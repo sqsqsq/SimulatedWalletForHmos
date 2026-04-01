@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "E:/1.code/SimulatedWalletForHmos/signing/deveco.p12",
+          "storePassword": "0000001E225C456338366999D2E9F41F101D69ABA274677EE0501CDDF7F9441AD8B5976217DB64615817EFD79429",
+          "keyAlias": "phone_test",
+          "keyPassword": "0000001E440E469018942C75E0E74145E2C358D90BB506B94DFC1EC77CEE4D0718A34014DEED2D16767ABC13A540",
+          "signAlg": "SHA256withECDSA",
+          "profile": "E:/1.code/SimulatedWalletForHmos/signing/debugDebug.p7b",
+          "certpath": "E:/1.code/SimulatedWalletForHmos/signing/simulatedWallet.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.0.2(22)",
+        "compatibleSdkVersion": "6.0.1(21)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "phone",
+      "srcPath": "./phone",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
