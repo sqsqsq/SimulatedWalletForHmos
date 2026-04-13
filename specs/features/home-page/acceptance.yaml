@@ -1,0 +1,451 @@
+# ============================================================================
+# 功能级规约 — 验收标准 + 边界用例 (Acceptance & Boundaries)
+# ============================================================================
+# 模块: home-page (钱包首页模块)
+# 来源: doc/features/home-page/PRD.md v1.0
+# 用途: 定义该功能模块的可量化验收标准和边界/异常场景。
+#       Harness 读取本文件做验收覆盖验证；Skill 5 参照本文件生成 UT 断言。
+#
+# 消费者:
+#   - harness/scripts/check-coding.ts    (脚本验 AC 覆盖率)
+#   - harness/scripts/check-ut.ts        (脚本验 UT 断言覆盖)
+#   - harness/prompts/verify-coding.md   (AI 验功能实现完整性)
+#   - harness/prompts/verify-ut.md       (AI 验 UT 有效性)
+#   - skills/5-business-ut/              (UT 生成参照)
+# ============================================================================
+
+feature: home-page
+source: doc/features/home-page/PRD.md
+version: "1.0"
+
+# --------------------------------------------------------------------------
+# P0 功能验收标准
+# --------------------------------------------------------------------------
+criteria:
+
+  - id: AC-1
+    prd_function: F1
+    priority: P0
+    description: '应用启动后显示底部 Tab 栏，包含"首页"和"我的"两个 Tab，点击可切换页面，当前 Tab 图标和文字变为蓝色高亮'
+    testable: true
+    verification_steps:
+      - "启动应用，观察底部是否显示 2 个 Tab"
+      - '确认 Tab 文字分别为"首页"和"我的"'
+      - '点击"我的"Tab，确认页面切换且图标/文字变为蓝色'
+      - '点击"首页"Tab，确认切回且高亮状态正确'
+    expected_result: "Tab 栏正常渲染，切换页面流畅，选中态视觉正确"
+
+  - id: AC-2
+    prd_function: F2
+    priority: P0
+    description: '首页右上角显示"+"按钮，点击后跳转到添卡入口页'
+    testable: true
+    verification_steps:
+      - '在首页确认右上角存在"+"图标按钮'
+      - "点击该按钮"
+      - '确认跳转到添卡入口页（标题为"添加卡片"）'
+    expected_result: "成功跳转到 AddCardEntryPage"
+
+  - id: AC-3
+    prd_function: F3
+    priority: P0
+    description: "首页上方显示无卡引导图片（4 张彩色卡片风格），点击跳转到卡包页"
+    testable: true
+    verification_steps:
+      - "在首页确认上方显示引导图片区域"
+      - "点击引导图片"
+      - '确认跳转到卡包页（标题为"卡包"）'
+    expected_result: "引导图片正确渲染，点击后跳转到 CardPackPage"
+
+  - id: AC-4
+    prd_function: F4
+    priority: P0
+    description: '引导图下方显示"卡包"标题、副标题和"添加管理卡片"按钮，点击按钮跳转到卡包页'
+    testable: true
+    verification_steps:
+      - '确认显示"卡包"标题'
+      - '确认显示"集中管理您的卡证票券钥匙"副标题'
+      - '确认显示"添加管理卡片"按钮'
+      - "点击按钮，确认跳转到卡包页"
+    expected_result: "卡包引导区内容完整，按钮跳转正确"
+
+  - id: AC-5
+    prd_function: F5
+    priority: P0
+    description: '首页中部展示元服务入口区（至少 3 个写死入口），支持左右滑动，点击任一入口弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - "确认元服务区域渲染至少 3 个入口项"
+      - "左右滑动确认 Swiper 功能正常"
+      - "确认圆点指示器存在且跟随滑动变化"
+      - '点击任一入口，确认 Toast"暂不支持"弹出'
+    expected_result: "元服务区正常展示，Swiper 流畅，Toast 正常弹出"
+    data_constraints:
+      min_items: 3
+      items_include: ["Huawei Card", "信用卡还款", "优惠加油"]
+
+  - id: AC-6
+    prd_function: F6
+    priority: P0
+    description: '首页下方"更多服务"区域展示 H5 运营轮播图（至少 2 张占位图），支持滑动和自动轮播，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - '确认"更多服务"标题存在'
+      - "确认轮播区至少有 2 张图片"
+      - "确认自动轮播功能正常"
+      - "手动滑动确认交互正常"
+      - '点击轮播图，确认 Toast"暂不支持"弹出'
+    expected_result: "运营轮播区正常渲染和自动轮播，交互 Toast 正确"
+    data_constraints:
+      min_items: 2
+
+  - id: AC-7
+    prd_function: F7
+    priority: P0
+    description: '我的页面顶部展示账号卡片，未登录时显示默认头像和"未登录"文字'
+    testable: true
+    verification_steps:
+      - '切换到"我的"Tab'
+      - "确认顶部显示账号信息卡片"
+      - "确认未登录状态下显示默认头像（灰色人形占位图）"
+      - '确认文字显示为"未登录"'
+    expected_result: "账号卡片正确渲染未登录状态"
+
+  - id: AC-8
+    prd_function: F8
+    priority: P0
+    description: '我的页面中部展示"银行卡交易记录"和"交通卡退款记录"两个列表项，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - "确认金融信息区域显示 2 个列表项"
+      - '确认文字分别为"银行卡交易记录"和"交通卡退款记录"'
+      - '确认每项有图标和">"箭头'
+      - '分别点击两项，确认 Toast"暂不支持"弹出'
+    expected_result: "金融信息列表正确渲染，点击 Toast 正确"
+    data_constraints:
+      exact_items: ["银行卡交易记录", "交通卡退款记录"]
+
+  - id: AC-9
+    prd_function: F9
+    priority: P0
+    description: '我的页面下方展示"设置"和"帮助与客服"两个列表项，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - "确认设置与帮助区域显示 2 个列表项"
+      - '确认文字分别为"设置"和"帮助与客服"'
+      - '确认每项有图标和">"箭头'
+      - '分别点击两项，确认 Toast"暂不支持"弹出'
+    expected_result: "设置列表正确渲染，点击 Toast 正确"
+    data_constraints:
+      exact_items: ["设置", "帮助与客服"]
+
+  - id: AC-10
+    prd_function: F10
+    priority: P0
+    description: '卡包页顶部显示返回箭头、"卡包"标题、右上角"+"按钮，点击返回回到首页，点击"+"跳转添卡入口页'
+    testable: true
+    verification_steps:
+      - "从首页进入卡包页"
+      - '确认顶部有返回箭头、"卡包"标题和"+"按钮'
+      - "点击返回箭头，确认回到首页"
+      - '再次进入卡包页，点击"+"按钮'
+      - "确认跳转到添卡入口页"
+    expected_result: "卡包页导航栏正确，返回和跳转链路完整"
+
+  - id: AC-11
+    prd_function: F11
+    priority: P0
+    description: '卡包页显示"添加卡片"栏目，附带"银行卡/交通卡/门禁卡等"描述，点击跳转添卡入口页'
+    testable: true
+    verification_steps:
+      - '确认卡包页有"添加卡片"栏目'
+      - '确认描述文字为"银行卡/交通卡/门禁卡等"'
+      - "点击该栏目，确认跳转到添卡入口页"
+    expected_result: "添加卡片栏目正确渲染和跳转"
+
+  - id: AC-12
+    prd_function: F13
+    priority: P0
+    description: '卡包页显示"管理非本机卡片"入口，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - '确认卡包页有"管理非本机卡片"入口'
+      - "点击该入口"
+      - '确认 Toast"暂不支持"弹出'
+    expected_result: "管理非本机入口正确渲染，Toast 正确"
+
+  - id: AC-13
+    prd_function: F14
+    priority: P0
+    description: '添卡入口页顶部显示返回箭头和"添加卡片"标题，点击返回回到卡包页'
+    testable: true
+    verification_steps:
+      - "从卡包页进入添卡入口页"
+      - '确认顶部有返回箭头和"添加卡片"标题'
+      - "点击返回箭头，确认回到卡包页"
+    expected_result: "添卡入口页导航正确，返回链路正确"
+
+  - id: AC-14
+    prd_function: F15
+    priority: P0
+    description: '添卡入口页显示"非本机卡片"入口，带数量徽标和箭头，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - '确认添卡入口页有"非本机卡片"入口'
+      - "确认该入口有数量徽标（灰色圆形背景数字）"
+      - '确认有">"箭头'
+      - '点击该入口，确认 Toast"暂不支持"弹出'
+    expected_result: "非本机卡片入口正确渲染，徽标和 Toast 正确"
+
+  - id: AC-15
+    prd_function: F16
+    priority: P0
+    description: '添卡入口页展示 5 类卡种（银行卡、交通卡、门禁卡、车钥匙、证件），每项含图标、名称、描述语和箭头，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - "确认添卡入口页列表有 5 个卡种入口"
+      - "确认名称分别为银行卡、交通卡、门禁卡、车钥匙、证件"
+      - '确认每项有彩色圆形图标、描述语和">"箭头'
+      - '逐一点击，确认每项 Toast"暂不支持"弹出'
+    expected_result: "5 类卡种列表完整渲染，每项交互正确"
+    data_constraints:
+      exact_count: 5
+      items:
+        - { name: "银行卡",  description: "双击电源键便捷支付" }
+        - { name: "交通卡",  description: "一张卡可刷全国" }
+        - { name: "门禁卡",  description: "手机就是门禁卡" }
+        - { name: "车钥匙",  description: "手机秒变车钥匙" }
+        - { name: "证件",    description: "随时随地查看证件" }
+
+# --------------------------------------------------------------------------
+# P1 功能验收标准
+# --------------------------------------------------------------------------
+  - id: AC-16
+    prd_function: F12
+    priority: P1
+    description: '卡包页无卡时"本设备卡片"区域不展示，页面布局正常'
+    testable: true
+    verification_steps:
+      - "确认无卡状态下进入卡包页"
+      - '确认"本设备卡片"区域不可见'
+      - "确认页面布局无错位或空白异常"
+    expected_result: "无卡时本设备卡片区域隐藏，布局正常"
+
+  - id: AC-17
+    prd_function: F17
+    priority: P1
+    description: "我的页面点击未登录状态的账号区域可触发登录流程"
+    testable: true
+    verification_steps:
+      - '切换到"我的"Tab'
+      - "确认处于未登录状态"
+      - "点击账号信息卡片"
+      - "确认触发登录流程（模拟阶段直接返回写死数据）"
+    expected_result: "点击未登录区域成功触发登录"
+
+  - id: AC-18
+    prd_function: F7
+    priority: P1
+    description: "我的页面登录后显示脱敏账号信息，头像更新为用户头像"
+    testable: true
+    verification_steps:
+      - '登录成功后切换到"我的"Tab'
+      - "确认头像更新为用户头像（非默认灰色头像）"
+      - "确认账号文字显示脱敏格式（如 *****6790@**.com）"
+    expected_result: "登录后账号卡片正确展示脱敏信息和头像"
+
+# --------------------------------------------------------------------------
+# P2 功能验收标准
+# --------------------------------------------------------------------------
+  - id: AC-19
+    prd_function: F18
+    priority: P2
+    description: '首页元服务区下方显示消息中心入口"欢迎使用钱包消息中心！"，点击弹出 Toast"暂不支持"'
+    testable: true
+    verification_steps:
+      - "在首页元服务区下方确认消息中心入口存在"
+      - '确认文字为"欢迎使用钱包消息中心！"'
+      - '确认有铃铛图标和">"箭头'
+      - '点击该入口，确认 Toast"暂不支持"弹出'
+    expected_result: "消息中心入口正确渲染，Toast 正确"
+
+# --------------------------------------------------------------------------
+# 通用验收标准
+# --------------------------------------------------------------------------
+  - id: AC-G1
+    prd_function: null
+    priority: P0
+    description: "所有 4 个页面在 HarmonyOS 4.0 及以上设备上正常显示，无布局错乱"
+    testable: true
+    verification_steps:
+      - "在 HarmonyOS 4.0+ 设备上依次访问首页、我的、卡包页、添卡入口页"
+      - "确认每个页面布局正常，组件对齐无错乱"
+    expected_result: "所有页面在目标设备上正常渲染"
+
+  - id: AC-G2
+    prd_function: null
+    priority: P0
+    description: "所有点击交互响应时间 ≤ 300ms，Toast 正常弹出并自动消失"
+    testable: true
+    verification_steps:
+      - "操作所有可点击元素"
+      - "确认每次点击到 UI 反馈 ≤ 300ms"
+      - "确认 Toast 弹出后自动消失"
+    expected_result: "交互响应快速，Toast 行为正确"
+
+  - id: AC-G3
+    prd_function: null
+    priority: P0
+    description: "页面跳转（首页→卡包→添卡入口）和返回链路完整，无死循环或闪退"
+    testable: true
+    verification_steps:
+      - "首页→卡包页→添卡入口页→返回卡包页→返回首页"
+      - "首页→添卡入口页→返回"
+      - "重复多次跳转，确认无闪退或死循环"
+    expected_result: "前进后退链路完整稳定"
+
+  - id: AC-G4
+    prd_function: null
+    priority: P0
+    description: "Tab 切换时页面状态保持（如从我的切回首页，首页状态不重置）"
+    testable: true
+    verification_steps:
+      - "在首页滑动元服务区到第 2 页"
+      - '切换到"我的"Tab'
+      - '切回"首页"Tab'
+      - "确认元服务区仍停留在第 2 页"
+    expected_result: "Tab 切换不丢失页面状态"
+
+# --------------------------------------------------------------------------
+# 边界/异常场景
+# --------------------------------------------------------------------------
+boundaries:
+
+  - id: BD-1
+    prd_exception: E1
+    scenario: network_offline
+    description: "网络断开时首页正常展示（数据全部为本地写死，不依赖网络）"
+    priority: P0
+    handling: "元服务和运营轮播使用本地写死数据，不依赖网络请求"
+    expected_behavior: "所有页面正常渲染，无网络错误提示"
+
+  - id: BD-2
+    prd_exception: E2
+    scenario: empty_card_list
+    description: "用户未绑定任何卡片时的空状态处理"
+    priority: P0
+    handling: >
+      首页展示无卡引导图+添加管理卡片按钮；
+      卡包页隐藏"本设备卡片"区域
+    expected_behavior: "引导用户添卡，卡包页布局无异常"
+
+  - id: BD-3
+    prd_exception: E3
+    scenario: not_logged_in
+    description: "用户未登录华为账号时的我的页面显示"
+    priority: P0
+    handling: '账号区域显示默认头像+"未登录"文字'
+    expected_behavior: "我的页面正常渲染未登录态"
+
+  - id: BD-4
+    prd_exception: E4
+    scenario: feature_not_supported
+    description: "点击暂未实现的功能入口"
+    priority: P0
+    handling: '弹出 Toast 提示"暂不支持"后自动消失'
+    expected_behavior: "Toast 正常弹出并在几秒后自动消失，不影响其他操作"
+    affected_functions: [F5, F6, F8, F9, F13, F15, F16, F18]
+
+  - id: BD-5
+    prd_exception: E5
+    scenario: back_press_on_home
+    description: "在首页 Tab 按系统返回键"
+    priority: P0
+    handling: "退出应用（系统默认行为）"
+    expected_behavior: "应用正常退出，无崩溃"
+
+  - id: BD-6
+    prd_exception: E6
+    scenario: tab_repeated_click
+    description: "已在首页 Tab 再次点击首页 Tab"
+    priority: P0
+    handling: "无操作，保持当前状态"
+    expected_behavior: "页面无刷新、无闪烁，状态保持"
+
+# --------------------------------------------------------------------------
+# 非功能性需求 — 量化性能指标
+# --------------------------------------------------------------------------
+performance:
+
+  - id: NFR-1
+    metric: "页面首屏加载"
+    threshold: "<= 1.5s"
+    unit: seconds
+    description: "从 Ability 启动到首页内容完全可见"
+
+  - id: NFR-2
+    metric: "Tab 切换响应"
+    threshold: "<= 300ms"
+    unit: milliseconds
+    description: "首页与我的之间切换的响应时间"
+
+  - id: NFR-3
+    metric: "页面跳转响应"
+    threshold: "<= 500ms"
+    unit: milliseconds
+    description: "从首页到卡包页/添卡入口页的跳转时间"
+
+  - id: NFR-4
+    metric: "轮播滑动帧率"
+    threshold: ">= 54 FPS"
+    unit: fps
+    description: "元服务和 H5 运营轮播的滑动流畅度"
+
+  - id: NFR-5
+    metric: "内存占用增量"
+    threshold: "<= 25 MB"
+    unit: megabytes
+    description: "整个首页模块（含所有 4 个页面）驻留时的内存增量"
+
+# --------------------------------------------------------------------------
+# 兼容性需求
+# --------------------------------------------------------------------------
+compatibility:
+  min_system_version: "HarmonyOS 4.0 (API 10)"
+  device_type: "手机"
+  screen_width_range: "360dp ~ 432dp"
+  dark_mode: false
+
+# --------------------------------------------------------------------------
+# 安全性需求
+# --------------------------------------------------------------------------
+security:
+  - id: SEC-1
+    description: "我的页面登录后显示的账号信息必须脱敏处理（如 *****6790@**.com）"
+    linked_functions: [F7]
+    linked_acceptance: [AC-18]
+
+  - id: SEC-2
+    description: "当前版本所有数据为本地写死，不涉及用户真实数据存储"
+    linked_functions: null
+
+# --------------------------------------------------------------------------
+# 验收标准覆盖率摘要
+# --------------------------------------------------------------------------
+coverage_summary:
+  total_prd_functions: 18
+  p0_functions: 15
+  p1_functions: 2
+  p2_functions: 1
+
+  ac_to_function_mapping:
+    p0_covered: [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F13, F14, F15, F16]
+    p0_coverage: "15/15 = 100%"
+    p1_covered: [F12, F17, F7]
+    p1_coverage: "2/2 = 100%"
+    p2_covered: [F18]
+    p2_coverage: "1/1 = 100%"
+
+  boundary_to_exception_mapping:
+    covered: [E1, E2, E3, E4, E5, E6]
+    coverage: "6/6 = 100%"

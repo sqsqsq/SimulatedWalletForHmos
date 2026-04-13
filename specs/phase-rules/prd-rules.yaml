@@ -1,0 +1,248 @@
+# ============================================================================
+# PRD 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 PRD 文档（Skill 1 产出）必须满足的通用规则。
+# 适用于所有功能模块的 doc/features/{module}/PRD.md。
+#
+# 消费者:
+#   - harness/scripts/check-prd.ts  (脚本 Harness, 确定性检查)
+#   - harness/prompts/verify-prd.md (AI Harness, 语义级检查)
+# ============================================================================
+
+phase: prd
+version: "1.0"
+applies_to: "doc/features/{module}/PRD.md"
+
+# --------------------------------------------------------------------------
+# 结构约束 — 脚本 Harness 可自动检测
+# --------------------------------------------------------------------------
+structure_checks:
+
+  required_chapters:
+    description: >
+      PRD 必须包含以下 8 个一级或二级章节（按 Markdown heading 匹配）：
+      功能概述、目标用户与使用场景、功能清单、页面/界面描述、
+      业务流程图、异常/边界场景处理、非功能性需求、验收标准
+    severity: BLOCKER
+    rule: |
+      expected_headings:
+        - "功能概述"
+        - "目标用户与使用场景"
+        - "功能清单"
+        - "页面/界面描述"
+        - "业务流程图"
+        - "异常/边界场景处理"
+        - "非功能性需求"
+        - "验收标准"
+      match: heading_text_contains
+
+  feature_table_format:
+    description: >
+      「功能清单」章节必须包含一个 Markdown 表格，且表头至少包含
+      编号、功能名称、优先级、描述 四列
+    severity: BLOCKER
+    rule: |
+      section: "功能清单"
+      expect: markdown_table
+      required_columns:
+        - "编号"
+        - "功能名称"
+        - "优先级"
+        - "描述"
+
+  priority_values:
+    description: >
+      功能清单表格中「优先级」列的值必须为 P0/P1/P2/P3 之一
+    severity: BLOCKER
+    rule: |
+      section: "功能清单"
+      column: "优先级"
+      allowed_values: ["P0", "P1", "P2", "P3"]
+
+  at_least_one_p0:
+    description: >
+      功能清单中必须包含至少一个 P0 功能项
+    severity: BLOCKER
+    rule: |
+      section: "功能清单"
+      column: "优先级"
+      min_count:
+        P0: 1
+
+  acceptance_criteria_format:
+    description: >
+      「验收标准」章节中每条标准必须包含唯一编号（如 AC-1、AC-2），
+      且编号需关联到功能清单中的功能编号
+    severity: BLOCKER
+    rule: |
+      section: "验收标准"
+      expect: pattern_per_item "AC-\\d+"
+      cross_ref: "功能清单.编号"
+
+  mermaid_flowchart:
+    description: >
+      「业务流程图」章节必须包含至少一个 Mermaid 代码块
+      （```mermaid ... ```），且使用 flowchart 语法
+    severity: BLOCKER
+    rule: |
+      section: "业务流程图"
+      expect: mermaid_block
+      syntax: flowchart
+
+  exception_table_format:
+    description: >
+      「异常/边界场景处理」章节必须包含 Markdown 表格，且表头至少包含
+      编号、异常场景、处理方式 三列
+    severity: MAJOR
+    rule: |
+      section: "异常/边界场景处理"
+      expect: markdown_table
+      required_columns:
+        - "编号"
+        - "异常场景"
+        - "处理方式"
+
+  minimum_exception_scenarios:
+    description: >
+      异常场景至少覆盖 3 种基本类型：网络异常、数据为空、功能暂不支持
+    severity: MAJOR
+    rule: |
+      section: "异常/边界场景处理"
+      min_rows: 3
+
+  nfr_quantified:
+    description: >
+      「非功能性需求」章节中的性能指标必须包含量化数值
+      （如 ≤ 1.5 秒、≥ 54 FPS），不允许仅有定性描述
+    severity: MAJOR
+    rule: |
+      section: "非功能性需求"
+      expect: numeric_metrics
+
+  page_description_completeness:
+    description: >
+      「页面/界面描述」章节中每个页面必须包含组件表格（至少含
+      组件、类型、交互行为 三列）
+    severity: MAJOR
+    rule: |
+      section: "页面/界面描述"
+      per_subsection:
+        expect: markdown_table
+        required_columns:
+          - "组件"
+          - "类型"
+          - "交互行为"
+
+  metadata_header:
+    description: >
+      PRD 文档顶部必须包含模块标识、版本、创建日期、状态等元数据
+    severity: MINOR
+    rule: |
+      expect: blockquote_metadata
+      required_fields:
+        - "模块标识"
+        - "版本"
+        - "创建日期"
+        - "状态"
+
+# --------------------------------------------------------------------------
+# 语义约束 — AI Harness 做语义级检查
+# --------------------------------------------------------------------------
+semantic_checks:
+
+  overview_clarity:
+    description: >
+      「功能概述」必须是一句简洁明确的描述，说明模块的核心价值，
+      而非"xxx功能"这种空泛表述
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查「功能概述」是否满足：(1) 一句话概括核心价值；
+      (2) 包含目标用户或使用场景的暗示；(3) 不使用空泛词汇
+
+  user_scenario_specificity:
+    description: >
+      「目标用户与使用场景」必须明确用户角色和具体场景描述，
+      场景应包含前置条件和用户意图
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查每个使用场景是否包含：(1) 具体的用户角色；
+      (2) 明确的操作目标；(3) 前置条件
+
+  feature_description_actionable:
+    description: >
+      功能清单中每项的「描述」必须具体到可实现，不允许仅有抽象描述
+    severity: MAJOR
+    ai_prompt_hint: >
+      对功能清单中每一项，判断描述是否足够具体，
+      让开发人员无歧义地理解需要实现什么
+
+  acceptance_testable:
+    description: >
+      每条验收标准必须是可测试、可量化的，包含明确的预期结果
+    severity: BLOCKER
+    ai_prompt_hint: >
+      逐条审查验收标准，判断：(1) 是否包含明确的操作步骤或前置条件；
+      (2) 是否包含可观察的预期结果；(3) 是否可以通过手动或自动化方式验证
+
+  ui_component_terminology:
+    description: >
+      界面描述中引用的 UI 组件应优先使用 ArkUI 术语
+      （Column、Row、List、Tabs、Navigation、Swiper 等）
+    severity: MINOR
+    ai_prompt_hint: >
+      检查界面描述中的组件类型是否使用了 ArkUI 组件名称
+
+  simulation_scope_awareness:
+    description: >
+      涉及真实后端（支付网关、银行接口等）的功能点必须标注为"模拟数据"
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查功能清单和界面描述中，是否有依赖真实后端的功能未标注模拟策略
+
+  business_flow_branch_coverage:
+    description: >
+      业务流程图必须覆盖主路径和关键分支（至少包含正常路径和异常路径）
+    severity: MAJOR
+    ai_prompt_hint: >
+      审查 Mermaid 流程图：(1) 是否涵盖了主路径；
+      (2) 是否有至少一条异常/分支路径；(3) 节点是否与功能清单一致
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 脚本 + AI 联合检查
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  feature_to_acceptance:
+    description: >
+      每个 P0/P1 功能（功能清单中的编号）必须在「验收标准」中
+      有至少一条对应的 AC 项（通过 AC 项中的功能编号引用关联）
+    severity: BLOCKER
+    rule: |
+      source: "功能清单"
+      filter: priority in ["P0", "P1"]
+      target: "验收标准"
+      link_field: "功能编号"
+      coverage: 100%
+
+  acceptance_to_feature:
+    description: >
+      每条验收标准（AC 项）必须关联到至少一个功能编号
+    severity: BLOCKER
+    rule: |
+      source: "验收标准"
+      require: reference_to "功能清单.编号"
+
+  exception_to_feature:
+    description: >
+      异常场景表中的场景应能对应到功能清单中的某些功能点
+    severity: MAJOR
+    rule: |
+      source: "异常/边界场景处理"
+      expect: relevance_to "功能清单"
+
+  scenario_to_page:
+    description: >
+      使用场景中提到的操作应能在「页面/界面描述」中找到对应的交互组件
+    severity: MAJOR
+    ai_prompt_hint: >
+      交叉验证：使用场景表中描述的用户操作，是否都能在界面描述中找到承载的 UI 组件

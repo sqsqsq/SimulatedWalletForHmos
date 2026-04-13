@@ -13,3 +13,9 @@
 **/.test
 /.appanalyzer
 /signing
+.obsidian
+/doc/原始需求
+.cursor
+harness/dist
+harness/reports/*
+!harness/reports/.gitkeep
