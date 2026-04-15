@@ -467,6 +467,12 @@ function checkUtFileNaming(
   }];
 }
 
+/** 仅导出 testsuite、用例在其它 *.test.ets 的 Hypium 入口文件（如 List.test.ets） */
+function isHypiumSuiteEntryShim(content: string): boolean {
+  return /export\s+default\s+function\s+testsuite\s*\(/.test(content) &&
+    !/\bdescribe\s*\(/.test(content);
+}
+
 function checkUtFrameworkImport(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
@@ -486,6 +492,7 @@ function checkUtFrameworkImport(
   const missingStructure: string[] = [];
 
   for (const { path: utPath, content } of utFiles) {
+    if (isHypiumSuiteEntryShim(content)) continue;
     if (!content.includes('@ohos/hypium')) {
       missingImport.push(utPath);
     }

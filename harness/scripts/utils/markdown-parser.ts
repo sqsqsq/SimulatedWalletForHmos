@@ -33,7 +33,7 @@ export interface MdCodeBlock {
 // --------------------------------------------------------------------------
 
 export function extractHeadings(content: string): MdHeading[] {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const headings: MdHeading[] = [];
   let inCodeBlock = false;
 
@@ -65,7 +65,7 @@ export function extractHeadings(content: string): MdHeading[] {
  * （含子 heading），直到遇到同级或更高级 heading 为止。
  */
 export function getSectionContent(content: string, headingText: string): string | null {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   let startLine = -1;
   let startLevel = 0;
   let inCodeBlock = false;
@@ -125,7 +125,7 @@ export function getSubsectionHeadings(content: string, headingText: string): MdH
 // --------------------------------------------------------------------------
 
 export function extractTables(content: string): MdTable[] {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const tables: MdTable[] = [];
   let inCodeBlock = false;
 
@@ -210,7 +210,7 @@ function parsePipeRow(line: string): string[] {
  * 提取 fenced code block，可按 language 过滤。
  */
 export function extractCodeBlocks(content: string, language?: string): MdCodeBlock[] {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const blocks: MdCodeBlock[] = [];
 
   let i = 0;
@@ -253,7 +253,7 @@ export function extractCodeBlocks(content: string, language?: string): MdCodeBlo
  * 格式：`> **Key**: value` 或 `> **Key**：value`
  */
 export function extractMetadata(content: string): Record<string, string> {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const metadata: Record<string, string> = {};
 
   for (let i = 0; i < Math.min(lines.length, 30); i++) {

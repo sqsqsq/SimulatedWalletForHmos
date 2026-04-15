@@ -1,0 +1,14 @@
+# ============================================================================
+# 功能级规约 — 边界用例索引（可选拆分）
+# ============================================================================
+# 权威边界场景仍维护在 acceptance.yaml 的 boundaries 字段。
+# 本文件便于单独 diff / 工具扩展；Harness 当前以 acceptance.yaml 为准。
+# ============================================================================
+
+feature: home-page
+version: "1.0"
+canonical_source: specs/features/home-page/acceptance.yaml
+
+note: >
+  将 PRD「异常/边界场景」同步写入 acceptance.yaml 的 boundaries 列表；
+  若需单独评审边界，可在此文件逐条列出 id 与 handling 摘要。

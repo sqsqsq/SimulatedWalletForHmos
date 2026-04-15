@@ -745,7 +745,9 @@ function extractTestCaseACRefs(plan: string): Map<string, string[]> {
     const tcId = (row[idCol] || '').trim();
     const acRefs = (row[acCol] || '').trim();
     if (tcId && acRefs) {
-      const refs = acRefs.split(/[,，、\s]+/).filter(r => r.match(/^(AC|BD)-?\d+$/i));
+      const refs = acRefs.split(/[,，、\s]+/).filter(r =>
+        r.match(/^(AC|BD)-(G\d+|\d+)$/i),
+      );
       result.set(tcId, refs);
     }
   }
