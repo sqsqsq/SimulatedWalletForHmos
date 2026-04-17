@@ -551,6 +551,10 @@ files:
   - "01-Product/Phone/oh-package.json5"
   - "01-Product/Phone/build-profile.json5"
   - "01-Product/Phone/hvigorfile.ts"
+  - "01-Product/Phone/src/main/resources/base/element/string.json"
+  - "01-Product/Phone/src/main/resources/base/element/color.json"
+  - "01-Product/Phone/src/main/resources/base/element/float.json"
+  - "01-Product/Phone/src/main/resources/base/profile/main_pages.json"
 
   # 资源文件
   - "05-SystemBase/CommFunc/src/main/resources/base/element/string.json"

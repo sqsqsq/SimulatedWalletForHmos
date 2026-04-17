@@ -41,8 +41,24 @@
   },
   "modules": [
     {
-      "name": "phone",
-      "srcPath": "./phone",
+      "name": "CommFunc",
+      "srcPath": "./05-SystemBase/CommFunc"
+    },
+    {
+      "name": "CommUI",
+      "srcPath": "./05-SystemBase/CommUI"
+    },
+    {
+      "name": "AccountManager",
+      "srcPath": "./04-BusinessBase/AccountManager"
+    },
+    {
+      "name": "WalletMain",
+      "srcPath": "./02-Feature/WalletMain"
+    },
+    {
+      "name": "Phone",
+      "srcPath": "./01-Product/Phone",
       "targets": [
         {
           "name": "default",

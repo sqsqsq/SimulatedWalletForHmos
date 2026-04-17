@@ -1,0 +1,12 @@
+{
+  "float": [
+    {
+      "name": "home_title_size",
+      "value": "20fp"
+    },
+    {
+      "name": "guide_banner_height",
+      "value": "160vp"
+    }
+  ]
+}

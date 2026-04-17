@@ -1,0 +1,36 @@
+{
+  "color": [
+    {
+      "name": "wallet_text_primary",
+      "value": "#182431"
+    },
+    {
+      "name": "wallet_text_secondary",
+      "value": "#99182431"
+    },
+    {
+      "name": "wallet_primary",
+      "value": "#0A59F7"
+    },
+    {
+      "name": "home_banner_start",
+      "value": "#E8F0FE"
+    },
+    {
+      "name": "home_banner_end",
+      "value": "#D0E3FF"
+    },
+    {
+      "name": "promo_placeholder",
+      "value": "#DCDCDC"
+    },
+    {
+      "name": "wallet_page_bg",
+      "value": "#F1F3F5"
+    },
+    {
+      "name": "wallet_badge_gray",
+      "value": "#8E8E93"
+    }
+  ]
+}

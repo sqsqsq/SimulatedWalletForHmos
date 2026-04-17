@@ -1,0 +1,7 @@
+export { HomeTabPage } from './presentation/pages/HomeTabPage';
+
+export { MineTabPage } from './presentation/pages/MineTabPage';
+
+export { buildCardPackPage } from './presentation/pages/CardPackPage';
+
+export { buildAddCardEntryPage } from './presentation/pages/AddCardEntryPage';

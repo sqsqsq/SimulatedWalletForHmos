@@ -205,8 +205,8 @@ SimulatedWalletForHmos/
 
 | 层 | Module | 格式 | 状态 | 说明 |
 |----|--------|------|------|------|
-| 01-Product | Phone | HAP | 已存在（待迁移） | 应用主入口，需从 `phone/` 迁移到 `01-Product/Phone/` |
-| 02-Feature | WalletMain | HAR | 已设计 | 公共页面：首页/我的/卡包/添卡入口/设置等 |
+| 01-Product | Phone | HAP | 已创建 | 应用主入口，位于 `01-Product/Phone/`，Tabs + Navigation |
+| 02-Feature | WalletMain | HAR | 已创建 | 公共页面：首页/我的/卡包/添卡入口 |
 | 02-Feature | SwipeCard | HAR | 未创建（规划中） | 刷卡/二维码支付 |
 | 02-Feature | BankCard | HAR | 未创建（规划中） | 银行卡业务 |
 | 02-Feature | TransportCard | HAR | 未创建（规划中） | 交通卡业务 |
@@ -214,9 +214,9 @@ SimulatedWalletForHmos/
 | 02-Feature | CarKeys | HAR | 未创建（规划中） | 车钥匙业务 |
 | 02-Feature | IDCards | HAR | 未创建（规划中） | 证件业务 |
 | 03-CommonBusiness | （按需添加） | HAR | — | 卡管理/配置管理/持久化管理等 |
-| 04-BusinessBase | AccountManager | HAR | 已设计 | 华为账号登录管理 |
-| 05-SystemBase | CommFunc | HAR | 已设计 | 系统功能封装（log/util/状态机等） |
-| 05-SystemBase | CommUI | HAR | 已设计 | 公共UI组件（基础页面/弹框/Toast等） |
+| 04-BusinessBase | AccountManager | HAR | 已创建 | 华为账号登录管理（当前为模拟登录） |
+| 05-SystemBase | CommFunc | HAR | 已创建 | 系统功能封装（log、格式化工具等） |
+| 05-SystemBase | CommUI | HAR | 已创建 | 公共UI组件（Toast、列表项、卡片容器等） |
 
 **状态说明**：
 - `已存在（初始）` — 项目脚手架自带
@@ -256,7 +256,7 @@ SimulatedWalletForHmos/
 
 | 功能 | 主要涉及模块 | PRD | Design | 代码 | 说明 |
 |------|-------------|-----|--------|------|------|
-| 钱包首页 | WalletMain, AccountManager, CommUI, CommFunc | [PRD.md](features/home-page/PRD.md) | [design.md](features/home-page/design.md) | 未完成 | 首页/我的/卡包/添卡入口 |
+| 钱包首页 | WalletMain, AccountManager, CommUI, CommFunc | [PRD.md](features/home-page/PRD.md) | [design.md](features/home-page/design.md) | 已落地 | 首页/我的/卡包/添卡入口 |
 
 ---
 

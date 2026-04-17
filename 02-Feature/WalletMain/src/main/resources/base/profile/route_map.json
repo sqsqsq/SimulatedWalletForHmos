@@ -1,0 +1,20 @@
+{
+  "routerMap": [
+    {
+      "name": "CardPackPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/CardPackPage.ets",
+      "buildFunction": "buildCardPackPage",
+      "data": {
+        "description": ""
+      }
+    },
+    {
+      "name": "AddCardEntryPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AddCardEntryPage.ets",
+      "buildFunction": "buildAddCardEntryPage",
+      "data": {
+        "description": ""
+      }
+    }
+  ]
+}

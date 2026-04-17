@@ -1,0 +1,88 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "WalletMain"
+    },
+    {
+      "name": "tab_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_mine",
+      "value": "我的"
+    },
+    {
+      "name": "home_title",
+      "value": "钱包"
+    },
+    {
+      "name": "mine_title",
+      "value": "我的"
+    },
+    {
+      "name": "card_pack_title",
+      "value": "卡包"
+    },
+    {
+      "name": "add_card_title",
+      "value": "添加卡片"
+    },
+    {
+      "name": "card_guide_subtitle",
+      "value": "集中管理您的卡证票券钥匙"
+    },
+    {
+      "name": "add_manage_cards",
+      "value": "添加管理卡片"
+    },
+    {
+      "name": "more_services",
+      "value": "更多服务"
+    },
+    {
+      "name": "not_supported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "not_logged_in",
+      "value": "未登录"
+    },
+    {
+      "name": "add_card_desc",
+      "value": "银行卡/交通卡/门禁卡等"
+    },
+    {
+      "name": "manage_non_local",
+      "value": "管理非本机卡片"
+    },
+    {
+      "name": "non_local_cards",
+      "value": "非本机卡片"
+    },
+    {
+      "name": "msg_center_welcome",
+      "value": "欢迎使用钱包消息中心！"
+    },
+    {
+      "name": "finance_section_title",
+      "value": "金融信息"
+    },
+    {
+      "name": "settings_section_title",
+      "value": "设置与帮助"
+    },
+    {
+      "name": "local_cards_section",
+      "value": "本设备卡片"
+    },
+    {
+      "name": "local_cards_empty",
+      "value": "暂无本机卡片"
+    },
+    {
+      "name": "wallet_login_hint",
+      "value": "点击登录华为账号"
+    }
+  ]
+}
