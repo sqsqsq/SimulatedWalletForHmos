@@ -26,6 +26,77 @@
 | 功能模块名称 | ✅ | 用于确定文档归档路径（如 `home-page`、`card-management`） |
 | 竞品截图 | ❌ | 可选，用于补充交互参考 |
 
+### Step 1.5: 术语消歧（BLOCKER，必做，不可跳过）
+
+> **本步骤是 PRD 阶段 Scope 守门机制的真正入口。**
+> 用户的自然语言描述中经常出现与模块字面相似但语义错位的术语
+> （最典型：「卡中心」≠「卡管理」CardManager；「我的」≠「账号」AccountManager）。
+> 弱模型若直接进入 Step 2 截图分析并写 PRD，非常可能把错误术语映射固化进文档。
+>
+> **本步骤就是把"隐式的术语理解"变成"显式的术语映射表"，交给用户逐条人工确认。**
+
+#### 1.5.1 必读输入
+
+- [doc/glossary.yaml](../../doc/glossary.yaml) — 业务术语 ↔ 权威模块映射表
+- [doc/module-catalog.yaml](../../doc/module-catalog.yaml) — 每个模块的职责画像（含 `NOT_responsible_for` / `easily_confused_with`）
+
+#### 1.5.2 执行步骤
+
+1. **提取业务名词**
+   从用户的原始需求文字中，抽出所有可能指代"功能 / 页面 / 模块 / 能力"的业务名词（含中文和英文），不要自行合并或重命名。
+
+2. **逐个查询 glossary**
+   对每个名词，在 `doc/glossary.yaml` 里做匹配：
+   - **精确命中 `term`** → 置信度 `high`，记录 `canonical_module`
+   - **命中 `aliases`** → 置信度 `high`，记录 `canonical_module` 并注明来自别名
+   - **未命中** → 置信度 `low`，进入下一步在 catalog 里找候选
+
+3. **未命中则查询 module-catalog 找 Top-3 候选**
+   对每个未命中术语，在 `doc/module-catalog.yaml` 的 `typical_business_terms` / `one_liner` / `responsibilities` 里做子串匹配，给出候选模块 Top-3，附每个候选的 `NOT_responsible_for`（让用户直观判断"是不是真的选错了"）。置信度统一 `low`。
+
+4. **对每个已命中术语，强制检查 `easily_confused_with`**
+   即便已精确命中，若该术语 / 其 `canonical_module` 存在 `easily_confused_with`，**必须在映射表里显示该混淆项**，置信度从 `high` 降级为 `medium`。这一步是本 Skill 的核心反模式：**"命中不等于正确，混淆项必须亮给用户看"**。
+
+5. **生成「术语映射表」并停下来等人工确认**
+   以下面的格式输出为 PRD 的前置章节：
+
+   ```markdown
+   ## 0. 术语映射表（用户确认前不得生成后续章节）
+
+   | 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项（必读） | 用户确认 |
+   |---------|---------|--------|--------|---------------|---------|
+   | 卡中心 | WalletMain | 02-Feature | medium | 卡管理 (CardManager) — 卡中心是 UI 页面，卡管理是后端能力 | [ ] |
+   | 添卡入口 | WalletMain | 02-Feature | high | — | [ ] |
+   | （未命中示例）X | 候选①：A / 候选②：B / 候选③：C | — | low | 各候选的 NOT_responsible_for 简述 | [ ] |
+   ```
+
+   - **所有行的「用户确认」必须为 `[x]` 才允许生成 PRD 正文**（这是 BLOCKER）。
+   - 即使置信度是 `high` 也必须人工确认（按项目约定，不启用 auto-approve）。
+   - 用户如对某条映射不满意，要求修正 → AI 把修正后的映射写入本表并再次等用户确认。
+
+6. **回写 glossary（用户批准后）**
+   所有用户确认过的**新术语**或**被修正过的术语映射**，必须在 PRD 归档前追加或更新到 `doc/glossary.yaml`（带 `confidence_hint: "user-approved on YYYY-MM-DD"`），作为下一次复用的种子。
+   **不得**在未获得用户明确同意时修改 glossary。
+
+#### 1.5.3 强约束
+
+1. **禁止在 Step 1.5 完成前进入 Step 2**。
+2. **禁止跨过本步骤**——即便用户说"简单需求直接写 PRD"，也要输出一张极简的映射表（至少列出需求中出现的主要业务名词）。
+3. 映射表必须放在 PRD 的 `## 0. 术语映射表` 章节。`check-prd.ts` 会强制校验：
+   - 该章节存在
+   - 所有行的「用户确认」列为 `[x]`
+   - `canonical_module` 字段的值必须存在于 `doc/module-catalog.yaml` 的模块名集合里
+4. 若任何一条映射的置信度是 `medium/low` 且用户未确认，`terminology_mapping_table` BLOCKER 会 FAIL，阻塞后续流程。
+
+#### 1.5.4 反模式（禁止）
+
+- ❌ "卡中心"直接当作 `CardManager`，因为"看起来差不多"
+- ❌ 置信度一律标 `high`，让用户全量打钩了事
+- ❌ 用户在聊天里口头说了"OK"，但没把 `[ ]` 改成 `[x]` 就继续
+- ❌ Step 2 截图分析中又出现了未在映射表里的新业务名词，却没有回到 Step 1.5 补条目
+
+---
+
 ### Step 2: 截图分析
 
 仔细分析用户提供的界面截图，提取以下信息：
@@ -44,16 +115,30 @@
 skills/1-prd-design/templates/prd-template.md
 ```
 
-按模板结构填充内容，**必须包含以下 8 个章节**：
+按模板结构填充内容，**必须包含以下 10 个章节**：
 
+0. **术语映射表** — Step 1.5 产物，所有映射必须 `[x]` 已确认（BLOCKER 起点）
 1. **功能概述** — 一句话描述该功能模块的核心价值
-2. **目标用户与使用场景** — 明确谁在什么场景下使用
-3. **功能清单** — 每项含：功能名、优先级（P0-P3）、描述
-4. **页面/界面描述** — 从截图提取的布局、组件、交互动作详细描述
-5. **业务流程图** — 使用 Mermaid flowchart 描述核心业务流
-6. **异常/边界场景处理** — 网络异常、空数据、权限不足等
-7. **非功能性需求** — 性能、兼容性、安全性要求
-8. **验收标准** — 可量化、可测试的条件列表
+2. **Scope 声明** — 本需求允许修改哪些模块、明确不改哪些模块、为什么（Scope 守门机制第二道）
+3. **目标用户与使用场景** — 明确谁在什么场景下使用
+4. **功能清单** — 每项含：功能名、优先级（P0-P3）、描述
+5. **页面/界面描述** — 从截图提取的布局、组件、交互动作详细描述
+6. **业务流程图** — 使用 Mermaid flowchart 描述核心业务流
+7. **异常/边界场景处理** — 网络异常、空数据、权限不足等
+8. **非功能性需求** — 性能、兼容性、安全性要求
+9. **验收标准** — 可量化、可测试的条件列表
+
+> **Scope 声明必须与术语映射表一致**：`in_scope_modules` 的所有条目必须来自映射表里已确认的 `canonical_module`，不允许出现映射表未涉及的模块。
+
+#### Step 3.1 Scope 声明填写规则（必读）
+
+Scope 声明是 Skill 2（Design）和 Skill 3（Coding）能否"不扩大改动范围"的唯一依据，**必须在生成 PRD 正文前先确定**：
+
+1. 通读需求描述 + 截图，识别要实现的功能。
+2. 对照 `doc/architecture.md` 的"模块清单"，判断哪些模块**必须改**（= `in_scope_modules`）、哪些模块**看似相关但本需求不需要改**（= `out_of_scope_modules`）。
+3. 在 `rationale` 中回答一个问题："如果后续 Skill 2 想把逻辑提到公共模块，我是否同意？不同意的理由是什么？"
+4. `in_scope_modules` 的模块名必须使用 PascalCase，且与 `doc/architecture.md` 保持一致（如 `BankCard`、`WalletMain`，**不要**使用 `bank-card` 或 `bank_card`）。
+5. 如果确实判断不清楚，宁可把 scope 声明得窄一些（只列最核心那 1 个模块），让 Skill 2 遇到问题时触发用户确认流程，也不要先写得宽松留"后路"。
 
 ### Step 4: 质量门禁自检
 
@@ -61,16 +146,17 @@ skills/1-prd-design/templates/prd-template.md
 
 ```
 [ ] 1. 功能概述：是否为一句简洁明确的描述？（非"xxx功能"这种空泛表述）
-[ ] 2. 目标用户：是否明确了用户角色？使用场景是否具体？
-[ ] 3. 功能清单：是否每项都有 P0-P3 优先级标注？描述是否具体到可实现？
-[ ] 4. 界面描述：是否覆盖了截图中所有可见的 UI 元素？布局描述是否可复现？
-[ ] 5. 业务流程图：Mermaid 语法是否正确？是否覆盖了主路径和关键分支？
-[ ] 6. 异常场景：是否至少覆盖了网络异常、数据为空、权限不足三种基本场景？
-[ ] 7. 非功能性需求：是否有具体的量化指标（如页面加载 < 2s）？
-[ ] 8. 验收标准：每条标准是否可测试、可量化？是否与功能清单一一对应？
+[ ] 2. Scope 声明：是否有 yaml 代码块？in_scope_modules 是否至少 1 项且与 architecture.md 模块名一致？rationale 是否真正解释了"为什么不改 out_of_scope_modules"？
+[ ] 3. 目标用户：是否明确了用户角色？使用场景是否具体？
+[ ] 4. 功能清单：是否每项都有 P0-P3 优先级标注？描述是否具体到可实现？
+[ ] 5. 界面描述：是否覆盖了截图中所有可见的 UI 元素？布局描述是否可复现？
+[ ] 6. 业务流程图：Mermaid 语法是否正确？是否覆盖了主路径和关键分支？
+[ ] 7. 异常场景：是否至少覆盖了网络异常、数据为空、权限不足三种基本场景？
+[ ] 8. 非功能性需求：是否有具体的量化指标（如页面加载 < 2s）？
+[ ] 9. 验收标准：每条标准是否可测试、可量化？是否与功能清单一一对应？
 ```
 
-**不通过项**：找出具体缺失点，自动补充完善后重新自检，直到 8 项全部通过。
+**不通过项**：找出具体缺失点，自动补充完善后重新自检，直到 9 项全部通过。
 
 ### Step 5: 输出与归档
 
@@ -144,12 +230,14 @@ Spec 文件提取完成后，引导用户执行验证以确保 PRD 质量达标�
 告知用户可运行脚本 Harness 检查 PRD 结构合规性：
 
 ```bash
-cd harness && npx ts-node scripts/check-prd.ts --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase prd --feature {module-name}
 ```
+
+> ⚠️ **一定要通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-prd.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `specs/phase-rules/prd-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、优先级合法性、追溯完整性等）
-- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准（AC 覆盖率、BD 覆盖率）
+- `specs/features/{module-name}/acceptance.yaml` — 功能级验收标准（若存在则加载；PRD 阶段通常不依赖）
 
 **若报告中存在 BLOCKER 级问题**：必须修正 PRD 并重新提取 Spec（回到 Step 4），直到零 BLOCKER。
 
@@ -238,3 +326,35 @@ cd harness && npx ts-node scripts/check-prd.ts --feature={module-name}
 3. **模拟数据标注**：涉及真实后端（支付网关、银行接口等）的功能，若当前阶段无法接入真实服务，应在 PRD 中标注为"模拟数据"
 4. **不要过度设计**：PRD 关注"做什么"而非"怎么做"，技术实现细节留给 Skill 2
 5. **中文输出**：所有 PRD 内容使用简体中文
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/prd` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-prd/trace.json`
+  - `<feature>`：功能名，与 `doc/features/<feature>/` 对应
+  - `<timestamp>`：`YYYYMMDD-HHmmss` 格式
+  - `<model>`：实际运行的模型标识，如 `minimax-2.5` / `glm-4.5` / `claude-sonnet-4`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `prd`。
+- **痛点回填**：同目录下再产出一份 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。
+- **用途**：trace.json 是内网弱模型试运行的主要回传物，用于驱动 skills/spec/harness 的下一轮迭代。**不要省略**。
+
+---
+
+## 运行时交付约定（Claude Code CLI / 内网弱模型）
+
+当本 Skill 由 Claude Code CLI 或等价 agent 运行时（尤其是内网弱模型场景），**阶段结束前必须**在以下目录产出交付凭证：
+
+```
+harness/reports/<feature>/<timestamp>/<model>-prd/
+├── trace.json          # 结构见 harness/trace/trace.schema.json（phase = "prd"）
+├── gap-notes.md        # 痛点回传，结构见 harness/trace/gap-notes.template.md
+└── check-prd.report.md # check-prd.ts 的输出（若已运行）
+```
+
+用途：
+1. 内网弱模型跑动后将 trace.json + gap-notes.md 回传给 Cursor 侧迭代 skills / specs / harness；
+2. 对比不同模型在同一 feature 上的表现；
+3. 定位"框架没兜住的问题"，驱动下一波改造。

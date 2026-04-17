@@ -1,0 +1,382 @@
+# ============================================================================
+# Module Catalog — SimulatedWalletForHmos
+# ============================================================================
+# 本文件是每个模块的"画像卡"：职责、对外导出、容易被误映射的近义模块。
+# 消费者:
+#   - skills/1-prd-design/SKILL.md Step 0.5 术语消歧
+#   - skills/2-requirement-design/SKILL.md Step 2.5 Scope 继承与提议
+#   - harness/scripts/check-prd.ts   (scope_matches_catalog BLOCKER)
+#   - harness/scripts/check-design.ts (scope_consistency_with_prd 交叉校验)
+#
+# 维护约定:
+#   1. 每个新增/重命名模块必须先更新本文件
+#   2. 每条 `NOT_responsible_for` 都是"曾经被 AI 或人类误塞进来过"的真实反例
+#   3. `typical_business_terms` 是反向索引：业务术语 → 模块
+#      务必覆盖自然语言里常见的叫法、别名、历史命名
+#   4. `easily_confused_with` 用来显式对抗"字面相似"陷阱（卡管理 vs 卡中心等）
+# ============================================================================
+
+schema_version: "1.0"
+
+modules:
+
+  # --------------------------------------------------------------------------
+  # 01-Product
+  # --------------------------------------------------------------------------
+  - name: Phone
+    layer: 01-Product
+    sub_layer: null
+    format: HAP
+    one_liner: 唯一的 HAP 主入口，集成所有 HAR 并打包最终产物
+    responsibilities:
+      - 各 Ability 入口代码
+      - 主 Tabs / Navigation 根框架
+      - HAR 依赖集成与编译出包
+    NOT_responsible_for:
+      - 任何业务逻辑
+      - 页面 UI（UI 全部下沉到 02-Feature 模块）
+      - 数据模型与仓储
+    typical_business_terms:
+      - 应用主入口
+      - HAP
+      - 应用壳
+    easily_confused_with: []
+    key_exports: []
+    entry_file: 01-Product/Phone/src/main/ets/entryability/EntryAbility.ets
+
+  # --------------------------------------------------------------------------
+  # 02-Feature
+  # --------------------------------------------------------------------------
+  - name: WalletMain
+    layer: 02-Feature
+    sub_layer: 顶层
+    format: HAR
+    one_liner: 公共页面承载模块（首页 / 我的 / 设置 / 卡包 / 添卡入口等）
+    responsibilities:
+      - 首页 Tab、我的 Tab 的页面 UI
+      - 卡包聚合入口页、添卡入口页
+      - 跨 Feature 的公共页面骨架
+    NOT_responsible_for:
+      - 具体卡种的业务代码
+      - 卡的 CRUD / 状态管理（那是 CardManager 的事）
+      - 刷卡 / 二维码支付行为（那是 SwipeCard 的事）
+    typical_business_terms:
+      - 首页
+      - 我的
+      - 卡中心           # ← 用户侧"卡中心"通常指聚合入口，不是 CardManager
+      - 卡聚合页
+      - 卡包页
+      - 添卡入口
+      - 设置页
+    easily_confused_with:
+      - module: CardManager
+        disambiguation: |
+          "卡中心 / 卡聚合页"指用户可见的 UI 聚合入口，归属 WalletMain；
+          CardManager 是 03-CommonBusiness 的后端公共能力，不含 UI。
+          判定规则：如果术语描述的是"用户打开看到的页面"，就是 WalletMain；
+          如果描述的是"卡的增删改查 / 订阅 / 功能代理"，才是 CardManager。
+    key_exports:
+      - HomePage
+      - MyPage
+      - CardPackagePage
+      - AddCardEntryPage
+    entry_file: 02-Feature/WalletMain/Index.ets
+
+  - name: SwipeCard
+    layer: 02-Feature
+    sub_layer: 中间层
+    format: HAR
+    one_liner: 刷卡 / 二维码支付行为管理，通过修改卡状态让卡片展示到刷卡页
+    responsibilities:
+      - 刷卡页面
+      - 各卡种刷卡行为的统一调度
+      - 卡状态与刷卡页的绑定
+    NOT_responsible_for:
+      - 卡的 CRUD（归 CardManager）
+      - 具体卡种业务（归各卡种 Feature 模块）
+      - 卡聚合入口 UI（归 WalletMain）
+    typical_business_terms:
+      - 刷卡
+      - 刷卡页
+      - 二维码支付
+      - Tap-to-pay
+    easily_confused_with: []
+    key_exports:
+      - SwipeCardPage
+    entry_file: 02-Feature/SwipeCard/Index.ets
+
+  - name: BankCard
+    layer: 02-Feature
+    sub_layer: 底层
+    format: HAR
+    one_liner: 银行卡业务模块（模拟工程简化版；真实工程对应 FinancialCard）
+    responsibilities:
+      - 银行卡详情与管理页面
+      - 银行卡模拟数据
+    NOT_responsible_for:
+      - 其他卡种（TransportCard / AccessCard 等）
+      - 统一的卡 CRUD（归 CardManager）
+      - 支付行为（归 SwipeCard）
+    typical_business_terms:
+      - 银行卡
+      - 储蓄卡
+      - 信用卡
+    easily_confused_with:
+      - module: CardManager
+        disambiguation: "本模块只管银行卡一个卡种；跨卡种统一能力归 CardManager"
+    key_exports:
+      - BankCardPage
+    entry_file: 02-Feature/BankCard/Index.ets
+
+  - name: TransportCard
+    layer: 02-Feature
+    sub_layer: 底层
+    format: HAR
+    one_liner: 交通卡业务模块
+    responsibilities:
+      - 交通卡详情与余额展示页面
+      - 交通卡模拟数据
+    NOT_responsible_for:
+      - 刷卡行为（归 SwipeCard）
+      - 卡 CRUD（归 CardManager）
+    typical_business_terms:
+      - 交通卡
+      - 公交卡
+      - 地铁卡
+    easily_confused_with: []
+    key_exports:
+      - TransportCardPage
+    entry_file: 02-Feature/TransportCard/Index.ets
+
+  - name: AccessCard
+    layer: 02-Feature
+    sub_layer: 底层
+    format: HAR
+    one_liner: 门禁卡业务模块
+    responsibilities:
+      - 门禁卡页面
+      - 门禁卡模拟数据
+    NOT_responsible_for:
+      - 车钥匙（归 CarKeys，物理交互不同）
+      - 卡 CRUD（归 CardManager）
+    typical_business_terms:
+      - 门禁卡
+      - 门卡
+      - 园区卡
+    easily_confused_with: []
+    key_exports:
+      - AccessCardPage
+    entry_file: 02-Feature/AccessCard/Index.ets
+
+  - name: CarKeys
+    layer: 02-Feature
+    sub_layer: 底层
+    format: HAR
+    one_liner: 车钥匙业务模块（包含多种车钥匙形态）
+    responsibilities:
+      - 车钥匙详情 / 授权 / 解绑页面
+      - 不同车钥匙形态的适配
+    NOT_responsible_for:
+      - 门禁卡（归 AccessCard）
+    typical_business_terms:
+      - 车钥匙
+      - 数字钥匙
+    easily_confused_with: []
+    key_exports:
+      - CarKeysPage
+    entry_file: 02-Feature/CarKeys/Index.ets
+
+  - name: IDCards
+    layer: 02-Feature
+    sub_layer: 底层
+    format: HAR
+    one_liner: 证件模块（身份证 / 驾驶证 / 行驶证等）
+    responsibilities:
+      - 各类证件的展示页面
+      - 证件模拟数据
+    NOT_responsible_for:
+      - 其他卡种
+    typical_business_terms:
+      - 证件
+      - 身份证
+      - 驾驶证
+      - 行驶证
+    easily_confused_with: []
+    key_exports:
+      - IDCardsPage
+    entry_file: 02-Feature/IDCards/Index.ets
+
+  # --------------------------------------------------------------------------
+  # 03-CommonBusiness
+  # --------------------------------------------------------------------------
+  - name: CardManager
+    layer: 03-CommonBusiness
+    sub_layer: 中间层
+    format: HAR
+    one_liner: 跨 Feature 共享的卡 CRUD / 数据订阅 / 功能代理公共能力（无 UI）
+    responsibilities:
+      - 所有卡种的统一增删改查
+      - 卡数据订阅与状态变更通知
+      - 把卡种具体功能代理回对应 Feature 模块
+    NOT_responsible_for:
+      - 用户可见的聚合入口页面（那是 WalletMain）
+      - 具体卡种的实际业务逻辑（那是各 Feature 卡种模块）
+      - 账号态 / 鉴权（那是 AccountManager）
+      - 刷卡行为（那是 SwipeCard）
+    typical_business_terms:
+      - 卡管理
+      - 卡的增删改查
+      - 卡数据订阅
+      - 卡状态变更
+    easily_confused_with:
+      - module: WalletMain
+        disambiguation: |
+          CardManager 是纯后端公共能力，不含任何 UI；
+          自然语言里"卡中心 / 卡包 / 卡聚合页"全都是 UI 概念，归 WalletMain，不归 CardManager。
+    key_exports:
+      - CardRepository
+      - CardStatusService
+    entry_file: 03-CommonBusiness/CardManager/Index.ets
+
+  - name: ConfigManager
+    layer: 03-CommonBusiness
+    sub_layer: 中间层
+    format: HAR
+    one_liner: 钱包全局配置管理
+    responsibilities:
+      - 配置项的读 / 写 / 订阅
+      - 配置来源（本地 / 远端）的统一封装
+    NOT_responsible_for:
+      - 持久化（归 PersistManager）
+      - 业务具体配置逻辑（由调用方提供 schema）
+    typical_business_terms:
+      - 配置
+      - 配置管理
+      - Config
+    easily_confused_with: []
+    key_exports:
+      - ConfigService
+    entry_file: 03-CommonBusiness/ConfigManager/Index.ets
+
+  - name: PersistManager
+    layer: 03-CommonBusiness
+    sub_layer: 底层
+    format: HAR
+    one_liner: 持久化能力统一封装（KVStore / RelationalStore / Preference 等）
+    responsibilities:
+      - KV / 关系型 / Preference 的统一 API
+      - 持久化目录管理
+    NOT_responsible_for:
+      - 配置项（那是 ConfigManager 的上层业务）
+      - 网络数据缓存策略（由调用方决定）
+    typical_business_terms:
+      - 持久化
+      - KV
+      - RelationalStore
+      - Preference
+    easily_confused_with: []
+    key_exports:
+      - KVStoreClient
+      - RelationalStoreClient
+    entry_file: 03-CommonBusiness/PersistManager/Index.ets
+
+  - name: LifecycleManager
+    layer: 03-CommonBusiness
+    sub_layer: 底层
+    format: HAR
+    one_liner: 应用生命周期与启动任务框架
+    responsibilities:
+      - 启动任务的注册与调度
+      - 生命周期进度的广播
+    NOT_responsible_for:
+      - 具体业务的初始化（只负责调度，不实现）
+    typical_business_terms:
+      - 生命周期
+      - 启动任务
+      - 启动调度
+    easily_confused_with: []
+    key_exports:
+      - LifecycleService
+    entry_file: 03-CommonBusiness/LifecycleManager/Index.ets
+
+  # --------------------------------------------------------------------------
+  # 04-BusinessBase
+  # --------------------------------------------------------------------------
+  - name: AccountManager
+    layer: 04-BusinessBase
+    sub_layer: null
+    format: HAR
+    one_liner: 华为账号登录 / 登出 / 鉴权 / 登录态订阅
+    responsibilities:
+      - 账号登录 / 登出行为
+      - 登录数据发布与订阅
+      - 封装华为账号登录 Kit API
+    NOT_responsible_for:
+      - 业务鉴权逻辑（由业务层组合使用）
+      - UI 登录引导（由 WalletMain 触发本模块 API）
+    typical_business_terms:
+      - 账号
+      - 登录
+      - 登出
+      - 鉴权
+      - AT
+      - 华为账号
+    easily_confused_with: []
+    key_exports:
+      - AccountService
+      - LoginStateObservable
+    entry_file: 04-BusinessBase/AccountManager/Index.ets
+
+  # --------------------------------------------------------------------------
+  # 05-SystemBase
+  # --------------------------------------------------------------------------
+  - name: CommFunc
+    layer: 05-SystemBase
+    sub_layer: null
+    format: HAR
+    one_liner: 与业务无关的系统级基础能力（log / livedata / 状态机 / util）
+    responsibilities:
+      - Log 能力
+      - LiveData / 状态机 / 决策树 / 通用 util
+      - 页面生命周期管理工具
+    NOT_responsible_for:
+      - 任何业务逻辑
+      - UI 组件（那是 CommUI）
+    typical_business_terms:
+      - log
+      - livedata
+      - 状态机
+      - 决策树
+      - util
+      - 通用方法
+    easily_confused_with:
+      - module: ConfigManager
+        disambiguation: "CommFunc 是系统级工具；ConfigManager 是业务级配置读写"
+    key_exports:
+      - Log
+      - LiveData
+      - StateMachine
+    entry_file: 05-SystemBase/CommFunc/Index.ets
+
+  - name: CommUI
+    layer: 05-SystemBase
+    sub_layer: null
+    format: HAR
+    one_liner: 与业务无关的基础 UI 组件（NavDestination / 弹框 / Toast / 卡片 / 滑动组件）
+    responsibilities:
+      - 基础 UI 组件
+      - 主题 / theme
+    NOT_responsible_for:
+      - 业务组件（含业务语义的组件应放在 02/03/04 层）
+    typical_business_terms:
+      - 通用UI
+      - 基础组件
+      - Toast
+      - 弹框
+      - NavDestination
+    easily_confused_with: []
+    key_exports:
+      - Toast
+      - BasicDialog
+      - NavDestinationBase
+    entry_file: 05-SystemBase/CommUI/Index.ets

@@ -17,6 +17,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import {
   PhaseChecker,
   CheckContext,
@@ -24,6 +25,7 @@ import {
   ContractsSpec,
 } from './utils/types';
 import { AstAnalyzer, FileAnalysis } from './utils/ast-analyzer';
+import { parseScope, describeScopeError } from './utils/scope-parser';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -565,6 +567,161 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
   }];
 }
 
+const LAYER_DIR_PREFIXES = [
+  '01-Product/',
+  '02-Feature/',
+  '03-CommonBusiness/',
+  '04-BusinessBase/',
+  '05-SystemBase/',
+];
+
+function isUnderLayerDir(relPath: string): boolean {
+  const normalized = relPath.replace(/\\/g, '/');
+  return LAYER_DIR_PREFIXES.some(prefix => normalized.startsWith(prefix));
+}
+
+function getDiffBaseRef(): { ref: string; mode: 'committed' | 'working' } {
+  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  if (envRef.toLowerCase() === 'working') return { ref: 'HEAD', mode: 'working' };
+  if (envRef.length > 0) return { ref: envRef, mode: 'committed' };
+  return { ref: 'HEAD~1', mode: 'committed' };
+}
+
+function gitDiffFiles(projectRoot: string, baseRef: string, mode: 'committed' | 'working'): { files: string[] | null; error?: string } {
+  try {
+    const args = mode === 'working'
+      ? ['diff', '--name-only', baseRef, '--']
+      : ['diff', '--name-only', baseRef, 'HEAD', '--'];
+    const cmd = `git ${args.map(a => JSON.stringify(a)).join(' ')}`;
+    const out = execSync(cmd, {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const files = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    return { files };
+  } catch (err) {
+    return { files: null, error: (err as Error).message };
+  }
+}
+
+function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
+  const designPath = path.join(ctx.projectRoot, 'doc', 'features', ctx.feature, 'design.md');
+  if (!fs.existsSync(designPath)) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `design.md 不存在（${designPath}），无法确定 in_scope_modules。`,
+    }];
+  }
+
+  const design = fs.readFileSync(designPath, 'utf-8');
+  const { scope, error } = parseScope(design);
+  if (error || !scope) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `无法从 design.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
+      suggestion: '请先通过 check-design.ts 的 scope_declaration 检查。',
+      affected_files: [`doc/features/${ctx.feature}/design.md`],
+    }];
+  }
+
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts?.modules?.length) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: 'contracts.yaml 无 modules，无法解析 package_path。',
+    }];
+  }
+
+  const nameToPath = new Map<string, string>();
+  for (const mod of contracts.modules) {
+    if (mod.name && mod.package_path) {
+      nameToPath.set(mod.name, mod.package_path.replace(/\\/g, '/').replace(/\/+$/, '') + '/');
+    }
+  }
+
+  const missingPaths: string[] = [];
+  const allowedPrefixes: string[] = [];
+  for (const modName of scope.in_scope_modules) {
+    const p = nameToPath.get(modName);
+    if (p) allowedPrefixes.push(p);
+    else missingPaths.push(modName);
+  }
+
+  if (missingPaths.length > 0) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `design.in_scope_modules 中以下模块在 contracts.yaml 中无 package_path：${missingPaths.join('、')}`,
+      suggestion: '请在 contracts.yaml 的 modules 列表中补充这些模块的 package_path。',
+      affected_files: [`specs/features/${ctx.feature}/contracts.yaml`],
+    }];
+  }
+
+  const { ref, mode } = getDiffBaseRef();
+  const { files, error: diffErr } = gitDiffFiles(ctx.projectRoot, ref, mode);
+  if (files === null) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `无法执行 git diff（base=${ref}, mode=${mode}）：${diffErr ?? '未知错误'}`,
+      suggestion:
+        '设置环境变量 HARNESS_DIFF_BASE_REF 指向合适的 base ref（如 main 或 HEAD~N），或 "working" 比对工作区与 HEAD。',
+    }];
+  }
+
+  if (files.length === 0) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `git diff（base=${ref}, mode=${mode}）无变更文件。`,
+    }];
+  }
+
+  const violations: string[] = [];
+  const inScopeHits: string[] = [];
+  const neutralCount = { value: 0 };
+
+  for (const file of files) {
+    const normalized = file.replace(/\\/g, '/');
+    if (!isUnderLayerDir(normalized)) {
+      neutralCount.value++;
+      continue;
+    }
+    const hit = allowedPrefixes.find(p => normalized.startsWith(p));
+    if (hit) inScopeHits.push(normalized);
+    else violations.push(normalized);
+  }
+
+  if (violations.length === 0) {
+    return [{
+      id: 'diff_within_scope', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `git diff（base=${ref}）共 ${files.length} 个变更文件：${inScopeHits.length} 个在 in_scope 模块内，${neutralCount.value} 个为框架性变更（doc/specs/harness/skills 等），0 个越界。`,
+    }];
+  }
+
+  return [{
+    id: 'diff_within_scope', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details: `${violations.length} 个变更文件越界到 in_scope_modules 之外的模块：\n${truncateList(violations, 15)}\n\nin_scope_modules: ${scope.in_scope_modules.join('、')}\nbase ref: ${ref}（mode=${mode}）`,
+    suggestion:
+      '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+    affected_files: violations,
+  }];
+}
+
 function checkCodeToDesign(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
   if (!contracts?.files?.length || !contracts?.modules?.length) {
@@ -656,6 +813,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDesignToCode(ctx), 'design_to_code'));
     results.push(...safeRun(() => checkDesignFilePlanToCode(ctx), 'design_file_plan_to_code'));
     results.push(...safeRun(() => checkCodeToDesign(ctx), 'code_to_design'));
+    results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
 
     return results;
   },

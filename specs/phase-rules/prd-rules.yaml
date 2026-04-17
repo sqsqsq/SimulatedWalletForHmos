@@ -20,13 +20,15 @@ structure_checks:
 
   required_chapters:
     description: >
-      PRD 必须包含以下 8 个一级或二级章节（按 Markdown heading 匹配）：
-      功能概述、目标用户与使用场景、功能清单、页面/界面描述、
-      业务流程图、异常/边界场景处理、非功能性需求、验收标准
+      PRD 必须包含以下 10 个一级或二级章节（按 Markdown heading 匹配）：
+      术语映射表、功能概述、Scope 声明、目标用户与使用场景、功能清单、
+      页面/界面描述、业务流程图、异常/边界场景处理、非功能性需求、验收标准
     severity: BLOCKER
     rule: |
       expected_headings:
+        - "术语映射表"
         - "功能概述"
+        - "Scope 声明"
         - "目标用户与使用场景"
         - "功能清单"
         - "页面/界面描述"
@@ -35,6 +37,58 @@ structure_checks:
         - "非功能性需求"
         - "验收标准"
       match: heading_text_contains
+
+  terminology_mapping_table:
+    description: >
+      「术语映射表」章节必须存在且为 Skill 1 Step 1.5 产出的标准格式：
+      (1) 至少包含一行业务术语；
+      (2) 每行必须包含：原始术语、权威模块、所属层、置信度、易混项、用户确认；
+      (3) 所有行的「用户确认」列必须为 `[x]`（本项目不启用 auto-approve）；
+      (4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内；
+      (5) 空映射表不被允许（即便只有一个术语也要显式列出）。
+    severity: BLOCKER
+    rule: |
+      section: "术语映射表"
+      expect: markdown_table
+      required_columns:
+        - "原始术语"
+        - "权威模块"
+        - "所属层"
+        - "置信度"
+        - "易混项"
+        - "用户确认"
+      min_rows: 1
+      all_rows_confirmed: "[x]"
+      canonical_module_must_exist_in: "doc/module-catalog.yaml"
+
+  scope_matches_catalog:
+    description: >
+      「Scope 声明」章节的 `in_scope_modules` 和 `out_of_scope_modules`
+      列出的每一个模块名，都必须在 doc/module-catalog.yaml 里真实存在，
+      防止 AI 自造模块名或写错名称。
+    severity: BLOCKER
+    rule: |
+      section: "Scope 声明"
+      validate_against: "doc/module-catalog.yaml"
+      fields:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+
+  scope_declaration:
+    description: >
+      「Scope 声明」章节必须包含一个 yaml 代码块，定义 in_scope_modules、
+      out_of_scope_modules、rationale 三个字段；in_scope_modules 至少一项。
+      这是 Scope 守门机制的起点：design 阶段的模块范围必须是本字段的子集。
+    severity: BLOCKER
+    rule: |
+      section: "Scope 声明"
+      expect: yaml_code_block
+      required_keys:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+        - "rationale"
+      min_items:
+        in_scope_modules: 1
 
   feature_table_format:
     description: >

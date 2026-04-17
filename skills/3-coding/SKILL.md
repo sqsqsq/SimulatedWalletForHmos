@@ -6,6 +6,12 @@
 
 本 Skill 是项目全生命周期流水线的**第三环**。上游输入来自 Skill 2（需求设计）的 `design.md`，输出（源码）将流入 Skill 4（Code Review）。
 
+> **⚠️ 开工前必读（弱模型环境尤其重要）**
+>
+> 1. **ArkTS 易错手册**：[reference/arkts-pitfalls.md](reference/arkts-pitfalls.md) — 收录了 `@State` 初始化、`$r()` 资源引用、`ForEach keyGenerator`、`Router vs NavPathStack`、HAR `Index.ets` 导出等 15 条弱模型反复踩的坑。**每写一个 `.ets` 文件前必须至少回顾相关条目，写完后对照自检。**
+> 2. **Scope 守门（新）**：本次编码的 git diff 不得越界到 design.md `in_scope_modules` 之外。Harness 的 `diff_within_scope` 规则会在 Step 7 阻断 BLOCKER。因此写代码时一旦发现要改 in_scope 之外的模块，**立刻停下来**，回到 Skill 2 的 Step 2.5.3 走 scope 扩展提议。
+> 3. **逐文件 Lint 门禁（新）**：Step 3 已强化为"单文件 Lint 不过不得进入下一个文件"，**严禁批量生成多个文件后再统一 lint**。
+
 ## 触发条件
 
 当用户的请求包含以下意图时激活本 Skill：
@@ -192,23 +198,37 @@
 6. 资源文件和模块配置
 ```
 
-### Step 3: 逐模块逐层生成代码
+### Step 3: 逐模块逐层生成代码（强制逐文件 Lint 门禁）
 
-对每个实现项执行以下循环：
+对每个实现项执行以下**严格的单文件闭环**，**禁止批量生成多个文件后再统一验证**：
 
-1. **声明当前上下文**：明确当前在哪个 Module 的哪个层，依赖了哪些已完成的代码
-2. **生成代码**：严格按照 design.md 中该项的规划生成，且**必须遵循 contracts.yaml 中的强契约**：
-   - 文件路径必须与 `contracts.yaml > files` 一致
-   - 接口签名（方法名、参数类型、返回类型、async 标记）必须与 `contracts.yaml > interfaces` 一致
-   - 数据模型（字段名、类型、是否必填）必须与 `contracts.yaml > data_models` 一致
-   - 组件 Props/State/Events 必须与 `contracts.yaml > components` 一致
-   - 资源 Key（$r 引用）必须与 `contracts.yaml > resource_keys` 一致
-   - 代码须覆盖 `acceptance.yaml > boundaries` 中定义的异常/边界场景处理逻辑
-3. **展示给用户**：输出代码并说明关键设计决策
-4. **等待确认**：用户确认后写入文件；有修改意见则调整后重新展示
-5. **写入文件**：将代码写入 design.md 指定的文件路径
-6. **Lint 检查**：每个文件写入后执行 `ReadLints` 检查，有 error 则立即修复
-7. **层间依赖检查**：验证 import 语句不违反分层规则
+1. **开文件前的自检（针对弱模型尤为重要）**
+   - 重读 [reference/arkts-pitfalls.md](reference/arkts-pitfalls.md) 中与当前文件类型（@Component / Repository / UseCase / Model / Index.ets）相关的 2-3 条。
+   - 声明当前上下文：哪个 Module、哪个层、依赖了哪些已完成的代码。
+   - **Scope 守门**：确认当前要写的文件路径是否在 `doc/features/{feature}/design.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
+
+2. **生成代码**：严格按照 `contracts.yaml` 的强契约（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 Key 一致），并覆盖 `acceptance.yaml > boundaries` 定义的异常处理。
+
+3. **写入文件**：仅写入**当前这一个**文件。
+
+4. **单文件 Lint 门禁（BLOCKER，禁止跳过）**：
+   - 立即对刚写入的文件执行 `ReadLints`。
+   - 有任何 error → 原地修复，再次 `ReadLints`，直到零 error。
+   - 有 warning → 评估是否可修（不可忽略）。
+   - **只要当前文件 Lint 未过，不得开始写任何其他文件**。这条规则对弱模型尤其重要：弱模型在长上下文中容易累积错误，批量生成后再统一 lint 会把"一个小错误"放大为"多个文件间的连锁错误"。
+
+5. **单文件自校对（对照 arkts-pitfalls.md）**：
+   - 快速扫一遍本文件，确认没有命中 `arkts-pitfalls.md` 里 15 条中任一"❌ 错"模式。
+   - 命中则立即修复，重新走第 4 步。
+
+6. **层间依赖检查**：验证本文件的 `import` 语句未违反模块内四层依赖（shared ← data ← domain ← presentation）和模块间五层依赖矩阵。
+
+7. **展示给用户并等待确认**：输出本文件代码并说明关键决策。用户有修改意见则调整后重新走 3-6 步；确认通过后才进入下一个文件。
+
+> **弱模型特别提示**：
+> - 假设你的上下文窗口"大但不可靠"——上一个文件的细节（变量名、类型、资源 key）你可能"记得但记错"。
+> - 写下一个文件前，**主动用 `ReadLints` / `grep` / `Read` 去验证你引用的符号**，不要凭记忆 import。
+> - 每个文件都是独立的 lint 单元，不要期待"等几个文件都写完一起修"——弱模型的"一起修"在实践中会漏。
 
 ### Step 4: 模块配置与资源文件
 
@@ -290,8 +310,10 @@
 告知用户可运行脚本 Harness 做自动化质量检查：
 
 ```bash
-cd harness && npx ts-node scripts/check-coding.ts --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase coding --feature {module-name}
 ```
+
+> ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-coding.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `specs/phase-rules/coding-rules.yaml` — 阶段级通用规则
@@ -359,6 +381,7 @@ cd harness && npx ts-node scripts/check-coding.ts --feature={module-name}
 
 ## 常用参考
 
+- **⭐ ArkTS 易错手册（弱模型必读）**: [reference/arkts-pitfalls.md](reference/arkts-pitfalls.md)
 - ArkUI 组件模式速查: [reference/arkui-patterns.md](reference/arkui-patterns.md)
 - 鸿蒙 API 用法速查: [reference/harmony-api-guide.md](reference/harmony-api-guide.md)
 - 模块脚手架规范: [templates/module-scaffold.md](templates/module-scaffold.md)
@@ -393,3 +416,37 @@ cd harness && npx ts-node scripts/check-coding.ts --feature={module-name}
 8. **HAR 导出**：HAR 模块需要通过 `Index.ets` 导出对外暴露的 API，未导出的内容为模块私有
 9. **边界场景覆盖**：代码必须处理 `acceptance.yaml > boundaries` 中定义的所有异常场景（网络异常、空数据、功能暂不支持等）
 10. **Harness 验证闭环**：编码完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才进入下一阶段
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/code` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-code/trace.json`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
+- **必须记录的事件**（针对弱模型迭代最关键）：
+  - `tool_calls`：`ReadLints` 的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
+  - `retries`：`lint_error` / `arkts_pitfall` 每次自修尝试次数，`related_file` 必填
+  - `human_pain_points`：逐条记录 ArkTS 错误类型（对照 `arkts-pitfalls.md` 的 15 条）
+  - `harness_checks`：`check-coding.ts` 的结果，特别是 `diff_within_scope` 是否通过
+- **痛点回填**：同目录 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。
+
+---
+
+## 运行时交付约定（Claude Code CLI / 内网弱模型）
+
+```
+harness/reports/<feature>/<timestamp>/<model>-coding/
+├── trace.json                 # phase = "coding"
+├── gap-notes.md
+├── check-coding.report.md     # 包含 diff_within_scope 结果
+└── verifier.report.md         # verifier 跑 verify-coding.md（可选）
+```
+
+**本 Skill 最容易发生的痛点（记入 `human_pain_points`）**：
+- `arkts_correctness`：ArkTS 语法/API 错误，需命中 `arkts-pitfalls.md` 的哪一条；
+- `contracts_mismatch`：实现与 `contracts.yaml` 签名/路径/资源 key 不一致；
+- `scope_creep`：`git diff` 出现 design `in_scope_modules` 外的文件。
+
+每次在 retry 一个文件时（lint 重跑、scope 越界回退），记入 `retries` 字段。

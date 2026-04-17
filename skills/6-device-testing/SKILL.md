@@ -187,7 +187,7 @@ skills/6-device-testing/templates/test-report-template.md
 告知用户可运行脚本 Harness 检查文档结构合规性：
 
 ```bash
-cd harness && npx ts-node harness-runner.ts --phase testing --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase testing --feature {module-name}
 ```
 
 脚本读取以下 Spec 文件执行自动化检查：
@@ -292,3 +292,13 @@ cd harness && npx ts-node harness-runner.ts --phase testing --feature={module-na
 8. **P0 优先**：若资源有限，优先覆盖 P0 AC 项，确保核心功能全部被测试
 9. **Harness 验证闭环**：文档完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才认为测试阶段完成
 10. **不修改源码**：生成测试文档时不应修改任何业务代码或 UT 代码
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/devtest` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-devtest/trace.json`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `testing`。
+- **痛点回填**：同目录 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。

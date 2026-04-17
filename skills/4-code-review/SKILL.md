@@ -194,7 +194,7 @@ skills/4-code-review/templates/review-report-template.md
 告知用户可运行脚本 Harness 检查报告结构合规性：
 
 ```bash
-cd harness && npx ts-node harness-runner.ts --phase review --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
 ```
 
 脚本读取以下 Spec 文件执行自动化检查：
@@ -287,3 +287,25 @@ cd harness && npx ts-node harness-runner.ts --phase review --feature={module-nam
 6. **中文输出**：审查报告使用简体中文
 7. **不要重复 Harness 已覆盖的检查**：Skill 4 是人工级别的深度审查，应关注语义正确性和架构合理性，确定性结构检查（文件存在、分层合规等）由 Harness 脚本自动完成
 8. **Harness 验证闭环**：报告完成后必须引导用户运行 Harness 验证（Step 6），确保零 BLOCKER 后才认为 Review 阶段完成
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/review` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-review/trace.json`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `review`。
+- **痛点回填**：同目录 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。
+
+---
+
+## 运行时交付约定（Claude Code CLI / 内网弱模型）
+
+```
+harness/reports/<feature>/<timestamp>/<model>-review/
+├── trace.json                 # phase = "review"
+├── gap-notes.md
+├── check-review.report.md
+└── verifier.report.md         # verifier 跑 verify-review.md（可选）
+```

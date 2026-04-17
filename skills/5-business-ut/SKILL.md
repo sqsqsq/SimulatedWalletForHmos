@@ -361,7 +361,7 @@ UT 交付后，引导用户执行 Harness 验证以确保 UT 质量达标。
 告知用户可运行脚本 Harness 做自动化质量检查：
 
 ```bash
-cd harness && npx ts-node harness-runner.ts --phase ut --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase ut --feature {module-name}
 ```
 
 脚本读取以下 Spec 文件执行自动化检查：
@@ -444,3 +444,25 @@ cd harness && npx ts-node harness-runner.ts --phase ut --feature={module-name}
 8. **中文注释**：DAG 的 description 和 UT 的用例名称使用中文，便于业务理解
 9. **Harness 验证闭环**：UT 完成后必须引导用户运行 Harness 验证（Step 7），确保零 BLOCKER 后才进入下一阶段
 10. **不修改源码**：生成 UT 时不应修改 Skill 3 产出的业务代码。若发现代码无法测试（如缺少依赖注入），应记录在交付摘要中作为改进建议，而非直接修改
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/ut` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-ut/trace.json`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `ut`。
+- **痛点回填**：同目录 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。
+
+---
+
+## 运行时交付约定（Claude Code CLI / 内网弱模型）
+
+```
+harness/reports/<feature>/<timestamp>/<model>-ut/
+├── trace.json             # phase = "ut"
+├── gap-notes.md
+├── check-ut.report.md
+└── verifier.report.md     # verifier 跑 verify-ut.md（可选）
+```

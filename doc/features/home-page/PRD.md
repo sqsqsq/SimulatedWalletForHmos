@@ -8,9 +8,83 @@
 
 ---
 
+## 0. 术语映射表
+
+> 第二波改造新增，所有映射以 `doc/glossary.yaml` 和 `doc/module-catalog.yaml` 为权威；
+> 本 PRD 为**历史基线回填**，全部条目均已与维护者确认（`[x]`）。
+
+| 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项（必读） | 用户确认 |
+|---------|---------|--------|--------|---------------|---------|
+| 首页 | WalletMain | 02-Feature | high | — | [x] |
+| 我的 | WalletMain | 02-Feature | medium | 账号 (AccountManager) — 我的是 UI Tab 页，账号是登录能力 | [x] |
+| 卡包 | WalletMain | 02-Feature | medium | 卡管理 (CardManager) — 卡包是 UI 聚合页面，卡管理是后端 CRUD 能力 | [x] |
+| 添卡入口 | WalletMain | 02-Feature | high | — | [x] |
+| 账号 | AccountManager | 04-BusinessBase | medium | 我的 (WalletMain) — 账号是登录能力，我的是 Tab 页 | [x] |
+| 登录 | AccountManager | 04-BusinessBase | high | — | [x] |
+| Toast / 基础组件 | CommUI | 05-SystemBase | high | — | [x] |
+| log / 通用方法 | CommFunc | 05-SystemBase | high | — | [x] |
+
+**回写状态**：本表所用术语均已在 `doc/glossary.yaml` 首批种子中。
+
+---
+
 ## 1. 功能概述
 
 钱包首页模块作为模拟华为钱包应用的主入口框架，通过"首页"和"我的"双 Tab 结构承载卡包管理、元服务导航、运营内容展示、账户信息与设置功能，并提供卡包页和添卡入口页的完整无卡态浏览与添卡跳转链路。
+
+---
+
+## Scope 声明
+
+> **本节是 Scope 守门机制的起点。**
+> Skill 2（Design）必须继承本节的 `in_scope_modules`；
+> Skill 3（Coding）的 git diff 不得越界到本节之外的模块。
+> 若开发过程中确实需要扩展，必须发起 **scope 扩展提议**，等待用户明确确认后才能更新本节。
+
+### Scope 模块清单
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 本需求允许修改的模块 | `Phone`、`WalletMain`、`AccountManager`、`CommUI`、`CommFunc` | 首页主入口框架所需的最小模块集，均为构建首页/我的/卡包/添卡入口页必不可少的基础能力 |
+| 本需求明确不修改的模块 | `SwipeCard`、`BankCard`、`TransportCard`、`AccessCard`、`CarKeys`、`IDCards`、`CardManager`、`ConfigManager`、`PersistManager`、`LifecycleManager` | 卡种模块仅出现 Toast"暂不支持"，不涉及实际业务；公共业务层当前无跨 Feature 共享能力需求 |
+
+### Scope 结构化字段（供 Spec 提取，必填）
+
+```yaml
+in_scope_modules:
+  - Phone
+  - WalletMain
+  - AccountManager
+  - CommUI
+  - CommFunc
+out_of_scope_modules:
+  - SwipeCard
+  - BankCard
+  - TransportCard
+  - AccessCard
+  - CarKeys
+  - IDCards
+  - CardManager
+  - ConfigManager
+  - PersistManager
+  - LifecycleManager
+rationale: |
+  本需求只构建"首页主入口框架 + 我的 Tab + 卡包页 + 添卡入口页"的浏览态与跳转链路：
+  - Phone 提供 HAP 主入口 + Tabs/Navigation 主框架。
+  - WalletMain 承载首页 / 我的 / 卡包 / 添卡入口四个公共页面 UI。
+  - AccountManager 提供账号登录状态的读取（F7）与登录触发（F17）。
+  - CommUI / CommFunc 提供 Toast、基础组件、Log、格式化等与业务无关的系统能力。
+  卡种模块（BankCard 等）的入口点击仅弹出 Toast"暂不支持"，不需要任何卡种业务代码；
+  03-CommonBusiness 层的 CardManager / ConfigManager 等当前版本没有跨 Feature 共享的业务逻辑需求，
+  即便"看起来应该把卡状态管理放到 CardManager"，在本 PRD 无卡态场景下也不引入，避免过度设计。
+  未来若新增卡种实际能力，再走 scope 扩展提议流程向 CardManager 引入。
+```
+
+### 最小改动原则
+
+1. **默认就地实现**：所有逻辑优先实现在 `in_scope_modules` 列出的最底层模块内。
+2. **禁止默默扩展**：若 Skill 2/3 在执行中发现"似乎需要在公共模块新增接口"，**必须停下来先生成 scope 扩展提议**给用户确认，不能直接写入 design.md 或代码。
+3. **公共能力优先复用**：能用 `doc/architecture.md > 各模块公共能力清单` 中已有能力解决的，不新增公共接口。
 
 ---
 

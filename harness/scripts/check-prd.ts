@@ -30,6 +30,17 @@ import {
   tableHasColumns,
   getColumnValues,
 } from './utils/markdown-parser';
+import { parseScope, describeScopeError } from './utils/scope-parser';
+import {
+  loadCatalog,
+  describeCatalogError,
+  allModuleNames,
+} from './utils/catalog-parser';
+import {
+  loadGlossary,
+  describeGlossaryError,
+  lookupTerm,
+} from './utils/glossary-parser';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -55,7 +66,8 @@ function loadPrd(ctx: CheckContext): string | null {
 
 function checkRequiredChapters(ctx: CheckContext, prd: string): CheckResult[] {
   const expected = [
-    '功能概述', '目标用户与使用场景', '功能清单', '页面/界面描述',
+    '术语映射表',
+    '功能概述', 'Scope 声明', '目标用户与使用场景', '功能清单', '页面/界面描述',
     '业务流程图', '异常/边界场景处理', '非功能性需求', '验收标准',
   ];
 
@@ -71,6 +83,36 @@ function checkRequiredChapters(ctx: CheckContext, prd: string): CheckResult[] {
     severity: 'BLOCKER', status: 'FAIL',
     details: `缺少 ${missing.length} 个必需章节：${missing.join('、')}`,
     suggestion: '请补充缺失的 PRD 章节。',
+  }];
+}
+
+function checkScopeDeclaration(ctx: CheckContext, prd: string): CheckResult[] {
+  const { scope, error } = parseScope(prd);
+  if (error) {
+    return [{
+      id: 'scope_declaration', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_declaration'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: describeScopeError(error),
+      suggestion:
+        '请在「Scope 声明」章节补充 ```yaml 代码块，包含 in_scope_modules（≥1 项）、out_of_scope_modules、rationale 三个字段。',
+    }];
+  }
+
+  const details = [
+    `in_scope_modules: ${scope!.in_scope_modules.join('、')}`,
+    `out_of_scope_modules: ${scope!.out_of_scope_modules.join('、') || '（空）'}`,
+    `rationale: ${scope!.rationale ? '已填写' : '⚠️ 未填写'}`,
+  ].join('；');
+
+  const rationaleWarn = scope!.rationale.length === 0;
+  return [{
+    id: 'scope_declaration', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'scope_declaration'),
+    severity: 'BLOCKER',
+    status: rationaleWarn ? 'WARN' : 'PASS',
+    details,
+    suggestion: rationaleWarn ? '建议补充 rationale 说明为何 out_of_scope_modules 不需要改。' : undefined,
   }];
 }
 
@@ -272,6 +314,231 @@ function checkMetadataHeader(ctx: CheckContext, prd: string): CheckResult[] {
 }
 
 // --------------------------------------------------------------------------
+// WP6: Terminology / Catalog Alignment Checks
+// --------------------------------------------------------------------------
+
+const TERMINOLOGY_REQUIRED_COLUMNS = [
+  '原始术语',
+  '权威模块',
+  '所属层',
+  '置信度',
+  '易混项',
+  '用户确认',
+];
+
+function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResult[] {
+  const section = getSectionContent(prd, '术语映射表');
+  if (!section) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: '未找到「术语映射表」章节。Skill 1 Step 1.5 要求 PRD 必须以该章节起始。',
+      suggestion: '请在功能概述之前插入 "## 0. 术语映射表" 章节，按模板填写映射表。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: '「术语映射表」章节未找到 Markdown 表格。',
+      suggestion: '请参考 skills/1-prd-design/templates/prd-template.md 中的表格格式。',
+    }];
+  }
+
+  const table = tables[0];
+  const { hasAll, missing } = tableHasColumns(table, TERMINOLOGY_REQUIRED_COLUMNS);
+  if (!hasAll) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `术语映射表缺少列：${missing.join('、')}。实际表头：${table.headers.join('、')}`,
+    }];
+  }
+
+  if (table.rows.length === 0) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: '术语映射表为空。至少列出需求中出现的主要业务名词（即便是极简需求也不可省略）。',
+    }];
+  }
+
+  // 过滤模板占位行（原始术语列仍然是 `{术语1}` 之类的）
+  const realRows = table.rows.filter(row => {
+    const term = (row[0] || '').trim();
+    return term.length > 0 && !/^\{.*\}$/.test(term);
+  });
+  if (realRows.length === 0) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: '术语映射表仅包含模板占位行（形如 `{术语1}`），未填写真实业务术语。',
+    }];
+  }
+
+  const confirmIdx = table.headers.findIndex(h => h.includes('用户确认'));
+  const moduleIdx = table.headers.findIndex(h => h.includes('权威模块'));
+  const termIdx = 0;
+
+  const unconfirmed: string[] = [];
+  realRows.forEach(row => {
+    const cell = (row[confirmIdx] || '').trim();
+    const isConfirmed = /\[[xX]\]/.test(cell);
+    if (!isConfirmed) unconfirmed.push((row[termIdx] || '(空)').trim());
+  });
+
+  if (unconfirmed.length > 0) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `${unconfirmed.length} 条术语映射未获得用户确认（用户确认列不是 [x]）：${unconfirmed.join('、')}`,
+      suggestion:
+        '本项目不启用 auto-approve。AI 必须停下来等用户对每一条映射逐个回复确认，再把 [ ] 改为 [x]。',
+    }];
+  }
+
+  // 校验 canonical_module 必须存在于 module-catalog.yaml
+  const catalogResult = loadCatalog(ctx.projectRoot);
+  if (!catalogResult.ok) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `模块画像加载失败：${describeCatalogError(catalogResult.error)}`,
+    }];
+  }
+
+  const knownModules = new Set(allModuleNames(catalogResult.catalog));
+  const unknown: Array<{ term: string; module: string }> = [];
+  realRows.forEach(row => {
+    const term = (row[termIdx] || '').trim();
+    const mod = (row[moduleIdx] || '').trim();
+    if (!mod) return;
+    // 支持「候选①：A / 候选②：B」形式的未命中行（含非模块名分隔符），只校验第一个候选
+    const primary = mod.split(/[\/／,，]/)[0].replace(/候选[①②③]?[:：]\s*/g, '').trim();
+    if (primary && !knownModules.has(primary)) {
+      unknown.push({ term, module: primary });
+    }
+  });
+
+  if (unknown.length > 0) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `${unknown.length} 条术语的权威模块不在 doc/module-catalog.yaml 内：${unknown.map(u => `${u.term}→${u.module}`).join('、')}`,
+      suggestion: '请检查模块名拼写，或先把真实存在的新模块补充到 doc/module-catalog.yaml 再写 PRD。',
+    }];
+  }
+
+  // 校验已确认映射是否与 glossary 矛盾（防"用户漫不经心勾 [x]"路径）
+  const glossaryResult = loadGlossary(ctx.projectRoot);
+  if (!glossaryResult.ok) {
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'WARN',
+      details: `${realRows.length} 条术语均已确认且对齐 catalog，但 glossary 校验跳过：${describeGlossaryError(glossaryResult.error)}`,
+    }];
+  }
+
+  const conflicts: Array<{ term: string; picked: string; canonical: string }> = [];
+  realRows.forEach(row => {
+    const term = (row[termIdx] || '').trim();
+    const picked = (row[moduleIdx] || '').trim().split(/[\/／,，]/)[0]
+      .replace(/候选[①②③]?[:：]\s*/g, '').trim();
+    if (!term || !picked) return;
+
+    const hit = lookupTerm(glossaryResult.glossary, term);
+    if (!hit) return; // 术语不在 glossary，不做强校验（新术语允许进入）
+    if (hit.term.canonical_module !== picked) {
+      conflicts.push({
+        term,
+        picked,
+        canonical: hit.term.canonical_module,
+      });
+    }
+  });
+
+  if (conflicts.length > 0) {
+    const parts = conflicts.map(
+      c => `「${c.term}」用户确认了 ${c.picked}，但 glossary 权威映射是 ${c.canonical}`,
+    );
+    return [{
+      id: 'terminology_mapping_table', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `${conflicts.length} 条用户已确认的映射与 doc/glossary.yaml 冲突：${parts.join('；')}`,
+      suggestion:
+        '两种合法处理：(1) 按 glossary 修正 PRD 映射；(2) 若确认要覆盖 glossary，先显式修改 doc/glossary.yaml 中该术语的 canonical_module 并注明 user-approved 日期，再跑 check。',
+    }];
+  }
+
+  return [{
+    id: 'terminology_mapping_table', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
+    severity: 'BLOCKER', status: 'PASS',
+    details: `${realRows.length} 条术语全部已确认，权威模块对齐 module-catalog，与 glossary 无冲突。`,
+  }];
+}
+
+function checkScopeMatchesCatalog(ctx: CheckContext, prd: string): CheckResult[] {
+  const { scope, error } = parseScope(prd);
+  if (error) {
+    return [{
+      id: 'scope_matches_catalog', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_matches_catalog'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `Scope 声明解析失败，跳过 catalog 对齐校验：${describeScopeError(error)}`,
+    }];
+  }
+
+  const catalogResult = loadCatalog(ctx.projectRoot);
+  if (!catalogResult.ok) {
+    return [{
+      id: 'scope_matches_catalog', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_matches_catalog'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `模块画像加载失败：${describeCatalogError(catalogResult.error)}`,
+    }];
+  }
+
+  const known = new Set(allModuleNames(catalogResult.catalog));
+  const invalidIn = scope!.in_scope_modules.filter(m => !known.has(m));
+  const invalidOut = scope!.out_of_scope_modules.filter(m => !known.has(m));
+
+  if (invalidIn.length === 0 && invalidOut.length === 0) {
+    return [{
+      id: 'scope_matches_catalog', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_matches_catalog'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `Scope 声明中全部 ${scope!.in_scope_modules.length + scope!.out_of_scope_modules.length} 个模块名均存在于 doc/module-catalog.yaml。`,
+    }];
+  }
+
+  const detailParts: string[] = [];
+  if (invalidIn.length > 0) detailParts.push(`in_scope_modules 未收录：${invalidIn.join('、')}`);
+  if (invalidOut.length > 0) detailParts.push(`out_of_scope_modules 未收录：${invalidOut.join('、')}`);
+
+  return [{
+    id: 'scope_matches_catalog', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'scope_matches_catalog'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details: detailParts.join('；'),
+    suggestion:
+      '请确认模块名拼写是否正确；若确实是新模块，先更新 doc/module-catalog.yaml 再写 PRD。',
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Traceability Checks
 // --------------------------------------------------------------------------
 
@@ -381,6 +648,9 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [];
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
+    results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
+    results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
+    results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
     results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));
     results.push(...safeRun(() => checkAtLeastOneP0(ctx, prd), 'at_least_one_p0'));

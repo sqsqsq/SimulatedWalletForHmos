@@ -20,12 +20,13 @@ structure_checks:
 
   required_chapters:
     description: >
-      设计文档必须包含以下 8 个章节：
-      模块架构图、目录/文件结构规划、数据模型定义、页面组件树、
+      设计文档必须包含以下 9 个章节：
+      Scope 声明与继承、模块架构图、目录/文件结构规划、数据模型定义、页面组件树、
       状态管理方案、服务层接口定义、路由/导航设计、PRD 功能映射表
     severity: BLOCKER
     rule: |
       expected_headings:
+        - "Scope 声明"
         - "模块架构图"
         - "目录/文件结构规划"
         - "数据模型定义"
@@ -35,6 +36,37 @@ structure_checks:
         - "路由/导航设计"
         - "PRD 功能映射表"
       match: heading_text_contains
+
+  scope_declaration:
+    description: >
+      「Scope 声明与继承」章节必须包含 yaml 代码块，
+      定义 inherited_from_prd / in_scope_modules / out_of_scope_modules /
+      rationale / expansions_with_user_approval 字段；
+      in_scope_modules 至少 1 项。
+    severity: BLOCKER
+    rule: |
+      section: "Scope 声明"
+      expect: yaml_code_block
+      required_keys:
+        - "in_scope_modules"
+        - "out_of_scope_modules"
+        - "rationale"
+      min_items:
+        in_scope_modules: 1
+
+  scope_consistency_with_prd:
+    description: >
+      design.in_scope_modules 必须是 prd.in_scope_modules ∪
+      expansions_with_user_approval.modules 的子集；
+      design 不得在未经用户批准的情况下声明 PRD.out_of_scope_modules 中的模块。
+      这是阻止 AI 自行扩大需求范围的核心 Scope 守门规则。
+    severity: BLOCKER
+    rule: |
+      source: "doc/features/{module}/PRD.md > Scope 声明 > yaml"
+      target: "doc/features/{module}/design.md > Scope 声明与继承 > yaml"
+      assertion: |
+        design.in_scope_modules ⊆ (prd.in_scope_modules ∪ design.expansions_with_user_approval.modules)
+        AND design.in_scope_modules ∩ prd.out_of_scope_modules ⊆ design.expansions_with_user_approval.modules
 
   architecture_diagram:
     description: >

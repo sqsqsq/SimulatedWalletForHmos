@@ -184,16 +184,80 @@
    - 新模块在 DAG 中的依赖位置
 4. 识别**可复用**的已有组件、工具类、数据模型（优先查阅 architecture.md 的公共能力清单）
 
+### Step 2.5: Scope 继承与提议（Scope 守门机制核心）
+
+这是本 Skill 最关键的一步。**在任何模块设计动作之前**，必须先完成 scope 边界的确认和登记：
+
+#### 2.5.1 继承 PRD 的 Scope 声明
+
+1. 读取 `doc/features/{module}/PRD.md` 的 **「Scope 声明」** 章节中的 yaml 代码块。
+2. 在脑中（并最终写入 design.md）显式复述一遍 `in_scope_modules` / `out_of_scope_modules` / `rationale`。
+3. **从此刻起，本次设计原则上只能规划修改 `in_scope_modules` 列出的模块**。
+
+#### 2.5.2 最小改动原则（强约束）
+
+1. **就地实现优先**：所有逻辑默认实现在 `in_scope_modules` 中最底层的那个 Feature 模块内，禁止出于"架构美感"或"日后可能复用"把代码提到 03-CommonBusiness / CommUI / CommFunc。
+2. **已有公共能力强制复用**：若发现可能要用公共能力，**先查 `doc/architecture.md > 各模块公共能力清单`**。清单里已有的，直接复用，不新增；清单里没有的，走 2.5.3 的扩展提议流程。
+3. **禁止默默扩大**：哪怕你判断出"需要在 CardManager 加一个接口"看起来确实合理，**也不能直接写入 design.md**。必须先生成 scope 扩展提议给用户，获得明确同意后才继续。
+
+#### 2.5.3 Scope 扩展提议流程（唯一合法的扩大路径）
+
+当且仅当满足以下条件之一时，才允许提议扩展 scope：
+- 现有 in_scope 模块**物理上无法**承载某功能（跨层依赖规则不允许）
+- `architecture.md` 的公共能力清单中**确实没有**可复用能力，且该能力是多个 Feature 都会需要的
+
+提议格式（必须以此结构输出给用户，等待用户明确答复"同意"后才继续设计）：
+
+```markdown
+## ⚠️ Scope 扩展提议（需用户确认）
+
+**PRD 已声明**：
+- in_scope_modules: [...]
+- out_of_scope_modules: [...]
+- rationale: ...
+
+**当前分析发现**需要扩展到以下模块：
+- 建议新增 in_scope：`{ModuleName}`
+- 原因：{具体描述为何现有模块无法承载}
+- 备选方案：{是否考虑过在现有 in_scope 模块内就地实现？为什么不行？}
+- 复用检查：{已查阅 architecture.md 公共能力清单，确认无已有能力可复用}
+
+**请用户明确回复**：
+- 同意扩展 → 我会在 design.md 的「Scope 声明与继承」章节的 `expansions_with_user_approval` 字段登记，并继续设计
+- 不同意 → 我会重新思考如何在原 in_scope 内解决
+```
+
+#### 2.5.4 登记用户批准
+
+用户同意扩展后，在 design.md 的「Scope 声明与继承」章节填入结构化字段：
+
+```yaml
+expansions_with_user_approval:
+  - modules: [CardManager]
+    reason: "BankCard 需要调用全局卡管理队列，CardManager 未暴露相关接口，且该能力后续其他 Feature 卡种也会共用"
+    approved_by: "{user_name}"
+    approved_at: "2026-04-17"
+```
+
+用户未同意的提议**不得**写入 design.md，并退回到 2.5.2 重新尝试就地实现。
+
+#### 2.5.5 输出
+
+本 Step 结束时，设计文档的 `in_scope_modules`（= PRD 继承 ∪ 已批准扩展）已经冻结，后续所有 Step 的模块选择必须在这个集合内。
+
 ### Step 3: 功能拆分到模块
 
-这是设计文档的**核心决策步骤**。逐条分析 PRD 功能清单，将每个功能点分配到五层架构中的正确模块：
+这是设计文档的**核心决策步骤**。逐条分析 PRD 功能清单，将每个功能点分配到五层架构中的正确模块。
+
+> **前置约束（来自 Step 2.5）**：所有功能点的"分配模块"必须落在 Step 2.5 冻结的 `in_scope_modules` 集合内。若强行想分配到集合外模块，**必须**停下来回到 Step 2.5.3 发起扩展提议，不得直接在拆分表中写出集合外的模块名。
 
 1. **逐功能分析**：对 PRD 中每个功能点，判断其本质属于哪一层：
-   - 这是一个页面/UI 交互？→ 02-Feature 层，进一步判断属于哪个 Feature 模块
-   - 这是账号登录/状态相关？→ 04-BusinessBase / AccountManager
-   - 这是通用 UI 组件（与业务无关）？→ 05-SystemBase / CommUI
-   - 这是工具/基础能力？→ 05-SystemBase / CommFunc
-   - 这是跨 Feature 共享的业务能力？→ 03-CommonBusiness
+   - 这是一个页面/UI 交互？→ 02-Feature 层，进一步判断属于哪个 Feature 模块（仅限 in_scope 中的 Feature）
+   - 这是账号登录/状态相关？→ 04-BusinessBase / AccountManager（仅当 AccountManager 在 in_scope 中）
+   - 这是通用 UI 组件（与业务无关）？→ 05-SystemBase / CommUI（仅当在 in_scope 中）
+   - 这是工具/基础能力？→ 05-SystemBase / CommFunc（仅当在 in_scope 中）
+   - 这是跨 Feature 共享的业务能力？→ 03-CommonBusiness（仅当在 in_scope 中）
+   - **若某功能点的天然归属模块不在 in_scope 中**：先尝试在 in_scope 的最合适模块内就地实现；若确实无法，回到 Step 2.5 发起扩展提议。
 
 2. **输出功能拆分表**（先于详细设计，供用户确认）：
 
@@ -290,11 +354,12 @@
 生成设计文档后，执行以下自检清单：
 
 ```
+[ ] 0. Scope 守门（BLOCKER）：design 的「Scope 声明与继承」章节是否存在？in_scope_modules 是否 ⊆ PRD.in_scope_modules ∪ expansions_with_user_approval？是否触碰了 PRD.out_of_scope_modules？
 [ ] 1. PRD 映射完整性：PRD 中每个 P0/P1 功能点是否在映射表中有明确条目？
 [ ] 2. 五层架构合规：每个模块是否放在了正确的架构层？依赖方向是否全部自上而下？
 [ ] 3. Feature 子层级合规：Feature 层模块间的依赖是否符合 顶层/中间层/底层 规则？
 [ ] 4. 模块最小化：是否只创建了 PRD 功能实际需要的模块？没有多余的模块？
-[ ] 5. 功能拆分准确性：每个功能点是否放在了最合适的模块？（账号→AccountManager，通用UI→CommUI等）
+[ ] 5. 功能拆分准确性：每个功能点是否放在了最合适的模块？且分配模块均在 in_scope_modules 内？
 [ ] 6. 文件路径合规：所有新增文件路径是否符合各层模块对应的内部结构？
 [ ] 7. 数据类型合法：数据模型字段类型是否都是 ArkTS 合法类型？
 [ ] 8. 接口签名完整：所有函数/方法签名是否包含入参类型和返回类型？
@@ -418,8 +483,10 @@ specs/features/{module-name}/contracts.yaml
 告知用户可运行脚本 Harness 检查设计文档结构合规性：
 
 ```bash
-cd harness && npx ts-node scripts/check-design.ts --feature={module-name}
+cd harness && npx ts-node harness-runner.ts --phase design --feature {module-name}
 ```
+
+> ⚠️ **必须通过 `harness-runner.ts` 入口**：直接 `ts-node scripts/check-design.ts` 不会触发任何检查（`check-*.ts` 只是导出 checker 模块，没有 CLI 入口），会静默返回 0 造成"假通过"。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `specs/phase-rules/design-rules.yaml` — 阶段级通用规则（章节存在性、表格格式、映射覆盖率等）
@@ -467,20 +534,21 @@ cd harness && npx ts-node scripts/check-design.ts --feature={module-name}
 
 ### 文档结构
 
-设计文档**必须包含以下 8 个章节**（读取模板以获取详细格式）：
+设计文档**必须包含以下 9 个章节**（读取模板以获取详细格式）：
 
 ```
 skills/2-requirement-design/templates/design-template.md
 ```
 
-1. **模块架构图** — Mermaid diagram，展示模块间依赖关系
-2. **目录/文件结构规划** — 精确到每个新增的 `.ets` 文件路径及其职责说明
-3. **数据模型定义** — interface/class 定义，含字段类型和说明
-4. **页面组件树** — 每个页面拆分为哪些自定义组件，含层级关系
-5. **状态管理方案** — 各装饰器的使用策略和数据流向
-6. **服务层接口定义** — Repository / UseCase / Client 的函数签名
-7. **路由/导航设计** — 页面间跳转关系和参数传递
-8. **PRD 功能映射表** — 每个 PRD 功能点到技术实现的逐项映射
+1. **Scope 声明与继承** — 继承 PRD 的 in_scope / out_of_scope，登记用户批准的扩展（Scope 守门起点，不可省略）
+2. **模块架构图** — Mermaid diagram，展示模块间依赖关系
+3. **目录/文件结构规划** — 精确到每个新增的 `.ets` 文件路径及其职责说明
+4. **数据模型定义** — interface/class 定义，含字段类型和说明
+5. **页面组件树** — 每个页面拆分为哪些自定义组件，含层级关系
+6. **状态管理方案** — 各装饰器的使用策略和数据流向
+7. **服务层接口定义** — Repository / UseCase / Client 的函数签名
+8. **路由/导航设计** — 页面间跳转关系和参数传递
+9. **PRD 功能映射表** — 每个 PRD 功能点到技术实现的逐项映射
 
 ### 文档格式
 - 使用 Markdown 格式
@@ -545,3 +613,35 @@ skills/2-requirement-design/templates/design-template.md
 8. **模块最小化**：只创建 PRD 功能实际需要的模块，不额外新增。一个 PRD 的功能通常会跨多个已有模块（如 Feature + AccountManager + CommUI），但不意味着要为每个功能创建新模块
 9. **跨模块拆分是核心能力**：Skill 2 的核心价值之一是将 PRD 中的功能点准确拆分到五层架构的正确模块中，确保职责单一、依赖合规
 10. **Harness 验证闭环**：设计完成后必须引导用户运行 Harness 验证（Step 13），确保零 BLOCKER 后才进入编码阶段
+
+---
+
+## Claude Code CLI 运行时约定
+
+当本 Skill 通过 `/design` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+
+- **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-design/trace.json`
+- **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `design`。
+- **必须记录的事件**：
+  - `human_interventions`：所有 **Scope 扩展提议**及用户批准/否决记录，`type: scope_expansion_approval`
+  - `retries`：`scope_violation` / `architecture_violation` / `contracts_mismatch` 等自修尝试
+  - `harness_checks`：`check-design.ts` 的 BLOCKER/MAJOR/WARN 计数
+- **痛点回填**：同目录 `gap-notes.md`，模板见 [harness/trace/gap-notes.template.md](../../harness/trace/gap-notes.template.md)。
+
+---
+
+## 运行时交付约定（Claude Code CLI / 内网弱模型）
+
+本 Skill 由 Claude Code CLI 或等价 agent 运行时，**阶段结束前必须**在以下目录产出交付凭证：
+
+```
+harness/reports/<feature>/<timestamp>/<model>-design/
+├── trace.json                # 结构见 harness/trace/trace.schema.json（phase = "design"）
+├── gap-notes.md              # 结构见 harness/trace/gap-notes.template.md
+├── check-design.report.md    # check-design.ts 的输出
+└── verifier.report.md        # verifier 子 agent 跑 verify-design.md 的语义审查报告（可选）
+```
+
+**特别提醒（本 Skill 最容易发生的痛点）**：
+- Scope 扩展提议是否被用户批准 → 必须记入 `trace.json` 的 `human_interventions`；
+- 若模型擅自扩展 scope 被拦截 → 记入 `human_pain_points`，category = `scope_creep`。

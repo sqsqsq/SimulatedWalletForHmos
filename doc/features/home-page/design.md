@@ -9,6 +9,51 @@
 
 ---
 
+## Scope 声明与继承
+
+> **本节继承自 PRD 的 Scope 声明，并记录本设计阶段用户批准的扩展。**
+> Skill 3（Coding）的 git diff 不得越界到 `in_scope_modules` 之外的模块。
+
+### Scope 概览
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 继承自 PRD | `true` | 完全继承 PRD 的 in_scope_modules，未发起扩展 |
+| 本设计允许修改的模块 | `Phone`、`WalletMain`、`AccountManager`、`CommUI`、`CommFunc` | = PRD.in_scope_modules |
+| 明确不修改的模块 | `SwipeCard`、`BankCard`、`TransportCard`、`AccessCard`、`CarKeys`、`IDCards`、`CardManager`、`ConfigManager`、`PersistManager`、`LifecycleManager` | 继承自 PRD.out_of_scope_modules |
+| 已获用户批准的扩展 | `[]` | 本设计未发起任何扩展 |
+
+### Scope 结构化字段（供 Harness 校验，必填）
+
+```yaml
+inherited_from_prd: true
+in_scope_modules:
+  - Phone
+  - WalletMain
+  - AccountManager
+  - CommUI
+  - CommFunc
+out_of_scope_modules:
+  - SwipeCard
+  - BankCard
+  - TransportCard
+  - AccessCard
+  - CarKeys
+  - IDCards
+  - CardManager
+  - ConfigManager
+  - PersistManager
+  - LifecycleManager
+rationale: |
+  本设计完全继承 PRD 的 scope 声明，未发起扩展。
+  首页/我的/卡包/添卡入口四个公共页面的 UI 与跳转全部落在 WalletMain，
+  账号能力由 AccountManager 提供，Toast/Log/通用组件由 CommUI/CommFunc 承载，
+  Phone 仅保留 HAP 主入口与 Tabs/Navigation 框架，不承载业务逻辑。
+expansions_with_user_approval: []
+```
+
+---
+
 ## 0. 功能拆分到模块
 
 ### 0.1 PRD 功能点 → 模块映射

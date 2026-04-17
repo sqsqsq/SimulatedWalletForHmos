@@ -9,6 +9,44 @@
 
 ---
 
+## Scope 声明与继承
+
+> **本节继承自 PRD 的 Scope 声明，并记录本设计阶段用户批准的扩展。**
+> Skill 3（Coding）的 git diff 不得越界到 `in_scope_modules` 之外的模块。
+
+### Scope 概览
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 继承自 PRD | `true` / `false` | 是否完全继承 PRD 的 in_scope_modules（未扩展） |
+| 本设计允许修改的模块 | `{ModuleA}`、`{ModuleB}` | = PRD.in_scope_modules ∪ expansions_with_user_approval |
+| 明确不修改的模块 | `{ModuleC}` | 继承自 PRD.out_of_scope_modules |
+| 已获用户批准的扩展 | 见下方 yaml | 无扩展则留空数组 `[]` |
+
+### Scope 结构化字段（供 Harness 校验，必填）
+
+```yaml
+inherited_from_prd: true
+in_scope_modules:
+  - {ModuleA}
+  - {ModuleB}
+out_of_scope_modules:
+  - {ModuleC}
+rationale: |
+  本设计完全继承 PRD 的 scope 声明，未发起扩展。
+  {或：经评估确认需扩展到 ModuleB，扩展已获用户批准，见下方 expansions_with_user_approval}
+expansions_with_user_approval:
+  - modules: [{ModuleB}]
+    reason: "{为何需要扩展；为何现有 in_scope 模块无法承载}"
+    approved_by: "{user_name}"
+    approved_at: "{YYYY-MM-DD}"
+```
+
+> 若本次设计未发起任何 scope 扩展，`expansions_with_user_approval` 字段应为空数组 `[]`，
+> 且 `inherited_from_prd` 应为 `true`。
+
+---
+
 ## 1. 模块架构图
 
 展示本次设计涉及的所有 Module 及其依赖关系。使用 Mermaid 绘制。

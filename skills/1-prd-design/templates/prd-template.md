@@ -8,11 +8,66 @@
 
 ---
 
+## 0. 术语映射表（Terminology Mapping Table）
+
+> **本节是本 PRD 的第一道 BLOCKER**：
+> 所有来自原始需求正文的业务名词，必须映射到 `doc/module-catalog.yaml` 中真实存在的模块名；
+> 所有行的「用户确认」列必须为 `[x]`；
+> 置信度 `high` 也必须人工逐条确认（本项目不启用 auto-approve）。
+>
+> 详细执行方法见 [skills/1-prd-design/SKILL.md#step-15-术语消歧](../../skills/1-prd-design/SKILL.md)。
+
+| 原始术语 | 权威模块 | 所属层 | 置信度（high / medium / low）| 易混项（必须亮出）| 用户确认 |
+|---------|---------|--------|-------------------------------|-------------------|---------|
+| {术语1} | {Module} | {01-Product ~ 05-SystemBase} | {置信度} | {混淆项模块及一句话说明 / 无则填 —} | [ ] |
+| {术语2} | {Module} | {…} | {…} | {…} | [ ] |
+
+**回写约定**：所有新增 / 修正的条目在用户批准后必须同步追加到 `doc/glossary.yaml`。
+
+---
+
 ## 1. 功能概述
 
 <!-- 一句话描述该功能模块的核心价值。要求：简洁、明确、体现用户价值。 -->
 
 {用一句话描述该模块的核心功能和价值主张}
+
+---
+
+## Scope 声明
+
+> **本节是 Scope 守门机制的起点。**
+> Skill 2（Design）必须继承本节的 `in_scope_modules`；
+> Skill 3（Coding）的 git diff 不得越界到本节之外的模块。
+> 若开发过程中确实需要扩展，必须发起 **scope 扩展提议**，等待用户明确确认后才能更新本节。
+
+### Scope 模块清单
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 本需求允许修改的模块 | `{ModuleA}`、`{ModuleB}` | PascalCase，与 `doc/architecture.md` 模块清单一致 |
+| 本需求明确不修改的模块 | `{ModuleC}`、`{ModuleD}` | 列出明确不允许触碰的模块（即便 AI 觉得"应该改"也不改）|
+
+### Scope 结构化字段（供 Spec 提取，必填）
+
+```yaml
+in_scope_modules:
+  - {ModuleA}
+  - {ModuleB}
+out_of_scope_modules:
+  - {ModuleC}
+  - {ModuleD}
+rationale: |
+  {为什么本需求只需要改 in_scope_modules 中的模块？}
+  {为什么 out_of_scope_modules 中的模块即便看起来相关也不改？}
+  {如果未来需要扩展 scope，触发条件是什么？}
+```
+
+### 最小改动原则
+
+1. **默认就地实现**：所有逻辑优先实现在 `in_scope_modules` 列出的最底层模块内。
+2. **禁止默默扩展**：若 Skill 2/3 在执行中发现"似乎需要在公共模块新增接口"，**必须停下来先生成 scope 扩展提议**给用户确认，不能直接写入 design.md 或代码。
+3. **公共能力优先复用**：能用 `doc/architecture.md > 各模块公共能力清单` 中已有能力解决的，不新增公共接口。
 
 ---
 

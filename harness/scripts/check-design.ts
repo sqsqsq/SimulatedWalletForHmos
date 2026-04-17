@@ -34,6 +34,11 @@ import {
   tableHasColumns,
   getColumnValues,
 } from './utils/markdown-parser';
+import {
+  parseScope,
+  describeScopeError,
+  findScopeViolations,
+} from './utils/scope-parser';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -59,7 +64,7 @@ function loadDoc(ctx: CheckContext, name: string): string | null {
 
 function checkRequiredChapters(ctx: CheckContext, design: string): CheckResult[] {
   const expected = [
-    '模块架构图', '目录/文件结构规划', '数据模型定义', '页面组件树',
+    'Scope 声明', '模块架构图', '目录/文件结构规划', '数据模型定义', '页面组件树',
     '状态管理方案', '服务层接口定义', '路由/导航设计', 'PRD 功能映射表',
   ];
 
@@ -75,6 +80,107 @@ function checkRequiredChapters(ctx: CheckContext, design: string): CheckResult[]
     severity: 'BLOCKER', status: 'FAIL',
     details: `缺少 ${missing.length} 个必需章节：${missing.join('、')}`,
     suggestion: '请补充缺失的设计文档章节。',
+  }];
+}
+
+function checkScopeDeclaration(ctx: CheckContext, design: string): CheckResult[] {
+  const { scope, error } = parseScope(design);
+  if (error) {
+    return [{
+      id: 'scope_declaration', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_declaration'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: describeScopeError(error),
+      suggestion:
+        '请在「Scope 声明与继承」章节补充 ```yaml 代码块，包含 in_scope_modules（≥1 项）、out_of_scope_modules、rationale。若有扩展，填写 expansions_with_user_approval。',
+    }];
+  }
+
+  const expansions = scope!.expansions_with_user_approval ?? [];
+  const expandedModules = expansions.flatMap(e => e.modules);
+  const details = [
+    `in_scope_modules: ${scope!.in_scope_modules.join('、')}`,
+    expandedModules.length > 0
+      ? `已批准扩展: ${expandedModules.join('、')}（共 ${expansions.length} 条记录）`
+      : '未声明 scope 扩展',
+  ].join('；');
+
+  return [{
+    id: 'scope_declaration', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'scope_declaration'),
+    severity: 'BLOCKER', status: 'PASS',
+    details,
+  }];
+}
+
+function checkScopeConsistencyWithPrd(
+  ctx: CheckContext, design: string, prd: string | null,
+): CheckResult[] {
+  if (!prd) {
+    return [{
+      id: 'scope_consistency_with_prd', category: 'traceability',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_prd'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: 'PRD.md 不存在，无法比对 scope 一致性。',
+    }];
+  }
+
+  const prdParse = parseScope(prd);
+  const designParse = parseScope(design);
+
+  if (prdParse.error) {
+    return [{
+      id: 'scope_consistency_with_prd', category: 'traceability',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_prd'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `PRD 的 Scope 声明无法解析：${describeScopeError(prdParse.error)}`,
+      suggestion: '请先修复 PRD 的 Scope 声明（运行 check-prd.ts 查看详情）。',
+      affected_files: [`doc/features/${ctx.feature}/PRD.md`],
+    }];
+  }
+  if (designParse.error) {
+    return [{
+      id: 'scope_consistency_with_prd', category: 'traceability',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_prd'),
+      severity: 'BLOCKER', status: 'FAIL',
+      details: `design 的 Scope 声明无法解析：${describeScopeError(designParse.error)}`,
+      suggestion: '请先补齐 design 的 Scope 声明（见 scope_declaration 检查项）。',
+    }];
+  }
+
+  const { unauthorizedExpansions, touchingForbidden } = findScopeViolations(
+    prdParse.scope!,
+    designParse.scope!,
+  );
+
+  if (unauthorizedExpansions.length === 0 && touchingForbidden.length === 0) {
+    return [{
+      id: 'scope_consistency_with_prd', category: 'traceability',
+      description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_prd'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `design.in_scope_modules ⊆ PRD scope（含批准扩展），共 ${designParse.scope!.in_scope_modules.length} 个模块。`,
+    }];
+  }
+
+  const messages: string[] = [];
+  if (unauthorizedExpansions.length > 0) {
+    messages.push(`未经用户批准就扩大到 PRD 之外的模块：${unauthorizedExpansions.join('、')}`);
+  }
+  if (touchingForbidden.length > 0) {
+    messages.push(`触碰了 PRD.out_of_scope_modules：${touchingForbidden.join('、')}`);
+  }
+
+  return [{
+    id: 'scope_consistency_with_prd', category: 'traceability',
+    description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_prd'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details: messages.join('；'),
+    suggestion:
+      '要么把相关模块从 design.in_scope_modules 移除并改为就地实现，要么回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
+    affected_files: [
+      `doc/features/${ctx.feature}/PRD.md`,
+      `doc/features/${ctx.feature}/design.md`,
+    ],
   }];
 }
 
@@ -516,6 +622,8 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [];
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
+    results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
+    results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_prd'));
     results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
     results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
     results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
