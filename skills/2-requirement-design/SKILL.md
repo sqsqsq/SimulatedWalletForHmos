@@ -618,7 +618,7 @@ skills/2-requirement-design/templates/design-template.md
 
 ## Claude Code CLI 运行时约定
 
-当本 Skill 通过 `/design` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+当本 Skill 通过 `/requirement-design` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
 
 - **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-design/trace.json`
 - **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `design`。

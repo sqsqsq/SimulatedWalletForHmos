@@ -331,7 +331,7 @@ cd harness && npx ts-node harness-runner.ts --phase prd --feature {module-name}
 
 ## Claude Code CLI 运行时约定
 
-当本 Skill 通过 `/prd` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+当本 Skill 通过 `/prd-design` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
 
 - **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-prd/trace.json`
   - `<feature>`：功能名，与 `doc/features/<feature>/` 对应

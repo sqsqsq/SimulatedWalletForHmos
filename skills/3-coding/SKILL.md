@@ -421,7 +421,7 @@ cd harness && npx ts-node harness-runner.ts --phase coding --feature {module-nam
 
 ## Claude Code CLI 运行时约定
 
-当本 Skill 通过 `/code` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
+当本 Skill 通过 `/coding` slash command 在 Claude Code CLI（或等价运行时）下运行时，**必须**在阶段结束时产出一份 trace 凭证：
 
 - **路径约定**：`harness/reports/<feature>/<timestamp>/<model>-code/trace.json`
 - **Schema**：[harness/trace/trace.schema.json](../../harness/trace/trace.schema.json)，`phase` 字段填 `coding`。

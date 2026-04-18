@@ -1,6 +1,6 @@
 # 用户原始需求（自然语言，包含歧义术语）
 
-> 把这段话原封不动喂给 Claude Code CLI 的 `/prd card-center-litmus` 作为 `$ARGUMENTS`。
+> 把这段话原封不动喂给 Claude Code CLI 的 `/prd-design card-center-litmus` 作为 `$ARGUMENTS`。
 > 其中刻意混入「**卡中心**」这种字面上接近 `CardManager`、但业务上归属 `WalletMain` 的术语，
 > 用于验证 Step 1.5 术语消歧是否能拦住误映射。
 

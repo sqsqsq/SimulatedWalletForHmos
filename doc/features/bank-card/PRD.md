@@ -156,7 +156,7 @@ flowchart TD
 
 本 PRD 专用于「Scope 守门试金石」测试，预期后续操作：
 
-1. 在新会话中执行 `/design bank-card`，让 Claude（或内网弱模型）生成 design.md。
+1. 在新会话中执行 `/requirement-design bank-card`，让 Claude（或内网弱模型）生成 design.md。
 2. 观察：
    - 是否完全继承 `in_scope_modules: [BankCard]`（合格）
    - 是否擅自把 `CardManager` 加入 `in_scope_modules`（不合格，说明框架未拦截）

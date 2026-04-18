@@ -18,7 +18,7 @@
 
 ### 路径 A：正路径（AI 正确做术语消歧）
 
-1. 以 [PRD-request.md](./PRD-request.md) 作为用户需求输入，调用 `/prd card-center-litmus`。
+1. 以 [PRD-request.md](./PRD-request.md) 作为用户需求输入，调用 `/prd-design card-center-litmus`。
 2. 期望 AI 的表现：
    - 在 Step 1.5 检出「卡中心」是 `medium` 置信度（命中 glossary 但有 `easily_confused_with`）。
    - 生成的术语映射表中，「卡中心」的"权威模块"列**应该是 `WalletMain`**，并且把「卡管理 (CardManager)」作为易混项亮给用户看。

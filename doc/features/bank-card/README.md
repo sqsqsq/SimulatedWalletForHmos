@@ -11,7 +11,7 @@
 
 ### 玩法 A — 验证"正向链路"（合格）
 
-1. 在新会话中执行 `/design bank-card`（或等价的 design 流程）。
+1. 在新会话中执行 `/requirement-design bank-card`（或等价的 design 流程）。
 2. AI 应该：
    - 完全继承 PRD 的 `in_scope_modules: [BankCard]`，`inherited_from_prd: true`。
    - `expansions_with_user_approval: []`。

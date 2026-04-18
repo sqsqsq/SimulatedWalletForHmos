@@ -62,21 +62,26 @@
 
 ## 三、工作流与 Skill 路由
 
-每个阶段都有对应 Skill 文档，Claude Code CLI 通过 `.claude/commands/` 的 slash command 进入。
+每个阶段都有对应 Skill 文档，Claude Code CLI 通过 `.claude/commands/` 的 slash command 进入。**slash 命名与 `skills/` 的目录名对齐（去掉前缀编号）**，便于和 Claude Code 自带命令区分。
 
 | 阶段 | Skill | Slash Command |
 |------|-------|--------------|
-| 1. PRD 撰写 | [skills/1-prd-design/SKILL.md](skills/1-prd-design/SKILL.md) | `/prd` |
-| 2. 技术设计 | [skills/2-requirement-design/SKILL.md](skills/2-requirement-design/SKILL.md) | `/design` |
-| 3. 编码落地 | [skills/3-coding/SKILL.md](skills/3-coding/SKILL.md) | `/code` |
-| 4. 代码审查 | [skills/4-code-review/SKILL.md](skills/4-code-review/SKILL.md) | `/review` |
-| 5. 业务级 UT | [skills/5-business-ut/SKILL.md](skills/5-business-ut/SKILL.md) | `/ut` |
-| 6. 真机测试 | [skills/6-device-testing/SKILL.md](skills/6-device-testing/SKILL.md) | `/devtest` |
+| 1. PRD 撰写 | [skills/1-prd-design/SKILL.md](skills/1-prd-design/SKILL.md) | `/prd-design` |
+| 2. 技术设计 | [skills/2-requirement-design/SKILL.md](skills/2-requirement-design/SKILL.md) | `/requirement-design` |
+| 3. 编码落地 | [skills/3-coding/SKILL.md](skills/3-coding/SKILL.md) | `/coding` |
+| 4. 代码审查 | [skills/4-code-review/SKILL.md](skills/4-code-review/SKILL.md) | `/code-review` |
+| 5. 业务级 UT | [skills/5-business-ut/SKILL.md](skills/5-business-ut/SKILL.md) | `/business-ut` |
+| 6. 真机测试 | [skills/6-device-testing/SKILL.md](skills/6-device-testing/SKILL.md) | `/device-testing` |
 
-**规则**：
-- 进入某阶段前，**必须完整读一遍对应 SKILL.md**，不要只看摘要就开始动手。
+**commands 文件的定位（极简路由器）**：
+- `.claude/commands/*.md` **只做路由**——声明 slash 元数据、绑定 `$ARGUMENTS`、把控制权交给对应的 `SKILL.md`，**不复述**任何规则 / BLOCKER / harness 命令 / 完成标准。
+- 阶段规则、产物路径、harness 调用、完成清单的**唯一事实源**：对应 `skills/<n>/SKILL.md`（全局约束则在本文件 `CLAUDE.md`）。
+- 若 commands 和 SKILL.md 冲突 → 一律以 SKILL.md 原文为准。
+
+**执行规则**：
+- 进入某阶段前，**必须完整读一遍对应 SKILL.md**，不要只看 commands 里的摘要就开始动手（事实上 commands 里也没摘要可看）。
 - Skill 中引用到的 template / reference / checklist 也是强制阅读（弱模型尤其不要跳读）。
-- 每个阶段产物**必须通过对应的 `harness/scripts/check-*.ts`**（结构 + 规则级）以及 `harness/prompts/verify-*.md`（语义级，由 `verifier` 子 agent 执行）。
+- 每个阶段产物**必须通过 `harness/harness-runner.ts --phase <phase> --feature <name>`**（结构 + 规则级）以及 `harness/prompts/verify-*.md`（语义级，由 `verifier` 子 agent 执行）。具体命令与路径以各 `SKILL.md` 为准。
 
 ---
 
