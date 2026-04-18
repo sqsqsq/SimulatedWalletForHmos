@@ -24,7 +24,7 @@ structure_checks:
       术语映射表、功能概述、Scope 声明、目标用户与使用场景、功能清单、
       页面/界面描述、业务流程图、异常/边界场景处理、非功能性需求、验收标准
     severity: BLOCKER
-    rule: |
+    rule:
       expected_headings:
         - "术语映射表"
         - "功能概述"
@@ -36,7 +36,7 @@ structure_checks:
         - "异常/边界场景处理"
         - "非功能性需求"
         - "验收标准"
-      match: heading_text_contains
+      match: "heading_text_contains"
 
   terminology_mapping_table:
     description: >
@@ -47,9 +47,9 @@ structure_checks:
       (4) 每行的「权威模块」必须存在于 doc/module-catalog.yaml 的模块名集合内；
       (5) 空映射表不被允许（即便只有一个术语也要显式列出）。
     severity: BLOCKER
-    rule: |
+    rule:
       section: "术语映射表"
-      expect: markdown_table
+      expect: "markdown_table"
       required_columns:
         - "原始术语"
         - "权威模块"
@@ -67,7 +67,7 @@ structure_checks:
       列出的每一个模块名，都必须在 doc/module-catalog.yaml 里真实存在，
       防止 AI 自造模块名或写错名称。
     severity: BLOCKER
-    rule: |
+    rule:
       section: "Scope 声明"
       validate_against: "doc/module-catalog.yaml"
       fields:
@@ -80,9 +80,9 @@ structure_checks:
       out_of_scope_modules、rationale 三个字段；in_scope_modules 至少一项。
       这是 Scope 守门机制的起点：design 阶段的模块范围必须是本字段的子集。
     severity: BLOCKER
-    rule: |
+    rule:
       section: "Scope 声明"
-      expect: yaml_code_block
+      expect: "yaml_code_block"
       required_keys:
         - "in_scope_modules"
         - "out_of_scope_modules"
@@ -95,9 +95,9 @@ structure_checks:
       「功能清单」章节必须包含一个 Markdown 表格，且表头至少包含
       编号、功能名称、优先级、描述 四列
     severity: BLOCKER
-    rule: |
+    rule:
       section: "功能清单"
-      expect: markdown_table
+      expect: "markdown_table"
       required_columns:
         - "编号"
         - "功能名称"
@@ -108,7 +108,7 @@ structure_checks:
     description: >
       功能清单表格中「优先级」列的值必须为 P0/P1/P2/P3 之一
     severity: BLOCKER
-    rule: |
+    rule:
       section: "功能清单"
       column: "优先级"
       allowed_values: ["P0", "P1", "P2", "P3"]
@@ -117,7 +117,7 @@ structure_checks:
     description: >
       功能清单中必须包含至少一个 P0 功能项
     severity: BLOCKER
-    rule: |
+    rule:
       section: "功能清单"
       column: "优先级"
       min_count:
@@ -128,9 +128,9 @@ structure_checks:
       「验收标准」章节中每条标准必须包含唯一编号（如 AC-1、AC-2），
       且编号需关联到功能清单中的功能编号
     severity: BLOCKER
-    rule: |
+    rule:
       section: "验收标准"
-      expect: pattern_per_item "AC-\\d+"
+      expect_pattern_per_item: 'AC-\d+'
       cross_ref: "功能清单.编号"
 
   mermaid_flowchart:
@@ -138,19 +138,19 @@ structure_checks:
       「业务流程图」章节必须包含至少一个 Mermaid 代码块
       （```mermaid ... ```），且使用 flowchart 语法
     severity: BLOCKER
-    rule: |
+    rule:
       section: "业务流程图"
-      expect: mermaid_block
-      syntax: flowchart
+      expect: "mermaid_block"
+      syntax: "flowchart"
 
   exception_table_format:
     description: >
       「异常/边界场景处理」章节必须包含 Markdown 表格，且表头至少包含
       编号、异常场景、处理方式 三列
     severity: MAJOR
-    rule: |
+    rule:
       section: "异常/边界场景处理"
-      expect: markdown_table
+      expect: "markdown_table"
       required_columns:
         - "编号"
         - "异常场景"
@@ -160,7 +160,7 @@ structure_checks:
     description: >
       异常场景至少覆盖 3 种基本类型：网络异常、数据为空、功能暂不支持
     severity: MAJOR
-    rule: |
+    rule:
       section: "异常/边界场景处理"
       min_rows: 3
 
@@ -169,19 +169,19 @@ structure_checks:
       「非功能性需求」章节中的性能指标必须包含量化数值
       （如 ≤ 1.5 秒、≥ 54 FPS），不允许仅有定性描述
     severity: MAJOR
-    rule: |
+    rule:
       section: "非功能性需求"
-      expect: numeric_metrics
+      expect: "numeric_metrics"
 
   page_description_completeness:
     description: >
       「页面/界面描述」章节中每个页面必须包含组件表格（至少含
       组件、类型、交互行为 三列）
     severity: MAJOR
-    rule: |
+    rule:
       section: "页面/界面描述"
       per_subsection:
-        expect: markdown_table
+        expect: "markdown_table"
         required_columns:
           - "组件"
           - "类型"
@@ -191,8 +191,8 @@ structure_checks:
     description: >
       PRD 文档顶部必须包含模块标识、版本、创建日期、状态等元数据
     severity: MINOR
-    rule: |
-      expect: blockquote_metadata
+    rule:
+      expect: "blockquote_metadata"
       required_fields:
         - "模块标识"
         - "版本"
@@ -271,28 +271,28 @@ traceability_checks:
       每个 P0/P1 功能（功能清单中的编号）必须在「验收标准」中
       有至少一条对应的 AC 项（通过 AC 项中的功能编号引用关联）
     severity: BLOCKER
-    rule: |
+    rule:
       source: "功能清单"
-      filter: priority in ["P0", "P1"]
+      filter: 'priority in ["P0", "P1"]'
       target: "验收标准"
       link_field: "功能编号"
-      coverage: 100%
+      coverage: "100%"
 
   acceptance_to_feature:
     description: >
       每条验收标准（AC 项）必须关联到至少一个功能编号
     severity: BLOCKER
-    rule: |
+    rule:
       source: "验收标准"
-      require: reference_to "功能清单.编号"
+      require_reference_to: "功能清单.编号"
 
   exception_to_feature:
     description: >
       异常场景表中的场景应能对应到功能清单中的某些功能点
     severity: MAJOR
-    rule: |
+    rule:
       source: "异常/边界场景处理"
-      expect: relevance_to "功能清单"
+      expect_relevance_to: "功能清单"
 
   scenario_to_page:
     description: >

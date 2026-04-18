@@ -22,9 +22,9 @@ structure_checks:
     description: >
       design.md 的「目录/文件结构规划」中列出的所有 .ets 文件必须存在
     severity: BLOCKER
-    rule: |
+    rule:
       source: "design.md > 目录/文件结构规划"
-      check: all_files_exist_on_disk
+      check: "all_files_exist_on_disk"
 
   layer_compliance:
     description: >
@@ -34,10 +34,10 @@ structure_checks:
         - data 层文件不得 import domain/presentation 层
         - domain 层文件不得 import presentation 层
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_file:
-        layer: infer_from_path  # shared|data|domain|presentation
-        imports: extract_import_paths
+        layer: "infer_from_path"    # 可选值: shared / data / domain / presentation
+        imports: "extract_import_paths"
         forbidden:
           shared: ["data/*", "domain/*", "presentation/*"]
           data: ["domain/*", "presentation/*"]
@@ -52,14 +52,14 @@ structure_checks:
         - 04-BusinessBase 只可依赖 05-SystemBase
         - 05-SystemBase 仅 CommUI → CommFunc 单向
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_import:
-        source_module: infer_from_file_path
-        target_module: infer_from_import_path
-        validate: layer_dependency_matrix
+        source_module: "infer_from_file_path"
+        target_module: "infer_from_import_path"
+        validate: "layer_dependency_matrix"
       matrix:
-        "01-Product":     ["02-Feature", "03-CommonBusiness", "04-BusinessBase", "05-SystemBase"]
-        "02-Feature":     ["03-CommonBusiness", "04-BusinessBase", "05-SystemBase"]
+        "01-Product": ["02-Feature", "03-CommonBusiness", "04-BusinessBase", "05-SystemBase"]
+        "02-Feature": ["03-CommonBusiness", "04-BusinessBase", "05-SystemBase"]
         "03-CommonBusiness": ["04-BusinessBase", "05-SystemBase"]
         "04-BusinessBase": ["05-SystemBase"]
         "05-SystemBase/CommUI": ["05-SystemBase/CommFunc"]
@@ -70,44 +70,44 @@ structure_checks:
       UI 层（presentation/）中的用户可见文本必须通过 $r('app.string.xxx')
       引用资源文件，禁止硬编码中文或英文 UI 文本
     severity: MAJOR
-    rule: |
+    rule:
       scope: "presentation/**/*.ets"
-      detect: literal_string_in_ui_component
+      detect: "literal_string_in_ui_component"
       exclude:
-        - log_statements
-        - constant_definitions_in_shared
-        - test_files
+        - "log_statements"
+        - "constant_definitions_in_shared"
+        - "test_files"
 
   resource_integrity:
     description: >
       所有 $r('app.string.xxx')、$r('app.color.xxx')、$r('app.float.xxx')
       引用的资源 key 必须在对应模块的 resources/ 下的 JSON 文件中定义
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_resource_ref:
-        pattern: "\\$r\\('app\\.(string|color|float)\\.([^']+)'\\)"
-        validate: key_exists_in_resource_json
+        pattern: '\$r\(''app\.(string|color|float)\.([^'']+)''\)'
+        validate: "key_exists_in_resource_json"
 
   har_index_export:
     description: >
       每个 HAR 模块必须有 Index.ets 作为导出入口，
       且对外暴露的 class/interface/function 必须在 Index.ets 中 export
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_har_module:
-        expect: file_exists "Index.ets"
-        validate: public_api_exported
+        expect_file_exists: "Index.ets"
+        validate: "public_api_exported"
 
   module_config_registered:
     description: >
       每个新增模块必须在根目录 build-profile.json5 的 modules[] 中注册，
       srcPath 使用层目录前缀格式（如 "./05-SystemBase/CommFunc"）
     severity: BLOCKER
-    rule: |
+    rule:
       source: "design.md > 模块变更摘要"
-      filter: change_type in ["新增"]
+      filter: 'change_type in ["新增"]'
       validate:
-        - build_profile_has_entry
+        - "build_profile_has_entry"
         - src_path_format: "./{layer_dir}/{ModuleName}"
 
   oh_package_dependencies:
@@ -115,22 +115,24 @@ structure_checks:
       模块的 oh-package.json5 中声明的依赖必须与五层架构依赖规则一致，
       依赖路径使用层目录相对路径
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_module:
         file: "oh-package.json5"
         validate:
-          - dependencies_match_layer_rules
-          - path_format: "file:../{layer_dir}/{ModuleName}" or "file:./{layer_dir}/{ModuleName}"
+          - "dependencies_match_layer_rules"
+          - path_format_any_of:
+              - "file:../{layer_dir}/{ModuleName}"
+              - "file:./{layer_dir}/{ModuleName}"
 
   page_registration:
     description: >
       所有 NavDestination 页面必须在对应模块的 main_pages.json 中注册；
       使用系统路由表时必须在 route_map.json 中配置
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_page_file:
         scope: "presentation/pages/*.ets"
-        validate: registered_in_main_pages_json
+        validate: "registered_in_main_pages_json"
 
   naming_conventions:
     description: >
@@ -140,30 +142,35 @@ structure_checks:
         - 文件名: PascalCase.ets（如 HomeTabPage.ets、CardRepository.ets）
         - 资源 key: snake_case（如 app.string.tab_home）
     severity: MAJOR
-    rule: |
+    rule:
       checks:
-        - module_dir_name: PascalCase
-        - struct_name: PascalCase, matches_filename
-        - ets_filename: PascalCase
-        - resource_key: snake_case
+        - module_dir_name: "PascalCase"
+        - struct_name: "PascalCase, matches_filename"
+        - ets_filename: "PascalCase"
+        - resource_key: "snake_case"
 
   no_any_type:
     description: >
       代码中不允许使用 any 类型（TypeScript/ArkTS 严格类型约束）
     severity: MAJOR
-    rule: |
+    rule:
       for_each_file:
-        detect: ":\\s*any\\b" or "as\\s+any\\b" or "<any>"
+        detect_any_of:
+          - ':\s*any\b'
+          - 'as\s+any\b'
+          - '<any>'
 
   async_await_pattern:
     description: >
       异步操作必须使用 async/await，不允许裸 Promise 回调链（.then().catch()）
     severity: MINOR
-    rule: |
-      detect: ".then(" or ".catch("
+    rule:
+      detect_any_of:
+        - ".then("
+        - ".catch("
       exclude:
-        - Promise.all
-        - Promise.race
+        - "Promise.all"
+        - "Promise.race"
 
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
@@ -232,29 +239,29 @@ traceability_checks:
       design.md 的「PRD 功能映射表」中每行的「关键文件」路径
       在代码工程中必须存在对应的文件
     severity: BLOCKER
-    rule: |
+    rule:
       source: "design.md > PRD 功能映射表.关键文件"
-      check: file_exists_on_disk
+      check: "file_exists_on_disk"
 
   design_file_plan_to_code:
     description: >
       design.md 的「目录/文件结构规划」中列出的每个文件路径
       都必须在代码工程中存在
     severity: BLOCKER
-    rule: |
+    rule:
       source: "design.md > 目录/文件结构规划"
-      extract: all_file_paths
-      check: all_exist_on_disk
+      extract: "all_file_paths"
+      check: "all_exist_on_disk"
 
   code_to_design:
     description: >
       代码工程中新增的 .ets 文件（非资源/配置）应能在 design.md 中
       找到对应规划，不允许存在 design.md 中未规划的新文件
     severity: MAJOR
-    rule: |
+    rule:
       source: "new_ets_files_in_module"
       target: "design.md > 目录/文件结构规划"
-      coverage: 100%
+      coverage: "100%"
 
   prd_acceptance_to_code:
     description: >
@@ -272,9 +279,8 @@ traceability_checks:
       非模块文件（doc/、specs/、skills/、harness/、.claude/、.cursor/、根配置等）
       视为框架性变更，不纳入本检查。
     severity: BLOCKER
-    rule: |
+    rule:
       source: "design.md > Scope 声明与继承 > yaml.in_scope_modules"
       module_paths: "contracts.yaml > modules[].package_path"
       diff_base_ref: "$HARNESS_DIFF_BASE_REF, default HEAD~1; 特殊值 'working' 表示当前工作区 vs HEAD"
-      validate: |
-        all(changed_files, f => not_under_layer_dir(f) or f.starts_with_any(allowed_package_paths))
+      validate: "all(changed_files, f => not_under_layer_dir(f) or f.starts_with_any(allowed_package_paths))"

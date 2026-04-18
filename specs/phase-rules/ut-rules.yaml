@@ -28,7 +28,7 @@ structure_checks:
       DAG 文件必须符合 DAG Schema 规范（YAML 格式），包含以下必填字段：
       flow_id、flow_name、entry_point、nodes[]
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_file:
         required_fields:
           - "flow_id"
@@ -46,7 +46,7 @@ structure_checks:
       code_execution, async_call, user_intervention,
       background_task, ui_navigation, assertion, conditional_branch
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_node:
         field: "type"
         allowed_values:
@@ -62,63 +62,64 @@ structure_checks:
     description: >
       DAG 必须是有向无环图，不允许存在循环引用（next 链不可回指）
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_file:
-        validate: topological_sort_possible
+        validate: "topological_sort_possible"
 
   dag_source_file_exists:
     description: >
       DAG 节点的 source.file 引用的文件路径必须在工程中存在
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_node:
         if_has: "source.file"
-        check: file_exists_on_disk
+        check: "file_exists_on_disk"
 
   ut_file_naming:
     description: >
       UT 文件命名必须以 .test.ets 结尾，
       文件名应反映对应的业务流程或模块名
     severity: MAJOR
-    rule: |
+    rule:
       for_each_ut_file:
-        expect: filename_ends_with ".test.ets"
+        expect: "filename_ends_with"
+        suffix: ".test.ets"
 
   ut_framework_import:
     description: >
       UT 文件必须导入 @ohos/hypium 测试框架，
       使用 describe/it/expect 标准测试结构
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_ut_file:
-        expect: import_from "@ohos/hypium"
-        expect: contains "describe(" and "it("
+        must_import_from: "@ohos/hypium"
+        must_contain: ["describe(", "it("]
 
   ut_assertion_exists:
     description: >
       每个 it() 测试用例中必须包含至少一条 expect 断言
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_test_case:
-        expect: min_assertions 1
+        min_assertions: 1
 
   mock_stub_for_async:
     description: >
       DAG 中 type=async_call 的节点，对应的 UT 代码中必须有
       mock/stub 处理（不允许在 UT 中发起真实异步调用）
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_node:
-        filter: type == "async_call"
-        cross_ref_ut: expect_mock_or_stub
+        filter: 'type == "async_call"'
+        cross_ref_ut: "expect_mock_or_stub"
 
   test_registration:
     description: >
       所有 UT 文件必须在 ohosTest 的测试清单中注册，确保可被执行
     severity: MAJOR
-    rule: |
+    rule:
       for_each_ut_file:
-        check: registered_in_test_runner
+        check: "registered_in_test_runner"
 
 # --------------------------------------------------------------------------
 # 语义约束 — AI Harness 做语义级检查
@@ -195,34 +196,37 @@ traceability_checks:
       每条 DAG 流程的 assertion 节点应关联到 PRD 的验收标准（AC 编号），
       确保 UT 验证的是业务需求而非实现细节
     severity: MAJOR
-    rule: |
+    rule:
       for_each_dag_file:
         assertion_nodes:
-          expect: reference_to "specs/features/{module}/acceptance.yaml"
-          or: reference_to "PRD.md > 验收标准.AC编号"
+          expect_reference_to_any_of:
+            - "specs/features/{module}/acceptance.yaml"
+            - "PRD.md > 验收标准.AC编号"
 
   acceptance_coverage:
     description: >
       PRD 中 P0/P1 的验收标准必须被至少一条 DAG 的 assertion 节点覆盖
     severity: BLOCKER
-    rule: |
+    rule:
       source: "PRD.md > 验收标准"
-      filter: priority in ["P0", "P1"]
+      filter: 'priority in ["P0", "P1"]'
       target: "DAG assertion nodes"
-      coverage: 100%
+      coverage: "100%"
 
   dag_to_source:
     description: >
       DAG 中每个非 assertion 节点的 source.file + source.function
       必须能在实际代码中找到对应的文件和函数
     severity: BLOCKER
-    rule: |
+    rule:
       for_each_dag_node:
-        filter: type != "assertion"
+        filter: 'type != "assertion"'
         if_has: "source"
-        check:
-          - file_exists: "source.file"
-          - function_exists: "source.function" in "source.file"
+        checks:
+          - field: "source.file"
+            expect: "file_exists"
+          - field: "source.function"
+            expect: "function_exists_in_file"
 
   boundary_coverage:
     description: >

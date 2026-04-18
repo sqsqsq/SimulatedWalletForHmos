@@ -18,10 +18,16 @@ export type Verdict = 'PASS' | 'FAIL';
 // Spec 相关类型
 // --------------------------------------------------------------------------
 
+/**
+ * 规则体类型：优先使用结构化嵌套映射（弱模型友好），
+ * 兼容旧版 `rule: |` 块级标量字符串形态，避免迁移过程中破坏兼容。
+ */
+export type RuleBody = Record<string, unknown> | string;
+
 export interface StructureCheck {
   description: string;
   severity: Severity;
-  rule?: string;
+  rule?: RuleBody;
   method?: string;
   check?: string;
   ai_prompt_hint?: string;
@@ -36,7 +42,7 @@ export interface SemanticCheck {
 export interface TraceabilityCheck {
   description: string;
   severity: Severity;
-  rule?: string;
+  rule?: RuleBody;
   ai_prompt_hint?: string;
 }
 
