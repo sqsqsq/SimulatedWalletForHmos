@@ -28,7 +28,14 @@ import {
   generateMergedReport,
   printReportToConsole,
 } from './scripts/utils/report-generator';
-import { Phase, CheckResult, CheckContext, PhaseChecker } from './scripts/utils/types';
+import {
+  Phase,
+  CheckResult,
+  CheckContext,
+  PhaseChecker,
+  isGlobalPhase,
+  GLOBAL_FEATURE_SENTINEL,
+} from './scripts/utils/types';
 import * as YAML from 'yaml';
 
 // --------------------------------------------------------------------------
@@ -47,7 +54,7 @@ const args = minimist(process.argv.slice(2), {
   },
 });
 
-const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing'];
+const VALID_PHASES: Phase[] = ['prd', 'design', 'coding', 'review', 'ut', 'testing', 'catalog', 'glossary'];
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -61,8 +68,8 @@ Harness — Spec/Harness 验证工具
   npx ts-node harness/harness-runner.ts [options]
 
 选项:
-  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing)
-  -f, --feature <name>      指定功能模块名 (如 home-page)
+  -p, --phase <phase>       指定验证阶段 (prd|design|coding|review|ut|testing|catalog|glossary)
+  -f, --feature <name>      指定功能模块名 (如 home-page)；catalog/glossary 阶段不需要
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             显示详细信息
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
@@ -70,6 +77,8 @@ Harness — Spec/Harness 验证工具
 
 示例:
   npx ts-node harness/harness-runner.ts --phase coding --feature home-page
+  npx ts-node harness/harness-runner.ts --phase catalog
+  npx ts-node harness/harness-runner.ts --phase glossary
   npx ts-node harness/harness-runner.ts --list
 `);
 }
@@ -96,7 +105,7 @@ async function main(): Promise<void> {
 
   // 参数校验
   const phase = args.phase as Phase | undefined;
-  const feature = args.feature as string | undefined;
+  let feature = args.feature as string | undefined;
 
   if (!phase) {
     console.error('错误: 必须指定 --phase 参数');
@@ -109,7 +118,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (!feature) {
+  // catalog/glossary 是"全局阶段"，不归属任何 feature。
+  // 若用户显式传了 --feature 也尊重其值（便于在不同 staging 轮次下分别归档报告），
+  // 否则使用哨兵值 GLOBAL_FEATURE_SENTINEL（= "_global"）。
+  if (isGlobalPhase(phase)) {
+    if (!feature) {
+      feature = GLOBAL_FEATURE_SENTINEL;
+    }
+  } else if (!feature) {
     console.error('错误: 必须指定 --feature 参数');
     printHelp();
     process.exit(1);
@@ -128,16 +144,24 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const featureSpec = specLoader.loadFeatureSpec(feature);
-  if (featureSpec.contracts) {
-    console.log(`   ✓ 功能级规约: specs/features/${feature}/contracts.yaml`);
+  // catalog/glossary 是全局阶段，不加载功能级规约
+  const featureSpec = isGlobalPhase(phase)
+    ? { feature }
+    : specLoader.loadFeatureSpec(feature);
+
+  if (isGlobalPhase(phase)) {
+    console.log(`   ⊘ 全局阶段（${phase}）：跳过功能级规约加载。`);
   } else {
-    console.log(`   ⊘ 功能级规约: contracts.yaml 不存在 (跳过契约检查)`);
-  }
-  if (featureSpec.acceptance) {
-    console.log(`   ✓ 功能级规约: specs/features/${feature}/acceptance.yaml`);
-  } else {
-    console.log(`   ⊘ 功能级规约: acceptance.yaml 不存在 (跳过验收检查)`);
+    if (featureSpec.contracts) {
+      console.log(`   ✓ 功能级规约: specs/features/${feature}/contracts.yaml`);
+    } else {
+      console.log(`   ⊘ 功能级规约: contracts.yaml 不存在 (跳过契约检查)`);
+    }
+    if (featureSpec.acceptance) {
+      console.log(`   ✓ 功能级规约: specs/features/${feature}/acceptance.yaml`);
+    } else {
+      console.log(`   ⊘ 功能级规约: acceptance.yaml 不存在 (跳过验收检查)`);
+    }
   }
 
   // Step 2: 运行脚本 Harness
@@ -260,6 +284,26 @@ function collectContextFiles(
   featureSpec: import('./scripts/utils/types').FeatureSpec,
 ): Array<{ label: string; content: string }> {
   const files: Array<{ label: string; content: string }> = [];
+
+  // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
+  // 不读任何 feature 维度的 PRD.md / design.md / 源码。
+  if (phase === 'catalog' || phase === 'glossary') {
+    const catalogPath = path.join(projectRoot, 'doc', 'module-catalog.yaml');
+    if (fs.existsSync(catalogPath)) {
+      files.push({
+        label: 'doc/module-catalog.yaml',
+        content: fs.readFileSync(catalogPath, 'utf-8'),
+      });
+    }
+    const glossaryPath = path.join(projectRoot, 'doc', 'glossary.yaml');
+    if (fs.existsSync(glossaryPath)) {
+      files.push({
+        label: 'doc/glossary.yaml',
+        content: fs.readFileSync(glossaryPath, 'utf-8'),
+      });
+    }
+    return files;
+  }
 
   const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
   if (prd) {

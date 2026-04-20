@@ -11,8 +11,8 @@
 | 维度 | SSOT 文件 | 说明 |
 |------|----------|------|
 | 架构与模块划分 | [doc/architecture.md](doc/architecture.md) | 五层模块架构 + 模块内四层结构 + 依赖矩阵。**任何与之冲突的设计一律以本文为准**。 |
-| 模块画像（Catalog） | [doc/module-catalog.yaml](doc/module-catalog.yaml) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**第二波 Scope 防错源头**。 |
-| 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。 |
+| 模块画像（Catalog） | [doc/module-catalog.yaml](doc/module-catalog.yaml) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**第二波 Scope 防错源头**。建模与修改走 [Skill 0 · Phase A](skills/0-catalog-bootstrap/SKILL.md)。 |
+| 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。建表走 [Skill 0 · Phase B](skills/0-catalog-bootstrap/SKILL.md)。 |
 | 通用编码规范 | [skills/3-coding/templates/coding-standards.md](skills/3-coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
 | ArkTS 易错点 | [skills/3-coding/reference/arkts-pitfalls.md](skills/3-coding/reference/arkts-pitfalls.md) | **弱模型必读**：15 条常见错例 vs 正例 |
 | 阶段规则（机器可读） | [specs/phase-rules/](specs/phase-rules/) | prd / design / coding / review / ut / testing 六阶段 YAML 规则 |
@@ -66,12 +66,16 @@
 
 | 阶段 | Skill | Slash Command |
 |------|-------|--------------|
+| 0. 模块画像自举（Phase A） | [skills/0-catalog-bootstrap/SKILL.md](skills/0-catalog-bootstrap/SKILL.md) | `/catalog-bootstrap <ModuleName>` |
+| 0. 术语表自举（Phase B） | [skills/0-catalog-bootstrap/SKILL.md](skills/0-catalog-bootstrap/SKILL.md) | `/glossary-bootstrap` |
 | 1. PRD 撰写 | [skills/1-prd-design/SKILL.md](skills/1-prd-design/SKILL.md) | `/prd-design` |
 | 2. 技术设计 | [skills/2-requirement-design/SKILL.md](skills/2-requirement-design/SKILL.md) | `/requirement-design` |
 | 3. 编码落地 | [skills/3-coding/SKILL.md](skills/3-coding/SKILL.md) | `/coding` |
 | 4. 代码审查 | [skills/4-code-review/SKILL.md](skills/4-code-review/SKILL.md) | `/code-review` |
 | 5. 业务级 UT | [skills/5-business-ut/SKILL.md](skills/5-business-ut/SKILL.md) | `/business-ut` |
 | 6. 真机测试 | [skills/6-device-testing/SKILL.md](skills/6-device-testing/SKILL.md) | `/device-testing` |
+
+> **Skill 0 是所有其他 Skill 的前置**：只有 `module-catalog.yaml` + `glossary.yaml` 先建好，后续 PRD 阶段的术语消歧与 Scope 守门才有可校验的基准。真实工程启动时，先按 Skill 0 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 Skill 0。
 
 **commands 文件的定位（极简路由器）**：
 - `.claude/commands/*.md` **只做路由**——声明 slash 元数据、绑定 `$ARGUMENTS`、把控制权交给对应的 `SKILL.md`，**不复述**任何规则 / BLOCKER / harness 命令 / 完成标准。
@@ -110,3 +114,8 @@ harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 - 历史需求示例：`doc/features/home-page/`（PRD + design + contracts + acceptance + review/test 报告齐全，可作为样板参考）
 - 全链路验证说明：[doc/Harness全链路验证说明.md](doc/Harness全链路验证说明.md)
+- Skill 0 全局阶段 harness 命令（**无 `--feature`**）：
+  ```bash
+  cd harness && npx ts-node harness-runner.ts --phase catalog
+  cd harness && npx ts-node harness-runner.ts --phase glossary
+  ```

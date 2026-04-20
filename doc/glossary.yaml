@@ -1,185 +1,78 @@
-# ============================================================================
-# Glossary — SimulatedWalletForHmos 业务术语表
-# ============================================================================
-# 本文件是"业务自然语言 ↔ 技术模块"的权威映射表。
-# 消费者:
-#   - skills/1-prd-design/SKILL.md Step 0.5 术语消歧
-#   - harness/scripts/check-prd.ts   (terminology_mapping_table BLOCKER)
-#
-# 维护约定:
-#   1. 新术语出现 → 先走 Step 0.5 人工确认 → 批准后回写到本文件
-#   2. 一个术语只允许有一个 canonical_module（否则必须用别名拆分为多条）
-#   3. easily_confused_with 是必须字段：即便没有已知混淆项，也要显式 []
-#   4. 本文件不收录纯技术词（log / util / NavDestination 等）；
-#      仅收录"业务团队 / 产品经理 / 用户"会用的自然语言词汇
-# ============================================================================
+# SSOT: 业务术语 ↔ 技术模块映射表 (Glossary)
+# 由 Skill 0 · Phase B (`/glossary-bootstrap`) 逐条追加
+# AI 绝不直接写入本文件，除非拿到用户在对话里的 `y` 确认
+# 骨架由 Skill 0 Phase B Step 0 创建；术语条目陆续通过 glossary-staging → 合并 进来
 
 schema_version: "1.0"
-
 terms:
-
-  # --------------------------------------------------------------------------
-  # 卡相关（最容易踩 scope creep 的高发区）
-  # --------------------------------------------------------------------------
-  - term: 卡中心
-    canonical_module: WalletMain
-    owner_layer: 02-Feature
+  - term: "首页"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
     aliases:
-      - 卡聚合页
-      - 卡包首页
-    sample_usage: "首页下滑进入卡中心，可以看到用户已添加的所有卡片。"
+      - "钱包首页"
+    sample_usage: "PRD: 首页顶部展示服务入口宫格、营销位、卡管引导"
+    confidence_hint: "catalog WalletMain.typical_business_terms[0] 精确命中；responsibilities 第 1 条直接承载 HomeTabPage"
+    easily_confused_with: []
+
+  - term: "我的"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases:
+      - "我的页"
+      - "个人中心"
+    sample_usage: "PRD: 我的页展示账号区、金融服务、设置入口"
+    confidence_hint: "catalog WalletMain.typical_business_terms 精确命中 (我的 / 我的页 / 个人中心 三个别名都在)；responsibilities 第 2 条直接承载 MineTabPage"
+    easily_confused_with: []
+
+  - term: "卡包"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases:
+      - "卡包页"
+    sample_usage: "PRD: 卡包页展示用户所有卡片的总览入口"
+    confidence_hint: "catalog WalletMain.typical_business_terms 精确命中；responsibilities 第 3 条直接承载 CardPackPage。**特别提醒**：卡包只负责'卡片总览入口'聚合 UI，具体卡片明细由各 02-Feature 底层卡种模块各自实现，不要把卡包误解为'卡管理'"
+    easily_confused_with: []
+
+  - term: "添卡入口"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases:
+      - "添卡"
+      - "添加卡片"
+    sample_usage: "PRD: 从首页 / 卡包页跳转到添卡入口，选择要添加的卡种"
+    confidence_hint: "catalog WalletMain.typical_business_terms 精确命中 (添卡入口 / 添卡 / 添加卡片 三个别名都在)；responsibilities 第 4 条只做分流、不实现具体添加逻辑"
+    easily_confused_with: []
+
+  - term: "设置"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases:
+      - "设置入口"
+    sample_usage: "PRD: 在'我的'页底部放置设置入口，点击跳转设置页"
+    confidence_hint: "catalog WalletMain.typical_business_terms 精确命中；responsibilities 第 2 条明确'我的页'含设置入口"
+    easily_confused_with: []
+
+  - term: "登录"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases:
+      - "登出"
+      - "登录态"
+      - "登录状态"
+    sample_usage: "PRD: 未登录时'我的'页顶部显示登录按钮；登录后展示 UserProfile"
+    confidence_hint: "catalog AccountManager.typical_business_terms 精确命中；responsibilities 第 1/2 条直接承载登录/登出与登录态发布"
+    easily_confused_with: []
+
+  - term: "账号"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases:
+      - "华为账号"
+      - "账户"
+    sample_usage: "PRD: 钱包强绑定华为账号，账号切换后清空本地缓存"
     confidence_hint: |
-      包含「中心 / 页 / 入口」字样的、描述"用户能看到的页面"的术语，
-      一律归 02-Feature 的 UI 承载模块，不归 03-CommonBusiness 的 Manager。
-    easily_confused_with:
-      - term: 卡管理
-        module: CardManager
-        disambiguation: |
-          "卡中心"指用户可见的 UI 聚合入口页，不含后端逻辑。
-          "卡管理"指跨 Feature 的卡 CRUD / 订阅服务，不含 UI。
-          判定：如果 PRD 描述的是"用户打开、滚动、点击"的行为，就是 WalletMain 里的卡中心页。
-
-  - term: 卡包
-    canonical_module: WalletMain
-    owner_layer: 02-Feature
-    aliases:
-      - 卡包页
-    sample_usage: "点击首页的添加管理卡片按钮，跳转到卡包页。"
-    confidence_hint: "「卡包」和「卡中心」是同一个页面的两种叫法，都归 WalletMain。"
-    easily_confused_with:
-      - term: 卡管理
-        module: CardManager
-        disambiguation: "卡包是 UI 页面（WalletMain），卡管理是后端服务（CardManager）。"
-
-  - term: 卡管理
-    canonical_module: CardManager
-    owner_layer: 03-CommonBusiness
-    aliases:
-      - 卡 CRUD
-      - 卡数据管理
-    sample_usage: "各卡种模块通过调用卡管理暴露的 CardRepository 完成增删改查。"
-    confidence_hint: "「卡管理」是后端公共能力，没有 UI。"
-    easily_confused_with:
-      - term: 卡中心
-        module: WalletMain
-        disambiguation: "卡管理=后端能力；卡中心=用户可见 UI。"
-
-  - term: 添卡入口
-    canonical_module: WalletMain
-    owner_layer: 02-Feature
-    aliases:
-      - 添加卡片页
-      - 添卡页
-    sample_usage: "从卡包页点击 + 按钮进入添卡入口，选择卡种类型。"
-    easily_confused_with: []
-
-  # --------------------------------------------------------------------------
-  # 刷卡 / 支付
-  # --------------------------------------------------------------------------
-  - term: 刷卡
-    canonical_module: SwipeCard
-    owner_layer: 02-Feature
-    aliases:
-      - 刷卡页
-      - 二维码支付
-    sample_usage: "双击电源键进入刷卡页，自动展示默认卡片。"
-    easily_confused_with: []
-
-  # --------------------------------------------------------------------------
-  # 账号 / 登录
-  # --------------------------------------------------------------------------
-  - term: 账号
-    canonical_module: AccountManager
-    owner_layer: 04-BusinessBase
-    aliases:
-      - 华为账号
-      - 登录态
-    sample_usage: "进入我的页面，顶部显示账号信息卡片。"
-    confidence_hint: "账号的登录/登出/订阅全部归 AccountManager；UI 展示归 WalletMain。"
-    easily_confused_with:
-      - term: 我的
-        module: WalletMain
-        disambiguation: "我的是 Tab 页（WalletMain），账号是登录能力（AccountManager）。"
-
-  - term: 登录
-    canonical_module: AccountManager
-    owner_layer: 04-BusinessBase
-    aliases:
-      - 登入
-      - 拉起登录
-    easily_confused_with: []
-
-  - term: 我的
-    canonical_module: WalletMain
-    owner_layer: 02-Feature
-    aliases:
-      - 我的页
-      - 我的 Tab
-    sample_usage: "底部 Tab 切换到「我的」，显示账号 + 金融信息 + 设置入口。"
-    easily_confused_with:
-      - term: 账号
-        module: AccountManager
-        disambiguation: "我的 Tab 是 UI 页面；账号是 AccountManager 提供的能力。"
-
-  # --------------------------------------------------------------------------
-  # 具体卡种
-  # --------------------------------------------------------------------------
-  - term: 银行卡
-    canonical_module: BankCard
-    owner_layer: 02-Feature
-    aliases: []
-    easily_confused_with:
-      - term: 卡管理
-        module: CardManager
-        disambiguation: "银行卡的独立业务归 BankCard；跨卡种的统一能力才归 CardManager。"
-
-  - term: 交通卡
-    canonical_module: TransportCard
-    owner_layer: 02-Feature
-    aliases:
-      - 公交卡
-      - 地铁卡
-    easily_confused_with: []
-
-  - term: 门禁卡
-    canonical_module: AccessCard
-    owner_layer: 02-Feature
-    aliases:
-      - 门卡
-    easily_confused_with:
-      - term: 车钥匙
-        module: CarKeys
-        disambiguation: "门禁卡是卡；车钥匙是钥匙。两者物理交互不同。"
-
-  - term: 车钥匙
-    canonical_module: CarKeys
-    owner_layer: 02-Feature
-    aliases:
-      - 数字钥匙
-    easily_confused_with: []
-
-  - term: 证件
-    canonical_module: IDCards
-    owner_layer: 02-Feature
-    aliases:
-      - 身份证
-      - 驾驶证
-      - 行驶证
-    easily_confused_with: []
-
-  # --------------------------------------------------------------------------
-  # 通用能力
-  # --------------------------------------------------------------------------
-  - term: 首页
-    canonical_module: WalletMain
-    owner_layer: 02-Feature
-    aliases:
-      - 首页 Tab
-    easily_confused_with: []
-
-  - term: 配置
-    canonical_module: ConfigManager
-    owner_layer: 03-CommonBusiness
-    aliases:
-      - 钱包配置
+      catalog AccountManager.typical_business_terms 精确命中；one_liner 即定义为'华为账号管理'。
+      **alias '账户' 的消歧**（来自 catalog NOT_responsible_for[3]）：
+      - 指华为登录身份 → 本 term（AccountManager）
+      - 指钱包业务账户（余额/流水/账户中心等）→ 不归本模块，属未来 WalletAccount 类模块
     easily_confused_with: []

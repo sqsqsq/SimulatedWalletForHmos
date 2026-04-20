@@ -3,7 +3,23 @@
 // ============================================================================
 
 /** 支持的开发阶段 */
-export type Phase = 'prd' | 'design' | 'coding' | 'review' | 'ut' | 'testing';
+export type Phase =
+  | 'prd'
+  | 'design'
+  | 'coding'
+  | 'review'
+  | 'ut'
+  | 'testing'
+  | 'catalog'    // Skill 0 · Phase A 产物：doc/module-catalog.yaml
+  | 'glossary';  // Skill 0 · Phase B 产物：doc/glossary.yaml
+
+/** catalog / glossary 两个"全局"阶段不归属任何 feature，使用本哨兵值 */
+export const GLOBAL_FEATURE_SENTINEL = '_global';
+
+/** 判断给定 phase 是否是"全局" phase（不需要 --feature 参数） */
+export function isGlobalPhase(phase: Phase): boolean {
+  return phase === 'catalog' || phase === 'glossary';
+}
 
 /** 检查严重等级 */
 export type Severity = 'BLOCKER' | 'MAJOR' | 'MINOR';

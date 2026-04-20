@@ -25,6 +25,8 @@ const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   review: 'review-rules.yaml',
   ut: 'ut-rules.yaml',
   testing: 'testing-rules.yaml',
+  catalog: 'catalog-rules.yaml',
+  glossary: 'glossary-rules.yaml',
 };
 
 export class SpecLoader {

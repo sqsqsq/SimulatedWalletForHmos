@@ -1,0 +1,171 @@
+# ============================================================================
+# Catalog 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 doc/module-catalog.yaml 必须满足的结构与交叉引用规则。
+# 与其他 6 阶段不同，本阶段作用的对象是全局文件，没有 --feature 维度。
+#
+# 消费者:
+#   - harness/scripts/check-catalog.ts  (脚本 Harness, 确定性检查)
+# ============================================================================
+
+phase: catalog
+version: "1.0"
+applies_to: "doc/module-catalog.yaml"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  file_exists:
+    description: >
+      doc/module-catalog.yaml 必须存在且为合法 YAML。
+      若不存在，所有其他 catalog 检查均被跳过并报 BLOCKER。
+    severity: BLOCKER
+    rule:
+      path: "doc/module-catalog.yaml"
+      must_be_parseable: true
+
+  schema_version_present:
+    description: >
+      根对象必须包含 schema_version 字段（字符串），用于未来兼容性演进。
+    severity: BLOCKER
+    rule:
+      required_root_keys:
+        - "schema_version"
+        - "modules"
+      schema_version_type: "string"
+
+  modules_is_list:
+    description: >
+      modules 字段必须是非空数组。
+    severity: BLOCKER
+    rule:
+      field: "modules"
+      type: "array"
+      min_length: 1
+
+  module_required_fields:
+    description: >
+      每个 module 必须包含全部必填字段：
+      name / layer / format / one_liner / responsibilities /
+      NOT_responsible_for / typical_business_terms / easily_confused_with /
+      key_exports / entry_file
+    severity: BLOCKER
+    rule:
+      required_fields:
+        - "name"
+        - "layer"
+        - "format"
+        - "one_liner"
+        - "responsibilities"
+        - "NOT_responsible_for"
+        - "typical_business_terms"
+        - "easily_confused_with"
+        - "key_exports"
+        - "entry_file"
+
+  layer_value_valid:
+    description: >
+      layer 字段必须是 5 个合法值之一：
+      01-Product / 02-Feature / 03-CommonBusiness / 04-BusinessBase / 05-SystemBase
+    severity: BLOCKER
+    rule:
+      field: "layer"
+      allowed_values:
+        - "01-Product"
+        - "02-Feature"
+        - "03-CommonBusiness"
+        - "04-BusinessBase"
+        - "05-SystemBase"
+
+  format_value_valid:
+    description: >
+      format 字段必须是 HAP 或 HAR 之一。
+    severity: BLOCKER
+    rule:
+      field: "format"
+      allowed_values:
+        - "HAP"
+        - "HAR"
+
+  name_unique:
+    description: >
+      所有 module.name 必须全局唯一（去重键）。
+    severity: BLOCKER
+    rule:
+      field: "name"
+      unique: true
+
+  not_responsible_for_min_count:
+    description: >
+      NOT_responsible_for 是 Scope 守门的核心反例字段，**每个模块至少 1 条**。
+      若真无反例，允许用单条特殊值 `# 暂无已知误塞反例` 占位（表示 AI 已审慎考虑过）。
+    severity: MAJOR
+    rule:
+      field: "NOT_responsible_for"
+      min_length: 1
+
+  one_liner_not_empty:
+    description: >
+      one_liner 不能为空字符串，也不能以"xxx 模块"这类空话结尾（反模式检查）。
+    severity: MAJOR
+    rule:
+      field: "one_liner"
+      not_empty: true
+      forbidden_suffix:
+        - "模块"
+        - "功能模块"
+
+  typical_vs_not_responsible_conflict:
+    description: >
+      自相矛盾检查：若某模块的 typical_business_terms[i] 出现在同模块
+      NOT_responsible_for[j] 的文本中（子串命中），视为 catalog 声明冲突。
+      典型原因：作者把"XX 时归本模块、XX 时不归本模块"两种语义未经分界
+      就同时塞进两个数组，下游 glossary 阶段会在该术语上持续产生高置信度
+      误分模块。应在 NOT_responsible_for 里写清消歧规则，或从
+      typical_business_terms 剔除该词。
+    severity: MAJOR
+    rule:
+      scan:
+        source: "typical_business_terms[]"
+        against: "NOT_responsible_for[]"
+        condition: "source_term is substring of against_text (whitespace/punct normalized)"
+
+# --------------------------------------------------------------------------
+# 语义级约束（由 AI Harness 处理，本阶段暂不启用）
+# --------------------------------------------------------------------------
+semantic_checks: {}
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 交叉引用校验
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  easily_confused_references_exist:
+    description: >
+      每条 easily_confused_with.module 指向的模块名，必须在同一 catalog 的 modules[] 中存在。
+      防止写错名或指向未建档模块。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_exist_in: "self.modules[].name"
+
+  entry_file_on_disk:
+    description: >
+      每个 entry_file 指向的相对路径应在项目磁盘上真实存在。
+      不存在时降级为 MAJOR（有可能是路径拼写错误或模块尚未创建）。
+    severity: MAJOR
+    rule:
+      field: "entry_file"
+      must_be_existing_file: true
+
+  layer_matches_path:
+    description: >
+      entry_file 的路径前缀（第一层目录）应与 module.layer 一致：
+      01-Product/ → 01-Product；02-Feature/ → 02-Feature；…
+      不一致通常意味着层级标错或模块放错位置。
+    severity: MAJOR
+    rule:
+      field: "entry_file"
+      path_prefix_matches_layer: true

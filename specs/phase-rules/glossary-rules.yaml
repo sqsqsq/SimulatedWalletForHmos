@@ -1,0 +1,138 @@
+# ============================================================================
+# Glossary 阶段规约 (Phase Rules)
+# ============================================================================
+# 定义 doc/glossary.yaml 必须满足的结构与交叉引用规则。
+# 与 catalog 阶段类似，作用的对象是全局文件，没有 --feature 维度。
+#
+# 消费者:
+#   - harness/scripts/check-glossary.ts  (脚本 Harness, 确定性检查)
+# ============================================================================
+
+phase: glossary
+version: "1.0"
+applies_to: "doc/glossary.yaml"
+
+# --------------------------------------------------------------------------
+# 结构约束
+# --------------------------------------------------------------------------
+structure_checks:
+
+  file_exists:
+    description: >
+      doc/glossary.yaml 必须存在且为合法 YAML。
+    severity: BLOCKER
+    rule:
+      path: "doc/glossary.yaml"
+      must_be_parseable: true
+
+  schema_version_present:
+    description: >
+      根对象必须包含 schema_version 字段（字符串）。
+    severity: BLOCKER
+    rule:
+      required_root_keys:
+        - "schema_version"
+        - "terms"
+      schema_version_type: "string"
+
+  terms_is_list:
+    description: >
+      terms 字段必须是非空数组。
+    severity: BLOCKER
+    rule:
+      field: "terms"
+      type: "array"
+      min_length: 1
+
+  term_required_fields:
+    description: >
+      每条 term 必须包含以下必填字段：
+      term / canonical_module / owner_layer / aliases / easily_confused_with
+    severity: BLOCKER
+    rule:
+      required_fields:
+        - "term"
+        - "canonical_module"
+        - "owner_layer"
+        - "aliases"
+        - "easily_confused_with"
+
+  term_unique:
+    description: >
+      所有 term 字段的值必须全局唯一（不允许同名条目）。
+    severity: BLOCKER
+    rule:
+      field: "term"
+      unique: true
+
+  alias_unique_across_terms:
+    description: >
+      同一 alias 不允许出现在两个不同的 term 里，防止术语消歧时歧义反查。
+    severity: BLOCKER
+    rule:
+      field: "aliases[]"
+      unique_across_parents: true
+
+  owner_layer_value_valid:
+    description: >
+      owner_layer 必须是 5 个合法 layer 值之一，与 catalog.modules[].layer 保持一致的取值域。
+    severity: BLOCKER
+    rule:
+      field: "owner_layer"
+      allowed_values:
+        - "01-Product"
+        - "02-Feature"
+        - "03-CommonBusiness"
+        - "04-BusinessBase"
+        - "05-SystemBase"
+
+# --------------------------------------------------------------------------
+# 语义级约束（暂不启用）
+# --------------------------------------------------------------------------
+semantic_checks: {}
+
+# --------------------------------------------------------------------------
+# 追溯约束 — 交叉引用校验（core value of glossary）
+# --------------------------------------------------------------------------
+traceability_checks:
+
+  canonical_module_exists_in_catalog:
+    description: >
+      每条 term.canonical_module 必须是 doc/module-catalog.yaml 中存在的模块名。
+      这是术语表与模块画像的核心交叉约束。
+    severity: BLOCKER
+    rule:
+      field: "canonical_module"
+      must_exist_in: "doc/module-catalog.yaml:modules[].name"
+
+  owner_layer_matches_catalog:
+    description: >
+      term.owner_layer 必须与 catalog 中对应 module.layer 相等。
+      不一致通常是手填术语时选错了层。
+    severity: BLOCKER
+    rule:
+      cross_check:
+        this: "owner_layer"
+        against: "doc/module-catalog.yaml:modules[name==canonical_module].layer"
+
+  easily_confused_modules_exist_in_catalog:
+    description: >
+      每条 term.easily_confused_with[].module 必须在 doc/module-catalog.yaml 中存在。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_exist_in: "doc/module-catalog.yaml:modules[].name"
+
+  term_covered_by_catalog_typical_terms:
+    description: >
+      抽样检查：term 或其 aliases 是否出现在 canonical_module 对应模块的
+      typical_business_terms / one_liner / responsibilities 任一字段里？
+      找不到时降级为 MAJOR（不强制 BLOCKER，因为可能是 canonical_module 的
+      typical_business_terms 还没补全），但提示用户回补 catalog。
+    severity: MAJOR
+    rule:
+      cross_check:
+        term_or_aliases_should_appear_in:
+          - "doc/module-catalog.yaml:modules[name==canonical_module].typical_business_terms"
+          - "doc/module-catalog.yaml:modules[name==canonical_module].one_liner"
+          - "doc/module-catalog.yaml:modules[name==canonical_module].responsibilities"
