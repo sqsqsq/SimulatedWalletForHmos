@@ -347,13 +347,15 @@ terms: []
 
 对每个术语 `<T>`，读 `doc/module-catalog.yaml`，执行 `skills/0-catalog-bootstrap/prompts/infer-glossary-term.md` 的 Step 1 → Step 6，核心骨架：
 
+0. **输入预检：种子技术词守门**（prompt **Step 1 前置，强制**）：读种子清单时，对每行执行 `^[A-Z][a-zA-Z0-9]+$` 正则 + `catalog.modules[].name` 重名检测；命中即停并提示用户修复（三选一：删除 / 改业务自然语言 / 加入 `doc/glossary-seed-allowlist.txt`）。harness `--phase glossary` 会以 BLOCKER 兜底。
 1. **精确匹配**（prompt Step 1）：`<T>` 是否出现在某模块的 `typical_business_terms` 里？若是 → 置信度 `high`
 2. **反向扫描 NOT_responsible_for**（prompt **Step 1.5，强制**）：若命中模块的 `NOT_responsible_for` 文本包含 `<T>` → 触发 catalog 内部冲突，`match_kind = typical_term_with_not_responsible_for_conflict`，置信度降一级
 3. **模糊匹配**（prompt Step 2）：`<T>` 是否作为子串出现在任何模块的 `typical_business_terms` / `one_liner` / `responsibilities` 里？→ 置信度 `medium`，列 Top-3 候选
-4. **未命中**（prompt Step 3）：无任何线索 → 置信度 `low`，要求用户补充该术语所指代的场景
-5. **alias-merge 分支**（prompt **Step 4.5，强制**）：写 staging 前扫已入库 `glossary.yaml` + 同批 staging；若存在同 canonical、字面相似（子串/相似度 ≥ 0.5）的 `<T'>`，`match_kind = alias_merge_candidate`，展示时默认推荐 `e 并入 <T'>`
+4. **反向指针扫描**（prompt **Step 2.5，强制，仅当 Step 1/2 全空时跑**）：用正则从 `NOT_responsible_for` 抓"属 X 模块"/"归 Y 类模块"/"→ Z"式反向指针；命中 → `match_kind = negative_hint_pointer`、canonical 仍填 TBD、candidates_top3 里给出被指向的模块名 + 原文片段
+5. **未命中**（prompt Step 3）：无任何线索 → 置信度 `low`，要求用户补充该术语所指代的场景
+6. **alias-merge 分支**（prompt **Step 4.5，强制**）：写 staging 前扫已入库 `glossary.yaml` + 同批 staging；若存在同 canonical、字面相似（子串/相似度 ≥ 0.5）的 `<T'>`，`match_kind = alias_merge_candidate`，展示时默认推荐 `e 并入 <T'>`
 
-> Step 1.5 和 Step 4.5 是**弱模型护栏**，不可省略。详细规则见 `prompts/infer-glossary-term.md`。
+> Step 0（输入预检）、Step 1.5、Step 2.5、Step 4.5 均是**弱模型护栏**，不可省略。详细规则见 `prompts/infer-glossary-term.md`。
 
 对每条术语生成 staging 条目：
 

@@ -5,11 +5,15 @@
 //
 // 检查项（与 glossary-rules.yaml 对应）：
 //   Structure:     schema_version_present, terms_is_list, term_required_fields,
-//                  term_unique, alias_unique_across_terms, owner_layer_value_valid
+//                  term_unique, alias_unique_across_terms, owner_layer_value_valid,
+//                  seed_no_technical_words
 //   Traceability:  canonical_module_exists_in_catalog, owner_layer_matches_catalog,
 //                  easily_confused_modules_exist_in_catalog,
 //                  term_covered_by_catalog_typical_terms
 // ============================================================================
+
+import * as fs from 'fs';
+import * as path from 'path';
 
 import {
   PhaseChecker,
@@ -211,6 +215,100 @@ function checkOwnerLayerValueValid(ctx: CheckContext, glossary: Glossary): Check
   }];
 }
 
+/**
+ * Seed 文件解析：按行读取。
+ * - # 开头整行 = 注释，丢弃
+ * - 行内 # 后面视为尾注（典型于 allowlist: `SDK  # reason: xxx`），截断
+ * - 余下 trim 后非空即为有效条目
+ */
+function readSeedLikeFile(fullPath: string): string[] {
+  if (!fs.existsSync(fullPath)) return [];
+  const raw = fs.readFileSync(fullPath, 'utf-8');
+  return raw
+    .split(/\r?\n/)
+    .map(line => {
+      const hashIdx = line.indexOf('#');
+      const head = hashIdx >= 0 ? line.slice(0, hashIdx) : line;
+      return head.trim();
+    })
+    .filter(line => line.length > 0);
+}
+
+const CAMEL_CASE_REGEX = /^[A-Z][a-zA-Z0-9]+$/;
+
+function checkSeedNoTechnicalWords(
+  ctx: CheckContext,
+  catalog: ModuleCatalog,
+): CheckResult[] {
+  const seedPath = path.join(ctx.projectRoot, 'doc', 'glossary-seed.txt');
+  const allowlistPath = path.join(ctx.projectRoot, 'doc', 'glossary-seed-allowlist.txt');
+
+  if (!fs.existsSync(seedPath)) {
+    return [{
+      id: 'seed_no_technical_words', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: 'doc/glossary-seed.txt 不存在——bootstrap 流程尚未开启或已收尾。',
+      suggestion: '若准备开启 /glossary-bootstrap，Skill 0 Phase B Step 1 会自动创建带注释的模板。',
+    }];
+  }
+
+  const seedTerms = readSeedLikeFile(seedPath);
+  if (seedTerms.length === 0) {
+    return [{
+      id: 'seed_no_technical_words', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '种子清单为空（仅注释或纯空白）——未达检查触发条件。',
+    }];
+  }
+
+  const allowlist = new Set(readSeedLikeFile(allowlistPath));
+  const moduleNames = new Set(catalog.modules.map(m => m.name));
+
+  const offenders: Array<{ term: string; reason: string }> = [];
+  for (const term of seedTerms) {
+    if (allowlist.has(term)) continue;
+
+    if (CAMEL_CASE_REGEX.test(term)) {
+      offenders.push({ term, reason: '疑似技术词（英文驼峰符号 / 类名模式）' });
+      continue;
+    }
+    if (moduleNames.has(term)) {
+      offenders.push({ term, reason: `与 catalog.modules[].name 重名（"${term}" 是技术模块名而非业务术语）` });
+      continue;
+    }
+  }
+
+  if (offenders.length === 0) {
+    return [{
+      id: 'seed_no_technical_words', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `种子清单 ${seedTerms.length} 行全部是业务自然语言词（或在 allowlist 中豁免）。`,
+    }];
+  }
+
+  const preview = offenders.slice(0, 8).map(o => `"${o.term}"（${o.reason}）`);
+
+  return [{
+    id: 'seed_no_technical_words', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details: `${offenders.length} 行疑似技术词污染：${preview.join('；')}`,
+    suggestion:
+      '三选一修复：\n' +
+      '  (a) 把该行从 doc/glossary-seed.txt 删掉（如果确实是误填的技术符号）\n' +
+      '  (b) 把它替换成业务自然语言描述（例如 "AccountManager" → "账号"）\n' +
+      '  (c) 若确认要保留（如行业通用缩写 HAP / SDK / NFC），把该行追加到\n' +
+      '      doc/glossary-seed-allowlist.txt（一行一个，# 开头为注释）',
+    affected_files: [
+      'doc/glossary-seed.txt',
+      'doc/glossary-seed-allowlist.txt',
+    ],
+  }];
+}
+
 // --------------------------------------------------------------------------
 // Traceability Checks（需要 catalog）
 // --------------------------------------------------------------------------
@@ -407,6 +505,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkTermUnique(ctx, glossary), 'term_unique'));
     results.push(...safeRun(() => checkAliasUniqueAcrossTerms(ctx, glossary), 'alias_unique_across_terms'));
     results.push(...safeRun(() => checkOwnerLayerValueValid(ctx, glossary), 'owner_layer_value_valid'));
+    results.push(...safeRun(() => checkSeedNoTechnicalWords(ctx, catalog), 'seed_no_technical_words'));
 
     // Traceability
     results.push(...safeRun(() => checkCanonicalModuleExistsInCatalog(ctx, glossary, catalog), 'canonical_module_exists_in_catalog'));

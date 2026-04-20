@@ -162,7 +162,9 @@ function toEasilyConfusedArray(value: unknown): EasilyConfusedEntry[] {
       const e = entry as Record<string, unknown>;
       const module = typeof e.module === 'string' ? e.module : '';
       const disambiguation = typeof e.disambiguation === 'string' ? e.disambiguation : '';
-      if (module) out.push({ module, disambiguation });
+      // 不再丢弃 module 为空的条目——`easily_confused_no_self_reference` BLOCKER 检查
+      // 需要看见空字段才能报告。`easily_confused_references_exist` 自行跳过空 module。
+      out.push({ module, disambiguation });
     }
   }
   return out;

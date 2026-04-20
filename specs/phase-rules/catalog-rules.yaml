@@ -151,6 +151,28 @@ traceability_checks:
       field: "easily_confused_with[].module"
       must_exist_in: "self.modules[].name"
 
+  easily_confused_no_self_reference:
+    description: >
+      easily_confused_with.module 不得指向模块自己；也不得为空字符串 / null。
+      自引用是低级设计错误（自己跟自己混淆没有意义），空值通常是忘填。
+    severity: BLOCKER
+    rule:
+      field: "easily_confused_with[].module"
+      must_not_equal_parent: true
+      must_not_be_empty: true
+
+  easily_confused_symmetric:
+    description: >
+      若 A.easily_confused_with 声明与 B 混淆，则 B.easily_confused_with 也应反向声明与 A 混淆。
+      消歧能力必须对称——任何一端漏声明都会让 Skill 1 Step 1.5 术语消歧在另一侧失盲。
+      若业务上确认就是单向易混（罕见），可通过在 disambiguation 文本里加 "unidirectional"
+      关键字显式豁免（当前沙盒未使用豁免）。
+    severity: MAJOR
+    rule:
+      field: "easily_confused_with[].module"
+      must_be_symmetric: true
+      allow_unidirectional_keyword: "unidirectional"
+
   entry_file_on_disk:
     description: >
       每个 entry_file 指向的相对路径应在项目磁盘上真实存在。

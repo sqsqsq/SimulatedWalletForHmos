@@ -23,13 +23,16 @@ match_info:
   #   fuzzy_typical_term                           —— Step 2 模糊命中 typical_business_terms
   #   fuzzy_one_liner                              —— Step 2 命中 one_liner
   #   fuzzy_responsibility                         —— Step 2 命中 responsibilities
+  #   negative_hint_pointer                        —— Step 2.5 从 NOT_responsible_for 反向指针
+  #                                                   抽到"属 X 模块"/"归 Y 模块"式提示（X/Y 可能
+  #                                                   尚未在 catalog 中，此时 canonical 仍填 TBD）
   #   unmatched                                    —— Step 3 零命中
   #   typical_term_with_not_responsible_for_conflict
   #                                                —— Step 1.5 发现命中模块的 NOT_responsible_for
   #                                                   文本同时包含本术语，catalog 自相矛盾
   #   alias_merge_candidate                        —— Step 4.5 与已存在的某 term 同 canonical_module
   #                                                   且字面相似，建议并入该 term 的 aliases 而非新建
-  match_kind: "exact_typical_term | fuzzy_typical_term | fuzzy_one_liner | fuzzy_responsibility | unmatched | typical_term_with_not_responsible_for_conflict | alias_merge_candidate"
+  match_kind: "exact_typical_term | fuzzy_typical_term | fuzzy_one_liner | fuzzy_responsibility | negative_hint_pointer | unmatched | typical_term_with_not_responsible_for_conflict | alias_merge_candidate"
   matched_text: "<AI 在 catalog 里真正命中的那个字符串>"
   # 若是 fuzzy / unmatched / conflict / alias_merge_candidate，给出 Top-3 候选让用户选
   candidates_top3: []

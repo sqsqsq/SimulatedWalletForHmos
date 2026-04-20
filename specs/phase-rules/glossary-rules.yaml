@@ -86,6 +86,25 @@ structure_checks:
         - "04-BusinessBase"
         - "05-SystemBase"
 
+  seed_no_technical_words:
+    description: >
+      `doc/glossary-seed.txt` 的每行业务术语不得是"技术词"。
+      技术词判定（任一命中即视为技术词）：
+        a) 纯英文驼峰：满足正则 ^[A-Z][a-zA-Z0-9]+$（至少 2 字符，首字母大写）
+        b) 等于 doc/module-catalog.yaml 里某 module.name（避免种子填成模块名本身）
+      豁免机制：`doc/glossary-seed-allowlist.txt`（可选）每行 = 一个豁免术语；
+      若种子行出现在豁免清单里则放行（用于极少数行业通用英文缩写，如 HAP / SDK 必要时）。
+
+      命中即 BLOCKER：glossary 是业务自然语言层，技术词污染会让 Skill 1 Step 1.5
+      误把 PRD 里的类名当成业务词去消歧，直接错分模块。
+    severity: BLOCKER
+    rule:
+      seed_file: "doc/glossary-seed.txt"
+      allowlist_file: "doc/glossary-seed-allowlist.txt"
+      forbid_patterns:
+        - "^[A-Z][a-zA-Z0-9]+$"
+      forbid_equals_from: "doc/module-catalog.yaml:modules[].name"
+
 # --------------------------------------------------------------------------
 # 语义级约束（暂不启用）
 # --------------------------------------------------------------------------

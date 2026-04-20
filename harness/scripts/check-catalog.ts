@@ -9,8 +9,8 @@
 //                  layer_value_valid, format_value_valid, name_unique,
 //                  not_responsible_for_min_count, one_liner_not_empty,
 //                  typical_vs_not_responsible_conflict
-//   Traceability:  easily_confused_references_exist, entry_file_on_disk,
-//                  layer_matches_path
+//   Traceability:  easily_confused_references_exist, easily_confused_no_self_reference,
+//                  easily_confused_symmetric, entry_file_on_disk, layer_matches_path
 //
 // 语义级检查此阶段暂不启用（catalog 本身就是 SSOT，没有语义歧义）。
 // ============================================================================
@@ -391,8 +391,10 @@ function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCa
 
   for (const m of catalog.modules) {
     for (const ec of m.easily_confused_with) {
-      if (ec.module && !known.has(ec.module)) {
-        broken.push(`${m.name} → "${ec.module}"`);
+      const target = (ec.module ?? '').trim();
+      if (!target) continue;
+      if (!known.has(target)) {
+        broken.push(`${m.name} → "${target}"`);
       }
     }
   }
@@ -411,6 +413,90 @@ function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCa
     severity: 'BLOCKER', status: 'FAIL',
     details: `${broken.length} 条 easily_confused_with 指向不存在的模块：${broken.join('、')}`,
     suggestion: '修正拼写；若引用模块确实尚未建档，请先 /catalog-bootstrap 该模块再回来加易混项。',
+    affected_files: ['doc/module-catalog.yaml'],
+  }];
+}
+
+function checkEasilyConfusedNoSelfReference(
+  ctx: CheckContext,
+  catalog: ModuleCatalog,
+): CheckResult[] {
+  const offenders: string[] = [];
+
+  for (const m of catalog.modules) {
+    for (const ec of m.easily_confused_with || []) {
+      const target = (ec.module ?? '').trim();
+      if (!target) {
+        offenders.push(`${m.name}.easily_confused_with[].module 为空`);
+        continue;
+      }
+      if (target === m.name) {
+        offenders.push(`${m.name} → 自己`);
+      }
+    }
+  }
+
+  if (offenders.length === 0) {
+    return [{
+      id: 'easily_confused_no_self_reference', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'easily_confused_no_self_reference'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: '无自引用、无空 module。',
+    }];
+  }
+  return [{
+    id: 'easily_confused_no_self_reference', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'easily_confused_no_self_reference'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details: `${offenders.length} 处非法引用：${offenders.join('；')}`,
+    suggestion: '删除自引用条目；空 module 字段补齐或整条删除。',
+    affected_files: ['doc/module-catalog.yaml'],
+  }];
+}
+
+function checkEasilyConfusedSymmetric(
+  ctx: CheckContext,
+  catalog: ModuleCatalog,
+): CheckResult[] {
+  const byName = new Map<string, ModuleCard>(catalog.modules.map(m => [m.name, m]));
+  const unidirectionalMarker = 'unidirectional';
+  const asymmetric: string[] = [];
+
+  for (const m of catalog.modules) {
+    for (const ec of m.easily_confused_with || []) {
+      const target = (ec.module ?? '').trim();
+      if (!target || target === m.name) continue;
+      const targetModule = byName.get(target);
+      if (!targetModule) continue;
+
+      const reverse = (targetModule.easily_confused_with || []).find(e => (e.module ?? '').trim() === m.name);
+      if (reverse) continue;
+
+      const exempt = typeof ec.disambiguation === 'string' &&
+        ec.disambiguation.toLowerCase().includes(unidirectionalMarker);
+      if (exempt) continue;
+
+      asymmetric.push(`${m.name} → ${target}（${target} 未反向声明与 ${m.name} 混淆）`);
+    }
+  }
+
+  if (asymmetric.length === 0) {
+    return [{
+      id: 'easily_confused_symmetric', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'easily_confused_symmetric'),
+      severity: 'MAJOR', status: 'PASS',
+      details: '全部 easily_confused_with 关系对称。',
+    }];
+  }
+  return [{
+    id: 'easily_confused_symmetric', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'easily_confused_symmetric'),
+    severity: 'MAJOR', status: 'WARN',
+    details: `${asymmetric.length} 处不对称：${asymmetric.join('；')}`,
+    suggestion:
+      '修复二选一：\n' +
+      '  (a) 在反向模块的 easily_confused_with 里补一条对应条目（推荐，消歧能力双向完整）\n' +
+      '  (b) 若确属单向易混，在正向的 disambiguation 文本里加关键字 "unidirectional" 显式豁免',
     affected_files: ['doc/module-catalog.yaml'],
   }];
 }
@@ -525,6 +611,8 @@ const checker: PhaseChecker = {
 
     // Traceability
     results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog), 'easily_confused_references_exist'));
+    results.push(...safeRun(() => checkEasilyConfusedNoSelfReference(ctx, catalog), 'easily_confused_no_self_reference'));
+    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog), 'easily_confused_symmetric'));
     results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
     results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
 
