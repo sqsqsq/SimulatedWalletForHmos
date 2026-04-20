@@ -46,7 +46,7 @@
 | 字段 | 取值 | 说明 |
 |------|------|------|
 | 本需求允许修改的模块 | `Phone`、`WalletMain`、`AccountManager`、`CommUI`、`CommFunc` | 首页主入口框架所需的最小模块集，均为构建首页/我的/卡包/添卡入口页必不可少的基础能力 |
-| 本需求明确不修改的模块 | `SwipeCard`、`BankCard`、`TransportCard`、`AccessCard`、`CarKeys`、`IDCards`、`CardManager`、`ConfigManager`、`PersistManager`、`LifecycleManager` | 卡种模块仅出现 Toast"暂不支持"，不涉及实际业务；公共业务层当前无跨 Feature 共享能力需求 |
+| 本需求明确不修改的模块 | （见下方 `out_of_scope_modules`，仅列出已在 `doc/module-catalog.yaml` 建档的模块） | 沙盒 catalog 目前只建档 5 个模块，其它真实工程存在但沙盒尚未建档的卡种/公共业务模块不列入 out_of_scope_modules——等它们通过 `/catalog-bootstrap` 补档后再回来更新本节 |
 
 ### Scope 结构化字段（供 Spec 提取，必填）
 
@@ -57,27 +57,25 @@ in_scope_modules:
   - AccountManager
   - CommUI
   - CommFunc
-out_of_scope_modules:
-  - SwipeCard
-  - BankCard
-  - TransportCard
-  - AccessCard
-  - CarKeys
-  - IDCards
-  - CardManager
-  - ConfigManager
-  - PersistManager
-  - LifecycleManager
+# 沙盒 catalog 目前只建档 5 个模块（CommFunc/CommUI/AccountManager/WalletMain/Phone），
+# 全部已列入 in_scope_modules，因此本清单为空。
+# 真实钱包工程移植后，这里应列出 SwipeCard/BankCard/CardManager 等**已建档但本需求不改**的模块。
+# harness scope_matches_catalog 要求本字段所有值必须出现在 doc/module-catalog.yaml:modules[].name 里。
+out_of_scope_modules: []
 rationale: |
   本需求只构建"首页主入口框架 + 我的 Tab + 卡包页 + 添卡入口页"的浏览态与跳转链路：
   - Phone 提供 HAP 主入口 + Tabs/Navigation 主框架。
   - WalletMain 承载首页 / 我的 / 卡包 / 添卡入口四个公共页面 UI。
   - AccountManager 提供账号登录状态的读取（F7）与登录触发（F17）。
   - CommUI / CommFunc 提供 Toast、基础组件、Log、格式化等与业务无关的系统能力。
-  卡种模块（BankCard 等）的入口点击仅弹出 Toast"暂不支持"，不需要任何卡种业务代码；
-  03-CommonBusiness 层的 CardManager / ConfigManager 等当前版本没有跨 Feature 共享的业务逻辑需求，
-  即便"看起来应该把卡状态管理放到 CardManager"，在本 PRD 无卡态场景下也不引入，避免过度设计。
-  未来若新增卡种实际能力，再走 scope 扩展提议流程向 CardManager 引入。
+  关于 out_of_scope_modules 为空的说明：
+  - 真实钱包工程会有 SwipeCard/BankCard/TransportCard/AccessCard/CarKeys/IDCards/CardManager
+    /ConfigManager/PersistManager/LifecycleManager 等模块，按最小改动原则都属于"不改"的范畴。
+  - 但 harness 的 `scope_matches_catalog` 要求 out_of_scope_modules 里的每个名字都必须已在
+    `doc/module-catalog.yaml` 建档，沙盒当前只建档 5 个模块，全部已进 in_scope_modules。
+  - 因此沙盒场景下本字段显式保持为空；卡种入口点击"暂不支持"的行为仍成立（由前端 Toast 直接处理，
+    不依赖卡种业务模块的代码）。
+  未来若新增卡种实际能力或 sandbox catalog 扩容到真实工程规模，再走 scope 扩展提议流程同步本节。
 ```
 
 ### 最小改动原则
