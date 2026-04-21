@@ -71,15 +71,45 @@ modules: []
 
 > **约束**：骨架里只能有 `schema_version` 和空 `modules`。**禁止**顺手塞示例模块——空列表会触发 `modules_is_list` 的 WARN 提示"尚未追加模块"，这是期望的中间态，不是错误。
 
-### Step 1. 列出待建模块清单
+### Step 1. 列出候选模块清单
 
 **入口命令**：用户传入一个模块名，如 `/catalog-bootstrap FinancialCard`。
-若用户没指定，你可以：
-1. 读 `build-profile.json5` 的 `modules[]`，提取所有 `srcPath`
-2. 对比 `doc/module-catalog.yaml` 的 `modules[].name`，列出还没建的模块
-3. 把清单展示给用户，**让用户选一个**作为本轮的目标
+
+若用户**没指定**模块名，按以下顺序组装清单：
+1. 读 `build-profile.json5` 的 `modules[]`，提取所有 `srcPath` → 得到"物理存在的模块"全集
+2. 对比 `doc/module-catalog.yaml` 的 `modules[].name`，标记每个模块当前是 `未建档` / `已建档`
+3. 把两类混合展示给用户，**让用户选一个**作为本轮目标。示例：
+
+```
+待建档（未在 catalog 中）：
+  [1] BankCard
+  [2] TransportCard
+已建档（可进入 UPDATE 模式刷新画像）：
+  [3] CardManager      最近提交动了 Index.ets 的 exports，建议刷新
+  [4] WalletMain       上次刷新 2 周前
+...
+选一个编号 / 模块名：
+```
 
 **禁止**：一次批量处理多个模块。每轮对话只处理一个。
+
+### Step 1.5. 判别 CREATE / UPDATE 模式（**强制**）
+
+用户指定（或从 Step 1 选中）模块名 `<M>` 后，**第一件事**是查 `doc/module-catalog.yaml` 判定本轮属于哪种模式：
+
+```
+if <M> ∈ modules[].name → UPDATE 模式（模块已建档，本轮是刷新）
+else                    → CREATE 模式（新建）
+```
+
+两种模式在 **Step 2 / Step 3 / Step 4 完全相同**——都是重新采集输入信号、生成 staging、做自检清单。**唯一区别**在 Step 5.1 的对话展示格式（详见 §5.1）：
+
+| 模式 | Step 5.1 展示 | Step 5.2 `q` 的含义 |
+|---|---|---|
+| CREATE | 完整新画像汇总表 | 丢弃 staging，主 catalog 不动（模块继续缺档） |
+| UPDATE | **字段级 diff**（新 vs 旧），只高亮变更 | 丢弃本次刷新，保留旧画像不动 |
+
+**禁止**：在 Step 5.1 展示前"忘记"自己是 UPDATE 模式——弱模型很容易一路跑下来按 CREATE 的格式输出，让用户以为是新建。本 Step 的判别结果**必须**在 Step 5.1 的展示标题里明示（`📦 <M>（新建）` 或 `🔧 <M>（更新已有画像）`）。
 
 ### Step 2. 采集"输入信号"（顺序很重要）
 
@@ -149,10 +179,12 @@ doc/catalog-staging/<ModuleName>.yaml
 
 #### 5.1 展示草稿摘要（**人友好的汇总表，不是原始 YAML 转储**）
 
-把刚生成的草稿在对话里以下面的格式展示：
+根据 Step 1.5 的模式判定结果选展示格式：
+
+##### 5.1.A CREATE 模式展示格式（模块首次建档）
 
 ```
-📦 <ModuleName> 模块画像草稿（doc/catalog-staging/<ModuleName>.yaml）
+📦 <ModuleName>（新建）  草稿位置：doc/catalog-staging/<ModuleName>.yaml
 ──────────────────────────────────────────────────
 Layer / Sub-layer:   02-Feature / 底层
 Format:              HAR
@@ -174,6 +206,53 @@ Signals used:
   ✓ architecture.md  ✓ oh-package.json5  ✓ Index.ets  ✗ README.md  (目录树 depth=3)
 ```
 
+##### 5.1.B UPDATE 模式展示格式（**字段级 diff，只高亮变更**）
+
+> **为什么不用 CREATE 格式**：整份画像再给用户看一遍，用户要自己用肉眼跟旧版本比对——几百行 YAML 一扫一个不准。UPDATE 模式的核心价值是 **"告诉用户改了什么，没改的别让用户浪费注意力"**。
+
+实现步骤（AI 在对话前本地完成）：
+
+1. 读 `doc/module-catalog.yaml` 里的旧 `modules[name==<M>]` 子树作为 `old`
+2. 读本轮刚生成的 `doc/catalog-staging/<M>.yaml` 的 `module:` 子树作为 `new`
+3. 按字段逐一对比，分三类：
+   - **changed**：`old[k] !== new[k]`（对数组/对象做 JSON 规范化后再比）
+   - **added**：`k` 只在 `new` 里有值（旧是 `null` / `[]` / 缺字段）
+   - **removed**：`k` 只在 `old` 里有值
+   - **unchanged**：完全相等 → 折叠成一行"✓ 其他 N 个字段无变化"
+
+展示格式：
+
+```
+🔧 <ModuleName>（更新已有画像）  草稿位置：doc/catalog-staging/<ModuleName>.yaml
+──────────────────────────────────────────────────
+⚠ one_liner:
+    旧：管理所有卡种的统一能力，包括增删改查/数据订阅/功能代理
+    新：管理所有卡种的统一能力，包括增删改查/订阅/代理/事件总线
+
+⚠ responsibilities:
+    + "对外提供统一事件总线 CardEventBus"      ← 新增
+    - "持有卡面样式配置"                        ← 删除（已移交 WalletMain）
+    · 其它 4 条不变
+
+⚠ key_exports:
+    旧：[CardManager, CardRepository, CardService]
+    新：[CardManager, CardRepository, CardService, CardEventBus]
+
+⚠ easily_confused_with:
+    + module: PassManager   disambiguation: "Pass 是专有名词代指…"
+
+✓ 其他 6 个字段无变化（name, layer, sub_layer, format, NOT_responsible_for, entry_file）
+
+Signals used:
+  ✓ architecture.md  ✓ oh-package.json5  ✓ Index.ets  ✗ README.md  (目录树 depth=3)
+```
+
+**硬约束**：
+- **unchanged 字段绝不能展开**——展开就违背了 diff 视角的初衷
+- 若某字段是数组或对象，**逐元素 diff**（展示 `+ <new>` / `- <old>`），**不要**整数组贴新旧两份
+- 若某字段被完全清空（`[]` → 非空 / 非空 → `[]`），标 `[EMPTIED]` 或 `[FIRST-FILLED]` 前缀让用户立刻注意到
+- 若 diff 的变更字段数 > 6（半数以上字段都在动），AI 应在末尾加一行警告：`⚠ 本轮变更范围较大（N 个字段），建议确认是否 <M> 模块发生了重大重构`——让用户警惕"这到底是刷新还是误操作"
+
 #### 5.2 邀请用户给简短回复
 
 **只问一个问题**，不要一次塞一堆选项让用户找：
@@ -182,7 +261,12 @@ Signals used:
 >   `y` 确认并合并
 >   `e <修改指令>` 修改某字段（例：`e 把 one_liner 改成 XXX` / `e 给 NOT_responsible_for 加一条："不处理卡面样式"` / `e 删掉 easily_confused_with 的 CardManager`）
 >   `s` 跳过（staging 保留，之后再决定）
->   `q` 作废（删 staging）
+>   `q` 作废
+
+| 回复 | CREATE 模式下的含义 | UPDATE 模式下的含义 |
+|---|---|---|
+| `y` | 把新画像追加到 catalog | 用新画像**整条替换**旧画像（旧版靠 git 历史找回） |
+| `q` | 删 staging，模块继续缺档 | 删 staging，**保留旧画像不动**（本次刷新作废） |
 
 #### 5.3 按用户口头回复处理（AI 自主动作，不再要求用户改文件）
 
@@ -208,7 +292,9 @@ Signals used:
    - 从 Step 5.3 `y` 来 → 范围 = 当前这个模块的 staging
    - 用户显式说"合并所有 / merge all" → 扫描 `doc/catalog-staging/*.yaml`，筛出 `confirmed_by_user: true` 的
 2. 对每个已确认 staging，**追加**到 `doc/module-catalog.yaml` 的 `modules` 列表末尾（若已存在同名模块，则**替换**整条）。合并时**只取 staging 的 `module:` 子树**，`confirmed_by_user` / `generated_by` / `generated_at` / `signals_used` 等元数据**不进**主 catalog。
-3. **删除**已合并的 staging 文件（`fs.unlink` / `rm` 均可）。审计溯源靠 git 历史——主 catalog 的每条 commit message 应带上 `via Skill 0 from <ModuleName>.yaml` 字样方便回查。
+3. **删除**已合并的 staging 文件（`fs.unlink` / `rm` 均可）。审计溯源靠 git 历史——主 catalog 的 commit message 用下列约定方便回查：
+   - CREATE 模式：`catalog: add <ModuleName> via Skill 0`
+   - UPDATE 模式：`catalog: refresh <ModuleName> via Skill 0 (<变更摘要>)`<br>&nbsp;&nbsp;&nbsp;&nbsp;其中 `<变更摘要>` 取 Step 5.1.B diff 里动过的字段名列表，如 `one_liner + key_exports + easily_confused_with`
 4. 跑 `harness-runner.ts --phase catalog` 做结构校验并把结果贴给用户
 
 **禁止**：
