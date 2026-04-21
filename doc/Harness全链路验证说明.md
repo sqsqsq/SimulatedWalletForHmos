@@ -72,7 +72,7 @@ foreach ($p in @('prd','design','coding','review','ut','testing')) {
 
 ### design / coding / review / ut / testing
 
-行为与 `framework/specs/phase-rules` 及对应 `check-*.ts` 一致；feature 级规约另见 `specs/features/<feature>/`（仍在实例工程根下）。
+行为与 `framework/specs/phase-rules` 及对应 `check-*.ts` 一致；feature 级规约与文档同目录扁平归档在实例工程根的 `doc/features/<feature>/`（阶段 9 起合并，`framework.config.json` 仅保留单字段 `paths.features_dir`，默认 `doc/features`）。
 
 ## 与 Slash / Skill 的对应关系
 
@@ -91,7 +91,7 @@ foreach ($p in @('prd','design','coding','review','ut','testing')) {
 以下条目来自早期为 `home-page` 打通链路时的修复，仍对 Windows / 沙盒样本有用：
 
 1. **Markdown CRLF**：`framework/harness/scripts/utils/markdown-parser.ts` 对 `split(/\r?\n/)` 统一处理，避免 Windows 下标题解析失败。
-2. **contracts 快照**：`specs/features/home-page/contracts.yaml` 与当前工程对齐（实例路径，不进 framework/）。
+2. **contracts 快照**：`doc/features/home-page/contracts.yaml` 与当前工程对齐（实例路径，不进 framework/）。
 3. **测试计划 AC-G 编号**：`check-testing.ts` 中关联 AC 的正则支持 `AC-G1` 等形式。
 4. **Hypium 入口**：`check-ut.ts` 跳过仅导出 `testsuite()`、无 `describe` 的入口 shim。
 5. **真机测试文档**：`doc/features/home-page/test-plan.md`、`test-report.md` 覆盖 acceptance 中 P0/P1 的 AC 追溯。

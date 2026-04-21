@@ -22,7 +22,7 @@
 
 ### 文件范围
 
-基于 `specs/features/home-page/contracts.yaml` 中的 `files` 清单，覆盖本次 home-page 落地的全部 ArkTS、模块配置与资源文件；v1.1 中曾重点核对 `WalletMain` 与 `acceptance.yaml` 的一致性。**v1.2 在落实修复后做了复核**，涉及文件仍以上述 contracts 清单为准。
+基于 `doc/features/home-page/contracts.yaml` 中的 `files` 清单，覆盖本次 home-page 落地的全部 ArkTS、模块配置与资源文件；v1.1 中曾重点核对 `WalletMain` 与 `acceptance.yaml` 的一致性。**v1.2 在落实修复后做了复核**，涉及文件仍以上述 contracts 清单为准。
 
 ---
 
@@ -33,9 +33,9 @@
 | 审查维度 | 依据文档 | 检查要点 |
 |----------|---------|----------|
 | 架构合规性 | `doc/architecture.md`、`specs/phase-rules/coding-rules.yaml` | 五层依赖、四层分层、HAR 导出 |
-| 接口一致性 | `specs/features/home-page/contracts.yaml` | 模型/Repository/组件契约与实现一致 |
+| 接口一致性 | `doc/features/home-page/contracts.yaml` | 模型/Repository/组件契约与实现一致 |
 | 编码规范 | `specs/phase-rules/coding-rules.yaml` | 资源引用、硬编码、async/await 偏好 |
-| 业务与验收 | `doc/features/home-page/design.md`、`specs/features/home-page/acceptance.yaml` | P0 AC 与 boundaries 覆盖 |
+| 业务与验收 | `doc/features/home-page/design.md`、`doc/features/home-page/acceptance.yaml` | P0 AC 与 boundaries 覆盖 |
 | 数据层 | design.md、`coding-rules.yaml` | 模拟数据置于 Repository，presentation 不经手数据源 |
 
 **脚本门禁**：**coding** 阶段 Harness 已复测通过（15/15 PASS，含 `async_await_pattern`）；本报告 v1.2 结论与代码当前状态一致。

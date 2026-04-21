@@ -7,7 +7,7 @@
 
 feature: home-page
 version: "1.0"
-canonical_source: specs/features/home-page/acceptance.yaml
+canonical_source: doc/features/home-page/acceptance.yaml
 
 note: >
   将 PRD「异常/边界场景」同步写入 acceptance.yaml 的 boundaries 列表；
