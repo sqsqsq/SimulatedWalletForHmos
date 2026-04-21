@@ -7,11 +7,11 @@
 #       Harness 读取本文件做验收覆盖验证；Skill 5 参照本文件生成 UT 断言。
 #
 # 消费者:
-#   - harness/scripts/check-coding.ts    (脚本验 AC 覆盖率)
-#   - harness/scripts/check-ut.ts        (脚本验 UT 断言覆盖)
-#   - harness/prompts/verify-coding.md   (AI 验功能实现完整性)
-#   - harness/prompts/verify-ut.md       (AI 验 UT 有效性)
-#   - skills/5-business-ut/              (UT 生成参照)
+#   - framework/harness/scripts/check-coding.ts    (脚本验 AC 覆盖率)
+#   - framework/harness/scripts/check-ut.ts        (脚本验 UT 断言覆盖)
+#   - framework/harness/prompts/verify-coding.md   (AI 验功能实现完整性)
+#   - framework/harness/prompts/verify-ut.md       (AI 验 UT 有效性)
+#   - framework/skills/5-business-ut/              (UT 生成参照)
 # ============================================================================
 
 feature: home-page

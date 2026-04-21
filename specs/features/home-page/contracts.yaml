@@ -7,9 +7,9 @@
 #       Harness 读取本文件做接口一致性验证。
 #
 # 消费者:
-#   - harness/scripts/check-coding.ts   (脚本验签名/文件存在性)
-#   - harness/prompts/verify-coding.md  (AI 验语义一致性)
-#   - skills/3-coding/SKILL.md           (编码时参照)
+#   - framework/harness/scripts/check-coding.ts   (脚本验签名/文件存在性)
+#   - framework/harness/prompts/verify-coding.md  (AI 验语义一致性)
+#   - framework/skills/3-coding/SKILL.md           (编码时参照)
 # ============================================================================
 
 feature: home-page

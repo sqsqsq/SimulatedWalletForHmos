@@ -4,8 +4,8 @@
 
 | 范围 | 说明 |
 |------|------|
-| **本文档覆盖** | 在已有产物（catalog、glossary、PRD、design、代码、review、UT、测试计划/报告等）的前提下，**按阶段运行脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成 `harness/reports/...` 与 `ai-prompt.md`。 |
-| **本文档不覆盖** | **不是**「一键完成」Skill 0 → PRD → 设计 → 编码 → Review → UT → 真机测试的**开发流水线**。各阶段文档与代码仍需按 `skills/` 中 Skill 人工或借助 AI 编写；Harness 是每步归档后的**质量门禁**。 |
+| **本文档覆盖** | 在已有产物（catalog、glossary、PRD、design、代码、review、UT、测试计划/报告等）的前提下，**按阶段运行脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成 `framework/harness/reports/...` 与 `ai-prompt.md`。 |
+| **本文档不覆盖** | **不是**「一键完成」Skill 0 → PRD → 设计 → 编码 → Review → UT → 真机测试的**开发流水线**。各阶段文档与代码仍需按 `framework/skills/` 中 Skill 人工或借助 AI 编写；Harness 是每步归档后的**质量门禁**。 |
 | **AI Harness** | 脚本只生成 `ai-prompt.md`，**不会**自动调用任何大模型；语义审查需自行把 prompt 发给所选模型。 |
 
 ## Phase 总览（8 个脚本阶段）
@@ -21,14 +21,14 @@
 | `ut` | UT 清单与入口 | **必填** | |
 | `testing` | 测试计划/报告 | **必填** | |
 
-全局阶段在 `harness-runner` 内使用哨兵 feature `_global`，报告目录形如：`harness/reports/_global/catalog/`。
+全局阶段在 `harness-runner` 内使用哨兵 feature `_global`，报告目录形如：`framework/harness/reports/_global/catalog/`。
 
 ## 一次性跑全链路（仅脚本检查）
 
 在仓库根目录下，先全局、再按 feature（PowerShell 示例，`home-page` 可替换为你的 feature 名）：
 
 ```powershell
-Set-Location "harness"
+Set-Location "framework/harness"
 
 # Skill 0 全局产物（无 --feature）
 npx ts-node harness-runner.ts --phase catalog
@@ -47,7 +47,7 @@ foreach ($p in @('prd','design','coding','review','ut','testing')) {
 
 ## 各阶段与关键脚本门禁（速查）
 
-更完整的规则定义见 `specs/phase-rules/<phase>-rules.yaml`；实现见 `harness/scripts/check-<phase>.ts`（若存在）。
+更完整的规则定义见 `framework/specs/phase-rules/<phase>-rules.yaml`；实现见 `framework/harness/scripts/check-<phase>.ts`（若存在）。
 
 ### catalog（`check-catalog.ts`）
 
@@ -72,31 +72,31 @@ foreach ($p in @('prd','design','coding','review','ut','testing')) {
 
 ### design / coding / review / ut / testing
 
-行为与 `specs/phase-rules` 及对应 `check-*.ts` 一致；feature 级规约另见 `specs/features/<feature>/`。
+行为与 `framework/specs/phase-rules` 及对应 `check-*.ts` 一致；feature 级规约另见 `specs/features/<feature>/`（仍在实例工程根下）。
 
 ## 与 Slash / Skill 的对应关系
 
-- 全局阶段对应：`/catalog-bootstrap`、`/glossary-bootstrap`（详见 `skills/0-catalog-bootstrap/SKILL.md`）。
-- 功能阶段对应：`/prd-design`、`/requirement-design`、`/coding`、`/code-review`、`/business-ut`、`/device-testing`（详见 `skills/1-prd-design` … `skills/6-device-testing` 及 `CLAUDE.md` 工作流表）。
+- 全局阶段对应：`/catalog-bootstrap`、`/glossary-bootstrap`（详见 `framework/skills/0-catalog-bootstrap/SKILL.md`）。
+- 功能阶段对应：`/prd-design`、`/requirement-design`、`/coding`、`/code-review`、`/business-ut`、`/device-testing`（详见 `framework/skills/1-prd-design` … `framework/skills/6-device-testing` 及 `CLAUDE.md` 工作流表）。
 
 ## 报告输出路径
 
-- 全局：`harness/reports/_global/{catalog|glossary}/`
-- 功能：`harness/reports/<feature>/{prd|design|coding|review|ut|testing}/`
+- 全局：`framework/harness/reports/_global/{catalog|glossary}/`
+- 功能：`framework/harness/reports/<feature>/{prd|design|coding|review|ut|testing}/`
 
-每阶段可生成 `merged-report.md`、`ai-prompt.md`；trace 路径约定见 `CLAUDE.md` 与 `harness/trace/trace.schema.json`。
+每阶段可生成 `merged-report.md`、`ai-prompt.md`；trace 路径约定见 `CLAUDE.md` 与 `framework/harness/trace/trace.schema.json`。
 
 ## 历史注记（home-page 打通链路时的工程要点）
 
 以下条目来自早期为 `home-page` 打通链路时的修复，仍对 Windows / 沙盒样本有用：
 
-1. **Markdown CRLF**：`harness/scripts/utils/markdown-parser.ts` 对 `split(/\r?\n/)` 统一处理，避免 Windows 下标题解析失败。
-2. **contracts 快照**：`specs/features/home-page/contracts.yaml` 与当前工程对齐。
+1. **Markdown CRLF**：`framework/harness/scripts/utils/markdown-parser.ts` 对 `split(/\r?\n/)` 统一处理，避免 Windows 下标题解析失败。
+2. **contracts 快照**：`specs/features/home-page/contracts.yaml` 与当前工程对齐（实例路径，不进 framework/）。
 3. **测试计划 AC-G 编号**：`check-testing.ts` 中关联 AC 的正则支持 `AC-G1` 等形式。
 4. **Hypium 入口**：`check-ut.ts` 跳过仅导出 `testsuite()`、无 `describe` 的入口 shim。
 5. **真机测试文档**：`doc/features/home-page/test-plan.md`、`test-report.md` 覆盖 acceptance 中 P0/P1 的 AC 追溯。
-6. **Cursor 跳板**：`.cursor/skills/*/SKILL.md` 指向 `skills/` 下正文。
+6. **Cursor 跳板**：`.cursor/skills/*/SKILL.md` 指向 `framework/skills/` 下正文。
 
 ## 累计改造与自检
 
-框架多波改造的**合并视角**见：[框架改造-沙盒自检报告-累计篇.md](./框架改造-沙盒自检报告-累计篇.md)。分卷报告（第一波、第二三波）仍保留作详细附录。
+框架多波改造的历史自检报告已归档至 `doc/archives/wave-1-2-framework-refactor/`。**合并视角**见：[框架改造-沙盒自检报告-累计篇.md](./archives/wave-1-2-framework-refactor/框架改造-沙盒自检报告-累计篇.md)。分卷报告（第一波、第二三波）同目录保留作详细附录。

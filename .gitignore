@@ -15,6 +15,6 @@
 /signing
 .obsidian
 /doc/原始需求
-harness/dist
-harness/reports/*
-!harness/reports/.gitkeep
+framework/harness/dist
+framework/harness/reports/*
+!framework/harness/reports/.gitkeep
