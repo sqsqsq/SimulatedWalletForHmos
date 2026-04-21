@@ -114,6 +114,7 @@ harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 - 历史需求示例：`doc/features/home-page/`（PRD + design + contracts + acceptance + review/test 报告齐全，可作为样板参考）
 - 全链路验证说明：[doc/Harness全链路验证说明.md](doc/Harness全链路验证说明.md)
+- 框架改造累计自检（分卷合并索引）：[doc/框架改造-沙盒自检报告-累计篇.md](doc/框架改造-沙盒自检报告-累计篇.md)
 - Skill 0 全局阶段 harness 命令（**无 `--feature`**）：
   ```bash
   cd harness && npx ts-node harness-runner.ts --phase catalog
