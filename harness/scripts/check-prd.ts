@@ -539,6 +539,204 @@ function checkScopeMatchesCatalog(ctx: CheckContext, prd: string): CheckResult[]
 }
 
 // --------------------------------------------------------------------------
+// C1a: 术语映射表的权威模块必须出现在 Scope 声明里
+// --------------------------------------------------------------------------
+
+function checkTerminologyModulesWithinScope(ctx: CheckContext, prd: string): CheckResult[] {
+  const section = getSectionContent(prd, '术语映射表');
+  if (!section) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '未找到「术语映射表」章节（已由 terminology_mapping_table 报告）。',
+    }];
+  }
+
+  const tables = extractTables(section);
+  if (tables.length === 0) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '术语映射表无 markdown 表格（已由 terminology_mapping_table 报告）。',
+    }];
+  }
+
+  const table = tables[0];
+  const moduleIdx = table.headers.findIndex(h => h.includes('权威模块'));
+  if (moduleIdx < 0) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '术语映射表缺少「权威模块」列（已由 terminology_mapping_table 报告）。',
+    }];
+  }
+
+  const realRows = table.rows.filter(row => {
+    const term = (row[0] || '').trim();
+    return term.length > 0 && !/^\{.*\}$/.test(term);
+  });
+  if (realRows.length === 0) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '术语映射表只有占位行（已由 terminology_mapping_table 报告）。',
+    }];
+  }
+
+  const { scope, error } = parseScope(prd);
+  if (!scope) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `Scope 声明解析失败，无法做交叉校验：${error ? describeScopeError(error) : '未知原因'}。`,
+    }];
+  }
+
+  const scopeSet = new Set<string>([
+    ...scope.in_scope_modules,
+    ...scope.out_of_scope_modules,
+  ]);
+
+  const missing: Array<{ term: string; module: string }> = [];
+  for (const row of realRows) {
+    const term = (row[0] || '').trim();
+    const modCell = (row[moduleIdx] || '').trim();
+    if (!modCell) continue;
+    // 仅取首个候选作为权威模块（与 terminology_mapping_table check 同口径）
+    const primary = modCell.split(/[\/／,，]/)[0]
+      .replace(/候选[①②③]?[:：]\s*/g, '').trim();
+    if (!primary) continue;
+    if (!scopeSet.has(primary)) {
+      missing.push({ term, module: primary });
+    }
+  }
+
+  if (missing.length === 0) {
+    return [{
+      id: 'terminology_modules_within_scope', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+      severity: 'BLOCKER', status: 'PASS',
+      details: `术语映射表中全部 ${realRows.length} 条权威模块均已在 Scope 声明中出现。`,
+    }];
+  }
+
+  return [{
+    id: 'terminology_modules_within_scope', category: 'structure',
+    description: ruleDesc(ctx, 'structure_checks', 'terminology_modules_within_scope'),
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      `${missing.length} 条术语的权威模块既不在 in_scope_modules 也不在 out_of_scope_modules：` +
+      missing.map(x => `${x.term}→${x.module}`).join('、'),
+    suggestion:
+      '两种合法处理：\n' +
+      '(1) 把这些模块补进 in_scope_modules（本需求确实要改）或 out_of_scope_modules（仅消歧用、不改）；\n' +
+      '(2) 若该术语本来就不在本需求语境，从术语映射表里删除该行。',
+    affected_files: [`doc/features/${ctx.feature}/PRD.md`],
+  }];
+}
+
+// --------------------------------------------------------------------------
+// C1b: glossary 术语在正文出现但未进术语映射表 → WARN（兜底网）
+// --------------------------------------------------------------------------
+
+function checkGlossaryTermsUsedInBody(ctx: CheckContext, prd: string): CheckResult[] {
+  const glossaryResult = loadGlossary(ctx.projectRoot);
+  if (!glossaryResult.ok) {
+    return [{
+      id: 'glossary_terms_used_in_body', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'glossary_terms_used_in_body'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: `glossary 加载失败，本 check 跳过：${describeGlossaryError(glossaryResult.error)}`,
+    }];
+  }
+
+  const glossary = glossaryResult.glossary;
+  if (glossary.terms.length === 0) {
+    return [{
+      id: 'glossary_terms_used_in_body', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'glossary_terms_used_in_body'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: 'glossary 暂无术语条目，无法反向扫描。',
+    }];
+  }
+
+  // 1. 抽出术语映射表里已声明的所有 term（含同 glossary 条目的 alias 传递）
+  const tableCovered = new Set<string>();
+  const tableSection = getSectionContent(prd, '术语映射表');
+  if (tableSection) {
+    const tables = extractTables(tableSection);
+    if (tables.length > 0) {
+      for (const row of tables[0].rows) {
+        const term = (row[0] || '').trim();
+        if (!term || /^\{.*\}$/.test(term)) continue;
+        // 表里这一行可能写的是 "Toast / 基础组件" 这种合写形式，先按 / ， 拆开
+        for (const piece of term.split(/[\/／,，]/)) {
+          const p = piece.trim();
+          if (!p) continue;
+          tableCovered.add(p);
+          const hit = lookupTerm(glossary, p);
+          if (hit) {
+            tableCovered.add(hit.term.term);
+            for (const a of hit.term.aliases) tableCovered.add(a);
+          }
+        }
+      }
+    }
+  }
+
+  // 2. 构造"正文"——把术语映射表整段从 PRD 里挖掉，剩下的就是 body
+  const body = tableSection ? prd.split(tableSection).join('') : prd;
+
+  // 3. 逐术语反向扫描：term/aliases 命中 body 但未在 tableCovered → WARN
+  const missing: Array<{ canonical_term: string; appeared_as: string; module: string }> = [];
+  for (const t of glossary.terms) {
+    const variants = [t.term, ...t.aliases].filter(v => v && v.length > 0);
+    if (variants.some(v => tableCovered.has(v))) continue;
+    const seen = variants.find(v => body.includes(v));
+    if (!seen) continue;
+    missing.push({
+      canonical_term: t.term,
+      appeared_as: seen,
+      module: t.canonical_module,
+    });
+  }
+
+  if (missing.length === 0) {
+    return [{
+      id: 'glossary_terms_used_in_body', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'glossary_terms_used_in_body'),
+      severity: 'MAJOR', status: 'PASS',
+      details: 'PRD 正文使用的 glossary 术语均已在术语映射表中显式声明。',
+    }];
+  }
+
+  return [{
+    id: 'glossary_terms_used_in_body', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'glossary_terms_used_in_body'),
+    severity: 'MAJOR', status: 'WARN',
+    details:
+      `${missing.length} 个 glossary 术语在 PRD 正文出现但未进术语映射表：` +
+      missing.map(x =>
+        x.appeared_as === x.canonical_term
+          ? `${x.appeared_as}(→${x.module})`
+          : `${x.appeared_as}[→${x.canonical_term} → ${x.module}]`,
+      ).join('、'),
+    suggestion:
+      '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 Skill 2 / 3 阶段因术语歧义改错模块；\n' +
+      '若只是正文里偶然带过的非业务用词 → 可直接忽略本 WARN（不会升级为 BLOCKER）。',
+    affected_files: [
+      `doc/features/${ctx.feature}/PRD.md`,
+      'doc/glossary.yaml',
+    ],
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Traceability Checks
 // --------------------------------------------------------------------------
 
@@ -651,6 +849,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
     results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
+    results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
     results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));
     results.push(...safeRun(() => checkAtLeastOneP0(ctx, prd), 'at_least_one_p0'));
@@ -664,6 +863,7 @@ const checker: PhaseChecker = {
 
     results.push(...safeRun(() => checkFeatureToAcceptance(ctx, prd), 'feature_to_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToFeature(ctx, prd), 'acceptance_to_feature'));
+    results.push(...safeRun(() => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
 
     return results;
   },

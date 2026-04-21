@@ -30,6 +30,7 @@ import {
   ModuleCard,
   ModuleCatalog,
 } from './utils/catalog-parser';
+import { parseScope } from './utils/scope-parser';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -669,6 +670,94 @@ function checkKeyExportsFreshVsIndex(
 }
 
 // --------------------------------------------------------------------------
+// C3: feature 反向扫描 — catalog 变更对已有 feature 的完整性影响
+// --------------------------------------------------------------------------
+
+function checkFeatureScopeIntegrity(
+  ctx: CheckContext,
+  catalog: ModuleCatalog,
+): CheckResult[] {
+  const featuresDir = path.join(ctx.projectRoot, 'doc', 'features');
+  if (!fs.existsSync(featuresDir)) {
+    return [{
+      id: 'feature_scope_integrity', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'feature_scope_integrity'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: 'doc/features 目录不存在，本 check 跳过。',
+    }];
+  }
+
+  const known = new Set<string>(catalog.modules.map(m => m.name));
+  const broken: Array<{ file: string; missing: string[]; in_or_out: string[] }> = [];
+  const affected = new Set<string>(['doc/module-catalog.yaml']);
+  let scannedCount = 0;
+
+  const dirents = fs.readdirSync(featuresDir, { withFileTypes: true });
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) continue;
+    for (const fileName of ['PRD.md', 'design.md']) {
+      const fullPath = path.join(featuresDir, dirent.name, fileName);
+      if (!fs.existsSync(fullPath)) continue;
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const { scope } = parseScope(content);
+      if (!scope) continue;
+      scannedCount++;
+
+      const inMissing = scope.in_scope_modules.filter(m => !known.has(m));
+      const outMissing = scope.out_of_scope_modules.filter(m => !known.has(m));
+      const allMissing = [...inMissing, ...outMissing];
+      if (allMissing.length === 0) continue;
+
+      const where: string[] = [];
+      if (inMissing.length > 0) where.push(`in_scope_modules:[${inMissing.join(', ')}]`);
+      if (outMissing.length > 0) where.push(`out_of_scope_modules:[${outMissing.join(', ')}]`);
+
+      const rel = path.join('doc', 'features', dirent.name, fileName).replace(/\\/g, '/');
+      broken.push({ file: rel, missing: allMissing, in_or_out: where });
+      affected.add(rel);
+    }
+  }
+
+  if (scannedCount === 0) {
+    return [{
+      id: 'feature_scope_integrity', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'feature_scope_integrity'),
+      severity: 'MAJOR', status: 'SKIP',
+      details: 'doc/features/*/PRD.md 与 design.md 中均未检测到 Scope 声明，本 check 跳过。',
+    }];
+  }
+
+  if (broken.length === 0) {
+    return [{
+      id: 'feature_scope_integrity', category: 'traceability',
+      description: ruleDesc(ctx, 'traceability_checks', 'feature_scope_integrity'),
+      severity: 'MAJOR', status: 'PASS',
+      details: `扫描了 ${scannedCount} 份 feature 文档，全部 Scope 引用均已在 catalog 建档。`,
+    }];
+  }
+
+  const lines = broken.map(b => `${b.file}：${b.in_or_out.join('；')}`);
+
+  return [{
+    id: 'feature_scope_integrity', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'feature_scope_integrity'),
+    severity: 'MAJOR', status: 'WARN',
+    details:
+      `${broken.length} 份 feature 文档引用了 catalog 未建档的模块` +
+      `（已扫描 ${scannedCount} 份含 Scope 声明的文档）：\n  - ` +
+      lines.join('\n  - '),
+    suggestion:
+      '每条漂移可任选 3 种修法之一：\n' +
+      '  (1) 补档：对缺失模块跑 `/catalog-bootstrap <M>` 进入 CREATE 模式建档；\n' +
+      '  (2) 修 feature：改对应 PRD.md / design.md 的 scope，删除或改名过期模块；\n' +
+      '  (3) 改名追溯：若本次 catalog 是把旧模块改了名，请在新模块 profile 里\n' +
+      '     添加 `merged_from: <旧名>` 备注，方便后续回查。\n' +
+      '不处理的话 → 对该 feature 跑 `--phase prd/design` 会 BLOCKER on scope_matches_catalog。',
+    affected_files: Array.from(affected),
+  }];
+}
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -725,6 +814,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
     results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
     results.push(...safeRun(() => checkKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
+    results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
 
     return results;
   },

@@ -19,6 +19,7 @@
 | 我的 | WalletMain | 02-Feature | medium | 账号 (AccountManager) — 我的是 UI Tab 页，账号是登录能力 | [x] |
 | 卡包 | WalletMain | 02-Feature | medium | 卡管理 (CardManager) — 卡包是 UI 聚合页面，卡管理是后端 CRUD 能力 | [x] |
 | 添卡入口 | WalletMain | 02-Feature | high | — | [x] |
+| 设置 | WalletMain | 02-Feature | high | — | [x] |
 | 账号 | AccountManager | 04-BusinessBase | medium | 我的 (WalletMain) — 账号是登录能力，我的是 Tab 页 | [x] |
 | 登录 | AccountManager | 04-BusinessBase | high | — | [x] |
 | Toast / 基础组件 | CommUI | 05-SystemBase | high | — | [x] |

@@ -86,7 +86,9 @@
    - 该章节存在
    - 所有行的「用户确认」列为 `[x]`
    - `canonical_module` 字段的值必须存在于 `doc/module-catalog.yaml` 的模块名集合里
+   - **每一行的「权威模块」必须同时出现在 Scope 声明的 `in_scope_modules` 或 `out_of_scope_modules` 里**（`terminology_modules_within_scope` BLOCKER）——写了某术语的消歧归属，却忘把对应模块声明进 Scope，属于典型自相矛盾。
 4. 若任何一条映射的置信度是 `medium/low` 且用户未确认，`terminology_mapping_table` BLOCKER 会 FAIL，阻塞后续流程。
+5. **兜底网**：若 `doc/glossary.yaml` 里的某术语（含 aliases）在 PRD 正文出现但未进本映射表，`glossary_terms_used_in_body` WARN 会提示——可能是作者把业务术语当成"普通词"写进正文。补进映射表即可清 WARN；若确认只是偶然带过的非业务用词，忽略 WARN 也不阻断流程。
 
 #### 1.5.4 反模式（禁止）
 
@@ -94,6 +96,7 @@
 - ❌ 置信度一律标 `high`，让用户全量打钩了事
 - ❌ 用户在聊天里口头说了"OK"，但没把 `[ ]` 改成 `[x]` 就继续
 - ❌ Step 2 截图分析中又出现了未在映射表里的新业务名词，却没有回到 Step 1.5 补条目
+- ❌ 术语映射表写了 `卡中心 → CardManager`，但 Scope 声明的 in/out_of_scope_modules 里都没有 CardManager（自相矛盾）
 
 ---
 
