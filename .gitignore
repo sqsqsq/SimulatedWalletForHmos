@@ -2,6 +2,9 @@
 **/oh_modules
 **/oh-package-lock.json5
 **/package-lock.json5
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
 /local.properties
 /.idea
 **/build
