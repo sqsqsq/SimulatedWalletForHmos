@@ -1,4 +1,5 @@
 # 从 PRD.md 提取的验收与边界 — home-page
+# v2：增补 ut_layer / ut_focus / linked_flow / linked_branch，用于 UT-Device 分层追溯
 schema_version: "1.0"
 feature: "home-page"
 
@@ -11,6 +12,11 @@ criteria:
     verification_steps:
       - "安装并冷启应用，切到底 Tab「首页」"
     expected_result: "页面可见主结构，无崩溃"
+    ut_layer: "both"
+    ut_focus: "UseCase.onAppear 走完 Loading→Success，UI 层通过订阅 state 完成首次渲染，不抛异常"
+    linked_flow: "home_loading"
+    linked_branch: "happy_load"
+
   - id: "AC-2"
     prd_function: "F1"
     priority: "P0"
@@ -22,6 +28,11 @@ criteria:
     data_constraints:
       min_service_items: 1
       min_promo_items: 1
+    ut_layer: "unit"
+    ut_focus: "UseCase.state.services.length ≥ 1 且 promos.length ≥ 1；port 调用顺序 getServiceEntries → getPromoList"
+    linked_flow: "home_loading"
+    linked_branch: "happy_load"
+
   - id: "AC-3"
     prd_function: "F2"
     priority: "P0"
@@ -30,6 +41,9 @@ criteria:
     verification_steps:
       - "点击卡面/引导区"
     expected_result: "导航至 CardPackPage"
+    ut_layer: "device"
+    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+
   - id: "AC-4"
     prd_function: "F2"
     priority: "P0"
@@ -38,6 +52,9 @@ criteria:
     verification_steps:
       - "点击主按钮"
     expected_result: "导航至 CardPackPage"
+    ut_layer: "device"
+    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+
   - id: "AC-5"
     prd_function: "F3"
     priority: "P0"
@@ -46,6 +63,9 @@ criteria:
     verification_steps:
       - "点击标题栏加号"
     expected_result: "导航至 AddCardEntryPage"
+    ut_layer: "device"
+    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+
   - id: "AC-6"
     prd_function: "F3"
     priority: "P0"
@@ -54,6 +74,9 @@ criteria:
     verification_steps:
       - "点击消息图标"
     expected_result: "Toast 或等价反馈出现"
+    ut_layer: "device"
+    ut_focus: "纯 UI 反馈，UT 不覆盖"
+
   - id: "AC-7"
     prd_function: "F4"
     priority: "P1"
@@ -62,6 +85,9 @@ criteria:
     verification_steps:
       - "目视检查宫格列数"
     expected_result: "与 ServiceGridSwiper 3 列栅格一致"
+    ut_layer: "device"
+    ut_focus: "UI 布局，UT 不覆盖"
+
   - id: "AC-8"
     prd_function: "F5"
     priority: "P1"
@@ -70,6 +96,9 @@ criteria:
     verification_steps:
       - "进入首页，观察活动区"
     expected_result: "有标题、至少 1 张活动卡、有轮播指示/自动播行为与实现可对应"
+    ut_layer: "device"
+    ut_focus: "UI 组件渲染，UT 不覆盖"
+
   - id: "AC-9"
     prd_function: "F5"
     priority: "P1"
@@ -78,6 +107,9 @@ criteria:
     verification_steps:
       - "点击活动卡"
     expected_result: "Toast 或占位，与产品/代码策略一致，不崩溃"
+    ut_layer: "device"
+    ut_focus: "UI 交互，UT 不覆盖"
+
   - id: "AC-10"
     prd_function: "F6"
     priority: "P1"
@@ -86,6 +118,10 @@ criteria:
     verification_steps:
       - "飞行模式进首页"
     expected_result: "不白屏死锁，可有 Toast/空态"
+    ut_layer: "both"
+    ut_focus: "UseCase port 抛异常时 state.phase=Failed 且 errorCode=LOAD_ERR；真机上 Toast 文案与可用性"
+    linked_flow: "home_loading"
+    linked_branch: "repo_failure"
 
   - id: "AC-G1"
     prd_function: "F1"
@@ -95,6 +131,9 @@ criteria:
     verification_steps:
       - "在配置的目标机型打开首页"
     expected_result: "无显著布局错位"
+    ut_layer: "device"
+    ut_focus: "机型布局，UT 不覆盖"
+
   - id: "AC-G2"
     prd_function: "F1"
     priority: "P0"
@@ -103,6 +142,8 @@ criteria:
     verification_steps:
       - "连点可点击主操作"
     expected_result: "有视觉或导航反馈"
+    ut_layer: "device"
+    ut_focus: "响应性能，UT 不覆盖"
 
 boundaries:
   - id: "BD-1"
@@ -111,18 +152,30 @@ boundaries:
     description: "无网络"
     handling: "缓存或空态、Toast 提示"
     expected_behavior: "不崩溃、可进入首页"
+    ut_layer: "both"
+    ut_focus: "UseCase 捕获 port 异常→Failed 状态；真机验证 Toast"
+    linked_flow: "home_loading"
+    linked_branch: "repo_failure"
+
   - id: "BD-2"
     prd_exception: "E2"
     scenario: "empty_data"
     description: "服务或活动空列表"
     handling: "隐藏区块或空态"
     expected_behavior: "不崩溃"
+    ut_layer: "both"
+    ut_focus: "UseCase 支持 services/promos 任一或全为空时状态不进入 Failed；真机验证隐藏/空态 UI"
+    linked_flow: "home_loading"
+    linked_branch: "empty_services"
+
   - id: "BD-3"
     prd_exception: "E3"
     scenario: "no_nav_stack"
     description: "无 navPathStack 上下文"
     handling: "不 push 或保护"
     expected_behavior: "不崩溃、可 Toast"
+    ut_layer: "device"
+    ut_focus: "导航栈异常属 UI 层，UT 不覆盖"
 
 performance:
   - id: "NFR-1"

@@ -1,5 +1,5 @@
-import homePageUtTest from './home_page_ut.test';
+import homeLoadingUseCaseTest from './home_loading.test';
 
 export default function testsuite() {
-  homePageUtTest();
+  homeLoadingUseCaseTest();
 }

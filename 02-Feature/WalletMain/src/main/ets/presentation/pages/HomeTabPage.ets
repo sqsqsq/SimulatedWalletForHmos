@@ -1,30 +1,38 @@
 import { Context } from '@kit.AbilityKit';
 import { showToast } from '@aspect/CommUI';
 import { HomeRepository } from '../../data/repository/HomeRepository';
+import { HomeLoadingUseCase, HomePhase } from '../../domain/usecase/HomeLoadingUseCase';
 import { PromoInfo } from '../../data/model/PromoInfo';
 import { ServiceEntry } from '../../data/model/ServiceEntry';
 import { CardGuideSection } from '../components/CardGuideSection';
 import { PromoSwiper } from '../components/PromoSwiper';
 import { ServiceGridSwiper } from '../components/ServiceGridSwiper';
 
+/**
+ * HomeTabPage — 订阅 HomeLoadingUseCase 状态并翻译为副作用（Toast / 渲染）。
+ * 业务流程由 UseCase 承担，UI 层只负责：
+ * 1) 在 aboutToAppear 触发 useCase.onAppear()；
+ * 2) 把 state.phase / services / promos 映射到 @State 并驱动渲染；
+ * 3) state.phase === Failed 时翻译为 Toast。
+ */
 @Component
 export struct HomeTabPage {
   @Consume('navPathStack') navPathStack: NavPathStack;
   @State services: ServiceEntry[] = [];
   @State promos: PromoInfo[] = [];
-  private readonly homeRepo: HomeRepository = new HomeRepository();
+  @State phase: HomePhase = HomePhase.Idle;
+  private readonly useCase: HomeLoadingUseCase = new HomeLoadingUseCase(new HomeRepository());
 
   aboutToAppear(): void {
-    void this.loadHomeData();
+    void this.triggerLoad();
   }
 
-  private async loadHomeData(): Promise<void> {
-    try {
-      this.services = await this.homeRepo.getServiceEntries();
-      this.promos = await this.homeRepo.getPromoList();
-    } catch {
-      this.services = [];
-      this.promos = [];
+  private async triggerLoad(): Promise<void> {
+    await this.useCase.onAppear();
+    this.phase = this.useCase.state.phase;
+    this.services = this.useCase.state.services;
+    this.promos = this.useCase.state.promos;
+    if (this.phase === HomePhase.Failed) {
       const ctx = this.getUIContext().getHostContext() as Context;
       showToast(ctx.resourceManager.getStringSync($r('app.string.home_data_unavailable').id));
     }

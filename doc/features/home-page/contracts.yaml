@@ -52,9 +52,25 @@ data_models:
 
 interfaces:
   - module: "WalletMain"
+    layer: "data/port"
+    file: "02-Feature/WalletMain/src/main/ets/data/port/HomeDataPort.ets"
+    class: "HomeDataPort"
+    methods:
+      - name: "getServiceEntries"
+        params: []
+        return: "Promise<ServiceEntry[]>"
+        async: true
+        description: "服务宫格数据端口（hexagonal port）"
+      - name: "getPromoList"
+        params: []
+        return: "Promise<PromoInfo[]>"
+        async: true
+        description: "活动轮播数据端口"
+  - module: "WalletMain"
     layer: "data/repository"
     file: "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets"
     class: "HomeRepository"
+    implements: "HomeDataPort"
     methods:
       - name: "getServiceEntries"
         params: []
@@ -115,9 +131,9 @@ state_management:
   - data: "navPathStack"
     scope: "App root Navigation"
     mechanism: "@Provide / @Consume"
-  - data: "services / promos"
+  - data: "phase / services / promos"
     scope: "HomeTabPage"
-    mechanism: "@State + HomeRepository"
+    mechanism: "@State 镜像 HomeLoadingUseCase.state（UseCase 内部使用 @Observed 模型）"
 
 navigation:
   routes:
@@ -138,6 +154,8 @@ files:
   - "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets"
   - "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets"
   - "02-Feature/WalletMain/src/main/ets/data/repository/MineRepository.ets"
+  - "02-Feature/WalletMain/src/main/ets/data/port/HomeDataPort.ets"
+  - "02-Feature/WalletMain/src/main/ets/domain/usecase/HomeLoadingUseCase.ets"
   - "02-Feature/WalletMain/src/main/ets/presentation/components/AccountCard.ets"
   - "02-Feature/WalletMain/src/main/ets/presentation/components/CardCategoryList.ets"
   - "02-Feature/WalletMain/src/main/ets/presentation/components/CardGuideSection.ets"

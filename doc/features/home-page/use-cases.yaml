@@ -1,0 +1,77 @@
+# home-page UseCase 规约 — 由 Skill 2 产出，Skill 3 据此实现，Skill 5 据此规划 DAG/UT
+# 覆盖 PRD.md F1（首页渲染与数据装配）主流程；UI 交互分支（F2/F3 的跳转、F5 的轮播）交 Skill 6 真机覆盖
+schema_version: "1.0"
+feature: "home-page"
+
+use_cases:
+  - id: "home_loading"
+    class: "HomeLoadingUseCase"
+    file: "02-Feature/WalletMain/src/main/ets/domain/usecase/HomeLoadingUseCase.ets"
+    description: "首页冷启/切入时加载服务宫格与活动数据，并根据结果发布状态供 UI 翻译成副作用"
+
+    triggers:
+      - event: "onAppear"
+        params: []
+        from_ac: ["AC-1", "AC-2", "AC-10"]
+
+    ports:
+      - name: "repo"
+        type: "HomeDataPort"
+        ownership: "local"
+        methods:
+          - { name: "getServiceEntries", params: [],             returns: "ServiceEntry[]" }
+          - { name: "getPromoList",      params: [],             returns: "PromoInfo[]"    }
+
+    state_model:
+      phases: [Idle, Loading, Success, Empty, Failed]
+      fields:
+        - { name: "errorCode", type: "string | null" }
+        - { name: "services",  type: "ServiceEntry[]" }
+        - { name: "promos",    type: "PromoInfo[]" }
+
+    branches:
+      - id: "happy_load"
+        scenario: "服务与活动均有数据，状态落到 Success，UI 按数据渲染"
+        setup: { repo.getServiceEntries: ok_nonempty, repo.getPromoList: ok_nonempty }
+        expected_phase_sequence: [Idle, Loading, Success]
+        expected_port_calls: ["repo.getServiceEntries", "repo.getPromoList"]
+        expected_state:
+          errorCode: null
+        linked_acceptance: ["AC-1", "AC-2"]
+
+      - id: "empty_services"
+        scenario: "服务为空、活动有数据，状态 Success 但 services 空，UI 隐藏宫格"
+        setup: { repo.getServiceEntries: ok_empty, repo.getPromoList: ok_nonempty }
+        expected_phase_sequence: [Idle, Loading, Success]
+        expected_port_calls: ["repo.getServiceEntries", "repo.getPromoList"]
+        expected_state:
+          errorCode: null
+        linked_acceptance: ["BD-2"]
+
+      - id: "empty_promos"
+        scenario: "活动为空、服务有数据，状态 Success 但 promos 空，UI 隐藏活动区"
+        setup: { repo.getServiceEntries: ok_nonempty, repo.getPromoList: ok_empty }
+        expected_phase_sequence: [Idle, Loading, Success]
+        expected_port_calls: ["repo.getServiceEntries", "repo.getPromoList"]
+        expected_state:
+          errorCode: null
+        linked_acceptance: ["BD-2"]
+
+      - id: "all_empty"
+        scenario: "两侧数据都为空，状态落到 Empty，UI 展示空态或隐藏"
+        setup: { repo.getServiceEntries: ok_empty, repo.getPromoList: ok_empty }
+        expected_phase_sequence: [Idle, Loading, Empty]
+        expected_port_calls: ["repo.getServiceEntries", "repo.getPromoList"]
+        expected_state:
+          errorCode: null
+        linked_acceptance: ["BD-2"]
+
+      - id: "repo_failure"
+        scenario: "任一 port 抛异常（含 E1 无网），状态 Failed 且 services/promos 回退为空，UI 翻译为 Toast"
+        setup: { repo.getServiceEntries: throw }
+        expected_phase_sequence: [Idle, Loading, Failed]
+        expected_port_calls: ["repo.getServiceEntries"]
+        expected_state:
+          errorCode: "LOAD_ERR"
+        not_called: []
+        linked_acceptance: ["AC-10", "BD-1"]
