@@ -1,6 +1,6 @@
 export interface PromoInfo {
   id: string;
-  title: string;
-  description: string;
+  title: Resource;
+  description: Resource;
   image: Resource;
 }

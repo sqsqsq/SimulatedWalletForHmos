@@ -65,6 +65,42 @@
       "value": "欢迎使用钱包消息中心！"
     },
     {
+      "name": "home_data_unavailable",
+      "value": "数据暂不可用，请稍后再试"
+    },
+    {
+      "name": "home_mock_service_s1_name",
+      "value": "Huawei Card"
+    },
+    {
+      "name": "home_mock_service_s2_name",
+      "value": "信用卡还款"
+    },
+    {
+      "name": "home_mock_service_s3_name",
+      "value": "优惠加油"
+    },
+    {
+      "name": "home_mock_service_s4_name",
+      "value": "更多"
+    },
+    {
+      "name": "home_mock_promo_p1_title",
+      "value": "春日出行"
+    },
+    {
+      "name": "home_mock_promo_p1_desc",
+      "value": "交通卡充值满减"
+    },
+    {
+      "name": "home_mock_promo_p2_title",
+      "value": "安全用卡"
+    },
+    {
+      "name": "home_mock_promo_p2_desc",
+      "value": "守护您的资金安全"
+    },
+    {
       "name": "finance_section_title",
       "value": "金融信息"
     },

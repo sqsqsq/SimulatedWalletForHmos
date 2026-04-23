@@ -3,12 +3,12 @@ import { ServiceEntry } from '../model/ServiceEntry';
 
 export class HomeRepository {
   async getServiceEntries(): Promise<ServiceEntry[]> {
-    // 与 acceptance AC-5 data_constraints.items_include 对齐
+    // 与 acceptance AC-5 data_constraints.items_include 对齐；文案在 string.json
     return [
-      { id: 's1', name: 'Huawei Card', icon: $r('sys.symbol.creditcard') },
-      { id: 's2', name: '信用卡还款', icon: $r('sys.symbol.doc_plaintext') },
-      { id: 's3', name: '优惠加油', icon: $r('sys.symbol.gift') },
-      { id: 's4', name: '更多', icon: $r('sys.symbol.square_grid_2x2') }
+      { id: 's1', name: $r('app.string.home_mock_service_s1_name'), icon: $r('sys.symbol.creditcard') },
+      { id: 's2', name: $r('app.string.home_mock_service_s2_name'), icon: $r('sys.symbol.doc_plaintext') },
+      { id: 's3', name: $r('app.string.home_mock_service_s3_name'), icon: $r('sys.symbol.gift') },
+      { id: 's4', name: $r('app.string.home_mock_service_s4_name'), icon: $r('sys.symbol.square_grid_2x2') }
     ];
   }
 
@@ -16,14 +16,14 @@ export class HomeRepository {
     return [
       {
         id: 'p1',
-        title: '春日出行',
-        description: '交通卡充值满减',
+        title: $r('app.string.home_mock_promo_p1_title'),
+        description: $r('app.string.home_mock_promo_p1_desc'),
         image: $r('sys.symbol.camera')
       },
       {
         id: 'p2',
-        title: '安全用卡',
-        description: '守护您的资金安全',
+        title: $r('app.string.home_mock_promo_p2_title'),
+        description: $r('app.string.home_mock_promo_p2_desc'),
         image: $r('sys.symbol.lock')
       }
     ];

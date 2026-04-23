@@ -1,41 +1,39 @@
 # SSOT: 模块画像目录 (Module Catalog)
-# 用途：业务自然语言 ↔ 技术模块的权威映射源之一
-# 维护方式：由 Skill 0 · Phase A (`/catalog-bootstrap <ModuleName>`) 逐模块追加
-#           AI 绝不直接写入本文件，除非拿到用户在对话里的 `y` 确认
-# 骨架由 Skill 0 Step 0 创建；模块卡片陆续通过 catalog-staging → 合并 进来
-
+# 由 Skill 0 · Phase A (`/catalog-bootstrap <ModuleName>`) 逐模块追加
 schema_version: "1.0"
 modules:
   - name: "CommFunc"
     layer: "05-SystemBase"
-    sub_layer: null
+    sub_layer: "CommFunc"
     format: "HAR"
-    one_liner: "系统功能封装：log 能力、LiveData 基础能力、状态机、决策树、通用 util 类等"
+    one_liner: "系统侧通用能力封装：轻量日志（hilog）与字符串/账号脱敏等可复用工具，供同层与上层 HAR 引用。"
     responsibilities:
-      - "封装 hilog 提供 Logger 静态方法（info / error 等），供全工程统一打日志"
-      - "提供通用格式化工具类（FormatUtil 当前包含 maskPhone / maskAccount 等脱敏能力）"
-      - "（架构规划）提供 LiveData 基础能力、状态机、决策树等与业务无关的系统工具（当前代码尚未落地，仅作为未来扩展位）"
+      - "通过 `Logger` 向各模块提供统一的 `hilog` 封装，统一 DOMAIN，降低重复样板代码。"
+      - "通过 `FormatUtil` 提供手机号/通用账号的脱敏与展示用格式化，供业务侧展示层复用。"
+      - "作为 05-SystemBase 中 **CommFunc 子层** 成员，在子层规则下不依赖 `CommUI`，可被 `CommUI` 与其它外层模块依赖（按架构 DSL 允许的层间边）。"
     NOT_responsible_for:
-      - "任何与业务相关的数据结构或服务（账号、卡、消息等一概不归它管）"
-      - "UI 组件（弹框 / 列表 / 卡片等属 CommUI；注意 CommUI 可以反向依赖 CommFunc，但 CommFunc 自身不提供任何 UI）"
-      - "网络 / 持久化 / NFC 等中间层能力（属 03-CommonBusiness 的 NetworkManager / DataPersistenceMng / NFCManager，与本模块无关）"
+      - "不负责页面、路由、可交互 UI 与视觉资源；若 PRD 描述「页面/组件/动效」等，应落在 Feature/Product 或同层 `CommUI` 模块，而非在 `CommFunc` 新造 UI。"
+      - "不负责卡、账户、交易、设备指纹等业务域逻辑与数据持有；`CommFunc` 只提供与业务无关的通用技术能力。"
+      - "不负责为单一 Feature 定制业务 DTO/Repository/领域服务；此类能力应落在对应 `02-Feature` 或 `04-BusinessBase` 模块的 domain 层。"
     typical_business_terms:
-      - "通用工具"
-      - "日志"
-      - "log"
-      - "脱敏工具"
-      - "格式化"
-      - "系统基础能力"
+      - "系统功能封装"
+      - "通用日志"
+      - "脱敏"
+      - "工具类"
     easily_confused_with:
       - module: "CommUI"
         disambiguation: |
-          判定规则（以"产物能否被 ArkUI 渲染出来"为锚）：
-          - 产物是**可渲染的 UI**（Toast / 弹框 / 颜色资源 / ArkUI 组件 / 主题色常量） → 属 CommUI
-          - 产物是**纯数据或方法**（Logger / 脱敏工具 / 格式化 / 状态机 / LiveData / 决策树 / 普通 util 类） → 属 CommFunc
-          典型反例：
-          - "日志级别的文字颜色常量" → 问自己：它是为了让 UI 渲染？若是 → CommUI（因为只有 UI 会消费）。若纯为了日志输出控制 → CommFunc。
-          - "Toast 文案格式化工具"（如"保留 N 位数字 + 加千分符"）→ 工具本身是纯函数 → CommFunc；但若封装成 `showFormattedToast()` 这样的 UI 调用 → CommUI。
-          依赖方向佐证：CommUI → CommFunc 单向，若你准备写的东西需要 import CommUI 的符号才能实现 → 绝不能放 CommFunc。
+          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
+          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
+          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+      - module: "AccountManager"
+        disambiguation: |
+          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+      - module: "WalletMain"
+        disambiguation: |
+          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
     key_exports:
       - "Logger"
       - "FormatUtil"
@@ -43,36 +41,38 @@ modules:
 
   - name: "CommUI"
     layer: "05-SystemBase"
-    sub_layer: null
+    sub_layer: "CommUI"
     format: "HAR"
-    one_liner: "公共 UI 组件：NavDestination 基础页面组件、弹框、Toast、卡片组件、滑动组件等与业务无关的基础组件"
+    one_liner: "公共可复用 ArkUI 组件与轻量主题/Toast 能力，为 Feature/Product 提供统一风格的基础 UI 积木；依赖同层 `CommFunc` 满足子层边。"
     responsibilities:
-      - "提供无业务语义的通用 UI 组件（当前含 ActionListItem 列表项、SectionCard 卡片容器、showToast 等），供上层模块复用"
-      - "维护统一的主题色与视觉常量（CommColors / app.color.*），让整个钱包 UI 风格一致"
-      - "封装 ArkUI promptAction 等系统 UI API，屏蔽 UIContext 缺失等边界情况，向上提供稳定调用形态"
+      - "导出通用 ArkUI 组件（如 `ActionListItem` 行列表项、`SectionCard` 区段卡片容器等），以 `@Component` / `@BuilderParam` 形式供上层直接拼装业务页面。"
+      - "提供 `CommColors` 与 `app.color.*` 等资源联动的色值语义，使业务侧在引用 token 时与公共主题保持一致。"
+      - "提供 `showToast` 等轻量交互反馈封装（基于 `promptAction`），在 UI 相关上下文中复用；空 catch 为「无 UI 上下文时静默」的预期行为，不等价于在 `CommFunc` 中实现业务日志。"
+      - "通过 `oh-package` 显式 `file:../CommFunc` 依赖，在架构上与「CommUI 子层可依赖 CommFunc 子层」一致。"
     NOT_responsible_for:
-      - "任何业务数据或服务（卡 / 账号 / 消息等一概不归，这些属 02-Feature 或 03-CommonBusiness）"
-      - "日志 / 工具方法（归 CommFunc；注意 CommUI 可调用 CommFunc，但反之不行）"
-      - "承载业务逻辑的页面（如首页 / 卡包 / 设置页等完整页面属 02-Feature 的 WalletMain，CommUI 只提供构成页面的原子组件）"
+      - "不负责完整业务页、导航栈、多 Tab 主框架；若 PRD 描述的是「某业务线首页/流程页」，应落在对应 `02-Feature` 或 `01-Product` 模块，而非在 `CommUI` 内堆业务态。"
+      - "不负责卡列表、卡详情、金融字段校验等业务域 UI；公共组件可被业务模块引用，但**业务态组件与数据绑定**应落在业务模块的 presentation 层。"
+      - "不替代 `CommFunc` 的 `Logger`、脱敏与纯工具 API；**无 UI 的纯技术能力**应继续走 `CommFunc` 的 `Index.ets` 导出，而非复制到本模块。"
     typical_business_terms:
-      - "通用组件"
-      - "公共组件"
-      - "Toast"
-      - "弹框"
-      - "列表项"
-      - "卡片容器"
-      - "UI 组件库"
+      - "公共 UI 组件"
       - "主题色"
+      - "通用列表项"
+      - "区段卡片"
+      - "Toast"
     easily_confused_with:
       - module: "CommFunc"
         disambiguation: |
-          判定规则（以"产物能否被 ArkUI 渲染出来"为锚）：
-          - 产物是**可渲染的 UI**（Toast / 弹框 / 颜色资源 / ArkUI 组件 / 主题色常量） → 属 CommUI
-          - 产物是**纯数据或方法**（Logger / 脱敏工具 / 格式化 / 状态机 / LiveData / 决策树 / 普通 util 类） → 属 CommFunc
-          典型反例（与 CommFunc 侧完全对称）：
-          - "日志级别的文字颜色常量" → 若是为了让 UI 渲染 → CommUI；若纯为日志输出控制 → CommFunc
-          - "Toast 文案格式化工具" → 纯函数 → CommFunc；封装成 `showFormattedToast()` → CommUI
-          依赖方向佐证：CommUI → CommFunc 单向。若你在 CommFunc 里想 import CommUI 的符号 → 说明你放错了模块。
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
     key_exports:
       - "CommColors"
       - "showToast"
@@ -84,27 +84,33 @@ modules:
     layer: "04-BusinessBase"
     sub_layer: null
     format: "HAR"
-    one_liner: "华为账号管理：登录/登出行为管理、订阅登录状态变化、登录数据发布。封装华为账号登录 Kit API"
+    one_liner: "跨 Feature 的账号域能力：基于 AppStorage 的登录态、展示账号、UserProfile 与可订阅的 `LoginState`；`AccountService` 为单例入口；登录流现阶段为可替换的模拟实现。"
     responsibilities:
-      - "封装登录 / 登出行为（AccountService 单例），目前沙盒版为模拟登录；未来对接华为账号 Kit"
-      - "维护并对外发布登录状态（LoginState 枚举 + AppStorage），通过 listener 机制广播登录状态变化"
-      - "提供当前用户资料查询（UserProfile），上层可据此渲染'我的'页面的账号区域"
-      - "向外暴露 AccountConstants（如 STORAGE_IS_LOGGED_IN 等 key）作为订阅/读取的约定常量"
+      - "以 `AccountService` 单例管理登录/登出、`getUserProfile`、以及 `onLoginStateChanged` / `offLoginStateChanged` 订阅，向业务方暴露统一账号会话语义。"
+      - "维护 `UserProfile`、`LoginState` 等数据模型与 `AccountConstants` 的存储键，保证「是否登录、展示用账号串」等在应用内可查询、可恢复。"
+      - "在 `login` 等路径中调用 `CommFunc` 的 `FormatUtil` 对展示账号做脱敏，仅负责**何时写入展示串**；不负责脱敏算法本身的演进（算法归 `CommFunc`）。"
     NOT_responsible_for:
-      - "UI 渲染（'我的'页面的具体布局归 02-Feature 的 WalletMain，AccountManager 只提供数据与状态流）"
-      - "其它身份/证件相关业务（身份证 / 驾驶证属 02-Feature 的 IDCards，与华为账号登录无任何关系）"
-      - "通用持久化框架（当前沙盒用 AppStorage；真实工程中的 KVStore / RelationalStore / Preference 管理属 03-CommonBusiness 的 DataPersistenceMng，本模块仅作为消费者）"
-      - "'账户'一词有二义：指华为账号登录身份时归本模块；指钱包业务账户（余额 / 流水 / 账户中心等）时不归本模块——真实工程应另建 WalletAccount / 余额账户类模块承载，沙盒暂缺"
+      - "不负责钱包首页/卡列表/行业 Feature 的页面编排与业务路由；这些归 `02-Feature`（如 `WalletMain`）或 `01-Product`，本模块只提供「账号维度的领域服务+模型」被其引用。"
+      - "不负责华为账号 Kit 的完整接入、OAuth 页面与合规弹窗的 UX；当前代码为**模拟登录**（注释已声明可替换为华为账号 Kit），真实开户/授权流程应在产品确定后由本模块或协作模块分步承载，**禁止**在 PRD 中默认等同「已上生产级 Huawei ID」。"
+      - "不负责通用 ArkUI 组件、主题、纯 Toast 工具；若只涉及无账号语义的视觉与动效，应归 `CommUI` / `CommFunc`。"
     typical_business_terms:
-      - "账号"
-      - "华为账号"
+      - "账号管理"
       - "登录"
       - "登出"
-      - "登录态"
-      - "登录状态"
-      - "用户信息"
-      - "账户"
-    easily_confused_with: []
+      - "我的账号"
+      - "未登录"
+    easily_confused_with:
+      - module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
     key_exports:
       - "AccountConstants"
       - "LoginState"
@@ -114,38 +120,42 @@ modules:
 
   - name: "WalletMain"
     layer: "02-Feature"
-    sub_layer: "顶层"
+    sub_layer: null
     format: "HAR"
-    one_liner: "钱包公共页面与入口聚合：首页 / 我的 / 卡包 / 添卡入口等非特定卡种业务页面"
+    one_liner: "钱包**主 feature**：导出首页/我的 Tab 子页、卡包与添卡等路由页构建函数；在 presentation 中编排卡引导、服务宫格、活动轮播等，并通过 `AccountManager` / `CommUI` / `CommFunc` 组合出「模拟钱包」主路径（数据当前多为本地 Repository 样例）。"
     responsibilities:
-      - "承载'首页'页面（HomeTabPage）：服务入口宫格、营销位、卡管引导等聚合视图"
-      - "承载'我的'页面（MineTabPage）：账号区（依赖 AccountManager 订阅登录态）、金融服务、设置入口"
-      - "承载'卡包'页面（CardPackPage）：卡片总览入口（卡片明细由各 02-Feature 底层卡种模块自己实现）"
-      - "承载'添卡入口'页面（AddCardEntryPage）：导向不同卡种的添加流程，本模块只做分流、不实现具体添加逻辑"
-      - "持有首页 / 我的相关的 Repository（HomeRepository / MineRepository）与模型（ServiceEntry / PromoInfo / FinanceEntry / SettingEntry）"
+      - "对外导出 `HomeTabPage`、`MineTabPage` 及 `buildCardPackPage` / `buildAddCardEntryPage`，供 `01-Product` 宿主通过 `Index.ets` 与 `main_pages` / `route_map` 装配主导航与二级页。"
+      - "在 `MineTabPage` 等场景集成 `AccountService` / `UserProfile` / `LoginState`（来自 `AccountManager`），在「我的」里呈现登录/展示账号，但**不替代** `AccountManager` 内的会话与存储实现。"
+      - "维护 `HomeRepository` / `MineRepository` / `CardRepository` 等同 feature 的读模型与 Mock/本地数据，支撑首页、我的、卡包、添卡等 UX；业务模型如 `ServiceEntry` / `CardCategory` / `PromoInfo` 等以本 feature 为归属。"
+      - "在页面与业务组件中组合 `CommUI` 的 `ActionListItem` / `SectionCard` / `showToast` 等，与 feature 内 `AccountCard` / `CardGuideSection` 等区分**通用积木 vs 带钱包语义的 feature 组件**。"
     NOT_responsible_for:
-      - "任何具体卡种的业务逻辑（银行卡 / 交通卡 / 门禁卡等属 02-Feature 底层各卡种模块；WalletMain 只能调用它们或提供入口，不能代写其卡片增删改查）"
-      - "登录 / 登出 / 登录态订阅等账号能力（属 04-BusinessBase 的 AccountManager；WalletMain 只作为消费方）"
-      - "通用原子 UI 组件（ActionListItem / Toast / SectionCard 等归 CommUI；WalletMain 的 components/ 只放与钱包业务耦合的组合组件，如 AccountCard / CardCategoryList / PromoSwiper）"
-      - "跨卡种的统一管理能力（如卡元数据聚合 / 统一订阅 / 功能代理——在真实工程里属 03-CommonBusiness 的 CardManager；沙盒目前无此模块）"
-      - "应用级路由 / Tabs / Ability 注册（属 01-Product 的 Phone；WalletMain 只导出页面组件，由 Phone 负责挂载）"
-      - "刷卡 / 二维码支付等跨卡种交互（属 02-Feature 中间层 SwipeCard；注意依赖方向是 WalletMain → SwipeCard，反向不允许）"
+      - "不负责应用级入口（EntryAbility、窗口态、HAP 级配置与签名）；宿主壳与多模块装配归 **`01-Product` / `Phone`**，本模块以 HAR 被依赖。"
+      - "不负责**跨 Feature 的账号域 API 与 AppStorage 键语义**的单独权威定义；登录/登出与 `UserProfile` 真理来源是 **`AccountManager`**，本模块只在其 UI 中调用与展示。"
+      - "不复制 **`CommUI`** 的通用无业务组件为「第二套设计系统」；可扩展布局但不应把**纯通用**的列表项/色板实现再实现一遍。"
+      - "不承担生产环境「卡发行、支付清算、NFC/SE 实卡管理」等线下业务；当前代码偏演示/模拟，与真实支付落地之间的 gap 须由产品拆需求后再落到本模块或独立业务模块，**不可默认本模块已等于生产卡系统**。"
     typical_business_terms:
-      - "首页"
-      - "钱包首页"
-      - "我的"
-      - "我的页"
-      - "个人中心"
+      - "钱包主功能"
       - "卡包"
-      - "卡包页"
       - "添卡"
-      - "添卡入口"
-      - "添加卡片"
-      - "设置"
-      - "设置入口"
-      - "金融服务"
-      - "营销位"
-    easily_confused_with: []
+      - "首页"
+      - "我的"
+    easily_confused_with:
+      - module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
     key_exports:
       - "HomeTabPage"
       - "MineTabPage"
@@ -157,27 +167,26 @@ modules:
     layer: "01-Product"
     sub_layer: null
     format: "HAP"
-    one_liner: "应用主入口：唯一的 HAP 模块，装壳所有 HAR 并对外发布一个可安装的应用"
+    one_liner: "应用**入口 HAP**：`PhoneAbility` 作为 UI 宿主加载 `pages/Index`，在独立模块内完成 `Navigation` + 双 Tab 壳，并从 `WalletMain` 拉取 `HomeTabPage` / `MineTabPage` 与二级页 builder；**不实现**卡种/服务数据与账号域，仅做壳与多 HAR 依赖聚合。"
     responsibilities:
-      - "注册 PhoneAbility（UIAbility）作为应用 home entity 入口，挂载主窗口并加载 Index 页面"
-      - "注册 PhoneBackupAbility 等 ExtensionAbility（备份能力）"
-      - "在 Index 页面装配 Tabs（首页 / 我的）+ Navigation 路由，把 WalletMain 导出的 HomeTabPage / MineTabPage / buildCardPackPage / buildAddCardEntryPage 挂载成一个完整 App"
-      - "作为最终打包产物承接所有 HAR 依赖（WalletMain / AccountManager / CommUI / CommFunc 等）"
+      - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/Index')`，并处理颜色模式、窗口与生命周期中的通用日志点。"
+      - "在 `pages/Index.ets` 中声明 `@Entry` 根 `Navigation` + 底部 `Tabs`（首页/我的），`@Provide('navPathStack')` 供 `WalletMain` 子页做栈式导航到卡包/添卡等 route。"
+      - "通过 HAP 级 `oh-package` 声明对 `WalletMain`、`AccountManager`、`CommUI`、`CommFunc` 的依赖，在工程上固定「产品壳拉 feature + 基座」的装配图。"
+      - "声明 `PhoneBackupAbility` 扩展能力（`type: backup`）及 `backup_config` 元数据，满足备份扩展的技术挂载点；**备份策略细节**以配置与系统契约为准。"
     NOT_responsible_for:
-      - "任何业务逻辑或具体页面内容（首页 / 我的 / 卡包 / 添卡等页面归 WalletMain；Phone 只负责'挂在哪个 Tab'、'Navigation 路由表'这种壳级事务）"
-      - "登录 / 账号 / 卡 / 工具类等任何能力（下沉到各 HAR 模块；HAP 层不放任何可复用能力）"
-      - "原子 UI 组件与主题（归 CommUI；HAP 层不声明组件）"
-      - "跨卡种业务（刷卡 / 卡包明细 / 银行卡 / 交通卡等都在 02-Feature）"
+      - "**不负责**首页服务宫格、活动轮播、卡包列表、我的页金融入口等**业务数据与用例**；此类归属 **`WalletMain` 的 Repository 与 feature 子页**。"
+      - "**不负责** `AccountService` / 登录态 / `UserProfile` 的域模型与存储；`Index` 仅消费 `WalletMain` 中已接好的「我的」页，**不**在 HAP 内复制账号领域逻辑。"
+      - "**不定义**可跨应用复用的通用 `ActionListItem` / 主题等；继续由 **`CommUI` / `CommFunc`** 提供，本壳只做页面级装配。"
+      - "不承担发布渠道、分账、真机 SE 等**渠道与合规**决策；HAP 仅持工程级配置与能力声明。"
     typical_business_terms:
+      - "主应用"
       - "应用入口"
-      - "App 入口"
-      - "HAP"
-      - "主 entry"
-      - "主 Ability"
-      - "Tabs"
-      - "Navigation 路由表"
-      - "应用启动"
-      - "主窗口"
-    easily_confused_with: []
+      - "启屏"
+      - "底 Tab"
+    easily_confused_with:
+      - module: "WalletMain"
+        disambiguation: |
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"

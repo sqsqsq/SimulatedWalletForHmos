@@ -19,8 +19,15 @@ export struct HomeTabPage {
   }
 
   private async loadHomeData(): Promise<void> {
-    this.services = await this.homeRepo.getServiceEntries();
-    this.promos = await this.homeRepo.getPromoList();
+    try {
+      this.services = await this.homeRepo.getServiceEntries();
+      this.promos = await this.homeRepo.getPromoList();
+    } catch {
+      this.services = [];
+      this.promos = [];
+      const ctx = this.getUIContext().getHostContext() as Context;
+      showToast(ctx.resourceManager.getStringSync($r('app.string.home_data_unavailable').id));
+    }
   }
 
   build() {
@@ -61,9 +68,6 @@ export struct HomeTabPage {
           CardGuideSection({
             onGoCardPack: () => {
               this.navPathStack.pushPath({ name: 'CardPackPage' });
-            },
-            onGoAddCard: () => {
-              this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
             }
           })
 

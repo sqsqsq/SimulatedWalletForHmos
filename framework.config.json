@@ -7,13 +7,22 @@
     "outer_layers": [
       {
         "id": "01-Product",
-        "can_depend_on": ["02-Feature", "03-CommonBusiness", "04-BusinessBase", "05-SystemBase"],
-        "intra_layer_deps": "forbid"
+        "can_depend_on": [
+          "02-Feature",
+          "03-CommonBusiness",
+          "04-BusinessBase",
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
       },
       {
         "id": "02-Feature",
-        "can_depend_on": ["03-CommonBusiness", "04-BusinessBase", "05-SystemBase"],
-        "intra_layer_deps": "forbid"
+        "can_depend_on": [
+          "03-CommonBusiness",
+          "04-BusinessBase",
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
       },
       {
         "id": "03-CommonBusiness",
@@ -23,15 +32,23 @@
       {
         "id": "04-BusinessBase",
         "can_depend_on": ["05-SystemBase"],
-        "intra_layer_deps": "forbid"
+        "intra_layer_deps": "dag"
       },
       {
         "id": "05-SystemBase",
         "can_depend_on": [],
         "intra_layer_deps": "sublayer",
         "sublayers": [
-          { "id": "CommUI",   "members_pattern_or_list": ["CommUI"],   "can_depend_on_sublayers": ["CommFunc"] },
-          { "id": "CommFunc", "members_pattern_or_list": ["CommFunc"], "can_depend_on_sublayers": [] }
+          {
+            "id": "CommUI",
+            "members_pattern_or_list": ["CommUI"],
+            "can_depend_on_sublayers": ["CommFunc"]
+          },
+          {
+            "id": "CommFunc",
+            "members_pattern_or_list": ["CommFunc"],
+            "can_depend_on_sublayers": []
+          }
         ]
       }
     ],
