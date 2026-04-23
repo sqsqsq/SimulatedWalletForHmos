@@ -151,36 +151,6 @@ HomeTabPage
 
 ---
 
-## 业务流程 UseCase 清单
-
-> v2 引入：按 framework/skills/2-requirement-design 约束，把多步业务流程从 UI 组件中剥离为 UseCase 一等公民。
-> 详见 `doc/features/home-page/use-cases.yaml`。
-
-### HomeLoadingUseCase（home_loading）
-
-- **职责**：首页冷启/切入时加载服务与活动数据，发布状态给 UI 层订阅；不触达 UI、Nav、Toast。
-- **文件**：`02-Feature/WalletMain/src/main/ets/domain/usecase/HomeLoadingUseCase.ets`
-- **触发**：UI 层在 `aboutToAppear` 转发 `useCase.onAppear()`。
-- **端口（构造器注入）**：
-  - `repo: HomeDataPort`（`02-Feature/WalletMain/src/main/ets/data/port/HomeDataPort.ets`），方法 `getServiceEntries` / `getPromoList`；默认适配器为 `HomeRepository`。
-- **状态模型**：`phase ∈ {Idle, Loading, Success, Empty, Failed}`，附带 `errorCode / services / promos`。
-- **分支**：`happy_load` / `empty_services` / `empty_promos` / `all_empty` / `repo_failure`（一一对应 UT it）。
-
-```mermaid
-stateDiagram-v2
-  [*] --> Idle
-  Idle --> Loading: onAppear
-  Loading --> Success: services.len + promos.len > 0
-  Loading --> Empty: 两侧均为空
-  Loading --> Failed: port 抛异常 (errorCode=LOAD_ERR)
-```
-
-UI（`HomeTabPage`）只负责两件事：
-1. `aboutToAppear()` 调用 `useCase.onAppear()`；
-2. 根据 `useCase.state.phase` 翻译成渲染 + Toast 副作用（`Failed → showToast(home_data_unavailable)`）。
-
----
-
 ## 状态管理方案
 
 | 数据 | 作用域 | 装饰器 / 机制 | 持有者 |

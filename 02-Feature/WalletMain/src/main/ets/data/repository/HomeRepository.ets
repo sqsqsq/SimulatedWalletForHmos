@@ -1,8 +1,7 @@
 import { PromoInfo } from '../model/PromoInfo';
 import { ServiceEntry } from '../model/ServiceEntry';
-import { HomeDataPort } from '../port/HomeDataPort';
 
-export class HomeRepository implements HomeDataPort {
+export class HomeRepository {
   async getServiceEntries(): Promise<ServiceEntry[]> {
     // 与 acceptance AC-5 data_constraints.items_include 对齐；文案在 string.json
     return [

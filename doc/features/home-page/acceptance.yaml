@@ -1,5 +1,8 @@
 # 从 PRD.md 提取的验收与边界 — home-page
-# v2：增补 ut_layer / ut_focus / linked_flow / linked_branch，用于 UT-Device 分层追溯
+# ut_layer / ut_focus 用于 UT ↔ Device 分层分工：
+#   unit   = UT 直接覆盖（驱动现有业务代码 + 自然边界打桩）
+#   device = 纯 UI/机型/性能，Skill 6 真机覆盖
+#   both   = UT 验证逻辑分支，真机验证 UI 副作用
 schema_version: "1.0"
 feature: "home-page"
 
@@ -13,9 +16,7 @@ criteria:
       - "安装并冷启应用，切到底 Tab「首页」"
     expected_result: "页面可见主结构，无崩溃"
     ut_layer: "both"
-    ut_focus: "UseCase.onAppear 走完 Loading→Success，UI 层通过订阅 state 完成首次渲染，不抛异常"
-    linked_flow: "home_loading"
-    linked_branch: "happy_load"
+    ut_focus: "HomeRepository.getServiceEntries / getPromoList 返回值不为 null 且数据模型字段齐全；真机验证首次渲染"
 
   - id: "AC-2"
     prd_function: "F1"
@@ -29,9 +30,7 @@ criteria:
       min_service_items: 1
       min_promo_items: 1
     ut_layer: "unit"
-    ut_focus: "UseCase.state.services.length ≥ 1 且 promos.length ≥ 1；port 调用顺序 getServiceEntries → getPromoList"
-    linked_flow: "home_loading"
-    linked_branch: "happy_load"
+    ut_focus: "HomeRepository.getServiceEntries().length ≥ 1 且 getPromoList().length ≥ 1"
 
   - id: "AC-3"
     prd_function: "F2"
@@ -118,10 +117,8 @@ criteria:
     verification_steps:
       - "飞行模式进首页"
     expected_result: "不白屏死锁，可有 Toast/空态"
-    ut_layer: "both"
-    ut_focus: "UseCase port 抛异常时 state.phase=Failed 且 errorCode=LOAD_ERR；真机上 Toast 文案与可用性"
-    linked_flow: "home_loading"
-    linked_branch: "repo_failure"
+    ut_layer: "device"
+    ut_focus: "异常路径靠 try/catch 包裹 + UI Toast 真机验证；当前 Repository 为 Mock 数据源无真实异常源，UT 暂不覆盖"
 
   - id: "AC-G1"
     prd_function: "F1"
@@ -152,10 +149,8 @@ boundaries:
     description: "无网络"
     handling: "缓存或空态、Toast 提示"
     expected_behavior: "不崩溃、可进入首页"
-    ut_layer: "both"
-    ut_focus: "UseCase 捕获 port 异常→Failed 状态；真机验证 Toast"
-    linked_flow: "home_loading"
-    linked_branch: "repo_failure"
+    ut_layer: "device"
+    ut_focus: "当前 HomeRepository 是本地 Mock 无真实网络路径；异常处理交真机验证"
 
   - id: "BD-2"
     prd_exception: "E2"
@@ -163,10 +158,8 @@ boundaries:
     description: "服务或活动空列表"
     handling: "隐藏区块或空态"
     expected_behavior: "不崩溃"
-    ut_layer: "both"
-    ut_focus: "UseCase 支持 services/promos 任一或全为空时状态不进入 Failed；真机验证隐藏/空态 UI"
-    linked_flow: "home_loading"
-    linked_branch: "empty_services"
+    ut_layer: "device"
+    ut_focus: "Mock 固定返回非空，空态路径交真机观察"
 
   - id: "BD-3"
     prd_exception: "E3"
