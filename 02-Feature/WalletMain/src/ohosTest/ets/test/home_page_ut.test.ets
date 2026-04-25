@@ -15,12 +15,12 @@ export default function homePageUtTest() {
     it('[AC-1] HomeRepository 返回非空数据，模型字段齐全', 0, async () => {
       const services = await repo.getServiceEntries();
       const promos = await repo.getPromoList();
-      expect(services).not.assertNull();
-      expect(promos).not.assertNull();
+      expect(services).not().assertNull();
+      expect(promos).not().assertNull();
       expect(services.length > 0).assertTrue();
       expect(promos.length > 0).assertTrue();
-      expect(services[0].id).not.assertUndefined();
-      expect(promos[0].id).not.assertUndefined();
+      expect(services[0].id).not().assertUndefined();
+      expect(promos[0].id).not().assertUndefined();
     });
 
     it('[AC-2] 服务与活动 Mock 条数满足 data_constraints 下限', 0, async () => {
