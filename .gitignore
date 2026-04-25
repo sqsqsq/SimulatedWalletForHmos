@@ -19,6 +19,11 @@
 /signing
 .obsidian
 /doc/原始需求
-framework/harness/dist
+
+# Framework runtime artifacts (managed by /framework-init)
+framework/harness/node_modules/
+framework/harness/dist/
 framework/harness/reports/*
 !framework/harness/reports/.gitkeep
+framework/harness/trace/
+framework/harness/package-lock.json
