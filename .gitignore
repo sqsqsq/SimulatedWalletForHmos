@@ -9,6 +9,7 @@
 /.idea
 **/build
 **/.hvigor
+**/BuildProfile.ets
 .cxx
 /.clangd
 /.clang-format
