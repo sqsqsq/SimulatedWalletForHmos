@@ -62,5 +62,11 @@
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md"
+  },
+  "toolchain": {
+    "devEcoStudio": {
+      "installPath": "D:/Program Files/Huawei/DevEco Studio",
+      "hvigorBin": ""
+    }
   }
 }
