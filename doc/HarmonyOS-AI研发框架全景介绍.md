@@ -149,9 +149,9 @@ HarmonyOS 工程（实例）
 | 0 | [`0-catalog-bootstrap`](../framework/skills/0-catalog-bootstrap/SKILL.md) | 模块画像 + 术语表自举 | `module-catalog.yaml` / `glossary.yaml` | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截 |
 | 1 | [`1-prd-design`](../framework/skills/1-prd-design/SKILL.md) | PRD 撰写 | `PRD.md` + `acceptance.yaml` + `boundaries.yaml` | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope |
 | 2 | [`2-requirement-design`](../framework/skills/2-requirement-design/SKILL.md) | 技术设计 | `design.md` + `contracts.yaml` + `use-cases.yaml`（条件式） | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema |
-| 3 | [`3-coding`](../framework/skills/3-coding/SKILL.md) | ArkTS 编码 | 源代码 + `contracts.yaml` 回填 | `diff_within_scope`、逐文件 Lint、分层 import、`named_business_handler` |
+| 3 | [`3-coding`](../framework/skills/3-coding/SKILL.md) | ArkTS 编码 | 源代码 + `contracts.yaml` 回填 | `diff_within_scope`、逐文件 Lint、分层 import、`named_business_handler`、**`coding_hvigor_build`**（v2.2：hvigor 真实编译） |
 | 4 | [`4-code-review`](../framework/skills/4-code-review/SKILL.md) | 代码审查 | `review-report.md` | Review 结论一致性、BLOCKER 数量 |
-| 5 | [`5-business-ut`](../framework/skills/5-business-ut/SKILL.md) | 业务级 UT（DAG） | `dag.yaml` + `*.test.ets` + `device-testing-todo.md` | `ut_import_whitelist`、`it_drives_flow`、`branch_coverage_full`、`acceptance_coverage` |
+| 5 | [`5-business-ut`](../framework/skills/5-business-ut/SKILL.md) | 业务级 UT（DAG） | `dag.yaml` + `*.test.ets` + `device-testing-todo.md` | `ut_import_whitelist`、`it_drives_flow`、`branch_coverage_full`、`acceptance_coverage`、**`ut_tsc_compiles`**、**`ut_hvigor_build`**、**`ut_hvigor_test`**、**`ut_no_src_mutation`**（v2.2：四道真实运行 / 改源码门禁） |
 | 6 | [`6-device-testing`](../framework/skills/6-device-testing/SKILL.md) | 真机测试 | `test-plan.md` + `test-report.md` | P0/P1 通过率、device AC 追溯 |
 
 **执行规则**：
@@ -431,6 +431,35 @@ UPDATE 模式会对 `framework.config.json` 做字段级 diff；切 adapter 时�
 - `ut_import_whitelist`（BLOCKER）：UT 文件禁 import `@Component` / `NavPathStack` / `showToast` / `$r(` / `AppStorage` 等 15+ 模式
 - 分层分工：`ut_layer ∈ {unit, both}` → UT；`device / both` → `device-testing-todo.md` → Skill 6 真机
 - `device_ac_delegation`（MAJOR）：device AC 必须在 todo 或 Skill 6 计划中登记
+
+### 3.4.1 v2.2 新增：UT "假 PASS" 三道护栏 + 改源码门禁
+
+**症状**：弱模型生成的 UT 大量 `tsc` 编译不过、或 hvigor 报错、或在没设备的 CI 上"无设备 → SKIP → PASS"，但 harness 全绿。
+
+**根因**：v2.1 之前 harness 只做静态结构扫描，缺少"真编译 / 真运行"出口。
+
+**解法（v2.2）**：
+
+| 规则 | 落点 | 严重度 | 触发逻辑 |
+|------|------|--------|----------|
+| `ut_tsc_compiles` | `check-ut.ts` + `utils/ts-compile.ts` | BLOCKER | 用 TypeScript Compiler API（`ts.createProgram`）对 `*.test.ets` 做 `noEmit` 扫描，零 Error 才通过；`.ets` 虚拟为 `.ts`，`@ohos/hypium` 走 ambient 声明，`noResolve: true` 不跟随 import |
+| `coding_hvigor_build` | `check-coding.ts` + `utils/hvigor-runner.ts` | BLOCKER | 对每个业务模块跑 `hvigorw assembleHap`；exit_code != 0 或解析出 ArkTS:ERROR / TSxxxx 即 FAIL；工具链缺失 / `HARNESS_SKIP_HVIGOR=1` 都翻译为 FAIL（不 SKIP） |
+| `ut_hvigor_build` | `check-ut.ts` | BLOCKER | 对 `<module>@ohosTest` 跑 `hvigorw assembleHap`；兜底 tsc 漏过的跨文件类型违约 |
+| `ut_hvigor_test` | `check-ut.ts` | BLOCKER | 先 `hdc list targets` 探测设备，无设备**直接 FAIL**（不再 SKIP）；有设备则 `hvigorw test` 装机运行，解析 hypium `OHOS_REPORT_RESULT` 行；failed > 0 或 total = 0 都 FAIL；`HARNESS_SKIP_HVIGOR_TEST=1` 也是 FAIL |
+| `ut_no_src_mutation` | `check-ut.ts` + `utils/git-diff.ts` | BLOCKER | git diff 检测 `02-Feature/**/src/main/**` 等业务源码改动；未在 `gap-notes.md > approved_src_mutations[]` 登记的一律 FAIL；baseRef 取 `trace.json > start_commit`，无则回退 `HEAD~1` |
+
+**配套**：
+- Skill 3 SKILL.md 新增 Step 6.5 "真实编译闭环"：agent 必须自己跑 hvigor、读日志、定位修复，不允许把编译失败标为"环境问题"。
+- Skill 5 SKILL.md 新增 Step 7.5 / 7.6（UT 编译闭环 + 装机运行闭环），并把"约束 #12 不修改业务源码"升级为 HARD STOP（必须先问后改 + gap-notes 登记）。
+- `verify-ut.md` prompt 顶部加 HARD STOP 等价条款，verifier 子 agent 检测疑似为"为 UT 便利新增的工具函数"时强制标 BLOCKER。
+- `harness-runner.ts` 在每次进阶段时把 `git rev-parse HEAD` 写入 `reports/<feature>/<phase>/trace.json > start_commit`，作为 `ut_no_src_mutation` 的 git diff 起点。
+
+**放宽 `named_business_handler`**：v2.1 的正则只识别 `function xxx` / 类方法 `xxx()`，误杀了 ArkTS 合法的类字段函数 `handleClick = async () => {}`。v2.2 新增 `reFieldFunc` 正则覆盖：
+- `xxx = () => {}` / `xxx = async () => {}` / `xxx = function() {}`
+- `xxx: () => void = async () => {}` / `xxx: MyType = () => {}`
+- `const xxx = () => {}` / `let xxx: Func = () => {}`
+
+仍然拦截**匿名**直接挂在 UI 事件上的 inline lambda（`.onClick(() => { ... })` 没有 `symbol =` 前缀，不匹配新正则）。
 
 ### 3.5 弱模型吞字反转语义
 
