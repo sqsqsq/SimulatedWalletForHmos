@@ -27,3 +27,5 @@ framework/harness/reports/*
 !framework/harness/reports/.gitkeep
 framework/harness/trace/
 framework/harness/package-lock.json
+framework/harness/state/*
+!framework/harness/state/.gitkeep
