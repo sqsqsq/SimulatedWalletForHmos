@@ -29,6 +29,16 @@ alwaysApply: true
 7. **最小改动**：任何不在原始诉求内的修改先问再做。
 8. **Harness 校验**：每个阶段完成后必须跑 `framework/harness/harness-runner.ts --phase <phase> --feature <name>` 并由独立 verifier 子 agent 审一轮。
 
+## Framework 优先修改原则
+
+当用户反馈 workflow / skill / harness / verifier / init / adapter / hooks / 规则文档等框架行为问题时，**第一优先级是修改 `framework/` 下的源头资产**，而不是直接修改由 framework 生成或分发到工程根的衍生物。
+
+- 优先改：`framework/skills/**`、`framework/harness/**`、`framework/specs/**`、`framework/templates/**`、`framework/agents/**`、`framework/docs/**`。
+- 谨慎改：根目录 `CLAUDE.md`、`.cursor/rules/*.mdc`、`.cursor/skills/**`、`.claude/**`、实例根 `framework.config.json` 等生成物 / 实例配置。
+- 若衍生物内容不对，先定位对应 framework 模板或生成脚本，修改源头后再通过 framework-init / render / harness 路径验证生成效果。
+- 只有在需要让当前实例立即具备新默认值或用于验证 framework 生成效果时，才同步修改实例侧衍生物；同步修改必须说明其源头文件，并避免只改衍生物。
+- 目标是让真实工程移植 framework 后自然获得修复，而不是在单个实例里手补一次。
+
 ## 冲突处理
 
 若本文件与 `AGENTS.md` / `framework/specs/phase-rules/*.yaml` 冲突，**一律以后者为准**，并立即反馈让维护者更新本 rules 文件。
