@@ -69,6 +69,12 @@
     "devEcoStudio": {
       "installPath": "D:/Program Files/Huawei/DevEco Studio",
       "hvigorBin": ""
+    },
+    "hvigor": {
+      "daemon": true,
+      "parallel": true,
+      "incremental": true,
+      "analyze": "advanced"
     }
   },
   "state_machine": {
