@@ -1,0 +1,17 @@
+# Framework-managed text artifacts should keep stable LF endings across OSes.
+CLAUDE.md text eol=lf
+AGENTS.md text eol=lf
+
+.claude/**/*.md text eol=lf
+.claude/**/*.mjs text eol=lf
+.claude/**/*.json text eol=lf
+
+.cursor/**/*.md text eol=lf
+.cursor/**/*.mdc text eol=lf
+.cursor/**/*.json text eol=lf
+
+framework/agents/**/*.md text eol=lf
+framework/agents/**/*.mjs text eol=lf
+framework/agents/**/*.json text eol=lf
+framework/templates/**/*.md text eol=lf
+framework/templates/**/*.json text eol=lf
