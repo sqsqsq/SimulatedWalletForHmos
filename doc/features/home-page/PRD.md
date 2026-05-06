@@ -65,6 +65,16 @@ rationale: |
   若产品后续要求改底 Tab/Ability，须另开需求并显式扩 scope。
 ```
 
+```yaml
+# Visual Handoff（脚本 harness 读取：须单独 yaml 块，根字段含 ui_change）
+ui_change: new_or_changed
+visual_handoff:
+  kind: repo_assets
+  authoritative_refs:
+    - id: home_ux_index
+      path: doc/features/home-page/ux-reference/README.md
+```
+
 ### 最小改动原则
 
 1. 优先在 `WalletMain` 的 `HomeTabPage` 及同 feature 的 `presentation` / `data` 中实现。  
@@ -108,7 +118,7 @@ rationale: |
 
 ## 5. 页面/界面描述
 
-> 线框以当前实现为基线，截图见 `doc/原始需求/1.首页\*.jpg`（文件名以资源管理器为准）。
+> **版面基线**：以归档原始截图与仓库内 UX 导出（含 `doc/features/home-page/ux-reference/`、`doc/原始需求/1.首页`）为准；与当前实现对齐的差异须记入验收或明示为模拟工程占位。Markdown 插图仅为扫读，非像素真相。
 
 ### 5.1 页面总览
 

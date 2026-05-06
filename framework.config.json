@@ -81,5 +81,8 @@
     "grace_period_minutes": 5,
     "ttl_hours": 12,
     "schema_version": "1.1"
+  },
+  "prd": {
+    "visual_handoff_enforcement": "strict"
   }
 }
