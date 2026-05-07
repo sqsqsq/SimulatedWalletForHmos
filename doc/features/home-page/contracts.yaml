@@ -2,19 +2,31 @@
 schema_version: "1.0"
 feature: "home-page"
 
-# 与 PRD Visual Handoff 对齐（脚本读 PRD；此处供编码/审查引用同一真源）
+# 与 PRD Visual Handoff 对齐（脚本以 PRD 为准；此处供编码/审查与 PRD v1.2 同形）
 visual_handoff:
   inherited_from_prd: true
   ui_change: "new_or_changed"
-  kind: "repo_assets"
+  kind: "screenshot_pack"
   authoritative_refs:
-    - id: "home_ux_index"
+    - id: "home_ux_readme_index"
       path: "doc/features/home-page/ux-reference/README.md"
+    - id: "home_screenshot_archive"
+      path: "doc/features/home-page/ux-reference"
+    - id: "ref_home_no_card"
+      path: "doc/features/home-page/ux-reference/1.首页-无卡.jpg"
+    - id: "ref_mine_tab"
+      path: "doc/features/home-page/ux-reference/2.我的.jpg"
+    - id: "ref_card_pack_empty"
+      path: "doc/features/home-page/ux-reference/3.卡包-无卡.jpg"
+    - id: "ref_add_card_entry"
+      path: "doc/features/home-page/ux-reference/4.添卡入口.jpg"
+    - id: "ref_manage_non_local_cards"
+      path: "doc/features/home-page/ux-reference/5.管理非本机卡片.jpg"
 
 # 可测的视觉与布局约定（模拟工程允许与截图像素不完全一致）
 visual_parity_contract:
   baseline: |
-    区域划分与信息架构以 PRD §5、ux-reference/README 及 doc/原始需求/1.首页 为走查基线。
+    区域划分与信息架构以 PRD §5、doc/features/home-page/ux-reference/（含 README 与各 jpg）为走查基线；旧路径 doc/原始需求/ 不作为真源。
   acceptable_deviations:
     - 模拟数据、占位图、高清导出未入库
     - 服务/活动条数与截图不一致时以不崩溃与 AC 语义为准

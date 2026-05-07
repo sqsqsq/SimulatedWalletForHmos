@@ -39,27 +39,23 @@ struct Index {
 
   build() {
     Navigation(this.navPathStack) {
-      Column() {
-        Tabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
-          TabContent() {
-            HomeTabPage()
-          }.tabBar(this.tabHome())
+      Tabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
+        TabContent() {
+          HomeTabPage({ navPathStack: this.navPathStack })
+        }.tabBar(this.tabHome())
 
-          TabContent() {
-            MineTabPage()
-          }.tabBar(this.tabMine())
-        }
-        .scrollable(false)
-        .barMode(BarMode.Fixed)
-        .onChange((index: number) => {
-          this.currentTabIndex = index;
-        })
-        .width('100%')
-        .layoutWeight(1)
-        .backgroundColor($r('app.color.phone_page_bg'))
+        TabContent() {
+          MineTabPage()
+        }.tabBar(this.tabMine())
       }
+      .scrollable(false)
+      .barMode(BarMode.Fixed)
+      .onChange((index: number) => {
+        this.currentTabIndex = index;
+      })
       .width('100%')
       .height('100%')
+      .backgroundColor($r('app.color.phone_page_bg'))
     }
     .hideTitleBar(true)
     .mode(NavigationMode.Stack)

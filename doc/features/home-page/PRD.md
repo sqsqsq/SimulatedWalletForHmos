@@ -1,7 +1,8 @@
 > **模块标识**: `home-page`  
-> **版本**: v1.1  
+> **版本**: v1.2  
 > **创建日期**: 2026-04-22  
-> **状态**: 评审中  
+> **最后修订**: 2026-05-07  
+> **状态**: 评审中（已对齐 Framework PRD-driven Visual Handoff + 本仓 `framework.config.json`）
 
 # 钱包首页（Home）— 产品需求文档（PRD）
 
@@ -11,6 +12,8 @@
 
 > 本节是 BLOCKER：**像素级走查与截图真源**以 `doc/features/home-page/ux-reference/` 为准（索引与每张图语义见该目录 **`README.md`**）；下列术语已对照 `doc/glossary.yaml`。  
 > 「用户确认」列为 `[x]` 表示本 PRD 定稿时作者已按 SSOT 核对，**若你作为评审方有异议请改表并重新跑 harness。**
+>
+> **与本仓 Framework 门禁对齐（必读）**：实例 `framework.config.json` 已 **opt-in** `prd` 段并设 `visual_handoff_enforcement: strict`（参见 `framework/skills/00-framework-init/prompts/prd-harness-options.md`）。因此本 UI 需求**必须**在 §2 提供**独立** `yaml` 块且含 **`ui_change`**；`visual_handoff.authoritative_refs` 中每条 `path` 须在仓库内 **agent 可达**（`harness-runner --phase prd` 合并报告中的 **Resolved Visual Sources** 表可核对）。另：本演示仓设 **`paths.docs_committed: true`**，假定将 `doc/features/**`（含 `ux-reference` 下 jpg）与主仓同源归档——完成回执 **Q3** 与 UX 路径类占位须与此一致。
 
 | 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项 | 用户确认 |
 |----------|----------|--------|--------|--------|----------|
@@ -21,6 +24,7 @@
 | 卡包 | WalletMain | 02-Feature | high | 系统功能封装 (CommFunc) — 卡种展示与流程 vs 无界面工具 | [x] |
 | 添卡 | WalletMain | 02-Feature | high | 公共 UI 组件 (CommUI) — 无卡种语义的纯按钮/列表行在 CommUI | [x] |
 | 底 Tab | Phone | 01-Product | high | 钱包主功能 (WalletMain) — 壳上 Tab 位 vs Tab 内 `HomeTabPage` 内容 | [x] |
+| 我的 | WalletMain | 02-Feature | high | 主应用 (Phone) — 「我的」Tab 壳位；本需求截图文件名 `2.我的.jpg` 仅作参照，不扩 scope 改该 Tab 页 | [x] |
 | 消息 / 消息中心（首页入口） | WalletMain | 02-Feature | high | 账号管理 (AccountManager) — 会话/Profile 域 API vs 本页仅入口与提示 | [x] |
 | Toast / 轻提示 | CommUI | 05-SystemBase | high | 钱包主功能 (WalletMain) — 与界面上下文绑定的短反馈，非 feature 数据 | [x] |
 | 主应用 | Phone | 01-Product | high | 钱包主功能 (WalletMain) — 同上「底 Tab」行 | [x] |
@@ -63,10 +67,12 @@ rationale: |
   活动/服务入口若需使用 Toast，只调用 CommUI 已有 API，不新增公共组件能力至 CommUI。
   账号登录态/Profile 的真理来源在 AccountManager；首页只展示与跳转，不新增账号域逻辑。
   若产品后续要求改底 Tab/Ability，须另开需求并显式扩 scope。
+  本仓库为演示实例：paths.docs_committed=true；过程/UX 素材默认与主仓同提交，与完成回执 Q3 语义一致。
 ```
 
 ```yaml
 # Visual Handoff（脚本 harness 读取：须单独 yaml 块，根字段含 ui_change）
+# kind=screenshot_pack：逐文件 path 与 ux-reference/README.md ID 对齐，合并报告 Resolved Visual Sources 逐条可达。
 ui_change: new_or_changed
 visual_handoff:
   kind: screenshot_pack
@@ -75,7 +81,19 @@ visual_handoff:
       path: doc/features/home-page/ux-reference/README.md
     - id: home_screenshot_archive
       path: doc/features/home-page/ux-reference
+    - id: ref_home_no_card
+      path: doc/features/home-page/ux-reference/1.首页-无卡.jpg
+    - id: ref_mine_tab
+      path: doc/features/home-page/ux-reference/2.我的.jpg
+    - id: ref_card_pack_empty
+      path: doc/features/home-page/ux-reference/3.卡包-无卡.jpg
+    - id: ref_add_card_entry
+      path: doc/features/home-page/ux-reference/4.添卡入口.jpg
+    - id: ref_manage_non_local_cards
+      path: doc/features/home-page/ux-reference/5.管理非本机卡片.jpg
 ```
+
+**实例级说明（非 yaml）**：当前 `framework.config.json` 未开启 `visual_sources.allow_absolute_paths` / `allow_network_paths`，故 **勿**在 handoff 中写裸盘符或 UNC；外置 UX 包请改用 **`${UX_ROOT}/...`** 并配置 `external_roots` 与运行环境变量（见下 HTML 注释）。
 
 <!--
 【团队范式注释，脚本不解析】若高保真归档在工程外，可采用：
@@ -270,6 +288,8 @@ flowchart TD
 | 索引与每张图语义（ID、与本需求关系） | `doc/features/home-page/ux-reference/README.md` |
 | 整包归档目录（含 `1–5` 号 `.jpg`，见 README 表格） | `doc/features/home-page/ux-reference/` |
 
+§2 `visual_handoff.authoritative_refs` 已对 README、目录及 **5 张 jpg** 分别绑定 `id`（与 README ID 列一致），供 strict 模式下 harness **逐路径**解析与 **Resolved Visual Sources** 报告；走查仍可按目录批量打开。
+
 走查顺序：README 表中 **先从 `ref_home_no_card` 对应首页无卡截图**对齐 `HomeTabPage`，再按需对照跳转目标截图（卡包 / 添卡等）；与 `contracts.yaml` 中 `visual_parity_contract` 一并使用。  
 
 **说明**：旧的 `doc/原始需求/` 等非 git 归档路径若有残留，不作为 harness/评审真源。
@@ -280,3 +300,4 @@ flowchart TD
 |------|------|----------|
 | 2026-04-22 | v1.0 | 首版，基于实现与原始截图目录起稿 |
 | 2026-05-06 | v1.1 | UX 像素真源统一切至 `ux-reference/`；Visual Handoff 升级为 `screenshot_pack`（README + 目录双引用）；正文与附录同步 |
+| 2026-05-07 | v1.2 | 对齐最新 Framework：`strict` + `paths.docs_committed` 实例说明；`authoritative_refs` 增加与 README 一致的 5 张截图逐文件绑定；外置 UX / 绝对路径约束说明 |

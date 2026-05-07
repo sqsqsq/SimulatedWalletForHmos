@@ -1,8 +1,9 @@
 > **模块标识**: `home-page`  
-> **对应 PRD**: `doc/features/home-page/PRD.md`  
-> **版本**: v1.1  
+> **对应 PRD**: `doc/features/home-page/PRD.md`（v1.2）  
+> **版本**: v1.2  
 > **创建日期**: 2026-04-22  
-> **状态**: 已确认  
+> **最后修订**: 2026-05-07  
+> **状态**: 已确认（与本仓 `framework.config.json`：strict Visual Handoff、`paths.docs_committed: true` 一致）
 
 # 钱包首页（Home）— 技术设计
 
@@ -27,6 +28,7 @@ rationale: |
   首页信息架构、卡引导、服务宫格、活动轮播与 HomeRepository 读模型均在 WalletMain 内实现；
   双 Tab 壳与 NavDestination 注册由 Phone 持有，本设计不修改 Phone 源码。
   Toast 仅调用 CommUI 已导出 API；账号域逻辑由 AccountManager 持有，首页不扩展。
+  UX 像素真源与 PRD `authoritative_refs` 一致；本演示仓 paths.docs_committed=true，与 PRD §2、完成回执 Q3 语义对齐。
 expansions_with_user_approval: []
 ```
 
@@ -199,20 +201,22 @@ flowchart LR
 
 ## Visual Handoff 与版面真源
 
-本设计与 PRD 中 **Visual Handoff** 机器可读块一致：`ui_change: new_or_changed`，`visual_handoff.kind: repo_assets`。
+与 PRD v1.2 **同一机器可读契约**：`ui_change: new_or_changed`，`visual_handoff.kind: screenshot_pack`；`authoritative_refs` 含 `ux-reference/README.md`、目录及 **5 张**与 README ID 对齐的 `.jpg`（详见 PRD §2 `yaml` 块）。本设计不另起异 KIND/异 path；编码与走查以 **`ux-reference/`** 与 harness **Resolved Visual Sources** 解析结果为准。
 
 | 项 | 说明 |
 |----|------|
-| **权威索引（`id: home_ux_index`）** | `doc/features/home-page/ux-reference/README.md`：仓库内版面与导出路径的索引；后续产品可在该 README 中增补 `authoritative_refs` 子路径。 |
-| **补充走查** | `doc/原始需求/1.首页`（与 PRD 附录 A 一致）；与当前实现对齐的差异须在验收或 README 中明示为模拟工程占位。 |
+| **索引与 ID** | `doc/features/home-page/ux-reference/README.md`（`ref_home_no_card` … `ref_manage_non_local_cards`）。 |
+| **整包与逐图** | 目录 `doc/features/home-page/ux-reference/` + 各 `id → path` 与 PRD 逐条一致；旧路径 `doc/原始需求/` **不作为**真源（与 PRD 附录 A 一致）。 |
 
 **相对真源的允许偏差**：
 
-- Mock 数据、占位卡图、未入库高清导出：**允许**，直至资产落入 `ux-reference/` 或 PRD 更新引用。  
+- Mock 数据、占位卡图：**允许**，以 `visual_parity_contract` 可测项与 AC 为准。  
 - 服务条数、活动条数与截图不完全一致：**允许**，以不崩溃、`AC-2`/`AC-7`/`AC-8` 语义满足为准。  
-- **禁止**仅以 PRD Markdown 内嵌缩略图作为唯一像素真源（与 PRD §5 一致）。
+- **禁止**仅以 PRD Markdown 内嵌图作为唯一像素真源（与 PRD §5 一致）。
 
-**契约下沉**：可测的资源 key、栅格列数、轮播行为等见本 feature `contracts.yaml` 中 `visual_parity_contract`。
+**实例门禁**：`prd.visual_handoff_enforcement: strict` 时 PRD handoff 须在仓内可达；外置 UX 包由 PRD 所述 **`${UX_ROOT}`** 与本仓 `visual_sources` 配置协同，本设计不声明裸盘符路径。
+
+**契约下沉**：可测的资源 key、栅格列数、轮播行为等见 `contracts.yaml` 的 `visual_parity_contract`；`visual_handoff` 段与 PRD 对齐见同文件顶部。
 
 ---
 
@@ -234,4 +238,14 @@ flowchart LR
 - **Visual Handoff**：版面真源与可测项见上文「Visual Handoff 与版面真源」及 `contracts.yaml` 的 `visual_handoff` / `visual_parity_contract`。  
 - **卡区与主按钮**：`CardGuideSection` 中卡面与「添加/管理卡」主按钮均回调 **卡包**（`CardPackPage`），与 PRD AC-3/AC-4 及当前代码一致。  
 - **加号**：标题栏加号进入 `AddCardEntryPage`（与 PRD AC-5 一致）。  
-- **F6**：无网场景若仍为本地 Mock 数据，以不崩溃、可扩展 Toast/空态分支为满足；具体网络探测若后续产品要求再迭代。
+- **F6**：无网场景若仍为本地 Mock 数据，以不崩溃、可扩展 Toast/空态分支为满足；具体网络探测若产品另开需求再迭代。
+
+---
+
+## 变更记录
+
+| 日期 | 版本 | 变更内容 |
+|------|------|----------|
+| 2026-04-22 | v1.0 | 首版 |
+| 2026-05-06 | v1.1 | 与 PRD v1.1 Scope/映射一致 |
+| 2026-05-07 | v1.2 | 对齐 PRD Visual Handoff：`screenshot_pack` + 与 PRD 同构 `authoritative_refs`；`contracts.yaml` 同步；弃用 `doc/原始需求` 基线描述 |

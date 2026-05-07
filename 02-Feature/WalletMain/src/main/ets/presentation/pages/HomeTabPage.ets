@@ -9,7 +9,8 @@ import { ServiceGridSwiper } from '../components/ServiceGridSwiper';
 
 @Component
 export struct HomeTabPage {
-  @Consume('navPathStack') navPathStack: NavPathStack;
+  /** TabContent 子树可能与 Navigation 外侧 @Provide 断链；由 Phone.Index 显式传入 */
+  @Prop navPathStack: NavPathStack = new NavPathStack();
   @State services: ServiceEntry[] = [];
   @State promos: PromoInfo[] = [];
   private readonly homeRepo: HomeRepository = new HomeRepository();
@@ -39,18 +40,19 @@ export struct HomeTabPage {
           .fontColor($r('app.color.wallet_text_primary'))
           .layoutWeight(1)
 
-        SymbolGlyph($r('sys.symbol.envelope'))
-          .fontSize(22)
-          .fontColor([$r('app.color.wallet_text_primary')])
-          .margin({ right: 16 })
+        Text($r('app.string.home_header_msg_action'))
+          .fontSize(14)
+          .fontColor($r('app.color.wallet_primary'))
+          .margin({ right: 12 })
           .onClick(() => {
             const ctx = this.getUIContext().getHostContext() as Context;
             showToast(ctx.resourceManager.getStringSync($r('app.string.msg_center_welcome').id));
           })
 
-        SymbolGlyph($r('sys.symbol.plus'))
-          .fontSize(24)
-          .fontColor([$r('app.color.wallet_primary')])
+        Text('+')
+          .fontSize(26)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.wallet_primary'))
           .onClick(() => {
             this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
           })
@@ -71,9 +73,13 @@ export struct HomeTabPage {
             }
           })
 
-          ServiceGridSwiper({ services: this.services })
+          if (this.services.length > 0) {
+            ServiceGridSwiper({ services: this.services })
+          }
 
-          PromoSwiper({ promos: this.promos })
+          if (this.promos.length > 0) {
+            PromoSwiper({ promos: this.promos })
+          }
         }
         .width('100%')
         .padding({

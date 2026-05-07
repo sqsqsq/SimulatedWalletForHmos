@@ -65,6 +65,10 @@
       "value": "欢迎使用钱包消息中心！"
     },
     {
+      "name": "home_header_msg_action",
+      "value": "消息"
+    },
+    {
       "name": "home_data_unavailable",
       "value": "数据暂不可用，请稍后再试"
     },
