@@ -1,10 +1,19 @@
 import { Context } from '@kit.AbilityKit';
 import { showToast } from '@aspect/CommUI';
 import { ServiceEntry } from '../../data/model/ServiceEntry';
+import { HomeConstants } from '../../shared/constant/HomeConstants';
 
 @Component
 export struct ServiceGridSwiper {
   @Prop services: ServiceEntry[] = [];
+
+  private buildColumnsTemplate(): string {
+    const parts: string[] = [];
+    for (let i = 0; i < HomeConstants.SERVICE_GRID_COLUMNS; i++) {
+      parts.push('1fr');
+    }
+    return parts.join(' ');
+  }
 
   private toastNotSupported(): void {
     const ctx = this.getUIContext().getHostContext() as Context;
@@ -33,7 +42,7 @@ export struct ServiceGridSwiper {
           }
         }, (item: ServiceEntry) => item.id)
       }
-      .columnsTemplate('1fr 1fr 1fr')
+      .columnsTemplate(this.buildColumnsTemplate())
       .rowsTemplate('1fr')
       .width('100%')
       .height(120)
