@@ -2,7 +2,7 @@
   "name": "@aspect/WalletMain",
   "version": "1.0.0",
   "description": "钱包主功能",
-  "main": "src/main/ets/Index.ets",
+  "main": "src/main/ets/index.ets",
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {

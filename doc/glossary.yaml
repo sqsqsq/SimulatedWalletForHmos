@@ -511,7 +511,7 @@ terms:
     canonical_module: "Phone"
     owner_layer: "01-Product"
     aliases: []
-    sample_usage: "当 PRD 说「`pages/Index.ets` 里底部 `Tabs`、首页/我的 两个 Tab 位、`@Provide('navPathStack')` 供子页出栈入栈」时，多指 **Phone 壳**上的主导航；不指**某一 Tab 内服务宫格/卡种区块的业务编排**（那是 **WalletMain** 的 `HomeTabPage` / `MineTabPage` 内容）。"
+    sample_usage: "当 PRD 说「`pages/index.ets` 里底部 `Tabs`、首页/我的 两个 Tab 位、`@Provide('navPathStack')` 供子页出栈入栈」时，多指 **Phone 壳**上的主导航；不指**某一 Tab 内服务宫格/卡种区块的业务编排**（那是 **WalletMain** 的 `HomeTabPage` / `MineTabPage` 内容）。"
     confidence_hint: "精确命中 `Phone.typical_business_terms`；与 NOT 不冲突（已扫）。"
     easily_confused_with:
       - term: "钱包主功能"

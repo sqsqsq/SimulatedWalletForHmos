@@ -16,7 +16,7 @@
 | 项目类型 | `app` |
 | 激活的 agent adapter | `claude` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
-| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 Index.ets；同层 01–04 为 dag，05 为 sublayer（CommUI→CommFunc） |
+| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 index.ets（由 `architecture.cross_module_exports_file` 配置）；同层 01–04 为 dag，05 为 sublayer（CommUI→CommFunc） |
 
 详细架构说明请阅读：[doc/architecture.md](doc/architecture.md)。
 
@@ -43,7 +43,7 @@
 
 1. **层间依赖方向严格按 `framework.config.json` → `architecture.outer_layers` 声明**，任何反向依赖一律拒绝。
 2. **模块内依赖方向按 `architecture.module_inner_layers` + `inner_dependency_direction` 声明**，禁止反向依赖。
-3. **跨模块访问必须通过 `architecture.cross_module_exports_file` 声明的出口文件**（默认 `Index.ets`），禁止深路径 import。
+3. **跨模块访问必须通过 `architecture.cross_module_exports_file` 声明的出口文件**（默认 `index.ets`），禁止深路径 import。
 
 ### 3.2 术语守门（BLOCKER）
 
@@ -65,7 +65,7 @@
 
 1. 写 `.ets` 文件**前**先扫一眼 [arkts-pitfalls.md](framework/skills/3-coding/reference/arkts-pitfalls.md) 相关条目。
 2. **逐文件闭环**：写一个文件 → 立刻 `ReadLints` → 零 error 才能写下一个。**严禁批量生成多文件后再统一 lint**。
-3. 不允许出现 `any`、硬编码字符串、未定义资源 key、未导出的 `Index.ets` 符号。
+3. 不允许出现 `any`、硬编码字符串、未定义资源 key、未导出的模块入口约定文件（默认 `index.ets`）中的符号缺失。
 
 ### 3.5 文档与代码同步
 

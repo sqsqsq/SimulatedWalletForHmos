@@ -37,7 +37,7 @@ modules:
     key_exports:
       - "Logger"
       - "FormatUtil"
-    entry_file: "05-SystemBase/CommFunc/src/main/ets/Index.ets"
+    entry_file: "05-SystemBase/CommFunc/src/main/ets/index.ets"
 
   - name: "CommUI"
     layer: "05-SystemBase"
@@ -52,7 +52,7 @@ modules:
     NOT_responsible_for:
       - "不负责完整业务页、导航栈、多 Tab 主框架；若 PRD 描述的是「某业务线首页/流程页」，应落在对应 `02-Feature` 或 `01-Product` 模块，而非在 `CommUI` 内堆业务态。"
       - "不负责卡列表、卡详情、金融字段校验等业务域 UI；公共组件可被业务模块引用，但**业务态组件与数据绑定**应落在业务模块的 presentation 层。"
-      - "不替代 `CommFunc` 的 `Logger`、脱敏与纯工具 API；**无 UI 的纯技术能力**应继续走 `CommFunc` 的 `Index.ets` 导出，而非复制到本模块。"
+      - "不替代 `CommFunc` 的 `Logger`、脱敏与纯工具 API；**无 UI 的纯技术能力**应继续走 `CommFunc` 的 `index.ets` 导出，而非复制到本模块。"
     typical_business_terms:
       - "公共 UI 组件"
       - "主题色"
@@ -78,7 +78,7 @@ modules:
       - "showToast"
       - "ActionListItem"
       - "SectionCard"
-    entry_file: "05-SystemBase/CommUI/src/main/ets/Index.ets"
+    entry_file: "05-SystemBase/CommUI/src/main/ets/index.ets"
 
   - name: "AccountManager"
     layer: "04-BusinessBase"
@@ -116,7 +116,7 @@ modules:
       - "LoginState"
       - "UserProfile"
       - "AccountService"
-    entry_file: "04-BusinessBase/AccountManager/src/main/ets/Index.ets"
+    entry_file: "04-BusinessBase/AccountManager/src/main/ets/index.ets"
 
   - name: "WalletMain"
     layer: "02-Feature"
@@ -124,7 +124,7 @@ modules:
     format: "HAR"
     one_liner: "钱包**主 feature**：导出首页/我的 Tab 子页、卡包与添卡等路由页构建函数；在 presentation 中编排卡引导、服务宫格、活动轮播等，并通过 `AccountManager` / `CommUI` / `CommFunc` 组合出「模拟钱包」主路径（数据当前多为本地 Repository 样例）。"
     responsibilities:
-      - "对外导出 `HomeTabPage`、`MineTabPage` 及 `buildCardPackPage` / `buildAddCardEntryPage`，供 `01-Product` 宿主通过 `Index.ets` 与 `main_pages` / `route_map` 装配主导航与二级页。"
+      - "对外导出 `HomeTabPage`、`MineTabPage` 及 `buildCardPackPage` / `buildAddCardEntryPage`，供 `01-Product` 宿主通过 `index.ets` 与 `main_pages` / `route_map` 装配主导航与二级页。"
       - "在 `MineTabPage` 等场景集成 `AccountService` / `UserProfile` / `LoginState`（来自 `AccountManager`），在「我的」里呈现登录/展示账号，但**不替代** `AccountManager` 内的会话与存储实现。"
       - "维护 `HomeRepository` / `MineRepository` / `CardRepository` 等同 feature 的读模型与 Mock/本地数据，支撑首页、我的、卡包、添卡等 UX；业务模型如 `ServiceEntry` / `CardCategory` / `PromoInfo` 等以本 feature 为归属。"
       - "在页面与业务组件中组合 `CommUI` 的 `ActionListItem` / `SectionCard` / `showToast` 等，与 feature 内 `AccountCard` / `CardGuideSection` 等区分**通用积木 vs 带钱包语义的 feature 组件**。"
@@ -161,7 +161,7 @@ modules:
       - "MineTabPage"
       - "buildCardPackPage"
       - "buildAddCardEntryPage"
-    entry_file: "02-Feature/WalletMain/src/main/ets/Index.ets"
+    entry_file: "02-Feature/WalletMain/src/main/ets/index.ets"
 
   - name: "Phone"
     layer: "01-Product"
@@ -170,7 +170,7 @@ modules:
     one_liner: "应用**入口 HAP**：`PhoneAbility` 作为 UI 宿主加载 `pages/Index`，在独立模块内完成 `Navigation` + 双 Tab 壳，并从 `WalletMain` 拉取 `HomeTabPage` / `MineTabPage` 与二级页 builder；**不实现**卡种/服务数据与账号域，仅做壳与多 HAR 依赖聚合。"
     responsibilities:
       - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/Index')`，并处理颜色模式、窗口与生命周期中的通用日志点。"
-      - "在 `pages/Index.ets` 中声明 `@Entry` 根 `Navigation` + 底部 `Tabs`（首页/我的），`@Provide('navPathStack')` 供 `WalletMain` 子页做栈式导航到卡包/添卡等 route。"
+      - "在 `pages/index.ets` 中声明 `@Entry` 根 `Navigation` + 底部 `Tabs`（首页/我的），`@Provide('navPathStack')` 供 `WalletMain` 子页做栈式导航到卡包/添卡等 route。"
       - "通过 HAP 级 `oh-package` 声明对 `WalletMain`、`AccountManager`、`CommUI`、`CommFunc` 的依赖，在工程上固定「产品壳拉 feature + 基座」的装配图。"
       - "声明 `PhoneBackupAbility` 扩展能力（`type: backup`）及 `backup_config` 元数据，满足备份扩展的技术挂载点；**备份策略细节**以配置与系统契约为准。"
     NOT_responsible_for:

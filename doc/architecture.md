@@ -65,7 +65,7 @@ graph TD
 
 `shared, data, domain, presentation`
 
-跨模块引用必须通过各模块根目录下的 **`Index.ets`** 导出，禁止深路径 import 到其它模块内部实现。
+跨模块引用必须通过各模块根目录下、与 `framework.config.json` → `architecture.cross_module_exports_file` 一致的导出入口（默认 **`index.ets`**）导出，禁止深路径 import 到其它模块内部实现。
 
 ---
 

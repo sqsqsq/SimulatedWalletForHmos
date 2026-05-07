@@ -2,7 +2,7 @@
   "name": "@aspect/AccountManager",
   "version": "1.0.0",
   "description": "账号管理",
-  "main": "src/main/ets/Index.ets",
+  "main": "src/main/ets/index.ets",
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
