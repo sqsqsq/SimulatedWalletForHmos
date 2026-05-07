@@ -1,24 +1,24 @@
 ---
 feature: "home-page"
 phase: "ut"
-agent_model: "cursor-agent"
+agent_model: "gpt-5.5"
 agent_runtime: "cursor-ide"
-claimed_completion_at: "2026-05-07T06:40:00+08:00"
-claimed_completion_commit_sha: "6c3b4545650c3e37749b98d5185500058cbf7341"
+claimed_completion_at: "2026-05-07T21:19:30+08:00"
+claimed_completion_commit_sha: "f329077c4d09a5fa79aa7e2a6b0f579f55233448"
 
 script_harness:
   command: "cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature home-page"
   exit_code: 0
   report_dir: "framework/harness/reports/home-page/ut"
   blocker_count: 0
-  ran_at: "2026-05-07T06:38:19.733Z"
+  ran_at: "2026-05-07T13:18:38.289Z"
 
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-ut.md"
   report_path: "framework/harness/reports/home-page/ut/verifier.report.md"
   verdict: "PASS"
-  ran_at: "2026-05-07T06:38:50.000Z"
+  ran_at: "2026-05-07T13:19:20.000Z"
 
 trace_json:
   path: "framework/harness/reports/home-page/ut/trace.json"
@@ -28,24 +28,24 @@ trace_json:
 self_check:
   q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\framework\\harness\\reports\\home-page\\ut\\trace.json"
   q2_verifier_verdict_quoted: "verdict: PASS"
-  q3_last_diff_file: "doc/features/home-page/review-report.md"
+  q3_last_diff_file: "framework/specs/phase-rules/ut-rules.yaml"
   q4_no_hallucinated_rule_used: true
-  q4_evidence: "闭环步骤见 CLAUDE.md §4.1 / §5.1；`ut_no_src_mutation` 与 `approved_src_mutations` 见 Skill 5 HARD STOP。"
+  q4_evidence: "闭环步骤见 CLAUDE.md §4.1 / §5.1；本轮脚本 harness PASS、verifier summary.verdict PASS（0 WARN / 0 BLOCKER FAIL）。"
 ---
 
-## 实际执行的 shell / 工具命令（最后 5 条，按时序）
+## 实际执行的 shell / 工具命令（按时序摘录）
 
-1. 首次 UT harness FAIL → 新增 `framework/harness/reports/home-page/ut/gap-notes.md`（登记 `HomeTabPage.ets`）
-2. `npx ts-node harness-runner.ts --phase ut --feature home-page`（复跑至 PASS）
-3. `Task(subagent_type=verifier)` — `verify-ut.md` 语义九项（含 SKIP）
-4. 写入 `framework/harness/reports/home-page/ut/verifier.report.md` 与完整 `ut/trace.json`
-5. `git rev-parse HEAD` / `git diff --name-only` — 回填 q3
+1. `npm run test:unit`（framework/harness）— 108 passed, 0 failed
+2. `hdc list targets` — 设备 `3UJ0225327004147`
+3. `npx ts-node harness-runner.ts --phase ut --feature home-page`（`2026-05-07T13:18:38.289Z` PASS）
+4. `Task(subagent_type=verifier)` — `verify-ut.md` → `verifier.report.md`（summary.verdict: PASS，0 WARN）
+5. `npx ts-node framework/harness/scripts/check-receipt.ts --feature home-page --phase ut` — PASS
+6. `git rev-parse HEAD` — 回填 `claimed_completion_commit_sha`
 
 ## 备注（可选）
 
-- **q3** 取 **`git diff --name-only`（已跟踪变更）最后一行**；未 track 的本回执须在 `git add` 后才进入 diff。  
-- **gap-notes**：在 **`HomeTabPage.ets`** 并入提交前保留，或在 commit 后删除对应 `approved_src_mutations` 条目以免误导。  
-- **claimed_completion_commit_sha** 为当前 **HEAD**；合并前可按新提交更新。
+- Verifier 对 **mock_plan_traceability**、**business_assertion_value** 已重新判定为 **PASS**；`summary.verdict: PASS`。
+- `trace.json` 为 harness 写入的轻量形态（含 `start_commit`）；与 trace.schema.json 全字段相比为子集，回执仅校验路径存在且 JSON 可解析。
 
 ## 反假设条款回顾（全局入口 §6.5）
 

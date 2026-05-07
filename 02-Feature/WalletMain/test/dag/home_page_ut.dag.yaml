@@ -31,6 +31,7 @@ nodes:
       file: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
       function: getServiceEntries
     stub_strategy: use_real_HomeRepository
+    spy_preset: default_entries
     next:
       - n2
   - id: n2
@@ -40,6 +41,7 @@ nodes:
       file: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
       function: getPromoList
     stub_strategy: use_real_HomeRepository
+    spy_preset: default_promos
     next:
       - n3
   - id: n3
