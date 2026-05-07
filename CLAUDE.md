@@ -70,6 +70,7 @@
 ### 3.5 文档与代码同步
 
 - design.md 的 `contracts.yaml`（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 key）是编码阶段的强契约，实现必须与之一致。
+- **`doc/features/<feature>/`** 默认**不假定**提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 控制；harness/receipt按工作区与配置判断，不因「仅未 commit」而作伪失败。**含 UI 形态的 PRD 应声明** `ui_change`/Visual Handoff；非 UI / 后端类需求不强制整块 yaml。
 - **feature 需求交付不自动触发 [doc/architecture.md](doc/architecture.md) 更新**——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `doc/features/<feature>/` 承担）。
 - 仅当 design.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [Skill 2 · Step 12](framework/skills/2-requirement-design/SKILL.md) 分支更新 [doc/architecture.md](doc/architecture.md) / [doc/module-catalog.yaml](doc/module-catalog.yaml) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
 - **[doc/module-catalog.yaml](doc/module-catalog.yaml)** 是模块职责 / 公共能力 / 易混点的唯一 SSOT；不要把这些细节复制到 architecture.md。

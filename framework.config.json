@@ -63,7 +63,8 @@
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md",
     "state_file": "framework/harness/state/.current-phase.json",
-    "receipt_dir_pattern": "doc/features/<feature>/<phase>"
+    "receipt_dir_pattern": "doc/features/<feature>/<phase>",
+    "docs_committed": true
   },
   "toolchain": {
     "devEcoStudio": {
@@ -83,6 +84,10 @@
     "schema_version": "1.1"
   },
   "prd": {
-    "visual_handoff_enforcement": "strict"
+    "visual_handoff_enforcement": "strict",
+    "visual_sources": {
+      "allow_absolute_paths": false,
+      "allow_network_paths": false
+    }
   }
 }

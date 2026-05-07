@@ -1,5 +1,5 @@
 > **模块标识**: `home-page`  
-> **版本**: v1.0  
+> **版本**: v1.1  
 > **创建日期**: 2026-04-22  
 > **状态**: 评审中  
 
@@ -9,8 +9,8 @@
 
 ## 0. 术语映射表
 
-> 本节是 BLOCKER：原始需求与截图见 `doc/原始需求/1.首页`（多终端路径编码时以资源管理器实际路径为准）。  
-> 下列术语已对照 `doc/glossary.yaml`；「用户确认」为 `[x]` 表示本 PRD 定稿时作者已按 SSOT 核对，**若你作为评审方有异议请改表并重新跑 harness。**
+> 本节是 BLOCKER：**像素级走查与截图真源**以 `doc/features/home-page/ux-reference/` 为准（索引与每张图语义见该目录 **`README.md`**）；下列术语已对照 `doc/glossary.yaml`。  
+> 「用户确认」列为 `[x]` 表示本 PRD 定稿时作者已按 SSOT 核对，**若你作为评审方有异议请改表并重新跑 harness。**
 
 | 原始术语 | 权威模块 | 所属层 | 置信度 | 易混项 | 用户确认 |
 |----------|----------|--------|--------|--------|----------|
@@ -69,11 +69,19 @@ rationale: |
 # Visual Handoff（脚本 harness 读取：须单独 yaml 块，根字段含 ui_change）
 ui_change: new_or_changed
 visual_handoff:
-  kind: repo_assets
+  kind: screenshot_pack
   authoritative_refs:
-    - id: home_ux_index
+    - id: home_ux_readme_index
       path: doc/features/home-page/ux-reference/README.md
+    - id: home_screenshot_archive
+      path: doc/features/home-page/ux-reference
 ```
+
+<!--
+【团队范式注释，脚本不解析】若高保真归档在工程外，可采用：
+path: ${UX_ROOT}/home-page/v3/
+并配置 framework.config.json → prd.visual_sources.external_roots 或本机环境变量 UX_ROOT。
+-->
 
 ### 最小改动原则
 
@@ -90,7 +98,7 @@ visual_handoff:
 | 用户角色 | 描述 |
 |----------|------|
 | 普通钱包用户 | 已安装本应用、使用双 Tab 主框架进入「首页」查看服务与活动 |
-| 产品/设计评审方 | 对照 `doc/原始需求/1.首页` 截图与本 PRD 做走查 |
+| 产品/设计评审方 | 对照 `doc/features/home-page/ux-reference/README.md` 所列归档图与本 PRD 做走查 |
 
 ### 3.2 使用场景
 
@@ -118,7 +126,7 @@ visual_handoff:
 
 ## 5. 页面/界面描述
 
-> **版面基线**：以归档原始截图与仓库内 UX 导出（含 `doc/features/home-page/ux-reference/`、`doc/原始需求/1.首页`）为准；与当前实现对齐的差异须记入验收或明示为模拟工程占位。Markdown 插图仅为扫读，非像素真相。
+> **版面基线**：以仓库内 **`doc/features/home-page/ux-reference/`** 归档图及同目录 **`README.md`** ID/说明为准；历史上若曾有过 `doc/原始需求/` 等非规范路径拷贝，一律以 **本目录** 为唯一权威。与本 PRD/实现对齐的差异须记入验收或明示为模拟工程占位。Markdown 正文插图仅为扫读，非像素真相。
 
 ### 5.1 页面总览
 
@@ -255,13 +263,20 @@ flowchart TD
 
 ## 附录
 
-### A. 原始需求与截图
+### A. UX 归档（权威截图包）
 
-- 目录：`doc/原始需求/1.首页`（若仓库路径显示乱码，以本地资源管理器为准）。  
-- 覆盖：无卡/有卡、服务与活动等界面，**与**本 PRD 可并行对照。  
+| 用途 | 路径 |
+|------|------|
+| 索引与每张图语义（ID、与本需求关系） | `doc/features/home-page/ux-reference/README.md` |
+| 整包归档目录（含 `1–5` 号 `.jpg`，见 README 表格） | `doc/features/home-page/ux-reference/` |
+
+走查顺序：README 表中 **先从 `ref_home_no_card` 对应首页无卡截图**对齐 `HomeTabPage`，再按需对照跳转目标截图（卡包 / 添卡等）；与 `contracts.yaml` 中 `visual_parity_contract` 一并使用。  
+
+**说明**：旧的 `doc/原始需求/` 等非 git 归档路径若有残留，不作为 harness/评审真源。
 
 ### B. 变更记录
 
 | 日期 | 版本 | 变更内容 |
 |------|------|----------|
 | 2026-04-22 | v1.0 | 首版，基于实现与原始截图目录起稿 |
+| 2026-05-06 | v1.1 | UX 像素真源统一切至 `ux-reference/`；Visual Handoff 升级为 `screenshot_pack`（README + 目录双引用）；正文与附录同步 |
