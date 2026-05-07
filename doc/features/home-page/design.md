@@ -1,6 +1,6 @@
 > **模块标识**: `home-page`  
 > **对应 PRD**: `doc/features/home-page/PRD.md`  
-> **版本**: v1.0  
+> **版本**: v1.1  
 > **创建日期**: 2026-04-22  
 > **状态**: 已确认  
 
@@ -73,7 +73,7 @@ graph TD
 ```text
 02-Feature/WalletMain/
 └── src/main/ets/
-    ├── Index.ets
+    ├── index.ets
     ├── data/
     │   ├── model/
     │   │   ├── PromoInfo.ets
@@ -155,7 +155,7 @@ HomeTabPage
 
 | 数据 | 作用域 | 装饰器 / 机制 | 持有者 |
 |------|--------|----------------|--------|
-| `navPathStack` | 自 Phone 根 `Index` 向下注入 | `@Provide` / `@Consume` | `Phone.Index` 提供；`HomeTabPage` 消费 |
+| `navPathStack` | 自 Phone 根页面向下注入 | `@Provide` / `@Consume` | `Phone` 根 `pages/index` 提供；`HomeTabPage` 消费 |
 | 服务宫格列表 `services` | 首页 Tab 内 | `@State` | `HomeTabPage` |
 | 活动轮播列表 `promos` | 首页 Tab 内 | `@State` | `HomeTabPage` |
 | `ServiceEntry[]` / `PromoInfo[]` 子项展示 | 子组件只读 | `@Prop` 传入 | `ServiceGridSwiper` / `PromoSwiper` |
@@ -197,6 +197,25 @@ flowchart LR
 
 ---
 
+## Visual Handoff 与版面真源
+
+本设计与 PRD 中 **Visual Handoff** 机器可读块一致：`ui_change: new_or_changed`，`visual_handoff.kind: repo_assets`。
+
+| 项 | 说明 |
+|----|------|
+| **权威索引（`id: home_ux_index`）** | `doc/features/home-page/ux-reference/README.md`：仓库内版面与导出路径的索引；后续产品可在该 README 中增补 `authoritative_refs` 子路径。 |
+| **补充走查** | `doc/原始需求/1.首页`（与 PRD 附录 A 一致）；与当前实现对齐的差异须在验收或 README 中明示为模拟工程占位。 |
+
+**相对真源的允许偏差**：
+
+- Mock 数据、占位卡图、未入库高清导出：**允许**，直至资产落入 `ux-reference/` 或 PRD 更新引用。  
+- 服务条数、活动条数与截图不完全一致：**允许**，以不崩溃、`AC-2`/`AC-7`/`AC-8` 语义满足为准。  
+- **禁止**仅以 PRD Markdown 内嵌缩略图作为唯一像素真源（与 PRD §5 一致）。
+
+**契约下沉**：可测的资源 key、栅格列数、轮播行为等见本 feature `contracts.yaml` 中 `visual_parity_contract`。
+
+---
+
 ## PRD 功能映射表
 
 | PRD 编号 | 功能名称 | 优先级 | 实现模块 | 关键文件 |
@@ -212,6 +231,7 @@ flowchart LR
 
 ## 设计备注（与实现基线一致）
 
+- **Visual Handoff**：版面真源与可测项见上文「Visual Handoff 与版面真源」及 `contracts.yaml` 的 `visual_handoff` / `visual_parity_contract`。  
 - **卡区与主按钮**：`CardGuideSection` 中卡面与「添加/管理卡」主按钮均回调 **卡包**（`CardPackPage`），与 PRD AC-3/AC-4 及当前代码一致。  
 - **加号**：标题栏加号进入 `AddCardEntryPage`（与 PRD AC-5 一致）。  
 - **F6**：无网场景若仍为本地 Mock 数据，以不崩溃、可扩展 Toast/空态分支为满足；具体网络探测若后续产品要求再迭代。

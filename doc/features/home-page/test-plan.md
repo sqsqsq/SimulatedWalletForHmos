@@ -115,7 +115,7 @@
 
 ### 测试依赖
 
-- 可安装** Debug** 包；`navPathStack` 由 `Phone/Index` 提供，**禁止**在不知会团队下只跑孤立页面导致 BD-3 假阳性。  
+- 可安装** Debug** 包；`navPathStack` 由 `Phone` 根页面提供，**禁止**在不知会团队下只跑孤立页面导致 BD-3 假阳性。  
 - 依赖 **Skill 3/4** 已合入的 WalletMain 实现与**当前导航名** `CardPackPage` / `AddCardEntryPage`。
 
 ### 环境限制

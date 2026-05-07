@@ -79,7 +79,7 @@ visual_handoff:
 
 1. 优先在 `WalletMain` 的 `HomeTabPage` 及同 feature 的 `presentation` / `data` 中实现。  
 2. 复用 `CommUI.showToast`、既有 ArkUI 模式；不复制第二套设计系统。  
-3. 需要 `Phone` 改 `pages/Index` 或导航契约时，**先**走 scope 扩展，**不**在本 PRD 中假设已批准。  
+3. 需要 `Phone` 改 `pages/index` 或导航契约时，**先**走 scope 扩展，**不**在本 PRD 中假设已批准。  
 
 ---
 
@@ -123,7 +123,7 @@ visual_handoff:
 ### 5.1 页面总览
 
 - **整体**：全屏 `Column`：上为标题行，下为 `Scroll` 内纵向区块（卡引导 → 服务宫格 → 活动/更多服务）。  
-- **底 Tab / 系统状态栏**：由 `Phone` 的 `Index` 提供，不属本页修改范围。  
+- **底 Tab / 系统状态栏**：由 `Phone` 的根页面提供，不属本页修改范围。  
 
 ### 5.2 区域：标题与顶部操作
 
