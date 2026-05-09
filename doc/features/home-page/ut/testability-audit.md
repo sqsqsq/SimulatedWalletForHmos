@@ -1,6 +1,6 @@
 # 可测性预检 — home-page
 
-> 自动生成/维护以通过 `ut_testability_audit_present`；模板见 `framework/skills/5-business-ut/templates/testability-audit-template.md`。
+> 自动生成/维护以通过 `ut_testability_audit_present`；模板见 `framework/profiles/hmos-app/skills/5-business-ut/templates/testability-audit-template.md`。
 
 ```yaml
 schema_version: "1.0"

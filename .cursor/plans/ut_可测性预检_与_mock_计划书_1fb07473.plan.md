@@ -35,6 +35,12 @@ todos:
   - id: decisions
     content: 落地前与用户确认：存量 feature 迁移策略 / L3 option_b seam 白名单 / 是否做 adapter slash 入口
     status: completed
+  - id: harness-fixtures-v23
+    content: v2.3 UT 门禁 Harness 回归（profiles/hmos-app/.../v2_2/ut_v23_*）覆盖 audit / mock-plan / spy_preset / L3 处置 / contracts
+    status: completed
+  - id: adapters-ut-audit
+    content: Cursor 跳板 ut-audit + Claude slash /ut-audit（templates 与实例 .cursor/.claude 已下发）
+    status: completed
 isProject: false
 ---
 
@@ -213,8 +219,31 @@ spy_preset: success            # 新增；引用 mock-plan.yaml > spies[].method
 
 ---
 
-## 待确认开放点
+## 待确认开放点（已闭环 · 2026-05-08）
 
-1. **存量 feature 迁移策略**：P2 上线时 `home-page` 这类已 PASS 的 feature 是否需要回填 mock-plan？建议「老 feature 仅当下次 UT 改动时补；新 feature 强制」，但需你拍板。
-2. **L3 + option_b 的源码改造范围**：是否限制 seam 形态？建议白名单 = 构造注入 / 包装 wrapper / 提取命名方法 / setter 注入；禁止「把全局单例改成另一种全局单例」。
-3. **是否给 Cursor / Claude 任一 adapter 做 slash 入口**：例如 `/ut-audit` 直接进入 Step 1.5，弱模型不容易跳。
+下列三项已在工程内落地，**权威表述以代码与 Skill 正文为准**；本节仅作计划书收口，避免与 frontmatter `todos` 状态矛盾。
+
+| # | 议题 | 决议摘要 | SSOT |
+|---|------|----------|------|
+| 1 | **存量 feature 迁移** | 已在历史 UT PASS 的 feature **仅当再次进入 Skill 5 且变更 UT 相关产物时** 回补 `ut/testability-audit.md` 与 `ut/mock-plan.yaml`；**新 feature 自 v2.3 起一律强制**。`home-page` 等已具备审计 + mock-plan + DAG `spy_preset` 可对齐此项。 | [`framework/skills/5-business-ut/SKILL.md`](../../framework/skills/5-business-ut/SKILL.md)「UT 可测性 / mock-plan 策略决议（v2.3）」§1 |
+| 2 | **L3 + option_b 接缝白名单** | 仅允许 **构造注入、包装 wrapper、提取命名方法、setter 注入**；**禁止**「换一种全局单例」式敷衍。 | 同上 §2；`ut_unsupported_targets_handled` + gap-notes 授权流 |
+| 3 | **Cursor / Claude 入口** | **已做**：Cursor `framework/agents/cursor/templates/skills/ut-audit/` → `.cursor/skills/ut-audit/`；Claude `ut-audit.md` → `/ut-audit`。仍须 **完整阅读** Skill 5 后自 Step 1.5 切入。 | 同上 §3；[`framework/agents/cursor/templates/skills/ut-audit/SKILL.md`](../../framework/agents/cursor/templates/skills/ut-audit/SKILL.md)、[`framework/agents/claude/templates/commands/ut-audit.md`](../../framework/agents/claude/templates/commands/ut-audit.md) |
+
+**回归保险**：`framework/profiles/hmos-app/harness/tests/fixtures/v2_2/` 下 `ut_v23_*` 系列 fixture（见 [`framework/harness/tests/README.md`](../../framework/harness/tests/README.md)）对 v2.3 脚本门禁做阴性覆盖；全量 `cd framework/harness && npm test` 应通过。
+
+> **说明**：Framework 四件套闭环（某 feature 的 trace / harness ut / verifier / phase-completion-receipt）仅在整个 **UT 阶段交付** 时产生；本计划书范围是 **机制与模板 + harness + 适配器入口**，不等价于替某一业务 feature 跑完 UT 阶段闭环。
+
+---
+
+## 机制闭环确认（计划书维度 · 2026-05-08）
+
+本节表示：**本计划所列 P1/P2/P3、todos、harness/fixtures、适配器模板**已与当前仓库对齐，**无再在计划书里登记的待办条目**。
+
+| 核对项 | 状态 |
+|--------|------|
+| **frontmatter todos**（`p1`–`p3` / fixtures / adapters / decisions） | 全部为 `completed` |
+| **`check-ut.ts`** | 含 `ut_testability_audit_present`、`ut_unsupported_targets_handled`、`ut_mock_plan_*`、`dag_spy_preset_resolvable` 等门禁 |
+| **Skill / 模板** | `Skill 5` 含 Step 1.5/1.6；`testability-audit-template.md` / `mock-plan-schema.md` / `dag-schema.md`（`spy_preset`）已存在 |
+| **Harness 回归** | `cd framework/harness && npm test`：**108** unit + **23** fixture 全通过（含 `ut_v23_*` 全套） |
+
+**仍需人工完成、但不属于「计划未写完」的范畴**：合并到主分支时请把 **`framework/agents/*/templates/` 下的 ut-audit 产物与实例 `.cursor/skills/ut-audit`** 一并纳入版本控制（或通过后续 `framework-init` 下发），避免新克隆仓库缺跳板。

@@ -2,6 +2,10 @@
   "schema_version": "1.0",
   "project_name": "SimulatedWalletForHmos",
   "project_type": "app",
+  "project_profile": {
+    "name": "hmos-app",
+    "sub_variant": "app"
+  },
   "agent_adapter": "claude",
   "architecture": {
     "outer_layers": [

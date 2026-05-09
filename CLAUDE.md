@@ -14,9 +14,10 @@
 |------|------|
 | 项目名 | `SimulatedWalletForHmos` |
 | 项目类型 | `app` |
+| project profile | `hmos-app`（子型：`—`） |
 | 激活的 agent adapter | `claude` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
-| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 index.ets（由 `architecture.cross_module_exports_file` 配置）；同层 01–04 为 dag，05 为 sublayer（CommUI→CommFunc） |
+| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 index.ets（由 architecture.cross_module_exports_file 配置）；同层 01–04 为 dag，05 为 sublayer（CommUI→CommFunc） |
 
 详细架构说明请阅读：[doc/architecture.md](doc/architecture.md)。
 
@@ -30,8 +31,8 @@
 | 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 给 phase-rules / check-*.ts 读取的结构化定义。修改必过 `/framework-init`（UPDATE 模式） |
 | 模块画像（Catalog） | [doc/module-catalog.yaml](doc/module-catalog.yaml) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**Scope 防错源头**。建模与修改走 Skill 0 · Phase A。 |
 | 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。建表走 Skill 0 · Phase B。 |
-| 通用编码规范 | [framework/skills/3-coding/templates/coding-standards.md](framework/skills/3-coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
-| ArkTS 易错点 | [framework/skills/3-coding/reference/arkts-pitfalls.md](framework/skills/3-coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
+| 通用编码规范（hmos-app） | [framework/profiles/hmos-app/skills/3-coding/templates/coding-standards.md](framework/profiles/hmos-app/skills/3-coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
+| ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
 | 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary 八阶段 YAML 规则 |
 | 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
 
@@ -43,7 +44,7 @@
 
 1. **层间依赖方向严格按 `framework.config.json` → `architecture.outer_layers` 声明**，任何反向依赖一律拒绝。
 2. **模块内依赖方向按 `architecture.module_inner_layers` + `inner_dependency_direction` 声明**，禁止反向依赖。
-3. **跨模块访问必须通过 `architecture.cross_module_exports_file` 声明的出口文件**（默认 `index.ets`），禁止深路径 import。
+3. **跨模块访问必须通过 `architecture.cross_module_exports_file` 声明的出口文件（实例配置为准），禁止深路径 import**。
 
 ### 3.2 术语守门（BLOCKER）
 
@@ -61,16 +62,16 @@
 4. 编码阶段 `git diff` 涉及的所有文件必须落在 design 的 `in_scope_modules` 内（`doc/`、`specs/`、`framework/` 等框架/实例基础设施目录除外）。
 5. **严禁静默扩展**：任何"顺手改一下"都必须回到 design 阶段走扩展提议流程。
 
-### 3.4 ArkTS 正确性守门（BLOCKER）
+### 3.4 宿主 toolchain 正确性守门（BLOCKER）
 
-1. 写 `.ets` 文件**前**先扫一眼 [arkts-pitfalls.md](framework/skills/3-coding/reference/arkts-pitfalls.md) 相关条目。
+1. 写 `.ets` 文件**前**先扫一眼 [arkts-pitfalls.md（profile）](framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md) 相关条目（其它 `project_profile` 以其 addendum / 宿主约定为准）。
 2. **逐文件闭环**：写一个文件 → 立刻 `ReadLints` → 零 error 才能写下一个。**严禁批量生成多文件后再统一 lint**。
-3. 不允许出现 `any`、硬编码字符串、未定义资源 key、未导出的模块入口约定文件（默认 `index.ets`）中的符号缺失。
+3. 不允许出现 `any`、硬编码字符串、未定义资源 key、以及在跨模块导出入口文件（由实例 `architecture.cross_module_exports_file` 指定文件名）中遗漏本应导出的符号。
 
 ### 3.5 文档与代码同步
 
 - design.md 的 `contracts.yaml`（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 key）是编码阶段的强契约，实现必须与之一致。
-- **`doc/features/<feature>/`** 默认**不假定**提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 控制；harness/receipt按工作区与配置判断，不因「仅未 commit」而作伪失败。**含 UI 形态的 PRD 应声明** `ui_change`/Visual Handoff；非 UI / 后端类需求不强制整块 yaml。
+- **`doc/features/<feature>/`** 默认**不假定**提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 管控；脚本 harness 与工作区快照优先，completion receipt **不强求**未入库即失败（参见 `paths.docs_committed` 语义）。含 **UI** 形态的 PRD **应当**声明 `ui_change`/Visual Handoff；非 UI / 后端类需求**不做**硬性要求。
 - **feature 需求交付不自动触发 [doc/architecture.md](doc/architecture.md) 更新**——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `doc/features/<feature>/` 承担）。
 - 仅当 design.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [Skill 2 · Step 12](framework/skills/2-requirement-design/SKILL.md) 分支更新 [doc/architecture.md](doc/architecture.md) / [doc/module-catalog.yaml](doc/module-catalog.yaml) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
 - **[doc/module-catalog.yaml](doc/module-catalog.yaml)** 是模块职责 / 公共能力 / 易混点的唯一 SSOT；不要把这些细节复制到 architecture.md。
@@ -80,7 +81,7 @@
 ## 四、工作流与 Skill 路由
 
 每个阶段都有对应 Skill 文档。具体触发方式由当前 adapter（`claude`）决定——
-有的 agent 用 slash（Claude Code 的 `/xxx`），有的 agent 用跳板文件（Cursor 的 `.cursor/skills/`），
+slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
 也可以直接让 agent 读对应 `framework/skills/<n>/SKILL.md` 进入。
 
 | 阶段 | Skill 路径 |
@@ -94,6 +95,8 @@
 | 4. 代码审查 | [framework/skills/4-code-review/SKILL.md](framework/skills/4-code-review/SKILL.md) |
 | 5. 业务级 UT | [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) |
 | 6. 真机测试 | [framework/skills/6-device-testing/SKILL.md](framework/skills/6-device-testing/SKILL.md) |
+
+> **辅助路由（Skill 5）**：**Cursor** 可用 `.cursor/skills/ut-audit` 跳板；**Claude Code** 可用 `/ut-audit`。二者均要求在完整阅读 [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) 后自 **Step 1.5** 切入；正文与 BLOCKER 仍以该 SKILL 为准。
 
 > **Skill 0（catalog + glossary）是所有其它 Skill 的前置**：只有 `doc/module-catalog.yaml` + `doc/glossary.yaml`
 > 先建好，后续 PRD 阶段的术语消歧与 Scope 守门才有可校验的基准。
@@ -136,7 +139,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 ### 5.1 阶段闭环判定（trace.json 缺失 = 阶段未完成）
 
-> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层（如 Claude Code 的 Stop hook）会读取本节定义的判据决定能否放行 stop。
+> 本节是 **Layer 2（完成回执）+ Layer 3（Stop hook）** 的 SSOT。物理拦截层若存在，则由具备 hooks 能力的 adapter 在实例根下发的脚本读取本节定义的判据决定能否放行 stop（细节见 [framework/agents/README.md](framework/agents/README.md)）。
 
 任何 **feature 维度阶段**（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
 
@@ -155,9 +158,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 > harness-runner 不为它们写 `.current-phase.json`，Stop hook 也对 `state.phase` 是这四值之一时一律放行。
 > 详见 [framework/harness/scripts/check-init.ts](framework/harness/scripts/check-init.ts) 头部"元阶段三件套刻意不对称"段落。
 
-> 不同 adapter 物理拦截能力不同：`claude` adapter 通过 `.claude/settings.json` 注册 Stop / SubagentStop hook
-> （由 `00-framework-init` 从 `framework/agents/claude/templates/` 下发），`generic` / `cursor` adapter 暂无等价
-> 物理层，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
+> 具备 Stop hook / Subagent hook 下发能力的 adapter：**安装与配置路径**仅以 [framework/agents/README.md](framework/agents/README.md) 为准；未配置等价物理层的 adapter，闭环依赖 Layer 1（本节及反假设条款）+ Layer 2（完成回执）共同保证。
 
 #### 5.1.1 会话边界与跨会话遗留（v2.8 起）
 

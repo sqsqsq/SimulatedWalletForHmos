@@ -19,6 +19,7 @@
 /signing
 .obsidian
 /doc/原始需求
+/.claude/settings.local.json
 
 # Framework runtime artifacts (managed by /framework-init)
 framework/harness/node_modules/
