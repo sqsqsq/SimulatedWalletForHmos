@@ -96,8 +96,6 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 | 5. 业务级 UT | [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) |
 | 6. 真机测试 | [framework/skills/6-device-testing/SKILL.md](framework/skills/6-device-testing/SKILL.md) |
 
-> **辅助路由（Skill 5）**：**Cursor** 可用 `.cursor/skills/ut-audit` 跳板；**Claude Code** 可用 `/ut-audit`。二者均要求在完整阅读 [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) 后自 **Step 1.5** 切入；正文与 BLOCKER 仍以该 SKILL 为准。
-
 > **Skill 0（catalog + glossary）是所有其它 Skill 的前置**：只有 `doc/module-catalog.yaml` + `doc/glossary.yaml`
 > 先建好，后续 PRD 阶段的术语消歧与 Scope 守门才有可校验的基准。
 > 真实工程启动时，先按 Skill 0 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 Skill 0。
