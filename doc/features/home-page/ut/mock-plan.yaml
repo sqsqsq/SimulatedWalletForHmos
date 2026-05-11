@@ -1,5 +1,7 @@
 schema_version: "1.0"
 feature: home-page
+# UT 策略（mock-plan_traceability）：当前 UT 直接使用 HomeRepository 内置 Mock，返回数据与下方 presets 一致；
+# 未使用 Spy 子类注入。DAG / spy_preset 保留为规约与 harness 追溯；若日后改为 Spy，请在 UT 中替换为 SpyHomeRepository 并删除本注记。
 imports:
   - { symbol: ServiceEntry, from: "02-Feature/WalletMain/src/main/ets/data/model/ServiceEntry" }
   - { symbol: PromoInfo, from: "02-Feature/WalletMain/src/main/ets/data/model/PromoInfo" }
