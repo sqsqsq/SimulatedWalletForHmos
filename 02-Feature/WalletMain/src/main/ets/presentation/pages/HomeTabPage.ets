@@ -9,8 +9,8 @@ import { ServiceGridSwiper } from '../components/ServiceGridSwiper';
 
 @Component
 export struct HomeTabPage {
-  /** TabContent 子树可能与 Navigation 外侧 @Provide 断链；由 Phone.Index 显式传入 */
-  @Prop navPathStack: NavPathStack = new NavPathStack();
+  /** NavPathStack 禁止 @Prop（真机 pushPath 会丢原生句柄 SIGSEGV），须与 Navigation 同源 @Link */
+  @Link navPathStack: NavPathStack;
   @State services: ServiceEntry[] = [];
   @State promos: PromoInfo[] = [];
   private readonly homeRepo: HomeRepository = new HomeRepository();

@@ -1,10 +1,15 @@
+import { NavPathContext } from '@aspect/CommFunc';
 import { buildAddCardEntryPage, buildCardPackPage, HomeTabPage, MineTabPage } from '@aspect/WalletMain';
 
 @Entry
 @Component
 struct Index {
-  @Provide('navPathStack') navPathStack: NavPathStack = new NavPathStack();
+  @State navPathStack: NavPathStack = new NavPathStack();
   @State currentTabIndex: number = 0;
+
+  aboutToAppear(): void {
+    NavPathContext.attach(this.navPathStack);
+  }
 
   @Builder
   navDestinationMap(name: string, _param: Object) {
@@ -41,7 +46,7 @@ struct Index {
     Navigation(this.navPathStack) {
       Tabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
         TabContent() {
-          HomeTabPage({ navPathStack: this.navPathStack })
+          HomeTabPage({ navPathStack: $navPathStack })
         }.tabBar(this.tabHome())
 
         TabContent() {

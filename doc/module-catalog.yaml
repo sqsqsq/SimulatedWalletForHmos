@@ -6,13 +6,15 @@ modules:
     layer: "05-SystemBase"
     sub_layer: "CommFunc"
     format: "HAR"
-    one_liner: "系统侧通用能力封装：轻量日志（hilog）与字符串/账号脱敏等可复用工具，供同层与上层 HAR 引用。"
+    one_liner: "系统侧通用能力封装：轻量日志（hilog）、字符串/账号脱敏工具，以及宿主 `Navigation` 用 `NavPathStack` 的全局挂载点（`NavPathContext`），供上层 HAR 引用。"
     responsibilities:
       - "通过 `Logger` 向各模块提供统一的 `hilog` 封装，统一 DOMAIN，降低重复样板代码。"
       - "通过 `FormatUtil` 提供手机号/通用账号的脱敏与展示用格式化，供业务侧展示层复用。"
+      - "通过 `NavPathContext` 为使用 `Navigation` + `NavPathStack` 的工程提供**宿主挂载的栈引用**（`attach` / `stack`），供 `NavDestination` 等无法 `@Link` 的子树安全调用 `pushPath` / `pop`；**不**承载路由表、页面名常量或业务跳转策略（由 Product/Feature 定义）。"
       - "作为 05-SystemBase 中 **CommFunc 子层** 成员，在子层规则下不依赖 `CommUI`，可被 `CommUI` 与其它外层模块依赖（按架构 DSL 允许的层间边）。"
     NOT_responsible_for:
-      - "不负责页面、路由、可交互 UI 与视觉资源；若 PRD 描述「页面/组件/动效」等，应落在 Feature/Product 或同层 `CommUI` 模块，而非在 `CommFunc` 新造 UI。"
+      - "不负责具体业务页面、`main_pages` / `route_map` 等路由表或「跳转到哪一屏」的产品决策；`NavPathContext` 仅持有宿主已绑定的 `NavPathStack` 引用，不替代 Feature 内的页面与导航命名。"
+      - "不负责可交互 UI 与视觉资源；若 PRD 描述「页面/组件/动效」等，应落在 Feature/Product 或同层 `CommUI` 模块，而非在 `CommFunc` 新造 UI。"
       - "不负责卡、账户、交易、设备指纹等业务域逻辑与数据持有；`CommFunc` 只提供与业务无关的通用技术能力。"
       - "不负责为单一 Feature 定制业务 DTO/Repository/领域服务；此类能力应落在对应 `02-Feature` 或 `04-BusinessBase` 模块的 domain 层。"
     typical_business_terms:
@@ -33,10 +35,11 @@ modules:
       - module: "WalletMain"
         disambiguation: |
           **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
-          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。宿主全局 `NavPathStack` 挂载可经本模块 `NavPathContext`，具体 `pushPath` 的页面名仍属各 Feature。
     key_exports:
       - "Logger"
       - "FormatUtil"
+      - "NavPathContext"
     entry_file: "05-SystemBase/CommFunc/src/main/ets/index.ets"
 
   - name: "CommUI"

@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { NavPathContext } from '@aspect/CommFunc';
 import { ActionListItem, showToast } from '@aspect/CommUI';
 import { CardCategory } from '../../data/model/CardCategory';
 import { CardRepository } from '../../data/repository/CardRepository';
@@ -6,7 +7,6 @@ import { CardCategoryList } from '../components/CardCategoryList';
 
 @Component
 struct AddCardEntryPage {
-  @Consume('navPathStack') navPathStack: NavPathStack;
   @State categories: CardCategory[] = [];
   @State nonLocalCount: number = 0;
   private readonly cardRepo: CardRepository = new CardRepository();
@@ -62,7 +62,7 @@ struct AddCardEntryPage {
     }
     .title($r('app.string.add_card_title'))
     .onBackPressed(() => {
-      this.navPathStack.pop();
+      NavPathContext.stack().pop();
       return true;
     })
   }

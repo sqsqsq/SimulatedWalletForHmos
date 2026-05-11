@@ -1,11 +1,10 @@
 import { Context } from '@kit.AbilityKit';
+import { NavPathContext } from '@aspect/CommFunc';
 import { ActionListItem, SectionCard, showToast } from '@aspect/CommUI';
 import { HomeConstants } from '../../shared/constant/HomeConstants';
 
 @Component
 struct CardPackPage {
-  @Consume('navPathStack') navPathStack: NavPathStack;
-
   private str(res: Resource): string {
     return (this.getUIContext().getHostContext() as Context).resourceManager.getStringSync(res.id);
   }
@@ -19,7 +18,7 @@ struct CardPackPage {
             .fontSize(22)
             .fontColor([$r('app.color.wallet_primary')])
             .onClick(() => {
-              this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
+              NavPathContext.stack().pushPath({ name: 'AddCardEntryPage' });
             })
         }
         .width('100%')
@@ -56,7 +55,7 @@ struct CardPackPage {
             bottom: 12
           })
           .onClick(() => {
-            this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
+            NavPathContext.stack().pushPath({ name: 'AddCardEntryPage' });
           })
         }
 
@@ -93,7 +92,7 @@ struct CardPackPage {
     }
     .title($r('app.string.card_pack_title'))
     .onBackPressed(() => {
-      this.navPathStack.pop();
+      NavPathContext.stack().pop();
       return true;
     })
   }
