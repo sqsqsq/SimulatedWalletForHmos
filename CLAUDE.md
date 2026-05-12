@@ -17,7 +17,7 @@
 | project profile | `hmos-app`（子型：`app`） |
 | 激活的 agent adapter | `claude` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
-| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 index.ets（由 architecture.cross_module_exports_file 配置）；同层 01–04 为 dag，05 为 sublayer（CommUI→CommFunc） |
+| 架构摘要 | 5 |
 
 详细架构说明请阅读：[doc/architecture.md](doc/architecture.md)。
 
@@ -33,7 +33,7 @@
 | 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。建表走 Skill 0 · Phase B。 |
 | 通用编码规范（hmos-app） | [framework/profiles/hmos-app/skills/3-coding/templates/coding-standards.md](framework/profiles/hmos-app/skills/3-coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
 | ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
-| 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary 八阶段 YAML 规则 |
+| 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary / **extensions** 等阶段 YAML 规则（以当前激活 workflow 为准） |
 | 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
 
 ---
@@ -100,6 +100,15 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 | 5. 业务级 UT | [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) |
 | 6. 真机测试 | [framework/skills/6-device-testing/SKILL.md](framework/skills/6-device-testing/SKILL.md) |
 
+
+### 实例扩展 Skill（doc/extensions）
+
+以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。
+
+| 标识 | Skill 路径 |
+|------|-----------|
+| `wallet-sdk-onboarding` | [doc/extensions/skills/wallet-sdk-onboarding/SKILL.md](doc/extensions/skills/wallet-sdk-onboarding/SKILL.md) |
+
 > **Skill 0（catalog + glossary）是所有其它 Skill 的前置**：只有 `doc/module-catalog.yaml` + `doc/glossary.yaml`
 > 先建好，后续 PRD 阶段的术语消歧与 Scope 守门才有可校验的基准。
 > 真实工程启动时，先按 Skill 0 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 Skill 0。
@@ -124,6 +133,22 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
    把 feature / phase / 报告路径完整传入；不得仅"提示用户去跑"或"等用户启动"。
 3. **CLAUDE.md 全文未禁止主 agent 调用 shell / 执行命令**；空白处一律按"允许"理解。
    若你以为某条规则限制了你执行命令，请先翻到第六节第 5 条「反假设条款」核对。
+
+### 4.2 实例扩展与生命周期钩子（路由）
+
+允许在不改 `framework/` 的前提下挂载业务 Skill / knowledge / phase 前后钩子。
+
+- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 SKILL 00 §5.4.6 自动从 `framework/skills/00-framework-init/templates/extension-skeleton/` 拷出；UPDATE 路径见 `framework/MIGRATION.md` v2.5。
+- **协议 SSOT**：[instance-extension-manifest.schema.yaml](framework/specs/instance-extension-manifest.schema.yaml) · [lifecycle-hooks-schema.yaml](framework/specs/lifecycle-hooks-schema.yaml) · [workflow-schema.json](framework/specs/workflow-schema.json)；三层叠加见 [docs/concepts/extensibility.md](framework/docs/concepts/extensibility.md)。
+
+**何时主动询问用户**（**仅询问**，不改 manifest、不给 y/n diff；本会话被 n 后不再就同一资料二次发问）：
+
+1. 强言语信号：「以后都…」「全工程都…」「我们家规矩…」；
+2. 稳定资料：SDK 约定 / 合规清单 / 命名禁忌 / 设计规范 / 第三方协议；
+3. 本会话反复 `Read` 同一资料 **≥ 3 次**，且不属于 `profile-addendum.md` / [doc/module-catalog.yaml](doc/module-catalog.yaml) / [doc/glossary.yaml](doc/glossary.yaml) 覆盖范围；
+4. 用户希望「每次进某 phase 前/后做某件事」→ lifecycle hook 本职。
+
+**隔离**：业务名词/模块归属 → catalog/glossary（Skill 0）；带流程/钩子/校验 → `doc/extensions/`。
 
 ---
 

@@ -1,6 +1,8 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "project_name": "SimulatedWalletForHmos",
+  "active_workflow": "spec-driven",
+  "lifecycle_hooks_enabled": true,
   "project_profile": {
     "name": "hmos-app",
     "sub_variant": "app"
@@ -81,6 +83,7 @@
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md",
+    "extension_dir": "doc/extensions",
     "state_file": "framework/harness/state/.current-phase.json",
     "receipt_dir_pattern": "doc/features/<feature>/<phase>",
     "docs_committed": true

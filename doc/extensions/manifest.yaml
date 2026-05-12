@@ -1,0 +1,16 @@
+schema_version: "1.0"
+name: wallet-sdk-demo
+version: "0.1.0"
+description: 演示用实例扩展包（钱包 SDK 接入向导 + knowledge + hooks；路径对齐 plan §7.13 白名单）
+provides:
+  skills:
+    - wallet-sdk-onboarding
+  knowledge:
+    - knowledge/naming-taboos.md
+  hooks:
+    coding:
+      pre_check:
+        - hooks/coding/pre_check.mjs
+    prd:
+      on_context_load:
+        - hooks/prd/on_context_load.md
