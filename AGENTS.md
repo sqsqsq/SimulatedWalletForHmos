@@ -1,4 +1,4 @@
-# AGENTS.md — SimulatedWalletForHmos（）全局指令
+# AGENTS.md — SimulatedWalletForHmos（应用工程）全局指令
 
 > 本文件由 `framework/skills/00-framework-init` 基于 `framework/templates/AGENTS.md.template`
 > 实例化生成。它是本工程所有 AI coding agent 的**全局系统指令**。
@@ -13,7 +13,7 @@
 | 维度 | 取值 |
 |------|------|
 | 项目名 | `SimulatedWalletForHmos` |
-| 项目类型 | `` |
+| 项目类型 | `app` |
 | project profile | `hmos-app`（子型：`app`） |
 | 激活的 agent adapter | `claude` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
