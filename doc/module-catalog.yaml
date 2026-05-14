@@ -158,7 +158,7 @@ modules:
       - module: "Phone"
         disambiguation: |
           **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
-          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
     key_exports:
       - "HomeTabPage"
       - "MineTabPage"
@@ -170,10 +170,10 @@ modules:
     layer: "01-Product"
     sub_layer: null
     format: "HAP"
-    one_liner: "应用**入口 HAP**：`PhoneAbility` 作为 UI 宿主加载 `pages/Index`，在独立模块内完成 `Navigation` + 双 Tab 壳，并从 `WalletMain` 拉取 `HomeTabPage` / `MineTabPage` 与二级页 builder；**不实现**卡种/服务数据与账号域，仅做壳与多 HAR 依赖聚合。"
+    one_liner: "应用**入口 HAP**：`PhoneAbility` 作为 UI 宿主加载 `pages/index`，在独立模块内完成 `Navigation` + 双 Tab 壳，并从 `WalletMain` 拉取 `HomeTabPage` / `MineTabPage` 与二级页 builder；根页在 `aboutToAppear` 中通过 `CommFunc` 的 `NavPathContext.attach` 绑定全局 `NavPathStack`，供子页栈式导航；**不实现**卡种/服务数据与账号域，仅做壳与多 HAR 依赖聚合。"
     responsibilities:
-      - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/Index')`，并处理颜色模式、窗口与生命周期中的通用日志点。"
-      - "在 `pages/index.ets` 中声明 `@Entry` 根 `Navigation` + 底部 `Tabs`（首页/我的），`@Provide('navPathStack')` 供 `WalletMain` 子页做栈式导航到卡包/添卡等 route。"
+      - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/index', …)`，并处理颜色模式、窗口与生命周期中的通用日志点。"
+      - "在 `pages/index.ets` 中声明 `@Entry` 根 `Navigation(this.navPathStack)` + 底部 `Tabs`（首页/我的）；`aboutToAppear` 调用 `NavPathContext.attach(this.navPathStack)`（来自 `@aspect/CommFunc`），向 feature 子树暴露与宿主一致的栈引用；`navDestination` 映射 `CardPackPage` / `AddCardEntryPage` 至 `WalletMain` 的 `buildCardPackPage` / `buildAddCardEntryPage`。"
       - "通过 HAP 级 `oh-package` 声明对 `WalletMain`、`AccountManager`、`CommUI`、`CommFunc` 的依赖，在工程上固定「产品壳拉 feature + 基座」的装配图。"
       - "声明 `PhoneBackupAbility` 扩展能力（`type: backup`）及 `backup_config` 元数据，满足备份扩展的技术挂载点；**备份策略细节**以配置与系统契约为准。"
     NOT_responsible_for:
@@ -189,7 +189,7 @@ modules:
     easily_confused_with:
       - module: "WalletMain"
         disambiguation: |
-          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`、`NavPathContext` 挂载栈** → **Phone**（本模块）。
           若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
