@@ -46,16 +46,16 @@ modules:
     layer: "05-SystemBase"
     sub_layer: "CommUI"
     format: "HAR"
-    one_liner: "公共可复用 ArkUI 组件与轻量主题/Toast 能力，为 Feature/Product 提供统一风格的基础 UI 积木；依赖同层 `CommFunc` 满足子层边。"
+    one_liner: "公共可复用 ArkUI 组件与轻量主题/Toast（`presentation/components` + `shared/theme`），为 Feature/Product 提供**无业务专名**的基础 UI 积木；通过 `oh-package` **单向依赖**同层 `CommFunc`，满足 **CommUI → CommFunc** 子层边。"
     responsibilities:
-      - "导出通用 ArkUI 组件（如 `ActionListItem` 行列表项、`SectionCard` 区段卡片容器等），以 `@Component` / `@BuilderParam` 形式供上层直接拼装业务页面。"
-      - "提供 `CommColors` 与 `app.color.*` 等资源联动的色值语义，使业务侧在引用 token 时与公共主题保持一致。"
-      - "提供 `showToast` 等轻量交互反馈封装（基于 `promptAction`），在 UI 相关上下文中复用；空 catch 为「无 UI 上下文时静默」的预期行为，不等价于在 `CommFunc` 中实现业务日志。"
-      - "通过 `oh-package` 显式 `file:../CommFunc` 依赖，在架构上与「CommUI 子层可依赖 CommFunc 子层」一致。"
+      - "导出通用 ArkUI 组件（当前：`ActionListItem`、`SectionCard`），以 `@Component` / `@BuilderParam` 等形式供上层拼装业务页面。"
+      - "导出 `CommColors`，与 `app.color.*` 等资源 token 对齐，供引用侧保持公共主题语义。"
+      - "导出 `showToast`（`ToastUtil`：`promptAction.showToast`，duration 固定示例值）；`try/catch` 空处理表示**非 UI 上下文时静默**，属于 Toast 封装预期，**不是**业务日志替代方案。"
+      - "通过 `oh-package` 声明 `file:../CommFunc`，在工程上与「CommUI 子层可依赖 CommFunc；CommFunc 不依赖 CommUI」一致。"
     NOT_responsible_for:
-      - "不负责完整业务页、导航栈、多 Tab 主框架；若 PRD 描述的是「某业务线首页/流程页」，应落在对应 `02-Feature` 或 `01-Product` 模块，而非在 `CommUI` 内堆业务态。"
-      - "不负责卡列表、卡详情、金融字段校验等业务域 UI；公共组件可被业务模块引用，但**业务态组件与数据绑定**应落在业务模块的 presentation 层。"
-      - "不替代 `CommFunc` 的 `Logger`、脱敏与纯工具 API；**无 UI 的纯技术能力**应继续走 `CommFunc` 的 `index.ets` 导出，而非复制到本模块。"
+      - "不负责完整业务页、**多 Tab 主框架、根 `Navigation`/`NavPathStack` 壳、`NavPathContext.attach`**；若 PRD 描述主导航壳或栈宿主，应落在 **`Phone` / `WalletMain`**，而非在本模块堆业务路由。"
+      - "不负责卡列表、卡详情、金融字段校验等**带钱包/账号领域语义**的业务 UI；公共组件可被引用，但**业务态组件与领域数据绑定**落在 **`WalletMain`** 等 feature presentation。"
+      - "不复制 **`CommFunc`** 的 `Logger`、脱敏与纯工具 API；无界面能力继续走 **`CommFunc`** 导出入口。"
     typical_business_terms:
       - "公共 UI 组件"
       - "主题色"
@@ -65,17 +65,21 @@ modules:
     easily_confused_with:
       - module: "CommFunc"
         disambiguation: |
-          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
-          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
-          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+          **ArkUI 组件 / `CommColors` / `showToast` 界面反馈** → **CommUI**（本模块）。
+          **hilog、`FormatUtil`、与界面无关的工具** → **CommFunc**。
+          依赖：`CommUI` → `CommFunc` ✅；反向 ❌。
       - module: "AccountManager"
         disambiguation: |
-          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
-          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+          **无账号语义的 UI 积木 / 主题 / Toast** → **CommUI**。
+          **`AccountService`、`UserProfile`、`LoginState`、AppStorage 账号键** → **AccountManager**。禁止在本模块 `@Component` 内写账号单例或改账号存储。
       - module: "WalletMain"
         disambiguation: |
-          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
-          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+          **无业务名状的**通用 ListItem、Section、主题 token、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属 `02-Feature/WalletMain`。
+      - module: "Phone"
+        disambiguation: |
+          **`ActionListItem` / `SectionCard` / `showToast` / `CommColors` 等可复用积木** → **CommUI**（本模块）。
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、`NavPathContext`、`navDestination`、HAP 装配** → **Phone**；壳页 import 本模块组合 UI，**不等价**本模块承担入口壳职责。
     key_exports:
       - "CommColors"
       - "showToast"
@@ -203,5 +207,9 @@ modules:
         disambiguation: |
           **入口壳、`PhoneAbility`、`Navigation`/`Tabs`、`NavPathContext.attach`、`navDestination`、HAP 级依赖聚合** → **Phone**（本模块）。
           **`AccountService`、AppStorage 账号键、`login`/`logout`、`LoginState`、`UserProfile` 真理** → **AccountManager**；本模块仅 **依赖并装载**含账号 UI 的子页，**不**在 HAP 内复制账号领域实现。
+      - module: "CommUI"
+        disambiguation: |
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、`NavPathContext`、`navDestination`、HAP 装配** → **Phone**（本模块）。
+          **`ActionListItem`、`SectionCard`、`CommColors`、`showToast` 等跨业务复用积木** → **CommUI**；壳层 **import** 拼装，**不在 HAP 再造一套设计系统实现**。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
