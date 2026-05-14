@@ -1,8 +1,8 @@
-# 从 design.md 抽取的功能级契约 — home-page
+# 从 design.md 抽取的功能级契约 — home-page（对齐 PRD v1.4 / design v1.3）
 schema_version: "1.0"
 feature: "home-page"
 
-# 与 PRD Visual Handoff 对齐（脚本以 PRD 为准；此处供编码/审查与 PRD v1.2 同形）
+# 与 PRD Visual Handoff 对齐（脚本以 PRD 为准；此处与 PRD v1.4 / design v1.3 同形）
 visual_handoff:
   inherited_from_prd: true
   ui_change: "new_or_changed"
@@ -27,6 +27,7 @@ visual_handoff:
 visual_parity_contract:
   baseline: |
     区域划分与信息架构以 PRD §5、doc/features/home-page/ux-reference/（含 README 与各 jpg）为走查基线；旧路径 doc/原始需求/ 不作为真源。
+    首页整块布局走查绑定 PRD AC-G1：对照 ux-reference/README 中 ref_home_no_card → 1.首页-无卡.jpg（纵向区块顺序、标题栏左右分区可达、无主交互叠盖）。
   acceptable_deviations:
     - 模拟数据、占位图、高清导出未入库
     - 服务/活动条数与截图不一致时以不崩溃与 AC 语义为准
@@ -43,6 +44,14 @@ visual_parity_contract:
       indicator_required: true
       min_cards: 1
       prd_trace: "AC-8 / F5"
+    layout_walkthrough_ac_g1:
+      ux_ref_id: "ref_home_no_card"
+      screenshot_path: "doc/features/home-page/ux-reference/1.首页-无卡.jpg"
+      prd_trace: "AC-G1"
+      checks:
+        - "纵向顺序：卡引导区 → 服务宫格 → 活动/更多服务区完整且无整块缺失"
+        - "标题栏：左侧标题区与右侧消息/加号图标区可见，不与中部 Scroll 内容叠盖"
+        - "主路径可滚动可达：不出现整块留白导致下方区块不可达或主按钮不可点"
 
 modules:
   - name: "WalletMain"

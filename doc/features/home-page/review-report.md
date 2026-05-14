@@ -1,11 +1,11 @@
 # Code Review 报告 — home-page
 
 > **模块标识**: `home-page`
-> **审查日期**: 2026-05-07
-> **审查版本**: v1.2
+> **审查日期**: 2026-05-14
+> **审查版本**: v1.3
 > **审查人**: AI Code Reviewer
-> **对应设计文档**: `doc/features/home-page/design.md`（v1.2）
-> **脚本参考**: `harness-runner.ts --phase coding --feature home-page`（最近一次：0 BLOCKER，1×MAJOR WARN `index.ets` 命名）
+> **对应设计文档**: `doc/features/home-page/design.md`（**v1.3**，对齐 PRD v1.4）
+> **脚本参考**: `harness-runner.ts --phase coding --feature home-page`（最近一次：零 BLOCKER，`coding_compile` PASS）
 
 ---
 
@@ -19,16 +19,15 @@
 
 ### 文件范围
 
-基于 `doc/features/home-page/contracts.yaml` → `files`，共 **20** 个 `.ets` 源文件。本轮**重点走查**首页链路与本次变更：
+基于 `doc/features/home-page/contracts.yaml` → `files`，共 **20** 个 `.ets` 源文件。本轮在 v1.2 基础上 **增量核对 Skill 3**（PRD F4/F5 Toast 分流、标题栏加号资源化），**精读**：
 
-- `02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets`（空数据时条件渲染宫格/轮播）
-- `02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets`（Mock 文案资源化）
-- `02-Feature/WalletMain/src/main/ets/presentation/components/CardGuideSection.ets`
-- `02-Feature/WalletMain/src/main/ets/presentation/components/ServiceGridSwiper.ets`
-- `02-Feature/WalletMain/src/main/ets/presentation/components/PromoSwiper.ets`
-- `02-Feature/WalletMain/src/main/ets/data/model/ServiceEntry.ets`、`PromoInfo.ets`
+- `02-Feature/WalletMain/src/main/resources/base/element/string.json`（`home_promo_no_detail`、`home_title_add_action`）
+- `02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets`（`home_title_add_action`、布局顺序）
+- `02-Feature/WalletMain/src/main/ets/presentation/components/PromoSwiper.ets`（活动卡 Toast → `home_promo_no_detail`）
+- `02-Feature/WalletMain/src/main/ets/presentation/components/ServiceGridSwiper.ets`（宫格 Toast → `not_supported`）
+- `02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets`、`ServiceEntry.ets`、`PromoInfo.ets`
 
-其余 `contracts.files` 条目与卡包/「我的」等页面仅做 import/分层与存在性核对，无新增业务变更。
+其余 `contracts.files`（卡包 / 我的 Tab 等）维持 **存在性 + import 分层** 抽查，无新增业务变更需求。
 
 ---
 
@@ -36,11 +35,11 @@
 
 | 审查维度 | 依据文档 | 检查要点 |
 |----------|----------|----------|
-| 架构合规性 | `coding-rules.yaml`，`doc/architecture.md` | WalletMain 仅依赖 CommUI/CommFunc；无逆向 01-Product |
-| 接口一致性 | `contracts.yaml` | `ServiceEntry`/`PromoInfo` 字段；`HomeRepository` 异步方法；组件 `@Prop`/`@State` |
-| 编码规范 | `coding-rules.yaml` | `$r()` 资源、`any`、async/await、`void` on fire-and-forget |
-| 业务与验收 | `design.md`，`acceptance.yaml`，`PRD.md`（§5/AC） | 标题资源 key、栅格 3×1、轮播 autoPlay+indicator；E2 空数据 |
-| 自动化 | 最近 **coding** harness 报告 | 与 `diff_within_scope`、资源类 SKIP 交叉核对 |
+| 架构合规性 | `coding-rules.yaml`，`doc/architecture.md` | WalletMain → CommUI/CommFunc；禁止逆向依赖产品壳 |
+| 接口一致性 | `contracts.yaml` | `ServiceEntry`/`PromoInfo`；`HomeRepository`；`@Prop`/`@State` |
+| 编码规范 | `coding-rules.yaml` | `$r()`、`any`、async/await；**禁止 presentation 硬编码 UI 文案** |
+| 业务与验收 | `design.md` v1.3，`acceptance.yaml`，PRD v1.4 | **F4/F5** Toast 语义分流；**AC-G1** 纵向顺序；栅格 3 列；轮播 autoPlay+indicator |
+| 自动化 | 最近 **coding** harness | 与 `diff_within_scope`、编译结果交叉核对 |
 
 ---
 
@@ -48,19 +47,18 @@
 
 | 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |
 |------|----------|------|----------|----------|----------|
-| CR-001 | INFO | 命名规范 | `harness check-coding` 对 `index.ets` 报 **naming_conventions**（非 PascalCase 文件名）。HarmonyOS HAR **模块出口惯例**即为 `index.ets`，与「组件 PascalCase」字面规则存在张力，**不构成可执行缺陷**。 | `02-Feature/WalletMain/src/main/ets/index.ets` | 保持出口文件名；若要消 WARN，应在 **framework** 对 HAR `index.ets` 白名单化（对齐 `coding-rules.yaml: naming_conventions`）。 |
-| CR-002 | INFO | 异常处理 | `HomeTabPage` 中 `navPathStack.pushPath`（约第 55、70 行）在宿主未注入栈时可能异常；`acceptance.yaml` 边界 **BD-3** 描述「极端无导航上下文」。当前 **Phone** 正常嵌入时无问题。 | `02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets` | 可选：在 `pushPath` 外包一层 `try/catch` 或对栈做存在性判断失败后 `showToast`；**不修改** `Phone` 模块前提下完成。 |
+| CR-001 | INFO | 命名规范 | `check-coding` 历史上对 HAR 出口 `index.ets` 曾报 **naming_conventions**（文件名非 PascalCase）。HarmonyOS **HAR main 惯例**即为 `index.ets`（或配置对齐之 exports），与字面「组件文件 PascalCase」存在张力，**非功能缺陷**。证据：`contracts.yaml` 声明 `index.ets`，工程 `oh-package.json5` `main` 与之对齐。 | `02-Feature/WalletMain/src/main/ets/index.ets` | 保持出口文件名；若需消脚本告警，应在 **framework** 侧对 HAR 出口文件白名单化（对应 `coding-rules.yaml: naming_conventions`）。 |
+| CR-002 | INFO | 异常处理 | `HomeTabPage` 中 `navPathStack.pushPath`（约第 57、72 行）在宿主未注入有效 `NavPathStack` 时理论上可能异常；`acceptance.yaml` 边界 **BD-3** 描述极端无导航上下文。当前 **Phone** 嵌入路径下正常。 | `02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets` | 可选：`pushPath` 外包 `try/catch` 失败则 `showToast`；**不调** `Phone` 模块前提下完成。 |
 
-**v1.0 报告已关闭项（证据复核）**：
+**v1.3 复核结论（原 CR 关闭 / 不升格）**：
 
-- 原 **CR-001（Mock 中文硬编码）** 已不成立：`HomeRepository` 中展示字段均通过 `$r('app.string.*')` 引用（见该文件第 8–28 行）。
-- **空列表展示**：`HomeTabPage` 已在 `services.length > 0` / `promos.length > 0` 条件下渲染 `ServiceGridSwiper`/`PromoSwiper`，与 PRD E2「宫格/轮播不展示或占位」一致。
+- **F4/F5**：`ServiceGridSwiper` 使用 `$r('app.string.not_supported')`（「暂不支持」）；`PromoSwiper` 使用 `$r('app.string.home_promo_no_detail')`（「暂无详情」），与 `design.md` 路由/导航表（L190–191）及 PRD v1.4 一致，**不构成**硬编码或逻辑错误。
+- **加号**：`HomeTabPage` 已改为 `$r('app.string.home_title_add_action')`，`string.json` 已定义，满足 **no_hardcoded_strings** 对标题区文案的要求。
+- **Mock 资源化**：`HomeRepository` 展示字段仍以 `$r('app.string.*')` 引用，与 v1.2 审查结论一致。
 
 ---
 
 ## 四、问题统计
-
-本段与「问题清单」表内计数一致：**BLOCKER 0**，**MAJOR 0**，**MINOR 0**，**INFO 2**。
 
 | 严重程度 | 数量 |
 |----------|------|
@@ -84,8 +82,8 @@
 
 ### INFO 级（可选）
 
-- **CR-001**：框架/实例层统一 HAR `index.ets` 命名规则与 harness 告警策略即可。
-- **CR-002**：若要强化边界单测或满足 BD-3 字面「可 Toast」，再加防御性导航。
+- **CR-001**：框架/实例统一 HAR 出口文件命名与 harness 策略。
+- **CR-002**：若产品要强约束 BD-3「可 Toast」，可加固 `pushPath` 调用。
 
 ---
 
@@ -93,14 +91,13 @@
 
 **审查结论**: 通过
 
-本轮无架构/契约/文件缺失类 **BLOCKER**，无 **MAJOR** 级代码问题；仅剩 **INFO** 级工程约定与可选健壮性说明。
+本轮 **零 BLOCKER / 零 MAJOR**；Skill 3 增量已与 **design v1.3 / PRD v1.4**（F4/F5 Toast 分流、标题栏资源化）对齐。剩余 2 条 **INFO** 为工程约定与可选健壮性，不阻断进入 UT。
 
 **判定依据**:
 
-- BLOCKER 数量: **0**（> 0 则不通过）
-- MAJOR 数量: **0**（= 0 且本报告将「通过」与「有条件通过」按 Skill 模板：无 MAJOR 阻断项 → **通过**）
+- BLOCKER 数量: **0**
+- MAJOR 数量: **0**
 
 **下一步建议**:
 
-- 可直接进入 **Skill 5（业务级 UT）**；若需物理闭环 **review** 阶段，再补 `harness-runner --phase review`、`verifier`、`trace` 与 `review/phase-completion-receipt.md`。
-- 若后续修改 `HomeTabPage`/`HomeRepository`，对本报告「重点走查」文件做增量 CR 即可。
+- 可进入 **Skill 5（业务级 UT）**；若后续修改首页链路，对本报告「精读」文件做增量 CR 即可。

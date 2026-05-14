@@ -1,9 +1,9 @@
 > **模块标识**: `home-page`  
-> **对应 PRD**: `doc/features/home-page/PRD.md`（v1.2）  
-> **版本**: v1.2  
+> **对应 PRD**: `doc/features/home-page/PRD.md`（**v1.4**）  
+> **版本**: v1.3  
 > **创建日期**: 2026-04-22  
-> **最后修订**: 2026-05-07  
-> **状态**: 已确认（与本仓 `framework.config.json`：strict Visual Handoff、`paths.docs_committed: true` 一致）
+> **最后修订**: 2026-05-14  
+> **状态**: 评审中（对齐 PRD v1.4：F4/F5 交互策略、AC-G1 布局走查锚点）
 
 # 钱包首页（Home）— 技术设计
 
@@ -188,7 +188,7 @@ export class HomeRepository {
 | 消息图标 | `onClick` | — | 仅 `showToast`，不压栈 |
 | 加号 | `onClick` | `AddCardEntryPage` | 添卡入口 |
 | 卡面 / 主按钮 | 回调 | `CardPackPage` | 与 PRD「卡包」一致 |
-| 宫格项 / 活动卡 | 占位策略 | — | 当前为 Toast 等可观察反馈，与 PRD 一致 |
+| 宫格项 / 活动卡 | 占位策略 | — | 无独立业务落地 URL/H5 时：`CommUI.showToast`，文案使用模块 **`string.json`** 中语义等价 PRD **「暂不支持」类**（宫格）与 **「暂无详情」类**（活动卡）的资源键；不得静默无反馈（PRD F4/F5 v1.4）。 |
 
 ```mermaid
 flowchart LR
@@ -201,7 +201,7 @@ flowchart LR
 
 ## Visual Handoff 与版面真源
 
-与 PRD v1.2 **同一机器可读契约**：`ui_change: new_or_changed`，`visual_handoff.kind: screenshot_pack`；`authoritative_refs` 含 `ux-reference/README.md`、目录及 **5 张**与 README ID 对齐的 `.jpg`（详见 PRD §2 `yaml` 块）。本设计不另起异 KIND/异 path；编码与走查以 **`ux-reference/`** 与 harness **Resolved Visual Sources** 解析结果为准。
+与 PRD **v1.4** **同一机器可读契约**：`ui_change: new_or_changed`，`visual_handoff.kind: screenshot_pack`；`authoritative_refs` 含 `ux-reference/README.md`、目录及 **5 张**与 README ID 对齐的 `.jpg`（详见 PRD §2 `yaml` 块）。本设计不另起异 KIND/异 path；编码与走查以 **`ux-reference/`** 与 harness **Resolved Visual Sources** 解析结果为准。
 
 | 项 | 说明 |
 |----|------|
@@ -235,9 +235,10 @@ flowchart LR
 
 ## 设计备注（与实现基线一致）
 
-- **Visual Handoff**：版面真源与可测项见上文「Visual Handoff 与版面真源」及 `contracts.yaml` 的 `visual_handoff` / `visual_parity_contract`。  
+- **Visual Handoff**：版面真源与可测项见上文「Visual Handoff 与版面真源」及 `contracts.yaml` 的 `visual_handoff` / `visual_parity_contract`（含 **AC-G1 ↔ ref_home_no_card** 走查项）。  
 - **卡区与主按钮**：`CardGuideSection` 中卡面与「添加/管理卡」主按钮均回调 **卡包**（`CardPackPage`），与 PRD AC-3/AC-4 及当前代码一致。  
 - **加号**：标题栏加号进入 `AddCardEntryPage`（与 PRD AC-5 一致）。  
+- **F4/F5**：交互默认值与 PRD v1.4 一致——无落地页时 **Toast + string 资源键**（禁止静默）；具体 key 由 Skill 3 在 `WalletMain` 资源中落地并在 review 对照 PRD 语义。  
 - **F6**：无网场景若仍为本地 Mock 数据，以不崩溃、可扩展 Toast/空态分支为满足；具体网络探测若产品另开需求再迭代。
 
 ---
@@ -249,3 +250,4 @@ flowchart LR
 | 2026-04-22 | v1.0 | 首版 |
 | 2026-05-06 | v1.1 | 与 PRD v1.1 Scope/映射一致 |
 | 2026-05-07 | v1.2 | 对齐 PRD Visual Handoff：`screenshot_pack` + 与 PRD 同构 `authoritative_refs`；`contracts.yaml` 同步；弃用 `doc/原始需求` 基线描述 |
+| 2026-05-14 | v1.3 | 对齐 PRD **v1.4**：路由表写明 F4/F5 Toast 资源键策略；设计备注引用 AC-G1；`contracts.yaml` `visual_parity_contract` 增补布局走查锚点 |

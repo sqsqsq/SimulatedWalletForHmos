@@ -49,7 +49,7 @@ export struct HomeTabPage {
             showToast(ctx.resourceManager.getStringSync($r('app.string.msg_center_welcome').id));
           })
 
-        Text('+')
+        Text($r('app.string.home_title_add_action'))
           .fontSize(26)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.wallet_primary'))

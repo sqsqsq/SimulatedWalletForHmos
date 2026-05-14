@@ -1,8 +1,8 @@
 > **模块标识**: `home-page`  
-> **版本**: v1.2  
+> **版本**: v1.4  
 > **创建日期**: 2026-04-22  
-> **最后修订**: 2026-05-07  
-> **状态**: 评审中（已对齐 Framework PRD-driven Visual Handoff + 本仓 `framework.config.json`）
+> **最后修订**: 2026-05-14  
+> **状态**: 评审中（文档质量：对齐 Verifier WARN — 场景主语、F4/F5 可执行性、AC-G1 像素锚点）
 
 # 钱包首页（Home）— 产品需求文档（PRD）
 
@@ -11,6 +11,7 @@
 ## 0. 术语映射表
 
 > 本节是 BLOCKER：**像素级走查与截图真源**以 `doc/features/home-page/ux-reference/` 为准（索引与每张图语义见该目录 **`README.md`**）；下列术语已对照 `doc/glossary.yaml`。  
+> **本轮**：按用户要求重跑 Skill 1；已新增 `doc/features/home-page/prd/context-exploration.md`（Context Exploration Gate）。语义相对 v1.2 **未扩 Scope**——仍为 WalletMain in-scope，其余模块仅消费。**v1.4**：收紧 §3.2、F4/F5、AC-G1（对齐上一轮 Verifier 文档 WARN）。  
 > 「用户确认」列为 `[x]` 表示本 PRD 定稿时作者已按 SSOT 核对，**若你作为评审方有异议请改表并重新跑 harness。**
 >
 > **与本仓 Framework 门禁对齐（必读）**：实例 `framework.config.json` 已 **opt-in** `prd` 段并设 `visual_handoff_enforcement: strict`（参见 `framework/skills/00-framework-init/prompts/prd-harness-options.md`）。因此本 UI 需求**必须**在 §2 提供**独立** `yaml` 块且含 **`ui_change`**；`visual_handoff.authoritative_refs` 中每条 `path` 须在仓库内 **agent 可达**（`harness-runner --phase prd` 合并报告中的 **Resolved Visual Sources** 表可核对）。另：本演示仓设 **`paths.docs_committed: true`**，假定将 `doc/features/**`（含 `ux-reference` 下 jpg）与主仓同源归档——完成回执 **Q3** 与 UX 路径类占位须与此一致。
@@ -42,7 +43,7 @@
 
 ## 1. 功能概述
 
-在「首页」Tab 为钱包用户提供**卡引导、服务宫格、活动/营销轮播**的可浏览与可跳转能力，与头部「消息 / 添卡」快捷入口，支撑进入卡包、添卡等二级路径；数据与页面编排权威在 `WalletMain`，宿主壳与底 Tab 在 `Phone`（本需求不改）。本工程为**模拟钱包**，不承诺与生产支付/实卡发行业务等效。
+为钱包用户在「首页」Tab 提供**卡引导、服务宫格、活动轮播**与顶部「消息 / 添卡」入口，并可跳转卡包、添卡页；**编排与数据**在 `WalletMain`，**壳与底 Tab**在 `Phone`（本需求不改）。本工程为**模拟钱包**，不等同生产支付/发卡。
 
 ---
 
@@ -122,10 +123,10 @@ path: ${UX_ROOT}/home-page/v3/
 
 | 场景编号 | 场景名称 | 场景描述 | 前置条件 |
 |----------|----------|----------|----------|
-| S1 | 浏览首页 | 用户打开 app，在底 Tab 选中「首页」，浏览卡区、服务宫格与活动 | 主入口已由 Phone 完成 loadContent |
-| S2 | 去卡包/添卡 | 用户点击卡区或「加号」等入口，进入卡包或添卡 | S1、导航栈可用 |
-| S3 | 点宫格/活动 | 用户点击服务项或活动卡，**当前实现**为占位或 Toast | 已加载 `HomeRepository` 数据 |
-| S4 | 点消息 | 用户点击消息图标，获得轻量反馈（如 Toast） | 无 |
+| S1 | 浏览首页 | **普通钱包用户**冷启或返回应用后，在底 Tab 选中「首页」，纵向滚动浏览卡引导区、服务宫格与活动区 | 主入口已由 Phone 完成 loadContent |
+| S2 | 去卡包/添卡 | **普通钱包用户**在首页点击卡引导可点区 /「添加/管理卡」进入卡包，或点击标题栏「+」进入添卡入口 | S1、导航栈可用 |
+| S3 | 点宫格/活动 | **普通钱包用户**点击某一宫格项或活动轮播卡片；无独立业务落地时须给出 §5.4 / §5.5 约定的 Toast 或占位反馈（不崩溃） | 已加载 `HomeRepository` 数据 |
+| S4 | 点消息 | **普通钱包用户**点击标题栏消息图标，须出现可观察的轻量反馈（如 Toast），与 §5.2 一致 | 无 |
 
 ---
 
@@ -136,8 +137,8 @@ path: ${UX_ROOT}/home-page/v3/
 | F1 | 首页信息架构与加载 | P0 | 进入首页 Tab 时拉取/展示 `HomeRepository` 的服务与活动数据，布局不崩溃 | S1 |
 | F2 | 卡引导与「添加/管理卡」 | P0 | 展示卡引导区，支持进入卡包；主按钮进入卡包（与现实现一致） | S1, S2 |
 | F3 | 顶部：消息与添卡 | P0 | 右侧消息入口反馈可预期；加号进入添卡页 | S2, S4 |
-| F4 | 服务宫格 | P1 | 3×1 或等价栅格+Swiper 指示，点击策略与文案符合 PRD/验收 | S3 |
-| F5 | 活动/更多服务轮播 | P1 | 轮播标题区 + 可滑动卡片，支持自动轮播与指示器，点击策略可预期 | S3 |
+| F4 | 服务宫格 | P1 | **3 列 × 1 行**栅格（可多页 Swiper + 指示器，见 §5.4）。单项点击：若无产品配置的独立落地页/H5，则调用 `CommUI.showToast` 展示「暂不支持」类短文案（或团队在下版 PRD 中单列固定文案）；不得静默无反馈、不得崩溃。 | S3 |
+| F5 | 活动/更多服务轮播 | P1 | **区域标题 + 横向轮播卡片 + 指示器 + 自动轮播**（见 §5.5）。单卡点击：若无白名单 URL 或深链配置，则以 Toast 或设计约定的占位反馈告知「暂无详情」类语义；不得静默无反馈、不得崩溃。 | S3 |
 | F6 | 无网/空数据可接受表现 | P1 | 无网或空列表时不白屏死锁，有降级或重试空间（可 Toast） | S1, S3 |
 
 ---
@@ -274,7 +275,7 @@ flowchart TD
 
 ### 通用
 
-- [ ] **AC-G1** (F1): 在目标 HarmonyOS 设备上**无**布局显著错位。  
+- [ ] **AC-G1** (F1): **布局走查（绑定像素真源）**：以 `doc/features/home-page/ux-reference/README.md` 中 **`ref_home_no_card`** 对应的 `1.首页-无卡.jpg` 为首页基线图；在目标 HarmonyOS 机型打开「首页」Tab，**普通钱包用户**可见视角下须同时满足：① **纵向区块顺序**为卡引导区 → 服务宫格 → 活动/更多服务区（允许间距/圆角随主题微调，但顺序不得颠倒或整块缺失）；② **标题栏**：左侧标题文案区与右侧「消息 / 加号」图标区均可见，不与中部内容叠盖；③ **无**整块留白导致下方区块不可达、无控件重叠遮挡主点击区。**判定 FAIL**：任一块应为 WalletMain 首页职责内的区域缺失、或与上述 README 勾选的「首页主真源」语义明显冲突（评审异议须更新 UX 或回归 PRD）。  
 - [ ] **AC-G2** (F1): 主要按钮点击在 **300 ms** 内有视觉或导航反馈。  
 
 ---
@@ -301,3 +302,5 @@ flowchart TD
 | 2026-04-22 | v1.0 | 首版，基于实现与原始截图目录起稿 |
 | 2026-05-06 | v1.1 | UX 像素真源统一切至 `ux-reference/`；Visual Handoff 升级为 `screenshot_pack`（README + 目录双引用）；正文与附录同步 |
 | 2026-05-07 | v1.2 | 对齐最新 Framework：`strict` + `paths.docs_committed` 实例说明；`authoritative_refs` 增加与 README 一致的 5 张截图逐文件绑定；外置 UX / 绝对路径约束说明 |
+| 2026-05-13 | v1.3 | PRD 重跑：补齐 `prd/context-exploration.md`；收紧功能概述；重申不改 Scope；闭环 Harness / Verifier |
+| 2026-05-14 | v1.4 | 文档质量：§3.2 场景主语改为「普通钱包用户」；F4/F5 写默认 Toast/占位策略并指针 §5.4/§5.5；AC-G1 绑定 `ref_home_no_card` 与可判定条款 |

@@ -69,6 +69,14 @@
       "value": "消息"
     },
     {
+      "name": "home_title_add_action",
+      "value": "+"
+    },
+    {
+      "name": "home_promo_no_detail",
+      "value": "暂无详情"
+    },
+    {
       "name": "home_data_unavailable",
       "value": "数据暂不可用，请稍后再试"
     },

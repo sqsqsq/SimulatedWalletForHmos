@@ -1,4 +1,4 @@
-# 从 PRD.md 提取的验收与边界 — home-page
+# 从 PRD.md 提取的验收与边界 — home-page（与 PRD v1.4 对齐）
 # ut_layer / ut_focus 用于 UT ↔ Device 分层分工：
 #   unit   = UT 直接覆盖（驱动现有业务代码 + 自然边界打桩）
 #   device = 纯 UI/机型/性能，Skill 6 真机覆盖
@@ -123,13 +123,15 @@ criteria:
   - id: "AC-G1"
     prd_function: "F1"
     priority: "P0"
-    description: "目标设备布局无严重错位"
+    description: "首页布局与 ux-reference 基线图 ref_home_no_card（1.首页-无卡.jpg）一致：纵向区块顺序、标题栏结构完整、无叠盖与整块失效"
     testable: true
     verification_steps:
-      - "在配置的目标机型打开首页"
-    expected_result: "无显著布局错位"
+      - "在目标机型进入首页 Tab"
+      - "并排对照 doc/features/home-page/ux-reference/1.首页-无卡.jpg 与 README 中 ref_home_no_card 说明"
+      - "检查：① 卡引导→宫格→活动区顺序完整 ② 标题栏左文右侧图标可见且无与中叠盖 ③ 无主交互区被遮挡或整页断层不可滚动"
+    expected_result: "三项均满足；与 README 首页职责语义冲突则 FAIL 并需更新 UX 或 PRD"
     ut_layer: "device"
-    ut_focus: "机型布局，UT 不覆盖"
+    ut_focus: "真机走查对照归档截图；UT 不覆盖像素对齐"
 
   - id: "AC-G2"
     prd_function: "F1"

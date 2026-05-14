@@ -6,9 +6,9 @@ import { PromoInfo } from '../../data/model/PromoInfo';
 export struct PromoSwiper {
   @Prop promos: PromoInfo[] = [];
 
-  private toastNotSupported(): void {
+  private toastPromoNoDetail(): void {
     const ctx = this.getUIContext().getHostContext() as Context;
-    showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
+    showToast(ctx.resourceManager.getStringSync($r('app.string.home_promo_no_detail').id));
   }
 
   build() {
@@ -50,7 +50,7 @@ export struct PromoSwiper {
           .backgroundColor($r('app.color.promo_placeholder'))
           .borderRadius(12)
           .onClick(() => {
-            this.toastNotSupported();
+            this.toastPromoNoDetail();
           })
         }, (item: PromoInfo) => item.id)
       }
