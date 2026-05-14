@@ -6,36 +6,42 @@ modules:
     layer: "05-SystemBase"
     sub_layer: "CommFunc"
     format: "HAR"
-    one_liner: "系统侧通用能力封装：轻量日志（hilog）、字符串/账号脱敏工具，以及宿主 `Navigation` 用 `NavPathStack` 的全局挂载点（`NavPathContext`），供上层 HAR 引用。"
+    one_liner: "系统侧通用能力（`shared/log`、`shared/utils`、`shared/navigation`）：`Logger`（固定 **DOMAIN** 的 `hilog.info`/`error`）、`FormatUtil`（`maskPhone` / `maskAccount`），以及 **`NavPathContext`**（宿主入口 **单次 `attach`** 全局单栈、`stack()` 未挂载时 **抛错**）；**零 UI、零业务状态**，供各 HAR 引用。"
     responsibilities:
-      - "通过 `Logger` 向各模块提供统一的 `hilog` 封装，统一 DOMAIN，降低重复样板代码。"
-      - "通过 `FormatUtil` 提供手机号/通用账号的脱敏与展示用格式化，供业务侧展示层复用。"
-      - "通过 `NavPathContext` 为使用 `Navigation` + `NavPathStack` 的工程提供**宿主挂载的栈引用**（`attach` / `stack`），供 `NavDestination` 等无法 `@Link` 的子树安全调用 `pushPath` / `pop`；**不**承载路由表、页面名常量或业务跳转策略（由 Product/Feature 定义）。"
-      - "作为 05-SystemBase 中 **CommFunc 子层** 成员，在子层规则下不依赖 `CommUI`，可被 `CommUI` 与其它外层模块依赖（按架构 DSL 允许的层间边）。"
+      - "导出 `Logger`：对 `@kit.PerformanceAnalysisKit` 的 `hilog` 做静态封装（当前暴露 `info` / `error`，统一 DOMAIN）。"
+      - "导出 `FormatUtil`：`maskPhone`（保留前三后四）、`maskAccount`（通用账号展示脱敏）；算法演进归属本模块，**不负责**决定「何时把串写入 AppStorage」（写入时机归 **`AccountManager`** 等业务模块）。"
+      - "导出 `NavPathContext`：`attach(stack)` 绑定与宿主根 `Navigation` **同源**的 `NavPathStack`；`stack()` 供无法 `@Link` 的子树取栈；未 `attach` 时抛 **`Error`**；源码注释约定由 **`01-Product` 入口**在 `aboutToAppear` 等时机挂载、**全局单栈**。"
+      - "维持 **CommFunc 子层**语义：`oh-package` **无业务依赖**；**禁止**依赖 **`CommUI`**；可被 **`CommUI` / Feature / Product** 按 DSL 依赖。"
     NOT_responsible_for:
-      - "不负责具体业务页面、`main_pages` / `route_map` 等路由表或「跳转到哪一屏」的产品决策；`NavPathContext` 仅持有宿主已绑定的 `NavPathStack` 引用，不替代 Feature 内的页面与导航命名。"
-      - "不负责可交互 UI 与视觉资源；若 PRD 描述「页面/组件/动效」等，应落在 Feature/Product 或同层 `CommUI` 模块，而非在 `CommFunc` 新造 UI。"
-      - "不负责卡、账户、交易、设备指纹等业务域逻辑与数据持有；`CommFunc` 只提供与业务无关的通用技术能力。"
-      - "不负责为单一 Feature 定制业务 DTO/Repository/领域服务；此类能力应落在对应 `02-Feature` 或 `04-BusinessBase` 模块的 domain 层。"
+      - "不负责根 **`Navigation`/`Tabs`、`loadContent`、`PhoneAbility`** 或 **`navDestination` 映射**；宿主壳归 **`Phone`**，本模块仅提供 **`NavPathContext` API**，由宿主/feature 调用 `attach`。"
+      - "不负责路由表、`main_pages` / `route_map`、页面名字符串常量或「跳到哪一屏」的产品策略；`NavPathContext` **只持有栈引用**，页面名由 **`WalletMain`** 等在 `pushPath` 时使用。"
+      - "不负责 ArkUI 组件、主题 token、`showToast` 等 **UI 反馈**；此类归 **`CommUI`**。"
+      - "不负责账号会话、`AppStorage` 账号键、`AccountService`、`LoginState` 等业务状态；**`AccountManager`** 可调用 `FormatUtil`，**禁止**在本模块持有登录态。"
+      - "不负责为单一 Feature 定制 DTO/Repository/领域服务；落在 **`02-Feature`** / **`04-BusinessBase`**。"
     typical_business_terms:
       - "系统功能封装"
       - "通用日志"
       - "脱敏"
       - "工具类"
+      - "导航栈上下文"
     easily_confused_with:
       - module: "CommUI"
         disambiguation: |
-          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
-          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
-          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+          **hilog、`FormatUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**（本模块）。
+          **`ActionListItem`、`SectionCard`、`CommColors`、`showToast`** → **CommUI**。
+          **依赖方向**：`CommUI` → `CommFunc` ✅；反向 ❌。
       - module: "AccountManager"
         disambiguation: |
-          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
-          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+          **纯工具与日志**、与「何时登录、存哪个 AppStorage 键」无关 → **CommFunc**。
+          **`AccountService`、`UserProfile`、`LoginState`、监听回调** → **AccountManager**。本模块可被其依赖，**不**写账号单例。
       - module: "WalletMain"
         disambiguation: |
-          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
-          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。宿主全局 `NavPathStack` 挂载可经本模块 `NavPathContext`，具体 `pushPath` 的页面名仍属各 Feature。
+          **导航栈上下文 / 脱敏工具 / Logger**、与卡包 Tab 产品语义无关 → **CommFunc**。
+          **首页/我的/卡包/添卡、`HomeRepository`、`pushPath` 业务语义** → **WalletMain**。`NavPathContext` **可被宿主 attach 后**供其 `pushPath` 使用，**页面名与编排**仍归 feature。
+      - module: "Phone"
+        disambiguation: |
+          **`Logger` / `FormatUtil` / `NavPathContext` 通用实现** → **CommFunc**（本模块）。
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、在根页调用 `NavPathContext.attach`** → **Phone**；宿主 **消费**本模块 API 完成挂载，**不等价**本模块承担 HAP 壳职责。
     key_exports:
       - "Logger"
       - "FormatUtil"
@@ -211,5 +217,9 @@ modules:
         disambiguation: |
           **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、`NavPathContext`、`navDestination`、HAP 装配** → **Phone**（本模块）。
           **`ActionListItem`、`SectionCard`、`CommColors`、`showToast` 等跨业务复用积木** → **CommUI**；壳层 **import** 拼装，**不在 HAP 再造一套设计系统实现**。
+      - module: "CommFunc"
+        disambiguation: |
+          **`PhoneAbility`、`loadContent`、根壳层 `Navigation`/`Tabs`、调用 `NavPathContext.attach`、HAP 依赖聚合** → **Phone**（本模块）。
+          **`Logger`、`FormatUtil`、`NavPathContext` 的实现本体**（无 Ability、无页面壳）→ **CommFunc**；本模块 **依赖并调用**其 API，**不在 HAP 重复实现**通用工具与上下文类。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
