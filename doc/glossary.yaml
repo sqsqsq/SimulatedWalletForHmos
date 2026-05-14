@@ -98,6 +98,35 @@ terms:
           **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
           **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
 
+  - term: "导航栈上下文"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD/评审说「全局导航栈」「NavPathContext」「子页无法 @Link 时要取同一个 NavPathStack」时，多指本模块 `NavPathContext.attach`/`stack` 的技术语义；不是底 Tab 壳或「跳转到哪一页」的产品路由文案。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；`NOT_responsible_for` 未字面否定「导航栈上下文」（Step 1.5 已扫）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          **hilog、`FormatUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**（本模块）。
+          **`ActionListItem`、`SectionCard`、`CommColors`、`showToast`** → **CommUI**。
+          **依赖方向**：`CommUI` → `CommFunc` ✅；反向 ❌。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          **纯工具与日志**、与「何时登录、存哪个 AppStorage 键」无关 → **CommFunc**。
+          **`AccountService`、`UserProfile`、`LoginState`、监听回调** → **AccountManager**。本模块可被其依赖，**不**写账号单例。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **导航栈上下文 / 脱敏工具 / Logger**、与卡包 Tab 产品语义无关 → **CommFunc**。
+          **首页/我的/卡包/添卡、`HomeRepository`、`pushPath` 业务语义** → **WalletMain**。`NavPathContext` **可被宿主 attach 后**供其 `pushPath` 使用，**页面名与编排**仍归 feature。
+      - term: "应用入口"
+        module: "Phone"
+        disambiguation: |
+          **`Logger` / `FormatUtil` / `NavPathContext` 通用实现** → **CommFunc**（本模块）。
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、在根页调用 `NavPathContext.attach`** → **Phone**；宿主 **消费**本模块 API 完成挂载，**不等价**本模块承担 HAP 壳职责。
+
   - term: "公共 UI 组件"
     canonical_module: "CommUI"
     owner_layer: "05-SystemBase"
