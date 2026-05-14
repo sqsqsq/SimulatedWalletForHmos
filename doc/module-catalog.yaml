@@ -87,15 +87,17 @@ modules:
     layer: "04-BusinessBase"
     sub_layer: null
     format: "HAR"
-    one_liner: "跨 Feature 的账号域能力：基于 AppStorage 的登录态、展示账号、UserProfile 与可订阅的 `LoginState`；`AccountService` 为单例入口；登录流现阶段为可替换的模拟实现。"
+    one_liner: "跨 Feature 的账号域能力：基于 **AppStorage** 的登录态、展示账号、`UserProfile` 与可订阅的 **`LoginState` 流水线**（含登录中过渡态）；`AccountService` 为单例入口；登录流现阶段为可替换的**模拟实现**（注释指向华为账号 Kit）。"
     responsibilities:
-      - "以 `AccountService` 单例管理登录/登出、`getUserProfile`、以及 `onLoginStateChanged` / `offLoginStateChanged` 订阅，向业务方暴露统一账号会话语义。"
-      - "维护 `UserProfile`、`LoginState` 等数据模型与 `AccountConstants` 的存储键，保证「是否登录、展示用账号串」等在应用内可查询、可恢复。"
-      - "在 `login` 等路径中调用 `CommFunc` 的 `FormatUtil` 对展示账号做脱敏，仅负责**何时写入展示串**；不负责脱敏算法本身的演进（算法归 `CommFunc`）。"
+      - "以 `AccountService` 单例（`getInstance`）管理登录/登出、`getUserProfile`、`onLoginStateChanged` / `offLoginStateChanged`；首次实例化执行 **`initStorage()`**，为 `AccountConstants` 声明的键补齐缺省值。"
+      - "`login()` 先 **`notify(LoginState.LOGGING_IN)`**，经异步占位后再写入 `STORAGE_IS_LOGGED_IN` / `STORAGE_DISPLAY_ACCOUNT`（展示串经 **`CommFunc.FormatUtil.maskPhone`**），最后 **`notify(LoginState.LOGGED_IN)`**；`logout()` 清理存储并 **`notify(LoginState.NOT_LOGGED_IN)`**；`notify` 同步更新 **`STORAGE_LOGIN_STATE`** 并广播监听。"
+      - "维护 `UserProfile`、`LoginState` 与 `AccountConstants` 存储键语义，保证「是否登录、展示用账号串、枚举态」在应用内可查询、可恢复。"
+      - "在登录路径中调用 `CommFunc` 的 `FormatUtil` 生成**展示用脱敏串**，仅负责**何时写入**；脱敏算法演进归 **`CommFunc`**。"
     NOT_responsible_for:
-      - "不负责钱包首页/卡列表/行业 Feature 的页面编排与业务路由；这些归 `02-Feature`（如 `WalletMain`）或 `01-Product`，本模块只提供「账号维度的领域服务+模型」被其引用。"
-      - "不负责华为账号 Kit 的完整接入、OAuth 页面与合规弹窗的 UX；当前代码为**模拟登录**（注释已声明可替换为华为账号 Kit），真实开户/授权流程应在产品确定后由本模块或协作模块分步承载，**禁止**在 PRD 中默认等同「已上生产级 Huawei ID」。"
-      - "不负责通用 ArkUI 组件、主题、纯 Toast 工具；若只涉及无账号语义的视觉与动效，应归 `CommUI` / `CommFunc`。"
+      - "不负责钱包首页/卡包/添卡等行业 Feature 的**页面编排、二级路由 `pushPath`、宿主 `Navigation`/`Tabs` 壳或 `NavPathContext.attach`**；这些归 **`WalletMain` / `Phone`**，本模块只提供账号领域 **API + AppStorage 真理** 供 UI 引用。"
+      - "不负责华为账号 Kit 的完整接入、OAuth 页面与合规弹窗 UX；当前为**模拟登录**（源码注释已声明可替换），**禁止**在 PRD 中默认等同生产级 Huawei ID。"
+      - "不负责通用 ArkUI 组件、主题、纯 Toast；无账号语义的视觉与动效归 **`CommUI` / `CommFunc`**。"
+      - "不承担生产环境「卡发行、支付清算、NFC/SE 实卡管理」等线下业务；当前账号流亦为演示向模拟，与真实支付/合规落地之间的 gap 须由产品拆需求后再落到 **`WalletMain`** 或其它业务模块，**不可默认本模块单独等于生产钱包账号中台**。"
     typical_business_terms:
       - "账号管理"
       - "登录"
@@ -105,15 +107,20 @@ modules:
     easily_confused_with:
       - module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
-          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+          若只讨论 **`FormatUtil.maskPhone` 等纯工具**、与「是否已登录、`LoginState`、监听回调」无关 → **CommFunc**。
+          若讨论 **AppStorage 账号键、`AccountService`、登录/登出生命周期与 `UserProfile`** → **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - module: "CommUI"
         disambiguation: |
-          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+          **列表项/主题色/Toast 等可复用 UI 积木** → **CommUI**。
+          **登录态写入、展示账号串、`LoginState` 订阅** → **AccountManager**（本模块）。不要在 `CommUI` 组件实现里藏 `AccountService` 单例逻辑。
       - module: "WalletMain"
         disambiguation: |
-          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
-          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+          **`AccountService` / `UserProfile` / AppStorage 账号键 / 登录订阅** → **AccountManager**（权威域）。
+          **「我的」页布局、Tab 跳转、`MineTabPage` 编排** → **WalletMain**；页面调用本模块 API，**真理仍在** `AccountManager`。
+      - module: "Phone"
+        disambiguation: |
+          **账号模型、存储键、`login`/`logout`、`LoginState` 枚举与监听** → **AccountManager**（本模块）。
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、`NavPathContext.attach`、`navDestination`** → **Phone**；入口 HAP **不**复制账号域实现，仅装载壳与子页。
     key_exports:
       - "AccountConstants"
       - "LoginState"
@@ -192,5 +199,9 @@ modules:
         disambiguation: |
           若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`、`NavPathContext` 挂载栈** → **Phone**（本模块）。
           若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
+      - module: "AccountManager"
+        disambiguation: |
+          **入口壳、`PhoneAbility`、`Navigation`/`Tabs`、`NavPathContext.attach`、`navDestination`、HAP 级依赖聚合** → **Phone**（本模块）。
+          **`AccountService`、AppStorage 账号键、`login`/`logout`、`LoginState`、`UserProfile` 真理** → **AccountManager**；本模块仅 **依赖并装载**含账号 UI 的子页，**不**在 HAP 内复制账号领域实现。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
