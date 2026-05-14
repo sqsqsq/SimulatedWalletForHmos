@@ -1,0 +1,11 @@
+---
+description: 未经用户同意禁止代为 git commit
+alwaysApply: true
+---
+
+## Git 提交（硬性）
+
+- **禁止**在未获得你的**明确要求或主动同意**的情况下执行 **`git commit`**（含任意参数、`git commit --amend`、以及通过脚本/工具触发的等价提交）。
+- 允许且鼓励：整理变更、`git status`、`git diff`、给出**建议的提交说明**供你复制；由你在本地自行提交。
+- **例外**：仅当你在本对话中使用明确措辞授权提交时（例如「提交」「帮我 commit」「可以 commit」），方可代为执行 `git commit`。
+- 若本规则与仓库其它文档（如某 workflow 要求 agent 必须 commit）冲突，**仍以你在对话中的明示为准**；需要提交时必须先向你确认。

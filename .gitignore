@@ -30,3 +30,7 @@ framework/harness/trace/
 framework/harness/package-lock.json
 framework/harness/state/*
 !framework/harness/state/.gitkeep
+
+# Skill 0 staging drafts (managed by /framework-init)
+doc/catalog-staging/
+doc/glossary-staging/
