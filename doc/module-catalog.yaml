@@ -125,14 +125,15 @@ modules:
     layer: "02-Feature"
     sub_layer: null
     format: "HAR"
-    one_liner: "钱包**主 feature**：导出首页/我的 Tab 子页、卡包与添卡等路由页构建函数；在 presentation 中编排卡引导、服务宫格、活动轮播等，并通过 `AccountManager` / `CommUI` / `CommFunc` 组合出「模拟钱包」主路径（数据当前多为本地 Repository 样例）。"
+    one_liner: "钱包**主 feature**：导出首页/我的 Tab 子页与卡包/添卡等 `@Builder` 二级页；`HomeTabPage` 通过 **`@Link navPathStack`** 使用与宿主根 `Navigation` 同源的栈调用 `pushPath`（路由名与 **`Phone`** 根页 `navDestination` 一致）；presentation 编排卡引导、服务宫格、活动轮播等，并组合 `AccountManager` / `CommUI` / `CommFunc`（数据当前多为本地 Repository 样例）。"
     responsibilities:
-      - "对外导出 `HomeTabPage`、`MineTabPage` 及 `buildCardPackPage` / `buildAddCardEntryPage`，供 `01-Product` 宿主通过 `index.ets` 与 `main_pages` / `route_map` 装配主导航与二级页。"
+      - "对外导出 `HomeTabPage`、`MineTabPage` 及 `buildCardPackPage` / `buildAddCardEntryPage`，供 **`Phone`** 等宿主通过 `index.ets` 装配；其中首页 Tab **必须**以 **`@Link navPathStack`** 绑定与宿主 `Navigation` **同源**的 `NavPathStack`（代码注释约束：禁止 `@Prop`，避免 `pushPath` 丢句柄）。"
+      - "在首页等路径使用 `navPathStack.pushPath({ name: 'CardPackPage' | 'AddCardEntryPage' })` 与宿主壳 `navDestination` 映射对齐；二级页由本模块 `@Builder` 导出，由宿主注册而非在本模块内自建平行 `Navigation` 根。"
       - "在 `MineTabPage` 等场景集成 `AccountService` / `UserProfile` / `LoginState`（来自 `AccountManager`），在「我的」里呈现登录/展示账号，但**不替代** `AccountManager` 内的会话与存储实现。"
       - "维护 `HomeRepository` / `MineRepository` / `CardRepository` 等同 feature 的读模型与 Mock/本地数据，支撑首页、我的、卡包、添卡等 UX；业务模型如 `ServiceEntry` / `CardCategory` / `PromoInfo` 等以本 feature 为归属。"
-      - "在页面与业务组件中组合 `CommUI` 的 `ActionListItem` / `SectionCard` / `showToast` 等，与 feature 内 `AccountCard` / `CardGuideSection` 等区分**通用积木 vs 带钱包语义的 feature 组件**。"
+      - "在页面与业务组件中组合 `CommUI` 的 `ActionListItem` / `SectionCard` / `showToast` 等，与 feature 内 `AccountCard` / `CardGuideSection` / `ServiceGridSwiper` 等区分**通用积木 vs 带钱包语义的 feature 组件**。"
     NOT_responsible_for:
-      - "不负责应用级入口（EntryAbility、窗口态、HAP 级配置与签名）；宿主壳与多模块装配归 **`01-Product` / `Phone`**，本模块以 HAR 被依赖。"
+      - "不负责应用级入口（EntryAbility、窗口态、HAP 级配置与签名）及根壳层的 **`Navigation` / `Tabs` / `NavPathContext.attach`**；宿主壳与多模块装配归 **`01-Product` / `Phone`**，本模块 Tab 页仅消费传入的 **`@Link navPathStack`** 并调用 `pushPath`。"
       - "不负责**跨 Feature 的账号域 API 与 AppStorage 键语义**的单独权威定义；登录/登出与 `UserProfile` 真理来源是 **`AccountManager`**，本模块只在其 UI 中调用与展示。"
       - "不复制 **`CommUI`** 的通用无业务组件为「第二套设计系统」；可扩展布局但不应把**纯通用**的列表项/色板实现再实现一遍。"
       - "不承担生产环境「卡发行、支付清算、NFC/SE 实卡管理」等线下业务；当前代码偏演示/模拟，与真实支付落地之间的 gap 须由产品拆需求后再落到本模块或独立业务模块，**不可默认本模块已等于生产卡系统**。"
@@ -154,11 +155,11 @@ modules:
       - module: "CommFunc"
         disambiguation: |
           **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
-          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航 `pushPath` 的业务语义**强相关 → **WalletMain**；**`NavPathContext.attach` 与全局栈挂载**仍属宿主 **`Phone` + `CommFunc`**，勿把栈宿主误判为本模块。
       - module: "Phone"
         disambiguation: |
-          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
-          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+          **卡种/服务宫格/卡包/添卡、`pushPath` 触发点、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、`NavPathContext.attach`、`navDestination` 注册二级 `@Builder`** → **Phone**；`Phone` 的 `pages/index` 从本模块 import 子页并传入 **`@Link`** 栈，**本模块不实现** Ability 与 HAP 壳。
     key_exports:
       - "HomeTabPage"
       - "MineTabPage"
