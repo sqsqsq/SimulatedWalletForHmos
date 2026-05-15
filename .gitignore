@@ -36,3 +36,6 @@ framework/harness/state/*
 # Skill 0 staging drafts (managed by /framework-init)
 doc/catalog-staging/
 doc/glossary-staging/
+
+# Framework auto-overwrite backup (managed by /framework-init)
+.framework-backup/

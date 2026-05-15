@@ -188,12 +188,12 @@ modules:
     layer: "01-Product"
     sub_layer: null
     format: "HAP"
-    one_liner: "应用**入口 HAP**：`PhoneAbility` 作为 UI 宿主加载 `pages/index`，在独立模块内完成 `Navigation` + 双 Tab 壳，并从 `WalletMain` 拉取 `HomeTabPage` / `MineTabPage` 与二级页 builder；根页在 `aboutToAppear` 中通过 `CommFunc` 的 `NavPathContext.attach` 绑定全局 `NavPathStack`，供子页栈式导航；**不实现**卡种/服务数据与账号域，仅做壳与多 HAR 依赖聚合。"
+    one_liner: "应用**入口 HAP**：`PhoneAbility` 加载 `pages/index`；根 `Index` 装配 `Navigation`+双 `Tabs`，`aboutToAppear` 中 `NavPathContext.attach`；**首页 Tab** 以 **`HomeTabPage({ navPathStack: $navPathStack })`** 传入与宿主同源栈（与 `WalletMain` 内 `@Link navPathStack` 配套），**我的 Tab** 壳层直接装载 **`MineTabPage()`**；`navDestination` 注册卡包/添卡至 `WalletMain` 的 builder；含 **`PhoneBackupAbility`（backup）**；**不实现**业务数据与账号域，仅壳与多 HAR 聚合。"
     responsibilities:
-      - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/index', …)`，并处理颜色模式、窗口与生命周期中的通用日志点。"
-      - "在 `pages/index.ets` 中声明 `@Entry` 根 `Navigation(this.navPathStack)` + 底部 `Tabs`（首页/我的）；`aboutToAppear` 调用 `NavPathContext.attach(this.navPathStack)`（来自 `@aspect/CommFunc`），向 feature 子树暴露与宿主一致的栈引用；`navDestination` 映射 `CardPackPage` / `AddCardEntryPage` 至 `WalletMain` 的 `buildCardPackPage` / `buildAddCardEntryPage`。"
-      - "通过 HAP 级 `oh-package` 声明对 `WalletMain`、`AccountManager`、`CommUI`、`CommFunc` 的依赖，在工程上固定「产品壳拉 feature + 基座」的装配图。"
-      - "声明 `PhoneBackupAbility` 扩展能力（`type: backup`）及 `backup_config` 元数据，满足备份扩展的技术挂载点；**备份策略细节**以配置与系统契约为准。"
+      - "维护 `PhoneAbility`（`UIAbility`）：`onWindowStageCreate` 中 `loadContent('pages/index', …)`，生命周期节点使用 `hilog` 记录；`onCreate` 尝试设置应用级 `ColorMode`。"
+      - "在 `pages/index.ets` 声明 `@Entry`：`Navigation(this.navPathStack)` + 底部 `Tabs`（首页/我的）；`aboutToAppear` 调用 `NavPathContext.attach(this.navPathStack)`（`@aspect/CommFunc`）；**首页** `TabContent` 内渲染 **`HomeTabPage({ navPathStack: $navPathStack })`**，向 feature 传入与宿主一致的栈绑定；**我的** `TabContent` 内渲染 **`MineTabPage()`**（当前壳层未向其传入 `navPathStack`）；`navDestination` 将 `CardPackPage` / `AddCardEntryPage` 映射到 `@aspect/WalletMain` 的 `buildCardPackPage` / `buildAddCardEntryPage`。"
+      - "通过 HAP `oh-package.json5` 声明对 `WalletMain`、`AccountManager`、`CommUI`、`CommFunc` 的依赖，固定「入口壳 + feature + 基座」装配图。"
+      - "声明 `PhoneBackupAbility`（`BackupExtensionAbility`，`type: backup`）及 `backup_config` 元数据挂载点；具体备份策略以配置与系统契约为准。"
     NOT_responsible_for:
       - "**不负责**首页服务宫格、活动轮播、卡包列表、我的页金融入口等**业务数据与用例**；此类归属 **`WalletMain` 的 Repository 与 feature 子页**。"
       - "**不负责** `AccountService` / 登录态 / `UserProfile` 的域模型与存储；`Index` 仅消费 `WalletMain` 中已接好的「我的」页，**不**在 HAP 内复制账号领域逻辑。"
