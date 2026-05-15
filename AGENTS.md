@@ -17,7 +17,7 @@
 | project profile | `hmos-app`（子型：`app`） |
 | 激活的 agent adapter | `claude` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
-| 架构摘要 | 5 |
+| 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口 index.ets |
 
 详细架构说明请阅读：[doc/architecture.md](doc/architecture.md)。
 
