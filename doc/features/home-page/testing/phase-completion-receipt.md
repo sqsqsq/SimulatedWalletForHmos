@@ -9,19 +9,19 @@ claimed_completion_commit_sha: "390935a8f3e64f6f4a62288a5b68412fa129686a"
 script_harness:
   command: "cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature home-page --summary --failures-only"
   exit_code: 0
-  report_dir: "framework/harness/reports/home-page/testing"
+  report_dir: "doc/features/home-page/testing/reports"
   blocker_count: 0
   ran_at: "2026-05-14T10:42:40Z"
 
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-testing.md"
-  report_path: "framework/harness/reports/home-page/testing/verifier.report.md"
+  report_path: "doc/features/home-page/testing/reports/verifier.report.md"
   verdict: "PASS"
   ran_at: "2026-05-14T10:43:30Z"
 
 trace_json:
-  path: "framework/harness/reports/home-page/testing/trace.json"
+  path: "doc/features/home-page/testing/reports/trace.json"
   exists: true
   schema_valid: true
 
@@ -32,7 +32,7 @@ context_exploration:
   has_blocker_coverage_risk: false
 
 self_check:
-  q1_trace_json_abs_path: "E:/1.code/SimulatedWalletForHmos/framework/harness/reports/home-page/testing/trace.json"
+  q1_trace_json_abs_path: "E:/1.code/SimulatedWalletForHmos/doc/features/home-page/testing/reports/trace.json"
   q2_verifier_verdict_quoted: "\"verdict\": \"PASS\""
   q3_last_diff_file: "framework/profiles/hmos-app/skills/6-device-testing/profile-addendum.md"
   q4_no_hallucinated_rule_used: true

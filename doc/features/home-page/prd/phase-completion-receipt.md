@@ -9,19 +9,19 @@ claimed_completion_commit_sha: "405386eecd4cedfd6b3f96bd6783db90fba0d95a"
 script_harness:
   command: "cd framework/harness && npx ts-node harness-runner.ts --phase prd --feature home-page"
   exit_code: 0
-  report_dir: "framework/harness/reports/home-page/prd"
+  report_dir: "doc/features/home-page/prd/reports"
   blocker_count: 0
   ran_at: "2026-05-14T03:38:20.265Z"
 
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-prd.md"
-  report_path: "framework/harness/reports/home-page/prd/verifier.report.md"
+  report_path: "doc/features/home-page/prd/reports/verifier.report.md"
   verdict: "PASS"
   ran_at: "2026-05-14T03:42:00.000Z"
 
 trace_json:
-  path: "framework/harness/reports/home-page/prd/trace.json"
+  path: "doc/features/home-page/prd/reports/trace.json"
   exists: true
   schema_valid: true
 
@@ -32,7 +32,7 @@ context_exploration:
   has_blocker_coverage_risk: false
 
 self_check:
-  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\framework\\harness\\reports\\home-page\\prd\\trace.json"
+  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\doc\\features\\home-page\\prd\\reports\\trace.json"
   q2_verifier_verdict_quoted: "**verdict** | **PASS**"
   q3_last_diff_file: "doc/features/home-page/acceptance.yaml"
   q4_no_hallucinated_rule_used: true

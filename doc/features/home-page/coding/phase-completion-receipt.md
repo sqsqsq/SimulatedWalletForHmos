@@ -9,19 +9,19 @@ claimed_completion_commit_sha: "405386eecd4cedfd6b3f96bd6783db90fba0d95a"
 script_harness:
   command: "cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature home-page --summary --failures-only"
   exit_code: 0
-  report_dir: "framework/harness/reports/home-page/coding"
+  report_dir: "doc/features/home-page/coding/reports"
   blocker_count: 0
   ran_at: "2026-05-14T12:48:45+08:00"
 
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-coding.md"
-  report_path: "framework/harness/reports/home-page/coding/verifier.report.md"
+  report_path: "doc/features/home-page/coding/reports/verifier.report.md"
   verdict: "PASS"
   ran_at: "2026-05-14T12:54:00+08:00"
 
 trace_json:
-  path: "framework/harness/reports/home-page/coding/trace.json"
+  path: "doc/features/home-page/coding/reports/trace.json"
   exists: true
   schema_valid: true
 
@@ -32,7 +32,7 @@ context_exploration:
   has_blocker_coverage_risk: false
 
 self_check:
-  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\framework\\harness\\reports\\home-page\\coding\\trace.json"
+  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\doc\\features\\home-page\\coding\\reports\\trace.json"
   q2_verifier_verdict_quoted: "**verdict**: **PASS**"
   q3_last_diff_file: "doc/features/home-page/prd/phase-completion-receipt.md"
   q4_no_hallucinated_rule_used: true

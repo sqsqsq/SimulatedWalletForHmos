@@ -157,8 +157,10 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 每次完成某个阶段任务，**必须**在以下路径产出一份 `trace.json`：
 
 ```
-framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
+doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json
 ```
+
+> 配置了 `paths.reports_dir_pattern` 时 harness 将该 phase 的报告落在 `reports/` 子目录（主 `trace.json` 通常与 `script-report.json` 同目录）；未配置的遗留实例仍为 `framework/harness/reports/<feature>/<phase>/`。以下闭环判据的路径以实例 `phase-completion-receipt.md` frontmatter 与磁盘真实路径为准。
 
 字段见 [framework/harness/trace/trace.schema.json](framework/harness/trace/trace.schema.json)；
 痛点回填结构见 [framework/harness/trace/gap-notes.template.md](framework/harness/trace/gap-notes.template.md)。
@@ -170,7 +172,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 
 任何 **feature 维度阶段**（PRD / design / coding / review / UT / device-testing）"完成"都必须**同时**满足以下条件：
 
-1. `framework/harness/reports/<feature>/<phase>/trace.json` 真实存在（**缺失即视为阶段未完成**）；
+1. **`doc/features/<feature>/<phase>/reports/trace.json`**（或 legacy：`framework/harness/reports/<feature>/<phase>/trace.json`）真实存在（**缺失即视为阶段未完成**）；
 2. 主 agent 已自跑 `harness-runner.ts`，verdict = `PASS`（或脚本退出码 0）；
 3. 主 agent 已通过 Task 工具调用 `subagent_type: verifier` 子 agent，且 verifier 报告 verdict = `PASS`；
 4. 主 agent 已填写 [framework/harness/templates/phase-completion-receipt.md](framework/harness/templates/phase-completion-receipt.md) 模板对应的回执
@@ -217,8 +219,7 @@ framework/harness/reports/<feature>/<timestamp>/<model>-<phase>/trace.json
 cd framework/harness && npx ts-node harness-runner.ts --clear-state
 ```
 
-无确认，直接删 `framework/harness/state/.current-phase.json`；历史 verdict / 报告 / 回执仍保留在
-`framework/harness/reports` 与 [doc/features](doc/features) 下。
+无确认，直接删 `framework/harness/state/.current-phase.json`；历史 verdict / 脚本报告 / verifier 产出通常在同一 feature 阶段的 `reports/` 子目录（或 legacy：`framework/harness/reports/`），完成回执在 [doc/features](doc/features) 下。
 
 ---
 

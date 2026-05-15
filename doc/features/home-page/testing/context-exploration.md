@@ -9,7 +9,7 @@ key_inputs_read:
   - "doc/features/home-page/test-plan.md — 章节结构、用例表与追溯列"
   - "doc/features/home-page/test-report.md — 执行结果与通过率"
   - "doc/features/home-page/acceptance.yaml — ut_layer / criteria / boundaries"
-  - "framework/harness/reports/home-page/testing/summary.json — harness 裁定"
+  - "doc/features/home-page/testing/reports/summary.json — harness 裁定"
 subagents_used: "verifier(subagent_type=verify-testing) for semantic PASS"
 searches_performed_estimate: 2
 files_inspected_count: 6
@@ -28,7 +28,7 @@ files_inspected_count: 6
 | doc/features/home-page/test-plan.md | 门禁章节与用例表 |
 | doc/features/home-page/test-report.md | 结论与通过率 |
 | doc/features/home-page/acceptance.yaml | AC/BD 与 ut_layer |
-| framework/harness/reports/home-page/testing/summary.json | 脚本 harness 结果 |
+| doc/features/home-page/testing/reports/summary.json | 脚本 harness 结果 |
 
 ## 关键结论
 

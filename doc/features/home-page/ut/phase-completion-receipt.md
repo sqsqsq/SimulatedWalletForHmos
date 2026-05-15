@@ -9,19 +9,19 @@ claimed_completion_commit_sha: "405386eecd4cedfd6b3f96bd6783db90fba0d95a"
 script_harness:
   command: 'PowerShell: $env:HARNESS_DIFF_BASE_REF="working"; cd framework/harness; npx ts-node harness-runner.ts --phase ut --feature home-page --summary --failures-only'
   exit_code: 0
-  report_dir: "framework/harness/reports/home-page/ut"
+  report_dir: "doc/features/home-page/ut/reports"
   blocker_count: 0
   ran_at: "2026-05-14T14:12:46+08:00"
 
 verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-ut.md"
-  report_path: "framework/harness/reports/home-page/ut/verifier.report.md"
+  report_path: "doc/features/home-page/ut/reports/verifier.report.md"
   verdict: "PASS"
   ran_at: "2026-05-14T14:14:30+08:00"
 
 trace_json:
-  path: "framework/harness/reports/home-page/ut/trace.json"
+  path: "doc/features/home-page/ut/reports/trace.json"
   exists: true
   schema_valid: true
 
@@ -32,7 +32,7 @@ context_exploration:
   has_blocker_coverage_risk: false
 
 self_check:
-  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\framework\\harness\\reports\\home-page\\ut\\trace.json"
+  q1_trace_json_abs_path: "e:\\1.code\\SimulatedWalletForHmos\\doc\\features\\home-page\\ut\\reports\\trace.json"
   q2_verifier_verdict_quoted: "**summary.verdict**: **PASS**（无 BLOCKER 级 FAIL）"
   q3_last_diff_file: "doc/features/home-page/review/phase-completion-receipt.md"
   q4_no_hallucinated_rule_used: true
@@ -43,7 +43,7 @@ self_check:
 
 1. （写入）`doc/features/home-page/ut/context-exploration.md`
 2. `PowerShell: $env:HARNESS_DIFF_BASE_REF=\"working\"; cd framework/harness; npx ts-node harness-runner.ts --phase ut --feature home-page --summary --failures-only`（首轮后因 gap-notes 缺授权 FAIL；补齐后 PASS）
-3. （更新）`framework/harness/reports/home-page/ut/gap-notes.md` — `approved_src_mutations` 增补 PromoSwiper、string.json
+3. （更新）`doc/features/home-page/ut/reports/gap-notes.md` — `approved_src_mutations` 增补 PromoSwiper、string.json
 4. `Task(subagent_type=verifier)` — `verify-ut.md` → `ut/verifier.report.md`
 5. `cd framework/harness; npx ts-node scripts/check-receipt.ts --feature home-page --phase ut`
 

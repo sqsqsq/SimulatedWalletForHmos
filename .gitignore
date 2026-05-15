@@ -26,6 +26,8 @@ framework/harness/node_modules/
 framework/harness/dist/
 framework/harness/reports/*
 !framework/harness/reports/.gitkeep
+# Feature-phase harness reports（paths.reports_dir_pattern 落在 doc/features 时）
+doc/features/*/*/reports/*
 framework/harness/trace/
 framework/harness/package-lock.json
 framework/harness/state/*

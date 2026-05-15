@@ -86,6 +86,7 @@
     "extension_dir": "doc/extensions",
     "state_file": "framework/harness/state/.current-phase.json",
     "receipt_dir_pattern": "doc/features/<feature>/<phase>",
+    "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
     "docs_committed": true
   },
   "toolchain": {
