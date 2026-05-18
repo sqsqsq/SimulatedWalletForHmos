@@ -35,6 +35,7 @@
 | ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/3-coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
 | 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary / **extensions** 等阶段 YAML 规则（以当前激活 workflow 为准） |
 | 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
+| Harness 运行时前置（Tier_1 · npm） | [framework/skills/reference/host-harness-readiness.md](framework/skills/reference/host-harness-readiness.md) | 克隆或独立拉起 Skill 跑 `harness-runner` 前须安装 `framework/harness` 依赖；与 Skill 00 Step 5.5 Tier_1 等价；宿主 IDE/hvigor 仍按 profile |
 
 ---
 
