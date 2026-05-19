@@ -43,6 +43,8 @@ doc/glossary-staging/
 # Skill 6 · hmos-app 真机自动化本地产物（vendor wheel 见 framework/profiles/hmos-app/vendor/hylyre/，须入库）
 /.hylyre/
 /doc/app-snapshot-cache/
+# Skill 6 即席用例临时目录（需要归档时可移出 ignore）
+/doc/features/_adhoc/
 
 # Hylyre/Hypium 以工程根为 cwd 时落盘的 task 日志；需要归档时再移出 ignore
 /reports/
