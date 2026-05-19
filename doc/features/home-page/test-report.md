@@ -1,12 +1,12 @@
 # 测试报告 — home-page
 
 > **模块标识**: `home-page`  
-> **版本**: v1.0  
+> **版本**: v1.1  
 > **日期**: 2026-05-19  
-> **测试执行人**: 自动化归档（Hylyre + harness）  
+> **测试执行人**: Hylyre 真机自动化 + agent 回填  
 > **对应测试计划**: `doc/features/home-page/test-plan.md`
 
-> **说明（诚实性）**: 本报告与 **`doc/features/home-page/testing/reports/20260519-ssot-full/hylyre/trace.json`** 对齐（`outcome=partial`）。派生计划含 **11** 条可执行 TC，`TC-010` / `TC-013`～`TC-015` 在派生 **frontmatter** 登记为 **explicit_skip**，在下方标 **跳过**。历史 **`smoke-20260518`** 烟测仅作旧档，不再作为本轮结论依据。
+> **说明**: 本轮与 **`doc/features/home-page/testing/reports/20260519-rerun-v3/hylyre/trace.json`** 对齐（`outcome=partial`）。派生计划 **11** 条可执行 TC；`TC-010` / `TC-013`～`TC-015` 在 **`derive-manifest.json`** 登记为 **explicit_skip**。
 
 ---
 
@@ -16,11 +16,11 @@
 |------|------|
 | 测试模块 | home-page / WalletMain 首页 |
 | 测试日期 | 2026-05-19 |
-| 测试环境 | 与 test-plan 一致；Hylyre + 已连接设备（见 `device-test-run.log`） |
-| 执行人 | 自动化（Hylyre）+ 回填合成 |
+| 测试环境 | 真机 3UJ0225327004147，HarmonyOS 6.0.2.3，API 22；Hylyre + hvigor debug 包 |
+| 执行人 | Hylyre 自动化 |
 | 用例总数（顶层计划） | 15 |
-| 本轮回合入派生自动化 | 11 |
-| explicit_skip（未进自动化表） | 4（TC-010、TC-013、TC-014、TC-015） |
+| 纳入自动化 | 11 |
+| explicit_skip | 4（TC-010、TC-013、TC-014、TC-015） |
 
 ---
 
@@ -29,80 +29,69 @@
 | 用例编号 | 用例名称 | 优先级 | 执行状态 | 备注 |
 |----------|----------|--------|----------|------|
 | TC-001 | 首页进入后主结构无崩溃 | P0 | 通过 | Hylyre：`touch`「首页」 |
-| TC-002 | 服务与活动区可见条目 | P0 | 失败 | `swipe` distance 需为 1–100（区域宽度百分比），当前步定义不合法 |
-| TC-003 | 卡面/卡引导可点进卡包 | P0 | 失败 | 未找到 `BY.text('卡')`，需对齐真实文案/selector |
-| TC-004 | 「添加/管理卡」主按钮进卡包 | P0 | 失败 | 未找到 `BY.text('添加')`，需对齐文案 |
-| TC-005 | 标题栏加号进添卡入口 | P0 | 通过 | `touch`「+」 |
-| TC-006 | 消息入口有轻量反馈 | P0 | 通过 | `touch`「消息」 |
-| TC-007 | 服务宫格 3 列展示 | P1 | 失败 | swipe distance 参数同上 |
-| TC-008 | 活动区标题+轮播+指示器/自动播 | P1 | 失败 | swipe distance 参数同上 |
-| TC-009 | 活动卡点击有反馈不崩溃 | P1 | 失败 | 未找到 `BY.text('活动')` |
-| TC-010 | 飞行模式进首页不白屏 | P1 | 跳过 | `explicit_skip_tc_ids` 登记；人工/环境项 |
-| TC-011 | 首屏与区块布局无严重错位 | P0 | 失败 | swipe distance 参数同上 |
-| TC-012 | 主要可点区域有点击反馈 | P0 | 失败 | 末步未找到「首页」（可能与当前页态有关） |
-| TC-013 | 无网与降级提示（边界 E1） | P0 | 跳过 | explicit_skip |
-| TC-014 | 服务/活动空列表不崩溃（边界 E2） | P0 | 跳过 | explicit_skip |
-| TC-015 | 无 navPathStack 不盲目 push（边界 E3） | P1 | 跳过 | explicit_skip |
+| TC-002 | 服务与活动区可见条目 | P0 | 通过 | scroll + 目视 Mock 数据区 |
+| TC-003 | 卡面/卡引导可点进卡包 | P0 | 通过 | `touch`「集中管理您的卡证票券钥匙」→ 卡包 |
+| TC-004 | 「添加/管理卡」主按钮进卡包 | P0 | 失败 | TC-003 后 Nav 子页无底 Tab；swipe 未能回到首页，找不到「首页」 |
+| TC-005 | 标题栏加号进添卡入口 | P0 | 失败 | 同上，会话态仍在子页 |
+| TC-006 | 消息入口有轻量反馈 | P0 | 通过 | `touch`「消息」→ Toast |
+| TC-007 | 服务宫格 3 列展示 | P1 | 通过 | scroll + `touch`「Huawei Card」 |
+| TC-008 | 活动区标题+轮播+指示器/自动播 | P1 | 通过 | scroll 至「更多服务」区 |
+| TC-009 | 活动卡点击有反馈不崩溃 | P1 | 通过 | `touch`「春日出行」→ Toast |
+| TC-010 | 飞行模式进首页不白屏 | P1 | 跳过 | explicit_skip；需人工开关飞行模式 |
+| TC-011 | 首屏与区块布局无严重错位 | P0 | 通过 | 上下 scroll 走查 |
+| TC-012 | 主要可点区域有点击反馈 | P0 | 通过 | 消息 + Huawei Card 点击有反馈 |
+| TC-013 | 无网与降级提示（边界 E1） | P0 | 跳过 | explicit_skip；需断网环境 |
+| TC-014 | 服务/活动空列表不崩溃（边界 E2） | P0 | 跳过 | explicit_skip；Mock 固定非空 |
+| TC-015 | 无 navPathStack 不盲目 push（边界 E3） | P1 | 跳过 | explicit_skip；极端宿主场景 |
 
 ---
 
 ## 三、缺陷清单
 
-本轮自动化 **失败** 未必等价于产品缺陷：含 **计划参数错误**（swipe distance）与 **selector 未对齐**。仍登记为待澄清，避免与 trace 矛盾。
-
 | 缺陷编号 | 关联用例 | 严重程度 | 状态 | 描述 |
 |----------|----------|----------|------|------|
-| DEF-AT-001 | TC-002 | MAJOR | 待修复 | Hylyre：`swipe.distance` 须为 1–100 整数（百分比），当前步定义不合法 |
-| DEF-AT-002 | TC-007 | MAJOR | 待修复 | 同上，swipe 参数不合规 |
-| DEF-AT-003 | TC-008 | MAJOR | 待修复 | 同上，swipe 参数不合规 |
-| DEF-AT-004 | TC-011 | MAJOR | 待修复 | 同上，swipe 参数不合规 |
-| DEF-AT-005 | TC-003 | MAJOR | 待修复 | `by_text('卡')` 与界面不一致，需对照 contracts / dump-ui |
-| DEF-AT-006 | TC-004 | MAJOR | 待修复 | `by_text('添加')` 与界面不一致 |
-| DEF-AT-007 | TC-009 | MAJOR | 待修复 | `by_text('活动')` 与界面不一致 |
-| DEF-AT-008 | TC-012 | MAJOR | 待修复 | 末步复点「首页」失败，结合当前页态调整步骤 |
+| DEF-AT-001 | TC-004 | MAJOR | 待修复 | Hylyre 单会话内 TC-003 进入 CardPackPage 后无法回到首页 Tab，TC-004 步骤找不到「添加管理卡片」 |
+| DEF-AT-002 | TC-005 | MAJOR | 待修复 | 同上；需在 Hylyre 增加返回/重启应用步骤，或拆分为独立 run |
 
 ### 缺陷统计
 
 | 严重程度 | 数量 | 待修复 | 已修复 | 已关闭 | 延期处理 |
 |---------|------|--------|--------|--------|----------|
 | BLOCKER | 0 | 0 | 0 | 0 | 0 |
-| MAJOR | 8 | 8 | 0 | 0 | 0 |
+| MAJOR | 2 | 2 | 0 | 0 | 0 |
 | MINOR | 0 | 0 | 0 | 0 | 0 |
-| **合计** | **8** | **8** | **0** | **0** | **0** |
+| **合计** | **2** | **2** | **0** | **0** | **0** |
 
 ---
 
 ## 四、通过率统计
 
-（可执行子集 11 条；**未**将 explicit_skip 计入失败分母。）
+（可执行子集 11 条；explicit_skip 不计入失败分母。）
 
 | 优先级 | 总用例 | 通过 | 失败 | 跳过 | 已执行子集通过率 | 达标阈值 | 是否达标 |
 |--------|--------|------|------|------|------------------|---------|----------|
-| P0（派生内） | 8 | 3 | 5 | — | 3/8 = 37.5% | 100% | **否** |
-| P1（派生内） | 3 | 0 | 3 | — | 0% | ≥ 95% | **否** |
+| P0（派生内） | 8 | 6 | 2 | — | 6/8 = 75% | 100% | **否** |
+| P1（派生内） | 3 | 3 | 0 | — | 100% | ≥ 95% | **是** |
 | 跳过（登记） | 4 | — | — | 4 | — | — | — |
-| **派生可执行** | **11** | **3** | **8** | 4（计划外跳过） | **27.3%** | test-plan 总体 ≥90% | **否** |
+| **派生可执行** | **11** | **9** | **2** | 4（计划外跳过） | **81.8%** | 总体 ≥ 90% | **否** |
 
 ---
 
 ## 五、结论
 
-**测试结论**: **不达标**（派生自动化子集大量失败 / 参数不合规，未满足 test-plan 通过标准）
+**测试结论**: **不达标**（P0 自动化子集 75%，未达 test-plan 100% 门槛）
 
-**结论说明**:  
-- 真机 trace：**`outcome=partial`**，**3 / 11** 自动化用例通过。  
-- **P0** 在派生表内 **8** 条已执行：**5** 条失败，不满足 P0 100%。  
-- 需在 **`20260519-ssot-full/hylyre/test-plan.hylyre.md`**（或新 timestamp）修正 **swipe 百分比** 与 **by_text**，并重跑 `testing` harness。
+**结论说明**:
+- 真机 trace：**`outcome=partial`**，**9 / 11** 自动化用例通过。
+- **P0** 派生内 **8** 条：**6** 通过、**2** 失败（TC-004/005 为 Nav 子页会话态限制，非已确认产品缺陷）。
+- **4** 条需人工/特殊环境的用例已 explicit_skip。
 
 **下一步建议**:
-
-1. 按 Hylyre 规则将 `swipe.distance` 改为 **1–100** 的整数；多步滚动拆成多格或多条用例。  
-2. 用 **contracts.yaml** / **dump-ui** 对齐「卡」「添加」「活动」等文案或改用 `by_id`。  
-3. explicit_skip 项按需人工补测并更新本报告。  
-4. 结论变更后重跑 **verifier**（`verify-testing.md`）并更新 **phase-completion-receipt**。
+1. TC-004/005：拆为独立 Hylyre run（每 run 冷启应用），或扩展 Hylyre 支持 `pressBack`/重启。
+2. explicit_skip 项（飞行模式、断网、空数据、navPathStack）按需人工补测。
+3. 产品侧若确认 TC-003 后卡包页行为正常，可将 AT-001/002 归为自动化债务而非功能缺陷。
 
 **判定依据（摘要）**:
-
-- Hylyre trace：`testing/reports/20260519-ssot-full/hylyre/trace.json`（`outcome=partial`）
+- Hylyre trace：`testing/reports/20260519-rerun-v3/hylyre/trace.json`（`outcome=partial`）
 
 ---
