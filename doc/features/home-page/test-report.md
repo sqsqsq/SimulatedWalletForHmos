@@ -1,12 +1,12 @@
 # 测试报告 — home-page
 
 > **模块标识**: `home-page`  
-> **版本**: v1.1  
+> **版本**: v1.3  
 > **日期**: 2026-05-19  
 > **测试执行人**: Hylyre 真机自动化 + agent 回填  
 > **对应测试计划**: `doc/features/home-page/test-plan.md`
 
-> **说明**: 本轮与 **`doc/features/home-page/testing/reports/20260519-rerun-v3/hylyre/trace.json`** 对齐（`outcome=partial`）。派生计划 **11** 条可执行 TC；`TC-010` / `TC-013`～`TC-015` 在 **`derive-manifest.json`** 登记为 **explicit_skip**。
+> **说明**: **Hylyre 执行结果**仍对齐 **`20260519-rerun-v7/hylyre/trace.json`**（`outcome=partial`，9/11）。**派生计划 v8**（`20260519-rerun-v8/hylyre/`，含 `{"back":{}}`、NAV lint 已通过）待在设备在线后由 agent 自跑 testing harness 产出 trace。`TC-010` / `TC-013`～`TC-015` 为 **explicit_skip**。
 
 ---
 
@@ -30,9 +30,9 @@
 |----------|----------|--------|----------|------|
 | TC-001 | 首页进入后主结构无崩溃 | P0 | 通过 | Hylyre：`touch`「首页」 |
 | TC-002 | 服务与活动区可见条目 | P0 | 通过 | scroll + 目视 Mock 数据区 |
-| TC-003 | 卡面/卡引导可点进卡包 | P0 | 通过 | `touch`「集中管理您的卡证票券钥匙」→ 卡包 |
-| TC-004 | 「添加/管理卡」主按钮进卡包 | P0 | 失败 | TC-003 后 Nav 子页无底 Tab；swipe 未能回到首页，找不到「首页」 |
-| TC-005 | 标题栏加号进添卡入口 | P0 | 失败 | 同上，会话态仍在子页 |
+| TC-003 | 卡面/卡引导可点进卡包 | P0 | 失败 | TC-004 后进卡包子页；swipe 未能回到首页 Tab，找不到「首页」 |
+| TC-004 | 「添加/管理卡」主按钮进卡包 | P0 | 通过 | v7 将 TC-004 置于 TC-003 前执行后通过 |
+| TC-005 | 标题栏加号进添卡入口 | P0 | 失败 | TC-004 后仍在卡包子页；swipe 未能回到首页，找不到「+」 |
 | TC-006 | 消息入口有轻量反馈 | P0 | 通过 | `touch`「消息」→ Toast |
 | TC-007 | 服务宫格 3 列展示 | P1 | 通过 | scroll + `touch`「Huawei Card」 |
 | TC-008 | 活动区标题+轮播+指示器/自动播 | P1 | 通过 | scroll 至「更多服务」区 |
@@ -50,8 +50,8 @@
 
 | 缺陷编号 | 关联用例 | 严重程度 | 状态 | 描述 |
 |----------|----------|----------|------|------|
-| DEF-AT-001 | TC-004 | MAJOR | 待修复 | Hylyre 单会话内 TC-003 进入 CardPackPage 后无法回到首页 Tab，TC-004 步骤找不到「添加管理卡片」 |
-| DEF-AT-002 | TC-005 | MAJOR | 待修复 | 同上；需在 Hylyre 增加返回/重启应用步骤，或拆分为独立 run |
+| DEF-AT-001 | TC-005 | MAJOR | 待修复 | Hylyre 单会话内 TC-004 进入 CardPackPage 后 swipe 无法回到首页 Tab，TC-005 找不到「+」 |
+| DEF-AT-002 | TC-003 | MAJOR | 待修复 | 同上；TC-003 排在 TC-004/005 之后时无法从子页复位 |
 
 ### 缺陷统计
 
@@ -83,15 +83,17 @@
 
 **结论说明**:
 - 真机 trace：**`outcome=partial`**，**9 / 11** 自动化用例通过。
-- **P0** 派生内 **8** 条：**6** 通过、**2** 失败（TC-004/005 为 Nav 子页会话态限制，非已确认产品缺陷）。
+- **P0** 派生内 **8** 条：**6** 通过、**2** 失败（TC-003/005 为 Nav 子页会话态与 Hylyre 无可靠返回步，非已确认产品缺陷）。
+- **TC-004** 经派生顺序调整后已通过。
 - **4** 条需人工/特殊环境的用例已 explicit_skip。
 
 **下一步建议**:
-1. TC-004/005：拆为独立 Hylyre run（每 run 冷启应用），或扩展 Hylyre 支持 `pressBack`/重启。
+1. 设备在线后由 agent 自跑 Skill 6，消费 **v8** 派生计划（`back` 复位，已通过 NAV-001/002/003 静态 lint）。
 2. explicit_skip 项（飞行模式、断网、空数据、navPathStack）按需人工补测。
-3. 产品侧若确认 TC-003 后卡包页行为正常，可将 AT-001/002 归为自动化债务而非功能缺陷。
+3. 若 v8 真机仍失败，再评估拆 run 或产品侧导航行为。
 
 **判定依据（摘要）**:
-- Hylyre trace：`testing/reports/20260519-rerun-v3/hylyre/trace.json`（`outcome=partial`）
+- 已执行 trace：`testing/reports/20260519-rerun-v7/hylyre/trace.json`（`outcome=partial`）
+- 待执行派生：`testing/reports/20260519-rerun-v8/hylyre/test-plan.hylyre.md`
 
 ---

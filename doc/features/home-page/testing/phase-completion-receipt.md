@@ -3,8 +3,8 @@ feature: "home-page"
 phase: "testing"
 agent_model: "composer-2.5"
 agent_runtime: "cursor"
-claimed_completion_at: "2026-05-19T14:12:00+08:00"
-claimed_completion_commit_sha: "4181a7d2f27863ca2e6a38269a57dded4bc1c996"
+claimed_completion_at: "2026-05-19T16:15:00+08:00"
+claimed_completion_commit_sha: "a471caf71e0eca1c0a686baf7282c571fa8824fc"
 
 # ----------------------------------------------------------------------
 # 1. Harness 验证（Layer 2 凭证）
@@ -14,15 +14,15 @@ script_harness:
   exit_code: 0
   report_dir: "doc/features/home-page/testing/reports"
   blocker_count: 0
-  ran_at: "2026-05-19T06:10:03.000Z"
+  ran_at: "2026-05-19T08:14:09.000Z"
 
 # ----------------------------------------------------------------------
 # 1.5 Testing 阶段 · 真机自动化产物路径
 # ----------------------------------------------------------------------
 testing_run_artifacts:
   hylyre_run_exit_code: 0
-  hylyre_report_path: "doc/features/home-page/testing/reports/20260519-rerun-v3/hylyre/test-report.md"
-  hylyre_trace_path: "doc/features/home-page/testing/reports/20260519-rerun-v3/hylyre/trace.json"
+  hylyre_report_path: "doc/features/home-page/testing/reports/20260519-rerun-v7/hylyre/test-report.md"
+  hylyre_trace_path: "doc/features/home-page/testing/reports/20260519-rerun-v7/hylyre/trace.json"
   app_snapshot_cache_dir: "doc/app-snapshot-cache"
 
 # ----------------------------------------------------------------------
@@ -33,7 +33,7 @@ verifier_subagent:
   prompt_template: "framework/harness/prompts/verify-testing.md"
   report_path: "doc/features/home-page/testing/reports/verifier.report.md"
   verdict: "PASS"
-  ran_at: "2026-05-19T06:12:00.000Z"
+  ran_at: "2026-05-19T08:16:00.000Z"
 
 # ----------------------------------------------------------------------
 # 3. trace.json 凭证（Layer 1 凭证）
@@ -58,7 +58,7 @@ context_exploration:
 self_check:
   q1_trace_json_abs_path: "D:/1.code/SimulatedWalletForHmos/doc/features/home-page/testing/reports/trace.json"
   q2_verifier_verdict_quoted: "PASS（0 BLOCKER FAIL；NFR 覆盖 WARN；业务结论不达标与数据自洽）"
-  q3_last_diff_file: "doc/features/home-page/test-report.md"
+  q3_last_diff_file: "doc/features/home-page/test-report.md (v1.3; Hylyre trace=v7, v8 derived pending run)"
   q4_no_hallucinated_rule_used: true
   q4_evidence: "按 CLAUDE.md §4.1/§5.1 自跑 harness、Task verifier、填写 receipt；HARNESS_HDC_EXE 指向 DevEco toolchains。"
 ---
@@ -74,7 +74,7 @@ self_check:
 ## 备注
 
 - **脚本 harness**：**PASS**，`blocker_count: 0`；`summary.json` → `can_claim_done: YES`。
-- **Hylyre**（`20260519-rerun-v3/hylyre/trace.json`）：**`outcome=partial`**，**9 / 11** 自动化通过；`TC-004/005` 因 Nav 子页无法回 Tab 失败。
+- **Hylyre**（`20260519-rerun-v7/hylyre/trace.json`）：**`outcome=partial`**，**9 / 11**；v8 派生（`back`）已通过 NAV lint，**待设备在线后 agent 重跑**更新 trace。
 - **explicit_skip**：TC-010、TC-013、TC-014、TC-015（人工/环境项）。
 - **业务结论**：**不达标**（P0 自动化 75%）；见 `test-report.md`。
 
