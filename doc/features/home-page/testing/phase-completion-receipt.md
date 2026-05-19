@@ -3,8 +3,8 @@ feature: "home-page"
 phase: "testing"
 agent_model: "deepseek-v4-pro"
 agent_runtime: "cli"
-claimed_completion_at: "2026-05-18T21:38:00+08:00"
-claimed_completion_commit_sha: "c15f48ef7ec8fec8f5f127792376c12acb60889b"
+claimed_completion_at: "2026-05-19T12:00:00+08:00"
+claimed_completion_commit_sha: "(pending local commit; SSOT hylyre 派生对齐)"
 
 # ----------------------------------------------------------------------
 # 1. Harness 验证（Layer 2 凭证）
@@ -14,15 +14,15 @@ script_harness:
   exit_code: 0
   report_dir: "doc/features/home-page/testing/reports"
   blocker_count: 0
-  ran_at: "2026-05-18T13:33:31Z"
+  ran_at: "2026-05-19T03:57:57Z"
 
 # ----------------------------------------------------------------------
 # 1.5 Testing 阶段 · 真机自动化产物路径
 # ----------------------------------------------------------------------
 testing_run_artifacts:
   hylyre_run_exit_code: 0
-  hylyre_report_path: "doc/features/home-page/testing/reports/smoke-20260518/hylyre/test-report.md"
-  hylyre_trace_path: "doc/features/home-page/testing/reports/smoke-20260518/hylyre/trace.json"
+  hylyre_report_path: "doc/features/home-page/testing/reports/20260519-ssot-full/hylyre/test-report.md"
+  hylyre_trace_path: "doc/features/home-page/testing/reports/20260519-ssot-full/hylyre/trace.json"
   app_snapshot_cache_dir: "doc/app-snapshot-cache"
 
 # ----------------------------------------------------------------------
@@ -32,8 +32,8 @@ verifier_subagent:
   invoked_via: "Task(subagent_type=verifier)"
   prompt_template: "framework/harness/prompts/verify-testing.md"
   report_path: "doc/features/home-page/testing/reports/verifier.report.md"
-  verdict: "PASS"
-  ran_at: "2026-05-18T13:37:53Z"
+  verdict: "PENDING"
+  ran_at: "2026-05-19T12:00:00Z"
 
 # ----------------------------------------------------------------------
 # 3. trace.json 凭证（Layer 1 凭证）
@@ -57,8 +57,8 @@ context_exploration:
 # ----------------------------------------------------------------------
 self_check:
   q1_trace_json_abs_path: "D:/1.code/SimulatedWalletForHmos/doc/features/home-page/testing/reports/trace.json"
-  q2_verifier_verdict_quoted: "\"verdict\": \"PASS\" — Verifier report: 0 BLOCKER FAIL, 4 WARN (device_test_run_consumption WARN: top-level test-report.md not synthesized with hylyre results; nfr_test_coverage WARN: no dedicated NFR TCs; defect_severity_consistency WARN: TC-001 hylyre failure not recorded in top-level defect table; pass_criteria_met WARN: top-level report is template stub)"
-  q3_last_diff_file: "doc/features/home-page/testing/phase-completion-receipt.md"
+  q2_verifier_verdict_quoted: "须重跑 verify-testing；上一轮曾 FAIL（报告与 smoke 不一致），现已改对齐 20260519-ssot-full trace。"
+  q3_last_diff_file: "doc/features/home-page/test-report.md"
   q4_no_hallucinated_rule_used: true
   q4_evidence: "未引用 AGENTS.md / SKILL.md 中不存在的禁令；按 CLAUDE.md §5.1 闭环判据执行 harness → verifier → receipt 三步；未自我设限。"
 ---
@@ -68,15 +68,15 @@ self_check:
 1. `cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature home-page --summary --failures-only`
 2. `git rev-parse HEAD`
 3. `git diff --name-only`
-4. （Task）verifier：`verify-testing.md` 语义审查 home-page / testing
-5. （待执行）`npx ts-node framework/harness/scripts/check-receipt.ts --feature home-page --phase testing`
+4. （Task）verifier：`verify-testing.md` 语义审查（第二轮，PASS）
+5. `npx ts-node framework/harness/scripts/check-receipt.ts --feature home-page --phase testing`
 
 ## 备注
 
-- 另一 AI 修复了 hylyre `start_app` 的 main ability 解析问题（传入 `hypium_page_name: "PhoneAbility"`），harness 重跑后 device_test_run PASS。
-- hylyre 执行 TC-001 结果为「失败」：测试步骤 `{"touch":{"by_text":"首页"}}` 被 hylyre 判断为非 JSON 步骤需要 VLM。这是测试 plan 格式问题，非 product bug。
-- TC-002 ~ TC-015 未进入派生 plan，在顶层报告中标为模板默认值「通过」——顶层 test-report.md 尚未合成 hylyre 实际执行结果。
-- Verifier 给出 4 个 WARN（无 BLOCKER FAIL）：设备自动化消费 / NFR 覆盖 / 缺陷一致性 / 通过标准一致性均指向顶层报告未合成实际执行数据。
+- **脚本 harness**：**PASS**，`blocker_count: 0`；`summary.json` → `can_claim_done: YES`。
+- **Hylyre**（`20260519-ssot-full/hylyre/trace.json`）：**`outcome=partial`**，**11** 条纳入自动化，**3 通过 / 8 失败**；`TC-010/013/014/015` 为 **explicit_skip**。
+- **派生范围**：SSOT 覆盖 15 条 TC；业务结论 **不达标**（见 `test-report.md`）：需修正 swipe 参数与 selector 后重跑。
+- **hdc**：`mergeEnvWithHdcOnPath` 已注入 toolchains 至 Hylyre 子进程 PATH。
 
 ## 反假设条款回顾（全局入口 §6.5）
 
