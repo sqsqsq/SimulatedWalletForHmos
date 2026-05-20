@@ -35,7 +35,7 @@ files_inspected_count: 10
 ## 关键结论
 
 - 本轮 **不修改** `src/main`：编码变更（Toast 文案键）未改变 Repository Mock 形状与条数，现有 2 个 `it()` 仍有效。
-- device-only AC/BD 继续落在 **Skill 6** / `device-testing-todo.md`。
+- device-only AC/BD 由 **Skill 6** 按 `acceptance.yaml` > `device_focus` 派生 test-plan 覆盖。
 
 ## 覆盖风险
 

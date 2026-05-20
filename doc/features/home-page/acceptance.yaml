@@ -1,8 +1,8 @@
 # 从 PRD.md 提取的验收与边界 — home-page（与 PRD v1.4 对齐）
-# ut_layer / ut_focus 用于 UT ↔ Device 分层分工：
+# ut_layer / ut_focus / device_focus 用于 UT ↔ Device 分层分工：
 #   unit   = UT 直接覆盖（驱动现有业务代码 + 自然边界打桩）
 #   device = 纯 UI/机型/性能，Skill 6 真机覆盖
-#   both   = UT 验证逻辑分支，真机验证 UI 副作用
+#   both   = UT 验证逻辑分支，真机验证 UI 副作用（须拆分 ut_focus + device_focus）
 schema_version: "1.0"
 feature: "home-page"
 
@@ -16,7 +16,8 @@ criteria:
       - "安装并冷启应用，切到底 Tab「首页」"
     expected_result: "页面可见主结构，无崩溃"
     ut_layer: "both"
-    ut_focus: "HomeRepository.getServiceEntries / getPromoList 返回值不为 null 且数据模型字段齐全；真机验证首次渲染"
+    ut_focus: "HomeRepository.getServiceEntries / getPromoList 返回值不为 null 且数据模型字段齐全"
+    device_focus: "切到首页 Tab 后无白屏、无崩溃；标题区可见（文案、加号、消息图标）；主区域可滚动"
 
   - id: "AC-2"
     prd_function: "F1"
@@ -41,7 +42,7 @@ criteria:
       - "点击卡面/引导区"
     expected_result: "导航至 CardPackPage"
     ut_layer: "device"
-    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+    device_focus: "点击卡引导区后导航栈栈顶为 CardPackPage；转场动画自然无异常"
 
   - id: "AC-4"
     prd_function: "F2"
@@ -52,7 +53,7 @@ criteria:
       - "点击主按钮"
     expected_result: "导航至 CardPackPage"
     ut_layer: "device"
-    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+    device_focus: "点击「添加/管理卡」主按钮，导航栈栈顶为 CardPackPage"
 
   - id: "AC-5"
     prd_function: "F3"
@@ -63,7 +64,7 @@ criteria:
       - "点击标题栏加号"
     expected_result: "导航至 AddCardEntryPage"
     ut_layer: "device"
-    ut_focus: "纯 UI 导航交互，UT 不覆盖"
+    device_focus: "点击标题栏加号，导航栈栈顶为 AddCardEntryPage"
 
   - id: "AC-6"
     prd_function: "F3"
@@ -74,7 +75,7 @@ criteria:
       - "点击消息图标"
     expected_result: "Toast 或等价反馈出现"
     ut_layer: "device"
-    ut_focus: "纯 UI 反馈，UT 不覆盖"
+    device_focus: "点击消息图标出现 Toast（文案匹配 msg_center_welcome）；持续时长 ≥ 1.5s"
 
   - id: "AC-7"
     prd_function: "F4"
@@ -85,7 +86,7 @@ criteria:
       - "目视检查宫格列数"
     expected_result: "与 ServiceGridSwiper 3 列栅格一致"
     ut_layer: "device"
-    ut_focus: "UI 布局，UT 不覆盖"
+    device_focus: "宫格实际列数为 3；超过 3 项时能进入第二页/滑动"
 
   - id: "AC-8"
     prd_function: "F5"
@@ -96,7 +97,7 @@ criteria:
       - "进入首页，观察活动区"
     expected_result: "有标题、至少 1 张活动卡、有轮播指示/自动播行为与实现可对应"
     ut_layer: "device"
-    ut_focus: "UI 组件渲染，UT 不覆盖"
+    device_focus: "活动区有标题；至少 1 张活动卡可见；存在轮播指示/自动播行为"
 
   - id: "AC-9"
     prd_function: "F5"
@@ -107,7 +108,7 @@ criteria:
       - "点击活动卡"
     expected_result: "Toast 或占位，与产品/代码策略一致，不崩溃"
     ut_layer: "device"
-    ut_focus: "UI 交互，UT 不覆盖"
+    device_focus: "点击活动卡出现 Toast 或占位；不崩溃"
 
   - id: "AC-10"
     prd_function: "F6"
@@ -118,7 +119,7 @@ criteria:
       - "飞行模式进首页"
     expected_result: "不白屏死锁，可有 Toast/空态"
     ut_layer: "device"
-    ut_focus: "异常路径靠 try/catch 包裹 + UI Toast 真机验证；当前 Repository 为 Mock 数据源无真实异常源，UT 暂不覆盖"
+    device_focus: "飞行模式下切到首页不白屏；Toast 文案为 home_data_unavailable 对应字符串；页面能自然滚动"
 
   - id: "AC-G1"
     prd_function: "F1"
@@ -131,7 +132,7 @@ criteria:
       - "检查：① 卡引导→宫格→活动区顺序完整 ② 标题栏左文右侧图标可见且无与中叠盖 ③ 无主交互区被遮挡或整页断层不可滚动"
     expected_result: "三项均满足；与 README 首页职责语义冲突则 FAIL 并需更新 UX 或 PRD"
     ut_layer: "device"
-    ut_focus: "真机走查对照归档截图；UT 不覆盖像素对齐"
+    device_focus: "目标机型上页面布局无重叠、截断；与 ref_home_no_card 基线走查一致"
 
   - id: "AC-G2"
     prd_function: "F1"
@@ -142,7 +143,7 @@ criteria:
       - "连点可点击主操作"
     expected_result: "有视觉或导航反馈"
     ut_layer: "device"
-    ut_focus: "响应性能，UT 不覆盖"
+    device_focus: "点击主按钮后 300ms 内出现视觉/导航反馈"
 
 boundaries:
   - id: "BD-1"
@@ -152,7 +153,7 @@ boundaries:
     handling: "缓存或空态、Toast 提示"
     expected_behavior: "不崩溃、可进入首页"
     ut_layer: "device"
-    ut_focus: "当前 HomeRepository 是本地 Mock 无真实网络路径；异常处理交真机验证"
+    device_focus: "无网络下 Toast 出现且文案正确；刷新后网络恢复能重试加载"
 
   - id: "BD-2"
     prd_exception: "E2"
@@ -161,7 +162,7 @@ boundaries:
     handling: "隐藏区块或空态"
     expected_behavior: "不崩溃"
     ut_layer: "device"
-    ut_focus: "Mock 固定返回非空，空态路径交真机观察"
+    device_focus: "服务为空时宫格区域隐藏或显示空态；活动为空时活动区隐藏或显示空态；都为空时页面不崩溃仍可滚动"
 
   - id: "BD-3"
     prd_exception: "E3"
@@ -170,7 +171,7 @@ boundaries:
     handling: "不 push 或保护"
     expected_behavior: "不崩溃、可 Toast"
     ut_layer: "device"
-    ut_focus: "导航栈异常属 UI 层，UT 不覆盖"
+    device_focus: "无导航栈时点击跳转按钮不崩溃，可出现 Toast 或静默"
 
 performance:
   - id: "NFR-1"
