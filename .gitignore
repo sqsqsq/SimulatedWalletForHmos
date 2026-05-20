@@ -41,7 +41,8 @@ doc/glossary-staging/
 .framework-backup/
 
 # Skill 6 · hmos-app 真机自动化本地产物（vendor wheel 见 framework/profiles/hmos-app/vendor/hylyre/，须入库）
-/.hylyre/
+**/.hylyre/
+**/tmp_hypium/
 /doc/app-snapshot-cache/
 # Skill 6 即席用例临时目录（需要归档时可移出 ignore）
 /doc/features/_adhoc/
