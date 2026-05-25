@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node 'D:\\1.code\\SimulatedWalletForHmos\\.codex\\hooks\\check-phase-completion.mjs'"
+          }
+        ]
+      }
+    ]
+  }
+}
