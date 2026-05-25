@@ -1,7 +1,0 @@
-{
-  "phase": "coding",
-  "feature": "demo",
-  "env": {
-    "HARNESS_SKIP_HVIGOR": "1"
-  }
-}

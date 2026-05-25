@@ -1,7 +1,0 @@
-{
-  "phase": "init",
-  "adapter": "claude",
-  "env": {
-    "CHECK_INIT_QUIET": "1"
-  }
-}
