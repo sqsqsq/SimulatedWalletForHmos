@@ -1,0 +1,75 @@
+# ============================================================================
+# UT 阶段规约 — profile 中立骨架（无 toolchain 细则）
+# ============================================================================
+# 测试文件命名、测试根目录、编译与设备执行链路等宿主细则在叠加层：
+#   framework/profiles/hmos-app/phase-rules-overlays/ut-rules.overlay.yaml
+#
+# 消费者：
+#   - framework/harness/scripts/check-ut.ts
+#   - framework/harness/prompts/verify-ut.md
+#
+# v2.3 增补 structure 规则 id（路径/模板细则在 profile 叠加层 YAML，实现见 check-ut.ts）：
+#   ut_testability_audit_present、ut_unsupported_targets_handled、ut_mock_plan_present、
+#   ut_mock_plan_typed、ut_mock_plan_contracts_consistent、dag_spy_preset_resolvable
+# ============================================================================
+
+phase: ut
+version: "2.3"
+applies_to:
+  use_cases_spec: "doc/features/{feature}/use-cases.yaml"
+  dag_files: "{module}/test/dag/**/*.yaml"
+  ut_files: "{module}/src/test/**/*"
+  # device-testing-todo.md 已废弃；见 acceptance.yaml > device_focus
+
+structure_checks: {}
+
+semantic_checks: {}
+
+traceability_checks: {}
+
+exploration_thresholds:
+  min_files_inspected: 5
+  min_source_code_paths: 3
+  min_searches: 4
+  min_code_facts: 3
+  require_subagent_when_use_cases_gt: 2
+  exploration_mode_allowed:
+    - subagent
+    - sequential
+
+# --------------------------------------------------------------------------
+# Context Exploration 触发策略（v2.10 — 复合评分）
+# --------------------------------------------------------------------------
+exploration_strategy:
+  default_mode: sequential
+  scoring:
+    threshold: 60
+    dimensions:
+      - id: module_loc
+        weight: 25
+        tiers:
+          - { gte: 50000, score: 25 }
+          - { gte: 20000, score: 15 }
+          - { gte: 5000, score: 8 }
+      - id: scope_breadth
+        weight: 20
+        tiers:
+          - { gte: 3, score: 20 }
+          - { gte: 2, score: 12 }
+          - { gte: 1, score: 5 }
+      - id: cross_layer
+        weight: 20
+        signal: touches_multiple_outer_layers
+        score_if_true: 20
+      - id: new_api_surface
+        weight: 15
+        signal: adds_exports_or_public_api
+        score_if_true: 15
+      - id: dependency_fan_out
+        weight: 20
+        tiers:
+          - { gte: 10, score: 20 }
+          - { gte: 5, score: 12 }
+          - { gte: 2, score: 5 }
+  sequential_multiplier: 2.0
+  sequential_min_files_inspected_add: 5

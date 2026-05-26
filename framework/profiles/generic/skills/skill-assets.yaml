@@ -1,0 +1,53 @@
+# generic profile：skill 资产仅在 `framework/profiles/generic/skills/` 树下，不委托 hmos-app。
+# 路径规则见 framework/harness/scripts/utils/profile-skill-assets.ts（相对 skills/<skill-id>/）。
+# -----------------------------------------------------------------------------
+schema_version: "1.0"
+profile: generic
+
+assets:
+  00-framework-init:
+    preset_5_layer_sample: templates/architecture-dsl-sample.json
+
+  0-catalog-bootstrap:
+    examples_domain_mapping: examples-domain-mapping.md
+    # 兼容别名：旧根 SKILL / 外链可能仍使用该键名
+    examples_wallet_domain: examples-domain-mapping.md
+    module_card_template: templates/module-card-template.yaml
+    glossary_term_template: templates/glossary-term-template.yaml
+
+  1-prd-design:
+    prd_template: templates/prd-template.md
+    example_prd: examples/example-prd.md
+    examples_prd_mapping: examples-prd-mapping.md
+
+  2-requirement-design:
+    design_template: templates/design-template.md
+    api_spec_template: templates/api-spec.md
+    data_model_template: templates/data-model.md
+    example_design: examples/example-design.md
+
+  3-coding:
+    coding_standards: templates/coding-standards.md
+    module_scaffold: templates/module-scaffold.md
+    arkts_pitfalls: reference/arkts-host-stub.md
+    arkui_patterns: reference/arkui-host-stub.md
+    harmony_api_guide: reference/harmony-host-stub.md
+
+  4-code-review:
+    review_checklist: templates/review-checklist.md
+
+  5-business-ut:
+    use_cases_schema: templates/use-cases-schema.md
+    dag_schema: templates/dag-schema.md
+    ut_template: templates/ut-template.md
+    mock_strategy: templates/mock-strategy.md
+    testability_audit_template: templates/testability-audit-template.md
+    mock_plan_schema: templates/mock-plan-schema.md
+    sample_flow_dir: examples/sample-flow
+    sample_flow_use_cases: examples/sample-flow/use-cases.yaml
+    card_opening_dir: examples/sample-flow
+    card_opening_use_cases: examples/sample-flow/use-cases.yaml
+
+  6-device-testing:
+    test_plan_template: templates/test-plan-template.md
+    test_report_template: templates/test-report-template.md

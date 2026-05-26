@@ -1,0 +1,34 @@
+adapter_name: generic
+description: |
+  通用 adapter——产出 AGENTS.md，并在用户指定的 bundle 根目录（如 `.agents`、`.codex`）
+  下生成 `skills/` 与 `rules/`。skills 默认 **inline** 物化（完整 SKILL 正文，供 Chrys 等
+  strict 加载器）；可选 **bridge** 薄跳板（仅适用于会跟进链接的 agent）。
+  bundle 根目录与物化模式由 `framework.config.json` → `paths.agent_bundle_*` 配置。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+commands: null
+
+skill_bridge: null
+
+rules:
+  target_dir: .agents/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+instance_skill_bridge: null
+
+user_confirmation:
+  structured_widget: unsupported
+  widget_tool_hint: none
+  portable_required: true
+
+post_install_hooks: []
+
+notes: |
+  - `paths.agent_bundle_root`（必填）与 `paths.agent_bundle_skill_mode`（`inline`|`bridge`，默认 inline）
+    在 init Step 0.2.5 由用户选定并写入 framework.config.json。
+  - inline：check-init PASS 后自动物化；render-agents-md 扩展 skill 亦 inline。
+  - bridge：与 cursor 相同，拷贝 shared/skills-bridge。
+  - 模板 SSOT：framework/agents/shared/agent-bundle/templates/
