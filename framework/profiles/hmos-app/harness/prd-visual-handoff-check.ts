@@ -13,7 +13,7 @@ import {
 import { createRequire } from 'module';
 import * as path from 'path';
 import { resolveAuthoritativePath } from '../../../harness/scripts/utils/visual-source-resolver';
-import { relFeatureFile, VisualHandoffEnforcementMode } from '../../../harness/config';
+import { relFeatureArtifact, VisualHandoffEnforcementMode } from '../../../harness/config';
 import type { CheckContext, CheckResult, VisualHandoffResolutionRow } from '../../../harness/scripts/utils/types';
 
 /** `yaml` 安装于 `framework/harness/node_modules`；本文件在 profile 树内，须从 harness 根解析依赖 */
@@ -297,7 +297,7 @@ function structureFailOrWarn(enforcement: VisualHandoffEnforcementMode | undefin
 export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[] {
   const enforcement = ctx.visualHandoffEnforcement;
   const desc = ruleDesc(ctx, 'structure_checks', 'visual_handoff');
-  const prdRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md');
+  const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md');
 
   if (ctx.skipVisualHandoff) {
     const audit = process.env.HARNESS_SKIP_VISUAL_HANDOFF_REASON || '（未设置 HARNESS_SKIP_VISUAL_HANDOFF_REASON）';
@@ -354,7 +354,7 @@ export function checkVisualHandoff(ctx: CheckContext, prd: string): CheckResult[
       severity: 'MAJOR',
       status: 'WARN',
       details:
-        '未找到含根字段 `ui_change` 的 ```yaml``` 代码块。参见 framework/skills/1-prd-design/reference/visual-handoff.md',
+        '未找到含根字段 `ui_change` 的 ```yaml``` 代码块。参见 framework/skills/feature/prd-design/reference/visual-handoff.md',
       suggestion:
         '在 PRD 中增加 Visual Handoff 块；若本需求不动 UI，请显式声明 ui_change: none。',
       affected_files: [prdRel],

@@ -1,13 +1,15 @@
 {
   "schema_version": "1.1",
   "project_name": "SimulatedWalletForHmos",
-  "active_workflow": "spec-driven",
-  "lifecycle_hooks_enabled": true,
   "project_profile": {
     "name": "hmos-app",
     "sub_variant": "app"
   },
-  "agent_adapter": "claude",
+  "materialized_adapters": [
+    "cursor",
+    "claude",
+    "generic"
+  ],
   "architecture": {
     "outer_layers": [
       {
@@ -83,17 +85,16 @@
     "glossary": "doc/glossary.yaml",
     "glossary_seed": "doc/glossary-seed.txt",
     "architecture_md": "doc/architecture.md",
-    "extension_dir": "doc/extensions",
     "state_file": "framework/harness/state/.current-phase.json",
     "receipt_dir_pattern": "doc/features/<feature>/<phase>",
     "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
-    "docs_committed": true
+    "docs_committed": true,
+    "extension_dir": "doc/extensions",
+    "module_graphs_dir": "<module>/code-graph.yaml",
+    "agent_bundle_root": ".agents",
+    "agent_bundle_skill_mode": "inline"
   },
   "toolchain": {
-    "devEcoStudio": {
-      "installPath": "D:/Program Files/Huawei/DevEco Studio",
-      "hvigorBin": ""
-    },
     "hvigor": {
       "daemon": true,
       "parallel": true,
@@ -101,27 +102,22 @@
       "analyze": "advanced"
     }
   },
-  "tools": {
-    "hylyre": {
-      "vendor_dir": "framework/profiles/hmos-app/vendor/hylyre",
-      "venv_dir": ".hylyre/venv",
-      "app_snapshot_cache_dir": "doc/app-snapshot-cache",
-      "pypi_extra_index_url": "https://pypi.tuna.tsinghua.edu.cn/simple",
-      "auto_install": true,
-      "doctor_first_run": true,
-      "hypium_page_name": "PhoneAbility"
-    }
-  },
   "state_machine": {
     "grace_period_minutes": 5,
     "ttl_hours": 12,
     "schema_version": "1.1"
   },
-  "prd": {
-    "visual_handoff_enforcement": "strict",
-    "visual_sources": {
-      "allow_absolute_paths": false,
-      "allow_network_paths": false
+  "active_workflow": "spec-driven",
+  "lifecycle_hooks_enabled": true,
+  "tools": {
+    "hylyre": {
+      "vendor_dir": "framework/profiles/hmos-app/vendor/hylyre",
+      "venv_dir": ".hylyre/venv",
+      "app_snapshot_cache_dir": "doc/app-snapshot-cache",
+      "pypi_extra_index_url": "https://mirrors.tools.huawei.com/pypi/simple",
+      "auto_install": true,
+      "doctor_first_run": true,
+      "hypium_page_name": "PhoneAbility"
     }
   }
 }

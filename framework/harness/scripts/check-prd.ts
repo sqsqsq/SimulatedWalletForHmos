@@ -43,7 +43,8 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isPrdVisualHandoffSkipped, dispatchPrdVisualHandoff } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureFile } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact } from '../config';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkContextExplorationArtifact } from './utils/context-exploration';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
 export { dispatchPrdVisualHandoff as checkVisualHandoff };
@@ -62,7 +63,7 @@ function ruleDesc(
 }
 
 function loadPrd(ctx: CheckContext): string | null {
-  return new SpecLoader(ctx.projectRoot)
+  return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'PRD.md');
 }
 
@@ -339,7 +340,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       id: 'terminology_mapping_table', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'terminology_mapping_table'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '未找到「术语映射表」章节。Skill 1 Step 1.5 要求 PRD 必须以该章节起始。',
+      details: '未找到「术语映射表」章节。prd-design Step 1.5 要求 PRD 必须以该章节起始。',
       suggestion: '请在功能概述之前插入 "## 0. 术语映射表" 章节，按模板填写映射表。',
     }];
   }
@@ -352,7 +353,7 @@ function checkTerminologyMappingTable(ctx: CheckContext, prd: string): CheckResu
       severity: 'BLOCKER', status: 'FAIL',
       details: '「术语映射表」章节未找到 Markdown 表格。',
       suggestion:
-        `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/1-prd-design/templates/prd-template.md 中的表格格式。`,
+        `请参考 framework/profiles/${ctx.resolvedProfile.name}/skills/prd-design/templates/prd-template.md 中的表格格式。`,
     }];
   }
 
@@ -643,7 +644,7 @@ function checkTerminologyModulesWithinScope(ctx: CheckContext, prd: string): Che
       '两种合法处理：\n' +
       '(1) 把这些模块补进 in_scope_modules（本需求确实要改）或 out_of_scope_modules（仅消歧用、不改）；\n' +
       '(2) 若该术语本来就不在本需求语境，从术语映射表里删除该行。',
-    affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md')],
+    affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md')],
   }];
 }
 
@@ -734,10 +735,10 @@ function checkGlossaryTermsUsedInBody(ctx: CheckContext, prd: string): CheckResu
           : `${x.appeared_as}[→${x.canonical_term} → ${x.module}]`,
       ).join('、'),
     suggestion:
-      '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 Skill 2 / 3 阶段因术语歧义改错模块；\n' +
+      '若这些词确实是业务术语 → 加进术语映射表并勾选 [x]，避免 requirement-design / 3 阶段因术语歧义改错模块；\n' +
       '若只是正文里偶然带过的非业务用词 → 可直接忽略本 WARN（不会升级为 BLOCKER）。',
     affected_files: [
-      relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md'),
+      relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md'),
       relGlossary(ctx.projectRoot),
     ],
   }];
@@ -847,7 +848,7 @@ const checker: PhaseChecker = {
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     const prd = loadPrd(ctx);
     if (!prd) {
-      const prdRel = relFeatureFile(ctx.projectRoot, ctx.feature, 'PRD.md');
+      const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'PRD.md');
       return [{
         id: 'prd_file_exists', category: 'structure',
         description: `${prdRel} 不存在`,
@@ -857,7 +858,9 @@ const checker: PhaseChecker = {
       }];
     }
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['PRD.md']),
+    ];
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
     results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
@@ -903,6 +906,7 @@ const checker: PhaseChecker = {
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'prd', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

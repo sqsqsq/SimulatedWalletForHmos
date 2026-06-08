@@ -11,19 +11,22 @@
     "check:review": "ts-node harness-runner.ts --phase review",
     "check:ut": "ts-node harness-runner.ts --phase ut",
     "check:testing": "ts-node harness-runner.ts --phase testing",
-    "test:fixtures": "ts-node tests/run-tests.ts",
-    "test:unit": "ts-node tests/run-unit.ts",
-    "test": "npm run test:unit && npm run test:fixtures",
+    "check:catalog": "ts-node harness-runner.ts --phase catalog",
+    "check:glossary": "ts-node harness-runner.ts --phase glossary",
+    "check:docs": "ts-node harness-runner.ts --phase docs",
+    "check:global": "npm run check:catalog && npm run check:glossary && npm run check:docs",
+    "test": "npm run check:global",
     "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
     "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts",
     "derive-adhoc-hylyre-hint": "ts-node scripts/derive-adhoc-hylyre-hint.ts",
     "lint-adhoc-steps": "ts-node scripts/lint-adhoc-steps.ts",
     "summarize-adhoc-dump": "ts-node scripts/summarize-adhoc-dump.ts",
-    "adhoc-device-test": "ts-node scripts/adhoc-device-test.ts"
+    "adhoc-device-test": "ts-node scripts/adhoc-device-test.ts",
+    "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
+    "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts"
   },
   "dependencies": {
     "yaml": "^2.7.0",
-    "glob": "^11.0.0",
     "chalk": "^4.1.2",
     "minimist": "^1.2.8"
   },

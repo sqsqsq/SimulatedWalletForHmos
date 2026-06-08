@@ -32,8 +32,16 @@ import {
 } from './utils/doc-freshness';
 import { validateProfileSkillAssetsForProject } from './utils/profile-skill-assets';
 import { runConfirmationUxChecks } from './check-skills-confirmation-ux';
-
-const INVENTORY_REL = 'framework/docs/DOC_INVENTORY.yaml';
+import { runNoNumberedSkillPathsChecks } from './check-no-numbered-skill-paths';
+import { runNoNumberedSkillProseChecks } from './check-no-numbered-skill-prose';
+import {
+  frameworkAbs,
+  frameworkLogicalRelPath,
+  frameworkRelPath,
+  repoLayoutFromContext,
+  resolveFrameworkPrefixedPath,
+  type RepoLayout,
+} from '../repo-layout';
 
 // --------------------------------------------------------------------------
 // git log 时间戳读取
@@ -76,8 +84,14 @@ function gitLastCommitTime(projectRoot: string, relOrAbs: string): string | null
 // 检查工具
 // --------------------------------------------------------------------------
 
-function existsInRepo(projectRoot: string, rel: string): boolean {
-  return fs.existsSync(path.join(projectRoot, rel));
+function existsInRepo(layout: RepoLayout, rel: string): boolean {
+  return fs.existsSync(resolveFrameworkPrefixedPath(layout.projectRoot, rel, layout));
+}
+
+/** inventory / doc 路径在 git 中使用的仓库相对路径（standalone 会剥掉 framework/ 前缀） */
+function gitPathFromInventoryRel(layout: RepoLayout, rel: string): string {
+  const abs = resolveFrameworkPrefixedPath(layout.projectRoot, rel, layout);
+  return path.relative(layout.projectRoot, abs).replace(/\\/g, '/');
 }
 
 function ruleDesc(
@@ -97,7 +111,9 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
   results: CheckResult[];
   docs?: DocEntry[];
 } {
-  const inventoryAbs = path.join(ctx.projectRoot, INVENTORY_REL);
+  const layout = repoLayoutFromContext(ctx);
+  const inventoryRel = frameworkLogicalRelPath('docs', 'DOC_INVENTORY.yaml');
+  const inventoryAbs = frameworkAbs(layout, 'docs', 'DOC_INVENTORY.yaml');
   const parsed = loadInventoryFromFile(inventoryAbs);
 
   if (!parsed.ok) {
@@ -110,7 +126,7 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
           severity: 'BLOCKER',
           status: 'FAIL',
           details: parsed.errors.map(e => `[${e.kind}] ${e.message}`).join('\n'),
-          affected_files: [INVENTORY_REL],
+          affected_files: [inventoryRel],
           suggestion: '修正 inventory 结构。最小骨架:\n```yaml\nschema_version: "1.0"\ndocs: []\n```',
         },
       ],
@@ -125,7 +141,7 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
         description: ruleDesc(ctx, 'structure_checks', 'inventory_exists'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `${INVENTORY_REL} 存在且为合法 YAML（${parsed.inventory!.docs.length} 条文档登记）。`,
+        details: `${inventoryRel} 存在且为合法 YAML（${parsed.inventory!.docs.length} 条文档登记）。`,
       },
       {
         id: 'inventory_schema_valid',
@@ -141,7 +157,8 @@ function checkInventoryExistsAndSchema(ctx: CheckContext): {
 }
 
 function checkDocFilesExist(ctx: CheckContext, docs: DocEntry[]): CheckResult[] {
-  const missing = docs.filter(d => !existsInRepo(ctx.projectRoot, d.path));
+  const layout = repoLayoutFromContext(ctx);
+  const missing = docs.filter(d => !existsInRepo(layout, d.path));
   if (missing.length === 0) {
     return [{
       id: 'doc_files_exist',
@@ -166,10 +183,11 @@ function checkDocFilesExist(ctx: CheckContext, docs: DocEntry[]): CheckResult[] 
 }
 
 function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckResult[] {
+  const layout = repoLayoutFromContext(ctx);
   const broken: string[] = [];
   for (const d of docs) {
     for (const s of d.sources) {
-      if (!existsInRepo(ctx.projectRoot, s)) {
+      if (!existsInRepo(layout, s)) {
         broken.push(`${d.path} → ${s}`);
       }
     }
@@ -197,7 +215,8 @@ function checkSourcePathsResolvable(ctx: CheckContext, docs: DocEntry[]): CheckR
 }
 
 function checkProfileSkillAssetsResolvable(ctx: CheckContext): CheckResult[] {
-  const v = validateProfileSkillAssetsForProject(ctx.projectRoot);
+  const layout = repoLayoutFromContext(ctx);
+  const v = validateProfileSkillAssetsForProject(ctx.projectRoot, layout);
   if (v.ok) {
     return [
       {
@@ -240,17 +259,18 @@ function checkDocFreshness(
     }];
   }
 
+  const layout = repoLayoutFromContext(ctx);
   const reports: FreshnessReport[] = [];
   for (const d of docs) {
-    const docTs = existsInRepo(ctx.projectRoot, d.path)
-      ? gitLastCommitTime(ctx.projectRoot, d.path)
+    const docTs = existsInRepo(layout, d.path)
+      ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(layout, d.path))
       : null;
 
     const sources: SourceTimestamp[] = d.sources.map(s => ({
       path: s,
-      exists: existsInRepo(ctx.projectRoot, s),
-      ts: existsInRepo(ctx.projectRoot, s)
-        ? gitLastCommitTime(ctx.projectRoot, s)
+      exists: existsInRepo(layout, s),
+      ts: existsInRepo(layout, s)
+        ? gitLastCommitTime(ctx.projectRoot, gitPathFromInventoryRel(layout, s))
         : null,
     }));
 
@@ -321,6 +341,8 @@ const checker: PhaseChecker = {
     results.push(...checkSourcePathsResolvable(ctx, docs));
     results.push(...checkProfileSkillAssetsResolvable(ctx));
     results.push(...runConfirmationUxChecks(ctx));
+    results.push(...runNoNumberedSkillPathsChecks(ctx));
+    results.push(...runNoNumberedSkillProseChecks(ctx));
 
     const gitProbe = probeGit(ctx.projectRoot);
     results.push(...checkDocFreshness(ctx, docs, gitProbe));

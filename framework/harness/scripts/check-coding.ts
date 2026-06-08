@@ -32,10 +32,12 @@ import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import {
   loadFrameworkConfig,
   getOuterLayerIds,
-  featureFilePath,
+  resolveFeatureArtifact,
+  relFeatureArtifact,
   relFeatureFile,
 } from '../config';
 import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID } from '../capability-registry';
+import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 
 // --------------------------------------------------------------------------
@@ -214,17 +216,17 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
 }
 
 function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
-  const designPath = featureFilePath(ctx.projectRoot, ctx.feature, 'design.md');
-  if (!fs.existsSync(designPath)) {
+  const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md');
+  if (!designResolved.exists) {
     return [{
       id: 'diff_within_scope', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
       severity: 'BLOCKER', status: 'SKIP',
-      details: `design.md 不存在（${designPath}），无法确定 in_scope_modules。`,
+      details: `design.md 不存在（${designResolved.canonicalPath}），无法确定 in_scope_modules。`,
     }];
   }
 
-  const design = fs.readFileSync(designPath, 'utf-8');
+  const design = fs.readFileSync(designResolved.actualPath, 'utf-8');
   const { scope, error } = parseScope(design);
   if (error || !scope) {
     return [{
@@ -233,7 +235,7 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       severity: 'BLOCKER', status: 'FAIL',
       details: `无法从 design.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
       suggestion: '请先通过 check-design.ts 的 scope_declaration 检查。',
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'design.md')],
+      affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'design.md')],
     }];
   }
 
@@ -344,8 +346,8 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
       staleness.stale
-        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 Skill 2 发起 scope 扩展或撤销误改。'
-        : '若这些改动确属本需求必须：回到 Skill 2 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 requirement-design 发起 scope 扩展或撤销误改。'
+        : '若这些改动确属本需求必须：回到 requirement-design 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 design.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',
@@ -536,13 +538,16 @@ const checker: PhaseChecker = {
     const analyzer = new AstAnalyzer(ctx.projectRoot);
     const analyses = sourceFiles.length > 0 ? analyzer.analyzeFiles(sourceFiles) : [];
 
-    const results: CheckResult[] = [];
+    const results: CheckResult[] = [
+      ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['design.md']),
+    ];
 
     results.push(
       ...safeRun(
         () => checkContextExplorationArtifact(ctx.projectRoot, ctx.feature, 'coding', {
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
         }),
         'context_exploration_gate',
       ),

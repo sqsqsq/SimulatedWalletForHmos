@@ -43,6 +43,8 @@ import {
   featureFilePath,
   featureDir,
   relFeatureFile,
+  relFeatureArtifact,
+  resolveFeatureArtifact,
   catalogPath,
   glossaryPath,
   architectureMdPath,
@@ -54,6 +56,9 @@ import {
   relFeaturePhaseReportsDir,
   featurePhaseReportsDir,
 } from './config';
+import {
+  evaluatePersonalSetupGate,
+} from './scripts/utils/personal-setup-gate';
 import {
   mergeAndWritePhaseState,
   tryValidateReceipt,
@@ -78,6 +83,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
+import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 
 // --------------------------------------------------------------------------
 // CLI 参数解析
@@ -189,13 +195,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // __dirname 指向 framework/harness/；projectRoot 需要再向上一级回到仓库/实例根。
-  // 阶段 3：harness 下所有路径解析统一走 config.resolvePaths；harness-runner
-  //        只把 projectRoot 当输入，不再自拼具体目录字符串。
-  const projectRoot = path.resolve(__dirname, '..', '..');
   const harnessRoot = __dirname;
-  const paths = resolvePaths(projectRoot, path.resolve(__dirname, '..'));
-  const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir);
+  const layout = detectRepoLayout(harnessRoot);
+  const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  const paths = resolvePaths(projectRoot, resolvedFrameworkRoot);
+  const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir, paths.featuresDir, resolvedFrameworkRoot);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');
   const featuresRel = path.relative(projectRoot, paths.featuresDir).replace(/\\/g, '/');
 
@@ -221,7 +225,7 @@ async function main(): Promise<void> {
       printHelp();
       process.exit(1);
     }
-    const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase);
+    const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
     process.exit(exitCode);
   }
 
@@ -241,6 +245,7 @@ async function main(): Promise<void> {
     workflowSpec = resolveWorkflowSpec(projectRoot, {
       config: fwConfigEarly,
       workflowOverride: typeof args.workflow === 'string' ? args.workflow : undefined,
+      frameworkRoot: resolvedFrameworkRoot,
     });
   } catch (err) {
     console.error(`错误: 无法解析 workflow：${(err as Error).message}`);
@@ -270,13 +275,31 @@ async function main(): Promise<void> {
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
 
+  const personalSetupExemptPhases = new Set<Phase>(['init', 'docs']);
+  const initInternalGlobalRun = process.env.HARNESS_INIT_INTERNAL_GLOBAL_RUN === '1';
+  const skipPersonalGateForInitInternal =
+    initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
+  if (!personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
+    const gate = evaluatePersonalSetupGate(projectRoot);
+    if (!gate.ok) {
+      console.error(`   ✗ ${gate.message.replace(/\n/g, '\n     ')}`);
+      console.error(
+        '     请在本工程根执行：cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>',
+      );
+      console.error(
+        '     或修正 materialized_adapters / 物化产物；详见 framework/skills/reference/personal-setup-gate.md',
+      );
+      process.exit(1);
+    }
+  }
+
   if (phase === 'testing' && feature === '_adhoc') {
     console.error(
       '   ✗ 即席（ad-hoc）真机测试勿使用 harness-runner --feature _adhoc。\n' +
         '     请改用: derive-adhoc-hylyre-hint 或 adhoc-device-test --steps "…"（derive）；\n' +
         '     跑机: adhoc-device-test --bundle <id> --plan <agent写的 test-plan.hylyre.md>\n' +
         '     （CLI 内自动 ensureHylyreReady，不要求用户 pip install / 手删 .hylyre/venv）\n' +
-        '     详见 framework/skills/6-device-testing/SKILL.md Step 4.B',
+        '     详见 framework/skills/feature/device-testing/SKILL.md Step 4.B',
     );
     process.exit(1);
   }
@@ -298,10 +321,10 @@ async function main(): Promise<void> {
 
   const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase);
   if (artifactInspection) {
-    printFeatureArtifactInspection(artifactInspection, featuresRel);
+    printFeatureArtifactInspection(projectRoot, artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
-      const blocker = featureArtifactBlocker(projectRoot, artifactInspection);
-      const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker]);
+      const blocker = featureArtifactBlocker(projectRoot, artifactInspection, paths.frameworkRoot);
+      const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker], resolvedFrameworkRoot);
       printReportToConsole(quickReport, {
         failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
       });
@@ -347,12 +370,16 @@ async function main(): Promise<void> {
     prdVisualSources: fwConfig.prd?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
+    frameworkRoot: resolvedFrameworkRoot,
+    frameworkRel,
+    harnessRoot,
+    layoutKind,
     resolvedProfile,
   };
 
   // 记录本次 harness 运行起点的 commit，供 ut_no_src_mutation 等规则使用
   // （注意：HEAD 是当前已提交状态；UT 阶段未提交的改动会被 git diff 检测到）
-  recordStartCommit(harnessRoot, phase, feature, projectRoot);
+  recordStartCommit(harnessRoot, phase, feature, projectRoot, resolvedFrameworkRoot);
 
   // 阶段状态机：标记 running，供 Stop hook 在 agent 想结束消息时判断
   // "当前是否处于阶段流程中"。harness 跑完后会再次更新 verdict / blocker_count；
@@ -432,7 +459,7 @@ async function main(): Promise<void> {
 
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
-  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks);
+  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot);
   printReportToConsole(scriptReport, {
     failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
   });
@@ -451,7 +478,7 @@ async function main(): Promise<void> {
     if (process.env.HARNESS_FORCE_STEP4_FAIL) {
       throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
     }
-    const contextFiles = collectContextFiles(specLoader, projectRoot, phase, feature, featureSpec);
+    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec);
     const specContent = YAML.stringify(phaseRule);
 
     assembleAIPrompt(
@@ -464,12 +491,13 @@ async function main(): Promise<void> {
       specContent,
       resolvedProfile,
       lifecycleFragments,
+      resolvedFrameworkRoot,
     );
     console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
     const e = err as Error;
     console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e);
+    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
   }
 
   if (finalReport === scriptReport) {
@@ -483,12 +511,12 @@ async function main(): Promise<void> {
         console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
       }
 
-      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent);
+      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent, resolvedFrameworkRoot);
       console.log(`   ✓ 合并报告已写入 ${reportDirRel}/merged-report.md`);
     } catch (err) {
       const e = err as Error;
       console.error(`   ✗ Step 5 生成合并报告失败: ${e.message}`);
-      finalReport = failScriptReportWithFatalError(scriptReport, 'generate_merged_report', e);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'generate_merged_report', e, resolvedFrameworkRoot);
     }
   }
 
@@ -510,7 +538,7 @@ async function main(): Promise<void> {
     receipt: receiptValidation,
   });
 
-  const runSummary = writeRunSummary(projectRoot, finalReport, receiptValidation);
+  const runSummary = writeRunSummary(projectRoot, finalReport, receiptValidation, resolvedFrameworkRoot);
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
@@ -520,6 +548,9 @@ async function main(): Promise<void> {
   if (finalReport.summary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
     console.log('  📤 请将 ai-prompt.md 发送给 AI 模型执行语义验证');
+  } else if (finalReport.summary.verdict === 'INCOMPLETE') {
+    console.log('  ⚠️  脚本 Harness 部分就绪（INCOMPLETE）');
+    console.log('  📱 编译已通过但真机/模拟器不可用；修复设备环境后重跑 UT');
   } else {
     const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
     if (runnerFailed) {
@@ -539,7 +570,7 @@ interface HarnessRunSummary {
   schema_version: '1.0';
   phase: Phase;
   feature: string;
-  verdict: 'PASS' | 'FAIL';
+  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   blocker_count: number;
   fail_count: number;
   warn_count: number;
@@ -597,8 +628,9 @@ function writeRunSummary(
   projectRoot: string,
   report: ScriptReport,
   receiptValidation: ReturnType<typeof tryValidateReceipt> | null,
+  frameworkRoot: string,
 ): HarnessRunSummary {
-  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase);
+  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
   const blockers = report.checks
     .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
@@ -709,6 +741,15 @@ function decideNextAction(
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
 ): string {
+  if (report.summary.verdict === 'INCOMPLETE') {
+    return 'device_ready_then_rerun_ut';
+  }
+  if (blockers.some(b => b.classification === 'install_downgrade_self_healable' || b.details_excerpt.includes('selfHealable'))) {
+    return 'set_HARNESS_DEVICE_TEST_UNINSTALL_BEFORE_INSTALL_then_rerun';
+  }
+  if (blockers.some(b => b.classification === 'install_needs_confirmation' || b.details_excerpt.includes('needsConfirmation'))) {
+    return 'confirm_install_action_then_rerun_ut';
+  }
   if (blockers.some(b => b.classification === 'stale_diff_base' || b.details_excerpt.includes('stale_diff_base'))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }
@@ -842,6 +883,24 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
     }
   }
 
+  if (report.phase === 'ut') {
+    const test = report.checks.find(c => c.id === 'ut_hvigor_test');
+    const build = report.checks.find(c => c.id === 'ut_hvigor_build');
+    if (
+      build?.status === 'PASS' &&
+      test?.status === 'FAIL' &&
+      (test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked')
+    ) {
+      signals.push({
+        id: 'compile_passed_device_blocked',
+        status: 'incomplete',
+        source_check: 'ut_hvigor_test',
+        message:
+          '宿主测试模块编译已通过，但真机/模拟器不可用；summary.verdict=INCOMPLETE，不视为 UT 阶段完成。',
+      });
+    }
+  }
+
   return signals;
 }
 
@@ -895,7 +954,11 @@ async function runScriptHarness(harnessRoot: string, context: CheckContext): Pro
   }
 }
 
-function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, featuresRel: string): void {
+function printFeatureArtifactInspection(
+  projectRoot: string,
+  inspection: FeatureArtifactInspection,
+  featuresRel: string,
+): void {
   console.log(`   Feature 目录: ${featuresRel}/${inspection.feature}/ (${inspection.pathKind})`);
   if (inspection.sameNameArchives.length > 0) {
     console.log(`   同名归档旁证: ${inspection.sameNameArchives.join(', ')}（已忽略，正式 feature 只认目录）`);
@@ -905,15 +968,48 @@ function printFeatureArtifactInspection(inspection: FeatureArtifactInspection, f
   }
   if (inspection.requiredFiles.length > 0) {
     if (inspection.missingRequiredFiles.length === 0) {
-      console.log(`   阶段必需文件: ${inspection.requiredFiles.join(', ')} 均存在`);
+      const present = inspection.requiredFiles.filter(
+        (f) => !inspection.missingRequiredFiles.includes(f),
+      );
+      if (present.length > 0 && inspection.pathKind === 'directory') {
+        console.log(`   阶段必需文件均已解析到：`);
+        for (const file of present) {
+          const r = resolveFeatureArtifact(projectRoot, inspection.feature, file);
+          const relActual = path.relative(projectRoot, r.actualPath).replace(/\\/g, '/');
+          const relCanon = relFeatureArtifact(projectRoot, inspection.feature, file);
+          if (r.legacyDuplicate) {
+            console.log(`     - ${file}: ⚠ canonical 与 legacy 双份（读 ${relActual}）`);
+          } else if (r.usedLegacy) {
+            console.log(`     - ${file}: 兼容旧路径 ${relActual}（建议迁至 ${relCanon}）`);
+          } else {
+            console.log(`     - ${file}: ${relActual}`);
+          }
+        }
+      } else {
+        console.log(`   阶段必需文件: ${inspection.requiredFiles.join(', ')} 均存在`);
+      }
     } else {
       console.log(`   阶段必需文件缺失: ${inspection.missingRequiredFiles.join(', ')}`);
+      const found = inspection.requiredFiles.filter((f) => !inspection.missingRequiredFiles.includes(f));
+      if (found.length > 0 && inspection.pathKind === 'directory') {
+        for (const file of found) {
+          const r = resolveFeatureArtifact(projectRoot, inspection.feature, file);
+          if (!r.exists) continue;
+          const relActual = path.relative(projectRoot, r.actualPath).replace(/\\/g, '/');
+          const suffix = r.usedLegacy ? '（兼容旧路径）' : r.legacyDuplicate ? '（双份并存）' : '';
+          console.log(`     已命中: ${file} → ${relActual}${suffix}`);
+        }
+      }
     }
   }
 }
 
-function featureArtifactBlocker(projectRoot: string, inspection: FeatureArtifactInspection): CheckResult {
-  const featuresRel = path.relative(projectRoot, resolvePaths(projectRoot).featuresDir).replace(/\\/g, '/');
+function featureArtifactBlocker(
+  projectRoot: string,
+  inspection: FeatureArtifactInspection,
+  frameworkRoot?: string,
+): CheckResult {
+  const featuresRel = path.relative(projectRoot, resolvePaths(projectRoot, frameworkRoot).featuresDir).replace(/\\/g, '/');
   const relPath = `${featuresRel}/${inspection.feature}`;
   const archiveHint = inspection.sameNameArchives.length > 0
     ? `\n检测到同名归档旁证：${inspection.sameNameArchives.join(', ')}。归档不会被当作正式 feature；如需恢复，请先获得用户明确确认后手动恢复为目录。`
@@ -953,8 +1049,9 @@ function recordStartCommit(
   phase: Phase,
   feature: string,
   projectRoot: string,
+  frameworkRoot: string,
 ): void {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   const tracePath = path.join(dir, 'trace.json');
 
   // 已有 start_commit 不动，保留 baseline
@@ -1000,11 +1097,12 @@ function recordStartCommit(
 
 function collectContextFiles(
   specLoader: SpecLoader,
-  projectRoot: string,
+  layout: RepoLayout,
   phase: Phase,
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
 ): Array<{ label: string; content: string }> {
+  const { projectRoot } = layout;
   const files: Array<{ label: string; content: string }> = [];
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
@@ -1030,10 +1128,11 @@ function collectContextFiles(
   // docs 是 framework 自检阶段：上下文只放 inventory 自身，
   // 不读 catalog/glossary，也不读 feature 维度文件。
   if (phase === 'docs') {
-    const inventoryPath = path.join(projectRoot, 'framework', 'docs', 'DOC_INVENTORY.yaml');
+    const inventoryPath = frameworkAbs(layout, 'docs', 'DOC_INVENTORY.yaml');
+    const inventoryLabel = frameworkLogicalRelPath('docs', 'DOC_INVENTORY.yaml');
     if (fs.existsSync(inventoryPath)) {
       files.push({
-        label: 'framework/docs/DOC_INVENTORY.yaml',
+        label: inventoryLabel,
         content: fs.readFileSync(inventoryPath, 'utf-8'),
       });
     }
@@ -1058,13 +1157,13 @@ function collectContextFiles(
 
   const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'PRD.md');
   if (prd) {
-    files.push({ label: relFeatureFile(projectRoot, feature, 'PRD.md'), content: prd });
+    files.push({ label: relFeatureArtifact(projectRoot, feature, 'PRD.md'), content: prd });
   }
 
   if (['design', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
     const design = specLoader.loadFeatureDoc(projectRoot, feature, 'design.md');
     if (design) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'design.md'), content: design });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'design.md'), content: design });
     }
   }
 
@@ -1094,7 +1193,7 @@ function collectContextFiles(
   if (phase === 'review') {
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'review-report.md'), content: reviewReport });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });
     }
 
     const specDir = featureDir(projectRoot, feature);
@@ -1155,12 +1254,12 @@ function collectContextFiles(
 
     const testPlan = specLoader.loadFeatureDoc(projectRoot, feature, 'test-plan.md');
     if (testPlan) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'test-plan.md'), content: testPlan });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-plan.md'), content: testPlan });
     }
 
     const testReport = specLoader.loadFeatureDoc(projectRoot, feature, 'test-report.md');
     if (testReport) {
-      files.push({ label: relFeatureFile(projectRoot, feature, 'test-report.md'), content: testReport });
+      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-report.md'), content: testReport });
     }
   }
 

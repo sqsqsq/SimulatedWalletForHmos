@@ -8,14 +8,15 @@
 
 ## 1. 设计原则
 
-1. **Canonical 回复值与展示形态解耦**——`1` / widget 选项 id / `全部按默认` / `Q1=y` 映射到同一语义（见 registry `canonical_map`）。
+1. **Canonical 回复值与展示形态解耦**——编号 / widget 选项 id / registry `canonical_map` 映射到同一语义（**禁止**把 legacy `Q1=y` 当作 init/setup 编排的合法确认通道）。
 2. **渐进增强（Progressive Enhancement）**：
-   - **Tier 1 Widget**（adapter 声明 `structured_widget: supported` 时）：优先 AskQuestion（Cursor）或宿主原生选项（Claude Code）。
+   - **Tier 1 Widget**（adapter 声明 `structured_widget: supported` 时）：优先 adapter interaction-renderer 声明的结构化选择控件。
    - **Tier 2 Portable**：**同一轮消息末尾必须附编号菜单**（`1` / `2` / `3`），chrys/codemate 等无 widget 宿主只展示本层。
    - **Tier 3 Recap**：写入磁盘或进入下一步前，**结构化复述决策**供用户最后一轮纠错。
 3. **禁止仅要求用户打字**：不得把「请逐行回复…」「请按以下格式打字…」作为**唯一**交互；须先有 gate/enum/matrix 或 artifact 路径。
 4. **禁止 oral OK**：裸 `好` / `继续` / `ok` / 单字 `y`（多题并存时）不构成确认——各 Skill 原有 BLOCKER 不变。
 5. **新增确认点**：先登记 `confirmation-registry.yaml` → SKILL 只链本文 + registry `id`（≤10 行）→ 跑 lint。
+6. **虚拟 registry `skill`**：无物理 `skills/<skill>/SKILL.md` 时，`skill` 字段表示分组/追溯用命名空间，须在 `check-skills-confirmation-ux.ts` 的 `VIRTUAL_REGISTRY_SKILLS` 显式登记（**禁止**用 `skill.startsWith('_')` 笼统跳过目录检查）。当前：`_cross_phase`（`phase.next_step` 跨阶段闭环菜单）。
 
 ---
 
@@ -44,7 +45,7 @@
 
 合法批量速记：`1`（gate 上下文）、`全部按默认`、`all=default`（仅当 registry 声明）。
 
-### 3.2 Enum（registry: `init.adapter` 等）
+### 3.2 Enum（registry: `init.project_profile` / `setup.adapter` 等）
 
 ```text
 请选择（回复编号）：
@@ -60,7 +61,7 @@
 1. 按默认（当前值：{value}）
 2. dag
 3. forbid
-4. sublayer（+ 子层问卷）
+4. sublayer（须 preset/磁盘已含 sublayers[]；否则 STOP，手动编辑 config 后重跑）
 ```
 
 ### 3.4 Artifact + portable（registry: `prd.terminology`）
@@ -102,9 +103,10 @@
 
 | registry id | widget 选项（示意） | portable | canonical |
 |-------------|---------------------|----------|-----------|
-| `init.adapter` | claude / cursor / generic / 保持 | `1`/`2`/`3`/`4` | adapter 名字符串 |
+| `init.materialized_adapters` | claude / cursor / generic 多选 | checkbox / 编号 | materialized_adapters[] |
+| `setup.adapter` | 从已物化列表选 | `1` | from_materialized |
 | `init.intra_layer_deps` | 全部维持 / 调整 / 讨论 | `1`/`2`/`3` | 每层 `按默认` 或具体 enum |
-| `init.populated_diff` | all=y / all=n / 逐项 | `1`/`2`/`3` | `Q1=y …` 或 `all=y` |
+| `init.task_decision` | 覆盖 / 保留 | `1`/`2` | overwrite / keep |
 | `catalog.staging` | y / e / s / q | `1`/`2`/`3`/`4` | 同左 |
 | `prd.terminology` | 全部 high / 逐行 / 修改 | `1`/`2`/`3` | PRD 表 `[x]` |
 
@@ -114,12 +116,14 @@
 
 ## 5. Adapter 能力（运行时）
 
-由 `framework/agents/<name>/adapter.yaml` → `user_confirmation` 段声明：
+由 `framework/agents/<name>/adapter.yaml` → `user_confirmation` 段声明；交互渲染协议见各 adapter 下发的 `interaction-renderer` 规则：
 
 | `structured_widget` | Agent 行为 |
 |---------------------|------------|
-| `supported` | 调 widget + **同轮** portable 脚注 |
-| `unsupported` | **仅** portable 编号菜单 |
+| `supported` | 按 interaction-renderer 调结构化选择控件 + **同轮** portable 脚注 |
+| `unsupported` | **仅** portable 编号菜单（generic interaction-renderer） |
+
+选项文案 SSOT：[confirmation-registry.yaml](./confirmation-registry.yaml)。
 
 chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsupported`。
 
@@ -127,12 +131,13 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 ## 6. 反模式（BLOCKER）
 
+- ❌ init/setup matrix 选 `sublayer` 后在对话追问子层 id / members（须 preset 或磁盘 JSON 预置完整 `sublayers[]`）
 - ❌ 仅展示 Markdown 表让用户逐行打字，无 gate/enum
 - ❌ widget 可用却仅给表格
-- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry 登记的 `widget_options_ref`（如 `init.adapter` → [adapter-widget-options.md](../00-framework-init/templates/adapter-widget-options.md)）
+- ❌ widget option 的 label/description **自造路径**或未逐字引用 registry `options`（如 `init.materialized_adapters` → [confirmation-registry.yaml](./confirmation-registry.yaml)）
 - ❌ 聊天 OK 但未写回 artifact（PRD `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
-- ❌ 多题并存时接受裸 `y` / `好`（见 Skill 00 §0.3.4.3）
+- ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
 - ❌ 阶段四件套 PASS 后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
 
@@ -155,7 +160,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 **禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
 
-**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（AskQuestion + portable 编号）→ **停等**。
+**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（确认菜单 + portable 编号）→ **停等**。
 
 | 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
 |-------------------|--------------------------------------------------|
@@ -189,7 +194,7 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 3. 其它 — 我在对话中说明意图
 ```
 
-选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→Skill 2 design、coding→Skill 4 review）。
+选项 1 的 `{next_skill_label}` 按当前 phase 替换（如 prd→requirement-design design、coding→code-review review）。
 
 ---
 
@@ -197,4 +202,4 @@ chrys / codemate 等内部 agent：实例用 `generic` adapter，等同 `unsuppo
 
 - Registry：[confirmation-registry.yaml](./confirmation-registry.yaml)
 - Lint：`framework/harness/scripts/check-skills-confirmation-ux.ts`
-- Init 编号 Q 特例：Skill 00 §0.3.4（`Q1=y` / `all=y`，已合规）
+- Init/setup 编排：`init.task_plan` + `init.task_decision` + `init.architecture_preset`（**禁止** legacy `Q1=y` / `all=y` 与 architecture 对话问卷）

@@ -2,7 +2,7 @@
 // config-field-merger — framework.config.json 字段级"只补缺、不覆盖"合并器
 // ============================================================================
 //
-// 背景：Skill 00 UPDATE 模式历史上只有「整文件替换 / 跳过」两档（见 SKILL.md §5.1），
+// 背景：framework-init UPDATE 模式历史上只有「整文件替换 / 跳过」两档（编排化前），
 // 当 framework 引入新字段（如 paths.extension_dir / paths.state_file /
 // state_machine.* / active_workflow / lifecycle_hooks_enabled 等）后，老工程
 // 重新跑 /framework-init 无法机器化补齐，常见现象是「重新 init 后只新增了几个
@@ -14,26 +14,30 @@
 //
 //   Pass 1 — BACKFILL_FIELDS：只补缺失 key，静默安全默认值
 //   Pass 2 — MIGRATION_RULES：modernize 已有 key（如 project_type → sub_variant）
-//   Pass 3 — CONFIRM_FIELDS：行为级变更，须 Skill 00 Q1.C 等显式 y/n 后才写入
+//   Pass 3 — CONFIRM_FIELDS：行为级变更，须 S2 CONFIRM pass（`--confirm-*` flag）后才写入
+//   （当前为空；reports_dir_pattern 已移入 BACKFILL）
 //
 // 严格约束（Pass 1）：
 //   1. 只补"老 config 完全没有"的 key；已有 key（哪怕值不同于默认）一律保留。
 //   2. 不动用户必填字段（project_name / architecture / agent_adapter）—— 走 Skill 交互。
 //   3. 不动 opt-in 字段（prd / atomic_service）—— 维护者手工选档。
-//   4. 不动 toolchain.devEcoStudio.installPath —— 由 Skill 5.6 detect-deveco 单独处理。
+//   4. 不动 toolchain.devEcoStudio.installPath —— 由 business-ut.6 detect-deveco 单独处理。
 //
 // 新增字段 checklist：
 //   - 静默安全默认 → BACKFILL_FIELDS + config.ts DEFAULT_*
 //   - 弃用/重命名 → MIGRATION_RULES
-//   - 行为变更 → CONFIRM_FIELDS + Skill 00 Q*.C
+//   - 行为变更 → CONFIRM_FIELDS + S2 CONFIRM pass
 // ============================================================================
 
 import {
-  DEFAULT_HYLYRE_TOOL_CONFIG,
   DEFAULT_PATHS,
-  DEFAULT_REPORTS_DIR_PATTERN,
   DEFAULT_STATE_MACHINE,
 } from '../../config';
+import { loadProfileConfigDefaults } from '../../profile-loader';
+import {
+  LOCAL_SCHEMA_VERSION,
+  type FrameworkLocalConfig,
+} from './framework-local-config';
 
 /** 单条补缺规则。`path` 为点分路径（如 `paths.extension_dir`、`state_machine.ttl_hours`）。 */
 export interface BackfillField {
@@ -46,14 +50,10 @@ export interface BackfillField {
 }
 
 /**
- * UPDATE 模式可被「字段级补缺合并」自动回填的字段白名单（SSOT）。
- *
- * 维护原则：
- *   - 这里**只**列允许在缺失时静默补默认值的字段；其它一律不能补。
- *   - 默认值取 framework/harness/config.ts 的 DEFAULT_PATHS / DEFAULT_STATE_MACHINE /
- *     DEFAULT_HYLYRE_TOOL_CONFIG 等常量；新增字段时先在 config.ts 里给真实默认值，再加到本表，避免双源漂移。
+ * 框架通用结构默认字段（所有 profile 共享；不含 profile-owned tools.*）。
+ * 不补 project_name / architecture —— 用户必填，走 probe 阻断或 builder inputs。
  */
-export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
+export const FRAMEWORK_GENERIC_BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   {
     path: 'schema_version',
     defaultValue: '1.1',
@@ -80,6 +80,11 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     path: 'paths.module_catalog',
     defaultValue: DEFAULT_PATHS.module_catalog,
     note: 'paths.module_catalog 缺失：回填 doc/module-catalog.yaml',
+  },
+  {
+    path: 'paths.module_graphs_dir',
+    defaultValue: DEFAULT_PATHS.module_graphs_dir,
+    note: 'paths.module_graphs_dir 缺失：回填 <module>/code-graph.yaml（模块根目录）',
   },
   {
     path: 'paths.glossary',
@@ -111,7 +116,11 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: DEFAULT_PATHS.receipt_dir_pattern,
     note: 'paths.receipt_dir_pattern 缺失：回填 doc/features/<feature>/<phase>（完成回执目录模式）',
   },
-  // paths.reports_dir_pattern 不在 BACKFILL —— 见 CONFIRM_FIELDS + Skill 00 Q1.C。
+  {
+    path: 'paths.reports_dir_pattern',
+    defaultValue: DEFAULT_PATHS.reports_dir_pattern,
+    note: 'paths.reports_dir_pattern 缺失：回填 doc/features/<feature>/<phase>/reports',
+  },
   {
     path: 'paths.docs_committed',
     defaultValue: DEFAULT_PATHS.docs_committed,
@@ -136,7 +145,7 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
   },
 
   // toolchain.hvigor.* —— 与模板 framework.config.template.json 默认值一致
-  // 不补 toolchain.devEcoStudio（Skill 5.6 detect-deveco 独立处理）。
+  // 不补 toolchain.devEcoStudio（business-ut.6 detect-deveco 独立处理）。
   {
     path: 'toolchain.hvigor.daemon',
     defaultValue: true,
@@ -157,44 +166,74 @@ export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = [
     defaultValue: 'advanced',
     note: "toolchain.hvigor.analyze 缺失：回填 'advanced'",
   },
-
-  // tools.hylyre.* —— hmos-app Skill 6 真机自动化；与 DEFAULT_HYLYRE_TOOL_CONFIG / 模板对齐
-  {
-    path: 'tools.hylyre.vendor_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.vendor_dir,
-    note: 'tools.hylyre.vendor_dir 缺失：回填 hmos-app vendor/hylyre 目录',
-  },
-  {
-    path: 'tools.hylyre.venv_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.venv_dir,
-    note: 'tools.hylyre.venv_dir 缺失：回填 .hylyre/venv',
-  },
-  {
-    path: 'tools.hylyre.app_snapshot_cache_dir',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.app_snapshot_cache_dir,
-    note: 'tools.hylyre.app_snapshot_cache_dir 缺失：回填 doc/app-snapshot-cache',
-  },
-  {
-    path: 'tools.hylyre.pypi_extra_index_url',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.pypi_extra_index_url,
-    note: 'tools.hylyre.pypi_extra_index_url 缺失：回填清华 PyPI 镜像（可改内网源）',
-  },
-  {
-    path: 'tools.hylyre.auto_install',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.auto_install,
-    note: 'tools.hylyre.auto_install 缺失：回填 true',
-  },
-  {
-    path: 'tools.hylyre.doctor_first_run',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.doctor_first_run,
-    note: 'tools.hylyre.doctor_first_run 缺失：回填 true',
-  },
-  {
-    path: 'tools.hylyre.hypium_page_name',
-    defaultValue: DEFAULT_HYLYRE_TOOL_CONFIG.hypium_page_name,
-    note: 'tools.hylyre.hypium_page_name 缺失：回填空串（由 device-test-run 扫描 entry mainElement）',
-  },
 ];
+
+/** profile-owned 结构默认顶层键（从 config-defaults.json 派生；排除 project_profile / architecture）。 */
+const PROFILE_OWNED_DEFAULT_ROOT_KEYS = ['tools'] as const;
+
+function flattenProfileOwnedDefaultsToBackfill(
+  obj: Record<string, unknown>,
+  prefix: string,
+  out: BackfillField[],
+): void {
+  for (const [key, value] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      flattenProfileOwnedDefaultsToBackfill(value as Record<string, unknown>, path, out);
+    } else {
+      out.push({
+        path,
+        defaultValue: value,
+        note: `${path} 缺失：按 profiles config-defaults.json 回填`,
+      });
+    }
+  }
+}
+
+function deriveProfileOwnedBackfillFields(profileName: string): BackfillField[] {
+  const defaults = loadProfileConfigDefaults(profileName);
+  const out: BackfillField[] = [];
+  for (const rootKey of PROFILE_OWNED_DEFAULT_ROOT_KEYS) {
+    const branch = defaults[rootKey];
+    if (branch && typeof branch === 'object' && !Array.isArray(branch)) {
+      flattenProfileOwnedDefaultsToBackfill(branch as Record<string, unknown>, rootKey, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * profile-aware 有效补缺白名单（SSOT）：框架通用 + profile-owned 结构默认（仅 tools.* 等）。
+ */
+export function getEffectiveBackfillFields(profileName: string): ReadonlyArray<BackfillField> {
+  const name = profileName.trim() || 'hmos-app';
+  const profileFields = deriveProfileOwnedBackfillFields(name);
+  const seen = new Set(FRAMEWORK_GENERIC_BACKFILL_FIELDS.map(f => f.path));
+  const merged: BackfillField[] = [...FRAMEWORK_GENERIC_BACKFILL_FIELDS];
+  for (const f of profileFields) {
+    if (!seen.has(f.path)) {
+      merged.push(f);
+      seen.add(f.path);
+    }
+  }
+  return merged;
+}
+
+/** 从 config 对象解析 project_profile.name；缺省 hmos-app。 */
+export function resolveProfileNameFromRaw(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'hmos-app';
+  const pp = (raw as Record<string, unknown>).project_profile;
+  if (pp && typeof pp === 'object' && !Array.isArray(pp)) {
+    const name = (pp as Record<string, unknown>).name;
+    if (typeof name === 'string' && name.trim().length > 0) return name.trim();
+  }
+  return 'hmos-app';
+}
+
+/**
+ * Legacy alias：hmos-app 有效补缺集。新代码请用 getEffectiveBackfillFields(profileName)。
+ */
+export const BACKFILL_FIELDS: ReadonlyArray<BackfillField> = getEffectiveBackfillFields('hmos-app');
 
 // --------------------------------------------------------------------------
 // Pass 2 — MIGRATION_RULES（modernize 已有 key，安全等价于 runtime normalize）
@@ -217,6 +256,19 @@ function ensureProjectProfileObject(base: Record<string, unknown>): Record<strin
   return created;
 }
 
+function ensureNestedObject(
+  base: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const existing = base[key];
+  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+    return existing as Record<string, unknown>;
+  }
+  const created: Record<string, unknown> = {};
+  base[key] = created;
+  return created;
+}
+
 function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
   return typeof pp.sub_variant === 'string' && pp.sub_variant.trim().length > 0;
 }
@@ -225,6 +277,69 @@ function hasNonEmptySubVariant(pp: Record<string, unknown>): boolean {
  * UPDATE 模式可被自动 modernize 的迁移规则（SSOT）。
  * 与 BACKFILL 不同：会修改/删除已有 key。
  */
+function projectHasLegacyPersonalFields(raw: Record<string, unknown>): boolean {
+  if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) return true;
+  const tc = raw.toolchain;
+  if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return false;
+  const deveco = (tc as Record<string, unknown>).devEcoStudio;
+  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return false;
+  const installPath = (deveco as Record<string, unknown>).installPath;
+  return typeof installPath === 'string' && installPath.trim().length > 0;
+}
+
+/** 从项目级 legacy config 构造待写入 framework.local.json 的内容（不修改 raw）。 */
+export function buildLocalFromProjectLegacy(raw: unknown): FrameworkLocalConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const local: FrameworkLocalConfig = { schema_version: LOCAL_SCHEMA_VERSION };
+  let hasAny = false;
+  if (typeof obj.agent_adapter === 'string' && obj.agent_adapter.trim()) {
+    local.agent_adapter = obj.agent_adapter.trim();
+    hasAny = true;
+  }
+  const tc = obj.toolchain;
+  if (tc && typeof tc === 'object' && !Array.isArray(tc)) {
+    const deveco = (tc as Record<string, unknown>).devEcoStudio;
+    if (deveco && typeof deveco === 'object' && !Array.isArray(deveco)) {
+      const installPath = (deveco as Record<string, unknown>).installPath;
+      const hvigorBin = (deveco as Record<string, unknown>).hvigorBin;
+      const ip = typeof installPath === 'string' ? installPath.trim() : '';
+      const hb = typeof hvigorBin === 'string' ? hvigorBin.trim() : '';
+      if (ip || hb) {
+        local.toolchain = {
+          devEcoStudio: {
+            ...(ip ? { installPath: ip } : {}),
+            ...(hb ? { hvigorBin: hb } : {}),
+          },
+        };
+        hasAny = true;
+      }
+    }
+  }
+  return hasAny ? local : null;
+}
+
+const LEGACY_MODULE_GRAPHS_DIR = 'doc/modules/<module>/code-graph.yaml';
+const LEGACY_PYPI_MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple';
+const HUAWEI_PYPI_MIRROR = 'https://mirrors.tools.huawei.com/pypi/simple';
+
+export function readRecord(obj: unknown): Record<string, unknown> | null {
+  return obj && typeof obj === 'object' && !Array.isArray(obj)
+    ? (obj as Record<string, unknown>)
+    : null;
+}
+
+export function readPathString(raw: Record<string, unknown>, dotPath: string): string | undefined {
+  const parts = dotPath.split('.');
+  let cur: unknown = raw;
+  for (const part of parts) {
+    const rec = readRecord(cur);
+    if (!rec || !Object.prototype.hasOwnProperty.call(rec, part)) return undefined;
+    cur = rec[part];
+  }
+  return typeof cur === 'string' ? cur : undefined;
+}
+
 export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
   {
     id: 'project_type_to_sub_variant',
@@ -268,6 +383,90 @@ export const MIGRATION_RULES: ReadonlyArray<MigrationRule> = [
       }
       pp.sub_variant = 'app';
       return { applied: true, summary: '补全 project_profile.sub_variant=app' };
+    },
+  },
+  {
+    id: 'extract_personal_to_local',
+    note: '外迁 agent_adapter / DevEco installPath 到 framework.local.json；项目 config 保留 materialized_adapters',
+    detect: raw =>
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? projectHasLegacyPersonalFields(raw as Record<string, unknown>)
+        : false,
+    apply: base => {
+      let changed = false;
+      const adapter =
+        typeof base.agent_adapter === 'string' && base.agent_adapter.trim()
+          ? base.agent_adapter.trim()
+          : null;
+      const ma = base.materialized_adapters;
+      const hasMa = Array.isArray(ma) && ma.length > 0;
+      if (adapter && !hasMa) {
+        base.materialized_adapters = [adapter];
+        changed = true;
+      } else if (adapter && hasMa && !ma.includes(adapter)) {
+        base.materialized_adapters = [...ma, adapter];
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'agent_adapter')) {
+        delete base.agent_adapter;
+        changed = true;
+      }
+      const tc = base.toolchain;
+      if (tc && typeof tc === 'object' && !Array.isArray(tc)) {
+        const row = tc as Record<string, unknown>;
+        const deveco = row.devEcoStudio;
+        if (deveco && typeof deveco === 'object' && !Array.isArray(deveco)) {
+          const d = deveco as Record<string, unknown>;
+          const installPath = typeof d.installPath === 'string' ? d.installPath.trim() : '';
+          const hvigorBin = typeof d.hvigorBin === 'string' ? d.hvigorBin.trim() : '';
+          if (installPath || hvigorBin) {
+            if (installPath) delete d.installPath;
+            if (hvigorBin) delete d.hvigorBin;
+            if (Object.keys(d).length === 0) delete row.devEcoStudio;
+            if (Object.keys(row).length === 0) delete base.toolchain;
+            changed = true;
+          }
+        }
+      }
+      return {
+        applied: changed,
+        summary: changed
+          ? '已外迁 personal 字段（agent_adapter / DevEco）并写入 materialized_adapters'
+          : 'personal 字段已外迁',
+      };
+    },
+  },
+  {
+    id: 'module_graphs_dir_to_module_root',
+    note: '迁移 paths.module_graphs_dir：doc/modules/<module>/code-graph.yaml → <module>/code-graph.yaml',
+    detect: raw => readPathString(raw, 'paths.module_graphs_dir') === LEGACY_MODULE_GRAPHS_DIR,
+    apply: base => {
+      const paths = ensureNestedObject(base, 'paths');
+      if (paths.module_graphs_dir === DEFAULT_PATHS.module_graphs_dir) {
+        return { applied: false, summary: 'paths.module_graphs_dir 已是新默认' };
+      }
+      paths.module_graphs_dir = DEFAULT_PATHS.module_graphs_dir;
+      return {
+        applied: true,
+        summary: `${LEGACY_MODULE_GRAPHS_DIR} → ${DEFAULT_PATHS.module_graphs_dir}`,
+      };
+    },
+  },
+  {
+    id: 'pypi_mirror_tsinghua_to_huawei',
+    note: '迁移 tools.hylyre.pypi_extra_index_url：清华源 → 华为源（仅旧框架默认 URL）',
+    detect: raw => readPathString(raw, 'tools.hylyre.pypi_extra_index_url') === LEGACY_PYPI_MIRROR,
+    apply: base => {
+      const tools = ensureNestedObject(base, 'tools');
+      const hylyre = ensureNestedObject(tools, 'hylyre');
+      if (hylyre.pypi_extra_index_url === HUAWEI_PYPI_MIRROR) {
+        return { applied: false, summary: 'pypi_extra_index_url 已是华为源' };
+      }
+      hylyre.pypi_extra_index_url = HUAWEI_PYPI_MIRROR;
+      return {
+        applied: true,
+        summary: `${LEGACY_PYPI_MIRROR} → ${HUAWEI_PYPI_MIRROR}`,
+      };
     },
   },
 ];
@@ -314,7 +513,7 @@ export function applyMigrations(raw: unknown): {
 }
 
 // --------------------------------------------------------------------------
-// Pass 3 — CONFIRM_FIELDS（行为级变更，须 Q1.C 等显式 y 后才写入）
+// Pass 3 — CONFIRM_FIELDS（行为级变更，须 CONFIRM pass 后才写入）
 // --------------------------------------------------------------------------
 
 export interface ConfirmField {
@@ -324,14 +523,7 @@ export interface ConfirmField {
   note: string;
 }
 
-export const CONFIRM_FIELDS: ReadonlyArray<ConfirmField> = [
-  {
-    path: 'paths.reports_dir_pattern',
-    confirmKey: 'reports_dir_pattern',
-    defaultValue: DEFAULT_REPORTS_DIR_PATTERN,
-    note: '启用 feature-phase 报告外置（doc/features/<feature>/<phase>/reports）；拒绝则保持 legacy framework/harness/reports/<feature>/<phase>/',
-  },
-];
+export const CONFIRM_FIELDS: ReadonlyArray<ConfirmField> = [];
 
 export interface PendingConfirmEntry {
   confirmKey: string;
@@ -404,21 +596,22 @@ export function applyConfirmFields(
 export function mergeFrameworkConfig(
   raw: unknown,
   confirmAnswers: Record<string, boolean> = {},
+  profileName?: string,
 ): {
   merged: Record<string, unknown>;
   backfillReport: MergeReport;
   migrationReport: MigrationReport;
   confirmReport: ConfirmApplyReport;
 } {
-  const { merged: afterBackfill, report: backfillReport } = mergeBackfillFields(raw);
+  const { merged: afterBackfill, report: backfillReport } = mergeBackfillFields(raw, profileName);
   const { merged: afterMigration, report: migrationReport } = applyMigrations(afterBackfill);
   const { merged, report: confirmReport } = applyConfirmFields(afterMigration, confirmAnswers);
   return { merged, backfillReport, migrationReport, confirmReport };
 }
 
 /** 字段路径是否在白名单内（用于外部诊断/单测）。 */
-export function isBackfillablePath(p: string): boolean {
-  return BACKFILL_FIELDS.some(f => f.path === p);
+export function isBackfillablePath(p: string, profileName = 'hmos-app'): boolean {
+  return getEffectiveBackfillFields(profileName).some(f => f.path === p);
 }
 
 // --------------------------------------------------------------------------
@@ -485,17 +678,19 @@ export interface MissingFieldEntry {
  * 检测老 config 中缺失但属于白名单的字段。**纯函数**，不动 raw。
  * 返回顺序与 BACKFILL_FIELDS 一致，便于稳定 diff。
  */
-export function detectMissingBackfillFields(raw: unknown): MissingFieldEntry[] {
+export function detectMissingBackfillFields(raw: unknown, profileName?: string): MissingFieldEntry[] {
+  const effectiveProfile = profileName?.trim() || resolveProfileNameFromRaw(raw);
+  const fields = getEffectiveBackfillFields(effectiveProfile);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     // 无法识别为对象时退化为「全部缺失」语义；上层（CREATE 模式）通常不会走到这里。
-    return BACKFILL_FIELDS.map(f => ({
+    return fields.map(f => ({
       path: f.path,
       defaultValue: f.defaultValue,
       note: f.note,
     }));
   }
   const out: MissingFieldEntry[] = [];
-  for (const f of BACKFILL_FIELDS) {
+  for (const f of fields) {
     if (!hasDottedKey(raw, f.path)) {
       out.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });
     }
@@ -522,16 +717,18 @@ export interface MergeReport {
  *
  * 调用方负责把返回的对象格式化（2 空格缩进 + 末尾换行）后写盘。
  */
-export function mergeBackfillFields(raw: unknown): {
+export function mergeBackfillFields(raw: unknown, profileName?: string): {
   merged: Record<string, unknown>;
   report: MergeReport;
 } {
+  const effectiveProfile = profileName?.trim() || resolveProfileNameFromRaw(raw);
+  const fields = getEffectiveBackfillFields(effectiveProfile);
   const base: Record<string, unknown> =
     raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (deepClone(raw) as Record<string, unknown>)
       : {};
   const applied: MissingFieldEntry[] = [];
-  for (const f of BACKFILL_FIELDS) {
+  for (const f of fields) {
     if (!hasDottedKey(base, f.path)) {
       setDottedKey(base, f.path, f.defaultValue);
       applied.push({ path: f.path, defaultValue: f.defaultValue, note: f.note });
@@ -558,4 +755,44 @@ function countLeafKeys(value: unknown): number {
     }
   }
   return n;
+}
+
+/** ensure-config 写盘禁止落盘的顶层 legacy / personal 键（与 MIGRATION_RULES / template SSOT 对齐） */
+export const PROJECT_CONFIG_INIT_WRITE_FORBIDDEN_TOP_KEYS = [
+  'agent_adapter',
+  'project_type',
+] as const;
+
+function stripPersonalDevEcoFromToolchain(obj: Record<string, unknown>): void {
+  const tc = obj.toolchain;
+  if (!tc || typeof tc !== 'object' || Array.isArray(tc)) return;
+  const tcObj = tc as Record<string, unknown>;
+  const deveco = tcObj.devEcoStudio;
+  if (!deveco || typeof deveco !== 'object' || Array.isArray(deveco)) return;
+  const devecoObj = { ...(deveco as Record<string, unknown>) };
+  delete devecoObj.installPath;
+  delete devecoObj.hvigorBin;
+  if (Object.keys(devecoObj).length === 0) {
+    delete tcObj.devEcoStudio;
+  } else {
+    tcObj.devEcoStudio = devecoObj;
+  }
+  if (Object.keys(tcObj).length === 0) {
+    delete obj.toolchain;
+  }
+}
+
+/**
+ * ensure-config 写盘专用：校验走 normalize/validate，落盘仅保留 Skill 提供的项目级字段。
+ * 禁止 normalize 回填 agent_adapter / legacy project_type / personal DevEco 路径。
+ */
+export function sanitizeProjectConfigForInitWrite(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  for (const key of PROJECT_CONFIG_INIT_WRITE_FORBIDDEN_TOP_KEYS) {
+    delete out[key];
+  }
+  stripPersonalDevEcoFromToolchain(out);
+  return out;
 }

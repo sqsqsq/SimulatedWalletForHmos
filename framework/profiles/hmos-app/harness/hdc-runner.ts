@@ -278,7 +278,7 @@ export function loadAppBundleName(projectRoot: string): string {
   return name;
 }
 
-/** Skill 6 装机门禁：与「本次编译输入」对齐的版本信息（来源 AppScope/app.json5）。 */
+/** device-testing 装机门禁：与「本次编译输入」对齐的版本信息（来源 AppScope/app.json5）。 */
 export interface AppInstallCandidateMeta {
   bundleName: string;
   /** 缺失时为 null，仅跳过数值型降级预检，不阻断装机尝试 */
@@ -818,6 +818,7 @@ export function classifyAaTestFailure(
 export interface OnDeviceUtOptions {
   projectRoot: string;
   harnessRoot: string;
+  frameworkRoot?: string;
   feature: string;
   phase: string;
   /** 模块名（contracts.modules[].name，对应 build-profile.json5 modules[].name） */
@@ -833,8 +834,13 @@ export interface OnDeviceUtOptions {
   skipEnvVar?: string;
 }
 
-function ensureHdcLogReportDir(projectRoot: string, feature: string, phase: string): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+function ensureHdcLogReportDir(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -978,7 +984,7 @@ function finalize(
 ): OnDeviceUtRunResult {
   // 落盘日志
   try {
-    const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase);
+    const dir = ensureHdcLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
     const file = path.join(dir, 'hdc-test.log');
     fs.writeFileSync(file, res.logExcerpt, 'utf-8');
     res.logPath = path.relative(process.cwd(), file).replace(/\\/g, '/');

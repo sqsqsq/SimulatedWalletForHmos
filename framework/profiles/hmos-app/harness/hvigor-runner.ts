@@ -38,6 +38,8 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { resolveHdcExecutableSync } from './hdc-runner';
+import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
+import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 
 export interface HvigorRunResult {
   /** 是否真正执行了 hvigor（false：工具链缺失 / 被 env 跳过） */
@@ -68,6 +70,8 @@ export interface HvigorRunResult {
   diagnostics?: string[];
   /** hypium test 解析结果（仅 runHvigorTest 填充） */
   testResult?: HypiumTestResult;
+  /** 装机预检阻塞诊断（runHvigorTest 在 install_preflight 短路时填充） */
+  installBlocking?: import('./device-install-diag').InstallBlockingDiagnosis;
   /** 执行命令的完整 argv，便于复现 */
   command?: string;
   /** 调用驱动：node_hvigorw_js / hvigorw_wrapper / path / … */
@@ -261,6 +265,7 @@ const PROJECT_DEPENDENCY_PATTERNS = [
 export function analyzeProjectDependencyIssue(
   projectRoot: string,
   input: Pick<HvigorRunResult, 'logExcerpt' | 'errors' | 'logAbsPath'> | string,
+  frameworkRoot?: string,
 ): ProjectDependencyIssue {
   let log: string;
   if (typeof input === 'string') {
@@ -291,7 +296,12 @@ export function analyzeProjectDependencyIssue(
     }
   }
   const missingDeclarations = dependencies.filter(dep => !declared.has(dep));
-  const harnessNodeModulesReady = fs.existsSync(path.join(projectRoot, 'framework', 'harness', 'node_modules', 'ts-node', 'package.json'));
+  const harnessRoot = frameworkRoot
+    ? path.join(path.resolve(frameworkRoot), 'harness')
+    : harnessRootFromLayout(inferRepoLayout(projectRoot));
+  const harnessNodeModulesReady = fs.existsSync(
+    path.join(harnessRoot, 'node_modules', 'ts-node', 'package.json'),
+  );
   const ohModulesExists = fs.existsSync(path.join(projectRoot, 'oh_modules'));
   const installHints: string[] = [];
   if (!harnessNodeModulesReady) {
@@ -581,8 +591,13 @@ function safeResolveFromConfig(
   }
 }
 
-function ensureHvigorLogReportDir(projectRoot: string, feature: string, phase: string): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+function ensureHvigorLogReportDir(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -877,7 +892,7 @@ export function detectProduct(projectRoot: string): string {
 }
 
 /**
- * 枚举 build-profile.json5 中声明的全部 product 名（供 Skill 6 真机打包前展示选项）。
+ * 枚举 build-profile.json5 中声明的全部 product 名（供 device-testing 真机打包前展示选项）。
  * 解析失败或为空时返回 `['default']`。
  */
 export function listAvailableProducts(projectRoot: string): string[] {
@@ -1151,6 +1166,8 @@ export interface HvigorInvokeOpts {
   cwd?: string;
   /** harness 根（reports 落盘） */
   harnessRoot: string;
+  /** framework 资产根；缺省时从 projectRoot infer */
+  frameworkRoot?: string;
   /** feature 名（reports 子目录） */
   feature: string;
   /** phase（reports 子目录） */
@@ -1231,7 +1248,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
   }
 
-  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase);
+  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   const logAbs = path.join(dir, opts.logBasename);
   const commandDisplay = spawnPlan.commandDisplay;
   const header = `$ ${commandDisplay}\n\n`;
@@ -1444,7 +1461,7 @@ export function runHvigorBuild(
  * 失败不阻断后续 assemble；仅 best-effort。
  */
 export function stopHvigorDaemon(
-  opts: Pick<HvigorInvokeOpts, 'projectRoot' | 'harnessRoot' | 'feature' | 'phase'>,
+  opts: Pick<HvigorInvokeOpts, 'projectRoot' | 'harnessRoot' | 'frameworkRoot' | 'feature' | 'phase'>,
 ): void {
   const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, ['--stop-daemon']);
   if ('toolMissing' in resolved) return;
@@ -1468,7 +1485,7 @@ export function runHvigorAssembleApp(
     task?: string;
     /** 覆盖 / 合并 config 的 coding.extraArgs（此处传入即整段替换 config 的 extraArgs） */
     extraArgs?: string[];
-    /** 覆盖 `-p product=`（Skill 6 device-testing 等） */
+    /** 覆盖 `-p product=`（device-testing device-testing 等） */
     product?: string;
     /** 覆盖 `-p buildMode=` */
     buildMode?: 'debug' | 'release';
@@ -1632,6 +1649,29 @@ export function runHvigorTest(
     return buildRes;
   }
 
+  // 装机前诊断：版本降级 / 设备可用性（与 testing 侧 device-install-diag 共用逻辑）
+  const installDiag = diagnoseInstallBlocking(opts.projectRoot);
+  writeUtInstallDiagJson(
+    opts.projectRoot,
+    opts.feature,
+    opts.phase,
+    opts.frameworkRoot ?? inferRepoLayout(opts.projectRoot).frameworkRoot,
+    installDiag,
+  );
+  if (installDiag.kind !== 'clear') {
+    return {
+      executed: false,
+      exitCode: 1,
+      durationMs: Date.now() - t0,
+      logExcerpt:
+        `[install-preflight blocked] kind=${installDiag.kind}\n${installDiag.details}`,
+      logPath: buildRes.logPath,
+      errors: [{ message: `失败阶段：install_preflight (${installDiag.kind})` }],
+      installBlocking: installDiag,
+      command: 'genOnDeviceTestHap + install_preflight',
+    };
+  }
+
   // ② / ③ / ④：装机 + 执行 + 解析（封装在 hdc-runner，避免本文件臃肿）
   // 这里通过 require 动态导入，避免 hvigor-runner ↔ hdc-runner 之间形成 import 环。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1639,6 +1679,7 @@ export function runHvigorTest(
   const onDevice = runOnDeviceUt({
     projectRoot: opts.projectRoot,
     harnessRoot: opts.harnessRoot,
+    frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
     phase: opts.phase,
     srcModuleName: opts.moduleName,

@@ -87,7 +87,7 @@ flowchart LR
 
 **为什么非要拆三层？**
 
-- **Spec 独立**：让"验收标准"可以在没有 Harness 时就供人工审查；而 Spec 本身又是 Skill 1/2 的**产物**（PRD 产 `acceptance.yaml` / design 产 `contracts.yaml`），同时是 Skill 3/5/6 的**输入**和 Harness 的**消费源** —— 一份数据三个方向使用
+- **Spec 独立**：让"验收标准"可以在没有 Harness 时就供人工审查；而 Spec 本身又是 prd-design/2 的**产物**（PRD 产 `acceptance.yaml` / design 产 `contracts.yaml`），同时是 coding/5/6 的**输入**和 Harness 的**消费源** —— 一份数据三个方向使用
 - **生成与验证分离**：生成者和验证者**可以是不同模型**（甚至不同厂商），消除"考生自己批改试卷"的偏差
 - **机制 > 文字**：文字里的"应该 / 禁止"靠不住，要落到 `check-*.ts` + `verify-*.md` 可执行的硬门禁
 
@@ -153,10 +153,10 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **初建**                  | 三层骨架            | `skills/` + `specs/phase-rules/` + `harness/` 首版；6 个阶段 Skill 打通端到端                                                                          |
 | **第一波**                | 弱模型友好          | **三阶段 Scope 守门**（PRD 声明 / design 继承 / coding diff 比对）；**宿主语言**易错手册（由 profile 提供；如 `hmos-app` 为 ArkTS）+ 逐文件 lint                                                   |
 | **第二波**                | 术语守门            | `module-catalog.yaml` + `glossary.yaml` 双 SSOT；PRD 新增术语映射表 Step 1.5；三道 BLOCKER 防线                                                       |
-| **第二三波**              | Skill 0 自举        | `/catalog-bootstrap` / `/glossary-bootstrap` 建档流程；护栏 A–D；种子词技术词 allowlist                                                                |
-| **通用化**                | framework 脱耦      | 从原宿主工程剥离出 `framework/` 作为独立资产；架构 DSL 化（分层可配置）；[`agent adapter`](../agents/README.md) 插件化；`00-framework-init` Skill |
+| **第二三波**              | catalog-bootstrap 自举        | `/catalog-bootstrap` / `/glossary-bootstrap` 建档流程；护栏 A–D；种子词技术词 allowlist                                                                |
+| **通用化**                | framework 脱耦      | 从原宿主工程剥离出 `framework/` 作为独立资产；架构 DSL 化（分层可配置）；[`agent adapter`](../agents/README.md) 插件化；`framework-init` Skill |
 | **架构文档收窄**          | 边界划清            | `architecture.md` 改为**架构级契约文档**（只记 `dsl_change`/`module_set_change`/`responsibility_rewrite` 三类事件），不再承担 feature 级变更日志       |
-| **UT 分层 v2 → v2.1**     | 刻骨教训            | v2 强制抽 `UseCase` 类 + `Port` 接口 → 简单 feature 翻车；v2.1 回退为**规约驱动**（UseCase 降级为 YAML 规约，代码形态 Skill 3 自选）                   |
+| **UT 分层 v2 → v2.1**     | 刻骨教训            | v2 强制抽 `UseCase` 类 + `Port` 接口 → 简单 feature 翻车；v2.1 回退为**规约驱动**（UseCase 降级为 YAML 规约，代码形态 coding 自选）                   |
 | **v2.2 真实编译/真机（hmos-app）**    | 假 PASS 三道护栏    | `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` 全部 BLOCKER（仅当 profile 注册对应 capability）；改业务源码必须 `gap-notes` 登记                     |
 | **v2.3 工具链识别（hmos-app）**       | DevEco 适配         | DevEco Studio 路径配置化、`detect-deveco.ts` 自动检测；`ut_hvigor_test` 改用 `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`                |
 | **v2.4 文档体系**         | 对外材料长期化      | `framework/docs/` 文档树 + `DOC_INVENTORY.yaml` + `--phase docs` 自动检查文档新鲜度（即本目录）                                                       |
@@ -173,9 +173,9 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **reports 外置**            | feature 产物与 submodule 分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
 | **v2.9 Karpathy 四原则**    | Agent 行为 + 探索量化 | [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；verifier `behavior_*` 维度 |
 | **v2.10 exploration_strategy** | 大仓深度探索      | design/coding **default-on subagent**；prd/review/ut **复合评分**；`sequential` 等价路径 |
-| **Hylyre 真机闭环（2.0）**  | Skill 6 端到端      | `device_test.build` / `install` / `run`；vendor wheel + venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
+| **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor wheel + venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
-| **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry；Claude **AskUserQuestion** BLOCKER（Skills 0–6）；`check-skills-confirmation-ux.ts` |
+| **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
 
 更多「**形态 / 宿主**默认假设」的剥离方向见 [`modality-framework-roadmap.md`](modality-framework-roadmap.md)。
 
@@ -221,14 +221,14 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 | 阶段 | Skill                                                                  | 职责                              | 关键产物                                              | 主要门禁（BLOCKER）                                                                                                            |
 | ---- | ---------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| ★    | [`00-framework-init`](../skills/00-framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐；DevEco 工具链路径配置；`npm test` 自检；全局 phase 初始化验收               |
-| 0    | [`0-catalog-bootstrap`](../skills/0-catalog-bootstrap/SKILL.md)         | 模块画像 + 术语表自举             | `module-catalog.yaml` / `glossary.yaml`               | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截                                                       |
-| 1    | [`1-prd-design`](../skills/1-prd-design/SKILL.md)                       | PRD 撰写                          | `PRD.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
-| 2    | [`2-requirement-design`](../skills/2-requirement-design/SKILL.md)       | 技术设计                          | `design.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
-| 3    | [`3-coding`](../skills/3-coding/SKILL.md)                               | 业务代码（宿主语言由 profile 决定，默认 ArkTS） | 源代码 + `contracts.yaml` + `context-exploration.md` | `diff_within_scope`、逐文件 Lint、**`coding_hvigor_build`**（profile capability） |
-| 4    | [`4-code-review`](../skills/4-code-review/SKILL.md)                     | 代码审查                          | `review-report.md`                                    | Review 结论一致性、BLOCKER 数量                                                                                                |
-| 5    | [`5-business-ut`](../skills/5-business-ut/SKILL.md)                     | 业务级 UT                         | `dag.yaml` + `*.test.ets` + 可选 `ut/reports/ac-coverage.json`  | **`ut_tsc_compiles`**、**`ut_hvigor_build`**、**`ut_hvigor_test`**、**`ut_no_src_mutation`**、`acceptance_coverage`（profile 驱动） |
-| 6    | [`6-device-testing`](../skills/6-device-testing/SKILL.md)               | 真机 / UI 自动化                  | `test-plan.md` + `test-report.md` + Hylyre trace      | **`device_test.build`** → **`install`** → **`run`**；`device_focus`；即席 **`_adhoc`** |
+| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；init 后可 `npm test`（= `check:global`） |
+| 0    | [`catalog-bootstrap`](../skills/project/catalog-bootstrap/SKILL.md)         | 模块画像 + 术语表自举             | `module-catalog.yaml` / `glossary.yaml`               | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截                                                       |
+| 1    | [`prd-design`](../skills/feature/prd-design/SKILL.md)                       | PRD 撰写                          | `PRD.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
+| 2    | [`requirement-design`](../skills/feature/requirement-design/SKILL.md)       | 技术设计                          | `design.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
+| 3    | [`coding`](../skills/feature/coding/SKILL.md)                               | 业务代码（宿主语言由 profile 决定，默认 ArkTS） | 源代码 + `contracts.yaml` + `context-exploration.md` | `diff_within_scope`、逐文件 Lint、**`coding_hvigor_build`**（profile capability） |
+| 4    | [`code-review`](../skills/feature/code-review/SKILL.md)                     | 代码审查                          | `review-report.md`                                    | Review 结论一致性、BLOCKER 数量                                                                                                |
+| 5    | [`business-ut`](../skills/feature/business-ut/SKILL.md)                     | 业务级 UT                         | `dag.yaml` + `*.test.ets` + 可选 `ut/reports/ac-coverage.json`  | **`ut_tsc_compiles`**、**`ut_hvigor_build`**、**`ut_hvigor_test`**、**`ut_no_src_mutation`**、`acceptance_coverage`（profile 驱动） |
+| 6    | [`device-testing`](../skills/feature/device-testing/SKILL.md)               | 真机 / UI 自动化                  | `test-plan.md` + `test-report.md` + Hylyre trace      | **`device_test.build`** → **`install`** → **`run`**；`device_focus`；即席 **`_adhoc`** |
 
 \* `use-cases.yaml` 仅在 feature 满足复杂度阈值（多 UI / 多步云 / 含回滚 任一）时产出。
 
@@ -245,7 +245,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 #### 2.3.1 Skill 层（生成）
 
 - **双层目录**：实际内容放在 `framework/skills/<skill>/SKILL.md` + `templates/` + `reference/` + `examples/`；各 adapter 在实例根暴露的**轻量入口**（slash / 跳板 / 规则）**不复制**正文，避免双源不一致（路径见 [`agents/README.md`](../agents/README.md)）。
-- **渐进增强确认**（[user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）：widget + portable 编号菜单 + 决策复述。Claude adapter 对 Skills **0–6** 关键确认点要求 **AskUserQuestion BLOCKER**（`.claude/rules/confirmation-ux.md` + `widget-options/`）。registry：[confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml)；lint：`check-skills-confirmation-ux.ts`
+- **渐进增强确认**（[user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）：widget + portable 编号菜单 + 决策复述。各 adapter 通过 **interaction-renderer** 注入渲染协议；选项文案 SSOT：[confirmation-registry.yaml](../skills/reference/confirmation-registry.yaml)；lint：`check-skills-confirmation-ux.ts`
 - **staging + 确认后才落地**：大产物先 staging 展示 diff，用户 `1/2/3/4`（或 `y/e/s/q`）回复之后才落地，对弱模型尤其关键
 
 #### 2.3.1.1 确认 UX 治理
@@ -265,14 +265,14 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 - `semantic_checks`：业务逻辑 / 设计合理性（AI 检）
 - `traceability_checks`：跨阶段追溯（脚本 + AI）
 
-**功能级规约**（在 Skill 1/2 执行时同步产出，归档在实例工程的 `doc/features/<feature>/`）：
+**功能级规约与阶段产物**（归档在实例工程的 `doc/features/<feature>/`）：跨阶段契约（`acceptance.yaml`、`contracts.yaml` 等）在 feature 根；阶段主产物在 `<phase>/` 子目录（`prd/PRD.md`、`design/design.md`、`review/review-report.md`、`testing/test-plan.md` 等，与 `context-exploration.md` / `reports/` 同树）。读侧兼容旧扁平路径，见 `harness/config.ts` artifact resolver。
 
 | 文件               | 生产者              | 内容                                                  |
 | ------------------ | ------------------- | ----------------------------------------------------- |
-| `acceptance.yaml`  | Skill 1             | 验收标准（AC-X），含 `priority` / `ut_layer` / `device_focus` |
-| `contracts.yaml`   | Skill 2             | 接口签名、数据模型、文件清单（从 design.md 提取）      |
-| `boundaries.yaml`  | Skill 1 + 2         | 边界用例、极端输入、性能指标                          |
-| `use-cases.yaml`   | Skill 2（条件式）   | 业务流程规约（仅复杂 feature 产出）                   |
+| `acceptance.yaml`  | prd-design             | 验收标准（AC-X），含 `priority` / `ut_layer` / `device_focus` |
+| `contracts.yaml`   | requirement-design             | 接口签名、数据模型、文件清单（从 design.md 提取）      |
+| `boundaries.yaml`  | prd-design + 2         | 边界用例、极端输入、性能指标                          |
+| `use-cases.yaml`   | requirement-design（条件式）   | 业务流程规约（仅复杂 feature 产出）                   |
 
 #### 2.3.3 Harness 层（验证）
 
@@ -303,7 +303,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 存量 feature 升级撞新 BLOCKER：优先 `npm run backfill:context`，或短期 `compat.yaml`（见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md)）。
 
-#### 2.3.5 Skill 6 · 真机测试（Hylyre 能力链）
+#### 2.3.5 device-testing · 真机测试（Hylyre 能力链）
 
 hmos-app profile 下 testing harness 按 capability 串联（`capability-registry.ts` → `profiles/hmos-app/harness/`）：
 
@@ -355,7 +355,7 @@ graph LR
 
 #### D. 业务级 UT 分层分工
 
-UT 是**既有代码的消费者**，不驱动架构。详见 [`skills/5-business-ut.md`](skills/5-business-ut.md)。
+UT 是**既有代码的消费者**，不驱动架构。详见 [`skills/feature/business-ut.md`](skills/feature/business-ut.md)。
 
 #### E. 跨阶段追溯链
 
@@ -394,7 +394,7 @@ robocopy path\to\framework-source\framework .\framework /E ^
          /XF reports
 ```
 
-之后**所有**初始化工作（宿主 `.gitignore` 补齐 / `npm install` / 自检 `npm test` / DevEco 路径配置 / harness 验证）由 `/framework-init` Skill 自动完成。详见 [`../MIGRATION.md`](../MIGRATION.md)。
+之后**所有**初始化工作（宿主 `.gitignore` 补齐 / `npm install` / S3 `run-global-phases` / harness 验证）由 `/framework-init` Skill 自动完成；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
 
 #### 模式 B · Submodule
 
@@ -416,7 +416,7 @@ git submodule update --init --recursive
 #### 日常需求（一条 feature 完整流程）
 
 ```bash
-# Step 0: 涉及新模块/新术语，先走 Skill 0
+# Step 0: 涉及新模块/新术语，先走 catalog-bootstrap
 /catalog-bootstrap <新模块名>      # 或自然语言：为 X 模块建档
 /glossary-bootstrap                # 按需扩充术语表
 
@@ -465,7 +465,7 @@ git submodule update --init --recursive
 
 **根因**：UT 变成了"数据接口测试"，而不是"业务流端到端驱动"。
 
-**解法**：详见 [`skills/5-business-ut.md`](skills/5-business-ut.md) 的"驱动 vs 声明"章节。
+**解法**：详见 [`skills/feature/business-ut.md`](skills/feature/business-ut.md) 的"驱动 vs 声明"章节。
 
 ### 3.4 UI mock 泥潭
 
@@ -473,7 +473,7 @@ git submodule update --init --recursive
 
 **根因**：ArkTS 的 `@Component struct` 是编译期语法糖，hypium 下无法实例化；试图在 UT 里验证 UI 交互是反人性的。
 
-**解法（彻底禁 UI import）**：详见 [`skills/5-business-ut.md`](skills/5-business-ut.md) 的"UT 与 device 分工"。
+**解法（彻底禁 UI import）**：详见 [`skills/feature/business-ut.md`](skills/feature/business-ut.md) 的"UT 与 device 分工"。
 
 ### 3.5 UT "假 PASS"（v2.2 三道护栏）
 
@@ -495,8 +495,8 @@ git submodule update --init --recursive
 
 **配套**：
 
-- Skill 3 SKILL.md 新增"真实编译闭环"步骤：agent 必须自己跑 hvigor、读日志、定位修复，不允许把编译失败标为"环境问题"
-- Skill 5 SKILL.md 新增"UT 编译闭环 + 装机运行闭环"，并把"不修改业务源码"升级为 HARD STOP
+- coding SKILL.md 新增"真实编译闭环"步骤：agent 必须自己跑 hvigor、读日志、定位修复，不允许把编译失败标为"环境问题"
+- business-ut SKILL.md 新增"UT 编译闭环 + 装机运行闭环"，并把"不修改业务源码"升级为 HARD STOP
 - `verify-ut.md` prompt 顶部加 HARD STOP 等价条款，verifier 检测疑似为"为 UT 便利新增的工具函数"时强制标 BLOCKER
 
 ### 3.6 弱模型吞字反转语义
@@ -522,7 +522,7 @@ git submodule update --init --recursive
 
 ### 3.7 过度架构化（v2 UseCase 翻车）
 
-详见 [`skills/5-business-ut.md`](skills/5-business-ut.md) 的"v2 → v2.1 教训"。
+详见 [`skills/feature/business-ut.md`](skills/feature/business-ut.md) 的"v2 → v2.1 教训"。
 
 **教训（值得记到墓志铭上）**：
 
@@ -553,7 +553,7 @@ git submodule update --init --recursive
 
 | 类别                        | 局限                                                    | 影响                              | 缓解                                                            |
 | --------------------------- | ------------------------------------------------------- | --------------------------------- | --------------------------------------------------------------- |
-| **Glossary 覆盖**           | 默认沙盒只有 ~15 条术语，真实工程估计需要 50-200 条      | 首轮接入需集中扩充                | Skill 0 `/glossary-bootstrap` 支持增量建档                      |
+| **Glossary 覆盖**           | 默认沙盒只有 ~15 条术语，真实工程估计需要 50-200 条      | 首轮接入需集中扩充                | catalog-bootstrap `/glossary-bootstrap` 支持增量建档                      |
 | **弱模型吞字防护**          | init 渲染 / adapter 拷贝已脚本化；三分区哨兵与 negation-diff 仍在推进 | UPDATE 模式 narrative 区仍有反转风险 | `render-agents-md.mjs` 首选路径 + `check-init.ts`；三分区 + negation-diff 待落地 |
 | **design 启发式误报**       | `file_structure_per_module` / `interface_signatures_complete` 用正则启发式 | 偶发误报需人工识别噪声            | 后续替换为 AST 精确分析                                         |
 | **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`） | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base） | 见 `coding-rules.yaml` / `git-diff.ts`                                                            |
@@ -605,14 +605,14 @@ git submodule update --init --recursive
 
 ### Skill 正文
 
-- [`../skills/00-framework-init/SKILL.md`](../skills/00-framework-init/SKILL.md)
-- [`../skills/0-catalog-bootstrap/SKILL.md`](../skills/0-catalog-bootstrap/SKILL.md)
-- [`../skills/1-prd-design/SKILL.md`](../skills/1-prd-design/SKILL.md)
-- [`../skills/2-requirement-design/SKILL.md`](../skills/2-requirement-design/SKILL.md)
-- [`../skills/3-coding/SKILL.md`](../skills/3-coding/SKILL.md)
-- [`../skills/4-code-review/SKILL.md`](../skills/4-code-review/SKILL.md)
-- [`../skills/5-business-ut/SKILL.md`](../skills/5-business-ut/SKILL.md)
-- [`../skills/6-device-testing/SKILL.md`](../skills/6-device-testing/SKILL.md)
+- [`../skills/project/framework-init/SKILL.md`](../skills/project/framework-init/SKILL.md)
+- [`../skills/project/catalog-bootstrap/SKILL.md`](../skills/project/catalog-bootstrap/SKILL.md)
+- [`../skills/feature/prd-design/SKILL.md`](../skills/feature/prd-design/SKILL.md)
+- [`../skills/feature/requirement-design/SKILL.md`](../skills/feature/requirement-design/SKILL.md)
+- [`../skills/feature/coding/SKILL.md`](../skills/feature/coding/SKILL.md)
+- [`../skills/feature/code-review/SKILL.md`](../skills/feature/code-review/SKILL.md)
+- [`../skills/feature/business-ut/SKILL.md`](../skills/feature/business-ut/SKILL.md)
+- [`../skills/feature/device-testing/SKILL.md`](../skills/feature/device-testing/SKILL.md)
 
 ### 规约与门禁
 
@@ -628,7 +628,7 @@ git submodule update --init --recursive
 - [`concepts/extensibility.md`](concepts/extensibility.md) · 四层扩展模型（framework → profile → workflow → extensions）
 - [`concepts/acceptance-layering.md`](concepts/acceptance-layering.md) · acceptance `ut_layer` / `device_focus` 与 UT / 真机分工
 - [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md) · 存量 feature 升级过渡协议
-- [`skills/5-business-ut.md`](skills/5-business-ut.md) · 业务级 UT 的设计哲学 + v2 → v2.1 → v2.2 演进
+- [`skills/feature/business-ut.md`](skills/feature/business-ut.md) · 业务级 UT 的设计哲学 + v2 → v2.1 → v2.2 演进
 - [`profiles/hmos-app-harness-toolchain.md`](profiles/hmos-app-harness-toolchain.md) · hmos-app hvigor / hdc / Hylyre 能力链
 - [`operations/harness-runbook.md`](operations/harness-runbook.md) · Harness（默认 **11** 项 phase / spec-driven DAG）的命令、报告、排错速查
 
@@ -637,12 +637,12 @@ git submodule update --init --recursive
 ## 维护同步（2026-05-22 · 对齐 2.0）
 
 - **Profile 解耦**：`project_profile` 下宿主实现包括 `harness/ut-host-impl.ts`、`harness/coding-host-rules.ts`、`hvigor-runner.ts`、`hdc-runner.ts` 等；根 `check-ut` / `check-coding` / `check-testing` 经 **`capability-registry.ts`** 调度，generic profile 可 SKIP。
-- **Hylyre 真机**：Skill 6 `device_test.build` / `install` / `run`；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`）；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/`。
+- **Hylyre 真机**：device-testing `device_test.build` / `install` / `run`；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`）；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/`。
 - **Agent 行为 + 探索**：[`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；`exploration_strategy` 复合评分 / subagent 默认路径。
-- **确认 UX**：[`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry；Claude adapter Skills **0–6** 关键确认点 **AskUserQuestion BLOCKER**。
+- **确认 UX**：[`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter **interaction-renderer** 统一注入。
 - **reports 外置**：`paths.reports_dir_pattern` 默认 `doc/features/<feature>/<phase>/reports/`。
 - **升级工具**：`merge-framework-config.mjs` 字段级补缺；`compat.yaml` + `npm run backfill:context` 过渡存量 feature。
-- **Framework-init**：`framework.config.json` 在 SKILL **Step 3.5** 整文件落盘，须早于 `render-agents-md`；`render-agents-md.mjs` 为弱模型首选渲染路径。
+- **Framework-init**：`framework.config.json` 在 **S3 执行** 落盘，须早于 `render-agents-md`；`render-agents-md.mjs` 为弱模型首选渲染路径。
 - **acceptance 分层 SSOT**：`acceptance.yaml` 的 `ut_layer` + `device_focus`；`device-testing-todo.md` 已废弃。
 
 ---

@@ -1,6 +1,6 @@
 # {{AGENT_ENTRY_FILE}} — {{PROJECT_NAME}}（{{PROJECT_TYPE_LABEL}}）全局指令
 
-> 本文件由 `framework/skills/00-framework-init` 基于 `framework/templates/AGENTS.md.template`
+> 本文件由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template`
 > 实例化生成。它是本工程所有 AI coding agent 的**全局系统指令**。
 >
 > 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。
@@ -29,12 +29,12 @@
 |------|----------|------|
 | 架构与模块划分 | [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) | 层级划分 + 依赖矩阵。**任何与之冲突的设计一律以本文为准**。 |
 | 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 给 phase-rules / check-*.ts 读取的结构化定义。修改必过 `/framework-init`（UPDATE 模式） |
-| 模块画像（Catalog） | [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**Scope 防错源头**。建模与修改走 Skill 0 · Phase A。 |
-| 业务术语表（Glossary） | [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。建表走 Skill 0 · Phase B。 |
+| 模块画像（Catalog） | [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) | 每个模块的职责 / `NOT_responsible_for` / `easily_confused_with`。**Scope 防错源头**。建模与修改走 catalog-bootstrap · Phase A。 |
+| 业务术语表（Glossary） | [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) | 自然语言业务名词 ↔ 权威模块映射。PRD 阶段术语消歧必读。建表走 catalog-bootstrap · Phase B。 |
 {{PROFILE_AGENT_SSOT_ROWS}}
 | 阶段规则（机器可读） | [framework/specs/phase-rules/](framework/specs/phase-rules/) | prd / design / coding / review / ut / testing / catalog / glossary / **extensions** 等阶段 YAML 规则（以当前激活 workflow 为准） |
 | 自动校验脚本 | [framework/harness/scripts/](framework/harness/scripts/) | 对应 `check-*.ts`，用于 BLOCKER 级门禁 |
-| Harness 运行时前置（Tier_1 · npm） | [framework/skills/reference/host-harness-readiness.md](framework/skills/reference/host-harness-readiness.md) | 克隆或独立拉起 Skill 跑 `harness-runner` 前须安装 `framework/harness` 依赖；与 Skill 00 Step 5.5 Tier_1 等价；宿主 IDE/hvigor 仍按 profile |
+| Harness 运行时前置（Tier_1 · npm） | [framework/skills/reference/host-harness-readiness.md](framework/skills/reference/host-harness-readiness.md) | 克隆或独立拉起 Skill 跑 `harness-runner` 前须安装 `framework/harness` 依赖；与 framework-init S3 `harness-install` Tier_1 等价；宿主 IDE/hvigor 仍按 profile |
 | Agent 行为规约（Karpathy 四原则） | [framework/skills/reference/agent-behavioral-principles.md](framework/skills/reference/agent-behavioral-principles.md) | Research First / Minimum Viable / Surgical / Verify — 各 Skill Research Sub-Phase 强制前读；verifier 行为维度 BLOCKER 语义依据 |
 
 ---
@@ -49,7 +49,7 @@
 
 ### 3.2 术语守门（BLOCKER）
 
-1. PRD 必须以 **`## 0. 术语映射表`** 章节起始，列出原始术语 → 权威模块的映射（见 Skill 1 Step 1.5）。
+1. PRD 必须以 **`## 0. 术语映射表`** 章节起始，列出原始术语 → 权威模块的映射（见 prd-design Step 1.5）。
 2. **所有映射必须逐条人工确认**（用户把 `[ ]` 改成 `[x]`），不启用 auto-approve。即便置信度 `high` 也必须确认。
 3. 每一条映射的 `权威模块` 必须存在于 [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})；否则 `terminology_mapping_table` BLOCKER 阻塞。
 4. 术语命中其他模块的 `easily_confused_with` 时，**必须显式亮给用户看**，不允许静默忽略。
@@ -57,9 +57,9 @@
 
 ### 3.3 Scope 守门（BLOCKER）
 
-1. PRD 必须声明 `in_scope_modules` / `out_of_scope_modules` / `rationale`（见 Skill 1）。
+1. PRD 必须声明 `in_scope_modules` / `out_of_scope_modules` / `rationale`（见 prd-design）。
 2. `in_scope_modules` / `out_of_scope_modules` 的每个模块名都**必须在 `{{MODULE_CATALOG_PATH}}` 中存在**（`scope_matches_catalog` BLOCKER），禁止自造模块名。
-3. design.md 必须**继承** PRD 的 scope；如需扩展，**停下来**向用户发起「Scope 扩展提议」，获得用户明确批准后写入 `expansions_with_user_approval` 才可继续（见 Skill 2 Step 2.5）。
+3. design.md 必须**继承** PRD 的 scope；如需扩展，**停下来**向用户发起「Scope 扩展提议」，获得用户明确批准后写入 `expansions_with_user_approval` 才可继续（见 requirement-design Step 2.5）。
 4. 编码阶段 `git diff` 涉及的所有文件必须落在 design 的 `in_scope_modules` 内（`doc/`、`specs/`、`framework/` 等框架/实例基础设施目录除外）。
 5. **严禁静默扩展**：任何"顺手改一下"都必须回到 design 阶段走扩展提议流程。
 
@@ -72,7 +72,7 @@
 - design.md 的 `contracts.yaml`（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 key）是编码阶段的强契约，实现必须与之一致。
 - **`doc/features/<feature>/`** 默认**不假定**提交进主代码仓——由 `framework.config.json` → `paths.docs_committed` 管控；脚本 harness 与工作区快照优先，completion receipt **不强求**未入库即失败（参见 `paths.docs_committed` 语义）。含 **UI** 形态的 PRD **应当**声明 `ui_change`/Visual Handoff；非 UI / 后端类需求**不做**硬性要求。
 - **feature 需求交付不自动触发 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) 更新**——架构文档只承载架构级契约，不承担 feature 级变更日志（后者由 git 与 `doc/features/<feature>/` 承担）。
-- 仅当 design.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [Skill 2 · Step 12](framework/skills/2-requirement-design/SKILL.md) 分支更新 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
+- 仅当 design.md 的 `架构影响声明.impact != none`（`dsl_change` / `module_set_change` / `responsibility_rewrite`）时，按 [requirement-design · Step 12](framework/skills/feature/requirement-design/SKILL.md) 分支更新 [{{ARCHITECTURE_MD_PATH}}]({{ARCHITECTURE_MD_PATH}}) / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / `framework.config.json` 的相应段落，并在 architecture.md 的「架构级变更记录」追加一行。
 - **[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})** 是模块职责 / 公共能力 / 易混点的唯一 SSOT；不要把这些细节复制到 architecture.md。
 
 ### 3.6 Context Exploration Gate（BLOCKER）
@@ -104,20 +104,20 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 
 | 阶段 | Skill 路径 |
 |------|-----------|
-| 0. Framework 初始化 / 升级 | [framework/skills/00-framework-init/SKILL.md](framework/skills/00-framework-init/SKILL.md) |
-| 0. 模块画像自举（Phase A） | [framework/skills/0-catalog-bootstrap/SKILL.md](framework/skills/0-catalog-bootstrap/SKILL.md) |
-| 0. 术语表自举（Phase B） | [framework/skills/0-catalog-bootstrap/SKILL.md](framework/skills/0-catalog-bootstrap/SKILL.md) |
-| 1. PRD 撰写 | [framework/skills/1-prd-design/SKILL.md](framework/skills/1-prd-design/SKILL.md) |
-| 2. 技术设计 | [framework/skills/2-requirement-design/SKILL.md](framework/skills/2-requirement-design/SKILL.md) |
-| 3. 编码落地 | [framework/skills/3-coding/SKILL.md](framework/skills/3-coding/SKILL.md) |
-| 4. 代码审查 | [framework/skills/4-code-review/SKILL.md](framework/skills/4-code-review/SKILL.md) |
-| 5. 业务级 UT | [framework/skills/5-business-ut/SKILL.md](framework/skills/5-business-ut/SKILL.md) |
-| 6. 真机测试 | [framework/skills/6-device-testing/SKILL.md](framework/skills/6-device-testing/SKILL.md) |
+| 0. Framework 初始化 / 升级 | [framework/skills/project/framework-init/SKILL.md](framework/skills/project/framework-init/SKILL.md) |
+| 0. 模块画像自举（Phase A） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
+| 0. 术语表自举（Phase B） | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
+| 1. PRD 撰写 | [framework/skills/feature/prd-design/SKILL.md](framework/skills/feature/prd-design/SKILL.md) |
+| 2. 技术设计 | [framework/skills/feature/requirement-design/SKILL.md](framework/skills/feature/requirement-design/SKILL.md) |
+| 3. 编码落地 | [framework/skills/feature/coding/SKILL.md](framework/skills/feature/coding/SKILL.md) |
+| 4. 代码审查 | [framework/skills/feature/code-review/SKILL.md](framework/skills/feature/code-review/SKILL.md) |
+| 5. 业务级 UT | [framework/skills/feature/business-ut/SKILL.md](framework/skills/feature/business-ut/SKILL.md) |
+| 6. 真机测试 | [framework/skills/feature/device-testing/SKILL.md](framework/skills/feature/device-testing/SKILL.md) |
 
 {{EXTENSION_SKILL_SECTION}}
-> **Skill 0（catalog + glossary）是所有其它 Skill 的前置**：只有 `{{MODULE_CATALOG_PATH}}` + `{{GLOSSARY_PATH}}`
+> **catalog-bootstrap（catalog + glossary）是所有其它 Skill 的前置**：只有 `{{MODULE_CATALOG_PATH}}` + `{{GLOSSARY_PATH}}`
 > 先建好，后续 PRD 阶段的术语消歧与 Scope 守门才有可校验的基准。
-> 真实工程启动时，先按 Skill 0 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 Skill 0。
+> 真实工程启动时，先按 catalog-bootstrap 逐模块自举；后续日常需求迭代，只有新增模块 / 术语才回 catalog-bootstrap。
 
 **执行规则**：
 - 进入某阶段前，**必须完整读一遍对应 SKILL.md**。
@@ -144,7 +144,7 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 
 允许在不改 `framework/` 的前提下挂载业务 Skill / knowledge / phase 前后钩子。
 
-- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 SKILL 00 §5.4.6 自动从 `framework/skills/00-framework-init/templates/extension-skeleton/` 拷出；UPDATE 路径见 `framework/MIGRATION.md` v2.5。
+- **落点**：`doc/extensions/`（可由 `framework.config.json → paths.extension_dir` 覆盖）；首份骨架由 S3 执行自动从 `framework/skills/project/framework-init/templates/extension-skeleton/` 拷出；UPDATE 路径见 `framework/MIGRATION.md` v2.5。
 - **协议 SSOT**：[instance-extension-manifest.schema.yaml](framework/specs/instance-extension-manifest.schema.yaml) · [lifecycle-hooks-schema.yaml](framework/specs/lifecycle-hooks-schema.yaml) · [workflow-schema.json](framework/specs/workflow-schema.json)；三层叠加见 [docs/concepts/extensibility.md](framework/docs/concepts/extensibility.md)。
 
 **何时主动询问用户**（**仅询问**，不改 manifest、不给 y/n diff；本会话被 n 后不再就同一资料二次发问）：
@@ -154,7 +154,7 @@ slash、技能跳板、或直链 `framework/skills/<n>/SKILL.md` 等形态的**�
 3. 本会话反复 `Read` 同一资料 **≥ 3 次**，且不属于 `profile-addendum.md` / [{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}}) / [{{GLOSSARY_PATH}}]({{GLOSSARY_PATH}}) 覆盖范围；
 4. 用户希望「每次进某 phase 前/后做某件事」→ lifecycle hook 本职。
 
-**隔离**：业务名词/模块归属 → catalog/glossary（Skill 0）；带流程/钩子/校验 → `doc/extensions/`。
+**隔离**：业务名词/模块归属 → catalog/glossary（catalog-bootstrap）；带流程/钩子/校验 → `doc/extensions/`。
 
 ---
 
@@ -269,7 +269,7 @@ cd framework/harness && npx ts-node harness-runner.ts --clear-state
 - 全链路验证说明：[framework/harness/harness-runner.ts](framework/harness/harness-runner.ts) 及各 `framework/skills/<n>/SKILL.md`
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
 - 功能需求产物目录（扁平归档 PRD / design / contracts / acceptance / review-report / test-plan 等）：[{{FEATURES_DIR}}]({{FEATURES_DIR}})
-- Skill 0 全局阶段 harness 命令（**无 `--feature`**）：
+- catalog-bootstrap 全局阶段 harness 命令（**无 `--feature`**）：
 
  ```bash
  cd framework/harness && npx ts-node harness-runner.ts --phase catalog

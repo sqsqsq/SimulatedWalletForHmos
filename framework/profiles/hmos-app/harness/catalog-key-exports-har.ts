@@ -10,6 +10,7 @@ import * as path from 'path';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import type { ModuleCatalog } from '../../../harness/scripts/utils/catalog-parser';
 import { relCatalog } from '../../../harness/config';
+import { isLibraryFormat } from './har-export-resolve';
 
 function ruleDesc(ctx: CheckContext, id: string): string {
   const checks = ctx.phaseRule.traceability_checks as Record<string, { description?: string }> | undefined;
@@ -52,7 +53,7 @@ export function checkKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCa
   const affected = new Set<string>([relCatalog(ctx.projectRoot)]);
 
   for (const m of catalog.modules) {
-    if (m.format !== 'HAR') continue;
+    if (!isLibraryFormat(m.format)) continue;
     if (!m.entry_file) continue;
 
     const entryPath = path.join(ctx.projectRoot, m.entry_file);
@@ -99,7 +100,7 @@ export function checkKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCa
       description: ruleDesc(ctx, 'key_exports_fresh_vs_index'),
       severity: 'MAJOR',
       status: 'PASS',
-      details: '所有 HAR 模块的 key_exports 与导出入口声明的 top-level export 一致。',
+      details: '所有 HAR/HSP 库模块的 key_exports 与导出入口声明的 top-level export 一致。',
     }];
   }
 
@@ -112,7 +113,7 @@ export function checkKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCa
     details: `${stale.length} 个模块的 key_exports 与导出入口漂移：\n  - ${stale.join('\n  - ')}`,
     suggestion:
       '对每个漂移模块 <M> 跑 `/catalog-bootstrap <M>` 进入 UPDATE 模式刷新画像；\n' +
-      'Skill 0 Step 5.1.B 会给出字段级 diff，确认后 `y` 替换旧画像。',
+      'catalog-bootstrap Step 5.1.B 会给出字段级 diff，确认后 `y` 替换旧画像。',
     affected_files: Array.from(affected),
   }];
 }

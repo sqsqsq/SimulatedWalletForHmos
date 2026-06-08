@@ -1,11 +1,11 @@
 // ============================================================================
-// canonical-gitignore.ts — init 约定 .gitignore SSOT（与 SKILL 00 §5.4.5 对齐）
+// canonical-gitignore.ts — init 约定 .gitignore SSOT（与 S3 ensure-gitignore 对齐）
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-/** SKILL 5.4.5.1 canonical patterns（路径相对实例工程根，POSIX 斜杠） */
+/** canonical .gitignore patterns（路径相对实例工程根，POSIX 斜杠） */
 export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework/harness/node_modules/',
   'framework/harness/dist/',
@@ -15,6 +15,8 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   'framework/harness/package-lock.json',
   'framework/harness/state/*',
   '!framework/harness/state/.gitkeep',
+  'framework/harness/**/ohosTest/',
+  'framework/harness/**/test/dag/',
   'doc/catalog-staging/',
   'doc/glossary-staging/',
   '.framework-backup/',
@@ -23,9 +25,10 @@ export const CANONICAL_IGNORE_PATTERNS: ReadonlyArray<string> = [
   '**/tmp_hypium/',
   '/doc/app-snapshot-cache/',
   '/doc/features/_adhoc/',
+  'framework.local.json',
 ];
 
-/** SKILL 5.4.5.2 等价覆盖映射 */
+/** 等价覆盖映射（宽规则覆盖 canonical pattern） */
 export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
   'framework/harness/node_modules/': [
     '**/node_modules',
@@ -58,6 +61,14 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     'framework/harness/state/',
   ],
   '!framework/harness/state/.gitkeep': ['!framework/harness/state/.gitkeep'],
+  'framework/harness/**/ohosTest/': [
+    'framework/harness/**/ohosTest/',
+    'framework/harness/**/ohosTest',
+  ],
+  'framework/harness/**/test/dag/': [
+    'framework/harness/**/test/dag/',
+    'framework/harness/**/test/dag',
+  ],
   'doc/catalog-staging/': ['doc/catalog-staging/', 'doc/catalog-staging', '**/catalog-staging/'],
   'doc/glossary-staging/': ['doc/glossary-staging/', 'doc/glossary-staging', '**/glossary-staging/'],
   '.framework-backup/': [
@@ -79,6 +90,7 @@ export const IGNORE_EQUIV_PATTERNS: Record<string, string[]> = {
     '/doc/app-snapshot-cache/',
   ],
   '/doc/features/_adhoc/': ['doc/features/_adhoc/', 'doc/features/_adhoc', '/doc/features/_adhoc/'],
+  'framework.local.json': ['framework.local.json'],
 };
 
 interface CanonicalSection {
@@ -98,14 +110,16 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
       'framework/harness/package-lock.json',
       'framework/harness/state/*',
       '!framework/harness/state/.gitkeep',
+      'framework/harness/**/ohosTest/',
+      'framework/harness/**/test/dag/',
     ],
   },
   {
-    header: '# Skill 0 staging: catalog / glossary drafts before merge into SSOT',
+    header: '# catalog-bootstrap staging: catalog / glossary drafts before merge into SSOT',
     patterns: ['doc/catalog-staging/', 'doc/glossary-staging/'],
   },
   {
-    header: '# Framework auto-overwrite backup (managed by check-init / Skill 00)',
+    header: '# Framework auto-overwrite backup (managed by check-init / framework-init)',
     patterns: ['.framework-backup/'],
   },
   {
@@ -113,8 +127,12 @@ const CANONICAL_SECTIONS: readonly CanonicalSection[] = [
     patterns: ['doc/features/*/*/reports/*'],
   },
   {
-    header: '# Skill 6 device-testing local artifacts (profile-dependent; dirs may not exist yet)',
+    header: '# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)',
     patterns: ['**/.hylyre/', '**/tmp_hypium/', '/doc/app-snapshot-cache/', '/doc/features/_adhoc/'],
+  },
+  {
+    header: '# Personal framework settings (per developer, gitignored)',
+    patterns: ['framework.local.json'],
   },
 ];
 

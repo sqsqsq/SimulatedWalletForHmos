@@ -1,5 +1,5 @@
 ---
-description: 进入技术设计阶段（Skill 2）
+description: 进入技术设计阶段（requirement-design）
 argument-hint: <feature-name>
 ---
 
@@ -7,12 +7,12 @@ argument-hint: <feature-name>
 
 **用户输入**：$ARGUMENTS
 
-> **BLOCKER — 本 Skill registry 确认点（Claude Code）**：
-> 凡 `design.scope_expansion` / `design.ok_to_code` / `design.arch_impact` / `design.split_table`，须**先**调 **AskUserQuestion**，
-> options 逐字引用 [../rules/widget-options/skill2-design-options.md](../rules/widget-options/skill2-design-options.md)；
-> **同轮仍附** portable 编号；`freeform_approval` 须先展示完整提议再 widget。
-> 会话级 SSOT：[../rules/confirmation-ux.md](../rules/confirmation-ux.md)。
+> **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
+> `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
+> 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
+
+> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 
-完整 Skill 定义请阅读：**[framework/skills/2-requirement-design/SKILL.md](../../framework/skills/2-requirement-design/SKILL.md)**
+完整 Skill 定义请阅读：**[framework/skills/feature/requirement-design/SKILL.md](../../framework/skills/feature/requirement-design/SKILL.md)**

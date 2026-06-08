@@ -5,7 +5,7 @@
 //
 // Pass 1 — BACKFILL：只补缺、不覆盖（BACKFILL_FIELDS）
 // Pass 2 — MIGRATION：modernize 已有 key（MIGRATION_RULES，如 project_type → sub_variant）
-// Pass 3 — CONFIRM：行为级变更，须 Skill 00 Q1.C 等显式 y 后才写入（CONFIRM_FIELDS）
+// Pass 3 — CONFIRM：行为级变更，须 S2 CONFIRM pass（`--confirm-*` flag）后才写入（CONFIRM_FIELDS）
 //
 // 用法：
 //   node framework/harness/scripts/merge-framework-config.mjs [--dry-run] [--apply] [--config <path>]
@@ -21,13 +21,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
-  BACKFILL_FIELDS,
   CONFIRM_FIELDS,
   MIGRATION_RULES,
   detectMissingBackfillFields,
   detectMissingConfirmFields,
   detectPendingMigrations,
+  getEffectiveBackfillFields,
   mergeFrameworkConfig,
+  resolveProfileNameFromRaw,
   MissingFieldEntry,
   PendingConfirmEntry,
   PendingMigrationEntry,
@@ -76,6 +77,9 @@ function parseArgs(argv: string[]): CliArgs {
         a.slice('--confirm-reports-dir-pattern='.length),
         '--confirm-reports-dir-pattern',
       );
+      process.stderr.write(
+        '[merge-framework-config] reports_dir_pattern 已自动 BACKFILL，--confirm-reports-dir-pattern 被忽略\n',
+      );
     } else if (a === '--help' || a === '-h') {
       process.stdout.write(USAGE + '\n');
       process.exit(0);
@@ -88,12 +92,12 @@ function parseArgs(argv: string[]): CliArgs {
   return { apply, dryRun, configPath, confirmAnswers };
 }
 
-const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>] [--confirm-reports-dir-pattern=y|n]
+const USAGE = `用法: merge-framework-config [--dry-run] [--apply] [--config <path>]
 
   --dry-run                         打印三 pass 诊断与合并预览，不写盘（默认）
   --apply                           先备份到 <repo>/.framework-backup/<UTC>/，再写回
   --config <path>                   指定 framework.config.json 路径
-  --confirm-reports-dir-pattern=y|n Skill 00 Q1.C 答复；y 写入 paths.reports_dir_pattern`;
+  --confirm-reports-dir-pattern=y|n （deprecated，no-op；reports_dir_pattern 已自动 BACKFILL）`;
 
 function readConfig(p: string): { raw: unknown; text: string } {
   if (!fs.existsSync(p)) fail(`找不到 framework.config.json：${p}`);
@@ -180,14 +184,17 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const { raw, text: originalText } = readConfig(args.configPath);
 
-  const missing = detectMissingBackfillFields(raw);
+  const profileName = resolveProfileNameFromRaw(raw);
+  const effectiveBackfill = getEffectiveBackfillFields(profileName);
+  const missing = detectMissingBackfillFields(raw, profileName);
   const pendingMigrations = detectPendingMigrations(raw);
   const pendingConfirm = detectMissingConfirmFields(raw);
 
   process.stdout.write(`\n=== merge-framework-config ===\n`);
   process.stdout.write(`config: ${args.configPath}\n`);
   process.stdout.write(`mode: ${args.apply ? 'apply' : 'dry-run'}\n`);
-  process.stdout.write(`backfill whitelist size: ${BACKFILL_FIELDS.length}\n`);
+  process.stdout.write(`profile: ${profileName}\n`);
+  process.stdout.write(`backfill whitelist size: ${effectiveBackfill.length}\n`);
   process.stdout.write(`migration rules: ${MIGRATION_RULES.length}\n`);
   process.stdout.write(`confirm fields: ${CONFIRM_FIELDS.length}\n`);
   process.stdout.write(`missing backfill fields: ${missing.length}\n`);
@@ -209,22 +216,13 @@ function main(): void {
   process.stdout.write(formatMissingTable(missing) + '\n\n');
   process.stdout.write('【Pass 2 · MIGRATION】待迁移规则：\n');
   process.stdout.write(formatMigrationTable(pendingMigrations) + '\n\n');
-  process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 Q1.C 等显式 y 才写入）：\n');
+  process.stdout.write('【Pass 3 · CONFIRM】待确认字段（须 CONFIRM pass 显式 y 才写入）：\n');
   process.stdout.write(formatConfirmTable(pendingConfirm) + '\n\n');
-
-  if (
-    pendingConfirm.length > 0 &&
-    args.confirmAnswers.reports_dir_pattern === undefined &&
-    args.apply
-  ) {
-    process.stdout.write(
-      '提示：paths.reports_dir_pattern 未通过 --confirm-reports-dir-pattern=y 确认，Pass 3 跳过写入。\n\n',
-    );
-  }
 
   const { merged, backfillReport, migrationReport, confirmReport } = mergeFrameworkConfig(
     raw,
     args.confirmAnswers,
+    profileName,
   );
   const mergedText = formatJson(merged);
 

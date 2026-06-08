@@ -1,7 +1,7 @@
 // ============================================================================
 // Init 阶段脚本 Harness — check-init.ts
 // ============================================================================
-// 作用对象: framework-init Skill 0.3 体检表 11 项产物。
+// 作用对象: framework-init S1 探测体检（check-init 11 项）产物。
 //
 // 设计要点（v2.6 弱模型工作流强制门 · L2+）:
 //   - 11 项 MISSING / EMPTY / POPULATED 判定全部由本脚本基于模板感知比对
@@ -9,11 +9,13 @@
 //   - 文本模板项使用 EOL-aware 比对：仅 CRLF/LF 不同不算用户漂移；
 //   - 双输出：
 //       (a) JSON   → framework/harness/reports/_global/init/<timestamp>/
-//                    check-init.json （机器读，给 SKILL 0.3.2 推策略）
-//       (b) stdout → SKILL 0.3.3 体检表（含 `update_policy` 列；#3 可按文件展开，总行数≥基线；
+//                    check-init.json （机器读，供 S1 探测推策略）
+//       (b) stdout → check-init 体检表（含 `update_policy` 列；#3 可按文件展开，总行数≥基线；
 //                     AI 仅原样搬运）
 //   - 由 PhaseChecker 接口对齐 harness-runner.ts 调度（与 catalog/glossary/
 //     docs 三个全局阶段同型），不单独跑 main()。
+//   - **只读 probe**：本脚本体检阶段零项目根写盘；gitignore / mechanism sync /
+//     deprecated cleanup 等副作用仅由 init-orchestrate S3 任务执行。
 //
 // 元阶段三件套**刻意不对称**：
 //   - 不接 verify-init.md（init 阶段 AI 语义审无可审）
@@ -27,8 +29,15 @@ import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import { frameworkLogicalRelPath } from '../repo-layout';
+import {
+  buildAgentsTemplateVars,
+  type LegacyRenderEnv,
+  renderFromLegacyEnv,
+} from './utils/template-renderer';
 import {
   detectMissingBackfillFields,
+  resolveProfileNameFromRaw,
   detectMissingConfirmFields,
   detectPendingMigrations,
   MissingFieldEntry,
@@ -46,6 +55,7 @@ import {
   materializeAgentBundleSkills,
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
+import { resolveSkillPath } from './utils/resolve-skill-path';
 import {
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
@@ -54,7 +64,6 @@ import {
   listMissingCanonicalPatterns,
   parseGitignoreLines,
   patternIsCovered,
-  type GitignoreEnsureResult,
 } from './utils/canonical-gitignore';
 
 // --------------------------------------------------------------------------
@@ -73,14 +82,14 @@ export interface Inspection {
   hash_template: string | null;        // sha256；非比对项为 null
   hash_target: string | null;
   diff_summary: string | null;         // POPULATED 项给前 50 行 unified-style diff
-  planned_strategy: string;            // 命中 SKILL 0.3.2 哪一行的策略文案
+  planned_strategy: string;            // check-init 策略矩阵文案
   diagnosis: string;                   // 本行的诊断短句（写进 stdout 表）
   /** 体检第 3 项逐文件展开时：该模板文件所属 adapter 段的 update_policy；其余行为 null */
   update_policy?: AdapterUpdatePolicy | null;
   /**
    * 第 1 项专用：UPDATE 模式下 framework.config.json 缺失的白名单字段（点分路径）。
    * 来源：scripts/utils/config-field-merger.ts BACKFILL_FIELDS。
-   * 当本字段非空时，Skill 00 §5.1 应触发 Q1.A「字段补缺合并」子问题；
+   * 当本字段非空时，S2/S3 应挂 `backfill-config` 任务并调用 merge-framework-config。
    * 推荐执行：`cd <repo-root> && node framework/harness/scripts/merge-framework-config.mjs --apply`（cwd 契约见 framework/skills/reference/harness-cli-cwd.md）。
    * CREATE 模式（cfg 不存在）或非 POPULATED 状态下为 null / 不设置。
    */
@@ -91,10 +100,15 @@ export interface Inspection {
    */
   migration_keys?: string[] | null;
   /**
-   * 第 1 项专用：UPDATE 模式下待 Q1.C 等确认的 CONFIRM_FIELDS confirmKey 列表。
+   * 第 1 项专用：UPDATE 模式下待 CONFIRM pass 的 CONFIRM_FIELDS confirmKey 列表。
    * 来源：scripts/utils/config-field-merger.ts detectMissingConfirmFields。
    */
   confirm_keys?: string[] | null;
+  /**
+   * 第 1 项专用：用户必填字段不完整（project_name / architecture），须 Skill 交互修复。
+   * 与「文件空壳」类 EMPTY 不同：不得被 planner 当作 satisfied/skip。
+   */
+  config_user_required_gap?: boolean;
 }
 
 export interface CheckInitReport {
@@ -108,6 +122,13 @@ export interface CheckInitReport {
   /** init 通过后自动对齐 auto_overwrite 机制产物时的备份目录（相对实例根），无对齐时为 null */
   mechanism_backup_rel_dir?: string | null;
   mechanism_synced_files?: number;
+  /** UPDATE 模式下 deprecated_artifacts backup_delete 记录 */
+  deprecated_artifacts_cleaned?: Array<{
+    path: string;
+    action: string;
+    reason: string;
+    backup_path: string | null;
+  }>;
   /** 体检前 ensureCanonicalGitignore 的追加摘要（无写入时为 null） */
   gitignore_sync?: { created: boolean; added: string[] } | null;
 }
@@ -308,7 +329,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     outerLayersLen: Array.isArray(outerLayers) ? outerLayers.length : 0,
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
-    missingBackfillFields: detectMissingBackfillFields(raw),
+    missingBackfillFields: detectMissingBackfillFields(raw, resolveProfileNameFromRaw(raw)),
     pendingMigrations: detectPendingMigrations(raw),
     missingConfirmFields: detectMissingConfirmFields(raw),
   };
@@ -346,6 +367,10 @@ interface AdapterDescriptor {
   templateFiles: AdapterTemplateFile[];
   /** adapter.yaml 中声明的所有 template 路径，用于 template_files_resolvable */
   declaredTemplatePaths: Array<{ field: string; abs: string; exists: boolean }>;
+  /** deprecated_artifacts 列表（check-init UPDATE 时 backup_delete） */
+  deprecatedArtifacts: Array<{ path: string; action: string; reason: string }>;
+  /** 解析后的 adapter.yaml 原始对象（供 target root 等推导） */
+  rawConfig: Record<string, unknown> | null;
 }
 
 /**
@@ -372,6 +397,115 @@ export function parseUpdatePolicy(raw: unknown): AdapterUpdatePolicy {
   return 'prompt_if_changed';
 }
 
+function resolveAdapterTargetRoot(cfg: Record<string, unknown> | null): string | null {
+  if (!cfg) return null;
+  const candidates = [
+    (cfg.rules as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.hooks as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.commands as { target_dir?: string } | undefined)?.target_dir,
+  ].filter((d): d is string => typeof d === 'string' && d.includes('/'));
+  for (const d of candidates) {
+    const posix = d.replace(/\\/g, '/');
+    const idx = posix.lastIndexOf('/');
+    if (idx > 0) return posix.slice(0, idx);
+  }
+  return null;
+}
+
+function appendInteractionRendererRule(
+  desc: AdapterDescriptor,
+  cfg: Record<string, unknown>,
+  adapterDir: string,
+): void {
+  const uc = cfg.user_confirmation as Record<string, unknown> | undefined;
+  if (!uc || typeof uc !== 'object') return;
+  const ruleRel = uc.interaction_renderer_rule;
+  if (typeof ruleRel !== 'string' || !ruleRel.trim()) return;
+  const rulesTarget = (cfg.rules as { target_dir?: string; update_policy?: string } | undefined)?.target_dir;
+  if (!rulesTarget) return;
+
+  const tplAbs = path.join(adapterDir, ruleRel);
+  const fileName = path.basename(ruleRel);
+  const targetRel = toPosix(path.join(rulesTarget, fileName));
+  if (desc.templateFiles.some(f => f.targetRel === targetRel)) return;
+
+  desc.declaredTemplatePaths.push({
+    field: 'user_confirmation.interaction_renderer_rule',
+    abs: tplAbs,
+    exists: existsAbs(tplAbs),
+  });
+  desc.templateFiles.push({
+    targetRel,
+    templateRel: toPosix(path.join('agents', desc.name, ruleRel)),
+    kind: 'verbatim',
+    origin: 'user_confirmation.interaction_renderer_rule',
+    update_policy: parseUpdatePolicy(
+      (cfg.rules as { update_policy?: string } | undefined)?.update_policy,
+    ),
+  });
+}
+
+function copyPathRecursive(srcAbs: string, destAbs: string): void {
+  const st = fs.statSync(srcAbs);
+  if (st.isDirectory()) {
+    fs.mkdirSync(destAbs, { recursive: true });
+    for (const ent of fs.readdirSync(srcAbs, { withFileTypes: true })) {
+      copyPathRecursive(path.join(srcAbs, ent.name), path.join(destAbs, ent.name));
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+  fs.copyFileSync(srcAbs, destAbs);
+}
+
+function removePathRecursive(abs: string): void {
+  if (!fs.existsSync(abs)) return;
+  fs.rmSync(abs, { recursive: true, force: true });
+}
+
+export function applyDeprecatedArtifactsCleanup(
+  projectRoot: string,
+  adapter: AdapterDescriptor,
+  mode: InitMode,
+): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
+  const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
+  if (mode !== 'update') {
+    return { cleaned, backupRelDir: null };
+  }
+  const entries = adapter.deprecatedArtifacts;
+  if (!entries.length) return { cleaned, backupRelDir: null };
+
+  const root = resolveAdapterTargetRoot(adapter.rawConfig);
+  if (!root) return { cleaned, backupRelDir: null };
+
+  let backupRelDir: string | null = null;
+  for (const entry of entries) {
+    if (entry.action !== 'backup_delete') continue;
+    const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
+    const absPath = path.join(projectRoot, root, relPath);
+    if (!fs.existsSync(absPath)) continue;
+
+    if (!backupRelDir) {
+      const stamp = nowStamp();
+      backupRelDir = `.framework-backup/${stamp}`;
+      fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
+    }
+    const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
+    copyPathRecursive(absPath, backupAbs);
+    removePathRecursive(absPath);
+    cleaned.push({
+      path: toPosix(path.join(root, relPath)),
+      action: entry.action,
+      reason: entry.reason,
+      backup_path: toPosix(path.join(backupRelDir, root, relPath)),
+    });
+    process.stderr.write(
+      `[check-init] deprecated artifact backup_delete: ${root}/${relPath} → ${backupRelDir}/${root}/${relPath}\n`,
+    );
+  }
+  return { cleaned, backupRelDir };
+}
+
 function loadAdapter(adapter: string): AdapterDescriptor {
   const adapterDir = path.join(FRAMEWORK_ROOT, 'agents', adapter);
   const yamlPath = path.join(adapterDir, 'adapter.yaml');
@@ -383,6 +517,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     entryFile: null,
     templateFiles: [],
     declaredTemplatePaths: [],
+    deprecatedArtifacts: [],
+    rawConfig: null,
   };
   if (!desc.yamlExists) return desc;
 
@@ -404,6 +540,20 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     return desc;
   }
   desc.yamlParseable = true;
+  desc.rawConfig = cfg as Record<string, unknown>;
+
+  if (Array.isArray(cfg.deprecated_artifacts)) {
+    for (const item of cfg.deprecated_artifacts) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (typeof row.path !== 'string' || typeof row.action !== 'string') continue;
+      desc.deprecatedArtifacts.push({
+        path: row.path,
+        action: row.action,
+        reason: typeof row.reason === 'string' ? row.reason : '',
+      });
+    }
+  }
 
   // ----- agent_entry_file（template_path 相对 framework/，target_path 相对实例根）
   const entry = cfg.agent_entry_file;
@@ -510,6 +660,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
     });
   }
 
+  appendInteractionRendererRule(desc, cfg as Record<string, unknown>, adapterDir);
+
   return desc;
 }
 
@@ -535,7 +687,7 @@ function resolveBundleForInitInspect(
     root: '.agents',
     skillsDir: '.agents/skills',
     rulesDir: '.agents/rules',
-    skillMode: 'inline',
+    skillMode: 'bridge',
   };
 }
 
@@ -611,9 +763,10 @@ function appendInlineSkillMaterializedTemplates(
   updatePolicy: AdapterUpdatePolicy,
 ): void {
   for (const skillDir of listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT)) {
+    const skillMdRel = resolveSkillPath(FRAMEWORK_ROOT, skillDir).skillMdFrameworkRel;
     desc.templateFiles.push({
       targetRel: `${bundle.skillsDir}/${skillDir}/SKILL.md`,
-      templateRel: toPosix(path.join('skills', skillDir, 'SKILL.md')),
+      templateRel: toPosix(skillMdRel),
       kind: 'materialized',
       skillDir,
       origin: `materialize:${skillDir}`,
@@ -629,6 +782,12 @@ export function applyGenericAdapterBundle(
   desc.templateFiles = desc.templateFiles.filter(
     f => !f.origin.startsWith('rules.template_dir') && !f.origin.startsWith('generic.'),
   );
+  for (const f of desc.templateFiles) {
+    if (f.origin === 'user_confirmation.interaction_renderer_rule') {
+      const fileName = path.basename(f.targetRel);
+      f.targetRel = toPosix(path.join(bundle.rulesDir, fileName));
+    }
+  }
   let rulesPolicy: AdapterUpdatePolicy = 'prompt_if_changed';
   try {
     const rulesRaw = (YAML.parse(fs.readFileSync(desc.yamlPath, 'utf8')) as {
@@ -650,75 +809,52 @@ export function applyGenericAdapterBundle(
 function applyAgentBundleInlineSync(
   projectRoot: string,
   bundle: ResolvedAgentBundlePaths,
-): { syncedFiles: number } {
-  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
-    return { syncedFiles: 0 };
+): {
+  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
+  syncedFiles: number;
+} {
+  const dirs = listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT);
+  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
+  let syncedFiles = 0;
+
+  for (const dir of dirs) {
+    const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`.replace(/\\/g, '/');
+    const tgAbs = path.join(projectRoot, ...targetRel.split('/'));
+    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir, {
+      projectRoot,
+      stubTargetRelPosix: targetRel,
+    });
+    const payload = Buffer.from(body, 'utf-8');
+
+    if (!fs.existsSync(tgAbs)) {
+      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
+      fs.writeFileSync(tgAbs, payload);
+      syncedFiles++;
+      results.push({ targetRel, effect: 'created' });
+      continue;
+    }
+
+    const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
+    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+      results.push({ targetRel, effect: 'unchanged' });
+      continue;
+    }
+
+    fs.writeFileSync(tgAbs, payload);
+    syncedFiles++;
+    results.push({ targetRel, effect: 'updated' });
   }
-  const outcome = materializeAgentBundleSkills({
-    projectRoot,
-    frameworkDir: FRAMEWORK_ROOT,
-    bundle,
-    mode: 'inline',
-  });
-  return { syncedFiles: outcome.filesWritten.length };
+
+  return { results, syncedFiles };
 }
+
+export { applyAgentBundleInlineSync };
 
 // --------------------------------------------------------------------------
 // 占位符渲染
 // --------------------------------------------------------------------------
 
-interface RenderEnv {
-  agent_entry_file: string;
-  project_name: string;
-  project_type: string;
-  project_type_label: string;
-  agent_adapter: string;
-  project_profile_name: string;
-  project_profile_sub_variant: string;
-  architecture_summary: string;
-  architecture_md_path: string;
-  module_catalog_path: string;
-  glossary_path: string;
-  features_dir: string;
-  module_inner_layers_csv: string;
-  cross_module_exports_file: string;
-  profile_agent_ssot_rows: string;
-  profile_agent_guardrails: string;
-}
-
-function projectTypeLabel(kind: string): string {
-  if (kind === 'app') return '应用工程';
-  if (kind === 'atomic_service') return '元服务工程';
-  return kind;
-}
-
-function buildArchitectureSummary(arch: any): string {
-  if (!arch || typeof arch !== 'object') return '<待生成>';
-  const layers: any[] = Array.isArray(arch.outer_layers) ? arch.outer_layers : [];
-  const inner: any[] = Array.isArray(arch.module_inner_layers) ? arch.module_inner_layers : [];
-  const ids = layers.map(l => l?.id).filter(Boolean);
-  const exitFile = arch.cross_module_exports_file ?? 'index.ets';
-  const layerPart = ids.length === 0
-    ? '0 个外层'
-    : `${ids.length} 个外层（${ids[0]}…${ids[ids.length - 1]}）`;
-  const innerPart = inner.length === 0
-    ? '模块内 0 层'
-    : `模块内 ${inner.length} 层 ${inner.join('→')}`;
-  return `${layerPart}，${innerPart}，跨模块出口 ${exitFile}`;
-}
-
-function loadProfileAgentsPartial(profileName: string, fileBase: string): string {
-  const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
-  const candidates = [
-    path.join(FRAMEWORK_ROOT, 'profiles', name, 'templates', 'agents-md', `${fileBase}.partial.md`),
-    path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'templates', 'agents-md', `${fileBase}.partial.md`),
-  ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
-    return fs.readFileSync(p, 'utf8').replace(/\s+$/, '');
-  }
-  return '';
-}
+type RenderEnv = LegacyRenderEnv;
 
 function projectProfileNameFromRaw(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return 'hmos-app';
@@ -733,13 +869,13 @@ function projectProfileNameFromRaw(raw: unknown): string {
   return 'hmos-app';
 }
 
-/** 与 Skill 00 Step 5.2 / init 体检第 4 项一致：profile doc-skeletons → generic → Skill 模板 */
+/** 与 S3 doc 骨架任务 / init 体检第 4 项一致：profile doc-skeletons → generic → Skill 模板 */
 function resolveArchitectureSkeletonSource(profileName: string): { tplRel: string; tplAbs: string } {
   const name = profileName.trim() !== '' ? profileName.trim() : 'hmos-app';
   const orderedAbs = [
     path.join(FRAMEWORK_ROOT, 'profiles', name, 'doc-skeletons', 'architecture.md.skeleton.md'),
     path.join(FRAMEWORK_ROOT, 'profiles', 'generic', 'doc-skeletons', 'architecture.md.skeleton.md'),
-    path.join(FRAMEWORK_ROOT, 'skills', '00-framework-init', 'templates', 'architecture.md.skeleton.md'),
+    path.join(FRAMEWORK_ROOT, 'skills', 'project', 'framework-init', 'templates', 'architecture.md.skeleton.md'),
   ];
   for (const abs of orderedAbs) {
     if (fs.existsSync(abs)) {
@@ -747,12 +883,13 @@ function resolveArchitectureSkeletonSource(profileName: string): { tplRel: strin
     }
   }
   const fallbackAbs = orderedAbs[orderedAbs.length - 1]!;
-  return { tplRel: 'skills/00-framework-init/templates/architecture.md.skeleton.md', tplAbs: fallbackAbs };
+  return { tplRel: 'skills/project/framework-init/templates/architecture.md.skeleton.md', tplAbs: fallbackAbs };
 }
 
 function buildRenderEnv(
   cfg: RawFrameworkConfig,
   adapter: AdapterDescriptor | null,
+  projectRoot?: string,
 ): RenderEnv | null {
   if (!cfg.parseable || !cfg.raw || !adapter || !adapter.entryFile) return null;
   const raw = cfg.raw;
@@ -761,49 +898,50 @@ function buildRenderEnv(
       ? (raw.project_profile as Record<string, unknown>)
       : {};
   let profileName = 'hmos-app';
-  let subVariant = DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY;
   if (typeof pp.name === 'string' && pp.name.trim() !== '') profileName = pp.name.trim();
-  if (typeof pp.sub_variant === 'string' && pp.sub_variant.trim() !== '') subVariant = pp.sub_variant.trim();
+
+  const vars = buildAgentsTemplateVars(raw, {
+    entryFile: adapter.entryFile.targetRel,
+    projectRoot: projectRoot ?? process.cwd(),
+    frameworkRoot: FRAMEWORK_ROOT,
+    agentAdapter: typeof raw.agent_adapter === 'string' ? raw.agent_adapter : adapter.name,
+    paths: {
+      architecture_md: cfg.paths.architecture_md,
+      module_catalog: cfg.paths.module_catalog,
+      glossary: cfg.paths.glossary,
+      features_dir: cfg.paths.features_dir,
+    },
+  });
+
+  const arch = raw.architecture as Record<string, unknown> | undefined;
   return {
-    agent_entry_file: adapter.entryFile.targetRel,
-    project_name: typeof raw.project_name === 'string' ? raw.project_name : '',
-    project_type: typeof raw.project_type === 'string' ? raw.project_type : 'app',
-    project_type_label: projectTypeLabel(raw.project_type ?? 'app'),
-    agent_adapter: typeof raw.agent_adapter === 'string' ? raw.agent_adapter : adapter.name,
-    project_profile_name: profileName,
-    project_profile_sub_variant: subVariant,
-    architecture_summary: buildArchitectureSummary(raw.architecture),
-    architecture_md_path: cfg.paths.architecture_md,
-    module_catalog_path: cfg.paths.module_catalog,
-    glossary_path: cfg.paths.glossary,
-    features_dir: cfg.paths.features_dir,
-    module_inner_layers_csv: Array.isArray(raw?.architecture?.module_inner_layers)
-      ? raw.architecture.module_inner_layers.join(' / ')
+    agent_entry_file: vars.AGENT_ENTRY_FILE,
+    project_name: vars.PROJECT_NAME,
+    project_type: vars.PROJECT_TYPE,
+    project_type_label: vars.PROJECT_TYPE_LABEL,
+    agent_adapter: vars.AGENT_ADAPTER,
+    project_profile_name: vars.PROJECT_PROFILE_NAME,
+    project_profile_sub_variant: vars.PROJECT_PROFILE_SUB_VARIANT,
+    architecture_summary: vars.ARCHITECTURE_SUMMARY,
+    architecture_md_path: vars.ARCHITECTURE_MD_PATH,
+    module_catalog_path: vars.MODULE_CATALOG_PATH,
+    glossary_path: vars.GLOSSARY_PATH,
+    features_dir: vars.FEATURES_DIR,
+    module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
+      ? (arch.module_inner_layers as string[]).join(' / ')
       : 'shared / data / domain / presentation',
-    cross_module_exports_file: raw?.architecture?.cross_module_exports_file ?? 'index.ets',
-    profile_agent_ssot_rows: loadProfileAgentsPartial(profileName, 'agent-ssot-rows'),
-    profile_agent_guardrails: loadProfileAgentsPartial(profileName, 'agent-guardrails'),
+    cross_module_exports_file:
+      typeof arch?.cross_module_exports_file === 'string'
+        ? arch.cross_module_exports_file
+        : 'index.ets',
+    profile_agent_ssot_rows: vars.PROFILE_AGENT_SSOT_ROWS,
+    profile_agent_guardrails: vars.PROFILE_AGENT_GUARDRAILS,
+    extension_skill_section: vars.EXTENSION_SKILL_SECTION,
   };
 }
 
 function renderTemplate(text: string, env: RenderEnv): string {
-  return text
-    .replace(/\{\{AGENT_ENTRY_FILE\}\}/g, env.agent_entry_file)
-    .replace(/\{\{PROJECT_NAME\}\}/g, env.project_name)
-    .replace(/\{\{PROJECT_TYPE_LABEL\}\}/g, env.project_type_label)
-    .replace(/\{\{PROJECT_TYPE\}\}/g, env.project_type)
-    .replace(/\{\{AGENT_ADAPTER\}\}/g, env.agent_adapter)
-    .replace(/\{\{PROJECT_PROFILE_NAME\}\}/g, env.project_profile_name)
-    .replace(/\{\{PROJECT_PROFILE_SUB_VARIANT\}\}/g, env.project_profile_sub_variant)
-    .replace(/\{\{PROFILE_AGENT_SSOT_ROWS\}\}/g, env.profile_agent_ssot_rows)
-    .replace(/\{\{PROFILE_AGENT_GUARDRAILS\}\}/g, env.profile_agent_guardrails)
-    .replace(/\{\{ARCHITECTURE_SUMMARY\}\}/g, env.architecture_summary)
-    .replace(/\{\{ARCHITECTURE_MD_PATH\}\}/g, env.architecture_md_path)
-    .replace(/\{\{MODULE_CATALOG_PATH\}\}/g, env.module_catalog_path)
-    .replace(/\{\{GLOSSARY_PATH\}\}/g, env.glossary_path)
-    .replace(/\{\{FEATURES_DIR\}\}/g, env.features_dir)
-    .replace(/\{\{MODULE_INNER_LAYERS_CSV\}\}/g, env.module_inner_layers_csv)
-    .replace(/\{\{CROSS_MODULE_EXPORTS_FILE\}\}/g, env.cross_module_exports_file);
+  return renderFromLegacyEnv(text, env);
 }
 
 // --------------------------------------------------------------------------
@@ -818,25 +956,25 @@ interface InspectorEnv {
 }
 
 function strategyText(line: number, status: InspectionStatus): string {
-  // 与 SKILL 0.3.2 策略矩阵一一对应；保持简短便于 stdout 表显示。
+  // 与 init-orchestrate S3 任务名对齐；stdout 表「计划动作」列仅供人读。
   const m: Record<number, Record<InspectionStatus, string>> = {
     1: {
-      MISSING: 'Step 3.5 直接写',
-      EMPTY: '等同 MISSING（直接写）',
-      POPULATED: 'Step 3.5 前 diff + 用户 y（或与 Q1 决策一致的动作）',
+      MISSING: 'S3 ensure-config（Skill 提供 JSON）',
+      EMPTY: '等同 MISSING',
+      POPULATED: 'S2 init.task_decision → S3 ensure-config / merge',
     },
     2: {
-      MISSING: 'Step 4.1 直接写',
+      MISSING: 'S3 materialize-entry-file',
       EMPTY: '保留现有文件（不重写）',
-      POPULATED: 'Step 4.1 前 diff + 用户 y',
+      POPULATED: 'S2 init.task_decision → S3 materialize-entry-file',
     },
     3: {
-      MISSING: '直接拷贝',
+      MISSING: 'S3 materialize-adapter-file / 拷贝',
       EMPTY: '保留现有文件（不重写）',
-      POPULATED: '逐文件 diff + 用户 y（自建文件保留）',
+      POPULATED: 'S2 init.task_decision → S3 materialize-adapter-file',
     },
     4: {
-      MISSING: 'Step 5.2 写骨架',
+      MISSING: 'S3 write-architecture（Skill 骨架）',
       EMPTY: '保留现有文件（不重写）',
       POPULATED: '默认跳过（不重置用户已迭代文档）',
     },
@@ -861,19 +999,19 @@ function strategyText(line: number, status: InspectionStatus): string {
       POPULATED: '不进入、不扫描、不比对',
     },
     9: {
-      MISSING: 'Step 5.5 npm install',
+      MISSING: 'S3 harness-install',
       EMPTY: '不适用',
-      POPULATED: 'Step 5.5 幂等跳过',
+      POPULATED: 'S3 harness-install 幂等跳过',
     },
     10: {
-      MISSING: 'Step 5.6 探测并写入 installPath',
+      MISSING: '阶段入口 --ensure 内联 personal setup（含 setup.deveco_path）',
       EMPTY: '等同 MISSING',
-      POPULATED: 'Step 5.6 跳过',
+      POPULATED: 'framework.local.json 已配置，跳过',
     },
     11: {
-      MISSING: 'check-init 体检前已 ensureCanonicalGitignore（见 stderr / check-init.json）',
-      EMPTY: '等同 MISSING（体检前已 ensure）',
-      POPULATED: 'canonical 已齐备，跳过追加',
+      MISSING: 'init-orchestrate S3：ensure-gitignore 任务',
+      EMPTY: '等同 MISSING',
+      POPULATED: 'canonical 已齐备',
     },
   };
   return m[line][status];
@@ -884,7 +1022,7 @@ function strategyText3Template(status: InspectionStatus, policy: AdapterUpdatePo
   if (status === 'MISSING') return strategyText(3, 'MISSING');
   if (status === 'EMPTY') return strategyText(3, 'EMPTY');
   if (policy === 'auto_overwrite') {
-    return 'check-init PASS：自动备份至 .framework-backup/<ts>/ 后对齐模板';
+    return 'init-orchestrate S3：sync-auto-overwrite 任务（备份后对齐模板）';
   }
   return strategyText(3, 'POPULATED');
 }
@@ -936,6 +1074,28 @@ function inspect01(env: InspectorEnv): Inspection {
       confirm_keys: null,
     };
   }
+  const projectName =
+    env.cfg.raw &&
+    typeof (env.cfg.raw as { project_name?: unknown }).project_name === 'string'
+      ? String((env.cfg.raw as { project_name: string }).project_name).trim()
+      : '';
+  if (!projectName) {
+    return {
+      index: 1,
+      target_path: target,
+      template_source: null,
+      status: 'EMPTY',
+      hash_template: null,
+      hash_target: null,
+      diff_summary: null,
+      planned_strategy: strategyText(1, 'EMPTY'),
+      diagnosis: 'project_name 缺失或为空（须 Skill 交互补全，backfill 不静默造数）',
+      missing_keys: null,
+      migration_keys: null,
+      confirm_keys: null,
+      config_user_required_gap: true,
+    };
+  }
   if (env.cfg.outerLayersLen === 0) {
     return {
       index: 1,
@@ -950,10 +1110,11 @@ function inspect01(env: InspectorEnv): Inspection {
       missing_keys: null,
       migration_keys: null,
       confirm_keys: null,
+      config_user_required_gap: true,
     };
   }
   // POPULATED：进一步识别 UPDATE 模式下的「白名单字段缺失」，
-  // 供 Skill 00 §5.1 Q1.A 触发 merge-framework-config.mjs --apply。
+  // 供 S3 backfill-config 任务调用 merge-framework-config.mjs --apply。
   const missingPaths = env.cfg.missingBackfillFields.map(f => f.path);
   const migrationIds = env.cfg.pendingMigrations.map(m => m.id);
   const confirmKeys = env.cfg.missingConfirmFields.map(c => c.confirmKey);
@@ -971,7 +1132,7 @@ function inspect01(env: InspectorEnv): Inspection {
   }
   if (confirmKeys.length > 0) {
     parts.push(
-      `待确认 ${confirmKeys.length} 项（${confirmKeys.join(', ')}；Skill 00 Q1.C 推荐 y）`,
+      `待确认 ${confirmKeys.length} 项（${confirmKeys.join(', ')}；S2 CONFIRM pass 推荐 y）`,
     );
   }
   return {
@@ -1043,7 +1204,7 @@ function inspect02(env: InspectorEnv): Inspection {
   }
   if (env.renderEnv === null) {
     // CREATE 模式：framework.config.json 还没有，渲染不出来。
-    // 与 SKILL 0.3.2 第 2 行 MISSING 动作一致——按 POPULATED 处理（已有内容但
+    // 与 check-init 策略矩阵第 2 行 MISSING 动作一致——按 POPULATED 处理（已有内容但
     // 无法证明等同于默认渲染骨架），交给用户决策是否覆盖。
     return {
       index: 2,
@@ -1136,7 +1297,13 @@ function inspect03(env: InspectorEnv): Inspection[] {
     if (f.kind === 'materialized' && f.skillDir) {
       let expectedBuf: Buffer;
       try {
-        expectedBuf = Buffer.from(materializeInlineSkillMarkdown(FRAMEWORK_ROOT, f.skillDir), 'utf8');
+        expectedBuf = Buffer.from(
+          materializeInlineSkillMarkdown(FRAMEWORK_ROOT, f.skillDir, {
+            projectRoot: env.projectRoot,
+            stubTargetRelPosix: f.targetRel.replace(/\\/g, '/'),
+          }),
+          'utf8',
+        );
       } catch (e) {
         fileRows.push({
           f,
@@ -1459,7 +1626,7 @@ function inspect06(env: InspectorEnv): Inspection {
 function inspect07(env: InspectorEnv): Inspection {
   const targetRel = env.cfg.paths.glossary_seed;
   const targetAbs = path.join(env.projectRoot, targetRel);
-  const tplRel = 'skills/00-framework-init/templates/glossary-seed.skeleton.txt';
+  const tplRel = 'skills/project/framework-init/templates/glossary-seed.skeleton.txt';
   const tplAbs = path.join(FRAMEWORK_ROOT, tplRel);
 
   const tgBuf = safeReadBuffer(targetAbs);
@@ -1579,7 +1746,7 @@ function inspect08(env: InspectorEnv): Inspection {
 // ---- 第 9 项: framework/harness/node_modules/ts-node/package.json ----------
 // 严格用 fs.existsSync——避免 .gitignore 假阴（修了上次 81d454c 的事故）。
 function inspect09(_env: InspectorEnv): Inspection {
-  const targetRel = 'framework/harness/node_modules/ts-node/package.json';
+  const targetRel = frameworkLogicalRelPath('harness', 'node_modules', 'ts-node', 'package.json');
   const targetAbs = path.join(HARNESS_ROOT, 'node_modules', 'ts-node', 'package.json');
   const exists = fs.existsSync(targetAbs);
   if (!exists) {
@@ -1592,7 +1759,7 @@ function inspect09(_env: InspectorEnv): Inspection {
       hash_target: null,
       diff_summary: null,
       planned_strategy: strategyText(9, 'MISSING'),
-      diagnosis: 'ts-node 未安装（Step 5.5 将 npm install）',
+      diagnosis: 'ts-node 未安装（S3 harness-install 将 npm install）',
     };
   }
   return {
@@ -1652,7 +1819,7 @@ function inspect10(env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + Skill 0 staging）----
+// ---- 第 11 项: 实例工程根 .gitignore（init 约定忽略项：harness 产物 + catalog-bootstrap staging）----
 function inspect11(env: InspectorEnv): Inspection {
   const targetRel = '.gitignore';
   const targetAbs = path.join(env.projectRoot, targetRel);
@@ -1702,7 +1869,7 @@ function inspect11(env: InspectorEnv): Inspection {
     diff_summary: `缺少 patterns:\n${missingPatterns.map(p => `  - ${p}`).join('\n')}`,
     planned_strategy: strategyText(11, 'MISSING'),
     diagnosis:
-      `ensure 已执行仍缺 ${missingPatterns.length} 条 canonical（请检查写权限或只读 .gitignore）` +
+      `缺 ${missingPatterns.length} 条 canonical patterns（S3 ensure-gitignore 任务补齐）` +
       advisoryNote,
   };
 }
@@ -1714,16 +1881,27 @@ function inspect11(env: InspectorEnv): Inspection {
 function applyInitMechanismSync(
   projectRoot: string,
   adapter: AdapterDescriptor,
-): { syncedFiles: number; backupRelDir: string | null } {
-  if (process.env.CHECK_INIT_SKIP_MECHANISM_SYNC === '1') {
-    return { syncedFiles: 0, backupRelDir: null };
-  }
-
+  options?: { ownedByTask?: Set<string>; includeTargets?: Set<string> },
+): {
+  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
+  syncedFiles: number;
+  backupRelDir: string | null;
+} {
   let syncedFiles = 0;
   let backupRelDir: string | null = null;
+  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
+  const owned = options?.ownedByTask;
+  const includeTargets = options?.includeTargets;
 
   for (const f of adapter.templateFiles) {
     if (f.update_policy !== 'auto_overwrite' || f.kind === 'materialized') continue;
+
+    const targetRel = f.targetRel.replace(/\\/g, '/');
+    if (includeTargets && !includeTargets.has(targetRel)) continue;
+    if (owned?.has(targetRel)) {
+      results.push({ targetRel, effect: 'delegated' });
+      continue;
+    }
 
     const tplAbs = path.join(FRAMEWORK_ROOT, f.templateRel);
     const tgAbs = path.join(projectRoot, f.targetRel);
@@ -1738,11 +1916,13 @@ function applyInitMechanismSync(
       fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
       fs.writeFileSync(tgAbs, tplBuf);
       syncedFiles++;
+      results.push({ targetRel, effect: 'created' });
       continue;
     }
 
     const cmp = compareTextArtifact(tplBuf, tgBuf);
     if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
+      results.push({ targetRel, effect: 'unchanged' });
       continue;
     }
 
@@ -1756,13 +1936,14 @@ function applyInitMechanismSync(
     fs.copyFileSync(tgAbs, backupAbs);
     fs.writeFileSync(tgAbs, tplBuf);
     syncedFiles++;
+    results.push({ targetRel, effect: 'updated' });
   }
 
-  return { syncedFiles, backupRelDir };
+  return { results, syncedFiles, backupRelDir };
 }
 
 /**
- * 与 SKILL 00 · §0.3.4.1 对齐：`auto_overwrite` 的 adapter 机制段已由 check-init 在 PASS 后自动对齐，
+ * S2 智能模式下 `auto_overwrite` 的 adapter 机制段已由 check-init 在 PASS 后自动对齐，
  * 不进入结构化 Q 收集；此处返回「实际需要用户在 0.3.4 收 y/n」的 inspection 行。
  */
 export function inspectionsForInit034Prompt(inspections: Inspection[]): Inspection[] {
@@ -1778,19 +1959,85 @@ export function inspectionsForInit034Prompt(inspections: Inspection[]): Inspecti
 // 主流程
 // --------------------------------------------------------------------------
 
-function resolveAdapterName(ctx: CheckContext, cfg: RawFrameworkConfig): {
-  name: string | null;
-  source: string;
-} {
-  // 优先 CLI --adapter；UPDATE 模式回落到 framework.config.json.agent_adapter
-  const cli = (ctx.adapter ?? '').trim();
+function resolveAdapterPick(
+  cfg: RawFrameworkConfig,
+  adapterHint?: string | null,
+): { name: string | null; source: string } {
+  const cli = (adapterHint ?? '').trim();
   if (cli) return { name: cli, source: 'cli_flag:--adapter' };
   if (cfg.agentAdapter) return { name: cfg.agentAdapter, source: 'framework.config.json:agent_adapter' };
   return { name: null, source: '' };
 }
 
+function resolveAdapterName(ctx: CheckContext, cfg: RawFrameworkConfig): {
+  name: string | null;
+  source: string;
+} {
+  return resolveAdapterPick(cfg, ctx.adapter);
+}
+
+export interface InitProbeOptions {
+  projectRoot: string;
+  /** harness --adapter 或 planner adapter override */
+  adapterHint?: string | null;
+}
+
+export interface InitProbeResult {
+  mode: InitMode;
+  adapterPick: { name: string | null; source: string };
+  adapter: AdapterDescriptor | null;
+  cfg: RawFrameworkConfig;
+  renderEnv: RenderEnv | null;
+  inspections: Inspection[];
+}
+
+function prepareAdapterForProbe(
+  adapterPick: { name: string | null; source: string },
+  cfg: RawFrameworkConfig,
+  projectRoot: string,
+): AdapterDescriptor | null {
+  if (!adapterPick.name) return null;
+  const adapter = loadAdapter(adapterPick.name);
+  if (adapter.yamlParseable && adapter.name === 'generic') {
+    const bundle = resolveBundleForInitInspect(adapterPick.name, cfg, projectRoot);
+    if (bundle) {
+      applyGenericAdapterBundle(adapter, bundle);
+    }
+  }
+  return adapter;
+}
+
+/** 纯只读 init 探测：11 项 inspection，零项目根写盘（副作用仅 init-orchestrate S3 任务） */
+export function runInitProbe(options: InitProbeOptions): InitProbeResult {
+  const cfg = loadRawFrameworkConfig(options.projectRoot);
+  const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
+  const adapterPick = resolveAdapterPick(cfg, options.adapterHint);
+  const adapter = prepareAdapterForProbe(adapterPick, cfg, options.projectRoot);
+  const renderEnv = buildRenderEnv(cfg, adapter, options.projectRoot);
+  const inspectorEnv: InspectorEnv = {
+    projectRoot: options.projectRoot,
+    cfg,
+    adapter,
+    renderEnv,
+  };
+  const inspections: Inspection[] = [
+    inspect01(inspectorEnv),
+    inspect02(inspectorEnv),
+    ...inspect03(inspectorEnv),
+    inspect04(inspectorEnv),
+    inspect05(inspectorEnv),
+    inspect06(inspectorEnv),
+    inspect07(inspectorEnv),
+    inspect08(inspectorEnv),
+    inspect09(inspectorEnv),
+    inspect10(inspectorEnv),
+    inspect11(inspectorEnv),
+  ];
+  return { mode, adapterPick, adapter, cfg, renderEnv, inspections };
+}
+
 function buildStdoutTable(report: CheckInitReport): string {
-  // SKILL 0.3.3 体检表（6 列；#3 可展开）
+  // check-init 体检表（6 列；#3 可展开）
   const header = [
     `Init 体检报告 [mode=${report.mode}, adapter=${report.adapter ?? 'N/A'}]`,
     `生成时间: ${report.generated_at}`,
@@ -1876,14 +2123,11 @@ const checker: PhaseChecker = {
   phase: 'init',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
-    const cfg = loadRawFrameworkConfig(ctx.projectRoot);
-    const mode: InitMode = cfg.exists && cfg.parseable ? 'update' : 'create';
-
-    const adapterPick = resolveAdapterName(ctx, cfg);
+    const probe = runInitProbe({ projectRoot: ctx.projectRoot, adapterHint: ctx.adapter });
+    const { mode, adapterPick, adapter, cfg, inspections } = probe;
     const blockers: string[] = [];
 
     // 1. adapter_yaml_resolvable
-    let adapter: AdapterDescriptor | null = null;
     let adapterCheckResult: CheckResult;
     if (!adapterPick.name) {
       adapterCheckResult = {
@@ -1896,22 +2140,17 @@ const checker: PhaseChecker = {
         suggestion: '在命令行追加 --adapter <实例所选 adapter 目录名>，或检查 framework.config.json 的 agent_adapter 字段（须与 framework/agents/* 对齐）',
       };
       blockers.push('adapter_yaml_resolvable: adapter 未指定');
+    } else if (!adapter) {
+      adapterCheckResult = {
+        id: 'adapter_yaml_resolvable',
+        category: 'structure',
+        description: '选定 adapter 的 adapter.yaml 必须可解析',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: 'adapter 装载失败',
+      };
+      blockers.push('adapter_yaml_resolvable: adapter 装载失败');
     } else {
-      adapter = loadAdapter(adapterPick.name);
-      if (adapter.yamlParseable && adapter.name === 'generic') {
-        const bundle = resolveBundleForInitInspect(adapterPick.name, cfg, ctx.projectRoot);
-        if (bundle) {
-          applyGenericAdapterBundle(adapter, bundle);
-        }
-        if (cfg.exists && cfg.parseable) {
-          const root = cfg.raw?.paths?.agent_bundle_root;
-          if (!root || String(root).trim() === '') {
-            blockers.push(
-              'generic_adapter_bundle: agent_adapter=generic 时必须在 framework.config.json 中配置 paths.agent_bundle_root',
-            );
-          }
-        }
-      }
       if (!adapter.yamlExists) {
         adapterCheckResult = {
           id: 'adapter_yaml_resolvable',
@@ -1985,41 +2224,7 @@ const checker: PhaseChecker = {
       };
     }
 
-    // 2b. init canonical .gitignore（体检 #11 之前幂等补齐）
-    let gitignoreEnsure: GitignoreEnsureResult | null = null;
-    if (process.env.CHECK_INIT_SKIP_GITIGNORE_SYNC !== '1') {
-      gitignoreEnsure = ensureCanonicalGitignore(ctx.projectRoot);
-      if (gitignoreEnsure.added.length > 0 && !process.env.CHECK_INIT_QUIET) {
-        process.stderr.write(
-          `[check-init] .gitignore: appended ${gitignoreEnsure.added.length} pattern(s): ` +
-            `${gitignoreEnsure.added.join(', ')}\n`,
-        );
-      }
-    }
-
-    // 3. 跑 11 项体检
-    const renderEnv = buildRenderEnv(cfg, adapter);
-    const inspectorEnv: InspectorEnv = {
-      projectRoot: ctx.projectRoot,
-      cfg,
-      adapter,
-      renderEnv,
-    };
-    const inspections: Inspection[] = [
-      inspect01(inspectorEnv),
-      inspect02(inspectorEnv),
-      ...inspect03(inspectorEnv),
-      inspect04(inspectorEnv),
-      inspect05(inspectorEnv),
-      inspect06(inspectorEnv),
-      inspect07(inspectorEnv),
-      inspect08(inspectorEnv),
-      inspect09(inspectorEnv),
-      inspect10(inspectorEnv),
-      inspect11(inspectorEnv),
-    ];
-
-    // 4. inspection_table_complete
+    // 3. 11 项体检（只读 probe，副作用见 init-orchestrate S3 任务）
     const incomplete = inspections.filter(i =>
       !['MISSING', 'EMPTY', 'POPULATED'].includes(i.status));
     const shapeOk = validateInspectionShape(inspections);
@@ -2083,28 +2288,15 @@ const checker: PhaseChecker = {
           };
         })();
 
+    const ins1UserGap = inspections.find(i => i.index === 1 && i.config_user_required_gap);
+    if (ins1UserGap) {
+      blockers.push(`framework.config.json: ${ins1UserGap.diagnosis}`);
+    }
+
     // 6. 装配 check-init.json + stdout 体检表（#3 可展开多行；check-init.json schema_version 1.1）
     const verdict: 'PASS' | 'FAIL' = blockers.length > 0 ? 'FAIL' : 'PASS';
 
-    let mechanism_backup_rel_dir: string | null = null;
-    let mechanism_synced_files = 0;
-    if (verdict === 'PASS' && adapter) {
-      const syncOutcome = applyInitMechanismSync(ctx.projectRoot, adapter);
-      mechanism_backup_rel_dir = syncOutcome.backupRelDir;
-      mechanism_synced_files = syncOutcome.syncedFiles;
-      if (adapter.name === 'generic') {
-        const bundle = resolveBundleForInitInspect('generic', cfg, ctx.projectRoot);
-        if (bundle?.skillMode === 'inline') {
-          const inlineSync = applyAgentBundleInlineSync(ctx.projectRoot, bundle);
-          mechanism_synced_files += inlineSync.syncedFiles;
-        }
-      }
-    }
-
-    const reportBase: Omit<CheckInitReport, keyof {
-      mechanism_backup_rel_dir?: string | null;
-      mechanism_synced_files?: number;
-    }> = {
+    const report: CheckInitReport = {
       schema_version: '1.1',
       mode,
       adapter: adapterPick.name,
@@ -2112,21 +2304,8 @@ const checker: PhaseChecker = {
       blockers,
       verdict,
       generated_at: new Date().toISOString(),
+      gitignore_sync: null,
     };
-    const gitignore_sync =
-      gitignoreEnsure && !gitignoreEnsure.skipped
-        ? { created: gitignoreEnsure.created, added: gitignoreEnsure.added }
-        : null;
-
-    const report: CheckInitReport =
-      verdict === 'PASS'
-        ? {
-            ...reportBase,
-            mechanism_backup_rel_dir,
-            mechanism_synced_files,
-            gitignore_sync,
-          }
-        : { ...reportBase, gitignore_sync };
 
     let writtenPath: string | null = null;
     try {
@@ -2136,10 +2315,10 @@ const checker: PhaseChecker = {
       console.error(`[check-init] 写 check-init.json 失败：${(e as Error).message}`);
     }
 
-    // stdout 体检表（被 SKILL 0.3.3 原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
+    // stdout 体检表（供 S1 探测原样搬运）。环境变量 CHECK_INIT_QUIET=1 时
     // 抑制（fixture 单测使用，避免污染 jest 输出）。
     if (!process.env.CHECK_INIT_QUIET) {
-      console.log('\n========== check-init: SKILL 0.3.3 体检表（脚本生成，AI 仅搬运） ==========');
+      console.log('\n========== check-init: 体检表（脚本生成，AI 仅搬运） ==========');
       console.log(buildStdoutTable(report));
       if (writtenPath) {
         console.log(`\nJSON 报告: ${path.relative(ctx.projectRoot, writtenPath).replace(/\\/g, '/')}`);
@@ -2212,6 +2391,7 @@ export const __testing = {
   buildStdoutTable,
   unifiedDiffSummary,
   normalizeEol,
+  resolveArchitectureSkeletonSource,
   compareTextArtifact,
   CANONICAL_IGNORE_PATTERNS,
   IGNORE_EQUIV_PATTERNS,
@@ -2222,7 +2402,10 @@ export const __testing = {
   ensureCanonicalGitignore,
   parseUpdatePolicy,
   inspectionsForInit034Prompt,
+  applyDeprecatedArtifactsCleanup,
   applyInitMechanismSync,
+  applyAgentBundleInlineSync,
   applyGenericAdapterBundle,
   resolveBundleForInitInspect,
+  runInitProbe,
 };

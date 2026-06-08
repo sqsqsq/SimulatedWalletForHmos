@@ -37,6 +37,8 @@ import {
   featuresDirPath,
   relFeaturesDir,
   relCatalog,
+  resolveFeatureArtifact,
+  relFeatureArtifact,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
 
@@ -106,7 +108,7 @@ function checkSchemaVersionPresent(ctx: CheckContext, catalog: ModuleCatalog): C
 }
 
 function checkModulesIsList(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
-  // 空列表是合法的 bootstrap 中间状态（Skill 0 Phase A 刚建骨架、还没追加任何模块）
+  // 空列表是合法的 bootstrap 中间状态（catalog-bootstrap Phase A 刚建骨架、还没追加任何模块）
   // 所以只给 WARN 级别提示，不 BLOCKER 阻塞后续 check
   if (catalog.modules.length === 0) {
     return [{
@@ -157,7 +159,7 @@ function checkModuleRequiredFields(ctx: CheckContext, catalog: ModuleCatalog): C
     severity: 'BLOCKER', status: 'FAIL',
     details: `缺失必填字段 ${missing.length} 处：${missing.slice(0, 10).join('、')}${missing.length > 10 ? ' …' : ''}`,
     suggestion:
-        `对照模板 framework/profiles/${ctx.resolvedProfile.name}/skills/0-catalog-bootstrap/templates/module-card-template.yaml 补齐字段。`,
+        `对照模板 framework/profiles/${ctx.resolvedProfile.name}/skills/catalog-bootstrap/templates/module-card-template.yaml 补齐字段。`,
     affected_files: [relCatalog(ctx.projectRoot)],
   }];
 }
@@ -669,9 +671,9 @@ function checkFeatureScopeIntegrity(
   for (const dirent of dirents) {
     if (!dirent.isDirectory()) continue;
     for (const fileName of ['PRD.md', 'design.md']) {
-      const fullPath = path.join(featuresDir, dirent.name, fileName);
-      if (!fs.existsSync(fullPath)) continue;
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const resolved = resolveFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      if (!resolved.exists) continue;
+      const content = fs.readFileSync(resolved.actualPath, 'utf-8');
       const { scope } = parseScope(content);
       if (!scope) continue;
       scannedCount++;
@@ -685,7 +687,7 @@ function checkFeatureScopeIntegrity(
       if (inMissing.length > 0) where.push(`in_scope_modules:[${inMissing.join(', ')}]`);
       if (outMissing.length > 0) where.push(`out_of_scope_modules:[${outMissing.join(', ')}]`);
 
-      const rel = `${featuresRel}/${dirent.name}/${fileName}`;
+      const rel = relFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
       broken.push({ file: rel, missing: allMissing, in_or_out: where });
       affected.add(rel);
     }

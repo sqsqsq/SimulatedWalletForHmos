@@ -12,7 +12,7 @@
 | 扩展位 | 位置 | 现状 |
 |--------|------|------|
 | 项目类型 | `framework.config.json → project_type` | 合法值 `app` / `atomic_service`，仅记录，不驱动行为 |
-| 模块形态 | `doc/module-catalog.yaml → modules[].format` | 合法值 `HAP` / `HAR` / `AtomicService`；AtomicService 通过 `format_value_valid` 检查，但不触发差异化校验 |
+| 模块形态 | `doc/module-catalog.yaml → modules[].format` | 合法值 `HAP` / `HAR` / `HSP` / `AtomicService`；HSP 与 HAR 同为 library format；AtomicService 通过 `format_value_valid` 检查，但不触发差异化校验 |
 | agent 入口 | `framework/templates/AGENTS.md.template` | 标题支持 `{{PROJECT_TYPE_LABEL}}` 占位符，由初始化 Skill 按 `project_type` 选择「应用工程 / 元服务工程」 |
 | 架构 DSL | `framework.config.json → architecture` | 与 `project_type` 解耦——元服务 / 应用共用同一套外层 / 内层模型 |
 
@@ -20,7 +20,7 @@
 
 - 不新增差异化的 phase-rules（首包大小、分包、免安装入口等规则暂缓）
 - 不改 `check-*.ts` 的行为分支（`project_type === 'atomic_service'` 不触发任何额外路径）
-- 不修改 Skill 0~6 的流程（元服务与应用走同一套 catalog / glossary / PRD / design / coding / review / UT / testing）
+- 不修改 catalog-bootstrap~6 的流程（元服务与应用走同一套 catalog / glossary / PRD / design / coding / review / UT / testing）
 
 ---
 
@@ -56,7 +56,7 @@
 
 - **约束来源**：元服务免安装运行时能调用的系统 API 是 App 的子集（部分权限 / 后台能力受限）。
 - **落地位置**：
-  - `framework/profiles/<宿主 project_profile>/skills/3-coding/reference/` 新增 `atomic-service-api-allowlist.md`（白名单文档；无专用 profile 时放 `generic` 或新建子 profile）
+  - `framework/profiles/<宿主 project_profile>/skills/coding/reference/` 新增 `atomic-service-api-allowlist.md`（白名单文档；无专用 profile 时放 `generic` 或新建子 profile）
   - `check-coding.ts` 扫描 `import` + API 调用，命中黑名单报 BLOCKER
 
 ### 2.5 资源本地化与体积压缩
@@ -77,7 +77,7 @@
 
 - **约束来源**：免安装入口对冷启动时延敏感（需控制首屏可交互时间）。
 - **落地位置**：
-  - Skill 6（真机测试）新增可选脚本，读系统日志 / trace，输出冷启动指标
+  - device-testing（真机测试）新增可选脚本，读系统日志 / trace，输出冷启动指标
   - `testing-rules.yaml` 增加 `cold_start_budget_ms`（可配置阈值）
 
 ---
@@ -103,9 +103,9 @@
 | `framework/harness/config.ts` → `FrameworkConfig.project_type` | 所有差异化 check 都先读这里判断是否启用 |
 | `framework/templates/framework.config.template.json` | 新增差异化阈值时同步更新示例 |
 | `framework/templates/AGENTS.md.template` | `{{PROJECT_TYPE_LABEL}}` 已预留，新增议题需求更细文案时在此扩展 |
-| `framework/skills/00-framework-init/SKILL.md` | 初始化时问 `project_type`，可提示用户「元服务会有额外阈值」 |
-| `framework/skills/3-coding/` | 议题 2.1～2.6 主要在编码阶段守门 |
-| `framework/skills/6-device-testing/` | 议题 2.7 依赖真机测试数据 |
+| `framework/skills/project/framework-init/SKILL.md` | 初始化时问 `project_type`，可提示用户「元服务会有额外阈值」 |
+| `framework/skills/feature/coding/` | 议题 2.1～2.6 主要在编码阶段守门 |
+| `framework/skills/feature/device-testing/` | 议题 2.7 依赖真机测试数据 |
 
 ---
 

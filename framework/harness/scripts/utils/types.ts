@@ -42,8 +42,8 @@ export type Severity = 'BLOCKER' | 'MAJOR' | 'MINOR';
 /** 单项检查结果状态 */
 export type CheckStatus = 'PASS' | 'FAIL' | 'WARN' | 'SKIP';
 
-/** 最终裁定 */
-export type Verdict = 'PASS' | 'FAIL';
+/** 最终裁定（INCOMPLETE：如 UT 编译通过但设备不可用） */
+export type Verdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
 // --------------------------------------------------------------------------
 // Spec 相关类型
@@ -250,7 +250,7 @@ export interface ContractsSpec {
 
 /** UT 分层（AC / BD 级别）：
  *  - unit   : 仅 Hypium 业务级 UT 覆盖
- *  - device : 仅真机 UI 自动化覆盖（Skill 6）
+ *  - device : 仅真机 UI 自动化覆盖（device-testing）
  *  - both   : UT + Device 共同覆盖
  */
 export type UtLayer = 'unit' | 'device' | 'both';
@@ -305,7 +305,7 @@ export interface AcceptanceSpec {
 }
 
 // --------------------------------------------------------------------------
-// use-cases.yaml Schema v2（Skill 2 产出、Skill 5 消费）
+// use-cases.yaml Schema v2（requirement-design 产出、business-ut 消费）
 // v2 定位：规约文档，不强制代码形态；核心字段是 ui_bindings 映射表
 // --------------------------------------------------------------------------
 
@@ -480,7 +480,7 @@ export interface ProfileCapabilitySpec {
 export interface ProfileYamlStub {
   name: string;
   display_name?: string;
-  /** Catalog：module card `format` 合法枚举（由 profile 声明；缺省 HAP/HAR/AtomicService） */
+  /** Catalog：module card `format` 合法枚举（由 profile 声明；缺省为 generic 默认 application/library/service/document；hmos-app 典型值 HAP/HAR/HSP/AtomicService） */
   catalog_allowed_module_formats?: string[];
   phases_disabled?: string[];
   capabilities?: Partial<Record<CapabilityKey, ProfileCapabilitySpec>>;
@@ -556,4 +556,12 @@ export interface CheckContext {
   skipVisualHandoff?: boolean;
   /** project profile（framework/profiles）。缺配置时由 config 归一为 hmos-app */
   resolvedProfile: HarnessResolvedProfile;
+  /** framework 资产根（standalone = projectRoot；consumer = projectRoot/framework） */
+  frameworkRoot: string;
+  /** projectRoot → frameworkRoot 的 POSIX 相对前缀：'' 或 'framework' */
+  frameworkRel: string;
+  /** framework/harness 绝对路径 */
+  harnessRoot: string;
+  /** standalone | consumer */
+  layoutKind?: 'standalone' | 'consumer';
 }

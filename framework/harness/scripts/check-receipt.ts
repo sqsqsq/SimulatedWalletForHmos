@@ -60,6 +60,7 @@ interface ReceiptFrontmatter {
     exit_code?: number;
     report_dir?: string;
     blocker_count?: number;
+    verdict?: string;
     ran_at?: string;
   };
   verifier_subagent?: {
@@ -166,6 +167,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 
 function main(): void {
   const { feature, phase, projectRoot, skipStateSync } = parseArgs();
+  const frameworkRoot = path.resolve(__dirname, '..', '..');
 
   const fw = loadFrameworkConfig(projectRoot);
   const resolved = loadResolvedProfile(projectRoot, fw);
@@ -244,6 +246,33 @@ function main(): void {
       severity: 'BLOCKER',
       message: `script_harness.blocker_count=${sh.blocker_count ?? '<missing>'}, 必须为 0。`,
     });
+  }
+  const harnessVerdict = (sh.verdict ?? '').toUpperCase();
+  if (harnessVerdict === 'INCOMPLETE') {
+    issues.push({
+      id: 'script_harness_incomplete',
+      severity: 'BLOCKER',
+      message:
+        'script_harness.verdict=INCOMPLETE：编译通过但设备不可用，不允许宣称 UT 阶段完成；请接入设备后重跑 harness。',
+    });
+  }
+  if (sh.report_dir) {
+    const summaryPath = path.join(projectRoot, sh.report_dir, 'summary.json');
+    if (fs.existsSync(summaryPath)) {
+      try {
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as { verdict?: string };
+        if ((summary.verdict ?? '').toUpperCase() === 'INCOMPLETE') {
+          issues.push({
+            id: 'summary_verdict_incomplete',
+            severity: 'BLOCKER',
+            message:
+              `summary.json verdict=INCOMPLETE（${path.relative(projectRoot, summaryPath).replace(/\\/g, '/')}）；UT 阶段未闭环。`,
+          });
+        }
+      } catch {
+        /* ignore corrupt summary */
+      }
+    }
   }
 
   // 3. verifier 必须 PASS
@@ -559,12 +588,14 @@ function main(): void {
       };
       syncPhaseStateOnReceiptPass(projectRoot, feature, phase as FeaturePhase, receiptValidation, {
         blocker_count: typeof sh.blocker_count === 'number' ? sh.blocker_count : 0,
+        frameworkRoot,
       });
       applyClosurePatchFromReceiptValidation(
         projectRoot,
         feature,
         phase as FeaturePhase,
         receiptValidation,
+        frameworkRoot,
       );
     }
 

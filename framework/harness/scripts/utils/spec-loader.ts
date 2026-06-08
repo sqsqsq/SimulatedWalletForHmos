@@ -21,7 +21,12 @@ import {
   FeatureSpec,
   UseCasesSpec,
 } from './types';
-import { resolvePaths, featureFilePath } from '../../config';
+import {
+  resolvePaths,
+  featuresDirPath,
+  resolveFeatureArtifact,
+  type FeaturePathOptions,
+} from '../../config';
 
 export type FeatureArtifactVerdict =
   | 'ok'
@@ -83,15 +88,26 @@ const OPTIONAL_FEATURE_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
 };
 
 export class SpecLoader {
+  private projectRoot: string;
   private phaseRulesDir: string;
   private featuresDir: string;
 
-  constructor(projectRoot: string, phaseRulesDir?: string, featuresDir?: string) {
+  constructor(projectRoot: string, phaseRulesDir?: string, featuresDir?: string, frameworkRoot?: string) {
     // 阶段 3：默认值来自 framework.config.json（经 resolvePaths 归一化）；
-    //        调用方可以用构造参数覆盖（单测/自定义 layout）。
-    const resolved = resolvePaths(projectRoot);
+    //        调用方可以用构造参数覆盖（单测/自定义 layout / 外部 frameworkRoot）。
+    const resolved = resolvePaths(projectRoot, frameworkRoot);
+    this.projectRoot = resolved.projectRoot;
     this.phaseRulesDir = phaseRulesDir ?? resolved.phaseRulesDir;
     this.featuresDir = featuresDir ?? resolved.featuresDir;
+  }
+
+  /** 当构造参数覆盖 `features_dir` 时，传给 resolver 的选项 */
+  private featurePathOpts(projectRoot: string): FeaturePathOptions | undefined {
+    const configured = featuresDirPath(projectRoot);
+    if (path.resolve(this.featuresDir) === path.resolve(configured)) {
+      return undefined;
+    }
+    return { featuresDirAbs: this.featuresDir };
   }
 
   // --------------------------------------------------------------------------
@@ -169,12 +185,15 @@ export class SpecLoader {
       }
     }
 
-    const missingRequiredFiles = pathKind === 'directory'
-      ? requiredFiles.filter(file => !fs.existsSync(path.join(featureDir, file)))
-      : requiredFiles.slice();
-    const presentOptionalFiles = pathKind === 'directory'
-      ? optionalFiles.filter(file => fs.existsSync(path.join(featureDir, file)))
-      : [];
+    const pathOpts = this.featurePathOpts(this.projectRoot);
+    const missingRequiredFiles =
+      pathKind === 'directory'
+        ? requiredFiles.filter((file) => !resolveFeatureArtifact(this.projectRoot, feature, file, pathOpts).exists)
+        : requiredFiles.slice();
+    const presentOptionalFiles =
+      pathKind === 'directory'
+        ? optionalFiles.filter((file) => resolveFeatureArtifact(this.projectRoot, feature, file, pathOpts).exists)
+        : [];
 
     const sameNameArchives: string[] = [];
     const relatedSiblingEntries: string[] = [];
@@ -234,9 +253,9 @@ export class SpecLoader {
    * @param docName 文档名 (如 'PRD.md', 'design.md')
    */
   loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
-    const docPath = featureFilePath(projectRoot, feature, docName);
-    if (!fs.existsSync(docPath)) return null;
-    return fs.readFileSync(docPath, 'utf-8');
+    const resolved = resolveFeatureArtifact(projectRoot, feature, docName, this.featurePathOpts(projectRoot));
+    if (!resolved.exists) return null;
+    return fs.readFileSync(resolved.actualPath, 'utf-8');
   }
 
   /**
@@ -348,7 +367,7 @@ function normalizeContractsFiles(contracts: ContractsSpec, contractsPath: string
 // ---------------------------------------------------------------------------
 // 契约上 ContractsSpec.module_dependencies 是 Record<string, string[]>
 // （key = 源模块名，value = 依赖模块名数组）。
-// 但实际 YAML 里常见另一种更自然的写法，来自 Skill 2 从架构图依赖箭头提取：
+// 但实际 YAML 里常见另一种更自然的写法，来自 requirement-design 从架构图依赖箭头提取：
 //   module_dependencies:
 //     - from: "<FeatureModule>"
 //       to: "<SharedUIModule>"
@@ -411,7 +430,7 @@ function normalizeModuleDependencies(contracts: ContractsSpec, contractsPath: st
 // ---------------------------------------------------------------------------
 // prd_to_code_traceability 字段别名归一
 // ---------------------------------------------------------------------------
-// ContractsSpec 契约字段名是 key_files，但当前 Skill 2 规范和 home-page 样例
+// ContractsSpec 契约字段名是 key_files，但当前 requirement-design 规范和 home-page 样例
 // 写的是 files。如果两种写法都可以被接受，则需要在加载期把 files 别名为
 // key_files，否则下游 `for (const f of item.key_files)` 直接 TypeError。
 // 该规范化**只做别名回填**，不删除原字段，以免影响其他消费者。

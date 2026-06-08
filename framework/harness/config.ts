@@ -38,6 +38,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { applyDefaults, loadProfileConfigDefaults } from './profile-loader';
+import { inferRepoLayout } from './repo-layout';
+import {
+  type AgentAdapterSource,
+  type FrameworkLocalConfig,
+  type FrameworkPersonalSetupStatus,
+  loadLocalConfig,
+  LOCAL_CONFIG_FILENAME,
+  mergeLocalIntoToolchain,
+  resolveAgentAdapterSource,
+  writeLocalConfig,
+} from './scripts/utils/framework-local-config';
+
+export type { AgentAdapterSource, FrameworkLocalConfig, FrameworkPersonalSetupStatus };
+export { LOCAL_CONFIG_FILENAME, loadLocalConfig, writeLocalConfig };
 
 // --------------------------------------------------------------------------
 // 架构 DSL 类型
@@ -201,7 +215,7 @@ export interface ToolchainConfig {
   preferredProduct?: string;
 }
 
-/** Skill 6 真机自动化（hmos-app profile · tools.hylyre） */
+/** device-testing 真机自动化（hmos-app profile · tools.hylyre） */
 export interface HylyreToolConfig {
   /** 相对 projectRoot：vendor wheel + release.manifest.json */
   vendor_dir: string;
@@ -230,10 +244,10 @@ export interface FrameworkToolsConfig {
 
 export interface FrameworkPaths {
   /**
-   * 功能级需求目录：每个 feature 一个子目录，扁平归档所有产物
-   * （PRD.md / design.md / contracts.yaml / contracts.planned.yaml /
-   *   acceptance.yaml / boundaries.yaml / review-report.md /
-   *   test-plan.md / test-report.md 等）。
+   * 功能级需求目录：每个 feature 一个子目录。跨阶段契约（contracts.yaml、
+   *   acceptance.yaml 等）在 feature 根；阶段主产物在 `<phase>/` 子目录
+   *   （prd/PRD.md、design/design.md、review/review-report.md、
+   *   testing/test-plan.md 等），由 artifact resolver 统一解析。
    *
    * 阶段 9 前曾存在 `feature_docs_dir` + `feature_specs_dir` 两个字段；
    * 现已合并为本字段，老字段会在加载时被检测并抛错。
@@ -281,6 +295,12 @@ export interface FrameworkPaths {
    * 实例侧 extension 根目录（相对实例工程根）。默认 `doc/extensions`。
    */
   extension_dir?: string;
+  /**
+   * 模块级 Code Graph 落盘路径模式（相对实例工程根）。
+   * 占位符：`<module>` 替换为 module-catalog 模块相对路径（如 `02-Feature/WalletHome`）。
+   * 默认 `<module>/code-graph.yaml`（与模块根目录 `index.ets` 同级）。
+   */
+  module_graphs_dir?: string;
   /**
    * Feature 阶段 harness 报告目录（相对实例工程根）的占位符模式。
    *
@@ -350,6 +370,11 @@ export interface FrameworkConfig {
   project_profile: ProjectProfileConfig;
   /** 本阶段仅记录，不驱动行为；阶段 5 的 adapter 层会消费 */
   agent_adapter: 'generic' | 'claude' | 'cursor' | string;
+  /**
+   * 项目级：本仓库物化并提交的 adapter 产物清单（如 ["claude","cursor"]）。
+   * 个人 active adapter 见 framework.local.json。
+   */
+  materialized_adapters?: string[];
   architecture: ArchitectureDsl;
   paths: FrameworkPaths;
   /**
@@ -442,7 +467,7 @@ function mergeAgentBundlePathDefaults(paths: FrameworkPaths, agentAdapter: strin
     next.agent_bundle_root = '.agents';
   }
   if (next.agent_bundle_skill_mode === undefined || next.agent_bundle_skill_mode === null) {
-    next.agent_bundle_skill_mode = 'inline';
+    next.agent_bundle_skill_mode = 'bridge';
   }
   return next;
 }
@@ -451,16 +476,17 @@ function validateAgentBundleForConfig(cfg: FrameworkConfig): void {
   if (cfg.agent_adapter !== 'generic') {
     return;
   }
-  const root = typeof cfg.paths.agent_bundle_root === 'string' ? cfg.paths.agent_bundle_root.trim() : '';
+  const normalizedPaths = mergeAgentBundlePathDefaults(cfg.paths, cfg.agent_adapter);
+  const root = typeof normalizedPaths.agent_bundle_root === 'string' ? normalizedPaths.agent_bundle_root.trim() : '';
   if (!root) {
     throw new Error(
-      '[agent-bundle] agent_adapter=generic 时必须配置 paths.agent_bundle_root（如 ".agents"）',
+      '[agent-bundle] agent_adapter=generic 时 paths.agent_bundle_root 为空；默认应回退为 ".agents"',
     );
   }
   if (root.includes('..') || path.isAbsolute(root) || /^[a-zA-Z]:/.test(root)) {
     throw new Error('[agent-bundle] paths.agent_bundle_root 必须是相对实例工程根的安全路径');
   }
-  const mode = cfg.paths.agent_bundle_skill_mode;
+  const mode = normalizedPaths.agent_bundle_skill_mode;
   if (mode !== undefined && mode !== 'bridge' && mode !== 'inline') {
     throw new Error('[agent-bundle] paths.agent_bundle_skill_mode 必须是 bridge 或 inline');
   }
@@ -474,18 +500,17 @@ export const DEFAULT_PATHS: FrameworkPaths = {
   architecture_md: 'doc/architecture.md',
   state_file: 'framework/harness/state/.current-phase.json',
   receipt_dir_pattern: 'doc/features/<feature>/<phase>',
+  reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
   docs_committed: false,
   extension_dir: 'doc/extensions',
+  module_graphs_dir: '<module>/code-graph.yaml',
 };
 
-/**
- * Q1.C / CONFIRM_FIELDS 写入 `paths.reports_dir_pattern` 时使用的推荐默认值。
- *
- * **故意不在 `DEFAULT_PATHS` 中**：若放进 DEFAULT_PATHS，`normalizeConfig` 会把该字段
- * 合并进所有实例 runtime config，导致磁盘未配置时也走 doc/features/.../reports，
- * 绕过 Skill 00 Q1.C（Q1.C=n 须保持 legacy 回退）。
- */
-export const DEFAULT_REPORTS_DIR_PATTERN = 'doc/features/<feature>/<phase>/reports';
+/** 默认 Code Graph 路径模式（与 `DEFAULT_PATHS.module_graphs_dir` 一致）。 */
+export const DEFAULT_MODULE_GRAPHS_DIR = '<module>/code-graph.yaml';
+
+/** @deprecated 使用 `DEFAULT_PATHS.reports_dir_pattern` */
+export const DEFAULT_REPORTS_DIR_PATTERN = DEFAULT_PATHS.reports_dir_pattern;
 
 /**
  * 阶段状态机时间常量默认值（v2.4）。
@@ -516,7 +541,135 @@ const DEPRECATED_PATH_FIELDS = ['feature_docs_dir', 'feature_specs_dir'] as cons
 
 const CONFIG_FILENAME = 'framework.config.json';
 
-let cachedConfig: { root: string; config: FrameworkConfig } | null = null;
+interface ConfigCacheEntry {
+  root: string;
+  projectMtime: number;
+  localMtime: number | null;
+  config: FrameworkConfig;
+  projectRaw: Record<string, unknown> | null;
+  local: FrameworkLocalConfig | null;
+  adapterStatus: FrameworkPersonalSetupStatus;
+}
+
+let cachedConfig: ConfigCacheEntry | null = null;
+
+function fileMtimeOrNull(filePath: string): number | null {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function readProjectConfigRaw(projectRoot: string): {
+  raw: Record<string, unknown> | null;
+  parsed: Partial<FrameworkConfig> | null;
+} {
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  if (!fs.existsSync(configPath)) {
+    return { raw: null, parsed: null };
+  }
+  const rawText = fs.readFileSync(configPath, 'utf-8');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    throw new Error(
+      `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
+    );
+  }
+  assertNoDeprecatedPaths(parsed);
+  return {
+    raw: parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null,
+    parsed: parsed as Partial<FrameworkConfig>,
+  };
+}
+
+function applyLocalMerge(
+  config: FrameworkConfig,
+  projectRaw: Record<string, unknown> | null,
+  local: FrameworkLocalConfig | null,
+): { config: FrameworkConfig; status: FrameworkPersonalSetupStatus } {
+  const status = resolveAgentAdapterSource(
+    '',
+    projectRaw,
+    local,
+    config.agent_adapter ?? 'generic',
+  );
+  const merged: FrameworkConfig = {
+    ...config,
+    agent_adapter: status.agent_adapter,
+    toolchain: mergeLocalIntoToolchain(config.toolchain, local),
+  };
+  return { config: merged, status };
+}
+
+export interface FrameworkConfigWithSources {
+  config: FrameworkConfig;
+  adapterStatus: FrameworkPersonalSetupStatus;
+  local: FrameworkLocalConfig | null;
+  projectRaw: Record<string, unknown> | null;
+}
+
+export function getFrameworkPersonalSetupStatus(projectRoot: string): FrameworkPersonalSetupStatus {
+  return loadFrameworkConfigWithSources(projectRoot).adapterStatus;
+}
+
+export function loadFrameworkConfigWithSources(projectRoot: string): FrameworkConfigWithSources {
+  const loaded = loadFrameworkConfigInternal(projectRoot);
+  return {
+    config: loaded.config,
+    adapterStatus: loaded.adapterStatus,
+    local: loaded.local,
+    projectRaw: loaded.projectRaw,
+  };
+}
+
+function loadFrameworkConfigInternal(projectRoot: string): ConfigCacheEntry {
+  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  const localPath = path.join(projectRoot, LOCAL_CONFIG_FILENAME);
+  const projectMtime = fileMtimeOrNull(configPath) ?? 0;
+  const localMtime = fileMtimeOrNull(localPath);
+
+  if (
+    cachedConfig &&
+    cachedConfig.root === projectRoot &&
+    cachedConfig.projectMtime === projectMtime &&
+    cachedConfig.localMtime === localMtime
+  ) {
+    return cachedConfig;
+  }
+
+  const { raw: projectRaw, parsed } = readProjectConfigRaw(projectRoot);
+  let config: FrameworkConfig;
+  if (parsed) {
+    config = normalizeConfig(parsed);
+  } else {
+    config = buildDefaultConfig();
+  }
+
+  const local = loadLocalConfig(projectRoot);
+  const { config: merged, status } = applyLocalMerge(config, projectRaw, local);
+
+  validateArchitectureDsl(merged.architecture);
+  if (merged.state_machine) {
+    validateStateMachine(merged.state_machine);
+  }
+  validateAgentBundleForConfig(merged);
+
+  cachedConfig = {
+    root: projectRoot,
+    projectMtime,
+    localMtime,
+    config: merged,
+    projectRaw,
+    local,
+    adapterStatus: status,
+  };
+  return cachedConfig;
+}
 
 /** `project_type` 弃用提示：每进程最多 stderr 一次，避免批量单测刷屏 */
 let warnedProjectTypeAliasMigration = false;
@@ -532,36 +685,7 @@ let warnedMissingProjectProfile = false;
  * `clearFrameworkConfigCache()` 显式失效。
  */
 export function loadFrameworkConfig(projectRoot: string): FrameworkConfig {
-  if (cachedConfig && cachedConfig.root === projectRoot) {
-    return cachedConfig.config;
-  }
-
-  const configPath = path.join(projectRoot, CONFIG_FILENAME);
-  let config: FrameworkConfig;
-  if (fs.existsSync(configPath)) {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      throw new Error(
-        `[framework/config.ts] ${CONFIG_FILENAME} 不是合法 JSON：${(err as Error).message}`,
-      );
-    }
-    assertNoDeprecatedPaths(parsed);
-    config = normalizeConfig(parsed as Partial<FrameworkConfig>);
-  } else {
-    config = buildDefaultConfig();
-  }
-
-  validateArchitectureDsl(config.architecture);
-  if (config.state_machine) {
-    validateStateMachine(config.state_machine);
-  }
-  validateAgentBundleForConfig(config);
-
-  cachedConfig = { root: projectRoot, config };
-  return config;
+  return loadFrameworkConfigInternal(projectRoot).config;
 }
 
 /** 方便外层调用——多数 check-*.ts 只关心架构 DSL */
@@ -603,6 +727,7 @@ function buildDefaultConfig(profileName = 'hmos-app'): FrameworkConfig {
       ...(projectProfileDefault.sub_variant ? { sub_variant: projectProfileDefault.sub_variant } : {}),
     },
     agent_adapter: agentAdapter,
+    materialized_adapters: [agentAdapter],
     architecture: architectureDefault,
     paths: mergeAgentBundlePathDefaults({ ...pathsDefault }, agentAdapter),
     state_machine: { ...DEFAULT_STATE_MACHINE },
@@ -711,6 +836,29 @@ function normalizePrdHarness(raw: PrdHarnessConfig | undefined): PrdHarnessConfi
   };
 }
 
+function normalizeMaterializedAdapters(
+  raw: Partial<FrameworkConfig> & { materialized_adapters?: unknown },
+  fallback: FrameworkConfig,
+): string[] | undefined {
+  const fromRaw = raw.materialized_adapters;
+  if (Array.isArray(fromRaw) && fromRaw.length > 0) {
+    const names = fromRaw
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map(x => x.trim());
+    if (names.length > 0) return [...new Set(names)];
+  }
+  if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) {
+    return [raw.agent_adapter.trim()];
+  }
+  if (fallback.materialized_adapters?.length) {
+    return fallback.materialized_adapters;
+  }
+  if (fallback.agent_adapter) {
+    return [fallback.agent_adapter];
+  }
+  return ['generic'];
+}
+
 function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
   const project_profile = normalizeProjectProfile(raw.project_profile, raw.project_type);
   const fallback = buildDefaultConfig(project_profile.name);
@@ -729,6 +877,7 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     project_type,
     project_profile,
     agent_adapter: raw.agent_adapter ?? fallback.agent_adapter,
+    materialized_adapters: normalizeMaterializedAdapters(raw, fallback),
     architecture: raw.architecture
       ? normalizeArchitecture(raw.architecture, fallback.architecture)
       : fallback.architecture,
@@ -746,6 +895,21 @@ function normalizeConfig(raw: Partial<FrameworkConfig>): FrameworkConfig {
     lifecycle_hooks_enabled: raw.lifecycle_hooks_enabled !== false,
     tools: normalizeTools(raw.tools),
   };
+}
+
+/**
+ * 写盘前硬校验 candidate config（normalize + architecture / state_machine / agent-bundle）。
+ * 与 `loadFrameworkConfigInternal` 校验层级一致（不含 local merge）。
+ * **返回值仅供校验链路使用**；ensure-config 落盘须用 `sanitizeProjectConfigForInitWrite(configWritePayload)`。
+ */
+export function validateFrameworkConfigWriteCandidate(raw: Partial<FrameworkConfig>): FrameworkConfig {
+  const config = normalizeConfig(raw);
+  validateArchitectureDsl(config.architecture);
+  if (config.state_machine) {
+    validateStateMachine(config.state_machine);
+  }
+  validateAgentBundleForConfig(config);
+  return config;
 }
 
 /**
@@ -1168,6 +1332,8 @@ const GLOBAL_FEATURE_REPORTS_SENTINEL = '_global';
 export interface ResolvedPaths {
   projectRoot: string;
   frameworkRoot: string;
+  /** projectRoot → frameworkRoot 的 POSIX 相对前缀：'' 或 'framework' */
+  frameworkRel: string;
   /** framework/specs/phase-rules 的绝对路径 */
   phaseRulesDir: string;
   /** framework/harness/reports 的绝对路径（全局 `_global` 与未配置 reports_dir_pattern 时的 feature 回退） */
@@ -1193,18 +1359,50 @@ export interface ResolvedPaths {
   receiptDirPattern: string;
 }
 
+export interface ResolveFrameworkRootOptions {
+  /** init CREATE 等尚无 skills/workflows 时允许回退到 `<projectRoot>/framework` */
+  allowMissingFramework?: boolean;
+}
+
+function resolveFrameworkRootArg(
+  projectRoot: string,
+  frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
+): string {
+  if (frameworkRoot && frameworkRoot.trim()) {
+    return path.resolve(frameworkRoot);
+  }
+  try {
+    return inferRepoLayout(projectRoot).frameworkRoot;
+  } catch (err) {
+    if (opts?.allowMissingFramework) {
+      return path.join(path.resolve(projectRoot), 'framework');
+    }
+    throw err;
+  }
+}
+
 /**
  * 把 `framework.config.json` 中声明的相对路径统一解析为绝对路径。
  *
  * @param projectRoot 实例工程根的绝对路径
- * @param frameworkRoot framework/ 所在绝对路径；默认 `<projectRoot>/framework`
+ * @param frameworkRoot framework 资产根；缺省时 `inferRepoLayout(projectRoot).frameworkRoot`
  */
-export function resolvePaths(projectRoot: string, frameworkRoot?: string): ResolvedPaths {
+export function resolvePaths(
+  projectRoot: string,
+  frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
+): ResolvedPaths {
   const cfg = loadFrameworkConfig(projectRoot);
-  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
+  const layoutRel =
+    path.resolve(fRoot) === path.resolve(projectRoot)
+      ? ''
+      : path.relative(path.resolve(projectRoot), fRoot).replace(/\\/g, '/');
   return {
-    projectRoot,
+    projectRoot: path.resolve(projectRoot),
     frameworkRoot: fRoot,
+    frameworkRel: layoutRel,
     phaseRulesDir: path.join(fRoot, 'specs', 'phase-rules'),
     reportsDir: path.join(fRoot, 'harness', 'reports'),
     promptsDir: path.join(fRoot, 'harness', 'prompts'),
@@ -1221,10 +1419,26 @@ export function resolvePaths(projectRoot: string, frameworkRoot?: string): Resol
   };
 }
 
+/** init CREATE 等早期场景：framework 树尚未落地时可允许缺省 framework/ 回退 */
+export function resolvePathsForInit(
+  projectRoot: string,
+  frameworkRoot?: string,
+): ResolvedPaths {
+  return resolvePaths(projectRoot, frameworkRoot, { allowMissingFramework: true });
+}
+
 // ---- 单条绝对路径 -------------------------------------------------------
 
 export function catalogPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.module_catalog);
+}
+
+/** 某模块的 Code Graph 文件路径（`<module>` 占位符替换为模块相对路径，如 `02-Feature/WalletHome`）。 */
+export function moduleGraphPath(projectRoot: string, moduleRelPath: string): string {
+  const pattern =
+    loadFrameworkConfig(projectRoot).paths.module_graphs_dir ?? DEFAULT_MODULE_GRAPHS_DIR;
+  const rel = pattern.replace(/<module>/g, moduleRelPath);
+  return path.join(projectRoot, rel);
 }
 
 export function glossaryPath(projectRoot: string): string {
@@ -1244,9 +1458,16 @@ export function featuresDirPath(projectRoot: string): string {
   return path.join(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir);
 }
 
+function featureDirResolved(projectRoot: string, feature: string, opts?: FeaturePathOptions): string {
+  if (opts?.featuresDirAbs) {
+    return path.join(path.resolve(opts.featuresDirAbs), feature);
+  }
+  return path.join(featuresDirPath(projectRoot), feature);
+}
+
 /** 某 feature 的完整目录（<features_dir>/<feature>） */
 export function featureDir(projectRoot: string, feature: string): string {
-  return path.join(featuresDirPath(projectRoot), feature);
+  return featureDirResolved(projectRoot, feature);
 }
 
 /** feature 局部的框架升级 compat 约定路径（<features_dir>/<feature>/compat.yaml） */
@@ -1259,8 +1480,191 @@ export function featureCompatPath(projectRoot: string, feature: string): string 
  * acceptance.yaml / review-report.md / test-plan.md / test-report.md 等。
  * 阶段 9 合并前的 `featureDocPath` 与 `featureSpecPath` 现均由本函数承担。
  */
-export function featureFilePath(projectRoot: string, feature: string, fileName: string): string {
-  return path.join(featureDir(projectRoot, feature), fileName);
+export function featureFilePath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  return path.join(featureDirResolved(projectRoot, feature, opts), fileName);
+}
+
+// --------------------------------------------------------------------------
+// Feature 阶段产物路径 SSOT（phase-scoped archival）
+// --------------------------------------------------------------------------
+
+/** 阶段主产物：basename → workflow phase id */
+export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
+  'PRD.md': 'prd',
+  'design.md': 'design',
+  'review-report.md': 'review',
+  'test-plan.md': 'testing',
+  'test-report.md': 'testing',
+  'testability-audit.md': 'ut',
+  'mock-plan.yaml': 'ut',
+};
+
+/** 从未有扁平 legacy 形态的阶段产物（canonical 即 ut/...） */
+export const ALREADY_PHASED_ARTIFACTS: ReadonlySet<string> = new Set([
+  'testability-audit.md',
+  'mock-plan.yaml',
+]);
+
+/** 覆盖 `paths.features_dir` 的绝对路径（SpecLoader 构造参数、单测自定义 layout） */
+export interface FeaturePathOptions {
+  featuresDirAbs?: string;
+}
+
+export interface ResolvedFeatureArtifact {
+  /** 实际用于读取的绝对路径 */
+  actualPath: string;
+  /** 规范写入路径（绝对） */
+  canonicalPath: string;
+  /** 扁平 legacy 路径（绝对）；无 legacy 时与 canonical 相同 */
+  legacyPath: string;
+  usedLegacy: boolean;
+  legacyDuplicate: boolean;
+  exists: boolean;
+}
+
+/**
+ * 归一化产物键：去掉已带的 `<phase>/` 前缀，返回 basename。
+ * `ut/mock-plan.yaml` 与 `mock-plan.yaml` 均归一为 `mock-plan.yaml`。
+ */
+export function normalizeArtifactFileName(fileName: string): string {
+  const trimmed = fileName.replace(/\\/g, '/').trim();
+  if (!trimmed) return trimmed;
+  const slash = trimmed.indexOf('/');
+  if (slash <= 0) return trimmed;
+  const prefix = trimmed.slice(0, slash);
+  const rest = trimmed.slice(slash + 1);
+  const phase = PHASE_SCOPED_ARTIFACTS[rest];
+  if (phase && phase === prefix) {
+    return rest;
+  }
+  return trimmed;
+}
+
+/** 返回产物归属阶段；全局契约返回 null */
+export function featureArtifactPhaseOf(fileName: string): string | null {
+  const base = normalizeArtifactFileName(fileName);
+  return PHASE_SCOPED_ARTIFACTS[base] ?? null;
+}
+
+/** 规范写入绝对路径（阶段产物 → `receiptDirPath` 同目录 + basename，与 context-exploration/receipt 对齐） */
+function receiptDirPathResolved(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  opts?: FeaturePathOptions,
+): string {
+  if (!opts?.featuresDirAbs) {
+    return receiptDirPath(projectRoot, feature, phase);
+  }
+  const cfg = loadFrameworkConfig(projectRoot);
+  const pattern = cfg.paths.receipt_dir_pattern ?? DEFAULT_PATHS.receipt_dir_pattern!;
+  const configuredRel = toPosix(cfg.paths.features_dir ?? DEFAULT_PATHS.features_dir!);
+  const overrideRel = toPosix(path.relative(projectRoot, path.resolve(opts.featuresDirAbs)));
+  let rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+  if (overrideRel !== configuredRel) {
+    if (rel.startsWith(`${configuredRel}/`)) {
+      rel = `${overrideRel}${rel.slice(configuredRel.length)}`;
+    } else {
+      rel = `${overrideRel}/${feature}/${phase}`;
+    }
+  }
+  return path.resolve(projectRoot, rel);
+}
+
+export function featureArtifactPath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  const phase = PHASE_SCOPED_ARTIFACTS[base];
+  if (phase) {
+    return path.join(receiptDirPathResolved(projectRoot, feature, phase, opts), base);
+  }
+  return featureFilePath(projectRoot, feature, base, opts);
+}
+
+/** 扁平 legacy 绝对路径（仅对有 legacy 的阶段主产物；ut 类与 canonical 相同） */
+export function featureArtifactLegacyPath(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  if (ALREADY_PHASED_ARTIFACTS.has(base)) {
+    return featureArtifactPath(projectRoot, feature, base, opts);
+  }
+  return featureFilePath(projectRoot, feature, base, opts);
+}
+
+/**
+ * 读解析：优先 canonical，回退 legacy；新旧并存时 legacyDuplicate=true。
+ */
+export function resolveFeatureArtifact(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): ResolvedFeatureArtifact {
+  const base = normalizeArtifactFileName(fileName);
+  const canonicalPath = featureArtifactPath(projectRoot, feature, base, opts);
+  const legacyPath = featureArtifactLegacyPath(projectRoot, feature, base, opts);
+  const hasCanonical = fs.existsSync(canonicalPath);
+  const hasLegacy =
+    !ALREADY_PHASED_ARTIFACTS.has(base) &&
+    legacyPath !== canonicalPath &&
+    fs.existsSync(legacyPath);
+  const legacyDuplicate = hasCanonical && hasLegacy;
+
+  if (hasCanonical) {
+    return {
+      actualPath: canonicalPath,
+      canonicalPath,
+      legacyPath,
+      usedLegacy: false,
+      legacyDuplicate,
+      exists: true,
+    };
+  }
+  if (hasLegacy) {
+    return {
+      actualPath: legacyPath,
+      canonicalPath,
+      legacyPath,
+      usedLegacy: true,
+      legacyDuplicate: false,
+      exists: true,
+    };
+  }
+  return {
+    actualPath: canonicalPath,
+    canonicalPath,
+    legacyPath,
+    usedLegacy: false,
+    legacyDuplicate: false,
+    exists: false,
+  };
+}
+
+/** canonical 相对路径（POSIX），用于错误消息 / affected_files / verifier label */
+export function relFeatureArtifact(
+  projectRoot: string,
+  feature: string,
+  fileName: string,
+  opts?: FeaturePathOptions,
+): string {
+  const base = normalizeArtifactFileName(fileName);
+  if (!PHASE_SCOPED_ARTIFACTS[base]) {
+    return toPosix(path.relative(projectRoot, featureFilePath(projectRoot, feature, base, opts)));
+  }
+  return toPosix(path.relative(projectRoot, featureArtifactPath(projectRoot, feature, base, opts)));
 }
 
 /** 阶段状态机文件绝对路径（agent 工作流强制门用） */
@@ -1299,8 +1703,9 @@ export function featurePhaseReportsDir(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
 ): string {
-  const fRoot = frameworkRoot ?? path.join(projectRoot, 'framework');
+  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
   if (feature === GLOBAL_FEATURE_REPORTS_SENTINEL) {
     return path.join(fRoot, 'harness', 'reports', '_global', phase);
   }
@@ -1319,8 +1724,9 @@ export function relFeaturePhaseReportsDir(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  opts?: ResolveFrameworkRootOptions,
 ): string {
-  const abs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const abs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot, opts);
   return toPosix(path.relative(projectRoot, abs));
 }
 
@@ -1500,7 +1906,7 @@ export const DEFAULT_HYLYRE_TOOL_CONFIG: HylyreToolConfig = {
   vendor_dir: 'framework/profiles/hmos-app/vendor/hylyre',
   venv_dir: '.hylyre/venv',
   app_snapshot_cache_dir: 'doc/app-snapshot-cache',
-  pypi_extra_index_url: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+  pypi_extra_index_url: 'https://mirrors.tools.huawei.com/pypi/simple',
   auto_install: true,
   doctor_first_run: true,
   hypium_page_name: '',

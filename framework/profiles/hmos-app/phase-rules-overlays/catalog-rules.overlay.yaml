@@ -81,7 +81,8 @@ structure_checks:
 
   format_value_valid:
     description: >
-      format 字段必须是 HAP / HAR / AtomicService 之一。
+      format 字段必须是 HAP / HAR / HSP / AtomicService 之一。
+      HSP 为动态共享库，与 HAR 同为 library format（导出入口与新鲜度检查等价）。
       AtomicService 为元服务扩展位（阶段 7 预留）：值合法、不触发额外检查；
       差异化规则（首包大小、分包策略、免安装入口等）见
       framework/docs/atomic-service-roadmap.md，作为后续独立议题推进。
@@ -91,6 +92,7 @@ structure_checks:
       allowed_values:
         - "HAP"
         - "HAR"
+        - "HSP"
         - "AtomicService"
 
   name_unique:
@@ -168,7 +170,7 @@ traceability_checks:
   easily_confused_symmetric:
     description: >
       若 A.easily_confused_with 声明与 B 混淆，则 B.easily_confused_with 也应反向声明与 A 混淆。
-      消歧能力必须对称——任何一端漏声明都会让 Skill 1 Step 1.5 术语消歧在另一侧失盲。
+      消歧能力必须对称——任何一端漏声明都会让 prd-design Step 1.5 术语消歧在另一侧失盲。
       若业务上确认就是单向易混（罕见），可通过在 disambiguation 文本里加 "unidirectional"
       关键字显式豁免（当前沙盒未使用豁免）。
     severity: MAJOR
@@ -199,7 +201,8 @@ traceability_checks:
 
   feature_scope_integrity:
     description: >
-      反向扫描 doc/features/*/PRD.md 和 doc/features/*/design.md 的
+      反向扫描 doc/features/*/prd/PRD.md 与 doc/features/*/design/design.md
+      （harness 经 artifact resolver 同时兼容扁平 legacy 路径）的
       Scope 声明（in_scope_modules + out_of_scope_modules），验证每个模块
       名在当前 catalog.modules[].name 里真实存在。
       漂移 → WARN（建议立刻修复或显式接受）：
@@ -210,16 +213,16 @@ traceability_checks:
            "先把该模块通过 /catalog-bootstrap <M> 补档"。
       解法（details 里会逐条列出）：
         (1) 补档：对缺失模块跑 /catalog-bootstrap <M>；
-        (2) 修 feature：改 PRD.md / design.md 里的 scope，删除或改名过期模块；
+        (2) 修 feature：改 prd/PRD.md / design/design.md 里的 scope，删除或改名过期模块；
         (3) 改名追溯：若本次是改名，在新模块 profile 备注
             merged_from: <旧名>，方便以后回查。
       HAP 里未出现 Scope 声明的 feature 目录（如仅有 README.md / litmus
-      sample）被自动跳过；只扫 PRD.md / design.md 两类正式文档。
+      sample）被自动跳过；只扫 PRD / design 两类正式文档（canonical 阶段路径）。
     severity: MAJOR
     rule:
       scan_files:
-        - "doc/features/*/PRD.md"
-        - "doc/features/*/design.md"
+        - "doc/features/*/prd/PRD.md"
+        - "doc/features/*/design/design.md"
       extract_fields:
         - "in_scope_modules"
         - "out_of_scope_modules"
@@ -227,18 +230,18 @@ traceability_checks:
 
   entry_file_matches_oh_package_main:
     description: >
-      每个 HAR 模块 catalog.entry_file 应与 oh-package.json5 main 解析出的
+      每个 HAR/HSP 库模块 catalog.entry_file 应与 oh-package.json5 main 解析出的
       导出入口路径一致（路径归一化后比较）。漂移 → WARN，建议跑
       `/catalog-bootstrap <M>` UPDATE 刷新 entry_file。
     severity: MAJOR
     rule:
       field: "modules[].entry_file"
       check_against: "oh-package.json5 main via resolveHarExportEntryPath"
-      applies_to_format: "HAR"
+      applies_to_format: "HAR/HSP"
 
   key_exports_fresh_vs_index:
     description: >
-      每个 HAR 模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
+      每个 HAR/HSP 库模块的 key_exports 应与其 entry_file（如 index.ets）里实际声明的
       top-level export 保持同步。以下两类漂移 → WARN（建议跑
       `/catalog-bootstrap <M>` 进 UPDATE 模式刷新画像）：
         a) stale_removed：catalog.key_exports[i] 在 entry_file 入口中找不到对应的
@@ -248,14 +251,14 @@ traceability_checks:
            10 条上限，说明不是主动裁剪而是漏记录）。
       HAP 模块的 entry_file 指向 EntryAbility.ets 而非 HAR index 入口时，此 check 跳过。
 
-      仅扫 HAR entry_file 中的 top-level export 声明（含 `export class/function/
+      仅扫 HAR/HSP 库模块 entry_file 中的 top-level export 声明（含 `export class/function/
       const/let/var/interface/type/enum` 与 `export { ... }` 两种形态）。
       `export * from 'xxx'` 通配再导出不纳入比对（递归读取成本高、信号弱）。
     severity: MAJOR
     rule:
       field: "modules[].key_exports"
       check_against: "modules[].entry_file"
-      applies_to_format: "HAR"
+      applies_to_format: "HAR/HSP"
       max_catalog_cap: 10
       scan_patterns:
         - "^\\s*export\\s+(?:default\\s+)?(?:class|function|const|let|var|interface|type|enum)\\s+(\\w+)"

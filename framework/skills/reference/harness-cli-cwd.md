@@ -19,7 +19,7 @@
 
 ## 2. BLOCKER — cwd 泄漏（高危序列）
 
-若上一条命令是 **类型 B**（例如 Step 0.3.0）：
+若上一条命令是 **类型 B**（例如 S3 `harness-runner --phase init`）：
 
 ```bash
 cd framework/harness && npx ts-node harness-runner.ts --phase init --adapter <adapter>
@@ -55,15 +55,31 @@ npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>
 
 ---
 
+## 2.5 BLOCKER — Write 工具 cwd 泄漏（business-ut UT / DAG / Spy）
+
+类型 B 命令（`cd framework/harness && harness-runner …`）之后，**同一 shell** 若用 Write 工具写宿主产物且使用**相对路径**，文件会落在 `framework/harness/...` 而非 `<repo-root>/...`。
+
+**Write 宿主源码 / UT / DAG / Spy 前必须**（二选一）：
+
+```bash
+cd <repo-root>
+```
+
+或使用 **绝对路径**：`<repo-root>/{contracts.modules[].package_path}/...`
+
+**禁止**向 `framework/harness/` Write 任何宿主 module 树、profile 规定的测试源文件、`test/dag/`（`reports/`、`state/` 等 harness 运行产物除外）。门禁：`check-ut` → `harness_host_artifact_pollution`（BLOCKER）。
+
+---
+
 ## 3. 常见类型 A 脚本
 
-| 脚本 | 典型 Skill 步骤 |
-|------|-----------------|
-| `render-agents-md.mjs` | Skill 00 §4.1.1 |
-| `merge-framework-config.mjs` | Skill 00 §5.1 / MIGRATION |
-| `show-last-committed-framework-config.mjs` | Skill 00 Step 1（Git 快照） |
-| `check-receipt.ts` | Skill 1～6 阶段闭环 |
-| `detect-deveco.ts`（shim） | Skill 00 Step 5.6 / hmos profile-addendum |
+| 脚本 | 典型 init 阶段 |
+|------|----------------|
+| `render-agents-md.mjs` | S3 adapter 物化 |
+| `merge-framework-config.mjs` | S3 config merge / MIGRATION |
+| `show-last-committed-framework-config.mjs` | S1.1 Git 快照 |
+| `check-receipt.ts` | prd-design～6 阶段闭环 |
+| `detect-deveco.ts`（shim） | personal setup（`setup.deveco_path`）/ hmos profile-addendum |
 
 **不经 shell 拼路径、无 cwd 问题**：`harness-runner.ts` 进程内调用各 `check-*.ts`；`hook-runner.mjs`（参数为绝对路径）。
 
@@ -72,5 +88,5 @@ npx ts-node scripts/check-receipt.ts --feature <feature> --phase <phase>
 ## 4. 相关入口
 
 - Tier_1 npm：[host-harness-readiness.md](./host-harness-readiness.md)
-- Init 全流程：[../00-framework-init/SKILL.md](../00-framework-init/SKILL.md)
+- Init 全流程：[../framework-init/SKILL.md](../framework-init/SKILL.md)
 - Harness runbook：[../../docs/operations/harness-runbook.md](../../docs/operations/harness-runbook.md)

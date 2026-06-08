@@ -22,7 +22,7 @@
 | 范围                                                                                                                                                     | 状态                                  |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | 在已有产物（catalog、glossary、PRD、design、代码、review、UT、测试计划/报告等）的前提下，按阶段运行**脚本 Harness**：读 Spec 与文档/代码，执行 `check-*.ts`，生成报告 | ✅ 本文档覆盖                         |
-| "一键完成"Skill 0 → PRD → 设计 → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
+| "一键完成"catalog-bootstrap → PRD → 设计 → 编码 → Review → UT → 真机测试的开发流水线                                                                                | ❌ Harness 不是开发流水线，而是质量门禁 |
 | AI Harness 自动调模型                                                                                                                                    | ❌ 脚本只生成 `ai-prompt.md`，不会自动调用任何大模型；语义审查需自行把 prompt 发给所选模型 |
 
 ---
@@ -45,10 +45,10 @@
 
 | Phase       | 对象                     | `--feature` | `requires`（前置） |
 | ----------- | ------------------------ | ----------- | ------------------ |
-| `prd`       | `doc/features/<feature>/PRD.md` | **必填** | `catalog`, `glossary` |
-| `design`    | `design.md` 等           | **必填** | `prd` |
-| `coding`    | 代码 + contracts       | **必填** | `design` |
-| `review`    | `review-report.md`     | **必填** | `coding` |
+| `prd`       | `doc/features/<feature>/prd/PRD.md` | **必填** | `catalog`, `glossary` |
+| `design`    | `design/design.md` 等    | **必填** | `prd` |
+| `coding`    | 代码 + 根目录 `contracts.yaml` | **必填** | `design` |
+| `review`    | `review/review-report.md` | **必填** | `coding` |
 | `ut`        | DAG / `*.test.ets` 等  | **必填** | `coding` |
 | `testing`   | 真机计划 / 报告        | **必填** | `ut` |
 
@@ -194,8 +194,8 @@ doc/features/<feature>/
 
 - **结构**：schema、`modules[]` 必填字段、layer/format、唯一性等
 - **追溯**：`easily_confused_with` 指向存在、无自引用 / 空 module（BLOCKER）、对称性（MAJOR，可 `unidirectional` 豁免）、`entry_file` 在磁盘、`layer_matches_path`
-- **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR 模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
-- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描 `doc/features/*/PRD.md` 与 `design.md` 的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
+- **U2** `key_exports_fresh_vs_index`（MAJOR / WARN）：HAR/HSP 库模块 `key_exports` 与 `Index.ets` 顶层 export 漂移时告警
+- **C3** `feature_scope_integrity`（MAJOR / WARN）：反向扫描各 feature 的 `prd/PRD.md` 与 `design/design.md`（读侧兼容旧扁平路径）的 Scope YAML，列出引用 catalog 未建档模块的文档（提前暴露后续 `scope_matches_catalog` 会 BLOCKER 的漂移）
 
 ### 5.2 glossary（`check-glossary.ts`）
 
@@ -213,17 +213,17 @@ doc/features/<feature>/
 
 ### 5.4 design / coding / review / testing
 
-行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致；feature 级规约与文档同目录扁平归档在实例工程根的 `doc/features/<feature>/`，`framework.config.json` 仅保留单字段 `paths.features_dir`，默认 `doc/features`。
+行为与对应 `framework/specs/phase-rules/<phase>-rules.yaml` 及 `check-<phase>.ts` 一致。`doc/features/<feature>/` 下：**跨阶段契约**（`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml` 等）在 feature **根目录**；**阶段主产物**在 `<phase>/` 子目录（如 `prd/PRD.md`、`design/design.md`、`testing/test-plan.md`），与 `context-exploration.md`、`phase-completion-receipt.md`、`reports/` 同树。路径由 `harness/config.ts` 的 artifact resolver（`PHASE_SCOPED_ARTIFACTS`）统一解析；读侧 dual-read 兼容旧扁平路径。
 
 #### Feature Artifact Resolution Protocol
 
-所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
+所有 feature 维度阶段都遵循同一条解析规则：`doc/features/<feature>/` 这个精确目录才是正式 feature；阶段主产物的 canonical 路径见 `featureArtifactPath` / `relFeatureArtifact`。`doc/features/<feature>.rar`、`<feature>.zip`、`<feature>.7z`、`<feature>.tar*`、`<feature>-old/`、`<feature>.md` 等同级条目只作为旁证展示，不进入 feature 列表，不参与规约加载，也不会被 harness 自动解压。
 
 - PRD 阶段是创建者：目录不存在时可以创建；若精确路径已存在但不是目录，或仅存在同名归档，应先让用户确认 feature 名称或恢复动作。
 - design / coding / review / ut / testing 是消费者：目录不存在时快速失败；目录存在但阶段必需文件缺失时报告缺失文件，不从归档补洞。
 - `SpecLoader.listAvailableFeatures()` 只返回目录；`inspectFeatureArtifacts(feature, phase)` 只做只读诊断，不修改文件、不恢复归档、不依赖 `.current-phase.json` / reports / trace。
 
-**v2.2 / v2.3 起常见 BLOCKER**（是否注册取决于 **active profile**；UT 全流程叙事见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)）：
+**v2.2 / v2.3 起常见 BLOCKER**（是否注册取决于 **active profile**；UT 全流程叙事见 [`../skills/feature/business-ut.md`](../skills/feature/business-ut.md)）：
 
 | Phase   | 规则（hmos-app 示例） | 摘要 |
 | ------- | --------------------- | ---- |
@@ -237,14 +237,14 @@ doc/features/<feature>/
 
 ### 5.5 ut（`check-ut.ts`）
 
-- 详见 [`../skills/5-business-ut.md`](../skills/5-business-ut.md)
+- 详见 [`../skills/feature/business-ut.md`](../skills/feature/business-ut.md)
 - 简明清单：`ut_import_whitelist` / `it_drives_flow` / `branch_coverage_full` / `acceptance_coverage` / `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation`
 - 调度：`capability-registry.ts` → profile `ut-host-impl` / `hvigor-runner` / `hdc-runner`
 
 ### 5.6 testing（`check-testing.ts`）
 
 - 标准 feature：`acceptance.yaml`（`device_focus`）→ 派生 / lint `test-plan.md` → **`device_test.build`** → **`install`** → **`run`**（Hylyre）
-- 即席 `_adhoc`：`npm run adhoc-device-test`（derive → `test-steps.json` → lint → 执行）；详见 [`../../skills/6-device-testing/SKILL.md`](../../skills/6-device-testing/SKILL.md)
+- 即席 `_adhoc`：`npm run adhoc-device-test`（derive → `test-steps.json` → lint → 执行）；详见 [`../../skills/feature/device-testing/SKILL.md`](../../skills/feature/device-testing/SKILL.md)
 - **`device-testing-todo.md` 已废弃**；SSOT 为 acceptance 分层，见 [`../concepts/acceptance-layering.md`](../concepts/acceptance-layering.md)
 
 ---
@@ -269,8 +269,8 @@ npx ts-node harness-runner.ts --phase docs
 ### 6.3 报告样例
 
 ```
-framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
-    ↳ framework/skills/5-business-ut/SKILL.md 更新于 2026-04-26T15:00:00+08:00
+framework/docs/skills/feature/business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
+    ↳ framework/skills/feature/business-ut/SKILL.md 更新于 2026-04-26T15:00:00+08:00
     ↳ framework/specs/phase-rules/ut-rules.yaml 更新于 2026-04-26T16:00:00+08:00
 ```
 
@@ -293,18 +293,18 @@ framework/docs/skills/5-business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ## 7. 与 Slash / Skill 的对应关系
 
-全局 phase **`extensions`** / **`init`** / **`docs`** 一般由 CI 或维护者直接用 `--phase`；无统一 slash（adapter 而异时以 [`agents/README.md`](../../agents/README.md) 为准）。`init` 对应 Skill：**[`00-framework-init`](../../skills/00-framework-init/SKILL.md)**。
+全局 phase **`extensions`** / **`init`** / **`docs`** 一般由 CI 或维护者直接用 `--phase`；无统一 slash（adapter 而异时以 [`agents/README.md`](../../agents/README.md) 为准）。`init` 对应 Skill：**[`framework-init`](../../skills/project/framework-init/SKILL.md)**。
 
 | Phase       | Slash                                          | Skill                                                                            |
 | ----------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `catalog`   | `/catalog-bootstrap`                           | [`../../skills/0-catalog-bootstrap/SKILL.md`](../../skills/0-catalog-bootstrap/SKILL.md) |
-| `glossary`  | `/glossary-bootstrap`                          | [`../../skills/0-catalog-bootstrap/SKILL.md`](../../skills/0-catalog-bootstrap/SKILL.md) |
-| `prd`       | `/prd-design`                                  | [`../../skills/1-prd-design/SKILL.md`](../../skills/1-prd-design/SKILL.md)         |
-| `design`    | `/requirement-design`                          | [`../../skills/2-requirement-design/SKILL.md`](../../skills/2-requirement-design/SKILL.md) |
-| `coding`    | `/coding`                                      | [`../../skills/3-coding/SKILL.md`](../../skills/3-coding/SKILL.md)                |
-| `review`    | `/code-review`                                 | [`../../skills/4-code-review/SKILL.md`](../../skills/4-code-review/SKILL.md)      |
-| `ut`        | `/business-ut`                                 | [`../../skills/5-business-ut/SKILL.md`](../../skills/5-business-ut/SKILL.md)      |
-| `testing`   | `/device-testing`                              | [`../../skills/6-device-testing/SKILL.md`](../../skills/6-device-testing/SKILL.md) |
+| `catalog`   | `/catalog-bootstrap`                           | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
+| `glossary`  | `/glossary-bootstrap`                          | [`../../skills/project/catalog-bootstrap/SKILL.md`](../../skills/project/catalog-bootstrap/SKILL.md) |
+| `prd`       | `/prd-design`                                  | [`../../skills/feature/prd-design/SKILL.md`](../../skills/feature/prd-design/SKILL.md)         |
+| `design`    | `/requirement-design`                          | [`../../skills/feature/requirement-design/SKILL.md`](../../skills/feature/requirement-design/SKILL.md) |
+| `coding`    | `/coding`                                      | [`../../skills/feature/coding/SKILL.md`](../../skills/feature/coding/SKILL.md)                |
+| `review`    | `/code-review`                                 | [`../../skills/feature/code-review/SKILL.md`](../../skills/feature/code-review/SKILL.md)      |
+| `ut`        | `/business-ut`                                 | [`../../skills/feature/business-ut/SKILL.md`](../../skills/feature/business-ut/SKILL.md)      |
+| `testing`   | `/device-testing`                              | [`../../skills/feature/device-testing/SKILL.md`](../../skills/feature/device-testing/SKILL.md) |
 | `docs`      | （无 slash，直接 `--phase docs`）               | —                                                                                |
 
 ---
@@ -533,7 +533,7 @@ cat framework/harness/state/.current-phase.json
 | 2 | **contracts 快照**：`doc/features/<feature>/contracts.yaml` 与当前工程对齐（实例路径，不进 `framework/`）                                    |
 | 3 | **测试计划 AC 编号**：`check-testing.ts` 中关联 AC 的正则支持 `AC-G1` 等形式                                                                  |
 | 4 | **Hypium 入口**：`check-ut.ts` 跳过仅导出 `testsuite()`、无 `describe` 的入口 shim                                                            |
-| 5 | **真机测试文档**：`doc/features/<feature>/test-plan.md`、`test-report.md` 必须覆盖 acceptance 中 P0 / P1 的 AC 追溯                          |
+| 5 | **真机测试文档**：`doc/features/<feature>/testing/test-plan.md`、`testing/test-report.md` 必须覆盖 acceptance 中 P0 / P1 的 AC 追溯                          |
 | 6 | **技能跳板**：部分 adapter 在实例根生成轻量入口，指向 `framework/skills/` 正文，**不复制内容**                                                  |
 
 ---
@@ -543,7 +543,7 @@ cat framework/harness/state/.current-phase.json
 - **Profile 编排**：`check-coding` / `check-ut` / `check-testing` 经 **`capability-registry.ts`** 调度 profile provider。
 - **Context Gate**：schema **1.1.0** + `exploration-strategy.ts`；`backfill:context` / `compat.yaml` 过渡存量 feature。
 - **Hylyre 真机**：testing phase `device_test.*`；报告外置 `doc/features/<feature>/<phase>/reports/`。
-- **确认 UX**：docs phase 含 `confirmation_ux_lint` BLOCKER；Claude adapter AskUserQuestion 见 Skill 0–6 registry。
+- **确认 UX**：docs phase 含 `confirmation_ux_lint` BLOCKER；Claude adapter AskUserQuestion 见 catalog-bootstrap … device-testing phase skills registry。
 - **Agent 行为**：各 feature phase Research Sub-Phase 前读 [`agent-behavioral-principles.md`](../../skills/reference/agent-behavioral-principles.md)。
 - workflow DAG 仍以 [`spec-driven.workflow.yaml`](../../workflows/spec-driven.workflow.yaml) 为 SSOT（**11** phase）。
 

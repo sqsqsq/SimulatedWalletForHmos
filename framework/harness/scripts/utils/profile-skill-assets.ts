@@ -6,6 +6,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { loadFrameworkConfig } from '../../config';
+import {
+  frameworkAbs,
+  frameworkLogicalRelPath,
+  frameworkRelPath,
+  inferRepoLayout,
+  resolveFrameworkPrefixedPath,
+  type RepoLayout,
+} from '../../repo-layout';
+
+function layoutOf(projectRoot: string, layout?: RepoLayout): RepoLayout {
+  return layout ?? inferRepoLayout(projectRoot);
+}
 
 /** SKILL 正文中的占位引用：profile-skill-asset:<skill-id>/<asset_key> */
 export const PROFILE_SKILL_ASSET_RE = /profile-skill-asset:([0-9a-z-]+)\/([a-z][a-z0-9_]*)/gi;
@@ -23,16 +35,23 @@ export interface LoadedManifest {
   errors: string[];
 }
 
-export function skillAssetsManifestRel(profileName: string): string {
-  return path.posix.join('framework', 'profiles', profileName, 'skills', 'skill-assets.yaml');
+export function skillAssetsManifestLogicalRel(profileName: string): string {
+  return frameworkLogicalRelPath('profiles', profileName, 'skills', 'skill-assets.yaml');
+}
+
+export function skillAssetsManifestRel(projectRoot: string, profileName: string, layout?: RepoLayout): string {
+  const L = layoutOf(projectRoot, layout);
+  return frameworkRelPath(L, 'profiles', profileName, 'skills', 'skill-assets.yaml');
 }
 
 export function loadSkillAssetsManifest(
   projectRoot: string,
   profileName: string,
+  layout?: RepoLayout,
 ): LoadedManifest {
-  const manifestRelPath = skillAssetsManifestRel(profileName);
-  const abs = path.join(projectRoot, manifestRelPath);
+  const L = layoutOf(projectRoot, layout);
+  const manifestRelPath = skillAssetsManifestLogicalRel(profileName);
+  const abs = frameworkAbs(L, 'profiles', profileName, 'skills', 'skill-assets.yaml');
   const errors: string[] = [];
   if (!fs.existsSync(abs)) {
     return {
@@ -90,20 +109,22 @@ export function loadSkillAssetsManifest(
 
 /**
  * 解析清单中的单条路径：
- * - 以 `framework/` 开头 → 相对仓库根
- * - 否则 → 相对 `framework/profiles/<profile>/skills/<skillId>/`
+ * - 以 `framework/` 开头 → 相对 projectRoot（consumer）或去前缀（standalone）
+ * - 否则 → 相对 `profiles/<profile>/skills/<skillId>/`
  */
 export function resolveManifestEntryPath(
   projectRoot: string,
   profileName: string,
   skillId: string,
   relOrFw: string,
+  layout?: RepoLayout,
 ): string {
   const norm = relOrFw.replace(/\\/g, '/').trim();
   if (norm.startsWith('framework/')) {
-    return path.join(projectRoot, norm);
+    return resolveFrameworkPrefixedPath(projectRoot, norm, layoutOf(projectRoot, layout));
   }
-  const base = path.join(projectRoot, 'framework', 'profiles', profileName, 'skills', skillId);
+  const L = layoutOf(projectRoot, layout);
+  const base = frameworkAbs(L, 'profiles', profileName, 'skills', skillId);
   return path.join(base, norm);
 }
 
@@ -113,6 +134,7 @@ export function resolveSkillAssetPath(
   manifest: SkillAssetsManifest,
   skillId: string,
   assetKey: string,
+  layout?: RepoLayout,
 ): { ok: boolean; relRepo?: string; absPath?: string; error?: string } {
   const bucket = manifest.assets[skillId];
   if (!bucket) {
@@ -125,7 +147,7 @@ export function resolveSkillAssetPath(
       error: `manifest 未声明资产「${skillId}/${assetKey}」`,
     };
   }
-  const abs = resolveManifestEntryPath(projectRoot, profileName, skillId, entry);
+  const abs = resolveManifestEntryPath(projectRoot, profileName, skillId, entry, layout);
   const relRepo = path.relative(projectRoot, abs).replace(/\\/g, '/');
   return { ok: true, relRepo, absPath: abs };
 }
@@ -157,7 +179,10 @@ export function scanMarkdownRelativeLinks(
   projectRoot: string,
   mdFileAbs: string,
   content: string,
+  layout?: RepoLayout,
 ): string[] {
+  const L = layoutOf(projectRoot, layout);
+  const skillsRootNorm = path.normalize(frameworkAbs(L, 'skills'));
   const issues: string[] = [];
   const dir = path.dirname(mdFileAbs);
   let m: RegExpExecArray | null;
@@ -170,7 +195,7 @@ export function scanMarkdownRelativeLinks(
     const pathOnly = decoded.split('#')[0].trim();
     if (!pathOnly) continue;
     const joined = path.normalize(path.join(dir, pathOnly));
-    if (!joined.startsWith(path.normalize(path.join(projectRoot, 'framework', 'skills')))) {
+    if (!joined.startsWith(skillsRootNorm)) {
       continue;
     }
     if (!fs.existsSync(joined)) {
@@ -185,28 +210,43 @@ export function scanMarkdownRelativeLinks(
  * 仅收集各阶段 SKILL.md 与 prompts/*.md。
  * 与 docs phase `profile_skill_assets_resolvable` 规则一致：不扫 templates/、reference/ 等示意骨架，避免误报。
  */
-function walkSkillDocMarkdownFiles(skillsRoot: string, out: string[]): void {
-  if (!fs.existsSync(skillsRoot)) return;
-  for (const ent of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const skillDir = path.join(skillsRoot, ent.name);
-    const skillMd = path.join(skillDir, 'SKILL.md');
-    if (fs.existsSync(skillMd)) {
-      out.push(skillMd);
-    }
-    const promptsDir = path.join(skillDir, 'prompts');
-    if (fs.existsSync(promptsDir)) {
-      for (const p of fs.readdirSync(promptsDir)) {
-        if (p.endsWith('.md')) {
-          out.push(path.join(promptsDir, p));
-        }
+const SKILL_SCOPE_DIRS = new Set(['project', 'feature']);
+
+function collectSkillMarkdownUnderDir(skillDir: string, out: string[]): void {
+  const skillMd = path.join(skillDir, 'SKILL.md');
+  if (fs.existsSync(skillMd)) {
+    out.push(skillMd);
+  }
+  const promptsDir = path.join(skillDir, 'prompts');
+  if (fs.existsSync(promptsDir)) {
+    for (const p of fs.readdirSync(promptsDir)) {
+      if (p.endsWith('.md')) {
+        out.push(path.join(promptsDir, p));
       }
     }
   }
 }
 
-export function scanAllRootSkillMarkdown(projectRoot: string): string[] {
-  const root = path.join(projectRoot, 'framework', 'skills');
+function walkSkillDocMarkdownFiles(skillsRoot: string, out: string[]): void {
+  if (!fs.existsSync(skillsRoot)) return;
+  for (const ent of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    if (ent.name === 'reference') continue;
+    const top = path.join(skillsRoot, ent.name);
+    if (SKILL_SCOPE_DIRS.has(ent.name)) {
+      for (const sub of fs.readdirSync(top, { withFileTypes: true })) {
+        if (!sub.isDirectory()) continue;
+        collectSkillMarkdownUnderDir(path.join(top, sub.name), out);
+      }
+      continue;
+    }
+    collectSkillMarkdownUnderDir(top, out);
+  }
+}
+
+export function scanAllRootSkillMarkdown(projectRoot: string, layout?: RepoLayout): string[] {
+  const L = layoutOf(projectRoot, layout);
+  const root = frameworkAbs(L, 'skills');
   const files: string[] = [];
   walkSkillDocMarkdownFiles(root, files);
   const issues: string[] = [];
@@ -217,7 +257,7 @@ export function scanAllRootSkillMarkdown(projectRoot: string): string[] {
     } catch {
       continue;
     }
-    issues.push(...scanMarkdownRelativeLinks(projectRoot, abs, content));
+    issues.push(...scanMarkdownRelativeLinks(projectRoot, abs, content, L));
   }
   return issues;
 }
@@ -226,8 +266,9 @@ export function scanAllRootSkillMarkdown(projectRoot: string): string[] {
  * 根 SKILL 树不应写死 **hmos-app** 物理路径；应使用 `profile-skill-asset:` 或 `<project_profile.name>`。
  * （`generic` 等名在少数「回落链」解释中可出现，不在这里一刀切拦截。）
  */
-export function scanRootSkillsHardcodedProfilePaths(projectRoot: string): string[] {
-  const root = path.join(projectRoot, 'framework', 'skills');
+export function scanRootSkillsHardcodedProfilePaths(projectRoot: string, layout?: RepoLayout): string[] {
+  const L = layoutOf(projectRoot, layout);
+  const root = frameworkAbs(L, 'skills');
   const files: string[] = [];
   walkSkillDocMarkdownFiles(root, files);
   const issues: string[] = [];
@@ -257,17 +298,21 @@ export interface ProfileSkillAssetsValidation {
 /**
  * 使用当前实例 framework.config.json 的 project_profile.name 做完整校验。
  */
-export function validateProfileSkillAssetsForProject(projectRoot: string): ProfileSkillAssetsValidation {
+export function validateProfileSkillAssetsForProject(
+  projectRoot: string,
+  layout?: RepoLayout,
+): ProfileSkillAssetsValidation {
   const errors: string[] = [];
+  const L = layoutOf(projectRoot, layout);
   const cfg = loadFrameworkConfig(projectRoot);
   const profileName = cfg.project_profile.name;
-  const loaded = loadSkillAssetsManifest(projectRoot, profileName);
+  const loaded = loadSkillAssetsManifest(projectRoot, profileName, L);
   if (!loaded.ok || !loaded.manifest) {
     errors.push(...loaded.errors);
     return { ok: false, errors };
   }
   const manifest = loaded.manifest;
-  const skillsRoot = path.join(projectRoot, 'framework', 'skills');
+  const skillsRoot = frameworkAbs(L, 'skills');
   const mdFiles: string[] = [];
   walkSkillDocMarkdownFiles(skillsRoot, mdFiles);
 
@@ -286,7 +331,7 @@ export function validateProfileSkillAssetsForProject(projectRoot: string): Profi
 
   for (const [skillId, keys] of seenRefs) {
     for (const assetKey of keys) {
-      const r = resolveSkillAssetPath(projectRoot, profileName, manifest, skillId, assetKey);
+      const r = resolveSkillAssetPath(projectRoot, profileName, manifest, skillId, assetKey, L);
       if (!r.ok || !r.absPath) {
         errors.push(
           `profile-skill-asset:${skillId}/${assetKey} 无法解析：${r.error ?? 'unknown'}`,
@@ -305,7 +350,7 @@ export function validateProfileSkillAssetsForProject(projectRoot: string): Profi
     const bucket = manifest.assets[skillId];
     for (const assetKey of Object.keys(bucket)) {
       const relOrAbs = bucket[assetKey];
-      const abs = resolveManifestEntryPath(projectRoot, profileName, skillId, relOrAbs);
+      const abs = resolveManifestEntryPath(projectRoot, profileName, skillId, relOrAbs, L);
       if (!fs.existsSync(abs)) {
         errors.push(
           `skill-assets.yaml 声明缺失：${skillId}/${assetKey} → ${path.relative(projectRoot, abs).replace(/\\/g, '/')}`,
@@ -314,8 +359,8 @@ export function validateProfileSkillAssetsForProject(projectRoot: string): Profi
     }
   }
 
-  errors.push(...scanAllRootSkillMarkdown(projectRoot));
-  errors.push(...scanRootSkillsHardcodedProfilePaths(projectRoot));
+  errors.push(...scanAllRootSkillMarkdown(projectRoot, L));
+  errors.push(...scanRootSkillsHardcodedProfilePaths(projectRoot, L));
 
   return { ok: errors.length === 0, errors };
 }

@@ -19,6 +19,7 @@ import {
   ScriptReport,
   ReportSummary,
   Severity,
+  Verdict,
   VisualHandoffResolutionRow,
   HarnessResolvedProfile,
   ScriptReportCompatApplied,
@@ -31,8 +32,8 @@ import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED
 // 报告目录管理
 // --------------------------------------------------------------------------
 
-function ensureReportDir(projectRoot: string, feature: string, phase: Phase): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+function ensureReportDir(projectRoot: string, feature: string, phase: Phase, frameworkRoot?: string): string {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -77,6 +78,7 @@ export function generateScriptReport(
   feature: string,
   projectRoot: string,
   checks: CheckResult[],
+  frameworkRoot?: string,
 ): ScriptReport {
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
@@ -96,7 +98,7 @@ export function generateScriptReport(
     report.compat_expired = finalized.compat_expired;
   }
 
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const reportPath = path.join(dir, 'script-report.json');
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
@@ -117,6 +119,7 @@ export function failScriptReportWithFatalError(
   report: ScriptReport,
   stage: 'assemble_ai_prompt' | 'generate_merged_report',
   err: Error,
+  frameworkRoot?: string,
 ): ScriptReport {
   const fatal: CheckResult = {
     id: `runner_${stage}_failed`,
@@ -136,7 +139,7 @@ export function failScriptReportWithFatalError(
     compat_expired: report.compat_expired,
   };
 
-  const dir = ensureReportDir(updated.project_root, updated.feature, updated.phase);
+  const dir = ensureReportDir(updated.project_root, updated.feature, updated.phase, frameworkRoot);
   fs.writeFileSync(
     path.join(dir, 'script-report.json'),
     JSON.stringify(updated, null, 2),
@@ -172,6 +175,7 @@ export function assembleAIPrompt(
   specContent: string,
   resolvedProfile?: HarnessResolvedProfile,
   lifecycleHookFragments?: string[],
+  frameworkRoot?: string,
 ): string {
   const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
   let template: string;
@@ -215,7 +219,7 @@ export function assembleAIPrompt(
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
 
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
 
@@ -305,6 +309,7 @@ export function generateMergedReport(
   feature: string,
   scriptReport: ScriptReport,
   aiReportContent?: string,
+  frameworkRoot?: string,
 ): string {
   const lines: string[] = [];
 
@@ -391,7 +396,7 @@ export function generateMergedReport(
   if (aiReportContent) {
     lines.push(aiReportContent);
   } else {
-    const dir = ensureReportDir(projectRoot, feature, phase);
+    const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
     const promptPath = path.join(dir, 'ai-prompt.md');
     if (fs.existsSync(promptPath)) {
       lines.push(`> AI Harness prompt 已生成，请将以下文件发送给任意 AI 模型执行验证：`);
@@ -413,7 +418,7 @@ export function generateMergedReport(
   lines.push('');
 
   const report = lines.join('\n');
-  const dir = ensureReportDir(projectRoot, feature, phase);
+  const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   fs.writeFileSync(path.join(dir, 'merged-report.md'), report, 'utf-8');
 
   return report;
@@ -468,7 +473,13 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'─'.repeat(60)}`);
   console.log(`  Total: ${report.summary.total}  |  PASS: ${report.summary.pass}  |  FAIL: ${report.summary.fail}  |  WARN: ${report.summary.warn}  |  SKIP: ${report.summary.skip}`);
   console.log(`  Blockers: ${report.summary.blockers}`);
-  console.log(`  Verdict: ${report.summary.verdict === 'PASS' ? (chalk ? chalk.green('PASS') : 'PASS') : (chalk ? chalk.red('FAIL') : 'FAIL')}`);
+  const verdictLabel =
+    report.summary.verdict === 'PASS'
+      ? (chalk ? chalk.green('PASS') : 'PASS')
+      : report.summary.verdict === 'INCOMPLETE'
+        ? (chalk ? chalk.yellow('INCOMPLETE') : 'INCOMPLETE')
+        : (chalk ? chalk.red('FAIL') : 'FAIL');
+  console.log(`  Verdict: ${verdictLabel}`);
   console.log(`${'─'.repeat(60)}`);
   console.log('');
 }
@@ -482,6 +493,38 @@ function formatConsoleDetails(details: string, maxChars: number): string {
 // --------------------------------------------------------------------------
 // 辅助方法
 // --------------------------------------------------------------------------
+
+function isUtDeviceExternalBlocked(checks: CheckResult[]): boolean {
+  const build = checks.find(c => c.id === 'ut_hvigor_build');
+  const test = checks.find(c => c.id === 'ut_hvigor_test');
+  if (build?.status !== 'PASS' || test?.status !== 'FAIL') return false;
+  return test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked';
+}
+
+function areBlockersOnlyUtDeviceExternal(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c =>
+      c.id === 'ut_hvigor_test' &&
+      (c.blocking_class === 'externalBlocked' || c.failure_kind === 'device_blocked'),
+  );
+}
+
+/** 供 unit test 与 report 生成复用 */
+export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
+  let blockers = 0;
+  for (const check of checks) {
+    if (check.status === 'FAIL' && check.severity === 'BLOCKER') {
+      blockers++;
+    }
+  }
+  if (blockers === 0) return 'PASS';
+  if (areBlockersOnlyUtDeviceExternal(checks) && isUtDeviceExternalBlocked(checks)) {
+    return 'INCOMPLETE';
+  }
+  return 'FAIL';
+}
 
 function computeSummary(checks: CheckResult[]): ReportSummary {
   const summary: ReportSummary = {
@@ -506,9 +549,7 @@ function computeSummary(checks: CheckResult[]): ReportSummary {
     }
   }
 
-  if (summary.blockers > 0) {
-    summary.verdict = 'FAIL';
-  }
+  summary.verdict = resolveVerdictFromChecks(checks);
 
   return summary;
 }

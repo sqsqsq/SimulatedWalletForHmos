@@ -1,7 +1,7 @@
 # ============================================================================
 # Code Review 阶段规约 (Phase Rules)
 # ============================================================================
-# 定义 Code Review 报告（Skill 4 产出）必须满足的通用规则。
+# 定义 Code Review 报告（code-review 产出）必须满足的通用规则。
 # 适用于所有功能模块的 Review 报告产出。
 #
 # 消费者:
@@ -11,7 +11,7 @@
 
 phase: review
 version: "1.0"
-applies_to: "doc/features/{module}/review-report.md"
+applies_to: "doc/features/{module}/review/review-report.md"
 
 # --------------------------------------------------------------------------
 # 结构约束 — 脚本 Harness 可自动检测

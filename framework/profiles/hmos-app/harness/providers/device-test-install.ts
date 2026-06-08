@@ -15,6 +15,7 @@ import {
   type DeviceProbeResult,
   type HdcInstallResult,
 } from '../hdc-runner';
+import { detectInstallDowngrade } from '../device-install-diag';
 
 export const provider: CapabilityProvider = {
   id: 'hdc_app',
@@ -26,6 +27,7 @@ export interface DeviceTestInstallOptions {
   /** 工程根（读取 AppScope/app.json5 做版本预检） */
   projectRoot: string;
   harnessRoot: string;
+  frameworkRoot?: string;
   feature: string;
   phase: string;
   hapPath: string;
@@ -86,7 +88,7 @@ function writeInstallArtifacts(
   },
 ): string | undefined {
   try {
-    const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+    const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
     fs.mkdirSync(reportDir, { recursive: true });
     const logAbs = path.join(reportDir, 'hdc-app-install.log');
     fs.writeFileSync(logAbs, payload.logLines.join('\n\n'), 'utf-8');
@@ -176,7 +178,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   }
 
   const hapFp = hapFileFingerprint(opts.hapPath);
-  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase);
+  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   const prevMetaPath = path.join(reportDir, 'device-test-install.meta.json');
   type PrevInstallMeta = {
     hapMtimeMs?: number | null;
@@ -217,12 +219,7 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
   const candVc = candidate.versionCode;
 
   /** bm dump 在部分 HarmonyOS 版本上会把 versionCode 误解析为 0；仅在可确信更高版本已装时判降级。 */
-  const downgradeDetected =
-    candVc !== null &&
-    installedParse.installed &&
-    devVc !== null &&
-    devVc > 0 &&
-    devVc > candVc;
+  const downgradeDetected = detectInstallDowngrade(candVc, installedParse);
 
   const versionAllowsReuse =
     devVc === null ||

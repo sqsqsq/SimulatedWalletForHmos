@@ -52,3 +52,10 @@ doc/glossary-staging/
 
 # 根目录工程级 build-profile（个人/本机差异大时需单独提交时再移出 ignore）
 /build-profile.json5
+
+# Framework runtime artifacts (managed by /framework-init)
+framework/harness/**/ohosTest/
+framework/harness/**/test/dag/
+
+# Personal framework settings (per developer, gitignored)
+framework.local.json
