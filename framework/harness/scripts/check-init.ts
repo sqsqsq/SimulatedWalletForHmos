@@ -30,6 +30,7 @@ import * as YAML from 'yaml';
 
 import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
+import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
   buildAgentsTemplateVars,
   type LegacyRenderEnv,
@@ -463,10 +464,16 @@ function removePathRecursive(abs: string): void {
   fs.rmSync(abs, { recursive: true, force: true });
 }
 
+export interface DeprecatedCleanupBackupSession {
+  stamp: string;
+  backupRelDir?: string;
+}
+
 export function applyDeprecatedArtifactsCleanup(
   projectRoot: string,
   adapter: AdapterDescriptor,
   mode: InitMode,
+  options?: { backupSession?: DeprecatedCleanupBackupSession },
 ): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
   if (mode !== 'update') {
@@ -478,7 +485,8 @@ export function applyDeprecatedArtifactsCleanup(
   const root = resolveAdapterTargetRoot(adapter.rawConfig);
   if (!root) return { cleaned, backupRelDir: null };
 
-  let backupRelDir: string | null = null;
+  const session = options?.backupSession;
+  let backupRelDir: string | null = session?.backupRelDir ?? null;
   for (const entry of entries) {
     if (entry.action !== 'backup_delete') continue;
     const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -486,9 +494,10 @@ export function applyDeprecatedArtifactsCleanup(
     if (!fs.existsSync(absPath)) continue;
 
     if (!backupRelDir) {
-      const stamp = nowStamp();
+      const stamp = session?.stamp ?? nowStamp();
       backupRelDir = `.framework-backup/${stamp}`;
       fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
+      if (session) session.backupRelDir = backupRelDir;
     }
     const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
     copyPathRecursive(absPath, backupAbs);
@@ -2326,12 +2335,56 @@ const checker: PhaseChecker = {
       console.log('========== end check-init ==========\n');
     }
 
+    // goal_capability — optional WARN only（goal-runner preflight 才 BLOCKER）
+    let goalCapResult: CheckResult;
+    if (adapter && adapter.yamlParseable) {
+      const gc = loadGoalCapability(ctx.frameworkRoot, adapter.name);
+      if (!gc.present) {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'WARN',
+          details: 'goal_capability 未声明；不使用 goal-runner 可忽略',
+        };
+      } else if (!gc.valid) {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'WARN',
+          details: gc.issues.join('; '),
+        };
+      } else {
+        goalCapResult = {
+          id: 'goal_capability_declared',
+          category: 'structure',
+          description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+          severity: 'MINOR',
+          status: 'PASS',
+          details: `mode=${gc.capability?.mode ?? 'unknown'}`,
+        };
+      }
+    } else {
+      goalCapResult = {
+        id: 'goal_capability_declared',
+        category: 'structure',
+        description: 'adapter goal_capability 可选声明（goal-runner 需要）',
+        severity: 'MINOR',
+        status: 'WARN',
+        details: 'adapter 未解析，跳过 goal_capability 检查',
+      };
+    }
+
     // 7. 返回 CheckResult[]：4 个聚合检查 + 11 个 inspection 详情（INFO 级别）
     const results: CheckResult[] = [
       adapterCheckResult,
       tplResolveResult,
       tableCompleteResult,
       diffResult,
+      goalCapResult,
     ];
     for (const ins of inspections) {
       const policyTag =

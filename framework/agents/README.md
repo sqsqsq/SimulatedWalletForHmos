@@ -19,12 +19,15 @@ framework/agents/
 │       ├── agents/              ← 子 agent 模板（如 verifier.md）
 │       ├── settings.json        ← 客户端配置（注册 Stop / SubagentStop 等 hook）
 │       └── hooks/               ← Claude Code hook 脚本（Layer 3 物理拦截）
-└── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
+├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
+│   ├── adapter.yaml
+│   └── templates/
+└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + goal_capability）
     ├── adapter.yaml
     └── templates/
-        ├── skills/<skill>/SKILL.md
-        └── rules/framework.mdc
 ```
+
+各 adapter 可选声明 `goal_capability`（goal-runner 全链路；check-init 仅 WARN，runner preflight BLOCKER）。见 `docs/operations/goal-mode-runbook.md`。
 
 ## 关键设计
 
@@ -45,6 +48,8 @@ framework/agents/
 - **禁止**在跳板里追加业务条款、选型表或多个次级文档链接；否则 agent 可能只读跳板、漏掉正文中的 BLOCKER、harness 与 verifier 要求。
 - **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（framework-init）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
+
+**v2.3+ 扁平 skill-id**：实例根跳板目录/文件使用扁平名（如 `.cursor/skills/coding/`、`.claude/commands/coding.md`），不再生成 `3-coding` 等编号目录。UPDATE `framework-init` 的 `cleanup-deprecated` 任务会按 `materialized_adapters` 自动 `backup_delete` 遗留编号跳板（备份 `.framework-backup/<timestamp>/`）；**勿**再依赖宿主手工删编号目录。旧 adapter 级废弃目录（`adapter.yaml` `deprecated_artifacts`）仍走同一任务。
 
 ## Init Skill：编排流（framework-init · S1–S4）
 

@@ -59,3 +59,6 @@ framework/harness/**/test/dag/
 
 # Personal framework settings (per developer, gitignored)
 framework.local.json
+
+# Feature-phase harness reports (paths.reports_dir_pattern)
+doc/features/*/goal-runs/
