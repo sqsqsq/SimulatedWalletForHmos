@@ -46,6 +46,7 @@ doc/glossary-staging/
 /doc/app-snapshot-cache/
 # Skill 6 即席用例临时目录（需要归档时可移出 ignore）
 /doc/features/_adhoc/
+/doc/features/原始需求/
 
 # Hylyre/Hypium 以工程根为 cwd 时落盘的 task 日志；需要归档时再移出 ignore
 /reports/
