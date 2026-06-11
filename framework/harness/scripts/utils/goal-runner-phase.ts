@@ -3,6 +3,8 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
+import { featurePhaseReportsDir, receiptFilePath } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
   FeaturePhase,
@@ -54,6 +56,7 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
     return { verdict, stale_summary: false, agent_failed: false };
   }
 
+  // Gate on fresh summary artifact — agent exit/timeout is observability only (cursor adapter norm).
   if (fresh && input.summaryVerdict) {
     return { verdict: input.summaryVerdict, stale_summary: false, agent_failed: agentFailed };
   }
@@ -63,7 +66,7 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
   }
 
   const stale = input.summaryAfterMtime !== null && !fresh;
-  if (stale || agentFailed || input.harnessExitCode !== 0 || input.summaryAfterMtime === null) {
+  if (stale || input.harnessExitCode !== 0 || input.summaryAfterMtime === null) {
     return { verdict: 'FAIL', stale_summary: stale, agent_failed: agentFailed };
   }
 
@@ -71,11 +74,129 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  ts?: string;
   type?: string;
   phase?: string;
   action?: PhaseVerdictAction;
   verdict?: string;
   status?: string;
+  blocking_class?: string;
+  failure_kind?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  timed_out?: boolean;
+  silent_killed?: boolean;
+  lingering_pipe?: boolean;
+  recovered?: boolean;
+  invoke_id?: string;
+  invoke_start_ts?: string;
+  chain?: string[];
+  attempt?: number;
+  substep?: string;
+  start_index?: number;
+  start_phase?: string;
+}
+
+export interface ResumedBudget {
+  totalTurns: number;
+  wallClockStartMs: number;
+}
+
+/** Count agent attempts from events (new start/end + legacy agent_invoke). */
+export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start') n++;
+    else if (e.type === 'agent_invoke') n++;
+  }
+  return n;
+}
+
+/** First run_start timestamp as wall-clock baseline (ms since epoch). */
+export function resolveWallClockStartMs(events: GoalRunEvent[]): number {
+  for (const e of events) {
+    if (e.type === 'run_start' && e.ts) {
+      const t = new Date(e.ts).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  return Date.now();
+}
+
+export function resolveResumedBudget(events: GoalRunEvent[]): ResumedBudget {
+  return {
+    totalTurns: countAgentInvokeStarts(events),
+    wallClockStartMs: resolveWallClockStartMs(events),
+  };
+}
+
+export interface ResumeGuardInput {
+  priorStatus?: string;
+  lastRunEndTs?: string;
+  forceResume?: boolean;
+  cooldownMinutes?: number;
+  /** Optional: summary mtime advanced after last run_end with changed blocking classification. */
+  blockingCleared?: boolean;
+}
+
+export interface ResumeGuardResult {
+  allowed: boolean;
+  reason?: string;
+}
+
+const TERMINAL_STATUSES = new Set(['HALTED', 'DEFERRED']);
+
+/**
+ * Conservative resume guard — default refuse HALTED/DEFERRED unless --force-resume
+ * or blocking classification demonstrably changed after last run_end.
+ */
+export function checkTerminalResumeGuard(input: ResumeGuardInput): ResumeGuardResult {
+  const status = input.priorStatus;
+
+  // Non-terminal prior runs (COMPLETED/PARTIAL/unknown) are not subject to terminal debounce.
+  if (!status || !TERMINAL_STATUSES.has(status)) return { allowed: true };
+
+  const cooldownMin = input.cooldownMinutes ?? 5;
+  if (input.lastRunEndTs) {
+    const endMs = new Date(input.lastRunEndTs).getTime();
+    if (!Number.isNaN(endMs)) {
+      const elapsed = Date.now() - endMs;
+      const cooldownMs = cooldownMin * 60 * 1000;
+      if (elapsed < cooldownMs) {
+        return {
+          allowed: false,
+          reason: `resume cooldown: wait ${Math.ceil((cooldownMs - elapsed) / 1000)}s after run_end (${status})`,
+        };
+      }
+    }
+  }
+
+  if (input.blockingCleared) return { allowed: true };
+  if (input.forceResume) return { allowed: true };
+
+  return {
+    allowed: false,
+    reason: `last run status ${status}; pass --force-resume to continue`,
+  };
+}
+
+export function findLastRunEnd(events: GoalRunEvent[]): GoalRunEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'run_end') return events[i];
+  }
+  return undefined;
+}
+
+/** Last run_end not superseded by a later run_start or resume (projection SSOT). */
+export function resolveEffectiveRunEnd(events: GoalRunEvent[]): GoalRunEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type !== 'run_end') continue;
+    const superseded = events
+      .slice(i + 1)
+      .some((e) => e.type === 'run_start' || e.type === 'resume');
+    if (!superseded) return events[i];
+  }
+  return undefined;
 }
 
 /** Check run budget before each phase attempt (turns + wall clock). */
@@ -219,4 +340,169 @@ export function resolveResumeState(
   }
 
   return { priorOutcomes, startIndex, deferredUpstream };
+}
+
+export interface PhaseSummaryPassReceipt {
+  verdict: string;
+  receipt_status?: string;
+  closure_status?: string;
+  mtimeMs: number;
+}
+
+/** Read on-disk phase summary + receipt closure fields for half-phase recovery. */
+export function readPhaseSummaryPassReceipt(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+): PhaseSummaryPassReceipt | null {
+  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
+  const summaryPath = path.join(dir, 'summary.json');
+  if (!fs.existsSync(summaryPath)) return null;
+  try {
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
+      verdict?: string;
+      receipt_status?: string;
+      closure_status?: string;
+    };
+    return {
+      verdict: summary.verdict ?? '',
+      receipt_status: summary.receipt_status,
+      closure_status: summary.closure_status,
+      mtimeMs: fs.statSync(summaryPath).mtimeMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */
+export function findUnclosedAgentInvokeStart(events: GoalRunEvent[]): GoalRunEvent | null {
+  const openStarts: GoalRunEvent[] = [];
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase && FEATURE_PHASE_SET.has(e.phase)) {
+      openStarts.push(e);
+    } else if (e.type === 'agent_invoke_end' && e.phase && FEATURE_PHASE_SET.has(e.phase)) {
+      let matched = false;
+      if (e.invoke_id) {
+        for (let i = openStarts.length - 1; i >= 0; i--) {
+          if (openStarts[i].invoke_id === e.invoke_id) {
+            openStarts.splice(i, 1);
+            matched = true;
+            break;
+          }
+        }
+      }
+      if (!matched) {
+        for (let i = openStarts.length - 1; i >= 0; i--) {
+          if (openStarts[i].phase === e.phase) {
+            openStarts.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return openStarts.length > 0 ? openStarts[openStarts.length - 1]! : null;
+}
+
+/** Receipt on disk is from the same invoke window as summary (mtime + optional claimed_completion_at). */
+export function isReceiptFreshForInvokeStart(
+  projectRoot: string,
+  feature: string,
+  phase: FeaturePhase,
+  invokeStartMs: number,
+): boolean {
+  if (Number.isNaN(invokeStartMs)) return false;
+  const receiptPath = receiptFilePath(projectRoot, feature, phase);
+  if (!fs.existsSync(receiptPath)) return false;
+
+  const mtimeMs = fs.statSync(receiptPath).mtimeMs;
+  if (mtimeMs <= invokeStartMs) return false;
+
+  try {
+    const raw = fs.readFileSync(receiptPath, 'utf-8');
+    const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw.replace(/^\uFEFF/, ''));
+    if (!fmMatch) return true;
+    const claimedLine = fmMatch[1]
+      .split(/\r?\n/)
+      .find((line) => /^\s*claimed_completion_at\s*:/.test(line));
+    if (!claimedLine) return true;
+    const value = claimedLine.replace(/^\s*claimed_completion_at\s*:\s*/, '').replace(/^["']|["']$/g, '').trim();
+    if (!value) return true;
+    const claimedMs = new Date(value).getTime();
+    if (Number.isNaN(claimedMs)) return false;
+    return claimedMs > invokeStartMs;
+  } catch {
+    return false;
+  }
+}
+
+function phaseHasTerminalVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
+  for (const e of events) {
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.action === 'retry') continue;
+    return true;
+  }
+  return false;
+}
+
+function phaseHasRecoveredVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
+  for (const e of events) {
+    if (e.type === 'phase_verdict' && e.phase === phase && e.recovered === true) return true;
+  }
+  return false;
+}
+
+/** Detect half-completed phase eligible for resume recovery (fresh PASS summary, unclosed invoke). */
+export function detectHalfCompletedPhaseRecovery(
+  events: GoalRunEvent[],
+  projectRoot: string,
+  feature: string,
+): { phase: FeaturePhase; invokeStartTs: string } | null {
+  const unclosed = findUnclosedAgentInvokeStart(events);
+  if (!unclosed?.phase || !unclosed.ts) return null;
+
+  const phase = unclosed.phase as FeaturePhase;
+  if (phaseHasTerminalVerdict(events, phase) || phaseHasRecoveredVerdict(events, phase)) {
+    return null;
+  }
+
+  const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
+  if (!summary || summary.verdict !== 'PASS') return null;
+  if (summary.receipt_status !== 'passed' || summary.closure_status !== 'closed') return null;
+
+  const startMs = new Date(unclosed.ts).getTime();
+  if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
+  if (!isReceiptFreshForInvokeStart(projectRoot, feature, phase, startMs)) return null;
+
+  return { phase, invokeStartTs: unclosed.ts };
+}
+
+export interface HalfPhaseRecoveryEvent {
+  type: string;
+  phase: FeaturePhase;
+  [key: string]: unknown;
+}
+
+/** Build compensation events for half-completed phase (orchestrator writes before rebuild). */
+export function buildHalfPhaseRecoveryEvents(
+  detected: { phase: FeaturePhase; invokeStartTs: string },
+): HalfPhaseRecoveryEvent[] {
+  const ts = new Date().toISOString();
+  return [
+    {
+      type: 'agent_invoke_recovered',
+      ts,
+      phase: detected.phase,
+      invoke_start_ts: detected.invokeStartTs,
+    },
+    {
+      type: 'phase_verdict',
+      ts,
+      phase: detected.phase,
+      verdict: 'PASS',
+      action: 'advance',
+      recovered: true,
+    },
+  ];
 }

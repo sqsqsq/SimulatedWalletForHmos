@@ -6,8 +6,8 @@
     "sub_variant": "app"
   },
   "materialized_adapters": [
-    "cursor",
     "claude",
+    "cursor",
     "generic"
   ],
   "architecture": {
