@@ -35,7 +35,7 @@
 ## 纪律
 
 - 裸「好 / 继续 / ok」不构成 BLOCKER 确认（init/setup 编排决策须 registry enum）
-- PRD 术语等 **artifact `[x]`** 仍须写回文件；对话 widget 不能替代
+- spec 术语等 **artifact `[x]`** 仍须写回文件；对话 widget 不能替代
 - **不替代** v2.9+ Research Sub-Phase / `context-exploration` harness
 
 ## Init / Setup 编排特例（BLOCKER）
@@ -47,6 +47,7 @@
 - **S3 执行**：将用户选择序列化为 **枚举 decision JSON**，交 `init-orchestrate.ts executeInitPlan`；违反 `allowed_actions` 或依赖闭包时 harness 拒绝。
 - **S2→S3**：registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认。
 - **S4 摘要**：使用 harness `buildRunSummary(run-log)` 输出，AI 不得自行拼接任务结果表；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）。
+- **S4 已闭环**：`buildRunSummary` 汇报完成后 **禁止**再附 portable 编号菜单脚注（含 `init.task_plan` / `init.materialized_adapters` 速查）；`portable_required` 仅适用于 S2 等同轮提问，不适用于 init 收尾摘要。
 - **个人 setup**：`setup.adapter` 只能从 `materialized_adapters` 已物化项选；`setup.deveco_path` 仅探测候选或跳过；写入 `framework.local.json` 且**不写**项目产物。
 
 ## 与 slash 的关系
@@ -58,5 +59,6 @@
 
 - widget 可用却仅给 Markdown 表 + 文本编号，未调 AskUserQuestion
 - option label 自造路径（含 `.claude/commands/skills/`）或 `(Recommended)` 标签
-- 跳过 Research Sub-Phase 直接写 PRD 正文大块（Step 2.5 仍 BLOCKER）
+- 跳过 Research Sub-Phase 直接写 spec 正文大块（Step 2.5 仍 BLOCKER）
 - 阶段四件套 PASS 后在同一执行流自动 Read 下一 Skill（须 `phase.next_step` 停等，见 user-confirmation-ux §8）
+- framework-init **S4 `buildRunSummary` 后**再附 `init.task_plan` / `init.materialized_adapters` 等 portable 脚注

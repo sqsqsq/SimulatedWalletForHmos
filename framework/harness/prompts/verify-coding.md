@@ -77,11 +77,11 @@
 
 - **严重等级**: MAJOR
 - **评估方法**:
-  1. 阅读 design.md 中的服务层接口定义（Repository 方法签名及其语义）
+  1. 阅读 plan.md 中的服务层接口定义（Repository 方法签名及其语义）
   2. 阅读对应的 Repository 实现代码，验证：
      - 方法返回值是否符合设计描述（数据格式、数量约束）
      - 模拟数据是否覆盖了设计中要求的场景
-  3. 阅读 design.md 中的组件树结构
+  3. 阅读 plan.md 中的组件树结构
   4. 阅读对应的页面/组件代码，验证：
      - 组件层级是否与组件树一致
      - 页面间跳转逻辑是否与导航设计一致
@@ -147,7 +147,7 @@
   2. 检查 presentation 层代码是否感知数据来源（如判断 `isMock`、读取模拟标记等）
   3. 理想状态：将来替换为真实 API 时，只需修改 Repository 内部实现，presentation 层无需变更
 
-### 检查 7: PRD 验收标准覆盖 (prd_acceptance_to_code)
+### 检查 7: spec 验收标准覆盖 (spec_acceptance_to_code)
 
 - **严重等级**: MAJOR
 - **评估方法**:
@@ -164,7 +164,7 @@
 - **严重等级**: BLOCKER
 - **评估方法**:
   1. 读取 `doc/features/{feature_name}/coding/context-exploration.md`（schema 1.1.0）
-  2. 对照 contracts、acceptance、design：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
+  2. 对照 contracts、acceptance、plan：`source_code_paths`、`Code Facts` 是否覆盖实际改动文件
   3. 探索文件缺失且脚本已 FAIL → 本项 FAIL
 
 ### 检查 9: 行为合规 — 研究有据 (behavior_research_grounded)
@@ -185,7 +185,7 @@
 ### 检查 12: 行为合规 — Scope 精准 (behavior_scope_surgical)
 
 - **严重等级**: BLOCKER
-- **评估方法**: git diff / 变更是否超出 design scope 与 contracts 文件清单 → FAIL
+- **评估方法**: git diff / 变更是否超出 plan scope 与 contracts 文件清单 → FAIL
 
 ### 检查 13: 阶段边界 — 禁止 autopilot (phase_transition_autopilot)
 
@@ -298,8 +298,8 @@ verification_result:
       suggestion: |
         <修正建议>
 
-    # --- 检查 7: PRD 验收标准覆盖 ---
-    - id: prd_acceptance_to_code
+    # --- 检查 7: spec 验收标准覆盖 ---
+    - id: spec_acceptance_to_code
       status: PASS | FAIL | WARN
       severity: MAJOR
       details: |
@@ -354,7 +354,7 @@ verification_result:
       status: PASS | FAIL | WARN
       severity: BLOCKER
       details: |
-        diff 超出 design scope/contracts: PASS/FAIL
+        diff 超出 plan scope/contracts: PASS/FAIL
       suggestion: |
         <修正建议>
 

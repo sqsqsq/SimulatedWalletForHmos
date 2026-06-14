@@ -34,7 +34,7 @@
 
 这三项叠加的直接后果：
 
-- 自然语言需求 → AI 选错模块 → PRD / design / coding 内部都对得上，但整条链路都在错的方向上往下走
+- 自然语言需求 → AI 选错模块 → spec / plan / coding 内部都对得上，但整条链路都在错的方向上往下走
 - 写代码时因上下文缺失频繁跑偏，到 code review 阶段才发现
 - UT 覆盖率看起来 80%+，线上一遇业务流程异常就炸（"声明覆盖"陷阱：`expect(list.length > 0)` 能过，业务流完全没跑）
 - 凭直觉"加强校验"而不控制边界，架构文档被每个 feature 改动污染成变更日志
@@ -58,8 +58,8 @@ flowchart LR
         FR["功能级规约<br/>doc/features/<feature>/*.yaml"]
     end
     subgraph skillLayer ["生成层 (Skill) · 产出文档/代码"]
-        S0["0. catalog+glossary"] --> S1["1. PRD"]
-        S1 --> S2["2. Design"]
+        S0["0. catalog+glossary"] --> S1["1. spec"]
+        S1 --> S2["2. plan"]
         S2 --> S3["3. Coding"]
         S3 --> S4["4. Review"]
         S4 --> S5["5. 业务级 UT"]
@@ -87,7 +87,7 @@ flowchart LR
 
 **为什么非要拆三层？**
 
-- **Spec 独立**：让"验收标准"可以在没有 Harness 时就供人工审查；而 Spec 本身又是 prd-design/2 的**产物**（PRD 产 `acceptance.yaml` / design 产 `contracts.yaml`），同时是 coding/5/6 的**输入**和 Harness 的**消费源** —— 一份数据三个方向使用
+- **Spec 独立**：让"验收标准"可以在没有 Harness 时就供人工审查；而 Spec 本身又是 spec/2 的**产物**（spec 产 `acceptance.yaml` / plan 产 `contracts.yaml`），同时是 coding/5/6 的**输入**和 Harness 的**消费源** —— 一份数据三个方向使用
 - **生成与验证分离**：生成者和验证者**可以是不同模型**（甚至不同厂商），消除"考生自己批改试卷"的偏差
 - **机制 > 文字**：文字里的"应该 / 禁止"靠不住，要落到 `check-*.ts` + `verify-*.md` 可执行的硬门禁
 
@@ -106,24 +106,24 @@ flowchart LR
   end
 
   subgraph feat [功能 phase]
-    prd[prd]
-    des[design]
+    spec[spec]
+    plan[plan]
     cod[coding]
     rev[review]
     utp[ut]
     tst[testing]
   end
 
-  prd --> des
-  des --> cod
+  spec --> plan
+  plan --> cod
   cod --> rev
   cod --> utp
   utp --> tst
-  cat --> prd
-  glo --> prd
+  cat --> spec
+  glo --> spec
 ```
 
-兼容降级 **`compat.yaml`** 不是图上节点：仅在 **`prd`～`ut`**（不含 `testing`）的脚本汇总前按需生效；**全局 phase 不参与**。见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md)。
+兼容降级 **`compat.yaml`** 不是图上节点：仅在 **`spec`～`ut`**（不含 `testing`）的脚本汇总前按需生效；**全局 phase 不参与**。见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md)。CLI 仍接受 legacy phase id `prd` / `design`（alias，WARN），见 [MIGRATION.md](../MIGRATION.md) §v2.3。
 
 runner 与各 phase 的命令、报告路径见 **[`operations/harness-runbook.md`](operations/harness-runbook.md)**。
 
@@ -151,8 +151,8 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | 波次                      | 核心主题            | 主要交付                                                                                                                                              |
 | ------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **初建**                  | 三层骨架            | `skills/` + `specs/phase-rules/` + `harness/` 首版；6 个阶段 Skill 打通端到端                                                                          |
-| **第一波**                | 弱模型友好          | **三阶段 Scope 守门**（PRD 声明 / design 继承 / coding diff 比对）；**宿主语言**易错手册（由 profile 提供；如 `hmos-app` 为 ArkTS）+ 逐文件 lint                                                   |
-| **第二波**                | 术语守门            | `module-catalog.yaml` + `glossary.yaml` 双 SSOT；PRD 新增术语映射表 Step 1.5；三道 BLOCKER 防线                                                       |
+| **第一波**                | 弱模型友好          | **三阶段 Scope 守门**（spec 声明 / plan 继承 / coding diff 比对）；**宿主语言**易错手册（由 profile 提供；如 `hmos-app` 为 ArkTS）+ 逐文件 lint                                                   |
+| **第二波**                | 术语守门            | `module-catalog.yaml` + `glossary.yaml` 双 SSOT；spec 新增术语映射表 Step 1.5；三道 BLOCKER 防线                                                       |
 | **第二三波**              | catalog-bootstrap 自举        | `/catalog-bootstrap` / `/glossary-bootstrap` 建档流程；护栏 A–D；种子词技术词 allowlist                                                                |
 | **通用化**                | framework 脱耦      | 从原宿主工程剥离出 `framework/` 作为独立资产；架构 DSL 化（分层可配置）；[`agent adapter`](../agents/README.md) 插件化；`framework-init` Skill |
 | **架构文档收窄**          | 边界划清            | `architecture.md` 改为**架构级契约文档**（只记 `dsl_change`/`module_set_change`/`responsibility_rewrite` 三类事件），不再承担 feature 级变更日志       |
@@ -172,7 +172,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **v2.8.3 弱模型 tool-call 兜底** | init 渲染 entry-file 卡死 | `render-agents-md.mjs` 升为首选路径；`tool-call retry-loop Ban` |
 | **reports 外置**            | feature 产物与 submodule 分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
 | **v2.9 Karpathy 四原则**    | Agent 行为 + 探索量化 | [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；verifier `behavior_*` 维度 |
-| **v2.10 exploration_strategy** | 大仓深度探索      | design/coding **default-on subagent**；prd/review/ut **复合评分**；`sequential` 等价路径 |
+| **v2.10 exploration_strategy** | 大仓深度探索      | plan/coding **default-on subagent**；spec/review/ut **复合评分**；`sequential` 等价路径 |
 | **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor wheel + venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
 | **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
@@ -221,10 +221,10 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 | 阶段 | Skill                                                                  | 职责                              | 关键产物                                              | 主要门禁（BLOCKER）                                                                                                            |
 | ---- | ---------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；init 后可 `npm test`（= `check:global`） |
+| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；**UPDATE** 时 `cleanup-deprecated` 备份删除遗留 skill 跳板（含 `3-coding` 及 `prd-design` / `requirement-design` 等语义旧名，保留 `spec` / `plan` / `coding`）；init 后可 `npm test`（= `check:global`） |
 | 0    | [`catalog-bootstrap`](../skills/project/catalog-bootstrap/SKILL.md)         | 模块画像 + 术语表自举             | `module-catalog.yaml` / `glossary.yaml`               | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截                                                       |
-| 1    | [`prd-design`](../skills/feature/prd-design/SKILL.md)                       | PRD 撰写                          | `PRD.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
-| 2    | [`requirement-design`](../skills/feature/requirement-design/SKILL.md)       | 技术设计                          | `design.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
+| 1    | [`spec`](../skills/feature/spec/SKILL.md)                       | spec 撰写                          | `spec.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
+| 2    | [`plan`](../skills/feature/plan/SKILL.md)       | 技术设计                          | `plan.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
 | 3    | [`coding`](../skills/feature/coding/SKILL.md)                               | 业务代码（宿主语言由 profile 决定，默认 ArkTS） | 源代码 + `contracts.yaml` + `context-exploration.md` | `diff_within_scope`、逐文件 Lint、**`coding_hvigor_build`**（profile capability） |
 | 4    | [`code-review`](../skills/feature/code-review/SKILL.md)                     | 代码审查                          | `review-report.md`                                    | Review 结论一致性、BLOCKER 数量                                                                                                |
 | 5    | [`business-ut`](../skills/feature/business-ut/SKILL.md)                     | 业务级 UT                         | `dag.yaml` + `*.test.ets` + 可选 `ut/reports/ac-coverage.json`  | **`ut_tsc_compiles`**、**`ut_hvigor_build`**、**`ut_hvigor_test`**、**`ut_no_src_mutation`**、`acceptance_coverage`（profile 驱动） |
@@ -232,7 +232,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 \* `use-cases.yaml` 仅在 feature 满足复杂度阈值（多 UI / 多步云 / 含回滚 任一）时产出。
 
-**Research Sub-Phase**：写 PRD / design / coding / review / UT 主产物前须落盘 `context-exploration.md`（schema **1.1.0**）。详见 §2.3.4。
+**Research Sub-Phase**：写 spec / plan / coding / review / UT 主产物前须落盘 `context-exploration.md`（schema **1.1.0**）。详见 §2.3.4。
 
 **执行规则**：
 
@@ -265,14 +265,14 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 - `semantic_checks`：业务逻辑 / 设计合理性（AI 检）
 - `traceability_checks`：跨阶段追溯（脚本 + AI）
 
-**功能级规约与阶段产物**（归档在实例工程的 `doc/features/<feature>/`）：跨阶段契约（`acceptance.yaml`、`contracts.yaml` 等）在 feature 根；阶段主产物在 `<phase>/` 子目录（`prd/PRD.md`、`design/design.md`、`review/review-report.md`、`testing/test-plan.md` 等，与 `context-exploration.md` / `reports/` 同树）。读侧兼容旧扁平路径，见 `harness/config.ts` artifact resolver。
+**功能级规约与阶段产物**（归档在实例工程的 `doc/features/<feature>/`）：跨阶段契约（`acceptance.yaml`、`contracts.yaml` 等）在 feature 根；阶段主产物在 `<phase>/` 子目录（`spec/spec.md`、`plan/plan.md`、`review/review-report.md`、`testing/test-plan.md` 等，与 `context-exploration.md` / `reports/` 同树）。读侧兼容旧扁平路径，见 `harness/config.ts` artifact resolver。
 
 | 文件               | 生产者              | 内容                                                  |
 | ------------------ | ------------------- | ----------------------------------------------------- |
-| `acceptance.yaml`  | prd-design             | 验收标准（AC-X），含 `priority` / `ut_layer` / `device_focus` |
-| `contracts.yaml`   | requirement-design             | 接口签名、数据模型、文件清单（从 design.md 提取）      |
-| `boundaries.yaml`  | prd-design + 2         | 边界用例、极端输入、性能指标                          |
-| `use-cases.yaml`   | requirement-design（条件式）   | 业务流程规约（仅复杂 feature 产出）                   |
+| `acceptance.yaml`  | spec             | 验收标准（AC-X），含 `priority` / `ut_layer` / `device_focus` |
+| `contracts.yaml`   | plan             | 接口签名、数据模型、文件清单（从 plan.md 提取）      |
+| `boundaries.yaml`  | spec + 2         | 边界用例、极端输入、性能指标                          |
+| `use-cases.yaml`   | plan（条件式）   | 业务流程规约（仅复杂 feature 产出）                   |
 
 #### 2.3.3 Harness 层（验证）
 
@@ -295,11 +295,11 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | 原则 | Framework 落地 |
 |------|----------------|
 | **Research First** | 主产物前 `context-exploration.md`；`source_code_paths` 须真实存在；代码与文档冲突以代码为准 |
-| **Minimum Viable** | 不超出 PRD/design/contracts 范围；禁止投机性抽象 |
+| **Minimum Viable** | 不超出 spec/plan/contracts 范围；禁止投机性抽象 |
 | **Surgical** | coding/review diff 落在 scope 与 contracts 内 |
 | **Verify Before Proceed** | harness + verifier + receipt + trace 四件套；Coding 逐文件 lint |
 
-**exploration_strategy**（phase-rules + `exploration-strategy.ts`）：design/coding 默认 **subagent** 探索（L1 trivial 可豁免）；prd/review/ut 按 **复合评分**（模块 LOC、跨层、fan-out 等）决定是否必须 subagent；无 subagent 时走 **sequential** 等价路径（量化阈值 × multiplier）。
+**exploration_strategy**（phase-rules + `exploration-strategy.ts`）：plan/coding 默认 **subagent** 探索（L1 trivial 可豁免）；spec/review/ut 按 **复合评分**（模块 LOC、跨层、fan-out 等）决定是否必须 subagent；无 subagent 时走 **sequential** 等价路径（量化阈值 × multiplier）。
 
 存量 feature 升级撞新 BLOCKER：优先 `npm run backfill:context`，或短期 `compat.yaml`（见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md)）。
 
@@ -332,7 +332,7 @@ flowchart LR
 
 #### A. 架构 DSL 与 project_profile
 
-`framework.config.json → architecture` 声明工程的分层（外层 + 内层）+ 依赖矩阵；`project_profile.name` 选择宿主 profile（默认 `hmos-app`）。`check-design.ts` / `check-coding.ts` / `check-testing.ts` 等经 **profile-host-loader** 调度宿主 capability，根 harness 只做编排。
+`framework.config.json → architecture` 声明工程的分层（外层 + 内层）+ 依赖矩阵；`project_profile.name` 选择宿主 profile（默认 `hmos-app`）。`check-plan.ts` / `check-coding.ts` / `check-testing.ts` 等经 **profile-host-loader** 调度宿主 capability，根 harness 只做编排。
 
 - 极简 3 层 App：改 `outer_layers` / `module_inner_layers` 即可，framework 核心一行不改
 - 元规则不可配：依赖方向自上而下、层级图须为 DAG、跨模块只许通过 `cross_module_exports_file`
@@ -346,12 +346,12 @@ flowchart LR
 
 ```mermaid
 graph LR
-    p["PRD 阶段<br/>声明<br/>in_scope / out_of_scope"] -->
-    d["Design 阶段<br/>assert design.modules ⊆ prd.scope<br/>越界必发 Scope 扩展提议"] -->
+    p["spec 阶段<br/>声明<br/>in_scope / out_of_scope"] -->
+    d["plan 阶段<br/>assert plan.modules ⊆ spec.scope<br/>越界必发 Scope 扩展提议"] -->
     c["Coding 阶段<br/>git diff 文件路径 ⊆ scope 模块<br/>BLOCKER"]
 ```
 
-任何"顺手改一下"都必须回到 design 阶段走**显式扩展提议**（`expansions_with_user_approval`），用户批准后才能写入。
+任何"顺手改一下"都必须回到 plan 阶段走**显式扩展提议**（`expansions_with_user_approval`），用户批准后才能写入。
 
 #### D. 业务级 UT 分层分工
 
@@ -362,17 +362,17 @@ UT 是**既有代码的消费者**，不驱动架构。详见 [`skills/feature/b
 Spec 是追溯链的枢纽，每一环都由脚本 Harness 自动验证：
 
 ```
-PRD.md ─→ acceptance.yaml (AC1, AC2, BD1, BD2...)
-               │ prd_to_design_coverage
+spec.md ─→ acceptance.yaml (AC1, AC2, BD1, BD2...)
+               │ spec_to_plan_coverage
                ▼
-design.md ─→ contracts.yaml (interfaces, data_models, files, linked: AC1→func1)
-               │ design_to_code_coverage
+plan.md ─→ contracts.yaml (interfaces, data_models, files, linked: AC1→func1)
+               │ plan_to_code_coverage
                ▼
 source code (func1.ets, func2.ets...)
                │ code_to_ut_coverage
                ▼
 UT (DAG + *.test.ets, it() 标签 [BRANCH-x][AC-Y])
-               │ prd_acceptance_to_test
+               │ spec_acceptance_to_test
                ▼
 Test Plan（由 acceptance `device_focus` 派生）
 ```
@@ -403,7 +403,7 @@ git submodule add <framework-repo-url> framework
 git submodule update --init --recursive
 ```
 
-之后同样跑 `/framework-init` 完成所有自动化步骤。Submodule 升级走 `git submodule update --remote framework` + `/framework-init UPDATE`。
+之后同样跑 `/framework-init` 完成所有自动化步骤。Submodule 升级走 `git submodule update --remote framework` + `/framework-init UPDATE`（UPDATE 会清理实例根遗留 skill 跳板，勿跳过 `cleanup-deprecated`）。
 
 #### 选择建议
 
@@ -421,8 +421,8 @@ git submodule update --init --recursive
 /glossary-bootstrap                # 按需扩充术语表
 
 # Step 1 ~ 6
-/prd-design <feature 描述>
-/requirement-design
+/spec <feature 描述>
+/plan
 /coding
 /code-review
 /business-ut
@@ -445,12 +445,12 @@ git submodule update --init --recursive
 
 **症状**：AI 顺手改了无关模块；review 阶段才发现 git diff 范围远超预期。
 
-**根因**：PRD 没有声明"只能改哪些"，AI 只能按"相关性"猜测。
+**根因**：spec 没有声明"只能改哪些"，AI 只能按"相关性"猜测。
 
 **解法（三阶段 Scope 守门）**：
 
-- PRD 必须声明 `in_scope_modules` / `out_of_scope_modules` / `rationale`
-- design.md 必须继承 PRD scope；扩展走显式"Scope 扩展提议"流程
+- spec 必须声明 `in_scope_modules` / `out_of_scope_modules` / `rationale`
+- plan.md 必须继承 spec scope；扩展走显式"Scope 扩展提议"流程
 - coding 阶段 `diff_within_scope` BLOCKER：git diff 涉及的文件必须全部在 scope 内
 
 落地：[`../harness/scripts/utils/scope-parser.ts`](../harness/scripts/utils/scope-parser.ts) + [`check-coding.ts`](../harness/scripts/check-coding.ts) 的 `checkDiffWithinScope`。
@@ -534,14 +534,14 @@ git submodule update --init --recursive
 
 **解法**：
 
-- design.md 新增**"架构影响声明"**章节，必填 `architecture_impact ∈ {none, dsl_change, module_set_change, responsibility_rewrite}`
+- plan.md 新增**"架构影响声明"**章节，必填 `architecture_impact ∈ {none, dsl_change, module_set_change, responsibility_rewrite}`
 - 只有后三种才触发 architecture.md 更新；`impact: none` 是 90% 场景的缺省值
-- `check-design.ts` 的 `checkDesignToArchitecture` 按 `impact` 字段条件式 SKIP
+- `check-plan.ts` 的 `checkDesignToArchitecture` 按 `impact` 字段条件式 SKIP
 - architecture.md 定位收窄为**架构级契约文档**；模块职责 / 公共能力 / 易混点移到 `module-catalog.yaml`
 
 ### 3.9 端到端"一键完成"的误区
 
-**症状**：期望 `harness-runner` 能一键跑完 PRD → design → coding → review → UT → testing。
+**症状**：期望 `harness-runner` 能一键跑完 spec → plan → coding → review → UT → testing。
 
 **正解**：Harness 是**每步归档后的质量门禁**，不是开发流水线。各阶段文档与代码仍需按 Skill 由 AI + 人工完成；Harness 的职责是**卡住错误不让往下传**。`AI Harness` 脚本只生成 `ai-prompt.md`，**不会自动调模型** —— 这是模型无关性的前提。
 
@@ -555,7 +555,7 @@ git submodule update --init --recursive
 | --------------------------- | ------------------------------------------------------- | --------------------------------- | --------------------------------------------------------------- |
 | **Glossary 覆盖**           | 默认沙盒只有 ~15 条术语，真实工程估计需要 50-200 条      | 首轮接入需集中扩充                | catalog-bootstrap `/glossary-bootstrap` 支持增量建档                      |
 | **弱模型吞字防护**          | init 渲染 / adapter 拷贝已脚本化；三分区哨兵与 negation-diff 仍在推进 | UPDATE 模式 narrative 区仍有反转风险 | `render-agents-md.mjs` 首选路径 + `check-init.ts`；三分区 + negation-diff 待落地 |
-| **design 启发式误报**       | `file_structure_per_module` / `interface_signatures_complete` 用正则启发式 | 偶发误报需人工识别噪声            | 后续替换为 AST 精确分析                                         |
+| **plan 启发式误报**         | `file_structure_per_module` / `interface_signatures_complete` 用正则启发式 | 偶发误报需人工识别噪声            | 后续替换为 AST 精确分析                                         |
 | **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`） | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base） | 见 `coding-rules.yaml` / `git-diff.ts`                                                            |
 | **acceptance→test-plan 分层** | SSOT 为 `acceptance.yaml` 的 `ut_layer` + `device_focus`；`device-testing-todo.md` 已废弃 | 存量 feature 若仍引用旧 todo 易误读 | 见 [acceptance-layering.md](concepts/acceptance-layering.md)；`device_ac_delegation` BLOCKER（`device_focus`） |
 | **架构漂移检测**            | 大仓长期 drift 缺 `check-architecture` 类门             | 架构违规靠 code review 兜底       | 纳入后续议题                                                     |
@@ -607,8 +607,8 @@ git submodule update --init --recursive
 
 - [`../skills/project/framework-init/SKILL.md`](../skills/project/framework-init/SKILL.md)
 - [`../skills/project/catalog-bootstrap/SKILL.md`](../skills/project/catalog-bootstrap/SKILL.md)
-- [`../skills/feature/prd-design/SKILL.md`](../skills/feature/prd-design/SKILL.md)
-- [`../skills/feature/requirement-design/SKILL.md`](../skills/feature/requirement-design/SKILL.md)
+- [`../skills/feature/spec/SKILL.md`](../skills/feature/spec/SKILL.md)
+- [`../skills/feature/plan/SKILL.md`](../skills/feature/plan/SKILL.md)
 - [`../skills/feature/coding/SKILL.md`](../skills/feature/coding/SKILL.md)
 - [`../skills/feature/code-review/SKILL.md`](../skills/feature/code-review/SKILL.md)
 - [`../skills/feature/business-ut/SKILL.md`](../skills/feature/business-ut/SKILL.md)
@@ -655,6 +655,6 @@ git submodule update --init --recursive
 > 核心不变：任何时候模型的决策路径都必须是人类可审的显式对抗，而不是黑盒相似度。**
 
 <!--
-  last-synced: 2026-05-22 (2.0: profile/capability-registry, Hylyre, Karpathy/exploration, confirmation UX, acceptance device_focus, RELEASE-NOTES)
+  last-synced: 2026-06-12 (2.3.0: spec/plan phase id、workflow DAG、skill-assets、MIGRATION §v2.3)
   Skill 与中台文档路径变更后同步维护同步段落（doc_freshness）。
 -->

@@ -10,7 +10,7 @@
 
 | 术语 | 层级 | 用途 | 默认生命周期 |
 |------|------|------|----------------|
-| **Code Graph**（功能图谱） | 模块 | 索引模块核心功能节点（入口、边界、分支意图），供 PRD/design/coding/UT/device-testing **导航** | 长期维护、可增删迭代 |
+| **Code Graph**（功能图谱） | 模块 | 索引模块核心功能节点（入口、边界、分支意图），供 spec/plan/coding/UT/device-testing **导航** | 长期维护、可增删迭代 |
 | **flow DAG** | 需求（feature） | 单条业务流的 UT 场景拓扑（entry → port_call → state → assertion） | **默认 ephemeral**，不归档到 `{module}/test/dag/` |
 | **Repo Map** | 全局（可选） | 跨模块轻量派生导航（文件/符号/依赖边聚合） | 后置能力，见 §6 |
 
@@ -91,13 +91,19 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 - `--seed-from-catalog`：仅在 `nodes` 为空时，用 catalog 的 `entry_file` / `key_exports` 生成**草稿**节点（`core: false`，须人工改 intent 并标 3–5 个 `core: true`）。
 - `--dry-run`：预览统计不写盘；包路径不对时用 `--package-path <layer>/<name>` 覆盖。
 
-漂移评估仍用库函数 `evaluateCodeGraphDrift()`；日常 `module-graph` phase / `0-code-graph` Skill 仍属后置（见下）。
+漂移评估：`evaluateCodeGraphDrift()`；日常维护入口已落地——**`code-graph` Skill** + harness `--phase module-graph`（见 `openspec/changes/code-graph-entrypoints`）。
+
+```bash
+cd framework/harness && npx ts-node harness-runner.ts --phase module-graph
+```
+
+用户主动建图：读 `framework/skills/project/code-graph/SKILL.md` 或 `/code-graph <ModuleName>`。
 
 ### 6.1 仍后置的能力
 
-- **Skill 全量接入图谱作导航索引**（prd-design/2/3/6）；每次使用须反查 anchor，不得当 PRD/design/coding 事实来源。
+- **Skill 全量接入图谱作导航索引**（spec / plan / coding / device-testing 等）；每次使用须反查 anchor，不得当 spec/plan/coding 事实来源。
 - **全局 Repo Map**（跨模块聚合派生导航）。
-- **日常维护入口**（harness-runner `--phase module-graph`、专用 Skill、CI drift 阶段）。
+- **CI 定时 drift 阶段**（可选；当前由 Skill 收尾或手动跑 `--phase module-graph`）。
 
 ---
 
@@ -106,3 +112,10 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <模块名> 
 - [可演进性与扩展分层](extensibility.md)
 - [验收分层](acceptance-layering.md)
 - [business-ut 业务级 UT](../skills/feature/business-ut.md)
+
+---
+
+## 维护同步（2026-06-12 · 2.3.0）
+
+- 对照 [`DOC_INVENTORY.yaml`](../DOC_INVENTORY.yaml)：`business-ut/SKILL.md` 本轮去除 Skill N 人读编号，正文仍引用 Code Graph / flow DAG 导航原则（索引-only，非 spec/plan/coding 真源）。
+- `module-graph` harness 与 `skills/project/code-graph/SKILL.md` 入口未变；仅同步 inventory source 时间戳。

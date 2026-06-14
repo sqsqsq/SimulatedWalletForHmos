@@ -8,13 +8,13 @@
 
 用户要求进入 **目标模式 / 全自动（无人值守）**，对某个 **feature** 从指定 phase 推进到终点时，进入本 Skill 并由 **agent 自跑** goal-runner。
 
-「全链路 / 从 PRD 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
+「全链路 / 从 spec 到真机 / 一个需求做到尾」等表述属于 **batch_authorized**（对话内多 phase），**不是**本 Skill 的 goal 触发词。
 
 ## 宿主怎么触发（用户侧）
 
 | 方式 | 示例 |
 |------|------|
-| Claude slash | `/goal-mode demo-feature 全自动从 prd 做到 testing` |
+| Claude slash | `/goal-mode demo-feature 全自动从 spec 做到 testing` |
 | 自然语言 | 「对 `demo-feature` 进入目标模式，无人值守全自动」 |
 | Codex/Cursor/generic Skill | 读跳板（skill id `goal-mode`）后进入本 Skill 正文 |
 
@@ -24,7 +24,7 @@
 |------|------|------|
 | `feature` | 是 | feature slug |
 | `requirement` | 否 | 需求描述 |
-| `start_phase` / `end_phase` | 否 | 默认 prd→testing |
+| `start_phase` / `end_phase` | 否 | 默认 spec→testing |
 | `adapter` | 否 | 用户显式指定 agent（如「用 cursor 跑 goal」）→ 校验 ∈ `materialized_adapters` 且入口产物存在 → 映射 `--adapter`；未物化 → **STOP** 引导 `/framework-init`（不在 goal 流程内写项目产物） |
 
 ## Agent 必须执行（勿推给用户）
@@ -61,7 +61,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
   --requirement "<需求描述>" \
   --adapter <显式指定或 personal setup 后的 active adapter> \
-  [--start prd] [--end testing] [--dry-run]
+  [--start spec] [--end testing] [--dry-run]
 ```
 
 `--dry-run` 仅用于 agent 自验参数；用户要求真跑时去掉。
@@ -90,7 +90,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts --manifest <path>
 ## manifest 关键字段
 
 - `feature`：feature slug（**必填**）
-- `start_phase` / `end_phase`：起止 phase（默认 prd→testing）
+- `start_phase` / `end_phase`：起止 phase（默认 spec→testing）
 - `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
 - `unattended`：写权限/审批/超时（preflight BLOCKER）
 - 运行证据：`doc/features/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）

@@ -69,7 +69,7 @@ business-ut 的第一原则是：**测试消费既有业务代码，不反过来
 | --- | --- |
 | 纯业务流、状态机、数据边界、错误码、持久化 | business-ut · 业务级 UT |
 | 页面渲染、导航、Toast、弹窗、资源、多机型显示 | device-testing · 真机测试 |
-| 一半业务一半 UI 的验收项 | 业务部分进 business-ut；UI 部分在 prd-design 的 `acceptance.yaml` > `device_focus`，由 device-testing 派生 test-plan |
+| 一半业务一半 UI 的验收项 | 业务部分进 business-ut；UI 部分在 spec 的 `acceptance.yaml` > `device_focus`，由 device-testing 派生 test-plan |
 
 这个边界由 `acceptance.yaml > criteria[].ut_layer` 表达：
 
@@ -115,8 +115,8 @@ it('[BRANCH-sms_fail_rollback][AC-3] 短验失败回滚', 0, async () => {
 
 ```mermaid
 flowchart LR
-  S1["prd-design<br/>PRD + acceptance.yaml"]
-  S2["requirement-design<br/>design.md + contracts.yaml<br/>use-cases.yaml(按需)"]
+  S1["spec<br/>spec.md + acceptance.yaml"]
+  S2["plan<br/>plan.md + contracts.yaml<br/>use-cases.yaml(按需)"]
   S3["coding<br/>业务代码 + 命名入口"]
   S4["code-review<br/>review-report.md"]
   S5["business-ut<br/>业务级 UT"]
@@ -129,10 +129,10 @@ flowchart LR
   S5 --> COV["ut/reports/ac-coverage.json<br/>（可选机器回执）"]
 ```
 
-**怎么读这张**：从左到右是需求在流水线里走的**阶段顺序**（不是代码 import 关系）。prd-design～4 为 business-ut 提供「验收、契约、实现、审阅」；business-ut 为 device-testing 交「能跑通的业务流 UT + 追溯材料 + 真机待办」。
+**怎么读这张**：从左到右是需求在流水线里走的**阶段顺序**（不是代码 import 关系）。spec～4 为 business-ut 提供「验收、契约、实现、审阅」；business-ut 为 device-testing 交「能跑通的业务流 UT + 追溯材料 + 真机待办」。
 
-- **S1** — PRD 与 `acceptance.yaml`：谁进 UT、谁进真机，由 `ut_layer` 定。
-- **S2** — `design.md`、`contracts.yaml`；复杂 feature 才额外有 `use-cases.yaml`（规划用例与分支的规约）。
+- **S1** — spec 与 `acceptance.yaml`：谁进 UT、谁进真机，由 `ut_layer` 定。
+- **S2** — `plan.md`、`contracts.yaml`；复杂 feature 才额外有 `use-cases.yaml`（规划用例与分支的规约）。
 - **S3** — 可测的业务编排 + 命名入口；UT 只消费、不要求你为此再造一套 `UseCase` 架构。
 - **S4** — 可选的审查结论，用来确认编码侧问题已收敛，不是 harness 的硬输入。
 - **S6** — 按 `acceptance.yaml` 的 `device_focus` 派生 test-plan，在真机/模拟器上验 UI / 导航 / 多机型等。
@@ -145,7 +145,7 @@ S5 向下的交付物（同一次 business-ut）：
 | `test/dag/*.dag.yaml` | 把「从哪些输入到哪些 it」固化成**可追溯结构**（给 harness 与人工对账用）。 |
 | `ut/reports/ac-coverage.json` | harness 可选写出的 unit 层覆盖摘要（**非** acceptance SSOT）。 |
 
-真机要点 SSOT 在 **prd-design** 的 `acceptance.yaml` > `device_focus`（`ut_layer ∈ {device, both}`），**不再**产出 `device-testing-todo.md`。
+真机要点 SSOT 在 **spec** 的 `acceptance.yaml` > `device_focus`（`ut_layer ∈ {device, both}`），**不再**产出 `device-testing-todo.md`。
 
 ### 3.2 业务级 UT 的内部模型
 
@@ -161,7 +161,7 @@ flowchart TD
   Plan["UT 规划清单<br/>AC/Branch -> DAG -> it()"]
   DAG["DAG<br/>用户动作 / data 调用 / state 迁移 / assertion"]
   Test["测试源文件<br/>hmos-app: *.test.ets"]
-  DevFocus["acceptance.yaml<br/>device_focus（prd-design）"]
+  DevFocus["acceptance.yaml<br/>device_focus（spec）"]
 
   AC --> Plan
   UC --> Plan
@@ -191,7 +191,7 @@ flowchart TD
 
 - **DAG**：把业务流画成有节点/边的 YAML，方便「这条 branch 是否写到了、是否对上 AC」的机械核对（对应 harness 的 DAG/追溯类规则）。
 - **测试源文件**：可执行的 profile 测试；**hmos-app** 为 hypium 的 `describe`/`it` + 打桩类。
-- **`device_focus`**：在 prd-design 写入 acceptance；device-testing 据此派生 test-plan（见 [acceptance-layering.md](../concepts/acceptance-layering.md)）。
+- **`device_focus`**：在 spec 写入 acceptance；device-testing 据此派生 test-plan（见 [acceptance-layering.md](../concepts/acceptance-layering.md)）。
 
 **下半区：一个 `it()` 内部的三步**（和上图「产物」是不同抽象层级：这里描述**单次用例在代码里做什么**）
 
@@ -247,7 +247,7 @@ flowchart TD
   subgraph inputs [上游输入]
     acc["acceptance.yaml"]
     con["contracts.yaml"]
-    des["design.md"]
+    des["plan.md"]
     uc["use-cases.yaml 可选"]
     srcB["业务编排源码"]
     srcD["data 层源码"]
@@ -303,7 +303,7 @@ flowchart TD
 | --- | --- | --- |
 | `acceptance.yaml` | 必需 | 决定哪些 AC 进入 UT，哪些移交真机 |
 | `contracts.yaml` | 必需 | 指定模块、接口、data 边界与路径 |
-| `design.md` | 必需 | 状态机、流程、架构约束来源 |
+| `plan.md` | 必需 | 状态机、流程、架构约束来源 |
 | 业务编排源码 | 必需 | 提供可直接调用的命名入口 |
 | data 层源码 | 必需 | 提供 Spy / Fake / Stub 的真实边界 |
 | `use-cases.yaml` | 按需 | 复杂 feature 的业务流规约 |
@@ -337,7 +337,7 @@ flowchart TD
 | `ut_layer` | business-ut 动作 |
 | --- | --- |
 | `unit` | 必须产出 UT |
-| `both` | 业务部分必须产出 UT；UI 部分在 acceptance `device_focus`（prd-design），由 device-testing 派生 test-plan |
+| `both` | 业务部分必须产出 UT；UI 部分在 acceptance `device_focus`（spec），由 device-testing 派生 test-plan |
 | `device` | 不写 UT，直接移交 device-testing |
 
 然后读取 `contracts.yaml` 和业务源码，确认：
@@ -409,7 +409,7 @@ DAG 是测试计划的结构化表达，不是为了炫技。它要让人一眼�
 | `assertion` | 测试断言点 |
 | `ui_subscription` | UI 对 state 的订阅说明，仅文档化，不进 UT |
 
-UI 导航、Toast、弹窗不要画成 UT assertion。它们应进入 `ui_subscription`（文档化）或 prd-design 的 `acceptance.yaml` > `device_focus`。
+UI 导航、Toast、弹窗不要画成 UT assertion。它们应进入 `ui_subscription`（文档化）或 spec 的 `acceptance.yaml` > `device_focus`。
 
 ### Step 4：生成 UT 与 Spy
 
@@ -455,9 +455,9 @@ export default function sampleFlowTest() {
 
 ### Step 5：真机要点（不在 business-ut 新建平行清单）
 
-`device` / `both` 的真机可观察要点应在 **prd-design** 写入 `acceptance.yaml` > `device_focus`（`both` 须拆分 `ut_focus` + `device_focus`）。business-ut **不再**产出 `device-testing-todo.md`。
+`device` / `both` 的真机可观察要点应在 **spec** 写入 `acceptance.yaml` > `device_focus`（`both` 须拆分 `ut_focus` + `device_focus`）。business-ut **不再**产出 `device-testing-todo.md`。
 
-若发现缺 `device_focus`，应回到 prd-design 补全；L3 `option_a` 亦在 acceptance 对应条目补 `device_focus`。Harness UT PASS 后可写出 `ut/reports/ac-coverage.json`（见正文 SKILL Step 6）。
+若发现缺 `device_focus`，应回到 spec 补全；L3 `option_a` 亦在 acceptance 对应条目补 `device_focus`。Harness UT PASS 后可写出 `ut/reports/ac-coverage.json`（见正文 SKILL Step 6）。
 
 device-testing 从 acceptance 过滤 `ut_layer∈{device,both}` 派生 `test-plan.md`。
 
@@ -560,7 +560,7 @@ AI Harness 重点看脚本难以判断的内容：
 不要先改业务源码。按顺序判断：
 
 1. 是否缺少命名业务入口？回 coding 抽出命名方法。
-2. 是否 data boundary 不清楚？回 requirement-design / `contracts.yaml` 补清楚。
+2. 是否 data boundary 不清楚？回 plan / `contracts.yaml` 补清楚。
 3. 是否其实是 UI 行为？移交 device-testing。
 4. 是否确实必须改业务源码？先向用户说明原因，得到明确同意，并登记到 `gap-notes.md > approved_src_mutations[]`。
 
@@ -598,6 +598,6 @@ AI Harness 重点看脚本难以判断的内容：
 > 它要求每条 UT 都能说明“我测的是哪个业务承诺、从哪里驱动、经过哪些边界、断言了什么状态”，并用编译、装机、运行和源码改动门禁防止弱模型制造“看起来通过”的假测试。
 
 <!--
-  last-synced: 2026-05-22 (2.0: capability-registry, context-exploration 1.1.0, device_focus)
+  last-synced: 2026-06-12 (2.3.0: profile-host-loader / capability-registry 路径复核)
 -->
 

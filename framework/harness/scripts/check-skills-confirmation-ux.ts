@@ -19,8 +19,8 @@ const TEXT_LIKE_EXTENSIONS = new Set([
   '.md', '.mdc', '.yaml', '.yml', '.template.md', '.md.template',
 ]);
 const CLAUDE_SLASH_COMMANDS = [
-  'commands/prd-design.md',
-  'commands/requirement-design.md',
+  'commands/spec.md',
+  'commands/plan.md',
   'commands/coding.md',
   'commands/code-review.md',
   'commands/business-ut.md',
@@ -28,6 +28,8 @@ const CLAUDE_SLASH_COMMANDS = [
   'commands/catalog-bootstrap.md',
   'commands/glossary-bootstrap.md',
   'commands/framework-init.md',
+  'commands/goal-mode.md',
+  'commands/code-graph.md',
 ] as const;
 const ADAPTER_NAMES = ['claude', 'cursor', 'generic'] as const;
 
@@ -135,6 +137,7 @@ export function lintConfirmationUx(options: ConfirmationUxLintOptions): CheckRes
   results.push(...lintRegistryOptionsSchema(registryText, registryRel));
   results.push(...lintInitSetupNoFreeText(registryText, registryRel));
   results.push(...lintInitSetupPromptsAndTemplates(layout));
+  results.push(...lintInitS4ClosedNoPortableFooter(layout));
   results.push(...lintSharedLayerNoToolNames(layout));
   results.push(...lintAdapterInteractionRenderers(layout));
   results.push(...lintClaudeInteractionTemplates(layout));
@@ -478,6 +481,33 @@ function lintRegistryOptionsSchema(registryText: string, registryRel: string): C
   return results;
 }
 
+const INIT_S4_CLOSED_MARKER = 'S4 已闭环';
+
+function lintInitS4ClosedNoPortableFooter(layout: RepoLayout): CheckResult[] {
+  const results: CheckResult[] = [];
+  const requiredFiles: Array<{ parts: string[]; label: string }> = [
+    { parts: ['skills', 'project', 'framework-init', 'SKILL.md'], label: 'framework-init SKILL' },
+    { parts: ['skills', 'reference', 'user-confirmation-ux.md'], label: 'user-confirmation-ux' },
+  ];
+  for (const { parts, label } of requiredFiles) {
+    const abs = frameworkAbs(layout, ...parts);
+    const rel = frameworkRelPath(layout, abs);
+    if (!fs.existsSync(abs)) {
+      results.push(blocker('init_s4_closed_ssot_missing', `${label} 缺失`, [rel]));
+      continue;
+    }
+    const text = fs.readFileSync(abs, 'utf-8');
+    if (!text.includes(INIT_S4_CLOSED_MARKER)) {
+      results.push(blocker(
+        'init_s4_closed_ssot_missing_rule',
+        `${label} 须声明 ${INIT_S4_CLOSED_MARKER}（禁止 S4 摘要后附 init portable 脚注）`,
+        [rel],
+      ));
+    }
+  }
+  return results;
+}
+
 function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
   const results: CheckResult[] = [];
   for (const adapter of ADAPTER_NAMES) {
@@ -510,6 +540,15 @@ function lintAdapterInteractionRenderers(layout: RepoLayout): CheckResult[] {
         `${adapter} interaction_renderer_rule 指向的文件不存在: ${ruleRel}`,
         [rulePathRel],
       ));
+    } else {
+      const ruleText = fs.readFileSync(ruleAbs, 'utf-8');
+      if (!ruleText.includes(INIT_S4_CLOSED_MARKER)) {
+        results.push(blocker(
+          'adapter_interaction_renderer_init_s4_closed',
+          `${adapter} interaction-renderer 须声明 ${INIT_S4_CLOSED_MARKER}（禁止 S4 摘要后附 portable 脚注）`,
+          [rulePathRel],
+        ));
+      }
     }
     if (uc.widget_tool_hint !== undefined) {
       results.push(blocker(
@@ -611,11 +650,11 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
     ));
   }
 
-  if (rel.includes('prd-design/SKILL.md') && needsConfirmUx) {
+  if (rel.includes('spec/SKILL.md') && needsConfirmUx) {
     if (!/\[x\]/.test(content) || !content.includes('术语映射')) {
       results.push(blocker(
         'artifact_checkbox_unchanged',
-        'prd-design 须保留 PRD 术语表 [x] BLOCKER',
+        'spec 须保留术语映射表 [x] BLOCKER',
         [rel],
       ));
     }
@@ -628,8 +667,8 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
 
 /** Feature phase SKILL.md must declare closure stop gates (user-confirmation-ux §8). */
 const PHASE_CLOSURE_LINT: Array<{ suffix: string; requiredIds: string[] }> = [
-  { suffix: 'feature/prd-design/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
-  { suffix: 'feature/requirement-design/SKILL.md', requiredIds: ['design.ok_to_code', 'phase.next_step', '闭环停等'] },
+  { suffix: 'feature/spec/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
+  { suffix: 'feature/plan/SKILL.md', requiredIds: ['plan.ok_to_code', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/coding/SKILL.md', requiredIds: ['coding.ok_to_review', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/code-review/SKILL.md', requiredIds: ['review.ok_to_ut', 'phase.next_step', '闭环停等'] },
   { suffix: 'feature/business-ut/SKILL.md', requiredIds: ['ut.ok_to_testing', 'phase.next_step', '闭环停等'] },

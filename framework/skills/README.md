@@ -73,13 +73,15 @@ profile-skill-asset:<skill-id>/<asset_key>
 |----------|------|------|
 | framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 接入 submodule、生成/更新 config、agent 产物与 `doc/` 骨架 |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
+| code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
+| goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |
 
 ### feature/ — 需求级（管线顺序由 workflow DAG 决定）
 
 | order | Skill id | 路径 | 摘要 |
 |-------|----------|------|------|
-| 10 | prd-design | [feature/prd-design/SKILL.md](feature/prd-design/SKILL.md) | PRD.md、术语映射与 Scope |
-| 20 | requirement-design | [feature/requirement-design/SKILL.md](feature/requirement-design/SKILL.md) | design.md、contracts |
+| 10 | spec | [feature/spec/SKILL.md](feature/spec/SKILL.md) | spec.md、术语映射与 Scope |
+| 20 | plan | [feature/plan/SKILL.md](feature/plan/SKILL.md) | plan.md、contracts |
 | 30 | coding | [feature/coding/SKILL.md](feature/coding/SKILL.md) | profile 宿主代码落地 |
 | 40 | code-review | [feature/code-review/SKILL.md](feature/code-review/SKILL.md) | 审查报告 |
 | 50 | business-ut | [feature/business-ut/SKILL.md](feature/business-ut/SKILL.md) | DAG + profile UT |

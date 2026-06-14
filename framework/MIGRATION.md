@@ -18,7 +18,7 @@
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/prd 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入 gitignored 的 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入 gitignored 的 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
@@ -127,8 +127,8 @@ git submodule update --remote framework
 |----------------------|------------------|---------------------------------------------|
 | `skills/00-framework-init/` | `skills/project/framework-init/` | `framework-init` |
 | `skills/0-catalog-bootstrap/` | `skills/project/catalog-bootstrap/` | `catalog-bootstrap` |
-| `skills/1-prd-design/` | `skills/feature/prd-design/` | `prd-design` |
-| `skills/2-requirement-design/` | `skills/feature/requirement-design/` | `requirement-design` |
+| `skills/1-spec/` | `skills/feature/spec/` | `spec` |
+| `skills/2-plan/` | `skills/feature/plan/` | `plan` |
 | `skills/3-coding/` | `skills/feature/coding/` | `coding` |
 | `skills/4-code-review/` | `skills/feature/code-review/` | `code-review` |
 | `skills/5-business-ut/` | `skills/feature/business-ut/` | `business-ut` |
@@ -351,7 +351,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **实例侧迁移要点**：
 
 - 若实例工程的 `doc/` 下仍存有 v2.3 之前从 framework 同步过来的总览类文档（典型文件名：`HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` / `Harness全链路验证说明.md` / `自然语言到技术模块-演进路线图.md`），**应在升级到 v2.4 后删除**——它们已被 `framework/docs/` 内的对应版本取代。
-- 实例工程**自有的**文档（如功能 PRD、design、test-plan、PPT 复盘材料等）**不受影响**，照常留在 `doc/` 下。
+- 实例工程**自有的**文档（如功能 spec、plan、test-plan、PPT 复盘材料等）**不受影响**，照常留在 `doc/` 下。
 - vendor 模式同步 framework 时，确保 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）一并随 framework 目录拷贝过去。
 - 接入 v2.4 后跑一次 `npx ts-node harness-runner.ts --phase docs` 自检；若有 MAJOR，按 [`docs/operations/harness-runbook.md`](docs/operations/harness-runbook.md) §6.4 的对照表处理。
 
@@ -533,7 +533,7 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 **回填脚本**：
 
 ```bash
-cd framework/harness && npm run backfill:context -- --feature <name> --phases prd,design,coding,review,ut [--dry-run] [--overwrite]
+cd framework/harness && npm run backfill:context -- --feature <name> --phases spec,plan,coding,review,ut [--dry-run] [--overwrite]
 ```
 
 成功后若曾使用 compat，请手动删除对应 `compat.yaml`。退出码：`0` 成功，`2` 参数/门禁错误，`3` 存在已存在文件且未 `--overwrite` 的跳过项。
@@ -554,19 +554,19 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 | Layer 2 | `context-exploration.ts` | schema 1.1.0 启用 BLOCKER 量化校验；1.0.0 仍走旧 frontmatter 关键词逻辑 |
 | Layer 2 | `profiles/<profile>/harness/exploration-snippets.yaml` | 宿主必查路径 overlay（hmos-app：`.ets`、`module.json5`、`build-profile.json5` 等） |
 | Layer 3 | `verify-*.md` | 新增 `behavior_research_grounded` / `behavior_minimum_viable` / `behavior_scope_surgical` / `behavior_verify_loop`；`context_exploration_sufficiency` 升为 BLOCKER |
-| 流程 | prd-design–5 | Context Exploration Gate 升级为独立编号 **Research Sub-Phase** |
+| 流程 | spec–5 | Context Exploration Gate 升级为独立编号 **Research Sub-Phase** |
 | 入口 | `AGENTS.md` / adapter rules | SSOT 表 + §3.7 Agent 行为规约 |
 
 **向后兼容（迁移窗口）**：
 
 - 既有 `context-exploration.md` 若 frontmatter 仍为 **`schema_version: "1.0.0"`**，harness 仅执行 v2.6 及以前的 frontmatter 关键词校验，**不强制**新字段。
 - **新写入或主动升级**到 **`schema_version: "1.1.0"`** 的文件，须满足对应 phase 的 `exploration_thresholds`（yaml 未配置时 fallback 到脚本内宽松默认值）。
-- 建议：新 feature 自 prd 起直接使用 1.1.0；既有 in-flight feature 可在下一 phase 升级，或继续 1.0.0 直至 feature 归档（不阻塞旧 harness PASS）。
+- 建议：新 feature 自 spec 起直接使用 1.1.0；既有 in-flight feature 可在下一 phase 升级，或继续 1.0.0 直至 feature 归档（不阻塞旧 harness PASS）。
 
 **backfill 行为变更**：
 
 ```bash
-cd framework/harness && npm run backfill:context -- --feature <name> --phases prd,design,coding,review,ut [--dry-run] [--overwrite]
+cd framework/harness && npm run backfill:context -- --feature <name> --phases spec,plan,coding,review,ut [--dry-run] [--overwrite]
 ```
 
 - 回填模板现为 **schema 1.1.0**，且 **`ready_to_produce: false`**（不再自动设 `true` 放行主产物）。
@@ -597,8 +597,8 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 | 机制 | 说明 |
 |------|------|
 | `exploration_strategy` | phase-rules 新段；与 `exploration_thresholds` 并存 |
-| design/coding **default-on** | 默认须 subagent；**L1 trivial**（rename/typo + loc<30 + 单层）可豁免 |
-| prd/review/ut **scoring** | 复合评分（module_loc / scope / cross_layer / api_surface / fan_out），≥60 须 subagent |
+| plan/coding **default-on** | 默认须 subagent；**L1 trivial**（rename/typo + loc<30 + 单层）可豁免 |
+| spec/review/ut **scoring** | 复合评分（module_loc / scope / cross_layer / api_surface / fan_out），≥60 须 subagent |
 | frontmatter 变更信号 | `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports` |
 | sequential 等价 | 无 subagent 时用 `sequential`，量化阈值 × `sequential_multiplier`（默认 2.0） |
 | `fan-out-scanner.ts` | 静态估算 in-scope 模块 import fan-out |
@@ -612,7 +612,7 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases pr
 
 1. vendor framework 后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
 2. 新 feature 的 `context-exploration.md` 填写变更信号 frontmatter
-3. design/coding 默认 `exploration_mode: subagent`；Chrys/generic 用 sequential + 更高量化阈值
+3. plan/coding 默认 `exploration_mode: subagent`；Chrys/generic 用 sequential + 更高量化阈值
 
 **验证**：`cd framework/harness && npm test`
 
@@ -648,7 +648,7 @@ check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者�
 
 **版本依赖**：slash `prompts` frontmatter 需较新 Claude Code CLI（约 2026-02+）；旧 CLI 忽略 frontmatter 时仍靠 `.claude/rules` + framework-init BLOCKER + portable 编号。
 
-**明确未改**：prd-design～6、confirmation-registry、user-confirmation-ux 扩写、AGENTS 模板、confirmation lint。
+**明确未改**：spec～6、confirmation-registry、user-confirmation-ux 扩写、AGENTS 模板、confirmation lint。
 
 ### v3.3.1：init.adapter Widget 固定文案
 
@@ -678,7 +678,7 @@ check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者�
 
 1. [agents/claude/templates/rules/confirmation-ux.md](agents/claude/templates/rules/confirmation-ux.md) — SHOULD → **BLOCKER**；registry 20 点索引；SSOT 链接按部署后 `.claude/rules/` 路径（`../../framework/skills/...`）。
 2. 新建 [agents/claude/templates/rules/widget-options/](agents/claude/templates/rules/widget-options/)（index + skill0–6 共 8 文件）— AskUserQuestion label SSOT。
-3. 8 个 Skill slash（`prd-design` … `glossary-bootstrap`）注入 Widget BLOCKER 段；**不改** `framework-init.md`。
+3. 8 个 Skill slash（`spec` … `glossary-bootstrap`）注入 Widget BLOCKER 段；**不改** `framework-init.md`。
 4. [harness/scripts/check-skills-confirmation-ux.ts](harness/scripts/check-skills-confirmation-ux.ts) — 增量 lint Claude templates。
 
 **实例维护者**（vendor framework 后 **自行** UPDATE init；agent 不代写 `.claude/`）：
@@ -689,9 +689,80 @@ check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者�
 
 预期下发：`.claude/rules/confirmation-ux.md`、`.claude/rules/widget-options/*.md`、8 个 skill slash。
 
-验收：confirmation-ux 含 BLOCKER；PRD Step 1.5 出现 AskUserQuestion + portable 脚注；init slash 行为不变。
+验收：confirmation-ux 含 BLOCKER；spec Step 1.5 出现 AskUserQuestion + portable 脚注；init slash 行为不变。
 
 **验证**：`cd framework/harness && npm test`。
+
+### v2.3：`prd`→`spec` / `design`→`plan` 阶段重定位（可选自动迁移）
+
+**语义**：`spec` = 长期需求规格快照；`plan` = 短中生命周期实现计划（`plan.md` 为契约草案，`contracts.yaml` 为机器真源）。
+
+**默认行为变更**（新 feature）：
+
+| 旧 | 新 |
+|----|-----|
+| `doc/features/<f>/prd/PRD.md` | `doc/features/<f>/spec/spec.md` |
+| `doc/features/<f>/design/design.md` | `doc/features/<f>/plan/plan.md` |
+| phase id `prd` / `design` | `spec` / `plan` |
+| `framework.config.json` 顶层 `"prd": { visual_handoff_* }` | `"spec": { ... }`（同字段名） |
+| profile / extension capability `prd.visual_handoff` | `spec.visual_handoff` |
+
+**`framework.config.json` `prd`→`spec` 段**：loader 短期仍读 legacy `prd` 并 WARN；**framework-init UPDATE**（merge 或 overwrite）经 `MIGRATION_RULES` 自动迁键。详见 [`docs/visual-handoff-config-migration.md`](docs/visual-handoff-config-migration.md)。
+
+**只读 alias（≥2 minor 窗口，WARN）**：harness/goal-runner 仍接受 `--phase prd`/`design`、旧路径、旧 check id（`prd_p0_coverage` 等）、extension manifest 旧 phase key；profile/extension 中 legacy capability `prd.visual_handoff` 仍可读（规范化为 `spec.visual_handoff`）。
+
+**`profile-skill-asset:` 旧引用**（`harness/scripts/utils/profile-skill-assets.ts` 自动规范化，无需手改 SKILL 正文）：
+
+| 旧 skill-id | 新 canonical |
+|-------------|--------------|
+| `prd-design` / `1-prd-design` / `1-spec` | `spec` |
+| `requirement-design` / `2-requirement-design` / `2-plan` | `plan` |
+
+**实例根 adapter 跳板（物化目录/文件）**：UPDATE `framework-init` 的 `cleanup-deprecated` 会按 `materialized_adapters` 自动 `backup_delete` 上表所列旧 skill-id 在实例根的遗留跳板（cursor：`.cursor/skills/<id>/`；claude：`.claude/commands/<id>.md`；generic：`<agent_bundle_root>/skills/<id>/`），与 `3-coding` 等编号旧跳板一并清理；现行扁平跳板（`spec`、`plan`、`coding` 等）不受影响。备份目录：`.framework-backup/<timestamp>/`。**勿跳过** `cleanup-deprecated`，否则 `prd-design` / `requirement-design` 等会与新版 `spec` / `plan` 并存、易误导。
+
+| 旧 asset_key | 新 canonical |
+|--------------|--------------|
+| `prd_template` / `example_prd` | `spec_template` / `example_spec` |
+| `design_template` / `example_design` | `plan_template` / `example_plan` |
+| `examples_prd_mapping` | `examples_spec_mapping` |
+
+**Extension `provides.skill_assets`**（`doc/extensions/manifest.yaml`，与 profile `skill-assets.yaml` 合并）：
+
+- **结构**：`provides.skill_assets.<skill-id>.<asset_key>` → 相对 `doc/extensions/` 的文件路径（与 profile 清单字段语义一致）。
+- **优先级**：extension 条目**覆盖** profile 同 `skill-id` + `asset_key`；extension **独有** key 可增补 profile 未声明的资产。
+- **引用方式**：SKILL / prompt 仍写 `` `profile-skill-asset:<skill>/<key>` ``；`harness/scripts/utils/profile-skill-assets.ts` 先读 extension 绝对路径，再回退 profile 清单。`check-docs` 的 `profile_skill_assets_resolvable` 校验合并后的解析结果。
+- **Schema / 实现**：[`specs/instance-extension-manifest.schema.yaml`](specs/instance-extension-manifest.schema.yaml)、[`harness/extension-loader.ts`](harness/extension-loader.ts)。
+
+```yaml
+# doc/extensions/manifest.yaml（片段）
+provides:
+  skill_assets:
+    spec:
+      spec_template: assets/host-spec-template.md
+      example_spec: assets/example-spec.md
+    plan:
+      plan_template: assets/host-plan-template.md
+```
+
+**推荐迁移**（实例维护者，非强制）：
+
+```bash
+# 仓根（dev 工具，不进发布 zip）
+node scripts/migrate-feature-phase-paths.mjs --project-root <repo> --dry-run
+node scripts/migrate-feature-phase-paths.mjs --project-root <repo>
+```
+
+迁移后重跑 `framework-init` UPDATE 刷新 adapter 跳板（`.cursor/skills`、`.claude/commands` 指向 `skills/feature/spec` / `plan`）。
+
+**已知限制（半迁 / 修订旧 feature）**：`context-exploration.md`、`trace.json`、harness `reports/` **不做** legacy `prd/`、`design/` 目录回退（与回执 `phase-completion-receipt.md` 的 `resolveReceiptFilePath` 策略不同，属刻意收窄）。典型触发：framework 升级后仍在旧目录续跑 spec/plan 并重跑 harness → BLOCKER `context_exploration_present`。处理：按报错 suggestion 执行
+
+```bash
+cd framework/harness && npm run backfill:context -- --feature <name> --phases spec,plan [--dry-run]
+```
+
+或在 canonical 目录（`doc/features/<f>/spec/`、`plan/`）手写/迁移 `context-exploration.md`。全量目录搬迁见上方 `migrate-feature-phase-paths.mjs`；半迁伴生文件需手迁或删 feature 重跑。
+
+术语表：[`docs/concepts/phase-terminology.md`](docs/concepts/phase-terminology.md)。
 
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
