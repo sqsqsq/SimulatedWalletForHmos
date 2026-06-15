@@ -63,3 +63,9 @@ framework.local.json
 
 # Feature-phase harness reports (paths.reports_dir_pattern)
 doc/features/*/goal-runs/
+
+# Framework runtime artifacts (managed by /framework-init)
+framework/harness/decision.json
+framework/harness/context.json
+framework/harness/init-decision.json
+framework/harness/init-context.json
