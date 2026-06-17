@@ -45,12 +45,14 @@ import {
   PendingConfirmEntry,
   PendingMigrationEntry,
 } from './utils/config-field-merger';
+import { loadLocalConfig } from './utils/framework-local-config';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import { loadFrameworkConfig } from '../config';
 import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
 } from './utils/agent-bundle-paths';
+import { readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
 import {
   listFrameworkBuiltinSkillDirs,
   materializeAgentBundleSkills,
@@ -273,6 +275,7 @@ interface RawFrameworkConfig {
   outerLayersLen: number;
   agentAdapter: string | null;
   toolchainInstallPath: string | null;
+  localDevecoInstallPath: string | null;
   /**
    * UPDATE 模式下：framework.config.json 中缺失的白名单字段（按 BACKFILL_FIELDS 顺序）。
    * CREATE 模式（exists=false / parseable=false）下为空数组。
@@ -294,6 +297,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      localDevecoInstallPath: null,
       missingBackfillFields: [],
       pendingMigrations: [],
       missingConfirmFields: [],
@@ -311,6 +315,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
       outerLayersLen: 0,
       agentAdapter: null,
       toolchainInstallPath: null,
+      localDevecoInstallPath: null,
       missingBackfillFields: [],
       pendingMigrations: [],
       missingConfirmFields: [],
@@ -322,6 +327,14 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
   };
   const outerLayers = raw?.architecture?.outer_layers;
   const installPath = raw?.toolchain?.devEcoStudio?.installPath;
+  let localDevecoInstallPath: string | null = null;
+  try {
+    const local = loadLocalConfig(projectRoot);
+    const lip = local?.toolchain?.devEcoStudio?.installPath;
+    localDevecoInstallPath = typeof lip === 'string' && lip.trim() ? lip.trim() : null;
+  } catch {
+    localDevecoInstallPath = null;
+  }
   return {
     exists: true,
     parseable: true,
@@ -330,6 +343,7 @@ function loadRawFrameworkConfig(projectRoot: string): RawFrameworkConfig {
     outerLayersLen: Array.isArray(outerLayers) ? outerLayers.length : 0,
     agentAdapter: typeof raw?.agent_adapter === 'string' ? raw.agent_adapter : null,
     toolchainInstallPath: typeof installPath === 'string' && installPath.length > 0 ? installPath : null,
+    localDevecoInstallPath,
     missingBackfillFields: detectMissingBackfillFields(raw, resolveProfileNameFromRaw(raw)),
     pendingMigrations: detectPendingMigrations(raw),
     missingConfirmFields: detectMissingConfirmFields(raw),
@@ -674,29 +688,31 @@ function loadAdapter(adapter: string): AdapterDescriptor {
   return desc;
 }
 
+/** init 物化 generic bundle 时 skill 模式 SSOT：薄跳板 bridge（inline 仅显式 opt-in 测试/特例，init 禁止写全量） */
+const INIT_GENERIC_BUNDLE_SKILL_MODE = 'bridge' as const;
+
 function resolveBundleForInitInspect(
   adapterName: string,
   rawCfg: RawFrameworkConfig,
-  projectRoot: string,
+  _projectRoot: string,
 ): ResolvedAgentBundlePaths | null {
   if (adapterName !== 'generic') {
     return null;
   }
   if (rawCfg.exists && rawCfg.parseable && rawCfg.raw && typeof rawCfg.raw === 'object') {
-    try {
-      const cfg = loadFrameworkConfig(projectRoot);
-      if (cfg.agent_adapter === 'generic') {
-        return readAgentBundlePathsFromConfig(cfg);
-      }
-    } catch {
-      /* fall through to defaults */
+    const paths = (rawCfg.raw as Record<string, unknown>).paths;
+    if (paths && typeof paths === 'object' && !Array.isArray(paths)) {
+      const fromProject = readGenericBundlePathsFromConfigPaths(
+        paths as import('../config').FrameworkConfig['paths'],
+      );
+      return { ...fromProject, skillMode: INIT_GENERIC_BUNDLE_SKILL_MODE };
     }
   }
   return {
     root: '.agents',
     skillsDir: '.agents/skills',
     rulesDir: '.agents/rules',
-    skillMode: 'bridge',
+    skillMode: INIT_GENERIC_BUNDLE_SKILL_MODE,
   };
 }
 
@@ -815,49 +831,8 @@ export function applyGenericAdapterBundle(
   }
 }
 
-function applyAgentBundleInlineSync(
-  projectRoot: string,
-  bundle: ResolvedAgentBundlePaths,
-): {
-  results: import('./utils/init-sync-telemetry').SyncTemplateResult[];
-  syncedFiles: number;
-} {
-  const dirs = listFrameworkBuiltinSkillDirs(FRAMEWORK_ROOT);
-  const results: import('./utils/init-sync-telemetry').SyncTemplateResult[] = [];
-  let syncedFiles = 0;
-
-  for (const dir of dirs) {
-    const targetRel = `${bundle.skillsDir}/${dir}/SKILL.md`.replace(/\\/g, '/');
-    const tgAbs = path.join(projectRoot, ...targetRel.split('/'));
-    const body = materializeInlineSkillMarkdown(FRAMEWORK_ROOT, dir, {
-      projectRoot,
-      stubTargetRelPosix: targetRel,
-    });
-    const payload = Buffer.from(body, 'utf-8');
-
-    if (!fs.existsSync(tgAbs)) {
-      fs.mkdirSync(path.dirname(tgAbs), { recursive: true });
-      fs.writeFileSync(tgAbs, payload);
-      syncedFiles++;
-      results.push({ targetRel, effect: 'created' });
-      continue;
-    }
-
-    const cmp = compareTextArtifact(payload, fs.readFileSync(tgAbs));
-    if (cmp.kind === 'byte_equal' || cmp.kind === 'eol_only') {
-      results.push({ targetRel, effect: 'unchanged' });
-      continue;
-    }
-
-    fs.writeFileSync(tgAbs, payload);
-    syncedFiles++;
-    results.push({ targetRel, effect: 'updated' });
-  }
-
-  return { results, syncedFiles };
-}
-
-export { applyAgentBundleInlineSync };
+// 注：原 applyAgentBundleInlineSync（generic inline 全量物化的写盘入口）已随 inline 模式彻底废弃移除。
+// inline 不再经由 config / init 链路生效；内置与扩展 skill 一律 bridge 薄跳板。
 
 // --------------------------------------------------------------------------
 // 占位符渲染
@@ -1784,10 +1759,10 @@ function inspect09(_env: InspectorEnv): Inspection {
   };
 }
 
-// ---- 第 10 项: toolchain.devEcoStudio.installPath --------------------------
+// ---- 第 10 项: framework.local.json DevEco installPath -----------------------
 function inspect10(env: InspectorEnv): Inspection {
-  const targetRel = 'framework.config.json:toolchain.devEcoStudio.installPath';
-  const installPath = env.cfg.toolchainInstallPath;
+  const targetRel = 'framework.local.json:toolchain.devEcoStudio.installPath';
+  const installPath = env.cfg.localDevecoInstallPath;
   if (!installPath) {
     return {
       index: 10,
@@ -1798,7 +1773,7 @@ function inspect10(env: InspectorEnv): Inspection {
       hash_target: null,
       diff_summary: null,
       planned_strategy: strategyText(10, 'MISSING'),
-      diagnosis: '字段缺失或为空字符串',
+      diagnosis: 'framework.local.json 缺失或未配置 toolchain.devEcoStudio.installPath',
     };
   }
   const exists = existsAbs(installPath);
@@ -2457,7 +2432,6 @@ export const __testing = {
   inspectionsForInit034Prompt,
   applyDeprecatedArtifactsCleanup,
   applyInitMechanismSync,
-  applyAgentBundleInlineSync,
   applyGenericAdapterBundle,
   resolveBundleForInitInspect,
   runInitProbe,

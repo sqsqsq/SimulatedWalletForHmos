@@ -38,7 +38,7 @@ v2.2 起，**任何形式的 SKIP/MAJOR 兜底都不应作为常态**；环境�
 
 | 错误关键词                                 | 排查                                                                                                                            |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `hvigor not found` / `command not found`    | `framework.config.json > toolchain.devEcoStudio.installPath` 未配置；在 `<repo-root>` 运行 `npx ts-node framework/harness/scripts/detect-deveco.ts --json` 自检（cwd 见 [harness-cli-cwd.md](../../skills/reference/harness-cli-cwd.md)） |
+| `hvigor not found` / `command not found`    | `framework.local.json > toolchain.devEcoStudio.installPath` 未配置；在 `<repo-root>` 运行 `npx ts-node framework/harness/scripts/detect-deveco.ts --json` 自检（cwd 见 [harness-cli-cwd.md](../../skills/reference/harness-cli-cwd.md)） |
 | `hdc list targets` 输出空                   | 未连接设备 / 未启动模拟器 / 未授权 USB 调试；先在 DevEco Studio 里确认设备能见                                                  |
 | `hap not found`                             | `genOnDeviceTestHap` 未生成或 **product 段不一致**：检查 `<module>/build/<product>/outputs/ohosTest/`（`product` 与 `detectProduct()` / `-p product=` 一致）；旧版仅查 `build/default/…` 会漏掉 `build/product/…` |
 | `OHOS_REPORT_RESULT total=0`                | hypium 启动了但没识别到任何 testsuite；检查 `<module>/src/ohosTest/ets/test/` 是否有合法的 `*.test.ets` + 入口 shim             |
@@ -163,9 +163,28 @@ runHvigorAssembleApp({
 
 ---
 
+## 4. 配置分层：DevEco 路径 vs 真机调优
+
+| 归属 | 文件 | 典型键 |
+| ---- | ---- | ------ |
+| **personal**（本机 DevEco 安装） | `framework.local.json` | `toolchain.devEcoStudio.installPath` / `hvigorBin` |
+| **project 调优**（可提交、团队共享） | `framework.config.json` | `toolchain.hmosDevice.*`、`toolchain.hvigor.*` |
+
+`toolchain.hmosDevice` 可选键（见 `framework/specs/framework.config.schema.json`）：
+
+| 键 | 说明 |
+| -- | ---- |
+| `killHdcServerOnFinish` | testing 结束后是否 kill hdc server |
+| `aaTestTimeoutMs` | `aa test` 子进程超时（毫秒） |
+| `testRunner` | Hypium runner 标识 |
+
+init 模板含空对象 `"hmosDevice": {}` 作占位；**框架不 backfill** 具体默认值，仅 migrate 从 legacy `toolchain.devEcoStudio` 调优键外迁。personal 前置（`deveco_toolchain`）由 **profile `personal_prerequisites`**（capability key 粒度）声明，经 `check-personal-setup --ensure --phase <phase>` 写 local。
+
+---
+
 ## 5. false PASS：宿主编译输出未被识别
 
-若怀疑 harness 已 PASS 但 **hvigor 日志里仍有 ArkTS 错误** 未被脚本归类：可把 `framework.config.json > toolchain.devEcoStudio.aaTestTimeoutMs` 调大后重跑，并核对 `hvigor-build.log` 与 `script-report.json`。
+若怀疑 harness 已 PASS 但 **hvigor 日志里仍有 ArkTS 错误** 未被脚本归类：可把 `framework.config.json > toolchain.hmosDevice.aaTestTimeoutMs` 调大后重跑，并核对 `hvigor-build.log` 与 `script-report.json`。
 
 ---
 
