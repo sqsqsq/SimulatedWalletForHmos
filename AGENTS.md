@@ -15,7 +15,6 @@
 | 项目名 | `SimulatedWalletForHmos` |
 | 项目类型 | `app` |
 | project profile | `hmos-app`（子型：`app`） |
-| 激活的 agent adapter | `generic` |
 | Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
 | 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口见 DSL `cross_module_exports_file` |
 
@@ -101,7 +100,7 @@
 
 ## 四、工作流与 Skill 路由
 
-每个阶段都有对应 Skill 文档。具体触发方式由当前 adapter（`generic`）决定——
+每个阶段都有对应 Skill 文档。具体触发方式由当前运行宿主及已物化入口决定——
 slash、技能跳板、或直链 `framework/skills/project/<skill>/SKILL.md` / `framework/skills/feature/<skill>/SKILL.md` 等形态的**约定**见 [framework/agents/README.md](framework/agents/README.md)。
 也可以直接让 agent 读对应 Skill 正文进入。
 

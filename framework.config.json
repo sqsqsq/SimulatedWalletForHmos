@@ -6,9 +6,12 @@
     "sub_variant": "app"
   },
   "materialized_adapters": [
+    "chrys",
     "claude",
+    "codex",
     "cursor",
-    "generic"
+    "generic",
+    "opencode"
   ],
   "architecture": {
     "outer_layers": [
