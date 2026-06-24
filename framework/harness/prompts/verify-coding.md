@@ -378,6 +378,28 @@ verification_result:
 
 ---
 
+## 七-b、多模态视觉对照（ui_change=new_or_changed 时 · MAJOR）
+
+> **Verifier 必须是多模态模型**（强 VL：Composer / Claude 等）。纯文本 verifier 对本节标 SKIP 并在 summary 注明降级。
+
+当 spec 声明 `ui_change: new_or_changed` 且上下文含 **原图 + ui-spec.yaml** 时，额外执行：
+
+### 检查 N: 视觉多模态 parity (visual_multimodal_parity)
+
+- **严重等级**: MAJOR
+- **评估方法**:
+  1. **用读图工具**逐个读取上下文 `context-images/` 下 sidecar 像素文件（禁止把 markdown 链接当已看图）
+  2. 打开 ui-spec.yaml，对照实现代码与资源，逐区域报告：版面结构 / 品牌主题色 / 真实资产 vs 占位 / 文案逐字保真
+  3. ui-spec `verified=unverified` 时：仅报告明显冲突，不宣称整体保真 PASS
+- **读图证据块（必填，可机读）**：结论中须含 fenced `read-image-evidence` 块，每条 `- file: <sidecar文件名>` + `observation: <关键观察>`（与 sidecar 清单一一对应）
+- **证据**: 按屏列出 must-fix 项（若有）
+
+若 adapter `image_input=none` 或上下文无图片注入：本检查 **SKIP**，details 写「视觉多模态层已降级（adapter 不支持图像）」。
+
+若 adapter 为 `tool_read` 但未输出合规读图证据块：本检查 **WARN**，details 写「未取得读图证据，多模态降级（区别于 adapter 不支持）」。
+
+---
+
 ## 八、注意事项
 
 1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 时不得给出整体 PASS

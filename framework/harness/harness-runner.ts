@@ -37,6 +37,7 @@ import {
   PhaseChecker,
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
+  HarnessRunSummary,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import {
@@ -87,6 +88,9 @@ import {
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
+import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
+import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
+import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath } from './scripts/utils/ui-spec-shared';
 
 // --------------------------------------------------------------------------
 // CLI 参数解析
@@ -94,7 +98,7 @@ import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPa
 
 const args = minimist(process.argv.slice(2), {
   string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow'],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -379,6 +383,9 @@ async function main(): Promise<void> {
     | 'reachable'
     | 'off'
     | undefined;
+  const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
+  const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
+  const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
   const context: CheckContext = {
     phase,
     feature,
@@ -387,9 +394,15 @@ async function main(): Promise<void> {
     featureSpec,
     adapter: typeof args.adapter === 'string' ? args.adapter : undefined,
     visualHandoffEnforcement: vhMode,
+    uiSpecEnforcement: uiSpecMode,
+    visualParityEnforcement: vpMode,
     specVisualSources: fwConfig.spec?.visual_sources,
     docsCommitted: fwConfig.paths.docs_committed ?? false,
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
+    skipUiSpec: Boolean(args['skip-ui-spec']),
+    skipVisualParity: Boolean(args['skip-visual-parity']),
+    adapterMultimodal: mmProbe.supported,
+    adapterImageInput: mmProbe.imageInput,
     frameworkRoot: resolvedFrameworkRoot,
     frameworkRel,
     harnessRoot,
@@ -498,7 +511,11 @@ async function main(): Promise<void> {
     if (process.env.HARNESS_FORCE_STEP4_FAIL) {
       throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
     }
-    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec);
+    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+      adapterMultimodal: context.adapterMultimodal,
+      adapterImageInput: context.adapterImageInput,
+      specVisualSources: context.specVisualSources,
+    });
     const specContent = YAML.stringify(phaseRule);
 
     assembleAIPrompt(
@@ -512,6 +529,7 @@ async function main(): Promise<void> {
       resolvedProfile,
       lifecycleFragments,
       resolvedFrameworkRoot,
+      { imageInput: context.adapterImageInput },
     );
     console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
   } catch (err) {
@@ -584,64 +602,6 @@ async function main(): Promise<void> {
   console.log('='.repeat(60) + '\n');
 
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
-}
-
-interface HarnessRunSummary {
-  schema_version: '1.0';
-  phase: Phase;
-  feature: string;
-  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
-  blocker_count: number;
-  fail_count: number;
-  warn_count: number;
-  script_report: string;
-  merged_report: string;
-  ai_prompt: string;
-  summary_json: string;
-  run_statuses: Array<{
-    id: string;
-    status: string;
-    can_claim_done?: boolean;
-    details: string;
-  }>;
-  ut_run_status?: string;
-  readiness_signals: Array<{
-    id: string;
-    status: 'ready' | 'incomplete' | 'unknown';
-    message: string;
-    source_check?: string;
-  }>;
-  blocking_warnings: Array<{
-    id: string;
-    blocking_class?: string;
-    details_excerpt: string;
-    suggestion?: string;
-  }>;
-  blocking_skips: Array<{
-    id: string;
-    blocking_class?: string;
-    details_excerpt: string;
-    suggestion?: string;
-  }>;
-  blockers: Array<{
-    id: string;
-    severity: string;
-    status: string;
-    classification?: string;
-    details_excerpt: string;
-    affected_files?: string[];
-    suggestion?: string;
-  }>;
-  next_action: string;
-  receipt_status?: string;
-  closure_status?: 'open' | 'closed';
-  /** coding 阶段：从 coding_compile / coding_hvigor_build 报告解析的首条编译错误，供 agent 无需通读日志即可汇报 */
-  compile_first_error?: {
-    file?: string;
-    line?: number;
-    message: string;
-    kind?: string;
-  };
 }
 
 function writeRunSummary(
@@ -1181,9 +1141,14 @@ function collectContextFiles(
   phase: Phase,
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
-): Array<{ label: string; content: string }> {
+  opts?: {
+    adapterMultimodal?: boolean;
+    adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
+    specVisualSources?: CheckContext['specVisualSources'];
+  },
+): import('./scripts/utils/types').ContextFileEntry[] {
   const { projectRoot } = layout;
-  const files: Array<{ label: string; content: string }> = [];
+  const files: import('./scripts/utils/types').ContextFileEntry[] = [];
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
   // 不读任何 feature 维度的 spec.md / plan.md / 源码。
@@ -1238,6 +1203,65 @@ function collectContextFiles(
   const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'spec.md');
   if (prd) {
     files.push({ label: relFeatureArtifact(projectRoot, feature, 'spec.md'), content: prd });
+  }
+
+  const uiSpecPath = path.join(projectRoot, 'doc', 'features', feature, 'spec', 'ui-spec.yaml');
+  if (fs.existsSync(uiSpecPath)) {
+    files.push({
+      label: uiSpecRelPath(projectRoot, feature),
+      content: fs.readFileSync(uiSpecPath, 'utf-8'),
+    });
+  }
+
+  const uiChange = prd ? parseUiChangeFromSpecMarkdown(prd) : null;
+  const wantsVisualContext =
+    ['spec', 'coding', 'review'].includes(phase) &&
+    uiChange !== null &&
+    UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
+
+  if (wantsVisualContext) {
+    const imageInput = opts?.adapterImageInput ?? (opts?.adapterMultimodal === false ? 'none' : 'tool_read');
+    if (imageInput === 'none') {
+      files.push({
+        label: '(multimodal-degraded)',
+        kind: 'text',
+        content:
+          '视觉多模态层已降级：adapter image_input=none；仅文本 ui-spec + 确定性 parity 生效。',
+      });
+    } else if (prd) {
+      const imgPaths = collectAuthoritativeImagePaths(projectRoot, prd, (p) => {
+        const r = resolveAuthoritativePath(p, {
+          projectRoot,
+          externalRoots: opts?.specVisualSources?.external_roots,
+          allowAbsolutePaths: Boolean(opts?.specVisualSources?.allow_absolute_paths),
+          allowNetworkPaths: Boolean(opts?.specVisualSources?.allow_network_paths),
+        });
+        return r.agentReachable ? r.resolvedAbsolute ?? null : null;
+      });
+      for (const img of imgPaths.slice(0, 8)) {
+        const ext = path.extname(img).toLowerCase();
+        const mime =
+          ext === '.png' ? 'image/png' :
+          ext === '.webp' ? 'image/webp' :
+          ext === '.gif' ? 'image/gif' :
+          'image/jpeg';
+        files.push({
+          label: path.relative(projectRoot, img).replace(/\\/g, '/'),
+          kind: 'image',
+          mime,
+          imagePath: img,
+          content: '权威视觉参考图（sidecar 副本；VL verifier 须读 reports/.../context-images/）',
+        });
+      }
+      if (imgPaths.length === 0) {
+        files.push({
+          label: '(multimodal-no-images)',
+          kind: 'text',
+          content:
+            'ui_change 需要 ui-spec，但未解析到 reachable 的 authoritative_ref 图片；多模态对照不可用。',
+        });
+      }
+    }
   }
 
   if (['plan', 'coding', 'review', 'ut', 'testing'].includes(phase)) {

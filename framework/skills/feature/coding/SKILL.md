@@ -4,7 +4,7 @@
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
@@ -82,6 +82,8 @@
 | plan.md | ✅ | 对应功能的实现计划（plan 阶段 输出），路径通常为 `doc/features/{module}/plan/plan.md` |
 | contracts.yaml | ✅ | 接口契约 Spec（plan 阶段 产出），路径为 `doc/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
 | acceptance.yaml | ✅ | 验收标准 Spec（spec 阶段 产出），路径为 `doc/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
+| ui-spec.yaml | ⚠️→✅ | **ui_change=new_or_changed 时必填**；路径 `doc/features/{module}/spec/ui-spec.yaml`（组件树 + token + 资产 + 逐字文案 SSOT） |
+| 原始需求截图 | ⚠️→✅ | **ui_change=new_or_changed 时必填**；须 `Read` Visual Handoff `authoritative_refs` 指向的原图（强 VL 推荐） |
 | use-cases.yaml | ⚠️ | 业务流程 UseCase Spec（plan 阶段 产出；**仅**多 UI 共享状态 / 多步云调用 / 含回滚分支的复杂 feature 才会有该文件），路径为 `doc/features/{module}/use-cases.yaml`，定义了每个 UseCase 的 coordinator / ui_bindings / data_boundaries / state_model / branches |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源，了解五层架构全貌和已有模块状态 |
 | spec.md | ❌ | 可选，用于交叉验证功能完整性 |
@@ -165,6 +167,16 @@
 ### Step 2.5: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
 在**写入第一个实现层源文件之前**（即进入 **Step 3** 之前），必须完成本 Step。
+
+#### Step 2.5a 视觉真源 Read（ui_change=new_or_changed 时 · BLOCKER）
+
+1. **必须 `Read`**：`authoritative_refs` 指向的**每一张原图** + `ui-spec.yaml` 全文。
+2. UI 实现以 **原图 + ui-spec 的 token / 组件树 / 逐字文案 / 资产 key** 为准；禁止占位图标、全局主题色、泛化文案 silently 替代。
+3. 资产缺失须按 ui-spec `assets[]` 显式 `placeholder`，不得静默替换。
+4. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
+5. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
+
+#### Step 2.5b Context Exploration（与原流程衔接）
 
 1. **必读**：`plan.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、architecture DSL、跨模块出口；**打开 contracts 涉及的已有源码**（`source_code_paths` ≥ 3）。
 2. **默认 subagent**：coding 阶段**默认 MUST** explore 子 agent 分片阅读；**仅** L1 trivial 可豁免（见 `change_intent` / `estimated_loc_delta`）。无 subagent 时用 `sequential` + 倍率阈值。
@@ -294,6 +306,7 @@ business-ut Harness 会用 `named_business_handler` BLOCKER 严格校验该项�
 [ ] 10. 导入完整：所有 import 语句是否完整，路径是否正确？
 [ ] 11. 命名入口完整性（若 use-cases.yaml 存在）：`ui_bindings[].user_actions[].calls` 所列每个符号是否都能在代码中找到对应命名方法 / 函数 / 导出符号（非 inline lambda）？业务编排源文件（形态 B / C）是否**零**UI/Nav/Toast/AppStorage import？
 [ ] 12. UI 层副作用翻译（若 use-cases.yaml 存在）：UI 的 `onClick` 是否只做"参数准备 + 转发调用命名函数"？Toast/导航是否通过订阅业务 state（`@Watch` 或等价）翻译，而非 `onClick` 内部硬编码分支？
+[ ] 13. 视觉 parity（ui_change=new_or_changed）：主题色 token 是否已应用到 `$r('app.color.*')`？真实资产 key 是否非占位？ui-spec 逐字文案是否落入 string 资源？组件树 major 节点是否在 contracts.components 有对应？
 ```
 
 **不通过项**：定位具体问题，自动修复后重新检查，直到全部通过。

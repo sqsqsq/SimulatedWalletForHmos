@@ -4,7 +4,7 @@
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
@@ -348,8 +348,9 @@ expansions_with_user_approval:
 4. **路由/导航设计**：
    - 页面间跳转关系、栈/路由 API、路由参数定义（**宿主路由栈与容器 API** 见 profile addendum）
 
-5. **Visual parity（与 spec Visual Handoff 对齐，有界面时）**：
+5. **Visual parity（与 spec Visual Handoff + ui-spec 对齐，有界面时）**：
    - 对照 `spec.md` 中含 `ui_change` 的 yaml 块中的 `authoritative_refs`（路径或设计稿 URL），在 `plan.md` 用一小节说明：**各区域 UI 以何真源为准**、相对真源允许的偏差（如占位图、模拟数据）、哪些项落入 `contracts.yaml`（间距档位、资源 key、字号等可测项）。
+   - **产出** `doc/features/<feature>/plan/visual-parity.yaml`：映射 ui-spec 每个 asset key / token key / 关键组件节点 → `contracts.yaml` 的 `resource_keys` / `components`（允许偏差标注）。
    - 若 spec 声明 `ui_change: none` / `reuse_only` / `impl_out_of_band`，本节可写「无新版面，无新增视觉对齐项」。
 
 ### Step 8: 构建 spec 功能映射表

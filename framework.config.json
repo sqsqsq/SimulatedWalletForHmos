@@ -110,6 +110,13 @@
     "ttl_hours": 12,
     "schema_version": "1.1"
   },
+  "spec": {
+    "visual_handoff_enforcement": "reachable",
+    "ui_spec_enforcement": "reachable"
+  },
+  "coding": {
+    "visual_parity_enforcement": "warn"
+  },
   "active_workflow": "spec-driven",
   "lifecycle_hooks_enabled": true,
   "tools": {

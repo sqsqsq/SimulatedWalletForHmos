@@ -4,7 +4,7 @@
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths** 及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（harness 之后用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。宿主打包/装机/设备工具链仍以本 Skill 的 profile addendum（Tier_2）为 SSOT。
 
@@ -294,6 +294,18 @@ doc/features/{module-name}/testing/test-plan.md
 10. **结果 SSOT**：`ADHOC_TRACE_FILE=` / `ADHOC_DERIVE_FILE=` / `ADHOC_HYLYRE_RUN_DIR=`；**禁止 glob timestamp**。
 11. **重跑 / UI 复位**：execute **默认冷重启**（清 Nav 栈）；前次 run 非全 pass 后**禁止**在未复位时假设仍在首页 Tab。`--continue-session` 显式保留 Nav 栈；若见 `ADHOC_UI_RESET_RECOMMENDED=1` 须去掉 `--continue-session` 或确认已冷重启。`--accept-cold-start` **只**跳过 snapshot warmup，**不能**代替冷重启。
 12. **warmup 软失败**：仍继续 run（`[WARN]`）。
+
+### Step 4.6: 视觉 diff 回环（visual_diff · ui_change=new_or_changed 时）
+
+> **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。
+
+1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
+2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → 多模态对照 **authoritative_refs 原图** + ui-spec → 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/`
+   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数，含几何 IoU）
+4. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
+5. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
 
 ### Step 5: 生成测试报告（测试执行后）
 

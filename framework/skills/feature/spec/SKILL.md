@@ -4,7 +4,7 @@
 
 ## 前置（依赖初始化 Skill 产物）
 
-本工程须先完成 [`00-framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths**（如 feature 文档目录、`module-catalog.yaml`、`glossary.yaml` 等）及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
+本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：实例根下已有有效的 `framework.config.json`，且本 skill 与 harness 所依赖的 **paths**（如 feature 文档目录、`module-catalog.yaml`、`glossary.yaml` 等）及 **`architecture` 段**已由初始化写入或与之一致。未完成 `/framework-init` 前请勿执行本 skill。
 
 **Harness 运行时前置**：执行本 Skill 中任意 `harness-runner` / `npx ts-node harness-runner.ts` / `check-receipt.ts`（依赖 harness npm）前，须满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)（§7.1 跑完 harness 后，§7.3 用 `cd framework/harness && npx ts-node scripts/check-receipt.ts`）。
 
@@ -163,15 +163,23 @@
 
 ---
 
-### Step 2: 截图分析
+### Step 2: 截图分析 → 产出 ui-spec.yaml
 
-仔细分析用户提供的界面截图，提取以下信息：
+仔细分析用户提供的界面截图，产出 **`doc/features/<feature>/spec/ui-spec.yaml`**（规范见 [reference/ui-spec.md](reference/ui-spec.md)）：
 
-1. **页面整体布局**：顶部导航栏、内容区域划分、底部标签栏等
-2. **UI 组件清单**：按钮、卡片、列表项、图标、文字标签、输入框、弹窗等
-3. **交互线索**：可点击元素、滑动区域、切换动作、跳转目标
-4. **视觉层次**：主次信息的排列、颜色/字号的层级关系
-5. **数据展示**：页面上展示了哪些动态数据（金额、卡号、状态等）
+1. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]` 记录（P0/P1 完整树 + bbox + 逐字文案；P2/P3 可 `lightweight: true`）
+2. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
+3. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
+4. **资产清单**：logo/图标 → `acquisition`（crop / svg_grab / repo_ref）+ `resolved_path` 或显式 `placeholder`
+5. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）
+
+**模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
+
+#### Step 2.1 资产落地（review#2）
+
+对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。
+
+仍可在 spec.md「页面/界面描述」保留散文补充，但 **ui-spec.yaml 为 coding parity 的结构化 SSOT**。
 
 ### Step 2.5: Research Sub-Phase（Context Exploration Gate · BLOCKER）
 
@@ -245,6 +253,7 @@ Scope 声明是 plan 阶段和 coding（Coding）能否"不扩大改动范围"�
 [ ] 8. 非功能性需求：是否有具体的量化指标（如页面加载 < 2s）？
 [ ] 9. 验收标准：每条标准是否可测试、可量化？是否与功能清单一一对应？
 [ ] 10. Visual Handoff：若为 UI 需求，是否有独立 yaml 块且含 `ui_change`？若 `new_or_changed`，handoff `path`/`url` 是否指向可比 spec 内嵌图更精确的真源（含外链 `${UX_ROOT}` 等范式）？非 UI / 后端需求可明示 `none` 等或省略整块（与实例 `spec` 段 / `paths.docs_committed` 策略一致）。
+[ ] 11. ui-spec.yaml：若 `ui_change=new_or_changed`，是否已产出 ui-spec（screens/tokens/assets）？P0 屏是否有组件树 + 逐字文案？`verified` 是否已过 gate（非 unverified 进 plan）？
 ```
 
 **不通过项**：找出具体缺失点，自动补充完善后重新自检，直到 **10** 项全部通过。
@@ -256,6 +265,7 @@ Scope 声明是 plan 阶段和 coding（Coding）能否"不扩大改动范围"�
 1. 将 spec 保存（或更新）至：
    ```
    doc/features/{module-name}/spec/spec.md
+   doc/features/{module-name}/spec/ui-spec.yaml   # ui_change=new_or_changed 时必填
    ```
 2. 在对话中输出变更摘要，便于人工审阅；用户若有修改意见，回到 Step 4（及前置 Step）迭代后再回到本 Step。
 3. **冻结 / 下游授权**（`spec.freeze`）：`1=冻结 spec，可进 plan 阶段` / `2=继续改 spec`（口头 OK 无效）。

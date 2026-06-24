@@ -5,6 +5,16 @@
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 
+/** AI prompt 上下文文件条目（文本或 sidecar 图片） */
+export interface ContextFileEntry {
+  label: string;
+  content: string;
+  kind?: 'text' | 'image';
+  /** 源图片绝对路径（kind=image 时） */
+  imagePath?: string;
+  mime?: string;
+}
+
 /** IDE / 校验脚本常用的已知 phase id（非穷尽） */
 export type KnownPhase =
   | 'spec'
@@ -414,7 +424,75 @@ export interface CheckResult {
   visual_resolution_rows?: VisualHandoffResolutionRow[];
 }
 
-/** 报告摘要 */
+/** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
+export interface SoftAdvisory {
+  id: string;
+  status: 'WARN' | 'SKIP';
+  details: string;
+  effective_image_input?: string;
+  source?: string;
+}
+
+/** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐） */
+export interface HarnessRunSummary {
+  schema_version: '1.0';
+  phase: Phase;
+  feature: string;
+  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  blocker_count: number;
+  fail_count: number;
+  warn_count: number;
+  script_report: string;
+  merged_report: string;
+  ai_prompt: string;
+  summary_json: string;
+  run_statuses: Array<{
+    id: string;
+    status: string;
+    can_claim_done?: boolean;
+    details: string;
+  }>;
+  ut_run_status?: string;
+  readiness_signals: Array<{
+    id: string;
+    status: 'ready' | 'incomplete' | 'unknown';
+    message: string;
+    source_check?: string;
+  }>;
+  blocking_warnings: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blocking_skips: Array<{
+    id: string;
+    blocking_class?: string;
+    details_excerpt: string;
+    suggestion?: string;
+  }>;
+  blockers: Array<{
+    id: string;
+    severity: string;
+    status: string;
+    classification?: string;
+    details_excerpt: string;
+    affected_files?: string[];
+    suggestion?: string;
+  }>;
+  next_action: string;
+  receipt_status?: string;
+  closure_status?: 'open' | 'closed';
+  compile_first_error?: {
+    file?: string;
+    line?: number;
+    message: string;
+    kind?: string;
+  };
+  soft_advisories?: SoftAdvisory[];
+}
+
+/** script-report.json checks 计数摘要 */
 export interface ReportSummary {
   total: number;
   pass: number;
@@ -456,7 +534,7 @@ export interface AIPromptOutput {
   timestamp: string;
   prompt_template: string;
   assembled_prompt: string;
-  context_files: Array<{ path: string; content: string }>;
+  context_files: Array<{ path: string; content: string } | ContextFileEntry>;
 }
 
 // --------------------------------------------------------------------------
@@ -469,12 +547,17 @@ export type CapabilityKey =
   | 'coding.compile'
   | 'coding.deps_install'
   | 'coding.lint'
+  | 'coding.visual_parity'
   | 'ut.compile'
   | 'ut.run'
   | 'device_test.run'
   | 'device_test.build'
   | 'device_test.install'
-  | 'spec.visual_handoff';
+  | 'device_test.visual_diff'
+  | 'spec.visual_handoff'
+  | 'spec.ui_spec'
+  | 'spec.asset_acquisition'
+  | 'plan.visual_parity';
 
 export type PersonalPrerequisiteId = 'agent_adapter' | 'deveco_toolchain';
 
@@ -567,6 +650,18 @@ export interface CheckContext {
   docsCommitted?: boolean;
   /** CLI `--skip-visual-handoff`：跳过 Visual Handoff 相关脚本检查 */
   skipVisualHandoff?: boolean;
+  /** spec：ui-spec 脚本守门档位（framework.config.json → spec.ui_spec_enforcement，opt-in） */
+  uiSpecEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
+  /** CLI `--skip-ui-spec`：跳过 ui-spec 相关脚本检查 */
+  skipUiSpec?: boolean;
+  /** coding：visual parity 脚本守门档位（framework.config.json → coding.visual_parity_enforcement） */
+  visualParityEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
+  /** CLI `--skip-visual-parity`：跳过 visual parity 脚本检查 */
+  skipVisualParity?: boolean;
+  /** adapter 是否声明 multimodal（M3）；不支持则上下文注入降级 */
+  adapterMultimodal?: boolean;
+  /** adapter 图片输入能力分级（M3）；none | tool_read | native_attach */
+  adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
   /** project profile（framework/profiles）。缺配置时由 config 归一为 hmos-app */
   resolvedProfile: HarnessResolvedProfile;
   /** framework 资产根（standalone = projectRoot；consumer = projectRoot/framework） */
