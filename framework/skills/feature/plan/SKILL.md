@@ -31,7 +31,7 @@
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)。**Research Sub-Phase 完成前禁止进入 Step 2.5（Scope 冻结）及后续 plan 撰写。**
 
-> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 
@@ -205,6 +205,8 @@ coding / review / UT / harness **一律优先读 `contracts.yaml`**，避免 pla
 
 **请用户明确回复**（`plan.scope_expansion` · freeform + portable，**须先展示上列完整提议**）：
 
+> **headless / goal-mode**：无交互用户 → **保守默认 = 拒绝扩展**（不写入 `expansions_with_user_approval`）；记录被推迟请求到 `headless-assumptions.md`，必要时 goal-run DEFERRED。
+
 ```text
 1. 已读并同意扩展（须记录用户原话到 expansions_with_user_approval）
 2. 拒绝扩展
@@ -349,8 +351,9 @@ expansions_with_user_approval:
    - 页面间跳转关系、栈/路由 API、路由参数定义（**宿主路由栈与容器 API** 见 profile addendum）
 
 5. **Visual parity（与 spec Visual Handoff + ui-spec 对齐，有界面时）**：
-   - 对照 `spec.md` 中含 `ui_change` 的 yaml 块中的 `authoritative_refs`（路径或设计稿 URL），在 `plan.md` 用一小节说明：**各区域 UI 以何真源为准**、相对真源允许的偏差（如占位图、模拟数据）、哪些项落入 `contracts.yaml`（间距档位、资源 key、字号等可测项）。
+   - 对照 `spec.md` 中含 `ui_change` 的 yaml 块中的真源（`authoritative_refs` 路径/URL，或 **`fidelity_snapshot` 的 `_fidelity-cache/fidelity.lock.yaml`**），在 `plan.md` 用一小节说明：**各区域 UI 以何真源为准**、相对真源允许的偏差（如占位图、模拟数据）、哪些项落入 `contracts.yaml`（间距档位、资源 key、字号等可测项）。
    - **产出** `doc/features/<feature>/plan/visual-parity.yaml`：映射 ui-spec 每个 asset key / token key / 关键组件节点 → `contracts.yaml` 的 `resource_keys` / `components`（允许偏差标注）。
+   - plan harness **只读 lock 清单做覆盖规划**，不联网、不对图；像素对图仅在 device-testing。
    - 若 spec 声明 `ui_change: none` / `reuse_only` / `impl_out_of_band`，本节可写「无新版面，无新增视觉对齐项」。
 
 ### Step 8: 构建 spec 功能映射表
@@ -649,7 +652,7 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 
 设计文档**必须包含以下 9 个章节**（章节细节以模板为准）：
 
-`` `profile-skill-asset:plan/plan_template` ``
+`` `profile-skill-asset:plan/plan_template` ``（解析见 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol)；**勿**在 `framework/skills/feature/plan/templates/` 找它，它在 `framework/profiles/<project_profile.name>/skills/plan/templates/plan-template.md`）
 
 1. **Scope 声明与继承** — 继承 spec 的 in_scope / out_of_scope，登记用户批准的扩展（Scope 守门起点，不可省略）
 2. **模块架构图** — Mermaid diagram，展示模块间依赖关系

@@ -15,15 +15,7 @@
 
 ### skill-assets.yaml 键
 
-机器清单：`framework/profiles/hmos-app/skills/skill-assets.yaml`。根 `SKILL.md` 使用 `` `profile-skill-asset:spec/<键>` `` 指向下列文件：
-
-| 键 | 相对 `skills/feature/spec/` |
-|----|------------------------------|
-| `spec_template` | `templates/spec-template.md` |
-| `prd_template` | `templates/spec-template.md`（legacy 别名） |
-| `example_spec` | `examples/example-spec.md` |
-| `example_prd` | `examples/example-spec.md`（legacy 别名） |
-| `examples_spec_mapping` | `examples-spec-mapping.md` |
+本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.spec` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:spec/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
 ## `generic` / 中立工程提醒
 
@@ -33,3 +25,10 @@
 
 - 可选旁证：`oh-package.json5`（包名）、`build-profile.json5`（模块 `srcPath`），用于核对 Scope 与物理模块路径。
 - **UI 真源**以 spec Visual Handoff / 用户截图为准；`context-exploration.md` 须能指向像素权威（`authoritative_refs` 或等价路径）。
+
+## 视觉保真捕获（v2.4+ · pixel_1to1）
+
+- Step 2 须按**分区扫描**产出 `spec/ref-elements.yaml`（参考图侧独立枚举；`implement | defer` 二选一）。
+- `ref-elements` 中 `disposition: defer` 须在 spec Visual Handoff 块登记 `fidelity_deferrals` 且 **`human_signed: true`**。
+- ui-spec 须写 `must_have_elements` / `semantic_role` / `color_ref` / `icon` / `badge`；plan 阶段补 `visual-parity.yaml` 组件映射供 coding **组件级** token 绑定校验。
+- `pixel_1to1` 联动产出 `spec/asset-manifest.yaml`（素材需求清单，拒绝 AI 山寨资产）。

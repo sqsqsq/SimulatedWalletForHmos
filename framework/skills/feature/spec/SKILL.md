@@ -31,7 +31,7 @@
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)（Karpathy 四原则 · Research First / Minimum Viable / Surgical / Verify Before Proceed）。**Research Sub-Phase 完成前禁止写入 spec 正文。**
 
-> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析；**禁止**在根 SKILL 写死 `framework/profiles/<某固定 profile>/...`。
 
 ---
 
@@ -135,7 +135,8 @@
 
    - **所有行的「用户确认」必须为 `[x]` 才允许生成 spec 正文**（这是 BLOCKER）。
    - 即使置信度是 `high` 也必须人工确认（按项目约定，不启用 auto-approve）。
-   - 用户如对某条映射不满意，要求修正 → AI 把修正后的映射写入本表并再次等用户确认。
+   - **headless / goal-mode 下例外（就地中和）**：无交互用户时，按 [user-confirmation-ux.md §9](../../reference/user-confirmation-ux.md) 自动写回 `[x]`（glossary 命中 → high 直确认；新术语 → medium/low + DEFERRED-review）并**继续写完 spec 正文**；**禁止**停下问人。本例外**覆盖**上两条停步要求。
+   - 用户如对某条映射不满意，要求修正 → AI 把修正后的映射写入本表并再次等用户确认（**仅交互态**）。
 
 6. **回写 glossary（用户批准后）**
    所有用户确认过的**新术语**或**被修正过的术语映射**，必须在 spec 归档前追加或更新到 `doc/glossary.yaml`（带 `confidence_hint: "user-approved on YYYY-MM-DD"`），作为下一次复用的种子。
@@ -167,11 +168,13 @@
 
 仔细分析用户提供的界面截图，产出 **`doc/features/<feature>/spec/ui-spec.yaml`**（规范见 [reference/ui-spec.md](reference/ui-spec.md)）：
 
-1. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]` 记录（P0/P1 完整树 + bbox + 逐字文案；P2/P3 可 `lightweight: true`）
-2. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
-3. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
-4. **资产清单**：logo/图标 → `acquisition`（crop / svg_grab / repo_ref）+ `resolved_path` 或显式 `placeholder`
-5. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）
+1. **分区扫描（捕获完整性）**：按顶部导航 / 内容主体 / 底部 / 浮层逐区枚举元素；每元素强制 `implement | defer`，落 **`spec/ref-elements.yaml`**（分母独立于 ui-spec，供 capture_completeness 校验）
+2. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]`（含 `must_have_elements[]`、`semantic_role` / `color_ref` / `icon` / `badge`；P0/P1 完整树 + bbox + 逐字文案）
+3. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
+4. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
+5. **资产清单**：logo/图标 → `acquisition` + `resolved_path` 或显式 `placeholder`；`pixel_1to1` 时联动产出 **`spec/asset-manifest.yaml`**
+6. **保真档位**：Visual Handoff 块声明 `fidelity_target`（`pixel_1to1` 时 defer 须 `fidelity_deferrals` + **人类签字**）；见 [reference/visual-handoff.md](reference/visual-handoff.md)
+7. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，未签字 defer → BLOCKER。
 
 **模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
 
@@ -203,7 +206,7 @@
 
 ### Step 3: 生成 spec 初稿
 
-读取 spec 文档模板：`` `profile-skill-asset:spec/spec_template` ``（解析规则见 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol)）。
+读取 spec 文档模板：`` `profile-skill-asset:spec/spec_template` ``（解析规则见 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol)）。**勿**在 `framework/skills/feature/spec/templates/` 找它（那里只有通用 `feature-card.md`）——它在 `framework/profiles/<project_profile.name>/skills/spec/templates/spec-template.md`。
 
 按模板结构填充内容，**必须包含以下 10 个章节**。  
 **Visual Handoff**：仅当需求为 **UI 形态**（新屏 / 改版 / 需对齐设计真源）时，须在 Scope 附近增加 **独立** `yaml` 块（根字段含 `ui_change`），写法见 [reference/visual-handoff.md](reference/visual-handoff.md)；**后端 / 库 / 云侧无界面**需求且团队未 opt-in `framework.config.json` 的 `spec.visual_handoff_enforcement: strict` 时，**不写**该块不产生脚本噪声。**doc/features/** 是否提交主仓由实例 **`paths.docs_committed`** 决定，harness 不隐含「必须入库」。
@@ -226,7 +229,8 @@
 - UI 形态：写完 Scope 后，按 [reference/visual-handoff.md](reference/visual-handoff.md) 增加**单独**的 ` ```yaml ` 块，根字段含 `ui_change`。
 - 不动 UI 或 UI 已外落成：在同一独立块中使用 `none` / `reuse_only` / `impl_out_of_band`（**勿**在无依据时写 `new_or_changed`）。
 - 有界面改版或新屏：`new_or_changed`（或 `copy_edits_only`）+ `visual_handoff`；`path` 可为**仓内相对**、**`${UX_ROOT}/...`** 或通过配置允许的绝对路径/UNC；`url` 类 kind 写明 http(s)。
-- spec 内嵌缩略图仅辅助；**像素权威以 handoff 声明的路径/URL 为准**。
+- **在线高保真**（内网 Figma / 门户）：`visual_handoff.kind: fidelity_snapshot` + `source_link`；spec 阶段 **显式调用宿主 MCP `fetch_fidelity`** 落盘 `ux-reference/_fidelity-cache/`（PNG + `fidelity.lock.yaml`）；`screens[].id` **必须等于** ui-spec 各屏 `ref_id`/`source_ref`。详见 [reference/visual-handoff.md](reference/visual-handoff.md) 与 [fidelity-fetch-mcp-contract.md](../../../docs/operations/fidelity-fetch-mcp-contract.md)。
+- spec 内嵌缩略图仅辅助；**像素权威以 handoff 声明的路径/URL 或 lock 快照为准**。
 
 #### Step 3.1 Scope 声明填写规则（必读）
 

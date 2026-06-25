@@ -29,7 +29,7 @@
 
 其中 `<project_profile.name>` 取自 `framework.config.json > project_profile.name`（未声明时由 harness 按仓库指纹回落默认 profile，见 init Skill S2.1（`project_profile`））。若该文件不存在，则仅依赖本 SKILL 正文 + 对应 profile 下模板/示例路径。
 
-> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。
+> **动态资产引用**：正文中的 `` `profile-skill-asset:<skill>/<asset_key>` `` 须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
 ---
 
@@ -245,6 +245,7 @@ doc/features/{module-name}/testing/test-plan.md
 
 - 创建目录：`doc/features/<feature>/testing/reports/<timestamp>/hylyre/`（`<timestamp>` 建议本地 sort 友序，如 `20260519-143000`）。
 - 写入 **`test-plan.hylyre.md`**：锚点 **`## 测试用例清单`** + **7 列表头**（顺序固定），自 profile 模板拷贝表头行。
+- **多 UI 入口（`use-cases.yaml > ui_bindings`）**：若同一 `user_actions.calls`（如 `flow.selectBank`）有多个 `ui` 入口（如 `BankCardAddPage` 与 `AllBanksPage`），须**每个入口各派生一条** Hylyre 用例，并在派生表或 frontmatter `derived_cases[]` 中携带结构化字段 **`entry_ui`**（= `ui_bindings[].ui`）、**`linked_flow`**、**`calls`**。脚本 `ui_entry_coverage` 据此校验；P0 缺任一入口 → BLOCKER FAIL。
 - 随后由你（agent）触发 **`harness-runner --phase testing --feature <feature>`**（见 Step 7）；宿主顺序为 **build → install → ensure Hylyre → run plan**（profile 未 SKIP 时）。
 
 **profile 为 generic / `device_test.run` 为 SKIP**：跳过 §4.5 与 Hylyre，按该 profile 的人工或其它自动化约定执行。
@@ -298,14 +299,16 @@ doc/features/{module-name}/testing/test-plan.md
 ### Step 4.6: 视觉 diff 回环（visual_diff · ui_change=new_or_changed 时）
 
 > **QA 阶段级动作**（非 test-plan 派生 `screenshot` 步骤根键）；与 hylyre-planned-step-fields 禁止项不冲突。
+> **唯一直接像素对图阶段**：参考图来自 spec `authoritative_refs` 或 **`fidelity.lock.yaml` 快照**（`buildAuthoritativeRefImageIndex` byId 联结 ui-spec `source_ref`）。
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
 2. **MVP 范围**：先覆盖可直达顶层屏；深层屏复用既有导航到达后再截。
-3. **执行**：对每屏 Hylyre 导航 + `screenshot` → 多模态对照 **authoritative_refs 原图** + ui-spec → 产出：
-   - `doc/features/<feature>/device-testing/device-screenshots/`
-   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数，含几何 IoU）
-4. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
-5. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。
+3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **双向 diff**（正向=spec 声明元素；反向=参考图有实现无）→ 产出：
+   - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举；`score_floor` 含 N×N 分块最小相似度）
+   - `doc/features/<feature>/device-testing/visual-diff.md`（must-fix 清单 + 每屏 verdict/分数）
+4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
+5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。
+6. **降级**：warmup/无设备 → harness `visual_diff` **SKIP**，标注「仅静态保真分生效」。`pixel_1to1` 下 lowScorePass / score_floor 哨兵 / must_fix / reverse_missing → **BLOCKER**。
 
 ### Step 5: 生成测试报告（测试执行后）
 

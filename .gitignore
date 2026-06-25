@@ -63,3 +63,11 @@ framework/harness/decision.json
 framework/harness/context.json
 framework/harness/init-decision.json
 framework/harness/init-context.json
+
+# Feature-phase harness reports (paths.reports_dir_pattern)
+doc/features/*/*/reports/*
+doc/features/*/goal-runs/
+doc/features/*/ux-reference/_fidelity-cache/
+
+# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)
+/doc/features/_adhoc/

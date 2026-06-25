@@ -31,7 +31,7 @@
 
 > **Agent 行为规约（BLOCKER）**：完整阅读 [`agent-behavioral-principles.md`](../../reference/agent-behavioral-principles.md)（原则 3 Surgical · 原则 4 Verify）。**Research Sub-Phase 完成前禁止写入第一个实现层源文件。**
 
-> **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
+> **动态资产引用**：若正文出现 `` `profile-skill-asset:<skill>/<asset_key>` ``，须按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。编码规范/脚手架/宿主易错手册等权威文件亦可通过清单键 `coding_standards`、`module_scaffold`、`arkts_pitfalls` 等定位（见当前 profile 的 `skills/skill-assets.yaml`）。
 
 ---
 
@@ -306,7 +306,7 @@ business-ut Harness 会用 `named_business_handler` BLOCKER 严格校验该项�
 [ ] 10. 导入完整：所有 import 语句是否完整，路径是否正确？
 [ ] 11. 命名入口完整性（若 use-cases.yaml 存在）：`ui_bindings[].user_actions[].calls` 所列每个符号是否都能在代码中找到对应命名方法 / 函数 / 导出符号（非 inline lambda）？业务编排源文件（形态 B / C）是否**零**UI/Nav/Toast/AppStorage import？
 [ ] 12. UI 层副作用翻译（若 use-cases.yaml 存在）：UI 的 `onClick` 是否只做"参数准备 + 转发调用命名函数"？Toast/导航是否通过订阅业务 state（`@Watch` 或等价）翻译，而非 `onClick` 内部硬编码分支？
-[ ] 13. 视觉 parity（ui_change=new_or_changed）：主题色 token 是否已应用到 `$r('app.color.*')`？真实资产 key 是否非占位？ui-spec 逐字文案是否落入 string 资源？组件树 major 节点是否在 contracts.components 有对应？
+[ ] 13. 视觉背板（ui_change=new_or_changed）：`pixel_1to1` 下带 `color_ref`/`semantic_role` 的 ui-spec 节点是否已在 **visual-parity.yaml 映射到 contract_component**，且该 struct 源码引用对应 `$r('app.color.*')`？`must_have_elements`（搜索框/角标等）是否在组件树或 string/源码命中？占位品牌资产是否已显式 placeholder + 用户知情？**在线高保真**：coding **不直接对快照 PNG**；间接受益于 spec 阶段 asset-acquisition 采色 + ref-elements 静态校验（`static_fidelity_score`）。
 ```
 
 **不通过项**：定位具体问题，自动修复后重新检查，直到全部通过。
@@ -523,7 +523,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 - Profile 编码 addendum: `framework/profiles/<profile>/skills/coding/profile-addendum.md`
 - Profile 宿主语言/组件/API 参考：以 addendum 中列出的 `reference/` 与 `templates/` 为准
-- 编码规范完整版: `` `profile-skill-asset:coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../../../README.md#profile-skill-asset-protocol)）
+- 编码规范完整版: `` `profile-skill-asset:coding/coding_standards` ``（解析规则见 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol)；profile 资产在 `framework/profiles/<project_profile.name>/skills/coding/templates/coding-standards.md`，**勿**在根 skill 树 `templates/` 找）
 
 ## 关联文件
 

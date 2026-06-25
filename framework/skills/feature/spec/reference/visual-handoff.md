@@ -46,6 +46,13 @@
 
 - 每项须至少包含 **`path` 或 `url` 之一**（可并存：仓内导出 + 在线稿）。
 
+**在线高保真快照类**：`fidelity_snapshot`（v2.4+）
+
+- 用于内网在线高保真（Figma / 内部门户等）；**maison 不抓取网络**，由宿主 **MCP `fetch_fidelity`** 在 spec 阶段导出快照。
+- 必填 **`source_link`**（http/https）；可选 **`delivery_code`**（非密标识；敏感传送码须 `${env:NAME}`，勿 commit 明文）、**`snapshot`**（默认 `doc/features/<feature>/ux-reference/_fidelity-cache/`）。
+- **不要**在 spec.md 写回 N 条 `authoritative_refs[].path` 指向 PNG（方案 a：id→png SSOT 在 `fidelity.lock.yaml`）。
+- harness **`fidelity_snapshot_promise`** 纯离线校验 lock + 声明屏 PNG 齐；详见 [`docs/operations/fidelity-fetch-mcp-contract.md`](../../../docs/operations/fidelity-fetch-mcp-contract.md) 与 [`specs/fidelity-lock.schema.yaml`](../../../specs/fidelity-lock.schema.yaml)。
+
 每项可写可选 **`id`**（逻辑区域名），便于正文引用。
 
 ## spec 驱动 + 项目级 opt-in（必读）
@@ -85,6 +92,22 @@
 
 - 详细场景表与 checklist：`framework/skills/project/framework-init/prompts/spec-harness-options.md`。
 
+## 保真档位与素材供给（v2.4+）
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| `fidelity_target` | `semantic_layout`（默认） / `pixel_1to1` | 像素级意图；贯穿 spec/coding/testing 严重度 ratchet |
+| `asset_acquisition_mode` | `approximate`（默认） / `auto_crop` / `user_dir` | `pixel_1to1` 联动默认抬升为 `user_dir` |
+| `fidelity_deferrals` | 数组 | P0 视觉元素 defer 须 `human_signed: true`（判据=人类签字） |
+
+`authoritative_refs` 新增 kind：**`asset_pack`**（用户素材目录，与 `repo_assets` 同样要求 `path`）。
+
+须同步产出：
+- `spec/ref-elements.yaml` — 参考图侧独立枚举（捕获完整性分母）
+- `spec/asset-manifest.yaml` — 美术资产需求清单（`pixel_1to1` / `user_dir` 时必填）
+
+**A/B/C 预期边界**：A 结构样式可逼近 1:1；B 美术资产取决于素材供给；C 动态交互不在静态参考图承诺内。
+
 ## CLI 逃生
 
 ```bash
@@ -122,3 +145,24 @@ visual_handoff:
     - id: ext_pack
       path: ${UX_ROOT}/my-feature/v3/
 ```
+
+## 示例：在线高保真 `fidelity_snapshot`
+
+```yaml
+ui_change: new_or_changed
+visual_handoff:
+  kind: fidelity_snapshot
+  source_link: https://internal.example/design/file/abc
+  delivery_code: ${env:UX_FIDELITY_CODE}
+  snapshot: doc/features/my-feature/ux-reference/_fidelity-cache/
+  fidelity_target: pixel_1to1
+```
+
+spec 阶段 agent 调用宿主 MCP `fetch_fidelity(source_link, feature, out_dir, screens[])` 落盘 PNG + lock；后续 device-testing 像素对图、spec 素材裁剪自动消费 lock（见 MCP 契约文档）。
+
+## A/B/C 与阶段范围（在线高保真）
+
+- **直接像素对图**：仅 **device-testing**（`visual-diff-capture`）。
+- **spec**：`asset-acquisition` 裁剪/采色（吃 PNG）；第二刀结构化派生注入 **内存 manifest**（`CheckContext.refElementsManifest`），同 run 内 `capture-completeness` 消费——verify 路径不写盘；VL 手工枚举仍落 `spec/ref-elements.yaml` 作审计/离线 fallback。
+- **coding**：`static-fidelity` 间接受益（token 值来自 spec 采样）；直接采样快照 PNG 为 future task。
+- **plan / review**：消费 lock 清单 / 治理签字，不对图。

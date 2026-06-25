@@ -16,9 +16,12 @@ import {
   buildAuthoritativeRefImageIndex,
   resolveRefSourceImage,
 } from './authoritative-ref-images';
-import { computeHistogramSimilarity, isJimpAvailable } from './image-toolkit';
+import { computeHistogramSimilarity, computeTileMinSimilarity, isJimpAvailable } from './image-toolkit';
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
+import { collectP0OverlayTargetIds } from './visual-diff-targets';
+
+export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
 export interface VisualDiffScreenshotFnArgs {
   screenId: string;
@@ -147,8 +150,13 @@ function resolveScoreFloor(
 ): number | undefined {
   if (!enabled || !refAbs || !isJimpAvailable()) return undefined;
   const sim = computeHistogramSimilarity(shotAbs, refAbs);
-  if (!sim.ok || typeof sim.similarity !== 'number') return undefined;
-  return sim.similarity;
+  const tile = computeTileMinSimilarity(shotAbs, refAbs, 4);
+  const globalSim = sim.ok && typeof sim.similarity === 'number' ? sim.similarity : undefined;
+  const tileSim = tile.ok && typeof tile.similarity === 'number' ? tile.similarity : undefined;
+  if (globalSim === undefined && tileSim === undefined) return undefined;
+  if (globalSim === undefined) return tileSim;
+  if (tileSim === undefined) return globalSim;
+  return Math.min(globalSim, tileSim);
 }
 
 /** pending/skipped 可被采集覆盖；pass/warn/fail 仅在截图 hash 未变时保留 */
@@ -340,6 +348,24 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       continue;
     }
     capturedScreens.push({ entry: row, hash: screenshotHash });
+  }
+
+  for (const ov of collectP0OverlayTargetIds(uiDoc)) {
+    if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
+    const paths = resolveShotPaths(opts.projectRoot, opts.feature, ov.id);
+    if (!paths) {
+      errors.push(`${ov.id}: overlay screen_id 非法`);
+      continue;
+    }
+    capturedScreens.push({
+      entry: {
+        screen_id: ov.id,
+        screenshot_path: paths.rel,
+        ref_id: ov.id,
+        verdict: 'pending',
+      },
+      hash: fs.existsSync(paths.abs) ? (hashScreenshotFile(paths.abs) ?? '') : '',
+    });
   }
 
   if (capturedScreens.length === 0) {
