@@ -26,8 +26,9 @@ framework/harness/node_modules/
 framework/harness/dist/
 framework/harness/reports/*
 !framework/harness/reports/.gitkeep
-# Feature-phase harness reports（paths.reports_dir_pattern 落在 doc/features 时）
-doc/features/*/*/reports/*
+# Feature 需求过程产物（本地开发，不入主仓）
+doc/features/
+
 framework/harness/trace/
 framework/harness/package-lock.json
 framework/harness/state/*
@@ -44,10 +45,6 @@ doc/glossary-staging/
 **/.hylyre/
 **/tmp_hypium/
 /doc/app-snapshot-cache/
-# Skill 6 即席用例临时目录（需要归档时可移出 ignore）
-/doc/features/_adhoc/
-/doc/features/原始需求/
-
 # Hylyre/Hypium 以工程根为 cwd 时落盘的 task 日志；需要归档时再移出 ignore
 /reports/
 
@@ -60,9 +57,6 @@ framework/harness/**/test/dag/
 
 # Personal framework settings (per developer, gitignored)
 framework.local.json
-
-# Feature-phase harness reports (paths.reports_dir_pattern)
-doc/features/*/goal-runs/
 
 # Framework runtime artifacts (managed by /framework-init)
 framework/harness/decision.json

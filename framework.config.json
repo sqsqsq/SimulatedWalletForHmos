@@ -91,7 +91,7 @@
     "state_file": "framework/harness/state/.current-phase.json",
     "receipt_dir_pattern": "doc/features/<feature>/<phase>",
     "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
-    "docs_committed": true,
+    "docs_committed": false,
     "extension_dir": "doc/extensions",
     "module_graphs_dir": "<module>/code-graph.yaml",
     "agent_bundle_root": ".agents",
