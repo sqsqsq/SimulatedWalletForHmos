@@ -23,11 +23,14 @@ export const VERIFIED_ENUM = ['verified', 'unverified', 'human_confirmed'] as co
 export const VERIFIED_METHOD_ENUM = ['vl_multimodal', 'human_gate', 'none'] as const;
 export const PRIORITY_ENUM = ['P0', 'P1', 'P2', 'P3'] as const;
 export const ACQUISITION_ENUM = ['crop', 'svg_grab', 'repo_ref'] as const;
+/** G3：按钮变体 / 对齐枚举 */
+export const BUTTON_VARIANT_ENUM = ['filled', 'tonal', 'outlined', 'ghost', 'text'] as const;
+export const ALIGN_ENUM = ['start', 'center', 'end', 'space_between', 'stretch'] as const;
 
 const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref', 'sampled']);
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
-  'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed',
+  'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets']);
 
@@ -70,6 +73,21 @@ function validateComponentNode(
   }
   if (n.bbox !== undefined && !isBbox(n.bbox)) {
     errors.push(`${pathLabel}.bbox 须为 4 元归一化 [x,y,w,h]`);
+  }
+  // G3：捕获保真字段（variant/align/width_ratio/layout_group/bg_color）
+  if (n.variant !== undefined && !(BUTTON_VARIANT_ENUM as readonly string[]).includes(n.variant as string)) {
+    errors.push(`${pathLabel}.variant 非法：${JSON.stringify(n.variant)}（须 ${BUTTON_VARIANT_ENUM.join('/')}）`);
+  }
+  if (n.align !== undefined && !(ALIGN_ENUM as readonly string[]).includes(n.align as string)) {
+    errors.push(`${pathLabel}.align 非法：${JSON.stringify(n.align)}（须 ${ALIGN_ENUM.join('/')}）`);
+  }
+  if (n.width_ratio !== undefined && (typeof n.width_ratio !== 'number' || n.width_ratio < 0 || n.width_ratio > 1)) {
+    errors.push(`${pathLabel}.width_ratio 须为 [0,1] 数值，收到 ${JSON.stringify(n.width_ratio)}`);
+  }
+  for (const k of ['layout_group', 'bg_color'] as const) {
+    if (n[k] !== undefined && typeof n[k] !== 'string') {
+      errors.push(`${pathLabel}.${k} 须为字符串`);
+    }
   }
   if (n.children !== undefined) {
     if (!Array.isArray(n.children)) {
@@ -207,7 +225,7 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (as.source_bbox !== undefined && !isBbox(as.source_bbox)) {
         errors.push(`assets[${i}].source_bbox 须为 4 元归一化 [x,y,w,h]`);
       }
-      for (const k of ['source_ref', 'resolved_path', 'rationale'] as const) {
+      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'string') {
           errors.push(`assets[${i}].${k} 须为字符串`);
         }

@@ -25,6 +25,27 @@
 
 ---
 
+## 防漂移完整性门禁（framework_integrity）
+
+发布件随包下发 `framework/RELEASE-MANIFEST.json`（每文件 sha256）。harness 启动时（普通模式与 goal 模式一致）跑全局 `framework_integrity` preflight：以 manifest 为准逐文件比对 `framework/`，**发现源码漂移默认判 BLOCKER**。
+
+- **目的**：杜绝在消费者侧（尤其 goal-mode 无人值守代理）静默改 framework 源码——发现即拦，逼其走上游回灌而非本地漂移。
+- **升级即生效**：解压新发布件覆盖 `framework/` 后首次跑 harness 即启用。**若你此前对 `framework/` 有本地改动，会立即判 BLOCKER**。
+- **两条出路**：(1) 把本地修复回灌 agent-maison 上游、重新发布（推荐）；(2) 确需本地 fork：在 `framework.config.json` 增 `"integrity": { "allow_local_drift": true }` 把漂移降为 WARN，或按路径精确放行 `"integrity": { "drift_allowlist": ["harness/scripts/check-testing.ts"] }`。
+- **dev/source layout**（framework 自身仓，无包内 manifest）自动 no-op，不影响其 `npm test`。
+
+---
+
+## device visual-diff 缺陷枚举契约（round2）
+
+`visual-diff.json` 每屏新增可选 `defects[]`（正向渲染缺陷枚举：`clipping`|`overlap`|`shape_mismatch`|`missing_render`|`other` + `bbox` + `severity` + `note`）与采集层自动写入的 `edge_tile_divergence`/`edge_over_threshold_tiles`。
+
+- **pass 契约**：`verdict=pass` 屏不得含 blocker/major defect（含则 pixel_1to1 FAIL、否则 WARN）。
+- **pixel_1to1 须逐屏枚举**：finalized verdict 的 `defects` 缺失（`undefined`）在 pixel_1to1 下判 **BLOCKER/FAIL**（补 `defects[]`、确无缺陷写 `[]` 即解除），与既有 `reverse_missing` 对称——**消费者旧 `visual-diff.json` 在 pixel_1to1 下会硬挂，须重跑 device-testing（采集层重写 + VL 逐屏枚举 defects）或手动补 `defects[]`**。非 pixel_1to1 不受影响。
+- **边缘哨兵**：采集层对 ref/shot 算结构散度，超阈 tile 未被 `defect.bbox` 覆盖且达地板 → WARN（低置信、永不 gate）；若属误报可补对应 `missing_render` defect 的 bbox 或复核该区域。
+
+---
+
 ## 把 framework 部署到目标工程：两种模式
 
 ### 模式 A：Vendor（直接拷源码，无独立 git 仓库）

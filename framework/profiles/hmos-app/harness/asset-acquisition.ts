@@ -19,6 +19,24 @@ import {
   resolveRefSourceImage,
 } from './authoritative-ref-images';
 import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isAutomationSigner, USER_REQUIREMENT_CONFIRMER } from '../../../harness/scripts/utils/fidelity-shared';
+import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
+
+/** G4b：crop 确认判据——human_crop_confirmed:true 且（headless 下）crop_confirmed_by 为非自动化身份或 user_requirement。 */
+function isCropHumanConfirmed(
+  a: { human_crop_confirmed?: boolean; crop_confirmed_by?: string },
+  headless: boolean,
+): boolean {
+  if (a.human_crop_confirmed !== true) return false;
+  if (isAutomationSigner(a.crop_confirmed_by)) return false;
+  // headless：须有前置授权者——user_requirement(用户 NL 前置授权) 或真人署名；缺/自动化=自报。
+  if (headless) {
+    const by = typeof a.crop_confirmed_by === 'string' ? a.crop_confirmed_by.trim() : '';
+    if (by === USER_REQUIREMENT_CONFIRMER) return true; // 显式认可：即便通用规则收紧也恒通过
+    return by.length > 0;
+  }
+  return true;
+}
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -63,6 +81,8 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
   }
 
   const notes: string[] = [];
+  const cropPendingConfirm: string[] = [];
+  const headless = isGoalHeadlessEnv();
   let uiSpecDirty = false;
   const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
 
@@ -84,8 +104,10 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
       notes.push(`${a.key}：缺 source_bbox`);
       continue;
     }
-    if (!a.human_crop_confirmed) {
-      notes.push(`${a.key}：关键资产须 human_crop_confirmed 后才自动裁图`);
+    if (!isCropHumanConfirmed(a, headless)) {
+      // G4b：未确认（headless 下还须非自动化/user_requirement crop_confirmed_by，堵自报）→ 确认门禁
+      cropPendingConfirm.push(a.key);
+      notes.push(`${a.key}：待确认裁剪框（human_crop_confirmed${headless ? ' + crop_confirmed_by 非自动化身份或 user_requirement' : ''}）后自动裁图`);
       continue;
     }
     const srcPick = resolveRefSourceImage(refIndex, a.source_ref);
@@ -129,7 +151,26 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
     writeUiSpecYaml(uiSpecAbs, doc);
   }
 
-  return [{
+  const results: CheckResult[] = [];
+
+  // G4b：crop 资产待人工确认 → 门禁（解耦 G1 自签：不自动置 confirmed，改走 goal-runner halt-confirm）。
+  // pixel_1to1 → BLOCKER（headless 无确认即挡；交互/goal 经既有确认 UX 暂停求人确认 bbox 后裁）；否则 WARN。
+  // 这让"从截图裁素材"在 goal 模式从休眠转可用，而非静默退占位。
+  if (cropPendingConfirm.length > 0) {
+    const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
+    results.push({
+      id: 'asset_crop_confirm_required',
+      category: 'structure',
+      description: desc,
+      severity,
+      status,
+      details: `crop 资产待人工确认裁剪框（human_crop_confirmed）：${cropPendingConfirm.join(', ')}`,
+      suggestion: 'goal-runner 暂停求人工确认/微调 bbox；或在需求中自然授权从原图/截图裁剪资源并记录 crop_confirmed_by=user_requirement。确认后置 human_crop_confirmed 自动裁剪；headless 无确认即 BLOCKER（不自动伪造确认）。',
+      affected_files: [uiSpecRel],
+    });
+  }
+
+  results.push({
     id: 'asset_acquisition',
     category: 'structure',
     description: desc,
@@ -137,5 +178,7 @@ export function checkAssetAcquisition(ctx: CheckContext): CheckResult[] {
     status: notes.some(n => /失败|逃逸|已跳过/.test(n)) ? 'WARN' : 'PASS',
     details: notes.length ? notes.join('；') : '无 crop 资产待处理',
     affected_files: [uiSpecRel],
-  }];
+  });
+
+  return results;
 }

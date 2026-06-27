@@ -168,19 +168,19 @@
 
 仔细分析用户提供的界面截图，产出 **`doc/features/<feature>/spec/ui-spec.yaml`**（规范见 [reference/ui-spec.md](reference/ui-spec.md)）：
 
-1. **分区扫描（捕获完整性）**：按顶部导航 / 内容主体 / 底部 / 浮层逐区枚举元素；每元素强制 `implement | defer`，落 **`spec/ref-elements.yaml`**（分母独立于 ui-spec，供 capture_completeness 校验）
-2. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]`（含 `must_have_elements[]`、`semantic_role` / `color_ref` / `icon` / `badge`；P0/P1 完整树 + bbox + 逐字文案）
+1. **分区扫描（捕获完整性）**：按顶部导航 / 内容主体 / 底部 / 浮层逐区枚举元素；每元素强制 `implement | defer`，落 **`spec/ref-elements.yaml`**（分母独立于 ui-spec，供 capture_completeness 校验）。**复杂区逐项拆解（G3）**：宫格/轮播/列表须把**每个图标/卡片/广告**枚举为独立元素（如 `service_grid_huawei_card` / `service_grid_unionpay` / `promo_ad_0`），**禁止压成单个 `service_grid`/`promo_swiper` 节点**（否则漏项不进分母、覆盖率虚高）；品牌图标须标 `icon.kind: brand_logo`
+2. **逐屏识别**：对照 Visual Handoff `authoritative_refs`，每屏一条 `screens[]`（含 `must_have_elements[]`、`semantic_role` / `color_ref` / `icon` / `badge`；**G3 捕获保真**：按钮 `variant`（filled/ghost/text/tonal/outlined，治"实心蓝 vs 浅灰药丸"）、同行元素 `layout_group` + `align` + `width_ratio`（治"全宽 vs 右侧药丸"、左对齐 vs 居中）、区域 `bg_color`（治灰底 vs 蓝底）；P0/P1 完整树 + bbox + 逐字文案）
 3. **组件 taxonomy**：节点 `type` 取自 7 类控件（input / action_button / overlay_panel / navigation_frame / content_display / list_selection / logic_condition）
-4. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）
+4. **token 表**：品牌色、间距、字号等；色值优先 **半确定性采样**（模型给 `source_bbox`，脚本采像素——见 M2 asset 子步骤）。**采色精度（G3）**：`source_bbox` 须取**目标元素的精确区域**（依赖分区扫描定位的元素 bbox），勿给整屏/大区——否则采到背景白底、得错色
 5. **资产清单**：logo/图标 → `acquisition` + `resolved_path` 或显式 `placeholder`；`pixel_1to1` 时联动产出 **`spec/asset-manifest.yaml`**
-6. **保真档位**：Visual Handoff 块声明 `fidelity_target`（`pixel_1to1` 时 defer 须 `fidelity_deferrals` + **人类签字**）；见 [reference/visual-handoff.md](reference/visual-handoff.md)
+6. **保真档位（先识别意图，再声明）**：从**原始需求/用户输入**识别强 1:1 信号——"完全参考 / 严格按图 / 像素级 / 1比1 / 逐像素 / 100% 还原 / 照着图做"——**命中即置 `fidelity_target: pixel_1to1`**。`semantic_layout`（默认）仅用于明确不追求逐屏还原的需求；**有截图 + "完全参考"类措辞却用 semantic_layout = 降级，禁止**。`pixel_1to1` 时 defer 须 `fidelity_deferrals` + **真人签字**（`signed_by: goal-mode-auto` 等自签不算人签）；见 [reference/visual-handoff.md](reference/visual-handoff.md)
 7. **DSL↔原图 gate**：人工逐屏 `[x]` 确认 → `verified: human_confirmed`；或无 VL 时 `verified: unverified`（下游降级，见 ui-spec.md）。**headless / goal-mode**：按 §9 自动标记并留痕，未签字 defer → BLOCKER。
 
 **模型档位（K2）**：本 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。
 
 #### Step 2.1 资产落地（review#2）
 
-对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。
+对每个 `assets[]` 按 `acquisition` 真正产出 `resolved_path`：`crop` 从原图裁 logo（关键资产须 `human_crop_confirmed`）；缺则 `placeholder: true` + `rationale`。**自然语言授权识别**：用户只需说“资源可以从原始图片/截图/素材图中裁剪获取”“从图里截元素/截图取资源”等自然话，即视为授权 Maison 使用截图裁剪路径；agent 必须自行翻译为 `acquisition: crop`、精确 `source_ref/source_bbox`、确定性 `resolved_path`，并记录 `human_crop_confirmed: true` + `crop_confirmed_by: user_requirement`（授权来自用户需求文本，不是 agent 自签）。**G4b goal 模式裁剪**：若缺少上述用户授权或 bbox 仍不确定，crop 待确认门禁触发——goal-runner **暂停求人确认/微调 bbox**，确认后置 `human_crop_confirmed`（**headless 须连同 `crop_confirmed_by` 真人/用户授权来源**）自动裁剪；headless 无真人/用户授权确认即 BLOCKER（**自报不算**）。用户也可在需求入口**前置**给 bbox/素材目录（`user_dir`/`asset_pack`）→ 免 mid-run halt 直接裁。这让"无高保真时用原始截图搞定资源"在 goal 模式从休眠转可用。
 
 仍可在 spec.md「页面/界面描述」保留散文补充，但 **ui-spec.yaml 为 coding parity 的结构化 SSOT**。
 
