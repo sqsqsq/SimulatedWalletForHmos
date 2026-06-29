@@ -112,7 +112,11 @@
     },
     {
       "path": "agents/cursor/adapter.yaml",
-      "sha256": "474bd6de5b4ebb56b09163ee3507eab7551abf7acf8feb56aaf9278be6ef512f"
+      "sha256": "49a2ac3250e06b6687cf88f9c43b7e6e743bf3bb3520841c86d6ff220440f072"
+    },
+    {
+      "path": "agents/cursor/templates/commands/goal-mode.md",
+      "sha256": "b80828861a4abdfcbb1b708ca40278c3533f01a86bfa7f028e9da7db6f14b24f"
     },
     {
       "path": "agents/cursor/templates/rules/interaction-renderer.mdc",
@@ -256,7 +260,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "7a12794bada8437f21721f8427584d6cfed7bda09598b04ea1045252e38c698d"
+      "sha256": "bf25f30199807d10c3be1ebd39f39055f708abea52553fd71df5259c9296c7ad"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -524,7 +528,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "e7fb663b555a5aba1cb28de39980479ff91ad96bd232126726b52740c52d3b3a"
+      "sha256": "7b57b0069a726bb925cb48c72154a1145980adc835f8191ff38f6b57d8edd99a"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -760,7 +764,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "5b76d2bbab92cea80138399d95e3470d51d17b409caf6829c21868f810e8893c"
+      "sha256": "ee29c2275aa3c98a35eceb2f886d641f520737ea49acdfea37807cdb948bb62a"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -768,7 +772,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-preflight.ts",
-      "sha256": "cf7bd9310fbfe7241a84a55b93b5ff21d4612e81519ca44d52835de7bacbe1d2"
+      "sha256": "3a34a191d4a4f791560af68c4a89119c89db0a23198d12051e99c8632966e677"
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
@@ -880,7 +884,7 @@
     },
     {
       "path": "harness/scripts/utils/personal-setup-gate.ts",
-      "sha256": "3660297bdd2ee68cb15e090e2ea4035c1cf4e84c53a0818bd38cd5fc79b657a0"
+      "sha256": "48a3d4647163b886e12f937471b304167fdcd31c70da9971338c3e02a81fd487"
     },
     {
       "path": "harness/scripts/utils/phase-alias.ts",
@@ -2012,7 +2016,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "c270dac648e5df82bab4484f50e6f5d5cc68abf6fdf6d5bc7c9ed0ef26c11c9d"
+      "sha256": "e0e5567965e21006758d5c1849d8b921bc88c375c4907f33c551cb8882926bfb"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -2140,7 +2144,7 @@
     },
     {
       "path": "workflows/goal-manifest.schema.yaml",
-      "sha256": "9d6ce2d38261c244db639f685626471a6851dcd12c915a7c5584ed2be518912a"
+      "sha256": "88921b7a4a102627a5ccdab2f4d532cccb0549ece6007f12e004dab9504d4cda"
     },
     {
       "path": "workflows/spec-driven.workflow.yaml",
