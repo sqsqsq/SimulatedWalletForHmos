@@ -17,8 +17,9 @@ import {
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
+import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText } from './visual-diff-ocr-gates';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanConfirmed } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { createRequire } from 'module';
 
@@ -82,6 +83,8 @@ export interface VisualDiffScreenEntry {
   screenshot_hash?: string;
   /** VL/agent 判定 verdict 时所依据的截图 hash；须与当前文件 hash 一致 */
   evaluated_screenshot_hash?: string;
+  /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
+  confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
   reverse_missing?: string[];
   /** 正向缺陷枚举：实现有但渲染错（裁切/重叠/形态/缺渲染）。pixel_1to1 下 verdict=pass 须为空数组 */
@@ -297,6 +300,10 @@ export function validateVisualDiffJson(
           errors.push(`screens[${i}] edge_tile_divergence 须在 [0,1]，收到 ${String(edgeDiv)}`);
         }
       }
+      const confirmedBy = row.confirmed_by;
+      if (confirmedBy !== undefined && confirmedBy !== null && typeof confirmedBy !== 'string') {
+        errors.push(`screens[${i}] confirmed_by 须为字符串`);
+      }
       const scoreFloor = row.score_floor;
       if (scoreFloor !== undefined && scoreFloor !== null) {
         if (typeof scoreFloor !== 'number' || Number.isNaN(scoreFloor)) {
@@ -368,6 +375,25 @@ export function collectEdgeSentinelUncovered(
     if (uncovered.length >= minUncovered) out.push({ screen_id: s.screen_id, tiles: uncovered });
   }
   return out;
+}
+
+/**
+ * T4：pixel_1to1 P0 warn 屏「无可执行回修指令」——verdict=warn 却 **must_fix 空**。
+ * 语义：pixel_1to1 P0 下 warn = "有残差、需再修一轮"；coding 真正消费的回修通道是 **must_fix**（可执行可定位的指令），
+ * 而 defects/reverse_missing 只是**证据**、不是指令（单纯 `defects:[{note}]` 不能告诉 coding 改哪 → loop 仍瞎猜，
+ * 正是 homepage 把卡包描述从卡夹下瞎挪到上的根源）。故 **defects/reverse_missing 不替代 must_fix**：要么把它们结构化成
+ * must_fix（warn，须修），要么残差可接受就判 **pass + minor defect** 记录（无需修）。与灾难地板(0.45)互补：地板抓崩坏分，
+ * 本条抓"压线 warn 却无 must_fix"（home_with_card 0.52 / manage_non_local 0.48 即此类）。
+ * 注：reverse_missing/major defects 另有各自 ratchet（本条不依赖它们兜底，只钉死 must_fix 通道）。
+ */
+export function collectWarnP0NoActionable(
+  screens: VisualDiffScreenEntry[],
+  p0Ids: string[],
+): VisualDiffScreenEntry[] {
+  const p0IdSet = new Set(p0Ids);
+  return screens.filter(
+    s => s.verdict === 'warn' && p0IdSet.has(s.screen_id) && (s.must_fix?.length ?? 0) === 0,
+  );
 }
 
 interface VisualDiffHit {
@@ -730,6 +756,117 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         line:
           `低于地板却未登记任何 defects/reverse_missing（低分无依据，须 VL 补缺陷或修分）：` +
           dishonest.map(s => s.screen_id).join(', '),
+      });
+    }
+  }
+
+  // T4：pixel_1to1 P0 warn 屏必须带**非空 must_fix**（coding 消费的回修指令通道；defects/reverse_missing 只是证据、不替代——
+  // 详见 collectWarnP0NoActionable 文档）。否则 = "知道不完美却不告诉 loop 改哪" → loop 饿死瞎猜（homepage 把卡包描述从卡夹下
+  // 瞎挪到上的根源）。与上方灾难地板(0.45)互补：地板抓"崩坏分"，本条抓"压线 warn 却无 must_fix"（home_with_card 0.52 /
+  // manage_non_local 0.48 即此类）。残差可接受就判 pass(+minor defect)；判 warn 就必须用 must_fix 说清改哪。
+  const warnP0NoActionable = collectWarnP0NoActionable(rep.screens, p0Ids);
+  if (pixel1to1 && warnP0NoActionable.length > 0) {
+    const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_warn_no_actionable',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `pixel_1to1 P0 屏 verdict=warn 却无可执行回修指令（must_fix 空，loop 无法精准回修；defects/reverse_missing 是证据非指令、不替代）：` +
+        warnP0NoActionable.map(s => `${s.screen_id}(f=${s.fidelity_score ?? 'n/a'})`).join(', ') +
+        `；warn 须给 coding 可执行 must_fix（残差可接受则判 pass+minor defect 记录）`,
+    });
+  }
+
+  // T5：声明式全局元素越界（如底部「首页/我的」Tab 泄漏到 card_pack/add_card 子页）——OCR 确定性检测，
+  // 不靠 root 类型猜（实测子页 root 也是 navigation_frame@0）。仅 global_elements 声明 + OCR 可用时实际跑 OCR。
+  const oob = collectOutOfBoundsGlobalElements(
+    uiDoc?.global_elements,
+    rep.screens,
+    rel => resolveShotPath(ctx.projectRoot, rel),
+  );
+  if (oob.violations.length > 0) {
+    const ratchet = pixel1to1
+      ? fidelityRatchetFailOrWarn(ctx, false)
+      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_out_of_bounds_element',
+      severity: ratchet.severity,
+      status: ratchet.status,
+      line:
+        `全局元素越界（仅属主屏可渲染该元素，却现于其它屏指定 band）：` +
+        oob.violations.map(v => `${v.element_id}@${v.screen_id}[${v.texts.join('+')}]`).join(', '),
+    });
+  }
+  // 降级信号：声明了 global_elements 须检测、却因 OCR 不可用/失败无法确认的屏——降 WARN 复核，不静默放过
+  // （OCR 不可用 ≠ 没泄漏；对齐"降 WARN 不 SKIP 整门禁"设计意图）。
+  if (oob.ocrUnavailable.length > 0) {
+    pushVisualDiffHit(hits, {
+      id: 'visual_diff_out_of_bounds_degraded',
+      severity: 'MAJOR',
+      status: 'WARN',
+      line:
+        `越界门禁降级：以下屏声明了 global_elements 但 OCR 不可用/失败、无法确认是否越界，须复核（装 tesseract.js/物化 chi_sim 后重采）：` +
+        oob.ocrUnavailable.join(', '),
+    });
+  }
+
+  // T1（窄）：pixel_1to1 P0 pass 屏声明锚点文本整块缺失 = 疑似 missing-render（高置信窄门禁，对 device≠mockup 鲁棒）。
+  // 两次实测证伪了像素/文本-位置度量；唯一鲁棒的 OCR 信号是文本存在性，故 T1 仅做"整块缺失"。位置/样式/图标类
+  // 假 PASS 不靠 T1，靠 T2（pixel_1to1 P0 人确认）+ T7（VL 证据）。
+  if (pixel1to1 && uiDoc) {
+    const passScreenIds = new Set(passScreens.map(s => s.screen_id));
+    const p0Set = new Set(p0Ids);
+    const screenAnchors = new Map<string, string[]>();
+    for (const sc of uiDoc.screens ?? []) {
+      if (!p0Set.has(sc.id) || !passScreenIds.has(sc.id)) continue;
+      const nodes = collectAllComponentNodes({ screens: [sc], tokens: {}, assets: [] } as UiSpecDoc);
+      const texts = nodes.map(n => n.text).filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+      if (texts.length > 0) screenAnchors.set(sc.id, texts);
+    }
+    const missingRes = collectGrossMissingAnchorText(
+      screenAnchors,
+      rep.screens,
+      rel => resolveShotPath(ctx.projectRoot, rel),
+    );
+    if (missingRes.violations.length > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_missing',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `pixel_1to1 P0 pass 屏声明锚点文本整块缺失（疑似该区域 missing-render；VL 不应判 pass）：` +
+          missingRes.violations.map(v => `${v.screen_id}(缺 ${v.missing.length}/${v.declared}: ${v.missing.slice(0, 4).join(',')})`).join('; '),
+      });
+    }
+    if (missingRes.ocrUnavailable.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_text_missing_degraded',
+        severity: 'MAJOR',
+        status: 'WARN',
+        line: `锚点缺失检测降级（OCR 不可用，须复核）：${missingRes.ocrUnavailable.join(', ')}`,
+      });
+    }
+  }
+
+  // T2（主背靠）：pixel_1to1 P0 屏判 pass 须真人过目确认（confirmed_by 非空且非自动化身份）。
+  // 两次实测证伪了像素/文本-位置度量（忠实屏误报）——图标/颜色/样式类假 PASS 不可约地需 VL/人判，
+  // 故 pixel_1to1 最严档下 P0 pass 屏不得仅凭 VL 自报闭环。headless 缺确认 → BLOCKER（goal-runner 据此 HALT 求人）；
+  // 交互态 → BLOCKER（agent 当场 stop-and-ask 用户确认、置 confirmed_by 后重判）。goal-mode-auto 等自签不算。
+  if (pixel1to1) {
+    const p0Set = new Set(p0Ids);
+    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanConfirmed(s.confirmed_by));
+    if (unconfirmed.length > 0) {
+      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_human_confirm_required',
+        severity: ratchet.severity,
+        status: ratchet.status,
+        line:
+          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份）——客观度量无法判图标/颜色/样式，须人兜底：` +
+          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/无效)` : '(缺 confirmed_by)'}`).join(', ') +
+          `；headless 走 HALT 求人，交互态当场确认后置 confirmed_by 重判。`,
       });
     }
   }
