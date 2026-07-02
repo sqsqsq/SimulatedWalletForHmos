@@ -18,7 +18,26 @@ export type FailureKind =
   | 'capture'
   | 'visual_gap'
   | 'code_regression'
-  | 'external_block';
+  | 'external_block'
+  | 'agent_timeout'
+  | 'transient_api_error'
+  | 'agent_no_output';
+
+/**
+ * P0-B/P0-D（b8f36a12）：agent 级基建失败信号——由 goal-runner 从 invoke 结果 +
+ * agent-output.log 哨兵采集后传入，**优先于 summary blocker 归因**（blocker 只是症状：
+ * 超时/断流 attempt 的 spec_file_exists 是"没跑完"的派生物，不是内容失败）。
+ * 优先级：agent_timeout（runner tree-kill 确定性事实）> transient_api_error（断流串
+ * 可能是被杀连带产生，故 timed_out 时不判断流）> agent_no_output > blocker 归因。
+ */
+export interface AgentInvokeSignals {
+  /** invoke.timed_out === true（maison 自己的预算 tree-kill） */
+  agentTimedOut?: boolean;
+  /** parseHeadlessApiError 非空信封命中（不依赖 exit code） */
+  agentApiError?: boolean;
+  /** 0 字节输出保守兜底（preflight 已过 + 无 spawn error + 极短时长 + exit≠0） */
+  agentNoOutput?: boolean;
+}
 
 /**
  * T6：失败按互斥 bucket 归因，使 goal-mode 不再把 testing 的工具链/采集/视觉差距一律塞 code_regression
@@ -33,15 +52,27 @@ export type FailureKind =
 const TOOLCHAIN_BLOCKER_PREFIXES = ['device_test_build', 'device_test_install', 'hylyre_', 'hvigor_'];
 /** check 层显式标注的 toolchain 子类（device_test_run 崩溃等）；用例失败不打此标 → 归 code_regression */
 const TOOLCHAIN_BLOCKING_CLASSES: ReadonlySet<string> = new Set(['device_toolchain']);
+/**
+ * round5 P0-A/X4：精确 id（非前缀）也归 toolchain。`visual_parity_ocr_unavailable`——pixel_1to1 下
+ * OCR（烤字门禁唯一承重探测）不可用属工具依赖缺失，须归 toolchain（signature 重复即 halt、指向"修 OCR 环境"），
+ * 否则其 `visual_parity_*` 前缀会掉进 code_regression 被盲重试。
+ */
+const TOOLCHAIN_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['visual_parity_ocr_unavailable']);
+/**
+ * round5 P1-B：采集/导航身份类精确 id 归 capture。`visual_diff_screenshot_dedup`（≥2 屏共享 hash=Tab
+ * 未切换/重复采集）本质是采集导航 bug（非 UI 差距），归 capture 而非 visual_gap——halt 原因/重试指导才
+ * 指向"修采集导航"而非"改 UI"（isVisualGapBlockerId 已 `&& !isCaptureBlockerId` 自动排除之）。
+ */
+const CAPTURE_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['visual_diff_screenshot_dedup']);
 
-/** 采集失败（截图 IO/Permission denied/screensWritten=0）；属基建 → 早 halt */
+/** 采集失败（截图 IO/Permission denied/screensWritten=0 / 撞 hash 未切屏）；属基建 → 早 halt */
 export function isCaptureBlockerId(id: string): boolean {
-  return id === 'visual_diff_capture' || id.startsWith('visual_diff_capture');
+  return id.startsWith('visual_diff_capture') || CAPTURE_BLOCKER_IDS.has(id);
 }
 
-/** 真机工具链失败（build/install/hylyre/hvigor）；盲重试无益 → 早 halt。device_test_run 不在此（见 blocking_class 路径） */
+/** 真机工具链失败（build/install/hylyre/hvigor + OCR 依赖缺失）；盲重试无益 → 早 halt。device_test_run 不在此（见 blocking_class 路径） */
 export function isToolchainBlockerId(id: string): boolean {
-  return TOOLCHAIN_BLOCKER_PREFIXES.some((p) => id.startsWith(p));
+  return TOOLCHAIN_BLOCKER_PREFIXES.some((p) => id.startsWith(p)) || TOOLCHAIN_BLOCKER_IDS.has(id);
 }
 
 /** check 层把 device_test_run 崩溃等显式标 blocking_class='device_toolchain' → 归 toolchain；用例失败无此标 */
@@ -58,12 +89,19 @@ export function isVisualGapBlockerId(id: string): boolean {
   return id.startsWith('visual_diff') && !isCaptureBlockerId(id);
 }
 
-/** signature 重复即 halt 的 kind（基建类 + 视觉无改善——盲重试都无益） */
+/**
+ * signature 重复即 halt 的 kind（基建类 + 视觉无改善——盲重试都无益）。
+ * P0-B：agent_timeout 加入——同专用 signature（agent_timeout@<phase>）重复且产物零进展
+ * → 熔断求人（§六-4）；有进展则 guard 放行走 resume 续作（不吃内容重试预算，P0-B.5）。
+ * P0-D：transient_api_error **不加入**——网络抖动重试有意义，走独立 backoff 上限；
+ * agent_no_output 也不加入——它在 runner 层第一次出现即 halt（不盲重试），无需 signature 熔断。
+ */
 export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'deterministic_gate_or_artifact_missing',
   'toolchain',
   'capture',
   'visual_gap',
+  'agent_timeout',
 ]);
 
 /**
@@ -141,12 +179,37 @@ export function extractBlockerSignature(summary: GoalSummaryLike | null | undefi
 }
 
 /**
+ * P0-B（§七.3）：跨 attempt 比较用的**有效** signature。PASS+timeout 常无普通 blocker
+ * → 空 signature 会被 shouldHaltNoProgress 的 `!priorBlockerSignature` 短路、熔断恒不
+ * 触发（逃逸）。agent_timeout 无 blocker 时构造专用 signature `agent_timeout@<phase>`，
+ * 使"连续超时且产物零进展"能被 guard 抓到。
+ */
+export function buildEffectiveBlockerSignature(
+  summary: GoalSummaryLike | null | undefined,
+  failureKind: FailureKind,
+  phase: string,
+): string {
+  const base = extractBlockerSignature(summary);
+  if (base) return base;
+  if (failureKind === 'agent_timeout') return `agent_timeout@${phase}`;
+  return base;
+}
+
+/**
  * Classify harness failure for guard + retry-context. Unknown ids → code_regression (prefer retry).
+ * P0-B/P0-D：agent 级信号（signals）优先于 blocker 归因——超时/断流 attempt 的
+ * deterministic blocker 只是"没跑完"的派生症状，按症状归因即误熔断（bc-openCard 现场）。
  */
 export function classifyFailureKind(
   summary: GoalSummaryLike | null | undefined,
   dependencyPolicy: DependencyPolicy = DEFAULT_DEPENDENCY_POLICY,
+  signals?: AgentInvokeSignals,
 ): FailureKind {
+  // agent 级基建失败优先（优先级见 AgentInvokeSignals 注释）
+  if (signals?.agentTimedOut) return 'agent_timeout';
+  if (signals?.agentApiError) return 'transient_api_error';
+  if (signals?.agentNoOutput) return 'agent_no_output';
+
   const meta = topBlockingMeta(summary);
   if (
     isDeferrableExternalBlock(meta.blocking_class, meta.failure_kind, dependencyPolicy)

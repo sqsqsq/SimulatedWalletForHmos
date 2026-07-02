@@ -16,13 +16,22 @@ export interface GoalBudget {
   max_retries_per_phase?: number;
   max_total_turns?: number;
   wall_clock_minutes?: number;
+  /**
+   * P0-D（b8f36a12）：API 断流（transient_api_error）独立重试上限——与
+   * max_retries_per_phase **解耦**（一次断流不吃内容重试预算），仍受
+   * max_total_turns + wall_clock 兜底。计数从 events.jsonl 派生（跨 resume 不清零）。
+   */
+  max_transient_api_retries?: number;
 }
 
 export interface UnattendedContract {
   write_mode: 'workspace-write' | 'accept-edits' | 'full-access';
   approval_mode: 'never' | 'on-request' | 'always';
   max_turns?: number;
+  /** 扁平全局超时（秒）；per-phase 未命中时的兜底。优先级见 utils/goal-timeout.ts。 */
   timeout_seconds?: number;
+  /** 显式 per-phase 超时覆盖（秒），最高优先。缺省走 goal-timeout 内置默认表。 */
+  phase_timeout_seconds?: Partial<Record<FeaturePhase, number>>;
   allowed_tools?: string[];
 }
 
@@ -61,6 +70,7 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
   max_retries_per_phase: 2,
   max_total_turns: 30,
   wall_clock_minutes: 480,
+  max_transient_api_retries: 3,
 };
 
 export function newRunId(): string {
@@ -93,6 +103,8 @@ function mergeBudget(raw?: GoalBudget): Required<GoalBudget> {
     max_retries_per_phase: raw?.max_retries_per_phase ?? DEFAULT_BUDGET.max_retries_per_phase,
     max_total_turns: raw?.max_total_turns ?? DEFAULT_BUDGET.max_total_turns,
     wall_clock_minutes: raw?.wall_clock_minutes ?? DEFAULT_BUDGET.wall_clock_minutes,
+    max_transient_api_retries:
+      raw?.max_transient_api_retries ?? DEFAULT_BUDGET.max_transient_api_retries,
   };
 }
 
@@ -174,6 +186,24 @@ export function buildGoalManifestFromInput(
   };
 }
 
+/**
+ * 治 2.3.0 历史 manifest：legacy 扁平 timeout_seconds=3600 且无 per-phase map →
+ * 视为"未显式设置"，删除该字段，使 **resume 旧 run** 走 goal-timeout 的 per-phase 默认表
+ * （否则历史续跑里 review/testing 仍只有 60min，等于没修这次现场问题）。
+ * 只对恰等于 legacy 默认值的扁平超时生效；用户显式设的非 3600 值保持不动。
+ *
+ * **仅用于 resume 旧 run（loadGoalManifestFromRun）**——不要用于 loadGoalManifestFile：
+ * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
+ */
+const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
+export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
+  const u = manifest.unattended;
+  if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {
+    delete u.timeout_seconds;
+  }
+  return manifest;
+}
+
 export function loadGoalManifestFile(
   filePath: string,
   projectRoot: string,
@@ -181,6 +211,9 @@ export function loadGoalManifestFile(
 ): GoalManifest {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
+  // 注意：不在此做 legacy 超时迁移——用户手写 --manifest 里的 timeout_seconds:3600
+  // 是显式选择，须按"扁平覆盖所有 phase"契约尊重。迁移只针对 resume 旧 run
+  // （那里的 3600 是 2.3.0 旧硬编码默认、非用户选择），见 loadGoalManifestFromRun。
   return buildGoalManifestFromInput(raw, {
     projectRoot,
     featuresDir: opts?.featuresDir,
@@ -240,5 +273,5 @@ export function loadGoalManifestFromRun(
   }
   const manifest = JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
   validateLoadedGoalManifest(manifest, { featuresDir, feature, runId });
-  return manifest;
+  return applyLegacyTimeoutMigration(manifest);
 }

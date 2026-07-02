@@ -49,6 +49,7 @@ import {
   tableHasColumns,
   getColumnValues,
   extractMetadata,
+  extractDeclaredVerdict,
   MdTable,
 } from './utils/markdown-parser';
 import {
@@ -59,6 +60,7 @@ import {
   dispatchDeviceTestRun,
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
+  analyzeProjectDependencyIssueViaProfile,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
@@ -80,9 +82,11 @@ import {
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
-import { buildHylyreVisualDiffScreenshotFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
+import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
-import { parseUiChangeFromSpecMarkdown } from './utils/ui-spec-shared';
+import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
 import {
   evaluateHylyreRunOutcome,
   reconcileReportWithHylyreTrace,
@@ -778,17 +782,19 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     }];
   }
 
-  const verdicts = ['达标', '有条件达标', '不达标'];
-  const hasVerdict = verdicts.some(v => section.includes(v));
+  // 声明式提取：锚定「测试结论:」声明行 + 最长优先，杜绝 '达标'⊂'不达标' 子串
+  // 与「下一步建议」枚举裁决词造成的整段污染。裁决-vs-trace 一致性由
+  // reconcileReportWithHylyreTrace 负责（消费同一 parseReportConclusionVerdict）。
+  const { verdict } = extractDeclaredVerdict(section, ['有条件达标', '不达标', '达标']);
 
-  if (hasVerdict) {
+  if (verdict) {
     return [{
       id,
       category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '结论章节包含明确的判定。',
+      details: `结论章节包含可机读判定：${verdict}。`,
     }];
   }
 
@@ -798,8 +804,8 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     description: ruleDesc(ctx, 'structure_checks', id),
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: '结论章节未包含明确的判定（达标/有条件达标/不达标）。',
-    suggestion: '报告结论必须包含明确判定：达标 / 有条件达标 / 不达标。',
+    details: '结论章节未找到可机读的判定声明行（达标/有条件达标/不达标）。',
+    suggestion: '请写出明确声明行，例如 `**测试结论**: 不达标`（裁决词须紧邻在"测试结论:"之后）。',
   }];
 }
 
@@ -1485,6 +1491,33 @@ function checkDeviceTestBuildGate(
         hv.successMarkerFound !== false);
 
     if (!compileOk) {
+      // P2：复用与 coding/ut 同一套（已根治的）依赖归因器，给弱模型可执行指引，
+      // 而不是甩一段裸日志。depIssue.found 已收敛为"命中真实解析失败信号"（见 hvigor-runner P0-A）。
+      let attribution: string[] = [];
+      try {
+        const depIssue = analyzeProjectDependencyIssueViaProfile(ctx, {
+          logExcerpt: hv.logExcerpt,
+          errors: hv.errors ?? [],
+          logAbsPath: hv.logAbsPath,
+        });
+        if (depIssue?.found) {
+          attribution = [
+            '── harness 归因：工程依赖解析失败（非本轮测试代码）──',
+            depIssue.missingDeclarations?.length
+              ? `未在 oh-package.json5 声明：${depIssue.missingDeclarations.join(', ')}；补声明后重跑。`
+              : `解析失败依赖：${(depIssue.dependencies ?? []).join(', ') || '(见日志)'}。`,
+          ];
+        } else {
+          const firstErr = (hv.errors ?? [])[0];
+          attribution = [
+            firstErr
+              ? `── harness 归因：真实编译错误，定位并修复后重跑 → ${firstErr.file ?? ''}${firstErr.line ? ':' + firstErr.line : ''} ${firstErr.message}`
+              : '── harness 归因：非依赖问题，按日志定位首个编译错误的 file:line 改代码后重跑 ──',
+          ];
+        }
+      } catch {
+        // 归因是增益，失败不影响 BLOCKER 判定
+      }
       return [
         {
           id,
@@ -1497,6 +1530,7 @@ function checkDeviceTestBuildGate(
             `命令：${hv.command ?? '(unknown)'}`,
             `日志：${hv.logPath ?? '(无)'}`,
             res.hapPath ? `解析 HAP：${res.hapPath}` : '未解析到 signed 主 HAP（编译失败或未产出）',
+            ...(attribution.length ? ['', ...attribution] : []),
             ...(hv.diagnostics?.length
               ? ['', '── harness 诊断 ──', ...hv.diagnostics.map(d => `• ${d}`)]
               : []),
@@ -2071,6 +2105,31 @@ function checkDeviceTestRunGate(
             ctx.phase,
             ctx.frameworkRoot,
           );
+          // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
+          const navConfig = loadVisualDiffNavConfig(ctx.projectRoot, ctx.feature);
+          // P1-A fail-fast（消费 validateNavConfig，不静默裸采）：≥2 P0 屏须导航区分；缺配置/配置不一致=明确失败，不进 capture（防误导 PASS）。
+          const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+          const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
+          const navValidation = navConfig ? validateNavConfig(navConfig, navP0TargetIds) : null;
+          const navGateError = navConfig
+            ? (navValidation && !navValidation.ok
+                ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
+                : null)
+            : (navP0TargetIds.length >= 2
+                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航区分，否则多屏截同一帧（曾致 5 屏同 hash）`
+                : null);
+          if (navGateError) {
+            const navRatchet = fidelityRatchetFailOrWarn(ctx, true);
+            out.push({
+              id: 'visual_diff_capture',
+              category: 'structure',
+              description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+              severity: navRatchet.severity,
+              status: navRatchet.status,
+              details: `【nav 配置门禁·P1-A】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。`,
+              suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
+            });
+          } else {
           const cap = captureVisualDiff({
             projectRoot: ctx.projectRoot,
             feature: ctx.feature,
@@ -2085,6 +2144,18 @@ function checkDeviceTestRunGate(
               deviceSn: process.env.HARNESS_HDC_TARGET,
               logPath: run.logPath,
             }),
+            ...(navConfig
+              ? {
+                  navConfig,
+                  navExecutorFn: buildHylyreNavExecutorFn({
+                    pythonPath: ready.pythonPath,
+                    hypiumWorkDir,
+                    deviceSn: process.env.HARNESS_HDC_TARGET,
+                    bundleName,
+                    logPath: run.logPath,
+                  }),
+                }
+              : {}),
           });
           const p0Failed = cap.p0CaptureFailures ?? [];
           const stalePreserved = cap.screensWritten === 0 && (cap.screensPreserved ?? 0) > 0;
@@ -2153,6 +2224,7 @@ function checkDeviceTestRunGate(
               ].join('\n'),
               suggestion: '确认 Hylyre 可 `screenshot`（排查 Permission denied/锁屏/占用）；非顶层屏须 device-testing 导航后重跑采集。',
             });
+          }
           }
         }
       }
