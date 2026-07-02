@@ -352,7 +352,7 @@
     },
     {
       "path": "harness/capability-registry.ts",
-      "sha256": "cc7c813a39f708051f27577792c067eba4a9477866486a90628bc6ec28c136b2"
+      "sha256": "7e627f6f7428ba77141d18f5bcdf9100752acd0ece01022272b759818fdb2758"
     },
     {
       "path": "harness/code-graph/anchor-hash.ts",
@@ -460,7 +460,7 @@
     },
     {
       "path": "harness/schemas/ui-spec.schema.json",
-      "sha256": "262ca38d126b512de9de5b8d9c8a49c4b5bc3203fdb7c390ba806dfcb7777788"
+      "sha256": "eeef72c06640a216e572889edc78829b9d3b84c428186de1981035e7cffd5344"
     },
     {
       "path": "harness/scripts/adhoc-device-test.ts",
@@ -1012,7 +1012,7 @@
     },
     {
       "path": "harness/scripts/utils/ui-spec-shared.ts",
-      "sha256": "ca2002fffa9bd5b3fdf605f52954bf85eb88aff1c33384ba564e5ae3441863d5"
+      "sha256": "f070948c9a8823e497381d5fefe671a39844fbff11d280e15eca504cfba26a6a"
     },
     {
       "path": "harness/scripts/utils/ut-artifact-parse.ts",
@@ -1328,7 +1328,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/asset-acquisition.ts",
-      "sha256": "ad91023c0f3e50b75560c6d7ec03b2de9631dffac90b97bd082b8ca7f0442822"
+      "sha256": "975a0576ce3eaf3c215d48ca3ea66fd1643cd3ba0df28f2a817462b0dcd87929"
+    },
+    {
+      "path": "profiles/hmos-app/harness/asset-crop-validation.ts",
+      "sha256": "f229cb2706e0b99a42198775fa8a6f1cc83a17cd635b04260b776296fc0bdeef"
     },
     {
       "path": "profiles/hmos-app/harness/asset-manifest-check.ts",
@@ -1360,7 +1364,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
-      "sha256": "fc5c1086518fff92d1c6f8ae1cecf75d5543fd1101ee33c7851096a78ce8ab02"
+      "sha256": "b14f4a7975165bfc69edeb37d0dc86e32889ce276de9f378d152859814b0dd1e"
     },
     {
       "path": "profiles/hmos-app/harness/demo/fidelity-fetch-stub.mjs",
@@ -1444,11 +1448,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/image-jimp-worker.cjs",
-      "sha256": "a3f866cb83dc13f9afcbc7fb2ebaf0b27b19ac6690ce45fc4812b499dca29ca1"
+      "sha256": "c68f750cb7c62d95effb7909661eb4fcba46106a5683cff0536648f2bd860352"
     },
     {
       "path": "profiles/hmos-app/harness/image-toolkit.ts",
-      "sha256": "c2687bb21db9e28c1a19d1c56ae1c72bf459876663e6ca63e644ff41afc4d1cd"
+      "sha256": "bbb1274b1024d9a8e37567483c6c26325a94c3cbf4127a92bb1d47c307b7391c"
     },
     {
       "path": "profiles/hmos-app/harness/named-handler.ts",
@@ -1456,7 +1460,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/ocr-toolkit.ts",
-      "sha256": "a226d406e7f7f54c7db8e007f05833b5316b6e826a1fcdad8cdf642c1d8f532f"
+      "sha256": "f8b3053828ddaffb77b336e55bcf042c8be2ccfa8ab114229900396bb2edf413"
     },
     {
       "path": "profiles/hmos-app/harness/ocr-worker.cjs",
@@ -1536,11 +1540,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/spec-asset-acquisition.ts",
-      "sha256": "c48cb5b2fae7f7af015ca672b7cbfe22c95222901eb3c5ebde4f15460afac449"
+      "sha256": "9b318a8ab05e9678900fbb46eec991d848e042fd5f555d7a26ac0d7f78d89b74"
     },
     {
       "path": "profiles/hmos-app/harness/providers/spec-ui-spec.ts",
-      "sha256": "eb5cd433f5bb0a2ee7f5a743717cdbc2ad5a996c32e95f32b293c65b7cb96726"
+      "sha256": "a7b20798353d8d09d9a564300a4ad6221264f9ea85a65304c75d1cce3d7167e0"
     },
     {
       "path": "profiles/hmos-app/harness/providers/spec-visual-handoff.ts",
@@ -1595,12 +1599,16 @@
       "sha256": "a4ddfc4cceb1663a068f82e3bfbbaf278b464343eb5f121784bc7af88937c3e6"
     },
     {
+      "path": "profiles/hmos-app/harness/ui-spec-bbox-semantic.ts",
+      "sha256": "4d92cc7c5a508c2d475a2d1d4064809954bb0532dfe8a05571ef41b548a9a6b1"
+    },
+    {
       "path": "profiles/hmos-app/harness/ui-spec-gate.ts",
       "sha256": "555c91ccee9b462e0d8add5c2b7606ed94be00922b1c71cb628da02641fb14d5"
     },
     {
       "path": "profiles/hmos-app/harness/ui-spec-schema-validate.ts",
-      "sha256": "c6d1990b4002264100bfc165b591542b82aed44bb9c86e1f9a6658bf7326fb6a"
+      "sha256": "d4cc8414b9616e3a50f5b8a1c0e0b4247bc5a233f563ba11cf32448824354e58"
     },
     {
       "path": "profiles/hmos-app/harness/ut-file-scope.ts",
@@ -1640,7 +1648,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-parity-backstop.ts",
-      "sha256": "7389dfc3459d99fdbe309dc161e30343e45ec4fe4e5cc856fdcff4c50bc23bff"
+      "sha256": "9b453715845c10d60a52bfa94f6341f5f7adc219c1389d59cc09130b28ab0462"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -1984,11 +1992,11 @@
     },
     {
       "path": "skills/feature/spec/SKILL.md",
-      "sha256": "f6f06589dc4a6dcc6b02f92ee7c44fbe8b438686a7f719a385913a3d030df50a"
+      "sha256": "112f9edf0cf2244b053498018e73281a27c86ea9d8ba683bd699dc6c8d9538d1"
     },
     {
       "path": "skills/feature/spec/reference/ui-spec.md",
-      "sha256": "ada342005a3f516edb97e373faf5029d216ff335e24cbce4b81d72bcb9897a8a"
+      "sha256": "25a703951701b879b9c14cae0144512a9fca0e64b3be1946ee8b9858e5081a11"
     },
     {
       "path": "skills/feature/spec/reference/visual-handoff.md",
@@ -2184,7 +2192,7 @@
     },
     {
       "path": "specs/phase-rules/spec-rules.yaml",
-      "sha256": "1ca85c5f8968de965501145534d8188378b205ad53aa9d81a4ec25bfc521e5e2"
+      "sha256": "75664ecfc6ad770b21d07205561740afd4110200ca8d1ed61e6518b17871baa2"
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
