@@ -396,7 +396,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "f096972460b0b9f9467c8c1f4b06133e6d76d4da378d7169d565782545579d72"
+      "sha256": "03ebcaaabe57de6651b346d506007698591f0726b558fb070b03a314e458c6fb"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -456,7 +456,7 @@
     },
     {
       "path": "harness/schemas/summary.schema.json",
-      "sha256": "ceed9016af2c24e45925277b66514b2665206192c456a0a459657fb0ebc9169b"
+      "sha256": "dc80f7fab56eb4c54bfecc7cfed1a3959d19bcd18a2c9afd7af6dc4168e2edac"
     },
     {
       "path": "harness/schemas/ui-spec.schema.json",
@@ -524,7 +524,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "99b4d7dec9bb994b5fdb3f4bbcda876d9a386204be959ce88e217245b084ff1c"
+      "sha256": "5c2fb4d21644db7ef9ae59a4828df2c115225443a6279d7149f6845cdc6a3089"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -779,6 +779,10 @@
       "sha256": "28b417f272cbd6c07c6bcc79bb870378a27b8147f121f35ccdc7d6f3484bee34"
     },
     {
+      "path": "harness/scripts/utils/gate-fingerprint.ts",
+      "sha256": "a44cac891e3e7134cc19a5a11d7e00a2b13d9853f3fde67836680d74039f7230"
+    },
+    {
       "path": "harness/scripts/utils/git-diff.ts",
       "sha256": "bd8f691934bb8c60febd13d6d05ad9d282e5dae8291ae5ea7060322544ae6971"
     },
@@ -1008,7 +1012,7 @@
     },
     {
       "path": "harness/scripts/utils/types.ts",
-      "sha256": "1facd39eaecf4bff3269357113ed5c819c2648f6acde0a9ca9e57f97cc411770"
+      "sha256": "58d9c38241e3d7e48b4223efebbaacfaabdb6cfab4b27cace58538f9044e1271"
     },
     {
       "path": "harness/scripts/utils/ui-spec-shared.ts",
@@ -1044,7 +1048,7 @@
     },
     {
       "path": "harness/templates/phase-completion-receipt.md",
-      "sha256": "49adc97cd6d1eca36eab854da0297427116dab075480406f25ea8b674587745e"
+      "sha256": "80f52919d1fc906d8e987be9c8b2468bd22c2e570216a699978c3d0df6401f94"
     },
     {
       "path": "harness/trace/gap-notes.template.md",
@@ -1060,7 +1064,7 @@
     },
     {
       "path": "harness/tsconfig.typecheck.json",
-      "sha256": "437895da5d571f4b860c791590d6c68c3616a1b5e38025bf9ab97a430b5e8a46"
+      "sha256": "4abb14cf90d65605a898abdd241592c0327dcefcfd7df88c31c4bf39f7455fd9"
     },
     {
       "path": "harness/ut-suite-entry-shim.ts",
@@ -1364,7 +1368,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
-      "sha256": "b5be6158e161db7e5711a69055beb2ba728de370298071f0c355a7198d98abec"
+      "sha256": "a0cfd8e48f8d68a8fa2ec680bea325a958aa545cee355829b143a485b02aaa25"
     },
     {
       "path": "profiles/hmos-app/harness/demo/fidelity-fetch-stub.mjs",
@@ -1640,7 +1644,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-ocr-gates.ts",
-      "sha256": "74358822866863f8a0a92fa176063dd995a8696dcf64f3ae2bfbc99047a5065a"
+      "sha256": "0bef598c241592ef1aac5b1a4250208bd93e256dd74c181b16169453da8330a0"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-targets.ts",
@@ -1648,7 +1652,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-parity-backstop.ts",
-      "sha256": "05d97f0cbc8c28a3131855af56228a20a368dae9acc528cf2cefff181164e7fa"
+      "sha256": "3a955947b28c8e742e18a8b1c3058fa0cc25f3129eae2cb1019ee683011a5326"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -1976,7 +1980,7 @@
     },
     {
       "path": "skills/feature/coding/SKILL.md",
-      "sha256": "b4aacbdfcd7a0f8c515d4b84de5d0c6f7c7b69c7d0485ff8985aab78902c58c3"
+      "sha256": "da7ac7d9756ebb17c82d2369413f1c74a36a87c08d484ccdbf55ff9cbfd13926"
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
@@ -2160,7 +2164,7 @@
     },
     {
       "path": "specs/phase-rules/coding-rules.yaml",
-      "sha256": "bc5992d661c98bf127dfe8c08f8016a6e8a63f9c26cb011a9c3ad3f2a1a7430e"
+      "sha256": "1f0d254a24d1608668f384a3bad2c8523464a6bd474045940d49953eccb76c57"
     },
     {
       "path": "specs/phase-rules/docs-rules.yaml",
@@ -2196,7 +2200,7 @@
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
-      "sha256": "f40607358696506cc7fd9194751601e2b53c164a1849efa3427e96a44f4f15ae"
+      "sha256": "3d3f73d3432f637cab9ff25469dff9acd68af3521c2372b9d64a35a0e5c4b871"
     },
     {
       "path": "specs/phase-rules/ut-rules.yaml",
