@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "d3a33be2911c3a754f7b660409ca3e9dec81951dcddf646debac593c33c0a954"
+      "sha256": "ce6c0903a87b5e41b27a1914b6339a2ad24c61862a46d0389136516586ef26e8"
     },
     {
       "path": "README.md",
@@ -184,7 +184,7 @@
     },
     {
       "path": "agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc",
-      "sha256": "65b7c0e0cc82efb04cbd1d1ff11efb3d9fa63865a5d6a371402f776364ead47c"
+      "sha256": "3d8383c7511fb013ec803afbaac122df27caf6343d44f5078cb88e6eb7284794"
     },
     {
       "path": "agents/shared/agent-bundle/templates/rules/framework.mdc",
@@ -384,7 +384,7 @@
     },
     {
       "path": "harness/config.ts",
-      "sha256": "911dab0648cbc18b9958e3d17ee83607e842553f61b9f197df91df1e846ae13f"
+      "sha256": "d07664fc0b95b5e4de00216fb8ad354b48938c62c22b86629bd98bb1c051a826"
     },
     {
       "path": "harness/extension-loader.ts",
@@ -396,7 +396,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "03ebcaaabe57de6651b346d506007698591f0726b558fb070b03a314e458c6fb"
+      "sha256": "cb2f483c0e754d9ed227db43b6723ef9e580a0d6e69d72455279ab426242a574"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -524,7 +524,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "5c2fb4d21644db7ef9ae59a4828df2c115225443a6279d7149f6845cdc6a3089"
+      "sha256": "372388d8a7e4356b075ac40eafe6799d723e5a060f8e4aafa62ad6ce73367164"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -568,7 +568,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "52e13ad95dc5571cb3e486669e23b74c2d7d3b07a8d24165a54fe2d20dc59a45"
+      "sha256": "03bf74fef40dcb32e50aba4960c93eac6363346bda1a50c4ed0a28b64bdcd9c2"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -680,7 +680,7 @@
     },
     {
       "path": "harness/scripts/utils/agent-invoke.ts",
-      "sha256": "a80482b82bd21c04a67cddb6e1d88187d42f3fa1c947ba6ee8108b7b26b90bb2"
+      "sha256": "2901ecc45f1192663fba4aba807549559370b5c9201ac32db5af104ff7828127"
     },
     {
       "path": "harness/scripts/utils/app-snapshot-cache-hint.ts",
@@ -760,7 +760,7 @@
     },
     {
       "path": "harness/scripts/utils/fidelity-shared.ts",
-      "sha256": "2138f82c6feb7f134e44fae5683b5674d93091b4a9fe5763d801746318585e7e"
+      "sha256": "e75206b273e4a0aefa1f6585a853ad30ada6ff8c3c6ffb4c9d186e2f8861be31"
     },
     {
       "path": "harness/scripts/utils/finalize-init-run-log.ts",
@@ -772,7 +772,7 @@
     },
     {
       "path": "harness/scripts/utils/framework-integrity.ts",
-      "sha256": "6d595db38e453bfe986986f75c8d286ee27049561c472384c931863eaad342b6"
+      "sha256": "058cc8924b329ad200920ccce8e956157b3de4bb03acb3ef450a9e2aa73eba75"
     },
     {
       "path": "harness/scripts/utils/framework-local-config.ts",
@@ -953,6 +953,10 @@
     {
       "path": "harness/scripts/utils/phase-transition-policy.ts",
       "sha256": "7a1b054e9edccfb1fe9e5db31221947c5eb15e83437ce94de4def4326076d936"
+    },
+    {
+      "path": "harness/scripts/utils/process-integrity.ts",
+      "sha256": "918a2f29c15389bad3fd88af47b117f5c0ba53efebfa1a8a964ad1dd06c69f37"
     },
     {
       "path": "harness/scripts/utils/profile-skill-assets.ts",
@@ -1336,7 +1340,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/asset-crop-validation.ts",
-      "sha256": "f229cb2706e0b99a42198775fa8a6f1cc83a17cd635b04260b776296fc0bdeef"
+      "sha256": "b02b449111faebe21547dc2be7af78adee3fb435a5fd7db20c52b2c51e219f8b"
     },
     {
       "path": "profiles/hmos-app/harness/asset-manifest-check.ts",
@@ -1401,6 +1405,10 @@
     {
       "path": "profiles/hmos-app/harness/discover-entry-main-element.ts",
       "sha256": "f290d201dd3fce078023c0d973106b7187c72c4cd06ebe230a7da53429cfde76"
+    },
+    {
+      "path": "profiles/hmos-app/harness/evidence-tamper-scan.ts",
+      "sha256": "69f4dad2d935880c561c23eb1261ac8de0ca9a1678cf4465f8cc2196ce0a09cd"
     },
     {
       "path": "profiles/hmos-app/harness/exploration-snippets.yaml",
@@ -1632,7 +1640,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "d222e7ecd18f4e35720b2f3c64752f12163cb71fcd4cc2196f003a2c770ed6e1"
+      "sha256": "4396afb0bebd5e04c83fb0072e50b81d403742b48465e83c4aaeb5ecffbaeb28"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -1652,7 +1660,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-parity-backstop.ts",
-      "sha256": "82506bb6c6279d46031bd70b5d3fa5365c664e5ba5d9fd2611e516b27c685755"
+      "sha256": "c752d2a1eab1980a8ce2962526dad31912489dd5bda13afa06ce99e857768243"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -2144,7 +2152,7 @@
     },
     {
       "path": "specs/framework.config.schema.json",
-      "sha256": "bf8b9e810decb0dbef22f0089aa33eacf05bc4cf654f7c1c49efd52dc9a830b9"
+      "sha256": "40bf4fe1e81de60984adf7f456d0f28a202937651b6c6bd61d7fbb19a48b995c"
     },
     {
       "path": "specs/framework.local.schema.json",
@@ -2200,7 +2208,7 @@
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
-      "sha256": "3d3f73d3432f637cab9ff25469dff9acd68af3521c2372b9d64a35a0e5c4b871"
+      "sha256": "6774c5865c15a1d0598e4e614be48f03538356bdc2c8d73d53fb732b8bec0f1f"
     },
     {
       "path": "specs/phase-rules/ut-rules.yaml",
