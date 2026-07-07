@@ -544,7 +544,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "1eb1f19fd659871413c79636f3fc234f85fb33ba607dcaae4a0620fe988dd13f"
+      "sha256": "8f2667fa7eeedf845f6a9e96f4ea222d8aa50d3ae3725adc175083433758b0ac"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -568,7 +568,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "03bf74fef40dcb32e50aba4960c93eac6363346bda1a50c4ed0a28b64bdcd9c2"
+      "sha256": "e58c539995b563222e54d8da3a9357398e6d15b04813975e8df29f059d543dc1"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -800,7 +800,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-failure-classifier.ts",
-      "sha256": "fe52b2e7818d597888309e0619049712f2e0c2840e195732ef8d57bb7377c632"
+      "sha256": "c5d29cda544e8acccfb77cc5507429410ce82ce99676f44ad9d028790a4fa38f"
     },
     {
       "path": "harness/scripts/utils/goal-headless-sentinel.ts",
@@ -828,7 +828,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
-      "sha256": "bb6ceb3d90fa336bb12a4ce5559f2c7e0ed78e79deb0c8366653effd3225576a"
+      "sha256": "f719e7f7b812df4c96087af5eb0315c6da6d577e8bc16c4906c672a30dad45cf"
     },
     {
       "path": "harness/scripts/utils/goal-run-lock.ts",
@@ -1355,6 +1355,10 @@
       "sha256": "781601d156e04599d971a988aba3c0ffe2b7ccd7cc6c6b173c57824096696de8"
     },
     {
+      "path": "profiles/hmos-app/harness/build-fingerprint.ts",
+      "sha256": "8fe1c692a95578ed33d2ccabc5073c01a9cd83aa16de42fc897570308df2455a"
+    },
+    {
       "path": "profiles/hmos-app/harness/capture-completeness-check.ts",
       "sha256": "9448277fce32610dc3b5a7de0d41b5ecf7a7e4c9e18adeea526985d46f8c838c"
     },
@@ -1528,7 +1532,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-install.ts",
-      "sha256": "c1045811bbc930fab41103e0d4200f6a0747587cb8eda9a20399031f1803316b"
+      "sha256": "f1d9da37f51ad6a71e1237a30006b726efc5f9af565def23e1f0ab7965e3e72e"
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-run.ts",
@@ -1636,11 +1640,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-capture.ts",
-      "sha256": "ffcfeacc817f11284894851cfc1a1032d2255af4709482cbb4cb5067137b137f"
+      "sha256": "190cabcef2c22eed3290c95935f55971f54e19b64bb157eb7668c79ac8aa2a47"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "4396afb0bebd5e04c83fb0072e50b81d403742b48465e83c4aaeb5ecffbaeb28"
+      "sha256": "28b3af3d37cfa7ad47e73348a6dac850d4dfe22ce1682b8efebe46b3dcb54eb9"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -1648,7 +1652,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-nav.ts",
-      "sha256": "8628fddfc5afca4579f60ab52d066eabd08e979947c3bdee3c14f6fb4c8cba11"
+      "sha256": "a2c1ab184c131b4b51ea597b7296400abd26238c65337db160cb086a09b00e1b"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-ocr-gates.ts",
@@ -2208,7 +2212,7 @@
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
-      "sha256": "6774c5865c15a1d0598e4e614be48f03538356bdc2c8d73d53fb732b8bec0f1f"
+      "sha256": "66658fa789913f75851bbbd19fd4213e3bf714266b01d39c0404cecd9d77e18e"
     },
     {
       "path": "specs/phase-rules/ut-rules.yaml",
