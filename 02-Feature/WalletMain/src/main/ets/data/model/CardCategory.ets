@@ -3,4 +3,5 @@ export interface CardCategory {
   name: string;
   description: string;
   icon: Resource;
+  subtitleRes?: Resource;
 }

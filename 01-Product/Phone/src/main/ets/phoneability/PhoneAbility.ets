@@ -1,3 +1,5 @@
+import { applyLaunchHomeCardMode } from '@aspect/WalletMain';
+import { AccountService } from '@aspect/AccountManager';
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
@@ -11,6 +13,10 @@ export default class PhoneAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
+    const cardModeParam = want.parameters?.['homeCardMode'];
+    applyLaunchHomeCardMode(typeof cardModeParam === 'string' ? cardModeParam : undefined);
+    const mineLoggedInParam = want.parameters?.['mineLoggedIn'];
+    AccountService.applyLaunchPreset(typeof mineLoggedInParam === 'string' ? mineLoggedInParam : undefined);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
 

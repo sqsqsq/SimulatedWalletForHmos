@@ -5,10 +5,11 @@ import { PromoInfo } from '../../data/model/PromoInfo';
 @Component
 export struct PromoSwiper {
   @Prop promos: PromoInfo[] = [];
+  @Prop imageFirst: boolean = false;
 
-  private toastPromoNoDetail(): void {
+  private toastNotSupported(): void {
     const ctx = this.getUIContext().getHostContext() as Context;
-    showToast(ctx.resourceManager.getStringSync($r('app.string.home_promo_no_detail').id));
+    showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
   }
 
   build() {
@@ -16,47 +17,83 @@ export struct PromoSwiper {
       Text($r('app.string.more_services'))
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.wallet_text_primary'))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
 
       Swiper() {
         ForEach(this.promos, (item: PromoInfo) => {
-          Stack({ alignContent: Alignment.BottomStart }) {
-            Row() {
-              SymbolGlyph(item.image)
-                .fontSize(48)
-                .fontColor([$r('app.color.wallet_primary')])
-                .margin({ left: 16 })
+          if (this.imageFirst) {
+            Column({ space: 0 }) {
+              Image($r('app.media.promo_marketing_illustration'))
+                .width('100%')
+                .height(72)
+                .objectFit(ImageFit.Cover)
+                .borderRadius({ topLeft: 12, topRight: 12 })
+              Column({ space: 4 }) {
+                Text(item.title)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary'))
+                  .maxLines(2)
+                  .width('100%')
+                Text(item.description)
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 10, bottom: 12 })
             }
             .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Start)
-            .alignItems(VerticalAlign.Center)
-
+            .height(130)
+            .backgroundColor($r('app.color.bg_surface'))
+            .borderRadius(12)
+            .onClick(() => {
+              this.toastNotSupported();
+            })
+          } else {
+          Column({ space: 6 }) {
             Column({ space: 4 }) {
               Text(item.title)
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.wallet_text_primary'))
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(2)
+                .width('100%')
               Text(item.description)
                 .fontSize(12)
-                .fontColor($r('app.color.wallet_text_secondary'))
+                .fontColor($r('app.color.text_secondary'))
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
             }
-            .padding(16)
+            .alignItems(HorizontalAlign.Start)
             .width('100%')
+            .padding({ left: 16, right: 16, top: 12 })
+
+            Image($r('app.media.promo_marketing_illustration'))
+              .width('100%')
+              .height(56)
+              .objectFit(ImageFit.Cover)
+              .borderRadius({ bottomLeft: 12, bottomRight: 12 })
           }
           .width('100%')
-          .height(140)
-          .backgroundColor($r('app.color.promo_placeholder'))
+          .height(130)
+          .backgroundColor($r('app.color.bg_surface'))
           .borderRadius(12)
           .onClick(() => {
-            this.toastPromoNoDetail();
+            this.toastNotSupported();
           })
+          }
         }, (item: PromoInfo) => item.id)
       }
       .width('100%')
-      .autoPlay(true)
-      .interval(3000)
+      .height(130)
+      .index(0)
+      .autoPlay(false)
       .indicator(true)
     }
     .width('100%')

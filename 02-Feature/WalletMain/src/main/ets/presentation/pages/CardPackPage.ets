@@ -1,51 +1,80 @@
-import { Context } from '@kit.AbilityKit';
 import { NavPathContext } from '@aspect/CommFunc';
-import { ActionListItem, SectionCard, showToast } from '@aspect/CommUI';
-import { HomeConstants } from '../../shared/constant/HomeConstants';
+import { SectionCard } from '@aspect/CommUI';
+import { CardRepository } from '../../data/repository/CardRepository';
+import { ManageNonLocalSheet } from '../components/ManageNonLocalSheet';
 
 @Component
 struct CardPackPage {
-  private str(res: Resource): string {
-    return (this.getUIContext().getHostContext() as Context).resourceManager.getStringSync(res.id);
+  @State sheetVisible: boolean = false;
+  @State showLocalCards: boolean = false;
+  private readonly cardRepo: CardRepository = new CardRepository();
+
+  aboutToAppear(): void {
+    void this.loadCardPackData();
+  }
+
+  private async loadCardPackData(): Promise<void> {
+    this.showLocalCards = await this.cardRepo.hasLocalCards();
+  }
+
+  @Builder
+  private manageSheetBuilder() {
+    ManageNonLocalSheet({
+      onClose: (): void => {
+        this.sheetVisible = false;
+      }
+    })
   }
 
   build() {
     NavDestination() {
       Column({ space: 12 }) {
         Row() {
-          Blank().layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(22)
+            .fontColor([$r('app.color.text_primary')])
+            .margin({ right: 8 })
+            .onClick(() => {
+              NavPathContext.stack().pop();
+            })
+
+          Text($r('app.string.card_pack_title'))
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(22)
-            .fontColor([$r('app.color.wallet_primary')])
+            .fontColor([$r('app.color.text_primary')])
             .onClick(() => {
               NavPathContext.stack().pushPath({ name: 'AddCardEntryPage' });
             })
         }
         .width('100%')
-        .padding({ right: 8 })
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 4, bottom: 4 })
 
         SectionCard() {
           Row() {
             SymbolGlyph($r('sys.symbol.plus_circle'))
               .fontSize(24)
-              .fontColor([$r('app.color.wallet_primary')])
+              .fontColor([$r('app.color.brand_primary')])
               .margin({ right: 12 })
-            Column({ space: 4 }) {
-              Text($r('app.string.add_card_title'))
-                .fontSize(17)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.wallet_text_primary'))
-                .width('100%')
-              Text($r('app.string.add_card_desc'))
-                .fontSize(13)
-                .fontColor($r('app.color.wallet_text_secondary'))
-                .width('100%')
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
+            Text($r('app.string.add_card_title'))
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Text($r('app.string.add_card_desc'))
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ right: 8 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
             SymbolGlyph($r('sys.symbol.chevron_right'))
               .fontSize(18)
-              .fontColor([$r('app.color.wallet_text_secondary')])
+              .fontColor([$r('app.color.text_secondary')])
           }
           .width('100%')
           .padding({
@@ -59,38 +88,56 @@ struct CardPackPage {
           })
         }
 
-        if (HomeConstants.SHOW_LOCAL_CARD_SECTION) {
+        if (this.showLocalCards) {
           Column({ space: 8 }) {
             Text($r('app.string.local_cards_section'))
               .fontSize(14)
-              .fontColor($r('app.color.wallet_text_secondary'))
+              .fontColor($r('app.color.text_secondary'))
               .width('100%')
             Text($r('app.string.local_cards_empty'))
               .fontSize(14)
-              .fontColor($r('app.color.wallet_text_secondary'))
+              .fontColor($r('app.color.text_secondary'))
               .width('100%')
               .padding(16)
-              .backgroundColor(Color.White)
+              .backgroundColor($r('app.color.bg_surface'))
               .borderRadius(12)
           }
         }
 
-        ActionListItem({
-          icon: $r('sys.symbol.phone'),
-          title: this.str($r('app.string.manage_non_local')),
-          onTap: () => {
-            const ctx = this.getUIContext().getHostContext() as Context;
-            showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
+        SectionCard() {
+          Row() {
+            SymbolGlyph($r('sys.symbol.rectangle_stack'))
+              .fontSize(22)
+              .fontColor([$r('app.color.text_secondary')])
+              .margin({ right: 12 })
+            Text($r('app.string.manage_non_local'))
+              .fontSize(16)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([$r('app.color.text_secondary')])
           }
-        })
+          .width('100%')
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .onClick(() => {
+            this.sheetVisible = true;
+          })
+        }
       }
       .width('100%')
       .height('100%')
       .padding(16)
       .alignItems(HorizontalAlign.Start)
-      .backgroundColor($r('app.color.wallet_page_bg'))
+      .backgroundColor($r('app.color.bg_page'))
+      .bindSheet($$this.sheetVisible, this.manageSheetBuilder(), {
+        height: SheetSize.LARGE,
+        showClose: false,
+        dragBar: true
+      })
     }
-    .title($r('app.string.card_pack_title'))
+    .hideTitleBar(true)
     .onBackPressed(() => {
       NavPathContext.stack().pop();
       return true;

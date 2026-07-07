@@ -1,4 +1,3 @@
-import { FormatUtil } from '@aspect/CommFunc';
 import { AccountConstants } from '../../shared/constant/AccountConstants';
 import { LoginState } from '../../data/model/LoginState';
 import { UserProfile } from '../../data/model/UserProfile';
@@ -48,7 +47,7 @@ export class AccountService {
       setTimeout(resolve, 400);
     });
     // 模拟阶段：写死登录成功（后续可替换为华为账号 Kit）
-    const masked: string = FormatUtil.maskPhone('13812348888');
+    const masked: string = '*****6790@**.com';
     AppStorage.setOrCreate(AccountConstants.STORAGE_IS_LOGGED_IN, true);
     AppStorage.setOrCreate(AccountConstants.STORAGE_DISPLAY_ACCOUNT, masked);
     this.notify(LoginState.LOGGED_IN);
@@ -71,6 +70,15 @@ export class AccountService {
     const idx: number = this.listeners.indexOf(callback);
     if (idx >= 0) {
       this.listeners.splice(idx, 1);
+    }
+  }
+
+  /** 真机 visual-diff 冷启动：Want.parameters.mineLoggedIn=true 预置已登录展示态 */
+  static applyLaunchPreset(raw: string | undefined): void {
+    if (raw === 'logged_in' || raw === 'true') {
+      AppStorage.setOrCreate(AccountConstants.STORAGE_IS_LOGGED_IN, true);
+      AppStorage.setOrCreate(AccountConstants.STORAGE_DISPLAY_ACCOUNT, '*****6790@**.com');
+      AppStorage.setOrCreate(AccountConstants.STORAGE_LOGIN_STATE, LoginState.LOGGED_IN);
     }
   }
 }

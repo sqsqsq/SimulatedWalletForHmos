@@ -1,36 +1,104 @@
 {
   "color": [
     {
-      "name": "wallet_text_primary",
-      "value": "#182431"
+      "name": "brand_primary",
+      "value": "#007DFF"
     },
     {
-      "name": "wallet_text_secondary",
-      "value": "#99182431"
+      "name": "text_primary",
+      "value": "#000000"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#888888"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#C7C7CC"
+    },
+    {
+      "name": "bg_page",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "bg_surface",
+      "value": "#FFFFFF"
     },
     {
       "name": "wallet_primary",
-      "value": "#0A59F7"
+      "value": "#007DFF"
     },
     {
-      "name": "home_banner_start",
-      "value": "#E8F0FE"
+      "name": "wallet_text_primary",
+      "value": "#000000"
     },
     {
-      "name": "home_banner_end",
-      "value": "#D0E3FF"
+      "name": "wallet_text_secondary",
+      "value": "#888888"
     },
     {
-      "name": "promo_placeholder",
-      "value": "#DCDCDC"
+      "name": "wallet_text_tertiary",
+      "value": "#C7C7CC"
     },
     {
       "name": "wallet_page_bg",
-      "value": "#F1F3F5"
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "wallet_surface_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "brand_bank_orange",
+      "value": "#FF9500"
+    },
+    {
+      "name": "brand_bank_pink",
+      "value": "#FF6B81"
+    },
+    {
+      "name": "brand_fuel_green",
+      "value": "#34C759"
+    },
+    {
+      "name": "brand_id_yellow",
+      "value": "#FFCC00"
+    },
+    {
+      "name": "brand_danger",
+      "value": "#FF3B30"
     },
     {
       "name": "wallet_badge_gray",
       "value": "#8E8E93"
+    },
+    {
+      "name": "promo_placeholder",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "button_tonal_bg",
+      "value": "#E8F3FF"
+    },
+    {
+      "name": "home_banner_end",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "card_stack_cmb",
+      "value": "#E8A317"
+    },
+    {
+      "name": "card_stack_transit",
+      "value": "#1E6FD9"
+    },
+    {
+      "name": "card_stack_fund",
+      "value": "#2E8B57"
+    },
+    {
+      "name": "card_stack_access",
+      "value": "#F5F5F5"
     }
   ]
 }

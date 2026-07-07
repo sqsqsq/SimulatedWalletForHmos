@@ -21,43 +21,58 @@ struct Index {
   }
 
   @Builder
-  tabHome() {
-    Column() {
-      Text($r('app.string.tab_home'))
-        .fontSize(12)
-        .fontColor(this.currentTabIndex === 0 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected'))
-        .margin({ top: 6, bottom: 6 })
-    }
-    .width('100%')
-  }
+  floatingTabBar() {
+    Row() {
+      Column({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.house_fill'))
+          .fontSize(22)
+          .fontColor([this.currentTabIndex === 0 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected')])
+        Text($r('app.string.tab_home'))
+          .fontSize(12)
+          .fontColor(this.currentTabIndex === 0 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected'))
+      }
+      .layoutWeight(1)
+      .onClick(() => {
+        this.currentTabIndex = 0;
+      })
 
-  @Builder
-  tabMine() {
-    Column() {
-      Text($r('app.string.tab_mine'))
-        .fontSize(12)
-        .fontColor(this.currentTabIndex === 1 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected'))
-        .margin({ top: 6, bottom: 6 })
+      Column({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.person_fill'))
+          .fontSize(22)
+          .fontColor([this.currentTabIndex === 1 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected')])
+        Text($r('app.string.tab_mine'))
+          .fontSize(12)
+          .fontColor(this.currentTabIndex === 1 ? $r('app.color.tab_selected') : $r('app.color.tab_unselected'))
+      }
+      .layoutWeight(1)
+      .onClick(() => {
+        this.currentTabIndex = 1;
+      })
     }
-    .width('100%')
+    .width('92%')
+    .padding({ top: 8, bottom: 8 })
+    .margin({ left: '4%', right: '4%', bottom: 12 })
+    .backgroundColor(Color.White)
+    .borderRadius(28)
+    .shadow({ radius: 16, color: '#1A000000', offsetY: 4 })
   }
 
   build() {
     Navigation(this.navPathStack) {
-      Tabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
-        TabContent() {
-          HomeTabPage({ navPathStack: $navPathStack })
-        }.tabBar(this.tabHome())
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column() {
+          if (this.currentTabIndex === 0) {
+            HomeTabPage({ navPathStack: $navPathStack })
+          } else {
+            MineTabPage()
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ bottom: 72 })
 
-        TabContent() {
-          MineTabPage()
-        }.tabBar(this.tabMine())
+        this.floatingTabBar()
       }
-      .scrollable(false)
-      .barMode(BarMode.Fixed)
-      .onChange((index: number) => {
-        this.currentTabIndex = index;
-      })
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.phone_page_bg'))

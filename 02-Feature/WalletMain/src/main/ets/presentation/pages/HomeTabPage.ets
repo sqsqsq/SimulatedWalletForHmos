@@ -1,9 +1,14 @@
 import { Context } from '@kit.AbilityKit';
 import { showToast } from '@aspect/CommUI';
+import { HomeCardDisplayMode } from '../../data/model/HomeCardState';
+import { MessageInfo } from '../../data/model/MessageInfo';
 import { HomeRepository } from '../../data/repository/HomeRepository';
 import { PromoInfo } from '../../data/model/PromoInfo';
 import { ServiceEntry } from '../../data/model/ServiceEntry';
 import { CardGuideSection } from '../components/CardGuideSection';
+import { CardStackSection } from '../components/CardStackSection';
+import { HomeTabHeader } from '../components/HomeTabHeader';
+import { MessageCenterRow } from '../components/MessageCenterRow';
 import { PromoSwiper } from '../components/PromoSwiper';
 import { ServiceGridSwiper } from '../components/ServiceGridSwiper';
 
@@ -13,16 +18,35 @@ export struct HomeTabPage {
   @Link navPathStack: NavPathStack;
   @State services: ServiceEntry[] = [];
   @State promos: PromoInfo[] = [];
+  @State cardMode: HomeCardDisplayMode = HomeCardDisplayMode.NO_CARD;
+  @State message: MessageInfo = {
+    text: $r('app.string.msg_center_welcome'),
+    showUnreadDot: false
+  };
   private readonly homeRepo: HomeRepository = new HomeRepository();
 
   aboutToAppear(): void {
     void this.loadHomeData();
   }
 
+  private handleTitleTap(): void {
+    const nextMode = this.cardMode === HomeCardDisplayMode.WITH_CARD
+      ? HomeCardDisplayMode.NO_CARD
+      : HomeCardDisplayMode.WITH_CARD;
+    HomeRepository.setLaunchCardModeOverride(nextMode);
+    this.cardMode = nextMode;
+    void this.loadHomeData();
+  }
+
   private async loadHomeData(): Promise<void> {
     try {
-      this.services = await this.homeRepo.getServiceEntries();
-      this.promos = await this.homeRepo.getPromoList();
+      this.cardMode = await this.homeRepo.getCardDisplayMode();
+      const hasCard: boolean = this.cardMode === HomeCardDisplayMode.WITH_CARD;
+      this.promos = [];
+      this.services = [];
+      this.services = await this.homeRepo.getServiceEntries(hasCard);
+      this.promos = await this.homeRepo.getPromoList(hasCard);
+      this.message = await this.homeRepo.getMessageInfo(this.cardMode);
     } catch {
       this.services = [];
       this.promos = [];
@@ -33,52 +57,43 @@ export struct HomeTabPage {
 
   build() {
     Column() {
-      Row() {
-        Text($r('app.string.home_title'))
-          .fontSize($r('app.float.home_title_size'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.wallet_text_primary'))
-          .layoutWeight(1)
-
-        Text($r('app.string.home_header_msg_action'))
-          .fontSize(14)
-          .fontColor($r('app.color.wallet_primary'))
-          .margin({ right: 12 })
-          .onClick(() => {
-            const ctx = this.getUIContext().getHostContext() as Context;
-            showToast(ctx.resourceManager.getStringSync($r('app.string.msg_center_welcome').id));
-          })
-
-        Text($r('app.string.home_title_add_action'))
-          .fontSize(26)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.wallet_primary'))
-          .onClick(() => {
-            this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
-          })
-      }
-      .width('100%')
-      .padding({
-        left: 16,
-        right: 16,
-        top: 12,
-        bottom: 8
+      HomeTabHeader({
+        onAddCard: () => {
+          this.navPathStack.pushPath({ name: 'AddCardEntryPage' });
+        },
+        onTitleTap: (): void => {
+          this.handleTitleTap();
+        }
       })
 
       Scroll() {
         Column({ space: 16 }) {
-          CardGuideSection({
-            onGoCardPack: () => {
-              this.navPathStack.pushPath({ name: 'CardPackPage' });
-            }
-          })
+          if (this.cardMode === HomeCardDisplayMode.NO_CARD) {
+            CardGuideSection({
+              onGoCardPack: () => {
+                this.navPathStack.pushPath({ name: 'CardPackPage' });
+              }
+            })
+          } else {
+            CardStackSection({
+              onGoCardPack: () => {
+                this.navPathStack.pushPath({ name: 'CardPackPage' });
+              }
+            })
+          }
 
           if (this.services.length > 0) {
             ServiceGridSwiper({ services: this.services })
           }
 
+          MessageCenterRow({ message: this.message })
+
           if (this.promos.length > 0) {
-            PromoSwiper({ promos: this.promos })
+            PromoSwiper({
+              promos: this.promos,
+              imageFirst: this.cardMode === HomeCardDisplayMode.NO_CARD
+            })
+              .key(this.cardMode === HomeCardDisplayMode.WITH_CARD ? 'promo_with_card' : 'promo_no_card')
           }
         }
         .width('100%')
@@ -93,6 +108,6 @@ export struct HomeTabPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.wallet_page_bg'))
+    .backgroundColor($r('app.color.bg_page'))
   }
 }
