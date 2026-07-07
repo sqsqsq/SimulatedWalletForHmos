@@ -48,6 +48,7 @@ import {
   resolveFeatureArtifact,
   featureArtifactPath,
   featureDir,
+  relFeatureFile,
 } from '../config';
 import {
   tryLoadUtHostImpl,
@@ -333,7 +334,7 @@ function checkDagSchemaCompliance(
       severity: 'BLOCKER',
       status: 'SKIP',
       details:
-        '未找到 DAG 文件（*.dag.yaml）。可放在 doc/features/<feature>/ut/reports/flow-dag/（ephemeral，默认）或 {module}/test/dag/（归档）。',
+        `未找到 DAG 文件（*.dag.yaml）。可放在 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'ut/reports/flow-dag/')}（ephemeral，默认）或 {module}/test/dag/（归档）。`,
     }];
   }
 
@@ -865,7 +866,7 @@ function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
       staleness.stale
         ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若仍有未授权的业务源码改动，再进入 HARD STOP 授权流程。'
         : '按 business-ut SKILL.md > 约束 #12 HARD STOP 流程：先向用户征得同意，再把变更登记到 ' +
-          'doc/features/<feature>/ut/reports/<timestamp>/<model>-ut/gap-notes.md（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。' +
+          `${relFeatureFile(ctx.projectRoot, ctx.feature, 'ut/reports/<timestamp>/<model>-ut/gap-notes.md')}（或 legacy：framework/harness/reports/…）> approved_src_mutations[]（含 file / reason / approved_at 等字段）。` +
           '禁止以"便利性"借口直接修改业务源码。' +
           configHint,
   }];
@@ -997,7 +998,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
       severity: 'MINOR',
       status: 'PASS',
-      details: `doc/features/${ctx.feature}/use-cases.yaml 已存在。`,
+      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'use-cases.yaml')} 已存在。`,
     }];
   }
 
@@ -1018,7 +1019,7 @@ function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
     description: ruleDesc(ctx, 'structure_checks', 'usecase_spec_recommended'),
     severity: 'MINOR',
     status: 'WARN',
-    details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 doc/features/${ctx.feature}/use-cases.yaml 以承载端到端分支。`,
+    details: `ut_layer ∈ {unit, both} 的 AC 有 ${unitAcCount} 条（≥3），建议产出 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'use-cases.yaml')} 以承载端到端分支。`,
     suggestion: `若 feature 确实多 UI 共享状态 / 多步云调用 / 含回滚分支，按 ${utSuggestionPaths(ctx).useCasesSchemaTemplateRel} 产出；否则可忽略本告警。`,
   }];
 }
@@ -2303,7 +2304,7 @@ function checkUtCoverageEvidencePresent(ctx: CheckContext): CheckResult[] {
       details: '无 unit/both UT 范围，跳过 coverage-evidence.json 强制。',
     }];
   }
-  const rel = coverageEvidenceRel(ctx.feature);
+  const rel = coverageEvidenceRel(ctx.projectRoot, ctx.feature);
   const acceptance = ctx.featureSpec.acceptance;
   const targetAcs = acceptance ? collectTargetUnitBothP0P1(acceptance) : [];
   const ev = loadCoverageEvidence(ctx.projectRoot, ctx.feature);
@@ -2916,7 +2917,7 @@ function checkUtMockPlanPresent(ctx: CheckContext, records: TestabilityAuditReco
         `L0/L1/L2 共 ${need.length} 条，需要 ut/mock-plan.yaml（含 spies[] 或 doubles[]）。\n` +
         `模板：${utSuggestionPaths(ctx).mockPlanSchemaTemplateRel}`,
       suggestion:
-        '写入 doc/features/<feature>/ut/mock-plan.yaml，声明 test double（strategy: spy | mockkit | fake | prototype_patch）与 presets。',
+        `写入 ${relFeatureFile(ctx.projectRoot, ctx.feature, 'ut/mock-plan.yaml')}，声明 test double（strategy: spy | mockkit | fake | prototype_patch）与 presets。`,
     }];
   }
 

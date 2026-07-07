@@ -12,11 +12,11 @@
 
 ### Feature 归档定位协议（本阶段是消费者）
 
-进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `<features_dir>/<feature>/`（默认 `doc/features/<feature>/`；下文所有 `<features_dir>` 均指该配置值）。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
 
 **跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：若 receipt 可能已存在，须**先**自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）。exit 0 → 该 phase 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state/summary 判未闭环或重跑本阶段。
 
-- 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
+- 只有精确目录 `<features_dir>/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
 - 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
 - 若目录存在但本阶段输入缺失（至少 `spec.md`、`plan.md`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`spec.md` / `plan.md` / `acceptance.yaml` / `contracts.yaml(可选)` / `use-cases.yaml(可选)` / `test-plan.md(本阶段产出)` 存在/缺失；若仍存在 legacy `device-testing-todo.md` 仅作 WARN 提示迁移，**不得**作为 SSOT。
@@ -49,12 +49,12 @@
 
 ### 模式分支：标准 feature vs 即席（ad-hoc）
 
-| 模式 | 典型输入 | 是否走 `doc/features/<正式 feature>/` |
+| 模式 | 典型输入 | 是否走 `<features_dir>/<正式 feature>/` |
 |------|----------|----------------------------------------|
 | **标准** | 「对 `home-page` 做真机测试」、已存在需求目录 | ✅ 必须存在 `spec.md` / `plan.md` / `acceptance.yaml` 等，按 Step 1–7 与 `harness-runner --phase testing --feature <名>` 闭环 |
 | **即席** | 仅描述 **bundle id / 外部应用** + **自然语言操作步骤**，不指向本仓库某 feature | ❌ 不消费需求目录；用占位 feature 目录名 **`_adhoc`**（见下文 Step 4.B） |
 
-**即席识别启发**（满足多条即可视为即席）：用户给出 `com.xxx.yyy` 类 bundle 字符串且步骤像「打开应用 → 点某按钮 → …」；或**未**提供与本仓库 `doc/features/` 下已有目录匹配的 feature 名，且核心诉求是「当场跑一遍 UI 流程」而非「完成某需求的 testing 阶段门禁」。
+**即席识别启发**（满足多条即可视为即席）：用户给出 `com.xxx.yyy` 类 bundle 字符串且步骤像「打开应用 → 点某按钮 → …」；或**未**提供与本仓库 `<features_dir>/` 下已有目录匹配的 feature 名，且核心诉求是「当场跑一遍 UI 流程」而非「完成某需求的 testing 阶段门禁」。
 
 ## 核心理念
 
@@ -78,11 +78,11 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | 功能模块名 | ✅ | 待测试的功能模块名（如 `home-page`），用于定位文件 |
-| spec.md | ✅ | 需求规格文档，路径 `doc/features/{module}/spec/spec.md` |
-| plan.md | ✅ | 实现计划，路径 `doc/features/{module}/plan/plan.md` |
+| spec.md | ✅ | 需求规格文档，路径 `<features_dir>/{module}/spec/spec.md` |
+| plan.md | ✅ | 实现计划，路径 `<features_dir>/{module}/plan/plan.md` |
 | acceptance.yaml | ✅ | 验收 SSOT（含 `ut_layer` / `device_focus`），**test-plan 派生来源** |
-| use-cases.yaml | ⬜（v2） | UseCase 规范，路径 `doc/features/{module}/use-cases.yaml`，了解 UT 已覆盖的分支 |
-| contracts.yaml | ⬜ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml`，用于理解模块边界 |
+| use-cases.yaml | ⬜（v2） | UseCase 规范，路径 `<features_dir>/{module}/use-cases.yaml`，了解 UT 已覆盖的分支 |
+| contracts.yaml | ⬜ | 接口契约 Spec，路径 `<features_dir>/{module}/contracts.yaml`，用于理解模块边界 |
 | doc/architecture.md | ⬜ | 项目模块架构，了解测试涉及的模块范围 |
 | review-report.md | ⬜ | 可选，确认代码已通过 Review 无 BLOCKER |
 
@@ -96,12 +96,12 @@ v2 起，AC/BD 层面已显式分层为 `ut_layer ∈ {unit, device, both}`：
 
 1. 向用户确认待测试的功能模块名 `{module-name}`（`testing.module_name`：`1=确认` / `2=修改`）
 2. 读取以下文件：
-   - `doc/features/{module}/acceptance.yaml` — ★ 验收 SSOT（按 `ut_layer∈{device,both}` + `device_focus` 派生用例）
-   - `doc/features/{module}/spec/spec.md` — 需求基准（业务流程、异常场景）
-   - `doc/features/{module}/plan/plan.md` — plan（页面组件树、导航设计）
-   - `doc/features/{module}/acceptance.yaml` — 验收标准，按 `ut_layer` 过滤出本 Skill 需要关注的项
-   - `doc/features/{module}/use-cases.yaml` — 若存在，了解 UT 已覆盖的 branch（避免重复测业务逻辑）
-   - `doc/features/{module}/contracts.yaml` — 接口契约（若存在）
+   - `<features_dir>/{module}/acceptance.yaml` — ★ 验收 SSOT（按 `ut_layer∈{device,both}` + `device_focus` 派生用例）
+   - `<features_dir>/{module}/spec/spec.md` — 需求基准（业务流程、异常场景）
+   - `<features_dir>/{module}/plan/plan.md` — plan（页面组件树、导航设计）
+   - `<features_dir>/{module}/acceptance.yaml` — 验收标准，按 `ut_layer` 过滤出本 Skill 需要关注的项
+   - `<features_dir>/{module}/use-cases.yaml` — 若存在，了解 UT 已覆盖的 branch（避免重复测业务逻辑）
+   - `<features_dir>/{module}/contracts.yaml` — 接口契约（若存在）
    - `doc/architecture.md` — 架构全貌（若存在）
 3. 按 `ut_layer` 统计本 Skill 的测试范围，向用户展示：
 
@@ -200,7 +200,7 @@ framework/profiles/<project_profile.name>/skills/device-testing/templates/test-p
 用户确认后，将测试计划保存到：
 
 ```
-doc/features/{module-name}/testing/test-plan.md
+<features_dir>/{module-name}/testing/test-plan.md
 ```
 
 ### Step 4.5 真机自动化 · 派生可执行计划（profile `device_test.run`）
@@ -211,7 +211,7 @@ doc/features/{module-name}/testing/test-plan.md
 
 #### Step 4.5.1 解析 TC 表
 
-1. 打开 `doc/features/<feature>/testing/test-plan.md`，定位含 **「测试用例清单」** 的章节。
+1. 打开 `<features_dir>/<feature>/testing/test-plan.md`，定位含 **「测试用例清单」** 的章节。
 2. 读取 **第一条**用例行表（与 harness 对 `test-plan.md` 的解析一致）：列须覆盖 **用例编号 / 用例名称 / 前置条件 / 测试步骤 / 预期结果 / 优先级 / 关联 AC**。
 3. 为每一行建立一项工作项：`TC-xxx`、自然语言 `测试步骤`、预期结果、优先级（供 Step 5 对齐）。
 
@@ -243,7 +243,7 @@ doc/features/{module-name}/testing/test-plan.md
 
 #### Step 4.5.5 落盘
 
-- 创建目录：`doc/features/<feature>/testing/reports/<timestamp>/hylyre/`（`<timestamp>` 建议本地 sort 友序，如 `20260519-143000`）。
+- 创建目录：`<features_dir>/<feature>/testing/reports/<timestamp>/hylyre/`（`<timestamp>` 建议本地 sort 友序，如 `20260519-143000`）。
 - 写入 **`test-plan.hylyre.md`**：锚点 **`## 测试用例清单`** + **7 列表头**（顺序固定），自 profile 模板拷贝表头行。
 - **多 UI 入口（`use-cases.yaml > ui_bindings`）**：若同一 `user_actions.calls`（如 `flow.selectBank`）有多个 `ui` 入口（如 `BankCardAddPage` 与 `AllBanksPage`），须**每个入口各派生一条** Hylyre 用例，并在派生表或 frontmatter `derived_cases[]` 中携带结构化字段 **`entry_ui`**（= `ui_bindings[].ui`）、**`linked_flow`**、**`calls`**。脚本 `ui_entry_coverage` 据此校验；P0 缺任一入口 → BLOCKER FAIL。
 - 随后由你（agent）触发 **`harness-runner --phase testing --feature <feature>`**（见 Step 7）；宿主顺序为 **build → install → ensure Hylyre → run plan**（profile 未 SKIP 时）。
@@ -302,10 +302,10 @@ doc/features/{module-name}/testing/test-plan.md
 > **唯一直接像素对图阶段**：参考图来自 spec `authoritative_refs` 或 **`fidelity.lock.yaml` 快照**（`buildAuthoritativeRefImageIndex` byId 联结 ui-spec `source_ref`）。
 
 1. **前置**：`device_test.build` + `device_test.install` 已通过；Hylyre 可 `screenshot`。
-2. **MVP 范围**：先覆盖可直达顶层屏；深层屏/overlay 由 **固化 nav 配置**自动导航到达后再截——`doc/features/<feature>/device-testing/visual-diff-nav.json`（key=屏标识，value=到达步骤 touch/wait_for/back，复用 Hylyre planned-step 根键、**不含** screenshot）。`visual_diff_capture` 有该配置时按屏导航到位再截（含非顶层屏与 overlay），屏 id 经 **X1 归一化**匹配（screen_id/ref_id/`__overlay__*`/nav_key 后缀差异吸收）；**页面结构无变化则复用、不需重生成**，仅屏/入口变更才更新；缺配置或与 ui-spec 屏集不一致 → 报错求补，**不静默裸采**（防多屏截同一帧）。**P0 屏无论是否 `lightweight` 都必须被采集与评估**（lightweight 只对 P2/P3 轻量 spec 生效，不豁免 P0 视觉门禁；曾有 P0+lightweight 屏被整个跳过、verdict=skipped 无人评估）。**某 P0 状态不可达（如 mock 预填数据导致"无卡态"到不了）是缺陷、不是豁免理由**：须产出 `must_fix`「P0 状态 X 不可达，须可导航到该态后重采」，禁止以 skipped 放行。
+2. **MVP 范围**：先覆盖可直达顶层屏；深层屏/overlay 由 **固化 nav 配置**自动导航到达后再截——`<features_dir>/<feature>/device-testing/visual-diff-nav.json`（key=屏标识，value=到达步骤 touch/wait_for/back，复用 Hylyre planned-step 根键、**不含** screenshot）。`visual_diff_capture` 有该配置时按屏导航到位再截（含非顶层屏与 overlay），屏 id 经 **X1 归一化**匹配（screen_id/ref_id/`__overlay__*`/nav_key 后缀差异吸收）；**页面结构无变化则复用、不需重生成**，仅屏/入口变更才更新；缺配置或与 ui-spec 屏集不一致 → 报错求补，**不静默裸采**（防多屏截同一帧）。**P0 屏无论是否 `lightweight` 都必须被采集与评估**（lightweight 只对 P2/P3 轻量 spec 生效，不豁免 P0 视觉门禁；曾有 P0+lightweight 屏被整个跳过、verdict=skipped 无人评估）。**某 P0 状态不可达（如 mock 预填数据导致"无卡态"到不了）是缺陷、不是豁免理由**：须产出 `must_fix`「P0 状态 X 不可达，须可导航到该态后重采」，禁止以 skipped 放行。
 3. **执行**：对每屏 Hylyre 导航 + `screenshot` → **先断言屏身份**（E3 防截错屏：确认截图呈现的就是目标屏——锚点＝该屏 `must_have_elements`/标题文案/导航态；不符即 `verdict=fail` + must_fix「captured wrong screen」，**禁止在错图上做 diff**；宿主曾把 home_nocard 截成弹窗陈图仍闭环）→ **双向 diff**（正向=spec 声明元素；反向=参考图有实现无；**G3 样式/布局核对**：ui-spec 声明的 `variant`/`layout_group`/`align`/`width_ratio`/`bg_color` 须逐一对真机截图核对——按钮填充形态/同行分组/对齐占宽/区域底色，不符进 must_fix；**渲染缺陷枚举**：逐屏登记 `defects[]`——裁切(clipping)/重叠重复(overlap)/形态版式不符(shape_mismatch，如声明 width_ratio 0.35 却全宽、tonal 却实心)/声明 asset 未渲染(missing_render，如 tab 仅文字)，每条带 `bbox`+`severity`(blocker|major|minor)+`note`；**verdict=pass 须 defects 为空且无 reverse_missing 残留**）→ 产出：
-   - `doc/features/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举 + `defects[]` 渲染缺陷枚举；`score_floor` 含 N×N 分块最小相似度；`edge_tile_divergence`/`edge_over_threshold_tiles` 由采集层自动写入——超阈 tile 未被任一 defect.bbox 覆盖会触发边缘哨兵 WARN，须补对应 defect 或复核该区域）
-   - `doc/features/<feature>/device-testing/visual-diff.md`（**由 harness 从 visual-diff.json 自动生成，含「采集完整性」节；请勿手改**——所有结构化结论/verdict/must_fix 一律填进 **JSON**，md 每次采集后无条件从 JSON 再生并覆盖任何手写内容，门禁结论始终以 JSON 为准。曾出现 md 手写"6 屏 hash 均已唯一"而 JSON 实为 5 屏同 hash 的谎言——现已根治）
+   - `<features_dir>/<feature>/device-testing/device-screenshots/visual-diff.json`（每屏 `reverse_missing[]` 逐元素枚举 + `defects[]` 渲染缺陷枚举；`score_floor` 含 N×N 分块最小相似度；`edge_tile_divergence`/`edge_over_threshold_tiles` 由采集层自动写入——超阈 tile 未被任一 defect.bbox 覆盖会触发边缘哨兵 WARN，须补对应 defect 或复核该区域）
+   - `<features_dir>/<feature>/device-testing/visual-diff.md`（**由 harness 从 visual-diff.json 自动生成，含「采集完整性」节；请勿手改**——所有结构化结论/verdict/must_fix 一律填进 **JSON**，md 每次采集后无条件从 JSON 再生并覆盖任何手写内容，门禁结论始终以 JSON 为准。曾出现 md 手写"6 屏 hash 均已唯一"而 JSON 实为 5 屏同 hash 的谎言——现已根治）
    > **T7 证据 rubric（pixel_1to1 P0 pass 屏）**：判 pass 前**逐关键元素**简记核对证据（该元素在截图中的位置/状态命中），便于 T2 真人确认快速复核与事后审计——这是 pass 的"出示工作量"，不是凭一个总分自报。**诚实边界**：客观度量（像素统计/OCR 文本-位置）经两次真机实测**都分不开忠实 vs 崩坏**（device≠mockup 使忠实屏也偏移），故无"客观逐区交叉"可自动比对；图标/颜色/样式类只能靠此 VL 证据 + T2 人确认兜底，**不得**宣称已自动验真。
 4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
 5. **回修**：must-fix 交 coding 修一轮（MVP 单轮 + 人工决定是否再迭代）。**must_fix 必须可执行可定位**——写「卡包描述应在卡夹插画下方而非上方」「+按钮应在标题同行右侧圆形灰底而非独立蓝色」这种带元素/区域+期望态的指令，关联具体 element_id 或区域 bbox；**禁止**「整体差异大/不够还原」这类无法回修的空话（coding 无从下手就会瞎挪布局，反而更糟）。
@@ -318,6 +318,28 @@ doc/features/{module-name}/testing/test-plan.md
    > 这类屏留 pending 弃判——真人确认（T2 `confirmed_by`）只在**判 pass** 时需要；确定性 FAIL 在手
    > 还全屏 pending＝白烧重试预算 + loop 饿死（终局 run 实锤：5 屏 pending、must_fix=0、3 次重试作废）。
    > 只有"确定性信号全绿、仅剩 pass 候选待真人确认"才 halt 求人。
+   > **结构声明验真分工（P1-4③·c9e2a7f4，诚实边界）**：spec 结构声明的"实现对不对"你只兜
+   > **文本类**（P1-C 同行拆分/乱序=确定性证据）；**非文本类**（tab 容器视觉/分组容器/独卡边距）
+   > device OCR 兜不住——它们由 coding 台账（表态）+ review 逐条人审 + 用户终审（T2）分工负责，
+   > **不要**因"OCR 看不见分组"就自行宣称结构已验真或已失败；拿不准的写进 defects note 留给人判。
+   > **判定持久化（P0-9a·e7a91b3c）**：pass/warn/fail 判定（含 `confirmed_by`）绑定「被评截图文件
+   > hash + build 指纹（实际 hap sha256）」——**同一构建下判定跨 harness 轮持久，不会被重采清空**；
+   > 改码重装（hap 变）→ 全部判定自动失效重判（改码必重判）。故真人确认一次即持久（不再像素恒等键
+   > 那样被真机时钟/轮播漂移清掉）。别再手动 reset visual-diff.json 求"刷新"——那是被 P0-7 物证扫描
+   > 视为改判脚本的红线行为。
+   > **visual 真人确认协议（P0-10·b6d3e9a2 · 交互态 agent 收到确认请求时）**：
+   > 1. **逐屏展示**截图与其 spec 参考原图（附差异要点），一屏一屏等真人明确表态；展示方式按你的
+   >    能力三级降级——能内联显示图片就内联，不能则调系统查看器打开，再不能则给出**绝对路径**请
+   >    真人自行打开、等其回复看完再问表态（纯 CLI 型 agent 不得因"贴不了图"卡死或跳过展示直接问结论）；
+   > 2. **认可** → 转录 `confirmed_by`＝真人**当场提供**的署名（**转录≠伪造**：只能记录真人对该具体屏
+   >    的明确表态；**禁**批量盲签、**禁**未展示先问结论、**禁**代答、**禁**自拟或沿用历史署名；
+   >    `user_requirement`/自动化身份无效）；
+   > 3. **不认可** → `verdict: fail` + 真人原话进 `must_fix`；
+   > 4. 绑定字段（`evaluated_screenshot_hash`/`evaluated_build_fingerprint`/`screenshot_hash`）**不动**，
+   >    无 BOM 的 UTF-8 保存；
+   > 5. **headless goal-mode 不适用本协议**——无真人在场，agent 唯一正确动作是让 harness 判
+   >    `await_human_visual_confirm` 后 **HALT 等真人**（run 外用对话式/`visual-confirm` CLI/手改完成）；
+   >    高保真路径是 `visual-confirm` CLI（真人终端直签，无 agent 中介）。
 7. **采集新鲜度（E1/E2）**：P0 屏截图失败（如 Permission denied/锁屏/设备占用）或 `screensWritten=0` 全靠 `preserved` 旧 json 充数时，`visual_diff_capture` 在 `pixel_1to1` 下 **FAIL**（否则 blocking WARN）——**不得**沿用陈旧/错图证据闭环；须修复采集后重采 P0 屏。
 
 ### Step 5: 生成测试报告（测试执行后）
@@ -330,7 +352,7 @@ framework/profiles/<project_profile.name>/skills/device-testing/templates/test-r
 
 #### Step 5.1 自 Hylyre trace 回填执行状态（必做）
 
-1. 读取 **`doc/features/<feature>/testing/reports/device-test-timing.json`**（harness 在 `device_test.run` 成功后写入）。填充测试概览 **「真机流水线耗时」** 表（区分 `build_reused` / `install_reused` 与 `hapBuiltAt`）；在执行结果表增加 **耗时** 列（来自 `cases[].duration_ms`，格式如 `12.4s`）。
+1. 读取 **`<features_dir>/<feature>/testing/reports/device-test-timing.json`**（harness 在 `device_test.run` 成功后写入）。填充测试概览 **「真机流水线耗时」** 表（区分 `build_reused` / `install_reused` 与 `hapBuiltAt`）；在执行结果表增加 **耗时** 列（来自 `cases[].duration_ms`，格式如 `12.4s`）。
 2. 解析 **`trace.json`**：`cases[]` 中每条含 **`id`**（与派生表 `用例编号` 对齐）、**`status`**（**通过 / 失败 / 阻塞 / 跳过**）、**`notes`**（可选）。
 3. **构建行集**：
    - 对 **派生表中出现**的 TC：以 **`cases[]`** 为准写状态与备注；若某 TC 无 case 记录但 run 整体失败 → 标 **阻塞** 或 **失败** 并注原因。
@@ -361,7 +383,7 @@ framework/profiles/<project_profile.name>/skills/device-testing/templates/test-r
 | P0 通过率 = 100% 但总体通过率 < 阈值 | 有条件达标 |
 | P0 通过率 < 100% | 不达标 |
 
-**即席模式**：无强求写 `doc/features/<feature>/testing/test-report.md`；可将摘要写入对话，或将一份简短 markdown 存于同次 `.../_adhoc/.../hylyre/` 旁供用户自取。
+**即席模式**：无强求写 `<features_dir>/<feature>/testing/test-report.md`；可将摘要写入对话，或将一份简短 markdown 存于同次 `.../_adhoc/.../hylyre/` 旁供用户自取。
 
 ### Step 6: 质量门禁自检
 
@@ -414,11 +436,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 ```
 
 agent 执行后必须 Read 退出码与报告文件；BLOCKER 必须修复后重跑。
-优先读取 `doc/features/<feature>/testing/reports/summary.json`；其中 `testing_run_status` 的 `can_claim_done` 必须为 `YES`，否则不能宣称真机测试阶段完成。
+优先读取 `<features_dir>/<feature>/testing/reports/summary.json`；其中 `testing_run_status` 的 `can_claim_done` 必须为 `YES`，否则不能宣称真机测试阶段完成。
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/testing-rules.yaml` — 阶段级通用规则
-- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准（追溯检查）
+- `<features_dir>/{module-name}/acceptance.yaml` — 功能级验收标准（追溯检查）
 
 **脚本检查覆盖项**：
 
@@ -466,10 +488,10 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 
 真机测试阶段宣布"完成"前必须**同时**满足：
 
-1. `doc/features/<feature>/testing/reports/trace.json` 真实存在；
+1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；
 2. 脚本 harness 退出码 0、零 BLOCKER；
 3. verifier 子 agent 报告 verdict = PASS；
-4. 完成回执 `doc/features/<feature>/testing/phase-completion-receipt.md` 已填写并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase testing` 校验。
+4. 完成回执 `<features_dir>/<feature>/testing/phase-completion-receipt.md` 已填写并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase testing` 校验。
 
 | 验证层 | 通过条件 |
 |--------|---------|
@@ -487,8 +509,8 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 
 | 产出 | 路径 |
 |------|------|
-| 测试计划 | `doc/features/{module-name}/testing/test-plan.md` |
-| 测试报告 | `doc/features/{module-name}/testing/test-report.md` |
+| 测试计划 | `<features_dir>/{module-name}/testing/test-plan.md` |
+| 测试报告 | `<features_dir>/{module-name}/testing/test-report.md` |
 
 ### 文档格式
 - 使用 Markdown 格式
@@ -504,17 +526,17 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 ## 关联文件
 
 - 上游输入:
-  - **`doc/features/{module}/acceptance.yaml`（含 device_focus，★派生 test-plan 的 SSOT）**
-  - `doc/features/{module}/spec/spec.md`（spec 阶段 输出）
-  - `doc/features/{module}/plan/plan.md`（plan 阶段 输出）
-  - `doc/features/{module}/use-cases.yaml`（plan 阶段 v2 输出，了解 UT 已覆盖分支）
+  - **`<features_dir>/{module}/acceptance.yaml`（含 device_focus，★派生 test-plan 的 SSOT）**
+  - `<features_dir>/{module}/spec/spec.md`（spec 阶段 输出）
+  - `<features_dir>/{module}/plan/plan.md`（plan 阶段 输出）
+  - `<features_dir>/{module}/use-cases.yaml`（plan 阶段 v2 输出，了解 UT 已覆盖分支）
   - 源代码（coding 输出，可选参考）
   - UT 代码 + DAG（business-ut 输出，可选参考）
-  - `doc/features/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec；按 ut_layer 过滤使用）
-  - `doc/features/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
+  - `<features_dir>/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec；按 ut_layer 过滤使用）
+  - `<features_dir>/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
 - 阶段级规约: `framework/specs/phase-rules/testing-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-testing.ts`
-- 派生提示 JSON（缺失派生计划时由 check-testing 写入）：`doc/features/<feature>/testing/reports/derive-hint-from-plan.json`
+- 派生提示 JSON（缺失派生计划时由 check-testing 写入）：`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`
 - 顶层计划结构化抽取 CLI：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`
 - AI Harness Prompt: `framework/harness/prompts/verify-testing.md`
 - 测试计划模板: `` `profile-skill-asset:device-testing/test_plan_template` ``
@@ -548,6 +570,6 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 
 当本 Skill 通过适配器下发的 slash（如 `/device-testing`）或其它等价快捷入口触发时，**必须**在阶段结束时产出一份 trace 凭证：
 
-- **路径约定**：`doc/features/<feature>/testing/reports/<timestamp>/<model>-devtest/trace.json`
+- **路径约定**：`<features_dir>/<feature>/testing/reports/<timestamp>/<model>-devtest/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `testing`。
 - **痛点回填**：同目录 `gap-notes.md`，模板见 [framework/harness/trace/gap-notes.template.md](../../../../framework/harness/trace/gap-notes.template.md)。

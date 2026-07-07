@@ -12,11 +12,11 @@
 
 ### Feature 归档定位协议（本阶段是消费者）
 
-进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `<features_dir>/<feature>/`（默认 `doc/features/<feature>/`；下文所有 `<features_dir>` 均指该配置值）。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
 
 **跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：若 receipt 可能已存在，须**先**自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）。exit 0 → 该 phase 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state/summary 判未闭环或重跑本阶段。
 
-- 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
+- 只有精确目录 `<features_dir>/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
 - 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
 - 若目录存在但本阶段输入缺失（至少 `plan.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`plan.md` / `contracts.yaml` / `acceptance.yaml` / `spec.md(可选)` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
@@ -64,13 +64,13 @@
 |----------|---------|---------|
 | 架构合规性 | `doc/architecture.md` + `framework.config.json > architecture` | BLOCKER |
 | 模块内四层分层 | `framework/specs/phase-rules/coding-rules.yaml` | BLOCKER |
-| 接口一致性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
-| 文件完整性 | `doc/features/{module}/contracts.yaml` | BLOCKER |
+| 接口一致性 | `<features_dir>/{module}/contracts.yaml` | BLOCKER |
+| 文件完整性 | `<features_dir>/{module}/contracts.yaml` | BLOCKER |
 | 资源引用完整性 | `framework/specs/phase-rules/coding-rules.yaml` | BLOCKER |
 | 命名规范 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 硬编码字符串 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
-| 异常处理 | `doc/features/{module}/acceptance.yaml` | MAJOR |
-| 业务逻辑正确性 | `doc/features/{module}/plan/plan.md` | MAJOR |
+| 异常处理 | `<features_dir>/{module}/acceptance.yaml` | MAJOR |
+| 业务逻辑正确性 | `<features_dir>/{module}/plan/plan.md` | MAJOR |
 | 数据所有权 | `framework/specs/phase-rules/coding-rules.yaml` | MAJOR |
 | 模拟数据隔离 | `framework/specs/phase-rules/coding-rules.yaml` | MINOR |
 | 视觉保真治理 | spec `fidelity_target` / `fidelity_deferrals` + harness `fidelity_governance` | BLOCKER（`pixel_1to1` defer 须人类签字） |
@@ -86,8 +86,13 @@
    `spec/reports/asset-contact-sheet-*.png` 逐张人核裁图与红框对应（3 秒/张）；有 failed/pending/真人翻案留痕的逐条确认处置。
 2. **可见文案 diff 复核**：核对 coding 门禁 `visible_text_whitelist` 结果；若存在
    `coding/visible-text-exemptions.yaml`，**逐条复核豁免 rationale 是否正当**（豁免是自报面，review 是唯一人审关口）。
-3. **结构声明复核**：ui-spec 的 `subtitle_position` / 分组容器 / `layout_group` / 浮动 tab `bg_color` 声明与**参考原图**
-   对照核实——P0-D 结构 lint 只保"有声明"，**声明对不对由本维度兜**（诚实边界的承接方）。
+3. **结构声明台账逐条复核（P1-4②·c9e2a7f4）**：打开 `coding/structure-conformance.yaml`，对
+   **每一条** entry（pixel_1to1 P0 全条目核对，**不许抽查**）：①打开 `implemented_by` 对应 struct
+   源码，验证 `how` 描述属实（如"主副标题同 Row 右置"就去看那个 Row）；②对照参考原图确认该
+   结构声明本身与原图一致。台账是 coding 自报面，**本维度是它唯一的人审关口**——门禁
+   `structure_declaration_ledger` 只保"逐条表过态 + struct 真实存在"，**登记内容对不对由你兜**
+   （非文本类结构如 tab 容器/分组视觉，device OCR 也兜不住，你是用户终审前最后防线）。
+   复核结论逐条写进 review-report.md 并引用台账路径。
 4. **must_have_elements 覆盖**：全部 must_have 与变更屏在源码有真实承载（消费 `visual_parity` 结果，不重扫）。
 
 把各项核对结论 + 引用的报告路径写进 review-report.md 的「视觉保真」维度章节；pixel_1to1 下缺任一类证据引用，
@@ -96,9 +101,9 @@
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
 | 功能模块名 | ✅ | 待审查的功能模块名（如 `home-page`），用于定位文件 |
-| plan.md | ✅ | 实现计划，路径 `doc/features/{module}/plan/plan.md` |
-| contracts.yaml | ✅ | 接口契约 Spec，路径 `doc/features/{module}/contracts.yaml` |
-| acceptance.yaml | ✅ | 验收标准 Spec，路径 `doc/features/{module}/acceptance.yaml` |
+| plan.md | ✅ | 实现计划，路径 `<features_dir>/{module}/plan/plan.md` |
+| contracts.yaml | ✅ | 接口契约 Spec，路径 `<features_dir>/{module}/contracts.yaml` |
+| acceptance.yaml | ✅ | 验收标准 Spec，路径 `<features_dir>/{module}/acceptance.yaml` |
 | coding-rules.yaml | ✅ | 编码阶段规约，路径 `framework/specs/phase-rules/coding-rules.yaml` |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源 |
 | 源代码 | ✅ | AI 自动读取 contracts.yaml files 列表中的所有文件 |
@@ -120,12 +125,12 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 1. 向用户确认待审查的功能模块名 `{module-name}`（`review.module_name`：`1=确认` / `2=修改`）
 2. 读取以下文件：
-   - `doc/features/{module}/plan/plan.md` — plan 基准
-   - `doc/features/{module}/spec/spec.md` — 需求基准（若存在）
+   - `<features_dir>/{module}/plan/plan.md` — plan 基准
+   - `<features_dir>/{module}/spec/spec.md` — 需求基准（若存在）
    - `doc/architecture.md` — 架构全貌
    - `framework/specs/phase-rules/coding-rules.yaml` — 编码阶段规约
-   - `doc/features/{module}/contracts.yaml` — 接口契约
-   - `doc/features/{module}/acceptance.yaml` — 验收标准
+   - `<features_dir>/{module}/contracts.yaml` — 接口契约
+   - `<features_dir>/{module}/acceptance.yaml` — 验收标准
 3. 根据 `contracts.yaml > files` 列表，读取所有源代码文件
 4. 向用户展示审查范围摘要：
 
@@ -143,7 +148,7 @@ review 阶段不执行宿主包管理器的**依赖安装命令**，也不使用
 
 1. **必读**：Step 1 列出的**全部待审源文件**（须 Read 每个文件）；`plan.md`、`contracts.yaml`、`acceptance.yaml`、`coding-rules.yaml`。
 2. **复合评分触发**：填写 frontmatter 变更信号；harness 评分 ≥ 60 或 L4 架构级变更时 MUST explore 子 agent；否则 sequential 须满足量化阈值。
-3. **增量落盘（断点续跑）**：`doc/features/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**——
+3. **增量落盘（断点续跑）**：`<features_dir>/<feature>/review/context-exploration.md`，**`schema_version: "1.1.0"`**——
    - 探索**开始时先落一版** `ready_to_produce: false`，之后**每读完一批（约 5 个）待审文件就 flush 一次**：把已 Read 文件追加进 `source_code_paths`、同步更新 `files_inspected_count`。
    - 意义：即使探索**途中超时**，盘上也留有"已检视文件"断点；goal 重跑会据此**跳过已登记文件、只补剩余**（勿重读已登记文件）。若重跑 prompt 附带"已检视文件清单"，直接采信、从未登记文件继续。
    - **全部待审文件读完**后才把 `ready_to_produce` 置 `true`；`source_code_paths` 须覆盖全部待审文件。
@@ -260,7 +265,7 @@ framework/skills/feature/code-review/templates/review-report-template.md
 1. 将审查报告展示给用户确认（`review.report_save`：`1=确认落盘` / `2=修改后再落盘`）
 2. 用户确认后，将报告保存到项目文档目录：
    ```
-   doc/features/{module-name}/review/review-report.md
+   <features_dir>/{module-name}/review/review-report.md
    ```
 3. 若用户要求修改，根据反馈调整后重新走 Step 4 自检
 
@@ -319,10 +324,10 @@ agent 必须主动通过 Task 工具调用 `subagent_type: verifier`（不是"�
 
 Review 阶段宣布"完成"前必须**同时**满足：
 
-1. `doc/features/<feature>/review/reports/trace.json` 真实存在；
+1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；
 2. 脚本 harness 退出码 0、零 BLOCKER；
 3. verifier 子 agent 报告 verdict = PASS；
-4. 完成回执 `doc/features/<feature>/review/phase-completion-receipt.md` 已填写并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase review` 校验。
+4. 完成回执 `<features_dir>/<feature>/review/phase-completion-receipt.md` 已填写并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase review` 校验。
 
 | 验证层 | 通过条件 |
 |--------|---------|
@@ -350,7 +355,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 
 | 产出 | 路径 |
 |------|------|
-| 审查报告 | `doc/features/{module-name}/review/review-report.md` |
+| 审查报告 | `<features_dir>/{module-name}/review/review-report.md` |
 
 ### 文档格式
 - 使用 Markdown 格式
@@ -363,10 +368,10 @@ Review 阶段宣布"完成"前必须**同时**满足：
 ## 关联文件
 
 - 上游输入:
-  - `doc/features/{module}/plan/plan.md`（plan 阶段 输出）
+  - `<features_dir>/{module}/plan/plan.md`（plan 阶段 输出）
   - 源代码（coding 输出）
-  - `doc/features/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
-  - `doc/features/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec）
+  - `<features_dir>/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
+  - `<features_dir>/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/review-rules.yaml`
 - 编码规约参考: `framework/specs/phase-rules/coding-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-review.ts`
@@ -398,7 +403,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 
 当本 Skill 通过适配器下发的 slash（如 `/code-review`）或其它等价快捷入口触发时，**必须**在阶段结束时产出一份 trace 凭证：
 
-- **路径约定**：`doc/features/<feature>/review/reports/<timestamp>/<model>-review/trace.json`
+- **路径约定**：`<features_dir>/<feature>/review/reports/<timestamp>/<model>-review/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `review`。
 - **痛点回填**：同目录 `gap-notes.md`，模板见 [framework/harness/trace/gap-notes.template.md](../../../../framework/harness/trace/gap-notes.template.md)。
 
@@ -407,7 +412,7 @@ Review 阶段宣布"完成"前必须**同时**满足：
 ## 运行时交付约定（内网 / 弱模型）
 
 ```
-doc/features/<feature>/review/reports/<timestamp>/<model>-review/
+<features_dir>/<feature>/review/reports/<timestamp>/<model>-review/
 ├── trace.json                 # phase = "review"
 ├── gap-notes.md
 ├── check-review.report.md

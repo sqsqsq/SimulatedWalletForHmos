@@ -12,11 +12,11 @@
 
 ### Feature 归档定位协议（本阶段是消费者）
 
-进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `doc/features/<feature>/`。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
+进入本 Skill 后，必须先基于 `framework.config.json > paths.features_dir` 精确定位 `<features_dir>/<feature>/`（默认 `doc/features/<feature>/`；下文所有 `<features_dir>` 均指该配置值）。本步骤只依赖用户给出的 feature 名与文件系统状态，不依赖 `.current-phase.json`、历史 reports、trace 或上一阶段缓存。
 
 **跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：若 receipt 可能已存在，须**先**自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）。exit 0 → 该 phase 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state/summary 判未闭环或重跑本阶段。
 
-- 只有精确目录 `doc/features/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
+- 只有精确目录 `<features_dir>/<feature>/` 是正式 feature；同级 `<feature>.rar` / `<feature>.zip` / `<feature>.7z` / `<feature>.tar*` 以及 `<feature>-old/`、`<feature>.md` 等同名前缀条目都只是旁证。
 - 若精确目录不存在，必须快速失败并提示用户先创建/恢复正式 feature 目录；不得自动解压归档，不得读取归档内容补齐上下文。
 - 若目录存在但本阶段输入缺失（至少 `plan/plan.md`、`contracts.yaml`、`acceptance.yaml`）：报告缺失文件并回到上游阶段补齐；不得把同名归档当作上游产物。
 - 继续执行前，向用户展示本阶段输入矩阵：`plan.md` / `contracts.yaml` / `acceptance.yaml` 存在/缺失，旁证归档/同名前缀条目如实列出但明确忽略。
@@ -79,12 +79,12 @@
 
 | 输入项 | 必需 | 说明 |
 |--------|------|------|
-| plan.md | ✅ | 对应功能的实现计划（plan 阶段 输出），路径通常为 `doc/features/{module}/plan/plan.md` |
-| contracts.yaml | ✅ | 接口契约 Spec（plan 阶段 产出），路径为 `doc/features/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
-| acceptance.yaml | ✅ | 验收标准 Spec（spec 阶段 产出），路径为 `doc/features/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
-| ui-spec.yaml | ⚠️→✅ | **ui_change=new_or_changed 时必填**；路径 `doc/features/{module}/spec/ui-spec.yaml`（组件树 + token + 资产 + 逐字文案 SSOT） |
+| plan.md | ✅ | 对应功能的实现计划（plan 阶段 输出），路径通常为 `<features_dir>/{module}/plan/plan.md` |
+| contracts.yaml | ✅ | 接口契约 Spec（plan 阶段 产出），路径为 `<features_dir>/{module}/contracts.yaml`，定义了接口签名、数据模型、文件清单等强契约 |
+| acceptance.yaml | ✅ | 验收标准 Spec（spec 阶段 产出），路径为 `<features_dir>/{module}/acceptance.yaml`，定义了验收标准和边界用例 |
+| ui-spec.yaml | ⚠️→✅ | **ui_change=new_or_changed 时必填**；路径 `<features_dir>/{module}/spec/ui-spec.yaml`（组件树 + token + 资产 + 逐字文案 SSOT） |
 | 原始需求截图 | ⚠️→✅ | **ui_change=new_or_changed 时必填**；须 `Read` Visual Handoff `authoritative_refs` 指向的原图（强 VL 推荐） |
-| use-cases.yaml | ⚠️ | 业务流程 UseCase Spec（plan 阶段 产出；**仅**多 UI 共享状态 / 多步云调用 / 含回滚分支的复杂 feature 才会有该文件），路径为 `doc/features/{module}/use-cases.yaml`，定义了每个 UseCase 的 coordinator / ui_bindings / data_boundaries / state_model / branches |
+| use-cases.yaml | ⚠️ | 业务流程 UseCase Spec（plan 阶段 产出；**仅**多 UI 共享状态 / 多步云调用 / 含回滚分支的复杂 feature 才会有该文件），路径为 `<features_dir>/{module}/use-cases.yaml`，定义了每个 UseCase 的 coordinator / ui_bindings / data_boundaries / state_model / branches |
 | doc/architecture.md | ✅ | 项目模块架构的唯一事实来源，了解五层架构全貌和已有模块状态 |
 | spec.md | ❌ | 可选，用于交叉验证功能完整性 |
 | 当前工程代码 | ✅ | AI 自动读取，用于理解现有模块结构和避免冲突 |
@@ -99,8 +99,8 @@
 
 1. 读取指定的 `plan.md` 文件
 2. 读取对应的功能级 Spec 文件（编码时的**强契约基准**）：
-   - `doc/features/{module}/contracts.yaml` — 接口签名、数据模型、文件清单、组件 Props 的精确契约
-   - `doc/features/{module}/acceptance.yaml` — 验收标准和边界用例，用于确保代码覆盖所有业务场景
+   - `<features_dir>/{module}/contracts.yaml` — 接口签名、数据模型、文件清单、组件 Props 的精确契约
+   - `<features_dir>/{module}/acceptance.yaml` — 验收标准和边界用例，用于确保代码覆盖所有业务场景
 3. 提取以下关键信息（**以 contracts.yaml 为权威来源**，plan.md 为补充上下文）：
    - **涉及哪些 Module**（格式按当前 profile）及其依赖关系 ← `contracts.yaml > modules` + `module_dependencies`
    - **每个 Module 内涉及哪些层和文件** ← `contracts.yaml > files`
@@ -173,22 +173,31 @@
 1. **必须 `Read`**：`authoritative_refs` 指向的**每一张原图** + `ui-spec.yaml` 全文。
 2. UI 实现以 **原图 + ui-spec 的 token / 组件树 / 逐字文案 / 资产 key** 为准；禁止占位图标、全局主题色、泛化文案 silently 替代。
 3. 资产缺失须按 ui-spec `assets[]` 显式 `placeholder`，不得静默替换。
-4. **资产物化（crop 真图落地 · 禁占位冒充 · BLOCKER）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（`doc/features/<feature>/spec/assets/<key>.<ext>` 的真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`（模块＝写 `$r('app.media.<key>')` 的那个模块）。**严禁**：① 生成 1×1/纯色/空 PNG 占位冒充真图；② 在工程根建 `media/` 目录冒充资源。缺真图时按第 3 条显式 `placeholder` 并停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图；`resource_integrity` 以模块资源目录实际文件判可用性，工程根/契约路径占位不被采信。**物化前置（P0-B·f2d8c4a6）**：只有 spec 阶段 `asset_crop_validation` 判 `verified` 的 crop 才可物化——门禁 `visual_parity_unverified_crop` 会重算产物 sha256 与验真裁决绑定比对，物化须从 `resolved_path` **原样字节复制**（不得再加工/压缩/换图）。
-5. **可见文案白名单（P1-A·f2d8c4a6 · pixel_1to1 BLOCKER）**：源码 `Text()/Button()` 字面量与被 `$r('app.string.*')` 引用的 string.json value 中，用户可见 CJK 文本**必须来自 ui-spec/ref-elements 文本集**——原图没有的文案严禁无中生有（round6 事故：zone 名 finance/settings 被脑补成可见标题「金融信息/设置与帮助」）。想加分组标题？回 spec 补建模，不许 coding 自造。确属功能必需的非原图文案（toast/错误提示/空态兜底）→ 登记 `doc/features/<feature>/coding/visible-text-exemptions.yaml`（`entries[].text` + **非空 `rationale`**，无理由不生效；review 视觉维度逐条复核）。门禁 `visible_text_whitelist` 拦截。
+4. **资产物化（crop 真图落地 · 禁占位冒充 · BLOCKER）**：对 `assets[]` 中 `acquisition: crop` 且非 `placeholder` 的每个 key，读其 `resolved_path`（`<features_dir>/<feature>/spec/assets/<key>.<ext>` 的真裁图）并**复制**进引用它的模块 `<module>/src/main/resources/base/media/<key>.<ext>`（模块＝写 `$r('app.media.<key>')` 的那个模块）。**严禁**：① 生成 1×1/纯色/空 PNG 占位冒充真图；② 在工程根建 `media/` 目录冒充资源。缺真图时按第 3 条显式 `placeholder` 并停下求人，不得静默糊弄。门禁 `visual_parity_asset_materialized`（pixel_1to1→BLOCKER）校验模块 media 为真图；`resource_integrity` 以模块资源目录实际文件判可用性，工程根/契约路径占位不被采信。**物化前置（P0-B·f2d8c4a6）**：只有 spec 阶段 `asset_crop_validation` 判 `verified` 的 crop 才可物化——门禁 `visual_parity_unverified_crop` 会重算产物 sha256 与验真裁决绑定比对，物化须从 `resolved_path` **原样字节复制**（不得再加工/压缩/换图）。
+5. **可见文案白名单（P1-A·f2d8c4a6 · pixel_1to1 BLOCKER）**：源码 `Text()/Button()` 字面量与被 `$r('app.string.*')` 引用的 string.json value 中，用户可见 CJK 文本**必须来自 ui-spec/ref-elements 文本集**——原图没有的文案严禁无中生有（round6 事故：zone 名 finance/settings 被脑补成可见标题「金融信息/设置与帮助」）。想加分组标题？回 spec 补建模，不许 coding 自造。确属功能必需的非原图文案（toast/错误提示/空态兜底）→ 登记 `<features_dir>/<feature>/coding/visible-text-exemptions.yaml`（`entries[].text` + **非空 `rationale`**，无理由不生效；review 视觉维度逐条复核）。门禁 `visible_text_whitelist` 拦截。
 6. **按 spec 声明渲染几何/填充（P1-A 升级 · pixel_1to1 BLOCKER）**：声明 `width_ratio≤0.6`/`align: end` 的按钮**不得** `.width('100%')`/`layoutWeight(1)`；`variant: tonal` 不得高饱和实心 `backgroundColor`；`subtitle_position: trailing` 的副标题 Row 同行右置、`below` 才题下。门禁 `visual_parity_render` 已升 pixel_1to1 BLOCKER——它抓到的都是源码静态可判的确定性违规，不再"以 device 为准"缓期。
 7. **严禁透明占位冒充（2026-07-03 · pixel_1to1 BLOCKER）**：**绝不允许**把 spec 文本/资产/符号引用挂在
    `opacity(0)`/`visibility(Visibility.None|Hidden)`/零尺寸/`fontSize(0)` 节点上"骗" presence 扫描
    （实锤反例：`Text($r('app.string.X')).fontSize(1).opacity(0)`、`Image($r(...)).width(0).height(0).opacity(0)`）——
    引用在、渲染无＝作弊，比缺失更恶劣（掩盖问题+污染结构/无障碍语义）。元素该渲染就真实可见渲染；
    实现不了走 ui-spec 显式 placeholder / fidelity_deferrals + 真人签字。门禁 `visual_parity_invisible_presence` 拦截。
-8. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
-9. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
+8. **结构声明台账（P1-4·c9e2a7f4 · pixel_1to1 BLOCKER）**：ui-spec 的**每条结构声明**
+   （`subtitle_position` / `layout_group` / `bg_color` / `global_elements` 条目）必须在
+   `<features_dir>/<feature>/coding/structure-conformance.yaml` 逐条登记：
+   `entries[]: node_id / declaration（如 subtitle_position=trailing）/ implemented_by（真实 struct 名）/ how（一句话实现说明）`。
+   背景（round6 实锤）：card_pack trailing、add_card 分组、tab 容器声明被 coding **静默无视**，
+   没有任何产物记录"这条声明我怎么处理的"，拖到真机才暴露——台账让每条声明必须表态。
+   纪律：**登记≠实现完成**——implemented_by 糊名（struct 不存在）门禁直接拦；内容糊弄会被
+   review 逐条人审 + device 文本信号双重打回。无 id 节点用门禁报错里的合成键
+   （`screen:<sid>/<type>@<order>`）照抄。门禁 `structure_declaration_ledger` 拦截。
+9. **弱模型**：若无法看图，仍须完整读取 ui-spec 文本 SSOT（提取阶段应用强 VL/人工 gate）。
+10. **模型档位**：Read 原图步骤推荐强 VL；纯编码步骤可用内网弱模型（见 ui-spec.md 解耦说明）。
 
 #### Step 2.5b Context Exploration（与原流程衔接）
 
 1. **必读**：`plan.md`、`contracts.yaml`、`acceptance.yaml`、`use-cases.yaml`（若有）、architecture DSL、跨模块出口；**打开 contracts 涉及的已有源码**（`source_code_paths` ≥ 3）。
 2. **默认 subagent**：coding 阶段**默认 MUST** explore 子 agent 分片阅读；**仅** L1 trivial 可豁免（见 `change_intent` / `estimated_loc_delta`）。无 subagent 时用 `sequential` + 倍率阈值。
-3. **增量落盘（断点续跑）**：`doc/features/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空——
+3. **增量落盘（断点续跑）**：`<features_dir>/<feature>/coding/context-exploration.md`，**`schema_version: "1.1.0"`**，Code Facts + `decisions_unlocked` 非空——
    - 探索**开始先落** `ready_to_produce: false`，之后**每读完一批（约 5 个）源文件就 flush**：追加已 Read 文件进 `source_code_paths`、更新 `files_inspected_count`；全部读完才置 `ready_to_produce: true`。
    - 意义：探索**途中超时**也留断点，goal 重跑据此**跳过已登记文件、只补剩余**；若重跑 prompt 附带"已检视文件清单"，直接采信、从未登记文件继续。
 
@@ -199,7 +208,7 @@
 1. **开文件前的自检（针对弱模型尤为重要）**
    - 重读 profile addendum 声明的宿主语言易错手册中与当前文件类型相关的 2-3 条。
    - 声明当前上下文：哪个 Module、哪个层、依赖了哪些已完成的代码。
-   - **Scope 守门**：确认当前要写的文件路径是否在 `doc/features/{feature}/plan/plan.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
+   - **Scope 守门**：确认当前要写的文件路径是否在 `<features_dir>/{feature}/plan/plan.md` 的 `in_scope_modules` 对应模块内；若不是，停下来，不得继续。
 
 2. **生成代码**：严格按照 `contracts.yaml` 的强契约（文件路径 / 接口签名 / 数据模型 / 组件 Props / 资源 Key 一致），并覆盖 `acceptance.yaml > boundaries` 定义的异常处理。
 
@@ -224,7 +233,7 @@
 
 ### Step 3.5: 业务编排与命名入口约束（v2.1）
 
-**触发条件**：仅当 `doc/features/{feature}/use-cases.yaml` 存在时才执行本步骤。
+**触发条件**：仅当 `<features_dir>/{feature}/use-cases.yaml` 存在时才执行本步骤。
 **核心原则**：v2.1 **不再强制** "必须在 `domain/usecase/` 下新建 `XxxUseCase` 类"、"必须新造 `XxxPort` 接口" 这类代码形态硬规则。由本 Skill 按复杂度自选最贴合的形式，但**必须**满足 `named_business_handler` 规则。
 
 #### 3.5.1 业务编排代码形态（三选一，按复杂度渐进）
@@ -278,7 +287,7 @@ Select-String -Path "<path>/<Flow>.<ext>" -Pattern "<profile-ui-symbols>"
 命中任一关键字 → 立即停下来改正。
 
 **命名入口一致性自检**：
-1. 打开 `doc/features/{feature}/use-cases.yaml`
+1. 打开 `<features_dir>/{feature}/use-cases.yaml`
 2. 对每个 `ui_bindings[].user_actions[].calls`，在代码中 `grep` 该符号
 3. 确认：(a) 确实存在；(b) 是**命名符号**——传统函数/类方法/类字段函数（`handleClick = async () => {}`）/命名 `const` 赋值 的箭头函数 **都算合法**；仅**匿名直接挂载**在 UI 事件上（如 `.onClick(() => { 一堆业务 })`）的写法不合法
 
@@ -363,8 +372,8 @@ business-ut Harness 会用 `named_business_handler` BLOCKER 严格校验该项�
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <feature-name> --summary --failures-only
 ```
 
-`coding.compile` BLOCKER 的具体 provider 与日志格式由当前 profile 声明；完整日志与 summary 落在 `doc/features/<feature>/coding/reports/` 下。PASS 另需命中 profile provider 声明的成功哨兵，避免「退出码 0 但输出异常」误判。
-优先读取 `doc/features/<feature>/coding/reports/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
+`coding.compile` BLOCKER 的具体 provider 与日志格式由当前 profile 声明；完整日志与 summary 落在 `<features_dir>/<feature>/coding/reports/` 下。PASS 另需命中 profile provider 声明的成功哨兵，避免「退出码 0 但输出异常」误判。
+优先读取 `<features_dir>/<feature>/coding/reports/summary.json`；其中 `coding_run_status` 的 `can_claim_done` 必须为 `YES` 才能进入 verifier + receipt。
 
 > **不要**让 agent 自己手敲完整宿主编译命令行；具体命令应由 profile provider 或 harness 封装。
 
@@ -373,7 +382,7 @@ profile 专属命令形态、超时与性能调优说明放在对应 `framework/
 #### 6.5.2 自闭环修复策略
 
 1. **看 verdict**：harness 报告里 profile compile capability 状态为 PASS 才算编译过；FAIL 进入修复闭环。
-2. **读完整日志**：harness 把日志写到 `doc/features/<feature>/coding/reports/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
+2. **读完整日志**：harness 把日志写到 `<features_dir>/<feature>/coding/reports/`（agent 必须 Read 完整内容，不允许只看前 100 行就猜）。
 3. **按错误类型分类**：
    - 宿主语言语法 / 类型错误 → 回到 Step 3 修文件；
    - `project_dependency_missing` / `Cannot find module` 等依赖缺失 → **先**按 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 核对 harness 自身 `npm install` / `node_modules/ts-node`（Tier_1 细节以该 SSOT 为准）。若 Tier_1 已满足，harness 会在同一次 run 内自动 `ohpm install` 并重编译（profile 声明 `coding.deps_install` 时）；agent **不得**要求用户手工安装。仅当 `project_dependency_install_failed`（registry/鉴权/网络）时按 ohpm 日志向用户求助；`project_dependency_undeclared` 时 agent **自补** oh-package.json5 声明后重跑。
@@ -415,7 +424,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 执行后 agent **必须**：
 
 1. Read 退出码（0 = PASS，非 0 = FAIL）；
-2. Read `doc/features/<feature>/coding/reports/` 下的报告文件，逐条核对 BLOCKER；
+2. Read `<features_dir>/<feature>/coding/reports/` 下的报告文件，逐条核对 BLOCKER；
 3. 优先 Read `summary.json`，确认 `coding_run_status.can_claim_done=YES`；
 4. **若有 BLOCKER 或 `can_claim_done=NO`**：自己回到 Step 3 修复，重跑，直到零 BLOCKER 且状态面板允许完成；
    - 若 `summary.next_action = rerun_with_HARNESS_DIFF_BASE_REF_working` 或 `diff_within_scope` 报 `stale_diff_base`：必须自动重跑一次 `HARNESS_DIFF_BASE_REF=working npx ts-node harness-runner.ts --phase coding --feature <feature>`。重跑后若仍有越界文件，才进入 scope 扩展提议或撤销误改流程。
@@ -430,7 +439,7 @@ harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done
 
 **必须同步执行**（禁止后台 harness + 并行 verifier）：
 
-1. Read `doc/features/<feature>/coding/reports/summary.json`：`verdict`、`next_action`、`compile_first_error`（若有）、`run_statuses`
+1. Read `<features_dir>/<feature>/coding/reports/summary.json`：`verdict`、`next_action`、`compile_first_error`（若有）、`run_statuses`
 2. Read 编译日志路径（`coding_compile` details 中的 `日志落盘` / `元数据` 路径；profile 落盘文件名见 addendum），摘录**第一条**错误：`文件:行 — 消息`
 3. 按下列模板汇报（可增删细节，但五项不可缺）：
 
@@ -452,8 +461,8 @@ harness **非 0 退出**或 `summary.json` 中 `coding_run_status.can_claim_done
 
 脚本读取以下 Spec 文件执行自动化检查：
 - `framework/specs/phase-rules/coding-rules.yaml` — 阶段级通用规则
-- `doc/features/{module-name}/contracts.yaml` — 功能级接口契约
-- `doc/features/{module-name}/acceptance.yaml` — 功能级验收标准
+- `<features_dir>/{module-name}/contracts.yaml` — 功能级接口契约
+- `<features_dir>/{module-name}/acceptance.yaml` — 功能级验收标准
 
 **脚本检查覆盖项**：
 
@@ -495,10 +504,10 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 **编码阶段宣布"完成"前，必须同时满足以下四条**（物理拦截层会按此判据拦截"假完成"）：
 
-1. **trace.json 真实存在**：`doc/features/<feature>/coding/reports/trace.json` 已写入。
+1. **trace.json 真实存在**：`<features_dir>/<feature>/coding/reports/trace.json` 已写入。
 2. **脚本 harness PASS**：`harness-runner.ts --phase coding --feature <feature>` 退出码 0，零 BLOCKER。
 3. **verifier 子 agent PASS**：通过 Task 工具触发 `subagent_type: verifier`，子 agent 报告 verdict = PASS。
-4. **完成回执通过校验**：填写 `doc/features/<feature>/coding/phase-completion-receipt.md`（模板见 [framework/harness/templates/phase-completion-receipt.md](../../../../harness/templates/phase-completion-receipt.md)），并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase coding` 校验。
+4. **完成回执通过校验**：填写 `<features_dir>/<feature>/coding/phase-completion-receipt.md`（模板见 [framework/harness/templates/phase-completion-receipt.md](../../../../harness/templates/phase-completion-receipt.md)），并通过 `cd framework/harness && npx ts-node scripts/check-receipt.ts --feature <feature> --phase coding` 校验。
 
 四条缺一不可。**仅靠口头"完成"不算闭环**——物理拦截层会读 `framework/harness/state/.current-phase.json` 与上述四份凭证决定能否放行。
 
@@ -538,9 +547,9 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 ## 关联文件
 
 - 上游输入:
-  - `doc/features/{module}/plan/plan.md`（plan 阶段 输出）
-  - `doc/features/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
-  - `doc/features/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec）
+  - `<features_dir>/{module}/plan/plan.md`（plan 阶段 输出）
+  - `<features_dir>/{module}/contracts.yaml`（plan 阶段 产出的接口契约 Spec）
+  - `<features_dir>/{module}/acceptance.yaml`（spec 阶段 产出的验收标准 Spec）
 - 阶段级规约: `framework/specs/phase-rules/coding-rules.yaml`
 - 脚本 Harness: `framework/harness/scripts/check-coding.ts`
 - AI Harness Prompt: `framework/harness/prompts/verify-coding.md`
@@ -571,7 +580,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 
 当本 Skill 通过适配器下发的 slash（如 `/coding`）或其它等价快捷入口触发时，**必须**在阶段结束时产出一份 trace 凭证：
 
-- **路径约定**：`doc/features/<feature>/coding/reports/<timestamp>/<model>-code/trace.json`
+- **路径约定**：`<features_dir>/<feature>/coding/reports/<timestamp>/<model>-code/trace.json`
 - **Schema**：[framework/harness/trace/trace.schema.json](../../../../framework/harness/trace/trace.schema.json)，`phase` 字段填 `coding`。
 - **必须记录的事件**（针对弱模型迭代最关键）：
   - `tool_calls`：`ReadLints`（或等价宿主静态检查）的 `count` 和 `failed_count`（每文件一次的调用频率是弱模型健康度的核心指标）
@@ -585,7 +594,7 @@ agent 必须主动通过 Task 工具调用 verifier 子 agent（不是"告诉用
 ## 运行时交付约定（内网 / 弱模型）
 
 ```
-doc/features/<feature>/coding/reports/<timestamp>/<model>-coding/
+<features_dir>/<feature>/coding/reports/<timestamp>/<model>-coding/
 ├── trace.json                 # phase = "coding"
 ├── gap-notes.md
 ├── check-coding.report.md     # 包含 diff_within_scope 结果
