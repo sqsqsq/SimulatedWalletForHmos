@@ -186,8 +186,25 @@ export function buildScreenSnapshot(
     else if (f.tier === 'warn') hits.push({ id: f.signal, status: 'WARN' });
     // advisory 不入 snapshot（非阻断信号，不参与"全绿"判定）
   }
+  // review-fix 轮3（codex P2-1）：unstable 屏 T8 命中按屏归属入 hits（WARN 档）
+  for (const f of payload?.t8_unstable_findings ?? []) {
+    if (f.screen_id !== screen.screen_id) continue;
+    hits.push({ id: f.signal, status: 'WARN' });
+  }
+  // 报告级信号（OCR/placement/M1 等）**不可归屏**——单独入 report_level_hits，不冒充
+  // 该屏信号（否则屏 B 的真实漏检不计 FN、还能 overrule 只发生在屏 A 的信号）。
+  // 排除 human_confirm 自身（"待签"信号非缺陷发现）。
+  const reportLevel: MachineSignalsSnapshot['hits'] = [];
+  for (const id of payload?.source_fail_hit_ids ?? []) {
+    if (id === 'visual_diff_human_confirm_required') continue;
+    reportLevel.push({ id, status: 'FAIL' });
+  }
+  for (const id of payload?.source_warn_ids ?? []) {
+    if (!reportLevel.some(h => h.id === id)) reportLevel.push({ id, status: 'WARN' });
+  }
   return {
     hits,
+    ...(reportLevel.length > 0 ? { report_level_hits: reportLevel } : {}),
     build_fingerprint: currentBuildFp,
     screenshot_hash: boundHash,
     oracle_version: oracleVersion,
@@ -238,7 +255,7 @@ async function main(): Promise<number> {
   // t6②：启动 reconciliation——发现 pending journal（上次事务被中断）先幂等补完
   const journalPath = feedbackJournalPath(projectRoot, feature);
   const ledgerPath = reviewFeedbackLedgerPath(projectRoot, feature);
-  const recon = reconcileFeedbackJournal({ journalPath, ledgerPath });
+  const recon = reconcileFeedbackJournal({ journalPath, ledgerPath, expectedVisualDiffPath: jsonPath });
   if (recon.recovered) {
     console.log(`[visual-confirm] ${recon.detail}`);
   }
@@ -275,6 +292,18 @@ async function main(): Promise<number> {
         '[visual-confirm] snapshot 一致性校验失败（截图/build/报告与当前屏不一致）——先重跑 testing harness 刷新后再落账，否则旧报告会制造错误 FP/FN。',
       );
       return 2;
+    }
+    // review-fix（codex P2-1）：被否决的 signal 必须真实存在于当前机器信号快照——
+    // 任意字符串会制造无中生有的 FP 样本污染升档数据。
+    const overrulable = [...snapshot.hits, ...(snapshot.report_level_hits ?? [])];
+    if (!overrulable.some(h => h.id === signal)) {
+      console.error(
+        `[visual-confirm] signal=${signal} 不在当前机器信号快照中（可否决：${overrulable.map(h => h.id).join(', ') || '无'}）——只能否决真实报出的信号。`,
+      );
+      return 2;
+    }
+    if (!snapshot.hits.some(h => h.id === signal)) {
+      console.log(`  注：${signal} 是报告级信号（无逐屏归属）——FP 样本归因到信号本身，不绑定本屏。`);
     }
     const rlOv = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {

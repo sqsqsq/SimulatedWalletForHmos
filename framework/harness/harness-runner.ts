@@ -43,7 +43,7 @@ import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import {
-  appendVisualRound,
+  commitVisualRound,
   visualRoundsLedgerPath,
   type VisualRoundEvaluation,
 } from './scripts/utils/visual-rounds-ledger';
@@ -691,6 +691,13 @@ async function main(): Promise<void> {
     printStableSummary(runSummary);
   }
 
+  // review-fix 轮3（codex P2-2）：账本落盘失败在交互态也 fail-closed——ledger 是熔断与
+  // 校准的持久化基础，写失败不得以 exit 0 溜走（goal 态另有 summary 消费路径双保险）。
+  if (runSummary.visual_round?.disposition === 'append_failed') {
+    console.error('\n  ❌ 视觉轮次账本落盘失败（append_failed）——本轮评估未持久化，按失败退出（修复磁盘/权限后重跑）。');
+    process.exit(1);
+  }
+
   // 最终结果
   console.log('\n' + '='.repeat(60));
   if (finalReport.summary.verdict === 'PASS') {
@@ -728,21 +735,14 @@ function consumeVisualRoundPayload(
   for (const c of report.checks) {
     const s = c.structured as { kind?: string; round?: VisualRoundEvaluation } | undefined;
     if (!s || s.kind !== 'visual_diff' || !s.round) continue;
-    const round = s.round;
-    if (round.disposition === 'appended') {
-      try {
-        appendVisualRound(visualRoundsLedgerPath(projectRoot, report.feature), round.row);
-      } catch (e) {
-        console.warn(`   ⚠ [visual-rounds] 账本追加失败（不阻断本轮）：${(e as Error).message}`);
-      }
+    // review-fix（codex P1-2）：commitVisualRound 落盘失败返回 disposition=append_failed
+    // （无 row_hash）——如实进 summary，goal-runner 据此 fail-closed halt；绝不在写失败后
+    // 仍宣称 appended（末轮无下次对账兜底）。
+    const receipt = commitVisualRound(visualRoundsLedgerPath(projectRoot, report.feature), s.round);
+    if (receipt.disposition === 'append_failed') {
+      console.warn('   ⚠ [visual-rounds] 账本追加失败——已按 append_failed 上报（goal 态将 fail-closed halt）');
     }
-    return {
-      loop_id: round.row.loop_id,
-      ...(round.row.attempt_id ? { attempt: round.row.attempt_id } : {}),
-      row_hash: round.row.row_hash,
-      disposition: round.disposition,
-      decision: round.decision,
-    };
+    return receipt;
   }
   return undefined;
 }

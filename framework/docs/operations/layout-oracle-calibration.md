@@ -83,6 +83,21 @@ bounds，且首版 **advisory**；真机 D5 在 8 屏跑 FP 观察，零误伤�
 | locator 覆盖率不足（<80%） | 该屏 B 类 SKIP + WARN 注记 | — |
 | layout dump 缺失（pixel_1to1 P0 屏） | WARN | 视 D1/D2 结论收紧 |
 
+## 3b. 真机校准数据（2026-07-11，SimulatedWalletForHmos / bc-openCard，8 P0 屏）
+
+f7a3d9c2 t5⑨/⑥ 设备模式校准（calibration.json 在该 feature `device-testing/reports/`）：
+
+- **静稳判据（t4b 依据）**：app 裁剪 hash 8/8 屏稳定；整图 hash 仅 3/8 相等（5 屏状态栏
+  漂移）——"整图字节恒等真机恒假"实锤，app 裁剪判据正确；布局签名 8/8 稳定；动效屏
+  （sms_verify overlay）3 组内收敛 → 静稳采样默认重试 2 定稿，t4b 已启用（仅 pixel_1to1）。
+- **appRoot 选择（E9 复验）**：7/8 屏单 `type='root'` 子树（面积比 0.945，首选即中）；
+  overlay+键盘场景出现**双 root**（app 窗口 + 输入法键盘窗口，键盘面积更大）——
+  "首个 type=root"策略 8/8 选对，"面积最大"回退在键盘在场时会选错。**现行策略保持**；
+  若未来遇到系统窗口 z 序把非 app root 排前的反例，再议按 bounds 贴合 app 区筛选。
+- 注记：本轮校准 CLI 裸跑 nav（未对齐 device_test.run 的 --bundle/--page-name 启动方式），
+  overlay 屏采样时 SMS sheet 未起——⑨/⑥ 判据数据不受影响；①-⑧ 逐屏语义结论须以正式
+  testing 采集的 dump 为准（该 feature 尚无正式 dump，下一次 testing 轮自动产出）。
+
 ## 4. 诚实边界
 
 - 本轮无连线设备（`hdc list targets` 空，2026-07-10），D1-D6 未执行；依赖 D1 结论的

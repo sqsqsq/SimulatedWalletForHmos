@@ -94,7 +94,7 @@ import {
   buildHalfPhaseRecoveryEvents,
   checkRunBudget,
   checkTerminalResumeGuard,
-  collectVisualAttemptIds,
+  collectUncommittedVisualAttemptIds,
   collectVisualRoundRowHashes,
   countAgentInvokeStarts,
   countTransientApiRetries,
@@ -1597,33 +1597,46 @@ Goal runner — tool-agnostic multi-phase orchestrator
           break;
         }
 
-        // t1/rev6（f7a3d9c2）：gate/resume 启动的 events↔ledger integrity 对账——events
-        // 期望的账本行缺失/被改（含 decision）→ halt 求人（删账本行=绕 fuse；损坏不解释成
-        // 空历史）。pending 行（agent 自跑已写、外层未提交 events）按本 run invocation 的
-        // attempt id 收养。诚实边界：运行时一致性防护，非协同篡改双文件的密码学防护。
+        // t1/rev6（f7a3d9c2）+ review-fix（cursor Critical/codex P1-1）：gate/resume 启动的
+        // events↔ledger integrity 对账——**无条件执行**（期望集恒空正是主路径失效形态：
+        // agent 先写→gate 恒 duplicate；期望集现已含 duplicate 的 row_hash）。缺行/改行/
+        // 损坏行/重复行/陈旧孤儿行 → halt 求人（删账本行=绕 fuse；损坏不解释成空历史）。
+        // pending 收养仅限"已 start、未 commit"的 invocation。诚实边界：运行时一致性防护，
+        // 非协同篡改双文件的密码学防护。
         if (!dryRun && phase === 'testing') {
           const eventsForIntegrity = loadEventsJsonl(eventsPath);
-          const expectedRowHashes = collectVisualRoundRowHashes(eventsForIntegrity);
-          if (expectedRowHashes.length > 0) {
-            const recon = reconcileLedgerWithEvents({
-              ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
-              loopId: `goal:${manifest.run_id}`,
-              expectedRowHashes,
-              pendingAttemptIds: collectVisualAttemptIds(eventsForIntegrity),
+          const recon = reconcileLedgerWithEvents({
+            ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
+            loopId: `goal:${manifest.run_id}`,
+            expectedRowHashes: collectVisualRoundRowHashes(eventsForIntegrity),
+            pendingAttemptIds: collectUncommittedVisualAttemptIds(eventsForIntegrity),
+          });
+          if (!recon.ok) {
+            halted = true;
+            const detail = recon.issues.map(i => `${i.kind}: ${i.detail}`).join('; ');
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'visual_ledger_integrity',
+              verdict: 'FAIL',
             });
-            if (!recon.ok) {
-              halted = true;
-              const detail = recon.issues.map(i => `${i.kind}: ${i.detail}`).join('; ');
-              appendEvent(manifest.report_dir, projectRoot, {
-                type: 'phase_halt',
-                phase,
-                halt_reason: 'visual_ledger_integrity',
-                verdict: 'FAIL',
-              });
-              console.error(`\n===== visual_ledger_integrity =====\n视觉轮次账本与 events 对账失败（须人工核查，不得删账本重跑绕过熔断）：\n${detail}\n`);
-              outcomes.push({ phase, verdict: 'FAIL', halted: true, retries });
-              break;
-            }
+            console.error(`\n===== visual_ledger_integrity =====\n视觉轮次账本与 events 对账失败（须人工核查，不得删账本重跑绕过熔断）：\n${detail}\n`);
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries });
+            break;
+          }
+          // review-fix 轮2（codex P1-1）：收养的 pending 行立即补写 recovery 事件——
+          // 进入下次期望集并关闭该 attempt 的 pending 身份（不写=pending 永久存活、
+          // 孤儿行可借其名义永续）。
+          for (const a of recon.adopted) {
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'visual_round',
+              phase,
+              loop_id: `goal:${manifest.run_id}`,
+              visual_attempt: a.attempt_id,
+              row_hash: a.row_hash,
+              disposition: 'recovered',
+              recovered: true,
+            });
           }
         }
 
@@ -1924,7 +1937,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               loop_id: string;
               attempt?: string;
               row_hash?: string;
-              disposition: 'appended' | 'duplicate';
+              disposition: 'appended' | 'duplicate' | 'append_failed';
               decision?: { fused: boolean };
             };
           } | null
@@ -1940,6 +1953,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             disposition: visualRoundReceipt.disposition,
             fused: visualRoundReceipt.decision?.fused === true,
           });
+          // review-fix（codex P1-2）：账本落盘失败=完整性事件——立即 fail-closed halt，
+          // 不得让"events 声称评估过而账本无行"的成功运行溜走（末轮无下次对账兜底）。
+          if (visualRoundReceipt.disposition === 'append_failed') {
+            halted = true;
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'visual_ledger_integrity',
+              verdict: 'FAIL',
+            });
+            console.error('\n===== visual_ledger_integrity =====\n视觉轮次账本追加失败（磁盘/权限）——本轮评估未持久化，fail-closed 求人；修复后重跑。\n');
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries });
+            break;
+          }
         }
 
         const resolved = resolvePhaseHarnessVerdict({

@@ -168,13 +168,16 @@ export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
 }
 
 /**
- * t1/rev6（f7a3d9c2）：events 回放——已提交的视觉轮次账本行 hash 集（disposition=appended）。
- * gate/resume 启动时与 ledger 对账：期望行缺失/被改 → integrity halt（删账本≠空历史）。
+ * t1/rev6（f7a3d9c2）+ review-fix（cursor Critical）：events 回放——账本行期望 hash 集。
+ * **含 duplicate**：主路径是"agent 自跑 harness append → 外层 gate 撞同 round_key 得
+ * duplicate"，events 里只会出现 duplicate 事件，但其 row_hash 就是那条账本行——只收
+ * appended 会让期望集恒空、整段 integrity 空转（删账本绕 fuse 不再被拦）。
+ * append_failed 无 row_hash，天然不入期望。
  */
 export function collectVisualRoundRowHashes(events: GoalRunEvent[]): string[] {
   const out: string[] = [];
   for (const e of events) {
-    if (e.type === 'visual_round' && e.disposition === 'appended' && typeof e.row_hash === 'string' && e.row_hash) {
+    if (e.type === 'visual_round' && typeof e.row_hash === 'string' && e.row_hash) {
       out.push(e.row_hash);
     }
   }
@@ -182,21 +185,27 @@ export function collectVisualRoundRowHashes(events: GoalRunEvent[]): string[] {
 }
 
 /**
- * t1/rev6：pending 行可收养的 attempt id 集——本 run 所有 invocation 的 visual attempt id
- * （`i<ordinal>`；agent 会话内 harness 已写 ledger、外层尚未提交 events 的行以此识别）。
+ * t1/rev6 + review-fix（codex P1-1，两轮收窄）：pending 行可收养的 attempt id——
+ * ①仅 **testing 阶段**的 invocation（spec/coding 等永不产 visual_round，入围会让其
+ * attempt 永久 pending、孤儿行可借名永续）；②仅"已 start、未 commit"（无对应
+ * visual_round 事件——含 reconciliation 收养后补写的 recovery 事件）；③仅**最后一个**
+ * 这样的 invocation（更早的未闭合 invocation 由上一次对账收养并补写 recovery 关闭；
+ * 若因故未关，其行按 orphan 拦下求人，不再默认收养）。
  */
-export function collectVisualAttemptIds(events: GoalRunEvent[]): string[] {
-  const out = new Set<string>();
+export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): string[] {
+  const startedTesting: string[] = [];
+  const committed = new Set<string>();
   for (const e of events) {
-    if (e.type === 'agent_invoke_start' && typeof e.invoke_id === 'string') {
+    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
       const m = e.invoke_id.match(/-(i\d+)$/);
-      if (m) out.add(m[1]);
+      if (m) startedTesting.push(m[1]);
     }
     if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
-      out.add(e.visual_attempt);
+      committed.add(e.visual_attempt);
     }
   }
-  return [...out];
+  const uncommitted = startedTesting.filter(id => !committed.has(id));
+  return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
 }
 
 /**

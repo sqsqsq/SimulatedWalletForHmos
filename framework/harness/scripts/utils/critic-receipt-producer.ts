@@ -79,6 +79,12 @@ export function hasImageReadParser(adapter: string): boolean {
   return Object.prototype.hasOwnProperty.call(IMAGE_READ_PARSERS, adapter);
 }
 
+/** review-fix（codex P1-4）：check 侧复核用——按 adapter 解析验读事件；无解析器 → null */
+export function parseImageReadEventsFor(adapter: string, eventsJsonl: string): string[] | null {
+  const parser = IMAGE_READ_PARSERS[adapter];
+  return parser ? parser(eventsJsonl) : null;
+}
+
 export interface ProduceCriticReceiptInput {
   projectRoot: string;
   feature: string;

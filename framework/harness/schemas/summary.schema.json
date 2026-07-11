@@ -84,7 +84,7 @@
         "loop_id": { "type": "string", "minLength": 1 },
         "attempt": { "type": "string" },
         "row_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
-        "disposition": { "type": "string", "enum": ["appended", "duplicate"] },
+        "disposition": { "type": "string", "enum": ["appended", "duplicate", "append_failed"] },
         "decision": {
           "type": "object",
           "additionalProperties": false,

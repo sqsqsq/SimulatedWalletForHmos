@@ -516,7 +516,8 @@ export interface HarnessRunSummary {
     loop_id: string;
     attempt?: string;
     row_hash?: string;
-    disposition: 'appended' | 'duplicate';
+    /** append_failed=账本落盘失败（review-fix codex P1-2）——goal-runner 据此 fail-closed halt */
+    disposition: 'appended' | 'duplicate' | 'append_failed';
     decision?: {
       fused: boolean;
       failure_kind?: string;

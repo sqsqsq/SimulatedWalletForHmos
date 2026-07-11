@@ -13,7 +13,7 @@
 
 | adapter | 当前 headless 形态 | 证据源结论 | tool_event_provenance | 状态 |
 |---|---|---|---|---|
-| claude | `claude -p`（纯文本输出，prompt 走 stdin） | 默认输出**无工具事件**。两条可行路线：①`--output-format stream-json --verbose`——stdout 变 NDJSON 事件流（含 `tool_use`/Read 记录），经 t3a 三文件分流写 agent-events.jsonl（人读投影 agent-output.log 不变，b8f36a12 日志消费链不受影响——**此为选定路线**，理由：事件即时、无 session 定位问题）；②本地 session transcript（`~/.claude/projects/<slug>/*.jsonl` 含 tool_use）——`-p` 不回显 session id，定位靠 mtime 猜，弃 | `structured_events`（**须在 adapter.yaml headless_invoke 显式加 stream-json 参数后才可声明**；未声明前恒 none） | 解析器已实装（`parseClaudeImageReadEvents`）；**待真机 fixture 复验**（t9 前采一份真实 stream-json 日志入 fixtures） |
+| claude | `claude -p`（纯文本输出，prompt 走 stdin） | 默认输出**无工具事件**。两条可行路线：①`--output-format stream-json --verbose`——stdout 变 NDJSON 事件流（含 `tool_use`/Read 记录），经 t3a 三文件分流写 agent-events.jsonl（人读投影 agent-output.log 不变，b8f36a12 日志消费链不受影响——**此为选定路线**，理由：事件即时、无 session 定位问题）；②本地 session transcript（`~/.claude/projects/<slug>/*.jsonl` 含 tool_use）——`-p` 不回显 session id，定位靠 mtime 猜，弃 | **`structured_events`（已声明，2026-07-11）**——运行时由 claudeArgv 按声明加 flags，非 headless_invoke 模板 | **2026-07-11 宿主实测（完成）**：CLI 2.1.169 真实样本三份（含成功 Read 真机截图的完整事件流）确认 NDJSON 事件与解析器逐字段吻合；真实 fixture 已固化（harness/tests/unit/fixtures/claude-agent-events.real.jsonl）；**声明已回填 structured_events**（claudeArgv 按声明加 stream-json flags）；断流哨兵已适配结构化信封（api_retry/result 事件，401 鉴权不误归 transient——初采即 401 实锤该保护）。环境注记：claude -p 鉴权曾 401，用户已修复 |
 | chrys | `chrys run --json` | `--json` 信封为结构化输出；**事件粒度是否含逐条工具调用待实测**（现有消费仅解析 headless_interaction_required 信封） | 暂 `none`（实测确认事件含图片读取记录后再升 structured_events） | 待宿主实测 |
 | codex | `codex exec`（stdin prompt） | exec 进度输出含命令执行记录，但**codex 无 Read 工具**——本地图片注入走 `view_image`/`-i`，其事件是否稳定出现在 stdout 待实测；`cat` 图片≠视觉注入，不得计入 | 暂 `none` | 待宿主实测 |
 | cursor | `cursor-agent -p`（stdin prompt） | 输出为文本流，未见结构化工具事件开关 | `none` | 恒 unverified（复查 CLI 更新再议） |
@@ -33,9 +33,10 @@
 
 ## 待宿主复验项（t9 合并执行）
 
-- [ ] claude：真机 goal run 采一份 `--output-format stream-json --verbose` 事件日志 →
-      固化为 fixture（`harness/tests/fixtures/`）→ 解析器单测从合成样本换真实样本；
-      确认 stream-json 下 b8f36a12 消费链（人读投影不变）确实零回归。
+- [x] claude：真实事件日志已采集固化（2026-07-11，含 tool_use/Read 成功样本）；解析器
+      单测已加真实样本用例；断流哨兵已适配结构化信封（stream-json 下 API 错误不再有
+      `^API Error` 文本锚——结构化 api_retry/result 事件补位，401 不误归 transient）。
+      余：首次真 goal run 时观察 b8f36a12 消费链端到端表现（哨兵/心跳/no-output）。
 - [ ] chrys：`--json` 事件流是否含逐条工具调用与图片输入记录。
 - [ ] codex：`view_image` 事件是否稳定出现在 exec stdout。
 - [ ] 结论回填本表 + adapter.yaml 声明同步。

@@ -42,8 +42,14 @@ export const ISSUE_KIND_TO_DETECTOR_FAMILY: Record<HumanIssueKind, string> = {
 };
 
 export interface MachineSignalsSnapshot {
-  /** 采集自最新 harness 结构化产物的该屏命中摘要（id+status），全绿=空数组 */
+  /** 该屏**可归属**命中（T8 stable/unstable findings 按 screen_id 归屏），全绿=空数组 */
   hits: Array<{ id: string; status: 'FAIL' | 'WARN' }>;
+  /**
+   * review-fix 轮3（codex P2-1）：报告级命中（OCR/placement/M1 等无逐屏归属的信号）——
+   * 单独记录不冒充"该屏信号"；FN 判定要求两者皆空（报告级有 FAIL 时无法断言"机器全绿"），
+   * 但 FN 不据此归因到具体屏。
+   */
+  report_level_hits?: Array<{ id: string; status: 'FAIL' | 'WARN' }>;
   build_fingerprint: string;
   screenshot_hash: string;
   /** layout-oracle 代码指纹（版本变化 → 历史样本失效标注） */
@@ -173,10 +179,15 @@ export function commitFeedbackTransaction(input: {
 /**
  * 启动 reconciliation：发现 pending journal → 按状态幂等补完事务（json 未写则重写、
  * ledger 未记则补记），随后清除。返回处置说明（CLI 打印给真人）。
+ * review-fix（codex P1-5）：journal 内的 visual_diff_path 不再被无条件信任——须与调用方
+ * 按 feature 重新派生的期望路径完全一致，否则视为被构造的 journal 丢弃（防真人启动确认
+ * 命令时被诱导覆盖工作区任意 JSON）。
  */
 export function reconcileFeedbackJournal(input: {
   journalPath: string;
   ledgerPath: string;
+  /** 期望的 visual-diff.json 绝对路径（由 feature/phase 重新派生，非 journal 自述） */
+  expectedVisualDiffPath: string;
 }): { recovered: boolean; detail?: string } {
   if (!fs.existsSync(input.journalPath)) return { recovered: false };
   let journal: FeedbackJournal;
@@ -189,6 +200,16 @@ export function reconcileFeedbackJournal(input: {
   if (!journal?.feedback_id || !journal.entry) {
     clearFeedbackJournal(input.journalPath);
     return { recovered: true, detail: 'journal 字段不全——已清除；上次操作未生效，请重做' };
+  }
+  if (
+    typeof journal.visual_diff_path !== 'string' ||
+    path.resolve(journal.visual_diff_path) !== path.resolve(input.expectedVisualDiffPath)
+  ) {
+    clearFeedbackJournal(input.journalPath);
+    return {
+      recovered: true,
+      detail: `journal 目标路径与本 feature 期望不符（${journal.visual_diff_path}）——已丢弃不写盘（防覆盖任意文件）；上次操作未生效，请重做`,
+    };
   }
   // pending：json 可能已写可能没写——重写一遍（原子替换幂等）再补 ledger
   if (journal.state === 'pending') {
@@ -244,9 +265,12 @@ export function aggregateFeedbackLedger(entries: FeedbackLedgerEntry[]): Feedbac
       fpBySignal[sig] = (fpBySignal[sig] ?? 0) + 1;
       continue;
     }
-    // reject：snapshot 全绿=FN 样本
+    // reject：snapshot 全绿=FN 样本——"全绿"含报告级（报告级有命中时机器并非全绿，
+    // 不计 FN；但报告级信号不冒充该屏归属）
     reject++;
-    const allGreen = (e.machine_signals_snapshot?.hits ?? []).length === 0;
+    const allGreen =
+      (e.machine_signals_snapshot?.hits ?? []).length === 0 &&
+      (e.machine_signals_snapshot?.report_level_hits ?? []).length === 0;
     if (!allGreen) continue; // 有信号命中的 reject 不是漏检——信号已见，属处置分歧，不计 FN
     if (e.human_issue_kind && e.human_issue_kind !== 'other') {
       const family = ISSUE_KIND_TO_DETECTOR_FAMILY[e.human_issue_kind];

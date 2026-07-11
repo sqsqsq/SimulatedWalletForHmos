@@ -31,6 +31,7 @@ import {
   visualRoundsLedgerPath,
   type VisualRoundEvaluation,
 } from '../../../harness/scripts/utils/visual-rounds-ledger';
+import { parseImageReadEventsFor } from '../../../harness/scripts/utils/critic-receipt-producer';
 import { createRequire } from 'module';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
@@ -163,8 +164,14 @@ export interface VisualDiffScreenEntry {
   evaluation_invalidated?: boolean;
   /** t5（1.1）：pixel_1to1 P0 pass 屏 defects=[] 时必填的逐区域举证 */
   region_attest?: RegionAttestEntry[];
-  /** t2（1.1）：布局树采集状态（capture 机器盖戳） */
-  layout_dump_status?: 'captured' | 'failed' | 'unavailable';
+  /**
+   * t2（1.1）：布局树采集状态（capture 机器盖戳）。
+   * t4b（f7a3d9c2，2026-07-11 真机双拍数据回填后启用）：'unstable'=静稳采样重试耗尽仍
+   * 图/树不稳（动画/轮播/动效屏）——T8 命中对该屏降档走独立 id（capability degradation）。
+   */
+  layout_dump_status?: 'captured' | 'failed' | 'unavailable' | 'unstable';
+  /** t4b：unstable 时的原因（image_drift|layout_drift|approot_drift|both，capture 机器盖戳） */
+  layout_dump_unstable_reason?: string;
   /** jimp 半定量客观下限/哨兵（不参与 PASS 阈值） */
   /** reference_only（P1-C）：像素直方图下限，历史多次实测证伪（UI 全错仍近满分），不参与任何判定 */
   score_floor?: number;
@@ -383,8 +390,18 @@ export function validateVisualDiffJson(
         errors.push(`screens[${i}].evaluation_invalidated 须为布尔`);
       }
       const lds = row.layout_dump_status;
-      if (lds !== undefined && lds !== null && lds !== 'captured' && lds !== 'failed' && lds !== 'unavailable') {
+      if (
+        lds !== undefined && lds !== null &&
+        lds !== 'captured' && lds !== 'failed' && lds !== 'unavailable' && lds !== 'unstable'
+      ) {
         errors.push(`screens[${i}].layout_dump_status 非法：${String(lds)}`);
+      }
+      if (
+        row.layout_dump_unstable_reason !== undefined &&
+        row.layout_dump_unstable_reason !== null &&
+        typeof row.layout_dump_unstable_reason !== 'string'
+      ) {
+        errors.push(`screens[${i}].layout_dump_unstable_reason 须为字符串`);
       }
       // t5：region_attest 结构校验
       const attest = row.region_attest;
@@ -606,16 +623,24 @@ export function collectWarnP0NoActionable(
 }
 
 /**
- * t9（rev7）：稳定缺陷指纹 `screen_id|class|element/region|bbox_bucket`——no-progress 熔断的
- * 机器判据（禁自然语言比对，同义改写会逃逸）。bbox 按 0.1 网格分桶吸收像素抖动。
- * check 会把当轮指纹集打进 details（[fingerprints] 注记）——连续两轮输出逐字相同即 no-progress，
- * goal 重试比对与交互态 critic 熔断共用此判据。
+ * t9（rev7）：稳定缺陷指纹 `screen_id|class|element/region|bbox_bucket[|producer#finding_id]`
+ * ——no-progress 熔断的机器判据（禁自然语言比对，同义改写会逃逸）。bbox 按 0.1 网格分桶
+ * 吸收像素抖动。check 会把当轮指纹集打进 details（[fingerprints] 注记）——连续两轮输出
+ * 逐字相同即 no-progress，goal 重试比对与交互态 critic 熔断共用此判据。
+ *
+ * review-fix 轮4（codex P1）：T8 转录 defect 追加 `source.producer#finding_id` 尾段——
+ * class/element/0.1 桶是粗粒度（多个 T8 signal 映射同 class，如 B 类全归 shape_mismatch），
+ * 已转录 finding 的身份若只剩这三元组，"修掉 A、冒出同元素同桶的 B"会撞同指纹误熔断
+ * （FAIL/WARN 转录发现同险，此处统一覆盖）。finding_id=hash(screen|signal|elements|桶)
+ * 天然区分 signal/元素集。legacy 无 source 的 defect（VL 自报）保持旧四元组不变；
+ * 新旧格式跨轮比较必不相等 → 熔断推迟一轮，错向安全侧，账本无需迁移。
  */
 export function computeDefectFingerprint(screenId: string, d: VisualDiffDefect): string {
   const bucket = Array.isArray(d.bbox) && d.bbox.length === 4
     ? d.bbox.map(n => (Math.round(n * 10) / 10).toFixed(1)).join(',')
     : 'nobbox';
-  return `${screenId}|${d.class}|${d.element?.trim() || 'unknown'}|${bucket}`;
+  const src = d.source?.finding_id?.trim() ? `|${d.source.producer}#${d.source.finding_id.trim()}` : '';
+  return `${screenId}|${d.class}|${d.element?.trim() || 'unknown'}|${bucket}${src}`;
 }
 
 export function collectDefectFingerprints(screens: VisualDiffScreenEntry[]): string[] {
@@ -680,8 +705,10 @@ export function defaultClassForSignal(signal: string): VisualDiffDefectClass {
  * t1（rev5）：loop-actionable 视觉残差 hit id 白名单（结构化谓词，非 visual_diff_ 前缀猜测）。
  * 排除（各归各的路径，不入 UI defect fuse）：human_confirm_required（T2 求人）、
  * layout_invariants_unstable（capability degradation，t4）、*_degraded/layout_dump_missing
- * （能力降级）、critic_receipt/attest_evidence（evidence repair）、schema（结构问题）、
- * tamper_artifact（红线，另有人工复核路径）、edge_sentinel/text_placement_must_fix（advisory）。
+ * （能力降级）、critic_receipt/attest_evidence/**region_attest**（evidence repair——
+ * review-fix cursor I-2：纯举证缺口是评审义务不是 UI 缺陷，补 attest 不是 coding 回修，
+ * 不得据此熔断）、schema（结构问题）、tamper_artifact（红线，另有人工复核路径）、
+ * edge_sentinel/text_placement_must_fix（advisory）。
  */
 export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
   'visual_diff',
@@ -696,7 +723,6 @@ export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
   'visual_diff_bidirectional_residual',
   'visual_diff_reverse_missing',
   'visual_diff_screenshot_dedup',
-  'visual_diff_region_attest',
   'visual_diff_selfreport_integrity',
   'visual_diff_evaluation_invalidated',
   'visual_diff_finding_transcription',
@@ -738,10 +764,21 @@ export interface VisualDiffStructuredPayload {
   fingerprintable: boolean;
   /** 计算 fuse 之前的 base FAIL hit id 集（排除 fuse 自身——feedback 环防护） */
   source_fail_hit_ids: string[];
+  /** 未处置 actionable WARN 身份（candidate-blocking WARN hit id + 未转录 warn finding_id） */
+  source_warn_ids: string[];
   await_human_only: boolean;
   actionable_residual: boolean;
   /** 轮次账本评估（disposition/decision/row）；账本评估失败时缺省 */
   round?: VisualRoundEvaluation;
+  /** unstable 屏的 T8 命中（capability degradation——per-screen snapshot 消费，不入指纹/对账） */
+  t8_unstable_findings?: Array<{
+    screen_id: string;
+    finding_id: string;
+    signal: string;
+    tier: string;
+    elements: string[];
+    bbox?: number[];
+  }>;
   t8_findings: Array<{
     screen_id: string;
     finding_id: string;
@@ -1620,6 +1657,39 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
             typeof att.evidence_log_hash !== 'string' || !att.evidence_log_hash.trim()
           ) {
             attErr = '缺 runner_attestation 段（手写 verified 属冒充）';
+          } else if (path.basename(att.evidence_log_path) !== 'agent-events.jsonl') {
+            // review-fix（codex P1-4）：证据文件只能是纯净结构化事件文件——指向任意现存
+            // 文件算 hash 不构成证明
+            attErr = `attestation 证据须为 agent-events.jsonl（收到 ${path.basename(att.evidence_log_path)}）`;
+          } else if (!process.env.MAISON_GOAL_RUN_ID?.trim() || !process.env.MAISON_GOAL_ATTEMPT?.trim()) {
+            // review-fix 轮2（codex P1-2）：verified 仅在 goal gate 语境采信——交互态采信
+            // 历史 goal 回执会产出 candidate-pass(verified)，与"交互态 verified 不在本期"
+            // 的显式非目标冲突；交互态一律如实 unverified（不否定其曾在 gate 语境的采信）。
+            attErr = 'verified 仅在 goal gate 语境采信（当前无 MAISON_GOAL_RUN_ID/ATTEMPT）——交互态如实按 unverified 呈现';
+          } else if (att.goal_run_id.trim() !== process.env.MAISON_GOAL_RUN_ID.trim()) {
+            attErr = `attestation goal_run_id 与当前 run 不符（${att.goal_run_id} ≠ ${process.env.MAISON_GOAL_RUN_ID}）`;
+          } else if (
+            // review-fix 轮2：attempt 级精确绑定（startsWith 可被旧 attempt 回执充数）
+            receipt.critic_run_id !==
+            `${process.env.MAISON_GOAL_RUN_ID.trim()}-${process.env.MAISON_GOAL_ATTEMPT.trim()}`
+          ) {
+            attErr = `critic_run_id 未精确绑定当前 invocation（${receipt.critic_run_id} ≠ ${process.env.MAISON_GOAL_RUN_ID}-${process.env.MAISON_GOAL_ATTEMPT}）`;
+          } else if (
+            // review-fix 轮4（codex P2）：子串 includes 不能证明文件在当前 run 目录（父目录/
+            // 其他路径片段含 run_id 即可通过）——收紧为**期望全路径精确等值**：回执只在
+            // testing 阶段由 runner 签发（goal-runner t3b 分支 phase==='testing'），期望路径
+            // 唯一可推导 = <featureDir>/goal-runs/<run_id>/phases/testing/agent-events.jsonl。
+            path.resolve(ctx.projectRoot, att.evidence_log_path) !==
+            path.resolve(
+              featureDir(ctx.projectRoot, ctx.feature),
+              'goal-runs',
+              process.env.MAISON_GOAL_RUN_ID.trim(),
+              'phases',
+              'testing',
+              'agent-events.jsonl',
+            )
+          ) {
+            attErr = `attestation 证据路径未绑定当前 run 的 testing 阶段目录（${att.evidence_log_path}）`;
           } else {
             const evidenceAbs = path.resolve(ctx.projectRoot, att.evidence_log_path);
             if (!fs.existsSync(evidenceAbs)) {
@@ -1628,6 +1698,22 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
               const actual = createHash('sha256').update(fs.readFileSync(evidenceAbs)).digest('hex').slice(0, 16);
               if (actual !== att.evidence_log_hash.trim()) {
                 attErr = `attestation 证据日志 hash 不符（声明 ${att.evidence_log_hash.slice(0, 8)}… 实际 ${actual.slice(0, 8)}…——日志被改或回执伪造）`;
+              } else {
+                // review-fix（codex P1-4）核心：check 侧**复核验读事件**——重解析证据日志，
+                // image_inputs 逐项须有对应结构化读取事件。"某文件 hash 未变"不等于
+                // "本轮 critic 确实读过这些图"；无解析器的 adapter 无法复核 → 不采信。
+                const reads = parseImageReadEventsFor(receipt.adapter, fs.readFileSync(evidenceAbs, 'utf-8'));
+                if (reads === null) {
+                  attErr = `adapter=${receipt.adapter} 无注册解析器，verified 主张不可复核`;
+                } else {
+                  const readSet = new Set(reads.map(r => path.resolve(ctx.projectRoot, r)));
+                  const unbacked = receipt.image_inputs.filter(
+                    i => typeof i?.path === 'string' && !readSet.has(path.resolve(ctx.projectRoot, i.path)),
+                  );
+                  if (unbacked.length > 0) {
+                    attErr = `image_inputs 有 ${unbacked.length} 项在证据日志中无验读事件（回执与日志不符：${unbacked.slice(0, 3).map(i => i.path).join(', ')}…）`;
+                  }
+                }
               }
             }
           }
@@ -1765,10 +1851,12 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // t0（f7a3d9c2）：findings 同时以结构化形态收集（finding_id/elements/bbox），供
   // t2 transcription audit 与结构化 payload 消费——hit line 只是人读投影。
   const t8Findings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
+  const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
   if (uiDoc) {
     const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
     const hardLines: string[] = [];
     const warnLines: string[] = [];
+    const unstableLines: string[] = [];
     const dumpMissing: string[] = [];
     const p0Set = new Set(p0Ids.map(canonicalOverlayBase));
     for (const s of rep.screens) {
@@ -1780,7 +1868,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       if (!dump) {
         // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
         // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
-        if (s.layout_dump_status === 'captured') {
+        if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
           dumpMissing.push(`${s.screen_id}（声称已采集但 layout-${s.screen_id}.json 缺失/不可解析——文件被删或损坏，须重采）`);
         } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
           dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
@@ -1788,6 +1876,19 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         continue;
       }
       const res = collectLayoutOracleForScreen({ screenId: s.screen_id, screen: uiScreen, dump });
+      // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
+      // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
+      // 消息明示真人复核）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
+      if (s.layout_dump_status === 'unstable') {
+        for (const f of res.findings) {
+          if (f.tier === 'advisory') continue;
+          t8UnstableFindings.push({ screen_id: s.screen_id, finding: f });
+          unstableLines.push(
+            `${s.screen_id}[${f.signal}#${f.finding_id}·${f.tier}→unstable]${f.bbox ? ` bbox=${JSON.stringify(f.bbox)}` : ''}: ${f.note}`,
+          );
+        }
+        continue;
+      }
       if (res.bClassSkipped) {
         warnLines.push(
           `${s.screen_id}: locator 覆盖率 ${(res.coverage * 100).toFixed(0)}% < ${LOCATOR_COVERAGE_THRESHOLD * 100}%，` +
@@ -1801,6 +1902,17 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         else if (f.tier === 'warn') warnLines.push(line);
         else referenceNotes.push(`[T8 advisory] ${line}`);
       }
+    }
+    if (unstableLines.length > 0) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_layout_invariants_unstable',
+        severity: 'MAJOR',
+        status: 'WARN',
+        line:
+          `【T8 观测（unstable 屏降档——静稳采样重试耗尽，图/树可能非同状态；capability degradation，` +
+          `不阻断 candidate-pass、免转录，T2 批量终审时真人复核）】` +
+          unstableLines.slice(0, 6).join(' | ') + (unstableLines.length > 6 ? ` …共 ${unstableLines.length} 处` : ''),
+      });
     }
     if (hardLines.length > 0) {
       const ratchet = pixel1to1
@@ -1996,6 +2108,10 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   //   bbox 仅 IoU≥0.5 legacy 回退）；②must_fix 逐条锚定（defect.must_fix_refs 引用，
   //   堵"条数凑平但错配"的 filler defects 缝——rev10 计数门只是必要条件近似）。
   // t4 的 unstable 独立 id 命中不产生 findings（capability degradation），天然免转录。
+  // review-fix（codex P1-3）：转录对账不净（hard 未转录/must_fix 漏锚定 FAIL）→ 本轮
+  // 指纹集缺斤短两/被 filler 污染——透传 transcriptionDirty 给指纹资格判定。
+  let transcriptionDirty = false;
+  const unloggedWarnFindingIds: string[] = [];
   {
     const unloggedHard: string[] = [];
     const unloggedWarn: string[] = [];
@@ -2013,11 +2129,14 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
               finding.elements.includes(d.element) &&
               signalExpectedClasses(finding.signal).has(d.class),
           )) ||
+        // review-fix（codex P2-2）：bbox legacy 回退同样须语义类一致——同区域一个无关
+        // 类别的 defect 不得消账（IoU 只证"位置重叠"，不证"同一问题"）。
         (Array.isArray(finding.bbox) &&
           defects.some(
             d =>
               Array.isArray(d.bbox) &&
               d.bbox.length === 4 &&
+              signalExpectedClasses(finding.signal).has(d.class) &&
               normRectIoU(finding.bbox as number[], d.bbox) >= TRANSCRIPTION_BBOX_IOU_MIN,
           ));
       if (matched) continue;
@@ -2038,12 +2157,14 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
         }
       } else {
         unloggedWarn.push(label);
+        unloggedWarnFindingIds.push(finding.finding_id);
       }
     }
     if (unloggedHard.length > 0) {
       const ratchet = pixel1to1
         ? fidelityRatchetFailOrWarn(ctx, false)
         : { severity: 'MAJOR' as const, status: 'WARN' as const };
+      if (ratchet.status === 'FAIL') transcriptionDirty = true;
       pushVisualDiffHit(hits, {
         id: 'visual_diff_finding_transcription',
         severity: ratchet.severity,
@@ -2055,6 +2176,9 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       });
     }
     if (unloggedWarn.length > 0) {
+      // review-fix 轮2（codex P1-3）：未转录的 candidate-blocking WARN 使本轮失去熔断
+      // 资格（其身份不在 defect 指纹集内，比较会吃残缺数据——错向安全侧推迟熔断）。
+      transcriptionDirty = true;
       // T8 warn 命中本身已在 CANDIDATE_BLOCKING_WARN_IDS 阻断 candidate-pass——
       // 本 WARN 只是落账提醒，不另加阻断。
       pushVisualDiffHit(hits, {
@@ -2085,6 +2209,7 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
       }
       if (unanchored.length > 0) {
         const ratchet = fidelityRatchetFailOrWarn(ctx, false);
+        if (ratchet.status === 'FAIL') transcriptionDirty = true;
         pushVisualDiffHit(hits, {
           id: 'visual_diff_finding_transcription',
           severity: ratchet.severity,
@@ -2102,11 +2227,13 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   // 熔断判据机器可比（goal 重试日志 diff / 交互态 critic 直接对照），不依赖自然语言。
   // rev9：未转录轮次（must_fix 无对应结构化 defects）无资格比较——显式标 ineligible，
   // 消费方不得对该轮做熔断判定（同数异质问题会被计数近似误判成无进展）。
-  const fingerprintable = isRoundFingerprintable(rep.screens);
+  // review-fix（codex P1-3）：资格=rev10 计数门 && 转录对账净——filler defects 轮
+  // （凑数错配）虽过计数门，但其指纹是污染数据，不得进入熔断比较基线。
+  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty;
   const roundFingerprints = fingerprintable ? collectDefectFingerprints(rep.screens) : [];
   if (!fingerprintable) {
     referenceNotes.push(
-      `[fingerprints] ineligible（存在 must_fix 未转录为结构化 defects 的屏——本轮不参与熔断比较，先逐条转录 class/element/bbox）`,
+      `[fingerprints] ineligible（存在 must_fix 未转录/未锚定的屏——本轮不参与熔断比较，先按 transcription 门禁逐条转录锚定）`,
     );
   } else if (roundFingerprints.length > 0) {
     referenceNotes.push(`[fingerprints] ${roundFingerprints.join(' ')}`);
@@ -2149,32 +2276,63 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   //   位 decision 恒 fused=false，账本仍照常观测）；
   // - check 只读账本判定，追加由 harness-runner 消费 structured payload 完成（红线切分）。
   const sourceFailHitIds = [...new Set(failHitsOnly.map(h => h.id))];
+  // review-fix 轮2（codex P1-3）：未处置 actionable WARN 的稳定身份进状态——WARN 从 A
+  // 变 B（同截图同 defects）不是同状态，不得撞 round_key 重放旧 decision。
+  const sourceWarnIds = [
+    ...new Set([
+      ...hits.filter(h => h.status === 'WARN' && CANDIDATE_BLOCKING_WARN_IDS.has(h.id)).map(h => h.id),
+      ...unloggedWarnFindingIds,
+    ]),
+  ];
   const actionableResidual =
     pixel1to1 && hasActionableVisualResidual(rep.screens, hits.map(h => ({ id: h.id, status: h.status })));
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || null;
-  const loopId = goalRunId ? `goal:${goalRunId}` : `interactive:${ctx.feature}`;
+  // review-fix（cursor I-1）：交互态 loop_id 带「采集世代」=ui-spec 内容指纹——spec 变更
+  // （新一轮设计迭代）自动开新世代，防跨会话拿旧轮同指纹误熔 ineffective_fix；
+  // 同一 spec 下跨会话比较仍成立（残差确实没修）。
+  const uiSpecGeneration = (() => {
+    try {
+      const specPath = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
+      if (fs.existsSync(specPath)) {
+        return createHash('sha256').update(fs.readFileSync(specPath)).digest('hex').slice(0, 8);
+      }
+    } catch { /* 世代不可算退 nospec */ }
+    return 'nospec';
+  })();
+  const loopId = goalRunId ? `goal:${goalRunId}` : `interactive:${ctx.feature}:${uiSpecGeneration}`;
   let roundEvaluation: VisualRoundEvaluation | undefined;
-  try {
-    roundEvaluation = evaluateVisualRound(visualRoundsLedgerPath(ctx.projectRoot, ctx.feature), {
-      loopId,
-      attemptId: goalRunId ? attemptId : null,
-      goalRunId,
-      buildFingerprint: currentBuildFp ?? '',
-      screensHash: computeScreensHash(rep.screens),
-      defectFingerprints: roundFingerprints,
-      sourceFailHitIds,
-      fingerprintable,
-      awaitHumanOnly,
-      actionableResidual,
-    });
-    if (roundEvaluation.corrupt_lines > 0) {
-      referenceNotes.push(
-        `[visual_rounds] 账本存在 ${roundEvaluation.corrupt_lines} 条损坏行（崩溃半行已跳过；行数异常回退须人工核查——账本损坏不解释成空历史）`,
-      );
+  // review-fix（cursor I-5）：goal 身份不完整（有 RUN_ID 无 ATTEMPT——新 harness 配旧
+  // runner 的混版场景）不得静默按交互态去重（会吞跨 attempt 同状态熔断）——如实跳过
+  // 账本评估（无 fuse、无追加），注记求修版本。
+  const roundIdentityComplete = !goalRunId || Boolean(attemptId);
+  if (!roundIdentityComplete) {
+    referenceNotes.push(
+      '[visual_rounds] goal 轮次身份不完整（有 MAISON_GOAL_RUN_ID 无 MAISON_GOAL_ATTEMPT——runner 版本过旧？）——本轮跳过账本评估，不误判不误吞',
+    );
+  } else {
+    try {
+      roundEvaluation = evaluateVisualRound(visualRoundsLedgerPath(ctx.projectRoot, ctx.feature), {
+        loopId,
+        attemptId: goalRunId ? attemptId : null,
+        goalRunId,
+        buildFingerprint: currentBuildFp ?? '',
+        screensHash: computeScreensHash(rep.screens),
+        defectFingerprints: roundFingerprints,
+        sourceFailHitIds,
+        sourceWarnIds,
+        fingerprintable,
+        awaitHumanOnly,
+        actionableResidual,
+      });
+      if (roundEvaluation.corrupt_lines > 0) {
+        referenceNotes.push(
+          `[visual_rounds] 账本存在 ${roundEvaluation.corrupt_lines} 条损坏行（崩溃半行已跳过；行数异常回退须人工核查——账本损坏不解释成空历史）`,
+        );
+      }
+    } catch (e) {
+      referenceNotes.push(`[visual_rounds] 轮次账本评估失败（不阻断本轮判定）：${(e as Error).message}`);
     }
-  } catch (e) {
-    referenceNotes.push(`[visual_rounds] 轮次账本评估失败（不阻断本轮判定）：${(e as Error).message}`);
   }
   if (roundEvaluation?.decision.fused && pixel1to1) {
     const d = roundEvaluation.decision;
@@ -2224,9 +2382,18 @@ export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
     defect_fingerprints: roundFingerprints,
     fingerprintable,
     source_fail_hit_ids: sourceFailHitIds,
+    source_warn_ids: sourceWarnIds,
     await_human_only: awaitHumanOnly,
     actionable_residual: actionableResidual,
     ...(roundEvaluation ? { round: roundEvaluation } : {}),
+    t8_unstable_findings: t8UnstableFindings.map(({ screen_id, finding }) => ({
+      screen_id,
+      finding_id: finding.finding_id,
+      signal: finding.signal,
+      tier: finding.tier,
+      elements: finding.elements,
+      ...(finding.bbox ? { bbox: finding.bbox } : {}),
+    })),
     t8_findings: t8Findings.map(({ screen_id, finding }) => ({
       screen_id,
       finding_id: finding.finding_id,

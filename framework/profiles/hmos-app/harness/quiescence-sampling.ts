@@ -11,11 +11,11 @@
 // 任一不稳 → 重试整组（默认 2 次）；仍不稳 → unstable + unstable_reason 记录。
 // dump₂ 为 T8 消费的最终 dump、shot₂ 为最终截图。
 //
-// 【flag 隔离（t4a）】本模块 observe-only：正式 testing 采集链**不调用**（保持单 shot
-// 单 dump 旧行为，t6b 守恒）；当前唯一消费者=t5 校准 CLI（含 ⑨双拍稳定性实测，为 t4b
-// 定参供数）。t4b（宿主实测数据回填后）才把本采样器接入 capture 正式链并启用
-// unstable 降档（独立 id visual_diff_layout_invariants_unstable，不进 candidate-blocking）。
-// 完成门槛（终审确认）：t5⑨ 真机数据未到手前不得启用。
+// 【消费方（t4b 已启用，2026-07-11 真机数据回填后）】①正式 testing 采集链——
+// visual-diff-capture acquireScreenArtifacts，`quiescenceSampling` **仅 pixel_1to1 装配**
+// （check-testing 与 layoutDumpFn 同守卫；低档保持单 shot 单 dump，t6b 守恒）；
+// ②t5 校准 CLI（⑨双拍稳定性实测）。unstable 降档走独立 id
+// visual_diff_layout_invariants_unstable（不进 candidate-blocking、免转录）。
 //
 // 已知残余局限（如实记录，不宣称原子采样）：A→B→A 状态往返、裁剪区外变化影响布局的
 // 边角情形——静稳是**启发式**。
@@ -181,6 +181,16 @@ export function sampleQuiescent(input: {
 
     const dump1 = loadDump(input.probeDumpAbs);
     const dump2 = loadDump(input.finalDumpAbs);
+    // review-fix（codex P1-6）：dump 执行成功但**不可解析**（损坏/schema 不符）是采集失败，
+    // 不是"时序不稳"——误归 unstable 会让坏 dump 走降档继续 candidate 路径。
+    if (!dump1 || !dump2) {
+      return failResult(
+        `dump 不可解析（损坏/schema 不符：${!dump1 ? 'dump₁' : ''}${!dump1 && !dump2 ? '、' : ''}${!dump2 ? 'dump₂' : ''}）`,
+        input,
+        attempt,
+        records,
+      );
+    }
     const layout1 = dump1 ? normalizedLayoutSignature(dump1) : null;
     const layout2 = dump2 ? normalizedLayoutSignature(dump2) : null;
     const approot1 = dump1 ? approotIdentity(dump1) : null;

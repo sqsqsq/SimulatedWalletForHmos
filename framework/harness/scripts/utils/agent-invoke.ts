@@ -243,11 +243,21 @@ function attachResolvedBinary(
 
 // Windows 铁律：prompt 不进 argv。claude 无 .exe 只有 claude.cmd → 必经 cmd.exe，
 // 命令行遇换行即截断（实测多行 prompt 只剩 2 字符），故 prompt 一律走 stdin（见 defaultHeadlessInvokePlan）。
-function claudeArgv(unattended: UnattendedContract): string[] {
+function claudeArgv(
+  unattended: UnattendedContract,
+  toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
+): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
     : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
   const argv = ['claude', '-p', '--allowedTools', tools.join(',')];
+  // t3a/f7a3d9c2：adapter 声明 structured_events → stdout 输出 NDJSON 事件流（含
+  // tool_use/Read 验读记录，t3b runner attestation 的证据源）。2026-07-11 宿主实采样本
+  // 确认事件形状；agent-output.log 仍为混合人读投影（三文件分流见 spawnHeadlessAsync），
+  // 断流哨兵已适配结构化信封（goal-headless-sentinel parseClaudeStreamJsonApiError）。
+  if (toolEventProvenance === 'structured_events') {
+    argv.push('--output-format', 'stream-json', '--verbose');
+  }
   if (unattended.approval_mode === 'never') {
     argv.push('--permission-mode', 'dontAsk');
   } else {
@@ -406,9 +416,10 @@ export function defaultHeadlessInvokePlan(
   adapterName: string,
   unattended: UnattendedContract,
   promptContent: string,
+  toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(unattended);
+    const argv = claudeArgv(unattended, toolEventProvenance);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
     return { ...plan, useStdin: true, stdin: promptContent };
   }
@@ -472,7 +483,8 @@ export function resolveHeadlessInvokePlan(
     return opencodeHeadlessPlan(vars, promptContent);
   }
   if (KNOWN_STRUCTURED_ADAPTERS.has(adapterName)) {
-    return defaultHeadlessInvokePlan(adapterName, unattended, promptContent);
+    // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）
+    return defaultHeadlessInvokePlan(adapterName, unattended, promptContent, capability.tool_event_provenance);
   }
   const custom = capability.external_runner?.headless_invoke?.trim();
   if (custom) {
