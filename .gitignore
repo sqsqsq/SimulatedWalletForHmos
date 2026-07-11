@@ -71,3 +71,6 @@ doc/features/*/ux-reference/_fidelity-cache/
 
 # device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)
 /doc/features/_adhoc/
+
+# Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
+/scratch/

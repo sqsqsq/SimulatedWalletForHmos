@@ -42,9 +42,18 @@ import {
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
+import {
+  appendVisualRound,
+  visualRoundsLedgerPath,
+  type VisualRoundEvaluation,
+} from './scripts/utils/visual-rounds-ledger';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
 import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
-import { resolveFidelityContextFromFeature } from './scripts/utils/fidelity-shared';
+import {
+  resolveFidelityContextFromFeature,
+  resolveEffectiveFidelityContext,
+  resolveOcrAvailableForRun,
+} from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
   featureFilePath,
@@ -76,6 +85,12 @@ import {
   type ReceiptValidation,
 } from './scripts/utils/phase-state';
 import {
+  runAdhocCorrection,
+  runCorrectionCheck,
+  runCorrectionInit,
+} from './scripts/utils/correction-commands';
+import { correctionStatePath } from './scripts/utils/correction-state';
+import {
   loadResolvedProfile,
   loadPhaseRuleWithOverlays,
   isPhaseDisabledByProfile,
@@ -87,6 +102,8 @@ import {
   listWorkflowPhases,
   type WorkflowSpec,
 } from './workflow-loader';
+import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
+import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import {
   dispatchLifecycleHooks,
   type HookDispatchPayload,
@@ -103,8 +120,8 @@ import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPat
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow'],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity'],
+  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -133,12 +150,21 @@ Harness — Spec/Harness 验证工具
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
-  --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）
+  --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）；一并清理未收口的 .current-correction.json（C5-full）
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
   -h, --help                显示帮助
+
+修正闭环（C5-min correction-routing；修正三问先分层再动手，重验≠重做）:
+  --correction-init         归属 + 三问分层 → 写 .current-correction.json（pending）
+                            必带 --correction-request "<原始请求>" 与三问答案
+                            --q-requirement y|n --q-contract y|n --q-code y|n；
+                            可选 --feature <name> 显式点名归属（缺省取活跃 state，均无 = no-feature）
+  --correction-check        对照 revalidate 清单核查证据全绿 → status: closed（stale/缺 state 拒绝）
+  --adhoc-correction        no-feature 载体：compile + lint + 架构规则 + catalog 反查
+                            touched modules；报告落 framework/harness/reports/_adhoc/<ts>/
 
 示例:
   cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature home-page
@@ -242,6 +268,41 @@ async function main(): Promise<void> {
     process.exit(exitCode);
   }
 
+  // 修正闭环命令（C5-min correction-routing）
+  if (args['correction-init']) {
+    const requestText = String(args['correction-request'] ?? '').trim();
+    if (!requestText) {
+      console.error('错误: --correction-init 必须携带 --correction-request "<原始修正请求>"（fingerprint 防换题复用）');
+      process.exit(1);
+    }
+    for (const k of ['q-requirement', 'q-contract', 'q-code'] as const) {
+      const v = String(args[k] ?? '').trim().toLowerCase();
+      if (v !== 'y' && v !== 'n') {
+        console.error(`错误: --${k} 必须显式给 y|n（修正三问不许缺答，见 AGENTS §4.0 修正三问）`);
+        process.exit(1);
+      }
+    }
+    const yn = (k: string): boolean => String(args[k]).trim().toLowerCase() === 'y';
+    process.exit(
+      runCorrectionInit(projectRoot, {
+        requestedFeature: (args.feature as string | undefined) ?? undefined,
+        answers: {
+          requirement_changed: yn('q-requirement'),
+          contract_changed: yn('q-contract'),
+          code_change_needed: yn('q-code'),
+        },
+        requestText,
+        frameworkRoot: resolvedFrameworkRoot,
+      }),
+    );
+  }
+  if (args['correction-check']) {
+    process.exit(runCorrectionCheck(projectRoot, harnessRoot, resolvedFrameworkRoot));
+  }
+  if (args['adhoc-correction']) {
+    process.exit(await runAdhocCorrection(projectRoot, harnessRoot, resolvedFrameworkRoot));
+  }
+
   // 参数校验
   const rawPhase = args.phase as Phase | undefined;
   let feature = args.feature as string | undefined;
@@ -289,6 +350,20 @@ async function main(): Promise<void> {
     console.error('错误: 必须指定 --feature 参数');
     printHelp();
     process.exit(1);
+  }
+
+  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
+  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
+  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
+    const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+    const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
+    if (!trackChain.idSet.has(phase)) {
+      console.error(
+        `错误: phase "${phase}" 不在 feature "${feature}"（track=${featureTrack}）的合法集。` +
+          `该 track 合法 feature phase: ${trackChain.featureOrdered.join(', ')}`,
+      );
+      process.exit(1);
+    }
   }
 
   console.log(`\n🔍 Harness 验证开始: phase=${phase}, feature=${feature}\n`);
@@ -392,14 +467,24 @@ async function main(): Promise<void> {
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
   const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
+  // E2：能力钳制——全局阶段（catalog/glossary/docs）不涉及 feature UI，固定 semantic_layout
+  // 不钳制；feature 阶段按 mmProbe.supported（视觉能力）+ profile OCR 就绪度钳制 desired→effective，
+  // 单点收口：全部 19 处 isPixel1to1/fidelityTarget 消费面只读 context.fidelityTarget（此处赋的
+  // 有效档位），零改动自动随能力降级（capture_completeness_external 等 pixel 分支天然降 WARN）。
   const fidelityCtx = phaseIsGlobal
     ? {
         fidelityTarget: 'semantic_layout' as const,
+        declaredFidelityTarget: 'semantic_layout' as const,
+        fidelityClamped: false,
+        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
         assetAcquisitionMode: 'approximate' as const,
         effectiveAssetAcquisitionMode: 'approximate' as const,
         fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
       }
-    : resolveFidelityContextFromFeature(projectRoot, feature);
+    : resolveEffectiveFidelityContext(resolveFidelityContextFromFeature(projectRoot, feature), {
+        hasVision: mmProbe.supported,
+        ocrAvailable: resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
+      });
   const context: CheckContext = {
     phase,
     feature,
@@ -416,6 +501,9 @@ async function main(): Promise<void> {
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
     fidelityTarget: fidelityCtx.fidelityTarget,
+    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
+    fidelityClamped: fidelityCtx.fidelityClamped,
+    fidelityClampReason: fidelityCtx.fidelityClampReason,
     assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
     effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
     fidelityDeferrals: fidelityCtx.fidelityDeferrals,
@@ -626,6 +714,39 @@ async function main(): Promise<void> {
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
 }
 
+/**
+ * t1（plan f7a3d9c2）：消费 check 的 visual_diff 结构化 payload——runner 侧追加轮次账本
+ * （check 只读判定、runner 写：账本与判定文件的红线切分），并生成 summary.visual_round
+ * 回执（goal-runner 写入 events.jsonl 做 integrity 对账）。
+ * disposition=duplicate：不追加，但**同样回传重放后的 decision**（rev5：agent 自跑首检
+ * fuse 后，外层 gate 必须仍能看到 no_progress_fuse）。
+ */
+function consumeVisualRoundPayload(
+  projectRoot: string,
+  report: ScriptReport,
+): HarnessRunSummary['visual_round'] | undefined {
+  for (const c of report.checks) {
+    const s = c.structured as { kind?: string; round?: VisualRoundEvaluation } | undefined;
+    if (!s || s.kind !== 'visual_diff' || !s.round) continue;
+    const round = s.round;
+    if (round.disposition === 'appended') {
+      try {
+        appendVisualRound(visualRoundsLedgerPath(projectRoot, report.feature), round.row);
+      } catch (e) {
+        console.warn(`   ⚠ [visual-rounds] 账本追加失败（不阻断本轮）：${(e as Error).message}`);
+      }
+    }
+    return {
+      loop_id: round.row.loop_id,
+      ...(round.row.attempt_id ? { attempt: round.row.attempt_id } : {}),
+      row_hash: round.row.row_hash,
+      disposition: round.disposition,
+      decision: round.decision,
+    };
+  }
+  return undefined;
+}
+
 function writeRunSummary(
   projectRoot: string,
   report: ScriptReport,
@@ -662,10 +783,17 @@ function writeRunSummary(
     }));
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
-  const closed = receiptValidation?.status === 'passed';
+  // C2：closure 来源按 track 分派——lite 的 receipt 恒 not_applicable，闭环判据改用
+  // 该 phase 自身脚本 verdict（如 exit 的 script-report PASS），不再被误判为"未闭环"。
+  const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, report.feature));
+  const closed =
+    resolvePhaseClosureSource(closureTrack, report.summary.verdict, receiptValidation?.status) !== 'open';
   // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
   // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
   const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
+  // t1（f7a3d9c2）：runner 侧追加视觉轮次账本 + 回执（在 summary 落盘前完成，保证
+  // summary.visual_round 与账本一致）。
+  const visualRound = consumeVisualRoundPayload(projectRoot, report);
   const summary: HarnessRunSummary = {
     schema_version: '1.0',
     phase: report.phase,
@@ -690,6 +818,7 @@ function writeRunSummary(
       : decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     receipt_status: receiptValidation?.status,
     closure_status: closed ? 'closed' : 'open',
+    ...(visualRound ? { visual_round: visualRound } : {}),
   };
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {
@@ -726,6 +855,14 @@ function printStableSummary(summary: HarnessRunSummary): void {
     console.log('blockers:');
     for (const b of summary.blockers) {
       console.log(`  - ${b.id}${b.classification ? ` (${b.classification})` : ''}`);
+    }
+  }
+  // codex P2：readiness_signals 此前只写 summary.json、从不打印——PASS 场景下的"值得单独提醒"
+  // 信号（如 fidelity_capability_clamped）用户永远看不到。通用打印，非仅本次改动的信号受益。
+  if (summary.readiness_signals.length > 0) {
+    console.log('readiness_signals:');
+    for (const s of summary.readiness_signals) {
+      console.log(`  - ${s.id} [${s.status}]: ${s.message}`);
     }
   }
   console.log('END_HARNESS_SUMMARY');
@@ -884,6 +1021,19 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
         message: terms.details,
       });
     }
+  }
+
+  // E2 P2（codex review）：钳制事实此前只落在 fidelity_target_declared 这个 PASS check 的
+  // details 里——summary.json 不收 PASS check，goal run 全绿时用户/runner 看不到降级发生过。
+  // readiness_signals 是本文件既有的"PASS 但值得单独提醒"通道，接进来即最小成本获得可见性。
+  const fidelityDeclared = report.checks.find(c => c.id === 'fidelity_target_declared');
+  if (fidelityDeclared?.status === 'PASS' && fidelityDeclared.details.includes('能力钳制')) {
+    signals.push({
+      id: 'fidelity_capability_clamped',
+      status: 'ready',
+      source_check: 'fidelity_target_declared',
+      message: fidelityDeclared.details,
+    });
   }
 
   if (report.phase === 'ut') {
@@ -1463,6 +1613,19 @@ function handleClearState(projectRoot: string): void {
     }
   } else {
     console.log(`⊘ ${rel} 不存在，无需清理`);
+  }
+  // C5-full：Stop hook 的 correction 联动（hard_hook 深度集成）没有独立逃生阀，
+  // --clear-state 是既有"明确放弃"出口——一并清理未收口的 correction state，
+  // 避免用户已放弃阶段却仍被残留的 pending correction 拦截 stop。
+  const correctionAbs = correctionStatePath(projectRoot);
+  const correctionRel = path.relative(projectRoot, correctionAbs).replace(/\\/g, '/');
+  if (fs.existsSync(correctionAbs)) {
+    try {
+      fs.unlinkSync(correctionAbs);
+      console.log(`✓ 已删除修正状态文件 ${correctionRel}`);
+    } catch (err) {
+      console.error(`✗ 删除 ${correctionRel} 失败: ${(err as Error).message}`);
+    }
   }
   console.log('');
   console.log('提示：');

@@ -25,7 +25,7 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn, loadSpecMarkdown } from './utils/fidelity-shared';
+import { fidelityRatchetFailOrWarn, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -83,11 +83,12 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
-import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { loadVisualDiffNavConfig, validateNavConfig } from '../../profiles/hmos-app/harness/visual-diff-nav';
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
   reconcileReportWithHylyreTrace,
@@ -1543,6 +1544,7 @@ function checkDeviceTestBuildGate(
     }
 
     if (!res.hapPath) {
+      const scannedDirs = res.scannedDirs ?? [];
       return [
         {
           id,
@@ -1551,12 +1553,30 @@ function checkDeviceTestBuildGate(
           severity: 'BLOCKER',
           status: 'FAIL',
           details: [
-            `hvigor 已通过但未在各模块 build/${res.resolvedProduct}/outputs/default/ 下找到合适的 *-signed.hap。`,
+            scannedDirs.length
+              ? `hvigor 已通过但未在以下已扫描的 outputs 目录中找到合适的 *-signed.hap：\n${scannedDirs.map((d) => `  - ${d}`).join('\n')}`
+              : 'hvigor 已通过但未扫描到任何 build/<segment>/outputs/<dir> 目录（请确认 build-profile.json5 modules[] 声明正确，或入口模块尚未产出任何构建产物）。',
             '请确认入口模块已产出主应用 HAP；可参考 reports/<feature>/testing/device-test-build.result.json。',
+            ...(hv.diagnostics?.length
+              ? ['', '── harness 诊断 ──', ...hv.diagnostics.map(d => `• ${d}`)]
+              : []),
           ].join('\n'),
         },
       ];
     }
+
+    const ambiguityLines =
+      (res.candidates?.length ?? 0) > 1
+        ? [
+            '',
+            `⚠ 候选 signed HAP 有 ${res.candidates!.length} 个，已按稳定优先级选择第一条：`,
+            ...res.candidates!.map((c) => `  - ${c.path}${c.path === res.hapPath ? '  ← 选中' : ''}`),
+          ]
+        : [];
+
+    const staleLines = res.staleSuspect
+      ? ['', `⚠ ${res.staleSuspectNote ?? 'signed 可能基于上一轮 unsigned'}（unsigned：${res.staleSuspectUnsignedPath ?? '(未知)'}）`]
+      : [];
 
     const reuseLine = res.reused
       ? `复用 HAP（跳过 hvigor）：${res.reuseReason ?? ''}；hapBuiltAt=${res.hapBuiltAt ?? '(未知)'}`
@@ -1573,6 +1593,8 @@ function checkDeviceTestBuildGate(
           `product=${res.resolvedProduct} buildMode=${res.resolvedBuildMode}`,
           `HAP: ${res.hapPath}`,
           reuseLine,
+          ...ambiguityLines,
+          ...staleLines,
         ].join('\n'),
       },
     ];
@@ -2148,6 +2170,19 @@ function checkDeviceTestRunGate(
               deviceSn: process.env.HARNESS_HDC_TARGET,
               logPath: run.logPath,
             }),
+            // t2（plan c6d8f2b4）：截图同时点 dump 布局树（layout-<screen_id>.json），T8 几何不变量消费。
+            // 轻量化守恒（rev8/D11）：仅 pixel_1to1 档采集——semantic_layout/reference_only 不付
+            // 每屏 dump-ui 设备调用成本（T8 对低档本就只 WARN 观察，重量跟着保真承诺走）。
+            ...(isPixel1to1(ctx)
+              ? {
+                  layoutDumpFn: buildHylyreLayoutDumpFn({
+                    pythonPath: ready.pythonPath,
+                    hypiumWorkDir,
+                    deviceSn: process.env.HARNESS_HDC_TARGET,
+                    logPath: run.logPath,
+                  }),
+                }
+              : {}),
             ...(navConfig
               ? {
                   navConfig,
@@ -2567,6 +2602,17 @@ const checker: PhaseChecker = {
         'test-report.md',
       ]),
     ];
+
+    results.push(
+      ...safeRun(
+        () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'testing', {
+          phaseRule: ctx.phaseRule,
+          profileName: ctx.resolvedProfile.name,
+          frameworkRoot: ctx.frameworkRoot,
+        }),
+        'context_exploration_gate',
+      ),
+    );
 
     const deviceTestHapHolder: DeviceTestPipelineHolder = {
       hapPath: null,

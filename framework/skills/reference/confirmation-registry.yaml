@@ -128,6 +128,21 @@ entries:
         label: "选项 D — STOP，手动编辑 config 后重跑"
         portable: "4=manual_edit_stop"
 
+  - id: init.project_scale
+    skill: "framework-init"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "S2.1 项目元数据"
+    portable_menu: "1=small 2=standard"
+    notes: "C4 exploration-scale：catalog 模块数 ≤3 时建议 small（术语消歧降为一次性确认、module-graph 默认禁用）；红线（diff_within_scope/Scope 声明）不受影响。"
+    options:
+      - value: small
+        label: "small — 小工程裁剪（模块数 ≤3 或估算代码量小）"
+        portable: "1=small"
+      - value: standard
+        label: "standard — 保持现状（缺省）"
+        portable: "2=standard"
+
   - id: init.intra_layer_deps
     skill: "framework-init"
     class: gate
@@ -329,6 +344,27 @@ entries:
         label: "继续改 spec — 本轮不冻结"
         portable: "2=继续改 spec"
 
+  # --- change-lite（lite 轨） ---
+  - id: feature.track
+    skill: "change-lite"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "S1 判档 / 中途升档"
+    portable_menu: "1=接受建议档 2=升 full 3=保持 lite"
+    notes: "agent 依 change-rules.yaml track_scoring 提议档位；一票升 full 项（pixel_1to1 / 跨模块 / goal 模式）命中时不得提议 lite。中途升档复用本 gate：确认后 feature.yaml history append，change.md 作 spec/plan 种子。"
+    options:
+      - value: accept_suggested
+        label: "接受建议档 — 按评分建议的 track 进入对应链"
+        portable: "1=接受建议档"
+        side_effect: "写 feature.yaml track/score_snapshot/confirmed_by"
+      - value: upgrade_full
+        label: "升 full — 走 spec→plan→coding→review→ut→testing 全链"
+        portable: "2=升 full"
+        side_effect: "feature.yaml track: full；升档时 history append + change.md 作种子"
+      - value: keep_lite
+        label: "保持 lite — 走 change→coding→exit 单文档链"
+        portable: "3=保持 lite"
+
   # --- plan ---
   - id: plan.scope_expansion
     skill: "plan"
@@ -482,6 +518,37 @@ entries:
       - value: other
         label: "其它 — 我在对话中说明意图"
         portable: "3=其它（说明）"
+
+  - id: correction.layer
+    skill: "_cross_phase"
+    class: gate
+    ssot_anchor: "user-confirmation-ux.md §3.1"
+    skill_step: "任一中途 NL 修正请求经修正三问分层后"
+    portable_menu: "1=同意按声明层实施 2=改层"
+    notes: "修正三问分层（需求变→spec / 契约变→plan / 纯实现→coding / 纯验证→ut·testing）后停等确认；禁止未分层直接动产物。strict 必确认，headless 低置信 halt-confirm（C5-min）。balanced 档窄范围高置信免确认（C5-full）：root_layer=纯验证 且 touched_layers 不含 coding 时，`--correction-init` 判定 `auto_confirm_eligible: true` 并落盘 .current-correction.json，agent 可直接实施、无需停等本 gate；其余一切组合（含改需求/改契约/改代码、或即便声明纯验证但同轮触及 coding）仍须走 1/2 确认。重验≠重做：只改根因层 SSOT，级联重跑下游脚本门禁。"
+    options:
+      - value: approve
+        label: "同意 — 按声明的 root_layer/touched_layers 实施并级联重验下游"
+        portable: "1=同意按声明层实施"
+        side_effect: "写 .current-correction.json（status: pending）后实施"
+      - value: relayer
+        label: "改层 — 用户指定正确落点层后重新分类"
+        portable: "2=改层"
+
+  - id: vision.blind_tier
+    skill: "_cross_phase"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "交互式视觉能力自测判卷为 none/ocr_capable 后（UI 相关阶段）"
+    portable_menu: "1=接受降级继续 2=拒绝（换模型/override）"
+    notes: "交互式视觉能力自测（I1 plan b7e42d19）判定当前模型无视觉（none）或仅 OCR（ocr_capable）时，一次性告知用户判定结果 + 本 feature 将生效的 effective fidelity 档位 + OCR 辅助可用性，enum 确认一次。默认=接受按 semantic_layout/reference_only 降级档继续；拒绝→指引设 vision.image_input_override 或换有视觉能力的模型后重测。留痕沿 headless-assumptions/user-confirmation-ux 惯例，不新造确认基建。仅交互式（headless 走 §9 保守默认，不问人）。"
+    options:
+      - value: accept
+        label: "接受降级 — 按钳制后的 fidelity 档位（semantic_layout/reference_only）继续，OCR 辅助按判定"
+        portable: "1=接受降级继续"
+      - value: reject
+        label: "拒绝 — 换有视觉能力的模型或设 vision.image_input_override 后重测，不在盲档下继续"
+        portable: "2=拒绝"
 
   # --- code-review review ---
   - id: review.module_name

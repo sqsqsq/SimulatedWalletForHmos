@@ -424,6 +424,12 @@ export interface CheckResult {
   blocking_class?: string;
   /** spec Visual Handoff：各 authoritative_ref 路径解析结果（merged-report 可读） */
   visual_resolution_rows?: VisualHandoffResolutionRow[];
+  /**
+   * t0（plan f7a3d9c2）：check → runner 的进程内结构化 payload（如 visual_diff 的指纹/
+   * 轮次账本评估）。**不裸进 summary.json**（其 blocker schema additionalProperties:
+   * false）——runner 消费后经账本侧车 + 显式 schema 字段（summary.visual_round）落盘。
+   */
+  structured?: unknown;
 }
 
 /** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
@@ -500,6 +506,24 @@ export interface HarnessRunSummary {
     kind?: string;
   };
   soft_advisories?: SoftAdvisory[];
+  /**
+   * t1（plan f7a3d9c2）：视觉轮次账本回执——runner 追加账本后回传（goal-runner 写入
+   * events.jsonl 做 integrity 对账）。disposition=duplicate 时同样带重放后的 decision
+   * （rev5：外层 gate 在 agent 自跑首检 fuse 后必须仍能看到）。显式 schema 字段，
+   * 与 schemas/summary.schema.json 同步（不裸塞 additionalProperties:false 顶层）。
+   */
+  visual_round?: {
+    loop_id: string;
+    attempt?: string;
+    row_hash?: string;
+    disposition: 'appended' | 'duplicate';
+    decision?: {
+      fused: boolean;
+      failure_kind?: string;
+      attribution?: string;
+      residual_fingerprints?: string[];
+    };
+  };
 }
 
 /** script-report.json checks 计数摘要 */
@@ -668,8 +692,18 @@ export interface CheckContext {
   visualParityEnforcement?: 'strict' | 'warn' | 'reachable' | 'off';
   /** CLI `--skip-visual-parity`：跳过 visual parity 脚本检查 */
   skipVisualParity?: boolean;
-  /** 来自 spec Visual Handoff yaml 块；默认 semantic_layout */
-  fidelityTarget?: 'pixel_1to1' | 'semantic_layout';
+  /** 来自 spec Visual Handoff yaml 块，经能力钳制后的**有效**档位；默认 semantic_layout */
+  fidelityTarget?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
+  /**
+   * E2（多模态降级阶梯 plan d4a8f3c6）：钳制前的**原始声明**档位（未钳制，用户/spec 意图）；
+   * 未钳制时与 fidelityTarget 相同。供 ratchet 回升 + fidelity_target_intent_nudge 判"是否
+   * 合法钳制"（能力钳制的合法降级 vs agent 擅自降级）区分用。
+   */
+  declaredFidelityTarget?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
+  /** fidelityTarget 是否因能力钳制而偏离 declaredFidelityTarget */
+  fidelityClamped?: boolean;
+  /** 钳制原因（fidelityClamped=true 时有值） */
+  fidelityClampReason?: 'no_vision_ocr_available' | 'no_vision_no_ocr';
   /** 来自 spec Visual Handoff yaml 块；默认 approximate */
   assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
   /** pixel_1to1 联动后的有效素材模式 */

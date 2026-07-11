@@ -8,11 +8,34 @@ import * as path from 'path';
 import {
   LOCAL_CANONICAL_TOP_KEYS,
   LOCAL_LEGACY_TOP_KEY,
+  LOCAL_VISION_KEYS,
+  LOCAL_VISION_CANARY_KEYS,
 } from './config-field-ownership';
 import type { ToolchainConfig } from '../../config';
 
 export const LOCAL_CONFIG_FILENAME = 'framework.local.json';
 export const LOCAL_SCHEMA_VERSION = '1.0';
+
+/** E1：image_input_override 合法值——与 multimodal-probe.ts 的 ImageInputMode 同型
+ * （framework-local-config.ts 是纯 config 层，不反向 import multimodal-probe，避免循环）。 */
+const LOCAL_IMAGE_INPUT_VALUES = new Set(['none', 'tool_read', 'native_attach']);
+const LOCAL_CANARY_VERDICT_VALUES = new Set(['tool_read', 'ocr_capable', 'none']);
+/** I1（交互式金丝雀 plan b7e42d19）：探测来源——goal preflight 写 'goal'，交互式判卷写 'interactive'。 */
+const LOCAL_CANARY_PROBED_VIA_VALUES = new Set(['goal', 'interactive']);
+
+export interface FrameworkLocalConfigVisionCanary {
+  adapter: string;
+  verdict: 'tool_read' | 'ocr_capable' | 'none';
+  probed_at: string;
+  reason?: string;
+  /** I1：探测来源；缺省视作 'goal'（向后兼容 E1 已写的无该字段缓存）。 */
+  probed_via?: 'goal' | 'interactive';
+}
+
+export interface FrameworkLocalConfigVision {
+  image_input_override?: 'none' | 'tool_read' | 'native_attach';
+  canary?: FrameworkLocalConfigVisionCanary;
+}
 
 export interface FrameworkLocalConfig {
   schema_version: string;
@@ -23,6 +46,7 @@ export interface FrameworkLocalConfig {
       hvigorBin?: string;
     };
   };
+  vision?: FrameworkLocalConfigVision;
 }
 
 export type AgentAdapterSource = 'local' | 'project_legacy' | 'fallback';
@@ -97,6 +121,75 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
       }
     }
   }
+
+  // E1（多模态降级阶梯 plan d4a8f3c6）：vision.image_input_override / vision.canary。
+  const vision = raw.vision;
+  if (vision !== undefined) {
+    if (!vision || typeof vision !== 'object' || Array.isArray(vision)) {
+      throw new Error('[framework-local-config] vision 必须是对象');
+    }
+    const visionObj = vision as Record<string, unknown>;
+    rejectUnknownObjectKeys(visionObj, LOCAL_VISION_KEYS, 'vision');
+    const outVision: FrameworkLocalConfigVision = {};
+
+    const override = visionObj.image_input_override;
+    if (override !== undefined) {
+      if (typeof override !== 'string' || !LOCAL_IMAGE_INPUT_VALUES.has(override)) {
+        throw new Error(
+          `[framework-local-config] vision.image_input_override 必须是 none|tool_read|native_attach，收到 ${String(override)}`,
+        );
+      }
+      outVision.image_input_override = override as FrameworkLocalConfigVision['image_input_override'];
+    }
+
+    const canary = visionObj.canary;
+    if (canary !== undefined) {
+      if (!canary || typeof canary !== 'object' || Array.isArray(canary)) {
+        throw new Error('[framework-local-config] vision.canary 必须是对象');
+      }
+      const canaryObj = canary as Record<string, unknown>;
+      rejectUnknownObjectKeys(canaryObj, LOCAL_VISION_CANARY_KEYS, 'vision.canary');
+      const adapter = canaryObj.adapter;
+      const verdict = canaryObj.verdict;
+      const probedAt = canaryObj.probed_at;
+      if (typeof adapter !== 'string' || !adapter.trim()) {
+        throw new Error('[framework-local-config] vision.canary.adapter 必须是非空字符串');
+      }
+      if (typeof verdict !== 'string' || !LOCAL_CANARY_VERDICT_VALUES.has(verdict)) {
+        throw new Error(
+          `[framework-local-config] vision.canary.verdict 必须是 tool_read|ocr_capable|none，收到 ${String(verdict)}`,
+        );
+      }
+      if (typeof probedAt !== 'string' || !probedAt.trim()) {
+        throw new Error('[framework-local-config] vision.canary.probed_at 必须是非空字符串（ISO 时间戳）');
+      }
+      const probedVia = canaryObj.probed_via;
+      if (
+        probedVia !== undefined &&
+        (typeof probedVia !== 'string' || !LOCAL_CANARY_PROBED_VIA_VALUES.has(probedVia))
+      ) {
+        throw new Error(
+          `[framework-local-config] vision.canary.probed_via 必须是 goal|interactive，收到 ${String(probedVia)}`,
+        );
+      }
+      outVision.canary = {
+        adapter: adapter.trim(),
+        verdict: verdict as FrameworkLocalConfigVisionCanary['verdict'],
+        probed_at: probedAt.trim(),
+        ...(typeof canaryObj.reason === 'string' && canaryObj.reason.trim()
+          ? { reason: canaryObj.reason.trim() }
+          : {}),
+        ...(typeof probedVia === 'string' && LOCAL_CANARY_PROBED_VIA_VALUES.has(probedVia)
+          ? { probed_via: probedVia as FrameworkLocalConfigVisionCanary['probed_via'] }
+          : {}),
+      };
+    }
+
+    if (outVision.image_input_override || outVision.canary) {
+      out.vision = outVision;
+    }
+  }
+
   return out;
 }
 

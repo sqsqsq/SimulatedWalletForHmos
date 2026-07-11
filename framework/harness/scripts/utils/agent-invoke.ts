@@ -17,6 +17,7 @@ import {
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
 import { sanitizeSpawnEnv } from './process-integrity';
+import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -28,7 +29,13 @@ export interface InvokeTemplateVars {
   PHASE: string;
 }
 
-/** Tokenize templates with this sentinel, then swap for real prompt as a single argv element. */
+/**
+ * Tokenize templates with this sentinel, then swap for real prompt as a single argv element.
+ * Argv-inline path is for CUSTOM external adapters only (planFromTemplate). Known structured
+ * adapters (claude/codex/cursor) deliver the prompt via stdin instead — a multi-line prompt as an
+ * argv element is truncated at the first newline by cmd.exe on Windows .cmd shims. A custom
+ * headless_invoke that embeds {{PROMPT}} and runs through a .cmd on Windows can still hit this.
+ */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
 const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codex', 'cursor', 'chrys', 'opencode']);
@@ -193,6 +200,18 @@ export function normalizeHeadlessTemplate(template: string): string {
     .replace(/"\$\(cat\s+[^"]+\)"/g, '{{PROMPT}}');
 }
 
+/**
+ * t3a（f7a3d9c2）：结构化事件/分流日志路径——与 agent-output.log 同目录。
+ * attestation（t3b）绑定 agent-events.jsonl，不绑混合人读日志。
+ */
+export function agentEventsLogPath(outputLogPath: string): string {
+  return path.join(path.dirname(outputLogPath), 'agent-events.jsonl');
+}
+
+export function agentStderrLogPath(outputLogPath: string): string {
+  return path.join(path.dirname(outputLogPath), 'agent-stderr.log');
+}
+
 export interface HeadlessInvokePlan {
   argv: string[];
   /** Pass prompt via stdin (generic pipe adapters only). */
@@ -222,11 +241,13 @@ function attachResolvedBinary(
   };
 }
 
-function claudeArgv(prompt: string, unattended: UnattendedContract): string[] {
+// Windows 铁律：prompt 不进 argv。claude 无 .exe 只有 claude.cmd → 必经 cmd.exe，
+// 命令行遇换行即截断（实测多行 prompt 只剩 2 字符），故 prompt 一律走 stdin（见 defaultHeadlessInvokePlan）。
+function claudeArgv(unattended: UnattendedContract): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
     : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
-  const argv = ['claude', '-p', prompt, '--allowedTools', tools.join(',')];
+  const argv = ['claude', '-p', '--allowedTools', tools.join(',')];
   if (unattended.approval_mode === 'never') {
     argv.push('--permission-mode', 'dontAsk');
   } else {
@@ -235,7 +256,7 @@ function claudeArgv(prompt: string, unattended: UnattendedContract): string[] {
   return argv;
 }
 
-function codexArgv(prompt: string, unattended: UnattendedContract): string[] {
+function codexArgv(unattended: UnattendedContract): string[] {
   const argv = ['codex', 'exec'];
   argv.push(
     '--sandbox',
@@ -245,12 +266,13 @@ function codexArgv(prompt: string, unattended: UnattendedContract): string[] {
     '--ask-for-approval',
     unattended.approval_mode === 'never' ? 'never' : 'on-request',
   );
-  argv.push(prompt);
+  // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
 
 /**
- * Cursor headless — positional prompt per CLI help; -p includes write/shell.
+ * Cursor headless — prompt via stdin (NOT argv: cursor-agent is a Windows .cmd shim,
+ * argv prompt gets truncated at the first newline by cmd.exe). -p includes write/shell.
  * approval_mode=never → --force --trust (unattended workspace trust).
  */
 export function cursorHeadlessPlan(
@@ -263,10 +285,11 @@ export function cursorHeadlessPlan(
   if (unattended.approval_mode === 'never') {
     argv.push('--force', '--trust');
   }
-  argv.push(prompt);
   const base = path.basename(binary);
   return {
     argv,
+    useStdin: true,
+    stdin: prompt,
     resolvedBinary: resolved,
     useCrossSpawn: shouldUseCrossSpawn(resolved),
     label: `${base} -p …`,
@@ -385,12 +408,14 @@ export function defaultHeadlessInvokePlan(
   promptContent: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(promptContent, unattended);
-    return attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 3).join(' ') + ' …');
+    const argv = claudeArgv(unattended);
+    const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
+    return { ...plan, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
-    const argv = codexArgv(promptContent, unattended);
-    return attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, argv.slice(0, 2).join(' ') + ' …');
+    const argv = codexArgv(unattended);
+    const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
+    return { ...plan, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
@@ -570,6 +595,8 @@ export interface AgentInvokeResult {
   kill_attempted?: boolean;
   kill_exit_code?: number | null;
   kill_error?: string | null;
+  /** C-ab-eval：按 adapter 声明采集的用量（采集失败/none → confidence: proxy，token 字段 null） */
+  usage?: AgentInvokeUsage;
 }
 
 export interface AgentInvokeOptions {
@@ -577,6 +604,20 @@ export interface AgentInvokeOptions {
   timeoutMs?: number;
   silentWatchdogMs?: number;
   outputLogPath?: string;
+  /** adapter goal_capability.usage_capture 声明（缺省 none）；结果回填 AgentInvokeResult.usage */
+  usageCapture?: UsageCaptureMethod;
+  /**
+   * t1（f7a3d9c2）：注入给 agent 子进程的额外 env（MAISON_GOAL_RUN_ID/MAISON_GOAL_ATTEMPT
+   * ——agent 会话内自跑 harness 与外层 gate 共用同一轮次身份）。
+   */
+  extraEnv?: Record<string, string>;
+  /**
+   * t3a（f7a3d9c2）：adapter 声明 structured_events 时启用三文件分流——
+   * agent-events.jsonl（仅 stdout，NDJSON 纯净，attestation 绑定对象）+
+   * agent-stderr.log（stderr 分流）+ agent-output.log（人读混合投影，既有消费者不动）。
+   * stdout/stderr 混写一个流会让 stderr 插行破坏 NDJSON（codex 实锤）。
+   */
+  toolEventCapture?: 'none' | 'structured_events' | 'session_transcript';
   /** Called when child spawns — register tree-kill for signal handlers. */
   onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
   onChildExit?: () => void;
@@ -585,6 +626,7 @@ export interface AgentInvokeOptions {
 function spawnHeadlessChild(
   plan: HeadlessInvokePlan,
   cwd: string,
+  extraEnv?: Record<string, string>,
 ): ChildProcess {
   const isWin = process.platform === 'win32';
   const stdio: ['pipe' | 'ignore', 'pipe', 'pipe'] = plan.useStdin
@@ -594,7 +636,7 @@ function spawnHeadlessChild(
   const opts = {
     cwd,
     // P0-7①：agent 子进程同样剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
-    env: { ...sanitizeSpawnEnv(process.env).env, [MAISON_GOAL_HEADLESS_ENV]: '1' },
+    env: { ...sanitizeSpawnEnv(process.env).env, [MAISON_GOAL_HEADLESS_ENV]: '1', ...(extraEnv ?? {}) },
     stdio,
     detached: !isWin,
     shell: false as const,
@@ -612,7 +654,7 @@ async function spawnHeadlessAsync(
   opts: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
   const started = Date.now();
-  const child = spawnHeadlessChild(plan, cwd);
+  const child = spawnHeadlessChild(plan, cwd, opts.extraEnv);
   const pid = child.pid ?? 0;
 
   let stdout = '';
@@ -648,6 +690,17 @@ async function spawnHeadlessAsync(
     ? fs.createWriteStream(opts.outputLogPath, { flags: 'w', encoding: 'utf-8' })
     : null;
 
+  // t3a（f7a3d9c2）：structured_events 三文件分流——events 文件只收 stdout（NDJSON 纯净，
+  // attestation 绑定对象）、stderr 单独分流；agent-output.log 保持混合人读投影（哨兵/
+  // 心跳/no-output 等既有消费者行为不变）。
+  const splitStreams =
+    opts.toolEventCapture === 'structured_events' && opts.outputLogPath
+      ? {
+          events: fs.createWriteStream(agentEventsLogPath(opts.outputLogPath), { flags: 'w', encoding: 'utf-8' }),
+          stderr: fs.createWriteStream(agentStderrLogPath(opts.outputLogPath), { flags: 'w', encoding: 'utf-8' }),
+        }
+      : null;
+
   const bumpActivity = (chunk: string): void => {
     lastActivity = Date.now();
     if (outputStream) outputStream.write(chunk);
@@ -656,11 +709,13 @@ async function spawnHeadlessAsync(
   child.stdout?.on('data', (buf: Buffer) => {
     const s = buf.toString();
     appendCaptured('stdout', s);
+    if (splitStreams) splitStreams.events.write(s);
     bumpActivity(s);
   });
   child.stderr?.on('data', (buf: Buffer) => {
     const s = buf.toString();
     appendCaptured('stderr', s);
+    if (splitStreams) splitStreams.stderr.write(s);
     bumpActivity(s);
   });
 
@@ -673,6 +728,12 @@ async function spawnHeadlessAsync(
   let killTriggered = false;
 
   const settleWaiter = createChildSettleWaiter(child, { outputStream });
+  if (splitStreams) {
+    child.on('close', () => {
+      splitStreams.events.end();
+      splitStreams.stderr.end();
+    });
+  }
 
   const killTree = (reason: 'timeout' | 'silent' | 'signal'): Promise<void> => {
     if (killTriggered && killInFlight) return killInFlight;
@@ -754,6 +815,8 @@ async function spawnHeadlessAsync(
     kill_attempted: killResult.kill_attempted,
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
+    // usage 是旁路事实：按声明采集，失败降 proxy，不影响主流程
+    usage: deriveInvokeUsage(opts.usageCapture, stdout, stderr),
   };
 }
 
