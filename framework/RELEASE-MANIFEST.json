@@ -383,10 +383,6 @@
       "sha256": "52d128fe67e28a094e5432e6b960a517dfcf0408326fd081a77ddd9600ca43db"
     },
     {
-      "path": "framework/harness/state/.current-correction.json",
-      "sha256": "7e4edb6c704a4b36834adfc2ce47b159e97c9c56968ff195b3ea27e800a5d262"
-    },
-    {
       "path": "harness/README.md",
       "sha256": "a91163b29742c60155fea733c8e3cba9f860c3d5e49c982f294e8ba420b2126a"
     },
@@ -424,7 +420,7 @@
     },
     {
       "path": "harness/config.ts",
-      "sha256": "e35915333af53a75ada4d9efb1ff8bc8c0d22d876329ed508d677ab74b271835"
+      "sha256": "2d8c715467413a721c03f49032dcac91be7c70d41b72d8f9fa9c21bea533aace"
     },
     {
       "path": "harness/extension-loader.ts",
