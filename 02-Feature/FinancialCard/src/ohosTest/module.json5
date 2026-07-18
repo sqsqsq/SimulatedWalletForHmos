@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "financialcard_test",
+    "type": "feature",
+    "deviceTypes": [
+      "phone"
+    ],
+    "deliveryWithInstall": false
+  }
+}

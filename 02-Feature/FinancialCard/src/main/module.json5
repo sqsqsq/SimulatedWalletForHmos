@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "FinancialCard",
+    "type": "har",
+    "description": "$string:module_desc",
+    "deviceTypes": [
+      "phone"
+    ]
+  }
+}

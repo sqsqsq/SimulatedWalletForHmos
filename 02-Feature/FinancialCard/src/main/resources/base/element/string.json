@@ -1,0 +1,784 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "银行卡开卡模块"
+    },
+    {
+      "name": "add_bank_card_title",
+      "value": "添加银行卡"
+    },
+    {
+      "name": "add_bank_subtitle_main",
+      "value": "免输卡号添卡"
+    },
+    {
+      "name": "add_bank_subtitle_count",
+      "value": "支持20家银行"
+    },
+    {
+      "name": "more_banks",
+      "value": "更多"
+    },
+    {
+      "name": "view_all_banks",
+      "value": "查看全部银行"
+    },
+    {
+      "name": "all_banks_title",
+      "value": "全部银行"
+    },
+    {
+      "name": "search_bank_placeholder",
+      "value": "搜索银行"
+    },
+    {
+      "name": "select_card_type_title",
+      "value": "选择卡类型"
+    },
+    {
+      "name": "debit_card",
+      "value": "储蓄卡"
+    },
+    {
+      "name": "credit_card",
+      "value": "信用卡"
+    },
+    {
+      "name": "card_type_hint",
+      "value": "请选择要添加的银行卡类型"
+    },
+    {
+      "name": "agreement_text",
+      "value": "添加银行卡即表示您同意相关服务协议"
+    },
+    {
+      "name": "agree_and_continue",
+      "value": "同意并继续"
+    },
+    {
+      "name": "select_card_hint",
+      "value": "请选择要添加的银行卡"
+    },
+    {
+      "name": "agreement_checkbox",
+      "value": "我已阅读并同意相关协议"
+    },
+    {
+      "name": "next_step",
+      "value": "下一步"
+    },
+    {
+      "name": "sms_verify_title",
+      "value": "短信验证"
+    },
+    {
+      "name": "sms_verify_hint",
+      "value": "验证码已发送至"
+    },
+    {
+      "name": "sms_resend",
+      "value": "重新发送"
+    },
+    {
+      "name": "sms_send",
+      "value": "发送验证码"
+    },
+    {
+      "name": "result_success_title",
+      "value": "添卡成功"
+    },
+    {
+      "name": "result_success_subtitle",
+      "value": "可用于实体店二维码支付和网上商城支付"
+    },
+    {
+      "name": "result_fail_title",
+      "value": "添卡失败"
+    },
+    {
+      "name": "result_fail_subtitle",
+      "value": "请稍后重试"
+    },
+    {
+      "name": "done",
+      "value": "完成"
+    },
+    {
+      "name": "bank_card_detail_title",
+      "value": "银行卡"
+    },
+    {
+      "name": "transaction_section_title",
+      "value": "交易记录"
+    },
+    {
+      "name": "no_transactions",
+      "value": "无交易记录"
+    },
+    {
+      "name": "payment_service_title",
+      "value": "此卡支付服务"
+    },
+    {
+      "name": "huawei_pay",
+      "value": "华为支付"
+    },
+    {
+      "name": "union_pay",
+      "value": "银联手机闪付"
+    },
+    {
+      "name": "bank_card_section_title",
+      "value": "银行卡"
+    },
+    {
+      "name": "view_all_cards",
+      "value": "查看全部"
+    },
+    {
+      "name": "bank_card_list_title",
+      "value": "银行卡"
+    },
+    {
+      "name": "empty_cards_toast",
+      "value": "当前无卡"
+    },
+    {
+      "name": "not_supported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "function_transfer",
+      "value": "转账"
+    },
+    {
+      "name": "function_repay",
+      "value": "还款"
+    },
+    {
+      "name": "function_bill",
+      "value": "账单"
+    },
+    {
+      "name": "function_more",
+      "value": "更多"
+    },
+    {
+      "name": "bank_promo_tag",
+      "value": "热门"
+    },
+    {
+      "name": "ui_de474150a6",
+      "value": "0ER记ee"
+    },
+    {
+      "name": "ui_202cb962ac",
+      "value": "123"
+    },
+    {
+      "name": "ui_a7a3de526b",
+      "value": "185****3841的验证码"
+    },
+    {
+      "name": "ui_3e34a47d8b",
+      "value": "AAS订志"
+    },
+    {
+      "name": "ui_a9dae5a1f9",
+      "value": "ANNS全"
+    },
+    {
+      "name": "ui_ffc9672225",
+      "value": "F乙"
+    },
+    {
+      "name": "ui_f6bf764704",
+      "value": "kkkk2209"
+    },
+    {
+      "name": "ui_3673eb88b0",
+      "value": "上思中信银行"
+    },
+    {
+      "name": "ui_7258d512a2",
+      "value": "下袜世日"
+    },
+    {
+      "name": "ui_19801a4bf8",
+      "value": "东莞农商银行"
+    },
+    {
+      "name": "ui_02fae18d66",
+      "value": "中信和银行"
+    },
+    {
+      "name": "ui_d777a959d1",
+      "value": "中国银行"
+    },
+    {
+      "name": "ui_8235fdc877",
+      "value": "为了您的银行卡开通华为支付和银联手机闪付服务需要您授权银联提供实名"
+    },
+    {
+      "name": "ui_f7b69aa066",
+      "value": "为确认是您本人操作请输入发送至手机"
+    },
+    {
+      "name": "ui_8cc1d2de45",
+      "value": "久加华为支付银联手机闪付"
+    },
+    {
+      "name": "ui_e12e715140",
+      "value": "了储蓄卡"
+    },
+    {
+      "name": "ui_c899d31000",
+      "value": "二维码支付"
+    },
+    {
+      "name": "ui_5b58b08a00",
+      "value": "二维码支付|2026年3月12日12:02:00"
+    },
+    {
+      "name": "ui_4338ee6632",
+      "value": "二维码支付|2026年3月12日17:58:44"
+    },
+    {
+      "name": "ui_f3bfe4d673",
+      "value": "二维码支付|2026年3月13日18:22:31"
+    },
+    {
+      "name": "ui_051fa2bc11",
+      "value": "二维码支付支已绑定"
+    },
+    {
+      "name": "ui_9b64d7dfe0",
+      "value": "二让"
+    },
+    {
+      "name": "ui_b78525bc3a",
+      "value": "于全和帮华为支付人银联手机闪付"
+    },
+    {
+      "name": "ui_2bd3b2ff03",
+      "value": "交易记录更多"
+    },
+    {
+      "name": "ui_3d7182bde7",
+      "value": "交通卡"
+    },
+    {
+      "name": "ui_813a23d568",
+      "value": "交通银行"
+    },
+    {
+      "name": "ui_fefa3e6683",
+      "value": "京纪行"
+    },
+    {
+      "name": "ui_f692d2aee6",
+      "value": "京银行"
+    },
+    {
+      "name": "ui_c1cd0bdbeb",
+      "value": "人东营银行"
+    },
+    {
+      "name": "ui_1e441df287",
+      "value": "人仑豆呈"
+    },
+    {
+      "name": "ui_cf873a7509",
+      "value": "人加华为支付银联手机闪付"
+    },
+    {
+      "name": "ui_30b78804b7",
+      "value": "人南京银行"
+    },
+    {
+      "name": "ui_52b67e38f1",
+      "value": "人多北京农商银行"
+    },
+    {
+      "name": "ui_595e514a60",
+      "value": "人多广东省农村信用社"
+    },
+    {
+      "name": "ui_8210130c17",
+      "value": "人建设银行"
+    },
+    {
+      "name": "ui_9d7c764c7e",
+      "value": "人线上支付"
+    },
+    {
+      "name": "ui_ffc90f3209",
+      "value": "人绿城通管理"
+    },
+    {
+      "name": "ui_df5789a59e",
+      "value": "人间放银行"
+    },
+    {
+      "name": "ui_7041f9ff73",
+      "value": "从招商银行"
+    },
+    {
+      "name": "ui_d216405e9f",
+      "value": "从访宁波银行"
+    },
+    {
+      "name": "ui_474cd02d15",
+      "value": "付款"
+    },
+    {
+      "name": "ui_4db7c58b69",
+      "value": "付款设为默认卡卡片信息解除绑定"
+    },
+    {
+      "name": "ui_5bea86d0be",
+      "value": "代发绿行"
+    },
+    {
+      "name": "ui_2aef375d91",
+      "value": "代广发归行"
+    },
+    {
+      "name": "ui_e05e6f3400",
+      "value": "余额"
+    },
+    {
+      "name": "ui_6912b102b4",
+      "value": "余额0.00"
+    },
+    {
+      "name": "ui_6d8db61800",
+      "value": "余额1.60"
+    },
+    {
+      "name": "ui_ecf716fe16",
+      "value": "侨同意并阅读云内付一键绑卡用户授权协议招商银行信"
+    },
+    {
+      "name": "ui_292b7236d9",
+      "value": "信息给招商银行"
+    },
+    {
+      "name": "ui_3704a0aafc",
+      "value": "信用卡(****2269)"
+    },
+    {
+      "name": "ui_6f9837cf6b",
+      "value": "信用卡(****8967)"
+    },
+    {
+      "name": "ui_051181c08d",
+      "value": "信用卡2913"
+    },
+    {
+      "name": "ui_e9b4db6a97",
+      "value": "倍大过绿行"
+    },
+    {
+      "name": "ui_7199300676",
+      "value": "储蓄卡0550"
+    },
+    {
+      "name": "ui_79b0e6d5b3",
+      "value": "光大银行"
+    },
+    {
+      "name": "ui_2e0f196e51",
+      "value": "免输卡号添卡支持家银行"
+    },
+    {
+      "name": "ui_105371be7e",
+      "value": "全丰银行"
+    },
+    {
+      "name": "ui_e399ceaa19",
+      "value": "全哈尔滨银行"
+    },
+    {
+      "name": "ui_7065a74aff",
+      "value": "全广州娟行"
+    },
+    {
+      "name": "ui_80dbc3625c",
+      "value": "全广州绢行"
+    },
+    {
+      "name": "ui_8e0f69d7d5",
+      "value": "全招商银行"
+    },
+    {
+      "name": "ui_deea1124b8",
+      "value": "兴业银行"
+    },
+    {
+      "name": "ui_1d1e9e590b",
+      "value": "册北部湾银行"
+    },
+    {
+      "name": "ui_8a13028783",
+      "value": "加区上"
+    },
+    {
+      "name": "ui_8593eb39b6",
+      "value": "加华为支付银联手机闪付"
+    },
+    {
+      "name": "ui_b95f454c4a",
+      "value": "加画山"
+    },
+    {
+      "name": "ui_656cf340af",
+      "value": "华为华为支支人代"
+    },
+    {
+      "name": "ui_1e4b18b53f",
+      "value": "华为支付人银联手机闪付"
+    },
+    {
+      "name": "ui_f697f6fa85",
+      "value": "华为支付银联手机闪付"
+    },
+    {
+      "name": "ui_cc252da53f",
+      "value": "华为智能门禁"
+    },
+    {
+      "name": "ui_6dbc6cae1b",
+      "value": "南京优芙得餐饮管理有限公司"
+    },
+    {
+      "name": "ui_2aed1dae2f",
+      "value": "卡包"
+    },
+    {
+      "name": "ui_6983fd3414",
+      "value": "卡包十"
+    },
+    {
+      "name": "ui_bea913a0d6",
+      "value": "卡片信息"
+    },
+    {
+      "name": "ui_ee5f799f33",
+      "value": "卫生同人次北京银行"
+    },
+    {
+      "name": "ui_b7b5db57c3",
+      "value": "吉安稠州村镇银行"
+    },
+    {
+      "name": "ui_faa24a2281",
+      "value": "吉林九台农村商业银行"
+    },
+    {
+      "name": "ui_cdb12a8d67",
+      "value": "吉林省农村信用社联合社"
+    },
+    {
+      "name": "ui_4605dc62a6",
+      "value": "回中加"
+    },
+    {
+      "name": "ui_164b40a8d3",
+      "value": "园区卡"
+    },
+    {
+      "name": "ui_a1f59f8e7e",
+      "value": "国东亚银行"
+    },
+    {
+      "name": "ui_6120bc11a2",
+      "value": "图上海银行"
+    },
+    {
+      "name": "ui_ae22bdf0bd",
+      "value": "天车领度"
+    },
+    {
+      "name": "ui_f8c4ddf135",
+      "value": "天车领度2000"
+    },
+    {
+      "name": "ui_ece956a48c",
+      "value": "央北京银行"
+    },
+    {
+      "name": "ui_c657ed7210",
+      "value": "工商银行"
+    },
+    {
+      "name": "ui_aa71a61cef",
+      "value": "已绑定"
+    },
+    {
+      "name": "ui_5b036395cd",
+      "value": "平安银行"
+    },
+    {
+      "name": "ui_713c4e560c",
+      "value": "广州花都笛州村镇银行"
+    },
+    {
+      "name": "ui_9986c14590",
+      "value": "引让允斯银行"
+    },
+    {
+      "name": "ui_0c6ed61ac2",
+      "value": "德州银行"
+    },
+    {
+      "name": "ui_a0a2bd1245",
+      "value": "忽社林银行"
+    },
+    {
+      "name": "ui_4ce4ef96c1",
+      "value": "息"
+    },
+    {
+      "name": "ui_8c86e67ccf",
+      "value": "情输入短信验证码秒后重试"
+    },
+    {
+      "name": "ui_ddce50d6f7",
+      "value": "我家管理"
+    },
+    {
+      "name": "ui_d62e90e850",
+      "value": "我已阅读快捷支付服务协议银联无卡自助消费授权协议"
+    },
+    {
+      "name": "ui_0685cdb873",
+      "value": "我的家"
+    },
+    {
+      "name": "ui_850d890cad",
+      "value": "招两红行一一"
+    },
+    {
+      "name": "ui_e0f88f4dbe",
+      "value": "招商银行"
+    },
+    {
+      "name": "ui_323d61bbd8",
+      "value": "搜索银行搜索"
+    },
+    {
+      "name": "ui_d3b8296779",
+      "value": "攻上上人上日"
+    },
+    {
+      "name": "ui_5d53c2c568",
+      "value": "时农业银行"
+    },
+    {
+      "name": "ui_d14bdc1cbe",
+      "value": "条和二二招商银行"
+    },
+    {
+      "name": "ui_42f2d62fe3",
+      "value": "此卡的支付服务"
+    },
+    {
+      "name": "ui_0a18713d73",
+      "value": "此译忆卡称未生口与能台门锁锁沿配对去配对"
+    },
+    {
+      "name": "ui_e6bb0a686b",
+      "value": "民生银行"
+    },
+    {
+      "name": "ui_d715c1323d",
+      "value": "汉口银行"
+    },
+    {
+      "name": "ui_700040d837",
+      "value": "江苏老乡鸡餐饮有限公司"
+    },
+    {
+      "name": "ui_169cea67aa",
+      "value": "河北银行"
+    },
+    {
+      "name": "ui_992c676bbc",
+      "value": "添加卡成功"
+    },
+    {
+      "name": "ui_363b0311aa",
+      "value": "添加卡片"
+    },
+    {
+      "name": "ui_d043fcd87b",
+      "value": "添加卡片银行卡交通卡门禁卡等"
+    },
+    {
+      "name": "ui_82e4a43774",
+      "value": "渤海银行"
+    },
+    {
+      "name": "ui_cffbefe0d2",
+      "value": "湖南省农村信用社四"
+    },
+    {
+      "name": "ui_2f5fcb4340",
+      "value": "激活支付"
+    },
+    {
+      "name": "ui_8c76053ea7",
+      "value": "激活支付功能可用于实体店碰一碰支付"
+    },
+    {
+      "name": "ui_5de11616b8",
+      "value": "用卡快捷支付服务协议授权云闪付获得您在本行银行卡号等信"
+    },
+    {
+      "name": "ui_5d7df6d8ea",
+      "value": "电行无忧卡金陵通"
+    },
+    {
+      "name": "ui_3735f6d8e2",
+      "value": "电表业银行"
+    },
+    {
+      "name": "ui_eb66dd3531",
+      "value": "畅行无忧卡"
+    },
+    {
+      "name": "ui_0aee4b098d",
+      "value": "百信银行"
+    },
+    {
+      "name": "ui_1f33143d60",
+      "value": "的验证码"
+    },
+    {
+      "name": "ui_90c21d17e4",
+      "value": "盛RS"
+    },
+    {
+      "name": "ui_f9a6aa8821",
+      "value": "福建海峡银行"
+    },
+    {
+      "name": "ui_13ccd1f094",
+      "value": "福建省农村信用社"
+    },
+    {
+      "name": "ui_47df40dce6",
+      "value": "稠州银行"
+    },
+    {
+      "name": "ui_e90b773bde",
+      "value": "等内多园人更多"
+    },
+    {
+      "name": "ui_b199fdd62c",
+      "value": "答二王着"
+    },
+    {
+      "name": "ui_08b55fea3c",
+      "value": "管理"
+    },
+    {
+      "name": "ui_bc830e059b",
+      "value": "管理其他设备"
+    },
+    {
+      "name": "ui_e22234534c",
+      "value": "网华为支付银联手机闪付"
+    },
+    {
+      "name": "ui_645787be5d",
+      "value": "罗华为支付多银联手机闪付"
+    },
+    {
+      "name": "ui_9b4c975a89",
+      "value": "肚关定万人月上一二"
+    },
+    {
+      "name": "ui_d2b496cc10",
+      "value": "蕊者银行"
+    },
+    {
+      "name": "ui_c7b01a47bb",
+      "value": "解除绑定"
+    },
+    {
+      "name": "ui_0dd8601558",
+      "value": "让NSAm"
+    },
+    {
+      "name": "ui_2fabf90614",
+      "value": "设为默认卡"
+    },
+    {
+      "name": "ui_14889aeedf",
+      "value": "证件"
+    },
+    {
+      "name": "ui_306b1ae7c3",
+      "value": "请选择您要绑定的银行卡"
+    },
+    {
+      "name": "ui_f33656e11a",
+      "value": "身份证"
+    },
+    {
+      "name": "ui_89f90f2905",
+      "value": "转长安银行"
+    },
+    {
+      "name": "ui_8001cfd701",
+      "value": "输入验证码"
+    },
+    {
+      "name": "ui_78973caa79",
+      "value": "这广西农商联合银行"
+    },
+    {
+      "name": "ui_ab61adcd14",
+      "value": "通卡"
+    },
+    {
+      "name": "ui_642c54c1d0",
+      "value": "邮储银行"
+    },
+    {
+      "name": "ui_954e389a1a",
+      "value": "重庆北碚笛州村镇银行"
+    },
+    {
+      "name": "ui_a824801c52",
+      "value": "重庆忠县笛州村镇银行"
+    },
+    {
+      "name": "ui_1ba714ae52",
+      "value": "银行二卡义"
+    },
+    {
+      "name": "ui_b12e1e1e0a",
+      "value": "银行卡查看全部"
+    },
+    {
+      "name": "ui_e7a0f39446",
+      "value": "门禁卡"
+    },
+    {
+      "name": "ui_66b4f65920",
+      "value": "非本机卡片查看全部"
+    },
+    {
+      "name": "ui_e54571ced7",
+      "value": "风浦发银行"
+    },
+    {
+      "name": "ui_953cc6a607",
+      "value": "黄河三农商银行加"
+    }
+  ]
+}
