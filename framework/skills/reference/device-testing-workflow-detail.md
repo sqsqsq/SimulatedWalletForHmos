@@ -22,7 +22,7 @@
 
 **4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏回填（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。仍无可靠 selector 的 TC：不写入派生表行，但须在 frontmatter 或 `derive-manifest.json` 登记 `explicit_skip_tc_ids`，Step 5 标跳过并写原因。
 
-**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出，`snapshot_cache_empty:true` 先 warmup 或 dump-ui。
+**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出（hint JSON 内含 `allowed_step_roots`/`step_shape_catalog` 机读步骤目录，翻译时以此为准），`snapshot_cache_empty:true` 先 warmup 或 dump-ui；若步骤语法不在当前上下文（长会话被压缩后常见），翻译前重读 `profile-skill-asset:device-testing` 的 `reference/hylyre-planned-step-fields.md`。
 
 **4.5.4 裁决与跳过登记**：维护「进入派生/跳过」两份清单，跳过须在 Step 5 报告逐条可见；派生表用例编号须 ⊆ 顶层 test-plan.md（否则 extra FAIL）；顶层每个 TC 须出现于派生表或 `explicit_skip_tc_ids`（否则 missing FAIL）。
 
@@ -85,6 +85,23 @@
 2. 解析 `trace.json`：`cases[]` 每条含 `id`（与派生表用例编号对齐）、`status`（通过/失败/阻塞/跳过）、`notes`（可选）。
 3. 构建行集：派生表中出现的 TC 以 `cases[]` 为准写状态与备注（无 case 记录但 run 整体失败→标阻塞或失败并注原因）；仅在顶层 test-plan.md、未进派生表的 TC → 标跳过，备注示例「缺少稳定 selector，需补 plan.md/contracts.yaml」。
 4. **不要**与 Hylyre 状态枚举混用其它字样（门禁与 receipt 校验依赖一致词表）。
+
+## 红线：测试接缝与 P0 覆盖（goal-fakepass-hardening，BLOCKER）
+
+- **测试接缝不得改变用户可见流程/默认行为**：`*_FAST_PATH`/`DEVICE_TEST*`/`SKIP_SMS*` 类
+  开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
+  跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
+  源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
+- **P0 用例 skip 不可自决**：explicit_skip/未执行的 P0 → `p0_coverage_integrity` BLOCKER，
+  goal 首触 halt（`await_human_p0_skip`）。出路只有三条：修可测性去 skip / 外部阻塞按
+  DEFERRED 登记 / 真人签发 p0_skip_waiver receipt（仅降级 WARN，run 封顶
+  AWAITING_HUMAN_REVIEW）。通过率必须双口径（skip 计入分母），存在 P0 skip 时结论不得
+  无条件「达标」。
+- **P0 状态迁移证据**：派生计划各 P0 TC 须动作指向 acceptance checkpoint 的
+  `target_element_id` 且其后 `wait_for` required 元素；flow 每条中间屏边须有已执行且通过
+  的 owning TC（纯 wait 冒充/直达结果页=`p0_semantic_coverage_integrity` FAIL）。
+- **mock 数据可辨识**：多实体场景（多卡/多账户）各实体可见身份（掩码后卡号等）必须唯一
+  可区分——掩码口径要避免「前 4+后 4 恒相同」（bc-openCard：全部卡显示 6225 **** 0001）。
 
 ## Step 6 质量门禁自检完整清单
 

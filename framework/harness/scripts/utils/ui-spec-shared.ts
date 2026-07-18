@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import { extractCodeBlocks } from './markdown-parser';
+import { shapeName, takeArray } from './shape-guards';
 import { featureFilePath, relFeatureFile } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
@@ -40,6 +41,13 @@ export interface UiSpecIconRef {
 export interface UiSpecComponentNode {
   id?: string;
   type: string;
+  /**
+   * blind-visual-hardening d3：容器/结构语义节点 → UI kit block 映射声明
+   * （nav_bar/list_card_container/list_row/sheet_scaffold/primary_button/selector_group/
+   * result_state/sms_code_field/detail_section）。声明后进入三段闭环校验：
+   * 声明 → 源码命中 block 锚点 → 运行时 uitree 出现锚点（ui-kit-conformance）。
+   */
+  block?: string;
   layout?: string;
   order: number;
   text?: string;
@@ -116,6 +124,19 @@ export interface UiSpecAsset {
    * asset_crop_validation 的 VL 隔离辨认不可用/失配时，此署名是唯一逃生阀（自动化身份不算）。
    */
   bbox_verified_by?: string;
+  /**
+   * blind-visual-hardening d2（design §1.6）：crop 产物来源记录——盲档下 crop 禁令的
+   * external_tool 放行通道（外部裁剪工具产物：工具名 + 源图 hash + bbox 记录）。
+   * 诚实边界：记录结构存在性可确定性校验，工具真实性不做密码学验证（provenance 三来源的
+   * 另两路 verified_artifact / human_receipt 分别由 asset-crop-validation 与 confirmation
+   * receipt 承担强验证）。
+   */
+  crop_provenance?: {
+    kind?: string;
+    tool?: string;
+    source_sha256?: string;
+    bbox?: number[];
+  };
 }
 
 /**
@@ -185,16 +206,73 @@ export function visualParityAbsPath(projectRoot: string, feature: string): strin
   return featureFilePath(projectRoot, feature, path.join('plan', 'visual-parity.yaml'));
 }
 
-export function loadUiSpecFile(absPath: string): UiSpecDoc | null {
+/**
+ * P0-2（plan d9b4f7e2）：ui-spec.yaml 加载 + **形状归一化**——agent 把数组字段写成
+ * `{}`/`""` 等非数组真值时（07-13 现场三处门禁 TypeError 崩溃的根源），在唯一 loader
+ * 入口归一为空数组，所有消费者（spec-ui-spec / asset-manifest / asset-acquisition /
+ * asset-crop / capture-completeness / fidelity-governance）一次性防崩。
+ * 形状偏差**留痕**在 shapeIssues——主门禁（checkUiSpecStructure）必须消费并产出
+ * 结构化 FAIL，归一化不许把坏形状安静洗成 PASS。
+ */
+export function loadUiSpecFileWithShapeIssues(
+  absPath: string,
+): { doc: UiSpecDoc; shapeIssues: string[] } | null {
   if (!fs.existsSync(absPath)) return null;
   const raw = fs.readFileSync(absPath, 'utf-8');
+  let doc: UiSpecDoc;
   try {
-    const doc = YAML.parse(raw) as UiSpecDoc;
-    if (!doc || typeof doc !== 'object') return null;
-    return doc;
+    const parsed = YAML.parse(raw) as UiSpecDoc;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    doc = parsed;
   } catch {
     return null;
   }
+  const shapeIssues: string[] = [];
+  const rec = doc as unknown as Record<string, unknown>;
+  rec.assets = takeArray(rec.assets, 'assets', shapeIssues);
+  rec.screens = takeArray(rec.screens, 'screens', shapeIssues);
+  if (rec.global_elements !== undefined) {
+    rec.global_elements = takeArray(rec.global_elements, 'global_elements', shapeIssues);
+  }
+  if (rec.tokens !== undefined && (rec.tokens === null || typeof rec.tokens !== 'object' || Array.isArray(rec.tokens))) {
+    shapeIssues.push(`tokens 应为映射（YAML map），实际是 ${shapeName(rec.tokens)}——最小合法样例：\`tokens: {}\``);
+    rec.tokens = {};
+  }
+  for (const g of doc.global_elements ?? []) {
+    if (!g || typeof g !== 'object') continue;
+    const gr = g as unknown as Record<string, unknown>;
+    gr.texts = takeArray(gr.texts, `global_elements[${String(gr.id ?? '?')}].texts`, shapeIssues);
+    gr.owner_screen_ids = takeArray(gr.owner_screen_ids, `global_elements[${String(gr.id ?? '?')}].owner_screen_ids`, shapeIssues);
+  }
+  for (const s of doc.screens) {
+    if (!s || typeof s !== 'object') continue;
+    const sr = s as unknown as Record<string, unknown>;
+    if (sr.must_have_elements !== undefined) {
+      sr.must_have_elements = takeArray(sr.must_have_elements, `screens[${String(sr.id ?? '?')}].must_have_elements`, shapeIssues);
+    }
+    normalizeComponentTreeShapes(s.root, `screens[${String(sr.id ?? '?')}].root`, shapeIssues);
+  }
+  return { doc, shapeIssues };
+}
+
+/** 组件树递归归一化：children 非数组真值 → [] + 留痕（walkComponentNodes 的 for..of 防崩）。 */
+function normalizeComponentTreeShapes(
+  node: UiSpecComponentNode | undefined,
+  label: string,
+  shapeIssues: string[],
+): void {
+  if (!node || typeof node !== 'object') return;
+  const nr = node as unknown as Record<string, unknown>;
+  if (nr.children !== undefined) {
+    nr.children = takeArray(nr.children, `${label}.children`, shapeIssues);
+  }
+  for (let i = 0; i < (node.children ?? []).length; i++) {
+    normalizeComponentTreeShapes(node.children![i], `${label}.children[${i}]`, shapeIssues);
+  }
+}
+
+export function loadUiSpecFile(absPath: string): UiSpecDoc | null {
+  return loadUiSpecFileWithShapeIssues(absPath)?.doc ?? null;
 }
 
 export function structureFailOrWarn(enforcement: VisualEnforcementMode | undefined): {

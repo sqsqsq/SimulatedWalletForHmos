@@ -30,7 +30,12 @@ import {
   type InvokeTemplateVars,
 } from './agent-invoke';
 import { resolveUiRelevanceForRun } from './fidelity-shared';
-import { ensureVisionCanaryAsset, buildCanaryPrompt, classifyCanaryResponse } from './vision-canary';
+import {
+  ensureVisionCanaryAsset,
+  buildCanaryPrompt,
+  resolveCanaryCacheDecision,
+  VISION_CANARY_PROBE_VERSION,
+} from './vision-canary';
 
 export type AdapterProvenance =
   | 'argv_adapter'
@@ -305,19 +310,34 @@ export function decideVisionCanaryProbe(input: {
   return { action: 'probe' };
 }
 
+export type VisionCanaryProbeOutcome =
+  | 'valid_cached'
+  | 'invalid_not_cached'
+  | 'invoke_failed_not_cached';
+
 /**
- * E1：实际执行金丝雀探测——生成资产、headless 问答、分类、写回 framework.local.json 缓存。
- * 【诚实声明】本函数会真实 spawn 一次 headless agent 调用（真实成本，同 goal-runner 本身
- * 每 phase 的调用性质一致，非额外风险类别）；单测只覆盖 decideVisionCanaryProbe 的纯决策
- * 分支，不在自动化测试中触发真实 agent 调用（那需要真实 CLI/账号，超出单测范畴）。
- * 失败降级：agent 调用/分类异常不抛出、不阻断 goal run——按 verdict='none' 保守处理，
- * 让主流程用现有（adapter 声明）路径继续跑，探测失败不是 BLOCKER。
+ * E1：实际执行金丝雀探测——生成资产、headless 问答、严格判卷、按有效性决定是否写缓存。
+ * 【诚实声明】本函数默认会真实 spawn 一次 headless agent 调用（真实成本，同 goal-runner
+ * 本身每 phase 的调用性质一致，非额外风险类别）；invokeFn 注入供单测覆盖写盘边界
+ * （plan c7d2e9a4 t6——事故真正发生地在"invoke → 写盘"之间，不能只测纯函数）。
+ * 写盘守卫（t2/t3）：resolveCanaryCacheDecision 消费完整调用事实——invoke 失败/无效答卷
+ * （空输出/额度错误文本/prompt echo/残卷）一律**不落缓存**（消费面按既有语义回退：盘上有
+ * fresh last-known-good 则沿用，否则 adapter 声明路径——stale-if-error，日志由 goal-runner
+ * 按盘上缓存现查二分）；只有有效作答（严格解析的 canonical answer）才 classify 并连同
+ * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER。
  */
 export async function runVisionCanaryProbe(input: {
   projectRoot: string;
   frameworkRoot: string;
   manifest: GoalManifest;
-}): Promise<{ ran: boolean; verdict?: 'tool_read' | 'ocr_capable' | 'none'; error?: string }> {
+  /** 单测注入（默认真实 invokeAgentHeadless），覆盖"invoke→写盘"边界免真 spawn */
+  invokeFn?: typeof invokeAgentHeadless;
+}): Promise<{
+  ran: boolean;
+  outcome?: VisionCanaryProbeOutcome;
+  verdict?: 'tool_read' | 'ocr_capable' | 'none';
+  error?: string;
+}> {
   const { projectRoot, frameworkRoot, manifest } = input;
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
   try {
@@ -338,8 +358,21 @@ export async function runVisionCanaryProbe(input: {
       PHASE: manifest.start_phase,
     };
     const plan = resolveHeadlessInvokePlan(adapter, cap.capability, manifest.unattended, prompt, vars);
-    const invoke = await invokeAgentHeadless(plan, projectRoot, { timeoutMs: 120_000 });
-    const classify = classifyCanaryResponse(invoke.stdout);
+    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    const decision = resolveCanaryCacheDecision({
+      stdout: invoke.stdout,
+      exitCode: invoke.exitCode,
+      timed_out: invoke.timed_out,
+      silent_killed: invoke.silent_killed,
+      skipped: invoke.skipped,
+    });
+    if (decision.kind !== 'valid') {
+      return {
+        ran: true,
+        outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
+        error: decision.detail,
+      };
+    }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
     writeLocalConfig(projectRoot, {
       ...existing,
@@ -347,16 +380,21 @@ export async function runVisionCanaryProbe(input: {
         ...(existing.vision ?? {}),
         canary: {
           adapter,
-          verdict: classify.verdict,
+          verdict: decision.classify.verdict,
           probed_at: new Date().toISOString(),
-          reason: classify.reason,
+          reason: decision.classify.reason,
           probed_via: 'goal',
+          probe_version: VISION_CANARY_PROBE_VERSION,
         },
       },
     });
-    return { ran: true, verdict: classify.verdict };
+    return { ran: true, outcome: 'valid_cached', verdict: decision.classify.verdict };
   } catch (e) {
-    return { ran: false, error: (e as Error).message };
+    // rev5(codex P2)：spawn/asset/config 异常同样是"探测执行失败"——归入
+    // invoke_failed_not_cached,让 runner 走统一的 stale-if-error LKG 二分日志
+    // (原 ran:false 会绕过 LKG 检查:强刷异常时旧 fresh 缓存实际仍被消费,日志却不说)。
+    // ran:false 仅保留给"没试跑"的合法跳过(无 goal_capability 声明)。
+    return { ran: true, outcome: 'invoke_failed_not_cached', error: `探测异常：${(e as Error).message}` };
   }
 }
 
@@ -365,4 +403,125 @@ export function goalRequiredPrerequisites(
   resolvedProfile: HarnessResolvedProfile,
 ): Set<PersonalPrerequisiteId> {
   return unionPhasePersonalPrerequisites(chain, resolvedProfile);
+}
+
+// ----------------------------------------------------------------------------
+// goal-fakepass-hardening t6：保真档位 preflight（spec 前，agent 未被调用，不烧 run）
+// ----------------------------------------------------------------------------
+
+import * as cryptoT6 from 'crypto';
+import {
+  dereferenceRequirementDocs,
+  detectFidelityIntent,
+  resolveRequestedFidelity,
+  type FidelityTarget,
+} from './fidelity-shared';
+import { resolveContextAdapterImageInput } from './multimodal-probe';
+import {
+  defaultTrustRegistryPath,
+  validateConfirmationReceiptFile,
+} from './confirmation-receipt';
+import { featureFilePath } from '../../config';
+import * as fsT6 from 'fs';
+
+export type FidelityPreflightAction =
+  | { action: 'proceed'; effective?: FidelityTarget; note?: string }
+  | { action: 'defer_capability_missing'; detail: string }
+  | { action: 'await_human_fidelity_tier'; detail: string };
+
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp)$/i;
+
+function dirHasImages(absDir: string): boolean {
+  try {
+    if (!fsT6.existsSync(absDir) || !fsT6.statSync(absDir).isDirectory()) return false;
+    return fsT6.readdirSync(absDir).some((f) => IMAGE_EXT_RE.test(f));
+  } catch {
+    return false;
+  }
+}
+
+export interface FidelityPreflightInput {
+  projectRoot: string;
+  frameworkRoot: string;
+  manifest: GoalManifest;
+  featuresDirRel: string;
+  /** 链首非 spec（上游 spec 已闭环）→ 本 preflight 不适用（档位对账由 check-spec 承担） */
+  chainStartsAtSpec: boolean;
+  now?: () => Date;
+}
+
+/**
+ * 规则（openspec goal-runner delta）：
+ * - 解引用 requirement 引用文档后做三态意图检测（摘要弱措辞+SSOT 强信号=事故原形）；
+ * - 强 pixel 意图 + 缺视觉能力 → DEFERRED_CAPABILITY_MISSING（不盲跑全链；
+ *   继续的唯一通道=有效 fidelity_downgrade receipt——flag/manifest 不构成授权）；
+ * - ambiguous + 参考图存在 + 未预授权（--fidelity 持平或抬升）→ await_human_fidelity_tier；
+ * - --fidelity 只升不降（resolveRequestedFidelity；降档尝试无 receipt 即拒绝并告警）。
+ */
+export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  if (!input.chainStartsAtSpec) return { action: 'proceed', note: 'chain 起点非 spec，档位对账由 check-spec 承担' };
+  const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
+    featuresDirRel: input.featuresDirRel,
+  });
+  const intent = detectFidelityIntent(deref.combined);
+  if (intent === 'none') return { action: 'proceed', note: '无截图一致性意图信号' };
+
+  const detected: FidelityTarget = intent === 'strong_pixel' ? 'pixel_1to1' : 'semantic_layout';
+
+  // 降档凭证（唯一降档通道）
+  let downgradeAuthorized = false;
+  let receiptNote = '';
+  if (manifest.fidelity && manifest.fidelity_receipt) {
+    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+    const v = validateConfirmationReceiptFile(
+      path.join(projectRoot, manifest.fidelity_receipt),
+      defaultTrustRegistryPath(projectRoot),
+      {
+        action: 'fidelity_downgrade',
+        feature: manifest.feature,
+        object_hash: objectHash,
+        run_id: manifest.run_id,
+        now: input.now,
+      },
+    );
+    downgradeAuthorized = v.valid;
+    if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
+  }
+  const resolved = resolveRequestedFidelity(detected, manifest.fidelity, downgradeAuthorized);
+  if (resolved.rejectedDowngrade) {
+    console.warn(
+      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，无有效 receipt 不生效（只升不降）。${receiptNote}`,
+    );
+  }
+
+  if (intent === 'strong_pixel' && resolved.effective === 'pixel_1to1') {
+    const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
+    if (!probe.supported) {
+      return {
+        action: 'defer_capability_missing',
+        detail:
+          `需求为强 1:1 还原意图（解引用命中：${deref.resolvedPaths.join('、') || 'requirement 文本'}），` +
+          `但 adapter=${manifest.adapter ?? 'unknown'} 无视觉能力。不盲跑全链（bc-openCard 4 轮 run 全废教训）；` +
+          `继续的唯一通道：真人经带外体系签发 fidelity_downgrade receipt 后以 --fidelity <tier> --fidelity-receipt <path> 重跑。` +
+          (receiptNote ? ` ${receiptNote}` : ''),
+      };
+    }
+    return { action: 'proceed', effective: 'pixel_1to1' };
+  }
+
+  // ambiguous：参考图存在 + 未预授权 → 停下问人（在烧掉整条 run 之前）
+  const hasImages =
+    dirHasImages(featureFilePath(projectRoot, manifest.feature, 'ux-reference')) ||
+    deref.resolvedPaths.some((rel) => dirHasImages(path.join(projectRoot, path.dirname(rel))));
+  if (intent === 'ambiguous' && hasImages && !manifest.fidelity) {
+    return {
+      action: 'await_human_fidelity_tier',
+      detail:
+        '需求提及与截图/设计稿一致但意图不明确（ambiguous），且存在参考图。请确认保真档位后重跑：' +
+        '`--fidelity pixel_1to1|semantic_layout`（预授权，不再停）；或修改需求原文写明' +
+        '「完全参考/像素级」等强措辞。headless 不代拍此决策。',
+    };
+  }
+  return { action: 'proceed', effective: resolved.effective };
 }

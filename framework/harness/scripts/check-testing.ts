@@ -31,6 +31,7 @@ import {
   relFeatureArtifact,
   relFeatureFile,
   featurePhaseReportsDir,
+  receiptDirPath,
   resolveHylyreToolConfig,
 } from '../config';
 import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './utils/test-plan-derive-hint';
@@ -40,8 +41,14 @@ import {
   evaluateDerivedCoverage,
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
+  lintHylyrePlanStepRules,
   type NavLintViolation,
+  type StepLintViolation,
 } from './utils/derived-hylyre-plan';
+import {
+  buildStandardHylyreDerivePayloadBase,
+  HYLYRE_PLANNED_STEP_FIELDS_REF,
+} from './utils/hylyre-standard-derive-knowledge';
 import {
   extractHeadings,
   getSectionContent,
@@ -76,11 +83,19 @@ import {
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { countBlockingDebt, loadVisualDebt } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
   loadTestingRootPollutionMeta,
 } from './utils/hylyre-root-pollution-warn';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import {
+  loadReviewClosureAttestation,
+  reconcileSourceTreeAgainstAttestation,
+} from './utils/closure-attestation';
+import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
+import { isPhaseDisabledByProfile } from '../profile-loader';
 import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-capture';
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
@@ -91,11 +106,17 @@ import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
+  parseReportConclusionVerdict,
   reconcileReportWithHylyreTrace,
   resolveAuthoritativeHylyreTracePath,
   evaluateUiEntryCoverage,
   buildEntryUiPriorityMap,
 } from './utils/testing-trace-gates';
+import {
+  evaluateP0CoverageIntegrity,
+  evaluateP0SemanticCoverage,
+} from './utils/p0-semantic-gates';
+import { parseHylyreTrace } from '../../profiles/hmos-app/harness/providers/device-test-run';
 import type { UseCasesSpec } from './utils/types';
 import {
   diagnoseInstallBlocking,
@@ -808,6 +829,92 @@ function checkReportConclusionWithVerdict(ctx: CheckContext, report: string | nu
     status: 'FAIL',
     details: '结论章节未找到可机读的判定声明行（达标/有条件达标/不达标）。',
     suggestion: '请写出明确声明行，例如 `**测试结论**: 不达标`（裁决词须紧邻在"测试结论:"之后）。',
+  }];
+}
+
+/**
+ * blind-visual-hardening d1 切片一（与 check-review negative_verdict_closure 同语义）：
+ * report_conclusion_with_verdict 只要有可机读裁决词就 PASS——「不达标」同样放行。
+ * 本 check：测试结论=不达标 → BLOCKER FAIL（产品负面裁决阻断 phase 闭环）。
+ * 不读 verifier/trace——裁决 vs trace 一致性归 reconcileReportWithHylyreTrace。
+ */
+export function checkNegativeTestingVerdictClosure(report: string | null): CheckResult[] {
+  const id = 'negative_verdict_closure';
+  const description = '负面产品裁决闭环门禁（测试结论=不达标 → 阻断 phase 闭环，修复重跑后方可推进）';
+  if (!report) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'SKIP',
+      details: 'test-report.md 不存在（报告存在性由 report_conclusion_with_verdict/run 状态门禁负责）。',
+    }];
+  }
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '测试结论') ?? '';
+  const { verdict } = extractDeclaredVerdict(section, ['有条件达标', '不达标', '达标']);
+  if (verdict !== '不达标') {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `测试结论=${verdict ?? '未声明'}，非负面裁决，本门禁不适用（缺声明行由 report_conclusion_with_verdict 拦）。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      '测试结论=「不达标」——产品负面裁决不得闭环推进。报告如实登记不达标是 report_validity 层面的合规，' +
+      '但产品裁决为负时 phase 不得以 PASS 收口（对齐 review 侧 negative_verdict_closure 语义）。',
+    suggestion: '修复失败用例/缺陷后重跑 device 测试与本 harness，结论更新为非「不达标」后方可闭环。',
+    failure_kind: 'negative_testing_verdict',
+    blocking_class: 'product_verdict',
+  }];
+}
+
+/**
+ * blind-visual-hardening d5（P0-D③）：视觉债务披露门禁——存在未清偿（open/accepted）视觉债务时，
+ * test-report 结论章节必须引用视觉债务（字样+计数），防「达标可发布」裸奔（bc-openCard 二轮：
+ * 债务全埋 WARN/soft_advisories，结论零 caveat）。结构化轴以 summary.quality_axes 为 SSOT，
+ * 报告只需如实披露引用；禁止「达标（带视觉债务）」复合措辞由模板层约束，本 check 管"必须提"。
+ */
+export function checkVisualDebtDisclosure(ctx: CheckContext, report: string | null): CheckResult[] {
+  const id = 'visual_debt_disclosure';
+  const description = '视觉债务披露门禁（存在未清偿债务时结论必须引用视觉债务清单）';
+  const debt = loadVisualDebt(ctx.projectRoot, ctx.feature);
+  const { open, accepted } = countBlockingDebt(debt);
+  if (open + accepted === 0) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: '无未清偿视觉债务，无披露义务。',
+    }];
+  }
+  if (!report) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'SKIP',
+      details: `存在视觉债务（open=${open}, accepted=${accepted}）但 test-report.md 不存在（报告存在性归其他门禁）。`,
+    }];
+  }
+  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '测试结论') ?? '';
+  // cursor 实施 review P3 加固：须"视觉债务"字样 + 计数数字同段出现（裸四字塞入不满足披露义务）
+  if (/视觉债务/.test(section) && /视觉债务[^\n]*\d|\d[^\n]*视觉债务/.test(section)) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details: `结论已披露视觉债务（open=${open}, accepted=${accepted}；SSOT=visual-debt.json / summary.quality_axes）。`,
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'FAIL',
+    details:
+      `存在未清偿视觉债务（open=${open}, accepted=${accepted}）但 test-report 结论章节未引用「视觉债务」——` +
+      '结论不得对视觉未验真保持沉默（bc-openCard 二轮「达标可发布」裸奔形态）。',
+    suggestion:
+      '在结论章节如实引用：视觉债务清单（doc/features/<feature>/visual-debt.md）与条目计数；' +
+      '产品裁决以 summary.quality_axes 为准（visual=UNVERIFIED 时 completion=FUNCTIONALLY_COMPLETE_VISUAL_PENDING，' +
+      'release_readiness=BLOCKED）——功能达标与视觉验真是两根轴，不写复合措辞。',
+    failure_kind: 'visual_debt_undisclosed',
+    blocking_class: 'product_verdict',
   }];
 }
 
@@ -1738,7 +1845,8 @@ type DeriveHintAugment = {
     | 'incomplete'
     | 'stale'
     | 'extra_in_derived'
-    | 'invalid_derived_steps';
+    | 'invalid_derived_steps'
+    | 'invalid_derived_step_rules';
   top_tc_ids?: string[];
   derived_tc_ids?: string[];
   missing_tc_ids?: string[];
@@ -1747,7 +1855,7 @@ type DeriveHintAugment = {
   rejected_placeholder_paths?: string[];
   source_plan_mtime_iso?: string;
   selected_derived_mtime_iso?: string;
-  lint_violations?: NavLintViolation[];
+  lint_violations?: Array<NavLintViolation | StepLintViolation>;
 };
 
 function absToProjectRel(projectRoot: string, abs: string): string {
@@ -1780,10 +1888,11 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
     }
 
     const payload = {
-      schema: 3,
+      // t7a（plan e6a3c9f4）：统一基座（schema 4 = 3 + 机器步骤知识块，只增字段向后兼容）——
+      // agent 翻译 hylyre 时手边永远有机读目录，不依赖语法文档已读/上下文未压缩。
+      ...buildStandardHylyreDerivePayloadBase(),
       feature: ctx.feature,
       phase: ctx.phase,
-      generated_at: new Date().toISOString(),
       source_relative,
       source_plan_mtime_iso: aug?.source_plan_mtime_iso ?? source_plan_mtime_iso,
       test_cases,
@@ -1967,6 +2076,43 @@ function checkDeviceTestRunGate(
       ];
     }
 
+    // t7b（plan e6a3c9f4）：STEP 级静态门禁接入标准派生计划路径（与即席同强度）——
+    // 非法根键/选择器形状/wait 误用在门禁层秒级拦下，不再只在真机执行时炸。
+    const stepLint = lintHylyrePlanStepRules(derivedContent);
+    const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
+    if (stepBlockers.length > 0) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, {
+        ...hintBase,
+        coverage_reason: 'invalid_derived_step_rules',
+        lint_violations: stepBlockers,
+      });
+      const lines = stepBlockers.slice(0, 12).map(
+        v => `  - [${v.rule_id}] ${v.tc_id}: ${v.message}${v.suggested_fix ? `（建议：${v.suggested_fix}）` : ''}`,
+      );
+      const hintLine = hintPath ? `机器步骤目录（allowed_step_roots / step_shape_catalog）见 ${hintPath}` : '';
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details: [
+            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处，当前 lint 支持的规则集 STEP-001~006）：`,
+            ...lines,
+            stepBlockers.length > 12 ? `  …等共 ${stepBlockers.length} 处` : '',
+            hintLine,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          suggestion:
+            `按 details 逐条修正派生表「测试步骤」列；步骤根键与形状目录以 derive-hint-from-plan.json 的 ` +
+            `allowed_step_roots / step_shape_catalog 为准（与本门禁同源）；语法细则深潜见 ${HYLYRE_PLANNED_STEP_FIELDS_REF}。`,
+          source: 'derived_hylyre_step_lint',
+        },
+      ];
+    }
+
     const topCases = extractTopPlanTestCasesForDeriveHint(topRaw);
     const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
     if (!navLint.ok) {
@@ -2133,22 +2279,25 @@ function checkDeviceTestRunGate(
           const navUiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
           const navP0TargetIds = collectP0VisualTargetIds(navUiDoc);
           const navValidation = navConfig ? validateNavConfig(navConfig, navP0TargetIds) : null;
+          // goal-fakepass-hardening t7：nav 配置缺失/非法=完备性 BLOCKER，与保真档位脱钩
+          // （bc-openCard 洞④：semantic_layout 下 fidelityRatchet 把缺 nav 降成 WARN，
+          //  9 个 P0 屏的视觉比对被静默吞掉——nav 配置是 agent 可产出的普通 artifact，
+          //  缺失属"活没干完"而非保真严格度问题）；门槛从 ≥2 改为 ≥1（单屏不逃）。
           const navGateError = navConfig
             ? (navValidation && !navValidation.ok
                 ? `nav 配置与 ui-spec 屏集不一致/步骤非法：${navValidation.errors.slice(0, 6).join('；')}${navValidation.errors.length > 6 ? '…' : ''}`
                 : null)
-            : (navP0TargetIds.length >= 2
-                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航区分，否则多屏截同一帧（曾致 5 屏同 hash）`
+            : (navP0TargetIds.length >= 1
+                ? `缺固化 nav 配置：${navP0TargetIds.length} 个 P0 屏须按屏导航到位采集（≥2 屏另防多屏截同一帧）`
                 : null);
           if (navGateError) {
-            const navRatchet = fidelityRatchetFailOrWarn(ctx, true);
             out.push({
               id: 'visual_diff_capture',
               category: 'structure',
               description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-              severity: navRatchet.severity,
-              status: navRatchet.status,
-              details: `【nav 配置门禁·P1-A】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。`,
+              severity: 'BLOCKER',
+              status: 'FAIL',
+              details: `【nav 配置门禁·完备性（档位无关）】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。真到不了的屏用 unreachable 显式登记（仅限外部阻塞枚举+绑定失败证据），任一 P0 unreachable → run 封顶非成功状态。`,
               suggestion: '为每个 P0 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
             });
           } else {
@@ -2652,6 +2801,17 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
     results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
 
+    // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
+    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
+    // --- blind-visual-hardening d5：视觉债务披露 ---
+    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
+    results.push(
+      ...safeRun(
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        'upstream_verdict_gate',
+      ),
+    );
+
     results.push(
       ...runAcceptanceYamlStructureChecks(ctx, (c, s, id) =>
         ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id),
@@ -2680,10 +2840,93 @@ const checker: PhaseChecker = {
       results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
     }
 
+    // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
+    results.push(...safeRun(() => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
+
+    // --- goal-fakepass-hardening t3：产品行为开关扫描（defense-in-depth）---
+    results.push(
+      ...safeRun(
+        () => buildBehaviorSwitchCheckResult({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        'product_behavior_switch_scan',
+      ),
+    );
+
+    // --- goal-fakepass-hardening t4/t5：P0 状态迁移证据 + skip 治理 + 双口径 ---
+    results.push(
+      ...safeRun(() => {
+        const reportsBaseP0 = path.join(receiptDirPath(ctx.projectRoot, ctx.feature, 'testing'), 'reports');
+        const tracePath = resolveAuthoritativeHylyreTracePath(reportsBaseP0);
+        const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+        const statusMap = trace
+          ? new Map((trace.cases ?? []).map((c) => [c.id.toUpperCase(), c.status] as const))
+          : null;
+        const inputs = {
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          planMd: plan ?? '',
+          reportMd: report ?? '',
+          traceCaseStatus: statusMap as Map<string, string> | null,
+          reportConclusion: report ? parseReportConclusionVerdict(report) : null,
+        };
+        return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
+      }, 'p0_semantic_gates'),
+    );
+
     results.push(buildTestingRunStatusResult(plan, report, results));
 
     return results;
   },
 };
+
+/**
+ * t2（goal-fakepass-hardening）：testing 期产品源码 vs review 闭环快照对账。
+ * bc-openCard 事故：testing 期写入 DEVICE_TEST_FAST_PATH=true 短路核心流程，review 审过的
+ * 代码与真机跑的不是同一份。基线=attestation 固化 inventory；走树=冻结 roots ∪ 当前重
+ * discovery（新增整模块可见）。任何差异/缺 attestation → BLOCKER，指引回跑 review 闭环。
+ */
+function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
+  const id = 'review_closure_attestation';
+  const description = 'review 闭环源码快照与 testing 期产品源码对账（防测试期篡改产品行为）';
+  if (isPhaseDisabledByProfile('review', ctx.resolvedProfile)) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'MINOR', status: 'SKIP',
+      details: `project_profile=${ctx.resolvedProfile.name} 已禁用 review 阶段，无 attestation 可对账。`,
+    }];
+  }
+  const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!att) {
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details:
+        '缺 review-closure-attestation.json（review 四件套闭环时由 check-receipt 生成）。' +
+        '无 grace window：存量 feature 首次跑新版 testing 前须补跑一次 review 闭环' +
+        '（fail-open 通道正是 bc-openCard 事故的形状）。',
+      suggestion: '回跑 review 闭环（harness + verifier + receipt + check-receipt）生成 attestation 后重试。',
+    }];
+  }
+  const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
+  if (!rec.ok) {
+    const fmt = (label: string, arr: string[]): string =>
+      arr.length === 0 ? '' : `\n${label}（${arr.length}）：${arr.slice(0, 8).join('、')}${arr.length > 8 ? '…' : ''}`;
+    return [{
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'FAIL',
+      details:
+        'review 闭环后产品源码发生变更——review 审过的代码与当前代码不是同一份：' +
+        fmt('新增', rec.added) + fmt('修改', rec.modified) + fmt('删除', rec.deleted) +
+        fmt('新出现的产品源码根', rec.new_roots),
+      suggestion:
+        '产品代码变更须回跑 review 闭环重审后再进 testing（ut 期修 bug 合法但同样触发重审）；' +
+        '测试接缝不得改变用户可见流程/默认行为。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description,
+    severity: 'BLOCKER', status: 'PASS',
+    details: `产品源码与 review 闭环快照一致（inventory ${att.inventory.file_count} 文件，roots=${att.inventory.roots.length}）。`,
+  }];
+}
 
 export default checker;

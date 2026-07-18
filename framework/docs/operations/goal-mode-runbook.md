@@ -37,14 +37,23 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 证据：`doc/features/<feature>/goal-runs/<run-id>/manifest.json`、`events.jsonl`、`goal-report.{md,json}`。
 
-## 状态语义
+## 状态语义（goal-fakepass-hardening 后）
 
 | 最终状态 | 含义 |
 |----------|------|
-| `COMPLETED` | 全链 PASS，无 DEFERRED |
+| `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
+| `AWAITING_HUMAN_REVIEW` | 链切片 PASS 但存在待人工事项（账本待复核 / waiver / 档位钳制 / flow_contract 缺 receipt）——封顶态，不得视为干净成功 |
+| `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行 |
+| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；新 halt 类：`await_human_p0_skip`（P0 用例被 skip 待真人裁决——修可测性 / DEFERRED 登记 / receipt waiver 三选一后 resume）、`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑） |
+| `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
+
+**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
+返回 `VALID`（重算全链 clean_pass/血缘/attestation/supersede 审计；伪造/缩链/世界后变
+分别判 INVALID/STALE）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
+closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
+废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 
@@ -64,6 +73,24 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 - **触发面（Cursor）· G6 已修**：根因是多 adapter 同名产物（`.cursor/skills`·`.claude/commands`·`.codex/skills` 都有 goal-mode）+ cursor 原 `commands: null`（无 `.cursor/commands` 产物）→ Cursor runtime 误读同名 `.claude/commands/goal-mode.md`(claude) 当 `/goal-mode`。G6 已给 cursor 生成 `.cursor/commands/goal-mode.md`（`RESOLVED_ADAPTER: cursor`），让 Cursor 的 Command 通道解析到 cursor 产物。**范围**：只修 goal-mode（唯一携带运行身份的 slash）；其它同名命令路由到 adapter 无关 skill、无误路由。
 - **Cursor 手工验证项（仓内证不了）**：`.cursor/commands/goal-mode.md` 存在且内容 `RESOLVED_ADAPTER: cursor`（仓内单测已锁）；但「Cursor 是否优先读 `.cursor/commands/` 而非 `.claude/commands/`」属 Cursor 产品行为——须在 Cursor 里实测：Settings → Commands 看 `/goal-mode` 指向 `.cursor/commands/`，必要时禁用/移除 `.claude/commands/goal-mode.md`。**无论 Cursor 行为如何，G1/G2 仍是硬兜底**（错 adapter 会被 goal-runner STOP）。
 - **恢复**：① 核对 `framework.local.json agent_adapter` 确是你要的；② 重跑（冲突会被 STOP 并提示）；③ 真要换：本次用 `--override-adapter`，永久用 `record-adapter`。
+
+## 视觉金丝雀缓存（`framework.local.json vision.canary`）与升级模型
+
+UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜色四题），结果缓存进
+`vision.canary`（个人级、gitignored）。**升级 framework 时不要删 `framework.local.json`**
+——删除会连 `agent_adapter`/DevEco 路径一并丢掉；缓存有完整的自动生命周期
+（plan c7d2e9a4）：
+
+- **协议版本自愈**：缓存带 `probe_version`；framework 升级改了探测协议后旧缓存自动判
+  stale，下一次 UI goal 重探原位覆写——用户零操作；
+- **TTL 分层**：goal 来源 `tool_read` 7 天、`none/ocr_capable` 24 小时（模型路由/额度/
+  权限会静默变，不永久采信）；interactive 来源恒 24 小时；
+- **探测失败不落缓存**：invoke 失败（非零退出/超时/静默被杀）或输出非有效答卷
+  （空输出/额度错误文本/prompt 回显/残卷）一律不写盘——盘上有新鲜缓存则沿用
+  （stale-if-error，runner 日志如实注明），否则本次 run 回退 adapter 声明路径、下次自动重探；
+- **强制重探**：换模型/账号后想立即刷新，goal-runner 加 `--refresh-vision-probe`
+  （自然语言对 agent 说「强制刷新视觉探测」即映射此 flag）；或手删 `vision.canary` 节点
+  （只删该节点，勿删整个 local 文件）。
 
 ## 两级校验
 

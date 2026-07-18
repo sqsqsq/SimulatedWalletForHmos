@@ -22,13 +22,23 @@ import {
 } from '../config';
 import { detectRepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
-import { buildAwaitHumanConfirmGuidance, buildClosureWallGuidance } from './utils/await-confirm-guidance';
+import {
+  buildAgentTimeoutRepeatedGuidance,
+  buildAwaitHumanConfirmGuidance,
+  buildClosureWallGuidance,
+  buildFrameworkBugGuidance,
+  buildFrameworkIntegrityGuidance,
+} from './utils/await-confirm-guidance';
 import { loadResolvedProfile } from '../profile-loader';
+import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/multimodal-probe';
+import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
+  computeRunRequirementSha,
+  dereferenceRequirementDocs,
   detectPixel1to1Intent,
   detectUiRelevantRequirement,
   discoverReferenceImagesForOcrPrescan,
@@ -45,12 +55,23 @@ import {
 } from './utils/ui-spec-shared';
 import {
   classifyPhaseVerdict,
+  featurePhasesFromWorkflow,
   formatDeferredUpstreamNotice,
   resolveAutoChain,
   resolveGoalRunStatus,
   type FeaturePhase,
+  type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
+import { collectAutoDecisions, countPendingMustReview } from './utils/headless-assumptions';
+import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
+import { loadReviewClosureAttestation } from './utils/closure-attestation';
+import {
+  classifyCleanPassIssues,
+  collectCleanPassIssues,
+  generateFeatureCompletion,
+  resolvePhaseRunIds,
+} from './utils/verify-feature-completion';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { mergeUsageIntoTraceFile } from './utils/usage-capture';
@@ -63,16 +84,21 @@ import {
   type GoalManifest,
 } from './utils/goal-manifest';
 import {
+  canAffordBackoff,
   collectPhaseTimeoutWarnings,
+  isExplicitPhaseTimeout,
   resolvePhaseTimeoutMs,
   resolveWallClockMs,
+  CONSECUTIVE_TIMEOUT_ESCALATE_AFTER,
+  CONSECUTIVE_TIMEOUT_HALT_AT,
+  FINALIZE_RESERVE_MS,
+  TIMEOUT_ESCALATION_FACTOR,
 } from './utils/goal-timeout';
 import {
   deriveResumeInspection,
   buildResumeSkipLines,
   deriveReportSections,
   deriveAndWriteCheckpoint,
-  readPhaseCheckpointTimedOut,
 } from './utils/goal-checkpoint';
 import {
   generateGoalReportJson,
@@ -85,6 +111,7 @@ import {
   agentEventsLogPath,
   createChildSettleWaiter,
   killProcessTree,
+  probeAdapterVersion,
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
@@ -104,6 +131,8 @@ import {
   lastPhaseVerdictTransientApiError,
   getSummaryMtime,
   isSummaryFresh,
+  countConsecutiveAgentTimeouts,
+  deriveContinuationFromEvents,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
@@ -113,6 +142,7 @@ import {
   resolveWallClockStartMs,
   countCumulativeAdvanceBlocked,
   countRepeatedSignatureInFamily,
+  type ContinuationCause,
 } from './utils/goal-runner-phase';
 import {
   reconcileLedgerWithEvents,
@@ -132,6 +162,7 @@ import {
   reconcileRunAdapter,
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
+  evaluateFidelityTierPreflight,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
 import {
@@ -163,6 +194,7 @@ import {
   buildEffectiveBlockerSignature,
   classifyFailureKind,
   extractDeterministicAffectedFiles,
+  extractIntegritySubtypes,
   isOperatorInterruptSignal,
   shouldHaltNoProgress,
   snapshotArtifacts,
@@ -231,6 +263,8 @@ function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
     end: typeof argv.end === 'string' ? argv.end : undefined,
     adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
     requirement: typeof argv.requirement === 'string' ? argv.requirement : undefined,
+    fidelity: typeof argv.fidelity === 'string' ? argv.fidelity : undefined,
+    'fidelity-receipt': typeof argv['fidelity-receipt'] === 'string' ? argv['fidelity-receipt'] : undefined,
     'override-start': Boolean(argv['override-start']),
     'override-end': Boolean(argv['override-end']),
     'override-manifest': Boolean(argv['override-manifest']),
@@ -376,6 +410,57 @@ function truncateOneLine(s: string, max: number): string {
 }
 
 /**
+ * t3-min invoke 前能力 gate（v5 可测抽取——codex 第四轮 P1：宿主行为不宜仅靠代码结构推断）：
+ * 真实链 runCapabilityPreflight（profile 前置解析→ensure 门→probe 深检）+ 机读
+ * HARNESS_PREFLIGHT 落盘 + phase_halt 事件。缺口=返回 halted outcome（调用方 push 后
+ * break——不产生 agent_invoke_start、不烧 agent 轮次）；齐备=null（调用方继续 invoke）。
+ * emitEvent 注入：主循环传 appendEvent 闭包；单测传事件收集器断言序列。
+ */
+export function runInvokeCapabilityGate(opts: {
+  projectRoot: string;
+  phase: string;
+  retries: number;
+  resolvedProfile: HarnessResolvedProfile;
+  emitEvent: (event: Record<string, unknown>) => void;
+}): { outcome: GoalPhaseOutcome } | null {
+  const capGap = runCapabilityPreflight(opts.projectRoot, opts.phase, opts.resolvedProfile);
+  if (capGap.ok) return null;
+  // t3-min v2（cursor MAJOR）：goal 路径同样落盘机读 HARNESS_PREFLIGHT（报告引导按它处置）。
+  emitHarnessPreflightGap(opts.projectRoot, opts.phase, capGap);
+  opts.emitEvent({
+    type: 'phase_halt',
+    phase: opts.phase,
+    halt_reason: 'await_human_capability_gap',
+    verdict: 'FAIL',
+  });
+  console.error(
+    `\n===== await_human_capability_gap =====\n[${capGap.code}] ${capGap.message}\n` +
+      `${capGap.guidance_install}\n${capGap.guidance_stop}\n` +
+      '环境修好后 --resume 继续（配置/SDK/DevEco 变更会自动解除；其余先跑 --ensure 人工 reprobe）；' +
+      '环境没修直接 resume 会再次在此拦截。\n',
+  );
+  // t3-min v2（codex P1）：halt_reason/guidance 进 outcome——goal-report 人读阶梯才可达。
+  return {
+    outcome: {
+      phase: opts.phase,
+      verdict: 'FAIL',
+      halted: true,
+      retries: opts.retries,
+      halt_reason: 'await_human_capability_gap',
+      halt_guidance: `[${capGap.code}] ${capGap.guidance_install} ${capGap.guidance_stop}`,
+    },
+  };
+}
+
+/**
+ * run_end 终态 halt_reason 语义（v5 可测抽取）：取最后一个 halted outcome 的原因——
+ * 消费方（goal-status/报告）无需回扫 phase_halt 事件即可分类终态。
+ */
+export function resolveLastHaltReason(outcomes: GoalPhaseOutcome[]): string | undefined {
+  return [...outcomes].reverse().find(o => o.halted && o.halt_reason)?.halt_reason;
+}
+
+/**
  * 把上一轮 harness summary 的 BLOCKER 证据压缩成可回喂给 fresh-context agent 的文本块。
  * 让重试/续跑的 agent 看到「上轮失败在哪、动了哪些文件、harness 给了什么修复建议」，
  * 避免在自己上一轮改坏的现场反复打补丁（goal 模式每轮 fresh context，否则跨轮失忆）。
@@ -413,8 +498,12 @@ async function runHarnessPhase(
   dryRun: boolean,
   manifest?: GoalManifest,
   roundIdentity?: { runId: string; attemptId: string },
-): Promise<number> {
-  if (dryRun) return 0;
+  // P0-4（plan d9b4f7e2 rev5）：harness 也在 wall deadline 内——旧实现无 timeout，agent
+  // 停在 deadline 后 harness 仍可无限跑，"超支 ≤ grace"无从保证。返回结构化结果：
+  // exitCode=1 无法区分门禁真失败与 wall 树杀，timedOut 单独承载。
+  timeoutMs?: number,
+): Promise<{ exitCode: number; timedOut: boolean }> {
+  if (dryRun) return { exitCode: 0, timedOut: false };
   const harnessDir = path.join(frameworkRoot, 'harness');
   // P0-7①：harness 子进程须在干净环境运行——剥离 NODE_OPTIONS 预加载注入（2026-07-05 伪签事故向量）。
   const sanitized = sanitizeSpawnEnv(process.env);
@@ -441,6 +530,10 @@ async function runHarnessPhase(
       shell: process.platform === 'win32',
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // P0-4 复审修复（codex P0）：POSIX 下须自成进程组——killProcessTree 的
+      // process.kill(-pid) 以进程组为前提，不 detached 时组杀必然 ESRCH 回落单杀，
+      // 孙进程（harness 再 spawn 的编译/设备子进程）漏杀。与 agent invoke 同口径。
+      detached: process.platform !== 'win32',
     },
   );
   activeHarnessKill = async () => {
@@ -451,14 +544,33 @@ async function runHarnessPhase(
   child.stdout?.on('data', (chunk: Buffer | string) => process.stdout.write(chunk));
   child.stderr?.on('data', (chunk: Buffer | string) => process.stderr.write(chunk));
 
+  // P0-4：remaining-budget timeout + 进程树 kill（bounded，见 agent-invoke killProcessTree）。
+  // 复审修复（codex P0/cursor 阻断1）：kill 必须与 agent 路径同构——**先 arm force-settle
+  // 再杀**。否则 taskkill 超时/失败且目标存活时 child 永不 exit/close，settleWaiter.promise
+  // 永久悬挂，hard wall 形同虚设（正是本 plan 要根治的"无界等待"在 harness 段的复刻）。
   const settleWaiter = createChildSettleWaiter(child, {});
+  let timedOut = false;
+  const killTimer =
+    typeof timeoutMs === 'number' && timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          settleWaiter.armForceSettleAfterKill();
+          if (child.pid) {
+            // killProcessTree 自身有界（taskkill helper 超时会被结束）；即便它失败，
+            // 上面的 force-settle 也保证 promise 在 FORCE_SETTLE 窗口内 resolve。
+            void killProcessTree(child.pid);
+          }
+        }, timeoutMs)
+      : null;
+
   try {
     const settled = await settleWaiter.promise;
-    activeHarnessKill = null;
-    return settled.exitCode;
+    return { exitCode: timedOut && settled.exitCode === 0 ? 1 : settled.exitCode, timedOut };
   } catch {
+    return { exitCode: 1, timedOut };
+  } finally {
+    if (killTimer) clearTimeout(killTimer);
     activeHarnessKill = null;
-    return 1;
   }
 }
 
@@ -536,7 +648,8 @@ function buildUnattendedExecutionBlock(
   capabilityAdvisory?: CapabilityAdvisory,
 ): string[] {
   const approval = manifest.unattended?.approval_mode ?? 'never';
-  const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
+  const assumptionsRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.jsonl`);
+  const assumptionsMdRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.md`);
   // E0（cursor 采纳：同 prompt 自相矛盾预防）——原文硬编码「唯一出路是 pixel_1to1 P0 屏人工
   // 确认」；盲档下 effective fidelity 根本到不了 pixel_1to1，这句话与能力块（若同时注入）自相
   // 矛盾。按 capabilityAdvisory（与能力块同源取值）分支措辞；未传入（非 UI phase）时保留原文。
@@ -568,8 +681,19 @@ function buildUnattendedExecutionBlock(
     '',
     'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
     '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
-    `- Record **every** auto-decision in \`${assumptionsRel}\` with provenance \`auto-approved (goal-mode), pending human review\`.`,
-    '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log deferred request in headless-assumptions.md.',
+    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; check-receipt`,
+    '  BLOCKER-validates schema and registry completeness — a gate without a ledger line fails the phase closure):',
+    '  `{"decision_id":"<unique>","run_id":"<this run id>","phase":"<phase>","gate_id":"<registry id>",' +
+      '"class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<what you chose, or n/a: reason>",' +
+      '"must_review":true|false,"source":"agent","ts":"<ISO 8601>"}`',
+    `- Optionally mirror a human-readable table in \`${assumptionsMdRel}\` (projection only — never the SSOT).`,
+    '- Ledger records are **not** authorization: any hard-gate-lowering decision (fidelity downgrade, P0 skip',
+    '  waiver, conditional-review authorization, behavior-switch waiver) requires an out-of-band confirmation',
+    '  receipt; without one the run caps at AWAITING_HUMAN_REVIEW.',
+    '- `freeform_approval` gates (scope expansion, src mutation): **conservative default** — do NOT expand scope / do NOT mutate protected src; log the deferred request as a ledger line (must_review=true).',
+    '- Product source under test phases is attestation-locked: any product-code change after review closure',
+    '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
+    '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',
@@ -820,8 +944,11 @@ export function resolvePhaseCapabilityAdvisory(
     isUiRelevant = uiChange !== null && UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
     desired = parseFidelityTargetFromHandoffDoc(parseVisualHandoffYamlRoot(specMd));
   } else {
-    isUiRelevant = detectUiRelevantRequirement(manifest.requirement);
-    desired = detectPixel1to1Intent(manifest.requirement) ? 'pixel_1to1' : 'semantic_layout';
+    // t6：意图检测在解引用后的合并文本上做——manifest 摘要只写 SSOT 路径+弱措辞而
+    // 原始需求.md「完全参考」×7 是强信号（bc-openCard 事故原形）。
+    const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement);
+    isUiRelevant = detectUiRelevantRequirement(deref.combined);
+    desired = detectPixel1to1Intent(deref.combined) ? 'pixel_1to1' : 'semantic_layout';
   }
   if (!isUiRelevant) return null;
 
@@ -861,6 +988,13 @@ export function buildPhasePrompt(
   partialResumeArtifacts?: string[],
   resumeSkipLines?: string[],
   capabilityAdvisory?: CapabilityAdvisory | null,
+  // P0-1（plan d9b4f7e2）：continuation 双维度——续作块由 cause 驱动（PASS+timeout 也出块、
+  // 断流不再谎称 TIMED OUT、进程重启加磁盘为准注记），不再依赖 partial 清单非空。
+  continuation?: { cause: ContinuationCause; process_resumed: boolean } | null,
+  /** 本次 invoke 的有效超时（ms）——注入续作块让 agent 有预算感知（P0-4 起为钳制/升档后的值）。 */
+  effectiveTimeoutMs?: number,
+  /** 本 phase 此前 attempt 的累计消耗（plan P0-1.6"已耗时"，复审补）。 */
+  phasePrior?: { attempts: number; elapsedMs: number },
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -889,18 +1023,55 @@ export function buildPhasePrompt(
   ].filter(Boolean);
   const hasArtifacts = !!partialResumeArtifacts && partialResumeArtifacts.length > 0;
   const hasSkipLines = !!resumeSkipLines && resumeSkipLines.length > 0;
-  if (hasArtifacts || hasSkipLines) {
-    parts.push(
-      '',
-      '## Prior attempt TIMED OUT — resume from partial work (NOT a content failure)',
-      '',
-      'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**',
-    );
+  // P0-1 rev3/rev6：续作块由 continuation.cause 驱动（不再依赖 partial 清单非空——
+  // PASS+timeout 且 partial 为空时"空清单"本身就是信息：产物在、receipt/closure 未完）。
+  const interruptedCause =
+    continuation &&
+    (continuation.cause === 'agent_timeout' ||
+      continuation.cause === 'transient_api_error' ||
+      continuation.cause === 'unknown')
+      ? continuation.cause
+      : null;
+  if (interruptedCause) {
+    const header =
+      interruptedCause === 'agent_timeout'
+        ? '## Prior attempt TIMED OUT — resume from partial work (NOT a content failure)'
+        : interruptedCause === 'transient_api_error'
+          ? '## Prior attempt hit an API CONNECTION DROP — resume from partial work (NOT a content failure)'
+          : '## Prior attempt was INTERRUPTED (process crash / unknown) — resume from partial work';
+    const intro =
+      interruptedCause === 'agent_timeout'
+        ? 'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**'
+        : interruptedCause === 'transient_api_error'
+          ? 'The previous attempt of this phase was interrupted by a model-API connection drop, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**'
+          : 'The previous attempt of this phase was interrupted before a verdict was recorded (runner/process crash or unknown). **Inspect the partial work on disk first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**';
+    parts.push('', header, '', intro);
     if (hasArtifacts) {
       parts.push('', 'Already (partially) written to disk:', '', ...partialResumeArtifacts!.map(f => `- ${f}`));
+    } else {
+      parts.push(
+        '',
+        'No partial phase artifacts were detected as freshly written — the interruption likely hit before writing, or only the closure steps (harness re-run / verifier / receipt) were left unfinished. Check the phase artifact directory, then finish the closure steps.',
+      );
     }
     if (hasSkipLines) {
       parts.push(...resumeSkipLines!);
+    }
+    if (continuation!.process_resumed) {
+      parts.push(
+        '',
+        'The runner process was restarted (--resume): trust the on-disk state over any assumption about the prior session.',
+      );
+    }
+    if (typeof effectiveTimeoutMs === 'number' && effectiveTimeoutMs > 0) {
+      const elapsedNote =
+        phasePrior && phasePrior.elapsedMs > 0
+          ? ` This phase has already consumed ~${Math.max(1, Math.round(phasePrior.elapsedMs / 60000))} minutes across ${phasePrior.attempts} prior attempt(s).`
+          : '';
+      parts.push(
+        '',
+        `Time budget: ~${Math.max(1, Math.round(effectiveTimeoutMs / 60000))} minutes before this attempt is forcibly killed — prioritize finishing artifacts + receipt/closure over re-exploration.${elapsedNote}`,
+      );
     }
     parts.push('', 'Resume where the prior attempt left off, finish the remaining work, then re-run this phase harness.');
   }
@@ -933,7 +1104,7 @@ export function buildPhasePrompt(
       parts.push(
         '',
         '**This is a device toolchain / screenshot-capture (infrastructure) failure — NOT a code defect.**',
-        'Do NOT revert or rewrite application code to "fix" it. Diagnose the environment: device connection / hdc / build toolchain / screenshot permissions.',
+        'Do NOT revert or rewrite application code to "fix" it. Diagnose the environment: device connection / hdc / build toolchain / signing configuration (signingConfigs / custom signing task coverage) / screenshot permissions.',
         'If the same infrastructure failure repeats, the run will HALT for you to fix the environment — blind retries waste the budget and do not improve the UI.',
       );
     } else if (priorFailureKind === 'visual_gap') {
@@ -950,6 +1121,23 @@ export function buildPhasePrompt(
         '',
         '**The prior attempt hit the phase wall-clock budget (agent_timeout) — NOT a content failure.**',
         'Resume the unfinished work from the partial artifacts; do NOT revert or redo completed parts.',
+      );
+    } else if (priorFailureKind === 'framework_integrity_block') {
+      // P0-5：本 kind 正常路径是 halt（不重试）——能走到这里只可能是人工处置后 --resume。
+      // 铁律：不给任何"修复/回滚"指引，framework 发布件对 agent 只读。
+      parts.push(
+        '',
+        '**The prior halt was a FRAMEWORK INTEGRITY block — human-only territory, NOT your artifacts.**',
+        'Framework release files are READ-ONLY for you: do NOT modify, restore, or revert anything under framework/.',
+        'A human should already have resolved it (drift_allowlist approval / restore / re-deploy). Just re-run this phase harness to confirm, then continue the phase work. If the integrity blocker persists, HALT — do not attempt workarounds.',
+      );
+    } else if (priorFailureKind === 'framework_bug') {
+      // P0-3：门禁自身缺陷——agent 改产物绕不过去，也不得改 framework 发布件。
+      parts.push(
+        '',
+        '**The prior halt was an INTERNAL GATE ERROR (framework bug) — NOT a defect in your artifacts.**',
+        'Do NOT keep mutating your artifacts to appease the crashing checker, and do NOT modify framework release files.',
+        'A human should already have fixed/redeployed the gate. Re-run this phase harness; if the same internal error reappears, HALT and report it.',
       );
     } else {
       parts.push(
@@ -978,7 +1166,13 @@ export function resolveOrphanedIncompleteRun(
   if (!runId) return null; // unidentifiable owner → fall through (steal stale lock)
   const events = loadEventsJsonl(path.join(featureRunsDirAbs, runId, 'events.jsonl'));
   const end = resolveEffectiveRunEnd(events);
-  if (end?.status === 'COMPLETED') return null; // prior run finished; only a leftover lock
+  if (
+    end?.status === 'COMPLETED' || // legacy
+    end?.status === 'CHAIN_SLICE_COMPLETED' ||
+    end?.status === 'AWAITING_HUMAN_REVIEW'
+  ) {
+    return null; // prior run finished; only a leftover lock
+  }
   const reason = isPidAlive(existing.pid) ? 'lock 心跳超时（owner 未释放）' : 'owner 进程已退出';
   return { runId, reason };
 }
@@ -1417,6 +1611,51 @@ Goal runner — tool-agnostic multi-phase orchestrator
       resolvedProfile,
     });
 
+    // goal-fakepass-hardening t8：截断链 preflight——start_phase 非链首时机器核验上游
+    // closure（血缘重算 + review attestation），manifest.requirement 的文本断言不作数
+    // （bc-openCard 事故：run2 以"上游已 PASS"文本断言直接从 ut 起跑）。
+    const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+    if (!dryRun && !argv.resume && chain[0] !== fullWorkflowChain[0]) {
+      const upstream = fullWorkflowChain.slice(0, fullWorkflowChain.indexOf(chain[0])).map(String);
+      // P0-2（八轮）+九轮 P0：比对**当前 run** 的 requirement 与上游 closure 记录的——
+      // 换需求起截断链时上游 closure 判 stale。当前 SHA 不可计算=无法证明需求血缘，
+      // goal 环境直接 BLOCKER（fail-closed，不静默跳过比较）。
+      const currentReqSha = computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir);
+      if (currentReqSha === null) {
+        console.error(
+          '[goal-runner] BLOCKER: 截断链核验无法计算当前 run 的 requirement 血缘哈希' +
+            `（goal-runs/${manifest.run_id}/manifest.json 缺失/不可读）——fail-closed，拒绝启动。`,
+        );
+        process.exit(1);
+      }
+      const staleness = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, upstream, {
+        currentRequirementSha: currentReqSha,
+      });
+      const bad = staleness.filter((r) => r.verdict !== 'fresh');
+      const missingAttestation =
+        upstream.includes('review') && !loadReviewClosureAttestation(projectRoot, manifest.feature);
+      if (bad.length > 0 || missingAttestation) {
+        console.error('[goal-runner] BLOCKER: 截断链上游 closure 核验失败——拒绝启动：');
+        for (const r of bad) {
+          const detail =
+            r.verdict === 'missing'
+              ? '缺 phase-evidence-manifest（旧版产物/未闭环，须补跑该阶段闭环）'
+              : r.propagated_from
+                ? `传染自上游 ${r.propagated_from}`
+                : `证据变更：${[...r.changed_paths, ...(r.receipt_changed ? ['<receipt>'] : []), ...(r.integrity_errors ?? [])].join('、')}`;
+          console.error(`  - [${r.phase}] ${r.verdict}：${detail}`);
+        }
+        if (missingAttestation) {
+          console.error('  - [review] 缺 review-closure-attestation.json（须回跑 review 闭环生成）');
+        }
+        console.error('  修复后重试，或从受影响的最上游阶段重新起链（--start）。');
+        process.exit(1);
+      }
+      emitMilestone(
+        `GOAL_RUN event=upstream_closure_verified phases=${upstream.join(',')} run_id=${manifest.run_id}`,
+      );
+    }
+
     // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
     // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
     // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
@@ -1430,8 +1669,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     if (visionProbeDecision.action === 'probe') {
       const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
-      if (probeResult.ran) {
+      if (probeResult.ran && probeResult.outcome === 'valid_cached') {
         console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
+      } else if (probeResult.ran) {
+        // plan c7d2e9a4 t3（stale-if-error）：探测无效/调用失败**未写盘**——日志须与消费面
+        // 实际行为一致（resolveBaseImageInput 只认盘）：盘上仍有当前版本 fresh 缓存（强刷
+        // 失败场景）→ 沿用 last-known-good；否则回退 adapter 声明路径,下次 run 自动重探。
+        let lkg: { probed_at: string; verdict: string } | null = null;
+        try {
+          const canary = loadFrameworkLocalConfig(projectRoot)?.vision?.canary;
+          if (canary && isVisionCanaryFresh(canary, manifest.adapter ?? 'generic')) {
+            lkg = { probed_at: canary.probed_at, verdict: canary.verdict };
+          }
+        } catch { /* local 读不出 → 按无缓存处理 */ }
+        console.warn(
+          lkg
+            ? `[goal-runner] 视觉金丝雀探测失败（${probeResult.error}），未写缓存——沿用既有实测缓存（probed_at=${lkg.probed_at}, verdict=${lkg.verdict}）`
+            : `[goal-runner] 视觉金丝雀探测无效/调用失败（${probeResult.error}），未缓存——本次 run 回退 adapter 声明路径，下次 run 自动重探`,
+        );
       } else if (probeResult.error) {
         console.warn(`[goal-runner] 视觉能力金丝雀实测跳过/失败（不阻断 run）：${probeResult.error}`);
       }
@@ -1498,7 +1753,66 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     flushProgress(true);
 
+    // goal-fakepass-hardening t8：--supersede <run_id>（可重复）——显式废弃 HALTED/PARTIAL
+    // 旧 run，写审计事件；completion verify 只认经审计的 supersede（自报 Set 不生效）。
+    const supersededRunIds: string[] = ([] as string[])
+      .concat(argv.supersede ?? [])
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+    for (const target of supersededRunIds) {
+      const targetEvents = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target, 'events.jsonl');
+      if (!fs.existsSync(targetEvents)) {
+        console.error(`[goal-runner] BLOCKER: --supersede 目标 run 不存在：${target}`);
+        process.exit(1);
+      }
+      appendEvent(manifest.report_dir, projectRoot, { type: 'supersede', target_run_id: target });
+      emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
+    }
+
+    // goal-fakepass-hardening t6：保真档位 preflight（agent 尚未被调用，不烧 run）——
+    // 强意图+缺视觉 → DEFERRED_CAPABILITY_MISSING；ambiguous+有图+未预授权 → halt 问人。
+    if (!argv.resume && !dryRun) {
+      const fidelityAction = evaluateFidelityTierPreflight({
+        projectRoot,
+        frameworkRoot,
+        manifest,
+        featuresDirRel: featuresDir,
+        chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
+      });
+      if (fidelityAction.action !== 'proceed') {
+        const status: GoalRunStatus =
+          fidelityAction.action === 'defer_capability_missing' ? 'DEFERRED_CAPABILITY_MISSING' : 'HALTED';
+        console.error(`\n[goal-runner] fidelity preflight → ${status}：\n${fidelityAction.detail}\n`);
+        const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, []);
+        writeGoalReport(projectRoot, manifest.report_dir, report, {
+          workflowChain: fullWorkflowChain.map(String),
+        });
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'run_end',
+          status,
+          ...(fidelityAction.action === 'await_human_fidelity_tier'
+            ? { halt_reason: 'await_human_fidelity_tier' }
+            : {}),
+        });
+        runConcluded = true;
+        emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
+        return fidelityAction.action === 'defer_capability_missing' ? 2 : 1;
+      }
+    }
+
     const cap = loadGoalCapability(frameworkRoot, manifest.adapter!);
+    // P1-7（plan d9b4f7e2）：adapter 版本运行时探测——每 run 一次、5s 超时、失败 unknown
+    // 不阻塞；进 events（版本随宿主环境漂移，不硬编码 adapter.yaml）。与 output_delivery
+    // 一并落 adapter_probe 事件，排障者一眼可见"什么版本、什么输出交付方式"。
+    if (!dryRun) {
+      const headlessCmd = cap.capability?.external_runner?.headless_invoke ?? '';
+      const adapterBinary = headlessCmd.trim().split(/\s+/)[0] || manifest.adapter!;
+      const adapterVersion = await probeAdapterVersion(adapterBinary);
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'adapter_probe',
+        adapter_version: adapterVersion,
+        output_delivery: cap.capability?.output_delivery ?? 'unknown',
+      });
+    }
     let outcomes: GoalPhaseOutcome[] = [];
     let deferredUpstream: Array<{ phase: FeaturePhase; reason: string }> = [];
     let chainStartIndex = 0;
@@ -1531,6 +1845,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
     // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
     const wallMs = resolveWallClockMs(manifest);
+    // P0-4（plan d9b4f7e2，rev8 偏离① 定稿口径）：wall deadline 制——**硬上界覆盖
+    // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
+    // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
+    // 07-13 案实锤：预算只在 attempt 启动前检查，review 在 ~580m 启动后跑满 32m，
+    // 限 585m 实跑 612m。
+    const wallDeadlineMs = wallClockStartMs + wallMs;
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
     for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
       console.warn(warn);
@@ -1649,9 +1969,37 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const priorSummaryRead = readPhaseSummary(projectRoot, manifest.feature, phase);
         const summaryMtimeBefore = getSummaryMtime(priorSummaryRead.summaryAbsPath);
 
-        // 重试（retries>0）或 resume 续跑本 phase 首轮时，把上轮 BLOCKER 证据回喂给 fresh-context agent。
-        // 保守门控：仅 FAIL/INCOMPLETE 才注入，避免干净首跑被残留旧 summary 污染。
-        const isPhaseContinuation = retries > 0 || (argv.resume && phaseIdx === chainStartIndex);
+        // P0-1（plan d9b4f7e2 rev6/rev7）：continuation {cause, process_resumed} 双维度，
+        // 与 retries（内容重试配额）**彻底解耦**——P0-B.5 的免配额重试曾因 retries 恒 0
+        // 拿不到任何回喂（07-13 chrys 案：spec 6 份字节级相同的冷 prompt，checkpoint 每轮
+        // 落盘却从未被同进程消费）。派生三层：
+        //   ① in-memory 上轮信号（同进程，最精确）；
+        //   ② events 五态窗口（--resume 跨进程，见 deriveContinuationFromEvents）；
+        //   ③ checkpoint timed_out（仅用于把 ② 的 unknown 升级为 agent_timeout——旧日志
+        //      end 事件可能缺 timed_out 标记）。
+        let continuation: { cause: ContinuationCause; process_resumed: boolean } | null = null;
+        if (priorAttemptApiError) {
+          continuation = { cause: 'transient_api_error', process_resumed: false };
+        } else if (priorAttemptTimedOut) {
+          continuation = { cause: 'agent_timeout', process_resumed: false };
+        } else if (retries > 0) {
+          continuation = { cause: 'content_retry', process_resumed: false };
+        } else if (Boolean(argv.resume) && phaseIdx === chainStartIndex) {
+          // rev6：resume 进入**全新 phase**（无历史 invoke）→ null，不注入任何续作块。
+          // 复审修复（codex P1）：**不再用 checkpoint.timed_out 升级 unknown**——checkpoint
+          // 是 phase 级、无 invoke_id、写在 harness 段之后：attempt A 超时留下的旧
+          // checkpoint 会盖过"attempt B 正常结束后崩于 harness"的 unknown 结论，违反
+          // 五态表"最新 attempt 优先/end 正常无 verdict → unknown"。events 五态窗口是
+          // 唯一权威（end 事件自带 timed_out，无需 checkpoint 佐证）。
+          const derived = deriveContinuationFromEvents(loadEventsJsonl(eventsPath), phase);
+          if (derived) {
+            continuation = { cause: derived.cause, process_resumed: true };
+          }
+        }
+        const isPhaseContinuation = continuation !== null;
+
+        // 上轮 BLOCKER 证据回喂。保守门控保留：仅 FAIL/INCOMPLETE 才注入，避免干净首跑
+        // 被残留旧 summary 污染。
         let priorFailure: string | undefined;
         let priorFailureKind: FailureKind | undefined;
         if (isPhaseContinuation && priorSummaryRead.summary) {
@@ -1664,21 +2012,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
             );
           }
         }
-        // P0-B/P0-D：上轮 agent 级中断以内存信号为准——summary 重算只见症状 blocker
-        // （断流的 spec_file_exists 会被误算 deterministic_gate，prompt 指导随之错向）。
-        if (priorAttemptApiError) priorFailureKind = 'transient_api_error';
-        else if (priorAttemptTimedOut) priorFailureKind = 'agent_timeout';
+        // P0-B/P0-D + rev6 缺口 b：上轮 agent 级中断以 continuation cause 为准——summary
+        // 重算只见症状 blocker（断流的 spec_file_exists 会被误算 deterministic_gate，
+        // "revert first" 指导随之错向）。现在同进程与 --resume 跨进程同一来源，kind 不再丢。
+        if (continuation?.cause === 'transient_api_error') priorFailureKind = 'transient_api_error';
+        else if (continuation?.cause === 'agent_timeout') priorFailureKind = 'agent_timeout';
 
-        // P1-B/P2：上轮因超时中断（非内容失败）时，把已落盘 partial 产物 + 已检视文件 skip-list
-        // 回喂，让重试续作而非从零重做探索。跨进程 resume 首轮从 checkpoint.json 回读上轮 timed_out
-        // （补 in-process priorAttemptTimedOut 在新进程丢失的缺口）。
-        const isResumeFirstRound = Boolean(argv.resume) && phaseIdx === chainStartIndex && retries === 0;
-        const timedOutForResume =
-          priorAttemptTimedOut ||
-          (isResumeFirstRound &&
-            readPhaseCheckpointTimedOut(projectRoot, manifest.report_dir, phase));
-        // P0-D：API 断流与超时同类——上轮被基建原因打断而非内容失败，partial 产物照样续作。
-        const interruptedForResume = timedOutForResume || priorAttemptApiError;
+        // P1-B/P2：上轮被基建原因打断（超时/断流/进程崩死）而非内容失败时，把已落盘
+        // partial 产物 + 已检视文件 skip-list 回喂，让重试续作而非从零重做探索。
+        const interruptedForResume =
+          continuation?.cause === 'agent_timeout' ||
+          continuation?.cause === 'transient_api_error' ||
+          continuation?.cause === 'unknown';
         const partialResumeArtifacts =
           isPhaseContinuation && interruptedForResume
             ? collectTimeoutResumableArtifacts(projectRoot, manifest.feature, phase, wallClockStartMs)
@@ -1693,6 +2038,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
               deriveReportSections(projectRoot, partialResumeArtifacts),
             )
           : [];
+
+        // P0-4（plan d9b4f7e2）：本 attempt 有效超时——**计算先于 buildPhasePrompt**，
+        // 同一个值传 prompt/agent_invoke_start 事件/adapter invoke/progress（单一事实源）。
+        // 连续第 2 次超时后默认表派生值升档 ×1.5（显式 override 不动，与 MIN 地板同一
+        // 豁免契约）；agent 侧 zero-budget 禁启动（rev7：invoke timer 语义 timeoutMs>0
+        // 才启用、checkRunBudget 只查原始 wall——"原始 remaining>0、扣 reserve 后 ≤0"
+        // 时绝不把 0 交给 timer 无超时裸跑）。
+        const phaseEventsNow = loadEventsJsonl(eventsPath);
+        const consecutiveTimeouts = countConsecutiveAgentTimeouts(phaseEventsNow, phase);
+        // 复审补（cursor，plan P0-1.6 的"已耗时"）：本 phase 此前各 attempt 的累计耗时，
+        // 注入续作块给 agent 预算感知（"这个 phase 已经烧了 X 分钟"）。
+        const priorAttemptDurationsMs = phaseEventsNow
+          .filter(
+            (e) =>
+              e.type === 'agent_invoke_end' &&
+              e.phase === phase &&
+              typeof e.duration_ms === 'number',
+          )
+          .map((e) => e.duration_ms as number);
+        const baseTimeoutMs = resolvePhaseTimeoutMs(phase, manifest);
+        const escalatedTimeoutMs =
+          !isExplicitPhaseTimeout(phase, manifest) &&
+          consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_ESCALATE_AFTER
+            ? Math.round(baseTimeoutMs * TIMEOUT_ESCALATION_FACTOR)
+            : baseTimeoutMs;
+        const availableForAgentMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+        if (availableForAgentMs <= 0) {
+          halted = true;
+          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          outcomes.push({
+            phase,
+            verdict: 'FAIL',
+            halted: true,
+            retries,
+            halt_reason: 'budget_wall_clock',
+          });
+          break;
+        }
+        const effectiveAgentTimeoutMs = Math.min(escalatedTimeoutMs, availableForAgentMs);
+        if (escalatedTimeoutMs > baseTimeoutMs) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'timeout_escalated',
+            phase,
+            effective_timeout_ms: effectiveAgentTimeoutMs,
+          });
+        }
 
         // E0：UI 需求 spec/plan/coding phase 能力感知——非 UI 相关 / 其余 phase 返回 null，
         // 不注入能力块（不打扰无关 phase 的 prompt）。
@@ -1715,6 +2106,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           partialResumeArtifacts,
           resumeSkipLines,
           capabilityAdvisory,
+          continuation,
+          effectiveAgentTimeoutMs,
+          priorAttemptDurationsMs.length > 0
+            ? {
+                attempts: priorAttemptDurationsMs.length,
+                elapsedMs: priorAttemptDurationsMs.reduce((a, b) => a + b, 0),
+              }
+            : undefined,
         );
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -1751,18 +2150,47 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const visualAttemptId = `i${totalTurns}`;
         const invokeId = `${phase}-${visualAttemptId}`;
 
+        // t3-min（openspec capability-gap-preflight）：invoke 前共享 preflight——每 phase
+        // 每 attempt 重检（含 --resume）；缺口不产生 agent_invoke_start、不烧 agent 轮次，
+        // 首触即 halt 求人（不进 CUMULATIVE_HALT_FAMILY：agent 未开跑，无累计语义）。
+        // v5：逻辑抽取为 runInvokeCapabilityGate（真实链可测——goal-capability-gate 单测
+        // 断言"缺口无 agent_invoke_start / resume 重检仍 halt / reprobe 后放行"事件序列）。
+        if (!dryRun) {
+          const capHalt = runInvokeCapabilityGate({
+            projectRoot,
+            phase,
+            retries,
+            resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
+            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+          });
+          if (capHalt) {
+            halted = true;
+            outcomes.push(capHalt.outcome);
+            break;
+          }
+        }
+
         progressSubstep = 'agent_invoke';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'agent_invoke_start',
           phase,
           invoke_id: invokeId,
           command: invokePlan.label,
+          // P0-4：timeout 单一事实源——progress/status/dead-man 优先读本字段判 liveness
+          // （升档后 manifest 静态解析会把合法运行 attempt 误报 STALLED，脑裂实锤）。
+          effective_timeout_ms: effectiveAgentTimeoutMs,
         });
         flushProgress();
 
+        // P0-4 rev7：调用 adapter 前断言——0 传给 invoke timer = 关闭超时，结构性禁止。
+        if (!(effectiveAgentTimeoutMs > 0)) {
+          throw new Error(
+            `[goal-runner] BUG: effectiveAgentTimeoutMs=${effectiveAgentTimeoutMs} 不得 ≤0 到达 adapter（zero-budget 应已在启动判据拦截）`,
+          );
+        }
         const invoke = await invokeAgentHeadless(invokePlan, projectRoot, {
           dryRun,
-          timeoutMs: resolvePhaseTimeoutMs(phase, manifest),
+          timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
           // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
           extraEnv: {
@@ -1798,6 +2226,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,
           usage: invoke.usage,
+          // P1-7（plan d9b4f7e2 rev6）：kill 诊断走事件字段，**不写 agent-output.log**
+          // （该文件是 interaction sentinel / critic outputHash / output bytes 三处证据源，
+          // runner 写入=污染证据+消灭"0 字节"事实）。0 字节 + output_delivery=buffered/
+          // unknown 即自解释：adapter 缓冲输出、被杀=日志空，非 agent 没干活。
+          kill_reason: invoke.timed_out === true ? 'agent_timeout' : undefined,
+          effective_timeout_ms: effectiveAgentTimeoutMs,
+          output_bytes: fs.existsSync(outputLogPath) ? fs.statSync(outputLogPath).size : 0,
+          output_delivery: cap.capability?.output_delivery ?? 'unknown',
         });
         flushProgress();
 
@@ -1856,14 +2292,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // P0-4 rev6：harness 启动判据——扣除收尾预留后的可用预算 ≤0 即不 spawn，直接
+        // budget_wall_clock 终局（"原始 remaining>0 但扣 reserve 后 ≤0"也不 spawn；
+        // 不产半份 harness 证据，绝不把 0 传给 timer）。
+        const availableForHarnessMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+        if (!dryRun && availableForHarnessMs <= 0) {
+          halted = true;
+          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          outcomes.push({
+            phase,
+            verdict: 'FAIL',
+            halted: true,
+            retries,
+            halt_reason: 'budget_wall_clock',
+            agent_exit_code: invoke.exitCode,
+            agent_timed_out: invoke.timed_out,
+          });
+          phaseDone = true;
+          break;
+        }
+
         progressSubstep = 'harness';
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_start',
           phase,
+          // P0-1 rev6：attempt 窗口按 invoke_id 精确切分（continuation 五态派生消费）。
+          invoke_id: invokeId,
         });
         flushProgress();
 
-        const harnessExit = await runHarnessPhase(
+        const harnessRun = await runHarnessPhase(
           projectRoot,
           frameworkRoot,
           phase,
@@ -1871,14 +2329,37 @@ Goal runner — tool-agnostic multi-phase orchestrator
           dryRun,
           manifest,
           { runId: manifest.run_id, attemptId: visualAttemptId },
+          availableForHarnessMs,
         );
+        const harnessExit = harnessRun.exitCode;
 
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_end',
           phase,
           exit_code: harnessExit,
+          invoke_id: invokeId,
+          // P0-4 rev6：wall 树杀与门禁真失败分开承载（exit_code=1 二义）。
+          timed_out: harnessRun.timedOut || undefined,
         });
         flushProgress();
+
+        // P0-4 rev6：harness 被 wall 杀 → 直接 budget_wall_clock 终局，**不读取/归因可能
+        // 只写了一半的 summary**（半份证据比无证据更毒）。
+        if (harnessRun.timedOut) {
+          halted = true;
+          appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+          outcomes.push({
+            phase,
+            verdict: 'FAIL',
+            halted: true,
+            retries,
+            halt_reason: 'budget_wall_clock',
+            agent_exit_code: invoke.exitCode,
+            agent_timed_out: invoke.timed_out,
+          });
+          phaseDone = true;
+          break;
+        }
 
         // P2：本次 attempt 结束后，runner 对"盘上现实"派生 checkpoint.json（观测 + 跨进程 resume）。
         if (!dryRun) {
@@ -2009,7 +2490,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
           operatorInterrupt,
+          // P0-5/P0-3 freshness（决策表 SSOT）：fresh 超时轮的 integrity/framework_bug
+          // 确定性证据优先于 agent_timeout（harness 在 tree-kill 之后新鲜跑出，可信）。
+          staleSummary: resolved.stale_summary,
         });
+        // P0-5：integrity subtype 多值收集（blocking_class 过滤 + classification 通道），
+        // 透传 phase_verdict / halt guidance / outcome。
+        const integritySubtypes =
+          failureKind === 'framework_integrity_block' ? extractIntegritySubtypes(summary) : [];
         // P0-B §七.3：agent_timeout 无普通 blocker 时用专用 signature（agent_timeout@<phase>），
         // 否则空 signature 被 shouldHaltNoProgress 短路、零进展熔断恒不触发。
         const currentBlockerSignature = buildEffectiveBlockerSignature(
@@ -2053,6 +2541,40 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 没有 normal 模式的 Stop hook 逃生阀；不 backoff、不盲重试、不冒充断流。
           action = 'halt';
           haltReason = 'agent_no_output';
+        } else if (failureKind === 'framework_integrity_block' && verdict !== 'PASS') {
+          // P0-5（plan d9b4f7e2）：framework 完整性家族一律首触 halt——agent 修不了也不许修
+          // （含"回滚可疑漂移"：07-13 chrys 案 goal agent 依 code_regression 通用话术回滚了
+          // 宿主经用户批准的真修复）。guidance 按 subtype 分补救、多值按修复顺序逐条。
+          action = 'halt';
+          haltReason = 'framework_integrity_block';
+          awaitConfirmGuidance = buildFrameworkIntegrityGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phase,
+            subtypes: integritySubtypes,
+            harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+          }).join('\n');
+          console.log(`\n===== framework_integrity_block =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'framework_bug' && verdict !== 'PASS') {
+          // P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误——框架缺陷只能人修（回灌源仓），
+          // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
+          action = 'halt';
+          haltReason = 'framework_bug';
+          const bugBlockers = (summary?.blockers ?? []).filter(
+            (b) => b.classification === 'framework_bug',
+          );
+          const bugStackHead = bugBlockers
+            .map((b) => (b.details_excerpt ?? '').split('\n').find((l) => l.trim()))
+            .find((l) => l && l.trim());
+          awaitConfirmGuidance = buildFrameworkBugGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phase,
+            checkerIds: bugBlockers.map((b) => b.id ?? '').filter(Boolean) as string[],
+            stackHead: bugStackHead ? truncateOneLine(bugStackHead, 200) : undefined,
+            harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
+          }).join('\n');
+          console.log(`\n===== framework_bug =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'transient_api_error' && verdict !== 'PASS') {
           // P0-D：断流走独立 backoff 重试（与 max_retries_per_phase 解耦），耗尽才 halt。
           if (transientRetriesUsed < manifest.budget.max_transient_api_retries) {
@@ -2076,6 +2598,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           // P0-10a 补强②：halt 时 console/detach.log 原样打印（看日志者亦撞见）。
           console.log(`\n===== await_human_visual_confirm =====\n${awaitConfirmGuidance}\n`);
+        } else if (failureKind === 'await_human_p0_skip' && verdict !== 'PASS') {
+          // t5（goal-fakepass-hardening）：P0 用例 skip 无凭证 waiver——agent 不可自决
+          // P0 去留，重试只会复现同 skip → 首触即 halt 求人；skip 清单与双口径在
+          // blocker details（p0_coverage_integrity）。
+          action = 'halt';
+          haltReason = 'await_human_p0_skip';
+          awaitConfirmGuidance = [
+            '===== await_human_p0_skip（P0 用例被跳过，须真人裁决）=====',
+            `feature=${manifest.feature} run_id=${manifest.run_id}`,
+            '- 被跳过的 P0 用例与全分母双口径见 testing summary 的 p0_coverage_integrity blocker details。',
+            '- 三条出路：①修复可测性后去 skip 重跑；②外部环境阻塞 → 按 DEFERRED 流程登记；',
+            '  ③确需豁免 → 真人经带外体系签发 p0_skip_waiver receipt，写入 testing/skip-waivers.yaml',
+            '  （逐条 tc_id + receipt_path），然后 --resume。waiver 只降级不洗白（run 封顶 AWAITING_HUMAN_REVIEW）。',
+          ].join('\n');
+          console.log(`\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS') {
           // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
           // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
@@ -2125,6 +2662,38 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ) {
           action = 'halt';
           haltReason = `no_progress_cumulative_${failureKind}`;
+        } else if (
+          // P0-4（plan d9b4f7e2）：连续超时熔断——升档（第 2 次后 ×1.5）仍救不回的第
+          // CONSECUTIVE_TIMEOUT_HALT_AT 次连续超时 → halt 求人。签名无关（07-13 案 FAIL
+          // 签名每轮互异，签名基 guard 全绕过）；含 PASS+unclosed 型（advance_blocked），
+          // 但"PASS 且闭环完成"的超时不拦（马上 advance，无需熔断）。
+          failureKind === 'agent_timeout' &&
+          (verdict !== 'PASS' || resolved.advance_blocked) &&
+          countConsecutiveAgentTimeouts(loadEventsJsonl(eventsPath), phase) + 1 >=
+            CONSECUTIVE_TIMEOUT_HALT_AT
+        ) {
+          action = 'halt';
+          haltReason = 'agent_timeout_repeated';
+          awaitConfirmGuidance = buildAgentTimeoutRepeatedGuidance({
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phase,
+            // 复审修复（codex P2）：本次 invoke 的 agent_invoke_end 在 verdict 链之前已
+            // 落盘 events——不再 concat 当前时长，否则末条重复、attempt 数虚高。
+            attemptDurationsMs: loadEventsJsonl(eventsPath)
+              .filter(
+                (e) =>
+                  e.type === 'agent_invoke_end' &&
+                  e.phase === phase &&
+                  typeof e.duration_ms === 'number',
+              )
+              .map((e) => e.duration_ms as number),
+            effectiveTimeoutMs: effectiveAgentTimeoutMs,
+            harnessPrefixRel: layout.frameworkRel
+              ? path.posix.join(layout.frameworkRel, 'harness')
+              : 'harness',
+          }).join('\n');
+          console.log(`\n===== agent_timeout_repeated =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'agent_timeout' && verdict !== 'PASS') {
           // P0-B.5：超时+有进展（guard 未熔断）→ resume 续作，不吃内容重试预算；
           // 全局仍受 wall_clock + max_total_turns 兜底（checkRunBudget 每轮重查）。
@@ -2167,6 +2736,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'phase_verdict',
           phase,
+          // P0-1 rev6：attempt 窗口按 invoke_id 精确切分（continuation 五态派生消费）。
+          invoke_id: invokeId,
           verdict,
           action,
           harness_exit: harnessExit,
@@ -2174,8 +2745,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_failed: resolved.agent_failed,
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
-          failure_kind_classified: failureKind,
+          // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案
+          // 全部 advance 事件带着 code_regression 字样，事后排障已实际造成误导。
+          failure_kind_classified:
+            verdict === 'PASS' && action === 'advance' ? undefined : failureKind,
           blocker_signature: currentBlockerSignature || undefined,
+          // P0-5：integrity subtype 多值透传（事后排障/报告消费；空列表不写）。
+          integrity_subtypes: integritySubtypes.length > 0 ? integritySubtypes : undefined,
           // E4：持久化 advance_blocked 状态，供下一次 attempt 的 countCumulativeAdvanceBlocked
           // 事件回放统计使用（events.jsonl 是唯一 SSOT，非内存计数，resume/detach 重启不丢）。
           advance_blocked: resolved.advance_blocked || undefined,
@@ -2185,8 +2761,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // P0-B/P0-D 诚实归因：让下游排障者（人/AI）一眼见真因，不再有"缺 API key"式臆造空间。
           api_error_excerpt: apiErrorSentinel?.matchedLine,
           agent_duration_ms: invoke.duration_ms,
-          timeout_budget_ms:
-            invoke.timed_out === true ? resolvePhaseTimeoutMs(phase, manifest) : undefined,
+          timeout_budget_ms: invoke.timed_out === true ? effectiveAgentTimeoutMs : undefined,
           // codex P2：agent 非零退出时保真 stderr（binary 不可 spawn 的 preflight 诊断就在这里）。
           agent_stderr_excerpt:
             invoke.exitCode !== 0 && invoke.stderr.trim()
@@ -2272,10 +2847,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // wall_clock（下一轮 checkRunBudget 重查）。backoff 修不了断掉的 TCP——只买
             // 到几次自动重试 + 诚实归因，长会话必断的网络仍需换代理/交互跑。
             transientRetriesUsed++;
-            const backoffMs =
+            const configuredBackoffMs =
               TRANSIENT_API_BACKOFF_MS[
                 Math.min(transientRetriesUsed - 1, TRANSIENT_API_BACKOFF_MS.length - 1)
               ];
+            // P0-4 rev6：backoff 是第四条等待路径——无条件 sleep 会在 wall 只剩几秒时
+            // 先睡满 45s 突破 deadline。复审收紧（codex P2）：剩余预算装不下**配置值**
+            // 就直接终局（canAffordBackoff 纯函数，单测钉行为），不睡截断的残量。
+            const backoffAvailableMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+            const backoffMs = configuredBackoffMs;
+            if (!canAffordBackoff(configuredBackoffMs, backoffAvailableMs)) {
+              halted = true;
+              appendEvent(manifest.report_dir, projectRoot, { type: 'budget_wall_clock', phase });
+              outcomes.push({
+                phase,
+                verdict: 'FAIL',
+                halted: true,
+                retries,
+                halt_reason: 'budget_wall_clock',
+              });
+              phaseDone = true;
+              continue;
+            }
             appendEvent(manifest.report_dir, projectRoot, {
               type: 'transient_api_retry_scheduled',
               phase,
@@ -2307,10 +2900,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_silent_killed: invoke.silent_killed,
           agent_warn: agentWarn,
           halt_reason: haltReason,
-          ...((haltReason === 'await_human_visual_confirm' || haltReason === 'closure_wall_repeated') &&
+          ...((haltReason === 'await_human_visual_confirm' ||
+            haltReason === 'closure_wall_repeated' ||
+            haltReason === 'await_human_p0_skip' ||
+            haltReason === 'framework_integrity_block' ||
+            haltReason === 'framework_bug' ||
+            haltReason === 'agent_timeout_repeated') &&
           awaitConfirmGuidance
             ? { halt_guidance: awaitConfirmGuidance }
             : {}),
+          // P0-5：integrity subtype 多值透传进最终报告。
+          ...(integritySubtypes.length > 0 ? { integrity_subtypes: integritySubtypes } : {}),
           interaction_question: interactionSentinel?.error,
           // codex P3：诊断保真进最终报告——只读 goal-report 的下游也能看到真因原文。
           failure_kind_classified: failureKind,
@@ -2340,10 +2940,103 @@ Goal runner — tool-agnostic multi-phase orchestrator
       agent_timed_out: o.agent_timed_out,
       advance_blocked: o.advance_blocked,
     }));
-    const status = resolveGoalRunStatus(phaseRecords, reachedEnd);
+    // t8/P1-1/P1-2：全链跑完时消费真实门禁信号（与 completion 生成同源 issues 集）——
+    // needs_human（flow_contract/waiver/档位钳制/待复核/运行时证据）→ AWAITING_HUMAN_REVIEW；
+    // needs_fix（verdict FAIL/stale/tampered/attestation 失配）→ 不得 CHAIN_SLICE_COMPLETED
+    // （codex 八轮 P1-2：needs_fix 之前被写成成功态是强错觉）。
+    let pendingHumanReview = false;
+    let blockingFix = false;
+    if (reachedEnd) {
+      const cls = classifyCleanPassIssues(
+        collectCleanPassIssues({
+          projectRoot,
+          feature: manifest.feature,
+          chain: fullWorkflowChain.map(String),
+          currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
+        }),
+      );
+      pendingHumanReview = cls.needsHuman;
+      blockingFix = cls.needsFix;
+    } else {
+      pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
+    }
+    const status = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
-    writeGoalReport(projectRoot, manifest.report_dir, report);
-    appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
+    writeGoalReport(projectRoot, manifest.report_dir, report, {
+      workflowChain: fullWorkflowChain.map(String),
+    });
+    // t3-min v3（codex 高优6 / openspec capability-gap-preflight）：terminal event 携带
+    // halt_reason——取最后一个 halted outcome 的原因（await_human_capability_gap 等），
+    // 消费方无需回扫 phase_halt 事件即可分类终态。v5 抽 helper 使语义可单测。
+    const lastHaltReason = resolveLastHaltReason(outcomes);
+    appendEvent(manifest.report_dir, projectRoot, {
+      type: 'run_end',
+      status,
+      ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
+    });
+
+    // P0-4（rev8 偏离① 定稿口径）：硬上界只覆盖 agent/harness/backoff 三路径；run_end 后
+    // 收尾为 **pre-check 拦截的 best-effort**——同步 fs 工作无进程内可执行 bound（同步
+    // 挂起时 timer/watchdog 均不运行），硬中断=进程自杀会写坏 receipt。本 pre-check 挡
+    // "开始前已超支"（finalize_skipped）；已开始步骤的越界由下方 finalize_overrun 事件
+    // 如实记录（喂开放问题 4 的 reserve 取值回灌）。真硬界=worker/child 隔离，开放问题 5。
+    const finalizeStartMs = Date.now();
+    const finalizeDeadlineExceeded = finalizeStartMs > wallDeadlineMs;
+    if (finalizeDeadlineExceeded) {
+      appendEvent(manifest.report_dir, projectRoot, { type: 'finalize_skipped', phase: undefined });
+      console.warn(
+        '[goal-runner] wall deadline 已过——跳过 best-effort 收尾（completion receipt 等），事件已留痕 finalize_skipped',
+      );
+    }
+
+    // t8：feature 完成凭证——仅当全链（按 track 解析）逐阶段 clean_pass 才生成；
+    // 生成失败/不满足只记录，不改变 run 终局（feature 级状态由 verify-feature-completion 判）。
+    if (!finalizeDeadlineExceeded && status === 'CHAIN_SLICE_COMPLETED') {
+      try {
+        const issues = collectCleanPassIssues({
+          projectRoot,
+          feature: manifest.feature,
+          chain: fullWorkflowChain.map(String),
+        });
+        if (issues.length === 0) {
+          const { runIds: phaseRunIds, attempts: phaseAttempts } = resolvePhaseRunIds(
+            projectRoot, manifest.feature, fullWorkflowChain.map(String),
+          );
+          for (const o of outcomes) phaseRunIds[String(o.phase)] = manifest.run_id;
+          const { originalAbs } = generateFeatureCompletion({
+            projectRoot,
+            feature: manifest.feature,
+            chain: fullWorkflowChain.map(String),
+            workflowTrack: goalTrack,
+            runId: manifest.run_id,
+            runDirAbs: path.join(projectRoot, manifest.report_dir),
+            phaseRunIds,
+            phaseAttempts,
+            supersedes: supersededRunIds,
+          });
+          emitMilestone(
+            `GOAL_RUN event=feature_completion_generated path=${path.relative(projectRoot, originalAbs).replace(/\\/g, '/')} run_id=${manifest.run_id}`,
+          );
+        } else {
+          emitMilestone(
+            `GOAL_RUN event=feature_completion_skipped reason=non_clean_pass pending=${issues.length} run_id=${manifest.run_id}`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[goal-runner] feature completion 生成失败（不影响 run 终局）：${(err as Error).message}`);
+      }
+    }
+    // P0-4 复审（codex P1）：收尾越过 deadline 的如实留痕——同步工作不可中断，超支量
+    // 进 events 供 FINALIZE_RESERVE 取值回灌（开放问题 4）。
+    if (!finalizeDeadlineExceeded && Date.now() > wallDeadlineMs) {
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'finalize_overrun',
+        duration_ms: Date.now() - finalizeStartMs,
+      });
+      console.warn(
+        `[goal-runner] 收尾越过 wall deadline（收尾耗时 ${Date.now() - finalizeStartMs}ms）——已留痕 finalize_overrun；如反复出现请上调 FINALIZE_RESERVE_MS`,
+      );
+    }
     runConcluded = true; // normal terminal written → suppress the INTERRUPTED safety net
     progressSubstep = null;
     progressPhase = null;
