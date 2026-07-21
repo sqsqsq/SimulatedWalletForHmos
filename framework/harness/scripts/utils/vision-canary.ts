@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Jimp from 'jimp';
+import { extractClaudeFinalResultText } from './claude-envelope';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -194,6 +195,34 @@ export function buildCanaryPrompt(imagePath: string): string {
   ].join('\n');
 }
 
+/**
+ * visual-capability-truth S3（路径 B）：phase prompt 内嵌视觉验证块——runner 出题、
+ * 同 invocation 作答、runner 判卷，通过才签发 invocation_bound（vl_multimodal 终签
+ * 的能力条件）。随机卷（答案只在 runner 内存），业务产出与答题同 invoke 绑定。
+ */
+export function buildInlineCanaryBlock(imagePath: string): string {
+  return [
+    '',
+    '## Inline visual verification (runner-issued — REQUIRED before any vl_multimodal signing)',
+    '',
+    'This run requires proof that THIS invocation can genuinely read images (a session-level probe is',
+    'not sufficient for final visual signing). A verification image has been generated at:',
+    `${imagePath}`,
+    '',
+    'Open it and include these answer lines VERBATIM near the END of your final output (one per line):',
+    'TOP_LEFT_COLOR=<color>',
+    'TOP_RIGHT_COLOR=<color>',
+    'BOTTOM_LEFT_COLOR=<color>',
+    'BOTTOM_RIGHT_COLOR=<color>',
+    'TEXT_TOKEN=<the short alphanumeric token printed in the image>',
+    '',
+    'If you cannot see images: output exactly CANNOT_SEE_IMAGE instead, work in the blind workflow,',
+    'and do NOT set `verified: verified` / `verified_method: vl_multimodal` — that signature will be',
+    'rejected without this verification anyway. Do not guess colors.',
+    '',
+  ].join('\n');
+}
+
 /** 输出转录里疑似调用外部读图/OCR 工具的迹象——尽力而为，非确定性判据（仅供诊断参考）。 */
 const EXTERNAL_TOOL_HINT_PATTERNS: readonly RegExp[] = [
   /tesseract/i,
@@ -307,6 +336,12 @@ export interface CanaryInvocationFacts {
   timed_out?: boolean;
   silent_killed?: boolean;
   skipped?: boolean;
+  /**
+   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 为 claude stream-json
+   * NDJSON 信封流（planUsesClaudeStreamJson 判定）。true 时判卷前先取终态 result 文本
+   * 投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout 会把真视觉宿主判成永久盲档。
+   */
+  structured_stdout?: boolean;
 }
 
 export type CanaryCacheDecision =
@@ -360,7 +395,21 @@ export function resolveCanaryCacheDecision(
     return { kind: 'invoke_failed', cache: false, detail: `invoke 非零退出（exitCode=${invocation.exitCode}）` };
   }
 
-  const raw = invocation.stdout;
+  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影终态 result 文本；无合法终态
+  // （残卷/错误 result/多 result 全非法）→ invalid_answer 维持 fail-closed，不放宽。
+  // externalToolSuspected 仍从原始 stdout 提取（tool_use 事件在信封里，不在投影文本）。
+  let raw = invocation.stdout;
+  if (invocation.structured_stdout) {
+    const projected = extractClaudeFinalResultText(invocation.stdout);
+    if (projected === null) {
+      return {
+        kind: 'invalid_answer',
+        cache: false,
+        detail: 'structured envelope 无终态 success result（残卷/错误 result/断流）——不判卷，不落缓存',
+      };
+    }
+    raw = projected;
+  }
   const requiredKeys = [...answerKey.geometry_questions.map(q => q.id), 'TEXT_TOKEN'];
   const finalAnswers = new Map<string, string>();
   for (const k of requiredKeys) {
@@ -389,7 +438,7 @@ export function resolveCanaryCacheDecision(
   return {
     kind: 'valid',
     cache: true,
-    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(raw) },
+    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(invocation.stdout) },
     canonicalAnswer,
   };
 }

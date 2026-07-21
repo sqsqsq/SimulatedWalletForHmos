@@ -249,6 +249,17 @@ export interface ContractsSpec {
   }>;
   files: string[];
   resource_keys?: Record<string, Record<string, ResourceEntry[]>>;
+  /**
+   * visual-capability-truth S6（P1-F）：宿主集成契约机器块——scope 一致性与可达性检查的
+   * 唯一真源（不从 plan 自由文本猜模块）。requires_modification=true 的 consumer 必须
+   * in_scope；false 时须验证实际 consumer binding 已存在（消费点引用/路由注册在案）。
+   */
+  integration_points?: Array<{
+    consumer_module: string;
+    provider_module: string;
+    requires_modification: boolean;
+    entry_symbol?: string;
+  }>;
   prd_to_code_traceability?: Array<{
     prd_id: string;
     priority: string;
@@ -428,6 +439,12 @@ export interface CheckResult {
   failure_kind?: string;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
+  /** P0-4（plan 7c4f2e9b）：显式 actionability（agent_fixable/human_only/toolchain_blocked）——
+   * 缺省走 goal-failure-classifier 注册表映射（优先级链：显式→映射→缺省 agent_fixable）。 */
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  /** P1-7（plan 7c4f2e9b）：operator/人类专用补充说明（framework 内部机制话术落此）——
+   * goal-report 渲染，**不进 agent 重试 prompt 失败回喂块**。 */
+  operator_note?: string;
   /**
    * 产出来源（t1d，plan e6a3c9f4）：由编排边界填充（safeRun origin / profile dispatch 标签），
    * 供报告/summary 定位"哪段实现产出了这条结果"；未填时渲染层回退显示 check-<phase>.ts。
@@ -485,6 +502,12 @@ export interface HarnessRunSummary {
    * 缺失/失配＝framework 门禁集已升级、旧产物 stale 不得豁免阶段（round6 Checkpoint-2 实锤）。
    */
   gate_fingerprint?: string;
+  /**
+   * S7 asset 继承指纹链 2（codex 实施 review 二轮 P1-6）：asset 域债务 revision——
+   * 债务管线定稿后机器写入（域内投影哈希/'no-debt' 哨兵）；testing 期继承时重算比对，
+   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_human）。
+   */
+  asset_debt_revision?: string;
   script_report: string;
   merged_report: string;
   ai_prompt: string;
@@ -556,8 +579,9 @@ export interface HarnessRunSummary {
     loop_id: string;
     attempt?: string;
     row_hash?: string;
-    /** append_failed=账本落盘失败（review-fix codex P1-2）——goal-runner 据此 fail-closed halt */
-    disposition: 'appended' | 'duplicate' | 'append_failed';
+    /** append_failed=账本落盘失败（review-fix codex P1-2）——goal-runner 据此 fail-closed halt。
+     * journaled（S5 单写者）=goal 态 agent 侧中间轮已写 journal proposal，runner 收编后入正式账本。 */
+    disposition: 'appended' | 'duplicate' | 'append_failed' | 'journaled';
     decision?: {
       fused: boolean;
       failure_kind?: string;

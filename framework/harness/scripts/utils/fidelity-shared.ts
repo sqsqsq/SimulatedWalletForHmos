@@ -371,6 +371,12 @@ const FIDELITY_TIER_RANK: Record<FidelityTarget, number> = {
   pixel_1to1: 2,
 };
 
+/** 档位枚举硬校验（十三轮 P0-1：resolveRequestedFidelity 对非法值静默回退 detected——
+ * CLI/manifest 显式传值时必须显式拒，垃圾枚举不得静默入 manifest）。 */
+export function isValidFidelityTarget(v: unknown): v is FidelityTarget {
+  return typeof v === 'string' && FIDELITY_TARGETS.has(v as FidelityTarget);
+}
+
 /**
  * `--fidelity`/manifest.fidelity 只升不降（codex 三轮 P0-2：headless agent 可代跑命令
  * 自带 flag，flag ≠ 用户授权）：requested < detected → 无效（降档唯一通道=t10 receipt，
@@ -547,6 +553,15 @@ export function resolveFidelityContextFromFeature(
 
 export function refElementsAbsPath(projectRoot: string, feature: string): string {
   return featureFilePath(projectRoot, feature, path.join('spec', 'ref-elements.yaml'));
+}
+
+/**
+ * P0-2（plan 7c4f2e9b）：报错/affected_files 用的 spec/ 相对路径——与 refElementsAbsPath
+ * **同源**。事故实证：relFeatureArtifact('ref-elements.yaml') 落 feature 根路径，agent 照
+ * 报错把文件 cp 到根目录白耗时间（归档里因此存在双份 ref-elements.yaml）。
+ */
+export function refElementsRelPath(projectRoot: string, feature: string): string {
+  return path.relative(projectRoot, refElementsAbsPath(projectRoot, feature)).replace(/\\/g, '/');
 }
 
 export function assetManifestAbsPath(projectRoot: string, feature: string): string {
