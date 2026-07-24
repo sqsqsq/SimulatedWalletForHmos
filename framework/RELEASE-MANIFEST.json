@@ -572,7 +572,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "5b144809d361372de2fb76a92c0fc6fb868322c8dff34fae7eb18b33d75368e1"
+      "sha256": "5d6d6ba481a23577c51702b6169733328947f649b65f221142a51e741ee2df6f"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -588,7 +588,7 @@
     },
     {
       "path": "harness/scripts/check-spec.ts",
-      "sha256": "8c4ed96ec04ad2a9ef67e362b17b3acef283e237db3032f7838da0e57b09dc04"
+      "sha256": "b50963e1578c51c65fc3487d8aad34d3d075558657fb16066b4fa2cf68d18423"
     },
     {
       "path": "harness/scripts/check-testing.ts",
@@ -596,7 +596,7 @@
     },
     {
       "path": "harness/scripts/check-ut.ts",
-      "sha256": "cb9b9e564f878be402cf27b03c610f9a7f2a7d172abf87d32af51bb4eb0ff5ec"
+      "sha256": "20419d0f0063d4e1a3a855a25cad6dda2b8b35a04194f62b901a6c1abe98b458"
     },
     {
       "path": "harness/scripts/derive-adhoc-hylyre-hint.ts",
@@ -616,7 +616,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "c17807f4193b1c7070ae37325f6a2aa4a49646ad5a3c96924096163aa7b99e6f"
+      "sha256": "9239bc1d6c25ab38f52c461b1410d680bff54062111b9ff246251ae7e91b4f0a"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -752,7 +752,7 @@
     },
     {
       "path": "harness/scripts/utils/await-confirm-guidance.ts",
-      "sha256": "4eade14c9da93689e86cad3b8dd736fafa69f356d4b3b105b25868cd401b7e8d"
+      "sha256": "4aa036b35734d872135bf464a3f100c7bfc01e94354fef6201a85c6aad6f5a61"
     },
     {
       "path": "harness/scripts/utils/behavior-switch-scan.ts",
@@ -884,7 +884,7 @@
     },
     {
       "path": "harness/scripts/utils/fidelity-shared.ts",
-      "sha256": "b3c9b88ccc74d6850460000cf7e35eb3c15214f30aafab914b66a59b8849c25a"
+      "sha256": "c1a2daefe353d2064334c1c636403de69c9a0feca36fc4496cfb6e97141ef21f"
     },
     {
       "path": "harness/scripts/utils/finalize-init-run-log.ts",
@@ -928,7 +928,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-failure-classifier.ts",
-      "sha256": "c51b892efd9033f010937e3b5e30a87b3d6cff53c48989d13cd9914bd6c3192f"
+      "sha256": "d8e1151e3890d01a7258e7b1d173f82ae796dcde63e82bb19af70c153e53cf7e"
     },
     {
       "path": "harness/scripts/utils/goal-headless-sentinel.ts",
@@ -940,7 +940,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "636795745d037f487503dc8528bd5e3f42c6618d9270bcdb7f8425a6ab97d584"
+      "sha256": "821dd462e669831d1ea9a2c6d5ee0c0eedf4659c6dc411f284947fb01dd348a6"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -952,7 +952,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
-      "sha256": "80cc7d6810dac0c9b6978e3b99de06bfa0903ce68209cdf2c11cfca581634723"
+      "sha256": "c1ed70a44e048cba4ec93ce94069d5969127c826e26bebbb61096f25658b50df"
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
@@ -960,11 +960,11 @@
     },
     {
       "path": "harness/scripts/utils/goal-run-lock.ts",
-      "sha256": "bd2312a18a536be0ae6fc9a15f234f80289eac6b5b9ce68e0d939abc2949c1ba"
+      "sha256": "86d5fdae42db9d883462aff0d3fd6c74c35feddb46e51f5fdbac44571ffb9a04"
     },
     {
       "path": "harness/scripts/utils/goal-runner-phase.ts",
-      "sha256": "14e0810048c9a74fcd5d69d4ff8a53843bb7c76f7f23e473c63cd01219ea4422"
+      "sha256": "5b5867561977faef18c7e031943995b118f6dd9ba31b0823af31f728b92823da"
     },
     {
       "path": "harness/scripts/utils/goal-timeout.ts",
@@ -1076,7 +1076,7 @@
     },
     {
       "path": "harness/scripts/utils/mutation-authorization.ts",
-      "sha256": "e979044dcdc2b876046d51471a2c2d7dd3b5d1b03bd9c7cf4e8fd5e30c17ebff"
+      "sha256": "e17665239555de2d44497f5e8ab88dd79e3787da316ec2cdf8d36d2b065c1c07"
     },
     {
       "path": "harness/scripts/utils/named-handler.ts",
@@ -1240,7 +1240,7 @@
     },
     {
       "path": "harness/scripts/utils/verify-feature-completion.ts",
-      "sha256": "a3ba4c0f4658d613c6b9e1a315c3b9e7c79fb94aea5d82419c9653f2a44ae180"
+      "sha256": "2203f17c71b53bb3b41f4753aa100a9c4fda724437527a2703410dc33cbb1b43"
     },
     {
       "path": "harness/scripts/utils/vision-canary-interactive.ts",
