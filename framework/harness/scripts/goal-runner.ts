@@ -10,17 +10,18 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import minimist from 'minimist';
 import {
   loadFrameworkConfig,
   loadFrameworkConfigWithSources,
   featurePhaseReportsDir,
+  featureDir,
   featureArtifactPath,
   receiptDirPath,
   relFeatureFile,
 } from '../config';
-import { detectRepoLayout } from '../repo-layout';
+import { detectRepoLayout, type RepoLayout } from '../repo-layout';
 import { sanitizeSpawnEnv } from './utils/process-integrity';
 import {
   buildAgentTimeoutRepeatedGuidance,
@@ -41,6 +42,8 @@ import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-l
 import {
   clampFidelityByCapability,
   computeRequirementShaFromText,
+  loadCapabilitySnapshot,
+  loadFidelityIntentSsot,
   listAuthoritativeGoalRuns,
   computeRunRequirementSha,
   dereferenceRequirementDocs,
@@ -61,6 +64,7 @@ import {
 } from './utils/ui-spec-shared';
 import {
   classifyPhaseVerdict,
+  DEFAULT_MAX_BACKTRACKS,
   featurePhasesFromWorkflow,
   formatDeferredUpstreamNotice,
   resolveAutoChain,
@@ -148,6 +152,8 @@ import {
   restoreFrozenFromSnapshot,
   passSnapshotPhaseDir,
   takePassSnapshot,
+  recordCodingBase,
+  resolveGitHeadSha,
 } from './utils/pass-snapshot';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import {
@@ -239,6 +245,7 @@ import {
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
   evaluateFidelityTierPreflight,
+  initializeFidelityRouting,
   evaluateFidelityTransitionAuthorization,
 } from './utils/goal-preflight';
 import { recordAdapterToLocal } from './utils/personal-setup-gate';
@@ -289,6 +296,36 @@ import {
   parseHeadlessApiError,
   parseHeadlessInteractionSentinel,
 } from './utils/goal-headless-sentinel';
+// plan d8c5f3a7 T4：testing 零写入 enforcement 用的**精确**源码快照（不是轻量
+// computeProductWorktreeDigest——后者仅 16 hex 且对二进制走文本 diff，恰好在本 plan
+// 要保护的 PNG 素材上失明）
+import {
+  computeProductSourceSnapshotDetail,
+  diffProductSourceSnapshots,
+  isUsableSnapshot,
+  type ProductSourceSnapshotDetail,
+} from './utils/product-source-snapshot';
+// v23 F2 预防层：写入边界 prompt 文案（检测=fs 快照前后对比，违规=halt 求人）
+import { renderWriteBoundaryGuidance } from './utils/testing-write-boundary';
+
+
+/** features_dir 相对路径（写入边界判定用） */
+function featuresDirRelOf(projectRoot: string): string {
+  try {
+    return (loadFrameworkConfig(projectRoot).paths.features_dir ?? 'doc/features').split(path.sep).join('/');
+  } catch {
+    return 'doc/features';
+  }
+}
+
+/** 产品源码层目录（architecture.outer_layers）——快照范围；配置不可读 → 空集（消费点 fail-closed） */
+function productLayerDirsOf(projectRoot: string): string[] {
+  try {
+    return (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id);
+  } catch {
+    return [];
+  }
+}
 
 const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
   spec: 'skills/feature/spec/SKILL.md',
@@ -602,6 +639,63 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
   return [`Verdict: ${verdict}`, ...lines].join('\n');
 }
 
+// ===========================================================================
+// 测试缝（plan d8c5f3a7 review 修正：runner 级集成测试）
+// ---------------------------------------------------------------------------
+// review 实锤：此前所有新增防线都只有**纯函数单测**，"污染轮不 spawn gate"「证据
+// quarantine」「事务提交」「provenance 断链」这些**时序与副作用**断言一条都没有——
+// 而它们恰恰是本 plan 的核心（2026-07-24 事故的成因就是时序错了）。
+// 仓内既有先例（__testing_setDigestReadFile / __testing_setDetectScanForEnsure）：
+// 注入点只在测试里被替换，生产路径零行为差异。
+// ===========================================================================
+
+/** agent 调用注入（测试用；null=走真实 invokeAgentHeadless） */
+type InvokeAgentFn = typeof invokeAgentHeadless;
+let injectedInvokeAgent: InvokeAgentFn | null = null;
+export function __testing_setInvokeAgent(fn: InvokeAgentFn | null): void {
+  injectedInvokeAgent = fn;
+}
+
+/** gate harness 注入（测试用；**spy 它有没有被调用**是"污染轮不 spawn"的核心断言） */
+type RunHarnessFn = (
+  projectRoot: string, frameworkRoot: string, phase: FeaturePhase, feature: string,
+  dryRun: boolean, manifest?: GoalManifest,
+  roundIdentity?: { runId: string; attemptId: string }, timeoutMs?: number,
+) => Promise<{ exitCode: number; timedOut: boolean }>;
+let injectedRunHarness: RunHarnessFn | null = null;
+export function __testing_setRunHarnessPhase(fn: RunHarnessFn | null): void {
+  injectedRunHarness = fn;
+}
+
+/**
+ * repo layout 注入（测试用）。
+ * `detectRepoLayout(__dirname)` 按**脚本自身位置**推 projectRoot——进程内测试因此永远
+ * 解析到框架源仓而非临时宿主，集成测试无从下手。注入后可指向 tmp host。
+ */
+let injectedLayout: RepoLayout | null = null;
+export function __testing_setRepoLayout(l: RepoLayout | null): void {
+  injectedLayout = l;
+}
+
+/**
+ * 闭环探针注入（测试用）。`tryValidateReceipt` 会 spawn 真 check-receipt 子进程——
+ * 在 tmp host 里必然 error（无 node_modules/无完整工程），使链在 spec 就 halt
+ * `closure_probe_error`。这是最后一个阻断 in-process 全链测试的子进程边界。
+ */
+type ValidateReceiptFn = typeof tryValidateReceipt;
+let injectedValidateReceipt: ValidateReceiptFn | null = null;
+export function __testing_setValidateReceipt(fn: ValidateReceiptFn | null): void {
+  injectedValidateReceipt = fn;
+}
+
+/** 一次性清空所有测试注入（测试 finally 调用，防串味） */
+export function __testing_resetGoalRunnerSeams(): void {
+  injectedValidateReceipt = null;
+  injectedInvokeAgent = null;
+  injectedRunHarness = null;
+  injectedLayout = null;
+}
+
 async function runHarnessPhase(
   projectRoot: string,
   frameworkRoot: string,
@@ -615,6 +709,11 @@ async function runHarnessPhase(
   // exitCode=1 无法区分门禁真失败与 wall 树杀，timedOut 单独承载。
   timeoutMs?: number,
 ): Promise<{ exitCode: number; timedOut: boolean }> {
+  if (injectedRunHarness) {
+    return injectedRunHarness(
+      projectRoot, frameworkRoot, phase, feature, dryRun, manifest, roundIdentity, timeoutMs,
+    );
+  }
   if (dryRun) return { exitCode: 0, timedOut: false };
   const harnessDir = path.join(frameworkRoot, 'harness');
   // P0-7①：harness 子进程须在干净环境运行——剥离 NODE_OPTIONS 预加载注入（2026-07-05 伪签事故向量）。
@@ -701,6 +800,11 @@ export interface CapabilityAdvisory {
   fidelityClamped: boolean;
   /** OCR 预扫描产出的 project-relative .ocr.json 路径（无参考图/OCR 不可用/有视觉时为空数组） */
   ocrJsonPaths: string[];
+  /** plan f6b2d9a4：三轴 SSOT 下发（SSOT 缺失=best_effort/undefined 回落） */
+  acceptanceStrictness?: 'best_effort' | 'hard';
+  assetAcquisitionMode?: 'approximate' | 'auto_crop' | 'user_dir';
+  /** post-impl3 P0-3：mid-chain vision 收紧触发 pixel∧hard∧clamped 真冲突——runner 须在 spawn 前 halt */
+  deferTriggered?: boolean;
 }
 
 /**
@@ -718,6 +822,14 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       (advisory.fidelityClamped
         ? ' (auto-clamped down from a higher desired target by the capability above — this is expected, not a mistake; do not try to "fix" it by editing fidelity_target)'
         : ''),
+    // plan f6b2d9a4：三轴 SSOT 下发——严格度与素材策略与门禁同源，agent 不得自行改判
+    `- Acceptance strictness: **${advisory.acceptanceStrictness ?? 'best_effort'}**` +
+      ((advisory.acceptanceStrictness ?? 'best_effort') === 'best_effort'
+        ? ' (quality gaps are recorded as visual debt and do NOT hard-block; do not stop to ask about them)'
+        : ' (hard contract: quality gaps escalate to BLOCKER and require human final confirmation)'),
+    ...(advisory.assetAcquisitionMode
+      ? [`- Asset acquisition mode (from fidelity-intent SSOT): **${advisory.assetAcquisitionMode}** — mirror this into ui-spec verbatim.`]
+      : []),
     '',
   ];
   if (advisory.fidelityClamped) {
@@ -735,8 +847,22 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
       '- Structure and screen layout: infer from the requirement text and any structured hints available.',
       '- Text copy and text positions: if OCR JSON files are listed below, treat them as ground truth — copy',
       '  text verbatim from there, do NOT invent wording.',
-      '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
-      '  claim to have visually verified their appearance.',
+      // plan f6b2d9a4 P0-1：素材建议按 SSOT 素材轴分流——auto_crop 需求下再教 placeholder
+      // 会直接顶撞路由决策（银行卡场景实证），一致性门禁必打回。
+      ...(advisory.assetAcquisitionMode === 'auto_crop'
+        ? [
+            '- Icons/logos/illustrations: the requirement authorizes cropping them from the reference screenshots',
+            '  (asset_acquisition_mode=auto_crop). Declare them as `acquisition: crop` with source/bbox in ui-spec;',
+            '  the crop pipeline (asset_crop_validation) verifies artifacts — do NOT claim visual verification yourself.',
+            '  Per-item fallback IS allowed and expected: when an item cannot pass trusted validation (no VL/human',
+            '  verification available), mark THAT item `placeholder: true` + register it as visual debt and continue',
+            '  — feature-level auto_crop does not mean every single item must crop successfully. Never loop retrying',
+            '  an unverifiable crop.',
+          ]
+        : [
+            '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
+            '  claim to have visually verified their appearance.',
+          ]),
       '- Anything you genuinely cannot determine without seeing the image: register it in the structured',
       '  blind-review pending list (see phase SKILL reference/ui-spec.md「盲档工作法」) instead of guessing',
       '  or endlessly re-attempting — that is the correct way to close this out at your capability level.',
@@ -935,6 +1061,236 @@ export const VISUAL_GAP_RETRY_GUIDANCE: readonly string[] = [
   '4. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
 ];
 
+/**
+ * plan d8c5f3a7 T4：**testing 阶段专用**的视觉缺口指导。
+ *
+ * 矛盾指令实锤（2026-07-24 事故的成因之一）：上面那条通用指导里的
+ * 「fix the code in THIS retry」与 device-testing SKILL.md:114「不修改源码」正面冲突。
+ * agent 照着 runner 的话改码，随即被 review_closure_attestation 与 upstream stale 双锁
+ * 判违规——两边都"按指示办事"，却互相打架。
+ *
+ * 分工冻结（三处契约统一）：
+ *   · testing：只复现、采证、产结构化缺陷 + 请求 backtrack —— **零产品源码写入**；
+ *   · coding：消费缺陷指纹并修复（本轮修码在 coding 侧仍然正确）；
+ *   · runner：以源码完整性闸门 enforce（prompt 之外的兜底，不依赖 agent 自觉）。
+ */
+export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
+  '**This is a visual-fidelity gap (the rendered UI does not match the reference).** In the TESTING phase your job is to make the gap MACHINE-ACTIONABLE — not to edit product code:',
+  '1. Deterministic fail_signals mean the screen IS decidable headlessly: set that screen verdict=fail and copy the signals into screens[].must_fix — do NOT leave such screens pending ("unattended cannot close the loop" is only true for PASS candidates awaiting human confirmed_by);',
+  '2. Record every defect as a structured entry (screen_id + observed vs expected + evidence path). These become the defect fingerprints that drive the fix.',
+  '3. **Do NOT modify product source code, requirement SSOT (acceptance/ui-spec/contracts/spec.md/plan.md), or root build config in this phase — not even to add test anchors.** The runner snapshots all of these around your invocation; any write is a run-terminating violation (receipt not issued, journal not merged, gate not run; the run halts and --resume is refused). Missing `by_id` anchors are themselves a defect: record them in screens[].must_fix so coding implements them after backtrack.',
+  '4. Every screen with non-empty must_fix (verdict warn/fail, fresh screenshot+build identity) is consumed by the runner as an actionable defect: it will backtrack to coding and inject your must_fix items into the coding prompt. Write them as concrete fix instructions.',
+  '5. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
+];
+
+/**
+ * ============================================================================
+ * F1（plan d8c5f3a7 v23）：统一可回修缺陷收集 —— ActionableDefect
+ * ----------------------------------------------------------------------------
+ * 回修输入**只有两项已存在的可靠事实**（v22 已删通用指标契约——score_floor 系
+ * reference_only 被实测证伪、blank_ratio 无区分力，那套只会打回好版本）：
+ *   A) visual-diff.json 里**新鲜**的 must_fix（5 条谓词，见下）；
+ *   B) 本轮导航**新增** faultlog 的 crash_suspected（F3 集合差归档，含 run_id）。
+ * 结构性素材问题（悬空 $r / 物化缺失）不在此——F4 已做成 coding 侧确定性 FAIL，
+ * coding 阶段就会失败，不需要绕到 testing 再发现一次。
+ *
+ * 【actionable 谓词（v23 冻结，5 条同时满足）】
+ *   ① verdict ∈ {warn, fail}；② must_fix[] 非空；③ evaluated_screenshot_hash 与
+ *   盘上截图一致；④ evaluated_build_fingerprint 与当前 build 一致（可算时）；
+ *   ⑤ 未被判 stale / evaluation_invalidated。
+ *   ③④⑤ 复用 profile 的 isStaleVisualDiffVerdict（同一判据，不另造）。
+ *   **新鲜度由 identity 判定，不看 run_id**：上一 run 但 build+截图完全一致的缺陷
+ *   仍是真缺陷（visual-diff 判定本就设计为同一构建下跨轮持久）；污染 invocation 遗留
+ *   的产物由 ③④ 自动失效——不需要 quarantine。
+ * ============================================================================
+ */
+export interface ActionableDefect {
+  source: 'visual_diff' | 'crash';
+  screen_or_case_id: string;
+  /** 修复指令（visual=must_fix 原文；crash=确定性指令），进 coding prompt */
+  instructions: string[];
+  /** 结构化锚优先（screen|class|element|bbox 桶，复用 computeDefectFingerprint）；
+   * 无结构化锚时退回规范化文案哈希 */
+  fingerprint: string;
+  /** 证据路径——由 runner 按已知目录结构拼接，**不信任产物自报**（防指向任意文件） */
+  evidence_path: string;
+}
+
+/** 整轮集合指纹：只有整轮 actionable 集合完全相同才算无进展（{A,B}→{B} 允许再回退） */
+export function roundFingerprintOf(defects: readonly ActionableDefect[]): string {
+  const h = createHash('sha256');
+  h.update(defects.map(d => d.fingerprint).slice().sort().join('\n'), 'utf-8');
+  return h.digest('hex').slice(0, 32);
+}
+
+export interface ActionableCollectResult {
+  defects: ActionableDefect[];
+  /**
+   * 身份不可核实的 must_fix（review 第 11 轮 P1）：warn/fail + 非空 must_fix 在场，但
+   * 截图/build 身份缺失或不可算——**不可信缺陷不得触发回退**（改码方向可能是错的），
+   * 但也**不等于没有缺陷**：调用方在 testing 内按 FAIL/retry 处置（引导重采补身份），
+   * 耗尽后 halt。真实生产路径可达：install 成功但 install meta 写失败 → currentFp
+   * 算不出 → 已知 must_fix 若静默丢弃，best_effort 下 gate 只 WARN、run 直接 advance。
+   */
+  unverified: Array<{ screen_or_case_id: string; reason: string }>;
+}
+
+export function collectActionableDefects(
+  projectRoot: string,
+  feature: string,
+  runId: string,
+): ActionableCollectResult {
+  const out: ActionableDefect[] = [];
+  const unverified: Array<{ screen_or_case_id: string; reason: string }> = [];
+
+  // ---- A) visual_diff：新鲜 must_fix ----
+  try {
+    const profileDir = path.join(__dirname, '..', '..', 'profiles', 'hmos-app', 'harness');
+    // 动态 require：core 不静态依赖 profile（层级边界；仓内既有先例）
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const vd = require(path.join(profileDir, 'visual-diff-check')) as {
+      isStaleVisualDiffVerdict: (sc: unknown, root: string, o: { currentBuildFingerprint?: string | null }) => boolean;
+      computeDefectFingerprint: (screenId: string, d: unknown) => string;
+      hashScreenshotFile: (p: string) => string | null;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const bf = require(path.join(profileDir, 'build-fingerprint')) as {
+      resolveCurrentBuildFingerprint: (root: string, feature: string, phase?: string) => string | null;
+    };
+    const diffRel = path.posix.join(
+      featuresDirRelOf(projectRoot), feature, 'device-testing', 'device-screenshots', 'visual-diff.json',
+    );
+    const diffAbs = path.join(projectRoot, ...diffRel.split('/'));
+    if (fs.existsSync(diffAbs)) {
+      const doc = JSON.parse(fs.readFileSync(diffAbs, 'utf-8')) as {
+        screens?: Array<{
+          screen_id?: string; verdict?: string; must_fix?: unknown[];
+          evaluation_invalidated?: boolean; defects?: unknown[];
+        }>;
+      };
+      const currentFp = bf.resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
+      for (const sc of doc.screens ?? []) {
+        const id = typeof sc.screen_id === 'string' ? sc.screen_id.trim() : '';
+        if (!id) continue;
+        // ⑤ 前置（review 第 13 轮）：evaluation_invalidated 的语义是"该屏评估整体不可信、
+        // 待 critic 重评"——与 verdict/must_fix 无关。放在 ①② 之后的话，verdict=pass 的
+        // 失效屏会在 ① 就被跳过，评估不可采信却照样完成。命中即进 unverified 通路
+        //（不回退、retry 重评、耗尽 halt），无新状态机。
+        if (sc.evaluation_invalidated === true) {
+          unverified.push({ screen_or_case_id: id, reason: '评估已被判无效（evaluation_invalidated，待 critic 重评）——该屏视觉评估尚不可采信' });
+          continue;
+        }
+        if (sc.verdict !== 'warn' && sc.verdict !== 'fail') continue;               // ①
+        const mustFix = (sc.must_fix ?? []).filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
+        if (mustFix.length === 0) continue;                                          // ②
+        // ③④ 显式判定（review 第 10 轮：isStaleVisualDiffVerdict 对**缺** evaluated hash
+        // 返回"不 stale"、currentFp 算不出时跳过 build 校验——缺身份的旧结论会触发错误
+        // 回退。actionable 要求**身份齐备且匹配**，缺=不 actionable（fail-closed）：
+        //   · evaluated_screenshot_hash 非空且等于盘上截图当前 hash；
+        //   · 当前 build fingerprint 可算（无 HAP 身份 → 一律不回退）；
+        //   · evaluated_build_fingerprint 非空且等于当前 build fingerprint。
+        const evalShot = typeof (sc as { evaluated_screenshot_hash?: string }).evaluated_screenshot_hash === 'string'
+          ? String((sc as { evaluated_screenshot_hash?: string }).evaluated_screenshot_hash).trim() : '';
+        // 身份不可核实 ≠ 没缺陷：must_fix 在场时记 unverified（调用方 FAIL/retry，不静默丢）
+        if (!evalShot) { unverified.push({ screen_or_case_id: id, reason: '缺 evaluated_screenshot_hash（截图身份未绑定）' }); continue; }   // ③
+        const shotRel = typeof (sc as { screenshot_path?: string }).screenshot_path === 'string'
+          ? String((sc as { screenshot_path?: string }).screenshot_path).trim() : '';
+        if (!shotRel) { unverified.push({ screen_or_case_id: id, reason: '缺 screenshot_path' }); continue; }
+        const shotNow = vd.hashScreenshotFile(
+          path.isAbsolute(shotRel) ? shotRel : path.join(projectRoot, ...shotRel.split('/')),
+        );
+        // ③④ **一切身份失败统一进 unverified**（review 第 12 轮：此前把"明确不匹配"当
+        // 正常代谢静默跳过——但"代谢"的前提是重评真的会发生；best_effort 下 stale gate
+        // 只 WARN，若重评没发生，已知 must_fix 就假绿完成。持续 mismatch = 尚无当前身份
+        // 的新判定 → 不驱动回退、也不允许完成，retry 引导重评，耗尽 halt。）
+        if (!shotNow) { unverified.push({ screen_or_case_id: id, reason: '绑定截图文件不可读（无法核验截图身份）' }); continue; }
+        if (shotNow !== evalShot) { unverified.push({ screen_or_case_id: id, reason: '截图身份不匹配（盘上截图已变但该屏尚未按当前截图重评）' }); continue; }
+        if (!currentFp) { unverified.push({ screen_or_case_id: id, reason: '当前 build fingerprint 不可算（install meta 缺失/损坏——install ok 但 meta 写失败的生产路径可达）' }); continue; } // ④
+        const evalFp = typeof (sc as { evaluated_build_fingerprint?: string }).evaluated_build_fingerprint === 'string'
+          ? String((sc as { evaluated_build_fingerprint?: string }).evaluated_build_fingerprint).trim() : '';
+        if (!evalFp) { unverified.push({ screen_or_case_id: id, reason: '缺 evaluated_build_fingerprint（build 身份未绑定）' }); continue; }
+        if (evalFp !== currentFp) { unverified.push({ screen_or_case_id: id, reason: 'build 身份不匹配（改码重装后该屏尚未按当前 HAP 重评）' }); continue; } // ④
+        if (vd.isStaleVisualDiffVerdict(sc, projectRoot, { currentBuildFingerprint: currentFp })) continue; // ⑤ stale
+        const structural = (sc.defects ?? []).map(d => vd.computeDefectFingerprint(id, d)).filter(Boolean);
+        const fingerprint = structural.length > 0
+          ? structural.slice().sort().join('&')
+          : `${id}|text:${createHash('sha256')
+              .update(mustFix.map(m => m.trim().replace(/\s+/g, ' ')).slice().sort().join('\n'), 'utf-8')
+              .digest('hex').slice(0, 16)}`;
+        out.push({
+          source: 'visual_diff',
+          screen_or_case_id: id,
+          instructions: mustFix.slice(0, 8),
+          fingerprint,
+          evidence_path: `${diffRel}#${id}`,
+        });
+      }
+    }
+  } catch (e) {
+    // 读不出 visual-diff ≠ 干净——但"没有有效判定/P0 缺屏"由既有 visual_diff 门禁负责
+    // 拦在 harness 侧（v22 已删 deterministic_signal_unavailable 人工阻断，不重造）。
+    console.warn(`[actionable] visual-diff 读取失败（${(e as Error).message}）——本轮无 visual 回修信号`);
+  }
+
+  // ---- B) crash：本 run 的集合差归档 ----
+  try {
+    const diagRel = path.posix.join(
+      featuresDirRelOf(projectRoot), feature, 'device-testing', 'reports', 'crash-diagnostics',
+    );
+    const diagAbs = path.join(projectRoot, ...diagRel.split('/'));
+    if (fs.existsSync(diagAbs)) {
+      for (const n of fs.readdirSync(diagAbs)) {
+        if (!n.endsWith('.json')) continue;
+        try {
+          const doc = JSON.parse(fs.readFileSync(path.join(diagAbs, n), 'utf-8')) as {
+            screen_or_case?: string; run_id?: string | null;
+            diagnosis?: { kind?: string; faultFiles?: string[] };
+          };
+          // 归档路径 feature 共享、跨 run 残留——只认本 run（F3 归档必写 run_id；无 run_id=过期）
+          if (!doc.run_id || doc.run_id !== runId) continue;
+          if (doc.diagnosis?.kind !== 'crash_suspected') continue;
+          const id = String(doc.screen_or_case ?? n.replace(/\.json$/, ''));
+          const faults = (doc.diagnosis.faultFiles ?? []).slice(0, 3).join(', ');
+          out.push({
+            source: 'crash',
+            screen_or_case_id: id,
+            instructions: [
+              `进入「${id}」即崩溃（本轮 faultlog 新增：${faults || 'n/a'}）——修复崩溃本身而非导航/选择器；诊断摘要见 evidence_path`,
+            ],
+            // 同屏崩溃视为同一缺陷（faultlog 文件名含时间戳，入纹会让熔断永不命中）
+            fingerprint: `crash|${id}`,
+            evidence_path: `${diagRel}/${n}`,
+          });
+        } catch { /* 单份诊断损坏 → 该文件不产信号（不拖垮整批） */ }
+      }
+    }
+  } catch { /* 目录不可枚举 → 无 crash 信号 */ }
+
+  return { defects: out, unverified };
+}
+
+/** F1 缺陷交接：回退后注入下一次 coding prompt 的必做段 */
+export function buildTestingDefectsBlock(defects: readonly ActionableDefect[]): string {
+  if (defects.length === 0) return '';
+  const lines: string[] = [
+    '',
+    '## Testing defects to fix (post-backtrack — REQUIRED)',
+    '',
+    'The previous TESTING round found the following actionable defects. The runner backtracked to',
+    'coding because fixing them requires product-code changes (testing itself is forbidden from',
+    'editing source). Fix EVERY item below, then the chain re-runs review/ut/testing:',
+    '',
+  ];
+  for (const d of defects.slice(0, 20)) {
+    lines.push(`### [${d.source}] ${d.screen_or_case_id}`);
+    for (const ins of d.instructions) lines.push(`- ${ins}`);
+    lines.push(`- Evidence: \`${d.evidence_path}\``);
+    lines.push('');
+  }
+  if (defects.length > 20) lines.push(`(…and ${defects.length - 20} more defects — see events.jsonl)`);
+  return lines.join('\n');
+}
+
 /** 参考图 OCR 预扫描输出文件名 slug——core 不可 import profiles/hmos-app 的
  * sanitizeVisualDiffScreenSlug（层级边界），故本地重写。与 profile 版刻意不同：保留 CJK
  * 字符（宿主复验实证：中文参考图名"1-银行卡添卡首页"被清成匿名的"1-"后，8 张图变成
@@ -1073,6 +1429,14 @@ export function resolvePhaseCapabilityAdvisory(
   }
   if (!isUiRelevant) return null;
 
+  // post-impl P0-1（plan f6b2d9a4）：SSOT-first——preflight/initializer 已产
+  // fidelity-intent.json 时，档位（selected）/严格度/素材轴以 SSOT 为准（spec.md 投影
+  // 与需求启发式仅作回落），prompt 与门禁同源；否则银行卡场景 preflight 判 auto_crop
+  // 而 prompt 仍教 placeholder，agent 首轮产出即与一致性门禁相撞。
+  const intentSsot = loadFidelityIntentSsot(projectRoot, manifest.feature);
+  if (intentSsot) desired = intentSsot.selected_fidelity;
+  const capSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
+
   const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
@@ -1112,12 +1476,49 @@ export function resolvePhaseCapabilityAdvisory(
     policyVisual = false;
     console.warn(`[S3] vision context 解析异常 → fail-closed blind_safe：${(e as Error).message}`);
   }
-  const hasVision = mmProbe.supported && policyVisual;
-  const clamp = clampFidelityByCapability(desired, { hasVision, ocrAvailable });
+  // post-impl2 P0-1：消费面只认同一 run 快照；live policy 收紧（快照 visual、live 盲）
+  // 时由本处（runner-owned writer）**原子重建** snapshot+SSOT+decision_id——DEFER 裁决
+  // 由 pregate 按刷新后的 SSOT 重执行（hard pixel 被收紧钳制不再静默降档）。
+  let effectiveSnap = capSnap;
+  let effectiveIntent = intentSsot;
+  let deferTriggered = false;
+  if (effectiveSnap && effectiveSnap.vision.verdict && !policyVisual) {
+    try {
+      const fdRel = (loadFrameworkConfig(projectRoot).paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
+      initializeFidelityRouting({
+        projectRoot, frameworkRoot, feature: manifest.feature,
+        requirement: manifest.requirement, featuresDirRel: fdRel,
+        executionIdentity: manifest.run_id,
+        adapter: manifest.adapter, profileDir: resolvedProfile.profileDir,
+        manifestFidelity: manifest.fidelity, fidelityReceiptRel: manifest.fidelity_receipt,
+        runIdForReceipt: manifest.run_id,
+      });
+      effectiveIntent = loadFidelityIntentSsot(projectRoot, manifest.feature);
+      effectiveSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
+      if (effectiveIntent) desired = effectiveIntent.selected_fidelity;
+      console.warn('[goal-runner] vision policy 收紧（blind-safe）——capability snapshot 与 fidelity SSOT 已原子重建。');
+      if (effectiveIntent && effectiveIntent.selected_fidelity === 'pixel_1to1' &&
+          effectiveIntent.acceptance_strictness === 'hard' && effectiveIntent.clamped) {
+        deferTriggered = true; // mid-chain 收紧触发真冲突——由调用方在 spawn 前消费
+      }
+    } catch (e) {
+      console.warn(`[goal-runner] 收紧重建失败：${(e as Error).message}`);
+      effectiveSnap = null;
+      // post-impl4 P0-2：fail-closed——旧 SSOT 为 pixel∧hard 时重建失败必须 DEFER，
+      // 不得在写盘异常时按盲档静默继续 hard 合同。
+      if (intentSsot && intentSsot.selected_fidelity === 'pixel_1to1' &&
+          intentSsot.acceptance_strictness === 'hard') {
+        deferTriggered = true;
+      }
+    }
+  }
+  const hasVision = effectiveSnap ? effectiveSnap.vision.verdict : (mmProbe.supported && policyVisual);
+  const effectiveOcr = effectiveSnap ? effectiveSnap.ocr.verdict : ocrAvailable;
+  const clamp = clampFidelityByCapability(desired, { hasVision, ocrAvailable: effectiveOcr });
 
   // spec 是 OCR 预扫描的唯一生产者（有真实 OCR 耗时）；plan/coding 只列出盘上已有的产物
   // （宿主复验修复①——此前 plan/coding 恒为空数组，能力块对 agent 谎称"没找到参考图"）。
-  const ocrJsonPaths = !hasVision && ocrAvailable
+  const ocrJsonPaths = !hasVision && effectiveOcr
     ? phase === 'spec' && toolkit
       ? runOcrPrescanForSpec(projectRoot, frameworkRoot, resolvedProfile, manifest, toolkit)
       : listExistingOcrPrescanOutputs(projectRoot, frameworkRoot, manifest.feature)
@@ -1125,10 +1526,13 @@ export function resolvePhaseCapabilityAdvisory(
 
   return {
     hasVision,
-    ocrAvailable,
+    ocrAvailable: effectiveOcr,
     effectiveFidelity: clamp.effective,
     fidelityClamped: clamp.clamped,
     ocrJsonPaths,
+    acceptanceStrictness: effectiveIntent?.acceptance_strictness ?? 'best_effort',
+    assetAcquisitionMode: effectiveIntent?.asset_acquisition_mode,
+    ...(deferTriggered ? { deferTriggered: true } : {}),
   };
 }
 
@@ -2286,6 +2690,15 @@ export function buildPhasePrompt(
     '',
     '- Do NOT invoke goal-runner, --resume, or --manifest; the orchestrator is already running this goal run.',
     '- goal-runs/ evidence directory is read-only for you: do NOT write, append, or patch events.jsonl or any run artifacts.',
+    // plan d8c5f3a7 T4（review 修正）：写入边界必须覆盖**首次** testing invocation——
+    // 此前只在 visual_gap 重试块里注入，首轮 agent 根本看不到边界就开始改码了。
+    ...(phase === 'testing'
+      ? ['', ...renderWriteBoundaryGuidance({
+          productLayerDirs: productLayerDirsOf(projectRoot),
+          feature: manifest.feature,
+          featuresDirRel: featuresDirRelOf(projectRoot),
+        })]
+      : []),
     '',
     `Read and follow the phase skill: ${PHASE_SKILL_REL[phase]}`,
     `Skill absolute path: ${skillAbs}`,
@@ -2383,7 +2796,8 @@ export function buildPhasePrompt(
         'If the same infrastructure failure repeats, the run will HALT for you to fix the environment — blind retries waste the budget and do not improve the UI.',
       );
     } else if (priorFailureKind === 'visual_gap') {
-      parts.push('', ...VISUAL_GAP_RETRY_GUIDANCE);
+      // T4：phase-aware——testing 期不得再叫 agent 改码（与 SKILL「不修改源码」统一）
+      parts.push('', ...(phase === 'testing' ? VISUAL_GAP_RETRY_GUIDANCE_TESTING : VISUAL_GAP_RETRY_GUIDANCE));
     } else if (priorFailureKind === 'transient_api_error') {
       // P0-D.5：断流≠内容失败——指导续作而非"修 blocker"，堵住"把缺产物当自己错误去修复现场"。
       parts.push(
@@ -2769,7 +3183,11 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
   return 0;
 }
 
-async function main(): Promise<number> {
+/**
+ * 主入口。**导出供 runner 级集成测试直接调用**（配合 __testing_set* 注入缝）——
+ * 生产路径仍由文件尾的 require.main 分支驱动，行为不变。
+ */
+export async function main(): Promise<number> {
   guardNestedGoalRunner();
   setupSignalHandlers();
 
@@ -2814,7 +3232,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     process.exit(1);
   }
 
-  const layout = detectRepoLayout(__dirname);
+  const layout = injectedLayout ?? detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const frameworkRoot = layout.frameworkRoot;
   const cfg = loadFrameworkConfig(projectRoot);
@@ -2877,6 +3295,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         feature: argv.feature,
         requirement: argv.requirement,
         adapter: argv.adapter ?? cfg.agent_adapter,
+        // plan f6b2d9a4 T3：fresh CLI 的 --fidelity/--fidelity-receipt 送入 parser
+        //（非法枚举在 parser fail-closed；此前 fresh 路径静默丢弃——宿主实证 papercut）。
+        fidelity:
+          typeof argv.fidelity === 'string' && argv.fidelity.trim() ? argv.fidelity.trim() : undefined,
+        fidelity_receipt:
+          typeof argv['fidelity-receipt'] === 'string' && String(argv['fidelity-receipt']).trim()
+            ? String(argv['fidelity-receipt']).trim()
+            : undefined,
         // Detached child reuses the run_id the launcher already printed to the host.
         run_id:
           typeof argv['run-id'] === 'string' && argv['run-id'].trim()
@@ -2895,14 +3321,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  // 十三轮 review P0-1：fidelity transition 独立前置校验——**fresh/resume 都执行**。
-  // 此前 evaluateFidelityTierPreflight 全跳 resume，--resume --manifest --fidelity 降档
-  // +垃圾凭证/垃圾枚举可绕过全部验证直落 authenticated checkpoint。枚举合法+降档 receipt
+  // 十三轮 review P0-1 + plan f6b2d9a4 T3：fidelity transition 独立前置校验——
+  // **fresh/manifest/resume 三路径全部执行**（此前被 if(argv.manifest) 圈住：宿主实证
+  // fresh CLI 的 --fidelity 被静默丢弃，被迫强化措辞 workaround）。枚举合法+降档 receipt
   // 验真通过才返回精确授权字段集（--fidelity→仅 fidelity；receipt 验真过→仅 fidelity_receipt，
   // 不互相搭车）；违规=BLOCKER。applied 判 string 过滤后的 manifestArgv（与
   // applyManifestCliOverrides 同一来源——裸旗标 --fidelity 没应用任何值，不进校验面）。
   let fidelityTransitionFields: ReadonlySet<string> = new Set<string>();
-  if (argv.manifest) {
+  {
     applyManifestCliOverrides(manifest, manifestArgv);
     const ft = evaluateFidelityTransitionAuthorization({
       projectRoot,
@@ -3161,7 +3587,41 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+    // v23 F1：缺陷交接上下文——回退后注入下一次 coding prompt；进程重启从 events 恢复
+    let backtrackCodingContext: ActionableDefect[] = [];
+    // v23 F1：整轮集合指纹熔断——启动时从本 run 有效 events 初始化（进程重启后同集合
+    // 不得再回退），随后内存实时更新
+    const seenRoundFingerprints = new Set<string>();
     let priorEvents = loadAuthoritativeEvents(eventsPath);
+    // v23 F2：testing_write_violation 是 run 终止态——同 run resume 一律拒绝（否则 resume
+    // 的新前快照会把上次遗留修改当合法基线，违规被洗白）。人工整理现场后必须新开 run。
+    if (argv.resume && priorEvents.some(e =>
+      (e as { type?: string }).type === 'testing_write_violation')) {
+      // 判据是 violation **事件本身**而非 halt reason——ledger tamper 与 violation 并发时
+      // halt reason 归 tamper，但 violation 事件仍在，终止态保护不得因此失效。
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'resume_rejected', reason: 'testing_write_violation_terminal',
+      });
+      console.error(
+        '[goal-runner] BLOCKER: 本 run 曾检出 testing_write_violation（testing 越权写入'
+        + '产品源码/需求 SSOT）——该状态为 run 终止态，不允许 resume。\n'
+        + '  原因：resume 会把上次遗留的修改当成合法基线，违规即被洗白。\n'
+        + '  处置：人工核查 events.jsonl 中 testing_write_violation 列出的文件、整理现场后**新开 run**。',
+      );
+      return 1;
+    }
+    // v23 F1：整轮集合指纹从有效 events 恢复（直接读 round_fingerprint 字段，不从有界
+    // defects[] 反算）；缺陷交接上下文取最近一条回退事件的 defects[]（一次遍历取两者）
+    for (const e of priorEvents) {
+      const ev = e as { type?: string; round_fingerprint?: string; defects?: ActionableDefect[] };
+      if (ev.type !== 'phase_backtrack_requested') continue;
+      if (typeof ev.round_fingerprint === 'string' && ev.round_fingerprint) {
+        seenRoundFingerprints.add(ev.round_fingerprint);
+      }
+      // 无条件覆盖（review 第 10 轮）：授权回退事件不带 defects[]——只在非空时覆盖会让
+      // 后续授权回退仍携带早已修好的旧缺陷。每条回退事件都重置 context 为其 defects ?? []。
+      backtrackCodingContext = Array.isArray(ev.defects) ? ev.defects : [];
+    }
 
     if (argv.resume) {
       const halfRecovery = detectHalfCompletedPhaseRecovery(
@@ -3659,34 +4119,38 @@ Goal runner — tool-agnostic multi-phase orchestrator
       emitMilestone(`GOAL_RUN event=supersede target=${target} run_id=${manifest.run_id}`);
     }
 
-    // goal-fakepass-hardening t6：保真档位 preflight（agent 尚未被调用，不烧 run）——
-    // 强意图+缺视觉 → DEFERRED_CAPABILITY_MISSING；ambiguous+有图+未预授权 → halt 问人。
-    if (!argv.resume && !dryRun) {
+    // plan f6b2d9a4：保真路由 preflight（agent 尚未被调用，不烧 run）——三段式自动定档，
+    // await_human 分支已删除（非关键冲突不阻塞）；唯一 DEFER=selected pixel ∧ hard ∧
+    // clamp 降档。initializeFidelityRouting 同时落 capability-snapshot + fidelity-intent
+    // SSOT（goal 模式的路由初始化唯一入口——agent invoke 前）。
+    // post-impl P1-5：resume 且 fidelity transition 字段被授权（--fidelity/--fidelity-receipt
+    // 生效）时必须重建路由——否则 manifest 已换档而 SSOT/snapshot/prompt/CheckContext 全用旧决策。
+    // post-impl3 P1-5：非 dry 一律幂等重算路由（resume 含 adapter/OCR/需求引用图/盲→视觉
+    // 恢复等能力变化——只靠 fidelity CLI transition 触发会复用旧决策；重算确定性幂等）。
+    if (!dryRun) {
       const fidelityAction = evaluateFidelityTierPreflight({
         projectRoot,
         frameworkRoot,
         manifest,
         featuresDirRel: featuresDir,
         chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
+        profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
+        fidelityFromCli: Boolean(manifestArgv.fidelity),
       });
       if (fidelityAction.action !== 'proceed') {
-        const status: GoalRunStatus =
-          fidelityAction.action === 'defer_capability_missing' ? 'DEFERRED_CAPABILITY_MISSING' : 'HALTED';
+        const status: GoalRunStatus = 'DEFERRED_CAPABILITY_MISSING';
         console.error(`\n[goal-runner] fidelity preflight → ${status}：\n${fidelityAction.detail}\n`);
         const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, []);
         writeGoalReport(projectRoot, manifest.report_dir, report, {
           workflowChain: fullWorkflowChain.map(String),
         });
-        appendEvent(manifest.report_dir, projectRoot, {
-          type: 'run_end',
-          status,
-          ...(fidelityAction.action === 'await_human_fidelity_tier'
-            ? { halt_reason: 'await_human_fidelity_tier' }
-            : {}),
-        });
+        appendEvent(manifest.report_dir, projectRoot, { type: 'run_end', status });
         runConcluded = true;
         emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);
-        return fidelityAction.action === 'defer_capability_missing' ? 2 : 1;
+        return 2;
+      }
+      if (fidelityAction.routing) {
+        console.log(`[goal-runner] fidelity 路由：${fidelityAction.routing.decision.rationale}（source=${fidelityAction.routing.decision.source}）`);
       }
     }
 
@@ -4120,6 +4584,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
           resolvedProfile,
           phase,
         );
+        // post-impl3 P0-3：mid-chain 能力收紧命中真冲突（pixel∧hard∧clamped）——spawn 前
+        // 消费裁决（否则收紧发生在 plan/coding 时后续不重跑 spec pregate，hard pixel 静默继续）。
+        if (capabilityAdvisory?.deferTriggered) {
+          halted = true;
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt', phase, halt_reason: 'capability_tightened_hard_pixel',
+          });
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: 'capability_tightened_hard_pixel',
+            halt_guidance:
+              'vision policy 收紧后 pixel_1to1+hard 无法满足——换视觉能力模型 / 真人签发 ' +
+              'fidelity_downgrade receipt / 放宽需求严格度，然后 --resume。',
+          });
+          break;
+        }
 
         // visual-capability-truth S3（路径 B）：spec 期 inline canary——runner 随机出题
         // （答案只在内存），业务产出与答题同 invocation；判卷通过才签 invocation_bound。
@@ -4197,6 +4677,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           (phase === 'review' && backtrackReviewFocus.length > 0
             ? buildBacktrackReviewFocusBlock(backtrackReviewFocus)
             : '') +
+          // v23 F1：回退后 coding 注入缺陷必做段——闭环最后一段电线（没有它，coding
+          // 回去了也不知道修什么 → 原样重跑 → 熔断）
+          (phase === 'coding' && backtrackCodingContext.length > 0
+            ? buildTestingDefectsBlock(backtrackCodingContext)
+            : '') +
           // P0-3（plan 7c4f2e9b）：closure-only attempt——frozen 清单只读声明。提示词只是
           // 第一道；硬保护在 harness 前的差异判定+恢复（提示词级约束对弱模型无约束力）。
           (() => {
@@ -4273,12 +4758,77 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // c4e8b1d3 G1-1（pre-coding 锚定）：**首次 coding agent invoke 前**记录当时 git
+        // HEAD 为 coding_base_sha（write-once trust 文件；resume/backtrack 复用原 SHA，
+        // 不得重新取 HEAD——那会把 agent 已 commit 的越界文件洗出 diff 基线）。
+        // 记录失败不在此 halt：ui_diff_within_declared_files 在 check 侧对缺锚 fail-closed，
+        // 此处只保证"能记则记 + 事件可审计"。
+        if (!dryRun && phase === ('coding' as FeaturePhase)) {
+          try {
+            const headSha = resolveGitHeadSha(projectRoot);
+            if (headSha) {
+              const rec = recordCodingBase({
+                projectRoot, feature: manifest.feature, runId: manifest.run_id, baseSha: headSha,
+              });
+              if (rec.kind === 'recorded') {
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'coding_base_recorded', phase, invoke_id: invokeId, base_sha: rec.body.base_sha,
+                });
+              } else if (rec.kind === 'invalid_existing') {
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'coding_base_invalid', phase, invoke_id: invokeId,
+                  detail: '既有 coding-base 记录损坏/验签失败——不重签洗白，门禁侧将 fail-closed',
+                });
+              }
+            } else {
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'coding_base_unavailable', phase, invoke_id: invokeId,
+                detail: 'git HEAD 不可得（非 git 仓库或 git 不可用）',
+              });
+            }
+          } catch (e) {
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'coding_base_unavailable', phase, invoke_id: invokeId,
+              detail: `coding_base 记录异常：${(e as Error).message.slice(0, 200)}`,
+            });
+          }
+        }
+
         progressSubstep = 'agent_invoke';
         // 四轮 review P0：agent 调用窗口括号——invoke 前快照 vision 账本并落 anchor 事件；
         // invoke 结束后比对，窗口内任何账本变更 = agent 篡改 → phase halt（fail-closed）。
         // 实施 round2 P2：dry 全程零 trust 面接触——不读 vision 账本、不落 anchor 事件
         //（post-invoke 比对块已同门；commitVisionAnchors 自身 dry no-op 是双保险）。
         const preInvokeVisionSnap = dryRun ? [] : snapshotVisionLedgers(projectRoot, manifest.feature);
+        // plan d8c5f3a7 T4：**产品源码零写入**的 invoke 窗口括号（testing 阶段）。
+        // SKILL.md:114 早有"不修改源码"的文字禁令，但 goal 态无任何机器 enforce——
+        // 2026-07-24 事故里 testing agent 为凑锚点改了 16 个产品文件（含把 AllBanksPage
+        // 的 .title() 改成非 @Builder 箭头函数，真机崩溃的高概率元凶），随后触发
+        // review_closure_attestation + upstream stale 双锁死。此处先拍快照，invoke 后比对。
+        // v23 F2：invocation 前快照（fs 递归哈希；三集合=产品层+feature SSOT+根构建配置）。
+        // 判据=invoke 前后对比、不与 HEAD 比——pre-existing dirty 合法（新 goal 未提交需求
+        // 不受伤），本 invocation 新增变化才违规。
+        const preInvokeSourceSnap: ProductSourceSnapshotDetail | null =
+          !dryRun && phase === 'testing'
+            ? computeProductSourceSnapshotDetail(projectRoot, productLayerDirsOf(projectRoot), manifest.feature)
+            : null;
+        // v23 F2 冻结：**invoke 前快照失败 → 不得调用 agent**（fail-closed）。没有可信基线
+        // 就放 agent 进来，事后连"它改没改"都判不了。
+        if (preInvokeSourceSnap && !isUsableSnapshot(preInvokeSourceSnap.sha256)) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed',
+            reason: preInvokeSourceSnap.failureReason,
+          });
+          console.error(
+            `\n===== pre_invoke_snapshot_failed =====\n`
+            + `invoke 前快照失败：${preInvokeSourceSnap.failureReason ?? preInvokeSourceSnap.sha256}\n`
+            + `没有可信基线不得调用 agent（testing 写保护无从谈起）。请核查产品层配置/目录后重试。\n`,
+          );
+          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
+          halted = true;
+          phaseDone = true;
+          continue;
+        }
         if (!dryRun) {
           appendEvent(manifest.report_dir, projectRoot, {
             type: 'vision_ledger_anchor',
@@ -4308,7 +4858,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `[goal-runner] BUG: effectiveAgentTimeoutMs=${effectiveAgentTimeoutMs} 不得 ≤0 到达 adapter（zero-budget 应已在启动判据拦截）`,
           );
         }
-        const invoke = await invokeAgentHeadless(invokePlan, projectRoot, {
+        const invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
@@ -4378,35 +4928,111 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         flushProgress();
 
+        // v23 F2：invoke 后快照比对（review 第 10 轮 P2：**先于** vision ledger 比对执行——
+        // ledger tamper 分支会 continue 早退，若源码检测在其后，同时改 ledger+源码时源码
+        // violation 不落事件、resume 不受终止态保护。现在两类检测都先落事件，再按
+        // ledger tamper → violation 的顺序裁决 halt）。快照范围已含 feature SSOT（acceptance/ui-spec/
+        // contracts/spec.md/plan.md/use-cases）与根构建配置——2026-07-24 死锁事故的两个
+        // 动作面（改产品码凑锚点、改需求 SSOT 放宽验收）都在同一张网里，不再依赖 git
+        //（gitignored/docs_committed:false 宿主全覆盖）。
+        let testingSourceMutated = false;
+        let mutationChangedList: string[] = [];
+        if (!dryRun && phase === 'testing' && preInvokeSourceSnap) {
+          const postInvokeSourceSnap = computeProductSourceSnapshotDetail(
+            projectRoot, productLayerDirsOf(projectRoot), manifest.feature,
+          );
+          const verdictSrc = diffProductSourceSnapshots(preInvokeSourceSnap, postInvokeSourceSnap);
+          if (verdictSrc.kind !== 'clean') {
+            testingSourceMutated = true;
+            mutationChangedList =
+              verdictSrc.kind === 'mutated'
+                ? verdictSrc.changed.map(c => `${c.how} ${c.path}`)
+                : [`unverifiable: ${verdictSrc.reason}`];
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'testing_write_violation',
+              phase,
+              invoke_id: invokeId,
+              kind: verdictSrc.kind,
+              changed: mutationChangedList.slice(0, 50),
+              changed_count: mutationChangedList.length,
+              pre_snapshot: preInvokeSourceSnap.sha256,
+              post_snapshot: postInvokeSourceSnap.sha256,
+            });
+          }
+        }
         // 四轮 review P0：invoke 窗口闭合比对——agent 调用期间 vision 账本被写 = 篡改
         // （合法写入只发生在 runner 编排的 gate harness 窗口）。首触即 halt，不重试洗白。
+        // review 第 11 轮 P2：ledger 比对只落事件——**处置指引统一在下方裁决**（旧写法
+        // 先进 ledger 分支提示"人工处置后 --resume"，而同轮的 testing_write_violation 又
+        // 使 resume 必然被拒——自相矛盾的指引）。source violation 在场 → 终止态为主
+        //（新开 run）；ledger-only → 才提示 --resume。
+        let ledgerTampered: string[] = [];
         if (!dryRun) {
           const postInvokeVisionSnap = snapshotVisionLedgers(projectRoot, manifest.feature);
-          const tamperedLedgers = diffVisionLedgerSnapshots(preInvokeVisionSnap, postInvokeVisionSnap);
-          if (tamperedLedgers.length > 0) {
+          ledgerTampered = diffVisionLedgerSnapshots(preInvokeVisionSnap, postInvokeVisionSnap);
+          if (ledgerTampered.length > 0) {
             appendEvent(manifest.report_dir, projectRoot, {
               type: 'vision_ledger_tamper',
               scope: 'agent_invoke',
               phase,
               invoke_id: invokeId,
-              files: tamperedLedgers,
+              files: ledgerTampered,
             });
-            appendEvent(manifest.report_dir, projectRoot, {
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'vision_ledger_tampered',
-              files: tamperedLedgers,
-            });
-            console.error(
-              `\n===== vision_ledger_tampered =====\nagent 调用窗口内 vision 账本被修改（${tamperedLedgers.join('、')}）——` +
-              'runner-owned 账本 agent 禁写（openspec feature-artifact-layout）。halt 求人：核查 events.jsonl 的 ' +
-              'pre_invoke anchor 与账本差异，人工处置后 --resume；不要删改账本行冒充原状。\n',
-            );
-            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'vision_ledger_tampered' });
-            halted = true;
-            phaseDone = true;
-            continue;
           }
+        }
+
+        // ===================================================================
+        // plan d8c5f3a7 T4：**源码完整性闸门（必须前置）**
+        // -------------------------------------------------------------------
+        // 时序是本切片的要害：原先 produceCriticReceipt（下方）与 replayJournalIntoLedger
+        // 都紧跟 invoke 执行，而 source drift reconciliation 远在 phase verdict 之后——
+        // 于是"污染证据"先被签发、先被收编进正式账本，事后再撤已经来不及。
+        // 新时序：invoke 返回 → 源码完整性判定 → **仅当干净**才允许签 receipt / 收编
+        // journal / spawn gate harness。判定为污染时这三步一律不执行（而非执行后再撤）。
+        //
+        // 证据处置：整轮隔离。不再尝试保留"改码前证据"——没有可信的文件监控事件，
+        // 就无法证明某份截图/轮次确实产生于改码之前（agent 完全可能改码→构建→截图→
+        // 自行还原，end diff=0）。只留 mutation audit。
+        // v23 F2 冻结处置：violation = **run 终止态**。不签 receipt / 不收编 journal /
+        // 不跑 gate / halt 并精确列出文件；**不自动反打、不 retry、不搬 quarantine**
+        //（自动改用户文件比停在现场风险更高）；同 run --resume 会被拒绝（见 resume 入口），
+        // 人工整理现场后必须新开 run。
+        if (testingSourceMutated) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt', phase, halt_reason: 'testing_write_violation',
+          });
+          console.error(
+            `\n===== testing_write_violation =====\n`
+            + `testing 阶段禁止写入产品源码 / 需求 SSOT / 根构建配置（本轮检出 ${mutationChangedList.length} 项变更）：\n`
+            + mutationChangedList.slice(0, 20).map(c => `  - ${c}`).join('\n')
+            + (mutationChangedList.length > 20 ? `\n  …（另 ${mutationChangedList.length - 20} 项）` : '')
+            + (ledgerTampered.length > 0
+              ? `\n（同轮还检出 vision 账本篡改：${ledgerTampered.join('、')}——一并人工核查）\n`
+              : '\n')
+            + `本轮证据不采信：receipt 不签发、journal 不收编、gate 不执行。\n`
+            + `这是本 run 的终止状态：不自动还原你的工作区（自动改文件比停在现场更危险），\n`
+            + `同 run --resume 会被拒绝。请人工核查/整理上述文件后**新开 run**。\n`
+            + `testing 只应复现、采证、产出结构化缺陷；代码修复由 runner 回退 coding 执行。\n`,
+          );
+          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'testing_write_violation' });
+          halted = true;
+          phaseDone = true;
+          continue;
+        }
+        // ledger-only：无源码违规时才给 --resume 指引（人工核查账本差异后可续）
+        if (ledgerTampered.length > 0) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'phase_halt', phase, halt_reason: 'vision_ledger_tampered', files: ledgerTampered,
+          });
+          console.error(
+            `\n===== vision_ledger_tampered =====\nagent 调用窗口内 vision 账本被修改（${ledgerTampered.join('、')}）——`
+            + 'runner-owned 账本 agent 禁写（openspec feature-artifact-layout）。halt 求人：核查 events.jsonl 的 '
+            + 'pre_invoke anchor 与账本差异，人工处置后 --resume；不要删改账本行冒充原状。\n',
+          );
+          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'vision_ledger_tampered' });
+          halted = true;
+          phaseDone = true;
+          continue;
         }
 
         // C-ab-eval：usage 落盘进本 phase trace（agent 产出后 best-effort 合并；已有 usage 不覆盖）
@@ -4432,7 +5058,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // t3b（f7a3d9c2）：goal 态 verified 回执生产——runner 从纯净事件文件（agent-events.jsonl）
         // 审计图片验读记录后签发 runner attestation 回执，在脚本闸门之前落盘（gate 消费）。
         // adapter 未声明 structured_events / 无注册解析器 / 覆盖不全 → 如实 unverified/不产出。
-        if (!dryRun && phase === 'testing' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
+        if (!dryRun && phase === 'testing' && !testingSourceMutated && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const produced = produceCriticReceipt({
               projectRoot,
@@ -4583,7 +5209,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // （时序保证中间轮行落在 gate 行之前——fuse"最后一有效行"语义正确）。
         // 重放不一致 → halt visual_ledger_integrity（journal 篡改/评估器漂移不得静默收编）。
         let journalReplayHalt = false;
-        if (!dryRun && phase === 'testing') {
+        // T4：污染轮次不收编——journal proposal 留在 run 目录内作 audit，不进正式账本
+        if (!dryRun && phase === 'testing' && !testingSourceMutated) {
           try {
             const replay = replayJournalIntoLedger({
               ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
@@ -4821,7 +5448,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
         if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
           const harnessRoot = path.join(frameworkRoot, 'harness');
-          const receiptValidation = tryValidateReceipt(
+          const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
             harnessRoot,
             projectRoot,
             phase,
@@ -4949,16 +5576,67 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const currentArtifactSnapshot =
           watchedFiles.length > 0 ? snapshotArtifacts(projectRoot, watchedFiles) : {};
 
+        // v23 F1：统一可回修缺陷收集——**只在 testing**（UT 不读视觉产物；既有 ut/testing
+        // authorized-backtrack 路径不受影响）。环境类失败（工具链/采集/外部依赖）回码修不好，
+        // 排除出回退判据。
+        const actionableResult: ActionableCollectResult =
+          !dryRun && phase === 'testing'
+            ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id)
+            : { defects: [], unverified: [] };
+        const actionableDefects = actionableResult.defects;
+        const envBlocked = meta.failure_kind === 'toolchain' || meta.failure_kind === 'capture' ||
+          meta.blocking_class === 'externalBlocked';
+        const hasActionable = actionableDefects.length > 0 && !envBlocked;
+        // review 第 11 轮 P1：可信缺陷优先回退；**只有 unverified** 时既不回退（不可信
+        // 不能驱动改码）也不 advance（must_fix 在场不能装干净）——testing 内 retry 引导
+        // 重采/补身份，耗尽 halt。
+        const unverifiableOnly =
+          phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
+
         let action = classifyPhaseVerdict({
           verdict,
           ...meta,
           dependency_policy: manifest.dependency_policy,
           retries_used: retries,
           max_retries_per_phase: manifest.budget.max_retries_per_phase,
+          phase,
+          deterministic_p0_defects: hasActionable,
+          backtracks_used: backtracksUsed,
         });
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        if (unverifiableOnly && (action === 'advance' || action === 'retry')) {
+          const notes = actionableResult.unverified.slice(0, 6)
+            .map(u => `${u.screen_or_case_id}：${u.reason}`).join('；');
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'unverifiable_must_fix', phase, invoke_id: invokeId,
+            entries: actionableResult.unverified.slice(0, 20),
+            count: actionableResult.unverified.length,
+          });
+          if (retries < manifest.budget.max_retries_per_phase) {
+            action = 'retry';
+            priorFailure =
+              `visual-diff 里有 ${actionableResult.unverified.length} 屏的视觉评估尚不可采信（${notes}）。`
+              + '不可采信的评估既不驱动回退、也不算通过：请重采/重评并确保 evaluated_screenshot_hash/'
+              + 'evaluated_build_fingerprint 与当前截图/安装 HAP 绑定（install meta 缺失先重装；evaluation_invalidated 屏须经 critic 重评清标记）。';
+            priorFailureKind = 'contract_violation' as FailureKind;
+            console.error(
+              `\n===== unverifiable_must_fix =====\n${notes}\n`
+              + `视觉评估尚不可采信——不回退也不放行，retry 重采/重评（${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
+            );
+          } else {
+            action = 'halt';
+            haltReason = 'unverifiable_must_fix';
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt', phase, halt_reason: 'unverifiable_must_fix',
+            });
+            console.error(
+              `\n===== unverifiable_must_fix =====\n${notes}\n`
+              + '重试预算内视觉评估始终不可采信——halt 求人（检查 install meta 写入/截图采集链/critic 重评）。\n',
+            );
+          }
+        }
         // P0-D.3 哨兵优先级：operator_interrupt > agent_timeout > headless_interaction_required >
         // transient_api_error > blocker。E4：用户手动中断压过一切（含 verdict===PASS 的边缘情况——
         // 中断就是中断，不因为脚本恰好跑完就当没发生）。
@@ -5294,7 +5972,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // budget_wall_clock 终局），保持 retry 语义不变。
             const probeRemainingMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
             const probe = inFlowReceiptValidation ?? (probeRemainingMs > 5_000
-              ? tryValidateReceipt(
+              ? (injectedValidateReceipt ?? tryValidateReceipt)(
                   path.join(frameworkRoot, 'harness'),
                   projectRoot,
                   phase,
@@ -5376,6 +6054,69 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             }
             }
+          }
+        }
+
+        // c4e8b1d3 G1-1（pre-coding 锚定）：**plan 正常 PASS advance 前必建 pass snapshot**
+        // ——coding 的 ui_diff_within_declared_files 白名单唯一来源。原实现只在
+        // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
+        // 无快照。失败 fail-closed halt（pass_snapshot_unavailable），与 closure retry
+        // 分支同语义；resume 场景盘上已有 active 快照则可信加载复验、不重取。
+        if (action === 'advance' && phase === ('plan' as FeaturePhase) && !dryRun) {
+          let planFreezeFailure: string | null = null;
+          try {
+            const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
+            if (headNow.mac === 'invalid') {
+              planFreezeFailure = 'pass_snapshot head 损坏/验签失败——不得在无可信冻结下 advance';
+            } else if (headNow.body?.state === 'active') {
+              if (!passSnapshotMemory.has(String(phase))) {
+                const trusted = loadTrustedSnapshotContext(
+                  projectRoot, manifest.feature, manifest.run_id, String(phase), null,
+                );
+                if (trusted.kind !== 'active') {
+                  planFreezeFailure = `盘上 head active 但可信加载失败：${
+                    trusted.kind === 'fail_closed' ? trusted.reason : trusted.kind}`;
+                }
+              }
+              // 本进程已建（closure retry 分支）→ 不重取
+            } else {
+              const frozen = resolveFrozenDeliverables({ projectRoot, feature: manifest.feature, phase });
+              if (frozen.length === 0) {
+                planFreezeFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
+              } else {
+                const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                const taken = takePassSnapshot({
+                  projectRoot,
+                  feature: manifest.feature,
+                  runId: manifest.run_id,
+                  phase: String(phase),
+                  epoch,
+                  files: frozen,
+                });
+                passSnapshotMemory.set(String(phase), { epoch, memoryDigest: taken.memoryDigest });
+                appendEvent(manifest.report_dir, projectRoot, {
+                  type: 'pass_snapshot_taken',
+                  phase,
+                  invoke_id: invokeId,
+                  pass_epoch: epoch,
+                  manifest_sha256: taken.manifestSha256,
+                  files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
+                });
+              }
+            }
+          } catch (e) {
+            planFreezeFailure = `快照建立失败：${(e as Error).message}`;
+          }
+          if (planFreezeFailure) {
+            action = 'halt';
+            haltReason = 'pass_snapshot_unavailable';
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt', phase, halt_reason: 'pass_snapshot_unavailable', detail: planFreezeFailure,
+            });
+            console.error(
+              `\n===== pass_snapshot_unavailable =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
+              '不做无冻结 advance（coding 的 UI scope 门将失去白名单来源）；人工核查 trust-state/产物后 --resume。\n',
+            );
           }
         }
 
@@ -5512,14 +6253,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             continue;
           }
           if (driftDecision.kind === 'authorized_backtrack') {
-            if (backtracksUsed >= 1) {
+            if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
               appendEvent(manifest.report_dir, projectRoot, {
                 type: 'phase_halt',
                 phase,
                 halt_reason: 'backtrack_limit',
                 verdict,
               });
-              console.error('\n===== backtrack_limit =====\n授权回退已达上限（1 次/run）——仍出现源码 drift，halt 求人（防回退震荡烧预算）。\n');
+              console.error(`\n===== backtrack_limit =====\n回退预算已耗尽（授权回退与缺陷回退共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人（防回退震荡烧预算）。\n`);
               outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'backtrack_limit' });
               halted = true;
               phaseDone = true;
@@ -5569,11 +6310,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             outcomes = outcomes.filter(o => !invalidatedPhases.includes(o.phase));
             // 增量重点复审清单注入（回退后 review prompt 消费）
             backtrackReviewFocus = driftDecision.files;
+            // review 第 10 轮（P1-4）：授权回退**不携带**缺陷清单——必须清空缺陷交接上下文，
+            // 否则上一次 visual 回退已修好的旧缺陷会被再次注入 coding prompt。
+            backtrackCodingContext = [];
             backtrackToIdx = Math.max(codingIdx, 0);
             appendEvent(manifest.report_dir, projectRoot, { type: 'phase_backtrack_completed', to_phase: chain[backtrackToIdx] });
             console.log(
               `[S4] 授权源码变更（${driftDecision.files.length} 文件，receipts=${driftDecision.matched.map(r => r.approved_by).join(',')}）` +
-              `→ 回退 ${chain[backtrackToIdx]}→review→ut→${phase}（消耗回退预算 1/1）`,
+              `→ 回退 ${chain[backtrackToIdx]}→review→ut→${phase}（消耗共用回退预算 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}）`,
             );
             phaseDone = true;
             continue;
@@ -5721,6 +6465,100 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
+        // v23 F1：统一回修环——testing 有 actionable 缺陷（含 best_effort 的 WARN）即回
+        // coding，缺陷内容经 backtrackCodingContext 真实交接进下一次 coding prompt。
+        // 熔断按**整轮集合指纹**：只有整轮 actionable 集合完全相同才算无进展（{A,B}
+        // 修成 {B} 允许再回退）；预算与授权回退共用 DEFAULT_MAX_BACKTRACKS。
+        if (action === 'backtrack_to_coding') {
+          const codingIdxBt = chain.indexOf('coding' as FeaturePhase);
+          const roundFp = roundFingerprintOf(actionableDefects);
+          if (codingIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
+            action = 'halt';
+            haltReason = codingIdxBt < 0
+              ? 'backtrack_target_absent'
+              : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
+            // 对齐其他 halt 分支惯例：专项事件落盘（resume/审计按事件恢复语境，
+            // outcome.halt_reason 只进 goal report）
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_halt', phase, halt_reason: haltReason,
+              round_fingerprint: roundFp,
+              backtracks_used: backtracksUsed,
+            });
+            console.error(
+              `\n===== ${haltReason} =====\n`
+              + (haltReason === 'backtrack_fingerprint_repeat'
+                ? `整轮 actionable 缺陷集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——\n回退→修不动→同集合再现，继续回退只会空转。halt 求人。\n`
+                : haltReason === 'backtrack_limit'
+                  ? `回退预算已耗尽（共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人。\n`
+                  : `执行链不含 coding，无处回退——halt 求人。\n`),
+            );
+          } else {
+            backtracksUsed++;
+            seenRoundFingerprints.add(roundFp);
+            backtrackCodingContext = actionableDefects.slice(0, 20);
+            const invalidatedBt = chain
+              .slice(codingIdxBt, phaseIdx + 1)
+              .filter(ph => outcomes.some(o => o.phase === ph));
+            const txIdBt = `${manifest.run_id}-defectbt${backtracksUsed}`;
+            if (!dryRun) {
+              beginInvalidationTx({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                causePhase: String(phase),
+                invalidatedPhases: invalidatedBt.map(String),
+                txId: txIdBt,
+              });
+              for (const ph of invalidatedBt) passSnapshotMemory.delete(String(ph));
+              commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, txIdBt);
+            }
+            appendEvent(manifest.report_dir, projectRoot, {
+              type: 'phase_backtrack_requested',
+              phase,
+              to_phase: 'coding',
+              invoke_id: invokeId,
+              reason: 'actionable_testing_defects',
+              // v23：完整 round_fingerprint（熔断恢复唯一依据）+ 有界 defects[]（交接内容；
+              // 指纹恢复**不**从它反算——截断+上限 20 无法可靠重建）
+              round_fingerprint: roundFp,
+              defects: backtrackCodingContext.map(d => ({
+                source: d.source,
+                screen_or_case_id: d.screen_or_case_id,
+                fingerprint: d.fingerprint,
+                instructions: d.instructions.map(t => t.length > 400 ? `${t.slice(0, 400)}…` : t),
+                evidence_path: d.evidence_path,
+              })),
+              defect_count: actionableDefects.length,
+              invalidation_tx_id: txIdBt,
+            });
+            for (const ph of invalidatedBt) {
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'phase_invalidated',
+                phase: ph,
+                cause_phase: phase,
+                reason: 'actionable_defect_backtrack',
+                invalidation_tx_id: txIdBt,
+              });
+            }
+            console.error(
+              `\n===== backtrack_to_coding =====\n`
+              + `${phase} 检出 ${actionableDefects.length} 项可回修缺陷（`
+              + actionableDefects.slice(0, 6).map(d => `${d.source}:${d.screen_or_case_id}`).join('、')
+              + `）——修复需要改产品码，而 ${phase} 阶段禁止写源码。\n`
+              + `回退 coding（缺陷清单已注入下一次 coding prompt），再重走 review/ut/${phase}。\n`
+              + `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
+            );
+            // v23：被失效阶段的旧 outcome 必须剔除——完成判定是 outcomes.length===chain.length，
+            // 不剔除则回退重跑后永远无法正常完成（review 第 6 轮实锤）。对齐 authorized_backtrack。
+            outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
+            appendEvent(manifest.report_dir, projectRoot, { type: 'phase_backtrack_started', to_phase: 'coding' });
+            phaseIdx = codingIdxBt - 1; // for 循环 ++ 后落回 coding
+            phaseDone = true;
+            if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
+            continue;
+          }
+        }
+
         if (action === 'retry') {
           priorBlockerSignature = currentBlockerSignature || priorBlockerSignature;
           priorArtifactSnapshot =
@@ -5846,6 +6684,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
       pendingHumanReview = cls.needsHuman;
       blockingFix = cls.needsFix;
+      if (process.env.MAISON_TEST_PROBE === '1') {
+        console.error(`[probe-cls] ${JSON.stringify(collectCleanPassIssues({
+          projectRoot,
+          feature: manifest.feature,
+          chain: fullWorkflowChain.map(String),
+          currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
+        }))}`);
+      }
     } else {
       pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
     }

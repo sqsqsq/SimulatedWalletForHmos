@@ -44,7 +44,7 @@ import {
 import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { checkStructureDeclarationLedger } from './structure-ledger';
-import { isPixel1to1, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectDeclaredElements } from './layout-oracle-check';
 import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 
@@ -194,8 +194,8 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
 
   if (issues.length > 0) {
-    const soft = !isPixel1to1(ctx) && (enforcement === 'warn' || enforcement === 'reachable');
-    const ratchet = isPixel1to1(ctx)
+    const soft = !isHardPixelContract(ctx) && (enforcement === 'warn' || enforcement === 'reachable');
+    const ratchet = isHardPixelContract(ctx)
       ? fidelityRatchetFailOrWarn(ctx, false)
       : structureFailOrWarn(enforcement);
     const { severity, status } = soft
@@ -243,7 +243,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   // round6 实证：按钮声明 width_ratio=0.28 却源码 .width('100%')，本门禁抓到了却只 WARN，正确信号被降级丢失。
   const renderIssues = collectRenderFaithfulnessIssues(ctx, doc, baselineUnverified);
   if (renderIssues.length > 0) {
-    const { severity, status } = isPixel1to1(ctx)
+    const { severity, status } = isHardPixelContract(ctx)
       ? fidelityRatchetFailOrWarn(ctx, false)
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({
@@ -253,7 +253,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details: [
-        isPixel1to1(ctx)
+        isHardPixelContract(ctx)
           ? '【渲染忠实度·pixel_1to1 阻断：spec 声明的静态可判几何/填充未按声明渲染】'
           : '【渲染忠实度·低置信，以 device visual-diff 为准】',
         ...renderIssues.map(i => i.detail),
@@ -268,7 +268,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   // t1（plan c6d8f2b4）：pixel_1to1 P0 屏声明元素须在源码设 `.id('<element_id>')`——
   // T8 布局 locator 的主方案锚（t0③ 实证 ArkUI .id() 透传 hypium dump id/key）。
   // 首版 WARN（观察期）：缺 .id 不产生错误判定、只降 locator 覆盖率（device 侧 B 类 SKIP+WARN 另有兜底）。
-  if (isPixel1to1(ctx)) {
+  if (isHardPixelContract(ctx)) {
     const contracts = ctx.featureSpec?.contracts;
     if (contracts) {
       const scan = scanFeatureSourceTree(ctx.projectRoot, contracts);
@@ -332,7 +332,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     const specTexts = collectSpecTextUniverse(doc, refDoc?.elements ?? null);
     const visibleTextIssues = collectVisibleTextIssues(ctx, specTexts, baselineUnverified);
     if (visibleTextIssues.length > 0) {
-      const { severity, status } = isPixel1to1(ctx)
+      const { severity, status } = isHardPixelContract(ctx)
         ? fidelityRatchetFailOrWarn(ctx, false)
         : { severity: 'MAJOR' as const, status: 'WARN' as const };
       results.push({
@@ -356,13 +356,13 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // s1 asset 真渲染：声明 asset_ref 却未 $r 引用 media（catches #6 tab 仅文字）
-  // review#4：pixel_1to1 下「声明却未真实渲染」(not_rendered) 升 BLOCKER；显式 placeholder 豁免仍 WARN。
+  // v23 F4 收窄：静态"没找到渲染引用"本就低置信（动态渲染/间接引用会漏判）——**一律 WARN**，
+  // 不再按档位升 BLOCKER。刚删掉不可靠指标（score_floor/blank_ratio），不再引入另一个
+  // 不可靠硬门禁；"实际页面未渲染"交给**新鲜的** visual-diff must_fix（回修环消费）。
   const assetIssues = collectAssetRenderIssues(ctx, doc, baselineUnverified);
   if (assetIssues.length > 0) {
-    const hardNotRendered = isPixel1to1(ctx) && assetIssues.some(i => i.assetRole === 'not_rendered');
-    const { severity, status } = hardNotRendered
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const severity = 'MAJOR' as const;
+    const status = 'WARN' as const;
     results.push({
       id: 'visual_parity_asset_render',
       category: 'structure',
@@ -370,7 +370,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       severity,
       status,
       details: [
-        hardNotRendered ? '【asset 真渲染·pixel_1to1 阻断：声明 asset_ref 却未渲染】' : '【asset 真渲染·低置信，以 device visual-diff 为准】',
+        '【asset 真渲染·低置信，以 device visual-diff 为准】',
         ...assetIssues.map(i => i.detail),
       ].join('\n'),
       suggestion: '声明 asset_ref 的元素须在对应组件 $r 引用并渲染该 media（如 tab 图标）；动态渲染/显式 placeholder 可豁免。',
@@ -379,12 +379,13 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // B s1.5 asset 物化真图校验：被 $r('app.media.*') 引用的【模块实际】media 必须是真图，禁 1×1/退化占位冒充。
-  // 以模块 resources/base/media 为准（不信 contracts/根 media path，那归 F）；pixel_1to1 → BLOCKER。
+  // v23 F4：**档位无关 FAIL**——"被引用的非占位素材物化缺失/损坏/空白/纯色"是确定性事实
+  //（collectPlaceholderAssetIssues 已豁免显式 placeholder 声明），best_effort 档同样有害：
+  // 2026-07-24 事故正是 best_effort 下删真素材换占位、一路漏到用户眼前。
   const materializeIssues = collectPlaceholderAssetIssues(ctx, doc, baselineUnverified);
   if (materializeIssues.length > 0) {
-    const { severity, status } = isPixel1to1(ctx)
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const severity = 'BLOCKER' as const;
+    const status = 'FAIL' as const;
     results.push({
       id: 'visual_parity_asset_materialized',
       category: 'structure',
@@ -418,7 +419,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       });
     }
     if (unverified.length > 0) {
-      const { severity, status } = isPixel1to1(ctx)
+      const { severity, status } = isHardPixelContract(ctx)
         ? fidelityRatchetFailOrWarn(ctx, false)
         : { severity: 'MAJOR' as const, status: 'WARN' as const };
       results.push({
@@ -629,7 +630,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   {
     const invisibleIssues = collectInvisiblePresenceIssues(ctx);
     if (invisibleIssues.length > 0) {
-      const { severity, status } = isPixel1to1(ctx)
+      const { severity, status } = isHardPixelContract(ctx)
         ? fidelityRatchetFailOrWarn(ctx, false)
         : { severity: 'MAJOR' as const, status: 'WARN' as const };
       results.push({
@@ -654,7 +655,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   // round5 P0-A：素材原子化——被 $r 引用的非 placeholder 素材图不得烤入 ui-spec 声明文本（整段大图 → 双渲染/烤字）。
   const bakedText = collectBakedTextAssetIssues(ctx, doc, baselineUnverified);
   if (bakedText.issues.length > 0) {
-    const { severity, status } = isPixel1to1(ctx)
+    const { severity, status } = isHardPixelContract(ctx)
       ? fidelityRatchetFailOrWarn(ctx, false)
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({
@@ -674,7 +675,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
   // round5 P0-A/X4：OCR 是烤字门禁唯一承重探测；pixel_1to1 下不可用不得 WARN 放行 → toolchain BLOCKER（指向"修 OCR 环境"，见 goal-failure-classifier）。
   if (bakedText.ocrUnavailable) {
-    const { severity, status } = isPixel1to1(ctx)
+    const { severity, status } = isHardPixelContract(ctx)
       ? fidelityRatchetFailOrWarn(ctx, false)
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({
@@ -694,7 +695,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   // round5 P0-B（Q5 采纳）：声明 required 品牌图标却用 sys.symbol 系统单色图标静默替代 → pixel_1to1 BLOCKER（含全局底 tab 图标）。
   const iconSubIssues = collectIconSubstitutionIssues(ctx, doc, baselineUnverified);
   if (iconSubIssues.length > 0) {
-    const { severity, status } = isPixel1to1(ctx)
+    const { severity, status } = isHardPixelContract(ctx)
       ? fidelityRatchetFailOrWarn(ctx, false)
       : { severity: 'MAJOR' as const, status: 'WARN' as const };
     results.push({

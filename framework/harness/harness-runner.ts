@@ -82,6 +82,10 @@ import {
   resolveFidelityContextFromFeature,
   resolveEffectiveFidelityContext,
   resolveOcrAvailableForRun,
+  loadFidelityIntentSsot,
+  loadCapabilitySnapshot,
+  deriveEffectiveAdapterImageInput,
+  effectiveAssetAcquisitionMode,
 } from './scripts/utils/fidelity-shared';
 import {
   resolvePaths,
@@ -149,7 +153,16 @@ import { resolveEffectiveVisionContext, sha256File } from './scripts/utils/effec
 /** S3：phase harness 侧 policy meet（codex P0-1d：异常 fail-closed 默认盲——异常默认
  * visual 会让非多模态模型重回视觉链路）。四轮 review P1：ui-spec 已存在时以当前 hash 参与
  * meet——unverified 产物（含 unverified_clean）即令无独立降级行也不得 visual；文件在但
- * hash 不可算 → blind-safe。 */
+ * hash 不可算 → blind-safe。
+ *
+ * plan d8c5f3a7 T1-3（legacy/fallback 兼容）：补 **run 身份透传**。本函数只在
+ * **capability-snapshot 缺失**时才被消费（见下方 `capSnap ? … : …`——snapshot 在场时
+ * live meet 完全不参与），故它服务的是 legacy feature / 交互式 / 未经 initializer 的
+ * phase-driven 场景。此前不传 runId，goal 探测的 canary 在此**永远**不可采信
+ * （`run_probed 不跨 run`）→ 同一份实测证据在 goal gate harness 与本路径上结论相反。
+ * 现从 `MAISON_GOAL_RUN_ID` 取运行身份：goal 态 gate harness 由 runner spawn 且带该 env，
+ * 与写 canary 时的 run 身份同源 → 可采信；纯 phase-driven 无该 env → 保持保守降级
+ * （那是**设计内**的分歧：跨执行上下文的实测证据本就不该被另一次执行直接采信）。 */
 function resolvePolicyVisualForHarness(projectRoot: string, feature: string): boolean {
   try {
     let artifactHashes: string[] | undefined;
@@ -159,9 +172,11 @@ function resolvePolicyVisualForHarness(projectRoot: string, feature: string): bo
       if (!h) return false;
       artifactHashes = [h];
     }
+    const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
     const vctx = resolveEffectiveVisionContext({
       projectRoot,
       feature,
+      ...(goalRunId ? { runId: goalRunId } : {}),
       ...(artifactHashes ? { artifactHashes } : {}),
     });
     return vctx.effective_policy.mode === 'visual';
@@ -530,6 +545,12 @@ async function main(): Promise<void> {
   // 不钳制；feature 阶段按 mmProbe.supported（视觉能力）+ profile OCR 就绪度钳制 desired→effective，
   // 单点收口：全部 19 处 isPixel1to1/fidelityTarget 消费面只读 context.fidelityTarget（此处赋的
   // 有效档位），零改动自动随能力降级（capture_completeness_external 等 pixel 分支天然降 WARN）。
+  // plan f6b2d9a4 v5/v7：fidelity-intent.json 为三轴唯一 SSOT（initializer 首产）——
+  // 在场时 selected 档位/素材轴以 SSOT 为准（spec.md Visual Handoff 仅为投影，由
+  // check-spec 复核一致性）；缺失（legacy/未初始化）回落投影解析。capability 输入
+  // snapshot 优先（v3 P1-4 同源），live policy meet 仍参与（blind-safe 降级只收紧不放宽）。
+  const intentSsot = phaseIsGlobal ? null : loadFidelityIntentSsot(projectRoot, feature);
+  const capSnap = phaseIsGlobal ? null : loadCapabilitySnapshot(projectRoot, feature);
   const fidelityCtx = phaseIsGlobal
     ? {
         fidelityTarget: 'semantic_layout' as const,
@@ -540,12 +561,32 @@ async function main(): Promise<void> {
         effectiveAssetAcquisitionMode: 'approximate' as const,
         fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
       }
-    : resolveEffectiveFidelityContext(resolveFidelityContextFromFeature(projectRoot, feature), {
-        // visual-capability-truth S3：hasVision = meet(探测, 三轴 effective_policy)——
-        // 反证器 blind-safe 降级后，phase harness 的档位钳制与各 gate 同步转盲（消费面收口）。
-        hasVision: mmProbe.supported && resolvePolicyVisualForHarness(projectRoot, feature),
-        ocrAvailable: resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
-      });
+    : (() => {
+        const projection = resolveFidelityContextFromFeature(projectRoot, feature);
+        const raw = intentSsot
+          ? {
+              ...projection,
+              fidelityTarget: intentSsot.selected_fidelity,
+              assetAcquisitionMode: intentSsot.asset_acquisition_mode,
+              effectiveAssetAcquisitionMode: effectiveAssetAcquisitionMode(
+                intentSsot.selected_fidelity,
+                intentSsot.asset_acquisition_mode,
+              ),
+            }
+          : projection;
+        return resolveEffectiveFidelityContext(raw, {
+          // post-impl2 P0-1（消费面只认同一 run 快照）：snapshot 在场即为唯一能力真值
+          //（live policy 收紧由 runner 侧原子重建 snapshot+SSOT 后再被本处消费——消费面
+          // 不得自行叠加 meet，否则「快照 visual、live 盲」会让 hard pixel 静默降档绕过
+          // DEFER）。snapshot 缺失（legacy/交互式）回落本地探测+meet。
+          hasVision: capSnap
+            ? capSnap.vision.verdict
+            : mmProbe.supported && resolvePolicyVisualForHarness(projectRoot, feature),
+          ocrAvailable: capSnap
+            ? capSnap.ocr.verdict
+            : resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
+        });
+      })();
   const context: CheckContext = {
     phase,
     feature,
@@ -565,11 +606,14 @@ async function main(): Promise<void> {
     declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
     fidelityClamped: fidelityCtx.fidelityClamped,
     fidelityClampReason: fidelityCtx.fidelityClampReason,
+    // plan f6b2d9a4：严格度轴（SSOT 缺失=best_effort 缺省）——裁决类谓词 isHardPixelContract 消费
+    acceptanceStrictness: intentSsot?.acceptance_strictness ?? 'best_effort',
     assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
     effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
     fidelityDeferrals: fidelityCtx.fidelityDeferrals,
-    adapterMultimodal: mmProbe.supported,
-    adapterImageInput: mmProbe.imageInput,
+    // post-impl3 P0-3：能力单源——快照判盲时 blind 门禁与 fidelity 同步转盲
+    adapterMultimodal: capSnap ? capSnap.vision.verdict : mmProbe.supported,
+    adapterImageInput: deriveEffectiveAdapterImageInput(capSnap ? capSnap.vision.verdict : null, mmProbe.imageInput),
     frameworkRoot: resolvedFrameworkRoot,
     frameworkRel,
     harnessRoot,
@@ -854,6 +898,11 @@ function consumeVisualRoundPayload(
               row_hash: row.row_hash,
               fused: s.round.decision.fused,
             },
+            // plan d8c5f3a7 T2：传**评估时刻**（row.at 即算出 claimed.row_hash 时用的 at）。
+            // 此前不传 → appendJournalProposal 用 new Date() 重打，与 claimed 不同源；
+            // at 参与 row_hash 不参与 base_state_hash，runner 重放遂得「base 全对、
+            // fused 全对、row 全错」→ 被判篡改 halt（2026-07-24 事故直接死因）。
+            at: row.at,
           },
         );
         console.log('   [visual-rounds] goal 态中间轮已写 journal proposal（runner 收编后入正式账本）');

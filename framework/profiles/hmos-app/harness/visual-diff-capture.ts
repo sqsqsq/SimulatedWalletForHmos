@@ -28,7 +28,14 @@ import {
 import type { VisualDiffReport, VisualDiffScreenEntry } from './visual-diff-check';
 import { hashScreenshotFile, isCaptureMutableVerdict } from './visual-diff-check';
 import { sampleQuiescent } from './quiescence-sampling';
-import { collectP0OverlayTargetIds, isP0VisualTargetScreen, isOverlayRootScreen } from './visual-diff-targets';
+import {
+  collectP0OverlayTargetIds,
+  isP0VisualTargetScreen,
+  isOverlayRootScreen,
+  resolveGoldenCaptureTargets,
+  type GoldenForbiddenTarget,
+  type GoldenScreenTarget,
+} from './visual-diff-targets';
 import {
   evaluateScreenIdentity,
   extractLayoutDumpFacets,
@@ -37,6 +44,15 @@ import {
   type NavScreenIdentity,
   type NavScreenSteps,
 } from './visual-diff-nav';
+// T5 接线：采集失败即崩溃诊断（此前本模块零生产调用方）
+import {
+  archiveTimeoutDiagnosis,
+  diagnoseNavigationFailure,
+  makeHdcCrashProbeDeps,
+  renderDiagnosis,
+  snapshotFaultlogSet,
+  type CrashProbeDeps,
+} from './device-crash-diagnostics';
 
 export { collectP0OverlayTargetIds } from './visual-diff-targets';
 
@@ -86,6 +102,8 @@ export interface VisualDiffCaptureOptions {
   specMd?: string | null;
   /** 注入 mock 或真实 Hylyre screenshot；缺省且无 Hylyre 时不写屏条目 */
   screenshotFn?: VisualDiffScreenshotFn;
+  /** v23 F3：崩溃诊断依赖注入（缺省走真机 hdc）；单测用它免真机 */
+  crashProbeDeps?: CrashProbeDeps;
   /** round5 P1-A：每屏到达步骤的显式导航配置（key 经 X1 归一化匹配 P0 target）；缺省则不导航（沿用旧裸采行为） */
   navConfig?: NavConfig;
   /** round5 P1-A：导航执行器（真机 Hylyre）；缺省则不导航。与 navConfig 同时提供才生效 */
@@ -118,6 +136,60 @@ export interface VisualDiffCaptureOptions {
    * 一致」时**跳过重采**（判定持久）；null/缺省 = 指纹不可用，一律不得跳采（codex 硬前提）。
    */
   currentBuildFingerprint?: string | null;
+  /**
+   * c4e8b1d3 G3：golden 显式 capture targets（consumer golden 回归专用）。
+   * 缺省时读 env MAISON_GOLDEN_CONTRACT（指向随包 contract JSON）；两者都无 = 普通
+   * visual-diff，保持 P0-only。显式目标不受 P0 过滤；解析失败 fail-closed 计入采集失败。
+   */
+  goldenTargets?: GoldenScreenTarget[];
+  /**
+   * round20 P1：golden 负向目标（HomeTab forbidden anchor 的证据**生产**接线）。
+   * 缺省随 env contract 装载；golden 模式下逐条导航 + UITree dump，写 wrapper 证据
+   *（run_id + build fp 绑定）；nav/dumpFn 缺失或导航失败 → fail-closed 记采集失败。
+   */
+  goldenForbidden?: GoldenForbiddenTarget[];
+}
+
+/** env MAISON_GOLDEN_CONTRACT → contract 的 positive_screens；未设/不可读 → null（普通模式）。
+ * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。 */
+export function loadGoldenContractTargetsFromEnv(projectRoot: string): GoldenScreenTarget[] | null {
+  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
+  if (!raw) return null;
+  const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
+  if (!fs.existsSync(abs)) {
+    throw new Error(`[golden-contract] MAISON_GOLDEN_CONTRACT 指向的文件不存在：${abs}`);
+  }
+  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { positive_screens?: unknown };
+  if (!Array.isArray(doc.positive_screens) || doc.positive_screens.length === 0) {
+    throw new Error(`[golden-contract] contract 缺 positive_screens：${abs}`);
+  }
+  const out: GoldenScreenTarget[] = [];
+  for (const s of doc.positive_screens as Array<Record<string, unknown>>) {
+    if (typeof s?.declared !== 'string' || typeof s?.capture !== 'string' || !s.declared || !s.capture) {
+      throw new Error(`[golden-contract] positive_screens 条目 shape 非法：${JSON.stringify(s)}`);
+    }
+    out.push({ declared: s.declared, capture: s.capture });
+  }
+  return out;
+}
+
+/** env contract 的 forbidden 负向目标（round20 P1：证据生产接线的输入）；未设 env → []；
+ * 设了但条目 shape 非法 → 抛错（与 targets 装载器同 fail-closed 语义）。 */
+export function loadGoldenContractForbiddenFromEnv(projectRoot: string): GoldenForbiddenTarget[] {
+  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
+  if (!raw) return [];
+  const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
+  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { forbidden?: unknown };
+  if (!Array.isArray(doc.forbidden)) return [];
+  const out: GoldenForbiddenTarget[] = [];
+  for (const f of doc.forbidden as Array<Record<string, unknown>>) {
+    if (typeof f?.id !== 'string' || typeof f?.anchor !== 'string' || typeof f?.evidence !== 'string' ||
+        !f.id || !f.anchor || !f.evidence) {
+      throw new Error(`[golden-contract] forbidden 条目 shape 非法：${JSON.stringify(f)}`);
+    }
+    out.push({ id: f.id, anchor: f.anchor, evidence: f.evidence });
+  }
+  return out;
 }
 
 export interface VisualDiffCaptureResult {
@@ -139,6 +211,8 @@ export interface VisualDiffCaptureResult {
 }
 
 // P0-9 顺手项（codex）：feature artifact 路径统一走 featureDir（尊重 paths.features_dir 配置）。
+// plan d8c5f3a7 T4 接线：截图批绑定装机会话（未登记的截图来源不可追溯 → verify 判断链）
+
 export function deviceScreenshotsDir(projectRoot: string, feature: string): string {
   return path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots');
 }
@@ -159,6 +233,11 @@ export function sanitizeVisualDiffScreenSlug(screenId: string): string | null {
     .replace(/^_|_$/g, '');
   if (!slug || slug.includes('..')) return null;
   return slug;
+}
+
+/** 崩溃诊断归档根：`device-testing/reports`（消费者按同一口径回读，见 goal-runner 的确定性缺陷收集） */
+function testingReportsDirForDiag(projectRoot: string, feature: string): string {
+  return path.join(featureDir(projectRoot, feature), 'device-testing', 'reports');
 }
 
 /** 解析截图相对/绝对路径，并断言落在 device-screenshots/ 内 */
@@ -389,6 +468,9 @@ export function mergeCapturedScreenEntry(
   const merged: VisualDiffScreenEntry = { ...existing };
   merged.screenshot_path = captured.screenshot_path;
   merged.screenshot_hash = capturedHash;
+  // round19 P1：字节恒等的保留路径也更新 run 戳——该屏本轮确实被重采（真值），
+  // golden run 绑定校验才不会把"重采后像素恒等"误判成跨 run 复用。
+  if (captured.captured_in_run) merged.captured_in_run = captured.captured_in_run;
   if (typeof captured.score_floor === 'number') {
     merged.score_floor = captured.score_floor;
   }
@@ -624,8 +706,23 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     };
   }
 
-  const targets = collectP0CaptureTargets(uiDoc);
-  if (targets.length === 0) {
+  // c4e8b1d3 G3：golden 显式 targets（不受 P0 过滤；普通模式两者皆无 → 纯 P0-only 原行为）
+  const goldenSpec = opts.goldenTargets ?? loadGoldenContractTargetsFromEnv(opts.projectRoot);
+  const golden = goldenSpec ? resolveGoldenCaptureTargets(uiDoc, goldenSpec) : null;
+  // round20 P1：负向目标（证据生产）——opts 注入优先；opts.goldenTargets 注入而未给
+  // forbidden 时不读 env（测试注入面独立），env 路径两者一体装载。
+  const goldenForbidden: GoldenForbiddenTarget[] = golden
+    ? (opts.goldenForbidden ?? (opts.goldenTargets ? [] : loadGoldenContractForbiddenFromEnv(opts.projectRoot)))
+    : [];
+  const p0Screens = collectP0CaptureTargets(uiDoc);
+  const targets = golden
+    ? [...p0Screens, ...golden.extraScreens.filter(s => !p0Screens.some(p => p.id === s.id))]
+    : p0Screens;
+  const p0Overlays = collectP0OverlayTargetIds(uiDoc);
+  const overlayTargets = golden
+    ? [...p0Overlays, ...golden.extraOverlays.filter(o => !p0Overlays.some(p => p.id === o.id))]
+    : p0Overlays;
+  if (targets.length === 0 && overlayTargets.length === 0 && (golden?.failures.length ?? 0) === 0) {
     return {
       ok: false,
       jsonPath,
@@ -648,7 +745,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   const navResolve = navEnabled
     ? resolveNavForTargets(opts.navConfig as NavConfig, [
         ...targets.map(t => t.id),
-        ...collectP0OverlayTargetIds(uiDoc).map(o => o.id),
+        ...overlayTargets.map(o => o.id),
+        ...goldenForbidden.map(f => f.id),
       ])
     : null;
 
@@ -667,12 +765,51 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
+  // golden 解析失败 fail-closed：contract 要求的屏无法成为采集目标 = 采集失败，
+  // 绝不静默跳过（否则 evaluator 端只见"缺屏"，丢了真因）。
+  if (golden) {
+    for (const f of golden.failures) {
+      errors.push(`golden_contract:${f.declared}: ${f.reason}（fail-closed——contract 屏无法解析为 capture target）`);
+      p0CaptureFailures.push(f.declared);
+    }
+  }
+  // v23 F3：集合差基线——导航前拍 faultlog 文件名集合；失败后重列，只有**本轮新增**
+  // 且属于本应用的 faultlog 才判崩溃（无时钟依赖：旧时间窗方案按 UTC 解析设备本地时间
+  // 文件名，时区差会把历史崩溃判成本轮崩溃）。仅有 bundleName 时才拍（诊断可用的前提）。
+  // v23 F3：集合差崩溃诊断。基线**每次导航前单独拍**（review 第 10 轮 P1：整批只拍一次
+  // 的话，A 屏崩溃产生的 faultlog 对之后 B 屏的"整批基线"永远是新增——B 只是选择器超时
+  // 也会被误判 crash_suspected）。无时钟依赖（旧时间窗方案的时区坑已删）。
+  const crashDeps = opts.crashProbeDeps ?? (opts.bundleName?.trim() ? makeHdcCrashProbeDeps() : null);
+  const takeFaultlogBaseline = (): ReadonlySet<string> | null =>
+    crashDeps && opts.bundleName?.trim() ? snapshotFaultlogSet(crashDeps) : null;
+  // c4e8b1d3 round19 P1：当前 goal run 身份——新采条目盖 captured_in_run 戳；golden 模式
+  // 下同 build 跳采**额外要求条目就是本 run 采的**（强制每 run 重采，第二个 run 不得
+  // 复用第一个 run 的截图凑 golden）。普通模式跳采行为逐字节不变（P0-9a 判定持久保留）。
+  const runIdNow = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
+  const goldenSkipAllowed = (existing: VisualDiffScreenEntry | undefined): boolean =>
+    !golden || (typeof existing?.captured_in_run === 'string' && existing.captured_in_run === runIdNow);
+  // v23 F3：清理**本 run** 的既有 crash 归档——本轮采集将对每个导航失败屏重新判定；
+  // 不清的话，上一轮修好后旧归档仍在（run_id 相同）会被消费成 actionable，造成
+  // "修好了还回退/熔断"的假信号。其他 run 的归档不动（本来就不被消费）。
+  {
+    const diagDirNow = path.join(testingReportsDirForDiag(opts.projectRoot, opts.feature), 'crash-diagnostics');
+    if (runIdNow && fs.existsSync(diagDirNow)) {
+      for (const n of fs.readdirSync(diagDirNow)) {
+        if (!n.endsWith('.json')) continue;
+        try {
+          const doc = JSON.parse(fs.readFileSync(path.join(diagDirNow, n), 'utf-8')) as { run_id?: string };
+          if (doc.run_id === runIdNow) fs.rmSync(path.join(diagDirNow, n));
+        } catch { /* 损坏归档一并清（本轮会重写） */ fs.rmSync(path.join(diagDirNow, n), { force: true }); }
+      }
+    }
+  }
   for (const screen of targets) {
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
     if (
       canSkipRecaptureForScreen(existingById.get(screen.id), opts.projectRoot, currentFp) &&
-      skipAllowedByIdentity(existingById.get(screen.id), opts.screenIdentity?.get(screen.id))
+      skipAllowedByIdentity(existingById.get(screen.id), opts.screenIdentity?.get(screen.id)) &&
+      goldenSkipAllowed(existingById.get(screen.id))
     ) {
       preservedBuildValidIds.push(screen.id);
       continue;
@@ -698,6 +835,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
     // P1-A：截图前先导航到位（有 executor 时）；导航失败 → 记 P0 采集失败，绝不截错屏。
     if (navEnabled) {
+      const navFaultlogBaseline = takeFaultlogBaseline();   // per-nav（不是整批一拍）
       const nav = opts.navExecutorFn!({
         screenId: screen.id,
         steps: navSteps ?? [],
@@ -705,7 +843,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         bundleName: opts.bundleName,
       });
       if (!nav.ok) {
-        errors.push(`${screen.id}: 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        // 到不了屏时**立刻**诊断是不是进入即崩溃。事故里这一步缺席，于是
+        // "点全部银行直接崩溃"被降级成一条 15.1s 元素超时，真凶从未进回修集合。
+        // 结构化诊断 + **归档**（含 run_id）——goal-runner 只认本 run 的归档，作为
+        // ActionableDefect(source='crash') 直接进回修环
+        const dg = crashDeps
+          ? diagnoseNavigationFailure(opts.bundleName ?? '', navFaultlogBaseline, crashDeps)
+          : { kind: 'diagnosis_unavailable' as const, reason: '未知 bundleName，崩溃诊断未跑' };
+        archiveTimeoutDiagnosis(testingReportsDirForDiag(opts.projectRoot, opts.feature), screen.id, dg);
+        errors.push(
+          `${screen.id}: 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）；${renderDiagnosis(dg)}`,
+        );
         p0CaptureFailures.push(screen.id);
         continue;
       }
@@ -751,6 +899,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
     // P0-9a：机器盖构建指纹戳（agent 无须也不应手填）——后续判定即绑定本构建。
     if (currentFp) row.evaluated_build_fingerprint = currentFp;
+    // round19 P1：run 身份戳（golden 强制本 run 重采 + evaluator run 绑定校验的依据）
+    if (runIdNow) row.captured_in_run = runIdNow;
     // P1-3：本截图通过的身份规则指纹——后续同 build 跳采须 identity 未变才合法
     const idnMain = opts.screenIdentity?.get(screen.id);
     if (idnMain && idnMain.proposed !== true) {
@@ -759,11 +909,12 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     capturedScreens.push({ entry: row, hash: screenshotHash });
   }
 
-  for (const ov of collectP0OverlayTargetIds(uiDoc)) {
+  for (const ov of overlayTargets) {
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
     if (
       canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp) &&
-      skipAllowedByIdentity(existingById.get(ov.id), opts.screenIdentity?.get(ov.id))
+      skipAllowedByIdentity(existingById.get(ov.id), opts.screenIdentity?.get(ov.id)) &&
+      goldenSkipAllowed(existingById.get(ov.id))
     ) {
       preservedBuildValidIds.push(ov.id);
       continue;
@@ -777,9 +928,16 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     const ovSteps = navResolve?.resolved.get(ov.id);
     if (navEnabled && ovSteps !== undefined) {
       fs.mkdirSync(path.dirname(paths.abs), { recursive: true });
+      const ovFaultlogBaseline = takeFaultlogBaseline();    // per-nav（overlay 同规则）
       const nav = opts.navExecutorFn!({ screenId: ov.id, steps: ovSteps, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
       if (!nav.ok) {
-        errors.push(`${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）`);
+        const dg = crashDeps
+          ? diagnoseNavigationFailure(opts.bundleName ?? '', ovFaultlogBaseline, crashDeps)
+          : { kind: 'diagnosis_unavailable' as const, reason: '未知 bundleName，崩溃诊断未跑' };
+        archiveTimeoutDiagnosis(testingReportsDirForDiag(opts.projectRoot, opts.feature), ov.id, dg);
+        errors.push(
+          `${ov.id}: overlay 导航失败${nav.error ? ` — ${nav.error}` : ''}（未截图，避免截错屏）；${renderDiagnosis(dg)}`,
+        );
         p0CaptureFailures.push(ov.id);
         continue;
       }
@@ -812,6 +970,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       if (typeof floor === 'number' && !Number.isNaN(floor)) row.score_floor = Math.max(0, Math.min(1, floor));
       row.screenshot_hash = screenshotHash;
       if (currentFp) row.evaluated_build_fingerprint = currentFp;
+      if (runIdNow) row.captured_in_run = runIdNow;
       if (edge) { row.edge_tile_divergence = edge.divergence; row.edge_over_threshold_tiles = edge.tiles; }
       row.layout_dump_status = acq.dumpStatus;
       if (acq.unstableReason) row.layout_dump_unstable_reason = acq.unstableReason;
@@ -828,9 +987,73 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         screenshot_path: paths.rel,
         ref_id: ov.parentScreenId,
         verdict: 'pending',
+        ...(runIdNow ? { captured_in_run: runIdNow } : {}),
       },
       hash: fs.existsSync(paths.abs) ? (hashScreenshotFile(paths.abs) ?? '') : '',
     });
+  }
+
+  // round20 P1：golden 负向证据生产——contract.forbidden 逐条导航 + UITree dump，写
+  // wrapper 证据（run_id + build fp 绑定；evaluator 只认 wrapper）。不可生产（缺 nav 步骤/
+  // 缺 layoutDumpFn/导航失败/dump 失败）→ fail-closed 记采集失败，绝不静默（否则干净宿主
+  // 按说明执行会"证据缺席必然 FAIL"却查不到真因）。
+  for (const f of goldenForbidden) {
+    const fSlug = sanitizeVisualDiffScreenSlug(f.id);
+    const evidenceRel = f.evidence.replace(/\\/g, '/');
+    if (!fSlug || evidenceRel.split('/').some(s => s === '' || s === '..')) {
+      errors.push(`golden_forbidden:${f.id}: id/evidence 路径非法（禁止空段与 ..）`);
+      p0CaptureFailures.push(f.id);
+      continue;
+    }
+    const fSteps = navResolve?.resolved.get(f.id);
+    if (!navEnabled || fSteps === undefined || !opts.layoutDumpFn) {
+      errors.push(
+        `golden_forbidden:${f.id}: 负向证据无法生产（${
+          !navEnabled ? '未启用导航（缺 navConfig/navExecutorFn）'
+            : fSteps === undefined ? 'nav 配置缺该屏到达步骤'
+            : '无 layoutDumpFn（UITree dump 能力缺失）'
+        }）——evaluator 将 fail-closed`,
+      );
+      p0CaptureFailures.push(f.id);
+      continue;
+    }
+    const fBaseline = takeFaultlogBaseline();
+    const fNav = opts.navExecutorFn!({ screenId: f.id, steps: fSteps, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
+    if (!fNav.ok) {
+      const dg = crashDeps
+        ? diagnoseNavigationFailure(opts.bundleName ?? '', fBaseline, crashDeps)
+        : { kind: 'diagnosis_unavailable' as const, reason: '未知 bundleName，崩溃诊断未跑' };
+      archiveTimeoutDiagnosis(testingReportsDirForDiag(opts.projectRoot, opts.feature), f.id, dg);
+      errors.push(`golden_forbidden:${f.id}: 导航失败${fNav.error ? ` — ${fNav.error}` : ''}；${renderDiagnosis(dg)}`);
+      p0CaptureFailures.push(f.id);
+      continue;
+    }
+    const tmpDump = path.join(reportDir, `.golden-forbidden-${fSlug}.json`);
+    const dump = opts.layoutDumpFn({ screenId: f.id, destAbs: tmpDump, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
+    if (!dump.ok || !fs.existsSync(tmpDump)) {
+      errors.push(`golden_forbidden:${f.id}: UITree dump 失败${dump.error ? ` — ${dump.error}` : ''}`);
+      p0CaptureFailures.push(f.id);
+      continue;
+    }
+    let tree: unknown;
+    try {
+      tree = JSON.parse(fs.readFileSync(tmpDump, 'utf-8'));
+    } catch {
+      tree = fs.readFileSync(tmpDump, 'utf-8');
+    }
+    fs.rmSync(tmpDump, { force: true });
+    const evidenceAbs = path.join(featureDir(opts.projectRoot, opts.feature), evidenceRel);
+    fs.mkdirSync(path.dirname(evidenceAbs), { recursive: true });
+    fs.writeFileSync(evidenceAbs, `${JSON.stringify({
+      schema_version: '1.0',
+      kind: 'golden_forbidden_evidence',
+      screen: f.id,
+      anchor: f.anchor,
+      run_id: runIdNow,
+      evaluated_build_fingerprint: currentFp,
+      captured_at: new Date().toISOString(),
+      tree,
+    }, null, 2)}\n`, 'utf-8');
   }
 
   if (capturedScreens.length === 0) {
@@ -871,6 +1094,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReportEarly, capturedScreens, currentFp);
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
+
 
   // P1-C：md 为 JSON 纯投影，每次无条件再生（不再"定型后不再生成"，根除手写散文与 JSON 背离）。
   fs.writeFileSync(mdPath, buildVisualDiffMdBody(report, { p0CaptureFailures, preservedBuildValidIds }), 'utf-8');

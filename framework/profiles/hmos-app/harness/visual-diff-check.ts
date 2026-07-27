@@ -27,7 +27,7 @@ import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isPixel1to1, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
@@ -198,6 +198,13 @@ export interface VisualDiffScreenEntry {
    * 已定判定缺本字段 = legacy stale（当前指纹可算时）。
    */
   evaluated_build_fingerprint?: string;
+  /**
+   * c4e8b1d3 round19 P1：本条目截图采集时的 goal run id（capture 机器盖戳，
+   * MAISON_GOAL_RUN_ID 在场即写）。golden 统一回归强制**本 run 重采**：golden 模式下
+   * 同 build 跳采额外要求本字段等于当前 run；consumer golden evaluator 校验其与传入
+   * run 一致（防第二个 run 复用第一个 run 的截图）。普通模式不参与跳采判定。
+   */
+  captured_in_run?: string;
   /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
   confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
@@ -1142,7 +1149,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     .filter(([, ids]) => ids.length >= 2)
     .map(([h, ids]) => `${h}:${ids.join('+')}`);
 
-  const pixel1to1 = isPixel1to1(ctx);
+  const pixel1to1 = isHardPixelContract(ctx);
   const refElementsPath = refElementsAbsPath(ctx.projectRoot, ctx.feature);
   const refElementsDoc = fs.existsSync(refElementsPath)
     ? loadRefElementsFile(refElementsPath)
@@ -1277,16 +1284,19 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）
+  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）。
+  // v23.5（review 第 14 轮）：**档位无关 FAIL**——OpenSpec visual-diff 规格明文
+  // "While present, the gate SHALL FAIL until a fresh evaluation clears the flag"（无档位
+  // 条件）；旧实现 best_effort 只 WARN，与 runner 侧 unverified 通路也不一致（runner 已
+  // 对该标记 retry/halt，gate 却放行=两层判定打架）。"评估不可信"与保真档位无关。
   const invalidatedScreens = rep.screens.filter(s => s.evaluation_invalidated === true);
   if (invalidatedScreens.length > 0) {
-    const ratchet = pixel1to1
-      ? fidelityRatchetFailOrWarn(ctx, false)
-      : { severity: 'MAJOR' as const, status: 'WARN' as const };
+    const invalidatedSeverity = 'BLOCKER' as const;
+    const invalidatedStatus = 'FAIL' as const;
     pushVisualDiffHit(hits, {
       id: 'visual_diff_evaluation_invalidated',
-      severity: ratchet.severity,
-      status: ratchet.status,
+      severity: invalidatedSeverity,
+      status: invalidatedStatus,
       line:
         `评估已失效待重判（evaluation_invalidated=true）：${invalidatedScreens.map(s => s.screen_id).join(', ')}` +
         `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；真人已签屏保留 verdict/confirmed_by，` +
