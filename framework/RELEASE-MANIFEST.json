@@ -436,7 +436,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "596096928a96c12a3a54f028b21b61fd4522c4d365eb7e3af6b1fa1de4d24c04"
+      "sha256": "015d19691b2880f2bf5c551932176c5e1c4fa6ed8e7b58d8fd21058c1d6db9d6"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -588,7 +588,7 @@
     },
     {
       "path": "harness/scripts/check-spec.ts",
-      "sha256": "035d5f93b365eb5b76eb8400e8f8cfe19ce4f20f77d9bd5c40614c36dacc8d43"
+      "sha256": "164dbd252f01458a3b3019bda8c78125ed38a7763ea4c30f795c9219074bef79"
     },
     {
       "path": "harness/scripts/check-testing.ts",
@@ -628,7 +628,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "c0f7a7fccc09fb6434a73c0aaadca9ed90831221ef8d7770b2816f25a89c0c99"
+      "sha256": "98d9a86eff9e5e90496bcea87be83a577ce2f54c46ff4e0faeccfa442decdbac"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -748,7 +748,7 @@
     },
     {
       "path": "harness/scripts/utils/agent-invoke.ts",
-      "sha256": "b7b570aefa5b96c0f5bb4b3cfab708fd82c0b9903df66d66d11ce5453fe137b7"
+      "sha256": "f08b11b678596eea0ba4e3eabf4a40ba0566c2bcb5543b1671bbf2b21d997dd9"
     },
     {
       "path": "harness/scripts/utils/app-snapshot-cache-hint.ts",
@@ -960,7 +960,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-preflight.ts",
-      "sha256": "9b20319899d3096df64551e4a2c41e35d584245b6d1212dbab465e014ac46814"
+      "sha256": "432b4d35334eac555b57f22b777e7d1efed258a3a9a9f9a5f9d441e9b4a06f88"
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
@@ -1104,7 +1104,7 @@
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
-      "sha256": "f5e77b1e57bd7ef84dfa3cc975d97be1437a8e62bd381854ae35ddb4da8f270e"
+      "sha256": "7a84bb78778877b3107ece59a48884f725f9e2e7b2da959fd2cc69e43fc69f95"
     },
     {
       "path": "harness/scripts/utils/path-candidates.ts",
@@ -1132,7 +1132,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-state.ts",
-      "sha256": "214e3b362cc82c44c1c23bc474426c2c3d502ee777d23d6fcd2a13710c1efa07"
+      "sha256": "2bd6850fe11ce093906f12cd71f1cce089f7489a06fffe9690d27a6dabaf2c86"
     },
     {
       "path": "harness/scripts/utils/phase-transition-policy.ts",
@@ -1140,7 +1140,7 @@
     },
     {
       "path": "harness/scripts/utils/process-integrity.ts",
-      "sha256": "369be23abfd18c613485d91511810c5fc8e897d854447d0ac80eb11cd83f94fd"
+      "sha256": "60dedad2d305583e0c44baf0f67ef7632c8abe6dc16a4c4175a1b93ebf343e52"
     },
     {
       "path": "harness/scripts/utils/product-source-snapshot.ts",
@@ -1272,7 +1272,7 @@
     },
     {
       "path": "harness/scripts/utils/vision-canary.ts",
-      "sha256": "8b67f8654ad9bb57b22826e88b276923314c0be0268df7114e484727128ce80c"
+      "sha256": "4f9069a1f8c287e0787187d4c97e1c859d070ae8a2a670014965022b4eff24bc"
     },
     {
       "path": "harness/scripts/utils/vision-counterevidence.ts",
@@ -2652,7 +2652,7 @@
     },
     {
       "path": "specs/runtime-artifact-policy.json",
-      "sha256": "e58588970cd8c64f8cc7eda0702baa3d046a371f4d2deef7e189389a166f95ae"
+      "sha256": "da0438d7d8a6b94daf8c900ea88e6d06a9ed87fc1d0369506e7e0bc08d3d0acf"
     },
     {
       "path": "specs/workflow-schema.json",
