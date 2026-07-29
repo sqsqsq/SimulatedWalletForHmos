@@ -6,7 +6,7 @@
 
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
-**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
+**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**设备策略（BLOCKER）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止）；`code=device_policy_unset` 就**先问用户四选一**再碰设备（选 ③ 须追问 `existing`/`managed`，禁默认托管）。与 goal 模式同一契约；PIN 只能由用户在自己终端登记，**绝不进对话**。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
 **Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/acceptance/contracts(可选)/use-cases(可选)/test-plan(本阶段产出)）；legacy `device-testing-todo.md` 存在仅 WARN 迁移提示，不得作 SSOT；输入缺失回上游补齐。
 
@@ -111,7 +111,7 @@ Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`�
 7. 测试计划与测试报告是独立文档，分别在不同时间点产出。
 8. 中文输出；P0 优先，资源有限时优先覆盖 P0 AC。
 9. Harness 验证闭环：agent 必须自跑 Step 7 + 主动触发 verifier；确保零 BLOCKER+verifier PASS+完成回执通过后才认为阶段完成。
-10. 不修改源码：**整个 testing 阶段**（生成文档、真机执行、视觉回环、重试轮，全程）不得修改任何业务代码、UT 代码、需求 SSOT（acceptance/ui-spec/contracts/spec/plan/use-cases）或根构建配置。runner 对 invoke 前后做快照比对，任何写入=run 终止态（证据作废、gate 不跑、--resume 拒绝）。修码诉求一律写进 must_fix 由回退后的 coding 实施。
+10. 不修改源码：**整个 testing 阶段**（生成文档、真机执行、视觉回环、重试轮，全程）不得修改任何业务代码、UT 代码、需求 SSOT（acceptance/ui-spec/contracts/spec/plan/use-cases）或根构建配置。runner 对 invoke 前后做快照比对，手工写入=run 终止态（证据作废、gate 不跑、--resume 拒绝）。**framework harness 触发的构建生成物例外**：`device_test.build` 重写的模块根 `BuildProfile.ets` 由 runner 自动分类为合法副作用（不算违规）——放心跑 harness 自检。**禁止在自己的命令里临时覆盖 `HARNESS_DEVICE_TEST_PRODUCT` / `HARNESS_DEVICE_TEST_BUILD_MODE`**：runner 已按 attempt 冻结这两个值并注入环境，覆盖会让生成物与冻结配置不符、被判违规。修码诉求一律写进 must_fix 由回退后的 coding 实施。
 
 ## 关联文件
 

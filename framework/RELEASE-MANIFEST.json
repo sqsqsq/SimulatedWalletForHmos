@@ -352,7 +352,7 @@
     },
     {
       "path": "docs/overview.md",
-      "sha256": "633bc680b1c997501cff170adfdbd5818245321597451067b0451af46143a052"
+      "sha256": "faad3a49c50da16a0198afe09389bcd46172c516a541a24a6515070855bed4ca"
     },
     {
       "path": "docs/profiles/hmos-app-harness-toolchain.md",
@@ -392,7 +392,7 @@
     },
     {
       "path": "harness/capability-registry.ts",
-      "sha256": "3546fd34b810a98f7ea0758e712c68c56de8e2c32b48744033407bf14e6220e0"
+      "sha256": "fe5a1d283a8ffe56d375ec735c4e606eb204399ee79368ef0cbc7b58672af50d"
     },
     {
       "path": "harness/code-graph/anchor-hash.ts",
@@ -444,7 +444,7 @@
     },
     {
       "path": "harness/package.json",
-      "sha256": "a83367334977f96ba25f1f959d7bf8de68f58846e3ef14c0c0f018bd08a8bee6"
+      "sha256": "8b80d3272a2e14c1a1f7b46f0527e559061e0748a8b3ea419052137d5858fb7c"
     },
     {
       "path": "harness/profile-host-loader.ts",
@@ -592,7 +592,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "1e074dc255db5aad9491d5b1325fe218df9c44a09c04b5d06f6d0b0df716f378"
+      "sha256": "9b274e6d341ab3a3c42b2039b5c8da976d13067183d1bf6f66fe0e9dafbe16c7"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -619,6 +619,10 @@
       "sha256": "6295f15f9f984be9a20316c1376a60603a32f7c01cd4bbf6af24a9b9af273e0e"
     },
     {
+      "path": "harness/scripts/device-policy.ts",
+      "sha256": "65d8bbd6fa4656608a63ffeb4722c4af02d7fa5b98396a4c22a8c7661151bfd0"
+    },
+    {
       "path": "harness/scripts/fidelity-intent-init.ts",
       "sha256": "b442fa88965793f128eaa803312602aff8caad8e0c148d444f071378d6c6cd02"
     },
@@ -628,7 +632,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "98d9a86eff9e5e90496bcea87be83a577ce2f54c46ff4e0faeccfa442decdbac"
+      "sha256": "67b6cda6c8c079a009760864f424f5c53081b76395c093315af8e8f2dcf0f167"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -748,7 +752,7 @@
     },
     {
       "path": "harness/scripts/utils/agent-invoke.ts",
-      "sha256": "f08b11b678596eea0ba4e3eabf4a40ba0566c2bcb5543b1671bbf2b21d997dd9"
+      "sha256": "10e95c538007a0d9c06c44b8a0d6e2e5a3e36974830d7f60928af3da79779c8f"
     },
     {
       "path": "harness/scripts/utils/app-snapshot-cache-hint.ts",
@@ -812,7 +816,7 @@
     },
     {
       "path": "harness/scripts/utils/config-field-ownership.ts",
-      "sha256": "65ccae6395bdf05d0dfb1e615c2faaa3f53f15eb225ee38b55f4e9dc947862aa"
+      "sha256": "a83aa707b4b3f57abaaf8c3a9d1b2588cfdcbbbac8f0b61c39b2b8327e28bdc6"
     },
     {
       "path": "harness/scripts/utils/config-placement-gate.ts",
@@ -857,6 +861,34 @@
     {
       "path": "harness/scripts/utils/derived-hylyre-plan.ts",
       "sha256": "7862f38494ebf327f3b403604415ad3b2c842ea6c018f78cb19c78230a9dad9a"
+    },
+    {
+      "path": "harness/scripts/utils/device-credential-store.ts",
+      "sha256": "2a767bd65b94eab552457e717279170ba117a6997601168ad4bb717377200a9d"
+    },
+    {
+      "path": "harness/scripts/utils/device-readiness-deps.ts",
+      "sha256": "eebef9fc5cd06fea334e02407c1a9b139bf651fd88b2b4910bba0418b037e25b"
+    },
+    {
+      "path": "harness/scripts/utils/device-readiness-gate.ts",
+      "sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a"
+    },
+    {
+      "path": "harness/scripts/utils/device-runtime-recovery.ts",
+      "sha256": "ca26dbe5d483bf4c1cbd9d321be41aa5b59ab2f0abc580e4be7bb258f09cbb57"
+    },
+    {
+      "path": "harness/scripts/utils/device-session.ts",
+      "sha256": "fa00fbb048e04d5e0b88c1cd946cc051be4db33ef238f48ee77c0f7eda0a9f56"
+    },
+    {
+      "path": "harness/scripts/utils/device-test-evidence-shared.ts",
+      "sha256": "eec45d1672c5ef90ad0964ba7f41271778c50f073440895a704ac795f4ed230f"
+    },
+    {
+      "path": "harness/scripts/utils/device-unlock-helper.ts",
+      "sha256": "de149d1cb4340dafca10f9cab9805eaf6817abdc2e9e2ebdbb1263932d854734"
     },
     {
       "path": "harness/scripts/utils/diff-scope.ts",
@@ -916,7 +948,7 @@
     },
     {
       "path": "harness/scripts/utils/framework-local-config.ts",
-      "sha256": "0cdf8539652af3f78a12b729d4746134b0930fa40315498aa4fea5277a4018a3"
+      "sha256": "fa7a43daa919ef681cbda0c24b5b41b05212917c69863c3bd874cd292dcdfd62"
     },
     {
       "path": "harness/scripts/utils/gate-fingerprint.ts",
@@ -976,7 +1008,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-runner-phase.ts",
-      "sha256": "5b5867561977faef18c7e031943995b118f6dd9ba31b0823af31f728b92823da"
+      "sha256": "699fbea9280c005d8873c0dfffca4abd57c463ee423549d2f3b1b0102e917805"
     },
     {
       "path": "harness/scripts/utils/goal-timeout.ts",
@@ -1123,12 +1155,20 @@
       "sha256": "c0a9bc0bd68d915a31547856efb905c6b8869f825535e50913d8ea8518d7d2e1"
     },
     {
+      "path": "harness/scripts/utils/phase-completion-probe.ts",
+      "sha256": "4c00a8fa40e29b120414fea46abba74b85aea4ef74a9e49a9adea0dd4d96b5f1"
+    },
+    {
+      "path": "harness/scripts/utils/phase-device-requirement.ts",
+      "sha256": "ad2bb39e57671fb892c634683ee59e1dd908c616fd305aa4685a732ddeaace52"
+    },
+    {
       "path": "harness/scripts/utils/phase-evidence-manifest.ts",
       "sha256": "bebc6352976ebde12223bf4116c52b6e2cb7ba64d4f8086cbbbb997f6827b39a"
     },
     {
       "path": "harness/scripts/utils/phase-personal-prerequisites.ts",
-      "sha256": "e3b6852828318afde462d1786fa2cfb73c3a581c59f2e19a6f90734d4342a950"
+      "sha256": "676f2a32f548b6d810e9527d5946c2b5cfab22d834d38e1d1f7ea9da7a9f273b"
     },
     {
       "path": "harness/scripts/utils/phase-state.ts",
@@ -1244,7 +1284,7 @@
     },
     {
       "path": "harness/scripts/utils/upstream-verdict-gate.ts",
-      "sha256": "3809a6d19e446a208a49eaf8bf72ae10538952e38de1a986617a4617bde0c983"
+      "sha256": "3be0ec701d53330a040108d74461a8dc45ea3fd7c87714e57a7567c2405a68a0"
     },
     {
       "path": "harness/scripts/utils/usage-capture.ts",
@@ -1592,7 +1632,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/app-snapshot-warmup.ts",
-      "sha256": "d38c94ab2989631f7883602c2ed74f12b59227a0af96cb2f0a14b85defb0760a"
+      "sha256": "f64534cf7c7775f6e6a4b10cef0a23f763004f4ba527898710192123fe430700"
     },
     {
       "path": "profiles/hmos-app/harness/arkui-static-rules.ts",
@@ -1628,7 +1668,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/build-fingerprint.ts",
-      "sha256": "8fe1c692a95578ed33d2ccabc5073c01a9cd83aa16de42fc897570308df2455a"
+      "sha256": "5a58d3e261980e824bedd18742c9b375cd2e3d29b8ce3bafe0f73fbfb5f1da6d"
     },
     {
       "path": "profiles/hmos-app/harness/capture-completeness-check.ts",
@@ -1667,8 +1707,16 @@
       "sha256": "b942c388db06ef38dd1c8723c8ef9965778473ccd6baa2109661442bb4e00a92"
     },
     {
+      "path": "profiles/hmos-app/harness/device-recovery-bridge.ts",
+      "sha256": "2bccfea7c4e62ce819fd193fa84acdc6f7cbc69b99e973c913cfb7419282e50e"
+    },
+    {
       "path": "profiles/hmos-app/harness/device-test-build-reuse.ts",
       "sha256": "d8779e9f1bd13ca7353a6fab50ac327336f887b6cd09d0b486bd626ce3265063"
+    },
+    {
+      "path": "profiles/hmos-app/harness/device-test-evidence.ts",
+      "sha256": "24d47f9ebf7f0e73dd54b667412f479cb000269dd09a3d30e18a45fcf6c988cf"
     },
     {
       "path": "profiles/hmos-app/harness/device-test-hypium-workdir.ts",
@@ -1707,6 +1755,10 @@
       "sha256": "7b11c2af6e6550d0ffa30c5b8a1ae546174b4ce2238b76fe4b7b9b14c3321ccd"
     },
     {
+      "path": "profiles/hmos-app/harness/generated-source-classifier.ts",
+      "sha256": "2bda3aeb8792c72f87d71a6d91bc540f0b27c81e4d4161e5d0f350d94ab14ae3"
+    },
+    {
       "path": "profiles/hmos-app/harness/graph-extractor-host.ts",
       "sha256": "7aa6393877300a0acffa5f280dbb5cf5950667dd730cba0c50b7b2af074111d4"
     },
@@ -1720,7 +1772,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/hdc-runner.ts",
-      "sha256": "8f5008b8bb6cdc7a0116b26f912d9a98cd9b4a4a67992b76eea8588cb6cd4cb6"
+      "sha256": "7cf4f65eaecff6c7ffb4b2f1ed82e157cc2a6e220badcf3b6c35f6ff44c7bc3e"
     },
     {
       "path": "profiles/hmos-app/harness/hmos-graph-extractor.ts",
@@ -1728,7 +1780,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/hvigor-runner.ts",
-      "sha256": "46eb383bbcba0ed7875f7e3d5f65529d80f54c0e5fe570a0a84d46e8adea074b"
+      "sha256": "22af9c75cfaaa40aa8095faf245bc45d0bcaebd916c3b6207b09377172e5fd6c"
     },
     {
       "path": "profiles/hmos-app/harness/hylyre-root-pollution.ts",
@@ -1824,11 +1876,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-install.ts",
-      "sha256": "368574d1aba7136d2e9ba538981b5bce43bd18fedb80f4832ab3386d66fcfedd"
+      "sha256": "6ee8c052eb0a071b8571adbcedb5cab5ffaceca7ff1c852adaf2d9303dcd9ede"
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-run.ts",
-      "sha256": "72130eb8455b1572caf17a2c50d438d87a43dca5866b7eadb725aadda22f376a"
+      "sha256": "d91dacef86c0d84437f1306c76e7f8bef16413ea75e4a8b0e748ace8c8ad91a7"
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-visual-diff.ts",
@@ -1960,7 +2012,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/ut-hvigor-test-failure.ts",
-      "sha256": "4f9aa36bf4a8c391ee5d6d0a1d45bc8e2cefea4e801a07d1761fd48519230a71"
+      "sha256": "f2946ea247bf19a957b19e5d2d98eab9741322601ecc8d6a49ee4cd3a79356f4"
     },
     {
       "path": "profiles/hmos-app/harness/ut-ui-import-ban.ts",
@@ -2032,7 +2084,7 @@
     },
     {
       "path": "profiles/hmos-app/profile.yaml",
-      "sha256": "7588faaa6d6cc2af98bb53b0b1fd3707c62450cc964b03e496f35e3919612eaf"
+      "sha256": "4723c6adf480adaedb96bf428927b0edad23054feb8f94c1a4dc5d1bfa26fb98"
     },
     {
       "path": "profiles/hmos-app/skills/README.md",
@@ -2192,7 +2244,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/profile-addendum.md",
-      "sha256": "f83c801c57b7feec728f3f6289e44650c047192336b22939c90aa9308347fb70"
+      "sha256": "4121c9a4903dfe387c212b45a4aeb08b807ee626e9daa32deb1259c943887f66"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
@@ -2212,7 +2264,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/framework-init/profile-addendum.md",
-      "sha256": "f0e4006a2426b4b61b3b3659f7704e5f4ce0c248866656a33ff9a09d4261e335"
+      "sha256": "20d6f80420a3b4e745a91102a00daacc66b8335ddd911ad0cf573b4c3d1682cc"
     },
     {
       "path": "profiles/hmos-app/skills/framework-init/templates/preset-5-layer.sample.json",
@@ -2348,7 +2400,7 @@
     },
     {
       "path": "skills/feature/business-ut/SKILL.md",
-      "sha256": "07b79af60d2e231b9870cd3a46f020f16e4ecc7972f12288ff4ff4fa7469b0d6"
+      "sha256": "b10554903543fac46354374fe31144078c900a357842e25f9d8bc951c07e45ad"
     },
     {
       "path": "skills/feature/business-ut/paths/path-c-characterization.md",
@@ -2376,7 +2428,7 @@
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
-      "sha256": "1f91a82dbdbbfaccd76268b5dbfd9675c58e45d1aa123b70315d77914335ba11"
+      "sha256": "862ce5e319b4b88e8d0bcdc8cd59315c56bf4c9f6b19e55478da777d363db33a"
     },
     {
       "path": "skills/feature/device-testing/reference/hylyre-host-preflight.md",
@@ -2496,7 +2548,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "71ae6d01b217bc7f3fb440b8928eb43673fa2add3954f8ec4166532326559d27"
+      "sha256": "db56ae1ca9fe008bfd30591d040005594260a05ff199aa4d4368e5bddc5b9d9f"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -2524,11 +2576,15 @@
     },
     {
       "path": "skills/reference/confirmation-registry.yaml",
-      "sha256": "a88c75dc157524ede6210ac474e61d2e144e1c2fa15576617fead1769483534e"
+      "sha256": "cc3de8a2b40724381356cd37eab967b19a966f312f2d680d0ce122ee0ed47c55"
     },
     {
       "path": "skills/reference/consumer-framework-boundary.md",
       "sha256": "df01592273d4e634f8a1f8ab50aa5ed8f48fa3ae49dceb6a05ed8765f6e21542"
+    },
+    {
+      "path": "skills/reference/device-policy-gate.md",
+      "sha256": "8a85daca068aff0f1f8abe05c07ece90e5e9f104a31f2f454ffcc64d7b89e385"
     },
     {
       "path": "skills/reference/device-testing-workflow-detail.md",
@@ -2536,7 +2592,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "2ae439fa76fdc7c07d8e19101b0c1df61574cc786024f16a00042a3928fc9e17"
+      "sha256": "18e89643db3619be0244025e08b8187b189236c2be705e1601f7309d57b023a6"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
@@ -2584,7 +2640,7 @@
     },
     {
       "path": "specs/framework.local.schema.json",
-      "sha256": "b3b5b770127f7b5bf3f658d4acbeebfedfd0a236a1bdc3d2e0a6d8fed60a1a2b"
+      "sha256": "8f9f100fa3945afdee2fdf917c2ebc3622785e1ae407d4ee16777a5028fab72d"
     },
     {
       "path": "specs/instance-extension-manifest.schema.yaml",

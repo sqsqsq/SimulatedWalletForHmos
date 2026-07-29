@@ -20,9 +20,17 @@ import {
   featureArtifactPath,
   receiptDirPath,
   relFeatureFile,
+  resolveFeatureArtifact,
 } from '../config';
 import { detectRepoLayout, type RepoLayout } from '../repo-layout';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-integrity';
+// d9e4b7c1 T2：device_test 缺陷进回修环——evidence schema/路径、权威 trace 二次核验、根/级联三分
+import {
+  deviceTestEvidencePath,
+  type DeviceTestEvidenceDoc,
+} from './utils/device-test-evidence-shared';
+import { resolveAuthoritativeHylyreTracePath } from './utils/testing-trace-gates';
+import { parseTestCaseFlowBlock, triageCascade } from './utils/test-case-flow';
 import {
   buildAgentTimeoutRepeatedGuidance,
   buildAwaitHumanConfirmGuidance,
@@ -117,6 +125,22 @@ import {
   FINALIZE_RESERVE_MS,
   TIMEOUT_ESCALATION_FACTOR,
 } from './utils/goal-timeout';
+// openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
+// gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
+import { phaseRequiresDevice } from './utils/phase-device-requirement';
+import { runDeviceReadinessGate } from './utils/device-readiness-gate';
+import { buildDeviceReadinessInput } from './utils/device-readiness-deps';
+import {
+  capsTestingConclusion,
+  collectForeignManagedSessions,
+  defaultProcessProbe,
+  readDeviceSession,
+  reclaimManagedDevice,
+  registerManagedDeviceCleanup,
+  writeDeviceSession,
+  type DeviceTargetKind,
+} from './utils/device-session';
+import { createCompletionProbe, decideSkipAgentInvoke } from './utils/phase-completion-probe';
 import {
   deriveResumeInspection,
   buildResumeSkipLines,
@@ -663,6 +687,9 @@ type RunHarnessFn = (
   projectRoot: string, frameworkRoot: string, phase: FeaturePhase, feature: string,
   dryRun: boolean, manifest?: GoalManifest,
   roundIdentity?: { runId: string; attemptId: string }, timeoutMs?: number,
+  // d9e4b7c1 T2（v13 缝扩展）：gate 注入 env（设备元组/冻结配置/强装 flag）——不扩缝则
+  // "设备身份透传到 gate"是测试盲区（假绿）
+  deviceTargetEnv?: Record<string, string>,
 ) => Promise<{ exitCode: number; timedOut: boolean }>;
 let injectedRunHarness: RunHarnessFn | null = null;
 export function __testing_setRunHarnessPhase(fn: RunHarnessFn | null): void {
@@ -690,12 +717,26 @@ export function __testing_setValidateReceipt(fn: ValidateReceiptFn | null): void
   injectedValidateReceipt = fn;
 }
 
+/**
+ * 设备就绪门注入（测试用）。
+ *
+ * 就绪门会真的跑 `hdc list targets` / 唤醒 / 探锁屏——在临时宿主里必然无设备，
+ * 使所有 ut/testing 链路被判 BLOCKED。注入后可模拟 READY/BLOCKED/AMBIGUOUS 三态，
+ * 从而在集成层验证"未 READY 不产生 agent_invoke_start"这条核心契约。
+ */
+type DeviceGateFn = typeof runDeviceReadinessGate;
+let injectedDeviceGate: DeviceGateFn | null = null;
+export function __testing_setDeviceReadinessGate(fn: DeviceGateFn | null): void {
+  injectedDeviceGate = fn;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
   injectedInvokeAgent = null;
   injectedRunHarness = null;
   injectedLayout = null;
+  injectedDeviceGate = null;
 }
 
 async function runHarnessPhase(
@@ -710,10 +751,13 @@ async function runHarnessPhase(
   // 停在 deadline 后 harness 仍可无限跑，"超支 ≤ grace"无从保证。返回结构化结果：
   // exitCode=1 无法区分门禁真失败与 wall 树杀，timedOut 单独承载。
   timeoutMs?: number,
+  /** P0-3：就绪门冻结的设备 env（serial/kind/session/credential_ref）——须与 agent 侧同源 */
+  deviceTargetEnv: Record<string, string> = {},
 ): Promise<{ exitCode: number; timedOut: boolean }> {
   if (injectedRunHarness) {
     return injectedRunHarness(
       projectRoot, frameworkRoot, phase, feature, dryRun, manifest, roundIdentity, timeoutMs,
+      deviceTargetEnv,
     );
   }
   if (dryRun) return { exitCode: 0, timedOut: false };
@@ -726,11 +770,25 @@ async function runHarnessPhase(
   const childEnv: NodeJS.ProcessEnv = {
     ...sanitized.env,
     [MAISON_GOAL_RUNNER_ENV]: '1',
+  };
+  // d9e4b7c1 T1（v12 P2 泛化）：注入键统一"先清大小写变体再写唯一键"（父环境 mixed-case
+  // 残留会与注入键并存，Windows 子进程读取哪个是未定义行为——GATE_HARNESS 单键处理的
+  // 既有教训推广到轮次身份与设备/冻结配置全部注入键）。
+  const gateInjectedEnv: Record<string, string> = {
     // t1（f7a3d9c2）：外层脚本闸门与 agent 自跑共用同一轮次身份（round_key 去重/重放）
     ...(roundIdentity
       ? { MAISON_GOAL_RUN_ID: roundIdentity.runId, MAISON_GOAL_ATTEMPT: roundIdentity.attemptId }
       : {}),
+    // P0-3（device-readiness review 二轮）：**冻结的设备目标必须同时给外层 gate harness**。
+    // 此前只注入 agent 的 extraEnv，而 gate harness 从 `process.env` 构造环境——多设备
+    // 时它会退回 hdc 默认目标，于是"就绪门冻结了 A 机、UT/testing 却在 B 机上跑"。
+    // 这里显式透传，与 agent 侧同源。
+    ...deviceTargetEnv,
   };
+  for (const [k, v] of Object.entries(gateInjectedEnv)) {
+    deleteEnvKeyCaseInsensitive(childEnv, k);
+    childEnv[k] = v;
+  }
   // S5（visual-capability-truth）：单写者标记——只有 runner 直接 spawn 的 gate harness
   // 可直写正式 vision 账本；agent 自跑 harness（无此标）只算不写/写 journal proposal。
   // b7e4d2a9 Todo3：先清大小写变体再设唯一大写=1（父环境残留 mixed-case 键会与之并存，
@@ -1083,7 +1141,7 @@ export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
   '**This is a visual-fidelity gap (the rendered UI does not match the reference).** In the TESTING phase your job is to make the gap MACHINE-ACTIONABLE — not to edit product code:',
   '1. Deterministic fail_signals mean the screen IS decidable headlessly: set that screen verdict=fail and copy the signals into screens[].must_fix — do NOT leave such screens pending ("unattended cannot close the loop" is only true for PASS candidates awaiting human confirmed_by);',
   '2. Record every defect as a structured entry (screen_id + observed vs expected + evidence path). These become the defect fingerprints that drive the fix.',
-  '3. **Do NOT modify product source code, requirement SSOT (acceptance/ui-spec/contracts/spec.md/plan.md), or root build config in this phase — not even to add test anchors.** The runner snapshots all of these around your invocation; any write is a run-terminating violation (receipt not issued, journal not merged, gate not run; the run halts and --resume is refused). Missing `by_id` anchors are themselves a defect: record them in screens[].must_fix so coding implements them after backtrack.',
+  '3. **Do NOT modify product source code, requirement SSOT (acceptance/ui-spec/contracts/spec.md/plan.md), or root build config in this phase — not even to add test anchors.** The runner snapshots all of these around your invocation; a hand-made write is a run-terminating violation (receipt not issued, journal not merged, gate not run; the run halts and --resume is refused). Build artifacts regenerated by the framework harness itself (e.g. module-root BuildProfile.ets rewritten by device_test.build) are auto-classified by the runner as legitimate side effects — running harness self-checks is safe and expected. Do NOT override HARNESS_DEVICE_TEST_PRODUCT/HARNESS_DEVICE_TEST_BUILD_MODE in your shell — the runner froze them for this attempt; a mismatching build artifact is treated as a violation. Missing `by_id` anchors are themselves a defect: record them in screens[].must_fix so coding implements them after backtrack.',
   '4. Every screen with non-empty must_fix (verdict warn/fail, fresh screenshot+build identity) is consumed by the runner as an actionable defect: it will backtrack to coding and inject your must_fix items into the coding prompt. Write them as concrete fix instructions.',
   '5. If the same set of visual gates keeps failing with no change, the run will HALT for human review rather than spinning.',
 ];
@@ -1110,7 +1168,7 @@ export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
  * ============================================================================
  */
 export interface ActionableDefect {
-  source: 'visual_diff' | 'crash';
+  source: 'visual_diff' | 'crash' | 'device_test';
   screen_or_case_id: string;
   /** 修复指令（visual=must_fix 原文；crash=确定性指令），进 coding prompt */
   instructions: string[];
@@ -1137,16 +1195,146 @@ export interface ActionableCollectResult {
    * 耗尽后 halt。真实生产路径可达：install 成功但 install meta 写失败 → currentFp
    * 算不出 → 已知 must_fix 若静默丢弃，best_effort 下 gate 只 WARN、run 直接 advance。
    */
-  unverified: Array<{ screen_or_case_id: string; reason: string }>;
+  unverified: Array<{ screen_or_case_id: string; reason: string; source: 'visual' | 'device_test' }>;
+}
+
+/** d9e4b7c1 T2：collector 的 device_test 消费上下文（runner 内存直传，禁从事件反推） */
+export interface DeviceTestCollectContext {
+  attemptId: string;
+  /** 当前 attempt 冻结的设备元组（a7 就绪门 deviceEnv 同源） */
+  expectedTarget: { serial: string | null; target_kind: string | null; session_id: string | null };
+  /** 本 attempt 的 gate harness 窗口（written_at / run meta 的唯一时间裁决窗口） */
+  harnessWindow: { startMs: number; endMs: number };
+  /** testing 阶段 reports 目录（evidence 与 run meta 所在） */
+  reportsDir: string;
+}
+
+/**
+ * d9e4b7c1 T1：attempt 级 device-test 构建配置冻结（testing 专属）。
+ * 解析一次、经 deviceEnv 同发 agent 与 gate harness、直传生成物分类器——三方同源。
+ * profileHarnessDir 由调用方从 **resolvedProfile.profileDir** 传入（review P2：硬编码
+ * hmos-app 会让未来任何开启 testing 的 profile 错误获得 hmos 的源码例外；null / 模块
+ * 缺失 → null，分类器同样不可用，行为与本改动前一致）。
+ */
+export function resolveFrozenDeviceTestConfig(
+  projectRoot: string,
+  profileHarnessDir: string | null,
+): { product: string; buildMode: 'debug' | 'release' } | null {
+  if (!profileHarnessDir) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const conv = require(path.join(profileHarnessDir, 'testing-build-conventions')) as {
+      resolveDeviceTestProduct: (root: string) => string;
+      resolveDeviceTestBuildMode: () => 'debug' | 'release';
+    };
+    return {
+      product: conv.resolveDeviceTestProduct(projectRoot),
+      buildMode: conv.resolveDeviceTestBuildMode(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * d9e4b7c1 T1：mutated diff 逐项过 profile 生成物分类器。
+ * fail-closed：冻结配置缺失 / profile 目录缺失 / 分类器不可用 / 单条判定异常 → 该条按 violation。
+ */
+export function partitionGeneratedSourceChanges(
+  projectRoot: string,
+  changed: Array<{ path: string; how: 'added' | 'removed' | 'modified' | 'type-changed' }>,
+  frozen: { product: string; buildMode: 'debug' | 'release' } | null,
+  profileHarnessDir: string | null,
+): {
+  violations: Array<{ path: string; how: 'added' | 'removed' | 'modified' | 'type-changed' }>;
+  generated: string[];
+} {
+  if (!frozen || !profileHarnessDir) return { violations: changed, generated: [] };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cls = require(path.join(profileHarnessDir, 'generated-source-classifier')) as {
+      classifyGeneratedSourceChange: (
+        root: string,
+        change: { path: string; how: string },
+        frozen: { product: string; buildMode: 'debug' | 'release' },
+      ) => { kind: string };
+    };
+    const violations: Array<{ path: string; how: 'added' | 'removed' | 'modified' | 'type-changed' }> = [];
+    const generated: string[] = [];
+    for (const c of changed) {
+      let verdict: { kind: string };
+      try {
+        verdict = cls.classifyGeneratedSourceChange(projectRoot, c, frozen);
+      } catch {
+        verdict = { kind: 'not_generated' };
+      }
+      if (verdict.kind === 'generated_legit') generated.push(c.path);
+      else violations.push(c);
+    }
+    return { violations, generated };
+  } catch {
+    return { violations: changed, generated: [] };
+  }
+}
+
+/**
+ * d9e4b7c1 T2：evidence 绑定校验（纯函数导出供单测）。任一环不满足返回人读原因
+ * （调用方把该轮全部失败 case 归 unverified）；全部通过返回 null。
+ */
+export function validateDeviceTestEvidenceBinding(
+  doc: DeviceTestEvidenceDoc,
+  runId: string,
+  ctx: DeviceTestCollectContext,
+): string | null {
+  if (doc.schema_version !== '1.0') return `evidence schema_version 不受支持：${String(doc.schema_version)}`;
+  if (doc.goal_run_id !== runId || doc.attempt_id !== ctx.attemptId) {
+    return `evidence 身份不匹配（${String(doc.goal_run_id)}/${String(doc.attempt_id)} vs 当前 ${runId}/${ctx.attemptId}）`;
+  }
+  const t = doc.device_target ?? { serial: null, target_kind: null, session_id: null };
+  const e = ctx.expectedTarget;
+  if (
+    (t.serial ?? null) !== (e.serial ?? null) ||
+    (t.target_kind ?? null) !== (e.target_kind ?? null) ||
+    (t.session_id ?? null) !== (e.session_id ?? null)
+  ) {
+    return 'evidence 设备元组与当前 attempt 冻结元组不一致（比完整三元组，不只比 serial）';
+  }
+  if (doc.install_executed !== true || doc.install_ok !== true) {
+    return 'evidence 无本轮真实安装成功事实（install reuse/失败不作数）';
+  }
+  // trace 一致性：writer 直取本轮 holder；collector 以权威 resolver 二次核验两者一致
+  const authoritative = resolveAuthoritativeHylyreTracePath(ctx.reportsDir);
+  if (!authoritative || path.resolve(authoritative) !== path.resolve(String(doc.trace_path ?? ''))) {
+    return 'evidence trace_path 与权威派生计划选择不一致';
+  }
+  // 时间窗：written_at 是唯一裁决字段（文件 mtime 仅诊断）；run meta 窗口须同落 harness 窗口
+  const writtenAt = Date.parse(String(doc.written_at ?? ''));
+  if (!Number.isFinite(writtenAt) || writtenAt < ctx.harnessWindow.startMs || writtenAt > ctx.harnessWindow.endMs) {
+    return 'evidence written_at 不在本 attempt 的 harness 窗口内';
+  }
+  try {
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(ctx.reportsDir, 'device-test-run.meta.json'), 'utf-8'),
+    ) as { run_started_at?: string; run_ended_at?: string };
+    const rs = Date.parse(String(meta.run_started_at ?? ''));
+    const re = Date.parse(String(meta.run_ended_at ?? ''));
+    if (!Number.isFinite(rs) || !Number.isFinite(re) || rs < ctx.harnessWindow.startMs || re > ctx.harnessWindow.endMs) {
+      return 'run meta 的 run_started_at/run_ended_at 不在本 attempt 的 harness 窗口内';
+    }
+  } catch {
+    return 'device-test-run.meta.json 缺失或不可读（run 窗口无法核验）';
+  }
+  return null;
 }
 
 export function collectActionableDefects(
   projectRoot: string,
   feature: string,
   runId: string,
+  deviceTest?: DeviceTestCollectContext,
 ): ActionableCollectResult {
   const out: ActionableDefect[] = [];
-  const unverified: Array<{ screen_or_case_id: string; reason: string }> = [];
+  const unverified: Array<{ screen_or_case_id: string; reason: string; source?: 'visual' | 'device_test' }> = [];
 
   // ---- A) visual_diff：新鲜 must_fix ----
   try {
@@ -1271,7 +1459,103 @@ export function collectActionableDefects(
     }
   } catch { /* 目录不可枚举 → 无 crash 信号 */ }
 
-  return { defects: out, unverified };
+  // ---- C) device_test：正式 gate evidence（d9e4b7c1 T2）----
+  // 只消费 runner pre-delete 后由 gate harness 写出的当前轮 evidence。缺文件 = 本轮无
+  // device_test 信号（正式 gate 未达写入门槛时 run 门禁本身已 FAIL，重试路径接管），
+  // 不制造 unverified 噪音；文件在场但任一身份/绑定校验不满足 → 该轮全部失败 case 进
+  // unverified（不可信不得驱动改码，也不得装干净）。
+  if (deviceTest) {
+    try {
+      const evPath = deviceTestEvidencePath(deviceTest.reportsDir);
+      if (fs.existsSync(evPath)) {
+        const pushUnverified = (id: string, reason: string): void => {
+          unverified.push({ screen_or_case_id: id, reason, source: 'device_test' });
+        };
+        let doc: DeviceTestEvidenceDoc | null = null;
+        try {
+          doc = JSON.parse(fs.readFileSync(evPath, 'utf-8')) as DeviceTestEvidenceDoc;
+        } catch (e) {
+          pushUnverified('device-test-evidence', `evidence 不可解析：${(e as Error).message}`);
+        }
+        if (doc) {
+          const failedCases = (doc.cases ?? []).filter(c => c && typeof c.case_id === 'string');
+          const bindFailure = validateDeviceTestEvidenceBinding(doc, runId, deviceTest);
+          if (bindFailure) {
+            if (failedCases.length === 0) pushUnverified('device-test-evidence', bindFailure);
+            for (const c of failedCases) pushUnverified(c.case_id, bindFailure);
+          } else {
+            // 根/级联三分复用 test_case_flow SSOT（级联 case 不产缺陷也不产 unverified——
+            // 与既有 run gate 的 triage 语义一致）；无 flow 块 → 不归类，全部按根处理。
+            const failedIds = failedCases.map(c => c.case_id);
+            let rootSet: Set<string> | null = null;
+            try {
+              const planResolved = resolveFeatureArtifact(projectRoot, feature, 'test-plan.md');
+              const planMd = fs.existsSync(planResolved.actualPath)
+                ? fs.readFileSync(planResolved.actualPath, 'utf-8')
+                : null;
+              const parsedFlow = planMd ? parseTestCaseFlowBlock(planMd) : { flow: null };
+              if (parsedFlow.flow) {
+                const triage = triageCascade(parsedFlow.flow, failedIds);
+                rootSet = new Set([...triage.rootFails, ...triage.independentFails]);
+              }
+            } catch {
+              rootSet = null;
+            }
+            for (const c of failedCases) {
+              if (rootSet && !rootSet.has(c.case_id)) continue; // 级联：根修好自然消失
+              if (
+                c.classification === 'product_actionable' &&
+                doc.device_target?.target_kind === 'physical' &&
+                c.failing_step
+              ) {
+                out.push({
+                  source: 'device_test',
+                  screen_or_case_id: c.case_id,
+                  instructions: [
+                    `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
+                      `(${c.failing_step.action}): spec anchor ${c.failing_step.selector_kind}=` +
+                      `${c.failing_step.selector} is missing on screen ${c.expected_screen ?? '(unknown)'} ` +
+                      `of the real device (serial=${doc.device_target.serial ?? 'unknown'}).`,
+                    `Implement the exact anchor (id/text) in product code for that screen — do NOT ` +
+                      `emit namespaced variants (e.g. 'maison:<feature>:<screen>:<id>'); acceptance ` +
+                      `requires the exact form.`,
+                    ...(c.evidence?.ui_dump
+                      ? [
+                          `UI dump evidence: ${c.evidence.ui_dump}` +
+                            (c.evidence.screenshot ? `; screenshot: ${c.evidence.screenshot}` : ''),
+                        ]
+                      : []),
+                    ...(c.error_excerpt ? [`Machine error: ${c.error_excerpt.slice(0, 200)}`] : []),
+                  ],
+                  fingerprint:
+                    `${c.case_id}|step:${c.failing_step.index}|` +
+                    `${c.failing_step.selector_kind}:${c.failing_step.selector}`,
+                  evidence_path: `${path.relative(projectRoot, evPath).split(path.sep).join('/')}#${c.case_id}`,
+                });
+              } else if (c.classification === 'product_actionable') {
+                pushUnverified(
+                  c.case_id,
+                  `product_actionable 但 target_kind=${doc.device_target?.target_kind ?? 'null'} 非 physical——非真机结果不驱动回修`,
+                );
+              } else {
+                pushUnverified(
+                  c.case_id,
+                  `${c.classification}${c.reason ? `（${c.reason}）` : ''}——不属可回修产品缺陷`,
+                );
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[actionable] device-test-evidence 消费失败（${(e as Error).message}）——本轮无 device 回修信号`);
+    }
+  }
+
+  return {
+    defects: out,
+    unverified: unverified.map(u => ({ ...u, source: u.source ?? ('visual' as const) })),
+  };
 }
 
 /** F1 缺陷交接：回退后注入下一次 coding prompt 的必做段 */
@@ -2590,6 +2874,32 @@ export function capRunStatusForVisionTrust(
   return { status, capped: false };
 }
 
+/**
+ * openspec device-readiness-and-completion t2：**设备真实性封顶**（导出单测）。
+ *
+ * testing 在模拟器/未知目标上跑出的结果不足以证明真机行为——没有逐用例设备能力矩阵时，
+ * 让它产出完整 completion 就是假绿。故封顶 PARTIAL（诚实的完成度表达，仍保留全部证据）。
+ *
+ * 判据取自 **runner 侧可信 device session**，不看 agent summary 自报（自报即可绕过）。
+ * `unknown` 与 `emulator` 同等对待——"判不出"绝不等于"是真机"。
+ */
+export function capRunStatusForDeviceAuthenticity(
+  status: string,
+  opts: { testingRan: boolean; targetKind: DeviceTargetKind | null },
+): { status: string; capped: boolean; reason?: string } {
+  if (status !== 'CHAIN_SLICE_COMPLETED' || !opts.testingRan) return { status, capped: false };
+  // targetKind=null：testing 未经设备就绪门（profile 未声明需设备 / dry-run）——该链路
+  // 与设备无关，封顶无从谈起。**不得**把它当作 'unknown' 处理，否则所有非设备工程的
+  // 正常完成都会被误降为 PARTIAL。
+  if (opts.targetKind === null) return { status, capped: false };
+  if (opts.targetKind === 'physical') return { status, capped: false };
+  return {
+    status: 'PARTIAL',
+    capped: true,
+    reason: `testing_on_${opts.targetKind}_device`,
+  };
+}
+
 /** ut/testing 期 source drift 对账 + 授权分类（attestation 缺失=review 未闭环，归上游门禁管，此处不判）。 */
 export type MutablePhaseDriftDecision = DriftClassification & {
   /** plan e7c2a4d8 T3b/c：当前 drift 内容 fingerprint 与条目（裁决请求单/比对消费；
@@ -3622,6 +3932,80 @@ Goal runner — tool-agnostic multi-phase orchestrator
     writeGoalManifest(manifest, projectRoot);
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
+
+    // openspec device-readiness-and-completion t5：outer_layers 声明与文件系统对账**前移**。
+    //
+    // 事故（07-28）：framework.config.json 声明的 03-CommonBusiness 目录不存在，但该校验
+    // 只在 testing 的 pre-invoke 跑，于是跑满 2.7 小时、烧完 spec/plan/coding/ut 才 HALT。
+    //
+    // 时点：run/manifest 已建（有可监控 run、能表达 --resume）→ **整个 run 的第一个 phase
+    // agent invocation 之前**。不是"testing 自己的 invoke 前"——那等于没前移。
+    // 条件：仅当链路含 testing（或确需 product snapshot）。无条件早检会让 spec-only /
+    // plan-only / ut-only 任务因一个**永不访问**的目录失败。
+    // 判据复用 computeProductSourceSnapshotDetail，与 testing pre-invoke 处**同源**，
+    // 避免早晚两套规则漂移；后者保留作纵深防御（防运行期目录被删）。
+    if (!dryRun && chain.includes('testing' as FeaturePhase)) {
+      const declaredLayers = productLayerDirsOf(projectRoot);
+      const earlySnap = computeProductSourceSnapshotDetail(projectRoot, declaredLayers, manifest.feature);
+      if (!isUsableSnapshot(earlySnap.sha256)) {
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'phase_halt',
+          phase: chain[0],
+          halt_reason: 'declared_product_layer_missing',
+          verdict: 'FAIL',
+          reason: earlySnap.failureReason ?? earlySnap.sha256,
+          declared_layers: declaredLayers,
+        });
+        appendEvent(manifest.report_dir, projectRoot, {
+          type: 'run_end', status: 'HALTED', halt_reason: 'declared_product_layer_missing',
+        });
+        runConcluded = true;
+        console.error(
+          '\n===== declared_product_layer_missing =====\n' +
+            `${earlySnap.failureReason ?? earlySnap.sha256}\n` +
+            `framework.config.json 的 architecture.outer_layers 声明：${declaredLayers.join('、') || '(空)'}\n` +
+            '本链路含 testing，须对产品源码层做快照保护——声明的目录必须真实存在。\n' +
+            '处置：修正配置声明或补建目录后重跑（--resume 会重检）。\n',
+        );
+        return 1;
+      }
+    }
+
+    // R10：**启动期对账回收**——上一个 run 若被硬杀（SIGKILL/断电），它的清理代码没机会
+    // 执行，托管模拟器会成为孤儿。此处依 device-session.json 对账：四元组吻合才回收，
+    // 用户自开实例与 PID 重用一律拒绝（reclaimManagedDevice 内判）。`--resume` 同样经过。
+    if (!dryRun) {
+      // S10：扫 **feature 下所有 run 目录**——上一个被硬杀的 run 的 session 躺在它自己的
+      // 目录里，只看当前 report_dir 永远发现不了，于是每次崩溃留一个孤儿模拟器。
+      const goalRunsRel = path.dirname(manifest.report_dir);
+      for (const { session: stale, reportDirRel } of collectForeignManagedSessions(
+        projectRoot,
+        goalRunsRel,
+        manifest.run_id,
+      )) {
+        const out = reclaimManagedDevice(stale, defaultProcessProbe());
+        if (out.action === 'reclaimed') {
+          console.log(
+            `[device] 启动对账：回收了 run ${stale.started_by_run} 遗留的托管模拟器（pid=${out.pid}）`,
+          );
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'managed_device_reclaimed',
+            scope: 'startup_reconcile',
+            prior_run_id: stale.started_by_run,
+            pid: out.pid,
+          });
+          // 标记已释放，避免下次启动重复尝试
+          try {
+            writeDeviceSession(projectRoot, reportDirRel, {
+              serial: null, target_kind: 'unknown', started_by_run: null, status: 'released',
+            });
+          } catch { /* best-effort */ }
+        } else if (out.action === 'refused') {
+          console.warn(`[device] 启动对账未回收（run ${stale.started_by_run}）：${out.reason}`);
+        }
+      }
+    }
+
     // v23 F1：缺陷交接上下文——回退后注入下一次 coding prompt；进程重启从 events 恢复
     let backtrackCodingContext: ActionableDefect[] = [];
     // v23 F1：整轮集合指纹熔断——启动时从本 run 有效 events 初始化（进程重启后同集合
@@ -3729,6 +4113,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // receipt（action=vision_ledger_ack，绑 project/feature/run/两账本 hash）为强 ack；
     // 旗标为弱 ack：须 events anchor 比对可行且通过，且终态封顶 AWAITING_HUMAN_REVIEW。
     let visionAckWeak = false;
+    // openspec device-readiness-and-completion t2：最后一次 testing 经设备就绪门取得的目标类型。
+    // **null = 本 run 的 testing 未经设备门**（profile 未声明 device_capabilities / dry-run），
+    // 与 'unknown'（经过了门但判不出机型）**语义不同**：前者不参与封顶（该链路本就与设备无关），
+    // 后者按模拟器同等封顶。混淆二者会把所有非设备链路误降为 PARTIAL。
+    let lastTestingTargetKind: DeviceTargetKind | null = null;
+    /** R10：托管模拟器的信号清理反注册句柄（正常回收后摘除，防重复回收） */
+    let releaseManagedDeviceCleanup: (() => void) | null = null;
     const currentAuthSubsetSha256 = computeAuthSubsetSha256(manifest.pre_authorized_mutations);
     // 八/九轮 P1：runner 内存可信态——启动验真后 head 世代/migrations/**上次写入字节 digest**
     // 只活在进程内；后续写点以内存为权威，覆盖前既比对身份/MAC/世代（缺失/漂移 halt），
@@ -4824,6 +5215,157 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        // openspec device-readiness-and-completion t3：设备就绪门。
+        // **必须排在 agent_invoke_start 之前**——未取得 READY 就不调 agent，agent 便
+        // 根本不进入"发现锁屏后自行处置"的场景（07-28 事故里它在该场景对用户真机
+        // 枚举了 10 组常见 PIN）。与 capability gate 是相邻的**独立**门：后者同步、
+        // 固定 capability FAIL；设备不可用应走 external_block defer 契约。
+        let deviceEnv: Record<string, string> = {};
+        // null = 本 phase 未经设备门（与 'unknown'=经过门但判不出机型 语义不同，见封顶函数）
+        let deviceKindThisPhase: DeviceTargetKind | null = null;
+        if (!dryRun && phaseRequiresDevice(phase, loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)))) {
+          // P1（三轮 review）：把**本 run 已托管的模拟器**交给 gate 复用。
+          // 不传的话，每个设备 phase 都会当作"从零开始"：真机若一直锁着，UT 起一个、
+          // testing 再起一个，后写的 session 覆盖前一个 → 旧进程再也回收不掉。
+          // `--resume` 走的也是这条路径（读的是本 run 自己的 report_dir）。
+          const priorSession = readDeviceSession(projectRoot, manifest.report_dir);
+          const reusableManaged =
+            priorSession?.managed &&
+            priorSession.started_by_run === manifest.run_id &&
+            priorSession.status !== 'released'
+              ? { serial: priorSession.serial, identity: priorSession.managed }
+              : null;
+          const decision = await (injectedDeviceGate ?? runDeviceReadinessGate)({
+            phase,
+            retries,
+            sessionId: invokeId,
+            input: { ...buildDeviceReadinessInput(projectRoot), existingManaged: reusableManaged },
+            emitEvent: ev => appendEvent(manifest.report_dir, projectRoot, ev as Parameters<typeof appendEvent>[2]),
+          });
+          if (decision.outcome) {
+            // S10：BLOCKED 但已启动了托管模拟器 → **先落 session 再退出**，
+            // 否则那个进程没有任何回收凭证，会一直挂到用户手动关闭。
+            if (decision.managed) {
+              writeDeviceSession(projectRoot, manifest.report_dir, {
+                serial: decision.target?.serial || null,
+                target_kind: 'emulator',
+                started_by_run: manifest.run_id,
+                managed: decision.managed,
+                status: 'failed',
+                note: decision.outcome.halt_guidance,
+              });
+            }
+            halted = decision.outcome.halted;
+            outcomes.push(decision.outcome as GoalPhaseOutcome);
+            console.error(
+              `\n===== ${decision.outcome.halt_reason} =====\n${decision.outcome.halt_guidance ?? ''}\n` +
+                `${decision.notes.join('\n')}\n` +
+                '设备就绪后重跑/--resume 继续；框架不会替你解锁设备。\n',
+            );
+            break;
+          }
+          deviceEnv = decision.env ?? {};
+          deviceKindThisPhase = decision.target?.targetKind ?? 'unknown';
+          if (phase === ('testing' as FeaturePhase)) lastTestingTargetKind = deviceKindThisPhase;
+          // 托管实例落 session 供回收（崩溃残留由下次启动/--resume 对账，见 device-session.ts）
+          if (decision.managed && decision.target) {
+            // P1（三轮 review）：session 是**单文件**模型——写新记录就覆盖旧记录。
+            // 若旧记录指向另一个仍活着的实例，它的 pid 四元组会就此永久丢失
+            //（当前 run 被 collectForeignManagedSessions 排除，退出清理只读最新 session）。
+            // gate 在新建前已确认回收旧实例（reclaimManaged），此处再兜一道：
+            // 覆盖前若发现旧记录是**不同的** pid，先尝试回收并留痕。
+            const prior = reusableManaged;
+            if (prior && prior.identity.pid !== decision.managed.pid) {
+              const out = reclaimManagedDevice(
+                {
+                  schema_version: '1.0',
+                  serial: prior.serial,
+                  target_kind: 'emulator',
+                  started_by_run: manifest.run_id,
+                  managed: prior.identity,
+                  status: 'ready',
+                  updated_at: new Date().toISOString(),
+                },
+                defaultProcessProbe(),
+              );
+              // P1（四轮 review）：这道兜底**必须检查结果**，不能只记录。
+              // `reclaimed`（已终止）与 `none`（进程本就不在）都表示没有遗留；
+              // `refused` 说明那个进程还活着且不敢动——此时覆盖 session 就等于
+              // 永久丢失它的回收凭证（当前 run 被 collectForeignManagedSessions 排除），
+              // 只能 halt 求人。
+              if (out.action === 'refused') {
+                const detail =
+                  `[device] 拒绝覆盖 device-session：旧托管实例 pid=${prior.identity.pid} ` +
+                  `仍在运行且未能回收（${out.reason}）。覆盖会永久丢失它的回收凭证。\n` +
+                  '  请手动结束该进程后重跑；或用 --resume 继续（届时会重新对账）。';
+                console.error(`\n===== 设备会话冲突 =====\n${detail}\n`);
+                halted = true;
+                outcomes.push({
+                  phase,
+                  verdict: 'FAIL',
+                  halted: true,
+                  retries,
+                  halt_reason: 'managed_device_session_conflict',
+                  halt_guidance: detail,
+                  // 与设备阻断同一契约：可 defer，指引指向"处理环境"而非"改代码"
+                  blocking_class: 'externalBlocked',
+                  failure_kind: 'device_blocked',
+                } as GoalPhaseOutcome);
+                break;
+              }
+              console.log(
+                `[device] 覆盖 session 前处置旧托管实例 pid=${prior.identity.pid}：${out.action}`,
+              );
+            }
+            writeDeviceSession(projectRoot, manifest.report_dir, {
+              serial: decision.target.serial,
+              target_kind: decision.target.targetKind,
+              started_by_run: manifest.run_id,
+              managed: decision.managed,
+              status: 'ready',
+            });
+            // R10：注册信号/退出清理。只覆盖"进程还能执行代码"的退出路径；
+            // 硬杀（SIGKILL/断电）由下次启动的对账回收兜底（见 run 启动处）。
+            if (!releaseManagedDeviceCleanup) {
+              releaseManagedDeviceCleanup = registerManagedDeviceCleanup(() => {
+                const out = reclaimManagedDevice(
+                  readDeviceSession(projectRoot, manifest.report_dir),
+                  defaultProcessProbe(),
+                );
+                if (out.action === 'reclaimed') {
+                  console.log(`[device] 信号退出：已回收托管模拟器（pid=${out.pid}）`);
+                }
+              });
+            }
+          }
+        }
+
+        // d9e4b7c1 T1：attempt 级 device-test 构建配置冻结。
+        // resolveDeviceTestProduct/BuildMode 读进程 env（HARNESS_DEVICE_TEST_PRODUCT/
+        // BUILD_MODE 是公开覆盖变量）——agent 子进程内临时覆盖不会传回 runner，生成物
+        // 分类器若现场重解析会与 hvigor 实际生成漂移、复发误伤。此处解析一次冻结，经
+        // deviceEnv 同发 agent 与 gate harness、直传分类器（三方同源）；agent 无视冻结
+        // 值自行覆盖属不受支持行为，产物与冻结值不符 → violation（fail-closed 即正确
+        // 语义）。generic profile 无 conventions 模块 → null（分类器同样不可用，行为
+        // 与今日一致）。
+        let frozenDeviceTest: { product: string; buildMode: 'debug' | 'release' } | null = null;
+        // review P2：分类器/conventions 从**实际 resolvedProfile** 加载，不硬编码 hmos-app。
+        // 复用 run 开始（manifest 建立时）解析的 resolvedProfile——单一 profile 判定时点；
+        // 在此二次 loadResolvedProfile 会制造第二个时点，且 loader 失败回退 hmos-app，
+        // 恰好复活"非 hmos profile 获得 hmos 源码例外"的可能。
+        let testingProfileHarnessDir: string | null = null;
+        if (!dryRun && phase === ('testing' as FeaturePhase)) {
+          testingProfileHarnessDir = path.join(resolvedProfile.profileDir, 'harness');
+          frozenDeviceTest = resolveFrozenDeviceTestConfig(projectRoot, testingProfileHarnessDir);
+          if (frozenDeviceTest) {
+            deviceEnv = {
+              ...deviceEnv,
+              HARNESS_DEVICE_TEST_PRODUCT: frozenDeviceTest.product,
+              HARNESS_DEVICE_TEST_BUILD_MODE: frozenDeviceTest.buildMode,
+            };
+          }
+        }
+
         // c4e8b1d3 G1-1（pre-coding 锚定）：**首次 coding agent invoke 前**记录当时 git
         // HEAD 为 coding_base_sha（write-once trust 文件；resume/backtrack 复用原 SHA，
         // 不得重新取 HEAD——那会把 agent 已 commit 的越界文件洗出 diff 基线）。
@@ -4924,14 +5466,74 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `[goal-runner] BUG: effectiveAgentTimeoutMs=${effectiveAgentTimeoutMs} 不得 ≤0 到达 adapter（zero-budget 应已在启动判据拦截）`,
           );
         }
-        const invoke = await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
+        // t4：完成观测探针。invoke **之前**建基线——只认本次调用内"不完整→完整"的跃迁，
+        // 否则 retry 遗留的上一轮 receipt 会被当作本轮完成。基线已完整时不做观测
+        // （该情形应由上层判为"无需再调 agent"，而不是启动后立刻杀）。
+        const completion = dryRun
+          ? null
+          : createCompletionProbe({ projectRoot, feature: manifest.feature, phase });
+        // R7 的处置（**与 review 建议部分分歧，已实证**）：
+        //
+        // review 要求"基线证据已完整时跳过本次 agent 调用"。实现后集成测试实锤：这会
+        // 破坏 **backtrack 语义**——回退到 coding 重跑时，上一轮的 receipt/summary 仍在
+        // 盘上，基线判"已完整"就直接跳过，于是 coding 只跑一次、crash/must_fix 修复指令
+        // 永远注入不进去（4 个既有用例同时红）。
+        //
+        // 根因是判据不足：`证据齐全` ≠ `本轮无需工作`。要安全地跳过，需要"证据确属本轮
+        // 需求与本轮回退上下文"的新鲜度判据，而不只是文件齐全。该判据设计留待下一轮
+        // （openspec tasks R7）。此处**只记事件不跳过**——保留一个已知的次优行为，
+        // 好过引入一个破坏回退闭环的行为。
+        //
+        // 注意：observer 在基线已完整时**恒不命中**（见 createCompletionProbe），所以
+        // 不会出现"启动后立刻被自己杀掉"的情形；这条路径的代价只是多烧一轮 agent。
+        // R7：证据齐全**且**通过新鲜度判据时才跳过 agent 调用。
+        // 只判"齐全"会破坏 backtrack——回退重跑时上一轮 receipt 仍在盘上，跳过会让
+        // coding 只跑一次、修复指令注入不进去（实证：4 个集成用例同时红）。
+        const skipDecision = completion
+          ? decideSkipAgentInvoke({
+              baselineComplete: completion.baselineComplete,
+              retries,
+              pendingHandoffCount: backtrackCodingContext.length,
+              evidenceRunId: completion.baselineRunId,
+              currentRunId: manifest.run_id,
+            })
+          : { skip: false, reason: 'dry-run' };
+        if (completion?.baselineComplete) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'completion_evidence_pre_existing',
+            phase,
+            invoke_id: invokeId,
+            action: skipDecision.skip ? 'skip_agent_invoke' : 'invoke_anyway',
+            reason: skipDecision.reason,
+          });
+          if (skipDecision.skip) {
+            console.log(`[goal-runner] ${phase}: ${skipDecision.reason} → 跳过本轮 agent 调用，直接跑 gate 复验。`);
+          }
+        }
+        const invoke = skipDecision.skip
+          ? ({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              command: '(skipped: completion evidence fresh)',
+              skipped: true,
+              duration_ms: 0,
+            } as Awaited<ReturnType<typeof invokeAgentHeadless>>)
+          : await (injectedInvokeAgent ?? invokeAgentHeadless)(invokePlan, projectRoot, {
           dryRun,
           timeoutMs: effectiveAgentTimeoutMs,
           outputLogPath,
+          // t4：确定性完成观测（与 settle/hard timeout/silent race）。判据注入自 runner，
+          // 通用进程层不依赖 receipt schema。
+          completionProbe: completion ? completion.probe : undefined,
+          deadlineMs: Date.now() + effectiveAgentTimeoutMs,
           // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
+          // t3（device-readiness）：设备目标经 extraEnv 注入子进程，**不写全局 process.env**
+          //（全局写会让多 phase/多 run 串 target——凭据/操作打到别人的手机上）
           extraEnv: {
             MAISON_GOAL_RUN_ID: manifest.run_id,
             MAISON_GOAL_ATTEMPT: visualAttemptId,
+            ...deviceEnv,
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
           toolEventCapture: cap.capability?.tool_event_provenance ?? 'none',
@@ -5009,21 +5611,57 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
           const verdictSrc = diffProductSourceSnapshots(preInvokeSourceSnap, postInvokeSourceSnap);
           if (verdictSrc.kind !== 'clean') {
-            testingSourceMutated = true;
-            mutationChangedList =
+            // d9e4b7c1 T1：mutated 逐项过 profile 生成物分类器——hvigor 合法重写模块根
+            // BuildProfile.ets（agent 跑 harness 自检触发 device_test.build，设计内工作流）
+            // 不算 agent 改码。全降级 → 透明事件不 halt、不进终止态（resume 拒绝按事件
+            // type 扫描，天然不受影响）；混合 → violation 只列真违规、生成物单列
+            // generated_changed（两张清单都要全）；unverifiable / 分类器不可用 → 全部按
+            // violation（fail-closed，行为与本改动前一致）。
+            const partition =
               verdictSrc.kind === 'mutated'
-                ? verdictSrc.changed.map(c => `${c.how} ${c.path}`)
-                : [`unverifiable: ${verdictSrc.reason}`];
-            appendEvent(manifest.report_dir, projectRoot, {
-              type: 'testing_write_violation',
-              phase,
-              invoke_id: invokeId,
-              kind: verdictSrc.kind,
-              changed: mutationChangedList.slice(0, 50),
-              changed_count: mutationChangedList.length,
-              pre_snapshot: preInvokeSourceSnap.sha256,
-              post_snapshot: postInvokeSourceSnap.sha256,
-            });
+                ? partitionGeneratedSourceChanges(
+                    projectRoot, verdictSrc.changed, frozenDeviceTest, testingProfileHarnessDir,
+                  )
+                : { violations: [], generated: [] as string[] };
+            if (
+              verdictSrc.kind === 'mutated' &&
+              partition.violations.length === 0 &&
+              partition.generated.length > 0
+            ) {
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'testing_generated_file_change',
+                phase,
+                invoke_id: invokeId,
+                files: partition.generated.slice(0, 50),
+                count: partition.generated.length,
+                product: frozenDeviceTest?.product,
+                build_mode: frozenDeviceTest?.buildMode,
+              });
+              console.log(
+                `[goal-runner] testing 期检出 ${partition.generated.length} 个构建生成物变化` +
+                  '（声明模块根的 BuildProfile.ets，内容与冻结配置推导逐值一致）——' +
+                  '分类为 framework harness 构建的合法副作用，不算违规。',
+              );
+            } else {
+              testingSourceMutated = true;
+              mutationChangedList =
+                verdictSrc.kind === 'mutated'
+                  ? partition.violations.map(c => `${c.how} ${c.path}`)
+                  : [`unverifiable: ${verdictSrc.reason}`];
+              appendEvent(manifest.report_dir, projectRoot, {
+                type: 'testing_write_violation',
+                phase,
+                invoke_id: invokeId,
+                kind: verdictSrc.kind,
+                changed: mutationChangedList.slice(0, 50),
+                changed_count: mutationChangedList.length,
+                ...(partition.generated.length > 0
+                  ? { generated_changed: partition.generated.slice(0, 50) }
+                  : {}),
+                pre_snapshot: preInvokeSourceSnap.sha256,
+                post_snapshot: postInvokeSourceSnap.sha256,
+              });
+            }
           }
         }
         // 四轮 review P0：invoke 窗口闭合比对——agent 调用期间 vision 账本被写 = 篡改
@@ -5415,6 +6053,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         progressSubstep = 'harness';
+        // d9e4b7c1 T2：goal 正式 testing gate 的两项前置——
+        //   ① pre-delete evidence（防伪最小化：agent 已于 invoke 结束退出，harness 结束后
+        //     文件存在且身份匹配 = gate 所写；不引入 nonce/账本）；
+        //   ② 强制安装 flag（复用既有 HARNESS_DEVICE_TEST_FORCE_INSTALL）**只注入 gate
+        //     harness env**——agent 自检与普通模式保留既有 install reuse，零变化。
+        let gateDeviceEnv = deviceEnv;
+        if (!dryRun && phase === ('testing' as FeaturePhase)) {
+          try {
+            fs.rmSync(
+              deviceTestEvidencePath(
+                featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot),
+              ),
+              { force: true },
+            );
+          } catch { /* 不存在/不可删都不阻断——collector 侧身份校验兜底 */ }
+          gateDeviceEnv = { ...deviceEnv, HARNESS_DEVICE_TEST_FORCE_INSTALL: '1' };
+        }
+        // d9e4b7c1 T2：attempt 的 harness 窗口（written_at/run meta 时间窗裁决的数据源）
+        const harnessStartedAtMs = Date.now();
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_start',
           phase,
@@ -5432,8 +6089,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest,
           { runId: manifest.run_id, attemptId: visualAttemptId },
           availableForHarnessMs,
+          // P0-3：把本 attempt 冻结的设备目标一并给外层 gate harness——
+          // 否则多设备时它退回 hdc 默认目标，跑在与就绪门冻结的不同设备上。
+          gateDeviceEnv,
         );
         const harnessExit = harnessRun.exitCode;
+        const harnessEndedAtMs = Date.now();
 
         appendEvent(manifest.report_dir, projectRoot, {
           type: 'harness_end',
@@ -5587,7 +6248,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
           closureStatus: summary?.closure_status,
           receiptStatus: summary?.receipt_status,
           agentTimedOut: invoke.timed_out,
+          completionObserved: invoke.completion_observed,
         });
+        // openspec device-readiness-and-completion t2：testing 结论封顶。
+        // **由 runner 依可信 device session 派生，不看 agent summary 自报**——自报即可绕过。
+        // 没有逐用例能力矩阵时，模拟器/未知目标上的 testing 结果不足以证明真机行为，
+        // 让它整体 PASS 就是假绿；封顶为 PARTIAL（诚实的完成度表达）。ut 不封顶。
+        const testingCapped =
+          deviceKindThisPhase !== null &&
+          capsTestingConclusion(phase, deviceKindThisPhase) &&
+          resolved.verdict === 'PASS';
+        if (testingCapped) {
+          appendEvent(manifest.report_dir, projectRoot, {
+            type: 'testing_conclusion_capped',
+            phase,
+            invoke_id: invokeId,
+            target_kind: deviceKindThisPhase,
+            reason: '模拟器/未知目标上的 testing 不得冒充真机通过（无逐用例能力矩阵时保守封顶）',
+          });
+          console.warn(
+            `[device] testing 在 target_kind=${deviceKindThisPhase} 上执行——结论封顶为 PARTIAL，` +
+              '不得宣称真机测试完成（接真机后重跑可解除）。',
+          );
+        }
         const verdict = resolved.verdict;
         const meta = extractBlockingMeta(summary);
         // P0-D：API 断流哨兵（adapter 感知信封锚定）。B/D 并存取 agent_timeout 优先
@@ -5647,7 +6330,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 排除出回退判据。
         const actionableResult: ActionableCollectResult =
           !dryRun && phase === 'testing'
-            ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id)
+            ? collectActionableDefects(projectRoot, manifest.feature, manifest.run_id, {
+                // d9e4b7c1 T2：device_test 消费上下文——期望设备元组由 runner 内存直传
+                // （禁从"最新事件"反推）；harness 窗口是 written_at/run meta 的唯一裁决窗口
+                attemptId: visualAttemptId,
+                expectedTarget: {
+                  serial: deviceEnv.HARNESS_HDC_TARGET ?? null,
+                  target_kind: deviceEnv.MAISON_DEVICE_TARGET_KIND ?? null,
+                  session_id: deviceEnv.MAISON_DEVICE_SESSION_ID ?? null,
+                },
+                harnessWindow: { startMs: harnessStartedAtMs, endMs: harnessEndedAtMs },
+                reportsDir: featurePhaseReportsDir(
+                  projectRoot, manifest.feature, String(phase), frameworkRoot,
+                ),
+              })
             : { defects: [], unverified: [] };
         const actionableDefects = actionableResult.defects;
         const envBlocked = meta.failure_kind === 'toolchain' || meta.failure_kind === 'capture' ||
@@ -5680,16 +6376,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
             entries: actionableResult.unverified.slice(0, 20),
             count: actionableResult.unverified.length,
           });
+          // d9e4b7c1 T2：retry/halt 指引按 source 分支——visual 的"补 evaluated_screenshot_hash"
+          // 对 device 源是完全错误的提示（事件 type 名保留 unverifiable_must_fix，审计连续性）。
+          const visualCount = actionableResult.unverified.filter(u => u.source !== 'device_test').length;
+          const deviceCount = actionableResult.unverified.length - visualCount;
+          const guidanceParts: string[] = [];
+          if (visualCount > 0) {
+            guidanceParts.push(
+              `visual-diff 里有 ${visualCount} 屏的视觉评估尚不可采信：请重采/重评并确保 `
+              + 'evaluated_screenshot_hash/evaluated_build_fingerprint 与当前截图/安装 HAP 绑定'
+              + '（install meta 缺失先重装；evaluation_invalidated 屏须经 critic 重评清标记）。',
+            );
+          }
+          if (deviceCount > 0) {
+            guidanceParts.push(
+              `真机测试有 ${deviceCount} 个用例的缺陷证据不可采信或不可归因：设备缺陷只有在正式 `
+              + 'gate evidence 身份齐备（run/attempt/设备元组/trace/时间窗全部匹配）、'
+              + 'classification=product_actionable 且 target_kind=physical 时才驱动回修。'
+              + '请核对测试 selector 与 ui-spec 锚点的对应关系（test_contract 类是测试问题不回 coding）、'
+              + '确认设备就绪与安装链正常（正式 gate 会强制重装并写 device-test-evidence.json）。',
+            );
+          }
           if (retries < manifest.budget.max_retries_per_phase) {
             action = 'retry';
             priorFailure =
-              `visual-diff 里有 ${actionableResult.unverified.length} 屏的视觉评估尚不可采信（${notes}）。`
-              + '不可采信的评估既不驱动回退、也不算通过：请重采/重评并确保 evaluated_screenshot_hash/'
-              + 'evaluated_build_fingerprint 与当前截图/安装 HAP 绑定（install meta 缺失先重装；evaluation_invalidated 屏须经 critic 重评清标记）。';
+              `本轮存在 ${actionableResult.unverified.length} 项不可采信的缺陷证据（${notes}）。`
+              + '不可采信的证据既不驱动回退、也不算通过。' + guidanceParts.join(' ');
             priorFailureKind = 'contract_violation' as FailureKind;
             console.error(
               `\n===== unverifiable_must_fix =====\n${notes}\n`
-              + `视觉评估尚不可采信——不回退也不放行，retry 重采/重评（${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
+              + `缺陷证据尚不可采信——不回退也不放行，retry 重采/重评（${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
             );
           } else {
             action = 'halt';
@@ -5699,7 +6415,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             });
             console.error(
               `\n===== unverifiable_must_fix =====\n${notes}\n`
-              + '重试预算内视觉评估始终不可采信——halt 求人（检查 install meta 写入/截图采集链/critic 重评）。\n',
+              + `重试预算内缺陷证据始终不可采信——halt 求人。${guidanceParts.join(' ')}\n`,
             );
           }
         }
@@ -6198,6 +6914,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           harness_exit: harnessExit,
           stale_summary: resolved.stale_summary,
           agent_failed: resolved.agent_failed,
+          // t4：完成观测收口——与 timed_out/agent_failed **互斥的独立原因码**。
+          // 归错类会让上层按失败路径重试一个证据已完整的阶段（正是 07-28 事故的放大链）。
+          completion_observed: invoke.completion_observed,
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
           // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案
@@ -6795,7 +7514,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
         `配置 ${VISION_CHECKPOINT_HMAC_ENV} 获得 authenticated checkpoint / 提供受信 ack receipt 后方可 clean completion`,
       );
     }
-    const status = visionCap.status as ReturnType<typeof resolveGoalRunStatus>;
+    // openspec device-readiness-and-completion t2：设备真实性封顶（在 vision 封顶之后叠加）。
+    // 只有 testing 真的跑过才判——纯 spec/plan/coding/ut 链路与设备无关，不受影响。
+    const testingRan = outcomes.some(o => o.phase === 'testing');
+    const deviceCap = capRunStatusForDeviceAuthenticity(visionCap.status, {
+      testingRan,
+      targetKind: lastTestingTargetKind,
+    });
+    if (deviceCap.capped) {
+      appendEvent(manifest.report_dir, projectRoot, {
+        type: 'device_authenticity_completion_cap',
+        from: visionCap.status,
+        to: deviceCap.status,
+        reason: deviceCap.reason,
+        target_kind: lastTestingTargetKind,
+      });
+      console.warn(
+        `[device] 设备真实性封顶：${visionCap.status} → ${deviceCap.status}（${deviceCap.reason}）——` +
+          'testing 未在已确认的真机上执行，不得宣称完整通过；接真机后重跑可解除。',
+      );
+    }
+    const status = deviceCap.status as ReturnType<typeof resolveGoalRunStatus>;
     const report = generateGoalReportJson(manifest.run_id, manifest.feature, status, outcomes);
     writeGoalReport(projectRoot, manifest.report_dir, report, {
       workflowChain: fullWorkflowChain.map(String),
@@ -6894,6 +7633,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const gc = deleteRunTrustState({ projectRoot, feature: manifest.feature, runId: manifest.run_id });
       if (gc.diagnostics.length > 0) console.warn(`[trust-gc] 封卷回收诊断：${gc.diagnostics.join('；')}`);
       if (gc.deleted.length > 0) console.log(`[trust-gc] 封卷回收：${gc.deleted.join('、')}`);
+    }
+
+    // openspec device-readiness-and-completion t2：托管模拟器回收（**任何终态**都回收——
+    // 不像 trust 状态只在封卷回收：模拟器是本 run 借用的机器资源，HALTED 也该还）。
+    // 只回收本 run 启动的实例；用户自开实例、PID 重用、exe 不符一律拒绝（见
+    // reclaimManagedDevice 的四元组校验）。崩溃路径回收不了——那由下次启动对账兜底。
+    if (!dryRun) {
+      // 正常终态回收：先摘信号钩子，避免 exit handler 再回收一次
+      releaseManagedDeviceCleanup?.();
+      releaseManagedDeviceCleanup = null;
+      const outcome = reclaimManagedDevice(
+        readDeviceSession(projectRoot, manifest.report_dir),
+        defaultProcessProbe(),
+      );
+      if (outcome.action === 'reclaimed') {
+        console.log(`[device] 已回收本 run 托管的模拟器（pid=${outcome.pid}）`);
+        writeDeviceSession(projectRoot, manifest.report_dir, {
+          serial: null, target_kind: 'unknown', started_by_run: null, status: 'released',
+        });
+      } else if (outcome.action === 'refused') {
+        console.warn(`[device] 托管实例未回收：${outcome.reason}`);
+      }
     }
 
     emitMilestone(`GOAL_RUN event=end status=${status} run_id=${manifest.run_id}`);

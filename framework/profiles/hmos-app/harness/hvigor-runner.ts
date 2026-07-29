@@ -62,6 +62,13 @@ export interface OnDeviceFailureEvidence {
   signSkipped?: boolean;
   signingConfigMissing?: boolean;
   installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+  /**
+   * t1（openspec device-readiness-and-completion）：aa test 阶段诊断的**结构化**透传。
+   * 此前该诊断只进 `errors[].message` 的散文（`失败阶段：device_locked；…`），下游分类
+   * 只能靠子串匹配判 device_locked——既脆弱又无法参与机器判定，导致锁屏最终兜底成
+   * `code_regression`（须改码、可重试）。结构化后由 `kind` 直接驱动分类。
+   */
+  runDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
 }
 
 export interface HvigorRunResult {
@@ -938,7 +945,7 @@ function parseHypiumOutput(log: string): HypiumTestResult {
 // 探测本身不应该成为编译失败的原因。
 
 /** 简易 JSON5 解析（容忍 // / /* 注释与尾逗号） */
-function parseProductJson5(content: string): unknown {
+export function parseProductJson5(content: string): unknown {
   let s = content.replace(/^\s*\/\/.*$/gm, '');
   s = s.replace(/([^"':])\s*\/\/.*$/gm, '$1');
   s = s.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -1998,7 +2005,7 @@ export function buildOnDeviceSignDiagnosis(
  */
 export function buildOnDeviceFailureEvidence(
   buildRes: Pick<HvigorRunResult, 'signSkipped' | 'signingConfigMissing'>,
-  onDevice: Pick<OnDeviceUtRunResult, 'failedAt' | 'unsignedPresent' | 'install'>,
+  onDevice: Pick<OnDeviceUtRunResult, 'failedAt' | 'unsignedPresent' | 'install' | 'aaTest'>,
 ): OnDeviceFailureEvidence {
   return {
     failedAt: onDevice.failedAt,
@@ -2006,6 +2013,7 @@ export function buildOnDeviceFailureEvidence(
     signSkipped: buildRes.signSkipped,
     signingConfigMissing: buildRes.signingConfigMissing,
     installDiagnosis: onDevice.install?.diagnosis,
+    runDiagnosis: onDevice.aaTest?.diagnosis,
   };
 }
 

@@ -27,6 +27,14 @@
 
 ### 首次启动
 
+**前置（BLOCKER，须在启动 runner 之前）：设备策略确认。**
+链路含需要设备的阶段（hmos-app 的 ut/testing）时，按
+[device-policy-gate.md](../../reference/device-policy-gate.md) 执行：跑 `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本——`npm run` 会往 stdout 插 banner）（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止），`code=device_policy_unset` 就**必须先问用户四选一**再启动 runner。选 ③ 时须追问 `existing`/`managed` 档位，**禁默认托管**。
+
+goal 特有的紧迫性：后台 detached runner **结构上无法弹交互**，错过启动前这个窗口就只能
+一路 BLOCKED。选 ② 时那条 `device:enroll` 必须交给用户在自己终端跑，**绝不要让用户把 PIN
+发到对话里**，也不得代为输入（完整红线见上述文档）。
+
 ```bash
 cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> \
