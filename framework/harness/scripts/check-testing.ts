@@ -105,6 +105,7 @@ import { captureVisualDiff } from '../../profiles/hmos-app/harness/visual-diff-c
 import { computeHapBuildFingerprint } from '../../profiles/hmos-app/harness/build-fingerprint';
 import { buildHylyreVisualDiffScreenshotFn, buildHylyreNavExecutorFn, buildHylyreLayoutDumpFn, readDeviceTestRunHylyreNavOpts } from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
 import { parseTestCaseFlowBlock, triageCascade, validateTestCaseFlow } from './utils/test-case-flow';
+import { normalizeDeviceTestCases } from './utils/device-test-case-kernel';
 import {
   loadVisualDiffNavConfig,
   loadVisualDiffNavConfigV2,
@@ -116,6 +117,7 @@ import {
 import { collectP0VisualTargetIds } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { lintDerivedPlanSelectorContract } from '../../profiles/hmos-app/harness/selector-contract';
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
@@ -1065,6 +1067,40 @@ function extractReportCaseIds(report: string): string[] {
   const idCol = tables[0].headers.findIndex(h => h.includes('编号'));
   if (idCol === -1) return [];
   return tables[0].rows.map(row => (row[idCol] || '').trim()).filter(id => id);
+}
+
+function checkDeviceCaseNormalization(ctx: CheckContext): CheckResult[] {
+  const acceptance = ctx.featureSpec.acceptance;
+  if (!acceptance) {
+    return [{
+      id: 'device_case_contract',
+      category: 'traceability',
+      description: 'Device testing cases 统一归一契约',
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details: 'phase 轨缺少 acceptance.yaml，无法归一 cases。',
+    }];
+  }
+  const normalized = normalizeDeviceTestCases({ mode: 'acceptance', acceptance });
+  if (normalized.issues.length > 0) {
+    return [{
+      id: 'device_case_contract',
+      category: 'traceability',
+      description: 'Device testing cases 统一归一契约',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: normalized.issues.join('\n'),
+      suggestion: '按 acceptance.yaml 的 criteria/expected/boundaries 修正设备用例结构后重跑 testing harness；adhoc 输入须使用同一 normalization kernel。',
+    }];
+  }
+  return [{
+    id: 'device_case_contract',
+    category: 'traceability',
+    description: 'Device testing cases 统一归一契约',
+    severity: 'BLOCKER',
+    status: 'PASS',
+    details: `mode=acceptance depth=${normalized.depth} cases=${normalized.cases.length}`,
+  }];
 }
 
 function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null): CheckResult[] {
@@ -2145,6 +2181,29 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
   }
 }
 
+/**
+ * Static checks for an already-derived Hylyre plan. This boundary intentionally
+ * excludes build/install/run, trace, and holder mutation: those remain runtime
+ * pipeline facts inside checkDeviceTestRunGate.
+ */
+function collectDeviceTestStaticPlanGates(
+  ctx: CheckContext,
+  derivedContent: string,
+  topPlanRaw: string,
+): {
+  stepLint: ReturnType<typeof lintHylyrePlanStepRules>;
+  selectorWarnings: ReturnType<typeof lintDerivedPlanSelectorContract>;
+  navLint: ReturnType<typeof lintDerivedHylyrePlanSteps>;
+} {
+  const stepLint = lintHylyrePlanStepRules(derivedContent);
+  const selectorUiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const selectorWarnings = selectorUiSpec
+    ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature)
+    : [];
+  const topCases = extractTopPlanTestCasesForDeriveHint(topPlanRaw);
+  const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
+  return { stepLint, selectorWarnings, navLint };
+}
 function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -2175,19 +2234,6 @@ function checkDeviceTestRunGate(
           severity: 'BLOCKER',
           status: 'SKIP',
           details: 'device_test.install 已 SKIP，同步跳过真机自动化测试。',
-        },
-      ];
-    }
-
-    if (!hapHolder.installPassed) {
-      return [
-        {
-          id,
-          category: 'structure',
-          description: desc,
-          severity: 'BLOCKER',
-          status: 'SKIP',
-          details: 'device_test.install 未 PASS（或未执行成功），同步跳过真机自动化测试。',
         },
       ];
     }
@@ -2306,7 +2352,9 @@ function checkDeviceTestRunGate(
 
     // t7b（plan e6a3c9f4）：STEP 级静态门禁接入标准派生计划路径（与即席同强度）——
     // 非法根键/选择器形状/wait 误用在门禁层秒级拦下，不再只在真机执行时炸。
-    const stepLint = lintHylyrePlanStepRules(derivedContent);
+    // Static lint/selector/navigation facts are isolated from the runtime holder.
+    const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, derivedContent, topRaw);
+    const { stepLint, selectorWarnings, navLint } = staticPlanGates;
     const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
     if (stepBlockers.length > 0) {
       const hintPath = writeDeriveHintFromPlanJson(ctx, {
@@ -2341,8 +2389,6 @@ function checkDeviceTestRunGate(
       ];
     }
 
-    const topCases = extractTopPlanTestCasesForDeriveHint(topRaw);
-    const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
     if (!navLint.ok) {
       const hintPath = writeDeriveHintFromPlanJson(ctx, {
         ...hintBase,
@@ -2372,6 +2418,21 @@ function checkDeviceTestRunGate(
       ];
     }
 
+    // Static plan facts are independent of build/install/run. Keep this after all
+    // static SSOT/lint/selector/nav checks so an install failure cannot hide an
+    // already-invalid derived plan behind a whole-gate SKIP.
+    if (!hapHolder.installPassed) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'SKIP',
+          details: 'device_test.install 未 PASS（或未执行成功），跳过真机自动化执行；静态派生计划已独立校验。',
+        },
+      ];
+    }
     const ready = dispatchDeviceTestEnsureReady(ctx, {
       projectRoot: ctx.projectRoot,
       harnessRoot: TESTING_HARNESS_ROOT,
@@ -2505,6 +2566,22 @@ function checkDeviceTestRunGate(
     } catch { /* 归类失败不影响门禁判定 */ }
 
     const out: CheckResult[] = [
+      ...(selectorWarnings.length > 0
+        ? [{
+            id: 'derived_selector_contract',
+            category: 'structure' as const,
+            description: '派生 Hylyre selector 必须可追溯到 ui-spec',
+            severity: 'MINOR' as const,
+            status: 'WARN' as const,
+            details: [
+              `[SELECTOR-SPEC-001] 共 ${selectorWarnings.length} 个 selector 无 ui-spec 契约依据（首版观察期 WARN）：`,
+              ...selectorWarnings.slice(0, 12).map(v =>
+                `  - ${v.tc_id} step ${v.step_index} ${v.selector_kind}=${v.selector}: ${v.message}`),
+            ].join('\n'),
+            suggestion: '用 derive-hylyre-plan-hint 的 selector_contract 只读查询修正；dump/cache 发现的候选须先回写 ui-spec/锚点注入。',
+            source: 'derived_selector_contract',
+          }]
+        : []),
       {
         id,
         category: 'structure',
@@ -2739,6 +2816,21 @@ function checkDeviceTestRunGate(
       },
     ];
   }
+}
+
+/** Test seam: static derived-plan validation must happen before install-based runtime SKIP. */
+export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext): CheckResult[] {
+  return checkDeviceTestRunGate(ctx, {
+    hapPath: null,
+    installPassed: false,
+    installExternallyBlocked: false,
+    buildReused: false,
+    hylyreTracePath: null,
+    deviceTestRunExecuted: false,
+    installExecuted: false,
+    installOk: false,
+    hapSha256Full: null,
+  });
 }
 
 function checkReportTraceReconciliation(
@@ -3111,6 +3203,7 @@ const checker: PhaseChecker = {
     );
 
     // --- Traceability checks ---
+    results.push(...safeRun(() => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
     results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
     results.push(...safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac'));

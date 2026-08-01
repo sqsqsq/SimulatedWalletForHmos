@@ -46,7 +46,7 @@ import {
 import {
   loadFrameworkConfig,
   featuresDirPath,
-  resolveFeatureArtifact,
+
   featureArtifactPath,
   featureDir,
   relFeatureFile,
@@ -298,16 +298,6 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   return ctx.featureSpec.useCases ?? null;
 }
 
-function loadDesignMd(ctx: CheckContext): string | null {
-  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
-  if (!resolved.exists) return null;
-  try {
-    return fs.readFileSync(resolved.actualPath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
 function acceptanceHasUnitLayerRequirement(ctx: CheckContext): boolean {
   const ac = ctx.featureSpec.acceptance;
   if (!ac) return false;
@@ -318,10 +308,6 @@ function acceptanceHasUnitLayerRequirement(ctx: CheckContext): boolean {
   );
 }
 
-function designMentionsUseCaseChapter(ctx: CheckContext): boolean {
-  const md = loadDesignMd(ctx);
-  return !!md && md.includes('业务流程 UseCase 清单');
-}
 
 // --------------------------------------------------------------------------
 // Structure Checks

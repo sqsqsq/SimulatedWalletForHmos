@@ -2,6 +2,53 @@
 
 本文描述**实例工程**在 framework 子模块或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+
+## 3.0.0：Skill 契约、assess 调和循环与 Goal 单写者
+
+3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
+
+1. **Summary 升级到 1.2**：phase checker 现在输出机械推导的 `assurance`、`capability_resolutions` 与 versioned closure commit。旧 summary 会被 `assess@1` 标为 `legacy_unverified`，必须重跑对应 harness，不能沿用旧 PASS 推进。
+   - 存量 `1.0/1.1` 或缺 `closure_commit` 的 full-track 产物须重跑 phase harness，并让 finalizer/receipt 重新提交 closure；只手改版本号无效。
+   - 缺 `assurance` 读取为 `unknown`；它不能满足 `minimum_assurance`。没有最低保证约束时仍会如实呈现，不静默猜成 `full`。
+   - harness stdout 在既有 `HARNESS_SUMMARY` 块之外新增有界 `NEXT_STEP` 渲染；每个 outer invocation 最多一次。机器解析仍以 summary/JSON 文件为准，不应抓散文行。
+
+
+### 3.0.0：能力裁剪与统一保证等级（Breaking）
+
+- `summary.depth`、`quality_depth`、`missing_optional_inputs` 与 goal `minimum_depth_by_phase` 已删除。新 summary 1.2 使用 `assurance`、`capability_resolutions` 与 `capability_resolution_contract_fingerprint`；旧 summary 必须重跑，不提供双字段兼容。
+- contract 的 `tiers`、`when`、`satisfies`、input 级 required/optional、`alternatives`、`normalizer` 与 `absent_effect` 已删除。迁移为 input 的有序结构化 `artifact`/`derive` sources，以及 capability 的 `tracks`、`axis`、`applicability_provider_id` 和 `on_missing`。
+- `minimum_assurance` 只影响 `assess@1` 的 `insufficient_assurance`；它不能放宽 quality axes、phase closure 或 release。`pruned` 不再改写 quality axes、closure 或 release，而留在 `assurance`、`capability_resolutions` 和 assess 的 `observed.degradations`；仅 `blocked` 能触发质量/完成态收紧。`AxisResolution.reason_code` 已删除，assess degradation 的 `reason_code=capability_pruned` 保留为溯源。
+- testing 的 `derive.adhoc-cases` 只读取显式 `--adhoc-cases` 输入；goal requirement 不再被隐式当作 adhoc cases。零个 case，或单个少于两步且没有 expected 的规范化 adhoc 输入，会在 resolver 中保持 `absent`，不会伪装成可满足 fail-policy capability。
+- 先前 closed 的 fallback phase 也必须重跑/重新闭环：evidence 绑定项目内 applicability 依赖和每一次实际 source attempt，缺失的高优先级 artifact 后来出现会使旧 closure stale。framework contract 仅以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance，升级 framework 不会使消费者历史 feature stale。带上游 producer 指针的裁剪只有在阻塞下游 `on_missing: fail` core capability 时才形成 producer 定向的 `pruned` assess gap。
+2. **Skill contract 成为运行时输入**：结构化 inputs、capabilities、produces 与 checks 由 `skills/feature/<skill>/contract.yaml` 声明；写边界与 closure 仍由既有 policy/evidence 机制负责。自定义 Skill/phase 需要在对应 Skill 目录补 contract，否则一致性门禁失败。
+3. **`next.json` 是投影**：`assess@1` 从 summary/closure/evidence/goal 指纹重算 gap 与一个 recommendation；不要写脚本直接编辑 `next.json`。
+4. **Goal 只有一个调和循环**：interactive 与 detached 都执行 `assess → authorize → one phase → reassess`。`goal-mode` Skill 不再维护下一阶段表。
+5. **用户模式改为“有人在场 / 无人值守”**：明确意图不再二次确认，歧义使用 registry `goal.run_mode`；`--detach` 恒为无人值守。
+
+Adapter 作者须按需补 root `goal_capability`：
+
+```yaml
+goal_capability:
+  mode: external_runner
+  in_session_reconcile: false
+  phase_context_isolation: false
+  supports_resume: false
+  handoff: none
+```
+
+旧 adapter 可不改：缺失字段按保守默认处理，但不会获得会话内自治或 handoff。`in_session_reconcile=true` 要求 context isolation；handoff 要求 resume。
+
+每个权威 goal run 新增：
+
+- `run-control.json`（`run-control@1`）：持久化单调 epoch 与 process/session owner；
+- 原子 handoff mailbox：只允许当前 owner 在 phase 边界消费；
+- `phase_verdict.reconcile_observation` 与 `assess_recommendation`：记录调和输入和最终推荐。
+
+所有权变化后，旧 owner 的 event/progress/manifest/phase 写入都会因 fencing 被拒绝。不要删除或重置 `run-control.json` 来“解锁”；session 过期也不会自动转移所有权。恢复应使用协作 handoff，或用户明确的 force takeover/force-resume。
+
+既有 manifest、events、progress、trust ledger 和 `run_id` 不做格式转换；session↔detached handoff 继续使用同一账本。dry-run 不在 `.dry` 外写 `next.json`。
+
+相关说明：[Skill 契约](docs/concepts/skill-contracts.md)、[调和循环](docs/concepts/reconcile-loop.md)、[Goal 运行手册](docs/operations/goal-mode-runbook.md)。
 ---
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）

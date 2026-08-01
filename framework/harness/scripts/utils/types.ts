@@ -3,6 +3,20 @@
 // ============================================================================
 
 import type { RefElementEntry } from './fidelity-shared';
+import type { CapabilityResolution } from './capability-resolution';
+
+/**
+ * Claude Code 内核家族 adapter（plan c7a9e2f4）：CLI 参数 / stream-json 信封 /
+ * hooks 协议 / slash 机制同源。codeagent=Claude Code CLI fork（物化目录 .cac，
+ * 二进制 codeagentcli，2026-07-29 宿主探针实证信封逐字段同构）。
+ * 消费方注意：本谓词只覆盖「内核同源」语义（信封解析、argv 复用、事件 forceParse 等）；
+ * 文案 / 目录名 / 身份标记类分支勿盲目收编——目录名以各 adapter.yaml target 为准。
+ */
+export const CLAUDE_KERNEL_ADAPTERS: ReadonlySet<string> = new Set(['claude', 'codeagent']);
+
+export function isClaudeKernelAdapter(name: string | null | undefined): boolean {
+  return typeof name === 'string' && CLAUDE_KERNEL_ADAPTERS.has(name);
+}
 
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
@@ -471,10 +485,10 @@ export interface SoftAdvisory {
 
 /** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐）
  * schema 1.1（blind-visual-hardening d1）：新增 report_validity + quality_axes +
- * release_readiness + completion_status——writer 恒写 1.1；1.0 仅兼容读取，
- * 不作 1.1 completion 干净依据（verify-feature-completion 强制）。 */
+ * release_readiness + completion_status。schema 1.2 新增 assurance + capability resolution + closure_commit；
+ * writer 恒写 1.2，1.0/1.1 仅兼容读取并视作 legacy_unverified。 */
 export interface HarnessRunSummary {
-  schema_version: '1.0' | '1.1';
+  schema_version: '1.0' | '1.1' | '1.2';
   phase: Phase;
   feature: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
@@ -554,6 +568,18 @@ export interface HarnessRunSummary {
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
+  /** Mechanical capability projection; legacy summaries read as unknown. */
+  assurance?: 'blocked' | 'degraded' | 'full' | 'not_applicable';
+  /** Immutable capability preflight result written by the runner. */
+  capability_resolutions?: CapabilityResolution[];
+  capability_resolution_contract_fingerprint?: string | null;
+  /** Full-track verified closure marker. It intentionally excludes the manifest hash. */
+  closure_commit?: {
+    schema_version: '1.0';
+    committed_at: string;
+    receipt_path: string;
+    evidence_manifest_path: string;
+  };
   /** t2 v2（receipt-slim run identity）：base summary 生成时刻（ISO） */
   generated_at?: string;
   /** t2 v2：生成时 git HEAD——slim 回执须与 claimed_completion_commit_sha 及当前 HEAD 三方一致，杜绝旧 PASS 件复用 */
@@ -620,6 +646,11 @@ export interface ScriptReport {
   feature: string;
   timestamp: string;
   project_root: string;
+  /** Capability preflight mechanical projection; never agent-authored. */
+  assurance: 'blocked' | 'degraded' | 'full' | 'not_applicable';
+  /** Immutable pre-check report, absent only for global phases. */
+  capability_resolutions: CapabilityResolution[];
+  capability_resolution_contract_fingerprint: string | null;
   checks: CheckResult[];
   summary: ReportSummary;
   compat_applied?: ScriptReportCompatApplied;

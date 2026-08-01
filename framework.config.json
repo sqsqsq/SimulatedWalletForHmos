@@ -8,6 +8,7 @@
   "materialized_adapters": [
     "chrys",
     "claude",
+    "codeagent",
     "codex",
     "cursor",
     "generic",

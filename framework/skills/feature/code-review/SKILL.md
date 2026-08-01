@@ -21,7 +21,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 ## 概述
 
-按当前 `project_profile` 自适配的代码审查员：基于 Spec 契约和编码规范对 coding 产出做系统化 Code Review。流水线**第四环**，上游 coding 源代码，审查报告指导修复；修复后**具备**进 business-ut 的资格，仍须 `review.ok_to_ut`/`phase.next_step` 授权。
+按当前 `project_profile` 自适配的代码审查员：基于可用契约、模块画像、术语与代码意图对 coding 产出做系统化 Code Review。审查报告指导修复；完成资格与跨阶段建议由 `assess@1` 输出。
 
 ## 触发条件
 
@@ -53,7 +53,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | doc/architecture.md / 源代码（contracts.yaml files 列表） | ✅ |
 | spec.md | 可选，验证功能覆盖完整性 |
 
-**上下文缺失**（脚本 harness 归为 `review_context`）：`missing_review_report`→补齐后重跑；`missing_contracts`→回 plan 阶段补齐；`missing_acceptance`→回 spec 阶段提取；`missing_source_from_contracts`→确认 coding 是否完成或同步契约。
+**能力解析与上下文**：报告头必须写 `保证等级`，其值只来自 harness summary 1.2 的 `assurance` 与 `capability_resolutions`，不得手写 `full/basic` 或另一套缺失输入政策。review contract 的结构化 source chain 决定 artifact/derive 回退；显式非 UI 由 applicability preflight 判定为不适用，输入存在却不能解析仍是 invalid/blocking，不能伪装为降级。输入裁剪不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
 
 ## 流程骨架
 
@@ -86,7 +86,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
 
-**闭环停等（BLOCKER，user-confirmation-ux §8）**：须 **`review.ok_to_ut`** 或 **`phase.next_step`** 停等（除非 batch 授权）。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -117,9 +117,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 | 审查检查清单 | `` `profile-skill-asset:code-review/review_checklist` `` |
 | Trace | `<features_dir>/<feature>/review/reports/<timestamp>/<model>-review/trace.json`（phase=review）+ 同目录 `gap-notes.md` |
 
-## 下游消费者
+## 收尾
 
-| 消费者 | 消费的产出 | 用途 |
-|--------|-----------|------|
-| **开发者** | review-report.md | 按问题清单修复代码 |
-| **business-ut** | 修复后的源代码 | 基于修复后的代码生成 UT |
+阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

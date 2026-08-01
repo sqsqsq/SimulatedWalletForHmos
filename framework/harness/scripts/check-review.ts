@@ -66,34 +66,6 @@ function loadDesign(ctx: CheckContext): string | null {
 
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
-  if (!ctx.featureSpec.contracts) {
-    results.push({
-      id: 'review_context_contracts',
-      category: 'structure',
-      description: 'Review 阶段需要 contracts.yaml 作为审查边界',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')} 不存在，无法确定源码文件、接口契约和模块边界。`,
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
-      suggestion: '回到 plan 阶段补齐 contracts.yaml 后重跑 review harness。',
-      failure_kind: 'missing_contracts',
-      blocking_class: 'review_context',
-    });
-  }
-  if (!ctx.featureSpec.acceptance) {
-    results.push({
-      id: 'review_context_acceptance',
-      category: 'structure',
-      description: 'Review 阶段需要 acceptance.yaml 作为验收追溯基准',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')} 不存在，无法审查需求验收覆盖和异常场景处理。`,
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'acceptance.yaml')],
-      suggestion: '回到 spec 阶段提取 acceptance.yaml 后重跑 review harness。',
-      failure_kind: 'missing_acceptance',
-      blocking_class: 'review_context',
-    });
-  }
   const files = ctx.featureSpec.contracts?.files ?? [];
   const missingSources = files.filter(f => f.endsWith('.ets') && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
@@ -494,7 +466,7 @@ function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckRes
 
 function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
   const metadata = extractMetadata(report);
-  const required = ['模块标识', '审查日期', '审查版本'];
+  const required = ['模块标识', '审查日期', '审查版本', '保证等级'];
   const missing = required.filter(f => !metadata[f]);
 
   if (missing.length === 0) {

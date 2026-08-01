@@ -117,6 +117,7 @@ import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   isAgentSideGoalHarness,
   mergeAndWritePhaseState,
+  syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
   runSyncClosure,
   type ReceiptValidation,
@@ -141,6 +142,15 @@ import {
 } from './workflow-loader';
 import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
+import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
+import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
+import {
+  assertCapabilityConsumption,
+  capabilityResolutionChecks,
+  resolveCapabilityReport,
+  type CapabilityResolutionReport,
+} from './scripts/utils/capability-resolution';
+import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
 import {
   dispatchLifecycleHooks,
   type HookDispatchPayload,
@@ -193,7 +203,7 @@ import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPat
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
+  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
@@ -223,6 +233,7 @@ Harness — Spec/Harness 验证工具
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
+  --adhoc-cases <text>      normalized fallback cases when testing has no acceptance.yaml
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）；一并清理未收口的 .current-correction.json（C5-full）
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
@@ -666,6 +677,40 @@ async function main(): Promise<void> {
   }
 
   let checks: CheckResult[] = [];
+  // Contract capability resolution is the one immutable pre-check report. It is
+  // intentionally computed before checker execution and never receives runtime
+  // build/install/run outcomes.
+  let capabilityReport: CapabilityResolutionReport | undefined;
+  if (!phaseIsGlobal) {
+    try {
+      const capabilityInput = resolveCapabilityResolutionEntryInput({
+        projectRoot,
+        feature,
+        phase,
+        featuresDir: featuresRel,
+        goalRunId: process.env.MAISON_GOAL_RUN_ID,
+        explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
+      });
+      capabilityReport = resolveCapabilityReport({
+        frameworkRoot: resolvedFrameworkRoot,
+        projectRoot,
+        feature,
+        phase,
+        track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+        ...capabilityInput,
+      });
+    } catch (error) {
+      checks.push({
+        id: 'capability_resolution_contract',
+        category: 'structure',
+        description: 'feature capability contract resolves before checker execution',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: (error as Error).message,
+        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
+      });
+    }
+  }
   // 防漂移 preflight（c2）：全局框架自检，全模式入口直调，不经 capability-registry / profile。
   checks.push(...runFrameworkIntegrityPreflight({ frameworkRoot: resolvedFrameworkRoot, projectRoot }));
   // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
@@ -721,9 +766,17 @@ async function main(): Promise<void> {
   checks.push(...(await emitLifecycle('post_verifier')));
   checks.push(...(await emitLifecycle('post_phase')));
 
+  if (capabilityReport) {
+    // Capability-owned CheckResults are the sole materialization of the immutable
+    // pre-check report. Runtime checker facts remain separate; duplicate IDs prove
+    // a checker attempted to contradict the contract and fail consumption.
+    checks.push(...capabilityResolutionChecks(capabilityReport));
+    assertCapabilityConsumption(capabilityReport, checks);
+  }
+
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
-  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot);
+  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot, capabilityReport);
   printReportToConsole(scriptReport, {
     failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
   });
@@ -799,26 +852,86 @@ async function main(): Promise<void> {
   // t2 receipt-slim（openspec receipt-slim）：base→骨架→check（读本次 base）→closure patch。
   // 拆环：旧序 receiptValidation 先于 summary 落盘，check-receipt 直读 summary 时会读到
   // 上次 run 的旧件；现在 base summary（无 receipt 依赖、原子写）先落盘。
-  const baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
   }
   const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
-  mergeAndWritePhaseState(projectRoot, workflowSpec, {
-    phase,
-    feature,
-    status: 'harness_finished',
-    last_run_at: new Date().toISOString(),
-    verdict: finalReport.summary.verdict,
-    blocker_count: finalReport.summary.blockers,
-    receipt: receiptValidation,
-  });
-
-  const runSummary = patchRunSummaryClosure(projectRoot, finalReport, baseSummary, receiptValidation, resolvedFrameworkRoot);
+  const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  let runSummary: HarnessRunSummary = baseSummary;
+  let closureFinalized = false;
+  if (
+    !phaseIsGlobal &&
+    closureTrack === 'full' &&
+    finalReport.summary.verdict === 'PASS' &&
+    receiptValidation?.status === 'passed'
+  ) {
+    try {
+      const finalized = finalizePhaseClosure({
+        projectRoot,
+        frameworkRoot: resolvedFrameworkRoot,
+        feature,
+        phase,
+        receipt: { ...receiptValidation, status: 'passed' },
+        blockerCount: finalReport.summary.blockers,
+        persistPhaseState: () =>
+          syncPhaseStateOnReceiptPassStrict(
+            projectRoot,
+            feature,
+            phase,
+            receiptValidation,
+            {
+              blocker_count: finalReport.summary.blockers,
+              frameworkRoot: resolvedFrameworkRoot,
+            },
+          ),
+      });
+      runSummary = finalized.summary;
+      closureFinalized = true;
+    } catch (err) {
+      const e = err as Error;
+      console.error(`   ✗ closure finalization 失败: ${e.message}`);
+      finalReport = failScriptReportWithFatalError(
+        finalReport,
+        'closure_finalization',
+        e,
+        resolvedFrameworkRoot,
+      );
+      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+    }
+  }
+  if (!closureFinalized) {
+    mergeAndWritePhaseState(projectRoot, workflowSpec, {
+      phase,
+      feature,
+      status: 'harness_finished',
+      last_run_at: new Date().toISOString(),
+      verdict: finalReport.summary.verdict,
+      blocker_count: finalReport.summary.blockers,
+      receipt: receiptValidation,
+    });
+    runSummary = patchRunSummaryClosure(
+      projectRoot,
+      finalReport,
+      baseSummary,
+      receiptValidation,
+      resolvedFrameworkRoot,
+    );
+  }
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
   }
 
+  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL) {
+    assessAndRenderNextStep({
+      projectRoot,
+      frameworkRoot: resolvedFrameworkRoot,
+      feature,
+      phase,
+      mode: isAgentSideGoalHarness() ? 'goal_mode' : 'manual',
+      status: `${runSummary.verdict}/${runSummary.closure_status ?? 'open'}`,
+    });
+  }
   // review-fix 轮3（codex P2-2）：账本落盘失败在交互态也 fail-closed——ledger 是熔断与
   // 校准的持久化基础，写失败不得以 exit 0 溜走（goal 态另有 summary 消费路径双保险）。
   if (runSummary.visual_round?.disposition === 'append_failed') {
@@ -991,7 +1104,10 @@ function resolveAssetAxisInheritance(
       quality_axes?: { asset?: { applicable?: boolean; verdict?: string } };
       asset_debt_revision?: string;
     };
-    if (parsed.schema_version !== '1.1' || !parsed.quality_axes?.asset) return null;
+    if (
+      (parsed.schema_version !== '1.1' && parsed.schema_version !== '1.2') ||
+      !parsed.quality_axes?.asset
+    ) return null;
     const upstreamVerdict = String(parsed.quality_axes.asset.verdict ?? 'UNVERIFIED');
     const summaryHash = createHash('sha256').update(raw).digest('hex').slice(0, 16);
     const issues: string[] = [];
@@ -1215,6 +1331,9 @@ function writeRunSummaryBase(
   const lattice = deriveSummaryVerdictLattice(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
+    report.capability_resolution_contract_fingerprint === null
+      ? undefined
+      : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
   );
   // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
   // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
@@ -1260,7 +1379,7 @@ function writeRunSummaryBase(
     });
   }
   const summary: HarnessRunSummary = {
-    schema_version: '1.1',
+    schema_version: '1.2',
     phase: report.phase,
     feature: report.feature,
     verdict: effectiveVerdict,
@@ -1286,6 +1405,9 @@ function writeRunSummaryBase(
     // base 初值：未闭环/等待 receipt——closure 定稿归 patchRunSummaryClosure。
     next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
     closure_status: 'open',
+    assurance: report.assurance,
+    capability_resolutions: report.capability_resolutions,
+    capability_resolution_contract_fingerprint: report.capability_resolution_contract_fingerprint,
     // t2 v2（codex BLOCKER3）：run identity——slim 回执三方绑定的机器锚（同版本 framework 下
     // 旧 PASS 件复用被 sha 失配拒绝）。
     generated_at: new Date().toISOString(),
@@ -1303,11 +1425,10 @@ function writeRunSummaryBase(
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
   }
-  // codex 三轮 P1-4：writer 侧 fail-fast——1.1 契约唯一权威校验；违反=框架缺陷，
-  // 宁可 harness 崩溃也不落一份缺 lattice 的"半 1.1"summary 让消费方各自猜。
+  // Writer fail-fast：1.2 extends the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);
   if (v11Errors.length > 0) {
-    throw new Error(`[quality-axes] summary 1.1 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
+    throw new Error(`[quality-axes] summary 1.2 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
   }
   atomicWriteJson(path.join(dir, 'summary.json'), summary);
   return summary;

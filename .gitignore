@@ -74,3 +74,6 @@ doc/features/*/ux-reference/_fidelity-cache/
 
 # Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
 /scratch/
+
+# Personal / local agent settings (per developer, gitignored)
+**/.cac/settings.local.json

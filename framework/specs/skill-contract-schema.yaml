@@ -1,0 +1,106 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://skill-contract@2"
+title: AgentMaison feature skill contract
+type: object
+required: [schema_version, skill, skill_doc, phases]
+additionalProperties: false
+properties:
+  schema_version:
+    const: "1.0"
+  skill:
+    type: string
+    pattern: "^[a-z][a-z0-9-]*$"
+  skill_doc:
+    type: string
+    const: SKILL.md
+  phases:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      $ref: "#/$defs/phase"
+$defs:
+  phase:
+    type: object
+    required: [tracks, inputs, capabilities, produces, verifies]
+    additionalProperties: false
+    properties:
+      tracks:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { enum: [full, lite] }
+      inputs:
+        type: array
+        items: { $ref: "#/$defs/input" }
+      capabilities:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/capability" }
+      produces:
+        type: array
+        items: { $ref: "#/$defs/output" }
+      verifies:
+        type: object
+        required: [check]
+        additionalProperties: false
+        properties:
+          check: { type: string, pattern: "^check-[a-z-]+\\.ts$" }
+      control_dependencies:
+        type: array
+        uniqueItems: true
+        items: { type: string }
+  input:
+    type: object
+    required: [id, sources]
+    additionalProperties: false
+    properties:
+      id: { type: string, pattern: "^[a-z][a-z0-9_]*$" }
+      sources:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/input_source" }
+  input_source:
+    oneOf:
+      - type: object
+        required: [kind, artifact]
+        additionalProperties: false
+        properties:
+          kind: { const: artifact }
+          artifact: { type: string, pattern: "^[a-z][a-z0-9-]*@[1-9][0-9]*$" }
+      - type: object
+        required: [kind, provider_id]
+        additionalProperties: false
+        properties:
+          kind: { const: derive }
+          provider_id: { type: string, pattern: "^[a-z][a-z0-9_.-]*$" }
+  capability:
+    type: object
+    required: [id, axis, inputs, tracks, on_missing]
+    additionalProperties: false
+    properties:
+      id: { type: string, pattern: "^[a-z][a-z0-9_]*$" }
+      axis: { enum: [functional, visual, asset, evidence] }
+      inputs:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { type: string, pattern: "^[a-z][a-z0-9_]*$" }
+      tracks:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { enum: [full, lite] }
+      applicability_provider_id:
+        type: string
+        pattern: "^[a-z][a-z0-9_.-]*$"
+      on_missing: { enum: [prune, fail] }
+  output:
+    type: object
+    additionalProperties: false
+    properties:
+      artifact: { type: string, pattern: "^[a-z][a-z0-9-]*@[1-9][0-9]*$" }
+      kind: { const: source }
+      id: { type: string }
+    oneOf:
+      - required: [artifact]
+      - required: [kind, id]

@@ -30,6 +30,7 @@ import {
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
+import type { CapabilityResolutionReport } from './capability-resolution';
 
 // --------------------------------------------------------------------------
 // 报告目录管理
@@ -115,7 +116,10 @@ export function generateScriptReport(
   projectRoot: string,
   checks: CheckResult[],
   frameworkRoot?: string,
+  capabilityReport?: CapabilityResolutionReport,
 ): ScriptReport {
+  void _harnessRoot;
+  void frameworkRoot;
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
   const report: ScriptReport = {
@@ -123,6 +127,9 @@ export function generateScriptReport(
     feature,
     timestamp: new Date().toISOString(),
     project_root: projectRoot,
+    assurance: capabilityReport?.assurance ?? 'not_applicable',
+    capability_resolutions: capabilityReport?.capabilities ?? [],
+    capability_resolution_contract_fingerprint: capabilityReport?.contract_fingerprint ?? null,
     checks: finalized.checks,
     summary,
   };
@@ -151,9 +158,13 @@ export function generateScriptReport(
  *   3. 覆盖写回 script-report.json
  *   4. 删除同目录下可能残留的 ai-prompt.md / merged-report.md（避免下游误读）
  */
+export function fatalFailureKindForStage(stage: 'assemble_ai_prompt' | 'generate_merged_report' | 'closure_finalization'): 'closure_finalization_failed' | 'framework_bug' {
+  return stage === 'closure_finalization' ? 'closure_finalization_failed' : 'framework_bug';
+}
+
 export function failScriptReportWithFatalError(
   report: ScriptReport,
-  stage: 'assemble_ai_prompt' | 'generate_merged_report',
+  stage: 'assemble_ai_prompt' | 'generate_merged_report' | 'closure_finalization',
   err: Error,
   frameworkRoot?: string,
 ): ScriptReport {
@@ -164,6 +175,9 @@ export function failScriptReportWithFatalError(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `[Harness runner fatal] ${err.message}\n${err.stack ?? ''}`,
+    failure_kind: fatalFailureKindForStage(stage),
+    blocking_class: stage === 'closure_finalization' ? 'closure_finalization' : 'framework_bug',
+    actionability: 'human_only',
   };
 
   const updated: ScriptReport = {
@@ -396,6 +410,8 @@ export function generateMergedReport(
   lines.push(`# ${phase.toUpperCase()} 阶段验证报告 — ${feature}`);
   lines.push('');
   lines.push(`> 生成时间: ${new Date().toISOString()}`);
+  lines.push(`> 保证等级: ${scriptReport.assurance}`);
+  lines.push(`> 能力解析: ${scriptReport.capability_resolutions.length} 项`);
   lines.push('');
 
   // 脚本 Harness 摘要
@@ -523,6 +539,8 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'='.repeat(60)}`);
   console.log(`  Harness Script Report — ${report.phase}/${report.feature}`);
   console.log(`  ${report.timestamp}`);
+  console.log(`  assurance=${report.assurance}`);
+  console.log(`  capability_resolutions=${report.capability_resolutions.length}`);
   console.log(`${'='.repeat(60)}`);
   console.log('');
 

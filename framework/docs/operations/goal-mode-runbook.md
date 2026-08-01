@@ -7,6 +7,42 @@
 
 `goal-runner` 是 Maison 工具无关的确定性全链路编排器：按 phase DAG 逐阶段 headless 调 agent → 跑 harness → 裁决 → 续行/重试/停止。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
+## 3.0 调和模型：一个循环、两个运行方式
+
+interactive session 与 detached `goal-runner` 现在共用：
+
+```text
+assess@1 → driver authorize/guard → execute one phase → reassess
+```
+
+`assess@1` 是唯一跨 phase 推荐源；runner 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 process guard。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
+
+用户只选择：
+
+| 运行方式 | 行为 |
+|---|---|
+| 有人在场 | 自动推进；遇到 human-only waiting item 立即询问 |
+| 无人值守 | 自动推进；waiting item 停放，run 可 detach/resume |
+
+明确自然语言意图直接映射；歧义走 registry `goal.run_mode`；CLI `--detach` 恒为无人值守。菜单不得出现 `in-session`、`headless` 或 capability tier。
+
+### Adapter capability 与降级
+
+adapter root `goal_capability` 新增：
+
+- `in_session_reconcile`
+- `phase_context_isolation`
+- `supports_resume`
+- `handoff: none | to_detached | bidirectional`
+
+in-session 自治必须同时声明 reconcile 与 phase context isolation；缺失时降级为手动 harness+assess。无人值守仍要求 external runner preflight。handoff 还要求 resume 能力。
+
+### Run control 与 handoff
+
+每个权威 run 持久化 `run-control.json`（`run-control@1`）。`current_epoch` 单调递增且 owner 释放后保留；所有 assess、phase invoke、harness/finalizer、event/progress/manifest 写入与终态发布都须通过 fencing。
+
+session 与 detached process 切换使用原子 mailbox。 requester 只写 request；当前 owner 在 phase verdict 边界写 `handoff_requested`、quiesce、释放；新 owner 以 `epoch+1` CAS 后写 `handoff_accepted`。两者继续使用同一 `run_id` 和 events ledger。过期 session 不会被自动接管，须协作 handoff 或显式 force takeover。
+
 原生 Claude/Codex `/goal` 仅为可选加速层；闭环裁决以 harness `summary.json` + runner 为准。
 
 ## 宿主怎么用（产品面）
@@ -101,6 +137,7 @@ UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜�
 ## Headless 路径（MVP 硬化）
 
 - Claude：`claude -p` + `--permission-mode dontAsk` / `--allowedTools`（结构化 argv，不经 shell tokenize）
+- CodeAgent：`codeagentcli -p`——Claude Code 内核 fork，flags 与 Claude 全套等价（2026-07-29 宿主实证含 stream-json/dontAsk/stdin prompt），agent-invoke 按家族谓词复用 claude argv；宿主身份 env=`CODEAGENT=1`，hook 进程注入 `CODEAGENT3_PROJECT_DIR`
 - Codex：`codex exec --sandbox workspace-write --ask-for-approval never|on-request`
 - Cursor：`cursor-agent`（回落 `agent`）`-p` + prompt **positional argv**（`-p` 已含 write/shell；`approval_mode=never` 时加 `--force --trust`）。**禁止** `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
 - Chrys：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`（文件传 prompt；preflight 空 `PROMPT_FILE` 时回退 positional）。前置：CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；`bootstrap_runtime` 需 provider 凭据（`~/.chrys` 或 `.env`）；先手跑 `chrys run "hi" --agent Code` 验证。无流式输出（`agent-output.log` phase 结束前可能为空）；退出码 0/1(stderr JSON)/124/130。
@@ -192,7 +229,7 @@ goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[
 | **指纹级熔断（f7a3d9c2）** | testing 视觉迭代：check 比对 `visual-rounds.ledger.jsonl`，连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差 → `failure_kind=no_progress_fuse` **首触即 HALT**（不烧重试预算；归因 `no_fix_attempt`/`ineffective_fix` 在 blocker details；duplicate 重放保证 agent 自跑首检的 fuse 外层 gate 仍可见）。与旧 `no_progress_visual_gap`（blocker-id 粗粒度签名熔断）并存：fuse 更细更先触发，signature 熔断留作兜底 |
 | **账本完整性（f7a3d9c2）** | testing gate/resume 启动时 events↔ledger 反向对账：期望行缺失/被改（含 decision）→ `visual_ledger_integrity` HALT——删账本行绕不过熔断，损坏不解释成空历史（运行时一致性防护，非密码学防篡改） |
 | **chrys sentinel** | `agent-output.log` 逐行 JSON 命中 `code=headless_interaction_required` → 立即 HALT + `agent_interaction_required` 事件 |
-| **重试上下文** | 产物缺失类失败不注入「先 revert」话术；仅 `code_regression` 保留 revert-first |
+| **重试上下文** | 产物缺失类失败不注入「先 revert」话术；仅 `code_regression` 保留 revert-first。testing 的可信根失败非空且全为 `test_contract` 时，后置精修并跨 retry/`--resume` 恢复该分类，prompt 只检查 selector、ui-spec、测试锚点或 runner 契约，禁止据此修改产品源码 |
 
 events 字段：`failure_kind_classified`、`blocker_signature`、`halt_reason`、`interaction_question`；f7a3d9c2 新增 `visual_round`（loop_id/visual_attempt/row_hash/disposition/fused——账本回执，integrity 对账期望集）与 `critic_receipt_produced`。轮次身份：runner 对 agent 与 gate 双注入 `MAISON_GOAL_RUN_ID`/`MAISON_GOAL_ATTEMPT`（attempt=events 回放的 invocation 序数，跨 `--resume` 单调，绝不用 phase 内 retries 计数）。
 

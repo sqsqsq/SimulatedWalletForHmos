@@ -35,6 +35,14 @@ fields:
     type: array
     items: string
     description: Optional ordered phase list overriding workflow auto_chain
+  minimum_assurance:
+    type: object
+    additionalProperties:
+      type: string
+      enum: [degraded, full]
+    description: >
+      Optional sparse phase-to-assurance floor. It only adds assess insufficient_assurance
+      gaps and never waives quality-axis, closure, or release rules.
   budget:
     type: object
     properties:
