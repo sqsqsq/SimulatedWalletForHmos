@@ -664,7 +664,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "b9a4669db3eba2f324840c0562df9c44523da2d5ef59965187a626c2f3a627df"
+      "sha256": "7acdf2b161853798a74cd6c8ccbc4e7c248bde93cdcb5aa2e791fb465e095f74"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -720,7 +720,7 @@
     },
     {
       "path": "harness/scripts/goal-mode-entry.ts",
-      "sha256": "be8b8225b7ced9977842f8a05a9d1c83d3befa4a875d8932421bc3d254699f49"
+      "sha256": "7aaf0abda2271ebf046d7b20de4473459a0d40f074a3887a48875111865d20fb"
     },
     {
       "path": "harness/scripts/goal-monitor.ts",
@@ -728,7 +728,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "dc93bd0f5093933a399fb44b30a01a2991b56f5a6741087ddc808c07e29dde1d"
+      "sha256": "c5f5d77a821611426f2d39c74c0de096877ef34b37d5dc60e5ca20e36bdf0d2b"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -848,7 +848,7 @@
     },
     {
       "path": "harness/scripts/utils/adjudication.ts",
-      "sha256": "58ee4c69bd4f00e95519de4fa775fc3489b09c82d7a15d776f2c89101fe267c4"
+      "sha256": "236f1706843c5a4619757dfac1f9e13d4d95bbb7db4036e6454213b2697c66bd"
     },
     {
       "path": "harness/scripts/utils/agent-bundle-paths.ts",
@@ -1100,7 +1100,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-failure-classifier.ts",
-      "sha256": "e76236a15e0a04a18759dfd60c16191fc0ab140b4fe3a0271bcacb6d5fcc9b34"
+      "sha256": "c00ebfb15c2d8735c58dfa78a798e737f8a82a1076f9f2f18060653757f35bd3"
     },
     {
       "path": "harness/scripts/utils/goal-handoff.ts",
@@ -1124,7 +1124,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "b09198d608ef26206a740760750f54059a30664043be67b567dccb7ed247e222"
+      "sha256": "4bbcf7a4180ec1b9d4c5210230dee4069766e67cbfaadd0083502f7b8087d646"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -1320,7 +1320,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-completion-probe.ts",
-      "sha256": "4c00a8fa40e29b120414fea46abba74b85aea4ef74a9e49a9adea0dd4d96b5f1"
+      "sha256": "7ab5978ae8ec556d5514772bb4d273a60887d870863b27f77af7cde54d016185"
     },
     {
       "path": "harness/scripts/utils/phase-device-requirement.ts",
@@ -1372,7 +1372,7 @@
     },
     {
       "path": "harness/scripts/utils/report-generator.ts",
-      "sha256": "5f8638499eaaadee78ba132bb89e6ef2026d3d6285a9f4b7c6565e53e3e47f08"
+      "sha256": "6cf37bd8c38445b14d4f66e36ad8e45f9e9dfb40922ce97882dea169ed28fc35"
     },
     {
       "path": "harness/scripts/utils/resolve-skill-path.ts",
@@ -1532,7 +1532,7 @@
     },
     {
       "path": "harness/templates/phase-completion-receipt.md",
-      "sha256": "c4be71ae5a72daed2c0f3b7b93d344bbda3d3294a73cc3a09d3d06110a96fb28"
+      "sha256": "4e64ee874b71f8e0ee6906e34fee83b09cdec00d0a25c291f4587e869d7f3dc9"
     },
     {
       "path": "harness/trace/gap-notes.template.md",
@@ -1860,7 +1860,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-host-rules.ts",
-      "sha256": "c7f9fbe5c97a339e29801d11d8569fcd8c32b89b6b48a60275ddcd8e1d43cdc0"
+      "sha256": "651962c5f8d8eb6e83a1859a907a0950538b4fa753e17c453520b04f742e4a4c"
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
@@ -1956,7 +1956,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/hvigor-runner.ts",
-      "sha256": "22af9c75cfaaa40aa8095faf245bc45d0bcaebd916c3b6207b09377172e5fd6c"
+      "sha256": "88adb63e9c7750f4e36017030fc24fa633953d5451a1e92c97244b94cea68fcf"
     },
     {
       "path": "profiles/hmos-app/harness/hylyre-root-pollution.ts",
@@ -2800,7 +2800,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "59b76b6aa7eb6587e9fb309c168cde18b0982ad3117c0d159ebbade71d17106c"
+      "sha256": "a14fe43312554f4f416857c949a2d808273efa3b9e7b8ff3f04226e30cb602d9"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
