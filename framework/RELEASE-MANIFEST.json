@@ -312,7 +312,7 @@
     },
     {
       "path": "agents/shared/guard-framework-write-core.mjs",
-      "sha256": "c6c735a8dd4c12a60a90594af010a85371e8fa1f1b0002623ae50e9fd23181b3"
+      "sha256": "5fc41d3456b0559cf9cd5177cf6331ffc6946c8af9387fad0b6e1cccfd7ac8d8"
     },
     {
       "path": "docs/DOC_INVENTORY.yaml",
@@ -672,7 +672,7 @@
     },
     {
       "path": "harness/scripts/check-skills-confirmation-ux.ts",
-      "sha256": "2b3262af4afa4acf77641f595bb515714236d18a7c46c846df3fafb9abf0427c"
+      "sha256": "339461387de1690075b0cf9a9f2c829a97e46697917b40dd3a70c909ab42aeed"
     },
     {
       "path": "harness/scripts/check-skills-index-init-steps.ts",
@@ -728,7 +728,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "9360ba45f4d26d1756da2602a6c438a12f6bf26a8841b8d5b454588a7b84f97e"
+      "sha256": "7422ebd67a1b330969c640a2f60ecaa1068db3a08e6d1a89cb0ff4b2a6494113"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -848,7 +848,7 @@
     },
     {
       "path": "harness/scripts/utils/adjudication.ts",
-      "sha256": "85ffb6ebaca2e12203c1c8f38b91c0dc7375c583deb88babd071582f719fa665"
+      "sha256": "b03db7cd775130f9cde1edf50ee3893554c81c962a1cc6659cf978c51c03c3a3"
     },
     {
       "path": "harness/scripts/utils/agent-bundle-paths.ts",
@@ -887,8 +887,12 @@
       "sha256": "8a3c26c093340bea66382855e2ba920ff40faf38bd598f4141b140201be7ac8f"
     },
     {
+      "path": "harness/scripts/utils/bounded-sync-wait.ts",
+      "sha256": "363ebaaca88c50d9f6e6ae9ee47750821de923027ebe4b2dbca5715f8581d251"
+    },
+    {
       "path": "harness/scripts/utils/canonical-gitignore.ts",
-      "sha256": "f5d92d0d7dbe9a510304e3611f46aaed6ce76e84b7775b63015eb831ccc6c4e8"
+      "sha256": "5a34f96b7ee91d6402b1856edd97e7b8d7760a4df2f3ea1f1a0c4a4063ff85f8"
     },
     {
       "path": "harness/scripts/utils/capability-alias.ts",
@@ -988,15 +992,15 @@
     },
     {
       "path": "harness/scripts/utils/device-readiness-deps.ts",
-      "sha256": "a80f72383700737b04cbf5b0d03408526bb80514dd7baad833c8eeb325e85234"
+      "sha256": "d1e519779eba4171b91f127543d27a0e40243df9135f7d098dd1a3acc8a77629"
     },
     {
       "path": "harness/scripts/utils/device-readiness-gate.ts",
-      "sha256": "aeaba9741a737fc0f5972dfabc9acdde4656645636b259a271f88cb6458bb30a"
+      "sha256": "548f9f207f89d08c60edd2a34429d82c79d2166876dd13073b51eb8e90f66da3"
     },
     {
       "path": "harness/scripts/utils/device-runtime-recovery.ts",
-      "sha256": "ca26dbe5d483bf4c1cbd9d321be41aa5b59ab2f0abc580e4be7bb258f09cbb57"
+      "sha256": "c9765b767be77f9ec6c9114de9807034d175aa0f932ff0244e2b0f231373bcbb"
     },
     {
       "path": "harness/scripts/utils/device-session.ts",
@@ -1012,7 +1016,7 @@
     },
     {
       "path": "harness/scripts/utils/device-unlock-helper.ts",
-      "sha256": "a3b0dc7262eb3db010ce574889b9ff409de5ab09f89193a50fb1d9628275fed4"
+      "sha256": "b8b972bc8356bbcbf1f2afddf760810e4dc22914efde697b9e2bd6cc49741481"
     },
     {
       "path": "harness/scripts/utils/diff-scope.ts",
@@ -1068,7 +1072,7 @@
     },
     {
       "path": "harness/scripts/utils/framework-integrity.ts",
-      "sha256": "f4a3ae9de32a7970a78d2007f08559f754a08bf862348c33f45fe568908a780a"
+      "sha256": "c88e8722e8e8108795139040ee9bcfdd3c0fe7af97109e16317e3b2912847b0b"
     },
     {
       "path": "harness/scripts/utils/framework-local-config.ts",
@@ -1124,7 +1128,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "4bbcf7a4180ec1b9d4c5210230dee4069766e67cbfaadd0083502f7b8087d646"
+      "sha256": "c4a810661224fed98dc11468ac41f503c45af314bc4213a508c0511eed20e1a1"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -1896,7 +1900,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/device-recovery-bridge.ts",
-      "sha256": "745982a8ca96c641e0f78b6c773cfa9d84825e19e948a621d9d583f1032223ca"
+      "sha256": "f597cbcb66d2f4525e71cf02f7a9b44957406639a98acb3f864060618c4cbfc1"
     },
     {
       "path": "profiles/hmos-app/harness/device-test-build-reuse.ts",
@@ -3000,7 +3004,7 @@
     },
     {
       "path": "specs/runtime-artifact-policy.json",
-      "sha256": "da0438d7d8a6b94daf8c900ea88e6d06a9ed87fc1d0369506e7e0bc08d3d0acf"
+      "sha256": "05ca4af822575ebcf4257a5710c214e58705c66cc61063bbf3dc139e5ed7c7a8"
     },
     {
       "path": "specs/skill-contract-schema.yaml",

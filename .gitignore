@@ -77,3 +77,11 @@ doc/features/*/ux-reference/_fidelity-cache/
 
 # Personal / local agent settings (per developer, gitignored)
 **/.cac/settings.local.json
+
+# Framework runtime artifacts (managed by /framework-init)
+!framework/harness/reports/
+!framework/harness/trace/
+framework/harness/trace/*
+!framework/harness/trace/trace.schema.json
+!framework/harness/trace/gap-notes.template.md
+!framework/harness/state/
