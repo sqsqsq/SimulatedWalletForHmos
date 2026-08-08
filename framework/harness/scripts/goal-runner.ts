@@ -42,7 +42,6 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
-  buildLineageMismatchGuidance,
 } from './utils/await-confirm-guidance';
 import {
   decide,
@@ -113,6 +112,7 @@ import {
   computeManifestIdentityFields,
   computeManifestIdentityHash,
   diffManifestIdentityFields,
+  inheritSuccessorManifest,
   loadGoalManifestFile,
   loadGoalManifestFromRun,
   manifestIdentityFieldDigest,
@@ -179,33 +179,29 @@ import {
 } from './utils/agent-invoke';
 import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
 import {
-  commitInvalidationTx,
+  discardPassSnapshotCache,
   diffFrozenAgainstManifest,
-  readFrozenManifest,
   loadTrustedSnapshotContext,
   phaseHasFrozenSurface,
   PASS_SNAPSHOT_ANCHOR_ENV,
-  PASS_SNAPSHOT_HMAC_ENV,
   formatSnapshotAnchorEnv,
   readPassSnapshotHead,
-  recoverInvalidationJournal,
   resolveFrozenDeliverables,
-  restoreFrozenFromSnapshot,
   passSnapshotPhaseDir,
+  nextPassSnapshotEpoch,
   takePassSnapshot,
   recordCodingBase,
   resolveGitHeadSha,
   deleteRunTrustState,
   isValidRunIdBasename,
 } from './utils/pass-snapshot';
-import { runInvalidationTx } from './utils/invalidation-tx';
 import {
   checkPlanAuthority,
   resolveScopeReplanContext,
   tryScopeReplan,
   type ScopeReplanPromptContext,
 } from './utils/scope-replan';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHash } from 'crypto';
 import {
   produceCriticReceipt,
   produceSpecRefsReceipt,
@@ -265,7 +261,10 @@ import {
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
+  collectSupersededAncestorEvents,
+  extractSupersedeTargets,
   resolveResumeFromEvents,
+  rebuildOutcomesFromEvents,
   resolveResumeState,
   resolveWallClockStartMs,
   countCumulativeAdvanceBlocked,
@@ -448,7 +447,13 @@ let progressPhase: FeaturePhase | null = null;
 let progressHeartbeatHook: (() => void) | null = null;
 
 /** Set once the manifest is loaded; lets signal/exit handlers locate events.jsonl. */
-let terminalEventCtx: { reportDir: string; projectRoot: string } | null = null;
+let terminalEventCtx: {
+  reportDir: string; projectRoot: string;
+  /** T1①：优雅收口要生成报告，须知道 run 身份 */
+  runId: string; feature: string;
+  /** codex 第九批 P1：报告阶段视图从 events 重建（不写空表抹掉 resume 进度）——须知道链 */
+  chain: FeaturePhase[]; workflowChain: string[];
+} | null = null;
 /** True once any run_end (normal or interrupted) is written — keeps terminal event idempotent. */
 let runConcluded = false;
 
@@ -497,7 +502,14 @@ export function evaluateForegroundSurvival(opts: {
   return opts.foregroundOk ? 'warn' : 'block';
 }
 
+/** codex 第九批收尾 P3：进程级幂等——`main()` 可被程序化多次调用（driver/测试），
+ * 重复注册会累积 SIGINT/SIGTERM/SIGBREAK handler（全量 unit 已触发
+ * MaxListenersExceededWarning）。布尔守卫即可，不引入新生命周期机制。 */
+let signalHandlersInstalled = false;
+
 function setupSignalHandlers(): void {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
   const handler = (signal: NodeJS.Signals): void => {
     // Synchronous + first: a host kill may not grant async time, so the terminal event
     // must land (appendFileSync) before the async tree-kills below.
@@ -584,6 +596,66 @@ function writeTerminalEvent(reason: string): void {
   }
 }
 
+/**
+ * T1①（e5d8a2c4）：**一切 terminal 出口必须经正常收口**——run_end 事件 + 报告落盘，
+ * 禁 throw 逃逸出 `main()`。
+ *
+ * 在案实锤（宿主 run1/6a969a 与 fa0663 三连）：runChain 内裸 throw 逃逸，CLI 外层
+ * catch 只补一条裸 `run_end{INTERRUPTED}`——**报告不生成**、退出方式与崩溃无异；
+ * driver 直调 `main()` 时连那条兜底事件都没有（棘轮单测钉过这个形态）。
+ *
+ * 返回 false＝run 身份尚未建立（manifest 解析前的异常），只能照旧抛给 CLI。
+ * 报告阶段视图**从 events 重建**（codex 第九批 P1：初版写空表会把 resume run 已有的
+ * 真实进度抹掉——events 是权威来源，就该从 events 折叠，而不是"不可信所以清空"）。
+ */
+function concludeInterruptedRun(err: unknown): boolean {
+  if (runConcluded || !terminalEventCtx) return false;
+  const ctx = terminalEventCtx;
+  runConcluded = true;
+  const message = ((err as Error)?.message ?? String(err)).slice(0, 2000);
+  try {
+    appendEvent(ctx.reportDir, ctx.projectRoot, {
+      type: 'run_end',
+      status: 'INTERRUPTED',
+      reason: 'uncaught_exception',
+      error: message,
+    });
+  } catch { /* best-effort：事件写不进也要试着写报告 */ }
+  try {
+    const evs = loadAuthoritativeEvents(
+      path.join(ctx.projectRoot, ctx.reportDir, 'events.jsonl'));
+    const outcomes = enrichOutcomesWithProjection(
+      rebuildOutcomesFromEvents(evs, ctx.chain) as GoalPhaseOutcome[],
+      evs as unknown as Array<Record<string, unknown>>,
+    );
+    const report = generateGoalReportJson(ctx.runId, ctx.feature, 'INTERRUPTED', outcomes);
+    writeGoalReport(ctx.projectRoot, ctx.reportDir, report, { workflowChain: ctx.workflowChain });
+  } catch { /* best-effort */ }
+  return true;
+}
+
+/**
+ * codex 第九批 P1：启动期 BLOCKER（run 身份已建立、run_start 已落，但在进入链执行前
+ * 被参数/前置校验拒绝）也必须优雅收口——此前直接 `return 1`/`process.exit(1)`，
+ * events 只有 run_start 没有 run_end，投影成僵尸 RUNNING。
+ */
+function concludeStartupBlocker(reason: string, detail: string): void {
+  if (runConcluded || !terminalEventCtx) return;
+  const ctx = terminalEventCtx;
+  runConcluded = true;
+  try {
+    // codex 第九批收尾 P1：run_end 必须经统一投影——裸 HALTED 会被 reducer 退回
+    // run_start 的 RESUME_READY，supervisor 把需要人修参数的 run 重新拉起
+    appendEvent(ctx.reportDir, ctx.projectRoot, withRunDisposition({
+      type: 'run_end', status: 'HALTED', halt_reason: reason, error: detail.slice(0, 1000),
+    }) as Parameters<typeof appendEvent>[2]);
+  } catch { /* best-effort */ }
+  try {
+    const report = generateGoalReportJson(ctx.runId, ctx.feature, 'HALTED', []);
+    writeGoalReport(ctx.projectRoot, ctx.reportDir, report, { workflowChain: ctx.workflowChain });
+  } catch { /* best-effort */ }
+}
+
 function readPhaseSummary(
   projectRoot: string,
   feature: string,
@@ -649,6 +721,7 @@ export function runInvokeCapabilityGate(opts: {
     type: 'phase_halt',
     phase: opts.phase,
     halt_reason: 'await_human_capability_gap',
+    probe: 'capability_preflight_ready',
     verdict: 'FAIL',
   });
   console.error(
@@ -811,6 +884,26 @@ export function __testing_setDeviceReadinessGate(fn: DeviceGateFn | null): void 
   injectedDeviceGate = fn;
 }
 
+/**
+ * invoke 前 capability gate 注入（测试用；e5d8a2c4 步骤 1）。
+ *
+ * 为什么需要它：capability gate 排在设备就绪门**之前**，而设备类 capability 的
+ * provider 恰是设备工具链（hdc/hvigor）——临时宿主必然缺，于是"注入设备门造
+ * WAITING 停放"的场景根本走不到设备门。桩掉 capability gate（返回 null=无缺口）
+ * 是唯一薄解；这不改变两门的真实顺序与语义。
+ */
+type InvokeCapabilityGateFn = typeof runInvokeCapabilityGate;
+let injectedCapabilityGate: InvokeCapabilityGateFn | null = null;
+export function __testing_setInvokeCapabilityGate(fn: InvokeCapabilityGateFn | null): void {
+  injectedCapabilityGate = fn;
+}
+
+/** 测试缝：仅在真实 pass snapshot 落盘后触发一次副作用注入；生产路径永不设置。 */
+let injectedAfterPassSnapshot: (() => void) | null = null;
+export function __testing_setAfterPassSnapshot(fn: (() => void) | null): void {
+  injectedAfterPassSnapshot = fn;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
   injectedValidateReceipt = null;
@@ -818,6 +911,8 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedRunHarness = null;
   injectedLayout = null;
   injectedDeviceGate = null;
+  injectedCapabilityGate = null;
+  injectedAfterPassSnapshot = null;
 }
 
 async function runHarnessPhase(
@@ -2032,28 +2127,41 @@ export function resolveFrozenManifestHash(
 }
 
 /**
- * resume 起点的 invalidation 过滤：phase_invalidated 事件之后（事件序）没有该 phase 新的
- * PASS phase_verdict → 该 phase 的旧 outcome 剔除、resume 起点回退到链上最早被剔除位。
+ * resume 起点的 invalidation 过滤：新协议读取一条 phase_backtrack_requested 的
+ * invalidated_phases[]；旧协议继续读取逐 phase 的 phase_invalidated。事件之后没有该
+ * phase 新的 PASS phase_verdict → 该 phase 的旧 outcome 剔除、resume 起点回退到最早位。
  */
 export function applyInvalidationsToResume(
   chain: readonly FeaturePhase[],
   outcomes: GoalPhaseOutcome[],
-  events: ReadonlyArray<{ type?: string; phase?: string; verdict?: string }>,
-): { outcomes: GoalPhaseOutcome[]; startIndex: number } {
+  events: ReadonlyArray<{
+    type?: string;
+    phase?: string;
+    verdict?: string;
+    invalidated_phases?: unknown;
+  }>,
+): { outcomes: GoalPhaseOutcome[]; startIndex: number; invalidatedPhases: string[] } {
   const stillInvalidated = new Set<string>();
   events.forEach((e, idx) => {
-    if (e.type !== 'phase_invalidated' || typeof e.phase !== 'string') return;
-    const revalidated = events
-      .slice(idx + 1)
-      .some(later => later.type === 'phase_verdict' && later.phase === e.phase && later.verdict === 'PASS');
-    if (!revalidated) stillInvalidated.add(e.phase);
+    const phases = e.type === 'phase_backtrack_requested' && Array.isArray(e.invalidated_phases)
+      ? e.invalidated_phases.filter((p): p is string => typeof p === 'string')
+      : e.type === 'phase_invalidated' && typeof e.phase === 'string'
+        ? [e.phase]
+        : [];
+    for (const phase of phases) {
+      const revalidated = events
+        .slice(idx + 1)
+        .some(later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS');
+      if (!revalidated) stillInvalidated.add(phase);
+      else stillInvalidated.delete(phase);
+    }
   });
-  if (stillInvalidated.size === 0) return { outcomes, startIndex: chain.length };
+  if (stillInvalidated.size === 0) return { outcomes, startIndex: chain.length, invalidatedPhases: [] };
   const filtered = outcomes.filter(o => !stillInvalidated.has(o.phase));
   const earliest = Math.min(
     ...[...stillInvalidated].map(p => chain.indexOf(p as FeaturePhase)).filter(i => i >= 0),
   );
-  return { outcomes: filtered, startIndex: earliest };
+  return { outcomes: filtered, startIndex: earliest, invalidatedPhases: [...stillInvalidated] };
 }
 
 // ---------------------------------------------------------------------------
@@ -2087,21 +2195,15 @@ export function diffVisionLedgerSnapshots(
     .map(a => a.file);
 }
 
-// 五/六轮 review P0-2：resume 校验的真实性锚——events.jsonl 是 agent 可写文件，"最后一条
-// anchor 事件"可与账本同时被伪造。checkpoint：
-//   - 位置在 agent workspace 之外（用户主目录；env MAISON_GOAL_CHECKPOINT_DIR 覆盖，且该
-//     env 已从 agent 子进程剥离——stripTrustAnchorEnv）。诚实边界：主目录并非 OS 级不可写
-//     （Claude 等 adapter 有 Bash），位置只是防误碰；
-//   - **writer authenticity 由 HMAC 承载**（MAISON_HMAC_GOAL_CHECKPOINT，沿用 MAISON_HMAC_
-//     前缀模型——agent-invoke 恒剥离该前缀，密钥对 agent 不可读）：部署配置密钥后
-//     缺 MAC/MAC 失配/损坏一律 invalid → fail-closed halt；未配密钥时如实降级为
-//     ok_unauthenticated（显式事件，不冒充强信任）；
-//   - namespace 绑定 project identity hash + feature + runId（六轮 P1：秒级 runId 跨工程
-//     碰撞会互相覆盖/误报）；payload 另绑 manifest_hash；写入 tmp+rename 原子替换。
-// 状态分立（六轮 P0-2）：absent（须显式 --ack-unverified-ledgers 才可弱信任续跑）/
-// invalid（损坏/验签失败/身份失配——fail-closed 无旁路）/ mismatch / ok / ok_unauthenticated。
-
-export const VISION_CHECKPOINT_HMAC_ENV = 'MAISON_HMAC_GOAL_CHECKPOINT';
+// T2 5a 收口后的 checkpoint 定位：**账本恢复缓存**（同 run resume 时免全量重算），不是
+// 裁决权威——它的存在与否/内容不改变任何权限结果（manifest 出生基线由 events 承载，见
+// resolveManifestIdentityBaseline）。位置在 agent workspace 之外（用户主目录；env
+// MAISON_GOAL_CHECKPOINT_DIR 覆盖）只为防误碰；namespace 绑定 project identity hash +
+// feature + runId（六轮 P1：秒级 runId 跨工程碰撞会互相覆盖/误报）；写入 tmp+rename 原子替换。
+// 状态分立（四态）：absent / invalid（结构损坏/身份失配——丢缓存重算）/
+// mismatch（内容失配——丢缓存重算）/ ok。全部不停死、不求人。
+// 【已删除 · T2 5a 收口刀（codex P2）】`VISION_CHECKPOINT_HMAC_ENV`（MAISON_HMAC_GOAL_CHECKPOINT）
+// ——签名维度整体退出后无消费者；部署侧该 env 变为惰性无效（CLI/配置均忽略）。
 
 function projectIdentityHash(projectRoot: string): string {
   return createHash('sha256')
@@ -2126,53 +2228,32 @@ export function visionCheckpointPath(projectRoot: string, feature: string, runId
   return path.join(visionTrustDir(), projectIdentityHash(projectRoot), safeFeature, `${runId}.json`);
 }
 
-/** 七轮 P0-2：授权子集规范化哈希——manifest 全文件 hash 会被 runner 运行中合法写回改变，
- * 授权提升攻击面只在 pre_authorized_mutations；对该子集做 stableStringify 哈希绑定。 */
-export function computeAuthSubsetSha256(preAuthorizedMutations: unknown): string {
-  return createHash('sha256')
-    .update(stableStringify(preAuthorizedMutations ?? []), 'utf-8')
-    .digest('hex');
-}
+// 【已删除 · T2 5a 收口刀二（codex P2）】`computeAuthSubsetSha256` 与 checkpoint 的
+// `auth_subset_sha256` 字段——只写不读（七轮 P0-2 的"resume 扩权比对"消费端已随信任链
+// 退役）；预授权扩权的现防线=pre_authorized_mutations 计入 manifest 身份字段
+// （computeManifestIdentityFields，停机期改写被 events 出生基线 drift 检测拦截）。
 
-function visionMac(body: object): string | null {
-  const key = process.env[VISION_CHECKPOINT_HMAC_ENV];
-  if (!key) return null;
-  return createHmac('sha256', key).update(JSON.stringify(body), 'utf-8').digest('hex');
-}
-
-function visionMacValid(body: object, mac: unknown): 'ok' | 'ok_unauthenticated' | 'invalid' {
-  const key = process.env[VISION_CHECKPOINT_HMAC_ENV];
-  if (key) {
-    const expect = createHmac('sha256', key).update(JSON.stringify(body), 'utf-8').digest('hex');
-    if (typeof mac !== 'string' || mac.length !== expect.length ||
-        !timingSafeEqual(Buffer.from(mac, 'utf-8'), Buffer.from(expect, 'utf-8'))) {
-      return 'invalid';
-    }
-    return 'ok';
-  }
-  return mac ? 'invalid' : 'ok_unauthenticated';
-}
+// 【已删除 · T2 5a 完成刀】`visionMac` / `visionMacValid`（vision 面 HMAC 签验）——
+// 签名维度整体退出：写入不再携带 mac 字段，读取忽略旧文件的 mac（兼容读取）；
+// "invalid" 只剩结构损坏/身份失配语义，处置=自动重建（lineageIncidentPresent）。
 
 interface VisionCheckpointDoc {
-  /** 1.2（十三轮 P1-3）：manifest_identity_fields 升为必填（缺失=invalid）。
-   * 1.1=legacy：无逐字段身份（或旧全文件/聚合 hash 时代产物）——**不得静默当新基线**：
-   * 聚合 hash 与当前身份哈希相等才允许一次性迁移，不等须显式 --override-manifest。 */
+  /** 1.2：manifest_identity_fields 必填（缺失=invalid，结构完整性）；1.1=legacy 兼容读取。 */
   schema_version: '1.1' | '1.2';
   run_id: string;
   project_root_hash: string;
   feature: string;
   manifest_hash: string | null;
-  /** 十二轮 P0-a：authenticated checkpoint 是 rebase 冻结基线 SSOT（events 仅审计投影）——
-   * 存逐字段身份，resume 时以此为可信旧基线做字段级 drift 授权。1.2 起必填。 */
+  /** 收口刀（codex P1-1）后为**惰性元数据**：drift 出生基线已改由 events 承载
+   * （resolveManifestIdentityBaseline），本字段不再参与任何裁决；保留写入只为
+   * 结构稳定与排障可读。 */
   manifest_identity_fields?: Record<string, string>;
-  /** 七轮 P0-2：pre_authorized_mutations 规范化哈希（resume 时与当前 manifest 比对——运行中扩权即 invalid） */
-  auth_subset_sha256?: string;
   /** 七轮 P0-3：per-run checkpoint 引用 feature head 世代（head 才是跨 run 连续性锚） */
   head_generation?: number;
   updated_at: string;
   files: VisionLedgerSnapshot[];
   migrations?: unknown[];
-  mac: string | null;
+  // 旧文件里的 mac/auth_subset_sha256 等多余字段由 JSON 解析自然忽略，不在类型里声明
 }
 
 export function writeVisionCheckpoint(args: {
@@ -2181,9 +2262,8 @@ export function writeVisionCheckpoint(args: {
   runId: string;
   manifestHash: string | null;
   files: readonly VisionLedgerSnapshot[];
-  /** 十三轮 P1-3：1.2 起必填——checkpoint 是 drift 基线 SSOT，缺逐字段身份即 invalid */
+  /** 1.2 结构必填；收口刀后仅惰性元数据（基线由 events 承载） */
   manifestIdentityFields: Record<string, string>;
-  authSubsetSha256?: string;
   headGeneration?: number;
   migrations?: unknown[];
 }): string {
@@ -2192,20 +2272,19 @@ export function writeVisionCheckpoint(args: {
   // 八轮 P1-1：**不从磁盘继承** migrations——磁盘旧文件是 agent 可及面（删除/伪造后 runner
   // 重签即洗白）。migrations 由调用方（runner 内存可信态）作为权威全量传入。
   const mergedMigrations = [...(args.migrations ?? [])];
-  const body: Omit<VisionCheckpointDoc, 'mac'> = {
+  const body: VisionCheckpointDoc = {
     schema_version: '1.2',
     run_id: args.runId,
     project_root_hash: projectIdentityHash(args.projectRoot),
     feature: args.feature,
     manifest_hash: args.manifestHash,
     manifest_identity_fields: args.manifestIdentityFields,
-    ...(args.authSubsetSha256 ? { auth_subset_sha256: args.authSubsetSha256 } : {}),
     ...(typeof args.headGeneration === 'number' ? { head_generation: args.headGeneration } : {}),
     updated_at: new Date().toISOString(),
     files: [...args.files],
     ...(mergedMigrations.length > 0 ? { migrations: mergedMigrations } : {}),
   };
-  const doc: VisionCheckpointDoc = { ...body, mac: visionMac(body) };
+  const doc: VisionCheckpointDoc = { ...body };
   // 原子替换（六轮 P1：并发/中断不得留半份 checkpoint）
   const content = `${JSON.stringify(doc, null, 2)}\n`;
   const tmp = `${p}.tmp-${process.pid}`;
@@ -2216,7 +2295,7 @@ export function writeVisionCheckpoint(args: {
 }
 
 export interface VisionCheckpointVerdict {
-  state: 'ok' | 'ok_unauthenticated' | 'mismatch' | 'absent' | 'invalid';
+  state: 'ok' | 'mismatch' | 'absent' | 'invalid';
   mismatched: string[];
   reason?: string;
   /** 八轮 P1-1：验真通过时带回 migrations（runner 收进内存可信态，写点不再读盘） */
@@ -2253,24 +2332,12 @@ export function verifyVisionCheckpoint(args: {
   if (doc.schema_version === '1.2' && !doc.manifest_identity_fields) {
     return { state: 'invalid', mismatched: [], reason: 'checkpoint 1.2 缺 manifest_identity_fields（必填）' };
   }
-  const { mac, ...body } = doc;
-  const macState = visionMacValid(body, mac);
-  if (macState === 'invalid') {
-    return {
-      state: 'invalid', mismatched: [],
-      reason: process.env[VISION_CHECKPOINT_HMAC_ENV]
-        ? 'checkpoint MAC 验签失败（部署已配密钥——缺 MAC/失配一律拒）'
-        : 'checkpoint 带 MAC 但当前部署无验证密钥——无法核实，fail-closed',
-    };
-  }
-  // 十二轮 P0-a：manifest 身份/授权子集 drift **不在此处 force-equal**——rebase 后新 identity
-  // 校验旧 checkpoint 必然 mismatch（自我判死）。checkpoint 是可信旧基线 SSOT：其 manifest_hash/
-  // manifest_identity_fields/auth_subset 由 MAC 保护、由 readVisionCheckpointMeta 取出交调用方
-  // 做字段级 drift 授权（override 授权后即成为新基线，本次 commit 写入新 identity）。
-  // 配密钥后 auth_subset 字段仍须存在（结构完整性），但比对交 drift 授权层。
-  if (process.env[VISION_CHECKPOINT_HMAC_ENV] && !doc.auth_subset_sha256) {
-    return { state: 'invalid', mismatched: [], reason: 'checkpoint 缺 auth_subset_sha256（密钥部署下必填）' };
-  }
+
+  // manifest 身份/授权子集 **不在此处比对**（十二轮 P0-a 的"不 force-equal"沿承）：
+  // 收口刀后 drift 授权整体走 events 出生基线（resolveManifestIdentityBaseline），
+  // checkpoint 内的身份字段只是惰性元数据——本函数只管缓存可复用性（身份绑定/形状/
+  // head 世代咬合/账本内容一致）。
+
   // 九轮 P1-1：head generation 咬合——旧 checkpoint 与当前 feature head 脱节即拒
   if (args.expectedHeadGeneration !== undefined && (doc.head_generation ?? -1) !== args.expectedHeadGeneration) {
     return {
@@ -2281,78 +2348,58 @@ export function verifyVisionCheckpoint(args: {
   const mismatched = diffVisionLedgerSnapshots(doc.files, args.current);
   if (mismatched.length > 0) return { state: 'mismatch', mismatched };
   const migrations = Array.isArray(doc.migrations) ? doc.migrations : [];
-  return macState === 'ok'
-    ? { state: 'ok', mismatched: [], migrations }
-    : { state: 'ok_unauthenticated', mismatched: [], migrations };
+  return { state: 'ok', mismatched: [], migrations };
 }
 
-/** 八/九轮 P1：checkpoint 覆盖前完整性 meta（MAC+身份 + **文件字节 digest**——九轮 P1-2：
- * runner 内存记住上次写入后的 digest，覆盖前精确比对，合法旧文件重放（身份+MAC 均过）
- * 因 digest 不符被拒；digest 供调用方存内存）。不比 files（账本可能已被 gate 合法推进）。 */
-export function readVisionCheckpointMeta(args: {
-  projectRoot: string;
-  feature: string;
-  runId: string;
-}): {
-  state: 'absent' | 'invalid' | 'valid' | 'valid_unauthenticated';
-  digest?: string;
-  manifestHash?: string | null;
-  manifestIdentityFields?: Record<string, string>;
-  /** 十三轮 P1-3：legacy=1.1 且无逐字段身份——不得静默当 drift 基线（聚合 hash 相等才
-   * 允许一次性迁移，不等须显式 --override-manifest） */
-  legacy?: boolean;
-} {
-  const p = visionCheckpointPath(args.projectRoot, args.feature, args.runId);
-  if (!fs.existsSync(p)) return { state: 'absent' };
-  try {
-    const bytes = fs.readFileSync(p);
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    const doc = JSON.parse(bytes.toString('utf-8')) as VisionCheckpointDoc;
-    if (
-      (doc?.schema_version !== '1.1' && doc?.schema_version !== '1.2') ||
-      doc.run_id !== args.runId ||
-      doc.project_root_hash !== projectIdentityHash(args.projectRoot) ||
-      doc.feature !== args.feature
-    ) return { state: 'invalid', digest };
-    if (doc.schema_version === '1.2' && !doc.manifest_identity_fields) return { state: 'invalid', digest };
-    const { mac, ...body } = doc;
-    const macState = visionMacValid(body, mac);
-    if (macState === 'invalid') return { state: 'invalid', digest };
-    // 十二轮 P0-a：MAC 验真后带回可信旧基线（manifest_hash + 逐字段身份）供 drift 授权
-    return {
-      state: macState === 'ok' ? 'valid' : 'valid_unauthenticated',
-      digest,
-      manifestHash: doc.manifest_hash ?? null,
-      ...(doc.manifest_identity_fields ? { manifestIdentityFields: doc.manifest_identity_fields } : {}),
-      legacy: !doc.manifest_identity_fields,
-    };
-  } catch {
-    return { state: 'invalid' };
+// 【已删除 · T2 5a 收口刀（codex P1-1）】`readVisionCheckpointMeta`（checkpoint 覆盖前
+// 完整性 meta + manifest 身份基线读取）——checkpoint 退出 manifest 裁决权威后无消费者。
+// codex 实测反例：同一份 manifest 漂移，checkpoint 在场→halt、checkpoint 删除/损坏→放行
+// ——"缓存是否存在"改变权限结果，且删缓存即可绕过出生意图。基线现由 events 承载（下方
+// resolveManifestIdentityBaseline）；checkpoint 只剩账本恢复缓存职责（verifyVisionCheckpoint）。
+// 同批删除：`readVisionFeatureHeadMeta`（head 覆盖前 meta——运行中覆盖复验已随 5a 删除，孤儿）。
+
+/**
+ * T2 5a 收口刀（codex P1-1）：manifest **出生基线**解析——只认仓内 events，不认场外缓存。
+ *
+ * fold 语义（与 resolveFrozenManifestHash/resolveBirthVisionLineage 同构，"首个 run_start
+ * 说了算"）：首个 `run_start.manifest_identity_fields` 为出生基线；其后每条
+ * `manifest_identity_rebase.to_fields`（授权 rebase 的审计事件）把基线前进到新值——
+ * override rebase 过一次后，后续 resume 不再复报同一漂移。
+ *
+ * 无 run_start / 旧 schema 缺该字段 → null（无基线，出生意图不可证——按当前身份继续，
+ * 与 resolveBirthVisionLineage 的 fail-to-continue 同一口径；刻意不回落场外 checkpoint：
+ * 那个回落就是"删缓存绕过/留缓存 halt"的不对称漏洞本身）。
+ */
+export function resolveManifestIdentityBaseline(
+  priorEvents: ReadonlyArray<{ type?: string; manifest_identity_fields?: unknown; to_fields?: unknown }>,
+): Record<string, string> | null {
+  let baseline: Record<string, string> | null = null;
+  for (const e of priorEvents) {
+    if (e.type === 'run_start' && baseline === null
+        && e.manifest_identity_fields && typeof e.manifest_identity_fields === 'object') {
+      baseline = e.manifest_identity_fields as Record<string, string>;
+    } else if (e.type === 'manifest_identity_rebase'
+        && e.to_fields && typeof e.to_fields === 'object') {
+      baseline = e.to_fields as Record<string, string>;
+    }
   }
+  return baseline;
 }
 
 /**
- * 十三轮 review P1-3：manifest 身份漂移决策（锁内、副作用前调用）——纯函数抽出供真路径测试。
- * 基线信任规则：
- *   - checkpoint absent/invalid → 无基线（交后续 vision 信任链 reseal/ack 处置），当前身份即 effective；
- *   - **legacy checkpoint（1.1 无逐字段身份）不得静默当新基线**：聚合 manifest_hash 与当前
- *     身份哈希相等 → 一次性 schema 迁移（本次 commit 写 1.2 全字段）；不等 → 须显式
- *     --override-manifest（无逐字段可 diff，只能整体确认），否则 halt——升级停机窗口的
- *     requirement/budget/allowed-tools 篡改不得借 schema 升级洗白；
- *   - valid_unauthenticated 基线照常比对（拦截未改 checkpoint 的天真篡改），但标记
- *     baselineUnauthenticated——调用方须走弱信任处置（resume ack + 终态封顶 + pre_run_manifest
- *     降级），**不得**将其视为可信 SSOT；
- *   - 字段级授权：changed ⊆ (override 旗标授权集 ∪ fidelity transition 验真授权集) 才 rebase。
+ * manifest 身份漂移决策（锁内、副作用前调用）——纯函数抽出供真路径测试。
+ * 基线信任规则（T2 5a 收口刀改版）：
+ *   - 基线=events 出生基线（resolveManifestIdentityBaseline）；null → 无基线，当前身份即
+ *     effective（场外缓存的存在与否**不得**出现在本决策的输入里）；
+ *   - 字段级授权：changed ⊆ (override 旗标授权集 ∪ fidelity transition 验真授权集) 才 rebase；
+ *     未授权漂移 halt（真冲突：出生意图与当前 manifest 不一致且无人授权）。
+ *   - legacy checkpoint 聚合迁移分支已随 checkpoint 基线一并退役（events 无 legacy 形态问题）。
  */
 export function resolveManifestDriftDecision(args: {
   currentFields: Record<string, string>;
   currentHash: string;
-  cpMeta: {
-    state: 'absent' | 'invalid' | 'valid' | 'valid_unauthenticated';
-    manifestHash?: string | null;
-    manifestIdentityFields?: Record<string, string>;
-    legacy?: boolean;
-  };
+  /** events 出生基线（null=无基线，见 resolveManifestIdentityBaseline） */
+  birthFields: Record<string, string> | null;
   overrides: { 'override-manifest': boolean; 'override-start': boolean; 'override-end': boolean };
   fidelityTransitionFields: ReadonlySet<string>;
 }): {
@@ -2360,8 +2407,6 @@ export function resolveManifestDriftDecision(args: {
   effectiveHash: string;
   rebaseApplied: boolean;
   rebaseAuthorizedBy: string | null;
-  baselineUnauthenticated: boolean;
-  legacyMigrated: boolean;
   halt: { message: string; changedFields: string[]; authorized: string[] | 'all' } | null;
 } {
   const base = {
@@ -2369,36 +2414,11 @@ export function resolveManifestDriftDecision(args: {
     effectiveHash: args.currentHash,
     rebaseApplied: false,
     rebaseAuthorizedBy: null as string | null,
-    baselineUnauthenticated: false,
-    legacyMigrated: false,
     halt: null as { message: string; changedFields: string[]; authorized: string[] | 'all' } | null,
   };
-  const { cpMeta } = args;
-  if (cpMeta.state === 'invalid' || cpMeta.state === 'absent') return base;
-  const baselineUnauthenticated = cpMeta.state === 'valid_unauthenticated';
-  if (cpMeta.legacy || !cpMeta.manifestIdentityFields) {
-    if (cpMeta.manifestHash && cpMeta.manifestHash === args.currentHash) {
-      // 聚合身份哈希相等=无漂移证据 → 一次性 schema 迁移（commit 写 1.2 全字段成新 SSOT）
-      return { ...base, baselineUnauthenticated, legacyMigrated: true };
-    }
-    if (args.overrides['override-manifest']) {
-      return { ...base, baselineUnauthenticated, rebaseApplied: true, rebaseAuthorizedBy: 'override-manifest' };
-    }
-    return {
-      ...base,
-      baselineUnauthenticated,
-      halt: {
-        message:
-          'legacy checkpoint（无逐字段身份）聚合 hash 与当前 manifest 身份不符——升级停机窗口内 ' +
-          'manifest 可能被改。无逐字段可 diff，须人工核对后以 --override-manifest 整体确认（fail-closed，' +
-          '不静默 rebase）。',
-        changedFields: ['<legacy_aggregate_mismatch>'],
-        authorized: [],
-      },
-    };
-  }
-  const changed = diffManifestIdentityFields(cpMeta.manifestIdentityFields, args.currentFields);
-  if (changed.length === 0) return { ...base, baselineUnauthenticated };
+  if (args.birthFields === null) return base;
+  const changed = diffManifestIdentityFields(args.birthFields, args.currentFields);
+  if (changed.length === 0) return base;
   const auth = overrideAuthorizedIdentityFields({
     'override-manifest': args.overrides['override-manifest'],
     'override-start': args.overrides['override-start'],
@@ -2413,7 +2433,6 @@ export function resolveManifestDriftDecision(args: {
   if (!authorized) {
     return {
       ...base,
-      baselineUnauthenticated,
       halt: {
         message:
           `manifest 身份字段在停机窗口漂移且未被对应 override 授权（变更字段：${changed.join('、')}；` +
@@ -2427,17 +2446,16 @@ export function resolveManifestDriftDecision(args: {
   }
   return {
     ...base,
-    baselineUnauthenticated,
     rebaseApplied: true,
     rebaseAuthorizedBy: authAll ? 'override-manifest' : [...(authSet ?? [])].sort().join(','),
   };
 }
 
 // ---------------------------------------------------------------------------
-// 七轮 P0-3：feature 级 authenticated head——vision 账本是 feature 级共享文件，per-run
-// checkpoint 只护同 run resume；跨 run 篡改（改完账本开新 run，runner 替攻击者重新签名
-// baseline）须由 feature head 拦截：每次 fresh run/resume 先验 head，合法写点后单调
-// generation 更新。head 与 checkpoint 同 MAC 模型。
+// feature 级 head（七轮 P0-3 起，收口后语义）：vision 账本是 feature 级共享文件，
+// per-run checkpoint 只是同 run resume 的恢复缓存；head 是**跨 run 连续性观察锚**
+// （无签名纯内容快照）——每次 fresh run/resume 先验，失配/损坏=自动 discontinuity
+// 重建（记录断裂、撤销连续性主张），合法写点后单调 generation 更新。
 // ---------------------------------------------------------------------------
 
 
@@ -2456,7 +2474,18 @@ export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?
   events: ReadonlyArray<Record<string, unknown>>,
 ): T[] {
   const byPhase = new Map<string, { run_disposition?: unknown; run_wait_kind?: unknown }>();
+  // codex 第九批 P0：**有序覆盖语义**（与 rebuildOutcomesFromEvents 同规则）——
+  // 后来的 phase_verdict{advance/defer} 清除该 phase 的旧 halt 投影。否则
+  // 「ut WAITING 停放 → resume 重跑 PASS」会产出"ut PASS + run_disposition=WAITING"
+  // 的自相矛盾报告，且下一次 resume 又把已成功的 ut 重新入队（纯函数回放实证）。
+  const CLEARING_ACTIONS = new Set([
+    'advance', 'defer_external_and_continue_if_allowed', 'defer_external_and_halt',
+  ]);
   for (const e of events) {
+    if (e?.type === 'phase_verdict' && CLEARING_ACTIONS.has(String(e.action))) {
+      byPhase.delete(String(e.phase));
+      continue;
+    }
     if (e?.type !== 'phase_halt') continue;
     if (typeof e.run_disposition !== 'string') continue;
     byPhase.set(String(e.phase), { run_disposition: e.run_disposition, run_wait_kind: e.run_wait_kind });
@@ -2478,8 +2507,7 @@ export function visionFeatureHeadPath(projectRoot: string, feature: string): str
 }
 
 interface VisionFeatureHeadDoc {
-  /** 1.1（十三轮 P1-4）：新增 hwm_declared——head 声明 HWM 链已建立（MAC 保护）。
-   * 1.0=legacy（HWM 机制落地前写出，缺声明）——用于区分"legacy 首建"与"HWM 被删除"。 */
+  /** 1.0/1.1 均兼容读取（1.1 时代多出的 hwm_declared 已随 HWM 链退役，忽略） */
   schema_version: '1.0' | '1.1';
   project_root_hash: string;
   feature: string;
@@ -2487,10 +2515,7 @@ interface VisionFeatureHeadDoc {
   files: VisionLedgerSnapshot[];
   last_run_id: string;
   updated_at: string;
-  /** 1.1 写入恒 true：本 head 之后必须存在世代 ≥ generation 的 HWM 链——
-   * head ok + HWM absent + 此声明 = 删除/丢失（fail-closed），不再静默重建新链洗白。 */
-  hwm_declared?: true;
-  mac: string | null;
+  // 旧文件里的 mac/hwm_declared 等多余字段由 JSON 解析自然忽略，不在类型里声明
 }
 
 export function writeVisionFeatureHead(args: {
@@ -2504,7 +2529,7 @@ export function writeVisionFeatureHead(args: {
 }): { generation: number; digest: string } {
   const p = visionFeatureHeadPath(args.projectRoot, args.feature);
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  const body: Omit<VisionFeatureHeadDoc, 'mac'> = {
+  const body: VisionFeatureHeadDoc = {
     schema_version: '1.1',
     project_root_hash: projectIdentityHash(args.projectRoot),
     feature: args.feature,
@@ -2512,11 +2537,8 @@ export function writeVisionFeatureHead(args: {
     files: [...args.files],
     last_run_id: args.runId,
     updated_at: new Date().toISOString(),
-    // 十三轮 P1-4：写 head 的同一 commit 必写同世代 HWM 行——声明进 MAC 保护面，
-    // 之后 HWM absent 即删除/丢失（fail-closed），不可静默重建。
-    hwm_declared: true,
   };
-  const doc: VisionFeatureHeadDoc = { ...body, mac: visionMac(body) };
+  const doc: VisionFeatureHeadDoc = { ...body };
   const content = `${JSON.stringify(doc, null, 2)}\n`;
   const tmp = `${p}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, content, 'utf-8');
@@ -2525,459 +2547,55 @@ export function writeVisionFeatureHead(args: {
   return { generation: body.generation, digest: createHash('sha256').update(Buffer.from(content, 'utf-8')).digest('hex') };
 }
 
-/** 八/九轮 P1：head 覆盖前完整性 meta（MAC+身份+世代 + 文件字节 digest，不比 files）。 */
-export function readVisionFeatureHeadMeta(args: {
-  projectRoot: string;
-  feature: string;
-}): { state: 'absent' | 'invalid' | 'valid' | 'valid_unauthenticated'; generation?: number; digest?: string } {
-  const p = visionFeatureHeadPath(args.projectRoot, args.feature);
-  if (!fs.existsSync(p)) return { state: 'absent' };
-  try {
-    const bytes = fs.readFileSync(p);
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    const doc = JSON.parse(bytes.toString('utf-8')) as VisionFeatureHeadDoc;
-    if (
-      (doc?.schema_version !== '1.0' && doc?.schema_version !== '1.1') ||
-      doc.project_root_hash !== projectIdentityHash(args.projectRoot) ||
-      doc.feature !== args.feature ||
-      typeof doc.generation !== 'number'
-    ) return { state: 'invalid', digest };
-    const { mac, ...body } = doc;
-    const macState = visionMacValid(body, mac);
-    if (macState === 'invalid') return { state: 'invalid', digest };
-    return {
-      state: macState === 'ok' ? 'valid' : 'valid_unauthenticated',
-      generation: doc.generation,
-      digest,
-    };
-  } catch {
-    return { state: 'invalid' };
-  }
-}
+// 【已删除 · T2 5a 收口刀（codex P2）】`readVisionFeatureHeadMeta`（head 覆盖前完整性
+// meta）——运行中覆盖前复验已随 5a 完成刀删除（runner 是 writer，提交即覆盖写），孤儿函数。
 
 export interface VisionFeatureHeadVerdict {
-  state: 'ok' | 'ok_unauthenticated' | 'mismatch' | 'absent' | 'invalid';
+  state: 'ok' | 'mismatch' | 'absent' | 'invalid';
   mismatched: string[];
   reason?: string;
   generation?: number;
-  /** 十三轮 P1-4：head 是否声明 HWM 链已建立（1.1 恒 true；legacy 1.0 无声明=false）——
-   * 供 assessHwmFreshness 区分"legacy 首建"与"HWM 被删除"。 */
-  hwmDeclared?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// 十/十一轮 review：HWM high-water mark——head/checkpoint 的 MAC 只证真实性不证新鲜度。
-// **诚实能力边界（十一轮 P0-1 修正上轮过度宣称）**：HWM 与 head/checkpoint 位于同一信任
-// 目录、同一权限边界——能回放前三者的攻击者同样能把 HWM **尾部截断**到对应旧世代，因此
-// HWM **不构成密码学跨重启 anti-rollback**。HWM 实际保证：检测**非协调回滚/意外损坏/
-// 非尾部删改/链断**（MAC'd append-only 链，世代单调 + prev_row_hash）——重启后只回放
-// head/checkpoint 而未同步截断 HWM 即被抓。真正的 hardened anti-rollback 需独立不可回卷锚
-// （权限隔离 broker / 远端 append-only store / 可信单调计数器），列 tasks 3.9j pending。
-// ---------------------------------------------------------------------------
+// 【已删除 · T2 5a 完成刀 + 收口刀（codex P1-3）】HWM 全链（行/读链、appendVisionHwm、
+// assessHwmFreshness）、reseal journal 全套（write/read/transactionalQuarantineHwm/
+// commitResealJournal/recoverResealTransaction）、`visionResealJournalPath`——防伪造纵深
+// 整体退役。收口刀补齐：HWM 亦退出 **lineage reset 事务**（此前仍被读取/改名/回滚，
+// codex 实测旧 .hwm.jsonl 是异常实体（如目录）时 quarantine 读它 EISDIR 零 phase 中断
+// ——与"无消费者的惰性遗留物"承诺冲突）。现 reset 事务只处理 head；旧 .hwm.jsonl 与
+// journal 文件真正成为无消费者的惰性遗留物（不读、不改名、不参与任何裁决）。
 
-export function visionHwmPath(projectRoot: string, feature: string): string {
-  const safeFeature = feature.replace(/[^\w.-]/g, '_');
-  return path.join(visionTrustDir(), 'vision-heads', projectIdentityHash(projectRoot), `${safeFeature}.hwm.jsonl`);
-}
-
-interface VisionHwmRow {
-  seq: number;
-  generation: number;
-  head_digest: string;
-  prev_row_hash: string | null;
-  at: string;
-  mac: string | null;
-}
-
-/** 读并验 HWM 链：返回高水位（最大合法世代 + 对应 head digest）。任何链断/MAC 失效 → invalid。 */
-export function readVisionHwmHighWater(args: {
-  projectRoot: string;
-  feature: string;
-}): { state: 'absent' | 'invalid' | 'ok' | 'ok_unauthenticated'; maxGeneration?: number; lastHeadDigest?: string; reason?: string } {
-  const p = visionHwmPath(args.projectRoot, args.feature);
-  if (!fs.existsSync(p)) return { state: 'absent' };
-  const lines = fs.readFileSync(p, 'utf-8').split(/\r?\n/).filter(l => l.trim());
-  if (lines.length === 0) return { state: 'absent' };
-  let expectSeq = 1;
-  let prevHash: string | null = null;
-  let last: VisionHwmRow | null = null;
-  let unauthenticated = false;
-  for (const line of lines) {
-    let row: VisionHwmRow;
-    try {
-      row = JSON.parse(line) as VisionHwmRow;
-    } catch {
-      return { state: 'invalid', reason: 'HWM 行 JSON 解析失败' };
-    }
-    const { mac, ...body } = row;
-    if (row.seq !== expectSeq || (row.prev_row_hash ?? null) !== prevHash || typeof row.head_digest !== 'string' || typeof row.generation !== 'number') {
-      return { state: 'invalid', reason: 'HWM 链断裂/形状失配（非尾部删/插/乱序/改）' };
-    }
-    const macState = visionMacValid(body, mac);
-    if (macState === 'invalid') return { state: 'invalid', reason: 'HWM 行 MAC 验签失败/无密钥核实' };
-    if (macState === 'ok_unauthenticated') unauthenticated = true;
-    // 单调世代（回滚/重排在链内即被抓）
-    if (last && row.generation <= last.generation) {
-      return { state: 'invalid', reason: `HWM 世代非单调（${last.generation} → ${row.generation}）` };
-    }
-    prevHash = createHash('sha256').update(JSON.stringify(row), 'utf-8').digest('hex').slice(0, 16);
-    expectSeq += 1;
-    last = row;
-  }
-  return {
-    state: unauthenticated ? 'ok_unauthenticated' : 'ok',
-    maxGeneration: last!.generation,
-    lastHeadDigest: last!.head_digest,
-  };
-}
-
-// 十二/十三轮 review P0-2：reseal 事务日志 v2——十三轮修复三个不可恢复崩溃点：
-// ① rename 后、quarantined 落盘前崩溃：v1 journal 仍是 prepared 且无备份路径可寻——v2 在
-//    **rename 前**把 planned_bak + 旧三锚 hash + receipt 绑定全部写进 prepared（MAC 保护）；
-// ② quarantined 后、head/checkpoint 重写前崩溃：v1 只设 resealTx.pending，但 head invalid
-//    分支仍要 resealStrong，而旧 receipt 因 canonical HWM 变 absent 失配 → 死锁——v2 启动
-//    **先恢复**：canonical 缺失 → 把备份 rename 回去（复验绑定 sha），原 receipt 复用可行；
-// ③ 重入 transactionalQuarantineHwm 会把未完成 journal 覆盖为 prepared 破坏现场——v2 存在
-//    非终态 journal 即抛（恢复必须先行，禁止覆盖）。
-// 状态机：prepared → quarantined → committed | rolled_back；恢复按**内容**判别
-// （canonical sha 是否等于事务绑定的旧链 sha），不只按状态旗标。
-export function visionResealJournalPath(projectRoot: string, feature: string): string {
-  const safeFeature = feature.replace(/[^\w.-]/g, '_');
-  return path.join(visionTrustDir(), 'vision-heads', projectIdentityHash(projectRoot), `${safeFeature}.reseal.json`);
-}
-
-interface VisionResealJournal {
-  schema_version: '2.0';
-  run_id: string;
-  state: 'prepared' | 'quarantined' | 'committed' | 'rolled_back';
-  old_hwm_sha256: string;
-  /** 十三轮：事务绑定旧三锚 + 授权 receipt 的 object_hash（审计+恢复语境） */
-  old_head_sha256: string;
-  old_checkpoint_sha256: string;
-  receipt_object_hash: string;
-  /** prepared 时（rename 前）即记录的计划备份名——崩溃后可定位已改名文件 */
-  planned_bak: string | null;
-  quarantined_as: string | null;
-  /** 十四轮 P0：三锚事务——head/checkpoint 在 quarantine 时同步 copy 备份（'absent'=当时
-   * 不存在，回滚语义=删除新写文件恢复缺位）。回滚须三锚全部复验等于旧 sha 才 rolled_back，
-   * 否则 head/checkpoint 已换新 key 而只回滚 HWM = 三锚混合态，原 receipt 永失配。 */
-  planned_head_bak: string | null;
-  planned_checkpoint_bak: string | null;
-  at: string;
-  mac: string | null;
-}
-
-function writeResealJournal(projectRoot: string, feature: string, j: Omit<VisionResealJournal, 'mac'>): void {
-  const p = visionResealJournalPath(projectRoot, feature);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  const doc: VisionResealJournal = { ...j, mac: visionMac(j) };
-  const tmp = `${p}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
-  fs.renameSync(tmp, p);
-}
-
-export function readResealJournal(projectRoot: string, feature: string):
-  | { verdict: 'absent' }
-  | { verdict: 'invalid'; reason: string }
-  | { verdict: 'ok' | 'ok_unauthenticated'; journal: VisionResealJournal } {
-  const p = visionResealJournalPath(projectRoot, feature);
-  if (!fs.existsSync(p)) return { verdict: 'absent' };
-  let doc: VisionResealJournal;
-  try {
-    doc = JSON.parse(fs.readFileSync(p, 'utf-8')) as VisionResealJournal;
-  } catch (e) {
-    return { verdict: 'invalid', reason: `reseal journal 损坏（${(e as Error).message}）` };
-  }
-  if (doc?.schema_version !== '2.0' || typeof doc.run_id !== 'string' ||
-      !['prepared', 'quarantined', 'committed', 'rolled_back'].includes(doc.state)) {
-    return { verdict: 'invalid', reason: 'reseal journal 形状/版本失配（v1 遗留须人工处置）' };
-  }
-  const { mac, ...body } = doc;
-  const macState = visionMacValid(body, mac);
-  if (macState === 'invalid') return { verdict: 'invalid', reason: 'reseal journal MAC 验签失败' };
-  return { verdict: macState === 'ok' ? 'ok' : 'ok_unauthenticated', journal: doc };
-}
-
-/** 事务化 quarantine 旧 HWM + **三锚备份**（十四轮 P0）。前置：非终态 journal 在场即抛
- * （启动恢复必须先行，禁止覆盖）。顺序：copy 备份 head/checkpoint（copy 后 sha 复验）→
- * prepared（含 planned_bak/planned_head_bak/planned_checkpoint_bak+全绑定）→ rename →
- * quarantined；任一步失败即抛（fail-closed）。返回 HWM 备份文件名（无旧 HWM=null）。 */
-export function transactionalQuarantineHwm(args: {
-  projectRoot: string;
-  feature: string;
-  runId: string;
-  oldHwmSha256: string;
-  oldHeadSha256: string;
-  oldCheckpointSha256: string;
-  receiptObjectHash: string;
-}): string | null {
-  const hp = visionHwmPath(args.projectRoot, args.feature);
-  const headP = visionFeatureHeadPath(args.projectRoot, args.feature);
-  const cpP = visionCheckpointPath(args.projectRoot, args.feature, args.runId);
-  const existing = readResealJournal(args.projectRoot, args.feature);
-  if (existing.verdict === 'invalid') {
-    throw new Error(`reseal journal 不可信（${existing.reason}）——中止 reseal（fail-closed，人工处置）`);
-  }
-  if (existing.verdict !== 'absent' &&
-      existing.journal.state !== 'committed' && existing.journal.state !== 'rolled_back') {
-    throw new Error(
-      `存在未完成的 reseal 事务（state=${existing.journal.state}, run=${existing.journal.run_id}）——` +
-      '启动恢复（recoverResealTransaction）必须先行，禁止覆盖现场（fail-closed）',
-    );
-  }
-  const suffix = `rekey-${args.runId}-${process.pid}.bak`;
-  // 十四轮 P0：head/checkpoint 先 copy 备份（后续 commitVisionAnchors 会用新 key 重写它们；
-  // 崩溃回滚须能把三锚**全部**恢复到旧字节，否则原 receipt 绑定永失配=三锚混合态死局）。
-  const backupAnchor = (src: string, expectSha: string, label: string): string | null => {
-    if (!fs.existsSync(src)) {
-      if (expectSha !== 'absent') {
-        throw new Error(`${label} 文件缺失但绑定 sha 非 absent（${expectSha.slice(0, 12)}…）——现场与绑定不符，中止 reseal`);
-      }
-      return null;
-    }
-    const bakName = `${path.basename(src)}.${suffix}`;
-    const bakAbs = path.join(path.dirname(src), bakName);
-    if (fs.existsSync(bakAbs)) throw new Error(`${label} 备份名冲突（${bakName}）——中止 reseal（fail-closed）`);
-    fs.copyFileSync(src, bakAbs);
-    const got = createHash('sha256').update(fs.readFileSync(bakAbs)).digest('hex');
-    if (got !== expectSha) {
-      throw new Error(`${label} 备份 sha 与绑定不符（copy 期间被改？）——中止 reseal（fail-closed）`);
-    }
-    return bakName;
-  };
-  const plannedHeadBak = backupAnchor(headP, args.oldHeadSha256, 'head');
-  const plannedCheckpointBak = backupAnchor(cpP, args.oldCheckpointSha256, 'checkpoint');
-  const plannedBak = fs.existsSync(hp) ? `${path.basename(hp)}.${suffix}` : null;
-  const bind = {
-    schema_version: '2.0' as const,
-    run_id: args.runId,
-    old_hwm_sha256: args.oldHwmSha256,
-    old_head_sha256: args.oldHeadSha256,
-    old_checkpoint_sha256: args.oldCheckpointSha256,
-    receipt_object_hash: args.receiptObjectHash,
-    planned_bak: plannedBak,
-    planned_head_bak: plannedHeadBak,
-    planned_checkpoint_bak: plannedCheckpointBak,
-  };
-  // prepared：**rename 前**落全部绑定（崩溃后凭 planned_* 定位/回滚）
-  writeResealJournal(args.projectRoot, args.feature, {
-    ...bind, state: 'prepared', quarantined_as: null, at: new Date().toISOString(),
-  });
-  if (!plannedBak) {
-    // 无旧 HWM（首配密钥）——无需搬移，直接 quarantined（commit 延后到新链首写复验后）
-    writeResealJournal(args.projectRoot, args.feature, {
-      ...bind, state: 'quarantined', quarantined_as: null, at: new Date().toISOString(),
-    });
-    return null;
-  }
-  const bakAbs = path.join(path.dirname(hp), plannedBak);
-  if (fs.existsSync(bakAbs)) {
-    throw new Error(`HWM quarantine 备份名冲突（${plannedBak}）——中止 reseal（fail-closed）`);
-  }
-  fs.renameSync(hp, bakAbs); // 失败即抛（fail-closed，不 warn 继续）
-  writeResealJournal(args.projectRoot, args.feature, {
-    ...bind, state: 'quarantined', quarantined_as: plannedBak, at: new Date().toISOString(),
-  });
-  return plannedBak;
-}
-
-/** reseal 事务提交（新 HWM 首写后立即复验通过时调用）——保留事务绑定字段。 */
-export function commitResealJournal(projectRoot: string, feature: string, runId: string): void {
-  const r = readResealJournal(projectRoot, feature);
-  if (r.verdict !== 'ok' && r.verdict !== 'ok_unauthenticated') {
-    throw new Error('commitResealJournal：journal 缺失/不可信——事务状态被破坏（fail-closed）');
-  }
-  writeResealJournal(projectRoot, feature, {
-    ...(({ mac: _m, ...rest }) => rest)(r.journal),
-    run_id: runId, state: 'committed', at: new Date().toISOString(),
-  });
-}
-
-/**
- * 十三/十四轮 review P0：启动期 reseal 事务恢复——在读取旧锚 hash/验 receipt **之前**运行。
- * 十四轮 P0：恢复覆盖**三个锚**（HWM+head+checkpoint）。commitVisionAnchors 顺序为
- * head→checkpoint→HWM：若在 head/checkpoint 已换新 key、HWM 首写前崩溃，只回滚 HWM =
- * 三锚混合态（原 receipt 绑旧 head/checkpoint 字节永失配、旧 key HWM 在新 key 下 invalid）。
- * 判别与处置（全按内容，不只按状态旗标）：
- *   - **完成判定**：canonical HWM 在场且 ≠ 旧链 sha（新链已首写）且新链+head 在当前 key 下
- *     可信 → 补记 committed（head/checkpoint 写于 HWM 之前，同 commit 内必已换新）；
- *   - **回滚**：其余情形——三锚各自与 journal 绑定旧 sha 比对，不符者从各自备份恢复
- *     （备份 sha 复验**先于**恢复；旧 sha='absent' 的锚=删除新写文件恢复缺位）；三锚全部
- *     复验等于旧 sha 后才标 rolled_back（原 receipt 复用可行）；任一锚无法恢复 → blocked。
- */
-export function recoverResealTransaction(args: { projectRoot: string; feature: string }): {
-  outcome: 'none' | 'rolled_back' | 'completed' | 'blocked';
-  detail?: string;
-} {
-  const r = readResealJournal(args.projectRoot, args.feature);
-  if (r.verdict === 'absent') return { outcome: 'none' };
-  if (r.verdict === 'invalid') return { outcome: 'blocked', detail: r.reason };
-  const j = r.journal;
-  if (j.state === 'committed' || j.state === 'rolled_back') return { outcome: 'none' };
-  const hp = visionHwmPath(args.projectRoot, args.feature);
-  const headP = visionFeatureHeadPath(args.projectRoot, args.feature);
-  const cpP = visionCheckpointPath(args.projectRoot, args.feature, j.run_id);
-  const shaOf = (p: string): string =>
-    fs.existsSync(p) ? createHash('sha256').update(fs.readFileSync(p)).digest('hex') : 'absent';
-  const reMac = (state: 'rolled_back' | 'committed'): void => {
-    writeResealJournal(args.projectRoot, args.feature, {
-      ...(({ mac: _m, ...rest }) => rest)(j), state, at: new Date().toISOString(),
-    });
-  };
-  // ---- 完成判定（十五轮 P1）：与正常启动**同一套门**——①verifyVisionFeatureHead（head
-  // MAC+与当前账本快照一致）②verifyVisionCheckpoint（存在+MAC+files+head_generation 咬合）
-  // ③assessHwmFreshness===proceed（HWM 与 head 世代/digest 精确等值）四项全过才 committed。
-  // 任一不满足=不完整提交——**不 commit 也不 blocked**（提前 committed 会把事务打成终态、
-  // 永久放弃回滚资格，本可用三份备份自动恢复的现场退化成人工处置/重签 receipt），落回下方
-  // 三锚回滚，原 receipt 复用可行。----
-  if (fs.existsSync(hp) && shaOf(hp) !== j.old_hwm_sha256) {
-    const snap = snapshotVisionLedgers(args.projectRoot, args.feature);
-    const head = verifyVisionFeatureHead({ projectRoot: args.projectRoot, feature: args.feature, current: snap });
-    const headOk = head.state === 'ok' || head.state === 'ok_unauthenticated';
-    const cpOk = headOk && (() => {
-      const cp = verifyVisionCheckpoint({
-        projectRoot: args.projectRoot, feature: args.feature, runId: j.run_id, current: snap,
-        expectedHeadGeneration: head.generation ?? 0,
-      });
-      return cp.state === 'ok' || cp.state === 'ok_unauthenticated';
-    })();
-    const hwmFreshOk = headOk && (() => {
-      const headMeta = readVisionFeatureHeadMeta({ projectRoot: args.projectRoot, feature: args.feature });
-      return assessHwmFreshness({
-        headGeneration: head.generation ?? 0,
-        headDigest: headMeta.digest,
-        hwmDeclared: head.hwmDeclared === true,
-        hwm: readVisionHwmHighWater({ projectRoot: args.projectRoot, feature: args.feature }),
-      }).action === 'proceed';
-    })();
-    if (headOk && cpOk && hwmFreshOk) {
-      reMac('committed');
-      return { outcome: 'completed', detail: '三锚整体一致（head/checkpoint/HWM+账本快照四门全过）——补记 commit' };
-    }
-    // 不完整提交 → 保留回滚资格，走下方三锚回滚
-  }
-  // ---- 回滚：三锚统一"比对→不符者从备份恢复→全量复验" ----
-  const restoreAnchor = (
-    target: string,
-    oldSha: string,
-    bakName: string | null,
-    label: string,
-  ): string | null => {
-    if (shaOf(target) === oldSha) return null; // 该锚未被改动
-    if (oldSha === 'absent') {
-      // 原状=缺位：新写文件删除即恢复
-      try { fs.rmSync(target, { force: true }); } catch { /* 下方全量复验兜底 */ }
-      return null;
-    }
-    const bakAbs = bakName ? path.join(path.dirname(target), bakName) : null;
-    if (!bakAbs || !fs.existsSync(bakAbs)) return `${label} 已被改动且备份缺失`;
-    const bakSha = createHash('sha256').update(fs.readFileSync(bakAbs)).digest('hex');
-    if (bakSha !== oldSha) return `${label} 备份内容与事务绑定 sha 不符（备份被篡改）`;
-    // 复验通过才恢复（copy 保留备份供审计；target 可能存在→先删再 copy）
-    fs.rmSync(target, { force: true });
-    fs.copyFileSync(bakAbs, target);
-    return null;
-  };
-  const failures = [
-    restoreAnchor(hp, j.old_hwm_sha256, j.quarantined_as ?? j.planned_bak, 'HWM'),
-    restoreAnchor(headP, j.old_head_sha256, j.planned_head_bak, 'head'),
-    restoreAnchor(cpP, j.old_checkpoint_sha256, j.planned_checkpoint_bak, 'checkpoint'),
-  ].filter((x): x is string => x !== null);
-  if (failures.length > 0) {
-    return { outcome: 'blocked', detail: `三锚回滚失败：${failures.join('；')}——人工处置` };
-  }
-  // 全量复验：三锚都必须等于事务绑定旧 sha 才算回滚完成（防"只回滚一部分"的混合态）
-  const finalMismatch = [
-    [shaOf(hp), j.old_hwm_sha256, 'HWM'],
-    [shaOf(headP), j.old_head_sha256, 'head'],
-    [shaOf(cpP), j.old_checkpoint_sha256, 'checkpoint'],
-  ].filter(([got, want]) => got !== want).map(([, , label]) => label as string);
-  if (finalMismatch.length > 0) {
-    return { outcome: 'blocked', detail: `三锚回滚后复验不符（${finalMismatch.join('、')}）——人工处置` };
-  }
-  reMac('rolled_back');
-  return {
-    outcome: 'rolled_back',
-    detail: '三锚已全部恢复到事务绑定旧状态——原 reseal receipt 复用可行',
-  };
-}
-
-/** 追加一行 HWM（每合法写点调用）。返回本行世代（用于事件留痕）。 */
-export function appendVisionHwm(args: {
-  projectRoot: string;
-  feature: string;
-  generation: number;
-  headDigest: string;
-}): void {
-  const p = visionHwmPath(args.projectRoot, args.feature);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  // 续链：读现有**合法**尾（invalid 则从空续——启动段已对 invalid 做 halt/reseal 决策）
-  let seq = 1;
-  let prevHash: string | null = null;
-  if (fs.existsSync(p)) {
-    const lines = fs.readFileSync(p, 'utf-8').split(/\r?\n/).filter(l => l.trim());
-    if (lines.length > 0) {
-      try {
-        const lastRow = JSON.parse(lines[lines.length - 1]) as VisionHwmRow;
-        if (typeof lastRow.seq === 'number') {
-          seq = lastRow.seq + 1;
-          prevHash = createHash('sha256').update(JSON.stringify(lastRow), 'utf-8').digest('hex').slice(0, 16);
-        }
-      } catch { /* 尾行损坏——从头续（读端会判 invalid） */ }
-    }
-  }
-  const body: Omit<VisionHwmRow, 'mac'> = {
-    seq,
-    generation: args.generation,
-    head_digest: args.headDigest,
-    prev_row_hash: prevHash,
-    at: new Date().toISOString(),
-  };
-  const row: VisionHwmRow = { ...body, mac: visionMac(body) };
-  fs.appendFileSync(p, `${JSON.stringify(row)}\n`, 'utf-8');
-}
-
-// ---------------------------------------------------------------------------
-// plan a5f9c3e2 t3①：lineage reset —— **recovery intent，不是授权**
-// ---------------------------------------------------------------------------
-// 用户以 `--vision-lineage=reset`（仅 fresh run）声明放弃历史连续性时执行：
-//   ① 事务性 quarantine 旧 head/HWM（临时改名，供中途失败回滚）；
-//   ② 断裂显式记 repo 内事件 `lineage_discontinuity`（旧 hash / 原因 / run_id）；
-//   ③ 世代归零 → 新 lineage 从头建立，后续全链重验；
-//   ④ 新 head 写入成功后**删除**旧场外实体（场外不是历史档案库，b7e4d2a9 红线）。
-// 安全性不靠授权：危险的从来不是 reset 本身，是**静默的** reset。断裂被响亮记录、
-// 连续性主张被禁止后，agent 即便自行触发 reset 也一无所获——旧 FAIL 不会被洗白，
-// 只会被标记为「链在此处断开」。不新增 head/checkpoint/HWM 字段、不建新状态机：
-// 备份名内嵌 run_id 即是全部所需状态（无第二本账）。
-// ---------------------------------------------------------------------------
+// 【已删除 · T2 5a 收口刀二（codex P1-2'）】`visionHwmPath`——上一刀还留着它给"legacy
+// hwm 残留兼容回滚"用，codex 实测该兼容路径本身就是死点（canonical HWM 为目录 +
+// 旧 `.reset-*.bak` 在场 → rollback rmSync 撞目录 ERR_FS_EISDIR，启动即崩）。
+// 现残留扫描**彻底不识别 HWM**：旧 `.hwm.jsonl` 及其 `.reset-*.bak/.absent` 一律忽略、
+// 允许人工删除——与 MIGRATION"惰性遗留物"承诺至此完全一致，不造自动 GC。
 
 function lineageResetBackupPaths(projectRoot: string, feature: string, runId: string): {
-  head: string; headBak: string; hwm: string; hwmBak: string;
+  head: string; headBak: string;
 } {
   const head = visionFeatureHeadPath(projectRoot, feature);
-  const hwm = visionHwmPath(projectRoot, feature);
   const suffix = `.reset-${runId.replace(/[^\w.-]/g, '_')}.bak`;
-  return { head, headBak: `${head}${suffix}`, hwm, hwmBak: `${hwm}${suffix}` };
+  return { head, headBak: `${head}${suffix}` };
 }
 
 export interface LineageResetQuarantine {
   old_head_sha256: string | null;
-  old_hwm_sha256: string | null;
   head_backup: string | null;
-  hwm_backup: string | null;
   /** 本次开始前从**上一次崩溃的 reset**回滚回来的锚（文件名列表；空=无残留） */
   rolled_back_from: string[];
 }
 
 /**
- * 该 feature 名下所有 reset 残留（任意 run，用于回滚/清扫）。
+ * 该 feature 名下的 **head** reset 残留（任意 run，用于回滚/清扫）。
  *
  * 两种残留（codex 七轮 P1）：
  *   `.bak`    旧锚**有内容** —— 回滚=删半成品 + 改名还原；
- *   `.absent` 旧锚**本就不存在**（legacy 状态：有 head 无 HWM 是受支持形态）——
- *             回滚=**删掉当前半成品**，把该锚恢复成 absent。
- * 少了墓碑这一半，「旧 head + 新 HWM」这种混合链会从 absent 侧漏过去
- *（随后被 assessHwmFreshness 判 rollback 停机，等于把可自愈的崩溃变成人工事故）。
+ *   `.absent` 旧锚**本就不存在** —— 回滚=**删掉当前半成品**，恢复成 absent
+ *             （现行 quarantine 不再产墓碑；此形态仅旧版本崩溃现场遗留）。
+ * 收口刀二（codex P1-2'）：**只认 head 的残留**——HWM 的 `.reset-*.bak/.absent`
+ * 与 `.hwm.jsonl` 本体一律不识别（旧残留人工删除即可；识别即回滚曾被实测为
+ * ERR_FS_EISDIR 启动死点）。
  */
 const RESET_RESIDUE_RE = /\.reset-[\w.-]+\.(bak|absent)$/;
 
@@ -2985,18 +2603,25 @@ function listLineageResetBackups(projectRoot: string, feature: string): Array<{
   residue: string; restoreTo: string; wasAbsent: boolean;
 }> {
   const head = visionFeatureHeadPath(projectRoot, feature);
-  const hwm = visionHwmPath(projectRoot, feature);
   const dir = path.dirname(head);
   if (!fs.existsSync(dir)) return [];
   const out: Array<{ residue: string; restoreTo: string; wasAbsent: boolean }> = [];
-  for (const name of fs.readdirSync(dir)) {
+  // 收口终刀二（codex P1）：枚举失败**向上抛**——两个调用方语义不同，降级只能发生在
+  // 需要它的那一侧：rollback 在调用点捕获（恢复失败=跳过继续，缓存无执行否决权）；
+  // finalize **不得**捕获（"无法确认备份是否清空"≠"没有备份"，吞掉即经由
+  // lineage_reset_committed 虚假提交——上一刀在共享层统一降级正是这个错）。
+  const names = fs.readdirSync(dir);
+  for (const name of names) {
     const abs = path.join(dir, name);
     const m = RESET_RESIDUE_RE.exec(name);
     if (!m) continue;
+    // 收口刀四（codex P1）：残留**只认普通文件**——目录/符号链接形态的 `.bak` 一律
+    // 不识别（codex 实测：目录形态 bak 被 rollback 改名成 canonical head → head 永久
+    // 变目录，其后每次启动全量重建）。异常形态残留=惰性垃圾，人工删除即可。
+    try { if (!fs.lstatSync(abs).isFile()) continue; } catch { continue; }
     const base = abs.replace(RESET_RESIDUE_RE, '');
     const wasAbsent = m[1] === 'absent';
     if (base === head) out.push({ residue: abs, restoreTo: head, wasAbsent });
-    else if (base === hwm) out.push({ residue: abs, restoreTo: hwm, wasAbsent });
   }
   return out;
 }
@@ -3004,33 +2629,53 @@ function listLineageResetBackups(projectRoot: string, feature: string): Array<{
 /**
  * 事务回滚：把上一次未完成 reset 的备份**还原**回原位。
  *
- * **全有全无（codex 六轮 P1 订正）**：v1 逐文件判「原位为空才还原」，在
- * 「新 head 已写、新 HWM 未写」的崩溃窗口会拼出 **新 head + 旧 HWM** 的混合链——
- * 比两头落空更坏（看起来像一条完整链，实际世代与 HWM 不同源）。
- * 现在的语义：备份在场即视为**事务未提交**（提交点已后移到三件套齐备之后），
- * 因此把该 feature 的锚整体退回备份时点——原位若有半成品新锚，先删再还原。
- * 返回被还原的文件名（空=无残留）。
+ * 语义：备份在场即视为**事务未提交**——把 head 退回备份时点；原位若有半成品新锚，
+ * 先删再还原。返回被还原的文件名（空=无残留）。收口刀后事务只涉 head 一件，
+ * "混合链"窗口（旧版三件套时代的全有全无动机）已不存在；HWM 残留一律不识别
+ * （收口刀二，见 listLineageResetBackups 头注）。
  *
- * 诚实边界（有意的简单化）：若崩溃恰好发生在「三件套齐备、finalize 之前」这一极窄窗口，
+ * 诚实边界（有意的简单化）：若崩溃恰好发生在「新 head 已写、finalize 之前」这一极窄窗口，
  * 本函数会退回旧 lineage 而不是提交那条已建好的新链——代价是重做一次 reset（幂等），
- * 换来的是**任何时刻都不会出现混合链**。不为这个窗口再引入一本提交日志。
+ * 不为这个窗口引入一本提交日志。
+ *
+ * **no-throw 边界（收口刀三，codex P1）**：本函数处理的是纯缓存——枚举/删除/改名
+ * 的任何失败（原位被目录顶住 EISDIR、权限等）都只跳过该条并告警，绝不向上抛
+ * （codex 实测 head=目录+旧 .bak 在场时 rmSync EISDIR 零 phase 中断）。跳过的残留
+ * 是惰性遗留物，允许人工删除；head 本体不可用由后续 verify=invalid→自动重建承接。
  */
 export function rollbackLineageResetQuarantine(args: {
   projectRoot: string; feature: string;
 }): string[] {
-  const backups = listLineageResetBackups(args.projectRoot, args.feature);
+  // 枚举失败在**本调用点**降级（收口终刀二）：namespace 被异常实体顶住（ENOTDIR 等）
+  // = 无可回滚残留，跳过继续；finalize 侧不做此降级（见 listLineageResetBackups 头注）。
+  let backups: ReturnType<typeof listLineageResetBackups>;
+  try {
+    backups = listLineageResetBackups(args.projectRoot, args.feature);
+  } catch (e) {
+    console.warn(
+      `[goal-runner] lineage reset 残留枚举失败（${(e as Error).message}）——按无残留继续（缓存无执行否决权）`,
+    );
+    return [];
+  }
   if (backups.length === 0) return [];
   const restored: string[] = [];
   for (const { residue, restoreTo, wasAbsent } of backups) {
-    // 半成品新锚（未提交事务的产物）先清除，避免与旧锚混链
-    if (fs.existsSync(restoreTo)) fs.rmSync(restoreTo, { force: true });
-    if (wasAbsent) {
-      // 旧值就是 absent —— 恢复到 absent 即「删掉半成品」，墓碑随之清除
-      fs.rmSync(residue, { force: true });
-    } else {
-      fs.renameSync(residue, restoreTo);
+    try {
+      // 半成品新锚（未提交事务的产物）先清除，避免与旧锚混链
+      if (fs.existsSync(restoreTo)) fs.rmSync(restoreTo, { force: true });
+      if (wasAbsent) {
+        // 旧值就是 absent —— 恢复到 absent 即「删掉半成品」，墓碑随之清除
+        fs.rmSync(residue, { force: true });
+      } else {
+        fs.renameSync(residue, restoreTo);
+      }
+      restored.push(path.basename(restoreTo));
+    } catch (e) {
+      console.warn(
+        `[goal-runner] lineage reset 残留 ${path.basename(residue)} 回滚失败（${(e as Error).message}）` +
+        '——跳过（缓存无执行否决权；残留可人工删除）',
+      );
     }
-    restored.push(path.basename(restoreTo));
   }
   return restored;
 }
@@ -3051,33 +2696,37 @@ export function quarantineLineageAnchorsForReset(args: {
   });
   const p = lineageResetBackupPaths(args.projectRoot, args.feature, args.runId);
   const out: LineageResetQuarantine = {
-    old_head_sha256: null, old_hwm_sha256: null, head_backup: null, hwm_backup: null,
+    old_head_sha256: null, head_backup: null,
     rolled_back_from: rolledBack,
   };
-  const anchors = [
-    [p.head, p.headBak, 'head'] as const,
-    [p.hwm, p.hwmBak, 'hwm'] as const,
-  ];
-  // 一个锚都不存在 = 没有可回滚的前态，本次 reset 等同「首次建链」——不留墓碑，
-  // 免得把一次正常的首建也变成「未提交事务」。
-  if (!anchors.some(([src]) => fs.existsSync(src))) return out;
-  for (const [src, bak, key] of anchors) {
-    if (fs.existsSync(bak) || fs.existsSync(`${bak.slice(0, -'.bak'.length)}.absent`)) {
-      throw new Error(
-        `lineage reset 残留名冲突（${path.basename(bak)}）——中止（fail-closed，人工处置残留）`,
-      );
-    }
-    if (!fs.existsSync(src)) {
-      // codex 七轮 P1：旧值 absent 也要留痕（legacy「有 head 无 HWM」是受支持形态）。
-      // 无墓碑则回滚遍历不到该锚，新产物会残留 → 旧 head + 新 HWM 混合链。
-      fs.writeFileSync(`${bak.slice(0, -'.bak'.length)}.absent`, '', 'utf-8');
-      continue;
-    }
-    const sha = createHash('sha256').update(fs.readFileSync(src)).digest('hex');
-    fs.renameSync(src, bak);
-    if (key === 'head') { out.old_head_sha256 = sha; out.head_backup = bak; }
-    else { out.old_hwm_sha256 = sha; out.hwm_backup = bak; }
+  // 收口刀（codex P1-3）：事务只涉 head 一件——旧 .hwm.jsonl **不读不改名**（异常实体
+  // （目录/坏权限）也不再有机会在 phase 前炸掉 run）。head 不存在 = 没有可回滚的前态，
+  // 本次 reset 等同「首次建链」——不留墓碑，免得把一次正常的首建也变成「未提交事务」。
+  if (!fs.existsSync(p.head)) return out;
+  // 收口刀二（codex P1-1'）：head 是**观察锚**——非普通文件（目录等异常实体）或读取
+  // 失败＝缓存不可用：不 hash、不 quarantine，按「无可回滚前态」继续（verify 已把这类
+  // 实体判 invalid → 走自动重建；这里再抛错＝观察锚重新拿到执行否决权，codex 实测
+  // head 为目录时恢复路径自身 EISDIR 零 phase）。新 head 写不上去（rename 撞目录）由
+  // commitVisionAnchors 的写失败降级承接（persist_failed 记录+继续）。
+  try {
+    if (!fs.statSync(p.head).isFile()) return out;
+  } catch { return out; }
+  // 收口刀三（codex P1）：残留名冲突从 fail-closed throw 降级为**跳过备份、继续重建**
+  // ——冲突残留是回滚失败留下的缓存垃圾，不得否决执行；不备份=old_head_sha256 记 null
+  // （断裂事件如实少一个旧 hash），新链照建，残留由 finalize 清扫或人工删除。
+  if (fs.existsSync(p.headBak) || fs.existsSync(`${p.headBak.slice(0, -'.bak'.length)}.absent`)) {
+    console.warn(
+      `[goal-runner] lineage reset 残留名冲突（${path.basename(p.headBak)}）——跳过备份直接重建` +
+      '（缓存无执行否决权）',
+    );
+    return out;
   }
+  try {
+    const sha = createHash('sha256').update(fs.readFileSync(p.head)).digest('hex');
+    fs.renameSync(p.head, p.headBak);
+    out.old_head_sha256 = sha;
+    out.head_backup = p.headBak;
+  } catch { /* 读/改名竞态失败＝缓存不可用，同上——继续，不授予否决权 */ }
   return out;
 }
 
@@ -3090,6 +2739,11 @@ export function finalizeLineageResetQuarantine(args: {
   projectRoot: string; feature: string; runId?: string;
 }): number {
   let removed = 0;
+  // 收口刀四（codex P1）订正上一刀：finalize **不吞**已识别备份的删除异常——吞掉即
+  // "清扫失败仍写 lineage_reset_committed"的虚假提交（事件声称已提交、缓存仍能回滚，
+  // 下次 rollback 会删掉新 head 还原旧备份）。这里抛出去由 commitVisionAnchors 外层
+  // catch 承接：记 persist_failed 继续执行、committed **不写**、pending 保持在场，
+  // 下一成功写点重试提交——run 不死，事实不假。
   for (const { residue } of listLineageResetBackups(args.projectRoot, args.feature)) {
     fs.rmSync(residue, { force: true });
     removed += 1;
@@ -3119,19 +2773,9 @@ export function verifyVisionFeatureHead(args: {
   ) {
     return { state: 'invalid', mismatched: [], reason: 'feature head 身份/形状失配' };
   }
-  const { mac, ...body } = doc;
-  const macState = visionMacValid(body, mac);
-  if (macState === 'invalid') {
-    return { state: 'invalid', mismatched: [], reason: 'feature head MAC 验签失败/无密钥核实' };
-  }
   const mismatched = diffVisionLedgerSnapshots(doc.files, args.current);
   if (mismatched.length > 0) return { state: 'mismatch', mismatched, generation: doc.generation };
-  return {
-    state: macState === 'ok' ? 'ok' : 'ok_unauthenticated',
-    mismatched: [],
-    generation: doc.generation,
-    hwmDeclared: doc.hwm_declared === true,
-  };
+  return { state: 'ok', mismatched: [], generation: doc.generation };
 }
 
 /**
@@ -3144,116 +2788,16 @@ export function verifyVisionFeatureHead(args: {
  *   - head 与 HWM 双 absent 的真首建不经过本函数（head absent 分支另行处理）。
  * 纯函数（真路径可测），rollback 判定沿用十/十一轮语义与诚实边界（非密码学 anti-rollback）。
  */
-export function assessHwmFreshness(args: {
-  headGeneration: number;
-  /** 当前盘上 head 字节 digest（readVisionFeatureHeadMeta().digest） */
-  headDigest: string | undefined;
-  hwmDeclared: boolean;
-  hwm: { state: 'absent' | 'invalid' | 'ok' | 'ok_unauthenticated'; maxGeneration?: number; lastHeadDigest?: string; reason?: string };
-}): { action: 'proceed' | 'bootstrap_legacy' | 'halt_hwm_missing' | 'halt_hwm_invalid' | 'halt_rollback' | 'halt_incomplete_commit'; reason?: string } {
-  if (args.hwm.state === 'invalid') {
-    return { action: 'halt_hwm_invalid', reason: args.hwm.reason ?? 'HWM 链不可信' };
-  }
-  if (args.hwm.state === 'absent') {
-    if (args.hwmDeclared) {
-      return {
-        action: 'halt_hwm_missing',
-        reason:
-          `head（世代 ${args.headGeneration}）声明 HWM 链已建立，但 HWM 文件缺失——删除/丢失不可静默重建新链` +
-          '（洗白通道）。人工核查后走 --reseal-receipt 重铸。',
-      };
-    }
-    return { action: 'bootstrap_legacy', reason: 'legacy head（1.0 无 hwm_declared）+ HWM 缺失——一次性显式 bootstrap' };
-  }
-  if (typeof args.hwm.maxGeneration === 'number') {
-    if (args.headGeneration < args.hwm.maxGeneration ||
-        (args.headGeneration === args.hwm.maxGeneration && args.headDigest !== args.hwm.lastHeadDigest)) {
-      return {
-        action: 'halt_rollback',
-        reason:
-          `head 世代 ${args.headGeneration} < HWM 高水位 ${args.hwm.maxGeneration}，或同世代 digest 不符——` +
-          '非协调回滚/损坏拦截',
-      };
-    }
-    // 十四轮 P1：**双向严格等值**——head 超前（headGeneration > maxGeneration）不再放行。
-    // 正常运行的崩溃窗口（head/checkpoint 已写、HWM 追加前崩）会留下此态；若放行，下个
-    // commit 写 N+2 行（严格递增校验放过跳档）即把未完成提交洗成正常历史，违背 spec
-    // "启动时 head 必须等于 HWM 高水位"。归类 incomplete_anchor_commit，fail-closed。
-    if (args.headGeneration > args.hwm.maxGeneration) {
-      return {
-        action: 'halt_incomplete_commit',
-        reason:
-          `head 世代 ${args.headGeneration} > HWM 高水位 ${args.hwm.maxGeneration}——上次锚提交未完成` +
-          '（incomplete_anchor_commit）或 HWM 被单独截断。不得继续执行（洗档拦截）；人工核查后走 --reseal-receipt 重铸。',
-      };
-    }
-  }
-  return { action: 'proceed' };
-}
+// 【已删除 · T2 5a 完成刀】HWM 行/读链、reseal journal 全套（write/read/transactionalQuarantineHwm/commitResealJournal/recoverResealTransaction）、appendVisionHwm、assessHwmFreshness——防伪造纵深整体退役；旧 .hwm.jsonl 与 journal 文件成为无消费者的惰性遗留物（不参与任何裁决）。
+// 【已删除 · T2 5a 收口刀（codex P2）】`visionLedgerAckObjectHash` / `visionTrustResealObjectHash`
+// ——ack/reseal 凭据协议整体退役后的孤儿绑定函数（confirmation receipt 侧对应两个 action
+// `vision_ledger_ack`/`vision_trust_reseal` 同批移除）。
 
-/** 七轮 P1-1（ack receipt 绑定对象）：vision_ledger_ack 的 object_hash 口径。 */
-export function visionLedgerAckObjectHash(args: {
-  projectRoot: string;
-  feature: string;
-  runId: string;
-  files: readonly VisionLedgerSnapshot[];
-}): string {
-  return createHash('sha256')
-    .update(stableStringify({
-      project_root_hash: projectIdentityHash(args.projectRoot),
-      feature: args.feature,
-      run_id: args.runId,
-      files: [...args.files],
-    }), 'utf-8')
-    .digest('hex');
-}
-
-/** 八/九轮（rekey/reseal 协议绑定对象）：vision_trust_reseal 的 object_hash 口径——
- * 绑当前双账本 hash + 旧 head/旧 checkpoint 字节 hash + **当前授权子集哈希 + frozen
- * manifest hash** + project/feature/run。九轮 P0-2：不绑授权面 → 真人签 reseal 后模型改
- * manifest 授权子集仍被 reseal 放行（授权升级旁路），故授权子集与冻结锚必须入签名对象。 */
-export function visionTrustResealObjectHash(args: {
-  projectRoot: string;
-  feature: string;
-  runId: string;
-  files: readonly VisionLedgerSnapshot[];
-  oldHeadSha256: string;
-  authSubsetSha256: string;
-  frozenManifestHash: string | null;
-  oldCheckpointSha256: string;
-  oldHwmSha256: string;
-}): string {
-  return createHash('sha256')
-    .update(stableStringify({
-      project_root_hash: projectIdentityHash(args.projectRoot),
-      feature: args.feature,
-      run_id: args.runId,
-      files: [...args.files],
-      old_head_sha256: args.oldHeadSha256,
-      old_checkpoint_sha256: args.oldCheckpointSha256,
-      old_hwm_sha256: args.oldHwmSha256,
-      auth_subset_sha256: args.authSubsetSha256,
-      frozen_manifest_hash: args.frozenManifestHash ?? null,
-    }), 'utf-8')
-    .digest('hex');
-}
-
-/** 七轮 P0-1：vision 信任封顶（导出单测）——UI 相关 run 在无 authenticated checkpoint
- * （未配 HMAC 密钥）或仅弱 ack（CLI 旗标非真人凭证）时不得产出 clean completion，
- * 封顶 AWAITING_HUMAN_REVIEW。非 UI run 不受影响。 */
-export function capRunStatusForVisionTrust(
-  status: string,
-  opts: { uiRelevant: boolean; hmacKeyPresent: boolean; ackWeak: boolean },
-): { status: string; capped: boolean; reason?: string } {
-  if (status !== 'CHAIN_SLICE_COMPLETED' || !opts.uiRelevant) return { status, capped: false };
-  if (!opts.hmacKeyPresent) {
-    return { status: 'AWAITING_HUMAN_REVIEW', capped: true, reason: 'vision_checkpoint_unauthenticated' };
-  }
-  if (opts.ackWeak) {
-    return { status: 'AWAITING_HUMAN_REVIEW', capped: true, reason: 'vision_ledger_ack_unattested' };
-  }
-  return { status, capped: false };
-}
+/** 【已删除 · 垂直闭环追补（codex 第九批 P0 + 2026-08-06 理念裁定）】
+ * `capRunStatusForVisionTrust`（七轮 P0-1）：UI run 无 HMAC 密钥/仅弱 ack 时完成态
+ * 封顶 AWAITING_HUMAN_REVIEW。整体删除——认证状态退出完成态语义；防伪造主防线=
+ * 终点验收不信 agent 自报（视觉裁判去自报化 + pixel_1to1 人工确认）。
+ * 防复活断言见 effective-vision-context 套件。设备真实性封顶（诚实完成度）保留在下方。 */
 
 /**
  * openspec device-readiness-and-completion t2：**设备真实性封顶**（导出单测）。
@@ -3334,7 +2878,8 @@ export function reconcileMutablePhaseSourceDrift(args: {
       feature: args.manifest.feature,
       // 十三轮 P1-3：runner 进程持 key（子进程已剥离）——无 key 部署下 pre_run_manifest
       // 整链（manifest 文件+run_start 冻结事件）在 agent 可写面，不构成机器可信授权。
-      manifestIdentityAuthenticated: Boolean(process.env[VISION_CHECKPOINT_HMAC_ENV]),
+      // 5a 完成刀：签名维度已删——身份字段不再有 authenticated/unauthenticated 之分
+      manifestIdentityAuthenticated: false,
       currentDriftFingerprint: fp?.fingerprint ?? null,
     },
   );
@@ -3375,9 +2920,10 @@ const SCOPE_REPLAN_REASON_TEXT: Record<ScopeReplanPromptContext['reason'], strin
 /**
  * e5d8a2c4 T1③(b)(c)：**reset 事务是否处于未完成态**（删除出生字段硬拒的配套判据）。
  *
- * 崩溃窗：fresh reset 已写 `lineage_discontinuity` → 在 `lineage_reset_committed`
- * **之前**崩溃 → resume 时 rollback 把**旧锚**还原回来。此后旧锚失配则 decide(resume)
- * 恒 terminal（死路）；旧锚有效则 run 照常继续而 **reset 意图被静默丢弃**（更坏）。
+ * 崩溃窗（立项时的旧语义，作为历史记录保留）：fresh reset 已写 `lineage_discontinuity`
+ * → 在 `lineage_reset_committed` **之前**崩溃 → resume 时 rollback 把**旧锚**还原回来。
+ * 当时旧锚失配即 decide(resume) terminal 死路（该判死已随 5a-1 统一 recover 删除）；
+ * 旧锚有效则 run 照常继续而 **reset 意图被静默丢弃**（更坏）——本判据治的是后者。
  *
  * 判据（codex 二轮再简化——**不依赖 discontinuity 是否已落盘**）：
  *   `needs_reset = 出生冻结的 manifest 含 reset  ∧  尚无 lineage_reset_committed`
@@ -3389,7 +2935,9 @@ const SCOPE_REPLAN_REASON_TEXT: Record<ScopeReplanPromptContext['reason'], strin
  *
  * **安全边界**：起点必须是**真正的出生值**，见 `resolveBirthVisionLineage`。
  * reset 本身是**撤销连续性主张**（`continuity_claim: 'revoked'`）而非授予权限，
- * 与 b3e8d4c7 t5 的失效重建同理：不采信 ≠ 放行。"resume 中途升级 reset"仍恒 terminal。
+ * 与 b3e8d4c7 t5 的失效重建同理：不采信 ≠ 放行。"resume 中途升级 reset"的防线
+ * 不在 decide（5a-1 后恒 recover）——在出生冻结判据本身（中途补写拿不到出生值）
+ * 加 manifest 身份字段 drift 检测（events 出生基线）。
  */
 export function resolveLineageResetInFlight(
   birthLineage: 'continue' | 'reset',
@@ -3407,8 +2955,8 @@ export function resolveLineageResetInFlight(
  * 上一版判据直接读**当前磁盘 manifest**，注释却宣称"出生冻结的 manifest"——
  * 名实不符，且有真实攻击面：首次 vision checkpoint 尚未生成时，manifest drift 按
  * 「无基线」放行，于是**停机窗口里把 `vision_lineage` 改成 `reset`**，resume 就会被
- * 判成"出生 reset 未完成"而拿到 recover——正是"resume 中途升级 reset 恒 terminal"
- * 要挡的那件事。（我原先写的"该字段计入 MAC 身份字段集故伪造不了"答非所问：
+ * 判成"出生 reset 未完成"而拿到 recover——正是"中途升级 reset 无效"这条红线
+ * 要挡的那件事。（我原先写的"该字段计入身份字段集故伪造不了"答非所问：
  * 攻击面不是伪造 events，是改盘上的 manifest。）
  *
  * 取值口径与既有 `resolveFrozenManifestHash` 同构——**首个 `run_start` 说了算**：
@@ -4072,7 +3620,7 @@ export async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
-      'run-id', 'ack-receipt', 'reseal-receipt',
+      'run-id', 'supersede',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
       'requirement-file',
@@ -4087,7 +3635,6 @@ export async function main(): Promise<number> {
       'refresh-vision-probe',
       // 六轮 P0-1：resume 时 vision checkpoint 缺失（旧版升级/被删）的显式人工确认——
       // 无此旗标一律 halt（fail-closed），不静默回落弱信任
-      'ack-unverified-ledgers',
     ],
     alias: { f: 'feature', h: 'help' },
   });
@@ -4165,17 +3712,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // （source layout Scenario）。07-17 事故 agent 向 framework/harness/ 写 debug 脚本未被拦，
   // 每-harness 复扫机制在位（harness-runner 全模式入口直调），最可能根因即此部署形态。
   // 只告警不改门（改判会破 source-repo 开发契约）；宿主据此改用发布包部署。
-  // b3e8d4c7 t4（用户拍板：仅警告，不设启动硬门）：未配 writer authenticity 密钥时，
-  // 同进程内的 scope 保护仍由内存锚承担（本 plan 已接线），但 **resume/重启后内存锚没了**，
-  // 只能退回弱快照——盘上 head 被换代无法证伪。既有约束（MIGRATION.md）已让未配置时
-  // UI 类 run 不产出 clean completion，这里只把降级说清楚，不再加门。
-  if (!process.env[PASS_SNAPSHOT_HMAC_ENV]?.trim()) {
-    console.warn(
-      `[goal-runner] ⚠ 未配置 ${PASS_SNAPSHOT_HMAC_ENV}——resume/重启后 scope 冻结保护降级为` +
-      '弱快照（同进程内由内存锚保护，不受影响）。配置该密钥可让跨进程也 fail-closed；' +
-      '未配置时 UI 类 run 的完成态仍按既有约束封顶人工复核。',
-    );
-  }
+  // codex 第九批收尾 P2：旧警告陈述"完成态封顶人工复核"已随垂直闭环删除——不再
+  // 诱导用户配置不需要的密钥。降级为一次性纯诊断（认证状态只影响记录，不影响执行
+  // 与完成态；HMAC 签验面整体删除属 T2 5a，届时本提示一并退役）。
+  // 5a 完成刀：HMAC 提示整体删除（vision 面签名维度已退役；pass-snapshot 的 HMAC
+  // 面属 5b 手术范围——5a 明确限定为 vision，见 plan 第十二批）。
 
   if (layout.frameworkRel && !fs.existsSync(path.join(frameworkRoot, 'RELEASE-MANIFEST.json'))) {
     console.warn(
@@ -4259,13 +3800,60 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  // T3①：自动后继的唯一 manifest 写入点继承源 run 的预算与指纹账本。
+  // 审计权仍来自后续 fresh run 的 supersede 事件；这里仅把启动约束和防震荡
+  // 指纹带入新 manifest，不能单独让旧 run 的阶段 PASS 跨 run 生效。
+  if (!argv.resume && !dryRunMode) {
+    const requestedSupersedeTargets =
+      Array.isArray(argv.supersede)
+        ? argv.supersede.filter((value): value is string => typeof value === 'string')
+        : typeof argv.supersede === 'string'
+          ? [argv.supersede]
+          : [];
+    const sourceRunId = requestedSupersedeTargets[0];
+    if (sourceRunId && isValidRunIdBasename(sourceRunId)) {
+      try {
+        const source = loadGoalManifestFromRun(projectRoot, sourceRunId, {
+          feature: manifest.feature,
+          featuresDir,
+        });
+        const sourceEvents = collectSupersededAncestorEvents({
+          projectRoot,
+          featuresDir,
+          feature: manifest.feature,
+          seedTargets: requestedSupersedeTargets,
+        });
+        const round: string[] = [];
+        const drift: string[] = [];
+        for (const event of sourceEvents) {
+          const record = event as unknown as {
+            round_fingerprint?: unknown;
+            drift_fingerprint?: unknown;
+          };
+          if (typeof record.round_fingerprint === 'string') round.push(record.round_fingerprint);
+          if (typeof record.drift_fingerprint === 'string') drift.push(record.drift_fingerprint);
+        }
+        manifest = inheritSuccessorManifest(manifest, source, { round, drift });
+      } catch (error) {
+        // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
+        // manifest，否则 --supersede 会悄悄刷新 end/预算/能力门。目标审计事件仍由
+        // 下方既有校验负责，但本次启动先 fail-closed，不制造合同不完整的后继。
+        throw new Error(
+          `[goal-runner] BLOCKER: 无法构造 supersede 后继 manifest（源=${sourceRunId}）：` +
+            `${(error as Error).message}`,
+        );
+      }
+    }
+  }
+
   // plan a5f9c3e2 t3①：**中途升级** lineage 声明不可接受——resume 不接受 --vision-lineage。
   // e5d8a2c4 T1③（2026-08-05）：**基于 manifest 出生字段的 resume 硬拒已删除**。
   // 它分不清「出生时声明、已消费完毕」与「中途塞入」，前者被后者的防线连坐，导致任何
   // 声明过 reset 的 run 结构性不可 resume（宿主实锤：停放话术让 resume、启动门拒 resume）。
-  // 「中途塞入」由两道现成的门承接：vision_lineage 已计入 MAC 保护的 manifest 身份字段
-  // （computeManifestIdentityFields，停机期被补写会被 drift 检测发现）；且 decide() 对
-  // reset_lineage 在非 fresh 恒 terminal。详见 goal-manifest.ts 该函数原址的删除注记。
+  // 「中途塞入」由两道现成的门承接：vision_lineage 已计入 manifest 身份字段
+  // （computeManifestIdentityFields，停机期被补写会被 events 出生基线 drift 检测发现）；
+  // 且执行判据只认**出生冻结值**（resolveBirthVisionLineage——中途补写拿不到出生值）。
+  // 详见 goal-manifest.ts 该函数原址的删除注记。
   {
     const isResume = Boolean(argv.resume);
     const lineageFlag =
@@ -4431,13 +4019,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // （--resume 与 --manifest 都盖）一律拒绝；`--force`/`--force-resume` 不可绕过。
   // SSOT=最新 authoritative run_end 事件（不信可变 goal-report.status——report 被改成
   // PARTIAL 不得重开封卷；诚实边界：events 亦在仓内非密码学防篡改，取 append-only 惯例
-  // 的相对强可信）。检查先于一切 trust-state 读取（含下方 manifest drift 的 checkpoint
-  // meta 读）、manifest/config 写入、canary/preflight——被删 checkpoint 的封卷 run 绝不
+  // 的相对强可信）。检查先于一切 manifest/config 写入、canary/preflight——封卷 run 绝不
   // 先走 drift/缺失确认流程再报 sealed。拒绝**只输出错误，不追加任何事件**（封卷后
   // 归档不再被修改）。COMPLETED 仅 legacy 读取兼容（新代码不得写出）。
+  // 收口刀：本次装载同时供下方 manifest 出生基线解析（同一份 events，一次读取）。
+  const startupEvents = loadAuthoritativeEvents(
+    path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
+  );
   {
-    const sealedEventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
-    const sealedRunEnd = findLastRunEnd(loadAuthoritativeEvents(sealedEventsPath));
+    const sealedRunEnd = findLastRunEnd(startupEvents);
     if (sealedRunEnd?.status === 'CHAIN_SLICE_COMPLETED' || sealedRunEnd?.status === 'COMPLETED') {
       console.error(
         `[goal-runner] BLOCKER: run ${manifest.run_id} 已成功封卷（sealed，${sealedRunEnd.status}）——` +
@@ -4448,20 +4038,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
   }
 
-  // 十二/十三轮 review：manifest 身份漂移检测——**锁内（防并发 TOCTOU/事件污染）+ 任何副作用
-  // （回写 local/writeGoalManifest/canary/preflight）之前**执行；可信旧基线取自 **authenticated
-  // checkpoint**（MAC 保护的 SSOT），events 仅审计投影。十三轮 P1-3：legacy checkpoint（无逐
-  // 字段身份）不静默当基线（聚合 hash 相等才一次性迁移）；valid_unauthenticated 基线标记弱信任
-  // （resume ack + 终态封顶 + pre_run_manifest 降级）。决策核心=resolveManifestDriftDecision
+  // manifest 身份漂移检测——**锁内（防并发 TOCTOU/事件污染）+ 任何副作用
+  // （回写 local/writeGoalManifest/canary/preflight）之前**执行。
+  // T2 5a 收口刀（codex P1-1）：可信出生基线改由 **events** 承载（首个 run_start 逐字段
+  // 身份 → 历次授权 rebase 事件前进基线，见 resolveManifestIdentityBaseline）——此前用
+  // 场外 checkpoint 当基线，codex 实测"checkpoint 在场→halt / 删除→放行"：缓存的存在与否
+  // 改变权限结果，且删缓存即可绕过出生意图。决策核心=resolveManifestDriftDecision
   // （纯函数，真路径可测）；未授权漂移 halt（drift 事件在锁内写，不污染他 run）。
-  // plan e7c2a4d8 T1b'（v22 P0-1）：dry-run 不读真实 run 的 vision checkpoint（同
-  // run_id 跨命名空间误读面）——以 absent 基线走「无基线」分支，零 trust 读写。
+  // plan e7c2a4d8 T1b'（v22 P0-1）沿承：dry-run 零 trust 读写、不与真实 run 事件基线
+  // 纠缠——以 null 基线走「无基线」分支。
   const manifestDrift = resolveManifestDriftDecision({
     currentFields: computeManifestIdentityFields(manifest),
     currentHash: computeManifestIdentityHash(manifest),
-    cpMeta: dryRun
-      ? ({ state: 'absent' } as ReturnType<typeof readVisionCheckpointMeta>)
-      : readVisionCheckpointMeta({ projectRoot, feature: manifest.feature, runId: manifest.run_id }),
+    birthFields: dryRun ? null : resolveManifestIdentityBaseline(startupEvents),
     overrides: {
       'override-manifest': Boolean(argv['override-manifest']),
       'override-start': Boolean(argv['override-start']),
@@ -4477,11 +4066,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     throw new Error(manifestDrift.halt.message);
   }
-  if (manifestDrift.legacyMigrated) {
-    goalEvents.emit({
-      type: 'vision_checkpoint_schema_migrated', from: '1.1', to: '1.2',
-    });
-  }
+  // 【已删除 · 收口刀】legacy checkpoint 聚合迁移分支与 `vision_checkpoint_schema_migrated`
+  // 事件——checkpoint 退出基线角色后无 schema 迁移语义。
 
     const { adapterStatus } = loadFrameworkConfigWithSources(projectRoot);
     const resolvedProfile = loadResolvedProfile(projectRoot, cfg);
@@ -4763,6 +4349,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
       return 1;
     }
+    for (const fingerprint of manifest.inherited_round_fingerprints ?? []) {
+      if (typeof fingerprint === 'string' && fingerprint) seenRoundFingerprints.add(fingerprint);
+    }
+    for (const fingerprint of manifest.inherited_drift_fingerprints ?? []) {
+      if (typeof fingerprint === 'string' && fingerprint) seenDriftFingerprints.add(fingerprint);
+    }
     // v23 F1：整轮集合指纹从有效 events 恢复（直接读 round_fingerprint 字段，不从有界
     // defects[] 反算）；缺陷交接上下文取最近一条回退事件的 defects[]（一次遍历取两者）
     for (const e of priorEvents) {
@@ -4830,7 +4422,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // Arm the terminal-event safety net now that report_dir is known: any abnormal exit
     // from here on writes run_end{INTERRUPTED} instead of dying silently.
-    terminalEventCtx = { reportDir: manifest.report_dir, projectRoot };
+    terminalEventCtx = {
+      reportDir: manifest.report_dir, projectRoot,
+      runId: manifest.run_id, feature: manifest.feature,
+      chain: [...chain], workflowChain: fullWorkflowChain.map(String),
+    };
 
     // visual-capability-truth S4：run_start 冻结 manifest hash——pre_run_manifest 授权源
     // 只认此快照（运行中补写 manifest 不构成授权）；resume 沿用首个 run_start 的冻结值。
@@ -4840,7 +4436,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const frozenManifestHash = resolveFrozenManifestHash(priorEvents, sha256FileHex(manifestFileAbs));
     const effectiveFrozenManifestIdentityHash = manifestDrift.effectiveHash;
     if (manifestDrift.rebaseApplied) {
-      // 审计投影（可信 rebase 基线由 authenticated checkpoint 承载，见 commitVisionAnchors）
+      // 基线承载事件（收口刀）：resolveManifestIdentityBaseline 消费本事件把出生基线
+      // 前进到 to_fields——授权 rebase 过一次后，后续 resume 不再复报同一漂移
       goalEvents.emit({
         type: 'manifest_identity_rebase',
         to_fields: manifestDrift.currentFields,
@@ -4858,11 +4455,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
     flushProgress(true);
 
     // 六/七轮 review P0：vision 信任链启动序——**head 先验（跨 run 连续性）→ resume
-    // checkpoint 校验（同 run 停机窗口 + 授权子集绑定）→ 迁移（验后迁）→ 基线锚**。
-    // ack 语义（七轮 P1-1）：CLI 旗标可被模型拼出，不构成人工授权——仅受信 confirmation
-    // receipt（action=vision_ledger_ack，绑 project/feature/run/两账本 hash）为强 ack；
-    // 旗标为弱 ack：须 events anchor 比对可行且通过，且终态封顶 AWAITING_HUMAN_REVIEW。
-    let visionAckWeak = false;
+    // checkpoint 校验（缓存可复用性）→ 迁移（验后迁）→ 基线锚**。
+    // ack 语义已整体退役（垂直闭环 + 收口刀：receipt 侧 vision_ledger_ack/vision_trust_reseal
+    // 两个 action 同批移除）——信任状态只记录、不拦截、不求人。
     // openspec device-readiness-and-completion t2：最后一次 testing 经设备就绪门取得的目标类型。
     // **null = 本 run 的 testing 未经设备门**（profile 未声明 device_capabilities / dry-run），
     // 与 'unknown'（经过了门但判不出机型）**语义不同**：前者不参与封顶（该链路本就与设备无关），
@@ -4870,123 +4465,77 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let lastTestingTargetKind: DeviceTargetKind | null = null;
     /** R10：托管模拟器的信号清理反注册句柄（正常回收后摘除，防重复回收） */
     let releaseManagedDeviceCleanup: (() => void) | null = null;
-    const currentAuthSubsetSha256 = computeAuthSubsetSha256(manifest.pre_authorized_mutations);
-    // 八/九轮 P1：runner 内存可信态——启动验真后 head 世代/migrations/**上次写入字节 digest**
-    // 只活在进程内；后续写点以内存为权威，覆盖前既比对身份/MAC/世代（缺失/漂移 halt），
-    // 又精确比对 digest——九轮 P1-2：**合法旧文件重放**（身份+MAC 均过但字节 != 内存最近值）
-    // 亦判篡改，runner 不为其重签。
+    // runner 内存态（收口刀二裁剪）：只剩两个真消费者——headGeneration（写点世代单调）
+    // 与 migrations（迁移凭证随写入持久）。八/九轮的覆盖前 digest 比对/checkpointWritten
+    // 追踪随"运行中复验"退役，字段只写不读即删（codex P2）。
     const visionTrust: {
       headGeneration: number;
       migrations: unknown[];
-      checkpointWritten: boolean;
-      headDigest: string | null;
-      checkpointDigest: string | null;
     } = {
       headGeneration: 0,
       migrations: [],
-      checkpointWritten: false,
-      headDigest: null,
-      checkpointDigest: null,
     };
     // 十二/十三轮 P0-b/P0-2：reseal 事务待提交标记（quarantine 后、新 HWM 首写复验通过前）。
-    // 十三轮：只在本 run 新开 quarantine 时置位——崩溃事务由 recoverResealTransaction 在启动
-    // 期按内容恢复（rolled_back 后原 receipt 复用/completed 补 commit），不再靠"同 run 续跑"。
-    const resealTx: { pending: boolean } = { pending: false };
     // plan a5f9c3e2 t3①：lineage reset 事务待提交标记——旧锚已改名让路、新 head 尚未写。
-    // 新 head 写入成功后 finalizeLineageResetQuarantine 删除旧场外实体（见 commitVisionAnchors）。
     // 崩溃留下的 .reset-<runId>.bak 由「head absent + 已声明 reset」路径自然重入处理。
     let lineageResetPending = false;
+    // 【T2 5a 完成刀（2026-08-07，codex 三条 P1 后收口）】commitVisionAnchors 重构：
+    // · 运行中 integrity 复验（head/checkpoint 被删/变即 throw）**删除**——runner 是
+    //   writer，提交即覆盖写；运行中被外部改动的兜底=下次启动 mismatch→自动重建
+    //   （"纯证据故障只触发 discontinuity/recompute"，不再有运行中 fail-closed）；
+    // · HWM 追加与复验**删除**（HWM 全链退役——防"协调回滚"的密码学纵深，三分类①）；
+    // · reseal 事务提交**删除**（reseal 全链退役）；
+    // · lineage reset 提交点＝head+checkpoint 写毕。
+    // 收口刀（codex P1-2）：**写失败降级**——head/checkpoint 已定义为观察锚/恢复缓存，
+    // 场外不可写（ENOTDIR/EACCES/磁盘满）最多意味着"本次未持久化连续性缓存"，不得重新
+    // 获得执行否决权（codex 实测：checkpoint 根不可用 → uncaught_exception 零 phase）。
+    // 记录事件后继续；reset 待提交标记保持在场，下一次成功写点自然补提交；整个 run 都
+    // 没写成时，下次启动的 rollback+事件判据（只有 discontinuity 无 committed→幂等续做）
+    // 兜底。
     const commitVisionAnchors = (
       scope: string,
       files: readonly VisionLedgerSnapshot[],
-      opts?: { skipIntegrityCheck?: boolean },
     ): void => {
       // plan e7c2a4d8 T1b'（v22 P0-1，宿主实证 ut2test dry 段曾写 vision anchor）：
-      // dry-run 零外部 trust 写——head/checkpoint/HWM 全家不落盘。
+      // dry-run 零外部 trust 写——head/checkpoint 全家不落盘。
       if (dryRun) return;
-      if (!opts?.skipIntegrityCheck) {
-        const headMeta = readVisionFeatureHeadMeta({ projectRoot, feature: manifest.feature });
-        const headOk =
-          (headMeta.state === 'valid' || headMeta.state === 'valid_unauthenticated') &&
-          headMeta.generation === visionTrust.headGeneration &&
-          // 九轮 P1-2：字节 digest 须等于内存最近写入值（合法旧文件重放被拒）
-          headMeta.digest === visionTrust.headDigest;
-        const cpMeta = readVisionCheckpointMeta({ projectRoot, feature: manifest.feature, runId: manifest.run_id });
-        const cpOk =
-          (cpMeta.state === 'valid' || cpMeta.state === 'valid_unauthenticated') &&
-          cpMeta.digest === visionTrust.checkpointDigest;
-        if (!headOk || !cpOk) {
-          goalEvents.emit({
-            type: 'vision_ledger_tamper',
-            scope: `${scope}_anchor_meta`,
-            head_state: headMeta.state,
-            head_generation: headMeta.generation ?? null,
-            expected_generation: visionTrust.headGeneration,
-            head_digest_match: headMeta.digest === visionTrust.headDigest,
-            checkpoint_state: cpMeta.state,
-            checkpoint_digest_match: cpMeta.digest === visionTrust.checkpointDigest,
-          });
-          throw new Error(
-            `vision 信任锚文件在运行中被删除/篡改/重放（scope=${scope}，head=${headMeta.state}/gen=${headMeta.generation ?? 'n/a'} ` +
-            `期望 ${visionTrust.headGeneration}，checkpoint=${cpMeta.state}）——fail-closed halt；runner 不为被篡改/重放的锚重新签名。`,
-          );
-        }
-      }
-      visionTrust.headGeneration += 1;
-      const headWrite = writeVisionFeatureHead({
-        projectRoot, feature: manifest.feature, runId: manifest.run_id, files,
-        generation: visionTrust.headGeneration,
-      });
-      visionTrust.headDigest = headWrite.digest;
-      visionTrust.checkpointDigest = writeVisionCheckpoint({
-        projectRoot,
-        feature: manifest.feature,
-        runId: manifest.run_id,
-        manifestHash: effectiveFrozenManifestIdentityHash,
-        manifestIdentityFields: manifestDrift.currentFields,
-        files,
-        authSubsetSha256: currentAuthSubsetSha256,
-        headGeneration: visionTrust.headGeneration,
-        migrations: visionTrust.migrations,
-      });
-      visionTrust.checkpointWritten = true;
-      // 十/十一/十二轮：持久化 HWM——每合法写点追加一行（诚实边界见 readVisionHwmHighWater 头注）
-      appendVisionHwm({
-        projectRoot, feature: manifest.feature,
-        generation: visionTrust.headGeneration, headDigest: headWrite.digest,
-      });
-      // plan a5f9c3e2 t3① ④（codex 六轮 P1 订正）：**新 lineage 三件套（head + checkpoint
-      // + HWM）齐备并复验通过后**才提交 reset 事务、删除旧场外实体。
-      // v1 把提交点放在 head 写完就删备份——若在 checkpoint/HWM 写入前崩溃，旧锚已毁、
-      // 新链未成，两头落空且无法回滚。提交点必须是整条新链的终点，不是第一步。
-      if (lineageResetPending) {
-        const freshHwm = readVisionHwmHighWater({ projectRoot, feature: manifest.feature });
-        if (freshHwm.state === 'invalid' || freshHwm.state === 'absent') {
-          throw new Error(
-            `lineage reset 新链复验失败（HWM=${freshHwm.state}）——事务不提交、` +
-            '旧锚备份保留待回滚（fail-closed）。',
-          );
-        }
-        const removed = finalizeLineageResetQuarantine({ projectRoot, feature: manifest.feature });
-        lineageResetPending = false;
-        goalEvents.emit({
-          type: 'lineage_reset_committed',
-          scope,
-          new_head_sha256: headWrite.digest,
-          new_generation: visionTrust.headGeneration,
-          offsite_backups_removed: removed,
-          continuity_claim: 'revoked',
+      try {
+        visionTrust.headGeneration += 1;
+        const headWrite = writeVisionFeatureHead({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id, files,
+          generation: visionTrust.headGeneration,
         });
-      }
-      // 十二轮 P0-b：reseal 事务——新 HWM 首写后**立即复验**（新 key 链可读），通过才 commit
-      // 日志；复验失败 fail-closed 抛（不留半事务态）。
-      if (resealTx.pending) {
-        const check = readVisionHwmHighWater({ projectRoot, feature: manifest.feature });
-        if (check.state !== 'ok' && check.state !== 'ok_unauthenticated') {
-          throw new Error(`reseal 后新 HWM 链复验失败（${check.reason ?? check.state}）——fail-closed，reseal 事务未提交。`);
+        writeVisionCheckpoint({
+          projectRoot,
+          feature: manifest.feature,
+          runId: manifest.run_id,
+          manifestHash: effectiveFrozenManifestIdentityHash,
+          manifestIdentityFields: manifestDrift.currentFields,
+          files,
+          headGeneration: visionTrust.headGeneration,
+          migrations: visionTrust.migrations,
+        });
+        if (lineageResetPending) {
+          const removed = finalizeLineageResetQuarantine({ projectRoot, feature: manifest.feature });
+          lineageResetPending = false;
+          goalEvents.emit({
+            type: 'lineage_reset_committed',
+            scope,
+            new_head_sha256: headWrite.digest,
+            new_generation: visionTrust.headGeneration,
+            offsite_backups_removed: removed,
+            continuity_claim: 'revoked',
+          });
         }
-        commitResealJournal(projectRoot, manifest.feature, manifest.run_id);
-        resealTx.pending = false;
+      } catch (e) {
+        const msg = (e as Error).message;
+        goalEvents.emit({
+          type: 'vision_anchor_persist_failed', scope, error: msg, continued: true,
+        });
+        console.warn(
+          `[goal-runner] 场外连续性缓存本次未持久化（${scope}）：${msg}——继续执行` +
+          '（缓存无执行否决权；下次启动按仓内事实重算）',
+        );
       }
     };
     // plan e7c2a4d8 T1b'（v22 P0-1）：dry-run 完全跳过外部 vision trust 链——reseal
@@ -4996,100 +4545,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
     {
       const now = snapshotVisionLedgers(projectRoot, manifest.feature);
       const ledgersPresent = now.some(f => f.sha256 !== 'absent');
-      const ackReceiptPath = typeof argv['ack-receipt'] === 'string' ? argv['ack-receipt'].trim() : '';
-      const ackStrong = ackReceiptPath
-        ? validateConfirmationReceiptFile(
-            path.isAbsolute(ackReceiptPath) ? ackReceiptPath : path.resolve(projectRoot, ackReceiptPath),
-            defaultTrustRegistryPath(projectRoot),
-            {
-              action: 'vision_ledger_ack',
-              feature: manifest.feature,
-              object_hash: visionLedgerAckObjectHash({
-                projectRoot, feature: manifest.feature, runId: manifest.run_id, files: now,
-              }),
-              run_id: manifest.run_id,
-            },
-          ).valid
-        : false;
-      if (ackReceiptPath && !ackStrong) {
-        console.warn('[S3] --ack-receipt 校验未通过（信任链/绑定失配）——按无强 ack 处理');
-      }
-      // 十三轮 P0-2：**先恢复未完成 reseal 事务**（在读取旧锚 hash/验 receipt 之前——恢复会
-      // 改变盘上现场：rolled_back 把旧 HWM 搬回 canonical，原 receipt 绑定重新可验；completed
-      // 补记 commit）。blocked=不可恢复，fail-closed 人工处置。
-      const resealRecovery = recoverResealTransaction({ projectRoot, feature: manifest.feature });
-      if (resealRecovery.outcome === 'blocked') {
-        goalEvents.emit({
-          type: 'vision_reseal_recovery_blocked', detail: resealRecovery.detail ?? null,
-        });
-        throw new Error(
-          `reseal 事务恢复失败（${resealRecovery.detail ?? 'unknown'}）——拒绝启动（fail-closed，人工处置）。`,
-        );
-      }
-      if (resealRecovery.outcome !== 'none') {
-        goalEvents.emit({
-          type: 'vision_reseal_recovered', mode: resealRecovery.outcome, detail: resealRecovery.detail ?? null,
-        });
-      }
-      // 八/九/十一轮：rekey/reseal——无 key→有 key 升级、密钥轮换后 head/checkpoint/HWM 必然
-      // invalid；仅绑定现场的强 receipt 可授权重铸。object_hash 绑当前授权子集哈希 +
-      // **effective manifest 身份哈希（十一轮 P1-5：rebase 后须绑新 requirement/budget/…）** +
-      // 旧 head/checkpoint/**HWM（十一轮 P0-2）**字节 hash——堵授权升级旁路 + 换钥不死锁。
-      const resealReceiptPath = typeof argv['reseal-receipt'] === 'string' ? argv['reseal-receipt'].trim() : '';
-      const oldHeadSha = sha256FileFull(visionFeatureHeadPath(projectRoot, manifest.feature)) ?? 'absent';
-      const oldCheckpointSha = sha256FileFull(visionCheckpointPath(projectRoot, manifest.feature, manifest.run_id)) ?? 'absent';
-      const oldHwmSha = sha256FileFull(visionHwmPath(projectRoot, manifest.feature)) ?? 'absent';
-      const resealObjectHash = visionTrustResealObjectHash({
-        projectRoot, feature: manifest.feature, runId: manifest.run_id, files: now,
-        oldHeadSha256: oldHeadSha,
-        authSubsetSha256: currentAuthSubsetSha256,
-        frozenManifestHash: effectiveFrozenManifestIdentityHash,
-        oldCheckpointSha256: oldCheckpointSha,
-        oldHwmSha256: oldHwmSha,
-      });
-      const resealStrong = resealReceiptPath
-        ? validateConfirmationReceiptFile(
-            path.isAbsolute(resealReceiptPath) ? resealReceiptPath : path.resolve(projectRoot, resealReceiptPath),
-            defaultTrustRegistryPath(projectRoot),
-            {
-              action: 'vision_trust_reseal',
-              feature: manifest.feature,
-              object_hash: resealObjectHash,
-              run_id: manifest.run_id,
-            },
-          ).valid
-        : false;
-      if (resealReceiptPath && !resealStrong) {
-        console.warn('[S3] --reseal-receipt 校验未通过（信任链/绑定失配）——按无 reseal 处理');
-      }
-      // 十一/十二/十三轮：受信 reseal 时**事务化** quarantine 旧 HWM（prepared 先落
-      // planned_bak+旧三锚+receipt 绑定 → rename → quarantined；提交延后到新 HWM 首写复验后，
-      // 见 commitVisionAnchors；非终态 journal 在场则 transactionalQuarantineHwm 抛=禁覆盖）。
-      if (resealStrong) {
-        const bak = transactionalQuarantineHwm({
-          projectRoot, feature: manifest.feature, runId: manifest.run_id,
-          oldHwmSha256: oldHwmSha,
-          oldHeadSha256: oldHeadSha,
-          oldCheckpointSha256: oldCheckpointSha,
-          receiptObjectHash: resealObjectHash,
-        });
-        resealTx.pending = true;
-        goalEvents.emit({ type: 'vision_hwm_resealed', old_hwm_sha256: oldHwmSha, quarantined_as: bak });
-      }
-      const requireAck = (context: string): void => {
-        if (ackStrong) {
-          goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'receipt', context });
-          return;
-        }
-        if (!argv['ack-unverified-ledgers']) {
-          goalEvents.emit({ type: 'vision_ledger_checkpoint_absent', ack: false, context });
-          throw new Error(
-            `vision 信任锚缺失（${context}）——须人工核查账本后带 --ack-unverified-ledgers（弱 ack，终态封顶人工复核）` +
-            '或提供 --ack-receipt <受信 confirmation receipt>（强 ack）后重试（fail-closed，不静默回落）。',
-          );
-        }
-        visionAckWeak = true;
-        goalEvents.emit({ type: 'vision_ledger_resume_ack', mode: 'flag_weak', context });
+      // 【T2 5a 完成刀删除记录（codex 三条 P1）】本区原有的整套 ack/reseal 控制面退役：
+      // · `--ack-receipt` 强 ack 校验（信任状态已退出执行控制面，无门可开——参数静默忽略）；
+      // · `recoverResealTransaction` 启动恢复（**codex 实测**：宿主遗留一份损坏旧 journal
+      //   即 `vision_reseal_recovery_blocked` + throw，零 phase——废弃物拥有否决执行的
+      //   权力。现旧 journal 不参与任何裁决，作为惰性遗留物不再有消费者）；
+      // · rekey/reseal 全链（旧锚 hash 采集、reseal receipt 校验、transactionalQuarantineHwm、
+      //   `--reseal-receipt` 参数）——换钥场景本身随 HMAC 删除而消失。
+      // 观察事件保留一条（absent 状态的如实记录），求人语义为零。
+      // 5a 完成刀：原 requireAck 已无"require"语义——纯观察事件 helper，随名归实
+      const emitTrustObservation = (context: string): void => {
+        goalEvents.emit({ type: 'vision_ledger_checkpoint_absent', context, continued: true });
       };
 
       // plan a5f9c3e2 t3① 崩溃恢复：上一次 lineage reset 若在「改名后、新 head 写入前」
@@ -5112,11 +4578,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // ------------------------------------------------------------------
       // e5d8a2c4 T1③(b)(c)：reset 事务的**未完成态**判定（删除出生字段硬拒的配套语义）。
       //
-      // 崩溃窗实锤：fresh reset 已写 lineage_discontinuity → 在 lineage_reset_committed
-      // **之前**崩溃 → resume 时上面的 rollback 把**旧锚**还原回来。此后：
-      //   · 旧锚失配 → decide(resume) 恒 terminal → :5078 裸 throw（死路）；
+      // 崩溃窗实锤（立项时旧语义，作历史记录）：fresh reset 已写 lineage_discontinuity
+      // → 在 lineage_reset_committed **之前**崩溃 → resume 时上面的 rollback 把**旧锚**
+      // 还原回来。当时：
+      //   · 旧锚失配 → decide(resume) terminal 裸 throw（该判死已随 5a-1 统一 recover 删除）；
       //   · 旧锚有效 → 没有 mismatch 分支可走 → run 照常继续，**而 reset 意图被静默丢弃**
       //     （manifest 还写着 reset、断裂事件已记，实际却沿用了旧 lineage——更坏）。
+      // 本判据今天治的是后者（前者已由恒 recover 消解）。
       // 删除出生字段硬拒本身是对的（它误伤"已消费完"的 reset），但只删不补 = 把
       // "拒绝启动"换成"启动后死或静默跳过"。故 (b)(c) 必须与删除同批交付。
       //
@@ -5133,27 +4601,38 @@ Goal runner — tool-agnostic multi-phase orchestrator
       //（手拼过一次，代价是双真值 + 一条咬不到生产的假变异结论，见该函数注释）。
       const lineageFacts = resolveLineageResetFacts(priorEvents, manifest);
       const lineageResetInFlight = lineageFacts.lineage_reset_in_flight;
-      // plan a5f9c3e2 t3①：裁决由统一内核给出（不在此就地判处置）。
-      // reset 只在 fresh + 已显式声明 vision_lineage=reset 时成立；resume 仅在
-      // **出生已声明且未 committed**（同一笔事务续做）时放行，中途升级仍恒 terminal。
-      const lineageDecision = decide(
-        {
-          incident: 'vision_feature_head_mismatch',
-          detail: head.mismatched.join('、'),
-          files: head.mismatched,
-          ...lineageFacts,
-        },
-        NO_AUTHORITY,
-        {
-          orchestration: 'goal',
-          owner_kind: 'process',
-          // 铁律 (c)：can_prompt_now 不改变裁决，只供话术选择措辞。
-          can_prompt_now: false,
-          invocation: argv.resume ? 'resume' : 'fresh',
-        },
-      );
+      // T2 5a-1（2026-08-07）：decide 对 mismatch 家族已统一为 recover（三条 invocation
+      // 路径同一恢复动作，terminal 分支删除）——**事故在场判定因此必须外置**：
+      // 只有「真失配 / 显式声明 reset / 半途续做」才构成 reset 事故；head ok 且无声明
+      // 的正常 run 根本不进裁决（否则 decide 恒 recover 会把每一次启动都断链重采——
+      // 与 ok_unauthenticated 并入失配是同一类"把理念执行成新空转"的错，实施时自查抓获）。
+      const lineageIncidentPresent =
+        head.state === 'mismatch'
+        // 5a-3：invalid（损坏/旧 MAC 残留不可解析）＝锚不可复用，与失配同路自动重建
+        //（此前唯一出路是签不出来的 --reseal-receipt——该死锁形态随 reseal 退役）
+        || head.state === 'invalid'
+        || lineageFacts.lineage_reset_requested === true
+        || lineageResetInFlight;
+      const lineageDecision = lineageIncidentPresent
+        ? decide(
+            {
+              incident: 'vision_feature_head_mismatch',
+              detail: head.mismatched.join('、'),
+              files: head.mismatched,
+              ...lineageFacts,
+            },
+            NO_AUTHORITY,
+            {
+              orchestration: 'goal',
+              owner_kind: 'process',
+              // 铁律 (c)：can_prompt_now 不改变裁决，只供话术选择措辞。
+              can_prompt_now: false,
+              invocation: argv.resume ? 'resume' : 'fresh',
+            },
+          )
+        : null;
       const lineageResetGranted =
-        lineageDecision.kind === 'recover' && lineageDecision.action === 'reset_lineage';
+        lineageDecision?.kind === 'recover' && lineageDecision.action === 'reset_lineage';
       // codex 六轮 P2 订正：v1 把执行限定在 mismatch|absent，于是「fresh 显式声明 reset
       // 但 head 恰好正常」变成**静默 no-op**——manifest 记着 reset、实际沿用旧 lineage、
       // 连 discontinuity 都没有，输入语义与执行不一致。现在**无条件遵从**：用户明确声明
@@ -5173,12 +4652,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
           head_state_before: head.state,
           reason: head.state === 'mismatch'
             ? `账本与 feature head 失配（${head.mismatched.join('、')}）`
-            : head.state === 'absent'
-              ? 'feature head 缺失'
-              : `用户显式声明放弃旧 lineage（head 当时状态=${head.state}）`,
-          declared_by: 'manifest.vision_lineage=reset',
+            : head.state === 'invalid'
+              ? `feature head 不可复用（${head.reason ?? '损坏/不可解析'}）——自动重建`
+              : head.state === 'absent'
+                ? 'feature head 缺失'
+                : `用户显式声明放弃旧 lineage（head 当时状态=${head.state}）`,
+          // T2 5a-1：意图来源三分（声明优先——声明+失配同时按声明记）
+          declared_by: lineageFacts.lineage_reset_requested === true
+            ? 'manifest.vision_lineage=reset'
+            : lineageResetInFlight
+              ? 'reset_in_flight_resume'
+              : 'auto_mismatch_recovery',
           old_head_sha256: q.old_head_sha256,
-          old_hwm_sha256: q.old_hwm_sha256,
           old_generation: head.generation ?? null,
           run_id: manifest.run_id,
           // 上一次 reset 崩在半路时先回滚再重做——留痕，便于排障
@@ -5188,157 +4673,58 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continuity_claim: 'revoked',
         });
         visionTrust.headGeneration = 0;
-      } else if (head.state === 'mismatch') {
-        goalEvents.emit({
-          type: 'vision_ledger_tamper', scope: 'feature_head', files: head.mismatched,
-          ...runDispositionFields(lineageDecision),
-        });
-        throw new Error(
-          `vision 账本与 feature head 失配（${head.mismatched.join('、')}）——跨 run 篡改拦截（fail-closed）。` +
-          `${lineageDecision.reason}\n` +
-          buildLineageMismatchGuidance({
-            feature: manifest.feature,
-            runId: manifest.run_id,
-            mismatched: head.mismatched,
-            invocation: argv.resume ? 'resume' : 'fresh',
-            harnessPrefixRel: layout.frameworkRel
-              ? path.posix.join(layout.frameworkRel, 'harness')
-              : 'harness',
-          }).join('\n'),
-        );
       }
+      // 【已删除 · T2 5a-1】mismatch → `vision_ledger_tamper` + 裸 throw 的"第一死"
+      // 分支（宿主 run1/6a969a 的死因，goal-runner 旧 :5078）：decide 对失配家族统一
+      // recover 后，mismatch 恒走上方自动 discontinuity 重建，该分支不可达。
+      // buildLineageMismatchGuidance（求人指引）随之退役；启动期 `vision_ledger_tamper`
+      // 事件不再产生（in-session 的 agent 窗口内篡改检测是另一条线，不在本删除面）。
       // reset 已执行时，旧 head 已被 quarantine 让路——后续所有基于 head.state 的处置
       // （invalid 拦截 / absent ack / ok 分支的 HWM 新鲜度对账）都不再适用：
       // 判据指向的那个 head 已经不在了，新 lineage 从世代 0 重建。
-      if (head.state === 'invalid' && !lineageResetGranted) {
-        if (resealStrong) {
-          // 八轮 P1-2：受信 reseal——按当前账本重铸信任锚（世代 best-effort 续接旧值，防回卷）
-          let priorGen = 0;
-          try {
-            const priorDoc = JSON.parse(
-              fs.readFileSync(visionFeatureHeadPath(projectRoot, manifest.feature), 'utf-8'),
-            ) as { generation?: unknown };
-            if (typeof priorDoc.generation === 'number' && priorDoc.generation > 0) priorGen = priorDoc.generation;
-          } catch { /* 不可解析——从 0 重铸 */ }
-          visionTrust.headGeneration = priorGen;
-          goalEvents.emit({
-            type: 'vision_trust_resealed', scope: 'feature_head', reason: head.reason, prior_generation: priorGen,
-          });
-        } else {
-          goalEvents.emit({ type: 'vision_head_invalid', reason: head.reason });
-          throw new Error(
-            `vision feature head 不可信（${head.reason}）——拒绝启动（fail-closed）。密钥升级/轮换场景请走 ` +
-            '--reseal-receipt <受信 confirmation receipt>（action=vision_trust_reseal，绑定当前账本与旧 head hash）。',
-          );
-        }
-      }
+      // 【T2 5a-2/5a-3（2026-08-07）删除记录】
+      // · head invalid（MAC 验签失败/损坏）→ 已并入上方自动重建（lineageIncidentPresent
+      //   含 invalid：锚不可复用=与失配同路 quarantine 重证）；reseal 重铸分支与
+      //   `--reseal-receipt` 出路（签不出的凭据当门禁，a5f9c3e2 实锤死锁形态）一并退役；
+      // · HWM 新鲜度对账（四 fail-closed throw：invalid/missing/incomplete_commit/
+      //   rollback + legacy bootstrap）整体退役——HWM 是防"协调回滚"的密码学纵深
+      //   （防伪造类），按三分类删除；head 保留为唯一连续性观察锚（无 MAC）；
+      // · `vision_checkpoint_unauthenticated` 认证事件删除——签名维度退出后无信息量。
       if (head.state === 'absent' && ledgersPresent && !lineageResetGranted) {
-        // 账本在场但无 head：首次升级或 head 被删——须显式 ack。
-        // plan a5f9c3e2 t3①：已声明 vision_lineage=reset 的 fresh run 例外——用户已明确
-        // 放弃历史连续性、断裂已记事件、世代归零后全链重验，无须再 ack「缺锚」
-        //（同一入口也承接 reset 中途崩溃后的重入：head 已改名让路即为 absent）。
-        requireAck('feature_head_absent_with_ledgers');
+        // 账本在场但无 head：首次升级或 head 被删——垂直闭环后 requireAck=记录+继续。
+        emitTrustObservation('feature_head_absent_with_ledgers');
       }
-      if (!lineageResetGranted && (head.state === 'ok' || head.state === 'ok_unauthenticated')) {
+      if (!lineageResetGranted && head.state === 'ok') {
         visionTrust.headGeneration = head.generation ?? 0;
-        // 十/十一/十三轮：HWM 新鲜度对账（**诚实边界**：检测非协调回滚/意外损坏/整链删除，
-        // 非密码学跨重启 anti-rollback——协调回放会同时截断 HWM 尾部，须 hardened 独立锚，
-        // 见 3.9j）。十三轮 P1-4：absent 三分——声明态缺失=删除拦截；legacy=显式 bootstrap。
-        // reseal 场景由上面的 invalid 分支处理；此处只对 head 已 ok 的情形对账。
-        if (!resealStrong) {
-          const hwm = readVisionHwmHighWater({ projectRoot, feature: manifest.feature });
-          const headMetaNow = readVisionFeatureHeadMeta({ projectRoot, feature: manifest.feature });
-          const fresh = assessHwmFreshness({
-            headGeneration: head.generation ?? 0,
-            headDigest: headMetaNow.digest,
-            hwmDeclared: head.hwmDeclared === true,
-            hwm,
-          });
-          if (fresh.action === 'halt_hwm_invalid') {
-            goalEvents.emit({ type: 'vision_hwm_invalid', reason: fresh.reason });
-            throw new Error(
-              `vision HWM 链不可信（${fresh.reason}）——拒绝启动（fail-closed）。密钥升级/轮换请走 --reseal-receipt。`,
-            );
-          }
-          if (fresh.action === 'halt_hwm_missing') {
-            goalEvents.emit({
-              type: 'vision_hwm_missing', head_generation: head.generation ?? 0,
-            });
-            throw new Error(`vision HWM 缺失拦截：${fresh.reason}（fail-closed）`);
-          }
-          if (fresh.action === 'halt_incomplete_commit') {
-            goalEvents.emit({
-              type: 'vision_hwm_incomplete_commit',
-              head_generation: head.generation ?? 0,
-              hwm_generation: hwm.maxGeneration ?? null,
-            });
-            throw new Error(`vision 锚提交未完成拦截：${fresh.reason}（fail-closed）`);
-          }
-          if (fresh.action === 'halt_rollback') {
-            goalEvents.emit({
-              type: 'vision_ledger_rollback',
-              head_generation: head.generation ?? 0,
-              hwm_generation: hwm.maxGeneration ?? null,
-              head_digest_match: headMetaNow.digest === hwm.lastHeadDigest,
-            });
-            throw new Error(
-              `vision 非协调回滚/损坏拦截（${fresh.reason}）——拒绝启动（fail-closed）。` +
-              '诚实边界：协调回放（同步截断 HWM 尾部）不可密码学阻止，hardened anti-rollback ' +
-              '需独立不可回卷锚（tasks 3.9j pending）。',
-            );
-          }
-          if (fresh.action === 'bootstrap_legacy') {
-            // legacy 1.0 head（HWM 机制落地前）——一次性显式迁移：事件留痕后继续；
-            // 首个 commit 写 1.1 head（hwm_declared）+ 同世代 HWM 首行，进入声明态。
-            goalEvents.emit({
-              type: 'vision_hwm_bootstrap', head_generation: head.generation ?? 0, reason: fresh.reason,
-            });
-          }
-        }
-      }
-      if (head.state === 'ok_unauthenticated') {
-        goalEvents.emit({
-          type: 'vision_checkpoint_unauthenticated', scope: 'feature_head',
-          note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——head 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
-        });
       }
 
       // ② resume：同 run checkpoint（六轮先验后迁 + head 世代咬合）。
-      // 十二轮 P0-a：manifest 身份/授权子集 drift 已在锁内 manifestDrift 块以 checkpoint 为
-      // 可信旧基线做字段级授权（rebase 后不自我判死）——此处不再 force-equal manifest/auth_subset。
+      // manifest 身份 drift 已在锁内 manifestDrift 块以 **events 出生基线**做字段级授权
+      // （收口刀 P1-1）——此处不再 force-equal manifest/auth_subset，只判缓存可复用性。
       if (Boolean(argv.resume)) {
         const cp = verifyVisionCheckpoint({
           projectRoot, feature: manifest.feature, runId: manifest.run_id, current: now,
           // head 已验真时 checkpoint 须与其世代咬合（脱节=旧 checkpoint 冒充）；head absent/
           // reseal 场景不比（无可信世代基线）
-          ...(head.state === 'ok' || head.state === 'ok_unauthenticated'
-            ? { expectedHeadGeneration: head.generation ?? 0 }
-            : {}),
+          ...(head.state === 'ok' ? { expectedHeadGeneration: head.generation ?? 0 } : {}),
         });
+        // 【T2 5a-2（2026-08-07）】checkpoint 三态分治落地（codex 三态订正的 run 级面）：
+        // · mismatch/invalid ＝ **缓存不可复用**：如实记录后丢弃缓存、按仓内事实全量
+        //   重算继续——不再 throw（"停机窗口被改"对 run 级缓存的正确响应是不采信，
+        //   不是拒绝续跑；lineage 级的真冲突已由 head 失配→自动重建承接）；
+        //   reseal 重铸分支随 5a-3 一并退役；
+        // · absent＝记录+继续（垂直闭环既有）；anchor 失配同样降为记录+丢缓存。
         if (cp.state === 'mismatch') {
           goalEvents.emit({
             type: 'vision_ledger_tamper', scope: 'resume_checkpoint', files: cp.mismatched,
+            continued: true,
           });
-          throw new Error(
-            `vision 账本在 runner 停机窗口被修改（${cp.mismatched.join('、')}，checkpoint 锚失配）——resume 拒绝继续（fail-closed）。`,
-          );
         }
         if (cp.state === 'invalid') {
-          if (resealStrong) {
-            goalEvents.emit({
-              type: 'vision_trust_resealed', scope: 'run_checkpoint', reason: cp.reason,
-            });
-            // 迁移凭证以内存重建（旧 checkpoint 不可信不读回）；后续 baseline 重写
-          } else {
-            goalEvents.emit({ type: 'vision_checkpoint_invalid', reason: cp.reason });
-            throw new Error(
-              `vision checkpoint 不可信（${cp.reason}）——resume 拒绝继续（fail-closed）。密钥升级/轮换场景请走 ` +
-              '--reseal-receipt（action=vision_trust_reseal）。',
-            );
-          }
+          goalEvents.emit({ type: 'vision_checkpoint_invalid', reason: cp.reason, continued: true });
         }
         if (cp.state === 'absent') {
-          requireAck('run_checkpoint_absent');
+          emitTrustObservation('run_checkpoint_absent');
           const lastAnchor = [...priorEvents]
             .reverse()
             .find(e => (e as { type?: string }).type === 'vision_ledger_anchor') as
@@ -5348,37 +4734,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const tampered = diffVisionLedgerSnapshots(lastAnchor!.files!, now);
             if (tampered.length > 0) {
               goalEvents.emit({
-                type: 'vision_ledger_tamper', scope: 'resume', files: tampered,
+                type: 'vision_ledger_tamper', scope: 'resume', files: tampered, continued: true,
               });
-              throw new Error(
-                `vision 账本与本 run 最后 anchor 失配（${tampered.join('、')}）——即便已 ack 也拒绝续跑（fail-closed）。`,
-              );
             }
-          } else if (!ackStrong) {
-            // 七轮 P1-1：last anchor 缺失时弱 ack（旗标）不足以继续——须强 ack receipt
-            goalEvents.emit({ type: 'vision_ledger_no_anchor', ack: 'weak_insufficient' });
-            throw new Error(
-              'vision 账本无任何可比对锚（checkpoint 缺失且本 run 无 anchor 事件）——弱 ack 旗标不足以继续，' +
-              '须 --ack-receipt <受信 confirmation receipt> 强 ack（fail-closed）。',
-            );
+          } else {
+            // 垂直闭环追补（codex 第九批 P0）：no-anchor 同样**记录后继续**。
+            goalEvents.emit({ type: 'vision_ledger_no_anchor', continued: true });
           }
         }
-        if (cp.state === 'ok' || cp.state === 'ok_unauthenticated') {
+        if (cp.state === 'ok') {
           // 八轮 P1-1：验真通过的 migrations 收进内存可信态（写点不再读盘）
           visionTrust.migrations = cp.migrations ?? [];
         }
-        if (cp.state === 'ok_unauthenticated') {
-          goalEvents.emit({
-            type: 'vision_checkpoint_unauthenticated',
-            note: `未配置 ${VISION_CHECKPOINT_HMAC_ENV}——checkpoint 仅位置信任（UI 相关 run 终态将封顶人工复核）`,
-          });
-        }
-        // 十三轮 P1-3：无 writer authenticity 的 checkpoint 被用作 drift 基线 → **弱信任处置**，
-        // 不能仅靠终态封顶（run 仍会按可能被扩的 budget/unattended/pre_authorized_mutations 执行）。
-        // resume 须显式 ack：弱旗标可续（终态照旧封顶），强 receipt 免吵；无 ack 不启动。
-        if (manifestDrift.baselineUnauthenticated) {
-          requireAck('checkpoint_unauthenticated_baseline');
-        }
+        // 【已删除 · 收口刀（codex P2）】`baselineUnauthenticated` 弱信任观察分支——
+        // checkpoint 退出基线角色后"未认证基线"概念整体消失。
       }
     }
 
@@ -5400,7 +4769,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
 
     // 基线：head（跨 run 连续性锚，单调 generation）→ checkpoint（run 态，引用 head 世代，
-    // 迁移凭证并入内存可信态随每次写入持久）。写失败=完整性锚不可用——fail-closed 抛错。
+    // 迁移凭证并入内存可信态随每次写入持久）。写失败=记录后继续（收口刀 P1-2 降级语义）。
     {
       visionTrust.migrations = [
         ...visionTrust.migrations,
@@ -5412,8 +4781,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         scope: 'run_start',
         files: baseline,
       });
-      // 启动段刚完成验真/reseal——本次写入跳过覆盖前验盘（后续写点恒验）
-      commitVisionAnchors('run_start', baseline, { skipIntegrityCheck: true });
+      commitVisionAnchors('run_start', baseline);
     }
     } // end if (!dryRun) —— vision trust 链（T1b'）
 
@@ -5427,19 +4795,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
       // ② target ≠ 当前 run（运行中删自己的 checkpoint/pass snapshot 是新删除能力
       //   带来的新风险）——否则 BLOCKER。
+      // codex 第九批 P1：三条 BLOCKER 统一走优雅收口（run_start 已落，直接 return/
+      // process.exit 会留下无 run_end 的僵尸 RUNNING 投影）；process.exit 一并替换为
+      // try 内 return（finally 释放锁，进程内调用可测——本区既有注释的约定）。
       if (!isValidRunIdBasename(target)) {
-        console.error(`[goal-runner] BLOCKER: --supersede 目标 runId 非法（须为合法 basename）：${JSON.stringify(target)}`);
-        return 1; // try 内 return——finally 释放锁（不用 process.exit：进程内调用可测）
+        const msg = `--supersede 目标 runId 非法（须为合法 basename）：${JSON.stringify(target)}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
       }
       if (target === manifest.run_id) {
-        console.error(`[goal-runner] BLOCKER: --supersede 不得指向当前 run（${target}）——运行中不得删除自身场外状态`);
+        const msg = `--supersede 不得指向当前 run（${target}）——运行中不得删除自身场外状态`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
         return 1;
       }
       const targetRunDir = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target);
       const targetEvents = path.join(targetRunDir, 'events.jsonl');
       if (!fs.existsSync(targetEvents)) {
-        console.error(`[goal-runner] BLOCKER: --supersede 目标 run 不存在：${target}`);
-        process.exit(1);
+        const msg = `--supersede 目标 run 不存在：${target}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
       }
       // 目标 manifest 身份验证：仓内 manifest.run_id 必须精确等于 target——身份验证
       // 失败只拒删场外状态（审计事件照落：supersede 语义本身不依赖场外状态在场）。
@@ -5521,7 +4898,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
     // 双计（codex 五轮 P1-②）。隔夜 resume 不再按日历跨度秒撞熔断（4035d4 事故）。
     const sessionStartMs = Date.now();
-    const budgetBase = resolveResumedBudget(priorEvents, { nextSessionStartMs: sessionStartMs });
+    // T1④（e5d8a2c4）：**预算沿 supersede 链折叠——supersede 不得刷新任何预算**。
+    // 预算是 per-run 从各自 events 回放的，新 run_id 即清零；不折叠的话"废弃旧 run
+    // 开后继"就是绕过 DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道。种子=
+    // 本次 CLI 的 --supersede（fresh）∪ 本 run events 里的 audited supersede（resume）。
+    // **阶段完成状态仍只读当前 run**（进度不跨 run 折叠，见 collectSupersededAncestorEvents 头注）。
+    const budgetFoldSeeds = [...supersededRunIds, ...extractSupersedeTargets(priorEvents)];
+    const ancestorBudgetEvents = budgetFoldSeeds.length > 0
+      ? collectSupersededAncestorEvents({
+          projectRoot, featuresDir, feature: manifest.feature, seedTargets: budgetFoldSeeds,
+        })
+      : [];
+    const budgetFoldEvents = ancestorBudgetEvents.length > 0
+      ? [...ancestorBudgetEvents, ...priorEvents]
+      : priorEvents;
+    const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
     let totalTurns = budgetBase.totalTurns;
     const priorActiveMs = budgetBase.priorActiveMs;
     // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
@@ -5546,6 +4937,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
+      if (!dryRun && inv.invalidatedPhases.length > 0) {
+        // 失效事件已在 events.jsonl 中成为事实；缓存退位是可重复副作用，崩溃后
+        // resume 仍会从同一条记录重做，不需要 pending/completed journal。
+        const discarded = discardPassSnapshotCache({
+          projectRoot,
+          feature: manifest.feature,
+          runId: manifest.run_id,
+          phases: inv.invalidatedPhases,
+        });
+        if (discarded.diagnostics.length > 0) {
+          console.warn(`[pass-snapshot] resume 丢弃失效缓存遇到外部故障：${discarded.diagnostics.join('；')}`);
+        }
+      }
       goalEvents.emit({
         type: 'resume',
         start_index: chainStartIndex,
@@ -5556,7 +4960,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let halted = false;
     // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 1 次/run。
     let backtrackToIdx: number | null = null;
-    let backtracksUsed = priorEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
+    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents）
+    let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     let backtrackReviewFocus: string[] = [];
     // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
     // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
@@ -5596,115 +5001,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return guidance;
     };
 
-    // ------------------------------------------------------------------
-    // P0-3（plan 7c4f2e9b）：PASS 快照同进程内存信任锚 + invalidation journal 恢复。
-    // journal 恢复**先于任何 pass_snapshot head 读取**（codex 八轮 P0）：pending →
-    // 续跑 head 更新并幂等补 phase_invalidated 事件；不可验证 → fail-closed halt。
-    // ------------------------------------------------------------------
+    // PASS 快照只在当前进程作为内容缓存使用。失效事件已由 applyInvalidationsToResume
+    // 统一回放；缓存 head 的退位是可重复副作用，不再读取/恢复旧 journal。
     const passSnapshotMemory = new Map<
       string,
       { epoch: number; memoryDigest: { manifestSha256: string; fileHashes: Record<string, string> } }
     >();
-    if (!dryRun) {
-      const jr = recoverInvalidationJournal(projectRoot, manifest.feature, manifest.run_id);
-      if (jr.kind === 'fail_closed') {
-        // b3e8d4c7 t5⑤：**崩溃窗不得退化成求人**。无 HMAC 环境 macFor 恒返回 null、写入
-        // mac=null、读回恒 ok_unauthenticated（pass-snapshot.ts:316/328），于是
-        // beginInvalidationTx → 进程死 → 未 commit 的崩溃窗，下次 resume 恒 halt——
-        // t5 的自动回退在它自己的崩溃窗里失效。
-        // 定稿：**完全不读旧 journal 的 payload**（phase/epoch/generation 一律不采信），
-        // 只按当前 run manifest 的 chain 从 plan 起重建一笔新事务覆盖它，然后回 plan 重跑。
-        // 「不读 payload 也不会漏失效」的论证（**重构后已更新**：事务入口已统一）：
-        // 生产侧一切失效事务都经 `runInvalidationTx`（utils/invalidation-tx.ts），当前三个
-        // 调用点的失效**下限**分别是 coding / coding / plan，均不早于 plan，
-        // 所以从 plan 起重建**覆盖**本仓一切可能的 journal（超集或相等——scope replan
-        // 自身的失效区间就是 plan→链尾，那一档是相等，不是严格超集）。
-        // 其中授权/漂移回退那处写作 `chain.slice(codingIdx >= 0 ? codingIdx : 0, …)`，
-        // 字面上像是能落到链首（可能是 spec），但该分支**不可达**：进入它要么是
-        // authorized_backtrack（截断链在更早处已 halt authorized_mutation_requires_full_chain），
-        // 要么是 decide() 判出的 recover——而 `chain_has_coding_review === false` 时
-        // backtrackBlocked 直接拦下（adjudication.ts:443），不会返回 recover。
-        // 故执行到失效时 chain 必含 coding。
-        // **边界（改动即失效）**：新增调用点的下限若早于 plan，或上述 chain 守卫被放宽，
-        // 本处重建下限必须同步前移，否则会漏失效。
-        // 旧 journal 只留审计说明，不新建 quarantine 系统。
-        goalEvents.emit({
-          type: 'pass_snapshot_journal_untrusted',
-          phase: chain[chainStartIndex],
-          detail: jr.reason,
-        });
-        const rebuilt = tryScopeReplan({
-          projectRoot,
-          feature: manifest.feature,
-          runId: manifest.run_id,
-          chain: chain.map(String),
-          endPhaseIdx: chain.length - 1,
-          // 启动期不按 outcome 过滤：outcome 视图此时可能尚未重建完，而
-          // beginInvalidationTx 对「无 PASS head 的 phase」本就跳过（pass-snapshot.ts:1277）。
-          phasesWithOutcome: null,
-          backtracksUsed,
-          maxBacktracks: DEFAULT_MAX_BACKTRACKS,
-          trigger: 'invalidation_journal_untrusted',
-          causePhase: String(chain[chainStartIndex]),
-          detail: jr.reason,
-          dryRun,
-          passSnapshotMemory,
-          emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-        });
-        if (rebuilt.kind === 'replanned') {
-          // 重建**吃回退预算**：否则确定性崩溃 = 每次 resume 重建再崩 = 无限自动循环；
-          // 吃预算才能在耗尽后收敛到既有等待机制。
-          // 诚实边界：backtracksUsed 从 events 计数重建（:5373），而 events 无 MAC、
-          // agent 可写——**同进程是硬预算，跨进程只是 best-effort 恢复提示**，
-          // 配不配 HMAC 都一样（HMAC 只保护 pass-snapshot / vision trust，不保护 events）。
-          backtracksUsed++;
-          outcomes = outcomes.filter(o => !rebuilt.invalidatedPhases.includes(String(o.phase)));
-          chainStartIndex = rebuilt.planIdx;
-          console.error(
-            `\n===== invalidation_journal_untrusted =====\n${jr.reason}\n` +
-            `→ 不采信旧事务 payload，已从 plan 重建失效事务（tx=${rebuilt.txId}）并自动回退 plan 重新签发。\n` +
-            `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
-          );
-        } else {
-          // 回退预算耗尽 / chain 不含 plan → 走**既有**等待机制（不新造分类）
-          goalEvents.emit({
-            type: 'phase_halt',
-            phase: chain[chainStartIndex],
-            halt_reason: 'pass_snapshot_journal_unverifiable',
-            detail: `${jr.reason}；自动重建不可用：${rebuilt.detail}`,
-          });
-          console.error(`\n===== pass_snapshot_journal_unverifiable =====\n${jr.reason}\n自动重建不可用：${rebuilt.detail}\n人工核查 trust-state 后 --resume。\n`);
-          outcomes.push({
-            phase: chain[chainStartIndex],
-            verdict: 'FAIL',
-            halted: true,
-            retries: 0,
-            halt_reason: 'pass_snapshot_journal_unverifiable',
-          });
-          halted = true;
-        }
-      }
-      if (jr.kind === 'pending_heads_applied') {
-        // 与正常路径同构：heads 已幂等应用 → 幂等补事件 → **最后** commit（post-impl P0#1：
-        // commit 提前会让「commit 后事件补齐前」的二次崩溃永久丢事件）。
-        const priorEv = loadAuthoritativeEvents(eventsPath);
-        for (const ph of jr.invalidatedPhases) {
-          const already = priorEv.some(
-            e => e.type === 'phase_invalidated' && e.phase === ph && e.invalidation_tx_id === jr.txId,
-          );
-          if (!already) {
-            goalEvents.emit({
-              type: 'phase_invalidated',
-              phase: ph,
-              cause_phase: 'journal_recovery',
-              reason: 'invalidation_journal_recovered',
-              invalidation_tx_id: jr.txId,
-            });
-          }
-        }
-        commitInvalidationTx(projectRoot, manifest.feature, manifest.run_id, jr.txId);
-      }
-    }
+
 
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
@@ -5719,7 +5022,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const phaseStartEvents = loadAuthoritativeEvents(
         path.join(projectRoot, manifest.report_dir, 'events.jsonl'),
       );
-      let transientRetriesUsed = countTransientApiRetries(phaseStartEvents, phase);
+      // T1④：transient 本就跨 resume 计数——跨 supersede 同样折叠（祖先同 phase 的断流重试计入）
+      let transientRetriesUsed = countTransientApiRetries(
+        ancestorBudgetEvents.length > 0 ? [...ancestorBudgetEvents, ...phaseStartEvents] : phaseStartEvents,
+        phase,
+      );
       // P0-D：上一次 attempt 是否 API 断流（同样非内容失败，partial 产物照样复用）。
       // resume 首轮从最近一次 phase_verdict 恢复，否则 prompt 归因错向 deterministic、
       // partial 续作块打不开。
@@ -6035,9 +5342,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // post-impl round2 P0#2：**spawn agent 之前**做一次统一可信快照加载，整个 attempt
-        // 复用内存副本（防 attempt 中途盘上换 manifest）；坏 MAC/shape/上下文绑定/
-        // head↔manifest 绑定 → 在 agent 有机会碰产物**之前** halt。
+        // **spawn agent 之前**做一次统一缓存加载，整个 attempt 复用内存副本。缓存坏掉只
+        // 触发「丢缓存、重跑当前责任阶段」；不恢复旧字节，也不把缓存故障交给人裁决。
         const psMemAnchor = passSnapshotMemory.get(String(phase));
         const trustedSnapshot = dryRun
           ? ({ kind: 'none' } as const)
@@ -6046,24 +5352,52 @@ Goal runner — tool-agnostic multi-phase orchestrator
               manifest.feature,
               manifest.run_id,
               String(phase),
-              // post-impl round3 P0#1：同进程内存锚在场时，盘上 head 消失/退位/换代
-              // 一律 spawn 前 fail_closed（两轮绕过：先删 head 再改产物）
+              // 同进程内存锚在场时，head 消失/退位/换代即缓存失效；随后重跑当前阶段。
               psMemAnchor
                 ? { epoch: psMemAnchor.epoch, manifestSha256: psMemAnchor.memoryDigest.manifestSha256 }
                 : null,
             );
         if (trustedSnapshot.kind === 'fail_closed') {
+          const discarded = discardPassSnapshotCache({
+            projectRoot,
+            feature: manifest.feature,
+            runId: manifest.run_id,
+            phases: [String(phase)],
+          });
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'pass_snapshot_unavailable',
             detail: `pre-spawn 可信快照加载失败：${trustedSnapshot.reason}`,
+            ...runDispositionFields(decide(
+              { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
-          console.error(
-            `\n===== pass_snapshot_unavailable =====\n可信快照加载失败（${trustedSnapshot.reason}）——在 agent 启动前拦截，不给它碰产物的机会。\n人工核查 trust-state 后 --resume。\n`,
-          );
-          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_unavailable' });
-          halted = true;
+          if (discarded.diagnostics.length > 0) {
+            goalEvents.emit({
+              type: 'phase_halt',
+              phase,
+              halt_reason: 'pre_invoke_snapshot_failed',
+              detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
+              probe: 'storage_ready',
+              ...runDispositionFields(decide(
+                { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
+            });
+            console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
+            halted = true;
+            phaseDone = true;
+            continue;
+          }
+          passSnapshotMemory.delete(String(phase));
+          // for 的 ++ 后仍落回当前 phase；缓存缺失不烧 backtrack 预算。
+          phaseIdx--;
+          console.warn(`\n===== pass_snapshot_unavailable =====\n${trustedSnapshot.reason}\n缓存已丢弃，重跑责任阶段。\n`);
           phaseDone = true;
           continue;
         }
@@ -6091,7 +5425,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             memoryAnchor: passSnapshotMemory.get('plan'),
           });
           if (authority.kind === 'ok') {
-            // HMAC 恢复出的锚**必须写回内存**——scopeAnchorEnv 才会把**同一个值**传给
+            // loader 读出的缓存锚必须写回内存——scopeAnchorEnv 才会把**同一个值**传给
             // gate；否则「preflight 读 A、gate 又读 B」是 TOCTOU。
             passSnapshotMemory.set('plan', authority.anchor);
             return false;
@@ -6134,16 +5468,39 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
             return true;
           }
-          // 回退预算耗尽 / chain 不含 plan → 走**既有**等待机制（既有 halt_reason，不新造）
+          // chain 不含 plan 仍是证据缓存故障的保守恢复：留下 RECOVERY_PENDING，
+          // 截断链按 successor_required 开后继 run。**但回退预算耗尽已有明确的
+          // backtrack_limit 终局语义**，不得继续投影 RECOVERY_PENDING 让 supervisor
+          // 无限重启同一个 run。
           const guidance = `${authority.detail}；自动回退不可用：${replan.detail}`;
+          const budgetExhausted =
+            replan.kind === 'unavailable' && replan.reason === 'backtrack_budget_exhausted';
+          const haltReason = budgetExhausted ? 'backtrack_limit' : 'pass_snapshot_unavailable';
+          const authorityDecision = decide(
+            { incident: haltReason, phase: String(phase) },
+            NO_AUTHORITY,
+            {
+              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              invocation: argv.resume ? 'resume' : 'fresh',
+            },
+          );
           goalEvents.emit({
             type: 'phase_halt',
             phase,
-            halt_reason: 'pass_snapshot_unavailable',
+            halt_reason: haltReason,
             detail: guidance,
+            halt_guidance: guidance,
+            successor_required: !budgetExhausted && replan.kind === 'unavailable' && replan.reason === 'chain_lacks_plan',
+            ...runDispositionFields(authorityDecision),
           });
-          console.error(`\n===== pass_snapshot_unavailable =====\n${guidance}\n人工核查 trust-state 后 --resume。\n`);
-          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_unavailable' });
+          console.error(
+            `\n===== ${haltReason} =====\n${guidance}\n` +
+              (budgetExhausted ? '回退预算已耗尽，当前 run 终止。\n' : '等待 supervisor 自动恢复。\n'),
+          );
+          outcomes.push({
+            phase, verdict: 'FAIL', halted: true, retries,
+            halt_reason: haltReason, halt_guidance: guidance,
+          });
           halted = true;
           return true;
         };
@@ -6248,7 +5605,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // v5：逻辑抽取为 runInvokeCapabilityGate（真实链可测——goal-capability-gate 单测
         // 断言"缺口无 agent_invoke_start / resume 重检仍 halt / reprobe 后放行"事件序列）。
         if (!dryRun) {
-          const capHalt = runInvokeCapabilityGate({
+          const capHalt = (injectedCapabilityGate ?? runInvokeCapabilityGate)({
             projectRoot,
             phase,
             retries,
@@ -6473,11 +5830,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed',
             reason: preInvokeSourceSnap.failureReason,
+            probe: 'storage_ready',
+            ...runDispositionFields(decide(
+              { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: preInvokeSourceSnap.failureReason ?? undefined },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
           console.error(
             `\n===== pre_invoke_snapshot_failed =====\n`
             + `invoke 前快照失败：${preInvokeSourceSnap.failureReason ?? preInvokeSourceSnap.sha256}\n`
-            + `没有可信基线不得调用 agent（testing 写保护无从谈起）。请核查产品层配置/目录后重试。\n`,
+            + `没有可信基线不得调用 agent（testing 写保护无从谈起）。等待存储/目录条件恢复后由 probe 唤醒。\n`,
           );
           outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
           halted = true;
@@ -7026,15 +6389,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         // ------------------------------------------------------------------
-        // P0-3（plan 7c4f2e9b）：closure-only 冻结差异判定与恢复（harness 之前——先恢复
-        // 再评审，恢复后的产物若仍 PASS 则 advance_blocked 续计由事件回放统计自然封顶）。
-        // 信任两层：同进程内存 digest 即可恢复；resume 后须 HMAC；恢复被拒 → halt 求人。
+        // closure-only 冻结差异判定：发现漂移即丢缓存并重跑责任阶段；不恢复旧字节。
         // ------------------------------------------------------------------
         if (!dryRun) {
-          const psMem = passSnapshotMemory.get(String(phase));
-          // post-impl round2 P0#2：复用 pre-spawn 可信加载的内存副本——不再从盘上重读
-          // head/manifest（attempt 中途盘上被换的 manifest 不参与保护判定；坏 MAC/绑定
-          // 已在 spawn 前 halt）。
+          // 复用 pre-spawn 可信加载的内存副本——不再从盘上重读 head/manifest。
           if (trustedSnapshot.kind === 'active') {
             const psHeadBody = trustedSnapshot.head;
             const psManifest = { body: trustedSnapshot.manifest };
@@ -7050,45 +6408,47 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   pass_epoch: psHeadBody.pass_epoch,
                   diffs: diffs.slice(0, 30),
                 });
-                const outcome = restoreFrozenFromSnapshot({
+                const discarded = discardPassSnapshotCache({
                   projectRoot,
                   feature: manifest.feature,
                   runId: manifest.run_id,
-                  phase: String(phase),
-                  diffs,
-                  trust: psMem ? { tier: 'in_process', memoryDigest: psMem.memoryDigest } : { tier: 'resume' },
-                  // post-impl round3 P0#2：恢复资格以 attempt 级不可变上下文为依据（防
-                  // diff 用快照 A、restore 被换成快照 B 的 TOCTOU）
-                  context: trustedSnapshot,
+                  phases: [String(phase)],
                 });
-                if (outcome.refused) {
+                passSnapshotMemory.delete(String(phase));
+                if (discarded.diagnostics.length > 0) {
                   goalEvents.emit({
                     type: 'phase_halt',
                     phase,
-                    halt_reason: 'pass_snapshot_restore_refused',
-                    detail: outcome.refused,
+                    halt_reason: 'pre_invoke_snapshot_failed',
+                    detail: `缓存丢弃失败：${discarded.diagnostics.join('；')}`,
+                    probe: 'storage_ready',
+                    ...runDispositionFields(decide(
+                      { incident: 'pre_invoke_snapshot_failed', phase: String(phase) },
+                      NO_AUTHORITY,
+                      { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                    )),
                   });
-                  console.error(
-                    `\n===== pass_snapshot_restore_refused =====\nPASS 冻结产物被改且无法自动恢复（${outcome.refused}）。\n` +
-                    '人工核查产物与 trust-state 快照后 --resume（生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT，使 resume 场景也可自动恢复）。\n',
-                  );
-                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pass_snapshot_restore_refused' });
+                  console.error(`\n===== pre_invoke_snapshot_failed =====\n缓存丢弃失败：${discarded.diagnostics.join('；')}\n等待外部存储条件恢复后 probe。\n`);
+                  outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'pre_invoke_snapshot_failed' });
                   halted = true;
                   phaseDone = true;
                   continue;
                 }
                 goalEvents.emit({
-                  type: 'pass_snapshot_restored',
+                  type: 'phase_halt',
                   phase,
-                  invoke_id: invokeId,
-                  pass_epoch: psHeadBody.pass_epoch,
-                  restored: outcome.restored,
-                  deleted_added: outcome.deletedAdded,
+                  halt_reason: 'pass_snapshot_unavailable',
+                  detail: `PASS 快照检测到 ${diffs.length} 项漂移；缓存已丢弃，重跑责任阶段。`,
+                  ...runDispositionFields(decide(
+                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
                 });
-                console.warn(
-                  `[pass-snapshot] closure-only attempt 改动冻结产物已恢复（restored=${outcome.restored.length}, ` +
-                  `removed_added=${outcome.deletedAdded.length}）——违规计入 advance_blocked 累计`,
-                );
+                console.warn(`[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移；丢弃缓存，重跑责任阶段。`);
+                phaseIdx--;
+                phaseDone = true;
+                continue;
               }
             }
           }
@@ -7567,16 +6927,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           haltReason = 'operator_interrupt';
         } else if (closureFinalizationError) {
-          driverGuardAction = 'halt';
-          haltReason = 'closure_finalization_failed';
-          awaitConfirmGuidance =
-            `closure finalizer 未能完成原子闭环：${closureFinalizationError}。` +
-            ' 请修复磁盘/权限/绑定不一致后 --resume；不得重跑内容阶段掩盖该错误。';
+          // finalizer 失败是当前责任阶段的可重复事务，不是产品内容问题；让同一阶段
+          // 自动重试 closure，不走 waiting(human)/terminal，也不把提示塞给 agent 修产物。
+          driverGuardAction = 'retry';
+          haltReason = undefined;
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'closure_finalization_failed',
             detail: closureFinalizationError,
+            ...runDispositionFields(decide(
+              { incident: 'closure_finalization_failed', phase: String(phase), detail: closureFinalizationError },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
           });
         } else if (invoke.timed_out !== true && interactionSentinel && verdict !== 'PASS') {
           driverGuardAction = 'halt';
@@ -7601,10 +6965,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }).join('\n');
           console.log(`\n===== framework_integrity_block =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'closure_finalization_failed' && verdict !== 'PASS') {
-          driverGuardAction = 'halt';
-          haltReason = 'closure_finalization_failed';
-          awaitConfirmGuidance = 'closure finalization 失败：请人工修复闭环产物、磁盘绑定或权限后 --resume。';
-          console.log(`\n===== closure_finalization_failed =====\n${awaitConfirmGuidance}\n`);
+          driverGuardAction = 'retry';
+          haltReason = undefined;
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'closure_finalization_failed',
+            detail: 'closure finalization 失败，重试当前责任阶段事务。',
+            ...runDispositionFields(decide(
+              { incident: 'closure_finalization_failed', phase: String(phase) },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          });
+          console.log('\n===== closure_finalization_failed =====\n自动重试当前责任阶段 closure 事务。\n');
         } else if (failureKind === 'framework_bug' && verdict !== 'PASS') {
           // P0-3（plan d9b4f7e2）：门禁脚本自身程序员错误——框架缺陷只能人修（回灌源仓），
           // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
@@ -7856,16 +7230,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // P0-3（plan 7c4f2e9b）：PASS+advance_blocked → 冻结 frozen deliverables。
           // 事故 i2 正是此态被重试后产物遭 i3 冷启动重写毁掉——快照落 runner trust-state
           // 独立命名空间，内存 digest 为同进程信任锚；已有活跃快照（violation 循环）不重取。
-          // post-impl review P0#2：**可信快照完整建立是 closure retry 的前置条件**——
-          // head 损坏/建立失败/表非空却零产物 一律 fail-closed halt（无保护重试=重开
-          // 「PASS 产物被毁」的洞）；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
+          // **可信快照完整建立是 closure retry 的前置条件**——
+          // head 损坏/建立失败/表非空却零产物都不在无保护下 retry；仅"该 phase 本无 frozen 保护面"（coding/ut 源码树
           // 产出走 closure-attestation）时按设计跳过。
           if (driverGuardAction === 'retry' && !dryRun) {
             let protectionFailure: string | null = null;
             try {
               const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-              if (headNow.mac === 'invalid') {
-                protectionFailure = 'pass_snapshot head 损坏/跨协议/验签失败——不得在无保护下 closure retry';
+              if (headNow.status === 'invalid') {
+                protectionFailure = 'pass_snapshot head 损坏/上下文不匹配——不得在无保护下 closure retry';
               } else if (!passSnapshotMemory.has(String(phase)) || headNow.body?.state !== 'active') {
                 if (!phaseHasFrozenSurface(phase)) {
                   // 设计内不适用（产出表全空：源码树产出由 closure-attestation 承载）
@@ -7874,7 +7247,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   if (frozen.length === 0) {
                     protectionFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
                   } else {
-                    const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                    const epoch = nextPassSnapshotEpoch(
+                      projectRoot, manifest.feature, manifest.run_id, String(phase),
+                    );
                     const taken = takePassSnapshot({
                       projectRoot,
                       feature: manifest.feature,
@@ -7900,16 +7275,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
             if (protectionFailure) {
               driverGuardAction = 'halt';
-              haltReason = 'pass_snapshot_unavailable';
+              haltReason = 'pre_invoke_snapshot_failed';
               goalEvents.emit({
                 type: 'phase_halt',
                 phase,
-                halt_reason: 'pass_snapshot_unavailable',
+                halt_reason: 'pre_invoke_snapshot_failed',
                 detail: protectionFailure,
+                probe: 'storage_ready',
+                ...runDispositionFields(decide(
+                  { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: protectionFailure },
+                  NO_AUTHORITY,
+                  { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                )),
               });
               console.error(
-                `\n===== pass_snapshot_unavailable =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
-                '不做无保护 closure retry（那会重开「PASS 产物被毁」的洞）；人工核查 trust-state/产物后 --resume。\n',
+                `\n===== pre_invoke_snapshot_failed =====\nPASS 产物无法建立可信冻结保护（${protectionFailure}）。\n` +
+                '不做无保护 closure retry；等待存储条件恢复后由 probe 唤醒。\n',
               );
             }
           }
@@ -7980,16 +7361,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
               const syncExit = syncResult.exitCode;
               if (syncResult.finalizationError) {
-                driverGuardAction = 'halt';
-                haltReason = 'closure_finalization_failed';
-                awaitConfirmGuidance =
-                  `closure finalizer 未能完成原子闭环：${syncResult.finalizationError}。` +
-                  ' 请修复磁盘/权限/绑定不一致后 --resume。';
+                driverGuardAction = 'retry';
+                haltReason = undefined;
                 goalEvents.emit({
                   type: 'phase_halt',
                   phase,
                   halt_reason: 'closure_finalization_failed',
                   detail: syncResult.finalizationError,
+                  ...runDispositionFields(decide(
+                    { incident: 'closure_finalization_failed', phase: String(phase), detail: syncResult.finalizationError },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
                 });
               }
               // round3 P1#4 + round4 P1#3：分流收敛为纯函数（矩阵测试锁定契约）
@@ -7997,7 +7380,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ? 'closure_finalization_failed'
                 : resolveClosureSyncOutcome(syncExit, closureOnlyAttempt, invoke.timed_out === true);
               if (syncOutcome === 'closure_finalization_failed') {
-                // Already translated to a terminal driver halt above.
+                // 已转为当前责任阶段的自动 retry，不进入人工/终局通道。
               } else if (syncOutcome === 'advance') {
                 driverGuardAction = 'advance';
                 haltReason = undefined;
@@ -8036,8 +7419,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // c4e8b1d3 G1-1（pre-coding 锚定）：**plan 正常 PASS advance 前必建 pass snapshot**
         // ——coding 的 ui_diff_within_declared_files 白名单唯一来源。原实现只在
         // PASS+advance_blocked closure retry 时建（上方 E4 分支），正常 PASS 直进 coding
-        // 无快照。失败 fail-closed halt（pass_snapshot_unavailable），与 closure retry
-        // 分支同语义；resume 场景盘上已有 active 快照则可信加载复验、不重取。
+        // 无快照时建立新的缓存；缓存坏掉重跑 plan，写入失败则等待外部存储条件。
         if (
           verdict === 'PASS' &&
           driverGuardAction !== 'halt' &&
@@ -8045,16 +7427,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           !dryRun
         ) {
           let planFreezeFailure: string | null = null;
+          let planFreezeCacheMiss = false;
           try {
             const headNow = readPassSnapshotHead(projectRoot, manifest.feature, manifest.run_id, String(phase));
-            if (headNow.mac === 'invalid') {
-              planFreezeFailure = 'pass_snapshot head 损坏/验签失败——不得在无可信冻结下 advance';
+            if (headNow.status === 'invalid') {
+              planFreezeCacheMiss = true;
+              planFreezeFailure = 'pass_snapshot head 损坏/上下文不匹配——缓存需重建';
             } else if (headNow.body?.state === 'active') {
               if (!passSnapshotMemory.has(String(phase))) {
                 const trusted = loadTrustedSnapshotContext(
                   projectRoot, manifest.feature, manifest.run_id, String(phase), null,
                 );
                 if (trusted.kind !== 'active') {
+                  planFreezeCacheMiss = trusted.kind === 'fail_closed';
                   planFreezeFailure = `盘上 head active 但可信加载失败：${
                     trusted.kind === 'fail_closed' ? trusted.reason : trusted.kind}`;
                 }
@@ -8065,7 +7450,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               if (frozen.length === 0) {
                 planFreezeFailure = 'frozen 产出表非空但磁盘零产物——PASS 无产物属不变量违例';
               } else {
-                const epoch = (headNow.body?.pass_epoch ?? 0) + 1;
+                const epoch = nextPassSnapshotEpoch(
+                  projectRoot, manifest.feature, manifest.run_id, String(phase),
+                );
                 const taken = takePassSnapshot({
                   projectRoot,
                   feature: manifest.feature,
@@ -8083,20 +7470,53 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   manifest_sha256: taken.manifestSha256,
                   files: frozen.map(f => ({ rel: f.rel, sha256: f.sha256 })),
                 });
+                injectedAfterPassSnapshot?.();
               }
             }
           } catch (e) {
             planFreezeFailure = `快照建立失败：${(e as Error).message}`;
           }
           if (planFreezeFailure) {
+            if (planFreezeCacheMiss) {
+              const discarded = discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: [String(phase)],
+              });
+              if (discarded.diagnostics.length === 0) {
+                passSnapshotMemory.delete(String(phase));
+                goalEvents.emit({
+                  type: 'phase_halt',
+                  phase,
+                  halt_reason: 'pass_snapshot_unavailable',
+                  detail: `${planFreezeFailure}；缓存已丢弃，重跑 plan。`,
+                  ...runDispositionFields(decide(
+                    { incident: 'pass_snapshot_unavailable', phase: String(phase) },
+                    NO_AUTHORITY,
+                    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+                  )),
+                });
+                phaseIdx--;
+                phaseDone = true;
+                continue;
+              }
+              planFreezeFailure += `；缓存丢弃失败：${discarded.diagnostics.join('；')}`;
+            }
             driverGuardAction = 'halt';
-            haltReason = 'pass_snapshot_unavailable';
+            haltReason = 'pre_invoke_snapshot_failed';
             goalEvents.emit({
-              type: 'phase_halt', phase, halt_reason: 'pass_snapshot_unavailable', detail: planFreezeFailure,
+              type: 'phase_halt', phase, halt_reason: 'pre_invoke_snapshot_failed', detail: planFreezeFailure,
+              probe: 'storage_ready',
+              ...runDispositionFields(decide(
+                { incident: 'pre_invoke_snapshot_failed', phase: String(phase), detail: planFreezeFailure },
+                NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
+              )),
             });
             console.error(
-              `\n===== pass_snapshot_unavailable =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
-              '不做无冻结 advance（coding 的 UI scope 门将失去白名单来源）；人工核查 trust-state/产物后 --resume。\n',
+              `\n===== pre_invoke_snapshot_failed =====\nplan PASS 产物无法建立可信冻结保护（${planFreezeFailure}）。\n` +
+              '不做无冻结 advance；等待存储条件恢复后由 probe 唤醒。\n',
             );
           }
         }
@@ -8326,63 +7746,98 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // plan e7c2a4d8 T4d（codex 四轮 P0-c）：goal 环境专用 blocker 出现时短路内容
         // 重试——reconciliation 门放宽为「action!=='retry' ∨ 存在该 blocker」，同一事故
         // 一个出口（unauthorized halt），不转化为 harness FAIL 后的内容重试循环。
-        const hasPostReviewMutationBlocker =
+        const hasPostReviewReconciliationBlocker =
           (summary?.blockers ?? []).some(
-            (b) => (b as { id?: string }).id === 'goal_post_review_source_mutation_unresolved',
+            (b) => {
+              const id = (b as { id?: string }).id;
+              return id === 'goal_post_review_source_mutation_unresolved' ||
+                id === 'goal_review_closure_baseline_unavailable';
+            },
           );
         if (
           !dryRun && (phase === 'ut' || phase === 'testing') &&
-          (action !== 'retry' || hasPostReviewMutationBlocker)
+          (action !== 'retry' || hasPostReviewReconciliationBlocker)
         ) {
-          const driftDecision = reconcileMutablePhaseSourceDrift({
+          let driftDecision = reconcileMutablePhaseSourceDrift({
             projectRoot,
             manifest,
             phase,
             frozenManifestHash,
             goalEnv: true,
           });
-          // T4d（codex 五/六轮 P0）：goal 环境 attestation 缺失/损坏 → 不走
-          // reconciliation（无基线可对账）→ 直接 halt（run 终态），guidance 只指向
-          // 新起 coding 起点 run（两态路由已撤销——「只删/删+改码」无证据源可分）。
-          if (driftDecision.baselineUnavailable) {
-            const baselineGuidance = [
-              `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
-              'goal 环境无源码基线，既判不了「review 后漂移」也不得放行（fail-closed）。',
-              '恢复路径（当前 run 不可达，resume 只会重入本 phase）：',
-              '  新起 coding 起点 run（coding→review→ut/testing 重建合法基线），旧 run 以 --supersede 废弃。',
-              '不读取 run-start diff、不采信 gap-notes 授权（无基线时的降级通道即洗白通道）。',
-            ].join('\n');
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'goal_review_closure_baseline_unavailable',
-              verdict,
-              halt_guidance: baselineGuidance,
-            });
-            console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
-            outcomes.push({
-              phase, verdict, halted: true, retries,
-              halt_reason: 'goal_review_closure_baseline_unavailable',
-              halt_guidance: baselineGuidance,
-            });
-            halted = true;
-            phaseDone = true;
-            continue;
+          // T4d：goal 环境 attestation 缺失/损坏 → 不得放行；按既有
+          // backtrack_to_coding 责任阶段重新建立基线。若当前链截断，交给 T3 的后继
+          // run 路由，不伪造当前 run 的连续性。
+          const chainHasCodingReview =
+            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
+          const baselineUnavailable = Boolean(driftDecision.baselineUnavailable);
+          if (baselineUnavailable) {
+            const baselineDecision = decide(
+              {
+                incident: 'goal_review_closure_baseline_unavailable',
+                phase: String(phase),
+                chain_has_coding_review: chainHasCodingReview,
+                backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
+              },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            );
+            if (baselineDecision.kind === 'recover' && baselineDecision.action === 'backtrack_to_coding') {
+              // 让下面唯一的 backtrack 路由完成事件落盘、缓存退位和执行指针移动。
+              driftDecision = { kind: 'unauthorized', files: [], violations: ['review closure baseline unavailable'] };
+            } else {
+              const baselineGuidance = [
+                `【${manifest.feature} · run ${manifest.run_id} · ${phase}】review closure attestation 缺失/损坏——`,
+                '当前链无法在本 run 回到 coding 建立基线；不读取 run-start diff、不采信 gap-notes 授权。',
+                'T3 将在截断链不可回退时自动 supersede 并生成 coding 起点后继 run。',
+              ].join('\n');
+              goalEvents.emit({
+                type: 'phase_halt',
+                phase,
+                halt_reason: 'goal_review_closure_baseline_unavailable',
+                verdict,
+                halt_guidance: baselineGuidance,
+                successor_required: true,
+                ...runDispositionFields({ kind: 'recover', action: 'backtrack_to_coding', reason: baselineDecision.reason }),
+              });
+              console.error(`\n===== goal_review_closure_baseline_unavailable =====\n${baselineGuidance}\n`);
+              outcomes.push({
+                phase, verdict, halted: true, retries,
+                halt_reason: 'goal_review_closure_baseline_unavailable',
+                halt_guidance: baselineGuidance,
+              });
+              halted = true;
+              phaseDone = true;
+              continue;
+            }
           }
           // T3b（codex 二轮 P0-b 方案 1）：authorized_backtrack 仅当当前 chain 同时含
           // coding 与 review——截断链即使裁决有效也无法在本 run 回退重验。
-          const chainHasCodingReview =
-            chain.includes('coding' as FeaturePhase) && chain.includes('review' as FeaturePhase);
           // plan a5f9c3e2 t3②：未受信漂移的**保守恢复**裁决（统一内核给出，不在此就地判）。
           // 恢复本身不降低保证——失效旧 coding closure 及其后阶段、把 diff 当未受信候选
           // 完整重走 coding→review→ut→testing，故**不需要任何授权**。
           // 纪律：复用执行机制（失效事务 / 回退预算 / phase 回退执行器），
           // **不复用授权语义**——不产 matched_receipts、不标 authorized。
-          let untrustedRevalidation = false;
+          let untrustedRevalidation = baselineUnavailable;
           let untrustedTerminalReason = '';
           // codex 八轮 P2：**保存真实裁决结果**供后续事件投影原样复用——此前落事件时
           // 手工重造 Decision，今天结果一致，但 decide() 一改，执行动作与报告投影就会分叉。
-          let untrustedDecision: Decision | null = null;
+          let untrustedDecision: Decision | null = baselineUnavailable ? decide(
+            {
+              incident: 'goal_review_closure_baseline_unavailable',
+              phase: String(phase),
+              chain_has_coding_review: chainHasCodingReview,
+              backtrack_budget_remaining: DEFAULT_MAX_BACKTRACKS - backtracksUsed,
+            },
+            NO_AUTHORITY,
+            {
+              orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+              invocation: argv.resume ? 'resume' : 'fresh',
+            },
+          ) : null;
           if (driftDecision.kind === 'unauthorized') {
             const driftFp = driftDecision.driftFingerprint ?? null;
             const driftDisposition = decide(
@@ -8447,11 +7902,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
             (untrustedRevalidation && driftDecision.kind === 'unauthorized')
           ) {
             if (backtracksUsed >= DEFAULT_MAX_BACKTRACKS) {
+              const backtrackLimitDecision = decide(
+                { incident: 'backtrack_limit', phase: String(phase) },
+                NO_AUTHORITY,
+                {
+                  orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                  invocation: argv.resume ? 'resume' : 'fresh',
+                },
+              );
               goalEvents.emit({
                 type: 'phase_halt',
                 phase,
                 halt_reason: 'backtrack_limit',
                 verdict,
+                ...runDispositionFields(backtrackLimitDecision),
               });
               console.error(`\n===== backtrack_limit =====\n回退预算已耗尽（授权回退与缺陷回退共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——halt 求人（防回退震荡烧预算）。\n`);
               outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'backtrack_limit' });
@@ -8464,44 +7928,49 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const invalidatedPhases = chain
               .slice(codingIdx >= 0 ? codingIdx : 0, phaseIdx + 1)
               .filter(p => outcomes.some(o => o.phase === p));
-            // P0-3（plan 7c4f2e9b，codex 七/八轮）：失效走可恢复事务——journal pending →
-            // 全部受影响 pass_snapshot head/tombstone → 幂等事件（携 tx_id）→ commit。
-            // events 仅审计投影；恢复资格 SSOT 在 trust-state journal/head。
+            // 失效事实一次性落盘；缓存 head/内存锚是其后的可重复副作用。
             const invalidationTxId = `${manifest.run_id}-bt${backtracksUsed}`;
-            runInvalidationTx({
-              projectRoot,
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              causePhase: String(phase),
-              invalidatedPhases: invalidatedPhases.map(String),
-              txId: invalidationTxId,
-              reason: untrustedRevalidation
-                ? UNTRUSTED_DRIFT_REASON
-                : 'authorized_source_mutation_backtrack',
-              extraEventFields: { files: driftDecision.files.slice(0, 20) },
-              dryRun,
-              passSnapshotMemory,
-              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-            });
+            const backtrackReason = untrustedRevalidation
+              ? UNTRUSTED_DRIFT_REASON
+              : 'authorized_source_mutation_backtrack';
+            const backtrackProjection = driftDecision.kind === 'authorized_backtrack'
+              ? {
+                  reason: backtrackReason,
+                  authorized: true,
+                  matched_receipts: driftDecision.matched.map(r => r.approved_by),
+                }
+              : {
+                  reason: UNTRUSTED_DRIFT_REASON,
+                  authorized: false,
+                  // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
+                  // 重启失忆=同一漂移白吃一次回退预算。
+                  drift_fingerprint: driftDecision.driftFingerprint ?? null,
+                  // t4④：统一投影只经唯一出口 runDispositionFields()，且**投影的是
+                  // 真实裁决结果本身**（不重造 Decision——执行与报告不得有第二个真值源）。
+                  ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
+                };
+
             goalEvents.emit({
               type: 'phase_backtrack_requested',
+              phase: String(phase),
               from_phase: phase,
               to_phase: chain[Math.max(codingIdx, 0)],
-              // 授权回退才带 receipt 语义；保守恢复路**恒不产该字段**（不冒充授权）。
-              ...(driftDecision.kind === 'authorized_backtrack'
-                ? { matched_receipts: driftDecision.matched.map(r => r.approved_by) }
-                : {
-                    reason: UNTRUSTED_DRIFT_REASON,
-                    authorized: false,
-                    // t3②（codex 六轮 P1）：持久化 drift 指纹供 resume 回放——不落盘=
-                    // 重启失忆=同一漂移白吃一次回退预算。
-                    drift_fingerprint: driftDecision.driftFingerprint ?? null,
-                    // t4④：统一投影只经唯一出口 runDispositionFields()，且**投影的是
-                    // 真实裁决结果本身**（不重造 Decision——执行与报告不得有第二个真值源）。
-                    ...(untrustedDecision ? runDispositionFields(untrustedDecision) : {}),
-                  }),
+              invalidated_phases: invalidatedPhases.map(String),
+              ...backtrackProjection,
               files: driftDecision.files.slice(0, 20),
+              defects: [],
+              fingerprint: driftDecision.driftFingerprint ?? null,
+              invalidation_tx_id: invalidationTxId,
             });
+            if (!dryRun) {
+              for (const p of invalidatedPhases) passSnapshotMemory.delete(String(p));
+              discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: invalidatedPhases.map(String),
+              });
+            }
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: chain[Math.max(codingIdx, 0)] });
             // 被失效 attempt 从 outcomes 剔除（goal report/resume 只见最新有效 attempt；
             // 常驻 summary 将被回退后的重跑覆盖，upstream gate 消费面天然新鲜化）
@@ -8762,10 +8231,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
             // 对齐其他 halt 分支惯例：专项事件落盘（resume/审计按事件恢复语境，
             // outcome.halt_reason 只进 goal report）
+            const backtrackLimitReached =
+              codingIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
+            const backtrackLimitDecision = backtrackLimitReached
+              ? decide(
+                  { incident: 'backtrack_limit', phase: String(phase) },
+                  NO_AUTHORITY,
+                  {
+                    orchestration: 'goal', owner_kind: 'process', can_prompt_now: false,
+                    invocation: argv.resume ? 'resume' : 'fresh',
+                  },
+                )
+              : null;
             goalEvents.emit({
               type: 'phase_halt', phase, halt_reason: haltReason,
               round_fingerprint: roundFp,
               backtracks_used: backtracksUsed,
+              ...(backtrackLimitDecision ? runDispositionFields(backtrackLimitDecision) : {}),
             });
             console.error(
               `\n===== ${haltReason} =====\n`
@@ -8783,28 +8265,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
               .slice(codingIdxBt, phaseIdx + 1)
               .filter(ph => outcomes.some(o => o.phase === ph));
             const txIdBt = `${manifest.run_id}-defectbt${backtracksUsed}`;
-            // **顺序修复**：此处原为 begin → delete → **commit** → 事件，与
-            // pass-snapshot 定下的「事件先于 commit」不变量相反——commit 后崩溃时
-            // journal 已被移除，phase_invalidated 永久补不回来，resume 会把已 supersede
-            // 的阶段当成仍然完成。改走唯一实现 runInvalidationTx。
-            runInvalidationTx({
-              projectRoot,
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              causePhase: String(phase),
-              invalidatedPhases: invalidatedBt.map(String),
-              txId: txIdBt,
-              reason: 'actionable_defect_backtrack',
-              dryRun,
-              passSnapshotMemory,
-              emit: (e: Record<string, unknown>) => goalEvents.emit(e),
-            });
+            // 事件先落盘，缓存退位随后执行；两者都可在 resume 中重复。
             goalEvents.emit({
               type: 'phase_backtrack_requested',
-              phase,
+              phase: String(phase),
+              from_phase: String(phase),
               to_phase: 'coding',
+              invalidated_phases: invalidatedBt.map(String),
               invoke_id: invokeId,
               reason: 'actionable_testing_defects',
+              authorized: false,
               // v23：完整 round_fingerprint（熔断恢复唯一依据）+ 有界 defects[]（交接内容；
               // 指纹恢复**不**从它反算——截断+上限 20 无法可靠重建）
               round_fingerprint: roundFp,
@@ -8816,8 +8286,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 evidence_path: d.evidence_path,
               })),
               defect_count: driverActionableDefects.length,
+              files: driverActionableDefects.map(d => d.evidence_path).filter(Boolean).slice(0, 20),
+              fingerprint: roundFp,
               invalidation_tx_id: txIdBt,
             });
+            if (!dryRun) {
+              for (const p of invalidatedBt) passSnapshotMemory.delete(String(p));
+              discardPassSnapshotCache({
+                projectRoot,
+                feature: manifest.feature,
+                runId: manifest.run_id,
+                phases: invalidatedBt.map(String),
+              });
+            }
             console.error(
               `\n===== backtrack_to_coding =====\n`
               + `${phase} 检出 ${driverActionableDefects.length} 项可回修缺陷（`
@@ -8976,57 +8457,33 @@ Goal runner — tool-agnostic multi-phase orchestrator
     } else {
       pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
     }
-    // 七轮 P0-1：vision 信任封顶——UI 相关 run 在无 authenticated checkpoint（未配 HMAC
-    // 密钥）或仅弱 ack（旗标非真人凭证）时不得产出 clean completion。UI 相关性按运行末态
-    // 判定（vision 账本已存在 或 spec 声明 UI 变更）；非 UI run 不受影响。
-    const uiRelevantAtEnd = (() => {
-      try {
-        if (
-          fs.existsSync(artifactAttestationsPath(projectRoot, manifest.feature)) ||
-          fs.existsSync(policyDowngradesPath(projectRoot, manifest.feature))
-        ) return true;
-        const specMdAtEnd = loadSpecMarkdown(projectRoot, manifest.feature);
-        const uc = specMdAtEnd ? parseUiChangeFromSpecMarkdown(specMdAtEnd) : null;
-        return Boolean(uc && UI_CHANGE_REQUIRES_UI_SPEC.has(uc));
-      } catch {
-        return true; // 判定不了按 UI 相关处理（fail-closed 方向）
-      }
-    })();
+    // 【已删除 · 收口刀二（codex P2）】`uiRelevantAtEnd` 运行末态 UI 相关性判定——
+    // 唯一消费者 capRunStatusForVisionTrust 已删（完成态不再因认证状态封顶），只算不用。
     const rawStatus = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
-    const visionCap = capRunStatusForVisionTrust(rawStatus, {
-      uiRelevant: uiRelevantAtEnd,
-      hmacKeyPresent: Boolean(process.env[VISION_CHECKPOINT_HMAC_ENV]),
-      ackWeak: visionAckWeak,
-    });
-    if (visionCap.capped) {
-      goalEvents.emit({
-        type: 'vision_trust_completion_cap',
-        from: rawStatus,
-        to: visionCap.status,
-        reason: visionCap.reason,
-      });
-      console.warn(
-        `[S3] vision 信任封顶：${rawStatus} → ${visionCap.status}（${visionCap.reason}）——` +
-        `配置 ${VISION_CHECKPOINT_HMAC_ENV} 获得 authenticated checkpoint / 提供受信 ack receipt 后方可 clean completion`,
-      );
-    }
-    // openspec device-readiness-and-completion t2：设备真实性封顶（在 vision 封顶之后叠加）。
+    // 【已删除 · 垂直闭环追补（codex 第九批 P0 + 2026-08-06 理念裁定）】
+    // `capRunStatusForVisionTrust`（七轮 P0-1 的 vision 信任封顶）：UI run 未配 HMAC
+    // 密钥/仅弱 ack 时完成态封顶 AWAITING_HUMAN_REVIEW。按裁定"完成态不再因认证状态
+    // 封顶"整体删除——防伪造主防线是终点验收不信 agent 自报（视觉裁判去自报化 +
+    // pixel_1to1 人工确认），认证状态彻底退出执行控制面与完成态语义。
+    // 注意与下方设备真实性封顶的区别：那是「模拟器结果不能冒充真机行为」的**诚实
+    // 完成度表达**（三分类里的防假绿面），不属防伪造类，保留。
+    // openspec device-readiness-and-completion t2：设备真实性封顶。
     // 只有 testing 真的跑过才判——纯 spec/plan/coding/ut 链路与设备无关，不受影响。
     const testingRan = outcomes.some(o => o.phase === 'testing');
-    const deviceCap = capRunStatusForDeviceAuthenticity(visionCap.status, {
+    const deviceCap = capRunStatusForDeviceAuthenticity(rawStatus, {
       testingRan,
       targetKind: lastTestingTargetKind,
     });
     if (deviceCap.capped) {
       goalEvents.emit({
         type: 'device_authenticity_completion_cap',
-        from: visionCap.status,
+        from: rawStatus,
         to: deviceCap.status,
         reason: deviceCap.reason,
         target_kind: lastTestingTargetKind,
       });
       console.warn(
-        `[device] 设备真实性封顶：${visionCap.status} → ${deviceCap.status}（${deviceCap.reason}）——` +
+        `[device] 设备真实性封顶：${rawStatus} → ${deviceCap.status}（${deviceCap.reason}）——` +
           'testing 未在已确认的真机上执行，不得宣称完整通过；接真机后重跑可解除。',
       );
     }
@@ -9175,6 +8632,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (status === 'HALTED') return 1;
     if (status === 'DEFERRED' || status === 'PARTIAL') return 2;
     return 0;
+  } catch (err) {
+    // T1①：run 身份已建立的任何未处理异常 → 优雅收口（run_end + 报告），返回 1。
+    // 身份未建立（manifest 解析前）→ 照旧抛给 CLI（那里没有可收口的 run）。
+    if (!concludeInterruptedRun(err)) throw err;
+    console.error(
+      `\n[goal-runner] run 因未处理异常中断——已优雅收口（run_end{INTERRUPTED} + 报告已落盘）：\n`
+      + `${(err as Error)?.message ?? err}`,
+    );
+    return 1;
   } finally {
     if (activeHarnessKill) {
       void activeHarnessKill().catch(() => {

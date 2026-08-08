@@ -105,7 +105,9 @@ export interface IncidentFacts {
   lineage_reset_requested?: boolean;
   /**
    * e5d8a2c4 T1③(c)：出生已声明 reset 且尚无 `lineage_reset_committed`——
-   * **同一笔已获准事务未完成**，与"resume 中途升级 reset"是两回事（后者仍恒 terminal）。
+   * **同一笔已获准事务未完成**，与"resume 中途升级 reset"是两回事（后者被出生冻结
+   * 判据挡在事实之外：补写拿不到出生值，另有 events 出生基线的身份 drift 检测兜底；
+   * decide 对失配本身恒 recover，见 5a-1）。
    * 由调用方从「出生冻结的 manifest + events」派生；覆盖 discontinuity 落盘前后的崩溃窗。
    */
   lineage_reset_in_flight?: boolean;
@@ -185,11 +187,7 @@ export interface IncidentSpec {
    * 结构前提不满足（截断链 / 预算耗尽 / 指纹重现）→ terminal。
    */
   recover_action?: RecoverAction;
-  /**
-   * plan a5f9c3e2 t2：**只映射不改行为**。这些 incident 的现行分类存疑（框架内部事务
-   * 失败却走了求人通道），但行为订正归后续 plan（先复现后改）。本字段仅作登记标注，
-   * 不影响 decide 输出。
-   */
+  /** plan e5d8a2c4 5b：保留 incident 的来源标注，行为由 class/recover_action 决定。 */
   suspected_misclassified?: boolean;
 }
 
@@ -327,18 +325,29 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   },
   await_human_fidelity_tier: { class: 'operator', requires_grant: 'fidelity_downgrade' },
   needs_human: { class: 'operator' },
+  /** codex 第九批 P1：--supersede 参数校验失败的启动期优雅收口（改参数重跑即可） */
+  supersede_target_invalid: { class: 'operator' },
   device_toolchain: { class: 'external' },
 
-  // --- 疑似误分类：**只映射不改行为**（行为订正归后续 plan，先复现后改） -------
-  // 这六条是框架自己的快照/事务失败，却走了求人通道而人也修不了。此处按
-  // 保持现行行为的类登记（operator=停下求人，与今天一致），仅打标注。
-  pass_snapshot_unavailable: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_restore_refused: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_journal_unverifiable: { class: 'operator', suspected_misclassified: true },
-  pre_invoke_snapshot_failed: { class: 'operator', suspected_misclassified: true },
-  closure_finalization_failed: { class: 'operator', suspected_misclassified: true },
+  // --- 5b：快照/事务故障的行为映射 -----------------------------------------
+  // 证据缓存只负责让责任阶段重新取得 PASS；它不产生人工授权，也不把旧字节写回宿主。
+  // pre-invoke 的失败点在写保护边界，可能是磁盘/权限等外部条件，因此保留 external
+  // 等 probe；其余纯缓存/事务故障走可重复的责任阶段恢复。
+  pass_snapshot_unavailable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_restore_refused: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_journal_unverifiable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
+  closure_finalization_failed: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
   goal_review_closure_baseline_unavailable: {
-    class: 'operator', structurally_terminal: true, suspected_misclassified: true,
+    class: 'recoverable', recover_action: 'backtrack_to_coding', suspected_misclassified: true,
   },
 } as const satisfies Record<string, IncidentSpec>);
 
@@ -406,16 +415,39 @@ const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
 };
 
 /**
- * **投影注入点（d6 t5⓪）**：带 `halt_reason` 的事件在**写盘那一层**自动补
- * `run_disposition` / `run_wait_kind`。
+ * **结构敏感 incident**（e5d8a2c4 T1⑤）：`decide()` 的输出依赖 incident id **之外**
+ * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹；reset_lineage 读
+ * lineage_reset_requested/in_flight）。这类事件的投影**必须在事故生产点**用完整
+ * facts 计算——写盘层兜底只有 halt_reason，会把 TERMINAL 化妆成 RECOVERY_PENDING
+ * （d6b1a8e3 t5④ 的原始反例）。集合由注册表**派生**，不手写第二份清单：
+ * `class==='recoverable' && !structurally_terminal`（structurally_terminal 在
+ * decide 最前直接 terminal、零 facts——其余家族的兜底与生产点计算**数学等价**：
+ * 纯函数、同输入。operator 类兜底 NO_AUTHORITY 亦等价——生产点若有 grant 就不会
+ * emit halt）。
+ */
+export function isStructuralFactsIncident(incident: string): boolean {
+  const spec = lookupIncident(incident);
+  return Boolean(spec && spec.class === 'recoverable' && !spec.structurally_terminal);
+}
+
+/**
+ * **投影注入点（d6 t5⓪；T1⑤ 收敛）**：带 `halt_reason` 的事件在**写盘那一层**补
+ * `run_disposition` / `run_wait_kind`——这**不是第二裁决**，而是**等价延迟投影**：
+ * 对非结构敏感 incident，`decide({incident})` 与生产点计算是纯函数同输入，结果
+ * 逐字段一致（该等价性由 adjudication 单测钉为契约）。
  *
  * 为什么不在 29 个 emit 点各写一遍：那等于要求每个新增 halt 的作者都记得补投影，
  * 漏一个 supervisor 就无判据——与「新增 incident 不注册即红」是同一类问题。
- * 全仓只有两条事件写入路径（goal-runner 的 reconcile boundary writer、
- * in-session 的 appendGoalEventFenced），在这两处各调一次即全覆盖。
  *
- * **已显式携带 `run_disposition` 的事件原样放行**——那是调用方投影了真实
- * `decide()` 结果（含结构性事实），比按 incident id 重算更准，不得覆盖。
+ * **已显式携带 `run_disposition` 的事件原样放行**——调用方投影了真实 `decide()`
+ * 结果（含结构性事实），不得覆盖。
+ *
+ * **结构敏感 incident 缺投影 = 开发错误**（T1⑤）：**拒绝化妆**——原样放行
+ * （宁缺判据，不给错误判据；下游对缺投影按 `halted` 原样显示），并打日志。
+ * **如实边界（codex 第九批 P3）**：本守卫当前只是"拒化妆+日志"，不是"测试直接
+ * 失败"级 fail-loud——被测保护是 t5⓪ 元门禁的 disguised 断言（写盘层不化妆）与
+ * 集合派生断言；"生产 emit 点缺投影会红"的生产路径断言随 T2 5b（六条改行为，
+ * 会重排 halt 生产面）一并收口，不在此提前建出口注册表。
  */
 export function withRunDisposition<T extends Record<string, unknown>>(
   event: T,
@@ -424,6 +456,14 @@ export function withRunDisposition<T extends Record<string, unknown>>(
   if (event.run_disposition !== undefined) return event;
   const incident = typeof event.halt_reason === 'string' ? event.halt_reason.trim() : '';
   if (!incident) return event;
+  if (isStructuralFactsIncident(incident)) {
+    console.error(
+      `[adjudication] 开发错误：结构敏感 incident（${incident}）的 halt 事件缺少生产点投影`
+      + '——写盘层拒绝用兜底 facts 化妆（会把 TERMINAL 算成 RECOVERY_PENDING）。'
+      + '请在 emit 点用完整 facts 调 decide() 并 runDispositionFields() 显式投影。',
+    );
+    return event;
+  }
   const decision = decide({ incident }, NO_AUTHORITY, { ...NEUTRAL_PROJECTION_CONTEXT, ...context });
   return { ...event, ...runDispositionFields(decision) };
 }
@@ -496,30 +536,33 @@ export function decide(
       }
       if (action === 'reset_lineage') {
         // reset 是 **recovery intent 不是 authority**：不查 grants。
-        // 安全性由「仅 fresh + 断裂显式记事件 + 禁连续性主张 + 全链重验」保证——
-        // 危险的从来不是 reset 本身，是静默的 reset。
-        // 未完成的出生 reset：幂等续做（**不是**中途升级）。它只会撤销连续性主张、
-        // 不授予任何权限，故在 resume 上也允许——否则崩在 reset 半途即成死路。
-        if (context.invocation !== 'fresh' && facts.lineage_reset_in_flight !== true) {
-          return {
-            kind: 'terminal',
-            reason: 'resume 遇 lineage 失配——绝不冒充连续（fail-closed）',
-          };
-        }
-        if (facts.lineage_reset_requested !== true) {
-          return {
-            kind: 'terminal',
-            reason: 'lineage 失配且未声明 vision_lineage=reset——不得擅自重建 lineage',
-          };
-        }
+        //
+        // 【T2 5a-1（2026-08-07）：invocation×3 行为表——三条路径统一为 recover】
+        // 此前三分（resume→terminal :495 / fresh 未声明→terminal :501 / fresh 声明→
+        // recover :507），前两条 terminal 正是宿主 run1"第一死"（tamper+裸 throw）与
+        // reset 半途崩死路的来源。按总纲推论与理念裁定：**失配是跨存储域的结构常态，
+        // 不是攻击信号**——head 存场外、账本在 repo 内，任何一侧独立演化即失配。
+        // 处置=自动 discontinuity：quarantine 旧锚 → 显式记录断裂
+        // （continuity_claim:'revoked'）→ 新 generation 全量重采重验。
+        // **与"绝不冒充连续"自洽**：自动重建**显式撤销**连续性主张，不是冒充连续
+        // ——冒充=沿用旧 lineage 却宣称连续；这里是记下断裂、从零重证。
+        // **"中途塞 reset"的防线不受影响**：那防的是停机窗口改 manifest 骗过身份
+        // 检测，由 manifest 身份字段 drift 检测（events 出生基线）+ 出生冻结判据承接
+        // （T1③ 注记的两道门）；decide 这里裁决的是"失配如何恢复"，不是"声明是否合法"。
+        // 声明/自动只是意图来源不同（事件 declared_by 区分），恢复动作同一条。
         return {
           kind: 'recover',
           action,
-          reason: '已声明放弃历史连续性：quarantine 旧锚 → 建新 lineage → 全链重验' +
-            '（显式撤销连续性主张，不伪造保证）',
+          reason: facts.lineage_reset_requested === true || facts.lineage_reset_in_flight === true
+            ? '已声明放弃历史连续性：quarantine 旧锚 → 建新 lineage → 全链重验' +
+              '（显式撤销连续性主张，不伪造保证）'
+            : 'lineage 失配（跨存储域结构常态）：自动 discontinuity——quarantine 旧锚 → ' +
+              '显式记录断裂 → 新 generation 全量重采重验（不冒充连续，也不停死）',
         };
       }
-      const blocked = backtrackBlocked(facts);
+      // retry_transaction 只重跑当前责任阶段，不消费回退预算，也不依赖 coding/review
+      // 链；预算/截断/指纹只约束真正跨阶段的 backtrack_to_coding。
+      const blocked = action === 'backtrack_to_coding' ? backtrackBlocked(facts) : null;
       if (blocked) return { kind: 'terminal', reason: blocked };
       return {
         kind: 'recover',

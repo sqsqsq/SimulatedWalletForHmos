@@ -85,6 +85,10 @@ export interface GoalManifest {
     max_files: number;
     approved_by?: string;
   }>;
+  /** T3 successor metadata; the audited supersede event remains the authority. */
+  successor_of?: string;
+  inherited_round_fingerprints?: string[];
+  inherited_drift_fingerprints?: string[];
 }
 
 export interface GoalManifestParseOptions {
@@ -142,6 +146,11 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
     fields.vision_lineage = manifest.vision_lineage ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
+    fields.successor_of = manifest.successor_of ?? null;
+    fields.inherited_round_fingerprints = manifest.inherited_round_fingerprints ?? null;
+    fields.inherited_drift_fingerprints = manifest.inherited_drift_fingerprints ?? null;
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(fields)) {
@@ -488,6 +497,48 @@ export function buildGoalManifestFromInput(
   };
 }
 
+export function inheritSuccessorManifest(
+  manifest: GoalManifest,
+  source: GoalManifest,
+  fingerprints: {
+    round: readonly string[];
+    drift: readonly string[];
+  },
+): GoalManifest {
+  const unique = (values: readonly string[]): string[] =>
+    [...new Set(values.map(value => value.trim()).filter(Boolean))];
+  if (manifest.feature !== source.feature) {
+    throw new Error(
+      `[goal-manifest] successor feature 不一致（当前=${manifest.feature}，源=${source.feature}）`,
+    );
+  }
+
+  // 后继不是一个“默认 fresh manifest 再补预算”的新契约：源 manifest 才是本条
+  // supersede 链的合同 SSOT。只替换新 run 的身份与明确要求的新起点；其余字段（end/
+  // requirement/adapter/chain/fidelity/dependency/预授权等）全部原样继承。阶段完成态
+  // 不在 manifest 中，故不会跨 run 复制；预算/无人值守深拷贝只是避免调用方后续改写源对象。
+  const freshHasVisionLineage = Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage');
+  const inherited = JSON.parse(JSON.stringify(source)) as GoalManifest;
+  // `vision_lineage` from source is a one-shot birth instruction. The source
+  // run has already consumed it; carrying it into a fresh successor would
+  // repeat the reset/quarantine path. A fresh successor may explicitly issue
+  // its own birth instruction, which is restored below.
+  delete inherited.vision_lineage;
+  const sourceRound = source.inherited_round_fingerprints ?? [];
+  const sourceDrift = source.inherited_drift_fingerprints ?? [];
+  return {
+    ...inherited,
+    start_phase: manifest.start_phase,
+    run_id: manifest.run_id,
+    report_dir: manifest.report_dir,
+    created_at: manifest.created_at,
+    ...(freshHasVisionLineage ? { vision_lineage: manifest.vision_lineage } : {}),
+    successor_of: source.run_id,
+    inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
+    inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
+  };
+}
+
 /**
  * 治 2.3.0 历史 manifest：legacy 扁平 timeout_seconds=3600 且无 per-phase map →
  * 视为"未显式设置"，删除该字段，使 **resume 旧 run** 走 goal-timeout 的 per-phase 默认表
@@ -520,10 +571,11 @@ export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineag
  * 让人 resume，自己的启动门拒绝 resume。
  *
  * 删除而非重写，因为它想防的 ② **已被两道现成的门覆盖**：
- * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 MAC 保护的身份字段
- *   （见上方该函数注释"键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现"）；
- * · `decide()` 对 `reset_lineage` 在 `invocation !== 'fresh'` 时恒 terminal
- *   （adjudication.ts）。
+ * · `computeManifestIdentityFields` 把 `vision_lineage` 计入 manifest 身份字段
+ *   （停机期被补写会被 events 出生基线的 drift 检测发现——T2 5a 收口后基线由 events
+ *   承载，MAC 已整体退役）；
+ * · 执行判据只认**出生冻结值**（resolveBirthVisionLineage——中途补写拿不到出生值；
+ *   decide 对失配本身恒 recover，见 5a-1，不再有 terminal 分支）。
  * 一件事三道门、其中一道分不清合法与非法——收敛回前两道。
  * 命令行 `--vision-lineage` **显式旗标**在 resume 上的拒绝**保留**（goal-runner.ts）——
  * 那才是真的"中途升级"；出生 manifest 里的 reset 不再据此拒绝。

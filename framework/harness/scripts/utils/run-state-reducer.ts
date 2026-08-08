@@ -42,6 +42,8 @@ export interface RunStateProjection {
   run_wait_kind?: WaitKind;
   /** 产出当前投影的事件类型（诊断用；无投影事件时为 null=处于初始 RESUME_READY） */
   source_event_type: string | null;
+  /** 产出当前投影的事件下标；supervisor 用它把 probe/successor 元数据绑定到同一事件 */
+  source_event_index: number | null;
   /** run_end 已落盘：本 run 的事件流已封口，后续更早投影不得翻转 */
   sealed: boolean;
 }
@@ -76,33 +78,58 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
   let current: RunStateProjection = {
     run_disposition: 'RESUME_READY',
     source_event_type: null,
+    source_event_index: null,
     sealed: false,
   };
-  for (const raw of events) {
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    const raw = events[eventIndex];
     if (!raw || typeof raw !== 'object') continue;
     const ev = raw as EventLike;
     const type = typeof ev.type === 'string' ? ev.type : '';
     if (type === 'run_start') {
-      current = { run_disposition: 'RESUME_READY', source_event_type: type, sealed: false };
+      current = {
+        run_disposition: 'RESUME_READY', source_event_type: type, source_event_index: eventIndex, sealed: false,
+      };
       continue;
     }
     if (type === 'run_end') {
       const status = typeof ev.status === 'string' ? ev.status : '';
       if (SEALED_STATUSES.has(status)) {
-        current = { run_disposition: 'TERMINAL', source_event_type: type, sealed: true };
+        current = {
+          run_disposition: 'TERMINAL', source_event_type: type, source_event_index: eventIndex, sealed: true,
+        };
         continue;
       }
       const waitKind = WAITING_STATUSES.get(status);
       if (waitKind) {
         current = {
-          run_disposition: 'WAITING', run_wait_kind: waitKind, source_event_type: type, sealed: true,
+          run_disposition: 'WAITING', run_wait_kind: waitKind, source_event_type: type,
+          source_event_index: eventIndex, sealed: true,
         };
         continue;
       }
-      // 其余（HALTED / INTERRUPTED / PARTIAL …）：**保留停机前最后一次投影**。
+      // codex 第九批收尾 P1：run_end **自带显式投影**时优先采用并封口——启动期
+      // BLOCKER（如 supersede_target_invalid）的事件流只有 run_start + run_end，
+      // "保留此前投影"会退回 run_start 的 RESUME_READY，supervisor 据此把一个
+      // 需要人修参数的 run 重新拉起（最小事件流实测）。
+      const explicitD = typeof ev.run_disposition === 'string' ? ev.run_disposition : '';
+      if (DISPOSITIONS.has(explicitD)) {
+        current = {
+          run_disposition: explicitD as Disposition,
+          ...(typeof ev.run_wait_kind === 'string' ? { run_wait_kind: ev.run_wait_kind as WaitKind } : {}),
+          source_event_type: type, source_event_index: eventIndex, sealed: true,
+        };
+        continue;
+      }
+      // 其余（HALTED / INTERRUPTED / PARTIAL …无显式投影）：**保留停机前最后一次投影**。
       // 「进程停了」是 liveness 的事实，「能不能续」是 disposition 的事实——
       // 由生产端在 halt 那一刻用真实结构事实算出的投影才是权威，此处不替它改判。
-      current = { ...current, source_event_type: current.source_event_type ?? type, sealed: true };
+      current = {
+        ...current,
+        source_event_type: current.source_event_type ?? type,
+        source_event_index: current.source_event_index ?? eventIndex,
+        sealed: true,
+      };
       continue;
     }
     if (current.sealed) continue;
@@ -112,6 +139,7 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
     current = {
       run_disposition: d as Disposition,
       source_event_type: type || null,
+      source_event_index: eventIndex,
       sealed: false,
       ...(d === 'WAITING' && (kind === 'human' || kind === 'external')
         ? { run_wait_kind: kind }
