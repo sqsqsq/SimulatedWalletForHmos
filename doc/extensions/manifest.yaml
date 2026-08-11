@@ -1,16 +1,31 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "0.1.0"
+version: "0.20.0"
 description: 演示用实例扩展包（钱包 SDK 接入向导 + knowledge + hooks；路径对齐 plan §7.13 白名单）
 provides:
   skills:
     - wallet-sdk-onboarding
+    - story
   knowledge:
     - knowledge/naming-taboos.md
+    - knowledge/constraints/README.md
+    - knowledge/constraints/ux-consistency.md
+    - knowledge/constraints/run-modes.md
+    - knowledge/constraints/security-privacy.md
+    - knowledge/constraints/app-lifecycle-config.md
+    - knowledge/constraints/dfx-baseline.md
+    - knowledge/constraints/telemetry.md
+    - knowledge/constraints/compatibility-checklist.md
+    - knowledge/constraints/env-exceptions.md
+    - knowledge/constraints/deliverables.md
   hooks:
     coding:
       pre_check:
         - hooks/coding/pre_check.mjs
-    prd:
+    spec:
       on_context_load:
-        - hooks/prd/on_context_load.md
+        - hooks/spec/on_context_load.md
+      post_check:
+        - hooks/spec/post_check.mjs
+  phase_rules_overlays:
+    spec: rules/spec-rules.overlay.yaml
