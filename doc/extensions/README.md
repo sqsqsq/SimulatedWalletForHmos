@@ -5,6 +5,6 @@
 - [framework/docs/concepts/extensibility.md](../../framework/docs/concepts/extensibility.md)
 - [framework/specs/instance-extension-manifest.schema.yaml](../../framework/specs/instance-extension-manifest.schema.yaml)
 
-初始化时若目录不存在，可由 **Skill 00** 从 [framework/skills/00-framework-init/templates/extension-skeleton/](../../framework/skills/00-framework-init/templates/extension-skeleton/) 拷贝骨架。
+初始化时若目录不存在，可由 **framework-init** 从 [framework/skills/project/framework-init/templates/extension-skeleton/](../../framework/skills/project/framework-init/templates/extension-skeleton/) 拷贝骨架。
 
 本仓库内含 **wallet-sdk-demo** 演示包（文件名与演进计划白名单对齐），仅作引用示例；生产环境请按业务改写 `manifest.yaml` 与路径。
