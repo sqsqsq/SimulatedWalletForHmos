@@ -21,7 +21,14 @@ import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { resolveLayoutDumpPath, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
 import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
+import {
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 import { checkRenderVisibilityCalibrate } from './render-visibility';
 import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
@@ -754,7 +761,16 @@ export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
 export function hasActionableVisualResidual(
   screens: VisualDiffScreenEntry[],
   hits: Array<{ id: string; status: 'FAIL' | 'WARN' }>,
+  /**
+   * t4（plan f3a8c6d2）：本轮**内容可行动**的 P0 缺屏（已由调用方剔除环境阻断态）。
+   * 事故：30 轮 ledger 全程 actionable_residual=false + defect_fingerprints=[]，
+   * 于是"全 pending、7 屏只采到 3 屏"的最烂轮次双重免疫熔断。缺屏本身就是"有事可修
+   * （修采集）"，必须计入残差。不合格轮由 `ctx.visualFuseEligibility` 在上游裁定为空集，
+   * 故此处只会收到内容态，不会把锁屏/权限故障改口成"修了没用"。
+   */
+  contentActionableMissingScreens?: readonly string[],
 ): boolean {
+  if ((contentActionableMissingScreens?.length ?? 0) > 0) return true;
   if (screens.some(s => s.verdict === 'fail' || (s.must_fix?.length ?? 0) > 0)) return true;
   if (hits.some(h => h.status === 'FAIL' && LOOP_ACTIONABLE_HIT_IDS.has(h.id))) return true;
   // 未解决 T8/M1 blocking WARN 亦属 loop-actionable（与 candidate-pass 阻断口径一致）
@@ -1026,54 +1042,105 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  if (!fs.existsSync(mdPath) && !fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
-      suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
-      affected_files: [reportRel],
-    }];
-  }
+  // t4（plan f3a8c6d2）：确定性 **all-mismatched 缺屏轮（missing-only）**——capture 端
+  // 已确证"本轮全部 P0 缺屏均为应用内错页"（`visualFuseEligibility.eligible=true` 且
+  // actionableMissingIds 非空），但**零成功采集**会使正式报告不产生或产生空 screens：
+  // 身份失配屏本轮零写入、旧裁决在 merge 前被瞬时失效剔除 → json 可能不存在、也可能
+  // 被剪成空 screens 数组。若在此处因"报告缺失/空 screens"提前 WARN/FAIL 返回，
+  // missing_screen 指纹与账本 fuse 永远走不到（t4 正向目标落空）。
+  //
+  // **空骨架的启用范围（review P1 收窄，勿再放宽）**：仅在「正式报告不存在」或
+  // 「json 成功解析且 screens 明确为空数组」时使用 `screens: []` 骨架。部分屏成功、
+  // 部分屏 mismatched 的混合轮（eligible=true + actionableMissingIds 存在，但报告
+  // 非空）**必须走正常解析与消费**——成功屏的 verdict/defects/证据照常参与判定，
+  // 只有 mismatched 的缺屏经资格对象承载；损坏 JSON 维持既有 FAIL（不因资格放行）。
+  // 缺屏指纹来源已移交资格对象，空骨架继续走既有链（P0 未覆盖 FAIL hit 照常产生、
+  // 缺屏指纹与 actionable 全部由资格对象承载）。**没有该资格时保持既有 WARN/FAIL 语义不变**。
+  const missingOnlyEligible =
+    ctx.visualFuseEligibility?.eligible === true &&
+    (ctx.visualFuseEligibility.actionableMissingIds?.length ?? 0) > 0;
 
-  if (!fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。',
-      affected_files: [reportRel],
-    }];
+  let rep: VisualDiffReport | null = null;
+  let schemaErrors: string[] = [];
+  let uiDoc: ReturnType<typeof loadUiSpecFile> = null;
+  const jsonExists = fs.existsSync(jsonPath);
+  if (!jsonExists) {
+    // 报告不存在：仅确定性 missing-only 轮放行为空骨架；其余保持既有 WARN 语义
+    if (!missingOnlyEligible) {
+      const mdExists = fs.existsSync(mdPath);
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'WARN',
+        details: mdExists
+          ? 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。'
+          : 'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
+        ...(mdExists ? {} : {
+          suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
+        }),
+        affected_files: [reportRel],
+      }];
+    }
+    rep = { schema_version: '1.1', screens: [] };
+    // 缺失/空报告分支同样需要 ui-spec 的 P0 目标集合（下方 p0Ids 计算）
+    uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (e) {
+      // 损坏 JSON：**不因资格放行**，维持既有 FAIL
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'FAIL',
+        details: `visual-diff.json 解析失败：${(e as Error).message}`,
+        affected_files: [reportRel],
+      }];
+    }
+    const parsedEmptyScreens =
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      Array.isArray((parsed as { screens?: unknown }).screens) &&
+      ((parsed as { screens: unknown[] }).screens.length === 0);
+    if (missingOnlyEligible && parsedEmptyScreens) {
+      // 合法空 screens（身份失配旧裁决被瞬时失效剔除后的形态）：空骨架继续
+      rep = { schema_version: '1.1', screens: [] };
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+    } else {
+      // 非空报告（含部分成功+部分 mismatched 的混合轮）与结构损坏：正常解析/校验
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+      const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
+      const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
+      const bestEffortReport = validated.report;
+      if (validated.fatal || !bestEffortReport) {
+        // root 非法 / screens 数组缺失（含非空但 shape 损坏）：无可门禁对象。
+        // UI change=new_or_changed 且有 P0 目标屏时不得静默放行（视为「无有效视觉
+        // 证据」），升 BLOCKER。
+        const p0Targets = collectP0VisualTargetIds(uiDoc);
+        const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
+        return [{
+          id: 'visual_diff',
+          category: 'structure',
+          description: desc,
+          severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
+          status: 'FAIL',
+          details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+          affected_files: [reportRel],
+        }];
+      }
+      rep = bestEffortReport;
+      schemaErrors = validated.errors;
+    }
   }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-  } catch (e) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'FAIL',
-      details: `visual-diff.json 解析失败：${(e as Error).message}`,
-      affected_files: [reportRel],
-    }];
-  }
-
-  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-  const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
-  const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
-  const bestEffortReport = validated.report;
-  if (validated.fatal || !bestEffortReport) {
-    // root 非法 / screens 数组缺失：无可门禁对象。UI change=new_or_changed 且有 P0 目标屏时
-    // 不得静默放行（视为「无有效视觉证据」），升 BLOCKER。
+  if (!rep) {
+    // 确定赋值不变量：上方每条路径要么已 return，要么已为 rep 赋值。
+    // 此处**不 fail-open**——按"无可门禁对象"显式 FAIL（不得静默返回空结果）。
     const p0Targets = collectP0VisualTargetIds(uiDoc);
     const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
     return [{
@@ -1082,14 +1149,12 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
       status: 'FAIL',
-      details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+      details: 'visual-diff 报告装载失败（内部不变量违反：无报告且无资格兜底）',
       affected_files: [reportRel],
     }];
   }
 
   // G0：非 fatal 的 schema 问题（缺图 / 非法 ref_id 等）转 finding 追加，绝不掩盖下方实质门禁。
-  const rep = bestEffortReport;
-  const schemaErrors = validated.errors;
   const mustFix = rep.screens.flatMap(s => s.must_fix ?? []);
   const failScreens = rep.screens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
@@ -1938,6 +2003,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
   if (uiDoc) {
     const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
+    // S6（e9c4a7f3 s6-locator-calibrate）：nav 触达 / region attest **按屏隔离**，
+    // 交互类型启发式仅 nav 缺失时回退——循环外预收集，避免每屏重复扫 nav/报告
+    const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+    const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+    const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
     const hardLines: string[] = [];
     const warnLines: string[] = [];
     const unstableLines: string[] = [];
@@ -1947,19 +2017,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       if (s.verdict === 'skipped') continue;
       const uiScreen = uiScreensById.get(s.screen_id) ?? uiScreensById.get(canonicalOverlayBase(s.screen_id));
       if (!uiScreen) continue;
-      const layoutAbs = path.join(reportDir, `layout-${s.screen_id}.json`);
-      const dump = loadLayoutDumpFile(layoutAbs);
+      const layoutResolved = resolveLayoutDumpPath(reportDir, s.screen_id);
+      if (layoutResolved.status === 'conflict') {
+        // t2b（plan c6d8f2b4）：raw 与 slug 两套文件名并存，无法判别归属——fail-closed，
+        // 不得无优先级双查（可能读到旧文件）。与"损坏/被删"区分开：这是命名问题。
+        dumpMissing.push(
+          `${s.screen_id}（布局 dump 命名冲突：layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json 与 ` +
+            `layout-${s.screen_id}.json 并存——疑似新旧寻址口径混写，须清理/统一后重采）`,
+        );
+        continue;
+      }
+      const layoutAbs = layoutResolved.status === 'missing' ? '' : layoutResolved.abs;
+      const dump = layoutAbs ? loadLayoutDumpFile(layoutAbs) : null;
       if (!dump) {
         // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
         // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
         if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
-          dumpMissing.push(`${s.screen_id}（声称已采集但 layout-${s.screen_id}.json 缺失/不可解析——文件被删或损坏，须重采）`);
+          dumpMissing.push(
+            `${s.screen_id}（声称已采集但 ${layoutResolved.status === 'legacy' ? `legacy 命名 ${layoutResolved.rel}` : `layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json`} 缺失/不可解析——文件被删或损坏，须重采）`,
+          );
         } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
           dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
         }
         continue;
       }
-      const res = collectLayoutOracleForScreen({ screenId: s.screen_id, screen: uiScreen, dump });
+      const res = collectLayoutOracleForScreen({
+        screenId: s.screen_id,
+        screen: uiScreen,
+        dump,
+        // S6（e9c4a7f3 s6-locator-calibrate）：T8 分母与 coding 侧同一收窄口径（按屏上下文）
+        locatorCtx: {
+          identityIds: collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature),
+          navStepIds: navStepIdsByScreen.get(s.screen_id),
+          attestRegions: attestByScreen.get(s.screen_id),
+          interactiveFallbackEnabled,
+        },
+      });
       // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
       // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
       // 消息明示真人复核）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
@@ -2313,9 +2406,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 消费方不得对该轮做熔断判定（同数异质问题会被计数近似误判成无进展）。
   // review-fix（codex P1-3）：资格=rev10 计数门 && 转录对账净——filler defects 轮
   // （凑数错配）虽过计数门，但其指纹是污染数据，不得进入熔断比较基线。
-  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty;
-  const roundFingerprints = fingerprintable ? collectDefectFingerprints(rep.screens) : [];
-  if (!fingerprintable) {
+  // t4（plan f3a8c6d2）：消费**唯一裁决对象**（capture 单点产出，capture 未运行时由
+  // check-testing 补 capture_not_run）。未设置＝非 device 采集路径，既有行为不变。
+  // 资格闸复用现有 `fingerprintable`：它同时是本轮熔断的必要条件、也是"能否作为下一轮
+  // 比较基线"的条件（visual-rounds-ledger 的 prevEligible 与 fuse 判定都要求它），
+  // 故并进去即**熔断资格层整体短路**——只清空缺屏集合是不够的，`fail_hit|visual_diff`
+  // 仍会进签名、`visual_diff` FAIL 又经既有白名单令 actionable 为真（review 已复现）。
+  const fuseEligibility = ctx.visualFuseEligibility;
+  const fuseIneligible = fuseEligibility !== undefined && !fuseEligibility.eligible;
+  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty && !fuseIneligible;
+  // t4（plan f3a8c6d2）：**内容可行动的 P0 缺屏 + 本轮 FAIL hit 身份并入现有指纹集合**。
+  // 旧实现只在 defects 非空时才写 [fingerprints] 行，于是"全 pending/采集失败"轮的指纹
+  // 恒为空 → "连续两轮逐字相同"判据无输入 → 采集烂到产不出 defects 的轮次反而永不熔断
+  // （bc-openCard 30 轮全程 fused=false 的第二个成因）。
+  // 签名按 plan 取**两元**：eligible P0 uncovered + source FAIL hit ids。
+  //   · 缺 FAIL hit 元会误熔断（review 复现：缺屏不变、FAIL 集从 visual_diff 变成
+  //     visual_diff+visual_diff_schema，问题明明变了，第二轮仍判无进展）；
+  //   · sourceFailHitIds 虽已随 ledger 行落盘，但熔断只比 defect_fingerprints，
+  //     不并进签名就等于没参与判定。
+  //   · 对有 defects 的正常轮同样并入：FAIL 集变化＝状态变化，判"不同"只会**推迟**
+  //     熔断，与既有 rev9 安全方向（宁可推迟、绝不误熔）一致。
+  // 缺屏集合直接取裁决对象的结论——不合格轮它本就是空集，无需在此重复分类。
+  const contentActionableMissing = fuseIneligible ? [] : (fuseEligibility?.actionableMissingIds ?? []);
+  const missingScreenFingerprints = contentActionableMissing.map(id => `missing_screen|${id}`);
+  const failHitFingerprints = [...new Set(hits.filter(h => h.status === 'FAIL').map(h => h.id))]
+    .sort()
+    .map(id => `fail_hit|${id}`);
+  const roundFingerprints = fingerprintable
+    ? [
+        ...collectDefectFingerprints(rep.screens),
+        ...missingScreenFingerprints,
+        ...failHitFingerprints,
+      ].sort()
+    : [];
+  if (fuseIneligible) {
+    referenceNotes.push(`[fingerprints] ineligible（本轮整体不参与熔断比较）：${fuseEligibility!.reason}`);
+  } else if (!fingerprintable) {
     referenceNotes.push(
       `[fingerprints] ineligible（存在 must_fix 未转录/未锚定的屏——本轮不参与熔断比较，先按 transcription 门禁逐条转录锚定）`,
     );
@@ -2368,8 +2494,17 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       ...unloggedWarnFindingIds,
     ]),
   ];
+  // t4：不合格轮的 actionable 也必须为 false——`fingerprintable=false` 已保证不熔断，
+  // 但 actionable 仍会被 `visual_diff` FAIL 经既有白名单置真，与"只有内容残差进
+  // actionable"的语义和报告真话不一致（账本行会记一个不存在的"可行动残差"）。
   const actionableResidual =
-    pixel1to1 && hasActionableVisualResidual(rep.screens, hits.map(h => ({ id: h.id, status: h.status })));
+    pixel1to1 &&
+    !fuseIneligible &&
+    hasActionableVisualResidual(
+      rep.screens,
+      hits.map(h => ({ id: h.id, status: h.status })),
+      contentActionableMissing,
+    );
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || null;
   // review-fix（cursor I-1）：交互态 loop_id 带「采集世代」=ui-spec 内容指纹——spec 变更
@@ -2463,10 +2598,31 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       '逐屏审阅 device-screenshots/shot-*.png 对照参考原图，认可后在 visual-diff.json ' +
       'screens[].confirmed_by 填真人署名（user_requirement/自动化身份无效）并重跑 harness；' +
       '不认可的屏改 verdict=fail 并写 must_fix。';
-  } else if (roundEvaluation?.decision.fused && pixel1to1) {
-    // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
-    // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
-    finalResult.failure_kind = 'no_progress_fuse';
+  } else {
+    if (roundEvaluation?.decision.fused && pixel1to1) {
+      // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
+      // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
+      finalResult.failure_kind = 'no_progress_fuse';
+    }
+    // t1（plan f3a8c6d2）：**显式否定人签时点**。
+    // 事故：await_human_only=false（7 个 P0 只采到 3 个且全 pending、visual_diff
+    // needs_fix），框架此处却什么都不说，agent 于是自行推断"只剩视觉验真，需要你写
+    // confirmed_by"——用户被叫来签一份机器根本没准备好的东西。
+    // 物理门（P0-9b）本身是对的，缺的是**把这个否定说出来**：机器判据已经算好了，
+    // 只是没进面向 agent 的报告。此处零新字段、零新分类，只把既有布尔如实呈现。
+    const failBlockers = hits.filter(h => h.status === 'FAIL');
+    if (failBlockers.length > 0) {
+      const firstMustFix = rep.screens.find(s => (s.must_fix?.length ?? 0) > 0);
+      const nextAction = firstMustFix
+        ? `修 ${firstMustFix.screen_id} 的 must_fix「${firstMustFix.must_fix![0]}」`
+        : `修 ${failBlockers[0].id}`;
+      finalResult.details +=
+        '\n【当前不需要真人签字】await_human_only=false——本轮仍有机器可判的阻塞项，' +
+        '真人签字（confirmed_by）此刻既不适用也不会被受理：' +
+        `${failBlockers.slice(0, 5).map(h => h.id).join('、')}` +
+        `${failBlockers.length > 5 ? `…共 ${failBlockers.length} 项` : ''}。` +
+        `下一步=${nextAction}；全部机器阻塞清零后本行会自动变为人签引导，届时再叫人。`;
+    }
   }
 
   // t0③：进程内结构化 payload（runner 消费追加账本 + summary.visual_round；不进 summary

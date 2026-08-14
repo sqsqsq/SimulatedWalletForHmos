@@ -56,7 +56,7 @@ import { loadResolvedProfile } from '../profile-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import type { HarnessResolvedProfile } from './utils/types';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { resolveContextAdapterImageInput, isVisionCanaryFresh } from './utils/multimodal-probe';
+import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
@@ -177,7 +177,7 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
-import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson } from './utils/claude-envelope';
+import { extractClaudeFinalResultText, parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   discardPassSnapshotCache,
   diffFrozenAgainstManifest,
@@ -271,6 +271,7 @@ import {
   countRepeatedSignatureInFamily,
   classifyClosureKind,
   resolveClosureSyncOutcome,
+  responsibilityRerunPending,
   shouldHaltClosureTimeout,
   type ContinuationCause,
 } from './utils/goal-runner-phase';
@@ -281,7 +282,9 @@ import {
 } from './utils/visual-rounds-ledger';
 import {
   applyClosurePatchFromReceiptValidation,
+  applyGoalModelPinEnv,
   isGoalHeadlessEnv,
+  MAISON_GOAL_MODEL_PIN_ENV,
   MAISON_GOAL_RUNNER_ENV,
   MAISON_GOAL_ALLOWED_TOOLS_ENV,
   runSyncClosureDetailed,
@@ -339,6 +342,8 @@ import { snapshotPhaseHarness } from './utils/goal-phase-snapshot';
 import {
   applyManifestCliOverrides,
   validateManifestCliOverrides,
+  normalizeAdapterModelCliValue,
+  resolveFinalModelPin,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
 import {
@@ -819,6 +824,16 @@ export function __testing_setInvokeAgent(fn: InvokeAgentFn | null): void {
 }
 
 /**
+ * plan d7f3a9c4 t4：金丝雀 probe 的 invoke 注入（测试用；null=走真实 invokeAgentHeadless）。
+ * 与 injectedInvokeAgent 分立——probe 走 runVisionCanaryProbe 的 invokeFn 缝，phase invoke
+ * 走 injectedInvokeAgent；不混用，避免集成测试里 probe 与 phase 的注入互相污染。
+ */
+let injectedCanaryProbeInvoke: InvokeAgentFn | null = null;
+export function __testing_setCanaryProbeInvoke(fn: InvokeAgentFn | null): void {
+  injectedCanaryProbeInvoke = fn;
+}
+
+/**
  * b3e8d4c7 t4：把 runner 内存里的 **plan** PASS 快照锚编成 gate harness 的 env。
  * 只有 plan 锚需要跨进程——ui-scope-gate 的白名单唯一来源就是它。
  * 内存里没有（未到 plan PASS / 已被合法 supersede 清除）→ 不注入，消费方退回既有行为。
@@ -913,6 +928,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
   injectedAfterPassSnapshot = null;
+  injectedCanaryProbeInvoke = null;
 }
 
 async function runHarnessPhase(
@@ -967,6 +983,9 @@ async function runHarnessPhase(
     // 这里显式透传，与 agent 侧同源。
     ...deviceTargetEnv,
   };
+  // plan d7f3a9c4 t3：model pin 注入链②（gate harness）——有 pin 才携带；无 pin 显式清理
+  //（共享执行器：先清大小写变体再写唯一大写键，父环境残留不会漏入子进程）。
+  applyGoalModelPinEnv(childEnv, manifest?.adapter_model_pin?.value);
   for (const [k, v] of Object.entries(gateInjectedEnv)) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
     childEnv[k] = v;
@@ -2010,12 +2029,18 @@ export function resolvePhaseCapabilityAdvisory(
   if (intentSsot) desired = intentSsot.selected_fidelity;
   const capSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
 
-  const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter);
+  const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  });
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
   // 判定其无视觉）——OR 进 ocrAvailable，不替代框架自身 OCR 环境探测（后者更可靠/确定性）。
   // cursor review（E6 后）：与 harness-runner.ts 门禁钳制共用同一口径，不再各算一遍。
-  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter);
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter, {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  });
   // visual-capability-truth S3：hasVision = meet(adapter/allowed_tools 探测, 三轴 effective_policy)
   // ——反证器降级 blind-safe 后，后续 phase（spec retry/plan/coding）的能力块与钳制同步转盲，
   // 消费面统一走 resolveEffectiveVisionContext（不再各读 local/canary 自行判级）。
@@ -2036,6 +2061,8 @@ export function resolvePhaseCapabilityAdvisory(
       phase,
       adapter: manifest.adapter,
       frameworkRoot,
+      // plan d7f3a9c4 t3：中央三轴 resolver 带最终裁决 pin——pin 在场时采信追加模型匹配。
+      ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
       // 四轮 review P1：ui-spec 已存在时以当前 hash 参与 meet——unverified 产物（含
       // unverified_clean）不再因"无独立降级行"漏出 visual（prompt 注入面同源收口）。
       ...(policyArtifactHashes ? { artifactHashes: policyArtifactHashes } : {}),
@@ -2065,6 +2092,10 @@ export function resolvePhaseCapabilityAdvisory(
         adapter: manifest.adapter, profileDir: resolvedProfile.profileDir,
         manifestFidelity: manifest.fidelity, fidelityReceiptRel: manifest.fidelity_receipt,
         runIdForReceipt: manifest.run_id,
+        // plan c8e5b3f1 t1：vision policy 收紧重建需求来源=goal manifest。
+        requirementProvenance: 'goal_manifest',
+        // plan d7f3a9c4 t3：能力重建同样带最终裁决 pin。
+        ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
       });
       effectiveIntent = loadFidelityIntentSsot(projectRoot, manifest.feature);
       effectiveSnap = loadCapabilitySnapshot(projectRoot, manifest.feature);
@@ -3627,6 +3658,9 @@ export async function main(): Promise<number> {
       // plan a5f9c3e2 t3①：vision lineage 处置的**唯一输入入口**（continue|reset）。
       // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
       'vision-lineage',
+      // plan d7f3a9c4 t1：显式模型钉（仅 headless runner 链路；in-session attended
+      // 由宿主会话自跑不适用）。
+      'adapter-model',
     ],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
@@ -3653,6 +3687,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
     [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
+    [--adapter-model <id>]   play the explicit model into headless argv (codex/claude/codeagent/cursor/opencode)
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
@@ -3699,6 +3734,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const manifestCliCheck = validateManifestCliOverrides(manifestArgv);
   if (!manifestCliCheck.ok) {
     console.error(manifestCliCheck.message);
+    process.exit(1);
+  }
+
+  // plan d7f3a9c4 t1：--adapter-model CLI 值归一 + fail-fast 校验（trim/非空/≤128/无控制
+  // 字符；不做模型名白名单）。raw boolean 裸旗标（minimist 置 true）也拒绝。
+  let cliAdapterModel: string | undefined;
+  try {
+    cliAdapterModel = normalizeAdapterModelCliValue(argv['adapter-model']);
+  } catch (err) {
+    console.error((err as Error).message);
     process.exit(1);
   }
 
@@ -3879,6 +3924,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 不互相搭车）；违规=BLOCKER。applied 判 string 过滤后的 manifestArgv（与
   // applyManifestCliOverrides 同一来源——裸旗标 --fidelity 没应用任何值，不进校验面）。
   let fidelityTransitionFields: ReadonlySet<string> = new Set<string>();
+  // plan d7f3a9c4 t2（codex P1）：adapter 变化判定须基于 **所有改写前** 的原始 adapter。
+  // applyManifestCliOverrides（下方）可经 --adapter+--override-manifest 改写 manifest.adapter，
+  // reconcile 又会读 local——若此刻才捕获，local 已被别窗切走时会把"换 adapter"误判为未变。
+  // 故在 applyManifestCliOverrides 之前捕获 manifest 既有 adapter。
+  const manifestAdapterBeforeCliOverrides = manifest.adapter;
   {
     applyManifestCliOverrides(manifest, manifestArgv);
     const ft = evaluateFidelityTransitionAuthorization({
@@ -3918,6 +3968,32 @@ Goal runner — tool-agnostic multi-phase orchestrator
     manifest.adapter = adapterDecision.effectiveAdapter;
     manifest.adapter_provenance = adapterDecision.provenance;
     if (adapterDecision.writeLocal) pendingAdapterWriteback = adapterDecision.effectiveAdapter;
+  }
+
+  // plan d7f3a9c4 t2：final pin **单点裁决**——接线位置在 adapter reconcile 之后、
+  // manifest 身份哈希计算之前。只在此处产生 final adapter_model_pin；不散落修改。
+  {
+    const finalPin = resolveFinalModelPin({
+      cliValue: cliAdapterModel,
+      effectiveAdapter: manifest.adapter!,
+      originalAdapter: manifestAdapterBeforeCliOverrides,
+      manifestPin: manifest.adapter_model_pin,
+      isResume: Boolean(argv.resume),
+      hasManifestFlag: Boolean(argv.manifest),
+      isSuccessor: Boolean(manifest.successor_of),
+      overrideManifest: Boolean(argv['override-manifest']),
+      overrideAdapter: Boolean(argv['override-adapter']),
+    });
+    if (!finalPin.ok) {
+      console.error(finalPin.message);
+      process.exit(1);
+    }
+    if (finalPin.pin) {
+      manifest.adapter_model_pin = finalPin.pin;
+    } else {
+      // 无 pin：不落键（与旧 manifest 兼容 + 身份字段集条件纳入同源约束）。
+      delete manifest.adapter_model_pin;
+    }
   }
 
   const dryRun = dryRunMode;
@@ -4170,9 +4246,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
       dryRun,
       forceRefresh: Boolean(argv['refresh-vision-probe']),
     });
+    // plan d7f3a9c4 t4：金丝雀 CLI 硬失败（spawn race / CLI·config 参数不兼容）**只有**在
+    // 真实 action==='probe' 路径上记录并升 run 级 BLOCKER；终态发射在 manifest 落盘后
+    //（见 writeGoalManifest 之后的 canary_cli_hard_failure 块），保证 run 有可监控终态。
+    let canaryHardCliFailure: string | null = null;
     if (visionProbeDecision.action === 'probe') {
-      const probeResult = await runVisionCanaryProbe({ projectRoot, frameworkRoot, manifest });
-      if (probeResult.ran && probeResult.outcome === 'valid_cached') {
+      const probeResult = await runVisionCanaryProbe({
+        projectRoot, frameworkRoot, manifest,
+        ...(injectedCanaryProbeInvoke ? { invokeFn: injectedCanaryProbeInvoke } : {}),
+      });
+      if (probeResult.outcome === 'hard_cli_failure') {
+        canaryHardCliFailure = probeResult.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题';
+      } else if (probeResult.ran && probeResult.outcome === 'valid_cached') {
         console.log(`[goal-runner] 视觉能力金丝雀实测完成：verdict=${probeResult.verdict}（已缓存至 framework.local.json）`);
       } else if (probeResult.ran) {
         // plan c7d2e9a4 t3（stale-if-error）：探测无效/调用失败**未写盘**——日志须与消费面
@@ -4181,8 +4266,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let lkg: { probed_at: string; verdict: string } | null = null;
         try {
           const canary = loadFrameworkLocalConfig(projectRoot)?.vision?.canary;
-          if (canary && isVisionCanaryFresh(canary, manifest.adapter ?? 'generic')) {
-            lkg = { probed_at: canary.probed_at, verdict: canary.verdict };
+          // plan d7f3a9c4 t3：旁路规则 `fresh && (!modelPin || canaryAdmissibleForExecution)`——
+          // 旧模型/跨 run 缓存在本 run 其实不可消费（image_input/OCR/tool_read/门禁都不采信），
+          // LKG 日志必须与消费面口径一致，否则谎报"沿用旧缓存"。
+          if (isFreshCanaryForExecution(canary, manifest.adapter ?? 'generic', {
+            runId: manifest.run_id,
+            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+          })) {
+            lkg = { probed_at: canary!.probed_at, verdict: canary!.verdict };
           }
         } catch { /* local 读不出 → 按无缓存处理 */ }
         console.warn(
@@ -4207,6 +4298,30 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
     }
     writeGoalManifest(manifest, projectRoot);
+
+    // plan d7f3a9c4 t4：金丝雀 CLI 硬失败 BLOCKER——复用既有启动期 HALT 模式（与下方
+    // declared_product_layer_missing 同款），**不在 probe 块内 process.exit**：
+    // 先写 manifest（run 可监控、可表达 --resume），再落 phase_halt（含 halt_guidance）+
+    // run_end{HALTED}，标记 runConcluded 后 return 1。fresh 由此有结构化终态；resume
+    // 不会保留旧 disposition。
+    if (canaryHardCliFailure) {
+      const guidance =
+        `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
+        '这是 CLI/config 参数不兼容或 spawn race——请核对 adapter 版本/配置/环境后重跑' +
+        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
+      goalEvents.emit({
+        type: 'phase_halt',
+        phase: chain[0],
+        halt_reason: 'canary_cli_hard_failure',
+        verdict: 'FAIL',
+        reason: canaryHardCliFailure,
+        halt_guidance: guidance,
+      });
+      goalEvents.emit({ type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure' });
+      runConcluded = true;
+      console.error(`\n===== canary_cli_hard_failure =====\n${guidance}\n`);
+      return 1;
+    }
 
     const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
 
@@ -5588,7 +5703,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           manifest.unattended,
           prompt,
           vars,
+          manifest.adapter_model_pin?.value,
         );
+        // plan d7f3a9c4 t1：dry-run 在 plan 输出回显 pin（用户权威输入可见）。
+        if (dryRun) {
+          console.log(
+            `[goal-runner] [dry-run] ${phase} plan: ${invokePlan.label}` +
+              (manifest.adapter_model_pin
+                ? `（adapter_model_pin=${manifest.adapter_model_pin.adapter}:${manifest.adapter_model_pin.value}）`
+                : ''),
+          );
+        }
 
         const outputLogPath = path.join(phaseDir, 'agent-output.log');
         // t1（f7a3d9c2，终审遗留②）：invoke_id 升级为 run 级持久序数（totalTurns 从 events
@@ -5663,8 +5788,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             outcomes.push(decision.outcome as GoalPhaseOutcome);
             console.error(
               `\n===== ${decision.outcome.halt_reason} =====\n${decision.outcome.halt_guidance ?? ''}\n` +
-                `${decision.notes.join('\n')}\n` +
-                '设备就绪后重跑/--resume 继续；框架不会替你解锁设备。\n',
+                `${decision.notes.join('\n')}\n`,
             );
             break;
           }
@@ -5912,6 +6036,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // R7：证据齐全**且**通过新鲜度判据时才跳过 agent 调用。
         // 只判"齐全"会破坏 backtrack——回退重跑时上一轮 receipt 仍在盘上，跳过会让
         // coding 只跑一次、修复指令注入不进去（实证：4 个集成用例同时红）。
+        // 环 B（plan f3a8c6d2 t2）：缓存失效重跑待办态从 phaseStartEvents 派生。
+        // 用 phase 循环体开头读盘的快照即可、无需在 attempt 内重读：三处 `phaseIdx--`
+        // 出口都先 emit halt 再 continue，for 的 ++ 落回本 phase 时 :5136 重新读盘，
+        // 故重入首轮必见该 halt；而同 phase 内的第 2+ 个 attempt 必有 retries>0
+        // （closure retry 与内容 retry 都走 :8529/:8531 递增），本就不会 skip——
+        // 快照陈旧不会影响任何 skip 决策。跨 --resume 同理（events.jsonl 是事实源）。
+        const rerunPending = responsibilityRerunPending(phaseStartEvents, String(phase));
         const skipDecision = completion
           ? decideSkipAgentInvoke({
               baselineComplete: completion.baselineComplete,
@@ -5919,6 +6050,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               pendingHandoffCount: backtrackCodingContext.length,
               evidenceRunId: completion.baselineRunId,
               currentRunId: manifest.run_id,
+              responsibilityRerunPending: rerunPending,
             })
           : { skip: false, reason: 'dry-run' };
         if (completion?.baselineComplete) {
@@ -5960,6 +6092,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // plan b3e8d4c7 t1：见 runHarnessPhase 同款注入——agent 侧自跑 harness /
             // check-receipt 也要能分辨"这个 attempt 属于哪个 phase"。
             MAISON_GOAL_ATTEMPT_PHASE: String(phase),
+            // plan d7f3a9c4 t3：model pin 注入链①（agent 子进程）——有 pin 才携带；
+            // 无 pin 不注入（buildAgentSpawnEnv 会清理父环境残留，见 agent-invoke.ts）。
+            ...(manifest.adapter_model_pin
+              ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value }
+              : {}),
             ...deviceEnv,
           },
           // t3a：adapter 声明 structured_events 时三文件分流（events/stderr/人读投影）
@@ -5987,6 +6124,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           timed_out: invoke.timed_out,
           silent_killed: invoke.silent_killed,
           lingering_pipe: invoke.lingering_pipe,
+          // plan d7f3a9c4 t4：spawn race 结构化事实进事件（诊断保真；不改变任何裁决）。
+          ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
           kill_attempted: invoke.kill_attempted,
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,
@@ -6003,6 +6142,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // P1-9（plan 7c4f2e9b）：模型身份 telemetry——共享 parser 读**纯 events 文件**的
         // init 事件，append-only 新事件承载；不回写冻结 manifest / 不改 run 前 adapter_probe
         // / 不为 telemetry 造 capability receipt / 不参与能力真值与任何策略分支。
+        // plan d7f3a9c4 t3：**只加一条**——pin 在场时把既有 observedModel 与 pin 比对，
+        // 失配 emit `pin_verify_mismatch` 告警注记（投影 goal-report）。判定走共享纯函数
+        // resolvePinVerifyMismatch（不改 manifest/verdict/routing/capability，warning-only）。
         if (!dryRun && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const eventsAbsForModel = agentEventsLogPath(outputLogPath);
@@ -6018,6 +6160,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 model: observedModel,
                 source: 'structured_event_init',
               });
+              const mismatch = resolvePinVerifyMismatch({
+                pin: manifest.adapter_model_pin?.value,
+                observed: observedModel,
+              });
+              if (mismatch) {
+                goalEvents.emit({
+                  type: 'pin_verify_mismatch',
+                  phase,
+                  invoke_id: invokeId,
+                  adapter: manifest.adapter ?? 'generic',
+                  pin: mismatch.pin,
+                  observed: mismatch.observed,
+                });
+                console.warn(
+                  `[goal-runner] ⚠ adapter_model_observed=${mismatch.observed} ≠ adapter_model_pin=${mismatch.pin}（phase=${phase}）——` +
+                    '仅告警，不影响 verdict/路由/能力判定；请核对自报是否被并发窗口切走。',
+                );
+              }
             }
           } catch { /* telemetry 缺失不阻断 */ }
         }
@@ -6434,18 +6594,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   phaseDone = true;
                   continue;
                 }
+                // t2（plan f3a8c6d2）：**漂移条目必须呈现给人**——原实现只报数量，
+                // 具体文件仅存在于 pass_snapshot_violation 事件里；bc-openCard 事故中
+                // 真凶 `plan/context-exploration.md` 因此要靠挖 events.jsonl 才能定位，
+                // 而它恰是可无限重复的结构性漂移。复用既有 detail 字段，不新增字段。
+                const driftDigest = diffs
+                  .slice(0, 5)
+                  .map(d => `${d.rel}(${d.class})`)
+                  .join('、') + (diffs.length > 5 ? ` …共 ${diffs.length} 项` : '');
                 goalEvents.emit({
                   type: 'phase_halt',
                   phase,
                   halt_reason: 'pass_snapshot_unavailable',
-                  detail: `PASS 快照检测到 ${diffs.length} 项漂移；缓存已丢弃，重跑责任阶段。`,
+                  detail: `PASS 快照检测到 ${diffs.length} 项漂移：${driftDigest}；缓存已丢弃，重跑责任阶段。`,
                   ...runDispositionFields(decide(
                     { incident: 'pass_snapshot_unavailable', phase: String(phase) },
                     NO_AUTHORITY,
                     { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: argv.resume ? 'resume' : 'fresh' },
                   )),
                 });
-                console.warn(`[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移；丢弃缓存，重跑责任阶段。`);
+                console.warn(
+                  `[pass-snapshot] closure-only attempt 检出 ${diffs.length} 项漂移：${driftDigest}；` +
+                  '丢弃缓存，重跑责任阶段。',
+                );
                 phaseIdx--;
                 phaseDone = true;
                 continue;
@@ -6623,7 +6794,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phase,
             manifest.feature,
             // b3e8d4c7 t1：权威路径与 agent 路径执行同一套 goal 门禁
-            { goalIdentity: { runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase) } },
+            { goalIdentity: { runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase),
+              // plan d7f3a9c4 t3：check-receipt 子进程同链透传 model pin。
+              ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}) } },
           );
           inFlowReceiptValidation = receiptValidation;
           if (receiptValidation.status === 'passed') {
@@ -7315,6 +7488,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     timeoutMs: Math.min(300_000, probeRemainingMs),
                     goalIdentity: {
                       runId: manifest.run_id, attemptId: visualAttemptId, attemptPhase: String(phase),
+                      // plan d7f3a9c4 t3：check-receipt 子进程同链透传 model pin。
+                      ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
                     },
                   },
                 )
@@ -7352,12 +7527,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             } else if (route.kind === 'deterministic_recheck') {
               // runner 不调 agent：正式 receipt state sync/closure patch → 直接推进
+              // 环 C（plan f3a8c6d2 t2）：提交侧透传当前 attempt 身份——sync-closure 在写
+              // phase state / 提交 summary closure 之前再做一次严格 attempt 等值校验，
+              // 上面 probe 的严格校验不作为提交侧的免检理由（纵深防御）。
               const syncResult = runSyncClosureDetailed(
                 path.join(frameworkRoot, 'harness'),
                 projectRoot,
                 manifest.feature,
                 String(phase),
                 frameworkRoot,
+                {
+                  goalIdentity: {
+                    runId: manifest.run_id,
+                    attemptId: visualAttemptId,
+                    attemptPhase: String(phase),
+                    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+                  },
+                },
               );
               const syncExit = syncResult.exitCode;
               if (syncResult.finalizationError) {
@@ -7592,6 +7778,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             recommendation: assessment.recommendation,
             goalRunId: manifest.run_id,
             attemptId: visualAttemptId,
+            // plan d7f3a9c4 t3：上游关环的 check-receipt 子进程同链透传 model pin。
+            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
             remainingBudgetMs: wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS,
             fence: () => {
               if (runControl) {
@@ -7691,11 +7879,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
             fused: assessment.stop.fused,
             failureKind,
           });
+          // t2（plan f3a8c6d2）：**gap 归属阶段不得被当前 phase 吞掉**。事件的 `phase`
+          // 是"在哪一阶段停下"，而 assess 的 gap 可能属于**上游别的阶段**——bc-openCard
+          // run 20260808T071335Z-4b0136 的 plan-i4 即：recommendation.phase='spec'
+          // （spec 的 evidence manifest stale），却呈现为"plan 阶段 framework_bug:
+          // stale: phase evidence manifest 非 fresh"，读者（含事后复盘）必然误读成 plan
+          // 自己的证据链坏了。此处只在 reason 文案里补明归属，复用既有字符串字段，
+          // 不新增事件字段、不改 halt 分类（catch-all 归 framework_bug 是设计内的
+          // fail-closed，见上方注释）。
+          const gapPhase = assessment.recommendation.phase;
+          const crossPhaseNote =
+            gapPhase && gapPhase !== String(phase)
+              ? `[gap 属于 ${gapPhase} 阶段，非当前 ${String(phase)}] `
+              : '';
           goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: haltReason,
-            reason: assessReason || 'assess returned halt without a driver-owned reason',
+            reason:
+              crossPhaseNote +
+              (assessReason || 'assess returned halt without a driver-owned reason'),
           });
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);

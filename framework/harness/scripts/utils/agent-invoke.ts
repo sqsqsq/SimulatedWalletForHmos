@@ -15,7 +15,7 @@ import {
   shouldUseCrossSpawn,
   type ResolvedHeadlessBinary,
 } from './headless-binary-resolve';
-import { MAISON_GOAL_HEADLESS_ENV } from './phase-state';
+import { MAISON_GOAL_HEADLESS_ENV, MAISON_GOAL_MODEL_PIN_ENV, applyGoalModelPinEnv } from './phase-state';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
 import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 
@@ -124,6 +124,12 @@ export interface ChildSettledResult {
   exitCode: number;
   signal: string | null;
   lingering_pipe: boolean;
+  /**
+   * plan d7f3a9c4 t4：child spawn race 的结构化事实（binary preflight 通过后 spawn 仍失败）。
+   * 与 resolvedBinary 短路路径（invokeAgentHeadless）产出**同一种**事实——不靠 stderr 猜
+   * spawn failure。
+   */
+  spawn_error?: { code?: string; message: string };
 }
 
 export interface AwaitChildSettledOptions {
@@ -161,6 +167,7 @@ export function createChildSettleWaiter(
   let settled = false;
   let exitCode = 1;
   let signal: string | null = null;
+  let spawnError: { code?: string; message: string } | undefined;
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveFn!: (r: ChildSettledResult) => void;
@@ -179,7 +186,12 @@ export function createChildSettleWaiter(
     }
     child.stdout?.destroy();
     child.stderr?.destroy();
-    resolveFn({ exitCode, signal, lingering_pipe });
+    resolveFn({
+      exitCode,
+      signal,
+      lingering_pipe,
+      ...(spawnError ? { spawn_error: spawnError } : {}),
+    });
   };
 
   const armForceSettleAfterKill = (): void => {
@@ -189,7 +201,11 @@ export function createChildSettleWaiter(
     }, forceSettleAfterKillMs);
   };
 
-  child.on('error', () => {
+  // plan d7f3a9c4 t4：不再丢弃 spawn 错误对象——结构化保留 {code, message}（resolvedBinary
+  // 短路与真实 child error 同构，见 invokeAgentHeadless）。spawn race 是 t4 新增硬失败之一。
+  child.on('error', (err) => {
+    const e = err as NodeJS.ErrnoException;
+    spawnError = { code: e.code, message: e.message };
     exitCode = 1;
     void finalize(false);
   });
@@ -286,6 +302,7 @@ function claudeArgv(
   unattended: UnattendedContract,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
   binary: string = 'claude',
+  modelPin?: string,
 ): string[] {
   const tools = unattended.allowed_tools?.length
     ? unattended.allowed_tools
@@ -303,19 +320,30 @@ function claudeArgv(
   } else {
     argv.push('--permission-mode', 'acceptEdits');
   }
+  // plan d7f3a9c4 t1：显式模型钉回放（claude 与 codeagent 共用本函数，仅 binary 不同）。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
+  }
   return argv;
 }
 
-function codexArgv(unattended: UnattendedContract): string[] {
-  const argv = ['codex', 'exec'];
-  argv.push(
-    '--sandbox',
-    unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write',
-  );
-  argv.push(
+function codexArgv(unattended: UnattendedContract, modelPin?: string): string[] {
+  // 事故修复（plan c9f4e7a2 t2）：`--ask-for-approval` 是 **codex 顶层旗标**，必须放在
+  // `exec` 之前。0.138.0 实测：`codex -a never exec --help` 成功；
+  // `codex exec -a never --help` → `unexpected argument '-a' found`。
+  const argv = [
+    'codex',
     '--ask-for-approval',
     unattended.approval_mode === 'never' ? 'never' : 'on-request',
-  );
+    'exec',
+  ];
+  // plan d7f3a9c4 t1：显式模型钉回放——`--model` 置于 `exec` 与 `--sandbox` 之间
+  // （位置随 c9 t2 修正后形态：exec --model <v> --sandbox <m>）。取消数据裸值陷阱：
+  // 不使用 `-c model=<raw>`。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
+  }
+  argv.push('--sandbox', unattended.write_mode === 'full-access' ? 'danger-full-access' : 'workspace-write');
   // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
@@ -329,11 +357,16 @@ export function cursorHeadlessPlan(
   unattended: UnattendedContract,
   prompt: string,
   resolved: ResolvedHeadlessBinary | null,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   const binary = resolved?.path ?? 'cursor-agent';
   const argv = [binary, '-p'];
   if (unattended.approval_mode === 'never') {
     argv.push('--force', '--trust');
+  }
+  // plan d7f3a9c4 t1：显式模型钉回放——`--model <v>`。
+  if (modelPin !== undefined) {
+    argv.push('--model', modelPin);
   }
   const base = path.basename(binary);
   return {
@@ -378,10 +411,15 @@ function chrysHeadlessPlan(vars: InvokeTemplateVars, promptContent: string): Hea
 export function opencodeHeadlessPlan(
   vars: InvokeTemplateVars,
   promptContent: string,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   const resolved = resolveHeadlessBinary([...OPENCODE_HEADLESS_BINARY_CANDIDATES]);
   const binary = resolved?.path ?? 'opencode';
   const argv = [binary, 'run', '--dangerously-skip-permissions', '--dir', vars.PROJECT_ROOT];
+  // plan d7f3a9c4 t1：显式模型钉回放——opencode 用 `-m <v>`（非 --model）。
+  if (modelPin !== undefined) {
+    argv.push('-m', modelPin);
+  }
   const base = path.basename(binary);
   return {
     argv,
@@ -458,27 +496,28 @@ export function defaultHeadlessInvokePlan(
   unattended: UnattendedContract,
   promptContent: string,
   toolEventProvenance?: 'none' | 'structured_events' | 'session_transcript',
+  modelPin?: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'claude') {
-    const argv = claudeArgv(unattended, toolEventProvenance);
+    const argv = claudeArgv(unattended, toolEventProvenance, 'claude', modelPin);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   // codeagent（plan c7a9e2f4）：Claude Code 内核 fork，argv 全套复用（仅二进制名不同）；
   // prompt 走 stdin 同款铁律（codeagentcli 亦为 Windows cmd shim，实证 stdin 喂 prompt 可用）。
   if (adapterName === 'codeagent') {
-    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli');
+    const argv = claudeArgv(unattended, toolEventProvenance, 'codeagentcli', modelPin);
     const plan = attachResolvedBinary(argv, CODEAGENT_HEADLESS_BINARY_CANDIDATES, 'codeagentcli -p …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
-    const argv = codexArgv(unattended);
+    const argv = codexArgv(unattended, modelPin);
     const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …');
     return { ...plan, adapterName, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
-    return { ...cursorHeadlessPlan(unattended, promptContent, resolved), adapterName };
+    return { ...cursorHeadlessPlan(unattended, promptContent, resolved, modelPin), adapterName };
   }
   if (adapterName === 'chrys') {
     return {
@@ -510,6 +549,7 @@ export function defaultHeadlessInvokePlan(
           PHASE: '',
         },
         promptContent,
+        modelPin,
       ),
       adapterName,
     };
@@ -529,16 +569,20 @@ export function resolveHeadlessInvokePlan(
   unattended: UnattendedContract,
   promptContent: string,
   vars: InvokeTemplateVars,
+  modelPin?: string,
 ): HeadlessInvokePlan {
   if (adapterName === 'chrys') {
     return chrysHeadlessPlan(vars, promptContent);
   }
   if (adapterName === 'opencode') {
-    return opencodeHeadlessPlan(vars, promptContent);
+    return opencodeHeadlessPlan(vars, promptContent, modelPin);
   }
   if (KNOWN_STRUCTURED_ADAPTERS.has(adapterName)) {
-    // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）
-    return defaultHeadlessInvokePlan(adapterName, unattended, promptContent, capability.tool_event_provenance);
+    // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）；
+    // d7f3a9c4 t1：显式模型钉随 modelPin 回放。
+    return defaultHeadlessInvokePlan(
+      adapterName, unattended, promptContent, capability.tool_event_provenance, modelPin,
+    );
   }
   const custom = capability.external_runner?.headless_invoke?.trim();
   if (custom) {
@@ -816,6 +860,11 @@ export interface AgentInvokeResult {
   kill_error?: string | null;
   /** C-ab-eval：按 adapter 声明采集的用量（采集失败/none → confidence: proxy，token 字段 null） */
   usage?: AgentInvokeUsage;
+  /**
+   * plan d7f3a9c4 t4：child spawn race 的结构化事实（resolvedBinary 短路与真实 child error
+   * 同一种 shape）——金丝雀硬失败分类据此判定，不靠 stderr 猜。
+   */
+  spawn_error?: { code?: string; message: string };
 }
 
 export interface AgentInvokeOptions {
@@ -886,6 +935,10 @@ export function buildAgentSpawnEnv(
     deleteEnvKeyCaseInsensitive(merged, k);
     merged[k] = v;
   }
+  // plan d7f3a9c4 t3：model pin 只随 extraEnv 显式带入——无 pin（extraEnv 缺键/空值）时显式
+  // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
+  // 执行器 applyGoalModelPinEnv（与 gateInjectedEnv / goalIdentity child env 同源）。
+  applyGoalModelPinEnv(merged, extraEnv?.[MAISON_GOAL_MODEL_PIN_ENV]);
   // 角色位定档前先清大小写变体（extraEnv 注入 `maison_goal_headless=''` 会与大写键并存，
   // Windows 子进程读取哪个是未定义行为）——保证子进程 env 恰有一个大写 HEADLESS='1'。
   deleteEnvKeyCaseInsensitive(merged, MAISON_GOAL_HEADLESS_ENV);
@@ -1136,6 +1189,8 @@ async function spawnHeadlessAsync(
     completion_observed: completionObserved || undefined,
     signal,
     lingering_pipe: settled.lingering_pipe || undefined,
+    // plan d7f3a9c4 t4：spawn race 结构化事实透传（child 'error' 事件）。
+    spawn_error: settled.spawn_error,
     kill_attempted: killResult.kill_attempted,
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
@@ -1175,11 +1230,15 @@ export async function invokeAgentHeadless(
   if (plan.resolvedBinary && !headlessBinarySpawnable(plan.resolvedBinary)) {
     const adapterGuess = diagnoseAdapterForBinaryIssue(plan);
     const candidates = STRUCTURED_BINARY_CANDIDATES[adapterGuess] ?? [...CURSOR_HEADLESS_BINARY_CANDIDATES];
+    const stderr = formatHeadlessBinaryIssue(adapterGuess, [...candidates], plan.resolvedBinary);
+    // plan d7f3a9c4 t4：resolvedBinary 短路与真实 child error 产出**同一种** spawn_error 结构化
+    // 事实（不靠 stderr 猜 spawn failure）——金丝雀硬失败分类据此统一判定。
     return {
       exitCode: 1,
       stdout: '',
-      stderr: formatHeadlessBinaryIssue(adapterGuess, [...candidates], plan.resolvedBinary),
+      stderr,
       command,
+      spawn_error: { code: 'resolved_binary_unspawnable', message: stderr },
     };
   }
 

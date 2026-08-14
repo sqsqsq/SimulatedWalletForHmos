@@ -302,7 +302,39 @@ export function resolveIdentityForTargets(
   return out;
 }
 
-/** layout dump 树 → identity 事实面（texts/ids/routes；容忍 {schema_version, tree} 包装）。 */
+/** `[x1,y1][x2,y2]` → 矩形；形态不符返回 null（不猜测）。 */
+function parseDumpBounds(raw: unknown): { x1: number; y1: number; x2: number; y2: number } | null {
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().match(/^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$/);
+  if (!m) return null;
+  return { x1: Number(m[1]), y1: Number(m[2]), x2: Number(m[3]), y2: Number(m[4]) };
+}
+
+/**
+ * layout dump 树 → identity 事实面（texts/ids/routes；容忍 {schema_version, tree} 包装）。
+ *
+ * t3（plan f3a8c6d2）：**不可见/零尺寸/屏外节点不得参与身份判定**。
+ * 事故（bc-openCard）：`shot-add_card_home_collapsed.png` 实拍为「全部银行」页，却顶着
+ * add_card_home_collapsed 身份入库并算出 score_floor=0.997。历史条目（
+ * `archive/20260812-pre-refresh/visual-diff.json`）显示其 `layout_dump_status=unavailable`
+ * ——**身份验真在当时没有实际执行**（无 dump 的旧采集路径直接放行），并非"身份门被
+ * 残留旧页节点骗过"。01-08-12 五轮 42 份应用态 dump + 08-13 锁屏/桌面校准 dump 均未
+ * 复现"旧页组件树残留"形态；锁屏/桌面 dump 的 `maison:` 页面组件前缀命中为 0。
+ *
+ * 剪枝语义（保守，避免过度推断）：
+ *   · `visible === 'false'` **明确为假** → 跳过该节点**及其整棵子树**（渲染语义上父不可见
+ *     则子必不可见）；属性缺失/空值**不跳**，不拿"没说"当"不可见"。
+ *   · 零尺寸/完全屏外 → 只跳过该节点自身，仍遍历子树（滚动容器父子可见性不同向，
+ *     不做强假设）。视口取根节点 bounds；根节点无合法 bounds 时不做屏外判定。
+ *
+ * **已知边界（实测校准）**：宿主 08-09/08-10 真机 dump 抽样统计 `visible="true"` 121 处、
+ * `visible="false"` **0 处**——该字段在此宿主上**没有区分度**；
+ * `docs/operations/layout-oracle-calibration.md:33` 亦记载"不可见/离屏节点表达方式未知
+ * （无 visibility 字段）→ 真机步骤 D4"。capture 链 dump 亦无 zIndex/hostWindowId/
+ * hierarchy 字段。故本函数的三类剪枝是**正确但可能无效的加固**，身份判定的主判据是
+ * runScreenIdentityGate 的**页面组件前缀所有权**（见 visual-diff-capture.ts）：有前缀且
+ * 锚缺失 = 应用页面树在场但错页（mismatched）；无前缀 = 锁屏/桌面/系统态（probe_failed）。
+ */
 export function extractLayoutDumpFacets(dumpJson: unknown): {
   texts: string[];
   ids: string[];
@@ -315,15 +347,31 @@ export function extractLayoutDumpFacets(dumpJson: unknown): {
     dumpJson && typeof dumpJson === 'object' && 'tree' in (dumpJson as Record<string, unknown>)
       ? (dumpJson as Record<string, unknown>).tree
       : dumpJson;
+  const rootAttrs =
+    root && typeof root === 'object'
+      ? (((root as Record<string, unknown>).attributes ?? root) as Record<string, unknown>)
+      : null;
+  const viewport = rootAttrs ? parseDumpBounds(rootAttrs.bounds) : null;
   const walk = (n: unknown): void => {
     if (!n || typeof n !== 'object') return;
     const node = n as Record<string, unknown>;
     const attrs = (node.attributes ?? node) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(attrs)) {
-      if (typeof v !== 'string' || !v.trim()) continue;
-      if (k === 'text') texts.push(v.trim());
-      else if (k === 'id' || k === 'key') ids.push(v.trim());
-      else if (/page|route|pagePath|navDestination/i.test(k)) routes.push(v.trim());
+    // 明确不可见 → 整棵子树都不参与身份判定
+    if (typeof attrs.visible === 'string' && attrs.visible.trim() === 'false') return;
+    const box = parseDumpBounds(attrs.bounds);
+    const degenerate = box !== null && (box.x2 <= box.x1 || box.y2 <= box.y1);
+    const offscreen =
+      box !== null &&
+      viewport !== null &&
+      (box.x2 <= viewport.x1 || box.y2 <= viewport.y1 ||
+        box.x1 >= viewport.x2 || box.y1 >= viewport.y2);
+    if (!degenerate && !offscreen) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (typeof v !== 'string' || !v.trim()) continue;
+        if (k === 'text') texts.push(v.trim());
+        else if (k === 'id' || k === 'key') ids.push(v.trim());
+        else if (/page|route|pagePath|navDestination/i.test(k)) routes.push(v.trim());
+      }
     }
     const children = node.children;
     if (Array.isArray(children)) for (const c of children) walk(c);

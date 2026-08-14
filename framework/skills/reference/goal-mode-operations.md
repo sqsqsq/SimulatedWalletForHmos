@@ -57,6 +57,11 @@ manifest**，`--resume` 只认冻结值、不会重读源文件——所以源�
 > 就是为它准备的。包装脚本的实际代价是——每次 run 重新发明一遍、文件名各不相同，下次谁
 > 重跑旧 launcher 就会把**上一轮的旧需求**带进新 run（宿主已出现两份不同名的需求文件）。
 
+> **goal 路径零变化（plan c8e5b3f1 t1）**：`derive.requirement` 的 provenance 收紧只影响手动
+> 阶段驱动路径；goal 模式需求来源恒为 manifest，`goal_manifest` provenance 由 goal-runner
+> preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
+> 一致，goal run 无需任何调整。
+
 同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
 
 ```bash
@@ -149,7 +154,8 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 
 | 层级 | 内容 |
 |------|------|
-| **强保证** | 框架只使用用户登记的凭据；任何一次失败即**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version` |
+| **强保证** | 框架只使用用户登记的凭据；**仅当实际尝试输入后**执行/复验失败才**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version`；零输入分支（未登记 / 形态不支持 / 并发占用 / 布局未就绪）不烧毁 |
+| **允许（正道）** | 登记 `credential` 且凭据 `ready` 时，重跑设备阶段由框架自动解锁（PIN 全程不经对话与 agent） |
 | **防御性指导** | agent 运行期只应调 framework 的 readiness 入口，prompt 明确禁止直接输入 PIN、直接启动模拟器 |
 | **不宣称** | 在没有 OS 沙箱的前提下，硬阻断恶意或偏航 agent 的直接 shell 操作 |
 
