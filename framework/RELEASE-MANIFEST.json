@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "3eeaf61aee6eccf2ef6864fe614cb70a78b3a19a",
-  "built_at": "2026-08-15T08:23:58.188Z",
+  "source_commit": "ac80eda6ff433ec7b390c1921bb8e63b7606cb79",
+  "built_at": "2026-08-15T09:24:40.505Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -666,7 +666,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "92b50ea1debf47810dc357f80dc10eeb615c686c28da48fe3d5172cd7a74c4a6"
+      "sha256": "27a4e89d4c2c03202cfa568985c7c4574f1874229961bf091ab6aa5f2cc7cb92"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "6dd61db71a6c987eb206ccc7096e4f71c89ab778ef62d1dc242bc6a30d52be0d"
+      "sha256": "37d6dacf192949c098e09864e621680c4dddc5049097f322131306cdc5cce706"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -1186,7 +1186,7 @@
     },
     {
       "path": "harness/scripts/utils/headless-assumptions.ts",
-      "sha256": "fb2ee6d61c7e1cb5430806e177d4f37b53dddd577355991b8dac6543d14eee2e"
+      "sha256": "e4bc90ce559003e3ef138bb08c1acf6b99cf306c80c0978a2cbef7f6052dcff1"
     },
     {
       "path": "harness/scripts/utils/headless-binary-resolve.ts",

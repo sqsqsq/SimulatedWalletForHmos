@@ -5844,6 +5844,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
               );
             }
           } else {
+            // codex review（回归三轮）：receipt 校验未过时把真实 message 落 detach.log——
+            // 此前失败原因无处可查（goal 态 state 不落盘、事件只有 status），只能靠人猜根因
+            //（宿主实锤：ledger 58 连错的真因藏了两个 run 才被定位）。
+            console.warn(
+              `[closure] in-flow receipt 校验未通过（status=${receiptValidation.status}）：` +
+                `${(receiptValidation.message ?? '无 message').slice(0, 600)}`,
+            );
             applyClosurePatchFromReceiptValidation(
               projectRoot, manifest.feature, phase, receiptValidation, frameworkRoot,
             );
