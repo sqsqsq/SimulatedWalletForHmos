@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "0680bff36e0d40898535269ca5753aa2951733bf",
-  "built_at": "2026-08-15T02:14:43.692Z",
+  "source_commit": "3eeaf61aee6eccf2ef6864fe614cb70a78b3a19a",
+  "built_at": "2026-08-15T06:44:46.627Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "b13347bc181876821b243bfa8862056fd183f431509ad740c0ccaa0903e43b7d"
+      "sha256": "6875de397d07033ed7be444717846b83becfc710fc4b33823d9ba76e76e92580"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -666,7 +666,7 @@
     },
     {
       "path": "harness/scripts/check-receipt.ts",
-      "sha256": "df83325a826c6fc81a86fec1a55e687e2c0cf40bbe8fe58a8dfc5291f052e6d3"
+      "sha256": "92b50ea1debf47810dc357f80dc10eeb615c686c28da48fe3d5172cd7a74c4a6"
     },
     {
       "path": "harness/scripts/check-review.ts",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "204f5f673409e2e6534a69b8cd4ce2b9d4714f999d62d132d7835981d86be8e8"
+      "sha256": "c24902d1fb34038e03cc513ea4c99f24e306fa5816e13c79eb86e1a191eeb2be"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -1298,7 +1298,7 @@
     },
     {
       "path": "harness/scripts/utils/p0-semantic-gates.ts",
-      "sha256": "afb33f2961ffbc0441a14553facd66459430ddb67b8257c26234617eb79d320e"
+      "sha256": "c273e6efbfa79af59403407fa072290d446facb952fcc3bc2a22e5779d41562d"
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
@@ -1375,6 +1375,10 @@
     {
       "path": "harness/scripts/utils/receipt-path-reconcile.ts",
       "sha256": "229cb2533a96b7d86d8003564dbfe4c045d053c9f8e850541884a26197ba5bf5"
+    },
+    {
+      "path": "harness/scripts/utils/receipt-scaffold.ts",
+      "sha256": "bafeb97f391943d05384fc0c0335490ed29a65af5400e6d571e8efa273715519"
     },
     {
       "path": "harness/scripts/utils/report-generator.ts",
@@ -1562,7 +1566,7 @@
     },
     {
       "path": "harness/templates/phase-completion-receipt.md",
-      "sha256": "4e64ee874b71f8e0ee6906e34fee83b09cdec00d0a25c291f4587e869d7f3dc9"
+      "sha256": "1b8166375180df4369be99671b76619eb402881e6534f32724e7d42e0e855e34"
     },
     {
       "path": "harness/trace/gap-notes.template.md",
