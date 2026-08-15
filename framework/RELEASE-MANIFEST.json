@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "ac80eda6ff433ec7b390c1921bb8e63b7606cb79",
-  "built_at": "2026-08-15T09:24:40.505Z",
+  "source_commit": "ef4ca1643eed2f8e84c4d22e1efc6c15217d980c",
+  "built_at": "2026-08-15T15:16:49.836Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -406,7 +406,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "1b2f0d222d156571adf4e2058c6ec75249d93bdc86200847249b58381b803af0"
+      "sha256": "a7385ba857ea35cef82bdc3b81432a98cc249b3260c6e49bdc0ef67cfcddbd8e"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "37d6dacf192949c098e09864e621680c4dddc5049097f322131306cdc5cce706"
+      "sha256": "efef531405e80556b5231c515b436b455f79d1a463b2258690ca73f14e4e6c4c"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -874,7 +874,7 @@
     },
     {
       "path": "harness/scripts/utils/assess.ts",
-      "sha256": "9b417ab94b253ffc04877dbe1ebfa61255c4dcd1bd018a41fff96fc3c2d67d91"
+      "sha256": "19de409a41ebc2084584acac71e0096016f2c833bfb51cc73ce3086808d3709f"
     },
     {
       "path": "harness/scripts/utils/ast-analyzer.ts",
@@ -1138,7 +1138,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-preflight.ts",
-      "sha256": "c49628b447b9594c9ece8c9b8ae5d0ea8f06482e04afdfc22160a10b02de84fc"
+      "sha256": "1bbc31946ad29483d703764a95cd0081f8a96957cd6ff27d78432fbdc2c80468"
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
@@ -1298,7 +1298,7 @@
     },
     {
       "path": "harness/scripts/utils/p0-semantic-gates.ts",
-      "sha256": "c273e6efbfa79af59403407fa072290d446facb952fcc3bc2a22e5779d41562d"
+      "sha256": "1b545e86d69ec6eeff90b2601d1aaf6dc681528b194f8fdd2ecd77c99fdf3d2d"
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
@@ -1514,7 +1514,7 @@
     },
     {
       "path": "harness/scripts/utils/verify-feature-completion.ts",
-      "sha256": "54257dac327f71a3c800a410e18bacf0ff63d79908b209d16af7840591d6d06b"
+      "sha256": "9c165b68e3b3dcf75d9d9183574d574e0cb3672ef725d377749673289e8924ee"
     },
     {
       "path": "harness/scripts/utils/vision-canary-interactive.ts",
@@ -3014,7 +3014,7 @@
     },
     {
       "path": "specs/phase-rules/spec-rules.yaml",
-      "sha256": "113b26c72576ea2cb804d9cadf023bb1d94a86f99a254a0d7a6e9b83ab760ef2"
+      "sha256": "0151618081406be86af049afae503837fe0bdf32e3f3445ff415566ce3b22ebb"
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",

@@ -90,7 +90,7 @@ import {
   type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
-import { collectAutoDecisions, countPendingMustReview, loadHeadlessLedger } from './utils/headless-assumptions';
+import { loadHeadlessLedger } from './utils/headless-assumptions';
 import { recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
 import {
   defaultTrustRegistryPath,
@@ -4008,8 +4008,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // SSOT（goal 模式的路由初始化唯一入口——agent invoke 前）。
     // post-impl P1-5：resume 且 fidelity transition 字段被授权（--fidelity/--fidelity-receipt
     // 生效）时必须重建路由——否则 manifest 已换档而 SSOT/snapshot/prompt/CheckContext 全用旧决策。
-    // post-impl3 P1-5：非 dry 一律幂等重算路由（resume 含 adapter/OCR/需求引用图/盲→视觉
-    // 恢复等能力变化——只靠 fidelity CLI transition 触发会复用旧决策；重算确定性幂等）。
+    // post-impl3 P1-5 → runner-owned-machine-facts 追补修订：非 dry 一律调用 preflight，
+    // 但**写盘只在链首为 spec 时发生**——下游起点读取复用 spec 冻结的 SSOT/snapshot
+    //（execution_identity 每 run 必变，旧"幂等重算"并不幂等：无条件重写会把上游 spec
+    // closure 弄 stale → assess 推荐 rerun_phase:spec 无路由 → framework_bug halt，
+    // 宿主实锤 run 20260815T112821Z-6cb1da）。能力变化在下游起点以内存重探判 DEFER。
     if (!dryRun) {
       const fidelityAction = evaluateFidelityTierPreflight({
         projectRoot,
@@ -7653,17 +7656,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
       advance_blocked: o.advance_blocked,
     }));
     // t8/P1-1/P1-2：全链跑完时消费真实门禁信号（与 completion 生成同源 issues 集）——
-    // needs_human（flow_contract/waiver/档位钳制/待复核/运行时证据）→ AWAITING_HUMAN_REVIEW；
+    // needs_human（waiver/档位钳制/运行时证据）→ AWAITING_HUMAN_REVIEW；
     // needs_fix（verdict FAIL/stale/tampered/attestation 失配）→ 不得 CHAIN_SLICE_COMPLETED
     // （codex 八轮 P1-2：needs_fix 之前被写成成功态是强错觉）。
     let pendingHumanReview = false;
     let blockingFix = false;
     if (reachedEnd) {
+      // codex 收口刀（宿主实锤 run 20260815T093217Z-42d1bc）：本次 run 终态分类只看**实际
+      // 执行切片** chain——传 fullWorkflowChain 会把「下游阶段尚未跑」判成 needs_fix，
+      // spec-only run 明明该 AWAITING_HUMAN_REVIEW 却被投成 PARTIAL。feature completion
+      // 生成（verify-feature-completion 调用侧）继续用完整链，语义不同：那是「feature
+      // 是否整体完成」，这里是「本 run 跑过的部分是什么终态」。
       const cls = classifyCleanPassIssues(
         collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: fullWorkflowChain.map(String),
+          chain: chain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }),
@@ -7674,14 +7682,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         console.error(`[probe-cls] ${JSON.stringify(collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: fullWorkflowChain.map(String),
+          chain: chain.map(String),
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }))}`);
       }
-    } else {
-      pendingHumanReview = countPendingMustReview(collectAutoDecisions(projectRoot, manifest.feature, chain.map(String))) > 0;
     }
+    // 账本 must_review 不再控制 run 终态（codex 收口刀：账本仅留痕与报告展示——跨 run
+    // 累积的 45 条历史待复核曾把终态永久压住，旧行又不可消解）。未达链尾的 run 保持
+    // pendingHumanReview=false；真人复核清单仍在 goal-report 自动决议汇总里完整呈现。
     // 【已删除 · 收口刀二（codex P2）】`uiRelevantAtEnd` 运行末态 UI 相关性判定——
     // 唯一消费者 capRunStatusForVisionTrust 已删（完成态不再因认证状态封顶），只算不用。
     const rawStatus = resolveGoalRunStatus(phaseRecords, reachedEnd, { pendingHumanReview, blockingFix });
