@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "ef4ca1643eed2f8e84c4d22e1efc6c15217d980c",
-  "built_at": "2026-08-15T15:16:49.836Z",
+  "source_commit": "bc55e06149596e2395969e7d0ca0cc969e74125b",
+  "built_at": "2026-08-16T02:49:04.951Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "efef531405e80556b5231c515b436b455f79d1a463b2258690ca73f14e4e6c4c"
+      "sha256": "e2fe9f82f32dc7fa501c6f82b260520f67f863f16bac902a89e3041cf362c3d7"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -1170,7 +1170,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-supervisor.ts",
-      "sha256": "3f518fc924b1ccf13a9936c8829a4aa3ef482ad7e94a861e64c0cb53a89e63a2"
+      "sha256": "4455ec5cfc934506e7a79e8ec631022da9dc57b35cc199fdd2b1d0905ddbc1c8"
     },
     {
       "path": "harness/scripts/utils/goal-timeout.ts",
@@ -1302,7 +1302,7 @@
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
-      "sha256": "3bcc186d47297f577277c13001f5b1f23708d115d5021fb35b6b57440a852bbc"
+      "sha256": "10835a20752e6cefe554fa71dbaaac1bd9d4766a2a09ea9347de9fa1d73cfe58"
     },
     {
       "path": "harness/scripts/utils/path-candidates.ts",
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "harness/scripts/utils/scope-replan.ts",
-      "sha256": "d433c9193a101883a50f1e88b8cc8f96539e17797a0c1e56b4837e3eff124e8a"
+      "sha256": "86b57c7c14ac2341b3ee734a4ad9f2f2eae2fb13ea86b40471e7cc5eacd18da7"
     },
     {
       "path": "harness/scripts/utils/shape-guards.ts",
@@ -1466,7 +1466,7 @@
     },
     {
       "path": "harness/scripts/utils/ui-scope-gate.ts",
-      "sha256": "c4bfb170cbe0f5a6d620348a7d95f77e6b9406ff02050e2909808c9f62069019"
+      "sha256": "1f9ec6e1fb52be8481116e05a4c0b4ac87b1d582ea4b48f53120f9ad0042a4cf"
     },
     {
       "path": "harness/scripts/utils/ui-spec-shared.ts",
