@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "1d28f3c3283f387214c14997f702331c518fa0dc",
-  "built_at": "2026-08-16T07:10:59.777Z",
+  "source_commit": "ce1ab77915944d7f89d93cfe1b08c036a5ab89be",
+  "built_at": "2026-08-16T12:45:41.709Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "6875de397d07033ed7be444717846b83becfc710fc4b33823d9ba76e76e92580"
+      "sha256": "10623eae513d4c49a865f966f92e4ad956d40aeff6e21101d80aa9bc1120018e"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "e2fe9f82f32dc7fa501c6f82b260520f67f863f16bac902a89e3041cf362c3d7"
+      "sha256": "748599105d7c9a211223b9108466b3653aa44c6aa336a1ad5695a731048ae890"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -850,7 +850,7 @@
     },
     {
       "path": "harness/scripts/utils/adjudication.ts",
-      "sha256": "38dfb908e16a275cc0bdb7268637d8f9523b8b58e27e8cdad0e0919e2ade8492"
+      "sha256": "7db4eaa691738f858eb5aaf874134e37953e9c4e20729f1169d72c98c4a87bc9"
     },
     {
       "path": "harness/scripts/utils/agent-bundle-paths.ts",
@@ -1154,7 +1154,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
-      "sha256": "345c9f8856f33197f5bd7852a8505f797dab9224a3428cd2524f55bba9bc2831"
+      "sha256": "ced16eb79fb2e9d890412e9e0fe201e76590ca3804f918859677bffa324e229f"
     },
     {
       "path": "harness/scripts/utils/goal-run-control.ts",
@@ -1166,7 +1166,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-runner-phase.ts",
-      "sha256": "49da0394dca7f2347da7f6b0600d0252b13209fa7331e22b8f562b4a142cde09"
+      "sha256": "5b94c5e237924cdd895b0b119be0b7d991a0babca03c07303c5b062e15e4d7a9"
     },
     {
       "path": "harness/scripts/utils/goal-supervisor.ts",
@@ -1302,7 +1302,7 @@
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
-      "sha256": "10835a20752e6cefe554fa71dbaaac1bd9d4766a2a09ea9347de9fa1d73cfe58"
+      "sha256": "8d17bc114d93846e5566db739bff3e143e1635799aef8d7c729ff2f629a7beb9"
     },
     {
       "path": "harness/scripts/utils/path-candidates.ts",
@@ -1326,7 +1326,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-completion-probe.ts",
-      "sha256": "fad526976205f703b83cfce278e53882da7eaf43275f1f4c86ae326838ea398a"
+      "sha256": "57fe2cae9c6a311f97f61fc194bd74e7029abce0793fdab40386edefabee3403"
     },
     {
       "path": "harness/scripts/utils/phase-device-requirement.ts",
@@ -1378,7 +1378,7 @@
     },
     {
       "path": "harness/scripts/utils/receipt-scaffold.ts",
-      "sha256": "bafeb97f391943d05384fc0c0335490ed29a65af5400e6d571e8efa273715519"
+      "sha256": "c3bdf2f0ea6e0e3a34748ae195248d24e51266e1cf75852619ae42ed5f4e245c"
     },
     {
       "path": "harness/scripts/utils/report-generator.ts",
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "harness/scripts/utils/scope-replan.ts",
-      "sha256": "86b57c7c14ac2341b3ee734a4ad9f2f2eae2fb13ea86b40471e7cc5eacd18da7"
+      "sha256": "f33ad795d33ea8db13d5ea023a9b601af6e6f8a2c9603bec08315155a14d9d4b"
     },
     {
       "path": "harness/scripts/utils/shape-guards.ts",
