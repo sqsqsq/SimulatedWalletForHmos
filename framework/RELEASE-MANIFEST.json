@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "bc55e06149596e2395969e7d0ca0cc969e74125b",
-  "built_at": "2026-08-16T02:49:04.951Z",
+  "source_commit": "1d28f3c3283f387214c14997f702331c518fa0dc",
+  "built_at": "2026-08-16T07:10:59.777Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -542,7 +542,7 @@
     },
     {
       "path": "harness/prompts/verify-review.md",
-      "sha256": "d5b5f17fb4c19a9a66a9a8ff2901fc96bcb4ea56f69e3259db994e27d0947bf7"
+      "sha256": "be642769945d10922125c2dc08989e62bf8e01cf7a147cc4ad6460bee55ba8be"
     },
     {
       "path": "harness/prompts/verify-spec.md",
@@ -618,7 +618,7 @@
     },
     {
       "path": "harness/scripts/check-coding.ts",
-      "sha256": "8c1f046adac1d17fc90288e968c8f2d225a68376fe79165fe6cf8c3e32f1e818"
+      "sha256": "8ca9192bb649faa20e142517ceedeb31c82364dbf9d18c639a742482a9305522"
     },
     {
       "path": "harness/scripts/check-contract-consistency.ts",
@@ -670,7 +670,7 @@
     },
     {
       "path": "harness/scripts/check-review.ts",
-      "sha256": "558a19aa709af954c260a2a6ef3c325d6c32f9647a6ab72b06c2701036a5f02c"
+      "sha256": "13dacd815772c927e313f7396ee89929c0b6cc8ef1f7c1d1eae06698598b91b3"
     },
     {
       "path": "harness/scripts/check-skills-confirmation-ux.ts",
@@ -1894,7 +1894,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-host-rules.ts",
-      "sha256": "651962c5f8d8eb6e83a1859a907a0950538b4fa753e17c453520b04f742e4a4c"
+      "sha256": "99e02dcbbc7807eaf5a2746ab3b42a13c7b7969b8a523f0e631ba8537319b5da"
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
@@ -2278,7 +2278,7 @@
     },
     {
       "path": "profiles/hmos-app/phase-rules-overlays/coding-rules.overlay.yaml",
-      "sha256": "78e7ce46bce49ea79564db056ae3715844dc3365ee6da1a63f1384a57fc577dc"
+      "sha256": "4eacad25a6d52fb10553fe0175c124ba07f967cbd541928daf98c4fbb647520f"
     },
     {
       "path": "profiles/hmos-app/phase-rules-overlays/module-graph-rules.overlay.yaml",
@@ -2430,11 +2430,11 @@
     },
     {
       "path": "profiles/hmos-app/skills/code-review/templates/review-checklist.md",
-      "sha256": "dfe8da6382e530b3178cb40c10106f94109f7e3de3f90749554059a3e59ba4a8"
+      "sha256": "e91a6e6a414eeef45fd9b4137f80c4889359773db087307e037f4234ef9bdd67"
     },
     {
       "path": "profiles/hmos-app/skills/coding/profile-addendum.md",
-      "sha256": "481b507b9d71c98ae5a439585c37bb3bde2a1a85ee70e7185ba55c5add0a0216"
+      "sha256": "e51407ec082951203b182e9b74d28a183907e5a2b0975bc3520fec09e578dde2"
     },
     {
       "path": "profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md",
@@ -2818,7 +2818,7 @@
     },
     {
       "path": "skills/reference/coding-workflow-detail.md",
-      "sha256": "ce59718d6a7e67c3cf09feae37ef7f2c9b25fa3ff1138857c85f2d5855d07194"
+      "sha256": "3890666beacd5ae376dbc4e8c60cd68a1191c6ae7525d35bafe6b318303503ff"
     },
     {
       "path": "skills/reference/confirmation-registry.yaml",
@@ -2858,7 +2858,7 @@
     },
     {
       "path": "skills/reference/plan-workflow-detail.md",
-      "sha256": "5635d35be8a4ed70da5f13ff38f10de5f63636ffaa397cf871f639ae3d8c38f3"
+      "sha256": "e8818e8b9ec2fb8ee941160117c86d700de6e09d82b8210d756f52d87d31150e"
     },
     {
       "path": "skills/reference/spec-workflow-detail.md",
