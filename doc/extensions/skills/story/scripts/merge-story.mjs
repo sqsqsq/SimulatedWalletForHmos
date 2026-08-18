@@ -157,12 +157,23 @@ const problems = [];
 
   check('编号', specText.match(/\b(?:S\d+|F\d+|E\d+|AC-[\w]*\d+|BD-\d+|NFR-\d+)\b/g) ?? []);
 
+  // 术语映射表混着两类词：**需求实体**（自动充值、门限——它们是名字，story 就该出现）
+  // 与**工程消歧用词**（主题色、Toast、脱敏——spec 拿它们把自然语言映到权威模块，
+  // story 用业务语言表达同一事实才是对的）。一视同仁地要求逐词出现，会让 story
+  // 越写人话越容易被判「丢了事实」——AR90006 的「主题色」就是这么误报的：
+  // 事实在 story 里完整写着，只是没出现那三个字。
+  //
+  // 分流键取表内已有的「所属层」列：平台能力层（05-SystemBase）的词条属工程消歧用词。
+  // 这不是措辞白名单，是架构层名（SSOT 在架构 DSL）。无该列的表不过滤，保持向后兼容。
   const gloss = extractSection(specText, /术语映射表/);
+  const glossRows = [...(gloss?.body ?? '').split(/\r?\n/)].map(tableCells).filter(Boolean);
+  const header = glossRows.find(c => /^原始术语$|^术语$/.test(c[0]));
+  const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
   check(
     '术语',
-    [...(gloss?.body ?? '').split(/\r?\n/)]
-      .map(tableCells)
-      .filter(c => c && c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
+    glossRows
+      .filter(c => c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
+      .filter(c => layerIdx < 0 || !/05-SystemBase/.test(c[layerIdx] ?? ''))
       .map(c => c[0].replace(/\*\*|`/g, '').trim())
   );
 
@@ -193,9 +204,10 @@ for (const [label, text] of [
   ['review', reviewText],
 ]) {
   for (const [what, kind, hits] of [
-    ['仓内路径', 'local', scanLocalPaths(text)],
+    // 传 projectRoot：模块目录形态与约束文件名由它现取，不吃硬编码快照
+    ['仓内路径', 'local', scanLocalPaths(text, projectRoot)],
     ['客户端语境禁用词', 'banned', scanBannedTerms(text)],
-    ['悬空引用', 'dangling', scanDanglingRefs(text)],
+    ['悬空引用', 'dangling', scanDanglingRefs(text, projectRoot)],
   ]) {
     if (hits.length > 0) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
   }

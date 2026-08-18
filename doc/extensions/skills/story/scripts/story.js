@@ -1,13 +1,16 @@
 /**
  * story.js — /story 的数据对接层（本文件是部署环境间唯一需要替换的实现）
  *
- * 契约（CLI，SKILL.md「story.js 契约」为准；成功 0 / 失败非 0）：
+ * 契约（CLI，**本 docstring 即唯一真源**；成功 0 / 失败非 0）：
  *   node story.js <init|archive|restore|review|help> <AR> [mcp-token] [--project-root <abs>]
  *   人类可读日志走 stderr；stdout 最后输出单行 JSON 结果：
- *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","initNeeded":true,"success":true}
- *             落盘 AR/SR/RR 三套：各自 detail.json，加 RR/prd.md、SR/design.md、
- *             AR/template.md（平台模板骨架）与 AR/design.md（不存在时建，已有内容不覆盖）；
- *             initNeeded 恒为 true（强制重新生成；AI 覆盖已有内容前须向用户确认）
+ *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","success":true}
+ *             落盘 AR/SR/RR 三套：各自 detail.json，加 RR/prd.md、SR/design.md，
+ *             以及拉到的 AR/design.md（已有内容一律不覆盖——它是需求分析的预填输入）；
+ *             拉到的 AR/design.md 无论有无内容都进后续需求分析，范围与覆盖由关卡定，
+ *             本命令不做这个判断。
+ *             工作区骨架（收件箱、RR/SR 占位件、design.md 空骨架）由 `story_flow.py init`
+ *             在本命令之后补齐，两者互不依赖
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,"success":true}
  *             系统侧正文名固定为 design.md，归档是覆盖它而非新建：
  *             ①拉系统最新正文做远端备份 ②临时把 design.md 改名 design.bak.md
@@ -16,22 +19,31 @@
  *             AR/story.md 与 AR/review.md 缺任一、或 merge-story --check 不过即失败，无降级路径
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             从最新备份解析源数据、**重新上传回系统**，恢复的是平台侧正文；本地 design.md 不变
- *   review  → 尚未实现，返回 success:false 并非 0 退出（接口形状先立住）
+ *   review  → {"mode":"review","reqNo":"...","fetched":true,"target":"AR/review.md",
+ *              "backupPath":"AR/.review-backup/<ts>-review.md","status":"confirmed|unchanged","success":true}
+ *             拉回评审人在系统上留下的反馈，**直接写入 AR/review.md**（先备份原件）。
+ *             产出不是中间 JSON 而是写回 review.md：回流阶段模型的输入唯一就是它，
+ *             人可能在系统上批注、也可能直接改本地文件，流程不关心来源。
+ *             AR/review.md 不存在即失败（先跑 /spec 产出首版）。实现在同目录 review.js
  *   help    → 打印工作流程（纯文本，CLI 级帮助）
  *   失败    → {"mode":"<命令>","reqNo":"...","success":false,"error":"..."}
  *
  * mcp-token：第三位置参数（token.js 获取）。本实现不校验、不使用；
  * 部署环境用它调 mcp 拉取/归档需求文档，缺失时应报错退出。
  *
- * 本实现是本地替身：RR/SR 取自 ../mock-data/，「需求系统」的读写以 stderr 占位打印模拟
- * （见 uploadToSystem / fetchSystemCarrier）。替换本文件时保持上述 CLI 契约不变——
- * **SKILL.md 只有一份，本文件的可观测输出必须与它逐字相符**，不允许出现「文档写这个、
- * 本地干那个」的分叉：那正是本地测不出真实契约问题的成因。
+ * 本实现是本地替身：RR/SR 取自 test/story/mock-data/（评测域的演示数据源），
+ * 「需求系统」的读写以 stderr 占位打印模拟（见 uploadToSystem / fetchSystemCarrier）。
+ * 替换本文件时保持上述 CLI 契约不变——
+ * 不允许出现「文档写这个、本地干那个」的分叉：那正是本地测不出真实契约问题的成因。
  */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+
+// mock-data 属评测域，自脚本目录上溯五层到仓库根再下探 test/story/mock-data。
+// 本文件是本地替身、不进交付，允许依赖 test/ 下的演示数据。
+const MOCK_DATA_DIR = path.resolve(__dirname, '..', '..', '..', '..', '..', 'test', 'story', 'mock-data');
 
 function log(msg) {
   console.error(`[story.js] ${msg}`);
@@ -103,52 +115,6 @@ function writeDetail(target, detail) {
   log(`生成：${target}`);
 }
 
-function emptyArTemplate(ids) {
-  // 骨架 = ar_design_init.md「需求提取五段结构」；AI 生成时在此骨架上补全而非重写
-  return `# ${ids.AR} 开发需求（AR）
-
-## 1 简介
-
-### 1.1 需求介绍
-
-### 1.2 相关文档链接
-
-| 内容 | 链接 |
-| --- | --- |
-| SR/AR单号 | ${ids.SR} / ${ids.AR} |
-| PRD文档 | requirement://prd/${ids.RR} |
-| SE设计文档 | requirement://sr/${ids.SR} |
-| UX设计文档 | |
-
-## 2 需求分析
-
-### 2.1 场景与功能点
-
-### 2.2 验收意图
-
-## 3 SE 方案摘要（本部件相关）
-
-### 3.1 全局方案与部件分工
-
-### 3.2 本部件方案要点与流程骨架
-
-## 4 上游索引
-
-> 本索引的 SR 章节号指向 \`SR/design.md\`（与本文件同在 \`doc/features/${ids.AR}/\` 工作区，PRD 为 \`RR/prd.md\`）；
-> 下游步骤（/spec 及其技术契约与合规判定取证）须按索引直读该文件原文，不得仅凭本文摘要推断。
-
-| 信息类别 | SR 章节 | 本流程消费步骤 |
-| --- | --- | --- |
-
-<!-- 逐类扫描 RR/SR 登记命中项：业务流程时序 / 端云接口 / 异常错误码 / 跨部件交互与调用方 /
-     系统级存储 / 配置管控 / 打点 / 非功能约束 / 安全合规 / 版本与配套 / 依赖 SDK·TA /
-     术语与命名 / 上游已定的方案边界。清单与消费方见 rules/ar_design_init.md -->
-
-
-## 5 上游已声明线索
-`;
-}
-
 /**
  * 上传归档件到需求系统——占位实现；对接真实系统时在此用 mcp-token 调用上传接口。
  *
@@ -189,24 +155,33 @@ function backup(featureRoot, label, srcFile) {
   return dest;
 }
 
+/** 材料层可显式声明父子关系与材料归属；缺省时按编号推导（1:1 假设）。 */
+function readMockDetail(ar) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(MOCK_DATA_DIR, `${ar}-detail.json`), 'utf-8')
+    );
+  } catch (_) {
+    return {};
+  }
+}
+
 // ---------------------------------------------------------------------------
 function pullMaterials(ar, featureRoot, localAr, ids) {
-  const mockDir = path.join(__dirname, '..', 'mock-data');
+  const mockDir = MOCK_DATA_DIR;
   // 用例可为特定 AR 提供更丰富的上游材料；无专用文件时仍使用默认材料。
+  // 兄弟 AR（同一 SR 拆出的多个 AR）经 `materials` 指向同一套材料。
   // 选择发生在数据接入层，不向使用方暴露任何判据。
-  const prdMock = path.join(mockDir, `${ar}-RR-prd.md`);
-  const srMock = path.join(mockDir, `${ar}-SR-design.md`);
+  const owner = readMockDetail(ar).materials ?? ar;
+  const prdMock = path.join(mockDir, `${owner}-RR-prd.md`);
+  const srMock = path.join(mockDir, `${owner}-SR-design.md`);
   const rrPath = path.join(featureRoot, 'RR', 'prd.md');
   const srPath = path.join(featureRoot, 'SR', 'design.md');
-  writeIfAbsent(rrPath, renderMock(fs.existsSync(prdMock) ? prdMock : path.join(mockDir, 'RR-prd.md'), ids));
-  writeIfAbsent(srPath, renderMock(fs.existsSync(srMock) ? srMock : path.join(mockDir, 'SR-design.md'), ids));
-
-  // 平台模板骨架。它只是 init 的落盘产物，**不是** design.md 的生成输入——
-  // design.md 的结构以 rules/ar_design_init.md 的五段为准。
-  writeIfAbsent(path.join(featureRoot, 'AR', 'template.md'), emptyArTemplate(ids));
-
-  // AR/design.md 不存在时生成空模板；已有内容（含空模板）不覆盖——实际提取由 AI 按 initNeeded 执行
-  writeIfAbsent(localAr, emptyArTemplate(ids));
+  // 上游文档按**材料归属方**的身份渲染：共享给兄弟 AR 时是同一份文档，
+  // 按各自 AR 号重渲染会让同一份 SR 在两个 AR 下内容不同。
+  const upstreamIds = { ...ids, AR: owner };
+  writeIfAbsent(rrPath, renderMock(fs.existsSync(prdMock) ? prdMock : path.join(mockDir, 'RR-prd.md'), upstreamIds));
+  writeIfAbsent(srPath, renderMock(fs.existsSync(srMock) ? srMock : path.join(mockDir, 'SR-design.md'), upstreamIds));
 
   writeDetail(path.join(featureRoot, 'RR', 'detail.json'), {
     reqNo: ids.RR, type: 'RR', title: firstHeading(rrPath, `${ids.RR} 产品需求`),
@@ -222,8 +197,8 @@ function pullMaterials(ar, featureRoot, localAr, ids) {
 
 function cmdInit(ar, featureRoot, localAr, ids) {
   pullMaterials(ar, featureRoot, localAr, ids);
-  log('AR/design.md 已就绪：请按 rules/ar_design_init.md 从 RR+SR 提取生成（story 技能的 AI 动作）。');
-  emit({ mode: 'init', reqNo: ar, parentNo: ids.SR, rrNo: ids.RR, initNeeded: true, success: true });
+  log('材料已落盘。接着跑 `story_flow.py init` 建工作区骨架（收件箱、占位件、design.md 空骨架）。');
+  emit({ mode: 'init', reqNo: ar, parentNo: ids.SR, rrNo: ids.RR, success: true });
 }
 
 function cmdArchive(ar, featureRoot, localAr, projectRoot) {
@@ -303,12 +278,12 @@ function cmdRestore(ar, featureRoot) {
   emit({ mode: 'restore', reqNo: ar, restored: true, verified: true, success: true });
 }
 
-function cmdReview(ar) {
-  // 占位：接口形状先立住，真实拉取未接通。详见 SKILL.md「检视」章。
-  const msg = 'review 尚未实现：需求系统的评审回稿拉取未接通，暂请评审人离线在 AR/review.md 上填写。';
-  log(msg);
-  emit({ mode: 'review', reqNo: ar, success: false, error: msg });
-  process.exit(1);
+function cmdReview(ar, featureRoot) {
+  // 实现拆在同目录 review.js——部署环境统一走本文件的 CLI，内部怎么组织是各自的事。
+  const { fetchReview } = require('./review.js');
+  const receipt = fetchReview({ ar, featureRoot, log, ts });
+  emit(receipt);
+  if (!receipt.success) process.exit(1);
 }
 
 function cmdHelp() {
@@ -317,7 +292,7 @@ function cmdHelp() {
   2. /spec                需求规格三产物：spec.md（代码要求）+ AR/review.md（人的决策）+ AR/story.md（归档件），门禁校验三份齐备
   3. /story archive <AR>  以 AR/story.md 为正文、AR/review.md 为附件归档上传（系统正文名固定 design.md；工作区文件不变）
   4. /story restore <AR>  用最新备份把系统正文恢复回上一版（本地 design.md 不变）
-  5. /story review <AR>   拉回评审回稿并驱动 spec 更新（尚未实现）
+  5. /story review <AR>   拉回评审回稿写入 AR/review.md（先备份），再据此修订 spec
   详细规则：doc/extensions/skills/story/SKILL.md`);
 }
 
@@ -361,10 +336,17 @@ if (!mcpToken) log('未传入 mcp-token（本地容忍；部署环境将拒绝�
 const projectRoot = path.resolve(projectRootArg ?? path.join(__dirname, '..', '..', '..', '..', '..'));
 const featureRoot = path.join(projectRoot, featuresDir(projectRoot), ar);
 const localAr = path.join(featureRoot, 'AR', 'design.md');
+// 父子关系：真实系统按单号返回，本地按编号推导。一个 SR 可拆多个 AR，编号推不出兄弟关系，
+// 故允许材料层用 <AR>-detail.json 显式声明（parentNo / rrNo / materials）。
 const num = ar.replace(/^AR/i, '');
-const ids = { AR: ar, SR: `SR${num}`, RR: `RR${num}` };
+const declared = readMockDetail(ar);
+const ids = {
+  AR: ar,
+  SR: declared.parentNo ?? `SR${num}`,
+  RR: declared.rrNo ?? `RR${num}`,
+};
 
 if (cmd === 'init') cmdInit(ar, featureRoot, localAr, ids);
 else if (cmd === 'archive') cmdArchive(ar, featureRoot, localAr, projectRoot);
 else if (cmd === 'restore') cmdRestore(ar, featureRoot);
-else if (cmd === 'review') cmdReview(ar);
+else if (cmd === 'review') cmdReview(ar, featureRoot);

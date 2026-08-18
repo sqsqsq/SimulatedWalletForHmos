@@ -18,7 +18,7 @@ terms:
       - term: "账号管理"
         module: "AccountManager"
         disambiguation: |
-          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
           若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
       - term: "钱包主功能"
         module: "WalletMain"
@@ -42,7 +42,7 @@ terms:
       - term: "账号管理"
         module: "AccountManager"
         disambiguation: |
-          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
           若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
       - term: "钱包主功能"
         module: "WalletMain"
@@ -54,7 +54,7 @@ terms:
     canonical_module: "CommFunc"
     owner_layer: "05-SystemBase"
     aliases: []
-    sample_usage: "当 PRD 说「展示手机号要脱敏」且指 `FormatUtil.maskPhone` 之类纯算法时，属本词；不是「已登录/展示用账号」这一账号域问题。"
+    sample_usage: "当 PRD 说「展示手机号要脱敏」且指 `MaskUtil.maskPhone` 之类纯算法时，属本词；不是「已登录/展示用账号」这一账号域问题。"
     confidence_hint: "精确命中 `CommFunc.typical_business_terms`；`CommFunc.NOT_responsible_for` 未在否定条目中单独排除「脱敏」二字（与 Step 1.5 不冲突）。"
     easily_confused_with:
       - term: "公共 UI 组件"
@@ -66,7 +66,7 @@ terms:
       - term: "账号管理"
         module: "AccountManager"
         disambiguation: |
-          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
           若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
       - term: "钱包主功能"
         module: "WalletMain"
@@ -78,7 +78,7 @@ terms:
     canonical_module: "CommFunc"
     owner_layer: "05-SystemBase"
     aliases: []
-    sample_usage: "当口头说「沉淀成工具类」指 `FormatUtil`/`Logger` 等无业务状态的静态能力时，属本词；不是「业务 Service 单例」。"
+    sample_usage: "当口头说「沉淀成工具类」指 `MaskUtil`/`Logger` 等无业务状态的静态能力时，属本词；不是「业务 Service 单例」。"
     confidence_hint: "精确命中 `CommFunc.typical_business_terms`；与 NOT 无冲突（已扫）。"
     easily_confused_with:
       - term: "公共 UI 组件"
@@ -90,7 +90,7 @@ terms:
       - term: "账号管理"
         module: "AccountManager"
         disambiguation: |
-          若只涉及 `Logger` / `FormatUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
           若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
       - term: "钱包主功能"
         module: "WalletMain"
@@ -108,7 +108,7 @@ terms:
       - term: "公共 UI 组件"
         module: "CommUI"
         disambiguation: |
-          **hilog、`FormatUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**（本模块）。
+          **hilog、`MaskUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**（本模块）。
           **`ActionListItem`、`SectionCard`、`CommColors`、`showToast`** → **CommUI**。
           **依赖方向**：`CommUI` → `CommFunc` ✅；反向 ❌。
       - term: "账号管理"
@@ -124,7 +124,7 @@ terms:
       - term: "应用入口"
         module: "Phone"
         disambiguation: |
-          **`Logger` / `FormatUtil` / `NavPathContext` 通用实现** → **CommFunc**（本模块）。
+          **`Logger` / `MaskUtil` / `NavPathContext` 通用实现** → **CommFunc**（本模块）。
           **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、在根页调用 `NavPathContext.attach`** → **Phone**；宿主 **消费**本模块 API 完成挂载，**不等价**本模块承担 HAP 壳职责。
 
   - term: "公共 UI 组件"
@@ -251,13 +251,13 @@ terms:
     canonical_module: "AccountManager"
     owner_layer: "04-BusinessBase"
     aliases: []
-    sample_usage: "当 PRD 说「单例的账号会话、`AccountService` 登录/登出、AppStorage 中的登录态与展示用账号串」时，指本域；不是「只调 `FormatUtil` 做脱敏」或「可复用列表行/Toast」的纯 UI/纯工具面。"
+    sample_usage: "当 PRD 说「单例的账号会话、`AccountService` 登录/登出、AppStorage 中的登录态与展示用账号串」时，指本域；不是「只调 `MaskUtil` 做脱敏」或「可复用列表行/Toast」的纯 UI/纯工具面。"
     confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
     easily_confused_with:
       - term: "系统功能封装"
         module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
           若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - term: "公共 UI 组件"
         module: "CommUI"
@@ -279,7 +279,7 @@ terms:
       - term: "系统功能封装"
         module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
           若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - term: "公共 UI 组件"
         module: "CommUI"
@@ -301,7 +301,7 @@ terms:
       - term: "系统功能封装"
         module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
           若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - term: "公共 UI 组件"
         module: "CommUI"
@@ -323,7 +323,7 @@ terms:
       - term: "系统功能封装"
         module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
           若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - term: "公共 UI 组件"
         module: "CommUI"
@@ -345,7 +345,7 @@ terms:
       - term: "系统功能封装"
         module: "CommFunc"
         disambiguation: |
-          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `FormatUtil` 等。
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
           若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
       - term: "公共 UI 组件"
         module: "CommUI"

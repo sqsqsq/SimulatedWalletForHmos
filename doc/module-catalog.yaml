@@ -6,17 +6,17 @@ modules:
     layer: "05-SystemBase"
     sub_layer: "CommFunc"
     format: "HAR"
-    one_liner: "系统侧通用能力（**HAR**，**`shared/log` · `shared/utils` · `shared/navigation`**）：**`Logger`**（**`hilog`**，`DOMAIN = 0xD001000`，静态 **`info` / `error`**）；**`FormatUtil`**（**`maskPhone`** 前三后四、**`maskAccount`** 通用账号脱敏，**过短输入原样返回**）；**`NavPathContext`**（**`attach`** 单例全局栈、**`stack()`** 未挂载抛 **`Error('NavPathStack not attached')`**）；源码注释说明 **`NavDestination`** 子树不宜 **`@Prop`** 传栈、宜 **`@Link` / 本上下文**。**零 UI、零业务状态**；**`oh-package.dependencies` 为空**。"
+    one_liner: "系统侧通用能力（**HAR**，**`shared/log` · `shared/utils` · `shared/navigation`**）：**`Logger`**（**`hilog`**，`DOMAIN = 0xD001000`，静态 **`info` / `error`**）；**`MaskUtil`**（**`maskPhone`** 前三后四、**`maskAccount`** 通用账号脱敏，**过短输入原样返回**）；**`NavPathContext`**（**`attach`** 单例全局栈、**`stack()`** 未挂载抛 **`Error('NavPathStack not attached')`**）；源码注释说明 **`NavDestination`** 子树不宜 **`@Prop`** 传栈、宜 **`@Link` / 本上下文**。**零 UI、零业务状态**；**`oh-package.dependencies` 为空**。"
     responsibilities:
       - "导出 **`Logger`**：封装 **`@kit.PerformanceAnalysisKit`** 的 **`hilog`**，统一 **`DOMAIN = 0xD001000`**，提供 **`Logger.info` / `Logger.error`**（**`(tag, format, ...args)`** 形态）。"
-      - "导出 **`FormatUtil`**：**`maskPhone`**——长度 **`<= 7`** 时原样返回，否则 **`前三 + **** + 后四`**；**`maskAccount`**——长度 **`<= 4`** 时原样返回，否则 **`前二 + **** + 后二`**；算法演进归本模块；**何时写入存储**归 **`AccountManager`** 等业务侧。"
+      - "导出 **`MaskUtil`**：**`maskPhone`**——长度 **`<= 7`** 时原样返回，否则 **`前三 + **** + 后四`**；**`maskAccount`**——长度 **`<= 4`** 时原样返回，否则 **`前二 + **** + 后二`**；算法演进归本模块；**何时写入存储**归 **`AccountManager`** 等业务侧。"
       - "导出 **`NavPathContext`**：**`attach(stack)`** 写入静态 **`pathStack`**（注释：**全局单栈**，由 **`01-Product`** 入口 **`aboutToAppear` 等时机**调用）；**`stack()`** 若 **`null`** 抛 **`Error`**（消息 **`NavPathStack not attached`**）；供 **`NavDestination`** 等无法 **`@Link`** 的子树取栈（注释指向真机 **`pushPath`/`@Prop` 风险**）。"
       - "维持 **CommFunc 子层**：**`oh-package.json5` `dependencies: {}`**；**禁止**依赖 **`CommUI`** 与业务 HAR；可被 **`CommUI` / Feature / Product** 按 DSL 引用。"
     NOT_responsible_for:
       - "不负责 **`PhoneAbility`**、**`loadContent`**、根 **`Navigation`/`Tabs`、`navDestination`**；宿主壳归 **`Phone`**，本模块仅提供 **`attach`/`stack` API**。"
       - "不负责路由策略、页面名字符串常量或 **`WalletMain`** 内 **`pushPath` 业务语义**；本模块**只持有栈引用**。"
       - "不负责 **`promptAction.showToast`、主题、`@Component`**；UI 反馈归 **`CommUI`**。"
-      - "不负责 **`AccountService`/`LoginState`/账号 AppStorage**；**`AccountManager`** 可调用 **`FormatUtil`**，本模块**不**持久化会话。"
+      - "不负责 **`AccountService`/`LoginState`/账号 AppStorage**；**`AccountManager`** 可调用 **`MaskUtil`**，本模块**不**持久化会话。"
       - "不负责 Feature/BusinessBase 的 **DTO/Repository**；归 **`WalletMain`** / **`AccountManager`** 等。"
     typical_business_terms:
       - "系统功能封装"
@@ -27,24 +27,24 @@ modules:
     easily_confused_with:
       - module: "CommUI"
         disambiguation: |
-          **`Logger` / `FormatUtil` / `NavPathContext`（无 ArkUI 组件）** → **CommFunc**（本模块）。
+          **`Logger` / `MaskUtil` / `NavPathContext`（无 ArkUI 组件）** → **CommFunc**（本模块）。
           **`ActionListItem`、`SectionCard`、`CommColors`、`showToast`** → **CommUI**。
           **`CommUI` → `CommFunc`** ✅；反向 ❌。
       - module: "AccountManager"
         disambiguation: |
           **纯日志/脱敏/导航上下文**，与「何时 **`login`、写哪个 **`AppStorage`** 键」无关 → **CommFunc**。
-          **`AccountService`、`UserProfile`、`LoginState`** → **AccountManager**；可依赖本模块 **`FormatUtil`**。
+          **`AccountService`、`UserProfile`、`LoginState`** → **AccountManager**；可依赖本模块 **`MaskUtil`**。
       - module: "WalletMain"
         disambiguation: |
           **工具与上下文实现**，与卡包/首页产品编排无关 → **CommFunc**。
           **`HomeTabPage`/`CardPackPage` 内 `pushPath`、`HomeRepository`、业务 UX** → **WalletMain**；可在宿主已完成 **`NavPathContext.attach`** 后调用 **`NavPathContext.stack()`**；**`attach` 调用点仍归宿主 `Phone`**。
       - module: "Phone"
         disambiguation: |
-          **`Logger`/`FormatUtil`/`NavPathContext` 类实现** → **CommFunc**。
+          **`Logger`/`MaskUtil`/`NavPathContext` 类实现** → **CommFunc**。
           **`PhoneAbility`、根壳、`NavPathContext.attach` 调用点** → **Phone**（宿主消费 API）。
     key_exports:
       - "Logger"
-      - "FormatUtil"
+      - "MaskUtil"
       - "NavPathContext"
     entry_file: "05-SystemBase/CommFunc/src/main/ets/index.ets"
 
@@ -62,7 +62,7 @@ modules:
     NOT_responsible_for:
       - "不负责 **`Phone` / `WalletMain`** 的 **`Navigation`/`Tabs`、`pushPath`、`NavPathContext.attach` / `stack()`** 等导航壳；PRD 若描述主导航宿主，归 **`Phone`** / **`WalletMain`**。"
       - "不负责卡列表、卡详情、账号会话等**领域语义 UI**；业务组件与数据绑定在 **`WalletMain`** 等 feature。"
-      - "不实现 **`CommFunc`** 的 **`Logger` / `FormatUtil` / `NavPathContext`**；纯工具与非 UI 能力走 **`CommFunc`**。"
+      - "不实现 **`CommFunc`** 的 **`Logger` / `MaskUtil` / `NavPathContext`**；纯工具与非 UI 能力走 **`CommFunc`**。"
     typical_business_terms:
       - "公共 UI 组件"
       - "主题色"
@@ -73,7 +73,7 @@ modules:
       - module: "CommFunc"
         disambiguation: |
           **ArkUI 组件 / `CommColors` / `showToast` 界面反馈** → **CommUI**（本模块）。
-          **`Logger`、`FormatUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**。
+          **`Logger`、`MaskUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**。
           依赖：**`CommUI` → `CommFunc`** ✅；反向 ❌。
       - module: "AccountManager"
         disambiguation: |
@@ -98,11 +98,11 @@ modules:
     layer: "04-BusinessBase"
     sub_layer: null
     format: "HAR"
-    one_liner: "跨 Feature 的账号域能力（**HAR**，仅依赖 **`CommFunc`**）：基于 **`AppStorage`** 的登录布尔、展示账号串与 **`LoginState` 枚举流水线**（含 **`LOGGING_IN`** 过渡态；枚举另含 **`LOGIN_FAILED`** 占位，当前模拟路径未触发）；**`AccountService`** 单例为唯一入口；**`login()`** 经 **`setTimeout` 模拟异步**后写入脱敏展示串（**`FormatUtil.maskPhone`**）；登录实现为可替换**模拟成功**（注释指向华为账号 Kit）。"
+    one_liner: "跨 Feature 的账号域能力（**HAR**，仅依赖 **`CommFunc`**）：基于 **`AppStorage`** 的登录布尔、展示账号串与 **`LoginState` 枚举流水线**（含 **`LOGGING_IN`** 过渡态；枚举另含 **`LOGIN_FAILED`** 占位，当前模拟路径未触发）；**`AccountService`** 单例为唯一入口；**`login()`** 经 **`setTimeout` 模拟异步**后写入脱敏展示串（**`MaskUtil.maskPhone`**）；登录实现为可替换**模拟成功**（注释指向华为账号 Kit）。"
     responsibilities:
       - "以 **`AccountService.getInstance()`** 懒初始化单例；首次实例化执行 **`initStorage()`**，对 **`AccountConstants`** 声明的 **`wallet_*`** 键在缺失时 **`setOrCreate`** 默认值（未登录 / 空串 / **`LoginState.NOT_LOGGED_IN`**）。"
       - "**`notify(state)`** 同步 **`STORAGE_LOGIN_STATE`** 并遍历内存 **`listeners`** 广播；**`onLoginStateChanged` / `offLoginStateChanged`** 以回调引用增删（调用方须 **`off` 同一函数引用**，典型见 **`WalletMain` · `MineTabPage`**）。"
-      - "**`login()`**：先 **`notify(LOGGING_IN)`**，**`await` 固定间隔 `setTimeout`**（模拟网络），再以硬编码演示手机号调用 **`FormatUtil.maskPhone`**，写入 **`STORAGE_IS_LOGGED_IN` / `STORAGE_DISPLAY_ACCOUNT`**，最后 **`notify(LOGGED_IN)`** 并返回 **`UserProfile`**。"
+      - "**`login()`**：先 **`notify(LOGGING_IN)`**，**`await` 固定间隔 `setTimeout`**（模拟网络），再以硬编码演示手机号调用 **`MaskUtil.maskPhone`**，写入 **`STORAGE_IS_LOGGED_IN` / `STORAGE_DISPLAY_ACCOUNT`**，最后 **`notify(LOGGED_IN)`** 并返回 **`UserProfile`**。"
       - "**`logout()`**：清零登录与展示串并 **`notify(NOT_LOGGED_IN)`**。"
       - "**`getUserProfile()`**：从 **`AppStorage`** 读取布尔与展示串组装 **`UserProfile`**（**`avatar`** 当前为 **`null`**）；**`UserProfile.accountText`** 未登录时返回展示文案「未登录」。"
     NOT_responsible_for:
@@ -119,7 +119,7 @@ modules:
     easily_confused_with:
       - module: "CommFunc"
         disambiguation: |
-          若只讨论 **`FormatUtil.maskPhone` 等纯工具**、与「是否已登录、`LoginState`、监听回调」无关 → **CommFunc**。
+          若只讨论 **`MaskUtil.maskPhone` 等纯工具**、与「是否已登录、`LoginState`、监听回调」无关 → **CommFunc**。
           若讨论 **AppStorage 账号键、`AccountService`、登录/登出生命周期与 `UserProfile`** → **AccountManager**（本模块）。本模块可依赖 **`CommFunc`**，禁止反向依赖。
       - module: "CommUI"
         disambiguation: |
@@ -222,6 +222,6 @@ modules:
       - module: "CommFunc"
         disambiguation: |
           **`PhoneAbility`、`loadContent`、根壳层 `Navigation`/`Tabs`、调用 `NavPathContext.attach`、HAP 依赖聚合** → **Phone**（本模块）。
-          **`Logger`、`FormatUtil`、`NavPathContext` 的实现本体**（无 Ability、无页面壳）→ **CommFunc**；本模块 **依赖并调用**其 API，**不在 HAP 重复实现**通用工具与上下文类。
+          **`Logger`、`MaskUtil`、`NavPathContext` 的实现本体**（无 Ability、无页面壳）→ **CommFunc**；本模块 **依赖并调用**其 API，**不在 HAP 重复实现**通用工具与上下文类。
     key_exports: []
     entry_file: "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"

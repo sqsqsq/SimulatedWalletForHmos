@@ -1,7 +1,7 @@
 /**
  * token.js — 获取 mcp token（本文件是部署环境间需要替换的实现之一）
  *
- * 契约（CLI，SKILL.md「MCP Token」章为准）：
+ * 契约（CLI，SKILL.md「需求系统 Token」章为准）：
  *   node token.js
  *     → 成功：exit 0，**stdout 即为 token 本身**（纯文本单行，无引号无 JSON）
  *     → 失败：非 0 退出，错误信息走 stderr；调用方转入 SKILL.md 步骤 2 从配置文件读取
