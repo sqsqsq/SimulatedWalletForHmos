@@ -208,6 +208,10 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
+  /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
+   * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
+   * 新 run 不再写该 halt（P0 未豁免 explicit skip 默认回 coding，见 p0-semantic-gates/
+   * repair-candidates），本条目**不是**新 run 的写入口，不参与 driver 决策。 */
   await_human_p0_skip: { class: 'operator', requires_grant: 'p0_skip_waiver' },
   /** 闭环墙：脚本门禁反复 PASS 但回执关不了环（多为只能真人签的确认项）。 */
   closure_open: { class: 'operator' },
@@ -253,6 +257,21 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * （--refresh-vision-probe 触发重探）；不是内容失败（agent 做不对），也不是框架缺陷。
    */
   canary_cli_hard_failure: { class: 'external' },
+  /**
+   * plan a7c3f9e2 t4/t5：编译形态无法确定（多候选未确认 / build-profile 缺失 /
+   * products 为空 / build-profile 不可解析——后三者无真实候选，不得虚构 default）——
+   * 工程配置侧问题，需用户经 init.product_selection / record-product-selection / env
+   * 显式确认；不是内容失败（agent 改代码无意义），确认后 --resume 重检即放行。
+   */
+  product_selection_unresolved: { class: 'external' },
+  /**
+   * plan a7c3f9e2 review P1（第二轮）：编译形态解析器执行失败（profile 模块存在但
+   * require/解析抛错）——build-profile 缺失/空/不可解析及普通配置读取错误已被解析器
+   * 正常收敛为判别结果，能逃到这里的是 **profile 模块加载或运行时异常 = framework
+   * fault**；按 external 会给出"等待外部环境恢复"的不合理结论。归类 framework_fault，
+   * 修复框架侧后 --resume 重检。
+   */
+  product_selection_probe_failed: { class: 'framework_fault' },
 
   // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
   //     budget 字段已入 manifest identity 冻结） ------------------------------
@@ -296,8 +315,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   no_progress_capture: { class: 'external' },
   /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
    *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
-   *  与 `await_human_confirm` / `await_human_p0_skip`（等人），压成一个会让 wait_kind
-   *  真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
+   *  与 `await_human_confirm`（等人；c7e4a2d9 已把 await_human_p0_skip 移出家族），
+   *  压成一个会让 wait_kind 真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
   no_progress_cumulative_external: { class: 'external' },
   no_progress_cumulative_human: { class: 'operator' },
   /** 设备就绪门（delegated producer：device-readiness-gate）。 */
@@ -337,6 +356,10 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
    *  死结复发；外部存储条件恢复后 probe 续跑。 */
   receipt_scaffold_unwritable: { class: 'external' },
+  /** plan c6a9e4d2 P0-2：Windows containment 绑定失败且 guardian 未证明消失——
+   *  旧 agent 无 Job 契约仍在野（kill 失败/复验仍活），halt 阻断续跑求人（真冲突
+   *  勿自动覆盖）；人工清理后 --resume（接管对账再拦/放行）。 */
+  agent_containment_unresolved: { class: 'external' },
   /** 责任阶段统一路由（plan b6e4c9f2）：可信缺陷候选写不回 summary（唯一真源）——
    *  assess 因此看不见缺陷、回退链断裂。存储条件问题，修好后 probe 续跑。 */
   repair_candidates_unwritable: { class: 'external' },

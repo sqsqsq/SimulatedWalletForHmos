@@ -82,7 +82,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 | `DEFERRED_CAPABILITY_MISSING` | preflight 终态：需求强 1:1 意图但 adapter 无视觉能力，不盲跑全链；继续须带外签发 fidelity_downgrade receipt 后 `--fidelity` + `--fidelity-receipt` |
 | `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
 | `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；新 halt 类：`await_human_p0_skip`（P0 用例被 skip 待真人裁决——修可测性 / DEFERRED 登记 / receipt waiver 三选一后 resume）、`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑） |
+| `HALTED` | FAIL 重试耗尽或 policy 拒绝续行；halt 类示例：`await_human_fidelity_tier`（需求意图 ambiguous+有参考图，`--fidelity` 预授权后重跑）。P0 未豁免 skip **不再首触求人**（c7e4a2d9）：explicit-only 缺口默认回 coding 修复并重测，status 为空/未登记 skip 留 testing 恢复执行，外部阻塞走 DEFERRED；只有确需降低标准才由真人签 waiver（WARN 封顶 AWAITING_HUMAN_REVIEW） |
 | `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
 
 **任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
@@ -184,6 +184,17 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动后须**存活自校验**（`detach.log` 增长 + `goal-status` 活性正常），没起就如实报"启动未存活"，不要假报"已在后台跑"。
 
 **存活是环境属性**：会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI；Node `detached:true` 不设 `CREATE_BREAKAWAY_FROM_JOB`，挡不住 `taskkill /T` / kill-on-close Job）下 `--detach` 也保不住，须用 OS 调度任务（cron / Windows Task Scheduler）托管 run。下面 chrys / opencode 是"阻塞型宿主"的具体落地。
+
+**本次实测（2026-08-18，Windows Claude Desktop 工具环境；措辞仅限定该宿主环境，不概括"Claude Code 一律必死"）**：工具 shell、会话后端、detached 探针的 `IsProcessInJob` 全部为 `true`，且 `detached:true` 无法请求 breakaway——该环境下 `--detach` 的 runner 三次在宿主轮次交还后的延迟回收中被硬杀（无部分退出钩子足迹，进程整体消失）。教训：**只要宿主进程在 kill-on-close Job Object 里，--detach 就是临时存活；真无人值守必须脱离该宿主进程的生命周期**。
+
+### 恢复路线分级（真无人值守 ≠ 用户终端临跑）
+
+| 路线 | 级别 | 说明 |
+|------|------|------|
+| **Task Scheduler（推荐，真无人值守）** | `goal-supervise --install-schtasks --feature <f> --every-minutes 5` | OS 计划任务独立于宿主会话/进程树；supervisor 自愈（run 崩溃/被杀后按 beacon×run_disposition 决策自动 `--resume`，且在有 Job 守卫下确认旧 owner 死亡后才受控拉起）。**显式手动执行才安装**，框架绝不自动写持久计划任务；`goal-supervise --uninstall-schtasks --feature <f>` 卸载 |
+| **用户自开终端 `--detach`** | 一次性临时路线 | 当前终端/宿主会话内能活（关闭启动窗口无碍），但**无 supervisor 自愈——run 崩了没人拉起**，宿主整树清理时也会被杀。适合"我看着这一轮 / 短任务"的临时场景，不写成与 Task Scheduler 同级保证 |
+
+不做 **Job flags 运行时自动探测或自动路由**（探测≠保护；containment 才是保护）——宿主环境是否 kill-on-close 一律由上面这条人工分级决定，不自动判。
 
 ### 从无后台能力的宿主 shell 启动（chrys / opencode TUI 等）→ 必须 `--detach`
 

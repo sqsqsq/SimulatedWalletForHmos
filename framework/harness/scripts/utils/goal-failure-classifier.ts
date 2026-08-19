@@ -30,9 +30,6 @@ export type FailureKind =
   | 'agent_no_output'
   /** P0-9b：唯一阻塞=T2 真人过目确认（设计内求人时刻，重试无意义，不入 no_progress 口径） */
   | 'await_human_confirm'
-  /** t5（goal-fakepass-hardening）：P0 用例被 skip 且无凭证 waiver——agent 不可自决 P0
-   * 去留，首触即 halt 求人（重试只会复现同 skip，不烧预算）。 */
-  | 'await_human_p0_skip'
   /**
    * t1（plan f7a3d9c2）：指纹级无进展熔断——check 层比对轮次账本（visual-rounds.ledger.jsonl）
    * 判"连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差"。首触即 halt（重试只会
@@ -40,8 +37,12 @@ export type FailureKind =
    * 由 check 侧细粒度判定先触发）。duplicate 重放的 fuse 同样走本 kind（rev5）。
    */
   | 'no_progress_fuse'
-  /** E4（案B chrys 银行卡实证）：用户主动 Ctrl+C（Windows STATUS_CONTROL_C_EXIT / POSIX
-   * SIGINT）——不是超时/断流/空产出/内容失败，重试是对用户意图的冒犯，须首触即 halt。 */
+  /**
+   * E4（案B chrys 银行卡实证）：**控制台中断类退出**（Windows STATUS_CONTROL_C_EXIT /
+   * POSIX SIGINT——Ctrl+C、窗口关闭、conhost 终止等，可能来自操作者有意中断，也可能
+   * 是宿主环境清理）。不是超时/断流/空产出/内容失败，重试是冒犯，须首触即 halt；
+   * 归因话术不得武断写成「用户手动」——只描述控制台中断类退出本身。
+   */
   | 'operator_interrupt'
   /** C5-min 验证转嫁禁令：修正触及验证层而宿主无 device 能力（evidence 缺口，与 await_human 系同构，不入 no_progress 口径）。
    * 【合并时留下的开放问题，未拍板】它和 await_human_confirm 结构同构——都设计成"首触即 halt"；
@@ -80,7 +81,7 @@ export function isOperatorInterruptSignal(
  * P0-B/P0-D（b8f36a12）：agent 级基建失败信号——由 goal-runner 从 invoke 结果 +
  * agent-output.log 哨兵采集后传入，**优先于 summary blocker 归因**（blocker 只是症状：
  * 超时/断流 attempt 的 spec_file_exists 是"没跑完"的派生物，不是内容失败）。
- * 优先级：operator_interrupt（人手动 Ctrl+C，压过一切）> agent_timeout（runner tree-kill
+ * 优先级：operator_interrupt（控制台中断类退出，压过一切）> agent_timeout（runner tree-kill
  * 确定性事实，但若 summary blockers 全为 await_human 家族则让位于 await_human_confirm——
  * E4：案B chrys 现场实证 agentTimedOut 会遮蔽"其实只差真人签字"的判定）>
  * transient_api_error（断流串可能是被杀连带产生，故 timed_out 时不判断流）>
@@ -93,7 +94,7 @@ export interface AgentInvokeSignals {
   agentApiError?: boolean;
   /** 0 字节输出保守兜底（preflight 已过 + 无 spawn error + 极短时长 + exit≠0） */
   agentNoOutput?: boolean;
-  /** isOperatorInterruptSignal(exitCode, signal) 命中——用户手动中断，非任何一种"失败"。 */
+  /** isOperatorInterruptSignal(exitCode, signal) 命中——控制台中断类退出，非任何一种"内容失败"。 */
   operatorInterrupt?: boolean;
   /**
    * P0-5/P0-3 freshness（plan d9b4f7e2 决策表）：resolved.stale_summary——本轮 harness 是否
@@ -187,7 +188,6 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
 export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'toolchain',
   'await_human_confirm',
-  'await_human_p0_skip',
 ]);
 
 /**
@@ -302,10 +302,10 @@ const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
   // 机器可修形态）。
   'goal_post_review_source_mutation_unresolved',
 ]);
-/** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3） */
+/** human_only 兼容映射：classification/failure_kind 族（含视觉二期人类门禁——codex 六轮 P0#3；
+ * c7e4a2d9 已移除 await_human_p0_skip——P0 未豁免 explicit skip 默认 agent_fixable 走 coding） */
 const HUMAN_ONLY_CLASSIFICATIONS: ReadonlySet<string> = new Set<string>([
   'await_human_confirm',
-  'await_human_p0_skip',
   'await_human_fidelity_tier',
   'capability_missing_strong_intent',
 ]);
@@ -495,7 +495,8 @@ export function classifyFailureKind(
   signals?: AgentInvokeSignals,
 ): FailureKind {
   // agent 级基建失败优先（优先级见 AgentInvokeSignals 注释）。operator_interrupt 压过一切——
-  // 用户手动 Ctrl+C 时无论是否也恰好超时/断流/空产出，都不是"失败"，重试是对用户意图的冒犯。
+  // 控制台中断类退出（Ctrl+C/关窗/conhost 终止，可能来自操作者或宿主环境清理）无论是否也
+  // 恰好超时/断流/空产出，都不按内容失败重试。
   if (signals?.operatorInterrupt) return 'operator_interrupt';
   if (signals?.agentTimedOut) {
     // P0-5/P0-3 freshness 决策表（plan d9b4f7e2 rev5 写死，P0-5.4 为 SSOT）：
@@ -555,10 +556,6 @@ export function classifyFailureKind(
   // 候选且零 must_fix/stale，唯一 BLOCKER=真人确认。agent 不能替人签，重试无意义 → 独立 kind。
   if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_confirm')) {
     return 'await_human_confirm';
-  }
-  // t5（goal-fakepass-hardening）：P0 skip 无凭证 waiver——agent 不可自决，首触即 halt 求人。
-  if ((summary?.blockers ?? []).some((b) => b.classification === 'await_human_p0_skip')) {
-    return 'await_human_p0_skip';
   }
   // t1（f7a3d9c2）：指纹级无进展熔断——须在 isVisualGapBlockerId 前缀归类**之前**判
   // （fuse blocker id 以 visual_diff 开头，否则被吸成 visual_gap 走粗熔断路径）。

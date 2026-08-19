@@ -7,7 +7,7 @@
 在生成测试计划（Step 2）之前，若当前 `project_profile` 将 **`device_test.build`/`device_test.install`** 声明为 **BLOCKER**，须与用户对齐「能在真机上跑的同一套包」：
 
 1. **读取宿主指南**：完整阅读 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md`，宿主 toolchain/环境/harness 变量以单一宿主附录为 SSOT，根 SKILL 不复述宿主专有名词。
-2. **与用户确认打包维度**（`testing.packaging`）：展示 product/buildMode 推荐值后 `1=确认` `2=修改`。product 枚举宿主工程可用制品维度（默认与宿主 `preferredProduct`/`detectProduct` 语义一致）；buildMode 为宿主 `debug`（默认）/`release`，需在会话或环境记下所选组合供 `testing` harness 复现；附录 `testing-build-conventions.ts` 说明可用 `HARNESS_DEVICE_TEST_*` 变量。
+2. **与用户确认打包维度**（`testing.packaging`）：展示 product/buildMode 推荐值后 `1=确认` `2=修改`。product 枚举宿主工程可用制品维度：默认按 `resolveProductSelection` 单次解析（`explicit_run` → `confirmed_env`（`HARNESS_DEVICE_TEST_PRODUCT`）→ `explicit_config`（config 值且 local 确认值逐字相等）→ `sole_candidate`）；**构建形态无法确定时不猜**（四种原因：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可解析——后三者无真实候选、不得虚构 `default`），停止并经 framework-init `init.product_selection` / `record-product-selection` 机器写入或 env 显式确认后继续。buildMode 为宿主 `debug`（默认）/`release`，需在会话或环境记下所选组合供 `testing` harness 复现；附录 `testing-build-conventions.ts` 说明可用 `HARNESS_DEVICE_TEST_*` 变量。
 3. **执行链路**：经 `capability-registry` → `dispatchDeviceTestBuild` 产出 signed 应用包；再 `dispatchDeviceTestInstall` 触发装机（宿主附录写明等价 CLI）。宿主实现在 `profiles/<name>/harness/providers/device-test-build.ts` 与 `device-test-install.ts`；日志约定见宿主 profile-addendum（同一 `reports/<feature>/testing/` 目录）。
 4. **与文档门禁的顺序**：`testing` 脚本 harness 会在校验 Markdown 计划/报告之前尝试 `device_test.build → device_test.install → device_test.run`（profile SKIP 则对应步骤 SKIP）。Hylyre ensure（venv/pip/doctor）在 `device_test.run` 内自动执行，非 Skill 入口独立步骤。可先撰写文档再由 harness 触发包链路；BLOCKER 失败须先修复宿主 toolchain/设备再继续闭环。
 5. **外部自动化**：Framework 负责「包已在设备上」之前的宿主门禁；后续第三方自动化/UI+Mock 不负责替代宿主打包（单向衔接）。
@@ -92,11 +92,15 @@
   开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
   跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
   源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
-- **P0 用例 skip 不可自决**：explicit_skip/未执行的 P0 → `p0_coverage_integrity` BLOCKER，
-  goal 首触 halt（`await_human_p0_skip`）。出路只有三条：修可测性去 skip / 外部阻塞按
-  DEFERRED 登记 / 真人签发 p0_skip_waiver receipt（仅降级 WARN，run 封顶
-  AWAITING_HUMAN_REVIEW）。通过率必须双口径（skip 计入分母），存在 P0 skip 时结论不得
-  无条件「达标」。
+- **P0 用例 skip 默认修复（c7e4a2d9）**：explicit_skip/未执行的 P0 → `p0_coverage_integrity`
+  BLOCKER（fail-closed 不变）。未豁免缺口**全部属于既有 explicit_skip_tc_ids 登记**时，
+  gate 复用 failure_kind=code_regression + agent_fixable → summary 自动产 coding 候选 →
+  assess 回退 coding 修复并重测（**不降低验收标准，修复不是授权行为**；同指纹无进展由
+  既有熔断收口）。status 为空或未经登记的 trace skip 不产 coding 候选、留在 testing 恢复
+  执行/派生计划；外部阻塞按 DEFERRED 登记；只有确需降低标准时才由真人签发
+  p0_skip_waiver receipt（仅降级 WARN，run 封顶 AWAITING_HUMAN_REVIEW）。通过率必须
+  双口径（skip 计入分母），存在 P0 skip 时结论不得无条件「达标」；不再有
+  await_human_p0_skip 首触求人 halt。
 - **P0 状态迁移证据**：派生计划各 P0 TC 须动作指向 acceptance checkpoint 的
   `target_element_id` 且其后 `wait_for` required 元素；flow 每条中间屏边须有已执行且通过
   的 owning TC（纯 wait 冒充/直达结果页=`p0_semantic_coverage_integrity` FAIL）。
