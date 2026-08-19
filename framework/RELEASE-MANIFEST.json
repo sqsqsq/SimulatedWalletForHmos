@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "1feabd006fcd5b81d5d07190c1c1fe1c461ba3ca",
-  "built_at": "2026-08-19T07:20:23.992Z",
+  "source_commit": "a52b64f6edfa19370a402df40a999baf68e1a715",
+  "built_at": "2026-08-19T10:54:30.086Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -406,7 +406,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "d98fd35cd1756dab015b889a1a2f392e6ceea168336fed5b3b79be43dcd2ea24"
+      "sha256": "ab3d821ff308f9dbf7cde409792e8e33e35537ba1dc510fa75bccd78568331ab"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "b0c33cdf82f26e0a71e1e81c330c316ada9e3ff245a86ac3da8daf306ec26f4d"
+      "sha256": "d528ef4cc55470a5de26c321fe92f6618708edcc25c8e621bcd28e13969b44e8"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -1146,7 +1146,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "993306178ce900ac42f8e3203ee1334662459cd9faf85e0d3cf379b4f23cbc32"
+      "sha256": "346a0095065de695ace508246efdd5b94a343856fc24db17cb1df2452a09cbd9"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -1154,7 +1154,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-preflight.ts",
-      "sha256": "46f6148ed4476a0c695d398c1bf3497797535c9bb484e6de54fbf41aa9198d66"
+      "sha256": "99c49f1021b9cd9f5d02e3141f0deadcff8f64c70b71dbf3a22b17c4a145f67a"
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
@@ -1350,7 +1350,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-evidence-manifest.ts",
-      "sha256": "be5a21fb5114306e99d22ae27d2b4b13d0a2b9da125fe7ae1dc846852139a05b"
+      "sha256": "a9bda0b0bf9e64fe00f2ffc2c99b4ce28c10e56fd44931ed623fb27436b2524c"
     },
     {
       "path": "harness/scripts/utils/phase-personal-prerequisites.ts",
@@ -2870,7 +2870,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "d2ea0d2118bff8fe60e662017576ebe15ca3d9768f63149a9b28f393c6ef479a"
+      "sha256": "e8ae71fa0c44cbe322a7aee1e9bf9edf46dd50213caddb31dcfde984a6a48d93"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
