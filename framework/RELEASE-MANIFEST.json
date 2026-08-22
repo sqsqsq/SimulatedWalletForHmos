@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "a52b64f6edfa19370a402df40a999baf68e1a715",
-  "built_at": "2026-08-19T10:54:30.086Z",
+  "source_commit": "6c5b100fe77618864afcffdd8fd1526453f7a500",
+  "built_at": "2026-08-22T04:03:48.243Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -582,7 +582,7 @@
     },
     {
       "path": "harness/schemas/summary.schema.json",
-      "sha256": "b54f0231137fc01b08453f5310c921a9cc265bb1609ea49f3e1beb4ca977280f"
+      "sha256": "369b18a25aaff322cac601296d9018fa71faa0f3c671ced01cc4d32291c8f6e6"
     },
     {
       "path": "harness/schemas/ui-spec.schema.json",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "d528ef4cc55470a5de26c321fe92f6618708edcc25c8e621bcd28e13969b44e8"
+      "sha256": "52bda5b6c8028a7306f0c0eb06a04c0159450b34a53bf94b85da53f87223d6eb"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -854,7 +854,7 @@
     },
     {
       "path": "harness/scripts/utils/adjudication.ts",
-      "sha256": "47b835d92aff2868d6bb1a9741b88a22b0247616264b75a31a506000cc06327a"
+      "sha256": "a78ee1e52d36c6fe421d5b6e517aa8dfabd4ab6ce996048b4ae0655a0cb80ae0"
     },
     {
       "path": "harness/scripts/utils/agent-bundle-paths.ts",
@@ -886,7 +886,7 @@
     },
     {
       "path": "harness/scripts/utils/assess.ts",
-      "sha256": "ecdf91d61f3186e9183783d7d740f76b325c3b1aea1b996363a06c9265a6c3b8"
+      "sha256": "c5602fbd3e11268ad16ee04265bba2454567e961caa2ccd5f2d5e3b3dd220589"
     },
     {
       "path": "harness/scripts/utils/ast-analyzer.ts",
@@ -1166,7 +1166,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-reconcile-observation.ts",
-      "sha256": "e86dd11af6557f68bfa58008cf536a62b98677cc3c571696c1faf8670ae505bb"
+      "sha256": "b3d963b57368c2e77ad7937e4482d914e9ebc6b8d37b84282f2169a14fff5d9a"
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
@@ -1402,7 +1402,7 @@
     },
     {
       "path": "harness/scripts/utils/repair-candidates.ts",
-      "sha256": "0514bd8100448dce6d7fa6edb4faf135061ad3b733797c34ecc1b9f52ffcd2a6"
+      "sha256": "0be70cb17b9df1e24fa3cbccdf8e6afcf89694aca647cedb4f1b8ea028b8518e"
     },
     {
       "path": "harness/scripts/utils/report-generator.ts",
@@ -1486,7 +1486,7 @@
     },
     {
       "path": "harness/scripts/utils/types.ts",
-      "sha256": "4d2d4593da10d12f1ff660fbf284cd555f9e8428217c94ea983455df33e0519d"
+      "sha256": "018e96044c9981101d70ef97a96001725248c7dcb8e1604390ed2c6c6240a50c"
     },
     {
       "path": "harness/scripts/utils/ui-scope-gate.ts",
@@ -2270,7 +2270,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "34a9bbb229c82bac94e693750d12fd964ab23712b2a00e0103d06f9e765e42ee"
+      "sha256": "6f9f9cb008e019e55be19ffec072acdb1767cb94c7c4ad1ed9da11b9e74e9282"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -2286,7 +2286,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-ocr-gates.ts",
-      "sha256": "caf93d4b3f5935d2edfebe911dc31311716396cac0128914ad2bcf89dd5e130d"
+      "sha256": "183a1a01f01a3b94697332bd09c6f8a1937171030deb73d5961c2def64b4c123"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-targets.ts",
@@ -2506,7 +2506,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-report-template.md",
-      "sha256": "26b69fec224e8f46a41248424fdcca242995238b14560cb9a4fe13d35ec6b7a2"
+      "sha256": "dd24037409199c3841e07775e12579d562add4249967375c9ed0fcee6829efcb"
     },
     {
       "path": "profiles/hmos-app/skills/framework-init/profile-addendum.md",
@@ -2694,7 +2694,7 @@
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
-      "sha256": "d5db8448d112332d6f3c5b190340e7cb57592266b89c57f31c6297656995954c"
+      "sha256": "8b3c44e31b9bab88ff5a9b6166c0cce0e6738c16430c550cb59f9476600c175d"
     },
     {
       "path": "skills/feature/device-testing/contract.yaml",
