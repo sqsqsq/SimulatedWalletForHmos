@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "6c5b100fe77618864afcffdd8fd1526453f7a500",
-  "built_at": "2026-08-22T04:03:48.243Z",
+  "source_commit": "ee13bbf6791a9123de599d0dfb4e7f1ae2b1c15a",
+  "built_at": "2026-08-22T14:48:07.971Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "e10a9c41526c10322680a8c40534f42d1741e326ef9258ef14e4b2af1ea86ea9"
+      "sha256": "a9835b6309c59cfbabb2ec6bc797c5da063f61b3d8e39a89cdaf659d95e35f62"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -2286,7 +2286,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-ocr-gates.ts",
-      "sha256": "183a1a01f01a3b94697332bd09c6f8a1937171030deb73d5961c2def64b4c123"
+      "sha256": "77a3d6f439c5653b2510e10e6030828fba166bb8a615ab0358000063ed1b2f02"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-targets.ts",
