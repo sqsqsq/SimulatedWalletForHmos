@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidefecthelper.local/schemas/clis.schema.json",
+  "title": "Unified agent CLI registry",
+  "type": "object",
+  "required": ["schema_version", "defaults", "clis"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "defaults": {
+      "type": "object",
+      "required": ["env", "timeout"],
+      "properties": {
+        "env": { "$ref": "#/$defs/env" },
+        "timeout": { "$ref": "#/$defs/timeout" }
+      }
+    },
+    "clis": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/cli" }
+    }
+  },
+  "$defs": {
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "timeout": {
+      "type": "object",
+      "required": ["soft_sec", "hard_sec", "stop_grace_sec"],
+      "properties": {
+        "soft_sec": { "type": "number", "exclusiveMinimum": 0 },
+        "hard_sec": { "type": "number", "exclusiveMinimum": 0 },
+        "stop_grace_sec": { "type": "number", "minimum": 0 }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["args"],
+      "properties": {
+        "args": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "resume_args": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "env": { "$ref": "#/$defs/env" },
+        "timeout": { "$ref": "#/$defs/timeout" }
+      }
+    },
+    "cli": {
+      "type": "object",
+      "required": [
+        "executable", "adapter", "default_profile", "use_cwd", "profiles"
+      ],
+      "properties": {
+        "description": { "type": "string" },
+        "executable": { "type": "string", "minLength": 1 },
+        "adapter": { "type": "string", "minLength": 1 },
+        "default_profile": { "type": "string", "minLength": 1 },
+        "use_cwd": { "type": "boolean" },
+        "env": { "$ref": "#/$defs/env" },
+        "profiles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/profile" }
+        }
+      }
+    }
+  }
+}

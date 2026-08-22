@@ -1,0 +1,25 @@
+# 组合 Case：上游已拆为两个 AR，同时验证交接、共享状态、正常受限分支、失败恢复和 Plan 边界。
+#
+# AR90005 与 AR90004 同挂 SR90004（见本 Case 的 workspace/AR/detail.json），材料共享——
+# 这正是「一个需求拆成多个 AR」在材料层的样子。此前 split 分支只有单测覆盖，
+# 端到端从未跑过；本用例要证明的是拆分能一路走到产物：
+#   初析逐条核对拆分信号 → 关卡给出份表 → 契约登记 parts →
+#   design.md §1.2 出拆分表 → Story「范围、承载与协作边界」讲清三层 → review 有拆分决策。
+id: split-two-ar
+ar: AR90005
+start_phase: story
+# 跑到 plan 为止：本用例要观测的是**拆分决策如何穿过上游三层**
+# （契约 parts → design.md §1.2 → Story 范围章 → spec Scope → plan 的设计边界），
+# 到 plan 就能看全；再往下是编码，与拆分正确性无关，徒增两小时。
+end_phase: plan
+prompt: |
+  执行 /story init AR90005，按 story 技能的规则生成 AR/design.md；随后执行 /spec 完成
+  spec 阶段，产出 spec.md、AR/review.md、AR/story.md 三份产物并通过门禁。
+
+  spec 阶段闭环后继续执行 plan 阶段，按 plan 的规则产出设计物料并通过它的门禁与闭环判定。
+
+  执行要求：
+  - 一路走到 plan 阶段闭环为止；
+  - 不修改 story 技能本身、不修改 framework、不修改本工程源码，只产出该需求的文档。
+
+  结束时在最终回复中总结执行过程中遇到的规则、脚本或上下文问题。

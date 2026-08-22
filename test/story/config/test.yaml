@@ -1,0 +1,58 @@
+# story 技能观测测试配置
+#
+target:
+  # 被测模型的工作目录 = 本仓库根。相对路径一律相对仓库根解析。
+  # 与 walletkit 不同：这里**没有独立 demo 仓**，被测模型直接在本仓工作区产出
+  # doc/features/<AR>/ 下的文档。因此新链历史迁移只限该 feature 目录，绝不碰源码。
+  path: .
+  # 被测产物根。新 Story 链只迁移当前 case 对应的 feature；其它 feature 与续跑输入不动。
+  features_dir: doc/features
+
+feature_history:
+  # 新 suite 起跑前，把主工程 doc/features 全部归档到 Story-Features-<时间戳>；不恢复。
+  archive_root: 'E:\Project\bak'
+  action_on_new_chain: move
+  timestamp_format: '%Y%m%d-%H%M%S'
+
+cli:
+  # CLI runtime 随本仓交付于 tools/cli，runner 不拼 provider 参数。
+  name: opencode
+  model: bailian/deepseek-v4-flash-0731
+  profile: build
+  # 时钟按**单次 CLI run**计，不是整个用例。spec 阶段要跑 harness + verifier，
+  # 比单轮问答长得多；coding 阶段要逐文件写码并 lint，更长。
+  # 事件静默不是失败条件，不配置 idle/turn timeout。
+  soft_timeout: 2700
+  hard_timeout: 5400
+  # end_phase 越靠后，单次 run 越可能长——按目标阶段放宽硬上限。
+  # 键是 end_phase，值是该用例的 hard_timeout（秒）；未列的沿用上面的默认值。
+  # 注意这是**单次 run** 的上限，全流程的总时长是它乘以轮次。
+  phase_hard_timeout:
+    coding: 10800   # 3h：写码 + 逐文件 lint
+    review: 10800
+    ut: 10800
+    testing: 10800
+
+observation:
+  # Story 与前置交互阶段需要及时驱动；进入 spec 后转为 Goal/heartbeat 的两分钟观测。
+  interaction_interval_sec: 15
+  automation_interval_sec: 120
+  # worker 自己每 10 秒续租；控制端只在 PID 已不存在且租约超过 3 分钟时判 worker_lost。
+  # lease 大于正式观测间隔，避免一次正常的 120 秒静默被误判为失联。
+  heartbeat_sec: 10
+  lease_sec: 180
+
+startup:
+  # 首次启动严格串行；每个 Case 获得有效 run-id/worker 状态后才启动下一个。
+  max_attempts: 3
+
+gates:
+  # 被测流程实际执行的项目原生门禁；协调器只记录运行结果和诊断。
+  post_check: doc/extensions/hooks/spec/post_check.mjs
+  merge_story: doc/extensions/skills/story/scripts/merge-story.mjs
+  # 装配一致性：story.md 是否确由章节装配而来、形态是否守恒、review 议题是否与登记表一致。
+  story_build: doc/extensions/skills/story/scripts/story-build.mjs
+
+output:
+  # 相对仓库根解析，与运行时 cwd 无关。
+  dir: output/story

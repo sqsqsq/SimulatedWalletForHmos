@@ -1,0 +1,3 @@
+{"type":"system","session_id":"ses-cursor"}
+{"type":"thinking","thinking":"cursor thought"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"cursor text"},{"type":"tool_use","name":"read","input":{"filePath":"b.py"}}]}}

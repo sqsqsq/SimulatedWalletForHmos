@@ -1,0 +1,14 @@
+# 多 Case 宿主按实际停等顺序发送；不注入初始 prompt。
+replies:
+  - id: material-confirm
+    expected_turn: 1
+    expected_kind: story_gate
+    text: 材料充足，开始需求分析。
+  - id: scope-split
+    expected_turn: 2
+    expected_kind: story_gate
+    text: 这个需求本次只做其中一部分：按端侧特性切开，本单先做策略查询与创建签约，状态查询与解约交给兄弟单据；两者共享签约标识，前者未完成会阻塞后者联调和开放。
+  - id: review-feedback
+    expected_turn: 3
+    expected_kind: story_gate
+    text: 同意云侧余额作为触发真源和付款前不扣费；请修改 Story，明确开关关闭只隐藏新签约入口、不得停止既有签约；通知失败暂缓优化但不阻塞本次签约结果，记录责任人和后续处理；完成 /story review 的逐条处置并保留原意见。

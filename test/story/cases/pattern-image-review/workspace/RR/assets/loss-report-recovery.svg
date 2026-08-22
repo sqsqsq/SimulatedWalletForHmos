@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">紧急挂失页状态与恢复入口参考</title>
+  <desc id="desc">三个手机界面依次展示资格与风险确认、身份或状态冲突恢复、云侧挂失结果。</desc>
+  <rect width="960" height="420" fill="#f4f6fa"/>
+  <g font-family="Arial, sans-serif" fill="#182431">
+    <text x="40" y="42" font-size="24" font-weight="700">紧急挂失：同页完成确认、恢复与结果查看</text>
+    <g transform="translate(55 75)">
+      <rect width="240" height="310" rx="24" fill="#ffffff" stroke="#c5cfda" stroke-width="2"/>
+      <text x="24" y="42" font-size="19" font-weight="700">资格与风险确认</text>
+      <rect x="24" y="66" width="192" height="54" rx="10" fill="#eef4ff"/>
+      <text x="38" y="98" font-size="15">正在核对卡片与账号</text>
+      <rect x="24" y="140" width="192" height="74" rx="10" fill="#fff4e5"/>
+      <text x="38" y="170" font-size="14">冻结影响与数据说明</text>
+      <text x="38" y="194" font-size="14">等待用户阅读确认</text>
+      <rect x="24" y="238" width="192" height="46" rx="23" fill="#2563eb"/>
+      <text x="82" y="268" font-size="16" fill="#ffffff">确认并继续</text>
+    </g>
+    <path d="M320 230h65" stroke="#748399" stroke-width="3" marker-end="url(#arrow)"/>
+    <g transform="translate(390 75)">
+      <rect width="240" height="310" rx="24" fill="#ffffff" stroke="#c5cfda" stroke-width="2"/>
+      <text x="24" y="42" font-size="19" font-weight="700">恢复处理</text>
+      <rect x="24" y="68" width="192" height="68" rx="10" fill="#f1edff"/>
+      <text x="38" y="98" font-size="14">身份未完成：去验证</text>
+      <text x="38" y="120" font-size="13" fill="#5b6573">回跳后重新核验资格</text>
+      <rect x="24" y="154" width="192" height="86" rx="10" fill="#fff0f0"/>
+      <text x="38" y="184" font-size="14">状态冲突：先刷新云侧</text>
+      <text x="38" y="208" font-size="13" fill="#5b6573">继续 / 重确认 / 客服</text>
+      <rect x="24" y="258" width="192" height="34" rx="17" fill="#e8edf3"/>
+      <text x="80" y="281" font-size="14">安全停留并重试</text>
+    </g>
+    <path d="M655 230h65" stroke="#748399" stroke-width="3" marker-end="url(#arrow)"/>
+    <g transform="translate(725 75)">
+      <rect width="180" height="310" rx="24" fill="#ffffff" stroke="#c5cfda" stroke-width="2"/>
+      <text x="22" y="42" font-size="19" font-weight="700">云侧结果</text>
+      <circle cx="90" cy="106" r="34" fill="#dff7e7"/>
+      <path d="M74 106l11 11 22-25" fill="none" stroke="#16834a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="58" y="164" font-size="17" font-weight="700">已冻结</text>
+      <text x="28" y="199" font-size="13" fill="#5b6573">仅云侧明确确认后显示</text>
+      <rect x="22" y="228" width="136" height="42" rx="21" fill="#2563eb"/>
+      <text x="57" y="255" font-size="15" fill="#ffffff">查看详情</text>
+      <text x="37" y="296" font-size="13" fill="#8a4b16">失败时保留重试/客服</text>
+    </g>
+  </g>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#748399"/>
+    </marker>
+  </defs>
+</svg>

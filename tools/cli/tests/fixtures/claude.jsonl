@@ -1,0 +1,2 @@
+{"type":"system","session_id":"ses-claude"}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"claude thought"},{"type":"text","text":"claude text"},{"type":"tool_result","content":"tool done"}]}}

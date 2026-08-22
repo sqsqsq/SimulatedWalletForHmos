@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "env": {
+      "PYTHONUTF8": "1",
+      "PYTHONIOENCODING": "utf-8"
+    },
+    "timeout": {
+      "soft_sec": 1800,
+      "hard_sec": 3600,
+      "stop_grace_sec": 60
+    }
+  },
+  "clis": {
+    "agent": {
+      "description": "Cursor Agent CLI",
+      "executable": "agent",
+      "adapter": "cursor_agent",
+      "default_profile": "workspace_write",
+      "use_cwd": true,
+      "profiles": {
+        "readonly": {
+          "args": [
+            "--mode",
+            "plan",
+            "-p",
+            "{prompt}",
+            "--trust",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json"
+          ],
+          "resume_args": [
+            "--mode",
+            "plan",
+            "-p",
+            "--resume",
+            "{session_id}",
+            "{prompt}",
+            "--trust",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json"
+          ]
+        },
+        "workspace_write": {
+          "args": [
+            "-p",
+            "{prompt}",
+            "--force",
+            "--trust",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json"
+          ],
+          "resume_args": [
+            "-p",
+            "--resume",
+            "{session_id}",
+            "{prompt}",
+            "--force",
+            "--trust",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json"
+          ]
+        }
+      }
+    },
+    "opencode": {
+      "description": "OpenCode CLI",
+      "executable": "opencode",
+      "adapter": "opencode",
+      "default_profile": "build",
+      "use_cwd": false,
+      "env": {
+        "OC_AUTO": "1"
+      },
+      "profiles": {
+        "readonly": {
+          "args": [
+            "run",
+            "--dir",
+            "{cwd}",
+            "--agent",
+            "plan",
+            "--model",
+            "{model}",
+            "--format",
+            "json",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "run",
+            "-s",
+            "{session_id}",
+            "--dir",
+            "{cwd}",
+            "--agent",
+            "plan",
+            "--model",
+            "{model}",
+            "--format",
+            "json",
+            "{prompt}"
+          ]
+        },
+        "build": {
+          "args": [
+            "run",
+            "--dir",
+            "{cwd}",
+            "--auto",
+            "--agent",
+            "build",
+            "--model",
+            "{model}",
+            "--format",
+            "json",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "run",
+            "-s",
+            "{session_id}",
+            "--dir",
+            "{cwd}",
+            "--auto",
+            "--agent",
+            "build",
+            "--model",
+            "{model}",
+            "--format",
+            "json",
+            "{prompt}"
+          ]
+        }
+      }
+    },
+    "claude": {
+      "description": "Claude Code CLI",
+      "executable": "claude",
+      "adapter": "claude",
+      "default_profile": "workspace_write",
+      "use_cwd": true,
+      "profiles": {
+        "readonly": {
+          "args": [
+            "--print",
+            "{prompt}",
+            "--permission-mode",
+            "plan",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose"
+          ],
+          "resume_args": [
+            "--print",
+            "--resume",
+            "{session_id}",
+            "{prompt}",
+            "--permission-mode",
+            "plan",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose"
+          ]
+        },
+        "workspace_write": {
+          "args": [
+            "--print",
+            "{prompt}",
+            "--dangerously-skip-permissions",
+            "--max-budget-usd",
+            "5",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose"
+          ],
+          "resume_args": [
+            "--print",
+            "--resume",
+            "{session_id}",
+            "{prompt}",
+            "--dangerously-skip-permissions",
+            "--max-budget-usd",
+            "5",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose"
+          ]
+        }
+      }
+    },
+    "codex": {
+      "description": "OpenAI Codex CLI",
+      "executable": "codex",
+      "adapter": "codex",
+      "default_profile": "full_access",
+      "use_cwd": true,
+      "profiles": {
+        "readonly": {
+          "args": [
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "--json",
+            "--skip-git-repo-check",
+            "-m",
+            "{model}",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "--ask-for-approval",
+            "never",
+            "--sandbox",
+            "read-only",
+            "exec",
+            "resume",
+            "{session_id}",
+            "--json",
+            "--skip-git-repo-check",
+            "-m",
+            "{model}",
+            "{prompt}"
+          ]
+        },
+        "readonly_schema": {
+          "args": [
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "--json",
+            "--output-schema",
+            "{schema}",
+            "--skip-git-repo-check",
+            "-m",
+            "{model}",
+            "{prompt}"
+          ]
+        },
+        "full_access": {
+          "args": [
+            "exec",
+            "--json",
+            "--yolo",
+            "--skip-git-repo-check",
+            "-m",
+            "{model}",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "exec",
+            "resume",
+            "{session_id}",
+            "--json",
+            "--yolo",
+            "--skip-git-repo-check",
+            "-m",
+            "{model}",
+            "{prompt}"
+          ]
+        }
+      }
+    }
+  }
+}

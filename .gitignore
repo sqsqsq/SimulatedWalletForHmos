@@ -77,3 +77,8 @@ doc/features/*/ux-reference/_fidelity-cache/
 
 # Personal / local agent settings (per developer, gitignored)
 **/.cac/settings.local.json
+output/
+**.pyc
+test/story/design/
+test/story/spec/
+.bak/

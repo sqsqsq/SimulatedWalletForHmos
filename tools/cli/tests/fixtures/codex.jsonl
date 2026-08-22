@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-codex"}
+{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"codex text"}}
+{"type":"item.completed","item":{"id":"item-2","type":"command_execution","command":"python -V","aggregated_output":"Python 3","exit_code":0,"status":"completed"}}
+{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":4}}

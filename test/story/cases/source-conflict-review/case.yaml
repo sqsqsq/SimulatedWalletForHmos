@@ -1,0 +1,18 @@
+# 组合 Case：本地非 AR 单号从现有材料起手，并在同轮材料冲突处等待人工定源。
+id: source-conflict-review
+ar: ISSUE-410
+interactive: true
+start_phase: story
+end_phase: spec
+prompt: |
+  这是本地问题单 ISSUE-410，材料已经在当前需求目录中。请使用现有本地起手能力完成 Story 初始化，
+  完整阅读全部同轮材料并收口 AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、
+  AR/story.md 并完成 spec 闭环。不要要求需求系统 token。
+
+  如果材料之间存在冲突，先登记冲突并等待人工确认，不要自行选择版本。材料明确写为尚未决定的问题，
+  即使其他冲突已经解决也要保持开放，只进入 Review，不写成 Story 当前方案。不要修改
+  doc/extensions/、test/story/、framework/ 或产品源码。结束时总结实际遇到的问题。
+
+suggested_reply: |
+  产品已确认离线时也要允许打开已校验的缓存凭证；请把系统说明中的“必须联网”修正为“有可用缓存即可”，
+  保留本次冲突和处置记录，然后继续。分享按钮仍按防重入要求处理；缓存跨账号与备份迁移仍未确认，保持 open。
