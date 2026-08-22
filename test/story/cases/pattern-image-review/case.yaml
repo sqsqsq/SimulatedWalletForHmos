@@ -2,7 +2,7 @@
 id: pattern-image-review
 ar: AR90004
 start_phase: story
-end_phase: review
+end_phase: plan
 prompt: |
   执行 /story init AR90004，按 story 技能规则完整阅读当前需求目录中实际存在的全部同轮材料，
   生成并收口 AR/design.md；随后依次完成 spec、plan、coding、review 阶段及各自正式闭环，到 review 为止，

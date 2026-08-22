@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
+from phase_state import derive_phase_state
 
 
 def _configure_console() -> None:
@@ -594,7 +595,19 @@ def refresh_worker_lease(out_dir: Path, state: dict, *, force: bool = False,
     if event:
         state["last_event"] = {"name": event, "at": _clock_text(current)}
     if phase:
-        state["last_phase"] = phase
+        phase_order = ("story", *PHASE_ORDER)
+        if phase in phase_order:
+            state["last_phase"] = phase
+            state["current_phase"] = phase
+            previous = str(state.get("highest_phase_reached") or phase)
+            if previous not in phase_order:
+                previous = phase
+            state["highest_phase_reached"] = max(previous, phase,
+                                                   key=phase_order.index)
+            state["phase_source"] = "runner_hint"
+            state["phase_observed_at"] = _clock_text(current)
+    state.update(derive_phase_state(REPO_ROOT, str(state.get("feature") or ""), state,
+                                    observed_at=_clock_text(current)))
     previous = float(state.get("heartbeat_epoch") or 0)
     due = force or current - previous >= HEARTBEAT_INTERVAL_SEC
     if due:
@@ -1598,8 +1611,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                      source_transaction=result.get("source_transaction"),
                      phase_results=result.get("phase_results"),
                      phase_result_files=result.get("phase_result_files"),
-                     last_phase=end_phase,
                      last_event={"name": "run_end", "at": result["end"]})
+        state.update(derive_phase_state(REPO_ROOT, feature, state,
+                                        observed_at=result["end"]))
         write_state(out_dir, state)
         feed.emit("run_end", status=result["execution_status"],
                   exit_code=result.get("exit_code"))
@@ -1769,6 +1783,11 @@ def cmd_poll(case_id: str, cursor: int, model_cursor: int, wait_sec: int, max_ch
                     "status": status,
                     "cli_run_id": state.get("cli_run_id"),
                     "last_phase": state.get("last_phase"),
+                    "current_phase": state.get("current_phase"),
+                    "highest_phase_reached": state.get("highest_phase_reached"),
+                    "phase_source": state.get("phase_source"),
+                    "phase_observed_at": state.get("phase_observed_at"),
+                    "spec_entered_at": state.get("spec_entered_at"),
                     "last_event": state.get("last_event"),
                     "heartbeat_at": state.get("heartbeat_at"),
                     "lease_expires_at": state.get("lease_expires_at"),

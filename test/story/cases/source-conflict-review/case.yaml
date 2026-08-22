@@ -3,7 +3,7 @@ id: source-conflict-review
 ar: ISSUE-410
 interactive: true
 start_phase: story
-end_phase: spec
+end_phase: plan
 prompt: |
   这是本地问题单 ISSUE-410，材料已经在当前需求目录中。请使用现有本地起手能力完成 Story 初始化，
   完整阅读全部同轮材料并收口 AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、

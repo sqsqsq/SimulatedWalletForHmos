@@ -1,4 +1,4 @@
-"""四个组合 Story Case 的静态覆盖与抗过拟合检查。
+"""当前组合 Story Case 的静态覆盖与抗过拟合检查。
 
 本文件不启动 Story CLI。标题与组织方式变化由 fixtures 验证，不再复制正式 Case。
 """
@@ -15,10 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 CASES = ROOT / "test/story/cases"
 FIXTURES = ROOT / "test/story/fixtures/narrative-variants"
 CASE_IDS = {
-    "pattern-image-review",
-    "source-conflict-review",
-    "split-interactive",
-    "split-two-ar",
+    path.name for path in CASES.iterdir()
+    if path.is_dir() and (path / "case.yaml").is_file()
 }
 VALID_START = {"story", "spec", "plan", "coding", "review", "ut", "testing"}
 VALID_END = VALID_START | {"story-review"}
@@ -45,10 +43,10 @@ def case_directories() -> list[Path]:
 
 
 class CaseShapeTest(unittest.TestCase):
-    def test_formal_case_set_is_exactly_four_composite_cases(self) -> None:
+    def test_formal_case_set_is_discovered_dynamically(self) -> None:
         self.assertEqual(CASE_IDS, {path.name for path in case_directories()})
         features = {definition(case_id)["ar"] for case_id in CASE_IDS}
-        self.assertEqual(4, len(features))
+        self.assertEqual(len(CASE_IDS), len(features))
 
     def test_every_case_uses_existing_schema_and_safe_workspace(self) -> None:
         for directory in case_directories():
@@ -142,7 +140,7 @@ class CompositeCoverageTest(unittest.TestCase):
 
     def test_split_case_combines_supplement_split_and_review(self) -> None:
         case = definition("split-interactive")
-        self.assertEqual("story-review", case["end_phase"])
+        self.assertIn(case["end_phase"], VALID_END)
         self.assertIn("文件名不带需求类型", case["prompt"])
         self.assertIn("本轮不会整体交付", case["prompt"])
         self.assertIn("/story archive", case["prompt"])

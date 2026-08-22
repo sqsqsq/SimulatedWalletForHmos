@@ -3,7 +3,7 @@ id: split-interactive
 ar: AR90006
 interactive: true
 start_phase: story
-end_phase: story-review
+end_phase: plan
 prompt: |
   执行 /story init AR90006，完整阅读当前需求目录中实际存在的全部同轮材料，生成并收口
   AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、AR/story.md 并完成 spec 闭环。

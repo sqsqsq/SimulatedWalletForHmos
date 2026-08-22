@@ -2,7 +2,7 @@
 
 This is deliberately a coordination layer, not a second Story runner.  Each
 case keeps the immutable run directory, worker lease, phase gates, source
-transaction, interaction channel and report data owned by ``run_case.py``.
+transaction, interaction channel and execution evidence owned by ``run_case.py``.
 
 The default mode runs in the real repository and shares Framework's single
 current-phase slot.  The isolated mode copies the current project into one
@@ -52,6 +52,7 @@ _configure_console()
 
 sys.path.insert(0, str(HERE))
 import run_layout  # noqa: E402
+from phase_state import derive_phase_state  # noqa: E402
 
 
 OUT_ROOT = Path(str(CFG.get("output", {}).get("dir", "output/story")))
@@ -108,6 +109,7 @@ WORKSPACE_EXCLUDED_DIR_NAMES = {
     ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
     "node_modules", "scratch", "state",
 }
+WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES = {".git", "output", "test", "tools"}
 
 
 @dataclass(frozen=True)
@@ -194,12 +196,62 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
     write_json(suite_root / "workspace-boundary.json", {
-        "schema_version": 1,
-        "copied_paths": sorted(copied),
-        "excluded_top_level": ["output", "test", "tools", "doc/features", ".git"],
+        "schema_version": 2,
+        "copied": sorted(copied),
+        "excluded": ["output/**", "test/**", "tools/**", "doc/features/**",
+                     ".git/**", "other Case inputs", "historical suite data"],
+        "case_seeded": {},
         "created_at": now(),
     })
     return template, workspace_root
+
+
+def _case_seed_manifest(case_id: str, feature: str) -> list[dict[str, Any]]:
+    source_root = CASES_ROOT / case_id / "workspace"
+    if not source_root.is_dir():
+        return []
+    seeded: list[dict[str, Any]] = []
+    for source in sorted(source_root.rglob("*")):
+        if source.is_symlink():
+            raise SystemExit(f"[multi] Case 输入拒绝软链接: {source}")
+        if not source.is_file():
+            continue
+        relative = source.relative_to(source_root).as_posix()
+        seeded.append({
+            "source": source.relative_to(REPO_ROOT).as_posix(),
+            "target": f"doc/features/{feature}/{relative}",
+            "size": source.stat().st_size,
+        })
+    return seeded
+
+
+def _verify_workspace_boundary(workspace: Path, feature: str) -> dict[str, Any]:
+    violations: list[str] = []
+    symlinks: list[str] = []
+    for path in workspace.rglob("*"):
+        relative = path.relative_to(workspace).as_posix()
+        if path.is_symlink():
+            symlinks.append(relative)
+            continue
+        if path.is_dir() and path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
+            violations.append(relative)
+    features = workspace / "doc/features"
+    unexpected_features = []
+    if features.is_dir():
+        unexpected_features = sorted(
+            child.name for child in features.iterdir()
+            if child.name != feature
+        )
+    if symlinks or violations or unexpected_features:
+        raise RuntimeError(
+            "workspace 边界失败: "
+            f"forbidden={violations}, symlinks={symlinks}, "
+            f"other_features={unexpected_features}")
+    return {
+        "recursive_forbidden": violations,
+        "symlinks": symlinks,
+        "other_features": unexpected_features,
+    }
 
 
 def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
@@ -216,11 +268,16 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
         raise SystemExit(f"[multi] Case workspace 已存在，拒绝覆盖: {workspace}")
     workspace_root.mkdir(parents=True, exist_ok=True)
     shutil.copytree(template, workspace)
-    if (workspace / ".git").exists() or (workspace / "test").exists() \
-            or (workspace / "tools").exists() or (workspace / "output").exists():
-        raise SystemExit(f"[multi] Case workspace 越界复制了受限目录: {workspace}")
+    boundary_check = _verify_workspace_boundary(workspace, str(case["feature"]))
     case["workspace"] = str(workspace)
     case["workspace_status"] = "created"
+    case["case_seeded"] = _case_seed_manifest(
+        str(case["case"]), str(case["feature"]))
+    boundary_path = suite_root / "workspace-boundary.json"
+    boundary = read_json(boundary_path, {}) or {}
+    boundary.setdefault("case_seeded", {})[str(case["case"])] = case["case_seeded"]
+    boundary.setdefault("case_checks", {})[str(case["case"])] = boundary_check
+    write_json(boundary_path, boundary)
     case_root = suite_root / "cases" / str(case["case"])
     case_root.mkdir(parents=True, exist_ok=True)
     baseline = snapshot_workspace_sources(workspace)
@@ -448,6 +505,10 @@ def new_case_record(plan: CasePlan, target_end_phase: str | None = None) -> dict
         "cursor": 0,
         "model_cursor": 0,
         "last_phase": None,
+        "current_phase": None,
+        "highest_phase_reached": None,
+        "phase_source": None,
+        "phase_observed_at": None,
         "spec_entered_at": None,
         "awaiting_since": None,
         "source_restore_status": "not_started",
@@ -475,7 +536,10 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
     record["status"] = state.get("status") or record.get("status")
     record["run_id"] = state.get("run_id")
     record["worker_pid"] = state.get("pid")
-    record["last_phase"] = state.get("last_phase")
+    for key in ("last_phase", "current_phase", "highest_phase_reached",
+                "phase_source", "phase_observed_at", "spec_entered_at"):
+        if state.get(key) is not None:
+            record[key] = state.get(key)
     record["awaiting_since"] = state.get("awaiting_since")
     if record.get("status") == WAITING_STATUS:
         record["last_awaiting"] = {
@@ -495,6 +559,21 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
         record["status"] = "provider_rejected"
         record["failure_class"] = "provider_rejected"
     return record
+
+
+def reconcile_record_phase(record: dict[str, Any]) -> dict[str, Any]:
+    """Reconcile a suite record from its workspace without reading model prose."""
+    workspace_text = str(record.get("workspace") or "").strip()
+    if not workspace_text:
+        return {}
+    keys = ("current_phase", "highest_phase_reached", "phase_source",
+            "phase_observed_at", "last_phase", "spec_entered_at")
+    before = {key: record.get(key) for key in keys}
+    record.update(derive_phase_state(Path(workspace_text),
+                                     str(record.get("feature") or ""), record,
+                                     observed_at=now()))
+    return {key: {"before": before.get(key), "after": record.get(key)}
+            for key in keys if before.get(key) != record.get(key)}
 
 
 def suite_path(suite_id: str) -> Path:
@@ -643,6 +722,51 @@ def _process_inventory() -> tuple[bool, list[dict[str, Any]], str | None]:
     return True, rows, None
 
 
+def _clear_readonly_and_retry(function: Any, path: str, _error: Any) -> None:
+    os.chmod(path, 0o700)
+    function(path)
+
+
+def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> list[dict[str, Any]]:
+    """Remove a preflight-approved tree, recovering Windows snapshot residue."""
+    evidence: list[dict[str, Any]] = []
+    delays = (0.0, 0.15, 0.4, 0.8)
+    for attempt in range(1, attempts + 1):
+        item: dict[str, Any] = {"attempt": attempt, "at": now()}
+        inventory_ok, processes, inventory_error = _process_inventory()
+        matches = [row for row in processes if str(path).lower() in str(
+            row.get("command") or "").lower()]
+        item.update({"process_inventory_ok": inventory_ok,
+                     "process_inventory_error": inventory_error,
+                     "process_matches": matches})
+        if not inventory_ok or matches:
+            item["status"] = "blocked_process_recheck"
+            evidence.append(item)
+            raise OSError(f"删除前进程复核失败或仍有进程引用: {path}")
+        try:
+            if path.exists():
+                shutil.rmtree(path, onexc=_clear_readonly_and_retry)
+            item["status"] = "deleted"
+            item["remaining"] = []
+            evidence.append(item)
+            return evidence
+        except OSError as exc:
+            remaining = []
+            if path.exists():
+                try:
+                    remaining = [str(item.relative_to(path))
+                                 for item in list(path.rglob("*"))[-50:]]
+                except OSError:
+                    remaining = ["<enumeration-failed>"]
+            item.update({"status": "retry", "error": str(exc),
+                         "remaining": remaining})
+            evidence.append(item)
+            if attempt >= attempts:
+                raise
+            time.sleep(delays[min(attempt, len(delays) - 1)])
+    return evidence
+
+
 def _state_evidence(output_path: Path) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     if not output_path.is_dir():
@@ -769,14 +893,19 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
     errors: list[str] = []
     for target in report["targets"]:
         removed: list[str] = []
+        target["deletion_attempts"] = []
         try:
             workspace_text = target.get("workspace")
             if workspace_text and Path(workspace_text).is_dir():
-                shutil.rmtree(workspace_text)
+                attempts = _remove_tree_with_recovery(Path(workspace_text))
+                target["deletion_attempts"].append(
+                    {"path": workspace_text, "attempts": attempts})
                 removed.append(workspace_text)
             output_text = target.get("output")
             if output_text and Path(output_text).is_dir():
-                shutil.rmtree(output_text)
+                attempts = _remove_tree_with_recovery(Path(output_text))
+                target["deletion_attempts"].append(
+                    {"path": output_text, "attempts": attempts})
                 removed.append(output_text)
             target["status"] = "deleted"
             target["removed"] = removed
@@ -1075,7 +1204,8 @@ def _case_is_stably_automatic(record: dict[str, Any]) -> bool:
         return False
     if status in TERMINAL_STATUS:
         return True
-    return status == "running" and str(record.get("last_phase") or "") in PHASE_ORDER
+    current = str(record.get("current_phase") or record.get("last_phase") or "")
+    return status == "running" and current in PHASE_ORDER
 
 
 def suite_automation_ready(suite: dict[str, Any]) -> bool:
@@ -1110,15 +1240,23 @@ def update_automation_stability(suite: dict[str, Any],
         str(record["case"]): {
             "run_id": record.get("run_id"), "status": record.get("status"),
             "last_phase": record.get("last_phase"),
+            "current_phase": record.get("current_phase"),
+            "highest_phase_reached": record.get("highest_phase_reached"),
+            "phase_source": record.get("phase_source"),
             "spec_entered_at": record.get("spec_entered_at"),
             "stable": _case_is_stably_automatic(record),
         }
         for record in records
     }
     if stable:
+        confirmation_epoch = time.time()
+        previous_epoch = float(stability.get("last_confirmation_epoch") or 0)
+        if previous_epoch and confirmation_epoch - previous_epoch < INTERACTION_INTERVAL_SEC:
+            return
         stability["consecutive_confirmations"] = min(
             required, int(stability.get("consecutive_confirmations") or 0) + 1)
         stability["last_confirmation_at"] = now()
+        stability["last_confirmation_epoch"] = confirmation_epoch
         if stability["consecutive_confirmations"] >= required \
                 and not stability.get("ready_at"):
             stability["ready_at"] = now()
@@ -1128,6 +1266,7 @@ def update_automation_stability(suite: dict[str, Any],
         was_ready = bool(stability.get("ready_at"))
         stability["consecutive_confirmations"] = 0
         stability["last_confirmation_at"] = None
+        stability["last_confirmation_epoch"] = None
         stability["ready_at"] = None
         if was_ready:
             append_event(suite, "automation_stability_lost")
@@ -1152,6 +1291,11 @@ def poll_one(record: dict[str, Any], wait_sec: int, max_chars: int,
         result.update({
             "status": run.get("status"),
             "last_phase": run.get("last_phase"),
+            "current_phase": run.get("current_phase"),
+            "highest_phase_reached": run.get("highest_phase_reached"),
+            "phase_source": run.get("phase_source"),
+            "phase_observed_at": run.get("phase_observed_at"),
+            "spec_entered_at": run.get("spec_entered_at"),
             "next_cursor": payload.get("next_cursor"),
             "next_model_cursor": payload.get("next_model_cursor"),
             "awaiting_reply": payload.get("awaiting_reply"),
@@ -1167,7 +1311,8 @@ def poll_one(record: dict[str, Any], wait_sec: int, max_chars: int,
 
 
 def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
-               *, wait_for_due: bool = False) -> list[dict[str, Any]]:
+               *, wait_for_due: bool = False,
+               stability_confirmation: bool = True) -> list[dict[str, Any]]:
     records = active_records(suite)
     if not records:
         schedule_pending(suite)
@@ -1198,11 +1343,11 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                 record["model_cursor"] = result["next_model_cursor"]
             if result.get("status"):
                 record["status"] = result["status"]
-            if result.get("last_phase"):
-                record["last_phase"] = result["last_phase"]
-            if str(record.get("last_phase") or "") in PHASE_ORDER \
-                    and not record.get("spec_entered_at"):
-                record["spec_entered_at"] = now()
+            for key in ("last_phase", "current_phase", "highest_phase_reached",
+                        "phase_source", "phase_observed_at", "spec_entered_at"):
+                if result.get(key) is not None:
+                    record[key] = result[key]
+            phase_correction = reconcile_record_phase(record)
             record["last_poll_at"] = now()
             record["last_poll"] = {
                 key: value for key, value in result.items()
@@ -1223,6 +1368,10 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                 "status_before": previous_status,
                 "status_after": current_status,
                 "last_phase": result.get("last_phase"),
+                "current_phase": record.get("current_phase"),
+                "highest_phase_reached": record.get("highest_phase_reached"),
+                "phase_source": record.get("phase_source"),
+                "phase_correction": phase_correction or None,
                 "event_count": result.get("event_count"),
                 "model_count": result.get("model_count"),
                 "has_more": result.get("has_more"),
@@ -1235,6 +1384,10 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                 record["automation_observation_state"] = "completed"
                 record["next_observation_at"] = None
             elif previous_status == WAITING_STATUS and current_status in PHASE_ACTIVE_STATUS:
+                if record.get("last_reply_status") == "accepted":
+                    record["last_reply_status"] = "consumed"
+                    append_event(suite, "reply_consumed", case=record["case"],
+                                 interaction_index=record.get("interaction_index"))
                 started = time.time()
                 record["automation_observation_state"] = "observing"
                 record["automation_observation_started_at"] = now()
@@ -1250,12 +1403,21 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                     time.time() if result.get("has_more")
                     else time.time() + cadence)
             refresh_record(record)
-            if record.get("status") == WAITING_STATUS and record.get("interaction_script"):
+            post_refresh_correction = reconcile_record_phase(record)
+            if phase_correction or post_refresh_correction:
+                append_case_observation(suite, str(record["case"]), {
+                    "kind": "phase_corrected",
+                    "changes": post_refresh_correction or phase_correction,
+                    "source": record.get("phase_source"),
+                })
+            if record.get("status") == WAITING_STATUS and record.get("interaction_script") \
+                    and record.get("last_reply_status") != "accepted":
                 send_scripted_reply(record, suite)
         append_event(suite, "poll_completed",
                      cases=[result["case"] for result in results],
                      statuses={result["case"]: result.get("status") for result in results})
-        update_automation_stability(suite, results)
+        if stability_confirmation:
+            update_automation_stability(suite, results)
     schedule_pending(suite)
     return [
         {
@@ -1265,6 +1427,9 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
             "effective_phase_scope": record.get("effective_phase_scope"),
             "status": record.get("status"), "run_id": record.get("run_id"),
             "last_phase": record.get("last_phase"),
+            "current_phase": record.get("current_phase"),
+            "highest_phase_reached": record.get("highest_phase_reached"),
+            "phase_source": record.get("phase_source"),
             "awaiting_since": record.get("awaiting_since"),
             "execution_status": record.get("execution_status"),
             "source_restore_status": record.get("source_restore_status"),
@@ -1298,6 +1463,7 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
         counts[status] = counts.get(status, 0) + 1
     return {
         "suite_id": suite["suite_id"],
+        "selected_case_count": len(suite.get("case_states", {})),
         "status": suite.get("status"),
         "jobs": suite["jobs"],
         "workspace": str(REPO_ROOT),
@@ -1322,6 +1488,10 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "effective_phase_scope": record.get("effective_phase_scope"),
                 "status": record.get("status"), "run_id": record.get("run_id"),
                 "last_phase": record.get("last_phase"),
+                "current_phase": record.get("current_phase"),
+                "highest_phase_reached": record.get("highest_phase_reached"),
+                "phase_source": record.get("phase_source"),
+                "phase_observed_at": record.get("phase_observed_at"),
                 "spec_entered_at": record.get("spec_entered_at"),
                 "awaiting_since": record.get("awaiting_since"),
                 "execution_status": record.get("execution_status"),
@@ -1425,6 +1595,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
             "required_confirmations": 2,
             "consecutive_confirmations": 0,
             "last_confirmation_at": None,
+            "last_confirmation_epoch": None,
             "ready_at": None,
             "cases": {},
         },
@@ -1497,13 +1668,13 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
             workspace_paths.add(str(workspace))
             if len(str(workspace)) > 180:
                 raise RuntimeError(f"workspace 路径过长: {workspace}")
-            forbidden = [name for name in ("output", "test", "tools", ".git")
-                         if (workspace / name).exists()]
-            if forbidden:
-                raise RuntimeError(f"workspace 含受限目录: {workspace}: {forbidden}")
+            boundary = _verify_workspace_boundary(
+                workspace, str(record["feature"]))
             record["workspace_status"] = "preflight_pass"
             checks["cases"].append({"case": record["case"], "ar": record["feature"],
-                                     "workspace": str(workspace), "status": "pass"})
+                                     "workspace": str(workspace), "status": "pass",
+                                     "boundary": boundary,
+                                     "case_seeded": record.get("case_seeded", [])})
         checks["status"] = "pass"
         checks["checked_at"] = now()
         append_event(suite, "preflight_pass", cases=checks["cases"])
@@ -1518,8 +1689,127 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
     save_suite(path / "suite.json", suite)
 
 
+def adaptive_requests(suite: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{
+        "case": record.get("case"), "feature": record.get("feature"),
+        "run_id": record.get("run_id"), **(record.get("last_adaptive_request") or {}),
+    } for record in suite.get("case_states", {}).values()
+        if record.get("status") == WAITING_STATUS
+        and record.get("interaction_state") == "adaptive_reply_required"]
+
+
+def settle_scripted_interactions(suite: dict[str, Any], max_chars: int) -> None:
+    limit = sum(len(record.get("interaction_script") or [])
+                for record in suite.get("case_states", {}).values()) + len(
+                    suite.get("case_states", {})) + 2
+    for _ in range(max(2, limit)):
+        waiting = [record for record in suite.get("case_states", {}).values()
+                   if record.get("status") == WAITING_STATUS]
+        if not waiting or adaptive_requests(suite):
+            return
+        if any(record.get("last_reply_status") == "rejected" for record in waiting):
+            return
+        poll_suite(suite, 0, max_chars, stability_confirmation=False)
+
+
+def interaction_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    names = {"scripted_reply_accepted", "scripted_reply_rejected", "reply_consumed",
+             "adaptive_reply_required"}
+    return [event for event in events if event.get("name") in names]
+
+
+def progress_snapshot(suite: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Capture only user-visible Case progress fields for deterministic diffs."""
+    return {
+        str(record["case"]): {
+            "status": record.get("status"),
+            "last_phase": record.get("last_phase"),
+            "current_phase": record.get("current_phase"),
+            "highest_phase_reached": record.get("highest_phase_reached"),
+            "phase_source": record.get("phase_source"),
+            "interaction_state": record.get("interaction_state"),
+            "reply_status": record.get("last_reply_status"),
+            "last_error": record.get("last_error"),
+            "spec_entered_at": record.get("spec_entered_at"),
+        }
+        for record in suite.get("case_states", {}).values()
+    }
+
+
+def progress_changes(before: dict[str, dict[str, Any]],
+                     suite: dict[str, Any],
+                     interactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    after = progress_snapshot(suite)
+    changes: list[dict[str, Any]] = []
+    for case_id in dict.fromkeys((*before.keys(), *after.keys())):
+        old = before.get(case_id, {})
+        new = after.get(case_id, {})
+        fields = {
+            key: {"before": old.get(key), "after": new.get(key)}
+            for key in dict.fromkeys((*old.keys(), *new.keys()))
+            if old.get(key) != new.get(key)
+        }
+        if fields:
+            changes.append({"kind": "case_progress", "case": case_id,
+                            "fields": fields})
+    changes.extend({"kind": "interaction", **event} for event in interactions)
+    return changes
+
+
+def control_payload(suite: dict[str, Any], *,
+                    interactions: list[dict[str, Any]] | None = None,
+                    changes: list[dict[str, Any]] | None = None,
+                    read_only: bool = False) -> dict[str, Any]:
+    records = list(suite.get("case_states", {}).values())
+    terminal = str(suite.get("status") or "") in {"finished", "failed", "stopped"}
+    adaptive = adaptive_requests(suite)
+    if terminal:
+        next_action = "finalize"
+    elif adaptive:
+        next_action = "reply_then_poll"
+    else:
+        next_action = "poll_after_interval"
+    next_interval_sec = None if terminal else (
+        AUTOMATION_INTERVAL_SEC if suite_automation_ready(suite)
+        else INTERACTION_INTERVAL_SEC)
+    stability = suite.get("automation_stability") or {}
+    change_list = changes or []
+    return {
+        "suite_id": suite.get("suite_id"), "suite_status": suite.get("status"),
+        "suite_terminal": terminal, "selected_case_count": len(records),
+        "cases": [{
+            "case": record.get("case"), "feature": record.get("feature"),
+            "run_id": record.get("run_id"), "status": record.get("status"),
+            "last_phase": record.get("last_phase"),
+            "current_phase": record.get("current_phase"),
+            "highest_phase_reached": record.get("highest_phase_reached"),
+            "phase_source": record.get("phase_source"),
+            "phase_observed_at": record.get("phase_observed_at"),
+            "event_count": (record.get("last_poll") or {}).get("event_count"),
+            "model_count": (record.get("last_poll") or {}).get("model_count"),
+            "interaction_state": record.get("interaction_state"),
+            "reply_status": record.get("last_reply_status"),
+            "observation_count": record.get("observation_count", 0),
+            "last_error": record.get("last_error"),
+        } for record in records],
+        "interactions": interactions or [],
+        "adaptive_reply_requests": adaptive,
+        "progress_changed": bool(change_list),
+        "changes": change_list,
+        "automation_stability": {
+            "required_confirmations": stability.get("required_confirmations", 2),
+            "consecutive_confirmations": stability.get("consecutive_confirmations", 0),
+            "last_confirmation_at": stability.get("last_confirmation_at"),
+            "ready_at": stability.get("ready_at"),
+        },
+        "next_interval_sec": next_interval_sec,
+        "next_action": next_action,
+        "read_only": read_only,
+    }
+
+
 def print_summary(suite: dict[str, Any]) -> None:
-    print(json.dumps(summary(suite), ensure_ascii=False, indent=2))
+    print(json.dumps(summary(suite), ensure_ascii=False, indent=2), flush=True)
 
 
 def command_plan(plans: list[CasePlan], jobs: int,
@@ -1575,7 +1865,7 @@ def command_start(plans: list[CasePlan], suite_id: str, jobs: int,
     schedule_pending(suite)
     suite["status"] = finalize_suite_status(suite)
     save_suite(path / "suite.json", suite)
-    print_summary(suite)
+    print(json.dumps(control_payload(suite), ensure_ascii=False, indent=2), flush=True)
     return 0
 
 
@@ -1584,20 +1874,35 @@ def command_poll(suite_id: str, wait_sec: int, max_chars: int) -> int:
         raise SystemExit("[multi] --wait-sec 必须 >= 0，--max-chars 必须 > 0")
     path, suite = load_suite(suite_id)
     if suite.get("status") in {"finished", "failed", "stopped"}:
-        print_summary(suite)
+        print(json.dumps(control_payload(suite), ensure_ascii=False, indent=2), flush=True)
         return 0 if suite.get("status") == "finished" else 2
+    before = progress_snapshot(suite)
+    event_cursor = len(suite.get("events", []))
     poll_suite(suite, wait_sec, max_chars)
+    settle_scripted_interactions(suite, max_chars)
     suite["status"] = finalize_suite_status(suite)
     save_suite(path / "suite.json", suite)
-    print_summary(suite)
+    events = list(suite.get("events", []))[event_cursor:]
+    interactions = interaction_events(events)
+    changes = progress_changes(before, suite, interactions)
+    print(json.dumps(control_payload(
+        suite, interactions=interactions, changes=changes),
+        ensure_ascii=False, indent=2), flush=True)
     return 0
 
 
 def command_status(suite_id: str) -> int:
     path, suite = load_suite(suite_id)
     del path
+    # Read-only view: derive current evidence in memory, never save suite/state or
+    # advance cursors, observations, interactions, or stability confirmations.
     suite["status"] = finalize_suite_status(suite)
-    print_summary(suite)
+    for record in suite.get("case_states", {}).values():
+        reconcile_record_phase(record)
+    payload = summary(suite)
+    payload["read_only"] = True
+    payload["driver_hint"] = "status 不消费事件或发送回复；正式驱动使用 start 后连续 poll"
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
     return 0
 
 
@@ -1710,6 +2015,17 @@ def _copy_file_with_backup(source: Path, destination: Path,
     })
 
 
+def _tree_digest(root: Path) -> str | None:
+    if not root.is_dir():
+        return None
+    files: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            files[path.relative_to(root).as_posix()] = hashlib.sha256(
+                path.read_bytes()).hexdigest()
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Archive and promote every terminal Case with a retained workspace."""
     workspace = Path(str(record.get("workspace") or "")).resolve()
@@ -1757,39 +2073,75 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
         write_json(case_root / "promotion-manifest.json", result)
         return result
 
-    main_baseline = suite.get("main_source_baseline") or {}
-    current_main = snapshot_workspace_sources(REPO_ROOT)
-    if main_baseline.get("digest") and current_main.get("digest") != main_baseline.get("digest"):
-        result = {"status": "main_workspace_drift", "accepted": False, **evidence}
-        write_json(case_root / "promotion-manifest.json", result)
-        return result
-
     promotion_backup = Path(str(suite["bundle_root"])) / "backup" / "promotion" \
         / str(record["case"])
     promoted: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    already_promoted: list[dict[str, Any]] = []
+
+    # Feature documents are independent Case outputs.  They must not be blocked
+    # by source changes promoted by an earlier Case in the same finalize batch.
     feature_source = workspace / "doc" / "features" / str(record["feature"])
     feature_destination = FEATURES_ROOT / str(record["feature"])
     if feature_source.is_dir():
-        if feature_destination.exists():
-            backup = promotion_backup / "doc-features" / str(record["feature"])
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(feature_destination), str(backup))
-        shutil.copytree(feature_source, feature_destination)
-        promoted.append({"kind": "feature", "source": str(feature_source),
-                         "destination": str(feature_destination)})
+        source_digest = _tree_digest(feature_source)
+        destination_digest = _tree_digest(feature_destination)
+        feature_item = {"kind": "feature", "source": str(feature_source),
+                        "destination": str(feature_destination),
+                        "sha256": source_digest}
+        if destination_digest == source_digest:
+            already_promoted.append(feature_item)
+        elif feature_destination.exists():
+            conflicts.append({**feature_item, "reason": "feature_destination_conflict",
+                              "destination_sha256": destination_digest})
+        else:
+            shutil.copytree(feature_source, feature_destination)
+            promoted.append(feature_item)
+
+    # Source promotion uses a per-file three-way check.  This accepts the suite
+    # baseline, is idempotent when a prior finalize already wrote the same file,
+    # and rejects only a genuinely divergent destination.
+    main_baseline_files = (suite.get("main_source_baseline") or {}).get("files", {})
+    current_main_files = snapshot_workspace_sources(REPO_ROOT).get("files", {})
     for relative in changed:
         source = workspace / relative
-        if source.is_file():
-            destination = REPO_ROOT / relative
+        if not source.is_file():
+            continue
+        destination = REPO_ROOT / relative
+        baseline_value = main_baseline_files.get(relative)
+        destination_value = current_main_files.get(relative)
+        source_value = after_files.get(relative)
+        if destination_value == source_value:
+            already_promoted.append({"kind": "source", "relative": relative,
+                                     "destination": str(destination),
+                                     "sha256": source_value.get("sha256")})
+        elif destination_value == baseline_value:
             _copy_file_with_backup(source, destination, promotion_backup / "source", relative,
                                    promoted)
-    result = {"status": "promoted", "accepted": True,
+            current_main_files[relative] = source_value
+        else:
+            conflicts.append({"kind": "source", "relative": relative,
+                              "destination": str(destination),
+                              "reason": "source_destination_conflict",
+                              "baseline": baseline_value,
+                              "destination_state": destination_value,
+                              "case_state": source_value})
+
+    if conflicts:
+        status = "partial_promotion_conflict" if promoted or already_promoted \
+            else "promotion_conflict"
+    elif promoted:
+        status = "promoted"
+    else:
+        status = "already_promoted"
+    result = {"status": status, "accepted": not conflicts,
               "case_status": record.get("status"),
               "execution_status": record.get("execution_status"),
               **evidence,
-              "promoted": promoted, "promoted_at": now()}
+              "promoted": promoted, "already_promoted": already_promoted,
+              "conflicts": conflicts, "promoted_at": now()}
     write_json(case_root / "promotion-manifest.json", result)
-    record["promotion_status"] = "promoted"
+    record["promotion_status"] = status
     return result
 
 
@@ -1850,56 +2202,10 @@ def command_finalize(suite_id: str, promote: bool, cleanup: bool) -> int:
     return 0
 
 
-def command_run(plans: list[CasePlan], suite_id: str, jobs: int,
-                wait_sec: int, max_chars: int,
-                base_end_phase: str | None = None,
-                continue_case: str | None = None,
-                continue_end_phase: str | None = None,
-                non_sandbox_authorized: bool = False,
-                isolated_workspaces: bool = False,
-                preserve_current_features: bool = False) -> int:
-    path, suite = create_suite(plans, suite_id, jobs, base_end_phase,
-                               continue_case, continue_end_phase,
-                               non_sandbox_authorized,
-                                isolated_workspaces,
-                                preserve_current_features)
-    prepare_suite_preflight(path, suite)
-    schedule_pending(suite)
-    save_suite(path / "suite.json", suite)
-    try:
-        while True:
-            suite["status"] = finalize_suite_status(suite)
-            if suite["status"] in {"finished", "failed"}:
-                save_suite(path / "suite.json", suite)
-                print_summary(suite)
-                return 0 if suite["status"] == "finished" else 2
-            scripted_pending = any(
-                record.get("status") == WAITING_STATUS
-                and int(record.get("interaction_index") or 0)
-                    < len(record.get("interaction_script") or [])
-                for record in suite["case_states"].values())
-            if suite["status"] == "awaiting_reply" and not scripted_pending and not any(
-                    record.get("status") in PHASE_ACTIVE_STATUS
-                    for record in suite["case_states"].values()):
-                save_suite(path / "suite.json", suite)
-                print_summary(suite)
-                return 4
-            poll_suite(suite, wait_sec, max_chars, wait_for_due=True)
-            suite["status"] = finalize_suite_status(suite)
-            save_suite(path / "suite.json", suite)
-    except KeyboardInterrupt:
-        # Do not stop workers implicitly.  The suite remains resumable through
-        # poll/reply/stop and the per-case worker state stays authoritative.
-        suite["status"] = finalize_suite_status(suite)
-        append_event(suite, "coordinator_interrupted")
-        save_suite(path / "suite.json", suite)
-        print_summary(suite)
-        return 130
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("plan", "start", "poll", "status", "reply", "stop", "run", "finalize"))
+    parser.add_argument("command", choices=("plan", "start", "poll", "status",
+                                            "reply", "stop", "finalize"))
     parser.add_argument("case_ids", nargs="*")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
@@ -1915,7 +2221,7 @@ def main() -> int:
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
                         default="manual")
     parser.add_argument("--reason", default="")
-    parser.add_argument("--wait-sec", type=int, default=120)
+    parser.add_argument("--wait-sec", type=int, default=15)
     parser.add_argument("--max-chars", type=int, default=200000)
     parser.add_argument("--authorize-non-sandbox", action="store_true",
                         help="记录宿主模型已获授权在非沙箱环境启动本轮外层协调器")
@@ -1930,7 +2236,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    if args.command in {"plan", "start", "run"}:
+    if args.command in {"plan", "start"}:
         plans = select_cases(args.case_ids, args.all)
         base_end_phase = args.end_phase or None
         continue_case = args.continue_case or None
@@ -1940,17 +2246,11 @@ def main() -> int:
                                 continue_case, continue_end_phase,
                                 args.isolated_workspaces)
         suite_id = args.suite_id or datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
-        if args.command == "start":
-            return command_start(plans, suite_id, args.jobs, base_end_phase,
-                                 continue_case, continue_end_phase,
-                                 args.authorize_non_sandbox,
-                                 args.isolated_workspaces,
-                                 args.preserve_current_features)
-        return command_run(plans, suite_id, args.jobs, args.wait_sec, args.max_chars,
-                           base_end_phase, continue_case, continue_end_phase,
-                           args.authorize_non_sandbox,
-                           args.isolated_workspaces,
-                           args.preserve_current_features)
+        return command_start(plans, suite_id, args.jobs, base_end_phase,
+                             continue_case, continue_end_phase,
+                             args.authorize_non_sandbox,
+                             args.isolated_workspaces,
+                             args.preserve_current_features)
 
     if not args.suite_id:
         raise SystemExit(f"[multi] {args.command} 必须提供 --suite-id")

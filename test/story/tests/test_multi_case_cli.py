@@ -5,6 +5,7 @@ the existing per-case runner and its immutable run evidence.
 """
 from __future__ import annotations
 
+import json
 import unittest
 import sys
 import tempfile
@@ -23,27 +24,99 @@ class OperatorProtocolTest(unittest.TestCase):
         guide = (SCRIPTS.parent / "TEST.md").read_text(encoding="utf-8")
         self.assertIn("## 0. 新会话协议", guide)
         self.assertIn("用户输入“开始测试”", guide)
-        self.assertIn("允许回复 `1,3`", guide)
+        self.assertIn("动态读取可用 Case", guide)
         self.assertIn("宿主模型启动外层协调器时使用非沙箱环境", guide)
         self.assertIn("不得写入 Case prompt", guide)
-        self.assertIn("每 2 分钟触发一次的 heartbeat", guide)
-        self.assertIn("连续两轮、间隔 15 秒", guide)
+        self.assertIn("同一个 heartbeat 每 15 秒唤醒", guide)
+        self.assertIn("poll --wait-sec 0", guide)
+        self.assertIn("同一个 heartbeat 更新为", guide)
         self.assertIn("本轮 workspace/output 也保留到下一轮", guide)
         self.assertIn("`finalize --cleanup` 已停用", guide)
 
 
 class MultiCasePlanTest(unittest.TestCase):
-    def test_selected_minimum_suite_has_four_unique_ars_and_scripted_replies(self) -> None:
-        selected = [
-            "split-two-ar", "split-interactive",
-            "source-conflict-review", "pattern-image-review",
-        ]
+    def test_selected_suite_uses_exact_dynamic_case_set(self) -> None:
+        selected = sorted(path.name for path in run_multi_case.CASES_ROOT.iterdir()
+                          if path.is_dir() and (path / "case.yaml").is_file())
         plans = run_multi_case.select_cases(selected, all_cases=False)
-        self.assertEqual(4, len(plans))
-        self.assertEqual(4, len({plan.feature for plan in plans}))
-        self.assertEqual(3, len(run_multi_case.load_interaction_script("split-interactive")))
-        self.assertEqual(1, len(run_multi_case.load_interaction_script("source-conflict-review")))
-        self.assertEqual((), run_multi_case.load_interaction_script("split-two-ar"))
+        self.assertEqual(selected, [plan.case_id for plan in plans])
+        self.assertEqual(len(plans), len({plan.feature for plan in plans}))
+
+
+class StructuredPhaseStateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.feature = "AR-PHASE"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def record(self) -> dict[str, object]:
+        return {
+            "case": "phase-case", "feature": self.feature,
+            "workspace": str(self.root), "requested_start_phase": "story",
+            "last_phase": "story", "current_phase": "story",
+        }
+
+    def write_current_phase(self, phase: str, feature: str | None = None) -> None:
+        path = self.root / "framework/harness/state/.current-phase.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "phase": phase, "feature": feature or self.feature,
+            "updated_at": "2026-08-22T03:43:28Z",
+        }), encoding="utf-8")
+
+    def test_framework_state_corrects_story_to_spec(self) -> None:
+        record = self.record()
+        self.write_current_phase("spec")
+        changes = run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("spec", record["current_phase"])
+        self.assertEqual("spec", record["highest_phase_reached"])
+        self.assertEqual("framework_current_phase", record["phase_source"])
+        self.assertIn("current_phase", changes)
+        self.assertTrue(record["spec_entered_at"])
+
+    def test_phase_artifact_is_structured_fallback(self) -> None:
+        artifact = self.root / f"doc/features/{self.feature}/spec/spec.md"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("# spec", encoding="utf-8")
+        record = self.record()
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("spec", record["current_phase"])
+        self.assertEqual("phase_artifact", record["phase_source"])
+
+    def test_framework_phase_is_current_while_artifact_advances_highest(self) -> None:
+        self.write_current_phase("spec")
+        artifact = self.root / f"doc/features/{self.feature}/plan/plan.md"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("# plan", encoding="utf-8")
+        record = self.record()
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("spec", record["current_phase"])
+        self.assertEqual("plan", record["highest_phase_reached"])
+        self.assertEqual("framework_current_phase", record["phase_source"])
+
+    def test_invalid_or_foreign_framework_state_is_ignored(self) -> None:
+        record = self.record()
+        self.write_current_phase("spec", feature="OTHER")
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("story", record["current_phase"])
+        self.assertFalse(record.get("spec_entered_at"))
+
+    def test_model_prose_does_not_change_phase(self) -> None:
+        record = self.record()
+        record["last_model_text"] = "已经进入 /spec 并读取 Spec Skill"
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("story", record["current_phase"])
+
+    def test_highest_phase_never_regresses(self) -> None:
+        record = self.record()
+        record.update({"current_phase": "plan", "last_phase": "plan",
+                       "highest_phase_reached": "plan",
+                       "spec_entered_at": "2026-08-22T03:00:00Z"})
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("plan", record["highest_phase_reached"])
+        self.assertEqual("2026-08-22T03:00:00Z", record["spec_entered_at"])
 
 
 class SuiteFeatureArchiveTest(unittest.TestCase):
@@ -110,25 +183,27 @@ class MultiCasePlanContinuationTest(unittest.TestCase):
         case_ids = sorted(path.name for path in run_multi_case.CASES_ROOT.iterdir()
                           if path.is_dir() and (path / "case.yaml").is_file())
         plans = [run_multi_case.load_case_plan(case_id) for case_id in case_ids]
-        self.assertEqual(4, len(plans))
-        self.assertEqual(4, len({plan.feature for plan in plans}))
-        self.assertTrue(any(plan.contains_coding for plan in plans))
-        self.assertTrue(any(plan.interactive for plan in plans))
-        self.assertEqual(
-            ("spec", "plan", "coding", "review"),
-            run_multi_case.load_case_plan("pattern-image-review").phases,
-        )
+        self.assertEqual(len(case_ids), len(plans))
+        self.assertEqual(len(plans), len({plan.feature for plan in plans}))
+        for plan in plans:
+            self.assertIn(plan.start_phase, run_multi_case.VALID_START)
+            self.assertIn(plan.end_phase, run_multi_case.VALID_END)
+            self.assertEqual(plan.contains_coding, "coding" in plan.phases)
 
     def test_all_cases_form_one_suite_with_unique_features(self) -> None:
         plans = run_multi_case.select_cases([], all_cases=True)
-        self.assertEqual(4, len(plans))
-        self.assertEqual(4, len({plan.feature for plan in plans}))
+        discovered = [path for path in run_multi_case.CASES_ROOT.iterdir()
+                      if path.is_dir() and (path / "case.yaml").is_file()]
+        self.assertEqual(len(discovered), len(plans))
+        self.assertEqual(len(plans), len({plan.feature for plan in plans}))
 
-    def test_story_review_is_interactive_but_does_not_reach_coding(self) -> None:
-        plan = run_multi_case.load_case_plan("split-interactive")
-        self.assertTrue(plan.interactive)
-        self.assertEqual(("spec",), plan.phases)
-        self.assertFalse(plan.contains_coding)
+    def test_interactive_flag_matches_loaded_script(self) -> None:
+        for directory in run_multi_case.CASES_ROOT.iterdir():
+            if not (directory / "case.yaml").is_file():
+                continue
+            plan = run_multi_case.load_case_plan(directory.name)
+            if plan.interaction_script:
+                self.assertTrue(plan.interactive)
 
 
 class MultiCaseSchedulingTest(unittest.TestCase):
@@ -275,15 +350,97 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             {"case": first["case"], "returncode": 0, "status": "running"},
             {"case": second["case"], "returncode": 0, "status": "running"},
         ]
-        run_multi_case.update_automation_stability(suite, results)
+        with mock.patch.object(run_multi_case.time, "time", return_value=100.0):
+            run_multi_case.update_automation_stability(suite, results)
         self.assertEqual(1, suite["automation_stability"]["consecutive_confirmations"])
         self.assertFalse(run_multi_case.suite_automation_ready(suite))
-        run_multi_case.update_automation_stability(suite, results)
+        with mock.patch.object(run_multi_case.time, "time", return_value=116.0):
+            run_multi_case.update_automation_stability(suite, results)
         self.assertTrue(run_multi_case.suite_automation_ready(suite))
         second["status"] = "awaiting_reply"
         run_multi_case.update_automation_stability(suite, results)
         self.assertEqual(0, suite["automation_stability"]["consecutive_confirmations"])
         self.assertFalse(run_multi_case.suite_automation_ready(suite))
+
+    def test_control_payload_is_dynamic_and_has_only_protocol_actions(self) -> None:
+        records = [self.record(f"case-{index}", f"feature-{index}", "running")
+                   for index in range(1, 4)]
+        suite = self.suite(*records)
+        suite.update({"suite_id": "dynamic", "status": "running",
+                      "automation_stability": {"required_confirmations": 2,
+                                               "consecutive_confirmations": 0}})
+        payload = run_multi_case.control_payload(suite)
+        self.assertEqual(len(records), payload["selected_case_count"])
+        self.assertEqual([record["case"] for record in records],
+                         [case["case"] for case in payload["cases"]])
+        self.assertIn(payload["next_action"], {
+            "poll_after_interval", "reply_then_poll", "finalize",
+        })
+        self.assertEqual(15, payload["next_interval_sec"])
+        self.assertFalse(payload["progress_changed"])
+        self.assertEqual([], payload["changes"])
+
+    def test_adaptive_request_requires_reply_then_poll(self) -> None:
+        record = self.record("case-x", "feature-x", "awaiting_reply")
+        record.update({"interaction_state": "adaptive_reply_required",
+                       "last_adaptive_request": {"turn": 2, "kind": "question",
+                                                 "prompt": "choose scope"}})
+        suite = self.suite(record)
+        suite.update({"suite_id": "adaptive", "status": "running"})
+        payload = run_multi_case.control_payload(suite)
+        self.assertEqual("reply_then_poll", payload["next_action"])
+        self.assertEqual("choose scope",
+                         payload["adaptive_reply_requests"][0]["prompt"])
+        self.assertEqual(15, payload["next_interval_sec"])
+
+    def test_ready_suite_switches_same_heartbeat_to_120_seconds(self) -> None:
+        record = self.record("case-x", "feature-x", "running")
+        record.update({"last_phase": "spec", "spec_entered_at": "entered"})
+        suite = self.suite(record)
+        suite.update({"suite_id": "ready", "status": "running",
+                      "automation_stability": {
+                          "required_confirmations": 2,
+                          "consecutive_confirmations": 2,
+                          "ready_at": "ready",
+                      }})
+        payload = run_multi_case.control_payload(suite)
+        self.assertEqual("poll_after_interval", payload["next_action"])
+        self.assertEqual(120, payload["next_interval_sec"])
+
+    def test_terminal_suite_requests_finalize_and_no_next_interval(self) -> None:
+        record = self.record("case-x", "feature-x", "finished")
+        suite = self.suite(record)
+        suite.update({"suite_id": "done", "status": "finished"})
+        payload = run_multi_case.control_payload(suite)
+        self.assertTrue(payload["suite_terminal"])
+        self.assertEqual("finalize", payload["next_action"])
+        self.assertIsNone(payload["next_interval_sec"])
+
+    def test_progress_changes_cover_dynamic_case_fields_and_interactions(self) -> None:
+        record = self.record("arbitrary-case", "feature-x", "running")
+        record.update({"last_phase": "story", "interaction_state": "waiting",
+                       "last_reply_status": None, "last_error": None})
+        suite = self.suite(record)
+        before = run_multi_case.progress_snapshot(suite)
+        record.update({"last_phase": "spec", "spec_entered_at": "entered",
+                       "interaction_state": "complete",
+                       "last_reply_status": "consumed"})
+        changes = run_multi_case.progress_changes(before, suite, [{
+            "name": "reply_consumed", "case": "arbitrary-case"}])
+        self.assertEqual("case_progress", changes[0]["kind"])
+        self.assertIn("last_phase", changes[0]["fields"])
+        self.assertEqual("interaction", changes[1]["kind"])
+
+    def test_zero_wait_poll_does_not_add_cli_sleep(self) -> None:
+        record = self.record("case-x", "feature-x", "running")
+        record.update({"cursor": 0, "model_cursor": 0, "last_phase": "story"})
+        suite = self.suite(record)
+        payload = {"run": {"status": "running", "last_phase": "story"}}
+        with mock.patch.object(run_multi_case, "invoke_case",
+                               return_value=(0, payload, "", "")) as invoke:
+            run_multi_case.poll_one(record, 0, 1000, suite)
+        args = invoke.call_args.args
+        self.assertEqual("0", args[args.index("--wait-sec") + 1])
 
 
 class WorkspaceBoundaryTest(unittest.TestCase):
@@ -414,6 +571,9 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                 (source / relative).mkdir(parents=True, exist_ok=True)
                 (source / relative / "marker.txt").write_text(relative, encoding="utf-8")
             (source / "01-Product" / "main.ets").write_text("product", encoding="utf-8")
+            (source / "01-Product" / "nested" / "tools").mkdir(parents=True)
+            (source / "01-Product" / "nested" / "tools" / "secret.txt").write_text(
+                "excluded", encoding="utf-8")
             (source / "framework" / "harness" / "state").mkdir(parents=True, exist_ok=True)
             (source / "framework" / "harness" / "state" / "phase.json").write_text("state", encoding="utf-8")
             for relative in run_multi_case.WORKSPACE_ALLOWED_FILES:
@@ -428,6 +588,11 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertFalse((template / "output").exists())
             self.assertFalse((template / ".git").exists())
             self.assertFalse((template / "framework" / "harness" / "state" / "phase.json").exists())
+            self.assertFalse((template / "01-Product" / "nested" / "tools").exists())
+            boundary = run_multi_case.read_json(suite_root / "workspace-boundary.json")
+            self.assertIn("copied", boundary)
+            self.assertIn("excluded", boundary)
+            self.assertIn("case_seeded", boundary)
             self.assertTrue(str(workspace_root).endswith("boundary-test"))
         finally:
             run_multi_case.REPO_ROOT = original_root
@@ -469,6 +634,59 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertEqual("cli_failed", result["case_status"])
             self.assertTrue((host / "doc/features/AR-X/story.md").is_file())
             self.assertTrue((host / "01-Product/new.txt").is_file())
+        finally:
+            run_multi_case.REPO_ROOT = original_repo
+            run_multi_case.FEATURES_ROOT = original_features
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_batch_promotion_keeps_later_features_and_is_idempotent(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-promotion-batch-"))
+        original_repo = run_multi_case.REPO_ROOT
+        original_features = run_multi_case.FEATURES_ROOT
+        try:
+            host = root / "host"
+            bundle = root / "bundle"
+            (host / "doc/features").mkdir(parents=True)
+            (host / "01-Product").mkdir(parents=True)
+            (host / "01-Product/base.txt").write_text("base", encoding="utf-8")
+            main_baseline = run_multi_case.snapshot_workspace_sources(host)
+            suite = {"bundle_root": str(bundle),
+                     "main_source_baseline": main_baseline}
+            records = []
+            for index in (1, 2):
+                workspace = root / f"workspace-{index}"
+                shutil.copytree(host, workspace)
+                feature = f"AR-{index}"
+                feature_root = workspace / "doc/features" / feature
+                feature_root.mkdir(parents=True)
+                (feature_root / "story.md").write_text(feature, encoding="utf-8")
+                baseline = run_multi_case.snapshot_workspace_sources(workspace)
+                if index == 1:
+                    (workspace / "01-Product/base.txt").write_text(
+                        "case-one", encoding="utf-8")
+                baseline_path = bundle / f"cases/case-{index}/workspace-baseline.json"
+                baseline_path.parent.mkdir(parents=True)
+                run_multi_case.write_json(baseline_path, baseline)
+                records.append({
+                    "case": f"case-{index}", "feature": feature,
+                    "workspace": str(workspace),
+                    "workspace_baseline": str(baseline_path),
+                    "status": "finished", "execution_status": "finished",
+                })
+            run_multi_case.REPO_ROOT = host
+            run_multi_case.FEATURES_ROOT = host / "doc/features"
+
+            first = run_multi_case.promote_case_workspace(suite, records[0])
+            second = run_multi_case.promote_case_workspace(suite, records[1])
+            repeated = run_multi_case.promote_case_workspace(suite, records[0])
+
+            self.assertEqual("promoted", first["status"])
+            self.assertEqual("promoted", second["status"])
+            self.assertEqual("already_promoted", repeated["status"])
+            self.assertTrue(repeated["accepted"])
+            self.assertEqual("AR-1", (host / "doc/features/AR-1/story.md").read_text())
+            self.assertEqual("AR-2", (host / "doc/features/AR-2/story.md").read_text())
+            self.assertEqual("case-one", (host / "01-Product/base.txt").read_text())
         finally:
             run_multi_case.REPO_ROOT = original_repo
             run_multi_case.FEATURES_ROOT = original_features

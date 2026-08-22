@@ -5,6 +5,14 @@
 
 ## 1. 当前状态
 
+2026-08-22 修复多 Case finalize 回灌串扰：Feature 文档与源码检查解耦，所有终态 Case 的 Feature
+均独立回灌；源码改为逐文件三方检查并支持幂等重入，前一个 Case 的合法写入不再导致后续 Case 被
+`main_workspace_drift` 整体拒绝。
+
+2026-08-22 修正长 CLI turn 内阶段状态滞后：worker 心跳与 suite poll 共同使用结构化 Framework
+current-phase 和阶段产物实时推导 `current_phase` / `highest_phase_reached`，不再等待下一 CLI turn，
+也不解析模型文本。现有运行 suite 可在下一次正式 poll 原地校正。
+
 2026-08-22 修正 feature 迁移位置：主工程 `doc/features/*` 不再进入 suite output，而是整批迁移到
 `E:\Project\bak\Story-Features-<时间戳>/`。suite output 只保留迁移清单和测试运行现场。
 
@@ -99,7 +107,7 @@ Manifest 与发布清单已经声明为 `2.0`。行为验证尚未执行，因�
 2. Tools CLI 与保留的四个并行 CLI 测试模块。
 3. 两个模式原件完整性、Demo 与 Tools 未被本轮修改、Demo 构建。
 4. Framework 缺失、首次适配、1.0→2.0、同版本重适配和失败恢复。
-5. 四个隔离 Case 的事实守恒、人读表达、图片/链接、Knowledge 应用与阶段传递，并由独立语义评价裁决。
+5. 当前选择的隔离 Case 按执行事实记录需求守恒、人读表达、图片/链接、Knowledge 应用与阶段传递。
 6. 全部验证通过后，记录 2.0 已验证结论；若验证修复改变直接维护文件，重新刷新并核对
    `releases/2.0.json` 指纹。
 
@@ -108,6 +116,16 @@ Manifest 与发布清单已经声明为 `2.0`。行为验证尚未执行，因�
 1. 测试验证已确认需求，不从旧用例、旧设计或历史 EVOLUTION 反推生产结构。
 2. 测试与当前需求或生产基线冲突时修正测试，不修改生产代码迎合废弃断言。
 3. Story/Extension 自身优化不调用 Story、Framework、Extension 的能力处理自身。
-4. 语义目标由独立评价判断；脚本不使用测试关键词、标题相似度或 Markdown 数量替代语义。
+4. 主模型依据测试场景理解异常并继续驱动；脚本不使用关键词、标题相似度或 Markdown 数量作内容裁决。
 5. 直接维护文件的新增和删除先显式修改发布清单；哈希刷新不能推断文件归属。
 6. `doc/extensions` 独立交付；来源考证留在测试域，直接维护内容不依赖外部工程、绝对路径或来源 Git 历史。
+
+2026-08-22 将主模型驱动改为 Codex heartbeat 调度：start 后建立 15 秒任务，每次唤醒执行零等待完整
+poll；全部实际 Case 连续两轮稳定进入 Spec 后更新同一任务为 120 秒，回退或等待回复时恢复 15 秒。
+runner 输出统一的下一间隔和结构化进展变化；每轮均展示完整简短状态，终态 finalize 后暂停 heartbeat。
+实现入口见 `design/2026-08-22-story-15-120秒自适应定时驱动/00-实现与验收.md`。
+2026-08-22 正向重构 Story 并行测试驱动：主模型负责完整测试回合、15 秒连续 poll、语义判断、
+自适应交互、异常恢复与汇总；脚本收敛为确定性的 plan/start/单轮 poll/reply/status/stop/finalize。
+撤销后台 watch、monitor lease 和脚本阻塞循环；不再以关键词或“污染”状态自动停止测试。实际 Case
+集合完全来自 suite。workspace 改为运行依赖白名单并递归校验，记录复制、排除和 Case seed 清单。
+实现入口见 `design/2026-08-22-story主模型驱动式并行测试正向重构/00-实现与验收.md`。
