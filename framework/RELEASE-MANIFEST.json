@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "ee13bbf6791a9123de599d0dfb4e7f1ae2b1c15a",
-  "built_at": "2026-08-22T14:48:07.971Z",
+  "source_commit": "8cc428a76418d1b9d7d8cc4aba0d519275ad562a",
+  "built_at": "2026-08-23T14:49:46.946Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "52bda5b6c8028a7306f0c0eb06a04c0159450b34a53bf94b85da53f87223d6eb"
+      "sha256": "9c695d5c55a03a84bf85956dee940e2813f651b20b8e2b3d257214b4eda17dff"
     },
     {
       "path": "harness/scripts/goal-status.ts",
