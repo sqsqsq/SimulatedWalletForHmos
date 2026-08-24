@@ -174,11 +174,32 @@ function resolveDerive(
           detail: `goal_requirement:${stableFingerprint(options.requirement.trim()).slice(0, 16)}`,
         };
       }
-      const change = featureFilePath(projectRoot, feature, 'change.md');
-      const deps = [dependency(change, 'derive')];
-      return fs.existsSync(change)
-        ? { state: 'resolved', dependencies: deps, detail: change }
-        : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
+      // 需求真源按轨道不同：goal 模式来自入参，lite 轨（L1）是 change.md，
+      // 完整流程（L2）是 RR/prd.md、SR/design.md、AR/design.md。
+      //
+      // 【本地热修·drift_allowlist 具名审批】上游只查前两者，于是 L2 —— 也就是
+      // CLAUDE.md §4.0 与 change-rules.yaml 明确规定的跨模块/pixel_1to1 正统入口 ——
+      // 的需求永远解析不到：capability blocked → functional 轴被压成 UNVERIFIED →
+      // summary INCOMPLETE → check-receipt 拒绝闭环，且重跑多少次都一样。
+      // 现象与完整因果链见归档：
+      //   AIDefectHelpler/docs/archive/需求开发/framework缺陷-spec阶段无法闭环.md
+      // 这里按该归档的「建议一（治本）」把候选来源补全，保留 on_missing: fail 的保护价值
+      //   —— 需求真缺失时仍然失败，不静默放行。上游修复后应撤销本改动与 allowlist 条目。
+      const candidates = [
+        featureFilePath(projectRoot, feature, 'change.md'),
+        featureFilePath(projectRoot, feature, path.join('AR', 'design.md')),
+        featureFilePath(projectRoot, feature, path.join('RR', 'prd.md')),
+        featureFilePath(projectRoot, feature, path.join('SR', 'design.md')),
+      ];
+      const deps = candidates.map((candidate) => dependency(candidate, 'derive'));
+      const hit = candidates.find((candidate) => fs.existsSync(candidate));
+      return hit
+        ? { state: 'resolved', dependencies: deps, detail: hit }
+        : {
+            state: 'absent',
+            dependencies: deps,
+            detail: 'goal requirement / change.md / AR·RR·SR requirement docs all missing',
+          };
     }
     case 'derive.test-targets': {
       const deps = sourceTreeDependency(projectRoot);

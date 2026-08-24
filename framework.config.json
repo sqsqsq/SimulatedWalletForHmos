@@ -121,6 +121,30 @@
   },
   "active_workflow": "spec-driven",
   "lifecycle_hooks_enabled": true,
+  "integrity": {
+    "drift_allowlist": [
+      {
+        "path": "harness/scripts/utils/capability-resolution.ts",
+        "rationale": "恢复 2026-08-10 已验证的本地热修（归档说明：AIDefectHelpler/docs/archive/需求开发/framework缺陷-spec阶段无法闭环.md）。该热修在 story.2.0 回退中被误删，导致 spec 阶段重新无法闭环。治本改动：derive.requirement 增补完整流程（L2）的需求来源 AR/design.md、RR/prd.md、SR/design.md——上游 provider 只认 goal 入参与 lite 轨 change.md，而 L2 正统入口手动 /spec 一个都不产出。上游修复后应撤销本条与该改动。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/trace/trace.schema.json",
+        "rationale": "RELEASE-MANIFEST 声明该文件，但 vendored 副本在 2026-05-25 submodule 迁移（744382be）时被误删，已从 git 历史 744382be^ 精确还原；行尾差异使哈希与清单不完全一致。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/trace/gap-notes.template.md",
+        "rationale": "同 trace.schema.json：清单声明而副本缺失，已从 git 历史 744382be^ 精确还原。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/state/.gitkeep",
+        "rationale": "目录占位文件，行尾与复制差异使哈希与清单不一致；不影响任何运行行为。",
+        "approved_by": "WYK"
+      }
+    ]
+  },
   "tools": {
     "hylyre": {
       "vendor_dir": "framework/profiles/hmos-app/vendor/hylyre",

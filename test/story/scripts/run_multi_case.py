@@ -107,8 +107,14 @@ WORKSPACE_ALLOWED_DOC_FILES = (
 WORKSPACE_EXCLUDED_DIR_NAMES = {
     ".git", "output", "test", "tools", "features", "oh_modules",
     ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
-    "node_modules", "scratch", "state",
+    "node_modules", "scratch",
 }
+# 按**路径**排除的运行态目录：新 workspace 不能带上一轮的阶段状态，否则起跑点不干净。
+# 不用裸目录名排除（曾用 "state"）——裸名会连带误伤任何叫 state 的产品源码目录，
+# 而且会把该目录里**发布件声明的占位文件**一起丢掉，触发 framework_integrity「缺失」。
+WORKSPACE_STATEFUL_DIRS = {"framework/harness/state"}
+# 上述目录里仍须保留的文件：发布清单声明了它们，丢了就会被判 framework 漂移。
+WORKSPACE_STATEFUL_KEEP = {".gitkeep"}
 WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES = {".git", "output", "test", "tools"}
 
 
@@ -158,6 +164,15 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
             if child.is_dir() and child.name in WORKSPACE_EXCLUDED_DIR_NAMES:
                 continue
             relative = child.relative_to(REPO_ROOT).as_posix()
+            if child.is_dir() and relative in WORKSPACE_STATEFUL_DIRS:
+                # 目录本身要建（发布清单声明它存在），内容不带过来，只留占位文件
+                keep_target = target / child.name
+                keep_target.mkdir(parents=True, exist_ok=True)
+                for keeper in sorted(child.iterdir(), key=lambda item: item.name):
+                    if keeper.is_file() and keeper.name in WORKSPACE_STATEFUL_KEEP:
+                        shutil.copy2(keeper, keep_target / keeper.name)
+                        copied.append(keeper.relative_to(REPO_ROOT).as_posix())
+                continue
             if child.is_dir():
                 visit(child, target / child.name)
             else:
