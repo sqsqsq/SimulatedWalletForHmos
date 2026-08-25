@@ -37,13 +37,16 @@ applies_when: always（凡需给出「代码库现状」这一半事实时）
 
 ## 5. 可观测性 — `confirmed: 已确认`
 
-日志、VOC、Chart 三渠道齐备，都在 `CommFunc`：
+日志、VOC、Chart 三渠道齐备，都在 `CommFunc`，惯例如下：
 
-- **日志** `Logger`（`shared/log/Logger.ets`）：封装 `hilog`，统一 `DOMAIN`，静态 `debug` / `info` / `error`。
-- **VOC** `WalletHAManager.vocBuilder(eventID, desc).report()`；门面 `logAndReport` / `logErrorAndReport` /
-  `logDebugAndReport` = 对应档日志 + 一条 VOC。
-- **Chart** `WalletHAManager.chartBuilder(WalletHAEventID, funcID, subFuncID).report()`。
-- 上报字段用 `WalletHAReportBaseCBuilder` 的链式 setter；终态取枚举 `WalletFuncResult`；事件 ID 集中在 `WalletHAEventID`。
+- **日志** `Logger`（`shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）：本地调测与完整流程还原——
+  流程每一步的进入与结果、分支走向、异常都记。
+- **VOC** `WalletHAManager.vocBuilder(eventID, desc).report()`，门面 `logAndReport` / `logErrorAndReport` /
+  `logDebugAndReport` = 对应档日志 + 一条 VOC：无本地日志时远程定位——只记关键路径事件：关键步骤的进入与完成、
+  重要状态标记的变更、用户中止与失败。
+- **Chart** `WalletHAManager.chartBuilder(WalletHAEventID, funcID, subFuncID).report()`：成功率、时延、终态统计——
+  业务步骤到达终态时每步一条，终态取 `WalletFuncResult`。
+- 三渠道共用同一次执行的流程与步骤标识（上报经 `setFuncID` / `setSubFuncID` 携带）；密度日志 > VOC > Chart，不设数量配额。
 - 上报非阻塞，失败只记 `Logger.error`，不向调用方抛出。
 
 ## 6. 敏感数据处理 — `confirmed: 已确认`
