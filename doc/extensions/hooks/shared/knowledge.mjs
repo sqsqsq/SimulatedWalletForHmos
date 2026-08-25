@@ -124,7 +124,18 @@ function parseConstraintFile(absPath, rel) {
   // 落法附注：判定期要拿它做复述比对的来源之一
   const notesMatch = body.match(/^#+\s*落法附注\s*$/m);
   const notes = notesMatch ? body.slice(notesMatch.index + notesMatch[0].length) : '';
-  return { file: rel, name: fm.name ?? '', domain: derived, appliesWhen: fm.applies_when ?? '', entries, notes };
+  // 中文域名取正文一级标题——归档件面向评审者，写仓内 slug 他们对不上
+  const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
+  const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
+  return {
+    file: rel,
+    name: fm.name ?? '',
+    title,
+    domain: derived,
+    appliesWhen: fm.applies_when ?? '',
+    entries: entries.map(e => ({ ...e, domainTitle: title })),
+    notes,
+  };
 }
 
 function parsePatternFile(absPath, rel) {

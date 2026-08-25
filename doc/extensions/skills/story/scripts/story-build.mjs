@@ -32,6 +32,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 
 /**
  * 成文判据——章节任务书里的那段话，与 `rules/rules.md` 红线 1 逐字同源。
@@ -347,11 +348,14 @@ function readJson(file, fallback) {
   return JSON.parse(stripBom(fs.readFileSync(file, 'utf-8')));
 }
 
-// 两份登记表的正确形状：报错时一并给出，作者不必去翻规则文件回想字段名。
+// 三份登记表的正确形状：报错时一并给出，作者不必去翻规则文件回想字段名。
 const REGISTRY_SHAPE = {
   decisions: '{"decisions": [{"id": "DEC-001", "status": "open", "question": "...", '
     + '"proposal": "...", "rationale": "...", "source": "...", "decider": "...", "impact": ["F1"]}]}',
-  ids: '{"ids": [{"id": "XXX-01", "title": "<权威规约原文的标题与含义>", "landing": "<本需求落点，可选>"}]}',
+  ids: '{"ids": [{"id": "AC-1", "title": "<权威规格件原文的标题与含义>", "landing": "<本需求落点，可选>"}]}',
+  constraints: '{"constraints": [{"id": "XXX-01", "hit": true, "conclusion": "<本需求的设计或不命中的依据>", '
+    + '"landing": "<契约名，可选>"}], "patterns": [{"unit": "<适用单元>", "candidate": "<在册 pattern_id 或空>", '
+    + '"signal": "<命中信号或反证>"}]}',
 };
 
 // 空表的出口：说明为什么该问「真的没有吗」，并给出显式声明的写法。
@@ -359,8 +363,10 @@ const REGISTRY_EMPTY_HINT = {
   decisions: '一个需求几乎不可能既没有开放点、也没有须让开发遵守的上游结论'
     + '——无上游依据的设定值、要人拍板的问题、上游已定但开发必须照做的结论，三类都算。'
     + '确认过每章都没有，就显式声明：{"decisions": [], "none_reason": "<为什么没有>"}',
-  ids: 'story 正文一条规约、验收或场景编号都没引用？'
+  ids: 'story 正文一条验收或场景编号都没引用？'
     + '确认过确实如此，就显式声明：{"ids": [], "none_reason": "<为什么没有>"}',
+  constraints: '激活清单里每个规约条目都要有判定——判「否」也是判定，也要给依据。'
+    + '空表意味着一个条目都没过，那不是「不涉及」，是「没判」。',
 };
 
 /**
@@ -548,6 +554,125 @@ export function renderStoryAppendix(ids) {
 }
 
 /**
+ * 规约符合性附录 —— 由知识判定注册件 + 激活清单确定性渲染。
+ *
+ * **一张表，逐条目一行**：域、编号、要求、命中、结论或落点。所有域同表同粒度，
+ * 兼容性不另开自检表——同一件事分两张表登记，两张表迟早对不上，而评审者要查的是「哪一张」
+ * 也说不清。
+ *
+ * **要求列由激活条目的原文渲染**，作者不手抄：手抄必然与原文分叉，而评审者核的是原文。
+ * 这一列因此**永远不作为复述判定的被检对象**——它天生等于原文，纳入比较会把所有行误杀。
+ * 被检的只有作者自己写的「结论或落点」列。
+ *
+ * @param {object[]} rows 注册件条目（已与激活条目对齐、补好域名与要求）
+ */
+export function renderKnowledgeAppendix(rows) {
+  if (!rows.length) return '';
+  const head = ['| 域 | 编号 | 要求 | 命中 | 结论或落点 |', '|---|---|---|---|---|'];
+  const body = rows.map(r =>
+    `| ${r.domainTitle} | ${r.id} | ${escapeCell(r.requirement)} | ${r.hit ? '是' : '否'} | ${escapeCell(r.conclusion)} |`);
+  return ['## 附录：规约符合性', '', ...head, ...body].join('\n');
+}
+
+/**
+ * 设计模式候选附录 —— 只登记候选，不做选型（选型是 plan 的事，那里才有方案上下文）。
+ * 零候选是正常结论，但必须显式写出来：没有候选和忘了判断，在产物上长得一模一样。
+ */
+export function renderPatternAppendix(rows) {
+  if (!rows.length) return '';
+  const head = ['| 适用单元 | 候选 | 命中信号或反证 |', '|---|---|---|'];
+  const body = rows.map(r =>
+    `| ${escapeCell(r.unit)} | ${escapeCell(r.candidate || '无候选')} | ${escapeCell(r.signal)} |`);
+  return ['## 附录：设计模式候选', '', ...head, ...body].join('\n');
+}
+
+/** 单元格内的 `|` 会把表撑破，转义掉；换行折成空格。 */
+function escapeCell(text) {
+  return String(text ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim() || '—';
+}
+
+/**
+ * 把知识判定注册件与激活清单对齐，产出两张附录表。
+ *
+ * **集合一致是硬判据**：注册件的条目集必须与激活清单的条目集完全相同。少一条 = 有条目没判，
+ * 多一条 = 判了个不在册的东西；两种都不是「差不多」，都会让「逐条判定」这件事失去意义。
+ *
+ * 要求列取激活条目的原文——作者不手抄。判「否」的行也要有结论（不命中的**依据**），
+ * 「不涉及」三个字不构成依据。
+ */
+function buildKnowledgeAppendix(ctx) {
+  const problems = [];
+  const reg = readRegistry(ctx.knowledgePath, 'constraints');
+  problems.push(...reg.problems);
+
+  let knowledge;
+  try {
+    knowledge = activeKnowledge(ctx.projectRoot);
+  } catch (e) {
+    // 派生失败不静默降级成空表——空表会让下面的集合比对恒真
+    return { constraintTable: '', patternTable: '', problems: [...problems, `激活知识派生失败：${e.message}`] };
+  }
+
+  const active = knowledge.entries;
+  const byId = new Map(active.map(e => [e.id, e]));
+  const rows = [];
+  const seen = new Set();
+  for (const item of reg.entries) {
+    const id = String(item?.id ?? '').trim();
+    if (!id) { problems.push('knowledge.json 有条目缺 id'); continue; }
+    if (seen.has(id)) { problems.push(`knowledge.json 中 ${id} 重复登记`); continue; }
+    seen.add(id);
+    const entry = byId.get(id);
+    if (!entry) {
+      problems.push(`knowledge.json 登记了不在激活清单里的条目 ${id}`
+        + '——阶段只认清单里的条目，编号写错或规约已下架');
+      continue;
+    }
+    const conclusion = String(item.conclusion ?? '').trim();
+    if (!conclusion || conclusion === '—') {
+      problems.push(`${id} 缺结论——判「是」要写本需求的设计，判「否」也要写不命中的依据`);
+    }
+    rows.push({
+      id,
+      domainTitle: entry.domainTitle,
+      requirement: entry.constraint,
+      hit: item.hit === true,
+      conclusion: conclusion || '—',
+      landing: String(item.landing ?? '').trim(),
+    });
+  }
+
+  const missing = active.map(e => e.id).filter(id => !seen.has(id));
+  if (missing.length) {
+    problems.push(`激活清单里这些条目没有判定：${missing.join('、')}`
+      + '——逐条目判定，判「否」也要给依据；漏判与「不涉及」在产物上长得一模一样');
+  }
+
+  // 模式候选：零候选是正常结论，但必须显式写出来
+  const patternReg = readJson(ctx.knowledgePath, {});
+  const patternRows = Array.isArray(patternReg.patterns) ? patternReg.patterns : [];
+  if (!patternRows.length) {
+    problems.push('knowledge.json 的 patterns 为空——'
+      + '零候选是合法结论，但要显式登记：写明适用单元与「为什么这些单元都不需要模式」');
+  }
+  for (const p of patternRows) {
+    const cand = String(p?.candidate ?? '').trim();
+    if (cand && !knowledge.patternIds.includes(cand)) {
+      problems.push(`模式候选 ${cand} 不在册（在册的：${knowledge.patternIds.join('、') || '无'}）`
+        + '——候选只能从激活清单里查表填，通用模式名不是合法值');
+    }
+    if (!String(p?.unit ?? '').trim()) problems.push('模式候选有条目缺适用单元');
+    if (!String(p?.signal ?? '').trim()) problems.push('模式候选有条目缺命中信号或反证');
+  }
+
+  return {
+    constraintTable: renderKnowledgeAppendix(rows),
+    patternTable: renderPatternAppendix(patternRows),
+    problems,
+  };
+}
+
+/**
  * review 投影：只有编号 + 标题与含义（两列），且只含 review 正文实际引用的编号。
  * 这是 R4 的结构性保证——review 里不可能出现第二份需求叙事，因为落点列根本不渲染。
  */
@@ -680,6 +805,7 @@ export function createContext(args) {
     chapterDir: path.join(srcDir, 'chapters'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
     idsPath: path.join(srcDir, 'ids.json'),
+    knowledgePath: path.join(srcDir, 'knowledge.json'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
     chapterFile: ch => path.join(srcDir, 'chapters', `${ch.id}.md`),
@@ -782,13 +908,33 @@ function scaffold(ctx) {
   if (!fs.existsSync(idsPath)) {
     fs.writeFileSync(idsPath, JSON.stringify({
       _example: {
-        id: 'XXX-01',
-        title: '标题与含义，抄自权威规约原文，不得凭记忆编造',
+        id: 'AC-1',
+        title: '标题与含义，抄自权威规格件原文，不得凭记忆编造',
         landing: '本需求落点（可选；全表都不填，story 附录就只出两列）',
       },
       ids: [],
     }, null, 2) + '\n', 'utf-8');
     created.push(path.relative(projectRoot, idsPath));
+  }
+  if (!fs.existsSync(ctx.knowledgePath)) {
+    fs.writeFileSync(ctx.knowledgePath, JSON.stringify({
+      _example: {
+        constraints: {
+          id: '照激活清单里的条目编号原样填，一条一行；判「否」也要填',
+          hit: 'true / false',
+          conclusion: '命中时写**本需求的设计**（落在哪个接口/键/字段/步骤上）；不命中时写依据',
+          landing: '承载它的契约名（可选，写了更好查）',
+        },
+        patterns: {
+          unit: '适用单元：一段有独立业务目标的流程，或一个承载用户操作的界面单位',
+          candidate: '在册的 pattern_id 原样填；该单元没有候选就留空',
+          signal: '为什么像（命中信号）或为什么不像（反证）',
+        },
+      },
+      constraints: [],
+      patterns: [],
+    }, null, 2) + '\n', 'utf-8');
+    created.push(path.relative(projectRoot, ctx.knowledgePath));
   }
 
   console.log(`[story-build] ✅ scaffold 完成，${created.length} 个文件：`);
@@ -889,9 +1035,16 @@ export function assemble(ctx) {
     problems.push(`悬空引用 {{${id}}}：未在 decisions.json / ids.json 登记`);
   }
 
+  const know = buildKnowledgeAppendix(ctx);
+  problems.push(...know.problems);
   const appendix = renderStoryAppendix(ids);
   const title = `# ${args.feature} — 需求评审叙事`;
-  const bodyText = [title, '', storyBody, appendix ? `\n${appendix}` : ''].join('\n').trimEnd();
+  const bodyText = [
+    title, '', storyBody,
+    know.constraintTable ? `\n${know.constraintTable}` : '',
+    know.patternTable ? `\n${know.patternTable}` : '',
+    appendix ? `\n${appendix}` : '',
+  ].join('\n').trimEnd();
 
   // 以下三条都扫**最终装配结果**而非章节正文：附录、决策引用、编号速查都是装配器
   // 渲染出来的，只查章节会留下盲区。

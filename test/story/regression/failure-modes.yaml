@@ -176,7 +176,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/M11-flagged-only-adjudication/good
     applicable_when: 存在 pre_verifier 注入机制
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: M12-normalize-folds-identifiers
     dimension: knowledge
@@ -189,7 +189,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/M12-normalize-folds-identifiers/good
     applicable_when: 存在复述判定模块
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: M13-numeric-form-quota
     dimension: readability
@@ -215,7 +215,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/M14-criteria-instruction-divergence/good
     applicable_when: 存在 spec/plan 写作注入件
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   # ---------------------------------------------------------------------------
   # 产物层（feature 产物里的失效形态）

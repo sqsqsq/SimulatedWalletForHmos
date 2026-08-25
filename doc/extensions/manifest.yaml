@@ -53,6 +53,15 @@ provides:
         - hooks/spec/story_on_context_load.mjs
       post_check:
         - hooks/spec/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    plan:
+      on_context_load:
+        - hooks/plan/on_context_load.md
+      post_check:
+        - hooks/plan/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
 
   phase_rules_overlays:
     spec: rules/spec-rules.overlay.yaml

@@ -4,7 +4,8 @@
  * 作用：把**本阶段三份产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
  *   1. 三份产物齐备：spec.md（代码要求）/ AR/review.md（归档件·决策件）/ AR/story.md（归档件·叙事主件）；
  *   2. §9 技术契约的结构完整性（core spec 模板未含，由 on_context_load.md 指令驱动 AI 追加）；
- *   3. 合规判定落 spec 的那部分（§7 UX 适配要求）确实写了；
+ *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
+ *      编号到条目级且在册、三方 ID 集合一致、要求列不是规约原文的复制；
  *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
  *   5. story 前置流程契约（AR/story-flow.json）已收口且决策留痕齐备。
  *
@@ -19,6 +20,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
+import { activeKnowledge, paraphraseSources } from '../shared/knowledge.mjs';
+import { isPureCopy } from '../shared/paraphrase.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -174,14 +177,219 @@ function findHeading(lines, titleRe) {
   });
 }
 
+/** 从某个二级标题起到下一个同级标题为止的行区间。 */
+function sectionRange(lines, startIdx) {
+  if (startIdx < 0) return null;
+  const level = (lines[startIdx].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const h = lines[i].trim().match(/^(#{2,4})\s+/);
+    if (h && h[1].length <= level) return { start: startIdx, end: i };
+  }
+  return { start: startIdx, end: lines.length };
+}
+
+/** 区间内的表格数据行（按列名取值）。 */
+function tableRowsIn(lines, range, headerKeywords) {
+  if (!range) return { headers: null, rows: [] };
+  let headers = null;
+  const rows = [];
+  for (let i = range.start; i < range.end; i++) {
+    const s = lines[i].trim();
+    if (!s.startsWith('|')) continue;
+    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    if (!headers) {
+      if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
+      continue;
+    }
+    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
+    rows.push({ line: i + 1, cells });
+  }
+  return { headers, rows };
+}
+
+function cellOf(cells, headers, keyword) {
+  const i = (headers ?? []).findIndex(h => h.includes(keyword));
+  return i >= 0 && i < cells.length ? cells[i] : '';
+}
+
+/**
+ * 知识判定的两个出口（BLOCKER）。
+ *
+ * 机械层只判**结构与集合**，不判内容对错：
+ *   1. 两章独立成节，且不落在技术契约章的区间内（并进去会让守恒从按名退化成按号）；
+ *   2. 编号粒度到条目级、编号在册（只写域前缀会让整域漏判照样放行）；
+ *   3. 三方 ID 集合一致（story 判「是」集 = spec 出口集 = acceptance 的 knowledge_rule 集）；
+ *   4. 要求列不是规约原文的复制或子串。
+ *
+ * 「这条要求是不是本需求的设计」是语义判断，归 verifier 全集裁决——本函数不下这个结论。
+ */
+function knowledgeExitProblems(ctx, lines) {
+  const problems = [];
+  let knowledge;
+  try {
+    knowledge = activeKnowledge(ctx.projectRoot);
+  } catch (e) {
+    return [`激活知识派生失败：${e.message}`];
+  }
+
+  const exitIdx = findHeading(lines, /规约约束要求/);
+  const patternIdx = findHeading(lines, /设计模式候选/);
+  const contractIdx = findHeading(lines, /技术契约/);
+  const contractRange = sectionRange(lines, contractIdx);
+
+  if (exitIdx === -1) {
+    return [
+      '缺「规约约束要求」章——判定产生的代码要求没有落点，到编码那里就等于不存在。'
+      + `形态见 ${SECTIONS_DOC}：按命中条目逐条一行，不为任何域预留固定小节。`,
+    ];
+  }
+  // 独立成节：不得落在技术契约章的区间内
+  for (const [idx, name] of [[exitIdx, '规约约束要求'], [patternIdx, '设计模式候选登记']]) {
+    if (idx >= 0 && contractRange && idx > contractRange.start && idx < contractRange.end) {
+      problems.push(`「${name}」并进了技术契约章——三章各回答一个问题，须独立成节：`
+        + '契约章登记「有什么」，要求章说「必须满足什么」，候选章说「可选什么」。');
+    }
+  }
+
+  const exitRange = sectionRange(lines, exitIdx);
+  const { headers, rows } = tableRowsIn(lines, exitRange, ['编号', '要求']);
+  if (!headers) {
+    problems.push('「规约约束要求」章缺表格（表头须含「编号」与「本需求的要求」两列）');
+    return problems;
+  }
+
+  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+  const specIds = new Set();
+  for (const { line, cells } of rows) {
+    const rawId = cellOf(cells, headers, '编号').replace(/[`*]/g, '').trim();
+    if (/^\{.*\}$/.test(rawId)) continue;                    // 模板占位行
+    const ids = rawId.match(/\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g) ?? [];
+    if (!ids.length) {
+      problems.push(`spec.md:${line} 约束要求的编号列「${rawId}」未到条目级`
+        + '——按域前缀判会让整域漏判照样放行，一条目一行');
+      continue;
+    }
+    for (const id of ids) {
+      specIds.add(id);
+      const entry = byId.get(id);
+      if (!entry) {
+        problems.push(`spec.md:${line} 编号 ${id} 不在激活清单里——编号写错，或那条规约已下架`);
+        continue;
+      }
+      if (entry.reviewAction) {
+        problems.push(`spec.md:${line} ${id} 的处置标了（评审动作），不产生代码要求，不应写进本章`
+          + '——它的动作归《决策与评审记录》的跨团队协同');
+        continue;
+      }
+      const requirement = cellOf(cells, headers, '要求');
+      const { copied, source } = isPureCopy(requirement, paraphraseSources(knowledge, id));
+      if (copied) {
+        problems.push(`spec.md:${line} ${id} 的要求是规约原文的复制或子串（来源「${source}…」）`
+          + '——写本需求的设计：它落在哪个接口、存储键、字段或业务步骤上');
+      }
+    }
+  }
+
+  // 模式候选章：只登记不选型，零候选也要显式声明
+  if (patternIdx === -1) {
+    problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
+      + '空着分不清「判过了不需要」与「压根没想这件事」');
+  } else {
+    const pr = tableRowsIn(lines, sectionRange(lines, patternIdx), ['适用单元', '候选']);
+    const real = pr.rows.filter(r => !/^\{.*\}$/.test(cellOf(r.cells, pr.headers, '适用单元')));
+    if (!pr.headers || !real.length) {
+      problems.push('「设计模式候选登记」章没有登记任何适用单元');
+    }
+    for (const { line, cells } of real) {
+      const cand = cellOf(cells, pr.headers, '候选').replace(/[`*]/g, '').trim();
+      if (!cand || /^(无候选|—|-)$/.test(cand)) {
+        if (!cellOf(cells, pr.headers, '信号').trim()) {
+          problems.push(`spec.md:${line} 该单元判无候选但没写理由`);
+        }
+        continue;
+      }
+      if (!knowledge.patternIds.includes(cand)) {
+        problems.push(`spec.md:${line} 候选「${cand}」不在册`
+          + `（在册的：${knowledge.patternIds.join('、') || '无'}）——候选只能查表填，通用模式名不是合法值`);
+      }
+    }
+  }
+
+  // 三方 ID 集合一致：story 判「是」集 / spec 出口集 / acceptance 的 knowledge_rule 集
+  problems.push(...idSetProblems(ctx, knowledge, specIds));
+  return problems;
+}
+
+/**
+ * 三方 ID 集合一致（机械收口）。
+ *
+ * **这是集合一致性，不是「知识已被应用」**——后者由 verifier 逐行裁决。
+ * 机械层越权下语义结论，就会变成「写了字就算做了」。
+ */
+function idSetProblems(ctx, knowledge, specIds) {
+  const problems = [];
+  const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
+
+  // story 侧：知识判定登记表里判「是」且非评审动作的条目。
+  // 判据是**注册件在不在**，不是流程契约在不在——注册件存在本身就说明走了 story 流程，
+  // 而两处判定对不上时评审者会看到互相矛盾的结论，与流程文件是否齐备无关。
+  let storyIds = null;
+  const regPath = path.join(featureDir, 'AR', 'story-src', 'knowledge.json');
+  if (fs.existsSync(regPath)) {
+    try {
+      const reg = JSON.parse(fs.readFileSync(regPath, 'utf-8').replace(/^﻿/, ''));
+      storyIds = new Set(
+        (Array.isArray(reg.constraints) ? reg.constraints : [])
+          .filter(c => c?.hit === true)
+          .map(c => String(c.id).trim())
+          .filter(id => !knowledge.entries.find(e => e.id === id)?.reviewAction));
+    } catch (e) {
+      problems.push(`knowledge.json 解析失败：${e.message}`);
+    }
+  }
+  if (storyIds) {
+    const onlyStory = [...storyIds].filter(id => !specIds.has(id));
+    const onlySpec = [...specIds].filter(id => !storyIds.has(id));
+    if (onlyStory.length) {
+      problems.push(`这些条目在归档件判「命中」，但 spec 的约束要求章没有对应行：${onlyStory.join('、')}`
+        + '——判了命中却没有代码要求，等于知识在需求阶段就丢了');
+    }
+    if (onlySpec.length) {
+      problems.push(`这些条目在 spec 有要求，但归档件没判「命中」：${onlySpec.join('、')}`
+        + '——两处判定对不上，评审者会看到互相矛盾的结论');
+    }
+  }
+
+  // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）
+  const accPath = path.join(featureDir, 'acceptance.yaml');
+  if (fs.existsSync(accPath)) {
+    const raw = fs.readFileSync(accPath, 'utf-8');
+    const accIds = new Set([...raw.matchAll(/knowledge_rule\s*:\s*["']?([A-Z][A-Z0-9]{1,7}-\d{2})/g)].map(m => m[1]));
+    if (accIds.size || specIds.size) {
+      const missing = [...specIds].filter(id => !accIds.has(id));
+      if (missing.length) {
+        problems.push(`这些条目有代码要求但 acceptance.yaml 没有对应验收条目：${missing.join('、')}`
+          + '——每条要求要有一条带 knowledge_rule 与 category 的 criteria，'
+          + '它是下游 ut/testing 分派验证的单一来源（ut_layer 决定谁验），缺了下游就无从覆盖');
+      }
+      const unknown = [...accIds].filter(id => !specIds.has(id));
+      if (unknown.length) {
+        problems.push(`acceptance.yaml 的 knowledge_rule 指向了 spec 里没有要求的条目：${unknown.join('、')}`);
+      }
+    }
+  }
+  return problems;
+}
+
 /**
  * spec 宿主扩展章节（core 模板未含，由 hooks/spec/on_context_load.md 指令驱动 AI 追加）：
  *   §9 技术契约 —— 给下游 AI：plan 据此编码、test-plan 据此出用例
  * 模板见 skills/story/templates/spec-sections.md。
  *
- * 曾有过 §10 合规与兼容自检，已迁出：那两张判定表零条代码要求，纯粹是给评审者的完备性回显，
- * 与「spec 只装与最终代码有关的内容」相悖。现落 AR/story.md 的影响面与合规章；
- * 它的完整性由 verifier 的 spec_constraint_echo 判定——那是判断，脚本判不了。
+ * 判定结论（命中/不命中）不在 spec：它零条代码要求，纯粹是给评审者的完备性回显，
+ * 与「spec 只装与最终代码有关的内容」相悖，现由知识判定登记表渲染成归档件的附录单表。
+ * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
+ * 结论是不是本需求的设计，由 verifier 按注入的必答清单逐行裁决——那是判断，脚本判不了。
  */
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
@@ -502,16 +710,9 @@ export default async function postCheckHook(ctx) {
     }
   }
 
-  // ---- 合规判定落 spec 的那部分：UX 适配要求 ----
-  // 深色主题 / 大字体 / 多语言这类要求只在合规判定时才冒出来，spec 别处没有，
-  // 漏了就到不了编码。仅当 spec 声明有 UI 变更时要求（非 UI 需求不适用）。
-  if (/ui_change:\s*(new_or_changed|changed|new)/.test(text) && findHeading(lines, /UX\s*适配要求/) === -1) {
-    problems.push(
-      '声明了 UI 变更但 §7 缺少「UX 适配要求」小节' +
-        '（界面适配类约束命中时产生的代码要求写在这里；要求内容见对应条目的「处置」列' +
-        '与该域落法附注。这类要求只在合规判定时产生，不写进 spec 就到不了编码）'
-    );
-  }
+  // ---- 知识判定的两个出口 ----
+  // 出口按**命中条目**派生，不为任何域预留固定小节——预留小节就是把域清单硬编码换个地方存在。
+  problems.push(...knowledgeExitProblems(ctx, lines));
 
   // ---- 术语映射表：业务名词须有解释（story 专属）----
   // 「解释」列是扩展在 core 模板的 §0 之上追加的，附录 A 只留一句索引。
