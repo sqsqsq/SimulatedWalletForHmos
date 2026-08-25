@@ -215,11 +215,26 @@ node --check <每个 doc/extensions 下的 .mjs>
 提交前固定跑，期望全部零命中（对应台账 M01–M04）：
 
 ```powershell
-grep -rnE "\b[A-Z]{2,8}-[0-9]{2}\b" doc/extensions --include=*.mjs --include=*.yaml --exclude-dir=knowledge
+grep -rnE "\b[A-Z]{2,8}-[0-9]{2}\b" doc/extensions --exclude-dir=knowledge
 grep -rnE "\b(AR|DTS|ISSUE)-?[0-9]{4,}\b" doc/extensions --exclude-dir=knowledge
 grep -rnE "\b0[1-9]-[A-Z][A-Za-z]{3,}\b" doc/extensions --exclude-dir=knowledge
 grep -rnE "[A-Za-z]:[\\/]|\bbackup/" doc/extensions
 ```
 
-口径：占位前缀（`XXX-01`）与注释行不计——它们是"任意域"的示例，正是不硬编码的写法。
-四条已内置为 `check_failure_modes.py` 的 M01–M04，此处仅作人工快查。
+**扫描面含 `.md`**：早先只扫代码、放过 Markdown（理由是「写作指令允许出现形态示例」），
+实测 16 处硬编码里有 10 处藏在注入件里全部逃检——注入件恰恰是模型直接读到的东西，
+它写死了域名，新增一个域时模型就照着旧清单干活。
+
+人工快查会有噪声（占位形态、反例说明、激活清单本身都会命中），准确判定以
+`check_failure_modes.py` 的 M01/M17 为准：它们的基准从激活清单派生，
+能区分「真实标识」「占位形态」「查无此物的死判据」三种情况。
+
+### 7.3 三条维护不变量的机械回归
+
+`AGENTS.md §2` 的三条约束各有对应形态，**只写文档会被跳过，机械回归不依赖记忆**：
+
+| 不变量 | 台账形态 |
+|---|---|
+| 机制层零测试特征（反过拟合） | M02（从 Case 目录动态提取业务词） |
+| 机制层不硬编码 knowledge 内容 | M01（真实标识）+ M17（查无此物的死判据） |
+| 正向实现，不打补丁 | M16（死代码 / 静默降级 / 待办标记） |

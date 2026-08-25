@@ -48,6 +48,10 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    scope_note: >
+      扫描面含 .md。早先只扫代码、放过 Markdown（理由是「写作指令允许出现形态示例」），
+      结果实测 16 处硬编码里有 10 处藏在注入件里全部逃检——注入件恰恰是模型直接读到的东西。
+      判定基准（真实条目与文件名）从激活清单派生；占位形态与反例说明不计。
 
   - id: M02-test-case-features
     dimension: knowledge
@@ -234,6 +238,39 @@ modes:
     applicable_when: 存在复述判定模块
     severity: BLOCKER
     status: fixed
+
+  - id: M16-patch-residue
+    dimension: infra
+    found_round: "2026-08-25"
+    form: 补丁式修补的残留——零调用的死代码、catch 内静默返回空集合、跨轮次的待办标记
+    clause: AGENTS.md §2「正向实现，不打补丁」
+    checker: m16_patch_residue
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M16-patch-residue/bad
+    good_fixture: test/story/fixtures/failure-modes/M16-patch-residue/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      三类各自独立判定：①零调用导出（作为值注册进分派表也算被用）；
+      ②catch 内返回**空集合**且无出声（返回 null 是显式的「没有」信号，不算）；
+      ③待办标记与明说的临时方案（「临时改名」这类业务行为描述不算，知识层不扫）。
+
+  - id: M17-dangling-knowledge-reference
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 机制层引用了激活清单里不存在的条目编号或知识文件——模型照着死判据去找基准，找不到只能自己编
+    clause: G7 / AGENTS.md §2.1「引用必须真实存在」
+    checker: m17_dangling_knowledge_reference
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M17-dangling-knowledge-reference/bad
+    good_fixture: test/story/fixtures/failure-modes/M17-dangling-knowledge-reference/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      只判两类明确引用，不做形态猜测（猜测会把脚本名、目录名一并误报）：
+      ①编号前缀在册而编号查不到；②显式写出的 knowledge/xxx.md 路径不在清单。
 
   # ---------------------------------------------------------------------------
   # 产物层（feature 产物里的失效形态）

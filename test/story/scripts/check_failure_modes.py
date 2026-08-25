@@ -270,28 +270,123 @@ EXCLUDE_KNOWLEDGE = ("knowledge", "_knowledge")
 PLACEHOLDER_PREFIX_RE = re.compile(r"^(X{2,}|N{2,}|A{2,}|YYY|ZZZ)$")
 
 
+def activation_names(root: Path) -> dict:
+    """从 manifest 的激活清单派生「真实存在的知识标识」集合。
+
+    这是判「硬编码」与「悬空引用」的基准：**能在清单里查到的就是真实标识**，
+    机制层写它就是把知识内容抄了一份；**查不到却长得像的**是死判据，更糟。
+
+    自己也从清单派生——写死一份清单来查「有没有写死清单」，那就滑稽了。
+    """
+    manifest = root / "manifest.yaml"
+    if not manifest.exists():
+        return {"entries": set(), "prefixes": set(), "slugs": set(), "derived": False}
+    try:
+        data = yaml.safe_load(read_text(manifest)) or {}
+    except yaml.YAMLError:
+        return {"entries": set(), "prefixes": set(), "slugs": set(), "derived": False}
+    activation = (data.get("provides") or {}).get("knowledge_activation") or {}
+    slugs, entries, prefixes = set(), set(), set()
+    for rels in activation.values():
+        for rel in rels or []:
+            rel = str(rel).replace("\\", "/")
+            slugs.add(rel.rsplit("/", 1)[-1].removesuffix(".md"))
+            f = root / rel
+            if not f.exists():
+                continue
+            text = read_text(f)
+            headers = header_index(text, ["编号", "约束"])
+            if not headers:
+                continue
+            for _, cells in md_table_rows(text, ["编号", "约束"]):
+                eid = cell(cells, headers, "编号").strip()
+                if ENTRY_ID_RE.fullmatch(eid):
+                    entries.add(eid)
+                    prefixes.add(eid.split("-")[0])
+    return {"entries": entries, "prefixes": prefixes, "slugs": slugs, "derived": bool(slugs)}
+
+
 @checker
 def m01_hardcoded_domain_prefix(root: Path, ctx: Ctx) -> Outcome:
-    """机制层代码里不得出现真实约束条目编号字面（域清单应运行期派生）。
+    """机制层不得出现真实知识标识的字面（域/条目/文件名应运行期派生）。
 
-    口径（G3）：**计**代码文件（``.mjs/.js/.yaml/.json``）中形如 ``SEC-01`` 的编号；
-    **不计** ① 占位前缀（``XXX-01``——刻意表示任意域，正是不硬编码的写法）；
-    ② 注释行（``//`` / ``*`` 开头）——那是说明不是判定逻辑，但仍建议中性化。
+    口径（G3）：
+
+    - **扫描面**：机制层（扩展根下除 ``knowledge/`` 外）的**代码与 Markdown 全部**。
+      早先只扫代码、放过 ``.md``（理由是「写作指令允许出现形态示例」），结果 16 处硬编码里
+      有 10 处藏在 ``.md`` 中全部逃检——注入件恰恰是模型直接读到的东西，它写死了域名，
+      新增一个域时模型就照着旧清单干活。
+    - **计**：能在激活清单里查到的**真实条目编号**与**知识文件 slug**；
+    - **不计**：① 占位形态（``XXX-01``——刻意表示任意域，正是不硬编码的写法）；
+      ② 注释/说明中作为**反例**出现的（同行含「不写」「禁止」「反例」「改为」等否定词）；
+      ③ 清单派生不出来时不判（报证据不足，不拿空集当通过）。
     """
+    names = activation_names(root)
+    if not names["derived"]:
+        return Outcome(True, "激活清单派生不出知识标识（证据不足，不判）")
+
+    negation = re.compile(r"不写|不得|禁止|反例|改为|改用|换成|已退役|不是|别写")
     hits = []
-    for path in iter_files(root, CODE_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+        rel = path.relative_to(root).as_posix()
+        if rel == "manifest.yaml":
+            continue   # 激活清单**就是**登记文件名的地方，它不是「抄了一份」
         for n, line in enumerate(split_lines(read_text(path)), start=1):
-            stripped = line.lstrip()
-            if stripped.startswith(("//", "*", "/*", "#")):
+            if negation.search(line):
                 continue
             for m in ENTRY_ID_RE.finditer(line):
-                prefix = m.group(0).split("-")[0]
-                if PLACEHOLDER_PREFIX_RE.match(prefix):
+                if PLACEHOLDER_PREFIX_RE.match(m.group(0).split("-")[0]):
                     continue
-                hits.append(f"{path.relative_to(root).as_posix()}:{n} `{m.group(0)}`")
+                if m.group(0) in names["entries"]:
+                    hits.append(f"{rel}:{n} 条目编号 `{m.group(0)}`")
+            for slug in names["slugs"]:
+                if re.search(rf"\b{re.escape(slug)}\b", line):
+                    hits.append(f"{rel}:{n} 知识文件名 `{slug}`")
+                    break
     if hits:
-        return Outcome(False, "机制层出现条目编号字面：" + "；".join(hits[:5]))
-    return Outcome(True, "机制层代码零真实条目编号字面（占位前缀与注释不计）")
+        return Outcome(False, "机制层写死了知识标识：" + "；".join(hits[:6]))
+    return Outcome(
+        True,
+        f"机制层零知识标识字面（基准：{len(names['entries'])} 条目 / {len(names['slugs'])} 文件）",
+    )
+
+
+@checker
+def m17_dangling_knowledge_reference(root: Path, ctx: Ctx) -> Outcome:
+    """机制层引用的知识标识必须在激活清单里真实存在。
+
+    比硬编码更糟的一类：写着 ``TEL-05``、``app-lifecycle-config`` 这种**查无此物**的编号与
+    文件名，模型照着它去找判定基准，找不到就只能自己编。实测这类死判据在注入件里存活了
+    很久——因为没有任何检查会去核对「这个编号真的有吗」。
+
+    口径（G3）：只判**两类明确的引用**，不做形态猜测（猜测会把脚本名、目录名一并误报）——
+    ① 编号：前缀在册（说明它确实指某个已激活的域）而编号查不到；
+    ② 显式写出的 ``knowledge/xxx.md`` 路径，其文件不在激活清单。
+    占位形态不计。
+    """
+    names = activation_names(root)
+    if not names["derived"]:
+        return Outcome(True, "激活清单派生不出知识标识（证据不足，不判）")
+
+    hits = []
+    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+        rel = path.relative_to(root).as_posix()
+        for n, line in enumerate(split_lines(read_text(path)), start=1):
+            # a) 编号：前缀在册说明它确实指某个已激活的域，编号却查不到 = 死判据
+            for m in ENTRY_ID_RE.finditer(line):
+                eid = m.group(0)
+                if PLACEHOLDER_PREFIX_RE.match(eid.split("-")[0]):
+                    continue
+                if eid.split("-")[0] in names["prefixes"] and eid not in names["entries"]:
+                    hits.append(f"{rel}:{n} 编号 `{eid}` 在激活清单里不存在（死判据）")
+            # b) 显式的知识文件路径引用：写出来了就必须真的在册
+            for pm in re.finditer(r"knowledge/[\w./-]+\.md", line):
+                slug = pm.group(0).rsplit("/", 1)[-1].removesuffix(".md")
+                if slug not in names["slugs"] and slug != "README":
+                    hits.append(f"{rel}:{n} 知识路径 `{pm.group(0)}` 不在激活清单")
+    if hits:
+        return Outcome(False, "引用了不存在的知识标识：" + "；".join(hits[:6]))
+    return Outcome(True, "机制层引用的知识标识全部在册")
 
 
 @checker
@@ -615,6 +710,91 @@ def m15_paraphrase_branch_drift(root: Path, ctx: Ctx) -> Outcome:
         if drift:
             return Outcome(False, "Python 与 JS 的复述判定漂移：" + "；".join(drift))
     return Outcome(True, f"{tail[0]}；双实现判定一致")
+
+
+@checker
+def m16_patch_residue(root: Path, ctx: Ctx) -> Outcome:
+    """补丁式修补的残留：死代码、静默降级、跨轮次的临时标记。
+
+    口径（G3）：三类各自可独立判定，**逐类报出**——
+
+    1. **死代码**：``export function X`` 在整个扩展根内零调用方（定义处不计）。
+       零调用的导出不只是多余，它守着的数据会成为「从不生效的第二真源」——
+       实测出现过一份硬编码的模式清单，被一个从没人调的自检函数守着。
+    2. **静默降级**：``catch`` 块里直接 ``return`` 空值且**同块内无任何出声**
+       （无 ``console``、无 ``throw``、无 ``problems.push``）。降级本身合法，静默不合法：
+       它把「没接上」伪装成「正常路径」。
+    3. **跨轮次临时标记**：``TODO`` / ``FIXME`` / ``暂时`` / ``临时`` / ``待迁移``。
+       留过一轮的临时方案就是永久方案，只是没人认领。
+
+    **不计**：注释里描述这些反模式本身的行（同行含「不得」「禁止」等否定词）——
+    维护契约与本 checker 的说明文字正属此类。
+    """
+    negation = re.compile(r"不得|禁止|不许|反例|应出声|必须出声|要出声")
+    code_files = iter_files(root, (".mjs", ".js"), ())
+    blobs = {p: read_text(p) for p in code_files}
+    all_code = "\n".join(blobs.values())
+
+    dead, silent, temp = [], [], []
+
+    # 1. 死代码：零调用方的导出
+    for path, text in blobs.items():
+        rel = path.relative_to(root).as_posix()
+        for n, line in enumerate(split_lines(text), start=1):
+            m = re.match(r"\s*export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)", line)
+            if not m:
+                continue
+            name = m.group(1)
+            # 调用点：排除定义行本身与 export 列表
+            uses = len(re.findall(rf"\b{re.escape(name)}\s*\(", all_code))
+            # 作为**值**被引用同样算用到：注册进映射表、放进导出列表、当回调传递。
+            # 只数调用形式会把「注册进 FORM_COUNTERS 这类分派表」的函数误报成死代码。
+            as_value = len(re.findall(rf"[:,\[{{]\s*{re.escape(name)}\s*[,\]}}\n]", all_code))
+            reexports = len(re.findall(rf"\bexport\s*{{[^}}]*\b{re.escape(name)}\b", all_code))
+            if uses <= 1 and as_value == 0 and reexports == 0:
+                dead.append(f"{rel}:{n} `{name}` 零调用方")
+
+    # 2. 静默降级：catch 块内直接 return 且无出声
+    for path, text in blobs.items():
+        rel = path.relative_to(root).as_posix()
+        rows = split_lines(text)
+        for i, line in enumerate(rows):
+            if not re.search(r"\bcatch\s*(\([^)]*\))?\s*{", line):
+                continue
+            block = "\n".join(rows[i: i + 6])
+            if re.search(r"console\.|throw |problems\.push|fail\(|log\(", block):
+                continue
+            # 只判返回**空集合**：`return null` 是显式的「没有」信号，调用方被迫判空；
+            # `return []` 才是静默——`for...of` 一声不响地跳过，看起来一切正常
+            if re.search(r"return\s*(\[\]|{})", block):
+                if negation.search(line) or negation.search(rows[max(0, i - 1)]):
+                    continue
+                silent.append(f"{rel}:{i + 1} catch 内静默返回空值")
+
+    # 3. 跨轮次临时标记。
+    # 「临时/暂时」在业务描述里是常用词（「临时改名再还原」「允许临时硬编码」都是被设计的行为），
+    # 所以只判它作为**遗留标记**的形态：待办标记，或明说是临时方案/待迁移。
+    # 知识层不扫——那里的「临时」是业务规则的一部分，不是代码里欠的债。
+    marker = re.compile(r"\bTODO\b|\bFIXME\b|\bXXX:|临时方案|临时措施|临时实现|暂时保留|待迁移|待重构")
+    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+        rel = path.relative_to(root).as_posix()
+        for n, line in enumerate(split_lines(read_text(path)), start=1):
+            if negation.search(line):
+                continue
+            m = marker.search(line)
+            if m:
+                temp.append(f"{rel}:{n} `{m.group(0)}`")
+
+    parts = []
+    if dead:
+        parts.append(f"死代码 {len(dead)} 处：" + "；".join(dead[:4]))
+    if silent:
+        parts.append(f"静默降级 {len(silent)} 处：" + "；".join(silent[:4]))
+    if temp:
+        parts.append(f"临时标记 {len(temp)} 处：" + "；".join(temp[:4]))
+    if parts:
+        return Outcome(False, " | ".join(parts))
+    return Outcome(True, f"零死代码 / 零静默降级 / 零临时标记（扫 {len(code_files)} 个代码文件）")
 
 
 # --------------------------------------------------------------------------- #

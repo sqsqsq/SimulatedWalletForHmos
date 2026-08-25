@@ -43,12 +43,21 @@ const EXEMPT_LINE_PATTERNS = [
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** 读 framework 配置。读不到就返回空对象——推导不出来时各处自行退回通用形态。 */
+/**
+ * 读 framework 配置。推导不出来时各处自行退回通用形态。
+ *
+ * **配置不存在**与**配置坏了**要分开：前者在换工程或裸跑时是正常的，后者是事故——
+ * 一份坏掉的配置会让所有从它派生的判据一起悄悄失效，那正是最该被看见的时刻。
+ */
 function readConfig(projectRoot) {
   if (!projectRoot) return {};
+  const configPath = path.join(projectRoot, 'framework.config.json');
+  if (!fs.existsSync(configPath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'framework.config.json'), 'utf-8'));
-  } catch {
+    return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  } catch (e) {
+    console.error(`[lint-rules] framework.config.json 解析失败：${e.message}`
+      + '——所有从它派生的形态判据将退回通用段');
     return {};
   }
 }

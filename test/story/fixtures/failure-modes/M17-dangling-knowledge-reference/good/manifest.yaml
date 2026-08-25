@@ -1,0 +1,7 @@
+schema_version: "1.0"
+name: fixture
+provides:
+  knowledge_activation:
+    facts: [knowledge/sample-profile.md]
+    constraints: [knowledge/sample-domain.md]
+    patterns: [knowledge/sample-pattern.md]
