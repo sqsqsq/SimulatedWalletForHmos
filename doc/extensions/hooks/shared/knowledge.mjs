@@ -5,27 +5,27 @@
  * 不扫描知识目录、不读未启用文件。目录里放一个未登记的知识文件，阶段读不到它。
  * 每个文件属于哪类知识，由它自己 frontmatter 的 `kind` 决定——清单只有一份。
  *
- * **零硬编码**：域前缀、条目清单、模式标识与角色，全部运行期从激活文件的正文派生。
+ * **零硬编码**：域前缀、条目清单、模式标识与角色，全部运行期从激活文件的 frontmatter 与正文派生。
  * 代码里没有任何域名、编号或模式名的字面量——新增一个域只改知识与清单，不改这里。
+ *
+ * 三类知识的定位见 knowledge/README.md；这里只解析结构，不定义知识。
  *
  * **派生为空必须出声**：清单为空、文件缺失、条目表解析出零行，一律 `throw`。
  * 返回空集会让所有「集合包含」类判据恒真，那是比报错危险得多的静默失效。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { parseYaml } from './yaml-lite.mjs';
 
-/** 三类知识的类型键——封闭集合（项目事实 / 规约 / 设计模式）。 */
+/** 三类知识的类型键——封闭集合。 */
 export const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
 
-/**
- * 索引件：目录的字段模型、模式的路由与粒度定义这类**说明性文档**。
- *
- * 它随激活清单交付、可被各阶段引用（那些「粒度照索引的定义切」的指令指的就是它），
- * 但不承载条目，因此不参与条目与模式的派生。
- * **它不是第四类知识**——说明性文档不形成新的知识类型。
- */
+/** 索引件：随清单交付、可被引用，不承载条目、不参与派生；不是第四类知识。 */
 export const INDEX_KIND = 'index';
+
+/** 激活清单文件名（相对扩展根）。 */
+const MANIFEST_NAME = 'manifest.yaml';
 
 /** 处置列以此开头的条目是纯评审动作：不产生代码要求。 */
 const REVIEW_ACTION_MARK = '（评审动作）';
@@ -106,15 +106,14 @@ function parseConstraintFile(absPath, rel) {
     const m = id.match(ENTRY_ID_RE);
     if (!m) continue;
     const handling = pick(cells, table.headers, '处置');
+    // 只派生有消费者的字段（复述比对、出口/冻结门禁、归档渲染）；
+    // 强制力/命中条件/验证列由模型直接读正文，机制不派生无人读的副本。
     entries.push({
       id,
       prefix: m[1],
       file: rel,
       constraint: pick(cells, table.headers, '约束'),
-      force: pick(cells, table.headers, '强制力'),
-      hitWhen: pick(cells, table.headers, '命中条件'),
       handling,
-      verify: pick(cells, table.headers, '验证'),
       reviewAction: handling.trim().startsWith(REVIEW_ACTION_MARK),
     });
   }
@@ -141,7 +140,6 @@ function parseConstraintFile(absPath, rel) {
     name: fm.name ?? '',
     title,
     domain: derived,
-    appliesWhen: fm.applies_when ?? '',
     entries: entries.map(e => ({ ...e, domainTitle: title })),
     notes,
   };
@@ -150,7 +148,7 @@ function parseConstraintFile(absPath, rel) {
 function parsePatternFile(absPath, rel) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的模式文件读不到 —— ${rel}`);
-  const { frontmatter, body } = splitFrontmatter(text);
+  const { frontmatter } = splitFrontmatter(text);
   const fm = frontmatterPairs(frontmatter);
   const id = fm.name;
   if (!id) fail(`${rel} 的 frontmatter 缺 name —— 模式标识是全链受控标识，不能缺`);
@@ -162,19 +160,17 @@ function parsePatternFile(absPath, rel) {
   if (coordinator && !roles.includes(coordinator)) {
     fail(`${rel} 的 coordinator_role「${coordinator}」不在 roles 里`);
   }
+  // 适用条件与正文由模型直接读，机制只认标识与角色（冻结门禁的投影基准）。
   return {
     file: rel,
     id,
     roles,
     optionalRoles: fmList(fm.optional_roles),
     coordinatorRole: coordinator,
-    appliesWhen: fm.applies_when ?? '',
-    notAppliesWhen: fm.not_applies_when ?? '',
-    body,
   };
 }
 
-/** 索引件：只取名字与正文，供引用它的阶段读取（不解析条目）。 */
+/** 索引件：只取名字，不解析条目；正文由 selfCheck 按 file 回读。 */
 function parseIndexFile(text, rel) {
   const { frontmatter, body } = splitFrontmatter(text);
   const fm = frontmatterPairs(frontmatter);
@@ -183,7 +179,6 @@ function parseIndexFile(text, rel) {
     file: rel,
     name: fm.name ?? '',
     title: titleMatch ? titleMatch[1].trim() : (fm.name ?? rel),
-    body,
   };
 }
 
@@ -197,7 +192,7 @@ function parseFactFile(absPath, rel) {
     .filter(Boolean)
     .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim())
     .filter(Boolean);
-  return { file: rel, name: fm.name ?? '', facets, body };
+  return { file: rel, name: fm.name ?? '', facets };
 }
 
 /**
@@ -213,7 +208,7 @@ function parseFactFile(absPath, rel) {
  */
 export function activeKnowledge(projectRoot) {
   const root = extensionRoot(projectRoot);
-  const manifestPath = path.join(root, 'manifest.yaml');
+  const manifestPath = path.join(root, MANIFEST_NAME);
   const raw = readTextOrNull(manifestPath);
   if (raw === null) {
     fail(`派生为空：读不到激活清单 ${relDisplay(projectRoot, manifestPath)}`);
@@ -292,49 +287,85 @@ export function paraphraseSources(knowledge, id) {
 }
 
 /**
- * 知识层自检 —— 结构级，不判内容对错。
+ * 知识层自检 —— 结构级边界，不判内容对错（那是人和 verifier 的事）。
  *
- * **只查机制层与知识层的职责边界**，不查知识内容对不对（那是人和 verifier 的事）：
- *   1. 规约不得携带目标工程的实现事实（类名、路径、API 归项目知识）；
- *   2. 知识不得维护阶段消费路由（阶段路由归各阶段自己的规则，写在这里就是第二份真源）。
+ * 扫描面是**全部激活文件**（三类知识 + 索引件），四项判据全部从激活清单与目录结构派生：
+ *   1. 规约不携带工程实现事实（源码路径/文件名归项目知识）；
+ *   2. 任一知识文件不含阶段消费矩阵（阶段路由归各阶段自己的规则）；
+ *   3. 项目知识不含在册规约编号（时机与要求归规约，facts 只写有什么、在哪）；
+ *   4. 任一知识文件不指向机制（manifest、hooks/skills/rules 这类目录）——知识是给模型
+ *      实现需求用的，维护坐标不进知识。
  *
- * **这里刻意不做模式基线守恒**：那需要在机制层存一份模式正文的 SHA 与元数据副本，
- * 而那份副本就是「机制层维护 knowledge 的第二份清单」——改一个字的模式正文、
- * 或新增一个模式，story 机制就会报错。模式内容的守恒归版本发布清单（它本就管内容归属），
- * 不归这里。
+ * 不做模式基线守恒：那要在机制层存一份模式正文的副本，副本就是第二份真源；归发布清单。
  *
  * @returns {string[]} 问题清单；空数组表示通过
  */
 export function selfCheck(projectRoot, knowledge) {
   const problems = [];
   const root = extensionRoot(projectRoot);
+  const readRel = rel => readTextOrNull(path.join(root, ...rel.split('/'))) ?? '';
+  const allFiles = [
+    ...knowledge.constraints, ...knowledge.facts, ...knowledge.patterns, ...knowledge.indexes,
+  ].map(k => k.file);
 
-  // 规约不得携带目标工程实现事实：源码路径与源文件名一律归项目知识
+  // 1. 规约不得携带目标工程实现事实：源码路径与源文件名一律归项目知识
   const implPathRe = /[\w./-]+\.(ets|ts|js|json5)\b/;
   for (const c of knowledge.constraints) {
-    const text = readTextOrNull(path.join(root, ...c.file.split('/'))) ?? '';
-    lines(text).forEach((line, i) => {
+    lines(readRel(c.file)).forEach((line, i) => {
       const m = line.match(implPathRe);
       if (m) {
         problems.push(`${c.file}:${i + 1} 规约携带工程实现事实「${m[0]}」`
-          + '——归项目知识；此处只写「去仓里按项目知识的定位规则找现成的」');
+          + '——归项目知识；此处只写「按项目知识的入口找现成的」');
       }
     });
   }
 
-  // Knowledge 不维护阶段消费路由：知识正文里不得出现阶段矩阵
+  // 2. 知识不维护阶段消费路由：任一知识文件的表格行里不得出现阶段矩阵
   const phaseWords = ['spec', 'plan', 'coding', 'review', 'testing'];
-  for (const c of knowledge.constraints) {
-    const text = readTextOrNull(path.join(root, ...c.file.split('/'))) ?? '';
-    for (const line of lines(text)) {
+  for (const file of allFiles) {
+    for (const line of lines(readRel(file))) {
       if (!line.trim().startsWith('|')) continue;
       const hit = phaseWords.filter(w => line.toLowerCase().includes(w));
       if (hit.length >= 3) {
-        problems.push(`${c.file} 出现阶段消费矩阵（表头含 ${hit.join('/')}）`
+        problems.push(`${file} 出现阶段消费矩阵（表头含 ${hit.join('/')}）`
           + '——阶段路由归各阶段自己的规则，知识不维护');
         break;
       }
     }
+  }
+
+  // 3. 项目知识不含在册规约编号：facts 只答有什么、在哪，时机与要求归规约
+  const entryIds = new Set(knowledge.entries.map(e => e.id));
+  const anyIdRe = /\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g;
+  for (const f of knowledge.facts) {
+    lines(readRel(f.file)).forEach((line, i) => {
+      for (const m of line.matchAll(anyIdRe)) {
+        if (entryIds.has(m[0])) {
+          problems.push(`${f.file}:${i + 1} 项目知识引用规约条目「${m[0]}」`
+            + '——时机与要求归规约，facts 只写有什么、在哪');
+        }
+      }
+    });
+  }
+
+  // 4. 知识不指向机制：目录名从扩展根实取（knowledge/ 以外的一级目录）+ 激活清单文件名
+  let mechanismDirs = [];
+  try {
+    mechanismDirs = fs.readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name !== 'knowledge' && !d.name.startsWith('.'))
+      .map(d => d.name);
+  } catch { /* 扩展根读不到时本项无从判，前面的激活读取已经出声 */ }
+  const mechanismRe = mechanismDirs.length
+    ? new RegExp(`(?:^|[\\s(\`/])(?:${mechanismDirs.map(d => d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})/|${MANIFEST_NAME.replace('.', '\\.')}`)
+    : new RegExp(MANIFEST_NAME.replace('.', '\\.'));
+  for (const file of allFiles) {
+    lines(readRel(file)).forEach((line, i) => {
+      const m = line.match(mechanismRe);
+      if (m) {
+        problems.push(`${file}:${i + 1} 知识指向机制「${m[0].trim()}」`
+          + '——维护坐标不进知识，知识只写给模型实现需求用的内容');
+      }
+    });
   }
 
   return problems;

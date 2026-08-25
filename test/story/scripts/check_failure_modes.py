@@ -397,6 +397,35 @@ def m17_dangling_knowledge_reference(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def m18_knowledge_boundary_leak(root: Path, ctx: Ctx) -> Outcome:
+    """知识文件越出自己的边界。
+
+    四种形态，全部由激活清单与目录结构派生（AGENTS.md §2「知识不含维护信息，定位只写一处」）：
+    ① 项目知识引用在册规约编号（时机与要求归规约）；② 任一知识文件指向机制
+    （manifest / hooks 等目录——维护坐标不进知识）；③ 规约携带源码路径；④ 阶段消费矩阵。
+
+    判定不在这里重实现：经 ``run_self_check.mjs`` 调真实 ``selfCheck``，退出码与问题清单即结论。
+    夹具是自带 ``framework.config.json``（``extension_dir: "."``）的迷你扩展根，把它当工程根传入；
+    真实目标把仓根当工程根（扩展根由仓根配置解析）。
+    """
+    runner = REPO_ROOT / "test" / "story" / "scripts" / "run_self_check.mjs"
+    if not runner.exists():
+        return Outcome(False, "缺自检脚本 run_self_check.mjs")
+    project_root = root if (root / "framework.config.json").exists() else REPO_ROOT
+    proc = subprocess.run(
+        ["node", str(runner), str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(REPO_ROOT),
+    )
+    if proc.returncode == 2:
+        return Outcome(False, f"知识派生失败（不当作通过）：{proc.stderr.strip() or proc.stdout.strip()}")
+    problems = [l.strip() for l in split_lines(proc.stdout) if l.strip()]
+    if proc.returncode != 0 or problems:
+        return Outcome(False, "知识边界泄漏：" + "；".join(problems[:6]))
+    return Outcome(True, "全部激活知识文件边界自检 0 问题")
+
+
+@checker
 def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     """机制层不得出现测试 Case 的单号或业务特征词（反过拟合）。"""
     case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")

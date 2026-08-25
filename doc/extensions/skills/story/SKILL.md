@@ -209,7 +209,7 @@ node doc/extensions/skills/story/scripts/story.js restore <AR> <mcp-token>
 
 - **本需求的材料**：四源现状（`RR/prd.md` + `SR/design.md` + `AR/design.md` 现状 +
   `AR/upstream.md`，存在即读）。逐轮可变，`round` 按它们的哈希判定轮次；
-- **工程级事实**：激活清单里的项目知识（部件画像与取证导航）
+- **工程级事实**：激活清单里的项目知识（部件画像与工程惯例）
   ——「本部件是谁、承担什么、与谁交互」的唯一定义来源，第 ② 节据它核对。
   跨需求恒定，不参与轮次哈希。
 

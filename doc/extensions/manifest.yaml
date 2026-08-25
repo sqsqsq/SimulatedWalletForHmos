@@ -18,11 +18,13 @@ provides:
   # 可被引用，但不承载条目，因此不参与条目与模式的派生。它**不是第四类知识**——
   # 说明性文档不形成新的知识类型。
   #
-  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从正文派生，
-  # 机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
+  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从各文件的
+  # frontmatter 与正文派生，机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
   knowledge:
-    - knowledge/component-profile.md
-    - knowledge/codebase-facts.md
+    - knowledge/README.md
+    - knowledge/facts/README.md
+    - knowledge/facts/component-profile.md
+    - knowledge/facts/codebase-facts.md
     - knowledge/constraints/README.md
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md

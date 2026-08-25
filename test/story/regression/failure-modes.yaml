@@ -272,6 +272,23 @@ modes:
       只判两类明确引用，不做形态猜测（猜测会把脚本名、目录名一并误报）：
       ①编号前缀在册而编号查不到；②显式写出的 knowledge/xxx.md 路径不在清单。
 
+  - id: M18-knowledge-boundary-leak
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 知识文件越出自己的边界——facts 引规约编号（把时机写进事实）、知识指向 manifest/hooks（维护信息进了模型 prompt）、规约带源码路径、知识里出现阶段矩阵
+    clause: AGENTS.md §2「知识不含维护信息，定位只写一处」/ 冻结 03-C3、C4
+    checker: m18_knowledge_boundary_leak
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M18-knowledge-boundary-leak/bad
+    good_fixture: test/story/fixtures/failure-modes/M18-knowledge-boundary-leak/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      判据在 hooks/shared/knowledge.mjs 的 selfCheck 里，checker 只调它不重实现。
+      四项基准全部派生：在册编号来自激活清单，机制目录名来自扩展根实读，不写关键词表。
+      批次 1 里 codebase-facts 被重写 5 次不收敛，根因就是这条边界没有机械回归。
+
   # ---------------------------------------------------------------------------
   # 产物层（feature 产物里的失效形态）
   # ---------------------------------------------------------------------------

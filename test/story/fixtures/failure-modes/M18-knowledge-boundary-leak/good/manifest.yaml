@@ -1,0 +1,8 @@
+schema_version: "1.0"
+name: fixture
+provides:
+  knowledge:
+    - knowledge/README.md
+    - knowledge/sample-profile.md
+    - knowledge/sample-domain.md
+    - knowledge/sample-pattern.md
