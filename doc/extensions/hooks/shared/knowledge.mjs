@@ -11,7 +11,6 @@
  * 返回空集会让所有「集合包含」类判据恒真，那是比报错危险得多的静默失效。
  */
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { parseYaml } from './yaml-lite.mjs';
 
@@ -256,13 +255,18 @@ export function paraphraseSources(knowledge, id) {
   return [e.constraint, e.handling, domain?.notes ?? ''].filter(Boolean);
 }
 
-/** 会产生代码要求的命中条目（评审动作条目不算）。 */
-export function codeRequiringEntries(knowledge) {
-  return knowledge.entries.filter(e => !e.reviewAction);
-}
-
 /**
  * 知识层自检 —— 结构级，不判内容对错。
+ *
+ * **只查机制层与知识层的职责边界**，不查知识内容对不对（那是人和 verifier 的事）：
+ *   1. 规约不得携带目标工程的实现事实（类名、路径、API 归项目知识）；
+ *   2. 知识不得维护阶段消费路由（阶段路由归各阶段自己的规则，写在这里就是第二份真源）。
+ *
+ * **这里刻意不做模式基线守恒**：那需要在机制层存一份模式正文的 SHA 与元数据副本，
+ * 而那份副本就是「机制层维护 knowledge 的第二份清单」——改一个字的模式正文、
+ * 或新增一个模式，story 机制就会报错。模式内容的守恒归版本发布清单（它本就管内容归属），
+ * 不归这里。
+ *
  * @returns {string[]} 问题清单；空数组表示通过
  */
 export function selfCheck(projectRoot, knowledge) {
@@ -275,7 +279,10 @@ export function selfCheck(projectRoot, knowledge) {
     const text = readTextOrNull(path.join(root, ...c.file.split('/'))) ?? '';
     lines(text).forEach((line, i) => {
       const m = line.match(implPathRe);
-      if (m) problems.push(`${c.file}:${i + 1} 规约携带工程实现事实「${m[0]}」——归项目知识，此处只写「见项目知识《…》‹面名›」`);
+      if (m) {
+        problems.push(`${c.file}:${i + 1} 规约携带工程实现事实「${m[0]}」`
+          + '——归项目知识；此处只写「去仓里按项目知识的定位规则找现成的」');
+      }
     });
   }
 
@@ -287,44 +294,12 @@ export function selfCheck(projectRoot, knowledge) {
       if (!line.trim().startsWith('|')) continue;
       const hit = phaseWords.filter(w => line.toLowerCase().includes(w));
       if (hit.length >= 3) {
-        problems.push(`${c.file} 出现阶段消费矩阵（表头含 ${hit.join('/')}）——阶段路由归各阶段自己的规则，知识不维护`);
+        problems.push(`${c.file} 出现阶段消费矩阵（表头含 ${hit.join('/')}）`
+          + '——阶段路由归各阶段自己的规则，知识不维护');
         break;
       }
     }
   }
 
-  // 模式基线：正文与元数据分开守（整文件 SHA 会与元数据受控扩展互斥）
-  const baselinePath = path.join(root, 'hooks', 'shared', 'pattern-baseline.json');
-  const baselineRaw = readTextOrNull(baselinePath);
-  if (baselineRaw !== null) {
-    let baseline;
-    try {
-      baseline = JSON.parse(baselineRaw);
-    } catch (e) {
-      problems.push(`模式基线文件解析失败：${e.message}`);
-      baseline = null;
-    }
-    for (const p of knowledge.patterns) {
-      const b = baseline?.patterns?.[p.id];
-      if (!b) { problems.push(`模式 ${p.id} 无基线登记——无法判定基线完整`); continue; }
-      const text = readTextOrNull(path.join(root, ...p.file.split('/'))) ?? '';
-      const { frontmatter, body } = splitFrontmatter(text);
-      const bodySha = sha256(body);
-      if (bodySha !== b.body_sha256) {
-        problems.push(`模式 ${p.id} 正文与基线不一致（基线完整性失败）`);
-      }
-      const fm = frontmatterPairs(frontmatter);
-      for (const [k, v] of Object.entries(b.frontmatter ?? {})) {
-        if (fm[k] !== v) problems.push(`模式 ${p.id} 的原件元数据键「${k}」被改动（应守恒）`);
-      }
-      const extra = Object.keys(fm).filter(k => !(k in (b.frontmatter ?? {})) && !(b.allowed_added_keys ?? []).includes(k));
-      if (extra.length) problems.push(`模式 ${p.id} 出现未获准的新增元数据键：${extra.join('、')}`);
-    }
-  }
-
   return problems;
-}
-
-function sha256(text) {
-  return createHash('sha256').update(text, 'utf-8').digest('hex');
 }

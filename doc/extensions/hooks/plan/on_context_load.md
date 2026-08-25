@@ -66,7 +66,7 @@ knowledge_freeze:
 ```yaml
 - id: AC-<N>                  # 框架原生形态，下游 ut/testing 认它
   knowledge_rule: <规约条目编号>   # 桥接键：把验收条目认回某条规约
-  category: <security|privacy|performance|dfx|compatibility|nfr>
+  category: <框架原生的约束类别>   # 本条规约属于哪一类；**不是**规约域的镜像
   prd_function: <业务步骤>
   ut_layer: <unit|device|both>     # 谁来验，单源在此
   ut_focus / device_focus: …       # 按框架规则必填

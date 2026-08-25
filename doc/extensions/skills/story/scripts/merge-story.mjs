@@ -23,13 +23,12 @@ import { scanBannedTerms, scanLocalPaths, scanDanglingRefs, formatHits, baseLaye
 // 基础设施
 
 function parseArgs(argv) {
-  const args = { check: false, init: false };
+  const args = { check: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--feature') args.feature = argv[++i];
     else if (a === '--project-root') args.projectRoot = argv[++i];
     else if (a === '--check') args.check = true;
-    else if (a === '--init') args.init = true;
   }
   return args;
 }
@@ -108,10 +107,6 @@ function tableCells(line) {
 
 const args = parseArgs(process.argv);
 if (!args.feature) fail('缺少 --feature <name>');
-if (args.init) {
-  fail('--init 已退役：story 改为逐章装配。请用 '
-    + 'story-build.mjs scaffold --feature <name> 起手，逐章转写后 build。');
-}
 if (!args.check) fail('须指定模式：--check（门禁校验）');
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));

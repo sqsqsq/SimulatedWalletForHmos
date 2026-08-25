@@ -4,13 +4,13 @@
  * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 merge-story.mjs（校验 story.md）共用，
  * 避免两处各维护一份词表而漂移。
  *
- * 词表与 skills/story/SKILL.md「概念红线（客户端语境）」及 rules/rules.md story 第 7 条逐字对齐；
- * 修改任一处须同步另两处。
+ * 本文件是禁用词表的**唯一真源**：story 撰写红线只描述「不用服务端发布术语」这条纪律，
+ * 具体词表不复述——复述就要两处同步，而同步这件事没有任何机制保证。
  *
  * **工程形态一律运行时推导，不硬编码**：模块目录形态取自 `framework.config.json` 的分层声明，
- * 约束文件名取自 `knowledge/constraints/` 的目录列举。硬编码的快照会过期——本文件曾内置一份
- * 约束文件名清单，其中三个文件早已退役而清单没跟上；换工程时它更是直接失效（模块目录形态一变，
- * 仓内路径就扫不到，归档件自包含红线**静默**失效）。
+ * 知识文件名取自激活清单（不扫目录——目录里躺着的未启用文件不参与判定）。硬编码的快照会过期：
+ * 本文件曾内置一份约束文件名清单，其中三个文件早已退役而清单没跟上；换工程时它更是直接失效
+ * （模块目录形态一变，仓内路径就扫不到，归档件自包含红线**静默**失效）。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -80,15 +80,23 @@ function moduleLayerIds(projectRoot) {
  * 它承载的是跨业务的平台能力。写死某个层名会在换工程时静默失效（坑 #29），
  * 而依赖方向是架构 DSL 里本来就有的语义。
  *
- * @returns {string[]} 取不到声明时返回空数组，调用方据此不过滤（向后兼容）
+ * @returns {string[]} 取不到声明时返回空数组并**出声告警**——调用方据此不过滤，
+ *   但这属于降级而非正常路径：静默降级会让「术语分流」这条判据无声消失。
  */
 export function baseLayerIds(projectRoot) {
   const layers = readConfig(projectRoot)?.architecture?.outer_layers;
-  if (!Array.isArray(layers)) return [];
-  return layers
+  if (!Array.isArray(layers)) {
+    console.error('[lint-rules] 架构 DSL 未声明外层，无法派生平台能力层：术语分流降级为不过滤');
+    return [];
+  }
+  const ids = layers
     .filter(l => Array.isArray(l?.can_depend_on) && l.can_depend_on.length === 0)
     .map(l => l?.id)
     .filter(id => typeof id === 'string' && id.trim());
+  if (!ids.length) {
+    console.error('[lint-rules] 架构 DSL 里没有依赖链最底层（can_depend_on 全非空）：术语分流降级为不过滤');
+  }
+  return ids;
 }
 
 function localPathRe(projectRoot) {
@@ -155,7 +163,6 @@ const DANGLING_REF_PATTERNS = [
   { re: /(?:见|指回|来源|源：)\s*A[1-8]\b/g, hint: '历史 impact 小节编号，本文不存在——改用事物的名字' },
   { re: /\bar_design_init\b|\bevidence-rules\b|\bstory-chapters\b|\bstory-src\b|SKILL\.md/g, hint: 'skill 内部规则文件不随归档，改述为自然语言' },
   { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g, hint: 'slug 是仓内文件名，改写为中文规约名 + 编号（形如「<中文规约名> XXX-01」）' },
-  { re: /simulation_scope_awareness|ui_change\s*:|ui_spec_enforcement/g, hint: '机器校验字段名，评审者不认识——保留其自然语言说明即可' },
 ];
 
 /**
@@ -184,7 +191,7 @@ function bareFileNameRule(projectRoot) {
   const names = [...new Set([...constraintNames(projectRoot), ...FRAMEWORK_ARTIFACT_NAMES])];
   return {
     re: new RegExp(String.raw`\b(?:${names.map(escapeRe).join('|')})\.(?:md|yaml|yml|json)\b`, 'g'),
-    hint: '仓内文件名不随归档——约束文件改写为中文规约名（如「打点规范规约」），产物文件改述为本文章节',
+    hint: '仓内文件名不随归档——知识文件改写为它的中文名，产物文件改述为本文章节',
   };
 }
 

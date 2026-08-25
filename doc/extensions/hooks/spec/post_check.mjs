@@ -20,7 +20,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
-import { activeKnowledge, paraphraseSources } from '../shared/knowledge.mjs';
+import { activeKnowledge, paraphraseSources, selfCheck } from '../shared/knowledge.mjs';
 import { isPureCopy } from '../shared/paraphrase.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -231,6 +231,10 @@ function knowledgeExitProblems(ctx, lines) {
   } catch (e) {
     return [`激活知识派生失败：${e.message}`];
   }
+
+  // 知识层自身的职责边界（规约不携带实现事实、知识不维护阶段路由）。
+  // 放在这里跑：spec 是知识判定的起点，知识层坏了后面每个阶段都建在坏地基上。
+  problems.push(...selfCheck(ctx.projectRoot, knowledge));
 
   const exitIdx = findHeading(lines, /规约约束要求/);
   const patternIdx = findHeading(lines, /设计模式候选/);
@@ -668,7 +672,8 @@ export default async function postCheckHook(ctx) {
   // 场景探针：走过 /story 的 feature 才有流程契约。
   // 本 hook 的检查分两类——**扩展新增的结构要求**（三份产物、§9 技术契约、术语解释列、
   // 归档件红线）只在 story 场景成立，对「口述一个需求直接跑 spec」的用法是凭空多出来的
-  // 硬阻断；**规约派生的要求**（§7 UX 适配）与 story 无关，对所有人生效。
+  // 硬阻断；**知识判定的两个出口**（约束要求章、模式候选登记）与 story 无关，对所有人生效
+  // ——判定产生的代码要求不进 spec，编码那里就拿不到。
   const isStory = fs.existsSync(path.join(featureRoot, ...FLOW_FILE));
 
   // ---- 本阶段三份产物齐备（story 专属）----

@@ -209,7 +209,7 @@ node doc/extensions/skills/story/scripts/story.js restore <AR> <mcp-token>
 
 - **本需求的材料**：四源现状（`RR/prd.md` + `SR/design.md` + `AR/design.md` 现状 +
   `AR/upstream.md`，存在即读）。逐轮可变，`round` 按它们的哈希判定轮次；
-- **工程级事实**：[knowledge/component-profile.md](../../knowledge/component-profile.md)
+- **工程级事实**：本阶段注入的项目知识（部件画像与取证导航）
   ——「本部件是谁、承担什么、与谁交互」的唯一定义来源，第 ② 节据它核对。
   跨需求恒定，不参与轮次哈希。
 
@@ -273,7 +273,7 @@ node doc/extensions/skills/story/scripts/story.js restore <AR> <mcp-token>
   （需求系统可能已预填）+ `AR/upstream.md`（人工补录的本部件材料）。
   **不直接读 `inbox/`**——收件箱里的材料在 S2 已汇入这四源（不变量：某类目标文件全文 =
   该类 inbox 材料的转换结果），再当一源读就是同一事实两个落点
-- **规则**：[rules/ar_design_init.md](rules/ar_design_init.md)，生成前完整阅读其四段内容——①两把裁剪标尺（指向 [knowledge/component-profile.md](../../knowledge/component-profile.md)，须一并读完）②提取原则 ③生成规则（需求提取五段结构、上游信息类别清单）④不做的事
+- **规则**：[rules/ar_design_init.md](rules/ar_design_init.md)，生成前完整阅读其四段内容——①两把裁剪标尺（指向本阶段注入的部件画像，须一并读完）②提取原则 ③生成规则（需求提取五段结构、上游信息类别清单）④不做的事
 - **范围**：契约 `split.decided === "split"` 时按 `scope_text` 裁剪，并把该文字逐字写入
   §1.2「本 AR 范围与拆分说明」；未切分时按契约 `positioning` 写（同 SR 有其它 AR 时
   **不能**只写「本 AR 承载全部需求」——那句话在有兄弟 AR 时是假的。三种形态见

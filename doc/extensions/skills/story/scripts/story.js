@@ -155,13 +155,25 @@ function backup(featureRoot, label, srcFile) {
   return dest;
 }
 
-/** 材料层可显式声明父子关系与材料归属；缺省时按编号推导（1:1 假设）。 */
+/**
+ * 材料层可显式声明父子关系与材料归属；缺省时按编号推导（1:1 假设）。
+ *
+ * **两种「读不到」要分开**：某个单号没有专用 detail 文件是设计内的降级（按编号推导即可）；
+ * 而整个材料目录不存在，说明这条拉取路径实际在空转——那是设施缺失，必须出声。
+ * 用同一个 catch 把两者吞成一样，会让「替身没接上」看起来和「正常走默认」毫无区别。
+ */
 function readMockDetail(ar) {
+  if (!fs.existsSync(MOCK_DATA_DIR)) {
+    log(`材料目录不存在：${MOCK_DATA_DIR}——本地替身没有任何上游材料可拉，`
+      + '后续将只生成占位件。接真实需求系统时这条路径由系统接入替换。');
+    return {};
+  }
+  const detailPath = path.join(MOCK_DATA_DIR, `${ar}-detail.json`);
+  if (!fs.existsSync(detailPath)) return {};   // 无专用声明：按编号推导，设计内
   try {
-    return JSON.parse(
-      fs.readFileSync(path.join(MOCK_DATA_DIR, `${ar}-detail.json`), 'utf-8')
-    );
-  } catch (_) {
+    return JSON.parse(fs.readFileSync(detailPath, 'utf-8'));
+  } catch (e) {
+    log(`材料声明解析失败（${detailPath}）：${e.message}——按编号推导继续`);
     return {};
   }
 }

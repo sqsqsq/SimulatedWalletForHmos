@@ -313,7 +313,11 @@ function renderSourceFp(fp) {
   return parts.length ? ` | sources: ${parts.join(' ')}` : '';
 }
 
-/** 从落盘的指纹行解析源 sha。旧格式（无 sources 段）返回 null，表示装配时还没记。 */
+/**
+ * 从落盘的指纹行解析源 sha。
+ * 返回 null 表示指纹行里没有 sources 段——那是**装配时一份源文档都不存在**的情况
+ * （`renderSourceFp` 对空对象返回空串），此时没有源可比，漂移检测无从谈起。
+ */
 function parseSourceFp(tail) {
   const m = tail.match(/\| sources: ([^>]+?)\s*-->/);
   if (!m) return null;
@@ -730,10 +734,6 @@ export function renderHumanZone(dec) {
   ].join('\n');
 }
 
-export function renderDecisionBlock(dec) {
-  return `${renderMachineZone(dec)}\n${renderHumanZone(dec)}`;
-}
-
 /** 从既有 review 里切出某议题的人工区（人工填写内容的唯一真源） */
 export function extractHumanZone(reviewText, id) {
   const mark = `<!-- decision: ${id} -->`;
@@ -926,7 +926,7 @@ function scaffold(ctx) {
           landing: '承载它的契约名（可选，写了更好查）',
         },
         patterns: {
-          unit: '适用单元：一段有独立业务目标的流程，或一个承载用户操作的界面单位',
+          unit: '适用单元：粒度照激活的模式索引里的定义切',
           candidate: '在册的 pattern_id 原样填；该单元没有候选就留空',
           signal: '为什么像（命中信号）或为什么不像（反证）',
         },
