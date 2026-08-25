@@ -1,5 +1,6 @@
 ---
 name: env-exceptions
+kind: constraints
 applies_when: always
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: design-patterns
+kind: index
 applies_when: always（凡需判断「这段实现该用哪种代码结构」时）
 ---
 

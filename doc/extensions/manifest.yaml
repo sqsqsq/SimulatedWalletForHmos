@@ -7,7 +7,19 @@ provides:
     - wallet-sdk-onboarding
     - story
 
-  # 框架侧只做存在性校验；真正决定「阶段读得到什么」的是下面的 knowledge_activation。
+  # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——
+  # 目录里躺着的未登记文件，任何阶段都读不到。
+  #
+  # **一份清单，不设第二份**：「这个文件属于哪类知识」写在文件自己的 frontmatter
+  # （`kind: facts | constraints | patterns | index`），不在这里再分一次组。
+  # 两份清单意味着两处要同步，改一处忘另一处就是静默漂移——而它们本来就该是同一件事。
+  #
+  # `kind: index` 是索引件（目录的字段模型、模式的路由与粒度定义）：随清单交付、
+  # 可被引用，但不承载条目，因此不参与条目与模式的派生。它**不是第四类知识**——
+  # 说明性文档不形成新的知识类型。
+  #
+  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从正文派生，
+  # 机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
   knowledge:
     - knowledge/component-profile.md
     - knowledge/codebase-facts.md
@@ -23,28 +35,6 @@ provides:
     - knowledge/design-patterns/README.md
     - knowledge/design-patterns/decision-tree.md
     - knowledge/design-patterns/page-interaction.md
-
-  # 激活清单（确定性）：阶段只读这里列出的文件，**不扫描 knowledge/ 目录**。
-  # 三类是封闭集合：项目事实 / 规约 / 设计模式。每个文件只能属于一类。
-  # 索引类 README 不登记——它只承载清单与组合边界，不是知识条目的载体。
-  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从这些文件的正文派生，
-  # 机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
-  knowledge_activation:
-    facts:
-      - knowledge/component-profile.md
-      - knowledge/codebase-facts.md
-    constraints:
-      - knowledge/constraints/ux-consistency.md
-      - knowledge/constraints/security-privacy.md
-      - knowledge/constraints/dfx-baseline.md
-      - knowledge/constraints/observability.md
-      - knowledge/constraints/resource-usage.md
-      - knowledge/constraints/compatibility-checklist.md
-      - knowledge/constraints/env-exceptions.md
-      - knowledge/constraints/deliverables.md
-    patterns:
-      - knowledge/design-patterns/decision-tree.md
-      - knowledge/design-patterns/page-interaction.md
 
   # 挂载分步进行：manifest 里任何一条路径不存在，加载器会**清空全部 provides**
   # （全有全无，不降级），所以只登记已交付的钩子。

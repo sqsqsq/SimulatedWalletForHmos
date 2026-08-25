@@ -1,8 +1,9 @@
 /**
  * 知识激活清单派生 —— 三类知识的唯一读取入口。
  *
- * **确定性激活**：只读 `manifest.yaml > provides.knowledge_activation` 列出的文件，
+ * **确定性激活**：只读 `manifest.yaml > provides.knowledge` 列出的文件，
  * 不扫描知识目录、不读未启用文件。目录里放一个未登记的知识文件，阶段读不到它。
+ * 每个文件属于哪类知识，由它自己 frontmatter 的 `kind` 决定——清单只有一份。
  *
  * **零硬编码**：域前缀、条目清单、模式标识与角色，全部运行期从激活文件的正文派生。
  * 代码里没有任何域名、编号或模式名的字面量——新增一个域只改知识与清单，不改这里。
@@ -16,6 +17,15 @@ import { parseYaml } from './yaml-lite.mjs';
 
 /** 三类知识的类型键——封闭集合（项目事实 / 规约 / 设计模式）。 */
 export const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
+
+/**
+ * 索引件：目录的字段模型、模式的路由与粒度定义这类**说明性文档**。
+ *
+ * 它随激活清单交付、可被各阶段引用（那些「粒度照索引的定义切」的指令指的就是它），
+ * 但不承载条目，因此不参与条目与模式的派生。
+ * **它不是第四类知识**——说明性文档不形成新的知识类型。
+ */
+export const INDEX_KIND = 'index';
 
 /** 处置列以此开头的条目是纯评审动作：不产生代码要求。 */
 const REVIEW_ACTION_MARK = '（评审动作）';
@@ -164,6 +174,19 @@ function parsePatternFile(absPath, rel) {
   };
 }
 
+/** 索引件：只取名字与正文，供引用它的阶段读取（不解析条目）。 */
+function parseIndexFile(text, rel) {
+  const { frontmatter, body } = splitFrontmatter(text);
+  const fm = frontmatterPairs(frontmatter);
+  const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
+  return {
+    file: rel,
+    name: fm.name ?? '',
+    title: titleMatch ? titleMatch[1].trim() : (fm.name ?? rel),
+    body,
+  };
+}
+
 function parseFactFile(absPath, rel) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的项目知识文件读不到 —— ${rel}`);
@@ -178,11 +201,15 @@ function parseFactFile(absPath, rel) {
 }
 
 /**
- * 读激活清单并派生三类知识。
+ * 读激活清单并派生知识。
  *
- * @returns {{facts: object[], constraints: object[], patterns: object[],
+ * **清单只有一份**（`provides.knowledge`）；「这个文件属于哪类」写在文件自己的
+ * frontmatter `kind` 里。曾经是两份——清单里再按类分一次组——那意味着新增一个知识文件
+ * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
+ *
+ * @returns {{facts: object[], constraints: object[], patterns: object[], indexes: object[],
  *            entries: object[], prefixes: string[], patternIds: string[]}}
- * @throws 清单缺失 / 文件读不到 / 条目表零行 / 角色未声明
+ * @throws 清单缺失 / 文件读不到 / kind 缺失或未知 / 条目表零行 / 角色未声明
  */
 export function activeKnowledge(projectRoot) {
   const root = extensionRoot(projectRoot);
@@ -197,32 +224,41 @@ export function activeKnowledge(projectRoot) {
   } catch (e) {
     fail(`激活清单解析失败（解析失败不当作空清单）：${e.message}`);
   }
-  const activation = manifest?.provides?.knowledge_activation;
-  if (!activation || typeof activation !== 'object') {
-    fail('派生为空：manifest 的 provides.knowledge_activation 缺失 —— 阶段不扫描知识目录，没有清单就没有知识');
-  }
-  const unknownKinds = Object.keys(activation).filter(k => !KNOWLEDGE_KINDS.includes(k));
-  if (unknownKinds.length) {
-    fail(`知识类型是封闭集合（${KNOWLEDGE_KINDS.join(' / ')}），清单出现未知类型：${unknownKinds.join('、')}`);
+  const list = manifest?.provides?.knowledge;
+  if (!Array.isArray(list) || !list.length) {
+    fail('派生为空：manifest 的 provides.knowledge 缺失或为空 —— 阶段不扫描知识目录，没有清单就没有知识');
   }
 
-  const out = { facts: [], constraints: [], patterns: [] };
-  const seen = new Map();
-  for (const kind of KNOWLEDGE_KINDS) {
-    const list = activation[kind];
-    if (!Array.isArray(list) || !list.length) {
-      fail(`派生为空：激活清单的 ${kind} 为空 —— 三类知识各自都要有内容，缺哪类都要显式说明`);
+  const out = { facts: [], constraints: [], patterns: [], indexes: [] };
+  const seen = new Set();
+  for (const rel of list) {
+    const relPosix = String(rel).replace(/\\/g, '/');
+    if (seen.has(relPosix)) fail(`${relPosix} 在激活清单里重复登记`);
+    seen.add(relPosix);
+
+    const abs = path.join(root, ...relPosix.split('/').filter(Boolean));
+    const text = readTextOrNull(abs);
+    if (text === null) fail(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`);
+
+    const kind = frontmatterPairs(splitFrontmatter(text).frontmatter).kind;
+    if (!kind) {
+      fail(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
+        + `不能靠目录或文件名去猜（可用：${[...KNOWLEDGE_KINDS, INDEX_KIND].join(' / ')}）`);
     }
-    for (const rel of list) {
-      const relPosix = String(rel).replace(/\\/g, '/');
-      if (seen.has(relPosix)) {
-        fail(`${relPosix} 同时登记在 ${seen.get(relPosix)} 与 ${kind} —— 一个文件只能属于一类知识`);
-      }
-      seen.set(relPosix, kind);
-      const abs = path.join(root, ...relPosix.split('/').filter(Boolean));
-      if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix));
-      else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix));
-      else out.facts.push(parseFactFile(abs, relPosix));
+    if (kind === INDEX_KIND) { out.indexes.push(parseIndexFile(text, relPosix)); continue; }
+    if (!KNOWLEDGE_KINDS.includes(kind)) {
+      fail(`${relPosix} 的 kind="${kind}" 不在封闭集合里`
+        + `（知识三类：${KNOWLEDGE_KINDS.join(' / ')}；说明性文档写 ${INDEX_KIND}，它不形成新的知识类型）`);
+    }
+    if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix));
+    else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix));
+    else out.facts.push(parseFactFile(abs, relPosix));
+  }
+
+  for (const kind of KNOWLEDGE_KINDS) {
+    if (!out[kind].length) {
+      fail(`派生为空：激活清单里没有任何 kind=${kind} 的文件 —— `
+        + '三类知识各自都要有内容，缺哪类都要显式说明');
     }
   }
 

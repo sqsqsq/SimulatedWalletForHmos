@@ -1,5 +1,6 @@
 ---
 name: sample-pattern
+kind: patterns
 roles: [表, 上下文]
 coordinator_role: 表
 ---

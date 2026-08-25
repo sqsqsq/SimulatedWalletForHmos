@@ -277,6 +277,9 @@ def activation_names(root: Path) -> dict:
     机制层写它就是把知识内容抄了一份；**查不到却长得像的**是死判据，更糟。
 
     自己也从清单派生——写死一份清单来查「有没有写死清单」，那就滑稽了。
+
+    清单只有一份（``provides.knowledge``）；文件属于哪类由它自己 frontmatter 的
+    ``kind`` 决定。本函数只需要「有哪些文件、哪些条目」，不关心分类。
     """
     manifest = root / "manifest.yaml"
     if not manifest.exists():
@@ -285,24 +288,28 @@ def activation_names(root: Path) -> dict:
         data = yaml.safe_load(read_text(manifest)) or {}
     except yaml.YAMLError:
         return {"entries": set(), "prefixes": set(), "slugs": set(), "derived": False}
-    activation = (data.get("provides") or {}).get("knowledge_activation") or {}
+    listed = (data.get("provides") or {}).get("knowledge") or []
     slugs, entries, prefixes = set(), set(), set()
-    for rels in activation.values():
-        for rel in rels or []:
-            rel = str(rel).replace("\\", "/")
-            slugs.add(rel.rsplit("/", 1)[-1].removesuffix(".md"))
-            f = root / rel
-            if not f.exists():
-                continue
-            text = read_text(f)
-            headers = header_index(text, ["编号", "约束"])
-            if not headers:
-                continue
-            for _, cells in md_table_rows(text, ["编号", "约束"]):
-                eid = cell(cells, headers, "编号").strip()
-                if ENTRY_ID_RE.fullmatch(eid):
-                    entries.add(eid)
-                    prefixes.add(eid.split("-")[0])
+    for rel in listed:
+        rel = str(rel).replace("\\", "/")
+        slug = rel.rsplit("/", 1)[-1].removesuffix(".md")
+        # 通用文件名（README/index）不具标识性：写它不等于耦合了知识内容，
+        # 而把它当标识会把所有提到 README 的地方一起误报。
+        # 这类文件的显式路径引用由 M17 的第二条判据覆盖。
+        if slug.lower() not in ("readme", "index"):
+            slugs.add(slug)
+        f = root / rel
+        if not f.exists():
+            continue
+        text = read_text(f)
+        headers = header_index(text, ["编号", "约束"])
+        if not headers:
+            continue
+        for _, cells in md_table_rows(text, ["编号", "约束"]):
+            eid = cell(cells, headers, "编号").strip()
+            if ENTRY_ID_RE.fullmatch(eid):
+                entries.add(eid)
+                prefixes.add(eid.split("-")[0])
     return {"entries": entries, "prefixes": prefixes, "slugs": slugs, "derived": bool(slugs)}
 
 

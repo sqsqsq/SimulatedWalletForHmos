@@ -1,5 +1,6 @@
 ---
 name: codebase-facts
+kind: facts
 applies_when: always（凡需给出「代码库现状」这一半事实时）
 ---
 

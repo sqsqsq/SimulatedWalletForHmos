@@ -1,5 +1,6 @@
 ---
 name: observability
+kind: constraints
 domain: OBS
 applies_when: 需求新增业务流程，或改变既有流程的分支/终态
 ---

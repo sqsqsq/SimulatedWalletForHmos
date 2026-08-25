@@ -1,5 +1,6 @@
 ---
 name: compatibility-checklist
+kind: constraints
 applies_when: always
 ---
 

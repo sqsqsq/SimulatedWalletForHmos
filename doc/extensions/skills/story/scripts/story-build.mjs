@@ -926,7 +926,7 @@ function scaffold(ctx) {
           landing: '承载它的契约名（可选，写了更好查）',
         },
         patterns: {
-          unit: '适用单元：粒度照激活的模式索引里的定义切',
+          unit: '适用单元：粒度照激活清单里的模式索引定义切',
           candidate: '在册的 pattern_id 原样填；该单元没有候选就留空',
           signal: '为什么像（命中信号）或为什么不像（反证）',
         },

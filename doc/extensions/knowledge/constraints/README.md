@@ -1,3 +1,8 @@
+---
+name: constraints-index
+kind: index
+---
+
 # 应用域常驻约束（constraints）
 
 **本目录是工程级常驻约束的权威**：写在这里就是规则，条目一律平权，修订走评审改这里。
@@ -64,8 +69,9 @@
 | env-exceptions.md | ENV | always |
 | deliverables.md | DLV | always |
 
-新增或下架域改这张表与对应文件，并在 `manifest.yaml` 的激活清单同步登记——
-消费方的域清单是运行期从激活清单派生的，不需要改代码。
+新增或下架域改这张表与对应文件，并在 `manifest.yaml` 的 `provides.knowledge` 加一行；
+文件自己的 frontmatter 写 `kind: constraints`。**清单只有这一份**——
+消费方的域清单是运行期从它派生的，不需要改代码。
 
 ## 强制力的含义
 

@@ -1,5 +1,6 @@
 ---
 name: ux-consistency
+kind: constraints
 applies_when: 需求含新页面/UI 改版
 ---
 

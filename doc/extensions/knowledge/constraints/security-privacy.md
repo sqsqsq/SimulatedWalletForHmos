@@ -1,5 +1,6 @@
 ---
 name: security-privacy
+kind: constraints
 applies_when: always
 ---
 

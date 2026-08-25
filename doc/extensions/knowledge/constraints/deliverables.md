@@ -1,5 +1,6 @@
 ---
 name: deliverables
+kind: constraints
 applies_when: always
 ---
 

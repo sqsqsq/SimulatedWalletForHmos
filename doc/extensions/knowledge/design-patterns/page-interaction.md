@@ -1,5 +1,6 @@
 ---
 name: page-interaction
+kind: patterns
 applies_when: 单个页面或组件内用户交互很多，且交互之间由业务结果驱动先后顺序（做完一件事自动进入下一个交互）
 not_applies_when: 页面只有两三个独立按钮，各自触发一次动作后结束；交互之间没有先后依赖
 triggers_usecase_spec: true

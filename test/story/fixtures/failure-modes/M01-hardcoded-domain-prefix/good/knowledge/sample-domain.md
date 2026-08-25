@@ -1,5 +1,6 @@
 ---
 name: sample-domain
+kind: constraints
 domain: SMP
 ---
 

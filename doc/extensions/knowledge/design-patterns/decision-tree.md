@@ -1,5 +1,6 @@
 ---
 name: decision-tree
+kind: patterns
 applies_when: 业务流程有多个分支，且每个分支自身是一段复杂功能（多步云侧调用、回滚或补偿分支），用 if/else 串会难以维护
 not_applies_when: 单一线性流程；分支只有一两步；分支条件是纯数据校验而非业务阶段推进
 triggers_usecase_spec: true

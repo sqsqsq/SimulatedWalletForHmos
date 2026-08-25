@@ -1,5 +1,6 @@
 ---
 name: dfx-baseline
+kind: constraints
 applies_when: always
 ---
 

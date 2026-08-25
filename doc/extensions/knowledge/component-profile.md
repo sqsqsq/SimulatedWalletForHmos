@@ -1,5 +1,6 @@
 ---
 name: component-profile
+kind: facts
 applies_when: always（凡需判断「上游内容是否与本部件相关」时）
 ---
 

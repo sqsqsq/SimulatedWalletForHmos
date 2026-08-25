@@ -1,5 +1,6 @@
 ---
 name: sample-profile
+kind: facts
 ---
 
 # 示例画像
