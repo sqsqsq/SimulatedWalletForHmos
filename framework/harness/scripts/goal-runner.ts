@@ -181,7 +181,7 @@ import {
   resolveHeadlessInvokePlan,
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
-import { parseClaudeInitModel, planUsesClaudeStreamJson, resolvePinVerifyMismatch } from './utils/claude-envelope';
+import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   recordCodingBase,
   resolveGitHeadSha,
@@ -207,6 +207,7 @@ import {
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
   resolveCanaryCacheDecision,
+  resolveCanaryStdoutEnvelope,
   resolveInvokeHardCliFailure,
   type CanaryAnswerKey,
 } from './utils/vision-canary';
@@ -245,6 +246,7 @@ import {
   isSummaryFresh,
   countConsecutiveAgentTimeouts,
   deriveContinuationFromEvents,
+  findLatestInvokeHarnessFailure,
   isClosureOnlyRetryPending,
   loadAuthoritativeEvents,
   loadEventsJsonl,
@@ -2187,10 +2189,11 @@ export function collectActionableDefects(
             trustedDeviceRootClassifications = rootCases.map((c) => c.classification);
             for (const c of failedCases) {
               if (rootSet && !rootSet.has(c.case_id)) continue; // 级联：根修好自然消失
+              // plan e6b3f8d2 t3：锚点漂移分类已删除——它的回修指令要求产品注入已撤销的
+              // framework 侧 canonical anchor（侵入宿主源码形态），随强制 UI kit 一并清除。
               const actionableClassification =
                 c.classification === 'product_actionable' ||
-                c.classification === 'product_state' ||
-                c.classification === 'scaffold_contract_drift';
+                c.classification === 'product_state';
               if (
                 actionableClassification &&
                 doc.device_target?.target_kind === 'physical' &&
@@ -2208,20 +2211,13 @@ export function collectActionableDefects(
                           `does not satisfy the retained predicate. ${c.reason ?? ''}`.trim(),
                         `Fix product state/binding logic; expected vs actual node observations are in device evidence.`,
                       ]
-                    : c.classification === 'scaffold_contract_drift'
-                      ? [
-                          `On-device test case ${c.case_id} uses a runtime maison anchor that cannot be ` +
-                            `resolved to the ui-spec node for screen ${c.expected_screen ?? '(unknown)'}.`,
-                          `Inject the canonical anchor maison:<feature>:<screen>:<ui-spec-node>[:<instance>] ` +
-                            `in product code; block semantic_node and host-only suffixes are not spec node ids.`,
-                        ]
-                      : [
-                          `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
-                            `(${c.failing_step.action}): ui-spec requires ` +
-                            `${c.failing_step.selector_kind}=${c.failing_step.selector} on screen ` +
-                            `${c.expected_screen ?? '(unknown)'}, but the whole attempt evidence pool has no exact hit.`,
-                          `Implement the canonical ui-spec-derived anchor/text in product code for that screen.`,
-                        ];
+                    : [
+                        `On-device test case ${c.case_id} failed at step ${c.failing_step.index} ` +
+                          `(${c.failing_step.action}): ui-spec requires ` +
+                          `${c.failing_step.selector_kind}=${c.failing_step.selector} on screen ` +
+                          `${c.expected_screen ?? '(unknown)'}, but the whole attempt evidence pool has no exact hit.`,
+                        `Implement the ui-spec-declared element id/text in product code for that screen.`,
+                      ];
                 if (evidenceLine) instructions.push(evidenceLine);
                 if (c.diagnostics?.length) {
                   instructions.push(`Additional diagnostics: ${c.diagnostics.map(d => `${d.code}: ${d.message}`).join('; ')}`);
@@ -3100,6 +3096,11 @@ export function buildPhasePrompt(
   // P0-1（plan d9b4f7e2）：continuation 双维度——续作块由 cause 驱动（PASS+timeout 也出块、
   // 断流不再谎称 TIMED OUT、进程重启加磁盘为准注记），不再依赖 partial 清单非空。
   continuation?: { cause: ContinuationCause; process_resumed: boolean } | null,
+  /**
+   * plan e6b3f8d2 t5：**同 invoke 的新鲜 harness 质量事实**（null=纯超时）。
+   * 非 null 时超时话术两轴并陈，不再无条件断言「NOT a content failure」。
+   */
+  timeoutCoexistingHarnessFailure?: { verdict: string; failure_kind?: string } | null,
   /** 本次 invoke 的有效超时（ms）——注入续作块让 agent 有预算感知（P0-4 起为钳制/升档后的值）。 */
   effectiveTimeoutMs?: number,
   /** 本 phase 此前 attempt 的累计消耗（plan P0-1.6"已耗时"，复审补）。 */
@@ -3155,14 +3156,29 @@ export function buildPhasePrompt(
       ? continuation.cause
       : null;
   if (interruptedCause) {
+    // plan e6b3f8d2 t5：两轴正交——transport（超时/断流）与 quality（harness 裁决）各说各的。
+    // 同 invoke 已有新鲜 harness FAIL 时**必须并陈**：旧文案无条件断言「NOT a content
+    // failure」，会让 agent 以为上轮只是被时钟打断，从而原样续作已被判不合格的产物。
+    const timeoutWithQualityFact =
+      interruptedCause === 'agent_timeout' && timeoutCoexistingHarnessFailure != null;
     const header =
-      interruptedCause === 'agent_timeout'
+      timeoutWithQualityFact
+        ? '## Prior attempt TIMED OUT **and** its harness run recorded a content '
+          + `${timeoutCoexistingHarnessFailure!.verdict} — two independent facts`
+        : interruptedCause === 'agent_timeout'
         ? '## Prior attempt TIMED OUT — resume from partial work (NOT a content failure)'
         : interruptedCause === 'transient_api_error'
           ? '## Prior attempt hit an API CONNECTION DROP — resume from partial work (NOT a content failure)'
           : '## Prior attempt was INTERRUPTED (process crash / unknown) — resume from partial work';
     const intro =
-      interruptedCause === 'agent_timeout'
+      timeoutWithQualityFact
+        ? 'Two orthogonal facts hold for the previous attempt, and BOTH are true:\n'
+          + '1. **Transport**: it was cut off by the wall-clock timeout — partial work is on disk, so do NOT redo exploration/analysis from scratch.\n'
+          + `2. **Quality**: the harness that ran for that same attempt recorded **${timeoutCoexistingHarnessFailure!.verdict}**`
+          + `${timeoutCoexistingHarnessFailure!.failure_kind ? ` (failure_kind: ${timeoutCoexistingHarnessFailure!.failure_kind})` : ''}`
+          + ' — the artifacts as they stand were judged NOT acceptable.\n'
+          + '**Do not treat this as "just a timeout".** Resume from the partial work, but FIX the recorded blockers below before finishing — re-running the same artifacts unchanged will fail again.'
+        : interruptedCause === 'agent_timeout'
         ? 'The previous attempt of this phase was interrupted by a wall-clock timeout, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**'
         : interruptedCause === 'transient_api_error'
           ? 'The previous attempt of this phase was interrupted by a model-API connection drop, not by a content/quality failure. **Re-read the partial work first and CONTINUE the unfinished parts — do NOT redo exploration/analysis from scratch.**'
@@ -3256,10 +3272,22 @@ export function buildPhasePrompt(
         'The missing artifacts above simply were not finished when the stream dropped. Continue from the partial work on disk: do NOT redo exploration, do NOT revert files — finish the unfinished artifacts and re-run this phase harness.',
       );
     } else if (priorFailureKind === 'agent_timeout') {
+      // plan e6b3f8d2 t5：同 invoke 有新鲜 harness FAIL 时两轴并陈；纯超时保持既有文案。
       parts.push(
         '',
-        '**The prior attempt hit the phase wall-clock budget (agent_timeout) — NOT a content failure.**',
-        'Resume the unfinished work from the partial artifacts; do NOT revert or redo completed parts.',
+        ...(timeoutCoexistingHarnessFailure
+          ? [
+              '**Two independent facts about the prior attempt — do not collapse them:**',
+              '- **Transport**: it hit the phase wall-clock budget (agent_timeout); partial artifacts are on disk.',
+              `- **Quality**: the harness for that same attempt recorded **${timeoutCoexistingHarnessFailure.verdict}**`
+                + `${timeoutCoexistingHarnessFailure.failure_kind ? ` (failure_kind: ${timeoutCoexistingHarnessFailure.failure_kind})` : ''}`
+                + ' — the BLOCKER evidence above is real content feedback, not timeout noise.',
+              'Resume from the partial artifacts AND address that evidence; do NOT revert or redo completed parts.',
+            ]
+          : [
+              '**The prior attempt hit the phase wall-clock budget (agent_timeout) — NOT a content failure.**',
+              'Resume the unfinished work from the partial artifacts; do NOT revert or redo completed parts.',
+            ]),
       );
     } else if (priorFailureKind === 'framework_integrity_block') {
       // P0-5：本 kind 正常路径是 halt（不重试）——能走到这里只可能是人工处置后 --resume。
@@ -5441,6 +5469,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             priorFailureKind = 'deterministic_gate_or_artifact_missing';
           }
         }
+        // plan e6b3f8d2 t5：**同 invoke 的新鲜 harness 质量事实**（纯函数，窗口分法与
+        // deriveContinuationFromEvents 同源）。只在超时续作时取用——两轴并陈的判据。
+        const timeoutCoexistingHarnessFailure =
+          continuation?.cause === 'agent_timeout'
+            ? findLatestInvokeHarnessFailure(attemptHistory, String(phase))
+            : null;
         // P0-B/P0-D + rev6 缺口 b：上轮 agent 级中断以 continuation cause 为准——summary
         // 重算只见症状 blocker（断流的 spec_file_exists 会被误算 deterministic_gate，
         // "revert first" 指导随之错向）。现在同进程与 --resume 跨进程同一来源，kind 不再丢。
@@ -5716,6 +5750,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           resumeSkipLines,
           capabilityAdvisory,
           continuation,
+          // plan e6b3f8d2 t5：同 invoke 的新鲜 harness 质量事实（两轴并陈判据）
+          timeoutCoexistingHarnessFailure,
           effectiveAgentTimeoutMs,
           priorAttemptDurationsMs.length > 0
             ? {
@@ -6364,6 +6400,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           duration_ms: invoke.duration_ms,
           timed_out: invoke.timed_out,
           silent_killed: invoke.silent_killed,
+          // plan e6b3f8d2 t1：adapter terminal 契约事实。
+          // · terminal_failure_observed —— codex `turn.failed`（失败终态，与
+          //   completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零）。
+          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的**纯诊断**
+          //   摘要。error 不是契约终态（error→重试成功→turn.completed 合法），因此它
+          //   **不进** api_disconnected / failure classifier / retry 任何判据，只在此留痕。
+          terminal_failure_observed: invoke.terminal_failure_observed,
+          terminal_error_excerpt: invoke.terminal_error_excerpt,
           lingering_pipe: invoke.lingering_pipe,
           // plan d7f3a9c4 t4：spawn race 结构化事实进事件（诊断保真；不改变任何裁决）。
           ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
@@ -6676,12 +6720,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //    宿主 run 20260823T161102Z-68480b 三轮拒签实锤）。
         if (!dryRun && phase === 'spec' && inlineCanaryKey) {
           try {
-            const structuredStdout = planUsesClaudeStreamJson(
+            // plan e6b3f8d2 t1：信封方言分派。claude 家族走三文件分流的 agent-events.jsonl；
+            // codex 的 JSONL 就在本次 invoke 的 stdout 上（tool_event_provenance 仍是 none，
+            // 不产 agent-events.jsonl——**terminal 事件流 ≠ 工具证据流**，不得混用）。
+            const canaryEnvelope = resolveCanaryStdoutEnvelope(
               manifest.adapter ?? 'generic',
               cap.capability?.tool_event_provenance,
             );
+            const structuredStdout = canaryEnvelope !== 'none';
             let decisionStdout = '';
-            if (structuredStdout) {
+            if (canaryEnvelope === 'claude_stream_json') {
               const eventsAbs = agentEventsLogPath(outputLogPath);
               const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
               decisionStdout = eventsRaw;
@@ -6701,6 +6749,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 silent_killed: invoke.silent_killed,
                 skipped: invoke.skipped,
                 structured_stdout: structuredStdout,
+                ...(structuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
               }, inlineCanaryKey);
               if (decision.kind === 'valid' && decision.classify.verdict === 'tool_read') {
                 writeCapabilityReceipt(projectRoot, manifest.feature, {
@@ -7679,7 +7728,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             guidanceParts.push(
               `真机测试有 ${deviceCount} 个用例的缺陷证据不可采信或不可归因：请按 priorFailure `
               + '中的 reason_code 与 selector/ui-spec 对照修复；只有绑定可信的 physical '
-              + 'product_actionable/product_state/scaffold_contract_drift 才驱动回修。',
+              + 'product_actionable/product_state 才驱动回修。',
             );
           }
           if (repeatedWithoutProgress) {

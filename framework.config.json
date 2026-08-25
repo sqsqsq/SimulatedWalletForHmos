@@ -96,8 +96,7 @@
     "extension_dir": "doc/extensions",
     "module_graphs_dir": "<module>/code-graph.yaml",
     "agent_bundle_root": ".agents",
-    "agent_bundle_skill_mode": "bridge",
-    "ui_kit_target_dir": "02-Feature/WalletMain/src/main/ets/maison_ui_kit"
+    "agent_bundle_skill_mode": "bridge"
   },
   "toolchain": {
     "hvigor": {

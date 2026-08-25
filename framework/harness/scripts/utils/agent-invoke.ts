@@ -18,6 +18,12 @@ import {
 import { MAISON_GOAL_HEADLESS_ENV, MAISON_GOAL_MODEL_PIN_ENV, applyGoalModelPinEnv } from './phase-state';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
 import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
+import {
+  createCodexTerminalScanner,
+  resolveTerminalEventParser,
+  type CodexTerminalScanner,
+  type TerminalEventParser,
+} from './codex-terminal-events';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -58,8 +64,12 @@ const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   opencode: OPENCODE_HEADLESS_BINARY_CANDIDATES,
 };
 
-/** Disabled by default — cursor-agent often streams little until phase end. Opt-in via silentWatchdogMs. */
-export const DEFAULT_SILENT_WATCHDOG_MS = 0;
+// 【静默看门狗生产链已删除 · plan e6b3f8d2 t1】
+// 旧常量恒 0（禁用）且 goal-runner 从未 opt-in——一个从未生效的「第二判死权威」。
+// 静默本就不是判据（cursor-agent「streams little until phase end」），FAIL 收口改由
+// adapter terminal 契约承接（见 codex-terminal-events.ts）。
+// 读侧兼容保留：AgentInvokeResult 的 `silent_killed?` 字段与历史事件仍可读，
+// 但**写侧不再产生**该事实（源码锚定回归见 goal-runner-hardening.unit.test.ts）。
 
 /** t4 完成观测：探针轮询间隔。2s 足够快（相对 90min 预算），又不至于打爆磁盘 IO。 */
 export const DEFAULT_COMPLETION_POLL_MS = 2_000;
@@ -346,6 +356,13 @@ function codexArgv(modelPin?: string): string[] {
     argv.push('--model', modelPin);
   }
   argv.push('--sandbox', 'danger-full-access');
+  // plan e6b3f8d2 t1：terminal 收口——`--json` 让 exec 把事件按 JSONL 打到 stdout
+  //（本机 codex-cli 0.149.0 实证，`--json` 置于既有旗标之后不影响 c9f4e7a2/d7f3a9c4
+  // 已验证的 `exec [--model <v>] --sandbox <m>` 顺序）。**由 codexArgv 独立追加**：
+  // 它与 `tool_event_provenance` 无关（那是「工具调用证据可审计」能力，codex 仍为 none），
+  // 不得靠工具证据字段触发，也不因此签发 verified critic 回执。
+  // 收口消费方=codex-terminal-events.createCodexTerminalScanner。
+  argv.push('--json');
   // prompt 走 stdin（codex exec 读 stdin：实测 stderr "Reading prompt from stdin..."），不进 argv。
   return argv;
 }
@@ -899,6 +916,19 @@ export interface AgentInvokeResult {
    * 上层据此走正常 gate 流程，绝不按失败路径重试一个已完成的阶段。
    */
   completion_observed?: boolean;
+  /**
+   * plan e6b3f8d2 t1：adapter terminal 契约观测到**失败终态**（codex `turn.failed`）。
+   * 与 completion_observed **互斥**——failed 恒不置 completion_observed，且最终
+   * exitCode===0 时规范化为非零（复用 timedOut 同款），保住 goal-runner-phase
+   * `agentFailed = exitCode!==0 && completionObserved!==true` 的失败语义。
+   */
+  terminal_failure_observed?: boolean;
+  /**
+   * plan e6b3f8d2 t1：terminal 事件里的**纯诊断**摘要——`turn.failed` 的错误正文与
+   * 顶层 `error` 事件（后者非契约终态：error→重试成功→turn.completed 合法）。
+   * 只进 `agent_invoke_end` 供排障，**不参与**任何 settle / classifier / retry 判据。
+   */
+  terminal_error_excerpt?: string;
   signal?: string | null;
   lingering_pipe?: boolean;
   kill_attempted?: boolean;
@@ -916,7 +946,11 @@ export interface AgentInvokeResult {
 export interface AgentInvokeOptions {
   dryRun?: boolean;
   timeoutMs?: number;
-  silentWatchdogMs?: number;
+  /**
+   * plan e6b3f8d2 t1：terminal 事件解析器。缺省按 plan.adapterName 解析
+   *（codex → codex_turn_jsonl，其余 none）；显式传入仅供单测注入。
+   */
+  terminalEventParser?: TerminalEventParser;
   outputLogPath?: string;
   /** adapter goal_capability.usage_capture 声明（缺省 none）；结果回填 AgentInvokeResult.usage */
   usageCapture?: UsageCaptureMethod;
@@ -1161,9 +1195,7 @@ async function spawnHeadlessAsync(
     if (target === 'stdout') stdout += chunk;
     else stderr += chunk;
   };
-  let lastActivity = Date.now();
   let timedOut = false;
-  let silentKilled = false;
   let exitCode = 1;
   let signal: string | null = null;
   let killResult: KillTreeResult = {
@@ -1187,22 +1219,37 @@ async function spawnHeadlessAsync(
         }
       : null;
 
-  const bumpActivity = (chunk: string): void => {
-    lastActivity = Date.now();
+  const writeHumanLog = (chunk: string): void => {
     if (outputStream) outputStream.write(chunk);
   };
+
+  // plan e6b3f8d2 t1：terminal 事件解析器——**直接消费 stdout chunk**（跨 chunk 行缓冲），
+  // 不要求产出 agent-events.jsonl（那是 critic 工具证据的三文件分流契约，与本条无关）。
+  // 只有声明了 terminal JSONL 契约的 adapter（现仅 codex）启用；其余 adapter 恒 null，
+  // 其 FAIL 诚实接受 hard timeout 兜底，不造假信号。
+  const terminalHooks: { onCompleted?: () => void; onFailed?: () => void } = {};
+  const terminalParser: TerminalEventParser =
+    opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
+  const terminalScanner: CodexTerminalScanner | null =
+    terminalParser === 'codex_turn_jsonl'
+      ? createCodexTerminalScanner({
+          onCompleted: () => terminalHooks.onCompleted?.(),
+          onFailed: () => terminalHooks.onFailed?.(),
+        })
+      : null;
 
   child.stdout?.on('data', (buf: Buffer) => {
     const s = buf.toString();
     appendCaptured('stdout', s);
     if (splitStreams) splitStreams.events.write(s);
-    bumpActivity(s);
+    terminalScanner?.push(s);
+    writeHumanLog(s);
   });
   child.stderr?.on('data', (buf: Buffer) => {
     const s = buf.toString();
     appendCaptured('stderr', s);
     if (splitStreams) splitStreams.stderr.write(s);
-    bumpActivity(s);
+    writeHumanLog(s);
   });
 
   if (plan.useStdin && plan.stdin && child.stdin) {
@@ -1221,13 +1268,14 @@ async function spawnHeadlessAsync(
     });
   }
 
-  const killTree = (reason: 'timeout' | 'silent' | 'signal' | 'completion'): Promise<void> => {
+  const killTree = (reason: 'timeout' | 'signal' | 'completion' | 'terminal_failure'): Promise<void> => {
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
     if (reason === 'timeout') timedOut = true;
-    if (reason === 'silent') silentKilled = true;
     // reason='completion' 刻意不置任何失败标记：证据已确定性完成，这不是超时也不是
-    // 静默杀，更不是 agent 失败——归错类会让上层按失败路径重试一个已经完成的阶段。
+    // agent 失败——归错类会让上层按失败路径重试一个已经完成的阶段。
+    // reason='terminal_failure'（plan e6b3f8d2 t1）同理不置 timedOut：失败语义由
+    // terminalFailureObserved + exitCode 规范化承载，**不得**冒充超时。
     settleWaiter.armForceSettleAfterKill();
     killInFlight = (async () => {
       if (pid > 0) {
@@ -1255,40 +1303,95 @@ async function spawnHeadlessAsync(
     });
   }
 
-  const timeoutMs = opts.timeoutMs;
-  const timeoutTimer =
-    timeoutMs && timeoutMs > 0
-      ? setTimeout(() => {
-          // R8：completion 已命中则不得再置超时标记（二者互斥）
-          if (completionObserved) return;
-          void killTree('timeout');
-        }, timeoutMs)
-      : null;
-
-  const silentMs = opts.silentWatchdogMs ?? DEFAULT_SILENT_WATCHDOG_MS;
-  const silentTimer =
-    silentMs != null && silentMs > 0
-      ? setInterval(() => {
-          // R8：completion 命中后进入 grace 期，此期间**静默是预期的**（agent 已写完
-          // 回执正在收尾）。不加这道闸，silent watchdog 会在 grace 内先开枪，最终
-          // 同时得到 completion_observed 与 silent_killed，又被归入失败分类。
-          if (completionObserved) return;
-          if (Date.now() - lastActivity >= silentMs) {
-            void killTree('silent');
-          }
-        }, 30_000)
-      : null;
-
-  // t4：完成观测——与 settle / hard timeout / silent 竞争。
-  // 判据是**确定性**的（证据在盘），不是概率性的（静默/无输出）：cursor-agent 本就
-  // "streams little until phase end"，拿静默做判据会误杀正常长任务（见
-  // DEFAULT_SILENT_WATCHDOG_MS=0 的既有理由）。故此处只接受注入的确定性探针。
-  let completionObserved = false;
+  // t4：完成观测——与 settle / hard timeout 竞争。
+  // 判据是**确定性**的（证据在盘 / adapter terminal 事件），不是概率性的（静默/无输出）：
+  // cursor-agent 本就 "streams little until phase end"，拿静默做判据会误杀正常长任务
+  //（这正是 silent watchdog 从未启用、并已于 plan e6b3f8d2 t1 删除生产链的原因）。
+  type InvokeClosureObservation = 'none' | 'completion' | 'terminal_failure';
+  let closureObservation: InvokeClosureObservation = 'none';
   /** R8：completion 命中时取消了 hard timeout —— 用于断言二者互斥 */
   let timeoutCancelledByCompletion = false;
+
+  // hard timeout 的**原到期时刻**。completion probe 可以暂时取消 timer；若随后收到
+  // terminal failure，失败优先并按这个原时刻恢复 wall-clock backstop，不能从失败时刻
+  // 重新起算一个完整 timeout（那会悄悄放大预算）。
+  const timeoutMs = opts.timeoutMs;
+  const hardTimeoutAtMs = timeoutMs && timeoutMs > 0 ? started + timeoutMs : null;
+  let timeoutTimer: NodeJS.Timeout | null = null;
+  const armHardTimeout = (): void => {
+    if (hardTimeoutAtMs === null || timeoutTimer || timedOut) return;
+    const remainingMs = Math.max(0, hardTimeoutAtMs - Date.now());
+    timeoutTimer = setTimeout(() => {
+      timeoutTimer = null;
+      // R8：只有仍由 completion 占有仲裁位时才豁免 hard timeout。terminal failure
+      // 会先夺回仲裁位并恢复本 timer，因此不得被旧 completion 洗白。
+      if (closureObservation === 'completion') return;
+      void killTree('timeout');
+    }, remainingMs);
+  };
+  armHardTimeout();
+
+  /**
+   * 收口共用原语：宽限内自然退出即最佳，仍存活才 tree-kill 本次 invocation。
+   * grace 不得越过绝对 deadline——收口不能反过来把 run 拖过 wall-clock 预算。
+   */
+  const armSettleGrace = (reason: 'completion' | 'terminal_failure'): void => {
+    const graceBudget = opts.completionGraceMs ?? DEFAULT_COMPLETION_GRACE_MS;
+    const untilDeadline = opts.deadlineMs ? opts.deadlineMs - Date.now() : graceBudget;
+    const grace = Math.max(0, Math.min(graceBudget, untilDeadline));
+    setTimeout(() => {
+      if (!settleWaiter.isSettled()) void killTree(reason);
+    }, grace);
+  };
+
+  /**
+   * plan e6b3f8d2 t1 review 收口：completion probe 与 adapter terminal 终态的**唯一仲裁入口**。
+   * `terminal_failure` 优先于任何 completion：
+   *   · completion 命中即取消 hard timeout，避免 deadline/grace 竞争制造双真；
+   *   · failure 已成立后，probe / turn.completed 都不能再置 completion；
+   *   · probe 先成立、随后收到 failure 时，撤销 completion 并按原到期时刻恢复 hard timeout；
+    *   · 两路仍复用同一 settle/grace 原语，最终结果强制互斥。
+   */
+  const observeClosure = (observation: Exclude<InvokeClosureObservation, 'none'>): void => {
+    if (observation === 'completion') {
+      if (closureObservation !== 'none' || timedOut) return;
+      closureObservation = 'completion';
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+        timeoutCancelledByCompletion = true;
+      }
+      armSettleGrace('completion');
+      return;
+    }
+
+    if (closureObservation === 'terminal_failure') return;
+    const supersededCompletion = closureObservation === 'completion';
+    closureObservation = 'terminal_failure';
+    if (supersededCompletion && timeoutCancelledByCompletion) {
+      timeoutCancelledByCompletion = false;
+      armHardTimeout();
+    }
+    // failed 之后进程若拒不退出且 grace kill 也没打死，恢复后的 hard timeout 仍是最后兜底。
+    armSettleGrace('terminal_failure');
+  };
+
+  const observeCompletion = (): void => observeClosure('completion');
+  const observeTerminalFailure = (): void => observeClosure('terminal_failure');
+
+  // terminal 观测钩子在 stdout 监听注册时尚未定义（本函数体全程同步，无 await 间隔，
+  // 故实际不会有 chunk 先到）；即便如此，下方仍做一次事实回放，结构上消除竞态。
+  terminalHooks.onCompleted = observeCompletion;
+  terminalHooks.onFailed = observeTerminalFailure;
+  {
+    const early = terminalScanner?.state();
+    if (early?.completionObserved) observeCompletion();
+    if (early?.terminalFailureObserved) observeTerminalFailure();
+  }
+
   const completionTimer = opts.completionProbe
     ? setInterval(() => {
-        if (completionObserved || killTriggered) return;
+        if (closureObservation !== 'none' || killTriggered) return;
         let hit = false;
         try {
           hit = opts.completionProbe!() === true;
@@ -1298,36 +1401,31 @@ async function spawnHeadlessAsync(
           hit = false;
         }
         if (!hit) return;
-        completionObserved = true;
-        // R8：命中即**取消 hard timeout**。否则证据在 deadline 前几秒完成时，先注册的
-        // timeout timer 很可能先于 grace 到期执行并置 timed_out=true，随后 completion
-        // 的 kill 变成 no-op —— 结果同时出现 completion_observed 与 timed_out，仍被
-        // 归入超时失败分类，等于收口白做。两者语义互斥，必须原子裁决。
-        if (timeoutTimer) {
-          clearTimeout(timeoutTimer);
-          timeoutCancelledByCompletion = true;
-        }
-        // 同理停掉 silent watchdog——grace 期内的静默是收尾，不是失联
-        if (silentTimer) clearInterval(silentTimer);
-        const graceBudget = opts.completionGraceMs ?? DEFAULT_COMPLETION_GRACE_MS;
-        const untilDeadline = opts.deadlineMs ? opts.deadlineMs - Date.now() : graceBudget;
-        // grace 不得越过绝对 deadline——收口不能反过来把 run 拖过 wall-clock 预算
-        const grace = Math.max(0, Math.min(graceBudget, untilDeadline));
-        setTimeout(() => {
-          // 宽限内自然退出即最佳；仍存活才 tree-kill 本次 invocation
-          if (!settleWaiter.isSettled()) void killTree('completion');
-        }, grace);
+        observeCompletion();
       }, opts.completionPollMs ?? DEFAULT_COMPLETION_POLL_MS)
     : null;
 
   const settled = await settleWaiter.promise;
+
+  // 终局补齐：先摘钩子再 flush——进程已 settle，残片里的终态只补事实，不得再 arm
+  // 任何 grace/kill（那会白白吊住 event loop）。timedOut 已成立时不追认 terminal 事实：
+  // 被 wall 杀掉的进程吐出的残片不能反过来洗成"正常收口"。
+  terminalHooks.onCompleted = undefined;
+  terminalHooks.onFailed = undefined;
+  terminalScanner?.flush();
+  const terminalState = terminalScanner?.state() ?? null;
+  if (!timedOut) {
+    // flush 可能补出末行终态；此时 child 已 settle，不再 arm grace/timer，只做最终事实仲裁。
+    // failure 优先，确保 parser 状态即使同时含两终态也绝不把双真带出 invoke 边界。
+    if (terminalState?.terminalFailureObserved) closureObservation = 'terminal_failure';
+    else if (terminalState?.completionObserved && closureObservation === 'none') closureObservation = 'completion';
+  }
 
   if (killInFlight) {
     await awaitPromiseWithTimeout(killInFlight, DEFAULT_KILL_INFLIGHT_DRAIN_MS, undefined);
   }
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
-  if (silentTimer) clearInterval(silentTimer);
   // t4：settle / timeout / abort 任一命中即取消 observer（不留悬挂 interval）
   if (completionTimer) clearInterval(completionTimer);
 
@@ -1347,16 +1445,33 @@ async function spawnHeadlessAsync(
     if (guardianProjection) spawnError = guardianProjection;
   }
 
+  // plan e6b3f8d2 t1：terminal 诊断摘要——`turn.failed` 正文 + 顶层 `error` 事件。
+  // **纯诊断**：只进 agent_invoke_end，不参与 settle / classifier / retry 任何判据。
+  const terminalDiagnostics = [
+    ...(terminalState?.failureExcerpt ? [`turn.failed: ${terminalState.failureExcerpt}`] : []),
+    ...(terminalState?.errorExcerpts ?? []).map((e) => `error: ${e}`),
+  ];
+  const terminalErrorExcerpt =
+    terminalDiagnostics.length > 0 ? terminalDiagnostics.join(' | ').slice(0, 2000) : undefined;
+
+  // 唯一仲裁态投影为两个历史结果字段；结构上不可能双真。
+  const completionObserved = closureObservation === 'completion';
+  const terminalFailureObserved = closureObservation === 'terminal_failure';
+
   return {
-    exitCode: timedOut || silentKilled ? (exitCode === 0 ? 1 : exitCode) : exitCode,
+    // plan e6b3f8d2 t1：terminal 失败终态在 exit 0 时规范化为非零——复用 timedOut 同款，
+    // 否则 `agentFailed = exitCode!==0 && completionObserved!==true` 会把失败洗白。
+    exitCode: timedOut || terminalFailureObserved ? (exitCode === 0 ? 1 : exitCode) : exitCode,
     stdout,
     stderr,
     command: plan.label,
     pid: pid || undefined,
     duration_ms,
     timed_out: timedOut || undefined,
-    silent_killed: silentKilled || undefined,
+    // silent_killed 写侧已删除（plan e6b3f8d2 t1）——字段仍在 interface 上供读侧兼容历史事件。
     completion_observed: completionObserved || undefined,
+    terminal_failure_observed: terminalFailureObserved || undefined,
+    ...(terminalErrorExcerpt ? { terminal_error_excerpt: terminalErrorExcerpt } : {}),
     signal,
     lingering_pipe: settled.lingering_pipe || undefined,
     // plan d7f3a9c4 t4 / c4e8a1f7 T1a：spawn race 与 guardian 建立失败统一结构化事实。
