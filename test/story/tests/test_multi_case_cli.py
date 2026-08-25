@@ -497,6 +497,38 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             tempfile.gettempdir = original_gettempdir
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_cleanup_failure_is_warning_and_does_not_block_start(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-cleanup-warning-"))
+        original_out = run_multi_case.OUT_ROOT
+        original_gettempdir = tempfile.gettempdir
+        try:
+            output_root = root / "output/story"
+            old_output = output_root / "story-suite-old"
+            new_output = output_root / "story-suite-new"
+            old_output.mkdir(parents=True)
+            new_output.mkdir(parents=True)
+            run_multi_case.write_json(old_output / "suite.json", {
+                "suite_id": "story-suite-old", "status": "finished",
+                "case_states": {},
+            })
+            run_multi_case.OUT_ROOT = output_root
+            tempfile.gettempdir = lambda: str(root / "temp")
+            with mock.patch.object(run_multi_case, "_process_inventory",
+                                   return_value=(True, [], None)), \
+                    mock.patch.object(
+                        run_multi_case, "_remove_tree_with_recovery",
+                        side_effect=OSError("residual snapshot")):
+                report = run_multi_case.cleanup_previous_test_runs(
+                    new_output, "story-suite-new")
+            self.assertEqual("completed_with_warnings", report["status"])
+            self.assertEqual(1, len(report["warnings"]))
+            self.assertTrue(old_output.exists())
+            self.assertTrue(new_output.exists())
+        finally:
+            run_multi_case.OUT_ROOT = original_out
+            tempfile.gettempdir = original_gettempdir
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_active_historical_suite_blocks_cleanup_before_delete(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-active-"))
         original_out = run_multi_case.OUT_ROOT

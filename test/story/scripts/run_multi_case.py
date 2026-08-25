@@ -905,7 +905,7 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
         raise SystemExit("[multi] 历史测试现场清理预检失败：" + "；".join(blockers))
     report["status"] = "deleting"
     write_json(new_bundle_root / "previous-run-cleanup.json", report)
-    errors: list[str] = []
+    cleanup_warnings: list[str] = []
     for target in report["targets"]:
         removed: list[str] = []
         target["deletion_attempts"] = []
@@ -925,16 +925,15 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
             target["status"] = "deleted"
             target["removed"] = removed
         except OSError as exc:
-            target["status"] = "delete_failed"
-            target["error"] = str(exc)
-            errors.append(f"{target['suite_id']}: {exc}")
+            target["status"] = "retained_cleanup_warning"
+            target["warning"] = str(exc)
+            cleanup_warnings.append(f"{target['suite_id']}: {exc}")
         write_json(new_bundle_root / "previous-run-cleanup.json", report)
-    report["status"] = "failed" if errors else "completed"
-    report["errors"] = errors
+    report["status"] = "completed_with_warnings" if cleanup_warnings else "completed"
+    report["warnings"] = cleanup_warnings
+    report["errors"] = []
     report["finished_at"] = now()
     write_json(new_bundle_root / "previous-run-cleanup.json", report)
-    if errors:
-        raise SystemExit("[multi] 历史测试现场部分清理失败，拒绝继续：" + "；".join(errors))
     return report
 
 
@@ -1156,11 +1155,16 @@ def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
                 or (actual_kind and actual_kind != expected_kind):
             fallback_reason = "interaction_gate_mismatch"
     if fallback_reason:
+        prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
         fallback = {
             "case": record["case"],
             "turn": awaiting.get("turn"),
             "kind": awaiting.get("kind"),
-            "model_prompt": awaiting.get("prompt") or awaiting.get("message"),
+            "model_prompt": prompt_text,
+            # question 是给宿主**当轮就能回**的那份原文：只给状态、要宿主再去翻 runlog，
+            # 一轮观测就变成两轮，等待时间凭空翻倍（实测一次空等约 10 分钟）。
+            "question": str(prompt_text)[:1200],
+            "case_inputs_hint": case_public_inputs(record),
             "reply": None,
             "reason": fallback_reason,
             "detected_at": now(),
@@ -1704,6 +1708,24 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
     save_suite(path / "suite.json", suite)
 
 
+def case_public_inputs(record: dict[str, Any]) -> list[str]:
+    """本 Case 的公开输入清单——宿主据此判断怎么回，不必去翻其它 Case 或历史答案。"""
+    feature = str(record.get("feature") or "")
+    if not feature:
+        return []
+    root = REPO_ROOT / "doc" / "features" / feature
+    if not root.is_dir():
+        return []
+    out: list[str] = []
+    for sub in ("RR", "SR", "AR", "inbox"):
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            out.append(str(f.relative_to(REPO_ROOT)).replace("\\", "/"))
+    return out[:12]
+
+
 def adaptive_requests(suite: dict[str, Any]) -> list[dict[str, Any]]:
     return [{
         "case": record.get("case"), "feature": record.get("feature"),
@@ -1784,9 +1806,13 @@ def control_payload(suite: dict[str, Any], *,
         next_action = "reply_then_poll"
     else:
         next_action = "poll_after_interval"
+    # 有 Case 在等回话时一律回到最短间隔：等待期的每一秒都是白等的，
+    # 而 120 秒节奏下「等待出现」与「宿主看到」之间平均差半个周期。
+    any_waiting = any(record.get("status") == WAITING_STATUS for record in records)
     next_interval_sec = None if terminal else (
-        AUTOMATION_INTERVAL_SEC if suite_automation_ready(suite)
-        else INTERACTION_INTERVAL_SEC)
+        INTERACTION_INTERVAL_SEC if (any_waiting or adaptive)
+        else (AUTOMATION_INTERVAL_SEC if suite_automation_ready(suite)
+              else INTERACTION_INTERVAL_SEC))
     stability = suite.get("automation_stability") or {}
     change_list = changes or []
     return {

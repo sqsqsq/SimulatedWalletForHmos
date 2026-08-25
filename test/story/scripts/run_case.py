@@ -212,6 +212,32 @@ def phase_before(phase: str) -> str | None:
     return "story" if idx == 0 else PHASE_ORDER[idx - 1]
 
 
+VERIFIER_REPORT_PATTERNS = (
+    "verifier.report.md",
+    "verifier-report.yaml",
+    "verifier-report.yml",
+    "verifier-*-result.yaml",
+    "verifier-*.md",
+    "verify-*.md",
+)
+
+
+def verifier_report(feature: str, phase: str):
+    """本阶段的 verifier 产物——认一组文件名，不认单一文件名。
+
+    命名由被测流程决定且历史上变过；驱动器把某一个名字当契约，等于把
+    「换了个文件名」变成「阶段永远不闭环」。
+    """
+    reports = REPO_ROOT / FEATURES_DIR / feature / phase / "reports"
+    if not reports.is_dir():
+        return None
+    for pattern in VERIFIER_REPORT_PATTERNS:
+        for hit in sorted(reports.glob(pattern)):
+            if hit.is_file():
+                return hit
+    return None
+
+
 def phase_evidence_complete(feature: str, phase: str) -> tuple[bool, list[str]]:
     """前序阶段是否已经闭环——续跑与目标终点的共同判据。
 
@@ -229,10 +255,15 @@ def phase_evidence_complete(feature: str, phase: str) -> tuple[bool, list[str]]:
     checks = {
         "trace.json": root / "reports" / "trace.json",
         "summary.json": root / "reports" / "summary.json",
-        "verifier 报告": root / "reports" / "verifier.report.md",
         "完成回执": root / "phase-completion-receipt.md",
     }
     missing = [name for name, path in checks.items() if not path.is_file()]
+    # verifier 报告的**文件名不是契约**：同一份内容曾落成 verifier.report.md 与
+    # verifier-report.yaml 两种命名。驱动器按单一文件名判闭环时，另一种命名会被判成
+    # 「未闭环」→ 反复下发同一条推进指令 → 模型按规则拒绝重跑 → 空转到预算耗尽
+    # （实测一次 27 轮）。所以这里认一组名字，任一存在即算。
+    if not verifier_report(feature, phase):
+        missing.append("verifier 报告")
     if missing:
         return False, missing
     try:
@@ -1430,6 +1461,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 metadata={"tool": "story-skill-test"})
             run: dict = {}
             turns = 0
+            # 同一阶段连续续话的计数（阶段级预算，见下方 phase_turn_budget_exhausted）
+            stuck_phase, stuck_turns = None, 0
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——
@@ -1503,9 +1536,27 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     # 是「评审→归档」，笼统说「按推荐走」会让模型去归档然后宣布全链交付）。
                     done = artifacts_ready(feature)
                     nxt = next_unclosed_phase(feature, end_phase) if done else None
+                    # **阶段级预算**：PHASE_TURNS 一直只被求和当全局上限，于是「同一阶段
+                    # 反复下发同一条指令而毫无进展」只能耗到全程预算用尽（实测 27 轮）。
+                    # 卡住的阶段自己有上限，超了就停——空转不产出任何证据，只消耗时间。
+                    budget_key = nxt or "story"
+                    if budget_key == stuck_phase:
+                        stuck_turns += 1
+                    else:
+                        stuck_phase, stuck_turns = budget_key, 1
+                    limit = PHASE_TURNS.get(budget_key, MAX_TURNS)
+                    if stuck_turns > limit:
+                        result["stop_reason"] = "phase_turn_budget_exhausted"
+                        result["stuck_phase"] = budget_key
+                        runlog.event("阶段预算耗尽",
+                                     f"{budget_key} 阶段连续续话 {stuck_turns} 次仍未闭环"
+                                     f"（上限 {limit}），停止本 Case 以免空转")
+                        feed.emit("phase_budget_exhausted", phase=budget_key,
+                                  turns=stuck_turns, limit=limit)
+                        break
                     gate_reply = continuation_reply(feature, artifacts_done=done, next_phase=nxt)
                     feed.emit("gate_reply", turn=turns,
-                              reason=(f"阶段边界：推进到 {nxt}" if nxt
+                              reason=(f"阶段边界：推进到 {nxt}（第 {stuck_turns}/{limit} 次）" if nxt
                                       else f"未达 {end_phase}，按推荐继续"))
                     runlog.event("续话", f"第 {turns + 1} 轮：{gate_reply[:80]}")
                 request = replace(

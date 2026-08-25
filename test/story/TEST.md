@@ -15,6 +15,12 @@
 用户已授权宿主模型启动外层协调器时使用非沙箱环境。`start` 必须在非沙箱环境执行并传入
 `--authorize-non-sandbox`。这不是要求被测模型切换环境，也不得写入 Case prompt。
 
+### 0.1 测试目标与观测边界
+
+- 正式 Case 是组合业务场景；叙述变形只做离线检查，不构成正式 Case。
+- 每个 Case 只能看到自身 workspace、初始任务和已发送交互，不得接触 `test/story/` 维护材料、其他 Case 或历史 suite。
+- 观测者（外层协调器）不得替被测模型运行 gate、修改被测产物或清理阶段状态。
+
 ## 1. 唯一入口与启动
 
 正式测试统一使用 `scripts/run_multi_case.py`，即使只运行一个 Case，也不直接运行 `run_case.py`。
@@ -40,10 +46,13 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
-4. 全部安全后删除历史 workspace/output，写入 `previous-run-cleanup.json`。
-5. 清理全部成功后，将当前 `doc/features/*` 整体迁移到
+4. 全部安全后尝试删除历史 workspace/output，写入 `previous-run-cleanup.json`。
+5. 若安全预检通过但个别历史目录删除失败，逐目标记录 `retained_cleanup_warning` 和残留路径，保留现场供下一轮重试，
+   不阻断本轮 feature 迁移、workspace 创建或 CLI 启动；只有活动 PID、有效 lease、路径越界、软链接风险、所有权不明或
+   进程无法可靠枚举等安全预检失败才停止。
+6. 清理预检通过后，将当前 `doc/features/*` 整体迁移到
    `E:\Project\bak\Story-Features-<时间戳>/`。
-6. 创建模板及各 Case workspace，再顺序启动 CLI。
+7. 创建模板及各 Case workspace，再顺序启动 CLI。
 
 workspace 只复制产品源码和构建配置、`framework/`、`doc/extensions/`、architecture/catalog/glossary
 以及当前 Case 所需输入。递归排除 `test/`、`tools/`、`output/`、`.git`、历史 `doc/features`、其他
@@ -73,7 +82,13 @@ feature 匹配的 `framework/harness/state/.current-phase.json` 为首选，阶�
 
 每个 Case 的 `interaction-script.yaml` 提供预设回复。协调器只在 `awaiting_reply` 后核对 turn/kind，
 再发送自然语言并记录接受与消费状态。若没有匹配脚本，宿主阅读当前问题、本 Case 公开输入和已发生
-交互，给出推进场景所需的最小回复，然后同一回合立即再次 `poll` 确认消费并继续驱动。不得读取其他
+交互，给出推进场景所需的最小回复，然后同一回合立即再次 `poll` 确认消费并继续驱动。
+
+**`awaiting_reply` 必须在它出现的那一次唤醒内回复完毕**：poll 返回的
+`adaptive_reply_requests[].question` 就是模型的原话，`case_inputs_hint` 是本 Case 的公开输入清单，
+当轮即可作答，不需要另开一轮去翻 runlog。只看 `status` 不读 `question`、把回复推到下一个周期，
+按协调失误记入观测记录——一次跨周期等待就是白等一个完整间隔。
+有 Case 处于 `awaiting_reply` 时 `next_interval_sec` 一律回到 15 秒，不受自动化稳定态影响。不得读取其他
 Case、历史答案或提示遗漏项。意外行为、维护文件名或任何关键词只能记录和理解，不能据此调用
 `stop`；`stop` 只响应用户明确要求。单个 Case 失败也不得停止其他 Case。
 
@@ -107,7 +122,8 @@ heartbeat 提示词必须包含当前 suite-id，并要求：每次只执行一�
 
 ## 5. 状态与证据
 
-静默不是终态，`awaiting_reply` 必须处理。权威状态只来自 `state.json` 和运行事件。典型目录：
+静默不是终态，`awaiting_reply` 必须处理。历史清理的 `completed_with_warnings` 不是 Case 失败；只要安全预检通过，
+协调器继续测试并在下一轮起跑重试残留。权威状态只来自 `state.json` 和运行事件。典型目录：
 
 ```text
 output/story/<suite-id>/
@@ -135,6 +151,16 @@ output/story/<suite-id>/
 
 原生 phase gates 仍由被测流程执行并记录。退出码只表达执行结果：正常完成且到达目标阶段为 0；
 CLI、gate、恢复或基础设施失败为非零。
+
+**阶段闭环凭证**：`trace.json`、`summary.json`、完成回执，以及 **verifier 报告**——
+后者认一组文件名（`verifier.report.md` / `verifier-report.yaml` / `verifier-*-result.yaml` /
+`verifier-*.md` / `verify-*.md`），任一存在即算。命名不是契约：按单一文件名判闭环时，
+换个命名就会被判成「未闭环」，驱动器会反复下发同一条推进指令而模型正确地拒绝重跑。
+
+**`stop_reason` 语义**：`phase_turn_budget_exhausted` = 同一阶段连续续话超过 `PHASE_TURNS`
+上限仍未闭环（空转，已中止）；`awaiting_reply_timeout` = 等人回话超时；
+其余为 CLI/基础设施原因。出现 `phase_turn_budget_exhausted` 时先查该阶段的闭环凭证是否齐备，
+再查驱动器判据与被测产物命名是否对得上。
 
 ## 6. 回灌与现场保留
 
