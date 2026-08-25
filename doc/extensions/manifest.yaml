@@ -62,6 +62,34 @@ provides:
         - hooks/plan/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
+    coding:
+      on_context_load:
+        - hooks/coding/on_context_load.md
+      post_check:
+        - hooks/coding/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    review:
+      on_context_load:
+        - hooks/review/on_context_load.md
+      post_check:
+        - hooks/review/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    ut:
+      on_context_load:
+        - hooks/ut/on_context_load.md
+      post_check:
+        - hooks/ut/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    testing:
+      on_context_load:
+        - hooks/testing/on_context_load.md
+      post_check:
+        - hooks/testing/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
 
   phase_rules_overlays:
     spec: rules/spec-rules.overlay.yaml

@@ -12,6 +12,8 @@
 #   target            mechanism（检查 doc/extensions 机制文件）| product（检查 feature 产物）
 #   bad_fixture       反夹具目录：checker 必须判 FAIL
 #   good_fixture      正夹具目录：checker 必须判 PASS
+#   self_check        internal = 正反例内建在 checker 的数据里（逐分支各带预期），
+#                     不用外部夹具目录；此时 bad_fixture / good_fixture 不填
 #   applicable_when   对真实目标运行的前提
 #   severity          BLOCKER | WARN
 #   status            fixed（永久回归） | pending_capability（目标能力未建，只做夹具自检）
@@ -217,6 +219,22 @@ modes:
     severity: BLOCKER
     status: fixed
 
+  - id: M15-paraphrase-branch-drift
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 复述判定的分支行为漂移——改了规范化或阈值后，某类对抗样本悄悄换了判定档位
+    clause: B1-14 / 坑 #11（多分支合并计数，单分支全灭也能凑数通过）
+    checker: m15_paraphrase_branch_drift
+    target: mechanism
+    self_check: internal
+    self_check_note: >
+      本形态的正反例是 test/story/fixtures/knowledge/adversarial.json 里的九个分支，
+      每条自带 expect_verdict / expect_not_verdict——checker 逐分支比对，
+      不用外部 bad/good 夹具目录。
+    applicable_when: 存在复述判定模块
+    severity: BLOCKER
+    status: fixed
+
   # ---------------------------------------------------------------------------
   # 产物层（feature 产物里的失效形态）
   # ---------------------------------------------------------------------------
@@ -232,7 +250,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P01-appendix-prefix-granularity/good
     applicable_when: 存在 AR/story.md 规约符合性附录
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P02-appendix-conclusion-paraphrase
     dimension: knowledge
@@ -245,7 +263,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P02-appendix-conclusion-paraphrase/good
     applicable_when: 存在 AR/story.md 规约符合性附录
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P03-spec-exit-paraphrase
     dimension: knowledge
@@ -258,7 +276,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P03-spec-exit-paraphrase/good
     applicable_when: 存在 spec/spec.md 规约约束要求章
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P04-plan-obligation-paraphrase
     dimension: knowledge
@@ -271,7 +289,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P04-plan-obligation-paraphrase/good
     applicable_when: 存在 plan/contracts.yaml 知识冻结块
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P05-anchor-points-to-declaration
     dimension: knowledge
@@ -284,7 +302,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/good
     applicable_when: 存在 plan/contracts.yaml 知识冻结块
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P06-knowledge-decision-after-design
     dimension: knowledge
@@ -297,7 +315,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P06-knowledge-decision-after-design/good
     applicable_when: 存在 plan/plan.md
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P07-rule-ids-in-story-body
     dimension: readability
@@ -364,7 +382,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P11-verifier-zero-adjudication/good
     applicable_when: 存在 <phase>/reports 下的 verifier 报告
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: P12-numeric-index-paragraph
     dimension: readability
@@ -391,4 +409,4 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/good
     applicable_when: 存在 plan/contracts.yaml 知识冻结块 且 存在 review/review-report.md
     severity: BLOCKER
-    status: pending_capability
+    status: fixed

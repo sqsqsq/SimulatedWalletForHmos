@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -535,20 +536,85 @@ def m13_numeric_form_quota(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def m14_criteria_instruction_divergence(root: Path, ctx: Ctx) -> Outcome:
-    """内容自检问句必须随写作指令下发给被测模型。"""
+    """内容自检问句必须随写作指令下发给被测模型。
+
+    口径（G3）：**只计写判定结论的阶段**（spec / plan）的注入件——它们要求模型自己写出
+    「这条规约在本需求里落成什么」，而机械门禁只拦得住原文照抄，拦不住换个说法，
+    所以自检问句必须和判据同批下发。**不计**下游阶段的注入件：它们消费的是已冻结的结论，
+    不产生新的判定文字。
+
+    按**路径**判归属，不按文件名——各阶段的注入件同名（`on_context_load.md`），
+    按文件名比对会把下游的也算成写作注入件。
+    """
     injections = [
         p for p in iter_files(root, TEXT_SUFFIXES, EXCLUDE_KNOWLEDGE)
         if "on_context_load" in p.name
     ]
     if not injections:
         return Outcome(True, "无写作注入件（不适用）")
+    writer_phases = [
+        p for p in injections
+        if re.search(r"(^|/)(spec|plan)(/|$)", p.relative_to(root).as_posix())
+    ]
+    if not writer_phases:
+        return Outcome(True, "无写判定结论阶段的注入件（不适用）")
     self_check = re.compile(r"自问|自检问句|这句话里有没有|遮住")
-    missing = [p.name for p in injections if not self_check.search(read_text(p))]
-    writer_phases = [p for p in injections if re.search(r"spec|plan", p.parent.name + p.name)]
-    missing = [n for n in missing if any(n == p.name for p in writer_phases)]
+    missing = [
+        p.relative_to(root).as_posix() for p in writer_phases
+        if not self_check.search(read_text(p))
+    ]
     if missing:
         return Outcome(False, "写作注入件缺内容自检问句：" + "、".join(missing))
-    return Outcome(True, "写作注入件均含内容自检问句")
+    return Outcome(True, f"{len(writer_phases)} 份写作注入件均含内容自检问句")
+
+
+@checker
+def m15_paraphrase_branch_drift(root: Path, ctx: Ctx) -> Outcome:
+    """复述判定的每个对抗分支都要维持冻结时的判定档位。
+
+    口径（G3）：**逐分支比对，不合并计数**——把九个分支合成一个通过率时，
+    某一类样本整体失效也能被其它分支的通过数掩盖（已实测过这种凑数通过）。
+
+    判定逻辑不在这里重实现：调用真实模块跑
+    ``test/story/scripts/check_paraphrase_branches.mjs``，退出码即结论。
+    重实现一份出来的是「测试对测试」，判据一改两边就分叉。
+    """
+    module = root / "hooks" / "shared" / "paraphrase.mjs"
+    if not module.exists():
+        return Outcome(True, "无复述判定模块（不适用）")
+    runner = REPO_ROOT / "test" / "story" / "scripts" / "check_paraphrase_branches.mjs"
+    if not runner.exists():
+        return Outcome(False, "缺分支验证脚本 check_paraphrase_branches.mjs")
+    # 夹具目录下的模块只作存在性演示；分支预期始终对交付件跑（判据的真源只有一处）
+    proc = subprocess.run(
+        ["node", str(runner)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(REPO_ROOT),
+    )
+    tail = [l for l in split_lines(proc.stdout) if l.strip()][-1:] or ["(无输出)"]
+    if proc.returncode != 0:
+        bad = [l.strip() for l in split_lines(proc.stdout) if l.strip().startswith("[FAIL]")]
+        return Outcome(False, f"分支偏离：{'；'.join(bad) or tail[0]}")
+
+    # 双实现一致性：门禁侧是 JS（paraphrase.mjs），产物回归侧是本文件的 Python 实现。
+    # 两份实现是被迫的（跨语言），但**判据必须只有一个**——所以在这里把它们机械绑起来：
+    # 同一批样本上判定不一致，立刻报出来，而不是等某天门禁放过、回归报错时才发现。
+    fixture = REPO_ROOT / "test" / "story" / "fixtures" / "knowledge" / "adversarial.json"
+    if fixture.exists():
+        data = json.loads(read_text(fixture))
+        src = data["source"]
+        drift = []
+        for c in data["cases"]:
+            py_copied, _ = is_pure_copy(c["text"], [src])
+            js_expects_copy = c.get("expect_verdict") == "PURE_COPY"
+            js_forbids_copy = c.get("expect_not_verdict") == "PURE_COPY"
+            if js_expects_copy and not py_copied:
+                drift.append(f"{c['id']}：JS 判纯复制，Python 未判")
+            if js_forbids_copy and py_copied:
+                drift.append(f"{c['id']}：JS 不判纯复制，Python 判了")
+        if drift:
+            return Outcome(False, "Python 与 JS 的复述判定漂移：" + "；".join(drift))
+    return Outcome(True, f"{tail[0]}；双实现判定一致")
 
 
 # --------------------------------------------------------------------------- #
@@ -992,7 +1058,22 @@ def fixture_ctx(fixture: Path, mode: dict) -> Ctx:
 
 
 def self_check(mode: dict, report: Report) -> None:
-    """反夹具必 FAIL、正夹具必 PASS。"""
+    """反夹具必 FAIL、正夹具必 PASS。
+
+    ``self_check: internal`` 的形态例外：它的正反例内建在 checker 的数据里
+    （每条样本各带预期），外部 bad/good 目录对它没有意义——那种形态跑一次 checker
+    本身，checker 内部逐条比对预期并把偏离项报出来。
+    """
+    if str(mode.get("self_check", "")).strip() == "internal":
+        outcome = run_checker(mode["checker"], DEFAULT_EXTENSION_DIR, Ctx(
+            knowledge_root=DEFAULT_EXTENSION_DIR / "knowledge",
+            extension_root=DEFAULT_EXTENSION_DIR,
+        ))
+        report.add(ModeResult(
+            mode["id"], "self_check", "internal（逐分支预期）",
+            "PASS" if outcome.ok else "FAIL", outcome.evidence,
+        ))
+        return
     for kind, expect_ok in (("bad_fixture", False), ("good_fixture", True)):
         rel = mode.get(kind)
         if not rel:
