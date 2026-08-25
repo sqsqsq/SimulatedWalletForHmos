@@ -46,10 +46,10 @@
 2. **边界**——本条管到哪为止，与哪条不重叠；
 3. **本工程决策的理由**——为什么这么定，而不是另一种。
 
-**不写目标工程的实现事实**：工具类名、模块路径、API 签名、既有封装一律归项目知识
-（[`codebase-facts.md`](../codebase-facts.md)），需要指到具体封装时写
-「见项目知识《工程取证事实登记》‹面名›」。规约换个工程不变，封装换个工程就不同——
-把封装名复制进规约，等于给同一个事实建了第二份真源。
+**不写目标工程的实现事实**：工具类名、模块路径、API 签名、既有封装一律归**项目知识**，
+需要指到具体封装时写「去仓里按项目知识的定位规则找现成的」——项目知识给的是怎么找，
+不是清单。规约换个工程不变，封装换个工程就不同：把封装名复制进规约，
+等于给同一个事实建了第二份真源。
 
 ## 域清单
 
@@ -59,6 +59,7 @@
 | security-privacy.md | SEC | always |
 | dfx-baseline.md | DFX | always |
 | observability.md | OBS | 需求新增业务流程，或改变既有流程的分支/终态 |
+| resource-usage.md | RES | 需求涉及界面图片、图标或用户可见文案 |
 | compatibility-checklist.md | COMPAT | always |
 | env-exceptions.md | ENV | always |
 | deliverables.md | DLV | always |

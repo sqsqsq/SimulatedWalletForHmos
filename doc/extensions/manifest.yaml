@@ -16,6 +16,7 @@ provides:
     - knowledge/constraints/security-privacy.md
     - knowledge/constraints/dfx-baseline.md
     - knowledge/constraints/observability.md
+    - knowledge/constraints/resource-usage.md
     - knowledge/constraints/compatibility-checklist.md
     - knowledge/constraints/env-exceptions.md
     - knowledge/constraints/deliverables.md
@@ -37,6 +38,7 @@ provides:
       - knowledge/constraints/security-privacy.md
       - knowledge/constraints/dfx-baseline.md
       - knowledge/constraints/observability.md
+      - knowledge/constraints/resource-usage.md
       - knowledge/constraints/compatibility-checklist.md
       - knowledge/constraints/env-exceptions.md
       - knowledge/constraints/deliverables.md
