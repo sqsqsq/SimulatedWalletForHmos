@@ -1,0 +1,8 @@
+feature: sample
+knowledge_freeze:
+  obligations:
+    - rule: SMP-01
+      criterion: AC-3
+      obligation: 对外处理过程必须可被单独定位与统计
+      anchor: 数据模型定义
+      landing: [data_models.ReceiptContext.receiptNo]

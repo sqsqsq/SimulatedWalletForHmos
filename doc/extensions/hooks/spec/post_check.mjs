@@ -522,7 +522,7 @@ export default async function postCheckHook(ctx) {
     const scopeBlock = text.match(/in_scope_modules:\s*\n((?:\s*-\s*.+\n)+)/);
     const inScope = new Set(
       (scopeBlock?.[1] ?? '')
-        .split('\n')
+        .split(/\r?\n/)
         .map(l => l.match(/^\s*-\s*(.+?)\s*$/)?.[1])
         .filter(Boolean)
     );

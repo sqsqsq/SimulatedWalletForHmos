@@ -1,0 +1,7 @@
+feature: sample
+knowledge_freeze:
+  obligations:
+    - rule: SMP-01
+      obligation: 受理单编号在提交入口生成并透传
+      anchor: 数据模型定义
+      landing: [data_models.ReceiptContext.receiptNo]

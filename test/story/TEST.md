@@ -189,6 +189,37 @@ python -m unittest discover -s tools/cli/tests
 python -m compileall -q tools/cli test/story/scripts
 python -m tools.cli.scripts.validate_clis
 python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数> --isolated-workspaces
+python test/story/scripts/check_failure_modes.py
+node --check <每个 doc/extensions 下的 .mjs>
 ```
 
 这些命令不启动真实被测 CLI，只检查接口、状态转换、清理预检、稳定观测和确定性规则。
+
+### 7.1 失效形态全量回归
+
+`check_failure_modes.py` 跑 `regression/failure-modes.yaml` 的全部形态，两段缺一不可：
+
+| 段 | 对象 | 判据 |
+|---|---|---|
+| 夹具自检 | `fixtures/failure-modes/<id>/{bad,good}` | 反夹具必 FAIL、正夹具必 PASS；不过 = checker 本身失效 |
+| 真实目标 | 机制层 = `doc/extensions`；产物层 = `--feature` 指定的**新**产物 | `status: fixed` 的形态一条不许命中 |
+
+`status: pending_capability` 报 SKIP（目标能力尚未建，不算回归失败）；`retired` 须带 `reason` + `approved_by`。
+
+`--historical` 是**观察档**：对实施前基线样本（`doc/features/*` 与
+`E:\Project\bak\Story-Features-*`）跑产物类 checker。这些样本本就含历史缺陷，检出是预期结果
+（等同额外的反夹具），**不参与 PASS/FAIL**。
+
+### 7.2 机制层负面扫描
+
+提交前固定跑，期望全部零命中（对应台账 M01–M04）：
+
+```powershell
+grep -rnE "\b[A-Z]{2,8}-[0-9]{2}\b" doc/extensions --include=*.mjs --include=*.yaml --exclude-dir=knowledge
+grep -rnE "\b(AR|DTS|ISSUE)-?[0-9]{4,}\b" doc/extensions --exclude-dir=knowledge
+grep -rnE "\b0[1-9]-[A-Z][A-Za-z]{3,}\b" doc/extensions --exclude-dir=knowledge
+grep -rnE "[A-Za-z]:[\\/]|\bbackup/" doc/extensions
+```
+
+口径：占位前缀（`XXX-01`）与注释行不计——它们是"任意域"的示例，正是不硬编码的写法。
+四条已内置为 `check_failure_modes.py` 的 M01–M04，此处仅作人工快查。

@@ -178,7 +178,7 @@ export function findUnsourcedNumbers(bodyText, upstreamText, decisions) {
   for (const m of bodyText.matchAll(NUMBER_WITH_UNIT)) {
     if (known.has(m[1])) continue;
     if (!missing.has(m[1])) {
-      missing.set(m[1], bodyText.slice(0, m.index).split('\n').length);
+      missing.set(m[1], bodyText.slice(0, m.index).split(/\r?\n/).length);
     }
   }
   return [...missing].map(([value, line]) => ({ value, line }));
@@ -191,7 +191,7 @@ export function authorBody(raw) {
 
 /** 表格行数：`|` 起头的行，去掉分隔行（`|---|`）。合并表不影响总量。 */
 function tableRowCount(text) {
-  return text.split('\n')
+  return text.split(/\r?\n/)
     .filter(l => l.trimStart().startsWith('|') && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
     .length;
 }
@@ -203,7 +203,7 @@ function tableRowCount(text) {
  * 那比漏检一个阈值更坏。所以剔除列表序号这类噪声，只收「看着就是参数」的。
  */
 function numericFacts(text) {
-  const body = text.split('\n')
+  const body = text.split(/\r?\n/)
     .map(l => l.replace(/^\s*[-*+]?\s*\d+[.、)]\s/, ''))   // 列表序号不是事实
     .join('\n');
   const found = new Set();
@@ -282,12 +282,15 @@ export function findMissingFacts(factSource, upstreamSource, body, at, decisions
  */
 export function demoteHeadings(text) {
   let fence = false;
-  return text.split('\n').map(line => {
-    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; return line; }
-    if (fence) return line;
-    const m = line.match(/^(#{1,5})(\s+\S)/);
-    return m ? `#${line}` : line;
-  }).join('\n');
+  // 改写型分行：用捕获组把行尾原样留在数组里再拼回——按 /\r?\n/ 切开后 join('\n')
+  // 会把 CRLF 静默转成 LF，`check` 的逐字重装配比对就会假失败。
+  return text.split(/(\r?\n)/).map((part, i) => {
+    if (i % 2 === 1) return part;                    // 奇数位是行尾分隔符本身
+    if (/^\s*(```|~~~)/.test(part)) { fence = !fence; return part; }
+    if (fence) return part;
+    const m = part.match(/^(#{1,5})(\s+\S)/);
+    return m ? `#${part}` : part;
+  }).join('');
 }
 
 function sha256(text) {
@@ -512,9 +515,11 @@ export function renderDecisionRefs(text, decisions) {
 export function renderIdRefs(text, ids) {
   const byId = new Map(ids.map(x => [x.id, x]));
   const missing = [];
-  const out = text.split('\n').map(line => {
-    const inTable = line.trimStart().startsWith('|');
-    return line.replace(/\{\{ID:([\w-]+)\}\}/g, (_m, id) => {
+  // 改写型分行：捕获组保留原行尾，避免把 CRLF 静默转成 LF（`check` 会逐字比对）。
+  const out = text.split(/(\r?\n)/).map((part, i) => {
+    if (i % 2 === 1) return part;
+    const inTable = part.trimStart().startsWith('|');
+    return part.replace(/\{\{ID:([\w-]+)\}\}/g, (_m, id) => {
       const entry = byId.get(id);
       if (!entry) {
         missing.push(id);
@@ -522,7 +527,7 @@ export function renderIdRefs(text, ids) {
       }
       return inTable ? id : `“${entry.title}（${id}）”`;
     });
-  }).join('\n');
+  }).join('');
   return { text: out, missing };
 }
 
@@ -745,7 +750,7 @@ function scaffold(ctx) {
       ...(ch.must_answer ?? []).map(q => `- ${q}`),
       '-->',
       ...(ch.transcribe_note ? ['<!-- 本章写法：' + ch.transcribe_note + ' -->'] : []),
-      `<!-- ${WRITING_CRITERION.split('\n').join('\n     ')} -->`,
+      `<!-- ${WRITING_CRITERION.split(/\r?\n/).join('\n     ')} -->`,
       '',
     ].join('\n');
     fs.writeFileSync(target, `${header}\n`, 'utf-8');
@@ -891,13 +896,13 @@ export function assemble(ctx) {
   // 以下三条都扫**最终装配结果**而非章节正文：附录、决策引用、编号速查都是装配器
   // 渲染出来的，只查章节会留下盲区。
   if (/\bundefined\b/.test(bodyText)) {
-    const line = bodyText.split('\n').findIndex(l => /\bundefined\b/.test(l)) + 1;
+    const line = bodyText.split(/\r?\n/).findIndex(l => /\bundefined\b/.test(l)) + 1;
     problems.push(`story 渲染结果含字面量 undefined（首次出现在第 ${line} 行）：某处取到了空字段`);
   }
 
   for (const word of AGENDA_WORDS) {
     if (!bodyText.includes(word)) continue;
-    const line = bodyText.split('\n').findIndex(l => l.includes(word)) + 1;
+    const line = bodyText.split(/\r?\n/).findIndex(l => l.includes(word)) + 1;
     problems.push(
       `story 出现议程措辞「${word}」（第 ${line} 行）——表态归《决策与评审记录》。`
       + '若来自规约原文，在 ids.json 里把含义改写为中性事实陈述，把待决部分登记为决策');

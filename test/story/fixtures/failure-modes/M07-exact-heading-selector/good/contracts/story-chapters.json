@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "note": "section 是候选词根数组，按顺序试、包含即命中；全部落空降级注入整篇",
+  "chapters": [
+    { "id": "01-background", "inputs": [ { "doc": "PRD", "section": ["背景", "目标"] } ] }
+  ]
+}

@@ -17,7 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanBannedTerms, scanLocalPaths, scanDanglingRefs, formatHits } from './lint-rules.mjs';
+import { scanBannedTerms, scanLocalPaths, scanDanglingRefs, formatHits, baseLayerIds } from './lint-rules.mjs';
 
 // ---------------------------------------------------------------------------
 // 基础设施
@@ -157,23 +157,26 @@ const problems = [];
 
   check('编号', specText.match(/\b(?:S\d+|F\d+|E\d+|AC-[\w]*\d+|BD-\d+|NFR-\d+)\b/g) ?? []);
 
-  // 术语映射表混着两类词：**需求实体**（自动充值、门限——它们是名字，story 就该出现）
-  // 与**工程消歧用词**（主题色、Toast、脱敏——spec 拿它们把自然语言映到权威模块，
+  // 术语映射表混着两类词：**需求实体**（它们是业务对象的名字，story 就该出现）
+  // 与**工程消歧用词**（主题色、Toast、脱敏这类——spec 拿它们把自然语言映到权威模块，
   // story 用业务语言表达同一事实才是对的）。一视同仁地要求逐词出现，会让 story
-  // 越写人话越容易被判「丢了事实」——AR90006 的「主题色」就是这么误报的：
-  // 事实在 story 里完整写着，只是没出现那三个字。
+  // 越写人话越容易被判「丢了事实」：实测出现过事实在 story 里完整写着、
+  // 只是没出现那几个工程用词，就被报成缺失。
   //
-  // 分流键取表内已有的「所属层」列：平台能力层（05-SystemBase）的词条属工程消歧用词。
-  // 这不是措辞白名单，是架构层名（SSOT 在架构 DSL）。无该列的表不过滤，保持向后兼容。
+  // 分流键取表内已有的「所属层」列：归属**平台能力层**的词条属工程消歧用词。
+  // 层身份按依赖方向从架构 DSL 派生（`can_depend_on` 为空者），不写层名字面——
+  // 写死名字换个工程就静默失效。无该列或派生不到时不过滤，保持向后兼容。
   const gloss = extractSection(specText, /术语映射表/);
   const glossRows = [...(gloss?.body ?? '').split(/\r?\n/)].map(tableCells).filter(Boolean);
   const header = glossRows.find(c => /^原始术语$|^术语$/.test(c[0]));
   const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
+  const baseLayers = baseLayerIds(projectRoot);
+  const isBaseLayer = cellText => baseLayers.some(id => cellText.includes(id));
   check(
     '术语',
     glossRows
       .filter(c => c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
-      .filter(c => layerIdx < 0 || !/05-SystemBase/.test(c[layerIdx] ?? ''))
+      .filter(c => layerIdx < 0 || !baseLayers.length || !isBaseLayer(c[layerIdx] ?? ''))
       .map(c => c[0].replace(/\*\*|`/g, '').trim())
   );
 

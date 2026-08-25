@@ -1,0 +1,9 @@
+feature: sample
+knowledge_freeze:
+  obligations:
+    - rule: SMP-01
+      obligation: 受理单编号透传
+      landing: [x.y]
+    - rule: SMP-02
+      obligation: 上报失败只记本地日志
+      landing: [x.z]

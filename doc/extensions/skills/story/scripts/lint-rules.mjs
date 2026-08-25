@@ -57,7 +57,7 @@ function readConfig(projectRoot) {
  *
  * 通用段是 framework 结构（跨工程不变）：`doc/extensions|features/`、`framework/`，
  * 以及 feature 工作区内的 `RR/` `SR/` `AR/`——评审者同样打不开。
- * 业务模块目录形态**因工程而异**（本工程是 `01-Product/`…`05-SystemBase/`，别的工程可能是
+ * 业务模块目录形态**因工程而异**（有的工程用带序号的分层目录，有的是扁平的
  * `app/`、`feature-xxx/`），故从配置的分层声明现取，取不到就只用通用段。
  */
 const GENERIC_PATH_ALTS = [
@@ -70,6 +70,24 @@ function moduleLayerIds(projectRoot) {
   const layers = readConfig(projectRoot)?.architecture?.outer_layers;
   if (!Array.isArray(layers)) return [];
   return layers.map(l => l?.id).filter(id => typeof id === 'string' && id.trim());
+}
+
+/**
+ * 平台能力层（依赖链最底层）的 id。
+ *
+ * **判据是依赖方向，不是名字**：`can_depend_on` 为空的层不依赖任何其它层，
+ * 它承载的是跨业务的平台能力。写死某个层名会在换工程时静默失效（坑 #29），
+ * 而依赖方向是架构 DSL 里本来就有的语义。
+ *
+ * @returns {string[]} 取不到声明时返回空数组，调用方据此不过滤（向后兼容）
+ */
+export function baseLayerIds(projectRoot) {
+  const layers = readConfig(projectRoot)?.architecture?.outer_layers;
+  if (!Array.isArray(layers)) return [];
+  return layers
+    .filter(l => Array.isArray(l?.can_depend_on) && l.can_depend_on.length === 0)
+    .map(l => l?.id)
+    .filter(id => typeof id === 'string' && id.trim());
 }
 
 function localPathRe(projectRoot) {
@@ -135,7 +153,7 @@ const DANGLING_REF_PATTERNS = [
   { re: /\bAR\s*§/g, hint: 'AR/design.md 归档时被本文覆盖，改用本文章节号' },
   { re: /(?:见|指回|来源|源：)\s*A[1-8]\b/g, hint: '历史 impact 小节编号，本文不存在——改用事物的名字' },
   { re: /\bar_design_init\b|\bevidence-rules\b|\bstory-chapters\b|\bstory-src\b|SKILL\.md/g, hint: 'skill 内部规则文件不随归档，改述为自然语言' },
-  { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g, hint: 'slug 是仓内文件名，改写为中文规约名 + 编号（如「安全隐私规约 SEC-01」）' },
+  { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g, hint: 'slug 是仓内文件名，改写为中文规约名 + 编号（形如「<中文规约名> XXX-01」）' },
   { re: /simulation_scope_awareness|ui_change\s*:|ui_spec_enforcement/g, hint: '机器校验字段名，评审者不认识——保留其自然语言说明即可' },
 ];
 
