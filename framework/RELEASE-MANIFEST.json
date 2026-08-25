@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "62602e76f9d843f9bf9f2ea454511826b38b6da9",
-  "built_at": "2026-08-24T10:58:09.233Z",
+  "source_commit": "3591229d33c5a4fc20773dc8c1542aabb2db53ec",
+  "built_at": "2026-08-24T23:43:01.155Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -22,7 +22,7 @@
     },
     {
       "path": "agents/chrys/adapter.yaml",
-      "sha256": "685bd591bd82097b3e8ec70444e4ca1a7f10cb8a85107bff47853cd84e3f1515"
+      "sha256": "0a3bd3e09443b555f0b834c8a54c2a628ce72517667545964d6d164f3fd427f0"
     },
     {
       "path": "agents/chrys/templates/rules/interaction-renderer.md",
@@ -302,7 +302,7 @@
     },
     {
       "path": "agents/shared/agent-bundle/templates/skills-bridge/goal-mode/SKILL.md",
-      "sha256": "b0ce9bac0f8dd4191658a04bd87d535b2394009edda877e6425a57e889f5a5ca"
+      "sha256": "8a1dec92d12b12c7706eaa47109478982dccbfd4c965565dc0bfe10aa43c70d4"
     },
     {
       "path": "agents/shared/agent-bundle/templates/skills-bridge/plan/SKILL.md",
@@ -406,7 +406,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "ab3d821ff308f9dbf7cde409792e8e33e35537ba1dc510fa75bccd78568331ab"
+      "sha256": "86ac33b1a27bd3c7ad93f87b1b080423e758963071daadf850737afe07178a8e"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "a9835b6309c59cfbabb2ec6bc797c5da063f61b3d8e39a89cdaf659d95e35f62"
+      "sha256": "f09b7e9c4260830649c6fc5d5a329ccf227a0f3c1a9e8874d60a25093f59a7a7"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -718,11 +718,11 @@
     },
     {
       "path": "harness/scripts/fidelity-intent-init.ts",
-      "sha256": "b81b6f66556cae5a08fccc45c29f3fcb1028a047e91bf8963911263c1599f0ea"
+      "sha256": "a1af2da411a43cf930838caf397e46ba1b75fd6863cf27452fd26823b9380cbe"
     },
     {
       "path": "harness/scripts/goal-mode-entry.ts",
-      "sha256": "58fabda6e57cba05e0d06adb266c5e9ec606ef13945242f9128988586cef1bed"
+      "sha256": "f9a813931356329d235859a3c48d5507392415b0b91dc3d984ca96df179dfba7"
     },
     {
       "path": "harness/scripts/goal-monitor.ts",
@@ -730,7 +730,7 @@
     },
     {
       "path": "harness/scripts/goal-runner.ts",
-      "sha256": "81465dbcb224eeb473d52403bb8deb41b39edbcb774d5afd7f41764c9baf6fde"
+      "sha256": "89609e97c4a293e4a00b5790143dae3bb6d8bae99f9dfb72ec65bf49395f374d"
     },
     {
       "path": "harness/scripts/goal-status.ts",
@@ -738,7 +738,7 @@
     },
     {
       "path": "harness/scripts/goal-supervise.ts",
-      "sha256": "0747114e729188e6391c7822ebc6971c1ca671bec3ba644204c9f1189b114f55"
+      "sha256": "6eec0e5c51af3a9e5756a0445f27764611f4d48aa911194b060bb4130d8c1b1a"
     },
     {
       "path": "harness/scripts/grade-vision-canary.ts",
@@ -891,6 +891,10 @@
     {
       "path": "harness/scripts/utils/ast-analyzer.ts",
       "sha256": "913070bfc15533856ffc8b6c79c15426e8359afd1904fc1969b8ffbee3700c9d"
+    },
+    {
+      "path": "harness/scripts/utils/attended-goal-context.ts",
+      "sha256": "b3423fcc99fa08a2d4bfee2193f93b910b00906a7c8cc9c5a00d3ced3c0217ab"
     },
     {
       "path": "harness/scripts/utils/await-confirm-guidance.ts",
@@ -1126,7 +1130,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-handoff.ts",
-      "sha256": "434312f0cc74ee35f05ae51b928e7e342d347a6dd55728cd24bacd3b2c031be8"
+      "sha256": "8a6d3f4dcde59070bb518c3ba27e3f702b8ff0c531b70f04a5e5a4fefc0c8836"
     },
     {
       "path": "harness/scripts/utils/goal-headless-sentinel.ts",
@@ -1134,7 +1138,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-in-session-driver.ts",
-      "sha256": "4f59863383eb8b6a3f2cbe31313443b6966d577626d6f7b125d16eb6a7ee7683"
+      "sha256": "5fc6d86191144ab9592a699b97eb7288d2ddf1552671769b22afb23b8b79e4f2"
     },
     {
       "path": "harness/scripts/utils/goal-in-session-evidence.ts",
@@ -1174,7 +1178,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-run-control.ts",
-      "sha256": "66ac3678e5bccb24b3a05152a7e2af6c7d93e2d1812bd4a44307525ea68d06ff"
+      "sha256": "986d7dd75c41196895757e8a940e382d4b9060ded717d1360882c0827d3dbdde"
     },
     {
       "path": "harness/scripts/utils/goal-run-lock.ts",
@@ -1250,7 +1254,7 @@
     },
     {
       "path": "harness/scripts/utils/init-task-executor.ts",
-      "sha256": "b466416dc629a504f33850bb7ba98440bf2e04a76dfb074c3558687bff659360"
+      "sha256": "da33963ce730f1f481900870a94e326b58010b11c388f18d9fb7d33a9d03468e"
     },
     {
       "path": "harness/scripts/utils/init-task-planner.ts",
@@ -1286,7 +1290,7 @@
     },
     {
       "path": "harness/scripts/utils/materialize-agent-bundle-skills.ts",
-      "sha256": "522a757add751c07c1896fdaed72b4a41998838605c1dcf4e12c9befa16a0d79"
+      "sha256": "f9f8fc78d26c16767ef3acfc93051358634577c249a67b00d6314a64a4004c28"
     },
     {
       "path": "harness/scripts/utils/materialized-adapters-resolve.ts",
@@ -2714,7 +2718,7 @@
     },
     {
       "path": "skills/feature/spec/SKILL.md",
-      "sha256": "6587bd720de2034a1229ccf2880127ca44ec785c1819c84a2a6a74787fcbe592"
+      "sha256": "aa4d7dcdb157b9c0919a9ac303a73b04490e8827b8e883549f95a48b8f426d6b"
     },
     {
       "path": "skills/feature/spec/contract.yaml",
@@ -2826,7 +2830,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "4720bdd66c0a3277cdeb5b947284492d32b1d288e0770823fc8c2fb51ba956f3"
+      "sha256": "f88336eb639dc24b169d4ef3f95036de8643d7e33d6a833c1bcb688d6034b34f"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -2870,7 +2874,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "e8ae71fa0c44cbe322a7aee1e9bf9edf46dd50213caddb31dcfde984a6a48d93"
+      "sha256": "3948bd9332103f952b58d218e9c45258b35444df2e6f525b536b2f12a70d459b"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
@@ -2886,7 +2890,7 @@
     },
     {
       "path": "skills/reference/personal-setup-gate.md",
-      "sha256": "83668bd6514879e45bd8e60b0125cacb5c822bd574e578d9cf478dfa434965b6"
+      "sha256": "d9a89d6c8a02830c4601b75bc33e576ca413e039ba857852f8526426824ea28c"
     },
     {
       "path": "skills/reference/plan-workflow-detail.md",
