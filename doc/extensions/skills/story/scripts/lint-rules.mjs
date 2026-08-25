@@ -14,6 +14,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 
 /** 客户端语境禁用词：服务器侧词汇，单独使用也算 */
 export const BANNED_TERMS = [
@@ -160,18 +161,21 @@ const DANGLING_REF_PATTERNS = [
 /**
  * 裸文件名（无路径分隔符）：`scanLocalPaths` 只认带 `/` 的路径，覆盖不到，故单列一条。
  *
- * 框架产物名固定；**约束文件名现取目录**——它随工程的应用域而变，硬编码就是个会过期的快照
- * （旧清单里 `run-modes`、`telemetry`、`app-lifecycle-config` 三个文件早已退役）。
+ * 框架产物名固定；**知识文件名从激活清单派生**——它随工程启用的知识而变，硬编码就是个
+ * 会过期的快照（旧清单里三个文件早已退役却还留在正则里）。
+ * 也不扫目录：阶段只认清单，目录里躺着的未启用文件不参与任何判定。
  */
 const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
 
 function constraintNames(projectRoot) {
   if (!projectRoot) return [];
   try {
-    return fs.readdirSync(path.join(projectRoot, 'doc', 'extensions', 'knowledge', 'constraints'))
-      .filter(f => f.endsWith('.md') && f !== 'README.md')
-      .map(f => f.slice(0, -3));
-  } catch {
+    const knowledge = activeKnowledge(projectRoot);
+    return [...knowledge.constraints, ...knowledge.patterns, ...knowledge.facts]
+      .map(k => k.file.split('/').pop().replace(/\.md$/, ''));
+  } catch (e) {
+    // 派生不到不静默：降级只影响裸文件名这一条规则，但必须让人看见（G7）
+    console.error(`[lint-rules] 知识文件名派生失败，裸文件名规则降级为仅框架产物名：${e.message}`);
     return [];
   }
 }

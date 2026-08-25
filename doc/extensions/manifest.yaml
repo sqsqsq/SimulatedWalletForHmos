@@ -1,11 +1,13 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "0.21.0"
-description: 演示用实例扩展包（钱包 SDK 接入向导 + knowledge + hooks；路径对齐 plan §7.13 白名单）
+version: "1.1.0"
+description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:
     - wallet-sdk-onboarding
     - story
+
+  # 框架侧只做存在性校验；真正决定「阶段读得到什么」的是下面的 knowledge_activation。
   knowledge:
     - knowledge/component-profile.md
     - knowledge/codebase-facts.md
@@ -13,32 +15,45 @@ provides:
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md
     - knowledge/constraints/dfx-baseline.md
+    - knowledge/constraints/observability.md
     - knowledge/constraints/compatibility-checklist.md
     - knowledge/constraints/env-exceptions.md
     - knowledge/constraints/deliverables.md
+    - knowledge/design-patterns/README.md
+    - knowledge/design-patterns/decision-tree.md
+    - knowledge/design-patterns/page-interaction.md
+
+  # 激活清单（确定性）：阶段只读这里列出的文件，**不扫描 knowledge/ 目录**。
+  # 三类是封闭集合：项目事实 / 规约 / 设计模式。每个文件只能属于一类。
+  # 索引类 README 不登记——它只承载清单与组合边界，不是知识条目的载体。
+  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从这些文件的正文派生，
+  # 机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
+  knowledge_activation:
+    facts:
+      - knowledge/component-profile.md
+      - knowledge/codebase-facts.md
+    constraints:
+      - knowledge/constraints/ux-consistency.md
+      - knowledge/constraints/security-privacy.md
+      - knowledge/constraints/dfx-baseline.md
+      - knowledge/constraints/observability.md
+      - knowledge/constraints/compatibility-checklist.md
+      - knowledge/constraints/env-exceptions.md
+      - knowledge/constraints/deliverables.md
+    patterns:
+      - knowledge/design-patterns/decision-tree.md
+      - knowledge/design-patterns/page-interaction.md
+
+  # 挂载分步进行：manifest 里任何一条路径不存在，加载器会**清空全部 provides**
+  # （全有全无，不降级），所以只登记已交付的钩子。
   hooks:
     spec:
       on_context_load:
-        - hooks/constraint-application.md
         - hooks/spec/on_context_load.md
         - hooks/spec/story_on_context_load.mjs
       post_check:
         - hooks/spec/post_check.mjs
-    plan:
-      on_context_load:
-        - hooks/constraint-application.md
-    coding:
-      on_context_load:
-        - hooks/constraint-application.md
-    review:
-      on_context_load:
-        - hooks/constraint-application.md
-    ut:
-      on_context_load:
-        - hooks/constraint-application.md
-    testing:
-      on_context_load:
-        - hooks/constraint-application.md
+
   phase_rules_overlays:
     spec: rules/spec-rules.overlay.yaml
     plan: rules/plan-rules.overlay.yaml

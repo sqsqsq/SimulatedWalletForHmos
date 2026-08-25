@@ -136,7 +136,7 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/M08-whole-file-sha-lock/good
     applicable_when: 存在 design-patterns 基线守恒机制
     severity: BLOCKER
-    status: pending_capability
+    status: fixed
 
   - id: M09-dangling-cross-reference
     dimension: knowledge

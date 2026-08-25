@@ -1,22 +1,21 @@
-# 实例扩展 review 阶段规则 overlay（constraints 消费）
-# 经 manifest provides.phase_rules_overlays.review 注册；semantic_checks 由 AI verifier 消费。
+# 实例扩展 review 阶段规则 overlay（应用域规约消费）
+# 经 manifest provides.phase_rules_overlays.review 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
 #
-# 本文件只问「适用矩阵里本阶段该消费的域，审查有没有过」——不复述域名、编号与维度。
+# 本文件只问「本阶段激活的规约条目，审查有没有过」——不复述域名、编号与维度。
+# 规约内容改了（增删域、改条目），这里一个字都不用动：条目清单由本阶段注入件从激活清单派生。
 phase: review
-version: "1.0"
+version: "1.1"
 semantic_checks:
   review_constraint_audit:
     description: >
-      应用域约束在本阶段的审查须真的过一遍：读
-      doc/extensions/knowledge/constraints/README.md 的适用矩阵，取 review 那一列，
-      逐个非「—」的格子核对——该域是否已按格子写明的维度对本次变更做了检查并给出结论
-      （命中项处置是否落实、有无遗漏）。命中判据与条目内容以该域文件为准。
-      审查视角是**已成型的变更**，不是设计意图：结论须指向 diff 中的具体位置。
-      矩阵中标「—」的域本阶段不消费。
+      本阶段注入件给出了激活的规约条目清单（编号、约束、命中条件、处置、验证执行体）。
+      逐条核对：命中本需求的条目，其处置是否已在本阶段产物中体现为对已成型变更的复核结论；
+      不命中的是否给了依据。命中判据与条目内容以注入的条目为准，本文件不复述。
+      **不要求另建台账**：结论写在它自然该在的位置即可，产物即证据。
+      处置标「（评审动作）」的条目不产生代码要求，本阶段不为其找代码落点。
     severity: MAJOR
     ai_prompt_hint: >
-      打开 doc/extensions/knowledge/constraints/README.md 找到适用矩阵，记下 review 列
-      所有非「—」的域及其消费维度（有的域在本阶段是「逐项过表」这类明确动作，按其字面执行）。
-      对照本次变更逐域给结论：检查了什么、结论是什么、依据在 diff 的哪一处。
-      **上游阶段声明过但本次变更里找不到落点的，正是本阶段该抓的**——
-      声明与落实之间的缺口只有到这里才看得见。
+      从本阶段注入的激活知识清单取全部在册规约条目。再读 本次变更的 diff 与 doc/features/{module}/review/review-report.md：
+      逐条回答「落实在 diff 的哪个位置」或「为什么不适用」。
+      上游阶段声明过、本次变更里却找不到落点的，正是本阶段该抓的。
+      条目里 `<待补充>` 的部分按规约目录 README「读条目时须知」处理：定性评估，不臆造数值。

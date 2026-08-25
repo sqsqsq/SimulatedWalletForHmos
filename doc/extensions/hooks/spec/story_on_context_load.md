@@ -80,7 +80,7 @@ core spec 模板缺少交付流程要求 spec 承载的接口契约 / 存储 / �
 
 ## 合规判定的另两个出口（BLOCKER）
 
-出口 ① 与判定方法见共享注入件（`hooks/constraint-application.md`）与
+出口 ① 与判定方法见同目录 `on_context_load.md` 与
 [`reference/constraint-usage.md`](../../skills/story/reference/constraint-usage.md)。本节只补 story 场景独有的两个出口：
 
 2. **需要人工选择的事项 → 登记 `AR/review.md` 的自然语言问题，卡点排最前**：每项写当前建议、依据、影响、来源和责任人，并留出“同意当前建议 / 有其他意见，需要修改 / 暂缓”的审核结果。问题按人要讨论的内容命名，不按规格、合规或上线等内部分类命名。
