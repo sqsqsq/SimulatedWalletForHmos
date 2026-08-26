@@ -94,6 +94,7 @@
     "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
     "docs_committed": false,
     "extension_dir": "doc/extensions",
+    "ui_kit_target_dir": "05-SystemBase/CommUI/src/main/ets/maison_ui_kit",
     "module_graphs_dir": "<module>/code-graph.yaml",
     "agent_bundle_root": ".agents",
     "agent_bundle_skill_mode": "bridge"

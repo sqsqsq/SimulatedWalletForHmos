@@ -1,0 +1,8 @@
+{
+  "constraints": [
+    { "id": "SMP-01", "hit": true, "conclusion": "订单提交过程标注定位标识 submitOrder" },
+    { "id": "CND-01", "hit": false, "conclusion": "不涉及" },
+    { "id": "CND-02", "hit": false, "conclusion": "不涉及" }
+  ],
+  "patterns": []
+}

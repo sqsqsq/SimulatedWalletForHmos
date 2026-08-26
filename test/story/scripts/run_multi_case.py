@@ -511,6 +511,10 @@ def new_case_record(plan: CasePlan, target_end_phase: str | None = None) -> dict
         "interaction_state": "not_started",
         "last_reply_status": None,
         "last_reply_text": None,
+        # 回复的身份由**关卡编号**决定：回过哪一关，比「上一次回复被消费了没有」可靠——
+        # 后者要靠 poll 恰好观测到 WAITING→ACTIVE 的跳变，而被测模型常在一个轮询周期内
+        # 消费回复并抛出下一关，前后两次看到的都是 awaiting，第二关就再也不会被回复。
+        "last_replied_turn": None,
         "adaptive_reply_count": 0,
         "last_adaptive_request": None,
         "last_awaiting": None,
@@ -1135,6 +1139,18 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
                  attempts=START_MAX_ATTEMPTS)
 
 
+def is_new_gate(record: dict[str, Any]) -> bool:
+    """当前等待的这一关，是不是还没回过？
+
+    判据是关卡编号：`last_awaiting.turn` 与 `last_replied_turn` 不同即为新关卡。
+    编号是被测流程自己给的，不依赖协调器是否恰好观测到状态跳变。
+    """
+    turn = (record.get("last_awaiting") or {}).get("turn")
+    if turn is None:
+        return False
+    return turn != record.get("last_replied_turn")
+
+
 def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
     """Reply to a declared gate; expose unexpected gates to the host model."""
     if record.get("status") != WAITING_STATUS:
@@ -1195,12 +1211,14 @@ def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
                      step=step.get("id"), returncode=returncode)
         return
     record["interaction_index"] = index + 1
+    record["last_replied_turn"] = awaiting.get("turn")
     record["interaction_state"] = (
         "complete" if index + 1 >= len(script) else "waiting")
     record["last_human_reply_at"] = now()
     record["automation_observation_state"] = "reply_sent"
     append_event(suite, "scripted_reply_accepted", case=record["case"],
-                 step=step.get("id"), reply_status=(payload or {}).get("reply_status"))
+                 step=step.get("id"), turn=awaiting.get("turn"),
+                 reply_status=(payload or {}).get("reply_status"))
 
 
 def schedule_pending(suite: dict[str, Any]) -> None:
@@ -1403,10 +1421,6 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                 record["automation_observation_state"] = "completed"
                 record["next_observation_at"] = None
             elif previous_status == WAITING_STATUS and current_status in PHASE_ACTIVE_STATUS:
-                if record.get("last_reply_status") == "accepted":
-                    record["last_reply_status"] = "consumed"
-                    append_event(suite, "reply_consumed", case=record["case"],
-                                 interaction_index=record.get("interaction_index"))
                 started = time.time()
                 record["automation_observation_state"] = "observing"
                 record["automation_observation_started_at"] = now()
@@ -1430,7 +1444,7 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                     "source": record.get("phase_source"),
                 })
             if record.get("status") == WAITING_STATUS and record.get("interaction_script") \
-                    and record.get("last_reply_status") != "accepted":
+                    and is_new_gate(record):
                 send_scripted_reply(record, suite)
         append_event(suite, "poll_completed",
                      cases=[result["case"] for result in results],
@@ -1750,7 +1764,7 @@ def settle_scripted_interactions(suite: dict[str, Any], max_chars: int) -> None:
 
 
 def interaction_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    names = {"scripted_reply_accepted", "scripted_reply_rejected", "reply_consumed",
+    names = {"scripted_reply_accepted", "scripted_reply_rejected",
              "adaptive_reply_required"}
     return [event for event in events if event.get("name") in names]
 
@@ -1985,6 +1999,7 @@ def command_reply(suite_id: str, case_id: str, text: str,
     else:
         record["last_reply_status"] = "accepted"
         record["last_reply_text"] = text
+        record["last_replied_turn"] = (record.get("last_awaiting") or {}).get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
         record["interaction_state"] = (

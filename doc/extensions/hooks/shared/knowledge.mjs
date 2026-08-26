@@ -135,11 +135,16 @@ function parseConstraintFile(absPath, rel) {
   // 中文域名取正文一级标题——归档件面向评审者，写仓内 slug 他们对不上
   const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
   const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
+  // applies_when 是域级命中条件：`always` 的域每条都要判，条件域先判域再逐条
+  // （消费者：归档装配的域级判定、spec/plan 的必答集派生）。
+  const appliesWhen = String(fm.applies_when ?? '').trim();
   return {
     file: rel,
     name: fm.name ?? '',
     title,
     domain: derived,
+    appliesWhen,
+    alwaysApplies: appliesWhen === 'always',
     entries: entries.map(e => ({ ...e, domainTitle: title })),
     notes,
   };

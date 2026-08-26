@@ -246,6 +246,34 @@ def load_constraint_entries(knowledge_root: Path | None) -> list[dict]:
     return entries
 
 
+def load_constraint_domains(knowledge_root: Path | None) -> list[dict]:
+    """从知识目录派生规约域及其命中条件（frontmatter 的 applies_when）。
+
+    写 ``always`` 的是常驻域，域内条目逐条判；其余是条件域，先判域再判条目。
+    域前缀从条目编号派生，不吃 frontmatter 里可能缺失的 domain 字段。
+    """
+    out: list[dict] = []
+    if knowledge_root is None or not knowledge_root.exists():
+        return out
+    for path in sorted(knowledge_root.rglob("*.md")):
+        text = read_text(path)
+        if not header_index(text, ["编号", "约束"]):
+            continue
+        fm = re.match(r"^---\r?\n(.*?)\r?\n---", text, flags=re.DOTALL)
+        applies = ""
+        if fm:
+            m = re.search(r"^applies_when\s*:\s*(.*)$", fm.group(1), flags=re.MULTILINE)
+            applies = m.group(1).strip() if m else ""
+        prefixes = {
+            cell(cells, header_index(text, ["编号", "约束"]) or [], "编号").strip().split("-")[0]
+            for _, cells in md_table_rows(text, ["编号", "约束"])
+        }
+        for prefix in sorted(p for p in prefixes if p):
+            out.append({"prefix": prefix, "applies_when": applies, "always": applies == "always",
+                        "file": path.name})
+    return out
+
+
 def sources_for(entry_id: str, entries: list[dict]) -> list[str]:
     out: list[str] = []
     for e in entries:
@@ -1123,7 +1151,14 @@ def p10_duplicate_image_reference(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def p11_verifier_zero_adjudication(root: Path, ctx: Ctx) -> Outcome:
-    """verifier 报告必须对必答集逐条给出裁决。"""
+    """verifier 报告必须对必答集逐条给出裁决。
+
+    必答集从**登记源**派生，与扩展侧 ``adjudication.mjs`` 同口径（两边的一致性由
+    ``test_adjudication_parity.py`` 绑定）：命中的条目 + 判整域不适用的域 + 模式候选单元。
+    归档件附录是登记源的渲染，不作为口径来源——渲染会把域前缀换成中文域名。
+
+    判据是**同一行**既含这个键、又含裁决词：报告里别处提过这个编号不算裁过它。
+    """
     reports: list[Path] = []
     for pattern in (
         "*/reports/**/verifier.report.md",
@@ -1136,20 +1171,17 @@ def p11_verifier_zero_adjudication(root: Path, ctx: Ctx) -> Outcome:
     reports = sorted(set(reports))
     if not reports:
         return Outcome(True, "无 verifier 报告（不适用）")
-    required: set[str] = set()
-    story = _story_path(root)
-    if story is not None:
-        text = read_text(story)
-        headers = header_index(text, APPENDIX_HEADERS)
-        if headers:
-            for _, cells in md_table_rows(text, APPENDIX_HEADERS):
-                if "否" in cell(cells, headers, "命中"):
-                    continue
-                required.update(ENTRY_ID_RE.findall(cell(cells, headers, "编号")))
+    registry = _registry(root)
+    if registry is None:
+        return Outcome(True, "无判定登记件（不适用）")
+    required = adjudication_keys(registry)
     if not required:
-        return Outcome(True, "必答集为空（无判「是」条目）")
-    blob = "\n".join(read_text(p) for p in reports)
-    missing = sorted(rid for rid in required if rid not in blob)
+        return Outcome(True, "必答集为空（登记源没有任何判定行）")
+    lines = "\n".join(read_text(p) for p in reports).splitlines()
+    missing = [
+        key for key in required
+        if not any(key in line and VERDICT_WORD_RE.search(line) for line in lines)
+    ]
     if missing:
         return Outcome(
             False,
@@ -1219,6 +1251,198 @@ def p13_silent_downstream_skip(root: Path, ctx: Ctx) -> Outcome:
     if empty_reason:
         return Outcome(False, "标「不适用」但无理由：" + "、".join(empty_reason[:5]))
     return Outcome(True, f"{len(rules)} 条义务均有结论")
+
+
+@checker
+def p14_image_broken_link(root: Path, ctx: Ctx) -> Outcome:
+    """归档件里的图片引用必须解析得到文件。
+
+    形态守恒只数图的条数——数得到「有一张图」，看不出它打不开。评审者拿到的是红叉。
+    """
+    story = root / "AR" / "story.md"
+    if not story.exists():
+        return Outcome(True, "无归档件叙事主件（不适用）")
+    text = read_text(story)
+    broken: list[str] = []
+    total = 0
+    for idx, line in enumerate(text.splitlines(), start=1):
+        for m in re.finditer(r"!\[[^\]]*\]\(([^)\s]+)\)", line):
+            ref = m.group(1)
+            if re.match(r"^(https?:|data:)", ref, flags=re.IGNORECASE):
+                continue
+            total += 1
+            if not (story.parent / ref).exists():
+                broken.append(f"第 {idx} 行「{ref}」")
+    if broken:
+        return Outcome(False, "图片引用解析不到文件：" + "；".join(broken[:5]))
+    return Outcome(True, f"{total} 处图片引用均可解析")
+
+
+@checker
+def p15_domain_gating_not_applied(root: Path, ctx: Ctx) -> Outcome:
+    """有命中条件的规约域，须先做域级判定，不是对着域内条目逐条写「不涉及」。"""
+    registry = _registry(root)
+    if registry is None:
+        return Outcome(True, "无判定登记件（不适用）")
+    domains = load_constraint_domains(ctx.knowledge_root)
+    if not domains:
+        return Outcome(True, "知识目录派生不出规约域（证据不足）")
+    conditional = {d["prefix"]: d for d in domains if not d["always"]}
+    if not conditional:
+        return Outcome(True, "激活的规约域都是常驻域（不适用）")
+    declared = {
+        str(d.get("prefix", "")).strip()
+        for d in registry.get("domains", []) or []
+        if isinstance(d, dict)
+    }
+    listed = {
+        eid.split("-")[0]
+        for c in registry.get("constraints", []) or []
+        if isinstance(c, dict) and (eid := str(c.get("id", "")).strip())
+    }
+    missing = [p for p in conditional if p not in declared and p in listed]
+    if missing:
+        return Outcome(False, "条件域未做域级判定却逐条登记：" + "、".join(sorted(missing)))
+    no_basis = [
+        str(d.get("prefix", ""))
+        for d in registry.get("domains", []) or []
+        if isinstance(d, dict) and not str(d.get("basis", "")).strip()
+    ]
+    if no_basis:
+        return Outcome(False, "域级判定缺依据：" + "、".join(sorted(no_basis)))
+    return Outcome(True, f"{len(conditional)} 个条件域都先判了域")
+
+
+@checker
+def p16_spec_exit_diverges(root: Path, ctx: Ctx) -> Outcome:
+    """规格件的出口章与判定登记件同文——同一条结论只有一份。"""
+    registry = _registry(root)
+    if registry is None:
+        return Outcome(True, "无判定登记件（不适用）")
+    spec = root / "spec" / "spec.md"
+    if not spec.exists():
+        return Outcome(True, "无规格件（不适用）")
+    text = read_text(spec)
+    headers = header_index(text, ["编号", "要求"])
+    if not headers:
+        return Outcome(True, "规格件无约束要求表（不适用）")
+    registered = {
+        str(c.get("id", "")).strip(): str(c.get("conclusion", "")).strip()
+        for c in registry.get("constraints", []) or []
+        if isinstance(c, dict)
+    }
+    diverged: list[str] = []
+    checked = 0
+    for _, cells in md_table_rows(text, ["编号", "要求"]):
+        rid = cell(cells, headers, "编号").strip(" `*")
+        want = registered.get(rid)
+        if not want:
+            continue
+        checked += 1
+        got = cell(cells, headers, "要求")
+        if _norm(got) != _norm(want):
+            diverged.append(f"{rid}（登记「{want[:24]}…」/ 出口「{got[:24]}…」）")
+    if diverged:
+        return Outcome(False, "出口章与登记源不同文：" + "；".join(diverged[:5]))
+    if checked == 0:
+        return Outcome(True, "出口章没有与登记源对应的编号（不适用）")
+    return Outcome(True, f"{checked} 行与登记源同文")
+
+
+@checker
+def p17_landing_md_yaml_mismatch(root: Path, ctx: Ctx) -> Outcome:
+    """方案正文的落点与契约里的落点是同一份冻结的两次渲染，不能各写各的。"""
+    freeze = _freeze(root)
+    if freeze is None:
+        return Outcome(True, "无知识冻结块（不适用）")
+    plan = root / "plan" / "plan.md"
+    if not plan.exists():
+        return Outcome(True, "无方案正文（不适用）")
+    text = read_text(plan)
+    headers = header_index(text, ["编号", "落点"])
+    if not headers:
+        return Outcome(False, "方案正文缺义务表（须有编号与落点两列）")
+    md: dict[str, str] = {}
+    for _, cells in md_table_rows(text, ["编号", "落点"]):
+        for rid in ENTRY_ID_RE.findall(cell(cells, headers, "编号")):
+            md[rid] = cell(cells, headers, "落点")
+    bad: list[str] = []
+    for ob in _obligations(freeze):
+        rid = str(ob.get("rule", "")).strip()
+        landings = ob.get("landing")
+        refs = landings if isinstance(landings, list) else ([landings] if landings else [])
+        tails = [str(r).split(".")[-1] for r in refs if str(r).strip()]
+        if not rid or not tails:
+            continue
+        row = md.get(rid)
+        if row is None:
+            bad.append(f"{rid}（正文表缺行）")
+        elif not any(t in row for t in tails):
+            bad.append(f"{rid}（正文「{row[:20]}」/ 契约「{'、'.join(tails)}」）")
+    if bad:
+        return Outcome(False, "落点两处对不上：" + "；".join(bad[:5]))
+    return Outcome(True, f"{len(md)} 条义务的落点两处一致")
+
+
+@checker
+def p18_step_equals_criterion(root: Path, ctx: Ctx) -> Outcome:
+    """业务步骤不能拿验收编号顶替——那样这条义务在流程里没有落点。"""
+    freeze = _freeze(root)
+    if freeze is None:
+        return Outcome(True, "无知识冻结块（不适用）")
+    obligations = _obligations(freeze)
+    if not obligations:
+        return Outcome(True, "冻结无义务条目（不适用）")
+    same = [
+        str(ob.get("rule", ""))
+        for ob in obligations
+        if str(ob.get("step", "")).strip()
+        and str(ob.get("step", "")).strip() == str(ob.get("criterion", "")).strip()
+    ]
+    if same:
+        return Outcome(False, "step 拿验收编号顶替：" + "、".join(same[:8]))
+    return Outcome(True, f"{len(obligations)} 条义务的 step 都是业务步骤")
+
+
+VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
+
+
+def adjudication_keys(registry: dict) -> list[str]:
+    """必答集的核对键 —— 与扩展侧 ``adjudication.mjs`` 的 ``adjudicationKeys`` 同口径。
+
+    两边各自实现（一边给 verifier 注入清单、一边在测试域核对目标产物），口径靠
+    ``test_adjudication_parity.py`` 绑定：改了一边不改另一边，那个测试会红。
+    """
+    keys: list[str] = []
+    for c in registry.get("constraints", []) or []:
+        if isinstance(c, dict) and (rid := str(c.get("id", "")).strip()):
+            keys.append(rid)
+    for d in registry.get("domains", []) or []:
+        if isinstance(d, dict) and d.get("applies") is not True:
+            if prefix := str(d.get("prefix", "")).strip():
+                keys.append(prefix)
+    for p in registry.get("patterns", []) or []:
+        if isinstance(p, dict) and (unit := str(p.get("unit", "")).strip()):
+            keys.append(unit)
+    seen: set[str] = set()
+    return [k for k in keys if not (k in seen or seen.add(k))]
+
+
+def _registry(root: Path) -> dict | None:
+    """判定登记件（归档件的知识判定源）。"""
+    path = root / "AR" / "story-src" / "knowledge.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(read_text(path))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"knowledge.json 解析失败：{exc}") from exc
+    return data if isinstance(data, dict) else None
+
+
+def _norm(text: str) -> str:
+    """同文比对的规范化：只去空白与强调符，不做同义归并。"""
+    return re.sub(r"[\s`*　]", "", str(text or ""))
 
 
 # --------------------------------------------------------------------------- #

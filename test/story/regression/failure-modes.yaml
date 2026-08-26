@@ -428,13 +428,14 @@ modes:
   - id: P11-verifier-zero-adjudication
     dimension: knowledge
     found_round: "2026-08-23"
-    form: verifier 报告缺少扩展判据的逐条裁决，harness 照收 PASS（实测 0/8 未裁决）
-    clause: B1-13 / G4 / 坑 #18
+    form: verifier 报告缺少扩展判据的逐条裁决，harness 照收 PASS（实测 0/8、后又 10/11 未裁决）；
+      必答集 = 登记源的命中条目 + 判整域不适用的域 + 模式候选单元，判据是同一行既含键又含裁决词
+    clause: B1-16「逐行裁决落盘」 / G4 / 坑 #18
     checker: p11_verifier_zero_adjudication
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P11-verifier-zero-adjudication/bad
     good_fixture: test/story/fixtures/failure-modes/P11-verifier-zero-adjudication/good
-    applicable_when: 存在 <phase>/reports 下的 verifier 报告
+    applicable_when: 存在 <phase>/reports 下的 verifier 报告 且 存在 AR/story-src/knowledge.json
     severity: BLOCKER
     status: fixed
 
@@ -462,5 +463,70 @@ modes:
     bad_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/bad
     good_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/good
     applicable_when: 存在 plan/contracts.yaml 知识冻结块 且 存在 review/review-report.md
+    severity: BLOCKER
+    status: fixed
+
+  - id: P14-image-broken-link
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 归档件的图片引用写成裸文件名或指向源材料目录，形态守恒数得到图、评审者打开是红叉
+    clause: B1-10 / rules.md 红线 2「表达形态与数量不得降级」
+    checker: p14_image_broken_link
+    target: product
+    bad_fixture: test/story/fixtures/failure-modes/P14-image-broken-link/bad
+    good_fixture: test/story/fixtures/failure-modes/P14-image-broken-link/good
+    applicable_when: 存在 AR/story.md
+    severity: BLOCKER
+    status: fixed
+
+  - id: P15-domain-gating-not-applied
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 有命中条件的规约域没先判域，对着域内条目逐条写「不涉及」——判定负担照旧，时机判断没做
+    clause: B1-13「条件域先判域，常驻域逐条」
+    checker: p15_domain_gating_not_applied
+    target: product
+    bad_fixture: test/story/fixtures/failure-modes/P15-domain-gating-not-applied/bad
+    good_fixture: test/story/fixtures/failure-modes/P15-domain-gating-not-applied/good
+    applicable_when: 存在 AR/story-src/knowledge.json 且激活清单里有条件域
+    severity: BLOCKER
+    status: fixed
+
+  - id: P16-spec-exit-diverges-from-registry
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 规格件出口章的要求与判定登记件同编号结论不同文，同一条要求出现两个版本且都没人报错
+    clause: B1-14「出口章与登记源同文」
+    checker: p16_spec_exit_diverges
+    target: product
+    bad_fixture: test/story/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/bad
+    good_fixture: test/story/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/good
+    applicable_when: 存在 AR/story-src/knowledge.json 与 spec/spec.md 的约束要求表
+    severity: BLOCKER
+    status: fixed
+
+  - id: P17-landing-md-yaml-mismatch
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 方案正文义务表的落点与契约冻结的 landing 各写各的，评审者读到的落点与下游去找的不是一个
+    clause: B1-17「落点两处一致」
+    checker: p17_landing_md_yaml_mismatch
+    target: product
+    bad_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/bad
+    good_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/good
+    applicable_when: 存在 plan/plan.md 与 plan/contracts.yaml 知识冻结块
+    severity: BLOCKER
+    status: fixed
+
+  - id: P18-step-equals-criterion
+    dimension: knowledge
+    found_round: "2026-08-25"
+    form: 冻结义务的业务步骤拿验收编号顶替，这条义务在业务流程里没有落点却照样过门禁
+    clause: B1-17「step 是业务步骤」
+    checker: p18_step_equals_criterion
+    target: product
+    bad_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/bad
+    good_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/good
+    applicable_when: 存在 plan/contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed

@@ -3,17 +3,20 @@ id: split-interactive
 ar: AR90006
 interactive: true
 start_phase: story
-end_phase: plan
+end_phase: review
 prompt: |
   执行 /story init AR90006，完整阅读当前需求目录中实际存在的全部同轮材料，生成并收口
   AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、AR/story.md 并完成 spec 闭环。
+  spec 闭环后继续依次完成 plan、coding、review 三个阶段及各自正式闭环，到 review 为止，
+  不进入 UT 或真机测试；编码阶段按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。
 
   产品需求还没有在需求系统归档，我已把一份文件名不带需求类型的 docx 放进当前需求目录，
   请把它作为补充材料处理。本轮不会整体交付全部端侧能力，需要在范围关卡结合材料确定本单范围，
   具体拆法我会在关卡中说明。
 
   spec 闭环后执行 /story archive AR90006 送审，等待我的评审意见，再按 /story review 完成意见处置。
-  不修改 doc/extensions/、test/story/、framework/ 或产品源码。结束时总结实际遇到的问题。
+  不修改 doc/extensions/、test/story/ 或 framework/，它们是本轮被测对象；产品源码按 Plan 该改就改。
+  结束时总结实际遇到的问题。
 
 suggested_reply: |
   这个需求本次只做其中一部分：按端侧特性切开，本单先做策略查询与创建签约，状态查询与解约交给兄弟单据；

@@ -1,32 +1,37 @@
 /**
  * pre_verifier —— 把本阶段的知识判定**全集**注入 verifier 的必答清单。
  *
- * ## 为什么必须是全集
+ * ## 为什么是收窄后的全集
  *
  * 机械层只判得了「有没有」和「是不是照抄」。「这句话是不是本需求的设计」是语义判断，
  * 只有 verifier 能下——所以每一行都要送去裁决。
  *
- * 上一轮的做法是只把**风险标记命中**的行送去裁（相似度高、没有专名），结果是
+ * 曾经的做法是只把**风险标记命中**的行送去裁（相似度高、没有专名），结果是
  * 「可信专名 + 低相似改写」整类逃逸：加一个自造名词、把原文换个说法，两个标记都不命中，
  * 于是那一行根本没人裁。所以本模块的判据定死为：
  *
  * > **风险标记只决定排序，不决定谁受裁决。**
  *
- * 清单里的每一行都要有裁决，包括看起来最干净的那些。
+ * 全集指**登记源的每一行**：命中的条目、判整域不适用的域、模式候选——一行不落。
+ * 不含归档件附录与出口章的行：它们是同一份结论的另一次渲染（附录由登记源渲染、
+ * 出口章与登记源同文，各有机械门禁保证），同一条裁三遍只是把清单撑长，不增加覆盖面。
+ * 集合的派生在 `adjudication.mjs`，与门禁核对用同一份口径——两边各存一份就会「注入 14 行、
+ * 只核 11 行」。
  *
  * ## 注入不等于执行
  *
  * 只注入清单、不校验 verifier 是否照做，实测会漏（曾出现整整 12 条一条没裁而 harness
- * 照收 PASS）。所以清单里显式要求逐条输出，收口由测试域的回归脚本核对 verifier 报告——
- * 框架的 post_verifier 钩子在 verifier **之前**触发，读不到它的报告，指望不上。
+ * 照收 PASS）。所以清单里显式要求把裁决表写进**报告文件**，闭环回填那次运行由各阶段
+ * post_check 核对——框架的 post_verifier 钩子在 verifier **之前**触发，读不到它的报告。
  *
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */
 import * as path from 'node:path';
+import { adjudicationSet } from './adjudication.mjs';
 import { activeKnowledge, paraphraseSources } from './knowledge.mjs';
 import { classify } from './paraphrase.mjs';
 import { extensionRoot, featureRoot, lines, readTextOrNull } from './paths.mjs';
-import { readContracts, readFreeze } from './freeze.mjs';
+import { readContracts } from './freeze.mjs';
 
 /**
  * 知识类语义判据的命名前缀。
@@ -99,102 +104,27 @@ function ownTerms(projectRoot, feature, contracts) {
   return [...terms];
 }
 
-/** spec 的两个出口 + 归档件判定登记：本阶段要裁的全集。 */
-function specRows(ctx, knowledge, terms) {
-  const rows = [];
-  const specText = readTextOrNull(path.join(featureRoot(ctx.projectRoot, ctx.feature), 'spec', 'spec.md'));
-  if (specText !== null) {
-    collectTableRows(specText, /规约约束要求/, ['编号', '要求']).forEach(({ cells, headers }) => {
-      const id = pick(cells, headers, '编号').replace(/[`*]/g, '').trim();
-      if (!/^[A-Z][A-Z0-9]{1,7}-\d{2}$/.test(id)) return;
-      rows.push(mkRow('spec 约束要求', id, pick(cells, headers, '要求'), knowledge, terms));
-    });
-    collectTableRows(specText, /设计模式候选/, ['适用单元', '候选']).forEach(({ cells, headers }) => {
-      const unit = pick(cells, headers, '适用单元');
-      if (!unit || /^\{.*\}$/.test(unit)) return;
-      rows.push({
-        source: '模式候选登记',
-        key: unit,
-        text: `${pick(cells, headers, '候选')}｜${pick(cells, headers, '信号')}`,
-        verdict: 'CLEAN',
-        reasons: [],
-        similarity: 0,
-      });
-    });
-  }
-  const regPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'AR', 'story-src', 'knowledge.json');
-  const regRaw = readTextOrNull(regPath);
-  if (regRaw !== null) {
-    try {
-      const reg = JSON.parse(regRaw.replace(/^﻿/, ''));
-      for (const c of Array.isArray(reg.constraints) ? reg.constraints : []) {
-        rows.push(mkRow('归档件判定', String(c?.id ?? ''), String(c?.conclusion ?? ''), knowledge, terms,
-          c?.hit === true ? '命中' : '不命中'));
-      }
-    } catch { /* 解析失败由 post_check 报，这里不重复 */ }
-  }
-  return rows;
-}
-
-function freezeRows(obligations, patterns, knowledge, terms, label) {
-  const rows = [];
-  for (const ob of obligations) {
-    rows.push(mkRow(label, String(ob.rule ?? ''), String(ob.obligation ?? ''), knowledge, terms));
-  }
-  for (const p of patterns) {
-    if (p.selected !== true) continue;
-    const roles = p.roles && typeof p.roles === 'object' ? p.roles : {};
-    rows.push({
-      source: '模式冻结',
-      key: String(p.pattern_id ?? ''),
-      text: `实例 ${p.instance ?? '—'}｜角色 ${Object.entries(roles).map(([k, v]) => `${k}=${v}`).join('、') || '—'}`,
-      verdict: 'CLEAN',
-      reasons: [],
-      similarity: 0,
-    });
-  }
-  return rows;
-}
-
-function mkRow(source, id, text, knowledge, terms, extra) {
-  const c = classify(text, paraphraseSources(knowledge, id), terms);
-  return {
-    source,
-    key: extra ? `${id}（${extra}）` : id,
-    text,
-    verdict: c.verdict,
-    reasons: c.reasons,
-    similarity: c.similarity,
-  };
-}
-
-function collectTableRows(text, headingRe, headerKeywords) {
-  const rows = lines(text);
-  const start = rows.findIndex(l => headingRe.test(l.trim()) && /^#{2,4}\s/.test(l.trim()));
-  if (start < 0) return [];
-  const level = (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
-  let headers = null;
-  const out = [];
-  for (let i = start + 1; i < rows.length; i++) {
-    const h = rows[i].trim().match(/^(#{2,4})\s+/);
-    if (h && h[1].length <= level) break;
-    const s = rows[i].trim();
-    if (!s.startsWith('|')) continue;
-    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-    if (!headers) {
-      if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
-      continue;
+/**
+ * 必答集的行 → 带排序信号的行。
+ *
+ * 排序信号只对「有规约原文可比」的行算得出来（条目判定与冻结义务）；
+ * 域级判定、模式候选、项目知识复用没有可比原文，标 CLEAN——**它们照样要裁**。
+ */
+function withSignals(rows, knowledge, terms) {
+  const comparable = new Set(['规约判定', '冻结义务']);
+  return rows.map(r => {
+    if (!comparable.has(r.source)) {
+      return { ...r, verdict: 'CLEAN', reasons: [], similarity: 0 };
     }
-    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
-    if (cells.some(c => /^\{.*\}$/.test(c))) continue;
-    out.push({ cells, headers });
-  }
-  return out;
-}
-
-function pick(cells, headers, keyword) {
-  const i = (headers ?? []).findIndex(h => h.includes(keyword));
-  return i >= 0 && i < cells.length ? cells[i] : '';
+    const c = classify(r.text, paraphraseSources(knowledge, r.key), terms);
+    return {
+      ...r,
+      key: r.source === '规约判定' ? `${r.key}（${r.hit ? '命中' : '不命中'}）` : r.key,
+      verdict: c.verdict,
+      reasons: c.reasons,
+      similarity: c.similarity,
+    };
+  });
 }
 
 export default async function preVerifier(ctx) {
@@ -233,16 +163,21 @@ export default async function preVerifier(ctx) {
 
   const { contracts } = readContracts(ctx.projectRoot, ctx.feature);
   const terms = ownTerms(ctx.projectRoot, ctx.feature, contracts);
-  const { obligations, patterns } = readFreeze(contracts);
 
-  let rows;
-  if (phase === 'spec') {
-    rows = specRows(ctx, knowledge, terms);
-  } else if (phase === 'plan') {
-    rows = freezeRows(obligations, patterns, knowledge, terms, '冻结义务');
-  } else {
-    rows = freezeRows(obligations, patterns, knowledge, terms, '冻结义务（下游留证）');
+  const set = adjudicationSet(ctx.projectRoot, ctx.feature, phase, knowledge);
+  if (set.error) {
+    return {
+      promptFragments: [[
+        '## 实例扩展必答清单（生成失败，须人工全量裁决）',
+        '',
+        `无法派生本阶段的必答集：${set.error}`,
+        '',
+        '**不要因为清单生成失败就跳过裁决**：请自己打开本阶段产物里的知识判定登记，',
+        '逐条判断每个结论是本需求的设计还是规约原文的复述，并把裁决表写进报告文件。',
+      ].join('\n')],
+    };
   }
+  const rows = withSignals(set.rows, knowledge, terms);
 
   if (!rows.length) {
     return {
@@ -292,6 +227,10 @@ export default async function preVerifier(ctx) {
     `在输出 YAML 的 \`checks:\` 中，为 ${checkIds.map(id => `\`${id}\``).join(' 与 ')} 各追加一条，`,
     '`details` 里**逐行**给出「行号 → 裁决 → 证据」，行数与上表一致；',
     '有任一行判「复述」即该条 `status: FAIL`。相应调整 `summary.total` 与计数。',
+    '',
+    '**裁决表必须写进 verifier 报告文件**（本阶段 `reports/verifier.report.md`），',
+    '固定表头 `| 编号 | 裁决 | 证据 |`，一行一条，编号照上表原样写。',
+    '只写在 YAML 输出里不算——那份输出不落盘，闭环回填时门禁核对的是报告文件，缺行即 BLOCKER。',
     '',
     '**漏裁与判 PASS 是两回事**：没裁的行不要留空、不要合并成一句「整体符合」——',
     '实测出现过整份清单一条没裁而门禁照收 PASS，那之后这条收口就成了硬要求。',

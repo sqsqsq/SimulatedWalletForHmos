@@ -43,6 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { sessionRanHarness } from './hook-session-evidence.mjs';
 
 // --------------------------------------------------------------------------
 // HOOK 端默认时间常量
@@ -284,11 +285,15 @@ export function readStateMachineFromConfig(projectRoot) {
  *   --------------+--------------------+--------------------------+-------------------------
  *   state.sid=sx  | fresh-current      | stale-cross-session      | inside-ttl→fresh-current
  *                 |                    |                          | else→stale-ttl-expired
- *   state.sid=null| inside-grace→fresh | inside-grace→fresh-unstmp| inside-ttl→fresh-current
+ *   state.sid=null| grace+跑过→fresh   | grace+跑过→fresh-unstmp  | inside-ttl→fresh-current
  *                 |  -unstamped(stamp) |  (stamp with sy)         | else→stale-ttl-expired
+ *                 | grace+没跑过→cross | grace+没跑过→cross       |
  *                 | else→stale-legacy  | else→stale-legacy        |
+ *
+ * **未盖章的 state 归谁，看本会话跑没跑过它**（ranHarness，由 transcript 一手记录判）。
+ * 只按 grace 窗口盖章，同仓两个会话时会把 state 判给恰好先结束消息的那个——实测串台 3 次。
  */
-export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now) {
+export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now, ranHarness = false) {
   const updatedAtMs = parseTimestampMs(state?.updated_at);
   const ageMs = updatedAtMs == null ? Number.POSITIVE_INFINITY : Math.max(0, now - updatedAtMs);
   const stateSid =
@@ -335,14 +340,24 @@ export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs
 
   // 分支 2：state 未盖章（runner 刚写完，hook 还没第一次回填 session_id）
   if (currentSid) {
-    if (ageMs <= gracePeriodMs) {
-      // 视作"runner 刚写完 state，本次 stop 是同会话第一次触发 hook"——盖章
+    if (ageMs <= gracePeriodMs && ranHarness) {
+      // 本会话的 transcript 里确有这条 harness 调用 + state 刚写不久 → 盖章
       return {
         kind: 'fresh-unstamped',
         isStale: false,
         sameSession: true,
         shouldStamp: true,
         reasonHuman: '',
+      };
+    }
+    if (ageMs <= gracePeriodMs) {
+      // 在窗口内但本会话没跑过它：同仓另一个会话在跑，本会话只是恰好先结束了一条消息
+      return {
+        kind: 'stale-cross-session',
+        isStale: true,
+        sameSession: false,
+        shouldStamp: false,
+        reasonHuman: '本会话没有跑过这个阶段的 harness（transcript 里没有对应记录），state 属于同仓的另一个会话',
       };
     }
     // 超 grace：state 写得太久，又没盖章过，更可能是上一会话残留
@@ -806,8 +821,10 @@ async function main() {
   // 拿 grace / ttl / 逃生阀阈值（从 framework.config.json）
   const { gracePeriodMs, ttlMs, maxConsecutiveBlocks } = readStateMachineFromConfig(projectRoot);
 
-  // 算 staleness
-  const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now());
+  // 算 staleness。未盖章的 state 归谁，按本会话 transcript 里有没有跑过这条 harness 判——
+  // 只按 grace 窗口盖章会在同仓多会话时把 state 判给「恰好先结束消息」的那个会话。
+  const ranHarness = sessionRanHarness(payload?.transcript_path, state?.feature, state?.phase);
+  const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now(), ranHarness);
 
   // 陈旧 → advisory + exit 0
   if (stale.isStale) {

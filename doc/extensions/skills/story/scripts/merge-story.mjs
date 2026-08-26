@@ -17,7 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanBannedTerms, scanLocalPaths, scanDanglingRefs, formatHits, baseLayerIds } from './lint-rules.mjs';
+import { scanBannedTerms, scanLocalPaths, scanDanglingRefs, scanBrokenImages, formatHits, baseLayerIds } from './lint-rules.mjs';
 
 // ---------------------------------------------------------------------------
 // 基础设施
@@ -206,6 +206,7 @@ for (const [label, text] of [
     ['仓内路径', 'local', scanLocalPaths(text, projectRoot)],
     ['客户端语境禁用词', 'banned', scanBannedTerms(text)],
     ['悬空引用', 'dangling', scanDanglingRefs(text, projectRoot)],
+    ['图片断链', 'image', scanBrokenImages(text, path.dirname(storyPath), fs, path)],
   ]) {
     if (hits.length > 0) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
   }

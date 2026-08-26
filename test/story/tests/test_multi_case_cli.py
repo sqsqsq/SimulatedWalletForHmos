@@ -301,6 +301,44 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
+    def test_next_gate_is_replied_even_when_previous_reply_was_accepted(self) -> None:
+        """新关卡按编号识别：不依赖协调器观测到 WAITING→ACTIVE 的跳变。
+
+        被测模型常在一个轮询周期内消费回复并抛出下一关，两次 poll 看到的都是 awaiting；
+        按「上一次回复被消费了没有」判，第二关永远等不到回复（实测两次都卡在这里）。
+        """
+        record = self.record("split-interactive", "AR90006", "awaiting_reply")
+        record.update({
+            "interaction_script": [
+                {"id": "s1", "text": "第一关回复", "expected_turn": 1},
+                {"id": "s2", "text": "第二关回复", "expected_turn": 2},
+            ],
+            "interaction_index": 0,
+            "last_awaiting": {"turn": 1, "kind": "story_gate"},
+        })
+        suite = self.suite(record)
+        suite["bundle_root"] = tempfile.mkdtemp()
+        try:
+            with mock.patch.object(run_multi_case, "invoke_case",
+                                   return_value=(0, {}, "", "")) as invoke:
+                self.assertTrue(run_multi_case.is_new_gate(record))
+                run_multi_case.send_scripted_reply(record, suite)
+                self.assertEqual(1, record["last_replied_turn"])
+
+                # 同一关卡再来一次 poll：不重复回复
+                self.assertFalse(run_multi_case.is_new_gate(record))
+
+                # 新关卡出现（上一次回复仍标 accepted）：照样要回
+                record["last_awaiting"] = {"turn": 2, "kind": "story_gate"}
+                self.assertEqual("accepted", record["last_reply_status"])
+                self.assertTrue(run_multi_case.is_new_gate(record))
+                run_multi_case.send_scripted_reply(record, suite)
+            self.assertEqual(2, invoke.call_count)
+            self.assertEqual(2, record["interaction_index"])
+            self.assertEqual(2, record["last_replied_turn"])
+        finally:
+            shutil.rmtree(suite["bundle_root"], ignore_errors=True)
+
     def test_poll_uses_story_and_spec_cadences(self) -> None:
         record = self.record("split-two-ar", "AR90005", "running")
         record.update({"cursor": 0, "model_cursor": 0, "last_phase": "story"})
@@ -424,9 +462,9 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         before = run_multi_case.progress_snapshot(suite)
         record.update({"last_phase": "spec", "spec_entered_at": "entered",
                        "interaction_state": "complete",
-                       "last_reply_status": "consumed"})
+                       "last_reply_status": "accepted"})
         changes = run_multi_case.progress_changes(before, suite, [{
-            "name": "reply_consumed", "case": "arbitrary-case"}])
+            "name": "scripted_reply_accepted", "case": "arbitrary-case"}])
         self.assertEqual("case_progress", changes[0]["kind"])
         self.assertIn("last_phase", changes[0]["fields"])
         self.assertEqual("interaction", changes[1]["kind"])

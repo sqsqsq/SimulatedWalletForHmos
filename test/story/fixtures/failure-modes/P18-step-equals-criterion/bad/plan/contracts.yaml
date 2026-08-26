@@ -1,0 +1,11 @@
+interfaces:
+  - name: OrderService
+    methods:
+      - submit
+knowledge_freeze:
+  obligations:
+    - rule: SMP-01
+      obligation: 提交过程带上定位标识 submitOrder
+      landing: interfaces.OrderService.submit
+      step: AC-K1
+      criterion: AC-K1

@@ -20,6 +20,9 @@
 - 正式 Case 是组合业务场景；叙述变形只做离线检查，不构成正式 Case。
 - 每个 Case 只能看到自身 workspace、初始任务和已发送交互，不得接触 `test/story/` 维护材料、其他 Case 或历史 suite。
 - 观测者（外层协调器）不得替被测模型运行 gate、修改被测产物或清理阶段状态。
+- 实跑期间宿主**只 poll / 回复 / 记录**：不读被测产物内容（读了就会把评价带进关卡回复，
+  实测污染过一次交互）、不开子 agent 或后台任务（宿主会话的 Stop/SubagentStop hook 会按
+  阶段状态往被测 feature 目录写报告）、不在主工程跑 harness。评测在 finalize 之后做。
 
 ## 1. 唯一入口与启动
 
@@ -43,6 +46,10 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
 
 ## 2. 起跑前固定顺序
 
+0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir`
+   且该目录已物化 UI kit 组件——没有的话，任何跑到 coding 的 Case 都会被 UI kit 门禁拦死在
+   「目标目录无法解析」上，与被测能力无关；主工程 `framework/harness/state/` 下没有属于
+   别人的阶段状态（有则先弄清归属，**不要盲目 clear-state**）。
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
@@ -180,6 +187,9 @@ python test/story/scripts/run_multi_case.py finalize `
 
 `finalize --cleanup` 已停用，必须明确报错且不删除现场。finalize 后本轮 workspace 和整个 suite output
 保留到下一轮起跑时统一清理。
+
+finalize 前确认主工程的阶段状态文件不存在、或不属于本次 feature——否则宿主会话的 hook 会按那份状态
+把报告写进回灌后的产物里，事后分不清哪些是被测模型产出的、哪些是宿主的副作用。
 
 ## 7. 离线验证
 

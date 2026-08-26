@@ -33,6 +33,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
+import { domainProblems } from '../../../hooks/shared/adjudication.mjs';
 
 /**
  * 成文判据——章节任务书里的那段话，与 `rules/rules.md` 红线 1 逐字同源。
@@ -570,12 +571,15 @@ export function renderStoryAppendix(ids) {
  *
  * @param {object[]} rows 注册件条目（已与激活条目对齐、补好域名与要求）
  */
-export function renderKnowledgeAppendix(rows) {
-  if (!rows.length) return '';
+export function renderKnowledgeAppendix(rows, domainRows = []) {
+  if (!rows.length && !domainRows.length) return '';
   const head = ['| 域 | 编号 | 要求 | 命中 | 结论或落点 |', '|---|---|---|---|---|'];
   const body = rows.map(r =>
     `| ${r.domainTitle} | ${r.id} | ${escapeCell(r.requirement)} | ${r.hit ? '是' : '否'} | ${escapeCell(r.conclusion)} |`);
-  return ['## 附录：规约符合性', '', ...head, ...body].join('\n');
+  // 判整域不适用的域一行带依据：域级判定是判定记录，不是跳过
+  const domainBody = domainRows.map(d =>
+    `| ${d.title} | — | — | 否 | 不适用：${escapeCell(d.basis)} |`);
+  return ['## 附录：规约符合性', '', ...head, ...body, ...domainBody].join('\n');
 }
 
 /**
@@ -598,8 +602,12 @@ function escapeCell(text) {
 /**
  * 把知识判定注册件与激活清单对齐，产出两张附录表。
  *
- * **集合一致是硬判据**：注册件的条目集必须与激活清单的条目集完全相同。少一条 = 有条目没判，
+ * **集合一致是硬判据**：注册件的条目集必须与**该判的那些条目**完全相同。少一条 = 有条目没判，
  * 多一条 = 判了个不在册的东西；两种都不是「差不多」，都会让「逐条判定」这件事失去意义。
+ *
+ * 该判哪些由域级判定决定：命中条件写 `always` 的域全部逐条，有条件的域先判域——
+ * 判不适用就整域一行带依据，域内条目不再逐条。判据在 `hooks/shared/adjudication.mjs`，
+ * 装配与 spec 门禁共用同一份，不各写一遍。
  *
  * 要求列取激活条目的原文——作者不手抄。判「否」的行也要有结论（不命中的**依据**），
  * 「不涉及」三个字不构成依据。
@@ -617,7 +625,15 @@ function buildKnowledgeAppendix(ctx) {
     return { constraintTable: '', patternTable: '', problems: [...problems, `激活知识派生失败：${e.message}`] };
   }
 
-  const active = knowledge.entries;
+  // 登记件整体只读一次：域级判定、条目、模式候选都在这一份里
+  let registry = {};
+  try {
+    registry = readJson(ctx.knowledgePath, {});
+  } catch { /* JSON 非法已由上面的 readRegistry 报出，不重复 */ }
+  const domains = domainProblems(knowledge, registry);
+  problems.push(...domains.problems);
+
+  const active = knowledge.entries.filter(e => domains.expectedIds.includes(e.id));
   const byId = new Map(active.map(e => [e.id, e]));
   const rows = [];
   const seen = new Set();
@@ -628,8 +644,11 @@ function buildKnowledgeAppendix(ctx) {
     seen.add(id);
     const entry = byId.get(id);
     if (!entry) {
-      problems.push(`knowledge.json 登记了不在激活清单里的条目 ${id}`
-        + '——阶段只认清单里的条目，编号写错或规约已下架');
+      // 在册但不在期望集 = 它所在的域已判整域不适用，那条已由域级判据报出，不重复
+      if (!knowledge.entries.some(e => e.id === id)) {
+        problems.push(`knowledge.json 登记了不在激活清单里的条目 ${id}`
+          + '——阶段只认清单里的条目，编号写错或规约已下架');
+      }
       continue;
     }
     const conclusion = String(item.conclusion ?? '').trim();
@@ -648,13 +667,12 @@ function buildKnowledgeAppendix(ctx) {
 
   const missing = active.map(e => e.id).filter(id => !seen.has(id));
   if (missing.length) {
-    problems.push(`激活清单里这些条目没有判定：${missing.join('、')}`
+    problems.push(`该判的条目里这些没有判定：${missing.join('、')}`
       + '——逐条目判定，判「否」也要给依据；漏判与「不涉及」在产物上长得一模一样');
   }
 
   // 模式候选：零候选是正常结论，但必须显式写出来
-  const patternReg = readJson(ctx.knowledgePath, {});
-  const patternRows = Array.isArray(patternReg.patterns) ? patternReg.patterns : [];
+  const patternRows = Array.isArray(registry.patterns) ? registry.patterns : [];
   if (!patternRows.length) {
     problems.push('knowledge.json 的 patterns 为空——'
       + '零候选是合法结论，但要显式登记：写明适用单元与「为什么这些单元都不需要模式」');
@@ -670,7 +688,7 @@ function buildKnowledgeAppendix(ctx) {
   }
 
   return {
-    constraintTable: renderKnowledgeAppendix(rows),
+    constraintTable: renderKnowledgeAppendix(rows, domains.domainRows),
     patternTable: renderPatternAppendix(patternRows),
     problems,
   };
@@ -919,8 +937,13 @@ function scaffold(ctx) {
   if (!fs.existsSync(ctx.knowledgePath)) {
     fs.writeFileSync(ctx.knowledgePath, JSON.stringify({
       _example: {
+        domains: {
+          prefix: '有命中条件的域才登记（frontmatter 的 applies_when 不是 always 的那些）；always 域不登记',
+          applies: 'true / false',
+          basis: '按该域的命中条件，写为什么适用或不适用本需求，一句',
+        },
         constraints: {
-          id: '照激活清单里的条目编号原样填，一条一行；判「否」也要填',
+          id: '照激活清单里的条目编号原样填，一条一行；判「否」也要填。判整域不适用的域，域内条目不再逐条登记',
           hit: 'true / false',
           conclusion: '命中时写**本需求的设计**（落在哪个接口/键/字段/步骤上）；不命中时写依据',
           landing: '承载它的契约名（可选，写了更好查）',
@@ -931,6 +954,7 @@ function scaffold(ctx) {
           signal: '为什么像（命中信号）或为什么不像（反证）',
         },
       },
+      domains: [],
       constraints: [],
       patterns: [],
     }, null, 2) + '\n', 'utf-8');

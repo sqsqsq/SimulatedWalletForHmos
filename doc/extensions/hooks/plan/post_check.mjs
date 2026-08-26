@@ -15,9 +15,11 @@
  * 契约：stdin JSON ctx → stdout JSON result。
  */
 import * as path from 'node:path';
+import { STATUS, writePostCheckEvidence } from '../shared/evidence.mjs';
 import { activeKnowledge, entryById, paraphraseSources } from '../shared/knowledge.mjs';
 import { isPureCopy } from '../shared/paraphrase.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
+import { adjudicationProblems } from '../shared/verifier-report.mjs';
 import {
   contractsPath,
   knowledgeCriteria,
@@ -149,6 +151,11 @@ export default async function planPostCheck(ctx) {
   const criteria = knowledgeCriteria(acceptance);
   const useCases = readUseCases(ctx.projectRoot, ctx.feature);
   const planHeadings = findHeadings(planText).all.map(h => h.title);
+  const mdLanding = decisionTableLandings(planText);
+  if (obligations.length && !mdLanding.rows.size) {
+    problems.push('plan.md 知识决策章缺义务表（表头须含「编号」与「落点」两列）'
+      + '——冻结在 yaml 里，评审者读的是 md，两处都要有');
+  }
 
   for (const ob of obligations) {
     const rule = String(ob.rule ?? '').trim() || '(缺 rule)';
@@ -173,6 +180,7 @@ export default async function planPostCheck(ctx) {
 
     // 落点实体（评审动作条目豁免）
     const refs = landingRefs(ob);
+    const tails = [];
     if (!refs.length) {
       if (!entry.reviewAction) {
         problems.push(`${at}：landing 为空——没有承载它的契约实体，到编码那里这条义务等于不存在`);
@@ -181,6 +189,20 @@ export default async function planPostCheck(ctx) {
       for (const ref of refs) {
         const r = resolveEntityRef(contracts, ref);
         if (!r.ok) problems.push(`${at}：落点「${ref}」解析不到契约实体——${r.reason}`);
+        if (r.tail) tails.push(r.tail);
+      }
+    }
+
+    // md 表与 yaml 是同一份冻结的两次渲染：两处各写各的，评审者读 plan.md 看到的落点
+    // 与下游按 yaml 去找的落点不是一个东西，而没有任何一处会报错。
+    if (tails.length && mdLanding.rows.size) {
+      const cell = mdLanding.rows.get(rule);
+      if (cell === undefined) {
+        problems.push(`${at}：plan.md 的知识决策表里没有 ${rule} 这一行`
+          + '——md 表与冻结是同一份，缺行等于评审者看不到这条义务');
+      } else if (!tails.some(t => cell.includes(t))) {
+        problems.push(`${at}：plan.md 落点「${cell}」与契约 landing（${tails.join('、')}）对不上`
+          + '——同一份冻结的两次渲染，写一处改一处');
       }
     }
 
@@ -194,13 +216,17 @@ export default async function planPostCheck(ctx) {
       problems.push(`${at}：anchor「${anchor}」在 plan.md 里找不到对应章`);
     }
 
-    // 业务步骤
+    // 业务步骤：step 回答「落在流程的哪一步」，criterion 回答「验收时怎么验」。
+    // 拿验收编号当 step 填，等于这条义务没有业务落点——它在流程里是悬空的。
     const step = String(ob.step ?? '').trim();
+    const criterionId = String(ob.criterion ?? '').trim();
     if (!step) {
       problems.push(`${at}：缺 step——这条义务落在哪个业务步骤上`);
+    } else if (step === criterionId) {
+      problems.push(`${at}：step 与 criterion 相同（${step}）——step 是业务步骤`
+        + '（验收条目的 prd_function，或 use-cases 的 branch id），不是验收编号');
     } else if (criteria.size || useCases.exists) {
-      const inAcceptance = [...criteria.values()].some(c =>
-        String(c.prd_function ?? '') === step || String(c.id ?? '') === step);
+      const inAcceptance = [...criteria.values()].some(c => String(c.prd_function ?? '') === step);
       if (!inAcceptance && !useCases.branches.has(step)) {
         problems.push(`${at}：step「${step}」在验收条目的 prd_function 与 use-cases 的 branch 里都定位不到`);
       }
@@ -279,8 +305,64 @@ export default async function planPostCheck(ctx) {
     }
   }
 
+  // ---- 6. 逐行裁决落盘 ----
+  const adj = adjudicationLanding(ctx, knowledge);
+  problems.push(...adj.problems);
+
+  // ---- 运行留痕：通过也写 ----
+  writePostCheckEvidence(ctx, {
+    checks: [
+      { id: 'knowledge_freeze_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
+      { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
+    ],
+    inputs: [
+      path.join(featureRoot(ctx.projectRoot, ctx.feature), 'plan', 'plan.md'),
+      contractsPath(ctx.projectRoot, ctx.feature),
+    ],
+  });
+
   if (problems.length) return blocker(problems);
   return { ok: true };
+}
+
+/** 逐行裁决核对：派生失败不静默通过——那会让本判据恒真。 */
+function adjudicationLanding(ctx, knowledge) {
+  try {
+    return adjudicationProblems(ctx, knowledge);
+  } catch (e) {
+    return { status: STATUS.FAIL, problems: [`逐行裁决无从核对：${e.message}`], detail: e.message };
+  }
+}
+
+/**
+ * plan.md 知识决策章里的「编号 → 落点」映射。
+ *
+ * 按**列名**取值：列序会随编辑漂移，列名是契约。找不到该表时返回空 Map，
+ * 由调用方判「缺表」——这里不静默当作通过。
+ */
+function decisionTableLandings(planText) {
+  const rows = lines(planText);
+  const start = rows.findIndex(l => DECISION_HEADING_RE.test(l.trim()));
+  if (start < 0) return { rows: new Map() };
+  const level = (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
+  const out = new Map();
+  let headers = null;
+  for (let i = start + 1; i < rows.length; i++) {
+    const h = rows[i].trim().match(/^(#{2,4})\s+/);
+    if (h && h[1].length <= level) break;
+    const s = rows[i].trim();
+    if (!s.startsWith('|')) { headers = null; continue; }
+    const cells = s.replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(c => c.replace(/\\\|/g, '|').trim());
+    if (!headers) {
+      if (cells.some(c => c.includes('编号')) && cells.some(c => c.includes('落点'))) headers = cells;
+      continue;
+    }
+    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
+    const idCell = cells[headers.findIndex(x => x.includes('编号'))] ?? '';
+    const landCell = cells[headers.findIndex(x => x.includes('落点'))] ?? '';
+    for (const id of idCell.match(/\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g) ?? []) out.set(id, landCell);
+  }
+  return { rows: out };
 }
 
 /** spec 候选登记里有没有非「无候选」的行；读不到 spec 时返回 null（不判）。 */

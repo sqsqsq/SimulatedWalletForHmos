@@ -12,7 +12,8 @@ coding / code-review / ut / testing 读的不是知识目录，而是你在这�
 ## 知识决策（设计输入）
 ### 设计模式选型     —— 逐个候选单元：选或不选 + 理由；选了给唯一实例名
 ### 规约义务         —— 逐条命中条目：本次要落实成什么 + 落在哪个契约实体 + 哪个业务步骤
-### 项目知识影响     —— 复用了什么、缺什么、与已登记事实有无矛盾
+### 项目知识影响     —— 按本方案**新增的能力**逐项：复用了哪个登记入口 / 未复用的理由 / 与登记不符之处
+###                    （不按项目知识的面逐面写「不涉及」）
 ## 1. 模块架构图 …（其后是设计各章）
 ```
 
@@ -28,7 +29,7 @@ knowledge_freeze:
     - rule: <规约条目编号>              # 一条目一行，不要一行塞多条
       criterion: <对应的验收条目编号>    # 见下方「四阶段的验证要求」
       obligation: <本次要落实成什么——可实施的设计结论，不是复述规约原文>
-      step: <哪个业务步骤：验收条目的 prd_function，或 use-cases 的 branch>
+      step: <哪个业务步骤：验收条目的 prd_function，或 use-cases 的 branch；**不是**验收编号>
       anchor: <plan.md 里承载该设计的**设计章**标题>
       review_focus: <review 阶段该核什么>
       landing:
@@ -119,7 +120,11 @@ knowledge_freeze:
 9. 模式不在册；`selected: true` 却缺 `instance`；`roles` 键集与该模式声明的角色集不一致；
    某个角色的值在契约里找不到对应实体；
 10. `use-cases.yaml` 存在时 `coordinator` 与模式声明的编排入口角色对不上；
-11. `obligation` 是规约原文的复制或子串。
+11. `obligation` 是规约原文的复制或子串；
+12. plan.md 义务表的「落点」与契约 `landing` 对不上，或该表缺失——md 与 yaml 是同一份冻结的两次渲染；
+13. `step` 与 `criterion` 相同——`step` 是业务步骤（验收条目的 `prd_function` 或 use-cases 的 branch id），
+    `criterion` 是验收编号，拿验收编号当步骤填等于这条义务在流程里没有落点；
+14. verifier 报告里没有逐行裁决表（闭环回填那次运行核对）。
 
 ### 七、与 spec 的衔接
 

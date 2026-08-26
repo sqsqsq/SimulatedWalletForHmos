@@ -1,0 +1,6 @@
+{
+  "constraints": [
+    { "id": "SMP-01", "hit": true, "conclusion": "订单提交过程标注定位标识 submitOrder" }
+  ],
+  "patterns": []
+}

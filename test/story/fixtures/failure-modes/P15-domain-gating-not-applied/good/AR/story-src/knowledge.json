@@ -1,0 +1,9 @@
+{
+  "domains": [
+    { "prefix": "CND", "applies": false, "basis": "本需求只改后台数据流转，不新增也不改动任何界面" }
+  ],
+  "constraints": [
+    { "id": "SMP-01", "hit": true, "conclusion": "订单提交过程标注定位标识 submitOrder" }
+  ],
+  "patterns": []
+}

@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { sessionRanHarness, sessionSpawnedVerifier } from './hook-session-evidence.mjs';
 
 // --------------------------------------------------------------------------
 // 1. stdin
@@ -234,14 +235,19 @@ function extractTextFromContent(content) {
 // 4. verdict 提取
 // --------------------------------------------------------------------------
 
+/**
+ * 取 verdict —— 只认**显式声明**的那几种写法。
+ *
+ * 曾经还认「正文里任意位置出现 PASS/FAIL」一类的宽松形态，结果是子 agent 正文里
+ * 随口提一句「上一轮 FAIL 的那条」就被当成本次结论。结论字段宁可为 null（调用方据此
+ * 记「未声明」），也不要从叙述里猜一个出来。
+ */
 function extractVerdict(text) {
   if (!text) return null;
-  // 支持："verdict: PASS"、"**Verdict: FAIL**"、"## Verdict\nPASS" 等
   const patterns = [
     /verdict\s*[:=：]\s*\**\s*(PASS|FAIL)\b/i,
     /\*\*\s*verdict\s*[:：]\s*(PASS|FAIL)\s*\**/i,
     /^##\s*verdict[\s\S]{0,40}?\b(PASS|FAIL)\b/im,
-    /\b(PASS|FAIL)\s*\(verdict\)/i,
   ];
   for (const re of patterns) {
     const m = re.exec(text);
@@ -326,12 +332,20 @@ async function main() {
   const feature = goalHeadless ? 'unknown' : (state?.feature ?? 'unknown');
   const phase = goalHeadless ? 'unknown' : (state?.phase ?? 'unknown');
 
-  const useStateDir = !goalHeadless && state && state.feature && state.phase;
-  const resolved = useStateDir
+  // 写进 feature 目录之前要有两份**本会话自己的**证据：这个阶段的 harness 是本会话跑的，
+  // verifier 子 agent 也是本会话调起的。缺任一份就写 state 兜底目录——
+  // 同仓另一个会话在跑时，仅凭 state 定位会把报告写进别人的 feature（实测 3 次，
+  // 其中一次把已经迁走的 feature 目录写活了）。
+  const ownsState = !goalHeadless && state && state.feature && state.phase
+    && sessionRanHarness(payload?.transcript_path, state.feature, state.phase)
+    && sessionSpawnedVerifier(payload?.transcript_path);
+  const resolved = ownsState
     ? resolveFeaturePhaseReportDir(projectRoot, String(state.feature), String(state.phase))
     : null;
-  const reportDir =
-    resolved ?? path.resolve(projectRoot, 'framework/harness/state');
+  // 目录不存在就不建：feature 目录是被测产物的位置，凭一次 hook 触发把它建出来，
+  // 事后分不清那是真产物还是 hook 的副作用
+  const useStateDir = resolved !== null && fs.existsSync(resolved);
+  const reportDir = useStateDir ? resolved : path.resolve(projectRoot, 'framework/harness/state');
 
   const mdPath = useStateDir
     ? path.join(reportDir, 'verifier.report.md')
@@ -381,7 +395,8 @@ async function main() {
   // 与 check-phase-completion.mjs 一致，避免 Stop hook 把刚跑过 verifier 的
   // 状态当成"陈旧"处理。
   try {
-    if (!goalHeadless && state && state.feature && state.phase) {
+    // 回写 state 与写报告同一个归属判据：不是本会话跑的 state，不改它的 session 维度
+    if (ownsState) {
       const nowIso = new Date().toISOString();
       const sid =
         typeof payload?.session_id === 'string' && payload.session_id.trim()

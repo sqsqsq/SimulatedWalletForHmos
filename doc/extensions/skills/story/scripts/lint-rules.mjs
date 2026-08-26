@@ -243,6 +243,29 @@ export function formatHits(hits, kind) {
   return hits.map(h => {
     if (kind === 'banned') return `第 ${h.line} 行禁用词「${h.term}」（${h.hint}）：${h.text}`;
     if (kind === 'dangling') return `第 ${h.line} 行悬空引用「${h.ref}」——${h.hint}`;
+    if (kind === 'image') return `第 ${h.line} 行图片引用「${h.path}」解析不到文件`;
     return `第 ${h.line} 行含仓内路径「${h.path}」：${h.text}`;
   });
+}
+
+/**
+ * 图片断链：按归档件所在目录解析相对路径，文件不存在即命中。
+ *
+ * 归档件是交出去给评审者看的——引用写成裸文件名或指向源材料目录，本地打开是红叉，
+ * 而正文与装配都不会因此报错：形态守恒只数图的条数，数得到「有一张图」，看不出它打不开。
+ *
+ * 外链（http/https）与内嵌数据不判：那不是仓内文件。
+ */
+export function scanBrokenImages(text, baseDir, fsMod, pathMod) {
+  const hits = [];
+  const rows = String(text ?? '').split(/\r?\n/);
+  for (let i = 0; i < rows.length; i++) {
+    for (const m of rows[i].matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+      const ref = m[1];
+      if (/^(https?:|data:)/i.test(ref)) continue;
+      const abs = pathMod.resolve(baseDir, decodeURIComponent(ref.replace(/^<|>$/g, '')));
+      if (!fsMod.existsSync(abs)) hits.push({ line: i + 1, path: ref });
+    }
+  }
+  return hits;
 }

@@ -40,12 +40,14 @@ applies_when: always（凡需给出「代码库现状」这一半事实时）
 日志、VOC、Chart 三渠道齐备，都在 `CommFunc`，惯例如下：
 
 - **日志** `Logger`（`shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）：本地调测与完整流程还原——
-  流程每一步的进入与结果、分支走向、异常都记。
-- **VOC** `WalletHAManager.vocBuilder(eventID, desc).report()`，门面 `logAndReport` / `logErrorAndReport` /
-  `logDebugAndReport` = 对应档日志 + 一条 VOC：无本地日志时远程定位——只记关键路径事件：关键步骤的进入与完成、
-  重要状态标记的变更、用户中止与失败。
+  流程每一步的进入与结果、分支走向、异常都记；不打敏感字段，确需记录先脱敏
+  （哪些算敏感、脱到什么程度见安全隐私规约，脱敏入口见下面的敏感数据处理）。
+- **VOC** 默认用门面 `WalletHAManager.logAndReport` / `logErrorAndReport` / `logDebugAndReport(eventID, desc)`
+  （对应档日志 + 一条 VOC，一行搞定）；只在「只上报、不打日志」时用 `vocBuilder(eventID, desc).report()`，不额外 set 属性。
+  记关键路径事件：关键步骤的进入与完成、重要状态标记的变更、用户中止与失败。
 - **Chart** `WalletHAManager.chartBuilder(WalletHAEventID, funcID, subFuncID).report()`：成功率、时延、终态统计——
   业务步骤到达终态时每步一条，终态取 `WalletFuncResult`。
+- 同一处代码 VOC 与 Chart 二选一：终态那一处发 Chart，过程关键点发 VOC。
 - 三渠道共用同一次执行的流程与步骤标识（上报经 `setFuncID` / `setSubFuncID` 携带）；密度日志 > VOC > Chart，不设数量配额。
 - 上报非阻塞，失败只记 `Logger.error`，不向调用方抛出。
 
@@ -54,7 +56,13 @@ applies_when: always（凡需给出「代码库现状」这一半事实时）
 通用脱敏 `MaskUtil`（`CommFunc` `shared/utils/MaskUtil.ets`）：`maskPhone` / `maskAccount`。
 业务专属脱敏放本业务模块的 `shared/utils/`（如 `FinancialCard` 的 `CardNumberMaskUtil`），不上提公共层。
 
-## 7. 依赖变更（SDK / 组件 / TA） — `confirmed: 已确认`
+## 7. 资源 — `confirmed: 已确认`
+
+字符串、颜色、尺寸在各模块 `src/main/resources/base/element/` 下的 `string.json` / `color.json` / `float.json`，
+多语言与深色同名文件放 `zh_CN/element/`、`dark/element/`；代码用 `$r('app.string.<key>')` 引用。
+新增或改动资源键时，改到的资源 json 与代码文件一样列进方案契约的文件清单。
+
+## 8. 依赖变更（SDK / 组件 / TA） — `confirmed: 已确认`
 
 模块依赖声明在各模块根 `oh-package.json5` 的 `dependencies`（`CommFunc` 为空）；模块清单在根 `build-profile.json5`。
 编排 SDK 以 `framework`（`libs/framework-1.0.0.har`）声明在消费模块的依赖里，与仓库根 `framework/` 目录无关。
