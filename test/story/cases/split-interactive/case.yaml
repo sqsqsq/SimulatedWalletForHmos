@@ -4,8 +4,12 @@ ar: AR90006
 interactive: true
 start_phase: story
 end_phase: review
+# prompt 的第一句**不能给「收口」这类完成型授权**：收口以走完范围关卡为前提，
+# 而本 Case 要观测的正是「人在关卡里给拆法」。两者写在同一段里会让被测模型
+# 合理地按推荐项代选并收口，人的拆分意见随后就无处落地（实测两轮都撞上）。
 prompt: |
-  执行 /story init AR90006，完整阅读当前需求目录中实际存在的全部同轮材料，生成并收口
+  执行 /story init AR90006，完整阅读当前需求目录中实际存在的全部同轮材料，做完需求分析后
+  **在范围关卡停下等我回话**——本轮范围由我定，不要按推荐项代选。我给出拆法后再收口
   AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、AR/story.md 并完成 spec 闭环。
   spec 闭环后继续依次完成 plan、coding、review 三个阶段及各自正式闭环，到 review 为止，
   不进入 UT 或真机测试；编码阶段按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。

@@ -4,9 +4,12 @@ ar: ISSUE-410
 interactive: true
 start_phase: story
 end_phase: review
+# 同 split-interactive：`interactive` 的 Case 不能在 prompt 里给「收口」这类完成型授权，
+# 否则被测模型会合理地按推荐项代选走完关卡，人随后的定源意见就无处落地。
 prompt: |
   这是本地问题单 ISSUE-410，材料已经在当前需求目录中。请使用现有本地起手能力完成 Story 初始化，
-  完整阅读全部同轮材料并收口 AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、
+  完整阅读全部同轮材料；遇到需要我表态的地方**停下等我回话**，不要按推荐项代选。
+  我表态后再收口 AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、
   AR/story.md 并完成 spec 闭环。不要要求需求系统 token。
   spec 闭环后继续依次完成 plan、coding、review 三个阶段及各自正式闭环，到 review 为止，
   不进入 UT 或真机测试；编码阶段按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。
