@@ -1,12 +1,16 @@
 // Maison UI Kit — MaisonPrimaryButton（semantic_node: primary_button）
 // 主操作按钮：enabled/disabled 状态色由 token 分支——事故形态：盲档把禁用态淡蓝写成常态。
 // variant: enabled | disabled | loading。
+//
+// 成员名是 enabledState 而不是 enabled：@Component struct 继承 CustomComponent，
+// 基类已有 enabled() 属性方法，同名成员会让任何物化了本 kit 的模块编译失败。
+// 本地热修，登记在宿主 framework.config.json 的 integrity.drift_allowlist。
 
 @Component
 export struct MaisonPrimaryButton {
   anchorId: string = '';
   label: ResourceStr = '';
-  enabled: boolean = true;
+  enabledState: boolean = true;
   loading: boolean = false;
   onAction?: () => void;
 
@@ -24,7 +28,7 @@ export struct MaisonPrimaryButton {
           .id(`${this.anchorId}-label`)
           .fontSize($r('sys.float.ohos_id_text_size_button1'))
           .fontColor(
-            this.enabled
+            this.enabledState
               ? $r('sys.color.ohos_id_color_text_primary_contrary')
               : $r('sys.color.ohos_id_color_text_tertiary'),
           )
@@ -36,11 +40,11 @@ export struct MaisonPrimaryButton {
     .width('100%')
     .height(40)
     .backgroundColor(
-      this.enabled
+      this.enabledState
         ? $r('sys.color.ohos_id_color_emphasize')
         : $r('sys.color.ohos_id_color_button_normal'),
     )
-    .enabled(this.enabled && !this.loading)
+    .enabled(this.enabledState && !this.loading)
     .onClick(() => this.onAction?.())
   }
 }

@@ -143,6 +143,11 @@
         "path": "harness/state/.gitkeep",
         "rationale": "目录占位文件，行尾与复制差异使哈希与清单不一致；不影响任何运行行为。",
         "approved_by": "WYK"
+      },
+      {
+        "path": "profiles/hmos-app/ui-kit/MaisonPrimaryButton.ets",
+        "rationale": "模板自带编译错误：成员 enabled 与 ArkUI CustomComponent 基类的 enabled() 属性方法同名，物化进任何模块后 assembleHap 必然编译失败。本仓此前一直是 ui_kit 目标目录无法解析（halt），模板从未被编译过，缺陷在 2026-08-26 配置 paths.ui_kit_target_dir 并物化后首次现形。本地热修：成员改名 enabledState（声明 1 处 + 引用 3 处），.enabled() 属性调用不变，语义与渲染完全等价。九个模板中仅此一个有同类冲突。上游修复后应撤销本条与该改动。",
+        "approved_by": "WYK"
       }
     ]
   },
