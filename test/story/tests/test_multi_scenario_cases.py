@@ -143,7 +143,19 @@ class CompositeCoverageTest(unittest.TestCase):
         self.assertIn(case["end_phase"], VALID_END)
         self.assertIn("文件名不带需求类型", case["prompt"])
         self.assertIn("本轮不会整体交付", case["prompt"])
-        self.assertIn("/story archive", case["prompt"])
+
+        # 终点与 prompt 必须一口径：`--end-phase` 只约束协调器，改不了发给模型的话，
+        # 两边说不一样时模型按 prompt 走（实测照 prompt 进了 plan，白跑一段）。
+        raw = (CASES / "split-interactive/case.yaml").read_text(encoding="utf-8")
+        if case["end_phase"] == "spec":
+            self.assertIn("spec 闭环后本轮到此为止", case["prompt"])
+            self.assertNotIn("/story archive", case["prompt"])
+            # 评审回流是本 Case 的长期观测资产，收窄终点时不能顺手删掉——
+            # 素材留着，并在文件里写明放开时怎么接回去。
+            self.assertIn("review_feedback", raw)
+            self.assertIn("放开到 review 时", raw)
+        else:
+            self.assertIn("/story archive", case["prompt"])
         docx = sorted((CASES / "split-interactive/workspace/inbox").glob("*.docx"))
         self.assertEqual(1, len(docx))
         sr = (CASES / "split-interactive/workspace/SR/design.md").read_text(encoding="utf-8")
