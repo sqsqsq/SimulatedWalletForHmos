@@ -18,6 +18,32 @@ export function isClaudeKernelAdapter(name: string | null | undefined): boolean 
   return typeof name === 'string' && CLAUDE_KERNEL_ADAPTERS.has(name);
 }
 
+/**
+ * 视觉委托（plan ab072691 t1①）：**执行 endpoint 身份**——(adapter, model) 二元组。
+ *
+ * `model` **必填**：provider 的意义就是「换一个能看图的具体模型」，没有冻结的 model 就没有
+ * provider 身份（另见 goal-manifest.AdapterModelPin 对 primary 的同款约束）。本类型刻意
+ * 落在 types.ts 而非 goal-manifest.ts——个人级 config、CLI、manifest、invoke 执行器四面
+ * 共用，不让 config 层反向依赖 manifest 层。
+ */
+export interface ProviderRef {
+  adapter: string;
+  model: string;
+}
+
+/**
+ * 视觉委托（plan ab072691 t2①）：本 run 的**视觉路由三态**。
+ *
+ * - `native`    — primary 自己能看图。现状链零变化（含 primary 金丝雀机制）。
+ * - `delegated` — primary 盲 **且** 配了只读视觉 provider **且** 该 provider 静态资格通过。
+ * - `blind`     — 其余一切。现状盲档地板。
+ *
+ * 由 preflight **派生一次并在 run 内不可变**。provider 每次调用的成败只决定「本轮视觉反馈
+ * 是否采信」，**不**反向改写 vision_mode / 能力真值 / capability snapshot / manifest
+ * （能力真值反写禁令的既有纪律，见 effective-vision-context.ts 头注）。
+ */
+export type VisionMode = 'native' | 'delegated' | 'blind';
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 
@@ -519,7 +545,7 @@ export interface HarnessRunSummary {
   /**
    * S7 asset 继承指纹链 2（codex 实施 review 二轮 P1-6）：asset 域债务 revision——
    * 债务管线定稿后机器写入（域内投影哈希/'no-debt' 哨兵）；testing 期继承时重算比对，
-   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_human）。
+   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_fix）。
    */
   asset_debt_revision?: string;
   script_report: string;

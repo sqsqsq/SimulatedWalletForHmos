@@ -30,8 +30,14 @@ import { loadFrameworkConfig } from '../config';
 import { loadResolvedProfile } from '../profile-loader';
 import { initializeFidelityRouting } from './utils/goal-preflight';
 import { resolveRequirementInput } from './utils/goal-manifest';
-import { computeRequirementShaFromText, loadFidelityIntentSsotState } from './utils/fidelity-shared';
+import {
+  computeRequirementShaFromText,
+  isInertLegacyFidelityDecisionSource,
+  loadFidelityIntentSsotState,
+} from './utils/fidelity-shared';
 import { validateAttendedGoalContext } from './utils/attended-goal-context';
+import { loadLocalConfig } from './utils/framework-local-config';
+import { resolveUnattendedVisualProviderPin } from './utils/visual-provider-identity';
 import { collectIntentTextWithPhaseFallback } from './check-spec';
 
 /** post-impl2 P1-3：SSOT 生命周期四态判据（可测纯函数）——
@@ -44,11 +50,21 @@ export function phaseInitDecision(
   state:
     | { state: 'missing' }
     | { state: 'corrupt' }
-    | { state: 'valid'; doc: { execution_identity: string; requirement_sha256: string } },
+    | {
+        state: 'valid';
+        doc: {
+          execution_identity: string;
+          requirement_sha256: string;
+          decision?: { source?: unknown };
+        };
+      },
   newRequirementSha: string | null,
   opts?: { activeGoalRunId?: string | null },
 ): 'reuse' | 'init' {
   if (state.state !== 'valid') return 'init';
+  // Defense in depth for callers/tests that construct a state directly instead of using the loader:
+  // a historical human/receipt decision is parse-compatible, never reusable authority.
+  if (isInertLegacyFidelityDecisionSource(state.doc.decision?.source)) return 'init';
   // post-impl4 P1-3：只保护**当前活跃 goal**的决策（identity == 活跃 run_id）——历史
   // 已结束 goal 的残留不复用（同需求换 adapter/模型后独立 /spec 必须重新探测能力）；
   // phase-owned 一律幂等重算。
@@ -183,12 +199,26 @@ function main(): number {
     adapter,
     profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
     ...(attendedManifest?.fidelity ? { manifestFidelity: attendedManifest.fidelity } : {}),
-    ...(attendedManifest?.fidelity_receipt
-      ? { fidelityReceiptRel: attendedManifest.fidelity_receipt }
-      : {}),
     ...(attendedManifest?.adapter_model_pin
       ? { modelPin: attendedManifest.adapter_model_pin.value }
       : {}),
+    // plan ab072691 t2①：视觉委托身份——attended goal 用 manifest 冻结值（不重读 local，
+    // 与 model pin 同纪律）；普通交互态（无 attended manifest）读个人级 local。
+    // 交互态读到已失效的旧配置只 WARN + 忽略并落 blind：档位初始化不是询问点，
+    // 询问/重选在 personal setup 门控里发生（registry setup.visual_provider）。
+    ...(() => {
+      if (attendedManifest) {
+        return attendedManifest.visual_provider_pin
+          ? { visualProviderPin: attendedManifest.visual_provider_pin }
+          : {};
+      }
+      const resolved = resolveUnattendedVisualProviderPin(
+        loadLocalConfig(projectRoot),
+        layout.frameworkRoot,
+      );
+      if (resolved.warning) console.warn(resolved.warning);
+      return resolved.pin ? { visualProviderPin: resolved.pin } : {};
+    })(),
     ...(attendedGoalRunId ? { runIdForReceipt: attendedGoalRunId } : {}),
     requirementProvenance,
     ...(requirementSourceFiles.length > 0
@@ -202,7 +232,8 @@ function main(): number {
   if (routing.defer) {
     console.error(
       '[fidelity-intent-init] 注意：pixel_1to1 + hard + 能力不足=真冲突——spec 门禁将按 ' +
-      'DEFERRED_CAPABILITY_MISSING 拦截（换视觉模型 / 降档 receipt / 放宽需求严格度）。',
+      'DEFERRED_CAPABILITY_MISSING 拦截（换具备视觉能力的 provider，或通过 correction/successor ' +
+      '明确修改需求后从 spec 重验）。',
     );
   }
   return 0;

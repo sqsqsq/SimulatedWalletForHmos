@@ -39,6 +39,13 @@ fields:
       运行身份来源（诚实化回溯）：local_config=取自 framework.local.json SSOT；
       override=经 --override-adapter 显式切换并回写 local；user_explicit/entry_declared/registry=
       首启无 local 时由解析阶梯（用户显式 / 跳板入口声明 / registry 交互）产出的 requested。旧 manifest 可缺省。
+  allow_blind_visual:
+    type: boolean
+    enum: [true]
+    deprecated: true
+    description: >
+      Deprecated legacy field. Readers tolerate historical true values, but runtime
+      policy and manifest identity ignore it. New CLI/manifest writers never emit this field.
   chain_override:
     type: array
     items: string

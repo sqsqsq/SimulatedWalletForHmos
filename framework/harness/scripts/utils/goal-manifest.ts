@@ -13,6 +13,7 @@ import {
   type DependencyPolicy,
 } from './phase-transition-policy';
 import { isValidFidelityTarget } from './fidelity-shared';
+import type { ProviderRef } from './types';
 
 export interface GoalBudget {
   max_retries_per_phase?: number;
@@ -89,9 +90,9 @@ export interface GoalManifest {
   chain_override?: FeaturePhase[];
   /** Contract-local minimum assurance by phase; labels are never compared globally. */
   minimum_assurance?: Record<string, 'degraded' | 'full'>;
-  /** t6：预授权档位（--fidelity；只升不降，降档须 fidelity_receipt 校验通过） */
+  /** t6：显式档位（--fidelity；只升不降，降档属于 requirement correction） */
   fidelity?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
-  /** t6：降档 confirmation receipt 文件（项目根相对）；flag 本身不构成授权 */
+  /** @deprecated legacy compatibility only; readers ignore it and new CLI writers reject it. */
   fidelity_receipt?: string;
   /**
    * plan d7f3a9c4 t1/t2：显式模型钉——用户 `--adapter-model` 的权威输入，
@@ -100,6 +101,23 @@ export interface GoalManifest {
    * 无键不受影响——见 computeManifestIdentityFields）。
    */
   adapter_model_pin?: AdapterModelPin;
+  /**
+   * 视觉委托（plan ab072691 t1⑤）：只读视觉 provider 的**冻结身份**。
+   *
+   * 与 adapter_model_pin 平行但**独立**：那是 primary 执行身份，这是第二个「只看图」
+   * endpoint。条件入身份哈希（键在场即入，旧 manifest 无键不受影响）；resume 只认冻结值、
+   * 不重读 framework.local.json；successor 随 ...inherited 继承。
+   *
+   * **支持资格不在 manifest 层判**——资格唯一真源是 adapter.yaml.visual_provider 完整声明
+   * （adapter-catalog）。这里只做 shape 校验，刻意**不**复用 KNOWN_MODEL_PIN_ADAPTERS：
+   * 那是 primary 模型钉的已知集，拿来当 provider 资格判据就是第二个平行真源。
+   */
+  visual_provider_pin?: ProviderRef;
+  /**
+   * Legacy-only：旧 manifest 可能含该字段。读取/重写时保留字节语义，但运行策略和
+   * identity 均忽略；新 CLI/manifest writer 不再生成它。
+   */
+  allow_blind_visual?: true;
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
@@ -180,6 +198,11 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
   if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
     fields.adapter_model_pin = manifest.adapter_model_pin ?? null;
   }
+  // plan ab072691 t1⑤：visual_provider_pin 同款条件入集——键在场即在哈希，旧 manifest
+  // 无键不受影响（否则既有 run resume 会凭空多出字段而误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'visual_provider_pin')) {
+    fields.visual_provider_pin = manifest.visual_provider_pin ?? null;
+  }
   // plan c4e8a1f7 T2：requirement_source_files 同款条件入集——键在场即在哈希（fresh
   // 由 resolveRequirementInput 来源列表写入）；旧 manifest 无键不受影响（resume 不误判漂移）。
   if (Object.prototype.hasOwnProperty.call(manifest, 'requirement_source_files')) {
@@ -226,9 +249,8 @@ export function diffManifestIdentityFields(
 }
 
 /** override 旗标 → 其授权可变更的身份字段集（--override-manifest=整体替换，授权全部字段）。
- * 十三轮 review P0-1：fidelity/fidelity_receipt 字段授权**不在本函数**——由
- * evaluateFidelityTransitionAuthorization（goal-preflight）在枚举+降档 receipt 验真通过后
- * 精确给出（十二轮的 fidelityApplied 搭车授权会放行 resume 绕过降档凭证验证的路径）。 */
+ * fidelity 由 evaluateFidelityTransitionAuthorization（goal-preflight）按合法枚举和只升不降
+ * 精确给出；fidelity_receipt 已退役，不获得字段授权。 */
 export function overrideAuthorizedIdentityFields(argv: {
   'override-manifest'?: boolean;
   'override-start'?: boolean;
@@ -431,6 +453,47 @@ export function validateAdapterModelPinValue(adapter: unknown, value: unknown): 
   }
 }
 
+/**
+ * plan ab072691 t1⑤：visual_provider_pin shape 校验（**运行时**，不信任 TS 类型）。
+ * adapter/model 均须非空字符串、trim 后 ≤128、无控制字符。
+ * **刻意不校验 adapter ∈ 某个集合**：provider 支持资格的唯一真源是
+ * agents/<adapter>/adapter.yaml.visual_provider 完整声明（adapter-catalog 派生），
+ * manifest 层再放一份名单就是平行真源。资格不足的处置在 CLI/路由层按输入形态分流
+ * （显式 CLI fail-fast / 旧 local 无人值守 WARN+blind），不是「拒绝加载 manifest」。
+ */
+export function validateVisualProviderPinValue(adapter: unknown, model: unknown): void {
+  const check = (label: string, raw: unknown): string => {
+    if (typeof raw !== 'string' || !raw.trim()) {
+      throw new Error(`[goal-manifest] visual_provider_pin.${label} 必填且须为非空字符串`);
+    }
+    const v = raw.trim();
+    if (v.length > 128) throw new Error(`[goal-manifest] visual_provider_pin.${label} 长度须 ≤128`);
+    if (/[\u0000-\u001F\u007F]/.test(v)) {
+      throw new Error(`[goal-manifest] visual_provider_pin.${label} 不得含控制字符`);
+    }
+    return v;
+  };
+  check('adapter', adapter);
+  check('model', model);
+}
+
+function normalizeVisualProviderPin(raw: unknown): ProviderRef | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[goal-manifest] visual_provider_pin 必须为对象');
+  }
+  const r = raw as Record<string, unknown>;
+  validateVisualProviderPinValue(r.adapter, r.model);
+  return { adapter: String(r.adapter).trim(), model: String(r.model).trim() };
+}
+
+function validateLegacyBlindVisualField(input: Record<string, unknown>): void {
+  if (!Object.prototype.hasOwnProperty.call(input, 'allow_blind_visual')) return;
+  if (input.allow_blind_visual !== true) {
+    throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
+  }
+}
+
 function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'full'> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -563,6 +626,14 @@ export function buildGoalManifestFromInput(
   // plan d7f3a9c4 t1：---manifest 文件可携带 adapter_model_pin（fresh 由
   // resolveFinalModelPin 落键；此处仅保真解析 + shape 校验）
   const adapterModelPin = normalizeAdapterModelPin(input.adapter_model_pin);
+  // plan ab072691 t1⑤：--manifest 文件可携带 visual_provider_pin（fresh 由
+  // resolveFinalVisualProviderPin 落键；此处仅保真解析 + shape 校验）
+  const visualProviderPin = normalizeVisualProviderPin(
+    (input as Record<string, unknown>).visual_provider_pin,
+  );
+  // legacy input may be parsed for a clear shape error, but normalized/new manifests never re-emit
+  // the retired waiver. Existing run manifests remain readable through loadGoalManifestFromRun.
+  validateLegacyBlindVisualField(input);
 
   // plan c4e8a1f7 T2：requirement_source_files 保真解析（字符串数组；空数组/非数组
   // fail-closed——来源列表是 fresh 解析器产物，手写 manifest 混入形状错误不得静默吞）。
@@ -579,6 +650,7 @@ export function buildGoalManifestFromInput(
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
+    ...(visualProviderPin ? { visual_provider_pin: visualProviderPin } : {}),
     ...(requirementSourceFiles ? { requirement_source_files: requirementSourceFiles } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
@@ -662,6 +734,10 @@ export function inheritSuccessorManifest(
   const inherited = JSON.parse(JSON.stringify(source)) as GoalManifest;
   // adapter_model_pin 是出生持续的模型钉，successor 默认继承源 run pin（覆盖继承值须显式 --adapter-model 出生
   // 输入，由 resolveFinalModelPin 裁决）。故此处**不得剥离**，随 ...inherited 原样继承。
+  // plan ab072691 t1⑤：visual_provider_pin 同理随 ...inherited 继承（出生时显式
+  // --visual-adapter/--visual-model 可覆盖，由 resolveFinalVisualProviderPin 裁决）。
+  // legacy allow_blind_visual 没有运行语义；successor 不复制无效历史字段。
+  delete inherited.allow_blind_visual;
   // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
   // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
   const sourceRound = source.inherited_round_fingerprints ?? [];
@@ -927,6 +1003,16 @@ export function validateLoadedGoalManifest(
       manifest.adapter_model_pin.adapter,
       manifest.adapter_model_pin.value,
     );
+  }
+  // plan ab072691 t1⑤：同款加载期 shape 校验（停机篡改命中既有 manifest_identity_drift）。
+  if (manifest.visual_provider_pin !== undefined) {
+    validateVisualProviderPinValue(
+      manifest.visual_provider_pin.adapter,
+      manifest.visual_provider_pin.model,
+    );
+  }
+  if (manifest.allow_blind_visual !== undefined && manifest.allow_blind_visual !== true) {
+    throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
   }
 }
 

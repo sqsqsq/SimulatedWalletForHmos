@@ -25,7 +25,16 @@ import {
   CheckContext,
   CheckResult,
 } from './utils/types';
-import { fidelityRatchetFailOrWarn, isHardPixelContract, isPixel1to1, loadSpecMarkdown } from './utils/fidelity-shared';
+import {
+  fidelityRatchetFailOrWarn,
+  isHardPixelContract,
+  isPixel1to1,
+  loadCapabilitySnapshot,
+  loadSpecMarkdown,
+  resolveUiRelevanceForRun,
+} from './utils/fidelity-shared';
+import { projectAxisRequiredForRelease } from './utils/quality-axes';
+import { detectRepoLayout } from '../repo-layout';
 import {
   resolveFeatureArtifact,
   relFeatureArtifact,
@@ -65,14 +74,19 @@ import {
   dispatchDeviceTestBuild,
   dispatchDeviceTestInstall,
   dispatchDeviceTestEnsureReady,
+  probeDeviceRuntimeStepTelemetry,
   dispatchDeviceTestRun,
   dispatchDeviceTestEvidenceCompose,
 } from '../capability-registry';
 // d9e4b7c1 T2：evidence 落盘路径（与 goal-runner pre-delete/collector 共用同一 basename）
 import { deviceTestEvidencePath } from './utils/device-test-evidence-shared';
+import type { DeviceTestEvidenceDoc } from './utils/device-test-evidence-shared';
+import { validateRuntimeFidelityEvidenceDocument } from './utils/runtime-step-evidence';
 import {
   isDeviceVisualDiffSkipped,
   dispatchDeviceVisualDiff,
+  resolveVisualProviderReview,
+  dispatchVisualDiffDeterministicOnly,
   analyzeProjectDependencyIssueViaProfile,
 } from '../capability-registry';
 import type { DeviceTestBuildResult } from '../../profiles/hmos-app/harness/providers/device-test-build';
@@ -89,6 +103,7 @@ export function deviceTestGateCompileOk(reused: boolean, hv: HvigorRunResult): b
 }
 import type { DeviceTestInstallResult } from '../../profiles/hmos-app/harness/providers/device-test-install';
 import type { HylyreReadyResult, HylyreRunResult } from '../../profiles/hmos-app/harness/providers/device-test-run';
+import type { RuntimeStepTelemetryCapability } from '../../profiles/hmos-app/harness/providers/device-test-run';
 import {
   collectDeviceTestTimings,
   writeDeviceTestTimingJson,
@@ -150,6 +165,8 @@ import {
 import {
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
+  isP0DeviceInteractive,
+  loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
 import { parseHylyreTrace } from '../../profiles/hmos-app/harness/providers/device-test-run';
@@ -2308,6 +2325,71 @@ export function writeDeviceTestEvidenceIfEligible(
   }];
 }
 
+function checkP0RuntimeStepEvidenceGate(
+  ctx: CheckContext,
+  priorResults: CheckResult[],
+): CheckResult[] {
+  const id = 'p0_runtime_step_evidence';
+  const description = 'P0 device flow 运行时逐步忠实性证据';
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  if (!acceptance?.criteria.some(isP0DeviceInteractive)) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，runtime step evidence 不适用。' }];
+  }
+  const runGate = priorResults.find(result => result.id === 'device_test_run');
+  if (runGate?.failure_kind === 'capability_missing') {
+    return [{
+      id,
+      category: 'structure',
+      description,
+      severity: 'MINOR',
+      status: 'SKIP',
+      blocking_class: 'externalBlocked',
+      failure_kind: 'capability_missing',
+      details: 'provider runtime_step_telemetry capability 不可用；由 device_test_run 投影 DEFERRED_CAPABILITY_MISSING，未启动内容重试。',
+    }];
+  }
+  if (process.env.MAISON_GOAL_GATE_HARNESS !== '1') {
+    return [{
+      id,
+      category: 'structure',
+      description,
+      severity: 'MINOR',
+      status: 'SKIP',
+      details: '非 goal 正式 gate：逐步 trace 可采集，但不生成可用于 feature completion 的 run/attempt 绑定证据。',
+    }];
+  }
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  const evidencePath = deviceTestEvidencePath(reportsDir);
+  let doc: DeviceTestEvidenceDoc;
+  try {
+    doc = JSON.parse(fs.readFileSync(evidencePath, 'utf-8')) as DeviceTestEvidenceDoc;
+  } catch (error) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: `provider 已声明支持 runtime telemetry，但 device-test-evidence 缺失/不可解析：${(error as Error).message}`,
+      suggestion: '修复 telemetry/evidence 产出后重跑 testing；不得改投 capability-missing。',
+    }];
+  }
+  const issue = validateRuntimeFidelityEvidenceDocument({
+    projectRoot: ctx.projectRoot,
+    feature: ctx.feature,
+    doc,
+    expectedGoalRunId: process.env.MAISON_GOAL_RUN_ID?.trim() || null,
+    expectedAttemptId: process.env.MAISON_GOAL_ATTEMPT?.trim() || null,
+    requirePhaseManifestBinding: false,
+  });
+  return issue
+    ? [{
+        id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+        details: `provider 已声明支持，但 runtime evidence 无效：${issue}`,
+        suggestion: '重跑 testing 并修复缺事件、乱序、错 target、伪造或 stale 证据；该类问题是 testing FAIL。',
+      }]
+    : [{
+        id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
+        details: `P0 runtime fidelity 已通过逐步重算验证（provider=${doc.runtime_fidelity?.provider.id}@${doc.runtime_fidelity?.provider.version}，checkpoints=${doc.runtime_fidelity?.checkpoints.length ?? 0}）。`,
+      }];
+}
+
 function readBundleNameFromAppScope(projectRoot: string): string {
   const p = path.join(projectRoot, 'AppScope', 'app.json5');
   const raw = fs.readFileSync(p, 'utf-8');
@@ -2676,6 +2758,49 @@ function checkDeviceTestRunGate(
       ];
     }
 
+    // autonomous-recovery-without-human-gates t4: runtime telemetry is a
+    // provider/profile fact checked before the real content run is spawned.
+    // Unsupported/unavailable providers defer through the existing external
+    // capability path; a provider that declares support is held to the hard
+    // post-run evidence contract below (missing/invalid evidence is not defer).
+    const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+    const runtimeTelemetryRequired = Boolean(
+      acceptanceFlows?.criteria.some(isP0DeviceInteractive),
+    );
+    if (runtimeTelemetryRequired) {
+      let runtimeCapability: RuntimeStepTelemetryCapability;
+      try {
+        runtimeCapability = probeDeviceRuntimeStepTelemetry(ctx, {
+          hylyreVersion: ready.hylyreVersion,
+          manifestVersion: ready.manifestVersion,
+        }) as RuntimeStepTelemetryCapability;
+      } catch (error) {
+        runtimeCapability = {
+          supported: false,
+          providerId: 'hylyre',
+          providerVersion: ready.hylyreVersion,
+          protocolVersion: '1.0',
+          collectorVersion: '1.0',
+          reason: `runtime telemetry handshake 失败：${(error as Error).message}`,
+        };
+      }
+      if (!runtimeCapability.supported) {
+        return [{
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          blocking_class: 'externalBlocked',
+          failure_kind: 'capability_missing',
+          details:
+            '【DEFERRED_CAPABILITY_MISSING】当前 device_test.run provider/profile 不支持 P0 runtime_step_telemetry；' +
+            `未启动真机内容执行。${runtimeCapability.reason}`,
+          suggestion: '换用支持 runtime step telemetry 的 provider/version 后重跑 testing。',
+        }];
+      }
+    }
+
     const bundleName = readBundleNameFromAppScope(ctx.projectRoot);
     // run-directory-freshness（plan 420a5005）：每次执行新建 `<timestamp>/hylyre/` 目录并
     // 原样复制选中的派生计划（含 derive-manifest.json）；本轮 report/trace/failures 全写
@@ -2723,6 +2848,7 @@ function checkDeviceTestRunGate(
       skipAssertExpected: true,
       coldRestart,
       appSnapshotCacheAbs,
+      runtimeStepTelemetry: runtimeTelemetryRequired,
     }) as HylyreRunResult;
 
     if (!run.ok) {
@@ -2973,8 +3099,8 @@ export function runDeviceVisualDiffCapture(
   const navTargetIds = [...new Set([...p0TargetIds, ...goldenNavTargetIds])];
   const navValidation = navConfigV2
     ? validateNavConfigV2(navConfigV2, navTargetIds, {
-        // plan f6b2d9a4 P0-1：真人确认要求=裁决类——只在 hard contract 生效
-        //（best_effort 记债不阻塞；执行类采集仍看 pixel target）。
+        // plan f6b2d9a4 P0-1：hard contract 要求已冻结的 identity 机器锚点；
+        // best_effort 保留 advisory，执行类采集仍看 pixel target。
         requireConfirmedIdentity: isHardPixelContract(ctx),
       })
     : null;
@@ -3337,6 +3463,106 @@ function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
 // Main Checker
 // --------------------------------------------------------------------------
 
+/**
+ * plan ab072691 t5①：delegated 轮次的 provider 评审调度。
+ *
+ * 返回 null = **本机制整体不激活**（native/blind、profile 未提供实现、或无目标屏）——
+ * 调用方照常走既有严格 dispatch，行为逐字等于本改动前。
+ * 返回 `unusable` = provider 不可用/载荷无效 → 调用方按 release requirement 与失败种类投影。
+ *
+ * vision_mode 只从**冻结快照**读：它由 preflight 派生一次、run 内不可变；gate 进程不得
+ * 自行重探、更不得因 provider 调用结果反向改写它。
+ */
+async function runDelegatedVisualProviderReview(
+  ctx: CheckContext,
+): Promise<
+  { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string } |
+  { kind: 'other' } |
+  null
+> {
+  try {
+    const snap = loadCapabilitySnapshot(ctx.projectRoot, ctx.feature);
+    if (snap?.vision_mode !== 'delegated') return null;
+    const fn = resolveVisualProviderReview(ctx);
+    if (!fn) {
+      // profile 没有实现只读评审：本轮等于没有可用 provider；只有既有 release
+      // policy 明确不要求的视觉项可 advisory，其余沿 external capability carrier defer。
+      return {
+        kind: 'unusable',
+        outcome: 'unavailable',
+        reason: `project_profile=${ctx.resolvedProfile.name} 未提供只读视觉 provider 评审实现`,
+      };
+    }
+    const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    const outcome = (await fn(ctx, { frameworkRoot })) as
+      | { kind: 'skipped'; reason: string }
+      | { kind: 'applied' }
+      | { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string };
+    if (outcome?.kind === 'unusable') {
+      return { kind: 'unusable', outcome: outcome.outcome, reason: outcome.reason };
+    }
+    return { kind: 'other' };
+  } catch (e) {
+    // 接线异常表示本轮 provider 不可用；由统一投影区分 advisory 与 release-required。
+    return {
+      kind: 'unusable',
+      outcome: 'unavailable',
+      reason: `provider 评审接线异常：${(e as Error).message}`,
+    };
+  }
+}
+
+export function projectDelegatedVisualProviderFailure(
+  ctx: CheckContext,
+  outcome: 'unavailable' | 'invalid',
+  reason: string,
+  description: string,
+): CheckResult {
+  const base: CheckResult = {
+    id: 'visual_diff',
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'SKIP',
+    structured: { kind: 'visual_provider_round', outcome, reason },
+    details: '',
+  };
+
+  if (outcome === 'invalid') {
+    return {
+      ...base,
+      status: 'FAIL',
+      failure_kind: 'visual_provider_invalid_evidence',
+      details:
+        `【delegated 视觉委托】provider 已执行但本轮证据不可采信（invalid）：${reason}\n` +
+        '该结果属于 evidence 产出失败，保持 testing FAIL 并走既有 retry/fuse；不得伪装成能力缺失或沿用旧 PASS。',
+      suggestion: '修复 provider 输出、身份/hash/freshness 或工作区完整性后重跑 testing。',
+    };
+  }
+
+  const visualApplicable = resolveUiRelevanceForRun(ctx.projectRoot, ctx.feature, null);
+  const releaseRequired = projectAxisRequiredForRelease('visual', visualApplicable);
+  if (isHardPixelContract(ctx) || releaseRequired) {
+    return {
+      ...base,
+      status: 'FAIL',
+      blocking_class: 'externalBlocked',
+      failure_kind: 'capability_missing',
+      details:
+        `【DEFERRED_CAPABILITY_MISSING】发布必需的视觉轴所需 provider 本轮不可用：${reason}\n` +
+        '复用既有 external/capability-missing 投影，当前内容不重试，也不请求人工签字。',
+      suggestion: '恢复当前冻结 provider/profile 的视觉能力后 resume；无需修改产品内容。',
+    };
+  }
+
+  return {
+    ...base,
+    details:
+      `【delegated 视觉委托】非发布必需的 provider 本轮不可用：${reason}\n` +
+      'provider-dependent 视觉证据保持 SKIP/UNVERIFIED advisory；确定性视觉红线仍继续执行。',
+  };
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     return fn();
@@ -3544,7 +3770,34 @@ const checker: PhaseChecker = {
       if (!ctx.visualFuseEligibility) {
         ctx.visualFuseEligibility = CAPTURE_NOT_RUN_ELIGIBILITY;
       }
-      results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+      // ------------------------------------------------------------------
+      // plan ab072691 t5①⑤：只读视觉 provider 评审 —— capture 之后、严格 dispatch 之前。
+      //
+      // 异步显式化：safeRun 是同步包装器（`fn: () => CheckResult[]`），塞不进 Promise，
+      // 所以这里**显式 await**（本 check 入口本就是 async），不把异步藏进同步壳。
+      //
+      // provider-dependent 严格 dispatch 在 unusable 时不执行，避免 pending 屏制造第二条
+      // 重复失败；统一投影只分三类：phase+release 均不要求时 unavailable=SKIP，strict
+      // 或 release-required unavailable=capability defer，invalid=testing FAIL/retry。
+      // 确定性红线仍在下面照跑。
+      const providerReview = await runDelegatedVisualProviderReview(ctx);
+      if (providerReview?.kind === 'unusable') {
+        results.push(projectDelegatedVisualProviderFailure(
+          ctx,
+          providerReview.outcome,
+          providerReview.reason,
+          ruleDesc(ctx, 'structure_checks', 'visual_diff'),
+        ));
+        // unusable 只抑制**依赖 provider 判定**的 pending/candidate 分支；与 provider
+        // 无关的确定性红线（改判脚本物证 / json 结构损坏）照跑——复用既有 check id，
+        // 不新增 id/状态/质量轴。
+        results.push(...safeRun(
+          () => dispatchVisualDiffDeterministicOnly(ctx),
+          'visual_diff_deterministic',
+        ));
+      } else {
+        results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+      }
     }
 
     // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
@@ -3578,6 +3831,8 @@ const checker: PhaseChecker = {
         return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
       }, 'p0_semantic_gates'),
     );
+
+    results.push(...checkP0RuntimeStepEvidenceGate(ctx, results));
 
     results.push(buildTestingRunStatusResult(plan, report, results));
 

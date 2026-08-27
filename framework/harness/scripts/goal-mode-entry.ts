@@ -28,6 +28,10 @@ import {
   type GoalManifest,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
+import { loadLocalConfig } from './utils/framework-local-config';
+import {
+  resolveUnattendedVisualProviderPin,
+} from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import type { ReconcileObservationV1 } from './utils/assess';
@@ -139,7 +143,7 @@ export async function runGoalModeInSession(
       status_line: '会话账本已记录终止预算',
     };
     return fusedResult(options, synthetic,
-      state.fuse_reason ?? (activeElapsedNow() >= wallClockMs ? '会话内 wall-clock 预算已耗尽' : '达到会话内执行预算 ' + maxTurns + ' 轮，等待人工复核'));
+      state.fuse_reason ?? (activeElapsedNow() >= wallClockMs ? '会话内 wall-clock 预算已耗尽' : '达到会话内执行预算 ' + maxTurns + ' 轮；本 run 终止，可由 successor run 继续'));
   }
 
   for (let round = state.total_rounds + 1; round <= maxTurns; round += 1) {
@@ -199,7 +203,7 @@ export async function runGoalModeInSession(
   }
 
   if (!last) throw new Error('[goal-mode-entry] no reconciliation round executed');
-  state.fuse_reason = '达到会话内执行预算 ' + maxTurns + ' 轮，等待人工复核';
+  state.fuse_reason = '达到会话内执行预算 ' + maxTurns + ' 轮；本 run 终止，可由 successor run 继续';
   writeInSessionLoopStateFenced(options.runDir, options.token, state);
   return fusedResult(options, last, state.fuse_reason);
 }
@@ -245,6 +249,25 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 30 },
+      // plan ab072691 t1③(b)：attended goal 在**创建 manifest 前**冻结只读视觉 provider。
+      // 询问/重选发生在宿主会话里（registry setup.visual_provider → init-orchestrate
+      // record-visual-provider 机器写盘）；这里只读 local 的既成结果并冻结进 manifest。
+      // local 缺失或旧配置失去资格时不伪造 provider；严格需求与能力不足的冲突由
+      // fidelity/capability 门禁裁决，optional 视觉轴保持 advisory。
+      ...(() => {
+        let local: ReturnType<typeof loadLocalConfig> = null;
+        try {
+          local = loadLocalConfig(options.projectRoot);
+        } catch (error) {
+          console.warn(
+            `[visual-provider] WARN: 读取个人级视觉 provider 配置失败，按无 provider 处理：` +
+              `${(error as Error).message}。严格视觉需求将由 capability 门禁诚实 defer。`,
+          );
+        }
+        const resolved = resolveUnattendedVisualProviderPin(local, options.frameworkRoot);
+        if (resolved.warning) console.warn(resolved.warning);
+        return resolved.pin ? { visual_provider_pin: resolved.pin } : {};
+      })(),
     },
     { projectRoot: options.projectRoot },
   );
@@ -410,6 +433,7 @@ async function main(): Promise<void> {
   const adapter = String(argv.adapter ?? '').trim();
   const runMode = String(argv['run-mode'] ?? '').trim();
   assertAttendedRunMode(runMode || undefined);
+  const prepareRun = Boolean(argv['prepare-run']);
   const adapterSourceRaw = String(argv['adapter-source'] ?? '').trim();
   const adapterSources = new Set<string>(RUN_ADAPTER_PROVENANCES);
   if (adapterSourceRaw && !adapterSources.has(adapterSourceRaw)) {
@@ -417,7 +441,7 @@ async function main(): Promise<void> {
   }
   const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
   const frameworkRoot = path.resolve(String(argv['framework-root'] ?? path.resolve(__dirname, '..')));
-  if (Boolean(argv['prepare-run'])) {
+  if (prepareRun) {
     const prepared = prepareGoalModeRun({
       projectRoot,
       frameworkRoot,
