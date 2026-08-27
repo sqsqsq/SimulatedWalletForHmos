@@ -60,6 +60,11 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
 
 ## 2. 起跑前固定顺序
 
+**要缩短本轮终点，改 Case 的 `end_phase` **并同步改 prompt**，不要只加 `--end-phase`**：
+后者只约束协调器的阶段范围判断，改不了发给被测模型的那段话；两边说不一样时模型按 prompt 走。
+实测一次——协调器记着「到 spec 为止」，prompt 里写着「继续完成 plan、coding、review」，
+模型照 prompt 一路进了 plan，白跑一段还得人工停。改完把原 prompt 段落注释在文件里，注明放开时怎么接回去。
+
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir`
    且该目录已物化 UI kit 组件——没有的话，任何跑到 coding 的 Case 都会被 UI kit 门禁拦死在
    「目标目录无法解析」上，与被测能力无关；主工程 `framework/harness/state/` 下没有属于
