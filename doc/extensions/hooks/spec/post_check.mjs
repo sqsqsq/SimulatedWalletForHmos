@@ -867,7 +867,7 @@ export default guard('spec', async (ctx) => {
 
   // ---- 逐行裁决落盘 ----
   // 闭环第三步（主 agent 重跑 harness 回填凭证）时 verifier 报告已在，本判据那时才真正生效。
-  const adj = adjudicationLanding(ctx);
+  const adj = adjudicationLanding(ctx, specPath);
   problems.push(...adj.problems);
 
   return gate(ctx, {
@@ -883,9 +883,9 @@ export default guard('spec', async (ctx) => {
 });
 
 /** 逐行裁决核对：知识派生失败时不静默通过——那会让本判据恒真。 */
-function adjudicationLanding(ctx) {
+function adjudicationLanding(ctx, specPath) {
   try {
-    return adjudicationProblems(ctx, activeKnowledge(ctx.projectRoot));
+    return adjudicationProblems(ctx, activeKnowledge(ctx.projectRoot), [specPath]);
   } catch (e) {
     return { status: STATUS.FAIL, problems: [`逐行裁决无从核对：${e.message}`], detail: e.message };
   }

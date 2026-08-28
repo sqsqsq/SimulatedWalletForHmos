@@ -69,9 +69,9 @@ function specExitIds(projectRoot, feature) {
 }
 
 /** 逐行裁决核对：知识派生失败不静默通过——那会让本判据恒真。 */
-function adjudicationLanding(ctx, knowledge) {
+function adjudicationLanding(ctx, knowledge, targetPaths) {
   try {
-    return adjudicationProblems(ctx, knowledge);
+    return adjudicationProblems(ctx, knowledge, targetPaths);
   } catch (e) {
     return { status: STATUS.FAIL, problems: [`逐行裁决无从核对：${e.message}`], detail: e.message };
   }
@@ -200,7 +200,7 @@ export default guard('plan', async (ctx) => {
   }
 
   // ---- 7. 逐行裁决落盘 ----
-  const adj = adjudicationLanding(ctx, knowledge);
+  const adj = adjudicationLanding(ctx, knowledge, [planPath, contractsPath(ctx.projectRoot, ctx.feature)]);
   problems.push(...adj.problems);
 
   return gate(ctx, {

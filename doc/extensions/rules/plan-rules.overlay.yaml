@@ -6,7 +6,7 @@
 phase: plan
 version: "1.1"
 semantic_checks:
-  knowledge_freeze_substance:
+  knowledge_obligation_substance:
     description: >
       冻结的每条义务与每个采用的模式都必须是**本需求的设计**，不是规约原文的转述。
       本阶段注入的必答清单逐行列出了全部冻结义务与模式角色投影，**每一行都要裁决**。

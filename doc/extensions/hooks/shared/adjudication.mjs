@@ -18,7 +18,8 @@
  */
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from './paths.mjs';
-import { readContracts, readFreeze } from './freeze.mjs';
+import { readContracts } from './freeze.mjs';
+import { obligationsFromContracts, patternRolesFromContracts } from './obligations.mjs';
 
 /** 登记源：归档件的判定登记件，spec 阶段一切知识判定的唯一出处。 */
 function registryPath(projectRoot, feature) {
@@ -155,29 +156,29 @@ function specSet(projectRoot, feature, knowledge) {
   return { rows, error: null };
 }
 
-/** 下游各阶段的行来自冻结块——它是 plan 之后唯一的知识入口。 */
+/** 下游各阶段的行来自契约实体上的 `must`——它是 plan 之后唯一的知识入口。 */
 function freezeSet(projectRoot, feature) {
   const { contracts, error, exists } = readContracts(projectRoot, feature);
   if (error) return { rows: [], error };
   if (!exists) return { rows: [], error: '读不到 plan/contracts.yaml' };
-  const { obligations, patterns } = readFreeze(contracts);
 
   const rows = [];
-  for (const ob of obligations) {
+  for (const ob of obligationsFromContracts(contracts)) {
     rows.push({
-      source: '冻结义务',
-      key: String(ob?.rule ?? '').trim(),
-      text: String(ob?.obligation ?? '').trim(),
+      source: '实体义务',
+      key: String(ob.rule ?? '').trim(),
+      text: `${ob.entityPath}｜${ob.text}`,
       hit: true,
     });
   }
-  for (const p of patterns) {
-    if (p?.selected !== true) continue;
-    const roles = p.roles && typeof p.roles === 'object' ? p.roles : {};
+  for (const pattern of new Set(patternRolesFromContracts(contracts).map(r => r.pattern).filter(Boolean))) {
+    const roles = patternRolesFromContracts(contracts)
+      .filter(r => r.pattern === pattern)
+      .map(r => `${r.role}=${r.path}`);
     rows.push({
-      source: '模式冻结',
-      key: String(p.pattern_id ?? '').trim(),
-      text: `实例 ${p.instance ?? '—'}｜角色 ${Object.entries(roles).map(([k, v]) => `${k}=${v}`).join('、') || '—'}`,
+      source: '模式投影',
+      key: pattern,
+      text: `角色 ${roles.join('、') || '—'}`,
       hit: true,
     });
   }

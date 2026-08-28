@@ -1,8 +1,8 @@
 # 实例扩展 review 阶段规则 overlay（知识账本消费）
 # 经 manifest provides.phase_rules_overlays.review 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
 #
-# 本文件只问「冻结账本里的义务，复核到位了没有」——不复述域名、编号与维度。
-# 本阶段读的是 plan 的冻结结果，不是知识目录：规约内容改了，这里一个字都不用动。
+# 本文件只问「契约实体上的义务，复核到位了没有」——不复述域名、编号与维度。
+# 本阶段读的是 plan 挂在实体上的 must，不是知识目录：规约内容改了，这里一个字都不用动。
 phase: review
 version: "1.1"
 semantic_checks:
@@ -15,8 +15,8 @@ semantic_checks:
       逐条给结论。
     severity: MAJOR
     ai_prompt_hint: >
-      读 knowledge_freeze 的 review_focus 与审查报告的复核表，对照本次 diff。
+      读契约各实体上的 must 与审查报告的复核表，对照本次 diff。
       结论指不到具体位置的、依据换个需求也照样成立的，判 FAIL——
       上游声明过而本次变更里找不到落点的，正是本阶段该抓的。
       **每条裁决附引文**：从审查报告或 diff 里抄一段连续 12 字以上的原文。
-      引文为空、或只是把 review_focus 复制一遍的，该条按**未裁**处理。
+      引文为空、或只是把 must.text 复制一遍的，该条按**未裁**处理。

@@ -1,17 +1,12 @@
 /**
- * plan 冻结结果 —— 下游唯一的知识入口。
+ * 契约访问器 —— 读 contracts / acceptance，解析实体引用。
  *
- * coding / review / ut / testing 读的是这里，不是知识目录：冻结缺失就零注入
- * （不是「回退到全量」，是**什么都收不到**），下游据此阻断并回 plan。
- *
+ * 义务本身不在这里：它挂在契约实体上，由 `obligations.mjs` 运行期派生。
  * 本模块只负责**读取与解析**，判据在各阶段的 post_check。
  */
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml-lite.mjs';
-
-/** 冻结块在 contracts.yaml 里的键。 */
-export const FREEZE_KEY = 'knowledge_freeze';
 
 /**
  * 实体引用语法：`<集合>.<实体>[.<成员>]`。
@@ -47,23 +42,6 @@ export function readContracts(projectRoot, feature) {
   }
 }
 
-/**
- * 取冻结块。
- * @returns {{freeze: object|null, obligations: object[], patterns: object[]}}
- */
-export function readFreeze(contracts) {
-  const freeze = contracts?.[FREEZE_KEY];
-  if (!freeze || typeof freeze !== 'object') {
-    return { freeze: null, obligations: [], patterns: [] };
-  }
-  const obligations = Array.isArray(freeze.obligations)
-    ? freeze.obligations.filter(o => o && typeof o === 'object')
-    : [];
-  const patterns = Array.isArray(freeze.patterns)
-    ? freeze.patterns.filter(p => p && typeof p === 'object')
-    : [];
-  return { freeze, obligations, patterns };
-}
 
 function asArray(v) {
   if (Array.isArray(v)) return v;
