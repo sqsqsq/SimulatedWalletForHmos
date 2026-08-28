@@ -150,7 +150,12 @@ const problems = [];
     if (lost.length > 0) missing.push(`${label}缺 ${lost.join('、')}`);
   };
 
-  check('编号', specText.match(/\b(?:S\d+|F\d+|E\d+|AC-[\w]*\d+|BD-\d+|NFR-\d+)\b/g) ?? []);
+  // **编号守恒不在这里判**：`story-build check` 按章节合同的 `id_shapes` 判——
+  // `keep` 的验收编号要在验收章逐条出现，`drop` 的仓内工作编号出现即 FAIL。
+  // 在这里再判一遍会变成「两处各判各的」：合同改了形态，这里还按写死的正则拦。
+  //
+  // **技术契约首列守恒也不在这里判**：`story-build check` 的整篇 token 守恒已经覆盖它，
+  // 而且覆盖得更全——首列只有接口名与键名，token 取的是全部单元格。
 
   // 术语映射表混着两类词：**需求实体**（它们是业务对象的名字，story 就该出现）
   // 与**工程消歧用词**（主题色、Toast、脱敏这类——spec 拿它们把自然语言映到权威模块，
@@ -174,19 +179,6 @@ const problems = [];
       .filter(c => layerIdx < 0 || !baseLayers.length || !isBaseLayer(c[layerIdx] ?? ''))
       .map(c => c[0].replace(/\*\*|`/g, '').trim())
   );
-
-  // 技术契约五节各表首列：接口名 / 存储键 / 配置项 / 事件 / 依赖
-  const contract = extractSection(specText, /技术契约/);
-  const lines = (contract?.body ?? '').split(/\r?\n/);
-  const keys = [];
-  for (let i = 0; i < lines.length; i++) {
-    const cells = tableCells(lines[i]);
-    if (!cells || cells.length < 2) continue;
-    if (/^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] ?? '')) continue; // 表头行
-    const key = cells[0].replace(/\*\*|`/g, '').replace(/[（(][^（()）]*[）)]\s*$/, '').trim();
-    if (key && !/^(—|-|不涉及)$/.test(key)) keys.push(key);
-  }
-  check('技术契约标识', keys);
 
   for (const m of missing) {
     problems.push(
