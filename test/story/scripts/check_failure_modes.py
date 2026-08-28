@@ -1515,6 +1515,155 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, "当前包对未适配目标树判得出差异：" + out.splitlines()[0][:160])
 
 
+# --------------------------------------------------------------------------- #
+# 批次 3 子批 A：作者面通道
+# --------------------------------------------------------------------------- #
+
+#: `author.md` 的行数上限——它是索引不是教材，长过这个数说明判据推理又搬回来了。
+AUTHOR_DOC_MAX_LINES = 60
+
+#: 判据推理搬回 author.md 的形态——**整段**展开「怎么判」，而不是一句「门禁会拦什么」。
+#: 只认带标题的推理块。一句「判据是 X 不是 Y」是简洁的门禁说明，属于须知该有的内容，
+#: 拿它当推理段会把正确的写法也判掉（实测 ut/author.md 就撞在这上面）。
+REASONING_MARKERS = ("三个自问", "写每一行前", "自问：")
+
+#: author.md 的四段结构：读哪些文件 / 产出形态 / 跑哪条命令 / 门禁拦什么。
+#: 段落数明显超出，说明教材内容又搬回来了——这比关键词更能代表「不再是索引」。
+AUTHOR_DOC_MAX_SECTIONS = 6
+
+
+@checker
+def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
+    """给阶段作者的要求写在了只有 verifier 读得到的地方。
+
+    8 个 hook 事件全部在 harness 同一进程、verifier 子 agent 之前跑完，片段唯一去处是
+    ``ai-prompt.md`` 尾部——``hooks/<phase>/*.md`` 里写什么，**写产物的那个主 agent 都看不到**。
+    基线态六份 ``on_context_load.md`` 400 行通篇是作者向文本（「spec 是什么」「三个自问」
+    「不写文档坐标」），于是作者只能靠门禁报错反推要求，内网实测 plan「仅展示」、coding「完全失效」。
+
+    本条守两件事：``hooks/**/*.md`` 只剩 ``author.md``；每份是**索引**不是教材
+    （≤60 行、不整段展开判据推理）。判定基准派生自 ``hooks/`` 的阶段目录，不写死阶段名。
+    """
+    hooks_dir = root / "hooks"
+    if not hooks_dir.exists():
+        return Outcome(True, "无 hooks 目录")
+    phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir() and p.name != "shared")
+    if not phases:
+        return Outcome(False, "判定基准派生为空（hooks/ 下没有阶段目录），不当作通过")
+
+    hits: list[str] = []
+    for md in sorted(hooks_dir.rglob("*.md")):
+        rel = md.relative_to(root).as_posix()
+        if md.name != "author.md":
+            hits.append(f"{rel} 是给作者的文本却放在 hooks 里——它只进 ai-prompt，作者读不到")
+            continue
+        lines = split_lines(read_text(md))
+        if len(lines) > AUTHOR_DOC_MAX_LINES:
+            hits.append(f"{rel} {len(lines)} 行，超过 {AUTHOR_DOC_MAX_LINES}——author.md 只做索引，不做教材")
+        body = read_text(md)
+        for marker in REASONING_MARKERS:
+            if marker in body:
+                hits.append(f"{rel} 含判据推理段「{marker}」——那属于模板注释或 overlay，不属于须知")
+        sections = [ln for ln in lines if ln.startswith("## ")]
+        if len(sections) > AUTHOR_DOC_MAX_SECTIONS:
+            hits.append(f"{rel} 有 {len(sections)} 个二级段落，超过 {AUTHOR_DOC_MAX_SECTIONS}"
+                        "——须知是四段索引（读什么 / 写成什么 / 跑什么 / 拦什么），不是教材")
+    if hits:
+        return Outcome(False, "；".join(hits[:6]))
+    covered = [p for p in phases if (hooks_dir / p / "author.md").exists()]
+    if not covered:
+        return Outcome(False, f"{len(phases)} 个阶段一个 author.md 都没有——作者面通道不存在")
+    return Outcome(True, f"{len(covered)}/{len(phases)} 个阶段有 author.md，均 ≤{AUTHOR_DOC_MAX_LINES} 行且无判据推理段")
+
+
+@checker
+def a04_gate_pass_leaves_no_trace(root: Path, ctx: Ctx) -> Outcome:
+    """门禁通过时不留痕——「跑了并通过」与「根本没跑」事后同形。
+
+    框架的 dispatcher 只在 hook 返回 ``ok:false`` 时把结果记进报告，通过的那次什么都不留。
+    基线态六个 ``post_check.mjs`` 里只有两个写留痕，AR90004 的 ``coding/reports/`` 里
+    没有 ``ext-post-check.json``——要证明某条判据在真实链路上生效过，举不出任何证据。
+
+    判据：每个阶段的 ``post_check.mjs`` 都能追溯到留痕（直接 import ``evidence.mjs``，
+    或经统一出口间接调用）。阶段清单派生自 ``hooks/`` 子目录。
+    """
+    hooks_dir = root / "hooks"
+    if not hooks_dir.exists():
+        return Outcome(True, "无 hooks 目录")
+    phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir() and p.name != "shared")
+    if not phases:
+        return Outcome(False, "判定基准派生为空（hooks/ 下没有阶段目录），不当作通过")
+
+    # 间接留痕：shared/ 下哪些模块自己写了留痕，import 它们就等于留了痕。
+    tracing: set[str] = set()
+    shared = hooks_dir / "shared"
+    if shared.exists():
+        for mod in sorted(shared.glob("*.mjs")):
+            if "writePostCheckEvidence" in read_text(mod):
+                tracing.add(mod.name)
+
+    missing: list[str] = []
+    for phase in phases:
+        pc = hooks_dir / phase / "post_check.mjs"
+        if not pc.exists():
+            continue
+        body = read_text(pc)
+        if "writePostCheckEvidence" in body:
+            continue
+        if any(re.search(rf"from ['\"][^'\"]*{re.escape(name)}['\"]", body) for name in tracing):
+            continue
+        missing.append(f"hooks/{phase}/post_check.mjs 通过时不留痕")
+    if missing:
+        return Outcome(False, "；".join(missing))
+    return Outcome(True, f"{len(phases)} 个阶段的 post_check 均留痕（含经 {sorted(tracing)} 间接留痕）")
+
+
+@checker
+def a05_entry_file_misses_extension_section(root: Path, ctx: Ctx) -> Outcome:
+    """扩展交付了入口段，宿主入口文件却没带上它。
+
+    主 agent 会话开始时自动进入上下文的只有入口文件（claude 读 CLAUDE.md，
+    codex 只读 AGENTS.md、不加载任何 rules 目录）。扩展把「动笔前先读 author.md」
+    这句话交付成 ``AGENTS.section.md`` 之后，若没写进两份入口文件，作者面通道就是断的
+    ——文件在仓里躺着，没有任何机制会把它送到作者眼前。
+
+    包没有 ``AGENTS.section.md`` 时本条不适用（未启用该形态）。
+    """
+    section = root / "AGENTS.section.md"
+    if not section.exists():
+        return Outcome(True, "包未交付 AGENTS.section.md（该形态未启用）")
+    body = _norm(read_text(section))
+    if not body:
+        return Outcome(False, "AGENTS.section.md 是空的——交付了一个空通道")
+
+    # 入口文件在宿主工程根：从扩展目录向上找，最多三级。
+    host = None
+    probe = root
+    for _ in range(4):
+        if (probe / "CLAUDE.md").exists() or (probe / "AGENTS.md").exists():
+            host = probe
+            break
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    if host is None:
+        return Outcome(False, "找不到宿主入口文件（CLAUDE.md / AGENTS.md）——无从证明这段送达了")
+
+    missing: list[str] = []
+    seen: list[str] = []
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        entry = host / name
+        if not entry.exists():
+            if name == "AGENTS.md":
+                missing.append(f"{name} 不存在")
+            continue
+        seen.append(name)
+        if body not in _norm(read_text(entry)):
+            missing.append(f"{name} 的「实例扩展」节没有 AGENTS.section.md 全文")
+    if missing:
+        return Outcome(False, "；".join(missing) + "——写入后须重渲染 / 重写入口文件")
+    return Outcome(True, f"{seen} 均含 AGENTS.section.md 全文")
+
 VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
 
 

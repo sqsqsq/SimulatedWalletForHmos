@@ -553,6 +553,61 @@ modes:
       不认机制细节；这条一旦破，那个排序就不成立了。
       判定基准（阶段名、知识文件名、条目编号）全部运行期派生，派生为空响亮报错。
 
+  - id: A03-author-channel-broken
+    dimension: infra
+    found_round: "2026-08-28"
+    form: 给阶段作者的要求写在 hooks 的 .md 里——那些片段只进 ai-prompt、只给 verifier，写产物的主 agent 从头到尾读不到
+    clause: E1 / 00 §1.4
+    checker: a03_author_channel_broken
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/A03-author-channel-broken/bad
+    good_fixture: test/story/fixtures/failure-modes/A03-author-channel-broken/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      8 个 hook 事件全在 harness 同一进程、verifier 之前跑完，片段唯一去处是 ai-prompt 尾部
+      （harness-runner.ts:765-768 + report-generator.ts:311-318）。基线态六份 on_context_load.md
+      400 行通篇作者向文本，内网实测 plan「仅展示」、coding「完全失效」。
+      本条守两件事：hooks/**/*.md 只剩 author.md；每份是索引不是教材（≤60 行、不整段展开判据推理）。
+      阶段清单派生自 hooks/ 子目录，不写死阶段名（G7）。
+
+  - id: A04-gate-pass-no-trace
+    dimension: infra
+    found_round: "2026-08-28"
+    form: post_check 通过时不留痕，「跑了并通过」与「根本没跑」在产物上完全同形
+    clause: 04 #2 / 00 §4.3
+    checker: a04_gate_pass_leaves_no_trace
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/A04-gate-pass-no-trace/bad
+    good_fixture: test/story/fixtures/failure-modes/A04-gate-pass-no-trace/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      dispatcher 只在 hook 返回 ok:false 时记结果（hooks-dispatcher.ts:177-188）。
+      基线态六个 post_check 只有两个写留痕，AR90004 的 coding/reports 里没有 ext-post-check.json
+      ——要证明某条判据在真实链路上生效过，举不出任何证据。
+      认间接留痕：post_check 若 import 了自己会写留痕的 shared 模块，同样算数（避免六处复制样板）。
+
+  - id: A05-entry-misses-section
+    dimension: infra
+    found_round: "2026-08-28"
+    form: 扩展交付了入口段（AGENTS.section.md），宿主的 CLAUDE.md / AGENTS.md 却没带上它——文件在仓里躺着，没有任何机制把它送到作者眼前
+    checker: a05_entry_file_misses_extension_section
+    clause: E1 / KA-8
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/A05-entry-misses-section/bad/doc/extensions
+    good_fixture: test/story/fixtures/failure-modes/A05-entry-misses-section/good/doc/extensions
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      主 agent 会话开始时自动进上下文的只有入口文件：claude 读 CLAUDE.md，
+      codex 只读 AGENTS(.override).md、不加载任何 rules 目录。这是作者面通道的最后一跳，
+      断在这里前面所有工作都送不到。包没有 AGENTS.section.md 时本条不适用（该形态未启用）。
+      与 adapt --check ⑤ 同口径：那条管目标工程，本条管本仓。
+
   - id: A02-adapt-check-blind
     dimension: infra
     found_round: "2026-08-28"
