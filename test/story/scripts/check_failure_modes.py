@@ -1557,7 +1557,10 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
         if md.name != "author.md":
             hits.append(f"{rel} 是给作者的文本却放在 hooks 里——它只进 ai-prompt，作者读不到")
             continue
+        # 末尾换行是文件的正常形态，不是内容行——算进去会让每份都多 1 行。
         lines = split_lines(read_text(md))
+        while lines and not lines[-1].strip():
+            lines.pop()
         if len(lines) > AUTHOR_DOC_MAX_LINES:
             hits.append(f"{rel} {len(lines)} 行，超过 {AUTHOR_DOC_MAX_LINES}——author.md 只做索引，不做教材")
         body = read_text(md)

@@ -1,9 +1,9 @@
 <!--
   plan-sections — plan.md 与 contracts.yaml 的宿主扩展章节模板（应用域）
 
-  用途：plan 是三类知识里设计模式**唯一的选型点**，也是全链**唯一的冻结点**——
-  coding / review / ut / testing 读的不是知识目录，而是这里冻结的结果。
-  本文件提供「知识决策（设计输入）」章骨架与冻结块写法，由 hooks/plan/author.md 引用。
+  用途：plan 是三类知识里设计模式**唯一的选型点**，也是规约义务**唯一的落点**——
+  coding / review / ut / testing 不读知识目录，它们读的是**挂在契约实体上的 `must`**。
+  本文件提供「知识决策（设计输入）」章骨架与 `must` 写法，由 hooks/plan/author.md 引用。
 
   ── 位置就是语义 ────────────────────────────────────────────────
   「知识决策」章**必须排在第一个设计章之前**。排在设计之后，它只能是
@@ -12,8 +12,8 @@
   **这正是「应用」与「声明」的差别。**
 
   ── 判据一句话 ──────────────────────────────────────────────────
-  冻结结果必须能指回方案里的实际落点，而那个落点是契约里的一个实体。
-  写不出承载字段的义务，到编码那里等于不存在。
+  义务要挂在下游真的会读的那个实体上。挂在别处（或只在 plan.md 里写一段），
+  到编码那里等于不存在。
 
   ── 三类知识的消费语义不同，不要混用同一套词 ──────────────────────
   | 类别     | 本阶段该做的                                   | 不算数的写法 |
@@ -41,7 +41,7 @@
 ### 规约义务
 
 <!-- spec §10 的每条命中条目在这里都要变成一条有落点的义务，一条目一行，不要一行塞多条。
-     本表与 contracts.yaml 的冻结块是同一份冻结的两次渲染，落点必须一致。 -->
+     本表与 contracts.yaml 里的 must 是同一件事的两次渲染，落点必须一致。 -->
 
 | 条目编号 | 本次要落实成什么 | 落点实体 | 承载设计章 |
 |---|---|---|---|
@@ -56,46 +56,73 @@
 
 ---
 
-## `plan/contracts.yaml` 的冻结块
+## `contracts.yaml`：义务挂在实体上
 
-题材中性，只看形态：
+题材中性，只看形态。**每条命中的规约，挂一条 `must` 到扛着它的那个实体上**：
 
 ```yaml
-knowledge_freeze:
-  obligations:
-    - rule: <规约条目编号>            # 一条目一行
-      criterion: <验收条目编号>        # 指向 acceptance.yaml 的一条；那条目就是四阶段的验证要求
-      obligation: 流程标识在业务入口生成一次并随上下文透传；步骤标识用固定枚举
-      step: <业务步骤>                 # 验收条目的 prd_function，或 use-cases 的 branch；不是验收编号
-      anchor: <承载该设计的设计章标题>  # 不能指回「知识决策」章自己——那是声明，不是落点
-      review_focus: <review 阶段该核什么>
-      landing:
-        - data_models.OrderContext.flowId
-        - data_models.OrderStepEnum
-  patterns:
-    - pattern_id: <在册的模式标识>
-      selected: true                   # 不选时 false，只需 rationale
-      instance: <本方案里的唯一实例名>
-      unit: <应用到哪个适用单元>
-      rationale: <为什么是它 / 为什么不用它>
-      anchor: <设计章标题>
-      roles:                           # 键 = 该模式声明的角色，不多不少
-        <角色名>: <承载它的类名 / 模型名 / 文件路径>
+data_models:
+  - name: OrderContext
+    fields:
+      - name: flowId
+        must:
+          - text: 流程标识在业务入口生成一次并随上下文透传
+            rule: <规约条目编号>
+            verify: ut
+
+interfaces:
+  - name: OrderCloudAdapter
+    methods:
+      - name: createOrReuse
+        must:
+          - text: 同一幂等键重复调用不得创建第二份单据
+            rule: <规约条目编号>
+            verify: both
+
+components:
+  - name: OrderSheet
+    must:
+      - text: 方向性布局参数只用 start/end
+        rule: <规约条目编号>
+        verify: probe          # 探针表达式在规约表的「探针」列，不写在这里
+    state:
+      - name: submitting
+        must:
+          - text: 提交中禁止二次触发
+            rule: <规约条目编号>
+            verify: review
+
+files:
+  - path: <角色文件路径>
+    pattern: <在册的模式标识>
+    role: <该模式声明过的角色名>
 ```
 
-**实体引用语法**：`data_models.<模型>[.<字段>]` / `interfaces.<类>[.<方法>]` /
-`components.<组件>[.<状态或属性>]` / `state_management.<环境>.<键>` / `resource_keys.<键>` /
-`files.<路径>` / `navigation.<目标页>`。
+### `must` 只能挂在这五处
 
-引用的东西必须在**同一份 contracts.yaml 里真实存在**——门禁按结构解析，不是按文本包含。
-集合名对齐 contracts 既有章节，**不自造平行命名空间**。
+`data_models[].fields[]` / `interfaces[].methods[]` / `components[]` 及其 `state[]` /
+`resource_keys[]` / `files[]`。
 
-**有落点 vs 没落点**（同一条义务的两种写法）：
+挂在实体顶层（`data_models.X` 而不是它的 `fields[]`）或别的集合上，门禁会拦——
+**挂在下游不会读的地方，就是又造了一本没人读的账本**。这正是上一版那本平行账本的下场：framework 的 coding SKILL 枚举 contracts 的
+7 个集合作为本阶段输入，从来不含它。
 
-- ❌ `obligation: 流程要带流程标识与步骤标识` / `landing:` 空
-  ——读完不知道哪个字段装流程标识；到编码那里这条义务等于不存在。
-- ✅ 上面代码块里那条：契约因此真的多了一个字段和一个枚举，coding 有东西可写，review 有东西可查。
+### 三个字段各写什么
 
-**四阶段的验证要求不另建第二份分派表**：coding 看 `landing`（落点实体在代码里必须存在）、
-review 看 `review_focus`、ut / testing 看验收条目的 `ut_layer`（`unit` 只 UT 验、`device` 只实机验、
-`both` 两边都要）。`ut_layer` 同时是「显式不适用」的载体，下游据此报 SKIP 并计数。
+| 字段 | 写什么 | 不算数的写法 |
+|---|---|---|
+| `text` | 这条规约**在这个实体上**具体要求做什么，可实施可测 | 复述规约原文；换个说法的同义改写 |
+| `rule` | 条目编号，须在激活清单里 | 只写域前缀 |
+| `verify` | `ut` / `device` / `both` / `review` / `probe` 五选一 | 自造取值；标 `probe` 但该条目规约表没有探针 |
+
+`verify` 同时是**四阶段分派的单源**，不另建第二份分派表：coding 执行探针、review 逐条复核、
+ut 覆盖 `ut`/`both`、testing 覆盖 `device`/`both`。标 `device` 就等于说「UT 不适用于这一条」。
+
+### 有落点 vs 没落点
+
+- ❌ 在 `plan.md` 里写一段「本需求要落实流程标识与步骤标识」，契约里没有对应字段
+  ——读完不知道哪个字段装流程标识；到编码那里，这条义务等于不存在。
+- ✅ 上面代码块里那条：`OrderContext.flowId` 上挂着它，编码时打开这个模型就看得见，
+  review 有东西可查，探针有文件可扫。
+
+**判据一句话：义务要挂在下游真的会读的那个实体上。**
