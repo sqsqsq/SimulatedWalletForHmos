@@ -7,7 +7,7 @@
  */
 import { readAcceptance, readContracts, readFreeze, knowledgeCriteria } from './freeze.mjs';
 
-const PLAN_INJECTION_DOC = 'doc/extensions/hooks/plan/on_context_load.md';
+const PLAN_INJECTION_DOC = 'doc/extensions/hooks/plan/author.md';
 
 /**
  * 取本阶段要消费的账本。

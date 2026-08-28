@@ -3,7 +3,7 @@
  *
  * 作用：把**本阶段三份产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
  *   1. 三份产物齐备：spec.md（代码要求）/ AR/review.md（归档件·决策件）/ AR/story.md（归档件·叙事主件）；
- *   2. §9 技术契约的结构完整性（core spec 模板未含，由 on_context_load.md 指令驱动 AI 追加）；
+ *   2. §9 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
  *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
  *      编号到条目级且在册、三方 ID 集合一致、要求列不是规约原文的复制；
  *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
@@ -407,7 +407,7 @@ function idSetProblems(ctx, knowledge, specIds) {
 }
 
 /**
- * spec 宿主扩展章节（core 模板未含，由 hooks/spec/on_context_load.md 指令驱动 AI 追加）：
+ * spec 宿主扩展章节（core 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）：
  *   §9 技术契约 —— 给下游 AI：plan 据此编码、test-plan 据此出用例
  * 模板见 skills/story/templates/spec-sections.md。
  *
@@ -420,7 +420,7 @@ const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
 ];
 
-/** 本阶段三份产物（见 hooks/spec/on_context_load.md「本阶段产出三份文档」） */
+/** 本阶段三份产物（见 skills/story/phases/spec.md「本阶段产出三份文档」） */
 const PHASE_ARTIFACTS = [
   {
     rel: ['AR', 'review.md'],

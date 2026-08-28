@@ -2,7 +2,7 @@
   spec-sections — spec.md 的宿主扩展章节模板（应用域）
 
   用途：core spec 模板缺少交付流程要求 spec 承载的「接口契约 / 存储 / 配置 / 埋点 / 依赖」，
-  以及知识判定的两个出口。本文件提供三章模板，由 hooks/spec/on_context_load.md 指令引用，
+  以及知识判定的两个出口。本文件提供三章模板，由 hooks/spec/author.md 指令引用，
   AI 生成 spec 时在 §8 验收标准之后依次追加。
 
   三章各回答一个不同的问题，**互不并入**：

@@ -299,7 +299,7 @@ node doc/extensions/skills/story/scripts/story.js restore <AR> <mcp-token>
 并从它的 Step 1 开始执行，**不再询问**。
 
 > **归档件只能由装配器产出**：spec 阶段的 `AR/story.md` 走 `scaffold → 逐章成文 → build → check`
-> 这条链，命令与顺序见 `hooks/spec/story_on_context_load.md` 的「逐章成文」段（那里是唯一真源）。
+> 这条链，命令与顺序见 `skills/story/phases/spec.md` 的「本阶段产出三份文档」段（那里是唯一真源）。
 > 自己手写一份交上去会被 spec 门禁逐字比对拦下——它比的是章节源装配出来的结果。
 
 > **为什么不在这里停等**：范围已经由人在 S3 定下，进 spec 没有分支可选，

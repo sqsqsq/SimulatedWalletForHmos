@@ -30,7 +30,7 @@ import {
   resolveEntityRef,
 } from '../shared/freeze.mjs';
 
-const INJECTION_DOC = 'doc/extensions/hooks/plan/on_context_load.md';
+const INJECTION_DOC = 'doc/extensions/hooks/plan/author.md';
 
 /** 第一个设计章：这些是 plan 模板里承载方案的章，知识决策必须排在它们之前。 */
 const DESIGN_HEADING_RE = /^##\s*\d*[.、]?\s*(模块架构|目录|文件结构|数据模型|页面组件|状态管理|服务层|接口定义|路由|导航)/;
