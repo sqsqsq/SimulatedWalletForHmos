@@ -530,3 +530,43 @@ modes:
     applicable_when: 存在 plan/contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
+
+  # ---------------------------------------------------------------------------
+  # adapt（工程适配）
+  # ---------------------------------------------------------------------------
+
+  - id: A01-adapt-couples-to-mechanism
+    dimension: infra
+    found_round: "2026-08-28"
+    form: adapt 的 Skill 或脚本写死扩展内部结构（hook 阶段路径、知识文件名、条目编号），机制一改适配能力就跟着废
+    clause: B3-10 / KD-10 / G7
+    checker: a01_adapt_couples_to_mechanism
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/A01-adapt-couples-to-mechanism/bad
+    good_fixture: test/story/fixtures/failure-modes/A01-adapt-couples-to-mechanism/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      与 M01 的分工：M01 守整个机制层不抄知识内容，本条只盯 adapt 交付件，且多判一类
+      ——hook 的「阶段目录 + 文件」路径。把 adapt 排在机制重构之前的全部理由，就是它
+      不认机制细节；这条一旦破，那个排序就不成立了。
+      判定基准（阶段名、知识文件名、条目编号）全部运行期派生，派生为空响亮报错。
+
+  - id: A02-adapt-check-blind
+    dimension: infra
+    found_round: "2026-08-28"
+    form: 适配后的核对判不出已知违规——机制留着旧文件、知识正文被改写、未确认的事实面进了清单、目标自定义被动过
+    clause: KD-1/KD-2/KD-3/KD-6 / C13
+    checker: a02_adapt_check_blind
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/A02-adapt-check-blind/bad
+    good_fixture: test/story/fixtures/failure-modes/A02-adapt-check-blind/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      不重实现判定：调真实 `adapt-scan.mjs`，退出码即结论（同 M15 / M18）。
+      夹具自带 package/ 与 target/ 两棵树、可选 after/（写入后状态），整棵树复制到临时目录再跑，
+      夹具本身不被写脏。真实目标那一栏用**当前包**去核一棵已提交的未适配目标树
+      （fixtures/adapt/target-prior），验证区分力在真包上同样成立、而不是只在迷你夹具里有效。

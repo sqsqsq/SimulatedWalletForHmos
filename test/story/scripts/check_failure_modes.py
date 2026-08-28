@@ -1409,6 +1409,112 @@ def p18_step_equals_criterion(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"{len(obligations)} 条义务的 step 都是业务步骤")
 
 
+# --------------------------------------------------------------------------- #
+# adapt（工程适配）
+# --------------------------------------------------------------------------- #
+
+ADAPT_SCRIPT = "skills/story-adaptation/scripts/adapt-scan.mjs"
+
+
+@checker
+def a01_adapt_couples_to_mechanism(root: Path, ctx: Ctx) -> Outcome:
+    """adapt 的交付件写死了扩展内部结构。
+
+    adapt 只该认**类别边界**——目录、后缀、frontmatter、manifest 段。一旦 Skill 或脚本里
+    出现某个 hook 的「阶段目录 + 文件」、某个知识文件名或模式名，机制一改 adapt 就跟着废；
+    而「机制大改后能用 adapt 快速适配」正是把它排在机制重构之前的全部理由（B3-10 / KD-10）。
+
+    判定基准全部派生：阶段名取 ``hooks/`` 的子目录，知识文件名与条目编号取激活清单。
+    **派生为空不当作通过**——那说明基准没建起来，不是「零命中」（G7）。
+    """
+    adapt_dir = root / "skills" / "story-adaptation"
+    if not adapt_dir.exists():
+        return Outcome(True, "无 adapt 交付件（能力未建）")
+    hooks_dir = root / "hooks"
+    phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir()) if hooks_dir.exists() else []
+    names = activation_names(root)
+    slugs, entries = names["slugs"], names["entries"]
+    if not phases and not slugs:
+        return Outcome(False, "判定基准派生为空（hooks 阶段目录与激活清单都取不到），不当作通过")
+    hits: list[str] = []
+    for path in iter_files(adapt_dir, ALL_SUFFIXES):
+        rel = path.relative_to(root).as_posix()
+        for lineno, line in enumerate(split_lines(read_text(path)), 1):
+            for ph in phases:
+                if re.search(rf"\bhooks/{re.escape(ph)}/\S", line):
+                    hits.append(f"{rel}:{lineno} 写死 hook 路径 `hooks/{ph}/…`")
+            for slug in sorted(slugs):
+                if slug in line:
+                    hits.append(f"{rel}:{lineno} 写死知识文件名 `{slug}`")
+            for entry in sorted(entries):
+                if re.search(rf"\b{re.escape(entry)}\b", line):
+                    hits.append(f"{rel}:{lineno} 写死条目编号 `{entry}`")
+    if hits:
+        return Outcome(False, "adapt 交付件耦合机制内部：" + "；".join(dict.fromkeys(hits[:6])))
+    return Outcome(True, f"adapt 交付件只认类别边界（基准：{len(phases)} 阶段 / {len(slugs)} 知识文件）")
+
+
+def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess:
+    """在给定的包/目标上跑真实 ``--scan`` 建基线，施加 ``after/`` 变更，再跑 ``--check``。
+
+    判定不在这里重实现：调真实脚本，退出码即结论（同 M15 / M18 的做法）。
+    """
+    script = package / "doc" / "extensions" / ADAPT_SCRIPT
+    if not script.exists():
+        script = REPO_ROOT / "doc" / "extensions" / ADAPT_SCRIPT
+    run = lambda mode: subprocess.run(
+        ["node", str(script), mode, "--target", str(target), "--package", str(package)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
+    scan = run("--scan")
+    if scan.returncode != 0:
+        return scan
+    after = target.parent / "after"
+    if after.exists():
+        for src in sorted(after.rglob("*")):
+            if src.is_file():
+                dst = target / src.relative_to(after)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes())
+    return run("--check")
+
+
+@checker
+def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
+    """适配后的核对判不出已知违规（核对形同虚设）。
+
+    四项各自要有区分力：① 机制目录留着旧文件 ② 目标知识正文被改写 ③ 未确认的事实面进了
+    启用清单 ④ 目标自定义文件被动过。这四种只要有一种漏过，「适配完成」就只是句口号。
+
+    夹具自带 ``package/`` 与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
+    临时目录再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
+    验证它在真包上同样判得出——不是只在迷你夹具里有效。
+    """
+    import shutil, tempfile
+
+    if not (REPO_ROOT / "doc" / "extensions" / ADAPT_SCRIPT).exists():
+        return Outcome(True, "无 adapt 辅助脚本（能力未建）")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        if (root / "target").exists() and (root / "package").exists():   # 夹具
+            shutil.copytree(root, tmp / "case")
+            proc = _run_adapt_check(tmp / "case" / "target", tmp / "case" / "package")
+        else:                                                            # 真实目标
+            src = REPO_ROOT / "test" / "story" / "fixtures" / "adapt" / "target-prior"
+            if not src.exists():
+                return Outcome(False, "缺未适配目标树夹具，真实目标无法取证")
+            shutil.copytree(src, tmp / "target")
+            proc = _run_adapt_check(tmp / "target", REPO_ROOT)
+        out = (proc.stdout + proc.stderr).strip()
+
+    if (root / "target").exists():                       # 夹具：退出码即结论
+        return Outcome(proc.returncode == 0, out[:400] if proc.returncode else "四项核对通过")
+    # 真实目标：未适配的树必须被判出来；判通过才是形态成立（核对瞎了）
+    if proc.returncode == 0:
+        return Outcome(False, "对未适配的目标树判了通过——核对失效")
+    return Outcome(True, "当前包对未适配目标树判得出差异：" + out.splitlines()[0][:160])
+
+
 VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
 
 

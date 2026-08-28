@@ -1,0 +1,6 @@
+schema_version: 1
+version: "1.0.0"
+provides:
+  knowledge:
+    - knowledge/sample-domain.md
+    - knowledge/sample-pattern.md
