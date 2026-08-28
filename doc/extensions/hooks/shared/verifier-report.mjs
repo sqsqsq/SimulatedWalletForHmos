@@ -15,7 +15,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { adjudicationKeys, adjudicationSet } from './adjudication.mjs';
+import { adjudicationKeys, adjudicationSet } from './verdict-set.mjs';
 import { featureRoot, readTextOrNull } from './paths.mjs';
 
 /** verifier 报告的文件名形态（与测试域回归脚本同一组名）。 */

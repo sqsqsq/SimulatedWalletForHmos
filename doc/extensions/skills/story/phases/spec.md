@@ -29,26 +29,16 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 |---|---|---|---|
 | `spec/spec.md` | AI | **代码要求** | AI 编码 / 出用例 / 门禁 |
 | `AR/review.md` | AI 起草 + **人确认** | 自然语言问题、当前建议、可填写的审核结果 | 评审者 |
-| `AR/story.md` | AI | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
+| `AR/story.md` | AI（**S5 的 writer 子 agent**，不在本阶段） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
 
 - `AR/review.md` **由 `AR/story-src/decisions.json` 渲染，不手写**：AI 只负责把开放点收齐并登记
   （问题、当前建议、依据、影响、来源、责任人），表态位由脚本生成、由评审人勾选。
   末尾状态行保持「**状态**：草稿（待开发确认）」——**不得代填「已确认」**。
   状态标「已确认」而问题没有审核结果即 BLOCKER。
-- `AR/story.md` **逐章成文，不整篇重写**：先 `scaffold` 按章节合同为各章生成写作任务书
-  （取材路标 + 必答 + 判据），**按路标去 PRD / SE / spec 取事实来写**，一次写一章；
-  开放点先登记进 `decisions.json` 再在正文写引用。写完 AI 自跑下面四条（不得让用户手动跑）：
-
-  ```
-  node doc/extensions/skills/story/scripts/story-build.mjs scaffold --feature <feature>
-  node doc/extensions/skills/story/scripts/story-build.mjs build    --feature <feature>
-  node doc/extensions/skills/story/scripts/story-build.mjs check    --feature <feature>
-  node doc/extensions/skills/story/scripts/merge-story.mjs --feature <feature> --check
-  ```
-
-  `build` 同时装配 story 并渲染 / 追加 review 的议题（已填写内容不会被覆盖）。
-  **`AR/story.md` 是装配产物，不要直接编辑**——改内容就改章节文件再 build。
-  撰写红线见 [`rules/rules.md`](../rules/rules.md)。
+- `AR/story.md` **不在本阶段写**。它由 `/story` 链的 S5 用独立 writer 子 agent 一份写成——
+  spec 走完时上下文已经涨到几十万 token，story 是最后被挤出来的那一份，实测因此丢过
+  表格非首列的事实与两张图。本阶段只需把 `decisions.json` 的开放点登记齐，
+  S5 的 writer 会读它。
 
 **story 不是 spec 的排版件**：spec 的可标识事实、PRD 的业务语境、SE 的全局方案，以及无编号的
 数据与交付事实，都必须在 story 有完整落点。story 可以整合、改序、改写，但不可以只保留编号、

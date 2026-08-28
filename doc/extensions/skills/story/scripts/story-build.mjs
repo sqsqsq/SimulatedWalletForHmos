@@ -3,11 +3,10 @@
  *
  * ## 与 1.0 逐章装配器的区别
  *
- * 1.0 的做法是 `scaffold` 生成 14 份逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完
- * 再 `assemble` 装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
+ * 1.0 的做法是先生成 14 份逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完再装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
  * 被四个章节合同各指一次，于是被强制写四遍**。
  *
- * 这里没有 scaffold、没有逐章文件、没有装配：作者读完全部材料**一份写成**，
+ * 这里没有逐章任务书、没有逐章文件、没有装配：作者读完全部材料**一份写成**，
  * 守恒改判「材料里每个可核对 token 在 story 整篇有落点」——事实只需出现一次，
  * 在哪一章由叙述需要决定。
  *
@@ -277,7 +276,7 @@ function cmdCheck(ctx) {
   const want = ctx.contract.chapters.map(c => c.title);
 
   // ① 14 个标题与顺序 = 合同；空节恰为「本需求不涉及。」
-  if (titles.join(' ') !== want.join(' ')) {
+  if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
     const extra = titles.filter(t => !want.includes(t));
     problems.push(`章节标题与合同不一致：${missing.length ? `缺 ${missing.join('、')}` : ''}`

@@ -491,6 +491,12 @@ modes:
     applicable_when: 存在 AR/story-src/knowledge.json 且激活清单里有条件域
     severity: BLOCKER
     status: fixed
+    migration_note: >
+      数据源迁移（2026-08-28，批次 3 子批 C）：域级判定原先登记在 AR/story-src/knowledge.json，
+      那份登记件与 spec §10 表是同一批结论的两处写法，已随子批 C 退场。域级判定的记录落点
+      改为归档件的「规约符合性」附录，由 S5 的 writer 直接写。**在 writer 产出新形态样本之前，
+      本形态对新产物记「不适用」**——这是如实的过渡状态，不是它还在守着。
+      新样本到位后按新落点重写 checker 与夹具。
 
   - id: P16-spec-exit-diverges-from-registry
     dimension: knowledge

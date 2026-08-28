@@ -17,7 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATUS } from '../shared/evidence.mjs';
-import { contractFiles, readContracts, resolveEntityRef } from '../shared/freeze.mjs';
+import { contractFiles, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';

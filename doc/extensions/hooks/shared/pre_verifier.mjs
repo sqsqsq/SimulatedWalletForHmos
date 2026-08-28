@@ -15,7 +15,7 @@
  * 全集指**登记源的每一行**：命中的条目、判整域不适用的域、模式候选——一行不落。
  * 不含归档件附录与出口章的行：它们是同一份结论的另一次渲染（附录由登记源渲染、
  * 出口章与登记源同文，各有机械门禁保证），同一条裁三遍只是把清单撑长，不增加覆盖面。
- * 集合的派生在 `adjudication.mjs`，与门禁核对用同一份口径——两边各存一份就会「注入 14 行、
+ * 集合的派生在 `verdict-set.mjs`，与门禁核对用同一份口径——两边各存一份就会「注入 14 行、
  * 只核 11 行」。
  *
  * ## 注入不等于执行
@@ -27,11 +27,11 @@
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */
 import * as path from 'node:path';
-import { adjudicationSet } from './adjudication.mjs';
+import { adjudicationSet } from './verdict-set.mjs';
 import { activeKnowledge, paraphraseSources } from './knowledge.mjs';
 import { classify } from './paraphrase.mjs';
 import { extensionRoot, featureRoot, lines, readTextOrNull } from './paths.mjs';
-import { readContracts } from './freeze.mjs';
+import { readContracts } from './contracts.mjs';
 
 /**
  * 知识类语义判据的命名前缀。

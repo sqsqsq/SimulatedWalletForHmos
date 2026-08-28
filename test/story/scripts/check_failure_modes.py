@@ -1176,12 +1176,12 @@ def p11_verifier_zero_adjudication(root: Path, ctx: Ctx) -> Outcome:
     reports = sorted(set(reports))
     if not reports:
         return Outcome(True, "无 verifier 报告（不适用）")
-    registry = _registry(root)
-    if registry is None:
-        return Outcome(True, "无判定登记件（不适用）")
-    required = adjudication_keys(registry)
+    spec_path = root / "spec" / "spec.md"
+    if not spec_path.exists():
+        return Outcome(True, "无 spec.md（不适用）")
+    required = adjudication_keys(read_text(spec_path))
     if not required:
-        return Outcome(True, "必答集为空（登记源没有任何判定行）")
+        return Outcome(True, "必答集为空（spec §10 没有任何命中条目）")
     lines = "\n".join(read_text(p) for p in reports).splitlines()
     missing = [
         key for key in required
@@ -1797,23 +1797,46 @@ def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
 VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
 
 
-def adjudication_keys(registry: dict) -> list[str]:
-    """必答集的核对键 —— 与扩展侧 ``adjudication.mjs`` 的 ``adjudicationKeys`` 同口径。
+#: spec §10 表里条目编号的形态（不写死任何域前缀，只约束形态）。
+_ENTRY_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{1,7}-\d{2}$")
+
+
+def adjudication_keys(spec_text: str) -> list[str]:
+    """必答集的核对键 —— 与扩展侧 ``verdict-set.mjs`` 的 ``specSet`` 同口径。
+
+    **数据源是 spec §10「规约约束要求」表本身**。上一版两边都读
+    ``AR/story-src/knowledge.json``，那是同一批结论的第二份写法——两处判定对不上时，
+    评审者无从知道哪个是准的，所以那份登记件退场了。
 
     两边各自实现（一边给 verifier 注入清单、一边在测试域核对目标产物），口径靠
     ``test_adjudication_parity.py`` 绑定：改了一边不改另一边，那个测试会红。
     """
+    lines = split_lines(spec_text)
+    start = next(
+        (i for i, l in enumerate(lines) if re.match(r"^#{2,4}\s+.*规约约束要求", l.strip())),
+        -1,
+    )
+    if start < 0:
+        return []
+    level = len(re.match(r"^(#{2,4})", lines[start].strip()).group(1))
     keys: list[str] = []
-    for c in registry.get("constraints", []) or []:
-        if isinstance(c, dict) and (rid := str(c.get("id", "")).strip()):
+    headers_seen = False
+    for line in lines[start + 1:]:
+        h = re.match(r"^(#{2,4})\s+", line.strip())
+        if h and len(h.group(1)) <= level:
+            break
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if all(re.fullmatch(r"[-: ]*", c) for c in cells):
+            continue
+        if not headers_seen:
+            headers_seen = True
+            continue
+        rid = cells[0].replace("`", "").replace("*", "").strip() if cells else ""
+        if _ENTRY_ID_RE.match(rid):
             keys.append(rid)
-    for d in registry.get("domains", []) or []:
-        if isinstance(d, dict) and d.get("applies") is not True:
-            if prefix := str(d.get("prefix", "")).strip():
-                keys.append(prefix)
-    for p in registry.get("patterns", []) or []:
-        if isinstance(p, dict) and (unit := str(p.get("unit", "")).strip()):
-            keys.append(unit)
     seen: set[str] = set()
     return [k for k in keys if not (k in seen or seen.add(k))]
 

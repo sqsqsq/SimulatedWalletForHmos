@@ -21,7 +21,6 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
-import { domainProblems, readRegistryFile } from '../shared/adjudication.mjs';
 import { adjudicationProblems } from '../shared/verifier-report.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
@@ -242,11 +241,6 @@ function knowledgeExitProblems(ctx, lines) {
   // 放在这里跑：spec 是知识判定的起点，知识层坏了后面每个阶段都建在坏地基上。
   problems.push(...selfCheck(ctx.projectRoot, knowledge));
 
-  // 域级判定与装配器共用同一份判据（adjudication.mjs）——判据只有一份，不各写一遍
-  const { registry, error: regError } = readRegistryFile(ctx.projectRoot, ctx.feature);
-  if (regError) problems.push(regError);
-  if (registry) problems.push(...domainProblems(knowledge, registry).problems);
-
   const exitIdx = findHeading(lines, /规约约束要求/);
   const patternIdx = findHeading(lines, /设计模式候选/);
   const contractIdx = findHeading(lines, /技术契约/);
@@ -302,17 +296,6 @@ function knowledgeExitProblems(ctx, lines) {
         problems.push(`spec.md:${line} ${id} 的要求是规约原文的复制或子串（来源「${source}…」）`
           + '——写本需求的设计：它落在哪个接口、存储键、字段或业务步骤上');
       }
-      // 与登记源同文：同一条结论只有一份，出口章是它的第二次渲染，不是第二次表述。
-      // 两处各写各的，评审者会看到同一条要求的两个版本，且无从知道哪个是准的。
-      const registered = registry
-        ? (Array.isArray(registry.constraints) ? registry.constraints : [])
-          .find(c => String(c?.id ?? '').trim() === id)
-        : null;
-      const conclusion = String(registered?.conclusion ?? '').trim();
-      if (conclusion && normalize(requirement) !== normalize(conclusion)) {
-        problems.push(`spec.md:${line} ${id} 的要求与登记源（AR/story-src/knowledge.json）不同文`
-          + '——出口章从登记源逐条抄，同一结论只有一份');
-      }
     }
   }
 
@@ -356,35 +339,9 @@ function idSetProblems(ctx, knowledge, specIds) {
   const problems = [];
   const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
 
-  // story 侧：知识判定登记表里判「是」且非评审动作的条目。
-  // 判据是**注册件在不在**，不是流程契约在不在——注册件存在本身就说明走了 story 流程，
-  // 而两处判定对不上时评审者会看到互相矛盾的结论，与流程文件是否齐备无关。
-  let storyIds = null;
-  const regPath = path.join(featureDir, 'AR', 'story-src', 'knowledge.json');
-  if (fs.existsSync(regPath)) {
-    try {
-      const reg = JSON.parse(fs.readFileSync(regPath, 'utf-8').replace(/^﻿/, ''));
-      storyIds = new Set(
-        (Array.isArray(reg.constraints) ? reg.constraints : [])
-          .filter(c => c?.hit === true)
-          .map(c => String(c.id).trim())
-          .filter(id => !knowledge.entries.find(e => e.id === id)?.reviewAction));
-    } catch (e) {
-      problems.push(`knowledge.json 解析失败：${e.message}`);
-    }
-  }
-  if (storyIds) {
-    const onlyStory = [...storyIds].filter(id => !specIds.has(id));
-    const onlySpec = [...specIds].filter(id => !storyIds.has(id));
-    if (onlyStory.length) {
-      problems.push(`这些条目在归档件判「命中」，但 spec 的约束要求章没有对应行：${onlyStory.join('、')}`
-        + '——判了命中却没有代码要求，等于知识在需求阶段就丢了');
-    }
-    if (onlySpec.length) {
-      problems.push(`这些条目在 spec 有要求，但归档件没判「命中」：${onlySpec.join('、')}`
-        + '——两处判定对不上，评审者会看到互相矛盾的结论');
-    }
-  }
+  // **不再和第二份登记表比对**：§10 的表本身就是判定登记，spec 阶段的判定结论只有一份。
+  // 上一版另有一份判定登记件，于是同一条结论有两处写法、两处判定，
+  // 评审者看到互相矛盾的结论时无从知道哪个是准的。归档件的符合性附录由 writer 直接写。
 
   // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）
   const accPath = path.join(featureDir, 'acceptance.yaml');
@@ -395,8 +352,9 @@ function idSetProblems(ctx, knowledge, specIds) {
       const missing = [...specIds].filter(id => !accIds.has(id));
       if (missing.length) {
         problems.push(`这些条目有代码要求但 acceptance.yaml 没有对应验收条目：${missing.join('、')}`
-          + '——每条要求要有一条带 knowledge_rule 与 category 的 criteria，'
-          + '它是下游 ut/testing 分派验证的单一来源（ut_layer 决定谁验），缺了下游就无从覆盖');
+          + '——每条要求要有一条带 knowledge_rule 的 criteria，'
+          + '它是 ut/testing 找到「该覆盖哪个场景」的桥（分派本身由 contracts 里 must.verify 定），'
+          + '缺了下游就无从覆盖');
       }
       const unknown = [...accIds].filter(id => !specIds.has(id));
       if (unknown.length) {
@@ -421,51 +379,13 @@ const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
 ];
 
-/** 本阶段三份产物（见 skills/story/phases/spec.md「本阶段产出三份文档」） */
-const PHASE_ARTIFACTS = [
-  {
-    rel: ['AR', 'review.md'],
-    name: 'AR/review.md',
-    why: '归档件·评审记录（自然语言问题、当前建议与可填写审核结果），由 AI 起草、人填写结果',
-    fix: '把开放点登记到 AR/story-src/decisions.json，再 story-build.mjs build 渲染（末尾状态行保持「草稿（待开发确认）」）',
-  },
-  {
-    rel: ['AR', 'story.md'],
-    name: 'AR/story.md',
-    why: '归档件·叙事主件（完整需求叙事 + 判断 + 合规回显），评审者以它为主线',
-    fix: '先 story-build.mjs scaffold 按章节合同注入源材料，逐章转写后 build 装配，再执行 check 与 merge-story --check',
-  },
-];
-
 /**
- * 归档件是**装配产物**：装配器重跑一遍，与磁盘逐字对比。
+ * story 相关的判据**不在本阶段**。
  *
- * 只查文件在不在，手写一份简版 story.md 照样过——实测发生过（模型跳过 scaffold 自己写了一份）。
- * 判据不在这里重实现：直接跑装配器与红线检查本身，它们是这两件事的真源。
+ * story 由 `/story` 链的 S5 用独立 writer 写成，判据在 `story-build check` 与
+ * `story_flow.py story` 的登记门禁里。spec 阶段再判一遍，就是两处各判各的：
+ * 这边按旧形态拦，那边按新形态放，改一处忘另一处就是静默漂移。
  */
-const STORY_CHECKS = [
-  { script: ['skills', 'story', 'scripts', 'story-build.mjs'], argv: ['check'], what: '装配一致（story.md 须由 story-build 装配，不能手写）' },
-  { script: ['skills', 'story', 'scripts', 'merge-story.mjs'], argv: ['--check'], what: '归档件红线（自包含、图链、坐标）' },
-];
-
-function storyArtifactProblems(ctx) {
-  const problems = [];
-  for (const { script, argv, what } of STORY_CHECKS) {
-    const abs = path.join(extensionRoot(ctx.projectRoot), ...script);
-    const r = spawnSync(process.execPath,
-      [abs, ...argv, '--feature', ctx.feature, '--project-root', ctx.projectRoot],
-      { encoding: 'utf-8' });
-    if (r.error) {
-      problems.push(`${path.basename(abs)} 跑不起来（${r.error.message}）——${what} 无从校验`);
-      continue;
-    }
-    if (r.status !== 0) {
-      const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`.trim().slice(0, 400);
-      problems.push(`${what} 未通过：${out || `${path.basename(abs)} 退出码 ${r.status}`}`);
-    }
-  }
-  return problems;
-}
 
 /**
  * story 前置流程契约（`AR/story-flow.json`，见 SKILL.md「初析与流程契约」章）。
@@ -728,23 +648,6 @@ export default guard('spec', async (ctx) => {
   // ——判定产生的代码要求不进 spec，编码那里就拿不到。
   const isStory = fs.existsSync(path.join(featureRoot, ...FLOW_FILE));
 
-  // ---- 本阶段三份产物齐备（story 专属）----
-  // spec 阶段一次 pass 产出 spec.md / review.md / story.md，三者事实同源。
-  // 只交 spec.md 就宣告闭环，等于把评审件推给下一次对话去补，那时上游取证上下文已经散了。
-  let storyArtifactsPresent = false;
-  if (isStory) {
-    const absent = PHASE_ARTIFACTS.filter(a => !fs.existsSync(path.join(featureRoot, ...a.rel)));
-    for (const a of absent) {
-      problems.push(`缺少本阶段产物「${a.name}」——${a.why}；处置：${a.fix}`);
-    }
-    storyArtifactsPresent = absent.length === 0;
-    // 在就跑装配器：文件存在不等于它是装配出来的。
-    // 不在则**显式声明这条判据没跑**——基线态在这里静默跳过，于是作者补完产物、
-    // 下一轮才撞见装配校验，同一个 check id 洋葱式 FAIL。
-    if (storyArtifactsPresent) problems.push(...storyArtifactProblems(ctx));
-    else skipped.push({ what: '归档件装配校验', why: '本阶段产物还没齐，齐了才能校验它是不是装配出来的' });
-  }
-
   // ---- story 前置流程契约已收口 ----
   problems.push(...storyFlowProblems(featureRoot));
 
@@ -877,7 +780,7 @@ export default guard('spec', async (ctx) => {
       { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
       { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
     ],
-    inputs: [specPath, path.join(featureRoot, 'AR', 'story-src', 'knowledge.json')],
+    inputs: [specPath],
     fix: `产物：spec.md（${rel}）。${fix}`,
   });
 });

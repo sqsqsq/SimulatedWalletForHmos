@@ -5,7 +5,7 @@
  *   --check  门禁校验（两项：可标识事实覆盖不丢 + 归档红线）
  *
  *   --init 与 --stamp 均已退役。story 的起手与装配由 story-build.mjs 承担：
- *   scaffold 按章节合同注入源材料，build 逐章装配。整文件复制只保证初稿完整，
+ *   按章节合同逐章取材再装配。整文件复制只保证初稿完整，
  *   保证不了终稿；章节粒度才能让源与终稿逐章可对照。
  *
  * ── 门禁只拦「评审者自己发现不了的伤害」 ────────────────────────────────
@@ -128,7 +128,7 @@ if (!fs.existsSync(reviewPath)) {
   fail(`AR/review.md 不存在：${reviewPath}（人的决策件，与 spec.md / story.md 同批产出）`);
 }
 if (!fs.existsSync(storyPath)) {
-  fail(`AR/story.md 不存在：${storyPath}（先用 story-build.mjs scaffold 起手，逐章转写后 build）`);
+  fail(`AR/story.md 不存在：${storyPath}（先在 /story 的 S5 由 writer 成文，再转写后 build）`);
 }
 
 const reviewText = stripBom(fs.readFileSync(reviewPath, 'utf-8'));

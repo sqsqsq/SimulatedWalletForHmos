@@ -1,7 +1,7 @@
 /**
  * 从契约实体派生义务索引 —— 义务写在下游本来就读的实体上，机器索引一律派生。
  *
- * 基线是一本平行账本（`contracts.knowledge_freeze`）：plan 往里写、下游从里读。
+ * 基线是一本平行账本（契约里那个与实体无关的冻结块）：plan 往里写、下游从里读。
  * 实测没人读——framework 的 coding SKILL 枚举 contracts 的 7 个集合作为本阶段输入，
  * 不含它；实跑里唯一完整落地的那条规约，靠的是它挂在了一个编码者本来就要读的契约字段上。
  * 所以义务改挂在实体上，索引由这里运行期派生，**不维护第二份清单**。
@@ -101,7 +101,7 @@ export function misplacedMust(contracts) {
 /**
  * 模式采用的结构投影：`files[].pattern` + `files[].role`。
  *
- * 替代 `knowledge_freeze.patterns[].roles: {角色: 类名}`——角色实体就是文件里的类，
+ * 替代旧账本里那张「角色 → 类名」映射表——角色实体就是文件里的类，
  * 再写一份映射表只会与 `files[]` 漂移。
  */
 export function patternRolesFromContracts(contracts) {

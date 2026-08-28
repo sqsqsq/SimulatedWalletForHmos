@@ -12,7 +12,7 @@
  */
 import * as path from 'node:path';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { readContracts } from '../shared/freeze.mjs';
+import { readContracts } from '../shared/contracts.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 

@@ -1,7 +1,7 @@
 /**
  * plan 阶段 post_check（实例扩展）—— 义务是否**挂到了契约实体上**。
  *
- * 基线判的是一本平行账本（`contracts.knowledge_freeze`）的形态：三重锚定、anchor 自指、
+ * 基线判的是一本平行账本（契约里那个与实体无关的冻结块）的形态：三重锚定、anchor 自指、
  * landing 解析、criterion/step/roles 一致性，25+ 条硬判据。账本本身没人读——framework 的
  * coding SKILL 枚举 contracts 的 7 个集合作为本阶段输入，不含它；实跑里唯一完整落地的那条
  * 规约，靠的是它挂在了一个编码者本来就要读的契约字段上。
@@ -10,7 +10,7 @@
  *   ① **集合一致**——spec §10 判命中的条目，在契约里都有实体扛着；反过来也不多出来；
  *   ② **挂对地方、写的是本需求的设计**——must 只能挂五类实体，text 不能是规约原文的复制。
  *
- * 「义务是不是真的被应用了」是语义判断，归 verifier（overlay `knowledge_freeze_substance`）。
+ * 「义务是不是真的被应用了」是语义判断，归 verifier（overlay 的义务实质判据）。
  * 机械层越权下语义结论，就会变成「写了字就算做了」。
  *
  * 契约：stdin JSON ctx → stdout JSON result。
@@ -24,7 +24,7 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, VER
 import { isPureCopy } from '../shared/paraphrase.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { adjudicationProblems } from '../shared/verifier-report.mjs';
-import { contractsPath, readContracts, resolveEntityRef } from '../shared/freeze.mjs';
+import { contractsPath, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
 
 const AUTHOR_DOC = 'doc/extensions/hooks/plan/author.md';
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
