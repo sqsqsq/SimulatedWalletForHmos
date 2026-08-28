@@ -684,8 +684,10 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
+    if contract.get("status") == "story_written":
+        return "run_archived", "story 已成文，可以 `/story archive` 归档"
     if contract.get("status") == "complete":
-        return "enter_spec", "流程已收口，直接进 /spec"
+        return "enter_spec", "流程已收口，直接进 /spec；spec 闭环后回 S5 写 story"
 
     current = contract["rounds"][-1]
     gates = round_gates(contract)
@@ -897,6 +899,41 @@ STORY = ("AR", "story.md")
 REVIEW = ("AR", "review.md")
 
 
+def cmd_story(feature_root: Path, project_root: Path) -> dict:
+    """登记「叙事件已成文」（S5 收口）。
+
+    story 不再在 spec 会话末尾写——那时上下文已经涨到几十万 token，story 是最后被挤出来的
+    那一份。它移到 spec 闭环之后的 S5，由独立 writer 在新鲜上下文里一份写成。
+
+    **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
+    不在这里重实现——两处各判各的，迟早对不上。
+    """
+    contract = require(load(feature_root))
+    if contract.get("status") != "complete":
+        raise FlowError("流程还没收口（status 不是 complete），成文态无从谈起")
+    story = feature_root / Path(*STORY)
+    if not story.is_file():
+        raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
+
+    checker = Path(__file__).resolve().parent / "story-build.mjs"
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
+    proc = subprocess.run(
+        [node, str(checker), "check", "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise FlowError(
+            "story-build check 未通过，成文态不予登记：\n"
+            + (proc.stderr or proc.stdout or "").strip())
+
+    contract["status"] = "story_written"
+    contract["story_written_at"] = now()
+    save(feature_root, contract)
+    return {"status": "story_written", "story": str(story)}
+
+
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     """登记「叙事件已送审」。归档动作由数据对接层执行，本命令只记状态。
 
@@ -908,6 +945,10 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     登记不可逆，凭据只认校验过的产物。
     """
     contract = require(load(feature_root))
+    if contract.get("status") != "story_written":
+        raise FlowError(
+            "还没登记成文态：归档的是 story，story 没过 check 就归档等于把未校验的产物送审。"
+            "先跑 `story_flow.py story --feature <名>`")
     story, review = feature_root / Path(*STORY), feature_root / Path(*REVIEW)
     for path, name in ((story, "AR/story.md"), (review, "AR/review.md")):
         if not path.is_file():
@@ -948,7 +989,7 @@ def is_archived(feature_root: Path) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
-                    choices=["init", "round", "decide", "status", "complete", "archived"])
+                    choices=["init", "round", "decide", "status", "complete", "story", "archived"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
@@ -983,6 +1024,8 @@ def main() -> int:
             result.update(payload)
         elif args.mode == "status":
             result.update(cmd_status(feature_root))
+        elif args.mode == "story":
+            result.update(cmd_story(feature_root, project_root))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
         else:
