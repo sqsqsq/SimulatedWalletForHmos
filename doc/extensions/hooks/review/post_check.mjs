@@ -12,7 +12,8 @@
  */
 import * as path from 'node:path';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { loadLedger } from '../shared/downstream.mjs';
+import { readContracts } from '../shared/freeze.mjs';
+import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
 const SECTION_TITLE = '知识义务复核';
@@ -46,14 +47,15 @@ function reviewTable(text) {
 }
 
 export default guard('review', async (ctx) => {
-  const { ok, problem, book } = loadLedger(ctx, 'review');
-  if (!ok) {
-    return gate(ctx, problem
-      ? { problems: [problem] }
-      : { skipped: [{ what: '知识义务复核表', why: '契约还没建（或读不到）' }] });
+  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
+  if (error) return gate(ctx, { problems: [error] });
+  if (!exists) {
+    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约还没建（或读不到）' }] });
   }
-  if (!book.obligations.length && !book.patterns.length) {
-    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '本需求没有冻结义务与模式' }] });
+  const obligations = obligationsFromContracts(contracts);
+  const roles = patternRolesFromContracts(contracts);
+  if (!obligations.length && !roles.length) {
+    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有标 pattern 的文件' }] });
   }
 
   const reportPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
@@ -81,7 +83,7 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  for (const ob of book.obligations) {
+  for (const ob of obligations) {
     const rule = String(ob.rule ?? '').trim();
     if (!rule) continue;
     const row = covered.get(rule);
@@ -107,18 +109,16 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  for (const p of book.patterns) {
-    const id = String(p.pattern_id ?? '').trim();
-    if (!id) continue;
+  for (const id of new Set(roles.map(r => r.pattern).filter(Boolean))) {
     if (!table.data.some(r => r.joined.includes(id))) {
       problems.push(`采用的模式 ${id} 在复核表里没有对应行`
-        + '——冻结了它，本阶段就要核实现是否按这个结构落');
+        + '——契约里有文件标了它，本阶段就要核实现是否按这个结构落');
     }
   }
 
   return gate(ctx, {
     problems,
     inputs: [reportPath],
-    fix: '处置：在审查报告补齐复核表，或回 plan 修正冻结后重跑。',
+    fix: '处置：在审查报告补齐复核表，或回 plan 修正 must 后重跑。',
   });
 });

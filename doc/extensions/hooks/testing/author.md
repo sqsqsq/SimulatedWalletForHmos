@@ -1,8 +1,7 @@
 # testing 阶段 · 扩展要求（写之前读这一页）
 
-**冻结结果是本阶段唯一的知识来源**：plan 已经把用到的规约义务冻结在
-`plan/contracts.yaml` 的 `knowledge_freeze` 里。不回去重读规约、不重新判断适用性。
-对不上时回 plan 更新冻结。
+**契约实体上的 `must` 就是本阶段的知识来源**：plan 已经把每条规约义务挂到了扛着它的
+那个实体上。不回去重读规约、不重新判断适用性。对不上时回 plan 改 `must`。
 
 **本阶段是最后一道关**——这些约束再往后就没有验证环节了。
 
@@ -10,18 +9,18 @@
 
 | 文件 | 拿什么 |
 |---|---|
-| `plan/contracts.yaml` 的 `knowledge_freeze` | 每条义务的 `criterion`——它指向一条验收条目 |
-| `spec/acceptance.yaml` | 那条验收条目的 `ut_layer`（谁来验）与 `device_focus`（走查或测量什么） |
+| `plan/contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
+| `spec/acceptance.yaml` | `knowledge_rule` 指回规约条目的那条验收条目，按它的 `device_focus` 走查 |
 
 ## 二、产出形态
 
-**`ut_layer` 就是分派单源**：
+**`must.verify` 就是分派单源**：
 
-| ut_layer | 本阶段 |
+| verify | 本阶段 |
 |---|---|
 | `device` | 只由实机验——**必须覆盖** |
 | `both` | UT 与实机都要——**也必须覆盖** |
-| `unit` | 只由 UT 验——**本阶段不适用** |
+| `ut` / `review` / `probe` | **本阶段不适用** |
 
 按验收条目的 `device_focus` 走查或测量，给**可复核证据**：截图、数值、日志。
 
@@ -38,7 +37,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 ## 四、门禁会拦什么
 
-- `ut_layer` 为 `device` / `both` 的义务在本阶段没有覆盖，也没有说法。
+- `verify` 为 `device` / `both` 的义务在本阶段没有覆盖，也没有说法。
 - 结论只有「已验证」「符合要求」而没有可复核证据。
 
 报错会一次列全，每条都写「缺什么 / 写到哪 / 怎么写」。不需要读 `post_check.mjs` 反推判据。

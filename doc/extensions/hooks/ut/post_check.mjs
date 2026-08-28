@@ -14,7 +14,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
-import { loadLedger, utLayerOf } from '../shared/downstream.mjs';
+import { knowledgeCriteria, readAcceptance, readContracts } from '../shared/freeze.mjs';
+import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
 /** UT 侧的覆盖证据：覆盖报告 + 用例源码里出现的 AC 标记。 */
@@ -52,37 +53,40 @@ function coveredAcceptanceIds(projectRoot, feature) {
 }
 
 export default guard('ut', async (ctx) => {
-  const { ok, problem, book } = loadLedger(ctx, 'ut');
-  if (!ok) {
-    return gate(ctx, problem
-      ? { problems: [problem] }
-      : { skipped: [{ what: '验收条目 UT 覆盖', why: '契约还没建（或读不到）' }] });
+  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
+  if (error) return gate(ctx, { problems: [error] });
+  if (!exists) {
+    return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '契约还没建（或读不到）' }] });
   }
-  if (!book.obligations.length) {
-    return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '本需求没有冻结义务' }] });
+  const obligations = obligationsFromContracts(contracts);
+  if (!obligations.length) {
+    return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '契约里没有 must' }] });
   }
 
+  // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）
+  const { acceptance } = readAcceptance(ctx.projectRoot, ctx.feature);
+  const criteria = knowledgeCriteria(acceptance);
   const covered = coveredAcceptanceIds(ctx.projectRoot, ctx.feature);
   const problems = [];
   const notApplicable = [];
 
-  for (const ob of book.obligations) {
+  for (const ob of obligations) {
     const rule = String(ob.rule ?? '?');
-    const criterion = String(ob.criterion ?? '').trim();
-    if (!criterion) continue;                       // 缺 criterion 由 plan 阶段门禁负责
-    const layer = utLayerOf(book, ob);
-    if (layer === 'device') {
-      notApplicable.push(`${rule}（验收条目 ${criterion} 标 device 层，由实机验）`);
+    // verify 是四阶段分派的单源：本阶段只管 ut 与 both，其余是显式不适用
+    if (ob.verify !== 'ut' && ob.verify !== 'both') {
+      notApplicable.push(`${rule}（verify: ${ob.verify || '未标'}，不由 UT 验）`);
       continue;
     }
-    if (!layer) {
-      problems.push(`义务 ${rule} 对应的验收条目 ${criterion} 没有 ut_layer`
-        + '——它是四阶段分派的单源，缺了就无从判断该由谁验');
+    const c = criteria.get(rule);
+    if (!c) {
+      problems.push(`义务 ${rule} 标了 verify: ${ob.verify}，但 acceptance.yaml 里没有`
+        + `knowledge_rule: ${rule} 的验收条目——本阶段无从知道该覆盖哪个场景`);
       continue;
     }
-    if (!covered.has(criterion)) {
-      problems.push(`义务 ${rule} 的验收条目 ${criterion}（${layer} 层）在 UT 侧找不到覆盖证据`
-        + '——本阶段该覆盖它却没有；确实不该由 UT 验就回 plan 把 ut_layer 改成 device');
+    const id = String(c.id ?? '').trim();
+    if (id && !covered.has(id)) {
+      problems.push(`义务 ${rule} 的验收条目 ${id} 在 UT 侧找不到覆盖证据`
+        + `——本阶段该覆盖它却没有；确实不该由 UT 验就回 plan 把 must.verify 改成 device`);
     }
   }
 
@@ -90,8 +94,8 @@ export default guard('ut', async (ctx) => {
     problems,
     checks: notApplicable.length
       ? [{ id: 'ext_ut_not_applicable', status: 'NOT_APPLICABLE',
-          detail: `按 ut_layer 显式分派：${notApplicable.join('、')}` }]
+          detail: `按 must.verify 显式分派：${notApplicable.join('、')}` }]
       : undefined,
-    fix: '处置：补齐用例覆盖，或回 plan 修正验收条目的 ut_layer 后重跑。',
+    fix: '处置：补齐用例覆盖，或回 plan 修正 must.verify 后重跑。',
   });
 });
