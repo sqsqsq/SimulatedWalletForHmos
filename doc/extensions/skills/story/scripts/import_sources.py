@@ -322,7 +322,7 @@ def demote_headings(markdown: str, shift: int) -> str:
     """把文档自带的标题整体降级，使其嵌在节标题之下。
 
     每份材料在目标文件里占一个 `##` 节，而文档自己的 `#` 会与之平级甚至反超——
-    层级一乱，story 逐章装配后的结构就散了。降级到 6 级封顶（markdown 上限）。
+    层级一乱，story 成文后的结构就散了。降级到 6 级封顶（markdown 上限）。
     """
     def fix(line: str) -> str:
         m = re.match(r"^(#{1,6})(\s)", line)

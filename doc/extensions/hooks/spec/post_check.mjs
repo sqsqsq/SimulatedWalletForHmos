@@ -1,15 +1,14 @@
 /**
  * spec 阶段 post_check 生命周期 hook（实例扩展 story）
  *
- * 作用：把**本阶段三份产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
- *   1. 三份产物齐备：spec.md（代码要求）/ AR/review.md（归档件·决策件）/ AR/story.md（归档件·叙事主件）；
+ * 作用：把**本阶段产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
+ *   1. 本阶段两份产物：spec.md（代码要求）与 AR/review.md（归档件·决策件）；
+ *      **story 不在本阶段**——它由 `/story` 链的 S5 用独立 writer 写成，判据在 story-build check；
  *   2. §9 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
  *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
- *      编号到条目级且在册、三方 ID 集合一致、要求列不是规约原文的复制；
+ *      编号到条目级且在册、与 acceptance 的桥接键一致、要求列不是规约原文的复制；
  *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
  *   5. story 前置流程契约（AR/story-flow.json）已收口且决策留痕齐备。
- *
- * 两份归档件自身的结构、一致性与自包含红线由 skills/story/scripts/merge-story.mjs --check 负责，本 hook 只查在不在。
  *
  * 校验边界：**不校验结论真假**——文档坐标可被 AI 伪造，校验格式只给虚假的安全感。
  * 结论是否成立由 AI verifier 按名称回查源文件、以及开发的证据抽查关卡把关。
@@ -340,7 +339,7 @@ function idSetProblems(ctx, knowledge, specIds) {
   const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
 
   // **不再和第二份登记表比对**：§10 的表本身就是判定登记，spec 阶段的判定结论只有一份。
-  // 上一版另有一份判定登记件，于是同一条结论有两处写法、两处判定，
+  // 上一版另有一份独立的判定记录文件，于是同一条结论有两处写法、两处判定，
   // 评审者看到互相矛盾的结论时无从知道哪个是准的。归档件的符合性附录由 writer 直接写。
 
   // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）
@@ -371,7 +370,8 @@ function idSetProblems(ctx, knowledge, specIds) {
  * 模板见 skills/story/templates/spec-sections.md。
  *
  * 判定结论（命中/不命中）不在 spec：它零条代码要求，纯粹是给评审者的完备性回显，
- * 与「spec 只装与最终代码有关的内容」相悖，现由知识判定登记表渲染成归档件的附录单表。
+ * 与「spec 只装与最终代码有关的内容」相悖——它落在归档件「影响面与合规」章的判定表里，
+ * 由 S5 的 writer 写、`story-build check` 核。
  * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
  * 结论是不是本需求的设计，由 verifier 按注入的必答清单逐行裁决——那是判断，脚本判不了。
  */

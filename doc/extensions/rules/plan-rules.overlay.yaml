@@ -1,4 +1,4 @@
-# 实例扩展 plan 阶段规则 overlay（知识冻结）
+# 实例扩展 plan 阶段规则 overlay（义务挂到契约实体）
 # 经 manifest provides.phase_rules_overlays.plan 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
 #
 # 本文件只问「冻结的义务是不是本需求的设计」——不复述域名、编号与维度。

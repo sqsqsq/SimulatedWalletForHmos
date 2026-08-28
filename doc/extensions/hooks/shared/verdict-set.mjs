@@ -4,17 +4,11 @@
  * 消费者：pre_verifier（注入清单）、spec/plan 的 post_check（核对报告有没有逐行裁）。
  * 两边各存一份口径，改一处忘另一处就是「注入了 14 行、门禁只核 11 行」这类静默漏裁。
  *
- * ## 为什么是收窄后的全集
+ * ## 全集是什么
  *
- * 同一条结论在归档件附录、spec 出口章、契约冻结里各出现一次，那是**同一份结论的三次渲染**：
- * 附录由登记源渲染、出口章与登记源同文（各自有机械门禁保证），裁一次就够。
- * 全集指的是**登记源的每一行**：命中的条目、判不适用的整域、模式候选——一行不落。
- *
- * ## 域级判定
- *
- * 规约域的 frontmatter 有 `applies_when`：写 `always` 的域每条都要逐条判；
- * 条件域先判「这个域适不适用本需求」，判不适用就整域一行带依据，域内条目不再逐条登记。
- * 时机由规约自己承担，模型不必对着不相干的域逐条写「不涉及」。
+ * spec 阶段：**§10 表的每一行 + §11 候选表的每一行**——一行不落。
+ * 这个阶段的判定只有这一份，所以裁一次就够。
+ * plan 之后：契约实体上的每条 `must` + 每个 `files[].pattern`。
  */
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from './paths.mjs';
@@ -24,8 +18,8 @@ import { obligationsFromContracts, patternRolesFromContracts } from './obligatio
 /**
  * 域级判定（条件域先判域）的**记录落点在归档件的符合性附录**，由 writer 写。
  *
- * 上一版另有一份判定登记件承载它，spec post_check 据此校验。
- * 那份登记件与 spec §10 表是同一批结论的两处写法——两处判定对不上时，
+ * 上一版另有一份独立的判定记录文件承载它，spec post_check 据此校验。
+ * 那份文件与 spec §10 表是同一批结论的两处写法——两处判定对不上时，
  * 评审者无从知道哪个是准的。它退场后，spec 阶段没有可校验的数据源：
  * 域级判定的完备性由 writer 的附录与 verifier 的语义判据管，机械层不假装判得了。
  */
@@ -48,8 +42,8 @@ export function adjudicationSet(projectRoot, feature, phase) {
 }
 
 function specSet(projectRoot, feature) {
-  // **数据源是 spec §10 表本身**，不是第二份登记件。
-  // 上一版读另一份判定登记件：同一条结论有两处写法、两处判定，
+  // **数据源是 spec §10 表本身**，不是第二份记录。
+  // 上一版读一份独立的判定记录文件：同一条结论有两处写法、两处判定，
   // 评审者看到互相矛盾的结论时无从知道哪个是准的。判定登记就是 §10 那张表。
   const specPath = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
   const text = readTextOrNull(specPath);

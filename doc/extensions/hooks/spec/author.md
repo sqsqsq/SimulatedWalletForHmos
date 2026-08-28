@@ -8,8 +8,8 @@
 | 文件 | 拿什么 |
 |---|---|
 | `doc/extensions/skills/story/templates/spec-sections.md` | §9 / §10 / §11 三节的表结构与写法；每节顶部的 HTML 注释就是该节的结构判据 |
-| `doc/extensions/skills/story/reference/constraint-usage.md` | 规约**怎么判、结论去哪**：判定的三个出口、先判域还是先判条目、判「否」要给什么依据、模式候选怎么登记 |
 | `doc/extensions/manifest.yaml` 的 `provides.knowledge` 所列文件 | 本阶段生效的规约条目表与项目知识。**只读清单里的文件**，不扫描 `knowledge/` 目录——没登记的读不到 |
+| `doc/extensions/skills/story/reference/evidence-rules.md` | §9 各节怎么取证、结论怎么写才能按名回查 |
 
 走 `/story` 链时另读 [`skills/story/phases/spec.md`](../../skills/story/phases/spec.md)：本轮材料从哪来、
 要出几份产物、§9 怎么取证。
@@ -24,6 +24,9 @@ spec 正文里扩展要求的只有三节，全部按 `spec-sections.md` 的表�
 - **§10 规约约束要求**——必须**满足什么**。判「命中」且处置未标（评审动作）的条目**逐条一行**，
   每行给出「这条在本需求里具体要求做什么」和「落点契约名」；落点名必须是 §9 里已登记的名字。
   **不为任何域预留固定小节**——哪些条目命中由本次需求决定。
+  **有命中条件的域先判域**：整域不适用时不必逐条登记，但要有一句可回查的依据
+  （「本需求无新增对外开放页面或接口」是依据，「不涉及」不是）。逐条判定的完整回显在归档件的
+  「影响面与合规」章成表，那是 S5 writer 的产物，不进 spec。
 - **§11 设计模式候选登记**——可以**选什么**。逐个适用单元一行，只登记不选型（选型缺方案上下文，是 plan 的事）。
   零候选是正常结论，但要写出单元与「为什么都不需要」。
 
