@@ -306,7 +306,7 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 4 | 同一 check id FAIL 次数 | ≤ 2 | 5（`lifecycle_hook_post_check_extension` 洋葱式暴露五层） |
 | 5 | spec 阶段上下文增量 | ≤ 150K | +397K（全程 11K → 818K，零 compaction） |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
-| 7 | `doc/extensions` 非知识层行数 | 较基线净减 | 基线 10358 |
+| 7 | `doc/extensions` 非知识层行数 | ≤ 7500（未达成时如实写「未达成」，不改本目标） | 基线 10358 |
 
 **第 3 项是最直接的信号**：作者去读 checker 源码，说明它从别处拿不到要求——
 批次 3 的作者面通道（入口文件 → `hooks/<phase>/author.md` → 模板 → 报错文案）就是为它建的。

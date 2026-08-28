@@ -2,8 +2,8 @@
   "generated_from": [
     "RR/prd.md"
   ],
-  "unit_count": 3,
-  "token_count": 3,
+  "unit_count": 5,
+  "token_count": 5,
   "units": [
     {
       "key": "PRD:3:239dab1e",
@@ -39,6 +39,32 @@
         "applicationId"
       ],
       "machine_facing": false
+    },
+    {
+      "key": "KNOWLEDGE:SMP-01",
+      "doc": "KNOWLEDGE",
+      "kind": "knowledge",
+      "section": "甲域约束",
+      "line": 0,
+      "text": "甲域约束 ｜ 受理单编号在提交入口生成一次",
+      "tokens": [
+        "SMP-01"
+      ],
+      "machine_facing": false,
+      "domain": "甲域约束"
+    },
+    {
+      "key": "KNOWLEDGE:SMP-02",
+      "doc": "KNOWLEDGE",
+      "kind": "knowledge",
+      "section": "甲域约束",
+      "line": 0,
+      "text": "甲域约束 ｜ 上报失败只记本地日志，不阻断主流程",
+      "tokens": [
+        "SMP-02"
+      ],
+      "machine_facing": false,
+      "domain": "甲域约束"
     }
   ]
 }

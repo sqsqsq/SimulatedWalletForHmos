@@ -26,7 +26,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { enumerateUnits, linkDuplicates } from './source-units.mjs';
+import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
+import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
   escapeCell, extractFreeformZone, extractHumanZone, findBlockRange,
   renderFreeformSection, renderHumanZone, renderMachineZone,
@@ -37,6 +38,10 @@ const COMMANDS = ['init', 'audit', 'check', 'build'];
 /** S5 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
 const MIN_QUOTE = 12;
+
+/** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
+const DOMAIN_NA = '整域不适用';
+const KNOWLEDGE_VERDICTS = ['命中', '不命中', DOMAIN_NA];
 
 /** 决策件必须扫过的六类议题——少扫一类不是「没有」，是「没想这件事」。 */
 const SCANNED_CATEGORIES = [
@@ -162,6 +167,16 @@ function cmdInit(ctx) {
     }));
   }
   if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
+
+  // 激活规约条目也是来源单元：逐条判定要和材料里的事实走同一条守恒链
+  try {
+    const k = activeKnowledge(ctx.projectRoot);
+    const ku = knowledgeUnits(k.entries);
+    if (!ku.length) fail('激活清单派生不出规约条目——不是「本需求没有规约」，是派生坏了');
+    units.push(...ku);
+  } catch (e) {
+    fail(`激活知识派生失败：${e.message}——判定表无从核对，不能当作「没有规约」通过`);
+  }
   linkDuplicates(units);
 
   writeJson(ctx.unitsPath, {
@@ -344,6 +359,7 @@ function cmdCheck(ctx) {
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
+    if (u.kind === 'knowledge') continue;   // 规约条目走 ⑦ 判定表，不走章节落点
     const rec = recByKey.get(u.key);
     const states = ['at', 'covered_by', 'machine_facing'].filter(k => rec?.[k]);
     if (states.length === 0) { stateless.push(u); continue; }
@@ -504,6 +520,45 @@ function cmdCheck(ctx) {
         } else if (norm(u.text).includes(q)) {
           // 把材料原话抄回来是回声：它证明的是「材料这么说」，不是「story 讲清了」
           problems.push(`${u.key} 的引文是来源单元原文的子串——那是回声，抄 story 里你据以判断的那句`);
+        }
+      }
+    }
+  }
+
+  // ⑦ 规约判定表：激活清单的每个条目在「影响面与合规」章有一行，或其整域一行「整域不适用」
+  //
+  // 逐条判定原先落在一份独立的判定记录文件里，那份文件退场后既无作业指引也无门禁——
+  // 批次 1 的「知识应用」在 story 侧就这么丢了。判定回到 story 里，评审者才拿得到完备性回显。
+  const kUnits = doc.units.filter(u => u.kind === 'knowledge');
+  if (kUnits.length) {
+    const complianceSec = sections.find(s => s.title.includes('合规'));
+    if (!complianceSec) {
+      problems.push('缺「影响面与合规」章——激活规约的逐条判定表落在那里');
+    } else {
+      const rows = new Map();          // 编号 → {判定, 依据}
+      const domainRows = new Map();    // 中文域名 → 判定
+      for (const line of complianceSec.text.split(/\r?\n/)) {
+        const s = line.trim();
+        if (!s.startsWith('|')) continue;
+        const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.replace(/[`*]/g, '').trim());
+        if (c.length < 4 || /^[-: ]*$/.test(c[0])) continue;
+        const [domain, id, verdict, basis] = c;
+        if (id) rows.set(id, { verdict, basis });
+        if (verdict === DOMAIN_NA) domainRows.set(domain, true);
+      }
+      for (const u of kUnits) {
+        const id = u.tokens[0];
+        const row = rows.get(id);
+        if (!row) {
+          if (domainRows.has(u.domain)) continue;   // 整域不适用，覆盖域内全部条目
+          problems.push(`规约 ${id}（${u.domain}）在「${complianceSec.title}」章的判定表里没有行`
+            + `——判「不命中」也要有一行；整域不适用就给该域一行「${DOMAIN_NA}」`);
+          continue;
+        }
+        if (!KNOWLEDGE_VERDICTS.includes(row.verdict)) {
+          problems.push(`规约 ${id} 的判定「${row.verdict}」不是 ${KNOWLEDGE_VERDICTS.join(' / ')} 之一`);
+        } else if (!row.basis) {
+          problems.push(`规约 ${id} 的判定没写依据——「不涉及」三个字不是依据`);
         }
       }
     }

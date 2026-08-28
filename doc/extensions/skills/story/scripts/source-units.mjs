@@ -29,7 +29,34 @@ export const UNIT_KINDS = [
   'diagram',      // mermaid / flowchart 围栏
   'blockquote',
   'code',         // yaml / json 围栏
+  'knowledge',    // 激活清单里的规约条目——它不从材料切出来，token 是条目编号
 ];
+
+/**
+ * 激活规约条目 → 来源单元。
+ *
+ * 逐条判定原先落在一份独立的判定记录文件里，那份文件退场后既无作业指引也无门禁——
+ * 批次 1 的「知识应用」在 story 侧就这么丢了。把条目变成来源单元，它就和材料里的
+ * 其它事实走同一条守恒链：一条不落，缺一条点名一条。
+ *
+ * token 是**编号**：判定表里出现编号是允许的（那是给评审者的完备性回显）；
+ * 正文里仍写中文规约名，归档件红线拦的是正文里的仓内标识。
+ *
+ * @param {{id, domainTitle, constraint}[]} entries `activeKnowledge().entries`
+ */
+export function knowledgeUnits(entries) {
+  return (entries ?? []).map(e => ({
+    key: `KNOWLEDGE:${e.id}`,
+    doc: 'KNOWLEDGE',
+    kind: 'knowledge',
+    section: e.domainTitle ?? '',
+    line: 0,
+    text: `${e.domainTitle ?? ''} ｜ ${e.constraint ?? ''}`.trim(),
+    tokens: [e.id],
+    machine_facing: false,
+    domain: e.domainTitle ?? '',
+  }));
+}
 
 /** 围栏语言 → 单元类型。未列出的围栏按 code 处理。 */
 const DIAGRAM_LANGS = new Set(['mermaid', 'flowchart', 'sequencediagram', 'graph', 'plantuml']);

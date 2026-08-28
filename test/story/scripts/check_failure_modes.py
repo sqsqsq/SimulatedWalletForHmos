@@ -33,7 +33,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 import sys
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -1794,6 +1796,87 @@ def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"引文全部可在目标产物里检索到（{out['verified']} 条）")
 
 
+def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
+    """跑 init → audit →（可选写裁决表）→ check，返回 check 的退出码与输出。
+
+    **在夹具的副本上跑**：这几条命令会写 source-units.json / audit.json / story-verdicts.md，
+    直接在夹具里跑会把它写脏，且上一次的产物会影响下一次的判定（实测 bad 跑完留下的裁决表
+    让 good 那面读到了错的引文）。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / root.name
+        shutil.copytree(root, work)
+        return _story_build_in(work, extra_verdict)
+
+
+def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
+    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
+    if build is None:
+        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
+
+    def run(cmd: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(build), cmd, "--feature", "F1", "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    for cmd in ("init", "audit"):
+        r = run(cmd)
+        if r.returncode != 0:
+            return r.returncode, f"{cmd} 跑不起来：{(r.stderr or r.stdout or '')[:200]}"
+
+    if extra_verdict is not None:
+        audit = root / "doc" / "features" / "F1" / "AR" / "story-src" / "audit.json"
+        data = json.loads(read_text(audit))
+        keys = []
+        for rec in data.get("records", []):
+            if not any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
+                rec["at"], rec["by"] = "页面、组件与状态", "author"
+                keys.append(rec["key"])
+        audit.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        rows = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
+        rows += [f"| {k} | 讲清 | {extra_verdict} |" for k in keys]
+        (audit.parent / "story-verdicts.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    r = run("check")
+    return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()
+
+
+@checker
+def r01_verdict_echo(root: Path, ctx: Ctx) -> Outcome:
+    """S5 的裁决用回声当引文——把来源单元的原话抄回来，证明不了 story 讲清了它。
+
+    机器定不了落点的单元交给 S5 裁决者裁，裁决要附引文。引文若是**来源单元原文的子串**，
+    它证明的是「材料这么说」，不是「story 讲清了」——那正是上一轮 verifier 报告里
+    272 行证据全是回声的形态。本条调真实的 story-build check。
+    """
+    quote_file = root / "verdict-quote.txt"
+    if not quote_file.exists():
+        return Outcome(True, "夹具没有裁决引文（该形态未启用）")
+    code, out = _story_build_cycle(root, read_text(quote_file).strip())
+    if code == 0:
+        return Outcome(True, "引文出自 story，裁决可核实")
+    if "回声" in out:
+        return Outcome(False, "引文是来源单元原文的回声，被判未裁")
+    return Outcome(False, f"check 未过（非回声原因）：{out[:200]}")
+
+
+@checker
+def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
+    """激活规约条目在合规章的判定表里缺行——逐条判定又丢了。
+
+    判定原先落在一份独立的记录文件里，那份文件退场后既无作业指引也无门禁。
+    现在条目是来源单元，缺一条要点名一条。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
+    if code == 0:
+        return Outcome(True, "激活规约条目在判定表里逐条有行")
+    if "判定表里没有行" in out:
+        return Outcome(False, f"判定表缺行被点名：{out.split('判定表里没有行')[0][-60:]}判定表里没有行")
+    return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
+
+
 @checker
 def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
     """story 的整篇守恒判不出材料里丢了什么。
@@ -1808,28 +1891,12 @@ def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
 
     夹具是一个迷你需求目录（`doc/features/F1/`），所以 `root` 传进来的是夹具根。
     """
-    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
-    if build is None:
-        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
-    if not build.exists():
-        return Outcome(False, "找不到 story-build.mjs——判定基准不存在，不当作通过")
     if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story 与材料（该形态未启用）")
 
-    def run(cmd: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["node", str(build), cmd, "--feature", "F1", "--project-root", str(root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-
-    if run("init").returncode != 0:
-        return Outcome(False, "story-build init 跑不起来——来源单元枚举失败")
-    audit = run("audit")
-    if audit.returncode != 0:
-        return Outcome(False, f"story-build audit 跑不起来：{(audit.stderr or '')[:160]}")
-    r = run("check")
-    if r.returncode == 0:
+    code, out = _story_build_cycle(root)
+    if code == 0:
         return Outcome(True, "整篇守恒通过：材料里的事实在 story 都有落点")
-    out = ((r.stderr or "") + (r.stdout or "")).strip()
     # 判据不是「报了错」，是**点名了具体哪个事实**——笼统说「有缺失」等于没有区分力
     named = [t for t in ("applicationId", "createBusinessOrder") if t in out]
     if not named and "没有任何落点" not in out:

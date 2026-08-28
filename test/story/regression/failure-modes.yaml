@@ -491,13 +491,6 @@ modes:
     applicable_when: 存在 AR/story-src/knowledge.json 且激活清单里有条件域
     severity: BLOCKER
     status: fixed
-    migration_note: >
-      数据源迁移（2026-08-28，批次 3 子批 C）：域级判定原先登记在 AR/story-src/knowledge.json，
-      那份登记件与 spec §10 表是同一批结论的两处写法，已随子批 C 退场。域级判定的记录落点
-      改为归档件的「规约符合性」附录，由 S5 的 writer 直接写。**在 writer 产出新形态样本之前，
-      本形态对新产物记「不适用」**——这是如实的过渡状态，不是它还在守着。
-      新样本到位后按新落点重写 checker 与夹具。
-
   - id: P16-spec-exit-diverges-from-registry
     dimension: knowledge
     found_round: "2026-08-25"
@@ -685,3 +678,37 @@ modes:
       上一版按作者自述（自由文本 reason 只判非空）→ 实测 161/272 单元「不进」、理由去重后 2 种。
       两版共同根因是守恒的粒度与位置都错。本条调真实的 story-build（init → audit → check），
       判据不是「报了错」而是**点名了具体哪个事实**——笼统说「有缺失」等于没有区分力。
+
+  - id: R01-verdict-echo
+    dimension: content
+    found_round: "2026-08-28"
+    form: S5 的裁决用回声当引文——把来源单元的原话抄回证据列，证明不了 story 讲清了它
+    clause: E7 / KR-1c
+    checker: r01_verdict_echo
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/R01-verdict-echo/bad
+    good_fixture: test/story/fixtures/failure-modes/R01-verdict-echo/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      机器定不了落点的单元交给 S5 裁决者逐条裁，裁决要附引文。引文若是来源单元原文的子串，
+      它证明的是「材料这么说」而不是「story 讲清了」——上一轮 verifier 报告 272 行证据
+      全是这种回声。判据：引文须是 story 那一章的逐字子串、≥12 字、且不是单元原文的子串。
+
+  - id: R02-knowledge-row-missing
+    dimension: content
+    found_round: "2026-08-28"
+    form: 激活规约条目在归档件合规章的判定表里缺行——逐条判定失去落点，批次 1 的知识应用在 story 侧退化
+    clause: E2 / KR-2b
+    checker: r02_knowledge_row_missing
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/R02-knowledge-row-missing/bad
+    good_fixture: test/story/fixtures/failure-modes/R02-knowledge-row-missing/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      判定原先落在一份独立的判定记录文件里；那份文件退场后，作业指引与门禁一起没了。
+      现在规约条目是来源单元，与材料里的事实走同一条守恒链：缺一条点名一条，
+      判「不命中」也要有行有依据，整域不适用时给该域一行即可（P15 的域级判定回来了）。
