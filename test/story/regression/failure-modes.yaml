@@ -625,3 +625,39 @@ modes:
       夹具自带 package/ 与 target/ 两棵树、可选 after/（写入后状态），整棵树复制到临时目录再跑，
       夹具本身不被写脏。真实目标那一栏用**当前包**去核一棵已提交的未适配目标树
       （fixtures/adapt/target-prior），验证区分力在真包上同样成立、而不是只在迷你夹具里有效。
+
+  - id: B01-probe-no-discrimination
+    dimension: infra
+    found_round: "2026-08-28"
+    form: 探针对已知违规没有区分力——查「名字在不在」而不是「写法对不对」，容器名恒真；或被注释里的提及骗过
+    clause: E3 / KB-4
+    checker: b01_probe_no_discrimination
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/B01-probe-no-discrimination/bad
+    good_fixture: test/story/fixtures/failure-modes/B01-probe-no-discrimination/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      基线的 coding 探针是 \b名\b 跨文件文本存在性，不分声明/调用/注释。实测一条明晃晃的
+      违规（方向性布局参数写成 left/right）被它放行——它查的是组件名在不在，而组件名当然在。
+      本条调真实的 probes.mjs 执行器，不在 checker 里重实现判定（同 A02 / M15 的做法）。
+      两个形态：absent_regex 要报出不该出现的写法；referenced_outside_definition 要判出
+      零调用的角色类且不被注释骗过——后者在实施中真的踩过一次。
+
+  - id: B02-evidence-echo
+    dimension: infra
+    found_round: "2026-08-28"
+    form: 裁决的证据是回声——把注入清单里给的话抄回证据列，机械层只查「同行含键 + 有裁决词」就放行
+    clause: E4 / KB-5
+    checker: b02_evidence_echo
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/B02-evidence-echo/bad
+    good_fixture: test/story/fixtures/failure-modes/B02-evidence-echo/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      实测 verifier 报告 272 行证据只有 14 种字符串、全是被检文本的复制，零条「落点错/漏了」，
+      而门禁照收 PASS。判据改为：引文非空且 ≥12 字、是目标产物的子串、一行只裁一个对象。
+      与 pre_verifier 不再注入被检文本是同一件事的两面——不给原文，才可能拿到真引文。

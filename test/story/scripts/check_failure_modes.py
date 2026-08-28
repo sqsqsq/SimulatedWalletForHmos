@@ -1667,6 +1667,133 @@ def a05_entry_file_misses_extension_section(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "；".join(missing) + "——写入后须重渲染 / 重写入口文件")
     return Outcome(True, f"{seen} 均含 AGENTS.section.md 全文")
 
+
+# --------------------------------------------------------------------------- #
+# 批次 3 子批 B：探针区分力与引文核实
+# --------------------------------------------------------------------------- #
+
+
+def _run_node(root: Path, name: str, script: str) -> tuple[dict | None, str]:
+    """在夹具目录里跑一段 ESM，取最后一行 JSON。
+
+    直接调**扩展里真实的执行器**，不在 checker 里重实现判定——重实现出来的是
+    「我以为它这么判」，与真实链路上跑的那个可以悄悄分叉（同 A02 / M15 的做法）。
+    """
+    tmp = root / name
+    try:
+        tmp.write_text(script, encoding="utf-8")
+        # 显式 utf-8：Windows 上 text=True 走 GBK，探针文案里的中文会让 stdout 解码失败、
+        # 悄悄变成 None——「跑了没输出」与「判据没过」就此同形。
+        r = subprocess.run(["node", str(tmp)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except Exception as e:  # noqa: BLE001
+        return None, f"跑不起来：{e}"
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    if r.returncode != 0:
+        return None, f"退出码 {r.returncode}：{(r.stderr or '').strip()[:200]}"
+    out = (r.stdout or "").strip().splitlines()
+    if not out:
+        return None, "没有输出"
+    try:
+        return json.loads(out[-1]), ""
+    except Exception:  # noqa: BLE001
+        return None, f"输出不是 JSON：{out[-1][:160]}"
+
+
+def _ext_file(root: Path, rel: str) -> Path | None:
+    """夹具里没有就退回真实扩展目录——夹具只放源码片段，执行器始终是真的那一份。"""
+    for base in (root, DEFAULT_EXTENSION_DIR):
+        p = base / rel
+        if p.exists():
+            return p
+    return None
+
+
+@checker
+def b01_probe_no_discrimination(root: Path, ctx: Ctx) -> Outcome:
+    """探针对已知违规没有区分力——恒真探针换了个写法。
+
+    基线的 coding 探针是 ``\\b名\\b`` 跨文件文本存在性：不分声明/调用/注释，
+    末段是容器名时恒真。实测一条明晃晃的违规（方向性布局参数写成 left/right）被它放行，
+    因为它查的是「组件名在不在」，而组件名当然在。
+
+    本条调**真实的探针执行器**，用两个形态验判别力：
+      ① ``absent_regex`` 要报出不该出现的写法；
+      ② ``referenced_outside_definition`` 要判出零调用的角色类，
+         且**不被另一个文件注释里的提及骗过**（实施中真的踩过这一下）。
+    """
+    probes = _ext_file(root, "hooks/shared/probes.mjs")
+    if probes is None:
+        return Outcome(False, "找不到探针执行器 probes.mjs——判定基准不存在，不当作通过")
+    files = sorted(p.name for p in root.glob("*.ets"))
+    if not files:
+        return Outcome(True, "夹具里没有源码片段（该形态未启用）")
+
+    script = "\n".join([
+        f"import {{ runProbe }} from {json.dumps(probes.resolve().as_uri())};",
+        f"const files = {json.dumps(files)};",
+        f"const root = {json.dumps(str(root.resolve()))};",
+        # r-string：`\b` 在普通字符串里是退格符，会被悄悄吃掉（坑 #36 的又一次）
+        r"const a = runProbe({kind:'absent_regex',pattern:String.raw`\b(left|right)\s*:`,"
+        r"count:null,raw:''}, {projectRoot: root, files, entityName:'Sheet', entityKind:'components'});",
+        "const b = runProbe({kind:'referenced_outside_definition',pattern:'',count:null,raw:''},"
+        " {projectRoot: root, files, entityName:'Orphan', entityKind:'files'});",
+        "console.log(JSON.stringify({absent: a, ref: b}));",
+    ])
+    out, err = _run_node(root, "_probe_check.mjs", script)
+    if out is None:
+        return Outcome(False, f"探针执行器{err}")
+
+    # checker 只如实判「这份源码有没有违规」，**不去猜自己在跑哪个夹具**——
+    # 正反由框架的 self_check 核对（反夹具必 FAIL、正夹具必 PASS）。
+    # 让 checker 按夹具名分支，等于把判定和期望写在同一处，两边一起错也发现不了。
+    bad = []
+    if not out["absent"]["ok"]:
+        bad.append(f"方向性写法：{out['absent']['detail'][:90]}")
+    if not out["ref"]["ok"]:
+        bad.append(f"角色引用：{out['ref']['detail'][:90]}")
+    if bad:
+        return Outcome(False, "；".join(bad))
+    return Outcome(True, f"两个探针都放行（扫 {out['absent']['scanned']} 个文件）")
+
+
+@checker
+def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
+    """裁决的证据是回声——把清单里给的话抄回来，不是读过产物。
+
+    实测：verifier 报告 272 行证据只有 14 种字符串、全是被检文本的复制，零条
+    「落点错/漏了」，而「同行含键 + 有裁决词」的判据照收 PASS。
+    本条调真实的 ``evidenceVerified``，验它能不能把回声判成「未裁」。
+    """
+    vr = _ext_file(root, "hooks/shared/verifier-report.mjs")
+    if vr is None:
+        return Outcome(False, "找不到 verifier-report.mjs——判定基准不存在，不当作通过")
+    report, target = root / "verifier.report.md", root / "target.md"
+    if not report.exists() or not target.exists():
+        return Outcome(True, "夹具里没有报告与目标产物（该形态未启用）")
+
+    script = "\n".join([
+        f"import {{ evidenceVerified }} from {json.dumps(vr.resolve().as_uri())};",
+        "import * as fs from 'node:fs';",
+        f"const lines = fs.readFileSync({json.dumps(str(report.resolve()))},'utf-8').split(/\\r?\\n/);",
+        f"const target = fs.readFileSync({json.dumps(str(target.resolve()))},'utf-8');",
+        "console.log(JSON.stringify(evidenceVerified(['R-01','R-02'], lines, [target])));",
+    ])
+    out, err = _run_node(root, "_evidence_check.mjs", script)
+    if out is None:
+        return Outcome(False, f"引文核实{err}")
+
+    # 同 b01：如实判，不按夹具名分支
+    if out["unadjudicated"]:
+        why = "；".join(f"{u['key']}（{u['why'][:40]}）" for u in out["unadjudicated"][:3])
+        return Outcome(False, f"{len(out['unadjudicated'])} 个对象未裁：{why}")
+    return Outcome(True, f"引文全部可在目标产物里检索到（{out['verified']} 条）")
+
+
 VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
 
 
