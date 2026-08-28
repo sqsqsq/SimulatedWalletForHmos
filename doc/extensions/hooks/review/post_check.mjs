@@ -12,7 +12,8 @@
  */
 import * as path from 'node:path';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { blocker, loadLedger } from '../shared/downstream.mjs';
+import { loadLedger } from '../shared/downstream.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 
 const SECTION_TITLE = '知识义务复核';
 const VERDICTS = ['落实', '未落实', '不适用'];
@@ -44,24 +45,32 @@ function reviewTable(text) {
   return { headers, data };
 }
 
-export default async function reviewPostCheck(ctx) {
-  if (ctx?.phase !== 'review' || !ctx?.feature || !ctx?.projectRoot) return { ok: true };
-
-  const { ok, blocked, book } = loadLedger(ctx, 'review');
-  if (!ok) return blocked ?? { ok: true };
-  if (!book.obligations.length && !book.patterns.length) return { ok: true };
+export default guard('review', async (ctx) => {
+  const { ok, problem, book } = loadLedger(ctx, 'review');
+  if (!ok) {
+    return gate(ctx, problem
+      ? { problems: [problem] }
+      : { skipped: [{ what: '知识义务复核表', why: '契约还没建（或读不到）' }] });
+  }
+  if (!book.obligations.length && !book.patterns.length) {
+    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '本需求没有冻结义务与模式' }] });
+  }
 
   const reportPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
   const text = readTextOrNull(reportPath);
-  if (text === null) return { ok: true };   // 报告缺失由框架的 check-review 负责
+  if (text === null) {
+    // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要留痕
+    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '审查报告还没生成' }] });
+  }
 
   const table = reviewTable(text);
   if (!table || !table.data.length) {
-    return blocker('review', [
-      `审查报告缺「${SECTION_TITLE}」表——冻结的每条义务都要有一行结论。`
-      + '形态：| rule | 落实位置（文件:符号） | 结论（落实/未落实/不适用） | 依据 |'
-      + '；「不适用」也要写，缺席与「做过但没写」事后完全同形，而只有前者是缺陷',
-    ]);
+    return gate(ctx, {
+      problems: [`审查报告缺「${SECTION_TITLE}」表——冻结的每条义务都要有一行结论。`
+        + '形态：| rule | 落实位置（文件:符号） | 结论（落实/未落实/不适用） | 依据 |'
+        + '；「不适用」也要写，缺席与「做过但没写」事后完全同形，而只有前者是缺陷'],
+      inputs: [reportPath],
+    });
   }
 
   const problems = [];
@@ -107,11 +116,9 @@ export default async function reviewPostCheck(ctx) {
     }
   }
 
-  if (problems.length) {
-    return blocker('review', [
-      ...problems,
-      '处置：在审查报告补齐复核表，或回 plan 修正冻结后重跑',
-    ]);
-  }
-  return { ok: true };
-}
+  return gate(ctx, {
+    problems,
+    inputs: [reportPath],
+    fix: '处置：在审查报告补齐复核表，或回 plan 修正冻结后重跑。',
+  });
+});

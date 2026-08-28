@@ -15,7 +15,8 @@
  * 契约：stdin JSON ctx → stdout JSON result。
  */
 import * as path from 'node:path';
-import { STATUS, writePostCheckEvidence } from '../shared/evidence.mjs';
+import { STATUS } from '../shared/evidence.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById, paraphraseSources } from '../shared/knowledge.mjs';
 import { isPureCopy } from '../shared/paraphrase.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
@@ -31,6 +32,7 @@ import {
 } from '../shared/freeze.mjs';
 
 const INJECTION_DOC = 'doc/extensions/hooks/plan/author.md';
+const FIX = `处置：按 ${INJECTION_DOC} 的形态补齐冻结结果，再重跑 harness --phase plan。`;
 
 /** 第一个设计章：这些是 plan 模板里承载方案的章，知识决策必须排在它们之前。 */
 const DESIGN_HEADING_RE = /^##\s*\d*[.、]?\s*(模块架构|目录|文件结构|数据模型|页面组件|状态管理|服务层|接口定义|路由|导航)/;
@@ -89,18 +91,20 @@ function readUseCases(projectRoot, feature) {
   return { exists: true, branches, coordinators };
 }
 
-export default async function planPostCheck(ctx) {
-  if (ctx?.phase !== 'plan' || !ctx?.feature || !ctx?.projectRoot) return { ok: true };
-
+export default guard('plan', async (ctx) => {
   const planPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'plan', 'plan.md');
   const planText = readTextOrNull(planPath);
-  if (planText === null) return { ok: true };   // plan.md 缺失由框架的 check-plan 负责
+  if (planText === null) {
+    // plan.md 缺失由框架的 check-plan 负责；扩展判据没跑成，要留痕
+    return gate(ctx, { skipped: [{ what: '知识决策章与冻结块', why: 'plan.md 还没生成' }] });
+  }
 
   let knowledge;
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return blocker([`激活知识派生失败：${e.message}`]);
+    // 派生失败必须出声，不能静默当空集通过——那会让下面每一条判据都恒真（G7）
+    return gate(ctx, { problems: [`激活知识派生失败：${e.message}`], fix: FIX });
   }
 
   const problems = [];
@@ -117,17 +121,25 @@ export default async function planPostCheck(ctx) {
 
   // ---- 2. 冻结块 ----
   const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return blocker([error]);
+  if (error) return gate(ctx, { problems: [...problems, error], fix: FIX });
   if (!exists) {
     problems.push(`缺 ${rel(ctx.projectRoot, contractsPath(ctx.projectRoot, ctx.feature))}`
       + '——冻结结果是下游唯一的知识入口，没有它下游零注入');
-    return blocker(problems);
+    return gate(ctx, {
+      problems,
+      skipped: [{ what: '冻结块内容判据（义务集一致 / 落点可解析 / 模式角色）', why: '契约文件还没建' }],
+      fix: FIX,
+    });
   }
   const { freeze, obligations, patterns } = readFreeze(contracts);
   if (!freeze) {
     problems.push('contracts.yaml 缺 knowledge_freeze 块——下游读的是它，不是知识目录；'
       + `形态见 ${INJECTION_DOC}`);
-    return blocker(problems);
+    return gate(ctx, {
+      problems,
+      skipped: [{ what: '冻结块内容判据（义务集一致 / 落点可解析 / 模式角色）', why: '契约里还没有冻结块' }],
+      fix: FIX,
+    });
   }
 
   // ---- 3. 义务集与 spec 出口集一致 ----
@@ -309,8 +321,9 @@ export default async function planPostCheck(ctx) {
   const adj = adjudicationLanding(ctx, knowledge);
   problems.push(...adj.problems);
 
-  // ---- 运行留痕：通过也写 ----
-  writePostCheckEvidence(ctx, {
+  return gate(ctx, {
+    problems,
+    fix: FIX,
     checks: [
       { id: 'knowledge_freeze_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
       { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
@@ -320,10 +333,7 @@ export default async function planPostCheck(ctx) {
       contractsPath(ctx.projectRoot, ctx.feature),
     ],
   });
-
-  if (problems.length) return blocker(problems);
-  return { ok: true };
-}
+});
 
 /** 逐行裁决核对：派生失败不静默通过——那会让本判据恒真。 */
 function adjudicationLanding(ctx, knowledge) {
@@ -402,15 +412,6 @@ function entityExists(contracts, name) {
 
 function rel(projectRoot, abs) {
   return path.relative(projectRoot, abs).replace(/\\/g, '/');
-}
-
-function blocker(problems) {
-  return {
-    ok: false,
-    severityOverride: 'BLOCKER',
-    message: `plan 阶段知识冻结未通过：${problems.join('；')}。`
-      + `处置：按 ${INJECTION_DOC} 的形态补齐冻结结果，再重跑 harness --phase plan。`,
-  };
 }
 
 export { findHeadings, specExitIds, entityExists };

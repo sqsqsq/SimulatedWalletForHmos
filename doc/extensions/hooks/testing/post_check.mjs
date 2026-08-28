@@ -14,7 +14,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
-import { blocker, loadLedger, utLayerOf } from '../shared/downstream.mjs';
+import { loadLedger, utLayerOf } from '../shared/downstream.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 
 /**
  * 实机侧的覆盖证据：测试计划与报告里引用到的 AC。
@@ -49,12 +50,16 @@ function referencedAcceptanceIds(projectRoot, feature) {
   return { ids, artifactCount };
 }
 
-export default async function testingPostCheck(ctx) {
-  if (ctx?.phase !== 'testing' || !ctx?.feature || !ctx?.projectRoot) return { ok: true };
-
-  const { ok, blocked, book } = loadLedger(ctx, 'testing');
-  if (!ok) return blocked ?? { ok: true };
-  if (!book.obligations.length) return { ok: true };
+export default guard('testing', async (ctx) => {
+  const { ok, problem, book } = loadLedger(ctx, 'testing');
+  if (!ok) {
+    return gate(ctx, problem
+      ? { problems: [problem] }
+      : { skipped: [{ what: '验收条目实机覆盖', why: '契约还没建（或读不到）' }] });
+  }
+  if (!book.obligations.length) {
+    return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '本需求没有冻结义务' }] });
+  }
 
   const { ids: referenced, artifactCount } = referencedAcceptanceIds(ctx.projectRoot, ctx.feature);
   if (!artifactCount) return { ok: true };   // 测试产物还没建，交框架原生门禁
@@ -82,12 +87,12 @@ export default async function testingPostCheck(ctx) {
     }
   }
 
-  if (problems.length) {
-    return blocker('testing', [
-      ...problems,
-      notApplicable.length ? `本阶段不适用（已按 ut_layer 显式分派）：${notApplicable.join('、')}` : null,
-      '处置：在测试计划与报告里覆盖这些验收条目，或回 plan 修正 ut_layer 后重跑',
-    ].filter(Boolean));
-  }
-  return { ok: true };
-}
+  return gate(ctx, {
+    problems,
+    checks: notApplicable.length
+      ? [{ id: 'ext_testing_not_applicable', status: 'NOT_APPLICABLE',
+          detail: `按 ut_layer 显式分派：${notApplicable.join('、')}` }]
+      : undefined,
+    fix: '处置：在测试计划与报告里覆盖这些验收条目，或回 plan 修正 ut_layer 后重跑。',
+  });
+});

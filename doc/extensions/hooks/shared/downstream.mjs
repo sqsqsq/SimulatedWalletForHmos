@@ -12,34 +12,34 @@ const PLAN_INJECTION_DOC = 'doc/extensions/hooks/plan/author.md';
 /**
  * 取本阶段要消费的账本。
  *
- * @returns {{ok: boolean, blocked: object|null, book: object|null}}
- *   `blocked` 非空时调用方直接返回它（冻结缺失/契约坏了，本阶段无从判起）。
+ * @returns {{ok: boolean, problem: string|null, book: object|null}}
+ *   `ok` 为 false 时：`problem` 非空表示这是个该阻断的问题（由调用方交给 `gate()` 组装，
+ *   报错首行才会指向 author.md、才会留痕）；`problem` 为空表示前置尚未具备，
+ *   调用方应作为「未执行判据」留痕，而不是静默当通过。
  */
 export function loadLedger(ctx, phase) {
   const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
   if (error) {
-    return { ok: false, blocked: blocker(phase, [error]), book: null };
+    return { ok: false, problem: error, book: null };
   }
   if (!exists) {
     // 契约本身缺失由框架的 check-<phase> 负责，这里不重复报
-    return { ok: false, blocked: null, book: null };
+    return { ok: false, problem: null, book: null };
   }
   const { freeze, obligations, patterns } = readFreeze(contracts);
   if (!freeze) {
     return {
       ok: false,
       book: null,
-      blocked: blocker(phase, [
-        'plan 未冻结知识结果（contracts.yaml 缺 knowledge_freeze）——'
+      problem: 'plan 未冻结知识结果（contracts.yaml 缺 knowledge_freeze）——'
         + '下游读的是冻结结果，不是知识目录；没有它本阶段零注入，也无从留证。'
         + `处置：回 plan 按 ${PLAN_INJECTION_DOC} 补齐冻结，重跑 plan 阶段后再回本阶段`,
-      ]),
     };
   }
   const { acceptance } = readAcceptance(ctx.projectRoot, ctx.feature);
   return {
     ok: true,
-    blocked: null,
+    problem: null,
     book: {
       contracts,
       obligations,
@@ -65,14 +65,6 @@ export function utLayerOf(book, obligation) {
     }
   }
   return null;
-}
-
-export function blocker(phase, problems) {
-  return {
-    ok: false,
-    severityOverride: 'BLOCKER',
-    message: `${phase} 阶段知识账本核对未通过：${problems.join('；')}。`,
-  };
 }
 
 export { PLAN_INJECTION_DOC };

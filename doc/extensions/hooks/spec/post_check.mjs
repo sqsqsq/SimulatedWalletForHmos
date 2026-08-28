@@ -23,7 +23,8 @@ import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
 import { domainProblems, readRegistryFile } from '../shared/adjudication.mjs';
 import { adjudicationProblems } from '../shared/verifier-report.mjs';
-import { STATUS, writePostCheckEvidence } from '../shared/evidence.mjs';
+import { STATUS } from '../shared/evidence.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, paraphraseSources, selfCheck } from '../shared/knowledge.mjs';
 import { isPureCopy, normalize } from '../shared/paraphrase.mjs';
 import { extensionRoot } from '../shared/paths.mjs';
@@ -703,22 +704,22 @@ function storyFlowProblems(featureRoot) {
   return problems;
 }
 
-export default async function postCheckHook(ctx) {
-  if (ctx?.phase !== 'spec' || !ctx?.feature || !ctx?.projectRoot) {
-    return { ok: true };
-  }
-
+export default guard('spec', async (ctx) => {
   const featureRoot = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
   const rel = path.join(featuresDir(ctx.projectRoot), ctx.feature, 'spec', 'spec.md');
   const specPath = path.join(featureRoot, 'spec', 'spec.md');
   const fix = `处置：按 ${SECTIONS_DOC} 补齐 spec 宿主扩展章节（结论写法见 ${EVIDENCE_DOC}），然后重跑 harness --phase spec。`;
 
-  // spec 本身缺失由 framework 的 check-spec 负责，本 hook 只管宿主扩展部分
-  if (!fs.existsSync(specPath)) return { ok: true };
+  // spec 本身缺失由 framework 的 check-spec 负责，本 hook 只管宿主扩展部分。
+  // 但扩展判据一条都没跑成，要留痕说明——「没报错」不等于「查过了」。
+  if (!fs.existsSync(specPath)) {
+    return gate(ctx, { skipped: [{ what: 'spec 宿主扩展章节与知识出口', why: 'spec.md 还没生成' }] });
+  }
 
   const text = fs.readFileSync(specPath, 'utf-8').replace(/^﻿/, '');
   const lines = text.split(/\r?\n/);
   const problems = [];
+  const skipped = [];
 
   // 场景探针：走过 /story 的 feature 才有流程契约。
   // 本 hook 的检查分两类——**扩展新增的结构要求**（三份产物、§9 技术契约、术语解释列、
@@ -737,8 +738,11 @@ export default async function postCheckHook(ctx) {
       problems.push(`缺少本阶段产物「${a.name}」——${a.why}；处置：${a.fix}`);
     }
     storyArtifactsPresent = absent.length === 0;
-    // 在就跑装配器：文件存在不等于它是装配出来的
+    // 在就跑装配器：文件存在不等于它是装配出来的。
+    // 不在则**显式声明这条判据没跑**——基线态在这里静默跳过，于是作者补完产物、
+    // 下一轮才撞见装配校验，同一个 check id 洋葱式 FAIL。
     if (storyArtifactsPresent) problems.push(...storyArtifactProblems(ctx));
+    else skipped.push({ what: '归档件装配校验', why: '本阶段产物还没齐，齐了才能校验它是不是装配出来的' });
   }
 
   // ---- story 前置流程契约已收口 ----
@@ -866,24 +870,17 @@ export default async function postCheckHook(ctx) {
   const adj = adjudicationLanding(ctx);
   problems.push(...adj.problems);
 
-  // ---- 运行留痕：通过也写，否则「跑了」与「没跑」事后同形 ----
-  writePostCheckEvidence(ctx, {
+  return gate(ctx, {
+    problems,
+    skipped,
     checks: [
       { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
       { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
     ],
     inputs: [specPath, path.join(featureRoot, 'AR', 'story-src', 'knowledge.json')],
+    fix: `产物：spec.md（${rel}）。${fix}`,
   });
-
-  if (problems.length > 0) {
-    return {
-      ok: false,
-      severityOverride: 'BLOCKER',
-      message: `spec.md（${rel}）未达 spec 闭环要求：${problems.join('；')}。${fix}`,
-    };
-  }
-  return { ok: true };
-}
+});
 
 /** 逐行裁决核对：知识派生失败时不静默通过——那会让本判据恒真。 */
 function adjudicationLanding(ctx) {

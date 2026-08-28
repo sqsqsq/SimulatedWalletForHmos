@@ -14,7 +14,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
-import { blocker, loadLedger, utLayerOf } from '../shared/downstream.mjs';
+import { loadLedger, utLayerOf } from '../shared/downstream.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 
 /** UT 侧的覆盖证据：覆盖报告 + 用例源码里出现的 AC 标记。 */
 function coveredAcceptanceIds(projectRoot, feature) {
@@ -50,12 +51,16 @@ function coveredAcceptanceIds(projectRoot, feature) {
   return ids;
 }
 
-export default async function utPostCheck(ctx) {
-  if (ctx?.phase !== 'ut' || !ctx?.feature || !ctx?.projectRoot) return { ok: true };
-
-  const { ok, blocked, book } = loadLedger(ctx, 'ut');
-  if (!ok) return blocked ?? { ok: true };
-  if (!book.obligations.length) return { ok: true };
+export default guard('ut', async (ctx) => {
+  const { ok, problem, book } = loadLedger(ctx, 'ut');
+  if (!ok) {
+    return gate(ctx, problem
+      ? { problems: [problem] }
+      : { skipped: [{ what: '验收条目 UT 覆盖', why: '契约还没建（或读不到）' }] });
+  }
+  if (!book.obligations.length) {
+    return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '本需求没有冻结义务' }] });
+  }
 
   const covered = coveredAcceptanceIds(ctx.projectRoot, ctx.feature);
   const problems = [];
@@ -81,12 +86,12 @@ export default async function utPostCheck(ctx) {
     }
   }
 
-  if (problems.length) {
-    return blocker('ut', [
-      ...problems,
-      notApplicable.length ? `本阶段不适用（已按 ut_layer 显式分派）：${notApplicable.join('、')}` : null,
-      '处置：补齐用例覆盖，或回 plan 修正验收条目的 ut_layer 后重跑',
-    ].filter(Boolean));
-  }
-  return { ok: true };
-}
+  return gate(ctx, {
+    problems,
+    checks: notApplicable.length
+      ? [{ id: 'ext_ut_not_applicable', status: 'NOT_APPLICABLE',
+          detail: `按 ut_layer 显式分派：${notApplicable.join('、')}` }]
+      : undefined,
+    fix: '处置：补齐用例覆盖，或回 plan 修正验收条目的 ut_layer 后重跑。',
+  });
+});

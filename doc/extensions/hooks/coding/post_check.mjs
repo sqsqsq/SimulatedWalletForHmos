@@ -13,7 +13,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { contractFiles, landingRefs, resolveEntityRef } from '../shared/freeze.mjs';
-import { blocker, loadLedger } from '../shared/downstream.mjs';
+import { loadLedger } from '../shared/downstream.mjs';
+import { guard, gate } from '../shared/gate.mjs';
 
 /** 落点引用的末段标识符：`data_models.Ctx.flowId` → `flowId`。 */
 function tailIdentifier(ref) {
@@ -37,17 +38,22 @@ function findIdentifier(projectRoot, files, name) {
   return false;
 }
 
-export default async function codingPostCheck(ctx) {
-  if (ctx?.phase !== 'coding' || !ctx?.feature || !ctx?.projectRoot) return { ok: true };
-
-  const { ok, blocked, book } = loadLedger(ctx, 'coding');
-  if (!ok) return blocked ?? { ok: true };
+export default guard('coding', async (ctx) => {
+  const { ok, problem, book } = loadLedger(ctx, 'coding');
+  if (!ok) {
+    return gate(ctx, problem
+      ? { problems: [problem] }
+      : { skipped: [{ what: '落点实体存在性', why: '契约还没建（或读不到）' }] });
+  }
 
   const files = contractFiles(book.contracts);
   const present = files.filter(rel => fs.existsSync(path.resolve(ctx.projectRoot, rel)));
   if (!present.length) {
-    // 一个契约文件都还没建：框架原生的文件完整性门禁会报，这里不重复
-    return { ok: true };
+    // 一个契约文件都还没建：框架原生的文件完整性门禁会报，这里不重复。
+    // 但要留痕说明本判据没跑成——「没报错」不等于「查过了」。
+    return gate(ctx, {
+      skipped: [{ what: '落点实体存在性', why: '契约点名的实现文件一个都还没建' }],
+    });
   }
 
   const problems = [];
@@ -79,11 +85,10 @@ export default async function codingPostCheck(ctx) {
     }
   }
 
-  if (problems.length) {
-    return blocker('coding', [
-      ...problems,
-      '处置：补齐落点实现，或回 plan 修正冻结（改了冻结要重跑 plan 阶段），再重跑 harness --phase coding',
-    ]);
-  }
-  return { ok: true };
-}
+  return gate(ctx, {
+    problems,
+    inputs: present.map(rel => path.resolve(ctx.projectRoot, rel)),
+    fix: '处置：补齐落点实现，或回 plan 修正冻结（改了冻结要重跑 plan 阶段），'
+      + '再重跑 harness --phase coding。',
+  });
+});
