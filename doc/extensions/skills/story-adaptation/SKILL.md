@@ -37,7 +37,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 目标仓里的东西 | 首次安装 | 升级 |
 |---|---|---|
-| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
+| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`、`AGENTS.section.md`（包有才有：渲染进入口文件的实例扩展段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
 | `skills/story/scripts/*.js`（需求系统对接） | **看发起方**：包内这些 js 文件头自述为「本地替身 / 模拟」→ 不复制，目标要按自己的需求系统写，方案登记「数据对接待适配」；否则（已适配仓发起）→ 整目录覆盖 | 同左 |
 | `knowledge/constraints/*.md`、`knowledge/design-patterns/*.md` —— **包里有的** | 从包复制，默认已确认、**默认在清单**（规约与模式是随包直接维护内容；缺 SDK 或既有案例只在方案里登记证据缺口，不删文件、不撤出清单） | 目标有同名的**换成包的版本**；**包新增的域 / 模式复制过去**，同样默认已确认、默认在清单 |
 | 目标自己加的规约域 / 模式文件（包里没有同名的） | — | **原样保留**，仍在清单 |
@@ -76,7 +76,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 ## 6 写入
 
-按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键。
+按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **重渲染入口文件**（包有 `AGENTS.section.md` 时：按目标 framework 的用法跑 `render-agents-md`，让 CLAUDE.md / AGENTS.md 的「实例扩展」节带上这一段；这一步漏掉，目标的主 agent 就不知道要先读各阶段须知）。
 
 ## 7 校验
 
@@ -86,7 +86,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 ```
 
 前者确认 manifest 每条路径都存在（有一条不存在，框架会清空全部扩展能力，而且不会在阶段里报错）。
-后者核四件事：机制目录 == 包、目标所有的知识文件旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过。
+后者核五件事：机制目录 == 包、目标所有的知识文件旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `AGENTS.section.md` 全文（包没有该文件时跳过）。
 
 任一 FAIL → **照它报的那几项改，再重跑校验**。它点的是具体位置——机制缺哪个文件、
 知识缺哪条事实、清单里哪个还是未确认、哪个自定义文件被动了——直接改到位即可。

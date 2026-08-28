@@ -48,7 +48,7 @@ const walk = (dir, base = dir) => !existsSync(dir) ? [] :
 const classOf = (p) =>
   /^skills\/story\/scripts\/[^/]+\.js$/.test(p) ? 'js'
   : p === 'manifest.yaml' || /^knowledge\/[^/]+\/README\.md$/.test(p) ? 'bridge'
-  : p === 'knowledge/README.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
+  : p === 'knowledge/README.md' || p === 'AGENTS.section.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
   : /^knowledge\//.test(p) ? 'know'
   : 'custom';
 
@@ -176,5 +176,16 @@ for (const c of before.custom) {
   else if (nowCustom.get(c.path) !== c.sha) bad.push(`④ 自定义文件被改：${c.path}`);
 }
 
+// ⑤ 入口文件含扩展段：包有 AGENTS.section.md 时，目标 AGENTS.md（及存在的 CLAUDE.md）须含其正文；包没有则跳过
+const SECTION = 'AGENTS.section.md', ws = (s) => s.replace(/\s+/g, ' ').trim();
+if (existsSync(join(PDIR, SECTION))) {
+  const body = ws(read(join(PDIR, SECTION)));
+  for (const entry of ['AGENTS.md', 'CLAUDE.md']) {
+    const f = join(TARGET, entry);
+    if (!existsSync(f)) { if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`); continue; }
+    if (!ws(read(f)).includes(body)) bad.push(`⑤ 入口文件未含扩展段：${entry}（写入后须重渲染入口文件）`);
+  }
+}
+
 if (bad.length) { console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`); bad.forEach((b) => console.error(`  ${b}`)); process.exit(1); }
-console.log('[adapt-scan] 四项核对通过：机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动');
+console.log('[adapt-scan] 核对通过：机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）');
