@@ -57,8 +57,8 @@
 ## 四、执行
 
 写入顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键。
-写入前先备份（备份失败不写入）。失败回滚：`adapt-scan.mjs --restore --target <目标根>`。
-写完跑：`harness-runner.ts --phase extensions` 与 `adapt-scan.mjs --check`。
+写完跑：`harness-runner.ts --phase extensions` 与 `adapt-scan.mjs --check`；
+校验报出的项照着改，改完重跑。
 
 ---
 

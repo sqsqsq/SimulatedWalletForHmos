@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * story adapt 辅助脚本——只做模型不可靠的机械活：列两棵树、备份、回滚、核对。
+ * story adapt 辅助脚本——只做模型不可靠的机械活：列两棵树、核对。
  * 归属与处置判断在 SKILL.md §2，由执行适配的 AI 做；本脚本不替它判。
  *
- * 用法: node adapt-scan.mjs --scan|--backup|--restore|--check --target <目标根> [--package <包根>]
+ * 用法: node adapt-scan.mjs --scan|--check --target <目标根> [--package <包根>]
  * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, cpSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, relative, dirname, sep, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
-const MODES = ['--scan', '--backup', '--restore', '--check'];
+const MODES = ['--scan', '--check'];
 const ROOT_FILES = ['.cac/commands/story.md', '.claude/commands/story.md',
   '.codex/skills/story/SKILL.md', '.opencode/skill/story/SKILL.md', 'framework.config.json'];
 const MOCK_MARKERS = ['本地替身', '模拟实现', 'MOCK_DATA_DIR'];
@@ -33,16 +33,14 @@ const extDir = (root) => {
   catch { return 'doc/extensions'; }
 };
 const rel = (base, f) => relative(base, f).split(sep).join('/');
-/** 逐文件复制：cpSync 拒绝复制到自身子目录，而备份就在 extension_dir 内 */
-const copyFiles = (files, from, to) => { for (const p of files) { mkdirSync(dirname(join(to, p)), { recursive: true }); cpSync(join(from, p), join(to, p)); } };
 const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
 const read = (f) => readFileSync(f, 'utf8');
 
-/** 递归列文件（相对 base 的 posix 路径）；默认跳过本脚本的工作目录 adapt/ */
-const walk = (dir, base = dir, skipWork = true) => !existsSync(dir) ? [] :
+/** 递归列文件（相对 base 的 posix 路径）；跳过本脚本的工作目录 adapt/ */
+const walk = (dir, base = dir) => !existsSync(dir) ? [] :
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const f = join(dir, e.name);
-    if (e.isDirectory()) return skipWork && rel(base, f) === 'adapt' ? [] : walk(f, base, skipWork);
+    if (e.isDirectory()) return rel(base, f) === 'adapt' ? [] : walk(f, base);
     return [rel(base, f)];
   });
 
@@ -95,7 +93,7 @@ if (!TARGET) die(`目标不是有效仓库根（找不到 framework.config.json�
 const PKG = opt('--package') ? findRoot(opt('--package')) : findRoot(dirname(fileURLToPath(import.meta.url)));
 if (!PKG) die('定位不到包根');
 const TDIR = join(TARGET, extDir(TARGET)), PDIR = join(PKG, extDir(PKG));
-const WORK = join(TDIR, 'adapt'), BEFORE = join(WORK, 'before.json'), BACKUP = join(WORK, 'backup');
+const WORK = join(TDIR, 'adapt'), BEFORE = join(WORK, 'before.json');
 const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
 
 // ── --scan ──────────────────────────────────────────────────────────────────
@@ -130,53 +128,6 @@ if (mode === '--scan') {
   writeFileSync(BEFORE, JSON.stringify(out, null, 2));
   console.log(JSON.stringify(out, null, 2));
   console.error(`[adapt-scan] 清单已写入 ${BEFORE}——判断按 SKILL.md §2 表逐文件做`);
-  process.exit(0);
-}
-
-// ── --backup ────────────────────────────────────────────────────────────────
-if (mode === '--backup') {
-  rmSync(BACKUP, { recursive: true, force: true });
-  mkdirSync(join(BACKUP, 'root'), { recursive: true });
-  if (existsSync(TDIR)) copyFiles(walk(TDIR), TDIR, join(BACKUP, 'ext'));   // walk 已跳过 adapt/
-  for (const p of ROOT_FILES) if (existsSync(join(TARGET, p))) {
-    mkdirSync(dirname(join(BACKUP, 'root', p)), { recursive: true });
-    cpSync(join(TARGET, p), join(BACKUP, 'root', p));
-  }
-  writeFileSync(join(BACKUP, 'manifest.json'), JSON.stringify({ at: new Date().toISOString(), ext_existed: existsSync(TDIR) }, null, 2));
-  console.log(`[adapt-scan] 已备份到 ${BACKUP}`);
-  process.exit(0);
-}
-
-// ── --restore ───────────────────────────────────────────────────────────────
-// 顺序写死：先仓库根文件，再 extension_dir。备份自身在 extension_dir 内，
-// 反过来先删目录，就把根文件的备份一起删了，跳板与配置再也回不来。
-if (mode === '--restore') {
-  if (!existsSync(BACKUP)) die(`没有备份可回滚：${BACKUP}`);
-  const meta = JSON.parse(read(join(BACKUP, 'manifest.json')));
-  // 根文件是逐个恢复的（不像 extension_dir 那样整体替换），所以本次写入**新增**的
-  // 那些——备份里没有、目标上却有——必须显式删掉，否则回滚后树会多出几个文件。
-  for (const p of ROOT_FILES) {
-    const b = join(BACKUP, 'root', p);
-    if (existsSync(b)) { mkdirSync(dirname(join(TARGET, p)), { recursive: true }); cpSync(b, join(TARGET, p)); }
-    else if (existsSync(join(TARGET, p))) {
-      rmSync(join(TARGET, p), { force: true });
-      // 连它留下的空目录一起收掉，否则回滚后目标会多出几个空壳目录
-      for (let d = dirname(join(TARGET, p)); d.startsWith(TARGET) && d !== TARGET; d = dirname(d)) {
-        try { if (readdirSync(d).length) break; rmSync(d, { recursive: true }); } catch { break; }
-      }
-    }
-  }
-  // 暂存到 extension_dir 之外：备份在它里面，不先搬走就会被下一步的删除带走
-  const staged = join(TDIR, '..', `.adapt-restore-${process.pid}`);
-  rmSync(staged, { recursive: true, force: true });
-  if (existsSync(join(BACKUP, 'ext'))) copyFiles(walk(join(BACKUP, 'ext')), join(BACKUP, 'ext'), staged);
-  // 工作记录（方案与用户确认记录）跟着回滚保留，只有已用掉的备份不留
-  for (const n of (existsSync(WORK) ? readdirSync(WORK) : []).filter((n) => n !== 'backup'))
-    cpSync(join(WORK, n), join(staged, 'adapt', n), { recursive: true });
-  rmSync(TDIR, { recursive: true, force: true });
-  if (meta.ext_existed) copyFiles(walk(staged, staged, false), staged, TDIR);
-  rmSync(staged, { recursive: true, force: true });
-  console.log(`[adapt-scan] 已回滚${meta.ext_existed ? '' : '（首次安装：扩展目录整体移除）'}`);
   process.exit(0);
 }
 
