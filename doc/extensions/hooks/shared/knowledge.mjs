@@ -62,6 +62,25 @@ function fmList(raw) {
 }
 
 /**
+ * 一行拆成单元格。
+ *
+ * markdown 里 `\|` 是**字面竖线**，不是列分隔符——正则类的单元格（探针列）必然用到它。
+ * 按裸 `|` 简单切会把 `\b(left\|right)` 切成两格，后半格还会顶掉右边所有列。
+ */
+function splitCells(row) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i];
+    if (ch === '\\' && row[i + 1] === '|') { cur += '|'; i++; continue; }
+    if (ch === '|') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map(c => c.trim());
+}
+
+/**
  * 抽出表头含全部关键词的 Markdown 表。
  * **按列名定位，不按列序**——列序会随编辑漂移，列名是契约。
  */
@@ -72,7 +91,7 @@ function markdownTable(text, headerKeywords) {
   for (const line of rows) {
     const s = line.trim();
     if (!s.startsWith('|')) { if (headers && !data.length) headers = null; continue; }
-    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    const cells = splitCells(s.replace(/^\|/, '').replace(/([^\\])\|$/, '$1'));
     if (!headers) {
       if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
       continue;
@@ -91,6 +110,50 @@ function pick(cells, headers, keyword) {
 /** 条目编号形态：`<域前缀>-<两位序号>`。前缀本身不硬编码，只约束形态。 */
 const ENTRY_ID_RE = /^([A-Z][A-Z0-9]{1,7})-(\d{2})$/;
 
+/** 规约条目表里探针列的列名。列不存在时按「无探针」派生（E9）。 */
+const PROBE_COLUMN = '探针';
+
+/** 探针形态封闭为四种：多一种就是给机制层开了个能塞业务规则的口子。 */
+export const PROBE_KINDS = [
+  'absent_regex',                  // 实体所在文件里不得出现
+  'present_in_method',             // 实体所在方法体内须出现
+  'referenced_outside_definition', // 实体在定义文件之外被引用
+  'count_eq',                      // 文件内命中次数恒等
+];
+
+/**
+ * 解析一格探针。
+ *
+ * **列缺省不是错误**（需求 E9）：目标工程的规约表还没有这一列时，`pick` 返回空串，
+ * 这里按「无探针」派生并返回 null。否则已适配仓一升级，老知识全部派生失败——
+ * 新增字段的缺省值是兼容性的一部分，不是可选的礼貌。
+ *
+ * 表达式里的 `|` 在 markdown 表格里必须写成 `\|`，这里还原。
+ */
+export function parseProbe(raw) {
+  // 只剥反引号：`*` 在正则里是量词，按 markdown 强调标记清掉会把 `\s*` 悄悄变成 `\s`。
+  const cell = String(raw ?? '').replace(/`/g, '').trim();
+  if (!cell || cell === '无' || cell === '—' || cell === '-') return null;
+  const expr = cell;
+  const kind = expr.split(':', 1)[0];
+  if (!PROBE_KINDS.includes(kind)) {
+    fail(`探针形态未知：「${kind}」——只接受 ${PROBE_KINDS.join(' / ')}，或写「无」`);
+  }
+  if (kind === 'referenced_outside_definition') {
+    return { kind, pattern: '', count: null, raw: expr };
+  }
+  const rest = expr.slice(kind.length + 1);
+  if (!rest) fail(`探针「${kind}」缺表达式：${expr}`);
+  if (kind === 'count_eq') {
+    // count_eq:<re>:<n> —— 正则里可能有冒号，所以从右边切一次
+    const at = rest.lastIndexOf(':');
+    const n = Number(rest.slice(at + 1));
+    if (at < 0 || !Number.isInteger(n)) fail(`探针 count_eq 形态应为 count_eq:<正则>:<次数>：${expr}`);
+    return { kind, pattern: rest.slice(0, at), count: n, raw: expr };
+  }
+  return { kind, pattern: rest, count: null, raw: expr };
+}
+
 function parseConstraintFile(absPath, rel) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的规约文件读不到 —— ${rel}`);
@@ -106,7 +169,7 @@ function parseConstraintFile(absPath, rel) {
     const m = id.match(ENTRY_ID_RE);
     if (!m) continue;
     const handling = pick(cells, table.headers, '处置');
-    // 只派生有消费者的字段（复述比对、出口/冻结门禁、归档渲染）；
+    // 只派生有消费者的字段（复述比对、出口/冻结门禁、归档渲染、探针执行）；
     // 强制力/命中条件/验证列由模型直接读正文，机制不派生无人读的副本。
     entries.push({
       id,
@@ -115,6 +178,7 @@ function parseConstraintFile(absPath, rel) {
       constraint: pick(cells, table.headers, '约束'),
       handling,
       reviewAction: handling.trim().startsWith(REVIEW_ACTION_MARK),
+      probe: parseProbe(pick(cells, table.headers, PROBE_COLUMN)),
     });
   }
   if (!entries.length) {
