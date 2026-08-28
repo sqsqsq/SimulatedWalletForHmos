@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "f3552ec66e4f2f86507b399ad2d51251be9bd990",
-  "built_at": "2026-08-28T07:09:48.609Z",
+  "source_commit": "5016acab073218707041851d9b0770f0506f7425",
+  "built_at": "2026-08-28T12:53:16.483Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "4def5820f48f8798bf8592ef35b3ce4d465dd35bb2b8c85a19608a745b92d973"
+      "sha256": "5279ec1080a7cca1b4101c8d23d31c1d73a184e8f6f047275b3405904bc79bfc"
     },
     {
       "path": "README.md",
@@ -982,7 +982,7 @@
     },
     {
       "path": "harness/scripts/utils/contract-reference-closure.ts",
-      "sha256": "c6dd729db972bb8acefdd983eb89bc3c0390c4c61a2654a3733a7420db84b4e9"
+      "sha256": "2ef161ca601fc5795819fa41455e84113cf034ff2c1b40d5c10412fe2f77ce8a"
     },
     {
       "path": "harness/scripts/utils/correction-commands.ts",
@@ -1522,7 +1522,7 @@
     },
     {
       "path": "harness/scripts/utils/types.ts",
-      "sha256": "cd51e4d0279cdad829a305a066e637c1089d1e4ea6f82e52b7555dd1414d6b0e"
+      "sha256": "0e1291a714d7f7c0ca5e244e5fc287bd7982a9f693deac0e75caaee196a38213"
     },
     {
       "path": "harness/scripts/utils/ui-scope-gate.ts",
@@ -1966,7 +1966,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-host-rules.ts",
-      "sha256": "1dcb55bb1f843438a90f98fba9c670abc99f0431819a885a9db1d4e4f9de9e09"
+      "sha256": "ca44c84cb224fbed817fa0bb1e7cc15dbf1584757da1ca2e0b30765f60cb7571"
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
@@ -3018,7 +3018,7 @@
     },
     {
       "path": "skills/feature/plan/SKILL.md",
-      "sha256": "1b570b14964aa32ada933373ecb54ec870aa3270fac3e46559674538794e2c9c"
+      "sha256": "faa797301d83afd3d2b434e9304d25ce8262c07c107a591da34911cfd570dae3"
     },
     {
       "path": "skills/feature/plan/contract.yaml",
@@ -3026,7 +3026,7 @@
     },
     {
       "path": "skills/feature/plan/contracts-template.yaml",
-      "sha256": "bb34e793358c109dadd576264fd162ae73a6785f294eb676034eed77bdb0f126"
+      "sha256": "ed469f12bbbbd3be7e04f43e8053ad07e68be6db2c20083fbafbc19fa5b0a973"
     },
     {
       "path": "skills/feature/spec/SKILL.md",
@@ -3206,7 +3206,7 @@
     },
     {
       "path": "skills/reference/plan-workflow-detail.md",
-      "sha256": "24d59dcf6018590490f059a6b74daaf7a6f14b7d7142a107b76b27442bf224dd"
+      "sha256": "a41c455712109403587aa733a25d22e1408b805b2e5e3408d42e3504f5b36292"
     },
     {
       "path": "skills/reference/spec-workflow-detail.md",
@@ -3238,7 +3238,7 @@
     },
     {
       "path": "specs/artifact-schemas/contracts.schema.yaml",
-      "sha256": "472181deb9fd892c201c1ff7c17b27dbd07f8a33e0f57ca2c42d3de7ed9a4a64"
+      "sha256": "664409125ad81a3bcdbc7c1c831f7c2618db477e945602a8023962794233577c"
     },
     {
       "path": "specs/artifact-schemas/coverage-evidence.schema.yaml",
