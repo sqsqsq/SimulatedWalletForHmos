@@ -85,7 +85,11 @@
 
 以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。
 
-当前无需桥接的实例扩展 Skill（`wallet-sdk-onboarding` 已于 2026-08-28 废弃删除）；`/story` 由四宿主跳板承载。
+本工程挂载了 story 实例扩展（`doc/extensions/`）：需求流程 + 三类知识 + 六阶段生命周期钩子。
+
+- **需求流程入口**：`/story <init|archive|restore|review|adapt|help> [AR编号]`——从材料导入到归档的完整链条由它承载。
+- **进入 spec / plan / coding / review / ut / testing 任一阶段、动笔之前**：若 `doc/extensions/hooks/<phase>/author.md` 存在，**先完整读它**。那一页写明本阶段要读哪几个扩展文件、产物里扩展要求的那几处长什么样、门禁会拦什么——写之前看，不必靠门禁报错反推。
+- **门禁报错自带修法**：各阶段 harness 会跑 `doc/extensions/hooks/<phase>/post_check.mjs`，它报的每一条都给出「缺什么 / 写到哪 / 怎么写」，不需要读脚本源码。
 
 > **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
