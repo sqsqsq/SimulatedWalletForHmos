@@ -163,15 +163,26 @@ export function isGoalHeadlessEnv(): boolean {
  * 在场而无 gate authority（MAISON_GOAL_GATE_HARNESS=1，runner 直接 spawn 的 gate
  * harness 独有、agent env 构造时按信任锚剥离）即视为 agent 侧。
  */
-export function isAgentSideGoalHarness(): boolean {
-  const anyGoalSignal =
+export function hasGoalExecutionSignal(): boolean {
+  return (
     Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
     Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
     // plan b3e8d4c7 t1：新增的 attempt phase 同属 goal 信号——不入并集的话，
     // 子进程只剩 PHASE 时真实 goal 上下文会被当 manual（与本 plan 的 fail-closed 相悖）。
     Boolean(process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim()) ||
-    isGoalOrchestrationEnv();
-  return anyGoalSignal && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+    isGoalOrchestrationEnv()
+  );
+}
+
+/** Direct harness runs may opt into a committed diff base; every goal context ignores it. */
+export function resolveHarnessDiffBaseRef(): string | undefined {
+  if (hasGoalExecutionSignal()) return undefined;
+  const value = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  return value || undefined;
+}
+
+export function isAgentSideGoalHarness(): boolean {
+  return hasGoalExecutionSignal() && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
 }
 
 /**

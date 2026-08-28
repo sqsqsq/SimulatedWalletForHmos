@@ -7,6 +7,12 @@
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
 
+### contracts.yaml 文件引用闭包（Breaking）
+
+- plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、页面与路由注册文件、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
+- `contracts.files` 是唯一授权集合。文件已存在、与 spec asset 字节相同、由生成器产出或在其他字段出现，都不会自动获得 coding/UI scope 授权；框架也不会写 reference graph/manifest sidecar。
+- 升级已有 feature 时，若 `contract_file_reference_closure` 失败，请回到 plan，把诊断中的确需交付路径逐项加入 `contracts.files`，重新生成/关闭 contracts 并重跑 plan harness。不要在 coding 阶段扩写 contracts。
+
 ### 无人值守恢复与人签质量通行证退役（Breaking）
 
 - `confirmed_by`、`human_confirmed`、`human_signed`、`visual-confirm` 以及 fidelity/P0 skip/
@@ -40,7 +46,7 @@
 - 先前 closed 的 fallback phase 也必须重跑/重新闭环：evidence 绑定项目内 applicability 依赖和每一次实际 source attempt，缺失的高优先级 artifact 后来出现会使旧 closure stale。framework contract 仅以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance，升级 framework 不会使消费者历史 feature stale。带上游 producer 指针的裁剪只有在阻塞下游 `on_missing: fail` core capability 时才形成 producer 定向的 `pruned` assess gap。
 2. **Skill contract 成为运行时输入**：结构化 inputs、capabilities、produces 与 checks 由 `skills/feature/<skill>/contract.yaml` 声明；写边界与 closure 仍由既有 policy/evidence 机制负责。自定义 Skill/phase 需要在对应 Skill 目录补 contract，否则一致性门禁失败。
 3. **`next.json` 是投影**：`assess@1` 从 summary/closure/evidence/goal 指纹重算 gap 与一个 recommendation；不要写脚本直接编辑 `next.json`。
-4. **Goal 只有一个调和循环**：interactive 与 detached 都执行 `assess → authorize → one phase → reassess`。`goal-mode` Skill 不再维护下一阶段表。
+4. **Goal 只有一个调和循环**：interactive 与 detached 都进入同一个 `GoalPhaseRuntime`，仅 executor transport（宿主 callback / adapter spawn）不同。runtime 独占 `assess → authorize → one phase → gate/verdict → reassess`；`goal-mode` Skill、宿主与 executor 不再维护下一阶段表或私有 gate。
 5. **用户模式改为“有人在场 / 无人值守”**：明确意图不再二次确认，歧义使用 registry `goal.run_mode`；`--detach` 恒为无人值守。
 
 Adapter 作者须按需补 root `goal_capability`：
@@ -223,6 +229,21 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 6. **保留**：`nav_bar` / `list_row` / `sheet_scaffold` 等词继续作为 ui-spec 的**通用结构
    语义 `type`**，不绑定任何具体组件实现。
 
+
+---
+
+## Goal run 出生与基线统一（3.0.0）
+
+- 新 run 必须同时具有 `manifest.json` 与唯一 `run_created`；manifest-only/重复或损坏出生事件
+  现在判 `CREATION_INCOMPLETE`，不可 resume/attach/supervisor 接管，但不占用同 feature 的
+  HALTED/PARTIAL successor 位置。
+- 含 `coding`/`ut` 的 chain 在出生时冻结 `manifest.run_base_sha`。goal UI/UT 门禁不再读取
+  `HARNESS_DIFF_BASE_REF`；旧 `coding-base.json` 只给没有 `run_created` 的合法 legacy run 读取。
+- `run_base_sha` 同 run 不可 override/rebase。自动 successor 继承 lineage baseline；祖先无可信
+  基线时须由操作者在 goal runtime 外显式执行
+  `--supersede <old-run-id> --rebaseline-to <当前 exact HEAD>` 创建新问责边界。
+- 旧 run 无需回填 `run_created` 或 `run_base_sha`，resume 也不会自动补造。若 legacy anchor 已损坏，
+  请保留证据并走显式 rebaseline successor，不要编辑旧 manifest/events 洗白。
 
 ---
 

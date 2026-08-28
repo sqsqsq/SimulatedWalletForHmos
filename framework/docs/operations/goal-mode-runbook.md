@@ -5,17 +5,21 @@
 
 ## 概述
 
-`goal-runner` 是 Maison 工具无关的确定性全链路编排器：按 phase DAG 逐阶段 headless 调 agent → 跑 harness → 裁决 → 续行/重试/停止。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
+`GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（宿主回调 / adapter spawn）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
 ## 3.0 调和模型：一个循环、两个运行方式
 
 interactive session 与 detached `goal-runner` 现在共用：
 
+- 冻结的 `PhaseExecutionContext`（run/workflow/track/chain/phase/attempt/owner fence/baseline）；
+- 同一个 `GoalPhaseRuntime` 生命周期与 owner 前后 fence；
+- 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/stdio/lease 遥测不入投影）。
+
 ```text
-assess@1 → driver authorize/guard → execute one phase → reassess
+assess@1 → GoalPhaseRuntime authorize/guard → executor transport → gate/verdict → reassess
 ```
 
-`assess@1` 是唯一跨 phase 推荐源；runner 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 process guard。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
+`assess@1` 是唯一跨 phase 推荐源；`GoalPhaseRuntime` 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 guard。executor 只传输 phase 调用。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
 
 用户只选择：
 
@@ -73,6 +77,47 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 证据：`doc/features/<feature>/goal-runs/<run-id>/manifest.json`、`events.jsonl`、`goal-report.{md,json}`。
 
+### Run 出生与 diff 基线
+
+新 run 统一由 `createGoalRun` 创建：先写 `manifest.json`，再写且仅写一条
+`run_created`。只有这两项完整存在，attended bridge、detached runner、supervisor 和
+recent-run 投影才会把它当成可运行实例。仅有 manifest、事件损坏或 `run_created` 重复均为
+`CREATION_INCOMPLETE`：不可 attach/resume，也不构成同 feature 的 HALTED/PARTIAL 占位者；
+检查既有 GC 报告后人工清理残留即可，不会自动补造出生事件。
+
+实际 chain 含 `coding` 或 `ut` 时，出生必须把当时 exact Git HEAD 冻结为
+`manifest.run_base_sha`；取不到 HEAD 就在零 agent 派发前拒绝创建。goal 内 UI/UT diff
+只认该字段，忽略并从子进程环境剥离 `HARNESS_DIFF_BASE_REF`。没有 `run_created` 的旧 run
+仍可只读旧 `run_start + coding-base`；一旦 `run_created` 在场便永不回退旧锚。
+
+`run_base_sha` 是 write-once 身份：同 run 的 `--override-manifest`、identity rebase 和 resume
+均不能改写。自动 successor 继承 lineage 的最早可信基线，不重新读取 HEAD。确需放弃旧
+lineage 时，只能由操作者在 goal runtime 外运行：
+
+```bash
+cd framework/harness && npx ts-node scripts/goal-runner.ts \
+  --feature <feature-slug> --requirement "<新问责需求>" --adapter <adapter> \
+  --supersede <old-run-id> --rebaseline-to <当前-exact-40hex-HEAD> --detach
+```
+
+两个参数必须同时提供，`--rebaseline-to` 必须等于执行瞬间 HEAD；goal execution env
+（即使带 `MAISON_GOAL_GATE_HARNESS=1`）一律拒绝。审计只追加到新 run：
+`run_created.rebaseline_from_run_id` 与 `supersede` 的 target/superseding/base/event 引用；
+不回写旧 run。这个管理命令建立新的问责边界，不是质量豁免，也不构成密码学真人证明。
+
+### Runtime-owned blocker 与契约扩展
+
+`run_base_sha` 缺失、损坏或与出生摘要不一致属于 runtime-owned framework blocker：runtime
+必须在 executor 前停止，且 actionability 归 operator/toolchain，不得把“补锚”“改 manifest”或
+重试同一 prompt 回喂给 agent。现代 run 不允许用 `trace.start_commit`、当前裸 HEAD 或
+`coding-base.json` 临时补救；旧 reader 只服务没有 `run_created` 的迁移期 run。
+
+plan closure 会把 `resource_keys[*].path`、`media`、页面/路由注册点以及 HAR build/export
+路径统一解析，并要求每个文件引用都已列入 `contracts.files`。例如 contracts 引用了 20 枚
+logo、但顶层 `files` 未声明时，应回到 plan 扩充 `contracts.files` 并重新 closure；不得在
+coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表。`contracts.yaml` 始终是唯一
+持久输入，closure 只产生内存规范化视图。
+
 ## 状态语义（goal-fakepass-hardening 后）
 
 | 最终状态 | 含义 |
@@ -89,7 +134,8 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 返回 `VALID`（重算全链 clean_pass/血缘/attestation/supersede 审计；伪造/缩链/世界后变
 分别判 INVALID/STALE）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
 closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
-废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）。
+废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）；
+只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 
