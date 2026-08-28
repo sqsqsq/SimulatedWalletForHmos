@@ -14,9 +14,11 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 ## 0 前置（不满足就停，不要继续）
 
 - 目标根有 `framework/` 与 `framework.config.json`；
-- 目标 `framework/package.json` 的 `version` ≥ 包 `manifest.yaml` 声明的下限；
-- 包声明的必需 framework 文件在目标就位；
-- 缺任何一项：列出缺什么，停。
+- 目标 `framework/package.json` 的 `version` ≥ `3.0.0`；
+- 目标 framework 里这些本地热修在位（本包依赖它们；缺则 spec 闭不上 / coding 编不过）：
+  `harness/scripts/utils/capability-resolution.ts`、`profiles/hmos-app/ui-kit/MaisonPrimaryButton.ets`；
+  包若交付 `AGENTS.section.md`，还须 `harness/scripts/utils/template-renderer.ts` 含扩展段注入点（`grep agents_section` 有命中）；
+- 缺任何一项：列出缺什么，停——framework 的补齐不归本命令管。
 
 ## 1 判态
 
