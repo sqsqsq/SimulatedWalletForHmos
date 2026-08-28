@@ -69,7 +69,7 @@ function splitCells(row) {
  * @param {string} text
  * @param {string[]} idShapes 合同声明的编号形态（正则源），命中的编号也算 token
  */
-export function tokensOf(text, idShapes = []) {
+export function tokensOf(text, idShapes = [], exclude = null) {
   const s = String(text ?? '');
   const out = new Set();
   for (const m of s.matchAll(CODE_SPAN_RE)) out.add(m[1].trim());
@@ -84,7 +84,10 @@ export function tokensOf(text, idShapes = []) {
       // 形态写错了不该让整次枚举崩掉；check 会单独报「编号形态不是合法正则」
     }
   }
-  return [...out].filter(t => t && t.length >= 2);
+  // 排除表由合同给（仓内单号、工程代号、spec Scope 里的模块名）：
+  // 要求 story 写出模块目录名，与归档件红线「不写仓内路径与模块名」直接冲突——
+  // 作者只能违反其一。这里由数据决定排除什么，本模块不写任何具体词。
+  return [...out].filter(t => t && t.length >= 2 && !(exclude && exclude(t)));
 }
 
 /**
@@ -97,6 +100,7 @@ export function tokensOf(text, idShapes = []) {
  */
 export function enumerateUnits(text, doc, opts = {}) {
   const idShapes = opts.idShapes ?? [];
+  const exclude = typeof opts.excludeToken === 'function' ? opts.excludeToken : null;
   const mf = opts.machineFacing ?? {};
   const mfKinds = new Set(mf.unit_kinds ?? []);
   const mfColumns = new Set(mf.table_columns ?? []);
@@ -127,7 +131,7 @@ export function enumerateUnits(text, doc, opts = {}) {
       section,
       line,
       text: body.slice(0, 400),
-      tokens: machineFacing ? [] : (extra.tokens ?? tokensOf(src, idShapes)),
+      tokens: machineFacing ? [] : (extra.tokens ?? tokensOf(src, idShapes, exclude)),
       machine_facing: machineFacing,
     });
   };
@@ -190,12 +194,12 @@ export function enumerateUnits(text, doc, opts = {}) {
     let media = false;
     for (const m of s.matchAll(IMAGE_RE)) {
       flushPara();
-      push('image', m[0], i + 1, { tokens: [path.basename(m[2])] });
+      push('image', m[0], i + 1, { tokens: [path.basename(m[2])].filter(t => !(exclude && exclude(t))) });
       media = true;
     }
     for (const m of s.matchAll(LINK_RE)) {
       flushPara();
-      push('link', m[0], i + 1, { tokens: [m[2]] });
+      push('link', m[0], i + 1, { tokens: [m[2]].filter(t => !(exclude && exclude(t))) });
       media = true;
     }
     if (media) continue;

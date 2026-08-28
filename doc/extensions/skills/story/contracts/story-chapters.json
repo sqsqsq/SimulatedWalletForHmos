@@ -8,29 +8,110 @@
     "DESIGN": "AR/design.md"
   },
   "chapters": [
-    { "id": "01-background", "title": "背景与目标", "question": "为什么要做这件事，做成什么样算成功？" },
-    { "id": "02-terms", "title": "术语", "question": "读下去之前，哪些词需要先统一理解？" },
-    { "id": "03-journey", "title": "完整用户旅程", "question": "用户从头到尾会经历什么？" },
-    { "id": "04-global", "title": "全局方案与参与方", "question": "整件事由哪几方怎么配合完成，本部件在其中做什么？" },
-    { "id": "05-scope", "title": "范围、边界与依赖", "question": "本次做哪些、不做哪些，不做的归谁，依赖谁？" },
-    { "id": "06-scenarios", "title": "场景与功能", "question": "具体要支持哪些场景，每个场景下系统做什么？" },
-    { "id": "07-pages", "title": "页面、组件与状态", "question": "界面上有什么，各自在什么状态下呈现什么？" },
-    { "id": "08-flow", "title": "业务流程与状态变化", "question": "一次完整流程怎么走，中间状态怎么流转？" },
-    { "id": "09-tradeoff", "title": "方案取舍", "question": "有哪些方案可选，为什么选了现在这个？" },
-    { "id": "10-contract", "title": "技术与数据约定", "question": "跨部件之间约定了什么接口、存储与配置？" },
-    { "id": "11-exception", "title": "异常、恢复与风险", "question": "出错时会怎样，怎么恢复，还有哪些风险没消除？" },
-    { "id": "12-compliance", "title": "影响面与合规", "question": "本需求触到了哪些合规面，带来什么后果，哪几条要读者留意？" },
-    { "id": "13-acceptance", "title": "质量与验收", "question": "怎么判断这件事做对了？" },
-    { "id": "14-rollout", "title": "上线与协同", "question": "怎么上线，需要谁配合，什么时候？" }
+    {
+      "id": "01-background",
+      "title": "背景与目标",
+      "question": "为什么要做这件事，做成什么样算成功？"
+    },
+    {
+      "id": "02-terms",
+      "title": "术语",
+      "question": "读下去之前，哪些词需要先统一理解？"
+    },
+    {
+      "id": "03-journey",
+      "title": "完整用户旅程",
+      "question": "用户从头到尾会经历什么？"
+    },
+    {
+      "id": "04-global",
+      "title": "全局方案与参与方",
+      "question": "整件事由哪几方怎么配合完成，本部件在其中做什么？"
+    },
+    {
+      "id": "05-scope",
+      "title": "范围、边界与依赖",
+      "question": "本次做哪些、不做哪些，不做的归谁，依赖谁？"
+    },
+    {
+      "id": "06-scenarios",
+      "title": "场景与功能",
+      "question": "具体要支持哪些场景，每个场景下系统做什么？"
+    },
+    {
+      "id": "07-pages",
+      "title": "页面、组件与状态",
+      "question": "界面上有什么，各自在什么状态下呈现什么？"
+    },
+    {
+      "id": "08-flow",
+      "title": "业务流程与状态变化",
+      "question": "一次完整流程怎么走，中间状态怎么流转？"
+    },
+    {
+      "id": "09-tradeoff",
+      "title": "方案取舍",
+      "question": "有哪些方案可选，为什么选了现在这个？"
+    },
+    {
+      "id": "10-contract",
+      "title": "技术与数据约定",
+      "question": "跨部件之间约定了什么接口、存储与配置？"
+    },
+    {
+      "id": "11-exception",
+      "title": "异常、恢复与风险",
+      "question": "出错时会怎样，怎么恢复，还有哪些风险没消除？"
+    },
+    {
+      "id": "12-compliance",
+      "title": "影响面与合规",
+      "question": "本需求触到了哪些合规面，带来什么后果，哪几条要读者留意？"
+    },
+    {
+      "id": "13-acceptance",
+      "title": "质量与验收",
+      "question": "怎么判断这件事做对了？"
+    },
+    {
+      "id": "14-rollout",
+      "title": "上线与协同",
+      "question": "怎么上线，需要谁配合，什么时候？"
+    }
   ],
   "machine_facing": {
     "_note": "机器面单元不参与整篇守恒——它们是给流程与工具读的登记项，不是给读者读的事实。unit_kinds 整类打标；table_columns 按列名逐列排除（不整行打标：一行里有机器列，不代表同一行的正文列也不用守恒）。",
-    "unit_kinds": ["code"],
-    "table_columns": ["所属模块", "所属层", "置信度", "本流程消费步骤", "SR 章节", "链接"]
+    "unit_kinds": [
+      "code"
+    ],
+    "table_columns": [
+      "所属模块",
+      "所属层",
+      "置信度",
+      "本流程消费步骤",
+      "SR 章节",
+      "链接"
+    ]
   },
   "id_shapes": {
     "_note": "keep 的编号是读者要对照的（验收编号）；drop 的是仓内工作标识，出现在归档件里读者对不上。",
-    "keep": ["AC-[A-Z]?\\d+"],
-    "drop": ["\\bS\\d+\\b", "\\bF\\d+\\b", "\\bE\\d+\\b", "\\bBD-\\d+\\b", "DEC-\\d+"]
+    "keep": [
+      "AC-[A-Z]?\\d+"
+    ],
+    "drop": [
+      "\\bS\\d+\\b",
+      "\\bF\\d+\\b",
+      "\\bE\\d+\\b",
+      "\\bBD-\\d+\\b",
+      "DEC-\\d+"
+    ]
+  },
+  "token_exclusions": {
+    "_note": "这些形态不该被要求进归档件：仓内单据号、工程内部代号，以及 spec Scope 里的模块名——writer 的红线本来就不许写模块目录名，再把它们当作必须出现的 token 就是自相矛盾。spec_scope_modules 从 spec 的 in_scope/out_of_scope 块现取，机制层不写任何具体词。",
+    "patterns": [
+      "\\b(RR|AR|SR|DTS|ISSUE)-?\\d{3,}\\b",
+      "\\bStory\\b"
+    ],
+    "spec_scope_modules": true
   }
 }

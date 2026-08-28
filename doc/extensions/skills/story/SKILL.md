@@ -71,10 +71,14 @@ spec 阶段闭环之后、归档之前。**story 由独立的 writer 子 agent �
 spec 走完时上下文已经涨到几十万 token，story 是最后被挤出来的那一份——实测它因此丢掉了
 表格非首列的事实与两张图。
 
-1. 主 agent 用 Task 启动子 agent，把 [phases/story-write.md](phases/story-write.md) 的
-   内容与 feature 名作为 prompt。子 agent 拿到的是**新鲜上下文**。
-2. 子 agent 内部循环：读材料 → 一份写成 → `story-build.mjs audit` → 给没落点的单元补写或
-   标 `covered_by` → `story-build.mjs check` 通过才返回。
+1. **writer 子 agent**：主 agent 用 Task 启动，把 [phases/story-write.md](phases/story-write.md)
+   的内容与 feature 名作为 prompt。子 agent 拿到的是**新鲜上下文**。
+   它内部循环：读材料 → 一份写成 → `story-build.mjs audit` → 给没落点的单元补写或
+   标 `covered_by` → `story-build.mjs check`。
+2. **verifier 子 agent**：`audit.json` 里出现 `by: author` 的记录时启动，prompt 是
+   [phases/story-verify.md](phases/story-verify.md)。机器定不了落点的单元只有模型能判——
+   框架给别的阶段都配了 verifier，S5 之前没有，这是缺口。
+   它产出 `AR/story-src/story-verdicts.md`，`check` 会核每条裁决的引文。
 3. 主 agent 只收结果，**不重读材料**；随后登记成文态：
 
 ```bash

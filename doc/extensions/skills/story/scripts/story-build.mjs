@@ -34,6 +34,10 @@ import {
 
 const COMMANDS = ['init', 'audit', 'check', 'build'];
 
+/** S5 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
+const VERDICT_WORDS = ['讲清', '未讲清'];
+const MIN_QUOTE = 12;
+
 /** 决策件必须扫过的六类议题——少扫一类不是「没有」，是「没想这件事」。 */
 const SCANNED_CATEGORIES = [
   '需求与范围', '交互与界面', '技术方案与依赖', '约束规约命中项', '异常与风险', '上线与协同',
@@ -93,6 +97,7 @@ function createContext(args) {
     unitsPath: path.join(srcDir, 'source-units.json'),
     auditPath: path.join(srcDir, 'audit.json'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
+    verdictsPath: path.join(srcDir, 'story-verdicts.md'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
   };
@@ -113,16 +118,46 @@ function sourceDocs(ctx) {
 // init：枚举来源单元 + 建决策骨架
 // --------------------------------------------------------------------------
 
+/**
+ * 组装 token 排除函数——**规则全部来自合同数据**，本文件不写任何具体词。
+ *
+ * 为什么要排除：`WalletMain` 这类模块目录名会被标识符正则取成 token，于是守恒要求它出现在
+ * story 里；而归档件红线第 1 条不许写模块名。两条一起生效时作者只能违反其一。
+ * 模块名从 spec 的 Scope 块现取——换个工程、换个需求都不用改这里。
+ */
+function buildTokenExclusion(ctx) {
+  const conf = ctx.contract.token_exclusions ?? {};
+  const res = [];
+  for (const p of conf.patterns ?? []) {
+    try { res.push(new RegExp(p)); } catch { /* 形态写错不该让枚举崩掉 */ }
+  }
+  const modules = new Set();
+  if (conf.spec_scope_modules) {
+    const spec = readText(path.join(ctx.featureRoot, 'spec', 'spec.md')) ?? '';
+    // `:[ \t]*\n` 不能写成 `:\s*\n`——`\s*` 会贪婪吃掉换行，后面那个 `\n` 就永远匹配不上
+    for (const m of spec.matchAll(/(?:in_scope_modules|out_of_scope_modules):[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n)+)/g)) {
+      for (const line of m[1].split(/\r?\n/)) {
+        const name = line.replace(/^\s*-\s*/, '').replace(/[`"']/g, '').split(/[\s#]/)[0].trim();
+        if (name) modules.add(name.split('/').pop());
+      }
+    }
+  }
+  if (!res.length && !modules.size) return null;
+  return (t) => modules.has(t) || res.some(re => re.test(t));
+}
+
 function cmdInit(ctx) {
   const docs = sourceDocs(ctx);
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
   }
   const idShapes = [...(ctx.contract.id_shapes?.keep ?? []), ...(ctx.contract.id_shapes?.drop ?? [])];
+  const excludeToken = buildTokenExclusion(ctx);
   const units = [];
   for (const d of docs) {
     units.push(...enumerateUnits(d.text, d.doc, {
       idShapes,
+      excludeToken,
       machineFacing: ctx.contract.machine_facing ?? {},
     }));
   }
@@ -149,7 +184,7 @@ function cmdInit(ctx) {
   process.stdout.write(
     `[story-build init] ${units.length} 个单元、${units.reduce((n, u) => n + u.tokens.length, 0)} 个 token`
     + `（机器面 ${units.filter(u => u.machine_facing).length} 个；`
-    + `无 token ${noToken} 个——它们的守恒靠语义判据，机器只要求作者给出落点）\n`);
+    + `无 token ${noToken} 个——它们的落点靠正文片段核，核不住的交 S5 裁决者逐条裁）\n`);
 }
 
 // --------------------------------------------------------------------------
@@ -228,18 +263,22 @@ function cmdAudit(ctx) {
       continue;
     }
     const old = prevByKey.get(u.key);
-    // 作者填的 covered_by 保留；机器给过的 at 每次重算（story 改了落点就该跟着变）
+    // 作者填的 covered_by 保留——它是作者的判断，机器只核不重算
     if (old?.covered_by) {
       records.push({ key: u.key, covered_by: old.covered_by });
       continue;
     }
+    // 机器每次重算：story 改了落点就该跟着变。**不沿用上一次的机器结果**，
+    // 否则 story 删了一段、落点还留在那儿，守恒就成了历史快照。
     const placed = autoPlace(u, sections);
     if (placed) {
-      records.push({ key: u.key, at: placed.title });
+      records.push({ key: u.key, at: placed.title, by: 'machine' });
       continue;
     }
-    if (old?.at) {
-      records.push({ key: u.key, at: old.at });
+    // 机器定不了：保留作者上次填的章名（`by: author`），由 S5 裁决者逐条裁「讲清没讲清」。
+    // **不沿用机器上次的结果**——`by` 标记就是为了让这两种来源不再混成一个 `at`。
+    if (old?.at && old.by === 'author') {
+      records.push({ key: u.key, at: old.at, by: 'author' });
       continue;
     }
     records.push({ key: u.key });                       // 三态皆空 → check 会报它
@@ -288,14 +327,20 @@ function cmdCheck(ctx) {
     if (!body) problems.push(`「${sec.title}」是空节——确实不涉及就写「${EMPTY_SECTION_TEXT}」一句`);
   }
 
-  // ② 整篇 token 守恒：非机器面单元的每个 token 有落点
-  const decisionsText = readText(ctx.decisionsPath) ?? '';
-  const haystack = `${storyText}\n${decisionsText}`;
+  // ② 落点守恒：三态每一种都过一遍机器。
+  //
+  // **落点域只有 story.md**。上一版把 decisions.json 也拼进来当草垛，于是任何 token 塞进
+  // 决策件就算落点——那是个逃生口。开放议题要在 story 里有一句交代，那一句才是落点。
+  //
+  // **`at` 要核到章**，不是核整篇：上一版只看 `at` 这个键在不在、token 在不在整篇里，
+  // 于是作者填任何章名都过——旧的自由文本理由换成了不核的 `at`，形态变了效果没变。
+  const sectionText = new Map(sections.map(s => [s.title, s.text]));
+  const titleSet = new Set(titles);
   const byKey = new Map(doc.units.map(u => [u.key, u]));
   const recByKey = new Map((audit.records ?? []).map(r => [r.key, r]));
   const missingTokens = [];
   const stateless = [];
-  let noTokenUnits = 0;
+  const authorPlaced = [];      // 机器定不了、由 S5 裁决者裁的那些
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
@@ -318,15 +363,40 @@ function cmdCheck(ctx) {
       else {
         const shared = u.tokens.filter(t => target.tokens.includes(t)).length;
         const sameGroup = (u.also_in ?? []).includes(rec.covered_by);
-        if (!shared && !sameGroup) {
-          problems.push(`${u.key} 说被 ${rec.covered_by} 承载，但两者没有共享 token、也不是同一条跨材料重复`);
+        // 都没 token 时看正文：两者规范化后一方是另一方的子串，才算讲的是同一件事
+        const a = norm(u.text), b = norm(target.text);
+        const nested = a.length >= 8 && b.length >= 8 && (a.includes(b) || b.includes(a));
+        if (!shared && !sameGroup && !nested) {
+          problems.push(`${u.key} 说被 ${rec.covered_by} 承载，但两者没有共享 token、`
+            + '不是同一条跨材料重复、正文也互不包含');
         }
       }
       continue;
     }
-    if (!u.tokens.length) { noTokenUnits++; continue; }
-    const lost = u.tokens.filter(t => !haystack.includes(t));
-    if (lost.length) missingTokens.push({ key: u.key, lost, text: u.text.slice(0, 50) });
+
+    // 到这里只剩 at 一态
+    if (!titleSet.has(rec.at)) {
+      problems.push(`${u.key} 的 at「${rec.at}」不是合同里的章节标题`);
+      continue;
+    }
+    const chapter = sectionText.get(rec.at) ?? '';
+    if (rec.by === 'author') {
+      // 机器定不了的，交给 S5 裁决者；这里只核标题在册，讲没讲清由 ⑥ 核
+      authorPlaced.push(u);
+      continue;
+    }
+    // by: machine —— 机器给的落点，必须在**那一章**里核得住
+    if (u.tokens.length) {
+      const lost = u.tokens.filter(t => !chapter.includes(t));
+      if (lost.length) {
+        missingTokens.push({ key: u.key, lost, at: rec.at, text: u.text.slice(0, 50) });
+      }
+      continue;
+    }
+    const frags = contentFragments(u.text);
+    if (!frags.some(f => norm(chapter).includes(f))) {
+      missingTokens.push({ key: u.key, lost: ['正文片段'], at: rec.at, text: u.text.slice(0, 50) });
+    }
   }
 
   if (stateless.length) {
@@ -336,10 +406,10 @@ function cmdCheck(ctx) {
       + '——补写正文，或标 covered_by 指向已进正文的另一条');
   }
   for (const m of missingTokens.slice(0, 8)) {
-    problems.push(`${m.key}「${m.text}」的这些事实在 story 与决策件里都找不到：${m.lost.join('、')}`);
+    problems.push(`${m.key}「${m.text}」落点标在「${m.at}」，但那一章里找不到：${m.lost.join('、')}`);
   }
   if (missingTokens.length > 8) {
-    problems.push(`另有 ${missingTokens.length - 8} 个单元有事实缺失（跑 audit 看全量）`);
+    problems.push(`另有 ${missingTokens.length - 8} 个单元的落点核不住（跑 audit 看全量）`);
   }
 
   // ③ 编号形态
@@ -396,6 +466,49 @@ function cmdCheck(ctx) {
     }
   }
 
+  // ⑥ 裁决核实：机器定不了落点的那些，S5 裁决者要逐条裁并附引文
+  //
+  // 这一条替代上一版的「靠语义判据守恒」那个空计数——说了「有 N 条机器管不了」，
+  // 却没人真去管它们，等于把漏写记了个数就放行。
+  if (authorPlaced.length) {
+    const vtext = readText(ctx.verdictsPath);
+    if (vtext === null) {
+      problems.push(`${authorPlaced.length} 个单元的落点机器定不了，需要 S5 裁决者逐条裁，`
+        + `但 ${path.basename(ctx.verdictsPath)} 不存在`);
+    } else {
+      const rows = new Map();
+      for (const line of vtext.split(/\r?\n/)) {
+        const s = line.trim();
+        if (!s.startsWith('|')) continue;
+        const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.trim());
+        if (c.length < 3 || /^[-: ]*$/.test(c[0])) continue;
+        rows.set(c[0].replace(/[`*]/g, ''), { verdict: c[1], quote: c[2] });
+      }
+      for (const u of authorPlaced) {
+        const row = rows.get(u.key);
+        if (!row) { problems.push(`裁决表里没有 ${u.key}「${u.text.slice(0, 30)}」这一行`); continue; }
+        if (!VERDICT_WORDS.includes(row.verdict)) {
+          problems.push(`${u.key} 的裁决「${row.verdict}」不是 ${VERDICT_WORDS.join(' / ')} 之一`);
+          continue;
+        }
+        if (row.verdict === '未讲清') {
+          problems.push(`${u.key}「${u.text.slice(0, 30)}」被裁「未讲清」——补写那一章`);
+          continue;
+        }
+        const q = norm(row.quote);
+        const chapter = norm(sectionText.get(recByKey.get(u.key)?.at) ?? '');
+        if (q.length < MIN_QUOTE) {
+          problems.push(`${u.key} 的引文只有 ${q.length} 字（要求 ≥${MIN_QUOTE}）`);
+        } else if (!chapter.includes(q)) {
+          problems.push(`${u.key} 的引文在它落点那一章里检索不到——引文要从 story 抄`);
+        } else if (norm(u.text).includes(q)) {
+          // 把材料原话抄回来是回声：它证明的是「材料这么说」，不是「story 讲清了」
+          problems.push(`${u.key} 的引文是来源单元原文的子串——那是回声，抄 story 里你据以判断的那句`);
+        }
+      }
+    }
+  }
+
   if (problems.length) {
     process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
     problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
@@ -403,7 +516,7 @@ function cmdCheck(ctx) {
   }
   process.stdout.write(
     `[story-build check] 通过：${sections.length} 章、${doc.units.length} 个来源单元`
-    + `（其中 ${noTokenUnits} 个无 token，守恒靠语义判据）\n`);
+    + `（机器核实 ${doc.units.length - authorPlaced.length} 条、S5 裁决 ${authorPlaced.length} 条）\n`);
 }
 
 // --------------------------------------------------------------------------
