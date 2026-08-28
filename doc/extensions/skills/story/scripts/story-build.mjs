@@ -132,11 +132,15 @@ function sourceDocs(ctx) {
  * 为什么要排除：`WalletMain` 这类模块目录名会被标识符正则取成 token，于是守恒要求它出现在
  * story 里；而归档件红线第 1 条不许写模块名。两条一起生效时作者只能违反其一。
  * 模块名从 spec 的 Scope 块现取——换个工程、换个需求都不用改这里。
+ *
+ * `id_shapes.drop`（`F1` / `S2` / `DEC-3` 这类仓内工作编号）同理：check ③ 明令它们不许
+ * 出现在 story 里，那它们就不能同时是守恒要求出现的 token。两条判据要求相反时，
+ * 作者怎么写都是错的。
  */
 function buildTokenExclusion(ctx) {
   const conf = ctx.contract.token_exclusions ?? {};
   const res = [];
-  for (const p of conf.patterns ?? []) {
+  for (const p of [...(conf.patterns ?? []), ...(ctx.contract.id_shapes?.drop ?? [])]) {
     try { res.push(new RegExp(p)); } catch { /* 形态写错不该让枚举崩掉 */ }
   }
   const modules = new Set();
@@ -159,7 +163,8 @@ function cmdInit(ctx) {
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
   }
-  const idShapes = [...(ctx.contract.id_shapes?.keep ?? []), ...(ctx.contract.id_shapes?.drop ?? [])];
+  // 只把 `keep` 的编号形态交给枚举器：`drop` 的那些不该进 story，也就不该成为守恒对象
+  const idShapes = [...(ctx.contract.id_shapes?.keep ?? [])];
   const excludeToken = buildTokenExclusion(ctx);
   const units = [];
   for (const d of docs) {

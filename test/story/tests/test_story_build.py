@@ -173,6 +173,27 @@ class TestMachinePlacement(StoryBuildCase):
         self.assertEqual(records[authored["key"]].get("by"), "author")
 
 
+class TestTokenExclusion(StoryBuildCase):
+    """守恒对象与归档件红线不能互相打架——同一个词不能既要求出现又禁止出现。"""
+
+    def test_drop_shaped_id_never_becomes_a_token(self) -> None:
+        """`drop` 的编号 check ③ 明令不许进 story，它就不能是守恒要求出现的 token。"""
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n功能 F7 与场景 S2 在本期一起上。\n",
+                       encoding="utf-8")
+        self.init_audit()
+        tokens = {t for u in self.units for t in (u.get("tokens") or [])}
+        self.assertNotIn("F7", tokens)
+        self.assertNotIn("S2", tokens)
+
+    def test_drop_shaped_id_in_story_still_fails(self) -> None:
+        """排除的是守恒对象，不是红线——编号真写进 story 仍要被拦。"""
+        self.init_audit()
+        self.settle()
+        self.rewrite_story("本需求不涉及。\n\n## 术语", "功能 F7 已完成。\n\n## 术语")
+        self.assert_check_names("story 里出现了仓内工作编号")
+
+
 class TestAuthorPlacement(StoryBuildCase):
     """KR-1b：作者落点的三种坏形态，各自点名。"""
 
