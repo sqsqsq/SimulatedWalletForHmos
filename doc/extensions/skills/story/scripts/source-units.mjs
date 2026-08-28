@@ -1,0 +1,233 @@
+/**
+ * 来源单元枚举 —— 把上游材料切成可核对的最小事实单位，并取出每个单位里的可核对 token。
+ *
+ * ## 为什么不是「逐章取材」
+ *
+ * 1.0 的做法是每章一份取材路标（去 PRD 的哪几节抄什么），守恒判「每章把取材节的每行
+ * 表格/数值/反引号写全」。后果是**同一个事实被四个章节合同各指一次，于是被强制写四遍**。
+ * 这里改成：材料整体切成单元，守恒判「每个单元的 token 在 story 整篇有落点」——
+ * 事实只需要出现一次，在哪一章由作者按叙述需要决定。
+ *
+ * ## 为什么 token 取全部单元格
+ *
+ * 基线只从表格首列取 ASCII 标识符，于是中文表格整行掉进自由文本理由——实测 9 个页面状态的
+ * 触发条件整列、接口字段名、`freezeTicketId`、AC 编号全部丢失，142 条理由写着「表头」而
+ * 表头压根不会成为单元。全部单元格都取，才谈得上「不丢」。
+ *
+ * 本模块只做**枚举与切分**，不判对错；判据在 `story-build.mjs check`。
+ */
+import * as crypto from 'node:crypto';
+import * as path from 'node:path';
+
+/** 单元类型——封闭集合。多一种就要同时给出它的 token 取法，不然就是漏判。 */
+export const UNIT_KINDS = [
+  'paragraph',
+  'list_item',
+  'table_row',
+  'image',
+  'link',
+  'diagram',      // mermaid / flowchart 围栏
+  'blockquote',
+  'code',         // yaml / json 围栏
+];
+
+/** 围栏语言 → 单元类型。未列出的围栏按 code 处理。 */
+const DIAGRAM_LANGS = new Set(['mermaid', 'flowchart', 'sequencediagram', 'graph', 'plantuml']);
+
+/** 带量纲的数值：阈值、时长、次数——它们是最容易在改写中丢掉的事实。 */
+const NUMERIC_RE = /\d+(?:\.\d+)?\s*(?:ms|毫秒|秒|s|分钟|min|小时|h|次|条|个|天|kb|mb|%)/gi;
+
+/** ASCII 标识符：接口名、字段名、存储键。长度 ≥4 才取——短的碰巧命中太多。 */
+const IDENT_RE = /\b[A-Za-z_][A-Za-z0-9_.]{3,}\b/g;
+
+/** 反引号跨度：作者显式标注的可核对名字。 */
+const CODE_SPAN_RE = /`([^`\n]+)`/g;
+
+const IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)/g;
+const LINK_RE = /(?<!!)\[([^\]]*)\]\((https?:\/\/[^)\s]+)/g;
+
+function sha8(s) {
+  return crypto.createHash('sha256').update(s, 'utf-8').digest('hex').slice(0, 8);
+}
+
+/** 一行拆单元格；`\|` 是字面竖线不是分隔符。 */
+function splitCells(row) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] === '\\' && row[i + 1] === '|') { cur += '|'; i++; continue; }
+    if (row[i] === '|') { out.push(cur); cur = ''; continue; }
+    cur += row[i];
+  }
+  out.push(cur);
+  return out.map(c => c.trim());
+}
+
+/**
+ * 从一段文本里取全部可核对 token。
+ *
+ * @param {string} text
+ * @param {string[]} idShapes 合同声明的编号形态（正则源），命中的编号也算 token
+ */
+export function tokensOf(text, idShapes = []) {
+  const s = String(text ?? '');
+  const out = new Set();
+  for (const m of s.matchAll(CODE_SPAN_RE)) out.add(m[1].trim());
+  for (const m of s.matchAll(IDENT_RE)) out.add(m[0]);
+  for (const m of s.matchAll(NUMERIC_RE)) out.add(m[0].replace(/\s+/g, ''));
+  for (const m of s.matchAll(IMAGE_RE)) out.add(path.basename(m[2]));
+  for (const m of s.matchAll(LINK_RE)) out.add(m[2]);
+  for (const shape of idShapes) {
+    try {
+      for (const m of s.matchAll(new RegExp(shape, 'g'))) out.add(m[0]);
+    } catch {
+      // 形态写错了不该让整次枚举崩掉；check 会单独报「编号形态不是合法正则」
+    }
+  }
+  return [...out].filter(t => t && t.length >= 2);
+}
+
+/**
+ * 把一份材料切成单元。
+ *
+ * @param {string} text 材料全文
+ * @param {string} doc 材料标识（PRD / SE / SPEC / DESIGN）
+ * @param {{idShapes?: string[], machineFacing?: {unit_kinds?: string[], table_columns?: string[]}}} opts
+ * @returns {{key, doc, kind, section, line, text, tokens, machine_facing}[]}
+ */
+export function enumerateUnits(text, doc, opts = {}) {
+  const idShapes = opts.idShapes ?? [];
+  const mf = opts.machineFacing ?? {};
+  const mfKinds = new Set(mf.unit_kinds ?? []);
+  const mfColumns = new Set(mf.table_columns ?? []);
+
+  const lines = String(text ?? '').split(/\r?\n/);
+  const units = [];
+  let section = '';
+  let tableHeaders = null;
+  let para = [];
+  let paraLine = 0;
+  let fence = null;          // {lang, start, body[]}
+
+  const flushPara = () => {
+    if (!para.length) return;
+    const body = para.join(' ').trim();
+    if (body) push('paragraph', body, paraLine);
+    para = [];
+  };
+
+  const push = (kind, body, line, extra = {}) => {
+    const machineFacing = mfKinds.has(kind) || extra.machineFacing === true;
+    // tokenSource：表格行只从非机器面列取 token；别的单元就是正文本身
+    const src = extra.tokenSource !== undefined ? extra.tokenSource : body;
+    units.push({
+      key: `${doc}:${line}:${sha8(`${doc}|${line}|${body}`)}`,
+      doc,
+      kind,
+      section,
+      line,
+      text: body.slice(0, 400),
+      tokens: machineFacing ? [] : (extra.tokens ?? tokensOf(src, idShapes)),
+      machine_facing: machineFacing,
+    });
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const s = raw.trim();
+
+    // 围栏：diagram 与 code 各成一个单元，内容不再逐行切
+    if (s.startsWith('```')) {
+      if (fence) {
+        const lang = fence.lang.toLowerCase();
+        const kind = DIAGRAM_LANGS.has(lang) ? 'diagram' : 'code';
+        push(kind, fence.body.join('\n'), fence.start);
+        fence = null;
+      } else {
+        flushPara();
+        fence = { lang: s.slice(3).trim(), start: i + 1, body: [] };
+      }
+      continue;
+    }
+    if (fence) { fence.body.push(raw); continue; }
+
+    if (!s) { flushPara(); tableHeaders = null; continue; }
+
+    if (s.startsWith('#')) {
+      flushPara();
+      tableHeaders = null;
+      section = s.replace(/^#+\s*/, '').trim();
+      continue;
+    }
+
+    if (s.startsWith('|')) {
+      flushPara();
+      const cells = splitCells(s.replace(/^\|/, '').replace(/([^\\])\|$/, '$1'));
+      if (cells.every(c => /^[-: ]*$/.test(c))) continue;          // 分隔行
+      if (!tableHeaders) { tableHeaders = cells; continue; }        // 表头本身不是单元
+      // **机器面按列排除，不整行打标**：一行里有「置信度」这种机器列，不代表同一行的
+      // 「触发条件」也不用守恒。基线正是在这里丢了 9 个页面状态的触发条件整列。
+      const kept = cells.filter((c, idx) => c && !mfColumns.has((tableHeaders[idx] ?? '').trim()));
+      const allMachine = kept.length === 0;
+      push('table_row', cells.filter(Boolean).join(' ｜ '), i + 1, {
+        machineFacing: allMachine,
+        tokenSource: kept.join(' ｜ '),
+      });
+      continue;
+    }
+    tableHeaders = null;
+
+    if (s.startsWith('>')) { flushPara(); push('blockquote', s.replace(/^>\s?/, ''), i + 1); continue; }
+
+    if (/^[-*+]\s|^\d+[.)]\s/.test(s)) {
+      flushPara();
+      push('list_item', s.replace(/^([-*+]|\d+[.)])\s+/, ''), i + 1);
+      continue;
+    }
+
+    // 图片与外链单独成单元——它们最容易在改写中整个丢掉，而守恒的是「这张图/这个链接还在」，
+    // 不是它周围那句话。token 只取 basename 与 URL 本身，不把路径拆成一堆噪声。
+    let media = false;
+    for (const m of s.matchAll(IMAGE_RE)) {
+      flushPara();
+      push('image', m[0], i + 1, { tokens: [path.basename(m[2])] });
+      media = true;
+    }
+    for (const m of s.matchAll(LINK_RE)) {
+      flushPara();
+      push('link', m[0], i + 1, { tokens: [m[2]] });
+      media = true;
+    }
+    if (media) continue;
+
+    para.push(s);
+    if (para.length === 1) paraLine = i + 1;
+  }
+  flushPara();
+  if (fence) push('code', fence.body.join('\n'), fence.start);
+
+  return units;
+}
+
+/**
+ * 跨材料内容去重：正文规范化后相同的单元互相登记 `also_in`。
+ *
+ * 保留而不合并——同一事实在 PRD 与 SE 各说一次是常态，story 里写一次就够；
+ * 但要让 audit 知道它们是同一件事，否则作者会被要求为每一份各写一遍。
+ */
+export function linkDuplicates(units) {
+  const byNorm = new Map();
+  for (const u of units) {
+    const norm = u.text.replace(/\s+/g, '').toLowerCase();
+    if (!norm) continue;
+    if (!byNorm.has(norm)) byNorm.set(norm, []);
+    byNorm.get(norm).push(u);
+  }
+  for (const group of byNorm.values()) {
+    if (group.length < 2) continue;
+    for (const u of group) {
+      u.also_in = group.filter(o => o.key !== u.key).map(o => o.key);
+    }
+  }
+  return units;
+}
