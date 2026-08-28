@@ -291,7 +291,12 @@ def sources_for(entry_id: str, entries: list[dict]) -> list[str]:
 CODE_SUFFIXES = (".mjs", ".js", ".yaml", ".yml", ".json")
 TEXT_SUFFIXES = (".md",)
 ALL_SUFFIXES = CODE_SUFFIXES + TEXT_SUFFIXES
-EXCLUDE_KNOWLEDGE = ("knowledge", "_knowledge")
+#: 不属于机制层、机制层判据不适用的目录。
+#: - ``knowledge``：知识层，它的域前缀、条目编号、路径本来就是内容。
+#: - ``adapt``：``story adapt`` 在目标工程就地生成的工作目录（两棵树清单、备份、方案、
+#:   安装记录）。它按定义会照录目标工程的知识标识、层名与绝对路径，扫它等于把运行产物
+#:   当交付件判；SKILL 明写「包不交付它」，机制类文件也不会落在这里。
+NON_MECHANISM_DIRS = ("knowledge", "_knowledge", "adapt")
 
 
 #: 占位前缀：刻意表示「任意域」的示例编号，不是硬编码（`XXX-01` 这类）。
@@ -362,7 +367,7 @@ def m01_hardcoded_domain_prefix(root: Path, ctx: Ctx) -> Outcome:
 
     negation = re.compile(r"不写|不得|禁止|反例|改为|改用|换成|已退役|不是|别写")
     hits = []
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         if rel == "manifest.yaml":
             continue   # 激活清单**就是**登记文件名的地方，它不是「抄了一份」
@@ -404,7 +409,7 @@ def m17_dangling_knowledge_reference(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(True, "激活清单派生不出知识标识（证据不足，不判）")
 
     hits = []
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             # a) 编号：前缀在册说明它确实指某个已激活的域，编号却查不到 = 死判据
@@ -459,7 +464,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")
     business_words = _case_business_words()
     hits = []
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             m = case_ids.search(line)
@@ -501,7 +506,7 @@ def m03_hardcoded_layer_names(root: Path, ctx: Ctx) -> Outcome:
     """机制层不得写死架构外层目录名（层清单从架构 DSL 派生）。"""
     layer_re = re.compile(r"\b0[1-9]-[A-Z][A-Za-z]{3,}\b")
     hits = []
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             m = layer_re.search(line)
             if m:
@@ -522,7 +527,7 @@ def m04_source_repo_coupling(root: Path, ctx: Ctx) -> Outcome:
         (re.compile(r"\b[0-9a-f]{40}\b"), "提交 SHA"),
     ]
     hits = []
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             for pat, why in patterns:
@@ -542,7 +547,7 @@ def m05_crlf_unsafe_split(root: Path, ctx: Ctx) -> Outcome:
         re.compile(r"\.split\(\s*/\\n/"),
     ]
     hits = []
-    for path in iter_files(root, (".mjs", ".js"), EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, (".mjs", ".js"), NON_MECHANISM_DIRS):
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             if any(p.search(line) for p in bad):
                 hits.append(f"{path.relative_to(root).as_posix()}:{n}")
@@ -612,7 +617,7 @@ def m09_dangling_cross_reference(root: Path, ctx: Ctx) -> Outcome:
     """跨文件相对引用必须真实存在。"""
     link_re = re.compile(r"\[[^\]]*\]\((\.{1,2}/[^)#\s]+)\)")
     hits = []
-    for path in iter_files(root, TEXT_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, TEXT_SUFFIXES, NON_MECHANISM_DIRS):
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             for m in link_re.finditer(line):
                 target = (path.parent / m.group(1)).resolve()
@@ -683,7 +688,7 @@ def m13_numeric_form_quota(root: Path, ctx: Ctx) -> Outcome:
     """数字计数不得进入写作命令或 PASS 条件（计数只作诊断）。"""
     quota_re = re.compile(r"(至少|不少于|必须有|须有)\s*[0-9一二三四五六七八九十]+\s*(张|个|条|段|处)?\s*(表|图|流程图|列表|小节|段落)")
     hits = []
-    for path in iter_files(root, TEXT_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, TEXT_SUFFIXES, NON_MECHANISM_DIRS):
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             m = quota_re.search(line)
             if m:
@@ -706,7 +711,7 @@ def m14_criteria_instruction_divergence(root: Path, ctx: Ctx) -> Outcome:
     按文件名比对会把下游的也算成写作注入件。
     """
     injections = [
-        p for p in iter_files(root, TEXT_SUFFIXES, EXCLUDE_KNOWLEDGE)
+        p for p in iter_files(root, TEXT_SUFFIXES, NON_MECHANISM_DIRS)
         if "on_context_load" in p.name
     ]
     if not injections:
@@ -840,7 +845,7 @@ def m16_patch_residue(root: Path, ctx: Ctx) -> Outcome:
     # 所以只判它作为**遗留标记**的形态：待办标记，或明说是临时方案/待迁移。
     # 知识层不扫——那里的「临时」是业务规则的一部分，不是代码里欠的债。
     marker = re.compile(r"\bTODO\b|\bFIXME\b|\bXXX:|临时方案|临时措施|临时实现|暂时保留|待迁移|待重构")
-    for path in iter_files(root, ALL_SUFFIXES, EXCLUDE_KNOWLEDGE):
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             if negation.search(line):
