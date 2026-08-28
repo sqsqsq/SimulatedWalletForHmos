@@ -287,3 +287,30 @@ grep -rnE "[A-Za-z]:[\\/]|\bbackup/" doc/extensions
 | 机制层不硬编码 knowledge 内容 | M01（真实标识）+ M17（查无此物的死判据） |
 | 正向实现，不打补丁 | M16（死代码 / 静默降级 / 待办标记） |
 | 知识不含维护信息、定位只写一处 | M18（facts 引规约编号 / 知识指向机制 / 规约带源码路径 / 阶段矩阵；经真实 `selfCheck`） |
+
+## 8. 实跑效率度量（批次 3 · 七项目标）
+
+跑完一轮后，用 `measure_run.py` 从 `events.jsonl` 读出这七项。**它只报数，不判 PASS/FAIL**
+——数字是诊断信息，不进写作命令、不进 PASS 条件（G8）。达标与否由人看着数字判断。
+
+```bash
+python test/story/scripts/measure_run.py output/story/<suite>/cases/<case>/<run>
+python test/story/scripts/measure_run.py <同上> --json      # 需要机器读时
+```
+
+| # | 指标 | 目标 | 诊断基线（批次 3 之前） |
+|---|---|---|---|
+| 1 | 门禁回环时间占比 | < 15% | **49.3%**（spec 47.4 min / plan 10.5 / coding 11.5） |
+| 2 | 作者读 `framework/**` + `doc/extensions/**` | ≤ 20 次/阶段 | 60 + 40 次 |
+| 3 | **读 checker 源码** | **0** | `check-spec.ts` 被读 9 次；14 条 bash 在 grep checker 反推判据 |
+| 4 | 同一 check id FAIL 次数 | ≤ 2 | 5（`lifecycle_hook_post_check_extension` 洋葱式暴露五层） |
+| 5 | spec 阶段上下文增量 | ≤ 150K | +397K（全程 11K → 818K，零 compaction） |
+| 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
+| 7 | `doc/extensions` 非知识层行数 | 较基线净减 | 基线 10358 |
+
+**第 3 项是最直接的信号**：作者去读 checker 源码，说明它从别处拿不到要求——
+批次 3 的作者面通道（入口文件 → `hooks/<phase>/author.md` → 模板 → 报错文案）就是为它建的。
+这一项不为零，说明通道没通。
+
+第 5 项要在 **spec 阶段单独取**：story 移到 S5 之后，spec 会话不再承担成文，
+增量应显著下降；若仍接近基线，说明 writer 子 agent 没有真的在新鲜上下文里跑（KC-4）。
