@@ -75,6 +75,10 @@ doc/features/*/ux-reference/_fidelity-cache/
 # Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
 /scratch/
 
+# story adapt 工作目录：目标工程所有、包不交付。本仓既是包又会被自扫描/自适配，
+# 就地产生的 plan/before/backup 属运行产物，不入库（本仓专属，不随 Extension 交付）
+doc/extensions/adapt/
+
 # Personal / local agent settings (per developer, gitignored)
 **/.cac/settings.local.json
 output/
