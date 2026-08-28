@@ -17,7 +17,6 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 - 目标 `framework/package.json` 的 `version` ≥ `3.0.0`；
 - 目标 framework 里这些本地热修在位（本包依赖它们；缺则 spec 闭不上 / coding 编不过）：
   `harness/scripts/utils/capability-resolution.ts`、`profiles/hmos-app/ui-kit/MaisonPrimaryButton.ets`；
-  包若交付 `AGENTS.section.md`，还须 `harness/scripts/utils/template-renderer.ts` 含扩展段注入点（`grep agents_section` 有命中）；
 - 缺任何一项：列出缺什么，停——framework 的补齐不归本命令管。
 
 ## 1 判态
@@ -39,7 +38,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 目标仓里的东西 | 首次安装 | 升级 |
 |---|---|---|
-| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`、`AGENTS.section.md`（包有才有：渲染进入口文件的实例扩展段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
+| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`、`AGENTS.section.md`（包有才有：写进入口文件「实例扩展」节的那一段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
 | `skills/story/scripts/*.js`（需求系统对接） | **看发起方**：包内这些 js 文件头自述为「本地替身 / 模拟」→ 不复制，目标要按自己的需求系统写，方案登记「数据对接待适配」；否则（已适配仓发起）→ 整目录覆盖 | 同左 |
 | `knowledge/constraints/*.md`、`knowledge/design-patterns/*.md` —— **包里有的** | 从包复制，默认已确认、**默认在清单**（规约与模式是随包直接维护内容；缺 SDK 或既有案例只在方案里登记证据缺口，不删文件、不撤出清单） | 目标有同名的**换成包的版本**；**包新增的域 / 模式复制过去**，同样默认已确认、默认在清单 |
 | 目标自己加的规约域 / 模式文件（包里没有同名的） | — | **原样保留**，仍在清单 |
@@ -78,7 +77,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 ## 6 写入
 
-按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **重渲染入口文件**（包有 `AGENTS.section.md` 时：按目标 framework 的用法跑 `render-agents-md`，让 CLAUDE.md / AGENTS.md 的「实例扩展」节带上这一段；这一步漏掉，目标的主 agent 就不知道要先读各阶段须知）。
+按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **入口文件**（包有 `AGENTS.section.md` 时：把它的内容写进目标 AGENTS.md 与 CLAUDE.md（存在时）的「实例扩展」节，替换该节原有内容；这一步漏掉，目标的主 agent 就不知道要先读各阶段须知）。
 
 ## 7 校验
 

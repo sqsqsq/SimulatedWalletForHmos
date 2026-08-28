@@ -183,7 +183,7 @@ if (existsSync(join(PDIR, SECTION))) {
   for (const entry of ['AGENTS.md', 'CLAUDE.md']) {
     const f = join(TARGET, entry);
     if (!existsSync(f)) { if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`); continue; }
-    if (!ws(read(f)).includes(body)) bad.push(`⑤ 入口文件未含扩展段：${entry}（写入后须重渲染入口文件）`);
+    if (!ws(read(f)).includes(body)) bad.push(`⑤ 入口文件未含扩展段：${entry}（把包内扩展段写进它的「实例扩展」节）`);
   }
 }
 
