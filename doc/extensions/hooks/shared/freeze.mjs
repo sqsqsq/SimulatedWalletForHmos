@@ -150,11 +150,6 @@ export function resolveEntityRef(contracts, ref) {
   return { ok: true, reason: '', tail: member };
 }
 
-/** 一条义务的落点引用列表。 */
-export function landingRefs(obligation) {
-  return asArray(obligation?.landing).map(x => String(x).trim()).filter(Boolean);
-}
-
 /** 契约点名的实现文件（coding 阶段据此限定检索范围，不全仓扫）。 */
 export function contractFiles(contracts) {
   const out = new Set();
