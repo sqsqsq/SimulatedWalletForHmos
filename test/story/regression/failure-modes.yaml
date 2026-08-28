@@ -667,3 +667,21 @@ modes:
       实测 verifier 报告 272 行证据只有 14 种字符串、全是被检文本的复制，零条「落点错/漏了」，
       而门禁照收 PASS。判据改为：引文非空且 ≥12 字、是目标产物的子串、一行只裁一个对象。
       与 pre_verifier 不再注入被检文本是同一件事的两面——不给原文，才可能拿到真引文。
+
+  - id: C01-story-conservation
+    dimension: content
+    found_round: "2026-08-28"
+    form: story 的守恒判不出材料里丢了什么——按「章 × 数量」或按「作者自述」守恒，而不是按事实 token 整篇判
+    clause: E7 / KC-1 / KC-2 / 冻结 01-C1
+    checker: c01_story_conservation
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/C01-story-conservation/bad
+    good_fixture: test/story/fixtures/failure-modes/C01-story-conservation/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      1.0 按逐章守恒（每章把取材节的每行写全）→ 同一事实被四个章节合同各指一次、被强制写四遍；
+      上一版按作者自述（自由文本 reason 只判非空）→ 实测 161/272 单元「不进」、理由去重后 2 种。
+      两版共同根因是守恒的粒度与位置都错。本条调真实的 story-build（init → audit → check），
+      判据不是「报了错」而是**点名了具体哪个事实**——笼统说「有缺失」等于没有区分力。

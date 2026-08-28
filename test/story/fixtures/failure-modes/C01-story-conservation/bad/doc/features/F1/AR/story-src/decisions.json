@@ -1,0 +1,29 @@
+{
+  "scanned_categories": {
+    "需求与范围": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    },
+    "交互与界面": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    },
+    "技术方案与依赖": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    },
+    "约束规约命中项": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    },
+    "异常与风险": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    },
+    "上线与协同": {
+      "entries": [],
+      "none_reason": "本轮扫过，无开放议题"
+    }
+  },
+  "decisions": []
+}

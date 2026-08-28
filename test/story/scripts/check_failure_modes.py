@@ -1794,6 +1794,49 @@ def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"引文全部可在目标产物里检索到（{out['verified']} 条）")
 
 
+@checker
+def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
+    """story 的整篇守恒判不出材料里丢了什么。
+
+    1.0 按「章 × 数量」守恒（每章把取材节的每行写全），上一版按「作者自述」守恒
+    （自由文本 `reason` 只判非空，实测 161/272 单元「不进」、理由去重后 2 种）。
+    两版共同的根因是**守恒的粒度与位置都错**：不是按事实 token 整篇判。
+
+    本条调**真实的 story-build**（init → audit → check），验它能不能：
+      ① 点名 story 里找不到的那个事实（不是笼统说「有缺失」）；
+      ② 拒绝三态之外的记录——自由文本理由在新形态下无法表达。
+
+    夹具是一个迷你需求目录（`doc/features/F1/`），所以 `root` 传进来的是夹具根。
+    """
+    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
+    if build is None:
+        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
+    if not build.exists():
+        return Outcome(False, "找不到 story-build.mjs——判定基准不存在，不当作通过")
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story 与材料（该形态未启用）")
+
+    def run(cmd: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(build), cmd, "--feature", "F1", "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    if run("init").returncode != 0:
+        return Outcome(False, "story-build init 跑不起来——来源单元枚举失败")
+    audit = run("audit")
+    if audit.returncode != 0:
+        return Outcome(False, f"story-build audit 跑不起来：{(audit.stderr or '')[:160]}")
+    r = run("check")
+    if r.returncode == 0:
+        return Outcome(True, "整篇守恒通过：材料里的事实在 story 都有落点")
+    out = ((r.stderr or "") + (r.stdout or "")).strip()
+    # 判据不是「报了错」，是**点名了具体哪个事实**——笼统说「有缺失」等于没有区分力
+    named = [t for t in ("applicationId", "createBusinessOrder") if t in out]
+    if not named and "没有任何落点" not in out:
+        return Outcome(False, f"check 报了错却没点名具体缺失：{out[:200]}")
+    return Outcome(False, f"守恒判出缺失（点名 {named or ['无落点单元']}）：{out[:160]}")
+
+
 VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
 
 
