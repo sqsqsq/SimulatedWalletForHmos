@@ -16,7 +16,9 @@
  *             ①拉系统最新正文做远端备份 ②临时把 design.md 改名 design.bak.md
  *             ③story.md 改名 design.md 上传（review.md 作附件）④无论成败还原 design.bak.md
  *             故 **archive 前后工作区 AR/design.md 字节不变**；
- *             AR/story.md 与 AR/review.md 缺任一、或 merge-story --check 不过即失败，无降级路径
+ *             AR/story.md 与 AR/review.md 缺任一即失败，无降级路径。
+ *             **门禁不在这里**：本文件是需求系统对接层的替身，内网是独立实现、从不调用扩展内容；
+ *             归档前的校验由 /story 链的 story-build check 承担（SKILL 归档节 ①）
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             从最新备份解析源数据、**重新上传回系统**，恢复的是平台侧正文；本地 design.md 不变
  *   review  → {"mode":"review","reqNo":"...","fetched":true,"target":"AR/review.md",
@@ -228,17 +230,6 @@ function cmdArchive(ar, featureRoot, localAr, projectRoot) {
       );
     }
   }
-  // 归档前强制过门禁：源哈希新鲜度、与 spec/acceptance 的一致性、两份归档件的自包含红线都在这一关。
-  const merge = path.join(__dirname, 'merge-story.mjs');
-  const checked = spawnSync(
-    process.execPath,
-    [merge, '--feature', ar, '--project-root', projectRoot, '--check'],
-    { stdio: ['ignore', 2, 'inherit'], windowsHide: true } // 子进程 stdout 转 stderr，保持本进程 stdout 只有 JSON
-  );
-  if (checked.status !== 0) {
-    fail(`归档件未通过 merge-story --check（详见上方输出），拒绝归档：${ar}`);
-  }
-
   // ① 系统侧正文名固定为 design.md，归档是覆盖它——先把系统当前那一版备份下来，
   //    restore 靠的就是这份备份。
   const backupPath = backup(featureRoot, 'remote', fetchSystemCarrier(featureRoot, localAr));

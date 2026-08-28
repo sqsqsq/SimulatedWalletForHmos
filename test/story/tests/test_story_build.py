@@ -1,0 +1,339 @@
+"""`story-build` 三个命令的单元断言——init 派生什么、audit 记什么、check 拦什么。
+
+台账（`check_failure_modes.py`）判的是**形态回不回来**：一个已知会犯的错，机制现在抓不抓得住。
+本文件判的是**判据本身的边界**：同一条判据，改一个字符就该翻面的那些地方。两者都要有，
+因为台账只覆盖曾经真实发生过的错，而边界是它没走到的地方。
+
+夹具借用 `R01-verdict-echo/good`——它是一份最小但完整的工作区（材料 + story + 激活清单 +
+决策件）。每个用例在**副本**上跑：这几条命令会写 `source-units.json` / `audit.json`，
+在夹具原地跑会把它写脏，且上一个用例的产物会影响下一个。
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story-build.mjs"
+FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
+           / "R01-verdict-echo" / "good")
+FEATURE = "F1"
+
+CHAPTER_OUT_OF_CONTRACT = "第十五章"
+QUOTE = "提交之后回执没到之前，界面停在等待态"
+
+
+class StoryBuildCase(unittest.TestCase):
+    """每个用例一份新工作区；子类只关心自己那一条判据。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "work"
+        shutil.copytree(FIXTURE, self.root)
+        self.addCleanup(self._tmp.cleanup)
+        self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+
+    # ---- 驱动 ----
+
+    def run_build(self, command: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(BUILD), command, "--feature", FEATURE,
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def init_audit(self) -> None:
+        for command in ("init", "audit"):
+            proc = self.run_build(command)
+            self.assertEqual(proc.returncode, 0, f"{command} 跑不起来：{proc.stderr}")
+
+    def check_output(self) -> tuple[int, str]:
+        proc = self.run_build("check")
+        return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()
+
+    def assert_check_names(self, needle: str) -> str:
+        """check 必须失败，且**点名**了原因——笼统说「有问题」等于没有区分力。"""
+        code, out = self.check_output()
+        self.assertEqual(code, 1, f"check 应当失败却过了：{out}")
+        self.assertIn(needle, out)
+        return out
+
+    # ---- 产物读写 ----
+
+    @property
+    def units(self) -> list[dict]:
+        return json.loads((self.src / "source-units.json").read_text(encoding="utf-8"))["units"]
+
+    @property
+    def audit(self) -> dict:
+        return json.loads((self.src / "audit.json").read_text(encoding="utf-8"))
+
+    def write_audit(self, data: dict) -> None:
+        (self.src / "audit.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def write_verdicts(self, rows: list[tuple[str, str, str]]) -> None:
+        lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
+        lines += [f"| {key} | {verdict} | {quote} |" for key, verdict, quote in rows]
+        (self.src / "story-verdicts.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def story(self) -> str:
+        return self.story_path.read_text(encoding="utf-8")
+
+    def rewrite_story(self, old: str, new: str) -> None:
+        text = self.story()
+        self.assertIn(old, text, "夹具变了，用例要跟着改")
+        self.story_path.write_text(text.replace(old, new), encoding="utf-8")
+
+    def settle(self) -> list[str]:
+        """把机器定不了落点的单元交给作者并配上裁决——夹具的基线态。
+
+        `check` 要求三态之一齐备：机器定不了的那些，正式链路上由 S5 裁决者处置。
+        用例要断言「某一条判据翻面」，基线就得是通过态，否则测的是别的问题。
+        """
+        data = self.audit
+        keys = []
+        for record in data["records"]:
+            if any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
+                continue
+            record["at"], record["by"] = "页面、组件与状态", "author"
+            keys.append(record["key"])
+        self.write_audit(data)
+        if keys:
+            self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
+        return keys
+
+    def hand_to_author(self) -> list[str]:
+        """把机器定不了落点的那些交给作者，返回它们的键。
+
+        夹具里所有单元机器都能定位，所以这里主动造一条：拿走一个单元的机器落点，
+        改标成作者落点——`check ⑥` 的裁决核实只对 `by: author` 生效。
+        """
+        data = self.audit
+        keys = []
+        for record in data["records"]:
+            if record.get("at") and record.get("by") == "machine":
+                record["at"], record["by"] = "页面、组件与状态", "author"
+                keys.append(record["key"])
+                break
+        self.assertTrue(keys, "夹具里没有可改判的记录")
+        for record in data["records"]:
+            if not any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
+                record["at"], record["by"] = "页面、组件与状态", "author"
+                keys.append(record["key"])
+        self.write_audit(data)
+        self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
+        return keys
+
+
+class TestMachinePlacement(StoryBuildCase):
+    """KR-1a：机器落点每条都能核回 story 正文，且不沿用上一次的结果。"""
+
+    def test_machine_records_are_backed_by_the_chapter_text(self) -> None:
+        self.init_audit()
+        by_key = {u["key"]: u for u in self.units}
+        chapters = {}
+        title = None
+        for line in self.story().split("\n"):
+            if line.startswith("## "):
+                title = line[3:].strip()
+                chapters[title] = []
+            elif title:
+                chapters[title].append(line)
+        machine = [r for r in self.audit["records"] if r.get("by") == "machine"]
+        self.assertTrue(machine, "夹具里应当有机器定位的单元")
+        for record in machine:
+            body = "\n".join(chapters[record["at"]])
+            unit = by_key[record["key"]]
+            tokens = unit.get("tokens") or []
+            hit = any(t in body for t in tokens) or unit["text"][:8] in body
+            self.assertTrue(hit, f"{record['key']} 标在「{record['at']}」但那一章里核不到")
+
+    def test_rerun_recomputes_machine_and_keeps_author(self) -> None:
+        self.init_audit()
+        before = {r["key"]: r.get("at") for r in self.audit["records"] if r.get("by") == "machine"}
+        data = self.audit
+        moved = next(r for r in data["records"] if r.get("by") == "machine")
+        moved["at"] = "上线与协同"          # 机器落点被改脏
+        authored = next(r for r in data["records"]
+                        if not any(r.get(k) for k in ("at", "covered_by", "machine_facing")))
+        authored["at"], authored["by"] = "术语", "author"   # 机器定不了、作者接手的那一条
+        self.write_audit(data)
+
+        self.assertEqual(self.run_build("audit").returncode, 0)
+        records = {r["key"]: r for r in self.audit["records"]}
+        self.assertEqual(records[moved["key"]].get("at"), before[moved["key"]],
+                         "机器落点应当每次重算——上一次的结果不作数")
+        self.assertEqual(records[authored["key"]].get("at"), "术语",
+                         "机器定不了的那条，作者落点应当保留，交 S5 裁决")
+        self.assertEqual(records[authored["key"]].get("by"), "author")
+
+
+class TestAuthorPlacement(StoryBuildCase):
+    """KR-1b：作者落点的三种坏形态，各自点名。"""
+
+    def test_author_chapter_must_be_in_the_contract(self) -> None:
+        self.init_audit()
+        data = self.audit
+        data["records"][0]["at"] = CHAPTER_OUT_OF_CONTRACT
+        data["records"][0]["by"] = "author"
+        self.write_audit(data)
+        self.assert_check_names(f"的 at「{CHAPTER_OUT_OF_CONTRACT}」不是合同里的章节标题")
+
+    def test_all_three_states_empty_is_named(self) -> None:
+        self.init_audit()
+        data = self.audit
+        for key in ("at", "by", "covered_by", "machine_facing"):
+            data["records"][0].pop(key, None)
+        self.write_audit(data)
+        self.assert_check_names("没有任何落点（三态皆空）")
+
+    def test_author_cannot_declare_machine_facing(self) -> None:
+        self.init_audit()
+        data = self.audit
+        record = data["records"][0]
+        record.pop("at", None)
+        record.pop("by", None)
+        record["machine_facing"] = True
+        self.write_audit(data)
+        self.assert_check_names("被标成 machine_facing，但枚举器没这么判")
+
+
+class TestVerdicts(StoryBuildCase):
+    """KR-1c：S5 裁决的核实——缺行、非法取值、短引文、回声、未讲清。"""
+
+    def test_missing_row_is_named(self) -> None:
+        self.init_audit()
+        self.hand_to_author()
+        self.write_verdicts([])
+        self.assert_check_names("裁决表里没有")
+
+    def test_verdict_word_is_closed(self) -> None:
+        self.init_audit()
+        keys = self.hand_to_author()
+        self.write_verdicts([(keys[0], "基本讲了", QUOTE)])
+        self.assert_check_names("不是 讲清 / 未讲清 之一")
+
+    def test_quote_below_floor_is_named(self) -> None:
+        self.init_audit()
+        keys = self.hand_to_author()
+        self.write_verdicts([(keys[0], "讲清", "界面停在等待态")])
+        self.assert_check_names("的引文只有")
+
+    def test_quote_must_come_from_the_chapter(self) -> None:
+        self.init_audit()
+        keys = self.hand_to_author()
+        self.write_verdicts([(keys[0], "讲清", "这句话在 story 的那一章里根本检索不到")])
+        self.assert_check_names("在它落点那一章里检索不到")
+
+    def test_echo_of_the_source_unit_is_rejected(self) -> None:
+        """引文抄的是材料原文——它证明「材料这么说」，不是「story 讲清了」。"""
+        self.init_audit()
+        keys = self.hand_to_author()
+        unit = next(u for u in self.units if u["key"] == keys[0])
+        echo = unit["text"][:20]
+        self.rewrite_story(QUOTE, f"{QUOTE}。{echo}")
+        self.write_verdicts([(keys[0], "讲清", echo)])
+        self.assert_check_names("回声")
+
+    def test_not_covered_verdict_fails_the_check(self) -> None:
+        self.init_audit()
+        keys = self.hand_to_author()
+        self.write_verdicts([(keys[0], "未讲清", QUOTE)])
+        self.assert_check_names("被裁「未讲清」")
+
+    def test_author_placement_without_verdict_file_is_named(self) -> None:
+        self.init_audit()
+        self.hand_to_author()
+        (self.src / "story-verdicts.md").unlink(missing_ok=True)
+        self.assert_check_names("需要 S5 裁决者逐条裁")
+
+
+class TestKnowledgeUnits(StoryBuildCase):
+    """KR-2a/2b：激活规约条目是来源单元，判定逐条落在合规章的表里。"""
+
+    def test_entries_become_units_with_domain_and_id(self) -> None:
+        self.init_audit()
+        knowledge = [u for u in self.units if u["key"].startswith("KNOWLEDGE:")]
+        self.assertTrue(knowledge, "激活清单里的规约条目应当派生成来源单元")
+        for unit in knowledge:
+            self.assertTrue(unit.get("domain"), f"{unit['key']} 缺域名")
+            self.assertIn(unit["key"].split(":", 1)[1], unit["text"] + str(unit.get("tokens")))
+
+    def test_repo_manifest_derives_units_too(self) -> None:
+        """本仓自己的激活清单也要派生得出来——夹具过了不代表真清单过。"""
+        script = (
+            "import {activeKnowledge} from './doc/extensions/hooks/shared/knowledge.mjs';"
+            "import {knowledgeUnits} from './doc/extensions/skills/story/scripts/source-units.mjs';"
+            "console.log(knowledgeUnits(activeKnowledge(process.cwd()).entries).length);")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                              cwd=REPO_ROOT, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreater(int(proc.stdout.strip()), 0, "本仓激活清单派生出 0 个规约单元")
+
+    def test_missing_row_is_named(self) -> None:
+        self.init_audit()
+        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |\n", "")
+        self.assert_check_names("判定表里没有行")
+
+    def test_verdict_word_is_closed(self) -> None:
+        self.init_audit()
+        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 |", "| 甲域约束 | SMP-02 | 大概不涉及 |")
+        self.assert_check_names("不是 命中 / 不命中 / 整域不适用 之一")
+
+    def test_basis_cannot_be_empty(self) -> None:
+        self.init_audit()
+        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |",
+                           "| 甲域约束 | SMP-02 | 不命中 |  |")
+        self.assert_check_names("没写依据")
+
+    def test_domain_level_row_covers_every_entry(self) -> None:
+        """整域不适用时给该域一行即可，域内条目不必逐条列。"""
+        self.init_audit()
+        self.settle()
+        self.rewrite_story(
+            "| 甲域约束 | SMP-01 | 命中 | 本需求新增提交入口，受理单编号在入口生成 |\n"
+            "| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |",
+            "| 甲域约束 | — | 整域不适用 | 本需求不触及该域的任何场景 |")
+        code, out = self.check_output()
+        self.assertEqual(code, 0, f"域级判定应当覆盖域内全部条目：{out}")
+
+
+class TestGlossaryAndRedlines(StoryBuildCase):
+    """KR-4a：merge-story 并进来的两件事——术语表实体词守恒与归档件四红线。"""
+
+    def write_spec(self, term: str) -> None:
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(
+            "# 甲需求 spec\n\n## 0. 术语映射表\n\n"
+            "| 原始术语 | 权威模块 | 解释 |\n|---|---|---|\n"
+            f"| {term} | 甲模块 | 一次提交的唯一标识 |\n",
+            encoding="utf-8")
+
+    def test_entity_term_absent_from_story_is_named(self) -> None:
+        self.init_audit()
+        self.write_spec("受理单号")
+        self.assert_check_names("受理单号")
+
+    def test_entity_term_present_passes(self) -> None:
+        self.init_audit()
+        self.settle()
+        self.write_spec("等待态")          # story 的「页面、组件与状态」章里有这个词
+        code, out = self.check_output()
+        self.assertEqual(code, 0, out)
+
+    def test_repo_path_in_story_is_named(self) -> None:
+        self.init_audit()
+        self.rewrite_story("本需求不涉及。\n\n## 术语",
+                           "详见 doc/features/F1/AR/design.md。\n\n## 术语")
+        self.assert_check_names("仓内路径")
+
+
+if __name__ == "__main__":
+    unittest.main()

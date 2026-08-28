@@ -49,8 +49,7 @@ startup:
 gates:
   # 被测流程实际执行的项目原生门禁；协调器只记录运行结果和诊断。
   post_check: doc/extensions/hooks/spec/post_check.mjs
-  merge_story: doc/extensions/skills/story/scripts/merge-story.mjs
-  # 装配一致性：story.md 是否确由章节装配而来、形态是否守恒、review 议题是否与登记表一致。
+  # story.md 的九项判据：章节合同、来源单元三态守恒、裁决与判定表核实、术语守恒、四红线。
   story_build: doc/extensions/skills/story/scripts/story-build.mjs
 
 output:

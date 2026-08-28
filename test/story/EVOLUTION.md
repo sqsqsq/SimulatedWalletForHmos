@@ -142,7 +142,7 @@ heartbeat 续跑。脚本外交互改由宿主依据公开 Case 场景回复并�
 
 - 两个模式正文和 README 的 SHA-256 与用户指定原件逐文件一致。
 - `story-chapters.json` 保留候选标题安全回退，固定十章且没有测试用例关键词失败门禁。
-- `merge-story.mjs` 不再硬编码本工程层名；直接维护的适配能力不读取外部工程路径或测试域作为运行依赖。
+- `story-build.mjs check` 不再硬编码本工程层名；直接维护的适配能力不读取外部工程路径或测试域作为运行依赖。
 - 2.0 文件归属由发布清单显式列出；目标适配范围为 `component-profile.md`、`codebase-facts.md`、
   `story.js`、`token.js`、`review.js` 和 Manifest 的 `provides.knowledge`。
 

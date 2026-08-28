@@ -661,6 +661,24 @@ modes:
       而门禁照收 PASS。判据改为：引文非空且 ≥12 字、是目标产物的子串、一行只裁一个对象。
       与 pre_verifier 不再注入被检文本是同一件事的两面——不给原文，才可能拿到真引文。
 
+  - id: R03-author-chain-dangling
+    dimension: knowledge
+    found_round: "2026-08-28"
+    form: 机制退场时删了文件却没删指路的那句话——作业书仍让模型去读一份已经不存在的文件
+    clause: G11 / KR-3b
+    checker: r03_author_chain_dangling
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/R03-author-chain-dangling/bad
+    good_fixture: test/story/fixtures/failure-modes/R03-author-chain-dangling/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      本轮删了三份文件（旧规则说明、旧门禁脚本、旧概念参考），每份都有别的文件在指它。
+      模型照着链去读、读不到，就会自己补一套规则——这比没写更坏。
+      判定面是 Markdown 链接与脚本路径：作者写下链接就是让人去读的。
+      工作区产物路径（在扩展包里本就不存在）与 adapt 的历史版本结构签名不在判定面内。
+
   - id: C01-story-conservation
     dimension: content
     found_round: "2026-08-28"

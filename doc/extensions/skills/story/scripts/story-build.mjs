@@ -27,6 +27,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
+import {
+  baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs, scanLocalPaths,
+} from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
   escapeCell, extractFreeformZone, extractHumanZone, findBlockRange,
@@ -316,6 +319,35 @@ function cmdAudit(ctx) {
 
 const EMPTY_SECTION_TEXT = '本需求不涉及。';
 
+/**
+ * spec §0 术语映射表里、应当出现在 story 的业务实体词，哪些没出现。
+ *
+ * 层身份按依赖方向从架构 DSL 派生（`can_depend_on` 为空者是平台能力层），不写层名字面——
+ * 写死名字换个工程就静默失效。无该列或派生不到时不过滤，保持向后兼容。
+ */
+function missingGlossaryTerms(specText, storyText, projectRoot) {
+  const rows = [];
+  let inTable = false;
+  for (const line of specText.split(/\r?\n/)) {
+    const s = line.trim();
+    if (/^#{1,4}\s/.test(s)) { inTable = /术语映射表/.test(s); continue; }
+    if (!inTable || !s.startsWith('|')) continue;
+    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.replace(/[`*]/g, '').trim());
+    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
+    rows.push(cells);
+  }
+  if (!rows.length) return [];
+  const header = rows.find(c => /^原始术语$|^术语$/.test(c[0]));
+  const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
+  const baseLayers = baseLayerIds(projectRoot);
+  return rows
+    .filter(c => c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
+    .filter(c => layerIdx < 0 || !baseLayers.length
+      || !baseLayers.some(id => (c[layerIdx] ?? '').includes(id)))
+    .map(c => c[0])
+    .filter(t => t && !storyText.includes(t));
+}
+
 function cmdCheck(ctx) {
   const problems = [];
   const doc = readJson(ctx.unitsPath, null);
@@ -561,6 +593,38 @@ function cmdCheck(ctx) {
           problems.push(`规约 ${id} 的判定没写依据——「不涉及」三个字不是依据`);
         }
       }
+    }
+  }
+
+  // ⑧ 术语表实体词守恒：spec §0 术语映射表里、权威模块落在 in_scope 的那些词须在 story 出现
+  //
+  // 术语表混着两类词：**需求实体**（业务对象的名字，story 就该出现）与**工程消歧用词**
+  // （主题色、脱敏这类——spec 拿它们把自然语言映到权威模块，story 用业务语言表达同一事实
+  // 才是对的）。一视同仁地要求逐词出现，会让 story 越写人话越容易被判「丢了事实」。
+  // 分流键取表内的「所属层」列：归属平台能力层的属工程消歧用词，不要求出现。
+  const specText = readText(path.join(ctx.featureRoot, 'spec', 'spec.md'));
+  if (specText !== null) {
+    const lost = missingGlossaryTerms(specText, storyText, ctx.projectRoot);
+    if (lost.length) {
+      problems.push(`spec 术语映射表里的这些业务实体词在 story 里找不到：${lost.join('、')}`
+        + '——可整合、可改序、可换措辞，但不能少');
+    }
+  }
+
+  // ⑨ 归档件四红线：仓内路径 / 客户端禁用词 / 悬空引用 / 图片断链
+  //
+  // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
+  // 词表与判定在 lint-rules.mjs（SSOT），这里只调。
+  const reviewText = readText(ctx.reviewPath) ?? '';
+  for (const [label, text] of [['story', storyText], ['review', reviewText]]) {
+    if (!text) continue;
+    for (const [what, kind, hits] of [
+      ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot)],
+      ['客户端语境禁用词', 'banned', scanBannedTerms(text)],
+      ['悬空引用', 'dangling', scanDanglingRefs(text, ctx.projectRoot)],
+      ['图片断链', 'image', scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path)],
+    ]) {
+      if (hits.length) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
     }
   }
 

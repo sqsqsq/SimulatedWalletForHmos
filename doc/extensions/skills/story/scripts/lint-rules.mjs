@@ -1,7 +1,7 @@
 /**
  * lint-rules.mjs — story 扩展的共享文本校验规则（词表 SSOT）
  *
- * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 merge-story.mjs（校验 story.md）共用，
+ * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 story-build.mjs check（校验 story.md）共用，
  * 避免两处各维护一份词表而漂移。
  *
  * 本文件是禁用词表的**唯一真源**：story 撰写红线只描述「不用服务端发布术语」这条纪律，

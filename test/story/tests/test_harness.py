@@ -221,14 +221,14 @@ class ModelStreamTest(unittest.TestCase):
         self._write(
             {"type": "reasoning", "content": "我先读 SKILL"},
             {"type": "tool", "tool_name": "bash",
-             "tool_input": {"command": "node merge-story.mjs --check"},
+             "tool_input": {"command": "node story-build.mjs check"},
              "tool_status": "completed"},
             {"type": "usage", "content": "ignored"},
             {"type": "text", "content": "已完成"},
         )
         items, cursor, _ = observe.read_model(self.path, 0, 1_000_000)
         self.assertEqual([i["type"] for i in items], ["reasoning", "tool", "text"])
-        self.assertEqual(items[1]["detail"], "node merge-story.mjs --check")
+        self.assertEqual(items[1]["detail"], "node story-build.mjs check")
         self.assertEqual(cursor, 3, "usage 不进流，游标只数进流的条目")
 
     def test_cursor_resumes(self) -> None:

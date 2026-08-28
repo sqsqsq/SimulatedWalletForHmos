@@ -94,7 +94,7 @@ python doc/extensions/skills/story/scripts/story_flow.py story --feature <AR>
 - **archive 不修改工作区任何文件**，可以放心执行
 
 ```bash
-node doc/extensions/skills/story/scripts/merge-story.mjs --feature <AR> --check   # ① 门禁
+node doc/extensions/skills/story/scripts/story-build.mjs check --feature <AR>      # ① 门禁
 node doc/extensions/skills/story/scripts/story.js archive <AR> <mcp-token>        # ② 上传
 python doc/extensions/skills/story/scripts/story_flow.py archived --feature <AR>  # ③ 登记
 ```

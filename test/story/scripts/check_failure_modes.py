@@ -1877,6 +1877,58 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
 
 
+_CHAIN_LINK = re.compile(r"\]\(([^)\s]+)\)")
+_CHAIN_SCRIPT = re.compile(r"`([A-Za-z0-9_./-]+\.(?:mjs|py|js))`")
+_CHAIN_OWNED = ("scripts/", "doc/extensions/")
+
+
+def _chain_files(root: Path):
+    """作者必读链：主 agent 的阶段须知、子 agent 的作业书、Skill 正文。"""
+    yield from root.glob("hooks/*/author.md")
+    yield from root.glob("**/phases/*.md")
+    yield from root.glob("**/SKILL.md")
+
+
+def _chain_resolves(root: Path, src: Path, ref: str) -> bool:
+    """相对写法逐级向上试：`rules/x.md` 写在 `skills/story/phases/` 里指的是 skill 根下那份。"""
+    ref = ref.split("#")[0]
+    if not ref:
+        return True
+    cands = [root / ref]
+    if ref.startswith("doc/extensions/"):
+        cands.append(root / ref[len("doc/extensions/"):])
+    cur = src.parent
+    while True:
+        cands.append(cur / ref)
+        if cur == root:
+            break
+        cur = cur.parent
+    return any(c.exists() for c in cands)
+
+
+@checker
+def r03_author_chain_dangling(root: Path, ctx: Ctx) -> Outcome:
+    """作者必读链指向已删文件——模型照着链去读，读到的是 404。
+
+    机制退场时最容易漏的不是代码而是**指路的那句话**：文件删了，指向它的作业书还在，
+    下一个模型仍会去读、读不到就自己编一套。判的是 Markdown 链接（作者写它就是让人去读的）
+    与脚本路径；工作区产物路径（`AR/story.md` 这类，在扩展包里本就不存在）与
+    **历史版本结构签名**（adapt 用来识别旧版目标仓的文件名，故意不在本包里）不在判定面内。
+    """
+    hits = []
+    for src in sorted(set(_chain_files(root))):
+        for n, line in enumerate(split_lines(read_text(src)), start=1):
+            refs = [r for r in _CHAIN_LINK.findall(line)
+                    if not r.startswith(("http", "mailto:", "#"))]
+            refs += [r for r in _CHAIN_SCRIPT.findall(line) if r.startswith(_CHAIN_OWNED)]
+            for ref in refs:
+                if not _chain_resolves(root, src, ref):
+                    hits.append(f"{src.relative_to(root).as_posix()}:{n} → {ref}")
+    if hits:
+        return Outcome(False, "作者必读链指向不存在的文件：" + "；".join(hits[:5]))
+    return Outcome(True, "作者必读链的引用全部落地")
+
+
 @checker
 def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
     """story 的整篇守恒判不出材料里丢了什么。

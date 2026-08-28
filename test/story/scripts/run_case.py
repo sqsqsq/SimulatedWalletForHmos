@@ -405,7 +405,7 @@ def expected_gate_names(start_phase: str, end_phase: str) -> tuple[str, ...]:
     """由阶段区间正向派生 gate，避免用例结束后再拿无关阶段补跑。"""
     names: list[str] = []
     if start_phase == "story":
-        names.extend(("post_check", "merge_story_check"))
+        names.append("post_check")
         if CFG.get("gates", {}).get("story_build"):
             names.append("story_build_check")
     names.extend(f"harness_{phase}" for phase in applicable_phases(start_phase, end_phase)
@@ -464,7 +464,7 @@ def build_phase_results(feature: str, start_phase: str, end_phase: str,
         reached = _phase_reached(feature_root, phase)
         if phase == "story":
             gate_names = tuple(name for name in
-                               ("post_check", "merge_story_check", "story_build_check")
+                               ("post_check", "story_build_check")
                                if name in gates)
         else:
             gate_names = (f"harness_{phase}",) if f"harness_{phase}" in gates else ()
@@ -1197,7 +1197,7 @@ def run_phase_harness(feature: str, phase: str,
                       out_dir: Path) -> tuple[str, dict[str, Any]]:
     """跑 framework 自己的阶段 harness；只调用发布件，不修改 framework。
 
-    story 那三个门禁（post_check / merge-story / story-build）只认识 story/spec 的产物，
+    story 那两个门禁（post_check / story-build）只认识 story/spec 的产物，
     对 plan 的 contracts.yaml、coding 的源码一无所知。真正判这些的是 framework 的
     `harness-runner.ts --phase <p>`，它按 workflow 的规则集跑。
     """
@@ -1233,12 +1233,11 @@ def _gate_diagnosis(cp: subprocess.CompletedProcess, *, command: list[str] | Non
 
 
 def _run_story_gates(feature: str, out_dir: Path) -> dict[str, str]:
-    """运行只属于 story→spec 新生成链路的三个门禁。绿 ≠ 语义达标。
+    """运行只属于 story→spec 新生成链路的两个门禁。绿 ≠ 语义达标。
 
     plan-only 不调用本函数，因而不会重复解释既有 Story。
     """
     post_check = REPO_ROOT / CFG["gates"]["post_check"]
-    merge_story = REPO_ROOT / CFG["gates"]["merge_story"]
     script = (
         "import {pathToFileURL} from 'node:url';"
         f"const m=await import(pathToFileURL({json.dumps(str(post_check))}).href);"
@@ -1247,21 +1246,14 @@ def _run_story_gates(feature: str, out_dir: Path) -> dict[str, str]:
     command = ["node", "--input-type=module", "-e", script]
     post_log = out_dir / "gate_post_check.log"
     r, post_diagnosis = _run_logged_gate(command, cwd=REPO_ROOT, log_path=post_log)
-    merge_command = ["node", str(merge_story), "--feature", feature,
-                     "--project-root", str(REPO_ROOT), "--check"]
-    merge_log = out_dir / "gate_merge_story.log"
-    r2, merge_diagnosis = _run_logged_gate(
-        merge_command, cwd=REPO_ROOT, log_path=merge_log)
     gates = {
         "post_check": ("pass" if r is not None and r.returncode == 0
                        and '"ok":true' in (r.stdout or "") else "fail"),
-        "merge_story_check": "pass" if r2 is not None and r2.returncode == 0 else "fail",
     }
     diagnostics = {
         "post_check": post_diagnosis,
-        "merge_story_check": merge_diagnosis,
     }
-    # 装配一致性：产物是不是真由章节装配而来（形态守恒、无手改、review 议题与登记表一致）。
+    # story.md 的九项判据：章节合同、来源单元三态守恒、裁决与判定表核实、术语守恒、四红线。
     story_build = CFG["gates"].get("story_build")
     if story_build:
         build_command = ["node", str(REPO_ROOT / story_build), "check", "--feature", feature,

@@ -941,8 +941,8 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     此后只备份不重建，评审人的批注与回稿都留在那份文件里。判据在契约里，
     与谁执行的归档无关——数据对接层由各部署环境自备实现，不随交付走。
 
-    **登记自带门禁**：先重跑一次 `merge-story --check`，通过才记。
-    登记不可逆，凭据只认校验过的产物。
+    **登记自带门禁**：先重跑一次 `story-build check`，通过才记——归档时 story 可能又改过，
+    成文态那次的校验不算数。登记不可逆，凭据只认校验过的产物。
     """
     contract = require(load(feature_root))
     if contract.get("status") != "story_written":
@@ -954,18 +954,18 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
         if not path.is_file():
             raise FlowError(f"{name} 不存在：归档件三缺一，无可登记的归档态")
 
-    checker = Path(__file__).resolve().parent / "merge-story.mjs"
+    checker = Path(__file__).resolve().parent / "story-build.mjs"
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：归档态登记要先重跑 merge-story --check，无法跳过")
+        raise FlowError("找不到 node：归档态登记要先重跑 story-build check，无法跳过")
     proc = subprocess.run(
-        [node, str(checker), "--feature", feature_root.name,
-         "--project-root", str(project_root), "--check"],
+        [node, str(checker), "check", "--feature", feature_root.name,
+         "--project-root", str(project_root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
         log((proc.stderr or proc.stdout).strip()[:2000])
         raise FlowError(
-            "归档件未通过 merge-story --check（详见上方输出），拒绝登记归档态。"
+            "归档件未通过 story-build check（详见上方输出），拒绝登记归档态。"
             "已经传上去的那一版是不合格的：修好后重新归档，再登记")
 
     contract["archived"] = {
