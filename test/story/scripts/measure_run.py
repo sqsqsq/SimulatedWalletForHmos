@@ -167,10 +167,19 @@ def main() -> int:
 
     path = Path(args.target)
     if path.is_dir():
-        found = sorted(path.rglob("events.jsonl"))
-        if not found:
-            raise SystemExit(f"[measure_run] {path} 下找不到 events.jsonl")
-        path = found[0]
+        # run 目录下有两层 events.jsonl：run 级汇总（本目录直下）与每一轮的
+        # `cli-runtime/<turn>/events.jsonl`。**先认本目录直下那份**——
+        # 递归后按字符串排序会让 `cli-runtime/…` 排在前面，于是只量到一轮：
+        # 实测同一次运行，汇总 1399 条事件、单轮 164 条，七项指标全部失真。
+        direct = path / "events.jsonl"
+        if direct.exists():
+            path = direct
+        else:
+            found = sorted(path.rglob("events.jsonl"))
+            if not found:
+                raise SystemExit(f"[measure_run] {path} 下找不到 events.jsonl")
+            # 退而求其次时取**最大**的那份，而不是排序第一份
+            path = max(found, key=lambda p: p.stat().st_size)
     if not path.exists():
         raise SystemExit(f"[measure_run] 读不到 {path}")
 
