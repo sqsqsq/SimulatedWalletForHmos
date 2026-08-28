@@ -196,11 +196,14 @@ export default async function preVerifier(ctx) {
   const order = { PURE_COPY: 0, SUSPECT: 1, CLEAN: 2 };
   rows.sort((a, b) => (order[a.verdict] - order[b.verdict]) || (b.similarity - a.similarity));
 
+  // **不注入被检文本**：文本一旦在提示词里，裁决就会退化成把它抄进证据列——
+  // 实测整份清单的证据只有十几种字符串、全是被检文本的回声，零条「落点错/漏了」。
+  // 这里只给「裁哪一行」，原文让 verifier 自己去产物里读：读过才可能给出真引文。
   const table = [
-    '| # | 来源 | 条目 | 被检文本 | 机械信号 | 你的裁决（设计 / 复述 / 不适用）+ 证据 |',
-    '|---|---|---|---|---|---|',
+    '| # | 来源 | 条目 | 机械信号 | 你的裁决（设计 / 复述 / 不适用）+ 引文 |',
+    '|---|---|---|---|---|',
     ...rows.map((r, i) =>
-      `| ${i + 1} | ${r.source} | ${r.key || '—'} | ${cell(r.text)} | ${signal(r)} | |`),
+      `| ${i + 1} | ${r.source} | ${r.key || '—'} | ${signal(r)} | |`),
   ];
 
   const fragment = [
@@ -225,8 +228,12 @@ export default async function preVerifier(ctx) {
     '### 输出要求（BLOCKER）',
     '',
     `在输出 YAML 的 \`checks:\` 中，为 ${checkIds.map(id => `\`${id}\``).join(' 与 ')} 各追加一条，`,
-    '`details` 里**逐行**给出「行号 → 裁决 → 证据」，行数与上表一致；',
+    '`details` 里**逐行**给出「行号 → 裁决 → 引文」，行数与上表一致；',
     '有任一行判「复述」即该条 `status: FAIL`。相应调整 `summary.total` 与计数。',
+    '',
+    '**引文要求（BLOCKER）**：引文须是**目标产物里的原话**，连续 12 字以上，能在产物里检索到。',
+    '上表故意不给被检文本——把清单里的字抄进引文列不算裁决，那只是回声。',
+    '打开产物、找到那一行、把你据以判断的原文抄下来；找不到落点就是判「复述」的依据。',
     '',
     '**裁决表必须写进 verifier 报告文件**（本阶段 `reports/verifier.report.md`），',
     '固定表头 `| 编号 | 裁决 | 证据 |`，一行一条，编号照上表原样写。',
@@ -237,11 +244,6 @@ export default async function preVerifier(ctx) {
   ].join('\n');
 
   return { promptFragments: [fragment] };
-}
-
-function cell(text) {
-  const s = String(text ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
-  return s.length > 90 ? `${s.slice(0, 90)}…` : (s || '（空）');
 }
 
 function signal(row) {

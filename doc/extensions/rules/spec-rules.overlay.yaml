@@ -34,7 +34,9 @@ semantic_checks:
     ai_prompt_hint: >
       读 spec 的设计模式候选登记章：适用单元的粒度是否符合激活清单里那份模式索引给的定义？
       命中信号有没有指向本需求里真实存在的分支、步骤或交互？
-      写「无候选」的行有没有给出理由？把结论逐行写进 details。
+      写「无候选」的行有没有给出理由？把结论**逐行**写进 details。
+      **每条裁决附引文**：从spec 的候选登记章抄一段连续 12 字以上的原文（能检索到的）。
+      引文为空、或只是把模式索引里那份单元定义复制一遍的，该条按**未裁**处理。
   spec_ext_conclusion_validity:
     description: >
       spec §9 技术契约与 story 影响面回显两表的结论须真实、具体、可按名回查：结论中写全了它谈论的东西的名字
@@ -57,6 +59,9 @@ semantic_checks:
       括注反而是错的（装配器的数值溯源守恒也会拦），别按 spec 的写法要求 story。
       结论只写「新增了一个开关」这类无名字的空话，同样 FAIL——无从核对。
       证据为「检索式零命中」类时，判断该检索式是否合理覆盖了该维度。
+      对象是**抽查的那几条事实**（每条写清抽的是哪一行），不是整章一句总评。
+      **每条裁决附引文**：从被回查的那个文件（spec / SR / RR / 源码）抄一段连续 12 字以上的原文（能检索到的）。
+      引文为空、或只是把spec 自己的结论复制一遍的，该条按**未裁**处理。
   story_reader_fitness:
     description: >
       叙事件 AR/story.md 是否适合它的读者。评审者手里只有它与《决策与评审记录》——需求规格不随归档，
@@ -107,6 +112,9 @@ semantic_checks:
       context-exploration.md key_inputs_read 是否覆盖；再比对 SR 中与本部件相关的端云接口
       声明与 spec 流程图/§9.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
       或两者接口清单矛盾，即 FAIL。SR/RR 均不存在时本检查 SKIP。
+      对象是 **SR 声明的每个与本部件相关的接口**，逐个核。
+      **每条裁决附引文**：从SR/design.md抄一段连续 12 字以上的原文（能检索到的）。
+      引文为空、或只是把spec 自己的 §9.1 表格复制一遍的，该条按**未裁**处理。
   split_boundary_consistency:
     description: >
       拆分边界一致性：AR/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
@@ -122,3 +130,6 @@ semantic_checks:
       是否有功能实质属于那几份的 scope——有即 FAIL（把兄弟 AR 的活揽进了本次范围）。
       再看 Scope 的 out_of_scope_modules：涉及那些份额的模块，rationale 是否写明了归属；
       只写「本需求不做」而不说归谁，同样记为 FAIL——评审者分不清「有人接」与「没人接」。
+      对象是**拆分表里 carrier 不是本 feature 的每一份**，逐份核。
+      **每条裁决附引文**：从AR/design.md 的拆分表与 spec 的功能清单抄一段连续 12 字以上的原文（能检索到的）。
+      引文为空、或只是把story-flow.json 的 scope 字段复制一遍的，该条按**未裁**处理。
