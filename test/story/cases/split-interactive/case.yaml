@@ -3,19 +3,14 @@ id: split-interactive
 ar: AR90006
 interactive: true
 start_phase: story
-# 本轮只验到 spec 完成（批次 2 的改动全在 story 装配与 spec 出口，下游不受影响）。
-# **改终止阶段必须同时改 prompt**：`--end-phase` 只约束协调器，改不了发给模型的那段话，
-# 两边说不一样时模型按 prompt 走——实测它照 prompt 一路进了 plan，等于白跑。
-# 放开到下游时：改回 `end_phase: review`，并把 prompt 末尾注释掉的那两段恢复。
+# 走到哪个阶段由驱动器控制（见 pattern-image-review 同位注释）。改终点只改这一行。
 end_phase: spec
 # prompt 的第一句**不能给「收口」这类完成型授权**：收口以走完范围关卡为前提，
 # 而本 Case 要观测的正是「人在关卡里给拆法」。两者写在同一段里会让被测模型
 # 合理地按推荐项代选并收口，人的拆分意见随后就无处落地（实测两轮都撞上）。
 prompt: |
   执行 /story init AR90006，完整阅读当前需求目录中实际存在的全部同轮材料，做完需求分析后
-  **在范围关卡停下等我回话**——本轮范围由我定，不要按推荐项代选。我给出拆法后再收口
-  AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、AR/story.md 并完成 spec 闭环。
-  spec 闭环后本轮到此为止，不进入 plan、coding 或其它阶段。
+  **在范围关卡停下等我回话**——本轮范围由我定，不要按推荐项代选。我给出拆法后再收口 AR/design.md。
 
   产品需求还没有在需求系统归档，我已把一份文件名不带需求类型的 docx 放进当前需求目录，
   请把它作为补充材料处理。本轮不会整体交付全部端侧能力，需要在范围关卡结合材料确定本单范围，
@@ -24,12 +19,9 @@ prompt: |
   不修改 doc/extensions/、test/story/ 或 framework/，它们是本轮被测对象。
   结束时总结实际遇到的问题。
 
-# 放开到 review 时，把下面两段接回 prompt（连同 end_phase 一起改）：
-#   spec 闭环后继续依次完成 plan、coding、review 三个阶段及各自正式闭环，到 review 为止，
-#   不进入 UT 或真机测试；编码阶段按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。
-#   产品源码按 Plan 该改就改。
-#
+# 放开到 review 时改 `end_phase: review`，并把归档送审那一步接回 prompt：
 #   spec 闭环后执行 /story archive AR90006 送审，等待我的评审意见，再按 /story review 完成意见处置。
+#   （那是 story 流程内的动作，不是阶段推进，所以要写在 prompt 里。）
 
 suggested_reply: |
   这个需求本次只做其中一部分：按端侧特性切开，本单先做策略查询与创建签约，状态查询与解约交给兄弟单据；

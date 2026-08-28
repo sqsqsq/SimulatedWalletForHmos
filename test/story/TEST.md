@@ -60,10 +60,18 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
 
 ## 2. 起跑前固定顺序
 
-**要缩短本轮终点，改 Case 的 `end_phase` **并同步改 prompt**，不要只加 `--end-phase`**：
-后者只约束协调器的阶段范围判断，改不了发给被测模型的那段话；两边说不一样时模型按 prompt 走。
-实测一次——协调器记着「到 spec 为止」，prompt 里写着「继续完成 plan、coding、review」，
-模型照 prompt 一路进了 plan，白跑一段还得人工停。改完把原 prompt 段落注释在文件里，注明放开时怎么接回去。
+**阶段推进是驱动器的职责，不是被测模型的**：`run_case.py` 在每个阶段边界按 `end_phase`
+算出下一个未闭环阶段，**指名下发**推进指令（`continuation_reply`——「现在执行 plan 阶段」）。
+所以：
+
+- **Case 的 `prompt` 里不写阶段链**。只写起点动作（`/story init …`）、业务任务与执行要求；
+  「随后依次完成 spec、plan、coding」这类话一律不写。写了有三个后果：与驱动器双写、
+  把「模型会不会自己一路跑」混进观测（测的就不再是驱动器能不能推动它）、
+  改终点时两边对不上（实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，
+  模型照 prompt 进了 plan，白跑一段还得人工停）。
+- **要改本轮终点，只改 `end_phase` 一行**，不必也不该动 prompt。
+- story 流程内的动作（`/story init`、`/story archive` 送审、`/story review` 处置）**要写在 prompt 里**——
+  它们不在 `PHASE_ORDER`（spec…testing）里，驱动器不会下发。
 
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir`
    且该目录已物化 UI kit 组件——没有的话，任何跑到 coding 的 Case 都会被 UI kit 门禁拦死在
@@ -106,9 +114,20 @@ feature 匹配的 `framework/harness/state/.current-phase.json` 为首选，阶�
 `next_interval_sec`。每次 heartbeat 唤醒都简短展示全部实际 Case 当前阶段、交互、错误及下一间隔；
 无变化也显示仍在观测。
 
-每个 Case 的 `interaction-script.yaml` 提供预设回复。协调器只在 `awaiting_reply` 后核对 turn/kind，
-再发送自然语言并记录接受与消费状态。若没有匹配脚本，宿主阅读当前问题、本 Case 公开输入和已发生
-交互，给出推进场景所需的最小回复，然后同一回合立即再次 `poll` 确认消费并继续驱动。
+每个 Case 的 `interaction-script.yaml` 提供预设回复。协调器只在 `awaiting_reply` 后核对 turn/kind
+与可选的 `expected_phase`，再发送自然语言并记录接受与消费状态。若没有匹配脚本（或该 Case 没有脚本文件），
+宿主阅读当前问题、本 Case 公开输入和已发生交互，给出推进场景所需的最小回复，然后同一回合立即再次
+`poll` 确认消费并继续驱动。
+
+`expected_phase` 是回复的**阶段前提**（`story` / `spec` / `archived`）：turn 编号只说「第几关」，
+说不出「这一关在哪个阶段」。评审意见这类回复必须在归档之后才有意义——只按 turn 排队，
+模型少停一关就会把后面的话提前送进前面的关卡。回落原因：
+
+| `last_adaptive_request.reason` | 含义 |
+|---|---|
+| `interaction_script_exhausted` | 脚本用完，后面的关卡由宿主实时回 |
+| `interaction_gate_mismatch` | 关卡编号或类型与脚本下一条对不上 |
+| `interaction_phase_mismatch` | 编号类型都对，但阶段前提未满足（如评审意见的关卡出现在归档之前） |
 
 **`awaiting_reply` 必须在它出现的那一次唤醒内回复完毕**：poll 返回的
 `adaptive_reply_requests[].question` 就是模型的原话，`case_inputs_hint` 是本 Case 的公开输入清单，

@@ -14,13 +14,9 @@ start_phase: story
 # 知识链在 coding/review 的传递由其余三个 Case 覆盖，不必每个用例都跑完整链。
 end_phase: plan
 prompt: |
-  执行 /story init AR90005，按 story 技能的规则生成 AR/design.md；随后执行 /spec 完成
-  spec 阶段，产出 spec.md、AR/review.md、AR/story.md 三份产物并通过门禁。
-
-  spec 阶段闭环后继续执行 plan 阶段，按 plan 的规则产出设计物料并通过它的门禁与闭环判定。
+  执行 /story init AR90005，按 story 技能的规则生成 AR/design.md。
 
   执行要求：
-  - 一路走到 plan 阶段闭环为止；
   - 不修改 story 技能本身、不修改 framework、不修改本工程源码，只产出该需求的文档。
 
   结束时在最终回复中总结执行过程中遇到的规则、脚本或上下文问题。

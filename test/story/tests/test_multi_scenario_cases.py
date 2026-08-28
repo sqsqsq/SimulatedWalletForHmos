@@ -82,6 +82,29 @@ class CaseShapeTest(unittest.TestCase):
             for leaked in ("历史答案", "期望 Story"):
                 self.assertNotIn(leaked, prompt, case_id)
 
+    def test_prompts_do_not_drive_phase_advancement(self) -> None:
+        """阶段推进归驱动器，不归被测模型。
+
+        `run_case.py` 在每个阶段边界按 `end_phase` 算出下一个未闭环阶段并**指名下发**
+        推进指令。prompt 里再写一遍阶段链，就是和驱动器双写：改终点时两边对不上
+        （实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 走），
+        而且把「模型会不会自己一路跑」混进了观测——测的就不再是驱动器能不能推动它。
+
+        `/story` 自己的动作（init / archive / review）不在 PHASE_ORDER 里，驱动器不发，
+        必须写在 prompt 里，所以不在本判据的拦截范围内。
+        """
+        chain = re.compile(
+            r"(依次完成|继续执行|随后执行\s*/?(spec|plan)|一路走到|"
+            r"(spec|plan|coding|review)\s*(阶段)?(闭环)?后(继续|再|本轮)|"
+            r"到\s*(spec|plan|coding|review|ut|testing)\s*(阶段)?为止|"
+            r"不进入\s*(plan|coding|review|UT|真机))")
+        for case_id in sorted(CASE_IDS):
+            prompt = str(definition(case_id)["prompt"])
+            hit = chain.search(prompt)
+            self.assertIsNone(
+                hit, f"{case_id} 的 prompt 在替驱动器安排阶段推进：「{hit.group(0) if hit else ''}」"
+                     f"——终点只由 end_phase 定，prompt 只写起点动作与业务要求")
+
 
 class NarrativeFixtureTest(unittest.TestCase):
     def test_three_styles_share_the_same_semantic_fact_tokens(self) -> None:
@@ -144,11 +167,8 @@ class CompositeCoverageTest(unittest.TestCase):
         self.assertIn("文件名不带需求类型", case["prompt"])
         self.assertIn("本轮不会整体交付", case["prompt"])
 
-        # 终点与 prompt 必须一口径：`--end-phase` 只约束协调器，改不了发给模型的话，
-        # 两边说不一样时模型按 prompt 走（实测照 prompt 进了 plan，白跑一段）。
         raw = (CASES / "split-interactive/case.yaml").read_text(encoding="utf-8")
         if case["end_phase"] == "spec":
-            self.assertIn("spec 闭环后本轮到此为止", case["prompt"])
             self.assertNotIn("/story archive", case["prompt"])
             # 评审回流是本 Case 的长期观测资产，收窄终点时不能顺手删掉——
             # 素材留着，并在文件里写明放开时怎么接回去。

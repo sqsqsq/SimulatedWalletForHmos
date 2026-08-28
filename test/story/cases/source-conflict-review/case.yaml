@@ -9,10 +9,8 @@ end_phase: review
 prompt: |
   这是本地问题单 ISSUE-410，材料已经在当前需求目录中。请使用现有本地起手能力完成 Story 初始化，
   完整阅读全部同轮材料；遇到需要我表态的地方**停下等我回话**，不要按推荐项代选。
-  我表态后再收口 AR/design.md；随后执行 /spec，产出 spec.md、AR/review.md、
-  AR/story.md 并完成 spec 闭环。不要要求需求系统 token。
-  spec 闭环后继续依次完成 plan、coding、review 三个阶段及各自正式闭环，到 review 为止，
-  不进入 UT 或真机测试；编码阶段按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。
+  我表态后再收口 AR/design.md。不要要求需求系统 token。
+  编码时按 Plan 修改本工程源码并通过项目要求的编译、lint 与门禁。
 
   如果材料之间存在冲突，先登记冲突并等待人工确认，不要自行选择版本。材料明确写为尚未决定的问题，
   即使其他冲突已经解决也要保持开放，只进入 Review，不写成 Story 当前方案。不要修改

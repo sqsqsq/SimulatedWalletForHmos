@@ -317,7 +317,16 @@ def safe_case_id(value: str) -> bool:
 
 
 def snapshot_workspace_sources(workspace: Path) -> dict[str, Any]:
-    """Hash only the product source allowlist for later promotion/diff evidence."""
+    """Hash only the product source allowlist for later promotion/diff evidence.
+
+    **构建产物不是源码**：coding 阶段会跑编译，`oh_modules/`、`build/`、`.hvigor/` 随之全变。
+    把它们算进「源码差异」有两个后果——差异里 572 个文件只有个位数是模型真改的，
+    看不出它动了什么；而 `oh_modules/@aspect/…` 的依赖树嵌套极深，
+    复制到证据目录时目标路径会超过 Windows 的 260 字符上限，回灌直接崩（实测 31 条）。
+
+    排除清单复用 `WORKSPACE_EXCLUDED_DIR_NAMES`——workspace 复制时就是按它挑的，
+    两处用同一份，不另立一份会漂移的副本。
+    """
     roots = ("01-Product", "02-Feature", "04-BusinessBase", "05-SystemBase")
     files: dict[str, dict[str, Any]] = {}
     for root in roots:
@@ -327,7 +336,10 @@ def snapshot_workspace_sources(workspace: Path) -> dict[str, Any]:
         for path in sorted(base.rglob("*")):
             if not path.is_file() or path.is_symlink():
                 continue
-            relative = path.relative_to(workspace).as_posix()
+            relative = path.relative_to(workspace)
+            if any(part in WORKSPACE_EXCLUDED_DIR_NAMES for part in relative.parts[:-1]):
+                continue
+            relative = relative.as_posix()
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             files[relative] = {"sha256": digest, "size": path.stat().st_size}
     digest = hashlib.sha256(
@@ -349,13 +361,47 @@ def load_interaction_script(case_id: str) -> tuple[dict[str, Any], ...]:
         if not isinstance(item, dict) or not str(item.get("text") or "").strip():
             raise SystemExit(f"[multi] interaction-script.yaml 第 {index} 项缺少 text: {case_id}")
         expected_turn = item.get("expected_turn", index)
+        expected_phase = str(item.get("expected_phase") or "").strip()
+        if expected_phase and expected_phase not in VALID_EXPECTED_PHASE:
+            raise SystemExit(
+                f"[multi] interaction-script.yaml 第 {index} 项 expected_phase 非法: "
+                f"{case_id}: {expected_phase}（可用：{'/'.join(sorted(VALID_EXPECTED_PHASE))}）")
         output.append({
             "id": str(item.get("id") or f"reply-{index}"),
             "text": str(item["text"]).strip(),
             "expected_turn": int(expected_turn),
             "expected_kind": str(item.get("expected_kind") or "story_gate"),
+            "expected_phase": expected_phase,
         })
     return tuple(output)
+
+
+# 关卡回复的阶段前提：turn 编号只说「第几关」，说不出「这一关在哪个阶段」。
+# 评审意见这类回复必须在归档之后才有意义——只按 turn 排队，模型少停一关就会把
+# 后面的话提前送进前面的关卡，而且送出去了才发现对不上。
+VALID_EXPECTED_PHASE = frozenset({"story", "spec", "archived"})
+
+
+def gate_phase_ready(record: dict[str, Any], expected_phase: str) -> bool:
+    """当前是否已满足该回复声明的阶段前提。"""
+    if not expected_phase:
+        return True
+    if expected_phase == "archived":
+        workspace_text = str(record.get("workspace") or "").strip()
+        if not workspace_text:
+            return False
+        flow = (Path(workspace_text) / "doc" / "features"
+                / str(record.get("feature") or "") / "AR" / "story-flow.json")
+        try:
+            return bool(json.loads(flow.read_text(encoding="utf-8")).get("archived"))
+        except (OSError, ValueError):
+            return False
+    highest = str(record.get("highest_phase_reached") or "").strip()
+    if expected_phase == "story":
+        # story 关卡发生在进入 spec 之前：还没到过 spec 就是 story 阶段。
+        return highest not in PHASE_ORDER
+    return highest in PHASE_ORDER and (
+        PHASE_ORDER.index(highest) >= PHASE_ORDER.index(expected_phase))
 
 
 def phase_scope(start_phase: str, end_phase: str) -> tuple[str, ...]:
@@ -1170,6 +1216,10 @@ def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
         if (actual_turn is not None and int(actual_turn) != expected_turn) \
                 or (actual_kind and actual_kind != expected_kind):
             fallback_reason = "interaction_gate_mismatch"
+        elif not gate_phase_ready(record, str(step.get("expected_phase") or "")):
+            # 阶段前提不满足：这条回复的内容依赖尚未发生的事（如评审意见依赖归档），
+            # 送出去只会被答非所问地消费掉。交给宿主当轮判断。
+            fallback_reason = "interaction_phase_mismatch"
     if fallback_reason:
         prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
         fallback = {

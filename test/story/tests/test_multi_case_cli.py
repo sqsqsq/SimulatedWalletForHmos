@@ -339,6 +339,65 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
+    def test_reply_with_unmet_phase_precondition_is_not_sent(self) -> None:
+        """阶段前提不满足时必须回落给宿主，**不能发送**。
+
+        turn/kind 都对得上、内容却依赖尚未发生的事（评审意见依赖归档），
+        送出去就被答非所问地消费掉，事后才发现对不上——所以判据是「一个字都没发出去」。
+        """
+        record = self.record("split-interactive", "AR90006", "awaiting_reply")
+        workspace = Path(tempfile.mkdtemp())
+        flow_dir = workspace / "doc" / "features" / "AR90006" / "AR"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "story-flow.json").write_text(
+            json.dumps({"archived": False}), encoding="utf-8")
+        record.update({
+            "interaction_script": [
+                {"id": "review", "text": "评审意见", "expected_turn": 3,
+                 "expected_kind": "story_gate", "expected_phase": "archived"},
+            ],
+            "interaction_index": 0,
+            "workspace": str(workspace),
+            "highest_phase_reached": "spec",
+            "last_awaiting": {"turn": 3, "kind": "story_gate", "prompt": "请给评审意见"},
+        })
+        suite = self.suite(record)
+        suite["bundle_root"] = tempfile.mkdtemp()
+        try:
+            def must_not_send(*a, **kw):
+                raise AssertionError("阶段前提未满足却发送了回复")
+
+            with mock.patch.object(run_multi_case, "invoke_case", must_not_send):
+                run_multi_case.send_scripted_reply(record, suite)
+            self.assertEqual("adaptive_reply_required", record["interaction_state"])
+            self.assertEqual("interaction_phase_mismatch",
+                             record["last_adaptive_request"]["reason"])
+            self.assertEqual(0, record["interaction_index"])
+
+            # 归档之后同一条就该发出去
+            (flow_dir / "story-flow.json").write_text(
+                json.dumps({"archived": {"at": "2026-08-27"}}), encoding="utf-8")
+            with mock.patch.object(run_multi_case, "invoke_case",
+                                   return_value=(0, {}, "", "")) as invoke:
+                run_multi_case.send_scripted_reply(record, suite)
+            invoke.assert_called_once()
+            self.assertEqual(1, record["interaction_index"])
+        finally:
+            shutil.rmtree(suite["bundle_root"], ignore_errors=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    def test_gate_phase_ready_reads_reached_phase_not_prose(self) -> None:
+        record = {"highest_phase_reached": None}
+        self.assertTrue(run_multi_case.gate_phase_ready(record, "story"))
+        self.assertFalse(run_multi_case.gate_phase_ready(record, "spec"))
+        record["highest_phase_reached"] = "spec"
+        self.assertFalse(run_multi_case.gate_phase_ready(record, "story"))
+        self.assertTrue(run_multi_case.gate_phase_ready(record, "spec"))
+        record["highest_phase_reached"] = "plan"
+        self.assertTrue(run_multi_case.gate_phase_ready(record, "spec"))
+        # 空字符串 = 未声明前提，一律放行
+        self.assertTrue(run_multi_case.gate_phase_ready(record, ""))
+
     def test_poll_uses_story_and_spec_cadences(self) -> None:
         record = self.record("split-two-ar", "AR90005", "running")
         record.update({"cursor": 0, "model_cursor": 0, "last_phase": "story"})

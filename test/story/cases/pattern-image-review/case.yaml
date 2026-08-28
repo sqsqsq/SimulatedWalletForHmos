@@ -2,11 +2,13 @@
 id: pattern-image-review
 ar: AR90004
 start_phase: story
+# 走到哪个阶段**由驱动器控制**：它在每个阶段边界按 `end_phase` 算出下一个未闭环阶段，
+# 指名下发推进指令（run_case.py 的 continuation_reply）。所以改终点只改这一行，
+# prompt 里不写阶段链——写了就是和驱动器双写，还把「模型会不会自己乱跑」混进观测。
 end_phase: review
 prompt: |
   执行 /story init AR90004，按 story 技能规则完整阅读当前需求目录中实际存在的全部同轮材料，
-  生成并收口 AR/design.md；随后依次完成 spec、plan、coding、review 阶段及各自正式闭环，到 review 为止，
-  不进入 UT 或真机测试。
+  生成并收口 AR/design.md。
 
   执行要求：
   - Story 同时保留当前挂失特性与兄弟补卡特性的责任、交接、支付中断和通知失败影响，不复制兄弟实现；
