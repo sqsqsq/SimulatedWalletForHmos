@@ -1,9 +1,9 @@
 ---
 name: story
-description: 需求开发流程编排——story init / archive / restore / review / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
+description: 需求开发流程编排——story init / archive / restore / review / adapt / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
 ---
 
-用法：`/story <init|archive|restore|review|help> [AR]`
+用法：`/story <init|archive|restore|review|adapt|help> [AR|目标工程]`
 
 ## 命令转化
 
@@ -15,6 +15,7 @@ description: 需求开发流程编排——story init / archive / restore / revi
 | `archive <AR>` | 「需求系统 Token」+「归档」 |
 | `restore <AR>` | 「需求系统 Token」+「恢复」 |
 | `review <AR>` | 「需求系统 Token」+「检视」 |
+| `adapt [<目标工程>]` | **改读** [story-adaptation/SKILL.md](../../../doc/extensions/skills/story-adaptation/SKILL.md)（不读 story 的 SKILL）——把本扩展装到／升级到另一个工程，与需求流程无关 |
 | `help` | **勿读 SKILL**——直接输出下方「工作流程」 |
 
 `init` 的编号可以是 AR 单号，也可以是问题单号／工单号——按前缀自动分派，详见「初始化」章。
@@ -30,6 +31,7 @@ description: 需求开发流程编排——story init / archive / restore / revi
 | 3 | `/story archive <AR>` | AR/story.md 作正文、AR/review.md 作附件，**两份**一并归档上传（自动备份；任一缺失或未过门禁即拒绝，不写工作区 AR/design.md） |
 | 4 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 5 | `/story review <AR>` | （可选）把评审人在系统上留下的反馈拉回 `AR/review.md`，据此修订 `spec/spec.md`；评审表态由人填，模型只做处置 |
+| — | `/story adapt [<目标工程>]` | 工程运维（不在开发顺序内）：把 Story Extension 装到／升级到另一个工程 |
 | — | `/story help` | 输出本流程说明 |
 
 `init` 之后不需要人再敲命令——中断后用

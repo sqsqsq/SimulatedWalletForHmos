@@ -153,9 +153,18 @@ if (mode === '--backup') {
 if (mode === '--restore') {
   if (!existsSync(BACKUP)) die(`没有备份可回滚：${BACKUP}`);
   const meta = JSON.parse(read(join(BACKUP, 'manifest.json')));
+  // 根文件是逐个恢复的（不像 extension_dir 那样整体替换），所以本次写入**新增**的
+  // 那些——备份里没有、目标上却有——必须显式删掉，否则回滚后树会多出几个文件。
   for (const p of ROOT_FILES) {
     const b = join(BACKUP, 'root', p);
     if (existsSync(b)) { mkdirSync(dirname(join(TARGET, p)), { recursive: true }); cpSync(b, join(TARGET, p)); }
+    else if (existsSync(join(TARGET, p))) {
+      rmSync(join(TARGET, p), { force: true });
+      // 连它留下的空目录一起收掉，否则回滚后目标会多出几个空壳目录
+      for (let d = dirname(join(TARGET, p)); d.startsWith(TARGET) && d !== TARGET; d = dirname(d)) {
+        try { if (readdirSync(d).length) break; rmSync(d, { recursive: true }); } catch { break; }
+      }
+    }
   }
   // 暂存到 extension_dir 之外：备份在它里面，不先搬走就会被下一步的删除带走
   const staged = join(TDIR, '..', `.adapt-restore-${process.pid}`);

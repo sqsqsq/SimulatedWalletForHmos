@@ -1,0 +1,11 @@
+schema_version: 1
+version: "1.0.0"
+description: 旧版扩展包（升级前形态）
+provides:
+  skills:
+    - story
+  knowledge:
+    - knowledge/README.md
+    - knowledge/facts/alpha-facts.md
+    - knowledge/constraints/README.md
+    - knowledge/constraints/alpha-domain.md

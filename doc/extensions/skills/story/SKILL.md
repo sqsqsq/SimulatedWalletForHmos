@@ -7,6 +7,8 @@ description: /story 需求流程编排——init 拉取需求资料并生成 AR/
 
 指令与章节的对应关系见跳板（命令转化表）；本文件各章节按动作组织。数据对接（需求系统拉取/归档/备份）统一由 [scripts/story.js](scripts/story.js) 承担。
 
+`/story adapt` 不在本文件——它是把本扩展装到／升级到别的工程的工程运维动作，与需求流程无关，见 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)。
+
 ## 需求系统 Token
 
 `story.js` 的每条命令都要 `<mcp-token>` 参数。按顺序取，取到即用：

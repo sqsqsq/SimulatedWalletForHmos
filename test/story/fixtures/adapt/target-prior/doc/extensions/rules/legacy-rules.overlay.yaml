@@ -1,0 +1,3 @@
+semantic_checks:
+  - id: legacy_check
+    hint: 旧版判据
