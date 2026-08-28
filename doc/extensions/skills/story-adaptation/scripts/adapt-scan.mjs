@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 const MODES = ['--scan', '--check'];
 const ROOT_FILES = ['.cac/commands/story.md', '.claude/commands/story.md',
   '.codex/skills/story/SKILL.md', '.opencode/skill/story/SKILL.md', 'framework.config.json'];
-const MOCK_MARKERS = ['本地替身', '模拟实现', 'MOCK_DATA_DIR'];
+const MOCK_MARKERS = ['本地替身', '模拟实现'];   // 包内对接脚本的自述；不认任何仓的具体标识符
 
 const argv = process.argv.slice(2);
 const mode = MODES.find((m) => argv.includes(m));
@@ -150,9 +150,13 @@ for (const p of ROOT_FILES.slice(0, 4)) {
 }
 
 // ② 目标所有的知识文件：旧事实序列仍按序在新文件（允许新增列/行/键）
+//    守恒对象 = 事实文件 + 目标自加的文件；包里有同名的规约/模式在升级时本就换成包的版本，不核
+const pkgNames = new Set((before.package_knowledge || []).map((p) => p.split('/').pop()));
 for (const k of before.knowledge) {
   if (k.confirmed === '未确认') continue;            // 样板被填写不在守恒对象内
-  const f = tf.find((p) => p.endsWith(`/${k.path.split('/').pop()}`) && classOf(p) === 'know');
+  const base = k.path.split('/').pop();
+  if (k.kind !== 'facts' && pkgNames.has(base)) continue;   // 随包直接维护，换版本是预期
+  const f = tf.find((p) => p.endsWith(`/${base}`) && classOf(p) === 'know');
   if (!f) { bad.push(`② 知识文件消失：${k.path}`); continue; }
   const seq = factSeq(read(join(TDIR, f)));
   let i = 0;

@@ -6,3 +6,4 @@ provides:
   knowledge:
     - knowledge/README.md
     - knowledge/facts/beta-facts.md
+    - knowledge/constraints/gamma-domain.md

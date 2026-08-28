@@ -9,3 +9,4 @@ provides:
     - knowledge/facts/alpha-facts.md
     - knowledge/constraints/README.md
     - knowledge/constraints/alpha-domain.md
+    - knowledge/constraints/dfx-baseline.md
