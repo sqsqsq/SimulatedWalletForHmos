@@ -1930,6 +1930,37 @@ def r03_author_chain_dangling(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
+    """spec 的流程契约门禁把 S5 之后的状态判成「未收口」，回头拦住自己的产物。
+
+    契约状态机是 `complete` →（spec）→ `story_written`（S5 登记）→ `archived`。
+    门禁问的是「进 spec 之前范围定了没有」，`complete` 之后每个状态都满足这个前提；
+    写成「等于 complete」就会在 S5 之后让 spec harness 一重跑就 FAIL，
+    `upstream_verdict_gate` 再把 coding、review 一并判 FAIL——四个已闭环的阶段集体翻红。
+    """
+    feature_root = root / "doc" / "features" / "F1"
+    if not (feature_root / "AR" / "story-flow.json").exists():
+        return Outcome(True, "夹具里没有流程契约（该形态未启用）")
+    script = (
+        "import {pathToFileURL} from 'node:url';"
+        "const m=await import(pathToFileURL(process.argv[1]).href);"
+        "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
+    check = _ext_file(root, "skills/story/scripts/flow-check.mjs")
+    if check is None:
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "flow-check.mjs"
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    if proc.returncode != 0:
+        return Outcome(False, f"flowProblems 跑不起来：{(proc.stderr or '')[-200:]}")
+    problems = json.loads(proc.stdout or "[]")
+    unclosed = [p for p in problems if "未收口" in p]
+    if unclosed:
+        return Outcome(False, f"契约被判未收口：{unclosed[0][:120]}")
+    return Outcome(True, f"收口判定正确（其余 {len(problems)} 条与本形态无关）")
+
+
+@checker
 def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
     """story 的整篇守恒判不出材料里丢了什么。
 

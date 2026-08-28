@@ -679,6 +679,26 @@ modes:
       判定面是 Markdown 链接与脚本路径：作者写下链接就是让人去读的。
       工作区产物路径（在扩展包里本就不存在）与 adapt 的历史版本结构签名不在判定面内。
 
+  - id: R04-flow-status-after-s5
+    dimension: content
+    found_round: "2026-08-28"
+    form: spec 的流程契约门禁把 S5 之后的状态判成「未收口」，回头拦住自己的产物——
+      四个已合法闭环的阶段被 upstream_verdict_gate 级联判红
+    clause: KR-4b / 实跑 story-suite-20260828-191953
+    checker: r04_flow_status_after_s5
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/R04-flow-status-after-s5/bad
+    good_fixture: test/story/fixtures/failure-modes/R04-flow-status-after-s5/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      「已收口」是一段区间不是一个值：契约状态机 complete →（spec）→ story_written → archived，
+      门禁问的是「进 spec 之前范围定了没有」，complete 之后每个状态都满足。
+      写成等于 complete，S5 一登记成文态，spec harness 重跑就 FAIL。
+      本条由真实实跑撞出来（AR90004 走完 S5 后四阶段集体翻红），夹具取自那次的真实契约、去掉单号字面。
+      bad = status init（真没收口，必须报）；good = status story_written（S5 已登记，不许报）。
+
   - id: C01-story-conservation
     dimension: content
     found_round: "2026-08-28"

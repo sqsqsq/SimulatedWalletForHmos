@@ -29,6 +29,16 @@ const FLOW_MATERIAL_CHOICES = new Set(['supplement', 'confirm_scope']);
 const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);
 const FLOW_FIX = "处置：回 /story 走完三级关卡（材料够不够 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
+/**
+ * 「已收口」是**一段区间**，不是一个值。
+ *
+ * 契约的状态机是 `complete` →（spec 阶段）→ `story_written`（S5 成文登记）→ `archived`。
+ * 本判据问的是「进 spec 之前范围定了没有」，`complete` 之后的每一个状态都满足这个前提。
+ * 写成 `status !== 'complete'` 会在 S5 之后反过来拦住自己的产物：spec harness 一重跑就
+ * FAIL，`upstream_verdict_gate` 再把 coding、review 一起判 FAIL——四个已合法闭环的阶段
+ * 集体翻红。这不是假想：一次端到端实跑真的撞上了，回归形态见测试域台账。
+ */
+const FLOW_CLOSED_STATES = new Set(['complete', 'story_written', 'archived']);
 const DESIGN_FILE = ['AR', 'design.md'];
 
 export function flowProblems(featureRoot) {
@@ -198,7 +208,7 @@ export function flowProblems(featureRoot) {
     }
   }
 
-  if (flow?.status !== 'complete') {
+  if (!FLOW_CLOSED_STATES.has(flow?.status)) {
     problems.push(
       `story 前置流程未收口（status=${flow?.status ?? '缺失'}）：材料与拆分决策没走完就进了 spec。${FLOW_FIX}`
     );
