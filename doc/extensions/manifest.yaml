@@ -4,7 +4,6 @@ version: "1.1.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:
-    - wallet-sdk-onboarding
     - story
 
   # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——

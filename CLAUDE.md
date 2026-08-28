@@ -85,9 +85,7 @@
 
 以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。
 
-| 标识 | Skill 路径 |
-|------|-----------|
-| `wallet-sdk-onboarding` | [doc/extensions/skills/wallet-sdk-onboarding/SKILL.md](doc/extensions/skills/wallet-sdk-onboarding/SKILL.md) |
+当前无需桥接的实例扩展 Skill（`wallet-sdk-onboarding` 已于 2026-08-28 废弃删除）；`/story` 由四宿主跳板承载。
 
 > **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
