@@ -295,7 +295,8 @@ node doc/extensions/skills/story/scripts/story.js restore <AR> <mcp-token>
 
 报告末尾按复述惯例收一句「若需修改请直接说明，否则按上述决策继续」，**不设选项、不等回话**。
 
-**然后直接进入 spec 阶段**：读 [framework/skills/feature/spec/SKILL.md](../../../../framework/skills/feature/spec/SKILL.md)
+**然后直接进入 spec 阶段**：先读 [`phases/spec.md`](phases/spec.md)——本轮材料从哪来、
+要出几份产物、§9 怎么取证；再读 [framework/skills/feature/spec/SKILL.md](../../../../framework/skills/feature/spec/SKILL.md)
 并从它的 Step 1 开始执行，**不再询问**。
 
 > **归档件只能由装配器产出**：spec 阶段的 `AR/story.md` 走 `scaffold → 逐章成文 → build → check`

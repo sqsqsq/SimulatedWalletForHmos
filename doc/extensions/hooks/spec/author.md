@@ -8,8 +8,11 @@
 | 文件 | 拿什么 |
 |---|---|
 | `doc/extensions/skills/story/templates/spec-sections.md` | §9 / §10 / §11 三节的表结构与写法；每节顶部的 HTML 注释就是该节的结构判据 |
+| `doc/extensions/skills/story/reference/constraint-usage.md` | 规约**怎么判、结论去哪**：判定的三个出口、先判域还是先判条目、判「否」要给什么依据、模式候选怎么登记 |
 | `doc/extensions/manifest.yaml` 的 `provides.knowledge` 所列文件 | 本阶段生效的规约条目表与项目知识。**只读清单里的文件**，不扫描 `knowledge/` 目录——没登记的读不到 |
-| `doc/extensions/skills/story/phases/spec.md`（走 `/story` 链时） | 本轮材料从哪来、AR/RR/SR 各是什么、收口后怎么进本阶段 |
+
+走 `/story` 链时另读 [`skills/story/phases/spec.md`](../../skills/story/phases/spec.md)：本轮材料从哪来、
+要出几份产物、§9 怎么取证。
 
 规约条目表的「处置」列和该域的落法附注是要求的正文，此处不复述——规约改了这一页不用改。
 
