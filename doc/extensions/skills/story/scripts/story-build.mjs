@@ -3,7 +3,7 @@
  *
  * ## 与 1.0 逐章生产线的区别
  *
- * 1.0 的做法是先生成 14 份逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完再装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
+ * 1.0 的做法是先生成逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完再装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
  * 被四个章节合同各指一次，于是被强制写四遍**。
  *
  * 这里没有逐章任务书、没有逐章文件、没有装配。成文分两步：**先分配后渲染**——
@@ -20,7 +20,7 @@
  * |------|--------|
  * | `init`  | 枚举来源单元 → `source-units.json`；建 `decisions.json` 骨架 |
  * | `audit` | 三态核对：`at` / `covered_by` / `machine_facing`，写 `audit.json` |
- * | `check` | 14 标题、整篇 token 守恒、编号形态、图与 diagram 落点、决策六类齐 |
+ * | `check` | 章标题与顺序、整篇 token 守恒、编号形态、图与 diagram 落点、决策六类齐 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  *
  * `audit.json` 只认三态，**没有自由文本理由**——上一版那个 `reason` 字段只判非空，
@@ -245,6 +245,33 @@ function storySections(storyText) {
   return out.map(s => ({ title: s.title, text: s.body.join('\n') }));
 }
 
+/** 附录那一章（合同里标了 `appendix` 的那个）。没有就返回 null。 */
+function appendixChapter(contract) {
+  return (contract.chapters ?? []).find(c => c.appendix) ?? null;
+}
+
+/**
+ * 从一章的正文里切出某个 `###` 小节。
+ *
+ * 附录一章里并排放着接口表、数据表、规约判定表、追溯表——它们列数相近，
+ * 在整章正文里找「四列表行」会把接口行也当成判定行读进来。所以按小节切。
+ */
+function subsectionText(sectionText, name) {
+  const lines = String(sectionText ?? '').split(/\r?\n/);
+  const body = [];
+  let hit = false;
+  for (const line of lines) {
+    const m = line.trim().match(/^###\s+(.+)$/);
+    if (m) {
+      if (hit) break;
+      hit = m[1].trim() === name;
+      continue;
+    }
+    if (hit) body.push(line);
+  }
+  return hit ? body.join('\n') : null;
+}
+
 /**
  * 机器给落点：单元的 token 在哪一节命中得最多，`at` 就填哪一节。
  *
@@ -401,7 +428,7 @@ function cmdCheck(ctx) {
   const titles = sections.map(s => s.title);
   const want = ctx.contract.chapters.map(c => c.title);
 
-  // ① 14 个标题与顺序 = 合同；空节恰为「本需求不涉及。」
+  // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
   if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
     const extra = titles.filter(t => !want.includes(t));
@@ -597,19 +624,27 @@ function cmdCheck(ctx) {
     }
   }
 
-  // ⑦ 规约判定表：激活清单的每个条目在「影响面与合规」章有一行，或其整域一行「整域不适用」
+  // ⑦ 规约判定表：激活清单的每个条目在附录的「规约判定」小节有一行，
+  //    或其整域一行「整域不适用」
   //
   // 逐条判定原先落在一份独立的判定记录文件里，那份文件退场后既无作业指引也无门禁——
   // 批次 1 的「知识应用」在 story 侧就这么丢了。判定回到 story 里，评审者才拿得到完备性回显。
+  //
+  // 落点在**附录**而不是主叙事的某一章：规约编号是工程标识，读者对不上，
+  // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
   const kUnits = doc.units.filter(u => u.kind === 'knowledge');
   if (kUnits.length) {
-    const complianceSec = sections.find(s => s.title.includes('合规'));
-    if (!complianceSec) {
-      problems.push('缺「影响面与合规」章——激活规约的逐条判定表落在那里');
+    const appendix = appendixChapter(ctx.contract);
+    const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
+    const verdictName = (appendix?.subsections ?? []).find(n => n.includes('规约')) ?? '规约判定';
+    const verdictText = appendixSec ? subsectionText(appendixSec.text, verdictName) : null;
+    if (verdictText === null) {
+      problems.push(`缺${appendix ? `「${appendix.title}」章的` : ''}「${verdictName}」小节`
+        + '——激活规约的逐条判定表落在那里');
     } else {
       const rows = new Map();          // 编号 → {判定, 依据}
       const domainRows = new Map();    // 中文域名 → 判定
-      for (const line of complianceSec.text.split(/\r?\n/)) {
+      for (const line of verdictText.split(/\r?\n/)) {
         const s = line.trim();
         if (!s.startsWith('|')) continue;
         const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.replace(/[`*]/g, '').trim());
@@ -623,7 +658,7 @@ function cmdCheck(ctx) {
         const row = rows.get(id);
         if (!row) {
           if (domainRows.has(u.domain)) continue;   // 整域不适用，覆盖域内全部条目
-          problems.push(`规约 ${id}（${u.domain}）在「${complianceSec.title}」章的判定表里没有行`
+          problems.push(`规约 ${id}（${u.domain}）在附录·${verdictName}的判定表里没有行`
             + `——判「不命中」也要有一行；整域不适用就给该域一行「${DOMAIN_NA}」`);
           continue;
         }

@@ -100,7 +100,7 @@ class StoryBuildCase(unittest.TestCase):
         for record in data["records"]:
             if any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
                 continue
-            record["at"], record["by"] = "页面、组件与状态", "author"
+            record["at"], record["by"] = "功能说明", "author"
             keys.append(record["key"])
         self.write_audit(data)
         if keys:
@@ -117,13 +117,13 @@ class StoryBuildCase(unittest.TestCase):
         keys = []
         for record in data["records"]:
             if record.get("at") and record.get("by") == "machine":
-                record["at"], record["by"] = "页面、组件与状态", "author"
+                record["at"], record["by"] = "功能说明", "author"
                 keys.append(record["key"])
                 break
         self.assertTrue(keys, "夹具里没有可改判的记录")
         for record in data["records"]:
             if not any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
-                record["at"], record["by"] = "页面、组件与状态", "author"
+                record["at"], record["by"] = "功能说明", "author"
                 keys.append(record["key"])
         self.write_audit(data)
         self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
@@ -158,7 +158,7 @@ class TestMachinePlacement(StoryBuildCase):
         before = {r["key"]: r.get("at") for r in self.audit["records"] if r.get("by") == "machine"}
         data = self.audit
         moved = next(r for r in data["records"] if r.get("by") == "machine")
-        moved["at"] = "上线与协同"          # 机器落点被改脏
+        moved["at"] = "交付与上线"          # 机器落点被改脏
         authored = next(r for r in data["records"]
                         if not any(r.get(k) for k in ("at", "covered_by", "machine_facing")))
         authored["at"], authored["by"] = "术语", "author"   # 机器定不了、作者接手的那一条
@@ -393,7 +393,7 @@ class TestGlossaryAndRedlines(StoryBuildCase):
     def test_entity_term_present_passes(self) -> None:
         self.init_audit()
         self.settle()
-        self.write_spec("等待态")          # story 的「页面、组件与状态」章里有这个词
+        self.write_spec("等待态")          # story 的「功能说明」章里有这个词
         code, out = self.check_output()
         self.assertEqual(code, 0, out)
 

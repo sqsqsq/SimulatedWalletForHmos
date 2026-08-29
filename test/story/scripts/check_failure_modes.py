@@ -1867,7 +1867,7 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
         keys = []
         for rec in data.get("records", []):
             if not any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
-                rec["at"], rec["by"] = "页面、组件与状态", "author"
+                rec["at"], rec["by"] = "功能说明", "author"
                 keys.append(rec["key"])
         audit.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         rows = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
