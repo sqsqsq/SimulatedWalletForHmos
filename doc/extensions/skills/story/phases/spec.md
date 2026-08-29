@@ -29,7 +29,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 |---|---|---|---|
 | `spec/spec.md` | AI | **代码要求** | AI 编码 / 出用例 / 门禁 |
 | `AR/review.md` | AI 起草 + **人确认** | 自然语言问题、当前建议、可填写的审核结果 | 评审者 |
-| `AR/story.md` | AI（**writer 子 agent**，见下方顺序） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
+| `AR/story.md` | AI（**分配 → 逐章渲染**，见下方顺序） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
 
 - `AR/review.md` **由 `AR/story-src/decisions.json` 渲染，不手写**：AI 只负责把开放点收齐并登记
   （问题、当前建议、依据、影响、来源、责任人），表态位由脚本生成、由评审人勾选。
@@ -42,23 +42,28 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
-`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面五步走完：
+`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面五步走完。
+作业规则见 [`phases/story-write.md`](story-write.md)（分配与逐章渲染各一段）。
 
 ```bash
-node doc/extensions/skills/story/scripts/story-build.mjs init --feature <feature>   # ① 枚举来源单元
-#                                                    ② Task 起 writer  → phases/story-write.md
-#                                                    ③ Task 起 verifier → phases/story-verify.md
-python doc/extensions/skills/story/scripts/story_flow.py story --feature <feature>  # ④ 登记（自带 check）
-#                                                    ⑤ 跑 spec harness
+node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
+#                              ② 分配：每个单元定一个落点，落 audit.json
+node .../story-build.mjs audit --feature <feature>   #    「待处理 0 条」才算分完
+#                              ③ 逐章渲染：按合同顺序一次写一章，追加到 AR/story.md
+#                                 每章写完跑一次 audit（它会打印未渲染章）
+#                              ④ 裁决：audit 里还有 by: author 时，按 phases/story-verify.md 裁
+python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
+#                              ⑥ 跑 spec harness
 ```
 
-- **② 与 ③ 是两个独立子 agent，主 agent 不读材料、不写 story**。spec 走到这里时上下文已经
-  几十万 token，story 是最后被挤出来的那一份——实测因此丢过表格非首列的事实与两张图。
-  子 agent 拿到的是新鲜上下文，这才是它们独立的理由；与 story 写在哪个阶段无关。
-- **③ 只在 `audit.json` 出现 `by: author` 记录时才需要**：机器定不了落点的单元只有模型能判。
-- **④ 自带门禁**：先重跑 `story-build check`，通过才登记 `story_written`。**只登记一次**——
+- **② 与 ③ 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。
+  分配先把「每件事去哪一章」定死并落盘，渲染就变成十四次有界的小任务，写完即落盘、断了能续。
+- **子 agent 是可选的**，不是机制的一部分：有 Task 工具的宿主，③ 每章可以起一个小子 agent，
+  ④ 也可以；没有 Task 的宿主，主 agent 自己按同样的顺序做——**两条路径产出同一批产物**。
+- **④ 只在 `audit.json` 出现 `by: author` 记录时才需要**：机器定不了落点的单元只有模型能判。
+- **⑤ 自带门禁**：先重跑 `story-build check`，通过才登记 `story_written`。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
-- **⑤ 之前必须走完 ①–④**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
+- **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 
 ## 三、§9 技术契约怎么写
 

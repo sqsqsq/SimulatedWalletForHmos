@@ -21,7 +21,8 @@ S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
    ↓
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
-   └─ story 由 writer 子 agent 写、verifier 子 agent 裁，`story_flow.py story` 登记
+   └─ story：分配落点 → 逐章渲染 → 裁决 → `story_flow.py story` 登记
+      （子 agent 可选，宿主没有 Task 工具时主 agent 自己做）
    ↓
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```
@@ -42,8 +43,8 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 生成 design.md | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
-| 成文：writer 怎么写 | [phases/story-write.md](phases/story-write.md) |
-| 成文：verifier 怎么裁 | [phases/story-verify.md](phases/story-verify.md) |
+| 成文：分配与逐章渲染 | [phases/story-write.md](phases/story-write.md) |
+| 成文：裁决者怎么裁 | [phases/story-verify.md](phases/story-verify.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 初始化
@@ -148,7 +149,7 @@ AI 依据人的决定写回文件，不要求用户手动编辑文件或运行�
 
 | | `AR/design.md` | `AR/story.md` |
 |---|---|---|
-| 流程角色 | 输入端：/spec 的输入（从四源提取，按本 AR 范围裁剪） | 输出端：spec 阶段内由 writer 一份写成的评审载体（面向人） |
+| 流程角色 | 输入端：/spec 的输入（从四源提取，按本 AR 范围裁剪） | 输出端：spec 阶段内逐章渲染成的评审载体（面向人） |
 | 归档语义 | 工作区里身份唯一：「上游提取件」，不承载归档产物 | archive 的上传正文（与 `AR/review.md` 一并上传） |
 
 ## 需求系统 Token

@@ -6,9 +6,13 @@
  * 1.0 的做法是先生成 14 份逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完再装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
  * 被四个章节合同各指一次，于是被强制写四遍**。
  *
- * 这里没有逐章任务书、没有逐章文件、没有装配：作者读完全部材料**一份写成**，
- * 守恒改判「材料里每个可核对 token 在 story 整篇有落点」——事实只需出现一次，
- * 在哪一章由叙述需要决定。
+ * 这里没有逐章任务书、没有逐章文件、没有装配。成文分两步：**先分配后渲染**——
+ * 作者给每个来源单元定一个落点（`audit.json`），再按合同顺序一次写一章、追加落盘。
+ * 守恒改判「材料里每个可核对 token 在 story 整篇有落点」。
+ *
+ * **区别不在按不按章写，在谁来分配**：1.0 由合同按关键词把材料路由给章，同一个事实
+ * 被四个章节合同各指一次；这里由作者分配、机器强制「一个单元一条记录一个落点」，
+ * 事实只出现一次。逐章渲染换来的是每步输出有界、写完即落盘、断了能续。
  *
  * ## 四个命令
  *
@@ -284,8 +288,9 @@ function contentFragments(text) {
 function cmdAudit(ctx) {
   const doc = readJson(ctx.unitsPath, null);
   if (!doc) fail(`还没有来源单元清单，先跑 init：${ctx.unitsPath}`);
-  const storyText = readText(ctx.storyPath);
-  if (storyText === null) fail(`读不到 ${ctx.storyPath}——先写 story 再核对`);
+  // story.md 还不存在 = **一章都没渲染**，不是错误：分配先于正文，
+  // 这一步正是用来核「每个单元都分到了地方」的。渲染过程中它是「渲染了几章」的中间态。
+  const storyText = readText(ctx.storyPath) ?? '';
   const sections = storySections(storyText);
   const prev = readJson(ctx.auditPath, { records: [] });
   const prevByKey = new Map((prev.records ?? []).map(r => [r.key, r]));
@@ -309,9 +314,13 @@ function cmdAudit(ctx) {
       records.push({ key: u.key, at: placed.title, by: 'machine' });
       continue;
     }
-    // 机器定不了：保留作者上次填的章名（`by: author`），由裁决者逐条裁「讲清没讲清」。
+    // 机器定不了：保留作者填的章名，由裁决者逐条裁「讲清没讲清」。
     // **不沿用机器上次的结果**——`by` 标记就是为了让这两种来源不再混成一个 `at`。
-    if (old?.at && old.by === 'author') {
+    //
+    // `by` 缺省即作者：它是**机器写的来源标记**，分配时作者只写 `at`，
+    // 机器核实通过才盖上 `by: machine`。要求作者自己填 `by: author` 等于把
+    // 内部记账字段摊给他记，漏填一次那条就悄悄变成「无落点」。
+    if (old?.at && old.by !== 'machine') {
       records.push({ key: u.key, at: old.at, by: 'author' });
       continue;
     }
@@ -322,11 +331,26 @@ function cmdAudit(ctx) {
   const open = records.filter(r => !r.at && !r.covered_by && !r.machine_facing);
   process.stdout.write(
     `[story-build audit] ${records.length} 条；待处理 ${open.length} 条`
-    + `（给它们补写正文，或标 covered_by 指向已进正文的另一条）\n`);
+    + `（给它们分配落点 at，或标 covered_by 指向已分配的另一条）\n`);
   for (const r of open.slice(0, 10)) {
     const u = doc.units.find(x => x.key === r.key);
     process.stdout.write(`  - ${r.key}｜${(u?.text ?? '').slice(0, 60)}\n`);
   }
+
+  // 渲染进度：哪几章还没写、每章还有多少条落点机器核不住。
+  // 成文是**逐章追加**的，中途断了要知道从哪一章续——这两行就是那个位置。
+  const rendered = new Set(sections.map(s => s.title));
+  const pending = ctx.contract.chapters.map(c => c.title).filter(t => !rendered.has(t));
+  const byChapter = new Map();
+  for (const r of records) {
+    if (r.by === 'author' && r.at) byChapter.set(r.at, (byChapter.get(r.at) ?? 0) + 1);
+  }
+  process.stdout.write(
+    `  未渲染章 ${pending.length}/${ctx.contract.chapters.length}`
+    + `${pending.length ? '：' + pending.join('、') : '（全部已渲染）'}\n`);
+  process.stdout.write(
+    `  各章待核单元（机器核不住、交裁决者）：`
+    + `${byChapter.size ? [...byChapter].map(([t, n]) => `${t} ${n}`).join('、') : '无'}\n`);
 }
 
 // --------------------------------------------------------------------------
