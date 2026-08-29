@@ -72,7 +72,7 @@ node doc/extensions/skills/story/scripts/story-build.mjs audit --feature <名>
 ```
 
 它会列出**还没有落点的**那些（三态皆空）。清零才算分配完成——
-「待处理 0 条」是进入第二步的前提。
+「待你分配 0 条」是进入第二步的前提。
 
 **分配的判断标准**：这件事**读者在哪一章会想知道它**。不确定时看章节模板里那一章的
 注释（`templates/story-template.md`），它写着这一章回答读者什么问题。

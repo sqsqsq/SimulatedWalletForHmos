@@ -313,6 +313,25 @@ function appendixChapter(contract) {
 }
 
 /**
+ * 这个单元是不是**机器直接归附录**的那一类（合同 `allocation.appendix_bound`）。
+ *
+ * 技术契约小节的表行——接口、字段、存储键、配置项、事件、交接——落点只可能是
+ * 附录的那两张表。让模型逐条去想「这一行读者在哪一章想知道」纯属苦役：
+ * 答案对每一行都一样，而模型每轮都要重答一遍。规则来自合同数据，本文件不认识
+ * 任何具体小节号。
+ */
+function appendixBound(unit, contract) {
+  for (const rule of contract.allocation?.appendix_bound ?? []) {
+    if (rule.doc && unit.doc !== rule.doc) continue;
+    if (!rule.section_re) continue;
+    let re;
+    try { re = new RegExp(rule.section_re); } catch { continue; }
+    if (re.test(String(unit.section ?? ''))) return true;
+  }
+  return false;
+}
+
+/**
  * 从一章的正文里切出某个 `###` 小节。
  *
  * 附录一章里并排放着接口表、数据表、规约判定表、追溯表——它们列数相近，
@@ -388,6 +407,7 @@ function cmdAudit(ctx) {
   const prev = readJson(ctx.auditPath, { records: [] });
   const prevByKey = new Map((prev.records ?? []).map(r => [r.key, r]));
 
+  const appendixTitle = appendixChapter(ctx.contract)?.title ?? null;
   const records = [];
   for (const u of doc.units) {
     if (u.machine_facing) {
@@ -398,6 +418,11 @@ function cmdAudit(ctx) {
     // 作者填的 covered_by 保留——它是作者的判断，机器只核不重算
     if (old?.covered_by) {
       records.push({ key: u.key, covered_by: old.covered_by });
+      continue;
+    }
+    // 技术契约的那些行由机器直接归附录：落点对每一行都一样，不值得让模型逐条重想
+    if (appendixTitle && appendixBound(u, ctx.contract)) {
+      records.push({ key: u.key, at: appendixTitle, by: 'machine' });
       continue;
     }
     // 机器每次重算：story 改了落点就该跟着变。**不沿用上一次的机器结果**，
@@ -423,8 +448,11 @@ function cmdAudit(ctx) {
 
   const open = records.filter(r => !r.at && !r.covered_by && !r.machine_facing);
   process.stdout.write(
-    `[story-build audit] ${records.length} 条；待处理 ${open.length} 条`
-    + `（给它们分配落点 at，或标 covered_by 指向已分配的另一条）\n`);
+    `[story-build audit] ${records.length} 条；待你分配 ${open.length} 条`
+    + `（机器已归位 ${records.length - open.length} 条：硬事实按 token 定章、`
+    + `技术契约行直接进附录）\n`
+    + `  待你分配的都是纯中文叙述：给每条一个正文章名 at，`
+    + `或标 covered_by 指向已分配的另一条\n`);
   for (const r of open.slice(0, 10)) {
     const u = doc.units.find(x => x.key === r.key);
     process.stdout.write(`  - ${r.key}｜${(u?.text ?? '').slice(0, 60)}\n`);
@@ -523,6 +551,8 @@ function cmdCheck(ctx) {
   const missingTokens = [];
   const stateless = [];
   const authorPlaced = [];      // 机器定不了、由裁决者裁的那些
+  const appendixTitle = appendixChapter(ctx.contract)?.title ?? null;
+  const narrativeKinds = new Set(ctx.contract.allocation?.narrative_kinds ?? []);
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
@@ -564,6 +594,15 @@ function cmdCheck(ctx) {
     }
     const chapter = sectionText.get(rec.at) ?? '';
     if (rec.by === 'author') {
+      // 业务叙述不落附录：附录是查阅件，读者顺着正文读下来要能读懂这件事。
+      // 塞进附录等于让它从阅读路径上消失——首跑 224/267 条就是这么塌进去的。
+      if (narrativeKinds.has(u.kind) && appendixTitle && rec.at === appendixTitle) {
+        problems.push(`${u.key}「${u.text.slice(0, 30)}」被分到「${appendixTitle}」，`
+          + `但${appendixTitle}是查阅件，业务叙述不落在那里`
+          + `——这条讲的是${u.doc}${u.section ? `·${u.section}` : ''}的事，`
+          + '读者在哪一章想知道它，就分那一章');
+        continue;
+      }
       // 机器定不了的，交给裁决者；这里只核标题在册，讲没讲清由 ⑥ 核
       authorPlaced.push(u);
       continue;

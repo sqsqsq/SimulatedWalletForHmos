@@ -48,7 +48,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 ```bash
 node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
 #                              ② 分配：每个单元定一个落点，落 audit.json
-node .../story-build.mjs audit --feature <feature>   #    「待处理 0 条」才算分完
+node .../story-build.mjs audit --feature <feature>   #    「待你分配 0 条」才算分完
 #                              ③ 逐章渲染：按合同顺序一次写一章，追加到 AR/story.md
 #                                 每章写完跑一次 audit（它会打印未渲染章）
 #                              ④ 裁决：audit 里还有 by: author 时，按 phases/story-verify.md 裁

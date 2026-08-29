@@ -296,6 +296,56 @@ class TestHardFactConservation(StoryBuildCase):
         self.assertNotIn("contentFragments", source)
 
 
+class TestAllocationDomain(StoryBuildCase):
+    """分配域：机器能定的不经模型；模型分的那些不许倒进附录。"""
+
+    def test_narrative_unit_placed_in_the_appendix_is_named(self) -> None:
+        """业务叙述分到附录 = 它从阅读路径上消失了，报错要说清该往哪儿放。"""
+        self.init_audit()
+        data = self.audit
+        keys = []
+        for record in data["records"]:
+            if not any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
+                record["at"], record["by"] = "附录", "author"
+                keys.append(record["key"])
+        self.assertTrue(keys, "夹具里应当有交给作者的纯中文单元")
+        self.write_audit(data)
+        self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
+        out = self.assert_check_names("业务叙述不落在那里")
+        self.assertIn("读者在哪一章想知道它", out)
+
+    def test_the_same_unit_in_a_body_chapter_passes(self) -> None:
+        """同一条放进正文章就该过——判的是位置，不是这条单元本身。"""
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(code, 0, out)
+
+    def test_engineering_contract_rows_never_reach_the_author(self) -> None:
+        """合同声明的技术契约小节由机器直接归附录，不进模型的分配任务。
+
+        落点对那些行都一样（接口表、数据配置事件表），让模型逐条重想是苦役——
+        而苦役正是它开始糊弄的地方。
+        """
+        spec_dir = self.root / "doc" / "features" / FEATURE / "spec"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "spec.md").write_text(
+            "# 甲需求 规格\n\n## 9. 技术契约\n\n"
+            "| 类型 | 标识 | 约定 |\n|---|---|---|\n"
+            "| 接口 | queryOrderState | 查订单当前状态 |\n"
+            "| 存储键 | order_draft_key | 草稿本地留存 |\n",
+            encoding="utf-8")
+        self.init_audit()
+        by_key = {u["key"]: u for u in self.units}
+        bound = [r for r in self.audit["records"]
+                 if by_key.get(r["key"], {}).get("doc") == "SPEC"
+                 and str(by_key[r["key"]].get("section") or "").startswith("9.")]
+        self.assertTrue(bound, "夹具应当切出技术契约小节的单元")
+        for record in bound:
+            self.assertEqual("附录", record.get("at"))
+            self.assertEqual("machine", record.get("by"))
+
+
 class TestTokenExclusion(StoryBuildCase):
     """守恒对象与归档件红线不能互相打架——同一个词不能既要求出现又禁止出现。"""
 

@@ -111,12 +111,16 @@ class TestAllocation(AllocateRenderCase):
         self.assertIn("未渲染章", proc.stdout)
 
     def test_unallocated_units_are_listed(self) -> None:
-        """没分配时，每一条都该被列成「待处理」——这是分配的任务清单。"""
+        """没分配时，纯中文那些都该被列成「待你分配」——这是分配的任务清单。
+
+        机器已归位的条数同时报出来：这两个数一起看，才知道模型真正要做多少事。
+        """
         proc = self.run_build("audit")
         open_count = sum(1 for r in self.records
                          if not r.get("at") and not r.get("covered_by") and not r.get("machine_facing"))
         self.assertGreater(open_count, 0)
-        self.assertIn(f"待处理 {open_count} 条", proc.stdout)
+        self.assertIn(f"待你分配 {open_count} 条", proc.stdout)
+        self.assertIn("机器已归位", proc.stdout)
 
     def test_one_record_per_unit_and_none_homeless(self) -> None:
         self.allocate()
