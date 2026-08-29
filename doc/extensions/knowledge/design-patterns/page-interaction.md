@@ -7,10 +7,6 @@ triggers_usecase_spec: true
 roles: [动作表, 动作枚举, 交互封装, 上下文, 页面组件]
 optional_roles: []
 coordinator_role: 交互封装
-sections:
-  select: 上篇 · 适用与选型
-  implement: 下篇 · 结构与落地
-  verify: 8. 验证清单
 ---
 
 # 页面交互编排

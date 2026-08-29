@@ -773,6 +773,26 @@ modes:
       它证明的是「材料这么说」而不是「story 讲清了」——上一轮 verifier 报告 272 行证据
       全是这种回声。判据：引文须是 story 那一章的逐字子串、≥12 字、且不是单元原文的子串。
 
+  - id: W01-non-story-invisible
+    dimension: boundary
+    found_round: 2026-08-29
+    form: 不走 /story 的需求被 story 专属要求拦住——扩展对它本该是隐形的
+    clause: KV-6 / S4-11 / W1 裁定 2026-08-15
+    checker: w01_non_story_invisible
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/W01-non-story-invisible/bad
+    good_fixture: test/story/fixtures/failure-modes/W01-non-story-invisible/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      判据面本身已按 isStoryFeature 分好：§9 技术契约、术语解释列、三份产物只在有流程契约时
+      才要求；§10 / §11 是知识判定的出口，对所有需求生效（判定产生的代码要求不进 spec，
+      编码那里就拿不到）。本条守的是**它别退回去**——只写 §10/§11 的需求跑 spec 门禁要能过，
+      且回话里不提 story / 三份产物 / 技术契约 / 归档件 / 三级关卡：作者读到这些，
+      就会去写他根本不需要写的东西。反夹具是同一份 spec 加一个 complete 的流程契约
+      （= 走了 /story），那时 §9 与三份产物就该被硬拦。
+
   - id: S01-diagram-degraded
     dimension: expression
     found_round: 2026-08-29

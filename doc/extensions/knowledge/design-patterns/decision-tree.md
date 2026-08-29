@@ -7,10 +7,6 @@ triggers_usecase_spec: true
 roles: [节点表, 步骤枚举, 上下文, 构建与启动]
 optional_roles: [页面跳转]
 coordinator_role: 构建与启动
-sections:
-  select: 上篇 · 适用与选型
-  implement: 下篇 · 结构与落地
-  verify: 8. 验证清单
 ---
 
 # 流程分支编排（决策树）

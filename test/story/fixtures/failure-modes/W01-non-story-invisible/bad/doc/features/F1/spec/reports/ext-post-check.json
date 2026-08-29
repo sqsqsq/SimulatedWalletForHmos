@@ -1,0 +1,23 @@
+{
+  "phase": "spec",
+  "feature": "F1",
+  "at": "2026-08-29T13:54:37.064Z",
+  "checks": [
+    {
+      "id": "knowledge_exit_structure",
+      "status": "FAIL",
+      "detail": "问题 3 条"
+    },
+    {
+      "id": "knowledge_adjudication_persisted",
+      "status": "NOT_APPLICABLE",
+      "detail": "verifier 尚未执行（spec/reports 下没有报告文件），必答 1 行"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "doc/features/F1/spec/spec.md",
+      "sha256": "b5c0a96df85b8a30"
+    }
+  ]
+}

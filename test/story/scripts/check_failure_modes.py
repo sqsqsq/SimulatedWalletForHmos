@@ -2001,6 +2001,62 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
 
 
+#: story 专属要求的说法——它们出现在**非** story 需求的门禁回话里，就是作者面泄漏。
+_STORY_ONLY_WORDS = ("story", "三份产物", "叙事件", "技术契约", "归档件", "三级关卡")
+
+
+def _spec_post_check(root: Path) -> tuple[bool, str] | None:
+    """在夹具根上跑真实的 spec post_check，回 (ok, message)；跑不起来回 None。"""
+    script = (
+        "import {pathToFileURL} from 'node:url';"
+        "const hook=(await import(pathToFileURL(process.argv[1]).href)).default;"
+        "const r=await hook({phase:'spec',feature:process.argv[3],projectRoot:process.argv[2]});"
+        "console.log(JSON.stringify({ok:r.ok!==false,message:r.message??''}));")
+    hook = _ext_file(root, "hooks/spec/post_check.mjs")
+    if hook is None:
+        hook = DEFAULT_EXTENSION_DIR / "hooks" / "spec" / "post_check.mjs"
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", script, "--", str(hook), str(root), "F1"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    return bool(data["ok"]), str(data["message"])
+
+
+@checker
+def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
+    """不走 /story 的需求被 story 专属要求拦住——扩展对它该是隐形的。
+
+    判据面本身已经按 `isStoryFeature` 分好了：§9 技术契约、术语解释列、三份产物
+    只在有流程契约时才要求；§10 / §11 是知识判定的出口，对所有需求生效
+    （判定产生的代码要求不进 spec，编码那里就拿不到）。
+
+    这一条守的是**它别退回去**：只写 §10/§11 的需求跑 spec 门禁要能过，
+    而且回话里不能提 story 专属的那几样——作者读到「三份产物」「技术契约」，
+    就会去写他根本不需要写的东西。
+    """
+    spec = root / "doc" / "features" / "F1" / "spec" / "spec.md"
+    if not spec.exists():
+        return Outcome(True, "夹具里没有规格件（该形态未启用）")
+    result = _spec_post_check(root)
+    if result is None:
+        return Outcome(False, "spec post_check 跑不起来")
+    ok, message = result
+    has_flow = (root / "doc" / "features" / "F1" / "AR" / "story-flow.json").exists()
+    if has_flow:
+        # 有流程契约 = 走了 /story：该被要求写全，拦住才对
+        if ok:
+            return Outcome(False, "走了 /story 却没拦——§9 与三份产物本该是硬要求")
+        return Outcome(False, f"story 需求被正常拦下：{message.splitlines()[2][:70] if len(message.splitlines()) > 2 else message[:70]}")
+    if not ok:
+        return Outcome(False, f"非 story 需求被拦住了：{message[:220]}")
+    leaked = [w for w in _STORY_ONLY_WORDS if w in message.lower()]
+    if leaked:
+        return Outcome(False, f"门禁回话里提了 story 专属要求 {leaked}——对这个需求它们不存在")
+    return Outcome(True, "非 story 需求只写两节即通过，回话里没有 story 专属要求")
+
+
 @checker
 def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
     """材料里的流程图在 story 里被压成「A → B → C」箭头文字。
