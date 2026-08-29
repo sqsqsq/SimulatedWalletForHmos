@@ -11,25 +11,26 @@
  * review.md——人可能在系统上批注，也可能直接改本地文件，**流程不关心来源**。
  * 多一层中间格式就多一套解析，而两套解析必然分叉。
  *
- * 本实现是替身：不连真实系统，把 test/story/mock-data/ 里的评审回稿（存在时）合并进 review.md，
- * 系统读写以 stderr 占位打印模拟。替换时保持 story.js 声明的回执形状不变。
+ * 本实现是替身：评审人的回稿就是系统上该单目录下的 `review-feedback.md`，
+ * 有就整份拉回来覆盖本地，没有就什么都不改。替换时保持 story.js 声明的回执形状不变。
  */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 
-// mock-data 属评测域，自脚本目录上溯五层到仓库根再下探 test/story/mock-data。
-const MOCK_DATA_DIR = path.resolve(__dirname, '..', '..', '..', '..', '..', 'test', 'story', 'mock-data');
+/** 评审人在系统上留下回稿的位置（相对该单的目录）。 */
+const FEEDBACK_FILE = 'review-feedback.md';
 
 /**
  * @param {object} ctx
  * @param {string} ctx.ar          单号
  * @param {string} ctx.featureRoot feature 工作区绝对路径
+ * @param {string} ctx.system      需求系统目录绝对路径
  * @param {Function} ctx.log       人类可读日志（走 stderr）
  * @param {Function} ctx.ts        时间戳串（备份文件名用）
  * @returns {object} 回执对象，由调用方 emit 成单行 JSON
  */
-function fetchReview({ ar, featureRoot, log, ts }) {
+function fetchReview({ ar, featureRoot, system, log, ts }) {
   const reviewPath = path.join(featureRoot, 'AR', 'review.md');
   if (!fs.existsSync(reviewPath)) {
     return {
@@ -48,18 +49,15 @@ function fetchReview({ ar, featureRoot, log, ts }) {
   // 人要点开的那份走 stderr 日志（上一行），两者各服务各的读者。
   const backupPath = path.relative(featureRoot, backupAbs).split(path.sep).join('/');
 
-  log(`（占位）从需求系统拉取 ${ar} 的评审回稿（对接真实系统时实现）`);
-
-  // 替身行为：有 mock 回稿就用它覆盖，没有就原样保留。
-  // **不伪造已填写的表态**——那会让本地跑出「评审已完成」的假象。
-  const mock = path.join(MOCK_DATA_DIR, `${ar}-review-feedback.md`);
+  const feedback = path.join(system, ar, FEEDBACK_FILE);
   let status = 'unchanged';
-  if (fs.existsSync(mock)) {
-    fs.writeFileSync(reviewPath, fs.readFileSync(mock, 'utf-8'), 'utf-8');
+  if (fs.existsSync(feedback)) {
+    fs.writeFileSync(reviewPath, fs.readFileSync(feedback, 'utf-8'), 'utf-8');
     status = 'confirmed';
-    log(`已用回稿覆盖：${reviewPath}`);
+    log(`已拉回评审回稿并覆盖：${reviewPath}`);
   } else {
-    log('本地无回稿材料，AR/review.md 保持原样——替身不伪造表态。');
+    // **不伪造已填写的表态**——那会让本地跑出「评审已完成」的假象。
+    log(`需求系统上 ${ar} 还没有评审回稿，AR/review.md 保持原样。`);
   }
 
   return {

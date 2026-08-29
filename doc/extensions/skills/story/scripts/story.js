@@ -5,27 +5,32 @@
  *   node story.js <init|archive|restore|review|help> <AR> [mcp-token] [--project-root <abs>]
  *   人类可读日志走 stderr；stdout 最后输出单行 JSON 结果：
  *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","success":true}
- *             落盘 AR/SR/RR 三套：各自 detail.json，加 RR/prd.md、SR/design.md，
- *             以及拉到的 AR/design.md（已有内容一律不覆盖——它是需求分析的预填输入）；
- *             拉到的 AR/design.md 无论有无内容都进后续需求分析，范围与覆盖由关卡定，
- *             本命令不做这个判断。
- *             工作区骨架（收件箱、RR/SR 占位件、design.md 空骨架）由 `story_flow.py init`
- *             在本命令之后补齐，两者互不依赖
+ *             按单号从需求系统拉单据：AR 自己、它挂的 SR、SR 挂的 RR，各写一份
+ *             detail.json，正文分别落 RR/prd.md、SR/design.md、AR/design.md。
+ *             AR/design.md 是**需求分析的预填输入**，系统上有就拉下来、本地已有一律不覆盖；
+ *             它有没有内容、范围够不够，由后续关卡判，本命令不做这个判断。
+ *             系统上查无此单即失败——单号打错时必须当场停住，而不是落一地占位件；
+ *             系统上某份正文缺失则**不写**该文件，留给 `story_flow.py init` 落占位件。
+ *             工作区骨架（收件箱、占位件、design.md 空骨架）由它在本命令之后补齐，
+ *             两者互不依赖
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,"success":true}
  *             系统侧正文名固定为 design.md，归档是覆盖它而非新建：
- *             ①拉系统最新正文做远端备份 ②临时把 design.md 改名 design.bak.md
- *             ③story.md 改名 design.md 上传（review.md 作附件）④无论成败还原 design.bak.md
- *             故 **archive 前后工作区 AR/design.md 字节不变**；
+ *             ①系统当前正文备份进该单的历史版本目录（restore 靠的就是它）
+ *             ②AR/story.md 的内容写成系统正文 ③AR/review.md 作为附件上传
+ *             ④`verified` = 系统侧两份与本地两份字节一致。
+ *             **工作区一个字节都不动**——归档是往系统上写，不是在本地搬文件；
  *             AR/story.md 与 AR/review.md 缺任一即失败，无降级路径。
  *             **门禁不在这里**：本文件是需求系统对接层的替身，内网是独立实现、从不调用扩展内容；
  *             归档前的校验由 /story 链的 story-build check 承担（SKILL 归档节 ①）
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
- *             从最新备份解析源数据、**重新上传回系统**，恢复的是平台侧正文；本地 design.md 不变
+ *             把该单最新的历史版本写回系统正文，回退 archive 那次覆盖；
+ *             没有历史版本即失败（restore 仅在 archive 之后可用）。本地 design.md 不变
  *   review  → {"mode":"review","reqNo":"...","fetched":true,"target":"AR/review.md",
  *              "backupPath":"AR/.review-backup/<ts>-review.md","status":"confirmed|unchanged","success":true}
  *             拉回评审人在系统上留下的反馈，**直接写入 AR/review.md**（先备份原件）。
  *             产出不是中间 JSON 而是写回 review.md：回流阶段模型的输入唯一就是它，
  *             人可能在系统上批注、也可能直接改本地文件，流程不关心来源。
+ *             系统上没有回稿时 `status: unchanged`，本地文件原样保留——不伪造表态。
  *             AR/review.md 不存在即失败（先跑 /spec 产出首版）。实现在同目录 review.js
  *   help    → 打印工作流程（纯文本，CLI 级帮助）
  *   失败    → {"mode":"<命令>","reqNo":"...","success":false,"error":"..."}
@@ -33,19 +38,31 @@
  * mcp-token：第三位置参数（token.js 获取）。本实现不校验、不使用；
  * 部署环境用它调 mcp 拉取/归档需求文档，缺失时应报错退出。
  *
- * 本实现是本地替身：RR/SR 取自 test/story/mock-data/（评测域的演示数据源），
- * 「需求系统」的读写以 stderr 占位打印模拟（见 uploadToSystem / fetchSystemCarrier）。
+ * **本实现是本地替身**：需求系统是一个本地目录，一个子目录就是一张单——
+ *
+ *     <system>/<单号>/detail.json          {reqNo,type:"RR|SR|AR",title,parentNo?,rrNo?}
+ *     <system>/<RR号>/prd.md               产品需求正文
+ *     <system>/<SR号>/design.md            系统设计正文
+ *     <system>/<AR号>/design.md            开发需求正文（archive 覆盖的就是它）
+ *     <system>/<AR号>/history/             历史版本，archive 备份、restore 取用
+ *     <system>/<AR号>/attachments/         附件，评审记录传到这里
+ *     <system>/<AR号>/review-feedback.md   评审人留下的回稿（review 拉它）
+ *
+ * 目录位置读环境变量 `STORY_REQUIREMENT_SYSTEM_DIR`，未设时取工程内的默认演示目录。
+ * **系统只承载 md**：真实需求系统的正文是纯文本单据，图片一律走别的渠道（人手上的
+ * 设计文档、原型说明），因此本替身不上传也不拉取任何图片——把图片塞进系统，
+ * 本地就会跑出一条真实环境里不存在的取材路径。
+ *
  * 替换本文件时保持上述 CLI 契约不变——
  * 不允许出现「文档写这个、本地干那个」的分叉：那正是本地测不出真实契约问题的成因。
  */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 
-// mock-data 属评测域，自脚本目录上溯五层到仓库根再下探 test/story/mock-data。
-// 本文件是本地替身、不进交付，允许依赖 test/ 下的演示数据。
-const MOCK_DATA_DIR = path.resolve(__dirname, '..', '..', '..', '..', '..', 'test', 'story', 'mock-data');
+/** 需求系统的默认落点：本工程演示用；正式测试与部署环境都由环境变量指定。 */
+const DEFAULT_SYSTEM_DIR = path.join('test', 'story', 'requirement-system');
+const SYSTEM_DIR_ENV = 'STORY_REQUIREMENT_SYSTEM_DIR';
 
 function log(msg) {
   console.error(`[story.js] ${msg}`);
@@ -74,7 +91,7 @@ function featuresDir(projectRoot) {
 }
 
 function ts() {
-  // 本地时间（备份/回执文件名），避免 UTC 裸值与本地时序误读
+  // 本地时间（历史版本/备份文件名），避免 UTC 裸值与本地时序误读
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   return (
@@ -94,128 +111,123 @@ function writeIfAbsent(target, content) {
   return true;
 }
 
-function renderMock(file, ids) {
-  let s = fs.readFileSync(file, 'utf-8');
-  for (const [k, v] of Object.entries(ids)) s = s.split(`{{${k}}}`).join(v);
-  return s;
-}
-
-function firstHeading(file, fallback) {
-  try {
-    const m = fs.readFileSync(file, 'utf-8').match(/^#\s+(.+)$/m);
-    if (m) return m[1].trim();
-  } catch (_) {
-    /* 回落 */
-  }
-  return fallback;
-}
-
-/** 需求单据元数据。真实系统按单号返回，本地从已落盘材料的标题合成。 */
 function writeDetail(target, detail) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${JSON.stringify(detail, null, 2)}\n`, 'utf-8');
   log(`生成：${target}`);
 }
 
-/**
- * 上传归档件到需求系统——占位实现；对接真实系统时在此用 mcp-token 调用上传接口。
- *
- * 归档是**多文件**的：正文 + 附件。正文在系统侧的名字固定为 design.md，本地的 story.md
- * 改名后上传占的就是这个位；review.md 作附件，评审者在它上面批注。
- *
- * @param {string} ar 单号
- * @param {{path:string, role:string}[]} files 待上传文件，role 为「正文」/「附件」
- */
-function uploadToSystem(ar, files) {
-  for (const f of files) {
-    log(`（占位）上传${f.role}到需求系统：${ar} ← ${f.path}（对接真实系统时实现）`);
-  }
+// ---------------------------------------------------------------------------
+// 需求系统（本替身 = 一个本地目录）
+
+/** 系统目录。环境变量优先；未设时用工程内的默认演示目录。 */
+function systemRoot(projectRoot) {
+  const configured = String(process.env[SYSTEM_DIR_ENV] ?? '').trim();
+  return configured ? path.resolve(configured) : path.join(projectRoot, DEFAULT_SYSTEM_DIR);
 }
 
 /**
- * 取系统当前正文（design.md）用于远端备份——占位实现。
- *
- * 真实系统按单号拉取；本地用上一次归档回执模拟「系统上现在是什么」，
- * 从没归档过就退回本地 design.md（等同于系统尚是 init 落下的那一版）。
+ * 取一张单。**三种「取不到」要分开**，它们的补救动作完全不同：
+ *   目录不在 = 这条拉取路径没接上（环境没配好）；
+ *   单据不在 = 单号打错或该单还没建（停下来问人）；
+ *   detail 坏了 = 单据本身有问题（找需求系统的人）。
+ * 用同一个 catch 吞成一样，「替身没接上」看起来就和「查无此单」毫无区别。
  */
-function fetchSystemCarrier(featureRoot, localAr) {
-  const archiveDir = path.join(featureRoot, '.archive');
-  if (fs.existsSync(archiveDir)) {
-    const prior = fs.readdirSync(archiveDir).filter(f => /^story-\d+\.md$/.test(f)).sort();
-    if (prior.length > 0) return path.join(archiveDir, prior[prior.length - 1]);
+function readTicket(system, no) {
+  if (!fs.existsSync(system)) {
+    return { found: false, reason: 'no_system', detail: null };
   }
-  return fs.existsSync(localAr) ? localAr : null;
-}
-
-function backup(featureRoot, label, srcFile) {
-  if (!srcFile || !fs.existsSync(srcFile)) return null;
-  const dir = path.join(featureRoot, '.backup');
-  fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, `AR-design-${label}-${ts()}.md`);
-  fs.copyFileSync(srcFile, dest);
-  log(`备份：${dest}`);
-  return dest;
-}
-
-/**
- * 材料层可显式声明父子关系与材料归属；缺省时按编号推导（1:1 假设）。
- *
- * **两种「读不到」要分开**：某个单号没有专用 detail 文件是设计内的降级（按编号推导即可）；
- * 而整个材料目录不存在，说明这条拉取路径实际在空转——那是设施缺失，必须出声。
- * 用同一个 catch 把两者吞成一样，会让「替身没接上」看起来和「正常走默认」毫无区别。
- */
-function readMockDetail(ar) {
-  if (!fs.existsSync(MOCK_DATA_DIR)) {
-    log(`材料目录不存在：${MOCK_DATA_DIR}——本地替身没有任何上游材料可拉，`
-      + '后续将只生成占位件。接真实需求系统时这条路径由系统接入替换。');
-    return {};
+  const detailPath = path.join(system, no, 'detail.json');
+  if (!fs.existsSync(detailPath)) {
+    return { found: false, reason: 'no_ticket', detail: null };
   }
-  const detailPath = path.join(MOCK_DATA_DIR, `${ar}-detail.json`);
-  if (!fs.existsSync(detailPath)) return {};   // 无专用声明：按编号推导，设计内
   try {
-    return JSON.parse(fs.readFileSync(detailPath, 'utf-8'));
+    return { found: true, reason: null, detail: JSON.parse(fs.readFileSync(detailPath, 'utf-8')) };
   } catch (e) {
-    log(`材料声明解析失败（${detailPath}）：${e.message}——按编号推导继续`);
-    return {};
+    return { found: false, reason: `bad_detail:${e.message}`, detail: null };
   }
+}
+
+/** 系统上这张单的某份文件；不存在返回 null（缺正文是常态，不是异常）。 */
+function ticketText(system, no, ...parts) {
+  if (!no) return null;
+  const target = path.join(system, no, ...parts);
+  return fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null;
+}
+
+function ticketTitle(system, no, fallback) {
+  const ticket = readTicket(system, no);
+  const title = ticket.detail && ticket.detail.title;
+  return typeof title === 'string' && title.trim() ? title.trim() : fallback;
+}
+
+/** 系统侧写入：目录按需建，路径统一以「相对系统根」的形式回执。 */
+function systemWrite(system, relParts, content) {
+  const target = path.join(system, ...relParts);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content, 'utf-8');
+  const rel = relParts.join('/');
+  log(`需求系统 ← ${rel}`);
+  return rel;
 }
 
 // ---------------------------------------------------------------------------
-function pullMaterials(ar, featureRoot, localAr, ids) {
-  const mockDir = MOCK_DATA_DIR;
-  // 用例可为特定 AR 提供更丰富的上游材料；无专用文件时仍使用默认材料。
-  // 兄弟 AR（同一 SR 拆出的多个 AR）经 `materials` 指向同一套材料。
-  // 选择发生在数据接入层，不向使用方暴露任何判据。
-  const owner = readMockDetail(ar).materials ?? ar;
-  const prdMock = path.join(mockDir, `${owner}-RR-prd.md`);
-  const srMock = path.join(mockDir, `${owner}-SR-design.md`);
-  const rrPath = path.join(featureRoot, 'RR', 'prd.md');
-  const srPath = path.join(featureRoot, 'SR', 'design.md');
-  // 上游文档按**材料归属方**的身份渲染：共享给兄弟 AR 时是同一份文档，
-  // 按各自 AR 号重渲染会让同一份 SR 在两个 AR 下内容不同。
-  const upstreamIds = { ...ids, AR: owner };
-  writeIfAbsent(rrPath, renderMock(fs.existsSync(prdMock) ? prdMock : path.join(mockDir, 'RR-prd.md'), upstreamIds));
-  writeIfAbsent(srPath, renderMock(fs.existsSync(srMock) ? srMock : path.join(mockDir, 'SR-design.md'), upstreamIds));
+function cmdInit(ar, featureRoot, localAr, system) {
+  const ticket = readTicket(system, ar);
+  if (!ticket.found) {
+    if (ticket.reason === 'no_system') {
+      fail(`需求系统不可达：${system} 不存在。`
+        + `本地替身以该目录为需求系统，请设置环境变量 ${SYSTEM_DIR_ENV} 指向它——`
+        + '这不是「查无此单」，单号本身还没被查过。');
+    }
+    if (ticket.reason === 'no_ticket') {
+      fail(`查无此单：需求系统里没有 ${ar}。请确认单号，或确认该单是否已在系统上建立。`);
+    }
+    fail(`单据数据有问题（${ar}）：${ticket.reason}。请联系需求系统侧核对该单。`);
+  }
 
-  writeDetail(path.join(featureRoot, 'RR', 'detail.json'), {
-    reqNo: ids.RR, type: 'RR', title: firstHeading(rrPath, `${ids.RR} 产品需求`),
-  });
-  writeDetail(path.join(featureRoot, 'SR', 'detail.json'), {
-    reqNo: ids.SR, type: 'SR', title: firstHeading(srPath, `${ids.SR} 系统设计`), rrNo: ids.RR,
-  });
+  const detail = ticket.detail;
+  const ids = {
+    AR: ar,
+    SR: typeof detail.parentNo === 'string' && detail.parentNo.trim() ? detail.parentNo.trim() : null,
+    RR: typeof detail.rrNo === 'string' && detail.rrNo.trim() ? detail.rrNo.trim() : null,
+  };
+
+  // 正文：系统上有才落。**缺就不写**——写个空文件会让下游分不清
+  //「系统上没有这部分内容」和「已经拉到了、内容确实是空的」。
+  const prd = ticketText(system, ids.RR, 'prd.md');
+  const srDesign = ticketText(system, ids.SR, 'design.md');
+  const arDesign = ticketText(system, ar, 'design.md');
+  const pulled = [];
+  if (prd !== null) { writeIfAbsent(path.join(featureRoot, 'RR', 'prd.md'), prd); pulled.push('RR/prd.md'); }
+  if (srDesign !== null) { writeIfAbsent(path.join(featureRoot, 'SR', 'design.md'), srDesign); pulled.push('SR/design.md'); }
+  if (arDesign !== null) { writeIfAbsent(localAr, arDesign); pulled.push('AR/design.md'); }
+
   writeDetail(path.join(featureRoot, 'AR', 'detail.json'), {
-    reqNo: ids.AR, type: 'AR', title: firstHeading(localAr, `${ids.AR} 开发需求`),
+    reqNo: ar, type: 'AR', title: ticketTitle(system, ar, `${ar} 开发需求`),
     parentNo: ids.SR, rrNo: ids.RR,
   });
-}
+  if (ids.SR) {
+    writeDetail(path.join(featureRoot, 'SR', 'detail.json'), {
+      reqNo: ids.SR, type: 'SR', title: ticketTitle(system, ids.SR, `${ids.SR} 系统设计`),
+      rrNo: ids.RR,
+    });
+  }
+  if (ids.RR) {
+    writeDetail(path.join(featureRoot, 'RR', 'detail.json'), {
+      reqNo: ids.RR, type: 'RR', title: ticketTitle(system, ids.RR, `${ids.RR} 产品需求`),
+    });
+  }
 
-function cmdInit(ar, featureRoot, localAr, ids) {
-  pullMaterials(ar, featureRoot, localAr, ids);
+  const missing = ['RR/prd.md', 'SR/design.md'].filter(rel => !pulled.includes(rel));
+  if (missing.length > 0) {
+    log(`系统上没有：${missing.join('、')}——这部分材料要另外拿到并走收件箱导入。`);
+  }
   log('材料已落盘。接着跑 `story_flow.py init` 建工作区骨架（收件箱、占位件、design.md 空骨架）。');
   emit({ mode: 'init', reqNo: ar, parentNo: ids.SR, rrNo: ids.RR, success: true });
 }
 
-function cmdArchive(ar, featureRoot, localAr, projectRoot) {
+function cmdArchive(ar, featureRoot, system) {
   // 归档是两份：叙事主件 story.md（正文）+ 决策件 review.md（附件）。
   // 两份都是 spec 阶段的产物，本命令只搬运不生成；缺任一即停，无降级路径——
   // 缺就停，比默默传个次品强（spec.md 含仓内路径、不自包含，顶不了正文）。
@@ -230,61 +242,58 @@ function cmdArchive(ar, featureRoot, localAr, projectRoot) {
       );
     }
   }
-  // ① 系统侧正文名固定为 design.md，归档是覆盖它——先把系统当前那一版备份下来，
-  //    restore 靠的就是这份备份。
-  const backupPath = backup(featureRoot, 'remote', fetchSystemCarrier(featureRoot, localAr));
-
-  // ②③④ 临时改名 → 上传 → 无论成败还原。工作区 design.md 由此在 archive 前后字节不变：
-  //     它的身份只有「RR+SR 提取件」一种，借位只在上传的这一瞬间，且由 finally 兜住。
-  const bakPath = path.join(featureRoot, 'AR', 'design.bak.md');
-  const borrowed = fs.existsSync(localAr);
-  if (borrowed) fs.renameSync(localAr, bakPath);
-  try {
-    uploadToSystem(ar, [
-      { path: storyPath, role: '正文（AR/story.md → 系统 design.md）' },
-      { path: notesPath, role: '附件（评审记录）' },
-    ]);
-  } finally {
-    if (borrowed) fs.renameSync(bakPath, localAr);
+  const ticket = readTicket(system, ar);
+  if (!ticket.found) {
+    fail(`需求系统里没有 ${ar}（${ticket.reason}），无处可归。`
+      + '没有系统单据的本地单不走归档：交付终点就是仓内那三份产物。');
   }
 
-  // 本地回执：归档发生过什么、归的是哪一版，留一份可回查的证据。
-  const archiveDir = path.join(featureRoot, '.archive');
-  fs.mkdirSync(archiveDir, { recursive: true });
-  const stamp = ts();
-  const receipt = path.join(archiveDir, `story-${stamp}.md`);
-  const notesReceipt = path.join(archiveDir, `review-${stamp}.md`);
-  fs.copyFileSync(storyPath, receipt);
-  fs.copyFileSync(notesPath, notesReceipt);
-  const verified = fs.existsSync(receipt) && fs.existsSync(notesReceipt);
-  log(`归档回执：${ar} | 正文=AR/story.md | 附件=AR/review.md | 存档=${receipt}、${notesReceipt}`);
+  // ① 系统当前正文先存一份历史版本——归档是覆盖，restore 靠的就是它。
+  //    系统上还没有正文时不留空历史：restore 回一个空文件比报「无历史」更难查。
+  const current = ticketText(system, ar, 'design.md');
+  let backupPath = null;
+  if (current !== null) {
+    backupPath = systemWrite(system, [ar, 'history', `design-${ts()}.md`], current);
+  } else {
+    log('系统上尚无正文，本次归档是首次写入，没有可备份的历史版本。');
+  }
+
+  // ② 正文 ③ 附件。**只上传 md，不上传图片、不改写正文里的链接**——
+  //    系统不承载图片，改写链接会让归档件与本地件分叉成两份不同的东西。
+  const storyText = fs.readFileSync(storyPath, 'utf-8');
+  const notesText = fs.readFileSync(notesPath, 'utf-8');
+  systemWrite(system, [ar, 'design.md'], storyText);
+  systemWrite(system, [ar, 'attachments', 'review.md'], notesText);
+
+  // ④ 传上去的和本地的是不是同一份东西——回执里的 verified 只认这个。
+  const verified = ticketText(system, ar, 'design.md') === storyText
+    && ticketText(system, ar, 'attachments', 'review.md') === notesText;
+  log(`归档完成：${ar} | 正文=AR/story.md → ${ar}/design.md | 附件=AR/review.md → ${ar}/attachments/review.md`);
+  log('工作区未改动。');
   emit({ mode: 'archive', reqNo: ar, archived: true, backupPath, verified, success: true });
 }
 
-function cmdRestore(ar, featureRoot) {
-  const dir = path.join(featureRoot, '.backup');
-  const all = fs.existsSync(dir)
-    ? fs.readdirSync(dir).filter(f => /^AR-design-(remote|local)-\d+\.md$/.test(f))
+function cmdRestore(ar, system) {
+  const historyDir = path.join(system, ar, 'history');
+  const versions = fs.existsSync(historyDir)
+    ? fs.readdirSync(historyDir).filter(f => /^design-\d+\.md$/.test(f)).sort()
     : [];
-  if (all.length === 0) fail(`无可用备份：${dir}（restore 仅在 archive 之后可用）`);
-  // 优先取「系统上一版」（remote 备份）；无远端备份时退回本地旧版。按时间戳取最新。
-  const byTs = arr => arr.sort((a, b) => a.match(/(\d+)\.md$/)[1].localeCompare(b.match(/(\d+)\.md$/)[1]));
-  const remotes = all.filter(f => f.includes('-remote-'));
-  const pool = remotes.length > 0 ? remotes : all;
-  const latest = path.join(dir, byTs(pool)[pool.length - 1]);
-
-  // 恢复的是**平台侧**正文：把备份重新上传回系统，回退 archive 对系统的那次覆盖。
-  // 本地 AR/design.md 一个字节都不动——它本来就没被 archive 改过。
-  uploadToSystem(ar, [{ path: latest, role: '正文（备份 → 系统 design.md）' }]);
-  log(`已用备份恢复系统正文（${remotes.length > 0 ? '系统上一版' : '本地旧版'}）：${latest}`);
+  if (versions.length === 0) {
+    fail(`${ar} 在需求系统上没有历史版本：${historyDir}（restore 仅在 archive 之后可用）`);
+  }
+  const latest = versions[versions.length - 1];
+  const content = fs.readFileSync(path.join(historyDir, latest), 'utf-8');
+  systemWrite(system, [ar, 'design.md'], content);
+  const verified = ticketText(system, ar, 'design.md') === content;
+  log(`已把系统正文恢复到上一版：${ar}/history/${latest}`);
   log('本地 AR/design.md 未改动。');
-  emit({ mode: 'restore', reqNo: ar, restored: true, verified: true, success: true });
+  emit({ mode: 'restore', reqNo: ar, restored: true, verified, success: true });
 }
 
-function cmdReview(ar, featureRoot) {
+function cmdReview(ar, featureRoot, system) {
   // 实现拆在同目录 review.js——部署环境统一走本文件的 CLI，内部怎么组织是各自的事。
   const { fetchReview } = require('./review.js');
-  const receipt = fetchReview({ ar, featureRoot, log, ts });
+  const receipt = fetchReview({ ar, featureRoot, system, log, ts });
   emit(receipt);
   if (!receipt.success) process.exit(1);
 }
@@ -294,7 +303,7 @@ function cmdHelp() {
   1. /story init <AR>     拉取 AR/SR/RR 单据与材料 + 生成 AR/design.md 空模板（触发 AI 按 rules/ar_design_init.md 提取；覆盖前须确认）
   2. /spec                需求规格三产物：spec.md（代码要求）+ AR/review.md（人的决策）+ AR/story.md（归档件），门禁校验三份齐备
   3. /story archive <AR>  以 AR/story.md 为正文、AR/review.md 为附件归档上传（系统正文名固定 design.md；工作区文件不变）
-  4. /story restore <AR>  用最新备份把系统正文恢复回上一版（本地 design.md 不变）
+  4. /story restore <AR>  把系统正文恢复回上一版（本地 design.md 不变）
   5. /story review <AR>   拉回评审回稿写入 AR/review.md（先备份），再据此修订 spec
   详细规则：doc/extensions/skills/story/SKILL.md`);
 }
@@ -339,17 +348,9 @@ if (!mcpToken) log('未传入 mcp-token（本地容忍；部署环境将拒绝�
 const projectRoot = path.resolve(projectRootArg ?? path.join(__dirname, '..', '..', '..', '..', '..'));
 const featureRoot = path.join(projectRoot, featuresDir(projectRoot), ar);
 const localAr = path.join(featureRoot, 'AR', 'design.md');
-// 父子关系：真实系统按单号返回，本地按编号推导。一个 SR 可拆多个 AR，编号推不出兄弟关系，
-// 故允许材料层用 <AR>-detail.json 显式声明（parentNo / rrNo / materials）。
-const num = ar.replace(/^AR/i, '');
-const declared = readMockDetail(ar);
-const ids = {
-  AR: ar,
-  SR: declared.parentNo ?? `SR${num}`,
-  RR: declared.rrNo ?? `RR${num}`,
-};
+const system = systemRoot(projectRoot);
 
-if (cmd === 'init') cmdInit(ar, featureRoot, localAr, ids);
-else if (cmd === 'archive') cmdArchive(ar, featureRoot, localAr, projectRoot);
-else if (cmd === 'restore') cmdRestore(ar, featureRoot);
-else if (cmd === 'review') cmdReview(ar, featureRoot);
+if (cmd === 'init') cmdInit(ar, featureRoot, localAr, system);
+else if (cmd === 'archive') cmdArchive(ar, featureRoot, system);
+else if (cmd === 'restore') cmdRestore(ar, system);
+else if (cmd === 'review') cmdReview(ar, featureRoot, system);
