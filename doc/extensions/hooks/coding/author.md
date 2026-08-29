@@ -9,7 +9,7 @@
 
 | 文件 | 拿什么 |
 |---|---|
-| `plan/contracts.yaml` | 各实体上的 `must`——`text` 是这条义务在这个实体上具体要做什么，`verify` 是谁来验 |
+| `contracts.yaml` | 各实体上的 `must`——`text` 是这条义务在这个实体上具体要做什么，`verify` 是谁来验 |
 | 被选中的那个设计模式文档（在 `manifest.yaml` 的 `provides.knowledge` 里） | 它的**实现篇**（frontmatter `sections.implement`）：结构、落点与命名、骨架、约定、反模式 |
 
 规约文件本身不必读——`must.text` 已经带着本需求的专名了。

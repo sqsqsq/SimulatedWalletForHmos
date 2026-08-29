@@ -341,7 +341,7 @@ modes:
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P04-plan-obligation-paraphrase/bad
     good_fixture: test/story/fixtures/failure-modes/P04-plan-obligation-paraphrase/good
-    applicable_when: 存在 plan/contracts.yaml 知识冻结块
+    applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
 
@@ -354,7 +354,7 @@ modes:
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/bad
     good_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/good
-    applicable_when: 存在 plan/contracts.yaml 知识冻结块
+    applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
 
@@ -462,7 +462,7 @@ modes:
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/bad
     good_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/good
-    applicable_when: 存在 plan/contracts.yaml 知识冻结块 且 存在 review/review-report.md
+    applicable_when: 存在 contracts.yaml 知识冻结块 且 存在 review/review-report.md
     severity: BLOCKER
     status: fixed
 
@@ -513,7 +513,7 @@ modes:
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/bad
     good_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/good
-    applicable_when: 存在 plan/plan.md 与 plan/contracts.yaml 知识冻结块
+    applicable_when: 存在 plan/plan.md 与 contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
 
@@ -526,7 +526,7 @@ modes:
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/bad
     good_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/good
-    applicable_when: 存在 plan/contracts.yaml 知识冻结块
+    applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
 

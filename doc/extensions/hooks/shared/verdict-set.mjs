@@ -80,7 +80,7 @@ function specSet(projectRoot, feature) {
 function freezeSet(projectRoot, feature) {
   const { contracts, error, exists } = readContracts(projectRoot, feature);
   if (error) return { rows: [], error };
-  if (!exists) return { rows: [], error: '读不到 plan/contracts.yaml' };
+  if (!exists) return { rows: [], error: '读不到 contracts.yaml' };
 
   const rows = [];
   for (const ob of obligationsFromContracts(contracts)) {

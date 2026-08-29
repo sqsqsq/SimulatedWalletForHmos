@@ -892,11 +892,13 @@ def _spec_path(root: Path) -> Path | None:
 
 
 def _contracts_path(root: Path) -> Path | None:
-    for rel in ("plan/contracts.yaml", "contracts.yaml"):
-        p = root / rel
-        if p.exists():
-            return p
-    return None
+    """契约只有一份，在 feature 根下——与 framework 同路径。
+
+    原来这里按「先子目录、后根」两处试。回退看着稳，实际是把「两份真源」
+    合法化了：哪一份被读到取决于哪一份先存在，两份不一致时谁也不报错。
+    """
+    p = root / "contracts.yaml"
+    return p if p.exists() else None
 
 
 def _plan_path(root: Path) -> Path | None:

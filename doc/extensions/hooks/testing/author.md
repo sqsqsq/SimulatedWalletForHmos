@@ -9,7 +9,7 @@
 
 | 文件 | 拿什么 |
 |---|---|
-| `plan/contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
+| `contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
 | `spec/acceptance.yaml` | `knowledge_rule` 指回规约条目的那条验收条目，按它的 `device_focus` 走查 |
 
 ## 二、产出形态

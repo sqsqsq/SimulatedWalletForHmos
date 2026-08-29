@@ -8,7 +8,7 @@
 
 | 文件 | 拿什么 |
 |---|---|
-| `plan/contracts.yaml` | 各实体上的 `must`（`text` 是这条义务在这个实体上要做什么）；标了 `pattern` 的文件 |
+| `contracts.yaml` | 各实体上的 `must`（`text` 是这条义务在这个实体上要做什么）；标了 `pattern` 的文件 |
 | 本轮 diff | 结论要指向 diff 里的**具体位置**，不是指向规约原文 |
 
 ## 二、产出形态
