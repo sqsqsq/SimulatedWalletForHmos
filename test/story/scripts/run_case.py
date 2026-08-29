@@ -1151,21 +1151,37 @@ def seed_case_workspace(case_id: str, feature: str) -> list[str]:
     没有这个目录的用例即从空目录起跑（既有用例的行为不变）。
     """
     src = HERE.parent / "cases" / case_id / "workspace"
-    if not src.is_dir():
-        return []
     dest_root = (REPO_ROOT / FEATURES_DIR / feature).resolve()
     seeded = []
-    for path in sorted(src.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(src)
-        dest = (dest_root / rel).resolve()
-        if not dest.is_relative_to(dest_root):      # 用例目录里的越界软链
-            raise SystemExit(f"[runner] 用例材料越界，拒绝铺设: {rel}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, dest)
-        seeded.append(rel.as_posix())
+    if src.is_dir():
+        for path in sorted(src.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(src)
+            dest = (dest_root / rel).resolve()
+            if not dest.is_relative_to(dest_root):      # 用例目录里的越界软链
+                raise SystemExit(f"[runner] 用例材料越界，拒绝铺设: {rel}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, dest)
+            seeded.append(rel.as_posix())
+    # 声明为 `deliver: start` 的补料属于「人手上本来就有、起跑前已经放好」那一类，
+    # 与 workspace 材料同时到位；其余的等模型开口要（`reply --deliver`）。
+    for name in start_delivered_supplements(case_id):
+        seeded.extend(f"inbox/{n}" for n in
+                      deliver_supplements(case_id, feature, [name]))
     return seeded
+
+
+def start_delivered_supplements(case_id: str) -> list[str]:
+    """case.yaml 里声明为起跑时就投放的补料。"""
+    path = HERE.parent / "cases" / case_id / "case.yaml"
+    if not path.is_file():
+        return []
+    case = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return [str(item["file"]).strip()
+            for item in (case.get("supplements") or [])
+            if isinstance(item, dict) and str(item.get("file") or "").strip()
+            and str(item.get("deliver") or "on_request").strip() == "start"]
 
 
 def _run_logged_gate(command: list[str], *, cwd: Path, log_path: Path,
@@ -1869,14 +1885,41 @@ def cmd_status(case_id: str) -> int:
     return 0
 
 
-def cmd_reply(case_id: str, text: str) -> int:
+def deliver_supplements(case_id: str, feature: str, names: list[str]) -> list[str]:
+    """把人手上的补料放进收件箱——**这才是「我把文档发你了」的物理动作**。
+
+    起跑时收件箱里只有说明书。补料等模型自己发现缺料、开口要，才随那句回话一起到达；
+    提前铺好，「它会不会发现材料不够」就永远测不到——材料一直都够。
+
+    投放是幂等的：同一份重复投只是覆盖同样的字节。文件名原样保留，
+    因为「文件名看不出是哪类材料」本身就是要被测的那个现实。
+    """
+    if not names:
+        return []
+    source_root = HERE.parent / "cases" / case_id / "supplements"
+    inbox = (REPO_ROOT / FEATURES_DIR / feature / "inbox").resolve()
+    delivered: list[str] = []
+    for name in names:
+        source = (source_root / name).resolve()
+        if not source.is_file() or source.parent != source_root.resolve():
+            raise SystemExit(f"[runner] 找不到补料或路径越界: {case_id}: {name}")
+        inbox.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, inbox / source.name)
+        delivered.append(source.name)
+    return delivered
+
+
+def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     """以用户身份回一句话给停等中的被测会话。
 
     交互用例（`interactive: true`）靠它推进；自动用例也能用它中途插话纠偏。
     **说人话**——照抄选项 key 或编号测不出「模型能不能听懂人话」，
     而那正是关卡最该被测的地方。
+
+    `--deliver` 让这句话带上附件：先把文件放进收件箱，再把话排进队列。
+    顺序不能反——话先到、文件后到，模型会照着那句话去看一个还不存在的目录。
     """
-    _, out_dir, _ = _load_case(case_id)
+    _, out_dir, feature = _load_case(case_id)
     text = (text or "").strip()
     if not text:
         print(json.dumps({"ok": False, "error": "--text 不能为空"}, ensure_ascii=False))
@@ -1901,12 +1944,13 @@ def cmd_reply(case_id: str, text: str) -> int:
                           "error": "worker lease 已过期且进程不可确认，拒绝入队"},
                          ensure_ascii=False))
         return 1
+    delivered = deliver_supplements(case_id, feature, list(deliver or []))
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / REPLY_FILE).write_text(
         json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
                    ensure_ascii=False), encoding="utf-8")
     print(json.dumps({
-        "ok": True, "queued": text,
+        "ok": True, "queued": text, "delivered": delivered,
         "reply_status": "accepted",
         "note": "被测会话本轮结束时取用；它仍在说话时不会被打断",
     }, ensure_ascii=False, indent=2))
@@ -2021,6 +2065,8 @@ def main() -> int:
     ap.add_argument("--max-chars", type=int, default=200000)
     ap.add_argument("--force", action="store_true", help="stop：跳过宽限期直接强杀")
     ap.add_argument("--text", default="", help="reply：以用户身份回的那句话（说人话，别抄选项 key）")
+    ap.add_argument("--deliver", action="append", default=[],
+                    help="reply：随这句话把 cases/<id>/supplements/ 下的补料放进收件箱，可多次")
     args = ap.parse_args()
 
     if args.command == "run":
@@ -2035,7 +2081,7 @@ def main() -> int:
     if args.command == "status":
         return cmd_status(args.case_id)
     if args.command == "reply":
-        return cmd_reply(args.case_id, args.text)
+        return cmd_reply(args.case_id, args.text, args.deliver)
     return cmd_stop(args.case_id, args.force)
 
 

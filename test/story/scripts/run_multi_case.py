@@ -127,6 +127,7 @@ class CasePlan:
     interactive: bool
     phases: tuple[str, ...]
     interaction_script: tuple[dict[str, Any], ...] = ()
+    supplements: tuple[dict[str, Any], ...] = ()
 
     @property
     def contains_coding(self) -> bool:
@@ -142,6 +143,7 @@ class CasePlan:
             "phase_scope": list(self.phases),
             "contains_coding": self.contains_coding,
             "interaction_script": list(self.interaction_script),
+            "supplements": list(self.supplements),
         }
 
 
@@ -221,6 +223,40 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     return template, workspace_root
 
 
+#: Case workspace 里的需求系统快照落点。点开头，与产品源码目录区分开；
+#: 它是**系统侧**状态，会被 archive 改写，finalize 时整份留存为行为证据。
+REQUIREMENT_SYSTEM_DIR = ".requirement-system"
+REQUIREMENT_SYSTEM_ENV = "STORY_REQUIREMENT_SYSTEM_DIR"
+
+
+def seed_requirement_system(case_id: str, workspace: Path) -> list[dict[str, Any]]:
+    """把该 Case 的需求系统快照复制进它自己的 workspace。
+
+    每个 Case 一套独立的系统：`archive` 会覆盖系统正文、`restore` 会回退它，
+    共用一份的话两个 Case 会互相改写对方的单据，而这类互相干扰事后极难归因。
+    """
+    source = CASES_ROOT / case_id / "system"
+    if not source.is_dir():
+        return []
+    destination = workspace / REQUIREMENT_SYSTEM_DIR
+    seeded: list[dict[str, Any]] = []
+    for path in sorted(source.rglob("*")):
+        if path.is_symlink():
+            raise SystemExit(f"[multi] 需求系统快照拒绝软链接: {path}")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(source)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        seeded.append({
+            "source": path.relative_to(REPO_ROOT).as_posix(),
+            "target": f"{REQUIREMENT_SYSTEM_DIR}/{relative.as_posix()}",
+            "size": path.stat().st_size,
+        })
+    return seeded
+
+
 def _case_seed_manifest(case_id: str, feature: str) -> list[dict[str, Any]]:
     source_root = CASES_ROOT / case_id / "workspace"
     if not source_root.is_dir():
@@ -288,9 +324,18 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     case["workspace_status"] = "created"
     case["case_seeded"] = _case_seed_manifest(
         str(case["case"]), str(case["feature"]))
+    case["system_seeded"] = seed_requirement_system(str(case["case"]), workspace)
+    # 备着但还没投的补料：起跑时收件箱里只有说明书，这几份要等模型开口要。
+    case["supplements_pending"] = [
+        item["file"] for item in (case.get("supplements") or [])
+        if item.get("deliver") != "start"]
+    case["supplements_delivered"] = []
     boundary_path = suite_root / "workspace-boundary.json"
     boundary = read_json(boundary_path, {}) or {}
     boundary.setdefault("case_seeded", {})[str(case["case"])] = case["case_seeded"]
+    boundary.setdefault("system_seeded", {})[str(case["case"])] = case["system_seeded"]
+    boundary.setdefault("supplements_pending", {})[str(case["case"])] = \
+        case["supplements_pending"]
     boundary.setdefault("case_checks", {})[str(case["case"])] = boundary_check
     write_json(boundary_path, boundary)
     case_root = suite_root / "cases" / str(case["case"])
@@ -348,6 +393,45 @@ def snapshot_workspace_sources(workspace: Path) -> dict[str, Any]:
     return {"schema_version": 1, "digest": digest, "files": files, "captured_at": now()}
 
 
+#: 补料的投放时机。`start` = 人手上本来就有、起跑前已放进需求目录；
+#: `on_request` = 被测模型开口要了才投——真实场景里人不会提前把所有文档铺满。
+VALID_DELIVER = frozenset({"start", "on_request"})
+
+
+def load_supplements(case_id: str) -> tuple[dict[str, Any], ...]:
+    """本 Case 备着的补料：文件名 + 什么时候投。
+
+    补料放在 `cases/<id>/supplements/`，与 `workspace/` 分开：后者是起跑那一刻
+    需求目录里就有的东西，前者是**要来的**。混在一起，「模型有没有发现缺料」
+    就永远测不到——材料早就摆好了。
+    """
+    path = CASES_ROOT / case_id / "case.yaml"
+    case = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    declared = case.get("supplements") or []
+    if not isinstance(declared, list):
+        raise SystemExit(f"[multi] case.yaml supplements 非列表: {case_id}")
+    root = CASES_ROOT / case_id / "supplements"
+    output: list[dict[str, Any]] = []
+    for index, item in enumerate(declared, start=1):
+        if not isinstance(item, dict) or not str(item.get("file") or "").strip():
+            raise SystemExit(f"[multi] case.yaml supplements 第 {index} 项缺少 file: {case_id}")
+        name = str(item["file"]).strip()
+        deliver = str(item.get("deliver") or "on_request").strip()
+        if deliver not in VALID_DELIVER:
+            raise SystemExit(
+                f"[multi] case.yaml supplements 第 {index} 项 deliver 非法: {case_id}: "
+                f"{deliver}（可用：{'/'.join(sorted(VALID_DELIVER))}）")
+        source = root / name
+        if not source.is_file() or source.is_symlink():
+            raise SystemExit(f"[multi] 声明的补料不存在: {case_id}: supplements/{name}")
+        if source.resolve().parent != root.resolve():
+            raise SystemExit(f"[multi] 补料越界: {case_id}: {name}")
+        # 路径记成「相对 Case 根」：绝对路径带着本机盘符，抄进证据文件就没法跨环境读。
+        output.append({"file": name, "deliver": deliver,
+                       "source": f"{case_id}/supplements/{name}"})
+    return tuple(output)
+
+
 def load_interaction_script(case_id: str) -> tuple[dict[str, Any], ...]:
     path = CASES_ROOT / case_id / "interaction-script.yaml"
     if not path.is_file():
@@ -356,6 +440,7 @@ def load_interaction_script(case_id: str) -> tuple[dict[str, Any], ...]:
     replies = payload.get("replies") if isinstance(payload, dict) else None
     if not isinstance(replies, list):
         raise SystemExit(f"[multi] interaction-script.yaml replies 非列表: {case_id}")
+    known = {item["file"] for item in load_supplements(case_id)}
     output: list[dict[str, Any]] = []
     for index, item in enumerate(replies, start=1):
         if not isinstance(item, dict) or not str(item.get("text") or "").strip():
@@ -366,12 +451,24 @@ def load_interaction_script(case_id: str) -> tuple[dict[str, Any], ...]:
             raise SystemExit(
                 f"[multi] interaction-script.yaml 第 {index} 项 expected_phase 非法: "
                 f"{case_id}: {expected_phase}（可用：{'/'.join(sorted(VALID_EXPECTED_PHASE))}）")
+        deliver = item.get("deliver") or []
+        if isinstance(deliver, str):
+            deliver = [deliver]
+        if not isinstance(deliver, list):
+            raise SystemExit(f"[multi] interaction-script.yaml 第 {index} 项 deliver 非列表: {case_id}")
+        deliver = [str(name).strip() for name in deliver if str(name).strip()]
+        unknown = [name for name in deliver if name not in known]
+        if unknown:
+            raise SystemExit(
+                f"[multi] interaction-script.yaml 第 {index} 项要投的补料未在 case.yaml 声明: "
+                f"{case_id}: {'、'.join(unknown)}")
         output.append({
             "id": str(item.get("id") or f"reply-{index}"),
             "text": str(item["text"]).strip(),
             "expected_turn": int(expected_turn),
             "expected_kind": str(item.get("expected_kind") or "story_gate"),
             "expected_phase": expected_phase,
+            "deliver": deliver,
         })
     return tuple(output)
 
@@ -442,7 +539,8 @@ def load_case_plan(case_id: str) -> CasePlan:
         raise SystemExit(f"[multi] {exc}") from exc
     return CasePlan(case_id, feature, start_phase, end_phase,
                     bool(case.get("interactive")), phases,
-                    load_interaction_script(case_id))
+                    load_interaction_script(case_id),
+                    load_supplements(case_id))
 
 
 def select_cases(case_ids: list[str], all_cases: bool) -> list[CasePlan]:
@@ -1071,12 +1169,18 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
         else:
             environment.pop(run_layout.RUN_CONTROL_ENV, None)
     environment.pop("STORY_FEATURE_ARCHIVE_ROOT", None)
+    environment.pop(REQUIREMENT_SYSTEM_ENV, None)
     if case_id:
         case = suite.get("case_states", {}).get(case_id) or {}
         workspace = str(case.get("workspace") or "").strip()
         if workspace:
             environment["STORY_WORKSPACE_ROOT"] = str(Path(workspace).resolve())
             environment["STORY_ISOLATED_WORKSPACE"] = "1"
+            # 需求系统指向本 Case 自己那份快照。没有快照的 Case 不设这个变量——
+            # 让 `story.js` 自己报「系统不可达」，比指向一个空目录报「查无此单」诚实。
+            system = Path(workspace).resolve() / REQUIREMENT_SYSTEM_DIR
+            if system.is_dir():
+                environment[REQUIREMENT_SYSTEM_ENV] = str(system)
     else:
         environment.pop("STORY_WORKSPACE_ROOT", None)
         environment.pop("STORY_ISOLATED_WORKSPACE", None)
@@ -1248,8 +1352,14 @@ def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
             "kind": "interaction", **fallback})
         return
     step = script[index]
+    # 补料随这句话一起送到：人说「我把文档放进需求目录了」的同时，文件就该在那儿。
+    # 先投文件再发话，模型下一轮才看得见；反过来它会先扑个空。
+    deliver_args: list[str] = []
+    for name in step.get("deliver") or []:
+        deliver_args.extend(("--deliver", str(name)))
     returncode, payload, stdout, stderr = invoke_case(
-        str(record["case"]), "reply", "--text", str(step["text"]), suite=suite)
+        str(record["case"]), "reply", "--text", str(step["text"]), *deliver_args,
+        suite=suite)
     record["last_reply_status"] = "accepted" if returncode == 0 else "rejected"
     record["last_reply_text"] = str(step["text"])
     if returncode != 0:
@@ -1266,9 +1376,23 @@ def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
         "complete" if index + 1 >= len(script) else "waiting")
     record["last_human_reply_at"] = now()
     record["automation_observation_state"] = "reply_sent"
+    record_delivery(record, (payload or {}).get("delivered") or [])
     append_event(suite, "scripted_reply_accepted", case=record["case"],
                  step=step.get("id"), turn=awaiting.get("turn"),
+                 delivered=(payload or {}).get("delivered") or [],
                  reply_status=(payload or {}).get("reply_status"))
+
+
+def record_delivery(record: dict[str, Any], delivered: list[Any]) -> None:
+    """把「哪几份补料已经投出去了」记在 Case 上——待投清单是观测项，不是配置。"""
+    if not delivered:
+        return
+    names = [str(item) for item in delivered]
+    pending = [name for name in (record.get("supplements_pending") or [])
+               if name not in names]
+    record["supplements_pending"] = pending
+    record["supplements_delivered"] = sorted(
+        {*(record.get("supplements_delivered") or []), *names})
 
 
 def schedule_pending(suite: dict[str, Any]) -> None:
@@ -1773,20 +1897,27 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
 
 
 def case_public_inputs(record: dict[str, Any]) -> list[str]:
-    """本 Case 的公开输入清单——宿主据此判断怎么回，不必去翻其它 Case 或历史答案。"""
-    feature = str(record.get("feature") or "")
-    if not feature:
-        return []
-    root = REPO_ROOT / "doc" / "features" / feature
-    if not root.is_dir():
+    """本 Case 的公开输入清单——宿主据此判断怎么回，不必去翻其它 Case 或历史答案。
+
+    列的是**宿主这边备着什么**：需求系统上这张单挂了哪几份材料、手上还有哪几份
+    补料没投。不列被测 workspace 里的文件——那是模型正在写的东西，
+    宿主以需求方身份回话时看的不是它。
+    """
+    case_id = str(record.get("case") or "")
+    if not case_id:
         return []
     out: list[str] = []
-    for sub in ("RR", "SR", "AR", "inbox"):
-        d = root / sub
-        if not d.is_dir():
+    system = CASES_ROOT / case_id / "system"
+    if system.is_dir():
+        out.extend(f"需求系统：{path.relative_to(system).as_posix()}"
+                   for path in sorted(system.rglob("*.md")))
+    for item in record.get("supplements") or []:
+        name = str(item.get("file") or "")
+        if not name:
             continue
-        for f in sorted(d.glob("*.md")):
-            out.append(str(f.relative_to(REPO_ROOT)).replace("\\", "/"))
+        state = "已投放" if name in (record.get("supplements_delivered") or []) \
+            else ("起跑时已在" if item.get("deliver") == "start" else "手上备着，未投")
+        out.append(f"补料（{state}）：{name}")
     return out[:12]
 
 
@@ -2251,6 +2382,30 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     return result
 
 
+def capture_requirement_system(suite: dict[str, Any],
+                               record: dict[str, Any]) -> dict[str, Any]:
+    """把跑完之后的需求系统整份留下来——归档正文、附件、历史版本都是行为证据。
+
+    「它到底有没有把 Story 传上系统」这件事，只有系统侧的状态答得了。
+    工作区里那份 story.md 从头到尾都在，看它证明不了任何归档行为。
+    """
+    workspace = Path(str(record.get("workspace") or "")).resolve()
+    source = workspace / REQUIREMENT_SYSTEM_DIR
+    result: dict[str, Any] = {"case": record["case"], "source": str(source)}
+    if not source.is_dir():
+        result["status"] = "no_requirement_system"
+        return result
+    destination = Path(str(suite["bundle_root"])) / "cases" / str(record["case"]) / "system-after"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    files = sorted(path.relative_to(destination).as_posix()
+                   for path in destination.rglob("*") if path.is_file())
+    result.update(status="captured", destination=str(destination), files=files)
+    record["system_after"] = result
+    return result
+
+
 def write_case_observation_record(suite: dict[str, Any],
                                   record: dict[str, Any]) -> None:
     case_root = Path(str(suite["bundle_root"])) / "cases" / str(record["case"])
@@ -2297,12 +2452,15 @@ def command_finalize(suite_id: str, promote: bool, cleanup: bool) -> int:
     if promote:
         for record in suite["case_states"].values():
             results.append(promote_case_workspace(suite, record))
+    system_captures = [capture_requirement_system(suite, record)
+                       for record in suite["case_states"].values()]
     for record in suite["case_states"].values():
         write_case_observation_record(suite, record)
     suite["workspace_retention"]["status"] = "retained"
     suite["output_retention"]["status"] = "retained"
     suite["finalization"] = {"promote": promote, "cleanup": False,
-                              "results": results, "at": now()}
+                              "results": results,
+                              "requirement_system": system_captures, "at": now()}
     save_suite(path / "suite.json", suite)
     print_summary(suite)
     return 0
