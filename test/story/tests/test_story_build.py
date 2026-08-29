@@ -577,6 +577,40 @@ class TestGlossaryAndRedlines(StoryBuildCase):
         self.assert_check_names("仓内路径")
 
 
+class TestErrorWordingPointsAtForm(StoryBuildCase):
+    """报错说的是「这一类事实的落点长什么样」，不是一张待抄的字面清单。
+
+    上一版报的是「落点标在『附录』，但那一章里找不到：WalletMain、cardId、…」。
+    模型逐轮照做，把这些字面一个个抄进附录——首跑那个占了全篇 58% 的倾倒区
+    不是模型自己想出来的，是门禁一条一条教出来的（失败数 35→11→9→1→6→18）。
+    """
+
+    def drop_from_appendix(self, fragment: str) -> None:
+        self.rewrite_story(fragment, "")
+
+    def test_numeric_threshold_gets_a_form_hint(self) -> None:
+        self.init_audit()
+        self.settle()
+        self.drop_from_appendix(" 超时 3秒 后")
+        out = self.assert_check_names("阈值")
+        self.assertIn("随它所属的那句叙述或验收行", out)
+        self.assertNotIn("找不到：", out)
+
+    def test_identifier_is_pointed_at_the_appendix_tables(self) -> None:
+        self.init_audit()
+        self.settle()
+        self.drop_from_appendix("createBusinessOrder")
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertNotIn("找不到：", out)
+
+    def test_the_bare_token_list_style_is_gone_from_the_source(self) -> None:
+        """禁止样式在源码里也不该留——留着下一轮就会有人接回去。"""
+        source = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                  ).read_text(encoding="utf-8")
+        self.assertNotIn("但那一章里找不到", source)
+
+
 REVIEW_HUMAN_ZONE = """#### 审核结果（由评审人填写）
 
 - [ ] **同意当前建议**

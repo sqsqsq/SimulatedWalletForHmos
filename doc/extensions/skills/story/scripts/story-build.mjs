@@ -328,6 +328,40 @@ function appendixChapter(contract) {
 }
 
 /**
+ * 核不住的落点，报错该说什么 —— **按 token 的类别指路，不裸列字面**。
+ *
+ * 上一版报的是「落点标在某章，那一章里核不到」外加一串裸 token。
+ * 模型逐轮照做：把那串字面一个个抄进附录。倾倒区不是模型自己想出来的，
+ * 是门禁一条一条教出来的（失败数 35→11→9→1→6→18，修一轴破另一轴）。
+ *
+ * 所以报错只说**这一类事实的落点长什么样**。字面仍然出现——不点名作者不知道说的是哪一条
+ * ——但它出现在一句指路的话里，而不是一张待抄清单里。
+ * 类别与落点名全部来自合同数据，本函数不认识任何具体业务词。
+ */
+function lostHint(unit, lost, contract, at) {
+  const token = lost[0];
+  const appendix = appendixChapter(contract);
+  const subs = appendix?.subsections ?? [];
+  const keep = (contract.id_shapes?.keep ?? []).some(p => {
+    try { return new RegExp(`^(?:${p})$`).test(token); } catch { return false; }
+  });
+  if (keep) {
+    return `验收编号 ${token} 要在验收那一章有独立一行，并写出可观察的通过条件`
+      + '——合并进别人那一行，读者就对不上上游这条到底做没做';
+  }
+  if (/^\d/.test(token)) {
+    return `阈值「${token}」要随它所属的那句叙述或验收行一起讲`
+      + '——单独摆着的数字，读者不知道它约束的是哪一步';
+  }
+  if (appendix && (appendixBound(unit, contract) || /^[A-Za-z_]/.test(token))) {
+    const where = subs.slice(0, 2).map(s => `「${appendix.title}·${s}」`).join('或');
+    return `接口、字段、键名这一类的落点是${where}表`
+      + `——「${token}」在那张表里有一行吗？主叙事里写它的中文业务名`;
+  }
+  return `这条事实要在「${at}」那一章讲出来：${unit.text.slice(0, 30)}`;
+}
+
+/**
  * 这个单元是不是**机器直接归附录**的那一类（合同 `allocation.appendix_bound`）。
  *
  * 技术契约小节的表行——接口、字段、存储键、配置项、事件、交接——落点只可能是
@@ -627,7 +661,7 @@ function cmdCheck(ctx) {
     // 没有 token 的单元走不到这里。
     const lost = u.tokens.filter(t => !chapter.includes(t));
     if (lost.length) {
-      missingTokens.push({ key: u.key, lost, at: rec.at, text: u.text.slice(0, 50) });
+      missingTokens.push({ key: u.key, unit: u, lost, at: rec.at });
     }
   }
 
@@ -635,10 +669,12 @@ function cmdCheck(ctx) {
     problems.push(`${stateless.length} 个单元没有任何落点（三态皆空）：`
       + stateless.slice(0, 5).map(u => `${u.key}「${u.text.slice(0, 30)}」`).join('；')
       + (stateless.length > 5 ? `……另 ${stateless.length - 5} 个` : '')
-      + '——补写正文，或标 covered_by 指向已进正文的另一条');
+      + '——补写正文，或标 covered_by 指向已进正文的另一条；'
+      + '这件事读者在哪一章想知道，就分那一章');
   }
   for (const m of missingTokens.slice(0, 8)) {
-    problems.push(`${m.key}「${m.text}」落点标在「${m.at}」，但那一章里找不到：${m.lost.join('、')}`);
+    problems.push(`${m.key} 在「${m.at}」里核不住：`
+      + lostHint(m.unit, m.lost, ctx.contract, m.at));
   }
   if (missingTokens.length > 8) {
     problems.push(`另有 ${missingTokens.length - 8} 个单元的落点核不住（跑 audit 看全量）`);
