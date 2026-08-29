@@ -1914,6 +1914,30 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
 
 
+@checker
+def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
+    """工程标识、规约编号、检索措辞出现在主叙事里——打断了面向人的阅读。
+
+    它们不是不该在归档件里：评审者要查接口名、要核规约判定，查得到才行。
+    问题在于位置——读者顺着九章读下来，每隔两行撞见一个 camelCase 就得停下来
+    判断「这是我要懂的东西吗」。附录是它们的唯一落点，主叙事写中文业务名。
+
+    判据不是「报了错」而是**点名了是哪一类、在哪一行**：只说「不合规」的门禁，
+    作者只能靠删字去试。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "主叙事零工程标识、零规约编号、零检索措辞")
+    if "主叙事出现" not in out:
+        return Outcome(False, f"check 未过（非语言红线原因）：{out[:200]}")
+    kinds = [k for k in ("工程标识", "rule_id", "search_phrase") if k in out]
+    if len(kinds) < 3:
+        return Outcome(False, f"语言红线只报了 {kinds}，三类应当各自点名：{out[:220]}")
+    return Outcome(False, f"三类语言红线各自被点名：{'、'.join(kinds)}")
+
+
 _CHAIN_LINK = re.compile(r"\]\(([^)\s]+)\)")
 _CHAIN_SCRIPT = re.compile(r"`([A-Za-z0-9_./-]+\.(?:mjs|py|js))`")
 _CHAIN_OWNED = ("scripts/", "doc/extensions/")

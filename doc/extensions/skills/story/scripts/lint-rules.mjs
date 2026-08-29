@@ -138,6 +138,141 @@ export function scanBannedTerms(text) {
   return hits;
 }
 
+// ---------------------------------------------------------------------------
+// 语言红线：作用域是**附录之外的主叙事**
+//
+// 接口名、字段名、存储键、事件 ID、规约编号这些工程标识不是不该出现在归档件里——
+// 它们必须保留，评审者要查的时候得查得到。问题在于**它们不能打断面向人的主叙述**：
+// 读者顺着九章读下来，每隔两行撞见一个 camelCase 就得停下来判断「这是我要懂的东西吗」。
+//
+// 所以附录成为它们的唯一落点：主叙事写中文业务名与中文规约名，标识在附录成表。
+// 这不是排除，是给它一个不打断阅读、机器又核得到的位置——守恒 token 在附录表里照样可核。
+
+/** 检索措辞：把「我去搜了一下没搜到」这种起草过程写进了给读者的文档。 */
+const SEARCH_PHRASE_RE = /检索[^。；\n]{0,16}(?:零命中|未命中|无结果|没有命中|无命中)/g;
+
+/** 来源括注：起草时标注「这个数是谁定的」，读者不需要，它属于追溯表。 */
+const SOURCE_TAG_RE = /（\s*(?:本工程设定|工程设定|上游约束|上游已定|本文设定)[^）]*）/g;
+
+/** 文档坐标：`xxx.md`、`§3.2` 这类只有仓内读者才用得上的定位。 */
+const DOC_COORDINATE_RE = /\b[\w-]+\.md\b|§\s*[\d.]+/g;
+
+/** 代码标识符的两种形态——它们几乎不会是产品名，可以无条件判。 */
+const CAMEL_CASE_RE = /\b[a-z][a-z0-9]*(?:[A-Z][a-zA-Z0-9]*)+\b/g;
+const SNAKE_CASE_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/g;
+
+/** 行内代码：主叙事里出现反引号，包的多半就是标识符。 */
+const INLINE_CODE_RE = /`([^`\n]+)`/g;
+
+/** AI 腔标题：模型写小标题时的口头禅。章标题由 check ① 判，这里只判 H3/H4。 */
+const AI_HEADING_TERMS = ['综上所述', '值得注意的是', '需要指出的是', '总的来说', '综上'];
+
+const REDLINE_HINTS = {
+  repo_identifier: '工程标识进附录的接口 / 数据配置事件 / 工程范围表，主叙事写中文业务名',
+  rule_id: '主叙事写中文规约名；编号进附录的规约判定表',
+  search_phrase: '这是起草过程，不是需求事实——读者不需要知道你搜没搜到',
+  source_tag: '「谁定的」进附录的追溯表，不打断正文',
+  doc_coordinate: '归档件的读者手上没有这个仓库，改用本文章节名或需求系统单号',
+  placeholder_heading: '标题用真实业务名，模板占位没填就是没写',
+  ai_heading: '标题用真实业务名，短、自然、准确概括下文',
+};
+
+/**
+ * 切出主叙事：附录那一章之前的部分。
+ *
+ * 附录不在作用域内——工程标识本来就该落在那里，扫它等于自相矛盾。
+ * 没有附录章时整篇都是主叙事（那说明作者还没写附录，另有判据管）。
+ *
+ * @returns {{line:number, text:string}[]} 行号是**原文行号**，报错要指得回去
+ */
+function mainNarrative(text, appendixTitle) {
+  const out = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(/^##\s+(.+)$/);
+    if (m && appendixTitle && m[1].trim() === appendixTitle) break;
+    out.push({ line: i + 1, text: lines[i] });
+  }
+  return out;
+}
+
+/**
+ * 扫描主叙事里的语言红线。
+ *
+ * **规则全部是数据**：规约编号来自激活清单，PascalCase 标识符来自材料里实际出现过的
+ * token——不猜。猜的代价是把 `HarmonyOS`、`WebView` 这类产品名判成工程标识，
+ * 而作者除了删掉正确的词之外无路可走。
+ *
+ * @param {string} text story 全文
+ * @param {object} [opts]
+ * @param {string} [opts.appendixTitle] 附录章标题（作用域边界）
+ * @param {string[]} [opts.ruleIds] 激活清单里的规约编号
+ * @param {string[]} [opts.identifiers] 材料里出现过的 ASCII 标识符
+ * @param {string[]} [opts.kinds] 只查这几类；不给则全查
+ * @returns {{line:number, kind:string, hit:string, hint:string, text:string}[]}
+ */
+export function scanLanguageRedline(text, opts = {}) {
+  const kinds = new Set(opts.kinds ?? Object.keys(REDLINE_HINTS));
+  const ruleIds = (opts.ruleIds ?? []).filter(id => typeof id === 'string' && id.trim());
+  const identifiers = new Set((opts.identifiers ?? []).filter(
+    id => typeof id === 'string' && /^[A-Za-z][A-Za-z0-9_]{3,}$/.test(id)));
+  const hits = [];
+  let inFence = false;
+
+  const push = (line, kind, hit, raw) => {
+    if (!kinds.has(kind)) return;
+    hits.push({ line, kind, hit, hint: REDLINE_HINTS[kind], text: raw.trim().slice(0, 100) });
+  };
+
+  for (const { line, text: raw } of mainNarrative(text, opts.appendixTitle)) {
+    if (/^\s*(```|~~~)/.test(raw)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;      // 围栏里是图与代码，不是叙述
+
+    const heading = raw.trim().match(/^#{3,4}\s+(.+)$/);
+    if (heading) {
+      const title = heading[1].trim();
+      if (title.includes('{{') || /<[^>]*>/.test(title)) {
+        push(line, 'placeholder_heading', title, raw);
+      }
+      if (/[？?]\s*$/.test(title)) push(line, 'ai_heading', title, raw);
+      for (const term of AI_HEADING_TERMS) {
+        if (title.includes(term)) push(line, 'ai_heading', term, raw);
+      }
+    }
+
+    for (const m of raw.matchAll(INLINE_CODE_RE)) {
+      push(line, 'repo_identifier', m[1], raw);
+    }
+    const outsideCode = raw.replace(INLINE_CODE_RE, ' ');
+    for (const re of [CAMEL_CASE_RE, SNAKE_CASE_RE]) {
+      for (const m of outsideCode.matchAll(re)) push(line, 'repo_identifier', m[0], raw);
+    }
+    for (const word of outsideCode.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? []) {
+      if (identifiers.has(word)) push(line, 'repo_identifier', word, raw);
+    }
+
+    for (const id of ruleIds) {
+      if (raw.includes(id)) push(line, 'rule_id', id, raw);
+    }
+    for (const [kind, re] of [['search_phrase', SEARCH_PHRASE_RE],
+                              ['source_tag', SOURCE_TAG_RE],
+                              ['doc_coordinate', DOC_COORDINATE_RE]]) {
+      for (const m of raw.matchAll(re)) push(line, kind, m[0], raw);
+    }
+  }
+  // 同一行同一类只报一次：一行里三个 camelCase 报三条，读的人只会更烦
+  const seen = new Set();
+  return hits.filter(h => {
+    const key = `${h.line}:${h.kind}:${h.hit}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
  * 扫描仓内本地路径。
  * @param {string} text 待扫描文本

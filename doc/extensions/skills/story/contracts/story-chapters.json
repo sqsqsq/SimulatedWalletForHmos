@@ -6,7 +6,12 @@
   "sources": {
     "PRD": "RR/prd.md",
     "SE": "SR/design.md",
-    "SPEC": { "path": "spec/spec.md", "notes": ["blockquote"] },
+    "SPEC": {
+      "path": "spec/spec.md",
+      "notes": [
+        "blockquote"
+      ]
+    },
     "DESIGN": "AR/design.md",
     "UPSTREAM": "AR/upstream.md"
   },
@@ -33,7 +38,10 @@
     {
       "id": "03-scope",
       "title": "范围",
-      "subsections": ["当前特性", "相关特性"],
+      "subsections": [
+        "当前特性",
+        "相关特性"
+      ],
       "subsections_note": "「相关特性」仅在真有兄弟单据时出现——没有兄弟就没有这一节，不是留空。",
       "questions": [
         "整个需求不做什么",
@@ -83,7 +91,9 @@
     {
       "id": "08-acceptance",
       "title": "验收",
-      "subsections": ["整体质量"],
+      "subsections": [
+        "整体质量"
+      ],
       "subsections_note": "验收场景各自成 H3，标题用真实业务场景名，不是固定小节；「整体质量」是固定的最后一节。",
       "questions": [
         "完整需求怎样才算完成",
@@ -103,7 +113,14 @@
       "id": "10-appendix",
       "title": "附录",
       "appendix": true,
-      "subsections": ["接口", "数据、配置与事件", "工程范围", "规约判定", "追溯", "来源"],
+      "subsections": [
+        "接口",
+        "数据、配置与事件",
+        "工程范围",
+        "规约判定",
+        "追溯",
+        "来源"
+      ],
       "questions": [
         "接口、存储、配置、事件各自的约定与触发时机",
         "数据的用途、有效期、隔离、清理与安全处置",
@@ -156,13 +173,5 @@
       "placeholder_heading",
       "ai_heading"
     ]
-  },
-  "token_exclusions": {
-    "_note": "这些形态不该被要求进归档件：仓内单据号、工程内部代号，以及 spec Scope 里的模块名——writer 的红线本来就不许写模块目录名，再把它们当作必须出现的 token 就是自相矛盾。spec_scope_modules 从 spec 的 in_scope/out_of_scope 块现取，机制层不写任何具体词。**本项在附录成为工程标识的唯一落点后移除**（那时模块名有了可核的落点，不再与红线相斥）。",
-    "patterns": [
-      "\\b(RR|AR|SR|DTS|ISSUE)-?\\d{3,}\\b",
-      "\\bStory\\b"
-    ],
-    "spec_scope_modules": true
   }
 }

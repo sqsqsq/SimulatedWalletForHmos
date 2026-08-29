@@ -32,7 +32,8 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
 import {
-  baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs, scanLocalPaths,
+  baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
+  scanLanguageRedline, scanLocalPaths,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
@@ -143,33 +144,23 @@ function sourceDocs(ctx) {
 /**
  * 组装 token 排除函数——**规则全部来自合同数据**，本文件不写任何具体词。
  *
- * 为什么要排除：模块目录名会被标识符正则取成 token，于是守恒要求它出现在
- * story 里；而归档件红线第 1 条不许写模块名。两条一起生效时作者只能违反其一。
- * 模块名从 spec 的 Scope 块现取——换个工程、换个需求都不用改这里。
- *
- * `id_shapes.drop`（`F1` / `S2` / `DEC-3` 这类仓内工作编号）同理：check ③ 明令它们不许
- * 出现在 story 里，那它们就不能同时是守恒要求出现的 token。两条判据要求相反时，
+ * 只排除 `id_shapes.drop`（`F1` / `S2` / `DEC-3` 这类仓内工作编号）：check ③ 明令它们
+ * 不许出现在 story 里，那它们就不能同时是守恒要求出现的 token。两条判据要求相反时，
  * 作者怎么写都是错的。
+ *
+ * **模块名与单据号不再排除。** 上一版把它们排掉，是因为守恒要求 token 出现在 story，
+ * 而红线不许写模块名——两条相斥，只能让守恒让步。现在附录成了工程标识的唯一落点：
+ * 模块名写进附录的工程范围表，守恒在那里核得到，语言红线只管附录之外的主叙事。
+ * 相斥消失了，排除也就没必要了——**排除掉的东西是不受任何判据保护的**，
+ * 那正是「模块名从 story 里整个消失也没人发现」的成因。
  */
 function buildTokenExclusion(ctx) {
-  const conf = ctx.contract.token_exclusions ?? {};
   const res = [];
-  for (const p of [...(conf.patterns ?? []), ...(ctx.contract.id_shapes?.drop ?? [])]) {
+  for (const p of ctx.contract.id_shapes?.drop ?? []) {
     try { res.push(new RegExp(p)); } catch { /* 形态写错不该让枚举崩掉 */ }
   }
-  const modules = new Set();
-  if (conf.spec_scope_modules) {
-    const spec = readText(path.join(ctx.featureRoot, 'spec', 'spec.md')) ?? '';
-    // `:[ \t]*\n` 不能写成 `:\s*\n`——`\s*` 会贪婪吃掉换行，后面那个 `\n` 就永远匹配不上
-    for (const m of spec.matchAll(/(?:in_scope_modules|out_of_scope_modules):[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n)+)/g)) {
-      for (const line of m[1].split(/\r?\n/)) {
-        const name = line.replace(/^\s*-\s*/, '').replace(/[`"']/g, '').split(/[\s#]/)[0].trim();
-        if (name) modules.add(name.split('/').pop());
-      }
-    }
-  }
-  if (!res.length && !modules.size) return null;
-  return (t) => modules.has(t) || res.some(re => re.test(t));
+  if (!res.length) return null;
+  return (t) => res.some(re => re.test(t));
 }
 
 function cmdInit(ctx) {
@@ -700,6 +691,45 @@ function cmdCheck(ctx) {
       ['图片断链', 'image', scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path)],
     ]) {
       if (hits.length) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
+    }
+  }
+
+  // ⑩ 语言红线：主叙事（附录之外）不出现工程标识、规约编号、检索措辞、
+  //    来源括注、文档坐标、占位标题、AI 腔标题
+  //
+  // 这些东西不是不该在归档件里——接口名、规约编号评审者要查的时候得查得到。
+  // 问题在于**它们不能打断面向人的主叙述**：读者顺着九章读下来，每隔两行撞见一个
+  // camelCase 就得停下来判断「这是我要懂的东西吗」。附录是它们的落点。
+  //
+  // 判据全部是数据：作用域边界取合同里标了 appendix 的那一章，规约编号取激活清单，
+  // PascalCase 标识符取材料里实际出现过的 token——**不猜**。猜的代价是把产品名
+  // 判成工程标识，而作者除了删掉正确的词之外无路可走。
+  const redlineKinds = ctx.contract.language_redline?.kinds;
+  if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
+    const appendix = appendixChapter(ctx.contract);
+    const identifiers = [];
+    for (const u of doc.units) {
+      for (const t of u.tokens ?? []) {
+        if (/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t)) identifiers.push(t);
+      }
+    }
+    const hits = scanLanguageRedline(storyText, {
+      appendixTitle: appendix?.title,
+      ruleIds: doc.units.filter(u => u.kind === 'knowledge').map(u => u.tokens[0]),
+      identifiers,
+      kinds: redlineKinds,
+    });
+    if (hits.length) {
+      const byKind = new Map();
+      for (const h of hits) {
+        if (!byKind.has(h.kind)) byKind.set(h.kind, []);
+        byKind.get(h.kind).push(h);
+      }
+      for (const [kind, list] of byKind) {
+        const sample = list.slice(0, 3).map(h => `${h.line} 行「${h.hit}」`).join('，');
+        problems.push(`主叙事出现${kind === 'repo_identifier' ? '工程标识' : kind} ${list.length} 处`
+          + `（${sample}${list.length > 3 ? ' …' : ''}）——${list[0].hint}`);
+      }
     }
   }
 

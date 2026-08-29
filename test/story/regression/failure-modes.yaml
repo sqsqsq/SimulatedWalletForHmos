@@ -773,6 +773,25 @@ modes:
       它证明的是「材料这么说」而不是「story 讲清了」——上一轮 verifier 报告 272 行证据
       全是这种回声。判据：引文须是 story 那一章的逐字子串、≥12 字、且不是单元原文的子串。
 
+  - id: S05-main-text-identifier
+    dimension: expression
+    found_round: 2026-08-29
+    form: 工程标识、规约编号、检索措辞写进主叙事——读者每隔两行就要停下来判断「这是我要懂的东西吗」
+    clause: KV-2 / 08-21 §2「不能打断面向人的主叙述」
+    checker: s05_main_text_identifier
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S05-main-text-identifier/bad
+    good_fixture: test/story/fixtures/failure-modes/S05-main-text-identifier/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      接口名、字段名、规约编号必须保留在归档件里——评审者要查得到。争的是位置不是有无：
+      附录是它们的唯一落点，主叙事写中文业务名与中文规约名。批次 3 实测两个 Case 的
+      作者落点里绝大多数来自规格件原句，story 通篇是 camelCase 与编号，评审者读不下去。
+      判据作用域限定在附录之外；判定形态全部是数据（规约编号取激活清单、标识取材料 token），
+      不猜——猜会把产品名判成工程标识，作者除了删掉正确的词之外无路可走。
+
   - id: R02-knowledge-row-missing
     dimension: content
     found_round: "2026-08-28"
