@@ -1833,6 +1833,91 @@ def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"引文全部可在目标产物里检索到（{out['verified']} 条）")
 
 
+def _chapter_bodies(story_path) -> dict:
+    """把 story 切成 {章标题: 正文}——夹具的引文要从真正的那一章里取。"""
+    out, cur, buf = {}, None, []
+    if story_path is None or not Path(story_path).is_file():
+        return out
+    for line in Path(story_path).read_text(encoding="utf-8").split("\n"):
+        if line.startswith("## "):
+            if cur:
+                out[cur] = "\n".join(buf).strip()
+            cur, buf = line[3:].strip(), []
+            continue
+        if cur is not None:
+            buf.append(line)
+    if cur:
+        out[cur] = "\n".join(buf).strip()
+    return out
+
+
+def _is_empty_chapter(body: str) -> bool:
+    """空章：正文恰是那一句。它已明说这件事不在本需求里，读者的问题也就不存在。"""
+    return body.strip() == "本需求不涉及。"
+
+
+def _chapter_quote(body: str) -> str:
+    """取该章正文的一段连续原文作引文。
+
+    不能只找散文句：术语章与异常章天然是表、业务流程章天然是图，
+    它们里面的文字同样是「答了这个问题」的证据。所以按**原文顺序**拼，
+    取够长的一段——check 只要求它是该章的逐字子串且 ≥12 字。
+    """
+    for line in body.split("\n"):
+        s = line.strip()
+        if not s or s.startswith(("#", "```", "~~~")):
+            continue
+        if s.startswith("|"):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            cells = [c for c in cells if c and not set(c) <= set("-: ")]
+            if not cells:
+                continue
+            s = max(cells, key=len)
+        if len(s) >= 14:
+            return s[:60]
+    return ""
+
+
+def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
+    """按合同派生裁决者的三张表：逐单元 / 逐问 / 逐章。
+
+    逐问与逐章的行由**合同**决定（章、问题、维度），不在测试里写死：合同改了夹具
+    自动跟着变；写死的话，改合同就要同步改一堆夹具，而没人保证会改。
+
+    引文取该章自己的一段原文——用同一句填满所有章会被 check 判「引文在该章里
+    检索不到」，那正是它该做的。
+    """
+    import json as _json
+    contract = _json.loads((Path(repo_root) / "doc/extensions/skills/story/contracts"
+                            / "story-chapters.json").read_text(encoding="utf-8"))
+    verdicts = contract.get("verdicts") or {}
+    question_ok = (verdicts.get("question_words") or ["答了"])[0]
+    chapter_ok = (verdicts.get("chapter_words") or ["达标"])[0]
+    bodies = _chapter_bodies(story_path)
+
+    lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
+    lines += ["| {} | {} | {} |".format(k, v, q) for k, v, q in unit_rows]
+
+    lines += ["", "| 章 | 问题 | 裁决 | 引文 |", "|---|---|---|---|"]
+    for chapter in contract.get("chapters") or []:
+        body = bodies.get(chapter["title"], "")
+        if _is_empty_chapter(body):
+            continue
+        evidence = _chapter_quote(body) or quote
+        for question in chapter.get("questions") or []:
+            lines.append("| {} | {} | {} | {} |".format(
+                chapter["title"], question, question_ok, evidence))
+
+    lines += ["", "| 章 | 维度 | 裁决 | 依据 |", "|---|---|---|---|"]
+    for chapter in contract.get("chapters") or []:
+        if chapter.get("appendix") or _is_empty_chapter(bodies.get(chapter["title"], "")):
+            continue
+        for dimension in verdicts.get("chapter_dimensions") or []:
+            lines.append("| {} | {} | {} | 本章按此写就 |".format(
+                chapter["title"], dimension, chapter_ok))
+    return "\n".join(lines) + "\n"
+
+
 def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
     """跑 init → audit →（可选写裁决表）→ check，返回 check 的退出码与输出。
 
@@ -1870,9 +1955,11 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
                 rec["at"], rec["by"] = "功能说明", "author"
                 keys.append(rec["key"])
         audit.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        rows = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
-        rows += [f"| {k} | 讲清 | {extra_verdict} |" for k in keys]
-        (audit.parent / "story-verdicts.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        (audit.parent / "story-verdicts.md").write_text(
+            _verdict_tables(REPO_ROOT, extra_verdict,
+                            [(k, "讲清", extra_verdict) for k in keys],
+                            root / "doc" / "features" / "F1" / "AR" / "story.md"),
+            encoding="utf-8")
 
     r = run("check")
     return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()

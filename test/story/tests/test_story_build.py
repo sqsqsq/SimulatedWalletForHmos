@@ -27,6 +27,91 @@ CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
 
 
+def _chapter_bodies(story_path) -> dict:
+    """把 story 切成 {章标题: 正文}——夹具的引文要从真正的那一章里取。"""
+    out, cur, buf = {}, None, []
+    if story_path is None or not Path(story_path).is_file():
+        return out
+    for line in Path(story_path).read_text(encoding="utf-8").split("\n"):
+        if line.startswith("## "):
+            if cur:
+                out[cur] = "\n".join(buf).strip()
+            cur, buf = line[3:].strip(), []
+            continue
+        if cur is not None:
+            buf.append(line)
+    if cur:
+        out[cur] = "\n".join(buf).strip()
+    return out
+
+
+def _is_empty_chapter(body: str) -> bool:
+    """空章：正文恰是那一句。它已明说这件事不在本需求里，读者的问题也就不存在。"""
+    return body.strip() == "本需求不涉及。"
+
+
+def _chapter_quote(body: str) -> str:
+    """取该章正文的一段连续原文作引文。
+
+    不能只找散文句：术语章与异常章天然是表、业务流程章天然是图，
+    它们里面的文字同样是「答了这个问题」的证据。所以按**原文顺序**拼，
+    取够长的一段——check 只要求它是该章的逐字子串且 ≥12 字。
+    """
+    for line in body.split("\n"):
+        s = line.strip()
+        if not s or s.startswith(("#", "```", "~~~")):
+            continue
+        if s.startswith("|"):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            cells = [c for c in cells if c and not set(c) <= set("-: ")]
+            if not cells:
+                continue
+            s = max(cells, key=len)
+        if len(s) >= 14:
+            return s[:60]
+    return ""
+
+
+def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
+    """按合同派生裁决者的三张表：逐单元 / 逐问 / 逐章。
+
+    逐问与逐章的行由**合同**决定（章、问题、维度），不在测试里写死：合同改了夹具
+    自动跟着变；写死的话，改合同就要同步改一堆夹具，而没人保证会改。
+
+    引文取该章自己的一段原文——用同一句填满所有章会被 check 判「引文在该章里
+    检索不到」，那正是它该做的。
+    """
+    import json as _json
+    contract = _json.loads((Path(repo_root) / "doc/extensions/skills/story/contracts"
+                            / "story-chapters.json").read_text(encoding="utf-8"))
+    verdicts = contract.get("verdicts") or {}
+    question_ok = (verdicts.get("question_words") or ["答了"])[0]
+    chapter_ok = (verdicts.get("chapter_words") or ["达标"])[0]
+    bodies = _chapter_bodies(story_path)
+
+    lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
+    lines += ["| {} | {} | {} |".format(k, v, q) for k, v, q in unit_rows]
+
+    lines += ["", "| 章 | 问题 | 裁决 | 引文 |", "|---|---|---|---|"]
+    for chapter in contract.get("chapters") or []:
+        body = bodies.get(chapter["title"], "")
+        if _is_empty_chapter(body):
+            continue
+        evidence = _chapter_quote(body) or quote
+        for question in chapter.get("questions") or []:
+            lines.append("| {} | {} | {} | {} |".format(
+                chapter["title"], question, question_ok, evidence))
+
+    lines += ["", "| 章 | 维度 | 裁决 | 依据 |", "|---|---|---|---|"]
+    for chapter in contract.get("chapters") or []:
+        if chapter.get("appendix") or _is_empty_chapter(bodies.get(chapter["title"], "")):
+            continue
+        for dimension in verdicts.get("chapter_dimensions") or []:
+            lines.append("| {} | {} | {} | 本章按此写就 |".format(
+                chapter["title"], dimension, chapter_ok))
+    return "\n".join(lines) + "\n"
+
+
 class StoryBuildCase(unittest.TestCase):
     """每个用例一份新工作区；子类只关心自己那一条判据。"""
 
@@ -77,9 +162,11 @@ class StoryBuildCase(unittest.TestCase):
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def write_verdicts(self, rows: list[tuple[str, str, str]]) -> None:
-        lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
-        lines += [f"| {key} | {verdict} | {quote} |" for key, verdict, quote in rows]
-        (self.src / "story-verdicts.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        """三张表一起写——裁决者的产物本来就是三张，只写一张 check 会判缺表。"""
+        fallback = next((q for _, verdict, q in rows
+                         if verdict == "讲清" and len(q) >= 12), "")
+        (self.src / "story-verdicts.md").write_text(
+            _verdict_tables(REPO_ROOT, fallback, rows, self.story_path), encoding="utf-8")
 
     def story(self) -> str:
         return self.story_path.read_text(encoding="utf-8")

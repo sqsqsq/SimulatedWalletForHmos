@@ -236,6 +236,39 @@ function storySections(storyText) {
   return out.map(s => ({ title: s.title, text: s.body.join('\n') }));
 }
 
+/**
+ * 切出裁决产物里的三张表。
+ *
+ * **按表头认，不按标题认**：标题是给人读的，作者改一个字表就找不着了；
+ * 表头是契约里定死的那几列。三表分开是因为任务不同——逐单元问「材料里这件事讲了没有」，
+ * 逐问问「读者这一章想知道的答了没有」，逐章问「这一章读起来对不对」。
+ *
+ * @returns {{units: Map, questions: {chapter,question,verdict,quote}[],
+ *            chapters: {chapter,dimension,verdict,basis}[]}}
+ */
+function parseVerdictTables(text) {
+  const out = { units: new Map(), questions: [], chapters: [] };
+  if (text === null || text === undefined) return out;
+  let mode = null;
+  for (const line of String(text).split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith('|')) continue;
+    const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.replace(/[`*]/g, '').trim());
+    if (/^[-: ]*$/.test(c[0])) continue;             // 分隔行
+    if (c[0] === '单元键') { mode = 'units'; continue; }
+    if (c[0] === '章' && c[1] === '问题') { mode = 'questions'; continue; }
+    if (c[0] === '章' && c[1] === '维度') { mode = 'chapters'; continue; }
+    if (mode === 'units' && c.length >= 3) {
+      out.units.set(c[0], { verdict: c[1], quote: c[2] });
+    } else if (mode === 'questions' && c.length >= 4) {
+      out.questions.push({ chapter: c[0], question: c[1], verdict: c[2], quote: c[3] });
+    } else if (mode === 'chapters' && c.length >= 4) {
+      out.chapters.push({ chapter: c[0], dimension: c[1], verdict: c[2], basis: c[3] });
+    }
+  }
+  return out;
+}
+
 /** 附录那一章（合同里标了 `appendix` 的那个）。没有就返回 null。 */
 function appendixChapter(contract) {
   return (contract.chapters ?? []).find(c => c.appendix) ?? null;
@@ -631,28 +664,25 @@ function cmdCheck(ctx) {
   //
   // 这一条替代上一版的「靠语义判据守恒」那个空计数——说了「有 N 条机器管不了」，
   // 却没人真去管它们，等于把漏写记了个数就放行。
+  const verdictConf = ctx.contract.verdicts ?? {};
+  const unitWords = verdictConf.unit_words ?? VERDICT_WORDS;
+  const vtextAll = readText(ctx.verdictsPath);
+  const tables = parseVerdictTables(vtextAll);
   if (authorPlaced.length) {
-    const vtext = readText(ctx.verdictsPath);
+    const vtext = vtextAll;
     if (vtext === null) {
       problems.push(`${authorPlaced.length} 个单元的落点机器定不了，需要裁决者逐条裁，`
         + `但 ${path.basename(ctx.verdictsPath)} 不存在`);
     } else {
-      const rows = new Map();
-      for (const line of vtext.split(/\r?\n/)) {
-        const s = line.trim();
-        if (!s.startsWith('|')) continue;
-        const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.trim());
-        if (c.length < 3 || /^[-: ]*$/.test(c[0])) continue;
-        rows.set(c[0].replace(/[`*]/g, ''), { verdict: c[1], quote: c[2] });
-      }
+      const rows = tables.units;
       for (const u of authorPlaced) {
         const row = rows.get(u.key);
         if (!row) { problems.push(`裁决表里没有 ${u.key}「${u.text.slice(0, 30)}」这一行`); continue; }
-        if (!VERDICT_WORDS.includes(row.verdict)) {
-          problems.push(`${u.key} 的裁决「${row.verdict}」不是 ${VERDICT_WORDS.join(' / ')} 之一`);
+        if (!unitWords.includes(row.verdict)) {
+          problems.push(`${u.key} 的裁决「${row.verdict}」不是 ${unitWords.join(' / ')} 之一`);
           continue;
         }
-        if (row.verdict === '未讲清') {
+        if (row.verdict === unitWords[1]) {
           problems.push(`${u.key}「${u.text.slice(0, 30)}」被裁「未讲清」——补写那一章`);
           continue;
         }
@@ -667,6 +697,69 @@ function cmdCheck(ctx) {
           problems.push(`${u.key} 的引文是来源单元原文的子串——那是回声，抄 story 里你据以判断的那句`);
         }
       }
+    }
+  }
+
+  // ⑥b 逐问与逐章：每章的读者问题答了没有、这一章读起来对不对
+  //
+  // 逐单元守的是「材料里的事实没丢」，它守不住「读者想知道的事没人回答」——
+  // 材料里没写的东西不会成为单元，而读者照样会问。逐问补的是这个缺口。
+  // 逐章判的是六个语义维度（合同 `verdicts.chapter_dimensions`）：业务过程与功能
+  // 分没分开、正常受限与真异常分没分开、取舍有没有被否方案……这些机器判不了。
+  //
+  // **前提是裁决产物已经存在**。writer 交回前会自己跑一次 check，那时裁决者还没上场，
+  // 拦它没有意义；裁决者一旦交了产物，三张表就都得齐——只交一张，等于把
+  // 「读者的问题答了没有」和「这一章读起来对不对」两件事悄悄跳过了。
+  if (storyText && vtextAll !== null && verdictConf.chapter_dimensions?.length) {
+    const questionWords = verdictConf.question_words ?? [];
+    const chapterWords = verdictConf.chapter_words ?? [];
+    const answered = new Map(tables.questions.map(r => [`${r.chapter}｜${r.question}`, r]));
+    const judged = new Map(tables.chapters.map(r => [`${r.chapter}｜${r.dimension}`, r]));
+    const missingQ = [];
+    const missingC = [];
+    // 空章（正文恰为「本需求不涉及。」）不判：它已经明说这件事不在本需求里，
+    // 读者的问题也就不存在。要求它答，只会逼出一段为了过门禁而写的空话。
+    const isEmptyChapter = (title) =>
+      norm(sectionText.get(title) ?? '') === norm(EMPTY_SECTION_TEXT);
+    for (const chapter of ctx.contract.chapters) {
+      if (isEmptyChapter(chapter.title)) continue;
+      for (const q of chapter.questions ?? []) {
+        const row = answered.get(`${chapter.title}｜${q}`);
+        if (!row) { missingQ.push(`${chapter.title}｜${q.slice(0, 20)}`); continue; }
+        if (!questionWords.includes(row.verdict)) {
+          problems.push(`「${chapter.title}」的问题裁决「${row.verdict}」`
+            + `不是 ${questionWords.join(' / ')} 之一`);
+        } else if (row.verdict === questionWords[1]) {
+          problems.push(`「${chapter.title}」没答读者的问题「${q.slice(0, 24)}」`
+            + `——${row.quote || '裁决者没写缺什么'}`);
+        } else if (norm(row.quote).length < MIN_QUOTE) {
+          problems.push(`「${chapter.title}」问题「${q.slice(0, 16)}」的引文不足 ${MIN_QUOTE} 字`);
+        } else if (!norm(sectionText.get(chapter.title) ?? '').includes(norm(row.quote))) {
+          problems.push(`「${chapter.title}」问题「${q.slice(0, 16)}」的引文在该章里检索不到`);
+        }
+      }
+      if (chapter.appendix) continue;      // 附录是查阅件，不判可读性维度
+      for (const dim of verdictConf.chapter_dimensions) {
+        const row = judged.get(`${chapter.title}｜${dim}`);
+        if (!row) { missingC.push(`${chapter.title}｜${dim.slice(0, 14)}`); continue; }
+        if (!chapterWords.includes(row.verdict)) {
+          problems.push(`「${chapter.title}」的「${dim.slice(0, 14)}」裁决「${row.verdict}」`
+            + `不是 ${chapterWords.join(' / ')} 之一`);
+        } else if (row.verdict === chapterWords[1]) {
+          problems.push(`「${chapter.title}」的「${dim.slice(0, 14)}」不达标`
+            + `——${row.basis || '裁决者没写依据'}`);
+        } else if (!row.basis) {
+          problems.push(`「${chapter.title}」的「${dim.slice(0, 14)}」判了达标却没写依据`);
+        }
+      }
+    }
+    if (missingQ.length) {
+      problems.push(`逐问表缺 ${missingQ.length} 行（${missingQ.slice(0, 3).join('、')}`
+        + `${missingQ.length > 3 ? ' …' : ''}）——每章每个读者问题都要有裁决`);
+    }
+    if (missingC.length) {
+      problems.push(`逐章表缺 ${missingC.length} 行（${missingC.slice(0, 3).join('、')}`
+        + `${missingC.length > 3 ? ' …' : ''}）——附录之外每章每个维度都要有裁决`);
     }
   }
 
