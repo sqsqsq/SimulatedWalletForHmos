@@ -1004,6 +1004,47 @@ function cmdCheck(ctx) {
     }
   }
 
+  // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
+  //
+  // 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区——
+  // 首跑的产物就在附录里多长出一个「机器核对索引」小节，255 行原文占全篇 58%。
+  // 判的是结构不是内容：约定之外的小节、原文围栏块、空节，三样都不该有。
+  const appendixDef = appendixChapter(ctx.contract);
+  const appendixSection = appendixDef
+    ? sections.find(sec => sec.title === appendixDef.title) : null;
+  const wantSubs = (appendixDef?.subsections ?? []).map(normalizeHeading);
+  if (appendixSection && wantSubs.length) {
+    for (const sub of subsectionNames(appendixSection.text)) {
+      if (!wantSubs.includes(sub.name)) {
+        problems.push(`「${appendixDef.title}」多了一节「${sub.raw}」`
+          + `——${appendixDef.title}只有约定的这几节：${wantSubs.join('、')}；`
+          + '工程细节各有落点表，叙述归正文章');
+      }
+    }
+    for (const want of wantSubs) {
+      const body = subsectionText(appendixSection.text, want);
+      if (body === null) {
+        problems.push(`「${appendixDef.title}」缺「${want}」这一节`
+          + '——确实不涉及也要留标题，写「不涉及：<依据>」一行');
+        continue;
+      }
+      const rows = body.split(/\r?\n/).map(l => l.trim())
+        .filter(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
+      if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
+        problems.push(`「${appendixDef.title}·${want}」是空的`
+          + '——成表或成列表，确实不涉及就写「不涉及：<依据>」一行');
+      }
+    }
+    for (const line of appendixSection.text.split(/\r?\n/)) {
+      const fence = line.trim().match(/^(?:```|~~~)\s*(\w*)/);
+      if (fence && fence[1] && fence[1] !== 'mermaid') {
+        problems.push(`「${appendixDef.title}」里有 ${fence[1]} 围栏块`
+          + `——${appendixDef.title}是表和列表，不是原文存放处`);
+        break;
+      }
+    }
+  }
+
   if (problems.length) {
     process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
     problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));

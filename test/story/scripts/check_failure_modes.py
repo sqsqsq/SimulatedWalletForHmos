@@ -2225,6 +2225,25 @@ def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"三类语言红线各自被点名：{'、'.join(kinds)}")
 
 
+@checker
+def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
+    """附录长出合同之外的小节、材料原文成段搬进围栏块——附录成了倾倒区。
+
+    附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。
+    首跑实测：产物在附录下多长出一个「机器核对索引」小节，255 行原文占全篇 58%，
+    而当时的判据只核「附录这一章存在」，倾倒完全合法。
+    判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "附录只有约定的几节，节内是表和列表")
+    if "多了一节" in out or "不是原文存放处" in out or "是空的" in out:
+        return Outcome(False, "附录的倾倒被点名（合同外小节 / 围栏块 / 空节）")
+    return Outcome(False, f"check 未过（非附录结构原因）：{out[:200]}")
+
+
 GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
 
 

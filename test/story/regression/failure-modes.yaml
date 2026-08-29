@@ -906,3 +906,22 @@ modes:
       倾倒成了唯一合法解。金样定稿后成为唯一效果定义——**任何判据若拦金样，错的是判据**。
       这一条是常驻正例：判据改动先跑它。两个分支都验——金样零 FAIL，
       且往副本里塞违例时判项真的点名（不然「零 FAIL」可能只是判项全空转）。
+
+  - id: S06-appendix-dump
+    dimension: expression
+    found_round: "2026-08-29"
+    form: 附录里长出合同之外的小节，材料原文成段搬进围栏块——附录变成倾倒区，归档件的可读部分被挤掉
+    clause: KG-3 / E2
+    checker: s06_appendix_dump
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S06-appendix-dump/bad
+    good_fixture: test/story/fixtures/failure-modes/S06-appendix-dump/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。首跑实测：
+      产物在附录下多长出一个「机器核对索引」小节，255 行原文占全篇 58%，
+      而当时的判据只核「附录这一章存在」，倾倒完全合法。
+      现在判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
+      小节名可带 A.–E. 序号：序号是表达形式，比较前统一剥掉。
