@@ -31,6 +31,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
+import { normalizeHeading } from './headings.mjs';
 import {
   baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths, scanReadability,
@@ -220,20 +221,26 @@ function cmdInit(ctx) {
 // audit：三态核对
 // --------------------------------------------------------------------------
 
-/** story 正文按 `## ` 标题切节。 */
+/**
+ * story 正文按 `## ` 标题切节。
+ *
+ * `title` 是**规范化后的业务名**（`## 1. 背景` → `背景`），`raw` 保留原样给报错用。
+ * 全链的标题比较——章序、落点归章、附录定位——都用 `title`，于是「作者按阅读习惯
+ * 加章序编号」与「合同存业务名」两件事同时成立，不必在每处判据各放宽一次。
+ */
 function storySections(storyText) {
   const out = [];
   let cur = null;
   for (const line of String(storyText ?? '').split(/\r?\n/)) {
     const m = line.trim().match(/^##\s+(.+)$/);
     if (m) {
-      cur = { title: m[1].trim(), body: [] };
+      cur = { raw: m[1].trim(), body: [] };
       out.push(cur);
       continue;
     }
     if (cur) cur.body.push(line);
   }
-  return out.map(s => ({ title: s.title, text: s.body.join('\n') }));
+  return out.map(s => ({ title: normalizeHeading(s.raw), raw: s.raw, text: s.body.join('\n') }));
 }
 
 /**
@@ -281,6 +288,7 @@ function appendixChapter(contract) {
  * 在整章正文里找「四列表行」会把接口行也当成判定行读进来。所以按小节切。
  */
 function subsectionText(sectionText, name) {
+  const want = normalizeHeading(name);
   const lines = String(sectionText ?? '').split(/\r?\n/);
   const body = [];
   let hit = false;
@@ -288,12 +296,25 @@ function subsectionText(sectionText, name) {
     const m = line.trim().match(/^###\s+(.+)$/);
     if (m) {
       if (hit) break;
-      hit = m[1].trim() === name;
+      hit = normalizeHeading(m[1]) === want;      // `### A. 接口` 与合同的 `接口` 是同一节
       continue;
     }
     if (hit) body.push(line);
   }
   return hit ? body.join('\n') : null;
+}
+
+/** 一章里全部 `###` 小节的业务名（序号已剥）。 */
+function subsectionNames(sectionText) {
+  const out = [];
+  let inFence = false;
+  for (const line of String(sectionText ?? '').split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const m = line.trim().match(/^###\s+(.+)$/);
+    if (m) out.push({ raw: m[1].trim(), name: normalizeHeading(m[1]) });
+  }
+  return out;
 }
 
 /**
@@ -848,11 +869,14 @@ function cmdCheck(ctx) {
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
   // 词表与判定在 lint-rules.mjs（SSOT），这里只调。
   const reviewText = readText(ctx.reviewPath) ?? '';
+  // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
+  // 「灰度」「回退」是业务事实不是客户端文案——收缩的是作用域，不是词表。
+  const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
   for (const [label, text] of [['story', storyText], ['review', reviewText]]) {
     if (!text) continue;
     for (const [what, kind, hits] of [
       ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot)],
-      ['客户端语境禁用词', 'banned', scanBannedTerms(text)],
+      ['客户端语境禁用词', 'banned', scanBannedTerms(text, { exemptChapters: bannedExempt })],
       ['悬空引用', 'dangling', scanDanglingRefs(text, ctx.projectRoot)],
       ['图片断链', 'image', scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path)],
     ]) {

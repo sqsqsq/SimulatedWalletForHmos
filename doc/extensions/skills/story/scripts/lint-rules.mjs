@@ -15,6 +15,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
+import { normalizeHeading } from './headings.mjs';
 
 /** 客户端语境禁用词：服务器侧词汇，单独使用也算 */
 const BANNED_TERMS = [
@@ -117,12 +118,23 @@ function localPathRe(projectRoot) {
 
 /**
  * 扫描禁用词。
+ *
+ * **章级豁免**（`opts.exemptChapters`，取值来自合同数据）：某些章天然在讲发布动作，
+ * 「灰度」「回退」在那里是业务事实而不是客户端文案。作用域收缩到章，与语言红线
+ * 收缩到「附录之外」同形——不是给某个词开小灶，是承认这几个词在那一章有正当位置。
+ * 实证：理想产物的「回退设计」小节被整节判成违规，而那一节恰是评审者最要看的。
+ *
+ * @param {string} text
+ * @param {object} [opts]
+ * @param {string[]} [opts.exemptChapters] 整章豁免的章标题（业务名，编号自动剥）
  * @returns {{line:number, term:string, hint:string, text:string}[]}
  */
-export function scanBannedTerms(text) {
+export function scanBannedTerms(text, opts = {}) {
   const hits = [];
+  const exempt = new Set((opts.exemptChapters ?? []).map(normalizeHeading).filter(Boolean));
   const lines = text.split(/\r?\n/);
   let inFence = false;
+  let inExemptChapter = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^\s*(```|~~~)/.test(line)) {
@@ -130,6 +142,9 @@ export function scanBannedTerms(text) {
       continue;
     }
     if (inFence) continue; // 代码块内可能是标识符，不判
+    const heading = line.trim().match(/^##\s+(.+)$/);
+    if (heading) inExemptChapter = exempt.has(normalizeHeading(heading[1]));
+    if (inExemptChapter) continue;
     if (EXEMPT_LINE_PATTERNS.some(re => re.test(line))) continue;
     for (const { term, hint } of BANNED_TERMS) {
       if (line.includes(term)) hits.push({ line: i + 1, term, hint, text: line.trim().slice(0, 100) });
@@ -183,14 +198,19 @@ const REDLINE_HINTS = {
  * 附录不在作用域内——工程标识本来就该落在那里，扫它等于自相矛盾。
  * 没有附录章时整篇都是主叙事（那说明作者还没写附录，另有判据管）。
  *
+ * **标题过规范化通道**：归档件的附录写作 `## 10. 附录`，合同里存的是 `附录`。
+ * 早先这里做逐字相等比较，编号一加就认不出附录，于是整个附录被当主叙事扫，
+ * 报出几十条本该允许的接口名与字段名——作者看到的是一堵无法翻越的墙。
+ *
  * @returns {{line:number, text:string}[]} 行号是**原文行号**，报错要指得回去
  */
 function mainNarrative(text, appendixTitle) {
   const out = [];
+  const want = normalizeHeading(appendixTitle);
   const lines = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].trim().match(/^##\s+(.+)$/);
-    if (m && appendixTitle && m[1].trim() === appendixTitle) break;
+    if (m && want && normalizeHeading(m[1]) === want) break;
     out.push({ line: i + 1, text: lines[i] });
   }
   return out;
@@ -257,9 +277,14 @@ export function scanLanguageRedline(text, opts = {}) {
     for (const id of ruleIds) {
       if (raw.includes(id)) push(line, 'rule_id', id, raw);
     }
+    // 来源括注在**表格里不判**：它之所以是病，是因为插在句子中间打断阅读；
+    // 表格的一格里「谁定的」是结构化事实，读者一眼扫过去，不构成打断。
+    // 实测：理想产物的关键取舍表用它标「这条已由上游定死」，那正是评审者要看的。
+    const isTableRow = raw.trim().startsWith('|');
     for (const [kind, re] of [['search_phrase', SEARCH_PHRASE_RE],
                               ['source_tag', SOURCE_TAG_RE],
                               ['doc_coordinate', DOC_COORDINATE_RE]]) {
+      if (kind === 'source_tag' && isTableRow) continue;
       for (const m of raw.matchAll(re)) push(line, kind, m[0], raw);
     }
   }

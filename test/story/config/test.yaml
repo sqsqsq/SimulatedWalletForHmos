@@ -17,12 +17,16 @@ feature_history:
 cli:
   # CLI runtime 随本仓交付于 tools/cli，runner 不拼 provider 参数。
   #
-  # 2026-08-29 换宿主：原来那套的模型凭据被服务端拒（401），当天中午还是好的。
-  # **换宿主等于换被测对象**——本轮之后的效率数字与更早几轮不能直接比，
-  # 比之前要先说清楚中间换过一次（G3：计数必须带口径）。
-  name: codex
-  model: gpt-5.6-luna
-  profile: full_access
+  # 宿主变更史（**换宿主等于换被测对象**：跨宿主的效率数字不能直接比，
+  # 引用更早几轮的次数与时长前须先说清中间换过谁，G3 计数必须带口径）：
+  #   2026-08-29 凭据被服务端拒（401）→ 临时换 codex / gpt-5.6-luna，
+  #              批次 4 首跑（check 23 次、失败序列 35→11→9→1→6→18、
+  #              成文链 24 分、全轮 ≥89 分未闭环）就是在那个宿主上测的；
+  #   2026-08-30 凭据恢复 → 换回本行这套。**首跑那组数字与之后各轮跨宿主**，
+  #              要比就得在本宿主上另测一组基线。
+  name: opencode
+  model: bailian/deepseek-v4-flash-0731
+  profile: build
   # 时钟按**单次 CLI run**计，不是整个用例。spec 阶段要跑 harness + verifier，
   # 比单轮问答长得多；coding 阶段要逐文件写码并 lint，更长。
   # 事件静默不是失败条件，不配置 idle/turn timeout。
