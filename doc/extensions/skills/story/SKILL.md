@@ -83,7 +83,7 @@ python doc/extensions/skills/story/scripts/story_flow.py archived --feature <AR>
 **③ 登记之后**，`AR/review.md` **归人所有——只备份，不重建**，评审人的线上批注与
 `/story review` 拉回的回稿都留在里面。③ 自带 ① 的门禁，通过才登记；登记不可逆。
 
-**决策件处于「草稿（待开发确认）」是常态路径**——评审的形态就是评审人在线上批注表态，
+**决策件带着未勾的议题去归档是常态路径**——评审的形态就是评审人在线上批注表态，
 归档正是送审动作。归档时提示一句即可，**不停等确认**。
 
 ## 恢复
@@ -95,7 +95,7 @@ python doc/extensions/skills/story/scripts/story_flow.py archived --feature <AR>
 
 `/story review <AR>` 把评审人在系统上留下的反馈拉回来，写入 `AR/review.md`（先备份原件）。
 
-评审表态由评审人填写——**你不代填表态、不改状态行**。人可能在系统上批注，也可能直接改本地
+评审表态由评审人填写——**你不代填表态、不动人工区**。人可能在系统上批注，也可能直接改本地
 文件：**流程不关心来源，模型的输入唯一就是 `AR/review.md`**。处置前完整读一遍
 [rules/review_reflow.md](rules/review_reflow.md)。产物是 `AR/review-disposition.json`
 与被修订的 `spec/spec.md`；**`AR/story.md` 与归档件不动**——story 定稿于评审时点。

@@ -2244,6 +2244,24 @@ def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非附录结构原因）：{out[:200]}")
 
 
+@checker
+def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
+    """评审记录长回签署字段与状态行——表单再次膨胀成需要说明书的东西。
+
+    判据是「需要说明书就是设计错了」。七个字段加一行状态每次都以「让评审更规范」的
+    名义长回来，实际后果是评审人先读一遍字段表，再在六个答不上来的格子里跳过或胡填，
+    而「已确认」因此不可信。留下的只有三态勾选与勾选下那一行说明。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "review.md").exists():
+        return Outcome(True, "夹具里没有评审记录（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "评审记录只有三态勾选与一行说明")
+    if "评审记录里出现" in out:
+        return Outcome(False, "签署字段与状态行被点名")
+    return Outcome(False, f"check 未过（非评审表单原因）：{out[:200]}")
+
+
 GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
 
 

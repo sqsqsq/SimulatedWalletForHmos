@@ -577,5 +577,79 @@ class TestGlossaryAndRedlines(StoryBuildCase):
         self.assert_check_names("仓内路径")
 
 
+REVIEW_HUMAN_ZONE = """#### 审核结果（由评审人填写）
+
+- [ ] **同意当前建议**
+- [ ] **有其他意见，需要修改**
+  - 修改意见：
+- [ ] **暂缓**
+  - 暂缓原因：
+"""
+
+
+class TestReviewForm(StoryBuildCase):
+    """评审表单只剩三态勾选与一行说明——需要说明书就是设计错了。
+
+    曾经这里还有暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、
+    确认依据七个字段。评审人打开它先要读一遍字段表，而其中六格他答不上来
+    （责任人和期限是排期的事，确认依据是审计的事）。答不上来的格子只会被跳过或胡填。
+    """
+
+    review_path = property(
+        lambda self: self.root / "doc" / "features" / FEATURE / "AR" / "review.md")
+
+    def write_decision(self) -> None:
+        (self.src / "decisions.json").write_text(json.dumps({
+            "scanned_categories": {},
+            "decisions": [{
+                "id": "submit-boundary", "question": "提交入口的责任边界",
+                "proposal": "本单只做提交与回执展示", "rationale": "补卡另有开发单承接",
+                "impact": ["需求范围"], "source": "上游产品文档", "decider": "需求负责人",
+            }],
+        }, ensure_ascii=False), encoding="utf-8")
+
+    def test_rendered_form_is_exactly_three_states(self) -> None:
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        text = self.review_path.read_text(encoding="utf-8")
+        self.assertIn(REVIEW_HUMAN_ZONE, text)
+        for gone in ("暂缓责任人", "完成期限", "是否阻塞执行", "后续动作",
+                     "确认人", "确认日期", "确认依据", "**状态**"):
+            self.assertNotIn(gone, text, f"「{gone}」不该再出现在评审记录里")
+
+    def test_filled_human_zone_survives_a_rerender(self) -> None:
+        """人填过的内容一个字节都不能动——重算它等于把做完的决定推回去一次。
+
+        连**旧形态**的人工区也要保住：字段是被裁掉了，人当时写在里面的话不是。
+        """
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        text = self.review_path.read_text(encoding="utf-8")
+        filled = text.replace("- [ ] **有其他意见，需要修改**\n  - 修改意见：",
+                              "- [x] **有其他意见，需要修改**\n  - 修改意见：范围要含补卡入口")
+        filled = filled.replace("<!-- decision: submit-boundary -->",
+                                "**确认人**：某评审人\n\n<!-- decision: submit-boundary -->")
+        self.review_path.write_text(filled, encoding="utf-8")
+
+        self.assertEqual(0, self.run_build("build").returncode)
+        again = self.review_path.read_text(encoding="utf-8")
+        self.assertIn("修改意见：范围要含补卡入口", again)
+        self.assertIn("**确认人**：某评审人", again, "旧形态里人写过的字也要保住")
+
+    def test_legacy_fields_in_the_review_are_named(self) -> None:
+        """人工区之外又长回签署字段与状态行时，check 要点名。"""
+        self.init_audit()
+        self.settle()
+        self.review_path.write_text(
+            "# 评审记录\n\n### 提交入口的责任边界\n\n"
+            "#### 审核结果（由评审人填写）\n\n- [ ] **同意当前建议**\n\n"
+            "<!-- decision: submit-boundary -->\n\n"
+            "**确认日期**：\n\n**状态**：草稿（待开发确认）\n",
+            encoding="utf-8")
+        out = self.assert_check_names("评审记录里出现")
+        self.assertIn("确认日期", out)
+        self.assertIn("状态行", out)
+
+
 if __name__ == "__main__":
     unittest.main()

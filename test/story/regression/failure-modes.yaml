@@ -925,3 +925,23 @@ modes:
       而当时的判据只核「附录这一章存在」，倾倒完全合法。
       现在判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
       小节名可带 A.–E. 序号：序号是表达形式，比较前统一剥掉。
+
+  - id: S07-review-legacy-fields
+    dimension: content
+    found_round: "2026-08-30"
+    form: 评审记录长回签署字段与状态行（确认人/确认日期/确认依据/状态）——表单再次膨胀成需要说明书的东西
+    clause: KG-4 / B2-9
+    checker: s07_review_legacy_fields
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S07-review-legacy-fields/bad
+    good_fixture: test/story/fixtures/failure-modes/S07-review-legacy-fields/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来：
+      暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、确认依据七个字段，
+      加上一行状态。实际后果是评审人先读一遍字段表，再在六个答不上来的格子里跳过或胡填
+      （责任人与期限是排期的事，确认依据是审计的事），而「已确认」因此不可信。
+      留下的只有三态勾选与勾选下那一行说明。判的是行首形态不是词——评审人在自己的
+      意见里写「这条要找确认人」不算违规，只判机器渲染出来的那种独立字段行。

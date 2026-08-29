@@ -52,6 +52,21 @@ const MIN_QUOTE = 12;
 const DOMAIN_NA = '整域不适用';
 const KNOWLEDGE_VERDICTS = ['命中', '不命中', DOMAIN_NA];
 
+/**
+ * 评审记录里不该出现的行 —— 每一样都被裁掉过，每一样都以「更规范」的名义长回来。
+ *
+ * 判的是**行首形态**而不是词：`确认人：` 是签署字段，而评审人在自己的意见里写
+ * 「这条要找确认人」是正常的话。只判机器渲染出来的那种独立字段行。
+ */
+const REVIEW_BANNED_LINES = [
+  { name: '如何填写', re: /^#{1,6}?\s*\**\s*(?:如何填写|填写说明|使用说明)/ },
+  { name: '确认人', re: /^[-*]?\s*\**确认人\**\s*[:：]/ },
+  { name: '确认日期', re: /^[-*]?\s*\**确认日期\**\s*[:：]/ },
+  { name: '确认依据', re: /^[-*]?\s*\**确认依据\**\s*[:：]/ },
+  { name: '状态行', re: /^[-*]?\s*\**状态\**\s*[:：]/ },
+  { name: '下一步', re: /^#{1,6}?\s*\**\s*下一步\**\s*[:：]?\s*$/ },
+];
+
 /** 决策件必须扫过的六类议题——少扫一类不是「没有」，是「没想这件事」。 */
 const SCANNED_CATEGORIES = [
   '需求与范围', '交互与界面', '技术方案与依赖', '约束规约命中项', '异常与风险', '上线与协同',
@@ -1045,6 +1060,20 @@ function cmdCheck(ctx) {
     }
   }
 
+  // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
+  //
+  // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
+  // 而它们的实际后果是评审人先读一遍字段表，再在答不上来的格子里胡填。
+  // **只判机器渲染的那部分**：评审人自己写的内容（修改意见、暂缓原因、计划外意见）不计。
+  if (reviewText) {
+    const banned = REVIEW_BANNED_LINES.filter(
+      ({ re }) => reviewText.split(/\r?\n/).some(l => re.test(l.trim())));
+    for (const { name } of banned) {
+      problems.push(`评审记录里出现「${name}」——评审人要填的只有三态勾选与一行说明；`
+        + '填写说明、签署字段、状态行都被裁掉过，它们只会让人在答不上来的格子里胡填');
+    }
+  }
+
   if (problems.length) {
     process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
     problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
@@ -1076,8 +1105,6 @@ function cmdBuild(ctx) {
     '',
     ...(blocks.length ? blocks : ['（本轮没有登记开放议题。）\n']),
     freeform,
-    '**状态**：草稿（待开发确认）',
-    '',
   ].join('\n');
 
   fs.mkdirSync(path.dirname(ctx.reviewPath), { recursive: true });
