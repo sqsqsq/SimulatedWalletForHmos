@@ -478,14 +478,33 @@ class StateMachineTest(unittest.TestCase):
 
 
 class CliRuntimeIsolationTest(unittest.TestCase):
-    """运行隔离避免 OpenCode 启动时写入或误建用户的配置目录。"""
+    """运行隔离避免 OpenCode 启动时写入或误建用户的配置目录。
+
+    这条隔离只对那一个宿主成立，所以判据**显式指定宿主**，不读当前配置——
+    否则换一次被测宿主，这条保护就会跟着变成红灯或悄悄失效，两者都不对。
+    """
+
+    def _env(self, cli_name: str, root: Path) -> dict[str, str]:
+        config = {**rc.CFG, "cli": {**rc.CFG.get("cli", {}), "name": cli_name}}
+        with mock.patch.object(rc, "CFG", config):
+            return rc.build_cli_env(root)
 
     def test_opencode_runtime_paths_stay_under_case_output(self) -> None:
         root = Path(tempfile.mkdtemp())
         try:
-            env = rc.build_cli_env(root)
+            env = self._env("opencode", root)
             self.assertEqual(Path(env["XDG_CONFIG_HOME"]).parent, root)
             self.assertEqual(Path(env["XDG_DATA_HOME"]).parent, root)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_other_clis_get_no_redirected_home(self) -> None:
+        """别的宿主不重定向 XDG：它们没有那个 mkdir 缺陷，改了反而会丢自己的凭据。"""
+        root = Path(tempfile.mkdtemp())
+        try:
+            env = self._env("codex", root)
+            self.assertNotIn("XDG_CONFIG_HOME", env)
+            self.assertNotIn("XDG_DATA_HOME", env)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
