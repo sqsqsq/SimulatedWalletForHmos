@@ -170,6 +170,13 @@ function createContext(args) {
  * 或 `{ path, notes: [...] }`——`notes` 是「按生成它的模板约定，这几类单元不是事实」，
  * 比如 spec.md 里的 `>` 块只承载登记项与作业说明。判据来自模板约定，不来自样本形状。
  */
+/** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
+function digestOf(text) {
+  return crypto.createHash('sha256')
+    .update(String(text ?? '').replace(/\r\n/g, '\n'), 'utf-8')
+    .digest('hex').slice(0, 16);
+}
+
 function sourceDocs(ctx) {
   const out = [];
   for (const [doc, decl] of Object.entries(ctx.contract.sources ?? {})) {
@@ -242,6 +249,9 @@ function cmdInit(ctx) {
 
   writeJson(ctx.unitsPath, {
     generated_from: docs.map(d => d.rel),
+    // 枚举时各份材料的指纹。check 拿它比对当前值——材料在枚举之后还在长，
+    // 后长出来的那些永远不会成为单元，守恒面就悄悄小了一圈（实测 27 条这么漏掉）。
+    source_digests: Object.fromEntries(docs.map(d => [d.rel, digestOf(d.text)])),
     unit_count: units.length,
     token_count: units.reduce((n, u) => n + u.tokens.length, 0),
     units,
@@ -568,6 +578,26 @@ function cmdCheck(ctx) {
   if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
   const audit = ctx.offline ? { records: [] } : readJson(ctx.auditPath, null);
   if (!audit) fail(`还没有核对记录，先跑 audit：${ctx.auditPath}`);
+
+  // ⓪ 材料没在枚举之后又变过
+  //
+  // 规格件在 story 写完之后还会继续长——评审裁定回填、遗漏补写。后长出来的内容
+  // 永远不会成为来源单元，于是守恒面悄悄小了一圈：check 在登记那一刻是过的，
+  // 过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
+  // 这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
+  if (!ctx.offline) {
+    const before = readJson(ctx.unitsPath, {}).source_digests ?? null;
+    if (before) {
+      const drifted = sourceDocs(ctx)
+        .filter(d => before[d.rel] && before[d.rel] !== digestOf(d.text))
+        .map(d => d.rel);
+      const added = sourceDocs(ctx).filter(d => !(d.rel in before)).map(d => d.rel);
+      if (drifted.length || added.length) {
+        problems.push(`材料在枚举之后变了：${[...drifted, ...added].join('、')}`
+          + '——重跑 init，audit 会把新增单元列进待分配（你已经分好的那些按 key 保留）');
+      }
+    }
+  }
 
   const sections = storySections(storyText);
   const titles = sections.map(s => s.title);

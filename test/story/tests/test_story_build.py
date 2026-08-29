@@ -72,6 +72,14 @@ def _chapter_quote(body: str) -> str:
     return ""
 
 
+def _appendix_title() -> str:
+    """附录那一章的标题从合同取——用例不写死章名，合同改了它跟着变。"""
+    contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts"
+                           / "story-chapters.json").read_text(encoding="utf-8"))
+    hit = next((c for c in contract.get("chapters") or [] if c.get("appendix")), None)
+    return (hit or {}).get("title", "")
+
+
 def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
     """按合同派生裁决者的三张表：逐单元 / 逐问 / 逐章。
 
@@ -183,16 +191,41 @@ class StoryBuildCase(unittest.TestCase):
         用例要断言「某一条判据翻面」，基线就得是通过态，否则测的是别的问题。
         """
         data = self.audit
-        keys = []
+        by_key = {u["key"]: u for u in self.units}
+        bodies = _chapter_bodies(self.story_path)
+        # 表行要落在有表的那一章：把材料的表摊进一章散文里，check ④ 判它降级——
+        # 那是它该做的，但这里要的是通过态基线，不是去撞那条判据
+        appendix = _appendix_title()
+        with_table = next((t for t, b in bodies.items()
+                           if t != appendix
+                           and any(x.strip().startswith("|") for x in b.split("\n"))), None)
+        rows = []
         for record in data["records"]:
             if any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
                 continue
-            record["at"], record["by"] = "功能说明", "author"
-            keys.append(record["key"])
+            kind = by_key.get(record["key"], {}).get("kind")
+            at = with_table if (kind == "table_row" and with_table) else "功能说明"
+            record["at"], record["by"] = at, "author"
+            body = bodies.get(at, "")
+            unit_text = by_key.get(record["key"], {}).get("text") or ""
+            quote = QUOTE if (QUOTE in body and QUOTE not in unit_text) else ""
+            if not quote:
+                for line in body.split("\n"):
+                    cand = line.strip()
+                    if cand.startswith("|"):
+                        cells = [c.strip() for c in cand.strip("|").split("|")]
+                        cells = [c for c in cells if c and not set(c) <= set("-: ")]
+                        if not cells:
+                            continue
+                        cand = max(cells, key=len)
+                    if len(cand) >= 14 and cand not in unit_text and not cand.startswith("#"):
+                        quote = cand[:60]
+                        break
+            rows.append((record["key"], "讲清", quote or QUOTE))
         self.write_audit(data)
-        if keys:
-            self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
-        return keys
+        if rows:
+            self.write_verdicts(rows)
+        return [k for k, _, _ in rows]
 
     def hand_to_author(self) -> list[str]:
         """把机器定不了落点的那些交给作者，返回它们的键。
@@ -559,14 +592,20 @@ class TestGlossaryAndRedlines(StoryBuildCase):
             encoding="utf-8")
 
     def test_entity_term_absent_from_story_is_named(self) -> None:
-        self.init_audit()
+        # 规格件要在枚举之前就位——枚举之后再出现，先撞上的是材料漂移那条判据
         self.write_spec("受理单号")
+        self.init_audit()
         self.assert_check_names("受理单号")
 
     def test_entity_term_present_passes(self) -> None:
+        self.write_spec("等待态")          # story 的「功能说明」章里有这个词
+        # 术语表的行是表行单元：它们的落点该是有表的那一章，摊成散文会被 ④ 判降级
+        self.rewrite_story(
+            "## 术语\n\n本需求不涉及。",
+            "## 术语\n\n| 术语 | 在本需求里的意思 |\n|---|---|\n"
+            "| 等待态 | 已提交但回执还没到的页面状态 |")
         self.init_audit()
         self.settle()
-        self.write_spec("等待态")          # story 的「功能说明」章里有这个词
         code, out = self.check_output()
         self.assertEqual(code, 0, out)
 
@@ -575,6 +614,52 @@ class TestGlossaryAndRedlines(StoryBuildCase):
         self.rewrite_story("本需求不涉及。\n\n## 术语",
                            "详见 doc/features/F1/AR/design.md。\n\n## 术语")
         self.assert_check_names("仓内路径")
+
+
+class TestSourceDrift(StoryBuildCase):
+    """材料在枚举之后又变过，check 就要拦。
+
+    规格件在 story 写完之后还会继续长——评审裁定回填、遗漏补写。后长出来的内容
+    永远不会成为来源单元，守恒面悄悄小了一圈：登记那一刻 check 是过的，
+    过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
+    这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
+    """
+
+    def test_edited_material_is_named(self) -> None:
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：超时后允许重试一次。\n",
+                       encoding="utf-8")
+        out = self.assert_check_names("材料在枚举之后变了")
+        self.assertIn("RR/prd.md", out)
+        self.assertIn("重跑 init", out)
+
+    def test_a_material_added_after_enumeration_is_named(self) -> None:
+        self.init_audit()
+        self.settle()
+        spec_dir = self.root / "doc" / "features" / FEATURE / "spec"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "spec.md").write_text("# 甲需求 规格\n\n## 1. 范围\n\n只改提交入口。\n",
+                                          encoding="utf-8")
+        self.assert_check_names("材料在枚举之后变了")
+
+    def test_reenumerating_clears_it_and_keeps_author_placements(self) -> None:
+        """重跑 init 之后门禁放行，而且已经分好的落点还在——不然没人敢重跑。"""
+        self.init_audit()
+        self.settle()
+        placed = {r["key"]: r["at"] for r in self.audit["records"] if r.get("by") == "author"}
+        self.assertTrue(placed)
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：超时后允许重试一次。\n",
+                       encoding="utf-8")
+        self.init_audit()
+        after = {r["key"]: r.get("at") for r in self.audit["records"]}
+        for key, at in placed.items():
+            self.assertEqual(at, after.get(key), f"{key} 的作者落点在重跑后丢了")
+        out = self.check_output()[1]
+        self.assertNotIn("材料在枚举之后变了", out)
 
 
 class TestErrorWordingPointsAtForm(StoryBuildCase):
