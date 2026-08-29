@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 
 /** 客户端语境禁用词：服务器侧词汇，单独使用也算 */
-export const BANNED_TERMS = [
+const BANNED_TERMS = [
   { term: '灰度', hint: '改说「功能开关管控」/「市场·管理台放量」' },
   { term: '回滚', hint: '改说「功能开关关闭」' },
   { term: '回退', hint: '改说「功能开关关闭」/「恢复旧版本表现」（数据/状态层面的回退不在此列，见豁免）' },

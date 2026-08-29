@@ -139,7 +139,7 @@ function sourceDocs(ctx) {
 /**
  * 组装 token 排除函数——**规则全部来自合同数据**，本文件不写任何具体词。
  *
- * 为什么要排除：`WalletMain` 这类模块目录名会被标识符正则取成 token，于是守恒要求它出现在
+ * 为什么要排除：模块目录名会被标识符正则取成 token，于是守恒要求它出现在
  * story 里；而归档件红线第 1 条不许写模块名。两条一起生效时作者只能违反其一。
  * 模块名从 spec 的 Scope 块现取——换个工程、换个需求都不用改这里。
  *
@@ -699,5 +699,3 @@ function main() {
 }
 
 main();
-
-export { SCANNED_CATEGORIES, storySections, autoPlace, escapeCell };

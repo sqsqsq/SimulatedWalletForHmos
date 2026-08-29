@@ -215,5 +215,3 @@ export default guard('plan', async (ctx) => {
     inputs: [planPath, contractsPath(ctx.projectRoot, ctx.feature)],
   });
 });
-
-export { findHeadings, specExitIds };

@@ -784,6 +784,35 @@ def m15_paraphrase_branch_drift(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def _exported_names(text: str):
+    """一个模块导出了哪些名字：`export function/const/class X` 与尾部 `export { A, B }`。"""
+    for n, line in enumerate(split_lines(text), start=1):
+        m = re.match(r"\s*export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z_$][\w$]*)", line)
+        if m:
+            yield m.group(1), n
+            continue
+        m = re.match(r"\s*export\s*\{([^}]*)\}", line)
+        if m:
+            for part in m.group(1).split(","):
+                name = part.split(" as ")[0].strip()
+                if name:
+                    yield name, n
+
+
+def _test_domain_code() -> list[Path]:
+    """测试域的代码文件——给测试用的导出是真消费者，不是死代码。"""
+    base = REPO_ROOT / "test" / "story"
+    if not base.exists():
+        return []
+    out = []
+    for p in base.rglob("*"):
+        if p.suffix in (".mjs", ".js", ".py") and not any(
+                part in {"__pycache__", "design", "output", "fixtures"} for part in p.parts):
+            out.append(p)
+    return out
+
+
+@checker
 def m16_patch_residue(root: Path, ctx: Ctx) -> Outcome:
     """补丁式修补的残留：死代码、静默降级、跨轮次的临时标记。
 
@@ -808,22 +837,21 @@ def m16_patch_residue(root: Path, ctx: Ctx) -> Outcome:
 
     dead, silent, temp = [], [], []
 
-    # 1. 死代码：零调用方的导出
+    # 1. 死代码：**零消费者的导出**
+    #
+    # 判的是「别的文件用不用它」，不是「本文件里调没调」。三处收紧过：
+    #   · `export const` 与尾部 `export { A, B }` 也算导出——漏掉它们放过了 24 个；
+    #   · 出现在某个 `export { … }` 列表里**不算**被用到——那正是零消费者的藏身处；
+    #   · 消费面含测试域：给测试用的导出是真消费者，不该被当成死代码删掉。
+    consumer_texts = [(p, t) for p, t in blobs.items()]
+    consumer_texts += [(p, read_text(p)) for p in _test_domain_code()]
     for path, text in blobs.items():
         rel = path.relative_to(root).as_posix()
-        for n, line in enumerate(split_lines(text), start=1):
-            m = re.match(r"\s*export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)", line)
-            if not m:
+        for name, line_no in _exported_names(text):
+            pattern = re.compile(rf"\b{re.escape(name)}\b")
+            if any(p != path and pattern.search(t) for p, t in consumer_texts):
                 continue
-            name = m.group(1)
-            # 调用点：排除定义行本身与 export 列表
-            uses = len(re.findall(rf"\b{re.escape(name)}\s*\(", all_code))
-            # 作为**值**被引用同样算用到：注册进映射表、放进导出列表、当回调传递。
-            # 只数调用形式会把「注册进 FORM_COUNTERS 这类分派表」的函数误报成死代码。
-            as_value = len(re.findall(rf"[:,\[{{]\s*{re.escape(name)}\s*[,\]}}\n]", all_code))
-            reexports = len(re.findall(rf"\bexport\s*{{[^}}]*\b{re.escape(name)}\b", all_code))
-            if uses <= 1 and as_value == 0 and reexports == 0:
-                dead.append(f"{rel}:{n} `{name}` 零调用方")
+            dead.append(f"{rel}:{line_no} `{name}` 零消费者导出")
 
     # 2. 静默降级：catch 块内直接 return 且无出声
     for path, text in blobs.items():

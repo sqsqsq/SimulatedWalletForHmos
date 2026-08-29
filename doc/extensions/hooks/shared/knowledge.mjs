@@ -19,10 +19,10 @@ import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { parseYaml } from './yaml-lite.mjs';
 
 /** 三类知识的类型键——封闭集合。 */
-export const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
+const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
 
 /** 索引件：随清单交付、可被引用，不承载条目、不参与派生；不是第四类知识。 */
-export const INDEX_KIND = 'index';
+const INDEX_KIND = 'index';
 
 /** 激活清单文件名（相对扩展根）。 */
 const MANIFEST_NAME = 'manifest.yaml';
@@ -37,14 +37,14 @@ function fail(msg) {
 }
 
 /** 切 frontmatter 与正文。无 frontmatter 时 fm 为空字符串。 */
-export function splitFrontmatter(text) {
+function splitFrontmatter(text) {
   const m = String(text ?? '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (!m) return { frontmatter: '', body: String(text ?? '') };
   return { frontmatter: m[1], body: m[2] };
 }
 
 /** frontmatter 键值（浅层，值保留原始文本）。 */
-export function frontmatterPairs(fm) {
+function frontmatterPairs(fm) {
   const out = {};
   for (const line of lines(fm)) {
     const m = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
@@ -114,7 +114,7 @@ const ENTRY_ID_RE = /^([A-Z][A-Z0-9]{1,7})-(\d{2})$/;
 const PROBE_COLUMN = '探针';
 
 /** 探针形态封闭为四种：多一种就是给机制层开了个能塞业务规则的口子。 */
-export const PROBE_KINDS = [
+const PROBE_KINDS = [
   'absent_regex',                  // 实体所在文件里不得出现
   'present_in_method',             // 实体所在方法体内须出现
   'referenced_outside_definition', // 实体在定义文件之外被引用
@@ -130,7 +130,7 @@ export const PROBE_KINDS = [
  *
  * 表达式里的 `|` 在 markdown 表格里必须写成 `\|`，这里还原。
  */
-export function parseProbe(raw) {
+function parseProbe(raw) {
   // 只剥反引号：`*` 在正则里是量词，按 markdown 强调标记清掉会把 `\s*` 悄悄变成 `\s`。
   const cell = String(raw ?? '').replace(/`/g, '').trim();
   if (!cell || cell === '无' || cell === '—' || cell === '-') return null;

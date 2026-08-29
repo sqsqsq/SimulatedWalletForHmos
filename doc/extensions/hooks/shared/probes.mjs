@@ -70,7 +70,7 @@ function readOrNull(abs) {
 /**
  * 实体名 → 承载它的实现文件。
  *
- * 先按文件名匹配（`LossReportSheet` → `.../LossReportSheet.ets`）；匹配不到就退回
+ * 先按文件名匹配（实体 `FooSheet` → `.../FooSheet.ets`）；匹配不到就退回
  * 契约点名的全部文件，并让调用方知道这次是**放宽了范围**——放宽会稀释区分力，
  * 静默放宽等于把恒真探针换了个写法。
  */
@@ -90,7 +90,7 @@ export function filesForEntity(files, entityName) {
  * 找不到方法定义时返回 null——调用方据此报「方法在契约里，代码里没有」，
  * 而不是拿整个文件当方法体去搜（那会让 `present_in_method` 退化成 `present_in_file`）。
  */
-export function methodBody(text, methodName) {
+function methodBody(text, methodName) {
   const name = String(methodName ?? '').trim();
   if (!name) return null;
   const re = new RegExp(`(^|[^\\w.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(<[^>]*>)?\\s*\\(`, 'm');

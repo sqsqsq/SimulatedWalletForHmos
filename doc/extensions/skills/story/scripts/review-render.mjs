@@ -123,6 +123,3 @@ export function findBlockRange(reviewText, id) {
   const headStart = reviewText.lastIndexOf('\n### ', zoneStart);
   return { start: headStart < 0 ? zoneStart : headStart + 1, end: end + mark.length };
 }
-
-
-export { HUMAN_ZONE_MARK, FREEFORM_OPEN, FREEFORM_CLOSE };

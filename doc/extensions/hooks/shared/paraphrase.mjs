@@ -70,7 +70,7 @@ export function similarity(a, b) {
 }
 
 /** 对一组来源取最高相似度。 */
-export function maxSimilarity(output, sources) {
+function maxSimilarity(output, sources) {
   let best = 0;
   for (const s of sources ?? []) best = Math.max(best, similarity(output, s));
   return best;
@@ -99,7 +99,7 @@ function lcsLength(a, b) {
  * @param {string} output
  * @param {string[]} ownTerms 本需求的契约名、步骤标识等
  */
-export function ownTermHits(output, ownTerms) {
+function ownTermHits(output, ownTerms) {
   const out = normalize(output);
   if (!out) return [];
   return (ownTerms ?? []).filter(t => {

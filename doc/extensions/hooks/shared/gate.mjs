@@ -22,7 +22,7 @@
 import { STATUS, writePostCheckEvidence } from './evidence.mjs';
 
 /** 每个阶段的作者须知位置（本文件不含任何业务字面，只有路径模板）。 */
-export function authorDoc(phase) {
+function authorDoc(phase) {
   return `doc/extensions/hooks/${phase}/author.md`;
 }
 

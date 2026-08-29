@@ -19,18 +19,14 @@
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 
-/** 单元类型——封闭集合。多一种就要同时给出它的 token 取法，不然就是漏判。 */
-export const UNIT_KINDS = [
-  'paragraph',
-  'list_item',
-  'table_row',
-  'image',
-  'link',
-  'diagram',      // mermaid / flowchart 围栏
-  'blockquote',
-  'code',         // yaml / json 围栏
-  'knowledge',    // 激活清单里的规约条目——它不从材料切出来，token 是条目编号
-];
+/**
+ * 单元类型是**封闭集合**，九种：`paragraph` / `list_item` / `table_row` / `image` /
+ * `link` / `diagram`（mermaid、flowchart 围栏）/ `blockquote` / `code`（yaml、json 围栏）/
+ * `knowledge`（激活清单里的规约条目——它不从材料切出来，token 是条目编号）。
+ *
+ * 多一种就要同时给出它的 token 取法，不然就是漏判。这份清单以 `push()` 的调用点为准；
+ * 曾经另有一个导出的常量重列一遍，零消费者——两份清单迟早对不上，删了。
+ */
 
 /**
  * 激活规约条目 → 来源单元。
@@ -96,7 +92,7 @@ function splitCells(row) {
  * @param {string} text
  * @param {string[]} idShapes 合同声明的编号形态（正则源），命中的编号也算 token
  */
-export function tokensOf(text, idShapes = [], exclude = null) {
+function tokensOf(text, idShapes = [], exclude = null) {
   const s = String(text ?? '');
   const out = new Set();
   for (const m of s.matchAll(CODE_SPAN_RE)) out.add(m[1].trim());

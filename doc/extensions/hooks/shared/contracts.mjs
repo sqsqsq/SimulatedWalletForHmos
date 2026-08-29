@@ -12,7 +12,7 @@ import { parseYaml } from './yaml-lite.mjs';
  * 实体引用语法：`<集合>.<实体>[.<成员>]`。
  * 集合名对齐 contracts.yaml 既有章节——**不自造平行命名空间**。
  */
-export const ENTITY_KINDS = [
+const ENTITY_KINDS = [
   'data_models',
   'interfaces',
   'components',

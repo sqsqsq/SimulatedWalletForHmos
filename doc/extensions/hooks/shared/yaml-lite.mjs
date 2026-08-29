@@ -161,5 +161,3 @@ export function parseYaml(text) {
   const { value } = parseBlock(rows, 0, first);
   return value;
 }
-
-export { parseSeqItemMap };

@@ -7,15 +7,13 @@
  * 所以义务改挂在实体上，索引由这里运行期派生，**不维护第二份清单**。
  */
 
-/** `must` 允许挂载的实体位置——多一处就是给「随便找个地方声明一下」开口子。 */
-export const MUST_HOSTS = [
-  'data_models[].fields[]',
-  'interfaces[].methods[]',
-  'components[]',
-  'components[].state[]',
-  'resource_keys[]',
-  'files[]',
-];
+/**
+ * `must` 允许挂载的实体位置是**封闭集合**：`data_models[].fields[]`、
+ * `interfaces[].methods[]`、`components[]`、`components[].state[]`、
+ * `resource_keys[]`、`files[]`。多一处就是给「随便找个地方声明一下」开口子。
+ *
+ * 以下面的遍历代码为准；曾经另有一个导出的常量重列一遍，零消费者——删了。
+ */
 
 /** `verify` 的封闭取值。`both` 不能省：旧 `ut_layer` 三态里它代表两边都要验。 */
 export const VERIFY_KINDS = ['ut', 'device', 'both', 'review', 'probe'];
