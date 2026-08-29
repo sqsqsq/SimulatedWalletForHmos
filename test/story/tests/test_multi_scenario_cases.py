@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -28,10 +29,14 @@ def definition(case_id: str) -> dict:
 
 
 def case_text(case_id: str) -> str:
-    workspace = CASES / case_id / "workspace"
+    """本 Case 全部可读材料：需求系统上挂的 + 起跑时就在工作区的。
+
+    补料是二进制文档，不在这里；它的内容由投放链路自己保证。
+    """
     return "\n".join(
         path.read_text(encoding="utf-8")
-        for path in sorted(workspace.rglob("*.md"))
+        for source in ("system", "workspace")
+        for path in sorted((CASES / case_id / source).rglob("*.md"))
     )
 
 
@@ -57,24 +62,37 @@ class CaseShapeTest(unittest.TestCase):
             self.assertIn(case.get("end_phase", "spec"), VALID_END)
             self.assertTrue(str(case.get("prompt", "")).strip())
 
-            workspace = directory / "workspace"
-            self.assertTrue(workspace.is_dir(), directory.name)
-            for path in workspace.rglob("*"):
-                self.assertFalse(path.is_symlink(), path)
-                if path.is_file():
-                    path.resolve().relative_to(workspace.resolve())
+            # 材料分三处，都可以为空，但不能三处都空——那样这个 Case 没有输入。
+            sources = [directory / name
+                       for name in ("system", "workspace", "supplements")]
+            self.assertTrue(any(source.is_dir() for source in sources), directory.name)
+            for source in sources:
+                if not source.is_dir():
+                    continue
+                for path in source.rglob("*"):
+                    self.assertFalse(path.is_symlink(), path)
+                    if path.is_file():
+                        path.resolve().relative_to(source.resolve())
 
     def test_story_start_cases_have_inputs_but_no_expected_outputs(self) -> None:
+        """从取材起手的 Case 要有上游材料，且不能预先摆好下游产物。"""
         forbidden = {"story.md", "review.md", "spec.md", "acceptance.yaml",
                      "plan.md", "contracts.yaml", "use-cases.yaml"}
         for directory in case_directories():
             case = definition(directory.name)
             if case.get("start_phase", "story") != "story":
                 continue
-            inputs = [path for path in (directory / "workspace").rglob("*") if path.is_file()]
-            self.assertTrue(any(part in {"RR", "SR", "inbox"}
-                                for path in inputs for part in path.parts), directory.name)
-            self.assertEqual([], [str(path) for path in inputs if path.name in forbidden])
+            inputs = [path
+                      for name in ("system", "workspace", "supplements")
+                      for path in (directory / name).rglob("*")
+                      if path.is_file()]
+            self.assertTrue(inputs, directory.name)
+            # `system/` 下 `<AR号>/design.md` 是需求系统上的开发单正文（上游预填的
+            # 提取件），不是本轮该产出的 story/spec——按目录判，不按文件名判。
+            in_workspace = [path for path in inputs
+                            if (directory / "workspace") in path.parents]
+            self.assertEqual([], [str(path) for path in in_workspace
+                                  if path.name in forbidden])
 
     def test_prompts_do_not_contain_maintenance_or_expected_story_answers(self) -> None:
         for case_id in CASE_IDS:
@@ -136,93 +154,173 @@ class NarrativeFixtureTest(unittest.TestCase):
 
 
 class CompositeCoverageTest(unittest.TestCase):
-    def test_all_story_scenarios_have_a_composite_carrier(self) -> None:
-        carriers = {
-            "single_feature": {"pattern-image-review", "source-conflict-review"},
-            "cross_component_and_sibling_context": {"pattern-image-review"},
-            "preexisting_sibling_ar": {"split-two-ar"},
-            "predeclared_and_interactive_split": {"split-interactive"},
-            "supplement_arbitrary_filename_and_images": {"split-interactive"},
-            "same_round_conflict_and_open_decision": {"source-conflict-review"},
-            "local_image": {"pattern-image-review"},
-            "review_archive_and_reflow": {"split-interactive"},
-            "local_non_ar_start": {"source-conflict-review"},
-            "normal_restriction_and_real_failure": {"pattern-image-review", "split-two-ar"},
-            "interfaces_data_config_events_compatibility_delivery": {"pattern-image-review"},
-            "plan_boundary_propagation": {"pattern-image-review", "split-two-ar"},
-        }
-        for scenario, expected in carriers.items():
-            self.assertTrue(expected <= CASE_IDS, scenario)
+    """两个 Case 合起来要覆盖的能力点，逐条有承载者。
 
-    def test_pattern_case_contains_rich_business_and_delivery_material(self) -> None:
-        text = case_text("pattern-image-review")
+    能力点写成清单不是为了好看：删一个 Case、改一份材料时，看得见丢的是哪一条。
+    """
+
+    def test_every_story_capability_has_a_carrier(self) -> None:
+        carriers = {
+            "系统按单号拉取": {"traffic-card-loss"},
+            "没有系统单据的本地起手": {"local-issue-autotopup"},
+            "系统只给 md，界面材料要另外要": {"traffic-card-loss"},
+            "占位件识别与按需补料": {"traffic-card-loss", "local-issue-autotopup"},
+            "docx 转正文并抽图": {"traffic-card-loss", "local-issue-autotopup"},
+            "上游已拆两张单与兄弟交接": {"traffic-card-loss"},
+            "同轮材料冲突与人工定源": {"local-issue-autotopup"},
+            "材料写明尚未决定的问题保持 open": {"local-issue-autotopup"},
+            "归档到系统与评审回稿处置": {"traffic-card-loss"},
+            "知识链传到 coding 并真实改码": {"traffic-card-loss", "local-issue-autotopup"},
+        }
+        for capability, expected in carriers.items():
+            self.assertTrue(expected <= CASE_IDS, capability)
+
+    def test_system_case_pulls_everything_from_the_requirement_system(self) -> None:
+        case = definition("traffic-card-loss")
+        self.assertTrue(case["system"])
+        system = CASES / "traffic-card-loss" / "system"
+        # 一个子目录一张单，每张单一份 detail.json——`story.js` 认的就是这个形状。
+        tickets = sorted(path.name for path in system.iterdir() if path.is_dir())
+        self.assertEqual(["AR90004", "AR90005", "RR90004", "SR90004"], tickets)
+        for no in tickets:
+            detail = json.loads((system / no / "detail.json").read_text(encoding="utf-8"))
+            self.assertEqual(no, detail["reqNo"])
+        ar = json.loads((system / case["ar"] / "detail.json").read_text(encoding="utf-8"))
+        self.assertEqual("SR90004", ar["parentNo"])
+        self.assertEqual("RR90004", ar["rrNo"])
+
+    def test_system_case_keeps_the_rich_business_material(self) -> None:
+        text = case_text("traffic-card-loss")
         for token in ("freezeTicketId", "支付中断", "通知失败", "queryLossEligibility",
                       "loss_report_recovery_context", "traffic_card_emergency_loss_enabled",
                       "loss_flow_recovery", "RTL", "回退"):
             self.assertIn(token, text)
 
-    def test_split_case_combines_supplement_split_and_review(self) -> None:
-        case = definition("split-interactive")
-        self.assertIn(case["end_phase"], VALID_END)
-        self.assertIn("文件名不带需求类型", case["prompt"])
-        self.assertIn("本轮不会整体交付", case["prompt"])
+    def test_system_case_leaves_the_ui_material_off_the_system(self) -> None:
+        """系统上只写到「界面参考没归档」为止，界面本身在人手上那份 docx 里。
 
-        raw = (CASES / "split-interactive/case.yaml").read_text(encoding="utf-8")
-        if case["end_phase"] == "spec":
-            self.assertNotIn("/story archive", case["prompt"])
-            # 评审回流是本 Case 的长期观测资产，收窄终点时不能顺手删掉——
-            # 素材留着，并在文件里写明放开时怎么接回去。
-            self.assertIn("review_feedback", raw)
-            self.assertIn("放开到 review 时", raw)
-        else:
-            self.assertIn("/story archive", case["prompt"])
-        docx = sorted((CASES / "split-interactive/workspace/inbox").glob("*.docx"))
-        self.assertEqual(1, len(docx))
-        sr = (CASES / "split-interactive/workspace/SR/design.md").read_text(encoding="utf-8")
+        这是本 Case 的材料关卡：模型要自己发现界面部分讲不下去、开口要，
+        才会拿到补料。产品正文里把界面画完，这一关就白设了。
+        """
+        prd = (CASES / "traffic-card-loss/system/RR90004/prd.md").read_text(encoding="utf-8")
+        self.assertIn("界面参考没有随本需求归档", prd)
+        self.assertNotIn("![", prd)
+        supplements = definition("traffic-card-loss")["supplements"]
+        self.assertEqual(1, len(supplements))
+        self.assertEqual("on_request", supplements[0]["deliver"])
+        self.assertTrue((CASES / "traffic-card-loss/supplements"
+                         / supplements[0]["file"]).is_file())
+
+    def test_system_case_carries_a_sibling_ticket_and_a_review_reply(self) -> None:
+        system = CASES / "traffic-card-loss" / "system"
+        sr = (system / "SR90004" / "design.md").read_text(encoding="utf-8")
+        for token in ("拆成两张开发单", "AR90005", "共享挂失上下文", "阻塞"):
+            self.assertIn(token, sr)
+        # 评审回稿放在系统上，等归档之后由 `/story review` 拉回来。
+        feedback = (system / "AR90004" / "review-feedback.md").read_text(encoding="utf-8")
+        self.assertIn("要改", feedback)
+        self.assertIn("暂缓", feedback)
+
+    def test_local_case_starts_from_half_the_material(self) -> None:
+        case = definition("local-issue-autotopup")
+        self.assertFalse(case["system"])
+        self.assertFalse((CASES / "local-issue-autotopup" / "system").exists())
+        self.assertFalse(str(case["ar"]).startswith("AR"))
+        detail = json.loads((CASES / "local-issue-autotopup/workspace/AR/detail.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(case["ar"], detail["reqNo"])
+        self.assertEqual("local-workspace", detail["source"])
+        # 本地单没有上游单号：写了就等于谎称它有系统单据。
+        self.assertNotIn("parentNo", detail)
+        self.assertNotIn("rrNo", detail)
+        # 产品正文缺席，起跑时工作区里只有系统设计那一份。
+        self.assertFalse((CASES / "local-issue-autotopup/workspace/RR").exists())
+        self.assertTrue((CASES / "local-issue-autotopup/workspace/SR/design.md").is_file())
+
+    def test_local_case_holds_one_conflict_and_one_undecided_item(self) -> None:
+        """冲突要在两份材料之间真实存在，未决项要在材料里写明还没定。"""
+        sr = (CASES / "local-issue-autotopup/workspace/SR/design.md").read_text(encoding="utf-8")
+        self.assertIn("单日充值上限", sr)
+        self.assertIn("100 元", sr)      # 补料里的产品文档写的是 200 元
+        self.assertIn("到现在还没有结论", sr)
         for token in ("wallet_auto_topup_contract", "扣款成功但写卡未完成",
                       "端侧不存在", "参与方", "不记录卡号"):
             self.assertIn(token, sr)
-        script = yaml.safe_load((CASES / "split-interactive/interaction-script.yaml")
-                                .read_text(encoding="utf-8"))
-        self.assertEqual([1, 2, 3], [item["expected_turn"] for item in script["replies"]])
-        self.assertIn("完成 /story review", script["replies"][-1]["text"])
 
-    def test_local_conflict_case_combines_local_start_and_share_reentry(self) -> None:
-        case = definition("source-conflict-review")
-        self.assertFalse(str(case["ar"]).startswith("AR"))
-        detail = yaml.safe_load((CASES / "source-conflict-review/workspace/AR/detail.json")
-                                .read_text(encoding="utf-8"))
-        self.assertEqual(case["ar"], detail["reqNo"])
-        self.assertEqual("local-workspace", detail["source"])
-        rr = (CASES / "source-conflict-review/workspace/RR/prd.md").read_text(encoding="utf-8")
-        sr = (CASES / "source-conflict-review/workspace/SR/design.md").read_text(encoding="utf-8")
-        self.assertIn("网络不可用时仍可打开", rr)
-        self.assertIn("网络不可用时一律阻止查看", sr)
-        self.assertIn("shareInProgress", sr)
-        self.assertIn("不同登录账号", rr)
-        self.assertIn("本轮尚未决定", rr)
-        self.assertNotIn("产品已确认", case["prompt"])
-        self.assertIn("产品已确认", case["suggested_reply"])
-        self.assertIn("保持 open", case["suggested_reply"])
-        self.assertIn("不要要求需求系统 token", case["prompt"])
+    def test_pictures_only_reach_the_flow_through_a_supplement(self) -> None:
+        """需求系统不承载图片，Case 目录里也不该躺着图片文件。
 
-    def test_split_two_ar_keeps_handoff_lifecycle_and_failures(self) -> None:
-        text = case_text("split-two-ar")
-        for token in ("freezeTicketId", "共享挂失上下文", "订单确认前不扣费",
-                      "地址校验失败", "订单创建失败", "联调与开放"):
-            self.assertIn(token, text)
-
-    def test_local_markdown_images_resolve_inside_their_workspace(self) -> None:
+        图只有一条路进来：人给的文档里内嵌，导入时抽出来。多留一条路，
+        「归档件里的图能不能打开」测的就不是真实链路了。
+        """
         for directory in case_directories():
-            workspace = directory / "workspace"
-            for markdown in workspace.rglob("*.md"):
-                text = markdown.read_text(encoding="utf-8")
-                for target in re.findall(r"!\[[^\]]+\]\(([^)]+)\)", text):
-                    if re.match(r"^(?:https?:|data:|//)", target):
-                        continue
-                    resolved = (markdown.parent / target.split("#", 1)[0]).resolve()
-                    resolved.relative_to(workspace.resolve())
-                    self.assertTrue(resolved.is_file(), f"{markdown}: {target}")
+            for source in ("system", "workspace"):
+                for path in (directory / source).rglob("*"):
+                    self.assertNotIn(
+                        path.suffix.lower(),
+                        {".png", ".jpg", ".jpeg", ".svg", ".webp", ".bmp"},
+                        f"{path} 是图片，但图片只能经补料文档进来")
+            for path in (directory / "supplements").glob("*"):
+                self.assertEqual(".docx", path.suffix.lower(), path)
+
+    def test_supplement_documents_carry_at_least_two_images(self) -> None:
+        import zipfile
+        for directory in case_directories():
+            for path in (directory / "supplements").glob("*.docx"):
+                with zipfile.ZipFile(path) as zf:
+                    media = [name for name in zf.namelist()
+                             if name.startswith("word/media/")]
+                self.assertGreaterEqual(len(media), 2, f"{path} 内嵌图片不足两张")
+
+    def test_scripts_speak_in_turn_and_deliver_declared_material(self) -> None:
+        for directory in case_directories():
+            script_path = directory / "interaction-script.yaml"
+            if not script_path.is_file():
+                continue
+            script = yaml.safe_load(script_path.read_text(encoding="utf-8"))
+            turns = [item["expected_turn"] for item in script["replies"]]
+            self.assertEqual(list(range(1, len(turns) + 1)), turns, directory.name)
+            declared = {item["file"] for item in definition(directory.name).get("supplements") or []}
+            delivered = {name for item in script["replies"]
+                         for name in (item.get("deliver") or [])}
+            self.assertTrue(delivered <= declared, directory.name)
+            # 备着的补料要有人投，否则它永远到不了被测模型手上。
+            on_request = {item["file"] for item in definition(directory.name).get("supplements") or []
+                          if item.get("deliver") == "on_request"}
+            self.assertTrue(on_request <= delivered, directory.name)
+
+    def test_prompts_stay_in_the_voice_of_the_person_who_asked(self) -> None:
+        """prompt 只说业务：单号、材料在哪、做到哪一步。
+
+        点了命令、脚本、文件名、关卡名，测的就不再是「模型能不能自己走通」，
+        而是「出题的人知不知道答案」；写了处置法（图片怎么办、冲突怎么办、
+        要不要拆），那几个观测点当场作废。
+        """
+        banned = ("/story", "story.js", "story_flow", "import_sources", "harness",
+                  "AR/design.md", "spec.md", "story.md", "review.md", "inbox",
+                  "关卡", "收件箱", "占位件",
+                  "图片", "兄弟", "冲突", "拆分", "未决", "定源", "补料")
+        # 「这轮别动被测对象」是工作纪律，不是需求信息，先摘掉再查。
+        discipline = ("doc/extensions/", "test/story/", "framework/")
+        for case_id in sorted(CASE_IDS):
+            prompt = str(definition(case_id)["prompt"])
+            for word in discipline:
+                prompt = prompt.replace(word, "")
+            hit = [word for word in banned if word in prompt]
+            self.assertEqual([], hit, f"{case_id} 的 prompt 泄题：{hit}")
+
+    def test_local_markdown_images_resolve_inside_their_case(self) -> None:
+        for directory in case_directories():
+            for source in ("system", "workspace"):
+                root = directory / source
+                for markdown in root.rglob("*.md"):
+                    text = markdown.read_text(encoding="utf-8")
+                    for target in re.findall(r"!\[[^\]]+\]\(([^)]+)\)", text):
+                        if re.match(r"^(?:https?:|data:|//)", target):
+                            continue
+                        resolved = (markdown.parent / target.split("#", 1)[0]).resolve()
+                        resolved.relative_to(root.resolve())
+                        self.assertTrue(resolved.is_file(), f"{markdown}: {target}")
 
 
 if __name__ == "__main__":

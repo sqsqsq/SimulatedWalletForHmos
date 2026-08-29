@@ -70,8 +70,42 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
   改终点时两边对不上（实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，
   模型照 prompt 进了 plan，白跑一段还得人工停）。
 - **要改本轮终点，只改 `end_phase` 一行**，不必也不该动 prompt。
-- story 流程内的动作（`/story init`、`/story archive` 送审、`/story review` 处置）**要写在 prompt 里**——
-  它们不在 `PHASE_ORDER`（spec…testing）里，驱动器不会下发。
+- story 流程内的动作（取材、归档送审、评审意见处置）不在 `PHASE_ORDER`（spec…testing）里，
+  驱动器不会下发，所以**要写在 prompt 里**——但写成需求方的话（「做到评审」「评审我来回」），
+  不是命令名。
+
+### 2.1 prompt 怎么写：说需求，不说做法
+
+prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，也不知道你在观测什么。
+
+| 写 | 不写 |
+|---|---|
+| 单号或单据性质、材料在哪、做到哪一步、谁来拍板 | 命令、脚本、文件名、目录名、关卡名 |
+| 「有些材料还在我手上，你要的时候跟我说」 | 「先检查占位件，然后要补料」 |
+| 「这张只做挂失，补卡我另找人」——**在关卡里说** | 把拆法预先写进 prompt |
+| 「这轮别动 doc/extensions、test/story、framework」（工作纪律，唯一的例外） | 「注意材料之间有冲突」「记得保留图片链接」 |
+
+**处置法一个字都不写**：冲突怎么办、未决项怎么办、图片怎么办、要不要拆——
+这些正是要观测的东西，写进 prompt 就等于把答案给了它，那一轮测的是宿主知不知道答案。
+诉求要由人**在关卡上说出口**（`interaction-script.yaml`），不能预塞进初始 prompt：
+模型走到关卡时它已在几十步之外，测出来的是记忆衰减，与关卡交互无关。
+
+判据在 `tests/test_multi_scenario_cases.py`（词表扫描）与 `tests/test_harness.py`。
+
+### 2.2 材料分三处，按真实体验投放
+
+| 目录 | 是什么 | 什么时候到 |
+|---|---|---|
+| `cases/<id>/system/` | 需求系统上挂着的单据（一个子目录一张单，含 `detail.json` 与正文 md） | 起跑时复制进该 Case 自己的 workspace，被测侧经环境变量看到 |
+| `cases/<id>/workspace/` | 起跑那一刻需求目录里就有的东西 | 起跑时 |
+| `cases/<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 等它开口 |
+
+**需求系统只承载 md，不承载图片**。图片只有一条路进来：人给的文档（docx）里内嵌，
+导入时抽出来。多留一条路，「归档件里的图能不能打开」测的就不是真实链路了。
+
+投放由脚本条目的 `deliver:` 触发（先投文件、再发话），宿主实时回话时用
+`run_case.py <case> reply --text "…" --deliver <文件名>`，同一条路径。
+起跑时收件箱里只有说明书——提前把材料铺满，「它会不会发现材料不够」就永远测不到。
 
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir`
    且该目录已物化 UI kit 组件——没有的话，任何跑到 coding 的 Case 都会被 UI kit 门禁拦死在
@@ -139,9 +173,13 @@ Case、历史答案或提示遗漏项。意外行为、维护文件名或任何�
 
 ```powershell
 python test/story/scripts/run_multi_case.py reply --suite-id story-suite-20260822-140000 `
-  --case split-interactive --reply-mode adaptive --reason "依据当前问题和本 Case 输入" `
-  --text "本单先做策略查询与创建签约，状态查询与解约交给兄弟单据。"
+  --case <case-id> --reply-mode adaptive --reason "依据当前问题和本 Case 输入" `
+  --text "这张只做挂失，补卡那张我另外找人做。"
 ```
+
+回话要带上人手上的材料时，加 `--deliver <文件名>`（文件名取自该 Case 的
+`supplements/`）：文件先落进收件箱，那句话才排进队列。反过来，模型会照着
+「我放进去了」这句话去看一个还不存在的目录。
 
 ## 4. 15/120 秒 heartbeat
 

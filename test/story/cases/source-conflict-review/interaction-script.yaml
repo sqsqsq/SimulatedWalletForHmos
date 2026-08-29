@@ -1,6 +1,0 @@
-# 仅由多 Case 宿主读取，不注入初始 prompt。
-replies:
-  - id: resolve-source-conflict
-    expected_turn: 1
-    expected_kind: story_gate
-    text: 产品已确认离线时也要允许打开已校验的缓存凭证；请把系统说明中的“必须联网”修正为“有可用缓存即可”，保留本次冲突和处置记录，然后继续。分享按钮仍按防重入要求处理；缓存跨账号与备份迁移仍未确认，保持 open。

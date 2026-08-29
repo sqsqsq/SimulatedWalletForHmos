@@ -207,6 +207,12 @@ class MultiCasePlanContinuationTest(unittest.TestCase):
 
 
 class MultiCaseSchedulingTest(unittest.TestCase):
+    """调度判据只看 case 与 feature 是否相同，与它们叫什么无关。
+
+    所以这里一律用**构造出来的夹具名**：写真实 Case 名的话，换一批用例就会亮起
+    一片红灯，而调度逻辑一个字都没改。
+    """
+
     @staticmethod
     def record(case_id: str, feature: str, status: str) -> dict[str, object]:
         return {
@@ -221,38 +227,38 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         return {"jobs": 3, "case_states": {str(r["case"]): r for r in records}}
 
     def test_same_feature_waiting_case_is_blocked(self) -> None:
-        pending = self.record("split-interactive", "AR90006", "pending")
-        waiting = self.record("same-feature-fixture", "AR90006", "awaiting_reply")
+        pending = self.record("case-alpha-fixture", "AR-ALPHA", "pending")
+        waiting = self.record("same-feature-fixture", "AR-ALPHA", "awaiting_reply")
         self.assertEqual(
             "same_feature:same-feature-fixture",
             run_multi_case.start_block_reason(pending, self.suite(pending, waiting)),
         )
 
     def test_different_feature_waiting_case_can_overlap(self) -> None:
-        pending = self.record("source-conflict-review", "ISSUE-410", "pending")
-        waiting = self.record("same-feature-fixture", "AR90006", "awaiting_reply")
+        pending = self.record("case-beta-fixture", "ISSUE-BETA", "pending")
+        waiting = self.record("same-feature-fixture", "AR-ALPHA", "awaiting_reply")
         self.assertIsNone(
             run_multi_case.start_block_reason(pending, self.suite(pending, waiting))
         )
 
     def test_phase_active_case_blocks_every_other_case(self) -> None:
-        pending = self.record("split-two-ar", "AR90005", "pending")
-        running = self.record("phase-active-fixture", "AR90004", "running")
+        pending = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
+        running = self.record("phase-active-fixture", "AR-DELTA", "running")
         self.assertEqual(
             "shared_current_phase_slot:phase-active-fixture",
             run_multi_case.start_block_reason(pending, self.suite(pending, running)),
         )
 
     def test_isolated_cases_do_not_share_phase_slot(self) -> None:
-        pending = self.record("pattern-image-review", "AR90004", "pending")
-        running = self.record("source-conflict-review", "ISSUE-410", "running")
+        pending = self.record("case-delta-fixture", "AR-DELTA", "pending")
+        running = self.record("case-beta-fixture", "ISSUE-BETA", "running")
         suite = self.suite(pending, running)
         suite["isolated_workspaces"] = True
         suite["jobs"] = 4
         self.assertIsNone(run_multi_case.start_block_reason(pending, suite))
 
     def test_start_retries_three_times_before_failing(self) -> None:
-        record = self.record("split-two-ar", "AR90005", "pending")
+        record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
                        "requested_end_phase": None, "start_history": []})
         suite = self.suite(record)
@@ -269,7 +275,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
     def test_lost_start_response_adopts_matching_active_run(self) -> None:
-        record = self.record("split-two-ar", "AR90005", "pending")
+        record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
                        "requested_end_phase": None, "start_history": []})
         suite = self.suite(record)
@@ -287,7 +293,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
     def test_unexpected_gate_requires_host_adaptive_reply(self) -> None:
-        record = self.record("split-interactive", "AR90006", "awaiting_reply")
+        record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         record.update({"interaction_script": [], "interaction_index": 0,
                        "last_awaiting": {"turn": 4, "kind": "story_gate",
                                          "prompt": "unexpected question"}})
@@ -307,7 +313,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         被测模型常在一个轮询周期内消费回复并抛出下一关，两次 poll 看到的都是 awaiting；
         按「上一次回复被消费了没有」判，第二关永远等不到回复（实测两次都卡在这里）。
         """
-        record = self.record("split-interactive", "AR90006", "awaiting_reply")
+        record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         record.update({
             "interaction_script": [
                 {"id": "s1", "text": "第一关回复", "expected_turn": 1},
@@ -345,9 +351,9 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         turn/kind 都对得上、内容却依赖尚未发生的事（评审意见依赖归档），
         送出去就被答非所问地消费掉，事后才发现对不上——所以判据是「一个字都没发出去」。
         """
-        record = self.record("split-interactive", "AR90006", "awaiting_reply")
+        record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         workspace = Path(tempfile.mkdtemp())
-        flow_dir = workspace / "doc" / "features" / "AR90006" / "AR"
+        flow_dir = workspace / "doc" / "features" / "AR-ALPHA" / "AR"
         flow_dir.mkdir(parents=True)
         (flow_dir / "story-flow.json").write_text(
             json.dumps({"archived": False}), encoding="utf-8")
@@ -399,7 +405,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         self.assertTrue(run_multi_case.gate_phase_ready(record, ""))
 
     def test_poll_uses_story_and_spec_cadences(self) -> None:
-        record = self.record("split-two-ar", "AR90005", "running")
+        record = self.record("case-gamma-fixture", "AR-GAMMA", "running")
         record.update({"cursor": 0, "model_cursor": 0, "last_phase": "story"})
         suite = self.suite(record)
         payload = {"run": {"status": "running", "last_phase": "story"}}
@@ -421,9 +427,9 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         self.assertEqual(120, result["observation_cadence_sec"])
 
     def test_mixed_story_and_spec_suite_stays_on_fifteen_seconds(self) -> None:
-        story = self.record("split-interactive", "AR90006", "running")
+        story = self.record("case-alpha-fixture", "AR-ALPHA", "running")
         story["last_phase"] = "story"
-        spec = self.record("source-conflict-review", "ISSUE-410", "running")
+        spec = self.record("case-beta-fixture", "ISSUE-BETA", "running")
         spec["last_phase"] = "spec"
         spec["spec_entered_at"] = "2026-08-22T00:00:00+08:00"
         suite = self.suite(story, spec)
@@ -434,8 +440,8 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         self.assertFalse(run_multi_case.suite_automation_ready(suite))
 
     def test_two_complete_spec_rounds_are_required_and_regression_resets(self) -> None:
-        first = self.record("split-interactive", "AR90006", "running")
-        second = self.record("source-conflict-review", "ISSUE-410", "running")
+        first = self.record("case-alpha-fixture", "AR-ALPHA", "running")
+        second = self.record("case-beta-fixture", "ISSUE-BETA", "running")
         for record in (first, second):
             record.update({"last_phase": "spec", "spec_entered_at": "entered"})
         suite = self.suite(first, second)

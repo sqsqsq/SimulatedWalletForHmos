@@ -14,7 +14,7 @@
 用法::
 
     python test/story/scripts/check_failure_modes.py                # 默认目标集
-    python test/story/scripts/check_failure_modes.py --feature AR90006 --feature AR90004
+    python test/story/scripts/check_failure_modes.py --feature AR90004 --feature ISSUE-206
     python test/story/scripts/check_failure_modes.py --feature-root <dir>
     python test/story/scripts/check_failure_modes.py --self-check   # 只跑夹具自检
     python test/story/scripts/check_failure_modes.py --list         # 列台账
@@ -483,21 +483,28 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
 
 
 def _case_business_words() -> list[str]:
-    """从测试 Case 派生业务特征词；派生不到就只用单号形态（不硬编码业务名）。"""
+    """从测试 Case 派生业务特征词；派生不到就只用单号形态（不硬编码业务名）。
+
+    取的是**会变成路径的那些名字**：人给的补充文档（文件名会成为
+    `assets/<stem>/` 目录名与导入后的小节名）与工作区里已有的资产目录。
+    机制层出现这类词，就是它照着某一轮的测试数据写死了。
+    """
     cases_dir = REPO_ROOT / "test" / "story" / "cases"
     words: set[str] = set()
     if not cases_dir.exists():
         return []
     for case_yaml in cases_dir.glob("*/case.yaml"):
         try:
-            data = yaml.safe_load(read_text(case_yaml)) or {}
+            yaml.safe_load(read_text(case_yaml))
         except yaml.YAMLError:
             continue
-        for inbox in (case_yaml.parent / "workspace" / "inbox").glob("*"):
-            stem = inbox.stem
+        case_root = case_yaml.parent
+        for material in (*(case_root / "supplements").glob("*"),
+                         *(case_root / "workspace" / "inbox").glob("*")):
+            stem = material.stem
             if len(stem) >= 4 and not stem.startswith("."):
                 words.add(stem)
-        for asset_dir in (case_yaml.parent / "workspace").rglob("assets/*"):
+        for asset_dir in (case_root / "workspace").rglob("assets/*"):
             if asset_dir.is_dir() and len(asset_dir.name) >= 4:
                 words.add(asset_dir.name)
     return sorted(w for w in words if re.search(r"[\u4e00-\u9fff]", w))

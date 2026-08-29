@@ -2143,7 +2143,8 @@ def command_status(suite_id: str) -> int:
 
 
 def command_reply(suite_id: str, case_id: str, text: str,
-                  reply_mode: str = "manual", reason: str = "") -> int:
+                  reply_mode: str = "manual", reason: str = "",
+                  deliver: list[str] | None = None) -> int:
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
         raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
@@ -2161,12 +2162,16 @@ def command_reply(suite_id: str, case_id: str, text: str,
                           "error": "另一个 Case 正占用 Framework 阶段槽，暂不注入回复",
                           "blockers": blockers}, ensure_ascii=False, indent=2))
         return 2
+    deliver_args: list[str] = []
+    for name in deliver or []:
+        deliver_args.extend(("--deliver", str(name)))
     returncode, payload, stdout, stderr = invoke_case(
-        case_id, "reply", "--text", text, suite=suite)
+        case_id, "reply", "--text", text, *deliver_args, suite=suite)
     interaction = {
         "kind": "interaction_reply",
         "mode": reply_mode,
         "reason": reason,
+        "delivered": (payload or {}).get("delivered") or [],
         "prompt": (record.get("last_awaiting") or {}).get("prompt")
                   or (record.get("last_awaiting") or {}).get("message"),
         "reply": text,
@@ -2183,6 +2188,7 @@ def command_reply(suite_id: str, case_id: str, text: str,
         record["last_replied_turn"] = (record.get("last_awaiting") or {}).get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
+        record_delivery(record, (payload or {}).get("delivered") or [])
         record["interaction_state"] = (
             "adaptive_sent" if reply_mode == "adaptive" else record.get("interaction_state"))
         script = list(record.get("interaction_script") or [])
@@ -2485,6 +2491,8 @@ def main() -> int:
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
                         default="manual")
     parser.add_argument("--reason", default="")
+    parser.add_argument("--deliver", action="append", default=[],
+                        help="reply：随这句话把该 Case supplements/ 下的材料放进收件箱，可多次")
     parser.add_argument("--wait-sec", type=int, default=15)
     parser.add_argument("--max-chars", type=int, default=200000)
     parser.add_argument("--authorize-non-sandbox", action="store_true",
@@ -2530,7 +2538,7 @@ def main() -> int:
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] reply 必须提供 --case 和非空 --text")
         return command_reply(args.suite_id, args.reply_case, args.text,
-                             args.reply_mode, args.reason)
+                             args.reply_mode, args.reason, args.deliver)
     return command_stop(args.suite_id, args.force)
 
 

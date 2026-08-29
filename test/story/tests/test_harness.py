@@ -110,9 +110,14 @@ class CaseConfigTest(unittest.TestCase):
                 self.assertFalse(
                     hit, f"{path} 声明了交互模式，prompt 里却预塞了诉求 {hit}"
                          "——那又退回测记忆了")
+                # 回话要有个固定来源，否则每轮现编，轮次之间就不可比。
+                # 逐关卡的 `interaction-script.yaml` 是它的完整形态（还能带补料投放）；
+                # 只有一关要回的用例可以用 case.yaml 的 `suggested_reply` 顶。
+                script = path.parent / "interaction-script.yaml"
                 self.assertTrue(
-                    str(cfg.get("suggested_reply") or "").strip(),
-                    f"{path} 缺 suggested_reply：每轮现编回话，轮次之间就不可比")
+                    script.is_file() or str(cfg.get("suggested_reply") or "").strip(),
+                    f"{path} 既没有 interaction-script.yaml 也没有 suggested_reply："
+                    "每轮现编回话，轮次之间就不可比")
 
     def test_a_prompt_that_claims_seeded_material_actually_ships_it(self) -> None:
         """prompt 说「材料我已经放好了」，`workspace/` 里就必须真有东西。
@@ -943,7 +948,7 @@ class HumanReplyTest(unittest.TestCase):
     def test_interactive_defaults_to_off(self) -> None:
         """既有用例一字不改，行为逐字节一致。"""
         self.assertFalse(rc.is_interactive({}))
-        self.assertFalse(rc.is_interactive({"id": "x", "ar": "AR90006"}))
+        self.assertFalse(rc.is_interactive({"id": "x", "ar": "AR-FIXTURE"}))
         self.assertTrue(rc.is_interactive({"interactive": True}))
 
     def test_waiting_gives_up_instead_of_answering_for_the_person(self) -> None:
@@ -979,8 +984,11 @@ class HumanReplyTest(unittest.TestCase):
         那句话不会有人读，而回执写着入队成功，人会以为说过了，
         然后一直等一个不会到来的下一轮。
         """
+        # 挑哪个用例无所谓，只要它存在且没在跑；用例集是动态的，别写死名字。
+        case_id = sorted(p.parent.name for p in
+                         (REPO_ROOT / "test" / "story" / "cases").glob("*/case.yaml"))[0]
         proc = subprocess.run(
-            [sys.executable, str(SCRIPTS / "run_case.py"), "split-interactive",
+            [sys.executable, str(SCRIPTS / "run_case.py"), case_id,
              "reply", "--text", "本次先做第一份"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(REPO_ROOT))

@@ -1,8 +1,0 @@
-{
-  "reqNo": "ISSUE-410",
-  "type": "local-issue",
-  "title": "离线交易凭证查看与分享修复",
-  "parentNo": "SR-LOCAL-41",
-  "rrNo": "RR-LOCAL-41",
-  "source": "local-workspace"
-}

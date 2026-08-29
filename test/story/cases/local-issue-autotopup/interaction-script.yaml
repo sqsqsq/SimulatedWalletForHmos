@@ -1,0 +1,29 @@
+# 需求方按实际停等顺序说的话；不注入初始 prompt。
+# 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+replies:
+  - id: hand-over-the-product-doc
+    expected_turn: 1
+    expected_kind: story_gate
+    expected_phase: story
+    # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
+    deliver:
+      - 交通卡自动充值.docx
+    text: 产品那份是他们自己写的稿子，没在需求系统上归档——我放进需求目录了，你按它来。
+
+  - id: product-doc-wins
+    expected_turn: 2
+    expected_kind: story_gate
+    expected_phase: story
+    text: 以产品那份为准，设计说明里那句是早先的旧数，产品后来调过。另外那两件到现在还是没人拍板，这轮先别定，也别写成结论。
+
+  - id: do-it-in-one-go
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: 这块一次做完，不拆开分批交，也没有别人接后半段。
+
+  - id: review-comments
+    expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 我看过了，大方向没问题。有一条要改：单日到上限那次不该算成扣款失败，用户看到的应该是“今天不再充了”，不是失败提示——这个要在方案里写清楚。别的按现在写的走；没人拍板的那两件仍然保持不定。
