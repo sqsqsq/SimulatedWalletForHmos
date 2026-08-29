@@ -757,6 +757,24 @@ function cmdCheck(ctx) {
       problems.push(`逐问表缺 ${missingQ.length} 行（${missingQ.slice(0, 3).join('、')}`
         + `${missingQ.length > 3 ? ' …' : ''}）——每章每个读者问题都要有裁决`);
     }
+
+    // 同一句被两章共用 = 同一事实在两处都作为「答了」的证据 → 它在其中一处是重复的。
+    // 「分配恰好一处」管的是来源单元，管不住作者把同一段话写进两章；
+    // 段落级重复由可读性那条管，这一条管的是**同一件事被当成两章各自的答案**。
+    const quoteChapters = new Map();
+    for (const row of tables.questions) {
+      if (row.verdict !== questionWords[0]) continue;
+      const key = norm(row.quote);
+      if (key.length < MIN_QUOTE) continue;
+      if (!quoteChapters.has(key)) quoteChapters.set(key, new Set());
+      quoteChapters.get(key).add(row.chapter);
+    }
+    for (const [key, chapters] of quoteChapters) {
+      if (chapters.size < 2) continue;
+      problems.push(`同一句话同时充当「${[...chapters].join('」与「')}」两章的答案`
+        + `（${key.slice(0, 20)}…）——同一件事只在主位置完整表述一次，`
+        + '另一处要么删掉，要么改写成只补它那一章独有的判断');
+    }
     if (missingC.length) {
       problems.push(`逐章表缺 ${missingC.length} 行（${missingC.slice(0, 3).join('、')}`
         + `${missingC.length > 3 ? ' …' : ''}）——附录之外每章每个维度都要有裁决`);
