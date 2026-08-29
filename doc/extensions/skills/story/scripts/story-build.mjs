@@ -67,6 +67,8 @@ function parseArgs(argv) {
   for (let i = 3; i < argv.length; i++) {
     if (argv[i] === '--feature') args.feature = argv[++i];
     else if (argv[i] === '--project-root') args.projectRoot = argv[++i];
+    else if (argv[i] === '--story') args.story = argv[++i];
+    else if (argv[i] === '--offline') args.offline = true;
   }
   return args;
 }
@@ -92,7 +94,36 @@ function featuresDir(projectRoot) {
   return typeof dir === 'string' && dir.trim() ? dir.trim() : 'doc/features';
 }
 
+/**
+ * 只读一份 story 的上下文 —— `check --offline --story <路径>`。
+ *
+ * **为什么要有它**：判据得有个仲裁锚。理想产物冻结在夹具里，任何一条判据改动
+ * 都先拿它跑一遍——拦住理想产物的判据，错的是判据。而理想产物没有需求目录、
+ * 没有单元清单、没有核对记录，正常的 check 连门都进不去。
+ *
+ * 走的是**同一个 `cmdCheck`**，不是另写一套：另写一套就会与生产链漂移，
+ * 到那时「拿它跑过了」什么也证明不了。单元清单与核对记录给空，
+ * 依赖它们的判项自然一条不判；不依赖的照跑。
+ */
+function createOfflineContext(args) {
+  if (!args.story) fail('缺 --story <story.md 路径>');
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const projectRoot = path.resolve(
+    args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..', '..'));
+  const contract = readJson(path.join(scriptDir, '..', 'contracts', 'story-chapters.json'), null);
+  if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
+  const storyPath = path.resolve(args.story);
+  if (readText(storyPath) === null) fail(`读不到 ${storyPath}`);
+  return {
+    args, projectRoot, contract, offline: true,
+    featureRoot: path.dirname(path.dirname(storyPath)),
+    storyPath,
+    unitsPath: '', auditPath: '', decisionsPath: '', verdictsPath: '', reviewPath: '',
+  };
+}
+
 function createContext(args) {
+  if (args.offline) return createOfflineContext(args);
   if (!args.feature) fail('缺 --feature');
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(
@@ -462,11 +493,13 @@ function missingGlossaryTerms(specText, storyText, projectRoot) {
 
 function cmdCheck(ctx) {
   const problems = [];
-  const doc = readJson(ctx.unitsPath, null);
+  // 离线模式（仲裁锚）：单元清单与核对记录给空，依赖它们的判项一条不判，
+  // 不依赖的照跑——同一个函数，不是另写一套。
+  const doc = ctx.offline ? { units: [] } : readJson(ctx.unitsPath, null);
   if (!doc) fail(`还没有来源单元清单，先跑 init：${ctx.unitsPath}`);
   const storyText = readText(ctx.storyPath);
   if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
-  const audit = readJson(ctx.auditPath, null);
+  const audit = ctx.offline ? { records: [] } : readJson(ctx.auditPath, null);
   if (!audit) fail(`还没有核对记录，先跑 audit：${ctx.auditPath}`);
 
   const sections = storySections(storyText);
@@ -666,9 +699,10 @@ function cmdCheck(ctx) {
     problems.push(`材料里有 ${sourceForm.image} 张图片，story 里只引用了 ${imgs.length} 张`);
   }
 
-  // ⑤ 决策件六类都扫过
-  const decisions = readJson(ctx.decisionsPath, null);
-  if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
+  // ⑤ 决策件六类都扫过（离线模式没有需求目录，这一项不判）
+  const decisions = ctx.offline ? null : readJson(ctx.decisionsPath, null);
+  if (ctx.offline) { /* 仲裁锚只判文档本身 */ }
+  else if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
   else {
     const scanned = decisions.scanned_categories ?? {};
     for (const cat of SCANNED_CATEGORIES) {
@@ -855,7 +889,7 @@ function cmdCheck(ctx) {
   // （主题色、脱敏这类——spec 拿它们把自然语言映到权威模块，story 用业务语言表达同一事实
   // 才是对的）。一视同仁地要求逐词出现，会让 story 越写人话越容易被判「丢了事实」。
   // 分流键取表内的「所属层」列：归属平台能力层的属工程消歧用词，不要求出现。
-  const specText = readText(path.join(ctx.featureRoot, 'spec', 'spec.md'));
+  const specText = ctx.offline ? null : readText(path.join(ctx.featureRoot, 'spec', 'spec.md'));
   if (specText !== null) {
     const lost = missingGlossaryTerms(specText, storyText, ctx.projectRoot);
     if (lost.length) {
@@ -991,7 +1025,12 @@ function cmdBuild(ctx) {
 function main() {
   const args = parseArgs(process.argv);
   if (!COMMANDS.includes(args.command)) {
-    fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]`);
+    fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]
+`
+      + '      story-build.mjs check --offline --story <story.md 路径>');
+  }
+  if (args.offline && args.command !== 'check') {
+    fail('--offline 只用于 check：它只读一份文档，登记与渲染都需要需求目录');
   }
   const ctx = createContext(args);
   if (args.command === 'init') cmdInit(ctx);

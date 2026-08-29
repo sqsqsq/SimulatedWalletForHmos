@@ -2151,6 +2151,61 @@ def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"三类语言红线各自被点名：{'、'.join(kinds)}")
 
 
+GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
+
+
+@checker
+def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
+    """判据把已定稿的理想产物判成违规。
+
+    这是**常驻正例**，与其它形态反过来：这里 PASS 的意思是「判据没拦金样」。
+    金样是唯一的效果定义，判据从它正推——所以任何判据改动先跑这一行，
+    拦住金样就是判据错，修判据不修金样。
+
+    两个分支都验。只验「零 FAIL」不够：判项集体空转时也是零 FAIL，
+    那种「通过」比拦错更难发现。
+    """
+    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
+    if build is None:
+        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
+    if not GOLDEN_STORY.exists():
+        return Outcome(False, "金样不在库里——判据失去仲裁锚")
+
+    def run(story: Path) -> tuple[int, str]:
+        proc = subprocess.run(
+            ["node", str(build), "check", "--offline", "--story", str(story),
+             "--project-root", str(REPO_ROOT)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()
+
+    code, out = run(GOLDEN_STORY)
+    if code != 0:
+        return Outcome(False, f"判据拦住了金样：{out[:260]}")
+
+    # 反分支：塞一个工程标识与一段超长的话进主叙事，判项应当各自点名
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "AR"
+        shutil.copytree(GOLDEN_STORY.parent, work)
+        story = work / "story.md"
+        text = read_text(story)
+        head = text.split("\n## ", 2)
+        if len(head) < 3:
+            return Outcome(False, "金样切不出第二章——形态变了，本条的注入点要重定")
+        injected = text.replace(
+            "\n## " + head[2].split("\n", 1)[0],
+            "\n## " + head[2].split("\n", 1)[0]
+            + "\n\n这里塞一个 queryLossEligibility 进主叙事：" + "复述一遍没有信息量的话，" * 20,
+            1)
+        story.write_text(injected, encoding="utf-8")
+        bad_code, bad_out = run(story)
+    if bad_code == 0:
+        return Outcome(False, "往金样里塞了工程标识与超长段落却仍然全过——判项在空转")
+    missed = [w for w in ("工程标识", "过长的段落") if w not in bad_out]
+    if missed:
+        return Outcome(False, f"注入的违例没被点名：{missed}；实际输出 {bad_out[:200]}")
+    return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
+
+
 _CHAIN_LINK = re.compile(r"\]\(([^)\s]+)\)")
 _CHAIN_SCRIPT = re.compile(r"`([A-Za-z0-9_./-]+\.(?:mjs|py|js))`")
 _CHAIN_OWNED = ("scripts/", "doc/extensions/")

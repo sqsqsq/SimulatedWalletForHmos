@@ -888,3 +888,21 @@ modes:
       判定原先落在一份独立的判定记录文件里；那份文件退场后，作业指引与门禁一起没了。
       现在规约条目是来源单元，与材料里的事实走同一条守恒链：缺一条点名一条，
       判「不命中」也要有行有依据，整域不适用时给该域一行即可（P15 的域级判定回来了）。
+
+  - id: G01-judgement-blocks-golden
+    dimension: expression
+    found_round: "2026-08-30"
+    form: 新加或改动的判据把已定稿的理想产物判成违规——判据没有仲裁源，冲突时只能靠加围栏调和
+    clause: KG-0 / P1「拦金样即判据错」
+    checker: g01_judgement_blocks_golden
+    target: mechanism
+    self_check: internal
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      四轮机制迭代的判据全部从「病」反推，从不存在「期望的 story 长什么样」的具体定义，
+      于是判据互相打架时没有仲裁源：批次 4 首跑一边要求人读的改写、一边要求逐字命中，
+      倾倒成了唯一合法解。金样定稿后成为唯一效果定义——**任何判据若拦金样，错的是判据**。
+      这一条是常驻正例：判据改动先跑它。两个分支都验——金样零 FAIL，
+      且往副本里塞违例时判项真的点名（不然「零 FAIL」可能只是判项全空转）。
