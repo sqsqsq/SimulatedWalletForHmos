@@ -773,6 +773,66 @@ modes:
       它证明的是「材料这么说」而不是「story 讲清了」——上一轮 verifier 报告 272 行证据
       全是这种回声。判据：引文须是 story 那一章的逐字子串、≥12 字、且不是单元原文的子串。
 
+  - id: S01-diagram-degraded
+    dimension: expression
+    found_round: 2026-08-29
+    form: 材料里的流程图在 story 里被压成「A → B → C」箭头文字——上一版只判「图有落点」，箭头文字也算落点
+    clause: KV-3 / M4 / 1.0 rules 第 2 条「表达形态与数量不得降级」
+    checker: s01_diagram_degraded
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S01-diagram-degraded/bad
+    good_fixture: test/story/fixtures/failure-modes/S01-diagram-degraded/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      读者要的是那张图一眼看出的结构：哪几条分支、各自去哪。文字复述做不到。判的是形态不是语义——源里是图的，落点章里就得还是图；story 的图数不少于源。实证：批次 3 的 AR90005 里源材料的流程图整个没进 story，而当时的判据全绿。
+
+  - id: S02-terms-not-table
+    dimension: expression
+    found_round: 2026-08-29
+    form: 材料里的表在 story 里被摊成散文，逐项比对的那几列丢了
+    clause: KV-3 / M4 / 冻结 01-C1
+    checker: s02_terms_not_table
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S02-terms-not-table/bad
+    good_fixture: test/story/fixtures/failure-modes/S02-terms-not-table/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      最先丢的是非首列——触发条件、编号、责任方。三行表摊成一句话，读者要靠数分号对齐，而术语表本来是给他随时回查的。单行不构成表，故只有 ≥2 行落在同一章时才要求成表——这条与「一行不成表」的表达规则对齐，否则机器要建表、裁决者判不该建表。
+
+  - id: S03-long-paragraph
+    dimension: expression
+    found_round: 2026-08-29
+    form: 一段几百字的散文，读者找不到结论也找不到停顿
+    clause: KV-3 / M5 / Microsoft 写作风格（短句短段、结论先行）
+    checker: s03_long_paragraph
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S03-long-paragraph/bad
+    good_fixture: test/story/fixtures/failure-modes/S03-long-paragraph/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      阈值满足「拆了一定更可读」这个条件，所以机械判它不会被换皮受益：把长段拆开、把结论提到段首，两件事都只会让文档更好读。**不设句长阈值**——中文 45–60 字的复句很常见，为凑短在逗号处一刀切只会写出半截话，那正是最省力的过关方式。
+
+  - id: S04-duplicate-paragraph
+    dimension: expression
+    found_round: 2026-08-29
+    form: 同一段话在两章各写一遍——「不重复」这一轴此前只有「分配恰好一处」在守，那管不住作者
+    clause: KV-3 / KV-7 / 冻结 01-C2
+    checker: s04_duplicate_paragraph
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S04-duplicate-paragraph/bad
+    good_fixture: test/story/fixtures/failure-modes/S04-duplicate-paragraph/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      分配恰好一处管的是来源单元，管不住作者在两章各写同样的话。规范化（去空白标点与强调标记）后逐段比对，改个标点也认得出。下限 duplicate_min_chars 是合同数据：低于它，「本需求不涉及。」这类模板句会被判成重复。
+
   - id: S05-main-text-identifier
     dimension: expression
     found_round: 2026-08-29

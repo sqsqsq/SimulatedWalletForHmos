@@ -1915,6 +1915,76 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
+    """材料里的流程图在 story 里被压成「A → B → C」箭头文字。
+
+    上一版只判「图有落点」——箭头文字也算落点，于是压扁能过。读者要的是那张图
+    一眼看出的结构：哪几条分支、各自去哪，文字复述做不到。
+    判的是**形态不是语义**：源里是图的，落点章里就得还是图。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "材料里的图以图的形态落在 story 里")
+    if "那一章没有图" in out or "数量不该少于源" in out:
+        return Outcome(False, "图被压成文字后被点名")
+    return Outcome(False, f"check 未过（非形态降级原因）：{out[:200]}")
+
+
+@checker
+def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
+    """材料里的表在 story 里被摊成散文，逐项比对的那几列就没了。
+
+    最先丢的是非首列——触发条件、编号、责任方。三行表摊成一句话，读者要靠数
+    分号来对齐，而术语表本来是给他随时回查的。
+    单行的表不在此列（一行不构成表），只有 ≥2 行落在同一章时才要求成表。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "材料里的表以表的形态落在 story 里")
+    if "那一章没有表" in out:
+        return Outcome(False, "表被摊成散文后被点名")
+    return Outcome(False, f"check 未过（非形态降级原因）：{out[:200]}")
+
+
+@checker
+def s03_long_paragraph(root: Path, ctx: Ctx) -> Outcome:
+    """一段几百字的散文。
+
+    阈值满足「拆了一定更可读」，所以机械判它不会被换皮受益——把长段拆开、
+    把结论提到段首，两件事都只会让文档更好读。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "没有超长段落")
+    if "过长的段落" in out:
+        return Outcome(False, "超长段落被点名并给出字数")
+    return Outcome(False, f"check 未过（非长度原因）：{out[:200]}")
+
+
+@checker
+def s04_duplicate_paragraph(root: Path, ctx: Ctx) -> Outcome:
+    """同一段话在两章各出现一次。
+
+    「不重复」这一轴此前只有「分配恰好一处」在守——那管的是来源单元，管不住
+    作者在两章各写一遍同样的话。规范化后逐段比对，改个标点也认得出。
+    """
+    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "签约成功之后，详情页顶部显示当前的触发门限")
+    if code == 0:
+        return Outcome(True, "没有重复的段落")
+    if "重复的段落" in out:
+        return Outcome(False, "重复段被点名并指出与哪一行相同")
+    return Outcome(False, f"check 未过（非重复原因）：{out[:200]}")
+
+
+@checker
 def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     """工程标识、规约编号、检索措辞出现在主叙事里——打断了面向人的阅读。
 

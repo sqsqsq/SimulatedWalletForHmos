@@ -273,6 +273,131 @@ export function scanLanguageRedline(text, opts = {}) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// 可读性：三条长度红线 + 重复段
+//
+// 三条阈值都满足同一个条件——**拆了一定更可读**。拆长段、拆长章、拆过长的步骤清单
+// 都不会写坏，所以机械判它们不会被换皮受益。
+//
+// **没有句长阈值**：中文技术叙述里 45–60 字的完整复句很常见，为了凑短而在逗号处
+// 断开，只会写出半截话和断裂的指代——那比长句更难读，而那正是最省力的过关方式。
+// 句子啰嗦不啰嗦是语义问题，归裁决者的「表达贴合」维度。
+
+const READABILITY_HINTS = {
+  long_paragraph: '拆开，或者把结论提成一句话放段首',
+  long_chapter: '分小标题，或者把并列的部分改成列表 / 表',
+  long_ordered_list: '按阶段拆成几节——十几步排成一列，读者记不住自己在第几步',
+  duplicate_paragraph: '同一段话出现两次：留在它主要回答读者问题的那一章，另一处删掉或改写成承接',
+};
+
+/** 段落规范化：去掉空白、标点与强调标记后比对，才认得出「改了个标点的同一段」。 */
+function normalizeParagraph(text) {
+  return text.replace(/[\s*`_>|-]/g, '').replace(/[，。；：、,.;:!?！？（）()「」“”"']/g, '');
+}
+
+/** 按 `## ` 把正文切成章，带原文行号——报错要指得回去。 */
+function chapterBlocks(text) {
+  const out = [];
+  let cur = null;
+  const lines = String(text ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(/^##\s+(.+)$/);
+    if (m) {
+      cur = { title: m[1].trim(), line: i + 1, lines: [] };
+      out.push(cur);
+      continue;
+    }
+    if (cur) cur.lines.push({ line: i + 1, text: lines[i] });
+  }
+  return out;
+}
+
+/**
+ * 扫描长度红线与重复段。阈值全部来自合同 `readability`，本文件不定默认值——
+ * 定了默认值，合同里删掉一项就会静默换成另一套标准。
+ *
+ * @param {string} text story 全文
+ * @param {object} conf 合同的 `readability` 段
+ * @returns {{line:number, kind:string, detail:string, hint:string}[]}
+ */
+export function scanReadability(text, conf = {}) {
+  const hits = [];
+  const push = (line, kind, detail) =>
+    hits.push({ line, kind, detail, hint: READABILITY_HINTS[kind] });
+  const maxPara = Number(conf.paragraph_max_chars) || 0;
+  const maxChapter = Number(conf.chapter_split_at_chars) || 0;
+  const maxSteps = Number(conf.ordered_steps_max) || 0;
+  const minDuplicate = Number(conf.duplicate_min_chars) || 0;
+
+  const paragraphs = new Map();     // 规范化后的段落 → 首次出现行号
+  for (const chapter of chapterBlocks(text)) {
+    let inFence = false;
+    let para = null;                // {line, chars}
+    let steps = null;               // {line, count}
+    let bodyChars = 0;
+    let hasBreak = false;           // 有 H3 / 列表 / 表就不算「一大坨」
+
+    const flushPara = () => {
+      if (!para) return;
+      if (maxPara && para.chars > maxPara) {
+        push(para.line, 'long_paragraph', `${para.chars} 字（上限 ${maxPara}）`);
+      }
+      const key = normalizeParagraph(para.raw);
+      if (minDuplicate && key.length >= minDuplicate) {
+        if (paragraphs.has(key)) {
+          push(para.line, 'duplicate_paragraph', `与第 ${paragraphs.get(key)} 行是同一段`);
+        } else {
+          paragraphs.set(key, para.line);
+        }
+      }
+      para = null;
+    };
+    const flushSteps = () => {
+      if (steps && maxSteps && steps.count > maxSteps) {
+        push(steps.line, 'long_ordered_list', `${steps.count} 项（上限 ${maxSteps}）`);
+      }
+      steps = null;
+    };
+
+    for (const { line, text: raw } of chapter.lines) {
+      if (/^\s*(```|~~~)/.test(raw)) {
+        inFence = !inFence;
+        flushPara();
+        hasBreak = true;            // 图与代码块本身就是一次视觉停顿
+        continue;
+      }
+      if (inFence) continue;
+
+      const trimmed = raw.trim();
+      if (!trimmed) { flushPara(); flushSteps(); continue; }
+      if (/^#{3,6}\s/.test(trimmed)) { flushPara(); flushSteps(); hasBreak = true; continue; }
+      if (/^\|/.test(trimmed) || /^[-*+]\s/.test(trimmed)) {
+        flushPara(); flushSteps(); hasBreak = true; bodyChars += trimmed.length; continue;
+      }
+      if (/^\d+[.、)]\s/.test(trimmed)) {
+        flushPara();
+        hasBreak = true;
+        steps = steps ? { ...steps, count: steps.count + 1 } : { line, count: 1 };
+        bodyChars += trimmed.length;
+        continue;
+      }
+      flushSteps();
+      para = para
+        ? { ...para, chars: para.chars + trimmed.length, raw: `${para.raw}${trimmed}` }
+        : { line, chars: trimmed.length, raw: trimmed };
+      bodyChars += trimmed.length;
+    }
+    flushPara();
+    flushSteps();
+
+    if (maxChapter && bodyChars > maxChapter && !hasBreak) {
+      push(chapter.line, 'long_chapter',
+        `「${chapter.title}」${bodyChars} 字且没有小标题、列表或表（上限 ${maxChapter}）`);
+    }
+  }
+  return hits;
+}
+
 /**
  * 扫描仓内本地路径。
  * @param {string} text 待扫描文本

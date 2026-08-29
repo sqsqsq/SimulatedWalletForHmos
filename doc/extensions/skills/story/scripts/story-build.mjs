@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
 import {
   baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
-  scanLanguageRedline, scanLocalPaths,
+  scanLanguageRedline, scanLocalPaths, scanReadability,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
@@ -541,7 +541,11 @@ function cmdCheck(ctx) {
     }
   }
 
-  // ④ 图片与 diagram：可解析、全篇唯一、有落点
+  // ④ 形态守恒：图片与 diagram 可解析、全篇唯一、**以同类形态落点**
+  //
+  // 上一版只判「有落点」——于是把流程图压成「A → B → C」这样的箭头文字、
+  // 把表压成散文都能通过。读者要的是那张图一眼看出的结构，文字复述它做不到。
+  // 判的是**形态不是语义**：语义归裁决者，这里只管「源里是图的，到这儿还是不是图」。
   const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
   const seen = new Set();
   for (const [, alt, src] of imgs) {
@@ -549,12 +553,63 @@ function cmdCheck(ctx) {
     if (seen.has(src)) problems.push(`图片 ${src} 在 story 里出现了不止一次`);
     seen.add(src);
   }
-  for (const u of doc.units.filter(x => x.kind === 'diagram')) {
+
+  /** 一章里有没有围栏图 / 图片 / 表——形态判据只问这三件事。 */
+  const chapterForm = new Map(sections.map(s => [s.title, {
+    diagram: /^\s*(?:```|~~~)\s*\w+/m.test(s.text),
+    image: /!\[[^\]]*\]\(/.test(s.text),
+    table: /^\s*\|/m.test(s.text),
+    text: s.text,
+  }]));
+  const placedAt = (u) => recByKey.get(u.key)?.at;
+  const tableRowsByChapter = new Map();
+
+  for (const u of doc.units) {
     const rec = recByKey.get(u.key);
-    if (!rec?.at && !rec?.covered_by) {
-      problems.push(`来源材料里的图（${u.doc}:${u.line}）在 story 里没有落点`
-        + '——图是读者最依赖的那部分，不能只在材料里有');
+    const at = placedAt(u);
+    if (u.kind === 'diagram') {
+      if (!at && !rec?.covered_by) {
+        problems.push(`来源材料里的图（${u.doc}:${u.line}）在 story 里没有落点`
+          + '——图是读者最依赖的那部分，不能只在材料里有');
+      } else if (at && chapterForm.get(at) && !chapterForm.get(at).diagram) {
+        problems.push(`来源材料里的图（${u.doc}:${u.line}）落在「${at}」，但那一章没有图`
+          + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构');
+      }
+    } else if (u.kind === 'image') {
+      if (at && chapterForm.get(at) && !chapterForm.get(at).image) {
+        problems.push(`来源材料里的图片（${u.doc}:${u.line}）落在「${at}」，但那一章没有图片引用`
+          + '——图片承载的信息，文字复述替代不了');
+      }
+    } else if (u.kind === 'table_row' && at) {
+      if (!tableRowsByChapter.has(at)) tableRowsByChapter.set(at, []);
+      tableRowsByChapter.get(at).push(u);
     }
+  }
+
+  // 表行：**该章分到 ≥2 条时**才要求成表——只有一行的不构成表（一行的表读起来
+  // 比一句话更费劲），那时只要求这一行的内容在该章出现，由整篇 token 守恒管。
+  for (const [at, rows] of tableRowsByChapter) {
+    const form = chapterForm.get(at);
+    if (!form || rows.length < 2) continue;
+    if (!form.table) {
+      problems.push(`材料里的表有 ${rows.length} 行落在「${at}」，但那一章没有表`
+        + '——把表压成散文，逐项比对的那几列就没了（最先丢的是触发条件与编号）');
+    }
+  }
+
+  // 整篇形态数不降级：源里有几张图，story 里就不该更少
+  const sourceForm = { diagram: 0, image: 0 };
+  for (const u of doc.units) {
+    if (u.kind === 'diagram') sourceForm.diagram += 1;
+    if (u.kind === 'image') sourceForm.image += 1;
+  }
+  const storyDiagrams = (storyText.match(/^\s*(?:```|~~~)\s*\w+/gm) ?? []).length;
+  if (sourceForm.diagram && storyDiagrams < sourceForm.diagram) {
+    problems.push(`材料里有 ${sourceForm.diagram} 张图，story 里只有 ${storyDiagrams} 张`
+      + '——数量不该少于源');
+  }
+  if (sourceForm.image && imgs.length < sourceForm.image) {
+    problems.push(`材料里有 ${sourceForm.image} 张图片，story 里只引用了 ${imgs.length} 张`);
   }
 
   // ⑤ 决策件六类都扫过
@@ -730,6 +785,29 @@ function cmdCheck(ctx) {
         problems.push(`主叙事出现${kind === 'repo_identifier' ? '工程标识' : kind} ${list.length} 处`
           + `（${sample}${list.length > 3 ? ' …' : ''}）——${list[0].hint}`);
       }
+    }
+  }
+
+  // ⑪ 可读性：长段、长章、过长步骤清单、重复段
+  //
+  // 四条都满足同一个条件——**拆了一定更可读**，所以机械判它们不会被换皮受益。
+  // 没有句长判据：为凑短而在逗号处断开只会写出半截话，那比长句更难读，
+  // 而那正是最省力的过关方式。句子啰嗦不啰嗦归裁决者。
+  const readability = ctx.contract.readability ?? {};
+  if (storyText && Object.keys(readability).some(k => !k.startsWith('_'))) {
+    const byKind = new Map();
+    for (const h of scanReadability(storyText, readability)) {
+      if (!byKind.has(h.kind)) byKind.set(h.kind, []);
+      byKind.get(h.kind).push(h);
+    }
+    const label = {
+      long_paragraph: '过长的段落', long_chapter: '一整章没有停顿',
+      long_ordered_list: '过长的步骤清单', duplicate_paragraph: '重复的段落',
+    };
+    for (const [kind, list] of byKind) {
+      const sample = list.slice(0, 3).map(h => `${h.line} 行 ${h.detail}`).join('，');
+      problems.push(`${label[kind] ?? kind} ${list.length} 处（${sample}`
+        + `${list.length > 3 ? ' …' : ''}）——${list[0].hint}`);
     }
   }
 
