@@ -260,6 +260,42 @@ class TestMachinePlacement(StoryBuildCase):
         self.assertEqual(records[authored["key"]].get("by"), "author")
 
 
+class TestHardFactConservation(StoryBuildCase):
+    """守恒只守硬事实：机器给落点的依据只有 token，纯中文叙事一律交作者。
+
+    上一版还有一条正文片段兜底：无 token 的单元，正文里找得到 ≥8 字的片段就算落点。
+    它让守恒同时要求「改写成人话」与「逐字保留原句」——两条互斥，把材料整段抄进
+    一个倾倒区是唯一同时满足的解，而门禁会判它通过（实测 267 个单元里 224 条塌进去）。
+    """
+
+    def test_units_without_tokens_are_never_machine_placed(self) -> None:
+        self.init_audit()
+        by_key = {u["key"]: u for u in self.units}
+        for record in self.audit["records"]:
+            if record.get("by") != "machine":
+                continue
+            unit = by_key[record["key"]]
+            self.assertTrue(unit.get("tokens"),
+                            f"{record['key']} 没有 token 却被机器定了落点——片段通道回来了")
+
+    def test_a_paraphrased_chinese_unit_stays_open_for_the_author(self) -> None:
+        """材料里的中文句子被逐字抄进 story 时，机器也不认它——那是裁决者的活。"""
+        self.init_audit()
+        by_key = {u["key"]: u for u in self.units}
+        open_units = [by_key[r["key"]] for r in self.audit["records"]
+                      if not any(r.get(k) for k in ("at", "covered_by", "machine_facing"))]
+        self.assertTrue(open_units, "夹具里应当有机器定不了的纯中文单元")
+        for unit in open_units:
+            self.assertFalse(unit.get("tokens"),
+                             f"{unit['key']} 有 token 却没被机器定位——那是另一类失败")
+
+    def test_the_word_fragment_channel_is_gone_from_the_source(self) -> None:
+        """通道的退场要在代码里也成立——留着函数没人调，下一轮就会有人接回去。"""
+        source = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                  ).read_text(encoding="utf-8")
+        self.assertNotIn("contentFragments", source)
+
+
 class TestTokenExclusion(StoryBuildCase):
     """守恒对象与归档件红线不能互相打架——同一个词不能既要求出现又禁止出现。"""
 

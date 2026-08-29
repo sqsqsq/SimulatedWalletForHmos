@@ -245,7 +245,7 @@ function cmdInit(ctx) {
   process.stdout.write(
     `[story-build init] ${units.length} 个单元、${units.reduce((n, u) => n + u.tokens.length, 0)} 个 token`
     + `（机器面 ${units.filter(u => u.machine_facing).length} 个；`
-    + `无 token ${noToken} 个——它们的落点靠正文片段核，核不住的交裁决者逐条裁）\n`);
+    + `无 token ${noToken} 个——纯中文叙事，机器不判落点，由你分配、由裁决者逐条裁）\n`);
 }
 
 // --------------------------------------------------------------------------
@@ -351,41 +351,31 @@ function subsectionNames(sectionText) {
 /**
  * 机器给落点：单元的 token 在哪一节命中得最多，`at` 就填哪一节。
  *
+ * **只认硬事实**。token 是改写时本该逐字保留的那些东西——接口名、字段名、
+ * 阈值与量纲、图片名、验收编号。它们在人话改写里也不会变，所以「机器核得到」
+ * 与「读者读得下去」不冲突。
+ *
+ * **不判纯中文叙事的落点**。上一版拿 ≥8 字的正文片段做子串兜底，于是守恒同时
+ * 要求「把材料改写成人话」和「逐字保留原句」——两条互斥，把材料原文整段抄进
+ * 一个倾倒区是唯一同时满足的解，而门禁会判它通过。实测首跑 267 个单元里 224 条
+ * 塌进附录的倾倒区，机器全绿。改写后的中文归裁决者逐条裁，灵敏度由删事实对抗测试验。
+ *
  * **不要求全部 token 同节**——上一版正是这么判的，于是「把一件事分两处讲清楚」
  * 被判成无落点，作者只好把它们硬塞进同一段。
  */
 function autoPlace(unit, sections) {
-  if (unit.tokens.length) {
-    let best = null;
-    for (const sec of sections) {
-      const hit = unit.tokens.filter(t => sec.text.includes(t)).length;
-      if (hit > 0 && (!best || hit > best.hit)) best = { title: sec.title, hit };
-    }
-    if (best) return best;
+  if (!unit.tokens.length) return null;      // 纯中文叙事：机器不定落点，交作者与裁决者
+  let best = null;
+  for (const sec of sections) {
+    const hit = unit.tokens.filter(t => sec.text.includes(t)).length;
+    if (hit > 0 && (!best || hit > best.hit)) best = { title: sec.title, hit };
   }
-  // 无 token 的单元（纯中文的表格行、引用句）：拿正文片段做**精确子串**匹配兜底。
-  // 不是相似度——相似度会把「差不多的话」判成同一件事，那正是守恒最怕的。
-  // 匹配不到仍然三态皆空，由作者显式交代：机器把能判的判了，判不了的不假装判了。
-  for (const frag of contentFragments(unit.text)) {
-    for (const sec of sections) {
-      if (norm(sec.text).includes(frag)) return { title: sec.title, hit: 0, by: 'text' };
-    }
-  }
-  return null;
+  return best;
 }
 
 /** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
 function norm(s) {
   return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
-}
-
-/** 单元正文里够长的片段（表格行按单元格切），≥8 字才用——短片段碰巧命中太多。 */
-function contentFragments(text) {
-  return String(text ?? '')
-    .split('｜')
-    .map(norm)
-    .filter(f => f.length >= 8)
-    .sort((a, b) => b.length - a.length);
 }
 
 function cmdAudit(ctx) {
@@ -578,17 +568,12 @@ function cmdCheck(ctx) {
       authorPlaced.push(u);
       continue;
     }
-    // by: machine —— 机器给的落点，必须在**那一章**里核得住
-    if (u.tokens.length) {
-      const lost = u.tokens.filter(t => !chapter.includes(t));
-      if (lost.length) {
-        missingTokens.push({ key: u.key, lost, at: rec.at, text: u.text.slice(0, 50) });
-      }
-      continue;
-    }
-    const frags = contentFragments(u.text);
-    if (!frags.some(f => norm(chapter).includes(f))) {
-      missingTokens.push({ key: u.key, lost: ['正文片段'], at: rec.at, text: u.text.slice(0, 50) });
+    // by: machine —— 机器给的落点，必须在**那一章**里核得住。
+    // 只核硬事实：`by: machine` 现在只可能由 token 命中产生（见 autoPlace），
+    // 没有 token 的单元走不到这里。
+    const lost = u.tokens.filter(t => !chapter.includes(t));
+    if (lost.length) {
+      missingTokens.push({ key: u.key, lost, at: rec.at, text: u.text.slice(0, 50) });
     }
   }
 

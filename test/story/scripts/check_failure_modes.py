@@ -1946,23 +1946,97 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
         if r.returncode != 0:
             return r.returncode, f"{cmd} 跑不起来：{(r.stderr or r.stdout or '')[:200]}"
 
-    if extra_verdict is not None:
-        audit = root / "doc" / "features" / "F1" / "AR" / "story-src" / "audit.json"
-        data = json.loads(read_text(audit))
-        keys = []
-        for rec in data.get("records", []):
-            if not any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
-                rec["at"], rec["by"] = "功能说明", "author"
-                keys.append(rec["key"])
-        audit.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        (audit.parent / "story-verdicts.md").write_text(
-            _verdict_tables(REPO_ROOT, extra_verdict,
-                            [(k, "讲清", extra_verdict) for k in keys],
-                            root / "doc" / "features" / "F1" / "AR" / "story.md"),
-            encoding="utf-8")
+    _seed_author_side(root, extra_verdict)
 
     r = run("check")
     return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()
+
+
+_NORM_RE = re.compile(r"[\s，。、；：!?！？（）()「」【】｜|*`>-]")
+
+
+def _norm(text: str) -> str:
+    return _NORM_RE.sub("", str(text or ""))
+
+
+def _seed_author_side(root: Path, extra_verdict: str | None) -> None:
+    """把「作者已分配、裁决者已裁」这一段补齐——它现在是纯中文单元的**唯一**通路。
+
+    机器只给硬事实（token）定落点；纯中文叙事一律留给作者，再由裁决者逐条裁。
+    夹具只带材料与 story，跑一遍 init/audit 之后那些单元必然三态皆空——
+    那是流程还没走完，不是夹具坏了。这里替作者与裁决者把该做的做掉，
+    好让形态类判据（图、表、长度、语言）验的是它们自己，而不是「流程没走完」。
+
+    落点按**作者会怎么放**来定：这条单元的正文在哪一章能找到就放哪一章。
+    这不是判据（判据里没有片段匹配了），是测试装置在模拟一个尽职的作者。
+    """
+    src = root / "doc" / "features" / "F1" / "AR" / "story-src"
+    audit_path = src / "audit.json"
+    units_path = src / "source-units.json"
+    story_path = root / "doc" / "features" / "F1" / "AR" / "story.md"
+    if not (audit_path.is_file() and units_path.is_file() and story_path.is_file()):
+        return
+    data = json.loads(read_text(audit_path))
+    units = {u["key"]: u for u in json.loads(read_text(units_path)).get("units", [])}
+    bodies = _chapter_bodies(story_path)
+    fallback = next((t for t, b in bodies.items() if b and not _is_empty_chapter(b)), None)
+    if fallback is None:
+        return
+
+    rows = []
+    for rec in data.get("records", []):
+        if any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
+            continue
+        unit = units.get(rec["key"], {})
+        if unit.get("kind") == "knowledge":
+            continue                      # 规约条目走判定表，不占章节落点
+        text = unit.get("text") or ""
+        at = _chapter_for(text, bodies) or fallback
+        rec["at"], rec["by"] = at, "author"
+        rows.append((rec["key"], "讲清", _quote_for(bodies.get(at, ""), text, extra_verdict)))
+    audit_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    (src / "story-verdicts.md").write_text(
+        _verdict_tables(REPO_ROOT, extra_verdict or "本章按此写就", rows, story_path),
+        encoding="utf-8")
+
+
+def _chapter_for(text: str, bodies: dict) -> str | None:
+    """这条单元的内容在哪一章能找到——模拟作者的分配判断。"""
+    frags = sorted((_norm(p) for p in str(text).split("｜")), key=len, reverse=True)
+    for frag in frags:
+        if len(frag) < 8:
+            continue
+        for title, body in bodies.items():
+            if frag in _norm(body):
+                return title
+    return None
+
+
+def _quote_for(body: str, unit_text: str, extra_verdict: str | None) -> str:
+    """引文要是该章的逐字子串。
+
+    checker 指定了引文就用它——**回声与否由判据判，装置不代判**：R01 那条形态
+    的反夹具给的正是一句回声，装置替它换掉，那条形态就永远测不出来了。
+    没指定时才自己找一段：跳过表格分隔与标题，表行取最长的那一格，
+    并且避开来源单元自己的原话（不然装置每次都在制造回声）。
+    """
+    want = _norm(extra_verdict or "")
+    if want and (want in _norm(body) or want in _norm(unit_text)):
+        # 在该章里找得到 → 正常引文；与来源单元原话重合 → checker 就是要拿它当回声
+        return extra_verdict
+    for line in body.split("\n"):
+        s = line.strip()
+        if not s or s.startswith(("#", "```", "~~~")):
+            continue
+        if s.startswith("|"):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            cells = [c for c in cells if c and not set(c) <= set("-: ")]
+            if not cells:
+                continue
+            s = max(cells, key=len)
+        if len(_norm(s)) >= 12 and _norm(s) not in _norm(unit_text):
+            return s[:60]
+    return _chapter_quote(body)
 
 
 @checker
