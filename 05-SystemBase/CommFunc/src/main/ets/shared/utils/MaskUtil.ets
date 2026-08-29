@@ -1,4 +1,4 @@
-export class FormatUtil {
+export class MaskUtil {
   /** 手机号脱敏：保留前 3 后 4 */
   static maskPhone(phone: string): string {
     if (phone.length <= 7) {
