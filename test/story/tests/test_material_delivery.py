@@ -159,36 +159,62 @@ class TestPhysicalDelivery(FixtureCase):
 
 
 class TestCoordinatorWiring(FixtureCase):
-    """协调器那一侧：快照进 workspace、环境变量指过去、回话带上补料。"""
+    """协调器那一侧：快照落在 workspace 之外、环境变量指过去、回话带上补料。"""
 
     def test_requirement_system_snapshot_is_copied_per_case(self) -> None:
-        workspace = self.root / "ws"
-        workspace.mkdir()
-        with mock.patch.object(run_multi_case, "CASES_ROOT", self.cases), \
-                mock.patch.object(run_multi_case, "REPO_ROOT", self.root):
-            seeded = run_multi_case.seed_requirement_system(CASE_ID, workspace)
+        workspace_root = self.root / "wsroot"
+        workspace_root.mkdir()
+        with mock.patch.object(run_multi_case, "CASES_ROOT", self.cases):
+            seeded = run_multi_case.seed_requirement_system(CASE_ID, workspace_root)
         self.assertEqual(2, len(seeded))
-        self.assertTrue((workspace / run_multi_case.REQUIREMENT_SYSTEM_DIR
-                         / FEATURE / "detail.json").is_file())
+        system = run_multi_case.requirement_system_path(workspace_root, CASE_ID)
+        self.assertTrue((system / FEATURE / "detail.json").is_file())
+
+    def test_snapshot_never_lands_inside_a_case_workspace(self) -> None:
+        """需求系统在远端，被测侧的目录树里不该有它。
+
+        放进 workspace 根下，模型一个 `ls` 就看见了——实测它确实去看了。
+        那一轮它仍规矩走了对接层，但这条路存在，下一轮就可能被绕过去，
+        「系统按单号拉取」这条链就测不到了。
+        """
+        workspace_root = self.root / "wsroot2"
+        workspace = workspace_root / CASE_ID
+        workspace.mkdir(parents=True)
+        with mock.patch.object(run_multi_case, "CASES_ROOT", self.cases):
+            run_multi_case.seed_requirement_system(CASE_ID, workspace_root)
+        system = run_multi_case.requirement_system_path(workspace_root, CASE_ID)
+        self.assertFalse(system.is_relative_to(workspace))
+        self.assertEqual([], [item.name for item in workspace.rglob("*")])
+
+    def test_boundary_check_rejects_a_snapshot_put_back_inside(self) -> None:
+        """哪天有人又把它挪回 workspace 里，起跑就得停——这条判据防的就是漂移。"""
+        workspace = self.root / "wsroot3" / CASE_ID
+        (workspace / run_multi_case.LEGACY_REQUIREMENT_SYSTEM_DIR).mkdir(parents=True)
+        with self.assertRaises(RuntimeError) as caught:
+            run_multi_case._verify_workspace_boundary(workspace, FEATURE)
+        self.assertIn(run_multi_case.LEGACY_REQUIREMENT_SYSTEM_DIR, str(caught.exception))
 
     def test_environment_points_at_the_case_own_system(self) -> None:
-        workspace = self.root / "ws2"
-        (workspace / run_multi_case.REQUIREMENT_SYSTEM_DIR).mkdir(parents=True)
-        suite = {"bundle_root": str(self.root), "case_states": {
-            CASE_ID: {"case": CASE_ID, "workspace": str(workspace)}}}
+        workspace_root = self.root / "wsroot4"
+        workspace = workspace_root / CASE_ID
+        workspace.mkdir(parents=True)
+        system = run_multi_case.requirement_system_path(workspace_root, CASE_ID)
+        system.mkdir(parents=True)
+        suite = {"bundle_root": str(self.root), "workspace_root": str(workspace_root),
+                 "case_states": {CASE_ID: {"case": CASE_ID, "workspace": str(workspace)}}}
         environment = run_multi_case.suite_environment(suite, CASE_ID)
-        self.assertEqual(
-            str((workspace / run_multi_case.REQUIREMENT_SYSTEM_DIR).resolve()),
-            environment[run_multi_case.REQUIREMENT_SYSTEM_ENV])
+        self.assertEqual(str(system), environment[run_multi_case.REQUIREMENT_SYSTEM_ENV])
 
     def test_case_without_a_snapshot_gets_no_system_pointer(self) -> None:
         """没有快照就别指过去：让替身自己报「系统不可达」，比指向空目录报「查无此单」诚实。"""
-        workspace = self.root / "ws3"
-        workspace.mkdir()
-        suite = {"bundle_root": str(self.root), "case_states": {
-            CASE_ID: {"case": CASE_ID, "workspace": str(workspace)}}}
+        workspace_root = self.root / "wsroot5"
+        workspace = workspace_root / CASE_ID
+        workspace.mkdir(parents=True)
+        suite = {"bundle_root": str(self.root), "workspace_root": str(workspace_root),
+                 "case_states": {CASE_ID: {"case": CASE_ID, "workspace": str(workspace)}}}
         environment = run_multi_case.suite_environment(suite, CASE_ID)
         self.assertNotIn(run_multi_case.REQUIREMENT_SYSTEM_ENV, environment)
+
 
     def test_scripted_reply_delivers_before_it_speaks(self) -> None:
         record = {
@@ -230,17 +256,20 @@ class TestCoordinatorWiring(FixtureCase):
 
     def test_finalize_keeps_the_system_state_as_evidence(self) -> None:
         """跑完之后系统上是什么样，只有系统侧的状态答得了。"""
-        workspace = self.root / "ws4"
-        system = workspace / run_multi_case.REQUIREMENT_SYSTEM_DIR / FEATURE
+        workspace_root = self.root / "wsroot6"
+        workspace = workspace_root / CASE_ID
+        workspace.mkdir(parents=True)
+        system = run_multi_case.requirement_system_path(workspace_root, CASE_ID) / FEATURE
         system.mkdir(parents=True)
         (system / "design.md").write_text("# 归档上去的叙事件\n", encoding="utf-8")
         (system / "history").mkdir()
-        (system / "history" / "design-20260829120000.md").write_text("# 旧版\n", encoding="utf-8")
+        (system / "history" / "design-20260829120000.md").write_text(
+            "# 旧版\n", encoding="utf-8")
         bundle = self.root / "bundle"
         (bundle / "cases" / CASE_ID).mkdir(parents=True)
         record = {"case": CASE_ID, "workspace": str(workspace)}
         result = run_multi_case.capture_requirement_system(
-            {"bundle_root": str(bundle)}, record)
+            {"bundle_root": str(bundle), "workspace_root": str(workspace_root)}, record)
         self.assertEqual("captured", result["status"])
         self.assertIn(f"{FEATURE}/design.md", result["files"])
         self.assertIn(f"{FEATURE}/history/design-20260829120000.md", result["files"])

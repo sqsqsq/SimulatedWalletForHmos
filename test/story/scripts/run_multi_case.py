@@ -223,14 +223,25 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     return template, workspace_root
 
 
-#: Case workspace 里的需求系统快照落点。点开头，与产品源码目录区分开；
-#: 它是**系统侧**状态，会被 archive 改写，finalize 时整份留存为行为证据。
-REQUIREMENT_SYSTEM_DIR = ".requirement-system"
+#: 需求系统快照的存放处：各 Case workspace 的**同级**目录，不在任何 workspace 之内。
+#:
+#: 真实环境里需求系统在远端，被测模型只能经对接层访问它。放进 workspace 根下，
+#: 模型一个 `ls` 就看见了——实测它确实去看了（那一轮仍规矩走了对接层，但这条路存在，
+#: 下一轮就可能被绕过，「系统按单号拉取」这条链就测不到了）。
+#: 位置只由环境变量告知对接层，被测侧的目录树里不留任何痕迹。
+REQUIREMENT_SYSTEM_ROOT = ".systems"
 REQUIREMENT_SYSTEM_ENV = "STORY_REQUIREMENT_SYSTEM_DIR"
+#: 曾经的落点（workspace 根下）。只用于边界检查——防的是哪天有人又把它挪回去。
+LEGACY_REQUIREMENT_SYSTEM_DIR = ".requirement-system"
 
 
-def seed_requirement_system(case_id: str, workspace: Path) -> list[dict[str, Any]]:
-    """把该 Case 的需求系统快照复制进它自己的 workspace。
+def requirement_system_path(workspace_root: Path, case_id: str) -> Path:
+    """该 Case 的需求系统在哪。与它的 workspace 平级，不在其内。"""
+    return Path(workspace_root).resolve() / REQUIREMENT_SYSTEM_ROOT / case_id
+
+
+def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str, Any]]:
+    """把该 Case 的需求系统快照复制到 workspace 之外的独立位置。
 
     每个 Case 一套独立的系统：`archive` 会覆盖系统正文、`restore` 会回退它，
     共用一份的话两个 Case 会互相改写对方的单据，而这类互相干扰事后极难归因。
@@ -238,7 +249,7 @@ def seed_requirement_system(case_id: str, workspace: Path) -> list[dict[str, Any
     source = CASES_ROOT / case_id / "system"
     if not source.is_dir():
         return []
-    destination = workspace / REQUIREMENT_SYSTEM_DIR
+    destination = requirement_system_path(workspace_root, case_id)
     seeded: list[dict[str, Any]] = []
     for path in sorted(source.rglob("*")):
         if path.is_symlink():
@@ -250,8 +261,8 @@ def seed_requirement_system(case_id: str, workspace: Path) -> list[dict[str, Any
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
         seeded.append({
-            "source": path.relative_to(REPO_ROOT).as_posix(),
-            "target": f"{REQUIREMENT_SYSTEM_DIR}/{relative.as_posix()}",
+            "source": f"{case_id}/system/{relative.as_posix()}",
+            "target": f"{REQUIREMENT_SYSTEM_ROOT}/{case_id}/{relative.as_posix()}",
             "size": path.stat().st_size,
         })
     return seeded
@@ -285,6 +296,10 @@ def _verify_workspace_boundary(workspace: Path, feature: str) -> dict[str, Any]:
             symlinks.append(relative)
             continue
         if path.is_dir() and path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
+            violations.append(relative)
+        # 需求系统在远端，被测侧的目录树里不该有它——放进来，模型一个 `ls`
+        # 就看见了，「系统按单号拉取」这条链下一轮就可能被绕过去。
+        if path.is_dir() and path.name == LEGACY_REQUIREMENT_SYSTEM_DIR:
             violations.append(relative)
     features = workspace / "doc/features"
     unexpected_features = []
@@ -324,7 +339,7 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     case["workspace_status"] = "created"
     case["case_seeded"] = _case_seed_manifest(
         str(case["case"]), str(case["feature"]))
-    case["system_seeded"] = seed_requirement_system(str(case["case"]), workspace)
+    case["system_seeded"] = seed_requirement_system(str(case["case"]), workspace_root)
     # 备着但还没投的补料：起跑时收件箱里只有说明书，这几份要等模型开口要。
     case["supplements_pending"] = [
         item["file"] for item in (case.get("supplements") or [])
@@ -1176,9 +1191,12 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
         if workspace:
             environment["STORY_WORKSPACE_ROOT"] = str(Path(workspace).resolve())
             environment["STORY_ISOLATED_WORKSPACE"] = "1"
-            # 需求系统指向本 Case 自己那份快照。没有快照的 Case 不设这个变量——
+            # 需求系统指向本 Case 自己那份快照——它在 workspace **之外**，
+            # 被测侧只能从这个环境变量知道它在哪。没有快照的 Case 不设这个变量：
             # 让 `story.js` 自己报「系统不可达」，比指向一个空目录报「查无此单」诚实。
-            system = Path(workspace).resolve() / REQUIREMENT_SYSTEM_DIR
+            workspace_root = Path(str(suite.get("workspace_root")
+                                      or Path(workspace).resolve().parent))
+            system = requirement_system_path(workspace_root, case_id)
             if system.is_dir():
                 environment[REQUIREMENT_SYSTEM_ENV] = str(system)
     else:
@@ -2396,7 +2414,8 @@ def capture_requirement_system(suite: dict[str, Any],
     工作区里那份 story.md 从头到尾都在，看它证明不了任何归档行为。
     """
     workspace = Path(str(record.get("workspace") or "")).resolve()
-    source = workspace / REQUIREMENT_SYSTEM_DIR
+    workspace_root = Path(str(suite.get("workspace_root") or workspace.parent))
+    source = requirement_system_path(workspace_root, str(record["case"]))
     result: dict[str, Any] = {"case": record["case"], "source": str(source)}
     if not source.is_dir():
         result["status"] = "no_requirement_system"
