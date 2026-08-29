@@ -194,6 +194,54 @@ class TestTokenExclusion(StoryBuildCase):
         self.assert_check_names("story 里出现了仓内工作编号")
 
 
+class TestTemplateNotes(StoryBuildCase):
+    """模板生成的文字不是材料——按生成它的模板约定判，不按样本形状判。"""
+
+    def test_spec_blockquotes_leave_the_author_facing_set(self) -> None:
+        """spec 模板的 `>` 块只承载登记项与作业说明，没有可讲的事实。
+
+        它们留在材料面时，审稿者只能对着「**版本**: v1.0」盖一个「讲清」——
+        实测 43/43 全「讲清」、0「未讲清」，区分力就是这么被稀释掉的。
+        """
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(
+            "\n".join([
+                "# 甲需求 spec",
+                "",
+                "> **版本**: v1.0",
+                "> **状态**: 草稿（评审中）",
+                "",
+                "## 0. 术语映射表",
+                "",
+                "> 本节是本 spec 的第一道 BLOCKER：业务名词必须映射到真实存在的模块名。",
+                "",
+                "| 原始术语 | 权威模块 |",
+                "|---|---|",
+                "| 等待态 | 甲模块 |",
+                "",
+            ]),
+            encoding="utf-8")
+        self.init_audit()
+        spec_bq = [u for u in self.units if u["doc"] == "SPEC" and u["kind"] == "blockquote"]
+        self.assertTrue(spec_bq, "夹具的 spec 里应当有 > 块")
+        for unit in spec_bq:
+            self.assertTrue(unit["machine_facing"], f"{unit['key']} 仍在材料面：{unit['text'][:30]}")
+            self.assertEqual(unit["tokens"], [], "机器面单元不参与 token 守恒")
+
+    def test_author_written_blockquotes_are_untouched(self) -> None:
+        """PRD 是人写的，它的 `>` 块该留在材料面——判据只对声明了 notes 的那份材料生效。"""
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8")
+                       + "\n> 产品强调：断网时也要能打开已经存下来的凭证。\n",
+                       encoding="utf-8")
+        self.init_audit()
+        prd_bq = [u for u in self.units if u["doc"] == "PRD" and u["kind"] == "blockquote"]
+        self.assertTrue(prd_bq, "PRD 里应当有 > 块")
+        self.assertTrue(all(not u["machine_facing"] for u in prd_bq),
+                        "人写的 > 块不该被打成机器面")
+
+
 class TestAuthorPlacement(StoryBuildCase):
     """KR-1b：作者落点的三种坏形态，各自点名。"""
 

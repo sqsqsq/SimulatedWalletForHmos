@@ -122,14 +122,21 @@ export function tokensOf(text, idShapes = [], exclude = null) {
  *
  * @param {string} text 材料全文
  * @param {string} doc 材料标识（PRD / SE / SPEC / DESIGN）
- * @param {{idShapes?: string[], machineFacing?: {unit_kinds?: string[], table_columns?: string[]}}} opts
+ * @param {{idShapes?: string[], excludeToken?: Function,
+ *          machineFacing?: {unit_kinds?: string[], table_columns?: string[]},
+ *          templateNotes?: string[]}} opts
+ *   `templateNotes`：这份材料由模板生成时，模板约定「不是事实」的那几类单元
  * @returns {{key, doc, kind, section, line, text, tokens, machine_facing}[]}
  */
 export function enumerateUnits(text, doc, opts = {}) {
   const idShapes = opts.idShapes ?? [];
   const exclude = typeof opts.excludeToken === 'function' ? opts.excludeToken : null;
   const mf = opts.machineFacing ?? {};
-  const mfKinds = new Set(mf.unit_kinds ?? []);
+  // 两个来源合成同一个「这类单元不是事实」的集合：
+  //   `machine_facing.unit_kinds` —— 按**用途**声明（工具读的登记项，对所有材料生效）；
+  //   `templateNotes`            —— 按**生成它的模板约定**声明（只对那一份材料生效）。
+  // 两者都是合同数据，本文件不写任何具体类型名。
+  const mfKinds = new Set([...(mf.unit_kinds ?? []), ...(opts.templateNotes ?? [])]);
   const mfColumns = new Set(mf.table_columns ?? []);
 
   const lines = String(text ?? '').split(/\r?\n/);

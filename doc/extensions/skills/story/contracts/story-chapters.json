@@ -1,10 +1,11 @@
 {
   "version": "3.0",
   "note": "章节合同：14 个标题、每章回答读者什么问题，外加机器面与编号形态两份数据。不含取材路标与逐章必答——那是 1.0 逐章生产线的核心，同一个事实被四个章节合同各指一次，于是被强制写四遍。story 由作者读完全部材料一份写成，事实只需出现一次，在哪一章由叙述需要决定。",
+  "sources_note": "每份材料给出路径；`notes` 声明「按生成它的模板约定，哪类单元不是事实」。spec.md 由 framework 的 spec 模板生成，模板里 `>` 块只承载文件头登记项（模块标识/版本/日期/状态）与各节作业说明（『本节是第一道 BLOCKER…』），没有可讲的事实——要求 story 去讲它们，审稿者只能盖橡皮章。PRD / SE / design 是人写的，不声明。依据是模板的约定，不是样本的形状：模板改了就改这行数据，机制不动。",
   "sources": {
     "PRD": "RR/prd.md",
     "SE": "SR/design.md",
-    "SPEC": "spec/spec.md",
+    "SPEC": { "path": "spec/spec.md", "notes": ["blockquote"] },
     "DESIGN": "AR/design.md"
   },
   "chapters": [

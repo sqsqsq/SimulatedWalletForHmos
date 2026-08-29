@@ -111,13 +111,23 @@ function createContext(args) {
   };
 }
 
-/** 材料文件：合同 `sources` 声明的那几份，存在即读。 */
+/**
+ * 材料文件：合同 `sources` 声明的那几份，存在即读。
+ *
+ * 两种写法都认：`"PRD": "RR/prd.md"`（人写的材料，整篇都是事实），
+ * 或 `{ path, notes: [...] }`——`notes` 是「按生成它的模板约定，这几类单元不是事实」，
+ * 比如 spec.md 里的 `>` 块只承载登记项与作业说明。判据来自模板约定，不来自样本形状。
+ */
 function sourceDocs(ctx) {
   const out = [];
-  for (const [doc, rel] of Object.entries(ctx.contract.sources ?? {})) {
+  for (const [doc, decl] of Object.entries(ctx.contract.sources ?? {})) {
+    const rel = typeof decl === 'string' ? decl : decl?.path;
+    if (!rel) continue;
     const abs = path.join(ctx.featureRoot, rel);
     const text = readText(abs);
-    if (text !== null) out.push({ doc, rel, text });
+    if (text !== null) {
+      out.push({ doc, rel, text, notes: typeof decl === 'string' ? [] : (decl.notes ?? []) });
+    }
   }
   return out;
 }
@@ -172,6 +182,7 @@ function cmdInit(ctx) {
       idShapes,
       excludeToken,
       machineFacing: ctx.contract.machine_facing ?? {},
+      templateNotes: d.notes,
     }));
   }
   if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
