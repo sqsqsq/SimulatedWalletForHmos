@@ -1932,6 +1932,46 @@ def r03_author_chain_dangling(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def f02_verifier_task_not_well_defined(root: Path, ctx: Ctx) -> Outcome:
+    """裁决者的作业书掺进整篇印象题——逐条那件事就被稀释掉了。
+
+    实测：43 条裁决全「讲清」、0「未讲清」，引文里 15 条与被裁的单元无关。
+    原因之一是同一份作业书既要它逐条对齐「这个单元 → 那一章讲没讲」，
+    又要它对整篇给「好不好读、有没有取舍」的结论。两件事的粒度差着一个数量级。
+
+    判据不写具体词：**自检维度的名字从 writer 的作业书里现取**，
+    再核它们没有出现在裁决者的作业书里。同一条作业要求只该待在一份作业书里。
+    """
+    write_doc = _find_phase_doc(root, "story-write.md")
+    verify_doc = _find_phase_doc(root, "story-verify.md")
+    if write_doc is None or verify_doc is None:
+        return Outcome(True, "作业书不全（该形态未启用）")
+    dimensions = _self_check_dimensions(read_text(write_doc))
+    if not dimensions:
+        return Outcome(False, "writer 作业书里派生不出自检维度——不是「没有维度」，是解析坏了")
+    verify_text = read_text(verify_doc)
+    leaked = [d for d in dimensions if d in verify_text]
+    if leaked:
+        return Outcome(False, "裁决者作业书里出现了整篇维度：" + "、".join(leaked))
+    return Outcome(True, f"逐对裁决任务良定（writer 自检 {len(dimensions)} 维，未泄漏到裁决者）")
+
+
+def _find_phase_doc(root: Path, name: str) -> Path | None:
+    hits = sorted(root.rglob(f"phases/{name}"))
+    return hits[0] if hits else None
+
+
+def _self_check_dimensions(text: str) -> list[str]:
+    """从 writer 作业书的自检节取维度名：`**一、独立可读。**` → `独立可读`。"""
+    out = []
+    for line in split_lines(text):
+        m = re.match(r"^\*\*[一二三四五六七八九十]+、(.+?)。?\*\*", line.strip())
+        if m:
+            out.append(m.group(1).strip())
+    return out
+
+
+@checker
 def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
     """spec 四阶段全绿，叙事件却从来没被写出来。
 

@@ -679,6 +679,25 @@ modes:
       判定面是 Markdown 链接与脚本路径：作者写下链接就是让人去读的。
       工作区产物路径（在扩展包里本就不存在）与 adapt 的历史版本结构签名不在判定面内。
 
+  - id: F02-verifier-task-diluted
+    dimension: content
+    found_round: "2026-08-29"
+    form: 裁决者的作业书既要逐条对齐单元、又要对整篇给印象结论，逐条那件事被稀释——
+      实测 43 条裁决全「讲清」、0「未讲清」，引文 15 条与被裁单元无关
+    clause: KF-3a / 06 §三 F1
+    checker: f02_verifier_task_not_well_defined
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/F02-verifier-task-diluted/bad
+    good_fixture: test/story/fixtures/failure-modes/F02-verifier-task-diluted/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      「这个单元 → 那一章讲没讲」与「整篇好不好读」差着一个数量级的粒度，
+      放进同一份作业书，前者就被后者挤掉。整篇两条维度归 writer 自检，裁决者只做逐对。
+      判据不写具体词：自检维度的名字从 writer 作业书里现取，再核它们没泄漏到裁决者作业书。
+      同一条作业要求只该待在一份作业书里。
+
   - id: F01-spec-without-story
     dimension: content
     found_round: "2026-08-29"

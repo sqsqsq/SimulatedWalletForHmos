@@ -32,6 +32,11 @@ CHECKER_PATH_RE = re.compile(r"framework/harness/scripts/check-[a-z]+\.ts")
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
 BASH_READ_RE = re.compile(r"\b(cat|head|tail|sed|less|type)\b")
 
+#: `story-build check` 通过时打印的两个数：多少条机器核实、多少条交给模型裁。
+#: 它说明守恒有多少压在模型层上——模型层的保证只能靠对抗测试证明，
+#: 这个数越大，那份对抗测试就越要紧。**只报数，不判达标**（G8）。
+CONSERVATION_RE = re.compile(r"机器核实\s*(\d+)\s*条[、,]\s*模型裁决\s*(\d+)\s*条")
+
 
 def _iter_events(path: Path):
     with path.open(encoding="utf-8") as fh:
@@ -74,6 +79,7 @@ def measure(events_path: Path) -> dict:
     context_first = context_last = None
     harness_runs = 0
     check_fail_counts: Counter[str] = Counter()
+    conservation: tuple[int, int] | None = None
     first_ts = last_ts = None
 
     for e in events:
@@ -115,6 +121,11 @@ def measure(events_path: Path) -> dict:
         for m in re.finditer(r"\b(lifecycle_hook_\w+|[a-z_]{6,})\b\s*(?:FAIL|未通过)", blob):
             check_fail_counts[m.group(1)] += 1
 
+        # story 守恒的两层各担多少条——取最后一次通过时的数
+        hit = CONSERVATION_RE.search(blob)
+        if hit:
+            conservation = (int(hit.group(1)), int(hit.group(2)))
+
     duration_min = None
     if first_ts and last_ts:
         duration_min = round((last_ts - first_ts).total_seconds() / 60, 1)
@@ -134,6 +145,8 @@ def measure(events_path: Path) -> dict:
         "context_growth": (context_last - context_first
                            if context_first is not None and context_last is not None else None),
         "repeated_check_fails": check_fail_counts.most_common(5),
+        "conservation_machine": conservation[0] if conservation else None,
+        "conservation_model": conservation[1] if conservation else None,
     }
 
 
@@ -155,6 +168,12 @@ def render(result: dict) -> str:
         "  ── 门禁 ──",
         f"    harness 运行 {result['harness_runs']} 次",
         f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（未识别到）'}   目标 同一 id ≤2 次",
+        "",
+        "  ── story 守恒两层各担多少 ──",
+        (f"    机器核实 {result['conservation_machine']} 条 / 模型裁决 "
+         f"{result['conservation_model']} 条   模型层的保证只能靠对抗测试证明"
+         if result["conservation_machine"] is not None
+         else "    （本轮没跑出 story-build check 的通过行）"),
     ]
     return "\n".join(lines)
 
