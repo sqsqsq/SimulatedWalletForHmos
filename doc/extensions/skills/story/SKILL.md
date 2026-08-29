@@ -20,9 +20,10 @@ S3 三级关卡    →  材料够不够 → 范围怎么定 → 承载哪份
 S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
    ↓
 [framework spec 阶段闭环]
+   ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
+   └─ story 由 writer 子 agent 写、verifier 子 agent 裁，`story_flow.py story` 登记
    ↓
-S5 成文        →  writer 子 agent 一份写成 AR/story.md，登记成文态
-S6 归档        →  /story archive 上传叙事件与评审记录
+S5 归档        →  /story archive 上传叙事件与评审记录
 ```
 
 **位置由契约回答，不靠回忆**：`story_flow.py status --feature <AR>` 读契约给出 `next`
@@ -40,8 +41,9 @@ S6 归档        →  /story archive 上传叙事件与评审记录
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 生成 design.md | [rules/ar_design_init.md](rules/ar_design_init.md) |
-| spec 阶段作业 | [phases/spec.md](phases/spec.md) |
-| S5 成文 | [phases/story-write.md](phases/story-write.md) |
+| spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
+| 成文：writer 怎么写 | [phases/story-write.md](phases/story-write.md) |
+| 成文：verifier 怎么裁 | [phases/story-verify.md](phases/story-verify.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 初始化
@@ -65,31 +67,9 @@ python doc/extensions/skills/story/scripts/story_flow.py init --feature <AR>  # 
 **本地单没有归档环节**——交付终点是仓内的 `spec/spec.md` + `AR/story.md` + `AR/review.md` 三件，
 走到归档时直接告诉用户这一点，不必尝试。
 
-## 成文（S5）
-
-spec 阶段闭环之后、归档之前。**story 由独立的 writer 子 agent 写**，不在 spec 会话里写：
-spec 走完时上下文已经涨到几十万 token，story 是最后被挤出来的那一份——实测它因此丢掉了
-表格非首列的事实与两张图。
-
-1. **writer 子 agent**：主 agent 用 Task 启动，把 [phases/story-write.md](phases/story-write.md)
-   的内容与 feature 名作为 prompt。子 agent 拿到的是**新鲜上下文**。
-   它内部循环：读材料 → 一份写成 → `story-build.mjs audit` → 给没落点的单元补写或
-   标 `covered_by` → `story-build.mjs check`。
-2. **verifier 子 agent**：`audit.json` 里出现 `by: author` 的记录时启动，prompt 是
-   [phases/story-verify.md](phases/story-verify.md)。机器定不了落点的单元只有模型能判——
-   框架给别的阶段都配了 verifier，S5 之前没有，这是缺口。
-   它产出 `AR/story-src/story-verdicts.md`，`check` 会核每条裁决的引文。
-3. 主 agent 只收结果，**不重读材料**；随后登记成文态：
-
-```bash
-python doc/extensions/skills/story/scripts/story_flow.py story --feature <AR>
-```
-
-该命令自带门禁——先重跑一次 `story-build check`，通过才登记。
-
 ## 归档
 
-- **前置**：成文态已登记（`status = story_written`），`AR/story.md` 与 `AR/review.md` 齐备
+- **前置**：spec 阶段已闭环（成文态 `status = story_written` 在那时登记），`AR/story.md` 与 `AR/review.md` 齐备
 - **不适用于本地单**（见「初始化」）
 - **archive 不修改工作区任何文件**，可以放心执行
 
@@ -168,7 +148,7 @@ AI 依据人的决定写回文件，不要求用户手动编辑文件或运行�
 
 | | `AR/design.md` | `AR/story.md` |
 |---|---|---|
-| 流程角色 | 输入端：/spec 的输入（从四源提取，按本 AR 范围裁剪） | 输出端：S5 由 writer 一份写成的评审载体（面向人） |
+| 流程角色 | 输入端：/spec 的输入（从四源提取，按本 AR 范围裁剪） | 输出端：spec 阶段内由 writer 一份写成的评审载体（面向人） |
 | 归档语义 | 工作区里身份唯一：「上游提取件」，不承载归档产物 | archive 的上传正文（与 `AR/review.md` 一并上传） |
 
 ## 需求系统 Token

@@ -271,7 +271,7 @@ class TestVerdicts(StoryBuildCase):
         self.init_audit()
         self.hand_to_author()
         (self.src / "story-verdicts.md").unlink(missing_ok=True)
-        self.assert_check_names("需要 S5 裁决者逐条裁")
+        self.assert_check_names("需要裁决者逐条裁")
 
 
 class TestKnowledgeUnits(StoryBuildCase):

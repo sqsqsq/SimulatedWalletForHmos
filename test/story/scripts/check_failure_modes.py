@@ -1930,6 +1930,46 @@ def r03_author_chain_dangling(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
+def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
+    """spec 四阶段全绿，叙事件却从来没被写出来。
+
+    story 是 spec 阶段三份产物之一（spec.md / review.md / story.md）。曾经把它挪到
+    spec 之后当独立一步，触发条件写「归档之前」——本地单没有归档，这个时点不存在，
+    于是没有任何阶段边界要求它。实测：四阶段 harness 全 pass、`AR/story.md` 不存在。
+
+    判据查**登记态**不查文件在不在：手写一份简版照样能骗过「文件存在」
+    （基线就这么判，注释里自己承认过）。`story_flow.py story` 登记前会重跑
+    `story-build check`，登记成功即九项判据都过了。
+    """
+    feature_root = root / "doc" / "features" / "F1"
+    if not (feature_root / "AR" / "story-flow.json").exists():
+        return Outcome(True, "夹具里没有流程契约（该形态未启用）")
+    problems = _flow_check_call(root, feature_root, "storyProduced")
+    if problems is None:
+        return Outcome(False, "storyProduced 跑不起来")
+    if problems:
+        return Outcome(False, f"叙事件未成文被点名：{problems[0][:80]}")
+    return Outcome(True, "成文已登记，spec 三份产物齐")
+
+
+def _flow_check_call(root: Path, feature_root: Path, fn: str) -> list[str] | None:
+    """调 flow-check.mjs 的某个导出，回问题串数组；跑不起来回 None。"""
+    script = (
+        "import {pathToFileURL} from 'node:url';"
+        "const m=await import(pathToFileURL(process.argv[1]).href);"
+        "console.log(JSON.stringify(m[process.argv[3]](process.argv[2])));")
+    check = _ext_file(root, "skills/story/scripts/flow-check.mjs")
+    if check is None:
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "flow-check.mjs"
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root), fn],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    if proc.returncode != 0:
+        return None
+    return json.loads(proc.stdout or "[]")
+
+
+@checker
 def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     """spec 的流程契约门禁把 S5 之后的状态判成「未收口」，回头拦住自己的产物。
 

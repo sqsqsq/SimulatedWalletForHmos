@@ -685,9 +685,11 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
     if contract.get("status") == "story_written":
-        return "run_archived", "story 已成文，可以 `/story archive` 归档"
+        return "run_archived", "叙事件已成文并登记，spec 可闭环；之后 `/story archive` 归档"
     if contract.get("status") == "complete":
-        return "enter_spec", "流程已收口，直接进 /spec；spec 闭环后回 S5 写 story"
+        return ("enter_spec",
+                "流程已收口，进 /spec。**成文在 spec 阶段内**——三份产物一次 pass 出齐，"
+                "顺序见 phases/spec.md §二")
 
     current = contract["rounds"][-1]
     gates = round_gates(contract)
@@ -900,13 +902,18 @@ REVIEW = ("AR", "review.md")
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
-    """登记「叙事件已成文」（S5 收口）。
+    """登记「叙事件已成文」——spec 阶段三份产物的第三份到位了。
 
-    story 不再在 spec 会话末尾写——那时上下文已经涨到几十万 token，story 是最后被挤出来的
-    那一份。它移到 spec 闭环之后的 S5，由独立 writer 在新鲜上下文里一份写成。
+    story 在 **spec 阶段内**成文，由独立 writer 子 agent 在新鲜上下文里一份写成：
+    主 agent 走到这里时上下文已经几十万 token，story 是最后被挤出来的那一份
+    （实测因此丢过表格非首列的事实与两张图）。**新鲜上下文来自子 agent，不来自换阶段**——
+    曾经把它挪到 spec 之后当独立一步，触发条件写「归档之前」，本地单没有归档，
+    于是四个阶段全绿而 story 从来没被写出来。
 
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
+
+    **只登记一次**：story 定稿于评审时点，评审回流只改 spec.md，不动 story。
     """
     contract = require(load(feature_root))
     if contract.get("status") != "complete":

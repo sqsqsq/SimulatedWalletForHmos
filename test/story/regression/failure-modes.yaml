@@ -679,6 +679,26 @@ modes:
       判定面是 Markdown 链接与脚本路径：作者写下链接就是让人去读的。
       工作区产物路径（在扩展包里本就不存在）与 adapt 的历史版本结构签名不在判定面内。
 
+  - id: F01-spec-without-story
+    dimension: content
+    found_round: "2026-08-29"
+    form: spec 四阶段全绿而叙事件从来没被写出来——成文没有阶段边界守着，本地单直接跳过
+    clause: KF-1a / 06 §三 F3
+    checker: f01_spec_without_story
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/F01-spec-without-story/bad
+    good_fixture: test/story/fixtures/failure-modes/F01-spec-without-story/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      story 是 spec 阶段三份产物之一。把它挪到 spec 之后当独立一步、触发条件写「归档之前」，
+      本地单没有归档，这个时点就不存在——实测四阶段 harness 全 pass、AR/story.md 不存在，
+      只有测试域的 story_build_check 拦住。成文回到 spec 阶段内，才有阶段边界要求它。
+      判据查登记态不查文件在不在：手写一份简版照样骗过「文件存在」（基线的注释自己承认过）；
+      登记前会重跑 story-build check，登记成功即九项判据都过了。
+      bad = status complete（范围收口了但没成文，必须报）；good = story_written（不许报）。
+
   - id: R04-flow-status-after-s5
     dimension: content
     found_round: "2026-08-28"

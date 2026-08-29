@@ -2,8 +2,8 @@
  * spec 阶段 post_check 生命周期 hook（实例扩展 story）
  *
  * 作用：把**本阶段产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
- *   1. 本阶段两份产物：spec.md（代码要求）与 AR/review.md（归档件·决策件）；
- *      **story 不在本阶段**——它由 `/story` 链的 S5 用独立 writer 写成，判据在 story-build check；
+ *   1. 本阶段三份产物：spec.md（代码要求）、AR/review.md（归档件·决策件）、
+ *      AR/story.md（归档件·叙事主件，由 writer 子 agent 在阶段内写成、登记态即判据）；
  *   2. §9 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
  *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
  *      编号到条目级且在册、与 acceptance 的桥接键一致、要求列不是规约原文的复制；
@@ -19,7 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
-import { flowProblems, isStoryFeature } from '../../skills/story/scripts/flow-check.mjs';
+import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/flow-check.mjs';
 import { adjudicationProblems } from '../shared/verifier-report.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
@@ -370,22 +370,13 @@ function idSetProblems(ctx, knowledge, specIds) {
  *
  * 判定结论（命中/不命中）不在 spec：它零条代码要求，纯粹是给评审者的完备性回显，
  * 与「spec 只装与最终代码有关的内容」相悖——它落在归档件「影响面与合规」章的判定表里，
- * 由 S5 的 writer 写、`story-build check` 核。
+ * 由 writer 子 agent 写、`story-build check` 核。
  * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
  * 结论是不是本需求的设计，由 verifier 按注入的必答清单逐行裁决——那是判断，脚本判不了。
  */
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
 ];
-
-/**
- * story 相关的判据**不在本阶段**。
- *
- * story 由 `/story` 链的 S5 用独立 writer 写成，判据在 `story-build check` 与
- * `story_flow.py story` 的登记门禁里。spec 阶段再判一遍，就是两处各判各的：
- * 这边按旧形态拦，那边按新形态放，改一处忘另一处就是静默漂移。
- */
-
 
 export default guard('spec', async (ctx) => {
   const featureRoot = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
@@ -413,6 +404,12 @@ export default guard('spec', async (ctx) => {
 
   // ---- story 前置流程契约已收口 ----
   problems.push(...flowProblems(featureRoot));
+
+  // ---- 三份产物齐备：第三份是叙事件（story 专属）----
+  // spec 是一次 pass 产出 spec.md / AR/review.md / AR/story.md，三者事实同源。
+  // 前两份由本文件的章节判据与 decisions 渲染管，第三份查登记态——
+  // 登记前会重跑 story-build check，登记成功即九项判据都过了。
+  problems.push(...storyProduced(featureRoot));
 
   // ---- 两章的结构完整性：章在、小节齐、非空、无模板占位（story 专属）----
   // 这两章是扩展在 core 模板之上新增的，只跑原生 spec 的使用者从没被要求写过。

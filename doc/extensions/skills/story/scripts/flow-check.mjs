@@ -30,15 +30,27 @@ const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);
 const FLOW_FIX = "处置：回 /story 走完三级关卡（材料够不够 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
 /**
- * 「已收口」是**一段区间**，不是一个值。
+ * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）→ `archived`（已送审）。
  *
- * 契约的状态机是 `complete` →（spec 阶段）→ `story_written`（S5 成文登记）→ `archived`。
- * 本判据问的是「进 spec 之前范围定了没有」，`complete` 之后的每一个状态都满足这个前提。
- * 写成 `status !== 'complete'` 会在 S5 之后反过来拦住自己的产物：spec harness 一重跑就
- * FAIL，`upstream_verdict_gate` 再把 coding、review 一起判 FAIL——四个已合法闭环的阶段
- * 集体翻红。这不是假想：一次端到端实跑真的撞上了，回归形态见测试域台账。
+ * **每道判据问的都是「到没到某个点」，答案是一段区间，不是一个值。**
+ * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：实测把「须 complete」写成
+ * `status !== 'complete'`，成文登记后 spec harness 一重跑就 FAIL，`upstream_verdict_gate`
+ * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。回归形态见测试域台账。
  */
-const FLOW_CLOSED_STATES = new Set(['complete', 'story_written', 'archived']);
+const FLOW_STATES = ['complete', 'story_written', 'archived'];
+
+/**
+ * 「流程走到了 `atLeast` 这一步没有」——两条 spec 判据共用这一个函数。
+ *
+ * @param {object|null} flow 已解析的契约
+ * @param {string} atLeast 状态机里的最低要求
+ * @returns {boolean} 没有契约时返回 false，由调用方决定「没走 /story」怎么算
+ */
+function reached(flow, atLeast) {
+  const at = FLOW_STATES.indexOf(String(flow?.status ?? ''));
+  const need = FLOW_STATES.indexOf(atLeast);
+  return at >= 0 && need >= 0 && at >= need;
+}
 const DESIGN_FILE = ['AR', 'design.md'];
 
 export function flowProblems(featureRoot) {
@@ -208,7 +220,7 @@ export function flowProblems(featureRoot) {
     }
   }
 
-  if (!FLOW_CLOSED_STATES.has(flow?.status)) {
+  if (!reached(flow, 'complete')) {
     problems.push(
       `story 前置流程未收口（status=${flow?.status ?? '缺失'}）：材料与拆分决策没走完就进了 spec。${FLOW_FIX}`
     );
@@ -260,4 +272,43 @@ export function flowProblems(featureRoot) {
 /** 场景探针：走过 /story 的 feature 才有流程契约。没走的不受本套判据影响。 */
 export function isStoryFeature(featureRoot) {
   return fs.existsSync(path.join(featureRoot, ...FLOW_FILE));
+}
+
+/**
+ * 叙事件成文了没有——spec 阶段三份产物里的第三份。
+ *
+ * spec 一次 pass 产出 `spec.md` / `AR/review.md` / `AR/story.md`，三者事实同源。
+ * 判据不查文件在不在：**手写一份简版照样过**（基线就这么判，实测被绕过）。
+ * 查的是登记态——`story_flow.py story` 登记前会重跑 `story-build check`，
+ * 登记成功即等于九项判据都过了。一处判定，一处真源。
+ *
+ * 曾经把成文挪到 spec 之后当独立一步，触发条件写「归档之前」；本地单没有归档，
+ * 这个时点不存在，于是四个阶段全绿而 story 从来没被写出来。成文回到 spec 阶段内，
+ * 它就有阶段边界守着了。
+ */
+export function storyProduced(featureRoot) {
+  const { exists, flow, error } = readFlow(featureRoot);
+  if (!exists) return [];                // 没走 /story，本判据不适用
+  if (error) {
+    // 读不出状态就判不了成文态。**不当作「没成文」也不当作「成文了」**——说出读不了这件事。
+    return [`AR/story-flow.json 不是合法 JSON（${error}）：成文态无从判定。${FLOW_FIX}`];
+  }
+  if (reached(flow, 'story_written')) return [];
+  return [
+    'spec 三份产物缺叙事件（AR/story.md 未登记成文）：spec 是一次 pass 产出 '
+    + 'spec.md / AR/review.md / AR/story.md 三份。处置：按 skills/story/phases/spec.md §二'
+    + '「阶段内顺序」走完——`story-build.mjs init` → Task 起 writer → '
+    + '（有 by: author 记录时）Task 起 verifier → `story_flow.py story --feature <feature>` 登记。',
+  ];
+}
+
+/** 读契约。三种结果各自可辨：没有文件 / 读出来了 / 解析失败并带原因。 */
+function readFlow(featureRoot) {
+  const flowPath = path.join(featureRoot, ...FLOW_FILE);
+  if (!fs.existsSync(flowPath)) return { exists: false, flow: null, error: null };
+  try {
+    return { exists: true, flow: JSON.parse(fs.readFileSync(flowPath, 'utf-8')), error: null };
+  } catch (err) {
+    return { exists: true, flow: null, error: err.message };
+  }
 }

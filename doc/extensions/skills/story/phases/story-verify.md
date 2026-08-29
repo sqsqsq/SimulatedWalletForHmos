@@ -1,9 +1,9 @@
-# story 裁决（S5 verifier 子 agent 的作业书）
+# story 裁决（verifier 子 agent 的作业书）
 
 你是这份叙事件的**独立裁决者**。writer 已经写完并跑过 `story-build check`，
 机器能核的落点它都核过了；你要裁的是**机器核不了的那部分**。
 
-框架给 spec / plan / coding 每个阶段都配了 verifier 子 agent，S5 之前没有——
+框架给 spec / plan / coding 每个阶段都配了 verifier 子 agent，story 这一份此前没有——
 机器定不了落点的单元本来就只有模型能判。这是缺口，不是给作者加的围栏。
 
 ## 你的输入

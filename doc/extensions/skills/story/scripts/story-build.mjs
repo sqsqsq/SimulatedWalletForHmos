@@ -38,7 +38,7 @@ import {
 
 const COMMANDS = ['init', 'audit', 'check', 'build'];
 
-/** S5 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
+/** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
 const MIN_QUOTE = 12;
 
@@ -207,7 +207,7 @@ function cmdInit(ctx) {
   process.stdout.write(
     `[story-build init] ${units.length} 个单元、${units.reduce((n, u) => n + u.tokens.length, 0)} 个 token`
     + `（机器面 ${units.filter(u => u.machine_facing).length} 个；`
-    + `无 token ${noToken} 个——它们的落点靠正文片段核，核不住的交 S5 裁决者逐条裁）\n`);
+    + `无 token ${noToken} 个——它们的落点靠正文片段核，核不住的交裁决者逐条裁）\n`);
 }
 
 // --------------------------------------------------------------------------
@@ -298,7 +298,7 @@ function cmdAudit(ctx) {
       records.push({ key: u.key, at: placed.title, by: 'machine' });
       continue;
     }
-    // 机器定不了：保留作者上次填的章名（`by: author`），由 S5 裁决者逐条裁「讲清没讲清」。
+    // 机器定不了：保留作者上次填的章名（`by: author`），由裁决者逐条裁「讲清没讲清」。
     // **不沿用机器上次的结果**——`by` 标记就是为了让这两种来源不再混成一个 `at`。
     if (old?.at && old.by === 'author') {
       records.push({ key: u.key, at: old.at, by: 'author' });
@@ -392,7 +392,7 @@ function cmdCheck(ctx) {
   const recByKey = new Map((audit.records ?? []).map(r => [r.key, r]));
   const missingTokens = [];
   const stateless = [];
-  const authorPlaced = [];      // 机器定不了、由 S5 裁决者裁的那些
+  const authorPlaced = [];      // 机器定不了、由裁决者裁的那些
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
@@ -434,7 +434,7 @@ function cmdCheck(ctx) {
     }
     const chapter = sectionText.get(rec.at) ?? '';
     if (rec.by === 'author') {
-      // 机器定不了的，交给 S5 裁决者；这里只核标题在册，讲没讲清由 ⑥ 核
+      // 机器定不了的，交给裁决者；这里只核标题在册，讲没讲清由 ⑥ 核
       authorPlaced.push(u);
       continue;
     }
@@ -519,14 +519,14 @@ function cmdCheck(ctx) {
     }
   }
 
-  // ⑥ 裁决核实：机器定不了落点的那些，S5 裁决者要逐条裁并附引文
+  // ⑥ 裁决核实：机器定不了落点的那些，裁决者要逐条裁并附引文
   //
   // 这一条替代上一版的「靠语义判据守恒」那个空计数——说了「有 N 条机器管不了」，
   // 却没人真去管它们，等于把漏写记了个数就放行。
   if (authorPlaced.length) {
     const vtext = readText(ctx.verdictsPath);
     if (vtext === null) {
-      problems.push(`${authorPlaced.length} 个单元的落点机器定不了，需要 S5 裁决者逐条裁，`
+      problems.push(`${authorPlaced.length} 个单元的落点机器定不了，需要裁决者逐条裁，`
         + `但 ${path.basename(ctx.verdictsPath)} 不存在`);
     } else {
       const rows = new Map();
@@ -640,7 +640,7 @@ function cmdCheck(ctx) {
   }
   process.stdout.write(
     `[story-build check] 通过：${sections.length} 章、${doc.units.length} 个来源单元`
-    + `（机器核实 ${doc.units.length - authorPlaced.length} 条、S5 裁决 ${authorPlaced.length} 条）\n`);
+    + `（机器核实 ${doc.units.length - authorPlaced.length} 条、模型裁决 ${authorPlaced.length} 条）\n`);
 }
 
 // --------------------------------------------------------------------------
