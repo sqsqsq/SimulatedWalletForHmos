@@ -44,7 +44,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
 `spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面五步走完。
-作业规则见 [`phases/story-write.md`](story-write.md)（分配与逐章渲染各一段）。
+作业规则见 [`phases/story-write.md`](story-write.md)（分配、逐章渲染、统稿各一段）。
 
 ```bash
 node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
@@ -53,13 +53,17 @@ node .../story-build.mjs audit --feature <feature>   #    「待你分配 0 条�
 #    机器先归位两类：带硬事实标记的、技术契约小节的行；剩给模型的都是纯中文叙述
 #                              ③ 逐章渲染：按合同顺序一次写一章，追加到 AR/story.md
 #                                 每章写完跑一次 audit（它会打印未渲染章）
+#                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；改完重跑 audit
 #                              ④ 裁决：audit 里还有 by: author 时，按 phases/story-verify.md 裁
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
 #                              ⑥ 跑 spec harness
 ```
 
+- **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
+  同一件事在三章各讲一遍、两句逐字重复、图连图没有承接，每章单看都对，合起来才看得出来。
+  自查清单见 `story-write.md` 第三步。
 - **② 与 ③ 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。
-  分配先把「每件事去哪一章」定死并落盘，渲染就变成十四次有界的小任务，写完即落盘、断了能续。
+  分配先把「每件事去哪一章」定死并落盘，渲染就变成逐章有界的小任务，写完即落盘、断了能续。
 - **子 agent 是可选的**，不是机制的一部分：有 Task 工具的宿主，③ 每章可以起一个小子 agent，
   ④ 也可以；没有 Task 的宿主，主 agent 自己按同样的顺序做——**两条路径产出同一批产物**。
 - **④ 只在 `audit.json` 出现 `by: author` 记录时才需要**：机器定不了落点的单元只有模型能判。

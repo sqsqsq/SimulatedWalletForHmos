@@ -907,6 +907,22 @@ modes:
       这一条是常驻正例：判据改动先跑它。两个分支都验——金样零 FAIL，
       且往副本里塞违例时判项真的点名（不然「零 FAIL」可能只是判项全空转）。
 
+  - id: G02-mechanism-points-at-assets
+    dimension: knowledge
+    found_round: "2026-08-30"
+    form: 机制层（代码、合同、模板、作业书、报错文案）提到金样、夹具或测试目录——判据从形态规则滑成「照着那一份写」
+    clause: KG2-9 / P6
+    checker: g02_mechanism_points_at_assets
+    target: mechanism
+    self_check: internal
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      金样与判据的关系是**单向**的：判据从金样正推，拦住金样就是判据错。反过来不成立——
+      机制层一旦提到金样或夹具，换个业务域立刻不成立，而台账仍然全绿（自证）。
+      与 M02 分工：M02 判业务字面（单号、业务名），这一条判「指向验证资产本身」。
+
   - id: S06-appendix-dump
     dimension: expression
     found_round: "2026-08-29"

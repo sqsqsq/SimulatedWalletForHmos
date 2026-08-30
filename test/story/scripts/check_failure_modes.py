@@ -2317,6 +2317,45 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
 
 
+
+#: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——
+#: 而样本是用来检验机制的，被检验的东西反过来指向检验它的东西，这条链就闭合成了自证。
+VERIFICATION_ASSET_WORDS = ("金样", "golden", "fixtures", "夹具目录", "test/story")
+
+
+@checker
+def g02_mechanism_points_at_assets(root: Path, ctx: Ctx) -> Outcome:
+    """机制层指向验证资产（金样、夹具、测试目录）。
+
+    金样是判据的仲裁锚：判据从它正推，拦它就是判据错。但这条关系是**单向**的——
+    机制层一旦提到金样或夹具，判据就从「形态规则」滑成了「照着那一份写」，
+    换个业务域立刻不成立，而台账还是全绿。
+
+    与 M02 分工：M02 判的是业务字面（单号、业务名），这条判的是**指向验证资产本身**。
+    """
+    def scan(lines):
+        out = []
+        for rel, n, line in lines:
+            for word in VERIFICATION_ASSET_WORDS:
+                if word in line:
+                    out.append(f"{rel}:{n} 「{word}」")
+                    break
+        return out
+
+    # 反例内建：判项本身也要证明它抓得住——不然「零命中」可能只是它在空转
+    sample = [("<样本>", 1, "写之前先照着金样那一份的第四章排布"),
+              ("<样本>", 2, "本章按合同的形态规则写就")]
+    caught = scan(sample)
+    if len(caught) != 1:
+        return Outcome(False, f"判项抓不住自带反例（命中 {len(caught)} 条，应为 1 条）——它在空转")
+
+    hits = scan((path.relative_to(root).as_posix(), n, line)
+                for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS)
+                for n, line in enumerate(split_lines(read_text(path)), start=1))
+    if hits:
+        return Outcome(False, "机制层指向了验证资产：" + "；".join(hits[:5]))
+    return Outcome(True, f"机制层不指向任何验证资产（词表 {len(VERIFICATION_ASSET_WORDS)} 项，反例可命中）")
+
 _CHAIN_LINK = re.compile(r"\]\(([^)\s]+)\)")
 _CHAIN_SCRIPT = re.compile(r"`([A-Za-z0-9_./-]+\.(?:mjs|py|js))`")
 _CHAIN_OWNED = ("scripts/", "doc/extensions/")
