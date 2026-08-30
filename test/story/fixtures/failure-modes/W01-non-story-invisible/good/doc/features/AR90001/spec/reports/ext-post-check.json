@@ -1,7 +1,7 @@
 {
   "phase": "spec",
   "feature": "AR90001",
-  "at": "2026-08-30T02:42:59.943Z",
+  "at": "2026-08-30T02:44:36.065Z",
   "checks": [
     {
       "id": "knowledge_exit_structure",

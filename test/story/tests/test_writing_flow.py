@@ -59,10 +59,18 @@ class TestChapterDimensions(unittest.TestCase):
                         "缺「同一件事只在一处完整表述」这一维")
 
     def test_no_similarity_or_quota_metric_sneaked_in(self) -> None:
-        """机器只守既有的两条重复判据；相似度与配额是模型判的事，机器判它必然误伤。"""
+        """机器只守既有的两条重复判据；相似度与配额是模型判的事，机器判它必然误伤。
+
+        判的是**可执行的那部分**：注释里写「比的不是相似度」正是该写的话，
+        把它一起判掉，就只能靠删注释过关。
+        """
         banned = ("相似度", "重复率", "字数配额", "similarity", "重复度")
         for path in list(SKILL.rglob("*.mjs")) + list(SKILL.rglob("*.json")):
-            text = path.read_text(encoding="utf-8")
+            lines = [ln for ln in path.read_text(encoding="utf-8").split("\n")
+                     if not ln.lstrip().startswith(("//", "*", "/*"))]
+            if path.suffix == ".json":
+                lines = [ln for ln in lines if not re.match(r'\s*"_?note', ln)]
+            text = "\n".join(lines)
             for word in banned:
                 self.assertNotIn(word, text, f"{path.name} 混进了指标类判据「{word}」")
 
