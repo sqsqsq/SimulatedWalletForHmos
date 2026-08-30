@@ -216,6 +216,24 @@ heartbeat 交给一个后台轮询脚本代跑——那个脚本若只做「poll
 按实跑顺序校准回来。**不要为了让脚本对上而改话术**——话术一改，这个 Case 观测的就不是同一件事了。
 本轮两个 Case 都漂了一关：一个的术语确认排在 story 之后才轮到，另一个的第二份材料模型自始至终没开口要。
 
+### 3.4 `--end-phase` 只被记录，不被采用——要改终点仍须改 `case.yaml`
+
+`start`／`plan` 接受 `--end-phase`，`plan` 的输出里也会回显 `requested_end_phase`，
+**但 suite 记录里每个 Case 的 `end_phase` 仍是 `case.yaml` 里的值**，驱动器照它推进。
+实测一轮：两个 Case 都传了 `--end-phase spec`，其中一个 spec 闭环后驱动器照旧下发了 plan。
+
+后果不只是多跑一段：`stop` **只有整 suite 一档，没有单 Case**
+（`command_stop` 遍历全部 case_states），另一个 Case 还没跑完就不能停，
+先到终点的那个只能一直跑下去。实测多跑了 18 分钟。
+
+所以本轮终点要与 `case.yaml` 不同时，两条路选一条：
+
+1. 改 `case.yaml` 的 `end_phase` 一行（`cases/` 属被测输入，改它要单独记账）；
+2. 接受它跑过头，到点后停整个 suite——**前提是用户明确要求停在那一步**。
+
+**不要靠 `--end-phase` 生效**。这个装置缺陷本身不在测试域的修改范围内（`run_*.py` 属运行装置），
+记在这里是为了下一轮不再按它的字面意思规划。
+
 ## 4. 15/120 秒 heartbeat
 
 - 未全部稳定进入 Spec 前，同一个 heartbeat 每 15 秒唤醒，执行一次
