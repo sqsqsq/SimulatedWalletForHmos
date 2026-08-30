@@ -152,8 +152,9 @@ export function enumerateUnits(text, doc, opts = {}) {
 
   const push = (kind, body, line, extra = {}) => {
     const machineFacing = mfKinds.has(kind) || extra.machineFacing === true;
-    // tokenSource：表格行只从非机器面列取 token；别的单元就是正文本身
-    const src = extra.tokenSource !== undefined ? extra.tokenSource : body;
+    // token 与正文同源：模型看到什么，机器就核什么。两者分家过一版——表格行的
+    // token 只从非机器面列取、正文却是整行，于是「不用守恒」的列照样被抄进产物。
+    const src = body;
     units.push({
       key: `${doc}:${line}:${sha8(`${doc}|${line}|${body}`)}`,
       doc,
@@ -201,12 +202,15 @@ export function enumerateUnits(text, doc, opts = {}) {
       if (!tableHeaders) { tableHeaders = cells; continue; }        // 表头本身不是单元
       // **机器面按列排除，不整行打标**：一行里有「置信度」这种机器列，不代表同一行的
       // 「触发条件」也不用守恒。基线正是在这里丢了 9 个页面状态的触发条件整列。
+      //
+      // 排除是**连正文一起排**，不只是免掉 token 义务：单元正文是模型分配与渲染时
+      // 唯一读到的东西，工具面的列留在正文里，它就照抄进产物——实测两份产物的术语表
+      // 抄进十几个类名、附录抄进整句检索结论，都是从这里来的。
       const kept = cells.filter((c, idx) => c && !mfColumns.has((tableHeaders[idx] ?? '').trim()));
       const allMachine = kept.length === 0;
-      push('table_row', cells.filter(Boolean).join(' ｜ '), i + 1, {
-        machineFacing: allMachine,
-        tokenSource: kept.join(' ｜ '),
-      });
+      // 整行皆机器面时保留整行原样：这一行本来就整体不参与守恒，正文只用于报错定位。
+      push('table_row', (allMachine ? cells.filter(Boolean) : kept).join(' ｜ '), i + 1,
+        { machineFacing: allMachine });
       continue;
     }
     tableHeaders = null;

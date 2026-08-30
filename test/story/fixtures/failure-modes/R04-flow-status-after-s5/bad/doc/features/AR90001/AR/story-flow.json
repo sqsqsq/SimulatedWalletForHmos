@@ -1,0 +1,86 @@
+{
+  "schema": 3,
+  "feature": "AR90001",
+  "status": "init",
+  "rounds": [
+    {
+      "round": 1,
+      "imported": [],
+      "analysis": {
+        "path": "AR/init-analysis.md",
+        "sha256": "sha256:a742f45ec149bf04"
+      },
+      "inputs": {
+        "RR/prd.md": "sha256:c674ac15d2ce5658",
+        "SR/design.md": "sha256:4ec7b2c05d383f93",
+        "AR/design.md": "sha256:aabc5f644dc124ff",
+        "AR/upstream.md": null
+      },
+      "materials": "sha256:dfd558c0227d8c5b",
+      "positioning": {
+        "scope_source": "sr_related",
+        "scope_text": "钱包端交通卡紧急挂失的申请、恢复与结果查看（资格查询 → 风险确认 → 提交/复用申请 → 结果确认），补卡相关归兄弟特性 F2。",
+        "sr_related_ars": [
+          {
+            "ar": "F2",
+            "scope": "补卡费用支付、制卡进度、领取通知、客服交接"
+          }
+        ]
+      },
+      "scope_options": [
+        {
+          "key": "carry_all",
+          "label": "按当前范围整体承载：资格查询与展示、风险确认与提交、身份回跳恢复、状态冲突恢复、创建/复用申请、冻结结果确认、安全检查点与防重、F2 交接数据；不包含补卡相关（归 F2）",
+          "recommended": true
+        }
+      ],
+      "gates": [
+        {
+          "gate": "material_scope",
+          "options": [
+            {
+              "label": "材料充足，开始需求分析",
+              "recommended": true,
+              "key": "confirm_scope"
+            },
+            {
+              "label": "补充材料后继续：我已把补充材料放进 doc/features/AR90001/inbox/",
+              "key": "supplement"
+            }
+          ],
+          "chosen": "confirm_scope",
+          "outcome": "accepted",
+          "by": "ai",
+          "basis": "按你推荐的选项继续，不用再问我；每个决策照常写明选了哪一项、依据是什么",
+          "at": "2026-08-28T11:25:55+00:00"
+        },
+        {
+          "gate": "scope_decision",
+          "options": [
+            {
+              "key": "carry_all",
+              "label": "按当前范围整体承载：资格查询与展示、风险确认与提交、身份回跳恢复、状态冲突恢复、创建/复用申请、冻结结果确认、安全检查点与防重、F2 交接数据；不包含补卡相关（归 F2）",
+              "recommended": true
+            }
+          ],
+          "chosen": "carry_all",
+          "outcome": "accepted",
+          "by": "ai",
+          "basis": "按你推荐的选项继续，不用再问我；每个决策照常写明选了哪一项、依据是什么。分析未找到满足四条判据的切分维度（流程单页面原子事务），代选整体承载",
+          "at": "2026-08-28T11:27:35+00:00"
+        }
+      ]
+    }
+  ],
+  "split": {
+    "decided": "none",
+    "settled_round": null,
+    "scope_text": null,
+    "parts": []
+  },
+  "design": {
+    "sha256": "sha256:b8a6687bd5b1fa67"
+  },
+  "design_generated_at": "2026-08-28T11:28:36+00:00",
+  "story_written_at": "2026-08-28T12:45:02+00:00"
+}

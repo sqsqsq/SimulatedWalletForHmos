@@ -1938,7 +1938,7 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
 
     def run(cmd: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(build), cmd, "--feature", "F1", "--project-root", str(root)],
+            ["node", str(build), cmd, "--feature", "AR90001", "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     for cmd in ("init", "audit"):
@@ -1970,10 +1970,10 @@ def _seed_author_side(root: Path, extra_verdict: str | None) -> None:
     落点按**作者会怎么放**来定：这条单元的正文在哪一章能找到就放哪一章。
     这不是判据（判据里没有片段匹配了），是测试装置在模拟一个尽职的作者。
     """
-    src = root / "doc" / "features" / "F1" / "AR" / "story-src"
+    src = root / "doc" / "features" / "AR90001" / "AR" / "story-src"
     audit_path = src / "audit.json"
     units_path = src / "source-units.json"
-    story_path = root / "doc" / "features" / "F1" / "AR" / "story.md"
+    story_path = root / "doc" / "features" / "AR90001" / "AR" / "story.md"
     if not (audit_path.is_file() and units_path.is_file() and story_path.is_file()):
         return
     data = json.loads(read_text(audit_path))
@@ -2065,7 +2065,7 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     判定原先落在一份独立的记录文件里，那份文件退场后既无作业指引也无门禁。
     现在条目是来源单元，缺一条要点名一条。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
     if code == 0:
@@ -2090,7 +2090,7 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
     if hook is None:
         hook = DEFAULT_EXTENSION_DIR / "hooks" / "spec" / "post_check.mjs"
     proc = subprocess.run(
-        ["node", "--input-type=module", "-e", script, "--", str(hook), str(root), "F1"],
+        ["node", "--input-type=module", "-e", script, "--", str(hook), str(root), "AR90001"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
@@ -2110,14 +2110,14 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
     而且回话里不能提 story 专属的那几样——作者读到「三份产物」「技术契约」，
     就会去写他根本不需要写的东西。
     """
-    spec = root / "doc" / "features" / "F1" / "spec" / "spec.md"
+    spec = root / "doc" / "features" / "AR90001" / "spec" / "spec.md"
     if not spec.exists():
         return Outcome(True, "夹具里没有规格件（该形态未启用）")
     result = _spec_post_check(root)
     if result is None:
         return Outcome(False, "spec post_check 跑不起来")
     ok, message = result
-    has_flow = (root / "doc" / "features" / "F1" / "AR" / "story-flow.json").exists()
+    has_flow = (root / "doc" / "features" / "AR90001" / "AR" / "story-flow.json").exists()
     if has_flow:
         # 有流程契约 = 走了 /story：该被要求写全，拦住才对
         if ok:
@@ -2139,7 +2139,7 @@ def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
     一眼看出的结构：哪几条分支、各自去哪，文字复述做不到。
     判的是**形态不是语义**：源里是图的，落点章里就得还是图。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2157,7 +2157,7 @@ def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
     分号来对齐，而术语表本来是给他随时回查的。
     单行的表不在此列（一行不构成表），只有 ≥2 行落在同一章时才要求成表。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2174,7 +2174,7 @@ def s03_long_paragraph(root: Path, ctx: Ctx) -> Outcome:
     阈值满足「拆了一定更可读」，所以机械判它不会被换皮受益——把长段拆开、
     把结论提到段首，两件事都只会让文档更好读。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2191,7 +2191,7 @@ def s04_duplicate_paragraph(root: Path, ctx: Ctx) -> Outcome:
     「不重复」这一轴此前只有「分配恰好一处」在守——那管的是来源单元，管不住
     作者在两章各写一遍同样的话。规范化后逐段比对，改个标点也认得出。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "签约成功之后，详情页顶部显示当前的触发门限")
     if code == 0:
@@ -2212,7 +2212,7 @@ def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     判据不是「报了错」而是**点名了是哪一类、在哪一行**：只说「不合规」的门禁，
     作者只能靠删字去试。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2234,7 +2234,7 @@ def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
     而当时的判据只核「附录这一章存在」，倾倒完全合法。
     判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2252,7 +2252,7 @@ def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
     名义长回来，实际后果是评审人先读一遍字段表，再在六个答不上来的格子里跳过或胡填，
     而「已确认」因此不可信。留下的只有三态勾选与勾选下那一行说明。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "review.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "review.md").exists():
         return Outcome(True, "夹具里没有评审记录（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2421,7 +2421,7 @@ def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
     （基线就这么判，注释里自己承认过）。`story_flow.py story` 登记前会重跑
     `story-build check`，登记成功即九项判据都过了。
     """
-    feature_root = root / "doc" / "features" / "F1"
+    feature_root = root / "doc" / "features" / "AR90001"
     if not (feature_root / "AR" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     problems = _flow_check_call(root, feature_root, "storyProduced")
@@ -2458,7 +2458,7 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     写成「等于 complete」就会在 S5 之后让 spec harness 一重跑就 FAIL，
     `upstream_verdict_gate` 再把 coding、review 一并判 FAIL——四个已闭环的阶段集体翻红。
     """
-    feature_root = root / "doc" / "features" / "F1"
+    feature_root = root / "doc" / "features" / "AR90001"
     if not (feature_root / "AR" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     script = (
@@ -2492,9 +2492,9 @@ def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
       ① 点名 story 里找不到的那个事实（不是笼统说「有缺失」）；
       ② 拒绝三态之外的记录——自由文本理由在新形态下无法表达。
 
-    夹具是一个迷你需求目录（`doc/features/F1/`），所以 `root` 传进来的是夹具根。
+    夹具是一个迷你需求目录（`doc/features/AR90001/`），所以 `root` 传进来的是夹具根。
     """
-    if not (root / "doc" / "features" / "F1" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story 与材料（该形态未启用）")
 
     code, out = _story_build_cycle(root)

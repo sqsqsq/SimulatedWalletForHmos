@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FLOW_CHECK = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
               / "scripts" / "flow-check.mjs")
-FEATURE = "F1"
+FEATURE = "AR90001"
 
 MINIMAL_FLOW = {
     "schema": 3,

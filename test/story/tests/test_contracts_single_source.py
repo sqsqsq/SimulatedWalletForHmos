@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONTRACTS_MJS = REPO_ROOT / "doc" / "extensions" / "hooks" / "shared" / "contracts.mjs"
-FEATURE = "F1"
+FEATURE = "AR90001"
 
 CONTRACT_YAML = """modules:
   - name: 甲模块

@@ -190,28 +190,46 @@ const REDLINE_HINTS = {
   doc_coordinate: '归档件的读者手上没有这个仓库，改用本文章节名或需求系统单号',
   placeholder_heading: '标题用真实业务名，模板占位没填就是没写',
   ai_heading: '标题用真实业务名，短、自然、准确概括下文',
+  harness_artifact: '这是造它的装置与流程说的话，不是需求本身——读者要的是业务事实，写它做什么、给谁用',
 };
 
 /**
- * 切出主叙事：附录那一章之前的部分。
+ * 全篇逐行，并标出「这一行在附录里吗」。
  *
- * 附录不在作用域内——工程标识本来就该落在那里，扫它等于自相矛盾。
- * 没有附录章时整篇都是主叙事（那说明作者还没写附录，另有判据管）。
+ * 多数红线的作用域是附录之外——工程标识本来就该落在附录，扫它等于自相矛盾。
+ * 但有两类东西在附录里也不该有（起草时的检索措辞、装置与流程机构的词），
+ * 所以边界不能在这里一刀切掉，逐类的作用域由合同数据说了算。
  *
  * **标题过规范化通道**：归档件的附录写作 `## 10. 附录`，合同里存的是 `附录`。
  * 早先这里做逐字相等比较，编号一加就认不出附录，于是整个附录被当主叙事扫，
  * 报出几十条本该允许的接口名与字段名——作者看到的是一堵无法翻越的墙。
  *
- * @returns {{line:number, text:string}[]} 行号是**原文行号**，报错要指得回去
+ * @returns {{line:number, text:string, inAppendix:boolean}[]} 行号是**原文行号**，报错要指得回去
  */
-function mainNarrative(text, appendixTitle) {
+function narrativeLines(text, appendixTitle) {
   const out = [];
   const want = normalizeHeading(appendixTitle);
   const lines = String(text ?? '').split(/\r?\n/);
+  let inAppendix = false;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].trim().match(/^##\s+(.+)$/);
-    if (m && want && normalizeHeading(m[1]) === want) break;
-    out.push({ line: i + 1, text: lines[i] });
+    if (m && want && normalizeHeading(m[1]) === want) inAppendix = true;
+    out.push({ line: i + 1, text: lines[i], inAppendix });
+  }
+  return out;
+}
+
+/**
+ * 逐类作用域：合同里写字符串 = 默认作用域（附录之外），写 `{kind, scope}` = 按它说的。
+ *
+ * @param {(string|{kind:string, scope?:string})[]} decls
+ * @returns {Map<string, string>} kind → scope
+ */
+function redlineScopes(decls) {
+  const out = new Map();
+  for (const decl of decls ?? []) {
+    if (typeof decl === 'string') out.set(decl, 'non_appendix');
+    else if (decl && typeof decl.kind === 'string') out.set(decl.kind, decl.scope || 'non_appendix');
   }
   return out;
 }
@@ -228,23 +246,30 @@ function mainNarrative(text, appendixTitle) {
  * @param {string} [opts.appendixTitle] 附录章标题（作用域边界）
  * @param {string[]} [opts.ruleIds] 激活清单里的规约编号
  * @param {string[]} [opts.identifiers] 材料里出现过的 ASCII 标识符
- * @param {string[]} [opts.kinds] 只查这几类；不给则全查
+ * @param {(string|{kind:string, scope?:string})[]} [opts.kinds] 只查这几类及各自作用域；不给则全查
+ * @param {string[]} [opts.harnessTerms] 装置与流程机构的类别词表（合同数据）
  * @returns {{line:number, kind:string, hit:string, hint:string, text:string}[]}
  */
 export function scanLanguageRedline(text, opts = {}) {
-  const kinds = new Set(opts.kinds ?? Object.keys(REDLINE_HINTS));
+  const scopes = opts.kinds ? redlineScopes(opts.kinds)
+    : new Map(Object.keys(REDLINE_HINTS).map(k => [k, 'non_appendix']));
   const ruleIds = (opts.ruleIds ?? []).filter(id => typeof id === 'string' && id.trim());
   const identifiers = new Set((opts.identifiers ?? []).filter(
     id => typeof id === 'string' && /^[A-Za-z][A-Za-z0-9_]{3,}$/.test(id)));
+  const harnessTerms = (opts.harnessTerms ?? []).filter(t => typeof t === 'string' && t.trim());
   const hits = [];
   let inFence = false;
+  let inAppendix = false;
 
   const push = (line, kind, hit, raw) => {
-    if (!kinds.has(kind)) return;
+    const scope = scopes.get(kind);
+    if (!scope) return;
+    if (inAppendix && scope !== 'all') return;
     hits.push({ line, kind, hit, hint: REDLINE_HINTS[kind], text: raw.trim().slice(0, 100) });
   };
 
-  for (const { line, text: raw } of mainNarrative(text, opts.appendixTitle)) {
+  for (const { line, text: raw, inAppendix: atAppendix } of narrativeLines(text, opts.appendixTitle)) {
+    inAppendix = atAppendix;
     if (/^\s*(```|~~~)/.test(raw)) {
       inFence = !inFence;
       continue;
@@ -286,6 +311,14 @@ export function scanLanguageRedline(text, opts = {}) {
                               ['doc_coordinate', DOC_COORDINATE_RE]]) {
       if (kind === 'source_tag' && isTableRow) continue;
       for (const m of raw.matchAll(re)) push(line, kind, m[0], raw);
+    }
+
+    // 装置词：造这份文档的工具与流程机构说的话。词表是**类别词**、由合同登记，
+    // 本文件不写具体词——写了就成了「这一轮见过的那几个词」。ASCII 词不分大小写。
+    for (const term of harnessTerms) {
+      const ascii = /^[A-Za-z0-9_.-]+$/.test(term);
+      const hit = ascii ? raw.toLowerCase().includes(term.toLowerCase()) : raw.includes(term);
+      if (hit) push(line, 'harness_artifact', term, raw);
     }
   }
   // 同一行同一类只报一次：一行里三个 camelCase 报三条，读的人只会更烦

@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
-FEATURE = "F1"
+FEATURE = "AR90001"
 
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
@@ -612,7 +612,7 @@ class TestGlossaryAndRedlines(StoryBuildCase):
     def test_repo_path_in_story_is_named(self) -> None:
         self.init_audit()
         self.rewrite_story("本需求不涉及。\n\n## 术语",
-                           "详见 doc/features/F1/AR/design.md。\n\n## 术语")
+                           "详见 doc/features/AR90001/AR/design.md。\n\n## 术语")
         self.assert_check_names("仓内路径")
 
 
@@ -768,6 +768,89 @@ class TestReviewForm(StoryBuildCase):
         out = self.assert_check_names("评审记录里出现")
         self.assertIn("确认日期", out)
         self.assertIn("状态行", out)
+
+
+class TestRequirementIdInTitle(StoryBuildCase):
+    """大标题带需求编号——归档件离开这个仓库后，编号是它回到需求系统的唯一一根绳子。"""
+
+    def test_title_without_the_id_is_named(self) -> None:
+        self.init_audit()
+        self.settle()
+        first = self.story().split("\n", 1)[0]
+        self.rewrite_story(first, "# " + first[2:].replace(FEATURE, "").strip())
+        out = self.assert_check_names("大标题缺需求编号")
+        self.assertIn(FEATURE, out, "报错要把该写的编号给出来")
+
+    def test_offline_falls_back_to_the_shape(self) -> None:
+        """离线只有一份 story，不知道 feature 叫什么——此时核形态，不放过去。"""
+        story = Path(self._tmp.name) / "AR" / "story.md"
+        story.parent.mkdir(parents=True, exist_ok=True)
+        text = self.story()
+        story.write_text(text.replace(text.split("\n", 1)[0], "# 某需求"), encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(BUILD), "check", "--offline", "--story", str(story),
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("大标题缺需求编号", (proc.stderr or "") + (proc.stdout or ""))
+
+
+class TestMachineFacingColumns(StoryBuildCase):
+    """机器面列**连正文一起排除**：模型读到的就是单元正文，只免 token 义务断不了照抄。"""
+
+    def _rows_of(self, table: str) -> list[dict]:
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.write_text("# " + FEATURE + " 规格\n\n## 0. 术语映射表\n\n" + table,
+                        encoding="utf-8")
+        self.assertEqual(0, self.run_build("init").returncode)
+        return [u for u in self.units if u["doc"] == "SPEC" and u["kind"] == "table_row"]
+
+    def test_machine_column_text_never_reaches_the_unit(self) -> None:
+        rows = self._rows_of(
+            "| 原始术语 | 权威模块 | 在本需求中的含义 |\n|---|---|---|\n"
+            "| 挂失 | WalletCardManager | 让原卡不能再被使用 |\n")
+        self.assertTrue(rows, "术语映射表该切出行单元")
+        row = rows[0]
+        self.assertNotIn("WalletCardManager", row["text"],
+                         "机器面列还留在单元正文里，模型照抄它就是照抄类名")
+        self.assertIn("让原卡不能再被使用", row["text"], "同一行的业务列还要守恒")
+
+    def test_a_row_of_only_machine_columns_keeps_its_text_for_diagnosis(self) -> None:
+        rows = self._rows_of(
+            "| 权威模块 | 代码现状 |\n|---|---|\n"
+            "| WalletCardManager | 检索挂失封装于本模块零命中 |\n")
+        self.assertTrue(rows)
+        self.assertTrue(rows[0]["machine_facing"], "整行都是机器面列，这一行整行不守恒")
+        self.assertEqual([], rows[0]["tokens"])
+
+
+class TestRedlineScope(StoryBuildCase):
+    """逐类作用域：多数红线只管附录之外，取证语言与装置词在附录里同样不该有。"""
+
+    def _put_in_appendix(self, line: str) -> None:
+        bodies = _chapter_bodies(self.story_path)
+        anchor = bodies[_appendix_title()].split("\n")[0]
+        self.rewrite_story(anchor, anchor + "\n\n" + line)
+
+    def test_search_phrase_in_the_appendix_is_named(self) -> None:
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+        self._put_in_appendix("检索挂失回执封装零命中。")
+        self.assert_check_names("这是起草过程")
+
+    def test_harness_word_in_the_appendix_is_named(self) -> None:
+        self.init_audit()
+        self.settle()
+        self._put_in_appendix("本次交付先以模拟实现替代真实通道。")
+        self.assert_check_names("造它的装置与流程说的话")
+
+    def test_identifiers_stay_legal_in_the_appendix(self) -> None:
+        """附录仍是工程标识的落点——顺手把它一起收紧，作者就无处可写了。"""
+        self.init_audit()
+        self.settle()
+        self._put_in_appendix("| 接口 | 用途 |\n|---|---|\n| queryLossState | 查挂失结果 |")
+        self.assertEqual(0, self.check_output()[0])
 
 
 if __name__ == "__main__":

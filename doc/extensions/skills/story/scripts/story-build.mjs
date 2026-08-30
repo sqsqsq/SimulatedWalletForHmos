@@ -616,6 +616,24 @@ function cmdCheck(ctx) {
     if (!body) problems.push(`「${sec.title}」是空节——确实不涉及就写「${EMPTY_SECTION_TEXT}」一句`);
   }
 
+  // ①b 大标题带需求编号：归档件离开这个仓库之后，编号是它与需求系统之间唯一的绳子。
+  //
+  // 在线时比对的是本 feature 的编号（知道答案就核答案）；离线只有一份 story，
+  // 此时退一格核**形态**——首个词是编号形态即可。两条路都拦得住「标题只有需求名」。
+  const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
+  const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
+  if (!h1Text) {
+    problems.push('没有大标题——归档件的第一行是 `# <需求编号> <需求名称>`');
+  } else if (ctx.args.feature) {
+    if (!h1Text.includes(ctx.args.feature)) {
+      problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
+        + '——归档件流转出去之后，读者靠这个编号回到需求系统');
+    }
+  } else if (!/^[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*(\s|$)/.test(h1Text)) {
+    problems.push(`大标题缺需求编号：「${h1Text.slice(0, 30)}」`
+      + '——第一行写成 `# <需求编号> <需求名称>`');
+  }
+
   // ② 落点守恒：三态每一种都过一遍机器。
   //
   // **落点域只有 story.md**。上一版把 decisions.json 也拼进来当草垛，于是任何 token 塞进
@@ -1047,6 +1065,7 @@ function cmdCheck(ctx) {
       ruleIds: doc.units.filter(u => u.kind === 'knowledge').map(u => u.tokens[0]),
       identifiers,
       kinds: redlineKinds,
+      harnessTerms: ctx.contract.language_redline?.harness_terms ?? [],
     });
     if (hits.length) {
       const byKind = new Map();

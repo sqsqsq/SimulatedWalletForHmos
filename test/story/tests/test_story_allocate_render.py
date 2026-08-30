@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
-FEATURE = "F1"
+FEATURE = "AR90001"
 
 
 class AllocateRenderCase(unittest.TestCase):

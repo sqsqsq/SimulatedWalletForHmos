@@ -131,17 +131,19 @@
     }
   ],
   "machine_facing": {
-    "_note": "机器面单元不参与整篇守恒——它们是给流程与工具读的登记项，不是给读者读的事实。unit_kinds 整类打标；table_columns 按列名逐列排除（不整行打标：一行里有机器列，不代表同一行的正文列也不用守恒）。",
+    "_note": "机器面单元不参与整篇守恒——它们是给流程与工具读的登记项，不是给读者读的事实。unit_kinds 整类打标；table_columns 按列名逐列排除（不整行打标：一行里有机器列，不代表同一行的正文列也不用守恒），被排除的列既不产 token **也不进单元正文**——模型读到的就是单元正文，只免 token 义务断不了照抄。整行都是机器面列时该行整行打标。列名按生成材料的模板约定登记：模板改了列名就改这行数据，机制不动。",
     "unit_kinds": [
       "code"
     ],
     "table_columns": [
       "所属模块",
+      "权威模块",
       "所属层",
       "置信度",
       "本流程消费步骤",
       "SR 章节",
-      "链接"
+      "链接",
+      "代码现状"
     ]
   },
   "id_shapes": {
@@ -165,16 +167,43 @@
     "duplicate_min_chars": 15
   },
   "language_redline": {
-    "_note": "作用域是**附录之外的主叙事**：工程标识只在附录成表，主叙事写中文业务名与中文规约名。这不是把工程细节排除掉，而是给它一个不打断阅读的落点——守恒 token 在附录表里照样可核。kinds 是形态声明，具体词表与正则在 lint-rules.mjs 里作为数据。",
+    "_note": "默认作用域是**附录之外的主叙事**：工程标识只在附录成表，主叙事写中文业务名与中文规约名。这不是把工程细节排除掉，而是给它一个不打断阅读的落点——守恒 token 在附录表里照样可核。但有两类东西**在附录里也不该有**：起草时的检索措辞，以及测试装置与流程机构的词——它们不是需求事实，换个位置仍然不是。所以 kinds 逐类带作用域：写字符串 = 默认作用域，写 {kind, scope:\"all\"} = 全篇。正则在 lint-rules.mjs 里作为数据；装置词表是**类别词**，登记在这里。",
     "scope": "non_appendix",
     "kinds": [
       "repo_identifier",
       "rule_id",
-      "search_phrase",
+      {
+        "kind": "search_phrase",
+        "scope": "all"
+      },
       "source_tag",
       "doc_coordinate",
       "placeholder_heading",
-      "ai_heading"
+      "ai_heading",
+      {
+        "kind": "harness_artifact",
+        "scope": "all"
+      }
+    ],
+    "harness_terms": [
+      "模拟实现",
+      "模拟数据",
+      "打桩",
+      "桩实现",
+      "夹具",
+      "门禁",
+      "流程关卡",
+      "关卡",
+      "守恒",
+      "回写",
+      "台账",
+      "校验脚本",
+      "冒烟",
+      "mock",
+      "lint",
+      "harness",
+      "checker",
+      "post_check"
     ]
   },
   "verdicts": {

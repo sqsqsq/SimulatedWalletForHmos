@@ -49,7 +49,7 @@ SPEC_MD = """# 甲需求规格
 class TestAdjudicationParity(unittest.TestCase):
     def test_js_and_python_derive_the_same_keys(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            feature = Path(d) / "doc" / "features" / "F1"
+            feature = Path(d) / "doc" / "features" / "AR90001"
             (feature / "spec").mkdir(parents=True)
             (feature / "spec" / "spec.md").write_text(SPEC_MD, encoding="utf-8")
 
@@ -59,7 +59,7 @@ class TestAdjudicationParity(unittest.TestCase):
             script = (
                 "import { adjudicationSet, adjudicationKeys } from "
                 f"{json.dumps(JS_MODULE.as_uri())};\n"
-                f"const r = adjudicationSet({json.dumps(str(Path(d)))}, 'F1', 'spec');\n"
+                f"const r = adjudicationSet({json.dumps(str(Path(d)))}, 'AR90001', 'spec');\n"
                 "if (r.error) { console.error(r.error); process.exit(1); }\n"
                 "console.log(JSON.stringify(adjudicationKeys(r.rows)));\n"
             )
