@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hylyre.dev/contracts/trace-output.json",
   "title": "HylyreTrace",
-  "description": "trace.json for Hylyre runs (P4+).",
+  "description": "Versioned Hylyre trace output. New traces use one CaseResult.steps[] ledger.",
   "type": "object",
   "required": ["schema_version", "feature", "phase", "outcome"],
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["0.1-p0", "0.2-p4"]
+      "enum": ["0.1-p0", "0.2-p4", "0.3-p0"]
     },
     "feature": { "type": "string", "minLength": 1 },
     "phase": { "type": "string", "enum": ["testing"] },
@@ -23,20 +23,147 @@
     },
     "retries": { "type": "integer", "minimum": 0 },
     "artifacts": { "type": "object", "additionalProperties": true },
+    "environment": { "$ref": "#/$defs/environment" },
     "cases": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id", "status"],
+      "items": { "$ref": "#/$defs/legacyCase" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "0.3-p0" } }
+      },
+      "then": {
+        "required": ["environment", "cases", "tool_calls"],
         "properties": {
-          "id": { "type": "string" },
-          "status": { "type": "string" },
-          "priority": { "type": "string" },
-          "ac_ref": { "type": "string" },
-          "notes": { "type": "string" }
-        },
-        "additionalProperties": true
+          "environment": { "$ref": "#/$defs/environment" },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/caseResult" }
+          }
+        }
       }
+    }
+  ],
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "required": [
+        "hylyre_version",
+        "hypium_version",
+        "trace_schema_version",
+        "selector_engine"
+      ],
+      "properties": {
+        "hylyre_version": { "type": "string", "minLength": 1 },
+        "hypium_version": { "type": "string", "minLength": 1 },
+        "trace_schema_version": { "type": "string", "const": "0.3-p0" },
+        "selector_engine": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "selector": {
+      "type": ["object", "null"],
+      "required": ["engine", "requested_match", "effective_match", "candidate_count"],
+      "properties": {
+        "engine": { "type": "string", "minLength": 1 },
+        "requested_match": { "type": ["string", "null"] },
+        "effective_match": { "type": ["string", "null"], "enum": ["exact", "contains", null] },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "selected_id": { "type": ["string", "null"] },
+        "bounds": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "stepResult": {
+      "type": "object",
+      "required": [
+        "index",
+        "kind",
+        "role",
+        "status",
+        "failure_kind",
+        "failure_code",
+        "duration_ms",
+        "selector",
+        "evidence",
+        "error"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["action", "assertion"] },
+        "status": { "type": "string", "enum": ["passed", "failed", "blocked", "skipped"] },
+        "failure_kind": {
+          "type": ["string", "null"],
+          "enum": ["assertion", "selector", "capability", "infrastructure", null]
+        },
+        "failure_code": {
+          "type": ["string", "null"],
+          "enum": [
+            "assertion_mismatch",
+            "selector_not_found",
+            "selector_ambiguous",
+            "inline_target_unresolvable",
+            "capability_unsupported",
+            "device_unavailable",
+            "driver_failure",
+            null
+          ]
+        },
+        "duration_ms": { "type": "number", "minimum": 0 },
+        "selector": { "$ref": "#/$defs/selector" },
+        "evidence": { "type": ["object", "null"] },
+        "error": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "caseResult": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "priority",
+        "ac_ref",
+        "notes",
+        "execution",
+        "verification",
+        "evidence",
+        "expected_check_mode",
+        "steps"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["通过", "失败", "阻塞", "跳过"] },
+        "priority": { "type": "string" },
+        "ac_ref": { "type": "string" },
+        "notes": { "type": "string" },
+        "execution": { "type": "string", "enum": ["completed", "aborted", "infrastructure_failed"] },
+        "verification": { "type": "string", "enum": ["passed", "failed", "inconclusive"] },
+        "evidence": { "type": "string", "enum": ["complete", "incomplete"] },
+        "expected_check_mode": { "type": "string", "enum": ["checked_vlm", "disabled_by_flag", "unavailable_no_vlm", "empty"] },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stepResult" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "legacyCase": {
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "priority": { "type": "string" },
+        "ac_ref": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

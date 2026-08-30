@@ -20,9 +20,9 @@
 
 **4.5.1 解析 TC 表**：打开 `<features_dir>/<feature>/testing/test-plan.md`，定位「测试用例清单」章节；读取第一条用例行表（列须覆盖用例编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC）；每行建立工作项 TC-xxx。
 
-**4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏候选（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。**四级优先级只负责发现候选，不授予真值地位**：任何来源的 `by_id` 都 MUST 经同一 normalizer 反解到当前 feature/screen 的 ui-spec node；`by_text` MUST 与 ui-spec text 精确等值。运行 `derive-hylyre-plan-hint` 可读 `selector_contract.entries[]` 查询 node → canonical 4 段 base anchor、kit 后缀与实例基数要求；派生 lint 以 `SELECTOR-SPEC-001` 结构化 WARN 报告无依据 selector。无法校验时先补 ui-spec/anchor 注入；仍无可靠 selector 的 TC 不写入派生表行，但须在 frontmatter 或 `derive-manifest.json` 登记 `explicit_skip_tc_ids`，Step 5 标跳过并写原因。
+**4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏候选（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。**四级优先级只负责发现候选，不授予真值地位**：任何来源的 `by_id` 都 MUST 经同一 normalizer 反解到当前 feature/screen 的 ui-spec node；正式 `by_text` MUST 显式声明 `match: exact|contains`，由 acceptance 意图选择，禁止按数字/日期等字符特征启发式放宽，也禁止运行时 fallback。运行 `derive-hylyre-plan-hint` 可读 `selector_contract.entries[]` 查询 canonical 节点；派生 lint 以 `STEP-007` 硬拦缺失/非法 match，以 `SELECTOR-SPEC-001` 结构化 WARN 报告无依据 selector。无法校验时先补 ui-spec/anchor 注入；仍无可靠 selector 的 TC 不写入派生表行，但须在 frontmatter 或 `derive-manifest.json` 登记 `explicit_skip_tc_ids`，Step 5 标跳过并写原因。
 
-**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出（hint JSON 内含 `allowed_step_roots`/`step_shape_catalog` 机读步骤目录，翻译时以此为准），`snapshot_cache_empty:true` 先 warmup 或 dump-ui；若步骤语法不在当前上下文（长会话被压缩后常见），翻译前重读 `profile-skill-asset:device-testing` 的 `reference/hylyre-planned-step-fields.md`。
+**4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；正式 `by_text` selector 每次都写 `"match":"exact"` 或 `"match":"contains"`，动态文本是否 contains 由 acceptance 意图判断而不是字符形态；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…","match":"exact"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；action 默认唯一性由 Hylyre 契约提供，需要消歧时只复用 `index`/`scope`/`within`/`all`；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出（hint JSON 内含 `allowed_step_roots`/`step_shape_catalog` 机读步骤目录，翻译时以此为准），`snapshot_cache_empty:true` 先 warmup 或 dump-ui；若步骤语法不在当前上下文（长会话被压缩后常见），翻译前重读 `profile-skill-asset:device-testing` 的 `reference/hylyre-planned-step-fields.md`。
 
 **4.5.4 裁决与跳过登记**：维护「进入派生/跳过」两份清单，跳过须在 Step 5 报告逐条可见；派生表用例编号须 ⊆ 顶层 test-plan.md（否则 extra FAIL）；顶层每个 TC 须出现于派生表或 `explicit_skip_tc_ids`（否则 missing FAIL）。
 
@@ -81,10 +81,12 @@
 
 ## Step 5.1 自 Hylyre trace 回填执行状态（必做）
 
-1. 读取 `<features_dir>/<feature>/testing/reports/device-test-timing.json`（harness 在 `device_test.run` 成功后写入）。填充测试概览「真机流水线耗时」表（区分 `build_reused`/`install_reused` 与 `hapBuiltAt`）；执行结果表增加耗时列（来自 `cases[].duration_ms`，如 `12.4s`）。
-2. 解析 `trace.json`：`cases[]` 每条含 `id`（与派生表用例编号对齐）、`status`（通过/失败/阻塞/跳过）、`notes`（可选）。
-3. 构建行集：派生表中出现的 TC 以 `cases[]` 为准写状态与备注（无 case 记录但 run 整体失败→标阻塞或失败并注原因）；仅在顶层 test-plan.md、未进派生表的 TC → 标跳过，备注示例「缺少稳定 selector，需补 plan.md/contracts.yaml」。
+1. 读取最终 run 的 `<features_dir>/<feature>/testing/reports/device-test-timing.json`（不得复用首轮真编/旧轮 timing）。填充测试概览「真机流水线耗时」表，使用最终 `build_reused`/`install_reused` 与 `hapBuiltAt`；打包/装机说明列显式写 `reused=true|false`；执行结果表增加耗时列，并为每个 case 回填最终 `duration_ms`，报告格式固定为精确整数毫秒 `Nms`（如 `1234ms`；历史 `1,234ms` 可读）。已进入 trace/timing 的 skip/block case 写 `0ms`，仅未进入 trace/timing 的 explicit skip 写 `—`。
+2. 解析最终 authoritative `trace.json`：`cases[]` 每条含 `id`（与派生表用例编号对齐）、`status`（通过/失败/阻塞/跳过）、`notes`（可选）；skip 必须保留并计入对应分母，不能从统计中删除。native trace 还须以 `trace.artifacts.plan` 和既有 run/identity receipt 绑定实际 derived plan/trace；StepResult count/index/kind 不一致即 FAIL。
+3. 构建行集：派生表中出现的 TC 以 `cases[]` 为准写状态与备注（无 case 记录但 run 整体失败→标阻塞或失败并注原因）；仅在顶层 test-plan.md、未进派生表的 TC → 标跳过，备注示例「缺少稳定 selector，需补 plan.md/contracts.yaml」。这类 explicit skip/未执行项即使是 P1/P2 也保持 testing FAIL，不能因 P0 已通过而完成 testing；只有机器证明的 capability 缺失可 defer。
 4. **不要**与 Hylyre 状态枚举混用其它字样（门禁与 receipt 校验依赖一致词表）。
+
+**报告重算**：当 run 已产出 trace、agent 已基于最终 trace/timing 写好顶层 `test-report.md` 后，可执行 `--report-reconcile-only --phase testing --feature <feature>`。该模式只读 trace/plan/report/timing/build-install-run meta，先对账同一最终 run 的 HAP 路径/内容指纹、meta 时间顺序、trace feature、精确 trace/timing case 集合、pipeline reused/阶段耗时和报告逐 case 耗时，再完整重跑 report/static checks 与既有 summary/quality axes writer；不调用 hvigor、hdc、Hylyre、设备、视觉采集或 executable lifecycle hook，也不改 trace 字节。
 
 ## 红线：测试接缝与 P0 覆盖（goal-fakepass-hardening，BLOCKER）
 
@@ -92,18 +94,33 @@
   开关默认 `true` = `product_behavior_switch_scan` BLOCKER（bc-openCard 事故：点银行直写卡
   跳结果页）。可测性接缝限 `.id()` 锚点等**不改行为**的改动——且 review 闭环后任何产品
   源码变更都会被 `review_closure_attestation` 拦下，须回跑 review 重审。
-- **P0 用例 skip 默认修复（c7e4a2d9）**：explicit_skip/未执行的 P0 → `p0_coverage_integrity`
-  BLOCKER（fail-closed 不变）。未豁免缺口**全部属于既有 explicit_skip_tc_ids 登记**时，
-  gate 复用 failure_kind=code_regression + agent_fixable → summary 自动产 coding 候选 →
-  assess 回退 coding 修复并重测（**不降低验收标准，修复不是授权行为**；同指纹无进展由
-  既有熔断收口）。status 为空或未经登记的 trace skip 不产 coding 候选、留在 testing 恢复
-  执行/派生计划；真实外部阻塞按 DEFERRED 登记；旧 p0_skip_waiver receipt 只读且不改变
-  verdict，P0 未执行不能降级为 WARN。通过率必须
+- **P0 用例 skip 证据边界（c7e4a2d9 / testing-stepresult-evidence-consumption）**：
+  explicit_skip/未执行的 P0 → `p0_coverage_integrity` BLOCKER（fail-closed 不变）。没有
+  `CaseResult.steps[]` 的 explicit skip/未执行缺口保持 testing-owned FAIL、零自动 coding
+  candidate；不得按 TC 名称、关联 AC 或报告散文猜原因。只有既有 capability resolution
+  以机器事实证明 provider 缺失时才走 DEFERRED。`code_regression`/coding candidate 只
+  绑定已执行且有冻结 `StepResult(assertion + assertion_mismatch)` 的机器证据；旧
+  `p0_skip_waiver` receipt 只读且不改变 verdict，P0 未执行不能降级为 WARN。通过率必须
   双口径（skip 计入分母），存在 P0 skip 时结论不得无条件「达标」；不再有
-  await_human_p0_skip 首触求人 halt。
-- **P0 状态迁移证据**：派生计划各 P0 TC 须动作指向 acceptance checkpoint 的
-  `target_element_id` 且其后 `wait_for` required 元素；flow 每条中间屏边须有已执行且通过
-  的 owning TC（纯 wait 冒充/直达结果页=`p0_semantic_coverage_integrity` FAIL）。
+  `await_human_p0_skip` 首触求人 halt。
+- **P0 native 证据对账**：Hylyre `0.4.0+` 且 trace `schema_version=0.3-p0` 时，
+  `CaseResult.execution=completed`、`verification=passed`、`evidence=complete` 只是必要条件；
+  每个 checkpoint 的 required 元素必须映射到同 index 的 `role=assertion,status=passed`
+  presence StepResult，forbidden 元素必须映射到 `wait_gone` 的 absence StepResult
+  （`observed_present=false,candidate_count=0`）。action-only、inconclusive、incomplete、旧
+  status 或报告散文均不得进通过分子。普通 interactive 与 goal 同源消费；goal 的
+  run/attempt/HAP/device identity binding 仍保留。实际执行的 derived plan、top plan 与 trace
+  路径/SHA 也必须通过既有 run/identity receipt 闭合，不能用后来修改的派生计划重解释 trace。
+- **失败归因与 legacy**：只消费 StepResult 的 `failure_kind + failure_code`；assertion mismatch
+  且 StepResult `status=failed`、非 `evidence.executed=false` 才回 coding，selector 回 testing
+  重派生/消歧，capability defer，infrastructure 回 external/toolchain。无 StepResult 的 explicit skip/未执行 case 保持 testing-owned FAIL、零
+  自动 coding。三重判据任一不满足时标记 `legacy_assertion_evidence_untrusted`，默认升级后重跑；
+  既有完整 telemetry 只能证明其实际采到的特定 checkpoint，不生成通用 CaseResult.steps[]。
+- **selector 两层门**：静态只认 canonical ui-spec；`match=exact` 精确等值，
+  `match=contains` 必须唯一或使用既有 `index/scope/within/all` 消歧。运行时只认 StepResult
+  selector evidence 的 candidate_count；多候选无真实消歧拒绝，禁止 exact→contains fallback、
+  父 Text/Row 中心点击、OCR 与坐标估算。静态/runtime/P0 共用 planned-step normalizer；
+  `selected_id` 必须属于计划 selector 的 canonical target 集。
 - **mock 数据可辨识**：多实体场景（多卡/多账户）各实体可见身份（掩码后卡号等）必须唯一
   可区分——掩码口径要避免「前 4+后 4 恒相同」（bc-openCard：全部卡显示 6225 **** 0001）。
 

@@ -10,7 +10,7 @@ from typing import Any
 
 import typer
 
-from hylyre.harness.runner import verify_report
+from hylyre.harness.runner import verify_report, verify_report_details
 from hylyre.report.emit import write_run_artifacts
 from hylyre.scenario.plan_parse import ParsedPlan, TestCase
 from hylyre.scenario.runner import CaseResult, ScenarioRunResult, ScenarioRunner
@@ -63,7 +63,11 @@ def execute_scenario(
     mb = resolve_model_backend(model_backend, use_fakes=use_fakes)
     if use_fakes:
         runner = ScenarioRunner(use_fakes=True)
-        result = runner.run_plan_file(plan, feature=feature)
+        result = runner.run_plan_file(
+            plan,
+            feature=feature,
+            check_expected=not skip_assert_expected,
+        )
         write_run_artifacts(
             result, report_path=report_out, trace_path=trace_out, model_backend=mb
         )
@@ -169,7 +173,6 @@ def execute_report_begin(
         "phase": "testing",
         "outcome": "success",
         "model_backend": model_backend,
-        "tool_calls": [],
         "retries": 0,
         "artifacts": {
             "adhoc": True,
@@ -259,6 +262,19 @@ def execute_report_finalize(
                 case=tc,
                 status=str(c["status"]),
                 notes=str(c.get("notes", "")),
+                execution=(
+                    "completed"
+                    if str(c["status"]) in ("通过", "失败", "跳过")
+                    else "infrastructure_failed"
+                ),
+                verification=(
+                    "passed"
+                    if str(c["status"]) == "通过"
+                    else "failed"
+                    if str(c["status"]) in ("失败", "阻塞")
+                    else "inconclusive"
+                ),
+                evidence="complete" if str(c["status"]) == "通过" else "incomplete",
             )
         )
     plan_marker = plan_path if plan_path is not None else Path("(ad-hoc)")
@@ -279,6 +295,7 @@ def execute_report_finalize(
         report_path=report_out,
         trace_path=trace_out,
         model_backend=mb,
+        schema_version="0.2-p4",
     )
     verify_plan = plan_path if plan_path is not None else None
     verify_report(report_out, trace_out, verify_plan)
@@ -375,9 +392,9 @@ def execute_report_verify(
     report: Path,
     trace: Path,
     plan: Path | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Raises ValueError when contracts fail."""
-    verify_report(report, trace, plan)
+    return verify_report_details(report, trace, plan)
 
 
 def run_report_verify(
@@ -387,11 +404,11 @@ def run_report_verify(
     plan: Path | None = None,
 ) -> None:
     try:
-        execute_report_verify(report=report, trace=trace, plan=plan)
+        details = execute_report_verify(report=report, trace=trace, plan=plan)
     except ValueError as exc:
         typer.secho(f"verify_report failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo("Contracts OK")
+    typer.echo(f"Contracts OK ({details['label']})")
 
 
 def run_report_begin(

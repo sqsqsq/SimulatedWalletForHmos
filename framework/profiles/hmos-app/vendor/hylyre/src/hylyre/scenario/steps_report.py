@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from hylyre.scenario.ledger import planned_step_kind, planned_step_role
 from hylyre.scenario.plan_parse import ParsedPlan, TestCase
-from hylyre.scenario.runner import CaseResult, ScenarioRunResult
+from hylyre.scenario.results import CaseResult, StepResult, case_verdict, redact_text
+from hylyre.scenario.runner import ScenarioRunResult
 
 
 def steps_batch_to_scenario_result(
@@ -21,13 +23,7 @@ def steps_batch_to_scenario_result(
     """Map per-step batch results to plan-shaped ``ScenarioRunResult`` for report/trace emit."""
     cases: list[TestCase] = []
     case_results: list[CaseResult] = []
-    tool_log: list[dict[str, Any]] = []
-
-    if bundle:
-        entry: dict[str, Any] = {"kind": "start_app", "bundle": bundle}
-        if page_name:
-            entry["page_name"] = page_name
-        tool_log.append(entry)
+    _ = (bundle, page_name)
 
     for row in batch.get("results", []):
         if not isinstance(row, dict):
@@ -46,22 +42,79 @@ def steps_batch_to_scenario_result(
             ac_ref=f"AC-{idx:03d}",
         )
         cases.append(tc)
-        status = "通过" if row.get("status") == "ok" else (
-            "跳过" if row.get("status") == "skipped" else "失败"
+        raw_result = row.get("step_result")
+        if isinstance(raw_result, dict):
+            step_result = StepResult(
+                index=int(raw_result.get("index", idx)),
+                kind=str(raw_result.get("kind", planned_step_kind(step_obj))),
+                role=str(raw_result.get("role", planned_step_role(step_obj))),  # type: ignore[arg-type]
+                status=str(
+                    raw_result.get(
+                        "status",
+                        "passed"
+                        if row.get("status") == "ok"
+                        else "skipped"
+                        if row.get("status") == "skipped"
+                        else "failed",
+                    )
+                ),  # type: ignore[arg-type]
+                failure_kind=raw_result.get("failure_kind"),  # type: ignore[arg-type]
+                failure_code=raw_result.get("failure_code"),
+                duration_ms=float(raw_result.get("duration_ms", row.get("elapsed_ms", 0))),
+                selector=raw_result.get("selector"),
+                evidence=raw_result.get("evidence"),
+                error=raw_result.get("error") or row.get("error"),
+            )
+        else:
+            row_status = row.get("status")
+            step_status = (
+                "passed" if row_status == "ok" else
+                "skipped" if row_status == "skipped" else "failed"
+            )
+            step_result = StepResult(
+                index=idx,
+                kind=planned_step_kind(step_obj),
+                role=planned_step_role(step_obj),  # type: ignore[arg-type]
+                status=step_status,  # type: ignore[arg-type]
+                failure_kind=(
+                    "capability"
+                    if row_status == "skipped"
+                    else None
+                    if row_status == "ok"
+                    else "infrastructure"
+                ),  # type: ignore[arg-type]
+                failure_code=(
+                    "capability_unsupported"
+                    if row_status == "skipped"
+                    else None if row_status == "ok" else "driver_failure"
+                ),
+                duration_ms=float(row.get("elapsed_ms", 0)),
+                evidence={"channel": "legacy_batch", "result": row_status == "ok"},
+                error=str(row.get("error", ""))[:4000] or None,
+            )
+        execution = (
+            "infrastructure_failed"
+            if step_result.failure_kind == "infrastructure"
+            and step_result.status == "blocked"
+            else "aborted"
+            if step_result.status in ("failed", "blocked")
+            else "completed"
         )
-        notes = ""
-        if status == "失败":
-            notes = str(row.get("error", ""))[:2000]
-        elif status == "跳过":
-            notes = str(row.get("error", ""))[:2000]
-        case_results.append(CaseResult(case=tc, status=status, notes=notes))
-        tool_log.append(
-            {
-                "case": case_id,
-                "kind": "planned_json",
-                "status": row.get("status"),
-                "step": step_obj,
-            }
+        verification, evidence, legacy_status = case_verdict(
+            (step_result,), expected_check_mode="empty", execution=execution
+        )
+        notes = redact_text(str(row.get("error", ""))[:2000]) or ""
+        case_results.append(
+            CaseResult(
+                case=tc,
+                status=legacy_status,
+                notes=notes,
+                execution=execution,  # type: ignore[arg-type]
+                verification=verification,
+                evidence=evidence,
+                expected_check_mode="empty",
+                steps=(step_result,),
+            )
         )
 
     plan = ParsedPlan(path=Path(steps_path), cases=tuple(cases))
@@ -70,5 +123,4 @@ def steps_batch_to_scenario_result(
         plan=plan,
         case_results=tuple(case_results),
         use_fakes=False,
-        tool_calls=tuple(tool_log),
     )

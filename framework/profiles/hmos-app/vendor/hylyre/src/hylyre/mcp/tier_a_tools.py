@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 from pathlib import Path
 from typing import Any
 
@@ -54,21 +55,18 @@ def register_tier_a_mcp_tools(
                     if session_id:
                         agent = _session_agent(session_id)
                         if fd is not None:
-                            from hylyre.api.exceptions import StepSkipped
-
                             out = await steps_cmd.run_steps_on_agent(
                                 agent, [payload], failure_dir=fd
                             )
-                            row = out["results"][0]
-                            if row["status"] == "skipped":
-                                raise StepSkipped(row.get("error", "skipped"))
-                            if row["status"] != "ok":
-                                raise RuntimeError(row.get("error", "step failed"))
-                            return "ok"
-                        from hylyre.api.step_dispatch import dispatch_planned_step
+                            return json.dumps(out, ensure_ascii=False)
+                        from hylyre.scenario.ledger import execute_ledger_step
 
-                        await dispatch_planned_step(agent, payload)
-                        return "ok"
+                        result = await execute_ledger_step(
+                            agent, payload, index=0, case_id="mcp-atomic-step"
+                        )
+                        return json.dumps(
+                            {"step_result": result.to_dict()}, ensure_ascii=False
+                        )
                     import anyio
 
                     if fd is not None:
@@ -81,15 +79,8 @@ def register_tier_a_mcp_tools(
                                 failure_dir=fd,
                             )
                         )
-                        row = result["results"][0]
-                        if row["status"] == "skipped":
-                            from hylyre.api.exceptions import StepSkipped
-
-                            raise StepSkipped(row.get("error", "skipped"))
-                        if row["status"] != "ok":
-                            raise RuntimeError(row.get("error", "step failed"))
-                        return "ok"
-                    await anyio.to_thread.run_sync(
+                        return json.dumps(result, ensure_ascii=False)
+                    result = await anyio.to_thread.run_sync(
                         lambda: loop_cmd.execute_dispatch_planned_step(
                             payload=payload,
                             device_sn=device_sn,
@@ -97,7 +88,9 @@ def register_tier_a_mcp_tools(
                             lyrebird_url=lyrebird_url,
                         )
                     )
-                    return "ok"
+                    return json.dumps(
+                        {"step_result": result}, ensure_ascii=False
+                    )
 
                 return await _call_logged_async(name, _run)
 
@@ -116,14 +109,16 @@ def register_tier_a_mcp_tools(
     ) -> str:
         async def _run() -> str:
             if session_id:
-                from hylyre.api.step_dispatch import dispatch_planned_step
+                from hylyre.scenario.ledger import execute_ledger_step
 
                 agent = _session_agent(session_id)
-                await dispatch_planned_step(agent, payload)
-                return "ok"
+                result = await execute_ledger_step(
+                    agent, payload, index=0, case_id="mcp-atomic-start-app"
+                )
+                return json.dumps({"step_result": result.to_dict()}, ensure_ascii=False)
             import anyio
 
-            await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: loop_cmd.execute_dispatch_planned_step(
                     payload=payload,
                     device_sn=device_sn,
@@ -131,6 +126,6 @@ def register_tier_a_mcp_tools(
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return "ok"
+            return json.dumps({"step_result": result}, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_start_app_step", _run)

@@ -75,7 +75,12 @@ const payload = {
   available_pages,
   selector_contract: {
     rule_id: 'SELECTOR-SPEC-001',
-    policy: 'snapshot-cache/device dump only discover candidates; by_id MUST resolve to ui-spec node and by_text MUST equal ui-spec text',
+    policy:
+      'snapshot-cache/device dump only discover candidates; by_id MUST resolve to ui-spec node; formal by_text MUST explicitly declare match exact|contains chosen by acceptance intent; runtime MUST NOT fallback',
+    match_modes: ['exact', 'contains'],
+    match_selection:
+      'Maison/agent chooses exact or contains from acceptance intent; never infer contains from digits/date or other text shape',
+    disambiguation_fields: ['index', 'scope', 'within', 'all'],
     entries: selector_contract,
   },
   navigation_discipline:

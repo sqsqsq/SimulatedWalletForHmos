@@ -4,6 +4,7 @@
 report_required_sections:
   - "测试概览"
   - "测试执行结果"
+  - "步骤证据"
   - "缺陷清单"
   - "通过率统计"
   - "结论"
@@ -13,6 +14,20 @@ execution_status_values:
   - "失败"
   - "阻塞"
   - "跳过"
+
+trace_schema_version: "0.3-p0"
+
+expected_check_mode_values:
+  - "checked_vlm"
+  - "disabled_by_flag"
+  - "unavailable_no_vlm"
+  - "empty"
+
+failure_kind_values:
+  - "assertion"
+  - "selector"
+  - "capability"
+  - "infrastructure"
 
 verdict_values:
   - "达标"

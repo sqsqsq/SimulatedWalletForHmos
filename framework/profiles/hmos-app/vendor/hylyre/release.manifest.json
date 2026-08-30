@@ -1,20 +1,25 @@
 {
   "schema": 2,
-  "hylyre_version": "0.3.2",
+  "hylyre_version": "0.4.1",
+  "wheel": {
+    "filename": "hylyre-0.4.1-py3-none-any.whl",
+    "sha256": "52573908786611874c4ce643fbd132fe5e1a3254c934378960384a5516bfdca5",
+    "size_bytes": 148956
+  },
   "source": {
     "root": "src",
-    "file_count": 79,
-    "total_bytes": 408355,
-    "tree_sha256": "c2bd0f367f0f1ede0cd96dc6c31f98c3a4a35a6cf82af6640d3e1953ef333ef9",
+    "file_count": 82,
+    "total_bytes": 538844,
+    "tree_sha256": "02f4eb63978fd7c06c3539f07e1a883db0f1f70ff58c283ea2c89e7f8b982146",
     "files": [
       {
         "path": "README.md",
-        "sha256": "b01b47f734092c85b64836a823c4e323287b033fddc9c04eecdbfb41fa6b1f3a",
-        "size_bytes": 5902
+        "sha256": "9248c638c2512a2529cf28cf15e9433de20e0d3fd33b40619b2737551b739403",
+        "size_bytes": 6487
       },
       {
         "path": "hylyre/__init__.py",
-        "sha256": "05bfafada3901c747abcb7a16158315d293187127974107908c2336e327eb4f2",
+        "sha256": "600820b8ec49a1115edb391b4c5937b8bcf01a2826040ce4f2e7faa58552399c",
         "size_bytes": 167
       },
       {
@@ -29,13 +34,13 @@
       },
       {
         "path": "hylyre/api/agent.py",
-        "sha256": "5dd0524ca76453eb9b0468ee3f1edeb46a0e3760bd9a071c5f7f3d27ffca830c",
-        "size_bytes": 33331
+        "sha256": "7fb0c7e212b5540666b25ea776cdddaaa91f3c999837076273bce7c7ead5b424",
+        "size_bytes": 45927
       },
       {
         "path": "hylyre/api/exceptions.py",
-        "sha256": "0c45cdb1a62af39a0ebb02c2069a855f2e519e444b53ae1c2a5590c8e2495d9a",
-        "size_bytes": 550
+        "sha256": "bf94eae46adeee756f7758869e10617c98c40f6d43970a834f61863d210174c0",
+        "size_bytes": 4181
       },
       {
         "path": "hylyre/api/failure_diag.py",
@@ -48,14 +53,19 @@
         "size_bytes": 875
       },
       {
+        "path": "hylyre/api/selector_contract.py",
+        "sha256": "66f376b6b2e0459a7ebabdfa1ec2f891371f47d46e5b4b891dcf02b09920bcbc",
+        "size_bytes": 2041
+      },
+      {
         "path": "hylyre/api/selector_ops.py",
-        "sha256": "6168f3843575d597075978365ef63a2296a29f0f09a67eba8b24b02bd5f48955",
-        "size_bytes": 10839
+        "sha256": "a08ed4c296258f41020c46cfa0f4b3fd0cad677b6cfc433ce040a689ad232da6",
+        "size_bytes": 15141
       },
       {
         "path": "hylyre/api/selector_resolve.py",
-        "sha256": "d1ba641917de049ce7f9bb7b3454ab367c1a1cdeca0db127f0766355e0b1f8b8",
-        "size_bytes": 19735
+        "sha256": "ae4a1d17bd95fbd1de1f13f772db8fa2843ff04808cf147456dc97a5f0305175",
+        "size_bytes": 38720
       },
       {
         "path": "hylyre/api/selectors.py",
@@ -64,8 +74,8 @@
       },
       {
         "path": "hylyre/api/step_dispatch.py",
-        "sha256": "0d79a1974383b57b56804e43e5cef7ed61ca480c28c959435161a46c104cc2a4",
-        "size_bytes": 1730
+        "sha256": "4dbee5cab0996df48eb6d01a6157389df13fd5ae7b33f03e499924c8bba9859e",
+        "size_bytes": 1736
       },
       {
         "path": "hylyre/app_store/__init__.py",
@@ -144,8 +154,8 @@
       },
       {
         "path": "hylyre/cli/commands/loop_cmd.py",
-        "sha256": "be5f831f028b9d2079a79528f4c7fbc51d31c429c315e8704506663080cdbdcb",
-        "size_bytes": 19220
+        "sha256": "9a48ea3947e451c63e6785abbf8b8b4c9a0f60e064ccb1a11187221f2adbfbd3",
+        "size_bytes": 21068
       },
       {
         "path": "hylyre/cli/commands/mock_cmd.py",
@@ -159,8 +169,8 @@
       },
       {
         "path": "hylyre/cli/commands/run_cmd.py",
-        "sha256": "4e8627dcb688d60f76da1202be66223f2c7d8d185be0767c6cd61f58ca3417e9",
-        "size_bytes": 13217
+        "sha256": "fa876d3cac6003683db321f2fb84fc870801429648ad837cc6c616b9bfd72882",
+        "size_bytes": 13950
       },
       {
         "path": "hylyre/cli/commands/session_cmd.py",
@@ -174,8 +184,8 @@
       },
       {
         "path": "hylyre/cli/commands/steps_cmd.py",
-        "sha256": "21cd142632d4a42c83a7af29f4070edc570c704a24414f1a10c1be5c21a1af59",
-        "size_bytes": 5465
+        "sha256": "ae02be55e79a74fadfa0fafda7cd6594a05b9e5d81ed8edbbeda9918cd8f6dfe",
+        "size_bytes": 9601
       },
       {
         "path": "hylyre/cli/tier_a_run_commands.py",
@@ -184,8 +194,8 @@
       },
       {
         "path": "hylyre/contracts/README.md",
-        "sha256": "29ebb095d19be5a48e62c53a429993cba590e28bbda521e6581b1d96db9081b5",
-        "size_bytes": 1220
+        "sha256": "cdc55dc8167e2dc67fabdc395d8a6750f0c8e45c621cd009bc8757c5b5cec503",
+        "size_bytes": 1843
       },
       {
         "path": "hylyre/contracts/__init__.py",
@@ -194,13 +204,13 @@
       },
       {
         "path": "hylyre/contracts/output-schema.json",
-        "sha256": "6ee1e15ca1e3850b278d41fd64b2ad1c9df6d422790db11634d4b24cf6119e8c",
-        "size_bytes": 1339
+        "sha256": "a18998dc16c8295b7c561a9a97b5fea67ef3b60f49d9b1cca3aea931b2371227",
+        "size_bytes": 5575
       },
       {
         "path": "hylyre/contracts/report-sections.yaml",
-        "sha256": "86821ad7f1f5cdb0ac8683ce019a101d6c346e1574603943469aaa6907f8608f",
-        "size_bytes": 627
+        "sha256": "a519812cf4b872cddd4c0983918602b9f20da8568844d0ffddece0f11667059c",
+        "size_bytes": 876
       },
       {
         "path": "hylyre/diagnostic_log.py",
@@ -224,8 +234,8 @@
       },
       {
         "path": "hylyre/drivers/base/ui_driver.py",
-        "sha256": "7412ec27ffef103459b69d99403b1f1ed19e44095b3fd92e5459332e13d3a977",
-        "size_bytes": 6475
+        "sha256": "2b2483f7860451a6afae870405259852dbc509776449e58abf5a81f90f47dc3c",
+        "size_bytes": 6985
       },
       {
         "path": "hylyre/drivers/base/vlm_client.py",
@@ -239,8 +249,8 @@
       },
       {
         "path": "hylyre/drivers/hypium/driver.py",
-        "sha256": "c7b04435881c26c598cea6cfc0b1a91412bc51d81a72bed58e6a25bf3e80dcb7",
-        "size_bytes": 20286
+        "sha256": "25a195ec32a05faf1a32e2beb4022584acaffb619757596cf27b4aad24a68649",
+        "size_bytes": 34399
       },
       {
         "path": "hylyre/drivers/hypium/hdc_cli.py",
@@ -274,13 +284,13 @@
       },
       {
         "path": "hylyre/harness/__init__.py",
-        "sha256": "718e43aa126f0ec37b5322c23cc40ed9567a5309cb1fb9a6819ccb895ee3a5d1",
-        "size_bytes": 110
+        "sha256": "b1b1d7f53f5990fe5c84d0b5f8a31875d4807eb82dc0c11bb235083bc1caf853",
+        "size_bytes": 292
       },
       {
         "path": "hylyre/harness/runner.py",
-        "sha256": "570a892f821370fa62d0a9aa8d90939b6c97bd17101b0a82909d8028b5458815",
-        "size_bytes": 11966
+        "sha256": "56eb8afa47b6009d6eb673c0cbb5b5bf5ded2b3938a5caf0eb5873a229f3f09a",
+        "size_bytes": 26332
       },
       {
         "path": "hylyre/mcp/__init__.py",
@@ -294,13 +304,13 @@
       },
       {
         "path": "hylyre/mcp/server.py",
-        "sha256": "5b30306230dc359aa0d1dcc577e2df4679797dc8e33945af9d05869ac7e71a84",
-        "size_bytes": 45382
+        "sha256": "16468b779e8a93f61023313bbc8a3f7daeebc925d68cf352027bcbd5c6954daf",
+        "size_bytes": 45966
       },
       {
         "path": "hylyre/mcp/tier_a_tools.py",
-        "sha256": "7a0552c5bf591da2d48e9a316614a4d74cf13941c8a4c9b9cd4d155eedec0bd2",
-        "size_bytes": 5623
+        "sha256": "7b4dd1dc0223e72c62baf31789fb505df4b06dae9518a4e0ecdab02e53af7055",
+        "size_bytes": 5428
       },
       {
         "path": "hylyre/progress/__init__.py",
@@ -319,13 +329,18 @@
       },
       {
         "path": "hylyre/report/emit.py",
-        "sha256": "8b202a052c677332203500fe68f28f1057b72b67c816ee680f90fec72854b2f6",
-        "size_bytes": 4763
+        "sha256": "b86e87a32404205c9ce9069b817258f66ff16fee7347bfbb0f9f7bae775d20a4",
+        "size_bytes": 7950
       },
       {
         "path": "hylyre/scenario/__init__.py",
-        "sha256": "98c5b97dfc36486645ee4ed4f62be963e11f587821f8ed38aad436613bc47fca",
-        "size_bytes": 406
+        "sha256": "fed46497641b5afa6e822a9e6a8f0f2b0987672cdcf35a1823b67a74539226b1",
+        "size_bytes": 440
+      },
+      {
+        "path": "hylyre/scenario/ledger.py",
+        "sha256": "be247f5ac6b82baf63a7305c1a8c36d6d87ce4b20cb2cfca85b4692ed9ea5298",
+        "size_bytes": 9260
       },
       {
         "path": "hylyre/scenario/plan_parse.py",
@@ -333,9 +348,14 @@
         "size_bytes": 2522
       },
       {
+        "path": "hylyre/scenario/results.py",
+        "sha256": "2f5b451f380827b9197e06380465b985ad60e731450ed15cfa48408af68ea747",
+        "size_bytes": 14790
+      },
+      {
         "path": "hylyre/scenario/runner.py",
-        "sha256": "a5fcd21b394472eda7b4feceeb0d2e2d374e4eec743e03c23467fbfaa96f0b96",
-        "size_bytes": 7547
+        "sha256": "f5a7c3ec51343c78cb2f358b9874358e1761ff92590ad634bbce5ecdef1d09c5",
+        "size_bytes": 23827
       },
       {
         "path": "hylyre/scenario/step_text.py",
@@ -344,8 +364,8 @@
       },
       {
         "path": "hylyre/scenario/steps_report.py",
-        "sha256": "739e2dbf723d40e8c3f1aed87dcfc614e0d96a31272014769e1afdc5b1ad395f",
-        "size_bytes": 2302
+        "sha256": "bf59d2c29b0e9f5a14f6e8a40ecce0e04add03c9038455e105e9c052fa078a3e",
+        "size_bytes": 4853
       },
       {
         "path": "hylyre/session/__init__.py",
@@ -359,8 +379,8 @@
       },
       {
         "path": "hylyre/session/daemon.py",
-        "sha256": "31a2ae7d25de8f6b44462fefc32630d93dadb4e59671f7f3aaf53f61acc32e48",
-        "size_bytes": 8216
+        "sha256": "25825702535dcd00d8f9d19c72dfb26222960906f86591e103ea346511c387a1",
+        "size_bytes": 9072
       },
       {
         "path": "hylyre/session/schema.py",
@@ -399,12 +419,12 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2593441aa0a85342b8aca3b6ddf258404b6ef2c657701107df476d47aea588af",
+        "sha256": "dfbdd4fe5c29a131babbeb1aef88fc4d0bd0b4a09bd1cb6b50d5dd24fee22634",
         "size_bytes": 1261
       }
     ]
   },
-  "generated_at": "2026-08-27T09:40:52Z",
+  "generated_at": "2026-08-30T14:12:14Z",
   "generator": {
     "python": "3.14.5",
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",

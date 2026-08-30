@@ -277,6 +277,46 @@ function hasMarkdownBacktickInCell(stepsRaw: string): boolean {
   return /`/.test(stepsRaw);
 }
 
+export const FORMAL_BY_TEXT_MATCHES = ['exact', 'contains'] as const;
+export type FormalByTextMatch = (typeof FORMAL_BY_TEXT_MATCHES)[number];
+
+/**
+ * T2：正式 feature 派生计划中的 by_text 必须显式选择 Hylyre 的匹配语义。
+ * 这里只校验结构和值域，不替作者决定 exact/contains；该选择来自 acceptance 意图。
+ * 递归检查 within/all/in 等既有富选择器，避免嵌套 by_text 依赖未声明的默认值。
+ */
+export function validateFormalByTextSelectors(step: unknown): Array<{
+  path: string;
+  message: string;
+}> {
+  const violations: Array<{ path: string; message: string }> = [];
+  const visit = (value: unknown, valuePath: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${valuePath}[${index}]`));
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.by_text === 'string' && record.by_text.trim().length > 0) {
+      const match = record.match;
+      if (typeof match !== 'string' || !FORMAL_BY_TEXT_MATCHES.includes(match as FormalByTextMatch)) {
+        violations.push({
+          path: valuePath,
+          message:
+            typeof match === 'string'
+              ? `by_text 的 match=${JSON.stringify(match)} 非法；正式派生计划只允许 exact/contains，禁止运行时静默放宽`
+              : '正式 by_text selector 必须显式声明 match: exact|contains；请按 acceptance 意图选择，不能依赖执行器默认值',
+        });
+      }
+    }
+    for (const [key, nested] of Object.entries(record)) {
+      visit(nested, `${valuePath}.${key}`);
+    }
+  };
+  visit(step, '$');
+  return violations;
+}
+
 export type StepLintViolation = {
   rule_id:
     | 'STEP-001'
@@ -285,6 +325,7 @@ export type StepLintViolation = {
     | 'STEP-004'
     | 'STEP-005'
     | 'STEP-006'
+    | 'STEP-007'
     | 'STEP-WAIT'
     | 'STEP-WAIT-SECONDS';
   severity: 'BLOCKER' | 'WARN';
@@ -295,8 +336,8 @@ export type StepLintViolation = {
 
 function suggestedFixForSharedStepLint(ruleId: string): string {
   if (ruleId === 'STEP-WAIT-SECONDS') return '{"wait":{"seconds":2}}';
-  if (ruleId === 'STEP-WAIT') return '{"wait_for":{"by_text":"…","timeout":10}}';
-  return '{"touch":{"by_text":"…"}}';
+  if (ruleId === 'STEP-WAIT') return '{"wait_for":{"by_text":"…","match":"exact","timeout":10}}';
+  return '{"touch":{"by_text":"…","match":"exact"}}';
 }
 
 export type LintHylyrePlanResult = {
@@ -312,7 +353,7 @@ export type LintHylyrePlanOptions = {
   backtickBlocker?: boolean;
 };
 
-/** STEP-001~006 static lint on derived plan markdown. */
+/** STEP-001~007 static lint on derived plan markdown. */
 export function lintHylyrePlanStepRules(
   derivedMd: string,
   opts?: LintHylyrePlanOptions,
@@ -329,7 +370,7 @@ export function lintHylyrePlanStepRules(
         severity: backtickBlocker ? 'BLOCKER' : 'WARN',
         tc_id: row.tc_id,
         message: '测试步骤列含 Markdown 反引号；Hylyre _JSONISH 无法识别，请使用裸 JSON。',
-        suggested_fix: normalizePlannedStepsCell(row.steps_raw),
+        suggested_fix: '去除 Markdown 反引号，并为每个 by_text 按 acceptance 意图显式补 match: exact|contains。',
       });
     }
 
@@ -341,7 +382,7 @@ export function lintHylyrePlanStepRules(
         severity: 'BLOCKER',
         tc_id: row.tc_id,
         message: `测试步骤 JSON 无法解析：${parsed.error}`,
-        suggested_fix: '{"touch":{"by_text":"…"}}',
+        suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
       });
       continue;
     }
@@ -355,7 +396,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `每步须恰好一个 JSON 根键，实际：${roots.join(', ') || '(empty)'}`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
         continue;
       }
@@ -366,7 +407,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `禁止将 CLI 命令名 "${root}" 作为步骤根键（如 dump-ui 应走探索，不是 plan 步骤）。`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
       } else if (!PLANNED_STEP_ROOT_KEY_SET.has(root)) {
         violations.push({
@@ -374,7 +415,7 @@ export function lintHylyrePlanStepRules(
           severity: 'BLOCKER',
           tc_id: row.tc_id,
           message: `未知步骤根键 "${root}"；允许：${[...PLANNED_STEP_ROOT_KEY_SET].join(', ')}`,
-          suggested_fix: '{"touch":{"by_text":"…"}}',
+          suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
         });
       }
 
@@ -407,8 +448,18 @@ export function lintHylyrePlanStepRules(
           rule_id: 'STEP-006',
           severity: 'WARN',
           tc_id: row.tc_id,
-          message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…"}}），action 包装为兼容形态。',
+          message: '推荐使用 direct 根键（如 {"touch":{"by_text":"…","match":"exact"}}），action 包装为兼容形态。',
           suggested_fix: '改用 direct touch/input/swipe/scroll 根键',
+        });
+      }
+
+      for (const v of validateFormalByTextSelectors(step)) {
+        violations.push({
+          rule_id: 'STEP-007',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message: `${v.path}：${v.message}`,
+          suggested_fix: '根据 acceptance 意图显式填写 "match":"exact" 或 "match":"contains"；不要按数字/日期等字符启发式选择',
         });
       }
 

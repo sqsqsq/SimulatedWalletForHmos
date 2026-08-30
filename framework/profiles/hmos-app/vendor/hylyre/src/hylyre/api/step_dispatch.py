@@ -32,7 +32,7 @@ async def dispatch_planned_step(
     payload: dict[str, Any],
     *,
     case_id: str = "step",
-) -> None:
+) -> Any:
     """Run a single planned step object (same root keys as test-plan rows after ``json.loads``)."""
     roots = [k for k in _DISPATCH_BY_ROOT if k in payload]
     if len(roots) != 1:
@@ -49,4 +49,4 @@ async def dispatch_planned_step(
     root = roots[0]
     method_name = _DISPATCH_BY_ROOT[root]
     fn = getattr(agent, method_name)
-    await fn(payload)
+    return await fn(payload)
