@@ -184,6 +184,37 @@ class StoryBuildCase(unittest.TestCase):
         self.assertIn(old, text, "夹具变了，用例要跟着改")
         self.story_path.write_text(text.replace(old, new), encoding="utf-8")
 
+    @staticmethod
+    def _quote_for(body: str, unit_text: str, tokens: list, used: dict) -> str:
+        """给这一条单元挑一句引文：**讲它的那一句**，不是全章第一句。
+
+        装置模拟的是尽职的裁决者。拿同一句给全章所有单元作证，正是 check ⑥ 要拦的
+        形态（一句章级总述句能满足够长、是原文、非回声三条）——装置这么做，
+        那条判据就永远测不出来。
+        """
+        cands = []
+        for line in body.split("\n"):
+            cand = line.strip()
+            if cand.startswith("|"):
+                cells = [c.strip() for c in cand.strip("|").split("|")]
+                cells = [c for c in cells if c and not set(c) <= set("-: ")]
+                if not cells:
+                    continue
+                cand = max(cells, key=len)
+            if len(cand) >= 14 and cand not in unit_text and not cand.startswith("#"):
+                cands.append(cand[:60])
+        if QUOTE in body and QUOTE not in unit_text:
+            cands.insert(0, QUOTE)
+        for cand in cands:
+            if any(t and t in cand for t in tokens):
+                used[cand] = used.get(cand, 0) + 1
+                return cand
+        for cand in cands:
+            if used.get(cand, 0) < 2:
+                used[cand] = used.get(cand, 0) + 1
+                return cand
+        return cands[0] if cands else ""
+
     def settle(self) -> list[str]:
         """把机器定不了落点的单元交给作者并配上裁决——夹具的基线态。
 
@@ -200,6 +231,7 @@ class StoryBuildCase(unittest.TestCase):
                            if t != appendix
                            and any(x.strip().startswith("|") for x in b.split("\n"))), None)
         rows = []
+        used: dict = {}
         for record in data["records"]:
             if any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
                 continue
@@ -208,19 +240,8 @@ class StoryBuildCase(unittest.TestCase):
             record["at"], record["by"] = at, "author"
             body = bodies.get(at, "")
             unit_text = by_key.get(record["key"], {}).get("text") or ""
-            quote = QUOTE if (QUOTE in body and QUOTE not in unit_text) else ""
-            if not quote:
-                for line in body.split("\n"):
-                    cand = line.strip()
-                    if cand.startswith("|"):
-                        cells = [c.strip() for c in cand.strip("|").split("|")]
-                        cells = [c for c in cells if c and not set(c) <= set("-: ")]
-                        if not cells:
-                            continue
-                        cand = max(cells, key=len)
-                    if len(cand) >= 14 and cand not in unit_text and not cand.startswith("#"):
-                        quote = cand[:60]
-                        break
+            tokens = by_key.get(record["key"], {}).get("tokens") or []
+            quote = self._quote_for(body, unit_text, tokens, used)
             rows.append((record["key"], "讲清", quote or QUOTE))
         self.write_audit(data)
         if rows:
@@ -590,6 +611,72 @@ class TestVerdicts(StoryBuildCase):
         self.hand_to_author()
         (self.src / "story-verdicts.md").unlink(missing_ok=True)
         self.assert_check_names("需要裁决者逐条裁")
+
+
+class TestQuoteBinding(StoryBuildCase):
+    """引文得讲**这一条**，不是这一章。
+
+    上一版三条机械要求（≥12 字、是落点那一章的逐字子串、不是来源原文的子串）
+    **一句章级总述句可以同时满足**——于是它给全章任何单元作证，删掉事实之后
+    引文一个字没变，裁决照旧「讲清」。实测：删掉四条归裁决者的事实，四条裁决全部存活。
+    两条形式判把这条路堵上，都不是相似度。
+    """
+
+    def token_unit(self):
+        """挑一条带硬事实、又归作者裁的单元。"""
+        keys = set(self.hand_to_author())
+        return next((u for u in self.units
+                     if u["key"] in keys and (u.get("tokens") or [])), None)
+
+    def test_a_quote_without_any_of_the_units_hard_facts_is_named(self) -> None:
+        self.init_audit()
+        unit = self.token_unit()
+        if unit is None:
+            self.skipTest("这份夹具里没有带硬事实又归作者裁的单元")
+        self.write_verdicts([(unit["key"], "讲清", QUOTE)])
+        out = self.assert_check_names("没有这条单元的任何一个硬事实")
+        self.assertIn("总述句", out, "报错要说清该抄哪一句")
+
+    def test_quoting_the_sentence_that_states_each_unit_passes(self) -> None:
+        """反面：裁决者逐单元给出讲它的那一句，两条都不该响。
+
+        基线态（`settle`）就是这么裁的：优先带这条单元硬事实的那一句，
+        其次挑还没被用满的。判据要拦的是「一句包打全章」，不是「有引文」。
+        """
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+        self.assertNotIn("没有这条单元的任何一个硬事实", out)
+        self.assertNotIn("同一句引文已经给", out)
+
+    def add_prose(self, count: int) -> None:
+        """给材料补几条纯中文事实——它们没有 token，必然落到作者手上。"""
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        extra = "".join(
+            f"\n第{i}件事：用户在这一步能看到当前进度，中途离开回来还能接着办。\n"
+            for i in range(1, count + 1))
+        prd.write_text(prd.read_text(encoding="utf-8") + extra, encoding="utf-8")
+
+    def test_the_third_unit_sharing_one_quote_is_named(self) -> None:
+        """同一句引文至多为两个单元作证——一句话不能包打全章。"""
+        self.add_prose(3)
+        self.init_audit()
+        keys = self.hand_to_author()
+        self.assertGreaterEqual(len(keys), 3, "补了三条纯中文事实，它们该归作者裁")
+        self.write_verdicts([(k, "讲清", QUOTE) for k in keys[:3]])
+        out = self.assert_check_names("同一句引文已经给")
+        self.assertIn("逐单元给出讲它的那一句", out)
+
+    def test_two_units_may_share_one_quote(self) -> None:
+        """上限是 2，不是 1：一句话讲清两件相邻的事是常态，判到 1 会误伤。"""
+        self.init_audit()
+        keys = self.hand_to_author()
+        if len(keys) < 2:
+            self.skipTest("这份夹具里归作者裁的单元不足两条")
+        self.write_verdicts([(k, "讲清", QUOTE) for k in keys[:2]])
+        _, out = self.check_output()
+        self.assertNotIn("同一句引文已经给", out)
 
 
 class TestKnowledgeUnits(StoryBuildCase):

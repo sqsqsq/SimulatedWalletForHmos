@@ -172,6 +172,9 @@ export function enumerateUnits(text, doc, opts = {}) {
   const exclude = typeof opts.excludeToken === 'function' ? opts.excludeToken : null;
   // 合同 `derived` 的那份材料只守业务编号——是数据说了算，本文件不认识任何一份材料的名字
   const idOnly = opts.idTokensOnly === true;
+  // 这份材料自己在需求目录里的位置：图片引用是相对它写的，判「引的是不是既有落盘位置」
+  // 要先能把相对路径还原回需求目录里的那一条。
+  const docPath = opts.docPath ?? '';
   const mf = opts.machineFacing ?? {};
   // 两个来源合成同一个「这类单元不是事实」的集合：
   //   `machine_facing.unit_kinds` —— 按**用途**声明（工具读的登记项，对所有材料生效）；
@@ -203,6 +206,7 @@ export function enumerateUnits(text, doc, opts = {}) {
     units.push({
       key: `${doc}:${line}:${sha8(`${doc}|${line}|${body}`)}`,
       doc,
+      docPath,
       kind,
       section,
       line,

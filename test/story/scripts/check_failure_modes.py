@@ -1984,6 +1984,7 @@ def _seed_author_side(root: Path, extra_verdict: str | None) -> None:
         return
 
     rows = []
+    used: dict = {}
     for rec in data.get("records", []):
         if any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
             continue
@@ -1993,7 +1994,9 @@ def _seed_author_side(root: Path, extra_verdict: str | None) -> None:
         text = unit.get("text") or ""
         at = _chapter_for(text, bodies) or fallback
         rec["at"], rec["by"] = at, "author"
-        rows.append((rec["key"], "讲清", _quote_for(bodies.get(at, ""), text, extra_verdict)))
+        rows.append((rec["key"], "讲清",
+                     _quote_for(bodies.get(at, ""), text, extra_verdict,
+                                used, unit.get("tokens") or [])))
     audit_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     (src / "story-verdicts.md").write_text(
         _verdict_tables(REPO_ROOT, extra_verdict or "本章按此写就", rows, story_path),
@@ -2012,18 +2015,23 @@ def _chapter_for(text: str, bodies: dict) -> str | None:
     return None
 
 
-def _quote_for(body: str, unit_text: str, extra_verdict: str | None) -> str:
-    """引文要是该章的逐字子串。
+def _quote_for(body: str, unit_text: str, extra_verdict: str | None,
+               used: dict | None = None, tokens: list | None = None) -> str:
+    """引文要是该章的逐字子串，而且是**讲这条单元**的那一句。
 
     checker 指定了引文就用它——**回声与否由判据判，装置不代判**：R01 那条形态
     的反夹具给的正是一句回声，装置替它换掉，那条形态就永远测不出来了。
     没指定时才自己找一段：跳过表格分隔与标题，表行取最长的那一格，
     并且避开来源单元自己的原话（不然装置每次都在制造回声）。
+
+    **优先带这条单元硬事实的那一句，其次挑还没被用满的**：装置模拟的是尽职的裁决者。
+    拿全章第一句给所有单元作证，正是判据要拦的形态——装置这么做，那条判据就测不出来。
     """
     want = _norm(extra_verdict or "")
     if want and (want in _norm(body) or want in _norm(unit_text)):
         # 在该章里找得到 → 正常引文；与来源单元原话重合 → checker 就是要拿它当回声
         return extra_verdict
+    cands = []
     for line in body.split("\n"):
         s = line.strip()
         if not s or s.startswith(("#", "```", "~~~")):
@@ -2035,8 +2043,19 @@ def _quote_for(body: str, unit_text: str, extra_verdict: str | None) -> str:
                 continue
             s = max(cells, key=len)
         if len(_norm(s)) >= 12 and _norm(s) not in _norm(unit_text):
-            return s[:60]
-    return _chapter_quote(body)
+            cands.append(s[:60])
+    if not cands:
+        return _chapter_quote(body)
+    counts = used if used is not None else {}
+    for cand in cands:
+        if any(_norm(t) and _norm(t) in _norm(cand) for t in (tokens or [])):
+            counts[cand] = counts.get(cand, 0) + 1
+            return cand
+    for cand in cands:
+        if counts.get(cand, 0) < 2:
+            counts[cand] = counts.get(cand, 0) + 1
+            return cand
+    return cands[0]
 
 
 @checker
@@ -2372,6 +2391,23 @@ def s15_appendix_prose_tail(root: Path, ctx: Ctx) -> Outcome:
 def s16_material_list_intermediate(root: Path, ctx: Ctx) -> Outcome:
     """材料清单里列中间产物与图片直链——清单变成倾倒区。"""
     return _form_case(root, "只列进 spec 之前的原始输入", "材料清单只有原始输入")
+
+
+@checker
+def s17_image_new_dir(root: Path, ctx: Ctx) -> Outcome:
+    """同名图片被复制进新建的目录——按文件名比对的判据一路放行。
+
+    实测一轮：模型自建了一个图片目录再复制一份，全树因此有五份同一张图。
+    同一张图散在几个目录里，改了一处其余几处就成了旧图。
+    """
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "图片引的是既有落盘位置")
+    if "新建的图片目录" in out:
+        return Outcome(False, "新目录里的副本引用被点名")
+    return Outcome(False, f"check 未过（非图片目录原因）：{out[:200]}")
 
 
 def _form_case(root: Path, needle: str, ok: str) -> Outcome:

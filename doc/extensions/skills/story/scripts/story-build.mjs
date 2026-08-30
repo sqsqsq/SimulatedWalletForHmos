@@ -238,6 +238,7 @@ function cmdInit(ctx) {
       machineFacing: ctx.contract.machine_facing ?? {},
       templateNotes: d.notes,
       idTokensOnly: d.derived,
+      docPath: d.rel,
     }));
   }
   if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
@@ -466,6 +467,22 @@ function subsectionSpan(storyText, chapterTitle, name) {
  * 同一份文档里同类的表会长出五种列名，读者每张表都要重新认一遍。
  * 附加列放行是因为真实存在（验收表可选的「主责」列）。
  */
+/** 需求目录内的相对路径（正斜杠），报错与目录比对都按它说话。 */
+function relFromFeature(ctx, target) {
+  return path.relative(ctx.featureRoot, target).split(path.sep).join('/');
+}
+
+/** posix 风格拼接并规范化（`..` 逐段回退），跨平台一致。 */
+function joinPosix(base, ref) {
+  const parts = String(base ?? '').split('/').filter(p => p && p !== '.');
+  for (const seg of String(ref ?? '').split(/[\\/]/)) {
+    if (seg === '..') { parts.pop(); continue; }
+    if (!seg || seg === '.') continue;
+    parts.push(seg);
+  }
+  return parts.join('/');
+}
+
 function headerMatches(actual, want) {
   return (want ?? []).every((col, i) => (actual[i] ?? '').trim() === String(col).trim());
 }
@@ -857,20 +874,42 @@ function cmdCheck(ctx) {
   // 说明段。复制出来的副本谁也不会去维护，改名之后更没人看得出它就是原来那张。
   // 判据只问两件事：引的这张在登记里吗、同一张图有没有被两个名字引用。
   {
-    const registered = new Map();          // 登记的图片文件名 → 它在材料里的位置
+    const registered = new Map();          // 登记的图片文件名 → 它在材料里的位置与落盘目录
     for (const u of doc.units) {
       if (u.kind !== 'image') continue;
       const name = (u.tokens ?? [])[0];
-      if (name) registered.set(name, `${u.doc}:${u.line}`);
+      if (!name) continue;
+      const ref = /!\[[^\]]*\]\(([^)\s]+)/.exec(u.text ?? '')?.[1] ?? name;
+      registered.set(name, {
+        at: `${u.doc}:${u.line}`,
+        dir: path.posix.dirname(joinPosix(path.dirname(u.docPath ?? ''), ref)),
+      });
     }
     if (registered.size) {
+      // **按落盘位置判，不只按文件名**：只比文件名，改名的拦得住、同名复制进一个新目录的
+      // 拦不住——实测一轮，模型自建了一个图片目录，全树因此有五份同一张图。
+      // 允许的位置是「材料里那些图既有的落盘目录」加上归档件自己的图片目录（合同数据）。
+      const allowDirs = new Set(registered.values().map(v => v.dir));
+      const storyImageDir = ctx.contract.story_image_dir;
+      if (storyImageDir) {
+        allowDirs.add(joinPosix(path.dirname(relFromFeature(ctx, ctx.storyPath)), storyImageDir));
+      }
       const byName = new Map();            // 文件名 → story 里引到它的那些路径
       for (const src of seen) {
+        if (/^(https?:|data:)/i.test(src)) continue;
         const name = src.split(/[\\/]/).pop();
+        const dir = path.posix.dirname(
+          joinPosix(path.dirname(relFromFeature(ctx, ctx.storyPath)), src));
         if (!registered.has(name)) {
           problems.push(`story 引用的图片「${src}」不在材料的图片登记里`
             + '——引它在仓里的既有落盘位置，不要复制一份到归档目录再改名；'
             + '副本没人维护，改了名读者也认不出它就是原来那张');
+          continue;
+        }
+        if (!allowDirs.has(dir)) {
+          problems.push(`story 引用的图片「${src}」在一个新建的图片目录里`
+            + `（登记在 ${registered.get(name).at}）——引它既有的落盘位置，别另建目录再复制一份；`
+            + '同一张图散在几个目录里，改了一处其余几处就成了旧图');
           continue;
         }
         if (!byName.has(name)) byName.set(name, []);
@@ -879,7 +918,7 @@ function cmdCheck(ctx) {
       for (const [name, srcs] of byName) {
         if (srcs.length < 2) continue;
         problems.push(`同一张图被两个路径引用：${srcs.join('、')}`
-          + `（登记在 ${registered.get(name)}）——同一张图只引一次，一处说清它画的是什么`);
+          + `（登记在 ${registered.get(name).at}）——同一张图只引一次，一处说清它画的是什么`);
       }
     }
   }
@@ -985,6 +1024,8 @@ function cmdCheck(ctx) {
   const unitWords = verdictConf.unit_words ?? VERDICT_WORDS;
   const vtextAll = readText(ctx.verdictsPath);
   const tables = parseVerdictTables(vtextAll);
+  const quoteUses = new Map();        // 规范化引文 → 拿它作证的单元键
+  const quoteReuseMax = Number(verdictConf.quote_reuse_max) || 0;
   if (authorPlaced.length) {
     const vtext = vtextAll;
     if (vtext === null) {
@@ -1012,6 +1053,26 @@ function cmdCheck(ctx) {
         } else if (norm(u.text).includes(q)) {
           // 把材料原话抄回来是回声：它证明的是「材料这么说」，不是「story 讲清了」
           problems.push(`${u.key} 的引文是来源单元原文的子串——那是回声，抄 story 里你据以判断的那句`);
+        } else {
+          // 引文绑定：上面三条（够长、是那一章的原文、不是回声）**一句章级总述句
+          // 可以同时满足**——于是它能给全章任何单元作证，删掉事实裁决照样说「讲清」。
+          // 两条形式判把这条路堵上，都不是相似度：
+          //   ① 这条单元带硬事实的，引文里得有其中至少一个；
+          //   ② 同一句引文至多为两个单元作证，第三次点名。
+          // 纯中文无 token 的单元不受 ① 约束——那正是机器判不了、只有人能裁的领域。
+          const bound = (u.tokens ?? []).filter(t => q.includes(norm(t)));
+          if ((u.tokens ?? []).length && !bound.length) {
+            problems.push(`${u.key} 的引文里没有这条单元的任何一个硬事实`
+              + `（${u.tokens.slice(0, 3).join('、')}${u.tokens.length > 3 ? '…' : ''}）`
+              + '——抄讲这件事的那一句，不是这一章的总述句');
+          }
+          const seen = (quoteUses.get(q) ?? []).concat(u.key);
+          quoteUses.set(q, seen);
+          if (quoteReuseMax && seen.length > quoteReuseMax) {
+            problems.push(`同一句引文已经给 ${seen.length} 个单元作证`
+              + `（上限 ${quoteReuseMax}：${seen.slice(0, 3).join('、')}…）`
+              + '——一句话不能包打全章，逐单元给出讲它的那一句');
+          }
         }
       }
     }

@@ -1111,3 +1111,21 @@ modes:
     scope_note: >
       实测一份产物 22 行：本轮规格被链了 4 次，事实记录、参考件与原图都单列。
       允许的目录是合同数据（进 spec 之前的原始输入），按解析后的落点判，不按字面前缀。
+
+  - id: S17-image-new-dir
+    dimension: dedup
+    found_round: "2026-08-31"
+    form: 同一张图被复制进新建的图片目录（文件名没变）——只比文件名的判据放行，全树因此有好几份同图
+    clause: KG-3 / 坑 #34
+    checker: s17_image_new_dir
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S17-image-new-dir/bad
+    good_fixture: test/story/fixtures/failure-modes/S17-image-new-dir/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    variant_of: S10-image-path-copied
+    scope_note: >
+      S10 判的是「改了名的副本」（文件名不在登记里），这条判的是**名字没变、目录变了**——
+      上一版按文件名比对，这一种一路放行。允许的位置是材料里那些图既有的落盘目录，
+      加上归档件自己的图片目录（合同 `story_image_dir`）。
