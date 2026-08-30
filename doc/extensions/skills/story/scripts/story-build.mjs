@@ -20,8 +20,9 @@
  * |------|--------|
  * | `init`  | 枚举来源单元 → `source-units.json`；建 `decisions.json` 骨架 |
  * | `audit` | 三态核对：`at` / `covered_by` / `machine_facing`，写 `audit.json` |
- * | `check` | 章标题与顺序、整篇 token 守恒、编号形态、图与 diagram 落点、决策六类齐 |
+ * | `check` | 章标题与顺序、整篇 token 守恒、章节与附录形态、图与 diagram 落点、决策字段齐 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
+ * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  *
  * `audit.json` 只认三态，**没有自由文本理由**——上一版那个 `reason` 字段只判非空，
  * 实测 161/272 个单元「不进」、理由去重后只有 2 种，等于给漏写开了一个合法出口。
@@ -37,10 +38,7 @@ import {
   scanImageForm, scanLanguageRedline, scanLocalPaths, scanMaterialList, scanReadability,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
-import {
-  extractFreeformZone, extractHumanZone, renderDocHeader,
-  renderFreeformSection, renderHumanZone, renderMachineZone,
-} from './review-render.mjs';
+import { renderReview } from './review-render.mjs';
 
 const COMMANDS = ['init', 'audit', 'check', 'build', 'number'];
 
@@ -955,6 +953,15 @@ function cmdCheck(ctx) {
             + '这一条渲染出来会是半个议题，评审人看不出要他表什么态');
         }
       }
+      // 类别决定它成章落在哪一节。**只判在不在词表里**——不判每类有没有条目、
+      // 不判数量、不判空类要不要解释：那些是配额，配额逼出来的是凑数与逃生口。
+      const keys = (ctx.contract.decision_categories ?? []).map(c => c?.key);
+      const category = String(dec?.category ?? '').trim();
+      if (keys.length && !keys.includes(category)) {
+        problems.push(`决策 ${dec?.id ?? '（无编号）'} 的类别`
+          + `${category ? `「${category}」不在词表里` : '没登记'}——`
+          + `从这十一类里挑一个：${keys.join(' / ')}`);
+      }
     }
   }
 
@@ -1416,22 +1423,14 @@ function cmdBuild(ctx) {
   const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
   const old = readText(ctx.reviewPath) ?? '';
 
-  // 序号按渲染顺序生成，不进登记表：登记表里存序号，插一条就要手工重排后面全部。
-  const blocks = list.map((dec, i) => {
-    const human = extractHumanZone(old, dec.id) ?? renderHumanZone(dec);
-    return `${renderMachineZone(dec, i + 1)}\n${human}\n`;
-  });
-  const freeform = renderFreeformSection(extractFreeformZone(old));
-
-  const out = [
-    renderDocHeader(),
-    ...(blocks.length ? blocks : ['本轮没有登记任何评审项。\n']),
-    freeform,
-  ].join('\n');
+  // 分层与编号都在渲染器里按登记顺序算，不进登记表：登记表里存序号，
+  // 插一条就要手工重排后面全部；类别成章的名字来自合同词表，机制不认识任何一类。
+  const out = renderReview(list, old, ctx.contract.decision_categories ?? []);
 
   fs.mkdirSync(path.dirname(ctx.reviewPath), { recursive: true });
   fs.writeFileSync(ctx.reviewPath, out, 'utf-8');
-  process.stdout.write(`[story-build build] 已渲染 ${list.length} 个议题；人工填写内容逐字节保留\n`);
+  process.stdout.write(`[story-build build] 已渲染 ${list.length} 个议题；人工填写内容逐字节保留
+`);
 }
 
 // --------------------------------------------------------------------------

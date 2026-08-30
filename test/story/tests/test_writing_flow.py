@@ -115,10 +115,10 @@ class TestIssueDefinitionIsOneText(unittest.TestCase):
         for other in rest:
             self.assertEqual(first, other)
 
-    def test_it_names_the_two_registrations_and_the_six_directions(self) -> None:
+    def test_it_names_the_admission_rule_and_the_two_registrations(self) -> None:
+        """准入判据只有一条：表态「不同意」会有产物要改。两种登记态各有去处。"""
         body = self.paragraphs()[0]
-        for needle in ("settled", "open", "漏登记",
-                       "需求与范围", "上线与协同"):
+        for needle in ("表态", "不同意", "settled", "open", "漏登记"):
             self.assertIn(needle, body)
 
 
@@ -144,10 +144,28 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
             for word in gone:
                 self.assertNotIn(word, text, f"{path.name} 还留着「{word}」")
 
-    def test_the_six_directions_survive_as_a_hint_for_people(self) -> None:
-        """删的是骨架义务，不是那六个方向——方向提示是给人的，空槽是给机器数的。"""
+    def test_the_scan_map_survives_as_a_hint_for_people(self) -> None:
+        """删的是骨架义务，不是扫描地图——地图是给人的，空槽是给机器数的。
+
+        六个方向换成十一类：粗粒度的「技术方案与依赖」一个筐装下准入、入口、规则、
+        数据、依赖五个热点，模型对不上号。新表拆到「内容特征可识别」的粒度。
+        """
         guide = read("phases/story-write.md")
-        self.assertIn("找议题时把六个方向", guide)
+        self.assertIn("对着这十一类过一遍", guide)
+        self.assertIn("这是扫描地图，不是配额", guide)
+
+    def test_the_scan_map_and_the_contract_word_list_agree(self) -> None:
+        """作业书里的类型名与合同 `decision_categories` 的 key 一一对上——
+        对不上时，模型按作业书写的类别会被 check 判「不在词表里」。
+        """
+        import json
+        contract = json.loads((SKILL / "contracts" / "story-chapters.json")
+                              .read_text(encoding="utf-8"))
+        keys = [c["key"] for c in contract["decision_categories"]]
+        guide = read("phases/story-write.md")
+        table = guide.split("对着这十一类过一遍", 1)[1].split("\n\n**", 1)[0]
+        for key in keys:
+            self.assertIn(f"| {key} |", table, f"作业书的扫描表里没有「{key}」")
 
 
 class TestTemplateDoesNotRepeatWhatCheckHolds(unittest.TestCase):

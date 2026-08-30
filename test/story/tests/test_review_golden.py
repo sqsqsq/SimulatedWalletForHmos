@@ -33,10 +33,15 @@ FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
 
-#: 立样时点 2026-08-30。sha256 前 16 位。
-FINGERPRINT = "d53a5d2e80b6269e"
+#: 立样时点 2026-08-30（晚四修：三级分层定稿）。副本与 `test/story/golden/` 的正本
+#: 逐字节一致——正本是效果定义，这里是机器台账消费的副本。sha256 前 16 位。
+FINGERPRINT = "62a20067aad7705a"
 
-BLOCK_RE = re.compile(r"^### (\d+)\. (.+)$", re.M)
+def categories() -> list[dict]:
+    """类型词表在合同里：扫描指引用 `key`，成章用 `section`。"""
+    contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts"
+                           / "story-chapters.json").read_text(encoding="utf-8"))
+    return contract.get("decision_categories") or []
 
 
 def golden_body() -> str:
@@ -49,26 +54,51 @@ def parse_golden() -> list[dict]:
     """把金样倒推成登记表。
 
     倒推而不是另写一份样本：另写一份就有了第二个真源，它与金样迟早对不上。
-    `status` 按正文里的小标题判——已定的写「根据」，待定的写「可选的做法」。
+    三级分层各承载一个字段：一级章名给 `status`、二级章名反查 `category`、
+    三级标题给 `title`；「请…确认」之前是 `clarification`，之后是人工区。
+    编号本身不进登记表——它由渲染顺序生成。
     """
-    body = golden_body()
+    by_section = {c["section"]: c["key"] for c in categories()}
     out: list[dict] = []
-    marks = [(m.start(), m.group(1), m.group(2))
-             for m in BLOCK_RE.finditer(body) for _ in [0]]
-    for i, (start, _, title) in enumerate(marks):
-        end = marks[i + 1][0] if i + 1 < len(marks) else body.index("## 计划外意见")
-        chunk = body[start:end]
-        ident = re.search(r"<!-- decision: (\S+) -->", chunk).group(1)
-        ask = re.search(r"^请(.+)确认。$", chunk, re.M)
-        lines = chunk.split("\n")
-        ask_idx = next(i for i, l in enumerate(lines) if re.fullmatch(r"请.+确认。", l))
-        out.append({
-            "id": ident,
-            "status": "settled" if "**根据**" in chunk else "open",
-            "title": title,
-            "clarification": "\n".join(lines[2:ask_idx - 1]),
-            "decider": ask.group(1),
-        })
+    status, category, cur = "open", "", None
+
+    def flush() -> None:
+        nonlocal cur
+        if cur is not None:
+            cur["clarification"] = "\n".join(cur["clarification"]).strip()
+            out.append(cur)
+        cur = None
+
+    for line in golden_body().split("\n"):
+        if line.startswith("## "):
+            flush()
+            status = "settled" if "已定事项" in line else "open"
+            continue
+        if line.startswith("### "):
+            flush()
+            name = re.sub(r"^###\s+\d+(?:\.\d+)*\s+", "", line).strip()
+            category = by_section.get(name, name)
+            continue
+        if line.startswith("#### "):
+            flush()
+            cur = {"id": "", "status": status, "category": category,
+                   "title": re.sub(r"^####\s+\d+(?:\.\d+)*\s+", "", line).strip(),
+                   "clarification": [], "decider": ""}
+            continue
+        if cur is None:
+            continue
+        ask = re.fullmatch(r"请(.+)确认。", line.strip())
+        if ask:
+            cur["decider"] = ask.group(1)
+            continue
+        mark = re.fullmatch(r"<!-- decision: (\S+) -->", line.strip())
+        if mark:
+            cur["id"] = mark.group(1)
+            continue
+        if line.strip() == "审核结果：" or cur["decider"]:
+            continue                      # 「请…确认」之后到锚之间是人工区
+        cur["clarification"].append(line)
+    flush()
     return out
 
 
@@ -127,8 +157,10 @@ class RenderMatchesGolden(RendererCase):
         self.write_decisions(pick)
         self.assertEqual(0, self.run_build().returncode)
         out = self.review.read_text(encoding="utf-8")
-        for i, entry in enumerate(pick, start=1):
-            self.assertIn(f"### {i}. {entry['title']}\n", out)
+        self.assertIn("## 1. 待确认事项", out)
+        self.assertIn("## 2. 已定事项", out)
+        for entry in pick:
+            self.assertIn(f"{entry['title']}\n", out)
             self.assertIn(entry["clarification"], out)
             self.assertIn(f"请{entry['decider']}确认。\n\n审核结果：\n\n"
                           f"<!-- decision: {entry['id']} -->", out)
@@ -192,6 +224,31 @@ class FieldsAreRequired(RendererCase):
                 code, out = self.run_check()
                 self.assertEqual(1, code, out)
                 self.assertIn(needle, out)
+
+    def test_a_category_outside_the_word_list_is_named(self) -> None:
+        """类别决定它成章落在哪一节——不在词表里，成章就成不出自然名。"""
+        entry = dict(parse_golden()[0])
+        entry["category"] = "我自己起的类别"
+        self.write_decisions([entry])
+        code, out = self.run_check()
+        self.assertEqual(1, code, out)
+        self.assertIn("不在词表里", out)
+
+    def test_a_missing_category_is_named(self) -> None:
+        entry = dict(parse_golden()[0])
+        entry.pop("category")
+        self.write_decisions([entry])
+        code, out = self.run_check()
+        self.assertEqual(1, code, out)
+        self.assertIn("类别", out)
+
+    def test_the_word_list_is_a_map_not_a_quota(self) -> None:
+        """十一类是扫描指引与章节词表：机器不判每类有没有条目、不判空类要不要解释。"""
+        entries = [e for e in parse_golden() if e["category"] == parse_golden()[0]["category"]]
+        self.write_decisions(entries)
+        _, out = self.run_check()
+        for quota in ("每类", "空类", "十一类都要", "类别齐"):
+            self.assertNotIn(quota, out, f"出现了按类别配额的判据：\n{out}")
 
     def test_no_quota_on_how_many_entries(self) -> None:
         """**不设数量下限**：凑数议题比零议题更坏，它把注意力摊薄在假议题上。

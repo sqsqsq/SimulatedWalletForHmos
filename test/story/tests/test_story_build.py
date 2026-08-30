@@ -925,20 +925,20 @@ class TestDecisionUnits(StoryBuildCase):
              "clarification": "**要定的事**：挂失办没办成，以哪一侧的说法为准。\n\n"
                               "**根据**：本端只有请求态，判不了卡是否真的停用。\n\n"
                               "**结论与影响**：以卡片服务的回执为准，页面照回执显示。",
-             "decider": "需求负责人"},
+             "decider": "需求负责人", "category": "验收口径"},
             {"id": "DEC-002", "status": "settled",
              "title": "同卡同状态的重复提交按一次算",
              "clarification": "**要定的事**：同一张卡短时间内重复提交怎么处理。\n\n"
                               "**根据**：重复提交只会让用户以为办了两次。\n\n"
                               "**结论与影响**：按一次算，第二次直接回到等待态。",
-             "decider": "需求负责人"},
+             "decider": "需求负责人", "category": "流程顺序与准入"},
             {"id": "DEC-003", "status": "open",
              "title": "线下渠道的入口这轮收不收",
              "clarification": "**要定的事**：线下渠道的入口要不要一起收进本单。\n\n"
                               "**可选的做法**：1. 本单先不收，等渠道方给时间表；"
                               "2. 一起收，范围扩到渠道侧。\n\n"
                               "**建议**：按第 1 种做。",
-             "decider": "产品负责人"},
+             "decider": "产品负责人", "category": "范围与拆分"},
         ],
     }
 
@@ -999,7 +999,7 @@ class TestDecisionUnits(StoryBuildCase):
              "clarification": "**要定的事**：回执迟迟不到时等多久。\n\n"
                               "**可选的做法**：1. 先按现网默认值；2. 等渠道方给数。\n\n"
                               "**建议**：按第 1 种做。",
-             "decider": "需求负责人"}])
+             "decider": "需求负责人", "category": "规则与数值"}])
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn("材料在枚举之后变了", out)
