@@ -134,7 +134,11 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         正是该写的话，把它一起判掉，下一轮就只能靠删掉退场理由过关。
         """
         gone = ("SCANNED_CATEGORIES", "scanned_categories", "none_reason",
-                "同意当前建议", "暂缓原因", "（暂无）", "审核结果（由评审人填写）")
+                "同意当前建议", "暂缓原因", "（暂无）", "审核结果（由评审人填写）",
+                # 编号归机器铺之后，判自己输出的那条判据与它的合同键一并退场
+                "heading_shapes",
+                # 窄准入定义（「依据不在材料里才是决策」）与六方向提示同轮退场
+                "依据不在材料里", "想一圈")
         for path in sorted(SKILL.rglob("*")):
             if not path.is_file() or path.suffix not in (".mjs", ".json", ".md", ".py", ".js"):
                 continue

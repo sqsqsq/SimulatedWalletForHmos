@@ -277,8 +277,8 @@ function cmdInit(ctx) {
 
   // 骨架只有一个空数组：曾经这里还预置六类议题的空槽，判据只核「零条目时写了没写
   // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过，而同一批
-  // 工程决策在别的轮次实打实登记了十条。词表作为「找议题时想一圈的方向」留在作业书里，
-  // 骨架义务删掉：方向提示是给人的，空槽是给机器数的。
+  // 工程决策在别的轮次实打实登记了十条。类型词表作为扫描地图留在作业书里，
+  // 骨架义务删掉：扫描地图是给人的，空槽是给机器数的。
   if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
 
   const noToken = units.filter(u => !u.machine_facing && u.tokens.length === 0).length;
