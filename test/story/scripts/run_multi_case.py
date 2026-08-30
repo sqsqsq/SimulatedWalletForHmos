@@ -238,9 +238,15 @@ LEGACY_REQUIREMENT_SYSTEM_SIBLING = ".systems"
 
 
 def requirement_system_path(workspace_root: Path, case_id: str) -> Path:
-    """该 Case 的需求系统在哪。在 suite 树之外，与 sw-story 根平级。"""
+    """该 Case 的需求系统在哪。锚定系统临时目录，不在 suite 树内。
+
+    目录名 = suite 名 + workspace_root 全路径短摘要：同一 suite 的 seed 与 env
+    两处推导一致，不同 workspace_root（含单测夹具）互不碰撞。
+    """
     root = Path(workspace_root).resolve()
-    return root.parent.parent / REQUIREMENT_SYSTEM_SIBLING / root.name / case_id
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:8]
+    return (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING
+            / f"{root.name}-{digest}" / case_id)
 
 
 def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str, Any]]:
@@ -985,9 +991,10 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                      if path.is_dir() and path.resolve() != new_bundle_root)
     if workspace_parent.is_dir():
         names.update(path.name for path in workspace_parent.iterdir() if path.is_dir())
-    # 需求系统快照在 suite 树之外（sw-sys/<suite>），孤儿残留也要按 suite 名收进来
+    # 需求系统快照在 suite 树之外（sw-sys/<suite>-<hash>），剥掉摘要后缀按 suite 名收进来
     if system_parent.is_dir():
-        names.update(path.name for path in system_parent.iterdir() if path.is_dir())
+        names.update(path.name.rsplit("-", 1)[0]
+                     for path in system_parent.iterdir() if path.is_dir())
     report: dict[str, Any] = {
         "schema_version": 1, "new_suite_id": new_suite_id,
         "output_root": str(output_root), "workspace_root": str(workspace_parent),
@@ -1094,12 +1101,15 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                 target["deletion_attempts"].append(
                     {"path": output_text, "attempts": attempts})
                 removed.append(output_text)
-            system_path = system_parent / str(target["suite_id"])
-            if system_path.is_dir():
-                attempts = _remove_tree_with_recovery(system_path)
-                target["deletion_attempts"].append(
-                    {"path": str(system_path), "attempts": attempts})
-                removed.append(str(system_path))
+            if system_parent.is_dir():
+                for system_path in sorted(system_parent.glob(
+                        f"{target['suite_id']}-*")):
+                    if not system_path.is_dir():
+                        continue
+                    attempts = _remove_tree_with_recovery(system_path)
+                    target["deletion_attempts"].append(
+                        {"path": str(system_path), "attempts": attempts})
+                    removed.append(str(system_path))
             target["status"] = "deleted"
             target["removed"] = removed
         except OSError as exc:

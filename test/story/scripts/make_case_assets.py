@@ -83,6 +83,17 @@ def png_share_manage() -> bytes:
     return _png(960, 500, paint)
 
 
+def png_key_card_detail() -> bytes:
+    """添加后的钥匙卡片详情：权限范围与有效期区。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(200, 70, 760, 190, GREEN, border=LINE)     # 钥匙卡片
+        rect(200, 210, 760, 266, GREY, border=LINE)     # 权限范围行
+        rect(200, 286, 760, 342, GREY, border=LINE)     # 有效期行
+        rect(200, 362, 760, 418, ORANGE, border=LINE)   # 到期提醒说明
+    return _png(960, 460, paint)
+
+
 def png_accept_page() -> bytes:
     """被分享人接受页：车辆信息卡 + 权限/有效期说明 + 添加按钮。"""
     def paint(rect):
@@ -269,8 +280,10 @@ def build_car_key_accept(out_dir: Path) -> Path:
         ("p", "图 1　接受页"),
         ("p", "暂不添加就保持待接受，72 小时后自动作废——接受页不设「拒绝」按钮，不想要就放着。"),
         ("h", 3, "二、添加之后"),
-        ("p", "添加成功后钥匙卡片进入对方的钱包卡包，卡片详情里能看到权限范围和有效期；"
+        ("p", "添加成功后钥匙卡片进入对方的钱包卡包，卡片详情里能看到权限范围和有效期（图 2）；"
               "权限之外的功能不出现在对方的操作面上，而不是置灰。"),
+        ("img", "key-card-detail.png"),
+        ("p", "图 2　添加后的钥匙卡片详情"),
         ("h", 3, "三、可读性要求"),
         ("t", [["位置", "要求"],
                ["车辆信息卡", "先讲清这是谁分享的、能用到什么时候，再给添加按钮"],
@@ -278,7 +291,7 @@ def build_car_key_accept(out_dir: Path) -> Path:
                ["全局", "深色主题与大字体下，车辆信息与主按钮保持可读可点"]]),
     ]
     path = out_dir / "车钥匙接受侧界面说明.docx"
-    write_docx(path, blocks, {"accept-page.png": png_accept_page()})
+    write_docx(path, blocks, {"accept-page.png": png_accept_page(), "key-card-detail.png": png_key_card_detail()})
     return path
 
 

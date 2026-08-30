@@ -160,73 +160,83 @@ class CompositeCoverageTest(unittest.TestCase):
     """
 
     def test_every_story_capability_has_a_carrier(self) -> None:
+        # 「上游已拆两张单与兄弟交接」由退役的 traffic-card-loss（金样回归锚，
+        # case.retired.yaml，不进常规 suite）承载，不在此表。
         carriers = {
-            "系统按单号拉取": {"traffic-card-loss"},
-            "没有系统单据的本地起手": {"local-issue-autotopup"},
-            "系统只给 md，界面材料要另外要": {"traffic-card-loss"},
-            "占位件识别与按需补料": {"traffic-card-loss", "local-issue-autotopup"},
-            "docx 转正文并抽图": {"traffic-card-loss", "local-issue-autotopup"},
-            "上游已拆两张单与兄弟交接": {"traffic-card-loss"},
-            "同轮材料冲突与人工定源": {"local-issue-autotopup"},
-            "材料写明尚未决定的问题保持 open": {"local-issue-autotopup"},
-            "归档到系统与评审回稿处置": {"traffic-card-loss"},
-            "知识链传到 coding 并真实改码": {"traffic-card-loss", "local-issue-autotopup"},
+            "系统按单号拉取": {"auto-topup"},
+            "没有系统单据的本地起手": {"car-key-sharing"},
+            "系统只给 md，界面材料要另外要": {"auto-topup"},
+            "占位件识别与按需补料": {"auto-topup", "car-key-sharing"},
+            "docx 转正文并抽图": {"auto-topup", "car-key-sharing"},
+            "同轮材料冲突与人工定源": {"car-key-sharing"},
+            "材料写明尚未决定的问题保持 open": {"car-key-sharing"},
+            "归档到系统与评审回稿处置": {"auto-topup"},
+            "多方协作与多步分支流程": {"car-key-sharing"},
+            "知识链传到 coding 并真实改码": {"auto-topup", "car-key-sharing"},
         }
         for capability, expected in carriers.items():
             self.assertTrue(expected <= CASE_IDS, capability)
 
+    def test_retired_case_stays_out_of_the_suite(self) -> None:
+        """AR90004 与金样材料同源（训练集），退役为回归锚：材料保留、不进 Case 集。"""
+        retired = CASES / "traffic-card-loss"
+        self.assertTrue((retired / "case.retired.yaml").is_file())
+        self.assertFalse((retired / "case.yaml").exists())
+        self.assertNotIn("traffic-card-loss", CASE_IDS)
+
     def test_system_case_pulls_everything_from_the_requirement_system(self) -> None:
-        case = definition("traffic-card-loss")
+        case = definition("auto-topup")
         self.assertTrue(case["system"])
-        system = CASES / "traffic-card-loss" / "system"
-        # 一个子目录一张单，每张单一份 detail.json——`story.js` 认的就是这个形状。
+        system = CASES / "auto-topup" / "system"
+        # 一个子目录一张单，每张单一份 detail.json——对接层认的就是这个形状。
         tickets = sorted(path.name for path in system.iterdir() if path.is_dir())
-        self.assertEqual(["AR90004", "AR90005", "RR90004", "SR90004"], tickets)
+        self.assertEqual(["AR90006", "RR90006", "SR90006"], tickets)
         for no in tickets:
             detail = json.loads((system / no / "detail.json").read_text(encoding="utf-8"))
             self.assertEqual(no, detail["reqNo"])
         ar = json.loads((system / case["ar"] / "detail.json").read_text(encoding="utf-8"))
-        self.assertEqual("SR90004", ar["parentNo"])
-        self.assertEqual("RR90004", ar["rrNo"])
+        self.assertEqual("SR90006", ar["parentNo"])
+        self.assertEqual("RR90006", ar["rrNo"])
 
     def test_system_case_keeps_the_rich_business_material(self) -> None:
-        text = case_text("traffic-card-loss")
-        for token in ("freezeTicketId", "支付中断", "通知失败", "queryLossEligibility",
-                      "loss_report_recovery_context", "traffic_card_emergency_loss_enabled",
-                      "loss_flow_recovery", "RTL", "回退"):
+        text = case_text("auto-topup")
+        for token in ("getAutoTopupPolicy", "wallet_auto_topup_contract", "contractNo",
+                      "扣款成功但写卡未完成", "单日充值上限", "免密", "脱敏",
+                      "唯一真源", "连续 3 次"):
             self.assertIn(token, text)
 
     def test_system_case_leaves_the_ui_material_off_the_system(self) -> None:
-        """系统上只写到「界面参考没归档」为止，界面本身在人手上那份 docx 里。
+        """系统上只写到「图见原稿」为止，界面本身在人手上那份 docx 里。
 
         这是本 Case 的材料关卡：模型要自己发现界面部分讲不下去、开口要，
         才会拿到补料。产品正文里把界面画完，这一关就白设了。
         """
-        prd = (CASES / "traffic-card-loss/system/RR90004/prd.md").read_text(encoding="utf-8")
-        self.assertIn("界面参考没有随本需求归档", prd)
+        prd = (CASES / "auto-topup/system/RR90006/prd.md").read_text(encoding="utf-8")
+        self.assertIn("见原稿", prd)
         self.assertNotIn("![", prd)
-        supplements = definition("traffic-card-loss")["supplements"]
+        supplements = definition("auto-topup")["supplements"]
         self.assertEqual(1, len(supplements))
         self.assertEqual("on_request", supplements[0]["deliver"])
-        self.assertTrue((CASES / "traffic-card-loss/supplements"
+        self.assertTrue((CASES / "auto-topup/supplements"
                          / supplements[0]["file"]).is_file())
 
-    def test_system_case_carries_a_sibling_ticket_and_a_review_reply(self) -> None:
-        system = CASES / "traffic-card-loss" / "system"
-        sr = (system / "SR90004" / "design.md").read_text(encoding="utf-8")
-        for token in ("拆成两张开发单", "AR90005", "共享挂失上下文", "阻塞"):
+    def test_system_case_split_is_decided_by_a_human_and_review_reply_waits(self) -> None:
+        # SR 提出可拆两份、范围由人拍板——交互脚本里那句「不拆了」对应的材料前提。
+        sr = (CASES / "auto-topup/system/SR90006/design.md").read_text(encoding="utf-8")
+        for token in ("可拆成", "contractNo", "阻塞", "与开发确认后定"):
             self.assertIn(token, sr)
-        # 评审回稿放在系统上，等归档之后由 `/story review` 拉回来。
-        feedback = (system / "AR90004" / "review-feedback.md").read_text(encoding="utf-8")
+        # 评审回稿放在系统上，等归档之后拉回来。
+        feedback = (CASES / "auto-topup/system/AR90006/review-feedback.md") \
+            .read_text(encoding="utf-8")
         self.assertIn("要改", feedback)
         self.assertIn("暂缓", feedback)
 
     def test_local_case_starts_from_half_the_material(self) -> None:
-        case = definition("local-issue-autotopup")
+        case = definition("car-key-sharing")
         self.assertFalse(case["system"])
-        self.assertFalse((CASES / "local-issue-autotopup" / "system").exists())
+        self.assertFalse((CASES / "car-key-sharing" / "system").exists())
         self.assertFalse(str(case["ar"]).startswith("AR"))
-        detail = json.loads((CASES / "local-issue-autotopup/workspace/AR/detail.json")
+        detail = json.loads((CASES / "car-key-sharing/workspace/AR/detail.json")
                             .read_text(encoding="utf-8"))
         self.assertEqual(case["ar"], detail["reqNo"])
         self.assertEqual("local-workspace", detail["source"])
@@ -234,17 +244,32 @@ class CompositeCoverageTest(unittest.TestCase):
         self.assertNotIn("parentNo", detail)
         self.assertNotIn("rrNo", detail)
         # 产品正文缺席，起跑时工作区里只有系统设计那一份。
-        self.assertFalse((CASES / "local-issue-autotopup/workspace/RR").exists())
-        self.assertTrue((CASES / "local-issue-autotopup/workspace/SR/design.md").is_file())
+        self.assertFalse((CASES / "car-key-sharing/workspace/RR").exists())
+        self.assertTrue((CASES / "car-key-sharing/workspace/SR/design.md").is_file())
 
-    def test_local_case_holds_one_conflict_and_one_undecided_item(self) -> None:
+    @staticmethod
+    def _docx_text(path: Path) -> str:
+        import zipfile
+        with zipfile.ZipFile(path) as zf:
+            return zf.read("word/document.xml").decode("utf-8")
+
+    def test_local_case_holds_one_conflict_and_two_undecided_items(self) -> None:
         """冲突要在两份材料之间真实存在，未决项要在材料里写明还没定。"""
-        sr = (CASES / "local-issue-autotopup/workspace/SR/design.md").read_text(encoding="utf-8")
-        self.assertIn("单日充值上限", sr)
-        self.assertIn("100 元", sr)      # 补料里的产品文档写的是 200 元
-        self.assertIn("到现在还没有结论", sr)
-        for token in ("wallet_auto_topup_contract", "扣款成功但写卡未完成",
-                      "端侧不存在", "参与方", "不记录卡号"):
+        sr = (CASES / "car-key-sharing/workspace/SR/design.md").read_text(encoding="utf-8")
+        self.assertIn("48 小时", sr)     # 补料里的产品文档写的是 24 小时
+        for token in ("queryKeySharingQuota", "key_sharing_draft", "幂等",
+                      "回滚", "车厂云", "脱敏"):
+            self.assertIn(token, sr)
+        prd = self._docx_text(CASES / "car-key-sharing/supplements/数字车钥匙分享.docx")
+        self.assertIn("24 小时", prd)
+        self.assertIn("还没定的两件事", prd)
+        self.assertIn("安全评审", prd)
+        self.assertIn("先不做结论", prd)
+
+    def test_local_case_flow_has_multi_step_branches_for_pattern_selection(self) -> None:
+        """分享创建每分支多步且各带失败处理——泛化样本上模式选型「选」路径的材料前提。"""
+        sr = (CASES / "car-key-sharing/workspace/SR/design.md").read_text(encoding="utf-8")
+        for token in ("一成一败必须回滚", "撤销中", "宽限", "草稿续办", "sequenceDiagram"):
             self.assertIn(token, sr)
 
     def test_pictures_only_reach_the_flow_through_a_supplement(self) -> None:
