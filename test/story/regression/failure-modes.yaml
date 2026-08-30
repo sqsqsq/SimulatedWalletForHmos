@@ -1031,3 +1031,83 @@ modes:
       与 P10（同一路径引两次）互补：那条判的是同一个引用出现两次，
       这条判的是**同一张登记图片被两个不同路径指到**。实测两个文件内容完全相同，
       story 分别称它们为「管理页」与「管理页布局参考」。
+
+  - id: S12-tradeoff-prose
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 关键取舍那一节写成散文——「否了什么、为什么被否的不行」两列被化进句子里，读者拼不出来
+    clause: KG-3 / B2-9
+    checker: s12_tradeoff_prose
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S12-tradeoff-prose/bad
+    good_fixture: test/story/fixtures/failure-modes/S12-tradeoff-prose/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      与 S08（缺节）互补：节在，形态塌了。模板明写「成表」，两轮四份产物照样写成两段散文
+      ——确定性的形式写在注释里就是自由发挥区。表头逐列逐字锁死，模型只填格子。
+
+  - id: S13-limited-and-error-in-one-table
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 设计内的受限结果与真正的失败混进同一张表——读者分不清哪些要处理、哪些本来就是这么设计的
+    clause: KG-3 / B2-9
+    checker: s13_limited_and_error_in_one_table
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S13-limited-and-error-in-one-table/bad
+    good_fixture: test/story/fixtures/failure-modes/S13-limited-and-error-in-one-table/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      判的是「两张表头可区分的分立表在不在」，不判每一行归哪张——行归属是语义，
+      归裁决者的逐章维度。空章豁免。
+
+  - id: S14-acceptance-bulleted
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 验收写成 bullet——编号、通过条件与主责挤在一行文字里，没法逐条比对
+    clause: KG-3 / B2-9
+    checker: s14_acceptance_bulleted
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S14-acceptance-bulleted/bad
+    good_fixture: test/story/fixtures/failure-modes/S14-acceptance-bulleted/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      组名自拟不判——按「要验的事」分组是作者的判断；判的是每个小节里那张表的头。
+
+  - id: S15-appendix-prose-tail
+    dimension: conservation
+    found_round: "2026-08-30"
+    form: 附录表后挂散文尾巴——没地方去的工程细节挤成段，倾倒区的最后一种形态
+    clause: KG-3 / 坑 #30
+    checker: s15_appendix_prose_tail
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S15-appendix-prose-tail/bad
+    good_fixture: test/story/fixtures/failure-modes/S15-appendix-prose-tail/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      与 S06（附录多长一节）同源，形态更隐蔽：节数对、围栏没有，尾巴挂在表后面。
+      开头那一句目的句不算——判的是表或列表**之后**的正文段。
+      另一半治法是收窄中间产物的 token 守恒（那些尾巴本来就是被落点义务逼出来的）。
+
+  - id: S16-material-list-intermediate
+    dimension: conservation
+    found_round: "2026-08-30"
+    form: 材料清单里列中间产物与图片直链——清单从「据哪几份材料写成」变成倾倒区
+    clause: KG-3 / 坑 #30
+    checker: s16_material_list_intermediate
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S16-material-list-intermediate/bad
+    good_fixture: test/story/fixtures/failure-modes/S16-material-list-intermediate/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      实测一份产物 22 行：本轮规格被链了 4 次，事实记录、参考件与原图都单列。
+      允许的目录是合同数据（进 spec 之前的原始输入），按解析后的落点判，不按字面前缀。

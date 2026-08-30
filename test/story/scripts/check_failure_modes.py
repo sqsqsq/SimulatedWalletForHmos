@@ -2333,6 +2333,59 @@ def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
 
 
+@checker
+def s12_tradeoff_prose(root: Path, ctx: Ctx) -> Outcome:
+    """关键取舍那一节写成散文——被否方案与理由化进句子，读者拼不出来。
+
+    与 S08 互补：那条判「节在不在」，这条判「节在、形态塌没塌」。模板明写成表，
+    两轮四份产物照样写成两段散文——确定性的形式写在注释里就是自由发挥区。
+    """
+    return _form_case(root, "要的是一张表头为", "取舍成表，四列齐")
+
+
+@checker
+def s13_limited_and_error_in_one_table(root: Path, ctx: Ctx) -> Outcome:
+    """设计内的受限结果与真正的失败混进同一张表。
+
+    读者分不清哪些要处理、哪些本来就是这么设计的。判的是两张表头可区分的分立表在不在，
+    不判每一行归哪张——行归属是语义，归裁决者。
+    """
+    return _form_case(root, "缺一张表头为", "受限与异常各成一张表")
+
+
+@checker
+def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
+    """验收写成 bullet——编号与通过条件挤在一行文字里，没法逐条比对。"""
+    return _form_case(root, "不是一张表头为", "验收每个小节都是一张编号表")
+
+
+@checker
+def s15_appendix_prose_tail(root: Path, ctx: Ctx) -> Outcome:
+    """附录表后挂散文尾巴——没地方去的工程细节挤成段。
+
+    开头那一句目的句不算，判的是表或列表**之后**的正文段。
+    """
+    return _form_case(root, "表后还有一段正文", "附录每节只有目的句加表")
+
+
+@checker
+def s16_material_list_intermediate(root: Path, ctx: Ctx) -> Outcome:
+    """材料清单里列中间产物与图片直链——清单变成倾倒区。"""
+    return _form_case(root, "只列进 spec 之前的原始输入", "材料清单只有原始输入")
+
+
+def _form_case(root: Path, needle: str, ok: str) -> Outcome:
+    """A 档固定形式的五条共用同一套跑法：good 该过，bad 该被点名。"""
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, ok)
+    if needle in out:
+        return Outcome(False, "固定形式被点名")
+    return Outcome(False, f"check 未过（非固定形式原因）：{out[:200]}")
+
+
 GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
 
 

@@ -34,8 +34,9 @@ import { fileURLToPath } from 'node:url';
 import { decisionUnits, enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
 import { normalizeHeading, renumberStory } from './headings.mjs';
 import {
-  baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
+  baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanImageForm, scanLanguageRedline, scanLocalPaths, scanMaterialList, scanReadability,
+  tableHeadersOf,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import { renderReview } from './review-render.mjs';
@@ -458,6 +459,17 @@ function subsectionSpan(storyText, chapterTitle, name) {
 }
 
 /** 一章里全部 `###` 小节的业务名（序号已剥）。 */
+/**
+ * 表头比对：声明的列**逐列逐字相等**，其后允许附加列。
+ *
+ * 逐字是有意的——列头是形不是内容，模板给出表头照抄即过；判「差不多」的话，
+ * 同一份文档里同类的表会长出五种列名，读者每张表都要重新认一遍。
+ * 附加列放行是因为真实存在（验收表可选的「主责」列）。
+ */
+function headerMatches(actual, want) {
+  return (want ?? []).every((col, i) => (actual[i] ?? '').trim() === String(col).trim());
+}
+
 function subsectionNames(sectionText) {
   const out = [];
   let inFence = false;
@@ -1274,6 +1286,22 @@ function cmdCheck(ctx) {
       if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
         problems.push(`「${appendixDef.title}·${want}」是空的`
           + '——成表或成列表，确实不涉及就写「不涉及：<依据>」一行');
+        continue;
+      }
+      // 表外零散文：一句目的句 + 表格行（材料清单是列表行），其余正文段逐段点名。
+      // 散文尾巴是倾倒区的最后一种形态——附录五节被锁死之后，没地方去的工程细节
+      // 就挤到表后面成段（实测一份产物 A/B/C 三节表后各挂两三段）。
+      // 「不涉及：<依据>」独行豁免：那是空节规则的既有形态，不算散文段。
+      if (appendixDef.subsection_form) {
+        // 判的是**尾巴**：开头那一句是目的句（该有的），跟在表或列表后面的那些，
+        // 是没地方去的工程细节挤出来的。
+        const tail = proseBlocks(body)
+          .filter(p => p.afterRows && !/不涉及[:：]\s*\S/.test(p.text));
+        for (const p of tail) {
+          problems.push(`「${appendixDef.title}·${want}」表后还有一段正文`
+            + `（「${p.text.slice(0, 18)}…」）`
+            + `——${appendixDef.subsection_form.note ?? '该进表的内容进表成行'}`);
+        }
       }
     }
     for (const line of appendixSection.text.split(/\r?\n/)) {
@@ -1321,6 +1349,66 @@ function cmdCheck(ctx) {
     }
   }
 
+  // ⑫e 固定形式：该固定的那几个位置，表头由数据锁死，模型只填格子
+  //
+  // **为什么锁到列**：术语、关键取舍、风险、受限与异常、验收——这五处的形式是确定性的，
+  // 效果定义已示范、模板已写明，两轮四份产物照样违反（取舍写成两段散文、受限与异常混成一张表、
+  // 验收全 bullet、术语章整段散文）。规律与编号那件事同根：**确定性的形式写在注释里
+  // 就是自由发挥区**，只有变成机器动作或判据才存在。
+  //
+  // **锁的是「本来就该是表的位置」，不是鼓励表格**：背景、方案叙述、流程图文、功能行为、
+  // 交付路径一条表格类判据都不加——能一句话说清的仍然不建表，那一面归裁决面的贴合维。
+  for (const chapter of ctx.contract.chapters ?? []) {
+    const spec = chapter.section_form;
+    if (!spec) continue;
+    const body = sectionText.get(chapter.title);
+    if (body === undefined) continue;
+    if (norm(body) === norm(EMPTY_SECTION_TEXT)) continue;      // 空章豁免
+    for (const [where, want] of Object.entries(spec)) {
+      if (where === '__two_tables__') {
+        const heads = tableHeadersOf(body);
+        for (const columns of want) {
+          if (!heads.some(h => headerMatches(h.columns, columns))) {
+            problems.push(`「${chapter.title}」缺一张表头为「${columns.join(' / ')}」的表`
+              + '——两类分开列：设计内的受限结果与真正的失败混在一张表里，'
+              + '读者分不清哪些要处理、哪些本来就是这么设计的');
+          }
+        }
+        continue;
+      }
+      if (where === '__each_h3__') {
+        for (const sub of subsectionNames(body)) {
+          const inner = subsectionText(body, sub.name);
+          if (inner === null || /不涉及[:：]\s*\S/.test(inner)) continue;
+          if (!tableHeadersOf(inner).some(h => headerMatches(h.columns, want.columns))) {
+            problems.push(`「${chapter.title}·${sub.raw}」不是一张表头为`
+              + `「${want.columns.join(' / ')}」的表——组名自拟，形态固定：`
+              + '一条一行、编号独立、通过条件可观察；写成 bullet 就没法逐条比对');
+          }
+        }
+        continue;
+      }
+      const scope = where === '__chapter__' ? body : subsectionText(body, where);
+      if (scope === null) continue;                 // 缺节由 ⑫b 报，这里不重复
+      if (/不涉及[:：]\s*\S/.test(scope)) continue;
+      if (want.columns
+          && !tableHeadersOf(scope).some(h => headerMatches(h.columns, want.columns))) {
+        problems.push(`「${chapter.title}${where === '__chapter__' ? '' : '·' + where}」`
+          + `要的是一张表头为「${want.columns.join(' / ')}」的表`
+          + '——这几列是固定的，内容填进格子里；写成散文，逐项比对的那几列就没了');
+      }
+      const budget = Number(want.prose_budget);
+      if (Number.isFinite(budget)) {
+        const prose = proseBlocks(scope).filter(p => !/不涉及[:：]\s*\S/.test(p.text));
+        if (prose.length > budget) {
+          problems.push(`「${chapter.title}${where === '__chapter__' ? '' : '·' + where}」`
+            + `表外有 ${prose.length} 段正文（至多 ${budget} 段）`
+            + '——该进表的内容写进表里，别在表外另起一段');
+        }
+      }
+    }
+  }
+
   // ⑫c 形态 lint：图的承接、材料清单的行形态
   //
   // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
@@ -1335,7 +1423,10 @@ function cmdCheck(ctx) {
     const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
     if (span) {
       const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
-      for (const h of scanMaterialList(body, span.start + 1)) {
+      // 链接按「相对 story.md 解析后落在需求目录的哪一段」判：`../RR/prd.md` 是 RR，
+      // 裸文件名是 story 自己那一层（归档件本身所在的目录），不判。
+      for (const h of scanMaterialList(body, span.start + 1,
+        { allowDirs: ctx.contract.material_dirs ?? [] })) {
         problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
       }
     }

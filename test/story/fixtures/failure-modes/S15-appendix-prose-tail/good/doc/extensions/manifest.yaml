@@ -1,0 +1,9 @@
+schema_version: "1.0"
+name: c01-fixture
+version: "1.0.0"
+description: C01 夹具的最小激活清单（只为让规约条目能派生成来源单元）
+provides:
+  knowledge:
+    - knowledge/facts/sample-facts.md
+    - knowledge/constraints/sample-domain.md
+    - knowledge/design-patterns/sample-pattern.md

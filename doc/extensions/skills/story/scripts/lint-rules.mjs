@@ -488,6 +488,8 @@ const IMAGE_HINTS = {
   image_lead: '图前一句承接，说清它画的是什么——读者先读到那句话，再看图；'
     + '说明写在图后，他得先猜一遍',
   material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
+  material_scope: '材料清单只列进 spec 之前的原始输入——本轮自己生成的中间产物、'
+    + '参考件与图片直链不是材料（图随它所在的那份材料走，不单列）',
   material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
     + '光写「产品需求文档」他不知道该找谁要哪一份',
 };
@@ -531,9 +533,11 @@ export function scanImageForm(text) {
  * @param {string} body 该小节正文
  * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
  */
-export function scanMaterialList(body, baseLine = 0) {
+export function scanMaterialList(body, baseLine = 0, opts = {}) {
   const hits = [];
   const lines = String(body ?? '').split(/\r?\n/);
+  const allow = opts.allowDirs ?? [];
+  const from = opts.storyDir ?? '';
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i].trim();
     const line = baseLine + i;
@@ -543,12 +547,40 @@ export function scanMaterialList(body, baseLine = 0) {
       continue;
     }
     if (!/^[-*+]\s/.test(s)) continue;
-    if (!/\[[^\]]*\]\([^)\s]+\)/.test(s)) {
+    const links = [...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)];
+    if (!links.length) {
       hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
                   hint: IMAGE_HINTS.material_link, text: s.slice(0, 100) });
+      continue;
+    }
+    if (!allow.length) continue;
+    for (const [, target] of links) {
+      if (/^(https?:|mailto:)/i.test(target)) continue;
+      const dir = firstSegment(from, target);
+      if (dir !== null && !allow.includes(dir)) {
+        hits.push({ line, kind: 'material_scope', hit: target,
+                    hint: IMAGE_HINTS.material_scope, text: s.slice(0, 100) });
+      }
     }
   }
   return hits;
+}
+
+/**
+ * 把一条相对链接解析到需求目录下的第一段目录名。
+ *
+ * 材料清单列的是**进 spec 之前的原始输入**。中间产物（本轮自己生成的规格、
+ * 事实记录、参考件）与图片文件直链不是材料——它们混进来，清单就从「据哪几份材料写成」
+ * 变成倾倒区：实测一份产物 22 行，规格被链了 4 次，连原图都单列。
+ */
+function firstSegment(fromDir, target) {
+  const parts = String(fromDir ?? '').split('/').filter(Boolean);
+  for (const seg of String(target).replace(/^\.\//, '').split('/')) {
+    if (seg === '..') { parts.pop(); continue; }
+    if (seg === '.' || !seg) continue;
+    parts.push(seg);
+  }
+  return parts.length > 1 ? parts[0] : null;   // 只剩文件名 → 与 story 同目录
 }
 
 /**
@@ -681,4 +713,69 @@ export function scanBrokenImages(text, baseDir, fsMod, pathMod) {
     }
   }
   return hits;
+}
+
+/**
+ * 一段文本里每张表的表头（按出现顺序）。
+ *
+ * 表头是**形**，不是内容：该固定的那几个位置（术语、取舍、风险、受限与异常、验收）
+ * 表头写成什么样是确定性的，模型只需要照着填格子。判它比判「有没有表」严，
+ * 因为「有张表」但列不对，逐项比对的那几列照样是缺的。
+ *
+ * @param {string} text
+ * @param {number} baseLine 该段首行在全篇里的行号（报错要指得回去）
+ * @returns {{line:number, columns:string[]}[]}
+ */
+export function tableHeadersOf(text, baseLine = 0) {
+  const out = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    if (/^(```|~~~)/.test(s)) { inFence = !inFence; continue; }
+    if (inFence || !s.startsWith('|')) continue;
+    const next = (lines[i + 1] ?? '').trim();
+    if (!/^\|[\s:|-]+\|?$/.test(next)) continue;          // 下一行不是分隔行 → 不是表头
+    out.push({
+      line: baseLine + i + 1,
+      columns: s.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim()),
+    });
+  }
+  return out;
+}
+
+/**
+ * 一段文本里的**正文段**（表、列表、标题、图、围栏、引用块之外的那些）。
+ *
+ * 用来判「该成表的地方别写散文」与附录的「表外零散文」：附录是查阅件，
+ * 每节一句目的句就够，表后再跟几段散文，那几段承载的正是没地方去的工程 token。
+ *
+ * `afterRows` 记它出没出现在第一行表格/列表之后——附录那条判的正是**尾巴**：
+ * 开头那一句是目的句（该有的），跟在表后面的才是没地方去的东西挤出来的。
+ *
+ * @returns {{line:number, text:string, afterRows:boolean}[]}
+ */
+export function proseBlocks(text, baseLine = 0) {
+  const out = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let inFence = false;
+  let cur = null;
+  let seenRow = false;
+  const flush = () => { if (cur) out.push(cur); cur = null; };
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    if (/^(```|~~~)/.test(s)) { inFence = !inFence; flush(); continue; }
+    if (inFence) continue;
+    const isRow = s.startsWith('|') || /^[-*+]\s/.test(s) || /^\d+[.、)]\s/.test(s);
+    if (!s || /^#{1,6}\s/.test(s) || isRow || s.startsWith('>') || /^!\[/.test(s)) {
+      flush();
+      if (isRow) seenRow = true;
+      continue;
+    }
+    cur = cur
+      ? { ...cur, text: `${cur.text}${s}` }
+      : { line: baseLine + i + 1, text: s, afterRows: seenRow };
+  }
+  flush();
+  return out;
 }
