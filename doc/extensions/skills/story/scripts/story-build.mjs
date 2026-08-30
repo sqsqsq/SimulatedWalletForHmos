@@ -48,6 +48,9 @@ const COMMANDS = ['init', 'audit', 'check', 'build'];
 const VERDICT_WORDS = ['讲清', '未讲清'];
 const MIN_QUOTE = 12;
 
+/** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
+const COPYEDIT_ROWS = 6;
+
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
 const KNOWLEDGE_VERDICTS = ['命中', '不命中', DOMAIN_NA];
@@ -128,7 +131,8 @@ function createOfflineContext(args) {
     args, projectRoot, contract, offline: true,
     featureRoot: path.dirname(path.dirname(storyPath)),
     storyPath,
-    unitsPath: '', auditPath: '', decisionsPath: '', verdictsPath: '', reviewPath: '',
+    unitsPath: '', auditPath: '', decisionsPath: '', verdictsPath: '',
+    copyeditPath: '', reviewPath: '',
   };
 }
 
@@ -153,6 +157,7 @@ function createContext(args) {
     auditPath: path.join(srcDir, 'audit.json'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
     verdictsPath: path.join(srcDir, 'story-verdicts.md'),
+    copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
   };
@@ -1341,6 +1346,29 @@ function cmdCheck(ctx) {
           }
         }
       });
+    }
+  }
+
+  // ⑫d 统稿留痕：`copyedit.md` 恰好六行，一项自查一行
+  //
+  // 统稿（通读全篇、收重复收承接收样式）是唯一一步没有任何产物的动作，于是跳过它
+  // 零成本——实测两份产物都有「同一件事讲三遍」「图题一章一个样」这类只有通读才看得见
+  // 的毛病，而门禁全绿。留痕不是为了核内容（内容真不真由裁决面与抽样人核管），
+  // 是为了让「没做」这件事留下痕迹。
+  //
+  // **只写六行，写多不奖励**：把它写成检查报告，下一轮就有人为了显得认真而灌水。
+  if (!ctx.offline) {
+    const copyedit = readText(ctx.copyeditPath);
+    if (copyedit === null) {
+      problems.push(`缺 ${path.basename(ctx.copyeditPath)}`
+        + '——统稿完成后在这里写六行，六项自查各一行「查了什么／改了几处或无」');
+    } else {
+      const rows = copyedit.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length;
+      if (rows !== COPYEDIT_ROWS) {
+        problems.push(`${path.basename(ctx.copyeditPath)} 有 ${rows} 行`
+          + `（要求恰好 ${COPYEDIT_ROWS} 行，空行不计）`
+          + '——六项自查各一行；写成检查报告不加分，下一轮只会有人为了显得认真而灌水');
+      }
     }
   }
 

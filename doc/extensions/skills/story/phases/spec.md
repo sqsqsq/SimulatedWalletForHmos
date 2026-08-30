@@ -46,6 +46,13 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 `spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面五步走完。
 作业规则见 [`phases/story-write.md`](story-write.md)（分配、逐章渲染、统稿各一段）。
 
+**什么算一条议题**：评审记录就是进行一些决策的澄清，已决策的呈现结果；不确定、矛盾、
+错误的要人评估。story 里写了结论、而这个结论的依据不在材料里——工程自设的数值或方式、
+待联调确认的默认值、用「以 X 近似」承载的能力、材料间冲突的定源——**每一条都是决策**：
+已定的登记 `settled`（正文落点是关键取舍），未定的登记 `open`（去处是评审记录），
+没有第三种去处。**把材料里没有的选择直接写死进附录，就是漏登记**。找议题时把六个方向
+想一圈：需求与范围、交互与界面、技术方案与依赖、约束规约命中项、异常与风险、上线与协同。
+
 ```bash
 node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
 #                              ② 分配：每个单元定一个落点，落 audit.json
@@ -53,7 +60,9 @@ node .../story-build.mjs audit --feature <feature>   #    「待你分配 0 条�
 #    机器先归位两类：带硬事实标记的、技术契约小节的行；剩给模型的都是纯中文叙述
 #                              ③ 逐章渲染：按合同顺序一次写一章，追加到 AR/story.md
 #                                 每章写完跑一次 audit（它会打印未渲染章）
-#                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；改完重跑 audit
+#                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
+#                                 六项自查各写一行到 AR/story-src/copyedit.md（恰好六行）；
+#                                 改完重跑 audit
 #                              ④ 裁决：audit 里还有 by: author 时，按 phases/story-verify.md 裁
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
 #                              ⑥ 跑 spec harness

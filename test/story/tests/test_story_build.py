@@ -1095,6 +1095,46 @@ class TestChapterSections(StoryBuildCase):
         self.assertEqual(0, code, out)
 
 
+class TestCopyeditTrace(StoryBuildCase):
+    """统稿留痕：恰好六行，**内容不判**。
+
+    统稿是唯一一步没有产物的动作，于是跳过它零成本——实测两份产物都有「同一件事
+    讲三遍」「图题一章一个样」这类只有通读才看得见的毛病，而门禁全绿。
+    留痕不是为了核内容（那归裁决面与抽样人核），是为了让「没做」留下痕迹。
+    """
+
+    SIX = "\n".join("第 {} 项：查过，无需改。".format(i) for i in range(1, 7)) + "\n"
+
+    def write_copyedit(self, text: str) -> None:
+        (self.src / "copyedit.md").write_text(text, encoding="utf-8")
+
+    def test_missing_file_is_named(self) -> None:
+        (self.src / "copyedit.md").unlink()
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("copyedit.md")
+
+    def test_exactly_six_lines_passes(self) -> None:
+        self.write_copyedit(self.SIX)
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_writing_more_is_not_rewarded(self) -> None:
+        """写成检查报告不加分——不然下一轮就有人为了显得认真而灌水。"""
+        self.write_copyedit(self.SIX + "另外还查了一遍标题。\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("恰好 6 行")
+
+    def test_blank_lines_do_not_count(self) -> None:
+        self.write_copyedit(self.SIX.replace("\n", "\n\n"))
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+
+
 class TestFormLints(StoryBuildCase):
     """三条形态 lint：图的承接与图题、材料清单的行形态、正文小节的编号。
 
