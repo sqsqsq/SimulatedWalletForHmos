@@ -2298,6 +2298,41 @@ def s09_flow_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非节级原因）：{out[:200]}")
 
 
+@checker
+def s10_image_path_copied(root: Path, ctx: Ctx) -> Outcome:
+    """图片被复制进归档目录、改个名再引用——副本没人维护，改名后认不出是原来那张。
+
+    实测链条：材料抽图落在素材目录（机制内）→ 模型复制一份进界面参考目录（合理）
+    → **又复制第三份进归档目录并改名**，story 按裸文件名引用。模板从来只约定图题形态，
+    没约定引用路径口径，于是这条链一路无人拦。
+    """
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "图片引的是登记里那张图的既有落盘位置")
+    if "不在材料的图片登记里" in out:
+        return Outcome(False, "归档目录下的副本引用被点名")
+    return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
+
+
+@checker
+def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
+    """同一张图被两个路径引用，story 里当成两张不同的图各引一次。
+
+    实测：两个文件的内容完全相同，story 分别称它们为「管理页」与「管理页布局参考」，
+    后一张没有任何说明段——读者以为看漏了什么，其实是同一张图。
+    """
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "同一张图只引一次")
+    if "同一张图被两个路径引用" in out:
+        return Outcome(False, "同图两名被点名")
+    return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
+
+
 GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
 
 

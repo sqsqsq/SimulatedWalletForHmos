@@ -22,11 +22,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90004"
 BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 
-#: 定稿时点 2026-08-30（用户逐轮批注后认可）。sha256 前 16 位。
+#: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接
+#: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
 #: 两处 image 是同一对文件的两个落点：金样正文按 `assets/x.png` 引，
 #: 界面材料按需求目录的 `../assets/<文档名>/x.png` 引——两条链都要能解析。
 FINGERPRINTS = {
-    "AR/story.md": "4ea8102f25ce383e",
+    "AR/story.md": "c392539c51339d8e",
     "AR/design.md": "ed2119f15893b568",
     "AR/assets/image1.png": "7a0b672988d707e2",
     "AR/assets/image2.png": "da8a096f4a859ddb",

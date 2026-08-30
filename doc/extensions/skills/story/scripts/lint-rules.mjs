@@ -475,6 +475,91 @@ export function scanReadability(text, conf = {}) {
   return hits;
 }
 
+// ---------------------------------------------------------------------------
+// 形态 lint：图的承接与图题、材料清单的行形态
+//
+// 这两样此前只写在模板注释里。实测两轮四份产物：**注释里的形态一条都没达成**
+// ——三张图全部写成「上图是…」（说明在图后，读者先看见图再看见它是什么），
+// 材料清单被写成表格且没有一条能定位到原件。有判据的形态则全部达成。
+// 所以形态要么接上判据，要么就承认它是建议。
+
+/** 图题写在替换文本里：`图 N · 题名`。序号是读者在正文里引用它的凭据。 */
+const IMAGE_ALT_RE = /^图\s*\d+\s*[·・]\s*\S/;
+
+const IMAGE_HINTS = {
+  image_lead: '图前一句承接，说清它画的是什么——读者先读到那句话，再看图；'
+    + '说明写在图后，他得先猜一遍',
+  image_alt: '图题写进替换文本，形如「图 1 · 页面状态走向」——'
+    + '正文引用「图 1」时读者要对得上号',
+  material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
+  material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
+    + '光写「产品需求文档」他不知道该找谁要哪一份',
+};
+
+/**
+ * 图的承接与图题形态。
+ *
+ * **上一非空行必须是正文段**：标题、另一张图、表行都不算承接。
+ * 图连着图，读者看不出第二张与第一张什么关系；紧跟标题的图等于没有引入。
+ *
+ * @returns {{line:number, kind:string, hit:string, hint:string, text:string}[]}
+ */
+export function scanImageForm(text) {
+  const hits = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let inFence = false;
+  let prev = null;                 // 上一非空、非围栏行
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (/^\s*(```|~~~)/.test(raw)) { inFence = !inFence; prev = raw.trim(); continue; }
+    if (inFence) continue;
+    const s = raw.trim();
+    if (!s) continue;
+    const imgs = [...s.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
+    if (imgs.length) {
+      const lead = prev ?? '';
+      const bad = !lead || lead.startsWith('#') || lead.startsWith('|')
+        || lead.startsWith('![') || /^!\[/.test(lead.replace(/^[-*+]\s+/, ''));
+      if (bad) hits.push({ line: i + 1, kind: 'image_lead', hit: imgs[0][2],
+                           hint: IMAGE_HINTS.image_lead, text: s.slice(0, 100) });
+      for (const [, alt, src] of imgs) {
+        if (!IMAGE_ALT_RE.test(alt.trim())) {
+          hits.push({ line: i + 1, kind: 'image_alt', hit: alt.trim() || src,
+                      hint: IMAGE_HINTS.image_alt, text: s.slice(0, 100) });
+        }
+      }
+    }
+    prev = s;
+  }
+  return hits;
+}
+
+/**
+ * 材料清单那一节的行形态：成列表、每行给得出原文链接。
+ *
+ * @param {string} body 该小节正文
+ * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
+ */
+export function scanMaterialList(body, baseLine = 0) {
+  const hits = [];
+  const lines = String(body ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    const line = baseLine + i;
+    if (s.startsWith('|')) {
+      hits.push({ line, kind: 'material_row', hit: s.slice(0, 40),
+                  hint: IMAGE_HINTS.material_row, text: s.slice(0, 100) });
+      continue;
+    }
+    if (!/^[-*+]\s/.test(s)) continue;
+    if (!/\[[^\]]*\]\([^)\s]+\)/.test(s)) {
+      hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
+                  hint: IMAGE_HINTS.material_link, text: s.slice(0, 100) });
+    }
+  }
+  return hits;
+}
+
 /**
  * 扫描仓内本地路径。
  * @param {string} text 待扫描文本

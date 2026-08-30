@@ -34,7 +34,7 @@ import { decisionUnits, enumerateUnits, knowledgeUnits, linkDuplicates } from '.
 import { normalizeHeading } from './headings.mjs';
 import {
   baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
-  scanLanguageRedline, scanLocalPaths, scanReadability,
+  scanImageForm, scanLanguageRedline, scanLocalPaths, scanMaterialList, scanReadability,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
@@ -416,6 +416,37 @@ function subsectionText(sectionText, name) {
   return hit ? body.join('\n') : null;
 }
 
+/**
+ * 某个 `###` 小节在**全篇**里的行区间（正文部分，0 起）。
+ *
+ * `subsectionText` 只给正文，报错就指不回原文行号；而材料清单那一节的形态判据
+ * 与仓内路径豁免都要按行说话。
+ *
+ * @returns {{start:number, end:number}|null}
+ */
+function subsectionSpan(storyText, chapterTitle, name) {
+  const lines = String(storyText ?? '').split(/\r?\n/);
+  const wantChapter = normalizeHeading(chapterTitle);
+  const wantSub = normalizeHeading(name);
+  let inChapter = false;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    const h2 = s.match(/^##\s+(.+)$/);
+    if (h2) {
+      if (start >= 0) return { start, end: i };
+      inChapter = normalizeHeading(h2[1]) === wantChapter;
+      continue;
+    }
+    const h3 = s.match(/^###\s+(.+)$/);
+    if (h3) {
+      if (start >= 0) return { start, end: i };
+      if (inChapter && normalizeHeading(h3[1]) === wantSub) start = i + 1;
+    }
+  }
+  return start >= 0 ? { start, end: lines.length } : null;
+}
+
 /** 一章里全部 `###` 小节的业务名（序号已剥）。 */
 function subsectionNames(sectionText) {
   const out = [];
@@ -572,6 +603,32 @@ function missingGlossaryTerms(specText, storyText, projectRoot) {
       || !baseLayers.some(id => (c[layerIdx] ?? '').includes(id)))
     .map(c => c[0])
     .filter(t => t && !storyText.includes(t));
+}
+
+/** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */
+function materialSubsectionName(contract) {
+  const appendix = appendixChapter(contract);
+  return (appendix?.subsections ?? []).find(n => n.includes('材料')) ?? null;
+}
+
+/**
+ * 把材料清单那一节里的 markdown 链接换成一个占位词，再交给仓内路径与悬空引用扫描。
+ *
+ * **原文链接是仓内路径唯一允许出现的位置**：归档件的读者打不开这个仓，但他要能
+ *据这一行把那份材料找出来——链接是「据哪几份材料写成」这件事唯一可核的形态。
+ * 豁免范围只到这一节的链接语法：同一行链接之外的文字照扫，别的章节照扫。
+ */
+function redactMaterialLinks(storyText, ctx) {
+  const appendix = appendixChapter(ctx.contract);
+  const name = materialSubsectionName(ctx.contract);
+  if (!appendix || !name) return storyText;
+  const span = subsectionSpan(storyText, appendix.title, name);
+  if (!span) return storyText;
+  const lines = String(storyText).split(/\r?\n/);
+  for (let i = span.start; i < span.end && i < lines.length; i++) {
+    lines[i] = lines[i].replace(/\[[^\]]*\]\([^)\s]*\)/g, '原文链接');
+  }
+  return lines.join('\n');
 }
 
 function cmdCheck(ctx) {
@@ -769,6 +826,40 @@ function cmdCheck(ctx) {
     if (!alt.trim()) problems.push(`图片 ${src} 没有 alt 文本`);
     if (seen.has(src)) problems.push(`图片 ${src} 在 story 里出现了不止一次`);
     seen.add(src);
+  }
+
+  // 图片引用的是**登记里那张图的既有落盘位置**，不是它的副本。
+  //
+  // 实测：模型把材料里抽出来的图复制第三份进归档目录、改个名再引用，其中两个名字
+  // 指向的是同一张图（内容一致），story 里当成两张不同的图各引一次，后一张没有任何
+  // 说明段。复制出来的副本谁也不会去维护，改名之后更没人看得出它就是原来那张。
+  // 判据只问两件事：引的这张在登记里吗、同一张图有没有被两个名字引用。
+  {
+    const registered = new Map();          // 登记的图片文件名 → 它在材料里的位置
+    for (const u of doc.units) {
+      if (u.kind !== 'image') continue;
+      const name = (u.tokens ?? [])[0];
+      if (name) registered.set(name, `${u.doc}:${u.line}`);
+    }
+    if (registered.size) {
+      const byName = new Map();            // 文件名 → story 里引到它的那些路径
+      for (const src of seen) {
+        const name = src.split(/[\\/]/).pop();
+        if (!registered.has(name)) {
+          problems.push(`story 引用的图片「${src}」不在材料的图片登记里`
+            + '——引它在仓里的既有落盘位置，不要复制一份到归档目录再改名；'
+            + '副本没人维护，改了名读者也认不出它就是原来那张');
+          continue;
+        }
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name).push(src);
+      }
+      for (const [name, srcs] of byName) {
+        if (srcs.length < 2) continue;
+        problems.push(`同一张图被两个路径引用：${srcs.join('、')}`
+          + `（登记在 ${registered.get(name)}）——同一张图只引一次，一处说清它画的是什么`);
+      }
+    }
   }
 
   /** 一章里有没有围栏图 / 图片 / 表——形态判据只问这三件事。 */
@@ -1046,13 +1137,19 @@ function cmdCheck(ctx) {
   // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
   // 「灰度」「回退」是业务事实不是客户端文案——收缩的是作用域，不是词表。
   const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
-  for (const [label, text] of [['story', storyText], ['review', reviewText]]) {
+  // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来，
+  // 不给链接他只知道「有一份产品需求文档」。豁免只到这一节的链接语法为止——
+  // 正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
+  const storyForPaths = redactMaterialLinks(storyText, ctx);
+  for (const [label, text] of [['story', storyForPaths], ['review', reviewText]]) {
     if (!text) continue;
     for (const [what, kind, hits] of [
       ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot)],
       ['客户端语境禁用词', 'banned', scanBannedTerms(text, { exemptChapters: bannedExempt })],
       ['悬空引用', 'dangling', scanDanglingRefs(text, ctx.projectRoot)],
-      ['图片断链', 'image', scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path)],
+      ['图片断链', 'image',
+        scanBrokenImages(label === 'story' ? storyText : text,
+                         path.dirname(ctx.storyPath), fs, path)],
     ]) {
       if (hits.length) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
     }
@@ -1202,6 +1299,48 @@ function cmdCheck(ctx) {
     if (min && present.size < min) {
       problems.push(`「${chapter.title}」只有 ${present.size} 个小节（至少 ${min} 个）`
         + `——${chapter.section_note ?? '这一章要分节，读者按节回找'}`);
+    }
+  }
+
+  // ⑫c 形态 lint：图的承接与图题、材料清单的行形态、正文小节的编号
+  //
+  // 三条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
+  // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、图题有没有编号、
+  // 材料能不能定位、小节编号成不成体系」。
+  for (const h of scanImageForm(storyText)) {
+    problems.push(`第 ${h.line} 行的图${h.kind === 'image_alt' ? '题「' + h.hit + '」' : ''}`
+      + `不合形态——${h.hint}`);
+  }
+  {
+    const appendix = appendixChapter(ctx.contract);
+    const name = materialSubsectionName(ctx.contract);
+    const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
+    if (span) {
+      const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
+      for (const h of scanMaterialList(body, span.start + 1)) {
+        problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
+      }
+    }
+  }
+  // 小节编号：`### <章号>.<序>`。章号取合同里这一章的位置——编号体系是给读者
+  // 引用与回找用的，序号与它所属的章对不上，「见 4.2」就指不到地方。附录的字母
+  // 序号由 ⑫ 那条管，不重复判。
+  {
+    const shape = ctx.contract.heading_shapes?.body_subsection;
+    if (shape) {
+      ctx.contract.chapters.forEach((chapter, idx) => {
+        if (chapter.appendix) return;
+        const body = sectionText.get(chapter.title);
+        if (body === undefined) return;
+        for (const sub of subsectionNames(body)) {
+          let re;
+          try { re = new RegExp(shape.replace('<n>', String(idx + 1))); } catch { return; }
+          if (!re.test(sub.raw)) {
+            problems.push(`「${chapter.title}」的小节「${sub.raw}」没带本章的编号`
+              + `——写成 \`### ${idx + 1}.<序> <业务名>\`，读者靠编号引用与回找`);
+          }
+        }
+      });
     }
   }
 

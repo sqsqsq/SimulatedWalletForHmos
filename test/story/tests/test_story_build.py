@@ -1095,5 +1095,94 @@ class TestChapterSections(StoryBuildCase):
         self.assertEqual(0, code, out)
 
 
+class TestFormLints(StoryBuildCase):
+    """三条形态 lint：图的承接与图题、材料清单的行形态、正文小节的编号。
+
+    三条此前都只写在模板注释里，实测两轮四份产物一条都没达成——三张图全部把说明
+    写在图后（读者先看见图再看见它是什么）、材料清单被写成表且没有一条能定位到原件、
+    小节编号一章一个样。有判据的形态则全部达成。形态要么接上判据，要么承认它是建议。
+    """
+
+    IMAGE = "![图 1 · 提交入口页面布局](entry.png)"
+
+    def put_features(self, body: str) -> None:
+        text = self.story()
+        head = "## 功能说明\n\n"
+        start = text.index(head) + len(head)
+        end = text.index("\n## ", start)
+        self.story_path.write_text(text[:start] + body + text[end:], encoding="utf-8")
+
+    def put_materials(self, body: str) -> None:
+        text = self.story()
+        head = "### E. 材料清单\n\n"
+        start = text.index(head) + len(head)
+        self.story_path.write_text(text[:start] + body, encoding="utf-8")
+
+    # ---- lint 1：图前承接 + 图题形态 ----
+
+    def test_an_image_right_after_a_heading_is_named(self) -> None:
+        self.put_features("### 6.1 提交与回执\n\n" + self.IMAGE + "\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("图前一句承接")
+
+    def test_an_image_with_a_lead_sentence_passes(self) -> None:
+        self.put_features("### 6.1 提交与回执\n\n图 1 是提交入口的位置：\n\n"
+                          + self.IMAGE + "\n")
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertNotIn("图前一句承接", out)
+        self.assertNotIn("图题", out)
+
+    def test_an_alt_without_a_number_is_named(self) -> None:
+        self.put_features("### 6.1 提交与回执\n\n下面是提交入口的位置：\n\n"
+                          "![提交入口页面布局](entry.png)\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("图题")
+
+    # ---- lint 2：材料清单的行形态 ----
+
+    def test_a_material_list_written_as_a_table_is_named(self) -> None:
+        self.put_materials("| 材料 | 贡献 |\n|---|---|\n| 甲需求 PRD | 状态取值 |\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("材料清单用列表不用表")
+
+    def test_a_material_row_without_a_link_is_named(self) -> None:
+        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("每份材料给一条原文链接")
+
+    def test_the_material_link_is_the_one_place_a_repo_path_may_appear(self) -> None:
+        """豁免只到这一节的链接语法：正文里的仓内路径照拦。"""
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)          # 夹具的材料清单本来就带链接
+
+        first = self.story().split("\n", 1)[0]
+        self.rewrite_story(first, first + "\n\n实现见 doc/features/AR90001/spec/spec.md。")
+        self.assert_check_names("仓内路径")
+
+    # ---- lint 3：正文小节编号 ----
+
+    def test_a_subsection_without_the_chapter_number_is_named(self) -> None:
+        self.put_features("### 提交与回执\n\n提交之后停在等待态，回执到达转为已回执。\n")
+        self.init_audit()
+        self.settle()
+        out = self.assert_check_names("没带本章的编号")
+        self.assertIn("6.", out, "报错要说清该写第几章的编号")
+
+    def test_a_subsection_numbered_for_another_chapter_is_named(self) -> None:
+        """编号是给读者引用与回找用的：`### 4.1` 出现在第六章，「见 4.1」就指错地方。"""
+        self.put_features("### 4.1 提交与回执\n\n提交之后停在等待态，回执到达转为已回执。\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("没带本章的编号")
+
+
 if __name__ == "__main__":
     unittest.main()

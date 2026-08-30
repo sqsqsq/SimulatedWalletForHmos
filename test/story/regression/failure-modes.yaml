@@ -996,3 +996,38 @@ modes:
     scope_note: >
       与 S08 同源，判的是「该分节的章分没分」。**不设「每章几节」的配额**——
       配额逼出来的是凑数的小标题，那比平铺更难读。空章豁免。
+
+  - id: S10-image-path-copied
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 图片被复制进归档目录并改名，story 按裸文件名引用——副本没人维护，改名后认不出是原来那张
+    clause: KG-3 / 坑 #34
+    checker: s10_image_path_copied
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S10-image-path-copied/bad
+    good_fixture: test/story/fixtures/failure-modes/S10-image-path-copied/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      模板历来只约定图题形态，从未约定引用路径口径，于是「抽图 → 复制 → 再复制并改名」
+      这条链一路无人拦。判据只问「引的这张在材料的图片登记里吗」，
+      不判它该放哪个目录——目录形态因工程而异。
+
+  - id: S11-image-two-names
+    dimension: dedup
+    found_round: "2026-08-30"
+    form: 同一张图被两个路径引用，story 当成两张不同的图各引一次，后一张没有说明段
+    clause: KG-3 / B2-9
+    checker: s11_image_two_names
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S11-image-two-names/bad
+    good_fixture: test/story/fixtures/failure-modes/S11-image-two-names/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    variant_of: S10-image-path-copied
+    scope_note: >
+      与 P10（同一路径引两次）互补：那条判的是同一个引用出现两次，
+      这条判的是**同一张登记图片被两个不同路径指到**。实测两个文件内容完全相同，
+      story 分别称它们为「管理页」与「管理页布局参考」。
