@@ -20,13 +20,51 @@ import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 
 /**
- * 单元类型是**封闭集合**，九种：`paragraph` / `list_item` / `table_row` / `image` /
+ * 单元类型是**封闭集合**，十种：`paragraph` / `list_item` / `table_row` / `image` /
  * `link` / `diagram`（mermaid、flowchart 围栏）/ `blockquote` / `code`（yaml、json 围栏）/
- * `knowledge`（激活清单里的规约条目——它不从材料切出来，token 是条目编号）。
+ * `knowledge`（激活清单里的规约条目——它不从材料切出来，token 是条目编号）/
+ * `decision`（决策登记里的一条——同样不从材料切出来）。
  *
  * 多一种就要同时给出它的 token 取法，不然就是漏判。这份清单以 `push()` 的调用点为准；
  * 曾经另有一个导出的常量重列一遍，零消费者——两份清单迟早对不上，删了。
  */
+
+/**
+ * 决策登记 → 来源单元。
+ *
+ * **为什么是独立通道而不是第七份材料**：决策件是流程里的活件——评审回填、遗漏补写，
+ * 它本来就会在流程中合法地变。上游材料的指纹门禁防的是「材料在枚举之后还在长而没人
+ * 重跑 init」，把活件塞进那条链，等于每改一条决策就撞一次 BLOCKER。规约条目早就是
+ * 这么处理的，同构即可。
+ *
+ * **为什么必须成为单元**：取舍理由在材料里本来就没有——它是起草时判出来的。不给它
+ * 落点义务，守恒链就永远不会要求它出现，于是产物里满篇结论、一条理由都没有
+ * （实测两份产物：一份只有一条取舍成形，另一份零条）。
+ *
+ * token 留空：取舍是纯中文叙述，机器定不了落点，由作者分配、由裁决者逐条裁。
+ * `status` 原样带出：已定的那些要在正文的取舍位置出现，开放议题不承担正文落点义务
+ * （它还没有结论，写进正文反而是把未定的事说成定了）。
+ *
+ * @param {{id, status, question, conclusion, proposal, rationale, impact}[]} decisions
+ */
+export function decisionUnits(decisions) {
+  return (decisions ?? []).filter(d => d && d.id).map(d => {
+    const impact = Array.isArray(d.impact) ? d.impact.join('、') : String(d.impact ?? '');
+    const body = [d.question, d.conclusion ?? d.proposal, d.rationale, impact]
+      .map(x => String(x ?? '').trim()).filter(Boolean).join(' ｜ ');
+    return {
+      key: `DECISION:${d.id}`,
+      doc: 'DECISIONS',
+      kind: 'decision',
+      section: String(d.source ?? ''),
+      line: 0,
+      text: body.slice(0, 400),
+      tokens: [],
+      machine_facing: false,
+      status: d.status === 'settled' ? 'settled' : 'open',
+    };
+  });
+}
 
 /**
  * 激活规约条目 → 来源单元。

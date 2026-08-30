@@ -30,7 +30,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
+import { decisionUnits, enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
 import { normalizeHeading } from './headings.mjs';
 import {
   baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
@@ -245,6 +245,17 @@ function cmdInit(ctx) {
   } catch (e) {
     fail(`激活知识派生失败：${e.message}——判定表无从核对，不能当作「没有规约」通过`);
   }
+
+  // 决策登记也是来源单元：取舍理由在材料里本来就没有，它是起草时判出来的。
+  // 不给它落点义务，守恒链永远不会要求它出现——实测两份产物一份一条取舍、一份零条。
+  const registered = readJson(ctx.decisionsPath, null);
+  const decisions = decisionUnits(registered?.decisions);
+  units.push(...decisions);
+  if (!decisions.length) {
+    process.stdout.write('[story-build init] 决策登记里一条都没有——'
+      + '取舍在 story 里就没有来源。是还没登记，还是这个需求真的一个判断都没做过？\n');
+  }
+
   linkDuplicates(units);
 
   writeJson(ctx.unitsPath, {
@@ -257,8 +268,7 @@ function cmdInit(ctx) {
     units,
   });
 
-  const decisions = readJson(ctx.decisionsPath, null);
-  if (!decisions) {
+  if (!registered) {
     writeJson(ctx.decisionsPath, {
       scanned_categories: Object.fromEntries(
         SCANNED_CATEGORIES.map(c => [c, { entries: [], none_reason: '' }])),
@@ -473,6 +483,9 @@ function cmdAudit(ctx) {
       records.push({ key: u.key, machine_facing: true });
       continue;
     }
+    // 开放议题不进落点账：它还没有结论，正文里写它等于把未定的事说成定了。
+    // 它在 review.md 里逐条摆给评审人——那才是它的去处。
+    if (u.kind === 'decision' && u.status === 'open') continue;
     const old = prevByKey.get(u.key);
     // 作者填的 covered_by 保留——它是作者的判断，机器只核不重算
     if (old?.covered_by) {
@@ -654,6 +667,7 @@ function cmdCheck(ctx) {
   for (const u of doc.units) {
     if (u.machine_facing) continue;
     if (u.kind === 'knowledge') continue;   // 规约条目走 ⑦ 判定表，不走章节落点
+    if (u.kind === 'decision' && u.status === 'open') continue;   // 开放议题走评审记录
     const rec = recByKey.get(u.key);
     const states = ['at', 'covered_by', 'machine_facing'].filter(k => rec?.[k]);
     if (states.length === 0) { stateless.push(u); continue; }

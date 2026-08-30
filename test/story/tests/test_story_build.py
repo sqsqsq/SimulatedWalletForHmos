@@ -853,5 +853,90 @@ class TestRedlineScope(StoryBuildCase):
         self.assertEqual(0, self.check_output()[0])
 
 
+class TestDecisionUnits(StoryBuildCase):
+    """决策登记走独立派生通道：取舍理由在材料里没有，它是起草时判出来的。"""
+
+    DECISIONS = {
+        "decisions": [
+            {"id": "DEC-001", "status": "settled",
+             "question": "挂失结果以哪一侧为准",
+             "conclusion": "以卡片服务的回执为准",
+             "rationale": "本端只有请求态，判不了卡是否真的停用",
+             "impact": ["业务方案"], "source": "上游已定", "decider": "需求负责人"},
+            {"id": "DEC-002", "status": "settled",
+             "question": "同一张卡重复提交怎么处理",
+             "conclusion": "同卡同状态的重复提交按一次算",
+             "rationale": "重复提交只会让用户以为办了两次",
+             "impact": ["业务方案"], "source": "AI 设定（无上游依据）", "decider": "需求负责人"},
+            {"id": "DEC-003", "status": "open",
+             "question": "线下渠道的入口要不要一起收",
+             "proposal": "本单先不收，等渠道方给出时间表",
+             "rationale": "渠道方尚未答复",
+             "impact": ["范围"], "source": "上游已定", "decider": "产品负责人"},
+        ],
+    }
+
+    def write_decisions(self, decisions=None) -> None:
+        """只换 decisions 这一段——分类扫描的登记是另一条判据，夹具原样保留。"""
+        path = self.src / "decisions.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["decisions"] = decisions if decisions is not None else self.DECISIONS["decisions"]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def test_each_decision_becomes_one_unit(self) -> None:
+        self.write_decisions()
+        self.assertEqual(0, self.run_build("init").returncode)
+        units = [u for u in self.units if u["kind"] == "decision"]
+        self.assertEqual(3, len(units), "三条决策该切出三个单元")
+        settled = next(u for u in units if u["key"] == "DECISION:DEC-001")
+        self.assertIn("以卡片服务的回执为准", settled["text"])
+        self.assertIn("本端只有请求态", settled["text"], "理由要进正文——它正是取舍的那一半")
+        self.assertEqual([], settled["tokens"], "取舍是纯中文叙述，机器不判落点")
+
+    def test_open_issues_carry_no_landing_duty(self) -> None:
+        """开放议题还没有结论——正文里写它，等于把未定的事说成定了。"""
+        self.write_decisions()
+        self.init_audit()
+        keys = {r["key"] for r in self.audit["records"]}
+        self.assertIn("DECISION:DEC-001", keys)
+        self.assertNotIn("DECISION:DEC-003", keys)
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+
+    def test_a_settled_decision_without_a_landing_is_named(self) -> None:
+        self.write_decisions()
+        self.init_audit()
+        self.settle()
+        data = self.audit
+        for record in data["records"]:
+            if record["key"] == "DECISION:DEC-002":
+                record.pop("at", None)
+                record.pop("by", None)
+        self.write_audit(data)
+        out = self.assert_check_names("三态皆空")
+        self.assertIn("DECISION:DEC-002", out)
+
+    def test_an_empty_register_speaks_up(self) -> None:
+        """一条决策都没登记时要出声——不能当作「这个需求没做过任何判断」静默通过。"""
+        self.write_decisions([])
+        proc = self.run_build("init")
+        self.assertEqual(0, proc.returncode)
+        self.assertIn("决策登记里一条都没有", proc.stdout)
+
+    def test_editing_a_decision_never_trips_the_material_drift_gate(self) -> None:
+        """决策件是流程里的活件：评审回填、遗漏补写都是既定动作，不该撞指纹门禁。"""
+        self.write_decisions()
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+        self.write_decisions(self.DECISIONS["decisions"] + [
+            {"id": "DEC-004", "status": "open", "question": "回执超时的等待时长",
+             "proposal": "先按现网默认值", "rationale": "待渠道方给数",
+             "impact": ["异常与恢复"], "source": "AI 设定（无上游依据）", "decider": "需求负责人"}])
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+        self.assertNotIn("材料在枚举之后变了", out)
+
+
 if __name__ == "__main__":
     unittest.main()
