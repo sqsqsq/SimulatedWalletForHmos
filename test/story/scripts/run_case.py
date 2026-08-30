@@ -734,10 +734,18 @@ def build_cli_env(out_dir: Path) -> dict[str, str]:
     其他 CLI 不受影响。
     """
     env = {str(k): str(v) for k, v in (CFG.get("cli", {}).get("env", {}) or {}).items()}
+    # 宿主的临时目录按轮隔离：实测被测模型在共享的 %TEMP%/opencode 里翻到了
+    # 历史轮次的会话数据（story-ar90006-docx、handoff-story），还据此推断流程走法。
+    # TMP/TEMP 指向本轮审计目录下的私有 tmp，历史数据物理隔离；对所有 CLI 生效。
+    private_tmp = out_dir / "cli-tmp"
+    private_tmp.mkdir(parents=True, exist_ok=True)
+    env["TMP"] = env["TEMP"] = str(private_tmp)
     if str(CFG.get("cli", {}).get("name", "")) != "opencode":
         return env
     env["XDG_CONFIG_HOME"] = str(out_dir / "opencode-xdg-config")
     env["XDG_DATA_HOME"] = str(out_dir / "opencode-xdg-data")
+    env["XDG_CACHE_HOME"] = str(out_dir / "opencode-xdg-cache")
+    env["XDG_STATE_HOME"] = str(out_dir / "opencode-xdg-state")
     configured = os.environ.get("OPENCODE_CONFIG")
     provider_config = Path(configured) if configured else Path.home() / ".config" / "opencode" / "opencode.jsonc"
     # 不在 harness 进程预读用户配置（既会越权也会暴露内容）；仅把路径交给 OpenCode 子进程。

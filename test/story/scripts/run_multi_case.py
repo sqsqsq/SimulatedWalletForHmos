@@ -223,21 +223,24 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     return template, workspace_root
 
 
-#: 需求系统快照的存放处：各 Case workspace 的**同级**目录，不在任何 workspace 之内。
+#: 需求系统快照的存放处：**suite 树之外**的独立目录。
 #:
-#: 真实环境里需求系统在远端，被测模型只能经对接层访问它。放进 workspace 根下，
-#: 模型一个 `ls` 就看见了——实测它确实去看了（那一轮仍规矩走了对接层，但这条路存在，
-#: 下一轮就可能被绕过，「系统按单号拉取」这条链就测不到了）。
-#: 位置只由环境变量告知对接层，被测侧的目录树里不留任何痕迹。
-REQUIREMENT_SYSTEM_ROOT = ".systems"
+#: 真实环境里需求系统在远端，被测模型只能经对接层访问它。两次实测各暴露一层：
+#: 放 workspace 根下，模型一个 `ls` 就看见；挪到 workspace 同级（suite 根下 `.systems/`），
+#: 模型 `find ..` 一步又列到了全部单据。suite 树内没有藏身处——被测模型的 cwd 在
+#: suite 树里，父链枚举是它的自然动作。所以快照放 `%TEMP%/sw-sys/<suite>/<case>`：
+#: 与 `sw-story` 平级，从 workspace 沿父链一步、两步都碰不到；位置只由环境变量告知对接层。
+REQUIREMENT_SYSTEM_SIBLING = "sw-sys"
 REQUIREMENT_SYSTEM_ENV = "STORY_REQUIREMENT_SYSTEM_DIR"
-#: 曾经的落点（workspace 根下）。只用于边界检查——防的是哪天有人又把它挪回去。
+#: 历史落点。只用于边界检查——防的是哪天有人又把它挪回去。
 LEGACY_REQUIREMENT_SYSTEM_DIR = ".requirement-system"
+LEGACY_REQUIREMENT_SYSTEM_SIBLING = ".systems"
 
 
 def requirement_system_path(workspace_root: Path, case_id: str) -> Path:
-    """该 Case 的需求系统在哪。与它的 workspace 平级，不在其内。"""
-    return Path(workspace_root).resolve() / REQUIREMENT_SYSTEM_ROOT / case_id
+    """该 Case 的需求系统在哪。在 suite 树之外，与 sw-story 根平级。"""
+    root = Path(workspace_root).resolve()
+    return root.parent.parent / REQUIREMENT_SYSTEM_SIBLING / root.name / case_id
 
 
 def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str, Any]]:
@@ -250,6 +253,8 @@ def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str
     if not source.is_dir():
         return []
     destination = requirement_system_path(workspace_root, case_id)
+    if destination.resolve().is_relative_to(Path(workspace_root).resolve()):
+        raise SystemExit(f"[multi] 需求系统快照落进了 suite 树内: {destination}")
     seeded: list[dict[str, Any]] = []
     for path in sorted(source.rglob("*")):
         if path.is_symlink():
@@ -262,7 +267,7 @@ def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str
         shutil.copy2(path, target)
         seeded.append({
             "source": f"{case_id}/system/{relative.as_posix()}",
-            "target": f"{REQUIREMENT_SYSTEM_ROOT}/{case_id}/{relative.as_posix()}",
+            "target": f"{REQUIREMENT_SYSTEM_SIBLING}/{case_id}/{relative.as_posix()}",
             "size": path.stat().st_size,
         })
     return seeded
@@ -971,6 +976,7 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
     """Delete owned historical workspace/output pairs before feature migration."""
     output_root = OUT_ROOT.resolve()
     workspace_parent = (Path(tempfile.gettempdir()) / "sw-story").resolve()
+    system_parent = (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING).resolve()
     new_bundle_root = new_bundle_root.resolve()
     inventory_ok, processes, inventory_error = _process_inventory()
     names: set[str] = set()
@@ -979,6 +985,9 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                      if path.is_dir() and path.resolve() != new_bundle_root)
     if workspace_parent.is_dir():
         names.update(path.name for path in workspace_parent.iterdir() if path.is_dir())
+    # 需求系统快照在 suite 树之外（sw-sys/<suite>），孤儿残留也要按 suite 名收进来
+    if system_parent.is_dir():
+        names.update(path.name for path in system_parent.iterdir() if path.is_dir())
     report: dict[str, Any] = {
         "schema_version": 1, "new_suite_id": new_suite_id,
         "output_root": str(output_root), "workspace_root": str(workspace_parent),
@@ -1085,6 +1094,12 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                 target["deletion_attempts"].append(
                     {"path": output_text, "attempts": attempts})
                 removed.append(output_text)
+            system_path = system_parent / str(target["suite_id"])
+            if system_path.is_dir():
+                attempts = _remove_tree_with_recovery(system_path)
+                target["deletion_attempts"].append(
+                    {"path": str(system_path), "attempts": attempts})
+                removed.append(str(system_path))
             target["status"] = "deleted"
             target["removed"] = removed
         except OSError as exc:
