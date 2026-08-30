@@ -348,6 +348,22 @@ const READABILITY_HINTS = {
   duplicate_paragraph: '同一段话出现两次：留在它主要回答读者问题的那一章，另一处删掉或改写成承接',
 };
 
+/**
+ * 一段话贡献的比对键：整段一个，段内每句各一个。
+ *
+ * 只比整段会漏掉最常见的那一种——三行长段的末句，被另起一段又整句说了一遍。
+ * 两边的「段」不同，句子却逐字相同，而读者看到的就是同一句话说了两遍。
+ */
+function duplicateKeys(raw) {
+  const whole = normalizeParagraph(String(raw ?? ''));
+  const keys = new Set(whole ? [whole] : []);
+  for (const sentence of String(raw ?? '').split(/(?<=[。！？])/)) {
+    const key = normalizeParagraph(sentence);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 /** 段落规范化：去掉空白、标点与强调标记后比对，才认得出「改了个标点的同一段」。 */
 function normalizeParagraph(text) {
   return text.replace(/[\s*`_>|-]/g, '').replace(/[，。；：、,.;:!?！？（）()「」“”"']/g, '');
@@ -400,10 +416,13 @@ export function scanReadability(text, conf = {}) {
       if (maxPara && para.chars > maxPara) {
         push(para.line, 'long_paragraph', `${para.chars} 字（上限 ${maxPara}）`);
       }
-      const key = normalizeParagraph(para.raw);
-      if (minDuplicate && key.length >= minDuplicate) {
+      // 整段与**逐句**都比：实测的重复形态是「一段的末句被另起一段整句重说」，
+      // 只比整段的话两边一个是三行长段、一个是独立短段，永远对不上。
+      // 比的是规范化后的逐字相等，不是相似度——同一句话说两遍，删掉一处永远是对的。
+      for (const key of duplicateKeys(para.raw)) {
+        if (!minDuplicate || key.length < minDuplicate) continue;
         if (paragraphs.has(key)) {
-          push(para.line, 'duplicate_paragraph', `与第 ${paragraphs.get(key)} 行是同一段`);
+          push(para.line, 'duplicate_paragraph', `与第 ${paragraphs.get(key)} 行重复`);
         } else {
           paragraphs.set(key, para.line);
         }

@@ -938,5 +938,36 @@ class TestDecisionUnits(StoryBuildCase):
         self.assertNotIn("材料在枚举之后变了", out)
 
 
+class TestDuplicateAcrossParagraphs(StoryBuildCase):
+    """重复判的是逐字相等，粒度到句——最常见的那一种跨在两段之间。"""
+
+    SENTENCE = "上一轮办到哪一步由服务端的受理记录决定，本端不自己记账。"
+
+    def _append_to_chapter(self, extra: str) -> None:
+        bodies = _chapter_bodies(self.story_path)
+        title = next(t for t, b in bodies.items()
+                     if t != _appendix_title() and not _is_empty_chapter(b))
+        anchor = bodies[title].split("\n")[0]
+        self.rewrite_story(anchor, anchor + extra)
+
+    def test_a_sentence_repeated_in_another_paragraph_is_named(self) -> None:
+        """长段的末句被另起一段整句重说：两边的「段」不同，句子逐字相同。"""
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0])
+        self._append_to_chapter(
+            "\n\n用户回到页面时看到的是上一轮的进度。" + self.SENTENCE
+            + "\n\n" + self.SENTENCE)
+        out = self.assert_check_names("重复")
+        self.assertIn("行重复", out, "报错要指回第一次出现的行")
+
+    def test_saying_it_once_passes(self) -> None:
+        self.init_audit()
+        self.settle()
+        self._append_to_chapter(
+            "\n\n用户回到页面时看到的是上一轮的进度。" + self.SENTENCE)
+        self.assertEqual(0, self.check_output()[0])
+
+
 if __name__ == "__main__":
     unittest.main()
