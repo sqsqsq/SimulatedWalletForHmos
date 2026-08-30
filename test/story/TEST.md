@@ -181,6 +181,41 @@ python test/story/scripts/run_multi_case.py reply --suite-id story-suite-2026082
 `supplements/`）：文件先落进收件箱，那句话才排进队列。反过来，模型会照着
 「我放进去了」这句话去看一个还不存在的目录。
 
+### 3.1 用脚本代跑 heartbeat 时：`reply_then_poll` 必须把宿主叫醒
+
+上一条纪律（当轮回完）只在**人或模型亲自看每一次 poll 返回**时成立。实际操作里宿主常把
+heartbeat 交给一个后台轮询脚本代跑——那个脚本若只做「poll、按 `next_interval_sec` 睡、再 poll」，
+`reply_then_poll` 就没有任何出口：驱动器一直等，日志一直刷，没有人被通知。
+实测一轮：两个 Case 分别空等 **45 分钟**与 **33 分钟**，其间轮询正常、状态正常、
+`last_error` 为空——**没有任何异常信号**，只有 `next_action` 那一行在反复说「该回话了」。
+
+所以代跑脚本必须满足两条，缺一条这段等待就会重演：
+
+1. **`next_action == "reply_then_poll"` 时立刻退出**（或以其它方式唤醒宿主），不要自己续睡；
+2. 退出前把「因为要回话而停」写进日志——事后看得出是**等宿主**，不是脚本自己挂了。
+
+脚本只负责按间隔敲门与在该叫人时叫人；**判断一律留在驱动器里**，多想一步就会与它分叉。
+
+### 3.2 模型的原话取不到时去哪儿读
+
+`adaptive_reply_requests[].question` 是首选，但它可能是空串（`status` 子命令甚至返回 `null`）。
+此时**不要凭 `case_inputs_hint` 猜模型在问什么**，按下面顺序取原话：
+
+| 读什么 | 给你什么 |
+|---|---|
+| `output/story/<suite>/cases/<case>/observations.jsonl` 末条 | 这次停等的 `kind` / `turn` / `reason` |
+| 该 Case run 目录下 `events.jsonl` 尾部的 `type: text` 事件 | **模型说的最后一段话**——它问的问题就在这里 |
+
+读的是模型对需求方说的话，不是它的产物——观测边界（§0.1）不变：产物内容仍然不读。
+
+### 3.3 `expected_phase` 漂移的处置：换回法，不换话术
+
+模型少停一关或多停一关，脚本后面的话就会与阶段对不上，落成
+`interaction_phase_mismatch`。处置是**用那一关本该说的那句话以 adaptive 方式回**
+（话术是需求方的话，不因阶段变而变），跑完再把脚本里的 `expected_turn` / `expected_phase`
+按实跑顺序校准回来。**不要为了让脚本对上而改话术**——话术一改，这个 Case 观测的就不是同一件事了。
+本轮两个 Case 都漂了一关：一个的术语确认排在 story 之后才轮到，另一个的第二份材料模型自始至终没开口要。
+
 ## 4. 15/120 秒 heartbeat
 
 - 未全部稳定进入 Spec 前，同一个 heartbeat 每 15 秒唤醒，执行一次
@@ -197,7 +232,7 @@ python test/story/scripts/run_multi_case.py reply --suite-id story-suite-2026082
 任一条件不满足立即清零。已进入 Spec 后终止的 Case 保留资格；未进入 Spec 就失败的 Case 不能触发
 120 秒。120 秒期间出现等待回复、阶段回退或状态异常时，把同一个 heartbeat 改回 15 秒；重新连续
 确认两轮后再改为 120 秒。poll 返回 `reply_then_poll` 时，主模型在本次唤醒中发送自适应回复并立即
-再次零等待 poll。返回 `finalize` 时执行回灌、输出逐 Case 汇总并暂停 heartbeat，不调用 `stop`。
+再次零等待 poll（heartbeat 由脚本代跑时见 §3.1——脚本必须在这一步把宿主叫醒，否则这句话落空）。返回 `finalize` 时执行回灌、输出逐 Case 汇总并暂停 heartbeat，不调用 `stop`。
 
 heartbeat 提示词必须包含当前 suite-id，并要求：每次只执行一次 `poll --wait-sec 0`；处理自适应回复后
 立即再 poll；按 `next_interval_sec` 更新当前 heartbeat；每轮展示简短完整快照；命令失败时诊断并重试
