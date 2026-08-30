@@ -45,18 +45,17 @@ import * as path from 'node:path';
  * `status` 原样带出：已定的那些要在正文的取舍位置出现，开放议题不承担正文落点义务
  * （它还没有结论，写进正文反而是把未定的事说成定了）。
  *
- * @param {{id, status, question, conclusion, proposal, rationale, impact}[]} decisions
+ * @param {{id, status, title, clarification, decider}[]} decisions
  */
 export function decisionUnits(decisions) {
   return (decisions ?? []).filter(d => d && d.id).map(d => {
-    const impact = Array.isArray(d.impact) ? d.impact.join('、') : String(d.impact ?? '');
-    const body = [d.question, d.conclusion ?? d.proposal, d.rationale, impact]
+    const body = [d.title, d.clarification]
       .map(x => String(x ?? '').trim()).filter(Boolean).join(' ｜ ');
     return {
       key: `DECISION:${d.id}`,
       doc: 'DECISIONS',
       kind: 'decision',
-      section: String(d.source ?? ''),
+      section: String(d.decider ?? ''),
       line: 0,
       text: body.slice(0, 400),
       tokens: [],

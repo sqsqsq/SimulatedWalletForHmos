@@ -38,7 +38,7 @@ import {
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
-  escapeCell, extractFreeformZone, extractHumanZone, findBlockRange,
+  extractFreeformZone, extractHumanZone, renderDocHeader,
   renderFreeformSection, renderHumanZone, renderMachineZone,
 } from './review-render.mjs';
 
@@ -65,11 +65,6 @@ const REVIEW_BANNED_LINES = [
   { name: '确认依据', re: /^[-*]?\s*\**确认依据\**\s*[:：]/ },
   { name: '状态行', re: /^[-*]?\s*\**状态\**\s*[:：]/ },
   { name: '下一步', re: /^#{1,6}?\s*\**\s*下一步\**\s*[:：]?\s*$/ },
-];
-
-/** 决策件必须扫过的六类议题——少扫一类不是「没有」，是「没想这件事」。 */
-const SCANNED_CATEGORIES = [
-  '需求与范围', '交互与界面', '技术方案与依赖', '约束规约命中项', '异常与风险', '上线与协同',
 ];
 
 function fail(msg) {
@@ -268,13 +263,11 @@ function cmdInit(ctx) {
     units,
   });
 
-  if (!registered) {
-    writeJson(ctx.decisionsPath, {
-      scanned_categories: Object.fromEntries(
-        SCANNED_CATEGORIES.map(c => [c, { entries: [], none_reason: '' }])),
-      decisions: [],
-    });
-  }
+  // 骨架只有一个空数组：曾经这里还预置六类议题的空槽，判据只核「零条目时写了没写
+  // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过，而同一批
+  // 工程决策在别的轮次实打实登记了十条。词表作为「找议题时想一圈的方向」留在作业书里，
+  // 骨架义务删掉：方向提示是给人的，空槽是给机器数的。
+  if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
 
   const noToken = units.filter(u => !u.machine_facing && u.tokens.length === 0).length;
   process.stdout.write(
@@ -836,18 +829,28 @@ function cmdCheck(ctx) {
     problems.push(`材料里有 ${sourceForm.image} 张图片，story 里只引用了 ${imgs.length} 张`);
   }
 
-  // ⑤ 决策件六类都扫过（离线模式没有需求目录，这一项不判）
+  // ⑤ 决策登记的字段齐备（离线模式没有需求目录，这一项不判）
+  //
+  // **只判形式，不判数量、不判叙述**。数量下限会催生凑数议题——凑数比零议题更坏，
+  // 它把评审人的注意力摊薄在假议题上；叙述质量的判据会催生套话，模型总能写出
+  // 一段过得去而什么也没说的话。数量塌陷与叙述质量由评审记录的效果定义、
+  // verifier 的逐问、以及评审人自己接。这里只核「渲染得出来」：
+  // 标题、澄清正文、请谁确认，缺一条渲出来就是半个议题。
   const decisions = ctx.offline ? null : readJson(ctx.decisionsPath, null);
   if (ctx.offline) { /* 仲裁锚只判文档本身 */ }
   else if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
   else {
-    const scanned = decisions.scanned_categories ?? {};
-    for (const cat of SCANNED_CATEGORIES) {
-      const c = scanned[cat];
-      if (!c) { problems.push(`决策件没扫「${cat}」这一类——少扫一类不是「没有」，是「没想这件事」`); continue; }
-      const n = Array.isArray(c.entries) ? c.entries.length : 0;
-      if (n === 0 && !String(c.none_reason ?? '').trim()) {
-        problems.push(`决策件「${cat}」零条目又没写 none_reason——空着分不清「判过了没有」与「压根没想」`);
+    const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
+    for (const dec of list) {
+      for (const [field, what] of [
+        ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
+        ['clarification', '带小标题分段的澄清正文'],
+        ['decider', '请谁确认'],
+      ]) {
+        if (!String(dec?.[field] ?? '').trim()) {
+          problems.push(`决策 ${dec?.id ?? '（无编号）'} 缺${what}——`
+            + '这一条渲染出来会是半个议题，评审人看不出要他表什么态');
+        }
       }
     }
   }
@@ -1171,12 +1174,12 @@ function cmdCheck(ctx) {
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
   // 而它们的实际后果是评审人先读一遍字段表，再在答不上来的格子里胡填。
-  // **只判机器渲染的那部分**：评审人自己写的内容（修改意见、暂缓原因、计划外意见）不计。
+  // **只判机器渲染的那部分**：评审人自己写在「审核结果：」后面的内容不计。
   if (reviewText) {
     const banned = REVIEW_BANNED_LINES.filter(
       ({ re }) => reviewText.split(/\r?\n/).some(l => re.test(l.trim())));
     for (const { name } of banned) {
-      problems.push(`评审记录里出现「${name}」——评审人要填的只有三态勾选与一行说明；`
+      problems.push(`评审记录里出现「${name}」——评审人要填的只有「审核结果：」后面那几句话；`
         + '填写说明、签署字段、状态行都被裁掉过，它们只会让人在答不上来的格子里胡填');
     }
   }
@@ -1201,16 +1204,16 @@ function cmdBuild(ctx) {
   const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
   const old = readText(ctx.reviewPath) ?? '';
 
-  const blocks = list.map(dec => {
+  // 序号按渲染顺序生成，不进登记表：登记表里存序号，插一条就要手工重排后面全部。
+  const blocks = list.map((dec, i) => {
     const human = extractHumanZone(old, dec.id) ?? renderHumanZone(dec);
-    return `${renderMachineZone(dec)}\n${human}\n`;
+    return `${renderMachineZone(dec, i + 1)}\n${human}\n`;
   });
   const freeform = renderFreeformSection(extractFreeformZone(old));
 
   const out = [
-    '# 评审记录',
-    '',
-    ...(blocks.length ? blocks : ['（本轮没有登记开放议题。）\n']),
+    renderDocHeader(),
+    ...(blocks.length ? blocks : ['本轮没有登记任何评审项。\n']),
     freeform,
   ].join('\n');
 

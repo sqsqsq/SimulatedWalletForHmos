@@ -696,22 +696,17 @@ class TestErrorWordingPointsAtForm(StoryBuildCase):
         self.assertNotIn("但那一章里找不到", source)
 
 
-REVIEW_HUMAN_ZONE = """#### 审核结果（由评审人填写）
-
-- [ ] **同意当前建议**
-- [ ] **有其他意见，需要修改**
-  - 修改意见：
-- [ ] **暂缓**
-  - 暂缓原因：
-"""
+REVIEW_HUMAN_ZONE = "审核结果：\n"
 
 
 class TestReviewForm(StoryBuildCase):
-    """评审表单只剩三态勾选与一行说明——需要说明书就是设计错了。
+    """评审人要填的只剩「审核结果：」一行——需要说明书就是设计错了。
 
     曾经这里还有暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、
     确认依据七个字段。评审人打开它先要读一遍字段表，而其中六格他答不上来
     （责任人和期限是排期的事，确认依据是审计的事）。答不上来的格子只会被跳过或胡填。
+    三态勾选是同一个问题的轻量版：勾「需要修改」而不写改成什么，那一勾传不出任何信息；
+    既然要写字，框就是多余的。
     """
 
     review_path = property(
@@ -719,40 +714,43 @@ class TestReviewForm(StoryBuildCase):
 
     def write_decision(self) -> None:
         (self.src / "decisions.json").write_text(json.dumps({
-            "scanned_categories": {},
             "decisions": [{
-                "id": "submit-boundary", "question": "提交入口的责任边界",
-                "proposal": "本单只做提交与回执展示", "rationale": "补卡另有开发单承接",
-                "impact": ["需求范围"], "source": "上游产品文档", "decider": "需求负责人",
+                "id": "submit-boundary", "status": "settled",
+                "title": "提交入口与补卡由两张开发单分别承接",
+                "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。\n\n"
+                                 "**根据**：上游已经拆成两张开发单。\n\n"
+                                 "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
+                "decider": "需求负责人",
             }],
         }, ensure_ascii=False), encoding="utf-8")
 
-    def test_rendered_form_is_exactly_three_states(self) -> None:
+    def test_the_human_zone_is_one_line(self) -> None:
         self.write_decision()
         self.assertEqual(0, self.run_build("build").returncode)
         text = self.review_path.read_text(encoding="utf-8")
         self.assertIn(REVIEW_HUMAN_ZONE, text)
         for gone in ("暂缓责任人", "完成期限", "是否阻塞执行", "后续动作",
-                     "确认人", "确认日期", "确认依据", "**状态**"):
+                     "确认人", "确认日期", "确认依据", "**状态**",
+                     "- [ ]", "同意当前建议", "暂缓原因"):
             self.assertNotIn(gone, text, f"「{gone}」不该再出现在评审记录里")
 
     def test_filled_human_zone_survives_a_rerender(self) -> None:
         """人填过的内容一个字节都不能动——重算它等于把做完的决定推回去一次。
 
-        连**旧形态**的人工区也要保住：字段是被裁掉了，人当时写在里面的话不是。
+        连**旧形态**留下的字也要保住：字段是被裁掉了，人当时写在里面的话不是。
         """
         self.write_decision()
         self.assertEqual(0, self.run_build("build").returncode)
         text = self.review_path.read_text(encoding="utf-8")
-        filled = text.replace("- [ ] **有其他意见，需要修改**\n  - 修改意见：",
-                              "- [x] **有其他意见，需要修改**\n  - 修改意见：范围要含补卡入口")
-        filled = filled.replace("<!-- decision: submit-boundary -->",
-                                "**确认人**：某评审人\n\n<!-- decision: submit-boundary -->")
+        anchor = "<!-- decision: submit-boundary -->"
+        filled = text.replace(
+            "审核结果：\n\n" + anchor,
+            "审核结果：范围要含补卡入口。\n\n**确认人**：某评审人\n\n" + anchor)
         self.review_path.write_text(filled, encoding="utf-8")
 
         self.assertEqual(0, self.run_build("build").returncode)
         again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("修改意见：范围要含补卡入口", again)
+        self.assertIn("审核结果：范围要含补卡入口。", again)
         self.assertIn("**确认人**：某评审人", again, "旧形态里人写过的字也要保住")
 
     def test_legacy_fields_in_the_review_are_named(self) -> None:
@@ -760,8 +758,8 @@ class TestReviewForm(StoryBuildCase):
         self.init_audit()
         self.settle()
         self.review_path.write_text(
-            "# 评审记录\n\n### 提交入口的责任边界\n\n"
-            "#### 审核结果（由评审人填写）\n\n- [ ] **同意当前建议**\n\n"
+            "# 评审记录\n\n### 1. 提交入口与补卡由两张开发单分别承接\n\n"
+            "审核结果：\n\n"
             "<!-- decision: submit-boundary -->\n\n"
             "**确认日期**：\n\n**状态**：草稿（待开发确认）\n",
             encoding="utf-8")
@@ -859,25 +857,28 @@ class TestDecisionUnits(StoryBuildCase):
     DECISIONS = {
         "decisions": [
             {"id": "DEC-001", "status": "settled",
-             "question": "挂失结果以哪一侧为准",
-             "conclusion": "以卡片服务的回执为准",
-             "rationale": "本端只有请求态，判不了卡是否真的停用",
-             "impact": ["业务方案"], "source": "上游已定", "decider": "需求负责人"},
+             "title": "挂失结果以卡片服务的回执为准",
+             "clarification": "**要定的事**：挂失办没办成，以哪一侧的说法为准。\n\n"
+                              "**根据**：本端只有请求态，判不了卡是否真的停用。\n\n"
+                              "**结论与影响**：以卡片服务的回执为准，页面照回执显示。",
+             "decider": "需求负责人"},
             {"id": "DEC-002", "status": "settled",
-             "question": "同一张卡重复提交怎么处理",
-             "conclusion": "同卡同状态的重复提交按一次算",
-             "rationale": "重复提交只会让用户以为办了两次",
-             "impact": ["业务方案"], "source": "AI 设定（无上游依据）", "decider": "需求负责人"},
+             "title": "同卡同状态的重复提交按一次算",
+             "clarification": "**要定的事**：同一张卡短时间内重复提交怎么处理。\n\n"
+                              "**根据**：重复提交只会让用户以为办了两次。\n\n"
+                              "**结论与影响**：按一次算，第二次直接回到等待态。",
+             "decider": "需求负责人"},
             {"id": "DEC-003", "status": "open",
-             "question": "线下渠道的入口要不要一起收",
-             "proposal": "本单先不收，等渠道方给出时间表",
-             "rationale": "渠道方尚未答复",
-             "impact": ["范围"], "source": "上游已定", "decider": "产品负责人"},
+             "title": "线下渠道的入口这轮收不收",
+             "clarification": "**要定的事**：线下渠道的入口要不要一起收进本单。\n\n"
+                              "**可选的做法**：1. 本单先不收，等渠道方给时间表；"
+                              "2. 一起收，范围扩到渠道侧。\n\n"
+                              "**建议**：按第 1 种做。",
+             "decider": "产品负责人"},
         ],
     }
 
     def write_decisions(self, decisions=None) -> None:
-        """只换 decisions 这一段——分类扫描的登记是另一条判据，夹具原样保留。"""
         path = self.src / "decisions.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["decisions"] = decisions if decisions is not None else self.DECISIONS["decisions"]
@@ -930,9 +931,11 @@ class TestDecisionUnits(StoryBuildCase):
         self.settle()
         self.assertEqual(0, self.check_output()[0])
         self.write_decisions(self.DECISIONS["decisions"] + [
-            {"id": "DEC-004", "status": "open", "question": "回执超时的等待时长",
-             "proposal": "先按现网默认值", "rationale": "待渠道方给数",
-             "impact": ["异常与恢复"], "source": "AI 设定（无上游依据）", "decider": "需求负责人"}])
+            {"id": "DEC-004", "status": "open", "title": "回执超时的等待时长",
+             "clarification": "**要定的事**：回执迟迟不到时等多久。\n\n"
+                              "**可选的做法**：1. 先按现网默认值；2. 等渠道方给数。\n\n"
+                              "**建议**：按第 1 种做。",
+             "decider": "需求负责人"}])
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn("材料在枚举之后变了", out)
