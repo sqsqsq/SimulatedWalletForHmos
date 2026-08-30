@@ -1007,5 +1007,93 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
         self.assert_check_names("工程标识")
 
 
+class TestChapterSections(StoryBuildCase):
+    """正文章的节级形态：必有的小节在不在、该分节的章分没分。
+
+    实测规律（两轮四份产物零例外）：有 check 判据的形态全达成，只写在模板注释或
+    占位里的形态全不达成。节级此前只有注释承载，于是方案章、流程章、交付章全部平铺。
+
+    **判据恰三条**，本类的后两条守的正是「没有加码」：菜单项不是配额、
+    每章几节不设下限。配额逼出来的是凑数小标题，那比平铺更难读。
+    """
+
+    SOLUTION = ("本需求由钱包端发起挂失请求，卡片服务判定结果。\n\n"
+                "### 4.1 参与方与分工\n\n"
+                "钱包端负责入口与结果展示，卡片服务负责判定与状态落库。\n")
+
+    def put_chapter(self, title: str, body: str) -> None:
+        text = self.story()
+        head = "## {}\n\n".format(title)
+        start = text.index(head) + len(head)
+        end = text.index("\n## ", start)
+        self.story_path.write_text(text[:start] + body + text[end:], encoding="utf-8")
+
+    def write_decisions(self, decisions: list) -> None:
+        (self.src / "decisions.json").write_text(
+            json.dumps({"decisions": decisions}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+    SETTLED = {
+        "id": "DEC-001", "status": "settled",
+        "title": "挂失结果以卡片服务的回执为准",
+        "clarification": "**要定的事**：以哪一侧为准。\n\n**根据**：本端只有请求态。\n\n"
+                         "**结论与影响**：以回执为准。",
+        "decider": "需求负责人",
+    }
+
+    def test_a_required_section_missing_is_named(self) -> None:
+        """必有的小节缺席要点名，并说清这一节是干什么的。"""
+        self.put_chapter("业务方案", "钱包端发起、卡片服务判定，两侧以回执为准。\n")
+        self.init_audit()
+        self.settle()
+        out = self.assert_check_names("参与方与分工")
+        self.assertIn("这一节", out)
+
+    def test_an_empty_chapter_is_exempt(self) -> None:
+        """空章豁免：它已明说这件事不在本需求里，节级形态无从谈起。"""
+        self.init_audit()
+        self.settle()
+        self.assertIn("## 业务方案\n\n本需求不涉及。", self.story())
+        self.assertEqual(0, self.check_output()[0])
+
+    def test_settled_decisions_require_the_tradeoff_section(self) -> None:
+        """有已定决策却没有取舍那一节——取舍化进散文，读者拼不出「否掉了什么」。"""
+        self.put_chapter("业务方案", self.SOLUTION)
+        self.write_decisions([self.SETTLED])
+        self.init_audit()
+        self.settle()
+        out = self.assert_check_names("关键取舍")
+
+        # 同一份正文，没有已定决策时不要求——判据跟着登记走，不是无条件加一节
+        self.write_decisions([])
+        self.init_audit()
+        self.settle()
+        self.assertEqual(0, self.check_output()[0], out)
+
+    def test_a_flat_chapter_that_must_be_sectioned_is_named(self) -> None:
+        self.put_chapter("业务流程", "用户进入入口、提交、等回执，回执到达即结束。\n")
+        self.init_audit()
+        self.settle()
+        self.assert_check_names("个小节")
+
+    def test_the_menu_is_not_a_quota(self) -> None:
+        """菜单是命名参考：只写必有的那一节，其余菜单项缺席照样通过。"""
+        self.put_chapter("业务方案", self.SOLUTION)
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_no_lower_bound_on_how_many_sections(self) -> None:
+        """一节也够：`min_sections` 只区分「分了没分」，不数够不够多。"""
+        self.put_chapter(
+            "业务流程",
+            "### 5.1 提交与回执\n\n用户提交之后等回执，回执到达即结束。\n")
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+
 if __name__ == "__main__":
     unittest.main()

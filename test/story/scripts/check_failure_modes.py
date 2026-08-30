@@ -2262,6 +2262,42 @@ def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(False, f"check 未过（非评审表单原因）：{out[:200]}")
 
 
+@checker
+def s08_solution_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
+    """已定决策成堆，方案章却没有取舍这一节——取舍散在正文里，读者找不到。
+
+    实测两轮四份产物零例外：有 check 判据的形态全达成，只写在模板注释里的形态全不达成。
+    取舍成节此前只在注释里，两份产物都把取舍化进散文，评审者要从头读完才拼得出
+    「否掉了什么」。判的是节在不在，不判它写得好不好——后者归裁决者。
+    """
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "有已定决策的方案章里，取舍单独成节")
+    if "这一节" in out:
+        return Outcome(False, "必有的小节缺席被点名")
+    return Outcome(False, f"check 未过（非节级原因）：{out[:200]}")
+
+
+@checker
+def s09_flow_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
+    """流程章整章平铺，一个小节都没有——主路径与支线混在一坨散文里。
+
+    与 S08 同源：节级形态此前只有模板占位承载，实测两份产物的流程章全部平铺。
+    这一条判的是「该分节的章分没分」，不设「每章几节」的配额——
+    配额逼出来的是凑数的小标题。
+    """
+    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
+    if code == 0:
+        return Outcome(True, "有内容的流程章分了小节")
+    if "个小节" in out:
+        return Outcome(False, "整章平铺被点名")
+    return Outcome(False, f"check 未过（非节级原因）：{out[:200]}")
+
+
 GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
 
 

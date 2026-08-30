@@ -1170,6 +1170,41 @@ function cmdCheck(ctx) {
     }
   }
 
+  // ⑫b 正文章的节级形态：必有的小节在不在、该分节的章分没分
+  //
+  // **为什么要有它**：两轮四份产物、零例外——有 check 判据的形态全达成，
+  // 只有模板占位与注释的形态全不达成（附录五节全中、03 章三小节全中；
+  // 而 04/05/09 的节级只写在注释里，两份产物全部平铺成散文）。
+  // 节级正是信息架构的精华：一条恢复支线一节、关键取舍一节、回退设计一节，
+  // 读者按节回找；压成一坨散文，他只能从头读到尾。
+  //
+  // **只有三条，不加码**：必有的小节在不在、有已定决策时取舍成没成节、
+  // 该分节的章有没有分节。「每章几节」这种配额一律不设——配额逼出来的是凑数的小标题。
+  for (const chapter of ctx.contract.chapters ?? []) {
+    if (chapter.appendix) continue;                 // 附录的小节枚举由 ⑫ 管
+    const body = sectionText.get(chapter.title);
+    if (body === undefined) continue;               // 章缺失由 ① 报，这里不重复
+    // 空章豁免：正文恰是那一句，它已明说这件事不在本需求里，节级形态也就无从谈起
+    if (norm(body) === norm(EMPTY_SECTION_TEXT)) continue;
+    const present = new Set(subsectionNames(body).map(s => s.name));
+    const settled = (Array.isArray(decisions?.decisions) ? decisions.decisions : [])
+      .filter(d => d?.status === 'settled').length;
+    const required = [
+      ...(chapter.section_required ?? []),
+      ...(settled ? (chapter.section_required_with_settled_decisions ?? []) : []),
+    ];
+    for (const want of required) {
+      if (present.has(normalizeHeading(want))) continue;
+      problems.push(`「${chapter.title}」缺「${want}」这一节`
+        + `——${chapter.section_note ?? '这一节是本章的必答内容'}`);
+    }
+    const min = Number(chapter.min_sections) || 0;
+    if (min && present.size < min) {
+      problems.push(`「${chapter.title}」只有 ${present.size} 个小节（至少 ${min} 个）`
+        + `——${chapter.section_note ?? '这一章要分节，读者按节回找'}`);
+    }
+  }
+
   // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，

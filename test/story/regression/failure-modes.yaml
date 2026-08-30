@@ -961,3 +961,38 @@ modes:
       （责任人与期限是排期的事，确认依据是审计的事），而「已确认」因此不可信。
       留下的只有「审核结果：」一行，评审人在它后面写具体内容。判的是行首形态不是词——评审人在自己的
       意见里写「这条要找确认人」不算违规，只判机器渲染出来的那种独立字段行。
+
+  - id: S08-solution-chapter-flat
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 已定决策成堆而方案章没有取舍这一节——取舍化进散文，评审者要读完整章才拼得出「否掉了什么」
+    clause: KG-3 / B2-9
+    checker: s08_solution_chapter_flat
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S08-solution-chapter-flat/bad
+    good_fixture: test/story/fixtures/failure-modes/S08-solution-chapter-flat/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      两轮四份产物零例外：有 check 判据的形态全达成（附录五节、范围三小节），
+      只写在模板注释或占位里的形态全不达成（方案章与交付章的节级）。节级正是信息架构
+      的精华——关键取舍一节、回退设计一节，读者按节回找。判的是节在不在，
+      写得好不好归裁决者。空章（正文恰为「本需求不涉及。」）豁免。
+
+  - id: S09-flow-chapter-flat
+    dimension: readability
+    found_round: "2026-08-30"
+    form: 有内容的流程章一个小节都没有——主路径与全部支线压在一坨散文里
+    clause: KG-3 / B2-9
+    checker: s09_flow_chapter_flat
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S09-flow-chapter-flat/bad
+    good_fixture: test/story/fixtures/failure-modes/S09-flow-chapter-flat/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    variant_of: S08-solution-chapter-flat
+    scope_note: >
+      与 S08 同源，判的是「该分节的章分没分」。**不设「每章几节」的配额**——
+      配额逼出来的是凑数的小标题，那比平铺更难读。空章豁免。
