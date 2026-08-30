@@ -969,5 +969,40 @@ class TestDuplicateAcrossParagraphs(StoryBuildCase):
         self.assertEqual(0, self.check_output()[0])
 
 
+class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
+    """本需求自己的编号不是工程标识。
+
+    ①b 要求大标题带着它，材料清单也要写清这份文档出自哪张单——它恰恰是归档件与
+    需求系统之间唯一的绳子。判它违规，两条判据就打架，作者无路可走。
+    实测一轮实跑卡死在这里：模型反复改标题、始终过不了，最后没登记成文就交了。
+
+    这条**离线跑不出来**（离线没有来源单元，标识符表是空的），所以必须在线跑。
+    """
+
+    def _put_id_in_materials(self) -> None:
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.write_text(
+            "# " + FEATURE + " 规格\n\n"
+            "## 1. 范围\n\n本单 " + FEATURE + " 只改提交入口。\n",
+            encoding="utf-8")
+
+    def test_the_title_carrying_the_id_passes(self) -> None:
+        self._put_id_in_materials()
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+        self.assertIn(FEATURE, self.story().split("\n", 1)[0], "夹具的大标题本来就带编号")
+
+    def test_another_repo_identifier_is_still_named(self) -> None:
+        """放行的只有本需求编号这一个——别的标识照拦，不然等于把 ⑩ 关掉。"""
+        self._put_id_in_materials()
+        self.init_audit()
+        self.settle()
+        first = self.story().split("\n", 1)[0]
+        self.rewrite_story(first, first + "\n\n提交走 queryLossEligibility 这个接口。")
+        self.assert_check_names("工程标识")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1068,9 +1068,17 @@ function cmdCheck(ctx) {
   const redlineKinds = ctx.contract.language_redline?.kinds;
   if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
     const appendix = appendixChapter(ctx.contract);
+    // **本需求自己的编号不是工程标识**：①b 要求大标题带着它，材料清单也要写清这份文档
+    // 出自哪张单——它恰恰是归档件与需求系统之间唯一的绳子。不放它出来，两条判据直接
+    // 打架：一条要求写上，一条判它违规，作者无路可走（实测把一轮实跑卡在这里）。
+    // 编号里带连字符时（`XXX-123` 这种），逐段也放行——正文里出现的是被切开的那一段。
+    const own = new Set(String(ctx.args.feature ?? '').trim()
+      .split(/[^A-Za-z0-9]+/).concat(String(ctx.args.feature ?? '').trim())
+      .map(s => s.trim()).filter(Boolean));
     const identifiers = [];
     for (const u of doc.units) {
       for (const t of u.tokens ?? []) {
+        if (own.has(t)) continue;
         if (/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t)) identifiers.push(t);
       }
     }
