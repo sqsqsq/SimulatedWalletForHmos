@@ -31,7 +31,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decisionUnits, enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
-import { normalizeHeading } from './headings.mjs';
+import { normalizeHeading, renumberStory } from './headings.mjs';
 import {
   baseLayerIds, formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanImageForm, scanLanguageRedline, scanLocalPaths, scanMaterialList, scanReadability,
@@ -42,7 +42,7 @@ import {
   renderFreeformSection, renderHumanZone, renderMachineZone,
 } from './review-render.mjs';
 
-const COMMANDS = ['init', 'audit', 'check', 'build'];
+const COMMANDS = ['init', 'audit', 'check', 'build', 'number'];
 
 /** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
@@ -1314,14 +1314,13 @@ function cmdCheck(ctx) {
     }
   }
 
-  // ⑫c 形态 lint：图的承接与图题、材料清单的行形态、正文小节的编号
+  // ⑫c 形态 lint：图的承接、材料清单的行形态
   //
-  // 三条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
-  // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、图题有没有编号、
-  // 材料能不能定位、小节编号成不成体系」。
+  // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
+  // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、材料能不能定位」。
+  // 图题编号与小节编号已归 `number` 机器铺，不再判。
   for (const h of scanImageForm(storyText)) {
-    problems.push(`第 ${h.line} 行的图${h.kind === 'image_alt' ? '题「' + h.hit + '」' : ''}`
-      + `不合形态——${h.hint}`);
+    problems.push(`第 ${h.line} 行的图不合形态——${h.hint}`);
   }
   {
     const appendix = appendixChapter(ctx.contract);
@@ -1334,27 +1333,8 @@ function cmdCheck(ctx) {
       }
     }
   }
-  // 小节编号：`### <章号>.<序>`。章号取合同里这一章的位置——编号体系是给读者
-  // 引用与回找用的，序号与它所属的章对不上，「见 4.2」就指不到地方。附录的字母
-  // 序号由 ⑫ 那条管，不重复判。
-  {
-    const shape = ctx.contract.heading_shapes?.body_subsection;
-    if (shape) {
-      ctx.contract.chapters.forEach((chapter, idx) => {
-        if (chapter.appendix) return;
-        const body = sectionText.get(chapter.title);
-        if (body === undefined) return;
-        for (const sub of subsectionNames(body)) {
-          let re;
-          try { re = new RegExp(shape.replace('<n>', String(idx + 1))); } catch { return; }
-          if (!re.test(sub.raw)) {
-            problems.push(`「${chapter.title}」的小节「${sub.raw}」没带本章的编号`
-              + `——写成 \`### ${idx + 1}.<序> <业务名>\`，读者靠编号引用与回找`);
-          }
-        }
-      });
-    }
-  }
+  // 小节编号不在这里判：它由 `number` 命令统一铺（D1）。机器保证的形态再设一条
+  // 判据，判的是自己的输出——真正会漏的是机器不做的那部分。
 
   // ⑫d 统稿留痕：`copyedit.md` 恰好六行，一项自查一行
   //
@@ -1404,6 +1384,29 @@ function cmdCheck(ctx) {
 }
 
 // --------------------------------------------------------------------------
+// number：给 story 重编号（章 / 小节 / 图题）
+// --------------------------------------------------------------------------
+
+/**
+ * 编号由机器铺，作者只写业务名标题与图题。
+ *
+ * 幂等：已经对的文件重跑一个字节都不改，所以放在登记步跑第二遍也无副作用。
+ */
+function cmdNumber(ctx) {
+  const before = readText(ctx.storyPath);
+  if (before === null) fail(`没有 AR/story.md 可编号（${ctx.storyPath}）`);
+  const after = renumberStory(before, ctx.contract.chapters ?? []);
+  if (after === before) {
+    process.stdout.write('[story-build number] 编号已经是对的，未改动\n');
+    return;
+  }
+  fs.writeFileSync(ctx.storyPath, after, 'utf-8');
+  const was = before.split(/\r?\n/);
+  const changed = after.split(/\r?\n/).filter((l, i) => l !== was[i]).length;
+  process.stdout.write(`[story-build number] 重编号 ${changed} 行（章序按合同，节序按出现顺序，图序按全篇顺序）\n`);
+}
+
+// --------------------------------------------------------------------------
 // build：渲染 review.md（机器区重算、人工区逐字节保留）
 // --------------------------------------------------------------------------
 
@@ -1447,6 +1450,7 @@ function main() {
   if (args.command === 'init') cmdInit(ctx);
   else if (args.command === 'audit') cmdAudit(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
+  else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);
 }
 

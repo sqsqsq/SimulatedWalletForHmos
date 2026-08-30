@@ -76,7 +76,9 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
 - **子 agent 是可选的**，不是机制的一部分：有 Task 工具的宿主，③ 每章可以起一个小子 agent，
   ④ 也可以；没有 Task 的宿主，主 agent 自己按同样的顺序做——**两条路径产出同一批产物**。
 - **④ 只在 `audit.json` 出现 `by: author` 记录时才需要**：机器定不了落点的单元只有模型能判。
-- **⑤ 自带门禁**：先重跑 `story-build check`，通过才登记 `story_written`。**只登记一次**——
+- **⑤ 自带门禁**：先跑 `story-build number`（章序、小节序、图题序号由机器统一铺——
+  你只写业务名标题与图题），再重跑 `story-build check`，通过才登记 `story_written`。
+  登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
 - **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 

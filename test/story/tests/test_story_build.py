@@ -1239,13 +1239,6 @@ class TestFormLints(StoryBuildCase):
         self.assertNotIn("图前一句承接", out)
         self.assertNotIn("图题", out)
 
-    def test_an_alt_without_a_number_is_named(self) -> None:
-        self.put_features("### 6.1 提交与回执\n\n下面是提交入口的位置：\n\n"
-                          "![提交入口页面布局](entry.png)\n")
-        self.init_audit()
-        self.settle()
-        self.assert_check_names("图题")
-
     # ---- lint 2：材料清单的行形态 ----
 
     def test_a_material_list_written_as_a_table_is_named(self) -> None:
@@ -1271,21 +1264,105 @@ class TestFormLints(StoryBuildCase):
         self.rewrite_story(first, first + "\n\n实现见 doc/features/AR90001/spec/spec.md。")
         self.assert_check_names("仓内路径")
 
-    # ---- lint 3：正文小节编号 ----
 
-    def test_a_subsection_without_the_chapter_number_is_named(self) -> None:
-        self.put_features("### 提交与回执\n\n提交之后停在等待态，回执到达转为已回执。\n")
-        self.init_audit()
-        self.settle()
-        out = self.assert_check_names("没带本章的编号")
-        self.assertIn("6.", out, "报错要说清该写第几章的编号")
+class TestNumbering(StoryBuildCase):
+    """`number`：章序、小节序、图题序号由机器铺。
 
-    def test_a_subsection_numbered_for_another_chapter_is_named(self) -> None:
-        """编号是给读者引用与回找用的：`### 4.1` 出现在第六章，「见 4.1」就指错地方。"""
-        self.put_features("### 4.1 提交与回执\n\n提交之后停在等待态，回执到达转为已回执。\n")
-        self.init_audit()
-        self.settle()
-        self.assert_check_names("没带本章的编号")
+    上一轮它们是模板里的一句要求加一条 lint。实测顺境的那份做了、逆境的那份整章丢光
+    ——而这件事根本不需要人来做：章序由合同定死，节序就是出现顺序，图序就是全篇顺序。
+    机器铺完，判据也就不必再判自己的输出（lint 3 与图题前缀判随之退役）。
+    """
+
+    def put_features(self, body: str) -> None:
+        text = self.story()
+        head = "## 功能说明\n\n"
+        start = text.index(head) + len(head)
+        end = text.index("\n## ", start)
+        self.story_path.write_text(text[:start] + body + text[end:], encoding="utf-8")
+
+    def number(self) -> str:
+        proc = self.run_build("number")
+        self.assertEqual(proc.returncode, 0, f"number 跑不起来：{proc.stderr}")
+        return self.story()
+
+    def subsections(self, text: str) -> list:
+        return [l for l in text.split("\n") if l.startswith("### ")]
+
+    def test_a_missing_number_is_filled_in(self) -> None:
+        self.put_features("### 提交与回执\n\n提交之后停在等待态。\n")
+        self.assertIn("### 6.1 提交与回执", self.number())
+
+    def test_a_number_from_another_chapter_is_corrected(self) -> None:
+        """`### 4.1` 出现在第六章，「见 4.1」就指错地方——机器按它所在的章重编。"""
+        self.put_features("### 4.1 提交与回执\n\n提交之后停在等待态。\n")
+        self.assertIn("### 6.1 提交与回执", self.number())
+
+    def test_out_of_order_numbers_are_resequenced(self) -> None:
+        self.put_features("### 6.3 提交与回执\n\n提交之后停在等待态。\n\n"
+                          "### 6.1 失败与重试\n\n失败之后可以重试。\n")
+        subs = [s for s in self.subsections(self.number()) if s.startswith("### 6.")]
+        self.assertEqual(["### 6.1 提交与回执", "### 6.2 失败与重试"], subs)
+
+    def test_running_it_twice_changes_nothing(self) -> None:
+        self.put_features("### 提交与回执\n\n提交之后停在等待态。\n")
+        once = self.number()
+        self.assertEqual(once, self.number(), "幂等：已经对的文件重跑一个字节都不该动")
+
+    def test_figure_titles_are_numbered_across_the_whole_document(self) -> None:
+        self.put_features("### 提交与回执\n\n下面是提交入口的位置：\n\n"
+                          "![提交入口页面布局](entry.png)\n\n"
+                          "状态走向如下：\n\n"
+                          "![图 7 · 状态走向](flow.png)\n")
+        text = self.number()
+        self.assertIn("![图 1 · 提交入口页面布局](entry.png)", text)
+        self.assertIn("![图 2 · 状态走向](flow.png)", text)
+
+    def test_the_appendix_keeps_its_letters(self) -> None:
+        """附录小节用字母序号，机器不动它——那是附录判据管的地方。"""
+        text = self.number()
+        self.assertIn("### A. 接口", text)
+
+    def test_a_chapter_outside_the_contract_is_left_alone(self) -> None:
+        """合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的。"""
+        self.rewrite_story("## 功能说明", "## " + CHAPTER_OUT_OF_CONTRACT)
+        text = self.number()
+        self.assertIn("## " + CHAPTER_OUT_OF_CONTRACT, text)
+
+
+class TestGoldenNumbering(unittest.TestCase):
+    """金样是编号的仲裁锚：跑一遍不变，去掉号再跑还原成它。"""
+
+    GOLDEN = REPO_ROOT / "test" / "story" / "golden" / "story-金样-AR90004.md"
+
+    def renumber(self, text: str) -> str:
+        script = (
+            "import * as fs from 'node:fs';"
+            "import { renumberStory } from './doc/extensions/skills/story/scripts/headings.mjs';"
+            "const c = JSON.parse(fs.readFileSync("
+            "'doc/extensions/skills/story/contracts/story-chapters.json','utf-8'));"
+            "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>"
+            "process.stdout.write(renumberStory(s, c.chapters)));"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            input=text, capture_output=True, text=True, encoding="utf-8",
+            cwd=str(REPO_ROOT), timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
+
+    def test_the_golden_is_a_fixed_point(self) -> None:
+        text = self.GOLDEN.read_text(encoding="utf-8")
+        self.assertEqual(text, self.renumber(text), "编号拦金样即编号错")
+
+    def test_a_de_numbered_golden_comes_back_byte_for_byte(self) -> None:
+        import re
+        text = self.GOLDEN.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            re.sub(r"!\[图\s*\d+\s*[·・]\s*", "![",
+                   re.sub(r"^(#{2,4})\s+\d+(?:\.\d+)*\.?\s+", r"\1 ", line))
+            for line in text.split("\n"))
+        self.assertNotEqual(text, stripped, "去号版该和金样不一样，否则这条什么都没验")
+        self.assertEqual(text, self.renumber(stripped))
 
 
 if __name__ == "__main__":

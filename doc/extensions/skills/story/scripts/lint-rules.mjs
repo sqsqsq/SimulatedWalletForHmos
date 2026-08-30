@@ -484,20 +484,17 @@ export function scanReadability(text, conf = {}) {
 // 所以形态要么接上判据，要么就承认它是建议。
 
 /** 图题写在替换文本里：`图 N · 题名`。序号是读者在正文里引用它的凭据。 */
-const IMAGE_ALT_RE = /^图\s*\d+\s*[·・]\s*\S/;
-
 const IMAGE_HINTS = {
   image_lead: '图前一句承接，说清它画的是什么——读者先读到那句话，再看图；'
     + '说明写在图后，他得先猜一遍',
-  image_alt: '图题写进替换文本，形如「图 1 · 页面状态走向」——'
-    + '正文引用「图 1」时读者要对得上号',
   material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
   material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
     + '光写「产品需求文档」他不知道该找谁要哪一份',
 };
 
 /**
- * 图的承接与图题形态。
+ * 图的承接。图题的「图 N ·」编号由 `number` 机器铺，这里不判——机器保证的事
+ * 再判一遍，判的是自己的输出。
  *
  * **上一非空行必须是正文段**：标题、另一张图、表行都不算承接。
  * 图连着图，读者看不出第二张与第一张什么关系；紧跟标题的图等于没有引入。
@@ -522,12 +519,6 @@ export function scanImageForm(text) {
         || lead.startsWith('![') || /^!\[/.test(lead.replace(/^[-*+]\s+/, ''));
       if (bad) hits.push({ line: i + 1, kind: 'image_lead', hit: imgs[0][2],
                            hint: IMAGE_HINTS.image_lead, text: s.slice(0, 100) });
-      for (const [, alt, src] of imgs) {
-        if (!IMAGE_ALT_RE.test(alt.trim())) {
-          hits.push({ line: i + 1, kind: 'image_alt', hit: alt.trim() || src,
-                      hint: IMAGE_HINTS.image_alt, text: s.slice(0, 100) });
-        }
-      }
     }
     prev = s;
   }

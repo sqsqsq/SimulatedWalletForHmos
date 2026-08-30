@@ -912,6 +912,10 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
 
+    **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`
+    统一铺——作者写业务名标题就够了。登记之后 story 冻结，所以编号必须在这之前完成；
+    命令幂等，已经对的文件一个字节都不改。
+
     **只登记一次**：story 定稿于评审时点，评审回流只改 spec.md，不动 story。
     """
     contract = require(load(feature_root))
@@ -925,6 +929,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
+    numbered = subprocess.run(
+        [node, str(checker), "number", "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if numbered.returncode != 0:
+        raise FlowError(
+            "story-build number 跑不通，成文态不予登记：\n"
+            + (numbered.stderr or numbered.stdout or "").strip())
     proc = subprocess.run(
         [node, str(checker), "check", "--feature", feature_root.name,
          "--project-root", str(project_root)],
