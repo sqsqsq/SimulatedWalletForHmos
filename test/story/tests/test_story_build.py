@@ -448,6 +448,70 @@ class TestTemplateNotes(StoryBuildCase):
                         "人写的 > 块不该被打成机器面")
 
 
+class TestDerivedSourceTokens(StoryBuildCase):
+    """合同声明 `derived` 的那份材料只守业务编号。
+
+    spec.md 是本轮流程自己生成的中间产物。它的工程 token（元素类型词、夹具名、
+    毫秒数、包名）此前全背落点义务，实测 194 个——归档叙事件不该写这些词，
+    于是它们只能挤进附录表后的散文尾巴与材料清单，倾倒区就是这么长出来的。
+    业务编号仍守恒：那是评审人认得、也会在验收里回找的东西。
+    """
+
+    SPEC_BODY = "\n".join([
+        "# 甲需求 spec",
+        "",
+        "## 9. 技术契约",
+        "",
+        "验收 AC-7 覆盖等待态；接口 submitTicket 超时 1500ms 后转失败，"
+        "承接名为 TicketFixture，宿主配置写在 oh-package.json5。",
+        "",
+    ])
+
+    def put_spec(self) -> None:
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(self.SPEC_BODY, encoding="utf-8")
+
+    def test_only_business_ids_survive_in_a_derived_source(self) -> None:
+        self.put_spec()
+        self.init_audit()
+        tokens = [t for u in self.units if u["doc"] == "SPEC" for t in (u.get("tokens") or [])]
+        self.assertIn("AC-7", tokens, "验收编号是业务编号，仍要守恒")
+        for engineering in ("submitTicket", "1500ms", "TicketFixture", "oh-package.json5"):
+            self.assertNotIn(engineering, tokens,
+                             f"{engineering} 是工程细节，它的家是 spec 自己")
+
+    def test_the_text_of_a_derived_unit_is_unchanged(self) -> None:
+        """收窄的是机器核对义务，不是信息可见性——分配与渲染仍读得到整行。"""
+        self.put_spec()
+        self.init_audit()
+        hit = [u for u in self.units
+               if u["doc"] == "SPEC" and "submitTicket" in (u.get("text") or "")]
+        self.assertTrue(hit, "spec 单元的正文该原样留着")
+
+    def test_the_other_sources_keep_every_token(self) -> None:
+        """回归：只有声明 `derived` 的那一份变，人写的材料一个 token 都不少。"""
+        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8")
+                       + "\n签约接口 signContract 超时 1500ms 后转失败。\n",
+                       encoding="utf-8")
+        self.put_spec()
+        self.init_audit()
+        prd_tokens = [t for u in self.units if u["doc"] == "PRD" for t in (u.get("tokens") or [])]
+        self.assertIn("signContract", prd_tokens, "上游材料的接口名照旧守恒")
+        self.assertIn("1500ms", prd_tokens, "上游材料的带单位数值照旧守恒")
+
+    def test_a_source_without_the_flag_is_not_narrowed(self) -> None:
+        """开关在合同数据里，机制不认识任何一份材料的名字——把标记摘掉，token 就回来。"""
+        contract = (REPO_ROOT / "doc/extensions/skills/story/contracts"
+                    / "story-chapters.json")
+        data = json.loads(contract.read_text(encoding="utf-8"))
+        derived = [k for k, v in (data.get("sources") or {}).items()
+                   if isinstance(v, dict) and v.get("derived")]
+        self.assertEqual(derived, ["SPEC"],
+                         "本轮只有 spec 是中间产物；再多一份要连同报告一起说明")
+
+
 class TestAuthorPlacement(StoryBuildCase):
     """KR-1b：作者落点的三种坏形态，各自点名。"""
 

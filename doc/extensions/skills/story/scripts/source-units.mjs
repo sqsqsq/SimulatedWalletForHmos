@@ -128,15 +128,21 @@ function splitCells(row) {
  *
  * @param {string} text
  * @param {string[]} idShapes 合同声明的编号形态（正则源），命中的编号也算 token
+ * @param {Function|null} exclude 合同声明的排除判定
+ * @param {boolean} idOnly 只取编号形态命中——本轮生成的中间产物用（合同 `derived`）。
+ *   它的工程细节（标识、带单位数值、包名）的家是那份产物自己；逼它们在归档叙事件里
+ *   找落点，只会长出散文尾巴与倾倒区。业务编号仍守恒：那是评审人认得的东西。
  */
-function tokensOf(text, idShapes = [], exclude = null) {
+function tokensOf(text, idShapes = [], exclude = null, idOnly = false) {
   const s = String(text ?? '');
   const out = new Set();
-  for (const m of s.matchAll(CODE_SPAN_RE)) out.add(m[1].trim());
-  for (const m of s.matchAll(IDENT_RE)) out.add(m[0]);
-  for (const m of s.matchAll(NUMERIC_RE)) out.add(m[0].replace(/\s+/g, ''));
-  for (const m of s.matchAll(IMAGE_RE)) out.add(path.basename(m[2]));
-  for (const m of s.matchAll(LINK_RE)) out.add(m[2]);
+  if (!idOnly) {
+    for (const m of s.matchAll(CODE_SPAN_RE)) out.add(m[1].trim());
+    for (const m of s.matchAll(IDENT_RE)) out.add(m[0]);
+    for (const m of s.matchAll(NUMERIC_RE)) out.add(m[0].replace(/\s+/g, ''));
+    for (const m of s.matchAll(IMAGE_RE)) out.add(path.basename(m[2]));
+    for (const m of s.matchAll(LINK_RE)) out.add(m[2]);
+  }
   for (const shape of idShapes) {
     try {
       for (const m of s.matchAll(new RegExp(shape, 'g'))) out.add(m[0]);
@@ -155,7 +161,7 @@ function tokensOf(text, idShapes = [], exclude = null) {
  *
  * @param {string} text 材料全文
  * @param {string} doc 材料标识（PRD / SE / SPEC / DESIGN）
- * @param {{idShapes?: string[], excludeToken?: Function,
+ * @param {{idShapes?: string[], excludeToken?: Function, idTokensOnly?: boolean,
  *          machineFacing?: {unit_kinds?: string[], table_columns?: string[]},
  *          templateNotes?: string[]}} opts
  *   `templateNotes`：这份材料由模板生成时，模板约定「不是事实」的那几类单元
@@ -164,6 +170,8 @@ function tokensOf(text, idShapes = [], exclude = null) {
 export function enumerateUnits(text, doc, opts = {}) {
   const idShapes = opts.idShapes ?? [];
   const exclude = typeof opts.excludeToken === 'function' ? opts.excludeToken : null;
+  // 合同 `derived` 的那份材料只守业务编号——是数据说了算，本文件不认识任何一份材料的名字
+  const idOnly = opts.idTokensOnly === true;
   const mf = opts.machineFacing ?? {};
   // 两个来源合成同一个「这类单元不是事实」的集合：
   //   `machine_facing.unit_kinds` —— 按**用途**声明（工具读的登记项，对所有材料生效）；
@@ -199,7 +207,7 @@ export function enumerateUnits(text, doc, opts = {}) {
       section,
       line,
       text: body.slice(0, 400),
-      tokens: machineFacing ? [] : (extra.tokens ?? tokensOf(src, idShapes, exclude)),
+      tokens: machineFacing ? [] : (extra.tokens ?? tokensOf(src, idShapes, exclude, idOnly)),
       machine_facing: machineFacing,
     });
   };
@@ -265,12 +273,14 @@ export function enumerateUnits(text, doc, opts = {}) {
     let media = false;
     for (const m of s.matchAll(IMAGE_RE)) {
       flushPara();
-      push('image', m[0], i + 1, { tokens: [path.basename(m[2])].filter(t => !(exclude && exclude(t))) });
+      push('image', m[0], i + 1,
+        { tokens: idOnly ? [] : [path.basename(m[2])].filter(t => !(exclude && exclude(t))) });
       media = true;
     }
     for (const m of s.matchAll(LINK_RE)) {
       flushPara();
-      push('link', m[0], i + 1, { tokens: [m[2]].filter(t => !(exclude && exclude(t))) });
+      push('link', m[0], i + 1,
+        { tokens: idOnly ? [] : [m[2]].filter(t => !(exclude && exclude(t))) });
       media = true;
     }
     if (media) continue;

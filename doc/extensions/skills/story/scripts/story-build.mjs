@@ -185,7 +185,13 @@ function sourceDocs(ctx) {
     const abs = path.join(ctx.featureRoot, rel);
     const text = readText(abs);
     if (text !== null) {
-      out.push({ doc, rel, text, notes: typeof decl === 'string' ? [] : (decl.notes ?? []) });
+      out.push({
+        doc, rel, text,
+        notes: typeof decl === 'string' ? [] : (decl.notes ?? []),
+        // `derived`＝这一份是本轮流程自己生成的中间产物，不是上游给的材料。
+        // 它只守业务编号，工程细节的家是它自己——见 enumerateUnits 的 idTokensOnly。
+        derived: typeof decl === 'object' && decl?.derived === true,
+      });
     }
   }
   return out;
@@ -232,6 +238,7 @@ function cmdInit(ctx) {
       excludeToken,
       machineFacing: ctx.contract.machine_facing ?? {},
       templateNotes: d.notes,
+      idTokensOnly: d.derived,
     }));
   }
   if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
