@@ -120,5 +120,5 @@
 
 ## 版本
 
-- Hylyre vendor 发布件：`0.4.1`（`framework/profiles/hmos-app/vendor/hylyre/`，源码树 `src/` + wheel 回退）
+- Hylyre vendor 发布件：`0.4.1`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；运行时代码仅兼容外部 legacy wheel 布局）
 - 字段变更时：同步更新 vendor 发布件、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`

@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "version": "3.0.0",
   "source_commit": "7401f221daf1bca082176bc87f61ea94506b4955",
-  "built_at": "2026-08-30T15:03:14.058Z",
+  "built_at": "2026-08-30T16:05:43.798Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -422,7 +422,7 @@
     },
     {
       "path": "docs/overview.md",
-      "sha256": "fa7872d4b1423062a6755ea317f295d242b1595afd3f0682c17edf6fea7d8f00"
+      "sha256": "1fc846ae94fc5873ef0f81ec12eb6d4bf5b101f29b27bc8708cd65c18eea5138"
     },
     {
       "path": "docs/profiles/hmos-app-harness-toolchain.md",
@@ -1422,7 +1422,7 @@
     },
     {
       "path": "harness/scripts/utils/planned-step-normalizer.ts",
-      "sha256": "03c995dfee3dfb656f0ca2a32d2bf7fb013cb468e24696bed4dd1c152ae97389"
+      "sha256": "b21d69073ca2c1f2d70bacc6778dc80671cbc667c266a445af772f176d7fa20d"
     },
     {
       "path": "harness/scripts/utils/process-integrity.ts",
@@ -2566,11 +2566,11 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/profile-addendum.md",
-      "sha256": "ea58ddebafc438fe85d93245e939a9676f37d4c2b0b784a9c50988ade4d82933"
+      "sha256": "c6e228dc5d6569862fb80436415085877e02616814479f399cfe602cfef1c52d"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
-      "sha256": "8420b7e7dd6dd556c1dbe10f99db7d93ab837886d541be2cb36a92ec255e3924"
+      "sha256": "0afaec8bcac82431e2dce89ed7e2967fc0209fe750bd976ed86f019ffa8993be"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-plan-hylyre-template.md",
@@ -2658,11 +2658,11 @@
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/README.md",
-      "sha256": "8ba509fc90add7ada757435cb4a1a9398f47a1f61c8420a2c11ec192cc3c543d"
+      "sha256": "ebe7eb44c49d49236df29823bff9aa5fe6438c6eb7ca9417bf43d889bc909b67"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/release.manifest.json",
-      "sha256": "73fb8939fbf08ec2fb47176268703135a1c27387d26ed500b67579978e8c4e9d"
+      "sha256": "3a06635160669a9136de8a374a58d0ea8b526a4aeddee31475f8e4fb859378e1"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/README.md",

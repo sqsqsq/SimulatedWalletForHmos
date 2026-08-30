@@ -1,11 +1,6 @@
 {
   "schema": 2,
   "hylyre_version": "0.4.1",
-  "wheel": {
-    "filename": "hylyre-0.4.1-py3-none-any.whl",
-    "sha256": "52573908786611874c4ce643fbd132fe5e1a3254c934378960384a5516bfdca5",
-    "size_bytes": 148956
-  },
   "source": {
     "root": "src",
     "file_count": 82,

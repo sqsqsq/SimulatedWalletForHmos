@@ -183,11 +183,18 @@ export function buildCanonicalSelectorIndex(doc: UiSpecDoc): CanonicalSelectorIn
     for (const child of node.children ?? []) visit(child, screenId, nextAncestors);
   };
   for (const screen of doc.screens ?? []) {
+    // `must_have_elements` is a declaration of obligations, not another
+    // rendering of the component tree. Prefer the concrete tree node when it
+    // exists so a canonical singleton is not falsely made ambiguous.
+    visit(screen.root, screen.id, new Set());
     for (const id of screen.must_have_elements ?? []) {
       if (typeof id !== 'string' || !id.trim()) continue;
-      add(byId, id.trim(), { id: id.trim(), screenId: screen.id, ancestorIds: new Set() });
+      const normalizedId = id.trim();
+      const existsInScreen = (byId.get(normalizedId) ?? []).some(node => node.screenId === screen.id);
+      if (!existsInScreen) {
+        add(byId, normalizedId, { id: normalizedId, screenId: screen.id, ancestorIds: new Set() });
+      }
     }
-    visit(screen.root, screen.id, new Set());
   }
   return { byId, byText };
 }

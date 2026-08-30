@@ -2,13 +2,13 @@
 
 ## 目录是什么
 
-本目录是 **hmos-app** profile 集成真机自动化测试的 vendor 入口：内置 Hylyre **明文源码树**（`src/`，默认安装形态）与同版本 **py3-none-any wheel**（兼容/回退形态），整个目录**提交进 Git**（体量 < 1 MB），协作者 `git clone` 即可拿到，不依赖联网拉取 Hylyre 本体。
+本目录是 **hmos-app** profile 集成真机自动化测试的 vendor 入口：内置 Hylyre **明文源码树**（`src/`，纯文本、跨 OS / Python 3.10+），整个目录提交进 Git，协作者 `git clone` 即可拿到，不依赖联网拉取 Hylyre 本体。
 
-源码树全部为可 review 的文本文件，作为默认安装与验真入口；wheel 保留给 legacy/离线回退场景。两者由根部联合 schema 2 manifest 绑定，harness 双存时源码优先，源码缺失时仅回落到 manifest 明确声明且 hash 匹配的 wheel。
+采用源码树而非 wheel 的原因：宿主代码仓库禁止提交 `.whl` 等二进制工件；源码树全部为可 review 的文本文件，合规且审计友好。Maison 开发仓与 consumer 包都只交付源码。harness 仍兼容历史 schema 1 wheel，以及外部 legacy 布局中“源码缺失但 manifest 明确声明且实际文件 hash 匹配”的 wheel 回退；该兼容能力不构成本目录的交付要求。
 
 传递依赖（如设备侧 Hypium 栈）仍由首次 `ensure` 时通过 PyPI 镜像安装，不在本目录 vendor。
 
-**本目录仅保留发布件**：`src/`、`hylyre-<version>-py3-none-any.whl`、`release.manifest.json`、本 README。Hylyre 发布包里的 `downstream-harness-requests.md` 等移交文档**不提交**进本目录。
+**本目录仅保留源码发布件**：`src/`、source-only `release.manifest.json` 与本 README。Hylyre 发布包里的 `downstream-harness-requests.md` 等移交文档和 `.whl` 都不进入 Maison。
 
 ## 布局与 manifest（schema 2）
 
@@ -18,13 +18,12 @@ vendor/hylyre/
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── hylyre/…            # 含 contracts/ package-data（json/yaml/md）
-├── hylyre-0.4.1-py3-none-any.whl # schema 2 manifest 的 wheel 回退工件
-├── release.manifest.json   # schema 2：hylyre_version + source{…} + wheel{…}
+├── release.manifest.json   # schema 2：hylyre_version + source{tree_sha256, files[]}
 └── README.md               # 本文件（maison 所有，非 Hylyre 发布物）
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
-- `wheel.filename` / `wheel.sha256` / `wheel.size_bytes` 声明同版本 wheel；源码树存在时源码优先，源码缺失时才允许按该声明回落。
+- schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash；本仓 `.gitattributes` 全局 `eol=lf`，checkout 字节与声明恒等。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
 
@@ -39,31 +38,23 @@ vendor/hylyre/
 与 Hylyre 文档 `docs/framework-vendor-bundle.md` 对齐：
 
 ```powershell
-# ① 在 Hylyre 仓产出两类发布件
+# ① 在 Hylyre 仓产出源码发布件
 cd D:\1.code\Hylyre
-python scripts/build_wheel.py --clean
 python scripts/build_wheel.py --source --clean
 
-# ② cp 到本目录（源码优先；联合 manifest；不拷移交 md）
-$wheel = "D:\1.code\Hylyre\dist\release"
+# ② cp 到本目录（覆盖旧 src 与 manifest；不拷 wheel/移交 md）
 $source = "D:\1.code\Hylyre\dist\release-src"
 $dst = "D:\1.code\agent-maison-br\profiles\hmos-app\vendor\hylyre"
 Remove-Item -Recurse -Force "$dst\src" -ErrorAction Ignore
 Remove-Item -Force "$dst\hylyre-*.whl" -ErrorAction Ignore
 Copy-Item -Recurse -Force "$source\src" "$dst\src"
-Copy-Item -Force "$wheel\hylyre-*.whl" $dst
-$sourceManifest = Get-Content "$source\release.manifest.json" -Raw | ConvertFrom-Json
-$wheelManifest = Get-Content "$wheel\release.manifest.json" -Raw | ConvertFrom-Json
-$sourceManifest | Add-Member -NotePropertyName wheel -NotePropertyValue $wheelManifest.wheel -Force
-$sourceManifest | ConvertTo-Json -Depth 20 | Set-Content "$dst\release.manifest.json" -Encoding utf8
+Copy-Item -Force "$source\release.manifest.json" "$dst\release.manifest.json"
 
-# ③ 校验源码树与 wheel（integration_docs 缺失放行、根层自有文件免检）
+# ③ 校验源码树（integration_docs 缺失放行、根层自有文件免检）
 python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
-$actualWheel = (Get-FileHash "$dst\$($wheelManifest.wheel.filename)").Hash.ToLower()
-if ($actualWheel -ne $wheelManifest.wheel.sha256) { throw "wheel sha256 mismatch" }
 ```
 
-同步后 Hylyre 发布包内如仍带 `integration_docs` 等移交文件，**不要**提交进 maison；把 harness 侧变更摘要补进下文「Framework 集成要点」。
+同步后 Hylyre 发布包内如仍带 `integration_docs` 等移交文件，**不要**提交进 Maison；`.whl` 同样不得进入本目录。把 harness 侧变更摘要补进下文「Framework 集成要点」。
 
 ## Framework 集成要点（vendor 0.4.1）
 
@@ -71,7 +62,7 @@ if ($actualWheel -ne $wheelManifest.wheel.sha256) { throw "wheel sha256 mismatch
 
 ### 源码树安装（plan a7c3e9d1）
 
-- `ensureHylyreReady` 双兼容 schema 1（wheel）/ schema 2（源码树，可带 wheel），**双存时源码优先**；安装命令等价 `pip install <src副本> "hylyre[device,mcp]"`，extras 与传递依赖照旧走镜像。
+- `ensureHylyreReady` 双兼容 schema 1（legacy wheel）/ schema 2（源码树），源码在场时恒优先；正常安装命令等价 `pip install <src副本> "hylyre[device,mcp]"`，不要求 wheel，extras 与传递依赖照旧走镜像。
 - 安装前 harness 会把 `src/` **按声明清单拷贝到 `.hylyre/build-src/` 临时副本**再交给 pip——pip ≥21.3 对目录是 in-tree build，直接装会在 vendor 目录产 `build/`、`*.egg-info/` 污染仓库。该副本装完即清，且下次安装前会先清空整个 `build-src/` 自愈残留。
 - venv 内 `.hylyre-vendor-fingerprint.json` 记录 `artifact_kind`（wheel/source）与工件指纹（wheel sha256 / tree_sha256）；从 wheel 切到源码树、同版本补丁件、指纹缺失均自动触发 pip 对齐，**无需手删 `.hylyre/venv`**。
 - 步骤键集 SSOT 消费直读 `src/hylyre/api/planned_step_keys.py`（不再从 whl zip 解包）。
@@ -115,7 +106,7 @@ if ($actualWheel -ne $wheelManifest.wheel.sha256) { throw "wheel sha256 mismatch
 |------|------|
 | `build_wheel.py --verify` 报 sha 不匹配 | 删除旧 `src/` 后重新从 `dist/release-src` 覆盖拷贝 |
 | harness 报「vendor 源码树与 manifest 声明不一致（声明文件缺失）」 | src 半拷贝/被改：按同步流程②重新覆盖 `src/` 与 manifest |
-| harness 报「vendor 发布件缺失」或 wheel sha 不匹配 | schema 2 双存布局须同时具备声明有效的 `src/` 或 manifest 背书的 wheel；按同步流程重新覆盖，并核对 `wheel.sha256` |
+| harness 报「vendor 发布件缺失」 | 本目录应具备 schema 2 `src/` 与完整 source 声明；按同步流程重新覆盖。外部 legacy 布局只有在源码缺失、manifest 声明 wheel 且实际 wheel 在场时才可回退 |
 | Python 版本错误 | 使用 **Python 3.10+** 创建隔离环境 |
 | `verify_report` / 缺 `report-sections.yaml` | `ensureHylyreReady` 会探测 contracts，缺失时对默认 venv 从 vendor 强制重装 |
 | vendor 已更新但 venv 仍旧版 | 用户重新发起 device-testing；agent Step 7 自跑 testing harness 时会自动对齐；仍失败则查 `hylyre-doctor.log`，必要时删 `.hylyre/venv` 后由 agent 再跑 Step 7 |
@@ -125,7 +116,7 @@ if ($actualWheel -ne $wheelManifest.wheel.sha256) { throw "wheel sha256 mismatch
 
 ## 不要做
 
-- **不要**手改 `src/` 内任何文件、`source.files[]`/`tree_sha256` 或 `wheel` hash；按上方流程由 Hylyre 两类发布件生成联合 manifest（逐文件/工件 sha 由 manifest 锁定）。
-- **不要**把 Hylyre 同步包里的 `integration_docs` / 移交 md 提交进本目录；`.whl` 仅保留当前 manifest 声明的同版本工件。
+- **不要**手改 `src/` 内任何文件或 `source.files[]`/`tree_sha256`；只从 Hylyre `dist/release-src` 覆盖同步，逐文件 hash 由 manifest 锁定。
+- **不要**把 Hylyre 同步包里的 `integration_docs`、移交 md 或 `.whl` 提交进本目录。
 - **不要**在 `src/` 里直接跑 `pip install`（in-tree build 会产 `build/`、`egg-info/` 污染）；harness 自动走临时副本。
 - 设备栈等大体量传递依赖**不要**往本目录塞；走镜像与 pip 缓存。
