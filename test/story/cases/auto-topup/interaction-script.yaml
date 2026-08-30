@@ -1,0 +1,36 @@
+# 需求方按实际停等顺序说的话；不注入初始 prompt。
+# 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+# expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
+replies:
+  - id: scope-do-both-in-one
+    expected_turn: 1
+    expected_kind: story_gate
+    expected_phase: story
+    text: 系统设计里说可以拆成两份，这次不拆了——签约和管理这张单一起做掉，别再立新单。
+
+  - id: hand-over-the-ui-doc
+    expected_turn: 2
+    expected_kind: story_gate
+    expected_phase: story
+    # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
+    deliver:
+      - 交通卡自动充值.docx
+    text: 界面的图当时没归档进系统，我把产品原稿放进需求目录了，签约页、管理页和流程图都在里面。
+
+  - id: init-wrap-up
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: 材料就这些了，按这些定稿往下走吧。
+
+  - id: terms-confirmed
+    expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 术语我看过了，口径没有歧义，就按你列的这些定。
+
+  - id: review-comments
+    expected_turn: 5
+    expected_kind: story_gate
+    expected_phase: archived
+    text: 评审的意见我已经写在系统上了，你拉回来按上面写的处理。开关那条一定要改，别的按我写的表态来。
