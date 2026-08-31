@@ -30,9 +30,24 @@ cli:
   #   2026-08-31 F5 轮按用户要求换回 opencode / deepseek。**与 F4 那轮跨宿主**：
   #              F5 报告里的效率数字要与 F 修复两轮比（同宿主），与 F4 首跑/收口
   #              那组比时必须写明中间换过 codex。
-  name: opencode
-  model: bailian/deepseek-v4-flash-0731
-  profile: build
+  configurations:
+    - id: bailian-deepseek
+      name: opencode
+      model: bailian/deepseek-v4-flash-0731
+      profile: build
+    - id: volcengine-glm-flash
+      name: opencode
+      model: volcengine/GLM5.3-Flash
+      profile: build
+    - id: codex-luna
+      name: codex
+      model: gpt-5.6-luna
+      profile: full_access
+  retry_policy:
+    # 内容审查 400 只在当前配置上干净重跑一次；再次命中即结束该 Case。
+    content_rejection_retries_per_config: 1
+    # 401 表示该凭据在本 suite 不可用，后续 attempt 跳过该配置。
+    auth_failure_scope: suite
   # **不设运行时限、不设续话轮次上限**（用户裁定 2026-08-31）。
   # 时限与轮次上限保护的是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop——
   # 一个跑得久的阶段不是失控，是它本来就长。两次实测都是限制先到：

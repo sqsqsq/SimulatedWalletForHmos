@@ -30,6 +30,12 @@ AUTH_PATTERNS = (
     "unauthorized",
     "invalid api key",
     "status 401",
+    "<401>",
+)
+CONTENT_POLICY_PATTERNS = (
+    "internalerror.algo.datainspectionfailed",
+    "output data may contain inappropriate content",
+    "data inspection failed",
 )
 SUBSCRIPTION_PATTERNS = (
     "subscription",
@@ -51,6 +57,10 @@ MODEL_PATTERNS = (
 
 def classify_failure(text: str) -> FailureKind:
     lowered = text.lower()
+    # A bare HTTP 400 is not enough: malformed requests are configuration
+    # failures, while these provider messages specifically mean content review.
+    if any(pattern in lowered for pattern in CONTENT_POLICY_PATTERNS):
+        return FailureKind.CONTENT_POLICY_REJECTED
     if any(pattern in lowered for pattern in SUBSCRIPTION_PATTERNS):
         return FailureKind.SUBSCRIPTION_UNAVAILABLE
     if any(pattern in lowered for pattern in AUTH_PATTERNS):

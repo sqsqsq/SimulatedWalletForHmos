@@ -35,6 +35,7 @@ class FailureKind(str, Enum):
     CLI_UNAVAILABLE = "cli_unavailable"
     CONFIGURATION_ERROR = "configuration_error"
     AUTH_REQUIRED = "auth_required"
+    CONTENT_POLICY_REJECTED = "content_policy_rejected"
     SUBSCRIPTION_UNAVAILABLE = "subscription_unavailable"
     MODEL_UNAVAILABLE = "model_unavailable"
     COMMAND_FAILED = "command_failed"

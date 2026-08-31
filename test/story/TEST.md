@@ -99,6 +99,30 @@ worker 并行运行。启动失败时检查活动指针、run、worker、lease�
 起跑前的这几道（启动重试、worker 租约、稳定性确认）**保留**——它们判的是「进程起没起来、
 还在不在」，那是事实，不是进度快慢。被裁掉的是拿进度当失败的那一类。
 
+### 1.1 CLI 配置组与单 Case 故障重跑
+
+CLI 测试按 `config/test.yaml > cli.configurations` 的顺序选宿主。具体配置条目不在执行协议中
+复述，以配置文件为唯一真源。
+
+配置组只处理 **CLI 基础设施失败**，不接管需求方角色：材料交付、范围拍板、关卡回复和
+`conclude` 判断仍全部由宿主模型按 §0.2 / §3.0 执行。脚本不得因为切换配置而自动回答关卡、
+自动选择需求方案或替宿主判断阶段是否到位。
+
+两类可自动恢复的失败：
+
+| 失败 | 识别 | 当前 Case | 其他 Case |
+|---|---|---|---|
+| 内容审查 400 | 只认 `DataInspectionFailed` / `Output data may contain inappropriate content` 等明确签名；裸 400 不算 | 保存失败 attempt；用同一配置从干净基线重跑一次；再次命中则终态 `content_policy_rejected` | 不停止、不重跑 |
+| 鉴权 401 | `auth_required`（401 / unauthorized / invalid api key） | 当前配置在本 suite 熔断，从干净基线切换下一配置；全部耗尽则终态 `cli_config_exhausted` | 已运行的不强杀；后续 attempt 跳过已熔断配置 |
+
+“干净基线”同时重建该 Case 的隔离 workspace、需求系统快照、补料投放状态、交互规划游标和
+阶段观测游标；失败 run 的 `artifact/`、事件、原始输出和 attempt 记录永久保留。新 attempt 回到
+相同业务起点，之后仍等待宿主逐关回复。重跑是原 suite 内的单 Case attempt，不创建新 suite。
+
+provider 失败后不对半成品跑业务 gate；只完成证据归档和运行态还原，再由协调器重建 Case。
+`poll` 快照必须展示 attempt、`cli_config_id`、`failure_kind` 和配置健康状态，使宿主看得见切换，
+但无需手工执行重跑命令。
+
 ## 2. 起跑前固定顺序
 
 **阶段推进是驱动器的职责，不是被测模型的**：`run_case.py` 在每个阶段边界按 `end_phase`
@@ -441,6 +465,8 @@ CLI、gate、恢复或基础设施失败为非零。
 | （无，自然结束而产物不齐） | `target_not_reached` | 1 | **模型真没做完**，只剩这一种 |
 | `cli_cannot_continue` | `cli_failed` | 1 | CLI 层失败（凭据被拒等） |
 | `no_session_id` | `cli_session_lost` | 2 | adapter 回了 succeeded 却没给 session id |
+| 内容审查第二次拒绝 | `content_policy_rejected` | 1 | 单 Case 的同配置重跑额度耗尽 |
+| 配置组全部鉴权失败 | `cli_config_exhausted` | 1 | 当前 suite 无可用 CLI 配置 |
 
 另外两个与被测能力无关的终态：`harness_incomplete`（退出码 2）= **装置自己漏跑了 gate**
 （gate 判红是被测对象的账，没跑是装置的账，两件事分开）；`worker_lost` = 进程真的不在了。

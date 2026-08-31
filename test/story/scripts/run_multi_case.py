@@ -52,7 +52,10 @@ _configure_console()
 
 sys.path.insert(0, str(HERE))
 import run_layout  # noqa: E402
+from cli_config_group import load_cli_group  # noqa: E402
 from phase_state import derive_phase_state  # noqa: E402
+
+CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
 
 
 OUT_ROOT = Path(str(CFG.get("output", {}).get("dir", "output/story")))
@@ -82,6 +85,7 @@ TERMINAL_STATUS = {
     "worker_start_failed", "worker_lost", "source_restore_failed",
     "provider_rejected", "workspace_prepare_failed", "unexpected_human_decision",
     "gate_failed", "target_not_reached",
+    "content_policy_rejected", "cli_config_exhausted",
 }
 PHASE_ACTIVE_STATUS = {"starting", "running", "stopping"}
 WAITING_STATUS = "awaiting_reply"
@@ -374,6 +378,184 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     case["workspace_baseline"] = str(case_root / "workspace-baseline.json")
     write_json(Path(case["workspace_baseline"]), baseline)
     return workspace
+
+
+def _complete_current_attempt(record: dict[str, Any], *, status: str,
+                              failure_kind: str, retry_action: str) -> None:
+    current = record.get("current_attempt")
+    for attempt in reversed(record.get("attempts") or []):
+        if attempt.get("attempt") == current:
+            attempt.update({
+                "status": status, "failure_kind": failure_kind,
+                "retry_action": retry_action, "finished_at": now(),
+            })
+            return
+
+
+def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
+    """Recreate one isolated Case from the suite's immutable inputs."""
+    if not suite.get("isolated_workspaces"):
+        record.update(status="workspace_prepare_failed", retry_finalized=True,
+                      last_error={"reason": "automatic_retry_requires_isolated_workspace"})
+        return
+    workspace_root = Path(str(suite["workspace_root"])).resolve()
+    workspace = (workspace_root / str(record["case"])).resolve()
+    if workspace == workspace_root or not workspace.is_relative_to(workspace_root):
+        raise RuntimeError(f"重跑 workspace 越界: {workspace}")
+    if workspace.is_symlink():
+        raise RuntimeError(f"重跑拒绝软链接 workspace: {workspace}")
+    if workspace.exists():
+        shutil.rmtree(workspace, onexc=_clear_readonly_and_retry)
+
+    system = requirement_system_path(workspace_root, str(record["case"])).resolve()
+    system_root = (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING).resolve()
+    if not system.is_relative_to(system_root) or system == system_root:
+        raise RuntimeError(f"重跑需求系统路径越界: {system}")
+    if system.is_symlink():
+        raise RuntimeError(f"重跑拒绝软链接需求系统: {system}")
+    if system.exists():
+        shutil.rmtree(system, onexc=_clear_readonly_and_retry)
+
+    record.update({
+        "workspace": None, "workspace_status": "recreating",
+        "run_id": None, "worker_pid": None, "cursor": 0, "model_cursor": 0,
+        "last_phase": None, "current_phase": None,
+        "highest_phase_reached": None, "phase_source": None,
+        "phase_observed_at": None, "spec_entered_at": None,
+        "awaiting_since": None, "execution_status": None,
+        "failure_kind": None, "pipeline": None,
+        "last_poll_at": None, "last_error": None, "last_awaiting": None,
+        "last_reply_status": None, "last_reply_text": None,
+        "last_replied_turn": None, "last_adaptive_request": None,
+        "interaction_index": 0, "interaction_state": "not_started",
+        "adaptive_reply_count": 0, "source_restore_status": "not_started",
+        "automation_observation_state": "not_started",
+        "automation_observation_started_at": None,
+        "automation_observation_until": None, "next_observation_at": None,
+        "observation_count": 0, "current_attempt": None,
+        "retry_finalized": False,
+    })
+    create_case_workspace(suite, record)
+    record["status"] = "pending"
+    retry_state = record.setdefault("retry_state", {})
+    retry_state.update({"phase": "prepared", "prepared_at": now()})
+
+
+def request_case_retry(suite: dict[str, Any], record: dict[str, Any], *,
+                       config_index: int, reason: str, failure_kind: str) -> None:
+    _complete_current_attempt(record, status="failed", failure_kind=failure_kind,
+                              retry_action=reason)
+    record["cli_config_index"] = config_index
+    record["cli_config_id"] = suite_cli_configurations(suite)[config_index]["id"]
+    record["retry_state"] = {
+        "phase": "preparing", "reason": reason,
+        "failure_kind": failure_kind, "planned_at": now(),
+        "next_cli_config_id": record["cli_config_id"],
+    }
+    record["status"] = "retry_preparing"
+    save_suite(Path(str(suite["bundle_root"])) / "suite.json", suite)
+    prepare_case_retry(suite, record)
+    append_event(suite, "case_retry_prepared", case=record["case"],
+                 reason=reason, cli_config_id=record["cli_config_id"])
+    append_case_observation(suite, str(record["case"]), {
+        "kind": "retry", "reason": reason, "failure_kind": failure_kind,
+        "next_cli_config_id": record["cli_config_id"],
+    })
+
+
+def process_retryable_failures(suite: dict[str, Any]) -> None:
+    records = list(suite.get("case_states", {}).values())
+    health = suite_cli_health(suite)
+
+    for record in records:
+        if record.get("status") == "retry_preparing":
+            try:
+                prepare_case_retry(suite, record)
+            except (OSError, RuntimeError, SystemExit) as exc:
+                record.update(status="workspace_prepare_failed", retry_finalized=True,
+                              last_error={"reason": str(exc)})
+                append_event(suite, "case_retry_prepare_failed",
+                             case=record.get("case"), error=str(exc))
+
+    # Authentication is configuration-wide.  Trip every observed 401 first so
+    # content retries in the same poll cannot select a now-invalid credential.
+    for record in records:
+        refresh_record(record)
+        if record.get("status") == "cli_failed" \
+                and record.get("failure_kind") == "auth_required":
+            config_id = str(record.get("cli_config_id") or "")
+            item = health.get(config_id)
+            if item and item.get("status") == "available":
+                item.update({
+                    "status": "unavailable_auth", "tripped_at": now(),
+                    "tripped_by_case": record.get("case"),
+                    "tripped_by_run": record.get("run_id"),
+                })
+                append_event(suite, "cli_configuration_tripped",
+                             cli_config_id=config_id, case=record.get("case"),
+                             run_id=record.get("run_id"), reason="auth_required")
+
+    retry_limit = int((suite.get("cli_configuration_group") or {})
+                      .get("retry_policy", CLI_RETRY_POLICY)
+                      .get("content_rejection_retries_per_config", 1))
+    for record in records:
+        if record.get("status") != "cli_failed":
+            continue
+        failure_kind = str(record.get("failure_kind") or "")
+        current_index = int(record.get("cli_config_index") or 0)
+        config_id = str(record.get("cli_config_id") or "")
+        if failure_kind == "auth_required":
+            selected = select_healthy_cli(suite, current_index + 1)
+            if selected is None:
+                _complete_current_attempt(
+                    record, status="cli_config_exhausted", failure_kind=failure_kind,
+                    retry_action="no_healthy_cli_configuration")
+                record.update(status="cli_config_exhausted", retry_finalized=True,
+                              last_error={"failure_kind": failure_kind,
+                                          "reason": "no_healthy_cli_configuration"})
+                record["retry_state"] = {"phase": "exhausted",
+                                         "reason": "no_healthy_cli_configuration",
+                                         "at": now()}
+                append_event(suite, "case_retry_exhausted", case=record.get("case"),
+                             reason="no_healthy_cli_configuration")
+                continue
+            request_case_retry(suite, record, config_index=selected[0],
+                               reason="switch_after_auth_failure",
+                               failure_kind=failure_kind)
+        elif failure_kind == "content_policy_rejected":
+            counts = record.setdefault("content_rejection_counts", {})
+            counts[config_id] = int(counts.get(config_id) or 0) + 1
+            if counts[config_id] > retry_limit:
+                _complete_current_attempt(
+                    record, status="content_policy_rejected", failure_kind=failure_kind,
+                    retry_action="content_retry_exhausted")
+                record.update(status="content_policy_rejected", retry_finalized=True,
+                              last_error={"failure_kind": failure_kind,
+                                          "reason": "content_retry_exhausted"})
+                record["retry_state"] = {"phase": "exhausted",
+                                         "reason": "content_retry_exhausted",
+                                         "at": now()}
+                append_event(suite, "case_retry_exhausted", case=record.get("case"),
+                             reason="content_retry_exhausted")
+                continue
+            selected = select_healthy_cli(suite, current_index)
+            if selected is None:
+                _complete_current_attempt(
+                    record, status="cli_config_exhausted",
+                    failure_kind="auth_required",
+                    retry_action="no_healthy_cli_configuration")
+                record.update(status="cli_config_exhausted", retry_finalized=True,
+                              last_error={"failure_kind": "auth_required",
+                                          "reason": "no_healthy_cli_configuration"})
+                record["retry_state"] = {"phase": "exhausted",
+                                         "reason": "no_healthy_cli_configuration",
+                                         "at": now()}
+                append_event(suite, "case_retry_exhausted", case=record.get("case"),
+                             reason="no_healthy_cli_configuration")
+                continue
+            request_case_retry(suite, record, config_index=selected[0],
+                               reason="retry_after_content_rejection",
+                               failure_kind=failure_kind)
 
 
 def read_json(path: Path, default: Any = None) -> Any:
@@ -716,10 +898,51 @@ def new_case_record(plan: CasePlan, target_end_phase: str | None = None) -> dict
         "automation_observation_until": None,
         "next_observation_at": None,
         "observation_count": 0,
+        "cli_config_id": CLI_CONFIGURATIONS[0]["id"],
+        "cli_config_index": 0,
+        "attempts": [],
+        "current_attempt": None,
+        "content_rejection_counts": {},
+        "retry_state": None,
     }
 
 
+def suite_cli_configurations(suite: dict[str, Any]) -> list[dict[str, str]]:
+    group = suite.get("cli_configuration_group") or {}
+    values = group.get("configurations") or CLI_CONFIGURATIONS
+    return [dict(item) for item in values]
+
+
+def suite_cli_health(suite: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    group = suite.setdefault("cli_configuration_group", {
+        "configurations": [dict(item) for item in CLI_CONFIGURATIONS],
+        "retry_policy": dict(CLI_RETRY_POLICY),
+        "health": {},
+    })
+    health = group.setdefault("health", {})
+    for item in suite_cli_configurations(suite):
+        health.setdefault(item["id"], {
+            "status": "available", "tripped_at": None,
+            "tripped_by_case": None, "tripped_by_run": None,
+        })
+    return health
+
+
+def select_healthy_cli(suite: dict[str, Any], start_index: int = 0) -> tuple[int, str] | None:
+    configurations = suite_cli_configurations(suite)
+    health = suite_cli_health(suite)
+    for index in range(max(0, start_index), len(configurations)):
+        config_id = configurations[index]["id"]
+        if health[config_id].get("status") == "available":
+            return index, config_id
+    return None
+
+
 def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("retry_finalized") and record.get("status") in {
+            "content_policy_rejected", "cli_config_exhausted",
+            "workspace_prepare_failed"}:
+        return record
     run_id = record.get("run_id")
     if not run_id and record.get("status") in {"pending", "coordinator_start_failed"}:
         return record
@@ -751,10 +974,20 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
     for key in ("failure_kind", "pipeline"):
         if key in state:
             record[key] = state.get(key)
+    if record.get("status") in TERMINAL_STATUS or record.get("status") == "cli_failed":
+        current = record.get("current_attempt")
+        for attempt in reversed(record.get("attempts") or []):
+            if attempt.get("attempt") == current and not attempt.get("finished_at"):
+                attempt.update({
+                    "status": record.get("status"),
+                    "failure_kind": record.get("failure_kind"),
+                    "finished_at": now(),
+                })
+                break
     if record.get("status") == "cli_failed" \
             and str(record.get("failure_kind") or "").lower() in {
                 "provider_rejected", "content_inspection", "rate_limited",
-                "service_unavailable", "auth_required",
+                "service_unavailable",
             }:
         record["status"] = "provider_rejected"
         record["failure_class"] = "provider_rejected"
@@ -1279,6 +1512,19 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
     matching active run; otherwise the bounded retry history remains evidence.
     """
     case_id = str(case["case"])
+    selected = select_healthy_cli(suite, int(case.get("cli_config_index") or 0))
+    if selected is None:
+        case["status"] = "cli_config_exhausted"
+        case["retry_finalized"] = True
+        case["retry_state"] = {"phase": "exhausted",
+                               "reason": "no_healthy_cli_configuration",
+                               "at": now()}
+        case["last_error"] = {"failure_kind": "auth_required",
+                              "reason": "no_healthy_cli_configuration"}
+        return
+    config_index, config_id = selected
+    case["cli_config_index"] = config_index
+    case["cli_config_id"] = config_id
     if suite.get("isolated_workspaces") and not case.get("workspace"):
         try:
             create_case_workspace(suite, case)
@@ -1292,6 +1538,7 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
         override_args.extend(("--start-phase", str(case["requested_start_phase"])))
     if case.get("requested_end_phase"):
         override_args.extend(("--end-phase", str(case["requested_end_phase"])))
+    override_args.extend(("--cli-config", config_id))
     history = case.setdefault("start_history", [])
     for attempt in range(1, START_MAX_ATTEMPTS + 1):
         case["start_attempts"] = attempt
@@ -1308,6 +1555,14 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
             case["run_id"] = payload.get("run_id")
             case["worker_pid"] = payload.get("worker_pid")
             case["last_error"] = None
+            attempt = {
+                "attempt": len(case.setdefault("attempts", [])) + 1,
+                "cli_config_id": config_id,
+                "run_id": case["run_id"], "started_at": now(),
+                "status": case["status"],
+            }
+            case["attempts"].append(attempt)
+            case["current_attempt"] = attempt["attempt"]
             entry["result"] = "confirmed"
             entry["run_id"] = case["run_id"]
             history.append(entry)
@@ -1326,6 +1581,14 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
             case["run_id"] = adopted.get("run_id")
             case["worker_pid"] = adopted.get("pid")
             case["last_error"] = None
+            attempt_record = {
+                "attempt": len(case.setdefault("attempts", [])) + 1,
+                "cli_config_id": config_id,
+                "run_id": case["run_id"], "started_at": now(),
+                "status": case["status"], "start_recovered": True,
+            }
+            case["attempts"].append(attempt_record)
+            case["current_attempt"] = attempt_record["attempt"]
             entry["result"] = "adopted_active_run"
             entry["run_id"] = case["run_id"]
             history.append(entry)
@@ -1567,6 +1830,7 @@ def poll_one(record: dict[str, Any], wait_sec: int, max_chars: int,
 def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                *, wait_for_due: bool = False,
                stability_confirmation: bool = True) -> list[dict[str, Any]]:
+    process_retryable_failures(suite)
     records = active_records(suite)
     if not records:
         schedule_pending(suite)
@@ -1670,6 +1934,7 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                      statuses={result["case"]: result.get("status") for result in results})
         if stability_confirmation:
             update_automation_stability(suite, results)
+        process_retryable_failures(suite)
     schedule_pending(suite)
     return [
         {
@@ -1850,6 +2115,17 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
             "last_confirmation_epoch": None,
             "ready_at": None,
             "cases": {},
+        },
+        "cli_configuration_group": {
+            "configurations": [dict(item) for item in CLI_CONFIGURATIONS],
+            "retry_policy": dict(CLI_RETRY_POLICY),
+            "health": {
+                item["id"]: {
+                    "status": "available", "tripped_at": None,
+                    "tripped_by_case": None, "tripped_by_run": None,
+                }
+                for item in CLI_CONFIGURATIONS
+            },
         },
         "cases": [plan.case_id for plan in plans],
         "case_plans": [plan.as_dict() for plan in plans],
@@ -2061,6 +2337,12 @@ def control_payload(suite: dict[str, Any], *,
         "cases": [{
             "case": record.get("case"), "feature": record.get("feature"),
             "run_id": record.get("run_id"), "status": record.get("status"),
+            "attempt": record.get("current_attempt"),
+            "cli_config_id": record.get("cli_config_id"),
+            "failure_kind": record.get("failure_kind"),
+            "retry_state": record.get("retry_state"),
+            "last_attempt": ((record.get("attempts") or [])[-1]
+                             if record.get("attempts") else None),
             "last_phase": record.get("last_phase"),
             "current_phase": record.get("current_phase"),
             "highest_phase_reached": record.get("highest_phase_reached"),
@@ -2083,6 +2365,7 @@ def control_payload(suite: dict[str, Any], *,
             "last_confirmation_at": stability.get("last_confirmation_at"),
             "ready_at": stability.get("ready_at"),
         },
+        "cli_configuration_health": suite_cli_health(suite),
         "next_interval_sec": next_interval_sec,
         "next_action": next_action,
         "read_only": read_only,
@@ -2117,14 +2400,18 @@ def command_plan(plans: list[CasePlan], jobs: int,
             "phase_active_parallelism": jobs if isolated_workspaces else 1,
             "same_feature_parallelism": 0,
             "coding_parallelism": jobs if isolated_workspaces else 0,
-            "awaiting_reply": "scripted replies are allowed per isolated Case"
-                if isolated_workspaces else "different features may overlap; reply is guarded",
+            "awaiting_reply": "host_reply_required_per_isolated_case"
+                if isolated_workspaces else "host_reply_required; different features may overlap",
             "workspace_copy": "allowlist_without_output_test_tools_features_git"
                 if isolated_workspaces else "current_workspace",
             "interaction_interval_sec": INTERACTION_INTERVAL_SEC,
             "automation_interval_sec": AUTOMATION_INTERVAL_SEC,
             "automation_stability_confirmations": 2,
             "workspace_output_retention": "retain_until_next_suite_start",
+            "cli_configurations": [item["id"] for item in CLI_CONFIGURATIONS],
+            "content_rejection_retries_per_config":
+                CLI_RETRY_POLICY["content_rejection_retries_per_config"],
+            "auth_failure_scope": CLI_RETRY_POLICY["auth_failure_scope"],
         },
     }, ensure_ascii=False, indent=2))
     return 0
@@ -2531,6 +2818,8 @@ def write_case_observation_record(suite: dict[str, Any],
         f"- 目标阶段：`{record.get('requested_end_phase') or record.get('end_phase')}`",
         f"- 最终状态：`{record.get('status')}`",
         f"- Run ID：`{record.get('run_id') or '未创建'}`",
+        f"- 最终 CLI 配置：`{record.get('cli_config_id') or '未选择'}`",
+        f"- Case attempts：{len(record.get('attempts') or [])}",
         f"- 启动尝试：{len(history)} / {START_MAX_ATTEMPTS}",
         f"- 观测次数：{record.get('observation_count', 0)}",
         f"- 回灌状态：`{promotion.get('status', '未执行')}`", "",
@@ -2542,6 +2831,12 @@ def write_case_observation_record(suite: dict[str, Any],
         lines.append(
             f"- 第 {item.get('attempt')} 次：{item.get('result')}"
             f"（returncode={item.get('returncode')}）")
+    lines.extend(["", "## CLI 配置切换与 Case 重跑", ""])
+    for item in record.get("attempts") or []:
+        lines.append(
+            f"- Attempt {item.get('attempt')}：`{item.get('cli_config_id')}` / "
+            f"`{item.get('status')}` / failure=`{item.get('failure_kind') or 'none'}` / "
+            f"action=`{item.get('retry_action') or 'none'}` / run=`{item.get('run_id')}`")
     lines.extend([
         "", "## 观测证据", "",
         "完整的 15 秒交互观测、120 秒自动观测和回复记录见 `observations.jsonl`。",

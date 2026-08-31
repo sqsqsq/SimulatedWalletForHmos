@@ -13,6 +13,7 @@ from unittest.mock import patch
 from tools.cli import CliClient, CliRunRequest
 from tools.cli.models import TERMINAL_STATUSES
 from tools.cli.run_store import RunStore
+from tools.cli.runner import classify_failure
 
 
 HERE = Path(__file__).resolve().parent
@@ -62,6 +63,17 @@ def registry_value() -> dict:
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_provider_content_inspection_is_classified_without_claiming_all_400s(self) -> None:
+        rejected = (
+            '"<400> InternalError.Algo.DataInspectionFailed: '
+            'Output data may contain inappropriate content."'
+        )
+        self.assertEqual("content_policy_rejected", classify_failure(rejected).value)
+        self.assertEqual("command_failed", classify_failure("400 bad request: invalid field").value)
+
+    def test_angled_401_is_auth_required(self) -> None:
+        self.assertEqual("auth_required", classify_failure("<401> Unauthorized").value)
+
     def test_runtime_root_is_caller_owned(self) -> None:
         with self.assertRaises(TypeError):
             CliClient()  # type: ignore[call-arg]

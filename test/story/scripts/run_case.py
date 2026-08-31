@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
+from cli_config_group import load_cli_group, select_cli
 from phase_state import derive_phase_state
 
 
@@ -69,7 +70,7 @@ if not OUT_ROOT.is_absolute():
     # 结果和测试脚本属于宿主侧；被测工程可以位于独立临时 workspace。
     OUT_ROOT = HOST_ROOT / OUT_ROOT
 
-CLI = CFG["cli"]["name"]
+CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
 if "turn_timeout" in CFG["cli"] or "idle_timeout" in CFG["cli"]:
     raise SystemExit("[runner] turn_timeout/idle_timeout 已废弃：静默不是失败条件")
 # **本域不设运行时限**（用户裁定 2026-08-31）。时限保护的是「进程失控」，
@@ -862,7 +863,7 @@ def _load_case(case_id: str, run_id: str | None = None) -> tuple[dict, Path, str
     return case, out_dir, feature
 
 
-def build_cli_env(out_dir: Path) -> dict[str, str]:
+def build_cli_env(out_dir: Path, cli_name: str | None = None) -> dict[str, str]:
     """为被测 CLI 建立每轮独立的可写运行目录。
 
     OpenCode 1.18 在 Windows 会把已存在的 XDG 子目录当作 mkdir 失败；将 config/data
@@ -870,13 +871,17 @@ def build_cli_env(out_dir: Path) -> dict[str, str]:
     其他 CLI 不受影响。
     """
     env = {str(k): str(v) for k, v in (CFG.get("cli", {}).get("env", {}) or {}).items()}
+    # Explicit in production; the fallback keeps this small helper directly
+    # testable without constructing a full request.
+    cli_name = cli_name or str(CFG.get("cli", {}).get("name")
+                               or CLI_CONFIGURATIONS[0]["name"])
     # 宿主的临时目录按轮隔离：实测被测模型在共享的 %TEMP%/opencode 里翻到了
     # 历史轮次的会话数据（story-ar90006-docx、handoff-story），还据此推断流程走法。
     # TMP/TEMP 指向本轮审计目录下的私有 tmp，历史数据物理隔离；对所有 CLI 生效。
     private_tmp = out_dir / "cli-tmp"
     private_tmp.mkdir(parents=True, exist_ok=True)
     env["TMP"] = env["TEMP"] = str(private_tmp)
-    if str(CFG.get("cli", {}).get("name", "")) != "opencode":
+    if cli_name != "opencode":
         return env
     env["XDG_CONFIG_HOME"] = str(out_dir / "opencode-xdg-config")
     env["XDG_DATA_HOME"] = str(out_dir / "opencode-xdg-data")
@@ -1477,6 +1482,7 @@ def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
 
 
 def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
+               cli_config_id: str | None = None,
                start_phase_override: str | None = None,
                end_phase_override: str | None = None) -> int:
     if run_id:
@@ -1508,6 +1514,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     # 单次 run 的硬上限按目标阶段放宽：coding 要写码 + 逐文件 lint，90 分钟不够。
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    cli_config = select_cli(CLI_CONFIGURATIONS, cli_config_id)
     # 上一轮没被取走的回话属于上一轮：留着会在本轮第一个关卡被当成人的回答用掉。
     (out_dir / REPLY_FILE).unlink(missing_ok=True)
     feed = observe.LiveFeed(out_dir / "live.jsonl")
@@ -1516,14 +1523,16 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
              "feature": feature, "pid": os.getpid(), "status": "running",
              "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "cli_run_id": None,
              "interactive": interactive, "requested_start_phase": start_phase,
-             "requested_end_phase": end_phase}
+             "requested_end_phase": end_phase,
+             "cli_config_id": cli_config["id"]}
     refresh_worker_lease(out_dir, state, force=True, event="run_start",
                          phase=start_phase)
     feed.emit("run_start", case=case_id, feature=feature, interactive=interactive)
 
     result: dict[str, Any] = {"case": case_id, "run_id": resolved_run_id, "feature": feature,
                               "start": state["started_at"], "status": "running",
-                              "execution_status": "running"}
+                              "execution_status": "running",
+                              "cli_config": cli_config}
     # 全局阶段槽是观测者与被测模型共用的单槽：运行前快照，终态还原。
     # 不还原的话，被测模型（或本驱动器的门禁调用）留下的阶段会拦住观测者会话的 Stop hook。
     phase_slot_snapshot = snapshot_phase_slot()
@@ -1555,8 +1564,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         feed.emit("upstream_fingerprint", digest=upstream_fingerprint["digest"][:16],
                   file_count=upstream_fingerprint["file_count"])
 
-    runlog.header({"case": case_id, "feature": feature, "cli": CLI,
-                   "model": CFG["cli"].get("model", ""), "target": TARGET,
+    runlog.header({"case": case_id, "feature": feature, "cli": cli_config["name"],
+                   "model": cli_config["model"], "target": TARGET,
                    "start": result["start"]})
     client = CliClient(runtime_root=out_dir / "cli-runtime")
     t0 = time.time()
@@ -1588,8 +1597,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 source_dirs=source_manifest["source_dirs"])
         with (out_dir / "events.jsonl").open("w", encoding="utf-8") as fh:
             request = CliRunRequest(
-                cli=CLI, model=str(CFG["cli"].get("model", "")),
-                profile=CFG["cli"].get("profile"),
+                cli=cli_config["name"], model=cli_config["model"],
+                profile=cli_config["profile"],
                 # 续跑不能复用用例的起手 prompt——那句「执行 /story init …」会让模型
                 # 重跑一遍已完成并闭环的上游阶段。
                 prompt=driver_prompt(
@@ -1597,8 +1606,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     else resume_prompt(feature, start_phase, end_phase),
                     interactive),
                 cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
-                stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir),
-                metadata={"tool": "story-skill-test"})
+                stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"]),
+                metadata={"tool": "story-skill-test",
+                          "cli_config_id": cli_config["id"]})
             run: dict = {}
             turns = 0
             # 同一阶段连续续话了几次——只用于报告里的可读性，不作上限
@@ -1754,10 +1764,21 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             "expected_gates": list(expected_gate_names(start_phase, end_phase)),
         }
 
+        retryable_provider_failure = result.get("failure_kind") in {
+            "auth_required", "content_policy_rejected",
+        }
         refresh_worker_lease(out_dir, state, force=True, event="gates_started", phase=end_phase)
-        result["gates"] = run_gates(
-            feature, out_dir, end_phase, start_phase=start_phase,
-            upstream_fingerprint=upstream_fingerprint)
+        if retryable_provider_failure:
+            # The coordinator will recreate this Case from its immutable baseline.
+            # Running business gates over a known partial product wastes time and
+            # can obscure the provider failure that caused the retry.
+            result["gates"] = {}
+            result["gates_skipped_reason"] = "retryable_provider_failure"
+            feed.emit("gates_skipped", reason=result["gates_skipped_reason"])
+        else:
+            result["gates"] = run_gates(
+                feature, out_dir, end_phase, start_phase=start_phase,
+                upstream_fingerprint=upstream_fingerprint)
         feed.emit("gates_done", **result["gates"])
 
         missing_gates = sorted(set(expected_gate_names(start_phase, end_phase))
@@ -1825,7 +1846,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         print(json.dumps(result, ensure_ascii=False, indent=2))
         state.update(status=result["execution_status"], finished_at=result["end"],
                      gates=result.get("gates"),
+                     gates_skipped_reason=result.get("gates_skipped_reason"),
                      exit_code=result.get("exit_code"),
+                     failure_kind=result.get("failure_kind"),
                      target_reached=result.get("target_reached"),
                      pipeline=result.get("pipeline"),
                      source_transaction=result.get("source_transaction"),
@@ -1877,9 +1900,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
 
 
 def cmd_start(case_id: str, start_phase_override: str | None = None,
-              end_phase_override: str | None = None) -> int:
+              end_phase_override: str | None = None,
+              cli_config_id: str | None = None) -> int:
     """后台跑：为每次执行创建不可变 run-id 目录，然后立即返回。"""
     _, _, feature = _load_case_definition(case_id)
+    cli_config = select_cli(CLI_CONFIGURATIONS, cli_config_id)
     if start_phase_override and start_phase_override not in {"story", *PHASE_ORDER}:
         raise SystemExit(f"[runner] 未知 start_phase「{start_phase_override}」")
     if end_phase_override:
@@ -1904,11 +1929,12 @@ def cmd_start(case_id: str, start_phase_override: str | None = None,
     state = {"case": case_id, "run_id": run_id, "feature": feature, "pid": None,
              "status": "starting", "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
              "requested_start_phase": start_phase_override,
-             "requested_end_phase": end_phase_override}
+             "requested_end_phase": end_phase_override,
+             "cli_config_id": cli_config["id"]}
     refresh_worker_lease(out_dir, state, force=True, event="worker_starting")
 
     argv = [sys.executable, str(HERE / "run_case.py"), case_id, "run", "--prepared",
-            "--run-id", run_id]
+            "--run-id", run_id, "--cli-config", cli_config["id"]]
     if start_phase_override:
         argv.extend(("--start-phase", start_phase_override))
     if end_phase_override:
@@ -1952,7 +1978,7 @@ def cmd_start(case_id: str, start_phase_override: str | None = None,
         "ok": True, "case": case_id, "run_id": run_id,
         "run_dir": run_dir_text,
         "feature": feature, "worker_pid": proc.pid,
-        "status": state.get("status", "starting"),
+        "status": state.get("status", "starting"), "cli_config_id": cli_config["id"],
         "requested_start_phase": start_phase_override,
         "requested_end_phase": end_phase_override,
         "observation_interval_sec": OBSERVATION_INTERVAL_SEC,
@@ -2255,6 +2281,8 @@ def main() -> int:
                              "conclude"))
     ap.add_argument("--prepared", action="store_true", help="内部：审计目录已由 start 清理")
     ap.add_argument("--run-id", default=None, help="内部：绑定 start 创建的不可变运行")
+    ap.add_argument("--cli-config", default=None,
+                    help="内部：本 attempt 使用的 cli.configurations id")
     ap.add_argument("--start-phase", default=None,
                     help="内部：协调器覆盖本轮起始阶段；不改变 case.yaml")
     ap.add_argument("--end-phase", default=None,
@@ -2274,10 +2302,12 @@ def main() -> int:
 
     if args.command == "run":
         return foreground(args.case_id, prepared=args.prepared, run_id=args.run_id,
+                          cli_config_id=args.cli_config,
                           start_phase_override=args.start_phase,
                           end_phase_override=args.end_phase)
     if args.command == "start":
-        return cmd_start(args.case_id, args.start_phase, args.end_phase)
+        return cmd_start(args.case_id, args.start_phase, args.end_phase,
+                         args.cli_config)
     if args.command == "poll":
         return cmd_poll(args.case_id, args.cursor, args.model_cursor,
                         args.wait_sec, args.max_chars)
