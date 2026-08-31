@@ -18,13 +18,22 @@ import * as path from 'node:path';
 import { adjudicationKeys, adjudicationSet } from './verdict-set.mjs';
 import { featureRoot, readTextOrNull } from './paths.mjs';
 
-/** verifier 报告的文件名形态（与测试域回归脚本同一组名）。 */
-const REPORT_NAME_RES = [
-  /^verifier\.report\.md$/i,
-  /^verifier-.*\.md$/i,
-  /^verify-.*\.md$/i,
-  /^verifier-.*-result\.ya?ml$/i,
-];
+/**
+ * verifier 报告的机器真源：按 subject 分区的 JSON。
+ *
+ * 报告不再由 verifier 自己写文件，而是 SubagentStop hook
+ * 从子 agent 的**终态消息**生成，按 subject 分区落盘 `verifier.report.<64位subject>.json`
+ * （＋同名 .md）。同目录的 .md 明确声明「只是人读投影，机器侧不解析」。
+ *
+ * 所以这里只认 JSON，且**只认这一种形态**。升级前认的四种旧文件名
+ * （verifier.report.md / verifier-*.md / verify-*.md / verifier-*-result.yaml）
+ * 全部退役：留任何一种都是双轨——同一份裁决会有两个真源，改一个不改另一个时
+ * 判据说不清自己在判谁。
+ */
+const REPORT_JSON_RE = /^verifier\.report\.[0-9a-f]{64}\.json$/i;
+
+/** JSON 里承载 verifier 结论正文的字段（record-verifier-report.mjs 的 `report_text`）。 */
+const REPORT_TEXT_FIELD = 'report_text';
 
 /** 裁决词：一行里出现任一个才算这条被裁过。 */
 const VERDICT_RE = /(PASS|FAIL|WARN|不适用|设计|复述)/;
@@ -85,15 +94,42 @@ export function evidenceVerified(keys, reportLines, targetTexts) {
   return { unadjudicated, verified };
 }
 
-/** 报告目录下所有 verifier 报告的绝对路径。 */
-function verifierReports(projectRoot, feature, phase) {
+/** 报告目录下所有 verifier 报告 JSON 的绝对路径。 */
+function verifierReportFiles(projectRoot, feature, phase) {
   const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
   // 目录不存在 = verifier 还没执行，是合法状态；目录在却读不动是异常，
   // 让它抛出去由调用方判 FAIL——吞掉的话「读失败」会伪装成「还没跑」。
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
-    .filter(n => REPORT_NAME_RES.some(re => re.test(n)))
+    .filter(n => REPORT_JSON_RE.test(n))
     .map(n => path.join(dir, n));
+}
+
+/**
+ * 取出各报告的结论正文。
+ *
+ * 一个阶段可能有多个 subject 的报告文件（换代、并发），全收集合并判——
+ * 少收一份就可能把「裁过了」判成「没裁」。
+ *
+ * 解析不动或没有正文字段的文件**记名单独报出**，不静默跳过：
+ * 那与「verifier 没跑」是两回事，混在一起就没法查。
+ */
+function reportTexts(files) {
+  const texts = [];
+  const unreadable = [];
+  for (const file of files) {
+    const raw = readTextOrNull(file);
+    let doc = null;
+    try {
+      doc = raw === null ? null : JSON.parse(raw);
+    } catch {
+      doc = null;
+    }
+    const body = typeof doc?.[REPORT_TEXT_FIELD] === 'string' ? doc[REPORT_TEXT_FIELD] : null;
+    if (body === null) unreadable.push(path.basename(file));
+    else texts.push(body);
+  }
+  return { texts, unreadable };
 }
 
 /**
@@ -123,16 +159,27 @@ export function adjudicationProblems(ctx, knowledge, targetPaths) {
     };
   }
 
-  const reports = verifierReports(ctx.projectRoot, ctx.feature, ctx.phase);
-  if (!reports.length) {
+  const files = verifierReportFiles(ctx.projectRoot, ctx.feature, ctx.phase);
+  if (!files.length) {
     return {
       status: 'NOT_APPLICABLE',
       problems: [],
-      detail: `verifier 尚未执行（${ctx.phase}/reports 下没有报告文件），必答 ${keys.length} 行`,
+      detail: `verifier 尚未执行（${ctx.phase}/reports 下没有 verifier.report.<subject>.json），`
+        + `必答 ${keys.length} 行`,
     };
   }
 
-  const text = reports.map(p => readTextOrNull(p) ?? '').join('\n');
+  const { texts, unreadable } = reportTexts(files);
+  if (unreadable.length) {
+    return {
+      status: 'FAIL',
+      problems: [`verifier 报告读不出结论正文：${unreadable.join('、')}`
+        + `——报告文件在，但解析不出 ${REPORT_TEXT_FIELD} 字段。这不是「还没跑」，`
+        + '是报告本身坏了或协议又变了，先查清楚再谈裁决'],
+      detail: `不可解析 ${unreadable.length}/${files.length}`,
+    };
+  }
+  const text = texts.join('\n');
   const lines = text.split(/\r?\n/);
 
   // 引文核实：光有裁决词不算裁过，引文得真的来自目标产物（否则就是回声）
