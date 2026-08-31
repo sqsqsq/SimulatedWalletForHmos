@@ -4,10 +4,16 @@
 黑盒跑真实 hook（node + stdin JSON），不 import 内部函数——判据是「同仓两个会话时
 hook 的对外行为对不对」，而不是某个函数返回了什么。
 
-覆盖三件事：
+覆盖两件事：
   1. 本会话跑过这个阶段的 harness → 未闭环时拦截（exit 2）；
-  2. 本会话没跑过 → 放行且不把 state 盖成自己的（同仓另一会话在跑）；
-  3. 情形 2 下 record hook 不把报告写进 feature 目录、更不新建那个目录。
+  2. 归属不成立时 record hook 不把报告写进 feature 目录、更不新建那个目录。
+
+原本还有第三条「本会话没跑过 → 放行且不把 state 盖成自己的」，F6 合并
+framework 3.0.0 后退役：新协议不再按 transcript 判归属，报告改为按 subject
+分区落盘（verifier.report.<64位subject>.json），谁也没有能力覆盖另一个 subject
+的文件；Stop 新鲜度只读 session_id + updated_at。「同仓两个会话抢 state」这个
+被批次 1 T0-T18 修过的形态，在新协议下不再由归属判定承载，因此这条判据没有
+对象了。它是否真的被覆盖，看冒烟短程里 verifier 留痕正不正常。
 """
 import json
 import os
@@ -91,17 +97,6 @@ class TestSessionOwnership(unittest.TestCase):
             r = _run("check-phase-completion.mjs", payload)
             self.assertEqual(r.returncode, 2,
                              f"跑过 harness 的会话未闭环时应被拦截；stderr={r.stderr[:300]}")
-
-    def test_other_session_is_not_stamped_as_owner(self):
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d)
-            payload = _make_project(tmp, ran_harness=False)
-            r = _run("check-phase-completion.mjs", payload)
-            self.assertEqual(r.returncode, 0, "没跑过这个阶段的会话应放行，不该被别人的 state 拦住")
-            state = json.loads((tmp / "framework" / "harness" / "state"
-                                / ".current-phase.json").read_text(encoding="utf-8"))
-            self.assertIsNone(state.get("session_id"),
-                              "没跑过 harness 的会话不该把 state 盖成自己的")
 
     def test_report_not_written_into_feature_dir_without_ownership(self):
         with tempfile.TemporaryDirectory() as d:

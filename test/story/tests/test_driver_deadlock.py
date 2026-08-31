@@ -112,29 +112,45 @@ class FrameworkIntegrityProvisioning(unittest.TestCase):
 
 
 class SpecRequirementProvider(unittest.TestCase):
-    """L2 完整流程的需求真源必须被 derive.requirement 认出来。
+    """L2 完整流程的需求真源必须解析得到——否则 spec 阶段永远闭不了环。
 
-    上游只认 goal 入参与 lite 轨 change.md，于是手动 /spec（L2 正统入口）的需求
-    永远解析不到 → functional 轴 UNVERIFIED → summary INCOMPLETE → 闭环被拒。
-    本地热修（drift_allowlist 具名审批）补齐 AR/RR/SR 三个来源；本测试防止它再次
-    在回退中被误删而无人察觉。
+    因果链是实测过的：derive.requirement 解析不到需求 → capability blocked →
+    functional 轴 UNVERIFIED → summary INCOMPLETE → check-receipt 拒绝闭环，
+    且重跑多少次都一样。
+
+    机制在 framework 3.0.0 换了一次（F6 合并）：旧版靠本地热修往候选里补
+    `AR/design.md`、`RR/prd.md`、`SR/design.md` 三条路径；新版不再猜路径，改由
+    `fidelity-intent-init` 显式签发需求 SSOT，spec 分支按
+    `requirement_provenance == 'explicit_cli'` + 身份匹配读它。热修随合并丢弃
+    （红线 9 的旧账），本测试改锚到新机制。
+
+    **对被测流程的影响**：走 L2 的 Case 现在必须自己完成 fidelity-intent-init
+    这一步。这是新基线的一部分，不是装置缺陷——absent 分支的报错文案已给出可
+    照做的命令，模型能不能据此走通正是要观测的。
     """
 
-    def test_provider_reads_full_track_docs(self):
+    def _requirement_branch(self) -> str:
         src = (REPO_ROOT / "framework" / "harness" / "scripts" / "utils"
                / "capability-resolution.ts").read_text(encoding="utf-8")
-        head = src[src.index("case 'derive.requirement'"):][:2000]
-        for doc in ("'AR', 'design.md'", "'RR', 'prd.md'", "'SR', 'design.md'"):
-            self.assertIn(doc, head, f"derive.requirement 未覆盖 {doc}")
+        head = src[src.index("case 'derive.requirement'"):]
+        return head[:head.index("case 'derive.test-targets'")]
 
-    def test_hotfix_is_named_approved(self):
-        import json
-        cfg = json.loads((REPO_ROOT / "framework.config.json").read_text(encoding="utf-8-sig"))
-        allow = {e["path"]: e for e in cfg.get("integrity", {}).get("drift_allowlist", [])}
-        entry = allow.get("harness/scripts/utils/capability-resolution.ts")
-        self.assertIsNotNone(entry, "热修缺 drift_allowlist 具名审批，framework_integrity 会判漂移")
-        self.assertTrue(entry.get("approved_by", "").strip())
-        self.assertTrue(entry.get("rationale", "").strip())
+    def test_spec_reads_the_fidelity_intent_ssot(self):
+        branch = self._requirement_branch()
+        for token in ("loadFidelityIntentSsotState", "explicit_cli", "execution_identity"):
+            self.assertIn(token, branch,
+                          f"spec 的需求来源不再经 {token} —— 机制又换了，先查清再改判据")
+
+    def test_absent_branch_tells_the_model_what_to_run(self):
+        """需求解析不到时，报错必须给出可照做的命令。
+
+        这是新机制唯一的补偿：旧版靠猜路径兜住了 L2，新版要求显式签发，那么
+        「没签发」的那一刻必须说清楚怎么签发，否则模型只能撞墙。
+        """
+        branch = self._requirement_branch()
+        self.assertIn("fidelity-intent-init", branch,
+                      "absent 分支没告诉模型跑什么命令，L2 需求缺失就成了死胡同")
+        self.assertIn("--requirement", branch)
 
 
 if __name__ == "__main__":
