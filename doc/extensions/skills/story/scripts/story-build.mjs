@@ -778,6 +778,23 @@ function materialSubsectionName(contract) {
 }
 
 /**
+ * 材料清单那一节里的全部链接目标，带行号。
+ *
+ * 与 `scanMaterialList` 的行形态判分开：那条判「这一行有没有链接、链到的目录允不允许」，
+ * 这里只把目标取出来，交给调用方判它在不在。两件事分开，报错才说得清是哪一件不成立。
+ *
+ * @returns {[number, string][]} `[行号, 链接目标]`
+ */
+function materialLinkTargets(body, baseLine = 0) {
+  const out = [];
+  const lines = String(body ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    for (const m of lines[i].matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) out.push([baseLine + i, m[1]]);
+  }
+  return out;
+}
+
+/**
  * 把材料清单那一节里的 markdown 链接换成一个占位词，再交给仓内路径与悬空引用扫描。
  *
  * **原文链接是仓内路径唯一允许出现的位置**：归档件的读者打不开这个仓，但他要能
@@ -1680,6 +1697,28 @@ function cmdCheck(ctx) {
       for (const h of scanMaterialList(body, span.start + 1,
         { allowDirs: ctx.contract.material_dirs ?? [] })) {
         problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
+      }
+      // 链接得能点开 —— 只在线上判，因为只有线上才知道那份文件在不在。
+      //
+      // 实测的失效形态：E 节写 `[RR/prd.md](RR/prd.md)`。story.md 在 AR/ 下，
+      // 这个裸相对路径解析出来是 `AR/RR/prd.md`——**不存在**。上面那条范围判
+      // 抓不到它：它只看链接落在需求目录的哪一段，`RR` 在允许集里就放行，
+      // 而「RR 这一段允许链」与「这个链接能不能点开」是两件事。
+      //
+      // 离线不判存在性：那时没有 feature 上下文，基准目录只能靠猜，而判据一旦
+      // 开始猜就没法解释也没法回归。离线拿到的往往是一份脱离需求目录的独立文件，
+      // 它身边本就没有 RR/ 与 AR/——形态判照跑，存在性留给线上。
+      if (!ctx.offline) {
+        const fromDir = path.dirname(ctx.storyPath);
+        for (const [line, target] of materialLinkTargets(body, span.start + 1)) {
+          if (/^(https?:|mailto:)/i.test(target)) continue;
+          if (!fs.existsSync(path.resolve(fromDir, target))) {
+            problems.push(`「${appendix.title}·${name}」第 ${line} 行的链接点不开：`
+              + `${target} —— 从归档件所在的位置解析不到这份文件。`
+              + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态，'
+              + '指错了等于没指');
+          }
+        }
       }
     }
   }

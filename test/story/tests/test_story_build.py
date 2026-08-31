@@ -1408,6 +1408,46 @@ class TestFormLints(StoryBuildCase):
         self.settle()
         self.assert_check_names("每份材料给一条原文链接")
 
+    def test_a_link_that_cannot_be_opened_is_named(self) -> None:
+        """链接得能点开——裸相对路径解析错一层就是断链。
+
+        实测的失效形态：E 节写 `[RR/prd.md](RR/prd.md)`。story.md 在 AR/ 下，
+        这个路径解析出来是 `AR/RR/prd.md`，不存在。行形态判抓不到它——那条只看
+        链接落在需求目录的哪一段，`RR` 在允许集里就放行。「这一段允许链」与
+        「这个链接能不能点开」是两件事，得分开判。
+        """
+        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
+                           "原文：[RR/prd.md](RR/prd.md)\n")
+        self.init_audit()
+        self.settle()
+        out = self.assert_check_names("链接点不开")
+        self.assertIn("RR/prd.md", out, "报错要把点不开的那个目标给出来")
+
+    def test_a_link_that_resolves_passes(self) -> None:
+        """同一份材料写对了相对层级就该过——判的是能不能点开，不是长什么样。"""
+        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
+                           "原文：[RR/prd.md](../RR/prd.md)\n")
+        self.init_audit()
+        self.settle()
+        code, out = self.check_output()
+        self.assertNotIn("链接点不开", out)
+
+    def test_offline_does_not_judge_whether_the_file_exists(self) -> None:
+        """离线不判存在性：那时没有 feature 上下文，基准目录只能靠猜。
+
+        判据一旦开始猜就没法解释也没法回归。金样正是离线跑的——它是独立文件，
+        身边没有 RR/ 也没有 AR/，存在性判在那里必然全红。
+        """
+        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
+                           "原文：[RR/prd.md](RR/prd.md)\n")
+        self.init_audit()
+        self.settle()
+        proc = subprocess.run(
+            ["node", str(BUILD), "check", "--offline", "--story", str(self.story_path),
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertNotIn("链接点不开", (proc.stderr or "") + (proc.stdout or ""))
+
     def test_the_material_link_is_the_one_place_a_repo_path_may_appear(self) -> None:
         """豁免只到这一节的链接语法：正文里的仓内路径照拦。"""
         self.init_audit()
