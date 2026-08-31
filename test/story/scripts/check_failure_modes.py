@@ -2043,7 +2043,7 @@ def _quote_for(body: str, unit_text: str, extra_verdict: str | None,
                 continue
             s = max(cells, key=len)
         if len(_norm(s)) >= 12 and _norm(s) not in _norm(unit_text):
-            cands.append(s[:60])
+            cands.append(s)
     if not cands:
         return _chapter_quote(body)
     counts = used if used is not None else {}
@@ -2212,7 +2212,8 @@ def s04_duplicate_paragraph(root: Path, ctx: Ctx) -> Outcome:
     """
     if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "签约成功之后，详情页顶部显示当前的触发门限")
+    code, out = _story_build_cycle(root,
+                                 "签约成功之后，详情页顶部显示当前的触发门限与单笔面额，用户可以随时改。")
     if code == 0:
         return Outcome(True, "没有重复的段落")
     if "重复的段落" in out:
@@ -2408,6 +2409,28 @@ def s17_image_new_dir(root: Path, ctx: Ctx) -> Outcome:
     if "新建的图片目录" in out:
         return Outcome(False, "新目录里的副本引用被点名")
     return Outcome(False, f"check 未过（非图片目录原因）：{out[:200]}")
+
+
+@checker
+def s18_appendix_image(root: Path, ctx: Ctx) -> Outcome:
+    """图整批迁进附录——正文的承接句留在原地，读者手边没有图。
+
+    落点判够不到：图片单元的落点是按引用位置反推的，图放哪儿它跟到哪儿。
+    这一条与图守恒合围，把图逼回它讲的那一章。
+    """
+    return _form_case(root, "里有", "图在它讲的那一章")
+
+
+@checker
+def s19_material_list_prose_head(root: Path, ctx: Ctx) -> Outcome:
+    """材料清单的列表之前塞散文——上一版只看列表之后。"""
+    return _form_case(root, "目的句之外还有", "材料清单只有目的句和列表行")
+
+
+@checker
+def s20_dangling_figure_ref(root: Path, ctx: Ctx) -> Outcome:
+    """这一段说「下图」，前后两块之内却没有图。"""
+    return _form_case(root, "附近却没有图", "指图的话旁边真有图")
 
 
 def _form_case(root: Path, needle: str, ok: str) -> Outcome:

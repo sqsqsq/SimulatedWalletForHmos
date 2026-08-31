@@ -72,8 +72,11 @@ if not OUT_ROOT.is_absolute():
 CLI = CFG["cli"]["name"]
 if "turn_timeout" in CFG["cli"] or "idle_timeout" in CFG["cli"]:
     raise SystemExit("[runner] turn_timeout/idle_timeout 已废弃：静默不是失败条件")
-SOFT_TIMEOUT = int(CFG["cli"].get("soft_timeout", 2700))
-HARD_TIMEOUT = int(CFG["cli"].get("hard_timeout", 5400))
+# **本域不设运行时限**（用户裁定 2026-08-31）。时限保护的是「进程失控」，
+# 而这里的观测者逐轮驱动、随时可以 stop——一个跑得久的阶段不是失控，是它本来就长。
+# 实测两次：`end_phase` 靠前时时限反而先到，把正在推进的会话从中间切断，
+# 留下一堆半成品产物，观测到的既不是能力也不是缺陷。传 0 = 不限制。
+NO_TIME_LIMIT = 0
 STOP_GRACE = int(CFG["cli"].get("stop_grace", 60))
 OBSERVATION_INTERVAL_SEC = int(CFG.get("observation", {}).get("interval_sec", 120))
 HEARTBEAT_INTERVAL_SEC = int(CFG.get("observation", {}).get("heartbeat_sec", 10))
@@ -87,8 +90,13 @@ if not FEATURE_HISTORY_ROOT.is_absolute():
     FEATURE_HISTORY_ROOT = (REPO_ROOT / FEATURE_HISTORY_ROOT).resolve()
 FEATURE_HISTORY_TIMESTAMP_FORMAT = str(
     FEATURE_HISTORY_CFG.get("timestamp_format", "%Y%m%d-%H%M%S"))
-if SOFT_TIMEOUT <= 0 or HARD_TIMEOUT <= SOFT_TIMEOUT or STOP_GRACE < 0:
-    raise SystemExit("[runner] 超时须满足 0 < soft < hard 且 stop_grace >= 0")
+if STOP_GRACE < 0:
+    raise SystemExit("[runner] stop_grace 不能为负")
+for gone in ("soft_timeout", "hard_timeout", "phase_hard_timeout", "max_turns"):
+    if gone in CFG["cli"]:
+        raise SystemExit(
+            f"[runner] cli.{gone} 已停用：本域不设运行时限与续话轮次上限，"
+            "终点由 case.yaml 的 end_phase 判定，空转由观测者 stop。把这一项从配置里删掉")
 if OBSERVATION_INTERVAL_SEC <= 0:
     raise SystemExit("[runner] observation.interval_sec 必须大于 0")
 if HEARTBEAT_INTERVAL_SEC <= 0 or WORKER_LEASE_SEC <= HEARTBEAT_INTERVAL_SEC:
@@ -123,7 +131,6 @@ GATE_REPLY = "按你推荐的选项继续，不用再问我；每个决策照常
 # 悄悄变成「有人说按推荐走」，测出来的行为是假的。
 REPLY_WAIT = int(CFG["cli"].get("reply_wait_sec", 3600))
 REPLY_FILE = "reply.json"
-MAX_TURNS = int(CFG["cli"].get("max_turns", 6))
 
 
 def driver_prompt(prompt: str, interactive: bool) -> str:
@@ -133,9 +140,11 @@ def driver_prompt(prompt: str, interactive: bool) -> str:
 
 # 阶段序列（framework 的 feature full 轨）。end_phase 用它定位「跑到哪为止」。
 PHASE_ORDER = ("spec", "plan", "coding", "review", "ut", "testing")
-# 每阶段的续话上限：越往后单阶段越长（coding 要逐文件 lint、review 要过 diff），
-# 给的是「这一阶段允许续几次话」，不是全程总轮次。
-PHASE_TURNS = {"spec": 6, "plan": 6, "coding": 12, "review": 6, "ut": 8, "testing": 6}
+# **不设续话轮次上限**（用户裁定 2026-08-31）。上一版按 end_phase 求和分配预算，
+# 而 story 流程自己的关卡（取材、补料、范围、成文前确认）不在 PHASE_ORDER 里、
+# 一轮都分不到——`end_phase=spec` 时全程只有 6 轮，光走关卡就用光，模型刚在 spec
+# 抛出术语映射表等人确认就被判「目标未达成」。终点由 end_phase 判定，
+# 空转由观测者看着 stop，不由一个与关卡数无关的计数器代管。
 # 产品源码目录。coding 阶段会写这里，跑完必须复位，否则第二轮起跑点就不是干净的。
 # **精确列举而不是「除 doc/test 之外」**：漏掉一个目录只是少复位一处，
 # 而多算一个目录会把被测件（doc/extensions）或 harness 自己（test/story）删掉。
@@ -1364,24 +1373,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     start_phase = resolve_start_phase(case, start_phase_override)
     if start_phase != "story" and phase_index(start_phase) > end_idx:
         raise SystemExit(f"[runner] start_phase({start_phase}) 在 end_phase({end_phase}) 之后")
-    # 轮次预算只覆盖本轮区间：plan-only 不把已经闭环的 spec 再算一遍。
-    budget_phases = (PHASE_ORDER[:end_idx + 1] if start_phase == "story"
-                     else PHASE_ORDER[phase_index(start_phase):end_idx + 1])
-    max_turns = sum(PHASE_TURNS.get(p, MAX_TURNS) for p in budget_phases)
-    # story 侧终点比 spec 多三段路：归档送审 → 拉回评审意见 → 逐条处置并修订规格。
-    if end_phase == STORY_REVIEW:
-        max_turns += 3
     # 阶段之间还有 phase.next_step / plan.ok_to_code 这类编号确认；自动模式沿用同一条
     # 回话即可（它说的是「按你推荐的选项继续」，对关卡与阶段推进同样成立），
     # 但要在报告里显式记下这轮有多少次是驱动器替人应答的。
     gate_reply = GATE_REPLY
     interactive = is_interactive(case)
     # 单次 run 的硬上限按目标阶段放宽：coding 要写码 + 逐文件 lint，90 分钟不够。
-    hard_timeout = int(CFG["cli"].get("phase_hard_timeout", {}).get(end_phase, HARD_TIMEOUT))
-    if hard_timeout <= SOFT_TIMEOUT:
-        raise SystemExit(
-            f"[runner] end_phase={end_phase} 的 hard_timeout({hard_timeout}) "
-            f"必须大于 soft_timeout({SOFT_TIMEOUT})")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 上一轮没被取走的回话属于上一轮：留着会在本轮第一个关卡被当成人的回答用掉。
@@ -1472,12 +1469,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     case["prompt"].strip() if start_phase == "story"
                     else resume_prompt(feature, start_phase, end_phase),
                     interactive),
-                cwd=TARGET, soft_timeout_sec=SOFT_TIMEOUT, hard_timeout_sec=hard_timeout,
+                cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
                 stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir),
                 metadata={"tool": "story-skill-test"})
             run: dict = {}
             turns = 0
-            # 同一阶段连续续话的计数（阶段级预算，见下方 phase_turn_budget_exhausted）
+            # 同一阶段连续续话了几次——只用于报告里的可读性，不作上限
             stuck_phase, stuck_turns = None, 0
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
@@ -1530,7 +1527,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
 
                 session_id = str(run.get("session_id") or "")
                 refresh_worker_lease(out_dir, state, force=True, event="cli_run_finished")
-                if (run.get("status") != "succeeded" or turns >= max_turns
+                if (run.get("status") != "succeeded"
                         or not session_id or target_reached(feature, end_phase)):
                     break
                 # 人先说话：交互用例等真人回话；自动用例里也允许中途插一句
@@ -1552,27 +1549,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     # 是「评审→归档」，笼统说「按推荐走」会让模型去归档然后宣布全链交付）。
                     done = artifacts_ready(feature)
                     nxt = next_unclosed_phase(feature, end_phase) if done else None
-                    # **阶段级预算**：PHASE_TURNS 一直只被求和当全局上限，于是「同一阶段
-                    # 反复下发同一条指令而毫无进展」只能耗到全程预算用尽（实测 27 轮）。
-                    # 卡住的阶段自己有上限，超了就停——空转不产出任何证据，只消耗时间。
-                    budget_key = nxt or "story"
-                    if budget_key == stuck_phase:
-                        stuck_turns += 1
-                    else:
-                        stuck_phase, stuck_turns = budget_key, 1
-                    limit = PHASE_TURNS.get(budget_key, MAX_TURNS)
-                    if stuck_turns > limit:
-                        result["stop_reason"] = "phase_turn_budget_exhausted"
-                        result["stuck_phase"] = budget_key
-                        runlog.event("阶段预算耗尽",
-                                     f"{budget_key} 阶段连续续话 {stuck_turns} 次仍未闭环"
-                                     f"（上限 {limit}），停止本 Case 以免空转")
-                        feed.emit("phase_budget_exhausted", phase=budget_key,
-                                  turns=stuck_turns, limit=limit)
-                        break
+                    stuck_turns = stuck_turns + 1 if nxt == stuck_phase else 1
+                    stuck_phase = nxt
                     gate_reply = continuation_reply(feature, artifacts_done=done, next_phase=nxt)
                     feed.emit("gate_reply", turn=turns,
-                              reason=(f"阶段边界：推进到 {nxt}（第 {stuck_turns}/{limit} 次）" if nxt
+                              reason=(f"阶段边界：推进到 {nxt}（同阶段第 {stuck_turns} 次）" if nxt
                                       else f"未达 {end_phase}，按推荐继续"))
                     runlog.event("续话", f"第 {turns + 1} 轮：{gate_reply[:80]}")
                 request = replace(

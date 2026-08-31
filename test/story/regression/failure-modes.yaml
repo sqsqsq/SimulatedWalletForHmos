@@ -1129,3 +1129,55 @@ modes:
       S10 判的是「改了名的副本」（文件名不在登记里），这条判的是**名字没变、目录变了**——
       上一版按文件名比对，这一种一路放行。允许的位置是材料里那些图既有的落盘目录，
       加上归档件自己的图片目录（合同 `story_image_dir`）。
+
+  - id: S18-appendix-image
+    dimension: conservation
+    found_round: "2026-08-31"
+    form: 图整批迁进附录——正文写着「下图是…」，读者读到那句话时手边没有图
+    clause: KG5-2 / 坑 #35
+    checker: s18_appendix_image
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S18-appendix-image/bad
+    good_fixture: test/story/fixtures/failure-modes/S18-appendix-image/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      三轮复发。落点判做不到这件事：图片单元的落点是按「在哪被引用」反推的，
+      图放哪儿落点跟到哪儿，那条判据对放错位置恒真（循环判据）。
+      这一条与「每张登记的图都必须被引用」合围：进不了附录、又不能不出现，
+      于是只剩它讲的那一章一个去处。
+
+  - id: S19-material-list-prose-head
+    dimension: conservation
+    found_round: "2026-08-31"
+    form: 材料清单的列表**之前**塞散文——上一版只看列表之后，之前是不设防区
+    clause: KG5-2 / 坑 #36
+    checker: s19_material_list_prose_head
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S19-material-list-prose-head/bad
+    good_fixture: test/story/fixtures/failure-modes/S19-material-list-prose-head/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    variant_of: S15-appendix-prose-tail
+    scope_note: >
+      S15 判的是表后的尾巴，这条判的是列表**前**的那一段。实测一轮，四张图连同
+      四段说明全塞在这里，判据一条都没响。这一节的形态是「一句目的句 + 列表行」，
+      目的句之外的散文块在前在后一样点名。附录另外四节仍只判尾巴。
+
+  - id: S20-dangling-figure-ref
+    dimension: conservation
+    found_round: "2026-08-31"
+    form: 悬空的指图句——这一段写着「下图」，前后两块之内却没有图
+    clause: KG5-2 / 坑 #37
+    checker: s20_dangling_figure_ref
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/S20-dangling-figure-ref/bad
+    good_fixture: test/story/fixtures/failure-modes/S20-dangling-figure-ref/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      承接判（image_lead）只从图往回看一行，图迁走之后它无从判起——留在原地的
+      那句话没有任何判据管。这一条从话往外看：前后各两个块之内没有图就点名。

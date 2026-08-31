@@ -11,7 +11,7 @@ interactive: true
 start_phase: story
 # 走到哪个阶段**由驱动器控制**：它在每个阶段边界按 `end_phase` 算出下一个未闭环阶段，
 # 指名下发推进指令。改终点只改这一行，prompt 里不写阶段链。
-end_phase: review
+end_phase: spec
 
 # 人手上备着、但没提前放进需求目录的材料。等它开口要才投——
 # 提前铺好，「它会不会发现材料不够」就永远测不到。

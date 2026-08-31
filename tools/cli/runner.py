@@ -256,14 +256,15 @@ class CliRunner:
                     )
                     stop_failed = not stopped_ok
                     break
-                if not soft_notified and elapsed > resolved.soft_timeout_sec:
+                if (resolved.soft_timeout_sec > 0 and not soft_notified
+                        and elapsed > resolved.soft_timeout_sec):
                     soft_notified = True
                     store.update(status=RunStatus.OVERTIME.value, overtime_at=now_iso())
                     emit(
                         event_type="lifecycle",
                         content="soft timeout reached; continuing",
                     )
-                if elapsed > resolved.hard_timeout_sec:
+                if resolved.hard_timeout_sec > 0 and elapsed > resolved.hard_timeout_sec:
                     timed_out = True
                     store.update(status=RunStatus.STOPPING.value, hard_timeout_at=now_iso())
                     emit(

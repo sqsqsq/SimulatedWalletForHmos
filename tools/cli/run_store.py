@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from .models import CliEvent, CliRunRequest, EventPage, RunStatus
 
@@ -59,6 +59,30 @@ def read_text_retry(path: Path, *, attempts: int = 50) -> str:
     for _ in range(attempts):
         try:
             return path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.01)
+    assert last_error is not None
+    raise last_error
+
+
+def open_text_retry(path: Path, *, attempts: int = 50) -> TextIO:
+    """Open an append-only log for streaming, with the same sharing-window retry.
+
+    The event log is the one file here that grows without bound. Reading it with
+    read_text_retry materialises the whole file plus a list of every line on each
+    poll; two parallel workers against a 3.7MB log exhausted memory and lost both
+    runs. Streaming keeps a poll proportional to the page it returns, not to the
+    log. The sharing violation happens at open time, so retrying the open keeps
+    the semantics read_text_retry had.
+
+    Truncation and rotation need no special handling: each call opens the file as
+    it is now, so a truncated log simply reads short and refills as it grows.
+    """
+    last_error: OSError | None = None
+    for _ in range(attempts):
+        try:
+            return path.open("r", encoding="utf-8", errors="replace")
         except OSError as exc:
             last_error = exc
             time.sleep(0.01)
@@ -183,11 +207,12 @@ class RunStore:
 
     def _last_seq(self) -> int:
         result = 0
-        for line in read_text_retry(self.events_path).splitlines():
-            try:
-                result = max(result, int(json.loads(line).get("seq", 0) or 0))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
+        with open_text_retry(self.events_path) as handle:
+            for line in handle:
+                try:
+                    result = max(result, int(json.loads(line).get("seq", 0) or 0))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
         return result
 
     def page(self, cursor: int, max_events: int, max_chars: int) -> EventPage:
@@ -196,21 +221,22 @@ class RunStore:
         has_more = False
         next_cursor = cursor
         if self.events_path.is_file():
-            for line in read_text_retry(self.events_path).splitlines():
-                try:
-                    value = json.loads(line)
-                    seq = int(value.get("seq", 0) or 0)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    continue
-                if seq <= cursor:
-                    continue
-                event_size = len(str(value.get("content") or ""))
-                if events and (len(events) >= max_events or size + event_size > max_chars):
-                    has_more = True
-                    break
-                events.append(CliEvent.from_dict(value))
-                size += event_size
-                next_cursor = seq
+            with open_text_retry(self.events_path) as handle:
+                for line in handle:
+                    try:
+                        value = json.loads(line)
+                        seq = int(value.get("seq", 0) or 0)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue
+                    if seq <= cursor:
+                        continue
+                    event_size = len(str(value.get("content") or ""))
+                    if events and (len(events) >= max_events or size + event_size > max_chars):
+                        has_more = True
+                        break
+                    events.append(CliEvent.from_dict(value))
+                    size += event_size
+                    next_cursor = seq
         run = self.state()
         # The event file and run state are separate durable files. An event
         # can be appended after this page's file snapshot but before terminal

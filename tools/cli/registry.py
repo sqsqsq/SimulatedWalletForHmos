@@ -224,11 +224,18 @@ class CliRegistry:
         soft = float(timeout["soft_sec"] if soft is None else soft)
         hard = float(timeout["hard_sec"] if hard is None else hard)
         grace = float(timeout["stop_grace_sec"] if grace is None else grace)
-        if soft <= 0 or hard <= soft or grace < 0:
+        # 0 means "no limit". A long agent run is not a failure mode here: the
+        # observer drives the session turn by turn and stops it explicitly, so a
+        # wall clock that kills the process mid-phase destroys evidence rather
+        # than protecting anything.
+        unlimited = soft <= 0 and hard <= 0
+        if not unlimited and (soft <= 0 or hard <= soft):
             raise CliConfigurationError(
-                "Request timeouts require 0 < soft_timeout_sec < hard_timeout_sec "
-                "and stop_grace_sec >= 0"
+                "Request timeouts require 0 < soft_timeout_sec < hard_timeout_sec, "
+                "or both 0 for no limit"
             )
+        if grace < 0:
+            raise CliConfigurationError("stop_grace_sec must be >= 0")
         env = {
             **defaults.get("env", {}),
             **cli.get("env", {}),

@@ -216,23 +216,22 @@ heartbeat 交给一个后台轮询脚本代跑——那个脚本若只做「poll
 按实跑顺序校准回来。**不要为了让脚本对上而改话术**——话术一改，这个 Case 观测的就不是同一件事了。
 本轮两个 Case 都漂了一关：一个的术语确认排在 story 之后才轮到，另一个的第二份材料模型自始至终没开口要。
 
-### 3.4 `--end-phase` 只被记录，不被采用——要改终点仍须改 `case.yaml`
+### 3.4 改测试终点：改 `case.yaml` 的 `end_phase` 一行
 
-`start`／`plan` 接受 `--end-phase`，`plan` 的输出里也会回显 `requested_end_phase`，
-**但 suite 记录里每个 Case 的 `end_phase` 仍是 `case.yaml` 里的值**，驱动器照它推进。
-实测一轮：两个 Case 都传了 `--end-phase spec`，其中一个 spec 闭环后驱动器照旧下发了 plan。
+**终点的真源是 `case.yaml` 的 `end_phase`**，`cases/` 里的注释本就写明了这一点。
+要让某一轮停在 spec 或 plan，就改那一行——一个 Case 一行，改完即生效，
+不必也不该在命令行上想办法。`cases/` 属被测输入，改它单独记一笔账。
 
-后果不只是多跑一段：`stop` **只有整 suite 一档，没有单 Case**
-（`command_stop` 遍历全部 case_states），另一个 Case 还没跑完就不能停，
-先到终点的那个只能一直跑下去。实测多跑了 18 分钟。
+`--end-phase` 是**同一件事的命令行 override**，不是坏的：`start` 收到它以后会随
+后台驱动进程一路传下去（`run_case.py` 的 `start` → `run`，驱动器用的就是 override 值）。
+容易读错的是回显——suite 记录里每个 Case 的 `end_phase` 字段**始终回显 `case.yaml` 的原值**，
+override 记在 `requested_end_phase` 与 `effective_phase_scope` 两个字段里。
+只看 `end_phase` 会得出「传了不算数」的结论，那是回显差，不是装置缺陷。
 
-所以本轮终点要与 `case.yaml` 不同时，两条路选一条：
-
-1. 改 `case.yaml` 的 `end_phase` 一行（`cases/` 属被测输入，改它要单独记账）；
-2. 接受它跑过头，到点后停整个 suite——**前提是用户明确要求停在那一步**。
-
-**不要靠 `--end-phase` 生效**。这个装置缺陷本身不在测试域的修改范围内（`run_*.py` 属运行装置），
-记在这里是为了下一轮不再按它的字面意思规划。
+另一件与终点相关、确实要提前想好的事：`stop` **只有整 suite 一档，没有单 Case**
+（`command_stop` 遍历全部 case_states）。两个 Case 终点不同时，先到终点的那个会一直挂着，
+直到另一个也跑完才能一起停。所以两个 Case 的 `end_phase` 差得越远，空转越久——
+F4 那轮实测空转 18 分钟。终点分歧大时，把它们分两个 suite 跑更省。
 
 ## 4. 15/120 秒 heartbeat
 

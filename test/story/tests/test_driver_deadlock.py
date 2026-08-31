@@ -53,21 +53,28 @@ class VerifierReportNaming(unittest.TestCase):
         self.assertIn("verifier 报告", missing)
 
 
-class PhaseTurnBudget(unittest.TestCase):
-    """阶段级预算存在且各阶段都有上限——只求和当全局上限等于没有阶段预算。"""
+class NoTurnBudget(unittest.TestCase):
+    """续话轮次上限已退场——它按 end_phase 分配预算，而 story 流程的关卡不在
+    `PHASE_ORDER` 里、一轮都分不到。实测 `end_phase=spec` 时全程只有 6 轮，
+    光走关卡就用光，模型刚在 spec 抛出术语映射表等人确认就被判「目标未达成」。
+    终点由 end_phase 判定，空转由观测者 stop。"""
 
-    def test_every_phase_has_a_budget(self):
-        for phase in run_case.PHASE_ORDER:
-            self.assertIn(phase, run_case.PHASE_TURNS,
-                          f"{phase} 没有续话上限，卡在这一阶段时只能耗到全程预算用尽")
-            self.assertGreater(run_case.PHASE_TURNS[phase], 0)
-
-    def test_budget_source_is_read_by_loop(self):
-        # 判据是「循环里真的按阶段计数并会中止」，不是「常量存在」——
-        # 上一版常量存在却只被 sum() 用掉，阶段预算实际从未生效。
+    def test_the_turn_budget_is_gone(self):
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
-        self.assertIn("phase_turn_budget_exhausted", src)
-        self.assertIn("stuck_turns > limit", src)
+        # 判的是「上限还在不在起作用」，不是字面——停用键的校验里必然还留着键名，
+        # 那一处正是「配置里再写它就报错」本身。
+        for gone in ("PHASE_TURNS", "MAX_TURNS", "max_turns =", "turns >= max_turns",
+                     "phase_turn_budget_exhausted", "stuck_turns > limit"):
+            self.assertNotIn(gone, src, f"轮次上限残留：{gone}")
+        self.assertFalse(hasattr(run_case, "PHASE_TURNS"))
+        self.assertFalse(hasattr(run_case, "MAX_TURNS"))
+
+    def test_a_stale_config_key_is_refused_not_ignored(self):
+        """配置里再写这几个键要直接报错——静默忽略会让人以为限制还在生效。"""
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        self.assertIn("已停用", src)
+        for gone in ("soft_timeout", "hard_timeout", "phase_hard_timeout", "max_turns"):
+            self.assertIn(f'"{gone}"', src)
 
 
 class AwaitingReplyCadence(unittest.TestCase):

@@ -677,11 +677,17 @@ class EndPhaseTest(unittest.TestCase):
             rc.REPO_ROOT = original
             shutil.rmtree(root, ignore_errors=True)
 
-    def test_turn_budget_grows_with_the_target_phase(self) -> None:
-        """跑得越远给的轮次越多；否则模型会在 coding 中途被轮次上限掐断。"""
-        to_spec = rc.PHASE_TURNS["spec"]
-        to_ut = sum(rc.PHASE_TURNS[p] for p in rc.PHASE_ORDER[:rc.phase_index("ut") + 1])
-        self.assertGreater(to_ut, to_spec * 3)
+    def test_no_wall_clock_and_no_turn_budget(self) -> None:
+        """本域不设运行时限、也不设续话轮次上限。
+
+        两者保护的都是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop。
+        实测两次都是限制先到：一次 1h54m 硬超时把正在推进的会话从中间切断，
+        一次 6 轮预算被 story 流程的关卡用光——留下的都是半成品，
+        观测到的既不是能力也不是缺陷。终点只由 end_phase 判定。
+        """
+        for gone in ("PHASE_TURNS", "MAX_TURNS", "SOFT_TIMEOUT", "HARD_TIMEOUT"):
+            self.assertFalse(hasattr(rc, gone), f"{gone} 应当已退场")
+        self.assertEqual(0, rc.NO_TIME_LIMIT)
 
     def test_source_reset_scope_is_enumerated_not_inferred(self) -> None:
         """源码复位范围必须是**列举**的。

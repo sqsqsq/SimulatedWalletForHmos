@@ -11,7 +11,7 @@ system: false
 interactive: true
 start_phase: story
 # 走到哪个阶段由驱动器控制（见 auto-topup 同位注释）。改终点只改这一行。
-end_phase: review
+end_phase: plan
 
 # 人手上备着、但没提前放进需求目录的材料。等它开口要才投。
 supplements:

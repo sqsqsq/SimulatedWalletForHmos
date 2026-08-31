@@ -26,24 +26,22 @@ cli:
   #              两轮都没跑完：A 轮模型输出崩坏（同一字符重复数千次）、
   #              B 轮跑到 coding 之后凭据**再次**被拒（同一个 401）。
   #              那两轮因此没有有效的效率读数；
-  #   2026-08-30 换回本行这套。**F 修复两轮与本宿主跨宿主**，
-  #              要与批次 4 首跑那组数字比，本宿主反而是同一套，可以直接比。
-  name: codex
-  model: gpt-5.6-luna
-  profile: full_access
-  # 时钟按**单次 CLI run**计，不是整个用例。spec 阶段要跑 harness + verifier，
-  # 比单轮问答长得多；coding 阶段要逐文件写码并 lint，更长。
-  # 事件静默不是失败条件，不配置 idle/turn timeout。
-  soft_timeout: 2700
-  hard_timeout: 5400
-  # end_phase 越靠后，单次 run 越可能长——按目标阶段放宽硬上限。
-  # 键是 end_phase，值是该用例的 hard_timeout（秒）；未列的沿用上面的默认值。
-  # 注意这是**单次 run** 的上限，全流程的总时长是它乘以轮次。
-  phase_hard_timeout:
-    coding: 10800   # 3h：写码 + 逐文件 lint
-    review: 10800
-    ut: 10800
-    testing: 10800
+  #   2026-08-30 换回 codex / gpt-5.6-luna，F4 六提交的在线收口测于它；
+  #   2026-08-31 F5 轮按用户要求换回 opencode / deepseek。**与 F4 那轮跨宿主**：
+  #              F5 报告里的效率数字要与 F 修复两轮比（同宿主），与 F4 首跑/收口
+  #              那组比时必须写明中间换过 codex。
+  name: opencode
+  model: bailian/deepseek-v4-flash-0731
+  profile: build
+  # **不设运行时限、不设续话轮次上限**（用户裁定 2026-08-31）。
+  # 时限与轮次上限保护的是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop——
+  # 一个跑得久的阶段不是失控，是它本来就长。两次实测都是限制先到：
+  # 一次把正在推进的会话从中间切断（1h54m 硬超时，plan 刚开始），
+  # 一次轮次预算 6 轮被 story 流程的关卡用光（模型刚在 spec 抛出术语映射表等确认）。
+  # 两次留下的都是半成品产物，观测到的既不是能力也不是缺陷。
+  # 终点由 case.yaml 的 end_phase 判定；空转由观测者看着 stop。
+  # `soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` 已停用，
+  # 写在这里会被 run_case.py 直接拒绝——防的是「以为还在生效」。
 
 observation:
   # Story 与前置交互阶段需要及时驱动；进入 spec 后转为 Goal/heartbeat 的两分钟观测。
