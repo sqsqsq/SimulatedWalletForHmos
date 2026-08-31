@@ -343,10 +343,33 @@ def render_target(sections: list[tuple[str, str]]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def preview(path: Path) -> dict:
+    """只读预览一份材料：正文文本 + 图清单，**不落盘任何东西**。
+
+    归类是判断（这份文档主体是 RR / SR / AR / UX 哪一类），判断要读内容；
+    而 .docx 是压缩包，不解开就读不了。落盘那一步的解析器本来就在这里，
+    预览复用它——否则读文档的人只能自己写一遍 zipfile + OOXML，
+    实测每轮都在重写，还得先猜对 namespace。
+
+    与导入用的是**同一个解析器**：预览看到的正文，就是导入会写进去的正文。
+    """
+    if not path.is_file():
+        raise ImportError_(f"「{path}」不存在")
+    if is_text(path):
+        return {"file": path.name, "kind": "text",
+                "text": path.read_text(encoding="utf-8", errors="replace"), "images": []}
+    markdown, blobs = docx_to_markdown(path, ".")
+    return {"file": path.name, "kind": "docx", "text": markdown,
+            "images": sorted(blobs.keys())}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 inbox/ 里的人工材料导入上游正文")
-    ap.add_argument("--feature", required=True)
+    ap.add_argument("--feature", required=False,
+                    help="导入模式必填；--preview 只读单份材料时可不填")
     ap.add_argument("--project-root", default=None)
+    ap.add_argument("--preview", default=None, metavar="PATH",
+                    help="只读预览一份材料的正文与图清单，不落盘（归类判断的输入）")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -354,6 +377,24 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+
+    if args.preview:
+        # 只读分支：不碰 feature 目录、不写任何文件，走完就退出。
+        try:
+            out = preview(Path(args.preview))
+        except ImportError_ as exc:
+            payload = {"mode": "preview", "ok": False, "error": str(exc)}
+            sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            return 1
+        log(f"预览 {out['file']}：正文 {len(out['text'])} 字，图 {len(out['images'])} 张")
+        payload = {"mode": "preview", "ok": True, **out}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return 0
+
+    if not args.feature:
+        payload = {"mode": "import", "ok": False, "error": "导入模式需要 --feature"}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return 1
 
     ar = args.feature
     result: dict = {"mode": "import", "reqNo": ar}

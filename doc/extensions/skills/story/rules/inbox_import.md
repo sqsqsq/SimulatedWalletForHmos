@@ -33,6 +33,16 @@
 这是最可靠的依据）> 文件名与首标题（仅作辅助线索）。一份文档混着多类内容时按**主体**归
 ——归类是文件级的，拆不开。
 
+**读 `.docx` 用预览，不要自己写解析**：
+
+```bash
+python doc/extensions/skills/story/scripts/import_sources.py --preview <docx 路径>
+```
+
+它输出正文与图清单、**不落盘任何东西**，用的是导入那一步同一个解析器——
+预览看到的正文，就是导入会写进去的正文。docx 是压缩包，自己写 zipfile + OOXML
+每轮都要重来一遍，还得先猜对 namespace。
+
 ## 落盘：先写判断，再跑脚本
 
 1. 写 `doc/features/<AR>/inbox/.classify.json`，内容 `{"<文件名>":"RR|SR|AR|UX", ...}`；

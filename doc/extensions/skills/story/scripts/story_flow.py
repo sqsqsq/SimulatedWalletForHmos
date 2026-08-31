@@ -81,6 +81,33 @@ STORY_SRC_FROZEN = (
     "story-verdicts.md", "copyedit.md",
 )
 SOURCES = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
+
+
+def sweep_story_src(src: Path) -> list[str]:
+    """登记前把 story-src/ 扫干净——只留台账那五件。
+
+    实测一轮：模型在这里造了 21 个工作草稿（分章文本、候选池、映射表），
+    跟五件台账混在一个目录里进了归档。归档件的读者分不清哪些是交付物、
+    哪些是造它时的脚手架，而脚手架里往往还有半成品与废弃版本。
+
+    白名单**就是 STORY_SRC_FROZEN 本身**，不在这里另列一份：那五件是随稿冻结、
+    要算指纹的台账，清理与冻结说的必须是同一批文件——各写一份，改一处忘一处时，
+    要么清掉了要算指纹的，要么留下了不该留的。
+
+    只扫这一层，不递归、不碰别的目录；清掉的逐个报出来，不静默删。
+    """
+    if not src.is_dir():
+        return []
+    swept = []
+    for item in sorted(src.iterdir()):
+        if item.name in STORY_SRC_FROZEN:
+            continue
+        if item.is_dir():
+            shutil.rmtree(item, ignore_errors=True)
+        else:
+            item.unlink(missing_ok=True)
+        swept.append(item.name)
+    return swept
 # 三级关卡，**每级只问一件事**：材料够不够 → 范围怎么定 → 承载哪一份。
 #
 # 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
@@ -970,6 +997,8 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
     # 之后 `story-build check` 拿它核对，`init`/`audit` 直接拒绝重算。
     src = feature_root / "AR" / "story-src"
+    for stray in sweep_story_src(src):
+        log(f"清理中间件：{stray}")
     contract["story_src_digests"] = {
         name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
     }

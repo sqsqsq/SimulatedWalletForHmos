@@ -16,7 +16,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { adjudicationKeys, adjudicationSet } from './verdict-set.mjs';
-import { featureRoot, readTextOrNull } from './paths.mjs';
+import { extensionRoot, featureRoot, readTextOrNull } from './paths.mjs';
 
 /**
  * verifier 报告落在哪 —— **两种协议，按宿主能力二选一，不是新旧接替**。
@@ -51,8 +51,26 @@ const REPORT_TEXT_FIELD = 'report_text';
 /** 裁决词：一行里出现任一个才算这条被裁过。 */
 const VERDICT_RE = /(PASS|FAIL|WARN|不适用|设计|复述)/;
 
-/** 引文的最短长度。太短的片段在任何产物里都能碰巧命中，证明不了读过。 */
-const MIN_QUOTE = 12;
+/**
+ * 引文的最短长度。太短的片段在任何产物里都能碰巧命中，证明不了读过。
+ *
+ * **数在合同里**（`verdicts.min_quote_chars`），这里只读：story 侧的 check 与本模块
+ * 判的是同一件事，各写一份 12 时改一处忘一处，两边就不一致而且**都是绿的**。
+ * 读不到合同时回落到这个值并照判——判据不能因为配置缺一项就整条失效。
+ */
+const MIN_QUOTE_FALLBACK = 12;
+
+function minQuoteChars(projectRoot) {
+  try {
+    const p = path.join(extensionRoot(projectRoot), 'skills', 'story', 'contracts',
+                        'story-chapters.json');
+    const raw = readTextOrNull(p);
+    const n = raw === null ? null : JSON.parse(raw)?.verdicts?.min_quote_chars;
+    return typeof n === 'number' && n > 0 ? n : MIN_QUOTE_FALLBACK;
+  } catch {
+    return MIN_QUOTE_FALLBACK;
+  }
+}
 
 /** 规范化：去空白、markdown 强调与反引号——引文与原文的差别不该卡在排版上。 */
 function normalizeQuote(s) {
@@ -74,7 +92,8 @@ function normalizeQuote(s) {
  * @param {string[]} targetTexts 目标产物全文（引文须出自其中之一）
  * @returns {{unadjudicated: {key: string, why: string}[], verified: number}}
  */
-export function evidenceVerified(keys, reportLines, targetTexts) {
+export function evidenceVerified(keys, reportLines, targetTexts,
+                                 minQuote = MIN_QUOTE_FALLBACK) {
   const targets = targetTexts.map(normalizeQuote).filter(Boolean);
   const unadjudicated = [];
   let verified = 0;
@@ -94,8 +113,8 @@ export function evidenceVerified(keys, reportLines, targetTexts) {
     const cells = row.split('|').map(c => c.trim()).filter(Boolean);
     const quote = cells.slice(1).sort((a, b) => b.length - a.length)[0] ?? '';
     const norm = normalizeQuote(quote);
-    if (norm.length < MIN_QUOTE) {
-      unadjudicated.push({ key, why: `引文只有 ${norm.length} 字（要求 ≥${MIN_QUOTE}）——太短的片段证明不了读过产物` });
+    if (norm.length < minQuote) {
+      unadjudicated.push({ key, why: `引文只有 ${norm.length} 字（要求 ≥${minQuote}）——太短的片段证明不了读过产物` });
       continue;
     }
     if (!targets.some(t => t.includes(norm))) {
@@ -215,7 +234,7 @@ export function adjudicationProblems(ctx, knowledge, targetPaths) {
           detail: `逐行裁决齐备（${keys.length} 行）；**引文未核实**——读不到目标产物` };
   }
 
-  const { unadjudicated, verified } = evidenceVerified(keys, lines, targets);
+  const { unadjudicated, verified } = evidenceVerified(keys, lines, targets, minQuoteChars(ctx.projectRoot));
   if (unadjudicated.length) {
     const shown = unadjudicated.slice(0, 5).map(u => `${u.key}（${u.why}）`);
     return {

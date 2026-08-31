@@ -197,3 +197,59 @@ class TestChapterRendering(AllocateRenderCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RegistrationSweepsScratchFiles(unittest.TestCase):
+    """登记前把 story-src/ 扫干净——只留台账那五件。
+
+    F6 实测：模型在 story-src/ 下造了 21 个工作草稿（分章文本 `_chapter_*.txt`、
+    候选池 `_pool_*.txt`、映射表 `_map_*.json`），跟五件台账混在一个目录里进了归档。
+    归档件的读者分不清哪些是交付物、哪些是造它时的脚手架。
+
+    白名单就是 `STORY_SRC_FROZEN` 本身，不另列一份——清理与冻结说的必须是同一批文件。
+    """
+
+    def test_the_whitelist_is_the_frozen_ledger_itself(self) -> None:
+        """反向锁：清理函数不得自带一份文件名清单。
+
+        各写一份时，改一处忘一处的后果是「清掉了要算指纹的」或「留下了不该留的」，
+        而两种都不会报错。
+        """
+        src = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+               / "story_flow.py").read_text(encoding="utf-8")
+        body = src[src.index("def sweep_story_src"):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("STORY_SRC_FROZEN", body, "清理没有引用冻结清单——那就是第二份真源")
+        for name in ("source-units.json", "audit.json", "story-verdicts.md"):
+            self.assertNotIn(f'"{name}"', body, f"清理代码里自己列了 {name}——两份清单")
+
+    def test_scratch_files_are_swept_and_the_ledger_survives(self) -> None:
+        import shutil as _shutil
+        import sys as _sys
+        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"))
+        import story_flow
+
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "story-src"
+            src.mkdir()
+            for name in story_flow.STORY_SRC_FROZEN:
+                (src / name).write_text("台账", encoding="utf-8")
+            (src / "_chapter_背景.txt").write_text("草稿", encoding="utf-8")
+            (src / "_pool_验收.txt").write_text("草稿", encoding="utf-8")
+            (src / "_scratch").mkdir()
+
+            swept = story_flow.sweep_story_src(src)
+
+            self.assertEqual(
+                sorted(["_chapter_背景.txt", "_pool_验收.txt", "_scratch"]), sorted(swept),
+                "清掉的和报出来的要一致——静默删比不删更糟")
+            left = sorted(p.name for p in src.iterdir())
+            self.assertEqual(sorted(story_flow.STORY_SRC_FROZEN), left,
+                             "登记后 story-src/ 应当恰是那五件")
+
+    def test_a_missing_directory_is_not_an_error(self) -> None:
+        import sys as _sys
+        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"))
+        import story_flow
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual([], story_flow.sweep_story_src(Path(d) / "nope"))

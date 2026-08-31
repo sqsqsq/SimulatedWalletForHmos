@@ -30,7 +30,19 @@ const AUTHOR_DOC = 'doc/extensions/hooks/plan/author.md';
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
 
-/** 设计章的起始形态——「知识决策」必须排在它们之前。 */
+/**
+ * 设计章的起始形态——「知识决策」必须排在它们之前。
+ *
+ * **这些词不是数出来的**：它们是 framework 规定的 plan 法定章名（`skills/feature/plan/SKILL.md`
+ * 的九章：1 Scope 声明与继承 / 2 模块架构图 / 3 目录文件结构规划 / 4 数据模型定义 /
+ * 5 页面组件树 / 6 状态管理方案 / 7 服务层接口定义 / 8 路由导航设计 / 9 spec 功能映射表）
+ * 里第 2–8 章那几个，也就是「设计」那一段。第 1 章 Scope 声明是框架要求的前置，
+ * 不算设计章——所以判的是「知识决策在设计章之前」，不是「知识决策排第一」。
+ *
+ * **真正的风险是它与 framework 的 `check-plan.ts > required_chapters` 是两份抄本**：
+ * 那边改了章名，这边不会跟着改，本判据就会静默失灵而没有任何信号。
+ * `test_plan_pattern_crosscheck.py` 锁两边一致——framework 改章名时测试先红。
+ */
 const DESIGN_HEADING_RE = /^##\s*\d*[.、]?\s*(模块架构|目录|文件结构|数据模型|页面组件|状态管理|服务层|接口定义|路由|导航)/;
 const DECISION_HEADING_RE = /^##\s*知识决策/;
 

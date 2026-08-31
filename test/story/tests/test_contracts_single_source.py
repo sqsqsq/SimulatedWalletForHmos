@@ -84,3 +84,44 @@ class TestContractsSingleSource(unittest.TestCase):
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)
+
+
+class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
+    """「信号来自业务流程本身」这句话，两个读者面都要看得到，且逐字一致。
+
+    F6 实证：spec §11 五个单元全判「无候选」，反证逐句复述模式索引的判定语言
+    （「无跨步骤状态」「几个彼此独立的按钮」）。四环因果里的一环是**读者面缺口**
+    ——那句「承载会换，业务不会」只写在模式索引里，而模式索引的读者标注只面向 plan；
+    spec 阶段做候选判定的人，手上是 spec 模板，看不到它。
+
+    所以它现在写在两处。两处就有漂移的风险，用这条测试锁住：改一处必须改另一处。
+    """
+
+    SENTENCES = (
+        "信号来自**业务流程本身**：数分支、数步数、看失败处理时，以需求描述的那个业务过程为准。",
+        "当前用模拟、演示或简化方式承载某一步，不改变业务信号——承载会换，业务不会。",
+    )
+    READERS = (
+        Path("doc/extensions/knowledge/design-patterns/README.md"),
+        Path("doc/extensions/skills/story/templates/spec-sections.md"),
+    )
+
+    def test_both_readers_carry_the_same_sentences(self) -> None:
+        for rel in self.READERS:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            for sentence in self.SENTENCES:
+                self.assertIn(sentence, text,
+                              f"{rel.name} 里没有这句：{sentence[:24]}…"
+                              "——两个读者面必须逐字一致，改一处就要改另一处")
+
+    def test_the_copyable_verdict_wording_is_gone_from_the_routing_table(self) -> None:
+        """路由表里那句可照抄的具体描述已退场。
+
+        原文是「单一线性流程、两三个分支且各自只有一两步、无跨步骤状态；或页面只有
+        几个彼此独立的按钮」——它被整句抄进反证栏，连「无跨步骤状态」这个与业务不符的
+        断言也照抄。判定标准换成「以上信号都不成立」，读者要自己去看前两行。
+        """
+        text = (REPO_ROOT / self.READERS[0]).read_text(encoding="utf-8")
+        for gone in ("无跨步骤状态；或页面只有几个彼此独立的按钮",
+                     "两三个分支且各自只有一两步"):
+            self.assertNotIn(gone, text, f"可照抄的判定话术还在：{gone}")

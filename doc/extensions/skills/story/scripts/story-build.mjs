@@ -45,7 +45,16 @@ const COMMANDS = ['init', 'audit', 'check', 'build', 'number'];
 
 /** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
-const MIN_QUOTE = 12;
+/**
+ * 引文的最短长度 —— **数在合同里**（`verdicts.min_quote_chars`），这里只读。
+ *
+ * 它有两个消费者：本文件的 check 与 hooks 侧的裁决核对。各写一份 12 时，
+ * 改一处忘一处两边就不一致，而且**两边都是绿的**——那种不一致没人看得见。
+ * 合同读不到时回落到 12 并照判：判据不能因为配置缺一项就整条失效。
+ */
+function minQuoteChars(contract) {
+  return contract?.verdicts?.min_quote_chars ?? 12;
+}
 
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 6;
@@ -715,9 +724,46 @@ function cmdAudit(ctx) {
     + `技术契约行直接进附录）\n`
     + `  待你分配的都是纯中文叙述：给每条一个正文章名 at，`
     + `或标 covered_by 指向已分配的另一条\n`);
-  for (const r of open.slice(0, 10)) {
+
+  // 分布：两个总数不够用来定批量策略。二百条待分配时要先看它们**长什么样**——
+  // 集中在哪几段来源、机器归位的那些去了哪几章——才谈得上分批。
+  // 实测过一轮：这些数模型自己写脚本 Counter 了一遍，而数据本来就在这儿。
+  const tri = {
+    at: records.filter(r => r.at).length,
+    covered_by: records.filter(r => r.covered_by).length,
+    machine_facing: records.filter(r => r.machine_facing).length,
+    open: open.length,
+  };
+  process.stdout.write(
+    `  三态：at ${tri.at}｜covered_by ${tri.covered_by}`
+    + `｜机器面 ${tri.machine_facing}｜待分配 ${tri.open}\n`);
+  const bySource = new Map();
+  for (const r of open) {
+    const u = doc.units.find(x => x.key === r.key);
+    const src = u?.source ?? u?.doc ?? '(未知来源)';
+    bySource.set(src, (bySource.get(src) ?? 0) + 1);
+  }
+  if (bySource.size) {
+    process.stdout.write(`  待分配按来源：`
+      + `${[...bySource].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s} ${n}`).join('、')}\n`);
+  }
+  const landed = new Map();
+  for (const r of records) {
+    if (r.at) landed.set(r.at, (landed.get(r.at) ?? 0) + 1);
+  }
+  if (landed.size) {
+    process.stdout.write(`  已分配按落点章：`
+      + `${[...landed].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join('、')}\n`);
+  }
+
+  const SHOW = 10;
+  for (const r of open.slice(0, SHOW)) {
     const u = doc.units.find(x => x.key === r.key);
     process.stdout.write(`  - ${r.key}｜${(u?.text ?? '').slice(0, 60)}\n`);
+  }
+  if (open.length > SHOW) {
+    process.stdout.write(`  …另 ${open.length - SHOW} 条同形，全部明细在 `
+      + `${path.basename(ctx.auditPath)}（三态皆空的那些）\n`);
   }
 
   // 渲染进度：哪几章还没写、每章还有多少条落点机器核不住。
@@ -1223,8 +1269,8 @@ function cmdCheck(ctx) {
         const q = normQuote(row.quote);
         const chapterRaw = sectionText.get(recByKey.get(u.key)?.at) ?? '';
         const chapter = normQuote(chapterRaw);
-        if (q.length < MIN_QUOTE) {
-          problems.push(`${u.key} 的引文只有 ${q.length} 字（要求 ≥${MIN_QUOTE}）`);
+        if (q.length < minQuoteChars(ctx.contract)) {
+          problems.push(`${u.key} 的引文只有 ${q.length} 字（要求 ≥${minQuoteChars(ctx.contract)}）`);
         } else if (!chapter.includes(q)) {
           problems.push(`${u.key} 的引文在它落点那一章里检索不到——引文要从 story 抄`);
         } else if (normQuote(u.text).includes(q)) {
@@ -1291,8 +1337,8 @@ function cmdCheck(ctx) {
         } else if (row.verdict === questionWords[1]) {
           problems.push(`「${chapter.title}」没答读者的问题「${q.slice(0, 24)}」`
             + `——${row.quote || '裁决者没写缺什么'}`);
-        } else if (norm(row.quote).length < MIN_QUOTE) {
-          problems.push(`「${chapter.title}」问题「${q.slice(0, 16)}」的引文不足 ${MIN_QUOTE} 字`);
+        } else if (norm(row.quote).length < minQuoteChars(ctx.contract)) {
+          problems.push(`「${chapter.title}」问题「${q.slice(0, 16)}」的引文不足 ${minQuoteChars(ctx.contract)} 字`);
         } else if (!norm(sectionText.get(chapter.title) ?? '').includes(norm(row.quote))) {
           problems.push(`「${chapter.title}」问题「${q.slice(0, 16)}」的引文在该章里检索不到`);
         }
@@ -1324,7 +1370,7 @@ function cmdCheck(ctx) {
     for (const row of tables.questions) {
       if (row.verdict !== questionWords[0]) continue;
       const key = norm(row.quote);
-      if (key.length < MIN_QUOTE) continue;
+      if (key.length < minQuoteChars(ctx.contract)) continue;
       if (!quoteChapters.has(key)) quoteChapters.set(key, new Set());
       quoteChapters.get(key).add(row.chapter);
     }

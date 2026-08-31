@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -120,3 +121,48 @@ class PlanPatternCrossCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesignChapterWordsStayInSyncWithFramework(unittest.TestCase):
+    """扩展认「设计章」的那几个词，必须是 framework 法定章名的子集。
+
+    判据本身没错：framework 的 plan SKILL 规定九章，第 1 章 Scope 声明是前置，
+    第 2–8 章是设计，扩展要求「知识决策」插在两者之间。那几个词就是第 2–8 章的章名。
+
+    错的是它现在有**两份抄本**——framework 的 `check-plan.ts > required_chapters` 一份，
+    扩展这里一份。framework 哪天改了章名，这边不会跟着改，判据就静默失灵：
+    `design` 恒为 -1，位置判整条跳过**且不报错**。这条测试就是那根绳子。
+
+    （不判两份相等：framework 那份含第 1 章 Scope 声明，扩展这份**有意不含**它
+    ——Scope 是前置章，把它算成设计章会把合法产物判红。）
+    """
+
+    def _framework_chapters(self) -> list[str]:
+        src = (REPO_ROOT / "framework" / "harness" / "scripts" / "check-plan.ts").read_text(
+            encoding="utf-8")
+        head = src[src.index("function checkRequiredChapters"):]
+        block = head[head.index("const expected = ["):head.index("];")]
+        return re.findall(r"'([^']+)'", block)
+
+    def _extension_words(self) -> list[str]:
+        src = (REPO_ROOT / "doc" / "extensions" / "hooks" / "plan"
+               / "post_check.mjs").read_text(encoding="utf-8")
+        line = next(l for l in src.splitlines() if l.startswith("const DESIGN_HEADING_RE"))
+        return re.search(r"\(([^)]+)\)", line).group(1).split("|")
+
+    def test_every_design_word_is_a_framework_chapter_name(self) -> None:
+        chapters = "".join(self._framework_chapters())
+        self.assertTrue(chapters, "读不到 framework 的 required_chapters——先查那边的结构")
+        orphans = [w for w in self._extension_words() if w not in chapters]
+        self.assertEqual([], orphans,
+                         f"这些词在 framework 的法定章名里找不到了：{orphans}"
+                         "——要么 framework 改了章名（本判据即将静默失灵），"
+                         "要么这里凭空多了一个词")
+
+    def test_scope_chapter_is_deliberately_excluded(self) -> None:
+        """Scope 声明是框架要求的**前置**章，不能算进设计章。
+
+        算进去，「知识决策要排在设计章之前」就变成「排在第一章之前」——
+        而 framework 规定 Scope 必须是第 1 章，任何合法 plan 都会被判红。
+        """
+        self.assertNotIn("Scope", "".join(self._extension_words()))
