@@ -59,6 +59,9 @@ CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
 
 
 OUT_ROOT = Path(str(CFG.get("output", {}).get("dir", "output/story")))
+# 被测 CLI 多久没吐字就报一声（只报警，处置由人授权）。
+STALL_ALERT_SEC = int(
+    ((CFG.get("cli") or {}).get("retry_policy") or {}).get("stall_alert_sec", 900))
 if not OUT_ROOT.is_absolute():
     OUT_ROOT = REPO_ROOT / OUT_ROOT
 SUITES_ROOT = OUT_ROOT
@@ -938,6 +941,26 @@ def select_healthy_cli(suite: dict[str, Any], start_index: int = 0) -> tuple[int
     return None
 
 
+
+def events_idle_sec(run_dir: str | None) -> int | None:
+    """被测 CLI 有多久没吐字了。
+
+    时限（soft/hard timeout）在 F6 被裁掉是对的——它们把正在推进的会话从中间切断。
+    但裁掉之后**没有任何东西在看「CLI 多久没产出了」**：实测一次，请求发出去没回来，
+    进程活着、租约健康、状态 running，从装置的每个指标看都一切正常，而它已经
+    50 分钟没吐一个字。挂起与深度思考在装置眼里长得一模一样。
+
+    所以这里只**报数**，不做任何终止判断：多久算久由看的人定，装置不替他定。
+    """
+    if not run_dir:
+        return None
+    path = Path(run_dir) / "events.jsonl"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return max(0, int(time.time() - mtime))
+
 def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
     if record.get("retry_finalized") and record.get("status") in {
             "content_policy_rejected", "cli_config_exhausted",
@@ -957,6 +980,13 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
         if state.get(key) is not None:
             record[key] = state.get(key)
     record["awaiting_since"] = state.get("awaiting_since")
+    idle = events_idle_sec(state.get("run_dir"))
+    record["events_idle_sec"] = idle
+    # 停滞只打标、**不处置**：可能还在想，自动重启会丢掉正在进行的工作。
+    # 处置要人授权（`retry <case>`）——装置报事实，人做决定。
+    record["stalled"] = bool(
+        idle is not None and idle >= STALL_ALERT_SEC
+        and record.get("status") in PHASE_ACTIVE_STATUS)
     if record.get("status") == WAITING_STATUS:
         # **原话要一起带上**：漏了它，`poll_suite` 刚透传上来的那份就在这里被抹掉，
         # 宿主拿到的 `question` 于是恒为空——他只能自己去 events.jsonl 尾部捞。
@@ -1948,6 +1978,8 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
             "highest_phase_reached": record.get("highest_phase_reached"),
             "phase_source": record.get("phase_source"),
             "awaiting_since": record.get("awaiting_since"),
+            "events_idle_sec": record.get("events_idle_sec"),
+            "stalled": record.get("stalled"),
             "execution_status": record.get("execution_status"),
             "source_restore_status": record.get("source_restore_status"),
             "blocked_by": record.get("blocked_by"),
@@ -2011,6 +2043,8 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "phase_observed_at": record.get("phase_observed_at"),
                 "spec_entered_at": record.get("spec_entered_at"),
                 "awaiting_since": record.get("awaiting_since"),
+            "events_idle_sec": record.get("events_idle_sec"),
+            "stalled": record.get("stalled"),
                 "execution_status": record.get("execution_status"),
                 "source_restore_status": record.get("source_restore_status"),
                 "automation_observation_state": record.get("automation_observation_state"),
@@ -2565,6 +2599,52 @@ def command_reply(suite_id: str, case_id: str, text: str,
     return returncode
 
 
+def command_retry(suite_id: str, case_id: str, reason: str) -> int:
+    """人授权后重启**一个** Case，其它 Case 一律不动。
+
+    配置组自带的重试等的是一个失败信号（400 内容审查、401 鉴权），而**挂起不产生
+    失败信号**：进程活着、租约健康、状态 running，从装置的每个指标看都正常，
+    它只是不再吐字。那种情况下机制在旁边待命，永远等不到该它出场。
+
+    所以处置入口留给人：装置报「多久没产出」（`events_idle_sec` / `stalled`），
+    要不要重启由人判断——可能它还在想，自动重启会把正在进行的工作丢掉。
+
+    重启走的是配置组同一条链路（干净基线、attempt+1），不新写一套；
+    失败 run 的 artifact、事件与 attempt 记录照常留档。
+    """
+    path, suite = load_suite(suite_id)
+    records = suite.get("case_states", {})
+    if case_id not in records:
+        raise SystemExit(f"[multi] 未知 Case: {case_id}")
+    record = records[case_id]
+    refresh_record(record)
+    before = dict(record)
+
+    # 先让这个 Case 的 worker 停下来——只停它一个。
+    if record.get("status") in ACTIVE_STATUS:
+        returncode, _, _, _ = invoke_case(case_id, "stop", suite=suite)
+        append_event(suite, "case_stop", case=case_id, returncode=returncode,
+                     reason="human_authorized_retry")
+
+    index = int(record.get("cli_config_index") or 0)
+    request_case_retry(suite, record, config_index=index,
+                       reason=reason or "human_authorized_retry",
+                       failure_kind="stalled")
+    schedule_pending(suite)
+    suite["status"] = finalize_suite_status(suite)
+    save_suite(path / "suite.json", suite)
+    sys.stdout.write(json.dumps({
+        "ok": True, "case": case_id,
+        "was": {"status": before.get("status"),
+                "events_idle_sec": before.get("events_idle_sec")},
+        "now": {"status": record.get("status"),
+                "attempt": record.get("attempt"),
+                "cli_config_id": record.get("cli_config_id")},
+        "note": "只重启了这一个 Case；其它 Case 未受影响。失败 run 的证据保留。",
+    }, ensure_ascii=False, indent=2) + "\n")
+    return 0
+
+
 def command_conclude(suite_id: str, case_id: str, reason: str) -> int:
     """宿主判定「这个 Case 本轮到此为止」——**逐 Case，且不杀进程**。
 
@@ -2877,7 +2957,8 @@ def command_finalize(suite_id: str, promote: bool, cleanup: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("plan", "start", "poll", "status",
-                                            "reply", "conclude", "stop", "finalize"))
+                                            "reply", "conclude", "retry", "stop",
+                                            "finalize"))
     parser.add_argument("case_ids", nargs="*")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
@@ -2946,6 +3027,10 @@ def main() -> int:
         if not args.reply_case:
             raise SystemExit("[multi] conclude 必须提供 --case（逐 Case 收工，不是整 suite）")
         return command_conclude(args.suite_id, args.reply_case, args.reason)
+    if args.command == "retry":
+        if not args.reply_case:
+            raise SystemExit("[multi] retry 必须提供 --case（逐 Case 重启，不动其它 Case）")
+        return command_retry(args.suite_id, args.reply_case, args.reason)
     if args.command == "reply":
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] reply 必须提供 --case 和非空 --text")
