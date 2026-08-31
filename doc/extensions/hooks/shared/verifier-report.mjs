@@ -19,18 +19,31 @@ import { adjudicationKeys, adjudicationSet } from './verdict-set.mjs';
 import { featureRoot, readTextOrNull } from './paths.mjs';
 
 /**
- * verifier 报告的机器真源：按 subject 分区的 JSON。
+ * verifier 报告落在哪 —— **两种协议，按宿主能力二选一，不是新旧接替**。
  *
- * 报告不再由 verifier 自己写文件，而是 SubagentStop hook
- * 从子 agent 的**终态消息**生成，按 subject 分区落盘 `verifier.report.<64位subject>.json`
- * （＋同名 .md）。同目录的 .md 明确声明「只是人读投影，机器侧不解析」。
+ * 谁写这份报告，取决于宿主 adapter 声明的 `verifier_capability`：
  *
- * 所以这里只认 JSON，且**只认这一种形态**。升级前认的四种旧文件名
- * （verifier.report.md / verifier-*.md / verify-*.md / verifier-*-result.yaml）
- * 全部退役：留任何一种都是双轨——同一份裁决会有两个真源，改一个不改另一个时
- * 判据说不清自己在判谁。
+ * - **声明了的**（`publisher: subagent_stop`）：报告不由 verifier 自己写，而是
+ *   SubagentStop 钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
+ *   `verifier.report.<64位subject>.json`（＋同名 .md 人读投影，机器侧不解析）。
+ * - **没声明的**：那个宿主没有这个钩子，框架也不会为它生成 request——
+ *   报告由执行方**自己写成文件**，文件名由作业书约定（历史上出现过下面四种）。
+ *
+ * 所以这里两种都认，且**不是双轨**：同一个宿主上只有一种协议在产出，
+ * 认少了就是在那半边宿主上把裁决核对整条砍断。判据要服务的是所有宿主，
+ * 不是当前这台机器上跑的那一个。
+ *
+ * 取正文的方式也随之分两路：JSON 取 `report_text` 字段，其余取文件内容本身。
  */
 const REPORT_JSON_RE = /^verifier\.report\.[0-9a-f]{64}\.json$/i;
+
+/** 执行方自己落盘时的文件名形态（无 subagent_stop 钩子的宿主走这条）。 */
+const REPORT_FILE_RES = [
+  /^verifier\.report\.md$/i,
+  /^verifier-.*\.md$/i,
+  /^verify-.*\.md$/i,
+  /^verifier-.*-result\.ya?ml$/i,
+];
 
 /** JSON 里承载 verifier 结论正文的字段（record-verifier-report.mjs 的 `report_text`）。 */
 const REPORT_TEXT_FIELD = 'report_text';
@@ -94,21 +107,22 @@ export function evidenceVerified(keys, reportLines, targetTexts) {
   return { unadjudicated, verified };
 }
 
-/** 报告目录下所有 verifier 报告 JSON 的绝对路径。 */
+/** 报告目录下所有 verifier 报告的绝对路径（两种协议都收）。 */
 function verifierReportFiles(projectRoot, feature, phase) {
   const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
   // 目录不存在 = verifier 还没执行，是合法状态；目录在却读不动是异常，
   // 让它抛出去由调用方判 FAIL——吞掉的话「读失败」会伪装成「还没跑」。
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
-    .filter(n => REPORT_JSON_RE.test(n))
+    .filter(n => REPORT_JSON_RE.test(n) || REPORT_FILE_RES.some(re => re.test(n)))
     .map(n => path.join(dir, n));
 }
 
 /**
- * 取出各报告的结论正文。
+ * 取出各报告的结论正文 —— 按落盘形态分两路取。
  *
- * 一个阶段可能有多个 subject 的报告文件（换代、并发），全收集合并判——
+ * 钩子发布的 JSON 取 `report_text` 字段；执行方自己写的文件，正文就是文件内容。
+ * 一个阶段可能有多份报告（换代、并发、多 subject），全收集合并判——
  * 少收一份就可能把「裁过了」判成「没裁」。
  *
  * 解析不动或没有正文字段的文件**记名单独报出**，不静默跳过：
@@ -119,6 +133,12 @@ function reportTexts(files) {
   const unreadable = [];
   for (const file of files) {
     const raw = readTextOrNull(file);
+    // 执行方自己写的报告：正文就是文件本身，不进 JSON 解析这条路。
+    if (!REPORT_JSON_RE.test(path.basename(file))) {
+      if (raw === null) unreadable.push(path.basename(file));
+      else texts.push(raw);
+      continue;
+    }
     let doc = null;
     try {
       doc = raw === null ? null : JSON.parse(raw);

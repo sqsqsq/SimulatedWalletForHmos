@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
-"""verifier 报告协议：机器真源只有按 subject 分区的那份 JSON。
+"""verifier 报告协议：两种落盘方式并存，按宿主能力分流。
 
-framework 3.0.0 换了协议——报告不再由 verifier 自己写文件，而是 SubagentStop 钩子
-从子 agent 的**终态消息**生成，按 subject 分区落盘
-``verifier.report.<64位subject>.json``（＋同名 .md，那份 .md 自己声明「机器侧不解析」）。
+谁写这份报告，取决于宿主 adapter 声明的 ``verifier_capability``：
 
-升级前扩展按四种旧文件名去找报告（``verifier.report.md`` / ``verifier-*.md`` /
-``verify-*.md`` / ``verifier-*-result.yaml``），新文件名一种都不匹配 → 逐行裁决
-判据永远判「报告缺失」→ spec 闭环第三步必卡。这一份就是那个断点的回归。
+- 声明了 ``publisher: subagent_stop`` 的（claude / codeagent）：报告不由 verifier
+  自己写，SubagentStop 钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
+  ``verifier.report.<64位subject>.json``；
+- **没声明的（opencode / codex / generic）**：那个宿主没有这个钩子，框架也不为它
+  生成 request，报告由执行方自己写成文件（历史上四种文件名）。
 
-四件事：
-  1. 新格式认得出，裁全了判 PASS；
-  2. 新格式认得出，漏裁判 FAIL（不是「还没跑」）；
-  3. 旧格式**一种都不再认**——留任何一种都是双轨，同一份裁决两个真源；
-  4. 文件在但读不出正文，报「报告坏了」而不是「还没跑」——这两件事的处置完全不同。
+两个断点，方向相反，这一份两边都锚：
+
+1. 升级后扩展只按旧文件名找报告 → 带 hash 的 JSON 一种都不匹配 → 判「报告缺失」
+   → 有钩子的宿主上 spec 闭环第三步必卡；
+2. 反过来只认 JSON → 没有钩子的那半边宿主上，裁决核对被整条砍断，而那恰恰是
+   当前被测宿主（opencode）。
+
+所以两种都认**不是双轨**：同一个宿主上只有一种协议在产出。认少了就是在某半边
+宿主上失明，而判据要服务的是所有宿主，不是当前这台机器上跑的那一个。
 """
 import json
 import subprocess
@@ -110,18 +114,29 @@ class VerifierReportProtocol(unittest.TestCase):
         self.assertTrue(any("OBS-01" in p for p in out["problems"]),
                         f"没点名漏掉的那一行：{out['problems']}")
 
-    def test_every_legacy_filename_is_retired(self):
-        """四种旧名一种都不能再被认——留一种就是双轨。
+    def test_self_written_reports_are_recognised_too(self):
+        """执行方自己写的报告也得认——那不是旧协议，是另一半宿主的现协议。
 
-        用**内容完整**的旧格式文件：只要还认它，状态就会是 PASS。判 NOT_APPLICABLE
-        才说明它压根没进发现逻辑。
+        谁写这份报告取决于宿主 adapter 的 `verifier_capability`：声明了
+        `publisher: subagent_stop` 的（claude / codeagent）由钩子从终态消息生成
+        JSON；**没声明的（opencode / codex / generic）根本没有那个钩子**，框架也不
+        为它生成 request，报告由执行方自己落成文件。
+
+        所以这不是双轨——同一个宿主上只有一种协议在产出。只认 JSON 会在没有钩子的
+        那半边宿主上把裁决核对整条砍断，而那恰恰是当前被测宿主。
         """
         for name in ("verifier.report.md", "verifier-spec.md",
                      "verify-spec.md", "verifier-spec-result.yaml"):
             with self.subTest(name=name):
                 out = self._run(reports={name: FULL_TABLE})
-                self.assertEqual("NOT_APPLICABLE", out["status"],
-                                 f"{name} 还在被当报告读——双轨没拆干净：{out}")
+                self.assertEqual("PASS", out["status"],
+                                 f"{name} 没被当报告读——没有钩子的宿主就核不了裁决：{out}")
+
+    def test_a_self_written_report_missing_a_row_still_fails(self):
+        """认它，不等于放宽它：自己写的报告漏裁一样判 FAIL。"""
+        out = self._run(reports={"verifier.report.md": PARTIAL_TABLE})
+        self.assertEqual("FAIL", out["status"], f"漏裁没被报出来：{out}")
+        self.assertTrue(any("OBS-01" in p for p in out["problems"]), out["problems"])
 
     def test_all_subjects_are_collected(self):
         """一个阶段可能有多份 subject 报告，得全收集合并判。

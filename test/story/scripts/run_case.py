@@ -278,6 +278,13 @@ def phase_before(phase: str) -> str | None:
 
 
 VERIFIER_REPORT_PATTERNS = (
+    # 现协议：报告由 SubagentStop 钩子从 verifier 的终态消息生成，按 subject 分区落盘。
+    # 这两条不加，闭环判定会把**已经闭环**的阶段判成未闭环——驱动器于是反复下发
+    # 同一条推进指令，模型按规则拒绝重跑，空转到没人叫停为止（旧协议下实测过 27 轮）。
+    "verifier.report.*.json",
+    "verifier.report.*.md",
+    # 以下是历史命名。这里与扩展机制层**不同**：机器裁决的真源只能有一个（扩展只认
+    # 上面那份 JSON），而这里判的是「报告文件在不在」，认一组名字才不会被换名字打断。
     "verifier.report.md",
     "verifier-report.yaml",
     "verifier-report.yml",

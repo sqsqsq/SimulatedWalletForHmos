@@ -1205,6 +1205,11 @@ def p11_verifier_zero_adjudication(root: Path, ctx: Ctx) -> Outcome:
     """
     reports: list[Path] = []
     for pattern in (
+        # 现协议：按 subject 分区的 JSON 是机器真源，结论正文在它的 report_text 字段里。
+        "*/reports/**/verifier.report.*.json",
+        "reports/**/verifier.report.*.json",
+        # 历史命名（正文即文件内容）。这里判的是「裁没裁」，读得到就读——
+        # 换过名字的旧产物照样要能核，否则回看旧轮次时判据自己先失明。
         "*/reports/**/verifier.report.md",
         "*/reports/**/verifier-*.md",
         "*/reports/**/verify-*.md",
