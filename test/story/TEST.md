@@ -38,6 +38,31 @@
 阶段状态往被测 feature 目录写报告）；不在主工程跑 harness。**评测在 finalize 之后以维护者身份做，
 实跑期间不切换身份。**
 
+## 0.3 人手跑一遍（不经测试装置）
+
+想自己在本仓试 `/story init`，先装本地需求系统——`story.js` 把需求系统当一个本地目录读，
+而它的默认目录**在仓里从来没存在过**（装置从不走这条回落，所以只有人手跑才撞得上）：
+
+```powershell
+python test/story/scripts/bootstrap_local_story.py --list              # 有哪些单
+python test/story/scripts/bootstrap_local_story.py --verify AR90006    # 装上并验证链路
+```
+
+装完**不用设任何环境变量**（目标目录就是 `story.js` 的默认值），会话里直接说
+`/story init AR90006` 即可。三点要知道：
+
+- 目录是**可写**的——`archive` 会覆盖单据正文、`restore` 会回退；想回出厂状态跑 `--reset`；
+- `doc/features/<单号>/` 已存在时脚本会**拦下来**：`story.js` 落材料时「已存在就跳过」，
+  残留会让新一轮材料拉不进来且不报错。先把它移走；
+- 补料（`supplements/` 里那些 docx）不会自动进 `inbox/`——那正是「模型会不会开口要材料」
+  要观测的东西，手跑时等它开口，你再复制过去。
+
+**这套东西只给本仓**：真实工程有自己的需求系统，`story.js`/`review.js`/`token.js`
+三个替身本来就要换成自己的实现，连带也不需要这个脚本。它因此不随扩展包交付。
+
+**它与 CLI 测试互不干扰**：装置给每个 Case 的需求系统指针要么指向该 Case 自己的快照、
+要么指向一个不存在的路径，绝不会落到这个目录（有机械回归守着）。
+
 ## 1. 唯一入口与启动
 
 正式测试统一使用 `scripts/run_multi_case.py`，即使只运行一个 Case，也不直接运行 `run_case.py`。
@@ -49,14 +74,30 @@ python test/story/scripts/run_multi_case.py start --all --jobs <实际Case数> -
 python test/story/scripts/run_multi_case.py poll --suite-id story-suite-20260822-140000 --wait-sec 0
 ```
 
+一轮跑下来就这四步，其余都是它们的细则：
+
+| 步 | 干什么 | 细则 |
+|---|---|---|
+| 1 | `plan` 只读确认：选中哪几个 Case、feature、目标阶段 | §0 |
+| 2 | `start` 起跑，建 15 秒 heartbeat | 本节 |
+| 3 | **循环**：`poll` → 读 `adaptive_reply_requests` → 以需求方身份回话 → 再 `poll` | §3.0 怎么回、§3.5 什么时候收工 |
+| 4 | 全部终态后 `finalize --promote` 回灌产物 | §6 |
+
 `start` 返回统一控制对象及 `next_action=poll_after_interval`、`next_interval_sec=15`。宿主模型立即创建
-名称包含 suite-id、绑定当前任务的 15 秒 Codex heartbeat。heartbeat 建立成功后，启动回合可以结束，
+名称包含 suite-id、绑定当前任务的 15 秒 heartbeat。heartbeat 建立成功后，启动回合可以结束，
 后续由定时唤醒继续驱动。`status` 只用于只读诊断：不消费事件、不回复、不增加观测次数或稳定确认，
 不能替代 `poll`。
+
+**一轮实跑只有三种收场**：目标阶段客观闭环（装置自己停）、你判定到位（`conclude`）、
+被测进程真的死了。**装置侧的阈值不再终止任何东西**——没有时限、没有轮次上限、
+等你回话也没有上限。看到别的失败终态，那是真的出了事，不是被装置掐的。
 
 Case 严格顺序启动：前一个取得有效 run-id、worker/lease 和活动状态后才启动下一个。确认启动后的
 worker 并行运行。启动失败时检查活动指针、run、worker、lease、workspace 和原始输出，最多恢复并
 重试 3 次；仍失败则保留完整事实并继续启动其余 Case。不要套外层 timeout 或输出截断管道。
+
+起跑前的这几道（启动重试、worker 租约、稳定性确认）**保留**——它们判的是「进程起没起来、
+还在不在」，那是事实，不是进度快慢。被裁掉的是拿进度当失败的那一类。
 
 ## 2. 起跑前固定顺序
 
@@ -97,7 +138,7 @@ prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，
 
 | 目录 | 是什么 | 什么时候到 |
 |---|---|---|
-| `cases/<id>/system/` | 需求系统上挂着的单据（一个子目录一张单，含 `detail.json` 与正文 md） | 起跑时复制进该 Case 自己的 workspace，被测侧经环境变量看到 |
+| `cases/<id>/system/` | 需求系统上挂着的单据（一个子目录一张单，含 `detail.json` 与正文 md） | 起跑时复制到系统临时目录（**workspace 之外**，模型 `ls` 看不见），被测侧只经环境变量知道它在哪 |
 | `cases/<id>/workspace/` | 起跑那一刻需求目录里就有的东西 | 起跑时 |
 | `cases/<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 等它开口 |
 
@@ -231,17 +272,21 @@ heartbeat 交给一个后台轮询脚本代跑——那个脚本若只做「poll
 
 脚本只负责按间隔敲门与在该叫人时叫人；**判断一律留在驱动器里**，多想一步就会与它分叉。
 
-### 3.2 模型的原话取不到时去哪儿读
+### 3.2 原话就在 poll 返回里，取不到才走兜底
 
-`adaptive_reply_requests[].question` 是首选，但它可能是空串（`status` 子命令甚至返回 `null`）。
-此时**不要凭 `case_inputs_hint` 猜模型在问什么**，按下面顺序取原话：
+`adaptive_reply_requests[].question` **就是模型本轮最后说的那段话**，poll 直接给你，
+当轮就能回。它旁边的 `prompt_source` 说明这份原话是哪来的：
 
-| 读什么 | 给你什么 |
+| `prompt_source` | 含义 |
 |---|---|
-| `output/story/<suite>/cases/<case>/observations.jsonl` 末条 | 这次停等的 `kind` / `turn` / `reason` |
-| 该 Case run 目录下 `events.jsonl` 尾部的 `type: text` 事件 | **模型说的最后一段话**——它问的问题就在这里 |
+| `cli_text_event` | 模型确实说了话，`question` 就是原文 |
+| `unavailable` | 取不到（模型这一轮一个 text 事件都没发） |
 
-读的是模型对需求方说的话，不是它的产物——观测边界（§0.1）不变：产物内容仍然不读。
+`question` 为 `null` 而不是空串——空串与「模型什么都没说」同形，那是静默降级。
+
+只有 `prompt_source` 是 `unavailable` 时才走兜底：读该 Case run 目录下
+`events.jsonl` 尾部的 `type: text` 事件。读的是模型对需求方说的话，不是它的产物——
+观测边界（§0.1）不变。
 
 ### 3.3 `expected_phase` 漂移的处置：换回法，不换话术
 
@@ -263,10 +308,67 @@ heartbeat 交给一个后台轮询脚本代跑——那个脚本若只做「poll
 override 记在 `requested_end_phase` 与 `effective_phase_scope` 两个字段里。
 只看 `end_phase` 会得出「传了不算数」的结论，那是回显差，不是装置缺陷。
 
-另一件与终点相关、确实要提前想好的事：`stop` **只有整 suite 一档，没有单 Case**
-（`command_stop` 遍历全部 case_states）。两个 Case 终点不同时，先到终点的那个会一直挂着，
-直到另一个也跑完才能一起停。所以两个 Case 的 `end_phase` 差得越远，空转越久——
-F4 那轮实测空转 18 分钟。终点分歧大时，把它们分两个 suite 跑更省。
+**`end_phase` 不再是唯一的终止开关**。它现在管三件事：驱动器算下一个未闭环阶段时的
+推进目标、跑哪几个 gate 的范围、以及 `closure.target_phase` 这个比对基准。
+目标阶段**真的闭环**了装置仍会自己停（那是客观事实，不是机械计数）；
+没闭环而你判断本轮已经到位时，用 `conclude` 收工——见 §3.5。
+
+终点不同的两个 Case 不再互相拖累：`conclude` 是**逐 Case** 的。
+（此前 `stop` 只有整 suite 一档，先到终点的那个要陪着另一个干等，实测空转 18 分钟。）
+
+### 3.5 什么时候收工：`conclude`，判定在你
+
+**装置只报事实，收不收工你说了算。** 每次 poll 的 Case 条目里有一个 `closure` 块，
+它把判定要用的东西一次给全：
+
+| 字段 | 说的是 |
+|---|---|
+| `target_phase` / `target_closed` | 本轮目标阶段；它的四件凭证齐没齐 |
+| `target_missing` | 差哪几件（`trace.json` / `summary.json` / 完成回执 / verifier 报告） |
+| `artifacts_ready` | spec.md、AR/story.md、AR/review.md 三件在不在 |
+| `next_unclosed_phase` | 目标之前第一个还没闭环的阶段 |
+| `beyond_target_evidence` | 目标**之后**的阶段有没有真实产物 |
+
+`beyond_target_evidence` 是「模型说要进下一阶段」这件事的**事实那一半**：
+它嘴上说的时候这里是空的，它真建了下一阶段的产物时才非空。
+两者一起看——`question` 里是它怎么说的，这里是它实际做到哪儿。
+
+**装置不据模型的散文改阶段、也不据它自动收工。** 判据：
+
+| 看到 | 做什么 |
+|---|---|
+| `target_closed = true` | 装置会自己停，**不用** conclude |
+| `target_closed = false`，但模型在宣告「进入下一阶段 / 本阶段已完成」，而 `target_phase` 就是当前阶段 | **判定本轮到位** → `conclude` |
+| `target_closed = false`，`target_missing` 还差凭证、模型也没宣告 | 按需求方身份继续回话推进 |
+| 拿不准 | 再 poll 一轮。**不要 stop**——`stop` 只响应用户明确要求 |
+
+```powershell
+python test/story/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-140000 `
+  --case <case-id> --reason "模型宣告进入 plan，本轮目标 spec 已到位"
+```
+
+**`conclude` 不是 `stop`**：
+
+| | 进程 | 门禁 | 产物 | 终态 |
+|---|---|---|---|---|
+| `conclude` | 不杀，worker 自己退出续话循环 | 照跑 | `phase-results/`、`artifact/` 齐全 | `concluded_by_host` |
+| `stop` | 强杀进程树 | **从不运行** | 残的 | `stopped` |
+
+**一条要提前说清的张力**：模型宣告「进入 plan」而 spec 的凭证没齐时，收工得到的是
+`concluded_by_host` + `target_reached=false` + `target_missing=[...]`。
+**那是一条有效观测（模型自认为完成而凭证不齐），不是装置失败**——退出码 0 表达的是
+「这次运行没有装置或 CLI 层面的故障」，产物到不到位由 `target_reached` 与
+`target_missing` 单独说，评测看那两个。
+
+### 3.6 等你回话没有上限
+
+worker 停在 `awaiting_reply` 会**一直等**，不设时限。它等的不是人的键盘，是**你**
+有没有把回复放进去——而你会被别的事打断、会跨会话。此前那道 1 小时的线踩上就静默
+break，还被记成 `target_not_reached`，报告上完全看不出是没人回话（实测两个 Case
+分别空等 45 分钟与 33 分钟，距那条线只差 15 分钟）。
+
+现在它每 5 分钟发一条 `awaiting_reply_stale` 事件，Case 条目里带 `waited_sec`。
+代跑 heartbeat 的脚本据它叫人（§3.1）。等待的唯一另一个出口是 `conclude`。
 
 ## 4. 15/120 秒 heartbeat
 
@@ -327,10 +429,28 @@ CLI、gate、恢复或基础设施失败为非零。
 `verifier-*.md` / `verify-*.md`），任一存在即算。命名不是契约：按单一文件名判闭环时，
 换个命名就会被判成「未闭环」，驱动器会反复下发同一条推进指令而模型正确地拒绝重跑。
 
-**`stop_reason` 语义**：`phase_turn_budget_exhausted` = 同一阶段连续续话超过 `PHASE_TURNS`
-上限仍未闭环（空转，已中止）；`awaiting_reply_timeout` = 等人回话超时；
-其余为 CLI/基础设施原因。出现 `phase_turn_budget_exhausted` 时先查该阶段的闭环凭证是否齐备，
-再查驱动器判据与被测产物命名是否对得上。
+**为什么停在这里 → 记成什么**。上一版把三件不同的事塞进同一个 `target_not_reached`，
+事后分不出是模型没做完、没人回话、还是 CLI 压根没回 session id——而后两种不是被测
+对象的账。现在一一对应：
+
+| `stop_reason` | 终态 | 退出码 | 谁的账 |
+|---|---|---|---|
+| `target_reached` | `finished` | 0 | 自然到达 |
+| `host_concluded`（且已闭环） | `finished` | 0 | 宿主收工，目标也到了 |
+| `host_concluded`（未闭环） | `concluded_by_host` | **0** | 宿主判定到此为止——**不是失败**，见 §3.5 |
+| （无，自然结束而产物不齐） | `target_not_reached` | 1 | **模型真没做完**，只剩这一种 |
+| `cli_cannot_continue` | `cli_failed` | 1 | CLI 层失败（凭据被拒等） |
+| `no_session_id` | `cli_session_lost` | 2 | adapter 回了 succeeded 却没给 session id |
+
+另外两个与被测能力无关的终态：`harness_incomplete`（退出码 2）= **装置自己漏跑了 gate**
+（gate 判红是被测对象的账，没跑是装置的账，两件事分开）；`worker_lost` = 进程真的不在了。
+
+退出码表达的是「**这次运行有没有装置或 CLI 层面的故障**」，不是「被测做得好不好」——
+后者看 `target_reached` 与 `closure.target_missing`。
+
+**本域不设任何时限与轮次上限**：`soft_timeout` / `hard_timeout` / `phase_hard_timeout` /
+`max_turns` / `reply_wait_sec` 写进配置会被直接拒绝（`run_case.py` 启动即 `SystemExit`），
+防的是「以为还在生效」。真出现 `timed_out` 说明有人把时限重新引进来了，装置会出声告警。
 
 ## 6. 回灌与现场保留
 

@@ -232,6 +232,10 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
 #: 与 `sw-story` 平级，从 workspace 沿父链一步、两步都碰不到；位置只由环境变量告知对接层。
 REQUIREMENT_SYSTEM_SIBLING = "sw-sys"
 REQUIREMENT_SYSTEM_ENV = "STORY_REQUIREMENT_SYSTEM_DIR"
+#: 没有需求系统快照的 Case 用它占位——一个保证不存在的路径。
+#: 不能让变量空着：空着 story.js 会落到它的默认目录，而那里装着人手跑用的单据。
+#: 指向不存在的路径时 story.js 报「需求系统不可达」，正是这类 Case 本该有的样子。
+NO_REQUIREMENT_SYSTEM = "(此 Case 没有需求系统)"
 #: 历史落点。只用于边界检查——防的是哪天有人又把它挪回去。
 LEGACY_REQUIREMENT_SYSTEM_DIR = ".requirement-system"
 LEGACY_REQUIREMENT_SYSTEM_SIBLING = ".systems"
@@ -1234,6 +1238,12 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
     else:
         environment.pop("STORY_WORKSPACE_ROOT", None)
         environment.pop("STORY_ISOLATED_WORKSPACE", None)
+    # **这个变量绝不能空着交出去。** 空着 `story.js` 会落到它的默认目录
+    # （`test/story/requirement-system`）——那里现在装着**人手跑用的**那套单据
+    # （`bootstrap_local_story.py` 放的）。装置一旦读到它，测的就不是本 Case 的输入了，
+    # 而且一声不吭。所以没有快照时显式指向一个保证不存在的路径：
+    # `story.js` 照旧报「需求系统不可达」，那是原本就要的诚实失败。
+    environment.setdefault(REQUIREMENT_SYSTEM_ENV, NO_REQUIREMENT_SYSTEM)
     return environment
 
 

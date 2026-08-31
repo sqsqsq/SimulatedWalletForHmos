@@ -205,15 +205,57 @@ class TestCoordinatorWiring(FixtureCase):
         environment = run_multi_case.suite_environment(suite, CASE_ID)
         self.assertEqual(str(system), environment[run_multi_case.REQUIREMENT_SYSTEM_ENV])
 
-    def test_case_without_a_snapshot_gets_no_system_pointer(self) -> None:
-        """没有快照就别指过去：让替身自己报「系统不可达」，比指向空目录报「查无此单」诚实。"""
+    def test_case_without_a_snapshot_points_nowhere_not_at_the_default(self) -> None:
+        """没有快照的 Case 要指向一个**不存在**的路径，而不是把变量空着。
+
+        让替身自己报「系统不可达」，比指向空目录报「查无此单」诚实——这条没变。
+        变的是实现：空着变量时 `story.js` 会落到它的默认目录
+        `test/story/requirement-system`，而那里装着**人手跑用的**那套单据
+        （`bootstrap_local_story.py` 放的）。装置读到它就不是在测本 Case 的输入了，
+        而且一声不吭。所以显式指向一个不存在的路径。
+        """
         workspace_root = self.root / "wsroot5"
         workspace = workspace_root / CASE_ID
         workspace.mkdir(parents=True)
         suite = {"bundle_root": str(self.root), "workspace_root": str(workspace_root),
                  "case_states": {CASE_ID: {"case": CASE_ID, "workspace": str(workspace)}}}
         environment = run_multi_case.suite_environment(suite, CASE_ID)
-        self.assertNotIn(run_multi_case.REQUIREMENT_SYSTEM_ENV, environment)
+        pointer = environment[run_multi_case.REQUIREMENT_SYSTEM_ENV]
+        self.assertFalse(Path(pointer).is_dir(), "指过去的目录不该存在")
+        self.assertNotEqual(
+            str((REPO_ROOT / "test" / "story" / "requirement-system").resolve()),
+            str(Path(pointer)),
+            "绝不能落到 story.js 的默认目录——那里是人手跑用的单据")
+
+    def test_the_local_requirement_system_is_never_copied_into_a_workspace(self) -> None:
+        """人装的那套需求系统不能进被测 workspace——进去了模型 `ls` 就看见了。
+
+        它在 `test/` 下，而复制白名单里没有 `test/`；这条把「天然看不到」钉成回归，
+        免得哪天有人往白名单里加了 `test` 而没想到这一层。
+        """
+        allowed = run_multi_case.WORKSPACE_ALLOWED_DIRS
+        self.assertNotIn("test", allowed)
+        for entry in allowed:
+            self.assertFalse(entry.startswith("test/"),
+                             f"复制白名单里出现了 {entry}——本地需求系统会跟着进 workspace")
+        for entry in run_multi_case.WORKSPACE_ALLOWED_FILES:
+            self.assertFalse(entry.startswith("test/"), entry)
+
+    def test_the_default_dir_never_leaks_into_any_case(self) -> None:
+        """机械回归：人装了本地需求系统之后，装置给任何 Case 的指针都不指向它。"""
+        default_dir = (REPO_ROOT / "test" / "story" / "requirement-system").resolve()
+        workspace_root = self.root / "wsroot6"
+        for case_id in (CASE_ID, "another-fixture"):
+            (workspace_root / case_id).mkdir(parents=True)
+        suite = {"bundle_root": str(self.root), "workspace_root": str(workspace_root),
+                 "case_states": {cid: {"case": cid,
+                                       "workspace": str(workspace_root / cid)}
+                                 for cid in (CASE_ID, "another-fixture")}}
+        for case_id in suite["case_states"]:
+            environment = run_multi_case.suite_environment(suite, case_id)
+            pointer = Path(environment[run_multi_case.REQUIREMENT_SYSTEM_ENV])
+            self.assertNotEqual(default_dir, pointer.resolve()
+                                if pointer.is_absolute() else pointer)
 
 
     def test_the_plan_tells_the_host_which_material_to_hand_over(self) -> None:

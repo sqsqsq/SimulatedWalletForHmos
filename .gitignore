@@ -72,6 +72,11 @@ doc/features/*/ux-reference/_fidelity-cache/
 # device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)
 /doc/features/_adhoc/
 
+# 本地需求系统（bootstrap_local_story.py 装的，给人手跑 /story init 用）。
+# 它是**可写状态目录**：archive 覆盖单据正文、history/ 累积版本、attachments/ 落评审件，
+# 入库后每次手跑都产生 diff。与 doc/features/ 同性质，不入库。
+/test/story/requirement-system/
+
 # Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
 /scratch/
 
