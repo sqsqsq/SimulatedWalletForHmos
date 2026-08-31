@@ -90,7 +90,7 @@
 | 标识 | Skill 路径 |
 |------|-----------|
 | `story` | [doc/extensions/skills/story/SKILL.md](doc/extensions/skills/story/SKILL.md) |
-| `wallet-sdk-onboarding` | [doc/extensions/skills/wallet-sdk-onboarding/SKILL.md](doc/extensions/skills/wallet-sdk-onboarding/SKILL.md) |
+| `story-adaptation` | [doc/extensions/skills/story-adaptation/SKILL.md](doc/extensions/skills/story-adaptation/SKILL.md) |
 
 > **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
