@@ -22,7 +22,6 @@ S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
    └─ story：分配落点 → 逐章渲染 → 裁决 → `story_flow.py story` 登记
-      （子 agent 可选，宿主没有 Task 工具时主 agent 自己做）
    ↓
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```

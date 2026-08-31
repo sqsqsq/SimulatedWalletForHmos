@@ -1,4 +1,4 @@
-# story 裁决（verifier 子 agent 的作业书）
+# story 裁决（作业书）
 
 **你判三件事，各出一张表：**
 
