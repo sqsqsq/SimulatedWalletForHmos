@@ -73,6 +73,13 @@ POSITIONING = ("AR", "story-src", ".positioning.json")
 # 第二级关卡此后只能从契约里取——见 read_scope_options 的注释
 SCOPE_OPTIONS = ("AR", "story-src", ".scope-options.json")
 DESIGN = ("AR", "design.md")
+# 成文态登记时随稿冻结的台账：story 定稿了，它据以成文的账本也就定稿了。
+# 登记之后重跑 init/audit 会把这几份重算一遍，实测过一次——登记 00:04 的台账
+# 被 00:20 的重跑冲掉，story.md 冻了，账本没冻。
+STORY_SRC_FROZEN = (
+    "source-units.json", "audit.json", "decisions.json",
+    "story-verdicts.md", "copyedit.md",
+)
 SOURCES = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
 # 三级关卡，**每级只问一件事**：材料够不够 → 范围怎么定 → 承载哪一份。
 #
@@ -124,6 +131,18 @@ def digest(path: Path) -> str | None:
     if not path.is_file():
         return None
     return "sha256:" + sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def ledger_digest(path: Path) -> str | None:
+    """台账指纹：**换行差异不算改动**（同一份文件在两台机器上可能行尾不同）。
+
+    这一个要与 `story-build.mjs` 的 `digestOf` 逐字节同口径——登记由本脚本写，
+    核对由那边做，两边算法差一点就会变成「每次都说台账被改过」。
+    """
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+    return sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -948,6 +967,12 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
+    # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
+    # 之后 `story-build check` 拿它核对，`init`/`audit` 直接拒绝重算。
+    src = feature_root / "AR" / "story-src"
+    contract["story_src_digests"] = {
+        name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
+    }
     save(feature_root, contract)
     return {"status": "story_written", "story": str(story)}
 

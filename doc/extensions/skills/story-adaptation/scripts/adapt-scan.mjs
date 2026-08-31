@@ -36,11 +36,18 @@ const rel = (base, f) => relative(base, f).split(sep).join('/');
 const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
 const read = (f) => readFileSync(f, 'utf8');
 
-/** 递归列文件（相对 base 的 posix 路径）；跳过本脚本的工作目录 adapt/ */
+/**
+ * 递归列文件（相对 base 的 posix 路径）；跳过本命令自己的工作目录。
+ *
+ * 工作目录带版本号并以点开头（`.adapt-<包 version>/`）：不同版本各自一份，
+ * 升到新版不会把上一版的方案与 before 快照覆盖掉；点开头是为了在目标工程里
+ * 一眼看出它是临时件而不是交付内容。
+ */
+const isWork = (name) => name === 'adapt' || name.startsWith('.adapt-');
 const walk = (dir, base = dir) => !existsSync(dir) ? [] :
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const f = join(dir, e.name);
-    if (e.isDirectory()) return rel(base, f) === 'adapt' ? [] : walk(f, base);
+    if (e.isDirectory()) return isWork(rel(base, f)) ? [] : walk(f, base);
     return [rel(base, f)];
   });
 
@@ -48,7 +55,7 @@ const walk = (dir, base = dir) => !existsSync(dir) ? [] :
 const classOf = (p) =>
   /^skills\/story\/scripts\/[^/]+\.js$/.test(p) ? 'js'
   : p === 'manifest.yaml' || /^knowledge\/[^/]+\/README\.md$/.test(p) ? 'bridge'
-  : p === 'knowledge/README.md' || p === 'AGENTS.section.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
+  : p === 'knowledge/README.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
   : /^knowledge\//.test(p) ? 'know'
   : 'custom';
 
@@ -93,7 +100,9 @@ if (!TARGET) die(`目标不是有效仓库根（找不到 framework.config.json�
 const PKG = opt('--package') ? findRoot(opt('--package')) : findRoot(dirname(fileURLToPath(import.meta.url)));
 if (!PKG) die('定位不到包根');
 const TDIR = join(TARGET, extDir(TARGET)), PDIR = join(PKG, extDir(PKG));
-const WORK = join(TDIR, 'adapt'), BEFORE = join(WORK, 'before.json');
+const PKG_VERSION = versionOf(existsSync(join(PDIR, 'manifest.yaml'))
+  ? read(join(PDIR, 'manifest.yaml')) : '') || 'unknown';
+const WORK = join(TDIR, `.adapt-${PKG_VERSION}`), BEFORE = join(WORK, 'before.json');
 const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
 
 // ── --scan ──────────────────────────────────────────────────────────────────
@@ -176,8 +185,8 @@ for (const c of before.custom) {
   else if (nowCustom.get(c.path) !== c.sha) bad.push(`④ 自定义文件被改：${c.path}`);
 }
 
-// ⑤ 入口文件含扩展段：包有 AGENTS.section.md 时，目标 AGENTS.md（及存在的 CLAUDE.md）须含其正文；包没有则跳过
-const SECTION = 'AGENTS.section.md', ws = (s) => s.replace(/\s+/g, ' ').trim();
+// ⑤ 入口文件含扩展段：包有 skills/story/AGENTS.section.md 时，目标 AGENTS.md（及存在的 CLAUDE.md）须含其正文；包没有则跳过
+const SECTION = 'skills/story/AGENTS.section.md', ws = (s) => s.replace(/\s+/g, ' ').trim();
 if (existsSync(join(PDIR, SECTION))) {
   const body = ws(read(join(PDIR, SECTION)));
   for (const entry of ['AGENTS.md', 'CLAUDE.md']) {

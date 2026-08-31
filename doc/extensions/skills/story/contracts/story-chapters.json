@@ -280,7 +280,9 @@
       "lint",
       "harness",
       "checker",
-      "post_check"
+      "post_check",
+      "import_sources",
+      "人话"
     ]
   },
   "verdicts": {

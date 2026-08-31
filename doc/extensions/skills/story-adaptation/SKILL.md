@@ -14,10 +14,14 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 ## 0 前置（不满足就停，不要继续）
 
 - 目标根有 `framework/` 与 `framework.config.json`；
-- 目标 `framework/package.json` 的 `version` ≥ `3.0.0`；
-- 目标 framework 里这些本地热修在位（本包依赖它们；缺则 spec 闭不上 / coding 编不过）：
-  `harness/scripts/utils/capability-resolution.ts`、`profiles/hmos-app/ui-kit/MaisonPrimaryButton.ets`；
-- 缺任何一项：列出缺什么，停——framework 的补齐不归本命令管。
+- 缺它：列出缺什么，停——framework 的补齐不归本命令管。
+
+**framework 的版本只记录，不设门槛。** 读一下目标 `framework/package.json` 的 `version`，
+写进方案页供人参考即可；不因为它低就停。实证：一个低于原门槛的目标工程升级过程完全正常，
+那道最低版本门槛判错了，把本来能装的工程挡在了外面。
+
+**framework 本身的问题不归 adapt 管**，也不必在这里提——它装的是扩展包，
+framework 是它运行的地基，地基归 framework 自己的升级路径。
 
 ## 1 判态
 
@@ -38,7 +42,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 目标仓里的东西 | 首次安装 | 升级 |
 |---|---|---|
-| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`、`AGENTS.section.md`（包有才有：写进入口文件「实例扩展」节的那一段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
+| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`（`skills/story/AGENTS.section.md` 就在 `skills/story/**` 里：包有才有，它是写进入口文件「实例扩展」节的那一段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
 | `skills/story/scripts/*.js`（需求系统对接） | **看发起方**：包内这些 js 文件头自述为「本地替身 / 模拟」→ 不复制，目标要按自己的需求系统写，方案登记「数据对接待适配」；否则（已适配仓发起）→ 整目录覆盖 | 同左 |
 | `knowledge/constraints/*.md`、`knowledge/design-patterns/*.md` —— **包里有的** | 从包复制，默认已确认、**默认在清单**（规约与模式是随包直接维护内容；缺 SDK 或既有案例只在方案里登记证据缺口，不删文件、不撤出清单） | 目标有同名的**换成包的版本**；**包新增的域 / 模式复制过去**，同样默认已确认、默认在清单 |
 | 目标自己加的规约域 / 模式文件（包里没有同名的） | — | **原样保留**，仍在清单 |
@@ -47,7 +51,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | `manifest.yaml` | 手写合成：`schema_version`/`version`/`description`、`provides.hooks`、`provides.phase_rules_overlays`、`provides.skills` 里本包自带的两项抄包；`provides.knowledge` = 已确认的事实文件 + 全部规约与模式（含目标自加）+ 各级 README；目标其它 `skills` 与 `skill_assets` 原样保留 | 同左 |
 | 目标自己的其它 `skills/*`、包不认识的任何文件 | 不动、不复制 | 不动 |
 | `framework.config.json` 里包要求的配置键 | 核对；缺的在方案里提议值（目录类的值须是目标真实存在的目录；列表类只追加不删目标已有条目）；用户点头才写 | 同左 |
-| `<extension_dir>/adapt/`（本命令的工作目录：`plan.md`、`before.json`、`installed.md`） | 目标所有；本次写入 | 不删；下次覆盖同名文件。**包不交付它**。`installed.md` 只记日期、发起方、缺口清单——**不记版本**，版本的唯一真源是 `manifest.yaml` |
+| `<extension_dir>/.adapt-<包 version>/`（本命令的工作目录：`plan.md`、`before.json`、`installed.md`） | 目标所有；本次写入 | 不删；下次覆盖同名文件。**包不交付它**。目录名带版本，两个版本的工作件互不覆盖；点开头是为了在目标工程里一眼看出它是临时件。旧的 `adapt/` 目录（本命令早先版本留下的）是历史工作件，不迁移不删除，可手动清理。`installed.md` 只记日期、发起方、缺口清单——**不记版本**，版本的唯一真源是 `manifest.yaml` |
 | 包新增的知识字段 / 表列 | **不补列**（缺列由框架按声明默认值派生）；方案第三段登记「包新增字段 X，目标知识待填」 | 同左 |
 
 ## 3 读两棵树
@@ -58,11 +62,13 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 它列出：机制目录逐文件（目标独有 / 包独有 / 同名有差异）、目标知识文件的 frontmatter 与所在目录、
 目标 `provides.knowledge` 清单、包内对接 js 是否自述替身、目标自定义文件的内容指纹，
-并写 `<目标 extension_dir>/adapt/before.json`。**清单是给你看的，判断由你按 §2 表做。**
+并写 `<目标 extension_dir>/.adapt-<包 version>/before.json`。**清单是给你看的，判断由你按 §2 表做。**
 
 ## 4 写方案
 
-写到 `<目标 extension_dir>/adapt/plan.md`，四段固定标题：
+写到 `<目标 extension_dir>/.adapt-<包 version>/plan.md`，四段固定标题：
+
+方案第一段开头记一行目标 `framework/package.json` 的 `version`——给人参考，不是门槛。
 
 1. **机制与跳板**：新增 / 删除 / 覆盖逐文件；目标本地改动过的机制文件与迁回建议；
 2. **知识**：事实文件逐个 保留 / 移动到 / 补键；包内同名规约与模式的换版本清单；目标自加文件的保留清单；
@@ -77,7 +83,9 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 ## 6 写入
 
-按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **入口文件**（包有 `AGENTS.section.md` 时：把它的内容写进目标 AGENTS.md 与 CLAUDE.md（存在时）的「实例扩展」节，替换该节原有内容；这一步漏掉，目标的主 agent 就不知道要先读各阶段须知）。
+第一步先**给目标工程的 `.gitignore` 追加一行 `doc/extensions/.adapt-*/`**（已有就跳过；`doc/extensions` 换成目标真实的 `extension_dir`）——工作目录是临时件，不加这一行它会被误提交进目标工程的库。
+
+然后按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **入口文件**（包有 `skills/story/AGENTS.section.md` 时：把它的内容写进目标 AGENTS.md 与 CLAUDE.md（存在时）的「实例扩展」节，替换该节原有内容；这一步漏掉，目标的主 agent 就不知道要先读各阶段须知）。
 
 ## 7 校验
 
@@ -87,7 +95,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 ```
 
 前者确认 manifest 每条路径都存在（有一条不存在，框架会清空全部扩展能力，而且不会在阶段里报错）。
-后者核五件事：机制目录 == 包、目标所有的知识文件旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `AGENTS.section.md` 全文（包没有该文件时跳过）。
+后者核五件事：机制目录 == 包、目标所有的知识文件旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文（包没有该文件时跳过）。
 
 任一 FAIL → **照它报的那几项改，再重跑校验**。它点的是具体位置——机制缺哪个文件、
 知识缺哪条事实、清单里哪个还是未确认、哪个自定义文件被动了——直接改到位即可。
@@ -96,7 +104,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 
 ## 8 收口
 
-写 `<目标 extension_dir>/adapt/installed.md`（日期、发起方、缺口清单），
+写 `<目标 extension_dir>/.adapt-<包 version>/installed.md`（日期、发起方、缺口清单），
 再报告：态、动作计数、未确认清单与证据缺口、下一步。
 
 ## 9 填事实的取证顺序

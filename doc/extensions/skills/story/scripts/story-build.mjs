@@ -159,7 +159,32 @@ function createContext(args) {
     copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
+    flowPath: path.join(featureRoot, 'AR', 'story-flow.json'),
   };
+}
+
+/**
+ * 成文态登记了没有——登记那一刻 story 与它的台账一起定稿。
+ *
+ * @returns {{written:boolean, digests:Record<string,string|null>}}
+ */
+function storyFrozen(ctx) {
+  const flow = ctx.offline ? null : readJson(ctx.flowPath, null);
+  return {
+    written: flow?.status === 'story_written',
+    digests: flow?.story_src_digests ?? {},
+  };
+}
+
+/** 台账冻结之后，重算它的两个命令一律拒绝执行。 */
+function refuseIfFrozen(ctx, command) {
+  if (!storyFrozen(ctx).written) return;
+  fail(`story 已定稿登记（story_written），台账随稿冻结，${command} 不再执行。\n`
+    + '  定稿是一个时点的快照：那一刻的来源单元、落点账、裁决与决策登记，'
+    + '就是这份 story 据以成文的全部依据。\n'
+    + '  重算它们等于换掉已定稿产物的依据，而 story.md 不会跟着变——'
+    + '实测过一次，登记时的台账被二十分钟后的一次重跑冲掉。\n'
+    + '  材料在定稿之后继续演化是正常的，与这份 story 无关：它讲的是定稿那一刻的事。');
 }
 
 /**
@@ -223,6 +248,7 @@ function buildTokenExclusion(ctx) {
 }
 
 function cmdInit(ctx) {
+  refuseIfFrozen(ctx, 'init');
   const docs = sourceDocs(ctx);
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
@@ -529,7 +555,108 @@ function norm(s) {
   return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
 }
 
+/** 引文比对面上再多剥两个字符：`` ` `` 与 `*`。
+ *
+ * 裁决表的格子被 `parseVerdictTables` 剥过这两个（表格里的行内代码与加粗会把
+ * 格子切乱），story 正文侧却留着。两端口径不一致时，凡是抄了带行内代码或加粗的
+ * 那句话，都会被判成「在这一章里检索不到」——附录表里的事实几乎条条如此。
+ */
+function normQuote(s) {
+  return norm(s).replace(/[`*]/g, '');
+}
+
+/**
+ * 规范化的同时留下每个字符在原文里的下标。
+ *
+ * 句边界要在**原文**上判：`norm` 把句号问号全剥了，规范化之后的串里根本没有句子。
+ * 于是引文先按规范化面定位（作者抄的时候标点常有出入），再用这张表把位置换回原文。
+ */
+function normIndex(s) {
+  const src = String(s ?? '');
+  const drop = /[\s，。、；：!?！？（）()「」【】`*]/;
+  let text = '';
+  const idx = [];
+  for (let i = 0; i < src.length; i++) {
+    if (drop.test(src[i])) continue;
+    text += src[i];
+    idx.push(i);
+  }
+  return { src, text, idx };
+}
+
+// 句读：一句话可以停在这里。引文的规范化形态里没有它们，所以判的是引文之后紧跟着的原文。
+// 冒号也算：「前一段是本特性，后一段由兄弟特性承载，分工如下：」是完整的一句，
+// 它引出下面那张表——这种目的句成片出现，判据不认它就会把好形态拦掉。
+const SENTENCE_END = /[。？！；：:]/;
+// 一句话可以从这里起头：行首、上一句的句读之后、导语冒号之后、列表标记之后、表格的格子里。
+const SENTENCE_START = /[\n。？！；：:|>]/;
+const LIST_MARK = /[-*+]/;
+// 往两边跳过的装饰：空白与包裹符号，它们既不结束一句话也不开始一句话。
+const TRIM_AROUND = /[ \t`*（()）「」【】]/;
+
+/** 这个位置是不是一行的开头（只隔着空白）。 */
+function atLineHead(src, pos) {
+  return /(^|\n)[ \t]*$/.test(src.slice(0, pos));
+}
+
+/**
+ * 这个字符是不是一个块的起头标记——无序列表的 `-`，或有序列表的 `1.` / `1)`。
+ *
+ * 有序列表要单独认：流程章常写成 `1. **进入与资格**：…` 这种编号步骤，
+ * 只认 `-` 的话，那一章每一步的第一句都会被判成「开头掐在半句里」。
+ */
+function isBlockMark(src, i) {
+  if (LIST_MARK.test(src[i]) && atLineHead(src, i)) return true;
+  if (src[i] !== '.' && src[i] !== ')') return false;
+  let k = i - 1;
+  while (k >= 0 && /\d/.test(src[k])) k--;
+  return k < i - 1 && atLineHead(src, k + 1);
+}
+
+/**
+ * 引文在原文的这一处，是不是**起止于句边界**。
+ *
+ * 这一条替代不了「引文讲的是不是这件事」，它只堵掉一种做法：从该章里切一段
+ * 十来个字的窗口交上来。窗口满足「够长、是这一章的原文、不是来源原话」，
+ * 却连一句话都不是——实测一轮，抽样十行里十行都是这种切片。
+ *
+ * 表格行里的事实按**格子**判：`|` 两侧就是这条事实的起止，整格即合法引文。
+ */
+function atSentenceBounds(src, start, end) {
+  let i = start - 1;
+  while (i >= 0 && TRIM_AROUND.test(src[i])) i--;
+  const okStart = i < 0 || SENTENCE_START.test(src[i]) || isBlockMark(src, i);
+  let j = end + 1;
+  while (j < src.length && TRIM_AROUND.test(src[j])) j++;
+  const okEnd = j >= src.length || src[j] === '\n' || src[j] === '|'
+    || SENTENCE_END.test(src[j]);
+  return { okStart, okEnd };
+}
+
+/**
+ * 引文在这一章里的**任一处**起止于句边界，就算数。
+ *
+ * 同一句话在一章里出现两次是常事（表里一条、正文里一条）。要求处处都合规，
+ * 等于拿另一处的排版去否掉作者抄对了的那一处。
+ *
+ * @returns {{found:boolean, okStart:boolean, okEnd:boolean}}
+ */
+function quoteBounds(chapterRaw, quote) {
+  const map = normIndex(chapterRaw);
+  const q = normQuote(quote);
+  if (!q) return { found: false, okStart: false, okEnd: false };
+  let best = null;
+  for (let at = map.text.indexOf(q); at >= 0; at = map.text.indexOf(q, at + 1)) {
+    const hit = atSentenceBounds(map.src, map.idx[at], map.idx[at + q.length - 1]);
+    if (hit.okStart && hit.okEnd) return { found: true, ...hit };
+    if (!best || (hit.okStart ? 1 : 0) + (hit.okEnd ? 1 : 0)
+        > (best.okStart ? 1 : 0) + (best.okEnd ? 1 : 0)) best = hit;
+  }
+  return best ? { found: true, ...best } : { found: false, okStart: false, okEnd: false };
+}
+
 function cmdAudit(ctx) {
+  refuseIfFrozen(ctx, 'audit');
   const doc = readJson(ctx.unitsPath, null);
   if (!doc) fail(`还没有来源单元清单，先跑 init：${ctx.unitsPath}`);
   // story.md 还不存在 = **一章都没渲染**，不是错误：分配先于正文，
@@ -672,6 +799,8 @@ function redactMaterialLinks(storyText, ctx) {
 
 function cmdCheck(ctx) {
   const problems = [];
+  // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
+  const notes = [];
   // 离线模式（仲裁锚）：单元清单与核对记录给空，依赖它们的判项一条不判，
   // 不依赖的照跑——同一个函数，不是另写一套。
   const doc = ctx.offline ? { units: [] } : readJson(ctx.unitsPath, null);
@@ -687,6 +816,7 @@ function cmdCheck(ctx) {
   // 永远不会成为来源单元，于是守恒面悄悄小了一圈：check 在登记那一刻是过的，
   // 过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
   // 这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
+  const frozen = ctx.offline ? { written: false, digests: {} } : storyFrozen(ctx);
   if (!ctx.offline) {
     const before = readJson(ctx.unitsPath, {}).source_digests ?? null;
     if (before) {
@@ -695,8 +825,27 @@ function cmdCheck(ctx) {
         .map(d => d.rel);
       const added = sourceDocs(ctx).filter(d => !(d.rel in before)).map(d => d.rel);
       if (drifted.length || added.length) {
-        problems.push(`材料在枚举之后变了：${[...drifted, ...added].join('、')}`
-          + '——重跑 init，audit 会把新增单元列进待分配（你已经分好的那些按 key 保留）');
+        // 登记之后这不再是问题：story 定稿于登记那一刻，是**快照**。材料继续演化
+        // 与它无关——评审回稿修订规格件正是常态路径。此前这里指路「重跑 init」，
+        // 而 init 在冻结之后会拒绝执行，两条一起就把人锁死在中间。
+        if (frozen.written) {
+          notes.push(`材料在成文登记之后变了：${[...drifted, ...added].join('、')}`
+            + '——story 与台账是定稿那一刻的快照，不随材料演化；这里只记一笔，不必处置');
+        } else {
+          problems.push(`材料在枚举之后变了：${[...drifted, ...added].join('、')}`
+            + '——重跑 init，audit 会把新增单元列进待分配（你已经分好的那些按 key 保留）');
+        }
+      }
+    }
+    // ⓪b 台账没在登记之后被换过。拒绝 init/audit 挡的是这两条命令，
+    // 挡不住有人直接改文件——指纹核对补上那一面。
+    for (const [name, want] of Object.entries(frozen.digests)) {
+      const now = digestOf(readText(path.join(ctx.srcDir, name)));
+      if (want === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
+      if (want !== now) {
+        problems.push(`${name} 与成文登记时的台账对不上——`
+          + 'story 定稿之后台账随稿冻结，它记的是这份 story 据以成文的依据；'
+          + '改了它，产物与依据就对不上了');
       }
     }
   }
@@ -1004,6 +1153,16 @@ function cmdCheck(ctx) {
             + '这一条渲染出来会是半个议题，评审人看不出要他表什么态');
         }
       }
+      // 澄清正文里的小标题用**加粗段首**，不用 `#` 标题行。
+      //
+      // 议题在 review.md 里已经有三级层次（状态分章、类型成节、逐条成项），
+      // 澄清正文里再起标题行，等于在第四级上又开一层——渲染出来层次就乱了。
+      // 实测一份产物七条议题全是 `###`。
+      if (/(^|\n)\s*#{1,6}\s/.test(String(dec?.clarification ?? ''))) {
+        problems.push(`决策 ${dec?.id ?? '（无编号）'} 的澄清正文里有标题行`
+          + '——小标题写成加粗段首（`**要点**：…`）；'
+          + '议题的层次由状态分章、类型成节、逐条成项给出，正文里再起标题会把它压乱');
+      }
       // 类别决定它成章落在哪一节。**只判在不在词表里**——不判每类有没有条目、
       // 不判数量、不判空类要不要解释：那些是配额，配额逼出来的是凑数与逃生口。
       const keys = (ctx.contract.decision_categories ?? []).map(c => c?.key);
@@ -1044,27 +1203,32 @@ function cmdCheck(ctx) {
           problems.push(`${u.key}「${u.text.slice(0, 30)}」被裁「未讲清」——补写那一章`);
           continue;
         }
-        const q = norm(row.quote);
-        const chapter = norm(sectionText.get(recByKey.get(u.key)?.at) ?? '');
+        const q = normQuote(row.quote);
+        const chapterRaw = sectionText.get(recByKey.get(u.key)?.at) ?? '';
+        const chapter = normQuote(chapterRaw);
         if (q.length < MIN_QUOTE) {
           problems.push(`${u.key} 的引文只有 ${q.length} 字（要求 ≥${MIN_QUOTE}）`);
         } else if (!chapter.includes(q)) {
           problems.push(`${u.key} 的引文在它落点那一章里检索不到——引文要从 story 抄`);
-        } else if (norm(u.text).includes(q)) {
+        } else if (normQuote(u.text).includes(q)) {
           // 把材料原话抄回来是回声：它证明的是「材料这么说」，不是「story 讲清了」
           problems.push(`${u.key} 的引文是来源单元原文的子串——那是回声，抄 story 里你据以判断的那句`);
         } else {
-          // 引文绑定：上面三条（够长、是那一章的原文、不是回声）**一句章级总述句
-          // 可以同时满足**——于是它能给全章任何单元作证，删掉事实裁决照样说「讲清」。
-          // 两条形式判把这条路堵上，都不是相似度：
-          //   ① 这条单元带硬事实的，引文里得有其中至少一个；
-          //   ② 同一句引文至多为两个单元作证，第三次点名。
-          // 纯中文无 token 的单元不受 ① 约束——那正是机器判不了、只有人能裁的领域。
-          const bound = (u.tokens ?? []).filter(t => q.includes(norm(t)));
-          if ((u.tokens ?? []).length && !bound.length) {
-            problems.push(`${u.key} 的引文里没有这条单元的任何一个硬事实`
-              + `（${u.tokens.slice(0, 3).join('、')}${u.tokens.length > 3 ? '…' : ''}）`
-              + '——抄讲这件事的那一句，不是这一章的总述句');
+          // 句边界：够长、是那一章的原文、不是回声——这三条一段**任意切出来的窗口**
+          // 也能同时满足。实测一轮，模型正是这么做的：从落点章里切十来个字交上来，
+          // 连一句话都不是（抽样十行里十行）。所以要求引文起止于句边界：
+          // 起点是句首（行首、上一句的句读之后、导语冒号之后、列表标记之后、格子里），
+          // 终点是句读或行尾。表格行按格子判，`|` 两侧就是这条事实的起止。
+          //
+          // 到此为止是形式判能走到的头。「同一章里的完整句，但讲的仍不是这件事」
+          // 只能由裁决者与抽样人核兜住——再往上就是相似度，那条路已经堵死不走。
+          const bounds = quoteBounds(chapterRaw, row.quote);
+          if (!bounds.okStart || !bounds.okEnd) {
+            const which = !bounds.okStart && !bounds.okEnd ? '两头都不是'
+              : (!bounds.okStart ? '开头掐在半句里' : '结尾停在半句里');
+            problems.push(`${u.key} 的引文${which}——`
+              + '引文要抄讲这件事的那句完整的话，从句子开头抄到句读或行尾；'
+              + '事实写在表格里的，抄它那一格');
           }
           const seen = (quoteUses.get(q) ?? []).concat(u.key);
           quoteUses.set(q, seen);
@@ -1310,6 +1474,7 @@ function cmdCheck(ctx) {
     const label = {
       long_paragraph: '过长的段落', long_chapter: '一整章没有停顿',
       long_ordered_list: '过长的步骤清单', duplicate_paragraph: '重复的段落',
+      duplicate_table_row: '表里重复的行',
     };
     for (const [kind, list] of byKind) {
       const sample = list.slice(0, 3).map(h => `${h.line} 行 ${h.detail}`).join('，');
@@ -1327,6 +1492,7 @@ function cmdCheck(ctx) {
   const appendixSection = appendixDef
     ? sections.find(sec => sec.title === appendixDef.title) : null;
   const wantSubs = (appendixDef?.subsections ?? []).map(normalizeHeading);
+  const materialName = materialSubsectionName(ctx.contract);
   if (appendixSection && wantSubs.length) {
     for (const sub of subsectionNames(appendixSection.text)) {
       if (!wantSubs.includes(sub.name)) {
@@ -1356,10 +1522,17 @@ function cmdCheck(ctx) {
       if (appendixDef.subsection_form) {
         // 判的是**尾巴**：开头那一句是目的句（该有的），跟在表或列表后面的那些，
         // 是没地方去的工程细节挤出来的。
-        const tail = proseBlocks(body)
-          .filter(p => p.afterRows && !/不涉及[:：]\s*\S/.test(p.text));
+        //
+        // **材料清单那一节例外，逐块判**：它成的是列表不是表，而上一版只看
+        // 「列表之后」，于是列表**之前**成了不设防区——实测一轮，四张图连同
+        // 四段说明全塞在那里，判据一条都没响。这一节的形态是「一句目的句 + 列表行」，
+        // 那就按它判：目的句之外的散文块，在前在后一样点名。
+        const wholeSection = want === normalizeHeading(materialName ?? '');
+        const blocks = proseBlocks(body)
+          .filter(p => !/不涉及[:：]\s*\S/.test(p.text));
+        const tail = wholeSection ? blocks.slice(1) : blocks.filter(p => p.afterRows);
         for (const p of tail) {
-          problems.push(`「${appendixDef.title}·${want}」表后还有一段正文`
+          problems.push(`「${appendixDef.title}·${want}」${wholeSection ? '目的句之外还有' : '表后还有'}一段正文`
             + `（「${p.text.slice(0, 18)}…」）`
             + `——${appendixDef.subsection_form.note ?? '该进表的内容进表成行'}`);
         }
@@ -1372,6 +1545,21 @@ function cmdCheck(ctx) {
           + `——${appendixDef.title}是表和列表，不是原文存放处`);
         break;
       }
+    }
+
+    // 附录里不放图。三轮复发同一种形态：正文各章写着「下图是…」，图却整批迁进附录，
+    // 读者读到那句话时手边没有图，要翻到最后再翻回来。
+    //
+    // 这一条与「每张登记的图都必须被引用」是**合围**：图进不了附录，又不能不出现，
+    // 于是只剩一个去处——它讲的那一章。落点判做不到这件事：图片单元的落点是按
+    // 「在哪被引用」反推的，图放哪儿落点就跟到哪儿，那条判据对放错位置恒真。
+    const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
+      .map(m => m[1]);
+    if (inAppendix.length) {
+      problems.push(`「${appendixDef.title}」里有 ${inAppendix.length} 张图`
+        + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`
+        + '——图片放它讲的那一章，跟着讲它的那句话走；'
+        + `${appendixDef.title}是查阅件，读者不会为了看一张图翻到这里来`);
     }
   }
 
@@ -1476,7 +1664,10 @@ function cmdCheck(ctx) {
   // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、材料能不能定位」。
   // 图题编号与小节编号已归 `number` 机器铺，不再判。
   for (const h of scanImageForm(storyText)) {
-    problems.push(`第 ${h.line} 行的图不合形态——${h.hint}`);
+    // 悬空指图点的是**那句话**，不是图——「第 N 行的图」会让人去那一行找一张不存在的图
+    problems.push(h.kind === 'image_dangling'
+      ? `第 ${h.line} 行写着「${h.hit}」，附近却没有图——${h.hint}`
+      : `第 ${h.line} 行的图不合形态——${h.hint}`);
   }
   {
     const appendix = appendixChapter(ctx.contract);
@@ -1532,6 +1723,10 @@ function cmdCheck(ctx) {
     }
   }
 
+  if (notes.length) {
+    process.stdout.write('[story-build check] 记一笔（不拦）：\n');
+    notes.forEach(n => process.stdout.write(`  · ${n}\n`));
+  }
   if (problems.length) {
     process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
     problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
@@ -1605,4 +1800,10 @@ function main() {
   else cmdBuild(ctx);
 }
 
-main();
+// 直接跑才执行命令；被 import 时只导出判定函数（正面校准要拿句边界判把一份文档
+// 逐句灌一遍，那件事不该经由一个需要完整需求目录的命令行去做）。
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
+
+export { normQuote, quoteBounds };

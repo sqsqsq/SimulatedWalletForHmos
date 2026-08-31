@@ -1,6 +1,6 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "1.1.0"
+version: "1.2.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:

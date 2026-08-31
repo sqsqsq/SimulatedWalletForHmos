@@ -2,7 +2,7 @@
 
 本仓库具有**双重身份**：
 
-1. **HarmonyOS 模拟钱包应用实例** — 可编译运行的示例工程，含 `01-Product/`、`02-Feature/` 等模块与业务文档（`doc/`，其中 `doc/features/<feature>/` 扁平归档该 feature 的全部产物：PRD / design / contracts / acceptance / review-report / test-plan 等）。
+1. **HarmonyOS 钱包应用工程** — 可编译运行，含 `01-Product/`、`02-Feature/` 等模块与业务文档（`doc/`，其中 `doc/features/<feature>/` 扁平归档该 feature 的全部产物：PRD / design / contracts / acceptance / review-report / test-plan 等）。
 2. **`framework/` 通用框架的宿主仓库** — `framework/` 目录为可单独拆出、供其它工程以 **git submodule** 复用的 Skill + Harness + phase-rules + agent adapters；说明见 [framework/README.md](framework/README.md)。
 
 ---

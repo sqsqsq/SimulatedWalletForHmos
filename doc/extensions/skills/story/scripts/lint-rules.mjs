@@ -346,7 +346,57 @@ const READABILITY_HINTS = {
   long_chapter: '分小标题，或者把并列的部分改成列表 / 表',
   long_ordered_list: '按阶段拆成几节——十几步排成一列，读者记不住自己在第几步',
   duplicate_paragraph: '同一段话出现两次：留在它主要回答读者问题的那一章，另一处删掉或改写成承接',
+  duplicate_table_row: '同一张表里两行逐字相同：删掉一行。'
+    + '两行说的是同一件事，读者会以为自己看漏了什么差别',
 };
+
+/**
+ * 同一张表里的两行逐字相同。
+ *
+ * 段落查重看不到这一面：表行在它眼里是「一次视觉停顿」，从不进比对。
+ * 实测一轮，附录一张表里相邻两行一字不差（同一个时限登记了两遍）。
+ *
+ * **只在一张表内比，且表头与分隔行豁免**：多张表共用同一个表头是形态要求
+ * （每个小节一张表，表头由数据锁死），跨表比对会把这种正确形态判成重复。
+ * 仍是规范化后的逐字相等，不是相似度。
+ */
+function scanDuplicateTableRows(text) {
+  const hits = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let inFence = false;
+  let block = [];                      // 当前这张表的 {line, key} 序列
+  const flush = () => {
+    const seen = new Map();
+    for (let i = 0; i < block.length; i++) {
+      // 表头：其后紧跟分隔行的那一行。分隔行规范化后是空串，天然不参与比对。
+      if (i + 1 < block.length && block[i + 1].separator) continue;
+      const { line, key, separator } = block[i];
+      if (separator || !key) continue;
+      if (seen.has(key)) {
+        hits.push({ line, kind: 'duplicate_table_row',
+                    detail: `与第 ${seen.get(key)} 行逐字相同`,
+                    hint: READABILITY_HINTS.duplicate_table_row });
+      } else {
+        seen.set(key, line);
+      }
+    }
+    block = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    if (/^(```|~~~)/.test(s)) { inFence = !inFence; flush(); continue; }
+    if (inFence) continue;
+    if (!s.startsWith('|')) { flush(); continue; }
+    const cells = s.replace(/^\||\|$/g, '').split('|');
+    block.push({
+      line: i + 1,
+      key: normalizeParagraph(s),
+      separator: cells.every(c => /^[-: ]*$/.test(c.trim())),
+    });
+  }
+  flush();
+  return hits;
+}
 
 /**
  * 一段话贡献的比对键：整段一个，段内每句各一个。
@@ -472,6 +522,8 @@ export function scanReadability(text, conf = {}) {
         `「${chapter.title}」${bodyChars} 字且没有小标题、列表或表（上限 ${maxChapter}）`);
     }
   }
+  hits.push(...scanDuplicateTableRows(text));
+  hits.sort((a, b) => a.line - b.line);
   return hits;
 }
 
@@ -487,6 +539,8 @@ export function scanReadability(text, conf = {}) {
 const IMAGE_HINTS = {
   image_lead: '图前一句承接，说清它画的是什么——读者先读到那句话，再看图；'
     + '说明写在图后，他得先猜一遍',
+  image_dangling: '说了有图的地方要真有图——这句话指着一张图，它附近却没有图。'
+    + '图迁走了就把这句话改掉，或者把图放回它讲的这一章',
   material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
   material_scope: '材料清单只列进 spec 之前的原始输入——本轮自己生成的中间产物、'
     + '参考件与图片直链不是材料（图随它所在的那份材料走，不单列）',
@@ -523,6 +577,51 @@ export function scanImageForm(text) {
                            hint: IMAGE_HINTS.image_lead, text: s.slice(0, 100) });
     }
     prev = s;
+  }
+  hits.push(...scanDanglingFigureRefs(lines));
+  hits.sort((a, b) => a.line - b.line);
+  return hits;
+}
+
+/** 指着一张图说话的措辞。它们是作者写下「这里有张图」的证据，不是业务词。 */
+const FIGURE_POINTERS = /(如下图|如上图|下图|上图|下面这张图|上面这张图)/;
+
+/**
+ * 悬空的指图句：这一段说「下图…」，它前后却没有图。
+ *
+ * 三轮复发的形态是**图整批迁走**——正文各章的承接句留在原地，图去了附录。
+ * 承接判（`image_lead`）只从图往回看一行，看不到这一面：图都不在了，它无从判起。
+ * 这一条从话往外看，两块之内没有图就点名。
+ *
+ * 判的范围是**前后各两个块**（空行分块），不是整章：读者的忍耐力大约就这么长，
+ * 再远他就得来回翻。
+ */
+function scanDanglingFigureRefs(lines) {
+  const hits = [];
+  // 先把行分块：空行是块界，围栏内整体算一块
+  const blocks = [];
+  let cur = null;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    if (/^(```|~~~)/.test(s)) { inFence = !inFence; }
+    if (!s && !inFence) { cur = null; continue; }
+    if (!cur) { cur = { start: i, lines: [] }; blocks.push(cur); }
+    cur.lines.push({ line: i + 1, text: s });
+  }
+  const hasImage = (b) => b.lines.some(l => /!\[[^\]]*\]\(/.test(l.text));
+  for (let b = 0; b < blocks.length; b++) {
+    if (hasImage(blocks[b])) continue;                    // 图就在这一段里，不必外找
+    const near = blocks.slice(Math.max(0, b - 2), b + 3).some(hasImage);
+    if (near) continue;
+    for (const l of blocks[b].lines) {
+      if (l.text.startsWith('|') || l.text.startsWith('#')) continue;
+      const m = FIGURE_POINTERS.exec(l.text);
+      if (!m) continue;
+      hits.push({ line: l.line, kind: 'image_dangling', hit: m[1],
+                  hint: IMAGE_HINTS.image_dangling, text: l.text.slice(0, 100) });
+      break;                                              // 一段点一次就够
+    }
   }
   return hits;
 }

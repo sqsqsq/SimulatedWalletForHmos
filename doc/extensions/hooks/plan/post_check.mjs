@@ -68,6 +68,81 @@ function specExitIds(projectRoot, feature) {
   return ids;
 }
 
+/**
+ * 从一张 markdown 表里逐行取**数据行**的格子。
+ *
+ * 表头行按位置认：紧跟着 `|---|` 分隔行的那一行就是表头。按内容认（比对列名）
+ * 会在列名改一个字时静默把表头当数据读进来，那种错没人看得见。
+ */
+function tableRows(rows, from, level) {
+  const pipes = [];
+  for (let i = from; i < rows.length; i++) {
+    const h = rows[i].trim().match(/^(#{2,4})\s+/);
+    if (h && h[1].length <= level) break;
+    const s = rows[i].trim();
+    if (s.startsWith('|')) pipes.push(s);
+  }
+  const cellsOf = (s) =>
+    s.replace(/^\||\|$/g, '').split('|').map(c => c.replace(/[`*]/g, '').trim());
+  const isSeparator = (s) => cellsOf(s).every(c => /^[-: ]*$/.test(c));
+  const out = [];
+  for (let i = 0; i < pipes.length; i++) {
+    if (isSeparator(pipes[i])) continue;
+    if (i + 1 < pipes.length && isSeparator(pipes[i + 1])) continue;   // 表头
+    out.push(cellsOf(pipes[i]));
+  }
+  return out;
+}
+
+/** 某一章的起始行号与它的标题级别。 */
+function chapterAt(rows, re) {
+  const start = rows.findIndex(l => re.test(l.trim()));
+  if (start < 0) return null;
+  return { start, level: (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length };
+}
+
+/**
+ * spec §11 判「命中」的候选：`{ 适用单元 → 候选 }`。
+ *
+ * 「无候选」是正常结论，不进这个集合——本判据核的是**命中了却在 plan 消失或被空手否掉**。
+ */
+function specPatternHits(projectRoot, feature) {
+  const p = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
+  const text = readTextOrNull(p);
+  if (text === null) return null;
+  const rows = lines(text);
+  const at = chapterAt(rows, /^#{2,4}\s+.*设计模式候选登记/);
+  if (!at) return null;
+  const hits = new Map();
+  for (const cells of tableRows(rows, at.start + 1, at.level)) {
+    const [unit, candidate] = cells;
+    if (!unit || !candidate) continue;
+    if (/^\{.*\}$/.test(unit) || /^\{.*\}$/.test(candidate)) continue;   // 模板占位行
+    if (candidate.includes('无候选')) continue;
+    hits.set(unit, candidate);
+  }
+  return hits;
+}
+
+/**
+ * plan 的设计模式选型表：`{ 适用单元 → { 选不选, 理由 } }`。
+ *
+ * 选型表就在「知识决策（设计输入）」章里——它是 plan 期的可见面，
+ * 有 plan 门禁看、有 verifier 问，模式否决就该落在这里。
+ */
+function planPatternChoices(planText) {
+  const rows = lines(planText);
+  const at = chapterAt(rows, /^#{2,4}\s+设计模式选型/);
+  if (!at) return null;
+  const out = new Map();
+  for (const cells of tableRows(rows, at.start + 1, at.level)) {
+    const [unit, , choice, , reason] = cells;
+    if (!unit || /^\{.*\}$/.test(unit)) continue;
+    out.set(unit, { choice: choice ?? '', reason: reason ?? '' });
+  }
+  return out;
+}
+
 /** 逐行裁决核对：知识派生失败不静默通过——那会让本判据恒真。 */
 function adjudicationLanding(ctx, knowledge, targetPaths) {
   try {
@@ -196,6 +271,42 @@ export default guard('plan', async (ctx) => {
     if (roles.length && !roles.includes(pr.role)) {
       problems.push(`files「${pr.path}」的 role「${pr.role}」不是 ${pr.pattern} 声明的角色`
         + `（该模式的角色：${roles.join('、')}）`);
+    }
+  }
+
+  // ---- 6b. spec 判命中的候选，在 plan 有行、不选时有理由 ----
+  //
+  // 实测一轮：spec §11 正确命中了候选（业务信号真实），plan 用「演示仓储一步完成」
+  // 「加节点表会扩大文件面」把它否了——**拿临时承载形态当信号输入**。否决在闭环内
+  // 完成，没有任何人过目，知识文件本身一个字没错。
+  //
+  // 这里只判形式两件事：命中的候选有没有行、不选时理由列空不空。
+  // 「理由引的是业务信号还是承载形态」是语义，归 verifier 逐问——
+  // 用措辞正则去拦，拦出来的是换一种说法的同一件事。
+  {
+    const hits = specPatternHits(ctx.projectRoot, ctx.feature);
+    const choices = planPatternChoices(planText);
+    if (hits === null) {
+      skipped.push({ what: '设计模式候选的交叉核对', why: 'spec.md 里没有候选登记章' });
+    } else if (choices === null) {
+      if (hits.size) {
+        problems.push(`spec 判命中 ${hits.size} 条设计模式候选，plan.md 却没有「设计模式选型」表`
+          + '——命中的候选要逐条给结论，选或不选都算');
+      }
+    } else {
+      for (const [unit, candidate] of hits) {
+        const row = choices.get(unit);
+        if (!row) {
+          problems.push(`spec 判「${unit}」命中候选 ${candidate}，plan 的设计模式选型表里没有这一行`
+            + '——命中的候选逐条给结论，漏一行它就在闭环里悄悄消失了');
+          continue;
+        }
+        if (row.choice.includes('不选') && !row.reason) {
+          problems.push(`「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
+            + '——不选是表态有后果的决策，理由要写成业务信号的反证'
+            + '（那个业务过程为什么不满足该模式的信号），不能以当前是模拟或演示承载为由');
+        }
+      }
     }
   }
 
