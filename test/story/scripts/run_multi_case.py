@@ -731,10 +731,17 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
             record[key] = state.get(key)
     record["awaiting_since"] = state.get("awaiting_since")
     if record.get("status") == WAITING_STATUS:
+        # **原话要一起带上**：漏了它，`poll_suite` 刚透传上来的那份就在这里被抹掉，
+        # 宿主拿到的 `question` 于是恒为空——他只能自己去 events.jsonl 尾部捞。
         record["last_awaiting"] = {
             "turn": state.get("awaiting_turn"),
             "kind": state.get("awaiting_kind"),
+            "prompt": state.get("awaiting_prompt") or None,
+            "prompt_source": state.get("awaiting_prompt_source") or "unavailable",
+            "waited_sec": state.get("awaiting_stale_sec"),
         }
+    if state.get("closure") is not None:
+        record["closure"] = state.get("closure")
     record["source_restore_status"] = source_restore_status(state)
     record["execution_status"] = state.get("execution_status") or record.get("status")
     for key in ("failure_kind", "pipeline"):
@@ -1391,7 +1398,9 @@ def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
         "planned_turn": (planned or {}).get("expected_turn"),
         "script_cursor": f"{index}/{len(script)}",
         "reply": None,
-        "reason": "host_reply_required" if planned else "interaction_script_exhausted",
+        # 「规划走完了」和「这个 Case 本来就没写规划」是两回事，分开报。
+        "reason": ("host_reply_required" if planned
+                   else "plan_exhausted" if script else "no_plan_for_this_case"),
         "detected_at": now(),
         "reply_status": "adaptive_reply_required",
     }
@@ -1641,9 +1650,11 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
                     "changes": post_refresh_correction or phase_correction,
                     "source": record.get("phase_source"),
                 })
-            if record.get("status") == WAITING_STATUS and record.get("interaction_script") \
-                    and is_new_gate(record):
-                send_scripted_reply(record, suite)
+            # **每一关都叫宿主**，有没有规划都叫。带 `interaction_script` 这个前置的是
+            # 上一版——那时没有脚本就没人应答，于是没写规划的 Case 会静默挂在
+            # awaiting_reply 上，谁也不知道它在等谁。
+            if record.get("status") == WAITING_STATUS and is_new_gate(record):
+                request_host_reply(record, suite)
         append_event(suite, "poll_completed",
                      cases=[result["case"] for result in results],
                      statuses={result["case"]: result.get("status") for result in results})
@@ -2257,6 +2268,43 @@ def command_reply(suite_id: str, case_id: str, text: str,
     return returncode
 
 
+def command_conclude(suite_id: str, case_id: str, reason: str) -> int:
+    """宿主判定「这个 Case 本轮到此为止」——**逐 Case，且不杀进程**。
+
+    与 `stop` 两处不同，都是实跑里被咬过的：
+
+    - `stop` 是整 suite 一档，先到终点的那个只能陪着另一个干等（实测空转 18 分钟）；
+      这里按 Case 收工，各走各的。
+    - `stop` 强杀进程树，门禁从不运行、`phase-results/` 不产出，报告是残的；
+      这里只放一个控制文件，worker 自己退出续话循环，照常跑完门禁与收尾。
+
+    终态是 `concluded_by_host`，**不是失败**：目标闭没闭环由 `target_reached` 与
+    `closure.target_missing` 单独说。模型自认为做完了而凭证不齐，那是一条有效观测。
+    """
+    path, suite = load_suite(suite_id)
+    if case_id not in suite["case_states"]:
+        raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
+    record = refresh_record(suite["case_states"][case_id])
+    args = ["--reason", reason] if reason else []
+    returncode, payload, stdout, stderr = invoke_case(
+        case_id, "conclude", *args, suite=suite)
+    if returncode != 0:
+        record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
+    else:
+        record["host_concluded"] = {"reason": reason, "at": now()}
+    append_event(suite, "case_concluded", case=case_id,
+                 returncode=returncode, reason=reason)
+    append_case_observation(suite, case_id, {
+        "kind": "host_conclude", "reason": reason, "returncode": returncode,
+        "closure": record.get("closure"),
+    })
+    save_suite(path / "suite.json", suite)
+    print(json.dumps(payload or {"ok": returncode == 0, "returncode": returncode,
+                                 "stdout": stdout[-2000:], "stderr": stderr[-2000:]},
+                     ensure_ascii=False, indent=2))
+    return returncode
+
+
 def command_stop(suite_id: str, force: bool) -> int:
     path, suite = load_suite(suite_id)
     errors: list[dict[str, Any]] = []
@@ -2524,7 +2572,7 @@ def command_finalize(suite_id: str, promote: bool, cleanup: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("plan", "start", "poll", "status",
-                                            "reply", "stop", "finalize"))
+                                            "reply", "conclude", "stop", "finalize"))
     parser.add_argument("case_ids", nargs="*")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
@@ -2589,6 +2637,10 @@ def main() -> int:
         return command_poll(args.suite_id, args.wait_sec, args.max_chars)
     if args.command == "status":
         return command_status(args.suite_id)
+    if args.command == "conclude":
+        if not args.reply_case:
+            raise SystemExit("[multi] conclude 必须提供 --case（逐 Case 收工，不是整 suite）")
+        return command_conclude(args.suite_id, args.reply_case, args.reason)
     if args.command == "reply":
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] reply 必须提供 --case 和非空 --text")

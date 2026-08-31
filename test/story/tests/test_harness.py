@@ -976,32 +976,55 @@ class HumanReplyTest(unittest.TestCase):
         self.assertFalse(rc.is_interactive({"id": "x", "ar": "AR-FIXTURE"}))
         self.assertTrue(rc.is_interactive({"interactive": True}))
 
-    def test_waiting_gives_up_instead_of_answering_for_the_person(self) -> None:
-        """等不到人**不降级成自动回话**。
+    def test_waiting_has_no_time_limit_and_only_conclude_ends_it(self) -> None:
+        """等宿主回话**不设上限**，唯一的另一个出口是宿主判定收工。
 
-        降级会把「没人应答」悄悄变成「有人说按推荐走」，测出来的交互行为是假的
-        ——而报告上看不出这一步是谁答的。
+        上一版等满一小时就 break，被折叠成 `target_not_reached`——与「模型真没做完」
+        同一个桶，报告上看不出是没人回话。而它等的不是人的键盘，是宿主（一个模型）
+        有没有把回复放进来：宿主会被别的事打断、会跨会话。实测两个 Case 分别空等
+        45 分钟与 33 分钟，距那道线只差 15 分钟。
         """
         feed = observe.LiveFeed(self.tmp / "live.jsonl")
         runlog = observe.RunLog(self.tmp / "runlog.md")
+        (self.tmp / rc.CONCLUDE_FILE).write_text(
+            json.dumps({"reason": "目标已到位"}), encoding="utf-8")
         state: dict = {}
-        got = rc.wait_for_human_reply(self.tmp, feed, runlog, state, turn=1, timeout=0)
+        got = rc.wait_for_human_reply(self.tmp, feed, runlog, state, turn=1,
+                                      prompt="要进 plan 了")
         runlog.close()
-        self.assertIsNone(got, "等不到回话却给出了内容")
-        events = [json.loads(ln) for ln in
-                  (self.tmp / "live.jsonl").read_text(encoding="utf-8").splitlines()
-                  if ln.strip()]
-        kinds = [e.get("type") for e in events]
+        self.assertIsNone(got, "收工判定应当让它返回 None，而不是一句回话")
+        self.assertFalse((self.tmp / rc.CONCLUDE_FILE).exists(), "收工判定要取走即删")
+        kinds = [json.loads(ln).get("type") for ln in
+                 (self.tmp / "live.jsonl").read_text(encoding="utf-8").splitlines()
+                 if ln.strip()]
         self.assertIn("awaiting_reply", kinds, "没有喊出「在等人回话」")
-        self.assertIn("awaiting_reply_timeout", kinds, "超时没有留痕")
+        self.assertNotIn("awaiting_reply_timeout", kinds, "超时语义已退场")
 
-    def test_waiting_publishes_a_state_the_poller_can_see(self) -> None:
-        """状态要能被轮询看到，否则观察者不知道该自己动手了。"""
+    def test_waiting_publishes_the_model_words_for_the_poller(self) -> None:
+        """状态要能被轮询看到，且**带上模型说了什么**。
+
+        此前宿主只拿得到「它停了」，原话得自己去 events.jsonl 尾部捞——
+        一轮观测因此变成两轮。
+        """
         feed = observe.LiveFeed(self.tmp / "live.jsonl")
         runlog = observe.RunLog(self.tmp / "runlog.md")
-        rc.wait_for_human_reply(self.tmp, feed, runlog, {}, turn=1, timeout=0)
+        (self.tmp / rc.CONCLUDE_FILE).write_text(json.dumps({"reason": "x"}), encoding="utf-8")
+        rc.wait_for_human_reply(self.tmp, feed, runlog, {}, turn=1,
+                                prompt="术语我列好了，请确认")
         runlog.close()
-        self.assertEqual(rc.read_state(self.tmp).get("status"), "awaiting_reply")
+        state = rc.read_state(self.tmp)
+        self.assertEqual(state.get("status"), "awaiting_reply")
+        self.assertEqual(state.get("awaiting_prompt"), "术语我列好了，请确认")
+        self.assertEqual(state.get("awaiting_prompt_source"), "cli_text_event")
+
+    def test_missing_model_words_are_named_not_blanked(self) -> None:
+        """取不到原话时要说「取不到」，不能给空串——空串与「模型没说话」同形。"""
+        feed = observe.LiveFeed(self.tmp / "live.jsonl")
+        runlog = observe.RunLog(self.tmp / "runlog.md")
+        (self.tmp / rc.CONCLUDE_FILE).write_text(json.dumps({"reason": "x"}), encoding="utf-8")
+        rc.wait_for_human_reply(self.tmp, feed, runlog, {}, turn=1, prompt="")
+        runlog.close()
+        self.assertEqual(rc.read_state(self.tmp).get("awaiting_prompt_source"), "unavailable")
 
     def test_replying_to_nothing_is_refused(self) -> None:
         """没人在跑就别回「已入队」。
@@ -1025,7 +1048,7 @@ class HumanReplyTest(unittest.TestCase):
         feed = observe.LiveFeed(self.tmp / "live.jsonl")
         runlog = observe.RunLog(self.tmp / "runlog.md")
         self._queue("按端侧特性切开，本单先做第一份")
-        got = rc.wait_for_human_reply(self.tmp, feed, runlog, {}, turn=1, timeout=5)
+        got = rc.wait_for_human_reply(self.tmp, feed, runlog, {}, turn=1)
         runlog.close()
         self.assertEqual(got, "按端侧特性切开，本单先做第一份")
         self.assertEqual(rc.read_state(self.tmp).get("status"), "running")

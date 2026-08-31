@@ -92,11 +92,13 @@ FEATURE_HISTORY_TIMESTAMP_FORMAT = str(
     FEATURE_HISTORY_CFG.get("timestamp_format", "%Y%m%d-%H%M%S"))
 if STOP_GRACE < 0:
     raise SystemExit("[runner] stop_grace 不能为负")
-for gone in ("soft_timeout", "hard_timeout", "phase_hard_timeout", "max_turns"):
+for gone in ("soft_timeout", "hard_timeout", "phase_hard_timeout", "max_turns",
+             "reply_wait_sec"):
     if gone in CFG["cli"]:
         raise SystemExit(
-            f"[runner] cli.{gone} 已停用：本域不设运行时限与续话轮次上限，"
-            "终点由 case.yaml 的 end_phase 判定，空转由观测者 stop。把这一项从配置里删掉")
+            f"[runner] cli.{gone} 已停用：本域不设运行时限、续话轮次上限，"
+            "等宿主回话也不设上限。目标由 end_phase 判定，何时收工由宿主 conclude。"
+            "把这一项从配置里删掉")
 if OBSERVATION_INTERVAL_SEC <= 0:
     raise SystemExit("[runner] observation.interval_sec 必须大于 0")
 if HEARTBEAT_INTERVAL_SEC <= 0 or WORKER_LEASE_SEC <= HEARTBEAT_INTERVAL_SEC:
@@ -111,9 +113,17 @@ from tools.cli import CliClient, CliRunRequest  # noqa: E402
 import observe  # noqa: E402
 
 ACTIVE_STATUS = {"starting", "running", "awaiting_reply", "stopping"}
-TERMINAL_STATUS = {"finished", "timeout", "stopped", "stop_failed", "cli_failed",
+TERMINAL_STATUS = {"finished", "stopped", "stop_failed", "cli_failed",
                    "gate_failed", "target_not_reached", "worker_start_failed",
-                   "worker_lost", "source_restore_failed"}
+                   "worker_lost", "source_restore_failed",
+                   # 宿主判定本轮到此为止：门禁照跑、产物照出，**不是失败**。
+                   # 目标闭没闭环由 target_reached / closure.target_missing 单独说。
+                   "concluded_by_host",
+                   # CLI 回了 succeeded 却没给 session id，无法续话——adapter 的账，
+                   # 不是模型没做完。上一版它被折叠进 target_not_reached。
+                   "cli_session_lost",
+                   # 装置自己漏跑了 gate。gate 判红是被测对象的账，没跑是装置的账。
+                   "harness_incomplete"}
 TERMINAL_CLI_STATUS = {"succeeded", "failed", "timed_out", "stopped", "stop_failed"}
 
 # story 的业务关卡会停下来等人选。**两种模式，按用例声明选**：
@@ -127,10 +137,15 @@ TERMINAL_CLI_STATUS = {"succeeded", "failed", "timed_out", "stopped", "stop_fail
 # 那条路。曾为了测「用户要求拆分」把答案预塞进初始 prompt，逼出的是记忆衰减问题，
 # 与真实交互无关（实测：模型在几十步后概括任务描述，把那句话整句丢了）。
 GATE_REPLY = "按你推荐的选项继续，不用再问我；每个决策照常写明选了哪一项、依据是什么。"
-# 交互模式下等人回话的上限。等不到不降级成自动回话——那会把「没人应答」
-# 悄悄变成「有人说按推荐走」，测出来的行为是假的。
-REPLY_WAIT = int(CFG["cli"].get("reply_wait_sec", 3600))
+# **等宿主回话不设上限**（见 wait_for_human_reply）。等久了每这么多秒出一次声——
+# 一直等不等于没人知道它在等。这是提醒，不是时限。
+REPLY_NUDGE = int(CFG["cli"].get("reply_nudge_sec", 300))
 REPLY_FILE = "reply.json"
+# 宿主判定「本轮到此为止」。与 reply 同构的单槽文件：写它不杀任何进程，
+# worker 读到就退出续话循环、照常跑完门禁与收尾。
+CONCLUDE_FILE = "conclude.json"
+# 交给宿主的模型原话截断长度——够他判断，又不至于把 poll 响应撑爆。
+PROMPT_LIMIT = 4000
 
 
 def driver_prompt(prompt: str, interactive: bool) -> str:
@@ -173,31 +188,72 @@ def pop_pending_reply(out_dir: Path) -> str | None:
     return text
 
 
+def pop_conclude_request(out_dir: Path) -> dict | None:
+    """取走宿主的收工判定（取走即删，同 `pop_pending_reply`）。
+
+    返回的是那条判定本身（含 `reason`），不是布尔——理由要写进终态回执，
+    事后才看得出这一轮为什么停在这里。
+    """
+    path = out_dir / CONCLUDE_FILE
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(payload, dict):
+        return None
+    path.unlink(missing_ok=True)
+    return payload
+
+
 def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
-                         turn: int, timeout: int) -> str | None:
-    """交互模式：停下来等人回话，超时返回 None（**不降级成自动回话**）。"""
+                         turn: int, prompt: str = "") -> str | None:
+    """交互模式：停下来等宿主回话。**无限等，不设上限。**
+
+    上一版等 `REPLY_WAIT`（1 小时）就 break，结果被折叠成 `target_not_reached`——
+    与「模型真没做完」同一个桶，报告上完全看不出是没人回话。而它等的不是人的键盘，
+    是**宿主**（一个模型）有没有把回复放进来；宿主会被别的事打断、会跨会话。
+    实测两个 Case 分别空等 45 分钟与 33 分钟，距那道线只差 15 分钟。
+
+    所以时限退场：等不到就一直等，每 `REPLY_NUDGE` 秒出一次声。循环里照常续租，
+    无限等**不会**触发 lease 失联。出口有两个——宿主回话，或宿主 conclude。
+
+    `prompt` 是模型本轮最后说的那段话，随停等一起交给宿主：他据它当轮就能回，
+    不必再去 events.jsonl 尾部捞。
+
+    @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）。
+    """
     state.update(status="awaiting_reply", awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"),
-                 awaiting_turn=turn, awaiting_kind="story_gate")
+                 awaiting_turn=turn, awaiting_kind="story_gate",
+                 awaiting_prompt=(prompt or "")[:PROMPT_LIMIT],
+                 awaiting_prompt_source="cli_text_event" if prompt else "unavailable")
     refresh_worker_lease(out_dir, state, force=True, event="awaiting_reply")
-    feed.emit("awaiting_reply", turn=turn, timeout_sec=timeout)
-    runlog.event("等待回话", f"第 {turn} 轮结束，等人回话："
+    feed.emit("awaiting_reply", turn=turn)
+    runlog.event("等待回话", f"第 {turn} 轮结束，等宿主回话："
                              f"run_case.py <case> reply --text \"…\"")
     print(f"[live] awaiting reply (turn={turn}) —— "
           f"用 run_case.py <case> reply --text \"…\" 回话", file=sys.stderr, flush=True)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    waited = 0.0
+    nudged = 0
+    while True:
         refresh_worker_lease(out_dir, state)
         text = pop_pending_reply(out_dir)
         if text:
-            state.update(status="running", awaiting_since=None)
+            state.update(status="running", awaiting_since=None,
+                         awaiting_prompt=None, awaiting_prompt_source=None)
             refresh_worker_lease(out_dir, state, force=True, event="human_reply")
             feed.emit("human_reply", turn=turn, text=observe.shorten(text, 300))
             runlog.event("人回话", text[:200])
             return text
+        if pop_conclude_request(out_dir) is not None:
+            return None
         time.sleep(1.0)
-    feed.emit("awaiting_reply_timeout", turn=turn, timeout_sec=timeout)
-    refresh_worker_lease(out_dir, state, force=True, event="awaiting_reply_timeout")
-    return None
+        waited += 1.0
+        # 等久了要出声——「一直等」不等于「没人知道它在等」。
+        if REPLY_NUDGE and waited >= REPLY_NUDGE * (nudged + 1):
+            nudged += 1
+            state["awaiting_stale_sec"] = int(waited)
+            refresh_worker_lease(out_dir, state, force=True, event="awaiting_reply_stale")
+            feed.emit("awaiting_reply_stale", turn=turn, waited_sec=int(waited))
 
 
 def resolve_start_phase(case: dict, override: str | None = None) -> str:
@@ -399,6 +455,70 @@ def target_reached(feature: str, end_phase: str) -> bool:
         return (REPO_ROOT / FEATURES_DIR / feature / "AR" / "review-disposition.json").is_file()
     ok, _ = phase_evidence_complete(feature, end_phase)
     return ok
+
+
+def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
+    """本轮的闭环事实——**只报事实，不下结论**。
+
+    「这一轮该不该结束」由宿主判断：他要同时看见「目标阶段的凭证齐没齐」和
+    「模型嘴上说了什么」。装置把前者算清楚交出去，后者随 `awaiting_prompt` 走；
+    **装置不据模型的散文改阶段、也不据它自动收工**——那又回到了机械判定。
+
+    `beyond_target` 是把「模型说要进 plan」落成事实的那一半：它嘴上说时这里是空的，
+    它真建了下一阶段的产物时才非空。两者摆在一起，宿主才判得准。
+    """
+    ok, missing = (True, []) if end_phase == STORY_REVIEW \
+        else phase_evidence_complete(feature, end_phase)
+    feature_root = REPO_ROOT / FEATURES_DIR / feature
+    beyond = [phase for phase in PHASE_ORDER[phase_index(end_phase) + 1:]
+              if phase_was_reached(feature_root, phase)]
+    return {
+        "target_phase": end_phase,
+        "target_closed": target_reached(feature, end_phase),
+        "target_missing": [] if ok else list(missing),
+        "artifacts_ready": artifacts_ready(feature),
+        "next_unclosed_phase": next_unclosed_phase(feature, end_phase),
+        "beyond_target_evidence": beyond,
+        "applicable_phases": list(applicable_phases(start_phase, end_phase)),
+    }
+
+
+def publish_closure(out_dir: Path, state: dict, feature: str,
+                    start_phase: str, end_phase: str) -> dict:
+    """把闭环事实刷进 state，让 poll 期间的宿主看得到（此前只在终态算一次）。"""
+    facts = closure_facts(feature, start_phase, end_phase)
+    state["closure"] = facts
+    refresh_worker_lease(out_dir, state)
+    return facts
+
+
+#: 一次运行为什么停在这里 → 记成什么终态、退出码是几。
+#:
+#: 上一版把「模型真没做完」「没人回话超时」「CLI 没回 session id」统统记成
+#: `target_not_reached`，事后完全分不出来——而其中两种压根不是被测对象的账。
+#: 退出码表达的是「**这次运行有没有装置或 CLI 层面的失败**」：宿主判定收工是
+#: 正常收场（0），哪怕目标没闭环——目标闭没闭环由 `target_reached` 与
+#: `target_missing` 单独说，评测看那两个。
+TERMINAL_BY_STOP_REASON = {
+    "target_reached": ("finished", 0),
+    "cli_cannot_continue": ("cli_failed", 1),
+    "no_session_id": ("cli_session_lost", 2),
+}
+
+
+def terminal_status_for(execution_status: str, stop_reason: str | None,
+                        reached: bool) -> tuple[str, int]:
+    """终态与退出码的唯一出处——纯函数，好打表。"""
+    if stop_reason == "host_concluded":
+        return ("finished", 0) if reached else ("concluded_by_host", 0)
+    if stop_reason in TERMINAL_BY_STOP_REASON:
+        status, code = TERMINAL_BY_STOP_REASON[stop_reason]
+        if stop_reason == "target_reached" and not reached:
+            return "target_not_reached", 1
+        return status, code
+    if execution_status != "finished":
+        return execution_status, 1
+    return ("finished", 0) if reached else ("target_not_reached", 1)
 
 
 def applicable_phases(start_phase: str, end_phase: str) -> tuple[str, ...]:
@@ -1495,6 +1615,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                       file=sys.stderr, flush=True)
 
                 cursor = 0
+                # 本轮模型最后说的那段话。停下来等宿主时要把它一起交出去——
+                # 宿主此前只拿得到「它停了」，得自己去 events.jsonl 尾部捞原话，
+                # 一轮观测因此变成两轮。这里顺手记住，零额外 IO。
+                last_text = ""
                 try:
                     while True:
                         page = client.poll(handle.run_id, cursor=cursor, wait_sec=1,
@@ -1505,6 +1629,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                             described = observe.describe(event)
                             if described:
                                 runlog.event(*described)
+                            if event.type == "text" and str(event.content or "").strip():
+                                last_text = str(event.content)
                             if event.type in {"lifecycle", "error"}:
                                 feed.emit("cli_" + event.type,
                                           content=observe.shorten(event.content, 300))
@@ -1527,8 +1653,27 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
 
                 session_id = str(run.get("session_id") or "")
                 refresh_worker_lease(out_dir, state, force=True, event="cli_run_finished")
-                if (run.get("status") != "succeeded"
-                        or not session_id or target_reached(feature, end_phase)):
+                # 每回合把闭环事实刷进 state：宿主是靠它判定「本轮到此为止」的，
+                # 只在终态算一次的话，poll 期间他什么也看不到。
+                publish_closure(out_dir, state, feature, start_phase, end_phase)
+                # 四条出口，每条各记一个 stop_reason——上一版三种情况共用
+                # `target_not_reached` 一个桶，事后分不出是模型没做完、没人回话、
+                # 还是 CLI 压根没回 session id。
+                concluded = pop_conclude_request(out_dir)
+                if concluded is not None:
+                    result["stop_reason"] = "host_concluded"
+                    result["conclude_reason"] = str(concluded.get("reason") or "")
+                    runlog.event("宿主收工", result["conclude_reason"] or "（未写理由）")
+                    feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
+                    break
+                if target_reached(feature, end_phase):
+                    result["stop_reason"] = "target_reached"
+                    break
+                if run.get("status") != "succeeded":
+                    result["stop_reason"] = "cli_cannot_continue"
+                    break
+                if not session_id:
+                    result["stop_reason"] = "no_session_id"
                     break
                 # 人先说话：交互用例等真人回话；自动用例里也允许中途插一句
                 # （观察者发现模型走偏时可以当场纠正，不必重跑）。
@@ -1538,10 +1683,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     runlog.event("人回话", gate_reply[:200])
                 elif interactive:
                     gate_reply = wait_for_human_reply(
-                        out_dir, feed, runlog, state, turn=turns, timeout=REPLY_WAIT)
+                        out_dir, feed, runlog, state, turn=turns, prompt=last_text)
                     if gate_reply is None:
-                        result["stop_reason"] = "awaiting_reply_timeout"
-                        runlog.event("等待超时", f"{REPLY_WAIT}s 内没人回话，本轮到此为止")
+                        # 等待期间宿主判了收工
+                        result["stop_reason"] = "host_concluded"
+                        runlog.event("宿主收工", "等待回话期间收到收工判定")
+                        feed.emit("host_concluded", turn=turns)
                         break
                 else:
                     # 卡在哪一层，就说哪一层的话：产物没齐是材料关卡（按推荐走即可），
@@ -1568,7 +1715,14 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             cli_status = str(run.get("status", "failed"))
             result["session_id"] = run.get("session_id") or ""
             result["cli_status"] = cli_status
-            result["status"] = {"succeeded": "finished", "timed_out": "timeout",
+            # `timed_out` 本域已不可达（两个时限都传 0）。真出现说明**有人把时限
+            # 重新引进来了**——那正是最该看见的时刻，所以出声而不是静默归类。
+            if cli_status == "timed_out":
+                feed.emit("unexpected_timeout",
+                          note="本域不设运行时限，出现超时说明时限被重新引入")
+                runlog.event("异常超时", "本域不设运行时限，请查 clis.json 与 run_case 的传参")
+                run["failure_kind"] = run.get("failure_kind") or "unexpected_timeout"
+            result["status"] = {"succeeded": "finished",
                                 "stopped": "stopped"}.get(cli_status, "cli_failed")
             result["execution_status"] = result["status"]
             if result["status"] == "cli_failed":
@@ -1576,6 +1730,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 result["exit_code"] = run.get("exit_code")
         result["elapsed_sec"] = round(time.time() - t0, 1)
         result["target_reached"] = target_reached(feature, end_phase)
+        result["closure"] = closure_facts(feature, start_phase, end_phase)
         next_phase = (PHASE_ORDER[end_idx + 1]
                       if end_phase != STORY_REVIEW and end_idx + 1 < len(PHASE_ORDER)
                       else None)
@@ -1603,16 +1758,26 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         result["gate_scope_complete"] = not missing_gates
         if missing_gates:
             result["missing_gates"] = missing_gates
-        gates_pass = all(v in ("pass", "skipped") for v in result["gates"].values())
+        # `warn` 也算过：非凭证文件的合法漂移要出声，但不该判整轮失败。
+        gates_pass = all(v in ("pass", "skipped", "warn") for v in result["gates"].values())
         result["phase_results"] = build_phase_results(
             feature, start_phase, end_phase, result["gates"])
         result["phase_result_files"] = publish_phase_results(out_dir, result["phase_results"])
         if result["execution_status"] == "finished":
-            if not result["target_reached"]:
-                result["status"] = result["execution_status"] = "target_not_reached"
-            elif not gates_pass or missing_gates:
+            status, code = terminal_status_for(
+                result["execution_status"], result.get("stop_reason"),
+                result["target_reached"])
+            result["status"] = result["execution_status"] = status
+            result["exit_code"] = code
+            # gate 判红是被测对象的账；gate **没跑**是装置自己漏了，两件事分开记。
+            if missing_gates:
+                result["status"] = result["execution_status"] = "harness_incomplete"
+                result["exit_code"] = 2
+            elif not gates_pass:
                 result["status"] = result["execution_status"] = "gate_failed"
-        result["exit_code"] = 0 if result["execution_status"] == "finished" else 1
+                result["exit_code"] = 1
+        else:
+            result["exit_code"] = result.get("exit_code") or 1
         feed.emit("execution_checks_done", status=result["execution_status"],
                   target_reached=result["target_reached"], gates=result["gates"])
 
@@ -1856,6 +2021,11 @@ def cmd_poll(case_id: str, cursor: int, model_cursor: int, wait_sec: int, max_ch
                     "since": state.get("awaiting_since"),
                     "turn": state.get("awaiting_turn"),
                     "kind": state.get("awaiting_kind"),
+                    # 模型本轮说了什么——宿主据它当轮就能回。取不到时给 None
+                    # 而不是空串：空串与「模型没说话」同形，那是静默降级。
+                    "prompt": state.get("awaiting_prompt") or None,
+                    "prompt_source": state.get("awaiting_prompt_source") or "unavailable",
+                    "waited_sec": state.get("awaiting_stale_sec"),
                     "how": f"python test/story/scripts/run_case.py {case_id} "
                            f"reply --text \"<以用户身份说的话>\"",
                 }
@@ -1942,6 +2112,40 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
         "ok": True, "queued": text, "delivered": delivered,
         "reply_status": "accepted",
         "note": "被测会话本轮结束时取用；它仍在说话时不会被打断",
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_conclude(case_id: str, reason: str) -> int:
+    """宿主判定「本轮到此为止」——**优雅收工，不杀任何进程**。
+
+    与 `stop` 的区别就是这一条：`stop` 强杀进程树，门禁从不运行、`phase-results/`
+    不产出，拿到的报告是残的；`conclude` 只放一个控制文件，worker 自己退出续话循环，
+    照常跑完门禁、出阶段结果、复制产物、还原源码事务，然后正常终止。
+
+    什么时候用它：目标阶段的凭证还没齐，但模型已经在宣告要进下一阶段——
+    那是它自认为做完了。这时收工，终态记 `concluded_by_host`，
+    `target_reached=false` 与 `closure.target_missing` 会如实写在报告里。
+    **那是一条有效观测（模型自认完成而凭证不齐），不是装置失败。**
+    """
+    _, out_dir, _ = _load_case(case_id)
+    state = reconcile_worker_state(out_dir, read_state(out_dir))
+    status = state.get("status")
+    if not status:
+        print(json.dumps({"ok": False, "error": "该用例没有在跑的运行"}, ensure_ascii=False))
+        return 1
+    if status in TERMINAL_STATUS:
+        print(json.dumps({"ok": False, "error": f"运行已终止（{status}），无需收工"},
+                         ensure_ascii=False))
+        return 1
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / CONCLUDE_FILE).write_text(
+        json.dumps({"reason": (reason or "").strip(),
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+        encoding="utf-8")
+    print(json.dumps({
+        "ok": True, "case": case_id, "reason": (reason or "").strip(),
+        "note": "被测会话本轮结束时收工；门禁与阶段结果照常产出，不杀进程",
     }, ensure_ascii=False, indent=2))
     return 0
 
@@ -2040,7 +2244,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("case_id")
     ap.add_argument("command", nargs="?", default="start",
-                    choices=("run", "start", "poll", "status", "stop", "reply"))
+                    choices=("run", "start", "poll", "status", "stop", "reply",
+                             "conclude"))
     ap.add_argument("--prepared", action="store_true", help="内部：审计目录已由 start 清理")
     ap.add_argument("--run-id", default=None, help="内部：绑定 start 创建的不可变运行")
     ap.add_argument("--start-phase", default=None,
@@ -2053,6 +2258,8 @@ def main() -> int:
     ap.add_argument("--wait-sec", type=int, default=OBSERVATION_INTERVAL_SEC)
     ap.add_argument("--max-chars", type=int, default=200000)
     ap.add_argument("--force", action="store_true", help="stop：跳过宽限期直接强杀")
+    ap.add_argument("--reason", default="",
+                    help="conclude：本轮为什么停在这里（进终态回执）")
     ap.add_argument("--text", default="", help="reply：以用户身份回的那句话（说人话，别抄选项 key）")
     ap.add_argument("--deliver", action="append", default=[],
                     help="reply：随这句话把 cases/<id>/supplements/ 下的补料放进收件箱，可多次")
@@ -2071,6 +2278,8 @@ def main() -> int:
         return cmd_status(args.case_id)
     if args.command == "reply":
         return cmd_reply(args.case_id, args.text, args.deliver)
+    if args.command == "conclude":
+        return cmd_conclude(args.case_id, args.reason)
     return cmd_stop(args.case_id, args.force)
 
 

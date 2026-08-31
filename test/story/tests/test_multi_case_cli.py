@@ -292,6 +292,41 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
+    def test_poll_calls_the_host_even_without_a_plan(self) -> None:
+        """经**真实调用点** `poll_suite` 驱动一次，且这个 Case 没有规划文件。
+
+        两件事一起验：① 调用点与函数定义对得上（上一版改名漏了调用点，
+        任何带规划的 Case 进 awaiting_reply 都 NameError，而五条单测全都直调
+        新名字、一条没响）；② 没写规划的 Case 也要被叫人——上一版的
+        `and record.get("interaction_script")` 前置会让它静默挂着，谁也不知道它在等谁。
+        """
+        record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
+        record.update({"interaction_script": [], "interaction_index": 0,
+                       "next_observation_at": None})
+        suite = self.suite(record)
+        suite["bundle_root"] = tempfile.mkdtemp()
+        suite["events"] = []
+        try:
+            polled = {
+                "case": "case-alpha-fixture", "status": "awaiting_reply",
+                "returncode": 0,
+                "awaiting_reply": {"turn": 3, "kind": "story_gate",
+                                   "prompt": "范围怎么定？"},
+            }
+            with mock.patch.object(run_multi_case, "poll_one", return_value=polled), \
+                    mock.patch.object(run_multi_case, "append_case_observation",
+                                      lambda *a, **k: None), \
+                    mock.patch.object(run_multi_case, "update_automation_stability",
+                                      lambda *a, **k: None):
+                run_multi_case.poll_suite(suite, wait_sec=0, max_chars=1000)
+            self.assertEqual("adaptive_reply_required", record["interaction_state"])
+            request = record["last_adaptive_request"]
+            self.assertEqual("no_plan_for_this_case", request["reason"],
+                             "没写规划与规划走完了是两回事，要分开报")
+            self.assertEqual("范围怎么定？", request["question"])
+        finally:
+            shutil.rmtree(suite["bundle_root"], ignore_errors=True)
+
     def test_every_gate_goes_to_the_host(self) -> None:
         """每一关都交给宿主——规划不再自己发话。
 
@@ -309,7 +344,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                 run_multi_case.request_host_reply(record, suite)
             invoke.assert_not_called()
             self.assertEqual("adaptive_reply_required", record["interaction_state"])
-            self.assertEqual("interaction_script_exhausted",
+            self.assertEqual("no_plan_for_this_case",
                              record["last_adaptive_request"]["reason"])
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
