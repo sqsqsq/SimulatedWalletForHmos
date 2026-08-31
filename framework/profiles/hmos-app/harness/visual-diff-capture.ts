@@ -150,46 +150,59 @@ export interface VisualDiffCaptureOptions {
   goldenForbidden?: GoldenForbiddenTarget[];
 }
 
-/** env MAISON_GOLDEN_CONTRACT → contract 的 positive_screens；未设/不可读 → null（普通模式）。
- * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。 */
-export function loadGoldenContractTargetsFromEnv(projectRoot: string): GoldenScreenTarget[] | null {
+export interface GoldenContractEnvLoad {
+  /** env 未设 → null（普通模式）；设了 → contract positive_screens 条目 */
+  targets: GoldenScreenTarget[] | null;
+  /** env 未设 / contract 无 forbidden 数组 → [] */
+  forbidden: GoldenForbiddenTarget[];
+}
+
+/**
+ * env MAISON_GOLDEN_CONTRACT → positive_screens + forbidden 的**单次**装载（两字段同文件、
+ * 单次 JSON.parse——调用方解析一次后显式传给消费方，不得各自重读 env）。
+ * 未设 env → { targets: null, forbidden: [] }（普通模式）。
+ * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。
+ */
+export function loadGoldenContractFromEnv(projectRoot: string): GoldenContractEnvLoad {
   const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
-  if (!raw) return null;
+  if (!raw) return { targets: null, forbidden: [] };
   const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
   if (!fs.existsSync(abs)) {
     throw new Error(`[golden-contract] MAISON_GOLDEN_CONTRACT 指向的文件不存在：${abs}`);
   }
-  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { positive_screens?: unknown };
+  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { positive_screens?: unknown; forbidden?: unknown };
   if (!Array.isArray(doc.positive_screens) || doc.positive_screens.length === 0) {
     throw new Error(`[golden-contract] contract 缺 positive_screens：${abs}`);
   }
-  const out: GoldenScreenTarget[] = [];
+  const targets: GoldenScreenTarget[] = [];
   for (const s of doc.positive_screens as Array<Record<string, unknown>>) {
     if (typeof s?.declared !== 'string' || typeof s?.capture !== 'string' || !s.declared || !s.capture) {
       throw new Error(`[golden-contract] positive_screens 条目 shape 非法：${JSON.stringify(s)}`);
     }
-    out.push({ declared: s.declared, capture: s.capture });
+    targets.push({ declared: s.declared, capture: s.capture });
   }
-  return out;
+  const forbidden: GoldenForbiddenTarget[] = [];
+  for (const f of (Array.isArray(doc.forbidden) ? doc.forbidden : []) as Array<Record<string, unknown>>) {
+    if (typeof f?.id !== 'string' || typeof f?.anchor !== 'string' || typeof f?.evidence !== 'string' ||
+        !f.id || !f.anchor || !f.evidence) {
+      throw new Error(`[golden-contract] forbidden 条目 shape 非法：${JSON.stringify(f)}`);
+    }
+    forbidden.push({ id: f.id, anchor: f.anchor, evidence: f.evidence });
+  }
+  return { targets, forbidden };
+}
+
+/** env MAISON_GOLDEN_CONTRACT → contract 的 positive_screens；未设/不可读 → null（普通模式）。
+ * 设了却读不出（路径错/JSON 坏/shape 非法）→ 抛错（fail-closed：golden 回归不许静默降级成 P0-only）。
+ * （委托 loadGoldenContractFromEnv——同一解析器，避免第二套 golden contract 解析。） */
+export function loadGoldenContractTargetsFromEnv(projectRoot: string): GoldenScreenTarget[] | null {
+  return loadGoldenContractFromEnv(projectRoot).targets;
 }
 
 /** env contract 的 forbidden 负向目标（round20 P1：证据生产接线的输入）；未设 env → []；
  * 设了但条目 shape 非法 → 抛错（与 targets 装载器同 fail-closed 语义）。 */
 export function loadGoldenContractForbiddenFromEnv(projectRoot: string): GoldenForbiddenTarget[] {
-  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
-  if (!raw) return [];
-  const abs = path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
-  const doc = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { forbidden?: unknown };
-  if (!Array.isArray(doc.forbidden)) return [];
-  const out: GoldenForbiddenTarget[] = [];
-  for (const f of doc.forbidden as Array<Record<string, unknown>>) {
-    if (typeof f?.id !== 'string' || typeof f?.anchor !== 'string' || typeof f?.evidence !== 'string' ||
-        !f.id || !f.anchor || !f.evidence) {
-      throw new Error(`[golden-contract] forbidden 条目 shape 非法：${JSON.stringify(f)}`);
-    }
-    out.push({ id: f.id, anchor: f.anchor, evidence: f.evidence });
-  }
-  return out;
+  return loadGoldenContractFromEnv(projectRoot).forbidden;
 }
 
 export interface VisualDiffCaptureResult {
@@ -207,6 +220,11 @@ export interface VisualDiffCaptureResult {
   errors: string[];
   /** E1：P0 顶层屏尝试采集却失败（截图失败/hash 失败/骨架失败）的 screen_id；非顶层屏跳过不计入 */
   p0CaptureFailures?: string[];
+  /**
+   * t4（plan f3a8c6d2）：本轮视觉熔断资格的**唯一裁决**（单点产出/单点消费）。
+   * 矩阵与依赖见 `VisualFuseEligibility` 注释。
+   */
+  fuseEligibility?: VisualFuseEligibility;
   skippedReason?: string;
 }
 
@@ -256,6 +274,66 @@ export function resolveShotPaths(
   return { rel, abs, slug };
 }
 
+// --- t2b（plan c6d8f2b4，2026-08-12 宿主实测纠偏项）：布局 dump 统一寻址 ---
+// 事故：写侧用 raw `layout-<screen_id>.json`，读侧有的也用 raw、有的用 slug
+// （sanitizeVisualDiffScreenSlug）——两套命名并存。宿主 out-of-band 采集按 slug 命名，
+// overlay 屏（`select_card_type_sheet__overlay__…` 双下划线压成单下划线）对不上，
+// 把命名问题误导成「文件被删或损坏，须重采」。
+// 落点：新写入统一 canonical slug（`layout-<slug>.json`）；读取按 canonical 优先，
+// legacy raw 仅作兼容 fallback；raw 与 slug 同时存在、或不同 screen_id 归一后 slug
+// 冲突 → fail-closed（不做无优先级的双查——否则可能读到旧文件且无法判别）。
+// ----------------------------------------------------------------------------
+
+/** layout dump 的 canonical 文件名：`layout-<slug>.json`（slug=sanitizeVisualDiffScreenSlug）。 */
+export function layoutDumpCanonicalFileName(screenId: string): string | null {
+  const slug = sanitizeVisualDiffScreenSlug(screenId);
+  if (!slug) return null;
+  return `layout-${slug}.json`;
+}
+
+/** legacy raw 文件名：`layout-<raw screen_id>.json`（历史口径；仅作兼容 fallback）。 */
+export function layoutDumpLegacyFileName(screenId: string): string {
+  return `layout-${screenId}.json`;
+}
+
+export type LayoutDumpResolvedPath =
+  | { status: 'canonical'; abs: string; rel: string }
+  | { status: 'legacy'; abs: string; rel: string }
+  | { status: 'conflict'; canonicalAbs: string; legacyAbs: string }
+  | { status: 'missing' };
+
+/**
+ * 统一解析某屏 layout dump 的落盘文件（device-screenshots 目录内）。
+ * - canonical 文件存在 → 用之；
+ * - 仅 legacy raw 文件存在（且与 canonical 不同名）→ 兼容回退，rel 标注 legacy；
+ * - 两者同时存在 → conflict（fail-closed：不得无优先级双查）；
+ * - 均不存在且 screen_id 本身已是合法 slug（canonical 与 legacy 同名）→ missing；
+ * - screen_id 非法（sanitize 拒绝）→ missing。
+ * 不同 screen_id 归一后 slug 冲突由调用方（capture 层）在目标集合上 fail-closed。
+ */
+export function resolveLayoutDumpPath(
+  reportDir: string,
+  screenId: string,
+): LayoutDumpResolvedPath {
+  const canonicalName = layoutDumpCanonicalFileName(screenId);
+  if (!canonicalName) return { status: 'missing' };
+  const canonicalAbs = path.join(reportDir, canonicalName);
+  const legacyName = layoutDumpLegacyFileName(screenId);
+  const legacyAbs = legacyName === canonicalName ? '' : path.join(reportDir, legacyName);
+  const hasCanonical = fs.existsSync(canonicalAbs);
+  const hasLegacy = legacyAbs !== '' && fs.existsSync(legacyAbs);
+  if (hasCanonical && hasLegacy) {
+    return { status: 'conflict', canonicalAbs, legacyAbs };
+  }
+  if (hasCanonical) {
+    return { status: 'canonical', abs: canonicalAbs, rel: canonicalName };
+  }
+  if (hasLegacy) {
+    return { status: 'legacy', abs: legacyAbs, rel: legacyName };
+  }
+  return { status: 'missing' };
+}
+
 /** MVP：navigation_frame @ order 0 视为可直达顶层屏 */
 export function isLikelyTopLevelScreen(screen: UiSpecScreen): boolean {
   const root = screen.root;
@@ -272,8 +350,9 @@ export function collectP0CaptureTargets(uiDoc: UiSpecDoc | null): UiSpecScreen[]
 }
 
 /**
- * t2：布局树 dump 单屏执行——写 `layout-<screen_id>.json` 到 device-screenshots。
- * 无 layoutDumpFn=能力缺失（unavailable）；有但失败=failed（错误记 errors 不中断采集）。
+ * t2：布局树 dump 单屏执行——写 `layout-<slug>.json`（canonical；t2b 统一寻址，
+ * legacy raw 名仅作读取兼容）。无 layoutDumpFn=能力缺失（unavailable）；
+ * 有但失败=failed（错误记 errors 不中断采集）。
  */
 function runLayoutDump(
   opts: VisualDiffCaptureOptions,
@@ -282,7 +361,12 @@ function runLayoutDump(
   errors: string[],
 ): 'captured' | 'failed' | 'unavailable' {
   if (!opts.layoutDumpFn) return 'unavailable';
-  const destAbs = path.join(reportDir, `layout-${screenId}.json`);
+  const canonicalName = layoutDumpCanonicalFileName(screenId);
+  if (!canonicalName) {
+    errors.push(`${screenId}: screen_id 非法（sanitize 拒绝），无法写布局树 dump`);
+    return 'failed';
+  }
+  const destAbs = path.join(reportDir, canonicalName);
   try {
     const r = opts.layoutDumpFn({ screenId, destAbs, deviceSn: opts.deviceSn, bundleName: opts.bundleName });
     if (r.ok && fs.existsSync(destAbs)) return 'captured';
@@ -329,7 +413,8 @@ function acquireScreenArtifacts(
   const qDir = path.join(reportDir, '_quiescence');
   fs.mkdirSync(qDir, { recursive: true });
   const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
-  const dumpAbs = path.join(reportDir, `layout-${screenId}.json`);
+  // t2b：canonical slug 命名（与 runLayoutDump 同口径）
+  const dumpAbs = path.join(reportDir, layoutDumpCanonicalFileName(screenId) ?? `layout-${slug}.json`);
   const q = sampleQuiescent({
     probeShotAbs: path.join(qDir, `shot-${slug}.probe.png`),
     probeDumpAbs: path.join(qDir, `layout-${slug}.probe.json`),
@@ -420,7 +505,8 @@ function resolveEdgeSentinel(
  * 硬前提（codex，缺一不可）：①当前构建指纹已成功现算（非 null）；②条目带
  * evaluated_build_fingerprint 且与当前指纹一致（缺失=legacy → 不跳，照常重采失效）；
  * ③evaluated_screenshot_hash 存在且与**盘上绑定截图文件**一致（文件未被替换/删除）。
- * 满足则该屏判定（含真人 confirmed_by）跨 harness 轮持久；build 一变（改码重装）自动失效。
+ * 满足则该屏的 hash-bound 机器判定可跨 harness 轮复用；build 一变（改码重装）自动失效。
+ * legacy confirmed_by 仅随条目保留，不参与该判据。
  * 背景：像素恒等作新鲜度键被真机证伪（状态栏时钟/轮播必漂移，2026-07-05 回修轮实锤）。
  */
 export function canSkipRecaptureForScreen(
@@ -493,14 +579,109 @@ export function mergeCapturedScreenEntry(
   return merged;
 }
 
+/**
+ * t4（plan f3a8c6d2）：**视觉熔断资格的唯一裁决对象**。
+ *
+ * 收敛动机（review 四轮后的方法论修正）：此前"本轮能否参与熔断"的事实散落在
+ * CheckResult 分类、capture 结果、以及三个可能互相矛盾的 ctx 字段里，生产者与消费者
+ * 可以各自"正确"而组合错误——判据换了四版（device id 白名单 → element_absent →
+ * screensWritten 批次代理 → identity mismatch → results 扫描），每修掉一个局部反例
+ * 就冒出新的。故改为**单点产出、单点消费**：由 capture 产出本对象，外层只在
+ * capture 未运行时补一条 `capture_not_run`。这是**删机制**，不新增状态/协议。
+ *
+ * 资格矩阵（穷举，勿再局部打补丁）：
+ *   | 本轮事实                                   | eligible |
+ *   |--------------------------------------------|----------|
+ *   | capture 根本未执行                          | false（外层补 capture_not_run） |
+ *   | dump / 截图 / 解析失败                      | false |
+ *   | 缺屏中任一为 probe_failed（锁屏/桌面/系统态或 dump 能力缺失） | false（整轮） |
+ *   | 缺屏无对应 screenEvidence（导航失败/采集失败等环境阻断）      | false（整轮） |
+ *   | 所有 P0 缺屏均确证 mismatched（应用页面树在场但非目标页）      | true（进 missing_screen） |
+ *   | 当前截图成功且存在视觉缺陷                   | true（既有 defects 通道） |
+ *
+ * t3 收口（2026-08-13 宿主校准）：mismatched 现为**确定性**内容正证据——身份不中 +
+ * 页面组件前缀在场，即应用页面树在场但渲染了非目标页；锁屏/桌面系统态 dump
+ * （含仅宿主 bundle 图标的桌面 dump）前缀为 0，落入 probe_failed。本判据随 t3 已验证。
+ */
+export interface VisualFuseEligibility {
+  eligible: boolean;
+  /** 合格且由缺屏驱动时：内容可行动的缺屏 id（进 missing_screen 指纹）；否则空 */
+  actionableMissingIds: string[];
+  /** 机器可读的判定依据（进 reference notes，供人读与回归断言） */
+  reason: string;
+}
+
+/** capture 未运行时外层补的裁决——结构上不可能漏：ctx 上没有值就等于没跑过 capture。 */
+export const CAPTURE_NOT_RUN_ELIGIBILITY: VisualFuseEligibility = {
+  eligible: false,
+  actionableMissingIds: [],
+  reason: 'capture_not_run：本轮未执行视觉采集（build/install/run 或静态门禁提前返回），旧视觉状态不得参与熔断',
+};
+
+/**
+ * 按上表裁决本轮资格（纯函数；真实生产链由 captureVisualDiff 调用）。
+ *
+ * 判据（t3/t4 收口，2026-08-13）：**只有被 identity gate 确证为 mismatched 的缺屏**
+ * （身份不中 + dump 含页面组件前缀 = 应用页面树在场但渲染了错页）才具备熔断资格——
+ * 设备活性由 dump 证据自身携带，属内容问题，可进 missing_screen 指纹。
+ * 其余缺屏一律整轮 ineligible：probe_failed（锁屏/桌面/系统态、dump 能力缺失、
+ * dump 失败/不可解析）与无 screenEvidence 的缺屏（导航失败、golden 失败、截图失败等
+ * 环境阻断）对"应用在前台"一无所知——绝不把环境故障改口成"修了没用"。
+ * element_absent / screensWritten / none_of / bundle 命中已被逐轮证伪，一律不恢复。
+ */
+export function resolveVisualFuseEligibility(input: {
+  p0CaptureFailures: readonly string[];
+  /** 逐屏 identity gate 结论（mismatched=内容正证据；probe_failed=环境/证据不足） */
+  screenEvidence: ReadonlyMap<string, 'mismatched' | 'probe_failed'>;
+}): VisualFuseEligibility {
+  const failures = [...new Set(input.p0CaptureFailures.filter(s => typeof s === 'string' && s.trim()))].sort();
+  if (failures.length === 0) {
+    return { eligible: true, actionableMissingIds: [], reason: '无 P0 缺屏；资格由既有 defects 通道决定' };
+  }
+  // 整轮合格 ⇔ 每个缺屏都有 **mismatched** 正证据（混合轮/证据缺失轮 fail-safe ineligible）
+  const allActionable = failures.every(id => input.screenEvidence.get(id) === 'mismatched');
+  if (allActionable) {
+    return {
+      eligible: true,
+      actionableMissingIds: failures,
+      reason:
+        `${failures.length} 个 P0 缺屏均经 identity gate 确证为应用页面树在场但非目标页（mismatched）` +
+        `——内容可行动，进 missing_screen 指纹`,
+    };
+  }
+  const probeFailed = failures.filter(id => input.screenEvidence.get(id) === 'probe_failed');
+  const unknown = failures.filter(id => !input.screenEvidence.has(id));
+  return {
+    eligible: false,
+    actionableMissingIds: [],
+    reason:
+      `${failures.length} 个 P0 缺屏——` +
+      `${probeFailed.length > 0 ? `${probeFailed.length} 屏 probe_failed（锁屏/桌面/系统态或 dump 能力缺失）：${probeFailed.slice(0, 5).join('、')}` : ''}` +
+      `${probeFailed.length > 0 && unknown.length > 0 ? '；' : ''}` +
+      `${unknown.length > 0 ? `${unknown.length} 屏无身份证据（导航/截图失败等环境阻断）：${unknown.slice(0, 5).join('、')}` : ''}` +
+      '——本轮整体不参与熔断比较（环境/证据事实不明，不得改口成内容问题）',
+  };
+}
+
 export function mergeVisualDiffReports(
   existing: VisualDiffReport | null,
   capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }>,
   currentBuildFingerprint?: string | null,
+  /**
+   * t3（plan f3a8c6d2）：本轮**瞬时**失效的 screen id（当前仅 identity mismatch）。
+   * 这些屏本轮拿不出可信截图，其旧条目（score/verdict）不得继续被消费——否则
+   * "错页高分"会跨轮存活（bc-openCard 的 0.997 即此形态）。瞬时=不落盘、不进 schema、
+   * 不新增持久状态；下一轮身份对上并成功采集即自然恢复。
+   */
+  invalidateScreenIds?: readonly string[],
 ): { report: VisualDiffReport; preserved: number; updated: number; invalidated: number } {
   const byId = new Map<string, VisualDiffScreenEntry>();
+  const dropped = new Set(
+    (invalidateScreenIds ?? []).filter(id => typeof id === 'string' && id.trim()),
+  );
   for (const s of existing?.screens ?? []) {
     if (typeof s.screen_id === 'string' && s.screen_id.trim()) {
+      if (dropped.has(s.screen_id)) continue; // 身份失配屏：旧裁决整条丢弃
       byId.set(s.screen_id, s);
     }
   }
@@ -631,19 +812,78 @@ export function skipAllowedByIdentity(
 }
 
 /**
+ * t4（plan f3a8c6d2）：身份 gate 的**可区分**结论。
+ *   · matched       —— 身份命中（或没有 identity / proposed 候选，按既有契约放行）
+ *   · mismatched    —— dump 取到了、**且证据显示被测应用页面树确实在渲染**，但不是目标页
+ *                      ＝纯导航/实现问题，唯一可作内容正证据的形态
+ *   · probe_failed  —— dump 执行失败/不可解析、confirmed identity 但无 dump 能力、
+ *                      或 dump 里找不到被测应用的页面组件前缀
+ *                      （锁屏页、桌面、系统弹窗都会落这里）——对页面一无所知，不得当证据
+ * 旧实现把这三者压成同一个 `ok:false`，于是 dump IO 故障被当成"唯一正证据"既进熔断、
+ * 又错误删除旧裁决（review 抓出）。`ok` 保留给既有调用点做放行判断，语义不变。
+ */
+export interface ScreenIdentityGateResult {
+  ok: boolean;
+  status: 'matched' | 'mismatched' | 'probe_failed';
+  detail?: string;
+}
+
+/**
+ * 被测应用页面在场的**所有权证据集**：全部已确认声明屏的 `all_of`/`any_of` **正向 id**。
+ *
+ * plan e6b3f8d2 t3（撤销强制 Maison UI kit）：此前用 `maison:<feature>:` 组件 id 前缀
+ * 推导所有权——那是 kit anchor 机制的副产品，随 kit 一并删除。页面身份判据**迁移到既有
+ * `visual-diff-nav` screen identity 声明**，让它真正成为唯一真源（不新增前缀/注册表/
+ * anchor 文件，不建第二套机制）：
+ *   · 只取 `all_of`/`any_of` 的**正向 id**，按**精确 id** 判在场；
+ *   · **不得使用 `none_of`**——它的契约只是「目标页禁入锚点」，不保证该锚属于本应用
+ *     （`none_of=[上滑解锁]` 配真实锁屏树会把锁屏判成"应用错页"，仓内已证伪）；
+ *   · 只声明 text/route 的工程推导不出任何 id ⇒ 返回空集，调用方 fail-safe 走 probe_failed。
+ * 取**全部已确认声明屏**而不只是目标屏：任一已确认屏的正向 id 在场，都足以证明被测应用的
+ * 页面树正在渲染（这正是「应用错页」与「锁屏/桌面等系统态」的分界）。
+ */
+function declaredScreenIdentityIds(opts: VisualDiffCaptureOptions): Set<string> {
+  const out = new Set<string>();
+  for (const identity of opts.screenIdentity?.values() ?? []) {
+    // proposed=true 是自动预填、未经确认的候选。生产调用会把 resolveIdentityForTargets 的
+    // 完整 map 传入，因此本 SSOT 消费点必须自行 fail-closed；候选既不参与目标 gate，
+    // 也绝不能替其他屏证明「应用页面在场」并把 probe_failed 升成确定性 mismatched。
+    if (identity.proposed === true) continue;
+    // 刻意不含 none_of：禁入锚点不构成所有权证明（见上）。
+    for (const m of [...(identity.all_of ?? []), ...(identity.any_of ?? [])]) {
+      if (typeof m.id !== 'string') continue;
+      const id = m.id.trim();
+      if (id) out.add(id);
+    }
+  }
+  return out;
+}
+
+/**
  * S2 P0-C：页面身份 gate——navigate 后、screenshot 落正式目录前执行。
  * 顺序契约：navigate → dump uitree（_identity 探测位）→ identity gate → screenshot →
- * canonical write。无 identity/proposed 候选/无 dump 能力 → 直接放行（强制策略由
+ * canonical write。无 identity/proposed 候选 → 直接放行（强制策略由
  * validateNavConfigV2 的 requireConfirmedIdentity 在校验层管）。
+ *
+ * t3（plan f3a8c6d2）：**confirmed identity 但无 layoutDumpFn ⇒ probe_failed**。
+ * 历史 0.997 错页条目（layout_dump_status=unavailable）正是"无 dump 能力时未验证放行"
+ * 时代的产物——身份验真没有实际执行，截图却进了正式目录。有确认身份却验不了真时
+ * 不得放行；probe_failed 语义=证据不足（不删旧裁决、不得作为内容/熔断正证据）。
  */
 function runScreenIdentityGate(
   opts: VisualDiffCaptureOptions,
   screenId: string,
   reportDir: string,
-): { ok: boolean; detail?: string } {
+): ScreenIdentityGateResult {
   const identity = opts.screenIdentity?.get(screenId);
-  if (!identity || identity.proposed === true) return { ok: true };
-  if (!opts.layoutDumpFn) return { ok: true };
+  if (!identity || identity.proposed === true) return { ok: true, status: 'matched' };
+  if (!opts.layoutDumpFn) {
+    return {
+      ok: false,
+      status: 'probe_failed',
+      detail: 'identity 已确认但无 layoutDumpFn（UITree dump 能力缺失）——身份无法验真，不得落正式截图',
+    };
+  }
   const slug = sanitizeVisualDiffScreenSlug(screenId) ?? 'screen';
   const probeAbs = path.join(reportDir, '_identity', `layout-${slug}.json`);
   try {
@@ -658,15 +898,22 @@ function runScreenIdentityGate(
     bundleName: opts.bundleName,
   });
   if (!d.ok) {
-    return { ok: false, detail: `identity 探测 dump 失败${d.error ? ` — ${d.error}` : ''}（身份未验不得落正式截图）` };
+    // t4：探测失败 ≠ 身份失配。dump 拿不到时我们对页面**一无所知**（设备可能锁屏/离线），
+    // 归 probe_failed——绝不能当成"页面渲染了只是错页"的内容证据。
+    return {
+      ok: false,
+      status: 'probe_failed',
+      detail: `identity 探测 dump 失败${d.error ? ` — ${d.error}` : ''}（身份未验不得落正式截图）`,
+    };
   }
   let json: unknown;
   try {
     json = JSON.parse(fs.readFileSync(probeAbs, 'utf-8'));
   } catch (e) {
-    return { ok: false, detail: `identity dump 不可解析：${(e as Error).message}` };
+    return { ok: false, status: 'probe_failed', detail: `identity dump 不可解析：${(e as Error).message}` };
   }
-  const ev = evaluateScreenIdentity(identity, extractLayoutDumpFacets(json));
+  const facets = extractLayoutDumpFacets(json);
+  const ev = evaluateScreenIdentity(identity, facets);
   if (!ev.ok) {
     const evidenceAbs = path.join(reportDir, '_mismatch', `shot-${slug}.png`);
     try {
@@ -675,12 +922,36 @@ function runScreenIdentityGate(
     } catch {
       /* 证据图 best-effort，不影响 mismatch 判定 */
     }
+    // 身份不命中还不够——`dump-ui` 不绑 bundle，锁屏页/桌面/系统弹窗同样会"不命中"。
+    // 判"应用错页"必须有**应用页面树所有权**的确定事实：dump 里精确命中任一**已确认屏**
+    // 的正向 identity id（ArkUI `.id()` 透传，系统页不会有）。
+    //
+    // 主页校准（2026-08-13 foreground-identity-calibration）：锁屏 119 节点 / 桌面
+    // 231 节点 dump 中应用页面组件 id 均为 0 命中——系统态拿不到应用页面 id；桌面 dump
+    // 虽出现 `com.example.simulatedwallet`（AppIcon 图标 id），但属**宿主 bundle 命中**
+    // 而非声明的页面组件 id，不会被当作所有权证据。
+    // 结论：有已确认 id + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
+    //       无任何已确认 id ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
+    //
+    // 曾试图把 `none_of` 命中也当所有权证明（为纯文本锚工程兜底）——**已证伪**：
+    // `none_of` 的契约只是"目标页禁入锚点"，不保证该锚属于本应用；把
+    // `none_of=[上滑解锁]` 配上真实锁屏树，锁屏就会被判成"应用错页"并进熔断。
+    const declaredIds = declaredScreenIdentityIds(opts);
+    const appRendered = declaredIds.size > 0 && facets.ids.some(id => declaredIds.has(id));
+    // 记法遵循 openspec `visual-diff` 契约：身份规则不通过一律记 `screen_identity_mismatch`
+    // （证据图归档 _mismatch/、正式目录零写入、该屏按缺证据处理）。
+    const cause = appRendered
+      ? 'dump 含已声明屏的正向 identity id（应用页面树在场）但非目标页'
+      : 'dump 无任何已声明 identity id（锁屏/桌面/系统态，或工程只声明了 text/route）';
     return {
       ok: false,
-      detail: `screen_identity_mismatch — ${ev.detail}（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
+      status: appRendered ? 'mismatched' : 'probe_failed',
+      detail:
+        `screen_identity_mismatch — ${ev.detail}（${cause}）` +
+        `（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
     };
   }
-  return { ok: true };
+  return { ok: true, status: 'matched' };
 }
 
 export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCaptureResult {
@@ -706,13 +977,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     };
   }
 
-  // c4e8b1d3 G3：golden 显式 targets（不受 P0 过滤；普通模式两者皆无 → 纯 P0-only 原行为）
-  const goldenSpec = opts.goldenTargets ?? loadGoldenContractTargetsFromEnv(opts.projectRoot);
+  // c4e8b1d3 G3 / Todo 3：golden 显式 targets（不受 P0 过滤；普通模式两者皆无 → 纯 P0-only 原行为）。
+  // **单解析契约**：未显式注入 targets 时只调一次 loadGoldenContractFromEnv（单次 JSON.parse
+  // 同时取 targets/forbidden）——禁止 targets 与 forbidden 分两次读 env（两次读取间文件内容
+  // 可能漂移，违背本 change 自己的单解析契约）；显式注入路径不读 env。
+  const goldenEnvLoad = opts.goldenTargets ? null : loadGoldenContractFromEnv(opts.projectRoot);
+  const goldenSpec = opts.goldenTargets ?? (goldenEnvLoad ? goldenEnvLoad.targets : null);
   const golden = goldenSpec ? resolveGoldenCaptureTargets(uiDoc, goldenSpec) : null;
   // round20 P1：负向目标（证据生产）——opts 注入优先；opts.goldenTargets 注入而未给
-  // forbidden 时不读 env（测试注入面独立），env 路径两者一体装载。
+  // forbidden 时不读 env（测试注入面独立），env 路径两者一体装载（同一 goldenEnvLoad）。
   const goldenForbidden: GoldenForbiddenTarget[] = golden
-    ? (opts.goldenForbidden ?? (opts.goldenTargets ? [] : loadGoldenContractForbiddenFromEnv(opts.projectRoot)))
+    ? (opts.goldenForbidden ?? (opts.goldenTargets ? [] : (goldenEnvLoad ? goldenEnvLoad.forbidden : [])))
     : [];
   const p0Screens = collectP0CaptureTargets(uiDoc);
   const targets = golden
@@ -750,7 +1025,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       ])
     : null;
 
-  // P0-9a：判定持久化——先读既有报告，build 指纹有效的已定屏跳过重采（判定含真人签持久）。
+  // P0-9a：判定持久化——先读既有报告，build 指纹有效的当前 hash-bound 机器判定可跳过重采。
   const existingReportEarly = loadExistingVisualDiffReport(jsonPath);
   const existingById = new Map<string, VisualDiffScreenEntry>(
     (existingReportEarly?.screens ?? [])
@@ -765,6 +1040,54 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
 
   const capturedScreens: Array<{ entry: VisualDiffScreenEntry; hash: string }> = [];
   const p0CaptureFailures: string[] = [];
+  // t2b（plan c6d8f2b4）：**归一 slug 冲突 fail-closed**——不同 screen_id 归一到同一个
+  // canonical slug（如 `a__b` 与 `a_b`、或 overlay 双下划线被压成单下划线）时，布局
+  // dump / probe / 截图会互相覆盖，读侧无法判别归属。采集开始前在目标集合上检测，
+  // **冲突双方（owner 与 collider）全部**记 P0 采集失败并跳过（不写、不猜），
+  // 两条采集循环（主屏 / overlay）入口均须跳过冲突屏。
+  const slugConflictIds = new Set<string>();
+  {
+    const slugOwners = new Map<string, string>();
+    for (const id of [...targets.map(t => t.id), ...overlayTargets.map(o => o.id)]) {
+      const slug = sanitizeVisualDiffScreenSlug(id);
+      if (!slug) continue;
+      const prev = slugOwners.get(slug);
+      if (prev !== undefined && prev !== id) {
+        // 原 owner 与后出现者都进冲突集合——owner 此前已被登记，须一并剔除
+        slugConflictIds.add(prev);
+        slugConflictIds.add(id);
+        continue;
+      }
+      slugOwners.set(slug, id);
+    }
+    if (slugConflictIds.size > 0) {
+      const bySlug = new Map<string, string[]>();
+      for (const id of slugConflictIds) {
+        const slug = sanitizeVisualDiffScreenSlug(id);
+        if (!slug) continue;
+        const list = bySlug.get(slug) ?? [];
+        list.push(id);
+        bySlug.set(slug, list);
+      }
+      for (const [slug, ids] of bySlug) {
+        errors.push(
+          `slug 归一冲突（fail-closed）：${ids.join('、')} 归一到同一 ` +
+            `canonical 文件名 layout-${slug}.json——布局 dump/截图会互相覆盖，本屏不采集。` +
+            `须改 screen_id 命名（避免双下划线/下划线混用）后重试。`,
+        );
+        for (const id of ids) p0CaptureFailures.push(id);
+      }
+    }
+  }
+  // t3（plan f3a8c6d2）：本轮**确证**身份失配屏的瞬时失效集合——不落盘、不进 schema，
+  // 仅用于 merge 前剔除该屏的旧条目（见 mergeVisualDiffReports 的 invalidateScreenIds）。
+  // 只加入 identity gate 的确定性 `mismatched`（页面组件前缀在场 + 目标锚缺失＝应用页面
+  // 树在场但渲染错页）；`probe_failed`（锁屏/桌面/systemd 或 dump 能力缺失）绝不加入——
+  // 证据不足时旧条目原样保留（含 inert legacy 字段），与 t4 资格矩阵同判据；
+  // 是否可信仍由后续 freshness/evidence gate 重算。
+  const identityMismatchIds: string[] = [];
+  // t4：逐屏 identity gate 结论（唯一的内容正证据来源，不做任何反推）
+  const screenEvidence = new Map<string, 'mismatched' | 'probe_failed'>();
   // golden 解析失败 fail-closed：contract 要求的屏无法成为采集目标 = 采集失败，
   // 绝不静默跳过（否则 evaluator 端只见"缺屏"，丢了真因）。
   if (golden) {
@@ -804,6 +1127,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     }
   }
   for (const screen of targets) {
+    // t2b：slug 冲突屏（owner 与 collider）采集入口直接跳过——已在冲突检测处记 P0 失败
+    if (slugConflictIds.has(screen.id)) continue;
     // root 即 overlay 的 base 屏（manage_non_local）由下方 overlay 循环采集，主循环跳过（避免重复/误判缺 nav）。
     if (isOverlayRootScreen(screen)) continue;
     if (
@@ -863,6 +1188,15 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     if (!idGate.ok) {
       errors.push(`${screen.id}: ${idGate.detail}`);
       p0CaptureFailures.push(screen.id);
+      if (idGate.status !== 'matched') screenEvidence.set(screen.id, idGate.status);
+      // t3（plan f3a8c6d2）：**确定性 mismatched 才瞬时失效旧裁决**——identity gate
+      // 已确证"应用页面树在场但渲染了非目标页"（页面组件前缀 + 锚缺失），该屏旧条目
+      // （score/verdict，含 0.997 型错页高分）不得继续被消费；merge 时按
+      // invalidateScreenIds 剔除。probe_failed（锁屏/桌面/系统态、dump 能力缺失、
+      // dump 失败/不可解析）**绝不删除**——证据不足时旧条目及 inert legacy 字段原样保留；
+      // 后续 freshness/evidence gate 仍会重算其可信度。
+      if (idGate.status === 'mismatched') identityMismatchIds.push(screen.id);
+      // 证据图（_mismatch/）照常归档，正式目录仍零写入——取证与拦截都不受影响。
       continue;
     }
     // t2/t4b：取材统一入口——旧路径=单 shot+dump；静稳路径=双 shot 双 dump（仅 pixel_1to1 装配）
@@ -910,6 +1244,8 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   }
 
   for (const ov of overlayTargets) {
+    // t2b：slug 冲突屏（owner 与 collider）同规则跳过——overlay 与主屏一致
+    if (slugConflictIds.has(ov.id)) continue;
     if (capturedScreens.some(c => c.entry.screen_id === ov.id)) continue;
     if (
       canSkipRecaptureForScreen(existingById.get(ov.id), opts.projectRoot, currentFp) &&
@@ -946,6 +1282,11 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       if (!ovIdGate.ok) {
         errors.push(`${ov.id}: ${ovIdGate.detail}`);
         p0CaptureFailures.push(ov.id);
+        if (ovIdGate.status !== 'matched') screenEvidence.set(ov.id, ovIdGate.status);
+        // t3：overlay 与主屏同规则——仅确定性 mismatched 瞬时失效旧裁决；
+        // probe_failed（锁屏/桌面/系统态、dump 能力缺失）不得删旧条目
+        //（见主屏分支注释，两处判据与 t4 资格矩阵同口径）。
+        if (ovIdGate.status === 'mismatched') identityMismatchIds.push(ov.id);
         continue;
       }
       // t2/t4b：overlay 屏在 sheet 开启态（导航后）取材——与主屏同一统一入口
@@ -1057,6 +1398,25 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
   }
 
   if (capturedScreens.length === 0) {
+    // t3（plan f3a8c6d2）：**零成功采集也必须清掉身份失配屏的旧裁决**。
+    // 本早退路径原样保留盘上 json（"无成功截图不写盘"），于是全屏失败那轮里，
+    // 已被证伪的错页条目（如 add_card_home_collapsed=全部银行页 0.997）会继续存活并
+    // 喂出误导性反馈——与 merge 路径的处置自相矛盾。此处只做**删除**（不新增条目、
+    // 不改其他屏），失配屏随后表现为"缺屏"，与 identity gate 的结论一致。
+    if (identityMismatchIds.length > 0 && existingReportEarly) {
+      const kept = existingReportEarly.screens.filter(
+        s => !identityMismatchIds.includes(s.screen_id),
+      );
+      if (kept.length !== existingReportEarly.screens.length) {
+        const pruned: VisualDiffReport = { ...existingReportEarly, schema_version: '1.1', screens: kept };
+        fs.writeFileSync(jsonPath, `${JSON.stringify(pruned, null, 2)}\n`, 'utf-8');
+        fs.writeFileSync(
+          mdPath,
+          buildVisualDiffMdBody(pruned, { p0CaptureFailures, preservedBuildValidIds }),
+          'utf-8',
+        );
+      }
+    }
     // P0-9a：全部屏均因 build 指纹有效而合法跳采（判定持久）→ 非"无采集"失败，md 照常再生。
     if (preservedBuildValidIds.length > 0 && p0CaptureFailures.length === 0 && existingReportEarly) {
       fs.writeFileSync(
@@ -1075,6 +1435,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         screensPreservedBuildValid: preservedBuildValidIds.length,
         errors,
         p0CaptureFailures,
+        fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
       };
     }
     return {
@@ -1088,11 +1449,17 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
         : {}),
       errors: errors.length ? errors : ['无成功截图，未写入 visual-diff.json'],
       p0CaptureFailures,
+      fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
       skippedReason: 'no_captures',
     };
   }
 
-  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(existingReportEarly, capturedScreens, currentFp);
+  const { report, preserved, updated, invalidated } = mergeVisualDiffReports(
+    existingReportEarly,
+    capturedScreens,
+    currentFp,
+    identityMismatchIds,
+  );
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
 
@@ -1110,5 +1477,6 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
     screensPreservedBuildValid: preservedBuildValidIds.length,
     errors,
     p0CaptureFailures,
+    fuseEligibility: resolveVisualFuseEligibility({ p0CaptureFailures, screenEvidence }),
   };
 }

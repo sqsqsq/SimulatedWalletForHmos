@@ -17,6 +17,7 @@
 | Markdown 表格列 AC-1 / L1 / testable | `records:` 数组 + `acceptance_id: AC-1` |
 | 只有 prose 段落无 yaml 块 | 至少一个 ` ```yaml ` 块含 `records:` |
 | `acceptance_id: AC-1-a`（子编号） | 只用 acceptance.yaml 已有 ID，如 `AC-1`、`BD-1` |
+| `name: HAFullChainService.getData`（类.方法） | `name: HAFullChainService`（纯类名；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`） |
 
 ## EXACT OUTPUT FORMAT — COPY AND FILL
 
@@ -30,10 +31,10 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil.isVersionControl
+      - name: BundleUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -43,10 +44,10 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
-      - name: BundleUtil.isVersionControl
+      - name: BundleUtil
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -56,7 +57,7 @@ records:
       file: 02-Feature/FinancialCard/src/main/ets/BankCard/presentation/component/openCard/openHWP/BankCardPetalOpenHwpInteraction.ets
     testability_level: L1
     dependencies:
-      - name: HAFullChainService.getData
+      - name: HAFullChainService
         kind: di_injectable
         seam: subclass_override
     verdict: testable
@@ -72,7 +73,7 @@ records:
 | **L0** | 纯函数 / 无外部 IO | 仅入参→出参，无单例/系统 API | 直接单测 |
 | **L1** | 可注入 / 可替换边界 | 构造参数、工厂、可被 Spy 的类 | Spy / 子类化 |
 | **L2** | 可子类化或 seams | 非 final 类、`protected` 可覆盖、可命名方法抽出 | 子类 Spy / 包装类 |
-| **L3** | 不可测或成本过高 | 全局单例、inline lambda 内嵌、无接缝 | **必须 STOP**：`option_a` 降级 device-only **或** `option_b` 源码改造（走 `ut_no_src_mutation` + gap-notes） |
+| **L3** | 不可测或成本过高 | 全局单例、inline lambda 内嵌、无接缝 | **必须 STOP**：`option_a` 降级 device-only **或** `option_b` 源码改造（回 coding owner 改造并重走 review→ut；gap-notes 只是记录，不放行 `ut_no_src_mutation`） |
 
 ## 依赖 `kind` 与可选 `seam`
 
@@ -98,7 +99,7 @@ records:
 | `acceptance_id` | ✅ | 如 `AC-1` / `BD-2`，须与 acceptance.yaml  id 一致 |
 | `entry_point` | 推荐 | `symbol`（类.方法）、`file`（相对仓库根路径） |
 | `testability_level` | ✅ | `L0` \| `L1` \| `L2` \| `L3` |
-| `dependencies` | 推荐 | `name` / `kind` / `seam` |
+| `dependencies` | 推荐 | `name` / `kind` / `seam`；**`name` 必须为纯类名**（与 mock-plan `target_class` 同口径；方法级信息写 `entry_point.symbol` 或 mock-plan `methods[]`，不写入 `name`） |
 | `verdict` | ✅ | `testable` \| `downgrade_device` \| `needs_seam` |
 | `recommendation` | L3 推荐 | `option_a` / `option_b` 文字说明 |
 | `selected` | **L3 必填** | `option_a` \| `option_b` |
@@ -148,6 +149,6 @@ records:
     verdict: downgrade_device
     recommendation:
       option_a: "标记 device-only，在 acceptance.yaml 对应条目填写 device_focus"
-      option_b: "源码改造：JumpManager 构造注入（须 gap-notes approved_src_mutations）"
+      option_b: "源码改造：交回 coding owner 完成 JumpManager 构造注入并重走 review→ut"
     selected: option_a   # 用户确认后填写 option_a 或 option_b
 ```

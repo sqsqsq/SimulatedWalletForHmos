@@ -26,12 +26,15 @@ import {
   loadReviewClosureAttestation,
   reconcileSourceTreeAgainstAttestation,
 } from './closure-attestation';
-import { collectAutoDecisions, countPendingMustReview } from './headless-assumptions';
-import { classifyGoalRunsDir, collectRequirementIntentText, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
-import { validateSummaryV11 } from './quality-axes';
+import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
+import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
-import { defaultTrustRegistryPath, validateConfirmationReceiptFile } from './confirmation-receipt';
-import { evaluateFlowContract, isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
+import {
+  deviceTestEvidencePath,
+  type DeviceTestEvidenceDoc,
+} from './device-test-evidence-shared';
+import { validateRuntimeFidelityEvidenceDocument } from './runtime-step-evidence';
+import { isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
   computeCanonicalReceiptSha256,
   loadPhaseEvidenceManifest,
@@ -101,9 +104,8 @@ export interface CompletionVerdict {
  * clean_pass 违例分类（codex 七轮 P1-2）：
  * - `needs_fix`：确定性故障（verdict FAIL / 血缘 stale-tampered / attestation 缺失失配）
  *   ——须修复或重跑，投影 FEATURE_INCOMPLETE，**不**是"待人工确认"；
- * - `needs_human`：设计内求人（flow_contract 缺 receipt / waiver / 档位钳制 /
- *   运行时证据未采集）——封顶 AWAITING_HUMAN_REVIEW。
- * 两类都令 clean_pass 失败（不生成 completion），但 run 级状态投影不同。
+ * - `needs_human`：legacy reader compatibility only；当前 writer 不再生成。
+ * 当前质量缺口统一由 needs_fix 或 phase outcome 的 capability defer 表达。
  */
 export type CleanPassIssueKind = 'needs_fix' | 'needs_human';
 
@@ -163,20 +165,6 @@ function readSummaryLattice(
   }
 }
 
-function waiverFilesPresent(projectRoot: string, feature: string, phase: string): string[] {
-  const found: string[] = [];
-  const candidates = [
-    featureFilePath(projectRoot, feature, path.join('testing', 'skip-waivers.yaml')),
-    featureFilePath(projectRoot, feature, path.join(phase, 'behavior-switch-waivers.yaml')),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p) && fs.readFileSync(p, 'utf-8').trim().length > 0) {
-      found.push(path.basename(p));
-    }
-  }
-  return [...new Set(found)];
-}
-
 export interface CleanPassOptions {
   projectRoot: string;
   feature: string;
@@ -215,12 +203,14 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
 
   // ①b summary schema 1.1（blind-visual-hardening d1：legacy 1.0 不作 completion 干净依据——
   //    历史假 PASS 不得重入新状态机；须当前 gate_fingerprint 下重跑该阶段）+
-  //    多轴负面裁决消费：visual/asset 等轴 UNVERIFIED(needs_human) → 封顶求人；
+  //    多轴负面裁决消费：visual/asset 等轴 legacy UNVERIFIED(needs_human) → 重投影为 needs_fix；
   //    轴 FAIL 已由 ① 的 verdict 投影覆盖，此处不重复计。
   for (const phase of chain) {
     const s = readSummaryLattice(projectRoot, feature, phase);
     if (!s.exists) continue; // 缺 summary 由 ① 报"缺失"
-    if (s.schemaVersion !== '1.2') {
+    // plan a9d4e7c2 T3：当代 = 1.2 ∪ 1.3（1.3 只把 verifier 字段条件化，assurance
+    // 与 closure_commit 契约不变）——把 1.3 判成 legacy 会让刚闭环的 feature 判不完成。
+    if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schemaVersion))) {
       issues.push({
         phase,
         condition: 'summary_schema_current',
@@ -246,14 +236,13 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
       issues.push({
         phase,
         condition: 'closure_commit_present',
-        detail: 'summary 1.2 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交',
+        detail: `summary ${s.schemaVersion} 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交`,
         kind: 'needs_fix',
       });
       continue;
     }
     // codex 三轮 P0-2：消费面统一规则——任一 required_for_release 轴非 PASS 都不得干净完成：
-    //   needs_human → 等待人工（AWAITING_HUMAN_REVIEW 封顶）；
-    //   needs_fix / external_dependency / 无 resolution 的负面态 → 必须修复/解除后重跑（needs_fix）。
+    // legacy needs_human 也重投影为 needs_fix；旧人签状态不能维持人工等待或完成。
     for (const [axisId, axis] of Object.entries(s.axes ?? {})) {
       if (!axis || axis.applicable !== true) continue;
       if ((axis as { required_for_release?: boolean }).required_for_release === false) continue;
@@ -263,7 +252,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
         phase,
         condition: 'quality_axis_verified',
         detail: `${axisId} 轴 ${axis.verdict}（resolution=${cls ?? '缺失'}${axis.resolution?.owner ? `/${axis.resolution.owner}` : ''}）`,
-        kind: cls === 'needs_human' ? 'needs_human' : 'needs_fix',
+        kind: 'needs_fix',
       });
     }
     // 投影一致性独立校验（防 release_readiness/completion_status 被单独篡改成 READY/COMPLETE）：
@@ -291,24 +280,15 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     }
   }
 
-  // ② 无 pending must-review（needs_human）
-  const decisions = collectAutoDecisions(projectRoot, feature, chain);
-  const pending = countPendingMustReview(decisions);
-  if (pending > 0) {
-    issues.push({ phase: '*', condition: 'no_pending_must_review', detail: `${pending} 项自动决议待人工复核`, kind: 'needs_human' });
-  }
+  // ②/③ legacy must_review/waiver artifacts are audit-only and never affect completion.
 
-  // ③ 无 waiver（needs_human：真人签发/裁决）
-  for (const phase of chain) {
-    const waivers = waiverFilesPresent(projectRoot, feature, phase);
-    if (waivers.length > 0) {
-      issues.push({ phase, condition: 'no_waivers', detail: `存在 waiver：${waivers.join(', ')}`, kind: 'needs_human' });
-    }
-  }
-
-  // ④ 无档位钳制封顶（needs_human）
+  // ④ 档位钳制说明当前能力不能满足冻结目标；正常路径应更早 capability-defer。
   if (opts.fidelityCapped) {
-    issues.push({ phase: '*', condition: 'no_fidelity_cap', detail: '强意图下档位被能力钳制（AWAITING_HUMAN_REVIEW 封顶）', kind: 'needs_human' });
+    issues.push({
+      phase: '*', condition: 'no_fidelity_cap',
+      detail: '强意图下当前能力被钳制；换 provider/version 后重跑，或以 correction/successor 输入改变需求',
+      kind: 'needs_fix',
+    });
   }
 
   // ⑤ 血缘一致（needs_fix：stale/tampered/missing 须重跑闭环）——含 requirement 血缘比对
@@ -346,70 +326,76 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     }
   }
 
-  // ⑦ flow_contract receipt（needs_human）——首次结构化流程模型须真人确认。
-  {
-    const fc = evaluateFlowContract(
-      projectRoot,
-      feature,
-      collectRequirementIntentText(projectRoot, feature),
-    );
-    if (fc[0]?.status === 'WARN') {
-      issues.push({ phase: 'spec', condition: 'flow_contract_receipt', detail: fc[0].details.split('。')[0], kind: 'needs_human' });
-    }
-  }
+  // ⑦ legacy flow_contract receipt 已退役；结构化 flow/checkpoint 机器证据仍由当前门禁验证，
+  // receipt 与 signer identity 均不能成为 clean-pass 输入。
 
-  // ⑧ P0 运行时忠实性证据（codex 八轮 P0-1：不再用文件存在性——空文件即可解除是后门）——
-  // 有 P0 device flow 的 feature，在 Hylyre provider step 采集落地前，"计划写对+TC 自报
-  // 通过+运行时 fast path"仍能骗过计划级对账。唯一解除通道=带外 runtime_fidelity_attestation
-  // receipt（绑定 testing 源码 aggregate + acceptance flows hash；provider 落地后 runner
-  // 自动签发，落地前真人带外确认）。无有效 receipt → needs_human 封顶，不得 FEATURE_COMPLETED。
+  // ⑧ P0 runtime fidelity: only machine observations in the existing
+  // Hylyre trace + device-test-evidence artifact can satisfy this obligation.
+  // The legacy runtime_fidelity_attestation receipt is intentionally inert.
   {
     const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
     const hasP0DeviceFlow = doc && doc.criteria.some(isP0DeviceInteractive);
-    if (hasP0DeviceFlow && !runtimeFidelityAttested(projectRoot, feature)) {
+    if (hasP0DeviceFlow) {
+      let expectedRunId: string | null = null;
+      let expectedAttemptId: string | null = null;
+      try {
+        const identity = resolvePhaseRunIds(projectRoot, feature, chain);
+        expectedRunId = identity.runIds.testing ?? null;
+        expectedAttemptId = identity.attempts.testing ?? null;
+      } catch (error) {
+        issues.push({
+          phase: 'testing',
+          condition: 'runtime_step_evidence_identity',
+          detail: `testing run/attempt 身份无法重算：${(error as Error).message}`,
+          kind: 'needs_fix',
+        });
+      }
+      const runtimeIssue = runtimeFidelityEvidenceIssue(
+        projectRoot,
+        feature,
+        expectedRunId,
+        expectedAttemptId,
+      );
+      if (runtimeIssue) {
       issues.push({
         phase: 'testing',
         condition: 'runtime_step_evidence',
-        detail:
-          '存在 P0 device flow 但无有效 runtime_fidelity_attestation receipt——计划级对账不能' +
-          '证明运行时忠实执行；须真人带外确认（或待 Hylyre provider step 采集落地由 runner 签发）' +
-          '方可 FEATURE_COMPLETED。空文件不再能解除封顶。',
-        kind: 'needs_human',
+        detail: `P0 runtime fidelity 机器证据无效：${runtimeIssue}`,
+        kind: 'needs_fix',
       });
+      }
     }
   }
 
   return issues;
 }
 
-/** runtime_fidelity_attestation 绑定哈希口径（签发侧对齐）：feature + acceptance flows +
- * testing 产品源码 aggregate——运行时证据必须与被测代码和声明流程绑定，防跨对象重放。 */
-export function runtimeFidelityObjectHash(projectRoot: string, feature: string): string {
-  const acc = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
-  const accHash = acc.exists ? sha256File(acc.actualPath) ?? '' : '';
-  const srcAgg = buildSourceInventory(projectRoot, { expectProductSources: false }).aggregate_sha256;
-  return crypto.createHash('sha256').update(`${feature}\n${accHash}\n${srcAgg}`, 'utf-8').digest('hex');
+export function runtimeFidelityEvidenceIssue(
+  projectRoot: string,
+  feature: string,
+  expectedGoalRunId: string | null,
+  expectedAttemptId: string | null,
+): string | null {
+  const evidencePath = deviceTestEvidencePath(
+    path.join(receiptDirPath(projectRoot, feature, 'testing'), 'reports'),
+  );
+  let doc: DeviceTestEvidenceDoc;
+  try {
+    doc = JSON.parse(fs.readFileSync(evidencePath, 'utf-8')) as DeviceTestEvidenceDoc;
+  } catch (error) {
+    return `device-test-evidence.json 缺失或不可解析：${(error as Error).message}`;
+  }
+  return validateRuntimeFidelityEvidenceDocument({
+    projectRoot,
+    feature,
+    doc,
+    expectedGoalRunId,
+    expectedAttemptId,
+    requirePhaseManifestBinding: true,
+  });
 }
 
-export function runtimeFidelityReceiptPath(projectRoot: string, feature: string): string {
-  return featureFilePath(projectRoot, feature, path.join('testing', 'runtime-fidelity.receipt.json'));
-}
-
-/**
- * 运行时忠实性证明（P0-1 重构）：消费 runtime_fidelity_attestation receipt（信任锚同 t10：
- * 预置 registry 取键、绑定 feature+acceptance+源码 aggregate、改动即 stale）。文件存在性
- * 判定已废弃——空的 runtime-step-evidence.json 不再解除封顶。
- */
-export function runtimeFidelityAttested(projectRoot: string, feature: string): boolean {
-  return validateConfirmationReceiptFile(
-    runtimeFidelityReceiptPath(projectRoot, feature),
-    defaultTrustRegistryPath(projectRoot),
-    { action: 'runtime_fidelity_attestation', feature, object_hash: runtimeFidelityObjectHash(projectRoot, feature) },
-  ).valid;
-}
-
-/** run 级状态投影（codex 七轮 P1-2）：needs_human 存在 → AWAITING；仅 needs_fix →
- * FEATURE_INCOMPLETE（该 run 通常已因 verdict 走非成功侧，此处是完成侧兜底分类）。 */
+/** legacy needs_human 仍可被读取；当前 collectCleanPassIssues 不再生成它。 */
 export function classifyCleanPassIssues(issues: CleanPassIssue[]): {
   needsHuman: boolean;
   needsFix: boolean;
@@ -421,10 +407,8 @@ export function classifyCleanPassIssues(issues: CleanPassIssue[]): {
 }
 
 /**
- * P1-1（codex 六轮）+ P1-2（七轮）：run 结束"是否有**待人工**事项"只消费 needs_human 类
- * clean_pass 违例（flow_contract 缺 receipt / waiver / 档位钳制 / 待复核 / 运行时证据
- * 未采集）——确定性故障（needs_fix：verdict FAIL / stale-tampered / attestation 失配）
- * 不投影为 AWAITING（那是修复/重跑事项，非人工确认）。与 completion 生成同源 issues 集。
+ * Legacy compatibility helper：旧 needs_human 记录仍可读；当前 writer 已不再生成该类，
+ * completion 会从当前机器证据重投影为 needs_fix / capability defer / advisory。
  */
 export function hasPendingHumanReview(opts: CleanPassOptions): boolean {
   return classifyCleanPassIssues(collectCleanPassIssues(opts)).needsHuman;

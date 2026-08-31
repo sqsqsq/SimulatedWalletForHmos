@@ -27,6 +27,7 @@ import {
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { finalizePhaseClosure } from './phase-closure-finalizer';
+import { deleteEnvKeyCaseInsensitive } from './process-integrity';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
 import { assessAndRenderNextStep } from './assess-renderer';
@@ -85,7 +86,62 @@ export const MAISON_GOAL_RUNNER_ENV = 'MAISON_GOAL_RUNNER';
 export const MAISON_GOAL_HEADLESS_ENV = 'MAISON_GOAL_HEADLESS';
 
 /** Comma-separated goal manifest `unattended.allowed_tools` for harness-runner image_input 降级。 */
-export const MAISON_GOAL_ALLOWED_TOOLS_ENV = 'MAISON_GOAL_ALLOWED_TOOLS';
+// MAISON_GOAL_ALLOWED_TOOLS_ENV 已退役（plan a8e5c3f9 t1）：注入与消费一并删除——
+// allowed_tools 是审批清单，headless 全权限下不构成任何执行/能力判断的输入。
+
+/**
+ * plan d7f3a9c4 t3：最终裁决后的 model pin value（生产代码与测试共用同一 SSOT）。
+ * 注入纪律沿用 `MAISON_GOAL_RUN_ID`：注入前先清大小写变体再写唯一大写键；无 pin 时
+ * **删除/不注入**（不得把 undefined/空串/`unknown` 当 pin）。子进程消费方取不到即按无 pin
+ * 处理（现状语义，不得臆造）。
+ */
+export const MAISON_GOAL_MODEL_PIN_ENV = 'MAISON_GOAL_MODEL_PIN';
+
+/**
+ * plan d7f3a9c4 t3：model pin env 注入的**唯一执行器**（三条子进程路径共用 + 测试共用）：
+ * 先按大小写不敏感清理全部变体（Windows 混写残留会与注入键并存，读取哪个是未定义行为），
+ * 再写唯一大写键；无 pin（undefined/空串）时只清理不写入——不得把 undefined/空串/`unknown`
+ * 当 pin。调用方在**任何**子进程 spawn 前对本键执行一次，即保证「无 pin 不泄漏陈旧值」。
+ */
+export function applyGoalModelPinEnv(env: NodeJS.ProcessEnv, modelPinValue: string | undefined): void {
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_MODEL_PIN_ENV);
+  if (modelPinValue) {
+    env[MAISON_GOAL_MODEL_PIN_ENV] = modelPinValue;
+  }
+}
+
+/**
+ * plan ab072691 t5①：本 run 冻结的**只读视觉 provider 身份**注入键（成对）。
+ *
+ * 为什么要 env：provider 评审发生在 **gate harness 进程**里（capture 之后、严格 dispatch
+ * 之前），那个进程没有 manifest。与 model pin 同一条注入纪律：注入前清大小写变体，
+ * 无 pin 时**只清不写**（子进程取不到即按未配置处理，不得臆造）。
+ * 交互态无此 env——由 gate 侧读个人级 framework.local.json。
+ */
+export const MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV = 'MAISON_GOAL_VISUAL_PROVIDER_ADAPTER';
+export const MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV = 'MAISON_GOAL_VISUAL_PROVIDER_MODEL';
+
+/** 成对注入的唯一执行器（成对写、成对清——半个身份既冻结不了也回放不了）。 */
+export function applyGoalVisualProviderEnv(
+  env: NodeJS.ProcessEnv,
+  pin: { adapter: string; model: string } | undefined,
+): void {
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV);
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV);
+  if (pin?.adapter && pin.model) {
+    env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = pin.adapter;
+    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = pin.model;
+  }
+}
+
+/** 从当前进程 env 读回冻结 provider 身份（成对齐全才算数）。 */
+export function readGoalVisualProviderEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): { adapter: string; model: string } | undefined {
+  const adapter = env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV]?.trim();
+  const model = env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV]?.trim();
+  return adapter && model ? { adapter, model } : undefined;
+}
 
 export function isGoalOrchestrationEnv(): boolean {
   return (
@@ -107,15 +163,26 @@ export function isGoalHeadlessEnv(): boolean {
  * 在场而无 gate authority（MAISON_GOAL_GATE_HARNESS=1，runner 直接 spawn 的 gate
  * harness 独有、agent env 构造时按信任锚剥离）即视为 agent 侧。
  */
-export function isAgentSideGoalHarness(): boolean {
-  const anyGoalSignal =
+export function hasGoalExecutionSignal(): boolean {
+  return (
     Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
     Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
     // plan b3e8d4c7 t1：新增的 attempt phase 同属 goal 信号——不入并集的话，
     // 子进程只剩 PHASE 时真实 goal 上下文会被当 manual（与本 plan 的 fail-closed 相悖）。
     Boolean(process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim()) ||
-    isGoalOrchestrationEnv();
-  return anyGoalSignal && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+    isGoalOrchestrationEnv()
+  );
+}
+
+/** Direct harness runs may opt into a committed diff base; every goal context ignores it. */
+export function resolveHarnessDiffBaseRef(): string | undefined {
+  if (hasGoalExecutionSignal()) return undefined;
+  const value = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  return value || undefined;
+}
+
+export function isAgentSideGoalHarness(): boolean {
+  return hasGoalExecutionSignal() && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
 }
 
 /**
@@ -270,9 +337,11 @@ export function tryValidateReceipt(
   // plan b3e8d4c7 t1：`goalIdentity` 透传 goal 身份 env——runner 从不给自己设 MAISON_GOAL_*，
   // 此前本函数 spawn 的 check-receipt 因此 goal 门禁**全部静默跳过**（权威路径最松、
   // agent 修复路径最严）。传入后两侧执行同一套门禁。
+  // plan d7f3a9c4 t3：`modelPin` 随 goalIdentity 同链透传（子进程 env 注入的唯一 key 按
+  // 大小写不敏感清理后写入；无 pin 时不注入并显式清理父环境残留）。
   opts?: {
     timeoutMs?: number;
-    goalIdentity?: { runId: string; attemptId: string; attemptPhase: string };
+    goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string };
   },
 ): ReceiptValidation {
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
@@ -310,6 +379,21 @@ export function tryValidateReceipt(
   }
 
   const isWin = process.platform === 'win32';
+  // plan d7f3a9c4 t3：goalIdentity 子进程 env 构造——先清大小写变体（Windows 混写残留会与
+  // 注入键并存，读取哪个是未定义行为），再写唯一大写键；model pin 无 pin 时显式清理。
+  const childEnv: NodeJS.ProcessEnv = opts?.goalIdentity
+    ? { ...process.env }
+    : process.env;
+  if (opts?.goalIdentity) {
+    for (const k of ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE']) {
+      deleteEnvKeyCaseInsensitive(childEnv, k);
+    }
+    childEnv.MAISON_GOAL_RUN_ID = opts.goalIdentity.runId;
+    childEnv.MAISON_GOAL_ATTEMPT = opts.goalIdentity.attemptId;
+    childEnv.MAISON_GOAL_ATTEMPT_PHASE = opts.goalIdentity.attemptPhase;
+    // plan d7f3a9c4 t3：model pin 走共享注入执行器（先清大小写变体、无 pin 只清理不写入）。
+    applyGoalModelPinEnv(childEnv, opts.goalIdentity.modelPin);
+  }
   const result = spawnSync(
     isWin ? 'npx.cmd' : 'npx',
     [
@@ -328,16 +412,7 @@ export function tryValidateReceipt(
       encoding: 'utf-8',
       shell: isWin,
       ...(opts?.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}),
-      ...(opts?.goalIdentity
-        ? {
-            env: {
-              ...process.env,
-              MAISON_GOAL_RUN_ID: opts.goalIdentity.runId,
-              MAISON_GOAL_ATTEMPT: opts.goalIdentity.attemptId,
-              MAISON_GOAL_ATTEMPT_PHASE: opts.goalIdentity.attemptPhase,
-            },
-          }
-        : {}),
+      ...(opts?.goalIdentity ? { env: childEnv } : {}),
     },
   );
 
@@ -423,8 +498,23 @@ export function runSyncClosureDetailed(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  // 环 C（plan f3a8c6d2 t2）：goal 调用方透传当前 run/attempt/phase 身份——**最终 closure
+  // 提交前再执行一次严格 attempt 等值校验**（纵深防御，不接受"调用方已先校验"的弱边界）。
+  //
+  // 事故（bc-openCard run 20260808T071335Z-4b0136）：receipt 的 claimed_attempt_id=i7
+  // 与终局 attempt i8 失配。本函数此前调 tryValidateReceipt **不带 goalIdentity**，
+  // 而 check-receipt 的 attempt 等值判据只在 goal 身份在场时生效（phase-state.ts:292-294：
+  // "runner 从不给自己设 MAISON_GOAL_*，此前本函数 spawn 的 check-receipt 因此 goal 门禁
+  // 全部静默跳过"）——即提交侧是最松的一环。补齐后：i8 已创建而 receipt 仍 claimed i7 时
+  // 提交必然失败，不写 phase state、不提交 summary closure、不改绑；只有 agent 把 receipt
+  // 重签为 i8 才允许闭环（禁止任何迁移/改绑协议）。
+  //
+  // 非 goal 调用（harness-runner 的 --sync-closure 等）省略本参数即保持现状。
+  opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string } },
 ): SyncClosureResult {
-  const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
+  const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature, {
+    ...(opts?.goalIdentity ? { goalIdentity: opts.goalIdentity } : {}),
+  });
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
   if (receiptValidation.status === 'not_applicable') {

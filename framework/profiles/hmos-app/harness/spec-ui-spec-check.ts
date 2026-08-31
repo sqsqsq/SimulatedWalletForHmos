@@ -17,18 +17,10 @@ import {
   uiSpecRelPath,
   type VisualEnforcementMode,
 } from '../../../harness/scripts/utils/ui-spec-shared';
-import { missingUiSpecGateScreens } from './ui-spec-gate';
-import { checkUiKitDeclarationRequired } from './ui-kit-conformance-check';
 import { validateUiSpecSchema } from './ui-spec-schema-validate';
-import { isGoalHeadlessEnv } from '../../../harness/scripts/utils/phase-state';
 import { isHardPixelContract } from '../../../harness/scripts/utils/fidelity-shared';
 import { readCanaryToolReadSignal } from '../../../harness/scripts/utils/multimodal-probe';
 import { loadFrameworkConfig } from '../../../harness/config';
-import {
-  readLatestRawAttestation,
-  resolveEffectiveVisionContext,
-  sha256File,
-} from '../../../harness/scripts/utils/effective-vision-context';
 import { verifyVlSigningChain } from '../../../harness/scripts/utils/critic-receipt-producer';
 
 function ruleDesc(
@@ -222,7 +214,7 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
     if (!method || method === 'none') {
       issues.push('verified=verified 时 verified_method 须为 vl_multimodal，不得为 none/空');
     } else if (method === 'human_gate') {
-      issues.push('verified=verified 与 human_gate 不匹配；人工 gate 须用 verified: human_confirmed');
+      issues.push('verified_method=human_gate 已退役；verified=verified 只接受当前机器 vl_multimodal 证据');
     } else if (method !== 'vl_multimodal') {
       issues.push(`verified_method 非法：${method}（verified=verified 时须 vl_multimodal）`);
     }
@@ -230,6 +222,11 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
   if (verified === 'unverified') {
     warnings.push(
       'ui-spec verified=unverified：DSL 未过原图 gate；下游 parity 只报结构不报保真。',
+    );
+  }
+  if (verified === 'human_confirmed') {
+    warnings.push(
+      'ui-spec verified=human_confirmed 是 legacy provenance，不再提供质量通行权；按 unverified 投影。',
     );
   }
 
@@ -266,26 +263,15 @@ export function checkUiSpecStructure(ctx: CheckContext, specMarkdown: string): C
     details: detailParts.join('\n'),
     affected_files: [uiSpecRel],
   }];
-  // blind-visual-hardening（cursor 实施 review P1）：盲档结构容器声明强制——kit 非 opt-in。
-  // 异常=BLOCKER（cursor 四轮 P2：spec 段若异常降 SKIP，coding 见零声明即空转，线框路径复活）。
-  try {
-    out.push(...checkUiKitDeclarationRequired(ctx));
-  } catch (e) {
-    out.push({
-      id: 'ui_kit_declaration_required', category: 'structure',
-      description: '盲档结构容器声明门禁执行异常（地板门禁不得因异常绕过）',
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过移除 ui-spec 来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-      affected_files: [uiSpecRel],
-    });
-  }
+  // plan e6b3f8d2 t3：强制 Maison UI kit 已撤销——「P0 屏必须声明 ≥1 语义容器 block」
+  // 这道门禁把具体组件实现升格成了产品契约（宿主结构上不可满足：spec 强制声明、
+  // contracts 冻结不含 kit、coding 只读 → 不 scaffold 未物化 / scaffold 越界双输）。
+  // 盲档视觉地板改由既有链承接：ui-spec P0 节点 → visual-parity.contract_component →
+  // contracts.components/files（plan-visual-parity-check 的所有权硬地板，不受档位降级）。
   return out;
 }
 
-/** DSL↔原图校验 gate（人工 / 多模态） */
+/** DSL↔原图校验 gate（当前机器证据；legacy 人签字段无质量权威） */
 export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string): CheckResult[] {
   const uiChange = parseUiChangeFromSpecMarkdown(specMarkdown);
   if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) {
@@ -297,13 +283,14 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
   if (!doc) {
     return [];
   }
-  const verified = doc.verified ?? 'unverified';
+  const declaredVerified = doc.verified ?? 'unverified';
+  const verified = declaredVerified === 'human_confirmed' ? 'unverified' : declaredVerified;
   if (verified === 'verified') {
     const method = (doc.verified_method ?? '').trim();
     if (!method || method === 'none' || method === 'human_gate') {
       const soft = ctx.uiSpecEnforcement === 'warn' || ctx.uiSpecEnforcement === 'reachable';
       const hint = method === 'human_gate'
-        ? 'human_gate 须配合 verified: human_confirmed'
+        ? 'human_gate 已退役，须使用当前机器 vl_multimodal 证据'
         : `须 vl_multimodal，收到 ${method || '(empty)'}`;
       return [{
         id: 'ui_spec_fidelity_gate',
@@ -315,54 +302,10 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         affected_files: [uiSpecRel],
       }];
     }
-    // visual-capability-truth S3 + 三轮 review P0-1/P0-2（openspec vision-capability-truth）：
-    // vl_multimodal 终签统一走 verifyVlSigningChain（runner 事件锚回执 + 精确 invoke/adapter
-    // 绑定 + 当前 authoritative refs 逐张 hash 核对），并要求：
-    //   - artifact attestation **必须为 verified**（unverified_clean/缺证/反证一律拒——
-    //     resolver 已把非 verified 判为 blind_safe，终签不得比 policy 更宽）；
-    //   - effective policy 为 visual（任何未解除降级/能力不足/账面损坏 → 拒签）。
-    // 20260718 事故：cursor 自签 vl_multimodal + OCR 乱码入 must_have——本硬化正是其解药。
-    const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
-    const uiSpecHash = sha256File(uiSpecAbs);
+    // 当前 invocation 的 capability + reference-read receipts 是唯一签名证据。
+    // 产物内容反证由同轮 vision_output_counterevidence 独立 FAIL/WARN，不再落跨轮账本。
     const chain = verifyVlSigningChain({ projectRoot: ctx.projectRoot, feature: ctx.feature });
     const signFailures: string[] = [...chain.failures];
-    if (uiSpecHash) {
-      const vctx = resolveEffectiveVisionContext({
-        projectRoot: ctx.projectRoot,
-        feature: ctx.feature,
-        phase: ctx.phase,
-        runId: chain.runId ?? undefined,
-        invokeId: chain.expectedInvoke ?? undefined,
-        artifactHashes: [uiSpecHash],
-      });
-      const att = vctx.artifact_attestation[uiSpecHash];
-      if (att.verdict !== 'verified') {
-        signFailures.push(
-          `artifact attestation=${att.verdict}（${att.reasons.slice(0, 3).join('；') || 'no reasons'}）——` +
-          '终签要求当前 hash 为 verified（unverified_clean/缺证/反证均不可终签）',
-        );
-      } else {
-        // 五轮 review P1：**最终 gate 语境**下 verified binding 的 run/invoke 须与当前
-        // signing chain 精确一致（下游历史 artifact 消费允许跨 invocation 复用内容有效的
-        // binding——继承边界见 openspec；终签不允许）。
-        const raw = readLatestRawAttestation(ctx.projectRoot, ctx.feature, uiSpecHash);
-        const b = raw?.binding;
-        if (!b || b.run_id !== chain.runId || b.invoke_id !== chain.expectedInvoke) {
-          signFailures.push(
-            `verified binding 签发身份与当前 invocation 不一致（binding=${b ? `${b.run_id}/${b.invoke_id}` : '缺失'} ≠ ` +
-            `当前 ${chain.runId}/${chain.expectedInvoke}）——终签须本 invocation 铸造的 verified`,
-          );
-        }
-      }
-      if (vctx.effective_policy.mode !== 'visual') {
-        signFailures.push(
-          `effective policy=blind_safe（${vctx.effective_policy.downgrade_reasons.slice(0, 3).join('；')}）——` +
-          '策略非 visual 时不得 vl_multimodal 终签',
-        );
-      }
-    } else {
-      signFailures.push('ui-spec 文件 hash 不可算——无法绑定 attestation，不可终签');
-    }
     if (signFailures.length > 0) {
       return [{
         id: 'ui_spec_fidelity_gate',
@@ -371,12 +314,13 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         severity: 'BLOCKER',
         status: 'FAIL',
         details: [
-          '【vl_multimodal 终签拒收（fail-closed）】签名不满足信任链条件，按 unverified 处理：',
+          '【vl_multimodal 终签拒收】当前 invocation 回执不完整，按 unverified 处理：',
           ...signFailures.map(f => `  - ${f}`),
         ].join('\n'),
         suggestion:
-          '出路：①有真视觉能力的 adapter（结构化事件 provenance 合格）重走 spec 生成签名；' +
-          '②真人逐屏 [x] 确认改 verified: human_confirmed；③走盲档地板交付（kit + 确定性反馈）。',
+          '出路：①当前视觉调用补齐 canary 与逐参考图读取；' +
+          '②若 adapter 无逐图 Read 审计能力（tool_event_provenance != structured_events），vl_multimodal 终签' +
+          '结构性不可达——诚实改 verified: unverified（软档 WARN 可继续，hard contract 仍 FAIL，不伪造签名）。',
         affected_files: [uiSpecRel],
       }];
     }
@@ -390,49 +334,6 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
         `ui-spec verified=${verified}（method=${doc.verified_method ?? 'n/a'}）；` +
         `终签信任链齐备：capability receipt（${chain.capReceipt!.binding_path}，runner 事件锚）+ ` +
         `refs 验读 ${chain.currentRefs.length} 张（逐张 hash 核对）+ attestation=verified + policy=visual。`,
-      affected_files: [uiSpecRel],
-    }];
-  }
-  if (verified === 'human_confirmed') {
-    // G1：headless goal-mode 无交互真人，verified: human_confirmed 必为自我认证人工
-    // （homepage「headless auto · 待人工复核」却标 human_confirmed 即此）。**任何档位**下都
-    // 不得在 headless 自签人工 gate；须改 vl_multimodal（诚实标 VL 核对）或留待真人逐屏 [x] 确认。
-    if (isGoalHeadlessEnv()) {
-      return [{
-        id: 'ui_spec_fidelity_gate',
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details:
-          'headless goal-mode 无交互真人，verified: human_confirmed 系自我认证人工；pixel_1to1 下不允许自签人工 gate。',
-        suggestion:
-          '改 verified: verified + verified_method: vl_multimodal（VL 多模态核对，不冒称人工）；或留待真人逐屏 [x] 确认后再标 human_confirmed。',
-        affected_files: [uiSpecRel],
-      }];
-    }
-    const missing = missingUiSpecGateScreens(doc, specMarkdown);
-    if (missing.length > 0) {
-      const soft = ctx.uiSpecEnforcement === 'warn' || ctx.uiSpecEnforcement === 'reachable';
-      return [{
-        id: 'ui_spec_fidelity_gate',
-        category: 'structure',
-        description: desc,
-        severity: soft ? 'MAJOR' : 'BLOCKER',
-        status: soft ? 'WARN' : 'FAIL',
-        details:
-          `ui-spec verified=human_confirmed 但 spec.md 缺逐屏 [x] gate 证据：${missing.join(', ')}`,
-        suggestion: '在 spec.md 增加 UI-spec gate 段，逐 P0 屏写 `- [x] <screen_id>`。',
-        affected_files: [uiSpecRel, relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md')],
-      }];
-    }
-    return [{
-      id: 'ui_spec_fidelity_gate',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `ui-spec verified=human_confirmed；spec gate [x] 已覆盖 P0 屏（method=${doc.verified_method ?? 'human_gate'}）`,
       affected_files: [uiSpecRel],
     }];
   }
@@ -457,10 +358,16 @@ export function checkUiSpecFidelityGate(ctx: CheckContext, specMarkdown: string)
     severity: sightedPixel1to1 ? 'BLOCKER' : soft ? 'MAJOR' : 'BLOCKER',
     status: sightedPixel1to1 ? 'FAIL' : soft ? 'WARN' : 'FAIL',
     details: sightedPixel1to1
-      ? 'ui-spec verified=unverified 且宿主真视觉实测在位（canary tool_read）+ fidelity_target=pixel_1to1：' +
+      ? `ui-spec verified=${declaredVerified}（${declaredVerified === 'human_confirmed' ? 'legacy 人签无 gate 权重，按 unverified；' : ''}` +
+        '宿主真视觉实测在位 canary=tool_read）+ fidelity_target=pixel_1to1：' +
         '有视觉能力却不核对 ui-spec 与原图，无软档豁免——未验真的 spec 流入下游是几何盲区根因之一（t6⑥）。'
-      : 'ui-spec verified=unverified：未经人工 [x] gate 或多模态核对，不得作为保真基线进 plan（可降级继续但须显式标注）。',
-    suggestion: '逐屏人工确认 ui-spec 与原图一致，设 verified: human_confirmed；或用 VL 多模态 gate。',
+      : `ui-spec verified=${declaredVerified}：${declaredVerified === 'human_confirmed' ? 'legacy 人签无 gate 权重；' : ''}` +
+        '未经当前机器多模态证据核对，不得作为保真基线进 plan（可降级继续但须显式标注）。',
+    suggestion:
+      '处理：①adapter 有逐图 Read 审计能力（tool_event_provenance=structured_events）且本 invocation ' +
+      '真视觉在位时，逐张读图并签 refs receipt 后设 verified: verified + verified_method: vl_multimodal；' +
+      '②adapter 无逐图 Read 审计能力（none-provenance）或本 invocation 判盲时，vl_multimodal 结构性不可达，' +
+      '诚实保留 verified: unverified（soft 档 WARN 可继续、hard contract 仍 FAIL，不伪造签名）。',
     affected_files: [uiSpecRel],
   }];
 }

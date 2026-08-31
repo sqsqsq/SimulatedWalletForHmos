@@ -6,10 +6,11 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
-import type { CheckContext } from './types';
+import type { CheckContext, VisionMode } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
 import { featureFilePath, relFeaturesDir } from '../../config';
 import { readCanaryOcrCapableSignal } from './multimodal-probe';
+import { inspectGoalRunCreationFiles } from './goal-run-creation';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
@@ -119,52 +120,14 @@ export function isAutomationSigner(signedBy: string | undefined): boolean {
 }
 
 /**
- * G4b：用户在需求文本中的自然语言裁剪授权 sentinel（"资源可从原图/截图裁剪获取"）。
- * 属**合法的前置确认者**（用户即真人、需求文本即授权），**绝不可加入 AUTOMATION_SIGNER_IDS**。
- * headless 下 crop_confirmed_by=此值 视为有效前置确认，免 mid-run halt 直接裁。
- */
-export const USER_REQUIREMENT_CONFIRMER = 'user_requirement';
-
-/**
- * T2：pixel_1to1 P0 pass 屏的真人确认判据——`confirmed_by` 非空且非自动化身份。
- * 视觉裁判可信化主背靠：像素/文本-位置度量均被实测证伪（忠实屏误报），图标/颜色/样式类假 PASS
- * 不可约地需 VL/人判 → pixel_1to1 P0 屏判 pass 须真人过目确认，goal-mode-auto 等自签不算（headless 走 HALT）。
- */
-export function isHumanConfirmed(confirmedBy: string | undefined): boolean {
-  return typeof confirmedBy === 'string' && confirmedBy.trim().length > 0 && !isAutomationSigner(confirmedBy);
-}
-
-/**
- * P0-6（plan c9e2a7f4）：验真签名判据——**授权哨兵 ≠ 验真签名**。
- * user_requirement 是需求级授权（能不能做），不能替代对具体屏/资产的真人过目（有没有人看过）。
- * 2026-07-05 实锤：宿主 agent 以 confirmed_by='user_requirement' 伪签 T2，在其 shell 的 harness
- * 运行中实际通关（回执 blocker_count 0），仅因 goal-runner 干净环境重跑才被打回。
- * 凡"验真/过目"语义的 signer（T2 confirmed_by / bbox_verified_by / baked_text_defer_by /
- * deferral signed_by）一律用本判据；授权语义（crop_confirmed_by）保持既有判据不变。
- * 诚实边界：堵不住伪造人名字符串（headless 自写 signer 本质不可信）；彻底解=带外确认凭证（round7 P0-8）。
+ * 外部 framework 完整性审批的 legacy signer 判据。它只用于真正的发布件修改权限，
+ * 不得用于 feature visual/crop/fidelity 质量结论。
  */
 export function isHumanVerified(signer: string | undefined): boolean {
-  if (!isHumanConfirmed(signer)) return false;
-  return signer!.trim().toLowerCase() !== USER_REQUIREMENT_CONFIRMER;
-}
-
-/**
- * 真人签字判据：human_signed:true 且 signed_by 非自动化身份。
- * signed_by 缺省视为人工（不破坏交互态既有行为）；仅显式自动化身份被拒。
- */
-export function isHumanSignedDeferral(
-  d: FidelityDeferralEntry,
-  opts?: { requireExplicitSigner?: boolean },
-): boolean {
-  if (d.human_signed !== true) return false;
-  if (isAutomationSigner(d.signed_by)) return false;
-  // P0-6：user_requirement 属需求级授权哨兵，不算对具体豁免条目的真人签字。
-  if (typeof d.signed_by === 'string' && d.signed_by.trim().toLowerCase() === USER_REQUIREMENT_CONFIRMER) return false;
-  // headless：缺 signed_by 视为可疑自签（真人会留名）→ 不算人签；交互态缺省仍算人工。
-  if (opts?.requireExplicitSigner) {
-    return typeof d.signed_by === 'string' && d.signed_by.trim().length > 0;
-  }
-  return true;
+  return typeof signer === 'string'
+    && signer.trim().length > 0
+    && !isAutomationSigner(signer)
+    && signer.trim().toLowerCase() !== 'user_requirement';
 }
 
 /**
@@ -331,12 +294,13 @@ const REQUIREMENT_DOC_MAX_BYTES = 256 * 1024;
 export function dereferenceRequirementDocs(
   projectRoot: string,
   requirement: string | null | undefined,
-  opts?: { featuresDirRel?: string },
+  opts?: { featuresDirRel?: string; excludePrefixes?: string[] },
 ): { combined: string; resolvedPaths: string[] } {
   const base = typeof requirement === 'string' ? requirement : '';
   if (!base.trim()) return { combined: base, resolvedPaths: [] };
   const featuresDirRel = (opts?.featuresDirRel ?? 'doc/features').replace(/\\/g, '/');
   const allowedPrefixes = ['doc/', featuresDirRel.endsWith('/') ? featuresDirRel : `${featuresDirRel}/`];
+  const excludedPrefixes = (opts?.excludePrefixes ?? []).map((p) => p.replace(/\\/g, '/'));
   const seen = new Set<string>();
   const parts = [base];
   const resolvedPaths: string[] = [];
@@ -347,6 +311,7 @@ export function dereferenceRequirementDocs(
     if (seen.has(rel)) continue;
     seen.add(rel);
     if (!allowedPrefixes.some((p) => rel.startsWith(p))) continue;
+    if (excludedPrefixes.some((p) => rel.startsWith(p))) continue;
     const abs = path.resolve(projectRoot, rel);
     if (!abs.startsWith(path.resolve(projectRoot) + path.sep)) continue; // 越界防线
     try {
@@ -399,8 +364,20 @@ export function classifyGoalRunsDir(runsDir: string): AuthoritativeGoalRuns {
     // 结构名（.dry 等点前缀目录）不入权威也不入 corrupt——目录名即隔离边界。
     if (ent.name.startsWith('.')) continue;
     const dir = path.join(runsDir, ent.name);
-    if (fs.existsSync(path.join(dir, 'manifest.json'))) {
-      out.runs.push(ent.name);
+    const manifestPath = path.join(dir, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      const creation = inspectGoalRunCreationFiles(
+        manifestPath,
+        path.join(dir, 'events.jsonl'),
+      );
+      if (creation.state === 'complete' || creation.state === 'legacy') {
+        out.runs.push(ent.name);
+      } else {
+        out.corruptRuns.push({
+          runId: ent.name,
+          reason: `CREATION_INCOMPLETE：${creation.state === 'creation_incomplete' ? creation.reason : '出生记录缺失'}`,
+        });
+      }
       continue;
     }
     const started =
@@ -437,7 +414,10 @@ export function collectRequirementIntentText(
     try {
       const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
       if (typeof m.requirement === 'string' && m.requirement.trim()) {
-        parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).combined);
+        parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, {
+          featuresDirRel,
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+        }).combined);
       }
     } catch { /* 单 manifest 损坏跳过 */ }
   }
@@ -467,7 +447,10 @@ export function collectRequirementSsotPaths(
       out.add(path.join(featuresDirRel, feature, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
       try {
         const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel }).resolvedPaths) {
+        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
+          featuresDirRel,
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+        }).resolvedPaths) {
           out.add(rel);
         }
       } catch { /* 单 manifest 损坏跳过 */ }
@@ -522,24 +505,18 @@ export function computeRequirementShaFromText(
   requirement: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const deref = dereferenceRequirementDocs(projectRoot, requirement, { featuresDirRel });
+  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${feature}/`;
+  const deref = dereferenceRequirementDocs(projectRoot, requirement, {
+    featuresDirRel,
+    excludePrefixes: [currentFeaturePrefix],
+  });
   const parts = [`inline:${requirement}`];
   for (const rel of deref.resolvedPaths.sort()) {
     try {
       parts.push(`${rel}:${fs.readFileSync(path.join(projectRoot, rel), 'utf-8')}`);
     } catch { /* skip */ }
   }
-  // ux-reference 文件内容摘要（存在才计）
-  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
-  try {
-    if (fs.existsSync(uxDir)) {
-      for (const f of fs.readdirSync(uxDir).sort()) {
-        if (!/\.(jpe?g|png|webp|bmp)$/i.test(f)) continue;
-        const buf = fs.readFileSync(path.join(uxDir, f));
-        parts.push(`ux:${f}:${crypto.createHash('sha256').update(buf).digest('hex')}`);
-      }
-    }
-  } catch { /* skip */ }
+  // 参考图片由 reference receipt/gate 单独绑定；运行中生成的 feature 产物不得改变需求身份。
   return crypto.createHash('sha256').update(parts.join('\n'), 'utf-8').digest('hex');
 }
 
@@ -556,14 +533,13 @@ export function isValidFidelityTarget(v: unknown): v is FidelityTarget {
 }
 
 /**
- * `--fidelity`/manifest.fidelity 只升不降（codex 三轮 P0-2：headless agent 可代跑命令
- * 自带 flag，flag ≠ 用户授权）：requested < detected → 无效（降档唯一通道=t10 receipt，
- * 调用方在凭证校验通过后显式传 downgradeAuthorized）。
+ * `--fidelity`/manifest.fidelity 只升不降（headless agent 可代跑命令，flag ≠ 需求变更）：
+ * requested < detected 永远无效。第三参数仅兼容旧调用，已无授权语义。
  */
 export function resolveRequestedFidelity(
   detected: FidelityTarget,
   requested: FidelityTarget | undefined,
-  downgradeAuthorized = false,
+  _legacyDowngradeAuthorized = false,
 ): { effective: FidelityTarget; rejectedDowngrade: boolean } {
   if (!requested || !FIDELITY_TARGETS.has(requested)) {
     return { effective: detected, rejectedDowngrade: false };
@@ -571,9 +547,7 @@ export function resolveRequestedFidelity(
   if (FIDELITY_TIER_RANK[requested] >= FIDELITY_TIER_RANK[detected]) {
     return { effective: requested, rejectedDowngrade: false };
   }
-  return downgradeAuthorized
-    ? { effective: requested, rejectedDowngrade: false }
-    : { effective: detected, rejectedDowngrade: true };
+  return { effective: detected, rejectedDowngrade: true };
 }
 
 /** pixel_1to1 联动：默认抬升 user_dir */
@@ -600,6 +574,20 @@ export interface FidelityCapability {
   hasVision: boolean;
   /** isOcrAvailable()（profile 相关，由调用方探测传入——core 不硬依赖具体 profile 的 OCR 实现） */
   ocrAvailable: boolean;
+  /**
+   * 视觉委托（plan ab072691 t2③）：**评审轴**——「本轮有没有一个能看图的检查者」。
+   *
+   * 为什么不给 hasVision 改名：hasVision 的语义是「**primary** 能不能看图」，被 prompt 组装、
+   * closure read requirement、tool-event provenance 分轴等多处消费，全局改名会把这些点一起
+   * 卷进来重判。这里只加一个**可选**字段，钳制判据取 `reviewVision ?? hasVision`：
+   * 不传的旧调用面**逐字不变**（零回归面），只有 delegated 判定点显式传 true。
+   *
+   * 语义依据：保真档位是**验收承诺**，取决于「检查者」能否看图，而不是「书写者」能否看图。
+   * delegated 下 primary 盲写、只读 provider 逐屏评审——pixel_1to1 因此可以放行。
+   * 放行不靠事前探测背书，靠三层既有兜底：同调用载荷校验 + 既有 VISUAL_PENDING 投影 +
+   * pixel_1to1 人签（三者均零改动）。
+   */
+  reviewVision?: boolean;
 }
 
 export type FidelityClampReason = 'no_vision_ocr_available' | 'no_vision_no_ocr';
@@ -622,7 +610,10 @@ export function clampFidelityByCapability(
   desired: FidelityTarget,
   capability: FidelityCapability,
 ): FidelityClampResult {
-  if (capability.hasVision) return { effective: desired, clamped: false };
+  // plan ab072691 t2③：钳制吃**评审轴**。缺省回落 hasVision ⇒ 旧调用面逐字不变；
+  // delegated（primary 盲 + 合格只读 provider）传 reviewVision=true ⇒ 与 native 同样不钳。
+  const review = capability.reviewVision ?? capability.hasVision;
+  if (review) return { effective: desired, clamped: false };
   if (desired === 'reference_only') return { effective: desired, clamped: false };
   if (capability.ocrAvailable) {
     if (desired === 'pixel_1to1') {
@@ -673,9 +664,9 @@ export function resolveEffectiveFidelityContext(
 
 // ============================================================================
 // plan f6b2d9a4：两谓词拆分 + 三段式路由决策 + fidelity-intent SSOT / capability
-// snapshot IO。执行类逻辑读 isPixelExecutionTarget；严重度抬升/人确认/封顶读
-// isHardPixelContract（effective=pixel ∧ strictness=hard——不用 desired：有效降档
-// receipt 放行 semantic 后不得再激活 pixel 硬门禁）。确定性完整性错误不经这两谓词。
+// snapshot IO。执行类逻辑读 isPixelExecutionTarget；严重度抬升/封顶读
+// isHardPixelContract（effective=pixel ∧ strictness=hard）。selected hard-pixel 被能力钳制时
+// 由 preflight 诚实 defer；legacy receipt 不参与档位或严重度裁决。确定性完整性错误不经这两谓词。
 // ============================================================================
 
 /** 执行类谓词：是否按 pixel 目标运行高质量提取/diff/度量（=旧 isPixel1to1 语义）。 */
@@ -683,7 +674,7 @@ export function isPixelExecutionTarget(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1';
 }
 
-/** 裁决类谓词：质量缺口是否升级 BLOCKER/真人确认/completion 封顶。 */
+/** 裁决类谓词：质量缺口是否升级 BLOCKER/completion 封顶。 */
 export function isHardPixelContract(ctx: CheckContext): boolean {
   return ctx.fidelityTarget === 'pixel_1to1' && ctx.acceptanceStrictness === 'hard';
 }
@@ -695,7 +686,7 @@ export interface FidelityRoutingInput {
   manifestFidelity?: string;
   /** 该值来源（CLI 显式 / manifest 文件声明）——decision.source 用 */
   manifestFidelitySource?: 'explicit_cli' | 'manifest_declared';
-  /** fidelity_downgrade receipt 验真结果（调用方验；本函数不读盘） */
+  /** @deprecated legacy input, ignored; a receipt cannot lower requirement fidelity. */
   downgradeReceiptValid?: boolean;
   capability: FidelityCapability;
   /** goal run_id 或显式 phase execution identity（如 phase:<feature>:spec） */
@@ -708,8 +699,20 @@ export type FidelityDecisionSource =
   | 'auto_default'
   | 'explicit_cli'
   | 'manifest_declared'
+  // legacy reader values; new writers never produce these sources.
   | 'downgrade_receipt'
   | 'human_confirmed';
+
+const INERT_LEGACY_FIDELITY_DECISION_SOURCES = new Set<FidelityDecisionSource>([
+  'downgrade_receipt',
+  'human_confirmed',
+]);
+
+/** Legacy values remain parse-compatible but never retain authority through fidelity-intent.json. */
+export function isInertLegacyFidelityDecisionSource(source: unknown): boolean {
+  return typeof source === 'string' &&
+    INERT_LEGACY_FIDELITY_DECISION_SOURCES.has(source as FidelityDecisionSource);
+}
 
 export interface FidelityRoutingDecision {
   inferred: FidelityTarget;
@@ -726,37 +729,34 @@ export interface FidelityRoutingDecision {
 }
 
 /**
- * 三段式路由（v4 P0 冻结）：inferred（文本推导，ratchet 锚）→ selected（只升不降；
- * 有效降档 receipt 才许降）→ effective（能力 clamp）。纯函数，不读盘不探测——
- * capability/receipt 验真由调用方（goal-runner / initializer / check-spec 复核）供给。
+ * 三段式路由：inferred（文本推导，ratchet 锚）→ selected（只升不降）→ effective
+ *（能力 clamp）。纯函数，不读盘不探测；legacy receipt 参数不参与判定。
  */
 export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): FidelityRoutingDecision {
   const det = detectDesiredFidelity(input.requirementText);
   const strictness = detectAcceptanceStrictness(input.requirementText);
   const assetIntent = detectAssetAcquisitionIntent(input.requirementText);
   const requested = isValidFidelityTarget(input.manifestFidelity) ? input.manifestFidelity : undefined;
-  const sel = resolveRequestedFidelity(det.desired, requested, input.downgradeReceiptValid === true);
+  const sel = resolveRequestedFidelity(det.desired, requested);
   const clamp = clampFidelityByCapability(sel.effective, input.capability);
   const defer = sel.effective === 'pixel_1to1' && strictness === 'hard' && clamp.clamped;
 
-  const receiptDowngraded =
-    input.downgradeReceiptValid === true && requested !== undefined &&
-    sel.effective === requested && FIDELITY_TIER_RANK[requested] < FIDELITY_TIER_RANK[det.desired];
   const requestedApplied =
     requested !== undefined && sel.effective === requested && requested !== det.desired;
-  const source: FidelityDecisionSource = receiptDowngraded
-    ? 'downgrade_receipt'
-    : requestedApplied
-      ? (input.manifestFidelitySource ?? 'manifest_declared')
-      : det.basis === 'default'
-        ? 'auto_default'
-        : 'requirement_self_declared';
+  const source: FidelityDecisionSource = requestedApplied
+    ? (input.manifestFidelitySource ?? 'manifest_declared')
+    : det.basis === 'default'
+      ? 'auto_default'
+      : 'requirement_self_declared';
   // routing_input_digest（v5 P2）：manifest/receipt/capability 任一变化 → 新 decision_id
   const digest = crypto.createHash('sha256').update(JSON.stringify({
     f: requested ?? null,
-    r: input.downgradeReceiptValid === true,
     v: input.capability.hasVision,
     o: input.capability.ocrAvailable,
+    // plan ab072691 t2③：评审轴是 clamp 的真实输入之一，必须进 digest，否则「委托到位/
+    // 委托失格」两种截然不同的路由会共用同一个 decision_id。**条件入集**（键在场即入）：
+    // 不传 reviewVision 的旧调用面 digest 逐字节不变，既有 decision_id 不漂移。
+    ...(input.capability.reviewVision !== undefined ? { rv: input.capability.reviewVision } : {}),
   })).digest('hex');
   const decision_id = crypto.createHash('sha256')
     .update(`${input.executionIdentity}|${input.requirementSha}|${digest}`)
@@ -783,6 +783,20 @@ export function resolveFidelityRoutingDecision(input: FidelityRoutingInput): Fid
 
 export const FIDELITY_INTENT_SCHEMA_VERSION = '2.0';
 
+/**
+ * plan c8e5b3f1 t1：需求来源裁判——`goal_manifest`=goal 模式（preflight vision policy 收紧重建）；
+ * `explicit_cli`=手动阶段驱动显式 `--requirement(-file)`（解析结果 trim 非空）；`intent_fallback`=
+ * 手动路径仅靠宽泛意图文本兜底（README/笔记/spec.md），**不**具备权威需求语义。
+ * 字段省略=旧版 doc（legacy 兼容，不判 corrupt、也不解锁 derive.requirement）；在场但枚举非法
+ * → 判 corrupt（半写/篡改不得被当 legacy 混过去）。`FIDELITY_INTENT_SCHEMA_VERSION` 不 bump。
+ */
+export type RequirementProvenance = 'goal_manifest' | 'explicit_cli' | 'intent_fallback';
+const REQUIREMENT_PROVENANCES = new Set<RequirementProvenance>(['goal_manifest', 'explicit_cli', 'intent_fallback']);
+
+export function isValidRequirementProvenance(v: unknown): v is RequirementProvenance {
+  return typeof v === 'string' && REQUIREMENT_PROVENANCES.has(v as RequirementProvenance);
+}
+
 export interface FidelityIntentSsot {
   schema_version: string;
   inferred_fidelity: FidelityTarget;
@@ -795,6 +809,13 @@ export interface FidelityIntentSsot {
   decision: { source: FidelityDecisionSource; rationale: string; decision_id: string };
   execution_identity: string;
   requirement_sha256: string;
+  /** plan c8e5b3f1 t1：可选——writer 从此永远写；缺字段=旧版 doc（legacy 兼容）。 */
+  requirement_provenance?: RequirementProvenance;
+  /**
+   * plan c4e8a1f7 T2：可选——requirement source 来源列表（项目根相对；与 goal manifest
+   * 同源）。缺字段=旧版 doc（legacy 兼容，不判 corrupt）；在场须为字符串数组。
+   */
+  requirement_source_files?: string[];
 }
 
 export function fidelityIntentSsotPath(projectRoot: string, feature: string): string {
@@ -818,7 +839,34 @@ export function loadFidelityIntentSsot(projectRoot: string, feature: string): Fi
   return s.state === 'valid' ? s.doc : null;
 }
 
+/**
+ * Compatibility-only inspection for the recovery coordinator. Runtime consumers still see these
+ * documents as missing through loadFidelityIntentSsotState/loadFidelityIntentSsot; the raw bytes
+ * are exposed only so a downstream-start goal can route back to the spec owner instead of treating
+ * a receipt-derived decision as an ordinary absent/non-UI SSOT.
+ */
+export function loadInertLegacyFidelityIntentSsot(
+  projectRoot: string,
+  feature: string,
+): FidelityIntentSsot | null {
+  const state = readFidelityIntentSsotState(projectRoot, feature);
+  return state.state === 'valid' && isInertLegacyFidelityDecisionSource(state.doc.decision.source)
+    ? state.doc
+    : null;
+}
+
 function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string): FidelityIntentSsotState {
+  const state = readFidelityIntentSsotState(projectRoot, feature);
+  if (state.state === 'valid' && isInertLegacyFidelityDecisionSource(state.doc.decision.source)) {
+    // Compatibility-read/new-authority-stop: these documents are structurally readable historical
+    // bytes, but exposing them as `valid` would let the receipt-derived selected/effective tiers flow
+    // through every SSOT consumer. Project them onto the existing missing/rebuild path instead.
+    return { state: 'missing' };
+  }
+  return state;
+}
+
+function readFidelityIntentSsotState(projectRoot: string, feature: string): FidelityIntentSsotState {
   const p = fidelityIntentSsotPath(projectRoot, feature);
   if (!fs.existsSync(p)) return { state: 'missing' };
   try {
@@ -839,6 +887,13 @@ function loadFidelityIntentSsotStateInner(projectRoot: string, feature: string):
       typeof doc?.decision?.decision_id !== 'string' || !/^[0-9a-f]{16}$/i.test(doc.decision.decision_id) ||
       typeof doc?.execution_identity !== 'string' || !doc.execution_identity.trim() ||
       typeof doc?.requirement_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(doc.requirement_sha256) ||
+      // plan c8e5b3f1 t1：requirement_provenance 在场但枚举非法 → corrupt（半写/篡改不得当 legacy）；
+      // 缺字段=旧版 doc，按 legacy 兼容不判 corrupt（不 bump schema_version）。
+      (doc.requirement_provenance !== undefined && !isValidRequirementProvenance(doc.requirement_provenance)) ||
+      // plan c4e8a1f7 T2：requirement_source_files 在场但形状非法 → corrupt；缺字段=legacy 兼容。
+      (doc.requirement_source_files !== undefined &&
+        (!Array.isArray(doc.requirement_source_files) ||
+         doc.requirement_source_files.some((f) => typeof f !== 'string' || !f.trim()))) ||
       // clamp 关系：clamped=true 须携合法 reason；false 不得携（半改写即 corrupt）
       (doc.clamped === true && doc.clamp_reason !== 'no_vision_ocr_available' && doc.clamp_reason !== 'no_vision_no_ocr') ||
       (doc.clamped === false && doc.clamp_reason !== undefined) ||
@@ -858,7 +913,13 @@ export function writeFidelityIntentSsot(
   projectRoot: string,
   feature: string,
   d: FidelityRoutingDecision,
-  ids: { executionIdentity: string; requirementSha: string },
+  ids: {
+    executionIdentity: string;
+    requirementSha: string;
+    requirementProvenance: RequirementProvenance;
+    /** plan c4e8a1f7 T2：可选来源列表（fidelity-intent SSOT 不建第二份图片清单） */
+    requirementSourceFiles?: string[];
+  },
 ): string {
   const p = fidelityIntentSsotPath(projectRoot, feature);
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -874,6 +935,11 @@ export function writeFidelityIntentSsot(
     decision: d.decision,
     execution_identity: ids.executionIdentity,
     requirement_sha256: ids.requirementSha,
+    // plan c8e5b3f1 t1：writer 从此永远写（必填入参，TS 防漏接）。
+    requirement_provenance: ids.requirementProvenance,
+    ...(ids.requirementSourceFiles && ids.requirementSourceFiles.length > 0
+      ? { requirement_source_files: ids.requirementSourceFiles }
+      : {}),
   };
   // post-impl3 P1-4：tmp+rename 原子替换（半写崩溃不得留下截断 SSOT）
   const tmp = `${p}.${process.pid}.tmp`;
@@ -900,6 +966,14 @@ export interface CapabilitySnapshot {
   decision_id?: string;
   vision: { verdict: boolean; source: string };
   ocr: { verdict: boolean; source: string };
+  /**
+   * 视觉委托（plan ab072691 t2②）：本 run 冻结的视觉路由三态。
+   * **可选**——旧快照无此键即现状语义（native/blind 由 vision.verdict 决定），
+   * 消费方不得凭空补默认值。
+   */
+  vision_mode?: VisionMode;
+  /** delegated 时的 provider 身份（诚实披露；native/blind 无此键） */
+  visual_provider?: { adapter: string; model: string };
   created_at: string;
 }
 
@@ -939,6 +1013,17 @@ export function loadCapabilitySnapshot(projectRoot: string, feature: string): Ca
       typeof doc?.created_at !== 'string' || !doc.created_at.trim() ||
       !doc.vision.source.trim() || !doc.ocr.source.trim()
     ) return null;
+    // plan ab072691 t2②：可选键 shape 校验——**在场才校验**（旧快照无键=现状语义，
+    // 不得凭空补默认）。形状坏掉的委托记录不能被当成有效委托，整份快照拒收。
+    const mode = (doc as { vision_mode?: unknown }).vision_mode;
+    if (mode !== undefined && mode !== 'native' && mode !== 'delegated' && mode !== 'blind') return null;
+    const vp = (doc as { visual_provider?: unknown }).visual_provider;
+    if (vp !== undefined) {
+      if (!vp || typeof vp !== 'object' || Array.isArray(vp)) return null;
+      const row = vp as { adapter?: unknown; model?: unknown };
+      if (typeof row.adapter !== 'string' || !row.adapter.trim()) return null;
+      if (typeof row.model !== 'string' || !row.model.trim()) return null;
+    }
     return doc;
   } catch {
     return null;
@@ -976,6 +1061,45 @@ export function loadSpecMarkdown(projectRoot: string, feature: string): string |
   const p = featureFilePath(projectRoot, feature, path.join('spec', 'spec.md'));
   if (!fs.existsSync(p)) return null;
   return fs.readFileSync(p, 'utf-8');
+}
+
+/**
+ * 意图文本收集（含 phase-driven 回退）：collectRequirementIntentText 只读 goal-run
+ * manifest——逐阶段驱动路径（无 goal-runs）恒空串，正是覆盖缺口的实体。回退源：
+ * feature 根目录需求文档（*.md/*.txt，产物投影 visual-debt.md 除外）+ spec.md，
+ * 各自过 dereferenceRequirementDocs（同源解引用，勿 fork）。
+ *
+ * plan f3a8c6d2 t5a：由 check-spec.ts 下沉至此（三个依赖 collectRequirementIntentText /
+ * dereferenceRequirementDocs / loadSpecMarkdown 本就都在本文件），使 capability-resolution
+ * 的 derive.visual-reference 可复用同源收集器而不反向依赖 check 脚本。check-spec.ts 保留
+ * 同名 re-export，既有消费方（fidelity-intent-init）零改动。
+ */
+export function collectIntentTextWithPhaseFallback(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel: string,
+): string {
+  const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
+  if (goalText.trim()) return goalText;
+  const parts: string[] = [];
+  const featRoot = path.join(projectRoot, featuresDirRel, feature);
+  const EXCLUDE = new Set(['visual-debt.md']);
+  try {
+    if (fs.existsSync(featRoot)) {
+      for (const ent of fs.readdirSync(featRoot, { withFileTypes: true })) {
+        if (!ent.isFile() || EXCLUDE.has(ent.name) || !/\.(md|txt)$/i.test(ent.name)) continue;
+        try {
+          parts.push(fs.readFileSync(path.join(featRoot, ent.name), 'utf-8'));
+        } catch { /* 单文件失败跳过 */ }
+      }
+    }
+  } catch { /* ignore */ }
+  const specMd = loadSpecMarkdown(projectRoot, feature);
+  if (specMd) parts.push(specMd);
+  if (parts.length === 0) return '';
+  return parts
+    .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
+    .join('\n\n');
 }
 
 export function loadHandoffDocFromFeature(projectRoot: string, feature: string): Record<string, unknown> | null {
@@ -1060,15 +1184,15 @@ export function resolveRefElementsDenominator(
   return { elements: doc.elements, source: 'disk' };
 }
 
-/** pixel_1to1：ref-elements disposition=defer 须对应 fidelity_deferrals 且 human_signed */
+/**
+ * Legacy API name retained for callers/tests. Under a strict pixel contract every
+ * ref-element defer is unresolved; human_signed/signed_by never authorize it.
+ */
 export function findUnsignedRefElementDefers(
   refDoc: RefElementsDoc,
   deferrals: FidelityDeferralEntry[],
-  opts?: { requireExplicitSigner?: boolean },
+  _opts?: { requireExplicitSigner?: boolean },
 ): string[] {
-  const signedIds = new Set(
-    deferrals.filter(d => isHumanSignedDeferral(d, opts)).map(d => d.element_id.toLowerCase()),
-  );
   const declaredIds = new Set(deferrals.map(d => d.element_id.toLowerCase()));
   const violations: string[] = [];
   for (const el of refDoc.elements) {
@@ -1076,14 +1200,14 @@ export function findUnsignedRefElementDefers(
     const lower = el.element_id.toLowerCase();
     if (!declaredIds.has(lower)) {
       violations.push(`${el.element_id}（ref-elements defer 未登记 fidelity_deferrals）`);
-    } else if (!signedIds.has(lower)) {
-      violations.push(`${el.element_id}（fidelity_deferrals 未 human_signed）`);
+    } else {
+      violations.push(`${el.element_id}（strict pixel contract 不允许 defer；legacy 人签无效）`);
     }
   }
   return violations;
 }
 
-/** P0 视觉元素 id 前缀/关键词（defer 须人类签字） */
+/** P0 视觉元素 id 前缀/关键词（strict contract 下 defer 必须保持未闭合） */
 export const P0_VISUAL_ELEMENT_HINTS = [
   'search_bar',
   'search',
@@ -1141,6 +1265,9 @@ export function resolveUiRelevanceForRun(
   return detectUiRelevantRequirement(requirement);
 }
 
+/** 参考图受支持扩展名（与声明面统一，review 裁决：png/jpg/jpeg/webp——不含 bmp，
+ * 避免"发现但不能合法声明"的永久假分母）。OCR 预扫、source sibling 扫描与 ux-reference
+ * 回退共用一份枚举。 */
 const OCR_PRESCAN_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
 function listImageFilesInDir(absDir: string): string[] {
@@ -1154,6 +1281,10 @@ function listImageFilesInDir(absDir: string): string[] {
   } catch {
     return [];
   }
+}
+
+function listSiblingImageFilesInDir(absDir: string): string[] {
+  return listImageFilesInDir(absDir);
 }
 
 /**
@@ -1187,32 +1318,65 @@ function extractExistingRequirementPathRefs(requirement: string, projectRoot: st
 }
 
 /**
- * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
- * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
- * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
- * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
- * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ * plan c4e8a1f7 T2：**单一 bounded 参考图发现集合**（全消费面共享的期望分母）。
+ * 语义冻结：
+ *   1. 需求文本中可解析的显式项目图片（既有 extractExistingRequirementPathRefs 语义）
+ *      UNION
+ *   2. 项目内 requirement source 各**直接父目录**的一层受支持图片（非递归）
+ *   3. canonical path 去重 + 确定性排序
+ *   4. 仅当并集为空才 fallback 到 feature `ux-reference/`
+ * inline requirement（无 sources）不触发 sibling 扫描；项目外 source 只读正文、不扫描其
+ * sibling。返回绝对路径数组。
  */
-export function discoverReferenceImagesForOcrPrescan(
+export function resolveRequirementReferenceImages(
   projectRoot: string,
   feature: string,
   requirement: string | undefined,
+  opts?: { requirementSourceFiles?: string[] },
 ): string[] {
   const found = new Set<string>();
   if (requirement) {
     for (const abs of extractExistingRequirementPathRefs(requirement, projectRoot)) {
       if (OCR_PRESCAN_IMAGE_EXTENSIONS.has(path.extname(abs).toLowerCase())) {
-        if (fs.statSync(abs).isFile()) found.add(abs);
+        if (fs.existsSync(abs) && fs.statSync(abs).isFile()) found.add(abs);
         continue;
       }
       for (const img of listImageFilesInDir(abs)) found.add(img);
     }
+  }
+  // 项目内 source 直接父目录一层扫描（项目外 source 不扫描）。
+  const projectRootAbs = path.resolve(projectRoot);
+  for (const src of opts?.requirementSourceFiles ?? []) {
+    const srcAbs = path.isAbsolute(src) ? src : path.resolve(projectRoot, src);
+    if (!srcAbs.startsWith(projectRootAbs + path.sep)) continue; // 项目外：只读正文不扫描
+    const parentDir = path.dirname(srcAbs);
+    for (const img of listSiblingImageFilesInDir(parentDir)) found.add(img);
   }
   if (found.size === 0) {
     const uxRefDir = featureFilePath(projectRoot, feature, 'ux-reference');
     for (const img of listImageFilesInDir(uxRefDir)) found.add(img);
   }
   return [...found].sort();
+}
+
+/**
+ * E0③（codex 采纳的参考图发现规则）：首次 spec invoke 前 spec.md / visual_handoff.
+ * authoritative_refs 尚不存在，不能复用既有"从 spec 收集图片"的路径。deterministic
+ * pre-scan 顺序：①requirement 文本中锚定 features_dir 的显式目录/文件路径引用 → 该目录下
+ * 图片文件；②回退 feature 既有 ux-reference/ 目录；③扫不到图源 → 空数组（调用方据此跳过
+ * OCR 预跑，绝不造假分母）。返回绝对路径，按文件名排序（确定性，供幂等 OCR 落盘用）。
+ * plan c4e8a1f7 T2：委托共享发现集合（正文显式 ∪ source 直接父目录一层；仅空集回退
+ * ux-reference）——与 capability/refs receipt/prompt 同一分母，不另实现第二套。
+ */
+export function discoverReferenceImagesForOcrPrescan(
+  projectRoot: string,
+  feature: string,
+  requirement: string | undefined,
+  opts?: { requirementSourceFiles?: string[] },
+): string[] {
+  return resolveRequirementReferenceImages(projectRoot, feature, requirement, {
+    requirementSourceFiles: opts?.requirementSourceFiles,
+  });
 }
 
 /** ocr-toolkit.ts 的 OcrWord/OcrLine 同型（profile 侧真实签名——bbox 为 [x,y,w,h] 归一化，
@@ -1294,6 +1458,7 @@ export function resolveOcrAvailableForRun(
   projectRoot: string,
   profileDir: string,
   adapterName: string | undefined,
+  identity?: import('./multimodal-probe').CanaryExecutionIdentity,
 ): boolean {
-  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName);
+  return probeProfileOcrAvailable(profileDir) || readCanaryOcrCapableSignal(projectRoot, adapterName, identity);
 }

@@ -76,16 +76,40 @@
 
 - **严重等级**: BLOCKER
 - **评估方法**:
-  1. 从问题清单中**抽样** 5-10 条问题（优先选择 BLOCKER 和 MAJOR 级别）
-  2. 对每条抽样问题：
+  1. **未关闭的 BLOCKER/MAJOR 必须逐条全验**（它们会作为可修缺陷候选驱动自动回退
+     coding——一条幻觉 CR 就会驱动改正确的代码，抽样不够）；MINOR/INFO 可抽样 5-10 条
+  2. 对每条验证问题：
      a. 验证「涉及文件」路径是否在上下文源代码中存在
      b. 验证「问题描述」是否与实际代码匹配——阅读对应源代码，确认问题确实存在
      c. 验证「严重程度」评级是否合理（对照 review-rules.yaml 中的分级标准）
   3. 若发现某条问题是误报（代码实际上是正确的但被标记为问题），标记为误报
-  4. 误报率计算：误报数 / 抽样数
+  4. 误报率计算：误报数 / 验证数
      - 误报率 ≤ 10%: PASS
      - 误报率 10%-30%: WARN
      - 误报率 > 30%: FAIL
+  5. **逐条裁决必须同时以机器可读块输出**（责任阶段路由消费——只有 confirmed 的问题
+     才能生成回退候选；无此块=全部问题视为未验证，零候选）。在报告正文追加：
+
+     ```issue-verification
+     - issue: CR-001
+       verdict: confirmed
+       evidence: SelectBankCardPage.ets | 补 onDisappear/shouldDismiss 复位状态机
+     - issue: CR-002
+       verdict: refuted
+       evidence: OpenCardFlow.ets | 消费 upsertCard 的 duplicated 字段并提示
+     ```
+
+     verdict 取值：`confirmed`（打开源码确认问题真实存在）/ `refuted`（误报）/
+     `unclear`（无法判定）。**只列你真正打开源码验证过的问题**；未验证的不列
+     （宁缺——unclear 与缺席都不产生候选）。
+     `evidence` **必填，格式＝`<涉及文件名> | <该行修复建议原文>`**：
+     ①涉及文件名（如 `SelectBankCardPage.ets`）；
+     ②**原样复制**问题清单里这一行的「修复建议」（无该列时复制「问题描述」）——
+     必须逐字照抄，不要改写、概括或只写关键词。
+     原因：它用于识别"上一轮 verifier 产物被当成本轮证据"。只写文件名不够（同一文件的
+     问题可能已经完全换了）；只写相似短语也不够（「修复下拉菜单状态机错误」与
+     「修复短信验证状态机错误」是两个缺陷）。**照抄不全的条目一律不采信**，该问题会
+     留在 review 要求重新验证——这是刻意的保守设计，不会误驱动改码。
 
 ### 检查 3: 修复建议可操作性 (fix_recommendation_actionable)
 
@@ -141,7 +165,7 @@
   3. 对于每条问题，判断其分类是否能对应到 `coding-rules.yaml` 中的具体规则：
      - "分层违规" → layer_compliance / inter_module_dependency
      - "接口不一致" → interface_signature_consistency
-     - "资源引用" → resource_integrity
+     - "资源引用" → coding_compile（真实构建为唯一真源；静态 resource_integrity 已退役）
      - "命名规范" → naming_conventions
      - "硬编码" → no_hardcoded_strings
      - "逻辑错误" → business_logic_correctness
@@ -357,3 +381,29 @@ verification_result:
 3. 问题准确性验证（检查 2）要求你阅读实际源代码来验证问题是否真实存在
 4. 对每一项检查，请给出**具体的代码/文档证据**（文件路径 + 关键引文），而非泛泛而谈
 5. BLOCKER 与结论一致性（检查 5）是 BLOCKER 级别——结论必须与问题统计匹配
+
+---
+
+## 终态块（唯一版本化结论出口 · 必填）
+
+> **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
+> 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
+> 那才是本轮要审的材料（可达上百 KB，刻意不走传输面）。
+>
+> 结束时，回答的**最后**必须且只能出现一个终态块，`verifier_subject_id` **逐字回显**
+> request 里的 `subject_id`（不得改写、不得截断、不得自行编造）：
+>
+> ```
+> <!-- maison-verifier-result:v1 -->
+> verifier_subject_id: <request.subject_id，64 位小写 hex>
+> verdict: PASS | FAIL
+> blocker_count: <BLOCKER 级 FAIL 数量，整数>
+> <!-- /maison-verifier-result:v1 -->
+> ```
+>
+> `verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
+>
+> 若你收到的**不是**这样一份 request JSON（例如被手抄成模板、只给了 feature/phase，
+> 或 JSON 前后夹带了额外指令）：照常输出审查结论，并在正文显著位置说明
+> 「未收到合法 verifier request，本次报告不可入闭环，请调用方把
+> `summary.verifier_request` 指向的 JSON 整段重投」。**不要自行编造 subject。**

@@ -7,6 +7,45 @@
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
 
+### contracts.yaml 文件引用闭包（Breaking）
+
+- plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、`navigation.config_files`、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
+- `contracts.files` 是唯一授权集合。文件已存在、与 spec asset 字节相同、由生成器产出或在其他字段出现，都不会自动获得 coding/UI scope 授权；框架也不会写 reference graph/manifest sidecar。
+- 升级已有 feature 时，若 `contract_file_reference_closure` 失败，请回到 plan，把诊断中的确需交付路径逐项加入 `contracts.files`，重新生成/关闭 contracts 并重跑 plan harness。不要在 coding 阶段扩写 contracts。
+
+#### navigation 段的 canonical 形态与 `registration_points`（Breaking，消费者需动手两处）
+
+- **navigation 只保留 `config_files`**：3.0 canonical 的 navigation 文件字段唯一——
+
+  ```yaml
+  navigation:
+    config_files:
+      - 02-Feature/CardFeature/src/main/resources/base/profile/main_pages.json
+      - 02-Feature/CardFeature/src/main/resources/base/profile/route_map.json
+  ```
+
+  语义是"导航注册/配置文件清单"，由真实消费者（hmos-app `page_registration`）塑形；每条路径同样必须列入 `contracts.files`。其它承载文件路径的 navigation 键——含嵌套在 `pages[]`/`routes[]` 之类容器里的形态——一律判 `unconsumed_file_field` BLOCKER。
+- **删除 `registration_points`**：该字段全仓无任何消费者，不是旧形态、不做别名归一。请从 contracts.yaml 删除；若确需声明注册文件，改写为 `navigation.config_files`。
+- 阶段归属：plan 闭包只裁决路径安全/规范化与 `contracts.files` 授权，**允许**声明 coding 将新建的文件；物理存在性由 coding `file_completeness` 裁决（已授权但未建 → plan PASS、coding FAIL）。同一轮里 hmos-app `page_registration` 也会如实 FAIL（不再以 SKIP 冒充成功）。
+
+### 无人值守恢复与人签质量通行证退役（Breaking）
+
+- `confirmed_by`、`human_confirmed`、`human_signed`、`visual-confirm` 以及 fidelity/P0 skip/
+  conditional review/behavior switch/source mutation/flow contract/runtime fidelity 等旧 confirmation
+  receipt 不再影响 verdict、phase advance 或 completion。旧字段和旧文件仍可读取用于审计，但新 writer
+  不再生成；不要批量重写宿主历史产物。
+- 旧 `AWAITING_HUMAN_REVIEW` run 仅兼容读取。恢复时会按当前机器事实重投影为责任阶段 repair、
+  `DEFERRED_CAPABILITY_MISSING`、optional advisory 或明确诊断；不能通过补签/resume 把 FAIL 改成 PASS。
+- strict 视觉目标缺少可用 provider 能力时在内容 agent spawn 前进入 capability defer；provider 已声明
+  支持但当前 evidence 缺失、stale、伪造、乱序或错误 target 时，testing FAIL 并重跑，不能伪装成缺能力。
+- P0 device flow 的 runtime fidelity 改由 hash-bound 的逐 step runtime observation 证明；旧 attestation
+  receipt 无效。crop/bbox 改由 source/bbox/tool/hash 确定性复算；旧人名字段无效。
+- 下游误写上游产物不会首次永久 HALT：runner 保留字节但失效旧信任，记录 owner/path/pre-post hash，
+  然后通过唯一 `backtrack_to_phase` 事务回 owner 全量重验并重签。只有持续并发、不可读、预算耗尽或
+  不收敛才进入精确 integrity/fuse 终止。
+- `confirmed_by_user` 等普通选择字段改名为中性 `selection_status`/`selection_source`。这类菜单仍可作为
+  attended UX，但不是质量凭证；无人值守运行必须从 manifest/config/默认策略得到确定结果。
+
 1. **Summary 升级到 1.2**：phase checker 现在输出机械推导的 `assurance`、`capability_resolutions` 与 versioned closure commit。旧 summary 会被 `assess@1` 标为 `legacy_unverified`，必须重跑对应 harness，不能沿用旧 PASS 推进。
    - 存量 `1.0/1.1` 或缺 `closure_commit` 的 full-track 产物须重跑 phase harness，并让 finalizer/receipt 重新提交 closure；只手改版本号无效。
    - 缺 `assurance` 读取为 `unknown`；它不能满足 `minimum_assurance`。没有最低保证约束时仍会如实呈现，不静默猜成 `full`。
@@ -22,7 +61,7 @@
 - 先前 closed 的 fallback phase 也必须重跑/重新闭环：evidence 绑定项目内 applicability 依赖和每一次实际 source attempt，缺失的高优先级 artifact 后来出现会使旧 closure stale。framework contract 仅以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance，升级 framework 不会使消费者历史 feature stale。带上游 producer 指针的裁剪只有在阻塞下游 `on_missing: fail` core capability 时才形成 producer 定向的 `pruned` assess gap。
 2. **Skill contract 成为运行时输入**：结构化 inputs、capabilities、produces 与 checks 由 `skills/feature/<skill>/contract.yaml` 声明；写边界与 closure 仍由既有 policy/evidence 机制负责。自定义 Skill/phase 需要在对应 Skill 目录补 contract，否则一致性门禁失败。
 3. **`next.json` 是投影**：`assess@1` 从 summary/closure/evidence/goal 指纹重算 gap 与一个 recommendation；不要写脚本直接编辑 `next.json`。
-4. **Goal 只有一个调和循环**：interactive 与 detached 都执行 `assess → authorize → one phase → reassess`。`goal-mode` Skill 不再维护下一阶段表。
+4. **Goal 只有一个调和循环**：interactive 与 detached 都进入同一个 `GoalPhaseRuntime`，仅 executor transport（宿主 callback / adapter spawn）不同。runtime 独占 `assess → authorize → one phase → gate/verdict → reassess`；`goal-mode` Skill、宿主与 executor 不再维护下一阶段表或私有 gate。
 5. **用户模式改为“有人在场 / 无人值守”**：明确意图不再二次确认，歧义使用 registry `goal.run_mode`；`--detach` 恒为无人值守。
 
 Adapter 作者须按需补 root `goal_capability`：
@@ -49,6 +88,55 @@ goal_capability:
 既有 manifest、events、progress、trust ledger 和 `run_id` 不做格式转换；session↔detached handoff 继续使用同一账本。dry-run 不在 `.dry` 外写 `next.json`。
 
 相关说明：[Skill 契约](docs/concepts/skill-contracts.md)、[调和循环](docs/concepts/reconcile-loop.md)、[Goal 运行手册](docs/operations/goal-mode-runbook.md)。
+---
+
+### verifier 能力化、短 request 投递与 summary 1.3（Breaking，plan a9d4e7c2）
+
+**verifier 不再是每阶段必跑的仪式，而是按能力启用。** 一次解析 workflow 的 `verifier_prompt`
+声明、feature track、evidence policy 与 adapter 的 `verifier_capability`，得到三态之一：
+
+- `disabled`：**缺席即为零**——不生成 `ai-prompt.md`、不生成 request、summary 不写
+  `verifier_subject_id` / `verifier_request` / `ai_prompt`，闭环也不要求 verifier 证据。
+  lite track 的 change/coding/exit、balanced 档的非保留 phase、profile 禁用的 phase、以及
+  workflow 未声明 `verifier_prompt` 的 phase 都在此列。**磁盘上残留的旧 prompt/request/report
+  永远不会重新激活已关闭的能力，也不需要你去清理。**
+- `enabled`：生成 `verifier.request.<subject>.json`，正常执行 verifier。
+- `blocked`：policy 声明 `required` 但当前 adapter 没有登记该模式的 verifier 能力。
+  **脚本门禁照常完整执行**——脚本 FAIL 如实报真实失败；脚本 PASS 才报
+  `INCOMPLETE / verifier_provider_unavailable`。
+
+**adapter 侧需要动手的一处**：`agents/<adapter>/adapter.yaml` 新增 `verifier_capability`
+（`transport` / `publisher` / `modes`）。claude 与 codeagent 已随发布件登记 `interactive`。
+自建 adapter 若确实具备 SubagentStop 发布链路且已实测，可照此登记；**未登记 = 无能力**，
+`full × interactive` 下会被判 `blocked`（这是如实结论，不是回归）。
+
+**投递协议改为短 request JSON（Breaking）。** 旧规则「把 `ai-prompt.md` 全文原样投递给 Task」
+已删除：真实样张可达 177KB，往返有损且机器块之外零校验。新规则——
+
+1. 跑 `harness-runner`；启用时它会打印并记录 `summary.verifier_request`；
+2. 把那份 `verifier.request.<subject>.json` 的**完整 JSON 正文**作为 Task prompt 投给
+   `subagent_type=verifier`（不要投 `ai-prompt.md` 全文、不要手抄或改写字段、不要前后夹带说明）；
+3. verifier 按其中的 `prompt_path` 自行 Read 原件，结束时回显 `subject_id`；
+4. 跑 `check-receipt.ts`；
+5. 关环用 `harness-runner.ts --sync-closure --phase <phase> --feature <feature>`。
+
+**第 5 步的口径变了**：`subject` 现在**按实际审查材料寻址**（`prompt_sha256` 直接哈希磁盘
+`ai-prompt.md` 字节，没有任何 canonical 投影）。因为组装出的 prompt 内嵌时间戳与整份 script
+report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifier 证据随之失效。`--sync-closure`
+不重跑脚本 harness、也不重发 request，正是为关环这一步存在的入口。
+
+**summary 升级到 1.3。** `ai_prompt` / `verifier_subject_id` / `verifier_request` 成为**条件字段**
+（仅 `enabled` 时在场）；`1.2` 仍可读，作为上一代闭环域。
+
+**存量产物怎么办：**
+
+- 已 closed 且 evidence manifest 仍 fresh 的阶段（含 1.2 代）走 grandfather，**零动作**；
+- 3.0.0 生成但**未闭环**的 subject/ai-prompt 不再继续发布：只需**重跑当前 phase 的 harness**
+  （分钟级）拿到新 request，再按上面五步走完即可。**不回退业务代码、不重写上游产物、
+  不从 spec 重走、也不要求提交。**
+- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/receipt →
+  下游因 freshness 变 stale → 从下游继续。不清空 feature。
+
 ---
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
@@ -94,22 +182,29 @@ goal_capability:
    `review/reports/review-closure-attestation.json`）。review 后任何产品源码变更（含
    contracts 未登记的新文件/新模块）→ testing FAIL，回跑 review 重审。
 2. **goal run 状态枚举重命名**：成功侧不再产出裸 `COMPLETED`——新枚举
-   `CHAIN_SLICE_COMPLETED`（仅链切片语义）/`AWAITING_HUMAN_REVIEW`（存在待人工事项封顶）/
+   `CHAIN_SLICE_COMPLETED`（仅链切片语义）/
    `DEFERRED_CAPABILITY_MISSING`（强 1:1 意图+缺视觉能力 preflight 终态）。feature 级完成
    只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`）——旧 run 的
-   `COMPLETED` 事件仅保留读取兼容。
+   `COMPLETED` 与 `AWAITING_HUMAN_REVIEW` 事件仅保留读取兼容，新 writer 不再生成。
 3. **headless 决议账本改 JSONL**：goal 环境阶段闭环强制
    `<phase>/headless-assumptions.jsonl`（schema + registry 完整性 BLOCKER 校验，见
    user-confirmation-ux §9.3）；markdown 降为人读投影。
 4. **P0 AC 结构化 checkpoint 强制**：存在 P0 device 交互 AC 的 feature，acceptance.yaml
    须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
    ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
-   P0 用例 skip 须逐条 `p0_skip_waiver` confirmation receipt，否则 testing FAIL 且 goal
-   首触 halt（`await_human_p0_skip`）。
+   P0 用例 skip 继续 fail-closed：旧 `p0_skip_waiver` confirmation receipt 只读且不 gate。
+   缺口属于既有 `explicit_skip_tc_ids` 登记时，
+   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测；
+   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器
+   `failure_kind`/`blocking_class` 信号的外部阻塞才走既有 DEFERRED。
+   `await_human_p0_skip` 主动首触 halt 已退役，仅保留历史事件读取兼容。
+   此外，每条 `ut_layer=device|both` 的 P0 AC 必须由至少一条 P0 TC 覆盖；把相关 TC
+   降为 P1/P2 会由既有 `acceptance_to_test_case` 原地 BLOCKER，不得借降档退出 P0 分母。
+   真机命令含 `--skip-assert-expected` 时，报告用例表仍须忠实投影 trace 的逐条状态，
+   但测试结论只能声明「不达标」或「有条件达标」，不得声明「达标」。
 
-配套：confirmation receipt 消费面已落地（`confirmation-trust-registry.json` 预置信任锚；
-签发体系为后继 change `confirmation-credential-issuance`——落地前所有降硬门禁授权不可用，
-相关 feature 封顶 `AWAITING_HUMAN_REVIEW`，属诚实现状）。
+配套：旧 confirmation receipt/trust registry/credential issuance 机制已退役；安全、法律、密钥、
+付款、发布等真正外部权限仍走各自的 external authorization 边界，但不能改写质量事实。
 
 ---
 
@@ -128,25 +223,91 @@ goal_capability:
    `release_readiness`/`completion_status` 投影。1.0 summary 兼容读取，但**不作 1.1
    feature-completion 干净依据**（`summary_schema_current` needs_fix——须当前 gate_fingerprint
    下重跑，防历史假 PASS 重入新状态机）。visual/asset 轴 UNVERIFIED（如盲档视觉未验真）
-   → completion 封顶 `AWAITING_HUMAN_REVIEW`、`release_readiness=BLOCKED`——headless 可继续
-   执行但 FEATURE_COMPLETED 不可达，收口走人工视觉验收 receipt（`human_visual_acceptance`，
-   rubric 冻结每维 ≥4/5，只清主观项不洗确定性 FAIL）。
+   → `release_readiness=BLOCKED`；可靠能力缺失时投影 capability-missing/deferred，能力具备但证据
+   缺失或无效时 FAIL/回修。legacy `human_visual_acceptance` 不再清偿视觉债务，用户反馈进入
+   correction/successor run 并由机器证据重验。
 3. **盲档素材纪律升级**：`effective_image_input=none` 时 `acquisition: crop` 须满足可信
-   消费态（resolved_path+provenance 三来源+真人 confirm）否则 spec BLOCKER
+   消费态（resolved_path + source/bbox/tool/hash provenance 并可确定性复算）否则 spec BLOCKER
    （`blind_crop_prohibition`）；物化进模块 media 的 brand-critical 素材空白/纯色/损坏 →
    coding BLOCKER **档位无关**（`asset_materialization_sanity`）；占位必须为可见语义占位
    （text_avatar/插画框/SymbolGlyph），空白 PNG 一律非法。素材缺供给走 `spec/asset-request.md`
    问人清单（registry `vision.asset_request`）。
 4. **UI 需求 spec 前置意图闸扩面**：逐阶段驱动路径（非 goal preflight）同样执行档位三态
-   检测（`fidelity_capability_pregate`）——强 pixel 意图+盲模型 → BLOCKER（DEFERRED 语义，
-   出路=换模型/人签 `fidelity_downgrade` receipt/改需求）；含混意图+参考图 → 人工定档。
-   **盲宿主上每条带设计截图的需求都会多一次确认，属设计内成本**（vision.blind_tier 动线）。
+   检测（`fidelity_capability_pregate`）——强 pixel 意图+盲模型 → capability defer，出路是配置
+   可用 provider 或以新 requirement/correction 改变目标；不能用 receipt 降档。含混意图按冻结输入和
+   确定性默认策略解析，不再设置 `vision.blind_tier` 人签动线。
 
-新增非 breaking 能力：盲档可实例化 UI kit（`profiles/hmos-app/ui-kit/` 九 blocks +
-scaffolder 四级目录解析 + 声明→源码→uitree 三段闭环）；视觉债务 SSOT（visual-debt.json+md，
-open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feedback.json，两类信号分立，
-盲模型的"文本化眼睛"）；设备渲染可见性 calibrate 观察节点（enforce 升级待实测回灌）。
+新增非 breaking 能力：视觉债务 SSOT（visual-debt.json+md，open/closed/accepted 三态审计
+分立）；确定性视觉反馈（visual-feedback.json，两类信号分立，盲模型的"文本化眼睛"）；
+设备渲染可见性 calibrate 观察节点（enforce 升级待实测回灌）。
 宿主复验规程见 `docs/operations/blind-host-replay-runbook.md`。
+
+> **⚠ 上述批次曾引入的「盲档可实例化 UI kit」已于 3.0.0 收口前整体撤销**，见下节。
+
+
+### 3.0.0：撤销强制 Maison UI kit（Breaking，plan e6b3f8d2 t3）
+
+**为什么撤销**：宿主 run 20260825T011950Z-eddfb2 实锤——framework 把一套具体 ArkUI 组件
+实现升级成了**强制产品契约**，并要求宿主在 `framework.config.json` 里指定 vendoring 落点。
+对守规 agent 这是结构性不可满足：spec 强制声明 kit block、plan 冻结的 contracts 不含 kit、
+coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就判「越界」，双输烧尽重试预算。
+**产品组件归属唯一归宿主：framework 不得规定宿主源码形态。**
+
+1. **删除的机制**（这些能力/配置/入口不再存在）：
+   - `profiles/hmos-app/ui-kit/**`（九个 ArkUI 组件模板 + block 清单）与 scaffolder、
+     三段闭环 check、实例锚点模块及其单测；
+   - `framework.config.json` 的 `paths` 下 **kit 目标目录配置项**与其四级解析
+     （显式配置 → common 层推导 → architecture 推导 → halt）。**存量配置里该键留着无害
+     （多余键不报错），但已完全不被读取，建议删除**；
+   - ui-spec 组件节点的 `block` 字段（**schema 已删除：继续声明会被判非法字段**）；
+   - 全部 `ui_kit_*` check id 与 `ui_kit_conformance` blocking class；
+   - 真机缺陷的**锚点漂移**分类（历史 evidence 里的该分类字符串读侧仍可解析，但不再驱动回修）。
+2. **selector 契约回归裸 ui-spec 节点**：测试计划的 `by_id` 必须是 ui-spec 声明的
+   **组件节点 id**、`by_text` 必须与 ui-spec `text` 精确等值。`maison:<feature>:<screen>:<node>`
+   实例锚点语法与其后缀契约已删除。
+   **存量影响**：带 `maison:` 前缀 selector 的测试计划、以及产品代码里注入的同款元素 id，
+   **须按 ui-spec 节点 id 重新生成**；不重新生成的条目会被判 `test_contract`
+   （selector 无 spec 依据），不会被误判成产品缺陷。
+3. **页面身份判据换源（行为等价，精度边界更明确）**：视觉采集判断「应用错页」不再靠
+   `maison:` 组件 id 前缀，改为复用既有 `visual-diff-nav` 的 **screen identity 声明**：
+   只取各屏 `all_of`/`any_of` 的**正向 id**、按**精确 id** 判在场（`none_of` 不作所有权
+   证明——它只是「目标页禁入锚点」，不保证该锚属于本应用）。三态语义冻结：目标屏正向 id
+   命中=`matched`；目标未命中但**其他已确认屏**（`proposed=false`）正向 id 命中=
+   `mismatched`（确定性错页）；`proposed=true` 的未确认候选不作应用页面所有权证据。系统树
+   无任何已确认 id（或工程只声明了 text/route）=`probe_failed`（证据不足，不作内容
+   正证据）。**建议**：给每个 P0/golden 目标屏都配至少一个 id 锚点，否则错页只能判 probe_failed。
+4. **盲档结构地板改由「产品组件所有权链」承接，并收紧为硬地板**：
+   ui-spec P0 节点 → `plan/visual-parity.yaml` 的 `components[].contract_component` →
+   `contracts.yaml` 的 `components[].name` → 该组件 `file` ∈ `contracts.files`。
+   这三项**不受 `coding.visual_parity_enforcement=warn|reachable|off` 降级**
+   （复用既有 `visual_parity_coverage`，不新增 check id）：
+   - P0 节点缺 `contract_component` → BLOCKER FAIL（含 `enforcement=off`）；
+   - P0 mapping 引用的组件在 `contracts.components` 中不存在 → BLOCKER FAIL
+     （数组为空时自然无法满足；旧实现反而跳过存在性检查）；
+   - P0 mapping 引用组件的 `file` 未列入 `contracts.files` → BLOCKER FAIL。
+   非 P0 mapping 与 assets/tokens/结构相似度等**视觉质量项照旧遵守 enforcement**。
+   **存量影响**：默认 `warn` 的宿主若此前只写了 P0 节点却没做组件映射，plan 阶段会开始
+   BLOCKER——补齐 visual-parity/contracts 映射即可，framework 不规定组件如何实现。
+5. **npm script 改名**：`ui-kit:placeholders` → **`asset:placeholders`**
+   （素材占位能力保留、与 kit 解耦）；`ui-kit:scaffold` 删除。
+6. **保留**：`nav_bar` / `list_row` / `sheet_scaffold` 等词继续作为 ui-spec 的**通用结构
+   语义 `type`**，不绑定任何具体组件实现。
+
+
+---
+
+## Goal run 出生与基线统一（3.0.0）
+
+- 新 run 必须同时具有 `manifest.json` 与唯一 `run_created`；manifest-only/重复或损坏出生事件
+  现在判 `CREATION_INCOMPLETE`，不可 resume/attach/supervisor 接管，但不占用同 feature 的
+  HALTED/PARTIAL successor 位置。
+- 含 `coding`/`ut` 的 chain 在出生时冻结 `manifest.run_base_sha`。goal UI/UT 门禁不再读取
+  `HARNESS_DIFF_BASE_REF`；旧 `coding-base.json` 只给没有 `run_created` 的合法 legacy run 读取。
+- `run_base_sha` 同 run 不可 override/rebase。自动 successor 继承 lineage baseline；祖先无可信
+  基线时须由操作者在 goal runtime 外显式执行
+  `--supersede <old-run-id> --rebaseline-to <当前 exact HEAD>` 创建新问责边界。
+- 旧 run 无需回填 `run_created` 或 `run_base_sha`，resume 也不会自动补造。若 legacy anchor 已损坏，
+  请保留证据并走显式 rebaseline successor，不要编辑旧 manifest/events 洗白。
 
 ---
 
@@ -174,8 +335,8 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    attestation 非 contradicted/evidence_gap；goal 态两张回执还须**属当前 invocation**
    （`MAISON_GOAL_ATTEMPT` 精确匹配——旧 attempt 的互洽回执对不可为本 attempt 产物终签）。
    存量自签 vl_multimodal 在下次 spec harness
-   即被拒（出路：真人 human_confirmed 逐屏确认 / 有 provenance 能力的 adapter 重签 /
-   盲档地板交付）。新增 spec 检查 `vision_output_counterevidence`（U+FFFD 等强证据 →
+   即被拒（出路：有 provenance 能力的 adapter 重签，或按 capability-missing/deferred 诚实投影；
+   legacy `human_confirmed` 不再放行）。新增 spec 检查 `vision_output_counterevidence`（U+FFFD 等强证据 →
    BLOCKER + blind-safe 策略降级；缺证 → WARN 同样使签名失效；`source_ref` 须解析到
    已知 reference id 才算映射；**反证缺席最多记 `unverified_clean`——verified attestation
    须正向 provenance（OCR 流在场且全部 UI 文本正向匹配参考文本）+ 终签链全绑定共同铸造**，
@@ -185,71 +346,23 @@ open/closed/accepted 三态审计分立）；确定性视觉反馈（visual-feed
    事件锚**（runner 每个 spec invocation 结束后清理并重签发回执，文件 sha256 写入 goal-run
    事件；无事件锚/hash 失配的回执一律拒——agent 伪造回执文件不再可行）、refs 回执须逐张
    覆盖**当前** authoritative 参考图（hash 核对；无参考图=无验证对象不可签）。
-4. **goal 态源码变更授权链（S4）**：ut/testing 期产品源码 drift 由 runner 统一对账；
-   授权只认三源（真人 confirmation receipt——须过 workspace 外 trust registry 签名链 /
-   runner policy 注册表 / `manifest.pre_authorized_mutations` 且 run_start 冻结 hash 匹配），
-   配额逐 receipt、删除源文件恒不可授权。存量 agent 自写 `approved_by`（如
-   `headless-testability-setter-seam`）一律失效。**当前窗口：diff 内容级 change-kind 分类器
-   未落地，自动回退整体禁用——receipt 全合规也 HALT 上抛人工裁决（receipt 作为裁决输入）；
-   分类器落地（tasks 4.2b）后恢复 authorized_backtrack 自动路径。**
+4. **goal 态源码变更责任链（S4，3.0.0 替代旧授权链）**：ut/testing 不拥有产品源码；
+   发现实际改写时，runner 记录路径、owner 与 pre/post hash，作废本 invocation 及旧 closure，
+   保留字节为未受信输入并自动 `backtrack_to_phase:coding` 全量重验。旧 confirmation receipt、
+   runner policy、`manifest.pre_authorized_mutations` 或 agent 自写 `approved_by` 均不能把非 owner
+   写入洗白；删除文件同样按 write violation 处理。只有重复/不稳定改写、不可读或预算/指纹
+   熔断才诚实终止，人工 resume 不重置质量结论。
 5. **goal 态 visual ledger 单写者（S5）**：agent 自跑 harness 不再直写
    visual-rounds ledger（写 `goal-runs/<runId>/intermediate-rounds.journal.jsonl`
    proposal——**按 goal run 隔离**，attempt 序号跨 run 重号不再互相污染；runner 顺序
    重放重算后收编；`disposition: journaled` 新枚举）；交互态直写不变。attempt 内中途
    重跑 harness 不再产生孤儿行误熔断（20260718 halt 直接触发器根治）。
-6. **vision 账本行链 + 单写者 + legacy 迁移（S3 收口）**：
-   `vision/artifact-attestations.jsonl` 与 `vision/policy-downgrades.jsonl` 从此**行级
-   hash 链**（seq/prev_row_hash/row_hash；未链/断链行按 corrupt fail-closed 剔除）且
-   goal 态**单写者**（agent 自跑 harness 只算不写，gate harness 收口落盘；agent 调用
-   窗口内的账本写入被 runner 快照括号检出 → `vision_ledger_tampered` halt）。**存量
-   宿主升级**：首次 goal run 启动时自动迁移旧无链账本——原文件 quarantine 为
-   `*.legacy-<ts>.bak`（events 记录原 sha256），downgrade/contradicted 行保守继承，
-   **旧 verified/supersede 不自动升级**（verified 须当前 spec gate 重新铸造、supersede
-   须 runner 重新签发）；mixed/不可解析文件不自动修复（保持 corrupt fail-closed，转
-   人工处置）。完整性锚两级：feature 级 authenticated head
-   `~/.maison/goal-checkpoints/vision-heads/<projectHash>/<feature>.json`（跨 run 连续性，
-   fresh run/resume 都先验）+ per-run checkpoint
-   `~/.maison/goal-checkpoints/<projectHash>/<feature>/<runId>.json`（env
-   `MAISON_GOAL_CHECKPOINT_DIR` 可覆盖，该 env 不进 agent 环境；另绑
-   pre_authorized_mutations 规范化哈希——停机窗口改 manifest 扩权 resume 即拒）。
-   **强烈建议部署配置 `MAISON_HMAC_GOAL_CHECKPOINT`**（MAISON_HMAC_ 前缀模型，agent env
-   恒剥离）：配置后损坏/验签失败一律 fail-closed；**未配置时 UI 相关 goal run 不产出
-   clean completion（CHAIN_SLICE_COMPLETED 封顶 AWAITING_HUMAN_REVIEW）**——writer
-   authenticity 是完成态前置条件。**resume 时信任锚缺失将 halt**：带
-   `--ack-unverified-ledgers` 为弱 ack（须 events anchor 可比对且通过，终态仍封顶人工
-   复核）；提供 `--ack-receipt <受信 confirmation receipt>`（action=vision_ledger_ack）
-   为强 ack。**配置/更换 HMAC 密钥后**旧 head/checkpoint 会判 invalid——用
-   `--reseal-receipt <受信 confirmation receipt>`（action=vision_trust_reseal，绑定当前
-   账本+旧 head/旧 checkpoint 字节 hash+当前授权子集+frozen manifest hash）重铸信任锚，
-   弱旗标不适用。信任锚 env（MAISON_HMAC_*/MAISON_TRUST_REGISTRY/
-   MAISON_GOAL_CHECKPOINT_DIR，**大小写不敏感匹配**）不会进入 agent、hvigor/ohpm、hylyre、
-   **整条 Python 准备链（解释器探测/import/venv/pip）**及 **HDC/设备工具** spawn 等可执行
-   宿主代码的子进程。MAC'd append-only 高水位链
-   `vision-heads/<projectHash>/<feature>.hwm.jsonl` 检测**非协调回滚/意外损坏/非尾部改**
-   （诚实边界：同权限域，协调回放+同步截断 HWM 尾部不可密码学阻止；真正 hardened
-   anti-rollback 需独立锚——broker/单调计数器，pending）。换钥/首配密钥后旧 HWM 会 invalid，
-   用 `--reseal-receipt`（现同时绑定旧 HWM 字节 hash）重铸，reseal 会事务化 quarantine 旧
-   HWM 链（**reseal journal v2**：MAC + rename 前记录计划备份名/旧三锚/receipt 绑定，quarantine 同步
-   sha 复验 copy 备份 head/checkpoint；崩溃后启动自动按内容恢复——**三锚全部**恢复到旧字节并
-   复验后才算回滚（任意崩溃窗口原 receipt 都可复用）、补 commit 须**四门全过**（head 对当前
-   账本快照验真 + checkpoint 存在/MAC/世代咬合 + HWM 与 head 精确等值——不完整提交不 commit
-   而是回滚，保留恢复资格）、备份被篡改 fail-closed；非终态事务在场时新 reseal 会被拒，先等
-   启动恢复）。启动时 head 世代与 HWM 高
-   水位**双向严格等值**：head 超前（上次锚提交未完成的残留态）同样 fail-closed
-   （vision_hwm_incomplete_commit，人工核查后 --reseal-receipt 重铸），不再静默续跑。**head 现声明 hwm_declared
-   （schema 1.1）**：声明后整个 HWM 文件被删=启动 fail-closed（恢复走 reseal receipt）；旧
-   1.0 head+缺 HWM 首次启动会落 vision_hwm_bootstrap 事件后自动建链。**checkpoint schema
-   1.2**：逐字段身份必填；旧 1.1 checkpoint（无逐字段身份）在聚合 hash 与当前 manifest 身份
-   相等时一次性自动迁移，不等则须 `--override-manifest` 显式确认（不静默 rebase）。**未配
-   HMAC 密钥的 resume 现须显式 ack**（弱旗标可续、终态照旧封顶；强 receipt 免打扰），且
-   pre_run_manifest 预授权源降级为不可机器采信（须 human receipt）。manifest **非授权字段**
-   （requirement/chain/budget/allowed_tools/fidelity/预授权）
-   在停机窗口被改会被身份哈希漂移检测（**锁内、副作用前**执行）拦截——合法变更走 `--override-manifest`
-   （整体）或 `--override-start`/`--override-end`（**仅授权对应字段**，裸旗标不放行无关字段
-   漂移）；`--fidelity`/`--fidelity-receipt` 经 **transition 前置校验**（fresh/resume 都执行：
-   枚举硬校验、降档须 fidelity_downgrade receipt 验真，垃圾值/无效凭证=BLOCKER）后仅精确授权
-   对应档位字段；authorized transition 会 rebase 持久化，下次 resume 不复报。run_id 格式升级为
-   `YYYYMMDDThhmmssZ-<6hex>`（随机后缀，防同秒跨工程碰撞）。
+6. **vision 信任状态退役（当前版本）**：
+   `vision/artifact-attestations.jsonl`、`vision/policy-downgrades.jsonl` 及其 hash-chain、
+   supersede、迁移、checkpoint/head/HWM、`vision_lineage` 已全部退出运行时。升级宿主
+   **无需迁移或清理**；旧文件即使损坏也不会再被读取、写入或影响路由/恢复。当前视觉能力
+   只看本次 probe/capability receipt，`vl_multimodal` 只核本次 capability/reference receipts
+   与当次反证结果。旧文件可按普通无消费者文件人工删除。
 
 ---
 
@@ -354,6 +467,27 @@ git submodule update --remote framework
 ---
 
 ## 版本变更记录
+
+### 宿主运行边界真值（Windows CLI 选择 · requirement 来源 · 视觉证据可达 · CodeAgent 放行 · v3.0.0）
+
+**适用范围**：升级到修复三次宿主 run（0.138 模型兼容 400 / guardian error 5 / inline canary 误拒签）并放行 CodeAgent 的 framework 版本。
+
+**行为摘要（非破坏性为主，一个可选新字段）**：
+
+1. **Windows 无头 CLI 选择真值**：解析器不再跨 PATH 目录全局偏好 `.exe`；按 `where.exe`/PATH 目录原顺序取首个明确受支持且可 spawn 的形态（`.cmd/.bat` 经 cross-spawn；无扩展名文件必须为原生 PE（MZ）头像，POSIX/ELF shim 不再仅凭存在入选）。若此前依赖“后置 `.exe` 胜出”，实际执行身份可能变化——以 `adapter_probe` 事件的 `resolved_binary` 字段为准核对。
+2. **probe/invoke 同一绝对路径**：adapter version probe、视觉金丝雀与正式 phase invoke 复用同一 session 解析结果；`adapter_probe` 事件新增 `resolved_binary` / `resolved_binary_kind` / `shadowed_candidates`（诊断）。旧 CSV/报告解析器如按旧字段消费不受影响（仅新增字段）。
+3. **正式 phase invoke 硬失败早停**：child spawn race、guardian containment 建立失败（CreateProcess/Assign/Resume，`[maison-guardian]` + ASCII marker 绑定投影为 `spawn_error`）、CLI/config 参数不兼容、Codex 结构化 `status=400 + invalid_request_error + requires a newer version of Codex`，命中即 `phase_halt(adapter_cli_hard_failure)`（external，零内容 retry、不跑 harness、不伪归因 `spec_file_exists`）。普通内容失败（含无 guardian 诊断的 exit 2）行为不变。
+4. **`--requirement-file` 来源保留（新增可选 manifest 字段）**：fresh manifest 新增可选 `requirement_source_files`（项目根相对列表），条件纳入身份哈希；resume 只读冻结值；successor 继承并在显式 file 增量时去重追加。**旧 manifest 无该字段不受影响**（身份哈希条件包含，resume 不误判漂移）。参考图发现改为单一共享集合：需求正文显式图片 ∪ 项目内来源文件直接父目录一层图片（canonical 去重排序），仅并集为空才回退 `ux-reference/`；capability/OCR 预扫/prompt/refs receipt 生产与验证共用同一分母，spec 漏声明任一发现图片将 FAIL。
+5. **fidelity-intent SSOT 可选 `requirement_source_files`**：旧 doc 缺字段按 legacy 兼容（不判 corrupt）；在场须为字符串数组。
+6. **inline canary 判卷统一 SSOT**：结构化 adapter 读纯 `agent-events.jsonl` 终态、非结构化 adapter 只消费本次 invoke 的 stdout 与退出事实（不再读含 prompt echo 的混合 `agent-output.log`）；能力与可审计性分轴——`tool_event_provenance=none`（如 Codex）即使 canary=tool_read 也不得签 refs receipt/`vl_multimodal`，产物诚实写 `verified: unverified`（best-effort WARN 可继续、hard contract FAIL，门槛不降）。
+7. **CodeAgent 放行**：headless 全权限支持集加入 `codeagent`（复用 `--dangerously-skip-permissions`/stdin/stream-json/Read parser）；Chrys 保持拒绝。真实 CLI flag 错误由统一 hard-CLI 早停承接。
+
+**实例升级 checklist**：
+
+1. 升级 framework 后重跑 goal 前，可在 dry-run 观察 `adapter_probe.resolved_binary` 确认 Windows 下实际选中的 CLI 形态与预期一致（多版本共存合法，PATH 首选项即执行身份）。
+2. 若使用 `--requirement-file`，新 run 的 manifest 会多出 `requirement_source_files`；**不要手工删除**——它是参考图发现的锚点（来源文件直接父目录一层）。
+3. CodeAgent 首次接入建议先 `codeagentcli --help` 记录版本，再做最短 Goal-mode smoke；如遇真实 unknown flag，请保留 stderr 证据（框架会一次停机并据实追加签名，不预猜）。
+4. 旧 run `--resume` 无需迁移：无 `requirement_source_files` 字段时发现语义回退到旧两级输入（正文显式路径 + ux-reference 回退），行为不变。
 
 ### Skill 层 scope 重构（`project/` + `feature/` · 去数字前缀 · v2.3.0）
 

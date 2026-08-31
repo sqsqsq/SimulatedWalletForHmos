@@ -20,11 +20,12 @@ import {
   resolveProfileNameFromRaw,
 } from './config-field-merger';
 import { ensureCanonicalGitignore } from './canonical-gitignore';
+import { updateLocalConfig } from './framework-local-config';
+import type { FrameworkLocalConfig } from './framework-local-config';
 import {
-  loadLocalConfig,
-  writeLocalConfig,
-  type FrameworkLocalConfig,
-} from './framework-local-config';
+  formatVisualProviderSupportList,
+  isVisualProviderSupported,
+} from './adapter-catalog';
 import type { InitTask, InitTaskPlan } from './init-task-planner';
 import type { TaskDecision } from '../init-orchestrate';
 import { applyLegacySkillBridgeCleanup, type BackupSession } from './legacy-skill-bridge-cleanup';
@@ -69,6 +70,12 @@ export interface InitExecutionContext {
   /** personal setup */
   activeAdapter?: string;
   devecoInstallPath?: string;
+  /**
+   * plan ab072691 t1③：只读视觉 provider 的用户选择（registry `setup.visual_provider`
+   * 收集后由 Skill 注入）。**agent 不手写 framework.local.json**——写盘唯一走
+   * record-visual-provider 任务的 updateLocalConfig。缺省=用户跳过，本轮 blind。
+   */
+  visualProvider?: { adapter: string; model: string };
   confirmAnswers?: Record<string, boolean>;
   /** CREATE 模式 ensure-config：整文件 JSON（由 Skill 在 S2 收集后注入） */
   configWritePayload?: Record<string, unknown>;
@@ -341,7 +348,6 @@ function syncTemplateTarget(
         'goal-mode',
         norm,
         resolved.skillMdRepoRel,
-        adapter.name,
       ),
       'utf-8',
     );
@@ -430,30 +436,6 @@ function runGlobalPhases(harnessRoot: string, projectRoot: string): string {
   return `全局 phase 完成: ${notes.join(', ')}（projectRoot=${projectRoot}）`;
 }
 
-function mergeLocal(
-  projectRoot: string,
-  patch: Partial<FrameworkLocalConfig>,
-): FrameworkLocalConfig {
-  const existing = loadLocalConfig(projectRoot);
-  const base: FrameworkLocalConfig = existing ?? { schema_version: '1.0' };
-  const next: FrameworkLocalConfig = {
-    schema_version: '1.0',
-    ...(base.agent_adapter ? { agent_adapter: base.agent_adapter } : {}),
-    ...(base.toolchain ? { toolchain: { ...base.toolchain } } : {}),
-  };
-  if (patch.agent_adapter) next.agent_adapter = patch.agent_adapter;
-  if (patch.toolchain?.devEcoStudio) {
-    next.toolchain = {
-      ...(next.toolchain ?? {}),
-      devEcoStudio: {
-        ...(next.toolchain?.devEcoStudio ?? {}),
-        ...patch.toolchain.devEcoStudio,
-      },
-    };
-  }
-  return next;
-}
-
 function assertAdapterMaterialized(projectRoot: string, adapterName: string): string {
   const { adapter } = loadInspectorEnv({ projectRoot, harnessRoot: '', plan: {} as InitTaskPlan }, adapterName);
   if (!adapter.entryFile) {
@@ -537,8 +519,22 @@ export function executeInitTask(
         confirm: false,
       });
       if (legacyLocal) {
-        writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, legacyLocal));
-        clearFrameworkConfigCache();
+        // 无损回写（t1）：只定向合并 `agent_adapter` 与 `toolchain.devEcoStudio` 两个目标字段，
+        // 不得展开整个 legacyLocal 覆盖顶层——否则会删掉 cur.toolchain.probe 与既有 hvigorBin。
+        updateLocalConfig(ctx.projectRoot, (cur) => {
+          const next: FrameworkLocalConfig = { ...cur };
+          if (legacyLocal.agent_adapter) next.agent_adapter = legacyLocal.agent_adapter;
+          if (legacyLocal.toolchain?.devEcoStudio) {
+            next.toolchain = {
+              ...cur.toolchain,
+              devEcoStudio: {
+                ...cur.toolchain?.devEcoStudio,
+                ...legacyLocal.toolchain.devEcoStudio,
+              },
+            };
+          }
+          return next;
+        });
         return { message: `${mergeMsg}；已外迁 personal 字段到 framework.local.json` };
       }
       return { message: mergeMsg };
@@ -632,8 +628,7 @@ export function executeInitTask(
     case 'record-adapter': {
       const active = ctx.activeAdapter?.trim();
       if (!active) throw new Error('record-adapter 需要 executionContext.activeAdapter');
-      writeLocalConfig(ctx.projectRoot, mergeLocal(ctx.projectRoot, { agent_adapter: active }));
-      clearFrameworkConfigCache();
+      updateLocalConfig(ctx.projectRoot, (cur) => ({ ...cur, agent_adapter: active }));
 
       const prereqs = resolveAllPersonalPrerequisites(ctx.projectRoot);
       const ensureResult = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites: prereqs });
@@ -654,6 +649,44 @@ export function executeInitTask(
 
       return { message };
     }
+    case 'record-visual-provider': {
+      // plan ab072691 t1③：只读视觉 provider 的**机器写盘**入口（agent 不手写 JSON）。
+      // 未注入 visualProvider 时保持未配置、不写 local；这不是质量授权，严格需求是否
+      // 可继续由 requirement/capability 门禁裁决。
+      const sel = ctx.visualProvider;
+      const adapter = sel?.adapter?.trim();
+      const model = sel?.model?.trim();
+      if (!adapter && !model) {
+        return {
+          message:
+            '未提供 visualProvider，保持未配置（不写入 local）；严格视觉需求将由 capability 门禁诚实 defer。',
+        };
+      }
+      if (!adapter || !model) {
+        // 半个身份既冻结不了也回放不了：任务 failed，让 agent 重新收集，而不是写半条记录。
+        throw new Error(
+          'record-visual-provider 需要 visualProvider.{adapter,model} 成对提供' +
+          `（缺 ${adapter ? 'model' : 'adapter'}）`,
+        );
+      }
+      const fwRoot = frameworkRootFromCtx(ctx);
+      if (!isVisualProviderSupported(fwRoot, adapter)) {
+        // 资格判据唯一来自 adapter catalog 的 visual_provider 完整声明。
+        // 这里 failed 即「请重选或跳过」，框架**不**替用户改选、**不** fallback。
+        throw new Error(
+          `record-visual-provider: adapter ${adapter} 暂未接入视觉 provider。` +
+          `当前支持：${formatVisualProviderSupportList(fwRoot)}。` +
+          '请重新选择，或跳过并以 blind 模式继续。',
+        );
+      }
+      updateLocalConfig(ctx.projectRoot, (cur) => ({
+        ...cur,
+        vision: { ...cur.vision, visual_provider: { adapter, model } },
+      }));
+      return {
+        message: `已写入 framework.local.json vision.visual_provider=${adapter}:${model}`,
+      };
+    }
     case 'detect-deveco': {
       const report = detectScan();
       if (report.recommended?.status === 'ok' && report.recommended.installPath) {
@@ -669,13 +702,16 @@ export function executeInitTask(
       if (!ctx.devecoInstallPath?.trim()) {
         return { message: '未提供 devecoInstallPath，跳过写入 local' };
       }
-      writeLocalConfig(
-        ctx.projectRoot,
-        mergeLocal(ctx.projectRoot, {
-          toolchain: { devEcoStudio: { installPath: ctx.devecoInstallPath.trim() } },
-        }),
-      );
-      clearFrameworkConfigCache();
+      updateLocalConfig(ctx.projectRoot, (cur) => ({
+        ...cur,
+        toolchain: {
+          ...cur.toolchain,
+          devEcoStudio: {
+            ...cur.toolchain?.devEcoStudio,
+            installPath: ctx.devecoInstallPath!.trim(),
+          },
+        },
+      }));
       return { message: '已写入 framework.local.json toolchain.devEcoStudio.installPath' };
     }
     default:

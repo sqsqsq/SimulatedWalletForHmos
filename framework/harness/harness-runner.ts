@@ -47,25 +47,21 @@ import {
   deriveSummaryVerdictLattice,
   projectCompletionStatus,
   projectReleaseReadiness,
+  resolveEffectiveVerdict,
+  SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
+  SUMMARY_SCHEMA_VERSION_CURRENT,
   validateSummaryV11,
 } from './scripts/utils/quality-axes';
 import { createHash } from 'crypto';
 import { receiptDirPath } from './config';
 import {
   annotateAssetTriState,
-  applyVisualAcceptance,
   assetDomainDebtRevision,
   countBlockingDebt,
   deriveVisualDebt,
   loadVisualDebtEx,
-  validateRubricPolicy,
   writeVisualDebt,
-  type VisualAcceptancePayload,
 } from './scripts/utils/visual-debt';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './scripts/utils/confirmation-receipt';
 import { computeGateFingerprint } from './scripts/utils/gate-fingerprint';
 import {
   commitVisualRound,
@@ -77,7 +73,8 @@ import {
   intermediateRoundsJournalPath,
 } from './scripts/utils/intermediate-rounds-journal';
 import { runFrameworkIntegrityPreflight } from './scripts/utils/framework-integrity';
-import { runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
+import { deleteEnvKeyCaseInsensitive, runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
+import { validateAttendedGoalContext } from './scripts/utils/attended-goal-context';
 import {
   resolveFidelityContextFromFeature,
   resolveEffectiveFidelityContext,
@@ -86,7 +83,9 @@ import {
   loadCapabilitySnapshot,
   deriveEffectiveAdapterImageInput,
   effectiveAssetAcquisitionMode,
+  resolveUiRelevanceForRun,
 } from './scripts/utils/fidelity-shared';
+import { reviewVisionForMode } from './scripts/utils/visual-provider-identity';
 import {
   resolvePaths,
   featureFilePath,
@@ -110,13 +109,44 @@ import {
 import {
   ensurePersonalSetup,
 } from './scripts/utils/personal-setup-gate';
+import { buildSummaryRepairCandidates } from './scripts/utils/repair-candidates';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
+import {
+  applyFrozenDeviceEnv,
+  buildTestingTargetKindCap,
+  runPhaseEntryDeviceGate,
+} from './scripts/utils/device-readiness-gate';
+import { phaseRequiresDevice } from './scripts/utils/phase-device-requirement';
+import {
+  defaultProcessProbe,
+  reclaimManagedDevice,
+  registerManagedDeviceCleanup,
+} from './scripts/utils/device-session';
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
+import {
+  loadVerifierEvidenceForSubject,
+  loadVerifierReportTextOrNull,
+} from './scripts/utils/verifier-evidence';
+import {
+  buildVerifierRequest,
+  computePromptSha256,
+  renderVerifierRequest,
+  verifierRequestFilename,
+} from './scripts/utils/verifier-request';
+import {
+  resolveVerifierPlan,
+  workflowVerifierPrompt,
+  type VerifierPlan,
+} from './scripts/utils/verifier-plan';
+import { resolveVerifierCapability } from './scripts/utils/adapter-catalog';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
+  MAISON_GOAL_RUNNER_ENV,
+  applyGoalVisualProviderEnv,
+  MAISON_GOAL_MODEL_PIN_ENV,
   mergeAndWritePhaseState,
   syncPhaseStateOnReceiptPassStrict,
   tryValidateReceipt,
@@ -141,13 +171,21 @@ import {
   listWorkflowPhases,
   type WorkflowSpec,
 } from './workflow-loader';
-import { resolveFeatureTrack, resolvePhaseChain, resolvePhaseClosureSource } from './scripts/utils/runtime-policy';
+import {
+  DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES,
+  resolveEvidencePolicy,
+  resolveFeatureTrack,
+  resolvePhaseChain,
+  resolvePhaseClosureSource,
+  type RuntimeContext,
+} from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
 import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
 import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
+  collectBlockedCapabilityFacts,
   resolveCapabilityReport,
   type CapabilityResolutionReport,
 } from './scripts/utils/capability-resolution';
@@ -160,41 +198,118 @@ import {
 import * as YAML from 'yaml';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
-import { resolveEffectiveVisionContext, sha256File } from './scripts/utils/effective-vision-context';
+import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
+import { writeReceiptScaffold } from './scripts/utils/receipt-scaffold';
 
-/** S3：phase harness 侧 policy meet（codex P0-1d：异常 fail-closed 默认盲——异常默认
- * visual 会让非多模态模型重回视觉链路）。四轮 review P1：ui-spec 已存在时以当前 hash 参与
- * meet——unverified 产物（含 unverified_clean）即令无独立降级行也不得 visual；文件在但
- * hash 不可算 → blind-safe。
- *
- * plan d8c5f3a7 T1-3（legacy/fallback 兼容）：补 **run 身份透传**。本函数只在
- * **capability-snapshot 缺失**时才被消费（见下方 `capSnap ? … : …`——snapshot 在场时
- * live meet 完全不参与），故它服务的是 legacy feature / 交互式 / 未经 initializer 的
- * phase-driven 场景。此前不传 runId，goal 探测的 canary 在此**永远**不可采信
- * （`run_probed 不跨 run`）→ 同一份实测证据在 goal gate harness 与本路径上结论相反。
- * 现从 `MAISON_GOAL_RUN_ID` 取运行身份：goal 态 gate harness 由 runner spawn 且带该 env，
- * 与写 canary 时的 run 身份同源 → 可采信；纯 phase-driven 无该 env → 保持保守降级
- * （那是**设计内**的分歧：跨执行上下文的实测证据本就不该被另一次执行直接采信）。 */
-function resolvePolicyVisualForHarness(projectRoot: string, feature: string): boolean {
+/** capability-snapshot 缺失时的当前执行能力回落；产物文件不参与判定。 */
+function resolveCurrentVisualForHarness(projectRoot: string, feature: string): boolean {
   try {
-    let artifactHashes: string[] | undefined;
-    const uiSpecAbs = uiSpecAbsPath(projectRoot, feature);
-    if (fs.existsSync(uiSpecAbs)) {
-      const h = sha256File(uiSpecAbs);
-      if (!h) return false;
-      artifactHashes = [h];
-    }
     const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+    const modelPin = process.env[MAISON_GOAL_MODEL_PIN_ENV]?.trim();
     const vctx = resolveEffectiveVisionContext({
       projectRoot,
       feature,
       ...(goalRunId ? { runId: goalRunId } : {}),
-      ...(artifactHashes ? { artifactHashes } : {}),
+      ...(modelPin ? { modelPin } : {}),
     });
-    return vctx.effective_policy.mode === 'visual';
+    return vctx.vision_capability.verdict === 'tool_read' || vctx.vision_capability.verdict === 'native';
   } catch {
     return false;
   }
+}
+
+export type HarnessFidelityContextFields = Pick<
+  CheckContext,
+  | 'fidelityTarget'
+  | 'declaredFidelityTarget'
+  | 'fidelityClamped'
+  | 'fidelityClampReason'
+  | 'acceptanceStrictness'
+  | 'assetAcquisitionMode'
+  | 'effectiveAssetAcquisitionMode'
+  | 'fidelityDeferrals'
+  | 'adapterMultimodal'
+  | 'adapterImageInput'
+>;
+
+/**
+ * Resolve the exact fidelity fields consumed by CheckContext. Keeping this as one exported helper
+ * lets chain-level tests prove that recovery rebuilt the on-disk SSOT actually read by the harness,
+ * rather than merely asserting the goal preflight's in-memory routing result.
+ */
+export function resolveHarnessFidelityContextFields(input: {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  adapter: string;
+  profileDir: string;
+  phaseIsGlobal: boolean;
+}): HarnessFidelityContextFields {
+  const mmProbe = resolveContextAdapterImageInput(
+    input.projectRoot,
+    input.frameworkRoot,
+    input.adapter,
+  );
+  const intentSsot = input.phaseIsGlobal
+    ? null
+    : loadFidelityIntentSsot(input.projectRoot, input.feature);
+  const capSnap = input.phaseIsGlobal
+    ? null
+    : loadCapabilitySnapshot(input.projectRoot, input.feature);
+  const fidelityCtx = input.phaseIsGlobal
+    ? {
+        fidelityTarget: 'semantic_layout' as const,
+        declaredFidelityTarget: 'semantic_layout' as const,
+        fidelityClamped: false,
+        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
+        assetAcquisitionMode: 'approximate' as const,
+        effectiveAssetAcquisitionMode: 'approximate' as const,
+        fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
+      }
+    : (() => {
+        const projection = resolveFidelityContextFromFeature(input.projectRoot, input.feature);
+        const raw = intentSsot
+          ? {
+              ...projection,
+              fidelityTarget: intentSsot.selected_fidelity,
+              assetAcquisitionMode: intentSsot.asset_acquisition_mode,
+              effectiveAssetAcquisitionMode: effectiveAssetAcquisitionMode(
+                intentSsot.selected_fidelity,
+                intentSsot.asset_acquisition_mode,
+              ),
+            }
+          : projection;
+        return resolveEffectiveFidelityContext(raw, {
+          hasVision: capSnap
+            ? capSnap.vision.verdict
+            : mmProbe.supported && resolveCurrentVisualForHarness(input.projectRoot, input.feature),
+          ...(capSnap?.vision_mode
+            ? { reviewVision: reviewVisionForMode(capSnap.vision_mode) }
+            : {}),
+          ocrAvailable: capSnap
+            ? capSnap.ocr.verdict
+            : resolveOcrAvailableForRun(
+                input.projectRoot,
+                input.profileDir,
+                input.adapter,
+              ),
+        });
+      })();
+  return {
+    fidelityTarget: fidelityCtx.fidelityTarget,
+    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
+    fidelityClamped: fidelityCtx.fidelityClamped,
+    fidelityClampReason: fidelityCtx.fidelityClampReason,
+    acceptanceStrictness: intentSsot?.acceptance_strictness ?? 'best_effort',
+    assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
+    effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
+    fidelityDeferrals: fidelityCtx.fidelityDeferrals,
+    adapterMultimodal: capSnap ? capSnap.vision.verdict : mmProbe.supported,
+    adapterImageInput: deriveEffectiveAdapterImageInput(
+      capSnap ? capSnap.vision.verdict : null,
+      mmProbe.imageInput,
+    ),
+  };
 }
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
@@ -204,7 +319,11 @@ import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPat
 // --------------------------------------------------------------------------
 
 const args = minimist(process.argv.slice(2), {
-  string: ['phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request', 'q-requirement', 'q-contract', 'q-code'],
+  string: [
+    'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
+    'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
+    'goal-owner-id', 'goal-owner-epoch',
+  ],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'correction-check', 'adhoc-correction'],
   alias: {
     p: 'phase',
@@ -214,6 +333,55 @@ const args = minimist(process.argv.slice(2), {
     v: 'verbose',
   },
 });
+
+export function bindAttendedGoalContext(input: {
+  projectRoot: string;
+  feature?: string;
+  phase?: string;
+  goalRunId?: string;
+  goalAttemptId?: string;
+  goalOwnerId?: string;
+  goalOwnerEpoch?: string | number;
+  env?: NodeJS.ProcessEnv;
+}): { bound: boolean; runId?: string; attemptId?: string; ownerId?: string; ownerEpoch?: number } {
+  const extraContextPresent =
+    input.goalAttemptId !== undefined || input.goalOwnerId !== undefined || input.goalOwnerEpoch !== undefined;
+  if (input.goalRunId === undefined) {
+    if (extraContextPresent) throw new Error('attended goal 上下文缺 --goal-run-id');
+    return { bound: false };
+  }
+  const runId = input.goalRunId.trim();
+  if (!runId) throw new Error('--goal-run-id 显式给出时不能为空');
+  const attemptId = input.goalAttemptId?.trim() ?? '';
+  const ownerId = input.goalOwnerId?.trim() ?? '';
+  const ownerEpoch = Number(input.goalOwnerEpoch);
+  const context = validateAttendedGoalContext({
+    projectRoot: input.projectRoot,
+    feature: input.feature?.trim() ?? '',
+    runId,
+    phase: input.phase?.trim() ?? '',
+    attemptId,
+    ownerId,
+    ownerEpoch,
+  });
+  const env = input.env ?? process.env;
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_RUN_ID');
+  deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_RUNNER_ENV);
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_ATTEMPT');
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_ATTEMPT_PHASE');
+  deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_GATE_HARNESS');
+  env.MAISON_GOAL_RUN_ID = runId;
+  env[MAISON_GOAL_RUNNER_ENV] = '1';
+  env.MAISON_GOAL_ATTEMPT = attemptId;
+  env.MAISON_GOAL_ATTEMPT_PHASE = context.identity.phase;
+  env.MAISON_GOAL_GATE_HARNESS = '1';
+  // plan ab072691 t5①（返修）：attended 也必须注入 **manifest 冻结的** provider 身份。
+  // 少了这一步，attended gate 会回落去读 framework.local.json——run 中途改个人配置就能
+  // 换掉本 run 的视觉 endpoint，manifest 冻结形同虚设。与 detached runner 共用同一执行器
+  // （成对写、成对清；无 pin 时只清不写）。
+  applyGoalVisualProviderEnv(env, context.manifest.visual_provider_pin);
+  return { bound: true, runId, attemptId, ownerId, ownerEpoch };
+}
 
 // --------------------------------------------------------------------------
 // 帮助信息
@@ -231,6 +399,10 @@ Harness — Spec/Harness 验证工具
   --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
   -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
+  --goal-run-id <run_id>    attended phase context；须与下面三项成组传入
+  --goal-attempt-id <id>    attended attempt identity（来自 phase_execute_request）
+  --goal-owner-id <id>      attended fenced session owner identity
+  --goal-owner-epoch <n>    attended fenced session owner epoch
   -l, --list                列出可用的 Spec 文件
   -v, --verbose             展开全部检查项（默认控制台只打印 FAIL/WARN）
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
@@ -322,6 +494,28 @@ async function main(): Promise<void> {
   const harnessRoot = __dirname;
   const layout = detectRepoLayout(harnessRoot);
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  try {
+    bindAttendedGoalContext({
+      projectRoot,
+      feature: typeof args.feature === 'string' ? args.feature : undefined,
+      phase: typeof args.phase === 'string' ? args.phase : undefined,
+      goalRunId: Object.prototype.hasOwnProperty.call(args, 'goal-run-id')
+        ? String(args['goal-run-id'])
+        : undefined,
+      goalAttemptId: Object.prototype.hasOwnProperty.call(args, 'goal-attempt-id')
+        ? String(args['goal-attempt-id'])
+        : undefined,
+      goalOwnerId: Object.prototype.hasOwnProperty.call(args, 'goal-owner-id')
+        ? String(args['goal-owner-id'])
+        : undefined,
+      goalOwnerEpoch: Object.prototype.hasOwnProperty.call(args, 'goal-owner-epoch')
+        ? String(args['goal-owner-epoch'])
+        : undefined,
+    });
+  } catch (error) {
+    console.error(`[harness] BLOCKER: ${(error as Error).message}`);
+    process.exit(1);
+  }
   const paths = resolvePaths(projectRoot, resolvedFrameworkRoot);
   const specLoader = new SpecLoader(projectRoot, paths.phaseRulesDir, paths.featuresDir, resolvedFrameworkRoot);
   const phaseRulesRel = path.relative(projectRoot, paths.phaseRulesDir).replace(/\\/g, '/');
@@ -498,6 +692,37 @@ async function main(): Promise<void> {
 
   const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
 
+  // ---------------------------------------------------------------------------
+  // verifier 能力解析（plan a9d4e7c2 T1）——**一次解析，全员消费**
+  // ---------------------------------------------------------------------------
+  // 生产端不再无条件装配：Step 4（ai-prompt）与 request 生成都由 plan.mode 门控。
+  // 解析对 interactive 与 goal **都生效**（否则 lite×goal 关不掉无条件装配）；
+  // adapter capability 的 blocked 判定本轮仅 interactive（goal 的发布权责另立）。
+  // 结果**不落 summary 快照**：适用性是随时可重算的判断，不是会漂移的状态。
+  const verifierRuntimeCtx: RuntimeContext = {
+    mode: isGoalOrchestrationEnv() || isAgentSideGoalHarness() ? 'goal' : 'interactive',
+    adapter: fwConfigEarly.agent_adapter ?? 'generic',
+    phase,
+    workflow: fwConfigEarly.active_workflow ?? 'spec-driven',
+    can_prompt_user: false,
+    can_collect_usage: false,
+  };
+  const verifierTrack = resolveFeatureTrack(
+    phaseIsGlobal ? null : loadFeatureTrackDecl(projectRoot, feature),
+  );
+  const verifierPlan: VerifierPlan = resolveVerifierPlan({
+    phase,
+    track: verifierTrack,
+    runtimeMode: verifierRuntimeCtx.mode,
+    policy: resolveEvidencePolicy(verifierTrack, verifierRuntimeCtx, {
+      evidence_profile: fwConfigEarly.evidence_profile,
+    }),
+    workflowVerifierPrompt: workflowVerifierPrompt(workflowSpec, phase),
+    phaseDisabledByProfile: isPhaseDisabledByProfile(phase, resolvedProfile),
+    adapterCapability: resolveVerifierCapability(resolvedFrameworkRoot, fwConfigEarly.agent_adapter),
+    adapterName: fwConfigEarly.agent_adapter,
+  });
+
   // Step 1: 加载 Spec
   console.log('📋 Step 1: 加载 Spec 规约...');
   let phaseRule;
@@ -542,6 +767,97 @@ async function main(): Promise<void> {
     }
   }
 
+  // ==========================================================================
+  // 普通模式设备前置（b3f7d9a2 t2）——排在 Step 2 之前，即**任何设备操作之前**
+  //
+  // 事故（2026-08-17 宿主）：普通模式 UT 撞上锁屏，自动解锁链从未启动。两条根因都在
+  // 这里收口：① 解锁链的目标解析只认 `HARNESS_HDC_TARGET`，而普通模式没人注入它，
+  // hdc 却隐式选唯一在线设备 → 解锁链"不知道对哪台动手"整体跳过；② 普通模式的
+  // `device-policy --check` + 四选一只有 SKILL 文档约束，无进程级门。
+  //
+  // 与 goal 侧共用**同一就绪核心**（ensureDeviceReady），此处只做出口翻译：
+  // 未通过 = 前脚本 fail-fast（打印 guidance + 非零退出，**不调用任何 checker/provider**）。
+  // 通过则把解析到的目标经 deviceEnvFor 注入本进程 env，后续 wake/解锁/bm dump/
+  // install/aa test 全链经 hdcTargetPrefix 共用同一 serial（目标只解析一次）。
+  //
+  // 写 process.env 与 deviceEnvFor 头注"不写全局 process.env"不冲突：那条约束防的是
+  // **长驻的 goal-runner** 跨 phase/run 串 target；此处进程生命周期**就是**单个 phase。
+  // ==========================================================================
+  /**
+   * 模拟器/未知目标的 testing 结论封顶（Step 2 之后与其它 CheckResult 一并入账）。
+   * 在门这里生成、稍后 push——目标分类只有门知道，而 checks 数组要到 Step 2 才存在。
+   */
+  let deviceConclusionCap: CheckResult | undefined;
+  if (phaseRequiresDevice(phase, resolvedProfile)) {
+    {
+      let gate;
+      try {
+        gate = await runPhaseEntryDeviceGate({ projectRoot, phase });
+      } catch (err) {
+        // 策略检查/就绪核心自身执行失败（凭据库不可读、配置损坏…）：与
+        // `device_policy_unset`（正常态）严格区分——必须停止，不得当成"未配置"
+        // 去引导用户重新登记凭据。
+        console.error(`   ✗ 设备策略检查执行失败：${(err as Error).message.replace(/\n/g, '\n     ')}`);
+        process.exit(1);
+      }
+      for (const n of gate.notes) console.log(`   · [device] ${n}`);
+      // **回收登记必须早于任何退出分支**（codex 二轮 P1）：托管模拟器"起来了但没就绪"
+      // （boot 超时/仍锁屏）是**普通、可执行清理的失败路径**，不是 SIGKILL 边界。
+      // 此前把这段放在 `!gate.ok` 之后，那个实例会零凭证泄漏。
+      if (gate.managed) {
+        // 普通模式的设备生命周期**就是本进程**，故身份留在内存、退出即回收，不落
+        // device-session.json（单文件 session + 跨 run 对账是 goal 的模型，normal
+        // 模式没有 run 目录也没有对账方，写了也无人消费）。
+        // **诚实边界**：进程被硬杀（SIGKILL/断电）留下的孤儿实例，普通模式没有兜底
+        // 对账，需用户手动关闭——goal 模式才有下次启动对账那张网。
+        const identity = gate.managed;
+        const serial = gate.target?.serial ?? gate.orphanSerial ?? null;
+        registerManagedDeviceCleanup(() => {
+          const out = reclaimManagedDevice(
+            {
+              schema_version: '1.0',
+              serial,
+              target_kind: 'emulator',
+              started_by_run: `harness-${phase}-${process.pid}`,
+              managed: identity,
+              status: gate.ok ? 'ready' : 'failed',
+              updated_at: new Date().toISOString(),
+            },
+            defaultProcessProbe(),
+          );
+          if (out.action === 'reclaimed') {
+            console.log(`[device] 退出：已回收本次托管启动的模拟器（pid=${out.pid}）`);
+          } else if (out.action === 'refused') {
+            console.error(
+              `[device] 退出：托管模拟器未能回收（${out.reason}）——请手动结束 pid=${identity.pid}`,
+            );
+          }
+        });
+      }
+      if (!gate.ok) {
+        console.error(`   ✗ ${(gate.reason ?? '设备前置未通过').replace(/\n/g, '\n     ')}`);
+        process.exit(1);
+      }
+      if (gate.env) {
+        // **整组原子注入**（codex 二轮 P0 + 三轮 P1）：逐键"不存在才写"会留下继承来的
+        // 陈旧 MAISON_DEVICE_CREDENTIAL_REF（manual 策略下被运行期优先取用 → 自动输 PIN）；
+        // 保留旧 HARNESS_HDC_TARGET 则会在已授权降级后造出"hdc 操作离线真机、门以为是
+        // 模拟器"的目标分裂。规则与理由见 applyFrozenDeviceEnv（提成函数以便行为测试）。
+        applyFrozenDeviceEnv(process.env, gate.env);
+        console.log(`   ✓ 设备目标已解析并注入：${process.env.HARNESS_HDC_TARGET}`);
+      }
+      // 模拟器/未知目标上的 testing **不得冒充真机整体通过**（harness-gates spec）。
+      // 既有封顶判据只在 goal-runner 被消费；普通模式此前根本没有 target kind 可用，
+      // 新门产出后直接复用同一函数，不依赖 agent 自报。
+      if (gate.target) {
+        deviceConclusionCap = buildTestingTargetKindCap(phase, gate.target);
+        if (deviceConclusionCap) {
+          console.log(`   ⚠ [device] testing 结论将被封顶（target_kind=${gate.target.targetKind}，非 physical）`);
+        }
+      }
+    }
+  }
+
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = fwConfigEarly;
@@ -553,7 +869,6 @@ async function main(): Promise<void> {
     | undefined;
   const uiSpecMode = fwConfig.spec?.ui_spec_enforcement as typeof vhMode;
   const vpMode = fwConfig.coding?.visual_parity_enforcement as typeof vhMode;
-  const mmProbe = resolveContextAdapterImageInput(projectRoot, resolvedFrameworkRoot, fwConfig.agent_adapter);
   // E2：能力钳制——全局阶段（catalog/glossary/docs）不涉及 feature UI，固定 semantic_layout
   // 不钳制；feature 阶段按 mmProbe.supported（视觉能力）+ profile OCR 就绪度钳制 desired→effective，
   // 单点收口：全部 19 处 isPixel1to1/fidelityTarget 消费面只读 context.fidelityTarget（此处赋的
@@ -562,44 +877,14 @@ async function main(): Promise<void> {
   // 在场时 selected 档位/素材轴以 SSOT 为准（spec.md Visual Handoff 仅为投影，由
   // check-spec 复核一致性）；缺失（legacy/未初始化）回落投影解析。capability 输入
   // snapshot 优先（v3 P1-4 同源），live policy meet 仍参与（blind-safe 降级只收紧不放宽）。
-  const intentSsot = phaseIsGlobal ? null : loadFidelityIntentSsot(projectRoot, feature);
-  const capSnap = phaseIsGlobal ? null : loadCapabilitySnapshot(projectRoot, feature);
-  const fidelityCtx = phaseIsGlobal
-    ? {
-        fidelityTarget: 'semantic_layout' as const,
-        declaredFidelityTarget: 'semantic_layout' as const,
-        fidelityClamped: false,
-        fidelityClampReason: undefined as 'no_vision_ocr_available' | 'no_vision_no_ocr' | undefined,
-        assetAcquisitionMode: 'approximate' as const,
-        effectiveAssetAcquisitionMode: 'approximate' as const,
-        fidelityDeferrals: [] as CheckContext['fidelityDeferrals'],
-      }
-    : (() => {
-        const projection = resolveFidelityContextFromFeature(projectRoot, feature);
-        const raw = intentSsot
-          ? {
-              ...projection,
-              fidelityTarget: intentSsot.selected_fidelity,
-              assetAcquisitionMode: intentSsot.asset_acquisition_mode,
-              effectiveAssetAcquisitionMode: effectiveAssetAcquisitionMode(
-                intentSsot.selected_fidelity,
-                intentSsot.asset_acquisition_mode,
-              ),
-            }
-          : projection;
-        return resolveEffectiveFidelityContext(raw, {
-          // post-impl2 P0-1（消费面只认同一 run 快照）：snapshot 在场即为唯一能力真值
-          //（live policy 收紧由 runner 侧原子重建 snapshot+SSOT 后再被本处消费——消费面
-          // 不得自行叠加 meet，否则「快照 visual、live 盲」会让 hard pixel 静默降档绕过
-          // DEFER）。snapshot 缺失（legacy/交互式）回落本地探测+meet。
-          hasVision: capSnap
-            ? capSnap.vision.verdict
-            : mmProbe.supported && resolvePolicyVisualForHarness(projectRoot, feature),
-          ocrAvailable: capSnap
-            ? capSnap.ocr.verdict
-            : resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, fwConfig.agent_adapter),
-        });
-      })();
+  const fidelityFields = resolveHarnessFidelityContextFields({
+    projectRoot,
+    frameworkRoot: resolvedFrameworkRoot,
+    feature,
+    adapter: fwConfig.agent_adapter,
+    profileDir: resolvedProfile.profileDir,
+    phaseIsGlobal,
+  });
   const context: CheckContext = {
     phase,
     feature,
@@ -615,18 +900,7 @@ async function main(): Promise<void> {
     skipVisualHandoff: Boolean(args['skip-visual-handoff']),
     skipUiSpec: Boolean(args['skip-ui-spec']),
     skipVisualParity: Boolean(args['skip-visual-parity']),
-    fidelityTarget: fidelityCtx.fidelityTarget,
-    declaredFidelityTarget: fidelityCtx.declaredFidelityTarget,
-    fidelityClamped: fidelityCtx.fidelityClamped,
-    fidelityClampReason: fidelityCtx.fidelityClampReason,
-    // plan f6b2d9a4：严格度轴（SSOT 缺失=best_effort 缺省）——裁决类谓词 isHardPixelContract 消费
-    acceptanceStrictness: intentSsot?.acceptance_strictness ?? 'best_effort',
-    assetAcquisitionMode: fidelityCtx.assetAcquisitionMode,
-    effectiveAssetAcquisitionMode: fidelityCtx.effectiveAssetAcquisitionMode,
-    fidelityDeferrals: fidelityCtx.fidelityDeferrals,
-    // post-impl3 P0-3：能力单源——快照判盲时 blind 门禁与 fidelity 同步转盲
-    adapterMultimodal: capSnap ? capSnap.vision.verdict : mmProbe.supported,
-    adapterImageInput: deriveEffectiveAdapterImageInput(capSnap ? capSnap.vision.verdict : null, mmProbe.imageInput),
+    ...fidelityFields,
     frameworkRoot: resolvedFrameworkRoot,
     frameworkRel,
     harnessRoot,
@@ -751,6 +1025,35 @@ async function main(): Promise<void> {
 
   checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
 
+  // blocked 阶梯（plan a9d4e7c2 T1）：**provider 缺失不禁基本诊断、不覆盖真实失败**。
+  // 这里不新建状态机——直接复用既有 externalBlocked/capability_missing 归因：
+  //   · 脚本另有 BLOCKER FAIL → areBlockersOnlyCapabilityMissing 为假 → 顶层仍 FAIL，
+  //     真实脚本失败原样保留在报告里（provider 缺失只是多一条并列事实）；
+  //   · 脚本 PASS（本条是唯一 BLOCKER）→ 顶层 INCOMPLETE / verifier_provider_unavailable，
+  //     不拖到 check-receipt 才死。
+  if (verifierPlan.mode === 'blocked') {
+    checks.push({
+      id: 'verifier_provider_unavailable',
+      category: 'structure',
+      description: 'verifier 能力可执行（policy=required 时当前 adapter 须登记该模式）',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: verifierPlan.message,
+      failure_kind: 'capability_missing',
+      blocking_class: 'externalBlocked',
+      actionability: 'human_only',
+      suggestion:
+        '二选一：①换用已登记 verifier 能力的 adapter（agents/<adapter>/adapter.yaml 的 verifier_capability.modes）；' +
+        '②在 framework.config.json 设 evidence_profile=balanced —— 但注意它**只关闭保留集之外**的 phase，' +
+        `${DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES.join(' / ')} 的 verifier 仍是 required，不会因 balanced 而放行。` +
+        '在此之前脚本门禁结论仍然有效，可照常修复脚本 BLOCKER。',
+    });
+  }
+
+  // 设备目标分类导致的 testing 结论封顶：与 checker 事实同账，参与 violations/报告/退出码。
+  // 由入口设备门产出（只有它知道 target_kind），不依赖 agent 自报。
+  if (deviceConclusionCap) checks.push(deviceConclusionCap);
+
   const violations = checks.filter(
     c => c.status === 'FAIL' && (c.severity === 'BLOCKER' || c.severity === 'MAJOR'),
   );
@@ -789,38 +1092,59 @@ async function main(): Promise<void> {
   const reportDirRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, paths.frameworkRoot);
   let finalReport = scriptReport;
 
-  try {
-    // Step 4: 组装 AI prompt
-    console.log('🤖 Step 4: 组装 AI Harness prompt...');
-    // Test hook：用于验证 Step 4 崩栈回写链路，仅自动化验证场景使用
-    if (process.env.HARNESS_FORCE_STEP4_FAIL) {
-      throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
-    }
-    const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
-      adapterMultimodal: context.adapterMultimodal,
-      adapterImageInput: context.adapterImageInput,
-      specVisualSources: context.specVisualSources,
-    });
-    const specContent = YAML.stringify(phaseRule);
+  // Step 4 门控（plan a9d4e7c2 T1 阶梯）：**只有 `enabled` ∧ 脚本 verdict=PASS 才装配**。
+  //   · disabled → 缺席即为零：不装配、不生成 request/subject。磁盘上可能还留着上一代
+  //     enabled 时的产物——不清理、也不因它们复活能力（当前是否启用只由本次解析决定）；
+  //   · blocked  → 没有 provider 能消费这份 prompt，装配只会平添一个 Step 4 崩栈面；
+  //   · 脚本非 PASS → verifier 子 agent 的契约本就禁止在脚本 FAIL 时被调用，
+  //     留一份"看起来可以调用"的 prompt/request 只会诱导违规调用。
+  const verifierProductionAllowed =
+    verifierPlan.mode === 'enabled' && scriptReport.summary.verdict === 'PASS';
+  if (!verifierProductionAllowed) {
+    const why =
+      verifierPlan.mode === 'enabled'
+        ? `脚本 verdict=${scriptReport.summary.verdict}（非 PASS 时不产出 verifier 调用面）`
+        : verifierPlan.message;
+    console.log(`🤖 Step 4: 跳过 AI Harness prompt 装配 —— ${why}`);
+  } else {
+    try {
+      // Step 4: 组装 AI prompt
+      console.log('🤖 Step 4: 组装 AI Harness prompt...');
+      // Test hook：用于验证 Step 4 崩栈回写链路，仅自动化验证场景使用
+      if (process.env.HARNESS_FORCE_STEP4_FAIL) {
+        throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
+      }
+      const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+        adapterMultimodal: context.adapterMultimodal,
+        adapterImageInput: context.adapterImageInput,
+        specVisualSources: context.specVisualSources,
+      });
+      const specContent = YAML.stringify(phaseRule);
 
-    assembleAIPrompt(
-      harnessRoot,
-      projectRoot,
-      phase,
-      feature,
-      contextFiles,
-      JSON.stringify(scriptReport, null, 2),
-      specContent,
-      resolvedProfile,
-      lifecycleFragments,
-      resolvedFrameworkRoot,
-      { imageInput: context.adapterImageInput },
-    );
-    console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
-  } catch (err) {
-    const e = err as Error;
-    console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-    finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
+      assembleAIPrompt(
+        harnessRoot,
+        projectRoot,
+        phase,
+        feature,
+        contextFiles,
+        JSON.stringify(scriptReport, null, 2),
+        specContent,
+        resolvedProfile,
+        lifecycleFragments,
+        resolvedFrameworkRoot,
+        {
+          imageInput: context.adapterImageInput,
+          // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
+          // enabled 时 resolveVerifierPlan 必带出该路径。
+          verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
+        },
+      );
+      console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
+    } catch (err) {
+      const e = err as Error;
+      console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
+    }
   }
 
   if (finalReport === scriptReport) {
@@ -853,16 +1177,31 @@ async function main(): Promise<void> {
   // t2 receipt-slim（openspec receipt-slim）：base→骨架→check（读本次 base）→closure patch。
   // 拆环：旧序 receiptValidation 先于 summary 落盘，check-receipt 直读 summary 时会读到
   // 上次 run 的旧件；现在 base summary（无 receipt 依赖、原子写）先落盘。
-  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+  let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+    verifierPlan,
+  });
   if (!phaseIsGlobal) {
     writeReceiptSkeletonIfMissing(projectRoot, feature, phase, finalReport.summary.verdict);
   }
-  const receiptValidation = phaseIsGlobal ? null : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  // adjudicated-repair-loop P0 宿主回放：goal-runner 只有等本 gate 子进程返回后，才能从
+  // script-report.json 读取 uncertain/disputed 信号。full track 若在这里先验 receipt 并关环，
+  // 外层随后 halt 会形成 PASS/closed + WAITING 的矛盾权威态。现有 gate 标志即所有权边界：
+  // 子进程只落 base summary；外层 goal-runner 完成裁决后独占 receipt validation/finalization。
+  // standalone 与无 testing 的 lite track 保持原有闭环语义。
+  const deferFullClosureToGoalRunner =
+    !phaseIsGlobal &&
+    closureTrack === 'full' &&
+    process.env.MAISON_GOAL_GATE_HARNESS === '1';
+  const receiptValidation =
+    phaseIsGlobal || deferFullClosureToGoalRunner
+      ? null
+      : tryValidateReceipt(harnessRoot, projectRoot, phase, feature);
   let runSummary: HarnessRunSummary = baseSummary;
   let closureFinalized = false;
   if (
     !phaseIsGlobal &&
+    !deferFullClosureToGoalRunner &&
     closureTrack === 'full' &&
     finalReport.summary.verdict === 'PASS' &&
     receiptValidation?.status === 'passed'
@@ -898,7 +1237,9 @@ async function main(): Promise<void> {
         e,
         resolvedFrameworkRoot,
       );
-      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot);
+      baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        verifierPlan,
+      });
     }
   }
   if (!closureFinalized) {
@@ -949,10 +1290,17 @@ async function main(): Promise<void> {
   console.log('\n' + '='.repeat(60));
   if (finalReport.summary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
-    console.log('  📤 请将 ai-prompt.md 发送给 AI 模型执行语义验证');
+    for (const line of buildPassGuidanceLines(runSummary, verifierPlan, phase, String(feature))) {
+      console.log(line);
+    }
   } else if (finalReport.summary.verdict === 'INCOMPLETE') {
+    // plan a9d4e7c2 P1-3：INCOMPLETE 不止"设备不可用"一种成因（verifier provider 缺失
+    // 同样落这里）。统一渲染机器投影 next_action，不再把所有 INCOMPLETE 硬解释成设备问题。
     console.log('  ⚠️  脚本 Harness 部分就绪（INCOMPLETE）');
-    console.log('  📱 编译已通过但真机/模拟器不可用；修复设备环境后重跑 UT');
+    if (verifierPlan.mode === 'blocked') {
+      console.log(`  🔌 ${verifierPlan.message}`);
+    }
+    console.log(`  ➡️  next_action = ${runSummary.next_action}`);
   } else {
     const runnerFailed = finalReport.checks.some(c => c.id.startsWith('runner_') && c.status === 'FAIL');
     if (runnerFailed) {
@@ -1066,11 +1414,7 @@ function resolveAxisApplicability(
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const shared = require('./scripts/utils/ui-spec-shared') as typeof import('./scripts/utils/ui-spec-shared');
-    const specPath = featureFilePath(projectRoot, feature, path.join('spec', 'spec.md'));
-    if (fs.existsSync(specPath)) {
-      const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
-      visualApplicable = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
-    }
+    visualApplicable = resolveUiRelevanceForRun(projectRoot, feature, null);
     if (visualApplicable) {
       const uiDoc = shared.loadUiSpecFile(shared.uiSpecAbsPath(projectRoot, feature));
       const assets = (uiDoc as { assets?: unknown[] } | null)?.assets;
@@ -1110,8 +1454,11 @@ function resolveAssetAxisInheritance(
       quality_axes?: { asset?: { applicable?: boolean; verdict?: string } };
       asset_debt_revision?: string;
     };
+    // plan a9d4e7c2 T3：兼容读取面同步纳入当代 1.3（版本集合唯一出处 quality-axes）——
+    // 漏掉即等于「升级后 asset 轴继承整体失效」的静默回退。
     if (
-      (parsed.schema_version !== '1.1' && parsed.schema_version !== '1.2') ||
+      (parsed.schema_version !== '1.1' &&
+        !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(parsed.schema_version))) ||
       !parsed.quality_axes?.asset
     ) return null;
     const upstreamVerdict = String(parsed.quality_axes.asset.verdict ?? 'UNVERIFIED');
@@ -1182,7 +1529,7 @@ function resolveAssetAxisInheritance(
     }
     // 指纹链 3（build fingerprint，三轮 review P1-5 fail-closed）：7.2b 落地前 build 链
     // 不可证——**不允许部分 provenance 的 PASS 继承**（spec 要求五链全一致），恒并入缺证
-    // 原因 → 继承保持 STALE/needs_human；build 身份钩子（hylyre 实机采集）接入后解除。
+    // 原因 → 继承保持 STALE/needs_fix；build 身份钩子（hylyre 实机采集）接入后解除。
     issues.push('build fingerprint 链未接入（tasks 7.2b pending）——五链不齐，asset 轴不继承');
     return {
       upstreamPhase: 'coding',
@@ -1215,39 +1562,6 @@ function applyVisualDebtPipeline(
     let debtDoc = annotateAssetTriState(deriveVisualDebt(report.feature, report.checks, prev), report.checks);
     if (debtDoc.entries.length === 0 && !prev) return; // 无债务面（非 UI/全绿且无历史）不落空文件
 
-    // 人工验收消费：payload（visual-acceptance.json）+ 信任链 receipt（.receipt.json 绑 payload 字节哈希）
-    const accDir = path.join(featureDir(projectRoot, report.feature), 'device-testing');
-    const payloadPath = path.join(accDir, 'visual-acceptance.json');
-    const receiptPath = path.join(accDir, 'visual-acceptance.receipt.json');
-    if (fs.existsSync(payloadPath) && fs.existsSync(receiptPath)) {
-      try {
-        const payload = JSON.parse(fs.readFileSync(payloadPath, 'utf-8')) as VisualAcceptancePayload;
-        const objectHash = crypto.createHash('sha256').update(fs.readFileSync(payloadPath)).digest('hex');
-        const trust = validateConfirmationReceiptFile(receiptPath, defaultTrustRegistryPath(projectRoot), {
-          action: 'human_visual_acceptance',
-          feature: report.feature,
-          object_hash: objectHash,
-        });
-        const policyErrors = validateRubricPolicy(payload);
-        if (trust.valid && policyErrors.length === 0) {
-          const applied = applyVisualAcceptance(
-            debtDoc,
-            payload,
-            path.relative(projectRoot, receiptPath).replace(/\\/g, '/'),
-          );
-          debtDoc = applied.doc;
-          if (applied.rejected.length > 0) {
-            console.warn(`   ⚠ [visual-debt] 验收 receipt 试图清偿确定性 FAIL，已拒绝：\n${applied.rejected.map(r => `     - ${r}`).join('\n')}`);
-          }
-        } else {
-          console.warn(
-            `   ⚠ [visual-debt] 人工验收无效（不予清偿）：${[...trust.reasons ?? [], ...policyErrors].slice(0, 4).join('；')}`,
-          );
-        }
-      } catch (e) {
-        console.warn(`   ⚠ [visual-debt] 验收消费异常（不予清偿）：${(e as Error).message}`);
-      }
-    }
     writeVisualDebt(projectRoot, debtDoc);
 
     const { open } = countBlockingDebt(debtDoc);
@@ -1256,8 +1570,8 @@ function applyVisualDebtPipeline(
       lattice.quality_axes.visual = {
         ...visual,
         verdict: 'UNVERIFIED',
-        blocking_class: 'needs_human',
-        resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+        blocking_class: 'needs_fix',
+        resolution: { class: 'needs_fix', owner: 'agent', retry_phase: 'testing' },
       };
     }
     // 债务影响 release/completion 投影（advance 投影不含 visual UNVERIFIED，等价性不破）
@@ -1288,10 +1602,42 @@ function applyVisualDebtPipeline(
  * 完整 schema-valid、原子写。closure 字段以"未闭环/等待 receipt"初值填充，由后续
  * patchRunSummaryClosure 定稿；进程中途崩溃不会留下非法 JSON 或残留旧 closed 态。
  */
-function writeRunSummaryBase(
+/** best-effort 文本读取（repair candidates 的输入面：缺文件=null=零候选，不抛） */
+function readTextOrNull(absPath: string): string | null {
+  try {
+    return fs.existsSync(absPath) ? fs.readFileSync(absPath, 'utf-8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读 feature 文档（canonical + legacy 全候选）——**必须走既有 artifact resolver**：
+ * 正式 review 报告在 `<feature>/review/review-report.md`，手拼 `<feature>/<doc>` 会读成
+ * null，导致 review 候选恒不生成（codex review 冻结项①：纯函数测试绕过生产读取路径，
+ * 出现假绿）。不新增路径规则或兼容层。
+ */
+function readFeatureDocOrNull(
+  projectRoot: string,
+  feature: string,
+  docName: string,
+): string | null {
+  const resolved = resolveFeatureArtifact(projectRoot, feature, docName);
+  return resolved.exists ? readTextOrNull(resolved.actualPath) : null;
+}
+
+/** c7e4a2d9：测试入口导出（runner 集成测试经桩调用真实 writer 落盘，禁止手搓 summary）。 */
+export function writeRunSummaryBase(
   projectRoot: string,
   report: ScriptReport,
   frameworkRoot: string,
+  opts?: {
+    /**
+     * 本次 run 的 verifier 能力解析结果（plan a9d4e7c2）。缺省 = 调用方未解析
+     * （测试桩入口）→ 按 disabled 处理：不写 verifier 字段、不生成 request。
+     */
+    verifierPlan?: VerifierPlan | null;
+  },
 ): HarnessRunSummary {
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
@@ -1325,6 +1671,10 @@ function writeRunSummaryBase(
     }));
   const utStatus = runStatuses.find(c => c.id === 'ut_run_status')?.details;
   const readinessSignals = buildReadinessSignals(report);
+  // plan c8e5b3f1 t2 A：blocked capability 通用诊断——确定性提取（capability_input_unresolved）。
+  // 通用投影只转述 capability/input/attempt/dependency；requirement 专属话术只来自 derive.requirement
+  // 自己的 attempt.detail（经 fact.unresolved[].detail 原样带出），此处不硬编码。
+  readinessSignals.push(...capabilityBlockedReadinessSignals(report));
   // 回执 stale 治理：机器写入门禁集指纹（agent 零参与）；check-receipt 消费时重算比对，
   // framework 门禁集升级后旧 summary/回执即失效（round6 Checkpoint-2：旧 spec 回执整体豁免 P0-D 的洞）。
   const gateFingerprint = computeGateFingerprint(frameworkRoot, report.phase);
@@ -1332,8 +1682,10 @@ function writeRunSummaryBase(
   // summary.visual_round 与账本一致）。
   const visualRound = consumeVisualRoundPayload(projectRoot, report);
   // blind-visual-hardening d1 切片二：多轴产品裁决 + report_validity（harness 派生，
-  // 非 agent 自报）。外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle——
-  // projected_verdict 与 legacy verdict 不一致=派生缺陷，显式落 readiness signal 不静默。
+  // 非 agent 自报）。外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle。
+  // plan c8e5b3f1 t2 B：归因统一走共享 deriveSummaryVerdictLattice（暴露 pre/post/has_blocked），
+  // runner 与测试同源；post 已含 hasBlocked 顶层钳制（不拿 rawPost 归因，否则 visual/asset blocked
+  // 会漏判），pre 供 pre!==legacy 的真派生缺陷判定。
   const lattice = deriveSummaryVerdictLattice(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
@@ -1341,9 +1693,10 @@ function writeRunSummaryBase(
       ? undefined
       : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
   );
+  const { has_blocked: hasBlocked, pre_projection_verdict: pre, projected_verdict: post } = lattice;
   // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
   // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
-  // 任一漂移 → STALE（needs_human），不复制裸 PASS。应用后重投影。
+  // 任一漂移 → STALE（needs_fix），不复制裸 PASS。应用后重投影。
   if (report.phase === 'testing') {
     const inh = resolveAssetAxisInheritance(projectRoot, report.feature);
     if (inh) {
@@ -1353,7 +1706,7 @@ function writeRunSummaryBase(
     }
   }
   // blind-visual-hardening d5：视觉债务 SSOT 派生（harness 派生非 agent 自报）+ 人工验收
-  // receipt 消费（只清 needs_human；needs_fix 拒绝）+ 未清偿债务 → visual 轴 UNVERIFIED
+  // legacy receipt 不参与；未清偿债务 → visual 轴 UNVERIFIED/needs_fix
   //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
   applyVisualDebtPipeline(projectRoot, report, lattice);
   // S7 二轮 P1-6：asset 域债务 revision 落盘（继承指纹链 2 的上游锚点——testing 期
@@ -1365,27 +1718,50 @@ function writeRunSummaryBase(
   } catch {
     /* 债务面异常时不落 revision（继承侧按缺失 fail-closed） */
   }
-  // 不变量对账（codex 实施 review P0-2 fail-closed）：投影与 legacy 不一致=框架派生缺陷——
-  // 顶层 verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。
-  const VERDICT_STRICTNESS: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
-  let effectiveVerdict = report.summary.verdict;
-  if (lattice.projected_verdict !== report.summary.verdict) {
-    const stricter =
-      (VERDICT_STRICTNESS[lattice.projected_verdict] ?? 2) > (VERDICT_STRICTNESS[report.summary.verdict] ?? 2)
-        ? lattice.projected_verdict
-        : report.summary.verdict;
+  // 不变量对账（codex 实施 review P0-2 fail-closed）：顶层 verdict 取**更严一侧**
+  //（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。plan c8e5b3f1 t2 B 因果归因：
+  //   · 仅 pre===legacy && post!==legacy → 差异由 capability 合法投影造成，**不报** mismatch；
+  //   · pre!==legacy → 独立派生缺陷，即使同时存在 blocked 也**照报** mismatch。
+  const legacy = report.summary.verdict;
+  // plan c8e5b3f1 t2 B：顶层 verdict 归因统一走共享纯函数 resolveEffectiveVerdict（评审：裁决逻辑
+  // 不该埋在 runner 内联，且 FAIL 降级保护须有守门测试）。它保证投影取更严侧、不把既有 FAIL 降级，
+  // mismatch 只在 pre!==legacy 时报（pre===legacy 的 capability 合法投影不报）。
+  const { verdict: effectiveVerdict, mismatch } = resolveEffectiveVerdict({ pre, post, legacy });
+  // plan a9d4e7c2 T2：verifier **调用凭证**的单点生成。放在这里而不是 Step 4，是因为
+  // 这里同时握有 gate 指纹与 worktree/source identity，且 ai-prompt.md 已在 Step 4 落盘——
+  // 一个函数内取齐全部输入，不给第二个生产者留位置。
+  // `enabled` 之外一律零产物：disabled 缺席即为零；blocked 无 provider，写 request 无意义。
+  const sourceCommitSha = resolveGitHeadSha(projectRoot);
+  const worktreeDigest = computeProductWorktreeDigest(
+    projectRoot,
+    (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
+  );
+  // 与 Step 4 同一判据：`enabled` ∧ 脚本 PASS。writer 侧独立复核 verdict，
+  // 保证即使调用方漏传门控也不会凭空产出一份没有 prompt 的凭证。
+  const verifierIssued =
+    opts?.verifierPlan?.mode === 'enabled' && report.summary.verdict === 'PASS'
+      ? issueVerifierRequest({
+          dir,
+          report,
+          projectRoot,
+          gateFingerprint: gateFingerprint ?? null,
+          sourceCommitSha,
+          worktreeDigest,
+        })
+      : null;
+  if (mismatch) {
+    // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
-      `   ⚠ [quality-axes] 投影(${lattice.projected_verdict}) ≠ legacy(${report.summary.verdict})——不变量破坏，按更严侧 ${stricter} 落盘（框架派生缺陷，请回灌源仓）`,
+      `   ⚠ [quality-axes] 投影前(pre=${pre}) ≠ legacy(${legacy})（post=${post} 已按 capability 投影/钳制）——独立派生缺陷，按更严侧 ${effectiveVerdict} 落盘（框架缺陷，请回灌源仓）`,
     );
-    effectiveVerdict = stricter as typeof effectiveVerdict;
     readinessSignals.push({
       id: 'quality_axes_projection_mismatch',
       status: 'incomplete',
-      message: `quality_axes 投影=${lattice.projected_verdict} ≠ legacy=${report.summary.verdict}，已按更严侧 ${stricter} 落盘（派生缺陷回灌源仓）`,
+      message: `quality_axes 投影前(pre=${pre}) ≠ legacy=${legacy}（post=${post}）——独立派生缺陷，已按更严侧 ${effectiveVerdict} 落盘`,
     });
   }
   const summary: HarnessRunSummary = {
-    schema_version: '1.2',
+    schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
     phase: report.phase,
     feature: report.feature,
     verdict: effectiveVerdict,
@@ -1400,7 +1776,9 @@ function writeRunSummaryBase(
     ...(assetDebtRevision ? { asset_debt_revision: assetDebtRevision } : {}),
     script_report: rel('script-report.json'),
     merged_report: rel('merged-report.md'),
-    ai_prompt: rel('ai-prompt.md'),
+    // plan a9d4e7c2 T3：ai_prompt 改**条件字段**——verifier disabled 的 phase 根本
+    // 不装配 prompt，写一个指向不存在文件的路径只会诱导消费方去读。
+    ...(verifierIssued ? { ai_prompt: rel('ai-prompt.md') } : {}),
     summary_json: rel('summary.json'),
     run_statuses: runStatuses,
     ut_run_status: utStatus,
@@ -1409,7 +1787,18 @@ function writeRunSummaryBase(
     blocking_skips: blockingSkips,
     blockers,
     // base 初值：未闭环/等待 receipt——closure 定稿归 patchRunSummaryClosure。
-    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals),
+    next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals, {
+      effectiveVerdict,
+      capabilityBlocked: hasBlocked,
+      verifierMode: opts?.verifierPlan?.mode,
+      verifierEvidence: resolveVerifierEvidenceState(
+        projectRoot,
+        report,
+        frameworkRoot,
+        opts?.verifierPlan?.mode,
+        verifierIssued?.subjectId ?? null,
+      ),
+    }),
     closure_status: 'open',
     assurance: report.assurance,
     capability_resolutions: report.capability_resolutions,
@@ -1417,13 +1806,21 @@ function writeRunSummaryBase(
     // t2 v2（codex BLOCKER3）：run identity——slim 回执三方绑定的机器锚（同版本 framework 下
     // 旧 PASS 件复用被 sha 失配拒绝）。
     generated_at: new Date().toISOString(),
-    ...(resolveGitHeadSha(projectRoot) ? { source_commit_sha: resolveGitHeadSha(projectRoot)! } : {}),
+    ...(sourceCommitSha ? { source_commit_sha: sourceCommitSha } : {}),
     // t2 v3（codex 阻断3）：dirty worktree 绑定——层目录 tracked diff+untracked 摘要，
     // HEAD 不动但源码已改时旧 PASS 件同样失效。
-    worktree_digest: computeProductWorktreeDigest(
-      projectRoot,
-      (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
-    ),
+    worktree_digest: worktreeDigest,
+    // plan a9d4e7c2 T3：verifier 字段**条件化**——身份=subject、适用性=policy（由
+    // resolveVerifierPlan 随时重算，不落快照）、代际=schema_version，三职分离。
+    // enabled 时才在场；disabled/blocked 时缺席，且缺席**不再**表示"旧件"
+    //（旧件由 schema_version 判定，见 check-receipt 的 grandfather 分派）。
+    // finalizer 的 closure patch 走 {...base} 展开，open→closed 原样保留。
+    ...(verifierIssued
+      ? {
+          verifier_subject_id: verifierIssued.subjectId,
+          verifier_request: verifierIssued.requestRel,
+        }
+      : {}),
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
@@ -1431,10 +1828,47 @@ function writeRunSummaryBase(
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
   }
-  // Writer fail-fast：1.2 extends the quality lattice with assurance provenance and closure state.
+  // 责任阶段统一路由（plan b6e4c9f2 t1）：可信可修缺陷的单一共享事实——harness 派生
+  // 非 agent 自报；manual/batch/goal 消费同一字段（goal 的 deterministic_defects 只是
+  // 其指纹投影）。信任闸（c7e4a2d9 收窄）：report_validity 只抑制**依赖报告自由文本**
+  // 的 review 候选；机器 check / verifier 合取候选（含 p0_coverage_integrity FAIL+
+  // code_regression）不得因产品负面结论被整体清空（负面结论恰是回修候选最需要存活的
+  // 时刻）。review 侧另叠 verifier 逐条 confirmed；人工授权不再抑制 candidate。
+  // agent 自跑轮 verifier 证据可能尚未发布 → 零 candidate（gate 轮自然出现）。
+  // plan e5b8c3f7 T3：正文取自**身份验真后**的 verifier.report.json，不再裸读 MD——
+  // 否则编辑 MD 就能凭空造出/抹掉回修候选（review 侧 verifier 逐条 confirmed 的输入面）。
+  try {
+    // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
+    // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）
+    const repairCandidates = buildSummaryRepairCandidates({
+      phase: report.phase,
+      checks: report.checks,
+      reportValidity: lattice.report_validity,
+      reviewReportText:
+        report.phase === 'review'
+          ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
+          : null,
+      // plan a9d4e7c2 P1-5：**锚到本轮刚签发的 subject**。不传 subjectId 的话 loader 会读
+      // 磁盘 summary 现值——而此刻它还是**上一轮**的（本 base summary 尚未落盘），于是
+      // 上一个 subject 的 verifier 正文会被算进这一轮的 repair_candidates。
+      // 本轮没签发凭证（disabled/blocked/脚本非 PASS/签发失败）→ 传 null = 零候选。
+      verifierReportText: loadVerifierReportTextOrNull(projectRoot, report.feature, report.phase, {
+        frameworkRoot,
+        subjectId: verifierIssued?.subjectId ?? null,
+      }),
+      parseClassificationFromDetails: extractFailureClassification,
+    });
+    if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
+  } catch (e) {
+    // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
+    console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
+  }
+  // Writer fail-fast：1.2/1.3 extend the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);
   if (v11Errors.length > 0) {
-    throw new Error(`[quality-axes] summary 1.2 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`);
+    throw new Error(
+      `[quality-axes] summary ${SUMMARY_SCHEMA_VERSION_CURRENT} 契约违反（框架缺陷，拒绝落盘）：${v11Errors.join('；')}`,
+    );
   }
   atomicWriteJson(path.join(dir, 'summary.json'), summary);
   return summary;
@@ -1444,6 +1878,10 @@ function writeRunSummaryBase(
  * t2 receipt-slim：瘦身回执骨架——仅 verdict=PASS 且回执缺失时幂等生成（FAIL 跑不留半真骨架）；
  * lite track 豁免（receipt 机制 not_applicable）。骨架自证字段占位、反假设 checkbox 全未勾，
  * 不构成闭环；生成失败不阻断门禁（best-effort，agent 可自行从模板复制）。
+ * openspec runner-owned-machine-facts：**goal 态让位**——骨架由 goal runner 在每次 invoke
+ * 前单点 force 写入（写失败 fail-closed 不启动 agent），本函数不再兼任第二写入点
+ * （双写者会掩盖 runner 写失败，且 PASS 后才建骨架迫使 closure 必然多跑一轮）。
+ * 非 goal 手动流程无 runner 可依，保留 PASS-gated 幂等首建。
  */
 function writeReceiptSkeletonIfMissing(
   projectRoot: string,
@@ -1452,25 +1890,100 @@ function writeReceiptSkeletonIfMissing(
   verdict: string,
 ): void {
   try {
+    if (process.env.MAISON_GOAL_ATTEMPT?.trim()) return;
     if (verdict !== 'PASS') return;
     if (resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)) === 'lite') return;
-    const receiptPath = resolveReceiptFilePath(projectRoot, feature, phase).path;
-    if (fs.existsSync(receiptPath)) return;
-    const templatePath = path.join(__dirname, 'templates', 'phase-completion-receipt.md');
-    if (!fs.existsSync(templatePath)) return;
-    const skeleton = fs
-      .readFileSync(templatePath, 'utf-8')
-      .replace('feature: "<feature-name>"', `feature: "${feature}"`)
-      .replace('phase: "<spec | plan | coding | review | ut | testing>"', `phase: "${phase}"`);
-    fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
-    fs.writeFileSync(receiptPath, skeleton, 'utf-8');
-    console.log(
-      `   ✓ 已生成瘦身回执骨架（PASS-gated）：${path.relative(projectRoot, receiptPath).replace(/\\/g, '/')}` +
-        '——自证字段待真实填写、反假设 checkbox 待勾选，骨架不构成闭环。',
-    );
+    const res = writeReceiptScaffold(projectRoot, feature, phase, {
+      attemptId: undefined,
+    });
+    if (res.wrote && res.receiptPath) {
+      console.log(
+        `   ✓ 已生成瘦身回执骨架（PASS-gated）：${path.relative(projectRoot, res.receiptPath).replace(/\\/g, '/')}` +
+          '——身份字段已预填（不得改动）；自证字段待真实填写、反假设 checkbox 待勾选，骨架不构成闭环。',
+      );
+    }
   } catch {
     /* best-effort：骨架失败不阻断，agent 仍可全手填 */
   }
+}
+
+/**
+ * 本轮 verifier 证据现状（plan a9d4e7c2 P1-3）——只看**本轮刚签发的 subject**。
+ *
+ * 绝不去读磁盘 summary 现值：写这份 base summary 时它还是**上一轮**的，按它取证据等于
+ * 把旧 subject 的结论算到新 run 头上。签发失败（无 subject）就诚实返回 absent。
+ */
+function resolveVerifierEvidenceState(
+  projectRoot: string,
+  report: ScriptReport,
+  frameworkRoot: string,
+  mode: 'disabled' | 'enabled' | 'blocked' | undefined,
+  issuedSubjectId: string | null,
+): 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid' {
+  if (mode !== 'enabled') return 'not_applicable';
+  if (!issuedSubjectId) return 'absent';
+  const loaded = loadVerifierEvidenceForSubject(
+    projectRoot,
+    report.feature,
+    report.phase,
+    issuedSubjectId,
+    { frameworkRoot },
+  );
+  if (loaded.ok) return loaded.evidence.verdict === 'PASS' ? 'pass' : 'fail';
+  return loaded.code === 'report_missing' ? 'absent' : 'invalid';
+}
+
+/**
+ * plan a9d4e7c2 T2：生成本轮 run 的 verifier **调用凭证**（短 request JSON）。
+ *
+ * 只在 `resolveVerifierPlan` 判 enabled 时调用。产物两样：
+ *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 Task prompt 投给
+ *     verifier；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
+ *   · `summary.verifier_subject_id` / `summary.verifier_request`——闭环侧的身份锚。
+ *
+ * subject 按**实际审查材料**寻址：`prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文，
+ * 没有 canonical 投影、没有 telemetry 归一。相同材料复用同一 subject（既有验真 JSON
+ * 照用，直接进 receipt）；材料变化必换 subject（check-receipt 指引重跑 verifier）。
+ * 时间戳导致换 subject 是合法结果——**不得**为提高复用率去改造 prompt producer。
+ *
+ * 输入面刻意**不含整份 summary SHA**：base summary 以 closure_status=open 落盘、
+ * finalizer 闭环时改写为 closed——整份 SHA 入 subject 会让正常闭环自锁。
+ *
+ * prompt 缺席（Step 4 崩栈已清理残留）或写盘失败 → 返回 null：summary 不写 verifier
+ * 字段，闭环侧按"能力启用但凭证缺失"指引重跑 harness，绝不产生半截凭证。
+ */
+function issueVerifierRequest(input: {
+  dir: string;
+  report: ScriptReport;
+  projectRoot: string;
+  gateFingerprint: string | null;
+  sourceCommitSha: string | null;
+  worktreeDigest: string | null;
+}): { subjectId: string; requestRel: string } | null {
+  const promptAbs = path.join(input.dir, 'ai-prompt.md');
+  const promptRaw = fs.existsSync(promptAbs) ? readTextOrNull(promptAbs) : null;
+  if (promptRaw === null) {
+    console.warn('   ⚠ [verifier-request] ai-prompt.md 不可读，本轮不生成 verifier 调用凭证。');
+    return null;
+  }
+  const rel = (abs: string): string => path.relative(input.projectRoot, abs).replace(/\\/g, '/');
+  const request = buildVerifierRequest({
+    feature: input.report.feature,
+    phase: input.report.phase,
+    prompt_path: rel(promptAbs),
+    prompt_sha256: computePromptSha256(promptRaw),
+    gate_fingerprint: input.gateFingerprint,
+    source_commit_sha: input.sourceCommitSha,
+    worktree_digest: input.worktreeDigest,
+  });
+  const requestAbs = path.join(input.dir, verifierRequestFilename(request.subject_id));
+  try {
+    fs.writeFileSync(requestAbs, renderVerifierRequest(request), 'utf-8');
+  } catch (e) {
+    console.warn(`   ⚠ [verifier-request] 凭证落盘失败：${(e as Error).message}`);
+    return null;
+  }
+  return { subjectId: request.subject_id, requestRel: rel(requestAbs) };
 }
 
 /** 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。 */
@@ -1562,13 +2075,76 @@ function printStableSummary(summary: HarnessRunSummary): void {
   console.log('END_HARNESS_SUMMARY');
 }
 
+/**
+ * 脚本 PASS 后的控制台指引（plan a9d4e7c2 复评 P2）——**按机器投影 `next_action` 渲染**。
+ *
+ * 旧写法是"只要 summary 里有 verifier_request 就叫人去投给 verifier"，那与材料寻址契约
+ * 直接冲突：当前 subject 已有验真 PASS 证据时，正确动作是填回执 + `--sync-closure`，
+ * 而对同一 subject 再跑一次 verifier 只会撞出 conflict。
+ *
+ * 抽成纯函数是为了让"控制台说了什么"可被断言——只断 summary 字段挡不住渲染层自说自话。
+ */
+export function buildPassGuidanceLines(
+  summary: Pick<HarnessRunSummary, 'next_action' | 'verifier_request' | 'verifier_subject_id'>,
+  plan: Pick<VerifierPlan, 'message'>,
+  phase: string,
+  feature: string,
+): string[] {
+  const syncHint = `  📝 下一步：填写完成回执 → npx ts-node harness-runner.ts --sync-closure --phase ${phase} --feature ${feature}`;
+  switch (summary.next_action) {
+    case 'run_verifier_then_receipt':
+    case 'rerun_verifier_with_current_request':
+      return [
+        '  📤 verifier 已启用：把下面这份 request JSON **整段**作为 Task prompt 投给 subagent_type=verifier',
+        `     ${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
+        '     （verifier 自行 Read 其中的 prompt_path；不要投递 ai-prompt.md 全文，也不要改写任何字段）',
+      ];
+    case 'fill_receipt_then_sync_closure':
+      return [
+        summary.verifier_subject_id
+          ? '  ♻️ 当前审查材料的 verifier 证据已验真可复用，**无需重跑 verifier**'
+          : `  ℹ verifier: ${plan.message}`,
+        syncHint,
+      ];
+    case 'fix_verifier_findings_then_rerun_harness':
+      return [
+        '  🔧 当前 subject 的 verifier 结论为 FAIL：先按其发现修改材料，再重跑本阶段 harness',
+        '     （**不要**对同一 subject 重跑 verifier——那只会撞出 conflict）',
+      ];
+    case 'resolve_verifier_provider_then_rerun':
+      return [`  🔌 ${plan.message}`];
+    default:
+      return [`  ➡️  next_action = ${summary.next_action}`];
+  }
+}
+
+/** 本轮 verifier 证据现状（仅在 plan=enabled 时有意义）。 */
+type VerifierEvidenceState = 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid';
+
 function decideNextAction(
   report: ScriptReport,
   blockers: HarnessRunSummary['blockers'],
   runStatuses: HarnessRunSummary['run_statuses'],
   blockingSkips: HarnessRunSummary['blocking_skips'],
   readinessSignals: HarnessRunSummary['readiness_signals'],
+  opts?: {
+    effectiveVerdict?: string;
+    capabilityBlocked?: boolean;
+    /** plan a9d4e7c2 P1-3：verifier 三态 —— 缺省按 enabled 处理（旧调用点兼容）。 */
+    verifierMode?: 'disabled' | 'enabled' | 'blocked';
+    /** 当前 subject 的证据现状；enabled 时由 writer 探测后传入。 */
+    verifierEvidence?: VerifierEvidenceState;
+  },
 ): string {
+  // plan a9d4e7c2 P1-3：provider 不可用会把顶层钳成 INCOMPLETE，但它**不是设备问题**——
+  // 必须先于下面的 device-external 分支返回自己的动作，否则 spec 阶段会得到
+  // `device_ready_then_rerun_ut` 这种驴唇不对马嘴的指引（评审实测形态）。
+  if (opts?.verifierMode === 'blocked') {
+    return 'resolve_verifier_provider_then_rerun';
+  }
+  // plan c8e5b3f1 t2：effective verdict = 顶层钳制后的最终值（capability blocked 时 ≠ legacy PASS）。
+  // 开头的 legacy INCOMPLETE/device-external 分支保持原语义（legacy 变 INCOMPLETE 的唯一路径就是
+  // device-external 例外），不得换成 effective。
   if (report.summary.verdict === 'INCOMPLETE') {
     return report.phase === 'testing' ? 'device_ready_then_rerun_testing' : 'device_ready_then_rerun_ut';
   }
@@ -1599,13 +2175,43 @@ function decideNextAction(
   if (runStatuses.some(s => s.can_claim_done === false)) {
     return 'fix_run_status_blockers_then_rerun';
   }
+  // plan c8e5b3f1 t2 C：capability 动作插在具名 blocker 链与 run_status 之后、readiness 通用动作
+  // 之前。位置不算保证——必须显式前置条件（真实 blocker/SKIP/run-status 在场时一律不给 capability 动作）。
+  if (
+    opts?.capabilityBlocked === true &&
+    blockers.length === 0 &&
+    blockingSkips.length === 0 &&
+    !runStatuses.some(s => s.can_claim_done === false)
+  ) {
+    return 'resolve_capability_inputs_then_rerun';
+  }
   if (readinessSignals.some(s => s.status === 'incomplete')) {
     return 'complete_readiness_warnings_then_continue';
   }
-  if (report.summary.verdict === 'PASS' && blockingSkips.length > 0) {
+  // plan c8e5b3f1 t2 C：最后的 PASS 判定用 effective verdict——capability blocked（effective≠PASS）
+  // 时不得落 run_verifier_then_receipt。
+  const effectiveVerdict = opts?.effectiveVerdict ?? report.summary.verdict;
+  if (effectiveVerdict === 'PASS' && blockingSkips.length > 0) {
     return 'review_blocking_skips_then_verifier';
   }
-  if (report.summary.verdict === 'PASS') return 'run_verifier_then_receipt';
+  if (effectiveVerdict === 'PASS') {
+    // plan a9d4e7c2 P1-3：脚本 PASS 之后到底该干什么，取决于 verifier 能力与证据现状——
+    // 旧实现恒返回 `run_verifier_then_receipt`，于是 disabled 的阶段被指去跑一个不存在的
+    // verifier，已有 PASS 证据的阶段被指去重跑（同 subject 重跑只会造 conflict）。
+    const mode = opts?.verifierMode ?? 'enabled';
+    if (mode === 'disabled') return 'fill_receipt_then_sync_closure';
+    switch (opts?.verifierEvidence) {
+      case 'pass':
+        return 'fill_receipt_then_sync_closure';
+      case 'fail':
+        // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
+        return 'fix_verifier_findings_then_rerun_harness';
+      case 'invalid':
+        return 'rerun_verifier_with_current_request';
+      default:
+        return 'run_verifier_then_receipt';
+    }
+  }
   if (blockers.some(b => b.id === 'ut_no_src_mutation' && /baseRef 可能过旧|HARNESS_DIFF_BASE_REF=working/.test(b.details_excerpt))) {
     return 'rerun_with_HARNESS_DIFF_BASE_REF_working';
   }
@@ -1767,6 +2373,37 @@ function buildReadinessSignals(report: ScriptReport): HarnessRunSummary['readine
   }
 
   return signals;
+}
+
+/**
+ * plan c8e5b3f1 t2 A：blocked capability 的通用诊断 readiness signals（capability_input_unresolved）。
+ * 从 report.capability_resolutions 确定性提取 active ∧ blocked 的事实（按 capability id 稳定排序）；
+ * message 只转述 capability/input/attempt/dependency，requirement 专属话术只经 fact.unresolved[].detail
+ * 原样带出（derive.requirement 自己的 detail），不在此硬编码。applicability invalid 的 blocked（无
+ * 普通 input attempt）也产出，避免整项静默漏掉。
+ */
+function capabilityBlockedReadinessSignals(report: ScriptReport): HarnessRunSummary['readiness_signals'] {
+  return collectBlockedCapabilityFacts({ capabilities: report.capability_resolutions }).map((fact) => {
+    const parts = fact.unresolved.length > 0
+      ? fact.unresolved.map((u) => {
+          // 展示**全部**相关 dependency path（不只第一个），保证尝试路径可诊断（review P2）。
+          const deps = u.dependencies.filter((d) => !!d.path).map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ');
+          return `input=${u.input} source=${u.source}` +
+            (u.detail ? `: ${u.detail}` : '') +
+            (deps ? ` path=[${deps}]` : '');
+        }).join('；')
+      // applicability invalid 的 blocked：展示 provider + 全部 applicability_dependencies path（review P2）。
+      : `applicability invalid（provider=${fact.applicability_provider ?? 'n/a'}` +
+        (fact.applicability_dependencies.length > 0
+          ? `，path=[${fact.applicability_dependencies.map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ')}]` : '') +
+        `）`;
+    return {
+      id: 'capability_input_unresolved',
+      status: 'incomplete' as const,
+      source_check: fact.capability,
+      message: `capability=${fact.capability} 输入未解析：${parts}`,
+    };
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -2372,7 +3009,12 @@ function printAvailableSpecs(
 // 入口
 // --------------------------------------------------------------------------
 
-main().catch(err => {
-  console.error('致命错误:', err);
-  process.exit(2);
-});
+export { decideNextAction };
+export { capabilityBlockedReadinessSignals };
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('致命错误:', err);
+    process.exit(2);
+  });
+}

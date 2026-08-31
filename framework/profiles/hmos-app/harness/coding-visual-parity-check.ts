@@ -26,7 +26,6 @@ import {
   detectPlaceholderMarker,
 } from './asset-integrity';
 import { canonicalPkgPath, findModuleMediaFile } from './visual-parity-backstop';
-import { checkUiKitSourceConformance } from './ui-kit-conformance-check';
 import { computeStaticFidelityScore } from './static-fidelity-score';
 import { collectUnverifiedCropLines } from './asset-crop-validation';
 import {
@@ -45,7 +44,6 @@ import { collectSpecTextUniverse } from './capture-completeness-check';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { checkStructureDeclarationLedger } from './structure-ledger';
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
-import { collectDeclaredElements } from './layout-oracle-check';
 import { resourceKeyToRef, scanFeatureSourceTree, scanResourceRefModules } from './source-ref-scan';
 
 function ruleDesc(
@@ -65,7 +63,11 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   return fs.readFileSync(p, 'utf-8');
 }
 
-/** S6（P1-H）：locator-required 分母——只含 identity 锚点 id/must_have/交互目标/kit block 实例。 */
+/** S6（P1-H calibrate）：locator-required 分母七类——identity 锚点 id 成员 / bbox 几何断言
+ * 目标 / forbidden-overlap 参与元素 / must_have_elements / region attest 元素 /
+ * 交互目标（测试步骤触达）/ UI kit block 实例锚点。动态列表行、纯装饰/OCR 噪声节点不
+ * 进分母（全量分母会海量误报 + 反向激励：spec 越细覆盖率越低、B 类越易 SKIP）。
+ * 交互节点类型启发式仅作 nav 配置缺失时的透明回退（新分母优先测步骤 by_id 触达）。 */
 const LOCATOR_INTERACTIVE_TYPES = new Set([
   'primary_button', 'selector_group', 'sms_code_field', 'list_selection', 'nav_bar',
   'sheet_scaffold', 'list_row', 'tab_bar', 'input_field', 'action_button',
@@ -74,6 +76,20 @@ const LOCATOR_INTERACTIVE_TYPES = new Set([
 export function collectLocatorRequiredElements(
   screen: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecScreen,
   identityIds: ReadonlySet<string>,
+  opts?: {
+    /** 测试步骤触达（仅本屏 by_id 集合；递归提取 selector 内 by_id）；缺省空 */
+    navStepIds?: ReadonlySet<string>;
+    /** region attest 元素（仅本屏 visual-diff.json region_attest[].region）；缺省空 */
+    attestRegions?: ReadonlySet<string>;
+    /**
+     * 显式区分「nav 配置不存在」与「nav 存在但本屏无触达」（review P1）：
+     * - nav 配置**不存在**（feature 级）→ true：交互节点类型启发式作为透明回退；
+     * - nav 配置**存在** → false：交互类型启发式**不得**无条件进分母
+     *   （触达语义以步骤 by_id 为准；本屏无触达=无交互目标，而非"全部交互"）。
+     * 缺省 false（nav 存在语义，安全侧）。
+     */
+    interactiveFallbackEnabled?: boolean;
+  },
 ): Array<{ elementId: string; reason: string }> {
   const out: Array<{ elementId: string; reason: string }> = [];
   const seen = new Set<string>();
@@ -84,16 +100,32 @@ export function collectLocatorRequiredElements(
     out.push({ elementId: t, reason });
   };
   const walk = (n: import('../../../harness/scripts/utils/ui-spec-shared').UiSpecComponentNode): void => {
-    const rec = n as { id?: unknown; type?: unknown; block?: unknown };
+    const rec = n as { id?: unknown; type?: unknown; block?: unknown; bbox?: unknown };
     if (typeof rec.id === 'string' && rec.id.trim()) {
       if (identityIds.has(rec.id.trim())) add(rec.id, 'identity_anchor');
-      else if (typeof rec.block === 'string' && rec.block.trim()) add(rec.id, 'kit_block_instance');
-      else if (typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) add(rec.id, 'interactive');
+      // plan e6b3f8d2 t3：原有一条「`node.block`（UI kit block 实例声明）→ locator-required」
+      // 分支，随 `block` 字段与强制 kit 一并**删除**。刻意**不**平移到通用 `type`：那会把
+      // S6 特意收窄过的分母重新放宽（结构语义类型恒入分母，nav 在场时也拿交互类型凑分母），
+      // 属于用新约束替换旧约束——本轮只删错误约束。这些节点照常经 identity / nav 触达 /
+      // bbox / 交互回退四条既有规则参与判定。
+      else if (opts?.navStepIds?.has(rec.id.trim())) add(rec.id, 'nav_step_target');
+      else if (Array.isArray(rec.bbox) && rec.bbox.length >= 4) add(rec.id, 'bbox_geometry_target');
+      else if (opts?.interactiveFallbackEnabled && typeof rec.type === 'string' && LOCATOR_INTERACTIVE_TYPES.has(rec.type)) {
+        add(rec.id, 'interactive');
+      }
     }
     for (const c of n.children ?? []) walk(c);
   };
   if (screen.root) walk(screen.root);
+  // forbidden-overlap / protected_region 参与元素（A1 断言对/保护区——缺 locator 则声明永不生效）
+  for (const pair of screen.forbidden_overlap ?? []) {
+    if (Array.isArray(pair)) for (const id of pair) if (typeof id === 'string') add(id, 'forbidden_overlap_participant');
+  }
+  for (const id of screen.protected_region ?? []) {
+    if (typeof id === 'string') add(id, 'forbidden_overlap_participant');
+  }
   for (const mh of screen.must_have_elements ?? []) add(mh, 'must_have');
+  for (const r of opts?.attestRegions ?? []) add(r, 'region_attest_element');
   return out;
 }
 
@@ -110,6 +142,87 @@ export function collectNavIdentityIdMembers(projectRoot: string, feature: string
       }
     }
   } catch { /* nav 不可读 → 空集 */ }
+  return out;
+}
+
+/** nav 2.0 存在性（feature 级）——决定交互类型启发式是否可作回退（review P1：
+ * nav 已存在时不得无条件用交互类型凑分母）。 */
+export function navConfigExists(projectRoot: string, feature: string): boolean {
+  try {
+    return loadVisualDiffNavConfigV2(projectRoot, feature) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** 递归提取任意 nav 步骤对象内的 `by_id`（含 within.by_id / scroll_to.in.by_id 等嵌套形态）。 */
+function collectByIdsDeep(value: unknown, out: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const v of value) collectByIdsDeep(v, out);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const rec = value as Record<string, unknown>;
+  const byId = rec['by_id'];
+  if (typeof byId === 'string' && byId.trim()) out.add(byId.trim());
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === 'by_id') continue;
+    collectByIdsDeep(v, out);
+  }
+}
+
+/**
+ * nav 2.0 **各屏**测试步骤中 by_id 触达的交互目标（locator-required「测试步骤触达」分母，
+ * **按 screen_id 隔离**——A 屏的步骤不得进 B 屏分母）。
+ * 语义=该屏步骤真正要 touch/wait 的元素；导航配置缺失 → 空 Map。
+ */
+export function collectNavStepTargetIdsByScreen(
+  projectRoot: string,
+  feature: string,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  try {
+    const v2 = loadVisualDiffNavConfigV2(projectRoot, feature);
+    for (const [screenId, entry] of Object.entries(v2?.screens ?? {})) {
+      const ids = new Set<string>();
+      for (const step of entry.steps) collectByIdsDeep(step, ids);
+      if (ids.size > 0) out.set(screenId, ids);
+    }
+  } catch { /* nav 不可读 → 空 Map */ }
+  return out;
+}
+
+/**
+ * 既有 visual-diff.json 中 region_attest[].region 的集合（locator-required「region attest
+ * 元素」分母；critic 承诺逐区域举证的对象须可 locator）。**按 screen_id 隔离**——A 屏的
+ * attest 区域不得进 B 屏分母；无报告/不可解析 → 空 Map。
+ */
+export function collectRegionAttestElementIdsByScreen(
+  projectRoot: string,
+  feature: string,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  try {
+    const jsonPath = path.join(
+      featureDir(projectRoot, feature),
+      'device-testing',
+      'device-screenshots',
+      'visual-diff.json',
+    );
+    if (!fs.existsSync(jsonPath)) return out;
+    const rep = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as {
+      screens?: Array<{ screen_id?: unknown; region_attest?: Array<{ region?: unknown; method?: unknown }> }>;
+    };
+    for (const s of rep.screens ?? []) {
+      if (typeof s.screen_id !== 'string' || !s.screen_id.trim()) continue;
+      const regions = new Set<string>();
+      for (const a of s.region_attest ?? []) {
+        if (a.method === 'human') continue;
+        if (typeof a.region === 'string' && a.region.trim()) regions.add(a.region.trim());
+      }
+      if (regions.size > 0) out.set(s.screen_id.trim(), regions);
+    }
+  } catch { /* 报告不可读 → 空 Map（calibrate 数据面不阻断） */ }
   return out;
 }
 
@@ -275,18 +388,28 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       const sourceText = scan.etsFiles.map(f => {
         try { return fs.readFileSync(f, 'utf-8'); } catch { return ''; }
       }).join('\n');
-      // S6（visual-capability-truth P1-H calibrate）：分母收窄为 locator-required 集
-      // （identity 锚点 id 成员 / must_have / 交互目标 / UI kit block 实例）——动态列表行、
-      // 纯装饰/OCR 噪声节点不进分母（codex plan 审查二轮：全量分母会海量误报）。
+      // S6（visual-capability-truth P1-H calibrate，e9c4a7f3 s6-locator-calibrate 重开）：
+      // 分母=locator-required 七类集（identity 锚点 id 成员 / bbox 几何断言目标 /
+      // forbidden-overlap 参与元素 / must_have_elements / region attest 元素 /
+      // 交互目标（测试步骤触达）/ UI kit block 实例锚点）——动态列表行、纯装饰/OCR
+      // 噪声节点不进分母（全量分母会海量误报 + 反向激励：spec 越细覆盖率越低）。
       // 终态诊断：WARN + 覆盖率落盘（locator-coverage.json）；宿主两 run 只回灌分母/夹具，
       // 不预留 <80% 自动升 BLOCKER。定位覆盖率是断言能力量测，不直接表达产品质量或 visual-debt。
       const identityIds = collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature);
+      // nav 触达 / region attest **按屏隔离**；interactive 类型启发式仅 nav 缺失时回退
+      const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+      const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+      const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
       const missingIds: string[] = [];
       let requiredTotal = 0;
       let requiredCovered = 0;
       for (const s of doc.screens ?? []) {
         if (s.priority !== 'P0') continue;
-        for (const el of collectLocatorRequiredElements(s, identityIds)) {
+        for (const el of collectLocatorRequiredElements(s, identityIds, {
+          navStepIds: navStepIdsByScreen.get(s.id),
+          attestRegions: attestByScreen.get(s.id),
+          interactiveFallbackEnabled,
+        })) {
           requiredTotal++;
           const idRe = new RegExp(`\\.id\\(\\s*['"\`]${el.elementId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]\\s*\\)`);
           if (idRe.test(sourceText)) requiredCovered++;
@@ -429,7 +552,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         severity,
         status,
         details: [
-          '【P0-B 物化前置】crop 资产须先过 spec 阶段 asset_crop_validation（sanity+VL 辨认/真人确认）才可物化进模块 media：',
+          '【P0-B 物化前置】crop 资产须先过 spec 阶段 asset_crop_validation（source/hash/bbox/tool/output 绑定 + sanity/VL 机器复验）才可物化进模块 media：',
           ...unverified.map(l => `  ${l}`),
         ].join('\n'),
         suggestion:
@@ -503,7 +626,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           ].join('\n'),
           suggestion:
             '用真实素材替换，或在 harness 目录执行占位生成 CLI（正式入口）：' +
-            `npm run ui-kit:placeholders -- --project-root <宿主根> --feature ${ctx.feature} --apply` +
+            `npm run asset:placeholders -- --project-root <宿主根> --feature ${ctx.feature} --apply` +
             '（brand_logo→文字头像 SVG / illustration→中性插画框 / decoration→中性块；禁空白 PNG）；' +
             'unverified=修复 jimp 环境（npm install）后重跑；brand-critical 素材仍为占位时 release 保持 BLOCKED。',
           affected_files: [uiSpecRel],
@@ -515,7 +638,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
   }
 
   // blind-visual-hardening 四轮 P0-1：占位在场检测——maison 占位 SVG（provenance marker）
-  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_human），
+  // 可见、sanity 会 PASS，但**占位≠素材已供给**：逐素材 WARN 入视觉债务（needs_fix），
   // brand-critical 占位 → release 经债务链保持 BLOCKED（直至真素材替换或人工验收 receipt）。
   // 五轮 P1-3：**全模块匹配**（first-match 会漏掉"A 模块真素材、B 模块占位"的实际引用模块）。
   {
@@ -556,11 +679,10 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
           details: [
             `【占位在场】${placeholderHits.length} 项素材当前为 maison 占位（可见但≠真素材）：`,
             ...placeholderHits.map(h => `  - ${h.key}（${h.kind}${h.critical ? '，brand-critical' : ''}）`),
-            '占位入视觉债务；brand-critical 占位 release 保持 BLOCKED，清偿=真素材替换（三态清偿）或人工验收 receipt 显式接受。',
+            '占位入视觉债务；brand-critical 占位 release 保持 BLOCKED，只有真素材替换并经责任阶段机器重验才可清偿。',
           ].join('\n'),
           suggestion:
-            '真素材到位后放置到对应 resolved_path/media 路径重跑（三态清偿自动闭账）；' +
-            '或走人工视觉验收 receipt 显式接受残余占位（accepted 留痕，不阻断 release 但审计分列）。',
+            '真素材到位后放置到对应 resolved_path/media 路径重跑，机器重验通过后自动闭账；人工验收不能清偿占位债务。',
           affected_files: [uiSpecRel],
           structured: { kind: 'asset_sanity', assets: placeholderHits.map(h => h.key) },
         });
@@ -609,20 +731,9 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // blind-visual-hardening d3（P0-C）：三段闭环·源码段——声明的语义容器须 block 实例化+锚点注入。
-  // 异常=BLOCKER（codex 三轮 P1-3：kit 是盲档视觉地板，执行异常若降 SKIP 即绕过 P0-C）。
-  try {
-    results.push(...checkUiKitSourceConformance(ctx));
-  } catch (e) {
-    results.push({
-      id: 'ui_kit_source_conformance', category: 'structure', description: desc,
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `ui-kit 源码段校验执行异常（地板门禁不得因异常绕过）：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-    });
-  }
+  // plan e6b3f8d2 t3：三段闭环·源码段随强制 Maison UI kit 一并撤销——framework 不再
+  // 规定宿主源码形态（组件实现/vendoring 落点/锚点注入）。源码结构证据继续由本文件
+  // 既有的 presence/结构相似度检查与 plan 侧所有权硬地板承接。
 
   // 透明节点假 presence 拦截（codex 发现的对抗模式，2026-07-03）：spec 文本/资产/符号引用挂在
   // 字面硬不可见节点（opacity(0)/visibility None|Hidden/双零尺寸/fontSize(0)）＝骗静态 presence 扫描。
@@ -646,7 +757,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ].join('\n'),
         suggestion:
           '删除透明占位节点：元素该渲染就真实可见渲染（真图标/真文本）；实现不了就走 ui-spec 显式' +
-          ' placeholder / fidelity_deferrals + 真人签字——透明冒充比缺失更恶劣（掩盖问题且污染结构/无障碍语义）。',
+          ' placeholder / best_effort 债务——strict pixel contract 不接受人签 defer；透明冒充比缺失更恶劣（掩盖问题且污染结构/无障碍语义）。',
         affected_files: [uiSpecRel],
       });
     }
@@ -669,7 +780,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...bakedText.issues.map(i => i.detail),
       ].join('\n'),
       suggestion:
-        '把整段大图重裁为原子插画（仅图形、无声明文本）；文字/交互控件/底部 tab 用真实组件渲染。营销插画确需含字则设 baked_text_defer + 真人署名。',
+        '把整段大图重裁为原子插画（仅图形、无声明文本）；文字/交互控件/底部 tab 用真实组件渲染。装饰文本不得同时登记为 UI text 节点。',
       affected_files: [uiSpecRel],
     });
   }
@@ -687,7 +798,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
       details:
         '【P0-A OCR 不可用】烤字门禁的 OCR 承重探测不可用/失败（tesseract.js 未装或 chi_sim 未物化，或素材图 OCR 失败）——pixel_1to1 下无法核验素材是否烤字，不得放行。',
       suggestion:
-        '修复 OCR 环境：确认 harness 已装 tesseract.js 且 profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 已物化；恢复后重跑（此 id 归 toolchain，signature 重复即 halt 求人）。',
+        '修复 OCR 环境：确认 harness 已装 tesseract.js 且 profiles/hmos-app/vendor/tessdata/chi_sim.traineddata 已物化；恢复后重跑（此 id 归 toolchain，signature 重复则按工具链阻塞终止本 run）。',
       affected_files: [uiSpecRel],
     });
   }
@@ -709,7 +820,7 @@ export function checkVisualParity(ctx: CheckContext): CheckResult[] {
         ...iconSubIssues.map(i => i.detail),
       ].join('\n'),
       suggestion:
-        '有品牌识别度的图标（app logo/银行 logo/营销图）裁原子素材并 $r(app.media.<key>) 渲染；标准语义图标（tab/铃铛/加号/卡种线性图标）按 P0-E 分型规则改声明 icon.kind=system_symbol + color_ref 着色 + fidelity_note；或显式 placeholder + 真人署名。',
+        '有品牌识别度的图标（app logo/银行 logo/营销图）使用机器可验证 source/hash 的原子素材并 $r(app.media.<key>) 渲染；标准语义图标按 P0-E 分型规则声明 system_symbol；仅允许的 placeholder 需保留 debt，release-required 项不得靠署名放行。',
       affected_files: [uiSpecRel],
     });
   }

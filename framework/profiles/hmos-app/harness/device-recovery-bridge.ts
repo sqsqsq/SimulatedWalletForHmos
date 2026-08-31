@@ -16,6 +16,8 @@
 // 静态依赖会在部分入口形成环。
 // ============================================================================
 
+import type { RevealOutcome, UnlockFailureKind } from '../../../harness/scripts/utils/device-unlock-helper';
+
 export interface DeviceReadyOutcome {
   ready: boolean;
   note: string;
@@ -30,6 +32,20 @@ export interface DeviceReadyOutcome {
    * 一台好设备判死。判不出时放行，让实际操作去暴露真实问题。
    */
   blocked: boolean;
+  /**
+   * e5d8a2c4 T3#2：解锁失败的结构化归因。**消费方按它决定下一步，禁止解析 `note` 文案。**
+   * 前置/并发/等待类失败不带该字段——照走既有 `device_blocked` 通道。
+   *
+   * 用**闭集类型**而非 string（codex 四批 P2）：放宽成 string 后，adapter 可以静默
+   * 产出第四、第五种未登记分类而编译器不报警——等于把刚删掉的兜底类从边界放回来。
+   * 这里是 `import type`（编译期擦除），不会形成本文件头注说的那种 require 环。
+   */
+  failureKind?: UnlockFailureKind;
+  /**
+   * a4e7c2f9：`reveal_failed` 的设备命令执行事实（`timedOut`/`errorCode`/`signal`/`status`）。
+   * 与 `failureKind` 同理——消费方据此区分 `ETIMEDOUT` 与 `ENOENT`，禁止解析 `note`。
+   */
+  revealFact?: RevealOutcome;
 }
 
 function loadDeps(): {
@@ -46,9 +62,16 @@ function loadDeps(): {
 }
 
 /**
- * 设备操作**前**的就绪保证。
+ * 设备操作**前**的就绪保证（操作前兜底 + 运行中再次锁屏的恢复）。
  *
- * 未显式指定目标时不做任何事——对未知目标动手比不动更危险。
+ * **目标不在这里解析**（b3f7d9a2 t2）：目标由**入口**解析一次并注入
+ * `HARNESS_HDC_TARGET`——goal 侧是就绪门（deviceEnvFor），普通模式是
+ * harness-runner 的设备前置。本桥只消费那个已解析的目标，**绝不读 config、
+ * 绝不自建第三套解析**：桥内再解析一次的下场是"解锁 A、hdc 操作 B"
+ * （hdc 经 hdcTargetPrefix 在 env 未设时隐式选唯一在线设备）。
+ *
+ * 因此"未显式指定目标 → 跳过"在入口门存在后只剩两种成因：本 phase 不需要设备，
+ * 或调用方在设备门之外的路径上（两者都不该在此对未知目标动手）。
  * 返回 `ready:false` 时调用方须让当前操作失败并归入 `externalBlocked`/`device_blocked`，
  * **不得**重试内容或切换目标。
  */
@@ -67,12 +90,10 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
     const r = ensureDeviceReadyAtRuntime({
       serial: target,
       credentialRef: deps.resolveAttemptCredentialRef(projectRoot),
-      deps: {
-        snapshot: deps.readLockScreenSnapshot,
-        wake: deps.wakeDevice,
-        reveal: deps.revealLockKeypad,
-        tap: deps.tapAt,
-      },
+      // e5d8a2c4 T3#3：解锁 deps 走 harness 的**唯一**接线，不在此再拼一份。
+      // 此前这里手拼四个字段、独独漏了 settle（当时是可选字段，不报错），于是
+      // 运行期恢复这条路在真机上恒零等待——正是 2026-08-05 宿主"永久零输入"的那条路。
+      deps: deps.buildUnlockDeps(),
     });
     // 只有"确实锁着且没解开"才算外部阻断；"判不出"不阻断（见 blocked 字段说明）
     const blocked = !r.recovered && (r.reason === 'unauthorized' || r.reason === 'unlock_failed');
@@ -81,6 +102,8 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
       note: r.note,
       authorized: r.recovered ? true : r.authorized,
       blocked,
+      ...(!r.recovered && r.failureKind ? { failureKind: r.failureKind } : {}),
+      ...(!r.recovered && r.revealFact ? { revealFact: r.revealFact } : {}),
     };
   } catch (err) {
     // 桥自身加载/执行失败：这是框架问题，不是设备阻断。放行让实际操作去暴露真实原因，
@@ -101,13 +124,21 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
 export function recoverAfterLockFailure(
   projectRoot: string,
   serial?: string | null,
-): { recovered: boolean; note: string } {
+): { recovered: boolean; note: string; failureKind?: UnlockFailureKind; revealFact?: RevealOutcome } {
   const target = (serial ?? process.env.HARNESS_HDC_TARGET)?.trim();
   if (!target) return { recovered: false, note: '未显式指定 HARNESS_HDC_TARGET，不对未知目标做恢复' };
   const r = ensureReadyBefore(projectRoot, target);
   // 桥不可用时 `ready:true` 只代表"没做检查"，**不代表恢复成功**——
   // 若照搬会让调用方以为设备已恢复而去重试原操作（P1，三轮 review）。
-  if (!r.ready || r.blocked) return { recovered: false, note: r.note };
-  if (/检查不可用/.test(r.note)) return { recovered: false, note: r.note };
+  //
+  // a4e7c2f9：失败出口 MUST 原样保留结构化归因与执行事实。此前这里只回
+  // `{recovered, note}`，`ensureReadyBefore` 已经分好的 failureKind 在这一跳被整个丢掉
+  // ——后置恢复路径的消费方于是又只剩解析文案一条路，正是本 change 要治的病。
+  const structured = {
+    ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+    ...(r.revealFact ? { revealFact: r.revealFact } : {}),
+  };
+  if (!r.ready || r.blocked) return { recovered: false, note: r.note, ...structured };
+  if (/检查不可用/.test(r.note)) return { recovered: false, note: r.note, ...structured };
   return { recovered: true, note: r.note };
 }

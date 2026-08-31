@@ -43,7 +43,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { sessionRanHarness } from './hook-session-evidence.mjs';
 
 // --------------------------------------------------------------------------
 // HOOK 端默认时间常量
@@ -285,15 +284,11 @@ export function readStateMachineFromConfig(projectRoot) {
  *   --------------+--------------------+--------------------------+-------------------------
  *   state.sid=sx  | fresh-current      | stale-cross-session      | inside-ttl→fresh-current
  *                 |                    |                          | else→stale-ttl-expired
- *   state.sid=null| grace+跑过→fresh   | grace+跑过→fresh-unstmp  | inside-ttl→fresh-current
+ *   state.sid=null| inside-grace→fresh | inside-grace→fresh-unstmp| inside-ttl→fresh-current
  *                 |  -unstamped(stamp) |  (stamp with sy)         | else→stale-ttl-expired
- *                 | grace+没跑过→cross | grace+没跑过→cross       |
  *                 | else→stale-legacy  | else→stale-legacy        |
- *
- * **未盖章的 state 归谁，看本会话跑没跑过它**（ranHarness，由 transcript 一手记录判）。
- * 只按 grace 窗口盖章，同仓两个会话时会把 state 判给恰好先结束消息的那个——实测串台 3 次。
  */
-export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now, ranHarness = false) {
+export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now) {
   const updatedAtMs = parseTimestampMs(state?.updated_at);
   const ageMs = updatedAtMs == null ? Number.POSITIVE_INFINITY : Math.max(0, now - updatedAtMs);
   const stateSid =
@@ -340,24 +335,14 @@ export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs
 
   // 分支 2：state 未盖章（runner 刚写完，hook 还没第一次回填 session_id）
   if (currentSid) {
-    if (ageMs <= gracePeriodMs && ranHarness) {
-      // 本会话的 transcript 里确有这条 harness 调用 + state 刚写不久 → 盖章
+    if (ageMs <= gracePeriodMs) {
+      // 视作"runner 刚写完 state，本次 stop 是同会话第一次触发 hook"——盖章
       return {
         kind: 'fresh-unstamped',
         isStale: false,
         sameSession: true,
         shouldStamp: true,
         reasonHuman: '',
-      };
-    }
-    if (ageMs <= gracePeriodMs) {
-      // 在窗口内但本会话没跑过它：同仓另一个会话在跑，本会话只是恰好先结束了一条消息
-      return {
-        kind: 'stale-cross-session',
-        isStale: true,
-        sameSession: false,
-        shouldStamp: false,
-        reasonHuman: '本会话没有跑过这个阶段的 harness（transcript 里没有对应记录），state 属于同仓的另一个会话',
       };
     }
     // 超 grace：state 写得太久，又没盖章过，更可能是上一会话残留
@@ -580,7 +565,17 @@ function readSummaryHint(projectRoot, state) {
   if (!read) return null;
   const nextAction = typeof read.summary.next_action === 'string' ? read.summary.next_action : '';
   if (!nextAction) return null;
-  return { path: read.summaryRel, nextAction };
+  // plan a9d4e7c2 P1-4：动作分流要看机器事实，不能只有一句 next_action 文案。
+  return {
+    path: read.summaryRel,
+    nextAction,
+    verdict: typeof read.summary.verdict === 'string' ? read.summary.verdict : '',
+    closureStatus: typeof read.summary.closure_status === 'string' ? read.summary.closure_status : '',
+    verifierRequest:
+      typeof read.summary.verifier_request === 'string' ? read.summary.verifier_request : '',
+    verifierSubjectId:
+      typeof read.summary.verifier_subject_id === 'string' ? read.summary.verifier_subject_id : '',
+  };
 }
 
 /**
@@ -617,10 +612,27 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
+  const syncCmd = `cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase ${phase} --feature ${feature}`;
+
+  // plan a9d4e7c2 P1-4：**首要动作必须按机器事实分流**。
+  //
+  // 脚本已经 PASS、只差回执/闭环时，"重跑完整 harness"是**破坏性**建议：它会重新装配
+  // 含时间戳的 ai-prompt.md，subject 随之换代，刚发布的 verifier 证据当场失效——
+  // 弱模型照做就进入"跑→换代→证据失效→再跑"的死循环。这种情况下唯一正确的第一动作是
+  // `--sync-closure`：它不重跑脚本 harness、不重发 request，并会**准确报出**到底缺
+  // verifier 还是缺回执。只有脚本没过（FAIL/INCOMPLETE）时，重跑完整 harness 才是对的。
+  const scriptPassed =
+    (typeof state.verdict === 'string' && state.verdict === 'PASS') ||
+    (summaryHint && summaryHint.verdict === 'PASS');
+  const closureOpen = !summaryHint || summaryHint.closureStatus !== 'closed';
+  const closureOnly = Boolean(scriptPassed && closureOpen);
+  const headline = closureOnly
+    ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（**不要**重跑完整 harness，那会换代 subject 并废掉已发布的 verifier 证据）：`
+    : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
   const lines = [
     // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
-    `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`,
-    `  → ${rerunCmd}`,
+    headline,
+    `  → ${closureOnly ? syncCmd : rerunCmd}`,
     ...(progress && progress.max > 0
       ? [`（第 ${progress.count}/${progress.max} 次拦截；连续零进展达 ${progress.max} 次将自动放行，交还你/用户决定。）`]
       : []),
@@ -635,23 +647,51 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
       '',
     ] : []),
     '如果你打算【继续这个阶段】，按下面顺序补齐：',
-    `  1. 主 agent 自跑 harness：`,
-    `       cd framework/harness && npx ts-node harness-runner.ts \\`,
-    `         --phase ${phase} --feature ${feature}`,
-    `  2. 通过 Task 工具调用 verifier 子 agent（subagent_type=verifier），`,
-    `     传入 feature/phase/报告路径。`,
-    `  3. 填写阶段完成回执：`,
-    `       模板：framework/harness/templates/phase-completion-receipt.md`,
-    `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
-    `  4. 重跑 harness-runner.ts，使其回填 receipt.status=passed 后再尝试 stop。`,
+    ...(closureOnly
+      ? [
+          `  1. 先跑 sync-closure（**不重跑脚本 harness、不换代 subject**）：`,
+          `       ${syncCmd}`,
+          `     它会准确告诉你还缺什么：verifier 证据、回执，还是别的。exit 0 即闭环。`,
+          `  2. 若它报 verifier 证据缺失且 summary.verifier_request 在场：`,
+          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : `<features_dir>/${feature}/${phase}/reports/verifier.request.<subject>.json`}`,
+          `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
+          `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
+          `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
+          `     全文、不要手抄或改写字段、不要附加说明——subject 由字段重算，抄错一处即失配。`,
+          `  3. 若它报回执缺失/不合格，填写阶段完成回执：`,
+          `       模板：framework/harness/templates/phase-completion-receipt.md`,
+          `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
+          `  4. 补齐后重跑第 1 步的 sync-closure，再尝试 stop。`,
+          `     **全程不要跑完整 harness**——脚本结论已经有效，重跑只会换代 subject。`,
+        ]
+      : [
+          `  1. 按 summary.next_action 修因（脚本尚未 PASS），然后自跑完整 harness：`,
+          `       cd framework/harness && npx ts-node harness-runner.ts \\`,
+          `         --phase ${phase} --feature ${feature}`,
+          `     若 next_action = resolve_verifier_provider_then_rerun：这是 **verifier provider`,
+          `     不可用**（当前 adapter 未登记 verifier 能力），不是设备问题、也不是"本阶段不适用`,
+          `     verifier"——换用已登记能力的 adapter，或调整 evidence_profile 后重跑。`,
+          `  2. 脚本 PASS 后若输出了 verifier request（summary.verifier_request 在场），`,
+          `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
+          `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
+          `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
+          `     全文、不要手抄或改写字段、不要附加说明。`,
+          `     没有输出 request 且 next_action 也没指向 provider 问题 = 本阶段不适用 verifier，跳到第 3 步。`,
+          `  3. 填写阶段完成回执：`,
+          `       模板：framework/harness/templates/phase-completion-receipt.md`,
+          `       目标：${receiptRel ?? `${featuresDir}/${feature}/${phase}/phase-completion-receipt.md`}`,
+          `  4. 运行 ${syncCmd}`,
+          `     （只对齐闭环态、不重跑脚本 harness，也不会换代 subject）后再尝试 stop。`,
+        ]),
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',
     `       cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
     `  这会删除 state file。下一次结束消息时本 hook 不会再拦你；`,
     `  历史 verdict / 报告 / 回执仍保留在 reports 与 ${featuresDir} 下。`,
     '',
-    'CLAUDE.md §5.1 把"四份物理凭证齐全"作为闭环判据；本提示是物理拦截层在',
-    '提醒你做出选择，不是要求"必须立刻完成"。继续 / 放弃二选一即可。',
+    'CLAUDE.md §5.1 的闭环判据 = 脚本 verdict PASS ∧ 全部 required 证据齐（要哪几项由',
+    'harness 求解输出，verifier 是否 required 由其 verifier plan 决定）；本提示是物理拦截层',
+    '在提醒你做出选择，不是要求"必须立刻完成"。继续 / 放弃二选一即可。',
   ];
   return lines.join('\n');
 }
@@ -821,10 +861,8 @@ async function main() {
   // 拿 grace / ttl / 逃生阀阈值（从 framework.config.json）
   const { gracePeriodMs, ttlMs, maxConsecutiveBlocks } = readStateMachineFromConfig(projectRoot);
 
-  // 算 staleness。未盖章的 state 归谁，按本会话 transcript 里有没有跑过这条 harness 判——
-  // 只按 grace 窗口盖章会在同仓多会话时把 state 判给「恰好先结束消息」的那个会话。
-  const ranHarness = sessionRanHarness(payload?.transcript_path, state?.feature, state?.phase);
-  const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now(), ranHarness);
+  // 算 staleness
+  const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now());
 
   // 陈旧 → advisory + exit 0
   if (stale.isStale) {

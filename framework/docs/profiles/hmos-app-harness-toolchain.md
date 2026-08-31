@@ -16,8 +16,8 @@
 | ut      | `ut_tsc_compiles`     | TypeScript Compiler API 对 `*.test.ets` 做 `noEmit` 扫描                              |
 | ut      | `ut_hvigor_build`     | `buildUtHvigorArgs` → 与 DevEco「Run ohosTest」对齐：`node hvigorw.js --mode module`、`-p isOhosTest=true`、`-p buildMode=test`、`genOnDeviceTestHap` + task 后 `analyze=normal`（及 parallel/incremental/daemon）；详见 profile 内 `hvigor-runner.ts` |
 | ut      | `ut_hvigor_test`      | 同上出包 → `hdc install` → `hdc shell aa test`；解析 hypium 报告；HAP 在 `build/<product>/outputs/ohosTest/`           |
-| ut      | `ut_no_src_mutation`  | git diff 检测业务源码改动；未在 `gap-notes.md > approved_src_mutations[]` 登记的 FAIL |
-| testing | `device_test.build` / `install` / `run` | 经 **`capability-registry.ts`** 调度 profile provider；Hylyre vendor wheel + venv；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/` |
+| ut      | `ut_no_src_mutation`  | attestation-first：review 正式闭环后按 review closure attestation 的逐文件内容哈希对账 review 后漂移（不看 git 提交状态；基线缺失/不可核实即 fail-closed），review 未闭环才回退 git diff；任一漂移均 FAIL 并交回 coding owner，legacy 授权字段不放行 |
+| testing | `device_test.build` / `install` / `run` | 经 **`capability-registry.ts`** 调度 profile provider；Hylyre vendor 发布件（源码树 `src/`；代码层兼容 legacy wheel 布局）+ venv；报告默认 `doc/features/<feature>/testing/reports/<ts>/hylyre/` |
 
 根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主实现见 `profiles/hmos-app/harness/providers/`。
 
@@ -59,14 +59,14 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
   --mode module \
   -p product=<detectProduct()> \
   -p buildMode=debug \
-  --daemon --parallel --incremental --analyze=advanced \
+  --daemon --parallel --incremental --analyze=normal \
   assembleHap
 
 # coding 可选：项目级 assembleApp（toolchain.hvigor.coding.driver = assemble_app_project）
 hvigorw --mode project \
   -p product=<detectProduct()> \
   -p buildMode=debug \
-  --daemon --parallel --incremental --analyze=advanced \
+  --daemon --parallel --incremental --analyze=normal \
   assembleApp
 
 # UT：genOnDeviceTestHap（与 DevEco Run ohosTest 对齐；task 在后，analyze=normal）
@@ -89,7 +89,7 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
       "daemon": true,
       "parallel": true,
       "incremental": true,
-      "analyze": "advanced"
+      "analyze": "normal"
     }
   }
 }
@@ -102,17 +102,17 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
 | `daemon` | `true` | `false` 传 `--no-daemon`；`true` 传 `--daemon` |
 | `parallel` | `true` | 是否传 `--parallel` |
 | `incremental` | `true` | 是否传 `--incremental` |
-| `analyze` | `"advanced"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |
+| `analyze` | `"normal"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |
 
-`coding_hvigor_build` 报告现在会打印实际 hvigor 命令；若日志命中 `00308018` / `Failed to find the incremental input file`，会追加诊断提示，帮助区分 ArkTS 编译错误和签名/打包增量状态问题。
+`coding_hvigor_build` 报告现在会打印实际 hvigor 命令；错误解析在剥 ANSI 后进行。日志命中 `Failed to find the incremental input file` 会追加增量输入 / 自定义签名任务 / daemon 三条提示；**仅**命中 `00308018` 则报告「SDK/hvigor 内部未知错误」（该码是 hvigor 的 Unknown Error 码，不再单凭码定性增量问题）；首个 `Failed :<module>:<target>@<Task>` 作为失败任务提示。`Failed :` 任务行与 `BUILD FAILED` 是 hvigor 包装行，不计入 errors。
 
 | Flag                  | 收益来源                                                                  | 风险点                                                                            |
 | --------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `-p product=<detect>` | 工程 product 名非 `default` 时需正确注入 | 自动探测：`toolchain.preferredProduct` > `build-profile.json5` 中优先命中名为 `product`/`default` 的项 > 首位 > 兜底 `default` |
+| `-p product=<resolve>` | 工程 product 名非 `default` 时需正确注入 | 单次解析（`resolveProductSelection`）：`explicit_run`（本次显式参数）→ `confirmed_env`（`HARNESS_DEVICE_TEST_PRODUCT`）→ `explicit_config`（config 值 **且** local 确认值逐字相等）→ `sole_candidate`（单候选）→ **`unresolved`：构建形态无法确定即停止并要求确认，不猜**（四种原因：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可解析；后三者无真实候选，**不得虚构 `default`**；名称启发式仅供候选展示排序）；未确认的存量 `preferredProduct` 只按未验证处理 |
 | `-p buildMode=debug`（coding 默认任务均会传） | 项目级 `assembleApp` 默认偏 `release`；固定 debug 缩短门禁耗时 | 模块级 ut 任务默认即 debug，装配时不重复写 `buildMode` |
 | `--parallel`          | 多模块工程开 hvigor task 并发，cold path 受益                              | **小工程（≤ 5 模块）反而是负收益**：worker spinup + 协调开销 > 并发节省；warm 路径下尤其明显 |
 | `--incremental`       | 缓存命中时 hvigor 跳过更激进，warm path 受益                           | cold path 缓存为空，开销基本中性；额外缓存扫描有微小负收益                        |
-| `--analyze=advanced`  | 产出更详细构建诊断信息，适合定位任务图 / 缓存问题                            | 日常 harness 不建议默认开启；可能显著增加 I/O 与分析耗时                         |
+| `--analyze=advanced`  | 产出更详细构建诊断信息，适合定位任务图 / 缓存问题                            | 仅显式 opt-in 时启用（默认 `normal`，与 DevEco 对齐）；可能显著增加 I/O 与分析耗时                         |
 
 ### 小工程 benchmark（仅供参考）
 

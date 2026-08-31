@@ -60,8 +60,8 @@ structure_checks:
       default_budget: 150
       overrides:
         - skill: framework-init
-          budget: 250
-          reason: "S0-S6 全流程 + adapter 物化矩阵 + portable fallback 规则密度高，C3a 台账批准"
+          budget: 260
+          reason: "S0-S6 全流程 + adapter 物化矩阵 + portable fallback 规则密度高，C3a 台账批准；2026-08 plan a7c3f9e2 增补 S2.1 product 确认契约（init.product_selection / record-product-selection / 可信来源判据）与写盘模型描述，+10 行台账追加"
         - skill: business-ut
           budget: 250
           reason: "三路径路由 + 两处 HARD STOP + 两条代码路径示例，全仓最复杂 skill，C3a 台账批准"
@@ -81,11 +81,8 @@ structure_checks:
 
   correction_layer_unconditional_confirm:
     description: >
-      skill 正文若提及 "correction.layer ... 确认"，同一文件内必须同时提及
-      auto_confirm_eligible（balanced 高置信免确认分支，C5-full）——否则视为
-      把 correction.layer 用户确认写成无条件停等，与 --correction-init 落盘的
-      .current-correction.json.auto_confirm_eligible 机读依据脱节（codex review
-      发现：弱模型按 skill 正文执行时会无视该字段直接停等）。
+      correction.layer 人签闸已退役；skills/templates 不得再要求通过该 gate 确认修正层。
+      correction request 经结构化分类后直接进入责任阶段并级联机器重验。
       allowlist 内 file+reason 视为已知豁免，其余一律 FAIL。
     severity: BLOCKER
     rule:

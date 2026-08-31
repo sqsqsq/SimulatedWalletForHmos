@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { UtHostImpl, UtHostSuggestionPaths } from '../../../harness/profile-host-loader';
+import type { UtHostImpl } from '../../../harness/profile-host-loader';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { compileTestFiles } from '../../../harness/scripts/utils/ts-compile';
 import { findFilesRecursive } from '../../../harness/scripts/utils/find-files-recursive';
@@ -30,11 +30,28 @@ import {
   writeUtInstallDiagJson,
 } from './device-install-diag';
 import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
-import { hasDependencyResolutionFailure as hasDepResolutionFailureSignal } from './hvigor-runner';
+import {
+  hasDependencyResolutionFailure as hasDepResolutionFailureSignal,
+  detectHvigorTaskNotFound,
+  isHvigorBuildSuccessful,
+  moduleDeclaresOhosTestTarget,
+} from './hvigor-runner';
+import {
+  resolveProductSelection,
+  describeProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+  summarizeUnresolvedCause,
+  type ProductSelection,
+} from './product-selection';
 import {
   buildUtHvigorTestFailDetails,
   type UtHvigorTestFailureModule,
 } from './ut-hvigor-test-failure';
+import {
+  evaluateSuiteRatchet,
+  suiteFailureKey,
+  targetCaseKey,
+} from '../../../harness/scripts/utils/ut-suite-baseline';
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
@@ -121,19 +138,8 @@ function checkUtFileNaming(
   ];
 }
 
-function getUtSuggestionPaths(): UtHostSuggestionPaths {
-  return {
-    useCasesSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/use-cases-schema.md',
-    mockPlanSchemaTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/mock-plan-schema.md',
-    testabilityAuditTemplateRel:
-      'framework/profiles/hmos-app/skills/business-ut/templates/testability-audit-template.md',
-    branchExampleTestRel:
-      'framework/profiles/hmos-app/skills/business-ut/examples/sample-flow/sample_flow.test.ets',
-    utHostImplRefRel: 'framework/profiles/hmos-app/harness/ut-host-impl.ts',
-  };
-}
+// getUtSuggestionPaths 已退役（plan f4c8d2b7 t5）：模板路径统一解析自
+// profiles/hmos-app/skills/skill-assets.yaml（framework/harness/scripts/utils/ut-template-paths.ts）。
 
 function checkUtFrameworkImport(
   ctx: CheckContext,
@@ -249,23 +255,32 @@ function checkUtTscCompiles(
     .map(([f, n]) => `${f}: ${n} 条`)
     .slice(0, 10);
 
+  // plan 423e5d0f P0-1：模拟 tsc 永不做编译 BLOCKER——权威性排序=真实 hvigor > 模拟 tsc
+  // （R2 实锤：存量 Main.test.ets 被裸 tsc 判 TS2749，同一文件真实 hvigor 编译 PASS）。
+  // 唯一编译 BLOCKER 是 ut_hvigor_build 真实编译；tsc 保留为快速诊断（WARN）。
+  // 例外护栏：profile 把 ut.compile 声明为 SKIP 时，tsc 是仅存的编译门禁，不降级。
+  const realCompileSkipped = isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile');
+
   return [
     {
       id: 'ut_tsc_compiles',
       category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
       severity: 'BLOCKER',
-      status: 'FAIL',
+      description: ruleDesc(ctx, 'structure_checks', 'ut_tsc_compiles'),
+      status: realCompileSkipped ? 'FAIL' : 'WARN',
       details:
         `${groupedByFile.size} 个 UT 文件共 ${report.diagnostics.length} 条 TypeScript Error（耗时 ${report.durationMs} ms）。\n` +
         `按文件：\n${summaryByFile.join('\n')}\n\n` +
-        `前 ${preview.length} 条诊断：\n${preview.join('\n')}`,
+        `前 ${preview.length} 条诊断：\n${preview.join('\n')}\n\n` +
+        (realCompileSkipped
+          ? '注意：ut.compile 已被 profile 声明 SKIP，模拟 tsc 是仅存的编译门禁——本结果保持 FAIL，不降级。'
+          : '口径：模拟 tsc 仅作快速诊断（WARN），编译通过与否以 ut_hvigor_build 真实编译为准；' +
+            '报错落在存量文件且真实编译 PASS 时属模拟器假错，不要为此修改存量代码。'),
       affected_files: Array.from(groupedByFile.keys()),
-      suggestion:
-        'UT 文件必须先通过 tsc --noEmit。请根据上方 TS 错误码修正代码；常见原因：' +
-        '(1) 符号未 import；(2) 调用签名与被测函数不符；(3) 类型字面量错误。' +
-        '若含 TS2614 且为 MockKit/when：在 mock-plan 声明 strategy=mockkit，勿改消费者 framework 内 ts-compile.ts。' +
-        '修完再跑 harness；该规则是 ut_hvigor_build 之前的第一道护城河。',
+      suggestion: realCompileSkipped
+        ? 'ut.compile 为 SKIP：请按上方 TS 错误码修正 UT 代码后重跑；常见原因：(1) 符号未 import；(2) 调用签名不符；(3) 类型字面量错误。'
+        : '新写 UT 的报错请按 TS 错误码修正（符号未 import / 签名不符 / 类型字面量错误）；' +
+          '存量文件的报错以 ut_hvigor_build 真实编译结论为准，不要修改存量代码，也不要改消费者 framework 内 ts-compile.ts。',
     },
   ];
 }
@@ -301,9 +316,32 @@ export function selectUtModulesToCompile(
   return owned.length > 0 ? owned : mods; // 兜底：筛空则退回全集
 }
 
+/**
+ * 编译顺序（plan 423e5d0f P0）：含**本 feature 新增** UT 文件的模块排最前，其次含 scoped
+ * 文件的模块，其余殿后——真实编译错误仍会短路循环，必须保证"报告能回答本 feature
+ * 的被测模块过没过"，不能让顺带被触碰的存量模块把真目标模块挤出执行窗口。
+ * 同一优先级内保持原有顺序（稳定排序）。
+ */
+export function orderUtModulesForCompile(
+  mods: Array<{ name: string; package_path: string }>,
+  scopedUtFiles: Array<{ path: string }>,
+  featureNewUtFiles: Array<{ path: string }>,
+): Array<{ name: string; package_path: string }> {
+  const rank = (m: { package_path: string }): number => {
+    if (featureNewUtFiles.some(f => f.path.includes(m.package_path))) return 0;
+    if (scopedUtFiles.some(f => f.path.includes(m.package_path))) return 1;
+    return 2;
+  };
+  return mods
+    .map((m, i) => ({ m, i, r: rank(m) }))
+    .sort((a, b) => (a.r - b.r) || (a.i - b.i))
+    .map(x => x.m);
+}
+
 function checkUtHvigorBuild(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
+  featureNewUtFiles: Array<{ path: string }> = [],
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
@@ -329,7 +367,11 @@ function checkUtHvigorBuild(
     ];
   }
 
-  const mods = selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles);
+  const mods = orderUtModulesForCompile(
+    selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles),
+    scopedUtFiles,
+    featureNewUtFiles,
+  );
   if (mods.length === 0) {
     return [
       {
@@ -343,7 +385,29 @@ function checkUtHvigorBuild(
     ];
   }
 
-  const perModule: Array<{ module: string; result: any }> = [];
+  // t5（plan a7c3f9e2）：本作用域内只解析一次，显式传给 ut 编译；unresolved 不猜、阻断。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR=1）时让位给既有 skip 语义（fixture 回归锁）。
+  const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
+  if (selection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
+    return [
+      {
+        id: 'ut_hvigor_build',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `ut_hvigor_build：${summarizeUnresolvedCause(selection)}（framework 拒绝猜测）。\n` +
+          buildProductSelectionUnresolvedGuidance(selection),
+        failure_kind: 'project_build_environment_inconsistent',
+        blocking_class: 'externalBlocked',
+        suggestion:
+          '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。请按 details 指引确认 product 后重跑。',
+      },
+    ];
+  }
+
+  const perModule: Array<{ module: string; result: any; taskNotFound?: { task: string } }> = [];
   for (const mod of mods) {
     const res = dispatchUtCompile(ctx, {
       projectRoot: ctx.projectRoot,
@@ -353,17 +417,44 @@ function checkUtHvigorBuild(
       moduleName: mod.name,
       target: 'ohosTest',
       skipEnvVar: 'HARNESS_SKIP_HVIGOR',
+      product: selection.product ?? undefined,
     });
-    perModule.push({ module: mod.name, result: res });
-    if (res.toolMissing || res.skippedByEnv || (res.executed && res.exitCode !== 0)) break;
+    const entry: { module: string; result: any; taskNotFound?: { task: string } } = {
+      module: mod.name,
+      result: res,
+    };
+    if (res.executed && res.exitCode !== 0) {
+      const tnf = detectHvigorTaskNotFound(mergeUtCompileLogForClassification(ctx, res));
+      if (tnf) entry.taskNotFound = tnf;
+    }
+    perModule.push(entry);
+    if (res.toolMissing || res.skippedByEnv) break; // 全局性问题：后续模块必然同因失败
+    // task-not-found 是单模块的工程配置形态问题（plan 423e5d0f P0）：继续编译其余模块，
+    // 保证报告能给出每个模块的事实；真实编译错误仍短路（修复靶点已明确，省时）。
+    if (res.executed && res.exitCode !== 0 && !entry.taskNotFound) break;
   }
 
-  const bad = perModule.filter(
-    x =>
-      x.result.toolMissing ||
-      x.result.skippedByEnv ||
-      (x.result.executed && (x.result.exitCode !== 0 || x.result.errors.length > 0)),
-  );
+  const perModuleStatusLines = [
+    '逐模块编译状态：',
+    ...(selection ? [`${describeProductSelection(selection)}（单次解析，贯穿本门禁）`] : []),
+    ...perModule.map(x => {
+      const r = x.result;
+      const st = r.toolMissing ? 'TOOL_MISSING'
+        : r.skippedByEnv ? 'ENV_SKIP'
+        : !r.executed ? 'NOT_EXECUTED'
+        // plan a7c3f9e2（意见2 P1，第四处出口）：与 coding/device-testing 共用
+        // isHvigorBuildSuccessful——errors[] 不参与终态（宿主非致命 ERROR 不误杀真成功）
+        : isHvigorBuildSuccessful(r) ? 'PASS'
+        : x.taskNotFound ? `FAIL（task_not_found: ${x.taskNotFound.task}）` : 'FAIL';
+      return `  - ${x.module}: ${st}${r.logPath ? `（日志：${r.logPath}）` : ''}`;
+    }),
+    ...mods.slice(perModule.length).map(m => `  - ${m.name}: NOT_EXECUTED（前序失败短路）`),
+  ];
+
+  // plan a7c3f9e2（意见2 P1，第四处出口）：ut_hvigor_build 的 FAIL 判据与 coding /
+  // device-testing 三处共用 isHvigorBuildSuccessful——toolMissing/skippedByEnv 时
+  // executed=false 天然覆盖，timedOut 比原判据更严谨；errors.length 不再参与终态。
+  const bad = perModule.filter(x => !isHvigorBuildSuccessful(x.result));
 
   if (bad.length === 0) {
     // plan d7e4b2a9 t3③：sign-skip 只做报告可见性，不改变 PASS 判定（编译本身成功，
@@ -380,14 +471,19 @@ function checkUtHvigorBuild(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}`,
+        details:
+          `全部 ${perModule.length} 个 ohosTest 模块 hvigor 编译通过（累计耗时 ` +
+          `${perModule.reduce((s, x) => s + x.result.durationMs, 0)} ms）。${signSkipNote}\n` +
+          perModuleStatusLines.join('\n'),
       },
     ];
   }
 
-  const first = bad[0].result;
-  const lines: string[] = [`ohosTest 模块 "${bad[0].module}" 编译失败：`];
-  const failureClass = classifyUtHvigorBuildFailure(first, ctx, bad[0].module, ctx.projectRoot);
+  // 详细展开优先选"真实编译失败"的模块；全是 task-not-found 时才展开该形态。
+  const detailEntry = bad.find(x => !x.taskNotFound) ?? bad[0];
+  const first = detailEntry.result;
+  const lines: string[] = [...perModuleStatusLines, '', `ohosTest 模块 "${detailEntry.module}" 编译失败：`];
+  const failureClass = classifyUtHvigorBuildFailure(first, ctx, detailEntry.module, ctx.projectRoot);
   if (first.toolMissing) {
     lines.push('原因：未找到 hvigor 可执行文件（请在 framework.local.json > toolchain.devEcoStudio 配置本机 DevEco 路径）。');
     first.logExcerpt.split(/\r?\n/).forEach((l: string) => lines.push(l));
@@ -436,7 +532,7 @@ function checkUtHvigorBuild(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: lines.join('\n'),
-      affected_files: [bad[0].module + '@ohosTest'],
+      affected_files: bad.map(x => `${x.module}@ohosTest`),
       failure_kind: failureClass.kind,
       blocking_class:
         failureClass.kind === 'external_project_build_blocker'
@@ -453,6 +549,7 @@ type UtHvigorFailureKind =
   | 'toolchain'
   | 'env_skip'
   | 'ut_hvigor_command_mismatch'
+  | 'ut_module_target_unregistered'
   | 'ut_code'
   | 'feature_code'
   | 'project_dependency_missing'
@@ -482,7 +579,7 @@ export function classifyConfigSchemaError(
       `定位 ${where} 的非法字段并修正；若该字段是本轮/前一轮为排障新增、反而把原本合法的配置改坏的，` +
       '优先回退到 trace.json.start_commit 的版本，而不是继续叠加改动。' +
       '提示：build-profile.json5 的 target 仅允许 name/config/source/resource/runtimeOS/output 字段。' +
-      '该文件受源码改动门禁约束，确需保留改动须经用户授权并登记 gap-notes approved_src_mutations。',
+      '该文件受源码改动门禁约束，确需修改须交回 coding owner 并重走 review→ut→testing。',
   };
 }
 
@@ -509,6 +606,31 @@ function classifyUtHvigorBuildFailure(
   }
 
   const mergedLog = mergeUtCompileLogForClassification(ctx, res);
+
+  // plan 423e5d0f P0：hvigor "Task ... was not found" = 工程构建配置形态问题（该模块未注册
+  // 对应构建目标 / hvigor 版本差异），不是 UT 代码问题——归因给 build-profile targets，
+  // 不按 module.json5 type 武断归因，也不引导 ohpm install / 改 UT。
+  const taskNotFound = detectHvigorTaskNotFound(mergedLog);
+  if (taskNotFound) {
+    const probe = moduleDeclaresOhosTestTarget(projectRoot, moduleName);
+    const probeNote =
+      probe === false
+        ? `工程根 build-profile.json5 的 modules[] 中模块 "${moduleName}" 的 targets 未含 ohosTest —— hvigor 因此不会为其挂载该 task（与日志现象一致）。`
+        : probe === true
+          ? `工程根 build-profile.json5 中模块 "${moduleName}" 已注册 ohosTest target，但 hvigor 仍未挂载该 task——多为 hvigor 版本/插件差异，需在 DevEco 对该模块实测 "Run ohosTest" 确认。`
+          : `未能从工程根 build-profile.json5 读取模块 "${moduleName}" 的 targets（文件缺失/解析失败/模块未列出），请人工核对。`;
+    return {
+      kind: 'ut_module_target_unregistered',
+      explanation:
+        `hvigor 报 Task '${taskNotFound.task}' was not found：该模块当前构建配置下不存在此构建目标任务。` +
+        `这是工程配置形态问题，不是 UT 代码问题。${probeNote}`,
+      suggestion:
+        `选项 A：在工程根 build-profile.json5 为模块 "${moduleName}" 的 targets 注册 ohosTest target（对照可正常 Run ohosTest 的模块写法），在 DevEco 实测通过后重跑；` +
+        '选项 B：若该模块本不属于本需求被测范围（仅因存量测试文件被顺带触碰而进入编译集合），恢复对该文件的改动使其退出 scope，不要为过门禁修改无关模块配置。' +
+        '注意：build-profile.json5 受源码改动门禁约束，确需修改须交回 coding owner 并重走 review→ut→testing。',
+    };
+  }
+
   if (looksLikeUtCompileCommandMismatch(ctx, mergedLog)) {
     return {
       kind: 'ut_hvigor_command_mismatch',
@@ -571,8 +693,8 @@ function classifyUtHvigorBuildFailure(
   if (touchesCurrentModuleMain) {
     return {
       kind: 'feature_code',
-      explanation: '编译错误指向当前模块 src/main；若确需改业务源码，必须先走 business-ut 源码修改授权流程。',
-      suggestion: '优先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时先向用户申请并登记 gap-notes。',
+      explanation: '编译错误指向当前模块 src/main；该文件属于 coding owner，UT 不得修改或用用户回复放行。',
+      suggestion: '先确认是否可通过 UT/Spy 调整规避；确需改 src/main 时产出 coding repair candidate，由 coding 修改后重走 review→ut。',
     };
   }
 
@@ -608,6 +730,8 @@ function formatDependencyIssue(issue: any): string {
 function checkUtHvigorTest(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
+  /** 责任域用例（含所属文件路径）——模块由 package_path 归属推导，构成 module::test 身份 */
+  targetCases: Array<{ path: string; test: string }> = [],
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
@@ -663,6 +787,28 @@ function checkUtHvigorTest(
     ];
   }
 
+  // t5（plan a7c3f9e2）：ut.run 同样单次解析编译形态；unresolved 不猜、阻断。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR_TEST=1）时让位给既有 skip 语义（fixture 回归锁）。
+  const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
+  if (selection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR_TEST) {
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `ut_hvigor_test：${summarizeUnresolvedCause(selection)}（framework 拒绝猜测）。\n` +
+          buildProductSelectionUnresolvedGuidance(selection),
+        failure_kind: 'project_build_environment_inconsistent',
+        blocking_class: 'externalBlocked',
+        suggestion:
+          '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。请按 details 指引确认 product 后重跑。',
+      },
+    ];
+  }
+
   const devProbe = probeUtRunDevices(ctx);
   if (!devProbe.available) {
     const head = devProbe.hdcPresent
@@ -705,6 +851,9 @@ function checkUtHvigorTest(
     ];
   }
 
+  // plan 423e5d0f P1-2（codex 修正）：**用例失败不短路**——棘轮裁决需要全部选中模块的
+  // 完整结果（半途 PASS=假绿）；只有链路级失败（工具缺失/未执行/无测试结果的异常退出）
+  // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
   const perModule: UtHvigorTestFailureModule[] = [];
   for (const mod of mods) {
     const res = dispatchUtRun(ctx, {
@@ -714,35 +863,113 @@ function checkUtHvigorTest(
       phase: 'ut',
       moduleName: mod.name,
       moduleSrcPath: mod.package_path,
+      product: selection.product ?? undefined,
     });
     perModule.push({ module: mod.name, result: res });
-    if (
-      res.toolMissing ||
-      (res.executed && (res.exitCode !== 0 || (res.testResult && res.testResult.failed > 0)))
-    ) {
+    const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;
+    if (res.toolMissing || (!caseLevelFailure && (!res.executed || res.exitCode !== 0))) {
       break;
     }
   }
+  const allModulesExecuted =
+    perModule.length === mods.length &&
+    perModule.every(x => x.result.executed && x.result.testResult);
 
+  // suite 失败棘轮：基线是 attended suite 输入工件（不授权源码改动或质量 PASS；
+  // 同级——普通授权文件+review 纪律，不做密码学防伪，见顶层裁定），本轮执行不生成；
+  // 无基线 → 不豁免任何失败（suite_health=UNKNOWN）。失败身份含 module（跨模块同名不互豁免）。
+  const allFailures = perModule.flatMap(x =>
+    (x.result.testResult?.failures ?? []).map((f: { suite: string; test: string }) => ({
+      module: x.module,
+      suite: f.suite,
+      test: f.test,
+    })),
+  );
+  const anyRealResult = perModule.some(x => x.result.executed && x.result.testResult);
+  // target 身份含模块（codex 五轮 #2）：模块 A 的目标用例名不得把模块 B 的同名历史失败
+  // 也标成 target——否则那条无关存量失败无法按基线豁免，又回到"存量拖死当前修复"。
+  const targetKeys = new Set(
+    targetCases.flatMap(c => {
+      const owner = mods.find(m => c.path.includes(m.package_path));
+      return owner ? [targetCaseKey(owner.name, c.test)] : mods.map(m => targetCaseKey(m.name, c.test));
+    }),
+  );
+  // 只有"真实跑出用例结果（total>0）"的模块才有资格证明其历史失败已恢复；
+  // executed 但 total=0（未跑到任何用例）不算（codex 六轮 #1）。
+  const modulesWithValidResults = new Set(
+    perModule
+      .filter(x => x.result.executed && (x.result.testResult?.total ?? 0) > 0)
+      .map(x => x.module),
+  );
+  const ratchet = anyRealResult
+    ? evaluateSuiteRatchet({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        frameworkRoot: ctx.frameworkRoot,
+        failures: allFailures,
+        targetKeys,
+        modulesWithValidResults,
+      })
+    : null;
+  const suiteHealthLine = `suite_health: ${ratchet ? ratchet.suiteHealth : 'UNKNOWN'}`;
+  const ratchetNote = ratchet && ratchet.baselineExempt.length > 0
+    ? `\n${suiteHealthLine}（${ratchet.baselineExempt.length} 条基线内历史失败已豁免，不计入本 feature 结论${
+        ratchet.baselineTightenedTo !== undefined ? `；基线已自动收紧至 ${ratchet.baselineTightenedTo} 条` : ''
+      }）：\n` +
+      ratchet.baselineExempt.slice(0, 10).map(f => `  - [${f.suite}] ${f.test}`).join('\n')
+    : ratchet && !ratchet.baselineAvailable && allFailures.length > 0
+      ? `\n${suiteHealthLine}（无可信 suite 失败基线：全部失败照常问责。如存量套件确有已知历史失败，` +
+        `由用户确认后放置 suite-failure-baseline.json（条目须含 module/suite/test，feature 字段须匹配）——` +
+        `本轮执行不得反推基线，agent 不得自行创建该文件）`
+      : `\n${suiteHealthLine}`;
+
+  const exemptKeys = new Set((ratchet?.baselineExempt ?? []).map(suiteFailureKey));
   const bad = perModule.filter(x => {
     const r = x.result;
     if (r.toolMissing) return true;
     if (!r.executed) return true;
-    if (r.exitCode !== 0) return true;
     const t = r.testResult;
+    if (t && (t.total ?? 0) > 0 && (t.failed ?? 0) > 0) {
+      // 豁免判定先于 exitCode：用例失败会让 aa test 以非零退出，不得因此绕过棘轮；
+      // 失败身份含模块名——A 模块的基线不得豁免 B 模块的同名失败。
+      const allExempt = (t.failures ?? []).every(
+        (f: { suite: string; test: string }) =>
+          exemptKeys.has(suiteFailureKey({ module: x.module, suite: f.suite, test: f.test })),
+      );
+      return !(allExempt && (t.failures ?? []).length > 0);
+    }
+    if (r.exitCode !== 0) return true;
     if (!t) return true;
     if (t.total <= 0) return true;
-    if (t.failed > 0) return true;
     return false;
   });
+
+  if (bad.length === 0 && !allModulesExecuted) {
+    // 防御：豁免使 bad 清空但并非所有选中模块都真实执行 → 不得宣称 PASS
+    return [
+      {
+        id: 'ut_hvigor_test',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details:
+          `选中 ${mods.length} 个模块，仅 ${perModule.length} 个产生真实执行结果——不完整的执行不得判 PASS。` +
+          `已执行：${perModule.map(x => x.module).join(', ') || '(无)'}${ratchetNote}`,
+        suggestion:
+          '检查未执行模块的链路失败原因（见已执行模块的日志与归因），修复后重跑；不得以部分模块结果宣称 UT 通过。',
+      },
+    ];
+  }
 
   if (bad.length === 0) {
     const totals = perModule.reduce(
       (acc, x) => ({
         total: acc.total + (x.result.testResult?.total ?? 0),
         passed: acc.passed + (x.result.testResult?.passed ?? 0),
+        failed: acc.failed + (x.result.testResult?.failed ?? 0),
       }),
-      { total: 0, passed: 0 },
+      { total: 0, passed: 0, failed: 0 },
     );
     return [
       {
@@ -752,9 +979,9 @@ function checkUtHvigorTest(
         severity: 'BLOCKER',
         status: 'PASS',
         details:
-          `全部 ${perModule.length} 个 ohosTest 模块装机执行通过：` +
-          `total=${totals.total}, passed=${totals.passed}, failed=0；` +
-          `目标设备：${devProbe.targets.join(' / ')}`,
+          `全部 ${perModule.length} 个 ohosTest 模块装机执行通过（target 无失败）：` +
+          `total=${totals.total}, passed=${totals.passed}, failed=${totals.failed}；` +
+          `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}`,
       },
     ];
   }
@@ -767,7 +994,7 @@ function checkUtHvigorTest(
       description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: formatted.lines.join('\n'),
+      details: formatted.lines.join('\n') + ratchetNote,
       affected_files: formatted.affectedFiles,
       failure_kind: formatted.failureKind,
       blocking_class: formatted.blockingClass,
@@ -936,7 +1163,6 @@ export const utHostImpl: UtHostImpl = {
   checkUtHvigorBuild,
   checkUtHvigorTest,
   checkTestRegistration,
-  getUtSuggestionPaths,
   isSuiteEntryShim: isSuiteEntryShimContent,
   collectHarnessPollutionExtras,
 };

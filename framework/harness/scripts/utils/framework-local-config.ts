@@ -10,6 +10,7 @@ import {
   LOCAL_LEGACY_TOP_KEY,
   LOCAL_VISION_KEYS,
   LOCAL_VISION_CANARY_KEYS,
+  LOCAL_VISION_VISUAL_PROVIDER_KEYS,
   LOCAL_DEVICE_KEYS,
   LOCAL_DEVICE_UNLOCK_KEYS,
 } from './config-field-ownership';
@@ -59,6 +60,18 @@ export interface FrameworkLocalConfigVisionCanary {
 export interface FrameworkLocalConfigVision {
   image_input_override?: 'none' | 'tool_read' | 'native_attach';
   canary?: FrameworkLocalConfigVisionCanary;
+  /**
+   * 视觉委托（plan ab072691 t1②）：个人级只读视觉 provider 身份。
+   *
+   * 形状 = ProviderRef（utils/types.ts），此处**不 import** 那个类型：本模块是纯 config 层，
+   * 与 image_input_override 同理不反向依赖上层，避免循环。
+   *
+   * **支持资格不在这里判**——资格唯一真源是 `agents/<adapter>/adapter.yaml.visual_provider`
+   * 完整声明（adapter-catalog listVisualProviderAdapters）。本层只保证形状合法，好让
+   * 「旧 local 记着一个已失去资格的 adapter」这件事**能被读出来**并按输入形态分流：
+   * 交互态提示重选、无人值守 WARN+忽略+blind、显式 CLI fail-fast。
+   */
+  visual_provider?: { adapter: string; model: string };
 }
 
 /** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
@@ -79,6 +92,22 @@ export interface FrameworkLocalToolchainProbe {
   };
   last_attempt?: { summary?: string; observed_at?: string };
   known_quirks?: string[];
+}
+
+/**
+ * t3（plan a7c3f9e2）：本机 product 确认凭证。
+ *
+ * 写入方唯一 = `record-product-selection` CLI（用户经 registry `init.product_selection`
+ * 显式选择后由机器写入）；与 `framework.config.json > toolchain.preferredProduct` 由
+ * 同一次操作写入。resolver 判定 `explicit_config` 的充要条件：
+ * config 值 **且** 本字段值逐字相等；无本字段或值不等 → `legacy_unverified_config`
+ * （不作为可信来源）。他人 clone 后 local 无记录 → 各自确认一次。
+ */
+export interface FrameworkLocalToolchainProductSelection {
+  confirmed?: {
+    value: string;
+    confirmed_at?: string;
+  };
 }
 
 /**
@@ -112,6 +141,7 @@ export interface FrameworkLocalConfig {
       hvigorBin?: string;
     };
     probe?: FrameworkLocalToolchainProbe;
+    productSelection?: FrameworkLocalToolchainProductSelection;
   };
   vision?: FrameworkLocalConfigVision;
   device?: FrameworkLocalConfigDevice;
@@ -208,6 +238,48 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
         }
       }
       toolchainOut.probe = probeObj as FrameworkLocalToolchainProbe;
+    }
+    // t3（plan a7c3f9e2）：product 确认凭证——键白名单 + value 非空字符串校验
+    const productSelection = tcObj.productSelection;
+    if (productSelection !== undefined) {
+      if (!productSelection || typeof productSelection !== 'object' || Array.isArray(productSelection)) {
+        throw new Error('[framework-local-config] toolchain.productSelection 必须是对象');
+      }
+      const psObj = productSelection as Record<string, unknown>;
+      rejectUnknownObjectKeys(psObj, LOCAL_PRODUCT_SELECTION_KEYS, 'toolchain.productSelection');
+      const psOut: FrameworkLocalToolchainProductSelection = {};
+      const confirmed = psObj.confirmed as Record<string, unknown> | undefined;
+      if (confirmed !== undefined) {
+        if (!confirmed || typeof confirmed !== 'object' || Array.isArray(confirmed)) {
+          throw new Error('[framework-local-config] toolchain.productSelection.confirmed 必须是对象');
+        }
+        rejectUnknownObjectKeys(
+          confirmed,
+          LOCAL_PRODUCT_SELECTION_CONFIRMED_KEYS,
+          'toolchain.productSelection.confirmed',
+        );
+        const value = confirmed.value;
+        if (typeof value !== 'string' || !value.trim()) {
+          throw new Error(
+            '[framework-local-config] toolchain.productSelection.confirmed.value 必须是非空字符串',
+          );
+        }
+        const confirmedAt = confirmed.confirmed_at;
+        if (confirmedAt !== undefined && (typeof confirmedAt !== 'string' || !confirmedAt.trim())) {
+          throw new Error(
+            '[framework-local-config] toolchain.productSelection.confirmed.confirmed_at 必须是非空字符串（ISO 时间戳）',
+          );
+        }
+        psOut.confirmed = {
+          value: value.trim(),
+          ...(typeof confirmedAt === 'string' && confirmedAt.trim()
+            ? { confirmed_at: confirmedAt.trim() }
+            : {}),
+        };
+      }
+      if (Object.keys(psOut).length > 0) {
+        toolchainOut.productSelection = psOut;
+      }
     }
     if (Object.keys(toolchainOut).length > 0) {
       out.toolchain = toolchainOut;
@@ -320,7 +392,31 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
       };
     }
 
-    if (outVision.image_input_override || outVision.canary) {
+    // plan ab072691 t1②：visual_provider {adapter, model}——两键均必填非空。
+    // model 必填的理由与 primary 的 adapter_model_pin 同源：没有冻结的 endpoint 就没有身份，
+    // 「声称已钉、实际未钉」是本框架反复付过代价的形态。
+    const visualProvider = visionObj.visual_provider;
+    if (visualProvider !== undefined) {
+      if (!visualProvider || typeof visualProvider !== 'object' || Array.isArray(visualProvider)) {
+        throw new Error('[framework-local-config] vision.visual_provider 必须是对象');
+      }
+      const vpObj = visualProvider as Record<string, unknown>;
+      rejectUnknownObjectKeys(vpObj, LOCAL_VISION_VISUAL_PROVIDER_KEYS, 'vision.visual_provider');
+      const vpAdapter = typeof vpObj.adapter === 'string' ? vpObj.adapter.trim() : '';
+      const vpModel = typeof vpObj.model === 'string' ? vpObj.model.trim() : '';
+      if (!vpAdapter) {
+        throw new Error('[framework-local-config] vision.visual_provider.adapter 必须是非空字符串');
+      }
+      if (!vpModel) {
+        throw new Error(
+          '[framework-local-config] vision.visual_provider.model 必须是非空字符串' +
+          '（provider 身份须冻结具体模型；不写 model 等于没有 provider）',
+        );
+      }
+      outVision.visual_provider = { adapter: vpAdapter, model: vpModel };
+    }
+
+    if (outVision.image_input_override || outVision.canary || outVision.visual_provider) {
       out.vision = outVision;
     }
   }
@@ -387,10 +483,13 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   return out;
 }
 
-const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio', 'probe']);
+const LOCAL_TOOLCHAIN_KEYS = new Set(['devEcoStudio', 'probe', 'productSelection']);
 /** t6 toolchain-probe-truth：probe 分层键与 compile 三态（写入权限见 profiles/hmos-app/harness/toolchain-probe.ts） */
 const LOCAL_PROBE_KEYS = new Set(['binary', 'cli_starts', 'project_compile', 'last_attempt', 'known_quirks']);
 const LOCAL_PROBE_COMPILE_STATUS = new Set(['unknown', 'verified', 'capability_failed']);
+/** t3（plan a7c3f9e2）：productSelection 分层键——确认凭证只含 confirmed{value, confirmed_at} */
+const LOCAL_PRODUCT_SELECTION_KEYS = new Set(['confirmed']);
+const LOCAL_PRODUCT_SELECTION_CONFIRMED_KEYS = new Set(['value', 'confirmed_at']);
 
 /** personal 叶子键 SSOT（与 config-field-ownership 对齐，避免循环 import 重复声明语义） */
 const LOCAL_DEVECO_LEAF_KEYS = new Set(['installPath', 'hvigorBin']);
@@ -453,6 +552,29 @@ export function writeLocalConfig(projectRoot: string, config: FrameworkLocalConf
     try { fs.rmSync(tmp, { force: true }); } catch { /* best-effort */ }
     throw err;
   }
+}
+
+/**
+ * 无损写回（事故修复四件套 plan c9f4e7a2 t1）：**唯一**的局部更新入口。
+ *
+ * 此前个人级配置的写盘分散在多个手写白名单 merge（personal-setup-gate mergeLocalPatch、
+ * init-task-executor mergeLocal），各自只保留 agent_adapter/toolchain/vision 的**子集**，
+ * 已在两起事故中把 `device`（含 `device.unlock.credential_ref`）与 `vision` 整段抹掉——
+ * 凭据仍在 OS 库，框架却丢了引用。这里改为：读取完整合法配置（文件不存在时以
+ * `{schema_version: LOCAL_SCHEMA_VERSION}` 为基线）→ updater 只返回目标字段修改后的
+ * **完整**配置 → 复用既有 validateLocalSchema + tmp/fsync/rename 原子写。不做通用深合并、
+ * 不加字段白名单、不扩展并发锁机制。
+ */
+export function updateLocalConfig(
+  projectRoot: string,
+  updater: (current: FrameworkLocalConfig) => FrameworkLocalConfig,
+): void {
+  const current = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
+  const next = updater(current);
+  writeLocalConfig(projectRoot, next);
+  // 延迟 require 避免与 config.ts 的运行时循环依赖（config.ts 静态 import 本模块）。
+  const { clearFrameworkConfigCache } = require('../../config') as typeof import('../../config');
+  clearFrameworkConfigCache();
 }
 
 export function resolveAgentAdapterSource(

@@ -3,8 +3,9 @@
  */
 
 import type { FrameworkPersonalSetupStatus } from '../../config';
-import type { HarnessResolvedProfile } from '../../scripts/utils/types';
-import type { GoalManifest } from './goal-manifest';
+import type { HarnessResolvedProfile, ProviderRef } from '../../scripts/utils/types';
+import { resolveVisionModeForRun, reviewVisionForMode } from './visual-provider-identity';
+import type { GoalManifest, RunAdapterProvenance } from './goal-manifest';
 import {
   adapterEntryExists,
   evaluatePersonalSetupGate,
@@ -21,24 +22,30 @@ import {
 import type { FeaturePhase } from './phase-transition-policy';
 import {
   loadGoalCapability,
+  routeGoalCapability,
   validateGoalCapabilityForRunner,
 } from './goal-adapter-capability';
-import { resolveGoalEffectiveImageInput, isVisionCanaryFresh } from './multimodal-probe';
+import { isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-probe';
 // plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
-import { canaryAdmissibleForRun } from './effective-vision-context';
-import { planUsesClaudeStreamJson } from './claude-envelope';
+// plan d7f3a9c4 t3：执行身份升级 `{runId, modelPin}` 二元——重探判定与采信判定共用
+// canaryAdmissibleForExecution（无 pin 时精确退化为 canaryAdmissibleForRun）。
 import {
+  assertAdapterHeadlessFullPermission,
   invokeAgentHeadless,
   resolveHeadlessInvokePlan,
+  resolveSessionBinary,
   validateHeadlessBinaryForPlan,
   type InvokeTemplateVars,
 } from './agent-invoke';
+import type { ResolvedHeadlessBinary } from './headless-binary-resolve';
 import { resolveUiRelevanceForRun } from './fidelity-shared';
 import {
   buildCanaryPrompt,
   generateRandomCanaryAnswerKey,
   renderCanaryImage,
   resolveCanaryCacheDecision,
+  resolveCanaryHardCliFailure,
+  resolveCanaryStdoutEnvelope,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
 
@@ -59,14 +66,6 @@ export function resolveAdapterProvenance(
   if (adapterStatus.source === 'project_legacy') return 'config_legacy';
   return 'fallback';
 }
-
-/** 运行身份语义来源（写入 manifest.adapter_provenance，供回溯）。 */
-export type RunAdapterProvenance =
-  | 'user_explicit'
-  | 'entry_declared'
-  | 'local_config'
-  | 'registry'
-  | 'override';
 
 export interface RunAdapterDecision {
   effectiveAdapter: string;
@@ -157,11 +156,18 @@ export interface GoalPreflightInput {
   dryRun: boolean;
   chain: FeaturePhase[];
   resolvedProfile: HarnessResolvedProfile;
+  executorMode?: 'attended' | 'detached';
 }
 
-export function runGoalPreflight(input: GoalPreflightInput): void {
+/**
+ * plan c4e8a1f7 T1a：preflight 返回本 execution session 解析出的 resolved binary
+ * （probe/canary/formal invoke 三个消费点共用同一绝对路径；resume 新进程重新解析）。
+ * dry-run WARN 提前返回 / 无结构化候选时返回 null。
+ */
+export function runGoalPreflight(input: GoalPreflightInput): SessionBinaryResolution | null {
   const { projectRoot, frameworkRoot, manifest, provenance, dryRun, chain, resolvedProfile } =
     input;
+  const executorMode = input.executorMode ?? 'detached';
   const adapter = manifest.adapter?.trim();
   if (!adapter) {
     throw new Error('[goal-runner] preflight BLOCKER: manifest.adapter 缺失');
@@ -193,9 +199,29 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
   }
 
   const cap = loadGoalCapability(frameworkRoot, adapter);
-  const v = validateGoalCapabilityForRunner(frameworkRoot, adapter, manifest.unattended);
-  if (!v.ok) {
-    throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
+  if (executorMode === 'attended') {
+    const route = routeGoalCapability(cap, 'attended');
+    if (route.kind !== 'in_session') {
+      throw new Error(`[goal-runner] preflight BLOCKER: ${route.reason}`);
+    }
+  } else {
+    const v = validateGoalCapabilityForRunner(frameworkRoot, adapter, manifest.unattended);
+    if (!v.ok) {
+      throw new Error(`[goal-runner] preflight BLOCKER:\n${v.issues.map((i) => `  - ${i}`).join('\n')}`);
+    }
+  }
+
+  // plan a8e5c3f9 t5：headless 全权限支持性——不支持的内建 adapter 明确失败，不静默降级
+  //（dry-run 与 binary 检查同待遇：降为 WARN，便于无宿主环境演练脚本）。
+  const fullPerm = executorMode === 'detached'
+    ? assertAdapterHeadlessFullPermission(adapter)
+    : { ok: true as const };
+  if (!fullPerm.ok) {
+    if (dryRun) {
+      console.warn(`[goal-runner] preflight WARN: ${fullPerm.reason}`);
+    } else {
+      throw new Error(`[goal-runner] preflight BLOCKER: ${fullPerm.reason}`);
+    }
   }
 
   if (provenance === 'fallback') {
@@ -218,6 +244,11 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     throw new Error(`[goal-runner] preflight BLOCKER: ${gate.message}`);
   }
 
+  // Attended transport is supplied by the host stdio callback. The common runtime still
+  // performs all project/capability/personal prerequisite checks above, but it must not
+  // require or resolve a detached headless binary.
+  if (executorMode === 'attended') return null;
+
   // argv_adapter 不豁免 deveco readiness（已在 evaluatePersonalSetupGate 校验）
 
   const vars: InvokeTemplateVars = {
@@ -229,37 +260,40 @@ export function runGoalPreflight(input: GoalPreflightInput): void {
     FEATURE: manifest.feature,
     PHASE: manifest.start_phase,
   };
+  // plan d7f3a9c4 t1：binary-gate 的纯 plan 构造**刻意不带 pin**——本 plan 只用于
+  // validateHeadlessBinaryForPlan（只校验 argv[0] 可否 spawn，与后续 flag 无关），
+  // 不实际 spawn；chrys/generic 的"不支持 pin"错误在更早的 resolveFinalModelPin()
+  // 即 fail-fast 退出，根本走不到此处。
+  // plan c4e8a1f7 T1a：session 级 binary 单点解析——plan 构造与返回值都复用同一结果；
+  // probe/canary/formal invoke 三个消费点拿到的都是这一个绝对路径。
+  const sessionBinary = resolveSessionBinary(adapter);
   const plan = resolveHeadlessInvokePlan(
     adapter,
     cap.capability!,
     manifest.unattended,
     vars.PROMPT,
     vars,
+    undefined,
+    sessionBinary.binary,
   );
   const binaryCheck = validateHeadlessBinaryForPlan(adapter, plan);
   if (!binaryCheck.ok) {
     if (dryRun) {
       console.warn(`[goal-runner] preflight WARN: ${binaryCheck.message}`);
-      return;
+      return null;
     }
     throw new Error(binaryCheck.message);
   }
 
-  const effectiveMm = resolveGoalEffectiveImageInput(
-    projectRoot,
-    frameworkRoot,
-    adapter,
-    manifest.unattended,
-  );
-  if (
-    effectiveMm.imageInput === 'none' &&
-    effectiveMm.reason.includes('缺 Read')
-  ) {
-    console.warn(
-      `[goal-runner] preflight WARN: image_input 声明 tool_read 但 goal allowed_tools 缺 Read；` +
-        `运行时视觉多模态将诚实降级为 none（${effectiveMm.reason}）`,
-    );
-  }
+  // plan a8e5c3f9 t1：「allowed_tools 缺 Read → 视觉降级」WARN 已随降级链一并退役——
+  // headless 全权限下审批清单不存在，也不再参与多模态能力判断。
+  return sessionBinary;
+}
+
+/** plan c4e8a1f7 T1a：session binary 解析结果（binary=null 时 shadowed 仍携带诊断）。 */
+export interface SessionBinaryResolution {
+  binary: ResolvedHeadlessBinary | null;
+  shadowed: string[];
 }
 
 export type VisionCanaryProbeSkipReason =
@@ -314,15 +348,19 @@ export function decideVisionCanaryProbe(input: {
   // plan d8c5f3a7 T1：**skip 的前提是消费端将会采信**——新鲜度只答「证据是否过期」，
   // 还须合取 canaryAdmissibleForRun 答「证据是否属于当前执行身份」。否则出现
   // 2026-07-24 事故形态：goal canary 因 TTL 内被判 fresh 而跳过重探，却因 run_id 不匹配
-  // 在三轴 resolver 处落 adapter_declared → blind_safe，凭空致盲；且 goal·tool_read
-  // 正结论 TTL=7d，等于「每 7 天只有第一个 run 有视觉，其余全盲」的永久陷阱。
+  // 无法供当前执行复用。新鲜度与执行身份必须同时满足，避免把旧 run 结果误当当前能力。
   const canary = local?.vision?.canary;
+  // plan d7f3a9c4 t3：**中央重探判定**——始终 `fresh && canaryAdmissibleForExecution(...)`。
+  // 无 pin 时 modelPin=undefined，谓词精确退化为 canaryAdmissibleForRun（run 绑定一步不少，
+  // 防 v5 公式把本处退化到只剩 fresh 而重新引入 07-24 跨 run 缓存事故）；pin 在场时才追加
+  // 模型匹配（resume 改 pin 同 run_id 的旧模型缓存不再被跳过重探）。
+  const modelPin = manifest.adapter_model_pin?.value;
   if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
-    if (canaryAdmissibleForRun(canary, { runId: manifest.run_id })) {
+    if (canaryAdmissibleForExecution(canary, { runId: manifest.run_id, modelPin })) {
       return { action: 'skip', reason: 'fresh_cache_present' };
     }
-    // 新鲜但本 run 不可采信（跨 run 的 goal canary / 旧缓存无 run_id）→ 当场重探，
-    // 探测结果会带本 run 的 run_id 写盘，消费面随即可采信。
+    // 新鲜但本 run 不可采信（跨 run 的 goal canary / 旧缓存无 run_id / pin 在场但模型不配）
+    // → 当场重探，探测结果会带本 run 的 run_id 与 pin 模型写盘，消费面随即可采信。
     return { action: 'probe', reason: 'fresh_but_not_admissible_for_run' };
   }
   return { action: 'probe' };
@@ -331,7 +369,8 @@ export function decideVisionCanaryProbe(input: {
 export type VisionCanaryProbeOutcome =
   | 'valid_cached'
   | 'invalid_not_cached'
-  | 'invoke_failed_not_cached';
+  | 'invoke_failed_not_cached'
+  | 'hard_cli_failure';
 
 /**
  * E1：实际执行金丝雀探测——生成资产、headless 问答、严格判卷、按有效性决定是否写缓存。
@@ -342,7 +381,9 @@ export type VisionCanaryProbeOutcome =
  * （空输出/额度错误文本/prompt echo/残卷）一律**不落缓存**（消费面按既有语义回退：盘上有
  * fresh last-known-good 则沿用，否则 adapter 声明路径——stale-if-error，日志由 goal-runner
  * 按盘上缓存现查二分）；只有有效作答（严格解析的 canonical answer）才 classify 并连同
- * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER。
+ * probe_version 写盘。异常降级：探测异常不抛出、不阻断 goal run，探测失败不是 BLOCKER
+ * （plan d7f3a9c4 t3 沿此；**t4 例外**：child spawn race / CLI·config 参数不兼容由
+ * resolveCanaryHardCliFailure 判定为 hard_cli_failure，goal-runner 据此升 run 级 BLOCKER）。
  */
 export async function runVisionCanaryProbe(input: {
   projectRoot: string;
@@ -352,6 +393,8 @@ export async function runVisionCanaryProbe(input: {
   invokeFn?: typeof invokeAgentHeadless;
   /** 单测注入（默认随机卷）：canned stdout 夹具须知道卷面答案才能构造有效作答（与 invokeFn 同款缝） */
   answerKeyFn?: typeof generateRandomCanaryAnswerKey;
+  /** plan c4e8a1f7 T1a：session 级 resolved binary（与正式 invoke 同一绝对路径） */
+  resolvedBinary?: ResolvedHeadlessBinary | null;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
@@ -383,8 +426,32 @@ export async function runVisionCanaryProbe(input: {
       FEATURE: manifest.feature,
       PHASE: manifest.start_phase,
     };
-    const plan = resolveHeadlessInvokePlan(adapter, cap.capability, manifest.unattended, prompt, vars);
+    const plan = resolveHeadlessInvokePlan(
+      adapter,
+      cap.capability,
+      manifest.unattended,
+      prompt,
+      vars,
+      manifest.adapter_model_pin?.value,
+      input.resolvedBinary,
+    );
     const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
+    // 不兼容只这两类升 hard_cli_failure（由 goal-runner 在 action==='probe' 真实路径升 BLOCKER）；
+    // 其余 invoke 结果（auth/quota/API/无效答卷/超时/静默杀）保持既有非阻断语义。
+    // "无有效 stdout" 复用 parseCanaryAnswer（传 answerKey）——CLI banner 等非答卷不压签名。
+    // plan e6b3f8d2 t1：信封方言按 adapter 解析——claude 家族看 tool_event_provenance，
+    // codex 自 `--json` 接入后恒为 JSONL（不做投影会把作答判成没作答）。
+    const canaryEnvelope = resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
+    const canaryStructuredStdout = canaryEnvelope !== 'none';
+    const hardCli = resolveCanaryHardCliFailure(invoke, {
+      answerKey,
+      structuredStdout: canaryStructuredStdout,
+      ...(canaryStructuredStdout ? { structuredStdoutFormat: canaryEnvelope } : {}),
+    });
+    if (hardCli) {
+      return { ran: true, outcome: 'hard_cli_failure', error: hardCli };
+    }
     const decision = resolveCanaryCacheDecision({
       stdout: invoke.stdout,
       exitCode: invoke.exitCode,
@@ -393,7 +460,8 @@ export async function runVisionCanaryProbe(input: {
       skipped: invoke.skipped,
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
-      structured_stdout: planUsesClaudeStreamJson(adapter, cap.capability.tool_event_provenance),
+      structured_stdout: canaryStructuredStdout,
+      ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
       return {
@@ -416,7 +484,9 @@ export async function runVisionCanaryProbe(input: {
           probe_version: VISION_CANARY_PROBE_VERSION,
           // S3（visual-capability-truth）：receipt 增维——adapter 层无法证明实际模型路由
           // （cursor auto 等），诚实记 unknown；scope 判级据此封顶 run_probed 且不跨 run。
-          model: 'unknown',
+          // plan d7f3a9c4 t3：**pin 在场时前提不再成立**——模型是用户显式指定并已回放进
+          // argv，receipt 记 pin.value（采信须模型匹配）；无 pin 时继续记 'unknown'（现状）。
+          model: manifest.adapter_model_pin?.value ?? 'unknown',
           probe_context: 'goal_preflight',
           run_id: manifest.run_id,
         },
@@ -453,10 +523,12 @@ export function goalRequiredPrerequisites(
 
 import * as cryptoT6 from 'crypto';
 import {
+  clampFidelityByCapability,
   computeRequirementShaFromText,
   dereferenceRequirementDocs,
   detectDesiredFidelity,
   isValidFidelityTarget,
+  loadFidelityIntentSsotState,
   resolveFidelityRoutingDecision,
   resolveOcrAvailableForRun,
   resolveRequestedFidelity,
@@ -464,16 +536,10 @@ import {
   writeFidelityIntentSsot,
   type FidelityRoutingDecision,
   type FidelityTarget,
+  type RequirementProvenance,
 } from './fidelity-shared';
-import { resolveEffectiveVisionContext, sha256File as sha256FileVc } from './effective-vision-context';
-import { uiSpecAbsPath as uiSpecAbsPathT6 } from './ui-spec-shared';
 import { resolveContextAdapterImageInput } from './multimodal-probe';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './confirmation-receipt';
 import { featureFilePath } from '../../config';
-import * as fsT6 from 'fs';
 
 export type FidelityPreflightAction =
   | { action: 'proceed'; effective?: FidelityTarget; note?: string; routing?: FidelityRoutingDecision }
@@ -493,38 +559,6 @@ export interface FidelityPreflightInput {
   now?: () => Date;
 }
 
-/** S3 policy meet（与 goal-runner advisory 同一 resolveEffectiveVisionContext 判定链——
- * 单源在 effective-vision-context；异常 fail-closed 默认盲）。
- * post-impl2 P0-1：必须带 run 身份（runId/adapter/frameworkRoot/phase）——goal canary
- * 只认 run_id 匹配（effective-vision-context:328），缺身份会把已证明有视觉的模型误判盲档。 */
-function resolvePolicyVisualForRouting(
-  projectRoot: string,
-  feature: string,
-  identity?: { runId?: string; adapter?: string; frameworkRoot?: string; phase?: string },
-): boolean {
-  try {
-    let artifactHashes: string[] | undefined;
-    const uiSpecAbs = uiSpecAbsPathT6(projectRoot, feature);
-    if (fsT6.existsSync(uiSpecAbs)) {
-      const h = sha256FileVc(uiSpecAbs);
-      if (!h) return false;
-      artifactHashes = [h];
-    }
-    const vctx = resolveEffectiveVisionContext({
-      projectRoot,
-      feature,
-      ...(identity?.runId ? { runId: identity.runId } : {}),
-      ...(identity?.adapter ? { adapter: identity.adapter } : {}),
-      ...(identity?.frameworkRoot ? { frameworkRoot: identity.frameworkRoot } : {}),
-      ...(identity?.phase ? { phase: identity.phase } : {}),
-      ...(artifactHashes ? { artifactHashes } : {}),
-    } as Parameters<typeof resolveEffectiveVisionContext>[0]);
-    return vctx.effective_policy.mode === 'visual';
-  } catch {
-    return false;
-  }
-}
-
 export interface FidelityRoutingInitInput {
   projectRoot: string;
   frameworkRoot: string;
@@ -537,8 +571,26 @@ export interface FidelityRoutingInitInput {
   profileDir?: string;
   manifestFidelity?: string;
   fidelityFromCli?: boolean;
+  /** @deprecated legacy manifest field; ignored and never grants a downgrade. */
   fidelityReceiptRel?: string;
   runIdForReceipt?: string;
+  /** plan d7f3a9c4 t3：最终裁决后的 model pin value（goal 态由 manifest 派生；无 pin 不传） */
+  modelPin?: string;
+  /**
+   * plan ab072691 t2①②：本 run 冻结的只读视觉 provider 身份（goal 态来自
+   * manifest.visual_provider_pin；阶段驱动来自个人级 local）。**不传=没配**。
+   * 传入不代表可用：静态资格（adapter 是否有完整 visual_provider 声明）在此处现算，
+   * 不合格即落 blind。真实调用的成败与本判定无关（无 provider 金丝雀）。
+   */
+  visualProviderPin?: ProviderRef;
+  /** plan c8e5b3f1 t1：需求来源（必填——TS 必填参数防漏接，漏传即编译不过）：
+   * goal_manifest=goal 模式（preflight / vision policy 收紧重建）；explicit_cli=手动显式非空
+   * 需求；intent_fallback=仅靠 collectIntentTextWithPhaseFallback 兜底。不提供默认值、不看
+   * 环境变量猜、不叠运行时校验。 */
+  requirementProvenance: RequirementProvenance;
+  /** plan c4e8a1f7 T2：需求来源列表（项目根相对；goal 态来自 manifest，阶段驱动来自
+   * --requirement-file 解析）——SSOT 以可选字段保留同一来源，不建第二份图片清单。 */
+  requirementSourceFiles?: string[];
   now?: () => Date;
 }
 
@@ -546,7 +598,7 @@ export interface FidelityRoutingInitInput {
  * plan f6b2d9a4 T2：路由初始化唯一执行实现（runner-owned）——goal 模式由 goal-runner
  * 在 agent invoke 前调用；phase-driven 由 skills/feature/spec Step 1 经
  * fidelity-intent-init CLI 调用（薄入口只透传，agent-adapters 约束）。职责：
- * 解引用需求 → 降档 receipt 验真 → capability 探测（vision probe × S3 policy meet、
+ * 解引用需求 → 当前执行 capability 探测（vision probe、
  * OCR）→ 三段式路由 → 落 capability-snapshot.json + fidelity-intent.json（唯一 SSOT）。
  * harness-runner/check-spec 只加载复核，不首产。
  */
@@ -555,46 +607,34 @@ export function initializeFidelityRouting(
 ): { routing: FidelityRoutingDecision; receiptNote: string; requirementSha: string } {
   const deref = dereferenceRequirementDocs(input.projectRoot, input.requirement, {
     featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${input.feature}/`],
   });
-  // 降档 receipt 验真（唯一降档通道；绑定=解引用合并需求文本 sha + feature + run_id）
-  let downgradeReceiptValid = false;
-  let receiptNote = '';
-  if (input.fidelityReceiptRel) {
-    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
-    const v = validateConfirmationReceiptFile(
-      path.join(input.projectRoot, input.fidelityReceiptRel),
-      defaultTrustRegistryPath(input.projectRoot),
-      {
-        action: 'fidelity_downgrade',
-        feature: input.feature,
-        object_hash: objectHash,
-        run_id: input.runIdForReceipt,
-        now: input.now,
-      },
-    );
-    downgradeReceiptValid = v.valid;
-    if (!v.valid) receiptNote = `降档 receipt 无效：${v.reasons.join('；')}`;
-  }
-  // capability snapshot（v3 P1-4 同源：一次探测，preflight/prompt/check-spec/intent 四消费面共用）
-  const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter);
-  const policyVisual = resolvePolicyVisualForRouting(input.projectRoot, input.feature, {
+  const receiptNote = input.fidelityReceiptRel
+    ? 'legacy fidelity_receipt 已忽略：质量档位只能由冻结需求或新的 correction/successor 输入改变。'
+    : '';
+  // capability snapshot：只记录当前执行的真实输入能力。产物验证结果不得反向改写模型能力。
+  const probe = resolveContextAdapterImageInput(input.projectRoot, input.frameworkRoot, input.adapter, {
     runId: input.runIdForReceipt,
-    adapter: input.adapter,
-    frameworkRoot: input.frameworkRoot,
-    phase: 'spec',
+    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
   });
-  const hasVision = probe.supported && policyVisual;
-  const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter);
+  const hasVision = probe.supported;
+  const ocrAvailable = resolveOcrAvailableForRun(input.projectRoot, input.profileDir ?? '', input.adapter, {
+    runId: input.runIdForReceipt,
+    ...(input.modelPin ? { modelPin: input.modelPin } : {}),
+  });
   const requirementSha =
     computeRequirementShaFromText(
       input.projectRoot, input.feature, input.requirement ?? deref.combined, input.featuresDirRel,
     ) ?? cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
+  // plan ab072691 t2①：vision_mode **在此派生一次**并随快照冻结——run 内不可变。
+  // 静态资格现算（catalog 完整声明），不做任何 provider 探测调用。
+  const visionMode = resolveVisionModeForRun(input.frameworkRoot, hasVision, input.visualProviderPin);
   const routing = resolveFidelityRoutingDecision({
     requirementText: deref.combined,
     manifestFidelity: input.manifestFidelity,
     manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
-    downgradeReceiptValid,
-    capability: { hasVision, ocrAvailable },
+    // t2③：钳制吃评审轴。delegated 与 native 同样不钳（pixel_1to1 放行）；blind 逐字不变。
+    capability: { hasVision, ocrAvailable, reviewVision: reviewVisionForMode(visionMode) },
     executionIdentity: input.executionIdentity,
     requirementSha,
   });
@@ -602,30 +642,50 @@ export function initializeFidelityRouting(
     execution_identity: input.executionIdentity,
     decision_id: routing.decision.decision_id,
     vision: {
+      // 语义不变：vision.verdict 恒指 **primary** 是否能看图（vision_mode 才是路由三态）。
       verdict: hasVision,
-      source: `probe:${probe.imageInput ?? 'none'}·policy:${policyVisual ? 'visual' : 'blind_safe'}`,
+      source: `probe:${probe.imageInput ?? 'none'}`,
     },
     ocr: { verdict: ocrAvailable, source: input.profileDir ? 'profile_probe_or_canary' : 'canary_signal' },
+    vision_mode: visionMode,
+    // 只有真正委托出去时才记 provider 身份：配了但失格 ⇒ blind，快照不得留一个
+    // 「看起来已委托」的记录（诚实披露优先于信息完整）。
+    ...(visionMode === 'delegated' && input.visualProviderPin
+      ? { visual_provider: { ...input.visualProviderPin } }
+      : {}),
   });
   writeFidelityIntentSsot(input.projectRoot, input.feature, routing, {
     executionIdentity: input.executionIdentity,
     requirementSha,
+    // plan c8e5b3f1 t1：writer 必须写调用方显式裁决的需求来源（必填入参，TS 防漏接）。
+    requirementProvenance: input.requirementProvenance,
+    // plan c4e8a1f7 T2：同一来源列表随 SSOT 可选字段保留。
+    ...(input.requirementSourceFiles && input.requirementSourceFiles.length > 0
+      ? { requirementSourceFiles: input.requirementSourceFiles }
+      : {}),
   });
   return { routing, receiptNote, requirementSha };
 }
 
 /**
  * 规则（plan f6b2d9a4：「非关键冲突不阻塞」）：
- * - 三段式路由：inferred（文本推导）→ selected（只升不降；receipt 降档）→ effective（clamp）；
+ * - 三段式路由：inferred（文本推导）→ selected（只升不降）→ effective（clamp）；
  * - **唯一阻塞形态**=selected=pixel_1to1 ∧ strictness=hard ∧ clamp 降档 →
- *   DEFERRED_CAPABILITY_MISSING（出路=换视觉模型 / fidelity_downgrade receipt / 改需求）；
+ *   DEFERRED_CAPABILITY_MISSING（出路=换视觉模型，或以 correction/successor 明确修改需求）；
  * - 其余一律 proceed（含混/自声明自动定档到能力内最优档，透明记录进 fidelity-intent SSOT）；
  *   await_human_fidelity_tier 分支已删除（v2 定稿）。
  */
 export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): FidelityPreflightAction {
   const { projectRoot, frameworkRoot, manifest } = input;
-  // post-impl P1-5：init 不被 chainStartsAtSpec 短路——截断链/resume 换档同样要刷新
-  // SSOT/snapshot（否则 manifest 已换档而决策层用旧数据）；仅 DEFER 判定限 spec 起点链。
+  // runner-owned-machine-facts 追补（codex 定点；宿主实锤 run 20260815T112821Z-6cb1da）：
+  // fidelity-intent.json / capability-snapshot.json 是 spec-owned、被 spec closure 冻结进
+  // evidence manifest 的决策文件。下游起点 run 无条件重写它们（execution_identity 每 run
+  // 必变，旧注释所称"幂等重算"并不幂等）= runner 亲手把上游 spec closure 弄 stale →
+  // 收尾 assess 推荐 rerun_phase:spec → 本链不含 spec 无路由 → catch-all framework_bug halt。
+  // 链首非 spec 改为**读取复用（零写盘）**；需求/显式档位真变了 → 明确要求从 spec 重跑。
+  if (!input.chainStartsAtSpec) {
+    return evaluateDownstreamStartFidelity(input);
+  }
   const { routing, receiptNote } = initializeFidelityRouting({
     projectRoot,
     frameworkRoot,
@@ -637,13 +697,22 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
     profileDir: input.profileDir,
     manifestFidelity: manifest.fidelity,
     fidelityFromCli: input.fidelityFromCli,
-    fidelityReceiptRel: manifest.fidelity_receipt,
     runIdForReceipt: manifest.run_id,
+    // plan c8e5b3f1 t1：goal preflight 需求来源=goal manifest。
+    requirementProvenance: 'goal_manifest',
+    // plan c4e8a1f7 T2：来源列表随 manifest 冻结值透传（SSOT 可选字段保留同一来源）。
+    ...(manifest.requirement_source_files && manifest.requirement_source_files.length > 0
+      ? { requirementSourceFiles: manifest.requirement_source_files }
+      : {}),
+    // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    // plan ab072691 t2①：视觉委托身份同样只从 manifest 冻结值派生（不重读 local）。
+    ...(manifest.visual_provider_pin ? { visualProviderPin: manifest.visual_provider_pin } : {}),
     now: input.now,
   });
   if (routing.rejectedDowngrade) {
     console.warn(
-      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，无有效 receipt 不生效（只升不降）。${receiptNote}`,
+      `[goal-runner] --fidelity=${manifest.fidelity} 是降档请求，不生效（只升不降；请以 correction/successor 修改需求）。${receiptNote}`,
     );
   }
   // post-impl4 P0-1：唯一真冲突（selected=pixel∧hard∧clamp）**不受链起点限制**——
@@ -654,18 +723,9 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
       routing,
       detail:
         `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
-        `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路三选一：` +
-        '①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt 后以 ' +
-        '`--fidelity <tier> --fidelity-receipt <path>` 重跑；③修改需求措辞放宽严格度。' +
+        `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路：` +
+        '换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。' +
         (receiptNote ? ` ${receiptNote}` : ''),
-    };
-  }
-  if (!input.chainStartsAtSpec) {
-    return {
-      action: 'proceed',
-      effective: routing.effective,
-      routing,
-      note: 'chain 起点非 spec：SSOT/snapshot 已按当前 manifest 刷新，档位对账由 check-spec 承担',
     };
   }
   return {
@@ -676,14 +736,128 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
   };
 }
 
+/**
+ * 链首非 spec 的下游起点：读取复用 spec 冻结的 fidelity 决策，**零写盘**。
+ * - SSOT 损坏 / 需求 sha 失配 / 显式档位与冻结 selected 不一致 → 明确要求从 spec 重跑
+ *   （上游审的不是当前需求/决策，续跑无意义；下游重建同样会污染 spec closure 输入集）；
+ * - SSOT 缺失 → 非 UI/legacy 流程合法，不新建直接 proceed（UI 缺失由上游 closure 校验拦）；
+ * - 唯一真冲突保留（post-impl4 P0-1 语义不因本改动削弱）：能力按当前执行**内存重探**，
+ *   pixel ∧ hard ∧ 当前能力钳 → DEFER。
+ */
+function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): FidelityPreflightAction {
+  const { projectRoot, frameworkRoot, manifest } = input;
+  const ssotState = loadFidelityIntentSsotState(projectRoot, manifest.feature);
+  if (ssotState.state === 'corrupt') {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        'fidelity-intent.json（spec 冻结的档位决策 SSOT）存在但损坏——下游起点不得重建它' +
+        '（重写会使上游 spec closure stale）。请从 spec 重跑（--start spec）恢复合法决策链。',
+    };
+  }
+  // 需求内容级 sha 与当前执行能力（内存探测，不写盘）——missing/valid 两分支共用
+  const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
+    featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${manifest.feature}/`],
+  });
+  const currentSha = computeRequirementShaFromText(
+    projectRoot, manifest.feature, manifest.requirement ?? deref.combined, input.featuresDirRel,
+  );
+  const identity = {
+    runId: manifest.run_id,
+    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+  };
+  const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, identity);
+  const ocrAvailable = resolveOcrAvailableForRun(projectRoot, input.profileDir ?? '', manifest.adapter, identity);
+  // plan ab072691 t2①③：下游起点同样按 manifest 冻结的 provider 身份重算评审轴——
+  // 否则「spec 期委托到位、下游起点却按盲重判」会把 pixel∧hard 误判成真冲突而 DEFER。
+  // 与上游同一条派生规则（静态资格，无 provider 探测）。
+  const downstreamReviewVision = reviewVisionForMode(
+    resolveVisionModeForRun(frameworkRoot, probe.supported, manifest.visual_provider_pin),
+  );
+  if (ssotState.state === 'missing') {
+    // 无既有 SSOT（legacy 现场/非 UI 流程/交互态闭环）：**内存推导**路由做真冲突判定
+    //（post-impl4 P0-1 语义不因零写盘削弱——盲 ∧ hard ∧ pixel 不许盲跑全链），
+    // resolveFidelityRoutingDecision 是纯函数，不落任何文件。legacy 降档 receipt 不参与；
+    // 档位只能由冻结需求或新的 correction/successor 输入改变。
+    const routing = resolveFidelityRoutingDecision({
+      requirementText: deref.combined,
+      manifestFidelity: manifest.fidelity,
+      manifestFidelitySource: input.fidelityFromCli ? 'explicit_cli' : 'manifest_declared',
+      capability: { hasVision: probe.supported, ocrAvailable, reviewVision: downstreamReviewVision },
+      executionIdentity: manifest.run_id,
+      requirementSha: currentSha,
+    });
+    if (routing.defer) {
+      return {
+        action: 'defer_capability_missing',
+        routing,
+        detail:
+          `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足` +
+          `（${routing.clampReason ?? 'capability_clamped'}）。不盲跑全链；出路：` +
+          '换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。',
+      };
+    }
+    return {
+      action: 'proceed',
+      effective: routing.effective,
+      routing,
+      note: 'chain 起点非 spec 且无既有 fidelity SSOT——内存推导路由，不新建文件（避免改写 spec closure 输入集）；档位对账由 check-spec 承担',
+    };
+  }
+  const ssot = ssotState.doc;
+  // ① 需求变更侦测——与 SSOT 写入口径同源（内容级 sha，跨 run 稳定）
+  if (currentSha !== ssot.requirement_sha256) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        '需求内容与 spec 冻结的档位决策 SSOT 失配（requirement sha 变更）——上游 spec 审的' +
+        '不是当前需求，从下游续跑无意义；请从 spec 重跑（--start spec）。',
+    };
+  }
+  // ② 显式档位变更侦测
+  if (
+    typeof manifest.fidelity === 'string' &&
+    isValidFidelityTarget(manifest.fidelity) &&
+    manifest.fidelity !== ssot.selected_fidelity
+  ) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        `--fidelity=${manifest.fidelity} 与 spec 冻结的 selected=${ssot.selected_fidelity} 不一致` +
+        '——档位决策变更须回 spec 重新裁决（--start spec），下游起点不得改写冻结决策。',
+    };
+  }
+  // ③ 唯一真冲突：当前执行能力（前置内存重探）钳 spec 冻结的 selected
+  const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
+    hasVision: probe.supported,
+    ocrAvailable,
+    reviewVision: downstreamReviewVision,
+  });
+  if (ssot.selected_fidelity === 'pixel_1to1' && ssot.acceptance_strictness === 'hard' && reclamp.clamped) {
+    return {
+      action: 'defer_capability_missing',
+      detail:
+        `需求为 pixel_1to1 目标且严格度=hard（不接受降级），而当前能力不足（${reclamp.reason ?? 'capability_clamped'}）。` +
+        '不盲跑全链；出路：换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。',
+    };
+  }
+  return {
+    action: 'proceed',
+    effective: ssot.effective_fidelity,
+    note:
+      'chain 起点非 spec：复用 spec 冻结的 fidelity 决策（零写盘——下游 run 不得改写被 closure ' +
+      '冻结的 spec-owned SSOT）；档位对账由 check-spec 承担',
+  };
+}
+
 // ----------------------------------------------------------------------------
 // 十三轮 review P0-1：fidelity transition 独立前置校验——fresh/resume 都执行。
 // 事故面：evaluateFidelityTierPreflight 全跳 resume，而 --resume --manifest --fidelity
 // 照样 applyManifestCliOverrides 入 manifest → 我方 drift 字段级授权直接放行未经验证的
 // 降档/垃圾凭证/垃圾枚举，写进 authenticated checkpoint 成为新 SSOT。
-// 契约：只有枚举合法 + （降档 ⟹ fidelity_downgrade receipt 验真通过）才返回精确授权
-// 字段集——--fidelity 只授权 fidelity、--fidelity-receipt 验真过才授权 fidelity_receipt，
-// 不再互相搭车；违规=blockers（调用方 fresh/resume 一律 BLOCKER 退出，不静默）。
+// 契约：显式档位枚举必须合法且只能升档；legacy --fidelity-receipt 已退役并拒绝写入。
+// 降档属于需求变更，须开启 correction/successor 从 spec 重验。
 // ----------------------------------------------------------------------------
 
 export interface FidelityTransitionInput {
@@ -697,9 +871,9 @@ export interface FidelityTransitionInput {
 }
 
 export interface FidelityTransitionVerdict {
-  /** 本次 CLI transition 授权覆盖的 manifest 身份字段（⊆ {fidelity, fidelity_receipt}） */
+  /** 本次 CLI transition 授权覆盖的 manifest 身份字段（仅可能包含 fidelity） */
   authorizedFields: Set<string>;
-  /** 非空=CLI 用法本身违规（枚举非法/降档无有效凭证/凭证无效）——一律 BLOCKER */
+  /** 非空=CLI 用法本身违规（枚举非法、降档或使用已退役 receipt）——一律 BLOCKER */
   blockers: string[];
 }
 
@@ -719,47 +893,24 @@ export function evaluateFidelityTransitionAuthorization(
   }
   const deref = dereferenceRequirementDocs(input.projectRoot, manifest.requirement, {
     featuresDirRel: input.featuresDirRel,
+    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${manifest.feature}/`],
   });
-  // ② 降档凭证验真（唯一降档通道；绑定语义与 evaluateFidelityTierPreflight 同源：
-  //    object_hash=解引用合并需求文本 sha256 + feature + run_id）
-  let receiptValid = false;
-  let receiptReasons: string[] = [];
-  if (manifest.fidelity_receipt) {
-    const objectHash = cryptoT6.createHash('sha256').update(deref.combined, 'utf-8').digest('hex');
-    const v = validateConfirmationReceiptFile(
-      path.join(input.projectRoot, manifest.fidelity_receipt),
-      defaultTrustRegistryPath(input.projectRoot),
-      {
-        action: 'fidelity_downgrade',
-        feature: manifest.feature,
-        object_hash: objectHash,
-        run_id: manifest.run_id,
-        now: input.now,
-      },
-    );
-    receiptValid = v.valid;
-    receiptReasons = v.reasons;
+  if (input.applied.fidelityReceipt) {
+    blockers.push('--fidelity-receipt 已退役：人工 receipt 不能降低质量档位；请修改需求并开启 correction/successor run。');
   }
-  if (input.applied.fidelityReceipt && !receiptValid) {
-    blockers.push(
-      `--fidelity-receipt 校验失败（${receiptReasons.slice(0, 3).join('；') || '文件缺失/不可读'}）——` +
-      '无效凭证不入 manifest（fail-closed）',
-    );
-  }
-  // ③ 只升不降（相对 inferred desired，与 routing 三段式同源——plan f6b2d9a4：
+  // ② 只升不降（相对 inferred desired，与 routing 三段式同源——plan f6b2d9a4：
   //    ambiguous 态删除，detectDesiredFidelity 缺省 semantic_layout）
   if (input.applied.fidelity && manifest.fidelity) {
     const detected: FidelityTarget = detectDesiredFidelity(deref.combined).desired;
-    const resolved = resolveRequestedFidelity(detected, manifest.fidelity, receiptValid);
+    const resolved = resolveRequestedFidelity(detected, manifest.fidelity);
     if (resolved.rejectedDowngrade) {
       blockers.push(
-        `--fidelity=${manifest.fidelity} 相对需求意图（${detected}）是降档且无有效 ` +
-        'fidelity_downgrade receipt——只升不降（fail-closed）',
+        `--fidelity=${manifest.fidelity} 相对需求意图（${detected}）是降档——只升不降；` +
+        '请修改需求并开启 correction/successor run（fail-closed）',
       );
     }
   }
   if (blockers.length > 0) return { authorizedFields, blockers };
   if (input.applied.fidelity) authorizedFields.add('fidelity');
-  if (input.applied.fidelityReceipt) authorizedFields.add('fidelity_receipt');
   return { authorizedFields, blockers };
 }

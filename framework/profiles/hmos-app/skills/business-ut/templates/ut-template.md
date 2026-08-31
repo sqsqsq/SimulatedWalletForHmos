@@ -237,8 +237,8 @@ afterEach(() => {
 it('[BRANCH-happy_path][AC-1] 主路径端到端成功', ...)        // ✅ 推荐：branch + AC 双标签
 it('[BRANCH-persist_fail] 本地持久化失败终止流程', ...)     // ✅ 仅 branch（无单独 AC）
 it('[AC-3] 二次校验失败，本地记录回滚', ...)                // ✅ 仅 AC（适合无 use-cases.yaml 的简单 feature）
-it('[AC-2][BD-1] 空列表回落', ...)                         // ✅ BD 作为 AC 组合标签
-it('[BD-1] 空列表', ...)                                   // ❌ FAIL：正则不认 BD 开头
+it('[BD-1] 空列表回落', ...)                               // ✅ 仅 BD（无需附带无关 AC）
+it('[AC-2][BD-1] 空列表回落', ...)                         // ✅ 同时覆盖 AC 与 BD
 it('首页加载后展示列表', ...)                          // ❌ FAIL：无标签，无法追溯
 ```
 
@@ -265,23 +265,43 @@ it('[BRANCH-xxx][AC-X] 用例描述', 0, async () => {
 
 ### 4. Hypium MockKit 路线（`mock-plan` 声明 `strategy: mockkit`）
 
-当 testability-audit 表明依赖难注入、不宜为 UT 改生产代码时，可在 `mock-plan.yaml` 的 `doubles[]` 声明 `strategy: mockkit`，UT 从 `@ohos/hypium` 导入 `MockKit` / `when`（**勿**与 Spy 的 `whenXxx` 属性混淆）：
+当 testability-audit 表明依赖难注入、不宜为 UT 改生产代码时，可在 `mock-plan.yaml` 的 `doubles[]` 声明 `strategy: mockkit`，UT 从 `@ohos/hypium` 导入 `MockKit` / `when`（**勿**与 Spy 的 `whenXxx` 属性混淆）。hypium 真实 API 形态（对齐 `@ohos/hypium` d.ts）：
 
 ```typescript
 import { describe, it, expect, MockKit, when } from '@ohos/hypium'
+import { RemoteTaskGateway, GateValidateResult } from '../../../main/ets/data/RemoteTaskGateway'
+import { TaskSubmitFlow } from '../../../main/ets/flow/TaskSubmitFlow'
 // 仅 mock contracts 登记的外部边界类；禁止 mock 被测 Flow/Coordinator
 
 export default function remoteBoundaryMockkitTest() {
-  describe('RemoteTaskGateway (mockkit)', () => {
-    it('[BRANCH-happy][AC-1] validate 返回 token', 0, async () => {
-      // when(...) 行为须与 mock-plan presets[].id 一致（如 ok_token）
-      expect(true).assertTrue()
+  describe('TaskSubmitFlow (mockkit boundary)', () => {
+    it('[BRANCH-happy][AC-1] 提交任务：边界返回 token → flow 进入 submitted 态', 0, async () => {
+      const mockKit = new MockKit()
+      const gateway = new RemoteTaskGateway()
+      let validateCalls: number = 0
+      // hypium 打桩三步：mockFunc(obj, obj.method) → when(mockedFn)(args) → afterReturn/afterAction
+      const mockValidate: Function = mockKit.mockFunc(gateway, gateway.validateRequest)
+      // 行为须与 mock-plan presets[].id 一致（如 'ok_token'），返回值用 ts_expr 的强类型表达
+      when(mockValidate)('req').afterAction(() => {
+        validateCalls++
+        return { ok: true, token: 't' } as GateValidateResult // preset: ok_token
+      })
+      // 真实驱动业务入口（被测对象是 Flow，不是被 mock 的边界）
+      const flow = new TaskSubmitFlow(gateway)
+      const result = await flow.submit('req')
+      // 断言三件套：返回值 + 状态迁移 + 边界调用序列（禁止 expect(true) 式空断言）
+      expect(result.token).assertEqual('t')
+      expect(flow.state.phase).assertEqual('submitted')
+      expect(validateCalls).assertEqual(1)
     })
   })
 }
 ```
 
-Harness `ut_hypium_mockkit_policy`：无 mock-plan mockkit 条目时导入 MockKit → FAIL。
+Harness `ut_hypium_mockkit_policy`（只问责本 feature 责任域内新增 UT；基线已存在的存量 UT 豁免）：
+- 无 mock-plan mockkit 条目时导入 MockKit → FAIL；
+- 静态可判定的 mock 目标类/方法未在 mockkit 条目声明 → FAIL；
+- `mockFunc` 打桩对象来自工厂/builder（目标类静态不可判定）→ 解析不出 ≠ 违规，最多 WARN 并建议在 mock-plan 补方法声明。
 
 ### 5. Spy 规范（v2.1，可注入场景推荐）
 

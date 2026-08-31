@@ -232,19 +232,28 @@ export interface ToolchainConfig {
   /**
    * 可选：覆盖 hvigor `-p product=` 装配时的探测结果。
    *
-   * 探测优先级（由 hvigor-runner.ts `detectProduct` 实现）：
-   *   ① toolchain.preferredProduct（本字段，用户显式覆盖）
-   *   ② build-profile.json5 app.products：若存在名为 `product` / `default` 的条目则优先于无序首位，否则取 products[0].name
-   *   ③ 兜底常量 'default'
+   * 解析优先级（由 `resolveProductSelection` 实现，plan a7c3f9e2 t5）：
+   *   explicit_run（本次显式参数）→ confirmed_env（HARNESS_DEVICE_TEST_PRODUCT）
+   *   → **explicit_config（本字段 且 framework.local.json
+   *   toolchain.productSelection.confirmed.value 逐字相等）**
+* → sole_candidate（build-profile.json5 **真实声明**单候选）→ unresolved（**构建形态
+   *   无法确定**：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可
+   *   解析——后三者无真实候选，**不得虚构 `default`**；停止并要求确认，不猜）。
    *
-   * 多 product 工程若 harness 不应猜首位，必须在此显式声明（常见为 `"product"`）。空字符串等同未声明。
+   * **用户意图契约**：本字段**只**由机器路径写入——用户经 framework-init registry
+   * `init.product_selection` 显式选择后，`record-product-selection` 同一次操作写本项目
+   * 与 `framework.local.json > toolchain.productSelection.confirmed`（本机确认凭证）。
+   * AI 的 `configWritePayload` 通道不得写本字段（t2b 白名单拒绝）。
+   * **未经 local 确认时按未验证处理**：存量/推断值（含 AI 历史写入的 `rom` 类事故值）
+   * 不作为可信来源，多候选工程会停止并要求确认；来源不明值**不静默删除**，仅不再采信。
+   * 空字符串等同未声明。
    */
   preferredProduct?: string;
 }
 
 /** device-testing 真机自动化（hmos-app profile · tools.hylyre） */
 export interface HylyreToolConfig {
-  /** 相对 projectRoot：vendor wheel + release.manifest.json */
+  /** 相对 projectRoot：vendor 发布件（maison 只携带源码树 src/；运行时代码兼容 legacy wheel 布局）+ release.manifest.json */
   vendor_dir: string;
   /** 相对 projectRoot：隔离 Python 环境目录 */
   venv_dir: string;
@@ -324,12 +333,6 @@ export interface FrameworkPaths {
    * 实例侧 extension 根目录（相对实例工程根）。默认 `doc/extensions`。
    */
   extension_dir?: string;
-  /**
-   * 盲档 UI kit（Maison blocks）scaffold 目标目录（相对实例工程根）。
-   * blind-visual-hardening d3：目标目录四级解析的第 1 级（显式配置优先）；
-   * 未配置时走 profile 推荐 → architecture 推导 → halt 问人（勿硬编码宿主层级）。
-   */
-  ui_kit_target_dir?: string;
   /**
    * 模块级 Code Graph 落盘路径模式（相对实例工程根）。
    * 占位符：`<module>` 替换为 module-catalog 模块相对路径（如 `02-Feature/WalletHome`）。
@@ -1997,9 +2000,14 @@ export function featurePhaseReportsDir(
   frameworkRoot?: string,
   opts?: ResolveFrameworkRootOptions,
 ): string {
-  const fRoot = resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
+  // frameworkRoot **惰性求值**：它只在 `_global` 与"配置真的没有 pattern"两条回退分支里
+  // 用得上，而 loadFrameworkConfig 会把 DEFAULT_PATHS 合并进 cfg.paths，于是 pattern 分支
+  // 几乎恒被命中。急切求值会让"没有 framework 树"的裁剪环境（单测夹具、只需要路径的消费方）
+  // 白白抛 `No framework tree`——那正是消费方各自另拼一份路径、把真源分叉成三份的动因
+  // （plan e5b8c3f7 review P1-4）。惰性化对今天能成功的调用零行为变化。
+  const frameworkRootLazy = (): string => resolveFrameworkRootArg(projectRoot, frameworkRoot, opts);
   if (feature === GLOBAL_FEATURE_REPORTS_SENTINEL) {
-    return path.join(fRoot, 'harness', 'reports', '_global', phase);
+    return path.join(frameworkRootLazy(), 'harness', 'reports', '_global', phase);
   }
   const cfg = loadFrameworkConfig(projectRoot);
   const pattern = cfg.paths.reports_dir_pattern;
@@ -2007,7 +2015,7 @@ export function featurePhaseReportsDir(
     const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
     return path.resolve(projectRoot, rel);
   }
-  return path.join(fRoot, 'harness', 'reports', feature, phase);
+  return path.join(frameworkRootLazy(), 'harness', 'reports', feature, phase);
 }
 
 /** `featurePhaseReportsDir` 相对 `projectRoot` 的 POSIX 风格路径（用于日志 / summary）。 */

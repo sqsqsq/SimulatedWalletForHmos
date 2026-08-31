@@ -13,6 +13,7 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
+
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
   Phase,
@@ -30,6 +31,7 @@ import {
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
+import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
 
 // --------------------------------------------------------------------------
@@ -226,16 +228,39 @@ export function assembleAIPrompt(
   resolvedProfile?: HarnessResolvedProfile,
   lifecycleHookFragments?: string[],
   frameworkRoot?: string,
-  options?: { imageInput?: ImageInputMode },
+  options?: {
+    imageInput?: ImageInputMode;
+    /**
+     * plan a9d4e7c2 P1-1：**workflow 声明的模板路径**（`verifier_prompt`，相对 harness 根），
+     * 由 `resolveVerifierPlan` 带出。调用方必须传——装配用哪个模板是 workflow 的声明说了算。
+     *
+     * 曾经这里硬编码 `prompts/verify-<phase>.md` 并在文件缺失时**偷偷造一个 fallback**：
+     * custom workflow 声明模板 B，runner 却按 A（或 fallback）装配，hook 仍会把这份
+     * 「审错了东西」的 prompt 哈希绑成有效证据——静默审错，正是本 plan 要根治的形态。
+     * 缺省仅为**兼容既有非 verifier 调用点**（如 init 的 prompt 组装）；一旦传入，
+     * 声明路径不可读即抛错，绝不回退。
+     */
+    verifierPromptRel?: string;
+  },
 ): string {
-  const templatePath = path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
-  let template: string;
-
-  if (fs.existsSync(templatePath)) {
-    template = fs.readFileSync(templatePath, 'utf-8');
-  } else {
-    template = buildFallbackTemplate(phase);
+  const declaredRel = options?.verifierPromptRel?.trim();
+  const templatePath = declaredRel
+    ? path.resolve(harnessRoot, declaredRel)
+    : path.join(harnessRoot, 'prompts', `verify-${phase}.md`);
+  if (!fs.existsSync(templatePath)) {
+    // fail-closed：声明了却读不到 = 声明与磁盘不一致，必须明确失败。
+    // 绝不 fallback——"造一个通用模板顶上"会让 verifier 审了一份谁也没声明过的东西，
+    // 而绑定链照样把它当有效证据。
+    throw new Error(
+      `[report-generator] verifier prompt 模板不存在：${templatePath}` +
+        (declaredRel
+          ? `（workflow 为 phase "${phase}" 声明的是 verifier_prompt: ${declaredRel}）`
+          : `（phase "${phase}" 的默认模板）`) +
+        '。请修正 workflow 的 verifier_prompt 声明或补齐该模板；框架不会自动生成替代品。',
+    );
   }
+  const template0 = fs.readFileSync(templatePath, 'utf-8');
+  let template: string = template0;
 
   if (resolvedProfile) {
     const overlayPath = path.join(
@@ -251,16 +276,6 @@ export function assembleAIPrompt(
       }
     }
   }
-
-  let assembled = template;
-  assembled = assembled.replace(/\{spec_content\}/g, specContent);
-  assembled = assembled.replace(/\{script_report\}/g, scriptReportJson);
-  assembled = assembled.replace(/\{feature_name\}/g, feature);
-  assembled = assembled.replace(/\{phase\}/g, phase);
-  assembled = assembled.replace(/\{timestamp\}/g, new Date().toISOString());
-  // round7 skills/文案批（plan a9c4e7f1）：verify 模板路径占位符——解析实例配置的
-  // paths.features_dir，custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
-  assembled = assembled.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
 
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const contextImageDir = path.join(dir, 'context-images');
@@ -292,8 +307,6 @@ export function assembleAIPrompt(
       return `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``;
     })
     .join('\n\n');
-  assembled = assembled.replace(/\{context_files\}/g, contextSection);
-
   const sidecarNames: string[] = [];
   if (fs.existsSync(contextImageDir)) {
     for (const f of fs.readdirSync(contextImageDir).sort()) {
@@ -301,18 +314,40 @@ export function assembleAIPrompt(
     }
   }
 
+  let tail = '';
   if (phase === 'coding' && options?.imageInput === 'tool_read') {
-    assembled +=
+    tail +=
       '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +
       formatReadImageEvidenceInstructions(sidecarNames) +
       '\n';
   }
-
   if (lifecycleHookFragments && lifecycleHookFragments.length > 0) {
-    assembled +=
+    tail +=
       '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
+
+  // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，
+  // 只有两处 runner telemetry 取不同值。这样"规范化"不再是事后对自由文本猜正则，
+  // 而是在格式化之前就精确知道哪两段是易变量。
+  // round7 skills/文案批（plan a9c4e7f1）：{features_dir} 解析实例配置的 paths.features_dir，
+  // custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
+  const fill = (scriptReportValue: string, timestampValue: string): string => {
+    let out = template;
+    out = out.replace(/\{spec_content\}/g, specContent);
+    out = out.replace(/\{script_report\}/g, scriptReportValue);
+    out = out.replace(/\{feature_name\}/g, feature);
+    out = out.replace(/\{phase\}/g, phase);
+    out = out.replace(/\{timestamp\}/g, timestampValue);
+    out = out.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
+    out = out.replace(/\{context_files\}/g, contextSection);
+    return out + tail;
+  };
+
+  // plan a9d4e7c2 T4：这里曾经额外产出一份「规范化摘要」（把 {timestamp} 与
+  // {script_report} 换成占位符）供 subject 派生，好让零改动重跑不换代。整套 canonical
+  // 投影已随「稳定 subject」承诺一并裁撤——subject 现在直接哈希写盘的 ai-prompt.md 字节。
+  const assembled = fill(scriptReportJson, new Date().toISOString());
 
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');
@@ -320,61 +355,6 @@ export function assembleAIPrompt(
   return assembled;
 }
 
-/** 当 prompt 模板不存在时，生成一个通用回退模板 */
-function buildFallbackTemplate(phase: Phase): string {
-  return `# ${phase} 阶段语义验证
-
-## 你的角色
-你是一个独立的审查员。你的职责是根据 Spec 约束客观评估 ${phase} 阶段的产出是否满足要求。
-
-## 阶段
-${phase}
-
-## 功能模块
-{feature_name}
-
-## Spec 规约内容
-
-\`\`\`yaml
-{spec_content}
-\`\`\`
-
-## 脚本 Harness 已通过的检查
-
-\`\`\`json
-{script_report}
-\`\`\`
-
-## 上下文文件
-
-{context_files}
-
-## 验证任务
-请针对 Spec 中所有 semantic_checks 项逐一评估，对每项给出 PASS / FAIL / WARN 判定。
-
-## 输出格式（必须严格遵循）
-
-\`\`\`yaml
-verification_result:
-  phase: "${phase}"
-  feature: "{feature_name}"
-  timestamp: "{timestamp}"
-  checks:
-    - id: <check_id>
-      status: PASS | FAIL | WARN
-      severity: BLOCKER | MAJOR | MINOR
-      details: "具体发现..."
-      affected_files: ["path/to/file"]
-      suggestion: "修正建议..."
-  summary:
-    total: N
-    pass: N
-    fail: N
-    warn: N
-    verdict: PASS | FAIL
-\`\`\`
-`;
-}
 
 // --------------------------------------------------------------------------
 // 合并报告
@@ -506,11 +486,52 @@ export function generateMergedReport(
   }
   lines.push('');
 
+  // plan c8e5b3f1 t2 A：blocked capability 明细（人读面，非门禁）——从 capability_resolutions 确定性
+  // 提取 active ∧ blocked 的事实。requirement 专属话术只来自该 capability 的 attempt.detail（原样转述），
+  // 通用段不夹带专属建议。
+  const blockedFacts = collectBlockedCapabilityFacts({ capabilities: scriptReport.capability_resolutions });
+  if (blockedFacts.length > 0) {
+    lines.push('## 二·五、blocked capability 明细');
+    lines.push('');
+    for (const fact of blockedFacts) {
+      lines.push(`### capability: ${fact.capability}（axis=${fact.axis}）`);
+      lines.push('');
+      if (fact.unresolved.length === 0) {
+        lines.push(
+          `- applicability invalid：provider=${fact.applicability_provider ?? 'n/a'}` +
+            (fact.applicability_dependencies.length > 0
+              ? `，path=${fact.applicability_dependencies.map((d) => d.path).join(', ')}`
+              : '') +
+            '。补齐该输入后重跑当前 phase。',
+        );
+      }
+      for (const u of fact.unresolved) {
+        lines.push(`- input=${u.input} source=${u.source}${u.detail ? `：${u.detail}` : ''}`);
+        if (u.upstream_producer) {
+          lines.push(`  upstream_producer=${u.upstream_producer}`);
+        }
+        if (u.dependencies.length > 0) {
+          lines.push(
+            `  dependencies: ${u.dependencies.map((d) => `${d.path}${d.exists ? '' : ' (missing)'}`).join(', ')}`,
+          );
+        }
+      }
+      lines.push('');
+    }
+  }
+
   // 最终裁定
   lines.push('## 三、最终裁定');
   lines.push('');
   if (scriptReport.summary.verdict === 'FAIL') {
     lines.push(`**FAIL** — 存在 ${scriptReport.summary.blockers} 个 BLOCKER 级别失败，必须修复后重新验证。`);
+  } else if (blockedFacts.length > 0) {
+    // review P2：已列出 blocked capability（脚本 checks 或无 BLOCKER，但 capability unresolved）——
+    // 不得宣告 PASS，明确阶段 INCOMPLETE、先补输入重跑（不改 ScriptReport 领域模型）。
+    lines.push(
+      `**INCOMPLETE** — 脚本 Harness 未发现 BLOCKER 失败，但存在 ${blockedFacts.length} 个 blocked capability（见上「blocked capability 明细」）；` +
+      '阶段因 capability 输入未解析为 INCOMPLETE，请补齐输入后重跑当前 phase。',
+    );
   } else {
     lines.push('**PASS** — 脚本 Harness 未发现 BLOCKER 失败。注意：脚本 PASS 不代表阶段闭环完成，仍必须继续执行 verifier 语义验证并填写 completion receipt。');
   }
@@ -652,6 +673,19 @@ function areBlockersOnlyCodingBuildExternal(checks: CheckResult[]): boolean {
   );
 }
 
+/**
+ * Provider/profile capability gaps are generic external blockers. They are
+ * distinct from a provider that declared support and then emitted invalid
+ * evidence, which deliberately has no externalBlocked classification.
+ */
+function areBlockersOnlyCapabilityMissing(checks: CheckResult[]): boolean {
+  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  if (blockerFails.length === 0) return false;
+  return blockerFails.every(
+    c => c.blocking_class === 'externalBlocked' && c.failure_kind === 'capability_missing',
+  );
+}
+
 /** 供 unit test 与 report 生成复用 */
 export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   let blockers = 0;
@@ -668,6 +702,9 @@ export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
     return 'INCOMPLETE';
   }
   if (areBlockersOnlyCodingBuildExternal(checks)) {
+    return 'INCOMPLETE';
+  }
+  if (areBlockersOnlyCapabilityMissing(checks)) {
     return 'INCOMPLETE';
   }
   return 'FAIL';

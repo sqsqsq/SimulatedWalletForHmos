@@ -2,12 +2,12 @@
 // layout-oracle-calibrate.ts — t5（plan f7a3d9c2）：布局 oracle 校准自动化核心。
 //
 // 产出双件套：calibration.json（SSOT，供程序消费）+ layout-oracle-calibration.report.md
-// （纯投影）。逐项标注 automated_conclusion vs needs_human（CLI 降摩擦，不替代真机人工
-// 结论）。CLI 显式触发、不挂任何阶段链；产出供人做 gate 升档判断，本 CLI 不改档位。
+// （纯投影）。CLI 显式触发、不挂任何阶段链；只消费版本化机器 fixture 与设备测量，
+// 产出供后续 evidence-backed gate 调整参考，本 CLI 不改档位。
 //
 // 模式：
 // - offline（默认）：分析既有采集产物（device-screenshots/ 的 shot-*.png 与
-//   layout-*.json）——覆盖 ①②③④⑤⑦⑧ 与 ledger FP/FN 表；
+//   layout-*.json）——覆盖 ①②③④⑤⑦⑧；
 // - device（--device）：额外执行 ⑥appRoot 多次 dump 稳定性 与 ⑨双拍/双 dump 稳定性
 //   实测（t4a 采样器，t4b 定参的前置数据——中期宿主触点）。
 // ============================================================================
@@ -33,23 +33,23 @@ import {
 } from './layout-oracle-check';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { canonicalOverlayBase } from './visual-diff-nav';
-import { deviceScreenshotsDir } from './visual-diff-capture';
+import { deviceScreenshotsDir, resolveLayoutDumpPath } from './visual-diff-capture';
+import {
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 import { cropAssetFromBbox, isJimpAvailable } from './image-toolkit';
 import {
   sampleQuiescent,
   type QuiescenceSampleFns,
   type QuiescenceSampleResult,
 } from './quiescence-sampling';
-import {
-  readFeedbackLedger,
-  aggregateFeedbackLedger,
-  reviewFeedbackLedgerPath,
-  type FeedbackAggregation,
-} from '../../../harness/scripts/utils/review-feedback-ledger';
 
 export const CALIBRATION_SCHEMA_VERSION = '1.0';
 
-export type CalibrationConclusionKind = 'automated_conclusion' | 'needs_human';
+export type CalibrationConclusionKind = 'automated_conclusion' | 'inspection_material';
 
 export interface CalibrationItemBase {
   id: string;
@@ -121,7 +121,6 @@ export interface CalibrationReport {
       }>;
       note: string;
     };
-    feedback_ledger: CalibrationItemBase & FeedbackAggregation;
   };
 }
 
@@ -155,8 +154,14 @@ export function runLayoutOracleCalibration(opts: {
   const screensMissingDump: string[] = [];
   const dumps = new Map<string, ParsedLayoutDump>();
   for (const id of p0Ids) {
-    const dumpAbs = path.join(reportDir, `layout-${id}.json`);
-    const dump = loadLayoutDumpFile(dumpAbs);
+    // t2b（plan c6d8f2b4）：统一寻址——canonical slug 优先，legacy raw 兼容；冲突 fail-closed
+    const resolved = resolveLayoutDumpPath(reportDir, id);
+    if (resolved.status === 'conflict') {
+      screensMissingDump.push(`${id}（命名冲突：canonical 与 legacy 并存，须清理后重采）`);
+      continue;
+    }
+    const dumpAbs = resolved.status === 'missing' ? '' : resolved.abs;
+    const dump = dumpAbs ? loadLayoutDumpFile(dumpAbs) : null;
     if (dump) {
       dumps.set(id, dump);
       screensAnalyzed.push(id);
@@ -193,10 +198,19 @@ export function runLayoutOracleCalibration(opts: {
     ...newItem('locator_coverage', '.id() 覆盖率（exact_id/unique_text/structural/unmatched 分布，D3 半自动）', 'automated_conclusion'),
     per_screen: [],
   };
+  // S6（e9c4a7f3）：按屏隔离上下文 + nav 缺失才启用交互回退，预收集一次
+  const navStepIdsByScreen = collectNavStepTargetIdsByScreen(opts.projectRoot, opts.feature);
+  const attestByScreen = collectRegionAttestElementIdsByScreen(opts.projectRoot, opts.feature);
+  const interactiveFallbackEnabled = !navConfigExists(opts.projectRoot, opts.feature);
   for (const [id, dump] of dumps) {
     const uiScreen = uiById.get(id) ?? uiById.get(canonicalOverlayBase(id));
     if (!uiScreen) continue;
-    const declared = collectDeclaredElements(uiScreen);
+    const declared = collectDeclaredElements(uiScreen, {
+      identityIds: collectNavIdentityIdMembers(opts.projectRoot, opts.feature),
+      navStepIds: navStepIdsByScreen.get(id),
+      attestRegions: attestByScreen.get(id),
+      interactiveFallbackEnabled,
+    });
     const { located, coverage } = locateElements(declared, dump.appRoot);
     const byConfidence: Record<string, number> = {};
     for (const e of located.values()) {
@@ -253,7 +267,18 @@ export function runLayoutOracleCalibration(opts: {
   for (const [id, dump] of dumps) {
     const uiScreen = uiById.get(id) ?? uiById.get(canonicalOverlayBase(id));
     if (!uiScreen) continue;
-    const res = collectLayoutOracleForScreen({ screenId: id, screen: uiScreen, dump });
+    const res = collectLayoutOracleForScreen({
+      screenId: id,
+      screen: uiScreen,
+      dump,
+      // S6（e9c4a7f3 s6-locator-calibrate）：与 coding/T8 同一收窄分母口径（按屏上下文）
+      locatorCtx: {
+        identityIds: collectNavIdentityIdMembers(opts.projectRoot, opts.feature),
+        navStepIds: navStepIdsByScreen.get(id),
+        attestRegions: attestByScreen.get(id),
+        interactiveFallbackEnabled,
+      },
+    });
     for (const f of res.findings) {
       if (f.signal === 'A3_close_overlap_default') {
         closeDryRun.hits.push({ screen_id: id, finding_id: f.finding_id, note: f.note });
@@ -306,9 +331,9 @@ export function runLayoutOracleCalibration(opts: {
     }
   }
 
-  // ⑦ bounds 语义抽查素材（needs_human：视觉边界 vs 触控热区须人对照并排图）
+  // ⑦ bounds 语义抽查素材：离线校准 advisory，不是 feature 质量通行证。
   const boundsSemantics: CalibrationReport['items']['bounds_semantics_material'] = {
-    ...newItem('bounds_semantics_material', 'bounds 语义抽查素材（可交互元素 bounds 反裁截图，needs_human）', 'needs_human'),
+    ...newItem('bounds_semantics_material', 'bounds 语义抽查素材（可交互元素 bounds 反裁截图，calibration advisory）', 'inspection_material'),
     crops: [],
     note: 'bounds 是视觉边界还是触控热区无法机器判定——逐张对照 crop 与真机观感后在校准决定表记结论',
   };
@@ -401,15 +426,6 @@ export function runLayoutOracleCalibration(opts: {
     }
   }
 
-  // ledger FP/FN 表（t6⑤：程序推导，升档评审的数据素材——非机制化升档）
-  const ledgerAgg = aggregateFeedbackLedger(
-    readFeedbackLedger(reviewFeedbackLedgerPath(opts.projectRoot, opts.feature)).entries,
-  );
-  const feedbackLedger: CalibrationReport['items']['feedback_ledger'] = {
-    ...newItem('feedback_ledger', '终审回灌 FP/FN 表（visual-confirm ledger 程序推导——升档评审数据素材）', 'automated_conclusion'),
-    ...ledgerAgg,
-  };
-
   return {
     schema_version: CALIBRATION_SCHEMA_VERSION,
     at: (opts.now ?? (() => new Date().toISOString()))(),
@@ -427,7 +443,6 @@ export function runLayoutOracleCalibration(opts: {
       bounds_semantics_material: boundsSemantics,
       locator_ambiguity: locatorAmbiguity,
       double_sample_stability: doubleSample,
-      feedback_ledger: feedbackLedger,
     },
   };
 }
@@ -473,15 +488,6 @@ export function renderCalibrationMd(r: CalibrationReport): string {
       if (rows.length > 20) lines.push(`  - …共 ${rows.length} 条（余见 calibration.json）`);
     }
     if (typeof item.note === 'string') lines.push(`- 注：${item.note}`);
-    if (item.id === 'feedback_ledger') {
-      const agg = item as unknown as FeedbackAggregation;
-      lines.push(
-        `- FP（按 signal）：${JSON.stringify(agg.fp_by_signal)}`,
-        `- FN：unattributed=${agg.fn_unattributed}，按 detector family（issue_kind 映射估计）=${JSON.stringify(agg.fn_by_family)}`,
-        `- 样本失效标注：oracle_version 变更样本 ${agg.stale_oracle_version_entries} 条`,
-        `- 升档规则参数（样本量 N/跨屏跨设备覆盖/FN 上限）待数据累积后由人定——本表是数据素材，非升档判定`,
-      );
-    }
     lines.push('');
   }
   return lines.join('\n');

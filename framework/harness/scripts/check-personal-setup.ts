@@ -4,6 +4,14 @@
 
 import * as path from 'path';
 
+import { detectRepoLayout } from '../repo-layout';
+import { listVisualProviderAdapterNames } from './utils/adapter-catalog';
+import { loadLocalConfig } from './utils/framework-local-config';
+import {
+  formatVisualProviderPrompt,
+  resolveVisualProviderFromLocal,
+  shouldPromptForVisualProvider,
+} from './utils/visual-provider-identity';
 import {
   ensurePersonalSetup,
   evaluatePersonalSetupGate,
@@ -46,8 +54,56 @@ function parseArgs(argv: string[]): PersonalSetupCliOptions {
   return { projectRoot, json, ensure, phase, selectAdapter };
 }
 
-function emitJson(payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>): void {
-  console.log(JSON.stringify(payload, null, 2));
+/**
+ * plan ab072691 t1③（返修）：只读视觉 provider 的**机器可读入口**。
+ *
+ * 纯 advisory：**永不**影响 `ok` / `code`。它向交互入口提供 provider 选择/明确盲跑
+ * 所需事实；真正的条件 prerequisite 只在 goal-runner 的 UI+primary-blind 启动决策点生效。
+ *
+ * 字段：
+ *  · `shouldPrompt` —— 是否该在本轮 UI 相关阶段问一次（local 缺失 或 现有 adapter 已失格）；
+ *  · `state`        —— absent | ok | unsupported | unavailable；
+ *  · `supported[]`  —— catalog 现算的支持项（**唯一**支持列表来源，勿在别处枚举）；
+ *  · `prompt`       —— shouldPrompt 时的现成提示语（含重选/跳过两条出路）。
+ */
+export function buildVisualProviderAdvisory(projectRoot: string): Record<string, unknown> {
+  let frameworkRoot: string | null = null;
+  try {
+    frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
+    const state = resolveVisualProviderFromLocal(loadLocalConfig(projectRoot), frameworkRoot);
+    const shouldPrompt = shouldPromptForVisualProvider(state);
+    return {
+      state: state.kind,
+      shouldPrompt,
+      supported: listVisualProviderAdapterNames(frameworkRoot),
+      ...(state.kind !== 'absent' ? { configured: state.ref } : {}),
+      ...(shouldPrompt ? { prompt: formatVisualProviderPrompt(state, frameworkRoot) } : {}),
+      decisionClass: 'setup.visual_provider',
+      task: 'record-visual-provider',
+    };
+  } catch (e) {
+    // advisory 出错不得影响 personal setup 的 ok/code；能力不足由后续 requirement/capability
+    // 门禁裁决，setup 层只提示修复配置，不产生质量授权。
+    const supported = frameworkRoot ? listVisualProviderAdapterNames(frameworkRoot) : [];
+    return {
+      state: 'unavailable',
+      shouldPrompt: true,
+      supported,
+      prompt:
+        `视觉 provider 配置读取失败：${(e as Error).message}。` +
+        '请修复 framework.local.json 的 provider 配置；保持未配置时，严格视觉需求会诚实 defer。',
+      reason: (e as Error).message,
+      decisionClass: 'setup.visual_provider',
+      task: 'record-visual-provider',
+    };
+  }
+}
+
+function emitJson(
+  payload: PersonalSetupEnsureJson | ReturnType<typeof evaluatePersonalSetupGate>,
+  projectRoot: string,
+): void {
+  console.log(JSON.stringify({ ...payload, visualProvider: buildVisualProviderAdvisory(projectRoot) }, null, 2));
 }
 
 if (require.main === module) {
@@ -71,7 +127,7 @@ if (require.main === module) {
       }
     }
     if (opts.json) {
-      emitJson(payload);
+      emitJson(payload, opts.projectRoot);
     }
     if (!payload.ok) {
       if (!opts.json) {
@@ -104,7 +160,7 @@ if (require.main === module) {
         ensured: null,
         candidates: [],
         message: 'personal setup 已就绪',
-      });
+      }, opts.projectRoot);
     } else {
       emitJson({
         ok: false,
@@ -115,7 +171,7 @@ if (require.main === module) {
         ensured: null,
         candidates: [],
         message: result.message,
-      });
+      }, opts.projectRoot);
     }
   }
   if (!result.ok) {

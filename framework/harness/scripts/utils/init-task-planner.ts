@@ -15,6 +15,7 @@ import {
   inspectionsForInit034Prompt,
   type InitMode,
 } from '../check-init';
+import type { FrameworkPackageIdentity } from './framework-integrity';
 import { detectLegacySkillBridgePresence } from './legacy-skill-bridge-cleanup';
 import {
   resolveMaterializedAdaptersFromContext,
@@ -22,6 +23,7 @@ import {
 } from './materialized-adapters-resolve';
 import {
   buildAdapterCatalogOrThrow,
+  listVisualProviderAdapterNames,
   type AdapterCatalogEntry,
 } from './adapter-catalog';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
@@ -59,6 +61,20 @@ export interface InitTaskPlan {
   tasks: InitTask[];
   /** project scope 运行时由 probe 填充；type 可选避免破坏手写 plan fixture */
   adapter_catalog?: AdapterCatalogEntry[];
+  /** t7（f3a8c6d2）：framework 发布包身份（S1 探测输出携带；可选避免破坏手写 fixture） */
+  framework_identity?: FrameworkPackageIdentity;
+  /**
+   * t3（plan a7c3f9e2）：product 认可诊断（S1 列出当前值 / 确认状态 / 全部候选）。
+   * 由 probe 尽力填充（候选解析失败或缺 profile 支持时省略）；多候选且未确认 →
+   * S2 以 `init.product_selection` 征求用户确认。
+   */
+  product_selection?: InitProductSelectionDiagnostic;
+}
+
+export interface InitProductSelectionDiagnostic {
+  current_value: string | null;
+  confirmation_status: 'confirmed' | 'unconfirmed' | 'no_preferred';
+  candidates: string[];
 }
 
 function inspectionToStatus(ins: Inspection): TaskStatus {
@@ -291,7 +307,10 @@ function buildProjectTasks(
   return tasks;
 }
 
-function buildPersonalTasks(materializedAdapters: string[]): InitTask[] {
+function buildPersonalTasks(
+  materializedAdapters: string[],
+  visualProviderCandidates: string[],
+): InitTask[] {
   return [
     {
       id: 'assert-active-adapter-materialized',
@@ -339,6 +358,24 @@ function buildPersonalTasks(materializedAdapters: string[]): InitTask[] {
       default_action: 'run',
       skippable: true,
       allowed_actions: ['run', 'skip'],
+    },
+    {
+      // plan ab072691 t1③：只读视觉 provider（delegated 视觉委托的第二 endpoint）。
+      // **可跳过**：没有 provider 只意味着本轮 blind，从来不是 setup 的前置条件——
+      // 因此它不在 personal prerequisite 集合里，跳过不影响 personal setup 就绪判定。
+      id: 'record-visual-provider',
+      title: '（可选）记录只读视觉 provider 到 framework.local.json',
+      category: 'personal',
+      scope: 'personal',
+      deps: ['record-adapter'],
+      status: 'needed',
+      default_action: 'prompt',
+      skippable: true,
+      allowed_actions: ['run', 'skip'],
+      decision_class: 'setup.visual_provider',
+      // 候选项**现算自 adapter catalog**（唯一支持列表来源）——与 record-adapter 的
+      // materialized_adapters 同款：决策面拿到的就是机器派生的清单，不靠文档记名单。
+      params: { visual_provider_candidates: visualProviderCandidates },
     },
   ];
 }
@@ -493,7 +530,7 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
       : resolveProjectInitAdapterHint(cfgSources, options.adapter);
 
   const probe = runInitProbe({ projectRoot, adapterHint });
-  const { mode, inspections } = probe;
+  const { mode, inspections, framework_identity } = probe;
 
   const materialized =
     scope === 'personal'
@@ -502,9 +539,10 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
         : [adapterHint]
       : resolveProjectMaterializedAdapters(cfgSources, adapterHint);
 
+  const probeFrameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
   let tasks =
     scope === 'personal'
-      ? buildPersonalTasks(materialized)
+      ? buildPersonalTasks(materialized, listVisualProviderAdapterNames(probeFrameworkRoot))
       : buildProjectTasks(inspections, mode, materialized);
 
   if (scope === 'project' && mode === 'update') {
@@ -527,14 +565,53 @@ export function probeInitTaskPlan(options: PlanProbeOptions): InitTaskPlan {
     mode,
     generated_at: new Date().toISOString(),
     tasks,
+    framework_identity,
   };
 
   if (scope === 'project') {
-    const frameworkRoot = resolveProbeFrameworkRoot(projectRoot, path.join(__dirname, '..', '..'));
-    plan.adapter_catalog = buildAdapterCatalogOrThrow(frameworkRoot);
+    plan.adapter_catalog = buildAdapterCatalogOrThrow(probeFrameworkRoot);
+    plan.product_selection = probeProductSelectionDiagnostic(projectRoot);
   }
 
   return plan;
+}
+
+/**
+ * t3（plan a7c3f9e2）：product 认可诊断（尽力而为——candidates 解析/profile 支持缺失时
+ * 返回 null，由调用方省略该字段，不得阻塞 init 流程）。
+ */
+export function probeProductSelectionDiagnostic(projectRoot: string): InitProductSelectionDiagnostic | undefined {
+  let candidates: string[];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const runner = require('./hvigor-runner') as { listAvailableProducts?: (root: string) => string[] };
+    if (typeof runner.listAvailableProducts !== 'function') return undefined;
+    candidates = runner.listAvailableProducts(projectRoot);
+  } catch {
+    return undefined;
+  }
+  let currentValue: string | null = null;
+  let confirmationStatus: InitProductSelectionDiagnostic['confirmation_status'] = 'no_preferred';
+  try {
+    const cfg = loadFrameworkConfigWithSources(projectRoot);
+    const pref = cfg.config.toolchain?.preferredProduct;
+    currentValue = typeof pref === 'string' && pref.trim() ? pref.trim() : null;
+    if (currentValue) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { loadLocalConfig } = require('./framework-local-config') as {
+        loadLocalConfig: (root: string) => { toolchain?: { productSelection?: { confirmed?: { value?: string } } } } | null;
+      };
+      const confirmed = loadLocalConfig(projectRoot)?.toolchain?.productSelection?.confirmed;
+      confirmationStatus = confirmed?.value === currentValue ? 'confirmed' : 'unconfirmed';
+    }
+  } catch {
+    confirmationStatus = 'no_preferred';
+  }
+  return {
+    current_value: currentValue,
+    confirmation_status: confirmationStatus,
+    candidates,
+  };
 }
 
 export function planTasksNeedingPrompt(plan: InitTaskPlan): InitTask[] {

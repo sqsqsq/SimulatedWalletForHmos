@@ -14,7 +14,6 @@
     "warn_count",
     "script_report",
     "merged_report",
-    "ai_prompt",
     "summary_json",
     "run_statuses",
     "readiness_signals",
@@ -25,8 +24,8 @@
   ],
   "properties": {
     "schema_version": {
-      "enum": ["1.0", "1.1", "1.2"],
-      "description": "Writer emits 1.2. Legacy 1.0/1.1 remains readable but has unknown assurance and legacy_unverified closure."
+      "enum": ["1.0", "1.1", "1.2", "1.3"],
+      "description": "Writer emits 1.3 (verifier fields are conditional on the resolved verifier capability). 1.2 stays readable as the previous closure generation; 1.0/1.1 remain readable with unknown assurance and legacy_unverified closure."
     },
     "report_validity": {
       "type": "string",
@@ -50,6 +49,16 @@
       "pattern": "^([0-9a-f]{16}|no-debt)$",
       "description": "asset 域债务 revision（域内条目投影 sha256 前16 或 no-debt 哨兵）；harness 机器写入，testing 期 asset 轴继承时重算比对——缺失/失配不继承"
     },
+    "verifier_subject_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "verifier 证据身份（plan a9d4e7c2）：runner 单点派生、按实际审查材料寻址（相同材料复用、材料变化必换，不加 nonce）。仅在该 phase 的 verifier 能力 enabled 时在场；缺席=不适用，不是缺失"
+    },
+    "verifier_request": {
+      "type": "string",
+      "minLength": 1,
+      "description": "该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）；与 verifier_subject_id 同进同退"
+    },
     "gate_fingerprint": {
       "type": "string",
       "pattern": "^.+:[0-9a-f]{12}$",
@@ -57,7 +66,11 @@
     },
     "script_report": { "type": "string", "minLength": 1 },
     "merged_report": { "type": "string", "minLength": 1 },
-    "ai_prompt": { "type": "string", "minLength": 1 },
+    "ai_prompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "verifier 能力 enabled 时才装配（1.3 起为条件字段；disabled 的 phase 根本不生成该文件）"
+    },
     "summary_json": { "type": "string", "minLength": 1 },
     "run_statuses": {
       "type": "array",
@@ -83,6 +96,36 @@
     "next_action": { "type": "string", "minLength": 1 },
     "receipt_status": { "type": "string" },
     "closure_status": { "type": "string", "enum": ["open", "closed"] },
+    "repair_candidates": {
+      "type": "array",
+      "description": "责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的唯一真源——harness 派生非 agent 自报；goal/manual/batch 三链共用（assess 直读本字段）。缺失=本轮无可信候选。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "files", "summary", "item_fingerprint", "source_phase"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "category": {
+            "type": "string",
+            "enum": ["spec", "plan", "coding"],
+            "description": "责任类别（既有 CorrectionCategory 子集；phase 由 assess 按 workflow 映射，不存 phase 名）"
+          },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "summary": { "type": "string" },
+          "item_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "缺陷身份指纹；整轮防震荡指纹=排序后集合 hash（不落盘，消费方现算）"
+          },
+          "identity_schema": {
+            "type": "string",
+            "enum": ["signal@1"],
+            "description": "adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记——仅 testing 结构化视觉信号候选携带（identity = sha256(computeDefectFingerprint(screen, defect))）；无字段 = legacy check-domain 候选（可诊断/路由，不入累计 one-shot 收敛与 no-op 判定）。可选、向后兼容。"
+          },
+          "source_phase": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "assurance": {
       "type": "string",
       "enum": ["blocked", "degraded", "full", "not_applicable"],
@@ -122,7 +165,7 @@
   "allOf": [
     {
       "if": {
-        "properties": { "schema_version": { "const": "1.2" } },
+        "properties": { "schema_version": { "enum": ["1.2", "1.3"] } },
         "required": ["schema_version"]
       },
       "then": { "required": ["assurance", "capability_resolutions", "capability_resolution_contract_fingerprint", "closure_status"] }
@@ -293,7 +336,7 @@
         "actionability": {
           "type": "string",
           "enum": ["agent_fixable", "human_only", "toolchain_blocked"],
-          "description": "P0-4（plan 7c4f2e9b）：注册表解析后的可修性——runner 决策梯③层聚合（∃toolchain→await_operator_toolchain；非空且全 human_only→await_human_gate_deferral）、回喂过滤与 no-progress 签名剔除共同消费"
+          "description": "注册表解析后的可修性：toolchain_blocked 投影 await_operator_toolchain；legacy human_only 不再产生人签放行或 await_human_gate_deferral。回喂过滤与 no-progress 签名剔除共同消费。"
         },
         "operator_note": {
           "type": "string",

@@ -1,69 +1,3 @@
-/**
- * P0-10a（plan b6d3e9a2）：await_human_visual_confirm 引导话术**机器生成**。
- *
- * P0-9b 把"设计内求人时刻"正确分类为 await_human_visual_confirm，但把裸 JSON 手改怼给了人。
- * 本 builder 按 run 上下文生成三入口引导，全部参数化（feature/run_id/路径/layout 命令注入）：
- *  ①【推荐·对话式，软契约】把内嵌确认协议的话术原样发给交互 agent，真人只需逐屏看图表态；
- *  ②【命令式·高保真】visual-confirm CLI，真人在终端直签（无 agent 中介，最可信）；
- *  ③【附录】手改 JSON 字段说明。
- *
- * 铁律：**模板零人名、零需求特定内容**——署名一律"由你当场提供"；headless 永不适用此协议
- * （agent 唯一正确动作是 halt 等真人，此话术是给 halt 之后的操作者读的）。
- */
-
-export interface AwaitConfirmGuidanceOpts {
-  feature: string;
-  runId: string;
-  /** 截图目录（projectRoot 相对，POSIX） */
-  screenshotsDirRel: string;
-  /** visual-diff.json（projectRoot 相对，POSIX） */
-  visualDiffJsonRel: string;
-  /** testing 阶段 id（一般 'testing'） */
-  phase: string;
-  /**
-   * projectRoot → framework harness 的相对前缀：consumer='framework/harness'、standalone='harness'。
-   * 用于生成宿主根目录可直接复制的 npm --prefix 命令。
-   */
-  harnessPrefixRel: string;
-}
-
-/** 逐屏展示三级降级措辞（交互 agent 按能力选一，纯 CLI 型不卡死）。 */
-const DISPLAY_FALLBACK_LINES: readonly string[] = [
-  '   - 逐屏展示：能内联显示图片就内联；不能则调系统查看器打开截图；再不能则给出截图与参考图的**绝对路径**请我自行打开，等我回复看完再问表态。',
-];
-
-/**
- * 生成 await_human_visual_confirm 引导话术（多行；调用侧 join('\n') 写入 halt_guidance / md / console）。
- */
-export function buildAwaitHumanConfirmGuidance(opts: AwaitConfirmGuidanceOpts): string[] {
-  const { feature, runId, screenshotsDirRel, visualDiffJsonRel, phase, harnessPrefixRel } = opts;
-  const cliCmd = `npm --prefix ${harnessPrefixRel} run visual-confirm -- --feature ${feature}`;
-  const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
-  return [
-    `【${feature} · run ${runId}】全部 P0 屏均为 pass 候选、确定性信号已干净——唯一剩余步骤是**真人逐屏过目确认**（T2 设计，agent 不能替你签，headless 只能 HALT 等你）。三种方式任选：`,
-    '',
-    '——方式 A（推荐·最省事，软契约）：把下面这段原样发给你的交互 agent（cursor/claude/codex 等），你只需逐屏看图后回复认可/不认可——',
-    '  ┌─────────────────────────────────────────',
-    `  │ 带我逐屏完成 ${feature} 的 visual 真人确认：`,
-    `  │ 1. 依次展示 ${screenshotsDirRel}/ 下每张 shot-*.png 与其 spec 参考原图，附差异要点，一屏一屏等我明确回复「认可」或「不认可+原因」；`,
-    ...DISPLAY_FALLBACK_LINES.map(l => `  │ ${l.trim()}`),
-    `  │ 2. 我认可的屏：在 ${visualDiffJsonRel} 对应 screens[].confirmed_by 填我**当场告诉你的署名**（不得自拟/沿用历史；user_requirement、goal-mode-auto 等自动化身份无效）；`,
-    '  │ 3. 我不认可的屏：verdict 改为 "fail"，把我说的原因原话写进 must_fix；',
-    '  │ 4. 不得改动 evaluated_screenshot_hash / evaluated_build_fingerprint / screenshot_hash；保存为无 BOM 的 UTF-8；',
-    '  │ 5. 没有我对某屏的明确表态前，绝不代填该屏 confirmed_by；',
-    `  │ 6. 全部处理完后续跑本 run：${resumeCmd}`,
-    '  └─────────────────────────────────────────',
-    '',
-    '——方式 B（高保真·最可信，无 agent 中介）：在终端直接跑（真人自己按 y=认可 / f=打回 / s=跳过，并当场输入署名）——',
-    `  ${cliCmd}`,
-    '',
-    '——方式 C（附录·手改 JSON）：编辑 ' + visualDiffJsonRel + ' —— 认可的屏加 "confirmed_by": "<你的署名>"（字符串；非 user_requirement/自动化身份）；不认可的屏 "verdict": "fail" 且 "must_fix": ["<差异>"]；绑定三字段（evaluated_screenshot_hash / evaluated_build_fingerprint / screenshot_hash）不动；UTF-8 无 BOM 保存。',
-    '',
-    `处理完后续跑：${resumeCmd}`,
-    '注：方式 A 经 agent 转录属软契约（agent 理论上仍可编造署名）；要最稳走方式 B（真人在终端直签）。你的签名与判定按 build 指纹持久，同一构建下不会被重采清掉。',
-  ];
-}
-
 export interface ClosureWallGuidanceOpts {
   feature: string;
   runId: string;
@@ -79,53 +13,70 @@ export interface ClosureWallGuidanceOpts {
 }
 
 /**
- * E4（案B chrys 银行卡实证：8 attempt/4h19m，script 门禁反复 PASS 却关不了环——非视觉确认场景，
- * 不可复用 buildAwaitHumanConfirmGuidance，那个是 testing 阶段截图/visual-diff.json 专用）。
- * 累计出现即 halt：脚本门禁已多次 PASS 但闭环/回执一直未完成，agent 重试无法自证突破——
- * 要么是只能人签的确认项（headless 无人可签），要么每轮又做了新探索/修改反复横跳，
- * 都需要人看一眼再决定，盲重试只会继续空转。
+ * E4（案B chrys 银行卡实证：8 attempt/4h19m，script 门禁反复 PASS 却关不了环）：
+ * 累计出现即进入收敛墙，如实列出 receipt/identity/freshness/closure 故障。质量签名不再是
+ * 恢复钥匙；盲重试不能消除同一指纹，只能在修复机器证据/闭环事务或开 successor run 后继续。
  */
 export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[] {
   const { feature, runId, phase, receiptPathRel, harnessPrefixRel, receiptStatus, cumulativeBlockedCount } = opts;
   const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --force-resume`;
+  const verifyCmd = `npm --prefix ${harnessPrefixRel} run check:${phase} -- --feature ${feature}`;
+  // t1（plan f3a8c6d2）：**按 receipt 的真实状态给原因，不再统一猜"多为人签"**。
+  // 事故（bc-openCard run 20260808T071335Z-4b0136）：receipt 的 verifier_subagent.verdict
+  // 其实是 PASS，真因是 claimed_attempt_id 与终局 attempt 失配 + evidence manifest stale，
+  // 而本话术开口就说"多为某项只能真人签署的确认"，把人直接引向签字——用户据此以为
+  // "只剩视觉验真等我签"。分类复用既有 ReceiptValidation 五态（不新建分类、不加字段）。
+  const byStatus: Record<string, string[]> = {
+    failed: [
+      `  1. 回执**存在但校验未通过**。先看校验输出的 BLOCKER 列表定位真因（不要预设是"人签"）：`,
+      `     ${verifyCmd}`,
+      '     常见真因：claimed_attempt_id 与本轮 attempt 失配、evidence manifest 非 fresh、',
+      '     反假设条款未全勾、verifier 报告缺失/过期。其中 attempt 失配与 stale 都不是人能签掉的。',
+      `  2. 若校验输出显示 verifier_subagent.verdict=FAIL，将当前结构化证据回馈责任阶段修复；`,
+      `     视觉/裁剪义务只接受 source/hash/tool/provider 机器证据，不得在 ${receiptPathRel} 补签放行。`,
+    ],
+    missing: [
+      `  1. **回执缺失**——agent 没有写出 ${receiptPathRel}。这不是人签问题：`,
+      '     让 agent 按阶段完成回执模板补写（含 verifier 调用自证与 attempt 身份），再续跑。',
+    ],
+    error: [
+      '  1. **回执校验探针自身执行失败**（framework/toolchain 问题，非产物问题）。',
+      '     不要修改产物或 framework 发布件绕过；修复环境或把完整错误回灌 agent-maison 源仓。',
+    ],
+    passed: [
+      '  1. 回执校验**已通过**却仍未推进——阻塞在 closure 提交侧（phase state / summary closure）。',
+      `     跑 ${verifyCmd} 看最终提交环节的报错，不要去补签名。`,
+    ],
+    not_applicable: [
+      '  1. 本 track（lite）**不产生回执**却出现 advance_blocked——runner 状态机不变量违例，',
+      '     属框架缺陷，应回灌 agent-maison 源仓核查，不要试图补签或改产物。',
+    ],
+  };
+  const unknownStatus = [
+    `  1. 尚无回执校验结果（可能从未跑到该步）。先跑 ${verifyCmd} 取得确定结论，`,
+    '     再按其 BLOCKER 列表处置；在拿到结论前不要预设是"只差人签"。',
+  ];
   return [
     `【${feature} · run ${runId} · ${phase}】脚本门禁已第 ${cumulativeBlockedCount} 次达到 PASS，但闭环/回执一直未完成` +
       (receiptStatus ? `（receipt_status=${receiptStatus}）` : '') +
-      '——agent 无法自证突破，继续重试只是空转，需要你看一眼再决定。',
+      '——同一指纹继续重试只是空转；须先修复机器证据/闭环事务，或在新证据下开 successor run。',
     '',
     '请检查：',
-    `  1. ${receiptPathRel} 的 verifier_subagent.verdict 与具体原因（多为某项只能真人签署的确认，`,
-    '     如视觉保真/裁剪授权类——headless 下没有人可签，agent 每次都会诚实报告 FAIL，重试不会变）；',
-    '  2. 若确认是"只差人签"：人工审阅相应产物后手动补全该签名字段，再续跑；',
-    '  3. 若怀疑是"预算不够、每轮都在做新探索但没收尾"：可提高该 phase 的 phase_timeout_ms 后续跑；',
-    '  4. 若怀疑是环境/工具链问题（如 OCR 不可用）：先修复环境，问题若随之消失即证实。',
+    ...(receiptStatus && byStatus[receiptStatus] ? byStatus[receiptStatus] : unknownStatus),
+    '  · 若怀疑是"预算不够、每轮都在做新探索但没收尾"：可提高该 phase 的 phase_timeout_ms 后续跑；',
+    '  · 若怀疑是环境/工具链问题（如 OCR 不可用）：先修复环境，问题若随之消失即证实。',
     '',
     `处理完后续跑：${resumeCmd}`,
   ];
 }
-
-/** plan e7c2a4d8 T3c（codex 五轮 P1-③）：receipt 签发路可用性——仓库现无 signer
- * 配置/命令/服务协议（confirmation-receipt.ts 明文：签发属后继 change
- * confirmation-credential-issuance，registry 通常不存在→一切 INVALID 是设计行为）。
- * **本 plan 内恒 false**；issuance change 落地时只改本常量（生产者），builder 五轴
- * 契约不变。语义（codex 四轮 P1-⑤）：不得由 registry 存在或历史 receipt 推断。 */
-export const MUTATION_RECEIPT_ISSUANCE_ROUTE_AVAILABLE = false;
 
 export interface UnauthorizedMutationGuidanceOpts {
   feature: string;
   runId: string;
   phase: string;
   violations: string[];
-  /** 当前 chain 是否同时含 coding 与 review（authorized_backtrack 的能力前提）。 */
+  /** 当前 chain 是否同时含 coding 与 review（自动 backtrack 的能力前提）。 */
   chainHasCodingReview: boolean;
-  /** trust registry 在且可验（≠签发能力）。 */
-  receiptVerificationConfigured: boolean;
-  /** 显式配置且探测可用的签发路（本 plan 恒 false，见常量）。 */
-  issuanceRouteAvailable: boolean;
-  /** 已存在与本次 drift 精确吻合的有效裁决 receipt（=裁决已可用，非签发可用）。 */
-  adjudicationAlreadyAvailable: boolean;
-  /** runner 落盘的裁决请求单（report_dir 相对路径；未能生成 → null）。 */
-  adjudicationRequestRel: string | null;
   /**
    * plan a5f9c3e2 t3②：保守恢复（失效旧 coding closure 及其后阶段、携未受信 diff 完整
    * 重验）**已是默认路径且不需要人签**。走到本 halt 说明它被结构性前提挡住——
@@ -138,20 +89,17 @@ export interface UnauthorizedMutationGuidanceOpts {
 
 /**
  * plan e7c2a4d8 T3c：unauthorized_source_mutation 的引导话术——banner/phase_halt 事件/
- * goal-report 单 SSOT。铁律：**只列当下真正可走的路**（v2 时 banner「写 receipt 后
- * --resume」按当日代码照做仍会再次 HALT，属过度承诺——本 builder 按能力真值分层）；
- * 恒有：agent 自产 gap-notes/自签 approved_by 不构成授权；pre_authorized_mutations
- * 在任何信任态下都只是意图预登记（classifier 落地前不放行，不列为出路）。
+ * goal-report 单 SSOT。人工 receipt/source authorization 已退役：越权字节只能交 owner
+ * 完整重验；当前 run 的结构前提不允许时，新起 coding owner run，不提供签字绕过路径。
  */
 export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuidanceOpts): string[] {
   const {
-    feature, runId, phase, violations, chainHasCodingReview,
-    issuanceRouteAvailable, adjudicationAlreadyAvailable, adjudicationRequestRel, harnessPrefixRel,
+    feature, runId, phase, violations, chainHasCodingReview, harnessPrefixRel,
     conservativeRecoveryBlockedReason,
   } = opts;
   const resumeCmd = `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId}`;
   const lines: string[] = [
-    `【${feature} · run ${runId} · ${phase}】产品源码变更未命中可信授权链（不自动回退洗白）：`,
+    `【${feature} · run ${runId} · ${phase}】检测到非 owner 阶段改写产品源码（旧信任已失效）：`,
     ...violations.map((v) => `  - ${v}`),
     '',
   ];
@@ -164,102 +112,23 @@ export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuid
       '',
     );
   }
-  if (adjudicationAlreadyAvailable && chainHasCodingReview) {
-    lines.push(
-      '裁决已可用：存在与当前变更内容精确吻合的人工裁决 receipt——',
-      `  直接续跑：${resumeCmd}（将走 coding→review→ut→testing 授权回退重验，消耗回退预算）。`,
-    );
-  } else if (adjudicationAlreadyAvailable && !chainHasCodingReview) {
-    lines.push(
-      '裁决已可用，但当前为截断链（chain 不含 coding/review），无法在本 run 内回退重验——',
-      '  请新起 coding 起点 run（coding 期合法实现该变更 → review 重审 → ut/testing 重验），',
-      '  旧 run 以 --supersede 废弃。',
-    );
-  } else if (issuanceRouteAvailable) {
-    lines.push(
-      '人工裁决路径（认可该变更时）：',
-      adjudicationRequestRel
-        ? `  1. 审阅裁决请求单 ${adjudicationRequestRel}（含变更内容 fingerprint 与 receipt 字段模板）；`
-        : '  1. 审阅本次变更内容；',
-      '  2. 经受信签发方签发绑定该 fingerprint 的 human confirmation receipt，登记入',
-      '     mutation-authorizations.jsonl 后 --resume' +
-        (chainHasCodingReview ? '（走 coding→review 授权回退重验）；' : '，并新起 coding 起点 run 重验（截断链无法回退）；'),
-      '  不认可：还原上述文件后 ' + resumeCmd + '。',
-    );
-  } else {
-    lines.push(
-      '当前部署 **human receipt 签发不可用**（无签发命令/服务；trust registry 属验签面，' ,
-      '不构成签发能力——confirmation-credential-issuance 落地前该路不通）。当下真正可走的两条路：',
-      `  1. 不认可该变更：还原上述文件后 ${resumeCmd}；`,
-      '  2. 认可该变更：新起 coding 起点 run——在 coding 期合法实现该变更并走 review 重审',
-      '     （旧 run 以 --supersede 废弃）。',
-    );
-    if (adjudicationRequestRel) {
-      lines.push(`  （裁决请求单已落盘 ${adjudicationRequestRel}，供未来签发能力就绪后复用。）`);
-    }
-  }
+  lines.push(
+    chainHasCodingReview
+      ? `恢复结构具备时 runner 会自动回 coding 全量重验；若本轮已触发预算/指纹熔断，请新起 coding owner run 并 supersede ${runId}。`
+      : `当前是截断链，无法在本 run 回到 coding owner；请新起 coding 起点 run 并 supersede ${runId}。`,
+    `不要靠签名、approved_by、pre_authorized_mutations 或旧 receipt 接受这些字节；owner 门禁通过后才重新取得信任。`,
+    `若只是外部并发写入，停止并发写入后再执行：${resumeCmd}`,
+  );
   lines.push(
     '',
-    '注意：agent 自产 gap-notes/自签 approved_by 不构成授权；manifest 的',
-    'pre_authorized_mutations 仅为意图预登记（内容级分类器落地前不放行）。',
+    '注意：保留当前工作区字节供 owner 重验；不要为通过门禁而补写人签字段。',
   );
   return lines;
 }
 
-export interface LineageMismatchGuidanceOpts {
-  feature: string;
-  runId: string;
-  /** 与 head 失配的账本文件（project 相对） */
-  mismatched: string[];
-  invocation: 'fresh' | 'resume';
-  /** consumer='framework/harness'、standalone='harness' */
-  harnessPrefixRel: string;
-}
-
-/**
- * plan a5f9c3e2 t3①：vision feature head 失配的引导话术。
- *
- * 立项事故（宿主 run 20260801T145522Z-16408e）：该拦截此前是**裸 throw、无 builder**，
- * 只说「人工核查后处置」，而唯一成文的重铸路 `--reseal-receipt` 需要受信签发方，
- * 签发端全仓不存在 → agent 只能自己现编出路（实测编出了「quarantine 改名备份」）。
- *
- * 铁律照本文件其余 builder：**只列当下真正可走的路**。现在真的有两条：
- *   ① 认为旧连续性仍然有效 → 恢复账本原状后重跑（不改锚、不冒充）；
- *   ② 明确放弃旧连续性 → `--vision-lineage=reset` 新起 fresh run（**仅 fresh**）——
- *      旧锚事务性 quarantine、断裂记 `lineage_discontinuity` 事件、世代归零全链重验。
- * 关键措辞：② **不是**「认可这次变更」，而是「撤销历史连续性主张、重新证明一遍」——
- * 它不需要任何人签，因为它不跳过验证、也不伪造保证。
- */
-export function buildLineageMismatchGuidance(opts: LineageMismatchGuidanceOpts): string[] {
-  const { feature, runId, mismatched, invocation, harnessPrefixRel } = opts;
-  const freshCmd =
-    `npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --vision-lineage=reset`;
-  const lines: string[] = [
-    `【${feature} · run ${runId}】vision 账本与场外 feature head 失配：`,
-    ...mismatched.slice(0, 8).map((f) => `  - ${f}`),
-    '',
-    'head 是**跨 run 的防洗账本锚**（记录上次收盘时各账本的哈希），不是授权——它只陈述',
-    '「账本变了」这一事实，无法被任何指令改成「没变过」。当下两条真正可走的路：',
-    '',
-    '  1. 旧连续性仍然有效（账本是误删/误改）：把账本恢复原状后重跑本 run。',
-    '     不要删改 head 冒充原状——那才是这道闸要挡的事。',
-    '',
-    '  2. 明确放弃旧连续性、从头重建：以新 run_id 起 fresh run 并显式声明——',
-    `     ${freshCmd}`,
-    '     该声明**不是**「认可变更」，而是「撤销历史连续性主张、重新证明一遍」：',
-    '     旧 head/HWM 事务性 quarantine → 断裂写入 lineage_discontinuity 事件（含旧哈希）',
-    '     → 世代归零 → 全链重验。因此它不需要任何人签署，也不会洗白任何历史 FAIL——',
-    '     本 run 只能声称「新 lineage 已全链验证」，不能声称「历史连续性得以保持」。',
-  ];
-  if (invocation === 'resume') {
-    lines.push(
-      '',
-      '注意：当前是 --resume。**放弃连续性只能在 fresh run 启动时声明**，续跑中途不得升级',
-      '（跑到一半把已建立的链一笔勾销不可接受）。本 run 到此为止，请按上面两条之一处置。',
-    );
-  }
-  return lines;
-}
+// 【已删除 · T2 5a 收口刀（codex P2）】`LineageMismatchGuidanceOpts` / `buildLineageMismatchGuidance`
+// ——head 失配已由 decide() 统一 recover（自动 discontinuity 重建，见 goal-runner
+// lineageIncidentPresent），失配不再产生任何求人拦截，引导话术无调用方。
 
 export interface BudgetExhaustedGuidanceOpts {
   feature: string;

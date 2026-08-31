@@ -335,9 +335,127 @@ optional_fields:
               命令模板（goal-runner 结构化 spawn，不经 shell）；占位符 {{PROMPT}}（内联 prompt 正文）、
               {{PROMPT_FILE}} {{SKILL_PATH}} {{PROJECT_ROOT}} {{FRAMEWORK_ROOT}} {{FEATURE}} {{PHASE}}。
               勿使用 $(cat …) 等 shell 语法。
+              **权限契约（plan a8e5c3f9）**：本命令即 adapter 提供方断言的
+              non-interactive full-permission 启动命令——无审批提示、完整文件系统/工具执行
+              权限（用户主动启动 Goal/headless 即为该授权）。Maison 不猜第三方 CLI 旗标、
+              不加命令白名单；无法满足者不得声明支持 Goal/headless。内建已知 CLI
+              （claude/codeagent/codex/cursor/opencode）运行时以 agent-invoke.ts 硬化 argv
+              为 SSOT，本字段仅声明面（两者须一致，防双口径）。
+              注意：全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
+              gate、receipt/人签、设备与凭据规则不受影响。
           unattended:
             type: object
-            description: 默认 unattended 契约；manifest 可覆盖
+            description: |
+              unattended 契约声明。plan a8e5c3f9 起 Goal/headless 运行时统一归一化为
+              effective 值（write_mode: full-access + approval_mode: never，见
+              goal-manifest.ts effectiveHeadlessUnattended）；旧 manifest 的其他枚举仍被
+              接受（历史 run 可 resume）但不再降低实际执行权限；allowed_tools 为审批清单
+              遗留字段（deprecated/ignored）。
+
+  visual_provider:
+    type: object | null
+    description: |
+      可选（plan ab072691）。声明本 adapter 可作为**只读视觉 provider**（delegated 视觉委托的
+      第二 endpoint：primary 盲写工程，provider 只看图产结构化评审）。
+
+      **本字段的完整声明就是 provider 的支持资格**——运行时由 adapter catalog 扫描本字段派生
+      唯一支持列表（harness/scripts/utils/adapter-catalog.ts listVisualProviderAdapters）。
+      禁止在 TypeScript 里另建 adapter 白名单、禁止按 adapter 内核家族推断（Claude 内核 fork
+      不自带资格）、禁止在文档里另写一份支持名单——三者会与本字段形成平行真源。
+
+      `goal_capability` **不参与** provider 资格判定：那是「能不能当 goal 主执行体」的声明，
+      与「能不能只读看图」正交；本字段自身承载 invoke / model / image / stdout 全契约。
+
+      四个字段**缺一即不完整**，不完整=无资格（交互态提示重选、无人值守 WARN+blind、
+      显式 CLI fail-fast）。取值为**机制 id 而非厂商名**：机制 adapter 通用，多个 adapter 可
+      共用同一机制。声明与运行时的分工同 `external_runner.headless_invoke`——本字段是声明面
+      与资格面，argv 构造 SSOT 在 harness/scripts/utils/visual-provider-invoke.ts，两者须一致。
+
+      **入册纪律（BLOCKER）**：每份声明须经锁定版本 CLI 的真实 invocation smoke 证明「只读
+      隔离成立 + model 真实回放 + 图片真实进模型 + stdout 正确投影」后方可写入。锁定版本实测
+      不支持所声明的隔离时，**不得**写入声明、更不得退回该 adapter 的工程默认配置启动。
+    fields:
+      readonly_invoke:
+        type: string
+        enum: ["safe_mode_read_only_tools", "read_only_sandbox", "ask_mode", "permission_deny_non_read"]
+        description: |
+          只读启动机制 id。语义：
+          - safe_mode_read_only_tools：CLI 提供「隔离工程定制（settings/hooks/入口文件/skills/
+            plugins/MCP 等）」的安全模式，并可把模型可见工具集合收敛到只读读取工具；
+          - read_only_sandbox：CLI 提供进程级只读沙箱档位（文件系统写入在沙箱层被拒）；
+          - ask_mode：CLI 提供只问不改的会话模式（无写入/无 shell 权限）；
+          - permission_deny_non_read：CLI 提供结构化权限声明，可把 edit/bash 等非只读工具置 deny。
+          **禁止**声明任何依赖普通 headless 全权限旗标的机制——那条 argv 是无条件全权限契约。
+      image_transport:
+        type: string
+        enum: ["prompt_path", "native_image_flag"]
+        description: |
+          图片入模路径。prompt_path=prompt 内明列工程内真实图片路径、由只读读图工具读取；
+          native_image_flag=CLI 原生附图旗标。两者都**直接使用工程内原路径**，不做暂存复制
+          （物理只读由 readonly_invoke 承担，receipt 图片路径因此天然与工程一致）。
+      stdout_envelope:
+        type: string
+        enum: ["stream_json_result", "turn_jsonl", "result_json", "events_json"]
+        description: |
+          stdout 信封方言——决定「用哪个既有投影函数把 stdout 还原成模型正文」以及是否需要
+          既有 terminal 事件解析器。**只选择既有能力，不新建第二套 parser**：投影后统一走
+          同一份载荷校验。turn_jsonl 额外契约：只有 invoke 结果 completion 观测成立且无
+          terminal failure 时才投影正文，投影为 null 亦判 invalid。
+      model_replay:
+        type: string
+        description: |
+          模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
+          无回放旗标的 adapter 不具 provider 资格（否则「声称已钉、实际未钉」）。
+
+  verifier_capability:
+    type: object | null
+    description: |
+      可选（plan a9d4e7c2）。声明本 adapter **能不能执行 verifier 闭环**。
+
+      背景：verifier 曾被做成「每阶段必跑的仪式」——policy 说 off、runner 仍无条件装配
+      产物、文档仍无条件要求四件套，适用性只在最末端的 check-receipt 才判。收口后
+      verifier 降为按 workflow/track/policy/adapter 能力**动态启用的能力**，本字段回答
+      其中第三问「当前 adapter 能不能执行」。
+
+      **本字段的完整声明就是能力资格**——运行时由 `resolveVerifierPlan`
+      （harness/scripts/utils/verifier-plan.ts）消费，经
+      `resolveVerifierCapability`（adapter-catalog.ts）扫描本字段派生。禁止在
+      TypeScript 里另建 adapter 白名单、禁止按内核家族推断、禁止以「有 hooks 目录」
+      推断——三者都会与本字段形成平行真源。
+
+      未声明 / 声明不完整 = 无能力（不是「降级可用」）。此时：
+        · policy 判 verifier=required 且 mode=interactive → `blocked`：**脚本检查照常
+          完整执行**，脚本 FAIL 如实报真因；脚本 PASS 才报
+          `INCOMPLETE / verifier_provider_unavailable`（provider 缺失不禁基本诊断）；
+        · policy 判 off / not_applicable → 与本字段无关，恒 disabled、零产物。
+
+      **入册纪律（BLOCKER）**：`modes` 只登记**真实实测过**的运行模式。claude / codeagent
+      的 interactive 已由宿主 SubagentStop 实抓验收；headless / goal 目前仍走 bedside
+      旁路，未验收前不得预填——虚标会让 runner 生成一份永远没人发布的 request。
+    fields:
+      transport:
+        type: string
+        enum: ["repo_file_request"]
+        description: |
+          调用凭证的投递机制 id（机制名非厂商名）。
+          repo_file_request：runner 在阶段 reports 目录写
+          `verifier.request.<64位subject>.json`，调用方把**该 JSON 整段**作为 Task prompt
+          投给 verifier；verifier 按其中的 `prompt_path` 自行 Read 磁盘 ai-prompt.md。
+          大文件不过传输面，抄错任何字段 → subject 重算失配 → 明确失败。
+      publisher:
+        type: string
+        enum: ["subagent_stop"]
+        description: |
+          结论的发布机制 id。subagent_stop：由 SubagentStop hook
+          （agents/claude/templates/hooks/record-verifier-report.mjs，claude-kernel 家族共享）
+          做四方对账（request 自述 subject == 重算 subject == summary 现值 == 终态块回显，
+          且 prompt_path/prompt_sha256 与磁盘相符）后发布
+          `verifier.report.<subject>.json`。
+      modes:
+        type: list
+        description: |
+          已实测支持的运行模式，非空；取值 interactive | headless | goal。
+          未列入的模式 = 该模式下无能力。
 
   user_confirmation:
     type: object | null

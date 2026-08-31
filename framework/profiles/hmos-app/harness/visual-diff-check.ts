@@ -17,17 +17,25 @@ import {
   type UiSpecDoc,
 } from '../../../harness/scripts/utils/ui-spec-shared';
 import { extractCodeBlocks } from '../../../harness/scripts/utils/markdown-parser';
+import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { collectOutOfBoundsGlobalElements, collectGrossMissingAnchorText, collectTextPlacementSignals, collectVerdictAbandonment } from './visual-diff-ocr-gates';
+import type { OcrFn } from './visual-diff-ocr-gates';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { canonicalOverlayBase } from './visual-diff-nav';
+import { resolveLayoutDumpPath, sanitizeVisualDiffScreenSlug } from './visual-diff-capture';
 import { collectVisualDiffTamperArtifacts } from './evidence-tamper-scan';
+import {
+  collectNavIdentityIdMembers,
+  collectNavStepTargetIdsByScreen,
+  collectRegionAttestElementIdsByScreen,
+  navConfigExists,
+} from './coding-visual-parity-check';
 import { checkRenderVisibilityCalibrate } from './render-visibility';
-import { checkUiKitRuntimeConformance } from './ui-kit-conformance-check';
 import { checkRuntimeMountConformance } from './runtime-mount-conformance';
 import { checkVisualFeedback } from './visual-feedback';
 import { EDGE_TILE_ROWS, EDGE_TILE_COLS, EDGE_SENTINEL_MIN_UNCOVERED } from './image-toolkit';
-import { isHardPixelContract, fidelityRatchetFailOrWarn, isHumanVerified } from '../../../harness/scripts/utils/fidelity-shared';
+import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 import { loadRefElementsFile, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
@@ -82,11 +90,71 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
 export type VisualDiffDefectClass = 'clipping' | 'overlap' | 'shape_mismatch' | 'missing_render' | 'other';
 export type VisualDiffDefectSeverity = 'blocker' | 'major' | 'minor';
 
-/** t0（plan f7a3d9c2）：defect 的 T8 转录溯源锚点——transcription audit 主判据 */
-export interface VisualDiffDefectSource {
-  producer: 'T8';
-  finding_id: string;
-  signal: string;
+/**
+ * defect 的**产出者溯源**。
+ * - `T8`（plan f7a3d9c2 t0）：机械 producer 的转录锚点——transcription audit 主判据；
+ * - `visual_provider`（plan ab072691 t5④）：只读视觉 provider 的逐屏评审写入。
+ *
+ * 两者是**不同的源**，不是同一条管线的两种标签：T8 是感知信号（须经 defect-review 裁决），
+ * provider 是独立 critic candidate（合法即物化回修、非法即丢弃，不进停等管线）。
+ */
+export type VisualDiffDefectSource =
+  | { producer: 'T8'; finding_id: string; signal: string }
+  | { producer: 'visual_provider'; invoke_id: string };
+
+/** T8 转录对账用：只有 T8 源才有 finding_id（provider 源恒返回 undefined）。 */
+export function t8FindingIdOf(source: VisualDiffDefectSource | undefined): string | undefined {
+  return source?.producer === 'T8' ? source.finding_id : undefined;
+}
+
+/**
+ * plan ab072691 t5⑦：critic 回执证据路径的绑定判定（**纯路径判定，无 IO**）。
+ *
+ * 两条互斥期望路径：
+ *  · primary（现状，逐字不变）——`<featureDir>/goal-runs/<run>/phases/testing/agent-events.jsonl`；
+ *  · delegated provider —— `<featureDir>/device-testing/reports/visual-review/<invoke_id>/agent-events.jsonl`。
+ *
+ * 走哪一支由**本 run 声明的 provider 身份**决定（env 冻结值优先，其次个人级 local），
+ * **不看回执自报的 adapter 名**——否则伪造者可以自选更宽松的那一支。
+ * provider 支只放宽「目录锚」，不放宽任何其它判据：`critic_run_id` 仍须精确等于
+ * `<run>-<attempt>`，证据日志 hash 仍须重算相符，验读事件仍须逐图复核。
+ */
+export function criticEvidenceBranchOf(
+  ctx: CheckContext,
+  receiptAdapter: string,
+): 'primary_testing' | 'visual_provider' {
+  // frameworkRoot 由本文件位置派生：`<framework>/profiles/<profile>/harness` 向上三层。
+  // **不用 detectRepoLayout(__dirname)**——它从 harness/ 之外的目录会直接抛
+  // "Cannot locate harness root"，而这里是回执校验的热路径，抛异常等于把 native 路径也弄坏。
+  const frameworkRootForProvider = path.resolve(__dirname, '..', '..', '..');
+  const declaredProvider = resolveActiveVisualProvider(ctx.projectRoot, frameworkRootForProvider).pin;
+  return declaredProvider && receiptAdapter.trim() === declaredProvider.adapter
+    ? 'visual_provider'
+    : 'primary_testing';
+}
+
+export function isCriticEvidencePathBound(
+  ctx: CheckContext,
+  receiptAdapter: string,
+  evidenceLogPath: string,
+): boolean {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (!runId) return false;
+  const abs = path.resolve(ctx.projectRoot, evidenceLogPath);
+  if (criticEvidenceBranchOf(ctx, receiptAdapter) === 'visual_provider') {
+    const providerRoot = path.resolve(
+      featureDir(ctx.projectRoot, ctx.feature),
+      'device-testing', 'reports', 'visual-review',
+    );
+    if (path.basename(abs) !== 'agent-events.jsonl') return false;
+    const invokeDir = path.dirname(abs);
+    // 恰好一层 invoke 目录（不接受任意深度嵌套——那等于放开目录锚）
+    return path.dirname(invokeDir) === providerRoot && path.basename(invokeDir).length > 0;
+  }
+  return abs === path.resolve(
+    featureDir(ctx.projectRoot, ctx.feature),
+    'goal-runs', runId, 'phases', 'testing', 'agent-events.jsonl',
+  );
 }
 
 /** 正向渲染缺陷（实现有但渲染错）。bbox 为归一化 [x,y,w,h] ∈ [0,1] */
@@ -110,6 +178,7 @@ export interface VisualDiffDefect {
 export interface RegionAttestEntry {
   region: string;
   verdict: 'no_diff' | 'diff_logged';
+  /** `human` is accepted only to parse legacy reports and has zero gate weight. */
   method: 'paired_crop_compare' | 'vl_screening' | 'human';
   /** method=paired_crop_compare 时必填：_attest/ 并排 crop 相对路径（harness 验存在性） */
   evidence?: string;
@@ -122,6 +191,10 @@ export interface RegionAttestEntry {
   /** rev8（paired 必填）：crop 来源区域，归一化 [x,y,w,h]（绑定"这个区域"） */
   source_bbox?: number[];
   by?: string;
+}
+
+function machineRegionAttest(screen: VisualDiffScreenEntry): RegionAttestEntry[] {
+  return (screen.region_attest ?? []).filter((entry) => entry.method !== 'human');
 }
 
 /** t7：critic 调用回执（device-testing/reports/critic-receipt.json） */
@@ -171,7 +244,7 @@ export interface VisualDiffScreenEntry {
   reported_geometric_iou?: number;
   /**
    * t4③：评估新鲜度失效标记——与采集新鲜度解耦。true=该屏评估产物（reported 分数与
-   * region_attest）须独立重评；不触发设备重采、不重置真人 confirmed_by 的 verdict；未清 → BLOCKER。
+   * region_attest）须独立重评；不触发设备重采。legacy confirmed_by 不参与结论；未清 → BLOCKER。
    */
   evaluation_invalidated?: boolean;
   /** t5（1.1）：pixel_1to1 P0 pass 屏 defects=[] 时必填的逐区域举证 */
@@ -205,7 +278,7 @@ export interface VisualDiffScreenEntry {
    * run 一致（防第二个 run 复用第一个 run 的截图）。普通模式不参与跳采判定。
    */
   captured_in_run?: string;
-  /** T2：真人确认者署名（pixel_1to1 P0 pass 屏须真人过目确认；goal-mode-auto 等自签不算） */
+  /** Legacy-only signer provenance; parsed for compatibility but ignored by current gates. */
   confirmed_by?: string;
   /** 反向 diff：参考图有、实现无的元素 id 清单 */
   reverse_missing?: string[];
@@ -273,30 +346,6 @@ export function isStaleVisualDiffVerdict(
     if (!fp || fp !== currentFp) return true;
   }
   return false;
-}
-
-/**
- * P0-10c（plan b6d3e9a2）：逐屏"可交由真人确认"资格谓词——checkVisualDiff 的 await 收窄判定
- * 与 visual-confirm CLI 的"待确认屏"筛选**同源**（防 CLI 宽筛把 stale/带 must_fix/绑定不全的
- * 屏签掉）。资格 = pixel_1to1 语境下该屏 verdict=pass、零 must_fix、指纹与当前构建一致、
- * evaluated hash 齐、非 stale（绑定截图文件未变、指纹一致）。currentBuildFp 不可算 → 一律不合格
- * （下轮无法跳采，签了也会被重采清）。confirmed_by 是否已填不在此判据内（由调用侧按用途叠加）。
- */
-export function isScreenAwaitConfirmEligible(
-  screen: VisualDiffScreenEntry,
-  projectRoot: string,
-  currentBuildFingerprint: string | null | undefined,
-): boolean {
-  const fp = typeof currentBuildFingerprint === 'string' ? currentBuildFingerprint.trim() : '';
-  if (!fp) return false;
-  if (screen.verdict !== 'pass') return false;
-  if ((screen.must_fix?.length ?? 0) !== 0) return false;
-  // t4③：评估已失效的屏不是干净的待签候选——critic 重评清标记后才可交真人
-  if (screen.evaluation_invalidated === true) return false;
-  if (screen.evaluated_build_fingerprint?.trim() !== fp) return false;
-  if (isMissingEvaluatedScreenshotHash(screen)) return false;
-  if (isStaleVisualDiffVerdict(screen, projectRoot, { currentBuildFingerprint: fp })) return false;
-  return true;
 }
 
 function collectAuthoritativeRefIds(specMd: string, uiDoc: ReturnType<typeof loadUiSpecFile>): Set<string> {
@@ -502,13 +551,19 @@ export function validateVisualDiffJson(
             // t0（f7a3d9c2）：转录溯源与 must_fix 锚点——可选字段，形状校验（legacy 兼容）
             if (dd.source !== undefined && dd.source !== null) {
               const src = dd.source as Record<string, unknown>;
-              if (
-                typeof src !== 'object' ||
-                src.producer !== 'T8' ||
-                typeof src.finding_id !== 'string' || !src.finding_id.trim() ||
-                typeof src.signal !== 'string' || !src.signal.trim()
-              ) {
-                errors.push(`screens[${i}].defects[${j}].source 须为 {producer:'T8', finding_id, signal}`);
+              // plan ab072691 t5④：两种合法产出者——T8 转录 / 只读视觉 provider 评审。
+              const t8Ok =
+                src.producer === 'T8' &&
+                typeof src.finding_id === 'string' && src.finding_id.trim().length > 0 &&
+                typeof src.signal === 'string' && src.signal.trim().length > 0;
+              const providerOk =
+                src.producer === 'visual_provider' &&
+                typeof src.invoke_id === 'string' && src.invoke_id.trim().length > 0;
+              if (typeof src !== 'object' || (!t8Ok && !providerOk)) {
+                errors.push(
+                  `screens[${i}].defects[${j}].source 须为 {producer:'T8', finding_id, signal} ` +
+                  `或 {producer:'visual_provider', invoke_id}`,
+                );
               }
             }
             if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {
@@ -658,7 +713,11 @@ export function computeDefectFingerprint(screenId: string, d: VisualDiffDefect):
   const bucket = Array.isArray(d.bbox) && d.bbox.length === 4
     ? d.bbox.map(n => (Math.round(n * 10) / 10).toFixed(1)).join(',')
     : 'nobbox';
-  const src = d.source?.finding_id?.trim() ? `|${d.source.producer}#${d.source.finding_id.trim()}` : '';
+  // plan ab072691 t5④：**只有 T8 源**追加身份尾段。provider 源刻意走 legacy 四元组——
+  // invoke_id 每轮必变，若进指纹则 provider 缺陷永远"看起来是新的"，no_progress_fuse
+  // 对 provider 误报将结构性失效（而它正是 provider 误报的兜底之一）。
+  const t8Id = t8FindingIdOf(d.source)?.trim();
+  const src = t8Id ? `|T8#${t8Id}` : '';
   return `${screenId}|${d.class}|${d.element?.trim() || 'unknown'}|${bucket}${src}`;
 }
 
@@ -722,11 +781,11 @@ export function defaultClassForSignal(signal: string): VisualDiffDefectClass {
 
 /**
  * t1（rev5）：loop-actionable 视觉残差 hit id 白名单（结构化谓词，非 visual_diff_ 前缀猜测）。
- * 排除（各归各的路径，不入 UI defect fuse）：human_confirm_required（T2 求人）、
+ * 排除（各归各的路径，不入 UI defect fuse）：legacy human_confirm_required、
  * layout_invariants_unstable（capability degradation，t4）、*_degraded/layout_dump_missing
  * （能力降级）、critic_receipt/attest_evidence/**region_attest**（evidence repair——
  * review-fix cursor I-2：纯举证缺口是评审义务不是 UI 缺陷，补 attest 不是 coding 回修，
- * 不得据此熔断）、schema（结构问题）、tamper_artifact（红线，另有人工复核路径）、
+ * 不得据此熔断）、schema（结构问题）、tamper_artifact（完整性红线，另走恢复路径）、
  * edge_sentinel/text_placement_must_fix（advisory）。
  */
 export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
@@ -754,7 +813,16 @@ export const LOOP_ACTIONABLE_HIT_IDS: ReadonlySet<string> = new Set([
 export function hasActionableVisualResidual(
   screens: VisualDiffScreenEntry[],
   hits: Array<{ id: string; status: 'FAIL' | 'WARN' }>,
+  /**
+   * t4（plan f3a8c6d2）：本轮**内容可行动**的 P0 缺屏（已由调用方剔除环境阻断态）。
+   * 事故：30 轮 ledger 全程 actionable_residual=false + defect_fingerprints=[]，
+   * 于是"全 pending、7 屏只采到 3 屏"的最烂轮次双重免疫熔断。缺屏本身就是"有事可修
+   * （修采集）"，必须计入残差。不合格轮由 `ctx.visualFuseEligibility` 在上游裁定为空集，
+   * 故此处只会收到内容态，不会把锁屏/权限故障改口成"修了没用"。
+   */
+  contentActionableMissingScreens?: readonly string[],
 ): boolean {
+  if ((contentActionableMissingScreens?.length ?? 0) > 0) return true;
   if (screens.some(s => s.verdict === 'fail' || (s.must_fix?.length ?? 0) > 0)) return true;
   if (hits.some(h => h.status === 'FAIL' && LOOP_ACTIONABLE_HIT_IDS.has(h.id))) return true;
   // 未解决 T8/M1 blocking WARN 亦属 loop-actionable（与 candidate-pass 阻断口径一致）
@@ -805,6 +873,15 @@ export interface VisualDiffStructuredPayload {
     tier: string;
     elements: string[];
     bbox?: number[];
+  }>;
+  /** Producer 归类的 uncertain 信号；仅作机器证据不足诊断，不创建人签恢复队列。 */
+  uncertain_signals?: Array<{
+    item_fingerprint: string;
+    screen_id: string;
+    /** 稳定候选锚（OCR 混淆=候选文本；整页缺口='whole-page'） */
+    target: string;
+    reason: string;
+    evidence_ref: string;
   }>;
 }
 
@@ -861,6 +938,7 @@ interface VisualDiffHit {
   severity: 'BLOCKER' | 'MAJOR';
   status: 'FAIL' | 'WARN';
   line: string;
+  suggestion?: string;
   rank: number;
 }
 
@@ -916,31 +994,99 @@ function finalizeVisualDiffHits(
     status: top.status,
     details: `${baseDetails}\n${hits.map(h => h.line).join('\n')}`,
     affected_files: [reportRel],
+    ...(top.suggestion ? { suggestion: top.suggestion } : {}),
   };
 }
 
 /** device-testing 渲染回环报告校验 */
 /** 入口：core 判定 + blind-visual-hardening d2/d3 附加面（渲染可见性 calibrate + 三段闭环运行时段） */
+// adjudicated-repair-loop：OCR 注入缝（测试用；缺省走 collectTextPlacementSignals 默认 ocrImageWords）
+let injectedVisualDiffOcrFn: OcrFn | null = null;
+export function __testing_setVisualDiffOcrFn(fn: OcrFn | null): void {
+  injectedVisualDiffOcrFn = fn;
+}
+
+/**
+ * plan ab072691 t5⑤（返修）：**与 provider 判定无关的确定性红线**——供 fail-open 路径单独调用。
+ *
+ * 背景：provider 不可用时不跑严格视觉对照（pending 屏会把 phase 挡死），但那条路**不该顺带
+ * 关掉与 provider 毫无关系的确定性侦测**。这里只跑两项，都复用既有 check id、既有判据、
+ * 既有严重度，不新增 id / 状态 / 质量轴：
+ *   · `visual_diff_tamper_artifact` —— 改判脚本物证（框架红线，任何档位 BLOCKER FAIL）；
+ *   · `visual_diff_schema`          —— visual-diff.json 结构损坏。
+ * 无命中即返回空数组（不产 PASS 噪音——本轮的结论由 fail-open 的 `visual_diff` SKIP 承载）。
+ */
+export function checkVisualDiffDeterministicOnly(ctx: CheckContext): CheckResult[] {
+  const out: CheckResult[] = [];
+  const jsonPath = path.join(
+    featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'device-screenshots', 'visual-diff.json',
+  );
+  const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'device-testing/visual-diff.md');
+
+  const tamperArtifacts = collectVisualDiffTamperArtifacts(
+    ctx.projectRoot,
+    ctx.feature,
+    featuresDirPath(ctx.projectRoot),
+  );
+  if (tamperArtifacts.length > 0) {
+    out.push({
+      id: 'visual_diff_tamper_artifact',
+      category: 'structure',
+      description: '视觉判定改判脚本物证扫描（确定性红线，与 provider 无关）',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
+        tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
+        `——判定只能由 capture/当前机器证据产生；删除脚本、作废旧信任并由 owner 阶段重跑全量验证。`,
+      affected_files: [reportRel],
+      suggestion: '删除改判脚本，作废旧证据与 closure，回到 owner 阶段重跑全量机器验证。',
+    });
+  }
+
+  if (fs.existsSync(jsonPath)) {
+    try {
+      const validated = validateVisualDiffJson(
+        JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) as unknown,
+        ctx.projectRoot,
+      );
+      if (validated.errors.length > 0) {
+        out.push({
+          id: 'visual_diff_schema',
+          category: 'structure',
+          description: 'visual-diff.json 结构校验（确定性，与 provider 无关）',
+          severity: 'MAJOR',
+          status: 'FAIL',
+          details:
+            `visual-diff.json 结构问题：` +
+            `${validated.errors.slice(0, 6).join('；')}${validated.errors.length > 6 ? '…' : ''}`,
+          affected_files: [reportRel],
+          suggestion: '按报错逐项修正 visual-diff.json 结构后重跑。',
+        });
+      }
+    } catch (e) {
+      out.push({
+        id: 'visual_diff_schema',
+        category: 'structure',
+        description: 'visual-diff.json 结构校验（确定性，与 provider 无关）',
+        severity: 'MAJOR',
+        status: 'FAIL',
+        details: `visual-diff.json 解析失败：${(e as Error).message}`,
+        affected_files: [reportRel],
+        suggestion: '修复 visual-diff.json 的 JSON 语法后重跑。',
+      });
+    }
+  }
+  return out;
+}
+
 export function checkVisualDiff(ctx: CheckContext): CheckResult[] {
   const results = checkVisualDiffCore(ctx);
   // P0-B④ calibrate：采集物（shot-*/layout-*）在即评，自守卫（无目录/无配对→零结果）；
   // WARN 观察不阻断，findings 供视觉债务与 enforce 校准消费。
   results.push(...safeCalibrate(ctx));
-  // P0-C③ 运行时段：声明语义容器的锚点须出现在 layout dump（dump 缺失自跳过）。
-  // 异常=BLOCKER（codex 三轮 P1-3：地板门禁不得因异常降 SKIP 绕过）。
-  try {
-    results.push(...checkUiKitRuntimeConformance(ctx));
-  } catch (e) {
-    results.push({
-      id: 'ui_kit_runtime_conformance', category: 'structure',
-      description: 'UI kit 三段闭环·运行时段执行异常（地板门禁不得因异常绕过）',
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `执行异常：${(e as Error).message}\n${(e as Error).stack ?? ''}`,
-      suggestion: '框架/环境问题——修复后重跑；不要通过删除 block 声明来绕过本门禁。',
-      failure_kind: 'framework_bug',
-      blocking_class: 'ui_kit_conformance',
-    });
-  }
+  // plan e6b3f8d2 t3：UI kit 三段闭环·运行时段随强制 kit 一并撤销（锚点机制已删除）。
+  // 运行时结构证据继续由下面的 runtime_mount_conformance（uitree 挂载轴）承担。
   // S7（visual-capability-truth P2-J.1）：结构保真运行时挂载轴——uitree 证据面（拆轴：
   // 静态声明轴照旧；无 dump 自 SKIP 不装死）。
   try {
@@ -988,6 +1134,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // P0-9 顺手项：走 featureDir 尊重 paths.features_dir 配置
   const reportDir = path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'device-screenshots');
 
+  // adjudicated-repair-loop M2（plan e2b7c4a9 t2.1）：producer 归类的 uncertain 信号收集器
+  // （OCR 混淆 / 整页参考图 vs 单视口口径缺口）——最终物化为 structuredPayload
+  // .uncertain_signals[] 随 script-report.json 落盘；不回写 visual-diff.json。
+  let collectedUncertainSignals: Array<{ screen_id: string; target: string; reason: string }> = [];
+
   const specMd = loadSpecMarkdown(ctx);
   const uiChange = specMd ? parseUiChangeFromSpecMarkdown(specMd) : null;
   if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) {
@@ -1026,54 +1177,105 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  if (!fs.existsSync(mdPath) && !fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details:
-        'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
-      suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
-      affected_files: [reportRel],
-    }];
-  }
+  // t4（plan f3a8c6d2）：确定性 **all-mismatched 缺屏轮（missing-only）**——capture 端
+  // 已确证"本轮全部 P0 缺屏均为应用内错页"（`visualFuseEligibility.eligible=true` 且
+  // actionableMissingIds 非空），但**零成功采集**会使正式报告不产生或产生空 screens：
+  // 身份失配屏本轮零写入、旧裁决在 merge 前被瞬时失效剔除 → json 可能不存在、也可能
+  // 被剪成空 screens 数组。若在此处因"报告缺失/空 screens"提前 WARN/FAIL 返回，
+  // missing_screen 指纹与账本 fuse 永远走不到（t4 正向目标落空）。
+  //
+  // **空骨架的启用范围（review P1 收窄，勿再放宽）**：仅在「正式报告不存在」或
+  // 「json 成功解析且 screens 明确为空数组」时使用 `screens: []` 骨架。部分屏成功、
+  // 部分屏 mismatched 的混合轮（eligible=true + actionableMissingIds 存在，但报告
+  // 非空）**必须走正常解析与消费**——成功屏的 verdict/defects/证据照常参与判定，
+  // 只有 mismatched 的缺屏经资格对象承载；损坏 JSON 维持既有 FAIL（不因资格放行）。
+  // 缺屏指纹来源已移交资格对象，空骨架继续走既有链（P0 未覆盖 FAIL hit 照常产生、
+  // 缺屏指纹与 actionable 全部由资格对象承载）。**没有该资格时保持既有 WARN/FAIL 语义不变**。
+  const missingOnlyEligible =
+    ctx.visualFuseEligibility?.eligible === true &&
+    (ctx.visualFuseEligibility.actionableMissingIds?.length ?? 0) > 0;
 
-  if (!fs.existsSync(jsonPath)) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'WARN',
-      details: 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。',
-      affected_files: [reportRel],
-    }];
+  let rep: VisualDiffReport | null = null;
+  let schemaErrors: string[] = [];
+  let uiDoc: ReturnType<typeof loadUiSpecFile> = null;
+  const jsonExists = fs.existsSync(jsonPath);
+  if (!jsonExists) {
+    // 报告不存在：仅确定性 missing-only 轮放行为空骨架；其余保持既有 WARN 语义
+    if (!missingOnlyEligible) {
+      const mdExists = fs.existsSync(mdPath);
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'WARN',
+        details: mdExists
+          ? 'visual-diff.md 存在但缺少 device-screenshots/visual-diff.json 结构化报告。'
+          : 'visual-diff 报告尚未产出。device-testing 须执行 Hylyre 截图 QA + 多模态 vs 原图对照，写入 device-testing/visual-diff.md。',
+        ...(mdExists ? {} : {
+          suggestion: '见 device-testing SKILL visual diff 步骤；MVP 先覆盖可直达顶层屏。',
+        }),
+        affected_files: [reportRel],
+      }];
+    }
+    rep = { schema_version: '1.1', screens: [] };
+    // 缺失/空报告分支同样需要 ui-spec 的 P0 目标集合（下方 p0Ids 计算）
+    uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (e) {
+      // 损坏 JSON：**不因资格放行**，维持既有 FAIL
+      return [{
+        id: 'visual_diff',
+        category: 'structure',
+        description: desc,
+        severity: 'MAJOR',
+        status: 'FAIL',
+        details: `visual-diff.json 解析失败：${(e as Error).message}`,
+        affected_files: [reportRel],
+      }];
+    }
+    const parsedEmptyScreens =
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      Array.isArray((parsed as { screens?: unknown }).screens) &&
+      ((parsed as { screens: unknown[] }).screens.length === 0);
+    if (missingOnlyEligible && parsedEmptyScreens) {
+      // 合法空 screens（身份失配旧裁决被瞬时失效剔除后的形态）：空骨架继续
+      rep = { schema_version: '1.1', screens: [] };
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+    } else {
+      // 非空报告（含部分成功+部分 mismatched 的混合轮）与结构损坏：正常解析/校验
+      uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+      const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
+      const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
+      const bestEffortReport = validated.report;
+      if (validated.fatal || !bestEffortReport) {
+        // root 非法 / screens 数组缺失（含非空但 shape 损坏）：无可门禁对象。
+        // UI change=new_or_changed 且有 P0 目标屏时不得静默放行（视为「无有效视觉
+        // 证据」），升 BLOCKER。
+        const p0Targets = collectP0VisualTargetIds(uiDoc);
+        const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
+        return [{
+          id: 'visual_diff',
+          category: 'structure',
+          description: desc,
+          severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
+          status: 'FAIL',
+          details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+          affected_files: [reportRel],
+        }];
+      }
+      rep = bestEffortReport;
+      schemaErrors = validated.errors;
+    }
   }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-  } catch (e) {
-    return [{
-      id: 'visual_diff',
-      category: 'structure',
-      description: desc,
-      severity: 'MAJOR',
-      status: 'FAIL',
-      details: `visual-diff.json 解析失败：${(e as Error).message}`,
-      affected_files: [reportRel],
-    }];
-  }
-
-  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-  const refIds = specMd ? collectAuthoritativeRefIds(specMd, uiDoc) : new Set<string>();
-  const validated = validateVisualDiffJson(parsed, ctx.projectRoot, { authoritativeRefIds: refIds });
-  const bestEffortReport = validated.report;
-  if (validated.fatal || !bestEffortReport) {
-    // root 非法 / screens 数组缺失：无可门禁对象。UI change=new_or_changed 且有 P0 目标屏时
-    // 不得静默放行（视为「无有效视觉证据」），升 BLOCKER。
+  if (!rep) {
+    // 确定赋值不变量：上方每条路径要么已 return，要么已为 rep 赋值。
+    // 此处**不 fail-open**——按"无可门禁对象"显式 FAIL（不得静默返回空结果）。
     const p0Targets = collectP0VisualTargetIds(uiDoc);
     const fatalBlocker = uiChange === 'new_or_changed' && p0Targets.length > 0;
     return [{
@@ -1082,14 +1284,12 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: fatalBlocker ? 'BLOCKER' : 'MAJOR',
       status: 'FAIL',
-      details: `visual-diff.json 无法解析为可校验报告：${validated.errors.join('；')}`,
+      details: 'visual-diff 报告装载失败（内部不变量违反：无报告且无资格兜底）',
       affected_files: [reportRel],
     }];
   }
 
   // G0：非 fatal 的 schema 问题（缺图 / 非法 ref_id 等）转 finding 追加，绝不掩盖下方实质门禁。
-  const rep = bestEffortReport;
-  const schemaErrors = validated.errors;
   const mustFix = rep.screens.flatMap(s => s.must_fix ?? []);
   const failScreens = rep.screens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
@@ -1199,7 +1399,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       line:
         `检出视觉判定改判脚本物证（程序化伪造/销毁 visual-diff.json 判定，属证据篡改）：` +
         tamperArtifacts.map(a => `${a.file}［${a.signatures.join('、')}］`).join('; ') +
-        `——判定只能由 capture/真人逐屏产生；删除脚本并还原判定后重跑，行为已违反框架红线（须人工复核）。`,
+        `——判定只能由 capture/当前机器证据产生；删除脚本、作废旧信任并由 owner 阶段重跑全量验证。`,
     });
   }
 
@@ -1269,7 +1469,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
               : '',
           ].filter(Boolean).join('；') +
           `——处置：命中屏写 evaluation_invalidated:true，由独立 critic 逐屏重评（重填 reported_*/region_attest）后清标记；` +
-          `真人 confirmed_by 的 pass 表态不作废、不触发设备重采（评估/采集双新鲜度解耦）`,
+          `设备截图无需因此重采（评估/采集双新鲜度解耦；legacy confirmed_by 无质量权威）`,
       });
     }
     if (grazing.length > 0) {
@@ -1284,7 +1484,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采、不作废真人签字）。
+  // t4③：evaluation_invalidated 未清 → 阻断（评估新鲜度失效；不触发重采）。
   // v23.5（review 第 14 轮）：**档位无关 FAIL**——OpenSpec visual-diff 规格明文
   // "While present, the gate SHALL FAIL until a fresh evaluation clears the flag"（无档位
   // 条件）；旧实现 best_effort 只 WARN，与 runner 侧 unverified 通路也不一致（runner 已
@@ -1299,8 +1499,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       status: invalidatedStatus,
       line:
         `评估已失效待重判（evaluation_invalidated=true）：${invalidatedScreens.map(s => s.screen_id).join(', ')}` +
-        `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；真人已签屏保留 verdict/confirmed_by，` +
-        `未签屏须整体重判；本标记不触发设备重采（P0-9a 采集持久化不受影响）`,
+        `——独立 critic 重评（重填 reported_*/region_attest）后移除该标记；所有屏均按当前机器证据重判，` +
+        `legacy confirmed_by 不提供豁免；本标记不触发设备重采（P0-9a 采集持久化不受影响）`,
     });
   }
 
@@ -1426,7 +1626,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       rep.screens,
       rel => resolveShotPath(ctx.projectRoot, rel),
       s => resolveRefSourceImage(refIndex, refIdFor(s)).path,
+      // adjudicated-repair-loop：OCR 注入缝（测试用；缺省走真实 ocrImageWords）
+      injectedVisualDiffOcrFn ?? undefined,
     );
+    // M2：producer 归类的 uncertain 信号（OCR 混淆 / 口径缺口）——留下供 structuredPayload 物化
+    collectedUncertainSignals = placement.uncertainSignals;
     const p0BaseSet = new Set(p0Ids.map(canonicalOverlayBase));
     const failScreensPlacement = placement.perScreen.filter(
       p => p.fail_signals.length > 0 && p0BaseSet.has(canonicalOverlayBase(p.screen_id)),
@@ -1476,7 +1680,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         status: ratchet.status,
         line:
           `【弃判】以下屏有确定性 FAIL 信号却 verdict=pending——headless 下必须判 fail 并把信号转 must_fix 后修码重测，` +
-          `不得以"无人值守不可闭环"弃判（真人确认只在 pass 候选时需要）：` +
+          `不得以"无人值守不可闭环"弃判；pass 候选同样只能由当前机器证据闭合：` +
           abandonment
             .map(a => `${a.screen_id}: ${a.lines.slice(0, 4).join('；')}${a.lines.length > 4 ? '…' : ''}`)
             .join(' | '),
@@ -1496,30 +1700,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
 
-  // T2（主背靠）：pixel_1to1 P0 屏判 pass 须真人过目确认（confirmed_by 非空且非自动化身份）。
-  // 两次实测证伪了像素/文本-位置度量（忠实屏误报）——图标/颜色/样式类假 PASS 不可约地需 VL/人判，
-  // 故 pixel_1to1 最严档下 P0 pass 屏不得仅凭 VL 自报闭环。headless 缺确认 → BLOCKER（goal-runner 据此 HALT 求人）；
-  // 交互态 → BLOCKER（agent 当场 stop-and-ask 用户确认、置 confirmed_by 后重判）。goal-mode-auto 等自签不算。
-  // P0-6：user_requirement 亦不算——它是需求级授权哨兵，不能替代对具体屏的真人过目
-  // （2026-07-05 实锤：agent 以它伪签 T2 并在自跑 harness 中通关过一次）。
-  if (pixel1to1) {
-    const p0Set = new Set(p0Ids);
-    const unconfirmed = passScreens.filter(s => p0Set.has(s.screen_id) && !isHumanVerified(s.confirmed_by));
-    if (unconfirmed.length > 0) {
-      const ratchet = fidelityRatchetFailOrWarn(ctx, false);
-      pushVisualDiffHit(hits, {
-        id: 'visual_diff_human_confirm_required',
-        severity: ratchet.severity,
-        status: ratchet.status,
-        line:
-          `pixel_1to1 P0 屏判 pass 须真人确认（confirmed_by 非自动化身份且非 user_requirement——` +
-          `后者属需求级授权，不能替代对具体屏的真人过目）——客观度量无法判图标/颜色/样式，须人兜底：` +
-          unconfirmed.map(s => `${s.screen_id}${s.confirmed_by ? `(confirmed_by=${s.confirmed_by} 属自动化/授权哨兵，无效)` : '(缺 confirmed_by)'}`).join(', ') +
-          `；headless 走 HALT 求人，交互态当场确认后置 confirmed_by 重判。`,
-      });
-    }
-  }
-
   // t5：pixel_1to1 P0 pass 屏 defects=[] 须附 region_attest——pass 的举证责任=逐区域对照声明，
   // 不是"没看见问题"（与 D11 缺枚举同级）。rev7（codex/cursor 同点）：非空不够，须**逐区域覆盖**
   // ——一条任意 {region:"root"} 不能替代全部 must_have_elements；diff_logged 须能关联 defect/must_fix。
@@ -1529,7 +1709,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const attestP0Pass = passScreens.filter(
       s => p0Set.has(canonicalOverlayBase(s.screen_id)) && Array.isArray(s.defects) && s.defects.length === 0,
     );
-    const bareEmptyDefects = attestP0Pass.filter(s => (s.region_attest?.length ?? 0) === 0);
+    const bareEmptyDefects = attestP0Pass.filter(s => machineRegionAttest(s).length === 0);
     if (bareEmptyDefects.length > 0) {
       const ratchet = fidelityRatchetFailOrWarn(ctx, false);
       pushVisualDiffHit(hits, {
@@ -1545,7 +1725,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const coverageMisses: string[] = [];
     const orphanDiffLogged: string[] = [];
     for (const s of attestP0Pass) {
-      const attest = s.region_attest ?? [];
+      const attest = machineRegionAttest(s);
       if (attest.length === 0) continue;
       const regions = new Set(attest.map(a => a.region));
       const uiScreen = uiById.get(canonicalOverlayBase(s.screen_id)) ?? uiById.get(s.screen_id);
@@ -1587,16 +1767,16 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   }
 
   // t7：attest 证据物证 + critic 回执校验（可证边界=素材物化+调用记录，非模型认知）。
-  // rev7 收紧（codex P1×2）：①回执在**任何** region_attest 存在时必需（vl_screening-only 也是
+  // rev7 收紧（codex P1×2）：①回执在任何当前机器 region_attest 存在时必需（vl_screening-only 也是
   // critic 调用，无回执=无调用记录——OpenSpec 两档 candidate-pass 均要求结构合法回执）；
   // ②evidence 限定本 feature 的 _attest/ 目录且 mtime 不早于被评截图；③image_inputs[].hash
   // 提供即重算比对，provenance=verified 时 hash 必填（verified 主张更强证明，须配更强证据）。
   let receiptProvenance: 'verified' | 'unverified' | null = null;
   {
-    const attestScreens = rep.screens.filter(s => (s.region_attest?.length ?? 0) > 0);
+    const attestScreens = rep.screens.filter(s => machineRegionAttest(s).length > 0);
     const pairedEntries: Array<{ screen: VisualDiffScreenEntry; attest: RegionAttestEntry }> = [];
     for (const s of attestScreens) {
-      for (const a of s.region_attest ?? []) {
+      for (const a of machineRegionAttest(s)) {
         if (a.method === 'paired_crop_compare') pairedEntries.push({ screen: s, attest: a });
       }
     }
@@ -1763,17 +1943,19 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
             // 其他路径片段含 run_id 即可通过）——收紧为**期望全路径精确等值**：回执只在
             // testing 阶段由 runner 签发（goal-runner t3b 分支 phase==='testing'），期望路径
             // 唯一可推导 = <featureDir>/goal-runs/<run_id>/phases/testing/agent-events.jsonl。
-            path.resolve(ctx.projectRoot, att.evidence_log_path) !==
-            path.resolve(
-              featureDir(ctx.projectRoot, ctx.feature),
-              'goal-runs',
-              process.env.MAISON_GOAL_RUN_ID.trim(),
-              'phases',
-              'testing',
-              'agent-events.jsonl',
-            )
+            //
+            // plan ab072691 t5⑦：delegated **窄分支**——回执由只读视觉 provider 产生时，
+            // 证据流不在 primary 的 testing 阶段目录，而在 provider 自己的调用证据目录。
+            // 分支判据取**本 run 声明的 provider 身份**（env 冻结值 / 个人级 local），
+            // 不取回执自报字段：否则伪造者可以自选更宽松的那一支。native 路径逐字不变。
+            !isCriticEvidencePathBound(ctx, receipt.adapter, att.evidence_log_path)
           ) {
-            attErr = `attestation 证据路径未绑定当前 run 的 testing 阶段目录（${att.evidence_log_path}）`;
+            // 措辞按分支给：primary 支逐字保持既有文案（下游断言与排障习惯都绑它），
+            // provider 支说自己的期望目录，不含糊成一句"某个目录"。
+            attErr =
+              criticEvidenceBranchOf(ctx, receipt.adapter) === 'visual_provider'
+                ? `attestation 证据路径未绑定本轮只读视觉 provider 的证据目录（${att.evidence_log_path}）`
+                : `attestation 证据路径未绑定当前 run 的 testing 阶段目录（${att.evidence_log_path}）`;
           } else {
             const evidenceAbs = path.resolve(ctx.projectRoot, att.evidence_log_path);
             if (!fs.existsSync(evidenceAbs)) {
@@ -1938,6 +2120,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
   if (uiDoc) {
     const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
+    // S6（e9c4a7f3 s6-locator-calibrate）：nav 触达 / region attest **按屏隔离**，
+    // 交互类型启发式仅 nav 缺失时回退——循环外预收集，避免每屏重复扫 nav/报告
+    const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+    const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+    const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
     const hardLines: string[] = [];
     const warnLines: string[] = [];
     const unstableLines: string[] = [];
@@ -1947,22 +2134,45 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       if (s.verdict === 'skipped') continue;
       const uiScreen = uiScreensById.get(s.screen_id) ?? uiScreensById.get(canonicalOverlayBase(s.screen_id));
       if (!uiScreen) continue;
-      const layoutAbs = path.join(reportDir, `layout-${s.screen_id}.json`);
-      const dump = loadLayoutDumpFile(layoutAbs);
+      const layoutResolved = resolveLayoutDumpPath(reportDir, s.screen_id);
+      if (layoutResolved.status === 'conflict') {
+        // t2b（plan c6d8f2b4）：raw 与 slug 两套文件名并存，无法判别归属——fail-closed，
+        // 不得无优先级双查（可能读到旧文件）。与"损坏/被删"区分开：这是命名问题。
+        dumpMissing.push(
+          `${s.screen_id}（布局 dump 命名冲突：layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json 与 ` +
+            `layout-${s.screen_id}.json 并存——疑似新旧寻址口径混写，须清理/统一后重采）`,
+        );
+        continue;
+      }
+      const layoutAbs = layoutResolved.status === 'missing' ? '' : layoutResolved.abs;
+      const dump = layoutAbs ? loadLayoutDumpFile(layoutAbs) : null;
       if (!dump) {
         // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
         // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
         if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
-          dumpMissing.push(`${s.screen_id}（声称已采集但 layout-${s.screen_id}.json 缺失/不可解析——文件被删或损坏，须重采）`);
+          dumpMissing.push(
+            `${s.screen_id}（声称已采集但 ${layoutResolved.status === 'legacy' ? `legacy 命名 ${layoutResolved.rel}` : `layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json`} 缺失/不可解析——文件被删或损坏，须重采）`,
+          );
         } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
           dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
         }
         continue;
       }
-      const res = collectLayoutOracleForScreen({ screenId: s.screen_id, screen: uiScreen, dump });
+      const res = collectLayoutOracleForScreen({
+        screenId: s.screen_id,
+        screen: uiScreen,
+        dump,
+        // S6（e9c4a7f3 s6-locator-calibrate）：T8 分母与 coding 侧同一收窄口径（按屏上下文）
+        locatorCtx: {
+          identityIds: collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature),
+          navStepIds: navStepIdsByScreen.get(s.screen_id),
+          attestRegions: attestByScreen.get(s.screen_id),
+          interactiveFallbackEnabled,
+        },
+      });
       // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
       // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
-      // 消息明示真人复核）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
+      // 消息明示证据不足）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
       if (s.layout_dump_status === 'unstable') {
         for (const f of res.findings) {
           if (f.tier === 'advisory') continue;
@@ -1994,7 +2204,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         status: 'WARN',
         line:
           `【T8 观测（unstable 屏降档——静稳采样重试耗尽，图/树可能非同状态；capability degradation，` +
-          `不阻断 candidate-pass、免转录，T2 批量终审时真人复核）】` +
+          `不阻断 optional candidate-pass、免转录；required 轴按能力事实保持 UNVERIFIED/DEFERRED）】` +
           unstableLines.slice(0, 6).join(' | ') + (unstableLines.length > 6 ? ` …共 ${unstableLines.length} 处` : ''),
       });
     }
@@ -2205,7 +2415,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       const entry = byScreenId.get(screen_id);
       const defects = entry?.defects ?? [];
       const matched =
-        defects.some(d => d.source?.finding_id === finding.finding_id) ||
+        defects.some(d => t8FindingIdOf(d.source) === finding.finding_id) ||
         (finding.elements.length > 0 &&
           defects.some(
             d =>
@@ -2313,9 +2523,42 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 消费方不得对该轮做熔断判定（同数异质问题会被计数近似误判成无进展）。
   // review-fix（codex P1-3）：资格=rev10 计数门 && 转录对账净——filler defects 轮
   // （凑数错配）虽过计数门，但其指纹是污染数据，不得进入熔断比较基线。
-  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty;
-  const roundFingerprints = fingerprintable ? collectDefectFingerprints(rep.screens) : [];
-  if (!fingerprintable) {
+  // t4（plan f3a8c6d2）：消费**唯一裁决对象**（capture 单点产出，capture 未运行时由
+  // check-testing 补 capture_not_run）。未设置＝非 device 采集路径，既有行为不变。
+  // 资格闸复用现有 `fingerprintable`：它同时是本轮熔断的必要条件、也是"能否作为下一轮
+  // 比较基线"的条件（visual-rounds-ledger 的 prevEligible 与 fuse 判定都要求它），
+  // 故并进去即**熔断资格层整体短路**——只清空缺屏集合是不够的，`fail_hit|visual_diff`
+  // 仍会进签名、`visual_diff` FAIL 又经既有白名单令 actionable 为真（review 已复现）。
+  const fuseEligibility = ctx.visualFuseEligibility;
+  const fuseIneligible = fuseEligibility !== undefined && !fuseEligibility.eligible;
+  const fingerprintable = isRoundFingerprintable(rep.screens) && !transcriptionDirty && !fuseIneligible;
+  // t4（plan f3a8c6d2）：**内容可行动的 P0 缺屏 + 本轮 FAIL hit 身份并入现有指纹集合**。
+  // 旧实现只在 defects 非空时才写 [fingerprints] 行，于是"全 pending/采集失败"轮的指纹
+  // 恒为空 → "连续两轮逐字相同"判据无输入 → 采集烂到产不出 defects 的轮次反而永不熔断
+  // （bc-openCard 30 轮全程 fused=false 的第二个成因）。
+  // 签名按 plan 取**两元**：eligible P0 uncovered + source FAIL hit ids。
+  //   · 缺 FAIL hit 元会误熔断（review 复现：缺屏不变、FAIL 集从 visual_diff 变成
+  //     visual_diff+visual_diff_schema，问题明明变了，第二轮仍判无进展）；
+  //   · sourceFailHitIds 虽已随 ledger 行落盘，但熔断只比 defect_fingerprints，
+  //     不并进签名就等于没参与判定。
+  //   · 对有 defects 的正常轮同样并入：FAIL 集变化＝状态变化，判"不同"只会**推迟**
+  //     熔断，与既有 rev9 安全方向（宁可推迟、绝不误熔）一致。
+  // 缺屏集合直接取裁决对象的结论——不合格轮它本就是空集，无需在此重复分类。
+  const contentActionableMissing = fuseIneligible ? [] : (fuseEligibility?.actionableMissingIds ?? []);
+  const missingScreenFingerprints = contentActionableMissing.map(id => `missing_screen|${id}`);
+  const failHitFingerprints = [...new Set(hits.filter(h => h.status === 'FAIL').map(h => h.id))]
+    .sort()
+    .map(id => `fail_hit|${id}`);
+  const roundFingerprints = fingerprintable
+    ? [
+        ...collectDefectFingerprints(rep.screens),
+        ...missingScreenFingerprints,
+        ...failHitFingerprints,
+      ].sort()
+    : [];
+  if (fuseIneligible) {
+    referenceNotes.push(`[fingerprints] ineligible（本轮整体不参与熔断比较）：${fuseEligibility!.reason}`);
+  } else if (!fingerprintable) {
     referenceNotes.push(
       `[fingerprints] ineligible（存在 must_fix 未转录/未锚定的屏——本轮不参与熔断比较，先按 transcription 门禁逐条转录锚定）`,
     );
@@ -2323,12 +2566,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     referenceNotes.push(`[fingerprints] ${roundFingerprints.join(' ')}`);
   }
 
-  // P0-9b（codex 收窄）：唯一阻塞=T2 真人确认 → 机器可读 await_human_confirm（goal-runner 据此
-  // halt 为 await_human_visual_confirm 而非 no_progress）。条件缺一不可：全部 FAIL hit 均为
-  // T2、P0 全覆盖、全屏 finalized pass 且零 must_fix、零 stale/缺 hash——warn+must_fix 混杂
-  // ≠待签（不得教用户签过未裁决内容）。
-  // t1（rev5）：awaitHumanOnly 在 fuse **之前**以 base hits 计算——candidate-pass/求人路径
-  // 优先于 no_progress_fuse；fuse 只在 awaitHumanOnly=false 时评估（防"只差人签"被抢走）。
   const failHitsOnly = hits.filter(h => h.status === 'FAIL');
   // rev8（codex P1）：candidate 资格不只排除额外 FAIL——**未处置的 T8/M1 WARN** 同样取消资格
   //（OpenSpec："no unresolved T8/M1 hit"；B 类结构背离/locator 覆盖不足/压线自报未处置就发起
@@ -2339,20 +2576,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     'visual_diff_layout_invariants',
     'visual_diff_selfreport_integrity',
   ]);
-  const hasBlockingWarn = hits.some(h => h.status === 'WARN' && CANDIDATE_BLOCKING_WARN_IDS.has(h.id));
-  // codex P2：须当前指纹可算且全屏指纹一致——否则（如 install meta 缺失）下一轮 capture 无法
-  // 跳采，真人签仍会被重采清掉，不得诱导用户此刻签名。
-  const awaitHumanOnly =
-    pixel1to1 &&
-    typeof currentBuildFp === 'string' &&
-    currentBuildFp.length > 0 &&
-    failHitsOnly.length > 0 &&
-    failHitsOnly.every(h => h.id === 'visual_diff_human_confirm_required') &&
-    !hasBlockingWarn &&
-    p0Uncovered.length === 0 &&
-    rep.screens.length > 0 &&
-    // 逐屏资格与 CLI 同源谓词（含 pass/零 must_fix/指纹一致/非 stale/hash 齐）
-    rep.screens.every(s => isScreenAwaitConfirmEligible(s, ctx.projectRoot, currentBuildFp));
 
   // t1（f7a3d9c2）：轮次账本评估 + 指纹级 no-progress fuse。
   // - source_fail_hit_ids=fuse 之前的 base FAIL hit 集（rev5：排除 fuse 自身防反馈环）；
@@ -2368,8 +2591,17 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       ...unloggedWarnFindingIds,
     ]),
   ];
+  // t4：不合格轮的 actionable 也必须为 false——`fingerprintable=false` 已保证不熔断，
+  // 但 actionable 仍会被 `visual_diff` FAIL 经既有白名单置真，与"只有内容残差进
+  // actionable"的语义和报告真话不一致（账本行会记一个不存在的"可行动残差"）。
   const actionableResidual =
-    pixel1to1 && hasActionableVisualResidual(rep.screens, hits.map(h => ({ id: h.id, status: h.status })));
+    pixel1to1 &&
+    !fuseIneligible &&
+    hasActionableVisualResidual(
+      rep.screens,
+      hits.map(h => ({ id: h.id, status: h.status })),
+      contentActionableMissing,
+    );
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || null;
   // review-fix（cursor I-1）：交互态 loop_id 带「采集世代」=ui-spec 内容指纹——spec 变更
@@ -2421,7 +2653,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         sourceFailHitIds,
         sourceWarnIds,
         fingerprintable,
-        awaitHumanOnly,
+        awaitHumanOnly: false,
         actionableResidual,
       }, { extraRows });
       if (roundEvaluation.corrupt_lines > 0) {
@@ -2437,7 +2669,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     const d = roundEvaluation.decision;
     const guidance =
       d.attribution === 'ineffective_fix'
-        ? '重建后缺陷指纹原样复现（修了没用）——停止迭代、halt 求人，携残差清单'
+        ? '重建后缺陷指纹原样复现（修了没用）——停止本 run，携残差清单进入 successor run'
         : '未经重建/修码原样重跑（跑了没修）——先改码重建再测，重复空跑不消耗迭代';
     pushVisualDiffHit(hits, {
       id: 'visual_diff_no_progress_fuse',
@@ -2447,25 +2679,38 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         `【t1 无进展熔断（${d.attribution}${roundEvaluation.disposition === 'duplicate' ? '，duplicate 重放' : ''}）】` +
         `连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差：${guidance}；残差指纹：` +
         `${(d.residual_fingerprints ?? []).slice(0, 6).join(' ')}${(d.residual_fingerprints?.length ?? 0) > 6 ? '…' : ''}`,
+      suggestion:
+        '保留残差清单并结束本 run；形成新的机器证据或编码变更后开启 successor run，' +
+        '人工 resume 或人签不得清除收敛熔断。',
     });
+  }
+
+  // Producer uncertainty is evidence insufficiency, never a request for a human quality signature.
+  // Strict/release-relevant visual work fails and retries; lower tiers keep an advisory only.
+  if (collectedUncertainSignals.length > 0) {
+    if (pixel1to1) {
+      pushVisualDiffHit(hits, {
+        id: 'visual_diff_uncertain_evidence',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        line:
+          `严格视觉证据仍有 ${collectedUncertainSignals.length} 项 producer uncertainty，` +
+          '当前机器证据不足，不能形成 PASS；须重采/重评或由支持该证据的 provider 产出有效结果：' +
+          collectedUncertainSignals.map((u) => `${u.screen_id}: ${u.reason}`).slice(0, 8).join('；'),
+      });
+    }
+    referenceNotes.push(
+      `[evidence_insufficient] ${collectedUncertainSignals.length} 项不确定信号（不创建人工裁决/签字入口；` +
+        `见 structured.uncertain_signals）：` +
+        collectedUncertainSignals.map((u) => `${u.screen_id}: ${u.reason}`).slice(0, 8).join('；'),
+    );
   }
 
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
   const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
 
-  if (awaitHumanOnly) {
-    finalResult.failure_kind = 'await_human_confirm';
-    // t3b：candidate-pass 两档位——verified 档由 runner attestation 校验解锁（手写 verified
-    // 已在回执校验处降级），其余如实 unverified、照常进 T2 批量终审。
-    const tier = receiptProvenance === 'verified' ? 'candidate-pass(verified)' : 'candidate-pass(unverified)';
-    finalResult.details +=
-      `\n【await_human_visual_confirm · ${tier}】唯一阻塞=真人过目确认（设计内求人时刻，非无进展）：` +
-      '逐屏审阅 device-screenshots/shot-*.png 对照参考原图，认可后在 visual-diff.json ' +
-      'screens[].confirmed_by 填真人署名（user_requirement/自动化身份无效）并重跑 harness；' +
-      '不认可的屏改 verdict=fail 并写 must_fix。';
-  } else if (roundEvaluation?.decision.fused && pixel1to1) {
-    // t1：goal-runner 据此 classification 首触即 halt（不烧重试预算）；duplicate 重放
-    // 同样置位——外层 gate 在 agent 自跑首检 fuse 后必须仍能看到（rev5）。
+  if (roundEvaluation?.decision.fused && pixel1to1) {
+    // 既有机器收敛熔断保留；不再存在 candidate-pass 人签分支。
     finalResult.failure_kind = 'no_progress_fuse';
   }
 
@@ -2482,7 +2727,8 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     fingerprintable,
     source_fail_hit_ids: sourceFailHitIds,
     source_warn_ids: sourceWarnIds,
-    await_human_only: awaitHumanOnly,
+    // Legacy ledger field stays false for schema compatibility; new rounds never enter a human gate.
+    await_human_only: false,
     actionable_residual: actionableResidual,
     ...(roundEvaluation ? { round: roundEvaluation } : {}),
     t8_unstable_findings: t8UnstableFindings.map(({ screen_id, finding }) => ({
@@ -2501,6 +2747,24 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       elements: finding.elements,
       ...(finding.bbox ? { bbox: finding.bbox } : {}),
     })),
+    // M2（plan e2b7c4a9 t2.1，review 修复）：producer 归类的 uncertain 信号物化——
+    // item_fingerprint 用**稳定**信号级身份（sha256(screen|ocr_uncertain|target)，target=候选
+    // 文本锚，非动态 reason）；随 checks[].structured 落盘，不回写 visual-diff.json。
+    // target 字段供恢复链路绑定：人工/agent 在 testing 报告 defect-review 块里用 target
+    // 精确引用该信号（confirmed/disputed）即可 resume，不再重复停等。
+    ...(collectedUncertainSignals.length > 0
+      ? {
+          uncertain_signals: collectedUncertainSignals.map((sig) => ({
+            item_fingerprint: createHash('sha256')
+              .update(`${sig.screen_id}|ocr_uncertain|${sig.target}`, 'utf-8')
+              .digest('hex'),
+            screen_id: sig.screen_id,
+            target: sig.target,
+            reason: sig.reason,
+            evidence_ref: `${reportRel}#${sig.screen_id}`,
+          })),
+        }
+      : {}),
   };
   finalResult.structured = structuredPayload;
   return [finalResult];

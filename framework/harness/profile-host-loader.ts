@@ -25,13 +25,9 @@ export type ProfileCodingHost = {
   checkCodingLint?(ctx: CheckContext): CheckResult[] | Promise<CheckResult[]>;
 };
 
-export type UtHostSuggestionPaths = {
-  useCasesSchemaTemplateRel: string;
-  mockPlanSchemaTemplateRel: string;
-  testabilityAuditTemplateRel: string;
-  branchExampleTestRel: string;
-  utHostImplRefRel: string;
-};
+// UtHostSuggestionPaths / getUtSuggestionPaths 已退役（plan f4c8d2b7 t5）：
+// 模板路径统一解析自 profiles/<profile>/skills/skill-assets.yaml（见 utils/ut-template-paths.ts），
+// 不再由各 profile host impl 维护平行硬编码路径表。
 
 export type UtFileEntry = { path: string; content: string };
 
@@ -39,6 +35,7 @@ export type UtFilePartition = {
   all: UtFileEntry[];
   scoped: UtFileEntry[];
   scopeSources: string[];
+  scopeDiagnostics?: string[];
 };
 
 export type UtHostImpl = {
@@ -57,17 +54,31 @@ export type UtHostImpl = {
     ctx: CheckContext,
     utFiles: Array<{ path: string; content: string }>,
   ): CheckResult[];
-  checkUtHvigorBuild(ctx: CheckContext, scopedUtFiles?: Array<{ path: string }>): CheckResult[];
-  checkUtHvigorTest(ctx: CheckContext, scopedUtFiles?: Array<{ path: string }>): CheckResult[];
+  checkUtHvigorBuild(
+    ctx: CheckContext,
+    scopedUtFiles?: Array<{ path: string }>,
+    /** 基线新增（本 feature 责任域）的 scoped UT 文件；用于编译顺序：feature 归属模块优先 */
+    featureNewUtFiles?: Array<{ path: string }>,
+  ): CheckResult[];
+  checkUtHvigorTest(
+    ctx: CheckContext,
+    scopedUtFiles?: Array<{ path: string }>,
+    /** 本 feature 责任域用例（含文件路径，供推导 module::test 身份；target 失败永不豁免） */
+    targetCases?: Array<{ path: string; test: string }>,
+  ): CheckResult[];
   checkTestRegistration(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,
   ): CheckResult[];
-  getUtSuggestionPaths(): UtHostSuggestionPaths;
   isSuiteEntryShim(content: string): boolean;
   /** 可选：profile 额外扫描 harnessRoot 下宿主测试产物（如 ohosTest / *.test.ets） */
   collectHarnessPollutionExtras?(ctx: CheckContext): string[];
 };
+
+export type UtSourceRootResolver = (
+  projectRoot: string,
+  modules: ReadonlyArray<{ name: string; package_path: string }>,
+) => string[];
 
 /**
  * Best-effort 加载 `profiles/<profile>/harness/<baseName>`（无扩展名，与 Node 解析一致）。
@@ -122,7 +133,6 @@ export function tryLoadUtHostImpl(profileDir: string): UtHostImpl | null {
     'checkUtHvigorBuild',
     'checkUtHvigorTest',
     'checkTestRegistration',
-    'getUtSuggestionPaths',
     'isSuiteEntryShim',
   ];
   for (const k of keys) {
@@ -164,4 +174,13 @@ export function tryLoadDiffExcludeTestPathRegexes(profileDir: string): RegExp[] 
   const rx = m?.diffExcludeTestPathRegexes;
   if (!Array.isArray(rx) || !rx.every(r => r instanceof RegExp)) return null;
   return rx;
+}
+
+/** Profile-owned UT path convention used by the phase write-owner resolver. */
+export function tryLoadUtSourceRootResolver(profileDir: string): UtSourceRootResolver | null {
+  const m = tryLoadProfileHarnessModule<{ resolveUtSourceRoots?: UtSourceRootResolver }>(
+    profileDir,
+    'profile-path-conventions',
+  );
+  return typeof m?.resolveUtSourceRoots === 'function' ? m.resolveUtSourceRoots : null;
 }

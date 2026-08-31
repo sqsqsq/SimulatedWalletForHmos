@@ -2,7 +2,7 @@
 
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
-> **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-两条总设计原则) 的“简单优先”与“回退重签”；本文件不重复定义。
+> **上位原则**：所有阶段同时遵循 [`docs/overview.md §1.2.1`](../../docs/overview.md#121-三条总设计原则) 的“简单优先”“回退重签”与“协作可恢复”；本文件不重复定义。
 >
 > 灵感来源：[Andrej Karpathy 对 LLM coding 的观察](https://x.com/karpathy/status/2015883857489522876)；工程化适配见 [andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)。
 >
@@ -83,7 +83,7 @@
 
 1. **Research Sub-Phase 完成后自检**：`source_code_paths` 存在？Code Facts ≥ 阈值？`decisions_unlocked` 非空？
 2. **逐文件闭环**（Coding）：写一个 `.ets` → `ReadLints` 零 error → 再写下一个。
-3. **阶段闭环四件套**：harness PASS → verifier PASS → completion receipt → trace.json；禁止口头「完成」。
+3. **阶段闭环**：脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供（要哪几项由 harness 求解输出；verifier 是否 required 由其 verifier plan 决定）；禁止口头「完成」。
 4. **每 Step 产出前**：对照上游 SSOT（spec ↔ plan ↔ contracts）确认无断链。
 
 ### 各阶段反例 / 正例

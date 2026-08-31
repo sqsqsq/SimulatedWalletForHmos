@@ -28,6 +28,10 @@ import {
   type FeaturePathOptions,
 } from '../../config';
 import { validateProjectRelativePath } from './project-relative-path';
+import {
+  normalizeContractFilePath,
+  resolveContractFileReferences,
+} from './contract-reference-closure';
 
 export type FeatureArtifactVerdict =
   | 'ok'
@@ -171,7 +175,7 @@ export class SpecLoader {
       // 下游 acceptance_yaml_present/契约类门禁按缺失裁决。
       const contracts = this.loadYamlMappingOrNull<ContractsSpec>(contractsPath, shapeIssues);
       if (contracts) {
-        normalizeContractsFiles(contracts, contractsPath, shapeIssues);
+        normalizeContractsFiles(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeModuleDependencies(contracts, contractsPath, shapeIssues);
         normalizeTraceability(contracts, contractsPath, shapeIssues);
         // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
@@ -182,6 +186,8 @@ export class SpecLoader {
         // 影响门禁裁决。加载边界统一收口：必填字符串 + 宿主根内校验 + canonical 化后再交
         // 消费者；非法条目剔除并经 shape_issues → feature_spec_shape 结构化 BLOCKER。
         normalizeContractsModulePaths(contracts, contractsPath, this.projectRoot, shapeIssues);
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'data_models', contractsPath, shapeIssues);
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'interfaces', contractsPath, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
         // S6（visual-capability-truth P1-F）：integration_points 机器块归一——map 数组 +
         // consumer_module/provider_module 必填字符串（缺失剔除 + shape_issues 留痕，
@@ -214,6 +220,12 @@ export class SpecLoader {
           }
         }
         spec.contracts = contracts;
+        spec.referenceClosure = resolveContractFileReferences(this.projectRoot, contracts);
+        for (const issue of spec.referenceClosure.invalid_paths) {
+          shapeIssues.push(
+            `${path.basename(contractsPath)} 的 \`${issue.source}\` 不是合法文件路径：${issue.message}`,
+          );
+        }
       }
     }
 
@@ -263,7 +275,30 @@ export class SpecLoader {
 
   /** 根节点须为 YAML map；null/标量/数组 → 留痕并按"无法解析"返回 null（不 throw）。 */
   private loadYamlMappingOrNull<T>(filePath: string, shapeIssues: string[]): T | null {
-    const doc = this.loadYaml<unknown>(filePath);
+    let doc: unknown;
+    try {
+      doc = this.loadYaml<unknown>(filePath);
+    } catch (error) {
+      const parsed = error as {
+        code?: unknown;
+        message?: unknown;
+        linePos?: Array<{ line?: unknown; col?: unknown }>;
+      };
+      const code = typeof parsed.code === 'string' && parsed.code.trim() ? parsed.code.trim() : null;
+      const firstPos = Array.isArray(parsed.linePos) ? parsed.linePos[0] : undefined;
+      const line = typeof firstPos?.line === 'number' ? firstPos.line : null;
+      const col = typeof firstPos?.col === 'number' ? firstPos.col : null;
+      const location = line !== null ? `（line ${line}${col !== null ? `, column ${col}` : ''}）` : '';
+      const message = typeof parsed.message === 'string'
+        ? parsed.message.split(/\r?\n/, 1)[0].trim()
+        : String(error);
+      const issue =
+        `${path.basename(filePath)} YAML 解析失败${code ? ` [${code}]` : ''}${location}：${message}` +
+        '——文件已按"无法解析"处理；请修复该行 YAML（plain scalar 含 `: ` 时加引号）后重跑';
+      shapeIssues.push(issue);
+      console.warn(`[spec-loader] ${filePath} YAML 解析失败，按无法解析处理：${issue}`);
+      return null;
+    }
     if (doc && typeof doc === 'object' && !Array.isArray(doc)) return doc as T;
     const kind = doc === null ? 'null（空文件/仅注释）' : Array.isArray(doc) ? 'array' : typeof doc;
     shapeIssues.push(
@@ -518,6 +553,7 @@ function normalizeContractsModulePaths(
 function normalizeContractsFiles(
   contracts: ContractsSpec,
   contractsPath: string,
+  projectRoot: string,
   shapeIssues: string[],
 ): void {
   const files = contracts.files;
@@ -543,7 +579,13 @@ function normalizeContractsFiles(
     if (coerced === null) {
       bad.push({ index: i, raw: files[i] });
     } else {
-      normalized.push(coerced);
+      try {
+        normalized.push(normalizeContractFilePath(projectRoot, coerced, `contracts.files[${i}]`));
+      } catch (error) {
+        shapeIssues.push(
+          `${path.basename(contractsPath)} 的 \`files[${i}]\`（${JSON.stringify(coerced)}）越界/非法：${(error as Error).message}——非法条目已剔除`,
+        );
+      }
     }
   }
 

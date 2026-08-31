@@ -14,6 +14,27 @@
 //
 // 判据边界（诚实）：这里判的是"完成证据是否已确定性落盘"，**不判**质量。质量由
 // gate harness 判——observer 命中后照常走既有 gate 流程，结论仍可能是 FAIL。
+//
+// ----------------------------------------------------------------------------
+// 职责归位（plan e6b3f8d2 t1，文档归位——**判据行为一字未改**）
+// ----------------------------------------------------------------------------
+// 本探针是**「PASS 形态闭环证据」加速器**，不是通用 FAIL 收口器：四条件里的
+// `receipt_status=passed` 与 `closure_status=closed` 在**真实 FAIL 时依设计恒不成立**
+//（runner 每次 invoke 前 force 重写未完成骨架；prompt 明令 FAIL 不得声称完成；宿主
+// 20260825T011950Z-eddfb2 终局回执即骨架）。所以：
+//   · 一个 turn「跑完但结论是 FAIL」时，探针**本就不会命中**，这不是缺陷；
+//   · **绝不能**为了给 FAIL 收口而放宽这四条件——放宽=死修复（半成品被判完成）
+//     + 轮内自修复误杀（agent 正在补救就被 tree-kill），两头都更糟。
+// FAIL 侧的收口责任明确划归 adapter **terminal 契约**：
+//   · 有 terminal 契约的 adapter（现仅 codex，`exec --json` 的 turn.completed/turn.failed）
+//     由 agent-invoke 的 terminal 解析器承接（codex-terminal-events.ts）；
+//   · 无 terminal 契约的 adapter 依赖自然退出 + hard timeout 兜底——**不用无效回执
+//     冒充信号**（造假信号比空等更贵）。
+//
+// 另：本模块回答的是**两个分立的问题**，不得混为一谈——
+//   ① `isCompletionEvidenceComplete`（证据是否齐全，四条件）；
+//   ② `isEvidenceFromCurrentInvocation`（这份齐全证据是否属于**本次 invocation**）。
+// ①成立而②不成立正是立项事故形态（上一轮回执被原样复写 → 跃迁成立 → 提前 tree-kill）。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -112,8 +133,7 @@ export function collectCompletionEvidence(
       if (out.receipt) {
         out.receiptSha = shaRaw.toLowerCase();
         // f9c2e6b4 t1：attempt 新鲜度素材。两者都**只采集不判定**——判定在
-        // isEvidenceFromCurrentInvocation，因为"完整"与"属于本次调用"是两个问题
-        // （前者还要喂 decideSkipAgentInvoke，那条路径不得要求匹配尚未开始的 attempt）。
+        // isEvidenceFromCurrentInvocation，因为"完整"与"属于本次调用"是两个问题。
         const attemptRaw = receiptField(text, 'claimed_attempt_id');
         if (attemptRaw && attemptRaw.length > 0 && !RECEIPT_PLACEHOLDER.test(`x: ${attemptRaw}`)) {
           out.attemptId = attemptRaw;
@@ -237,60 +257,17 @@ export function isEvidenceFromCurrentInvocation(
   );
 }
 
+// 【skip 判定已删除 · codex 收尾（runner-owned-machine-facts）】decideSkipAgentInvoke
+// （R7"证据齐全即跳过"）：runner 现在每轮 invoke 前 force 重建未完成骨架，
+// baselineComplete 结构上恒 false——判定不可达，整链（含 completion_evidence_pre_existing
+// 事件与伪造 skipped invoke）删除。探针唯一职责=观察本轮 agent 把骨架填成完整。
+
 /**
  * 构造 observer 探针：闭包捕获 invoke 前基线，只在**本次调用内发生跃迁**时返回 true。
  *
- * - 基线已完整 → 恒返回 false（调用方应在 invoke 前就跳过本次调用，而不是启动后即杀）；
+ * - 基线已完整 → 恒返回 false（骨架单点写入后结构上不出现；防御性保留）；
  * - 基线不完整 → 变完整即命中一次（内部锁存，避免重复触发 kill）。
  */
-export interface SkipDecision {
-  /** 可安全跳过本次 agent 调用 */
-  skip: boolean;
-  reason: string;
-}
-
-/**
- * R7：**能否安全跳过本次 agent 调用**。
- *
- * "证据齐全"本身不足以跳过——回退重跑（backtrack）时上一轮的 receipt/summary 仍在盘上，
- * 直接跳过会让 coding 只跑一次、crash/must_fix 修复指令永远注入不进去（实证：4 个既有
- * 集成用例同时红）。跳过必须同时满足：
- *
- *   ① 基线证据齐全；
- *   ② **不是回退/带交接上下文的重跑**——有 must_fix/crash 要修就必须真的跑；
- *   ③ **不是本 phase 的重试轮**（retries=0）——重试意味着上一轮判了失败，
- *      而失败轮留下的证据不能代表"这一轮不用干活"；
- *   ④ 证据的需求身份与本 run 一致（换了需求就得重跑）。
- *
- * 四条都成立时，跳过是安全的：证据属于同一需求、同一 phase、且没有任何待修项。
- */
-export function decideSkipAgentInvoke(input: {
-  baselineComplete: boolean;
-  /** 本 phase 已重试次数（>0 = 上一轮判失败） */
-  retries: number;
-  /** 回退交接的待修项数量（>0 = 必须真跑） */
-  pendingHandoffCount: number;
-  /** 证据自报的 run 身份（缺失 = 无从校验 → 不跳过） */
-  evidenceRunId?: string | null;
-  /** 当前 run 身份 */
-  currentRunId?: string | null;
-}): SkipDecision {
-  if (!input.baselineComplete) return { skip: false, reason: '基线证据不完整' };
-  if (input.retries > 0) {
-    return { skip: false, reason: `本 phase 第 ${input.retries + 1} 轮（上一轮判失败）——须真跑` };
-  }
-  if (input.pendingHandoffCount > 0) {
-    return { skip: false, reason: `存在 ${input.pendingHandoffCount} 项回退交接待修——须真跑` };
-  }
-  if (!input.evidenceRunId || !input.currentRunId) {
-    return { skip: false, reason: '证据缺少 run 身份，无从校验新鲜度' };
-  }
-  if (input.evidenceRunId !== input.currentRunId) {
-    return { skip: false, reason: '证据来自其它 run（跨 run 遗留不代表本轮已完成）' };
-  }
-  return { skip: true, reason: '本 run 同一 phase、非重试轮、无待修项且证据齐全' };
-}
-
 export function createCompletionProbe(input: {
   projectRoot: string;
   feature: string;

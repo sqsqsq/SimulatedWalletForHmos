@@ -18,6 +18,32 @@ export function isClaudeKernelAdapter(name: string | null | undefined): boolean 
   return typeof name === 'string' && CLAUDE_KERNEL_ADAPTERS.has(name);
 }
 
+/**
+ * 视觉委托（plan ab072691 t1①）：**执行 endpoint 身份**——(adapter, model) 二元组。
+ *
+ * `model` **必填**：provider 的意义就是「换一个能看图的具体模型」，没有冻结的 model 就没有
+ * provider 身份（另见 goal-manifest.AdapterModelPin 对 primary 的同款约束）。本类型刻意
+ * 落在 types.ts 而非 goal-manifest.ts——个人级 config、CLI、manifest、invoke 执行器四面
+ * 共用，不让 config 层反向依赖 manifest 层。
+ */
+export interface ProviderRef {
+  adapter: string;
+  model: string;
+}
+
+/**
+ * 视觉委托（plan ab072691 t2①）：本 run 的**视觉路由三态**。
+ *
+ * - `native`    — primary 自己能看图。现状链零变化（含 primary 金丝雀机制）。
+ * - `delegated` — primary 盲 **且** 配了只读视觉 provider **且** 该 provider 静态资格通过。
+ * - `blind`     — 其余一切。现状盲档地板。
+ *
+ * 由 preflight **派生一次并在 run 内不可变**。provider 每次调用的成败只决定「本轮视觉反馈
+ * 是否采信」，**不**反向改写 vision_mode / 能力真值 / capability snapshot / manifest
+ * （能力真值反写禁令的既有纪律，见 effective-vision-context.ts 头注）。
+ */
+export type VisionMode = 'native' | 'delegated' | 'blind';
+
 /** 支持的开发阶段（运行时由 workflow YAML 定义；此处为通用字符串别名） */
 export type Phase = string;
 
@@ -196,10 +222,26 @@ export interface PhaseRuleSpec {
   exploration_strategy?: ExplorationStrategy;
 }
 
-interface ResourceEntry {
+export interface ResourceEntry {
   key: string;
   value: string;
   description?: string;
+  /** Materialized repository file authorized separately by contracts.files. */
+  path?: string;
+  /** Optional additional materialized media file(s), also authorized by contracts.files. */
+  media?: string | string[];
+}
+
+/**
+ * 3.0 canonical navigation：唯一字段 `config_files`——导航注册/配置文件清单
+ * （如 main_pages.json / route_map.json）。语义由真实消费者塑形
+ * （profiles/hmos-app `page_registration`）；每条路径同样受 `contracts.files` 授权。
+ * 历史推测性同义字段（main_pages_file/route_map_file/page_registration_file/
+ * route_registration_file/page_files/route_files/pages[]/routes[]）零消费者，已裁撤，
+ * 按未知 file-like 字段 fail-closed。
+ */
+export interface ContractNavigationSpec {
+  config_files?: string[];
 }
 
 /** 功能级规约 — 接口契约 (features/{name}/contracts.yaml) */
@@ -213,6 +255,11 @@ export interface ContractsSpec {
     format: string;
     change_type: string;
     package_path: string;
+    /** HAR/HSP materialized entry/build/export files; every path must also be in files. */
+    har_index?: string;
+    builder?: string;
+    export_file?: string;
+    export_files?: string[];
   }>;
   module_dependencies: Record<string, string[]>;
   data_models: Array<{
@@ -286,7 +333,40 @@ export interface ContractsSpec {
     holder: string;
     module: string;
   }>;
-  navigation?: Record<string, unknown>;
+  navigation?: ContractNavigationSpec;
+}
+
+export type ContractFileReferenceKind =
+  | 'modules.har_index'
+  | 'modules.builder'
+  | 'modules.export_file'
+  | 'modules.export_files'
+  | 'data_models.file'
+  | 'interfaces.file'
+  | 'components.file'
+  | 'resource_keys.path'
+  | 'resource_keys.media'
+  | 'navigation.config_files'
+  | 'prd_to_code_traceability.key_files';
+
+export interface ContractFileReference {
+  path: string;
+  kind: ContractFileReferenceKind;
+  source: string;
+}
+
+export interface ContractFileReferenceIssue {
+  kind: ContractFileReferenceKind | 'contracts.files' | 'unconsumed_file_field';
+  source: string;
+  raw: unknown;
+  message: string;
+}
+
+/** Ephemeral parser projection. It is never serialized beside contracts.yaml. */
+export interface ContractReferenceClosure {
+  authorized_files: string[];
+  references: ContractFileReference[];
+  invalid_paths: ContractFileReferenceIssue[];
 }
 
 /** UT 分层（AC / BD 级别）：
@@ -415,6 +495,8 @@ export interface FeatureSpec {
   acceptance?: AcceptanceSpec;
   /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
   useCases?: UseCasesSpec;
+  /** In-memory contracts.files authorization projection; never persisted as a graph/sidecar. */
+  referenceClosure?: ContractReferenceClosure;
   /**
    * P0-2（plan d9b4f7e2 复审）：spec-loader 加载期发现并归一化的形状偏差留痕
    * （根节点非 map / 集合字段非数组）。harness-runner 据此产出结构化 FAIL
@@ -485,10 +567,13 @@ export interface SoftAdvisory {
 
 /** harness 写入的 summary.json 稳定契约（与 schemas/summary.schema.json 对齐）
  * schema 1.1（blind-visual-hardening d1）：新增 report_validity + quality_axes +
- * release_readiness + completion_status。schema 1.2 新增 assurance + capability resolution + closure_commit；
- * writer 恒写 1.2，1.0/1.1 仅兼容读取并视作 legacy_unverified。 */
+ * release_readiness + completion_status。schema 1.2 新增 assurance + capability resolution + closure_commit。
+ * schema 1.3（plan a9d4e7c2）：verifier 字段**条件化**——`ai_prompt` / `verifier_subject_id` /
+ * `verifier_request` 仅在该 phase 的 verifier 能力 enabled 时在场；三职分离=代际靠
+ * `schema_version`、适用性靠 policy（随时重算，不落快照）、身份靠 subject。
+ * writer 恒写 1.3；1.0/1.1 仍视作 legacy_unverified，1.2 为可读的上一代闭环域。 */
 export interface HarnessRunSummary {
-  schema_version: '1.0' | '1.1' | '1.2';
+  schema_version: '1.0' | '1.1' | '1.2' | '1.3';
   phase: Phase;
   feature: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
@@ -519,12 +604,23 @@ export interface HarnessRunSummary {
   /**
    * S7 asset 继承指纹链 2（codex 实施 review 二轮 P1-6）：asset 域债务 revision——
    * 债务管线定稿后机器写入（域内投影哈希/'no-debt' 哨兵）；testing 期继承时重算比对，
-   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_human）。
+   * 缺失/失配＝债务链不可证 → 不继承（STALE needs_fix）。
    */
   asset_debt_revision?: string;
+  /**
+   * plan a9d4e7c2：本轮 run 的 verifier 证据身份（runner 单点生成，agent 零参与）。
+   * **按实际审查材料寻址**——相同材料复用同一 subject（既有验真 JSON 直接进 receipt），
+   * 材料变化必换 subject；不加 nonce，也不承诺跨 harness run 稳定。
+   * 仅在 verifier 能力 enabled 时在场；disabled/blocked 时缺席（缺席=不适用，不是"缺失"）。
+   * 派生输入见 verifier-request.ts（明确排除整份 summary SHA，防闭环自锁）。
+   */
+  verifier_subject_id?: string;
+  /** 该 subject 的短 request JSON 仓根相对路径（Task prompt 的唯一投递体）。 */
+  verifier_request?: string;
   script_report: string;
   merged_report: string;
-  ai_prompt: string;
+  /** verifier 能力 enabled 时才装配（1.3 起为条件字段）。 */
+  ai_prompt?: string;
   summary_json: string;
   run_statuses: Array<{
     id: string;
@@ -568,6 +664,22 @@ export interface HarnessRunSummary {
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
+  /**
+   * 责任阶段统一路由（plan b6e4c9f2）：可信可修缺陷的单一共享事实（可选字段；
+   * 缺失=本轮无可信候选）。harness 派生非 agent 自报——review 逐条 verifier 验证/
+   * 机器 check id 归属/路径域兜底，形状见 repair-candidates.ts。goal 的
+   * deterministic_defects 是其指纹投影；manual/batch 消费同一事实。
+   */
+  repair_candidates?: Array<{
+    id: string;
+    category: 'spec' | 'plan' | 'coding';
+    files: string[];
+    summary: string;
+    item_fingerprint: string;
+    source_phase: string;
+    /** adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记；缺省=legacy check-domain。 */
+    identity_schema?: 'signal@1';
+  }>;
   /** Mechanical capability projection; legacy summaries read as unknown. */
   assurance?: 'blocked' | 'degraded' | 'full' | 'not_applicable';
   /** Immutable capability preflight result written by the runner. */
@@ -826,6 +938,25 @@ export interface CheckContext {
   refElementsManifest?: RefElementEntry[];
   /** refElementsManifest 溯源说明（报告/details 用） */
   refElementsManifestDetail?: string;
+  /**
+   * t4（plan f3a8c6d2）：视觉熔断资格的**唯一裁决**（同 run 内存传递，不落盘、
+   * 不进 summary/schema）。
+   *
+   * 单点产出：`captureVisualDiff` 按穷举矩阵裁决；capture 未运行的路径由 check-testing
+   * 在派发 visual diff 前补 `CAPTURE_NOT_RUN_ELIGIBILITY`——**结构上不可能漏**，
+   * 因为"ctx 上没有值"就等于"没跑过 capture"，无需再去反推不完整的失败分类。
+   * 单点消费：visual-diff-check 用它同时约束 `fingerprintable`（熔断资格闸）与
+   * `actionable_residual`，不再维持多个可能互相矛盾的字段。
+   *
+   * 未设置（undefined）= 非 device 采集路径（如单测直调 checkVisualDiff）→ 既有行为不变。
+   * 形状见 profiles/hmos-app/harness/visual-diff-capture.ts 的 `VisualFuseEligibility`
+   *（core 不反向依赖 profile 类型，此处按结构声明）。
+   */
+  visualFuseEligibility?: {
+    eligible: boolean;
+    actionableMissingIds: string[];
+    reason: string;
+  };
   /** adapter 是否声明 multimodal（M3）；不支持则上下文注入降级 */
   adapterMultimodal?: boolean;
   /** adapter 图片输入能力分级（M3）；none | tool_read | native_attach */

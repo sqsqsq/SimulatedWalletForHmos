@@ -48,15 +48,13 @@ import {
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
 import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
+import { reviewVisionForMode } from './utils/visual-provider-identity';
 import {
   clampFidelityByCapability,
   collectRequirementIntentText,
   computeRunRequirementSha,
-  dereferenceRequirementDocs,
   detectFidelityIntent,
   isHardPixelContract,
-  isHumanSignedDeferral,
-  isHumanVerified,
   isPixel1to1,
   listAuthoritativeGoalRuns,
   loadCapabilitySnapshot,
@@ -72,21 +70,7 @@ import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, type UiSpecA
 import { loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
 import { scanUiSpecCounterevidence, type RefElementLite } from './utils/vision-counterevidence';
 import { verifyVlSigningChain } from './utils/critic-receipt-producer';
-import { computeGateFingerprint } from './utils/gate-fingerprint';
-import {
-  appendArtifactAttestation,
-  appendPolicyDowngrade,
-  computeCurrentBindingContext,
-  hasActiveDowngradeForArtifactHash,
-  readLatestRawAttestation,
-  resolveEffectiveVisionContext,
-  sha256File,
-} from './utils/effective-vision-context';
-import {
-  defaultTrustRegistryPath,
-  validateConfirmationReceiptFile,
-} from './utils/confirmation-receipt';
-import { isAgentSideGoalHarness, isGoalOrchestrationEnv } from './utils/phase-state';
+import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
@@ -102,48 +86,17 @@ export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
  * CodeAgentCLI 逐阶段驱动，intent 检测从未运行，缺省 semantic_layout 全部 pixel 硬门禁
  * 未激活。本 check 用**同源函数**（collectRequirementIntentText + detectFidelityIntent，
  * 勿 fork）把三态闸覆盖到 phase-driven 路径：
- *   强意图 + 盲 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义：不许静默降档继续跑），
- *     唯一放行=有效 fidelity_downgrade receipt（绑定需求 SSOT 哈希）→ 降 WARN（不洗白，
- *     债务/封顶语义由 quality_axes/completion 链承担）；
- *   含混意图 + 盲 + 有参考图 → BLOCKER（await_human_fidelity_tier：交互式走 vision.blind_tier
- *     告知确认——一次需求一次确认，成本属设计内，勿开旁路）；
+ *   强意图 + 盲 → BLOCKER（DEFERRED_CAPABILITY_MISSING 语义：不许静默降档继续跑）；
+ *     换有视觉能力的 provider 后恢复，或以 correction/successor 明确修改需求并从 spec 重验；
+ *   含混意图 + 盲 + 有参考图 → 按冻结需求和能力自动选取可证明档位，不等待人工定档；
  *   none / 非盲 → PASS。
  * 落盘 spec/reports/fidelity-intent.json：reference_intent{value,source}/desired/effective/
- * downgrade_receipt（desired 永不被自动改写——ratchet 回升锚点）。
+ * decision provenance（selected 永不被 legacy receipt 降低；旧 receipt 派生 SSOT 按缺失重算）。
  */
-/**
- * 意图文本收集（含 phase-driven 回退）：collectRequirementIntentText 只读 goal-run
- * manifest——逐阶段驱动路径（无 goal-runs）恒空串，正是覆盖缺口的实体。回退源：
- * feature 根目录需求文档（*.md/*.txt，产物投影 visual-debt.md 除外）+ spec.md，
- * 各自过 dereferenceRequirementDocs（同源解引用，勿 fork）。
- */
-export function collectIntentTextWithPhaseFallback(
-  projectRoot: string,
-  feature: string,
-  featuresDirRel: string,
-): string {
-  const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
-  if (goalText.trim()) return goalText;
-  const parts: string[] = [];
-  const featRoot = path.join(projectRoot, featuresDirRel, feature);
-  const EXCLUDE = new Set(['visual-debt.md']);
-  try {
-    if (fs.existsSync(featRoot)) {
-      for (const ent of fs.readdirSync(featRoot, { withFileTypes: true })) {
-        if (!ent.isFile() || EXCLUDE.has(ent.name) || !/\.(md|txt)$/i.test(ent.name)) continue;
-        try {
-          parts.push(fs.readFileSync(path.join(featRoot, ent.name), 'utf-8'));
-        } catch { /* 单文件失败跳过 */ }
-      }
-    }
-  } catch { /* ignore */ }
-  const specMd = loadSpecMarkdown(projectRoot, feature);
-  if (specMd) parts.push(specMd);
-  if (parts.length === 0) return '';
-  return parts
-    .map(p => dereferenceRequirementDocs(projectRoot, p, { featuresDirRel }).combined)
-    .join('\n\n');
-}
+// 定义已下沉至 utils/fidelity-shared.ts（其三个依赖本就都在那里），使
+// capability-resolution 的 derive.visual-reference 能复用同源收集器而不反向依赖本脚本。
+// 此处保留原导出名，既有消费方（fidelity-intent-init 等）零改动。
+export { collectIntentTextWithPhaseFallback } from './utils/fidelity-shared';
 
 /**
  * plan e7c2a4d8 T1d 补全（实施 round2 P1）：goal-runs 权威枚举的 corrupt 残留
@@ -239,6 +192,10 @@ export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[]
     const reclamp = clampFidelityByCapability(ssot.selected_fidelity, {
       hasVision: snap.vision.verdict,
       ocrAvailable: snap.ocr.verdict,
+      // plan ab072691 t2③：复核用的评审轴同样只读**冻结快照**里的 vision_mode——
+      // pregate 的职责是「按写入时那次决策重算是否自洽」，不是重新探测能力。
+      // 旧快照无该键 → undefined → 回落 hasVision，复核口径逐字不变。
+      ...(snap.vision_mode ? { reviewVision: reviewVisionForMode(snap.vision_mode) } : {}),
     });
     if (reclamp.effective !== ssot.effective_fidelity) {
       issues.push(
@@ -318,23 +275,26 @@ export function checkFidelityCapabilityPregate(ctx: CheckContext): CheckResult[]
         '【DEFERRED_CAPABILITY_MISSING】需求为 pixel_1to1 目标且严格度=hard（不接受降级），' +
         `而当前能力不足（${ssot.clamp_reason ?? 'capability_clamped'}）——不得静默降档继续跑。`,
       suggestion:
-        '出路三选一：①换有视觉能力的模型/配置后重跑；②真人签发 fidelity_downgrade receipt' +
-        '（绑定需求 SSOT 哈希）后重跑；③修改需求措辞放宽严格度（best-effort）。',
+        '换有视觉能力的模型/配置后重跑，或以 correction/successor 明确修改需求并从 spec 重验。',
       failure_kind: 'capability_missing_strong_intent',
-      blocking_class: 'await_human_fidelity_tier',
+      blocking_class: 'device_toolchain',
+      actionability: 'toolchain_blocked',
     }];
   }
-  return [{
-    id, category: 'structure', description,
-    severity: 'BLOCKER', status: 'PASS',
-    details:
-      `路由：inferred=${ssot.inferred_fidelity} selected=${ssot.selected_fidelity} ` +
-      `effective=${ssot.effective_fidelity}${ssot.clamped ? `（clamped:${ssot.clamp_reason}）` : ''} ` +
-      `strictness=${ssot.acceptance_strictness} asset=${ssot.asset_acquisition_mode} ` +
-      `source=${ssot.decision.source}` +
-      (ssot.clamped ? '——自动定档不洗白：视觉债务/封顶语义照常生效。' : '。'),
-  }];
+  return [
+    {
+      id, category: 'structure', description,
+      severity: 'BLOCKER', status: 'PASS',
+      details:
+        `路由：inferred=${ssot.inferred_fidelity} selected=${ssot.selected_fidelity} ` +
+        `effective=${ssot.effective_fidelity}${ssot.clamped ? `（clamped:${ssot.clamp_reason}）` : ''} ` +
+        `strictness=${ssot.acceptance_strictness} asset=${ssot.asset_acquisition_mode} ` +
+        `source=${ssot.decision.source}` +
+        (ssot.clamped ? '——自动定档不洗白：视觉债务/封顶语义照常生效。' : '。'),
+    },
+  ];
 }
+
 
 // --------------------------------------------------------------------------
 // blind-visual-hardening d5/P1-F：盲档素材问人清单（素材是输入不是推断）
@@ -370,7 +330,7 @@ export function maybeWriteAssetRequest(ctx: CheckContext): void {
     '> 三个出路：①按下表放置路径提供素材后重跑 spec harness（自动吸收：过 role sanity 即',
     '> source=VERIFIED，源码绑定/设备渲染两态由 coding/testing 检查闭账——文件放了但 UI 仍引用',
     '> 旧占位不会假清偿）；②接受可见语义占位交付（brand-critical 占位时 release 保持 BLOCKED，',
-    '> 债务走人工验收 receipt 显式接受——盲宿主首轮预期走此路，rubric 冻结 ≥4/5）；③逐项 defer。',
+    '> 占位债务保持 release BLOCKED，待真素材到位并经机器重验关闭）；③逐项 defer。',
     '',
     '| 素材 key | 用途推断 | 建议尺寸 | 放置路径 | 当前占位形态 |',
     '|----------|----------|----------|----------|--------------|',
@@ -397,13 +357,12 @@ export function maybeWriteAssetRequest(ctx: CheckContext): void {
  * 禁的是盲模型**执行或自证** crop，不禁消费已可信完成的 crop 产物（codex 三轮③收窄）。
  * effective_image_input=none ∧ acquisition=crop 时，须同时满足：
  *   c1 resolved_path 存在；
- *   c2 provenance 可验证（三来源之一，design §1.6）：
+ *   c2 provenance 可验证（机器来源之一）：
  *      verified_artifact = asset-crop-validation.json 该 key verdict=verified；
- *      human_receipt    = spec/crop-provenance/<key>.receipt.json 有效 confirmation receipt；
  *      external_tool    = asset.crop_provenance {kind:external_tool, tool, source_sha256} 结构记录
- *                         （诚实边界：记录存在性确定性校验，工具真实性不做密码学验证）；
- *   c3 human_crop_confirmed=true 且 crop_confirmed_by 为可信真人身份
- *      （isHumanVerified：非空/非自动化/非 user_requirement 哨兵——授权哨兵≠条目级验真，P0-6）。
+ *                         且 source_sha256 命中真实参考图；
+ *   c3 当前 invocation 的 provider 已执行，产物经 sanity+VL/确定性验证且 hash/path 绑定。
+ * Legacy human_crop_confirmed/crop_confirmed_by/crop receipt 仅兼容读取，不构成放行。
  * 任一 crop 资产不满足 → BLOCKER FAIL；正确出路=placeholder:true+asset-manifest 或 asset-request 问人。
  * 事故锚：bc-openCard 二轮 22 项 crop 全部 human_crop_confirmed:false 且零验真，物化空白占位。
  */
@@ -438,15 +397,14 @@ export function collectFeatureReferenceImageHashes(projectRoot: string, feature:
 }
 
 /**
- * visual-capability-truth S3：视觉产出确定性反证器。
- * contradicted（已证明矛盾）→ BLOCKER FAIL + attestation contradicted + blind-safe 策略降级；
- * evidence_gap（证据不足）→ MAJOR WARN + attestation unverified（reasons 前缀 evidence_gap:）
- * ——两态同样使 vl_multimodal 失效（fidelity gate 消费 attestation），审计措辞不得混淆；
- * heuristic → observe-only 计数落盘。
+ * 视觉产出确定性反证器（无状态）。
+ * contradicted（已证明矛盾）→ 当前轮 BLOCKER FAIL；
+ * evidence_gap（证据不足）→ 当前轮 MAJOR WARN；
+ * 两者都不写跨轮策略状态，也不改变当前/后续 attempt 的模型视觉能力。
  */
 export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult[] {
   const id = 'vision_output_counterevidence';
-  const description = '视觉产出反证器（U+FFFD/无映射/低置信升 UI——三态分立，attestation 落盘）';
+  const description = '视觉产出反证器（当前产物无状态检查：冲突 FAIL、证据缺口 WARN）';
   const uiSpecAbs = uiSpecAbsPath(ctx.projectRoot, ctx.feature);
   const uiDoc = loadUiSpecFile(uiSpecAbs);
   if (!uiDoc) return [];
@@ -455,86 +413,29 @@ export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult
     uiDoc,
     (refDoc?.elements as RefElementLite[] | undefined) ?? null,
   );
-  const uiSpecHash = sha256File(uiSpecAbs);
   const uiSpecRelP = path
     .relative(ctx.projectRoot, uiSpecAbs)
     .replace(/\\/g, '/');
-  // attestation 落盘（append-only；同 hash 同 verdict 幂等跳过）
-  // 五轮 review P0-1：vision 账本单写者（对齐 visual-rounds ledger 的 S5 纪律）——
-  // goal 态 agent 自跑 harness 只**计算**反证结论（结果照常展示回喂），不写账本；
-  // 只有 runner 直接 spawn 的 gate harness（MAISON_GOAL_GATE_HARNESS=1）或非 goal 交互态
-  // 允许提交。agent 即便伪造该 env 直写，外层 runner 的 invoke 快照括号仍会检出并 halt。
-  // b7e4d2a9 Todo3（2026-07-27 宿主误杀实锤）：判定统一走共享谓词——此前用
-  // isGoalOrchestrationEnv()（只看 RUNNER/HEADLESS），cursor 工具子进程丢 HEADLESS 留
-  // RUN_ID 时被误判为交互态直写正式账本 → 外层按篡改 halt（假阳性）。
-  const ledgerWriteAllowed = !isAgentSideGoalHarness();
-  const persistAttestation = (
-    verdict: 'contradicted' | 'unverified' | 'verified',
-    reasons: string[],
-    binding?: import('./utils/effective-vision-context').ArtifactAttestationRecord['binding'],
-  ): void => {
-    if (!uiSpecHash || !ledgerWriteAllowed) return;
-    // 幂等判据含 verdict/reasons/**canonical binding**（五轮 P1：同 hash 新 run/invoke 重验
-    // 时 binding 已变，不得跳写让账面保留旧签发身份）。
-    const existing = readLatestRawAttestation(ctx.projectRoot, ctx.feature, uiSpecHash);
-    if (
-      existing &&
-      existing.verdict === verdict &&
-      existing.reasons.join('|') === reasons.join('|') &&
-      JSON.stringify(existing.binding ?? null) === JSON.stringify(binding ?? null)
-    ) return;
-    appendArtifactAttestation(ctx.projectRoot, ctx.feature, {
-      artifact_path: uiSpecRelP,
-      artifact_hash: uiSpecHash,
-      verdict,
-      reasons,
-      source: 'vision_output_counterevidence',
-      ...(binding ? { binding } : {}),
-    });
-  };
   if (scan.contradicted.length > 0) {
-    persistAttestation('contradicted', scan.contradicted.map(f => `${f.code}:${f.where}`));
-    // blind-safe 策略降级（幂等：activeDowngrades 层去重靠 supersede 语义，此处按 hash 防重复行）
-    if (ledgerWriteAllowed && uiSpecHash && !hasActiveDowngradeForHash(ctx.projectRoot, ctx.feature, uiSpecHash)) {
-      appendPolicyDowngrade(ctx.projectRoot, ctx.feature, {
-        reason: 'artifact_visual_attestation=contradicted（effective policy downgraded to blind-safe）',
-        artifact_path: uiSpecRelP,
-        artifact_hash: uiSpecHash,
-        source: 'vision_output_counterevidence',
-      });
-    }
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'FAIL',
       details: [
-        `【反证成立（contradicted）】视觉产出与确定性证据矛盾——本产物的视觉验证签名无效，`,
-        `本 run 视觉策略保守降级 blind-safe（措辞注意：这是策略降级，不等于已证明模型无视觉能力）：`,
+        `【反证成立（contradicted）】当前视觉产出与确定性证据矛盾：`,
         ...scan.contradicted.slice(0, 8).map(f => `  - [${f.code}] ${f.where}：${f.detail}`),
         ...(scan.evidenceGap.length > 0 ? [`另有 ${scan.evidenceGap.length} 项证据缺口（evidence_gap，详见 WARN 明细）`] : []),
       ].join('\n'),
-      suggestion:
-        '修正 ui-spec 受污染文本（重新核对参考图/重采 OCR）→ 产物新 hash 重新走验证（verified attestation 自动解除该降级）；或走盲档地板交付。',
+      suggestion: '重新核对参考图或重采 OCR，直接修正当前 ui-spec；修复后重跑本门禁。',
       affected_files: [uiSpecRelP],
     }];
   }
   if (scan.evidenceGap.length > 0) {
-    persistAttestation('unverified', scan.evidenceGap.map(f => `evidence_gap:${f.code}:${f.where}`));
-    // codex 实施 review P0-3b：evidence_gap 同样落 blind-safe 策略降级（S1 design §4：
-    // 两态同样可安全降 blind-safe；措辞=缺证降级非证伪降级）
-    if (ledgerWriteAllowed && uiSpecHash && !hasActiveDowngradeForHash(ctx.projectRoot, ctx.feature, uiSpecHash)) {
-      appendPolicyDowngrade(ctx.projectRoot, ctx.feature, {
-        reason: 'artifact_visual_attestation=evidence_gap（缺证降级 blind-safe——非证伪，补证后新 hash verified 自动解除）',
-        artifact_path: uiSpecRelP,
-        artifact_hash: uiSpecHash,
-        source: 'vision_output_counterevidence',
-      });
-    }
     return [{
       id, category: 'structure', description,
       severity: 'MAJOR', status: 'WARN',
       details: [
         `【证据不足（evidence_gap）】${scan.evidenceGap.length} 项 UI 文本缺乏可信视觉证据——`,
-        `不构成"已证伪"，但 vl_multimodal 签名不可采信（缺证 ≠ 证伪，审计分立）；本 run 视觉策略缺证降级 blind-safe：`,
+        `不构成"已证伪"；只影响当前产物结论，不改变模型视觉能力或后续 attempt 路由：`,
         ...scan.evidenceGap.slice(0, 8).map(f => `  - [${f.code}] ${f.where}：${f.detail}`),
         ...(scan.heuristics.length > 0 ? [`observe-only 计数：${scan.heuristics.map(h => h.code).join(', ')}`] : []),
       ].join('\n'),
@@ -542,76 +443,33 @@ export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult
       affected_files: [uiSpecRelP],
     }];
   }
-  // 三轮 review P0-3（收紧二轮）：文本互证（ui-spec vs ref-elements）两个文件都是 agent 产物，
-  // 单靠 exact/substring 匹配仍是间接自签。verified 只在**正向 provenance + 终签链全绑定**时
-  // 铸造：当前 run/精确 invoke 的 runner 事件锚回执（capability=canary 判卷证视觉能力 +
-  // refs=结构化验读事件证读过当前参考图，逐张 hash 核对）；铸造行携带 binding（run/invoke/
-  // refs hash/ref-elements hash/gate fingerprint）。盲模型同步两份文本 → 无 canary receipt →
-  // 铸不出 verified、解除不了 blind-safe。
   if (scan.positive_provenance) {
     const chain = verifyVlSigningChain({ projectRoot: ctx.projectRoot, feature: ctx.feature });
     if (chain.ok) {
-      // 四轮 review P1：binding 与消费端同源计算（computeCurrentBindingContext——resolver 验的
-      // 就是这套值）；gate fingerprint 不可算 → **不铸 verified**（fail-closed，binding 必填）。
-      // 幂等语义：旧 verified 行 binding 陈旧时 resolver 投影为 unverified → 与新铸 verified
-      // 必然不等 → 落新行（幂等键实质含完整 binding 有效性）。
-      const bindingCtx = computeCurrentBindingContext(
-        ctx.projectRoot, ctx.feature, path.resolve(__dirname, '..', '..'),
-      );
-      if (!bindingCtx.gate_fingerprint) {
-        persistAttestation('unverified', ['counterevidence_clean_unbound', 'gate_fingerprint_uncomputable']);
-        return [{
-          id, category: 'structure', description,
-          severity: 'BLOCKER', status: 'PASS',
-          details:
-            `无确定性反证且终签链绑定，但 gate fingerprint 不可计算——verified 拒铸（binding 必填，fail-closed）；` +
-            'attestation 记 unverified。排查 framework phase-rules 可读性后重跑。',
-        }];
-      }
-      persistAttestation('verified', ['counterevidence_clean', 'provenance_mapped', 'signing_chain_bound'], {
-        run_id: chain.runId!,
-        invoke_id: chain.expectedInvoke!,
-        ref_elements_sha256: bindingCtx.ref_elements_sha256,
-        refs: bindingCtx.refs,
-        gate_fingerprint: bindingCtx.gate_fingerprint,
-      });
       return [{
         id, category: 'structure', description,
         severity: 'BLOCKER', status: 'PASS',
         details:
-          `无确定性反证、正向 provenance 成立且终签链全绑定（texts=${scan.counters.texts_total} 全匹配；` +
-          `refs=${bindingCtx.refs.length} 张 runner 事件锚验读）；verified attestation 已落盘（含 binding）。`,
+          `无确定性反证、正向 provenance 成立且当前 invocation 回执完整（texts=${scan.counters.texts_total} 全匹配；` +
+          `invoke=${chain.expectedInvoke}）。`,
       }];
     }
-    persistAttestation('unverified', ['counterevidence_clean_unbound', `signing_chain:${chain.failures[0] ?? 'unknown'}`]);
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'PASS',
       details:
         `无确定性反证且文本正向匹配（texts=${scan.counters.texts_total}），但终签链未绑定` +
-        `（${chain.failures.slice(0, 2).join('；')}）——文本互证不单独铸 verified（两份文件皆 agent 产物），` +
-        'attestation 记 unverified；不解除既有降级。',
+        `（${chain.failures.slice(0, 2).join('；')}）——当前产物保持 unverified，但后续 attempt 仍可重新读图补齐。`,
     }];
   }
-  persistAttestation('unverified', ['counterevidence_clean_no_provenance']);
   return [{
     id, category: 'structure', description,
     severity: 'BLOCKER', status: 'PASS',
     details:
       `无确定性反证（texts=${scan.counters.texts_total}，单字符碎片=${scan.counters.single_char_fragments}` +
       `${scan.heuristics.length > 0 ? `；observe-only：${scan.heuristics.map(h => h.code).join(', ')}` : ''}），` +
-      '但无正向 provenance 基础（非 OCR 工作流/文本未全部匹配参考）——attestation 记 unverified_clean，' +
-      '不签 verified、不解除既有降级（解除须 runner supersede 或正向验证成立的新 hash verified）。',
+      '但无正向 provenance 基础（非 OCR 工作流/文本未全部匹配参考）——当前产物保持 unverified。',
   }];
-}
-
-
-// codex 实施 review 二轮附带修：旧判据 downgrade_reasons.includes('contradicted') 对
-// evidence_gap 降级行永假 → 每次重跑重复追加同 hash 降级行（账面膨胀）；且 P0-4 后
-// per-hash attestation 原因也会进 downgrade_reasons（无账本行也含 'contradicted' 字样，
-// 会反向抑制真正的账本行落盘）。改为账本级 active 降级行按 hash 精确判定。
-function hasActiveDowngradeForHash(projectRoot: string, feature: string, hash: string): boolean {
-  return hasActiveDowngradeForArtifactHash(projectRoot, feature, hash);
 }
 
 export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
@@ -677,19 +535,6 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
       }
     }
     let provenanceOk = verifiedArtifactBound;
-    if (!provenanceOk && resolvedAbs && fs.existsSync(resolvedAbs)) {
-      const rPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'crop-provenance', `${a.key}.receipt.json`));
-      if (fs.existsSync(rPath)) {
-        // receipt 绑定 crop 产物字节哈希——换图即 stale（对齐 receipt 消费契约 object_hash 语义）
-        const artifactSha = crypto.createHash('sha256').update(fs.readFileSync(resolvedAbs)).digest('hex');
-        const v = validateConfirmationReceiptFile(rPath, defaultTrustRegistryPath(ctx.projectRoot), {
-          action: 'crop_provenance',
-          feature: ctx.feature,
-          object_hash: artifactSha,
-        });
-        provenanceOk = v.valid;
-      }
-    }
     if (!provenanceOk) {
       // cursor 实施 review P2 收紧：external_tool 记录不再"自填即过"——source_sha256 必须命中
       // feature 参考图集的真实文件哈希（工具确实从某张权威原图裁出），否则不构成 provenance。
@@ -705,18 +550,14 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
         );
       }
     }
-    if (!provenanceOk) missing.push('c2 provenance 不可验证（verified_artifact/human_receipt/external_tool 三来源均缺）');
+    if (!provenanceOk) missing.push('c2 provenance 不可验证（verified_artifact/external_tool 机器来源均缺）');
 
     // v7 P1-2：免 c3 条目级预确认——仅当①本 invocation 中 asset_acquisition provider
-    // 确认执行（skip/throw 不算）②该 key 为严格生产者 verified（sanity+VL 辨认或真人
-    // bbox 翻案——verified 语义在生产者，不降标）③hash/resolved_path 绑定复验有效。
-    // 真人确认降级为终验收/翻案角色，不再是启动前置。
+    // 确认执行（skip/throw 不算）②该 key 为严格生产者 verified（sanity+VL/确定性证据）
+    // ③hash/resolved_path 绑定复验有效。人工字段与 receipt 均无豁免权。
     const machineVerifiedAdmit = ctx.assetAcquisitionProviderRan === true && verifiedArtifactBound;
-    if (!machineVerifiedAdmit && (a.human_crop_confirmed !== true || !isHumanVerified(a.crop_confirmed_by))) {
-      missing.push(
-        'c3 缺条目级验真：机器验真路径（本 invocation provider 执行 + verified + 绑定复验）' +
-        '与可信真人 human_crop_confirmed 均不满足（自动化/user_requirement 哨兵不算）',
-      );
+    if (!machineVerifiedAdmit) {
+      missing.push('c3 缺机器验真：本 invocation provider 执行 + verified + hash/path 绑定复验未同时满足');
     }
 
     if (missing.length > 0) violations.push(`  - ${a.key}：${missing.join('；')}`);
@@ -741,8 +582,8 @@ export function checkBlindCropProhibition(ctx: CheckContext): CheckResult[] {
     ].filter(Boolean).join('\n'),
     suggestion:
       '不满足条件的资产改走：①placeholder:true + asset-manifest（coding 期按 role 生成可见语义占位）；' +
-      '②asset-request 问人（用户提供素材/外部工具裁剪后按 crop_provenance 记录）；' +
-      '③已有可信产物则补齐 c1-c3（验真产物/人签 receipt/external_tool 记录 + 真人 crop_confirmed_by）。',
+      '②asset-request 等待用户提供素材，或由外部工具裁剪后按 crop_provenance 记录；' +
+      '③已有产物则补齐 source hash/tool provenance，并由当前 provider 重验生成绑定报告。',
     affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, path.join('spec', 'ui-spec.yaml'))],
     failure_kind: 'blind_crop_prohibited',
     blocking_class: 'asset_integrity',
@@ -1589,10 +1430,10 @@ function checkHeadlessAssumptionsTrace(ctx: CheckContext): CheckResult[] {
   return [{
     id: 'headless_assumptions_review',
     category: 'structure',
-    description: 'goal-mode 自动确认留痕待复核',
+    description: 'goal-mode 自动决议审计记录',
     severity: 'MINOR',
     status: 'WARN',
-    details: `${autoCount} 条术语/闸门为 goal-mode 自动确认，待人工复核（见 ${assumptionsRel}）。`,
+    details: `${autoCount} 条术语/闸门带 legacy must_review 审计标记（见 ${assumptionsRel}）；该标记不参与阶段或完成门禁。`,
     affected_files: [assumptionsRel],
   }];
 }
@@ -1671,9 +1512,8 @@ const checker: PhaseChecker = {
       // capture-completeness 同 run 优先读内存 manifest（见 capability-registry dispatchSpec*）。
       results.push(...safeRun(() => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
     }
-    // S3 P0-2b（codex 实施 review）：反证器**先于** ui-spec/fidelity gate 执行——同一次
-    // harness run 内 attestation 先落盘，终签消费本次结论而非上一轮陈旧记录（自守卫：
-    // 无 ui-spec 文档返回空结果，与 profile 开关无耦合）。
+    // 反证器先于 ui-spec/fidelity gate 执行，让终签消费同一 run 的当前结论；
+    // 无 ui-spec 文档返回空结果，与 profile 开关无耦合。
     results.push(...safeRun(() => checkVisionOutputCounterevidence(ctx), 'vision_output_counterevidence'));
     if (isSpecUiSpecSkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1706,7 +1546,7 @@ const checker: PhaseChecker = {
     // --- blind-visual-hardening d2：盲档 crop 左移禁令（不依赖 profile capability 开关——
     //     盲模型自证裁剪在任何 profile 下都非法）---
     results.push(...safeRun(() => checkBlindCropProhibition(ctx), 'blind_crop_prohibition'));
-    // （vision_output_counterevidence 已前移至 ui_spec 检查之前——同 run 内 attestation 先落盘）
+    // vision_output_counterevidence 已前移至 ui_spec 检查之前，供同 run 终签直接消费。
     // --- blind-visual-hardening P1-F：盲档素材问人清单（side artifact，best-effort）---
     try { maybeWriteAssetRequest(ctx); } catch { /* 清单生成失败不阻断 */ }
     results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
@@ -1843,8 +1683,8 @@ function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
  * t6：把「有截图+完全参考类措辞却用 semantic_layout=禁止的降级」从 prose 机器化。
  * 事故对位：原始需求「完全参考」×7，spec 自声明 semantic_layout，整条视觉硬门禁失效；
  * fidelity-shared G2 注释自证 homepage 同模式复发（此前 TS 侧只有弱 nudge，无门禁）。
- * 豁免=fidelity_deferrals 真人签字降档条目（自动化身份/user_requirement 不算；
- * goal 环境须留名）——且仅降级 WARN，不产生干净通过。
+ * legacy fidelity_deferrals/human_signed 只读但无降档授权力；冻结需求的强 1:1 目标只能由
+ * correction/successor 输入改变，当前 run 必须按 pixel_1to1 执行或因能力缺失 defer。
  */
 function checkFidelityIntentReconciliation(ctx: CheckContext): CheckResult[] {
   const id = 'fidelity_intent_reconciliation';
@@ -1865,21 +1705,6 @@ function checkFidelityIntentReconciliation(ctx: CheckContext): CheckResult[] {
       details: `intent=${intent}，declared=${declared}——无禁止的降级。`,
     }];
   }
-  const deferrals = parseFidelityDeferrals(handoff);
-  const headless = isGoalOrchestrationEnv();
-  const covering = deferrals.find(
-    (d) => /fidelity|档位|降档|pixel/i.test(`${d.element_id} ${d.reason ?? ''}`) &&
-      isHumanSignedDeferral(d, { requireExplicitSigner: headless }),
-  );
-  if (covering) {
-    return [{
-      id, category: 'structure', description,
-      severity: 'MAJOR', status: 'WARN',
-      details:
-        `需求 SSOT 为强 1:1 意图但声明 ${declared}——已有真人签字降档 deferral` +
-        `（${covering.element_id}, signed_by=${covering.signed_by ?? 'n/a'}）。降级不洗白：run 封顶 AWAITING_HUMAN_REVIEW。`,
-    }];
-  }
   return [{
     id, category: 'structure', description,
     severity: 'BLOCKER', status: 'FAIL',
@@ -1887,8 +1712,7 @@ function checkFidelityIntentReconciliation(ctx: CheckContext): CheckResult[] {
       `需求 SSOT 命中强 1:1 还原意图（完全参考/像素级/1比1 类措辞），但 spec 声明 fidelity_target=${declared}` +
       '——禁止的降级（bc-openCard/homepage 双事故同模式）。',
     suggestion:
-      '将 fidelity_target 改为 pixel_1to1；或经用户确认在 fidelity_deferrals 增加真人签字降档条目' +
-      '（human_signed: true + signed_by 真人署名；goal-mode-auto/user_requirement 不算）。',
+      '将 fidelity_target 改为 pixel_1to1；若冻结需求本身需要改变，请用 correction/successor run 提交新需求输入。',
   }];
 }
 

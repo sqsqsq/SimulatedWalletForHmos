@@ -17,7 +17,7 @@ import * as path from 'path';
 import { receiptDirPath } from '../../config';
 import type { CheckResult } from './types';
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
-import { validateSummaryV11 } from './quality-axes';
+import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 
 /** 回退链序（workflow SSOT 不可解析时的保守缺省——与 spec-driven full 轨一致） */
 export const FEATURE_PHASE_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -103,7 +103,7 @@ export function evaluateUpstreamViews(views: UpstreamPhaseView[]): UpstreamViola
               // t1（openspec device-readiness-and-completion）：措辞须明确主语是**人**——
               // 原文"解锁真机"被 agent 读作自我指令，07-28 事故中 agent 据此对用户真机
               // 枚举 10 组常见 PIN 致设备锁定。指引只描述人的动作，不给 agent 留自解锁暗示。
-              `请人修复环境（如请人解锁真机并保持前台）后重跑 ${v.phase} harness 即可解除；` +
+              `请人修复环境（无可用 ready 凭据或自动恢复未完成时，请人解锁真机并保持前台）后重跑 ${v.phase} harness 即可解除；` +
               `勿改产品代码，也不要尝试自行解锁设备`
             : ''),
       });
@@ -170,7 +170,8 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     }
     // codex 实施 review P0-3 + 三轮 P1-4：声明 1.1 → 完整契约唯一权威校验（四字段+轴不变量）；
     // 违反 → 机器裁决不可信（手搓裸/半 summary 拒收）
-    if (['1.1', '1.2'].includes(String((parsed as { schema_version?: unknown }).schema_version))) {
+    const parsedSchemaVersion = String((parsed as { schema_version?: unknown }).schema_version);
+    if (parsedSchemaVersion === '1.1' || SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(parsedSchemaVersion)) {
       const v11Errors = validateSummaryV11(parsed);
       if (v11Errors.length > 0) {
         return {

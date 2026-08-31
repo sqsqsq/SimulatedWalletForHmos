@@ -12,8 +12,8 @@
 //   ③ 一个遍历该数组逐个试的循环。
 // 本模块的约束逐条对着它们：
 //   - 对 ①：坐标**必须从当前 UI tree 解析**，0–9 识别不全即零输入，绝不用固定坐标兜底；
-//   - 对 ②③：只用**用户登记的那一个**凭据（无候选集、无遍历），且任何一次失败即
-//     烧毁该凭据版本——换口令重试这条路本身被堵死。
+//   - 对 ②③：只用**用户登记的那一个**凭据（无候选集、无遍历），且仅当**实际尝试输入后**
+//     执行/复验失败才烧毁该凭据版本——换口令重试这条路本身被堵死；零输入分支不烧毁。
 //
 // 互斥不再依赖文件锁：`claimAndUnlock` 用 CredWrite 的覆盖语义抢占，读回校验 nonce
 // 才是赢家（见 device-credential-store 文件头）。
@@ -55,8 +55,44 @@ export interface LockScreenSnapshot {
   keypad: KeypadKey[];
   /** 冷却三态与稳定规则号；不得携带任何 UI 原文。 */
   cooldown: { state: LockCooldownState; ruleId: string };
+  /**
+   * e5d8a2c4 T3#1：键位识别的结构化归因（非敏感：容器在否/识别到几个/何种校验不过）。
+   * 缺省视为未知——旧 stub/夹具不带该字段时按 `digits_incomplete` 处置（可 settle 重试）。
+   */
+  keypadDiag?: { reason: string; found: number; containerFound: boolean; hiddenSkipped: boolean };
   /** reveal gesture 的相对坐标来源；缺失时不使用固定分辨率兜底。 */
   lockBounds?: ScreenBounds;
+}
+
+/**
+ * reveal 手势的**执行事实**（脱敏；a4e7c2f9 t3）。
+ *
+ * 为什么必须有返回值：此前 `reveal` 返回 `void`，其底层 `runHdc` 的 ok 无人消费，
+ * 于是"滑动命令被超时 SIGTERM 砍断"这一事实在证据链上根本不存在，helper 只能拿
+ * reveal **之后**的快照去分类——那当然还是时钟页，于是被误判成
+ * `layout_unsupported`（"须真机校准"）。宿主 run 20260817T065727Z-1896c1 两次撞此。
+ *
+ * **注意本类型只让事实"可用"，不能强制调用方消费**——TS 对同步函数返回值没有
+ * must-use 语义。真正的保证是 {@link ensureUnlocked} 的行为契约（reveal 不 ok 即
+ * 立即零输入返回）与其对应的行为回归，不是类型系统。
+ *（对照 T3#3 把 `settle` 从可选改必填：那是**接口字段**必填，类型确实能强制；
+ *  与"返回值必须被读取"不是一回事，早期设计稿混淆过这两者。）
+ */
+export interface RevealOutcome {
+  ok: boolean;
+  /** 命令超时被终止（下游据此归 reveal_failed 而非布局问题） */
+  timedOut: boolean;
+  signal?: string | null;
+  status?: number | null;
+  /**
+   * 枚举化错误码（`ETIMEDOUT` / `ENOENT` …）。
+   *
+   * **必须随结论上浮，不得只落进 note**：消费方按类别行动时禁止解析文案（本模块既有纪律）。
+   * 初版在这一跳把它丢了，后果不只是超时少一个字段——`ENOENT`（hdc 缺失/设备掉线）会
+   * 整个退化成 `exec_failed` + `signal=none status=none`，诊断信息归零，
+   * 与本 change 要治的"执行事实丢失"是同一个病。
+   */
+  errorCode?: string | null;
 }
 
 export interface UnlockDeps {
@@ -64,15 +100,79 @@ export interface UnlockDeps {
   snapshot(serial: string): LockScreenSnapshot;
   /** 非秘密唤醒 */
   wake(serial: string): void;
-  /** 仅展示 PIN 键盘的非秘密上滑；坐标由当前锁屏 bounds 推导。 */
-  reveal(serial: string, bounds: ScreenBounds): void;
+  /** 仅展示 PIN 键盘的非秘密上滑；坐标由当前锁屏 bounds 推导。返回执行事实供 helper 消费。 */
+  reveal(serial: string, bounds: ScreenBounds): RevealOutcome;
   /** 点击坐标（argv 只出现数字坐标，**不出现 PIN 字符**） */
   tap(serial: string, x: number, y: number): void;
+  /**
+   * T3#3：reveal 后每次重取样之前的等待（观察域动作，不碰凭据）。
+   *
+   * **刻意设为必填**：此前它是可选、生产两处接线都没传，于是"有界 settle"在真机上
+   * 恒等于零等待——而单测注入了计数桩，全绿。可选字段的缺省值就是这样变成事故的
+   * （fail-open 缺省 = 静默回到坏行为）。现在类型层面强制两条路径都必须显式接线。
+   *
+   * 间隔本身是**固定常量**（{@link SETTLE_INTERVAL_MS}），不作为依赖注入：
+   * 初版把 `settleMs`/`maxResamples`/`now` 都开成注入项，还配了「dump 耗时计入间隔、
+   * 只补差额」的计时契约与一套总预算校验。codex 三轮指出那是过度通用化，复盘属实——
+   * 那条契约的真实收益是**省延迟**（慢 dump 时不额外等），被我包装成了"正确性契约"。
+   * 正确性只要求"存在真实间隔"，固定间隔无条件满足；代价是最坏多等
+   * {@link SETTLE_INTERVAL_MS} × {@link MAX_RESAMPLES}，有界且远小于同链路上既有的
+   * 同步 spawnSync。假时钟、差额计算、总预算校验一并删除。
+   */
+  settle(ms: number): void;
 }
+
+/** reveal 后每次重取样之前的固定间隔。与相邻的一次 dumpLayout 同量级。 */
+export const SETTLE_INTERVAL_MS = 400;
+/** reveal 后额外重取样次数上限（连同首帧共 4 帧）。 */
+export const MAX_RESAMPLES = 3;
+
+/**
+ * e5d8a2c4 T3#2：解锁失败的**结构化类别**——只设**有处置差异的三类**。
+ * 必须是类型字段而不是 note 里的字符串——否则 supervisor / probe / 事件消费者只能
+ * 解析文案或**再分类一次**，等于又造第二份分类表（本纲要治的正是这个）。
+ * · `credential_unavailable`：凭据不可用/被烧/未登记/非数字 PIN → 走凭据登记流程；
+ * · `ui_not_settled`：键盘未稳（动画/遮挡）→ 可自动 settle 重试；
+ * · `layout_unsupported`：布局不认识 → 须真机校准，probe=framework/adapter 版本变化。
+ *
+ * 刻意**不设** `unlock_failed`：输入失败会烧毁凭据版本，下一步同样是**重新登记**
+ * ——处置相同即不该分家（codex 二轮：按处置差异收敛，不按事件来源分类）。
+ *
+ * 也刻意**不设**兜底类（codex 三轮驳回了我加的 `precondition_unmet`）。当时的理由是
+ * "冷却/状态不明/bounds 缺失也该有个类"，但真去数它的成员就发现它是个垃圾桶：
+ * `absent`（凭据不存在）与 `unsupported`（非数字 PIN）本就是 `credential_unavailable`，
+ * 被兜底类**错归**了；剩下的冷却、锁屏状态判不出、并发抢占，处置各不相同，
+ * 合成一类等于没分类，只是凭空扩大了下游值空间。故 `failureKind` **可选**：
+ * 三类之外**不带 kind**，照走既有 `device_not_ready` 通道（与本改动前一致）。
+ *
+ * a4e7c2f9 t4 增设第四类 `reveal_failed`，判据**收窄到"reveal 命令自身执行失败/超时"**。
+ * 它符合上面那条"按处置差异收敛"的既有裁决，而不是被驳回过的兜底类：其下一步是
+ * **排查 hdc/设备连通性**，与重新登记凭据（credential_unavailable）、等 UI 稳定
+ * （ui_not_settled）、真机校准布局（layout_unsupported）三者都不同。
+ * 「可重试」**不含自动重试**：同一 attempt 最多 reveal 一次，不得因本类在原地重复
+ * swipe；重试指人工排查后经新 invocation 或 `--resume` 再来。
+ */
+export type UnlockFailureKind =
+  | 'credential_unavailable'
+  | 'ui_not_settled'
+  | 'layout_unsupported'
+  | 'reveal_failed';
 
 export type UnlockOutcome =
   | { ok: true; note: string }
-  | { ok: false; note: string; attempted: boolean };
+  /** `failureKind` 缺省 = 无可行动类别（前置/并发/等待类），调用方按既有通道处置 */
+  | {
+      ok: false;
+      note: string;
+      attempted: boolean;
+      failureKind?: UnlockFailureKind;
+      /**
+       * reveal 命令的执行事实（仅 `reveal_failed` 路径带）。
+       * 整份上浮而非只挑 errorCode：挑字段就是下一次"少带一个"的开始，
+       * 而这个类型本身已经是脱敏闭集（枚举码 / 信号名 / 退出码），无额外暴露面。
+       */
+      revealFact?: RevealOutcome;
+    };
 
 export interface UnlockInput {
   serial: string;
@@ -102,7 +202,7 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
 
   // 放行判定**只读 OS 凭据库状态**（plan D3g 的唯一安全 SSOT）。非 ready 一律零输入。
   const gate = canAttemptUnlock(id, provider);
-  if (!gate.ok) return { ok: false, note: gate.reason, attempted: false };
+  if (!gate.ok) return { ok: false, note: gate.reason, attempted: false, failureKind: 'credential_unavailable' };
 
   // 先唤醒再取快照：息屏时 UI tree 不完整，先探测必然判不出（P1）
   deps.wake(serial);
@@ -126,6 +226,50 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
   const initialCooldown = cooldownBlocked(snap);
   if (initialCooldown) return initialCooldown;
 
+  /**
+   * e5d8a2c4 T3#2：设备失败**只保留有处置差异的三类**——多一类就是多一条没人会走的路。
+   * · `credential_unavailable` 走凭据登记流程（本函数其余 gate 分支）；
+   * · `ui_not_settled`         可自动 settle 重试（本进程已试满）；
+   * · `layout_unsupported`     须真机校准，其 probe = framework 版本 / adapter capability 变化。
+   * 归因随附**非敏感结构化事实**，让消费方不必再猜（2026-08-05 宿主实况：agent 列了
+   * 一串可能原因逐个试）。
+   */
+  /** **唯一分类点**：note 只做展示，结构化类别由本函数产出（禁两处各判一次） */
+  const unlockFailureKindOf = (s: LockScreenSnapshot): UnlockFailureKind => {
+    const reason = s.keypadDiag?.reason ?? 'digits_incomplete';
+    return reason === 'pin_container_not_found' || reason === 'geometry_insane' || reason === 'digit_invalid'
+      ? 'layout_unsupported'
+      : 'ui_not_settled';
+  };
+  const unlockBlockedNote = (s: LockScreenSnapshot): string => {
+    const d = s.keypadDiag;
+    const reason = d?.reason ?? 'digits_incomplete';
+    const cls = unlockFailureKindOf(s);
+    const facts = d
+      ? `container=${d.containerFound ? 'found' : 'absent'} digits=${d.found}/10 hidden_skipped=${d.hiddenSkipped}`
+      : 'diag=unavailable';
+    const hint = cls === 'layout_unsupported'
+      ? '锁屏布局与当前适配不符（有界重采样窗口耗尽仍未识别）——须真机校准（原地重试无意义；升级 framework/更换 adapter 后重试）'
+      : '键盘尚未稳定——已在本进程内有界重取样后仍不齐（遮挡/动画/AOD 等）';
+    return `unlock_blocked:${cls}:${reason}（零输入；${facts}；${hint}）`;
+  };
+
+  /**
+   * a4e7c2f9 t4：reveal 命令自身失败的文案。与 {@link unlockBlockedNote} 分开是因为
+   * 二者归因来源不同——这条只陈述**设备命令执行事实**，不含任何 UI 布局判断，
+   * 更**绝不出现"须真机校准"**（那正是把人引向完全错误方向的那句话）。
+   */
+  const revealBlockedNote = (r: RevealOutcome): string => {
+    const reason = r.timedOut ? 'timeout' : 'exec_failed';
+    const facts = `timed_out=${r.timedOut} error_code=${r.errorCode ?? 'none'}` +
+      ` signal=${r.signal ?? 'none'} status=${r.status ?? 'none'}`;
+    // 措辞刻意**完全不出现"真机校准"字样**（连"勿做真机校准"也不写）：回归用例
+    // 严格禁止该词出现在本类 note 里，这样将来任何人把误导指引加回来都会当场变红。
+    return `unlock_blocked:reveal_failed:${reason}（零输入；${facts}；` +
+      `展示 PIN 键盘的滑动命令未完成（超时或被中止）——**不是**布局问题，` +
+      `无需改动布局适配；请排查 hdc/设备连通性后重跑）`;
+  };
+
   const completeKeypad = (s: LockScreenSnapshot): Map<string, KeypadKey> | null => {
     const map = new Map(s.keypad.map(k => [k.digit, k]));
     return s.keypad.length === 10 && map.size === 10 &&
@@ -137,18 +281,57 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
     if (!snap.lockBounds) {
       return { ok: false, note: 'unlock_blocked:lock_bounds_missing（无法安全展示键盘，零输入）', attempted: false };
     }
-    // 只做一次非秘密状态迁移，不 sleep、不盲重试、更不读取凭据。
-    deps.reveal(serial, snap.lockBounds);
-    snap = deps.snapshot(serial);
-    if (snap.locked === undefined) {
-      return { ok: false, note: 'unlock_blocked:post_reveal_state_unknown（零输入）', attempted: false };
+    // 非秘密状态迁移：一次 reveal。**不读取凭据、不输入任何数字。**
+    // 「一次」是硬约束：reveal_failed **不得**在本 attempt 内自动重滑（见 UnlockFailureKind）。
+    const revealed = deps.reveal(serial, snap.lockBounds);
+
+    // a4e7c2f9 t3/t4：**控制流即硬闸**。reveal 没成功就立即零输入退出，绝不拿
+    // "reveal 之后的快照"去做任何布局结论——那正是宿主 run 20260817T065727Z-1896c1
+    // 两次被误判的成因：滑动被 5s 超时 SIGTERM 砍断 → 页面仍停在时钟页 → 分类器
+    // 如实报告"没有 PIN 容器" → 文案却断言"锁屏布局与当前适配不符，须真机校准"。
+    // 真机实测：同一参数不限超时可跑完（5.2s）并正确识别十键，布局从无问题。
+    //
+    // 硬闸放在这里、而**不是**把 reveal 事实作为入参喂给 unlockFailureKindOf，是
+    // 刻意的：分类器只对**成功 reveal 后的 UI 快照**负责，把设备命令状态耦合进布局
+    // 分类会让真源分叉；reveal 失败时它根本不会被调用，layout_unsupported 在结构上
+    // 就产不出来——比"传参进去再判一次"强。
+    if (!revealed.ok) {
+      return {
+        ok: false,
+        note: revealBlockedNote(revealed),
+        attempted: false,
+        failureKind: 'reveal_failed',
+        revealFact: revealed,
+      };
     }
-    if (!snap.locked) return { ok: true, note: '已解锁（reveal 后无需输入）' };
-    const postRevealCooldown = cooldownBlocked(snap);
-    if (postRevealCooldown) return postRevealCooldown;
-    byDigit = completeKeypad(snap);
-    if (!byDigit) {
-      return { ok: false, note: 'unlock_blocked:keypad_incomplete_after_reveal（零输入）', attempted: false };
+
+    // e5d8a2c4 T3#3：**有界 settle + 重取样**。此前 reveal 后**零等待**直接二帧取样，
+    // 于是任何动画延迟都变成"永久零输入 → 无人值守停机等人"（2026-08-05 宿主实况）。
+    // 纪律边界写死：既有「不盲重试」防的是**重复输入 PIN**（烧尝试次数、触发冷却）；
+    // **重新观察屏幕不碰任何秘密**，二者不可混为一谈。本循环全程 attempted=false。
+    //
+    // 早先那版注释宣称"重取样本身就是间隔，无需显式等待"——那是把 hdc dump 的偶然
+    // 耗时当成保证（取样一变快，间隔就归零），已作废：这里等的是**真的等**。
+    for (let i = 0; ; i += 1) {
+      snap = deps.snapshot(serial);
+      if (snap.locked === undefined) {
+        return { ok: false, note: 'unlock_blocked:post_reveal_state_unknown（零输入）', attempted: false };
+      }
+      if (!snap.locked) return { ok: true, note: '已解锁（reveal 后无需输入）' };
+      const postRevealCooldown = cooldownBlocked(snap);
+      if (postRevealCooldown) return postRevealCooldown;
+      byDigit = completeKeypad(snap);
+      if (byDigit) break;
+      // plan f4c8d2b7 t3：**所有**失败 kind 一律跑满有界观察窗口（3×400ms），最后一帧
+      // 才由 unlockFailureKindOf 定性。此前 layout_unsupported 首帧早退——但 reveal 动画
+      // 进行中容器就是还没挂载，pin_container_not_found 完全可能是过渡态（宿主实锤：
+      // 同设备几小时前自动解锁成功，几小时后首帧被判永久 layout_unsupported）。
+      // 重采样只重新 dump UI、不读取不输入凭据，有界零输入观察安全且统一；真正不支持
+      // 的布局只额外等待约 1.2 秒，代价可接受。
+      if (i >= MAX_RESAMPLES) {
+        return { ok: false, note: unlockBlockedNote(snap), attempted: false, failureKind: unlockFailureKindOf(snap) };
+      }
+      deps.settle(SETTLE_INTERVAL_MS);
     }
   }
   // 抢占 + 点击一体：CredWrite 覆盖 + 读回验 nonce 即互斥，赢家才会真的点。
@@ -171,9 +354,12 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
       // 兜底：取得互斥后回读仍非自己的 claim。正常不该发生，同样零输入且不烧毁
       return { ok: false, note: '并发抢占竞争失败——本次零输入', attempted: false };
     case 'absent':
-      return { ok: false, note: '凭据不存在（未登记或已被烧毁）——零输入', attempted: false };
+      // 未登记/已烧毁：下一步就是重新登记——与 credential_unavailable 同一处置。
+      // 兜底类曾把它错归成"前置条件"，等于把一条可行动的路藏起来（codex 三轮）。
+      return { ok: false, note: '凭据不存在（未登记或已被烧毁）——零输入', attempted: false, failureKind: 'credential_unavailable' };
     case 'unsupported':
-      return { ok: false, note: '登记的凭据不是数字 PIN——本版仅支持数字 PIN', attempted: false };
+      // 同上：登记的东西本版用不了 → 仍是"重新登记"这条路。
+      return { ok: false, note: '登记的凭据不是数字 PIN——本版仅支持数字 PIN', attempted: false, failureKind: 'credential_unavailable' };
     default: {
       // 执行出错：可能已点出若干位（异常也可能发生在点击循环中途），且 claim 可能已写入。
       // 一律按失败烧毁——保守方向，用户重新登记即可，且墓碑能说明原因。
@@ -181,7 +367,7 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
       return {
         ok: false,
         note: burn.ok ? '解锁执行失败——已烧毁该凭据版本' : '解锁执行失败，且凭据烧毁未成功——须人工清理',
-        attempted: true,
+        attempted: true, failureKind: 'credential_unavailable',
       };
     }
   }
@@ -209,6 +395,6 @@ export function ensureUnlocked(input: UnlockInput): UnlockOutcome {
         ? '解锁后无法复验——已保守烧毁凭据'
         : '凭据未能解锁——已烧毁该凭据版本'
       : '解锁失败，且凭据烧毁未成功——须人工清理',
-    attempted: true,
+    attempted: true, failureKind: 'credential_unavailable',
   };
 }

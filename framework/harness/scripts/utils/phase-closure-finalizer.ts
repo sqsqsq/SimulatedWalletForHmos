@@ -1,5 +1,5 @@
 // ============================================================================
-// phase-closure-finalizer.ts — crash-consistent summary 1.2 closure commit
+// phase-closure-finalizer.ts — crash-consistent summary closure commit（1.2/1.3 闭环域）
 // ============================================================================
 
 import * as crypto from 'crypto';
@@ -8,6 +8,7 @@ import * as path from 'path';
 import {
   featurePhaseReportsDir,
   loadFrameworkConfig,
+  resolveFeatureArtifact,
 } from '../../config';
 import { writeReviewClosureAttestation } from './closure-attestation';
 import {
@@ -21,10 +22,20 @@ import {
   phaseEvidenceManifestPath,
   readReceiptManifestPointer,
   resolvePhaseEvidenceManifest,
+  verifyPhaseEvidenceManifestWithStagedOutputs,
   writePhaseEvidenceManifest,
   writeReceiptManifestPointer,
 } from './phase-evidence-manifest';
 import { isPidAlive } from './goal-run-lock';
+import {
+  buildSummaryRepairCandidates,
+  type RepairCandidateCheckInput,
+} from './repair-candidates';
+import { loadVerifierReportTextOrNull } from './verifier-evidence';
+import {
+  SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
+  SUMMARY_SCHEMA_VERSION_CURRENT,
+} from './quality-axes';
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import type { HarnessRunSummary, Phase } from './types';
 
@@ -41,6 +52,8 @@ export interface FinalizePhaseClosureOptions {
   feature: string;
   /** Goal orchestration must pass the authoritative run id; process env is only a fallback. */
   goalRunId?: string;
+  /** Attempt identity already verified by the receipt validator; used to reject cross-attempt staged recovery. */
+  goalAttemptId?: string;
   phase: string;
   receipt: {
     status: 'passed';
@@ -60,16 +73,36 @@ export interface FinalizePhaseClosureOptions {
   };
   /** Assess is deliberately post-commit; failure does not roll back verified closure. */
   assessAfterCommit?: () => unknown;
+  /** Fault-injection seam. A selected cut simulates process death and intentionally preserves partial publication. */
+  faultAt?: ClosurePublicationCut;
 }
+
+export type ClosurePublicationCut =
+  | 'after_staged_summary'
+  | 'after_manifest_publish'
+  | 'after_receipt_pointer'
+  | 'after_phase_state'
+  | 'after_summary_rename';
 
 export interface FinalizePhaseClosureResult {
   transitioned: boolean;
   evidence_rebound?: boolean;
+  recovered_partial?: boolean;
   closure_fingerprint: string;
   summary: HarnessRunSummary;
   manifest_path: string;
   assess?: unknown;
   assess_error?: string;
+}
+
+class ClosureCrashSimulation extends Error {
+  constructor(readonly cut: ClosurePublicationCut) {
+    super(`simulated closure crash at ${cut}`);
+  }
+}
+
+function maybeCrash(opts: FinalizePhaseClosureOptions, cut: ClosurePublicationCut): void {
+  if (opts.faultAt === cut) throw new ClosureCrashSimulation(cut);
 }
 
 function sha256Bytes(bytes: Buffer | string): string {
@@ -267,6 +300,7 @@ function publishEvidenceBinding(
     now: opts.now,
   });
   const written = writePhaseEvidenceManifest(opts.projectRoot, manifest);
+  maybeCrash(opts, 'after_manifest_publish');
   writeReceiptManifestPointer(
     opts.projectRoot,
     opts.feature,
@@ -274,7 +308,9 @@ function publishEvidenceBinding(
     manifestRel,
     written.sha256,
   );
+  maybeCrash(opts, 'after_receipt_pointer');
   opts.persistPhaseState();
+  maybeCrash(opts, 'after_phase_state');
   return { manifestRel, manifestSha: written.sha256 };
 }
 
@@ -297,6 +333,118 @@ function evidenceBindingMatches(
   return readReceiptManifestPointer(opts.projectRoot, opts.feature, opts.phase) === loaded.fileSha256;
 }
 
+function recoverPartialPublication(
+  opts: FinalizePhaseClosureOptions,
+  reportsDir: string,
+  summaryPath: string,
+): FinalizePhaseClosureResult | null {
+  const prefix = `${path.basename(summaryPath)}.staged-`;
+  const candidates = fs.existsSync(reportsDir)
+    ? fs.readdirSync(reportsDir)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => path.join(reportsDir, name))
+    : [];
+  const canonicalManifestRel = path.relative(
+    opts.projectRoot,
+    phaseEvidenceManifestPath(opts.projectRoot, opts.feature, opts.phase),
+  ).replace(/\\/g, '/');
+  const valid = candidates.flatMap((stagedPath) => {
+    try {
+      const raw = fs.readFileSync(stagedPath, 'utf8');
+      const parsed = JSON.parse(raw) as HarnessRunSummary;
+      const runMatches = !opts.goalRunId || parsed.run_id === opts.goalRunId;
+      const attemptMatches = !opts.goalAttemptId || !parsed.visual_round?.attempt ||
+        parsed.visual_round.attempt === opts.goalAttemptId;
+      if (
+        !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(parsed.schema_version)) ||
+        parsed.feature !== opts.feature || parsed.phase !== opts.phase ||
+        parsed.verdict !== 'PASS' || parsed.blocker_count !== 0 || parsed.closure_status !== 'closed' ||
+        parsed.closure_commit?.schema_version !== '1.0' ||
+        parsed.closure_commit.receipt_path !== opts.receipt.receipt_path ||
+        parsed.closure_commit.evidence_manifest_path !== canonicalManifestRel ||
+        !runMatches || !attemptMatches
+      ) return [];
+      return [{ stagedPath, raw, parsed, sha256: sha256Bytes(raw) }];
+    } catch {
+      return [];
+    }
+  });
+  if (valid.length === 0) return null;
+  if (valid.length > 1) {
+    throw new Error(`closure partial publication 不唯一（${valid.length} 个 staged summary），拒绝猜测事务`);
+  }
+
+  const candidate = valid[0];
+  const loaded = loadPhaseEvidenceManifest(opts.projectRoot, opts.feature, opts.phase);
+  if (!loaded) {
+    // Crash occurred immediately after the staged write. No evidence was published,
+    // so a freshly receipt-validated caller may discard this temp file and start a
+    // new transaction; the old bytes never became trusted.
+    fs.unlinkSync(candidate.stagedPath);
+    return null;
+  }
+  const verification = verifyPhaseEvidenceManifestWithStagedOutputs({
+    projectRoot: opts.projectRoot,
+    feature: opts.feature,
+    phase: opts.phase,
+    stagedOutputs: [{ canonicalPath: summaryPath, sha256: candidate.sha256 }],
+    frameworkRoot: opts.frameworkRoot,
+    currentRequirementSha: opts.goalRunId
+      ? computeRunRequirementSha(opts.projectRoot, opts.feature, opts.goalRunId)
+      : undefined,
+    // A previous completed closure may already own the receipt pointer. If the
+    // current manifest independently proves the staged summary and all other
+    // evidence, this transaction is precisely the writer allowed to advance it.
+    allowPriorReceiptPointer: true,
+  });
+  if (verification.verdict !== 'fresh') {
+    // The staged summary is a runner-owned temporary witness. Once the current
+    // manifest cannot prove it, retaining that witness only makes every resume
+    // rediscover the same untrusted partial transaction. Preserve user files and
+    // old closure evidence; the caller will route back to the owner.
+    fs.unlinkSync(candidate.stagedPath);
+    throw new Error(
+      `closure partial publication 无法证明仍等价（${verification.verdict}: ` +
+      `${verification.changed_paths.join(', ') || verification.integrity_errors?.join(', ') || 'unknown'}）`,
+    );
+  }
+  const pointer = readReceiptManifestPointer(opts.projectRoot, opts.feature, opts.phase);
+  if (pointer !== loaded.fileSha256) {
+    writeReceiptManifestPointer(
+      opts.projectRoot,
+      opts.feature,
+      opts.phase,
+      canonicalManifestRel,
+      loaded.fileSha256,
+    );
+  }
+  opts.persistPhaseState();
+  fs.renameSync(candidate.stagedPath, summaryPath);
+  return {
+    transitioned: true,
+    recovered_partial: true,
+    closure_fingerprint: candidate.sha256,
+    summary: candidate.parsed,
+    manifest_path: canonicalManifestRel,
+  };
+}
+
+export function hasStagedPhaseClosure(input: {
+  projectRoot: string;
+  frameworkRoot: string;
+  feature: string;
+  phase: string;
+}): boolean {
+  const reportsDir = featurePhaseReportsDir(
+    input.projectRoot,
+    input.feature,
+    input.phase,
+    input.frameworkRoot,
+  );
+  const prefix = 'summary.json.staged-';
+  return fs.existsSync(reportsDir) && fs.readdirSync(reportsDir).some((name) => name.startsWith(prefix));
+}
+
 /**
  * Final commit point is the staged-summary rename. Anything before it may leave
  * recomputable evidence, but canonical summary remains open and cannot advance.
@@ -312,9 +460,10 @@ function finalizePhaseClosureUnlocked(
   );
   const summaryPath = path.join(reportsDir, 'summary.json');
   const current = readSummary(summaryPath);
-  if (current.parsed.schema_version !== '1.2') {
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(current.parsed.schema_version))) {
     throw new Error(
-      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；请重跑 harness 生成 1.2 assurance 后再闭环`,
+      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；` +
+        `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
     );
   }
   if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
@@ -335,14 +484,9 @@ function finalizePhaseClosureUnlocked(
     const currentSha = sha256Bytes(current.raw);
     const manifestRel = current.parsed.closure_commit.evidence_manifest_path;
     if (!evidenceBindingMatches(opts, summaryPath, currentSha, manifestRel)) {
-      const rebound = publishEvidenceBinding(opts, summaryPath, currentSha);
-      return {
-        transitioned: false,
-        evidence_rebound: true,
-        closure_fingerprint: currentSha,
-        summary: current.parsed,
-        manifest_path: rebound.manifestRel,
-      };
+      throw new Error(
+        'closed summary 与既有 evidence binding 不一致；禁止按当前字节重新绑定，须失效并回退责任阶段',
+      );
     }
     return {
       transitioned: false,
@@ -352,6 +496,75 @@ function finalizePhaseClosureUnlocked(
       manifest_path: manifestRel,
     };
   }
+
+  const recovered = recoverPartialPublication(opts, reportsDir, summaryPath);
+  if (recovered) return recovered;
+
+/**
+ * 闭环冻结前重算 verifier 依赖的 repair_candidates（plan a9d4e7c2 P1-5）。
+ *
+ * 为什么必须在这里、而不是首次 writer：首次 writer 跑在 verifier **之前**，那时当前
+ * subject 还没有任何证据；而闭环现在走 `--sync-closure`（它刻意不重跑脚本 harness，
+ * 也就不会再进 writer）。不补这一次，review/UT 的 verifier 逐条 confirmed 候选就永远
+ * 落不进 closed summary——goal 侧的回退候选输入面恒空。
+ *
+ * 纪律：
+ *   · 复用**同一个**共享实现 `buildSummaryRepairCandidates`，不新写一份组装逻辑；
+ *   · verifier 正文取自 `loadVerifierReportTextOrNull`，此刻 summary 已是本轮定稿值，
+ *     loader 按 summary 现值锚定，读到的必然是刚验真通过的那一份；
+ *   · 读不到 script-report / 组装抛错 → 保留 base 已有候选，绝不清空（best-effort 事实层）。
+ */
+function recomputeClosureRepairCandidates(
+  opts: FinalizePhaseClosureOptions,
+  reportsDir: string,
+  base: HarnessRunSummary,
+): HarnessRunSummary['repair_candidates'] | undefined {
+  try {
+    const scriptReportPath = path.join(reportsDir, 'script-report.json');
+    if (!fs.existsSync(scriptReportPath)) return base.repair_candidates;
+    const scriptReport = JSON.parse(fs.readFileSync(scriptReportPath, 'utf8')) as {
+      checks?: Array<Record<string, unknown>>;
+    };
+    const checks = Array.isArray(scriptReport.checks) ? scriptReport.checks : [];
+    const verifierReportText = loadVerifierReportTextOrNull(
+      opts.projectRoot,
+      opts.feature,
+      String(opts.phase),
+      { frameworkRoot: opts.frameworkRoot },
+    );
+    // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
+    if (!verifierReportText) return base.repair_candidates;
+    const reviewDoc =
+      String(opts.phase) === 'review'
+        ? resolveFeatureArtifact(opts.projectRoot, opts.feature, 'review-report.md')
+        : null;
+    const reviewReportText =
+      reviewDoc && reviewDoc.exists ? fs.readFileSync(reviewDoc.actualPath, 'utf8') : null;
+    // 字段名必须是 `failure_kind`——`buildSummaryRepairCandidates` 的输入契约收的是它，
+    // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**
+    // （`ut_hvigor_test` 的 code_regression、`p0_coverage_integrity` 的同类合取都会失效），
+    // 而 `as never` 恰好把这个结构错误从类型检查里藏了起来。用真实结构子类型接住。
+    const candidateChecks: RepairCandidateCheckInput[] = checks.map((c) => ({
+      id: String(c.id ?? ''),
+      status: String(c.status ?? ''),
+      severity: String(c.severity ?? ''),
+      details: typeof c.details === 'string' ? c.details : '',
+      ...(typeof c.failure_kind === 'string' ? { failure_kind: c.failure_kind } : {}),
+      ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
+    }));
+    const candidates = buildSummaryRepairCandidates({
+      phase: String(opts.phase),
+      checks: candidateChecks,
+      reportValidity: (base.report_validity ?? 'PASS') as 'PASS' | 'FAIL' | 'UNVERIFIED',
+      reviewReportText,
+      verifierReportText,
+    });
+    return candidates.length > 0 ? candidates : base.repair_candidates;
+  } catch {
+    // best-effort：重算失败不阻断闭环提交，保留 base 已有候选。
+    return base.repair_candidates;
+  }
+}
 
   const committedAt = (opts.now ? opts.now() : new Date()).toISOString();
   const manifestAbs = phaseEvidenceManifestPath(
@@ -366,9 +579,16 @@ function finalizePhaseClosureUnlocked(
     receipt_path: opts.receipt.receipt_path,
     evidence_manifest_path: manifestRel,
   };
+  // plan a9d4e7c2 P1-5：verifier 依赖的候选只有到这一步才有可验真的证据可依。
+  const closureRepairCandidates = recomputeClosureRepairCandidates(opts, reportsDir, current.parsed);
   const finalSummary: HarnessRunSummary = {
+    // plan a9d4e7c2 T3：**保真闭环**——`{...current.parsed}` 原样带走 base 的代际与
+    // verifier 字段；这里绝不把 1.3 回写成 1.2（旧写法会让 open→closed 悄悄降代，
+    // 下游 upstream gate / attestation 立刻把刚闭环的阶段判成上一代）。
     ...current.parsed,
-    schema_version: '1.2',
+    ...(closureRepairCandidates && closureRepairCandidates.length > 0
+      ? { repair_candidates: closureRepairCandidates }
+      : {}),
     receipt_status: 'passed',
     closure_status: 'closed',
     next_action: 'phase_closed_wait_user',
@@ -379,10 +599,12 @@ function finalizePhaseClosureUnlocked(
   fs.mkdirSync(reportsDir, { recursive: true });
   const stagedSummaryPath = `${summaryPath}.staged-${process.pid}-${Date.now()}`;
   fs.writeFileSync(stagedSummaryPath, finalBytes, 'utf8');
+  maybeCrash(opts, 'after_staged_summary');
 
   try {
     publishEvidenceBinding(opts, summaryPath, summarySha);
     fs.renameSync(stagedSummaryPath, summaryPath);
+    maybeCrash(opts, 'after_summary_rename');
 
     const result: FinalizePhaseClosureResult = {
       transitioned: true,
@@ -399,11 +621,10 @@ function finalizePhaseClosureUnlocked(
     }
     return result;
   } catch (error) {
-    try {
-      if (fs.existsSync(stagedSummaryPath)) fs.unlinkSync(stagedSummaryPath);
-    } catch {
-      // The original finalization error remains authoritative.
-    }
+    // Preserve staged bytes after every publication cut. A later fenced caller
+    // either proves and completes the same transaction or rejects it and
+    // backtracks the owner; deleting the only transaction witness here made
+    // manifest/pointer/state partials permanently unrecoverable.
     throw error;
   }
 }

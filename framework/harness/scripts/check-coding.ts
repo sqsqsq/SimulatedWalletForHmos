@@ -6,7 +6,7 @@
 //
 // 检查项（与 coding-rules.yaml 对应）：
 //   Structure:     file_completeness, layer_compliance, inter_module_dependency,
-//                  no_hardcoded_strings, resource_integrity, har_index_export,
+//                  no_hardcoded_strings, har_index_export,
 //                  module_config_registered, oh_package_dependencies,
 //                  page_registration, naming_conventions, no_any_type,
 //                  async_await_pattern
@@ -32,7 +32,7 @@ import { parseScope, describeScopeError } from './utils/scope-parser';
 import { scanNamedBusinessHandler } from './utils/named-handler';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
-import { classifyChangedFiles, layerDirPrefixes } from './utils/diff-scope';
+import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import {
   loadFrameworkConfig,
@@ -47,6 +47,7 @@ import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { validateProjectRelativePath } from './utils/project-relative-path';
 import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-candidates';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
+import { resolveHarnessDiffBaseRef } from './utils/phase-state';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -343,20 +344,19 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const nameToPath = new Map<string, string>();
-  for (const mod of contracts.modules) {
-    if (mod.name && mod.package_path) {
-      nameToPath.set(mod.name, mod.package_path.replace(/\\/g, '/').replace(/\/+$/, '') + '/');
-    }
-  }
-
-  const missingPaths: string[] = [];
-  const allowedPrefixes: string[] = [];
-  for (const modName of scope.in_scope_modules) {
-    const p = nameToPath.get(modName);
-    if (p) allowedPrefixes.push(p);
-    else missingPaths.push(modName);
-  }
+  // Shared source-owner resolver: coding gate and invocation write attribution
+  // consume the same contracts/catalog path normalization.  Full track remains
+  // strict: every mapping must come from contracts.yaml (catalog fallback is only
+  // a diagnostic here; it cannot silently replace the plan contract).
+  const moduleResolution = resolveModulePathPrefixes(
+    ctx.projectRoot,
+    scope.in_scope_modules,
+    contracts.modules,
+  );
+  const missingPaths = scope.in_scope_modules.filter(
+    (name) => !moduleResolution.sources.get(name)?.startsWith('contracts.yaml '),
+  );
+  const allowedPrefixes = moduleResolution.allowedPrefixes;
 
   if (missingPaths.length > 0) {
     return [{
@@ -369,10 +369,10 @@ function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const envRef = (process.env.HARNESS_DIFF_BASE_REF ?? '').trim();
+  const envRef = resolveHarnessDiffBaseRef();
   const diff = diffChangedFiles({
     projectRoot: ctx.projectRoot,
-    baseRef: envRef || undefined,
+    baseRef: envRef,
   });
   if (!diff.executed) {
     return [{

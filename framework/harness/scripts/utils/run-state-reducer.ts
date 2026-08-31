@@ -24,15 +24,13 @@ import type { Disposition, WaitKind } from './adjudication';
  * 真·终局 status —— 与 runner 的**封卷守卫同源**（goal-runner 只对
  * `CHAIN_SLICE_COMPLETED` / `COMPLETED` 拒绝一切启动面）。
  *
- * codex 订正：此前把 `AWAITING_HUMAN_REVIEW` / `DEFERRED*` / `PARTIAL` 也塞进这里是**错的**
- * ——runner 明确允许它们 `--resume`，判 TERMINAL 会让 supervisor 永不重启、
- * 报告也谎称「结构上无法继续」。它们是**等待**，不是终局。
+ * `AWAITING_HUMAN_REVIEW` 仅为 legacy 读取输入；当前 reducer 把它投影成机器重验，
+ * 而不是继续等待人签。`DEFERRED*` 仍是外部/能力等待，不是终局。
  */
 const SEALED_STATUSES: ReadonlySet<string> = new Set(['CHAIN_SLICE_COMPLETED', 'COMPLETED']);
 
 /** run_end.status → 等待类投影（可 --resume，只是在等某件事发生）。 */
 const WAITING_STATUSES: ReadonlyMap<string, WaitKind> = new Map<string, WaitKind>([
-  ['AWAITING_HUMAN_REVIEW', 'human'],
   ['DEFERRED', 'external'],
   ['DEFERRED_CAPABILITY_MISSING', 'external'],
 ]);
@@ -42,8 +40,30 @@ export interface RunStateProjection {
   run_wait_kind?: WaitKind;
   /** 产出当前投影的事件类型（诊断用；无投影事件时为 null=处于初始 RESUME_READY） */
   source_event_type: string | null;
+  /** 产出当前投影的事件下标；supervisor 用它把 probe/successor 元数据绑定到同一事件 */
+  source_event_index: number | null;
   /** run_end 已落盘：本 run 的事件流已封口，后续更早投影不得翻转 */
   sealed: boolean;
+  /** Latest stable recovery diagnostic, projected from existing events without becoming state SSOT. */
+  recovery?: RecoveryDiagnostic;
+}
+
+export interface RecoveryDiagnostic {
+  reason: string;
+  current_phase?: string;
+  owner_phase?: string;
+  target_phase?: string;
+  gap_kind?: string;
+  action: 'backtrack_to_phase' | 'retry' | 'defer' | 'halt';
+  changed_paths: Array<{
+    path: string;
+    owner?: string;
+    pre_sha256?: string;
+    post_sha256?: string;
+  }>;
+  fingerprint?: string;
+  backtracks_used?: number;
+  backtracks_limit?: number;
 }
 
 interface EventLike {
@@ -51,6 +71,7 @@ interface EventLike {
   status?: unknown;
   run_disposition?: unknown;
   run_wait_kind?: unknown;
+  [key: string]: unknown;
 }
 
 const DISPOSITIONS: ReadonlySet<string> = new Set([
@@ -66,43 +87,132 @@ const DISPOSITIONS: ReadonlySet<string> = new Set([
  *  · 事件携带 `run_disposition` → 覆盖当前态（**取最新 authoritative 投影**）；
  *  · `run_end` → 封口，按 status 三分（与 runner 封卷守卫同源）：
  *      - **真终局**（CHAIN_SLICE_COMPLETED / COMPLETED，runner 拒绝一切启动面）→ `TERMINAL`；
- *      - **等待类**（AWAITING_HUMAN_REVIEW → human；DEFERRED* → external）→ `WAITING(kind)`
- *        ——它们可 `--resume`，只是在等某件事发生，判 TERMINAL 是谎报；
+ *      - **legacy 人签态**（AWAITING_HUMAN_REVIEW）→ `RECOVERY_PENDING`，触发当前机器门禁重验；
+ *      - **等待类**（DEFERRED* → external）→ `WAITING(kind)`；
  *      - **其余**（HALTED / INTERRUPTED / PARTIAL …）→ **保留停机前最后一次投影**。
  *        「进程停了」是 liveness 的事实，「能不能续」是 disposition 的事实；
  *        生产端在 halt 那一刻用真实结构事实算出的投影才是权威，此处不替它改判。
  */
 export function reduceRunState(events: readonly unknown[]): RunStateProjection {
+  let recovery: RecoveryDiagnostic | undefined;
   let current: RunStateProjection = {
     run_disposition: 'RESUME_READY',
     source_event_type: null,
+    source_event_index: null,
     sealed: false,
   };
-  for (const raw of events) {
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    const raw = events[eventIndex];
     if (!raw || typeof raw !== 'object') continue;
     const ev = raw as EventLike;
     const type = typeof ev.type === 'string' ? ev.type : '';
     if (type === 'run_start') {
-      current = { run_disposition: 'RESUME_READY', source_event_type: type, sealed: false };
+      recovery = undefined;
+      current = {
+        run_disposition: 'RESUME_READY', source_event_type: type, source_event_index: eventIndex, sealed: false,
+      };
       continue;
+    }
+    if (type === 'phase_write_violation') {
+      const violations = Array.isArray(ev.violations) ? ev.violations : [];
+      recovery = {
+        reason: 'phase_write_violation',
+        ...(typeof ev.phase === 'string' ? { current_phase: ev.phase } : {}),
+        action: 'backtrack_to_phase',
+        changed_paths: violations.slice(0, 20).flatMap((raw) => {
+          if (!raw || typeof raw !== 'object') return [];
+          const item = raw as Record<string, unknown>;
+          if (typeof item.path !== 'string') return [];
+          return [{
+            path: item.path,
+            ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+            ...(typeof item.pre_sha256 === 'string' ? { pre_sha256: item.pre_sha256 } : {}),
+            ...(typeof item.post_sha256 === 'string' ? { post_sha256: item.post_sha256 } : {}),
+          }];
+        }),
+        ...(typeof ev.fingerprint === 'string' ? { fingerprint: ev.fingerprint } : {}),
+      };
+    } else if (type === 'phase_backtrack_requested') {
+      const reason = typeof ev.reason === 'string' ? ev.reason : 'backtrack_requested';
+      const files = Array.isArray(ev.files) ? ev.files.filter((f): f is string => typeof f === 'string').slice(0, 20) : [];
+      const previousByPath = new Map((recovery?.changed_paths ?? []).map((item) => [item.path, item]));
+      recovery = {
+        reason,
+        ...(typeof ev.phase === 'string' ? { current_phase: ev.phase } : {}),
+        ...(typeof ev.to_phase === 'string' ? { owner_phase: ev.to_phase, target_phase: ev.to_phase } : {}),
+        ...(typeof ev.gap_kind === 'string' ? { gap_kind: ev.gap_kind } : {}),
+        action: 'backtrack_to_phase',
+        changed_paths: files.map((file) => previousByPath.get(file) ?? { path: file }),
+        ...(typeof ev.fingerprint === 'string'
+          ? { fingerprint: ev.fingerprint }
+          : typeof ev.round_fingerprint === 'string' ? { fingerprint: ev.round_fingerprint } : {}),
+        ...(typeof ev.backtracks_used === 'number' ? { backtracks_used: ev.backtracks_used } : {}),
+        ...(typeof ev.backtracks_limit === 'number' ? { backtracks_limit: ev.backtracks_limit } : {}),
+      };
+    } else if (type === 'phase_halt' && typeof ev.recovery_reason === 'string') {
+      recovery = {
+        reason: ev.recovery_reason,
+        ...(typeof ev.phase === 'string' ? { current_phase: ev.phase } : {}),
+        ...(typeof ev.owner_phase === 'string'
+          ? { owner_phase: ev.owner_phase, target_phase: ev.owner_phase }
+          : typeof ev.target_phase === 'string' ? { target_phase: ev.target_phase } : {}),
+        action: 'halt',
+        changed_paths: recovery?.changed_paths ?? [],
+        ...(typeof ev.fingerprint === 'string'
+          ? { fingerprint: ev.fingerprint }
+          : typeof ev.round_fingerprint === 'string' ? { fingerprint: ev.round_fingerprint } : {}),
+        ...(typeof ev.backtracks_used === 'number' ? { backtracks_used: ev.backtracks_used } : {}),
+        ...(typeof ev.backtracks_limit === 'number' ? { backtracks_limit: ev.backtracks_limit } : {}),
+      };
     }
     if (type === 'run_end') {
       const status = typeof ev.status === 'string' ? ev.status : '';
       if (SEALED_STATUSES.has(status)) {
-        current = { run_disposition: 'TERMINAL', source_event_type: type, sealed: true };
+        // 成功终态已经证明恢复事务闭合；历史事件仍在 events.jsonl 中，但当前投影不得
+        // 继续携带上一轮 backtrack/violation 诊断，避免 status_reason 归因污染。
+        recovery = undefined;
+        current = {
+          run_disposition: 'TERMINAL', source_event_type: type, source_event_index: eventIndex, sealed: true,
+        };
+        continue;
+      }
+      if (status === 'AWAITING_HUMAN_REVIEW') {
+        current = {
+          run_disposition: 'RECOVERY_PENDING', source_event_type: type,
+          source_event_index: eventIndex, sealed: true,
+        };
         continue;
       }
       const waitKind = WAITING_STATUSES.get(status);
       if (waitKind) {
         current = {
-          run_disposition: 'WAITING', run_wait_kind: waitKind, source_event_type: type, sealed: true,
+          run_disposition: 'WAITING', run_wait_kind: waitKind, source_event_type: type,
+          source_event_index: eventIndex, sealed: true,
         };
         continue;
       }
-      // 其余（HALTED / INTERRUPTED / PARTIAL …）：**保留停机前最后一次投影**。
+      // codex 第九批收尾 P1：run_end **自带显式投影**时优先采用并封口——启动期
+      // BLOCKER（如 supersede_target_invalid）的事件流只有 run_start + run_end，
+      // "保留此前投影"会退回 run_start 的 RESUME_READY，supervisor 据此把一个
+      // 需要人修参数的 run 重新拉起（最小事件流实测）。
+      const explicitD = typeof ev.run_disposition === 'string' ? ev.run_disposition : '';
+      if (DISPOSITIONS.has(explicitD)) {
+        current = {
+          run_disposition: explicitD as Disposition,
+          ...(typeof ev.run_wait_kind === 'string' ? { run_wait_kind: ev.run_wait_kind as WaitKind } : {}),
+          source_event_type: type, source_event_index: eventIndex, sealed: true,
+        };
+        continue;
+      }
+      // 其余（HALTED / INTERRUPTED / PARTIAL …无显式投影）：**保留停机前最后一次投影**。
       // 「进程停了」是 liveness 的事实，「能不能续」是 disposition 的事实——
       // 由生产端在 halt 那一刻用真实结构事实算出的投影才是权威，此处不替它改判。
-      current = { ...current, source_event_type: current.source_event_type ?? type, sealed: true };
+      current = {
+        ...current,
+        source_event_type: current.source_event_type ?? type,
+        source_event_index: current.source_event_index ?? eventIndex,
+        sealed: true,
+      };
       continue;
     }
     if (current.sealed) continue;
@@ -112,13 +222,14 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
     current = {
       run_disposition: d as Disposition,
       source_event_type: type || null,
+      source_event_index: eventIndex,
       sealed: false,
       ...(d === 'WAITING' && (kind === 'human' || kind === 'external')
         ? { run_wait_kind: kind }
         : {}),
     };
   }
-  return current;
+  return recovery ? { ...current, recovery } : current;
 }
 
 /**

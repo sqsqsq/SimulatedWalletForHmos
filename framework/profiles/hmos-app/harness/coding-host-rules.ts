@@ -16,7 +16,15 @@ import {
   dispatchDepsInstall,
   analyzeCodingDependencyIssueViaProfile,
 } from '../../../harness/capability-registry';
-import { detectHvigorConfigError, type ProjectDependencyIssue } from './hvigor-runner';
+import { detectHvigorConfigError, isHvigorBuildSuccessful, type ProjectDependencyIssue } from './hvigor-runner';
+import {
+  resolveProductSelection,
+  describeProductSelection,
+  buildProductSelectionUnresolvedGuidance,
+  summarizeUnresolvedCause,
+  TRUSTED_PRODUCT_SOURCES,
+  type ProductSelection,
+} from './product-selection';
 import {
   isCrossModuleExportFileStem,
   isLibraryFormat,
@@ -26,6 +34,10 @@ import {
 
 import { runArkuiStaticRules } from './arkui-static-rules';
 import { blockerFail } from '../../../harness/scripts/utils/check-result-factory';
+import {
+  resolveContractFileReferences,
+  selectContractReferencePaths,
+} from '../../../harness/scripts/utils/contract-reference-closure';
 
 export { isCrossModuleExportFileStem } from './har-export-resolve';
 
@@ -81,71 +93,6 @@ function ruleDesc(
   return checks?.[id]?.description?.trim() ?? id;
 }
 
-function collectResourceKeys(projectRoot: string, contracts: ContractsSpec): Map<string, Set<string>> {
-  const keys = new Map<string, Set<string>>();
-  const resourceFiles = contracts.files.filter(f => f.includes('/resources/') && f.endsWith('.json'));
-
-  for (const relPath of resourceFiles) {
-    const fullPath = path.join(projectRoot, relPath);
-    if (!fs.existsSync(fullPath)) continue;
-    try {
-      const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-      const basename = path.basename(relPath, '.json');
-      if (Array.isArray(content[basename])) {
-        if (!keys.has(basename)) keys.set(basename, new Set());
-        const set = keys.get(basename)!;
-        for (const item of content[basename]) {
-          if (item.name) set.add(item.name);
-        }
-      }
-    } catch {
-      /* skip malformed */
-    }
-  }
-
-  // HarmonyOS media：PNG/JPG/SVG 在 <module>/src/main/resources/base/media/，无 element JSON。
-  // F：以【模块实际资源目录】为准注册 key（ArkUI $r('app.media.<key>') 的真实解析路径），
-  // 绝不信 contracts.resource_keys[].path 的根相对路径——根/contracts 路径放 70B 占位曾绕过
-  // resource_integrity（宿主 homepage 实测：./media/*.png + contracts path 指根目录）。
-  const MEDIA_EXT_RE = /\.(png|jpg|jpeg|webp|svg|gif|bmp)$/i;
-  const registerMediaDir = (dir: string): void => {
-    if (!fs.existsSync(dir)) return;
-    if (!keys.has('media')) keys.set('media', new Set());
-    const set = keys.get('media')!;
-    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (ent.isFile() && MEDIA_EXT_RE.test(ent.name)) {
-        set.add(ent.name.replace(MEDIA_EXT_RE, ''));
-      }
-    }
-  };
-  for (const mod of contracts.modules ?? []) {
-    registerMediaDir(path.join(projectRoot, mod.package_path, 'src', 'main', 'resources', 'base', 'media'));
-  }
-  // 兼容：仅当 contracts entry.path 指向【模块 resources/base/media 内】的真实文件时才补登记，
-  // 杜绝工程根 media/ 等模块外路径冒充（与 visual_parity_asset_materialized 同口径）。
-  const rk = contracts.resource_keys as
-    | Record<string, Record<string, Array<{ key: string; path?: string }>>>
-    | undefined;
-  if (rk) {
-    const normMediaSeg = `${path.sep}src${path.sep}main${path.sep}resources${path.sep}base${path.sep}media${path.sep}`;
-    for (const mod of Object.values(rk)) {
-      const mediaEntries = mod.media;
-      if (!Array.isArray(mediaEntries)) continue;
-      if (!keys.has('media')) keys.set('media', new Set());
-      const set = keys.get('media')!;
-      for (const entry of mediaEntries) {
-        if (!entry.key || !entry.path) continue;
-        const abs = path.resolve(projectRoot, entry.path);
-        if (abs.includes(normMediaSeg) && fs.existsSync(abs)) {
-          set.add(entry.key);
-        }
-      }
-    }
-  }
-
-  return keys;
-}
-
 function truncateList(items: string[], max: number): string {
   const shown = items.slice(0, max).map(i => `  - ${i}`).join('\n');
   return items.length > max ? `${shown}\n  ... 还有 ${items.length - max} 项` : shown;
@@ -186,99 +133,6 @@ function checkNoHardcodedStrings(ctx: CheckContext, analyses: FileAnalysis[]): C
       }`,
       affected_files: [...new Set(hits.map(h => h.file))],
       suggestion: "请将 UI 文本替换为 $r('app.string.xxx') 资源引用。",
-    },
-  ];
-}
-
-function checkResourceIntegrity(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: 'contracts.yaml 不存在，跳过资源引用检查。',
-      },
-    ];
-  }
-
-  const resourceKeys = collectResourceKeys(ctx.projectRoot, contracts);
-  const totalKeys = Array.from(resourceKeys.values()).reduce((s, set) => s + set.size, 0);
-  const totalRefs = analyses.reduce((s, a) => s + a.resourceRefs.length, 0);
-
-  if (totalKeys === 0 && totalRefs > 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '未找到资源 JSON 文件，无法验证 $r() 引用。',
-      },
-    ];
-  }
-  if (totalRefs === 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '未发现 $r() 引用。',
-      },
-    ];
-  }
-
-  const missing: Array<{ file: string; ref: string; type: string; key: string; line: number }> = [];
-  for (const a of analyses) {
-    for (const ref of a.resourceRefs) {
-      const set = resourceKeys.get(ref.resourceType);
-      if (!set || !set.has(ref.key)) {
-        missing.push({
-          file: a.filePath,
-          ref: ref.raw,
-          type: ref.resourceType,
-          key: ref.key,
-          line: ref.lineNumber,
-        });
-      }
-    }
-  }
-
-  if (missing.length === 0) {
-    return [
-      {
-        id: 'resource_integrity',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-        severity: 'BLOCKER',
-        status: 'PASS',
-        details: `全部 ${totalRefs} 处 $r() 引用均有对应资源定义。`,
-      },
-    ];
-  }
-
-  const details = missing
-    .slice(0, 10)
-    .map(m => `  - ${m.file}:${m.line} → ${m.ref} (${m.type}.${m.key} 未定义)`)
-    .join('\n');
-  return [
-    {
-      id: 'resource_integrity',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'resource_integrity'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${missing.length} 处 $r() 引用缺少资源定义：\n${details}${
-        missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 处` : ''
-      }`,
-      affected_files: [...new Set(missing.map(m => m.file))],
-      suggestion: '在对应模块的 resources/base/element/*.json 中补充缺失的资源 key。',
     },
   ];
 }
@@ -617,10 +471,36 @@ export function isDependencyDeclared(
   return false;
 }
 
+/**
+ * 导航注册配置文件（plan c7e2a9d4 T2）：经统一解析边界的纯 selector 消费，**不裸读**
+ * `contracts.navigation` 原始字段。装载期 SpecLoader 已算好 `referenceClosure`；缺失时
+ * 按 check-plan.ts 同款 `??` 兜底现算，双相共享同一份解析结论、不重复计算。
+ */
+function resolveNavigationConfigFiles(ctx: CheckContext): string[] {
+  const contracts = ctx.featureSpec.contracts;
+  if (!contracts) return [];
+  const closure = ctx.featureSpec.referenceClosure
+    ?? resolveContractFileReferences(ctx.projectRoot, contracts);
+  return selectContractReferencePaths(closure, 'navigation.config_files');
+}
+
+/**
+ * 已声明的注册配置文件读取（review P1）：`existsSync` 对"路径其实是目录"返回 true，随后
+ * `readFileSync` 抛 EISDIR——异常逃到 check-coding 的 safeRun 会被降级成 MINOR SKIP，
+ * `coding_run_status` 不计入阻断，于是"不可读"反而能宣称完成。故本地判普通文件并吞掉
+ * 读取异常，一律归入 unreadable → BLOCKER FAIL（fail-closed，不新增机制）。
+ */
+function readRegularFileOrNull(absolutePath: string): string | null {
+  try {
+    if (!fs.statSync(absolutePath).isFile()) return null;
+    return fs.readFileSync(absolutePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
 function checkPageRegistration(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const nav = contracts?.navigation as Record<string, unknown> | undefined;
-  const configFiles = (nav?.config_files ?? []) as string[];
   const components = contracts?.components ?? [];
 
   const navPages = components
@@ -644,21 +524,49 @@ function checkPageRegistration(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  let configContent = '';
-  for (const cf of configFiles) {
-    const c = readFileIfExists(path.join(ctx.projectRoot, cf));
-    if (c) configContent += c;
-  }
-
-  if (!configContent) {
+  // 状态表（plan c7e2a9d4 T2）：走到这里必然「已有 NavDestination 页面」——
+  // 没有注册配置声明、或声明的文件读不到，都是真实缺口，一律 FAIL，不得以 SKIP 冒充成功。
+  const configFiles = resolveNavigationConfigFiles(ctx);
+  if (configFiles.length === 0) {
     return [
       {
         id: 'page_registration',
         category: 'structure',
         description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
         severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '导航配置文件 (main_pages.json / route_map.json) 不存在。',
+        status: 'FAIL',
+        details:
+          `${navPages.length} 个 NavDestination 页面待注册，但 contracts.yaml 的 ` +
+          '`navigation.config_files` 未声明任何导航注册配置文件。',
+        suggestion:
+          '回到 plan 在 contracts.yaml 的 `navigation.config_files` 声明 main_pages.json / ' +
+          'route_map.json 等注册配置文件，并同步列入 `contracts.files`。',
+      },
+    ];
+  }
+
+  let configContent = '';
+  const unreadable: string[] = [];
+  for (const cf of configFiles) {
+    const c = readRegularFileOrNull(path.join(ctx.projectRoot, cf));
+    if (c === null) unreadable.push(cf);
+    else configContent += c;
+  }
+
+  if (unreadable.length > 0) {
+    return [
+      {
+        id: 'page_registration',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: [
+          `${unreadable.length} 个已声明的导航注册配置文件不存在或不可读：`,
+          ...unreadable.map(f => `  - ${f}`),
+        ].join('\n'),
+        affected_files: unreadable,
+        suggestion: '在 coding 阶段实际创建这些注册配置文件（文件存在性的正式裁决在 coding file_completeness）。',
       },
     ];
   }
@@ -1035,7 +943,12 @@ function compileLogText(res: {
     .join('\n');
 }
 
-/** 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。 */
+/**
+ * 导出供 harness 单测断言 failure_kind 枚举稳定（勿在业务代码中依赖）。
+ * 签名第三参：t5（plan a7c3f9e2）注入构建前单次解析的 ProductSelection——
+ * source 非可信集合（explicit_run/confirmed_env/explicit_config，即 sole_candidate）时，
+ * explanation **首句**声明编译形态未经确认（推断值不得冒充用户意图）。
+ */
 export function classifyCodingCompileFailure(
   res: {
     toolMissing?: boolean;
@@ -1046,6 +959,43 @@ export function classifyCodingCompileFailure(
     errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
     successMarkerFound?: boolean;
     /** f9c2e6b4 t2：配置错误判据需要原始日志（与 analyzeProjectDependencyIssue 同源入参） */
+    logAbsPath?: string;
+    logExcerpt?: string;
+  },
+  ctx: CheckContext,
+  selection?: ProductSelection,
+): CodingCompileFailureClassification {
+  return withUnconfirmedFormLead(classifyCodingCompileFailureCore(res, ctx), selection);
+}
+
+/**
+ * 首句声明"编译形态未经确认"（plan a7c3f9e2 t5 ⑧ + review P2 统一）：source 非可信集合
+ * （explicit_run/confirmed_env/explicit_config，即 sole_candidate 等推导形态）时，
+ * explanation **首句**声明形态未经确认——推断值不得冒充用户意图。
+ * 分类器内部与 checkCodingCompile 的 override 分支最终选择处都经本函数收口，防绕过。
+ */
+export function withUnconfirmedFormLead(
+  outcome: CodingCompileFailureClassification,
+  selection?: ProductSelection,
+): CodingCompileFailureClassification {
+  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source)) return outcome;
+  return {
+    ...outcome,
+    explanation:
+      `编译形态未经确认：product=${selection.product} 由工程候选推导（来源：${selection.source}），` +
+      `未曾在 framework.local.json 确认——推断值不得冒充用户意图。\n${outcome.explanation}`,
+  };
+}
+
+function classifyCodingCompileFailureCore(
+  res: {
+    toolMissing?: boolean;
+    skippedByEnv?: boolean;
+    timedOut?: boolean;
+    executed?: boolean;
+    exitCode?: number;
+    errors?: Array<{ file?: string; line?: number; code?: string; message: string }>;
+    successMarkerFound?: boolean;
     logAbsPath?: string;
     logExcerpt?: string;
   },
@@ -1215,15 +1165,9 @@ type CompileRunResult = {
   diagnostics?: string[];
 };
 
-function isCompilePass(res: CompileRunResult): boolean {
-  const errs = res.errors ?? [];
-  return Boolean(
-    res.executed &&
-      !res.timedOut &&
-      res.exitCode === 0 &&
-      errs.length === 0 &&
-      res.successMarkerFound !== false,
-  );
+/** 导出供生产链单测断言（plan a7c3f9e2 t1：与 device-testing 出口共用同一终态判据）。 */
+export function isCompilePass(res: CompileRunResult): boolean {
+  return isHvigorBuildSuccessful(res);
 }
 
 /** 导出供生产链单测断言（failure kind → blocking_class 的唯一映射点）。 */
@@ -1246,11 +1190,19 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
   return kind;
 }
 
-function buildCompilePassDetails(res: CompileRunResult, modulesCount: number, extraNote?: string): string {
+function buildCompilePassDetails(
+  res: CompileRunResult,
+  modulesCount: number,
+  /** 耗时文本（runner 遥测，直接进 details——subject 不承诺稳定，无需分域投影） */
+  durationText: string,
+  extraNote?: string,
+  selection?: ProductSelection,
+): string {
   return [
     extraNote ? `${extraNote}\n` : '',
-    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${res.durationMs} ms）。`,
+    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${durationText}）。`,
     `命令：${res.command ?? '(unknown)'}`,
+    ...(selection ? [describeProductSelection(selection)] : []),
     `元数据：${res.metaPath ?? '(无)'}`,
     `完整日志：${res.logPath ?? '(无)'}`,
     ...(res.diagnostics?.length ? ['诊断提示：', ...res.diagnostics.map((d: string) => `  - ${d}`)] : []),
@@ -1262,7 +1214,10 @@ function buildCompilePassDetails(res: CompileRunResult, modulesCount: number, ex
 function buildCompileFailDetails(
   res: CompileRunResult,
   failure: CodingCompileFailureClassification,
+  /** 耗时文本（同上） */
+  durationText: string,
   extraLines: string[] = [],
+  selection?: ProductSelection,
 ): string {
   const errs = res.errors ?? [];
   const detailsLines: string[] = [];
@@ -1276,8 +1231,9 @@ function buildCompileFailDetails(
     detailsLines.push('修复指引：去掉该环境变量并重跑。显式跳过真实编译不被允许作为出口。');
   } else {
     detailsLines.push(
-      `exit_code=${res.exitCode}, durationMs=${res.durationMs}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
+      `exit_code=${res.exitCode}, durationMs=${durationText}, timedOut=${Boolean(res.timedOut)}, successMarkerFound=${res.successMarkerFound ?? 'n/a'}`,
     );
+    if (selection) detailsLines.push(describeProductSelection(selection));
     detailsLines.push(`失败归因：${failure.kind}`);
     detailsLines.push(`归因说明：${failure.explanation}`);
     detailsLines.push(`命令：${res.command ?? '(unknown)'}`);
@@ -1340,6 +1296,33 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
     ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
 
+  // t5（plan a7c3f9e2 ⑤）：**本作用域内只解析一次**，同一 ProductSelection 对象贯穿
+  // 构建参数与分类/详情生成；构建期间外部配置改变也不得二次解析。
+  const compileSelection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'coding' });
+
+  // unresolved：构建形态无法确定（四种原因，见 product-selection.ts）——不猜，
+  // 经既有阻断通道停止并要求确认。
+  // blocking_class 复用 externalBlocked（外部/环境类：agent 不该改代码绕过），
+  // goal 无人值守由 goal-runner 启动前置检查先行 halt（本分支在交互式将其落 BLOCKER FAIL）。
+  // env 显式跳过（HARNESS_SKIP_HVIGOR=1）时**让位给既有 skip 语义**——用户明确跳过了
+  // 编译，报"显式跳过不作为出口"比要求确认 product 更对症（fixture 回归锁）。
+  if (compileSelection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
+    const guidance = buildProductSelectionUnresolvedGuidance(compileSelection);
+    return duplicateCompileResults({
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: ['coding_compile（真实编译）失败：' + summarizeUnresolvedCause(compileSelection), guidance].join('\n'),
+      affected_files: modules.map(m => `${m.name} (module)`),
+      failure_kind: 'project_build_environment_inconsistent',
+      blocking_class: resolveCompileBlockingClass('project_build_environment_inconsistent'),
+      suggestion:
+        '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。' +
+        '请按 details 中的指引确认 product（init.product_selection / record-product-selection / env）后重跑。',
+    });
+  }
+
   const compileBaseOpts = {
     projectRoot: ctx.projectRoot,
     harnessRoot: HARNESS_ROOT,
@@ -1347,6 +1330,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     phase: 'coding',
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
     frameworkRoot: ctx.frameworkRoot,
+    product: compileSelection.product ?? undefined,
   };
 
   let res: CompileRunResult = dispatchCodingCompile(ctx, compileBaseOpts);
@@ -1357,7 +1341,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   let buildTxnRetryLines: string[] = [];
 
   if (res.toolMissing || res.skippedByEnv || !isCompilePass(res)) {
-    let firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    let firstFailure = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
     // f9c2e6b4 t2：配置错误但路径实际存在 → **原样重跑一次构建事务**再下结论。
     // 这一步不启动 agent、不消耗内容重试预算：矛盾（"说找不到、但它就在那儿"）本身
@@ -1368,7 +1352,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
         `原因：${firstFailure.explanation.split('\n')[0]}`,
       ];
       res = dispatchCodingCompile(ctx, { ...compileBaseOpts, forceNoDaemon: true });
-      const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+      const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
       buildTxnRetryLines.push(
         isCompilePass(res)
           ? '重跑结果：PASS（首次失败为一次性环境不一致，已自证）'
@@ -1438,20 +1422,29 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: buildCompilePassDetails(res, modules.length, depsAutoFixNote),
+      details: buildCompilePassDetails(res, modules.length, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
     });
   }
 
   const failure =
-    overrideFailure ??
-    classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx);
+    // review P2：override 分支（dependency/toolchain/install 自愈文案）同样统一收口
+    // "首句声明形态未经确认"——不得绕过 classify 的装饰。
+    overrideFailure
+      ? withUnconfirmedFormLead(overrideFailure, compileSelection)
+      : classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
   return duplicateCompileResults({
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: buildCompileFailDetails(res, failure, [...buildTxnRetryLines, ...installExtraLines]),
+    details: buildCompileFailDetails(
+      res,
+      failure,
+      String(res.durationMs),
+      [...buildTxnRetryLines, ...installExtraLines],
+      compileSelection,
+    ),
     affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),
@@ -1462,7 +1455,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
 function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
   const out: CheckResult[] = [];
   out.push(...checkNoHardcodedStrings(ctx, analyses));
-  out.push(...checkResourceIntegrity(ctx, analyses));
+  // resource_integrity 已退役：资源合法性唯一真源=coding_compile 真实构建
   out.push(...checkHarIndexExport(ctx));
   out.push(...checkModuleConfigRegistered(ctx));
   out.push(...checkOhPackageDependencies(ctx));

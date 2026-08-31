@@ -13,6 +13,7 @@ import {
   type DependencyPolicy,
 } from './phase-transition-policy';
 import { isValidFidelityTarget } from './fidelity-shared';
+import type { ProviderRef } from './types';
 
 export interface GoalBudget {
   max_retries_per_phase?: number;
@@ -24,6 +25,40 @@ export interface GoalBudget {
    * max_total_turns + wall_clock 兜底。计数从 events.jsonl 派生（跨 resume 不清零）。
    */
   max_transient_api_retries?: number;
+}
+
+export interface AdapterModelPin {
+  /** 最终 effective adapter（resolveFinalModelPin 单点裁决后写入） */
+  adapter: string;
+  /** 用户显式 --adapter-model 的权威模型值 */
+  value: string;
+}
+
+export const RUN_ADAPTER_PROVENANCES = [
+  'user_explicit',
+  'entry_declared',
+  'local_config',
+  'registry',
+  'override',
+] as const;
+export type RunAdapterProvenance = (typeof RUN_ADAPTER_PROVENANCES)[number];
+
+/**
+ * plan a8e5c3f9 t6：Goal/headless 有效权限——很薄的纯解析点（非状态机、无第二份持久状态）。
+ * 用户主动启动 Goal/headless 即授权 non-interactive + no approval prompt + full
+ * filesystem/tool execution；adapter 只翻译该语义，不得降级。
+ * 旧 manifest 的 write_mode/approval_mode 枚举仍被接受（历史 run 可 resume、原文不重写），
+ * 但执行、prompt 与能力判断一律使用本函数的 effective 值；allowed_tools 是审批清单遗留
+ * 字段（deprecated/ignored），不构成 effective 权限的一部分。
+ * 注意：全权限=CLI/工具/OS 执行能力，不是业务裁决权——phase 权责、integrity、
+ * runner-owned gate、receipt/人签、journal 收编、设备与凭据规则一概不受影响。
+ */
+export function effectiveHeadlessUnattended(raw?: UnattendedContract): UnattendedContract {
+  return {
+    ...(raw ?? ({} as UnattendedContract)),
+    write_mode: 'full-access',
+    approval_mode: 'never',
+  };
 }
 
 export interface UnattendedContract {
@@ -43,32 +78,59 @@ export interface GoalManifest {
   end_phase: FeaturePhase;
   feature: string;
   requirement?: string;
+  /**
+   * plan c4e8a1f7 T2：需求来源列表（项目根相对正斜杠；项目外 source 保留绝对路径）。
+   * 可选字段：旧 manifest 无键不受影响（身份哈希条件包含，见 computeManifestIdentityFields）。
+   * 语义=provenance，不是需求正文——参考图发现据此做 source 直接父目录一层扫描。
+   */
+  requirement_source_files?: string[];
+  /**
+   * goal-run-birth-contract：fresh run 在任何 coding/UT agent 执行前冻结的 Git 基线。
+   * 条件入身份哈希；同一 run write-once。纯 spec/plan 链可无此键。
+   */
+  run_base_sha?: string;
+  /**
+   * goal-runtime-contract-enforcement-fixes：fresh birth 已解析完成的实际执行链。
+   * run_created 同值绑定；modern resume/attach 只读此链，不重新解析 workflow/track。
+   */
+  phase_chain?: FeaturePhase[];
   adapter?: string;
   /** 运行身份来源（诚实化回溯）：user_explicit|entry_declared|local_config|registry|override */
   adapter_provenance?: string;
   chain_override?: FeaturePhase[];
   /** Contract-local minimum assurance by phase; labels are never compared globally. */
   minimum_assurance?: Record<string, 'degraded' | 'full'>;
-  /** t6：预授权档位（--fidelity；只升不降，降档须 fidelity_receipt 校验通过） */
+  /** t6：显式档位（--fidelity；只升不降，降档属于 requirement correction） */
   fidelity?: 'pixel_1to1' | 'semantic_layout' | 'reference_only';
-  /** t6：降档 confirmation receipt 文件（项目根相对）；flag 本身不构成授权 */
+  /** @deprecated legacy compatibility only; readers ignore it and new CLI writers reject it. */
   fidelity_receipt?: string;
+  /**
+   * plan d7f3a9c4 t1/t2：显式模型钉——用户 `--adapter-model` 的权威输入，
+   * 随 headless argv 回放。adapter 必须等于最终 effective adapter（由
+   * resolveFinalModelPin 单点裁决）。条件入身份哈希（键在场即入，旧 manifest
+   * 无键不受影响——见 computeManifestIdentityFields）。
+   */
+  adapter_model_pin?: AdapterModelPin;
+  /**
+   * 视觉委托（plan ab072691 t1⑤）：只读视觉 provider 的**冻结身份**。
+   *
+   * 与 adapter_model_pin 平行但**独立**：那是 primary 执行身份，这是第二个「只看图」
+   * endpoint。条件入身份哈希（键在场即入，旧 manifest 无键不受影响）；resume 只认冻结值、
+   * 不重读 framework.local.json；successor 随 ...inherited 继承。
+   *
+   * **支持资格不在 manifest 层判**——资格唯一真源是 adapter.yaml.visual_provider 完整声明
+   * （adapter-catalog）。这里只做 shape 校验，刻意**不**复用 KNOWN_MODEL_PIN_ADAPTERS：
+   * 那是 primary 模型钉的已知集，拿来当 provider 资格判据就是第二个平行真源。
+   */
+  visual_provider_pin?: ProviderRef;
+  /**
+   * Legacy-only：旧 manifest 可能含该字段。读取/重写时保留字节语义，但运行策略和
+   * identity 均忽略；新 CLI/manifest writer 不再生成它。
+   */
+  allow_blind_visual?: true;
   budget: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
-  /**
-   * plan a5f9c3e2 t3①：vision lineage 处置意图。**是 recovery intent，不是 authority**
-   * ——CLI 旗标可被模型拼出、无 key 部署下 manifest 整链在 agent 可写面，故本字段
-   * 绝不进 AuthorityFacts.grants。其安全性由「仅 fresh 可选 + 断裂显式记事件 +
-   * 禁止声称历史连续性 + 全链重验」保证：危险的不是 reset 本身，是静默的 reset。
-   *
-   * 唯一入口 CLI `--vision-lineage=reset`；缺省 continue；resume 携 reset 直接拒绝；
-   * 运行中不得自动升级为 reset。
-   *
-   * **旧 manifest 兼容**：文档中无该键时行为按 `continue`，且身份字段集**不注入该键**
-   * （见 computeManifestIdentityFields）——否则既有 run resume 会多出一个身份字段而误判漂移。
-   */
-  vision_lineage?: 'continue' | 'reset';
   run_id: string;
   report_dir: string;
   created_at: string;
@@ -85,6 +147,10 @@ export interface GoalManifest {
     max_files: number;
     approved_by?: string;
   }>;
+  /** T3 successor metadata; the audited supersede event remains the authority. */
+  successor_of?: string;
+  inherited_round_fingerprints?: string[];
+  inherited_drift_fingerprints?: string[];
 }
 
 export interface GoalManifestParseOptions {
@@ -137,23 +203,61 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
-  // plan a5f9c3e2 t3①：vision_lineage **仅在文档中实际存在该键时**入身份字段集。
-  // 凭空给旧 manifest 补默认值会让既有 run resume 多出一个字段 → 误判漂移。
-  // 键在场即入哈希，故停机期间被补写仍会被既有 drift 检测发现（安全性不打折）。
-  if (Object.prototype.hasOwnProperty.call(manifest, 'vision_lineage')) {
-    fields.vision_lineage = manifest.vision_lineage ?? null;
+  // adapter_model_pin 条件入集——键在场即在
+  // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'adapter_model_pin')) {
+    fields.adapter_model_pin = manifest.adapter_model_pin ?? null;
+  }
+  // plan ab072691 t1⑤：visual_provider_pin 同款条件入集——键在场即在哈希，旧 manifest
+  // 无键不受影响（否则既有 run resume 会凭空多出字段而误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'visual_provider_pin')) {
+    fields.visual_provider_pin = manifest.visual_provider_pin ?? null;
+  }
+  // plan c4e8a1f7 T2：requirement_source_files 同款条件入集——键在场即在哈希（fresh
+  // 由 resolveRequirementInput 来源列表写入）；旧 manifest 无键不受影响（resume 不误判漂移）。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'requirement_source_files')) {
+    fields.requirement_source_files = manifest.requirement_source_files ?? null;
+  }
+  // goal-run-birth-contract：run_base_sha 是条件身份字段。diff 必须照常看到它，
+  // write-once 授权防线由 goal-runner 的 drift decision/replay 层负责。
+  if (Object.prototype.hasOwnProperty.call(manifest, 'run_base_sha')) {
+    fields.run_base_sha = manifest.run_base_sha ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'phase_chain')) {
+    fields.phase_chain = manifest.phase_chain ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'successor_of')) {
+    fields.successor_of = manifest.successor_of ?? null;
+    fields.inherited_round_fingerprints = manifest.inherited_round_fingerprints ?? null;
+    fields.inherited_drift_fingerprints = manifest.inherited_drift_fingerprints ?? null;
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(fields)) {
-    out[k] = crypto.createHash('sha256').update(stableJson(v), 'utf-8').digest('hex').slice(0, 16);
+    out[k] = manifestIdentityFieldDigest(v);
   }
   return out;
 }
 
+/**
+ * 身份字段集里**单个字段的取值指纹**。
+ *
+ * 存在的理由是给**消费方**用：`manifest_identity_fields` 里存的是逐字段 sha256 截断，
+ * **不是原值**。任何想问"出生时这个字段是不是某个值"的代码，都必须拿本函数算出期望
+ * 指纹再比，**不能拿原值去比**——那样恒不相等，且失败得毫无声息。
+ *
+   * 消费方必须使用 writer 的同一摘要口径，不能拿原值与指纹直接比较。
+ */
+export function manifestIdentityFieldDigest(value: unknown): string {
+  return crypto.createHash('sha256').update(stableJson(value), 'utf-8').digest('hex').slice(0, 16);
+}
+
 export function computeManifestIdentityHash(manifest: GoalManifest): string {
-  return crypto.createHash('sha256')
-    .update(stableJson(computeManifestIdentityFields(manifest)), 'utf-8')
-    .digest('hex');
+  return computeManifestIdentityFieldsHash(computeManifestIdentityFields(manifest));
+}
+
+/** run_created / identity replay 共用的逐字段集合摘要口径。 */
+export function computeManifestIdentityFieldsHash(fields: Record<string, string>): string {
+  return crypto.createHash('sha256').update(stableJson(fields), 'utf-8').digest('hex');
 }
 
 /** 两组逐字段哈希间发生变化的字段名（含新增/删除键）。 */
@@ -166,9 +270,8 @@ export function diffManifestIdentityFields(
 }
 
 /** override 旗标 → 其授权可变更的身份字段集（--override-manifest=整体替换，授权全部字段）。
- * 十三轮 review P0-1：fidelity/fidelity_receipt 字段授权**不在本函数**——由
- * evaluateFidelityTransitionAuthorization（goal-preflight）在枚举+降档 receipt 验真通过后
- * 精确给出（十二轮的 fidelityApplied 搭车授权会放行 resume 绕过降档凭证验证的路径）。 */
+ * fidelity 由 evaluateFidelityTransitionAuthorization（goal-preflight）按合法枚举和只升不降
+ * 精确给出；fidelity_receipt 已退役，不获得字段授权。 */
 export function overrideAuthorizedIdentityFields(argv: {
   'override-manifest'?: boolean;
   'override-start'?: boolean;
@@ -210,6 +313,25 @@ export function newRunId(): string {
 function normalizePhase(v: unknown, fallback: FeaturePhase): FeaturePhase {
   if (typeof v !== 'string' || !v.trim()) return fallback;
   return v.trim() as FeaturePhase;
+}
+
+export function normalizeGoalPhaseChain(
+  value: unknown,
+  label = 'phase_chain',
+): FeaturePhase[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`[goal-manifest] ${label} 必须为非空 phase 数组`);
+  }
+  const normalized = value.map((item) => {
+    if (typeof item !== 'string' || !item.trim()) {
+      throw new Error(`[goal-manifest] ${label} 只能包含非空 phase 字符串`);
+    }
+    return item.trim() as FeaturePhase;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`[goal-manifest] ${label} 不得包含重复 phase`);
+  }
+  return normalized;
 }
 
 function mergeDependencyPolicy(raw?: Partial<DependencyPolicy>): Required<DependencyPolicy> {
@@ -326,6 +448,92 @@ function parsePreAuthorizedMutations(
   return out.length > 0 ? out : undefined;
 }
 
+function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[goal-manifest] adapter_model_pin 必须为对象');
+  }
+  const r = raw as Record<string, unknown>;
+  validateAdapterModelPinValue(r.adapter, r.value);
+  return { adapter: String(r.adapter).trim(), value: String(r.value).trim() };
+}
+
+/** 已知 adapter 集（model pin 形状校验的 adapter ∈ 已知集约束）。 */
+const KNOWN_MODEL_PIN_ADAPTERS = new Set([
+  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic',
+]);
+
+/**
+ * shape 校验（**运行时**，不信任 TS 类型——JSON 解析后的不可信值须逐项检查）。
+ * adapter 须为非空字符串且 ∈ 已知集；value 须为字符串、trim 后非空 ≤128 无控制字符。
+ * 违规整体拒绝加载/解析。
+ */
+export function validateAdapterModelPinValue(adapter: unknown, value: unknown): void {
+  if (typeof adapter !== 'string' || !adapter.trim()) {
+    throw new Error('[goal-manifest] adapter_model_pin.adapter 必填且须为非空字符串');
+  }
+  const a = adapter.trim();
+  if (!KNOWN_MODEL_PIN_ADAPTERS.has(a)) {
+    throw new Error(
+      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${['codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic'].join('|')}）`,
+    );
+  }
+  if (typeof value !== 'string') {
+    throw new Error('[goal-manifest] adapter_model_pin.value 必填且须为字符串');
+  }
+  const v = value.trim();
+  if (!v) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 必填');
+  }
+  if (v.length > 128) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 长度须 ≤128');
+  }
+  if (/[\u0000-\u001F\u007F]/.test(v)) {
+    throw new Error('[goal-manifest] adapter_model_pin.value 不得含控制字符');
+  }
+}
+
+/**
+ * plan ab072691 t1⑤：visual_provider_pin shape 校验（**运行时**，不信任 TS 类型）。
+ * adapter/model 均须非空字符串、trim 后 ≤128、无控制字符。
+ * **刻意不校验 adapter ∈ 某个集合**：provider 支持资格的唯一真源是
+ * agents/<adapter>/adapter.yaml.visual_provider 完整声明（adapter-catalog 派生），
+ * manifest 层再放一份名单就是平行真源。资格不足的处置在 CLI/路由层按输入形态分流
+ * （显式 CLI fail-fast / 旧 local 无人值守 WARN+blind），不是「拒绝加载 manifest」。
+ */
+export function validateVisualProviderPinValue(adapter: unknown, model: unknown): void {
+  const check = (label: string, raw: unknown): string => {
+    if (typeof raw !== 'string' || !raw.trim()) {
+      throw new Error(`[goal-manifest] visual_provider_pin.${label} 必填且须为非空字符串`);
+    }
+    const v = raw.trim();
+    if (v.length > 128) throw new Error(`[goal-manifest] visual_provider_pin.${label} 长度须 ≤128`);
+    if (/[\u0000-\u001F\u007F]/.test(v)) {
+      throw new Error(`[goal-manifest] visual_provider_pin.${label} 不得含控制字符`);
+    }
+    return v;
+  };
+  check('adapter', adapter);
+  check('model', model);
+}
+
+function normalizeVisualProviderPin(raw: unknown): ProviderRef | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[goal-manifest] visual_provider_pin 必须为对象');
+  }
+  const r = raw as Record<string, unknown>;
+  validateVisualProviderPinValue(r.adapter, r.model);
+  return { adapter: String(r.adapter).trim(), model: String(r.model).trim() };
+}
+
+function validateLegacyBlindVisualField(input: Record<string, unknown>): void {
+  if (!Object.prototype.hasOwnProperty.call(input, 'allow_blind_visual')) return;
+  if (input.allow_blind_visual !== true) {
+    throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
+  }
+}
+
 function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'full'> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -358,15 +566,26 @@ function normalizeMinimumAssurance(raw: unknown): Record<string, 'degraded' | 'f
  *   · 相对路径按 **projectRoot** 解析（两个入口同一口径，不依赖各自 cwd）；
  *   · **只读取内容**。防陈旧靠调用方在 fresh 时把内容冻结进 manifest，
  *     **不靠**规定文件命名或禁止复用路径——权威需求文件本就该长期复用。
+ *
+ * plan c4e8a1f7 T2：来源是 provenance、不是需求正文——返回 frozen text + 可选
+ * `requirement_source_files[]`（项目内→项目根相对正斜杠；项目外→保留绝对路径，只读正文、
+ * 不扫描其 sibling；inline → 空数组）。fresh manifest 持久化该列表并纳入身份哈希，
+ * resume 只读冻结值，successor 继承并在显式 file 增量时去重追加。
  */
+export interface ResolvedRequirementInput {
+  text: string | undefined;
+  /** 来源文件（项目根相对或绝对）；inline requirement 为空数组 */
+  sources: string[];
+}
+
 export function resolveRequirementInput(input: {
   requirement?: unknown;
   requirementFile?: unknown;
   projectRoot: string;
-}): string | undefined {
+}): ResolvedRequirementInput {
   const inline = typeof input.requirement === 'string' ? input.requirement : undefined;
   const fileRaw = typeof input.requirementFile === 'string' ? input.requirementFile.trim() : '';
-  if (!fileRaw) return inline;
+  if (!fileRaw) return { text: inline, sources: [] };
   if (inline !== undefined && inline.trim().length > 0) {
     throw new Error(
       '[goal] --requirement 与 --requirement-file 互斥：两者同给时无法判定哪个是真值，' +
@@ -381,7 +600,13 @@ export function resolveRequirementInput(input: {
   if (!text) {
     throw new Error(`[goal] --requirement-file 内容为空：${abs}`);
   }
-  return text;
+  const projectRootAbs = path.resolve(input.projectRoot);
+  const rel = path.relative(projectRootAbs, abs);
+  const sources =
+    rel && !rel.startsWith('..') && !path.isAbsolute(rel)
+      ? [rel.split(path.sep).join('/')]
+      : [abs];
+  return { text, sources };
 }
 
 export function buildGoalManifestFromInput(
@@ -438,18 +663,50 @@ export function buildGoalManifestFromInput(
     typeof input.fidelity_receipt === 'string' && input.fidelity_receipt.trim()
       ? input.fidelity_receipt.trim().replace(/\\/g, '/')
       : undefined;
-  // t3①：仅在输入显式给出该键时写入（缺省不落键——旧 manifest 兼容与身份字段集同源约束）
-  const rawLineage = input.vision_lineage;
-  if (rawLineage !== undefined && rawLineage !== 'continue' && rawLineage !== 'reset') {
-    throw new Error(
-      `[goal-manifest] vision_lineage 值非法（${String(rawLineage)}）——须 continue|reset`,
-    );
+  // plan d7f3a9c4 t1：---manifest 文件可携带 adapter_model_pin（fresh 由
+  // resolveFinalModelPin 落键；此处仅保真解析 + shape 校验）
+  const adapterModelPin = normalizeAdapterModelPin(input.adapter_model_pin);
+  // plan ab072691 t1⑤：--manifest 文件可携带 visual_provider_pin（fresh 由
+  // resolveFinalVisualProviderPin 落键；此处仅保真解析 + shape 校验）
+  const visualProviderPin = normalizeVisualProviderPin(
+    (input as Record<string, unknown>).visual_provider_pin,
+  );
+  // legacy input may be parsed for a clear shape error, but normalized/new manifests never re-emit
+  // the retired waiver. Existing run manifests remain readable through loadGoalManifestFromRun.
+  validateLegacyBlindVisualField(input);
+
+  // plan c4e8a1f7 T2：requirement_source_files 保真解析（字符串数组；空数组/非数组
+  // fail-closed——来源列表是 fresh 解析器产物，手写 manifest 混入形状错误不得静默吞）。
+  let requirementSourceFiles: string[] | undefined;
+  if (Object.prototype.hasOwnProperty.call(input, 'requirement_source_files')) {
+    const raw = input.requirement_source_files;
+    if (!Array.isArray(raw) || raw.some((x) => typeof x !== 'string' || !x.trim())) {
+      throw new Error('[goal-manifest] requirement_source_files 必须为非空字符串数组');
+    }
+    requirementSourceFiles = raw.map((x) => String(x).trim().replace(/\\/g, '/'));
   }
+
+  let runBaseSha: string | undefined;
+  if (Object.prototype.hasOwnProperty.call(input, 'run_base_sha')) {
+    const raw = typeof input.run_base_sha === 'string' ? input.run_base_sha.trim().toLowerCase() : '';
+    if (!/^[0-9a-f]{40}$/.test(raw)) {
+      throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
+    }
+    runBaseSha = raw;
+  }
+
+  const phaseChain = Object.prototype.hasOwnProperty.call(input, 'phase_chain')
+    ? normalizeGoalPhaseChain(input.phase_chain)
+    : undefined;
 
   return {
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
-    ...(rawLineage !== undefined ? { vision_lineage: rawLineage } : {}),
+    ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
+    ...(visualProviderPin ? { visual_provider_pin: visualProviderPin } : {}),
+    ...(requirementSourceFiles ? { requirement_source_files: requirementSourceFiles } : {}),
+    ...(runBaseSha ? { run_base_sha: runBaseSha } : {}),
+    ...(phaseChain ? { phase_chain: phaseChain } : {}),
     schema_version: '1.0',
     start_phase: normalizePhase(input.start_phase, 'spec'),
     end_phase: normalizePhase(input.end_phase, 'testing'),
@@ -473,6 +730,93 @@ export function buildGoalManifestFromInput(
 }
 
 /**
+ * e9d4b7a3 t1：successor 显式 requirement 增量的稳定分节标记（也是机器检测锚——
+ * isSuccessorRepairRequirement 据此识别"本轮修复增量"是否存在；coding 侧能力块
+ * 依此收紧 auto_crop 优先级，见 goal-runner buildCapabilityBlock）。
+ */
+export const SUCCESSOR_REQUIREMENT_INCREMENT_MARKER =
+  '## 本轮修复增量 (successor requirement increment)';
+
+/** 合并后的 requirement 是否携带显式修复增量段。 */
+export function isSuccessorRepairRequirement(requirement: string | undefined | null): boolean {
+  return typeof requirement === 'string' && requirement.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+}
+
+/**
+ * e9d4b7a3 t1：explicit 增量与源 requirement 合并——源正文在前、增量段在后（唯一任务
+ * 真源仍是 manifest.requirement 原文，coding prompt 逐字可见两段）。源已含标记（重复
+ * 合并/增量自带标记）时不二次嵌套标记段——增量直接续接在既有标记段之后，标记恒一个。
+ */
+export function mergeSuccessorRequirement(
+  sourceRequirement: string | undefined,
+  increment: string,
+): string {
+  const source = (sourceRequirement ?? '').trim();
+  const inc = increment.trim();
+  if (source.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER)) {
+    return [source, '', inc].filter(l => l !== '').join('\n');
+  }
+  return [source, '', SUCCESSOR_REQUIREMENT_INCREMENT_MARKER, '', inc].filter(l => l !== '').join('\n');
+}
+
+/**
+ * e9d4b7a3 t1（二轮 review P1 修正）：successor 的**显式 requirement 增量合并**不在本函数
+ * 做——本函数只做合同继承（requirement 逐字继承源 run）；「是否显式提供 --requirement /
+ * --requirement-file」是 CLI 输入事实，与 manifest 字段值无关（--manifest 自带不同文本
+ * 不得被误判为增量）。合并由 goal-runner 在捕获显式 flag + applyManifestCliOverrides 全部
+ * 完成之后调用 mergeSuccessorRequirement 一次性执行（唯一合并点）。
+ */
+export function inheritSuccessorManifest(
+  manifest: GoalManifest,
+  source: GoalManifest,
+  fingerprints: {
+    round: readonly string[];
+    drift: readonly string[];
+  },
+): GoalManifest {
+  const unique = (values: readonly string[]): string[] =>
+    [...new Set(values.map(value => value.trim()).filter(Boolean))];
+  if (manifest.feature !== source.feature) {
+    throw new Error(
+      `[goal-manifest] successor feature 不一致（当前=${manifest.feature}，源=${source.feature}）`,
+    );
+  }
+
+  // 后继不是一个"默认 fresh manifest 再补预算"的新契约：源 manifest 才是本条
+  // supersede 链的合同 SSOT。只替换新 run 的身份与明确要求的新起点；其余字段（end/
+  // requirement/adapter/chain/fidelity/dependency/预授权等）全部原样继承。阶段完成态
+  // 不在 manifest 中，故不会跨 run 复制；预算/无人值守深拷贝只是避免调用方后续改写源对象。
+  const inherited = JSON.parse(JSON.stringify(source)) as GoalManifest;
+  // adapter_model_pin 是出生持续的模型钉，successor 默认继承源 run pin（覆盖继承值须显式 --adapter-model 出生
+  // 输入，由 resolveFinalModelPin 裁决）。故此处**不得剥离**，随 ...inherited 原样继承。
+  // plan ab072691 t1⑤：visual_provider_pin 同理随 ...inherited 继承（出生时显式
+  // --visual-adapter/--visual-model 可覆盖，由 resolveFinalVisualProviderPin 裁决）。
+  // legacy allow_blind_visual 没有运行语义；successor 不复制无效历史字段。
+  delete inherited.allow_blind_visual;
+  // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
+  // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
+  const sourceRound = source.inherited_round_fingerprints ?? [];
+  const sourceDrift = source.inherited_drift_fingerprints ?? [];
+  // plan c4e8a1f7 T2：successor 继承源 requirement 来源列表，并在显式 file 增量时
+  // 去重追加（manifest.requirement_source_files 由 CLI 显式 --requirement-file 解析产生）。
+  const sourceFiles =
+    source.requirement_source_files ?? [];
+  const explicitFiles = manifest.requirement_source_files ?? [];
+  const mergedSourceFiles = [...new Set([...sourceFiles, ...explicitFiles])];
+  return {
+    ...inherited,
+    start_phase: manifest.start_phase,
+    run_id: manifest.run_id,
+    report_dir: manifest.report_dir,
+    created_at: manifest.created_at,
+    successor_of: source.run_id,
+    ...(mergedSourceFiles.length > 0 ? { requirement_source_files: mergedSourceFiles } : {}),
+    inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
+    inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
+  };
+}
+
+/**
  * 治 2.3.0 历史 manifest：legacy 扁平 timeout_seconds=3600 且无 per-phase map →
  * 视为"未显式设置"，删除该字段，使 **resume 旧 run** 走 goal-timeout 的 per-phase 默认表
  * （否则历史续跑里 review/testing 仍只有 60min，等于没修这次现场问题）。
@@ -482,31 +826,6 @@ export function buildGoalManifestFromInput(
  * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
  */
 const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
-/**
- * plan a5f9c3e2 t3①：lineage 意图解析（唯一读取点）。缺键 → `continue`。
- * 注意：**读到 `reset` 只表示「已声明放弃历史连续性」这一 recovery intent**，
- * 不表示任何授权；调用方仍须按 fresh-only + 断裂记事件 + 禁连续性主张 + 全链重验落地。
- */
-export function resolveVisionLineage(manifest: Pick<GoalManifest, 'vision_lineage'>): 'continue' | 'reset' {
-  return manifest.vision_lineage === 'reset' ? 'reset' : 'continue';
-}
-
-/**
- * t3①：resume 携 `reset` 直接拒绝——放弃历史连续性只能在 fresh run 启动时声明，
- * run 中途/续跑不得升级（否则等于跑到一半把已建立的链一笔勾销）。
- * 返回错误消息（null=合法）。
- */
-export function visionLineageResumeIssue(
-  manifest: Pick<GoalManifest, 'vision_lineage'>,
-  invocation: 'fresh' | 'resume',
-): string | null {
-  if (invocation === 'resume' && resolveVisionLineage(manifest) === 'reset') {
-    return 'vision_lineage=reset 仅允许 fresh run 声明——resume 携 reset 拒绝启动' +
-      '（放弃历史连续性不得在续跑中途升级）。如确需重建 lineage，请以新 run_id 启动。';
-  }
-  return null;
-}
-
 export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
   const u = manifest.unattended;
   if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {
@@ -609,10 +928,98 @@ export function resolveRawRunInput(
   return { feature, runId, isResume, dryRun };
 }
 
+/**
+ * Resume 只是在既有 run 上重新取得执行身份；effective adapter 未变化时，manifest 中
+ * 记录的仍应是该 run 出生时的来源。把一次 local 对账写成 `override` 会改动冻结
+ * manifest 的全文件 hash，进而把 phase-evidence-manifest 全部误判为 stale。
+ */
+export function resolvePersistedAdapterProvenance(opts: {
+  isResume: boolean;
+  originalAdapter?: string;
+  originalProvenance?: string;
+  effectiveAdapter: string;
+  decisionProvenance: RunAdapterProvenance;
+}): string | undefined {
+  if (opts.isResume && opts.originalAdapter === opts.effectiveAdapter) {
+    return opts.originalProvenance;
+  }
+  return opts.decisionProvenance;
+}
+
+function serializeGoalManifest(manifest: GoalManifest): string {
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+function serializedGoalManifestSha256(manifest: GoalManifest): string {
+  return crypto.createHash('sha256').update(serializeGoalManifest(manifest), 'utf-8').digest('hex');
+}
+
+/**
+ * phase evidence 的旧条目保存的是全文件 hash，无法直接迁移为字段级 hash。兼容判断只
+ * 枚举 adapter_provenance（身份哈希明确排除的审计元数据）；命中意味着其它每个字节
+ * 都与闭环时一致。adapter/requirement/budget 等真实字段不参与枚举，仍 fail-closed。
+ */
+export function goalManifestHashMatchesModuloAdapterProvenance(
+  manifest: GoalManifest,
+  expectedHash: string | null,
+): boolean {
+  if (!/^[0-9a-f]{64}$/.test(expectedHash ?? '')) return false;
+  if (serializedGoalManifestSha256(manifest) === expectedHash) return true;
+  const candidates: Array<RunAdapterProvenance | undefined> = [undefined, ...RUN_ADAPTER_PROVENANCES];
+  return candidates.some((provenance) => {
+    const candidate = { ...manifest };
+    if (provenance === undefined) delete candidate.adapter_provenance;
+    else candidate.adapter_provenance = provenance;
+    return serializedGoalManifestSha256(candidate) === expectedHash;
+  });
+}
+
+export type FrozenAdapterProvenanceRepair =
+  | { repaired: false; manifest: GoalManifest }
+  | { repaired: true; manifest: GoalManifest; from: 'override'; to: string | undefined };
+
+/**
+ * 3.0.0 兼容修复：旧 runner 曾在同 adapter resume 时把 `adapter_provenance` 改为
+ * `override`。只在“仅还原该字段即可逐字命中首个 run_start 冻结 hash”时恢复；若
+ * requirement、预算、adapter 等还有任何漂移，所有候选均不命中并保持 fail-closed。
+ */
+export function restoreFrozenAdapterProvenance(
+  manifest: GoalManifest,
+  frozenManifestHash: string | null,
+): FrozenAdapterProvenanceRepair {
+  if (manifest.adapter_provenance !== 'override' || !/^[0-9a-f]{64}$/.test(frozenManifestHash ?? '')) {
+    return { repaired: false, manifest };
+  }
+  if (serializedGoalManifestSha256(manifest) === frozenManifestHash) {
+    return { repaired: false, manifest };
+  }
+
+  const candidates: Array<RunAdapterProvenance | undefined> = [
+    undefined,
+    ...RUN_ADAPTER_PROVENANCES.filter((provenance) => provenance !== 'override'),
+  ];
+  const matches: Array<{ manifest: GoalManifest; provenance: string | undefined }> = [];
+  for (const provenance of candidates) {
+    const candidate = { ...manifest };
+    if (provenance === undefined) delete candidate.adapter_provenance;
+    else candidate.adapter_provenance = provenance;
+    if (serializedGoalManifestSha256(candidate) === frozenManifestHash) {
+      matches.push({ manifest: candidate, provenance });
+    }
+  }
+  if (matches.length !== 1) return { repaired: false, manifest };
+  return {
+    repaired: true,
+    manifest: matches[0].manifest,
+    from: 'override',
+    to: matches[0].provenance,
+  };
+}
+
 export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
   const abs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+  fs.writeFileSync(abs, serializeGoalManifest(manifest), 'utf-8');
   return abs;
 }
 
@@ -643,6 +1050,30 @@ export function validateLoadedGoalManifest(
     throw new Error(
       `[goal-manifest] manifest.report_dir 必须为 feature 绑定路径: ${canonical}（收到: ${reportDir}）`,
     );
+  }
+  // plan d7f3a9c4 t2：加载时 shape 校验 adapter_model_pin（adapter/value shape 违规
+  // 整体拒绝加载——停机篡改应命中既有 manifest_identity_drift）。
+  if (manifest.adapter_model_pin !== undefined) {
+    validateAdapterModelPinValue(
+      manifest.adapter_model_pin.adapter,
+      manifest.adapter_model_pin.value,
+    );
+  }
+  // plan ab072691 t1⑤：同款加载期 shape 校验（停机篡改命中既有 manifest_identity_drift）。
+  if (manifest.visual_provider_pin !== undefined) {
+    validateVisualProviderPinValue(
+      manifest.visual_provider_pin.adapter,
+      manifest.visual_provider_pin.model,
+    );
+  }
+  if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
+    throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
+  }
+  if (manifest.phase_chain !== undefined) {
+    manifest.phase_chain = normalizeGoalPhaseChain(manifest.phase_chain);
+  }
+  if (manifest.allow_blind_visual !== undefined && manifest.allow_blind_visual !== true) {
+    throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
   }
 }
 

@@ -1,0 +1,34 @@
+# contracts.yaml — plan phase machine contract
+schema_version: "1.0"
+feature: "{feature}"
+
+modules:
+  - name: "{ModuleA}"
+    layer: "{outer-layer-id}"
+    format: "{host-module-format}"
+    change_type: "modify"
+    package_path: "path/to/module"
+    # File-valued optional fields below must also appear in top-level files.
+    # har_index: "path/to/module/Index.ext"
+    # builder: "path/to/module/build-script.ext"
+    # export_file: "path/to/module/Index.ext"
+    # export_files: []
+
+module_dependencies: {}
+data_models: []
+interfaces: []
+components: []
+state_management: []
+
+navigation:
+  # 3.0 canonical: config_files is the only navigation file field (registration/config
+  # files such as main_pages.json / route_map.json). Every entry must also appear in
+  # top-level files; any other file-bearing navigation key fails plan closure.
+  config_files: []
+
+resource_keys: {}
+prd_to_code_traceability: []
+
+# Sole file-authorization set for coding/review/UT and every reference above.
+files:
+  - "path/to/module/changed-file.ext"

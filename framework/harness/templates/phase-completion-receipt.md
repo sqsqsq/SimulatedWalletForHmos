@@ -19,20 +19,34 @@ agent_model: "<实际模型 id，如 minimax-2.5 / gpt-5.5 / <vendor-model-id>>"
 agent_runtime: "<cli-or-sdk-identifier | other>"
 claimed_completion_at: "<ISO 8601, 如 2026-04-27T10:00:00+08:00>"
 claimed_completion_commit_sha: "<git rev-parse HEAD 真实值>"
-# goal 模式下**必填**：填 env `MAISON_GOAL_ATTEMPT` 的当前值（非 goal 模式留空即可）。
-# 它是"本回执属于哪一次 attempt"的唯一凭据——**不要从上一轮回执抄**：抄了会让完成观测
-# 把上一轮的旧声明当作本轮完成，agent 刚启动就被判完成并终止（实证 run 20260803T103413Z-3f72a8：
-# coding 连续两次 attempt 各只活 35 秒，重试预算 90 秒烧光）。
-claimed_attempt_id: "<env MAISON_GOAL_ATTEMPT 的值；非 goal 模式留空>"
+# 本回执属于哪一次 attempt 的唯一凭据。goal 模式下由 runner 在骨架中**预填**（closure
+# attempt 开始前会重写为当前轮次身份，如 "i3"）——**agent 不得修改本字段**：goal 态
+# check-receipt 与 runner 身份精确等值校验，手改/抄旧值即 FAIL（抄旧回执还会让完成观测
+# 把上一轮旧声明当本轮完成，实证 run 20260803T103413Z-3f72a8：coding 连续两次 attempt
+# 各只活 35 秒）。非 goal（人工）模式保持留空即可。
+claimed_attempt_id: ""
 
 # ----------------------------------------------------------------------
-# 1. Verifier 子 agent（语义级凭证；机器无法替代的调用自证）
+# 1. Verifier 子 agent（**兼容投影 · 已退出裁决权威**）
 # ----------------------------------------------------------------------
+# plan e5b8c3f7：verifier 的机器真源是
+#   doc/features/<feature>/<phase>/reports/verifier.report.<subject>.json
+# （按 subject 分区；当前是哪一份由 summary.verifier_subject_id 决定）
+# 由 SubagentStop hook 在四方对账后发布（request 重算 subject == summary.verifier_subject_id
+# == 终态块回显，且 request 的 prompt_path/prompt_sha256 与磁盘原件相符）。check-receipt 真验真：feature/phase 匹配、agent
+# 身份在场、subject 现值、结构合法、verdict 与 BLOCKER 计数一致——**本块手填什么都
+# 不改变判定**。填错只会得到一条 MAJOR 提示，填对也不能让不合格的报告通过。
+#
+# 本块保留至少一个 minor 窗口，供存量回执解析不断裂；新回执照填即可（如实抄机器事实）。
+# 让 verifier 报告出现的正确路径：主 agent 用 Task 触发 subagent_type=verifier，
+# prompt = summary.verifier_request 指向的 verifier.request.<subject>.json **整段 JSON**
+# （verifier 自读其中的 prompt_path）。harness 未输出 request = 本阶段不适用 verifier，
+# 本块留空即可，闭环不要求它。
 verifier_subagent:
-  invoked_via: "Task(subagent_type=verifier)"   # 不允许 "told user to run"
+  invoked_via: "Task(subagent_type=verifier)"   # 兼容投影；不允许 "told user to run"
   prompt_template: "framework/harness/prompts/verify-<phase>.md"
-  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.md"
-  verdict: "PASS"        # PASS | FAIL；FAIL 即未闭环（从 verifier 报告摘录原文）
+  report_path: "doc/features/<feature>/<phase>/reports/verifier.report.<subject>.json"
+  verdict: "PASS"        # 兼容投影：如实抄 verifier.report.json 的 verdict
   ran_at: "<ISO 8601>"
 
 # ----------------------------------------------------------------------

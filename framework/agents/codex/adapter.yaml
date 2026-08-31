@@ -26,8 +26,35 @@ user_confirmation:
 # codex exec 读图能力待实测；默认定档 none
 image_input: none
 
+# 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
+# 只读手段=exec 的只读沙箱档位；**绝不复用** goal headless 的 danger-full-access argv。
+# stdout 信封复用 e6 已验证的 turn JSONL 终态契约（completion 成立且无 terminal failure
+# 才投影正文）。运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
+# 入册凭据（plan ab072691 tasks 7.7，宿主 codex-cli 0.149.0 真实 invocation 实证）：
+#   argv `--ask-for-approval never exec --model <m> --sandbox read-only --image <png> --json`；
+#   一次调用 14.9s outcome=success；随机金丝雀四象限颜色 4/4 命中、随机 token 逐字报回
+#   （唯一偏差是 `0`→`O` 同形字，非视觉盲区）；turn_jsonl 正文投影成立；
+#   invoke 前后 `git status --porcelain` 逐字节一致；usage 由既有 invokeAgentHeadless 回填
+#   （capture=stdout_json confidence=measured）。
+visual_provider:
+  readonly_invoke: read_only_sandbox
+  image_transport: native_image_flag
+  stdout_envelope: turn_jsonl
+  model_replay: '--model'
+
 goal_capability:
   mode: native_goal
+  # plan e6b3f8d2 t1：`codex exec --json` 打印 JSONL 事件流（0.149.0 本机实证）。
+  # · output_delivery=streaming —— stdout 逐事件即时到达（非整段缓冲），活性判据可据此
+  #   把「工作面停滞」与「控制面心跳」分开（goal-progress SUSPECTED_STALL，t4）。
+  # · usage_capture=stdout_json —— 末行 `turn.completed` 自带 usage（input_tokens/
+  #   output_tokens…），既有 fromStdoutJson 解析器直接可读，不新增枚举。
+  # · **tool_event_provenance 刻意保持缺省 none**：该字段是「工具调用证据可审计」能力
+  #   （图片读取事件入册制，docs/operations/adapter-tool-event-provenance.md），
+  #   stdout 有 terminal JSONL ≠ 工具调用可审计。`--json` 由 agent-invoke 的 codexArgv
+  #   独立追加，不借工具证据字段触发，也不签发 verified critic 回执。
+  output_delivery: streaming
+  usage_capture: stdout_json
   in_session_reconcile: true
   phase_context_isolation: true
   supports_resume: true
@@ -38,9 +65,13 @@ goal_capability:
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (codex exec …, prompt via STDIN — NOT the {{PROMPT}} argv below).
-    headless_invoke: 'codex exec --sandbox workspace-write --ask-for-approval never "{{PROMPT}}"'
+    # plan a8e5c3f9：headless 全权限契约——恒 approval never + danger-full-access，
+    # 不再随 manifest write_mode 摇摆声明 workspace-write。
+    # plan e6b3f8d2 t1：运行时 argv 另含 `--json`（terminal 事件收口，见 codexArgv）——
+    # 本模板只用于能力校验，不是运行时真值。
+    headless_invoke: 'codex --ask-for-approval never exec --sandbox danger-full-access "{{PROMPT}}"'
     unattended:
-      write_mode: workspace-write
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []

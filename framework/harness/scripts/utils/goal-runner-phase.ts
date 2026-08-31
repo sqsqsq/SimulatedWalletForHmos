@@ -198,6 +198,8 @@ export interface GoalRunEvent {
   status?: string;
   blocking_class?: string;
   failure_kind?: string;
+  /** defer verdict 的精确原因；缺省兼容旧事件为 external_blocked。 */
+  deferred_reason?: string;
   failure_kind_classified?: string;
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
@@ -224,9 +226,26 @@ export interface GoalRunEvent {
   output_delivery?: string;
   /** P1-7：adapter 版本运行时探测（adapter_probe 事件；探测失败记 unknown 不阻塞）。 */
   adapter_version?: string;
+  /** plan a8e5c3f9 t6：adapter_probe 事件带 effective 权限——旧 manifest 原文（如
+   * workspace-write）不再反映实际执行权限，审计以本字段为准。 */
+  effective_write_mode?: string;
+  effective_approval_mode?: string;
+  /** 历史字段：silent watchdog 生产链已于 plan e6b3f8d2 t1 删除，仅读旧 run 事件用。 */
   silent_killed?: boolean;
+  /**
+   * plan e6b3f8d2 t1（agent_invoke_end）：adapter terminal 失败终态（codex `turn.failed`）。
+   * 与 completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零。
+   */
+  terminal_failure_observed?: boolean;
+  /**
+   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 诊断摘要（turn.failed 正文 + 顶层
+   * error 事件）。**纯诊断**——不进任何 settle / classifier / retry 判据。
+   */
+  terminal_error_excerpt?: string;
   lingering_pipe?: boolean;
   recovered?: boolean;
+  /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */
+  skipped?: boolean;
   invoke_id?: string;
   invoke_start_ts?: string;
   chain?: string[];
@@ -439,6 +458,9 @@ export function lastPhaseVerdictTransientApiError(
   return false;
 }
 
+// 【已删除 · pass snapshot 退役】responsibilityRerunPending（"缓存失效后重跑责任阶段"
+// 待办态）：其唯一置位源 phase_halt(pass_snapshot_unavailable) 已不再产生。
+
 /**
  * E4（案B chrys 银行卡实证：8 attempt/4h19m，advance_blocked 两次分别以不同 reason
  * 出现——closure_open 类走 max_retries_per_phase 兜底但慢，agent_timeout_unclosed 类
@@ -460,7 +482,7 @@ export function countCumulativeAdvanceBlocked(
 
 /**
  * E4：同一 blocker_signature 在给定 failure_kind 家族内跨 attempt **累计**（非仅连续）出现
- * 次数——basis for CUMULATIVE_HALT_FAMILY（toolchain/await_human_confirm 等）反复出现却被
+ * 次数——basis for CUMULATIVE_HALT_FAMILY（当前为 toolchain）反复出现却被
  * 其他产物变化"冲淡"掩盖（spec.md 内容每轮在变 ≠ 这个具体 blocker 真的在改善）。
  */
 export function countRepeatedSignatureInFamily(
@@ -517,6 +539,104 @@ export function resolveWallClockStartMs(events: GoalRunEvent[]): number {
     }
   }
   return Date.now();
+}
+
+/** 从 events 提取 supersede 链的直接目标（audited supersede 事件才算，自报不生效）。 */
+export function extractSupersedeTargets(events: GoalRunEvent[]): string[] {
+  const out: string[] = [];
+  for (const e of events) {
+    const t = (e as { type?: string; target_run_id?: unknown });
+    if (t.type === 'supersede' && typeof t.target_run_id === 'string' && t.target_run_id.trim()) {
+      out.push(t.target_run_id.trim());
+    }
+  }
+  return out;
+}
+
+/**
+ * T1④（e5d8a2c4）：沿 supersede 链折叠**祖先 run 的 events**——仅供预算 reducer
+ * 消费（totalTurns / priorActiveMs / wall 起点 / 回退计数 / transient retry）。
+ *
+ * 硬约束语义：**supersede 不得刷新任何预算**。预算是 per-run 从各自 events 回放的，
+ * 新 run_id 即清零——不折叠的话，"废弃旧 run 开后继"就是绕过
+ * DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道（plan 判读 v3 教训原文）。
+ *
+ * 边界：
+ * - **阶段完成状态不折叠**（resolveResumeState 只吃当前 run——预算跨 run 折叠、
+ *   进度不跨 run 折叠，语义不同，plan T1④ 原文）；
+ * - 递归祖先的祖先（链式 supersede），`visited` 防环；目标 events 缺失＝跳过
+ *   （被清理的历史 run 不阻断新 run——只损失其预算记账，如实少算不如拒启）；
+ * - 返回按 ts 升序（祖先在前），供 `resolveWallClockStartMs` 取最早 run_start。
+ */
+export function collectSupersededAncestorEvents(opts: {
+  projectRoot: string;
+  featuresDir: string;
+  feature: string;
+  seedTargets: string[];
+  /** 注入供测试；缺省读盘（authoritative 口径——dry 段照常剔除） */
+  loadEvents?: (absPath: string) => GoalRunEvent[];
+}): GoalRunEvent[] {
+  const load = opts.loadEvents ?? loadAuthoritativeEvents;
+  const visited = new Set<string>();
+  const chainEvents: GoalRunEvent[] = [];
+  const queue = [...opts.seedTargets];
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (!id || visited.has(id)) continue;
+    visited.add(id);
+    const abs = path.join(
+      opts.projectRoot, opts.featuresDir, opts.feature, 'goal-runs', id, 'events.jsonl');
+    const evs = load(abs);
+    chainEvents.push(...evs);
+    queue.push(...extractSupersedeTargets(evs));
+  }
+  return chainEvents.sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+}
+
+/**
+ * e9d4b7a3 t4：预算 lineage 折叠**唯一共享入口**——budgetFoldSeeds（CLI --supersede ∪
+ * currentEvents 内 audited supersede）→ 收集祖先事件 → 拼 budgetFoldEvents。
+ * runner 熔断 / progress.json / heartbeat 三处必须消费本入口，禁止各自复制公式
+ * （曾经 progress/heartbeat 只计当前 run events → supersede 链显示 5/30 假象）。
+ * seedTargets 为调用方 CLI 显式 --supersede（resume/progress 消费面传空——它们的事件
+ * 流里已有 audited supersede 事件）；currentEvents 恒传当前 run 的权威事件。
+ */
+export interface BudgetLineageFold {
+  /** 祖先 + 当前 run 事件（预算/回退计数/transient 的唯一计算源） */
+  budgetFoldEvents: GoalRunEvent[];
+  /** 仅祖先部分（runner 侧 transient 计数等已折叠消费仍需要） */
+  ancestorEvents: GoalRunEvent[];
+  /** 折叠种子（显式 ∪ 事件派生，去重保序） */
+  foldSeeds: string[];
+}
+
+export function foldBudgetLineage(opts: {
+  projectRoot: string;
+  featuresDir: string;
+  feature: string;
+  seedTargets?: readonly string[];
+  currentEvents?: readonly GoalRunEvent[];
+  /** 注入供测试；缺省读盘 */
+  loadEvents?: (absPath: string) => GoalRunEvent[];
+}): BudgetLineageFold {
+  const current = [...(opts.currentEvents ?? [])];
+  const foldSeeds = [
+    ...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets(current)]),
+  ];
+  const ancestorEvents = foldSeeds.length > 0
+    ? collectSupersededAncestorEvents({
+        projectRoot: opts.projectRoot,
+        featuresDir: opts.featuresDir,
+        feature: opts.feature,
+        seedTargets: foldSeeds,
+        ...(opts.loadEvents ? { loadEvents: opts.loadEvents } : {}),
+      })
+    : [];
+  return {
+    budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
+    ancestorEvents,
+    foldSeeds,
+  };
 }
 
 export function resolveResumedBudget(
@@ -649,13 +769,26 @@ export function rebuildOutcomesFromEvents(
   for (const phase of chain) {
     const halt = lastHalt.get(phase);
     if (halt) {
-      const h = halt as { verdict?: string; halt_reason?: string; halt_guidance?: string };
+      const h = halt as {
+        verdict?: string; halt_reason?: string; halt_guidance?: string;
+        run_disposition?: string; run_wait_kind?: string;
+      };
+      // 设备停放 WAITING 语义不得回退（fa0663）：phase_halt 事件的
+      // run_disposition/run_wait_kind 投影字段必须原样带到重建 outcome——
+      // resolveResumeState 的 WAITING(external) 续跑判据消费这两个字段。
       outcomes.push({
         phase,
         verdict: (h.verdict ?? 'FAIL') as string,
         halted: true,
         ...(h.halt_reason ? { halt_reason: h.halt_reason } : {}),
         ...(h.halt_guidance ? { halt_guidance: h.halt_guidance } : {}),
+        // 投影字段原样透传（type 收窄：事件侧由写盘层统一投影判定落盘，读回即信任）。
+        ...(typeof h.run_disposition === 'string'
+          ? { run_disposition: h.run_disposition as GoalPhaseOutcome['run_disposition'] }
+          : {}),
+        ...(typeof h.run_wait_kind === 'string'
+          ? { run_wait_kind: h.run_wait_kind as GoalPhaseOutcome['run_wait_kind'] }
+          : {}),
       });
       break;
     }
@@ -675,7 +808,12 @@ export function rebuildOutcomesFromEvents(
         phase,
         verdict,
         deferred: true,
-        deferred_reason: 'external_blocked',
+        deferred_reason:
+          typeof e.deferred_reason === 'string'
+            ? e.deferred_reason
+            : typeof e.failure_kind === 'string'
+              ? e.failure_kind
+              : 'external_blocked',
       });
       continue;
     }
@@ -727,6 +865,37 @@ export function loadEventsJsonl(absPath: string): GoalRunEvent[] {
   return out;
 }
 
+export interface EventsLoadStrictResult {
+  events: GoalRunEvent[];
+  missing: boolean;
+  corruptLines: Array<{ line: number; snippet: string }>;
+}
+
+/**
+ * t1（plan c6a9e4d2）：resume 决策面的**严格** events 加载——逐行校验，任何一行 JSON
+ * 损坏都不静默跳过（loadEventsJsonl 的 skip-malformed 只适合审计/展示读取）。
+ * 消费方（resume 起点、terminal guard）必须 fail-closed：events 缺失或损坏 → 拒绝
+ * resume 并命名损坏物。snippet 截断 300 字符（events 行可能携带长 payload，不整行外泄）。
+ */
+export function loadEventsJsonlStrict(absPath: string): EventsLoadStrictResult {
+  if (!fs.existsSync(absPath)) return { events: [], missing: true, corruptLines: [] };
+  const raw = fs.readFileSync(absPath, 'utf-8');
+  const lines = raw.split(/\r?\n/);
+  const events: GoalRunEvent[] = [];
+  const corruptLines: Array<{ line: number; snippet: string }> = [];
+  for (let idx = 0; idx < lines.length; idx++) {
+    const trimmed = lines[idx].trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed) as GoalRunEvent);
+    } catch {
+      const snippet = trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed;
+      corruptLines.push({ line: idx + 1, snippet });
+    }
+  }
+  return { events, missing: false, corruptLines };
+}
+
 /** plan e7c2a4d8 T1c：权威消费面视图——按会话段剔除 dry-run 段（.dry 隔离后新文件
  * 天然纯净；本过滤专治 legacy 混写文件如宿主 ut2test 形态）。凡从 events 派生权威
  * 状态（预算/重试计数/棘轮/resume 重建/对账期望集）一律走本口径；纯审计/展示读取
@@ -770,6 +939,35 @@ export function resolveResumeState(
       priorOutcomes: priorOutcomes.slice(0, -1),
       startIndex: idx >= 0 ? idx : 0,
       deferredUpstream,
+    };
+  }
+
+  // e5d8a2c4 步骤 3（垂直恢复闭环）：**最早一个尚未完成的 `WAITING(external)` phase
+  // 必须重新入队**。fa0663 实锤：设备停放的 outcome 是 `{verdict:'FAIL', halted:false,
+  // run_disposition:'WAITING', run_wait_kind:'external'}`——旧逻辑把它计入 done，
+  // resume `start_index=链长` 直接收口，停放话术承诺的"设备就绪后 --resume 继续"
+  // 永不发生（同一 run 恒 PARTIAL 的吸收态）。判据**消费既有投影字段**（写盘层对每条
+  // phase_halt 都落了 run_disposition/run_wait_kind，报告 phases 原样携带）；`halted`
+  // 只表示"当前会话是否停止推进"（设备门仅 AMBIGUOUS 置 true），不是跨 run 完成判据。
+  const isUnfinishedExternalWait = (o: GoalPhaseOutcome): boolean =>
+    o.run_disposition === 'WAITING' && o.run_wait_kind === 'external';
+  const firstWaitingIdx = chain.findIndex((p) =>
+    priorOutcomes.some((o) => o.phase === p && isUnfinishedExternalWait(o)));
+  if (firstWaitingIdx >= 0) {
+    // codex 第九批 P0 订正（前缀规则）：从 phase k 重跑，**只保留严格位于 k 之前的
+    // outcome**——初版只删后缀中的 WAITING、保留下游旧 PASS，会让重跑后的链把
+    // 过期 PASS 当完成态；deferredUpstream 同理**从保留前缀重算**（初版沿用全量，
+    // 会把正在重试的 phase 的旧 deferred 记录带进新一轮）。
+    const prefix = priorOutcomes.filter((o) => {
+      const i = chain.indexOf(o.phase);
+      return i >= 0 && i < firstWaitingIdx;
+    });
+    return {
+      priorOutcomes: prefix,
+      startIndex: firstWaitingIdx,
+      deferredUpstream: prefix
+        .filter((o) => o.deferred)
+        .map((o) => ({ phase: o.phase, reason: o.deferred_reason ?? 'external_blocked' })),
     };
   }
 
@@ -914,6 +1112,78 @@ export function deriveContinuationFromEvents(
     return { cause: 'content_retry', ...(fk ? { failureKind: fk } : {}) };
   }
   return end.timed_out === true ? { cause: 'agent_timeout' } : { cause: 'unknown' };
+}
+
+/**
+ * The next invocation is closure-only exactly when the latest authoritative
+ * outcome for this phase requested a retry after PASS solely to finish closure.
+ * Pass snapshots may protect frozen files, but are not workflow state.
+ */
+export function isClosureOnlyRetryPending(events: GoalRunEvent[], phase: string): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.phase !== phase) continue;
+    if (event.type === 'phase_halt' || event.type === 'phase_invalidated') return false;
+    if (event.type !== 'phase_verdict') continue;
+    return event.verdict === 'PASS' && event.advance_blocked === true && event.action === 'retry';
+  }
+  return false;
+}
+
+/**
+ * plan e6b3f8d2 t5：**同一 invoke 窗口**内是否存在新鲜的 harness 质量事实（FAIL/INCOMPLETE）。
+ *
+ * 背景：events 两轴本就正交——超时 attempt 的 `phase_verdict` 同时带 `timed_out` 与
+ * `failure_kind`（harness 精修的内容失败 kind）。失真只发生在 retry prompt 组装层：
+ * 它对 `continuation.cause==='agent_timeout'` 无条件硬写「NOT a content failure」，
+ * 于是 agent 被告知"上轮只是超时"，而上轮 harness 其实已经判了内容 FAIL。
+ *
+ * 判据刻意收在**最近一次 invoke 的窗口**内（与 deriveContinuationFromEvents 同一分窗法：
+ * 最后一个 `agent_invoke_start` → 其配对 `agent_invoke_end` → 窗口内的 `phase_verdict`），
+ * 这样才是"同 invoke 的新鲜事实"，不会把更早 attempt 的旧 FAIL 拿来并陈。
+ *
+ * 返回 null = 该窗口没有质量事实（纯超时/崩在 harness 前/verdict 是 PASS）。
+ */
+export function findLatestInvokeHarnessFailure(
+  events: GoalRunEvent[],
+  phase: string,
+): { verdict: string; failure_kind?: string; blocking_class?: string } | null {
+  let startIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'agent_invoke_start' && e.phase === phase) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx < 0) return null;
+  const start = events[startIdx];
+
+  let endIdx = -1;
+  for (let i = startIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type !== 'agent_invoke_end' || e.phase !== phase) continue;
+    if (start.invoke_id && e.invoke_id && e.invoke_id !== start.invoke_id) continue;
+    endIdx = i;
+    break;
+  }
+  if (endIdx < 0) return null; // 崩在 agent 段，harness 从未跑过
+
+  const end = events[endIdx];
+  for (let i = endIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'agent_invoke_start' && e.phase === phase) break; // 撞到下一 attempt 即关窗
+    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
+    if (e.invoke_id && end.invoke_id && e.invoke_id !== end.invoke_id) continue;
+    const verdict = typeof e.verdict === 'string' ? e.verdict : '';
+    if (verdict !== 'FAIL' && verdict !== 'INCOMPLETE') return null;
+    return {
+      verdict,
+      ...(e.failure_kind ? { failure_kind: e.failure_kind } : {}),
+      ...(e.blocking_class ? { blocking_class: e.blocking_class } : {}),
+    };
+  }
+  return null;
 }
 
 /** Last agent_invoke_start without a matching agent_invoke_end (invoke_id first, phase fallback). */

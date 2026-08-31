@@ -14,7 +14,8 @@
 
 import * as crypto from 'crypto';
 import Jimp from 'jimp';
-import { extractClaudeFinalResultText } from './claude-envelope';
+import { extractClaudeFinalResultText, planUsesClaudeStreamJson } from './claude-envelope';
+import { extractCodexAgentMessageText } from './codex-terminal-events';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -303,11 +304,34 @@ export interface CanaryInvocationFacts {
   silent_killed?: boolean;
   skipped?: boolean;
   /**
-   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 为 claude stream-json
-   * NDJSON 信封流（planUsesClaudeStreamJson 判定）。true 时判卷前先取终态 result 文本
-   * 投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout 会把真视觉宿主判成永久盲档。
+   * P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）：stdout 是**结构化信封流**而非
+   * 纯文本。true 时判卷前先做信封投影——行锚 ^KEY=value$ 在信封上恒空，直接扫原始 stdout
+   * 会把真视觉宿主判成永久盲档。
    */
   structured_stdout?: boolean;
+  /**
+   * plan e6b3f8d2 t1：信封**方言**。缺省 `claude_stream_json`（既有语义不变）；
+   * codex 自 `exec --json` 接入后 stdout 亦为 JSONL（`codex_turn_jsonl`），
+   * 投影规则见 codex-terminal-events.extractCodexAgentMessageText。
+   */
+  structured_stdout_format?: CanaryStdoutEnvelope;
+}
+
+/** 判卷前需要投影的 stdout 信封方言（plan e6b3f8d2 t1）。 */
+export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl';
+
+/**
+ * adapter → 判卷 stdout 信封方言（'none' = 纯文本，直接扫）。
+ * 与各自的 argv 注入条件**严格同构**：
+ *   · claude 家族：`--output-format stream-json` 仅在 tool_event_provenance=structured_events 时注入；
+ *   · codex：`--json` 由 codexArgv **无条件**追加（plan e6b3f8d2 t1），故恒为 JSONL。
+ */
+export function resolveCanaryStdoutEnvelope(
+  adapterName: string,
+  toolEventProvenance?: string,
+): 'none' | CanaryStdoutEnvelope {
+  if (adapterName === 'codex') return 'codex_turn_jsonl';
+  return planUsesClaudeStreamJson(adapterName, toolEventProvenance as never) ? 'claude_stream_json' : 'none';
 }
 
 export type CanaryCacheDecision =
@@ -331,6 +355,59 @@ function lastLegalAssignment(rawOutput: string, key: string): string | null {
 }
 
 /**
+ * 答卷解析 SSOT（plan d7f3a9c4 t4 review：硬失败分类与写盘判卷**同源**判定"stdout 是否有效"——
+ * CLI banner/升级提示/stream 前导不是有效答卷，不能压掉明确的参数错误签名）。
+ * 返回：
+ *  - `canonicalAnswer`：有效答卷（全键合法赋值 / 独立行 CANNOT_SEE_IMAGE）；缺失=无有效答卷；
+ *  - `externalToolSuspected`：从**原始 stdout** 提取（结构化时 tool_use 在信封里，不在投影文本）；
+ *  - `structuredProjectedNull`：structured envelope 存在但无终态 success result（区别于普通空输出）。
+ */
+export interface CanaryAnswerParseResult {
+  canonicalAnswer: string | null;
+  externalToolSuspected: boolean;
+  structuredProjectedNull: boolean;
+}
+
+export function parseCanaryAnswer(
+  invocation: Pick<CanaryInvocationFacts, 'stdout' | 'structured_stdout' | 'structured_stdout_format'>,
+  answerKey: CanaryAnswerKey,
+): CanaryAnswerParseResult {
+  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影为可判卷文本。
+  // plan e6b3f8d2 t1：按信封方言分派（缺省仍是 claude stream-json，既有行为不变）。
+  let raw = invocation.stdout;
+  let structuredProjectedNull = false;
+  if (invocation.structured_stdout) {
+    const projected =
+      invocation.structured_stdout_format === 'codex_turn_jsonl'
+        ? extractCodexAgentMessageText(invocation.stdout)
+        : extractClaudeFinalResultText(invocation.stdout);
+    if (projected === null) {
+      structuredProjectedNull = true;
+      raw = '';
+    } else {
+      raw = projected;
+    }
+  }
+  const requiredKeys = [...answerKey.geometry_questions.map(q => q.id), 'TEXT_TOKEN'];
+  const finalAnswers = new Map<string, string>();
+  for (const k of requiredKeys) {
+    const v = lastLegalAssignment(raw, k);
+    if (v !== null) finalAnswers.set(k, v);
+  }
+  let canonicalAnswer: string | null = null;
+  if (finalAnswers.size === requiredKeys.length) {
+    canonicalAnswer = requiredKeys.map(k => `${k}=${finalAnswers.get(k)!}`).join('\n');
+  } else if (/^\s*CANNOT_SEE_IMAGE\s*$/im.test(raw)) {
+    canonicalAnswer = 'CANNOT_SEE_IMAGE';
+  }
+  return {
+    canonicalAnswer,
+    externalToolSuspected: detectExternalToolSuspected(invocation.stdout),
+    structuredProjectedNull,
+  };
+}
+
+/**
  * goal 路径唯一写盘判据（plan c7d2e9a4 t2/t3，codex 三轮收敛）：
  * ① invoke 事实先行——skipped/timed_out/silent_killed/非零退出 = 调用没成，与答卷无关；
  * ② 严格答卷解析（防 prompt echo 双杀——canary prompt 自身含全部答题键行与
@@ -342,6 +419,7 @@ function lastLegalAssignment(rawOutput: string, key: string): string | null {
  * ③ valid 时重组 canonical answer 交 classify——**不得回传原始 stdout**（旧 classifier
  *    是首中解析 + CANNOT_SEE 子串判，echo+尾部真答卷会被二次污染判 none）；
  *    externalToolSuspected 仍从原始 stdout 提取（规范化不丢诊断信号）。
+ * 答卷解析本体统一走 parseCanaryAnswer（t4 硬失败分类同源复用）。
  */
 export function resolveCanaryCacheDecision(
   invocation: CanaryInvocationFacts,
@@ -362,50 +440,177 @@ export function resolveCanaryCacheDecision(
     return { kind: 'invoke_failed', cache: false, detail: `invoke 非零退出（exitCode=${invocation.exitCode}）` };
   }
 
-  // P0-1 归一（plan 7c4f2e9b）：structured stdout 先投影终态 result 文本；无合法终态
-  // （残卷/错误 result/多 result 全非法）→ invalid_answer 维持 fail-closed，不放宽。
-  // externalToolSuspected 仍从原始 stdout 提取（tool_use 事件在信封里，不在投影文本）。
-  let raw = invocation.stdout;
-  if (invocation.structured_stdout) {
-    const projected = extractClaudeFinalResultText(invocation.stdout);
-    if (projected === null) {
+  const parsed = parseCanaryAnswer(invocation, answerKey);
+  if (parsed.canonicalAnswer === null) {
+    if (parsed.structuredProjectedNull) {
       return {
         kind: 'invalid_answer',
         cache: false,
         detail: 'structured envelope 无终态 success result（残卷/错误 result/断流）——不判卷，不落缓存',
       };
     }
-    raw = projected;
-  }
-  const requiredKeys = [...answerKey.geometry_questions.map(q => q.id), 'TEXT_TOKEN'];
-  const finalAnswers = new Map<string, string>();
-  for (const k of requiredKeys) {
-    const v = lastLegalAssignment(raw, k);
-    if (v !== null) finalAnswers.set(k, v);
-  }
-
-  let canonicalAnswer: string | null = null;
-  if (finalAnswers.size === requiredKeys.length) {
-    canonicalAnswer = requiredKeys.map(k => `${k}=${finalAnswers.get(k)!}`).join('\n');
-  } else if (/^\s*CANNOT_SEE_IMAGE\s*$/im.test(raw)) {
-    canonicalAnswer = 'CANNOT_SEE_IMAGE';
-  }
-  if (canonicalAnswer === null) {
-    const trimmed = raw.trim();
+    const trimmed = invocation.stdout.trim();
     return {
       kind: 'invalid_answer',
       cache: false,
       detail: !trimmed
         ? '空输出——非有效答卷（额度耗尽/断流?），不落缓存'
-        : `输出非有效答卷（合法答题键 ${finalAnswers.size}/${requiredKeys.length}、无独立行 CANNOT_SEE_IMAGE——错误文本/残卷/回显?），不落缓存`,
+        : `输出非有效答卷（合法答题键缺失、无独立行 CANNOT_SEE_IMAGE——错误文本/残卷/回显?），不落缓存`,
     };
   }
 
-  const classify = classifyCanaryResponse(canonicalAnswer, answerKey);
+  const classify = classifyCanaryResponse(parsed.canonicalAnswer, answerKey);
   return {
     kind: 'valid',
     cache: true,
-    classify: { ...classify, externalToolSuspected: detectExternalToolSuspected(invocation.stdout) },
-    canonicalAnswer,
+    classify: { ...classify, externalToolSuspected: parsed.externalToolSuspected },
+    canonicalAnswer: parsed.canonicalAnswer,
   };
+}
+
+// ---------------------------------------------------------------------------
+// plan d7f3a9c4 t4：金丝雀 CLI 硬失败分类（仅 action==='probe' 的真实调用路径消费）
+// ---------------------------------------------------------------------------
+
+/** 硬失败分类所需的最小 invoke 事实（AgentInvokeResult 子集 + spawn_error）。 */
+export interface CanaryHardCliFailureFacts {
+  exitCode: number;
+  timed_out?: boolean;
+  silent_killed?: boolean;
+  skipped?: boolean;
+  stdout: string;
+  stderr: string;
+  spawn_error?: { code?: string; message: string };
+}
+
+/**
+ * CLI/config 参数不兼容的 stderr 显式枚举签名（plan ④ 正则纪律）：
+ *  - 行首锚定（`^`）——`^error:` / `^Usage:` 单独出现会误判认证/额度/模型服务错误；
+ *  - 只认签名关键字本身，`Usage:` 仅作辅助特征、**不能单独触发**；
+ *  - 逐行限长（防 10KB 长行回溯灾难），禁 `[^\n]*` 前缀，禁全文 stringify。
+ */
+const HARD_CLI_STDERR_SIGNATURES: ReadonlyArray<RegExp> = [
+  // error: unknown argument '--foo' / error: unexpected argument '--foo' found / error: unrecognized option '--foo'
+  // `^[ \t]*` 只放行行首空白缩进（仍锚定行首，不是任意前缀——禁 `[^\n]*`）。
+  /^[ \t]*(?:error:\s*)?(?:unknown argument|unexpected argument|unrecognized option)/i,
+  // error: Error loading config ... / Error loading config: ...
+  /^[ \t]*(?:error:\s*)?Error loading config/i,
+];
+
+/** stderr 单行参与签名匹配的最大长度（超过即截断——只保留行首签名区）。 */
+const HARD_CLI_LINE_CAP = 1024;
+
+/**
+ * plan c4e8a1f7 T1a：已恢复的 Codex 结构化模型兼容 400 信封精确签名（脱敏 fixture）：
+ *   {"type":"error","status":400,"error":{"type":"invalid_request_error",
+ *    "message":"The 'gpt-5.6-luna' model requires a newer version of Codex. ..."}}
+ * 判据=签名键值同时在场（stdout/stderr 皆扫）。生产判据**不维护 model→CLI 版本静态表**；
+ * 只对实际调用返回的精确结构化永久错误 fail-fast，普通非零退出仍走原行为。
+ */
+const CODEX_400_REQUIRES_NEWER_SIGNATURES: ReadonlyArray<RegExp> = [
+  /"type"\s*:\s*"error"/,
+  /"status"\s*:\s*400/,
+  /"type"\s*:\s*"invalid_request_error"/,
+  /requires a newer version of Codex/i,
+];
+
+function matchesCodex400RequiresNewer(allOutput: string): boolean {
+  // 防御：只扫前 64KB（真实 400 信封体很小，签名在头部）。
+  const bounded = allOutput.length > HARD_CLI_LINE_CAP * 64
+    ? allOutput.slice(0, HARD_CLI_LINE_CAP * 64)
+    : allOutput;
+  return CODEX_400_REQUIRES_NEWER_SIGNATURES.every((re) => re.test(bounded));
+}
+
+/**
+ * plan c4e8a1f7 T1a：正式 phase invoke 与金丝雀探测共用的**硬失败共享分类**（SSOT）。
+ * 分类三源（任一命中即硬失败）：
+ *   ① child spawn race / guardian 建立失败：`spawn_error` 结构化事实在场
+ *      （resolvedBinary 短路、真实 child error 与 guardian 投影同一种 shape）；
+ *   ② CLI/config 参数不兼容：nonzero exit + 非 timeout/silent + 无有效答卷 +
+ *      stderr 逐行命中显式枚举签名；
+ *   ③ Codex 结构化模型兼容 400 信封（status=400 + invalid_request_error +
+ *      requires a newer version of Codex，stdout/stderr 皆扫）。
+ * 未命中返回 null（维持现状语义：普通内容失败走既有 harness/retry）。
+ */
+export function resolveInvokeHardCliFailure(
+  facts: CanaryHardCliFailureFacts,
+  opts?: {
+    answerKey?: CanaryAnswerKey;
+    structuredStdout?: boolean;
+    /** plan e6b3f8d2 t1：信封方言（缺省 claude stream-json）。 */
+    structuredStdoutFormat?: CanaryStdoutEnvelope;
+    /**
+     * plan c4e8a1f7 T1a（评审 P1 修复）：正式 phase invoke 无"答卷"概念——
+     * stdout 非空（banner/进度行）**不得**充当"有效答卷"压掉明确的参数错误签名；
+     * 金丝雀探测（answerKey 在场或默认）保持"banner 不压签名"的既有语义：
+     * 有可解析答卷时视为 agent 作答过、不是参数错误。
+     */
+    formalInvoke?: boolean;
+  },
+): string | null {
+  if (facts.skipped) return null;
+  if (facts.timed_out || facts.silent_killed) return null;
+  // ① child spawn race / guardian 建立失败：结构化事实在场即硬失败（不靠 stderr 猜）。
+  if (facts.spawn_error) {
+    const isGuardian =
+      facts.spawn_error.code === 'maison_guardian_containment_failed' ||
+      (facts.stderr || '').includes('[maison-guardian]');
+    return isGuardian
+      ? `guardian containment 建立失败（${facts.spawn_error.message}）`
+      : `child spawn error（${facts.spawn_error.code ?? 'spawn'}）：${facts.spawn_error.message}`;
+  }
+  // ③ Codex 结构化模型兼容 400（先于②判——它是 CLI 兼容类硬错误，run 必停机）。
+  if (facts.exitCode !== 0) {
+    const combined = `${facts.stderr}\n${facts.stdout}`;
+    if (matchesCodex400RequiresNewer(combined)) {
+      return 'Codex 模型兼容硬错误：当前 Codex CLI 版本过低，模型要求更新版本（status=400 + invalid_request_error + requires a newer version of Codex）——升级 Codex CLI 后重跑，非内容失败。';
+    }
+  }
+  // ② CLI/config 参数不兼容——必要条件缺一不可。
+  if (facts.exitCode === 0) return null;
+  // 有"有效答卷"不是参数错误：
+  //  · canary 路径（answerKey 在场）：可解析金丝雀答卷才视为作答；banner 不算；
+  //  · 无 answerKey 的 canary 直调（旧语义）：任意非空 stdout 算有效答卷；
+  //  · **formal invoke（formalInvoke=true）**：不存在答卷概念——banner/任意 stdout
+  //    都不压签名（评审 P1 最小复现：exit1 + banner stdout + unknown argument → 必须停机）。
+  const hasValidAnswer = opts?.formalInvoke
+    ? false
+    : opts?.answerKey
+      ? parseCanaryAnswer(
+          {
+            stdout: facts.stdout,
+            ...(opts.structuredStdout ? { structured_stdout: true } : {}),
+            ...(opts.structuredStdoutFormat ? { structured_stdout_format: opts.structuredStdoutFormat } : {}),
+          },
+          opts.answerKey,
+        ).canonicalAnswer !== null
+      : Boolean(facts.stdout && facts.stdout.trim()); // 无 answerKey 时保守沿用旧语义
+  if (hasValidAnswer) return null; // 有有效答卷不是参数错误
+  const lines = facts.stderr.split(/\r?\n/);
+  for (const line of lines) {
+    const capped = line.slice(0, HARD_CLI_LINE_CAP);
+    for (const sig of HARD_CLI_STDERR_SIGNATURES) {
+      if (sig.test(capped)) {
+        return `CLI/config 参数不兼容：${capped.trim().slice(0, 300)}`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * plan d7f3a9c4 t4：金丝雀探测是否命中**硬失败**——薄委托共享分类
+ * （c4e8a1f7 T1a：与正式 phase invoke 同一 SSOT）。
+ * 本函数不写盘、不 spawn、不分类 cache——只做"是否硬失败"的判别。
+ */
+export function resolveCanaryHardCliFailure(
+  facts: CanaryHardCliFailureFacts,
+  opts?: {
+    answerKey?: CanaryAnswerKey;
+    structuredStdout?: boolean;
+    structuredStdoutFormat?: CanaryStdoutEnvelope;
+  },
+): string | null {
+  return resolveInvokeHardCliFailure(facts, opts);
 }

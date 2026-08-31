@@ -8,12 +8,17 @@
 //
 // 授权边界（与门完全一致，不放宽）：
 //   - 只用用户登记的凭据；未登记 = 不尝试任何输入；
-//   - 一次锁屏事件只恢复一次；失败即机器级锁死；
+//   - 一次锁屏事件只恢复一次；仅当**实际尝试输入后**执行/复验失败才机器级锁死；
 //   - **只在同一 serial 上恢复**——恢复失败即让本 attempt 失败，绝不热切模拟器
 //     （热切会产出一半真机一半模拟器的混合证据，而 target_kind 只记一个）。
 // ============================================================================
 
-import { ensureUnlocked, type UnlockDeps } from './device-unlock-helper';
+import {
+  ensureUnlocked,
+  type RevealOutcome,
+  type UnlockDeps,
+  type UnlockFailureKind,
+} from './device-unlock-helper';
 import type { CredentialProvider } from './device-credential-store';
 
 export interface RuntimeRecoveryInput {
@@ -42,7 +47,27 @@ export type RuntimeRecoveryReason =
 
 export type RuntimeRecoveryResult =
   | { recovered: true; note: string; reason: 'not_locked' }
-  | { recovered: false; note: string; authorized: boolean; reason: RuntimeRecoveryReason };
+  | {
+      recovered: false;
+      note: string;
+      authorized: boolean;
+      reason: RuntimeRecoveryReason;
+      /**
+       * e5d8a2c4 T3#2（codex 三轮 P1）：解锁失败的**结构化归因原样上浮**。
+       *
+       * `reason` 是**本模块**的处置枚举（要不要外部阻断），`failureKind` 是**解锁链**
+       * 的归因枚举（下一步该干什么）——两者不是一回事。此前只回 `reason:'unlock_failed'`，
+       * 把 helper 已经分好的三类重新压平成一个字，消费方要按类别行动就只能解析
+       * `note` 文案或**再分类一次**（=第二份分类表，本纲要治的正是这个）。
+       */
+      failureKind?: UnlockFailureKind;
+      /**
+       * a4e7c2f9：`reveal_failed` 的设备命令执行事实。**这条路径尤其不能丢**——
+       * 宿主 run 20260817T065727Z-1896c1 两次实际撞到的就是运行期恢复
+       *（`ut_hvigor_test` 装机步骤内部），而非 runner 级就绪门。
+       */
+      revealFact?: RevealOutcome;
+    };
 
 /**
  * 设备操作前的就绪保证（幂等，可在每个边界前调用）。
@@ -73,7 +98,7 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
       // 指引必须把**出路**说全：只说"请人解锁"会让用户以为没有别的办法，
       // 而"启用自动解锁"是明确支持的选项（普通模式下尤其容易漏掉这一点）。
       note:
-        '设备锁屏且未登记自动解锁凭据——请人解锁设备后重跑；框架不会尝试任何口令。' +
+        '设备锁屏且未登记自动解锁凭据——请人解锁设备后重跑；框架不会猜测或枚举未登记的口令。' +
         '若希望无人值守时自动解锁，可由**用户本人在自己的终端**运行 ' +
         '`npm run device:enroll -- --serial <序列号>` 登记 PIN（真实 TTY 隐藏输入，绝不进对话）。',
       authorized: false,
@@ -89,7 +114,14 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
   });
   return r.ok
     ? { recovered: true, note: r.note, reason: 'not_locked' }
-    : { recovered: false, note: r.note, authorized: true, reason: 'unlock_failed' };
+    : {
+        recovered: false,
+        note: r.note,
+        authorized: true,
+        reason: 'unlock_failed',
+        ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+        ...(r.revealFact ? { revealFact: r.revealFact } : {}),
+      };
 }
 
 /**

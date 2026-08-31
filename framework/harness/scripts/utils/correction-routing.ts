@@ -6,8 +6,8 @@
 //   Q1 需求/验收本身变了？        → spec 层
 //   Q2 需求没变，接口/契约/设计变？ → plan 层
 //   Q3 上游都没错——要改产品代码？  → 是=coding；否（纯补验证）= verification
-// 本模块只做**确定性判定**（纯函数）：答案由 agent/用户经 `correction.layer` gate
-// 给出；层→phase 的映射按 feature track 投影（lite 的 spec/plan 职能由 change.md
+// 本模块只做**确定性判定**（纯函数）：答案来自当前 correction request 的结构化分类；
+// 层→phase 的映射按 feature track 投影（lite 的 spec/plan 职能由 change.md
 // 承载 → change phase；verification → exit）。
 // 重验≠重做：revalidate = 落点 phase + 其下游**已闭环** phase 的脚本门禁。
 
@@ -18,7 +18,7 @@ import { resolvePhaseChain, type FeatureTrack } from './runtime-policy';
 // 三问 → 根因类别
 // --------------------------------------------------------------------------
 
-/** 修正三问的答案（gate 确认后的事实输入） */
+/** 修正三问的结构化分类输入。 */
 export interface CorrectionAnswers {
   /** Q1 需求/验收本身变了 */
   requirement_changed: boolean;
@@ -53,10 +53,18 @@ export function touchedCategories(a: CorrectionAnswers): CorrectionCategory[] {
 // 类别 → phase（track 投影）
 // --------------------------------------------------------------------------
 
+/** 类别→候选 phase 名的共享偏好表（correction 路由与责任阶段路由共用——非平行表）。 */
+function categoryPhasePreference(track: FeatureTrack): Record<CorrectionCategory, string[]> {
+  return track === 'lite'
+    ? { spec: ['change'], plan: ['change'], coding: ['coding'], verification: ['exit'] }
+    : { spec: ['spec'], plan: ['plan'], coding: ['coding'], verification: ['ut', 'testing'] };
+}
+
 /**
  * 把根因类别投影到当前 track 的 phase。full：spec/plan/coding 同名，verification→ut；
  * lite：spec/plan 职能由 change.md 承载 → change，verification→exit。
  * 投影结果不在该 track 链内时回退链首（防 workflow 自定义链缺 phase 时产出幽灵 phase）。
+ * （correction 修正意见路由语义保留；责任阶段回退路由须用下面的严格版本。）
  */
 export function mapCategoryToPhase(
   category: CorrectionCategory,
@@ -64,14 +72,24 @@ export function mapCategoryToPhase(
   track: FeatureTrack,
 ): string {
   const chain = resolvePhaseChain(spec, track).featureOrdered;
-  const preferred: Record<CorrectionCategory, string[]> =
-    track === 'lite'
-      ? { spec: ['change'], plan: ['change'], coding: ['coding'], verification: ['exit'] }
-      : { spec: ['spec'], plan: ['plan'], coding: ['coding'], verification: ['ut', 'testing'] };
-  for (const p of preferred[category]) {
+  return mapCategoryToChainPhase(category, chain, track) ?? chain[0];
+}
+
+/**
+ * 责任阶段路由的**严格**类别→phase 映射（plan b6e4c9f2 t2，codex 三轮）：
+ * 映射不到当前 resolved chain 的真实节点时返回 **null**——消费方走既有
+ * backtrack_target_absent 语义。禁止静默回链首（未知责任误投错误阶段的根源）；
+ * lite/custom workflow 不出现幽灵 spec/plan。
+ */
+export function mapCategoryToChainPhase(
+  category: CorrectionCategory,
+  chain: readonly string[],
+  track: FeatureTrack,
+): string | null {
+  for (const p of categoryPhasePreference(track)[category]) {
     if (chain.includes(p)) return p;
   }
-  return chain[0];
+  return null;
 }
 
 // --------------------------------------------------------------------------
@@ -90,24 +108,6 @@ export interface CorrectionClassification {
   touched_layers: string[];
   /** 级联重验清单：根因 phase + 其下游**已闭环** phase */
   revalidate: RevalidateEntry[];
-}
-
-/**
- * balanced 高置信免确认（C5-full，design.md 占位语义落地，用户 2026-07-09 拍板窄范围）：
- * 仅当 profileLabel=balanced（即 resolveProfileLabel 已判 full×interactive×config balanced）
- * 且根因类别=verification 且未触及 coding 层时，跳过 `correction.layer` 用户确认闸门直接
- * 实施——纯补验证、不动任何产物层的修正无需停等。改需求/改契约/改代码（含组合修正触及
- * coding）一律仍须停等确认，不因 balanced 档而放松。
- */
-export function shouldAutoConfirmCorrectionLayer(input: {
-  profileLabel: 'strict' | 'balanced' | 'minimal';
-  category: CorrectionCategory;
-  touchedLayers: readonly string[];
-}): boolean {
-  if (input.profileLabel !== 'balanced') return false;
-  if (input.category !== 'verification') return false;
-  if (input.touchedLayers.includes('coding')) return false;
-  return true;
 }
 
 /**

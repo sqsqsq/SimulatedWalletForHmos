@@ -17,23 +17,44 @@
 // 退出码：0=已处理（含判定不介入）；1=参数/环境错误。**决策为不重启不算失败**。
 // ============================================================================
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
+import { loadFrameworkConfig } from '../config';
+import { loadResolvedProfile } from '../profile-loader';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
 import { superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
+import { defaultProcessProbe } from './utils/device-session';
+import {
+  pidExists,
+  reconcileGuardianOwnership,
+  type PidExistenceProbe,
+} from './utils/goal-containment-reconcile';
+import {
+  probeDeviceReadiness,
+} from './utils/device-readiness-deps';
+import { probeCapabilityPreflight } from './utils/capability-preflight';
+import type { ReadinessProbeName } from './utils/device-readiness-gate';
 import { featureDir } from '../config';
+import { readRunControl, type RunControlV1 } from './utils/goal-run-control';
+import { HANDOFF_REQUEST_NAME, isValidHandoffRequest } from './utils/goal-handoff';
+import { inspectGoalRunCreationFiles } from './utils/goal-run-creation';
 
 interface ResolvedRun {
   runId: string;
   reportDir: string;
+  runDir: string;
   eventsPath: string;
 }
 
 /** 解析 run：显式 id 或 latest（按目录名字典序——run_id 前缀是 ISO 时间戳，字典序即时间序）。 */
-function resolveRun(projectRoot: string, feature: string, wanted: string): ResolvedRun | null {
+function resolveRun(
+  projectRoot: string,
+  feature: string,
+  wanted: string,
+): ResolvedRun | { runId: string; creationIncomplete: string } | null {
   const runsRoot = path.join(featureDir(projectRoot, feature), 'goal-runs');
   if (!fs.existsSync(runsRoot)) return null;
   const ids = fs
@@ -46,7 +67,58 @@ function resolveRun(projectRoot: string, feature: string, wanted: string): Resol
   const reportDir = path
     .relative(projectRoot, path.join(runsRoot, runId))
     .replace(/\\/g, '/');
-  return { runId, reportDir, eventsPath: path.join(projectRoot, reportDir, 'events.jsonl') };
+  const runDir = path.join(projectRoot, reportDir);
+  const creation = inspectGoalRunCreationFiles(
+    path.join(runDir, 'manifest.json'),
+    path.join(runDir, 'events.jsonl'),
+  );
+  if (creation.state !== 'complete' && creation.state !== 'legacy') {
+    return {
+      runId,
+      creationIncomplete:
+        creation.state === 'creation_incomplete' ? creation.reason : 'manifest/run_created 出生记录缺失',
+    };
+  }
+  return { runId, reportDir, runDir, eventsPath: path.join(runDir, 'events.jsonl') };
+}
+
+type OwnerGate =
+  | { action: 'process'; control: RunControlV1 }
+  | { action: 'no_op'; reason: string };
+
+/** Supervisor is read-only outside process ownership; malformed mailbox state fails closed. */
+function hasIncompleteHandoff(runDir: string, runId: string): boolean {
+  const filePath = path.join(runDir, HANDOFF_REQUEST_NAME);
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!isValidHandoffRequest(value) || value.run_id !== runId) return true;
+    return value.status === 'pending' || value.status === 'consumed';
+  } catch {
+    return true;
+  }
+}
+
+function gateSupervisorOwner(runDir: string, runId: string): OwnerGate {
+  let control: RunControlV1 | null;
+  try {
+    control = readRunControl(runDir, runId);
+  } catch (error) {
+    return { action: 'no_op', reason: `run-control 损坏，fail-closed：${(error as Error).message}` };
+  }
+  if (!control?.owner) {
+    return { action: 'no_op', reason: 'run-control owner 缺失，fail-closed' };
+  }
+  if (control.owner.state === 'quiescing' || hasIncompleteHandoff(runDir, runId)) {
+    return { action: 'no_op', reason: 'owner 正在 quiesce 或 handoff 未完成——不抢控制权' };
+  }
+  if (control.owner.kind === 'session') {
+    return {
+      action: 'no_op',
+      reason: `session owner state=${control.owner.state}——仅 attended bridge/操作者可接管`,
+    };
+  }
+  return { action: 'process', control };
 }
 
 /** 该终局结论是否已记过——同一结论只落一次，防周期任务把事件流刷爆。 */
@@ -74,8 +146,76 @@ let injectedRunnerScript: string | null = null;
 export function __testing_setRunnerScript(scriptPath: string | null): void {
   injectedRunnerScript = scriptPath;
 }
+let injectedConditionProbe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null = null;
+export function __testing_setConditionProbe(
+  probe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
+): void {
+  injectedConditionProbe = probe;
+}
+// plan c6a9e4d2 P1-3：接管守卫的进程探针注入（单测无需真起进程；null=生产 defaultProcessProbe）
+let injectedProcessProbe: ReturnType<typeof defaultProcessProbe> | null = null;
+export function __testing_setProcessProbe(probe: ReturnType<typeof defaultProcessProbe> | null): void {
+  injectedProcessProbe = probe;
+}
+function activeProcessProbe(): ReturnType<typeof defaultProcessProbe> {
+  return injectedProcessProbe ?? defaultProcessProbe();
+}
+// P0（二轮 review）：PID existence 通道注入（单测避开真实进程表；null=生产 pidExists）
+let injectedPidExists: PidExistenceProbe | null = null;
+export function __testing_setPidExists(probe: PidExistenceProbe | null): void {
+  injectedPidExists = probe;
+}
+function activePidExists(): PidExistenceProbe {
+  return injectedPidExists ?? pidExists;
+}
+// P1-3：spawn 注入（行为面测试：断言拉起参数且零副效应；null=生产 spawn）
+let injectedSpawnImpl:
+  | ((file: string, args: string[], opts: object) => Pick<ChildProcess, 'pid' | 'unref'>)
+  | null = null;
+export function __testing_setSpawnImpl(
+  fn: ((file: string, args: string[], opts: object) => Pick<ChildProcess, 'pid' | 'unref'>) | null,
+): void {
+  injectedSpawnImpl = fn;
+}
 function runnerScriptPath(): string {
   return injectedRunnerScript ?? path.join(__dirname, 'goal-runner.ts');
+}
+
+function runConditionProbe(
+  projectRoot: string,
+  reportDir: string,
+  probe: string,
+  phase?: string,
+): { ready: boolean; reason?: string } {
+  if (injectedConditionProbe) return injectedConditionProbe(probe, phase);
+  if (probe === 'storage_ready') {
+    const reportDirAbs = path.join(projectRoot, reportDir);
+    try {
+      fs.accessSync(reportDirAbs, fs.constants.W_OK);
+      return { ready: true, reason: 'run report directory is writable' };
+    } catch (error) {
+      return { ready: false, reason: 'run report directory is not writable: ' + String((error as Error).message) };
+    }
+  }
+  if (
+    probe === 'device_readiness' ||
+    probe === 'credential_state_ready' ||
+    probe === 'adapter_capability_ready'
+  ) {
+    const result = probeDeviceReadiness(projectRoot, probe as ReadinessProbeName);
+    return { ready: result.ready, reason: result.reason };
+  }
+  if (probe === 'capability_preflight_ready') {
+    if (!phase?.trim()) return { ready: false, reason: 'capability probe 缺少责任 phase' };
+    const cfg = loadFrameworkConfig(projectRoot);
+    const resolved = loadResolvedProfile(projectRoot, cfg);
+    const result = probeCapabilityPreflight(projectRoot, phase.trim(), resolved);
+    return {
+      ready: result.ready,
+      reason: result.reason ?? result.code ?? 'capability preflight not ready',
+    };
+  }
+  return { ready: false, reason: 'unsupported condition probe: ' + probe };
 }
 
 const TASK_PREFIX = 'MaisonGoalSupervise';
@@ -163,9 +303,22 @@ async function main(): Promise<number> {
     console.error(`[goal-supervise] 找不到 feature=${feature} 的 goal run`);
     return 1;
   }
+  if ('creationIncomplete' in run) {
+    console.log(
+      `[goal-supervise] run=${run.runId} → no_op：CREATION_INCOMPLETE（${run.creationIncomplete}）；` +
+        '仅供诊断，不自动 resume/接管',
+    );
+    return 0;
+  }
+  const ownerGate = gateSupervisorOwner(run.runDir, run.runId);
+  if (ownerGate.action === 'no_op') {
+    console.log(`[goal-supervise] run=${run.runId} → no_op：${ownerGate.reason}`);
+    return 0;
+  }
   const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
   const decision = superviseRun({
     projectRoot, reportDir: run.reportDir, runId: run.runId, events,
+    conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
   });
 
   console.log(`[goal-supervise] run=${run.runId} → ${decision.action}：${decision.reason}`);
@@ -188,6 +341,59 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  // t3（plan c6a9e4d2）：接管守卫——只允许在确认旧 owner（guardian）死亡后拉起：
+  //   · 任一 guardian 严格身份匹配且存活 → 旧 owner 未死 → 维持退避、保留 cooldown，
+  //     不拉起（多未闭合逐项检查，不漏更早孤儿）；
+  //   · 未闭合 invoke 却无任何 Job 绑定（旧版 run）→ fail-closed，人工清理，
+  //     不自动拉起（--force-resume 是人工确认路径，supervisor 不代其确认）；
+  //   · guardian 已不存在/身份不匹配/不可核实 → 不阻断（警告），确认旧 owner 死亡
+  //     成立后照常拉起；
+  //   · P1-3（review）：**所有允许拉起的分支统一追加受控 --force-resume**——旧 owner
+  //     确认死亡即视为受控恢复现场；若最后一个 events run_end 是 HALTED，不带 force
+  //     会被 terminal guard 拒绝，恢复再次失效。cooldown 语义保留在 runner 端
+  //     （force 不 bypass cooldown）。
+  const guardianState = reconcileGuardianOwnership(events, activeProcessProbe(), activePidExists());
+  if (guardianState.kind === 'legacy_run') {
+    console.log(
+      `[goal-supervise] 旧版 run 无 Job 绑定事件（${guardianState.reason}）——`
+      + 'fail-closed 需人工清理，supervisor 不自动拉起',
+    );
+    if (!hasObservation(events, 'legacy_needs_manual')) {
+      appendSupervisorEvent(run.eventsPath, {
+        type: 'supervisor_observation',
+        run_id: run.runId,
+        action: 'legacy_needs_manual',
+        reason: guardianState.reason,
+      });
+    }
+    return 0;
+  }
+  if (guardianState.kind === 'outcomes') {
+    const aliveMatch = guardianState.items.find((i) => i.kind === 'guardian_alive_matching');
+    if (aliveMatch && aliveMatch.kind === 'guardian_alive_matching') {
+      console.log(
+        `[goal-supervise] 接管守卫：guardian(pid=${aliveMatch.bound.pid}) 仍存活且身份严格匹配` +
+        '——旧 owner 未死，维持退避不拉起',
+      );
+      if (!hasObservation(events, 'owner_alive')) {
+        appendSupervisorEvent(run.eventsPath, {
+          type: 'supervisor_observation',
+          run_id: run.runId,
+          action: 'owner_alive',
+          reason: `guardian(pid=${aliveMatch.bound.pid}) 身份匹配且存活——不拉起`,
+        });
+      }
+      return 0;
+    }
+    for (const item of guardianState.items) {
+      if (item.kind === 'guardian_identity_unverifiable') {
+        console.warn(`[goal-supervise] ⚠ 接管守卫：${item.reason}（不杀、不阻断，照常拉起）`);
+      }
+    }
+  }
+  // 到达此处 = 旧 owner 死亡已确认（guardian 不存在/不可核实/无未闭合）——统一受控 force。
+  const allowedForceResume = true;
+
   // 退避（首次为 0）——防重启风暴，退避值与重启序号同源自决策核
   if (decision.backoff_ms > 0) {
     console.log(`[goal-supervise] 退避 ${Math.round(decision.backoff_ms / 1000)}s 后重启…`);
@@ -196,20 +402,43 @@ async function main(): Promise<number> {
 
   // **先落事件再拉起**：崩在 spawn 之前也已计数，避免「拉起失败但没记账」导致无限重试
   appendSupervisorEvent(run.eventsPath, {
-    type: 'supervisor_restart',
+    type: 'supervisor_restart', action: 'resume',
     run_id: run.runId,
     restart_seq: decision.restart_seq,
     backoff_ms: decision.backoff_ms,
     reason: decision.reason,
+    ...(decision.successor_required
+      ? {
+          successor_required: true,
+          successor_start_phase: decision.successor_start_phase ?? 'coding',
+        }
+      : {}),
   });
 
-  const runnerArgs = [
-    runnerScriptPath(),
-    '--feature', feature,
-    '--resume', run.runId,
-    '--detach',
-  ];
-  const child = spawn(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
+  const successorStartPhase = decision.successor_required
+    ? decision.successor_start_phase ?? 'coding'
+    : null;
+  const runnerArgs = successorStartPhase
+    ? [
+        runnerScriptPath(),
+        '--feature', feature,
+        '--start', successorStartPhase,
+        '--supersede', run.runId,
+        '--force',
+        '--detach',
+      ]
+    : [
+        runnerScriptPath(),
+        '--feature', feature,
+        '--resume', run.runId,
+        // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
+        // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
+        // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
+        ...(allowedForceResume ? ['--force-resume'] : []),
+        '--detach',
+      ];
+  const spawnImpl = injectedSpawnImpl ?? spawn;
+  const child = spawnImpl(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
     cwd: projectRoot,
     detached: true,
     stdio: 'ignore',
@@ -220,6 +449,9 @@ async function main(): Promise<number> {
   appendSupervisorEvent(run.eventsPath, {
     type: 'supervisor_restart_spawned', run_id: run.runId,
     restart_seq: decision.restart_seq, pid: child.pid ?? null,
+    ...(successorStartPhase
+      ? { successor_required: true, successor_start_phase: successorStartPhase }
+      : {}),
   });
   return 0;
 }
@@ -234,7 +466,12 @@ if (require.main === module) {
     });
 }
 
-export { resolveRun as __testing_resolveRun, taskName as __testing_taskName };
+export {
+  appendSupervisorEvent as __testing_appendSupervisorEvent,
+  resolveRun as __testing_resolveRun,
+  taskName as __testing_taskName,
+  runConditionProbe as __testing_runConditionProbe,
+};
 // 进程内入口（测试用）：非 dry-run 分支必须真跑一次才算验收，见 supervisor-kill-recovery
 export { main as __testing_main };
 export { restartBackoffMs };

@@ -21,6 +21,8 @@
 
 按当前 `project_profile` 自适配的实现规划师：把 spec 转化为可落地的实现计划。流水线**第二环**，上游 `spec.md`，输出流入 coding。
 
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec；越权字节不获信任或人工豁免。
+
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
 | plan.md（契约草案/来源） | `<features_dir>/<f>/plan/plan.md` | ephemeral（全链路闭环后可归档降级） |
@@ -67,7 +69,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。
 12. **输出与归档**：写盘 `plan.md` → 摘要供人审阅 → **立即进 Step 13**，不得先做编码。
-13. **提取 contracts.yaml**（详见 reference 字段表）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。补充 acceptance.yaml 边界用例（若 spec 未产出）。
+13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/HAR build/export 文件引用以及 `navigation.config_files[]`（3.0 canonical 的唯一 navigation 文件字段，其它承载路径的 navigation 键一律判 `unconsumed_file_field` BLOCKER）必须逐项列入，闭包失败只可回 plan 补 `files` 后重闭环，不得凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
 14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。`dsl_change` 时须同步修改 [framework.config.json](../../../framework.config.json) 的 `architecture` 段。
 
 ## 门禁清单表
@@ -80,6 +82,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 | 数据类型合法性 | 契约字段类型符合 profile 类型系统 | verifier BLOCKER |
 | P0/P1 无未决项 | 无 TBD/TODO | verifier BLOCKER |
 | plan 章节完整/追溯 | `plan-rules.yaml` | 见 `check-plan.ts` 报告修正 |
+| contracts 文件引用闭包 | 所有文件引用 ⊆ `contracts.files` | BLOCKER：回 Step 13 补 `files`、重闭环 |
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接跑 `check-plan.ts` 不会触发任何检查，静默返回 0 造成假通过。
 
@@ -87,11 +90,17 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {module-name}
 ```
 
-**AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。
 
-## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
 
-1. `<features_dir>/<feature>/plan/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后设计阶段完成，**具备**进 coding 的资格；**不授权**自动开 coding。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+
+## 阶段闭环判定（全局入口 §5.1）
+
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/plan/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**）；4. 完成回执经 `check-receipt.ts` 校验通过。required 证据齐备后设计阶段完成，**具备**进 coding 的资格；**不授权**自动开 coding。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
@@ -116,7 +125,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 4. 数据模型类型须符合宿主语言类型系统。
 5. 设计即契约：接口签名/文件路径/组件 Props 是 coding 阶段强契约，务必精确。
 6. contracts.yaml 必须同步产出（Step 13），精确度直接影响编码质量与自动化验证有效性。
-7. 中文输出；模块最小化，只创建 spec 实际需要的模块。
+7. `contracts.files` 是唯一授权集合；任何文件引用都不得靠物理存在、内容相同或其他字段获得隐式授权。
+8. 中文输出；模块最小化，只创建 spec 实际需要的模块。
 
 ## 关联文件
 

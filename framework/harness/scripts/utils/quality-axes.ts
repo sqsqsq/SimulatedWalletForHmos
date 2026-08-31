@@ -11,17 +11,16 @@
 //     （release_readiness + completion_status 标签）；
 //   ④ 防 split-brain：外部阻塞分类以 resolveVerdictFromChecks 为唯一 oracle
 //     （不重复实现 device-external 判定），且 deriveSummaryVerdictLattice 输出
-//     projected_verdict 供写盘方与 legacy verdict 对账（不一致=框架缺陷，显式记录）。
-// 状态语义严格复用现行两类（verify-feature-completion.ts CleanPassIssueKind）：
-//   needs_fix（确定性故障→修复重跑，投 PARTIAL/FEATURE_INCOMPLETE）；
-//   needs_human（设计内求人→AWAITING_HUMAN_REVIEW 封顶）；
-//   external_dependency（外部阻塞→INCOMPLETE/DEFERRED 语义，对齐 device-external 先例）。
-// 人工确认永远不能解除确定性 FAIL（清偿边界在 confirmation-receipt 消费侧执行）。
+//     projected_verdict 供写盘方与 legacy verdict 对账（不一致=独立派生缺陷，显式记录；
+//     pre===legacy 的 capability 合法投影除外——t2 因果归因，不报）。
+// 新 writer 只产生 needs_fix 或 external_dependency。needs_human/owner=human 仅为 legacy
+// summary schema 的兼容读取值，任何人签都不能解除确定性 FAIL/UNVERIFIED。
 // ============================================================================
 
 import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
+import { validateRepairCandidatesShape } from './repair-candidates';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -53,8 +52,12 @@ export type ReleaseReadiness = 'READY' | 'BLOCKED';
 export interface VerdictLattice {
   report_validity: ReportValidity;
   quality_axes: QualityAxes;
-  /** phase-advance 投影（应与 legacy 顶层 verdict 一致；写盘方对账） */
+  /** capability 投影前的 phase-advance verdict（t2 因果归因的 pre）。 */
+  pre_projection_verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  /** 含 hasBlocked 顶层钳制的最终投影 verdict（t2 因果归因的 post；不拿 rawPost 归因）。 */
   projected_verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  /** capability 投影是否产生 blocked（t2 因果归因/next_action 需要）。 */
+  has_blocked: boolean;
   release_readiness: ReleaseReadiness;
   completion_status: string;
 }
@@ -65,6 +68,16 @@ export interface DeriveAxesOptions {
   visualApplicable: boolean;
   /** ui-spec 声明了 assets → asset 轴 applicable（蕴含 visualApplicable） */
   assetApplicable: boolean;
+}
+
+/**
+ * Release requirement SSOT for quality axes. The current policy requires every
+ * applicable axis for release; callers that must decide before summary
+ * materialization reuse this projector instead of inferring optionality from
+ * fidelity/strictness.
+ */
+export function projectAxisRequiredForRelease(axis: AxisId, applicable: boolean): boolean {
+  return AXIS_IDS.includes(axis) && applicable;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,10 +104,8 @@ const VISUAL_PREFIXES = [
   'visible_text',
   'quiescence',
   // S7（visual-capability-truth）：结构保真拆轴——运行时挂载轴（testing 侧）与静态轴分立聚合
-  // cursor 深度 review：实际 check id 为 ui_kit_source_conformance / ui_kit_runtime_conformance，
-  // 'ui_kit_conformance' 前缀两者都匹配不到（漂移归 functional 轴）——放宽到族前缀。
+  // plan e6b3f8d2 t3：`ui_kit_` 族前缀随强制 Maison UI kit 撤销一并删除（已无该族 check id）。
   'runtime_mount_conformance',
-  'ui_kit_',
   'ui_spec_',
 ];
 const EVIDENCE_PREFIXES = [
@@ -137,9 +148,6 @@ const REPORT_VALIDITY_CHECK_IDS = new Set([
   'test_case_table_format',
 ]);
 
-/** 设计内求人家族（与 goal-failure-classifier / E4 家族口径一致的宽匹配） */
-const AWAIT_HUMAN_RE = /await_human|pending_confirm|defer_human|human_sign|fidelity_capture_governance/i;
-
 interface CheckLike {
   id: string;
   status: CheckResult['status'];
@@ -148,17 +156,13 @@ interface CheckLike {
   failure_kind?: string;
 }
 
-function isAwaitHumanCheck(c: CheckLike): boolean {
-  return AWAIT_HUMAN_RE.test(c.blocking_class ?? '') || AWAIT_HUMAN_RE.test(c.failure_kind ?? '');
-}
-
 // ---------------------------------------------------------------------------
 // 派生
 // ---------------------------------------------------------------------------
 
 /** phase-advance 时 UNVERIFIED 也阻断（INCOMPLETE）的轴集合——按 phase。
- * visual/asset 的 UNVERIFIED **不**阻断推进（headless 可继续），只阻断 release
- * （需人工验收清偿，needs_human → run 封顶 AWAITING_HUMAN_REVIEW）——双投影分立的核心。 */
+ * visual/asset 的 UNVERIFIED **不**阻断推进（由 phase matrix 决定），但继续阻断 release；
+ * 后续 testing/owner 必须补齐机器证据，不存在人签清偿。 */
 const ADVANCE_UNVERIFIED_BLOCKING: Record<AxisId, (phase: string) => boolean> = {
   functional: () => true,
   evidence: phase => phase === 'ut' || phase === 'testing',
@@ -238,10 +242,7 @@ export function deriveQualityAxes(
       verdict = 'NOT_APPLICABLE';
     } else if (b.hardFails.length > 0) {
       verdict = 'FAIL';
-      const allHuman = b.hardFails.every(isAwaitHumanCheck);
-      resolution = allHuman
-        ? { class: 'needs_human', owner: 'human', retry_phase: null }
-        : { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+      resolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
     } else if (b.externalFails.length > 0) {
       verdict = 'UNVERIFIED';
       resolution = { class: 'external_dependency', owner: 'external', retry_phase: phase };
@@ -249,17 +250,14 @@ export function deriveQualityAxes(
       // 轴 applicable 但本 phase 零执行（如 spec 期 functional 测试未运行、
       // 盲档下 visual 检查整体 SKIP）——如实 UNVERIFIED。
       verdict = 'UNVERIFIED';
-      resolution =
-        id === 'visual' || id === 'asset'
-          ? { class: 'needs_human', owner: 'human', retry_phase: null }
-          : { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+      resolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
     } else {
       verdict = 'PASS';
     }
 
     axes[id] = {
       applicable,
-      required_for_release: applicable,
+      required_for_release: projectAxisRequiredForRelease(id, applicable),
       verdict,
       blocking_class: resolution?.class ?? null,
       source_checks: [...new Set(b.sources)].sort(),
@@ -273,7 +271,7 @@ export function deriveQualityAxes(
 // S7（visual-capability-truth P2-J.2）：asset 轴带 provenance 继承——testing 期无本阶段
 // asset 检查时，继承的是**证据引用**而非裸 verdict 复制：五指纹（source summary hash /
 // source&build fingerprint / gate fingerprint / inventory hash / debt revision）由调用方
-// I/O 判定一致性；任一漂移 → STALE/UNVERIFIED（needs_human），不得复制上游 PASS。
+// I/O 判定一致性；任一漂移 → STALE/needs_fix，不得复制上游 PASS。
 // ---------------------------------------------------------------------------
 
 export interface AssetAxisInheritance {
@@ -303,8 +301,8 @@ export function applyAssetAxisInheritance(axes: QualityAxes, inh: AssetAxisInher
   axes.asset = {
     ...a,
     verdict: 'STALE',
-    blocking_class: 'needs_human',
-    resolution: { class: 'needs_human', owner: 'human', retry_phase: null },
+    blocking_class: 'needs_fix',
+    resolution: { class: 'needs_fix', owner: 'agent', retry_phase: inh.upstreamPhase },
     source_checks: [`stale_inheritance:${inh.upstreamPhase}:${inh.provenanceDetail}`],
   };
 }
@@ -352,7 +350,7 @@ export function projectReleaseReadiness(axes: QualityAxes): ReleaseReadiness {
   return 'READY';
 }
 
-/** completion 投影标签（仅标签——不构成状态机，映射走既有 needs_fix/needs_human 通道） */
+/** completion 投影标签（仅标签——不构成状态机；当前负面态走 needs_fix/external_dependency） */
 export function projectCompletionStatus(axes: QualityAxes): string {
   const anyFail = AXIS_IDS.some(id => axes[id].applicable && axes[id].verdict === 'FAIL');
   if (anyFail) return 'INCOMPLETE';
@@ -381,18 +379,41 @@ export function applyCapabilityResolutionProjection(
     if (!capability.active || capability.state !== 'blocked') continue;
     const axis = axes[capability.axis];
     const resolution: AxisResolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
+    // review P1：capability 投影**不得**把既有 FAIL 降成 UNVERIFIED——axis 已 FAIL 时保留其
+    // verdict/blocking_class/resolution，只追加 capability source（否则顶层被 runner 救回 FAIL 而
+    // axis 却是 UNVERIFIED，形成分裂）。非 FAIL 轴才投影为 UNVERIFIED（blocked → 阻断）。
+    const alreadyFail = axis.verdict === 'FAIL';
     axes[capability.axis] = {
       ...axis,
       applicable: true,
       required_for_release: true,
-      verdict: 'UNVERIFIED',
-      blocking_class: resolution.class,
+      ...(alreadyFail ? {} : { verdict: 'UNVERIFIED' as const, blocking_class: resolution.class, resolution }),
       source_checks: [...new Set([...axis.source_checks, `capability:${capability.id}`])].sort(),
-      resolution,
     };
     hasBlocked = true;
   }
   return { hasBlocked };
+}
+
+/**
+ * plan c8e5b3f1 t2 B：顶层 verdict 的因果归因纯函数——runner 与单测共用（评审：裁决逻辑不应埋在
+ * runner 内联，且须有守门测试）。规则：
+ *   · post===legacy → verdict=legacy；mismatch 仍按 pre!==legacy 判定（独立派生缺陷照报）；
+ *   · post!==legacy → verdict 取**更严一侧**（FAIL > INCOMPLETE > PASS）——capability 投影只能收紧
+ *     （PASS→INCOMPLETE），不得把既有 FAIL 降成 INCOMPLETE；
+ *   · mismatch = pre!==legacy（独立派生缺陷照报；pre===legacy 的 capability 合法投影不报）。
+ */
+export function resolveEffectiveVerdict(input: {
+  pre: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  post: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  legacy: 'PASS' | 'FAIL' | 'INCOMPLETE';
+}): { verdict: 'PASS' | 'FAIL' | 'INCOMPLETE'; mismatch: boolean } {
+  // review：post===legacy 时 verdict 就是 legacy，但 mismatch 仍须按 pre!==legacy 判定——
+  // pre!==legacy 属独立派生缺陷，即使最终 verdict 未变也要报告（如 pre=PASS/post=INCOMPLETE/legacy=INCOMPLETE）。
+  if (input.post === input.legacy) return { verdict: input.legacy, mismatch: input.pre !== input.legacy };
+  const strictness: Record<string, number> = { FAIL: 2, INCOMPLETE: 1, PASS: 0 };
+  const stricter = strictness[input.post] > strictness[input.legacy] ? input.post : input.legacy;
+  return { verdict: stricter, mismatch: input.pre !== input.legacy };
 }
 
 export function deriveSummaryVerdictLattice(
@@ -402,14 +423,21 @@ export function deriveSummaryVerdictLattice(
 ): VerdictLattice {
   const quality_axes = deriveQualityAxes(checks, opts, capabilityReport);
   const report_validity = deriveReportValidity(checks);
-  const capabilityProjection = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
-  const projected = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  // plan c8e5b3f1 t2：手动投影以暴露 pre/rawPost/post 供因果归因——projectPhaseAdvanceVerdict 纯函数、
+  // applyCapabilityResolutionProjection 原地改 axes，前后各调一次即得标量；post 必须含 hasBlocked 顶层
+  // 钳制（visual/asset blocked 依赖它，否则会被误判）。
+  const pre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const { hasBlocked } = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
+  const rawPost = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const post = hasBlocked && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
   return {
     report_validity,
     quality_axes,
-    projected_verdict: capabilityProjection.hasBlocked && projected === 'PASS' ? 'INCOMPLETE' : projected,
-    release_readiness: capabilityProjection.hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
-    completion_status: capabilityProjection.hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
+    pre_projection_verdict: pre,
+    projected_verdict: post,
+    has_blocked: hasBlocked,
+    release_readiness: hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
+    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes),
   };
 }
 
@@ -420,6 +448,15 @@ export function deriveSummaryVerdictLattice(
 const NEGATIVE_VERDICTS = new Set<AxisVerdict>(['FAIL', 'UNVERIFIED', 'STALE', 'MISSING']);
 
 /**
+ * summary 代际常量（plan a9d4e7c2 T3）——**唯一出处**，消费方一律引用，不各写 `'1.2'`。
+ *   · CURRENT：writer 恒写的当代版本；
+ *   · ASSURANCE：带 assurance + capability resolution + closure_commit 的闭环域
+ *     （1.2 与 1.3 同属；1.3 只是把 verifier 字段条件化，assurance 契约不变）。
+ */
+export const SUMMARY_SCHEMA_VERSION_CURRENT = '1.3';
+export const SUMMARY_ASSURANCE_SCHEMA_VERSIONS: ReadonlySet<string> = new Set(['1.2', '1.3']);
+
+/**
  * summary 1.1 完整契约校验——**唯一权威**（codex 三轮 P1-4：lite schema 无条件 required，
  * 各消费方只验局部会碎片化）。writer 落盘前 fail-fast 调用；verify-feature-completion 与
  * upstream-verdict-gate 消费 1.1 时统一调用。校验面：四字段 presence + 枚举 + 轴不变量。
@@ -427,8 +464,11 @@ const NEGATIVE_VERDICTS = new Set<AxisVerdict>(['FAIL', 'UNVERIFIED', 'STALE', '
 export function validateSummaryV11(summary: unknown): string[] {
   if (!summary || typeof summary !== 'object') return ['summary 非对象'];
   const s = summary as Record<string, unknown>;
-  if (s.schema_version !== '1.1' && s.schema_version !== '1.2') {
-    return [`schema_version=${String(s.schema_version)} 非 1.1/1.2`];
+  // 责任阶段统一路由（plan b6e4c9f2）：repair_candidates 可选字段——存在即须形状合法
+  const rcErrors = validateRepairCandidatesShape(s.repair_candidates);
+  if (rcErrors.length > 0) return rcErrors;
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schema_version)) && s.schema_version !== '1.1') {
+    return [`schema_version=${String(s.schema_version)} 非 1.1/1.2/1.3`];
   }
   const errors: string[] = [];
   if (s.report_validity !== 'PASS' && s.report_validity !== 'FAIL' && s.report_validity !== 'UNVERIFIED') {
@@ -442,7 +482,7 @@ export function validateSummaryV11(summary: unknown): string[] {
   }
   if (s.quality_axes == null) errors.push('quality_axes 缺失');
   else errors.push(...validateQualityAxes(s.quality_axes));
-  if (s.schema_version === '1.2') {
+  if (SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schema_version))) {
     if (typeof s.assurance !== 'string' || !['blocked', 'degraded', 'full', 'not_applicable'].includes(s.assurance)) {
       errors.push('assurance 缺失/非法');
     }

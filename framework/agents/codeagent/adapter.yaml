@@ -42,6 +42,14 @@ hooks:
   template_dir: ../claude/templates/hooks
   update_policy: auto_overwrite
 
+# verifier 能力声明（plan a9d4e7c2）：与 claude 共享同一份 hook 模板与同一套 request 协议。
+# modes 只登记实测过的模式——codeagent 的 interactive SubagentStop payload 已于 2026-08-29
+# 宿主实抓（消费的四个字段全在场且语义同构，见下方 notes）；headless / goal 未验收，不预填。
+verifier_capability:
+  transport: repo_file_request
+  publisher: subagent_stop
+  modes: ["interactive"]
+
 instance_skill_bridge:
   commands_target_dir: .cac/commands
 
@@ -64,9 +72,16 @@ goal_capability:
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (codeagentcli -p …, prompt via STDIN — 与 claude 同款 Windows cmd shim 换行截断铁律)。
-    headless_invoke: 'codeagentcli -p "{{PROMPT}}" --allowedTools Bash,Read,Write,Edit,Glob,Grep --permission-mode dontAsk'
+    # plan a8e5c3f9：headless 全权限契约——argv 与 claude 共用（claudeArgv），
+    # --dangerously-skip-permissions / stdin / stream-json / Read parser 全链复用。
+    # plan c4e8a1f7 T1b（用户裁决）：CodeAgent 进入 supported 集合——删除 agent-invoke.ts
+    # assertAdapterHeadlessFullPermission 的专门拒绝后即接入（argv 无须再改）；真实 CLI flag
+    # 错误由统一 hard-CLI 早停（adapter_cli_hard_failure）一次停机并据 stderr 修正，不预猜。
+    # 宿主 smoke：先记录 `codeagentcli --help`/version，再跑最短 Goal-mode。
+    # Chrys 保持拒绝（bypass 旗标仍未经宿主核实）。
+    headless_invoke: 'codeagentcli -p --dangerously-skip-permissions "{{PROMPT}}"'
     unattended:
-      write_mode: accept-edits
+      write_mode: full-access
       approval_mode: never
 
 post_install_hooks: []
@@ -83,3 +98,15 @@ notes: |
     探针法重采（hooks env 链两个变量名都覆盖）。
   - hard_hook 档位的对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写/
     Stop 真拦收尾/SubagentStop 真落报告）完成为准。
+  - **verifier 闭环绑定：已实抓确认**（宿主采集 2026-08-29；实况见 plan e5b8c3f7 附录 A
+    与 openspec/changes/verifier-evidence-identity/tasks.md 附录 B）。
+    SubagentStop hook 以 payload 的子 agent 身份（agent_id / agent_transcript_path /
+    last_assistant_message）做三重等值绑定后才发布 verifier.report.json；实抓证实 codeagent
+    四个消费字段全在场且语义与 claude 同构（transcript_path=主会话、agent_transcript_path=
+    子代理且指向真实文件，其首条 user prompt 复现原样投递的 Task prompt）→ **共享 hook 直接
+    成立，无需 adapter-specific 分支**。payload 另有 is_kia_repo / process_id 两个本 hook 不
+    消费的字段（未知字段一律忽略），少一个 claude 侧本就可选的 prompt_id。
+  - **已实证差异：SubagentStop 的 matcher 不按 agent type 过滤**——注册项一律触发（实抓中
+    matcher="verifier" 对一个 agent_type="" 的子 agent 同样触发）。settings.json 里的
+    matcher 因此只是提示、不是过滤器；绑定完全不依赖它：非 verifier 子 agent 的转录里没有
+    verifier 证据身份机器块，一律 invocation_subject_absent → bedside，永远发布不了 canonical。

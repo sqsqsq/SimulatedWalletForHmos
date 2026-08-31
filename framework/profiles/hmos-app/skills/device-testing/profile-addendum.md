@@ -11,7 +11,7 @@
 - **构建复用**：当 **业务源码 mtime ≤ 已有 HAP mtime** 且 product/buildMode 一致时，**跳过 hvigor**（`reused: true`，门禁仍 PASS）。`timestamp` 为本次跑门禁时刻，**不是** HAP 生成时间——以资源管理器中 HAP 修改时间或 `hapBuiltAt` 为准。
 - **交互默认值**：见 **`framework/profiles/hmos-app/harness/testing-build-conventions.ts`**（导出 **`listAvailableProducts`**、**`describeDeviceTestHarnessEnvHints`** 等）。
 - **可选构建矩阵**：通过环境变量覆盖：`HARNESS_DEVICE_TEST_PRODUCT`、`HARNESS_DEVICE_TEST_BUILD_MODE`（`debug`|`release`）。不要用 **`HARNESS_SKIP_DEVICE_TEST_BUILD` / `HARNESS_SKIP_DEVICE_TEST_INSTALL`** 作为出口——testing harness 会判 **FAIL**。**goal 模式下禁止 agent 临时覆盖这两个变量**（plan d9e4b7c1）：runner 在 attempt 开始已冻结 {product, buildMode} 并注入环境（agent 与外层 gate 同源），覆盖会让 hvigor 生成物（模块根 `BuildProfile.ets`）与冻结配置不符、被写保护判违规。
-- **goal 正式 gate 强装与 evidence**（plan d9e4b7c1）：goal 模式的外层 testing gate 会注入 `HARNESS_DEVICE_TEST_FORCE_INSTALL=1`（强制 `hdc install -r`，装机复用只保留给 agent 自检与普通模式）并在 build→install→run 全部完成后由 check-testing 协调层统一写 **`reports/<feature>/testing/device-test-evidence.json`**（覆盖式、当前轮专属：goal 身份 + 设备元组 + 完整 HAP sha256 + `written_at` + 结构化 cases 四分类）。goal-runner 只消费该 evidence 驱动 testing→coding 回修（仅 `target_kind=physical` 且 `classification=product_actionable|product_state|scaffold_contract_drift`）；agent 自检产物仅供参考、runner 在 spawn gate 前会删除旧 evidence——**不要手写该文件**。
+- **goal 正式 gate 强装与 evidence**（plan d9e4b7c1）：goal 模式的外层 testing gate 会注入 `HARNESS_DEVICE_TEST_FORCE_INSTALL=1`（强制 `hdc install -r`，装机复用只保留给 agent 自检与普通模式）并在 build→install→run 全部完成后由 check-testing 协调层统一写 **`reports/<feature>/testing/device-test-evidence.json`**（覆盖式、当前轮专属：goal 身份 + 设备元组 + 完整 HAP sha256 + `written_at` + 结构化 cases 四分类）。goal-runner 只消费该 evidence 驱动 testing→coding 回修（仅 `target_kind=physical` 且 `classification=product_actionable|product_state`）；agent 自检产物仅供参考、runner 在 spawn gate 前会删除旧 evidence——**不要手写该文件**。
 - **强制重编**：`HARNESS_DEVICE_TEST_FORCE_BUILD=1` 时始终执行 hvigor。
 - **真编译前停 daemon**：源码新于 HAP、需执行 hvigor 时，harness 会先 **`hvigor --stop-daemon`** 再 assemble，并注入 DevEco **JBR** 到子进程 `Path`（避免旧 daemon worker 在 PackageHap 阶段 `spawn java ENOENT`）。复用 HAP（`reused: true`）时不调 hvigor，亦不停 daemon。
 
@@ -67,10 +67,10 @@
 ### 能力概述
 
 - **`profile.yaml`** 将 **`device_test.run`** 声明为 **provider: hylyre**（与 `framework/profiles/hmos-app/harness/providers/device-test-run.ts` 对齐）。
-- **vendor**：`framework/profiles/hmos-app/vendor/hylyre/` 入库 **hylyre-*.whl** + `release.manifest.json`（参见该目录 `README.md` 同步流程）。
-- **隔离环境**：默认在仓库根 **`.hylyre/venv`**（`framework.config.json > tools.hylyre.venv_dir`）；由 runner **自动** `python -m venv` + `pip install <wheel> "hylyre[device,mcp]"`（可选 `--extra-index-url`，**追加**索引不覆盖用户 `~/.pip/pip.conf`）。
+- **vendor**：`framework/profiles/hmos-app/vendor/hylyre/` 入库**明文源码树 `src/`** + `release.manifest.json`（schema 2；wheel 已退役不再入库，harness 代码仍兼容 legacy wheel 布局——参见该目录 `README.md` 同步流程）。
+- **隔离环境**：默认在仓库根 **`.hylyre/venv`**（`framework.config.json > tools.hylyre.venv_dir`）；由 runner **自动** `python -m venv` + `pip install <发布件> "hylyre[device,mcp]"`（可选 `--extra-index-url`，**追加**索引不覆盖用户 `~/.pip/pip.conf`）。源码树安装时 runner 先把 `src/` 按 manifest 清单拷到 `.hylyre/build-src/` 临时副本再交给 pip（防 in-tree build 污染 vendor）。
 - **ensure 触发点**：**非** device-testing 入口独立步骤；**agent 在 device-testing Step 7 自跑 `testing` harness** 时，在 **`device_test.run`** 前自动调用 **`ensureHylyreReady`**（build → install → ensure → run）。**用户不直接执行 harness 脚本**；重试亦用自然语言调起 device-testing，由 agent 自跑（见 `.cursor/rules/framework-agent-execution.mdc`）。
-- **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下 wheel + `release.manifest.json` 后，**用户只需用自然语言重新发起 device-testing 真机测试**；agent 自跑 testing harness 时，默认 venv 会按 manifest 版本与 wheel sha256 自动 **`pip install --upgrade`**（无 install fingerprint 或 sha256 变化时亦会重装），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**；**通常无需手删 `.hylyre/venv`**。
+- **vendor 自动对齐**：覆盖 `vendor/hylyre/` 下发布件（`src/` 或 wheel）+ `release.manifest.json` 后，**用户只需用自然语言重新发起 device-testing 真机测试**；agent 自跑 testing harness 时，默认 venv 会按 manifest 版本与工件指纹（wheel sha256 / 源码 tree_sha256，按声明清单复算）自动 **`pip install --upgrade`**（无 install fingerprint、指纹变化或 wheel↔source 形态切换时亦会重装），并在 venv 内写入 **`.hylyre-vendor-fingerprint.json`**（含 `artifact_kind`）；**通常无需手删 `.hylyre/venv`**。
 - **首次安装 / 升级**：默认 **600s** `pip` 超时（`HARNESS_HYLYRE_PIP_TIMEOUT_MS` 可覆盖）；传递依赖含 **hypium** 设备栈与 **opencv-python** 等，见控制台进度输出。
 - **自检**：首次安装或**本次发生 vendor 对齐升级**后（`doctor_first_run: true`）执行 **`python -m hylyre doctor`**，日志落在 `<features_dir>/<feature>/testing/reports/hylyre-doctor.log`；`hylyre-ready.meta.json` 含 `installFingerprint` / `vendorSyncReason`。
 - **环境覆盖**：`HYLYRE_PYTHON`（指定已就绪解释器）、`HYLYRE_HOME`（指定已有 venv 根目录）可跳过默认 venv 管理；**`HYLYRE_PYTHON` 不会自动升级**——若与 vendor manifest 版本不一致则 harness **BLOCKER**，需在该环境手动升级或取消该变量。
@@ -97,7 +97,7 @@
   - 锚点标题：**`## 测试用例清单`**（或 `### …`）
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
-  - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`scroll_to`** / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor wheel 内 `hylyre/api/planned_step_keys.py` 为 SSOT）
+  - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`scroll_to`** / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor 源码树 `src/hylyre/api/planned_step_keys.py` 为 SSOT）
 - **selector 查找顺序与真值边界**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` → 设备 dump；后两级只发现候选。任何 `by_id` 必须反解到当前 feature/screen 的 ui-spec node，`by_text` 必须与 ui-spec text 精确等值；用 `derive-hylyre-plan-hint.selector_contract.entries[]` 查询 canonical base anchor/后缀/基数。`SELECTOR-SPEC-001` 首版 WARN；即使真机跑过（如历史 `next_step_btn`）也不等于有契约依据。无法校验则补 ui-spec/锚点，否则该 TC 不写入派生计划并显式跳过。
 - **富选择器（Hylyre 0.2+）**：同名文案/同类型多组件（如 bindSheet 半模态「下一步」 vs 背后页面「下一步」）优先用 `scope:"top_overlay"`、`within`/`below`/`above`、`all`、`index`、`visible`/`enabled` 等（详见 [hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)）；勿仅写裸 `by_text` 碰运气。
 - **长列表**：屏外项用 **`scroll_to`** 或 touch 内 `scroll_into_view`，勿盲猜 `scroll` 步数。Hylyre 0.3+ `scroll_to` 对已在屏目标先匹配再滚。

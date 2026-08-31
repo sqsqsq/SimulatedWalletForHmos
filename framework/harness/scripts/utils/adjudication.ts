@@ -101,27 +101,22 @@ export interface IncidentFacts {
   backtrack_budget_remaining?: number;
   /** 整轮 actionable 集合指纹是否与上次回退完全相同（回退震荡）。 */
   round_fingerprint_repeated?: boolean;
-  /** manifest 声明 vision_lineage=reset（**recovery intent，不是授权**）。 */
-  lineage_reset_requested?: boolean;
   /** 相关文件（诊断用；不参与裁决）。 */
   files?: string[];
 }
 
 // ---------------------------------------------------------------------------
-// 授权（只装已验证 grant）
+// 外部权限事实（不参与质量降级）
 // ---------------------------------------------------------------------------
 
 /**
- * `live_operator`  当场真人应答（同步在场，调用方已取得明确表态）
- * `verified_receipt` 通过 confirmation-receipt 信任链验签的 receipt
- *
- * **没有 `manifest` / `cli_flag` / `natural_language` 源**——它们只是 authority
- * verifier 的输入，不得直接成为 grant（框架明文红线，见文件头）。
+ * 仅保留窄 external_authorization 类型给真正的外部秘密/不可逆操作/法律权限。
+ * 当前 feature quality incidents 不消费 grant；旧 confirmation receipt 永远不能推进。
  */
-export type AuthoritySource = 'live_operator' | 'verified_receipt';
+export type AuthoritySource = 'external_authorization';
 
 export interface VerifiedAuthorityGrant {
-  /** 被授权的动作 id（与 incident 的 requires_grant 对应）。 */
+  /** 外部权限动作 id；不得命名为 quality waiver。 */
   action: string;
   source: AuthoritySource;
   /** 该授权锚定的对象（如 receipt object_hash）——换皮到更宽授权即失配。 */
@@ -172,25 +167,16 @@ export interface IncidentSpec {
    * 能继续。判据不是「有没有人工动作」（设备/环境恢复未必是人工动作）。
    */
   structurally_terminal?: boolean;
-  /** operator 类专用：放行所需的 grant action id（缺 grant → waiting('human')）。 */
-  requires_grant?: string;
   /**
    * recoverable 类专用：可用的恢复动作。
    * 结构前提不满足（截断链 / 预算耗尽 / 指纹重现）→ terminal。
    */
   recover_action?: RecoverAction;
-  /**
-   * plan a5f9c3e2 t2：**只映射不改行为**。这些 incident 的现行分类存疑（框架内部事务
-   * 失败却走了求人通道），但行为订正归后续 plan（先复现后改）。本字段仅作登记标注，
-   * 不影响 decide 输出。
-   */
+  /** plan e5d8a2c4 5b：保留 incident 的来源标注，行为由 class/recover_action 决定。 */
   suspected_misclassified?: boolean;
 }
 
-export type RecoverAction = 'backtrack_to_coding' | 'reset_lineage' | 'retry_transaction';
-
-/** vision reset 的 recovery intent id（**不是** grant action——见文件头红线）。 */
-export const LINEAGE_RESET_INTENT = 'vision_lineage_reset';
+export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
 
 /**
  * canonical incident 注册表（唯一产地）。
@@ -200,29 +186,43 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // --- 本 plan 打通的两条恢复路 -------------------------------------------
   /** ut/testing 期产品源码漂移：保守恢复=失效旧 coding closure 及其后阶段、回退重验。 */
   unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
-  /** 跨 run vision 账本与 feature head 失配（启动期 fail-closed 家族的入口）。 */
-  vision_feature_head_mismatch: { class: 'recoverable', recover_action: 'reset_lineage' },
 
   // --- 结构上无法在本 run 继续 ---------------------------------------------
-  authorized_mutation_requires_full_chain: { class: 'operator', structurally_terminal: true },
+  authorized_mutation_requires_full_chain: { class: 'recoverable', structurally_terminal: true },
   backtrack_limit: { class: 'recoverable', structurally_terminal: true },
   backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true },
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
-  testing_write_violation: { class: 'operator', structurally_terminal: true },
-  vision_ledger_tampered: { class: 'operator', structurally_terminal: true },
-  visual_ledger_integrity: { class: 'operator', structurally_terminal: true },
+  /** 写边界/owner 无法从既有 SSOT 唯一解析，框架无法安全归因或自动重验。 */
+  phase_write_boundary_unresolved: { class: 'framework_fault', structurally_terminal: true },
+  phase_write_owner_unresolved: { class: 'framework_fault', structurally_terminal: true },
+  /** 同一越权写入已在本 run 重现，现有收敛熔断不允许 resume 重置。 */
+  phase_write_violation_repeat: { class: 'recoverable', structurally_terminal: true },
+  /** invocation 后快照失败时无法证明写入归因，属于不可继续的框架事务失败。 */
+  post_invoke_snapshot_failed: { class: 'framework_fault', structurally_terminal: true },
+  testing_write_violation: { class: 'recoverable', structurally_terminal: true },
+  visual_ledger_integrity: { class: 'framework_fault', structurally_terminal: true },
 
   // --- 需要人的决定（可问则问，不可问则停放） -------------------------------
-  await_human_visual_confirm: { class: 'operator', requires_grant: 'human_visual_acceptance' },
-  await_human_verification_evidence: { class: 'operator', requires_grant: 'runtime_fidelity_attestation' },
-  capability_tightened_hard_pixel: { class: 'operator', requires_grant: 'fidelity_downgrade' },
+  /** legacy 事件只读：不再接受人签释放；当前证据须在 correction/successor run 重算。 */
+  await_human_visual_confirm: { class: 'recoverable', structurally_terminal: true },
+  /** 累计 one-shot/no-op 收敛熔断；same-run resume 无释放权，只能 successor/new evidence。 */
+  repair_not_converging: { class: 'recoverable', structurally_terminal: true },
+  /** legacy-only：当前实现以 device/provider capability-missing 投影，不接受 runtime 人签。 */
+  await_human_verification_evidence: { class: 'external' },
+  capability_tightened_hard_pixel: { class: 'external' },
   declared_product_layer_missing: { class: 'operator' },
   unverifiable_must_fix: { class: 'operator' },
   headless_interaction_required: { class: 'operator' },
+  /** Attended executor cannot finish the current request without new host/user input. */
+  executor_waiting: { class: 'operator' },
   operator_interrupt: { class: 'operator' },
-  await_human_p0_skip: { class: 'operator', requires_grant: 'p0_skip_waiver' },
-  /** 闭环墙：脚本门禁反复 PASS 但回执关不了环（多为只能真人签的确认项）。 */
-  closure_open: { class: 'operator' },
+  /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
+   * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
+   * 新 run 不再写该 halt（P0 未豁免 explicit skip 默认回 coding，见 p0-semantic-gates/
+   * repair-candidates），本条目**不是**新 run 的写入口，不参与 driver 决策。 */
+  await_human_p0_skip: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
+  /** 闭环墙：脚本门禁反复 PASS 但机器证据/closure 事务无法关环。 */
+  closure_open: { class: 'recoverable', recover_action: 'retry_transaction' },
   /**
    * assess 侧 halt 的**通用**兜底（运行时带 `assess_halt:<reason>` 后缀——normalizeIncidentId 归一）。
    * f9c2e6b4 t3 起，产生端对"重试耗尽"改发下面两个带责任类别的 id；本条只留给未分类的
@@ -259,6 +259,35 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   agent_no_output: { class: 'external' },
   agent_timeout_repeated: { class: 'external' },
   closure_timeout: { class: 'external' },
+  /**
+   * plan d7f3a9c4 t4：金丝雀 CLI 硬失败（child spawn race / CLI·config 参数不兼容）——
+   * CLI/adapter 兼容性问题、**非需求代码**。修复 adapter 版本/配置/环境后可重跑
+   * （--refresh-vision-probe 触发重探）；不是内容失败（agent 做不对），也不是框架缺陷。
+   */
+  canary_cli_hard_failure: { class: 'external' },
+  /**
+   * plan c4e8a1f7 T1a：正式 phase invoke 的 CLI/guardian 硬失败（child spawn race /
+   * guardian containment 建立失败 / CLI·config 参数不兼容 / Codex 模型兼容 400）——
+   * agent 根本没有执行任务，缺产物只是症状；harness 前直接停机（零内容 retry、
+   * 不伪归因 spec_file_exists）。修复 adapter 版本/配置/环境/升级 CLI 后可重跑；
+   * 普通内容失败（含无 guardian 诊断的 exit 2）不属此类，保持既有 harness/retry。
+   */
+  adapter_cli_hard_failure: { class: 'external' },
+  /**
+   * plan a7c3f9e2 t4/t5：编译形态无法确定（多候选未确认 / build-profile 缺失 /
+   * products 为空 / build-profile 不可解析——后三者无真实候选，不得虚构 default）——
+   * 工程配置侧问题，需用户经 init.product_selection / record-product-selection / env
+   * 显式确认；不是内容失败（agent 改代码无意义），确认后 --resume 重检即放行。
+   */
+  product_selection_unresolved: { class: 'external' },
+  /**
+   * plan a7c3f9e2 review P1（第二轮）：编译形态解析器执行失败（profile 模块存在但
+   * require/解析抛错）——build-profile 缺失/空/不可解析及普通配置读取错误已被解析器
+   * 正常收敛为判别结果，能逃到这里的是 **profile 模块加载或运行时异常 = framework
+   * fault**；按 external 会给出"等待外部环境恢复"的不合理结论。归类 framework_fault，
+   * 修复框架侧后 --resume 重检。
+   */
+  product_selection_probe_failed: { class: 'framework_fault' },
 
   // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
   //     budget 字段已入 manifest identity 冻结） ------------------------------
@@ -280,8 +309,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   //     session driver / delegated producer 的 halt_reason 从未入册，「全覆盖」是虚的）。
   //     一律按**保持现行行为**的类登记（这些今天都是停下求人/等外部），
   //     绝不落 recoverable —— 映射完整 ≠ 行为改动。
-  /** 仅剩需真人签字/确认项，内容重试无意义（actionability 聚合层出口）。 */
-  await_human_gate_deferral: { class: 'operator' },
+  /** legacy-only：新运行不再生成；resume 只能触发机器重验，不能靠签名改写质量结论。 */
+  await_human_gate_deferral: { class: 'recoverable', recover_action: 'retry_transaction' },
   /** 存在 toolchain 阻塞项——环境修好后继续。 */
   await_operator_toolchain: { class: 'external' },
   /** in-session 调和熔断（goal-mode-entry）。codex 七轮 P1：`fuse_reason` **持久化在
@@ -296,16 +325,16 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    *  external——判 operator 会错报成「等人决策」。 */
   no_progress_agent_timeout: { class: 'external' },
   /** 视觉门禁无改善熔断（与基建类分流，见 goal-runner driverGuard 分支注释）。 */
-  no_progress_visual_gap: { class: 'operator' },
+  no_progress_visual_gap: { class: 'recoverable', structurally_terminal: true },
   /** 基建类无进展：工具链 / 采集失败——环境修好后继续。 */
   no_progress_toolchain: { class: 'external' },
   no_progress_capture: { class: 'external' },
   /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
    *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
-   *  与 `await_human_confirm` / `await_human_p0_skip`（等人），压成一个会让 wait_kind
-   *  真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
+   *  历史上也覆盖 `await_human_confirm`；当前质量缺口已重投影到 owner/capability 路径，
+   *  压成一个会让 wait_kind 真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
   no_progress_cumulative_external: { class: 'external' },
-  no_progress_cumulative_human: { class: 'operator' },
+  no_progress_cumulative_human: { class: 'recoverable', structurally_terminal: true },
   /** 设备就绪门（delegated producer：device-readiness-gate）。 */
   device_not_ready: { class: 'external' },
   /** codex 七轮 P1：AMBIGUOUS 的原契约是「多设备无法唯一确定 → HALT 求人，须用户配置
@@ -319,20 +348,42 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   goal_post_review_source_mutation_unresolved: {
     class: 'recoverable', recover_action: 'backtrack_to_coding',
   },
-  await_human_fidelity_tier: { class: 'operator', requires_grant: 'fidelity_downgrade' },
-  needs_human: { class: 'operator' },
+  await_human_fidelity_tier: { class: 'external' },
+  needs_human: { class: 'recoverable', recover_action: 'retry_transaction' },
+  /** codex 第九批 P1：--supersede 参数校验失败的启动期优雅收口（改参数重跑即可） */
+  supersede_target_invalid: { class: 'operator' },
   device_toolchain: { class: 'external' },
 
-  // --- 疑似误分类：**只映射不改行为**（行为订正归后续 plan，先复现后改） -------
-  // 这六条是框架自己的快照/事务失败，却走了求人通道而人也修不了。此处按
-  // 保持现行行为的类登记（operator=停下求人，与今天一致），仅打标注。
-  pass_snapshot_unavailable: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_restore_refused: { class: 'operator', suspected_misclassified: true },
-  pass_snapshot_journal_unverifiable: { class: 'operator', suspected_misclassified: true },
-  pre_invoke_snapshot_failed: { class: 'operator', suspected_misclassified: true },
-  closure_finalization_failed: { class: 'operator', suspected_misclassified: true },
+  // --- 5b：快照/事务故障的行为映射 -----------------------------------------
+  // 证据缓存只负责让责任阶段重新取得 PASS；它不产生人工授权，也不把旧字节写回宿主。
+  // pre-invoke 的失败点在写保护边界，可能是磁盘/权限等外部条件，因此保留 external
+  // 等 probe；其余纯缓存/事务故障走可重复的责任阶段恢复。
+  pass_snapshot_unavailable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_restore_refused: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pass_snapshot_journal_unverifiable: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
+  pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
+  /** runner-owned-machine-facts：invoke 前回执骨架写失败（目录只读/模板缺失/文件占用）。
+   *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
+   *  死结复发；外部存储条件恢复后 probe 续跑。 */
+  receipt_scaffold_unwritable: { class: 'external' },
+  /** plan c6a9e4d2 P0-2：Windows containment 绑定失败且 guardian 未证明消失——
+   *  旧 agent 无 Job 契约仍在野（kill 失败/复验仍活），halt 阻断续跑求人（真冲突
+   *  勿自动覆盖）；人工清理后 --resume（接管对账再拦/放行）。 */
+  agent_containment_unresolved: { class: 'external' },
+  /** 责任阶段统一路由（plan b6e4c9f2）：可信缺陷候选写不回 summary（唯一真源）——
+   *  assess 因此看不见缺陷、回退链断裂。存储条件问题，修好后 probe 续跑。 */
+  repair_candidates_unwritable: { class: 'external' },
+  closure_finalization_failed: {
+    class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
+  },
   goal_review_closure_baseline_unavailable: {
-    class: 'operator', structurally_terminal: true, suspected_misclassified: true,
+    class: 'recoverable', recover_action: 'backtrack_to_coding', suspected_misclassified: true,
   },
 } as const satisfies Record<string, IncidentSpec>);
 
@@ -400,16 +451,38 @@ const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
 };
 
 /**
- * **投影注入点（d6 t5⓪）**：带 `halt_reason` 的事件在**写盘那一层**自动补
- * `run_disposition` / `run_wait_kind`。
+ * **结构敏感 incident**（e5d8a2c4 T1⑤）：`decide()` 的输出依赖 incident id **之外**
+ * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹）。这类事件的投影**必须在事故生产点**用完整
+ * facts 计算——写盘层兜底只有 halt_reason，会把 TERMINAL 化妆成 RECOVERY_PENDING
+ * （d6b1a8e3 t5④ 的原始反例）。集合由注册表**派生**，不手写第二份清单：
+ * `class==='recoverable' && !structurally_terminal`（structurally_terminal 在
+ * decide 最前直接 terminal、零 facts——其余家族的兜底与生产点计算**数学等价**：
+ * 纯函数、同输入。operator 类兜底 NO_AUTHORITY 亦等价——生产点若有 grant 就不会
+ * emit halt）。
+ */
+export function isStructuralFactsIncident(incident: string): boolean {
+  const spec = lookupIncident(incident);
+  return Boolean(spec && spec.class === 'recoverable' && !spec.structurally_terminal);
+}
+
+/**
+ * **投影注入点（d6 t5⓪；T1⑤ 收敛）**：带 `halt_reason` 的事件在**写盘那一层**补
+ * `run_disposition` / `run_wait_kind`——这**不是第二裁决**，而是**等价延迟投影**：
+ * 对非结构敏感 incident，`decide({incident})` 与生产点计算是纯函数同输入，结果
+ * 逐字段一致（该等价性由 adjudication 单测钉为契约）。
  *
  * 为什么不在 29 个 emit 点各写一遍：那等于要求每个新增 halt 的作者都记得补投影，
  * 漏一个 supervisor 就无判据——与「新增 incident 不注册即红」是同一类问题。
- * 全仓只有两条事件写入路径（goal-runner 的 reconcile boundary writer、
- * in-session 的 appendGoalEventFenced），在这两处各调一次即全覆盖。
  *
- * **已显式携带 `run_disposition` 的事件原样放行**——那是调用方投影了真实
- * `decide()` 结果（含结构性事实），比按 incident id 重算更准，不得覆盖。
+ * **已显式携带 `run_disposition` 的事件原样放行**——调用方投影了真实 `decide()`
+ * 结果（含结构性事实），不得覆盖。
+ *
+ * **结构敏感 incident 缺投影 = 开发错误**（T1⑤）：**拒绝化妆**——原样放行
+ * （宁缺判据，不给错误判据；下游对缺投影按 `halted` 原样显示），并打日志。
+ * **如实边界（codex 第九批 P3）**：本守卫当前只是"拒化妆+日志"，不是"测试直接
+ * 失败"级 fail-loud——被测保护是 t5⓪ 元门禁的 disguised 断言（写盘层不化妆）与
+ * 集合派生断言；"生产 emit 点缺投影会红"的生产路径断言随 T2 5b（六条改行为，
+ * 会重排 halt 生产面）一并收口，不在此提前建出口注册表。
  */
 export function withRunDisposition<T extends Record<string, unknown>>(
   event: T,
@@ -418,6 +491,14 @@ export function withRunDisposition<T extends Record<string, unknown>>(
   if (event.run_disposition !== undefined) return event;
   const incident = typeof event.halt_reason === 'string' ? event.halt_reason.trim() : '';
   if (!incident) return event;
+  if (isStructuralFactsIncident(incident)) {
+    console.error(
+      `[adjudication] 开发错误：结构敏感 incident（${incident}）的 halt 事件缺少生产点投影`
+      + '——写盘层拒绝用兜底 facts 化妆（会把 TERMINAL 算成 RECOVERY_PENDING）。'
+      + '请在 emit 点用完整 facts 调 decide() 并 runDispositionFields() 显式投影。',
+    );
+    return event;
+  }
   const decision = decide({ incident }, NO_AUTHORITY, { ...NEUTRAL_PROJECTION_CONTEXT, ...context });
   return { ...event, ...runDispositionFields(decision) };
 }
@@ -433,10 +514,6 @@ export function dispositionOf(decision: Decision): Disposition {
 
 /** ut drift 走保守恢复时的决策原因——**不复用授权语义**（不产 matched_receipts）。 */
 export const UNTRUSTED_DRIFT_REASON = 'untrusted_source_drift_revalidation';
-
-function hasGrant(authority: AuthorityFacts, action: string): boolean {
-  return authority.grants.some((g) => g.action === action && Boolean(g.binding));
-}
 
 /** 回退的结构前提（任一不满足 → 结构上无法在本 run 恢复）。 */
 function backtrackBlocked(facts: IncidentFacts): string | null {
@@ -463,7 +540,7 @@ function backtrackBlocked(facts: IncidentFacts): string | null {
  */
 export function decide(
   facts: IncidentFacts,
-  authority: AuthorityFacts,
+  _authority: AuthorityFacts,
   context: ExecutionContext,
 ): Decision {
   const spec = lookupIncident(facts.incident);
@@ -488,30 +565,9 @@ export function decide(
       if (!action) {
         return { kind: 'waiting', wait_kind: 'human', reason: `${facts.incident}：可恢复但未声明恢复动作` };
       }
-      if (action === 'reset_lineage') {
-        // reset 是 **recovery intent 不是 authority**：不查 grants。
-        // 安全性由「仅 fresh + 断裂显式记事件 + 禁连续性主张 + 全链重验」保证——
-        // 危险的从来不是 reset 本身，是静默的 reset。
-        if (context.invocation !== 'fresh') {
-          return {
-            kind: 'terminal',
-            reason: 'resume 遇 lineage 失配——绝不冒充连续（fail-closed）',
-          };
-        }
-        if (facts.lineage_reset_requested !== true) {
-          return {
-            kind: 'terminal',
-            reason: 'lineage 失配且未声明 vision_lineage=reset——不得擅自重建 lineage',
-          };
-        }
-        return {
-          kind: 'recover',
-          action,
-          reason: '已声明放弃历史连续性：quarantine 旧锚 → 建新 lineage → 全链重验' +
-            '（显式撤销连续性主张，不伪造保证）',
-        };
-      }
-      const blocked = backtrackBlocked(facts);
+      // retry_transaction 只重跑当前责任阶段，不消费回退预算，也不依赖 coding/review
+      // 链；预算/截断/指纹只约束真正跨阶段的 backtrack_to_coding。
+      const blocked = action === 'backtrack_to_coding' ? backtrackBlocked(facts) : null;
       if (blocked) return { kind: 'terminal', reason: blocked };
       return {
         kind: 'recover',
@@ -522,15 +578,10 @@ export function decide(
       };
     }
     case 'operator': {
-      if (spec.requires_grant && hasGrant(authority, spec.requires_grant)) {
-        return { kind: 'continue', reason: `已验证授权（${spec.requires_grant}）放行` };
-      }
       return {
         kind: 'waiting',
         wait_kind: 'human',
-        reason: spec.requires_grant
-          ? `${facts.incident}：缺已验证授权（${spec.requires_grant}）——停放等人`
-          : `${facts.incident}：需要人的决定——停放等人`,
+        reason: `${facts.incident}：需要外部输入或决定——停放等待；人工决定不得改写机器质量结论`,
       };
     }
     case 'external':

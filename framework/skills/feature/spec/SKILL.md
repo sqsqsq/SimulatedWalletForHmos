@@ -21,6 +21,8 @@
 
 按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是流水线**第一环**，输出 `spec.md` 供下游各阶段消费。宿主扩展通过 `doc/extensions/knowledge/`、`hooks/spec/on_context_load.md`、`phase_rules_overlays.spec` 叠加。
 
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 spec/acceptance/UI 契约产物；不得修改 plan、实现源码、UT 或 testing 产物。runner 会按 invoke 前后哈希归因；越权字节仅作为未受信输入保留，本轮证据作废并自动回唯一 owner 全量重验，不能用人工确认豁免。
+
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
 | spec.md | `<features_dir>/<f>/spec/spec.md` | 长期归档 |
@@ -32,16 +34,16 @@
 
 ## 层边界（BLOCKER）
 
-用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层）；`.current-correction.json.auto_confirm_eligible=true` 可直接实施，否则须经 `correction.layer` 1/2 确认。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
+用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层），然后直接按机器分类的责任层实施并级联重验，不设人签 gate。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
 
 ## 流程骨架
 
-1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`——落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。goal 模式该文件已由 goal-runner 首产——CLI 会自动探测并跳过，**绝不覆盖** goal 决策（writer 唯一）。
+1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4 + c8e5b3f1）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 initializer。若本轮来自 attended `phase_execute_request`，必须把请求的完整上下文原样传为 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --goal-run-id <run_id> --goal-phase <phase> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；阶段驱动路径执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`（超长需求可用 `--requirement-file <path>`，两者互斥）。initializer 落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot；attended 分支只读精确 manifest，并在写盘前校验 run / feature / session owner / epoch / lease，同 run 有效 SSOT 只读复用。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。**因果提示（勿让 agent 猜）**：阶段驱动路径的 `derive.requirement` 只认 SSOT 里 provenance=`explicit_cli`（=本次显式给了非空 `--requirement`/`--requirement-file`）且身份匹配的需求——**若不给需求文本**（CLI 只会落 `intent_fallback`），spec 的 requirement capability 保持 blocked → 阶段 INCOMPLETE → check-receipt 拒绝闭环，重跑多少次都一样。显式传空 `--requirement`（`""` / 空格）会 fail-fast，不会静默降级读 README/笔记/spec.md 解锁。
 2. **术语消歧**（BLOCKER，详见 reference）：必读 [doc/glossary.yaml](../../../../doc/glossary.yaml)（业务术语↔权威模块）与 [doc/module-catalog.yaml](../../../../doc/module-catalog.yaml)（模块职责画像），生成`## 0. 术语映射表`，所有行 `[x]` 用户确认后才允许生成正文；headless 例外见 reference。**`project_scale=small`**（`framework.config.json`，framework-init 按 catalog 模块数 ≤3 建议）时映射表仍须产出，但可用节末一行 `- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射` 整体替代逐行 `[x]`；Scope/`diff_within_scope` 等红线不受影响。
 3. **截图分析 → ui-spec.yaml**（UI 需求，详见 reference）：分区扫描、逐屏识别、组件 taxonomy、token 表、资产清单、保真档位判定、DSL↔原图 gate。
 4. **Research Sub-Phase**（Context Facts Gate·BLOCKER，C4）：进入 Step 5 正文前必读本阶段 SSOT（glossary/catalog/architecture.md + 相关既有实现，≥2 源码文件）+ profile 必查路径；填 `context_intent`/`estimated_loc_delta`/`touches_layers`；harness 按 `exploration_strategy` 复合评分决定是否须 subagent。spec 是 full track 的**建立阶段**：在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`ready_to_produce: true` 且 `has_blocker_coverage_risk: false`）——后续 plan/coding/review/ut/testing 各阶段只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 `spec/context-exploration.md`（per-phase）仍可读但已弃用，SSOT 见 `framework/harness/scripts/utils/context-facts.ts`。
 5. **生成 spec 初稿**：读 `` `profile-skill-asset:spec/spec_template` ``，填 10 章节（0 术语映射表 / 1 功能概述 / 2 Scope 声明 / 3 目标用户场景 / 4 功能清单 / 5 页面描述 / 6 业务流程图 / 7 异常边界 / 8 非功能性需求 / 9 验收标准）。Scope 的 `in_scope_modules` 须全部来自已确认映射表的 `canonical_module`。UI 需求须在 Scope 附近增加独立 `yaml` 块（`ui_change` 字段，见 [reference/visual-handoff.md](reference/visual-handoff.md)）；非 UI 且未 opt-in `spec.visual_handoff_enforcement: strict` 时不写该块。**Scope 填写要点**：对照 architecture.md 判断 `in_scope_modules`/`out_of_scope_modules`，`rationale` 须回答"若下游想把逻辑提到公共模块是否同意"；模块名 PascalCase；判断不清宁可窄。
-6. **质量自检**（10 项，逐项检查不通过自动修正）：功能概述非空话 / Scope yaml 块+rationale / 用户场景明确 / 功能清单含优先级 / 界面描述覆盖截图元素 / Mermaid 语法+主路径分支 / 异常场景≥3 类 / 非功能性有量化指标 / 验收标准可测试且与功能清单对应 / Visual Handoff 独立块（若 UI）+ ui-spec 已产出且 `verified` 非 unverified（若 `new_or_changed`）。
+6. **质量自检**（10 项，逐项检查不通过自动修正）：功能概述非空话 / Scope yaml 块+rationale / 用户场景明确 / 功能清单含优先级 / 界面描述覆盖截图元素 / Mermaid 语法+主路径分支 / 异常场景≥3 类 / 非功能性有量化指标 / 验收标准可测试且与功能清单对应 / Visual Handoff 独立块（若 UI）+ ui-spec 已产出（若 `new_or_changed`）。**`verified` 自检口径（plan c4e8a1f7 T3，能力与可审计性分轴）**：只有**能看图 ∧ 工具事件可审计**（`hasVision=true` 且 `tool_event_provenance=structured_events`，即 canary 判真视觉 + claude/codeagent）时，`verified` 非 unverified 才是**可达且被要求**的（逐张读图 → refs receipt → vl_multimodal 终签）；其余象限（无视觉 / `none`-provenance 如 codex / 盲 + structured）统一走既有 `unverified` 语义——继续用图片完成工作但诚实写 `verified: unverified`（伪造 `verified: verified`/`verified_method: vl_multimodal` 恒被拒；best-effort/reachable 档 WARN 可继续，hard contract 仍 FAIL）。禁止无条件要求"verified 非 unverified"——那会让不可审计/盲宿主追逐结构性不可能终签。
 7. **输出与归档**：写盘 `spec.md`（+ `ui-spec.yaml` 若 UI）→ 对话输出摘要 → **冻结/下游授权**（`spec.freeze`：`1=冻结可进 plan` `2=继续改`，口头 OK 无效）→ 进 Step 8；Step 8 完成后立即进 Step 9，**严禁**跳过 7.1。
 8. **提取 acceptance.yaml**（详见 reference 字段表）：`criteria`/`boundaries`/`performance`/`coverage_summary` 四章节，`ut_layer` 分层判定见 reference。
 
@@ -61,11 +63,19 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {module-name}
 ```
 
-**AI Harness**：agent 必须主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。
+若本轮来自 attended `phase_execute_request`，上述阶段入口还必须追加同一组 `--goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；不得扫描 feature 下的 active run 自动绑定。完成 verifier 与 receipt 自证后，以**同一组参数**再次运行 `harness-runner.ts --sync-closure --phase spec --feature <feature>`；只有 exit 0 才可向 attended bridge 回传 `passed`。
 
-## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
+**AI Harness**：harness 输出 verifier request 时，agent 必须主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。
 
-1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后只证明本阶段闭环；跨阶段资格与建议由 `assess@1` 输出。
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
+
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+
+## 阶段闭环判定（全局入口 §5.1）
+
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**）；4. 完成回执经 `check-receipt.ts` 校验通过。required 证据齐备后只证明本阶段闭环；跨阶段资格与建议由 `assess@1` 输出。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

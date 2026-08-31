@@ -9,9 +9,13 @@
 import type { UiSpecDoc } from '../../../harness/scripts/utils/ui-spec-shared';
 import { ASSET_KEY_RE } from './asset-integrity';
 
-/** blind-visual-hardening d3（codex 五轮 P1-5 契约统一）：语义容器节点入 canonical 枚举——
- * docs/映射器教 `type: nav_bar` 直写，validator 必须同源认可（单测过、真实 spec 阶段挂=假绿）。 */
-export const SEMANTIC_BLOCK_TYPE_ENUM = [
+/**
+ * 结构语义节点入 canonical `type` 枚举——docs/映射器教 `type: nav_bar` 直写，validator
+ * 必须同源认可（单测过、真实 spec 阶段挂=假绿）。
+ * plan e6b3f8d2 t3：这些词**保留为通用结构语义**，但**不再绑定任何具体实现**——
+ * 随强制 Maison UI kit 撤销，`node.block` 字段与 block↔组件映射已删除。
+ */
+export const STRUCTURAL_SEMANTIC_TYPE_ENUM = [
   'nav_bar',
   'list_card_container',
   'list_row',
@@ -31,7 +35,7 @@ export const COMPONENT_TYPE_ENUM = [
   'content_display',
   'list_selection',
   'logic_condition',
-  ...SEMANTIC_BLOCK_TYPE_ENUM,
+  ...STRUCTURAL_SEMANTIC_TYPE_ENUM,
 ] as const;
 
 export const TOKEN_KIND_ENUM = ['color', 'spacing', 'font_size', 'radius', 'divider'] as const;
@@ -110,16 +114,21 @@ function pushUnknownKeyErrors(
   }
 }
 
-const TOKEN_ALLOWED_KEYS = new Set(['kind', 'value', 'source_bbox', 'source_ref', 'sampled']);
+const TOKEN_ALLOWED_KEYS = new Set([
+  'kind', 'value', 'source_bbox', 'source_ref', 'sampled',
+  'placeholder', 'value_source',
+]);
 const ASSET_ALLOWED_KEYS = new Set([
   'key', 'acquisition', 'source_ref', 'source_bbox',
   'resolved_path', 'placeholder', 'rationale', 'human_crop_confirmed', 'crop_confirmed_by',
   // round5 P0-A 烤字 defer（TS 类型已有，validator 此前漏登记）
   'baked_text_defer', 'baked_text_defer_by',
-  // P0-C（f2d8c4a6）：产物验真真人署名（与 crop_confirmed_by 授权语义正交）
+  // legacy-only 人名字段：只做 schema 兼容读取，不参与裁剪授权或验真
   'bbox_verified_by',
   // blind-visual-hardening：crop 产物来源记录 / role 声明（机器派生为准，声明供交叉对账）/ 占位形态
   'crop_provenance', 'role', 'placeholder_kind',
+  // review follow-up：盲档回退的诚实原因说明（不构成验真/授权）
+  'blind_fallback_reason',
 ]);
 const ROOT_ALLOWED_KEYS = new Set(['schema_version', 'verified', 'verified_method', 'screens', 'tokens', 'assets', 'global_elements']);
 
@@ -180,10 +189,6 @@ function validateComponentNode(
   }
   if (n.subtitle_position !== undefined && n.subtitle_position !== 'trailing' && n.subtitle_position !== 'below') {
     errors.push(`${pathLabel}.subtitle_position 非法：${JSON.stringify(n.subtitle_position)}（须 trailing/below）`);
-  }
-  // blind-visual-hardening：block 显式声明（与语义 type 直写二选一皆合法）
-  if (n.block !== undefined && !(SEMANTIC_BLOCK_TYPE_ENUM as readonly string[]).includes(n.block as string)) {
-    errors.push(`${pathLabel}.block 非法：${JSON.stringify(n.block)}（须 ${SEMANTIC_BLOCK_TYPE_ENUM.join('/')}）`);
   }
   if (typeof n.id === 'string' && n.id.trim()) {
     if (seenNodeIds.has(n.id)) {
@@ -345,6 +350,12 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (t.sampled !== undefined && typeof t.sampled !== 'boolean') {
         errors.push(`token ${key}.sampled 须为布尔`);
       }
+      if (t.placeholder !== undefined && typeof t.placeholder !== 'boolean') {
+        errors.push(`token ${key}.placeholder 须为布尔`);
+      }
+      if (t.value_source !== undefined && typeof t.value_source !== 'string') {
+        errors.push(`token ${key}.value_source 须为字符串`);
+      }
     }
   }
 
@@ -376,10 +387,13 @@ export function validateUiSpecSchema(doc: UiSpecDoc): string[] {
       if (as.source_bbox !== undefined && !isBbox(as.source_bbox)) {
         errors.push(`assets[${i}].source_bbox 须为 4 元归一化 [x,y,w,h]`);
       }
-      for (const k of ['source_ref', 'resolved_path', 'rationale', 'crop_confirmed_by', 'baked_text_defer_by', 'bbox_verified_by'] as const) {
+      for (const k of ['source_ref', 'resolved_path', 'rationale', 'blind_fallback_reason', 'baked_text_defer_by', 'bbox_verified_by'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'string') {
           errors.push(`assets[${i}].${k} 须为字符串`);
         }
+      }
+      if (as.crop_confirmed_by !== undefined && as.crop_confirmed_by !== null && typeof as.crop_confirmed_by !== 'string') {
+        errors.push(`assets[${i}].crop_confirmed_by 须为字符串或 null`);
       }
       for (const k of ['placeholder', 'human_crop_confirmed', 'baked_text_defer'] as const) {
         if (as[k] !== undefined && typeof as[k] !== 'boolean') {

@@ -4,6 +4,7 @@
  */
 
 import type { WorkflowSpec } from '../../workflow-loader';
+import type { AssessAuthorizationContext, AssessRecommendation } from './assess';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   effectiveRequires,
@@ -24,6 +25,13 @@ export type PhaseVerdictAction =
   | 'retry'
   | 'halt'
   /**
+   * 责任阶段统一路由（plan b6e4c9f2 t2）：回退到 assess 选定的任意可信 earlier phase
+   * （目标在 recommendation.phase；由 repair_candidates 类别经 workflow 严格映射得出，
+   * 映射不到=null=既有 backtrack_target_absent）。'backtrack_to_coding' 保留为
+   * testing 缺陷特例的既有字面（t4 收编后统一归此）。
+   */
+  | 'backtrack_to_phase'
+  /**
    * plan d8c5f3a7 T4：带缺陷指纹回退 coding 修复（扩展既有 authorized_backtrack 语义，
    * 不新造机制）。2026-07-24 事故暴露的结构性缺口：转移策略只有「同阶段 retry ≤2 → halt」，
    * **不存在 testing FAIL → 回 coding → 再 testing 的环**；既有回退通道
@@ -42,8 +50,7 @@ export type PhaseVerdictAction =
 /**
  * goal-fakepass-hardening t8（openspec goal-runner delta）：非最终成功状态不得含裸
  * COMPLETED 语义——run 级成功=CHAIN_SLICE_COMPLETED（只证明本 run 的链切片，feature 级
- * 完成只认 verify-feature-completion=VALID）；存在待人工事项（pending must-review/
- * waiver/档位钳制）→ AWAITING_HUMAN_REVIEW 封顶。'COMPLETED' 仅为 legacy 事件读取兼容
+ * 完成只认 verify-feature-completion=VALID）；AWAITING_HUMAN_REVIEW/COMPLETED 仅为 legacy 事件读取兼容，
  * （旧 run 的 events.jsonl），新代码不得写出。INTERRUPTED 由 goal-mode-unattended-survival
  * 管辖（异常退出终态，正交共存）。
  */
@@ -328,15 +335,11 @@ export function classifyPhaseVerdict(
   // 旧顺序 `PASS 先行 return` 是第 6 轮 review 实锤的致命错误：best_effort（银行卡真实
   // 档位）下视觉缺陷表现为 WARN、verdict=PASS → 回修环从未可达。actionable 缺陷非空
   // 即回退，与 verdict 无关。只在 testing（UT 不读视觉产物；runner 侧同样只在 testing
-  // 收集）。优先级序：安全 halt（在 runner 层先行 continue，根本到不了这里）→
-  // actionable 回退（此处）→ 普通 PASS/FAIL。
-  // 预算/指纹/回退目标的裁决**全部收归 runner 的统一回退分支**——policy 里不看预算。
-  // review 第 10 轮实锤：旧写法预算耗尽后 PASS+actionable 掉到 advance、FAIL+actionable
-  // 掉到 retry——残留缺陷被当成通过推进/原地空转，与"耗尽即 halt"相反。恒返回
-  // backtrack_to_coding，runner 分支判 target/fingerprint/budget 并在那里 halt。
-  if (input.deterministic_p0_defects === true && input.phase === 'testing') {
-    return 'backtrack_to_coding';
-  }
+  // 【testing 缺陷专用裁决已删除 · 责任阶段统一路由（codex 二轮冻结项①）】
+  // v23 F1 的"PASS+actionable 也必须回退"语义**未削弱**，只是换了唯一入口：缺陷经
+  // summary.repair_candidates → assess candidates 分支 → backtrack_to_phase；该分支
+  // 在 recommendationForObservation 中**先于**本分类器执行，故 PASS+可信缺陷不会掉进
+  // 下面的 advance。deterministic_p0_defects 入参保留供诊断，不再决定路由。
 
   if (verdict === 'PASS') return 'advance';
 
@@ -378,6 +381,10 @@ export function classifyPhaseAssessment(
       return { action: 'stop', target: null, runner_action: runnerAction };
     case 'backtrack_to_coding':
       return { action: 'rerun_phase', target: 'coding', runner_action: runnerAction };
+    case 'backtrack_to_phase':
+      // 责任阶段统一路由：目标由 assess 的 recommendation.phase 承载（本分类器不产
+      // 该 action——candidates 分支在 assess 层；此处仅保证枚举完备不抛）。
+      return { action: 'rerun_phase', target: null, runner_action: runnerAction };
     case 'defer_external_and_continue_if_allowed':
     case 'defer_external_and_halt':
       return { action: 'resolve_deferred', target: 'current', runner_action: runnerAction };
@@ -391,14 +398,14 @@ export function classifyPhaseAssessment(
 export const DEFAULT_MAX_BACKTRACKS = 2;
 
 /**
- * Compute final goal run status from per-phase outcomes.
- * 成功终态=CHAIN_SLICE_COMPLETED（仅链切片语义）；opts.pendingHumanReview（待复核决议/
- * waiver/档位钳制）把否则成功的 run 封顶为 AWAITING_HUMAN_REVIEW——不再产出裸 COMPLETED。
+ * Compute final goal run status from per-phase outcomes. Current writers never produce
+ * AWAITING_HUMAN_REVIEW; a legacy pending-human signal is reprojected to PARTIAL/revalidation.
  */
 export function resolveGoalRunStatus(
   phases: Array<{
     phase: FeaturePhase;
     deferred?: boolean;
+    deferred_reason?: string;
     halted?: boolean;
     agent_timed_out?: boolean;
     advance_blocked?: boolean;
@@ -411,12 +418,18 @@ export function resolveGoalRunStatus(
   const anyUnclosedTimeout = phases.some((p) => p.agent_timed_out && p.advance_blocked);
   if (anyUnclosedTimeout && reachedEnd) return 'PARTIAL';
   const anyDeferred = phases.some((p) => p.deferred);
-  if (anyDeferred) return reachedEnd ? 'DEFERRED' : 'PARTIAL';
+  if (anyDeferred) {
+    const capabilityMissing = phases.some(
+      p => p.deferred && p.deferred_reason === 'capability_missing',
+    );
+    if (capabilityMissing) return 'DEFERRED_CAPABILITY_MISSING';
+    return reachedEnd ? 'DEFERRED' : 'PARTIAL';
+  }
   if (!reachedEnd) return 'PARTIAL';
   // codex 八轮 P1-2：needs_fix（血缘 stale/tampered/verdict FAIL/attestation 失配）非人工
   // 确认事项，但同样不得 CHAIN_SLICE_COMPLETED（那声称链切片干净）——投 PARTIAL（修复重跑）。
   if (opts?.blockingFix) return 'PARTIAL';
-  return opts?.pendingHumanReview ? 'AWAITING_HUMAN_REVIEW' : 'CHAIN_SLICE_COMPLETED';
+  return opts?.pendingHumanReview ? 'PARTIAL' : 'CHAIN_SLICE_COMPLETED';
 }
 
 /**
@@ -483,6 +496,30 @@ export function isPhaseWithinBatchRange(
   const throughIdx = FEATURE_PHASE_ORDER.indexOf(throughPhase);
   if (fromIdx < 0 || toIdx < 0 || throughIdx < 0) return false;
   return toIdx === fromIdx + 1 && toIdx <= throughIdx;
+}
+
+/** Existing attended authorization policy, shared by compatibility callers and GoalPhaseRuntime. */
+export function recommendationAuthorized(
+  recommendation: AssessRecommendation,
+  authorization: AssessAuthorizationContext,
+  chain: string[],
+  opts?: { startPhase?: string },
+): boolean {
+  if (recommendation.action === 'stop') return false;
+  if (authorization.mode === 'goal_mode') return true;
+  if (authorization.mode === 'manual') return false;
+  if (!recommendation.phase || !authorization.through_phase) return false;
+  const targetIndex = chain.indexOf(recommendation.phase);
+  const throughIndex = chain.indexOf(authorization.through_phase);
+  if (targetIndex < 0 || throughIndex < 0 || targetIndex > throughIndex) return false;
+  if (recommendation.runner_action === 'backtrack_to_phase') {
+    if (!opts?.startPhase) return false;
+    const startIndex = chain.indexOf(opts.startPhase);
+    return startIndex >= 0 && targetIndex >= startIndex;
+  }
+  const fromPhase = targetIndex > 0 ? chain[targetIndex - 1] : chain[targetIndex];
+  return recommendation.phase === fromPhase ||
+    isPhaseWithinBatchRange(fromPhase, recommendation.phase, authorization.through_phase);
 }
 
 /**

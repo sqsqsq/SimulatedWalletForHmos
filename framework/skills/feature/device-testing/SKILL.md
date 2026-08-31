@@ -6,7 +6,7 @@
 
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
-**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**设备策略（BLOCKER）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止）；`code=device_policy_unset` 就**先问用户四选一**再碰设备（选 ③ 须追问 `existing`/`managed`，禁默认托管）。与 goal 模式同一契约；PIN 只能由用户在自己终端登记，**绝不进对话**。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
+**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**设备策略（BLOCKER）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，不得当成"未配置"引导重新登记）；**只看 `code` 不看 `configured`**（坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`）；harness-runner 在需设备 phase 另有进程级入口门（同一 `code`，设备操作前 fail-fast + 目标解析一次注入全链）作兜底；`code=device_policy_unset` 就**先问用户四选一**再碰设备（选 ③ 须追问 `existing`/`managed`，禁默认托管）。与 goal 模式同一契约；PIN 只能由用户在自己终端登记，**绝不进对话**。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
 **Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/acceptance/contracts(可选)/use-cases(可选)/test-plan(本阶段产出)）；legacy `device-testing-todo.md` 存在仅 WARN 迁移提示，不得作 SSOT；输入缺失回上游补齐。
 
@@ -19,6 +19,8 @@
 ## 概述
 
 按当前 `project_profile` 自适配的设备/系统测试工程师：基于 acceptance 标准与 Spec 契约生成测试计划，执行后产出标准化测试报告。流水线**第六环（最终环）**，上游 business-ut 的 DAG 和 UT 代码，输出是功能模块质量交付的最终把关。
+
+**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner；越权字节仅作为未受信输入保留，本轮证据作废，不能用人工确认豁免。
 
 ## 触发条件
 
@@ -60,8 +62,8 @@
 5. **Step 4 归档**：`<features_dir>/{module-name}/testing/test-plan.md`。
 6. **Step 4.5 真机自动化派生可执行计划**（`device_test.run` 为 BLOCKER 时，详见 reference）：解析 TC 表 → 按 contracts/plan/snapshot-cache/设备连线四级优先级发现 selector 候选（四级只负责发现；snapshot-cache/设备 dump 不是真值）→ by_id 必须反解到当前 ui-spec node、by_text 必须与 ui-spec text 精确等值，无法校验则补 spec/锚点或显式跳过 → 译为 Hylyre JSON（裸单行、canonical 直接根键、禁 start_app/dump_ui 根键）→ 裁决与跳过登记 → 落盘 `test-plan.hylyre.md` 到 `testing/reports/<timestamp>/hylyre/` → 触发 `harness-runner --phase testing`。
 7. **Step 4.B 即席模式**（详见 reference）：Derive hint（不跑机）→ Agent 写 `doc/features/_adhoc/testing/staging/test-steps.json` 并 lint → 执行 `adhoc-device-test`（默认冷重启）→ 观察汇总决策树 → 不写 receipt/verifier，交付 trace.json cases 摘要。
-8. **Step 4.6 视觉 diff 回环**（`ui_change=new_or_changed` 时，详见 reference）：唯一直接像素对图阶段；MVP 覆盖顶层屏+固化 nav 配置到达深层屏/overlay；P0 屏无论 lightweight 与否必须采集评估；执行时先断言屏身份(E3)再双向 diff(正向/反向+G3 样式核对+defects 枚举+**region_attest 逐区域举证**)；采图同时点 dump 布局树(`layout-<screen_id>.json`)供 **T8 几何不变量**消费；产出 `visual-diff.json`(唯一结构化真源)+自动生成 `visual-diff.md`(请勿手改)；`pixel_1to1` 下 T1/T2/T4/T5/P1-C/**T8(布局 hard)/M1(自报退化)/attest 证据/critic 回执**等确定性信号任一命中即 BLOCKER（分数字段=reported_* 参考自评、零 gate 权重）；**回修=独立 critic 自动迭代至 candidate-pass 或指纹化熔断**（不再单轮即找人）；**T2 主背靠**——P0 pass 屏须真人 `confirmed_by` 签字，时点后移为 candidate-pass 后一次性批量终审；**禁止弃判**——确定性 fail 信号必须当场 verdict=fail+逐条写进该屏 must_fix，不得以"要真人签字"为由留 pending；**修码不在 testing 内进行**（testing 全程禁止写产品源码/需求 SSOT——runner 消费非空 must_fix 自动回退 coding 修复后重走 review/ut/testing）；判定持久化绑定截图 hash+build 指纹，改码重装才失效重判（`evaluation_invalidated` 只失效评估、不触发重采）。
-9. **Step 5 生成测试报告**（`testing` harness PASS 且 trace.json 已写出后）：模板 `templates/test-report-template.md`；Step 5.1 自 trace 回填执行状态（详见 reference）；填充测试概览/执行结果/缺陷清单/通过率统计/结论 5 章节；结论判定：P0=100%且总体≥阈值→达标，P0=100%但总体<阈值→有条件达标，P0<100%→不达标。即席模式无强求写 test-report.md。
+8. **Step 4.6 视觉 diff 回环**（`ui_change=new_or_changed` 时，详见 reference）：唯一直接像素对图阶段；MVP 覆盖顶层屏+固化 nav 配置到达深层屏/overlay；P0 屏无论 lightweight 与否必须采集评估；执行时先断言屏身份(E3)再双向 diff(正向/反向+G3 样式核对+defects 枚举+**region_attest 逐区域举证**)；采图同时点 dump 布局树(`layout-<screen_id>.json`)供 **T8 几何不变量**消费；产出 `visual-diff.json`(唯一结构化真源)+自动生成 `visual-diff.md`(请勿手改)；`pixel_1to1` 下 T1/T4/T5/P1-C/**T8(布局 hard)/M1(自报退化)/attest 证据/critic 回执**等机器信号任一命中即 BLOCKER（分数字段=reported_* 参考自评、零 gate 权重）；回修由独立 critic 自动迭代至 candidate-pass 或指纹化熔断。当前 attempt/hash/identity 绑定的 deterministic/native/delegated 证据决定 visual 轴；legacy `confirmed_by` 无 gate 权重。确定性 fail 信号必须 verdict=fail+逐条写进 must_fix，不得弃判；testing 禁止写产品源码/需求 SSOT，runner 消费 must_fix 自动回退 coding 修复后重走 review/ut/testing。
+9. **Step 5 生成测试报告**（`testing` harness PASS 且 trace.json 已写出后）：模板 `templates/test-report-template.md`；Step 5.1 自 trace 回填执行状态（详见 reference）；填充测试概览/执行结果/缺陷清单/通过率统计/结论 5 章节；结论判定：P0=100%且总体≥阈值→达标，P0=100%但总体<阈值→有条件达标，P0<100%→不达标。确定性 producer FAIL 与合法 provider defect 直接物化既有 repair candidate；primary dispute/缺复核无否决权。producer uncertain 或 provider invalid 表示证据不足：required 轴保持 FAIL/UNVERIFIED 或 capability defer，optional 轴仅 advisory，不创建人工裁决停等。即席模式无强求写 test-report.md。
 10. **Step 6 质量门禁自检**：测试计划 11 项 + 测试报告 8 项（完整清单详见 reference）；不通过定位后自动修正重检。
 11. **Step 7 Harness 验证门禁**：见下方门禁清单表。
 
@@ -83,13 +85,19 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 优先读 `summary.json`，`testing_run_status.can_claim_done` 须为 `YES` 才能宣称阶段完成。
 
-**AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。
 
-## 阶段闭环判定（全局入口 §5.1，四条件缺一不可）
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
+
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+
+## 阶段闭环判定（全局入口 §5.1）
 
 > **标准 feature 模式**适用下文四条件。**即席（`_adhoc`）模式**不宣称「某需求 testing 阶段闭环」：不写 receipt、不强求 `harness-runner testing --feature _adhoc` PASS、不要求 verifier；以交付 trace.json 摘要为主。
 
-1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS；4. 完成回执经 `check-receipt.ts` 校验通过。四项全满足后真机测试阶段完成（**最终环**）。
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**）；4. 完成回执经 `check-receipt.ts` 校验通过。required 证据齐备后真机测试阶段完成（**最终环**）。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成（含回修起点），执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

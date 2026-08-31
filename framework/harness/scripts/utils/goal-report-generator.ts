@@ -6,16 +6,17 @@ import { loadFidelityIntentSsot } from './fidelity-shared';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
-import type { PhaseSnapshotFiles } from './goal-phase-snapshot';
+import type { PhaseSnapshotFiles, PhaseSnapshotVerifierEvidence } from './goal-phase-snapshot';
 import { relFeatureFile } from '../../config';
 import { collectAutoDecisions } from './headless-assumptions';
 import type { Disposition, WaitKind } from './adjudication';
+import { reduceRunState, type RecoveryDiagnostic } from './run-state-reducer';
 
 export interface MustReviewItem {
   phase: FeaturePhase;
   summary: string;
   assumptions_path: string;
-  /** 非待复核条目（must_review=false）也进汇总，仅标记不同 */
+  /** legacy 字段；false 条目也进汇总，所有条目都只作审计投影、不参与门禁。 */
   must_review?: boolean;
 }
 
@@ -119,7 +120,7 @@ export interface GoalPhaseOutcome {
    */
   run_disposition?: Disposition;
   run_wait_kind?: WaitKind;
-  /** P0-9b：await_human_visual_confirm 等设计内求人 halt 的逐步操作指引（给真人读） */
+  /** legacy/terminal halt 的迁移说明；不得包含人签放行步骤。 */
   halt_guidance?: string;
   /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
   integrity_subtypes?: string[];
@@ -127,6 +128,9 @@ export interface GoalPhaseOutcome {
   /** Set when closure gate blocked advance (open receipt / timeout). */
   advance_blocked?: boolean;
   snapshot_files?: PhaseSnapshotFiles;
+  /** plan e5b8c3f7 T3：快照时点的 verifier 机器事实（身份验真后的 JSON 真源）；
+   *  验真不通过=null。**不得**回头解析快照里的 verifier.report.md（那只是人读存档）。 */
+  verifier_evidence?: PhaseSnapshotVerifierEvidence | null;
   // P0-B/P0-D（codex P3）诊断保真：只读 goal-report 的下游也能看到真因原文。
   failure_kind_classified?: string;
   /** API 断流哨兵命中的 CLI 错误信封行（transient_api_error 时）。 */
@@ -151,12 +155,16 @@ export interface GoalReport {
   schema_version: '1.0';
   run_id: string;
   feature: string;
-  status: GoalRunStatus;
+  /** `INTERRUPTED`＝未处理异常的优雅收口（e5d8a2c4 T1①）——events 层异常终态在
+   *  报告里如实透传，与正常终态并列显示，**不是** GoalRunStatus 的新成员。 */
+  status: GoalRunStatus | 'INTERRUPTED';
   phases: GoalPhaseOutcome[];
   deferred_phases: FeaturePhase[];
   generated_at: string;
   /** plan f6b2d9a4：三轴路由投影（writeGoalReport 从 fidelity-intent SSOT 派生；非 UI/legacy 缺省无） */
   fidelity_routing?: GoalReportFidelityRouting;
+  /** Latest recovery transaction/terminal diagnostic, projected from events. */
+  recovery?: RecoveryDiagnostic;
 }
 
 // ============================================================================
@@ -215,7 +223,7 @@ export function buildAttemptAxesTimeline(events: AttemptAxisEventLike[], phase: 
 export function generateGoalReportJson(
   runId: string,
   feature: string,
-  status: GoalRunStatus,
+  status: GoalRunStatus | 'INTERRUPTED',
   phases: GoalPhaseOutcome[],
 ): GoalReport {
   const deferred_phases = phases.filter((p) => p.deferred).map((p) => p.phase);
@@ -284,7 +292,9 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   closure_timeout:
     'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume',
   pass_snapshot_unavailable:
-    'PASS 产物无法建立/判定可信冻结保护（head 损坏/快照失败/预期快照消失）——不做无保护重试，人工核查 trust-state 后 --resume',
+    'PASS 快照不可复用（head 损坏/快照失败/预期快照消失）——丢弃缓存，重跑责任阶段；若存储不可写则等待 external probe',
+  receipt_scaffold_unwritable:
+    '回执骨架无法写入（目录只读/模板缺失/文件占用）——未启动 agent、未烧 attempt；修复存储条件后 --resume',
   closure_probe_error:
     'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume',
   closure_state_invariant:
@@ -292,13 +302,13 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   await_operator_toolchain:
     '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后 --resume，详见 blocker details',
   await_human_gate_deferral:
-    '仅剩需真人签字/确认项（设计内求人时刻，内容重试无意义）——逐条完成人签后 --resume；语义同 AWAITING_HUMAN_REVIEW',
+    '历史质量人签停车事件（机制已退役）——签名或普通 resume 不改变结论；须按当前机器证据重新投影为修复、能力缺失或可选 advisory',
   pass_snapshot_restore_refused:
-    'PASS 冻结产物被改且无法自动恢复——人工核查产物与 trust-state 快照；生产/无头部署建议配置 MAISON_HMAC_GOAL_CHECKPOINT（使 resume 场景也可自动恢复）',
+    'PASS 冻结缓存不可复用——保留宿主现状，丢弃缓存并重跑责任阶段，经完整门禁重新建立快照',
   pass_snapshot_journal_unverifiable:
-    'PASS 快照失效 journal 无法验证（损坏/验签失败）——人工核查 trust-state 后 --resume，不得依据不可信 journal 改动快照',
+    'PASS 快照失效记录不可复用——按事件重放并丢弃缓存，重跑责任阶段，不读取旧 journal 恢复字节',
   await_human_visual_confirm:
-    '待真人逐屏过目确认（设计内求人时刻，见下方引导）',
+    '历史视觉人签停机事件（机制已退役）——不得签名后 resume；请以当前机器证据开启 correction/successor run 重验',
   framework_integrity_block:
     'framework 完整性拦截——须真人处置（allowlist 具名审批/还原/重铺/回灌，见下方引导），agent 不得改动 framework 发布件',
   framework_bug:
@@ -335,59 +345,6 @@ export function renderPhaseDiagnosticProse(p: {
 }
 
 
-/**
- * plan d6b1a8e3 t5③：**lineage 断裂展示**。
- * 上游 a5f9c3e2 只负责写 `lineage_discontinuity` / `lineage_reset_committed` 事件并
- * 禁止连续性主张；把它讲给人听是报告的事。
- * 铁律：结论只能声称「新 lineage 已全链验证」，**不得**出现「历史连续性得以保持」。
- * 无断裂事件时返回空数组——不给未 reset 的 run 平白加一节。
- */
-export function renderLineageDiscontinuitySection(
-  events: ReadonlyArray<Record<string, unknown>>,
-  /**
-   * 本 run 的终态（`report.status`）。**必须由调用方传入，不能从 events 里找 run_end**
-   * ——生产顺序是 writeGoalReport 先于 emit(run_end)，报告生成时事件流里永远还没有
-   * 本次终态，靠扫事件会让**每一个成功 run 都被写成「尚不能声称已全链验证」**。
-   * 传 status 而不是重排落盘顺序：重排会造出「run_end 已落、报告却说失败」的反向不一致。
-   */
-  runStatus?: string,
-): string[] {
-  const broken = events.filter((e) => e.type === 'lineage_discontinuity');
-  if (broken.length === 0) return [];
-  const committed = events.filter((e) => e.type === 'lineage_reset_committed');
-  const lines: string[] = ['## Vision lineage', '', '> **历史连续性已撤销**（本 run 显式放弃旧 lineage 并重建）。', ''];
-  for (const b of broken) {
-    const oldHead = typeof b.old_head_sha256 === 'string' ? b.old_head_sha256 : '(absent)';
-    const gen = b.old_generation ?? '(n/a)';
-    lines.push(`- 断裂原因：${String(b.reason ?? '(未记录)')}`);
-    lines.push(`- 旧锚：head=\`${oldHead}\` · 世代 ${String(gen)}`);
-  }
-  for (const c of committed) {
-    lines.push(`- 新 lineage：head=\`${String(c.new_head_sha256 ?? '(pending)')}\` · 世代 ${String(c.new_generation ?? '(pending)')}`);
-  }
-  // codex 订正：此前只要见到 discontinuity 就宣称「新 lineage 已全链验证」——
-  // reset 中途失败、或后续阶段 HALTED 时那就是**假话**。三个事实按证据**递进**：
-  //   ①有 discontinuity            → 只能说「历史连续性已撤销」
-  //   ②有 lineage_reset_committed  → 才能加一句「新 lineage 已建立」
-  //   ③run 真的走完（CHAIN_SLICE_COMPLETED/COMPLETED）→ 才能说「已全链验证」
-  const chainCompleted =
-    runStatus === 'CHAIN_SLICE_COMPLETED' || runStatus === 'COMPLETED';
-  lines.push('', '结论口径（按已有证据逐级给出，不越级）：');
-  lines.push('- 历史连续性**已撤销**——旧 lineage 的判定不因本次重建而延续，也不因本次重建而被洗白（断裂已如实记账）。');
-  if (committed.length > 0) {
-    lines.push('- 新 lineage **已建立**（reset 事务已提交，旧场外锚已清理）。');
-  } else {
-    lines.push('- 新 lineage **尚未建立**：reset 事务未提交（中途中断）——旧锚备份仍在，下次启动会先回滚再重做。');
-  }
-  if (committed.length > 0 && chainCompleted) {
-    lines.push('- 新 lineage **已全链验证**（本 run 走完整链并取得完成终态）。');
-  } else {
-    lines.push('- **尚不能声称「已全链验证」**：本 run 未取得完成终态，新 lineage 的验证不完整。');
-  }
-  lines.push('');
-  return lines;
-}
-
 export function generateGoalReportMarkdown(
   report: GoalReport,
   options: GoalReportMarkdownOptions = {},
@@ -401,7 +358,7 @@ export function generateGoalReportMarkdown(
   const mustReview = options.mustReviewItems ?? [];
   const pendingCount = mustReview.filter((i) => i.must_review !== false).length;
 
-  // t8 状态语义收窄：状态行自带切片范围与待复核计数——"两行 PASS 被读成需求完成"
+  // t8 状态语义收窄：状态行自带切片范围与审计项计数——"两行 PASS 被读成需求完成"
   // 的事故形状在此显式拆穿；feature 级完成只认 verify-feature-completion。
   const statusSuffixParts: string[] = [];
   if (isSlice) {
@@ -411,7 +368,7 @@ export function generateGoalReportMarkdown(
     );
   }
   if (pendingCount > 0) {
-    statusSuffixParts.push(`含 ${pendingCount} 项 goal-mode 自动决议待人工复核`);
+    statusSuffixParts.push(`含 ${pendingCount} 项 goal-mode 自动决议审计记录（不参与门禁）`);
   }
   const statusLine =
     `- **Status**: ${report.status}` +
@@ -436,12 +393,34 @@ export function generateGoalReportMarkdown(
     );
   }
 
+  if (report.recovery) {
+    const r = report.recovery;
+    lines.push(
+      '## Recovery',
+      '',
+      `- **Reason**: ${r.reason}`,
+      `- **Action**: ${r.action}`,
+      `- **Current / owner target**: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
+      `- **Gap**: ${r.gap_kind ?? '—'}`,
+      `- **Budget**: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- **Fingerprint**: ${r.fingerprint ?? '—'}`,
+      '',
+    );
+    for (const item of r.changed_paths.slice(0, 20)) {
+      lines.push(
+        `- \`${item.path}\`${item.owner ? ` owner=${item.owner}` : ''}` +
+        `${item.pre_sha256 || item.post_sha256 ? ` pre=${item.pre_sha256 ?? 'missing'} post=${item.post_sha256 ?? 'missing'}` : ''}`,
+      );
+    }
+    if (r.changed_paths.length > 0) lines.push('');
+  }
+
   if (mustReview.length > 0) {
     lines.push(
-      '## 自动决议汇总（goal-mode 自动确认 · 待人工复核）',
+      '## 自动决议审计汇总（不参与门禁）',
       '',
-      `headless 下共 ${mustReview.length} 项自动决议（其中 ${pendingCount} 项待人工复核）。`,
-      '复核前不得视为最终确认；账本记录不构成任何降低硬门禁的授权：',
+      `headless 下共 ${mustReview.length} 项自动决议（其中 ${pendingCount} 项沿用 legacy must_review 标记）。`,
+      '这些记录只用于追溯普通输入与保守默认；不会暂停 run、阻止完成或降低任何机器硬门禁：',
       '',
     );
     const byPhase = new Map<string, MustReviewItem[]>();
@@ -453,7 +432,7 @@ export function generateGoalReportMarkdown(
     for (const [phase, items] of byPhase) {
       const shown = items.slice(0, 10);
       for (const item of shown) {
-        const tag = item.must_review === false ? '' : ' **[待复核]**';
+        const tag = item.must_review === false ? '' : ' **[legacy audit]**';
         lines.push(`- **${phase}**:${tag} ${item.summary}（见 \`${item.assumptions_path}\`）`);
       }
       if (items.length > shown.length) {
@@ -463,7 +442,7 @@ export function generateGoalReportMarkdown(
     lines.push('');
   }
 
-  const CLEAN_TERMINAL = new Set<string>(['COMPLETED', 'CHAIN_SLICE_COMPLETED', 'AWAITING_HUMAN_REVIEW']);
+  const CLEAN_TERMINAL = new Set<string>(['COMPLETED', 'CHAIN_SLICE_COMPLETED']);
   if (!CLEAN_TERMINAL.has(String(report.status))) {
     lines.push(
       '> **注意**：本报告生成 ≠ 所有子进程已退出 / goal 全流程已完成。非终局成功态请结合 events.jsonl 判断是否在跑。',
@@ -512,14 +491,23 @@ export function generateGoalReportMarkdown(
       for (const a of advisories) {
         lines.push(`| ↳ 预算提示 | — | — | — | — | ${a.replace(/\|/g, '\\|')} | — |`);
       }
+      // plan d7f3a9c4 t3：pin 与自报模型失配的告警注记投影（仅告警，不参与任何裁决）。
+      const pinMismatches = options.events.filter(
+        e =>
+          e.type === 'pin_verify_mismatch' &&
+          e.phase === String(p.phase) &&
+          typeof e.pin === 'string' &&
+          typeof e.observed === 'string',
+      );
+      for (const m of pinMismatches) {
+        lines.push(
+          `| ↳ 模型核验 | — | — | — | — | adapter_model_observed=${String(m.observed).replace(/\|/g, '\\|')}` +
+            ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（仅告警，verdict/路由不变） | — |`,
+        );
+      }
     }
   }
 
-  // t5③：lineage 断裂展示（上游只写事件+禁连续性主张，讲给人听归报告）
-  if (options.events?.length) {
-    const section = renderLineageDiscontinuitySection(options.events, report.status);
-    if (section.length > 0) lines.push('', ...section);
-  }
 
   // P1-6（plan 7c4f2e9b）：no_progress/超时族 halt 附四轴 attempt 时间线——事故文案
   // 「连续超时且产物零进展」双分句失实（3/5 超时、产物一直在变），死模板降为兜底一行，
@@ -551,7 +539,7 @@ export function generateGoalReportMarkdown(
   // agent_timeout_repeated 的补救文案不渲染等于没写。
   const guidedHalts = report.phases.filter((p) => p.halt_guidance);
   if (guidedHalts.length > 0) {
-    lines.push('', '## 需人工处置（halt 引导）', '');
+    lines.push('', '## 终止处置（halt 引导）', '');
     for (const p of guidedHalts) {
       lines.push(`### ${p.phase} · ${p.halt_reason ?? 'halted'}`, '', p.halt_guidance!.trim(), '');
     }
@@ -559,13 +547,13 @@ export function generateGoalReportMarkdown(
 
   const needsReview = report.phases.filter((p) => p.interaction_question);
   if (needsReview.length > 0) {
-    lines.push('', '## 需人工介入（headless 无法继续）', '');
+    lines.push('', '## 外部输入或权限（headless 无法自行满足）', '');
     for (const p of needsReview) {
       lines.push(`- **${p.phase}**: ${p.interaction_question}`);
     }
     lines.push(
       '',
-      '请人工确认后 `--resume` 续跑；或补全 `user-confirmation-ux.md` §9 覆盖该闸门。',
+      '补齐上列真实外部输入或权限条件后可用 `--resume` 续跑；该操作不改变任何质量结论。',
     );
   }
 
@@ -646,12 +634,6 @@ export function writeGoalReport(
       };
     }
   } catch { /* 投影失败不阻断报告 */ }
-  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
-  const mustReviewItems = collectMustReviewFromAssumptions(
-    projectRoot,
-    report.feature,
-    report.phases.map((p) => p.phase),
-  );
   // P1-6：events.jsonl 回放供四轴时间线（读取失败降级为空——报告永不因时间线炸）
   let axesEvents: Array<Record<string, unknown>> = [];
   try {
@@ -665,6 +647,14 @@ export function writeGoalReport(
         .filter((x): x is Record<string, unknown> => x !== null);
     }
   } catch { /* ignore */ }
+  const runState = reduceRunState(axesEvents);
+  if (runState.recovery) report.recovery = runState.recovery;
+  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+  const mustReviewItems = collectMustReviewFromAssumptions(
+    projectRoot,
+    report.feature,
+    report.phases.map((p) => p.phase),
+  );
   fs.writeFileSync(
     mdPath,
     generateGoalReportMarkdown(report, {

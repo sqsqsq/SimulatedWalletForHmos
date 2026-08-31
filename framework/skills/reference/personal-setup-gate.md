@@ -8,9 +8,24 @@ Feature phase（catalog-bootstrap / spec … device-testing）与对应 adapter 
 cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>
 ```
 
-goal-mode 等多 adapter 工程须加 `--select-adapter <RESOLVED_ADAPTER>`（解析方式见 [goal-mode SKILL](../project/goal-mode/SKILL.md) §运行身份）。
+goal-mode 的 local-first 解析与需要 `--select-adapter` 的条件见 [goal-mode-operations.md](goal-mode-operations.md#运行身份resolved_adapter解析阶梯)；已有合法 local 时不得再传请求身份触发重复选择。
 
-**仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`）。勿依赖人读 stderr/stdout 散文。
+**仅解析 stdout JSON**（稳定字段：`ok`, `code`, `status`, `activeAdapter`, `materializedAdapters`, `ensured`, `candidates`, `message`, `visualProvider`）。勿依赖人读 stderr/stdout 散文。
+
+`visualProvider` 在本 checker 中仍是**纯 advisory**：它**永不**影响 `ok` / `code`，因为这里缺少
+UI 相关性与 primary effective image-input 上下文，不能全局判失败。它是 goal 启动的**条件
+prerequisite 输入**：`goal-runner` 在 primary canary 尝试后、正式 phase 前统一判断
+「UI 相关 + primary blind + 无合法 provider」是否持有一次明确盲跑授权。
+
+| 字段 | 含义与用法 |
+|------|-----------|
+| `visualProvider.shouldPrompt` | `true` → 按 S2.1 **问一次**；`false` → **不问**（已配置且受支持） |
+| `visualProvider.state` | `absent` / `ok` / `unsupported` / `unavailable`；`unavailable` 也须提示修复配置或明确盲跑，不等于授权 |
+| `visualProvider.supported[]` | catalog 现算的支持项——**唯一**支持列表来源，勿在别处枚举 |
+| `visualProvider.prompt` | `shouldPrompt` 时的现成提示语（含「重选」「跳过并 blind」两条出路） |
+| `visualProvider.decisionClass` | 询问用的 registry 条目 id（`setup.visual_provider`） |
+| `visualProvider.task` | 写盘用的 init 任务 id（`record-visual-provider`） |
+| `visualProvider.configured` | 已有配置时回显 `{adapter, model}`（`state != absent` 才有） |
 
 | `code` | 行为 |
 |--------|------|
@@ -55,7 +70,7 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
    cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal --project-root <repo-root>
    ```
 
-3. 解析 stdout 的 `InitTaskPlan` JSON；向用户渲染任务表（`assert-active-adapter-materialized` → `record-adapter` → `detect-deveco` → `record-deveco-path`）。
+3. 解析 stdout 的 `InitTaskPlan` JSON；向用户渲染任务表（`assert-active-adapter-materialized` → `record-adapter` → `detect-deveco` → `record-deveco-path` → `record-visual-provider`）。
 4. 读取 `materialized_adapters`（来自 `loadFrameworkConfigWithSources`）；**禁止**在本步写盘。
 
 #### S1.1 选择 active adapter（BLOCKER）
@@ -71,6 +86,29 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 2. 将 S1–S2 选择序列化为 personal scope **decision JSON**（schema 同 `init-orchestrate.ts` 的 `InitRunDecision`）。
 3. 执行 `executeInitPlan`（`record-adapter` / `record-deveco-path` 任务负责写 local；**禁止** agent 手写 `framework.local.json` 全文）。
 4. **`assert-active-adapter-materialized` 只读通过**后，`record-adapter` 才写入 `framework.local.json`（DAG 顺序由 planner 保证）。
+
+---
+
+### S2.1 只读视觉 provider（可选，可跳过）
+
+**问不问不靠你判断，读机器字段**：本轮涉及 UI 且**主模型无视觉能力**时，读 S1 那份 stdout JSON 的
+`visualProvider.shouldPrompt`——`true` 才问、且只问一次；`false` 一律不问（已配置且受支持）。
+该字段的判据就是「local 缺失、现有 adapter 已不在支持列表内、**或配置读取不可用**」，
+由 harness 确定性算出，不要在对话里重新推断。非 UI 轮次不看它。
+
+- provider = **只读**第二 endpoint：只看图产结构化评审，物理上不写工程；正式产物唯一写者仍是主模型。
+- 用 registry **`setup.visual_provider`**（即 `visualProvider.decisionClass`；从支持列表选或保持未配置）。
+  选项与提示语直接取 `visualProvider.supported[]` 与 `visualProvider.prompt`——**支持列表现算自
+  adapter catalog**（扫 `agents/<adapter>/adapter.yaml` 的 `visual_provider` 完整声明），
+  本文与任何文档**都不写死名单**。
+- 选中的 adapter 不在支持列表 → 任务 failed 并回列支持项：**请重选或保持未配置**。框架**不自动改选**、
+  **不在多个 provider 之间 fallback**。
+- 写盘由 `record-visual-provider` 任务完成（即 `visualProvider.task`；
+  `executionContext.visualProvider = {adapter, model}`）；**禁止** agent 手写 `framework.local.json`。
+- 保持未配置时不写 `framework.local.json`，也不产生质量授权。严格视觉需求在后续
+  requirement/capability preflight 诚实 defer；非 strict 可按既有 advisory 策略继续。
+- 无人值守（goal headless）**不走本步**：旧配置失效/读取不可用只 WARN 并按「无 provider」处理，
+  不询问、不自动 fallback；后续门禁依据冻结需求与能力事实决定结果。
 
 ---
 
@@ -94,4 +132,4 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 
 - Tier_1 npm：[host-harness-readiness.md](./host-harness-readiness.md)
 - 项目 vs personal：[framework-init](../project/framework-init/SKILL.md)
-- 视觉能力实测（personal-setup 后置，UI 相关阶段·交互式）：[interactive-vision-canary](./interactive-vision-canary.md)——自测卷判卷无感写 `framework.local.json` 的 `vision.canary`，盲档确认走 registry `vision.blind_tier`
+- 视觉能力实测（personal-setup 后置，UI 相关阶段·交互式）：[interactive-vision-canary](./interactive-vision-canary.md)——自测卷判卷无感写 `framework.local.json` 的 `vision.canary`；缺能力按 strict/optional 质量契约自动投影，不设盲档人签通行证

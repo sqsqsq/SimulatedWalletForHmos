@@ -11,7 +11,7 @@
 // 因此这里不做多 profile 分派——等真有第二个需设备的 profile 时再抽 provider。
 // ============================================================================
 
-import { spawnSync } from 'child_process';
+import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadLocalConfig } from './framework-local-config';
@@ -21,21 +21,81 @@ import {
   spawnManagedDevice,
   type ManagedProcessIdentity,
 } from './device-session';
+import { boundedSyncWait } from './bounded-sync-wait';
 import {
   ensureUnlocked,
   type KeypadKey,
   type LockScreenSnapshot,
+  type RevealOutcome,
   type ScreenBounds,
+  type UnlockDeps,
 } from './device-unlock-helper';
-import type { DeviceReadinessDeps, DeviceReadinessInput, EmulatorFallback } from './device-readiness-gate';
+import {
+  evaluateDeviceReadinessProbe,
+  type DeviceReadinessDeps,
+  type DeviceReadinessInput,
+  type DeviceReadinessProbeResult,
+  type EmulatorFallback,
+  type ReadinessProbeName,
+} from './device-readiness-gate';
+import {
+  canAttemptUnlock,
+  parseCredentialRef,
+  windowsCredentialProvider,
+} from './device-credential-store';
 
 /** 设备侧探测/操作的统一超时——任何一条都不得成为新的无限等待 */
 const HDC_PROBE_TIMEOUT_MS = 10_000;
 
-function runHdc(args: string[], timeoutMs = HDC_PROBE_TIMEOUT_MS): { ok: boolean; out: string } {
-  const r = spawnSync('hdc', args, { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true });
-  const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-  return { ok: !r.error && r.status === 0, out };
+/**
+ * 设备命令的**结构化执行事实**（脱敏）。
+ *
+ * a4e7c2f9 t1：此前只回 `{ok,out}`，失败**原因**被整个丢弃。代价见宿主 run
+ * 20260817T065727Z-1896c1：reveal 被 5s 超时 SIGTERM 砍断这一事实在证据链上完全
+ * 不存在，下游只能拿"reveal 之后仍是时钟页"的快照去分类，必然误判成
+ * `layout_unsupported`（"须真机校准"）——而真机布局其实完全正确，一个字都不用改。
+ *
+ * **刻意不含 `error.message`**：Node 的超时 message 形如
+ * `spawnSync D:\Program Files\nodejs\node.exe ETIMEDOUT`，携带本机绝对路径。
+ * 只投影枚举化的 `errorCode`；`out` 之外不引入任何新的设备/主机内容。
+ */
+export interface HdcExecFact {
+  /** 判据与本改造前**完全一致**（`!error && status===0`），不放宽 */
+  ok: boolean;
+  out: string;
+  /** 被信号终止时为 null（超时即属此列） */
+  status: number | null;
+  signal: string | null;
+  /** spawnSync 的 timeout 到期：`error.code==='ETIMEDOUT'`，实测伴随 `signal:'SIGTERM'` */
+  timedOut: boolean;
+  /** 枚举化错误码（ETIMEDOUT / ENOENT …）；无 error 时 null */
+  errorCode: string | null;
+}
+
+/**
+ * 纯投影：spawnSync 结果 → 执行事实。
+ *
+ * 单独提取是为了让单测**驱动生产判据本身**，而不是另写一份等价逻辑跑绿
+ * （同类惯例见 hdc-runner.ts 的 `isHdcListTargetsProbeOk`）。
+ */
+export function projectHdcExecFact(
+  r: Pick<SpawnSyncReturns<string>, 'stdout' | 'stderr' | 'status' | 'signal' | 'error'>,
+): HdcExecFact {
+  const errorCode = (r.error as NodeJS.ErrnoException | undefined)?.code ?? null;
+  return {
+    ok: !r.error && r.status === 0,
+    out: `${r.stdout ?? ''}\n${r.stderr ?? ''}`,
+    status: r.status ?? null,
+    signal: r.signal ?? null,
+    timedOut: errorCode === 'ETIMEDOUT',
+    errorCode,
+  };
+}
+
+function runHdc(args: string[], timeoutMs = HDC_PROBE_TIMEOUT_MS): HdcExecFact {
+  return projectHdcExecFact(
+    spawnSync('hdc', args, { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true }),
+  );
 }
 
 /** `hdc list targets`；`[Empty]` 与空输出都视为无设备 */
@@ -294,6 +354,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * 解锁链的**唯一**生产接线（e5d8a2c4 T3#3）。
+ *
+ * 为什么必须只有一处：解锁 deps 此前在两个地方各拼一份——门这边（本文件
+ * `buildDeviceReadinessInput`）和运行期恢复那边（`profiles/hmos-app/harness/
+ * device-recovery-bridge.ts`）。两份都"看起来一样"，但 settle 只在其中一处被讨论过，
+ * 另一处连字段都没写；而 `settle` 当时是可选字段，于是缺的那份**静默零等待**。
+ * 这就是本纲要反复在治的形态：同一语义两处各写一遍 → 漂移 → 谁也没报错。
+ *
+ * settle 的机制选型与 R16 的关系见 `bounded-sync-wait.ts` 文件头（那里是权威说明）：
+ * 长/无界等待（模拟器 boot、readiness 轮询）仍恒为 async；这里补的是**有硬上限的
+ * 短观察间隔**——固定 `SETTLE_INTERVAL_MS`、最多 `MAX_RESAMPLES` 次。
+ *（早先这里写"差额多数为 0，dump 耗时已计入间隔"，那套差额计时已随第四批删除。）
+ */
+export function buildUnlockDeps(): UnlockDeps {
+  return {
+    snapshot: readLockScreenSnapshot,
+    wake: wakeDevice,
+    reveal: revealLockKeypad,
+    tap: tapAt,
+    settle: boundedSyncWait,
+  };
+}
+
 // 诚实边界：不同 HarmonyOS 版本的锁屏组件树结构不同，下面的节点匹配需随真机校准。
 // 识别不足 10 键时上层零输入——宁可不解锁，也绝不乱点。
 
@@ -333,9 +417,11 @@ export function parseLockScreenTree(tree: unknown): LockScreenSnapshot {
     return { locked: false, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'not_locked' } };
   }
   const lockBounds = boundsOf(lockRoot);
+  const kp = collectDigitKeysWithDiag(lockRoot);
   return {
     locked: true,
-    keypad: collectDigitKeys(lockRoot),
+    keypad: kp.keys,
+    keypadDiag: kp.diag,
     cooldown: classifyCooldown(lockRoot),
     ...(lockBounds ? { lockBounds } : {}),
   };
@@ -445,18 +531,65 @@ export function classifyCooldown(lockRoot: unknown): LockScreenSnapshot['cooldow
   return { state: 'not_cooldown', ruleId: 'auth_no_cooldown_signal' };
 }
 
-/** 只在 Digital_PSD_Input_Tip 内收集 0–9；重复、缺失或几何异常一律返回空。 */
-export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: number; y: number }> {
+/**
+ * e5d8a2c4 T3#1：键位识别失败的**结构化归因**。
+ *
+ * 此前五种截然不同的原因全部返回空数组，上层塌缩成一句
+ * `keypad_incomplete_after_reveal（零输入）`——2026-08-05 宿主实况：agent 只能列
+ * 「AOD/表盘/通知遮挡、非数字 PIN 盘、截图时机」猜一遍，maison 侧也无从复查
+ * （dump 用完即弃）。两类原因的处置**完全不同**：容器没找到=布局不认识，须真机校准，
+ * 重试无意义；容器在但键不全=动画/遮挡，settle 后重取样很可能就好。
+ *
+ * 只产**非敏感结构化事实**（容器在否 / 识别到几个 / 何种校验不过），
+ * **不含任何 UI 原文**。
+ *
+ * 原始 dump **用完即弃、从不落盘**（本模块无任何写盘路径）。a4e7c2f9 t6：此处早先
+ * 写的是"原始 dump 仅在显式校准旗标下另行落盘"——**那个旗标从未实现**，是一句失实
+ * 描述，已按实际行为更正。刻意维持不落盘：原始锁屏树含通知与 UI 文本，属隐私面，
+ * 且根因诊断不依赖它；将来若确需采集，应另做显式、脱敏、用户触发的校准能力，
+ * 而不是在运行期悄悄留存。
+ */
+export type KeypadDiagReason =
+  | 'ok'
+  /** 容器 id 未命中——OS 版本或锁屏布局变了，须真机校准 */
+  | 'pin_container_not_found'
+  /** 容器在但数字不足 10——动画未完成 / 被遮挡 */
+  | 'digits_incomplete'
+  /** 同一数字重复出现，或数字节点无 bounds——树结构异常 */
+  | 'digit_invalid'
+  /** 数字齐但 3×3 几何校验不过——非标准 PIN 盘 */
+  | 'geometry_insane'
+  /** 有节点因 visible=false / opacity=0 被跳过——通常是过渡态 */
+  | 'keys_hidden';
+
+export interface KeypadDiag {
+  reason: KeypadDiagReason;
+  /** 识别到的合法数字个数（0–10） */
+  found: number;
+  /** 是否发现 PIN 容器 */
+  containerFound: boolean;
+  /** 是否有节点因 hidden 被跳过（区分「没渲染」与「渲染了但隐藏」） */
+  hiddenSkipped: boolean;
+}
+
+/** 只在 Digital_PSD_Input_Tip 内收集 0–9；重复、缺失或几何异常一律不返回键位（带归因）。 */
+export function collectDigitKeysWithDiag(lockRoot: unknown): {
+  keys: Array<{ digit: string; x: number; y: number }>;
+  diag: KeypadDiag;
+} {
   const container = findNode(lockRoot, attrs => String(attrs.id ?? '') === PIN_CONTAINER_ID);
-  if (!container) return [];
+  if (!container) {
+    return { keys: [], diag: { reason: 'pin_container_not_found', found: 0, containerFound: false, hiddenSkipped: false } };
+  }
   const found = new Map<string, { digit: string; x: number; y: number }>();
   let invalid = false;
+  let hiddenSkipped = false;
   const visit = (node: unknown, inheritedBounds: ScreenBounds | null): void => {
     const attrs = nodeAttrs(node);
     if (attrs) {
       const hidden = attrs.visible === false || String(attrs.visible ?? '').toLowerCase() === 'false' ||
         String(attrs.opacity ?? '') === '0';
-      if (hidden) return;
+      if (hidden) { hiddenSkipped = true; return; }
       const ownBounds = boundsOf(node);
       const effectiveBounds = ownBounds ?? inheritedBounds;
       const original = String(attrs.originalText ?? '').trim();
@@ -477,8 +610,19 @@ export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: n
   };
   visit(container, boundsOf(container));
   const keys = [...found.values()];
-  if (invalid || keys.length !== 10 || !'0123456789'.split('').every(d => found.has(d))) return [];
-  return keypadGeometryIsSane(found) ? keys : [];
+  const base = { found: keys.length, containerFound: true, hiddenSkipped };
+  if (invalid) return { keys: [], diag: { reason: 'digit_invalid', ...base } };
+  if (keys.length !== 10 || !'0123456789'.split('').every(d => found.has(d))) {
+    // hidden 跳过导致的不全单独归类——它更像过渡态而非布局不支持
+    return { keys: [], diag: { reason: hiddenSkipped ? 'keys_hidden' : 'digits_incomplete', ...base } };
+  }
+  if (!keypadGeometryIsSane(found)) return { keys: [], diag: { reason: 'geometry_insane', ...base } };
+  return { keys, diag: { reason: 'ok', ...base } };
+}
+
+/** 既有调用面兼容（只要键位、不要归因）。 */
+export function collectDigitKeys(lockRoot: unknown): Array<{ digit: string; x: number; y: number }> {
+  return collectDigitKeysWithDiag(lockRoot).keys;
 }
 
 function keypadGeometryIsSane(keys: ReadonlyMap<string, KeypadKey>): boolean {
@@ -502,17 +646,67 @@ function keypadGeometryIsSane(keys: ReadonlyMap<string, KeypadKey>): boolean {
   return zero.y > Math.max(...rows[2].map(k => k.y)) && Math.abs(zero.x - rows[0][1].x) <= colTolerance;
 }
 
-/** 展示 PIN 键盘的非秘密上滑；全部坐标从当前锁屏 bounds 相对推导。 */
-export function revealLockKeypad(serial: string, bounds: ScreenBounds): void {
+/** 设备端 `uitest uiInput swipe` 第 5 参数的合法域（见 `uitest uiInput help`，默认 600）。 */
+export const UITEST_VELOCITY_RANGE = { min: 200, max: 40_000 } as const;
+
+/** reveal 超时下限——低于此值即便手势本身合法也没有完成余量。 */
+export const REVEAL_TIMEOUT_FLOOR_MS = 5_000;
+
+/**
+ * reveal 手势的**操作策略**：velocity 与 timeout **必须同处定义**（a4e7c2f9 t2）。
+ *
+ * 事故原型：二者此前是分散在同一函数里的两个独立字面量（velocity=300、timeout=5_000），
+ * 从未被核对是否相容。该机 lockBounds 高 2003px ⇒ 按 0.78→0.32 滑 921px，真机实测
+ * 需 5.2s，稳定超过 5s 超时 → spawnSync SIGTERM 砍断 → 页面停在时钟页 → 被误判成
+ * `layout_unsupported`。
+ *
+ * **为什么不按 distance/velocity 精算 timeout**：理论值 921/300≈3.07s，比 5s 超时还"宽裕"
+ * ——也就是说任何基于理论时长的相容性校验都会给这个坏组合放行，实测却是 5.2s
+ * （差 1.7 倍，真实耗时含进程启动与通信开销）。同类"把偶然耗时当保证"的错误在
+ * e5d8a2c4 T3#3「dump 耗时即间隔」上已犯过一次并作废。
+ * 故这里取**实测有大余量的固定组合**：1500px/s 实测 1153ms，对 10s 超时余量约 8.7 倍。
+ * 参数是否真的相容，由真机验收证明（plan t8），不由单测的算术断言证明。
+ */
+export const REVEAL_GESTURE_POLICY = {
+  velocityPxPerSecond: 1500,
+  timeoutMs: 10_000,
+} as const;
+
+/**
+ * 展示 PIN 键盘的非秘密上滑；全部坐标从当前锁屏 bounds 相对推导。
+ *
+ * 返回执行事实（a4e7c2f9 t3）：此前返回 `void`，底层 runHdc 的 ok 被整个丢弃，
+ * 于是"命令被超时砍断"在证据链上不存在。调用方 `ensureUnlocked` 必须消费它。
+ */
+export function revealLockKeypad(
+  serial: string,
+  bounds: ScreenBounds,
+  /**
+   * 执行器注入点——**缺省即生产实现**，仅供单测观察"这次到底用了什么 velocity /
+   * 什么 timeout"，从而对准生产函数验证策略同源，而不是用源码正则去猜
+   *（源码正则会把错实现一起锁死，属既有教训）。
+   *
+   * 与 `settle` 那个反例的区别：那里的可选缺省是 **no-op**（fail-open 静默回到坏行为），
+   * 这里的缺省是**正确行为本身**，注入只改变观察方式、不改变语义。
+   */
+  exec: (args: string[], timeoutMs: number) => HdcExecFact = runHdc,
+): RevealOutcome {
+  const r = exec(buildRevealSwipeArgs(serial, bounds), REVEAL_GESTURE_POLICY.timeoutMs);
+  // errorCode 必须一并带出：漏掉它，ENOENT（hdc 缺失/设备掉线）就会退化成
+  // `exec_failed + signal=none status=none`，诊断归零。
+  return { ok: r.ok, timedOut: r.timedOut, signal: r.signal, status: r.status, errorCode: r.errorCode };
+}
+
+/** reveal 手势的 argv（纯函数，供单测直接驱动；**velocity 只在此处取自策略**）。 */
+export function buildRevealSwipeArgs(serial: string, bounds: ScreenBounds): string[] {
   const x = Math.round((bounds.left + bounds.right) / 2);
   const fromY = Math.round(bounds.top + (bounds.bottom - bounds.top) * 0.78);
   const toY = Math.round(bounds.top + (bounds.bottom - bounds.top) * 0.32);
-  // 设备端 `uitest uiInput help` 定义第 5 参数为 velocity（200–40000 px/s，默认 600），不是时长。
-  const velocityPxPerSecond = 300;
-  runHdc([
+  return [
     '-t', serial, 'shell', 'uitest', 'uiInput', 'swipe',
-    String(x), String(fromY), String(x), String(toY), String(velocityPxPerSecond),
-  ], 5_000);
+    String(x), String(fromY), String(x), String(toY),
+    String(REVEAL_GESTURE_POLICY.velocityPxPerSecond),
+  ];
 }
 /** 坐标点击——argv 只出现数字坐标，**不出现 PIN 字符** */
 export function tapAt(serial: string, x: number, y: number): void {
@@ -577,6 +771,7 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
   const deps: DeviceReadinessDeps = {
     listTargets: listHdcTargets,
     isLocked: probeScreenLocked,
+    snapshot: readLockScreenSnapshot,
     wake: wakeDevice,
     knownEmulatorSerials: () => knownEmulatorSerialsFrom(listHdcTargets()),
     attestPhysical: attestPhysicalDevice,
@@ -622,14 +817,20 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
             const r = ensureUnlocked({
               serial,
               credentialRef: unlockRef,
-              deps: {
-                snapshot: readLockScreenSnapshot,
-                wake: wakeDevice,
-                reveal: revealLockKeypad,
-                tap: tapAt,
-              },
+              deps: buildUnlockDeps(),
             });
-            return { ok: r.ok, note: r.note };
+            // e5d8a2c4 T3#2：**结构化类别原样传递**（codex P1）——此前只回 ok/note，
+            // 到 readiness result / device_unlock_attempt / phase_halt 就只剩文案，
+            // 下游要按类别行动只能解析字符串或**再分类一次**（=第二份分类表）。
+            // a4e7c2f9：reveal 执行事实同理随行，否则 errorCode 到事件层又只剩文案。
+            return r.ok
+              ? { ok: true, note: r.note }
+              : {
+                  ok: false,
+                  note: r.note,
+                  failureKind: r.failureKind,
+                  ...(r.revealFact ? { revealFact: r.revealFact } : {}),
+                };
           },
         }
       : {}),
@@ -640,4 +841,46 @@ export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessI
     emulatorFallback: resolveEmulatorFallback(projectRoot),
     deps,
   };
+}
+
+function credentialIsReady(ref: string | null, serial?: string): boolean {
+  const id = ref ? parseCredentialRef(ref) : null;
+  if (!id || (serial && id.serial !== serial)) return false;
+  return canAttemptUnlock(id, windowsCredentialProvider()).ok;
+}
+
+/**
+ * Read-only condition probe consumed by goal-supervise. It never wakes, unlocks,
+ * launches, or writes a device/session record.
+ */
+export function probeDeviceReadiness(
+  projectRoot: string,
+  probe: ReadinessProbeName = 'device_readiness',
+): DeviceReadinessProbeResult {
+  const input = buildDeviceReadinessInput(projectRoot);
+  const targets = input.deps.listTargets().map(s => s.trim()).filter(Boolean);
+  const configured = input.configuredSerial?.trim();
+  const selectedSerial =
+    configured && targets.includes(configured)
+      ? configured
+      : !configured && targets.length === 1
+        ? targets[0]
+        : undefined;
+  const snapshot =
+    probe === 'credential_state_ready' || !selectedSerial
+      ? undefined
+      : (input.deps.snapshot?.(selectedSerial) ?? {
+          locked: input.deps.isLocked(selectedSerial),
+          keypad: [],
+          cooldown: { state: 'ambiguous' as const, ruleId: 'snapshot_unavailable' },
+        });
+  return evaluateDeviceReadinessProbe(
+    {
+      configuredSerial: configured,
+      targets,
+      snapshot,
+      credentialReady: credentialIsReady(input.credentialRef ?? null, selectedSerial),
+    },
+    probe,
+  );
 }

@@ -6,30 +6,27 @@
 
 本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。
 
-**关键区分（避免误传 `--adapter`）**：解析阶梯只产出 **`requestedAdapter`（请求身份）**；**真正生效的运行身份以 `framework.local.json agent_adapter`（SSOT 权威）为准**——已有合法记录时一律用它，`requestedAdapter` 仅在「首启无 local」或「`--override-adapter` 显式覆盖」时才成为 effective。**local 不是阶梯的一级**，而是阶梯产物之上的权威。
+运行身份按 **local-first** 解析，**永不硬猜 / 永不默认 claude·cursor**：先不带 `--select-adapter` 执行 personal setup。已有合法 `framework.local.json agent_adapter` 时，直接采用返回的 `activeAdapter`，来源为 `local_config`；不得构造 `requestedAdapter`，也不得重复询问 `setup.adapter`。无 local 且只有一个候选时，允许 `--ensure` 确定性自动选择。无 local 且有多个候选时，才使用 registry **`setup.adapter`**，再由 personal setup 写盘；来源为 `registry`。用户明确要求切换 adapter 时仍走既有永久切换或 `--override-adapter` 契约。
 
-`requestedAdapter` 解析阶梯（优先级从高到低，**永不硬猜 / 永不默认 claude·cursor**）：
-
-1. **用户显式指定**（输入表 `adapter` 列 / 「用 cursor 跑 goal」等）→ 来源 `user_explicit`。
-2. **入口 / 跳板声明**：刚读过的 slash 或 skills-bridge 跳板内 `> 运行身份（RESOLVED_ADAPTER）：<name>` 行（Claude slash、Cursor/Codex/generic bridge 物化时注入）→ 来源 `entry_declared`。
-3. **回退**：入口无身份声明 → registry **`setup.adapter`** 交互选择（见 [user-confirmation-ux.md](user-confirmation-ux.md)）→ 来源 `registry`；**绝不默认**。
-
-启动 goal-runner 时：**`--adapter` 传 check-personal-setup 返回的 `activeAdapter`（即 SSOT），并用 `--adapter-source` 传上面来源**（写入 manifest `adapter_provenance` 供回溯）；**不得**把未经对账的 `requestedAdapter` 猜测直接当 `--adapter`。goal-runner 会以 local 为权威对账：冲突即 STOP（除非 `--override-adapter`）。
+启动入口的 `--adapter` 只传 personal setup 返回的 `activeAdapter`。`--adapter-source` 只传已知的真实来源；无法映射到既有枚举时省略并在 manifest 中保持字段缺省，不得虚构 `unknown` 或把中性 skills-bridge 当成 `entry_declared`。
 
 ### Personal setup + 确定性写盘（严格顺序）
 
-1. 按上节阶梯解析 `RESOLVED_ADAPTER`。
-2. 执行 [personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure --select-adapter <RESOLVED_ADAPTER> --project-root <repo-root>`。
-3. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
+1. 执行 [personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure --project-root <repo-root>`，首次不得带 `--select-adapter`。
+2. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
 
 | `code` | 行为 |
 |--------|------|
-| `ok` | 已就绪（或 `--ensure` 已自动写入 `framework.local.json`）→ 用返回的 `activeAdapter` 作为 `--adapter` 继续 |
-| `adapter_conflict` | local 已记录 X 但本次请求 Y≠X → **默认尊重 local（X）**；用户确要换 Y → 永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
-| `needs_adapter_choice` | `requestedAdapter` ∉ candidates → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；或 **STOP**→`/framework-init` |
+| `ok` | 已有合法 local 时直接用返回的 `activeAdapter`，`adapterSource=local_config`，不再询问；无 local 的单候选由 `--ensure` 自动写入后继续，来源拿不准时省略 `--adapter-source` |
+| `adapter_conflict` | 仅用户明确要求切换时可能出现；默认尊重 local（X）。永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
+| `needs_adapter_choice` | 无 local 且多候选 → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；然后用返回的 `activeAdapter`，`adapterSource=registry`；或 **STOP**→`/framework-init` |
 | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
-4. 若阶梯 2 自动写入了 local.json（`ensured` 含 `auto_selected_adapter`），须在汇报中说明：「我按当前运行宿主选了 `<X>`（个人级 `framework.local.json`，gitignored）；要换别的 adapter 请讲」。
+3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`（gitignored）；要换别的 adapter 请讲。
+
+同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
+对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
+phase evidence 对历史 3.0.0 事故 manifest 仅容忍该审计字段差异；其它任意字节漂移仍判 stale。
 
 **边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
@@ -57,32 +54,42 @@ manifest**，`--resume` 只认冻结值、不会重读源文件——所以源�
 > 就是为它准备的。包装脚本的实际代价是——每次 run 重新发明一遍、文件名各不相同，下次谁
 > 重跑旧 launcher 就会把**上一轮的旧需求**带进新 run（宿主已出现两份不同名的需求文件）。
 
-同一 run 续跑；只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover：
+> **goal 路径零变化（plan c8e5b3f1 t1）**：`derive.requirement` 的 provenance 收紧只影响手动
+> 阶段驱动路径；goal 模式需求来源恒为 manifest，`goal_manifest` provenance 由 goal-runner
+> preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
+> 一致，goal run 无需任何调整。
+
+同一 run 续跑时，非 orphan 的 session↔process 正常转换只走 mailbox handoff。只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover；supervisor 永不得代为触发：
 
 ```bash
 npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
 npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --force-resume --detach
 ```
 
-新起 attended run 先由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge：
+新起 attended UI run 先按 [interactive-vision-canary.md](interactive-vision-canary.md) 完成实测；若 primary 仍 blind，可配置合法 provider，也可保持未配置并由后续 requirement/capability 门禁按严格度裁决。随后由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge：
 
 ```powershell
-npx ts-node scripts/goal-mode-entry.ts --prepare-run --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
+npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
 ```
 
-命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
+`--allow-blind-visual` 已删除；旧 manifest 字段只读兼容但不参与身份或策略。成功时命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复成功的 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
 
-有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，并逐轮输出一行 `phase_execute_request` JSON。active adapter 必须为每个请求提供一个隔离 phase context，并向 stdin 回一行 `{"status":"passed|failed|waiting","phase":"...","details":"..."}`；不得由 Skill 自建循环或 token：
+有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，随后把推进权交给唯一 `GoalPhaseRuntime`，并逐轮输出一行 `phase_execute_request` JSON。权威上下文固定为 `run_id/phase/attempt_id/owner_id/owner_epoch`；runtime 在 executor 前后都复核 owner/epoch，陈旧回包不能写 gate、verdict 或 closure。attach 的 `--adapter` 必须与 manifest adapter 一致。active adapter 必须为每个请求提供一个隔离 phase context，把这五个字段原样显式传给 initializer、harness 与 closure sync；不得由 Skill/host 自建 assess/重试/推进循环、token，或依赖兄弟 shell 继承环境。只有 context-bound `harness-runner --sync-closure` exit 0 后，才可向 stdin 回 `{"status":"passed","phase":"..."}`；未闭环只能回 `failed|waiting`：
 
 ```bash
-npx ts-node scripts/goal-mode-entry.ts --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
+npx ts-node scripts/goal-mode-entry.ts --run-mode attended --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
 ```
 
-读取状态与有界监控：
+每个 attended phase 的 harness 与闭环命令均追加同一组参数：
+
+```bash
+--goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>
+```
+
+读取状态（**唯一入口 `goal-status`**；`goal-monitor` 是 opt-in 盯守工具，**不得**当状态查询，见「查进度」与「opt-in 盯守细则」）：
 
 ```bash
 npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
-npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --max-seconds 240
 ```
 ## 启动方式（survival-first）事故背景
 
@@ -94,28 +101,52 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 
 **存活是环境属性**：对 Cursor / 本机已实测 `--detach` 可活过会话。若换到会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI），`--detach` 也可能保不住——那种环境须由宿主调度任务（cron / Windows Task Scheduler）托管 run，不能只靠 `--detach`。
 
-## 监控 loop 细则
+## 无人值守启动后的默认交还（--detach）
 
-- **宿主工具 timeout 耦合（BLOCKER）**：调用 `goal-monitor --max-seconds N` 时，shell/tool 的 timeout 必须显式设置为 `> N`（建议 `N + 60s`；例如 `--max-seconds 240` 对应工具 timeout ≥300s）。如果宿主默认 timeout 更短（如 120s），必须显式提升；无法提升时把 `N` 降到安全值并循环。
+**新默认：启动即交还。** 无人值守（`--detach`）run 启动后，执行**有界启动握手**，确认就绪后汇报并**立即结束当前轮次**；不需要用户开口「后台跑」，也不进入 monitor。用户在不在看对话框都不影响 run 独立存活。
+
+- **有界启动握手（唯一合法等待，硬上限 30s）**：launcher 打印 JSON 后秒级退出时，manifest 由后台子进程稍后才写（detach 竞态的正常窗口）。在 30s 内以 2–5s 间隔**只检查三件事**：①`manifest.json` 已落盘；②`detach.log` 增长；③liveness 存活。握手按**结果分类**汇报：已有可信终态/等待态证据（如 30s 内就 `COMPLETED` / `HALTED` / 进入可信等待——终态 run 的 liveness 返回 `DONE` 而非 healthy，进程退出、日志停增长是合法结果）→ 按真实状态汇报；非终态且进程健康 → 报「已启动」；超窗但进程仍活着 → 报「尚未就绪，进程仍存活」+ `detach.log` 路径；**仅当进程确实死亡且无可信结束证据时才报「未存活」**。`detach.log` 增长是启动证据，**不是必须持续满足的终局门禁**。这段等待不得延长、不得夹带等待任何阶段事件。
+- **汇报模板（启动即用；亦为 P1-8 熔断后的转出话术，从「熔断后才用」提为「启动即用」）**：①`run_id` 与当前 phase；②预计耗时与依据（阶段超时预算）；③续查指令 `goal-status --feature <f> --run-id <id>`；④说明「后台继续跑，要看进度或让我盯着随时说」→ **结束当前轮次**。
+- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **opt-in 盯守**；不盯守就交还轮次。上述 ≤30s 启动握手是**唯一例外**，且它只查就绪三件事、不等任何阶段事件。
+
+## 查进度（状态查询唯一入口）
+
+用户问「进度怎样」时，执行**一次** `goal-status`，现查现答，答完交还轮次：
+
+```bash
+npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
+```
+
+- **不得**用 `goal-monitor`（含 `--max-seconds 0`）当状态查询：monitor 默认游标 `since-event=-1`，会把**最早的历史** phase_verdict 当新事件重放报出，与当前快照混淆（B1）。
+- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` 实时重算。
+
+## opt-in 盯守细则（仅用户明确要求盯守时进入）
+
+仅当用户明确说「你盯着」或等价表述时，才进入 bounded monitor loop：
+
+```bash
+npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --since-event <last_seen> --max-seconds 240
+```
+
+- **宿主工具 timeout 耦合（BLOCKER）**：**当实际调用** `goal-monitor --max-seconds N` 时，shell/tool 的 timeout 必须显式设置为 `> N`（建议 `N + 60s`；例如 `--max-seconds 240` 对应工具 timeout ≥300s）。如果宿主默认 timeout 更短（如 120s），必须显式提升；无法提升时把 `N` 降到安全值。
 - **循环方式**：monitor 有输出后，向用户汇报，并把输出里的 **`next_since_event` 原样**作为下一段 monitor 的 `--since-event`（该字段就是为此而设，不要自己从 `event_index` 换算，也不要省略）。**漏传或传 0 会让历史事件被反复消费、同一条异常每轮重报**——这正是宿主 stale 误报的成因。未终态且当前轮次仍活跃时，再启动下一段 bounded monitor。**不要**跑 `goal-status --watch` 常驻。
 - **通知自带裁决轴**：输出含 `run_disposition`（`RESUME_READY`/`RECOVERY_PENDING`/`WAITING`/`TERMINAL`）与 `run_wait_kind`（`human`/`external`）。汇报时按它说「在等人 / 在等环境 / 框架正在自动恢复 / 已终局」，**不要**自己按 halt_reason 另判一套。
 - **no-op**：若到 `--max-seconds` 仍无通知事件，monitor 会 no-op 退出；agent 可继续下一段 bounded monitor，不得误判 runner 卡死。
 - **heartbeat**：低频运行中摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断，并去重；不是每个 240s monitor 都汇报一次。
 - **硬 liveness 异常**：monitor 返回 `notification_kind=liveness`（`STALLED` / `ORPHAN_SUSPECTED`）时，向用户汇报一次并**停止** bounded monitor loop，升级让用户决策（查 `detach.log`、决定是否 `--force-resume` 或停 run）；**不要**继续轮询。monitor 已对同一异常去重（无新事件不复报），硬卡死/孤儿继续 loop 没有意义。
 - **跨轮次接管**：如果当前轮次被中断或上下文切换，新轮 agent 必须从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。
-- **fire-and-forget**：仅当用户明确要求后台跑不用汇报时，agent 可只给 `run_id`、`progress.json` 和一次性 status 命令，不进入 monitor loop。
-- **monitor 熔断（P1-8，plan 7c4f2e9b——07-17 实测宿主被 monitor 循环占用 2h05m）**：以下任一条件命中，宿主**必须**主动转 fire-and-forget 并交还对话轮次，不得继续轮询：
+- **monitor 熔断（P1-8，plan 7c4f2e9b——07-17 实测宿主被 monitor 循环占用 2h05m）**：以下任一条件命中，宿主**必须**主动停止 monitor 并交还对话轮次，不得继续轮询：
   1. 连续 **3 轮** bounded monitor（≈12–15min）phase/substep 无推进（same phase + same substep）；
   2. 单 phase 的 monitor 累计等待超过 **30 分钟**；
   3. 单轮对话内 monitor 总时长超过 **30 分钟**（硬上限——2h+ 的占用对用户是事故不是服务）。
-  转出话术模板：向用户交代 ①`run_id` 与当前 phase/attempt；②预计耗时与依据（phase 超时预算）；③续看指令（`goal-status --feature <f> --run-id <id>`）；④说明「后台继续跑，完成/求人时可随时用上述命令查看」，然后结束当前轮次。用户后续追问时按 status/monitor 现查现答。
-- **加速器**（Cursor 等支持 `notify_on_output` 的宿主）：匹配 runner stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 可更快触发一次 monitor；它只是加速器，通知 SSOT 仍是 `events.jsonl` / `goal-monitor`。
+  转出话术模板：向用户交代 ①`run_id` 与当前 phase/attempt；②预计耗时与依据（phase 超时预算）；③续看指令（`goal-status --feature <f> --run-id <id>`）；④说明「后台继续跑，完成/求人时可随时用上述命令查看」，然后结束当前轮次。用户后续追问时按 status 现查现答。
+- **禁自建长驻桥**：不得自建 `tail detach.log` 之类长驻桥接进程变相恢复 stdout 监听——`--detach` 下 runner stdout 已全进 `detach.log`，不是事件通道；若未来存在非 detached、有活 stdout 的路径再按 L4 声明式设计，不在话术层保留。
 - 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` / `goal-monitor`（实时重算锁 pid）。
 - 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
 - **活性信号唯一权威 = `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍）；判断「是否卡死」只看这些。**
 - **BLOCKER（chrys / opencode 等无流式 headless adapter）**：`phases/<phase>/agent-output.log` 在该 phase **结束前恒为空**（chrys 结束才一次性写 stdout、opencode 流式但中途可长时间静默）——**禁止** tail 该日志判断进度或卡死；看到它空 ≠ runner 卡住。误把空日志当卡死会触发错误的 `--resume` / 重复起 run（chrys 实测坑）。
 
-**边界**：bounded monitor 不是跨轮次唤醒能力。它只能在主 agent 当前轮次仍活着时尽力汇报；若主对话已经结束，真正的推送/唤醒属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 定时唤醒、Cursor `notify_on_output`）。
+**边界**：bounded monitor 不是跨轮次唤醒能力。它只能在主 agent 当前轮次仍活着时尽力汇报；若主对话已经结束，真正的推送/唤醒属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 定时唤醒）。
 
 ## manifest 关键字段
 
@@ -149,7 +180,8 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 
 | 层级 | 内容 |
 |------|------|
-| **强保证** | 框架只使用用户登记的凭据；任何一次失败即**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version` |
+| **强保证** | 框架只使用用户登记的凭据；**仅当实际尝试输入后**执行/复验失败才**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version`；零输入分支（未登记 / 形态不支持 / 并发占用 / 布局未就绪）不烧毁 |
+| **允许（正道）** | 登记 `credential` 且凭据 `ready` 时，重跑设备阶段由框架自动解锁（PIN 全程不经对话与 agent） |
 | **防御性指导** | agent 运行期只应调 framework 的 readiness 入口，prompt 明确禁止直接输入 PIN、直接启动模拟器 |
 | **不宣称** | 在没有 OS 沙箱的前提下，硬阻断恶意或偏航 agent 的直接 shell 操作 |
 

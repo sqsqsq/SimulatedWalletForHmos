@@ -57,7 +57,7 @@
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
 
-**修正三问**（中途 NL 修正必答 · `correction.layer`，先分层再动手）：
+**修正三问**（中途 NL 修正必答，先分层再动手）：
 
 | 问 | 是 → 落点层 |
 |---|---|
@@ -65,7 +65,9 @@
 | Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-只改根因层 SSOT 产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做。
+`--correction-init` 按上述事实自动路由责任阶段，不再要求人签。只改根因层 SSOT
+产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做；用户反馈是 successor/correction
+输入，不是对上一 run 的签名。
 
 ### 4.0.1 阶段 Skill 总表
 
@@ -85,11 +87,10 @@
 
 以下由 `render-agents-md` 扫描 `doc/extensions/skills/*/SKILL.md` 自动生成；若与框架内置 Skill 跳板 / slash **同名**，桥接产物会自动加 `ext-` 前缀（见标识列）。
 
-本工程挂载了 story 实例扩展（`doc/extensions/`）：需求流程 + 三类知识 + 六阶段生命周期钩子。
-
-- **需求流程入口**：`/story <init|archive|restore|review|adapt|help> [AR编号]`——从材料导入到归档的完整链条由它承载。
-- **进入 spec / plan / coding / review / ut / testing 任一阶段、动笔之前**：若 `doc/extensions/hooks/<phase>/author.md` 存在，**先完整读它**。那一页写明本阶段要读哪几个扩展文件、产物里扩展要求的那几处长什么样、门禁会拦什么——写之前看，不必靠门禁报错反推。
-- **门禁报错自带修法**：各阶段 harness 会跑 `doc/extensions/hooks/<phase>/post_check.mjs`，它报的每一条都给出「缺什么 / 写到哪 / 怎么写」，不需要读脚本源码。
+| 标识 | Skill 路径 |
+|------|-----------|
+| `story` | [doc/extensions/skills/story/SKILL.md](doc/extensions/skills/story/SKILL.md) |
+| `wallet-sdk-onboarding` | [doc/extensions/skills/wallet-sdk-onboarding/SKILL.md](doc/extensions/skills/wallet-sdk-onboarding/SKILL.md) |
 
 > **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 

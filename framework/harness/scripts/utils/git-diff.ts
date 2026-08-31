@@ -5,6 +5,17 @@
 //   - check-ut.ts  ut_no_src_mutation BLOCKER（检测 business-ut 阶段未授权的业务
 //                  源码改动）。
 //
+// 生效域收窄（plan f3a9d2c7 T2）：在 `ut_no_src_mutation` 里本模块已**降为 fallback
+// 采集器**——direct 模式的首选基线是 review closure attestation 的逐文件内容哈希，
+// 只有**盘上观察不到任何 review 闭环痕迹**（无 closure attestation 且 summary 缺失/legacy），
+// 或 profile 禁用 review 时才回退到这里。注意措辞：这只证明"现在看不到"，不证明"从未闭环"
+// ——「闭环证据残缺」（有 attestation 却没 closed summary）一律 fail-closed，不进本模块；
+// 但把全部闭环产物删光确实会落到这里，那是可观察性的边界，不是本模块的保证。原因是 git
+// diff 只能回答「相对某 commit 差了什么」，回答不了「UT 这一相位改了什么」：框架在
+// coding→review→ut 边界从不留 commit，工作区里的 coding 合法产物会被结构性地冒充成
+// UT 的改动（宿主 bc-openCard-1 实锤）。fallback 域内**保留**既有兼容行为及其已知
+// commit-blind 风险（working 基线看不见已提交的改动）。
+//
 // 设计要点：
 //   - 使用 spawnSync 避免 PowerShell 拼接问题；
 //   - baseRef 未传时默认 **working**（只统计相对 HEAD 的工作区/暂存/未跟踪，与日常感知一致）；
@@ -334,6 +345,52 @@ export function diffChangedFilesWithStatus(opts: {
   return { executed: true, baseRef, entries };
 }
 
+export interface ListFilesAtRefResult {
+  executed: boolean;
+  ref: string;
+  /** ref 树下全部文件相对路径（正斜杠归一） */
+  files: Set<string>;
+  error?: string;
+}
+
+/**
+ * 列出 ref 树下的全部文件路径（`git ls-tree -r --name-only -z <ref>`）。
+ * 用于「基线身份」判定：文件在基线 ref 已存在 = 存量（legacy），否则 = 本轮新增。
+ * ref 不可达 / 非 git 仓库 → executed=false（调用方保守处理，不假装能判定）。
+ */
+export function listFilesAtRef(projectRoot: string, ref: string): ListFilesAtRefResult {
+  const cwd = projectRoot;
+  const trimmed = ref.trim();
+  if (!trimmed) {
+    return { executed: false, ref: '', files: new Set(), error: 'ref 为空' };
+  }
+  const verify = spawnSync('git', ['rev-parse', '--verify', `${trimmed}^{commit}`], {
+    cwd, encoding: 'utf-8', shell: false,
+  });
+  if (verify.status !== 0) {
+    return {
+      executed: false, ref: trimmed, files: new Set(),
+      error: `ref 不可达（非 git 仓库或 commit 不存在）：${trimmed}`,
+    };
+  }
+  const ls = spawnSync(
+    'git',
+    ['ls-tree', '-r', '--name-only', '-z', trimmed],
+    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (ls.status !== 0) {
+    return {
+      executed: false, ref: trimmed, files: new Set(),
+      error: `git ls-tree 失败：${(ls.stderr ?? Buffer.alloc(0)).toString('utf-8').trim()}`,
+    };
+  }
+  const files = new Set<string>();
+  for (const p of (ls.stdout as Buffer).toString('utf-8').split('\0').filter(Boolean)) {
+    files.add(p.replace(/\\/g, '/'));
+  }
+  return { executed: true, ref: trimmed, files };
+}
+
 /** 读取 base 侧文件内容（`git show <ref>:<path>`）；不存在/失败 → null。 */
 export function readFileAtRef(projectRoot: string, ref: string, relPath: string): Buffer | null {
   const res = spawnSync(
@@ -398,33 +455,4 @@ export function filterBusinessSourceChanges(
     // 非标准 layout 的工程：前缀匹配已落在某外层目录内的路径也视作业务源码
     return true;
   });
-}
-
-/**
- * 读取 gap-notes.md 里的 approved_src_mutations[] 清单。
- * 返回被授权的文件路径集合（相对项目根的正斜杠路径）。
- *
- * 兼容两种格式：
- *  (a) YAML code block：```yaml\napproved_src_mutations:\n  - file: "..."\n    ...\n```
- *  (b) bullet list：`- file: "..."` 形式
- */
-export function readApprovedMutations(gapNotesPath: string): Set<string> {
-  const approved = new Set<string>();
-  if (!fs.existsSync(gapNotesPath)) return approved;
-  const text = fs.readFileSync(gapNotesPath, 'utf-8');
-
-  // 抓 `file: "..."` 或 `file: '...'` 或 `file: path` 行
-  // 注意：只在 approved_src_mutations 段落内计入，避免误抓其它段落
-  const sectionMatch = text.match(/approved_src_mutations\s*:\s*([\s\S]*?)(?=\n##\s|\n---|\n$)/i);
-  if (!sectionMatch) return approved;
-  const section = sectionMatch[1];
-  const fileRe = /^\s*-?\s*file\s*:\s*["']?([^"'\n]+?)["']?\s*$/gm;
-  let m: RegExpExecArray | null;
-  while ((m = fileRe.exec(section)) !== null) {
-    const p = m[1].trim();
-    // 跳过模板里的注释示例（`# - file: "..."` 形式会被注释符过滤）
-    if (p.startsWith('#') || p === '') continue;
-    approved.add(p.replace(/\\/g, '/'));
-  }
-  return approved;
 }

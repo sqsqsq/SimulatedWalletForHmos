@@ -49,12 +49,13 @@
 4. **模型无关 / 厂商无关 / IDE 无关** —— Spec 是 YAML、Prompt 是 Markdown、脚本是 TypeScript，不绑定任何 agent / 任何 IDE / 任何模型；同一套资产可在任意已接入的宿主中运行（接入方式见 [`agents/README.md`](../agents/README.md)）
 5. **显式对抗字面相似 > 更强大的检索** —— 字面相似陷阱只能靠"显式枚举反例"对抗，不能靠相似度算掉（embedding 会把意思相反但字面相近的术语算得很近，反而助长误映射）
 
-#### 1.2.1 两条总设计原则
+#### 1.2.1 三条总设计原则
 
 1. **简单优先**：用最少的概念、状态和规则解决已经发生的问题；优先复用既有 SSOT、裁决与恢复通道，不为假设中的未来场景新增平行机制。新增复杂度必须证明不可避免。
 2. **回退重签**：**允许发现、自动回退、重新签发；禁止原地自我授权。** 下游阶段可以发现上游遗漏，但权限、范围或契约的扩展必须回到权责所属阶段重新裁决，再由 runner 产生新一代权威状态；旧代只失效或被 supersede，不被原地改写洗白。无人值守只改变回退是否自动执行，不降低这条边界。
+3. **协作可恢复**：AgentMaison 将 agent 视为可能犯错的协作者，而非需要持续对抗的攻击者；优先保证 AI 稳定推进并通过独立 review、测试与最终验收产出高水准结果，不追求 100% 自动化或过程文件绝对防篡改。证据、缓存或状态被误改时应丢弃、重建或回责任阶段重跑，不为此引入常态钥匙、签名、receipt 或人工确认；硬门禁只保留给真实秘密、不可逆操作、明确人类授权和硬预算。
 
-两者共同约束 framework 演进：先问“能否用已有机制更简单地完成”，再问“这是回到权责阶段重新签发，还是下游正在给自己授权”。
+三者共同约束 framework 演进：先问“能否用已有机制更简单地完成”，再问“这是回到权责阶段重新签发，还是下游正在给自己授权”，最后问“这是必须对抗的真实高风险，还是应靠恢复吸收的协作失误”。
 
 ### 1.3 核心理念：三层分离
 
@@ -164,7 +165,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **通用化**                | framework 脱耦      | 从原宿主工程剥离出 `framework/` 作为独立资产；架构 DSL 化（分层可配置）；[`agent adapter`](../agents/README.md) 插件化；`framework-init` Skill |
 | **架构文档收窄**          | 边界划清            | `architecture.md` 改为**架构级契约文档**（只记 `dsl_change`/`module_set_change`/`responsibility_rewrite` 三类事件），不再承担 feature 级变更日志       |
 | **UT 分层 v2 → v2.1**     | 刻骨教训            | v2 强制抽 `UseCase` 类 + `Port` 接口 → 简单 feature 翻车；v2.1 回退为**规约驱动**（UseCase 降级为 YAML 规约，代码形态 coding 自选）                   |
-| **v2.2 真实编译/真机（hmos-app）**    | 假 PASS 三道护栏    | `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` 全部 BLOCKER（仅当 profile 注册对应 capability）；改业务源码必须 `gap-notes` 登记                     |
+| **v2.2 真实编译/真机（hmos-app）**    | 假 PASS 三道护栏    | `coding_hvigor_build` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` 全部 BLOCKER（仅当 profile 注册对应 capability）；UT 期改业务源码一律 FAIL 回 coding，**无授权登记通道**                     |
 | **v2.3 工具链识别（hmos-app）**       | DevEco 适配         | DevEco Studio 路径配置化、`detect-deveco.ts` 自动检测；`ut_hvigor_test` 改用 `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`                |
 | **v2.4 文档体系**         | 对外材料长期化      | `framework/docs/` 文档树 + `DOC_INVENTORY.yaml` + `--phase docs` 自动检查文档新鲜度（即本目录）                                                       |
 | **弱模型三层闭环**        | 步骤跳过 / 规则幻觉 | Layer 1（实例根全局入口 §4.1 / §5.1 / §6）+ Layer 2（`phase-completion-receipt.md` + `check-receipt.ts`）+ Layer 3（Stop hook，Claude adapter 下发）；[`agents/README.md`](../agents/README.md) |
@@ -181,7 +182,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **reports 外置**            | feature 产物与 submodule 分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
 | **v2.9 Karpathy 四原则**    | Agent 行为 + 探索量化 | [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；verifier `behavior_*` 维度 |
 | **v2.10 exploration_strategy** | 大仓深度探索      | plan/coding **default-on subagent**；spec/review/ut **复合评分**；`sequential` 等价路径 |
-| **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor wheel + venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
+| **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；vendor 发布件（源码树/wheel）+ venv；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
 | **v3.1 merge-framework-config** | UPDATE 补缺       | `merge-framework-config.mjs` 字段级「只补缺不覆盖」；含 `tools.hylyre.*` |
 | **v3.2–v3.4 确认 UX**     | 全 Skill 统一确认   | [`user-confirmation-ux.md`](../skills/reference/user-confirmation-ux.md) + registry schema 2.0；adapter interaction-renderer；`check-skills-confirmation-ux.ts` |
 
@@ -305,7 +306,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **Research First** | 主产物前 `context-exploration.md`；`source_code_paths` 须真实存在；代码与文档冲突以代码为准 |
 | **Minimum Viable** | 不超出 spec/plan/contracts 范围；禁止投机性抽象 |
 | **Surgical** | coding/review diff 落在 scope 与 contracts 内 |
-| **Verify Before Proceed** | harness + verifier + receipt + trace 四件套；Coding 逐文件 lint |
+| **Verify Before Proceed** | harness verdict PASS ∧ 全部 policy=required 的证据齐（verifier / receipt / trace / exploration 逐项由 policy 求解，非固定套餐）；Coding 逐文件 lint |
 
 **exploration_strategy**（phase-rules + `exploration-strategy.ts`）：plan/coding 默认 **subagent** 探索（L1 trivial 可豁免）；spec/review/ut 按 **复合评分**（模块 LOC、跨层、fan-out 等）决定是否必须 subagent；无 subagent 时走 **sequential** 等价路径（量化阈值 × multiplier）。
 
@@ -497,7 +498,7 @@ git submodule update --init --recursive
 | `coding_hvigor_build` | `check-coding.ts` → **`capability-registry`** → `profiles/<name>/harness/hvigor-runner.ts` | BLOCKER | 对每个业务模块跑 `assembleHap`；解析 ArkTS:ERROR / TSxxxx 即 FAIL；工具链缺失也是 FAIL（不 SKIP）       |
 | `ut_hvigor_build`     | `check-ut.ts` → profile `hvigor-runner.ts`                           | BLOCKER | 对 `<module>@ohosTest` 跑 `assembleHap`；兜底 tsc 漏过的跨文件类型违约                                  |
 | `ut_hvigor_test`      | `check-ut.ts` → profile `hdc-runner.ts`                              | BLOCKER | `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`；解析 hypium `OHOS_REPORT_RESULT`            |
-| `ut_no_src_mutation`  | `check-ut.ts` + `scripts/utils/git-diff.ts`                         | BLOCKER | git diff 检测业务源码改动；未在 `gap-notes.md > approved_src_mutations[]` 登记的一律 FAIL              |
+| `ut_no_src_mutation`  | `check-ut.ts` + `scripts/utils/closure-attestation.ts`（fallback：`scripts/utils/git-diff.ts`） | BLOCKER | **attestation-first**：review 正式闭环后基线=review closure attestation 的逐文件内容哈希（与 git 提交状态无关，coding 合法产物不在裁决域）；闭环但基线缺失/不可核实即 fail-closed；review 未闭环才回退 git diff。任一漂移均 FAIL 并回 coding 重走 review 闭环，人工授权不改变结论 |
 | `device_test_evidence_write`（非门禁） | `check-testing.ts` → profile `device-test-evidence.ts`（plan d9e4b7c1） | —       | goal 正式 gate 专属：`MAISON_GOAL_GATE_HARNESS=1` + 身份完整 + 本轮强装成功（`FORCE_INSTALL` 由 runner 注入）+ run 有 trace + 写前复算 HAP sha 一致 → 统一写 `device-test-evidence.json`（testing→coding 回修的唯一 device 输入；普通模式零变化）。另：testing 写保护对 hvigor 生成的模块根 `BuildProfile.ets` 走生成物分类降级（`testing_generated_file_change` 事件，不 halt） |
 
 **调度模型**：根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主 toolchain 由 **`project_profile`** 注册 capability（`coding.compile`、`ut.compile`、`ut.run`、`device_test.*`），经 **`capability-registry.ts`** 动态加载 `profiles/<name>/harness/providers/*`。generic profile 可声明 SKIP，脚本层返回 SKIP 而非假 PASS。
@@ -565,7 +566,7 @@ git submodule update --init --recursive
 | **Glossary 覆盖**           | 默认沙盒只有 ~15 条术语，真实工程估计需要 50-200 条      | 首轮接入需集中扩充                | catalog-bootstrap `/glossary-bootstrap` 支持增量建档                      |
 | **弱模型吞字防护**          | init 渲染 / adapter 拷贝已脚本化；三分区哨兵与 negation-diff 仍在推进 | UPDATE 模式 narrative 区仍有反转风险 | `render-agents-md.mjs` 首选路径 + `check-init.ts`；三分区 + negation-diff 待落地 |
 | **plan 启发式误报**         | `file_structure_per_module` / `interface_signatures_complete` 用正则启发式 | 偶发误报需人工识别噪声            | 后续替换为 AST 精确分析                                         |
-| **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`） | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base） | 见 `coding-rules.yaml` / `git-diff.ts`                                                            |
+| **diff 基线**               | 未设 `HARNESS_DIFF_BASE_REF` 时默认为 **working**（工作区 vs `HEAD`）；该 env 只在 **git diff 生效域**有意义（coding/exit 门禁，以及 `ut_no_src_mutation` 在 review 未闭环时的 fallback），goal 信号下一律忽略 | CI 若要扫「区间内已提交」需显式传 `HARNESS_DIFF_BASE_REF`（如 merge-base）；UT 门禁在 review 已闭环时改用内容哈希基线，设它无效 | 见 `coding-rules.yaml` / `git-diff.ts` / `closure-attestation.ts`                                  |
 | **acceptance→test-plan 分层** | SSOT 为 `acceptance.yaml` 的 `ut_layer` + `device_focus`；`device-testing-todo.md` 已废弃 | 存量 feature 若仍引用旧 todo 易误读 | 见 [acceptance-layering.md](concepts/acceptance-layering.md)；`device_ac_delegation` BLOCKER（`device_focus`） |
 | **架构漂移检测**            | 大仓长期 drift 缺 `check-architecture` 类门             | 架构违规靠 code review 兜底       | 纳入后续议题                                                     |
 

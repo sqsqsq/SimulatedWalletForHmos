@@ -5,7 +5,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { artifactReadCandidatePaths, catalogPath, featureFilePath } from '../../config';
+import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
 import {
@@ -22,6 +22,12 @@ import {
   type PhaseContract,
   type SkillContract,
 } from './skill-contract';
+import {
+  collectIntentTextWithPhaseFallback,
+  fidelityIntentSsotPath,
+  loadFidelityIntentSsotState,
+  resolveRequirementReferenceImages,
+} from './fidelity-shared';
 
 export type InputResolutionState = 'resolved' | 'absent' | 'invalid' | 'not_applicable';
 export type CapabilityResolutionState = 'resolved' | 'pruned' | 'blocked' | 'not_applicable';
@@ -83,6 +89,9 @@ export interface CapabilityResolutionOptions {
   track: FeatureTrackName;
   /** Goal/entry input is normalized before resolution; resolver never asks interactively. */
   requirement?: string;
+  /** plan c4e8a1f7 T2：需求来源列表（goal manifest 冻结值；derive.visual-reference 的
+   * source 直接父目录扫描输入——同一共享发现集合，杜绝第二套分母）。 */
+  requirementSourceFiles?: string[];
   adhocCases?: string;
 }
 
@@ -174,32 +183,129 @@ function resolveDerive(
           detail: `goal_requirement:${stableFingerprint(options.requirement.trim()).slice(0, 16)}`,
         };
       }
-      // 需求真源按轨道不同：goal 模式来自入参，lite 轨（L1）是 change.md，
-      // 完整流程（L2）是 RR/prd.md、SR/design.md、AR/design.md。
-      //
-      // 【本地热修·drift_allowlist 具名审批】上游只查前两者，于是 L2 —— 也就是
-      // CLAUDE.md §4.0 与 change-rules.yaml 明确规定的跨模块/pixel_1to1 正统入口 ——
-      // 的需求永远解析不到：capability blocked → functional 轴被压成 UNVERIFIED →
-      // summary INCOMPLETE → check-receipt 拒绝闭环，且重跑多少次都一样。
-      // 现象与完整因果链见归档：
-      //   AIDefectHelpler/docs/archive/需求开发/framework缺陷-spec阶段无法闭环.md
-      // 这里按该归档的「建议一（治本）」把候选来源补全，保留 on_missing: fail 的保护价值
-      //   —— 需求真缺失时仍然失败，不静默放行。上游修复后应撤销本改动与 allowlist 条目。
-      const candidates = [
-        featureFilePath(projectRoot, feature, 'change.md'),
-        featureFilePath(projectRoot, feature, path.join('AR', 'design.md')),
-        featureFilePath(projectRoot, feature, path.join('RR', 'prd.md')),
-        featureFilePath(projectRoot, feature, path.join('SR', 'design.md')),
-      ];
-      const deps = candidates.map((candidate) => dependency(candidate, 'derive'));
-      const hit = candidates.find((candidate) => fs.existsSync(candidate));
-      return hit
-        ? { state: 'resolved', dependencies: deps, detail: hit }
-        : {
-            state: 'absent',
-            dependencies: deps,
-            detail: 'goal requirement / change.md / AR·RR·SR requirement docs all missing',
+      // plan c8e5b3f1 t1：阶段驱动路径——fidelity-intent SSOT 是本路径唯一权威需求来源。
+      // SSOT 段判据：state==='valid' 且 requirement_provenance==='explicit_cli' 且
+      // execution_identity 等于当前阶段身份（phase:<feature>:spec，不跨身份导入历史 goal 残留
+      // 决策）。intent_fallback / 缺字段旧版 SSOT / corrupt / 跨身份一律**不解锁**，继续落
+      // 到 change.md（legacy）。corrupt 按 absent 继续、不升 invalid、不抢 fidelity 门禁裁决权。
+      // **只在 spec 阶段启用**（review P1）：lite 的 change 阶段也用 derive.requirement，但必须
+      // 保持纯 change.md 分支零变化——否则创建 spec SSOT 会让语义未变的 change closure 被判 stale。
+      const change = featureFilePath(projectRoot, feature, 'change.md');
+      if (options.phase === 'spec') {
+        const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
+        const ssot = ssotState.state === 'valid' ? ssotState.doc : null;
+        const ssotPath = fidelityIntentSsotPath(projectRoot, feature);
+        // 身份口径：reader 用 phase:<feature>:<options.phase>（唯一 writer 硬编码 phase:<feature>:spec）。
+        // 目前仅 spec 生成显式匹配身份；若将来给其它 phase 加 derive.requirement，须先对齐 writer
+        // 身份口径，勿在此静默扩匹配。
+        const expectedIdentity = `phase:${feature}:${options.phase}`;
+        if (
+          ssot &&
+          ssot.requirement_provenance === 'explicit_cli' &&
+          ssot.execution_identity === expectedIdentity
+        ) {
+          // ④ 该段依赖**只绑 fidelity-intent.json 本身**（真实 path + sha256）——需求变更 → 重跑
+          // Step 1 → initializer 重新签发 → 文件哈希变 → 旧 closure 经既有
+          // capabilityResolutionEvidenceInputs → productionEvidence 链自然 stale。不记源文件路径、
+          // 不存第二份 sha、不做实时验源。
+          return {
+            state: 'resolved',
+            dependencies: [dependency(ssotPath, 'derive')],
+            detail: `fidelity_intent_ssot:${ssotPath}`,
           };
+        }
+        // review P1：spec 的 fallback/absent 分支**无条件**绑定 SSOT 路径（missing/corrupt 也以
+        // exists:false 记录，符合 openspec "freshness binds all actual attempts…absent paths with
+        // exists:false"）——否则"先经 change.md 形成旧 closure，再签发 explicit_cli SSOT"时旧
+        // closure 因从未记录 fidelity-intent.json 而永久 fresh。goal 分支（上方 options.requirement
+        // 非空）仍返回空 deps，不含此处绑定。
+        const deps = dedupeDependencies([
+          dependency(ssotPath, 'derive'),
+          dependency(change, 'derive'),
+        ]);
+        if (fs.existsSync(change)) {
+          return { state: 'resolved', dependencies: deps, detail: change };
+        }
+        // ⑤ 失败话术：三段全 absent 时 detail 机器可读且可行动（列出已尝试三段与关键路径，给两条
+        // 修复路径），不写"框架缺陷"。
+        return {
+          state: 'absent',
+          dependencies: deps,
+          detail:
+            'requirement 来源缺失：已尝试 ① goal manifest ② fidelity-intent SSOT（explicit_cli+身份匹配）' +
+            `（${ssotPath}）③ change.md（legacy）均无可解析需求。修复路径：goal 模式经 manifest 提供需求；` +
+            '手动阶段驱动模式带需求文本重跑 Step 1：`fidelity-intent-init --feature ' +
+            '<feature> --requirement "<需求文本>"`（或 `--requirement-file <path>`）。',
+        };
+      }
+      // 非 spec（lite change 等）：保留既有纯 change.md 分支（逐元素零变化——SSOT 不加载、不匹配、
+      // 不绑定，spec SSOT 的创建/变化不得影响 change closure 的新鲜度判定）。
+      const deps = [dependency(change, 'derive')];
+      return fs.existsSync(change)
+        ? { state: 'resolved', dependencies: deps, detail: change }
+        : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
+    }
+    // plan f3a8c6d2 t5a（plan c4e8a1f7 T2 收口）：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
+    // capability input unresolved 通道（readiness/next_action/assess/merged-report 四处投影
+    // 自动获得），不另产 CheckResult、不另造 pregate。
+    // 事故（bc-openCard）：需求把参考图指向不存在的 ux-reference/（实际十张图在别处），
+    // spec 空手写 ui-spec → 下游判 evidence_gap → 按盲档跑两天。第一张多米诺就在这里。
+    case 'derive.visual-reference': {
+      const featuresDirRel =
+        (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+      const intentText = collectIntentTextWithPhaseFallback(projectRoot, feature, featuresDirRel);
+      // plan c4e8a1f7 T2（评审 P1 修复）：**当前 requirement 恒为优先输入**——普通 inline
+      // goal 的 `options.requirement` 来自 entry input（当前 run manifest 冻结值），不再
+      // 退回"全部历史 run requirement 聚合"（可能混入旧图片；宿主实锤混入形态）。
+      // 仅当 options.requirement 缺失（如阶段驱动无显式需求）才 fallback 宽泛意图文本。
+      const reqInput = options.requirement?.trim() ? options.requirement : intentText;
+      // sources 解析（评审 P1 修复）：① entry input 显式携带（goal 路径）；② 为空时从
+      // **身份匹配**的 fidelity-intent SSOT 读取（phase-driven 路径——fidelity-intent-init
+      // 已写入 requirement_source_files，此处是"只写不读"断桥的读侧）；③ 都缺 → 空。
+      let sources = options.requirementSourceFiles;
+      if (!sources || sources.length === 0) {
+        const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
+        const ssot = ssotState.state === 'valid' ? ssotState.doc : null;
+        const expectedIdentity = `phase:${feature}:${options.phase}`;
+        if (
+          ssot &&
+          ssot.requirement_provenance === 'explicit_cli' &&
+          ssot.execution_identity === expectedIdentity &&
+          ssot.requirement_source_files &&
+          ssot.requirement_source_files.length > 0
+        ) {
+          sources = ssot.requirement_source_files;
+        }
+      }
+      // 单一路径消费共享发现集合（正文显式 ∪ source 直接父目录一层；仅空集回退
+      // ux-reference）——与 OCR 预扫/phase prompt/refs receipt 生产验证同一分母。
+      const refs = resolveRequirementReferenceImages(projectRoot, feature, reqInput, {
+        ...(sources && sources.length > 0 ? { requirementSourceFiles: sources } : {}),
+      });
+      // 依赖只绑**真实图片文件**（换图/删图 → 既有 stale 链自然重算）。不绑 ux-reference/
+      // 目录本身：证据 manifest 的 hasher 只认 isFile()，目录会被永久记成 exists:false，
+      // 图补齐后也不变——那是误导性诊断，不是新鲜度信号。缺图时 capability 直接 blocked、
+      // 根本形不成 closure，无需靠依赖失效来恢复，故 absent 分支不记依赖（与
+      // derive.requirement 的 goal 分支同形）。本项不加任何回升驱动器。
+      if (refs.length > 0) {
+        const deps = dedupeDependencies(
+          refs.slice(0, 20).map((r) => dependency(path.isAbsolute(r) ? r : path.join(projectRoot, r), 'derive')),
+        );
+        return { state: 'resolved', dependencies: deps, detail: `reference_images:${refs.length}` };
+      }
+      return {
+        state: 'absent',
+        dependencies: [],
+        detail:
+          'fidelity 意图为 pixel_1to1，但一张参考图都取不到——像素级比对没有基准，' +
+          '继续跑只会产出无视觉证据的 ui-spec，随后被下游判 evidence_gap 并按盲档降级。' +
+          `已查：需求文本中锚定 ${featuresDirRel}/${feature} 的显式路径引用、以及回退目录 ` +
+          `${featuresDirRel}/${feature}/ux-reference/，均无图片文件。修复路径：` +
+          '① 把参考图放到该 feature 的 ux-reference/ 下，或在需求文本里写明它们的真实目录' +
+          '（发现器认需求中锚定 features_dir 的显式路径）；② 若本特性确实没有参考图，' +
+          '把 fidelity 意图改为 semantic_layout/reference_only 后重新初始化 SSOT，' +
+          '不要在无基准时声称 pixel_1to1。补齐后重跑 spec 阶段即恢复。',
+      };
     }
     case 'derive.test-targets': {
       const deps = sourceTreeDependency(projectRoot);
@@ -253,6 +359,20 @@ function resolveApplicability(
   if (!capability.tracks.includes(options.track)) return { applicable: false, dependencies: [], detail: 'track excluded' };
   const provider = capability.applicability_provider_id ?? 'applicability.always';
   if (provider === 'applicability.always') return { applicable: true, dependencies: [] };
+  // plan f3a8c6d2 t5a：仅当 fidelity SSOT 已定档 pixel_1to1 时才要求参考图基准。
+  // SSOT 未签发/未定档/非 pixel 一律 not_applicable——语义布局与仅参考档本就不需要像素基准，
+  // 也不得让"SSOT 还没建"退化成阻塞（那会打破既有"零询问自动定档"）。
+  if (provider === 'applicability.pixel_fidelity') {
+    const ssotPath = fidelityIntentSsotPath(options.projectRoot, options.feature);
+    const dependencies = [dependency(ssotPath, 'applicability')];
+    const state = loadFidelityIntentSsotState(options.projectRoot, options.feature);
+    if (state.state !== 'valid') {
+      return { applicable: false, dependencies, detail: `fidelity ssot ${state.state}` };
+    }
+    return state.doc.selected_fidelity === 'pixel_1to1'
+      ? { applicable: true, dependencies, detail: 'selected_fidelity=pixel_1to1' }
+      : { applicable: false, dependencies, detail: `selected_fidelity=${state.doc.selected_fidelity}` };
+  }
   // UI is independently decided before any capability input. A missing spec is unknown,
   // therefore still applicable and later pruned by its declared input; explicit non-UI
   // metadata is the only NOT_APPLICABLE route.
@@ -462,4 +582,67 @@ export function capabilityResolutionAssurance(report: CapabilityResolutionReport
   // Keep the comparison table live and make accidental enum additions fail visibly.
   if (!(report.assurance in ASSURANCE_RANK)) throw new Error(`[capability-resolution] 非法 assurance ${report.assurance}`);
   return report.assurance;
+}
+
+// ============================================================================
+// plan c8e5b3f1 t2：blocked capability 可诊断投影的数据源（pre-check fact，不产 CheckResult）
+// ============================================================================
+
+/** 单个 blocked capability 面向诊断的确定性事实（readiness signal / merged-report / assess 共用）。 */
+export interface BlockedCapabilityFact {
+  capability: string;
+  axis: ContractCapability['axis'];
+  /** applicability invalid 导致的 blocked（无普通 input attempt）时非空，供诊断不静默漏项 */
+  applicability_provider: string | null;
+  applicability_dependencies: ResolutionDependency[];
+  /** 未解析（absent/invalid/not_applicable）的 input attempt 明细，按 input id + source 稳定排序 */
+  unresolved: Array<{
+    input: string;
+    source: string;
+    detail?: string;
+    upstream_producer?: string;
+    dependencies: ResolutionDependency[];
+  }>;
+}
+
+/**
+ * 从报告确定性提取 active ∧ blocked 的能力事实（t2 投影的唯一数据源，跨 readiness/merged-report
+ * 复用）。**不**含 requirement 专属修复话术——那些只存在于 derive.requirement 自己的 attempt.detail
+ * 里，由消费方原样转述，防止通用投影夹带专属建议。applicability invalid 的 blocked（inputs 为空）
+ * 仍产出 fact，只展示 capability/applicability provider/dependency，不整项静默漏掉。
+ */
+export function collectBlockedCapabilityFacts(
+  report: Pick<CapabilityResolutionReport, 'capabilities'>,
+): BlockedCapabilityFact[] {
+  const facts: BlockedCapabilityFact[] = [];
+  for (const capability of report.capabilities) {
+    if (!capability.active || capability.state !== 'blocked') continue;
+    const unresolved: BlockedCapabilityFact['unresolved'] = [];
+    // defensive：宽松输入（assess 的 capabilityEntries）可能缺 inputs——按空处理，不 TypeError。
+    const inputs = Array.isArray(capability.inputs) ? capability.inputs : [];
+    for (const input of inputs) {
+      const attempts = Array.isArray(input.attempts) ? input.attempts : [];
+      for (const attempt of attempts) {
+        if (!attempt || typeof attempt !== 'object') continue;
+        if (attempt.state !== 'absent' && attempt.state !== 'invalid' && attempt.state !== 'not_applicable') continue;
+        unresolved.push({
+          input: input.id,
+          source: attempt.source,
+          ...(attempt.detail ? { detail: attempt.detail } : {}),
+          ...(attempt.upstream_producer ? { upstream_producer: attempt.upstream_producer } : {}),
+          dependencies: Array.isArray(attempt.dependencies) ? attempt.dependencies : [],
+        });
+      }
+    }
+    unresolved.sort((a, b) => `${a.input}|${a.source}`.localeCompare(`${b.input}|${b.source}`));
+    facts.push({
+      capability: capability.id,
+      axis: capability.axis,
+      applicability_provider: capability.applicability_provider_id ?? null,
+      applicability_dependencies: Array.isArray(capability.applicability_dependencies) ? capability.applicability_dependencies : [],
+      unresolved,
+    });
+  }
+  facts.sort((a, b) => a.capability.localeCompare(b.capability));
+  return facts;
 }

@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
+import { inspectGoalRunCreationFiles } from './goal-run-creation';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -16,6 +17,7 @@ import {
   countAgentInvokeStarts,
   filterAuthoritativeEvents,
   findLatestEffectiveTimeoutMs,
+  foldBudgetLineage,
   loadEventsJsonl,
   partitionExecutionSessions,
   resolveEffectiveRunEnd,
@@ -39,7 +41,9 @@ import {
 import { normalizePhaseId } from './phase-alias';
 import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
 import type { WorkflowSpec } from '../../workflow-loader';
-import { reduceRunState } from './run-state-reducer';
+import { reduceRunState, type RecoveryDiagnostic } from './run-state-reducer';
+import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
+import { defaultProcessProbe } from './device-session';
 import type { Disposition, WaitKind } from './adjudication';
 
 export const PROGRESS_SCHEMA_VERSION = '1.0';
@@ -109,6 +113,7 @@ export interface GoalProgressSnapshot {
    */
   run_disposition: Disposition;
   run_wait_kind?: WaitKind;
+  recovery?: RecoveryDiagnostic;
   generated_at: string;
   source: {
     events_path: string;
@@ -137,6 +142,14 @@ export interface GoalProgressSnapshot {
     state: LivenessState;
     last_activity_at: string | null;
     seconds_since_activity: number | null;
+    /**
+     * plan e6b3f8d2 t4：**工作面**停滞时长（now − agent-output.log mtime），毫秒。
+     * 刻意与 `seconds_since_activity` 分立——后者是**控制面**口径，含 runner 自写
+     * heartbeat，agent 一字不吐它也恒新鲜（立项事故：i3 输出 65 分钟零变化，
+     * 活性却一路 ACTIVE）。仅在“未闭合 invoke + 输出未变 + streaming”三合取成立时
+     * 有值；其余为 null，避免把 buffered/unknown/已闭合 invoke 误报成输出停滞。
+     */
+    agent_output_stalled_ms: number | null;
     signals: {
       feature_lock_heartbeat: 'fresh' | 'stale' | 'missing';
       runner_lock: 'present' | 'missing';
@@ -160,6 +173,24 @@ export interface GoalProgressSnapshot {
   };
   recent_events: Array<{ ts: string; type: string; phase?: string }>;
   next_action: string;
+  /**
+   * plan c6a9e4d2 t3：guardian 接管**只读投影**——报告**全部**未闭合 invoke 的绑定
+   * guardian 及各自存活性（P0-1 review：只聚合最后一个会漏报更早孤儿）。goal-status/
+   * monitor 只读消费它（识别绑定/存活性），**绝不据其回收**；回收只发生在 goal-runner
+   * resume 对账 / goal-supervise 的受控 force 决策里。
+   * alive=null 表示无法探测（非 win32 / 探针不可用）。
+   */
+  guardian?: {
+    unclosed_bounds: number;
+    any_alive: boolean | null;
+    bounds: Array<{
+      pid: number;
+      token: string;
+      invoke_id: string;
+      phase: string;
+      alive: boolean | null;
+    }>;
+  };
   phases_summary: Array<{
     phase: FeaturePhase;
     status: ProgressPhaseStatus;
@@ -179,6 +210,12 @@ export interface ProjectProgressInput {
   nowMs?: number;
   /** When projecting for goal-status with live lock probe. */
   liveProbe?: boolean;
+  /**
+   * e9d4b7a3 t4（二轮 review P1）：预算 lineage 折叠所需的 featuresDir，**必传**——
+   * 不接受反向推导（旧实现从 report_dir 反推会多带 feature 段，in-session 路径
+   * 折叠错到 `.../feat-a/feat-a/goal-runs`；真实来源是 cfg.paths.features_dir）。
+   */
+  featuresDir: string;
 }
 
 interface PhaseSpan {
@@ -552,6 +589,21 @@ export interface LivenessInput {
   lastLingeringPipe: boolean;
 }
 
+/**
+ * plan e6b3f8d2 t4：**本 run events** 里 `adapter_probe` 声明的输出交付方式。
+ * 刻意读事件而不是现行 `adapter.yaml`——历史 run 不得被今天的声明重新解释
+ *（一个 run 的活性判据只能用它自己当时落盘的事实）。缺失即 unknown。
+ */
+export function resolveRunOutputDelivery(events: GoalRunEvent[]): 'streaming' | 'buffered' | 'unknown' {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== 'adapter_probe') continue;
+    const v = e.output_delivery;
+    return v === 'streaming' || v === 'buffered' ? v : 'unknown';
+  }
+  return 'unknown';
+}
+
 export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liveness'] {
   const { events, featureLock, nowMs, runEnded, terminalStatus } = input;
 
@@ -560,6 +612,7 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
       state: 'DONE',
       last_activity_at: events.length > 0 ? (events[events.length - 1].ts ?? null) : null,
       seconds_since_activity: 0,
+      agent_output_stalled_ms: null,
       signals: {
         feature_lock_heartbeat: 'missing',
         runner_lock: 'missing',
@@ -687,11 +740,34 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     state = 'QUIET';
   }
 
+  // plan e6b3f8d2 t4：**工作面与控制面分离**。控制面（runner heartbeat）恒新鲜会把
+  // 「agent 一字不吐」盖成 ACTIVE（立项事故：i3 输出停滞 65 分钟仍报 ACTIVE）。
+  // 判据三合取，缺一不降：
+  //   ① 存在未闭合 invoke（确实有个 agent 正在跑）；
+  //   ② 工作面信号 outputSignal='unchanged'（agent-output.log 超软阈未变）；
+  //   ③ 本 run 事件声明 output_delivery='streaming'——**只有流式交付**才能从"日志不长"
+  //      推出"agent 没吐字"；buffered/unknown 下日志本就可能整段憋着，据此降级即误报。
+  // **只观测不干预**：降级到既有枚举 SUSPECTED_STALL，不触发 kill/恢复，不新增枚举或
+  // 第二 reducer；且只从 ACTIVE/QUIET 抬（ORPHAN/STALLED/ATTENTION 是更强的控制面结论）。
+  const outputDelivery = resolveRunOutputDelivery(events);
+  const outputStallObserved =
+    unclosed !== null &&
+    outputSignal === 'unchanged' &&
+    outputDelivery === 'streaming';
+  const agentOutputStalledMs =
+    outputStallObserved && input.agentOutputMtimeMs != null
+      ? Math.max(0, nowMs - input.agentOutputMtimeMs)
+      : null;
+  if ((state === 'ACTIVE' || state === 'QUIET') && outputStallObserved) {
+    state = 'SUSPECTED_STALL';
+  }
+
   return {
     state,
     last_activity_at:
       lastActivityMs != null ? new Date(lastActivityMs).toISOString() : null,
     seconds_since_activity: secondsSince,
+    agent_output_stalled_ms: agentOutputStalledMs,
     signals: {
       feature_lock_heartbeat: lockHeartbeat,
       runner_lock: runnerPresent,
@@ -743,15 +819,25 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // 实施 round2 P1：预算轴与 runner T2 同构——turns 只计权威段；wall_elapsed=活跃时间
   //（Σ 历史段 activeMs + 直播段 now−段首），不再用「首个 run_start→now」日历跨度
   //（隔夜 resume 面板秒报预算耗尽=4035d4 形态）。dry 视图保留 raw 口径。
+  // e9d4b7a3 t4：与 runner 熔断/heartbeat 同一折叠入口（foldBudgetLineage 沿 supersede
+  // 链收祖先 events）——supersede 链下 progress 显示 lineage 累计（30/30），不再 5/30。
   let turnsUsed: number;
   let wallElapsed: number;
   if (!partition) {
     turnsUsed = countAgentInvokeStarts(events);
     wallElapsed = nowMs - resolveWallClockStartMs(events);
   } else {
-    turnsUsed = partition.totalTurns;
-    const auth = partition.sessions.filter((s) => s.mode === 'authoritative');
+    const featuresDir = input.featuresDir;
+    const fold = foldBudgetLineage({
+      projectRoot,
+      featuresDir,
+      feature: input.manifest.feature,
+      currentEvents: events,
+    });
+    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents);
+    const auth = foldPartition.sessions.filter((s) => s.mode === 'authoritative');
     const last = auth.length > 0 ? auth[auth.length - 1] : null;
+    turnsUsed = foldPartition.totalTurns;
     if (!last) {
       wallElapsed = 0;
     } else if (!lastRunEnd && Number.isFinite(last.startMs) && last.startMs > 0) {
@@ -762,7 +848,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
         auth.slice(0, -1).reduce((a, s) => a + s.activeMs, 0) +
         Math.max(0, nowMs - last.startMs);
     } else {
-      wallElapsed = partition.priorActiveMs;
+      wallElapsed = foldPartition.priorActiveMs;
     }
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
@@ -830,6 +916,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       statusReason = 'soft_quiet_window';
     }
   }
+  if (!statusReason && runState.recovery) statusReason = runState.recovery.reason;
 
   const { percent, kind } = computeEstimatedPercent(spans, currentSpan);
 
@@ -882,6 +969,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     // 裁决轴（正交于上面的 liveness 轴）——supervisor 按 beacon × run_disposition 决策
     run_disposition: runState.run_disposition,
     ...(runState.run_wait_kind ? { run_wait_kind: runState.run_wait_kind } : {}),
+    ...(runState.recovery ? { recovery: runState.recovery } : {}),
     generated_at: new Date(nowMs).toISOString(),
     source: {
       events_path: eventsPath,
@@ -931,6 +1019,7 @@ export function buildLiveGoalStatusSnapshot(opts: {
   projectRoot: string;
   manifest: GoalManifest;
   workflow: WorkflowSpec;
+  /** e9d4b7a3 t4：必传（cfg.paths.features_dir 派生）——折叠 lineage 与锁路径共用 */
   featuresDir: string;
   feature: string;
   runId: string;
@@ -956,12 +1045,40 @@ export function buildLiveGoalStatusSnapshot(opts: {
     runnerLock,
     nowMs,
     liveProbe: true,
+    featuresDir: opts.featuresDir,
   });
   snapshot = applyFreshnessDegradation(snapshot, {
     liveProbe: true,
     featureLock,
     nowMs,
   });
+
+  // plan c6a9e4d2 t3：guardian 只读投影（**全部**未闭合绑定 + 各自存活性；探针只读，
+  // 不杀进程）。非 win32 或探针不可用 → alive=null；any_alive 为聚合三态。
+  const guardianBounds = findUnclosedGuardianBounds(events);
+  if (guardianBounds.length > 0) {
+    const bounds = guardianBounds.map((b) => {
+      let alive: boolean | null = null;
+      if (process.platform === 'win32') {
+        try {
+          alive = defaultProcessProbe().identify(b.pid) !== null;
+        } catch {
+          alive = null;
+        }
+      }
+      return { pid: b.pid, token: b.token, invoke_id: b.invoke_id, phase: b.phase, alive };
+    });
+    const hasAlive = bounds.some((b) => b.alive === true);
+    const hasDead = bounds.some((b) => b.alive === false);
+    snapshot = {
+      ...snapshot,
+      guardian: {
+        unclosed_bounds: bounds.length,
+        any_alive: hasAlive ? true : hasDead ? false : null,
+        bounds,
+      },
+    };
+  }
 
   if (opts.tailN && opts.tailN > 0) {
     // 实施 round2 P1：tail 与投影同视图（普通 run 权威过滤、dry 视图 raw）——
@@ -985,6 +1102,19 @@ export function formatGoalStatusJson(snapshot: GoalProgressSnapshot): string {
   return JSON.stringify(snapshot, null, 2);
 }
 
+function formatAgentOutputStall(liveness: GoalProgressSnapshot['liveness']): string | null {
+  if (
+    liveness.agent_output_stalled_ms == null ||
+    liveness.agent_output_stalled_ms < SOFT_STALL_MS
+  ) {
+    return null;
+  }
+  return (
+    `agent 输出已停滞 ${Math.floor(liveness.agent_output_stalled_ms / 60000)} 分钟` +
+    '（工作面口径：now − agent-output.log mtime；控制面 heartbeat 不计入）'
+  );
+}
+
 export function formatGoalStatusText(
   snapshot: GoalProgressSnapshot,
   feature: string,
@@ -994,12 +1124,14 @@ export function formatGoalStatusText(
     snapshot.chain.percent_kind === 'indeterminate'
       ? `${snapshot.chain.current_index + 1}/${snapshot.chain.total}`
       : `${snapshot.chain.estimated_percent ?? 0}%`;
-  return (
-    `Goal ${feature} · run ${runId} · ${snapshot.status}\n` +
-    `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})\n` +
-    `Liveness: ${snapshot.liveness.state} · progress ${pct}\n` +
-    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`
-  );
+  const outputStall = formatAgentOutputStall(snapshot.liveness);
+  return [
+    `Goal ${feature} · run ${runId} · ${snapshot.status}`,
+    `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})`,
+    `Liveness: ${snapshot.liveness.state} · progress ${pct}`,
+    ...(outputStall ? [outputStall] : []),
+    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`,
+  ].join('\n');
 }
 
 export interface StatusWatchOptions {
@@ -1094,6 +1226,7 @@ export function applyFreshnessDegradation(
 }
 
 export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string {
+  const outputStall = formatAgentOutputStall(snapshot.liveness);
   const lines: string[] = [
     `# Goal Progress - ${snapshot.feature}`,
     '',
@@ -1105,6 +1238,9 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
         ? `, last activity ${snapshot.liveness.seconds_since_activity}s ago`
         : ''
     }`,
+    // plan e6b3f8d2 t4：工作面口径单列。**不复用 seconds_since_activity**——那条含
+    // runner 自写 heartbeat，会把"agent 早不吐字了"读成"刚刚还活着"。
+    ...(outputStall ? [`- ${outputStall}`] : []),
     `- Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
     '',
     '## Phases',
@@ -1120,6 +1256,27 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     lines.push(
       `| ${row.phase} | ${row.status} | ${row.attempts || '—'} | ${dur} | ${evidence} |`,
     );
+  }
+
+  if (snapshot.recovery) {
+    const r = snapshot.recovery;
+    lines.push(
+      '',
+      '## Recovery',
+      '',
+      `- Reason: ${r.reason}`,
+      `- Action: ${r.action}`,
+      `- Current / owner target: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
+      `- Gap: ${r.gap_kind ?? '—'}`,
+      `- Budget: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- Fingerprint: ${r.fingerprint ?? '—'}`,
+    );
+    for (const item of r.changed_paths.slice(0, 20)) {
+      lines.push(
+        `- ${item.path}${item.owner ? ` owner=${item.owner}` : ''}` +
+        `${item.pre_sha256 || item.post_sha256 ? ` pre=${item.pre_sha256 ?? 'missing'} post=${item.post_sha256 ?? 'missing'}` : ''}`,
+      );
+    }
   }
 
   lines.push('', '## Recent Activity', '');
@@ -1275,11 +1432,13 @@ export function resolveLatestRunId(
     if (ent.name.startsWith('.')) continue;
     const manifestPath = path.join(runsDir, ent.name, 'manifest.json');
     const eventsPath = path.join(runsDir, ent.name, 'events.jsonl');
+    const creation = inspectGoalRunCreationFiles(manifestPath, eventsPath);
+    if (creation.state !== 'complete' && creation.state !== 'legacy') continue;
     let ts = 0;
     if (fs.existsSync(eventsPath)) {
       const events = loadEventsJsonl(eventsPath);
       for (const e of events) {
-        if (e.type === 'run_start' && e.ts) {
+        if ((e.type === 'run_created' || e.type === 'run_start') && e.ts) {
           const t = new Date(e.ts).getTime();
           if (!Number.isNaN(t)) ts = Math.max(ts, t);
         }
