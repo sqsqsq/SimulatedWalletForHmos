@@ -2099,18 +2099,28 @@ _STORY_ONLY_WORDS = ("story", "三份产物", "叙事件", "技术契约", "归�
 
 
 def _spec_post_check(root: Path) -> tuple[bool, str] | None:
-    """在夹具根上跑真实的 spec post_check，回 (ok, message)；跑不起来回 None。"""
+    """跑真实的 spec post_check，回 (ok, message)；跑不起来回 None。
+
+    **在副本上跑**，与 `_story_build_cycle` 同一口径：hook 通过时也会写留痕
+    （`spec/reports/ext-post-check.json`，里面有时间戳），在夹具原地跑就是每跑一次
+    把夹具写脏一次——那两个文件因此长期挂在工作区里，被一次次捎带提交，
+    而谁也说不清它们到底改了什么。
+    """
     script = (
         "import {pathToFileURL} from 'node:url';"
         "const hook=(await import(pathToFileURL(process.argv[1]).href)).default;"
         "const r=await hook({phase:'spec',feature:process.argv[3],projectRoot:process.argv[2]});"
         "console.log(JSON.stringify({ok:r.ok!==false,message:r.message??''}));")
-    hook = _ext_file(root, "hooks/spec/post_check.mjs")
-    if hook is None:
-        hook = DEFAULT_EXTENSION_DIR / "hooks" / "spec" / "post_check.mjs"
-    proc = subprocess.run(
-        ["node", "--input-type=module", "-e", script, "--", str(hook), str(root), "AR90001"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / root.name
+        shutil.copytree(root, work)
+        hook = _ext_file(work, "hooks/spec/post_check.mjs")
+        if hook is None:
+            hook = DEFAULT_EXTENSION_DIR / "hooks" / "spec" / "post_check.mjs"
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", script, "--",
+             str(hook), str(work), "AR90001"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
     data = json.loads(proc.stdout.strip().splitlines()[-1])

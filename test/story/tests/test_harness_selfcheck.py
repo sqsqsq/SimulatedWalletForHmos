@@ -75,6 +75,22 @@ class CallSitesResolve(unittest.TestCase):
         self.assertEqual(["send_scripted_reply"], unresolved)
 
 
+class LedgerDoesNotDirtyItsFixtures(unittest.TestCase):
+    """台账跑一遍，夹具一个字节都不该变。
+
+    实测踩过：spec post_check 在夹具**原地**跑，而 hook 通过时也会写留痕
+    （`spec/reports/ext-post-check.json`，里面有时间戳）。于是每跑一次台账就有两个
+    夹具文件变脏，长期挂在工作区里被一次次捎带提交——而谁也说不清它们改了什么。
+    """
+
+    def test_the_spec_post_check_runs_on_a_copy(self) -> None:
+        source = (SCRIPTS / "check_failure_modes.py").read_text(encoding="utf-8")
+        body = source.split("def _spec_post_check")[1].split("\ndef ")[0]
+        self.assertIn("TemporaryDirectory", body,
+                      "spec post_check 要在副本上跑——它会写留痕，原地跑就把夹具写脏了")
+        self.assertIn("copytree", body)
+
+
 class NoTimeLimitStaysExplicit(unittest.TestCase):
     """`clis.json` 的全局默认仍是有限时限，story 侧靠显式传 0 绕开。
 
