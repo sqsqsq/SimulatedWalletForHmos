@@ -29,6 +29,12 @@ AUTH_PATTERNS = (
     "please login",
     "unauthorized",
     "invalid api key",
+    # Providers spell the same failure several ways.  Alibaba Model Studio answers
+    # `{"code":"invalid_api_key","message":"Incorrect API key provided."}` — neither
+    # spelling matches the spaced form above, so without these two the run is
+    # classified as a plain command failure and the config group never trips.
+    "invalid_api_key",
+    "incorrect api key",
     "status 401",
     "<401>",
 )

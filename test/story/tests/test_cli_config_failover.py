@@ -168,3 +168,39 @@ class CleanRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealProviderAuthSignatures(unittest.TestCase):
+    """凭据失效的真实报文，必须被认成鉴权失败——不是笼统的命令失败。
+
+    实测（2026-08-31 F7 首跑）：两个 Case 在 30 秒内双双 `cli_failed`，
+    failure_kind 记的是 `command_failed`，配置组一次都没熔断，三个配置里
+    只用了第一个就整轮报废。原因是签名对不上——
+
+        阿里云返回 {"code":"invalid_api_key","message":"Incorrect API key provided."}
+
+    而模式表里写的是带空格的 `invalid api key`：`invalid_api_key` 是下划线、
+    `Incorrect API key provided` 里压根没有 "invalid"。两个都不匹配。
+
+    识别不出来的后果不是「少切一次配置」，是**整个配置组形同虚设**：
+    provider 换一种说法拼错误消息，熔断就不会发生，而外面看到的仍然是
+    「跑挂了」这三个字。所以这里锁的是真实报文，不是构造的理想字符串。
+    """
+
+    ALIYUN = ('{"error":{"message":"Incorrect API key provided. For details, see: '
+              'https://help.aliyun.com/zh/model-studio/error-code#apikey-error",'
+              '"type":"invalid_request_error","param":null,"code":"invalid_api_key"},'
+              '"request_id":"ca5b2094-6c83-9477-8b25-261181d2f924"}')
+
+    def test_aliyun_invalid_api_key_is_auth_required(self) -> None:
+        from tools.cli.runner import classify_failure
+        from tools.cli.models import FailureKind
+        self.assertEqual(FailureKind.AUTH_REQUIRED, classify_failure(self.ALIYUN))
+
+    def test_both_spellings_are_covered(self) -> None:
+        """下划线与「Incorrect API key」各锁一条——去掉任一条都会漏掉一类 provider。"""
+        from tools.cli.runner import classify_failure
+        from tools.cli.models import FailureKind
+        for text in ('code: invalid_api_key', 'Incorrect API key provided.'):
+            with self.subTest(text=text):
+                self.assertEqual(FailureKind.AUTH_REQUIRED, classify_failure(text))
