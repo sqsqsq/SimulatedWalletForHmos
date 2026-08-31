@@ -292,7 +292,12 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
-    def test_unexpected_gate_requires_host_adaptive_reply(self) -> None:
+    def test_every_gate_goes_to_the_host(self) -> None:
+        """每一关都交给宿主——规划不再自己发话。
+
+        宿主替代的是**人**：人不会两次说出一模一样的句子，也不会对着一段没有问题的
+        独白照本宣科。规划留在那儿供宿主判断这一关该表达什么立场。
+        """
         record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         record.update({"interaction_script": [], "interaction_index": 0,
                        "last_awaiting": {"turn": 4, "kind": "story_gate",
@@ -301,9 +306,43 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         suite["bundle_root"] = tempfile.mkdtemp()
         try:
             with mock.patch.object(run_multi_case, "invoke_case") as invoke:
-                run_multi_case.send_scripted_reply(record, suite)
+                run_multi_case.request_host_reply(record, suite)
             invoke.assert_not_called()
             self.assertEqual("adaptive_reply_required", record["interaction_state"])
+            self.assertEqual("interaction_script_exhausted",
+                             record["last_adaptive_request"]["reason"])
+        finally:
+            shutil.rmtree(suite["bundle_root"], ignore_errors=True)
+
+    def test_the_request_carries_what_this_gate_should_convey(self) -> None:
+        """回落信息要带上「这一关按规划本该表达什么」。
+
+        上一版只给「模型说了什么」，宿主要自己去翻脚本；翻漏了就临场发挥，
+        观测到的于是掺进了宿主自己的话——实测发生过一次。
+        """
+        record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
+        record.update({
+            "interaction_script": [
+                {"id": "scope", "text": "这次不拆单，一起做完。", "expected_turn": 1,
+                 "expected_phase": "story", "deliver": []},
+            ],
+            "interaction_index": 0,
+            "last_awaiting": {"turn": 7, "kind": "story_gate", "prompt": "范围怎么定？"},
+        })
+        suite = self.suite(record)
+        suite["bundle_root"] = tempfile.mkdtemp()
+        try:
+            with mock.patch.object(run_multi_case, "invoke_case") as invoke:
+                run_multi_case.request_host_reply(record, suite)
+            invoke.assert_not_called()
+            request = record["last_adaptive_request"]
+            self.assertEqual("scope", request["planned_step_id"])
+            self.assertEqual("这次不拆单，一起做完。", request["planned_intent"])
+            self.assertEqual("范围怎么定？", request["question"])
+            # 关卡编号对不上不再决定任何事——它只是参考
+            self.assertEqual(7, request["turn"])
+            self.assertEqual(1, request["planned_turn"])
+            self.assertEqual("0/1", request["script_cursor"])
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
@@ -325,31 +364,31 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         suite = self.suite(record)
         suite["bundle_root"] = tempfile.mkdtemp()
         try:
-            with mock.patch.object(run_multi_case, "invoke_case",
-                                   return_value=(0, {}, "", "")) as invoke:
+            with mock.patch.object(run_multi_case, "invoke_case") as invoke:
                 self.assertTrue(run_multi_case.is_new_gate(record))
-                run_multi_case.send_scripted_reply(record, suite)
-                self.assertEqual(1, record["last_replied_turn"])
+                run_multi_case.request_host_reply(record, suite)
+                # 宿主回话之后这一关才算回过（`command_reply` 里记）
+                record["last_replied_turn"] = 1
+                record["last_reply_status"] = "accepted"
 
-                # 同一关卡再来一次 poll：不重复回复
+                # 同一关卡再来一次 poll：不重复叫宿主
                 self.assertFalse(run_multi_case.is_new_gate(record))
 
-                # 新关卡出现（上一次回复仍标 accepted）：照样要回
+                # 新关卡出现（上一次回复仍标 accepted）：照样要叫
                 record["last_awaiting"] = {"turn": 2, "kind": "story_gate"}
-                self.assertEqual("accepted", record["last_reply_status"])
                 self.assertTrue(run_multi_case.is_new_gate(record))
-                run_multi_case.send_scripted_reply(record, suite)
-            self.assertEqual(2, invoke.call_count)
-            self.assertEqual(2, record["interaction_index"])
-            self.assertEqual(2, record["last_replied_turn"])
+                run_multi_case.request_host_reply(record, suite)
+            invoke.assert_not_called()
+            self.assertEqual(2, record["adaptive_reply_count"])
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
-    def test_reply_with_unmet_phase_precondition_is_not_sent(self) -> None:
-        """阶段前提不满足时必须回落给宿主，**不能发送**。
+    def test_the_phase_precondition_is_handed_to_the_host_not_enforced(self) -> None:
+        """阶段前提随规划条目一起交给宿主判断，装置不再据它决定发不发。
 
-        turn/kind 都对得上、内容却依赖尚未发生的事（评审意见依赖归档），
-        送出去就被答非所问地消费掉，事后才发现对不上——所以判据是「一个字都没发出去」。
+        评审意见这类话依赖尚未发生的事（归档）。上一版的做法是「前提不满足就回落」，
+        而现在**每一关都回落**——前提写进 `planned_phase`，宿主看着它决定这一关
+        该不该把那个意思说出口。判据仍是「装置一个字都没发出去」。
         """
         record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         workspace = Path(tempfile.mkdtemp())
@@ -371,23 +410,17 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         suite["bundle_root"] = tempfile.mkdtemp()
         try:
             def must_not_send(*a, **kw):
-                raise AssertionError("阶段前提未满足却发送了回复")
+                raise AssertionError("装置替宿主发了回复")
 
             with mock.patch.object(run_multi_case, "invoke_case", must_not_send):
-                run_multi_case.send_scripted_reply(record, suite)
+                run_multi_case.request_host_reply(record, suite)
+            request = record["last_adaptive_request"]
             self.assertEqual("adaptive_reply_required", record["interaction_state"])
-            self.assertEqual("interaction_phase_mismatch",
-                             record["last_adaptive_request"]["reason"])
+            self.assertEqual("archived", request["planned_phase"],
+                             "阶段前提要交到宿主手上，让他判断这话现在该不该说")
+            self.assertEqual("评审意见", request["planned_intent"])
+            # 指针只由宿主 `--step` 推进，装置自己不动它
             self.assertEqual(0, record["interaction_index"])
-
-            # 归档之后同一条就该发出去
-            (flow_dir / "story-flow.json").write_text(
-                json.dumps({"archived": {"at": "2026-08-27"}}), encoding="utf-8")
-            with mock.patch.object(run_multi_case, "invoke_case",
-                                   return_value=(0, {}, "", "")) as invoke:
-                run_multi_case.send_scripted_reply(record, suite)
-            invoke.assert_called_once()
-            self.assertEqual(1, record["interaction_index"])
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
             shutil.rmtree(workspace, ignore_errors=True)

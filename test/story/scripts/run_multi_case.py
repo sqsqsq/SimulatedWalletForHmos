@@ -1344,86 +1344,67 @@ def is_new_gate(record: dict[str, Any]) -> bool:
     return turn != record.get("last_replied_turn")
 
 
-def send_scripted_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
-    """Reply to a declared gate; expose unexpected gates to the host model."""
+def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
+    """每一关都交给宿主回答，并把「这一关按规划本该表达什么」一并交出去。
+
+    **脚本不再自动应答。** 上一版是「三重比对全等就自动投逐字原话，否则回落给宿主」，
+    两个后果都在实跑里出现过：
+
+      ① `expected_turn` 是绝对序号，模型多问一关，从那一关起后面**全部**条目失配，
+         永久回落——设计好的话术被大面积跳过，而没有任何信号说跳了几条
+         （实测一轮：五条脚本只投出三条，评审意见那条从头到尾没排上）；
+      ② 回落时只给宿主「模型说了什么」，不给「这一关本该说什么」，宿主要自己去翻
+         脚本才知道；翻漏了就临场发挥，观测到的于是掺进了宿主自己的话。
+
+    现在的分工：**脚本是需求方的立场，不是应答器。** 它写明这一关需求方持什么立场、
+    该把哪份材料交出去；宿主按当时的情境自然地把那个意思说出来，不逐字照抄——
+    真实的需求方本来就不会两次说出一模一样的句子。
+
+    模型没有提问、只是在自言自语地推进时，宿主给一句中性的推进回复，
+    **不注入任何做法或写作指引**——那些正是要观测的东西。
+
+    15 秒 / 120 秒的 heartbeat 正是为这件事设的：交互期让宿主及时接话，
+    自动化期退回常规观测。自动应答架空的就是这个设计。
+    """
     if record.get("status") != WAITING_STATUS:
         return
     script = list(record.get("interaction_script") or [])
     index = int(record.get("interaction_index") or 0)
     awaiting = record.get("last_awaiting") or {}
-    fallback_reason = None
-    if index >= len(script):
-        fallback_reason = "interaction_script_exhausted"
-    else:
-        step = script[index]
-        expected_turn = int(step.get("expected_turn") or index + 1)
-        actual_turn = awaiting.get("turn")
-        expected_kind = str(step.get("expected_kind") or "story_gate")
-        actual_kind = str(awaiting.get("kind") or "")
-        if (actual_turn is not None and int(actual_turn) != expected_turn) \
-                or (actual_kind and actual_kind != expected_kind):
-            fallback_reason = "interaction_gate_mismatch"
-        elif not gate_phase_ready(record, str(step.get("expected_phase") or "")):
-            # 阶段前提不满足：这条回复的内容依赖尚未发生的事（如评审意见依赖归档），
-            # 送出去只会被答非所问地消费掉。交给宿主当轮判断。
-            fallback_reason = "interaction_phase_mismatch"
-    if fallback_reason:
-        prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
-        fallback = {
-            "case": record["case"],
-            "turn": awaiting.get("turn"),
-            "kind": awaiting.get("kind"),
-            "model_prompt": prompt_text,
-            # question 是给宿主**当轮就能回**的那份原文：只给状态、要宿主再去翻 runlog，
-            # 一轮观测就变成两轮，等待时间凭空翻倍（实测一次空等约 10 分钟）。
-            "question": str(prompt_text)[:1200],
-            "case_inputs_hint": case_public_inputs(record),
-            "reply": None,
-            "reason": fallback_reason,
-            "detected_at": now(),
-            "reply_status": "adaptive_reply_required",
-        }
-        record["last_reply_status"] = "adaptive_reply_required"
-        record["last_reply_text"] = None
-        record["last_adaptive_request"] = fallback
-        record["adaptive_reply_count"] = (
-            int(record.get("adaptive_reply_count") or 0) + 1)
-        record["interaction_state"] = "adaptive_reply_required"
-        record["automation_observation_state"] = "waiting_for_adaptive_reply"
-        append_event(suite, "adaptive_reply_required", **fallback)
-        append_case_observation(suite, str(record["case"]), {
-            "kind": "interaction", **fallback})
-        return
-    step = script[index]
-    # 补料随这句话一起送到：人说「我把文档放进需求目录了」的同时，文件就该在那儿。
-    # 先投文件再发话，模型下一轮才看得见；反过来它会先扑个空。
-    deliver_args: list[str] = []
-    for name in step.get("deliver") or []:
-        deliver_args.extend(("--deliver", str(name)))
-    returncode, payload, stdout, stderr = invoke_case(
-        str(record["case"]), "reply", "--text", str(step["text"]), *deliver_args,
-        suite=suite)
-    record["last_reply_status"] = "accepted" if returncode == 0 else "rejected"
-    record["last_reply_text"] = str(step["text"])
-    if returncode != 0:
-        record["last_error"] = {
-            "returncode": returncode, "payload": payload,
-            "stdout": stdout[-2000:], "stderr": stderr[-2000:],
-        }
-        append_event(suite, "scripted_reply_rejected", case=record["case"],
-                     step=step.get("id"), returncode=returncode)
-        return
-    record["interaction_index"] = index + 1
-    record["last_replied_turn"] = awaiting.get("turn")
-    record["interaction_state"] = (
-        "complete" if index + 1 >= len(script) else "waiting")
-    record["last_human_reply_at"] = now()
-    record["automation_observation_state"] = "reply_sent"
-    record_delivery(record, (payload or {}).get("delivered") or [])
-    append_event(suite, "scripted_reply_accepted", case=record["case"],
-                 step=step.get("id"), turn=awaiting.get("turn"),
-                 delivered=(payload or {}).get("delivered") or [],
-                 reply_status=(payload or {}).get("reply_status"))
+    prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
+    planned = script[index] if index < len(script) else None
+    request = {
+        "case": record["case"],
+        "turn": awaiting.get("turn"),
+        "kind": awaiting.get("kind"),
+        "model_prompt": prompt_text,
+        # question 是给宿主**当轮就能回**的那份原文：只给状态、要宿主再去翻 runlog，
+        # 一轮观测就变成两轮，等待时间凭空翻倍（实测一次空等约 10 分钟）。
+        "question": str(prompt_text)[:1200],
+        "case_inputs_hint": case_public_inputs(record),
+        # 规划里下一条还没说出口的立场——宿主据它决定这一关表达什么意思。
+        # 关卡编号对不对得上不再决定任何事，只作参考。
+        "planned_step_id": (planned or {}).get("id"),
+        "planned_intent": str((planned or {}).get("text") or "") or None,
+        "planned_deliver": list((planned or {}).get("deliver") or []),
+        "planned_phase": (planned or {}).get("expected_phase"),
+        "planned_turn": (planned or {}).get("expected_turn"),
+        "script_cursor": f"{index}/{len(script)}",
+        "reply": None,
+        "reason": "host_reply_required" if planned else "interaction_script_exhausted",
+        "detected_at": now(),
+        "reply_status": "adaptive_reply_required",
+    }
+    record["last_reply_status"] = "adaptive_reply_required"
+    record["last_reply_text"] = None
+    record["last_adaptive_request"] = request
+    record["adaptive_reply_count"] = (
+        int(record.get("adaptive_reply_count") or 0) + 1)
+    record["interaction_state"] = "adaptive_reply_required"
+    record["automation_observation_state"] = "waiting_for_adaptive_reply"
+    append_event(suite, "adaptive_reply_required", **request)
+    append_case_observation(suite, str(record["case"]), {
+        "kind": "interaction", **request})
 
 
 def record_delivery(record: dict[str, Any], delivered: list[Any]) -> None:
@@ -2185,9 +2166,18 @@ def command_status(suite_id: str) -> int:
     return 0
 
 
+#: 宿主这一句话是哪一种，直接决定它对观测的影响，所以要分开记账而不是只数次数。
+#:   planned   —— 按规划条目表达需求方的立场（`--step` 指名是哪一条）
+#:   answered  —— 回答模型主动提出的问题
+#:   neutral   —— 模型没有提问，只给一句中性的推进，不含任何做法或写作指引
+#:   improvised—— 以上都不是：宿主自己的话。**这一类会污染观测**，评测时要单独看
+HOST_REPLY_KINDS = ("planned", "answered", "neutral", "improvised")
+
+
 def command_reply(suite_id: str, case_id: str, text: str,
                   reply_mode: str = "manual", reason: str = "",
-                  deliver: list[str] | None = None) -> int:
+                  deliver: list[str] | None = None,
+                  step_id: str = "", reply_kind: str = "improvised") -> int:
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
         raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
@@ -2213,6 +2203,10 @@ def command_reply(suite_id: str, case_id: str, text: str,
     interaction = {
         "kind": "interaction_reply",
         "mode": reply_mode,
+        # 这一句是「按规划 / 答提问 / 中性推进 / 宿主自己的话」——评测要据它判断
+        # 这份产物有多少受了宿主话术影响，只数次数是答不出这个问题的。
+        "reply_kind": reply_kind,
+        "planned_step": step_id or None,
         "reason": reason,
         "delivered": (payload or {}).get("delivered") or [],
         "prompt": (record.get("last_awaiting") or {}).get("prompt")
@@ -2221,7 +2215,8 @@ def command_reply(suite_id: str, case_id: str, text: str,
         "returncode": returncode,
     }
     append_event(suite, "case_reply", case=case_id, returncode=returncode,
-                 reply_mode=reply_mode, reason=reason)
+                 reply_mode=reply_mode, reply_kind=reply_kind,
+                 planned_step=step_id or None, reason=reason)
     append_case_observation(suite, case_id, interaction)
     if returncode != 0:
         record["last_error"] = {"stdout": stdout[-4000:], "stderr": stderr[-4000:]}
@@ -2234,17 +2229,27 @@ def command_reply(suite_id: str, case_id: str, text: str,
         record_delivery(record, (payload or {}).get("delivered") or [])
         record["interaction_state"] = (
             "adaptive_sent" if reply_mode == "adaptive" else record.get("interaction_state"))
+        # 规划指针由宿主**显式声明**推进（`--step <id>`），不再靠拿回复文本去和
+        # 脚本逐字比对。宿主是按情境把那个意思说出来的，不会逐字重合——
+        # 上一版因此几乎从不推进指针，规划条目一条条烂在后面没人知道。
         script = list(record.get("interaction_script") or [])
-        for index, step in enumerate(script):
-            if str(step.get("text") or "").strip() == text.strip():
+        if step_id:
+            hit = next((i for i, s in enumerate(script)
+                        if str(s.get("id") or "") == step_id), None)
+            if hit is None:
+                record["last_error"] = {
+                    "step": step_id,
+                    "error": "规划里没有这个条目",
+                    "known": [str(s.get("id") or "") for s in script],
+                }
+            else:
                 record["interaction_index"] = max(
-                    int(record.get("interaction_index") or 0), index + 1)
+                    int(record.get("interaction_index") or 0), hit + 1)
                 record["interaction_state"] = (
-                    "complete" if index + 1 >= len(script) else "waiting")
-                append_event(suite, "scripted_reply_synced",
-                             case=case_id, step=step.get("id"),
-                             interaction_index=record["interaction_index"])
-                break
+                    "complete" if hit + 1 >= len(script) else "waiting")
+                append_event(suite, "planned_step_covered", case=case_id,
+                             step=step_id, interaction_index=record["interaction_index"])
+        record.setdefault("host_reply_kinds", []).append(reply_kind)
     save_suite(path / "suite.json", suite)
     print(json.dumps(payload or {"ok": False, "returncode": returncode,
                                  "stdout": stdout[-4000:], "stderr": stderr[-4000:]},
@@ -2535,6 +2540,12 @@ def main() -> int:
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
                         default="manual")
     parser.add_argument("--reason", default="")
+    parser.add_argument("--step", dest="step_id", default="",
+                        help="这一句覆盖了规划里的哪一条（条目 id）——指名它，规划指针才前进")
+    parser.add_argument("--reply-kind", dest="reply_kind",
+                        choices=HOST_REPLY_KINDS, default="improvised",
+                        help="planned=按规划立场 / answered=答模型的提问 / "
+                             "neutral=中性推进 / improvised=宿主自己的话（会污染观测）")
     parser.add_argument("--deliver", action="append", default=[],
                         help="reply：随这句话把该 Case supplements/ 下的材料放进收件箱，可多次")
     parser.add_argument("--wait-sec", type=int, default=15)
@@ -2582,7 +2593,8 @@ def main() -> int:
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] reply 必须提供 --case 和非空 --text")
         return command_reply(args.suite_id, args.reply_case, args.text,
-                             args.reply_mode, args.reason, args.deliver)
+                             args.reply_mode, args.reason, args.deliver,
+                             args.step_id, args.reply_kind)
     return command_stop(args.suite_id, args.force)
 
 

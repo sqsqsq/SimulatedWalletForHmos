@@ -216,7 +216,7 @@ class TestCoordinatorWiring(FixtureCase):
         self.assertNotIn(run_multi_case.REQUIREMENT_SYSTEM_ENV, environment)
 
 
-    def test_scripted_reply_delivers_before_it_speaks(self) -> None:
+    def test_the_plan_tells_the_host_which_material_to_hand_over(self) -> None:
         record = {
             "case": CASE_ID, "feature": FEATURE, "status": run_multi_case.WAITING_STATUS,
             "interaction_script": [{"id": "ask", "text": "文档放进去了。",
@@ -235,15 +235,22 @@ class TestCoordinatorWiring(FixtureCase):
             calls.append((case_id, command, args))
             return 0, {"reply_status": "accepted", "delivered": [DOC_NAME]}, "", ""
 
+        # 规划不再自己发话：它把「这一关该交出哪份材料」告诉宿主，宿主回话时带上
+        # `--deliver`。人说「我把文档放进去了」的同时文件就该在那儿，这一点没变，
+        # 变的是说这句话的人——脚本换成宿主。
         with mock.patch.object(run_multi_case, "invoke_case", fake_invoke), \
                 mock.patch.object(run_multi_case, "append_case_observation",
                                   lambda *a, **k: None):
-            run_multi_case.send_scripted_reply(record, suite)
-        self.assertEqual(1, len(calls))
-        self.assertIn("--deliver", calls[0][2])
-        self.assertIn(DOC_NAME, calls[0][2])
-        self.assertEqual([], record["supplements_pending"])
-        self.assertEqual([DOC_NAME], record["supplements_delivered"])
+            run_multi_case.request_host_reply(record, suite)
+        self.assertEqual(0, len(calls), "规划不该自己去发话")
+        request = record["last_adaptive_request"]
+        self.assertEqual([DOC_NAME], request["planned_deliver"])
+        self.assertEqual("ask", request["planned_step_id"])
+        self.assertEqual("文档放进去了。", request["planned_intent"])
+        # 材料还在人手上：宿主带着 `--deliver` 说那句话时才落进收件箱。
+        # 规划自己把它投出去，就等于「文件到了、但没人说过给你」。
+        self.assertEqual([DOC_NAME], record["supplements_pending"])
+        self.assertEqual([], record.get("supplements_delivered") or [])
 
     def test_public_inputs_list_what_the_host_has(self) -> None:
         record = {"case": CASE_ID, "feature": FEATURE,
