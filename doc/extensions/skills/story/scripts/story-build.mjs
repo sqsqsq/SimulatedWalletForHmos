@@ -1166,10 +1166,28 @@ function cmdAudit(ctx) {
 const EMPTY_SECTION_TEXT = '本需求不涉及。';
 
 /**
+ * 术语单元格的**主名**——括注剥掉之后剩下的那部分。
+ *
+ * 术语表里普遍写成「数字车钥匙（车钥匙）」「权限档（全功能/仅解闭锁）」：括号里是给
+ * 读者的同义提示或取值枚举，不是要求 story 逐字复述的内容。拿整个单元格去 story 里
+ * 做子串匹配，主名明明在也会判成缺失——实跑一次报 12 个词，逐个核过全是这个成因。
+ *
+ * **剥空不静默**：整格就是一个括注时按原串判，否则「（仅括注）」这种写坏的格子
+ * 会因为主名为空而被无声跳过，看起来像通过了。
+ */
+function glossaryMainName(cell) {
+  const bare = String(cell ?? '').replace(/[（(][^）)]*[）)]/g, '').trim();
+  return bare || String(cell ?? '').trim();
+}
+
+/**
  * spec §0 术语映射表里、应当出现在 story 的业务实体词，哪些没出现。
  *
  * 层身份按依赖方向从架构 DSL 派生（`can_depend_on` 为空者是平台能力层），不写层名字面——
  * 写死名字换个工程就静默失效。无该列或派生不到时不过滤，保持向后兼容。
+ *
+ * 核的是**主名**（见 `glossaryMainName`），报的是**原单元格**——报错要让人一眼
+ * 认出是术语表里的哪一行。
  */
 function missingGlossaryTerms(specText, storyText, projectRoot) {
   const rows = [];
@@ -1191,7 +1209,7 @@ function missingGlossaryTerms(specText, storyText, projectRoot) {
     .filter(c => layerIdx < 0 || !baseLayers.length
       || !baseLayers.some(id => (c[layerIdx] ?? '').includes(id)))
     .map(c => c[0])
-    .filter(t => t && !storyText.includes(t));
+    .filter(t => t && !storyText.includes(glossaryMainName(t)));
 }
 
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */

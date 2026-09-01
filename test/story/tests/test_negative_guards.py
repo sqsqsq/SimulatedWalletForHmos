@@ -419,6 +419,59 @@ class GlossaryEntitiesMustReachTheStory(NegativeCase):
         self.settle()
         self.assert_check_names(self.TERM)
 
+    def write_glossary(self, *rows: str) -> None:
+        """造一份只有术语映射表的 spec。"""
+        spec = self.feature_root() / "spec" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(
+            "# 甲需求 spec\n\n## 0. 术语映射表\n\n" + self.HEADER
+            + "\n|---|---|---|---|---|---|---|\n" + "".join(rows),
+            encoding="utf-8")
+
+    @staticmethod
+    def row(term: str) -> str:
+        return "| " + term + " | 甲模块 | 业务层 | 高 | — | [x] | 本需求里指某个具体业务动作 |\n"
+
+    def test_a_term_with_a_parenthetical_is_matched_by_its_main_name(self) -> None:
+        """术语写成「主名（同义提示）」时，story 里有主名就算到位。
+
+        括号里是给读者的同义提示或取值枚举，不是要求 story 逐字复述的内容。
+        拿整个单元格做子串匹配，主名明明在也会判成缺失——实跑一次误报 12 个词。
+        """
+        self.init_audit()
+        self.settle()
+        present = self.story().split("\n## ")[1].split("\n")[0].strip()
+        self.write_glossary(self.row(present + "（换个说法）"))
+        _, out = self.check_output()
+        self.assertNotIn(present + "（换个说法）", out,
+                         "主名在 story 里，却因为括注被判成缺失")
+
+    def test_a_genuinely_absent_term_is_still_reported(self) -> None:
+        """剥了括注也不能放过真缺的词——主名压根不在 story 里，照报。"""
+        self.write_glossary(self.row(self.TERM + "（某个别名）"))
+        self.init_audit()
+        self.settle()
+        self.assert_check_names(self.TERM)
+
+    def test_a_cell_that_is_only_a_parenthetical_is_not_skipped(self) -> None:
+        """整格就是一个括注——剥空之后按原串判，不因主名为空被无声跳过。
+
+        静默跳过与「本来就没问题」事后同形，那是上一轮栽过的形状。
+        """
+        weird = "（" + self.TERM + "）"
+        self.write_glossary(self.row(weird))
+        self.init_audit()
+        self.settle()
+        self.assert_check_names(weird)
+
+    def test_the_reported_text_is_the_original_cell(self) -> None:
+        """核的是主名，报的是原单元格——人要一眼认出是术语表里的哪一行。"""
+        self.write_glossary(self.row(self.TERM + "（某个别名）"))
+        self.init_audit()
+        self.settle()
+        out = self.assert_check_names(self.TERM)
+        self.assertIn(self.TERM + "（某个别名）", out, "报错要带上原来的括注")
+
 
 class DeclaredSourcesMustExist(NegativeCase):
     """声明了却不存在的来源 —— **当前没有任何人拦**。
