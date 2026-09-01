@@ -60,9 +60,23 @@ const walk = (dir, base = dir) => !existsSync(dir) ? [] :
     return [rel(base, f)];
   });
 
+/**
+ * 对接层的地盘：`skills/story/scripts/`。
+ *
+ * 它不是「几个 .js 文件」，是**一块归目标所有的目录**——自定义对接 js 会带来
+ * 依赖与锁文件（`package.json`、`node_modules/`、构建产物）。按路径长相分类时，
+ * 这些统统落进「机制」，撞上「机制目录 == 包」而恒 FAIL，目标绕不过去。
+ *
+ * 所以这一层**按所有权判，不按路径长相判**：包里有的归包，包里没有的归目标。
+ * 不写死依赖文件名——下一个依赖形态（`pnpm-lock.yaml`、`.venv/`、`dist/`）
+ * 又得加一条，那是词表式补丁。
+ */
+const ADAPTER_DIR = 'skills/story/scripts/';
+
 /** 类别（相对 extension_dir 的路径）——与 SKILL.md §2 表一一对应 */
 const classOf = (p) =>
   /^skills\/story\/scripts\/[^/]+\.js$/.test(p) ? 'js'
+  : p.startsWith(ADAPTER_DIR) && !PKG_FILES.has(p) ? 'custom'
   : p === 'manifest.yaml' || /^knowledge\/[^/]+\/README\.md$/.test(p) ? 'bridge'
   : p === 'knowledge/README.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
   : /^knowledge\//.test(p) ? 'know'
@@ -112,6 +126,8 @@ const TDIR = join(TARGET, extDir(TARGET)), PDIR = join(PKG, extDir(PKG));
 const PKG_VERSION = versionOf(existsSync(join(PDIR, 'manifest.yaml'))
   ? read(join(PDIR, 'manifest.yaml')) : '') || 'unknown';
 const WORK = join(TDIR, `.adapt-${PKG_VERSION}`), BEFORE = join(WORK, 'before.json');
+/** 包里有哪些文件 —— `classOf` 判对接层归属时要它。包自身的文件按定义都在其中。 */
+const PKG_FILES = new Set(walk(PDIR));
 const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
 
 // ── --scan ──────────────────────────────────────────────────────────────────

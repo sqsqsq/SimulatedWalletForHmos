@@ -1,6 +1,9 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "1.2.0"
+# 1.3.0：机制面有判据行为变化——形态判据从「这一章有没有图」换成「分了几张画了几张」、
+# 归档件禁用词在 review 上按结构分区收窄作用域、术语核主名不核括注、报错按判据类分组。
+# 目标工程升上来会看到不同的报错集合，所以是 minor 不是 patch。
+version: "1.3.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:

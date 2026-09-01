@@ -1697,9 +1697,15 @@ class TestRetiredThings(unittest.TestCase):
                                   f"{path.name} 还指着旧路径：{line.strip()}")
 
     def test_the_manifest_version_covers_this_round(self) -> None:
-        """机制变了，manifest 版本要跟着走——它是 adapt 升级路径的唯一真源。"""
+        """机制变了，manifest 版本要跟着走——它是 adapt 升级路径的唯一真源。
+
+        **版本号写死在这里是故意的**：谁改了机制面，这一条就会红，逼他回答
+        「这轮该不该升版本」。版本不升的代价不是洁癖问题——`adapt` 判态直接比它，
+        版本相同判「重适配」，而重适配**不执行机制行**，于是机制改动一条都装不进
+        目标工程。红了就一起改，别只把断言改绿。
+        """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.2.0"', manifest)
+        self.assertIn('version: "1.3.0"', manifest)
 
 
 class TestLedgerFrozenAfterRegistration(StoryBuildCase):
