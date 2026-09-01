@@ -79,7 +79,31 @@ STORY_SRC_FROZEN = (
     "source-units.json", "audit.json", "decisions.json",
     "story-verdicts.md", "copyedit.md",
 )
-SOURCES = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
+# 材料输入 —— 「这一轮拿到了什么」的完整定义，轮次指纹按它算。
+#
+# 四份文本源 + 界面参考目录。**界面参考与四份文本同等，都是材料本身**：它在材料清单里
+# 占一行，初析要消费它，story 的图片单元从它来。只盯四份文本时，补料如果只有图
+# （转换后只落 `ux-reference/`），四份文本一个字节没变 → 指纹不变 → 不算新一轮
+# → 关卡列表永不重置 → 流程卡死。实跑撞到过一次。
+SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
+#: 目录形态的材料源：目录下每个文件各自进指纹，加一张图就是材料变了。
+SOURCE_DIRS = ("ux-reference",)
+
+
+def material_inputs(feature_root: Path) -> dict[str, str | None]:
+    """本轮的材料输入逐份取哈希 —— 文件源与目录源同等对待。
+
+    目录不存在时不贡献任何键，与「四份文本时代」的指纹口径一致：
+    没有界面参考的单子，指纹不因为多了一个空目录概念而变。
+    """
+    inputs = {rel: digest(feature_root / rel) for rel in SOURCE_DOCS}
+    for rel in SOURCE_DIRS:
+        d = feature_root / rel
+        if not d.is_dir():
+            continue
+        for f in sorted(x for x in d.iterdir() if x.is_file()):
+            inputs[f.relative_to(feature_root).as_posix()] = digest(f)
+    return inputs
 
 
 def sweep_story_src(src: Path) -> list[str]:
@@ -402,7 +426,7 @@ def read_gate_options(feature_root: Path) -> list[dict]:
 
 
 def material_fingerprint(inputs: dict[str, str | None]) -> str:
-    """本轮材料的指纹：四源哈希的有序摘要。
+    """本轮材料的指纹：材料输入逐份哈希的有序摘要（见 `material_inputs`）。
 
     **一轮 = 一次材料状态**。轮次边界曾以初析件 sha 划分，那是「先分析后确认材料」时代的
     残留：材料还没确认就得先写出完整初析，材料一变分析全废，每轮补料重做一遍。
@@ -426,7 +450,7 @@ def cmd_round(feature_root: Path) -> dict:
 
     # 事实一律取当下：调用时机不确定（导入完全可能发生在 round 之后），
     # 所以每次调用都重算，绝不沿用上一次的快照。
-    inputs = {rel: digest(feature_root / rel) for rel in SOURCES}
+    inputs = material_inputs(feature_root)
     fingerprint = material_fingerprint(inputs)
     # 分析件可有可无：材料盘点阶段它还没写完整版
     analysis_sha = digest(feature_root / Path(*ANALYSIS))

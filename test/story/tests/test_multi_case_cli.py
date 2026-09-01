@@ -241,28 +241,30 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             run_multi_case.start_block_reason(pending, self.suite(pending, waiting))
         )
 
-    def test_phase_active_case_blocks_every_other_case(self) -> None:
-        pending = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
-        running = self.record("phase-active-fixture", "AR-DELTA", "running")
-        self.assertEqual(
-            "shared_current_phase_slot:phase-active-fixture",
-            run_multi_case.start_block_reason(pending, self.suite(pending, running)),
-        )
+    def test_cases_never_share_a_phase_slot(self) -> None:
+        """**2026-09-02 改判**：阶段槽串行是非隔离模式的产物，那个模式已经退场。
 
-    def test_isolated_cases_do_not_share_phase_slot(self) -> None:
+        每个 Case 有自己的临时工作区，框架阶段互不相干，没有槽位可抢。
+        原用例断言的 `shared_current_phase_slot` 阻塞随非隔离分支一起删掉了。
+        """
         pending = self.record("case-delta-fixture", "AR-DELTA", "pending")
         running = self.record("case-beta-fixture", "ISSUE-BETA", "running")
         suite = self.suite(pending, running)
-        suite["isolated_workspaces"] = True
         suite["jobs"] = 4
         self.assertIsNone(run_multi_case.start_block_reason(pending, suite))
+
+    def test_the_shared_slot_reason_is_gone_from_the_source(self) -> None:
+        """槽位串行的理由码不许长回来——它一回来就是非隔离模式又开了口子。"""
+        body = (Path(run_multi_case.__file__)).read_text(encoding="utf-8")
+        self.assertNotIn("shared_current_phase_slot:", body)
 
     def test_start_retries_three_times_before_failing(self) -> None:
         record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
                        "requested_end_phase": None, "start_history": []})
+        record["workspace"] = tempfile.mkdtemp()   # 工作区已备好，本例只测重试计数
         suite = self.suite(record)
-        suite.update({"isolated_workspaces": False, "bundle_root": tempfile.mkdtemp()})
+        suite.update({"bundle_root": tempfile.mkdtemp()})
         failed = (1, None, "", "lock busy")
         try:
             with mock.patch.object(run_multi_case, "invoke_case", return_value=failed), \
@@ -278,8 +280,9 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
                        "requested_end_phase": None, "start_history": []})
+        record["workspace"] = tempfile.mkdtemp()   # 同上：本例测的是丢响应后的认领
         suite = self.suite(record)
-        suite.update({"isolated_workspaces": False, "bundle_root": tempfile.mkdtemp()})
+        suite.update({"bundle_root": tempfile.mkdtemp()})
         try:
             with mock.patch.object(run_multi_case, "invoke_case",
                                    return_value=(1, None, "", "response lost")), \
@@ -898,3 +901,74 @@ class WorkspaceBoundaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceMustLiveInTemp(unittest.TestCase):
+    """测量工具不许在被测对象的仓里跑 —— 两道物理校验。
+
+    隔离曾经是**可选的**（`--isolated-workspaces`，缺省关）。缺省关的那一轮，
+    被测 CLI 直接跑在主仓里，被测模型改了判据所在目录的一个文件。它自己报备了，
+    所以这次看得见；看不见的那次会把「机制被改过之后的读数」当成干净的读数。
+
+    开关已经退场。下面锁的是「退场之后不许从别的地方回来」：工作区必须落在系统
+    临时目录，且不得是主仓的子路径。
+    """
+
+    def suite_with_workspace_root(self, root: Path) -> dict:
+        return {
+            "bundle_root": str(root),
+            "workspace_template": str(root / "template"),
+            "workspace_root": str(root),
+        }
+
+    def test_a_workspace_under_the_main_repo_is_refused(self) -> None:
+        """工作区落在主仓里——起跑前就拒绝，不是跑完再后悔。"""
+        suite = self.suite_with_workspace_root(run_multi_case.REPO_ROOT / "output")
+        with self.assertRaises(SystemExit) as ctx:
+            run_multi_case.create_case_workspace(suite, {"case": "any-case"})
+        self.assertRegex(str(ctx.exception), "临时目录|主仓",
+                         "报错要说清是哪一条不成立")
+
+    def test_the_isolation_switch_is_gone(self) -> None:
+        """`--isolated-workspaces` 与非隔离分支一起退场，不留关掉隔离的入口。"""
+        body = Path(run_multi_case.__file__).read_text(encoding="utf-8")
+        for gone in ("--isolated-workspaces", "isolated_workspaces",
+                     "not_isolated", "current_workspace"):
+            self.assertNotIn(gone, body, "「%s」还在，隔离仍可被关掉" % gone)
+
+
+class MechanismContaminationIsAlwaysVisible(unittest.TestCase):
+    """机制层被改过这件事，永远不会悄悄混进读数。
+
+    哨兵**不拦**（改动可能来自维护者自己），它只保证这件事出现在 suite 终态里。
+    """
+
+    def suite_all_finished(self) -> dict:
+        return {"case_states": {"c": {"case": "c", "status": "finished",
+                                      "source_restore_status": "not_required"}}}
+
+    def test_a_clean_tree_finishes_normally(self) -> None:
+        suite = self.suite_all_finished()
+        with mock.patch.object(run_multi_case, "mechanism_contamination",
+                               return_value={"checked": True, "clean": True}):
+            self.assertEqual("finished", run_multi_case.finalize_suite_status(suite))
+
+    def test_a_dirty_mechanism_marks_the_suite(self) -> None:
+        """`doc/extensions` 有未提交改动 → suite 终态变 `harness_contaminated`。"""
+        suite = self.suite_all_finished()
+        dirty = {"checked": True, "clean": False,
+                 "status": " M doc/extensions/skills/story/scripts/story_flow.py",
+                 "diff": "@@ -1 +1 @@\n-a\n+b\n"}
+        with mock.patch.object(run_multi_case, "mechanism_contamination",
+                               return_value=dirty):
+            self.assertEqual("harness_contaminated",
+                             run_multi_case.finalize_suite_status(suite))
+        self.assertEqual(dirty, suite["mechanism_contamination"],
+                         "diff 要落进 suite，事后能查是哪一处被改了")
+
+    def test_an_unusable_git_does_not_fail_the_suite(self) -> None:
+        """哨兵自己跑不起来时不冒充结论——记「没核过」，不把 suite 判脏。"""
+        suite = self.suite_all_finished()
+        with mock.patch.object(run_multi_case, "mechanism_contamination",
+                               return_value={"checked": False, "reason": "git 不可用"}):
+            self.assertEqual("finished", run_multi_case.finalize_suite_status(suite))

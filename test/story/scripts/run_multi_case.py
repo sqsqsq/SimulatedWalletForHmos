@@ -4,11 +4,11 @@ This is deliberately a coordination layer, not a second Story runner.  Each
 case keeps the immutable run directory, worker lease, phase gates, source
 transaction, interaction channel and execution evidence owned by ``run_case.py``.
 
-The default mode runs in the real repository and shares Framework's single
-current-phase slot.  The isolated mode copies the current project into one
-temporary Git workspace per Case; each worker then owns its own feature tree,
-Framework state, and CLI cwd, while immutable run evidence stays in the suite
-bundle under the main repository's output directory.
+Every Case gets its own temporary Git workspace, copied from the current
+project: each worker owns its feature tree, Framework state, and CLI cwd.
+Running inside the repository under test is not an option — a model under test
+must not be able to edit the mechanism being measured.  Immutable run evidence
+still lands in the suite bundle under the main repository's output directory.
 """
 from __future__ import annotations
 
@@ -348,6 +348,15 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     template = Path(str(suite["workspace_template"])).resolve()
     workspace_root = Path(str(suite["workspace_root"])).resolve()
     workspace = (workspace_root / str(case["case"])).resolve()
+    # **测量工具不许在被测对象的仓里跑。** 隔离是唯一形态（开关已退场），
+    # 但「唯一形态」是个约定，下面两条是物理校验：工作区必须落在系统临时目录，
+    # 且不得是主仓的子路径。破了这条，被测模型就能改被测机制，那一轮的读数
+    # 全都要先自证「这次它没改过」——实测撞到过一次，改的正是判据所在的目录。
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    if not workspace.is_relative_to(temp_root):
+        raise SystemExit(f"[multi] Case workspace 必须在系统临时目录下: {workspace}")
+    if workspace.is_relative_to(REPO_ROOT):
+        raise SystemExit(f"[multi] Case workspace 落在主仓里，拒绝启动: {workspace}")
     if not template.is_dir() or not (template / "framework").is_dir():
         raise SystemExit(f"[multi] 缺少 workspace template: {template}")
     if not workspace.is_relative_to(workspace_root) or workspace == workspace_root:
@@ -397,10 +406,6 @@ def _complete_current_attempt(record: dict[str, Any], *, status: str,
 
 def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
     """Recreate one isolated Case from the suite's immutable inputs."""
-    if not suite.get("isolated_workspaces"):
-        record.update(status="workspace_prepare_failed", retry_finalized=True,
-                      last_error={"reason": "automatic_retry_requires_isolated_workspace"})
-        return
     workspace_root = Path(str(suite["workspace_root"])).resolve()
     workspace = (workspace_root / str(record["case"])).resolve()
     if workspace == workspace_root or not workspace.is_relative_to(workspace_root):
@@ -1523,14 +1528,11 @@ def start_block_reason(case: dict[str, Any], suite: dict[str, Any]) -> str | Non
     active = active_records(suite)
     if len(active) >= int(suite["jobs"]):
         return "jobs_limit"
-    isolated = bool(suite.get("isolated_workspaces"))
     for other in active:
         if other["case"] == case["case"]:
             return "case_already_active"
         if other["feature"] == case["feature"]:
             return f"same_feature:{other['case']}"
-        if not isolated and other["status"] in PHASE_ACTIVE_STATUS:
-            return f"shared_current_phase_slot:{other['case']}"
     return None
 
 
@@ -1555,7 +1557,7 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
     config_index, config_id = selected
     case["cli_config_index"] = config_index
     case["cli_config_id"] = config_id
-    if suite.get("isolated_workspaces") and not case.get("workspace"):
+    if not case.get("workspace"):
         try:
             create_case_workspace(suite, case)
         except (OSError, SystemExit) as exc:
@@ -1988,6 +1990,37 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
     ]
 
 
+def mechanism_contamination() -> dict[str, Any]:
+    """机制层有没有在本轮被改过 —— **哨兵，不是拦截器**。
+
+    隔离已经是唯一形态，被测模型按设计够不着主仓。但「够不着」是设计意图，
+    这里核的是事实：主仓 `doc/extensions/` 一旦有未提交改动，本轮读数就不再是
+    「那个机制」的读数——它可能是被测方自己改过之后的机制。
+
+    拦不住也不该拦（改动可能来自维护者自己）：它的职责是让这件事**永远不会
+    悄悄混进读数**。实测撞到过一次：非隔离那一轮，被测模型改了判据所在目录，
+    如果不是 `git status` 恰好露了出来，那一轮的结论会被当成干净的。
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--", "doc/extensions"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        dirty = (proc.stdout or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        return {"checked": False, "reason": str(exc)}
+    if not dirty:
+        return {"checked": True, "clean": True}
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--", "doc/extensions"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT)).stdout or ""
+    except Exception:  # noqa: BLE001
+        diff = ""
+    return {"checked": True, "clean": False, "status": dirty, "diff": diff}
+
+
 def finalize_suite_status(suite: dict[str, Any]) -> str:
     for record in suite["case_states"].values():
         refresh_record(record)
@@ -2002,6 +2035,10 @@ def finalize_suite_status(suite: dict[str, Any]) -> str:
         return "failed"
     if any(status not in TERMINAL_STATUS for status in statuses):
         return "failed"
+    contamination = mechanism_contamination()
+    suite["mechanism_contamination"] = contamination
+    if contamination.get("checked") and not contamination.get("clean"):
+        return "harness_contaminated"
     return "finished"
 
 
@@ -2017,7 +2054,6 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
         "jobs": suite["jobs"],
         "workspace": str(REPO_ROOT),
         "bundle_root": suite.get("bundle_root"),
-        "isolated_workspaces": suite.get("isolated_workspaces", False),
         "workspace_template": suite.get("workspace_template"),
         "workspace_root": suite.get("workspace_root"),
         "execution_authorization": suite.get("execution_authorization"),
@@ -2080,7 +2116,6 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
                  continue_case: str | None = None,
                  continue_end_phase: str | None = None,
                  non_sandbox_authorized: bool = False,
-                 isolated_workspaces: bool = False,
                  preserve_current_features: bool = False) -> tuple[Path, dict[str, Any]]:
     if jobs <= 0:
         raise SystemExit("[multi] --jobs 必须大于 0")
@@ -2088,9 +2123,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         raise SystemExit(
             "[multi] CLI 测试必须显式提供 --authorize-non-sandbox，记录用户授权后才能启动")
     validate_phase_overrides(base_end_phase, continue_case, continue_end_phase, plans)
-    if not isolated_workspaces:
-        ensure_no_external_active(plans)
-    if isolated_workspaces and jobs < len(plans):
+    if jobs < len(plans):
         raise SystemExit(
             f"[multi] 隔离并行 suite 要求 jobs >= Case 数量（{jobs} < {len(plans)}），"
             "避免把已设计的并行轮次静默降级为排队")
@@ -2104,10 +2137,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     previous_run_cleanup = cleanup_previous_test_runs(path, suite_id)
     migration = migrate_existing_features(path)
     feature_archive_path = migration.get("destination_root")
-    workspace_template = None
-    workspace_root = None
-    if isolated_workspaces:
-        workspace_template, workspace_root = create_workspace_template(path, suite_id)
+    workspace_template, workspace_root = create_workspace_template(path, suite_id)
     plan_map = {plan.case_id: plan for plan in plans}
     suite: dict[str, Any] = {
         "schema_version": 1,
@@ -2120,7 +2150,6 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         "bundle_root": str(path.resolve()),
         "control_root": str((path / "controls").resolve()),
         "feature_archive_path": feature_archive_path,
-        "isolated_workspaces": isolated_workspaces,
         "preserve_current_features": preserve_current_features,
         "workspace_template": str(workspace_template) if workspace_template else None,
         "workspace_root": str(workspace_root) if workspace_root else None,
@@ -2167,16 +2196,12 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         "baseline": git_snapshot(),
         "main_source_baseline": snapshot_workspace_sources(REPO_ROOT),
         "scheduler": {
-            "mode": "isolated_case_workspaces" if isolated_workspaces
-                    else "shared_workspace_and_framework_phase_slot",
-            "shared_current_phase_slot": "isolated_per_case" if isolated_workspaces
-                    else "serialized",
-            "phase_active_parallelism": jobs if isolated_workspaces else 1,
-            "awaiting_reply_parallelism": "allowed" if isolated_workspaces
-                    else "allowed_for_different_features",
-            "coding_parallelism": jobs if isolated_workspaces else 0,
-            "reply_guard": "allow_isolated_workspaces" if isolated_workspaces
-                    else "reject_while_other_phase_active",
+            "mode": "isolated_case_workspaces",
+            "shared_current_phase_slot": "isolated_per_case",
+            "phase_active_parallelism": jobs,
+            "awaiting_reply_parallelism": "allowed",
+            "coding_parallelism": jobs,
+            "reply_guard": "per_case_workspace",
             "ar_uniqueness": "one_case_one_ar_and_unique_within_suite",
             "interaction_interval_sec": INTERACTION_INTERVAL_SEC,
             "automation_interval_sec": AUTOMATION_INTERVAL_SEC,
@@ -2194,9 +2219,6 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         record = new_case_record(
             plan, requested_end_phase(plan, base_end_phase,
                                       continue_case, continue_end_phase))
-        if continue_case == case_id and not isolated_workspaces:
-            record["wait_for_cases"] = [other.case_id for other in plans
-                                         if other.case_id != case_id]
         suite["case_states"][case_id] = record
     set_suite_environment(suite)
     Path(suite["control_root"]).mkdir(parents=True, exist_ok=True)
@@ -2209,16 +2231,13 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
 def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
     """Prepare every isolated workspace before the first model worker starts."""
     checks: dict[str, Any] = {
-        "status": "not_isolated" if not suite.get("isolated_workspaces") else "running",
+        "status": "running",
         "suite_id": suite["suite_id"],
         "cases": [],
         "forbidden_workspace_entries": ["output", "test", "tools", ".git",
                                         "doc/features (history)"],
         "checked_at": now(),
     }
-    if not suite.get("isolated_workspaces"):
-        write_json(path / "preflight.json", checks)
-        return
     workspace_paths: set[str] = set()
     try:
         for record in suite["case_states"].values():
@@ -2418,10 +2437,9 @@ def print_summary(suite: dict[str, Any]) -> None:
 def command_plan(plans: list[CasePlan], jobs: int,
                  base_end_phase: str | None = None,
                  continue_case: str | None = None,
-                 continue_end_phase: str | None = None,
-                 isolated_workspaces: bool = False) -> int:
+                 continue_end_phase: str | None = None) -> int:
     validate_phase_overrides(base_end_phase, continue_case, continue_end_phase, plans)
-    if isolated_workspaces and jobs < len(plans):
+    if jobs < len(plans):
         raise SystemExit(
             f"[multi] 隔离并行 plan 要求 jobs >= Case 数量（{jobs} < {len(plans)}）")
     print(json.dumps({
@@ -2432,17 +2450,14 @@ def command_plan(plans: list[CasePlan], jobs: int,
         ],
         "jobs": jobs,
         "workspace": str(REPO_ROOT),
-        "isolated_workspaces": isolated_workspaces,
         "policy": {
             "initial_start": "sequential_confirmed_then_parallel_run",
             "start_max_attempts": START_MAX_ATTEMPTS,
-            "phase_active_parallelism": jobs if isolated_workspaces else 1,
+            "phase_active_parallelism": jobs,
             "same_feature_parallelism": 0,
-            "coding_parallelism": jobs if isolated_workspaces else 0,
-            "awaiting_reply": "host_reply_required_per_isolated_case"
-                if isolated_workspaces else "host_reply_required; different features may overlap",
-            "workspace_copy": "allowlist_without_output_test_tools_features_git"
-                if isolated_workspaces else "current_workspace",
+            "coding_parallelism": jobs,
+            "awaiting_reply": "host_reply_required_per_isolated_case",
+            "workspace_copy": "allowlist_without_output_test_tools_features_git",
             "interaction_interval_sec": INTERACTION_INTERVAL_SEC,
             "automation_interval_sec": AUTOMATION_INTERVAL_SEC,
             "automation_stability_confirmations": 2,
@@ -2461,13 +2476,11 @@ def command_start(plans: list[CasePlan], suite_id: str, jobs: int,
                   continue_case: str | None = None,
                   continue_end_phase: str | None = None,
                   non_sandbox_authorized: bool = False,
-                  isolated_workspaces: bool = False,
                   preserve_current_features: bool = False) -> int:
     path, suite = create_suite(plans, suite_id, jobs, base_end_phase,
                                continue_case, continue_end_phase,
                                non_sandbox_authorized,
-                                isolated_workspaces,
-                                preserve_current_features)
+                               preserve_current_features)
     prepare_suite_preflight(path, suite)
     schedule_pending(suite)
     suite["status"] = finalize_suite_status(suite)
@@ -2534,9 +2547,7 @@ def command_reply(suite_id: str, case_id: str, text: str,
                           "error": f"当前状态不是 awaiting_reply: {record.get('status')}"},
                          ensure_ascii=False, indent=2))
         return 1
-    blockers = [] if suite.get("isolated_workspaces") else [
-        other["case"] for other in active_records(suite)
-        if other["case"] != case_id and other["status"] in PHASE_ACTIVE_STATUS]
+    blockers: list[str] = []
     if blockers:
         print(json.dumps({"ok": False, "case": case_id,
                           "error": "另一个 Case 正占用 Framework 阶段槽，暂不注入回复",
@@ -2991,8 +3002,6 @@ def main() -> int:
     parser.add_argument("--max-chars", type=int, default=200000)
     parser.add_argument("--authorize-non-sandbox", action="store_true",
                         help="记录宿主模型已获授权在非沙箱环境启动本轮外层协调器")
-    parser.add_argument("--isolated-workspaces", action="store_true",
-                        help="为每个 Case 复制独立临时 Git workspace，允许阶段真正并行")
     parser.add_argument("--preserve-current-features", action="store_true",
                         help="已停用；正式测试必须迁移当前 doc/features")
     parser.add_argument("--promote", action="store_true",
@@ -3009,13 +3018,11 @@ def main() -> int:
         continue_end_phase = args.continue_end_phase or None
         if args.command == "plan":
             return command_plan(plans, args.jobs, base_end_phase,
-                                continue_case, continue_end_phase,
-                                args.isolated_workspaces)
+                                continue_case, continue_end_phase)
         suite_id = args.suite_id or datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
         return command_start(plans, suite_id, args.jobs, base_end_phase,
                              continue_case, continue_end_phase,
                              args.authorize_non_sandbox,
-                             args.isolated_workspaces,
                              args.preserve_current_features)
 
     if not args.suite_id:
