@@ -1,5 +1,7 @@
 # review 阶段 · 扩展要求（写之前读这一页）
 
+> **推进不逐段问**：门禁报错怎么修、check 过了下一步做什么、进 harness 还是进 verifier——这些是义务不是选择题。停等点与两层授权边界的唯一定义，见[story SKILL.md「推进契约」](../../skills/story/SKILL.md#推进契约)。
+
 **契约实体上的 `must` 就是本阶段的知识来源**：plan 已经把每条规约义务挂到了扛着它的
 那个实体上。不回去重读规约、不重新判断该不该适用、不自行改结论。与实际对不上时
 **回 plan 改 `must`**，不在本阶段自行解释。
@@ -41,5 +43,3 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature <
 
 **上游阶段声明过、本次变更里却找不到落点的，正是本阶段该抓的。**
 照 `must.text` 说的那件事核，不要退回去复述规约原文。
-
-报错会一次列全，每条都写「缺什么 / 写到哪 / 怎么写」。不需要读 `post_check.mjs` 反推判据。

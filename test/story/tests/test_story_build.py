@@ -609,10 +609,17 @@ class TestVerdicts(StoryBuildCase):
         self.assert_check_names("被裁「未讲清」")
 
     def test_author_placement_without_verdict_file_is_named(self) -> None:
+        """裁决件被删 —— 现在第一道就拦，且点明「补产出，不是删同伴文件」。
+
+        它曾经是「有 by: author 记录却没有裁决件」这一条判据的入口。实跑里模型
+        真正做过的是**报错涨到上千之后把裁决件整份删掉**——那时删掉它反而让报错数
+        下去了。存在性判把这条逃生口关上，所以现在拦它的是更靠前的那一道。
+        """
         self.init_audit()
         self.hand_to_author()
         (self.src / "story-verdicts.md").unlink(missing_ok=True)
-        self.assert_check_names("需要裁决者逐条裁")
+        out = self.assert_check_names("story-verdicts.md")
+        self.assertIn("不是把同伴文件删掉", out)
 
 
 class TestQuoteSentenceBounds(StoryBuildCase):

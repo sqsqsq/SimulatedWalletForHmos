@@ -304,6 +304,34 @@ class IdentifiersMustBeConservedWhereTheyLand(NegativeCase):
     就算核到——那与「这个单元的事实有落点」不是一回事。
     """
 
+    def test_the_shape_has_one_definition(self) -> None:
+        """判定式一处：⑩ 与守恒各写一份时，同一个 token 两边认得不一样就会夹死作者。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertEqual(body.count("const IDENTIFIER_SHAPE ="), 1)
+        self.assertNotIn("/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t)", body,
+                         "还有一处自己写了判定式")
+
+    def test_scope_is_the_matching_appendix_row_not_the_whole_appendix(self) -> None:
+        """**范围是附录里的那一行，不是整个附录。**
+
+        「附录里任何位置出现过就算核到」是真放宽——附录是个大草垛，
+        那与「这个单元的事实在附录有落点」不是一回事。
+        这条用附录**另一行**里的同名标识符来验：它不该让本单元过关。
+        """
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertIn("appendixRowFor(u, appendixText)", body,
+                      "守恒没按行核，而是按整个附录核")
+        self.assertNotIn("!appendixText.includes(t)", body,
+                         "出现了按整个附录核的写法——那是放宽")
+
+    def test_fenced_scope_matches_the_redline(self) -> None:
+        """围栏里红线管不到，守恒也就不该把围栏里的词赶去附录。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertIn("fenced.includes(t)", body)
+
     def test_N5_identifier_not_found_in_its_landing_chapter(self) -> None:
         """坏产物：机器给了落点，但那一章里核不到它的 token。"""
         self.init_audit()
@@ -420,23 +448,20 @@ class DeclaredSourcesMustExist(NegativeCase):
 
 
 class LedgersMustAllExist(NegativeCase):
-    """五件台账缺一件 —— **当前只拦得住其中三件**。
+    """五件台账缺一件都要被点名。
 
     冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
-    实跑里裁决台账错到上千条之后被整份删除，删完 check 的报错数确实下去了。
+    实跑里裁决台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
 
-    现状：`source-units.json` / `audit.json` 缺失是硬退出，`decisions.json` /
-    `copyedit.md` 缺失有判据；**`story-verdicts.md` 只在存在 `by: author` 记录时
-    才被要求**——而这份夹具里机器能定位全部单元，`by: author` 为空，
-    于是删掉裁决台账一声不吭。
+    改动前只有三件拦得住：`story-verdicts.md` **只在存在 `by: author` 记录时**
+    才被要求，而机器恰好定得了全部落点时删掉它一声不吭。批次 4 把五件统一到起步判。
     """
 
     LEDGERS = ("source-units.json", "audit.json", "decisions.json",
                "story-verdicts.md", "copyedit.md")
 
-    def test_the_three_that_are_covered(self) -> None:
-        """先锁住现在拦得住的那几件，改动不许把它们弄丢。"""
-        for name in ("source-units.json", "audit.json", "decisions.json", "copyedit.md"):
+    def test_each_missing_ledger_is_named(self) -> None:
+        for name in self.LEDGERS:
             with self.subTest(ledger=name):
                 self.setUp()
                 self.init_audit()
@@ -444,22 +469,42 @@ class LedgersMustAllExist(NegativeCase):
                 (self.src / name).unlink(missing_ok=True)
                 code, out = self.check_output()
                 self.assertNotEqual(code, 0, name + " 缺失居然没拦：" + out)
-                self.assertIn(name.split(".")[0], out,
-                              "拦是拦了，但没点名是哪一件：" + out)
+                self.assertIn(name, out, "拦是拦了，但没点名是哪一件：" + out)
+                self.assertIn("不是把同伴文件删掉", out, "报错没堵住删台账那条路")
 
-    @unittest.expectedFailure
     def test_N9_verdicts_ledger_deleted_without_author_records(self) -> None:
         """坏产物：裁决台账被整份删除，而机器恰好定得了全部落点。
 
-        **批次 4 转正**：`check` 起步先判五件存在，缺任一＝BLOCKER，
-        报错文案写明「补产出，不是把同伴文件删掉」。
+        （批次 4 已转正。这正是改动前唯一漏掉的那一件——没有作者态时它不被要求。）
         """
         self.init_audit()
-        self.settle()
-        author = [r for r in self.audit["records"] if r.get("by") == "author"]
-        self.assertEqual(author, [], "夹具变了：这条反例要的是「没有作者态」那种情形")
         (self.src / "story-verdicts.md").unlink(missing_ok=True)
-        self.assert_check_names("story-verdicts.md")
+        out = self.assert_check_names("story-verdicts.md")
+        self.assertIn("不是把同伴文件删掉", out)
+        # 拦它的是**起步那一道**，不是「有作者态才要裁决件」那条旧判据——
+        # 后者在机器定得了全部落点时不生效，正是原先漏掉的那种情形。
+        self.assertIn("台账缺", out)
+        self.assertNotIn("需要裁决者逐条裁", out)
+
+    def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
+        """清理、冻结、存在性三处说的必须是同一批文件——各写一份就会改一处忘一处。"""
+        flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/story_flow.py"
+                ).read_text(encoding="utf-8")
+        block = flow.split("STORY_SRC_FROZEN = (", 1)[1].split(")", 1)[0]
+        self.assertEqual(tuple(sorted(re.findall(r'"([^"]+)"', block))),
+                         tuple(sorted(self.LEDGERS)))
+
+        build = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                 ).read_text(encoding="utf-8")
+        ledgers = build.split("const STORY_SRC_LEDGERS = [", 1)[1].split("];", 1)[0]
+        keys = re.findall(r"\['(\w+Path)'", ledgers)
+        self.assertEqual(len(keys), len(self.LEDGERS), "mjs 侧的五件清单条数对不上")
+        for key in keys:
+            # 取在线 ctx 的那一行（离线 ctx 把五个字段一起置空，不是落点定义处）
+            line = next(l for l in build.split("\n")
+                        if l.strip().startswith(key + ":") and "path.join(srcDir" in l)
+            self.assertTrue(any(name in line for name in self.LEDGERS),
+                            key + " 指向的不是那五件之一：" + line.strip())
 
 
 class TheLibraryItselfIsComplete(unittest.TestCase):
@@ -499,7 +544,8 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
         body = self.THIS.read_text(encoding="utf-8")
         marks = list(re.finditer(r"^\s+@unittest\.expectedFailure\s*\n\s+def (test_\w+)",
                                  body, re.M))
-        self.assertTrue(marks, "一个 xfail 都没有——N8/N9 被谁悄悄转正了？")
+        # 全部转正之后这里可以是空的——**但只要还留着一个，就必须写明哪一批转正**，
+        # 否则它会一直挂在那里，看着像验过、其实从没被验过。
         for m in marks:
             window = body[m.end():m.end() + 900]
             self.assertRegex(window, r"批次 \d 转正",

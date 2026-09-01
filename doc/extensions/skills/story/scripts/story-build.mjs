@@ -182,6 +182,40 @@ function createContext(args) {
 }
 
 /**
+ * 随稿冻结的五件台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
+ *
+ * 文件名的真源在 `story_flow.py` 的 `STORY_SRC_FROZEN`：那五件是登记时要算指纹、
+ * 登记后拒绝重算、归档时随稿走的同一批。清理、冻结、存在性三处说的必须是同一批文件，
+ * 各写一份就会改一处忘一处。
+ */
+const STORY_SRC_LEDGERS = [
+  ['unitsPath', 'init'], ['auditPath', 'audit'], ['decisionsPath', 'init'],
+  ['verdictsPath', '裁决'], ['copyeditPath', '统稿'],
+];
+
+/**
+ * 五件台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
+ *
+ * 冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
+ * 实跑里裁决台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
+ * 原先五件里只有三件缺失拦得住——裁决件**只在存在 `by: author` 记录时**才被要求，
+ * 机器恰好定得了全部落点时删掉它一声不吭。
+ *
+ * 报错文案要把这条路直接堵死：缺的那件是**补产出**，不是删同伴文件。
+ */
+function requireLedgers(ctx) {
+  if (ctx.offline) return;                 // 仲裁锚只有一份 story，没有台账目录
+  const missing = STORY_SRC_LEDGERS
+    .filter(([key]) => ctx[key] && readText(ctx[key]) === null)
+    .map(([key, how]) => `${path.basename(ctx[key])}（跑 ${how} 产出）`);
+  if (!missing.length) return;
+  fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
+    + '  这五件是这份 story 据以成文的全部依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
+    + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
+    + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
+}
+
+/**
  * 成文态登记了没有——登记那一刻 story 与它的台账一起定稿。
  *
  * @returns {{written:boolean, digests:Record<string,string|null>}}
@@ -369,6 +403,70 @@ function formShortfallLine(item) {
   }
   return [`材料里的表有 ${item.units.length} 行${where}没有表`
     + '——把表压成散文，逐项比对的那几列就没了（最先丢的是触发条件与编号）'];
+}
+
+/**
+ * 工程标识的形态判定 —— **check ⑩ 与 token 守恒共用这一个判定式**。
+ *
+ * 两处必须是同一个真源：⑩ 判「主叙事里不许出现工程标识」，守恒判「这个 token 要在
+ * 落点核得到」。各写一份时，只要有一个 token 被一边认成标识符、另一边不认，
+ * 同一个单元就被两条判据夹死——写进正文违反⑩，不写违反守恒，作者怎么写都是错的
+ * （内网问题 6 就是这个）。
+ */
+const IDENTIFIER_SHAPE = /^[A-Za-z][A-Za-z0-9_]{3,}$/;
+
+/**
+ * 本需求自己的编号不是工程标识。
+ *
+ * ①b 要求大标题带着它，材料清单也要写清这份文档出自哪张单——它是归档件与需求系统
+ * 之间唯一的绳子。编号里带连字符时（`XXX-123` 这种），逐段也放行。
+ */
+function ownIdentifiers(feature) {
+  const f = String(feature ?? '').trim();
+  return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
+}
+
+/** 这个 token 是不是工程标识形态（本需求自己的编号除外）。 */
+function isEngineeringIdentifier(token, own) {
+  return !own.has(token) && IDENTIFIER_SHAPE.test(token);
+}
+
+/**
+ * 一段正文里被围栏包住的部分。
+ *
+ * 语言红线只管围栏之外（`lint-rules.mjs` 的 `inFence` 分支直接跳过）：围栏里是图与代码，
+ * 不是面向人的叙述。守恒要跟它同一个作用域——图的类型词（`flowchart` 这类）本来就只在
+ * 围栏里出现，把它按「主叙事不许有工程标识」赶去附录，是拿一条不管这里的判据管这里。
+ */
+function fencedText(text) {
+  const out = [];
+  let inFence = false;
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (/^\s*(?:```|~~~)/.test(line)) { inFence = !inFence; out.push(line); continue; }
+    if (inFence) out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
+ * 附录里承载这个单元的那一行。
+ *
+ * 技术契约类单元在附录的表里各占一行。守恒核工程标识时**只看那一行**——
+ * 只要「附录里任何位置出现过」就算核到的话，附录是个大草垛，
+ * 与「这个单元的事实在附录有落点」不是一回事。
+ *
+ * 怎么认那一行：拿单元自己的 token 去附录逐行找，命中最多的那一行就是它的行。
+ * 找不到就返回空串（守恒随之报「核不住」，这是对的——它确实没落点）。
+ */
+function appendixRowFor(unit, appendixText) {
+  const tokens = unit.tokens ?? [];
+  if (!tokens.length || !appendixText) return '';
+  let best = '', hit = 0;
+  for (const line of String(appendixText).split(/\r?\n/)) {
+    const n = tokens.filter(tk => line.includes(tk)).length;
+    if (n > hit) { hit = n; best = line; }
+  }
+  return best;
 }
 
 /** 缺失来源报成一句话——BLOCKER 与「记一笔」共用这一份措辞。 */
@@ -1094,6 +1192,8 @@ function redactMaterialLinks(storyText, ctx) {
 }
 
 function cmdCheck(ctx) {
+  // 起步先判五件台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的回声。
+  requireLedgers(ctx);
   const problems = [];
   // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
   const notes = [];
@@ -1210,6 +1310,9 @@ function cmdCheck(ctx) {
   const authorPlaced = [];      // 机器定不了、由裁决者裁的那些
   const appendixTitle = appendixChapter(ctx.contract)?.title ?? null;
   const narrativeKinds = new Set(ctx.contract.allocation?.narrative_kinds ?? []);
+  // 工程标识的守恒范围是**附录里的那一行**，不是叙事落点章——判定式与 ⑩ 共用一个。
+  const ownIds = ownIdentifiers(ctx.args.feature);
+  const appendixText = appendixTitle ? (sectionText.get(appendixTitle) ?? '') : '';
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
@@ -1286,7 +1389,26 @@ function cmdCheck(ctx) {
     // by: machine —— 机器给的落点，必须在**那一章**里核得住。
     // 只核硬事实：`by: machine` 现在只可能由 token 命中产生（见 autoPlace），
     // 没有 token 的单元走不到这里。
-    const lost = u.tokens.filter(t => !chapter.includes(t));
+    //
+    // **工程标识按附录里的那一行核，不按叙事落点章核。**
+    //
+    // 放宽账：语言红线（⑩）不许主叙事出现工程标识，而守恒要求 token 在落点核得到，
+    // 同一个单元被两条判据夹死——写进正文违反⑩，不写违反守恒（内网问题 6）。
+    // 误伤面就是这个死锁；接的人是**附录的对应行**：技术契约类单元本来就由
+    // `appendixBound` 机器直接归附录，各占一行，标识符在那一行核得住。
+    //
+    // 范围是**那一行**不是整个附录：只要「附录里任何位置出现过」就算核到的话，
+    // 附录是个大草垛，与「这个单元的事实有落点」不是一回事——那才是真放宽。
+    //
+    // 作用域与 ⑩ 对齐：⑩ 跳过围栏（`lint-rules.mjs` 的 `inFence`），
+    // 所以围栏里核得住的也算数——图的类型词只在围栏里出现，⑩ 本来就不管它。
+    const fenced = fencedText(chapter);
+    const lost = u.tokens.filter(t => {
+      if (!isEngineeringIdentifier(t, ownIds)) return !chapter.includes(t);
+      if (chapter.includes(t)) return false;          // 正文里写了也算（⑩ 会另判它）
+      if (fenced.includes(t)) return false;           // 围栏里，⑩ 管不到
+      return !appendixRowFor(u, appendixText).includes(t);
+    });
     if (lost.length) {
       missingTokens.push({ key: u.key, unit: u, lost, at: rec.at });
     }
@@ -1719,18 +1841,10 @@ function cmdCheck(ctx) {
   const redlineKinds = ctx.contract.language_redline?.kinds;
   if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
     const appendix = appendixChapter(ctx.contract);
-    // **本需求自己的编号不是工程标识**：①b 要求大标题带着它，材料清单也要写清这份文档
-    // 出自哪张单——它恰恰是归档件与需求系统之间唯一的绳子。不放它出来，两条判据直接
-    // 打架：一条要求写上，一条判它违规，作者无路可走（实测把一轮实跑卡在这里）。
-    // 编号里带连字符时（`XXX-123` 这种），逐段也放行——正文里出现的是被切开的那一段。
-    const own = new Set(String(ctx.args.feature ?? '').trim()
-      .split(/[^A-Za-z0-9]+/).concat(String(ctx.args.feature ?? '').trim())
-      .map(s => s.trim()).filter(Boolean));
     const identifiers = [];
     for (const u of doc.units) {
       for (const t of u.tokens ?? []) {
-        if (own.has(t)) continue;
-        if (/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t)) identifiers.push(t);
+        if (isEngineeringIdentifier(t, ownIds)) identifiers.push(t);
       }
     }
     const hits = scanLanguageRedline(storyText, {
