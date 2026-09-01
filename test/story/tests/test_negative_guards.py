@@ -114,7 +114,7 @@ class FiguresMustNotVanish(NegativeCase):
         self.init_audit()
         self.place_all_figures_in("功能说明")
         audit_out = self.run_build("audit").stdout
-        self.assertIn("欠图片 3 个", audit_out, "audit 没在写作时报出来")
+        self.assertIn("分图片 3、画了 0，还欠 3", audit_out, "audit 没在写作时报出来")
         self.assert_check_names("但那一章没有图片引用")
 
     def test_N2_material_diagrams_flattened_to_arrows(self) -> None:
@@ -126,7 +126,7 @@ class FiguresMustNotVanish(NegativeCase):
         self.init_audit()
         self.place_all_figures_in("功能说明")
         audit_out = self.run_build("audit").stdout
-        self.assertIn("欠图 2 个", audit_out, "audit 没在写作时报出来")
+        self.assertIn("分图 2、画了 0，还欠 2", audit_out, "audit 没在写作时报出来")
         self.assert_check_names("但那一章没有图")
 
     def test_N3_image_placed_in_a_chapter_that_has_no_image(self) -> None:
@@ -145,16 +145,19 @@ class FiguresMustNotVanish(NegativeCase):
     def test_N4_diagram_with_no_state_at_all(self) -> None:
         """坏产物：流程图连表态都没有——没落点、没 covered_by、也没说为什么不进。
 
-        判据本身没放松：**三态皆空照旧拦**。措辞随 `material_only` 这一态的引入
-        改了（现在有三条合法出路，报错要把三条都说出来），断言跟着措辞走。
+        判据本身没放松：**三态皆空照旧拦**。措辞随 `material_only` 收回图片专用而
+        改了——流程图的合法出路只剩两条，报错不该再把 `material_only` 当出路提。
         """
         self.seed_diagrams(1)
         self.init_audit()
         self.settle()
         diagram = self.units_of_kind("diagram")[0]
         self.set_record(diagram["key"])
-        out = self.assert_check_names("既没进 story，也没说明为什么不进")
-        self.assertIn("material_only", out, "报错要说清第三条出路是什么")
+        out = self.assert_check_names("在 story 里没有落点")
+        line = next(l for l in out.splitlines() if "在 story 里没有落点" in l)
+        self.assertIn("covered_by", line, "报错要说清另一条出路是什么")
+        self.assertNotIn("material_only", line,
+                         "流程图没有 material_only 这条出路，报错不该指过去")
 
 
 class FormShortfallIsVisibleWhileWriting(NegativeCase):
@@ -189,8 +192,8 @@ class FormShortfallIsVisibleWhileWriting(NegativeCase):
         proc = self.run_build("audit")
         self.assertEqual(proc.returncode, 0, "audit 是分配工具，不该因欠账变红")
         self.assertIn("形态欠账", proc.stdout)
-        self.assertIn("欠图片", proc.stdout)
-        self.assertIn("欠图 ", proc.stdout)
+        self.assertIn("分图片 1、画了 0", proc.stdout)
+        self.assertIn("分图 1、画了 0", proc.stdout)
 
     def test_audit_and_check_agree(self) -> None:
         """同一份坏产物，`audit` 报的与 `check` 拦的是同一批单元键。
@@ -246,21 +249,23 @@ class FormShortfallIsVisibleWhileWriting(NegativeCase):
 class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
     """「可以不引」有且只有一条合法路径，且它自己也有锁。
 
-    这一态是本轮唯一的放宽。放宽账：
-    - **它防的是什么**：图连表态都没有（三态皆空）——N4 锁着，没动；
-    - **误伤面**：「整篇形态数不降级」在 30+ 图的 PRD 上逼人复刻，已退场；
-    - **谁来接**：`formShortfall`（audit 报 + check 拦），30 图夹具已证。
+    **这一态只给图片。** 开它是为了「PRD 里 30 张界面图不必都进 story」那个场景，
+    流程图在材料里通常只有三五张，没有塞不下的压力，所以不给。放宽账：
+    - **它防的是什么**：图片连表态都没有（三态皆空）——N4 同型，锁着没动；
+    - **误伤面**：「整篇图片数不降级」在 30+ 图的 PRD 上逼人复刻，已退场；
+    - **谁来接**：`formShortfall` 按章按类比「分了几张画了几张」，audit 报 + check 拦。
     """
 
-    def test_marked_figures_are_accepted(self) -> None:
-        self.seed_diagrams(1)
+    def test_marked_images_are_accepted(self) -> None:
+        """图片标了 material_only 并写了理由——合法，不报。"""
+        self.seed_images(1)
         self.init_audit()
         self.settle()
-        d = self.units_of_kind("diagram")[0]
-        self.set_record(d["key"], material_only="界面细节图，叙述由功能说明章承载")
+        img = self.units_of_kind("image")[0]
+        self.set_record(img["key"], material_only="界面细节图，叙述由功能说明章承载")
         code, out = self.check_output()
-        self.assertNotIn("既没进 story", out)
-        self.assertNotIn("不是图类单元", out)
+        self.assertNotIn("没有落点", out)
+        self.assertNotIn("不是图片", out)
 
     def test_text_units_cannot_use_it(self) -> None:
         """文字事实没有「去材料里看」这条路——它不进 story 就是丢了。"""
@@ -270,14 +275,15 @@ class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
                          if u.get("kind") not in ("image", "diagram")
                          and not u.get("machine_facing"))
         self.set_record(text_unit["key"], material_only="留在材料里")
-        self.assert_check_names("不是图类单元")
+        self.assert_check_names("不是图片")
 
     def test_a_reason_is_required(self) -> None:
-        self.seed_diagrams(1)
+        """图片标了 material_only 却不写理由——空着分不清「判过了」与「懒得引」。"""
+        self.seed_images(1)
         self.init_audit()
         self.settle()
-        d = self.units_of_kind("diagram")[0]
-        self.set_record(d["key"], material_only="")
+        img = self.units_of_kind("image")[0]
+        self.set_record(img["key"], material_only="")
         self.assert_check_names("没有任何落点")
 
     def test_the_author_page_has_no_unconditional_permission(self) -> None:
@@ -304,7 +310,8 @@ class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
                 ).read_text(encoding="utf-8")
         for gone in ("数量不该少于源", "story 里只引用了"):
             self.assertNotIn(gone, body, "「" + gone + "」还在")
-        self.assertIn("没有图片数量判据", body, "退场理由要留在代码里，否则下一轮会加回来")
+        self.assertIn("没有「全篇总数不降级」这类判据", body,
+                      "退场理由要留在代码里，否则下一轮会加回来")
 
     def test_the_replacement_is_wired(self) -> None:
         """删之前先证明有人接：接的人必须真的接在两个时刻上。"""
@@ -530,11 +537,13 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
 
     THIS = Path(__file__)
 
-    def test_nine_negatives_are_present(self) -> None:
+    NEGATIVE_COUNT = 12
+
+    def test_negatives_are_numbered_without_gaps(self) -> None:
         body = self.THIS.read_text(encoding="utf-8")
-        found = sorted(set(re.findall(r"def test_(N\d)_", body)))
-        self.assertEqual(found, ["N%d" % i for i in range(1, 10)],
-                         "反例编号不全：" + str(found))
+        found = sorted({int(m) for m in re.findall(r"def test_N(\d+)", body)})
+        self.assertEqual(found, list(range(1, self.NEGATIVE_COUNT + 1)),
+                         "反例编号不全或有缺号：" + str(found))
 
     def test_every_negative_names_the_judgement(self) -> None:
         """每条反例都要**点名是哪一条判据拦的**，不许只判退出码。
@@ -544,9 +553,13 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
         「有没有对具体报错串下断言」，不是「有没有调某个辅助函数」。
         """
         body = self.THIS.read_text(encoding="utf-8")
-        blocks = re.split(r"\n    def (test_N\d\w*)\(", body)
+        blocks = re.split(r"\n    def (test_N\d+\w*)\(", body)
         pairs = list(zip(blocks[1::2], blocks[2::2]))
-        self.assertEqual(len(pairs), 9, "反例条数不对：" + str([p[0] for p in pairs]))
+        # 一个编号可以有多条（同一坏形状的图与图片两侧），但每个编号至少要有一条。
+        self.assertEqual(
+            sorted({int(re.match(r"test_N(\d+)", n).group(1)) for n, _ in pairs}),
+            list(range(1, self.NEGATIVE_COUNT + 1)),
+            "反例条数不对：" + str([p[0] for p in pairs]))
         for name, block in pairs:
             body_only = block.split("\n    def ")[0]
             named = ("assert_check_names(" in body_only
@@ -572,3 +585,213 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FormShortfallCountsPerChapterPerKind(NegativeCase):
+    """形态判据的粒度：**这一章分了几张、画了几张**，不是「这一章有没有图」。
+
+    只问有无时，一章分到 4 张只画 1 张也算过关。实测撞到过：四个流程图单元全分到
+    业务流程章，那章画了 1 张状态机，另外三张被压成箭头散文，一条都没报。
+
+    换成数量之后**不会退回「材料有几张就塞几张」**：分母是作者自己给的 `at` 数，
+    不是材料总数。不该进 story 的图片标 `material_only`、被自绘图覆盖的标 `covered_by`，
+    两者都不进分母。下面前六条锁的就是「分母确实由作者说了算」。
+    """
+
+    def add_to_chapter(self, title: str, text: str) -> None:
+        """在指定章的标题行之后插入正文。"""
+        story = self.story()
+        i = story.index("\n## " + title)
+        j = story.index("\n", i + 1)
+        self.story_path.write_text(
+            story[:j + 1] + "\n" + text + "\n" + story[j + 1:], encoding="utf-8")
+
+    def draw_diagrams(self, chapter: str, n: int) -> None:
+        self.add_to_chapter(chapter, "\n\n".join(
+            "```mermaid\nflowchart TD\n  P%d[发起] --> Q%d[完成]\n```" % (i, i)
+            for i in range(1, n + 1)))
+
+    def draw_images(self, chapter: str, names: list) -> None:
+        """章里真引用这些图片，并把文件建出来——断链判据要文件在。"""
+        base = self.feature_root() / "RR" / "assets"
+        base.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (base / name).write_bytes(b"\x89PNG\r\n")
+        self.add_to_chapter(chapter, "\n\n".join(
+            "![界面示意](../RR/assets/%s)" % name for name in names))
+
+    def place(self, kind: str, chapter: str) -> list:
+        """把该类单元全部分到一章，返回它们的 key（顺序即枚举顺序）。"""
+        by_key = {u["key"]: u for u in self.units}
+        data = self.audit
+        keys = []
+        for record in data["records"]:
+            u = by_key.get(record["key"])
+            if u and u.get("kind") == kind:
+                for k in [k for k in record if k != "key"]:
+                    del record[k]
+                record["at"] = chapter
+                keys.append(record["key"])
+        self.write_audit(data)
+        return keys
+
+    # ---- 正推：分母由作者说了算 ----
+
+    def test_drawn_equals_allocated_passes(self) -> None:
+        """3 张分到一章、那一章画了 3 张——不报。"""
+        self.seed_diagrams(3)
+        self.init_audit()
+        self.settle()
+        self.place("diagram", "功能说明")
+        self.draw_diagrams("功能说明", 3)
+        _, out = self.check_output()
+        self.assertNotIn("只画了", out)
+        self.assertNotIn("但那一章没有图", out)
+
+    def test_drawing_more_than_allocated_passes(self) -> None:
+        """判的是不少于，不是相等：1 张分到一章、画了 3 张——不报。"""
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.settle()
+        self.place("diagram", "功能说明")
+        self.draw_diagrams("功能说明", 3)
+        _, out = self.check_output()
+        self.assertNotIn("只画了", out)
+
+    def test_covered_by_is_not_in_the_denominator(self) -> None:
+        """4 张里 1 张 `at`、3 张 `covered_by` 指向它，那一章画 1 张——不报。
+
+        这是 story 合并自绘的正当形状。分母只数 `at`，所以它不会被误报成欠 3 张。
+        """
+        self.seed_diagrams(4)
+        self.init_audit()
+        self.settle()
+        keys = self.place("diagram", "功能说明")
+        self.assertEqual(len(keys), 4)
+        self.draw_diagrams("功能说明", 1)
+        for key in keys[1:]:
+            self.set_record(key, covered_by=keys[0])
+        _, out = self.check_output()
+        self.assertNotIn("只画了", out)
+
+    def test_material_only_image_is_not_in_the_denominator(self) -> None:
+        """3 张图片里 1 张 `at`、2 张 `material_only`，那一章引 1 张——不报。"""
+        self.seed_images(3)
+        self.init_audit()
+        self.settle()
+        keys = self.place("image", "功能说明")
+        self.assertEqual(len(keys), 3)
+        self.draw_images("功能说明", ["ui-1.png"])
+        for key in keys[1:]:
+            self.set_record(key, material_only="界面细节图，叙述由本章文字承载")
+        _, out = self.check_output()
+        self.assertNotIn("只引了", out)
+        self.assertNotIn("但那一章没有图片引用", out)
+
+    def test_thirty_images_two_drawn_rest_marked(self) -> None:
+        """30 张界面图给 2 张 `at` + 28 张 `material_only`——图片相关零报错。
+
+        这是内网那条「PRD 里 30+ 图，模型被逼把所有图片往 story 里硬塞」的直接验收：
+        分母是作者给的 2，不是材料里的 30。
+        """
+        self.seed_images(30)
+        self.init_audit()
+        self.settle()
+        keys = self.place("image", "功能说明")
+        self.assertEqual(len(keys), 30)
+        self.draw_images("功能说明", ["ui-1.png", "ui-2.png"])
+        for key in keys[2:]:
+            self.set_record(key, material_only="界面细节图，叙述由本章文字承载")
+        _, out = self.check_output()
+        for gone in ("只引了", "但那一章没有图片引用", "在 story 里没有落点"):
+            self.assertNotIn(gone, out, "30 图夹具被误报：" + gone)
+
+    def test_two_units_one_file_counts_once(self) -> None:
+        """两个图片单元指向同一个文件、都分到一章，story 引一次——不报。
+
+        图片的身份是文件。引两次另有判据拦（同一张图被两个路径引用），
+        所以这里按文件名去重后比数，否则同一张图登记两次就凭空欠一张。
+        """
+        self.append_material(
+            "\n\n### 界面 A\n\n![图 A 界面示意](assets/dup.png)"
+            "\n\n### 界面 B\n\n![图 B 同一张图的另一处引用](assets/dup.png)\n")
+        self.init_audit()
+        self.settle()
+        keys = self.place("image", "功能说明")
+        self.assertEqual(len(keys), 2, "两个单元指向同一文件时仍是两个单元")
+        self.draw_images("功能说明", ["dup.png"])
+        _, out = self.check_output()
+        self.assertNotIn("只引了", out, "同一个文件被算成两张，凭空欠了一张")
+
+    # ---- 反例 ----
+
+    def test_N10_four_allocated_one_drawn(self) -> None:
+        """坏产物：4 张流程图分到同一章，那一章只画了 1 张，其余压成箭头散文。
+
+        这正是实跑撞到的形状。只问「这一章有没有图」时它整条溜过去。
+        """
+        self.seed_diagrams(4)
+        self.init_audit()
+        self.settle()
+        self.place("diagram", "功能说明")
+        self.draw_diagrams("功能说明", 1)
+        out = self.assert_check_names("的图有 4 张，那一章只画了 1 张")
+        self.assertIn("covered_by", out, "报错要给出合并自绘的那条出路")
+
+    def test_N10_image_side(self) -> None:
+        """坏产物：4 张图片分到同一章，那一章只引了 1 张。"""
+        self.seed_images(4)
+        self.init_audit()
+        self.settle()
+        self.place("image", "功能说明")
+        self.draw_images("功能说明", ["ui-1.png"])
+        self.assert_check_names("的图片有 4 张，那一章只引了 1 张")
+
+    def test_N12_json_fence_is_not_a_diagram(self) -> None:
+        """坏产物：流程图分了落点章，那一章只有一个 json 围栏。
+
+        围栏块不等于图。按「带语言标签的围栏」数，这一章会被算成画了 1 张，
+        欠账整条消失——仓里就有带 `text` 围栏的产物。
+        """
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.settle()
+        self.place("diagram", "功能说明")
+        self.add_to_chapter("功能说明", '```json\n{ "state": "done" }\n```')
+        self.assert_check_names("但那一章没有图")
+
+    def test_original_wording_when_nothing_drawn(self) -> None:
+        """一张都没画时仍按原措辞逐单元报——指到来源行，作者好回去看那是什么图。"""
+        self.seed_diagrams(2)
+        self.init_audit()
+        self.settle()
+        self.place("diagram", "功能说明")
+        out = self.assert_check_names("但那一章没有图")
+        self.assertNotIn("只画了", out, "一张没画时不该走「画了但不够」那句")
+
+
+class DiagramsHaveNoMaterialOnly(NegativeCase):
+    """`material_only` 只给图片，流程图没有这条出路。
+
+    开这一态是为了「PRD 里 30 张界面图不必都进 story」那个场景；流程图在材料里
+    通常只有三五张，从来没有塞不下的压力。给了它这条出路，作者一标了事，
+    而流程图恰恰是读者最依赖的那部分。
+    """
+
+    def test_N11_diagram_cannot_be_material_only(self) -> None:
+        """坏产物：流程图标 `material_only` 并写了理由，想以此免画。"""
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.settle()
+        d = self.units_of_kind("diagram")[0]
+        self.set_record(d["key"], material_only="时序细节，叙述已覆盖")
+        out = self.assert_check_names("不是图片")
+        self.assertIn("covered_by", out, "报错要指出流程图该走哪条出路")
+
+    def test_the_kind_set_names_only_images(self) -> None:
+        """范围收回在源里也锁一道：`IMAGE_KINDS` 不许再把 diagram 算进去。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        line = next(l for l in body.splitlines() if l.startswith("const IMAGE_KINDS"))
+        self.assertIn("'image'", line)
+        self.assertNotIn("diagram", line, "diagram 又被放回 material_only 的适用集了")

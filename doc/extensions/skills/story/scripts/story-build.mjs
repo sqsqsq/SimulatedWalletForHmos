@@ -60,13 +60,16 @@ function minQuoteChars(contract) {
 const COPYEDIT_ROWS = 6;
 
 /**
- * 图类单元 —— 落点上多一态 `material_only`（留在材料、不进 story）的那两类。
+ * 能标 `material_only`（留在材料、不进 story）的单元 —— **只有图片**。
  *
- * 图与文字事实在这件事上不对称：一张图不引用时，读者还能顺材料清单里的原文链接
- * 去看原件；一条文字事实不进 story 就是丢了，没有第二条路。
- * 所以「不进 story」只对图类是合法状态。
+ * 图片与文字事实不对称：一张图片不引用时，读者还能顺材料清单里的原文链接去看原件；
+ * 一条文字事实不进 story 就是丢了，没有第二条路。所以「不进 story」对图片是合法状态。
+ *
+ * **流程图不在这里。** 开这一态是为了「PRD 里 30 张界面图不必都进 story」那个场景，
+ * 而流程图在材料里通常只有三五张，从来没有塞不下的压力。流程图的合法出路只有
+ * `at`（画出来）与 `covered_by`（story 自绘一张覆盖它）。
  */
-const IMAGE_KINDS = new Set(['image', 'diagram']);
+const IMAGE_KINDS = new Set(['image']);
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
@@ -324,12 +327,23 @@ function scanSources(ctx) {
 }
 
 /**
- * 一章里有没有围栏图 / 图片 / 表——形态判据只问这三件事。
+ * 什么算一张图：**只有画图语言的围栏块**。
+ *
+ * `json` / `yaml` / `text` 围栏是数据与摘抄，不是图。把它们算成图，「这一章画了几张」
+ * 就会凭空多出来，欠画的反而判成够了——仓里就有这样的产物（附录倾倒那份夹具里
+ * 有一个 `text` 围栏）。
+ */
+const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/gmi;
+
+/**
+ * 一章里画了几张图 / 引了几张图片 / 有没有表。
+ *
+ * **图与图片数个数，表判有无**：表行不是一行一张表，一章一张表就够，所以表只问有无。
  */
 function chapterForms(sections) {
   return new Map(sections.map(s => [s.title, {
-    diagram: /^\s*(?:```|~~~)\s*\w+/m.test(s.text),
-    image: /!\[[^\]]*\]\(/.test(s.text),
+    diagram: (s.text.match(DIAGRAM_FENCE) ?? []).length,
+    image: (s.text.match(/!\[[^\]]*\]\(/g) ?? []).length,
     table: /^\s*\|/m.test(s.text),
     text: s.text,
   }]));
@@ -350,30 +364,44 @@ function chapterForms(sections) {
  *
  * **只判已渲染的章**：还没写的章当然没有图，那不是欠账。
  *
- * @returns {{at: string, kind: 'image'|'diagram'|'table_row', units: object[]}[]}
+ * **判的是「分了几张画了几张」，不是「这一章有没有图」。** 只问有无时，一章分到 4 张
+ * 只画 1 张也算过关——实测撞到过：四个流程图单元全分到业务流程章，那章画了 1 张状态机，
+ * 另外三张被压成箭头散文，一条都没报。
+ *
+ * **它不会退回「材料有几张就得塞几张」**：分母是**作者自己给的 `at` 数**，不是材料总数。
+ * 不该进 story 的图片标 `material_only`、被自绘图覆盖的标 `covered_by`，两者都不进分母，
+ * 分配数当场降下来。30 张界面图给 2 张 `at` + 28 张 `material_only`，这里一条都不报。
+ *
+ * @returns {{at: string, kind: 'image'|'diagram'|'table_row', units: object[],
+ *            want?: number, drawn?: number}[]}
  */
 function formShortfall(units, recByKey, sections) {
   const forms = chapterForms(sections);
   const rendered = new Set(sections.map(s => s.title));
-  const bucket = new Map();                 // `${at} ${kind}` → units
+  const bucket = new Map();                 // `${at} ${kind}` → {at, kind, units}
   const rows = new Map();                   // at → table_row units
   for (const u of units) {
     const at = recByKey.get(u.key)?.at;
     if (!at || !rendered.has(at)) continue;
-    const form = forms.get(at);
-    if (!form) continue;
-    if (u.kind === 'diagram' && !form.diagram) {
-      pushInto(bucket, `${at} diagram`, u);
-    } else if (u.kind === 'image' && !form.image) {
-      pushInto(bucket, `${at} image`, u);
+    if (!forms.has(at)) continue;
+    if (u.kind === 'diagram' || u.kind === 'image') {
+      const k = `${at} ${u.kind}`;
+      if (!bucket.has(k)) bucket.set(k, { at, kind: u.kind, units: [] });
+      bucket.get(k).units.push(u);
     } else if (u.kind === 'table_row') {
       pushInto(rows, at, u);
     }
   }
   const out = [];
-  for (const [key, list] of bucket) {
-    const [at, kind] = key.split(' ');
-    out.push({ at, kind, units: list });
+  for (const item of bucket.values()) {
+    // **图片的身份是文件**：两个单元指向同一个文件时，story 引一次就够——引两次
+    // 另有判据拦（「同一张图被两个路径引用」）。所以图片按文件名去重后比数，否则
+    // 同一张图登记两次就凭空欠一张。流程图没有文件，逐单元算。
+    const want = item.kind === 'image'
+      ? new Set(item.units.map(u => (u.tokens ?? [])[0] ?? u.key)).size
+      : item.units.length;
+    const drawn = forms.get(item.at)?.[item.kind] ?? 0;
+    if (want > drawn) out.push({ ...item, want, drawn });
   }
   // 表行：**该章分到 ≥2 条时**才要求成表——只有一行的不构成表（一行的表读起来
   // 比一句话更费劲），那时只要求这一行的内容在该章出现，由整篇 token 守恒管。
@@ -390,14 +418,29 @@ function pushInto(map, key, value) {
   map.get(key).push(value);
 }
 
-/** 形态欠账报成一句话——`audit` 与 `check` 共用这一份措辞。 */
+/**
+ * 形态欠账报成一句话——`audit` 与 `check` 共用这一份措辞。
+ *
+ * **一张都没画**时逐单元报，指到来源行，作者好回去看那是什么图；
+ * **画了但不够**时报两个数，作者要知道还差几张，逐单元列反而看不出差额。
+ */
 function formShortfallLine(item) {
   const where = `落在「${item.at}」，但那一章`;
   if (item.kind === 'diagram') {
+    if (item.drawn > 0) {
+      return [`材料里分到「${item.at}」的图有 ${item.want} 张，那一章只画了 ${item.drawn} 张`
+        + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构；'
+        + 'story 自己画的那张已经覆盖了其中几张，就给那几条标 covered_by'];
+    }
     return item.units.map(u => `来源材料里的图（${u.doc}:${u.line}）${where}没有图`
       + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构');
   }
   if (item.kind === 'image') {
+    if (item.drawn > 0) {
+      return [`材料里分到「${item.at}」的图片有 ${item.want} 张，那一章只引了 ${item.drawn} 张`
+        + '——图片承载的信息，文字复述替代不了；'
+        + '确实不必进正文的那几张标 material_only 并各写一句理由'];
+    }
     return item.units.map(u => `来源材料里的图片（${u.doc}:${u.line}）${where}没有图片引用`
       + '——图片承载的信息，文字复述替代不了');
   }
@@ -1074,8 +1117,11 @@ function cmdAudit(ctx) {
       const who = item.units.slice(0, 4)
         .map(u => `${u.key}「${String(u.text ?? '').replace(/\s+/g, ' ').slice(0, 24)}」`)
         .join('、');
+      const short = item.want === undefined
+        ? `欠${what} ${item.units.length} 个`
+        : `分${what} ${item.want}、画了 ${item.drawn}，还欠 ${item.want - item.drawn}`;
       process.stdout.write(
-        `    ${item.at} —— 欠${what} ${item.units.length} 个：${who}`
+        `    ${item.at} —— ${short}：${who}`
         + `${item.units.length > 4 ? '…' : ''}\n`);
     }
   }
@@ -1328,17 +1374,20 @@ function cmdCheck(ctx) {
       // 留在材料、不进 story。**只给图类**：文字事实没有「去材料里看」这条路。
       //
       // 放宽账（它防什么 / 误伤面 / 谁来接）：
-      // 这一态开的口子是「图可以不进 story」，它替代的是「整篇形态数不降级」
-      // 那两条——后者在 30+ 图的真实 PRD 上等价于逼作者把 PRD 复刻一遍。
-      // 接的人是 `formShortfall`：分了落点章却没画，`audit` 当场报、`check` 收口拦。
+      // 这一态开的口子是「**图片**可以不进 story」，替代的是「整篇图片数不降级」——
+      // 后者在 30+ 图的真实 PRD 上等价于逼作者把 PRD 复刻一遍。
+      // 接的人是 `formShortfall`：分了落点章却没画够，`audit` 当场报、`check` 收口拦。
       // 已用 30 图夹具证过：给了 at 却没画的那些，audit 逐条报得出来。
+      //
+      // **流程图不给这一态**：开它是为了 30 张界面图那个场景，而流程图在材料里通常
+      // 只有三五张，没有塞不下的压力。所以这里判 kind。
       if (!IMAGE_KINDS.has(u.kind)) {
-        problems.push(`${u.key} 标了 material_only，但它不是图类单元（kind=${u.kind}）`
-          + '——这一态只给图片与图：图不引用时读者还能顺材料清单的链接去看原件，'
-          + '文字事实不进 story 就是丢了');
+        problems.push(`${u.key} 标了 material_only，但它不是图片（kind=${u.kind}）`
+          + '——这一态只给图片：图片不引用时读者还能顺材料清单的链接去看原件；'
+          + '文字事实不进 story 就是丢了，流程图请用 at 或 covered_by');
       } else if (String(rec.material_only).trim().length < 4) {
         problems.push(`${u.key} 的 material_only 没写理由`
-          + '——写一句为什么这张图不必进 story，空着分不清「判过了不需要」与「懒得引」');
+          + '——写一句为什么这张图片不必进 story，空着分不清「判过了不需要」与「懒得引」');
       }
       continue;
     }
@@ -1526,10 +1575,10 @@ function cmdCheck(ctx) {
   for (const u of doc.units) {
     if (u.kind !== 'diagram') continue;
     const rec = recByKey.get(u.key);
-    if (!rec?.at && !rec?.covered_by && !rec?.material_only) {
-      problems.push(`来源材料里的图（${u.doc}:${u.line}）既没进 story，也没说明为什么不进`
-        + '——按叙述逻辑该引就引（分个落点章），story 自己画了覆盖它就标 covered_by，'
-        + '确实不必进正文就标 material_only 并写一句理由');
+    if (!rec?.at && !rec?.covered_by) {
+      problems.push(`来源材料里的图（${u.doc}:${u.line}）在 story 里没有落点`
+        + '——图是读者最依赖的那部分，不能只在材料里有：'
+        + '按叙述逻辑分个落点章画出来，或者 story 自己画了一张覆盖它就标 covered_by');
     }
   }
 
@@ -1538,12 +1587,17 @@ function cmdCheck(ctx) {
     for (const line of formShortfallLine(item)) problems.push(line);
   }
 
-  // **没有图片数量判据。** 这里曾经核「story 的图数不少于材料」：3 张图的材料上
-  // 它等价于「丢图＝丢内容」，30+ 图的真实 PRD 上它等价于「把 PRD 复刻一遍」。
+  // **没有「全篇总数不降级」这类判据**，图与图片都没有。曾经有两条，形状是
+  // 「材料里有 N 张，story 里少于 N 就报」。它们的分母是**材料里有几张**，作者压不下来，
+  // 只能塞；30+ 图的真实 PRD 上，那等价于把 PRD 复刻一遍。
   //
-  // 删它的前提是**先证明有人接**（不是删了再说）：`formShortfall` 把逐单元的形态判
-  // 前移到了 `audit`，分了落点章却没画的那些，写完一章当场就报。
-  // 30 图夹具实证：给了 at 却没画的两个，audit 逐条报得出来。
+  // 接手的是上面的 `formShortfall`，它比的是同一件事的另一个分母：**作者自己给了
+  // 几个 `at`**。不该进 story 的图片标 `material_only`、被自绘图覆盖的标 `covered_by`，
+  // 分配数当场降下来，所以它抓得住「分了 4 张只画 1 张」而不逼任何人硬塞。
+  //
+  // 把全篇总数那种判据加回来是走回头路，三条理由：它不看 `covered_by`（story 合并
+  // 自绘会被误报）、它数的是所有带语言标签的围栏（`json` / `text` 也当成图）、
+  // 它的分母不受作者支配。
   //
   // 反向的数量判据（引用率上限之类）同样不设：逼引与逼不引都是拿数量代替判断。
 
