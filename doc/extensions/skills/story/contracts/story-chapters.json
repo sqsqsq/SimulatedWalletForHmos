@@ -4,18 +4,35 @@
   "skeleton_note": "十章顺序即阅读顺序：先说为什么做（背景），再统一词（术语），再划清谁做什么（范围），然后是怎么解决（业务方案）、怎么推进（业务流程）、本特性承担哪段（功能说明）、哪里会坏（异常与恢复）、怎么算做对（验收）、怎么交出去（交付与上线），工程细节留在最后（附录）。",
   "sources_note": "每份材料给出路径；`notes` 声明「按生成它的模板约定，哪类单元不是事实」。spec.md 由 framework 的 spec 模板生成，模板里 `>` 块只承载文件头登记项（模块标识/版本/日期/状态）与各节作业说明（『本节是第一道 BLOCKER…』），没有可讲的事实——要求 story 去讲它们，审稿者只能盖橡皮章。PRD / SE / design / upstream 是人写的，不声明。依据是模板的约定，不是样本的形状：模板改了就改这行数据，机制不动。`derived: true` 声明「这一份是本轮流程自己生成的中间产物」——它只守业务编号（id_shapes.keep 那类评审人认得的号），标识名、带单位的工程数值、包名不再背落点义务：那些东西的家是那份产物自己，逼它们在归档叙事件里找地方，长出来的只有附录表后的散文尾巴和材料清单里的倾倒。真业务事实必在上游材料里另有出处，照旧守恒。",
   "sources": {
-    "PRD": "RR/prd.md",
-    "SE": "SR/design.md",
+    "PRD": {
+      "path": "RR/prd.md",
+      "required": true
+    },
+    "SE": {
+      "path": "SR/design.md",
+      "required": true
+    },
     "SPEC": {
       "path": "spec/spec.md",
       "notes": [
         "blockquote"
       ],
-      "derived": true
+      "derived": true,
+      "required": true
     },
-    "DESIGN": "AR/design.md",
-    "UPSTREAM": "AR/upstream.md",
-    "UX": "ux-reference/README.md"
+    "DESIGN": {
+      "path": "AR/design.md",
+      "required": true
+    },
+    "UPSTREAM": {
+      "path": "AR/upstream.md",
+      "required": false
+    },
+    "UX": {
+      "path": "ux-reference/README.md",
+      "required": false,
+      "warn_if_siblings": "ux-reference"
+    }
   },
   "chapters": [
     {

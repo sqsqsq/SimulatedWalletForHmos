@@ -217,17 +217,38 @@ class DeclaredSourcesMustExist(NegativeCase):
         self.assertGreaterEqual(len(missing), 2,
                                 "夹具变了——它本该缺好几个声明来源，这条反例才有对象")
 
-    @unittest.expectedFailure
-    def test_N8_missing_declared_source_is_named(self) -> None:
-        """坏产物：合同声明的来源文件不存在，守恒面悄悄缩小。
+    def test_N8_import_half_done_index_missing_while_files_present(self) -> None:
+        """坏产物：`ux-reference/` 里有图片，却没有索引 README——导入做了一半。
 
-        **批次 2 转正**：合同给每个来源标 `required`，缺必备的报 BLOCKER、
-        缺可选的记一笔；`ux-reference/` 有文件却没 README.md 时升级为 BLOCKER
-        （图片在而索引不在，是导入做了一半，不是本需求没有界面）。
+        这就是实跑那一次的形状：2 张 png 在、`README.md` 不在，于是 UX 整类
+        枚举出 0 个单元，全程零报错。**这一档没有误伤面**：目录里有文件是客观事实，
+        索引缺席是客观缺陷。
+
+        （批次 2 已转正。原先这条写成「任何声明来源缺失都该拦」，实测那样会让
+        114 个单测与 23 条失效形态变红——它们都是最小夹具，一份材料测一条判据。
+        新增义务同样要先量误伤面，见 `scanSources` 的注释。）
         """
-        self.init_audit()
-        self.settle()
-        self.assert_check_names("合同声明的来源")
+        ux = self.feature_root() / "ux-reference"
+        ux.mkdir(parents=True, exist_ok=True)
+        (ux / "signup.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        proc = self.run_build("init")
+        self.assertNotEqual(proc.returncode, 0, "导入做了一半居然没拦")
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertIn("合同声明的来源 UX 不存在", out)
+        self.assertIn("导入做了一半", out)
+
+    def test_missing_optional_source_is_visible_but_not_blocking(self) -> None:
+        """缺失一律**可见**——根因是零信号，不是没拦。
+
+        夹具本身就缺好几个声明来源。它们不该拦（最小夹具是正常形态），
+        但必须在 init 的来源账里以 0 出现、并各记一笔。
+        """
+        proc = self.run_build("init")
+        self.assertEqual(proc.returncode, 0, "可选来源缺失不该拦：" + proc.stderr)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("来源：", out)
+        self.assertIn("不存在", out)
+        self.assertIn("记一笔：", out)
 
 
 class LedgersMustAllExist(NegativeCase):
@@ -285,12 +306,21 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
                          "反例编号不全：" + str(found))
 
     def test_every_negative_names_the_judgement(self) -> None:
-        """每条都必须 assert_check_names，不允许只判退出码。"""
+        """每条反例都要**点名是哪一条判据拦的**，不许只判退出码。
+
+        只判 `returncode == 1` 证明不了任何事：换一条判据误报也能让它绿。
+        判据不一定在 `check`——N8 那条在 `init` 就拦住了——所以认的是
+        「有没有对具体报错串下断言」，不是「有没有调某个辅助函数」。
+        """
         body = self.THIS.read_text(encoding="utf-8")
-        for block in re.split(r"\n    def test_N\d_", body)[1:]:
-            head = block.split("\n\n")[0]
-            self.assertIn("assert_check_names", block,
-                          "有反例只判了退出码，没点名判据：" + head[:60])
+        blocks = re.split(r"\n    def (test_N\d\w*)\(", body)
+        pairs = list(zip(blocks[1::2], blocks[2::2]))
+        self.assertEqual(len(pairs), 9, "反例条数不对：" + str([p[0] for p in pairs]))
+        for name, block in pairs:
+            body_only = block.split("\n    def ")[0]
+            named = ("assert_check_names(" in body_only
+                     or re.search(r"assertIn\(\s*[\"'][^\"']*[一-鿿]", body_only))
+            self.assertTrue(named, name + " 只判了退出码，没点名是哪一条判据")
 
     def test_expected_failures_say_which_batch_turns_them(self) -> None:
         """每个 xfail 都要写明哪一批转正——不写就是永远不转。

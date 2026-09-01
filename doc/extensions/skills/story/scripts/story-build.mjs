@@ -211,23 +211,87 @@ function digestOf(text) {
 }
 
 function sourceDocs(ctx) {
-  const out = [];
+  return scanSources(ctx).docs;
+}
+
+/**
+ * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
+ *
+ * 上一版这里是 `if (text !== null) out.push(...)`：读不到就静默跳过。
+ * 后果是守恒面能凭空缩掉一整类而零信号——实测一轮，`ux-reference/README.md`
+ * 没被产出，UX 整类枚举出 0 个单元（上一轮那两份分别是 34 个和 11 个），
+ * 从 init 到 check 没有一条报错提过这件事。
+ *
+ * 这与 ⓪ 的立意是同一件事（它防「枚举之后材料变了，守恒面悄悄小一圈」），
+ * 但 ⓪ 管的是**变了**，管不了**压根不在**。
+ *
+ * 缺失分两档，由合同数据定，本文件不写死任何路径：
+ *
+ * - **`warn_if_siblings` 指的那个目录有别的文件、偏偏没有这一份 → BLOCKER。**
+ *   图片在而索引不在，说明导入做了一半，不是「本需求没有界面」。
+ *   这一档**没有误伤面**：目录里有文件是客观事实，索引缺席是客观缺陷。
+ * - **其余缺失 → 记一笔**（`required` 只决定措辞轻重，不决定拦不拦）。
+ *
+ * **为什么必备来源缺失也不拦**：这条判据是新增的正向义务，按「放宽前先写命中面」
+ * 的同一把尺子，新增义务也要先量误伤面。实测：把「必备来源缺失」判成 BLOCKER，
+ * 114 个单测与 23 条失效形态当场变红——它们全是最小夹具，一份材料测一条判据，
+ * 要求每份都备齐四类材料只会让夹具更假，不会让判据更准。
+ *
+ * 而根因本来就不是「没拦」，是**零信号**：守恒面缩掉一整类而没有一处提过。
+ * 让它一律可见（init 的来源账 + check 的记一笔）就解决了根因；
+ * 真正该拦的那一种由上面那一档拦，且拦得准。
+ *
+ * @returns {{docs: object[], missing: object[]}}
+ */
+function scanSources(ctx) {
+  const docs = [], missing = [];
   for (const [doc, decl] of Object.entries(ctx.contract.sources ?? {})) {
     const rel = typeof decl === 'string' ? decl : decl?.path;
     if (!rel) continue;
+    const obj = typeof decl === 'object' && decl ? decl : {};
     const abs = path.join(ctx.featureRoot, rel);
     const text = readText(abs);
     if (text !== null) {
-      out.push({
+      docs.push({
         doc, rel, text,
-        notes: typeof decl === 'string' ? [] : (decl.notes ?? []),
+        notes: obj.notes ?? [],
         // `derived`＝这一份是本轮流程自己生成的中间产物，不是上游给的材料。
         // 它只守业务编号，工程细节的家是它自己——见 enumerateUnits 的 idTokensOnly。
-        derived: typeof decl === 'object' && decl?.derived === true,
+        derived: obj.derived === true,
       });
+      continue;
     }
+    // 兄弟文件在而这一份不在：导入做了一半
+    let siblings = 0;
+    const dir = obj.warn_if_siblings
+      ? path.join(ctx.featureRoot, obj.warn_if_siblings) : null;
+    if (dir) {
+      try { siblings = fs.readdirSync(dir).length; } catch { siblings = 0; }
+    }
+    missing.push({
+      doc, rel,
+      required: obj.required === true,
+      siblings,
+      siblingDir: obj.warn_if_siblings ?? null,
+      // 只有「兄弟文件在而索引不在」才拦——那一档没有误伤面。见本函数注释。
+      blocking: siblings > 0,
+    });
   }
-  return out;
+  return { docs, missing };
+}
+
+/** 缺失来源报成一句话——BLOCKER 与「记一笔」共用这一份措辞。 */
+function missingSourceLine(m) {
+  if (m.siblings > 0) {
+    return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
+      + `——但 ${m.siblingDir}/ 里有 ${m.siblings} 个文件。`
+      + '图片在而索引不在，是导入做了一半：把它们登记进索引，'
+      + '否则这一类材料一个单元都枚举不出来，守恒面会悄悄小一圈';
+  }
+  return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
+    + (m.required
+      ? '——它是必备来源，缺了这一轮的守恒面就不完整'
+      : '（可选来源，缺了是正常的）');
 }
 
 // --------------------------------------------------------------------------
@@ -258,9 +322,17 @@ function buildTokenExclusion(ctx) {
 
 function cmdInit(ctx) {
   refuseIfFrozen(ctx, 'init');
-  const docs = sourceDocs(ctx);
+  const { docs, missing } = scanSources(ctx);
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
+  }
+  // 导入做了一半要在**枚举之前**拦住：枚举完再说，作者已经拿着残缺的守恒面往下走了。
+  const blocking = missing.filter(m => m.blocking);
+  if (blocking.length) {
+    fail(blocking.map(missingSourceLine).join('\n  ') + '\n'
+      + '  补齐它再跑 init。这一类材料缺席时枚举不出任何单元，'
+      + '而后面每一条判据都只在「枚举出来的那些」上跑——'
+      + '守恒面小了一圈，门禁全绿也证明不了什么。');
   }
   // 只把 `keep` 的编号形态交给枚举器：`drop` 的那些不该进 story，也就不该成为守恒对象
   const idShapes = [...(ctx.contract.id_shapes?.keep ?? [])];
@@ -321,6 +393,23 @@ function cmdInit(ctx) {
     `[story-build init] ${units.length} 个单元、${units.reduce((n, u) => n + u.tokens.length, 0)} 个 token`
     + `（机器面 ${units.filter(u => u.machine_facing).length} 个；`
     + `无 token ${noToken} 个——纯中文叙事，机器不判落点，由你分配、由裁决者逐条裁）\n`);
+
+  // 来源账：哪一类贡献了多少单元。**缺席的那些显示为 0 并写明原因**——
+  // 只报总数时，「少了一整类」和「这一类本来就少」长得一模一样。
+  const perDoc = new Map();
+  for (const u of units) {
+    const d = String(u.key ?? '').split(':')[0];
+    perDoc.set(d, (perDoc.get(d) ?? 0) + 1);
+  }
+  const line = [];
+  for (const d of docs) line.push(`${d.doc} ${perDoc.get(d.doc) ?? 0}`);
+  for (const m of missing) {
+    line.push(`${m.doc} 0（${m.rel} 不存在${m.required ? '，必备' : '，可选'}）`);
+  }
+  process.stdout.write(`  来源：${line.join('、')}\n`);
+  for (const m of missing) {
+    process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -872,6 +961,19 @@ function cmdCheck(ctx) {
   if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
   const audit = ctx.offline ? { records: [] } : readJson(ctx.auditPath, null);
   if (!audit) fail(`还没有核对记录，先跑 audit：${ctx.auditPath}`);
+
+  // ⓪a 合同声明的来源都在
+  //
+  // ⓪ 防的是「枚举之后材料变了」，防不了「声明的来源压根不在」。后者更隐蔽：
+  // 那一类连一个单元都枚举不出来，而后面每一条判据都只在「枚举出来的那些」上跑，
+  // 于是守恒面小了一整类，门禁却全绿。实测一轮，`ux-reference/README.md` 没被产出，
+  // UX 整类 0 个单元（上一轮那两份分别是 34 与 11），从头到尾没有一条报错提过。
+  if (!ctx.offline) {
+    const { missing } = scanSources(ctx);
+    for (const m of missing) {
+      (m.blocking ? problems : notes).push(missingSourceLine(m));
+    }
+  }
 
   // ⓪ 材料没在枚举之后又变过
   //
