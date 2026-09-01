@@ -280,6 +280,24 @@ class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
         self.set_record(d["key"], material_only="")
         self.assert_check_names("没有任何落点")
 
+    def test_the_author_page_has_no_unconditional_permission(self) -> None:
+        """作者面不许出现**无限定**的「可以不引」。
+
+        上一轮就栽在这里：`story-write.md` 里同时有「图不必每张都进 story」
+        「没有数量判据——引多引少都不判」和原有的「图片一张不少、一图一引」，
+        两句直接打架，而前两句就在分配表正下方、位置更显眼。
+
+        判据要能机械分辨：**许可只能与它的条件长在同一处**（三态里的
+        `material_only`），不能作为独立分句出现。所以这里拦的是那几句的措辞本身。
+        """
+        page = (REPO_ROOT / "doc/extensions/skills/story/phases/story-write.md"
+                ).read_text(encoding="utf-8")
+        for banned in ("不必每张都进", "引多引少", "没有数量判据"):
+            self.assertNotIn(banned, page,
+                             "「%s」是无限定许可句，读者会只读到前半句" % banned)
+        self.assertIn("图片一张不少", page, "原有的正向要求不该被顺手删掉")
+        self.assertIn("给了 `at` 就等于承诺要画", page, "缺了「分了落点＝承诺」这一半")
+
     def test_no_count_or_ratio_judgement_anywhere(self) -> None:
         """退场的是数量判据，不是判据——**不许换个方向再加一条**。"""
         body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
