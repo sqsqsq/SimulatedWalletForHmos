@@ -89,21 +89,45 @@ class FiguresMustNotVanish(NegativeCase):
     下面四条是图这一侧全部的网，动它们之前先在这里锁住。
     """
 
+    def place_all_figures_in(self, chapter: str) -> None:
+        by_key = {u["key"]: u for u in self.units}
+        data = self.audit
+        for record in data["records"]:
+            u = by_key.get(record["key"])
+            if u and u.get("kind") in ("image", "diagram"):
+                for k in [k for k in record if k != "key"]:
+                    del record[k]
+                record["at"] = chapter
+        self.write_audit(data)
+
     def test_N1_material_images_not_referenced_at_all(self) -> None:
-        """坏产物：材料给了 3 张图片，story 一张都不引。"""
+        """坏产物：材料给了 3 张图片，分了落点章，story 里一张都没画。
+
+        **2026-09-01 改判**：原先这条由「整篇形态数不降级」拦（材料 N 张、
+        story M 张，M<N 即报）。那条判据在 30+ 图的真实 PRD 上等价于逼作者把
+        PRD 复刻一遍，已退场；接它的是前移到 `audit` 的逐单元形态判。
+
+        坏产物的形状因此更具体了：不是「总数少了」，是「这一章说要画、结果没画」。
+        `check` 收口拦，`audit` 在写完那一章时就报——这条两头都断言。
+        """
         self.seed_images(3)
         self.init_audit()
-        self.settle()
-        out = self.assert_check_names("story 里只引用了")
-        self.assertIn("材料里有 3 张图片", out)
+        self.place_all_figures_in("功能说明")
+        audit_out = self.run_build("audit").stdout
+        self.assertIn("欠图片 3 个", audit_out, "audit 没在写作时报出来")
+        self.assert_check_names("但那一章没有图片引用")
 
     def test_N2_material_diagrams_flattened_to_arrows(self) -> None:
-        """坏产物：材料给了 2 张流程图，story 把它压成箭头文字、一张图都没有。"""
+        """坏产物：材料给了 2 张流程图，分了落点章，那一章压成了箭头文字。
+
+        **2026-09-01 改判**：理由同 N1。
+        """
         self.seed_diagrams(2)
         self.init_audit()
-        self.settle()
-        out = self.assert_check_names("数量不该少于源")
-        self.assertIn("材料里有 2 张图", out)
+        self.place_all_figures_in("功能说明")
+        audit_out = self.run_build("audit").stdout
+        self.assertIn("欠图 2 个", audit_out, "audit 没在写作时报出来")
+        self.assert_check_names("但那一章没有图")
 
     def test_N3_image_placed_in_a_chapter_that_has_no_image(self) -> None:
         """坏产物：图片分了落点章，那一章里没有任何图片引用。
@@ -119,13 +143,157 @@ class FiguresMustNotVanish(NegativeCase):
         self.assert_check_names("但那一章没有图片引用")
 
     def test_N4_diagram_with_no_state_at_all(self) -> None:
-        """坏产物：流程图既没进 story，也没标 covered_by——连表态都没有。"""
+        """坏产物：流程图连表态都没有——没落点、没 covered_by、也没说为什么不进。
+
+        判据本身没放松：**三态皆空照旧拦**。措辞随 `material_only` 这一态的引入
+        改了（现在有三条合法出路，报错要把三条都说出来），断言跟着措辞走。
+        """
         self.seed_diagrams(1)
         self.init_audit()
         self.settle()
         diagram = self.units_of_kind("diagram")[0]
         self.set_record(diagram["key"])
-        self.assert_check_names("在 story 里没有落点")
+        out = self.assert_check_names("既没进 story，也没说明为什么不进")
+        self.assertIn("material_only", out, "报错要说清第三条出路是什么")
+
+
+class FormShortfallIsVisibleWhileWriting(NegativeCase):
+    """形态欠账要在**写的时候**就看得见，不是全篇写完被 check 一次性告知。
+
+    图是 token 守恒链上最薄的一环——图片单元的 token 只有文件 basename，
+    画了才有、没画就没有；流程图的 token 近乎空。所以文字事实丢了会被整篇
+    token 守恒在任意位置捞回来，**图丢了只有形态判这一条**。
+    它原先只在 `check` 跑，也就是全篇写完之后。
+
+    实测一轮：3 张图片 + 2 张流程图分了落点章，story 里一张都没有，
+    作者一路写到最后才知道。
+    """
+
+    def place_figures_in(self, chapter: str) -> None:
+        by_key = {u["key"]: u for u in self.units}
+        data = self.audit
+        for record in data["records"]:
+            u = by_key.get(record["key"])
+            if u and u.get("kind") in ("image", "diagram"):
+                for k in [k for k in record if k != "key"]:
+                    del record[k]
+                record["at"] = chapter
+        self.write_audit(data)
+
+    def test_audit_reports_the_shortfall(self) -> None:
+        """分了落点章、那一章没画——`audit` 当场报出来。"""
+        self.seed_images(1)
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.place_figures_in("功能说明")
+        proc = self.run_build("audit")
+        self.assertEqual(proc.returncode, 0, "audit 是分配工具，不该因欠账变红")
+        self.assertIn("形态欠账", proc.stdout)
+        self.assertIn("欠图片", proc.stdout)
+        self.assertIn("欠图 ", proc.stdout)
+
+    def test_audit_and_check_agree(self) -> None:
+        """同一份坏产物，`audit` 报的与 `check` 拦的是同一批单元键。
+
+        两处各写一份判定的话，作者会在「audit 说没事、check 说不行」之间打转。
+        """
+        self.seed_images(1)
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.place_figures_in("功能说明")
+        audit_out = self.run_build("audit").stdout
+        _, check_out = self.check_output()
+        keys = [u["key"] for u in self.units if u.get("kind") in ("image", "diagram")]
+        self.assertTrue(keys)
+        for key in keys:
+            doc_line = key.rsplit(":", 1)[0]        # check 报的是 doc:line，不是完整 key
+            self.assertIn(key, audit_out, "audit 没报 " + key)
+            self.assertIn(doc_line, check_out, "check 没报 " + doc_line)
+
+    def test_shortfall_only_covers_rendered_chapters(self) -> None:
+        """还没写的章当然没有图——那不是欠账。"""
+        self.seed_images(1)
+        self.init_audit()
+        text = self.story()
+        head, _, _ = text.rpartition("\n## ")
+        self.story_path.write_text(head, encoding="utf-8")
+        last = [c for c in text.split("\n## ")][-1].split("\n")[0].strip()
+        self.place_figures_in(last)
+        out = self.run_build("audit").stdout
+        self.assertNotIn("形态欠账", out, "未渲染章被当成欠账了")
+
+    def test_next_chapter_owes_is_listed(self) -> None:
+        """第二步声明的那份输入——「分给本章的那些单元」——真的产出来了。"""
+        self.seed_images(1)
+        self.init_audit()
+        text = self.story()
+        head, _, tail = text.rpartition("\n## ")
+        self.story_path.write_text(head, encoding="utf-8")
+        last = tail.split("\n")[0].strip()
+        self.place_figures_in(last)
+        out = self.run_build("audit").stdout
+        self.assertIn("下一个待写章「" + last + "」", out)
+        self.assertIn("图片 1 个", out)
+
+    def test_one_definition_only(self) -> None:
+        """判定只有一份：`formShortfall` 定义一处、调用两处。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertEqual(body.count("function formShortfall("), 1)
+        self.assertEqual(body.count("formShortfall(doc.units"), 2)
+
+
+class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
+    """「可以不引」有且只有一条合法路径，且它自己也有锁。
+
+    这一态是本轮唯一的放宽。放宽账：
+    - **它防的是什么**：图连表态都没有（三态皆空）——N4 锁着，没动；
+    - **误伤面**：「整篇形态数不降级」在 30+ 图的 PRD 上逼人复刻，已退场；
+    - **谁来接**：`formShortfall`（audit 报 + check 拦），30 图夹具已证。
+    """
+
+    def test_marked_figures_are_accepted(self) -> None:
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.settle()
+        d = self.units_of_kind("diagram")[0]
+        self.set_record(d["key"], material_only="界面细节图，叙述由功能说明章承载")
+        code, out = self.check_output()
+        self.assertNotIn("既没进 story", out)
+        self.assertNotIn("不是图类单元", out)
+
+    def test_text_units_cannot_use_it(self) -> None:
+        """文字事实没有「去材料里看」这条路——它不进 story 就是丢了。"""
+        self.init_audit()
+        self.settle()
+        text_unit = next(u for u in self.units
+                         if u.get("kind") not in ("image", "diagram")
+                         and not u.get("machine_facing"))
+        self.set_record(text_unit["key"], material_only="留在材料里")
+        self.assert_check_names("不是图类单元")
+
+    def test_a_reason_is_required(self) -> None:
+        self.seed_diagrams(1)
+        self.init_audit()
+        self.settle()
+        d = self.units_of_kind("diagram")[0]
+        self.set_record(d["key"], material_only="")
+        self.assert_check_names("没有任何落点")
+
+    def test_no_count_or_ratio_judgement_anywhere(self) -> None:
+        """退场的是数量判据，不是判据——**不许换个方向再加一条**。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        for gone in ("数量不该少于源", "story 里只引用了"):
+            self.assertNotIn(gone, body, "「" + gone + "」还在")
+        self.assertIn("没有图片数量判据", body, "退场理由要留在代码里，否则下一轮会加回来")
+
+    def test_the_replacement_is_wired(self) -> None:
+        """删之前先证明有人接：接的人必须真的接在两个时刻上。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertEqual(body.count("function formShortfall("), 1)
+        self.assertEqual(body.count("formShortfall(doc.units"), 2)
 
 
 class IdentifiersMustBeConservedWhereTheyLand(NegativeCase):
