@@ -1872,6 +1872,23 @@ class TestCheckOutputAggregates(StoryBuildCase):
         self.assertIn("处未通过", body)
         self.assertIn("不随稿冻结、不进材料清单", body)
 
+    def test_nothing_is_lost_between_the_terminal_and_the_detail(self) -> None:
+        """封顶只挡终端，不挡内容——明细里的条数要等于终端报的总数。
+
+        聚合只改呈现：判定一条没少、一条没多。少一条就是把问题藏了，
+        而藏问题正是删台账那件事的另一种形态。
+        """
+        self.init_audit()
+        self.settle()
+        self.flood()
+        code, out = self.check_output()
+        self.assertEqual(code, 1)
+        total = int(re.search(r"(\d+) 处未通过", out).group(1))
+        body = (self.src / "check-detail.md").read_text(encoding="utf-8")
+        counted = sum(int(n) for n in re.findall(r"^## .+（(\d+) 条）$", body, re.M))
+        self.assertEqual(counted, total, "明细与终端报的总数对不上")
+        self.assertIn(str(total) + " 处未通过", body)
+
     def test_the_detail_file_is_not_one_of_the_frozen_five(self) -> None:
         """诊断件不进冻结五件——它是这一次 check 的产物，不是 story 的依据。"""
         flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/story_flow.py"
