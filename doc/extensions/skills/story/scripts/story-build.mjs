@@ -877,6 +877,9 @@ function cmdAudit(ctx) {
 
 const EMPTY_SECTION_TEXT = '本需求不涉及。';
 
+/** 术语映射表「解释」列的消歧参照标记：这一行是拿来做对照的，本需求不做它。 */
+const GLOSSARY_REFERENCE_MARK = '（消歧参照）';
+
 /** 终端上一次最多打多少条明细——其余进 `check-detail.md`。 */
 const CHECK_TERMINAL_CAP = 40;
 /** 每个判据类在终端露几条样本。 */
@@ -962,16 +965,20 @@ function missingGlossaryTerms(specText, storyText, projectRoot) {
   if (!rows.length) return [];
   const header = rows.find(c => /^原始术语$|^术语$/.test(c[0]));
   const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
-  // 「解释」列填「—」的行不参与本判：那一列的既有约定就是「评审者不需要这个词」
-  // ——spec 那边只对权威模块在 Scope 内的行要求写解释，Scope 外的行留「—」是合法的。
-  // 消歧参照物正是这种行：术语表因 `easily_confused_with` 把别人的词拉进来做对照，
-  // 它是 spec 的本职内容，需求叙事里天然不出现。要求它出现，作者只能把不做的事写进
-  // story——那是为了过判据造事实。
+  // **消歧参照物不参与本判。** 术语表因 Catalog 的易混项把别人的词拉进来做对照，
+  // 那是 spec 的本职内容——本需求并不做它，需求叙事里天然不出现。要求它出现，
+  // 作者只能把不做的事写进 story，那是为了过判据造事实。
+  //
+  // 标记落在「解释」列，两种写法：
+  // - `—`：评审者不需要这个词（被消费的基础能力，spec 那边对 Scope 外的行本就许可留空）；
+  // - `（消歧参照）…`：**权威模块也在 Scope 内**的参照物。这一类没法靠留空表达——
+  //   spec 那边对 Scope 内的行要求解释非空，作者被两条判据夹住：写了解释就得让它
+  //   出现在 story，不写解释过不了 spec。所以标记得是显式的一个值，不是「空着」。
   const explainIdx = header ? header.findIndex(h => /解释/.test(h)) : -1;
   const isReference = (c) => {
     if (explainIdx < 0) return false;
     const v = (c[explainIdx] ?? '').trim();
-    return v === '—' || v === '-' || v === '';
+    return v === '—' || v === '-' || v === '' || v.startsWith(GLOSSARY_REFERENCE_MARK);
   };
   const baseLayers = baseLayerIds(projectRoot);
   return rows
