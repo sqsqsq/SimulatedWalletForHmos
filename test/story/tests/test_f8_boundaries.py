@@ -105,6 +105,72 @@ class EntryFileMarkers(unittest.TestCase):
         self.assertIn("入口文件未含扩展段", scan)
 
 
+class PackageNamedKnowledgeIsConserved(unittest.TestCase):
+    """包里有同名的知识文件被换成包的版本 —— 现在核得出来。
+
+    这正是上一版的盲区：守恒把「包里有同名的规约与模式」整类排除在外，理由是
+    它们随包直接维护。于是升级把目标写好的内容整份盖掉时，校验一声不吭。
+    夹具里那份是**规约**（不是事实文件），走的正是原先被排除的那一支。
+    """
+
+    DOMAIN = "gamma-domain"
+    OLD = ("---\nname: " + DOMAIN + "\nkind: constraints\n---\n\n"
+           "# 丙域约束（目标自己写的）\n\n"
+           "| 编号 | 约束 | 强制力 |\n|---|---|---|\n"
+           "| GAMMA-01 | 丙操作须记录 | 基线 |\n")
+    PACKAGE = ("---\nname: " + DOMAIN + "\nkind: constraints\n---\n\n"
+               "# 丙域约束\n\n"
+               "| 编号 | 约束 | 强制力 | 命中条件 |\n|---|---|---|---|\n"
+               "| GAMMA-01 | 丙操作须记录并带执行标识 | 红线 | 涉及丙操作时 |\n")
+    MERGED = ("---\nname: " + DOMAIN + "\nkind: constraints\n---\n\n"
+              "# 丙域约束（目标自己写的）\n\n"
+              "| 编号 | 约束 | 强制力 | 命中条件 |\n|---|---|---|---|\n"
+              "| GAMMA-01 | 丙操作须记录 | 基线 | 涉及丙操作时 |\n")
+
+    def build(self, after_upgrade: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for side, body in (("package", self.PACKAGE), ("target", self.OLD)):
+            ext = root / side / "doc" / "extensions"
+            (ext / "knowledge" / "constraints").mkdir(parents=True)
+            (ext / "knowledge" / "constraints" / (self.DOMAIN + ".md")).write_text(
+                body, encoding="utf-8")
+            (root / side / "framework.config.json").write_text(
+                json.dumps({"paths": {"extension_dir": "doc/extensions"}}), encoding="utf-8")
+            (ext / "manifest.yaml").write_text(
+                'version: "1.0.0"\nprovides:\n  knowledge:\n'
+                '    - knowledge/constraints/' + self.DOMAIN + '.md\n', encoding="utf-8")
+        # --scan 记下目标升级前的样子，然后把升级结果写进去，再 --check
+        self.scan(root)
+        (root / "target" / "doc" / "extensions" / "knowledge" / "constraints"
+         / (self.DOMAIN + ".md")).write_text(after_upgrade, encoding="utf-8")
+        return root
+
+    def scan(self, root: Path) -> None:
+        subprocess.run(
+            ["node", str(ADAPT / "scripts" / "adapt-scan.mjs"), "--scan",
+             "--target", str(root / "target"), "--package", str(root / "package")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def check(self, root: Path) -> tuple[int, str]:
+        proc = subprocess.run(
+            ["node", str(ADAPT / "scripts" / "adapt-scan.mjs"), "--check",
+             "--target", str(root / "target"), "--package", str(root / "package")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    def test_replacing_it_with_the_package_version_is_caught(self) -> None:
+        code, out = self.check(self.build(self.PACKAGE))
+        self.assertNotEqual(code, 0, "整份换成包的版本没被核出来：" + out)
+        self.assertIn("知识内容丢失", out)
+
+    def test_a_merge_that_keeps_the_target_content_passes(self) -> None:
+        """合并是允许的：目标已有内容一字不丢，包新增的列进来。"""
+        code, out = self.check(self.build(self.MERGED))
+        self.assertNotIn("知识内容丢失", out, "合并态被误判成丢失：" + out)
+
+
 class AdaptEntryMarkerFixture(unittest.TestCase):
     """标记协议的正反夹具：跑真的 adapt-scan，退出码即结论。"""
 
