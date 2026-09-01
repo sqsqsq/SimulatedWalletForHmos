@@ -87,6 +87,12 @@ doc/features/*/ux-reference/_fidelity-cache/
 doc/extensions/.adapt-*/
 doc/extensions/adapt/
 
+# Python 字节码：运行 story_flow.py / import_sources.py 就地产生，既不入库也不交付。
+# adapt 的机制目录扫描会把 skills/ 下的一切当成机制内容比对与复制——不排除它，
+# 一份 .pyc 会被当作「机制文件」搬进目标工程，再因为字节码不同而永远核不平。
+__pycache__/
+*.py[cod]
+
 # Personal / local agent settings (per developer, gitignored)
 **/.cac/settings.local.json
 output/

@@ -44,10 +44,19 @@ const read = (f) => readFileSync(f, 'utf8');
  * 一眼看出它是临时件而不是交付内容。
  */
 const isWork = (name) => name === 'adapt' || name.startsWith('.adapt-');
+/**
+ * 运行产物目录：跑过脚本就会有，既不入库也不交付。
+ *
+ * 不排除它，`__pycache__` 里的字节码会被 classOf 判成 `skills/story/**` 下的机制内容，
+ * 跟着「整体复制」搬进目标工程，再因为两边字节码不同而永远核不平。
+ */
+const isRuntimeJunk = (name) => name === '__pycache__';
 const walk = (dir, base = dir) => !existsSync(dir) ? [] :
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const f = join(dir, e.name);
-    if (e.isDirectory()) return isWork(rel(base, f)) ? [] : walk(f, base);
+    if (e.isDirectory()) {
+      return isWork(rel(base, f)) || isRuntimeJunk(e.name) ? [] : walk(f, base);
+    }
     return [rel(base, f)];
   });
 
@@ -159,12 +168,16 @@ for (const p of ROOT_FILES.slice(0, 4)) {
 }
 
 // ② 目标所有的知识文件：旧事实序列仍按序在新文件（允许新增列/行/键）
-//    守恒对象 = 事实文件 + 目标自加的文件；包里有同名的规约/模式在升级时本就换成包的版本，不核
-const pkgNames = new Set((before.package_knowledge || []).map((p) => p.split('/').pop()));
+//
+// **守恒对象 = 目标已有的每一个知识文件**，不分事实 / 规约 / 模式。上一版把「包里有
+// 同名的规约与模式」排除在守恒之外，理由是它们随包直接维护、换版本是预期——那条排除
+// 正是「升级把目标写好的知识整份盖掉而校验一声不吭」的成因：谁都没在核它。
+// 现在包内知识文件只有两个用途：新装时作初始样板、升级时作**变更提案**（由执行模型
+// 语义合并、人确认后写入），目标已有的内容在任何路径 / 结构下都不被静默覆盖。
+// 索引 README 不在此列（classOf 判为 bridge / mech，按 SKILL §2 索引行合成）。
 for (const k of before.knowledge) {
   if (k.confirmed === '未确认') continue;            // 样板被填写不在守恒对象内
   const base = k.path.split('/').pop();
-  if (k.kind !== 'facts' && pkgNames.has(base)) continue;   // 随包直接维护，换版本是预期
   const f = tf.find((p) => p.endsWith(`/${base}`) && classOf(p) === 'know');
   if (!f) { bad.push(`② 知识文件消失：${k.path}`); continue; }
   const seq = factSeq(read(join(TDIR, f)));
@@ -185,14 +198,34 @@ for (const c of before.custom) {
   else if (nowCustom.get(c.path) !== c.sha) bad.push(`④ 自定义文件被改：${c.path}`);
 }
 
-// ⑤ 入口文件含扩展段：包有 skills/story/AGENTS.section.md 时，目标 AGENTS.md（及存在的 CLAUDE.md）须含其正文；包没有则跳过
+// ⑤ 入口文件含扩展段（带标记区）
+//
+// 包有 skills/story/AGENTS.section.md 时，目标 AGENTS.md（及存在的 CLAUDE.md）须含其正文。
+// 正文自带 `<!-- story-ext:begin -->` / `<!-- story-ext:end -->` 标记区：「实例扩展」节
+// **不止 adapt 一个写者**——framework 的 render-agents-md 也往这一节生成 Skill 表格，
+// 上一版按整节替换，把宿主刚生成的表格连同别的内容一起盖掉了。标记区划清写者边界：
+// adapt 只重写标记之间，标记之外一律不碰。
+//
+// 目标里已有无标记旧段时**单独报**：那是首次迁移，SKILL §6 的做法是原位包上标记，
+// 而不是再追加一段——两条报错文案不同，因为修法不同。
 const SECTION = 'skills/story/AGENTS.section.md', ws = (s) => s.replace(/\s+/g, ' ').trim();
+const EXT_BEGIN = '<!-- story-ext:begin -->', EXT_END = '<!-- story-ext:end -->';
 if (existsSync(join(PDIR, SECTION))) {
-  const body = ws(read(join(PDIR, SECTION)));
+  const raw = read(join(PDIR, SECTION));
+  const body = ws(raw);
+  // 无标记形态：把标记行剥掉之后的正文，用来认出「内容在、标记没包上」的旧段
+  const bare = ws(raw.split(/\r?\n/).filter((l) => !l.trim().startsWith('<!-- story-ext:')).join('\n'));
   for (const entry of ['AGENTS.md', 'CLAUDE.md']) {
     const f = join(TARGET, entry);
     if (!existsSync(f)) { if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`); continue; }
-    if (!ws(read(f)).includes(body)) bad.push(`⑤ 入口文件未含扩展段：${entry}（把包内扩展段写进它的「实例扩展」节）`);
+    const got = ws(read(f));
+    if (got.includes(body)) continue;
+    if (bare && got.includes(bare)) {
+      bad.push(`⑤ 入口文件的扩展段没有标记区：${entry}`
+        + `（首次迁移：把既有那一段原位用 ${EXT_BEGIN} / ${EXT_END} 包起来，不要另追加一段）`);
+    } else {
+      bad.push(`⑤ 入口文件未含扩展段：${entry}（把包内扩展段连同标记区写进它的「实例扩展」节末尾）`);
+    }
   }
 }
 

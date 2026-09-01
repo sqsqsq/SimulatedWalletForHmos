@@ -1,5 +1,7 @@
 # spec 阶段 · 扩展要求（写之前读这一页）
 
+> **推进不逐段问**：门禁报错怎么修、check 过了下一步做什么、进 harness 还是进 verifier——这些是义务不是选择题。停等点白名单与两层授权边界，见[story SKILL.md「推进契约」](../../skills/story/SKILL.md#推进契约)。
+
 本工程的实例扩展在 spec 阶段有两组要求。这一页只做索引：读什么、写成什么、跑什么、门禁拦什么。
 
 **先分清你在哪一组**——这个需求走了 `/story` 链吗（需求目录里有 `AR/story-flow.json`）？
@@ -56,5 +58,3 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <�
 
 **只在走 `/story` 时**：§9 缺章缺小节或没填；术语映射表里 `in_scope_modules` 的业务词没解释；
 三份产物不齐或叙事件没登记成文态；三级关卡没走完就进本阶段。
-
-报错会**一次列全**，每条都写「缺什么 / 写到哪 / 怎么写」，不必去读 `post_check.mjs` 反推。
