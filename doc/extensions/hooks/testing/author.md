@@ -1,7 +1,5 @@
 # testing 阶段 · 扩展要求（写之前读这一页）
 
-> **推进不逐段问**：门禁报错怎么修、check 过了下一步做什么、进 harness 还是进 verifier——这些是义务不是选择题。停等点白名单与两层授权边界，见[story SKILL.md「推进契约」](../../skills/story/SKILL.md#推进契约)。
-
 **契约实体上的 `must` 就是本阶段的知识来源**：plan 已经把每条规约义务挂到了扛着它的
 那个实体上。不回去重读规约、不重新判断适用性。对不上时回 plan 改 `must`。
 
@@ -41,3 +39,5 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 - `verify` 为 `device` / `both` 的义务在本阶段没有覆盖，也没有说法。
 - 结论只有「已验证」「符合要求」而没有可复核证据。
+
+报错会一次列全，每条都写「缺什么 / 写到哪 / 怎么写」。不需要读 `post_check.mjs` 反推判据。

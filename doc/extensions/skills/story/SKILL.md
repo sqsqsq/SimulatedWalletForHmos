@@ -46,49 +46,6 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | 成文：裁决者怎么裁 | [phases/story-verify.md](phases/story-verify.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
-## 推进契约
-
-**这一节是本扩展里推进授权的唯一定义**，各阶段须知与作业书只引用它、不复述。
-
-### 授权分两层
-
-| 层 | 谁说了算 | 怎么推进 |
-|---|---|---|
-| **story 流程段内**：S1→S4、spec 阶段内的成文与裁决、S5 归档 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，不逐段问 |
-| **framework 阶段之间**：spec 闭环 → plan 及之后 | framework 的推进策略 | 本节管不着，见下 |
-
-**story 契约 `next` 覆盖的就是第一层**：`init → 材料 → 关卡 → design.md → spec 闭环
-（三份产物）→ 归档`。它不驱动 plan 及之后——那属于 framework 的阶段边界。
-
-**第二层不另造一套授权。** 用户的目标越过 spec 时（例如「做到 plan」「全链路交付」），
-在 S4 收口那一刻一次讲清：请他在下一条消息里把范围说出来（framework 认「做到 design /
-做到 review / 全链路」这类表述），或者走 framework 的阶段推进确认点一次拿到范围授权。
-**一次问代替逐段问**——不要每闭环一个阶段问一次，也不要自己替 framework 判定授权。
-
-### 停等点白名单
-
-以下四种情形停下问人，**此外一律不问**：
-
-1. **材料缺口**：需要人补料才能继续（占位件、`inbox/` 空、单号查无此单）；
-2. **范围变更**：`scope_gate` 触发的三级关卡；
-3. **同一处连续 3 次修不好**：报出样本与已经试过的修法，然后停；
-4. **破坏性动作的既有确认点**：归档、恢复这类不可逆或覆盖线上内容的操作。
-
-「门禁报错了要不要修」「check 过了下一步做什么」「进 harness 还是进 verifier」
-**都不在白名单里**——那是义务不是选择题。
-
-### 裁决衔接链
-
-`story-build check` 通过之后，到阶段闭环是**一条义务链，链内没有停等点**：
-
-```
-check 通过 → 读本阶段 author.md → 写产物 → 主 agent 自己跑 harness
-          → 结构级 PASS → 主 agent 主动触发 verifier → 闭环
-```
-
-`check` FAIL 时按报错文案修，改完重跑，直到通过或触发白名单第 3 条。
-报错文案自带「缺什么 / 写到哪 / 怎么写」，不需要问该不该修。
-
 ## 初始化
 
 - **输入**：AR 单号 + `<mcp-token>`（取法见「需求系统 Token」）
@@ -138,8 +95,7 @@ python doc/extensions/skills/story/scripts/story_flow.py archived --feature <AR>
 `/story review <AR>` 把评审人在系统上留下的反馈拉回来，写入 `AR/review.md`（先备份原件）。
 
 评审表态由评审人填写——**你不代填表态、不动人工区**。人可能在系统上批注，也可能直接改本地
-文件：**流程不关心来源，模型的输入唯一就是 `AR/review.md`**。回传的意见写进这一份的
-「审核结果：」行与「其他意见」章，**不用整文批注版覆盖正本**（落位细则见下）。处置前完整读一遍
+文件：**流程不关心来源，模型的输入唯一就是 `AR/review.md`**。处置前完整读一遍
 [rules/review_reflow.md](rules/review_reflow.md)。产物是 `AR/review-disposition.json`
 与被修订的 `spec/spec.md`；**`AR/story.md` 与归档件不动**——story 定稿于评审时点。
 

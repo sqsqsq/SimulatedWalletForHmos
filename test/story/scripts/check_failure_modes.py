@@ -1675,15 +1675,9 @@ def a05_entry_file_misses_extension_section(root: Path, ctx: Ctx) -> Outcome:
     ——文件在仓里躺着，没有任何机制会把它送到作者眼前。
 
     包没有 ``AGENTS.section.md`` 时本条不适用（未启用该形态）。
-
-    **交付位置有两处**：扩展根（夹具形态）与 ``skills/story/``（本仓实际交付的位置，
-    由 story-adaptation SKILL §2 表的机制行带走）。只认扩展根时，本条在真实仓上恒判
-    「该形态未启用」而静默跳过——检查入口段有没有送达的这条判据，自己没送达。
     """
-    section = next((p for p in (root / "AGENTS.section.md",
-                                root / "skills" / "story" / "AGENTS.section.md")
-                    if p.exists()), None)
-    if section is None:
+    section = root / "AGENTS.section.md"
+    if not section.exists():
         return Outcome(True, "包未交付 AGENTS.section.md（该形态未启用）")
     body = _norm(read_text(section))
     if not body:

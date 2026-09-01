@@ -59,57 +59,6 @@ function minQuoteChars(contract) {
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 6;
 
-/**
- * 图类单元 —— 落点上有第四态 `material_only`（留在材料、不进 story）的那两类。
- *
- * 图与文字事实在这件事上不对称：一张图不引用时，读者还能顺着材料清单里的原文链接
- * 去看原件；一条文字事实不进 story 就是丢了，没有第二条路。所以「不进 story」
- * 只对图类是合法状态。
- */
-const IMAGE_KINDS = new Set(['image', 'diagram']);
-
-/**
- * 工程标识的形态判定 —— **check ⑩ 与 token 守恒共用这一个判定式**。
- *
- * 两处必须是同一个真源：⑩ 判「主叙事里不许出现工程标识」，守恒判「这个 token 要在
- * 落点核得到」。两处各写一份判定式时，只要有一个 token 被一边认成标识符、另一边不认，
- * 同一个单元就被两条判据夹死——正文写上它违反⑩，不写它违反守恒，作者无路可走。
- */
-const IDENTIFIER_SHAPE = /^[A-Za-z][A-Za-z0-9_]{3,}$/;
-
-/**
- * 本需求自己的编号不是工程标识。
- *
- * ①b 要求大标题带着它，材料清单也要写清这份文档出自哪张单——它是归档件与需求系统之间
- * 唯一的绳子。编号里带连字符时（`XXX-123` 这种），逐段也放行：正文里出现的是被切开的那一段。
- */
-function ownIdentifiers(feature) {
-  const f = String(feature ?? '').trim();
-  return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
-}
-
-/** 这个 token 是不是工程标识形态（本需求自己的编号除外）。 */
-function isEngineeringIdentifier(token, own) {
-  return !own.has(token) && IDENTIFIER_SHAPE.test(token);
-}
-
-/**
- * 一段正文里被围栏包住的部分。
- *
- * 语言红线只管围栏之外（`lint-rules.mjs` 的 `inFence` 分支直接跳过）：围栏里是图与代码，
- * 不是面向人的叙述。守恒要跟它同一个作用域——图的类型词（`flowchart` 这类）本来就只在
- * 围栏里出现，把它按「主叙事不许有工程标识」赶去附录，是拿一条不管这里的判据管这里。
- */
-function fencedText(text) {
-  const out = [];
-  let inFence = false;
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; out.push(line); continue; }
-    if (inFence) out.push(line);
-  }
-  return out.join('\n');
-}
-
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
 const KNOWLEDGE_VERDICTS = ['命中', '不命中', DOMAIN_NA];
@@ -221,38 +170,6 @@ function createContext(args) {
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
     flowPath: path.join(featureRoot, 'AR', 'story-flow.json'),
   };
-}
-
-/**
- * 随稿冻结的五件台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
- *
- * 文件名的真源在 `story_flow.py` 的 `STORY_SRC_FROZEN`：那五件是登记时要算指纹、
- * 登记后拒绝重算、归档时随稿走的同一批。清理、冻结、存在性三处说的必须是同一批文件，
- * 各写一份就会改一处忘一处。
- */
-const STORY_SRC_LEDGERS = [
-  ['unitsPath', 'init'], ['auditPath', 'audit'], ['decisionsPath', 'init'],
-  ['verdictsPath', '裁决'], ['copyeditPath', '统稿'],
-];
-
-/**
- * 五件台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
- *
- * 冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
- * 报错多到刷屏时，删掉那份报错最多的文件，check 的报错数就下去了——实测发生过一次，
- * 裁决台账错到 1000+ 之后被整份删除。所以报错文案要把这条路直接堵死：
- * 缺的那件是**补产出**，不是删同伴文件。
- */
-function requireLedgers(ctx) {
-  if (ctx.offline) return;                 // 仲裁锚只有一份 story，没有台账目录
-  const missing = STORY_SRC_LEDGERS
-    .filter(([key]) => ctx[key] && readText(ctx[key]) === null)
-    .map(([key, how]) => `${path.basename(ctx[key])}（跑 ${how} 产出）`);
-  if (!missing.length) return;
-  fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
-    + '  这五件是这份 story 据以成文的全部依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
-    + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
-    + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
 }
 
 /**
@@ -774,11 +691,6 @@ function cmdAudit(ctx) {
       records.push({ key: u.key, covered_by: old.covered_by });
       continue;
     }
-    // 图类的 material_only 同理：作者判定这张图不必进 story，机器不重算、只核理由与形态
-    if (old?.material_only && IMAGE_KINDS.has(u.kind)) {
-      records.push({ key: u.key, material_only: old.material_only });
-      continue;
-    }
     // 技术契约的那些行由机器直接归附录：落点对每一行都一样，不值得让模型逐条重想
     if (appendixTitle && appendixBound(u, ctx.contract)) {
       records.push({ key: u.key, at: appendixTitle, by: 'machine' });
@@ -805,7 +717,7 @@ function cmdAudit(ctx) {
   }
   writeJson(ctx.auditPath, { records });
 
-  const open = records.filter(r => !r.at && !r.covered_by && !r.machine_facing && !r.material_only);
+  const open = records.filter(r => !r.at && !r.covered_by && !r.machine_facing);
   process.stdout.write(
     `[story-build audit] ${records.length} 条；待你分配 ${open.length} 条`
     + `（机器已归位 ${records.length - open.length} 条：硬事实按 token 定章、`
@@ -820,12 +732,11 @@ function cmdAudit(ctx) {
     at: records.filter(r => r.at).length,
     covered_by: records.filter(r => r.covered_by).length,
     machine_facing: records.filter(r => r.machine_facing).length,
-    material_only: records.filter(r => r.material_only).length,
     open: open.length,
   };
   process.stdout.write(
-    `  落点分布：at ${tri.at}｜covered_by ${tri.covered_by}`
-    + `｜机器面 ${tri.machine_facing}｜留在材料 ${tri.material_only}｜待分配 ${tri.open}\n`);
+    `  三态：at ${tri.at}｜covered_by ${tri.covered_by}`
+    + `｜机器面 ${tri.machine_facing}｜待分配 ${tri.open}\n`);
   const bySource = new Map();
   for (const r of open) {
     const u = doc.units.find(x => x.key === r.key);
@@ -877,74 +788,6 @@ function cmdAudit(ctx) {
 
 const EMPTY_SECTION_TEXT = '本需求不涉及。';
 
-/** 术语映射表「解释」列的消歧参照标记：这一行是拿来做对照的，本需求不做它。 */
-const GLOSSARY_REFERENCE_MARK = '（消歧参照）';
-
-/** 终端上一次最多打多少条明细——其余进 `check-detail.md`。 */
-const CHECK_TERMINAL_CAP = 40;
-/** 每个判据类在终端露几条样本。 */
-const CHECK_SAMPLES_PER_CLASS = 5;
-
-/**
- * 报错登记本 —— **只改输出形态，判定逻辑一个字节不变**。
- *
- * 各判项照旧 `problems.push(一句话)`；本对象在 push 时给它盖上当前判据类的戳，
- * 戳由 `problems.at('②落点守恒')` 这样的调用切换。收尾时按类聚合：每类一行计数
- * 加前几条样本，全量明细落文件。
- *
- * 为什么要聚合：一千多条逐条刷屏，终端里翻不到头，也看不出「错在哪一类」。
- * 洪水本身构成删台账的动力——删掉报错最多的那份文件，数字就下去了。
- * 聚合之后，1000 条呈现为「⑥裁决核实 980 条 + 五条样本 + 一句修法」，
- * 读者一眼看出是同一类问题，明细要看时去 `check-detail.md`。
- */
-/**
- * 全量明细写 `story-src/check-detail.md`。
- *
- * 它是**这一次 check 的诊断件**：不入冻结五件（那五件是产物的依据，随稿走），
- * 也不进材料清单（读者不需要它）。每次 check 覆盖重写——上一次的错已经不成立了。
- *
- * @returns {string|null} 写成的路径；离线或写不进去时 null
- */
-function writeCheckDetail(ctx, grouped, total) {
-  if (ctx.offline || !ctx.srcDir) return null;
-  const at = new Date().toISOString();
-  const out = [`# story-build check 明细`, '',
-    `${total} 处未通过，分 ${grouped.size} 类。生成于 ${at}。`,
-    '', '> 本文件是这一次 check 的诊断件，不随稿冻结、不进材料清单，下次 check 覆盖重写。', ''];
-  for (const [cls, list] of grouped) {
-    out.push(`## ${cls}（${list.length} 条）`, '');
-    list.forEach((t, i) => out.push(`${i + 1}. ${t}`));
-    out.push('');
-  }
-  const file = path.join(ctx.srcDir, 'check-detail.md');
-  try {
-    fs.mkdirSync(ctx.srcDir, { recursive: true });
-    fs.writeFileSync(file, out.join('\n'), 'utf8');
-    return file;
-  } catch { return null; }
-}
-
-function makeProblemLog() {
-  const items = [];
-  let current = '其它';
-  return {
-    /** 切换当前判据类；此后 push 的都归这一类 */
-    at(cls) { current = cls; },
-    push(text) { items.push({ cls: current, text: String(text) }); },
-    get length() { return items.length; },
-    forEach(fn) { items.forEach((it, i) => fn(it.text, i)); },
-    /** 按类聚合，保持类首次出现的顺序 */
-    byClass() {
-      const out = new Map();
-      for (const it of items) {
-        if (!out.has(it.cls)) out.set(it.cls, []);
-        out.get(it.cls).push(it.text);
-      }
-      return out;
-    },
-  };
-}
-
 /**
  * spec §0 术语映射表里、应当出现在 story 的业务实体词，哪些没出现。
  *
@@ -965,27 +808,11 @@ function missingGlossaryTerms(specText, storyText, projectRoot) {
   if (!rows.length) return [];
   const header = rows.find(c => /^原始术语$|^术语$/.test(c[0]));
   const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
-  // **消歧参照物不参与本判。** 术语表因 Catalog 的易混项把别人的词拉进来做对照，
-  // 那是 spec 的本职内容——本需求并不做它，需求叙事里天然不出现。要求它出现，
-  // 作者只能把不做的事写进 story，那是为了过判据造事实。
-  //
-  // 标记落在「解释」列，两种写法：
-  // - `—`：评审者不需要这个词（被消费的基础能力，spec 那边对 Scope 外的行本就许可留空）；
-  // - `（消歧参照）…`：**权威模块也在 Scope 内**的参照物。这一类没法靠留空表达——
-  //   spec 那边对 Scope 内的行要求解释非空，作者被两条判据夹住：写了解释就得让它
-  //   出现在 story，不写解释过不了 spec。所以标记得是显式的一个值，不是「空着」。
-  const explainIdx = header ? header.findIndex(h => /解释/.test(h)) : -1;
-  const isReference = (c) => {
-    if (explainIdx < 0) return false;
-    const v = (c[explainIdx] ?? '').trim();
-    return v === '—' || v === '-' || v === '' || v.startsWith(GLOSSARY_REFERENCE_MARK);
-  };
   const baseLayers = baseLayerIds(projectRoot);
   return rows
     .filter(c => c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
     .filter(c => layerIdx < 0 || !baseLayers.length
       || !baseLayers.some(id => (c[layerIdx] ?? '').includes(id)))
-    .filter(c => !isReference(c))
     .map(c => c[0])
     .filter(t => t && !storyText.includes(t));
 }
@@ -1034,9 +861,7 @@ function redactMaterialLinks(storyText, ctx) {
 }
 
 function cmdCheck(ctx) {
-  // 起步先判五件台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的回声。
-  requireLedgers(ctx);
-  const problems = makeProblemLog();
+  const problems = [];
   // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
   const notes = [];
   // 离线模式（仲裁锚）：单元清单与核对记录给空，依赖它们的判项一条不判，
@@ -1054,7 +879,6 @@ function cmdCheck(ctx) {
   // 永远不会成为来源单元，于是守恒面悄悄小了一圈：check 在登记那一刻是过的，
   // 过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
   // 这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
-  problems.at('⓪ 材料没在枚举之后又变过');
   const frozen = ctx.offline ? { written: false, digests: {} } : storyFrozen(ctx);
   if (!ctx.offline) {
     const before = readJson(ctx.unitsPath, {}).source_digests ?? null;
@@ -1094,7 +918,6 @@ function cmdCheck(ctx) {
   const want = ctx.contract.chapters.map(c => c.title);
 
   // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
-  problems.at('① 章标题与顺序');
   if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
     const extra = titles.filter(t => !want.includes(t));
@@ -1111,7 +934,6 @@ function cmdCheck(ctx) {
   //
   // 在线时比对的是本 feature 的编号（知道答案就核答案）；离线只有一份 story，
   // 此时退一格核**形态**——首个词是编号形态即可。两条路都拦得住「标题只有需求名」。
-  problems.at('①b 大标题带需求编号');
   const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
   const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
   if (!h1Text) {
@@ -1133,7 +955,6 @@ function cmdCheck(ctx) {
   //
   // **`at` 要核到章**，不是核整篇：上一版只看 `at` 这个键在不在、token 在不在整篇里，
   // 于是作者填任何章名都过——旧的自由文本理由换成了不核的 `at`，形态变了效果没变。
-  problems.at('② 落点守恒');
   const sectionText = new Map(sections.map(s => [s.title, s.text]));
   const titleSet = new Set(titles);
   const byKey = new Map(doc.units.map(u => [u.key, u]));
@@ -1143,33 +964,16 @@ function cmdCheck(ctx) {
   const authorPlaced = [];      // 机器定不了、由裁决者裁的那些
   const appendixTitle = appendixChapter(ctx.contract)?.title ?? null;
   const narrativeKinds = new Set(ctx.contract.allocation?.narrative_kinds ?? []);
-  // 工程标识的守恒范围是**附录**，不是叙事落点章——两者同一个判定式，见 ⑩。
-  const own = ownIdentifiers(ctx.args.feature);
-  const appendixText = appendixTitle ? (sectionText.get(appendixTitle) ?? '') : '';
 
   for (const u of doc.units) {
     if (u.machine_facing) continue;
     if (u.kind === 'knowledge') continue;   // 规约条目走 ⑦ 判定表，不走章节落点
     if (u.kind === 'decision' && u.status === 'open') continue;   // 开放议题走评审记录
     const rec = recByKey.get(u.key);
-    const states = ['at', 'covered_by', 'machine_facing', 'material_only'].filter(k => rec?.[k]);
+    const states = ['at', 'covered_by', 'machine_facing'].filter(k => rec?.[k]);
     if (states.length === 0) { stateless.push(u); continue; }
     if (states.length > 1) {
-      problems.push(`${u.key} 同时标了 ${states.join(' 与 ')}——各态互斥，一条只能是其中一个`);
-    }
-    if (rec.material_only) {
-      // 图类单元的第四态：留在材料、不进 story。读者经材料清单的原始文件链接可达。
-      // **只给图类**：文字事实没有「在材料里看」这条路——它不进 story 就是丢了。
-      if (!IMAGE_KINDS.has(u.kind)) {
-        problems.push(`${u.key} 标了 material_only，但它不是图类单元（kind=${u.kind}）`
-          + '——这一态只给图片与图：图不引用时读者还能顺材料清单的链接去看原件，'
-          + '文字事实不进 story 就是丢了');
-      } else if (String(rec.material_only).trim().length < 4) {
-        problems.push(`${u.key} 的 material_only 没写理由`
-          + '——写一句为什么这张图不必进 story（叙述由哪一段、哪张图承载），'
-          + '空着分不清「判过了不需要」与「懒得引」');
-      }
-      continue;
+      problems.push(`${u.key} 同时标了 ${states.join(' 与 ')}——三态互斥，一条只能是其中一个`);
     }
     if (rec.machine_facing) {
       problems.push(`${u.key} 被标成 machine_facing，但枚举器没这么判`
@@ -1218,19 +1022,7 @@ function cmdCheck(ctx) {
     // by: machine —— 机器给的落点，必须在**那一章**里核得住。
     // 只核硬事实：`by: machine` 现在只可能由 token 命中产生（见 autoPlace），
     // 没有 token 的单元走不到这里。
-    //
-    // **工程标识按附录核，不按叙事落点章核。** 语言红线（⑩）不许主叙事出现工程标识，
-    // 而附录是它们唯一的落点——两条判据要求相反时，作者怎么写都是错的：写进正文违反⑩，
-    // 不写违反守恒。demo 的材料里含标识符的单元恰好都归了附录，两条判据碰不上；
-    // 材料把标识符写进业务叙述句时就碰上了。所以按 token 形态分两路核：
-    // 标识符形态去附录核，其余（数值、阈值、图片名、验收编号）照旧核落点章。
-    // 叙事落点对这类单元只核业务语义——那由裁决者的逐条裁决接。
-    const lost = u.tokens.filter(t => {
-      if (!isEngineeringIdentifier(t, own)) return !chapter.includes(t);
-      // ⑩ 管不到围栏里，所以围栏里核得住就算数——两条判据作用域对齐
-      if (fencedText(chapter).includes(t)) return false;
-      return !appendixText.includes(t);
-    });
+    const lost = u.tokens.filter(t => !chapter.includes(t));
     if (lost.length) {
       missingTokens.push({ key: u.key, unit: u, lost, at: rec.at });
     }
@@ -1252,7 +1044,6 @@ function cmdCheck(ctx) {
   }
 
   // ③ 编号形态
-  problems.at('③ 编号形态');
   for (const shape of ctx.contract.id_shapes?.drop ?? []) {
     let re;
     try { re = new RegExp(shape, 'g'); } catch { problems.push(`编号形态不是合法正则：${shape}`); continue; }
@@ -1280,7 +1071,6 @@ function cmdCheck(ctx) {
   // 上一版只判「有落点」——于是把流程图压成「A → B → C」这样的箭头文字、
   // 把表压成散文都能通过。读者要的是那张图一眼看出的结构，文字复述它做不到。
   // 判的是**形态不是语义**：语义归裁决者，这里只管「源里是图的，到这儿还是不是图」。
-  problems.at('④ 形态守恒');
   const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
   const seen = new Set();
   for (const [, alt, src] of imgs) {
@@ -1359,10 +1149,9 @@ function cmdCheck(ctx) {
     const rec = recByKey.get(u.key);
     const at = placedAt(u);
     if (u.kind === 'diagram') {
-      if (!at && !rec?.covered_by && !rec?.material_only) {
-        problems.push(`来源材料里的图（${u.doc}:${u.line}）既没进 story，也没说明为什么不进`
-          + '——按叙述逻辑该引就引（分个落点章），story 自己画了覆盖它就标 covered_by，'
-          + '确实不必进正文就标 material_only 并写一句理由');
+      if (!at && !rec?.covered_by) {
+        problems.push(`来源材料里的图（${u.doc}:${u.line}）在 story 里没有落点`
+          + '——图是读者最依赖的那部分，不能只在材料里有');
       } else if (at && chapterForm.get(at) && !chapterForm.get(at).diagram) {
         problems.push(`来源材料里的图（${u.doc}:${u.line}）落在「${at}」，但那一章没有图`
           + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构');
@@ -1389,13 +1178,20 @@ function cmdCheck(ctx) {
     }
   }
 
-  // **没有图片数量判据。** 上一版在这里核「story 的图数不少于材料」：3 张图的材料上
-  // 它等价于「丢图＝丢内容」，30+ 图的真实 PRD 上它等价于「把 PRD 复刻一遍」——
-  // 作者被逼着把每张界面细节图都塞进叙述里。`material_only` 成为合法态之后，
-  // 「不少于源」在逻辑上也不再成立。
-  //
-  // 反向的数量判据（引用率上限之类）同样不设：逼引与逼不引都是拿数量代替判断。
-  // 该引没引由语义接——story-verify 逐张问 material_only 的图有没有断了叙述的链。
+  // 整篇形态数不降级：源里有几张图，story 里就不该更少
+  const sourceForm = { diagram: 0, image: 0 };
+  for (const u of doc.units) {
+    if (u.kind === 'diagram') sourceForm.diagram += 1;
+    if (u.kind === 'image') sourceForm.image += 1;
+  }
+  const storyDiagrams = (storyText.match(/^\s*(?:```|~~~)\s*\w+/gm) ?? []).length;
+  if (sourceForm.diagram && storyDiagrams < sourceForm.diagram) {
+    problems.push(`材料里有 ${sourceForm.diagram} 张图，story 里只有 ${storyDiagrams} 张`
+      + '——数量不该少于源');
+  }
+  if (sourceForm.image && imgs.length < sourceForm.image) {
+    problems.push(`材料里有 ${sourceForm.image} 张图片，story 里只引用了 ${imgs.length} 张`);
+  }
 
   // ⑤ 决策登记的字段齐备（离线模式没有需求目录，这一项不判）
   //
@@ -1404,7 +1200,6 @@ function cmdCheck(ctx) {
   // 一段过得去而什么也没说的话。数量塌陷与叙述质量由评审记录的效果定义、
   // verifier 的逐问、以及评审人自己接。这里只核「渲染得出来」：
   // 标题、澄清正文、请谁确认，缺一条渲出来就是半个议题。
-  problems.at('⑤ 决策登记的字段齐备');
   const decisions = ctx.offline ? null : readJson(ctx.decisionsPath, null);
   if (ctx.offline) { /* 仲裁锚只判文档本身 */ }
   else if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
@@ -1447,7 +1242,6 @@ function cmdCheck(ctx) {
   //
   // 这一条替代上一版的「靠语义判据守恒」那个空计数——说了「有 N 条机器管不了」，
   // 却没人真去管它们，等于把漏写记了个数就放行。
-  problems.at('⑥ 裁决核实');
   const verdictConf = ctx.contract.verdicts ?? {};
   const unitWords = verdictConf.unit_words ?? VERDICT_WORDS;
   const vtextAll = readText(ctx.verdictsPath);
@@ -1521,7 +1315,6 @@ function cmdCheck(ctx) {
   // **前提是裁决产物已经存在**。writer 交回前会自己跑一次 check，那时裁决者还没上场，
   // 拦它没有意义；裁决者一旦交了产物，三张表就都得齐——只交一张，等于把
   // 「读者的问题答了没有」和「这一章读起来对不对」两件事悄悄跳过了。
-  problems.at('⑥b 逐问与逐章');
   if (storyText && vtextAll !== null && verdictConf.chapter_dimensions?.length) {
     const questionWords = verdictConf.question_words ?? [];
     const chapterWords = verdictConf.chapter_words ?? [];
@@ -1597,11 +1390,10 @@ function cmdCheck(ctx) {
   //    或其整域一行「整域不适用」
   //
   // 逐条判定原先落在一份独立的判定记录文件里，那份文件退场后既无作业指引也无门禁——
-  // 规约的逐条判定在 story 侧就这么整片丢了。判定回到 story 里，评审者才拿得到完备性回显。
+  // 批次 1 的「知识应用」在 story 侧就这么丢了。判定回到 story 里，评审者才拿得到完备性回显。
   //
   // 落点在**附录**而不是主叙事的某一章：规约编号是工程标识，读者对不上，
   // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
-  problems.at('⑦ 规约判定表');
   const kUnits = doc.units.filter(u => u.kind === 'knowledge');
   if (kUnits.length) {
     const appendix = appendixChapter(ctx.contract);
@@ -1647,7 +1439,6 @@ function cmdCheck(ctx) {
   // （主题色、脱敏这类——spec 拿它们把自然语言映到权威模块，story 用业务语言表达同一事实
   // 才是对的）。一视同仁地要求逐词出现，会让 story 越写人话越容易被判「丢了事实」。
   // 分流键取表内的「所属层」列：归属平台能力层的属工程消歧用词，不要求出现。
-  problems.at('⑧ 术语表实体词守恒');
   const specText = ctx.offline ? null : readText(path.join(ctx.featureRoot, 'spec', 'spec.md'));
   if (specText !== null) {
     const lost = missingGlossaryTerms(specText, storyText, ctx.projectRoot);
@@ -1661,7 +1452,6 @@ function cmdCheck(ctx) {
   //
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
   // 词表与判定在 lint-rules.mjs（SSOT），这里只调。
-  problems.at('⑨ 归档件四红线');
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
   // 「灰度」「回退」是业务事实不是客户端文案——收缩的是作用域，不是词表。
@@ -1680,22 +1470,7 @@ function cmdCheck(ctx) {
         scanBrokenImages(label === 'story' ? storyText : text,
                          path.dirname(ctx.storyPath), fs, path)],
     ]) {
-      if (!hits.length) continue;
-      // **禁用词按产物分治**：story 是叙事件，「灰度」「回退」出现在那里多半真是在讲
-      // 交付机制，照拦（讲发布动作的那一章有合同级豁免）。review 是决策文档——
-      // 「可选的做法是什么」「为什么被否的那条不行」「不同意时改成什么」天然要写
-      // 反事实与理由，这些词在那里是决策语言不是交付承诺。实测两处命中全属此类。
-      // review 本来就有人工评审兜住，误伤面与兜底面重合，所以那一半记一笔不拦。
-      //
-      // 只对禁用词分治：仓内路径、悬空引用、图片断链在 review 里同样是坏的
-      // ——评审者手上没有这个仓，点不开就是点不开。
-      if (label === 'review' && kind === 'banned') {
-        notes.push(`review 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`
-          + '——决策文档写反事实与理由是本职，这里只记一笔；'
-          + '若确实是在承诺交付机制，改掉');
-        continue;
-      }
-      problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
+      if (hits.length) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
     }
   }
 
@@ -1709,14 +1484,21 @@ function cmdCheck(ctx) {
   // 判据全部是数据：作用域边界取合同里标了 appendix 的那一章，规约编号取激活清单，
   // PascalCase 标识符取材料里实际出现过的 token——**不猜**。猜的代价是把产品名
   // 判成工程标识，而作者除了删掉正确的词之外无路可走。
-  problems.at('⑩ 语言红线');
   const redlineKinds = ctx.contract.language_redline?.kinds;
   if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
     const appendix = appendixChapter(ctx.contract);
+    // **本需求自己的编号不是工程标识**：①b 要求大标题带着它，材料清单也要写清这份文档
+    // 出自哪张单——它恰恰是归档件与需求系统之间唯一的绳子。不放它出来，两条判据直接
+    // 打架：一条要求写上，一条判它违规，作者无路可走（实测把一轮实跑卡在这里）。
+    // 编号里带连字符时（`XXX-123` 这种），逐段也放行——正文里出现的是被切开的那一段。
+    const own = new Set(String(ctx.args.feature ?? '').trim()
+      .split(/[^A-Za-z0-9]+/).concat(String(ctx.args.feature ?? '').trim())
+      .map(s => s.trim()).filter(Boolean));
     const identifiers = [];
     for (const u of doc.units) {
       for (const t of u.tokens ?? []) {
-        if (isEngineeringIdentifier(t, own)) identifiers.push(t);
+        if (own.has(t)) continue;
+        if (/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t)) identifiers.push(t);
       }
     }
     const hits = scanLanguageRedline(storyText, {
@@ -1745,7 +1527,6 @@ function cmdCheck(ctx) {
   // 四条都满足同一个条件——**拆了一定更可读**，所以机械判它们不会被换皮受益。
   // 没有句长判据：为凑短而在逗号处断开只会写出半截话，那比长句更难读，
   // 而那正是最省力的过关方式。句子啰嗦不啰嗦归裁决者。
-  problems.at('⑪ 可读性');
   const readability = ctx.contract.readability ?? {};
   if (storyText && Object.keys(readability).some(k => !k.startsWith('_'))) {
     const byKind = new Map();
@@ -1770,7 +1551,6 @@ function cmdCheck(ctx) {
   // 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区——
   // 首跑的产物就在附录里多长出一个「机器核对索引」小节，255 行原文占全篇 58%。
   // 判的是结构不是内容：约定之外的小节、原文围栏块、空节，三样都不该有。
-  problems.at('⑫ 附录结构');
   const appendixDef = appendixChapter(ctx.contract);
   const appendixSection = appendixDef
     ? sections.find(sec => sec.title === appendixDef.title) : null;
@@ -1856,7 +1636,6 @@ function cmdCheck(ctx) {
   //
   // **只有三条，不加码**：必有的小节在不在、有已定决策时取舍成没成节、
   // 该分节的章有没有分节。「每章几节」这种配额一律不设——配额逼出来的是凑数的小标题。
-  problems.at('⑫b 正文章的节级形态');
   for (const chapter of ctx.contract.chapters ?? []) {
     if (chapter.appendix) continue;                 // 附录的小节枚举由 ⑫ 管
     const body = sectionText.get(chapter.title);
@@ -1891,7 +1670,6 @@ function cmdCheck(ctx) {
   //
   // **锁的是「本来就该是表的位置」，不是鼓励表格**：背景、方案叙述、流程图文、功能行为、
   // 交付路径一条表格类判据都不加——能一句话说清的仍然不建表，那一面归裁决面的贴合维。
-  problems.at('⑫e 固定形式');
   for (const chapter of ctx.contract.chapters ?? []) {
     const spec = chapter.section_form;
     if (!spec) continue;
@@ -1948,7 +1726,6 @@ function cmdCheck(ctx) {
   // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
   // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、材料能不能定位」。
   // 图题编号与小节编号已归 `number` 机器铺，不再判。
-  problems.at('⑫c 形态 lint');
   for (const h of scanImageForm(storyText)) {
     // 悬空指图点的是**那句话**，不是图——「第 N 行的图」会让人去那一行找一张不存在的图
     problems.push(h.kind === 'image_dangling'
@@ -2002,7 +1779,6 @@ function cmdCheck(ctx) {
   // 是为了让「没做」这件事留下痕迹。
   //
   // **只写六行，写多不奖励**：把它写成检查报告，下一轮就有人为了显得认真而灌水。
-  problems.at('⑫d 统稿留痕');
   if (!ctx.offline) {
     const copyedit = readText(ctx.copyeditPath);
     if (copyedit === null) {
@@ -2037,27 +1813,8 @@ function cmdCheck(ctx) {
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));
   }
   if (problems.length) {
-    const grouped = problems.byClass();
-    process.stderr.write(`[story-build check] ${problems.length} 处未通过，`
-      + `分 ${grouped.size} 类：\n`);
-    // 少量报错照旧逐条列——聚合是给洪水用的，十条以内摊开更好读。
-    if (problems.length <= CHECK_TERMINAL_CAP) {
-      problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
-    } else {
-      for (const [cls, list] of grouped) {
-        process.stderr.write(`  【${cls}】${list.length} 条\n`);
-        for (const t of list.slice(0, CHECK_SAMPLES_PER_CLASS)) {
-          process.stderr.write(`    · ${t}\n`);
-        }
-        if (list.length > CHECK_SAMPLES_PER_CLASS) {
-          process.stderr.write(`    …另 ${list.length - CHECK_SAMPLES_PER_CLASS} 条同类，见明细\n`);
-        }
-      }
-    }
-    // 全量明细落文件：终端封顶之后，逐条内容不能就此消失。
-    // 它**不进冻结五件、不进材料清单**——是这一次 check 的诊断件，不是产物的依据。
-    const detail = writeCheckDetail(ctx, grouped, problems.length);
-    if (detail) process.stderr.write(`  全量明细：${detail}\n`);
+    process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
+    problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
     process.exit(1);
   }
   process.stdout.write(
