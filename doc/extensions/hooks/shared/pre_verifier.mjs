@@ -19,8 +19,8 @@
  *
  * ## 注入不等于执行
  *
- * 只注入清单、不校验 verifier 是否照做，实测会漏（曾出现整整 12 条一条没裁而 harness
- * 照收 PASS）。所以清单里显式要求把裁决表写进**报告文件**，闭环回填那次运行由各阶段
+ * 只注入清单、不校验 verifier 是否照做会漏：清单里的条目一条没裁，harness 照收 PASS。
+ * 所以清单里显式要求把裁决表写进**报告文件**，闭环回填那次运行由各阶段
  * post_check 核对——框架的 post_verifier 钩子在 verifier **之前**触发，读不到它的报告。
  *
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。

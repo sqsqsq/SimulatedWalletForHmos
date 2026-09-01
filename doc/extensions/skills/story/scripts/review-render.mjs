@@ -35,11 +35,11 @@
  * 不在每个议题里重复。
  */
 /** 机器区与人工区的分界：这一行之前确定性重渲染，之后逐字节保留。 */
-const HUMAN_ZONE_MARK = '审核结果：';
+export const HUMAN_ZONE_MARK = '审核结果：';
 
 /** 计划外意见区的边界标记。 */
-const FREEFORM_OPEN = '<!-- freeform-zone -->';
-const FREEFORM_CLOSE = '<!-- /freeform-zone -->';
+export const FREEFORM_OPEN = '<!-- freeform-zone -->';
+export const FREEFORM_CLOSE = '<!-- /freeform-zone -->';
 
 /**
  * 一级分层＝状态，固定三章。章名面向人：`待确认事项` 而不是「需要你拍板」。

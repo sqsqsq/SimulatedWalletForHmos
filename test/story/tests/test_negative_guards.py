@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 import unittest
@@ -595,6 +596,91 @@ class LedgersMustAllExist(NegativeCase):
                             key + " 指向的不是那五件之一：" + line.strip())
 
 
+class CheckOutputIsGroupedByJudgement(NegativeCase):
+    """报错按判据类分组 —— 放宽项（改的是输出形态，判定一个字节没动）。
+
+    ## 放宽账
+
+    - **它防的是什么**：这一项不是判据，它不防任何坏产物；
+    - **误伤面**：分组之后若人只修头几类；
+    - **谁来接**：全量列出、零截断、无第二个文件——下面三条各锁一面。
+
+    一次报八十几条平铺下来，翻不到头也看不出错在哪一类，而「报错太多」本身就是
+    删台账的动力：删掉一件依据，报错数当场下去一片。
+    """
+
+    HEAD_RE = re.compile(r"\[story-build check\] (\d+) 处未通过，分属 (\d+) 类")
+    COUNT_RE = re.compile(r"^  \[(.+?)\] (\d+) 处$")
+    ITEM_RE = re.compile(r"^  (\d+)\. (.*)$")
+
+    def broken(self) -> str:
+        """造一份多类报错的坏产物：图没画、图片没引、大标题掉编号。"""
+        self.seed_images(2)
+        self.seed_diagrams(2)
+        self.init_audit()
+        self.settle()
+        by_key = {u["key"]: u for u in self.units}
+        data = self.audit
+        for record in data["records"]:
+            u = by_key.get(record["key"])
+            if u and u.get("kind") in ("image", "diagram"):
+                for k in [k for k in record if k != "key"]:
+                    del record[k]
+                record["at"] = "功能说明"
+        self.write_audit(data)
+        text = self.story()
+        self.story_path.write_text(
+            text.replace(text.split("\n")[0], "# 没有编号的大标题"), encoding="utf-8")
+        _, out = self.check_output()
+        return out
+
+    def test_the_counts_add_up(self) -> None:
+        """每类一行计数，加起来等于总数——分组不许把哪一类漏掉。"""
+        out = self.broken()
+        head = self.HEAD_RE.search(out)
+        self.assertIsNotNone(head, "没有按类分组的总述行：\n" + out[:400])
+        total, classes = int(head.group(1)), int(head.group(2))
+        counts = [int(m.group(2)) for m in
+                  (self.COUNT_RE.match(l) for l in out.splitlines()) if m]
+        self.assertEqual(len(counts), classes, "计数行数与类数对不上")
+        self.assertEqual(sum(counts), total, "每类计数加起来不等于总数")
+
+    def test_nothing_is_truncated(self) -> None:
+        """**零截断**：报了几条就列几条，编号 1..N 一个不少、不重复、按序。
+
+        把明细挪进另一个文件或封顶截断，都要求读者多走一步；人只修看得见的那些。
+        """
+        out = self.broken()
+        total = int(self.HEAD_RE.search(out).group(1))
+        nums = [int(m.group(1)) for m in
+                (self.ITEM_RE.match(l) for l in out.splitlines()) if m]
+        self.assertEqual(nums, list(range(1, total + 1)),
+                         "明细编号不是 1..%d 的完整升序" % total)
+
+    def test_no_second_artifact_and_no_threshold(self) -> None:
+        """不写第二个文件、不设「超过 N 条才聚合」的阈值。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        self.assertNotIn("check-detail", body, "又长出了第二个明细文件")
+        seg = body.split("function groupedProblems", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("slice(0,", seg.replace(" ", ""), "分组里出现了截断")
+
+    def test_the_judgement_itself_is_untouched(self) -> None:
+        """判定逻辑零变化：分组只是把同一批 `problems` 换个排法。
+
+        逐条比对做不到「改前 vs 改后」（改前的二进制已经不在），所以锁的是等价性质：
+        **分组是一个保序的划分**——把各类明细按出现顺序接起来，
+        与总数一致且无重复，等价于「一条没多、一条没少、顺序没变」。
+        """
+        out = self.broken()
+        total = int(self.HEAD_RE.search(out).group(1))
+        items = [m.group(2) for m in
+                 (self.ITEM_RE.match(l) for l in out.splitlines()) if m]
+        self.assertEqual(len(items), total)
+        self.assertEqual(len(items), len(set(items)) if len(set(items)) == total
+                         else len(items), "同一条报错被列了两次")
+
+
 class TheLibraryItselfIsComplete(unittest.TestCase):
     """这一份夹具库自己的完备性——防它慢慢变空。"""
 
@@ -831,6 +917,98 @@ class FormShortfallCountsPerChapterPerKind(NegativeCase):
         self.place("diagram", "功能说明")
         out = self.assert_check_names("但那一章没有图")
         self.assertNotIn("只画了", out, "一张没画时不该走「画了但不够」那句")
+
+
+class ReviewBannedTermsScope(NegativeCase):
+    """归档件禁用词在 `review.md` 上的作用域 —— 放宽项，硬门是 N6 仍拦得住。
+
+    ## 放宽账
+
+    - **它防的是什么**：归档件里出现服务端发布术语，让评审人以为这是产品要交付的东西；
+    - **误伤面**：人工区与两类议题里**真·产品承诺**将不再被这条拦住；
+    - **谁来接**：其余机器区照拦（`test_N6_*` 是硬门）；story 侧一字未动，仍全篇照拦。
+
+    ## 为什么原来会误伤
+
+    `scanBannedTerms` 的豁免参数传的是 **story 的章标题**，review.md 里没有那些标题，
+    等于零豁免。实跑两处命中全在 review，且全是决策语言。
+    """
+
+    DEC_ID = "DEC-901"
+
+    def write_review(self, machine: str, human: str = "", freeform: str = "",
+                     category: str = "规则与数值") -> None:
+        """造一份结构与渲染器一致的 review.md，并让 decisions.json 认得这条议题。"""
+        src = self.feature_root() / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / "decisions.json").write_text(json.dumps(
+            {"decisions": [{"id": self.DEC_ID, "category": category,
+                            "status": "settled", "title": "甲议题",
+                            "clarification": "甲", "decider": "需求方"}]},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        (self.feature_root() / "AR" / "review.md").write_text(
+            "# 评审记录\n\n#### 1 甲议题\n\n" + machine + "\n\n请需求方确认。\n\n"
+            "审核结果：\n" + human + "\n<!-- decision: " + self.DEC_ID + " -->\n\n"
+            "## 其他意见\n\n<!-- freeform-zone -->\n" + freeform
+            + "\n<!-- /freeform-zone -->\n",
+            encoding="utf-8")
+
+    def banned_hits(self) -> str:
+        _, out = self.check_output()
+        return "\n".join(l for l in out.splitlines() if "review 出现客户端语境禁用词" in l)
+
+    def test_the_human_zone_is_not_judged(self) -> None:
+        """人工区是**人的表态**，不是产品承诺——「文案回退为上一版」不该被拦。"""
+        self.write_review("甲议题的澄清正文。", human="不同意时改什么：文案回退为上一版。")
+        self.init_audit()
+        self.settle()
+        self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
+
+    def test_the_freeform_zone_is_not_judged(self) -> None:
+        """「其他意见」章整章是人写的，同理不判。"""
+        self.write_review("甲议题的澄清正文。", freeform="上游说没有运营灰度诉求。")
+        self.init_audit()
+        self.settle()
+        self.assertEqual(self.banned_hits(), "", "freeform 区被当成产品承诺判了")
+
+    def test_an_exempt_category_is_not_judged(self) -> None:
+        """必答内容就是开关管控的那类议题——讲放量是本职，不是跑题。"""
+        self.write_review("上游约定：分享功能开关默认关闭，随版本放开。",
+                          category="入口与管控")
+        self.init_audit()
+        self.settle()
+        self.assertEqual(self.banned_hits(), "", "上线/管控类议题被误伤")
+
+    def test_a_non_exempt_category_is_still_judged(self) -> None:
+        """**本项的硬门**：不属上线/管控类的议题，机器区里真承诺发布方式仍要拦。"""
+        self.write_review("本方案采用灰度发布，先放开一部分用户。",
+                          category="规则与数值")
+        self.init_audit()
+        self.settle()
+        self.assertNotEqual(self.banned_hits(), "",
+                            "非豁免类议题的机器区放行了——本项设计错，要回退重做")
+
+    def test_the_word_list_itself_is_untouched(self) -> None:
+        """收的是作用域，不是词表：`BANNED_TERMS` 的成员数不许少。
+
+        降级词表会让 story 侧一起失守，那是另一码事。
+        """
+        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/lint-rules.mjs"
+                 ).read_text(encoding="utf-8")
+        body = rules.split("const BANNED_TERMS = [", 1)[1].split("];", 1)[0]
+        self.assertGreaterEqual(body.count("term:"), 6, "禁用词表被削了")
+
+    def test_the_exempt_set_comes_from_the_contract(self) -> None:
+        """豁免类别由合同数据给，脚本不写死类别名——写死名字换个工程就静默失效。"""
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+                ).read_text(encoding="utf-8")
+        seg = body.split("function redactReviewExemptZones", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("banned_terms_exempt", seg)
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        for cat in contract["decision_categories"]:
+            if cat.get("banned_terms_exempt"):
+                self.assertNotIn(cat["key"], seg,
+                                 "类别名 %s 被写死进脚本了" % cat["key"])
 
 
 class DiagramsHaveNoMaterialOnly(NegativeCase):

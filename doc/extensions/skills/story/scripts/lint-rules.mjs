@@ -670,7 +670,7 @@ export function scanMaterialList(body, baseLine = 0, opts = {}) {
  *
  * 材料清单列的是**进 spec 之前的原始输入**。中间产物（本轮自己生成的规格、
  * 事实记录、参考件）与图片文件直链不是材料——它们混进来，清单就从「据哪几份材料写成」
- * 变成倾倒区：实测一份产物 22 行，规格被链了 4 次，连原图都单列。
+ * 变成倾倒区：同一份规格被链好几次，连图片文件都单列成行。
  */
 function firstSegment(fromDir, target) {
   const parts = String(fromDir ?? '').split('/').filter(Boolean);

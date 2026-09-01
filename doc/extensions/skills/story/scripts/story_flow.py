@@ -74,8 +74,7 @@ POSITIONING = ("AR", "story-src", ".positioning.json")
 SCOPE_OPTIONS = ("AR", "story-src", ".scope-options.json")
 DESIGN = ("AR", "design.md")
 # 成文态登记时随稿冻结的台账：story 定稿了，它据以成文的账本也就定稿了。
-# 登记之后重跑 init/audit 会把这几份重算一遍，实测过一次——登记 00:04 的台账
-# 被 00:20 的重跑冲掉，story.md 冻了，账本没冻。
+# 登记之后重跑 init/audit 会把这几份重算一遍：story.md 冻了，账本被后一次重跑冲掉。
 STORY_SRC_FROZEN = (
     "source-units.json", "audit.json", "decisions.json",
     "story-verdicts.md", "copyedit.md",
@@ -86,8 +85,8 @@ SOURCES = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
 def sweep_story_src(src: Path) -> list[str]:
     """登记前把 story-src/ 扫干净——只留台账那五件。
 
-    实测一轮：模型在这里造了 21 个工作草稿（分章文本、候选池、映射表），
-    跟五件台账混在一个目录里进了归档。归档件的读者分不清哪些是交付物、
+    模型会在这里造一堆工作草稿（分章文本、候选池、映射表），
+    跟五件台账混在一个目录里进归档。归档件的读者分不清哪些是交付物、
     哪些是造它时的脚手架，而脚手架里往往还有半成品与废弃版本。
 
     白名单**就是 STORY_SRC_FROZEN 本身**，不在这里另列一份：那五件是随稿冻结、

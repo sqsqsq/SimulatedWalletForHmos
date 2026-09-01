@@ -24,8 +24,8 @@
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  *
- * `audit.json` 只认三态，**没有自由文本理由**——上一版那个 `reason` 字段只判非空，
- * 实测 161/272 个单元「不进」、理由去重后只有 2 种，等于给漏写开了一个合法出口。
+ * `audit.json` 只认三态，**没有自由文本理由**——只判非空的自由文本理由字段，
+ * 大半单元会填同一句套话，等于给漏写开了一个合法出口。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -39,7 +39,9 @@ import {
   tableHeadersOf,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
-import { renderReview } from './review-render.mjs';
+import {
+  FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
+} from './review-render.mjs';
 
 const COMMANDS = ['init', 'audit', 'check', 'build', 'number'];
 
@@ -264,8 +266,7 @@ function sourceDocs(ctx) {
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
  * 上一版这里是 `if (text !== null) out.push(...)`：读不到就静默跳过。
- * 后果是守恒面能凭空缩掉一整类而零信号——实测一轮，`ux-reference/README.md`
- * 没被产出，UX 整类枚举出 0 个单元（上一轮那两份分别是 34 个和 11 个），
+ * 后果是守恒面能凭空缩掉一整类而零信号：某一份来源没被产出时，那一类枚举出 0 个单元，
  * 从 init 到 check 没有一条报错提过这件事。
  *
  * 这与 ⓪ 的立意是同一件事（它防「枚举之后材料变了，守恒面悄悄小一圈」），
@@ -359,14 +360,13 @@ function chapterForms(sections) {
  * 为什么要前移：图是 token 守恒链上最薄的一环——图片单元的 token 只有文件
  * basename，画了才有、没画就没有；流程图的 token 近乎空。所以文字事实丢了会被
  * 整篇 token 守恒在任意位置捞回来，**图丢了只有这一条形态判**。而它原先只在
- * `check` 跑，也就是全篇写完之后。实测一轮：3 张图片 + 2 张流程图分了落点章，
- * story 里一张都没有，作者一路写到最后才被告知。
+ * `check` 跑，也就是全篇写完之后——图分了落点章却一张没画时，作者要一路写到最后
+ * 才被告知。
  *
  * **只判已渲染的章**：还没写的章当然没有图，那不是欠账。
  *
- * **判的是「分了几张画了几张」，不是「这一章有没有图」。** 只问有无时，一章分到 4 张
- * 只画 1 张也算过关——实测撞到过：四个流程图单元全分到业务流程章，那章画了 1 张状态机，
- * 另外三张被压成箭头散文，一条都没报。
+ * **判的是「分了几张画了几张」，不是「这一章有没有图」。** 只问有无时，一章分到多张
+ * 只画一张也算过关：其余几张被压成箭头散文，一条都不会报。
  *
  * **它不会退回「材料有几张就得塞几张」**：分母是**作者自己给的 `at` 数**，不是材料总数。
  * 不该进 story 的图片标 `material_only`、被自绘图覆盖的标 `covered_by`，两者都不进分母，
@@ -607,7 +607,7 @@ function cmdInit(ctx) {
   writeJson(ctx.unitsPath, {
     generated_from: docs.map(d => d.rel),
     // 枚举时各份材料的指纹。check 拿它比对当前值——材料在枚举之后还在长，
-    // 后长出来的那些永远不会成为单元，守恒面就悄悄小了一圈（实测 27 条这么漏掉）。
+    // 后长出来的那些永远不会成为单元，守恒面就悄悄小了一圈。
     source_digests: Object.fromEntries(docs.map(d => [d.rel, digestOf(d.text)])),
     unit_count: units.length,
     token_count: units.reduce((n, u) => n + u.tokens.length, 0),
@@ -864,8 +864,8 @@ function subsectionNames(sectionText) {
  *
  * **不判纯中文叙事的落点**。上一版拿 ≥8 字的正文片段做子串兜底，于是守恒同时
  * 要求「把材料改写成人话」和「逐字保留原句」——两条互斥，把材料原文整段抄进
- * 一个倾倒区是唯一同时满足的解，而门禁会判它通过。实测首跑 267 个单元里 224 条
- * 塌进附录的倾倒区，机器全绿。改写后的中文归裁决者逐条裁，灵敏度由删事实对抗测试验。
+ * 一个倾倒区是唯一同时满足的解，而门禁会判它通过——大半单元会塌进附录那个倾倒区，
+ * 机器全绿。改写后的中文归裁决者逐条裁，灵敏度由删事实对抗测试验。
  *
  * **不要求全部 token 同节**——上一版正是这么判的，于是「把一件事分两处讲清楚」
  * 被判成无落点，作者只好把它们硬塞进同一段。
@@ -1168,9 +1168,9 @@ const EMPTY_SECTION_TEXT = '本需求不涉及。';
 /**
  * 术语单元格的**主名**——括注剥掉之后剩下的那部分。
  *
- * 术语表里普遍写成「数字车钥匙（车钥匙）」「权限档（全功能/仅解闭锁）」：括号里是给
- * 读者的同义提示或取值枚举，不是要求 story 逐字复述的内容。拿整个单元格去 story 里
- * 做子串匹配，主名明明在也会判成缺失——实跑一次报 12 个词，逐个核过全是这个成因。
+ * 术语表的单元格普遍写成「主名（同义提示）」或「主名（取值枚举）」：括号里是给读者的
+ * 提示，不是要求 story 逐字复述的内容。拿整个单元格去 story 做子串匹配，主名明明在
+ * 也会判成缺失，而术语表里带括注的行往往占大多数。
  *
  * **剥空不静默**：整格就是一个括注时按原串判，否则「（仅括注）」这种写坏的格子
  * 会因为主名为空而被无声跳过，看起来像通过了。
@@ -1236,6 +1236,59 @@ function materialLinkTargets(body, baseLine = 0) {
 }
 
 /**
+ * 归档件禁用词在 `review.md` 上的**作用域**：把不判的那几段抹成空行。
+ *
+ * 抹而不是跳过，是为了让行号不变——报错要指得回原文的那一行。
+ *
+ * 红线管的是**这份文档对产品的承诺**。review 里有两片地方不是承诺：
+ *
+ * | 不判的 | 为什么 |
+ * |---|---|
+ * | 人工区（`审核结果：` 之后到该议题的结束标记） | 那是**人的表态**：「不同意，文案回退为上一版」是他在说要改成什么，不是产品要交付回退能力 |
+ * | 「其他意见」章（`freeform-zone` 之内） | 同上，整章都是人写的 |
+ * | 必答内容就是上线动作 / 开关管控的那几类议题 | 与 story 的章级豁免逐字同一条判据：讲开关放量与上线顺序是这一类议题的本职，把它判成违规等于要求作者删掉评审人最要看的那一段 |
+ *
+ * **豁免类别由合同数据给**（`decision_categories[].banned_terms_exempt`），
+ * 脚本不写死类别名——写死名字换个工程就静默失效。
+ *
+ * **其余机器区照拦**：议题澄清正文里真的在承诺一种发布方式时，它仍该被拦住。
+ */
+function redactReviewExemptZones(reviewText, ctx) {
+  const text = String(reviewText ?? '');
+  if (!text) return text;
+  const exemptCats = new Set((ctx.contract.decision_categories ?? [])
+    .filter(c => c?.banned_terms_exempt).map(c => c.key));
+  const catOf = new Map();
+  for (const dec of (readJson(ctx.decisionsPath, null)?.decisions ?? [])) {
+    if (dec?.id) catOf.set(String(dec.id), String(dec.category ?? ''));
+  }
+  // CRLF 安全：这里只喂给禁用词扫描，它自己也按同样的切法，行号对得上就行。
+  const lines = text.split(/\r?\n/);
+  // 先把每一行归到它所属的议题：结束标记在块尾，所以从标记往回划。
+  const owner = new Array(lines.length).fill(null);
+  let from = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/<!--\s*decision:\s*([^\s>-]+)\s*-->/);
+    if (!m) continue;
+    for (let k = from; k <= i; k++) owner[k] = m[1];
+    from = i + 1;
+  }
+  const keep = new Array(lines.length).fill(true);
+  let inFreeform = false;
+  let inHuman = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.includes(FREEFORM_OPEN)) inFreeform = true;
+    if (inFreeform) { keep[i] = false; if (line.includes(FREEFORM_CLOSE)) inFreeform = false; continue; }
+    if (line.startsWith(HUMAN_ZONE_MARK)) inHuman = true;
+    if (/<!--\s*decision:/.test(line)) inHuman = false;
+    if (inHuman) { keep[i] = false; continue; }
+    if (owner[i] && exemptCats.has(catOf.get(owner[i]) ?? '')) keep[i] = false;
+  }
+  return lines.map((l, i) => (keep[i] ? l : '')).join('\n');
+}
+
+/**
  * 把材料清单那一节里的 markdown 链接换成一个占位词，再交给仓内路径与悬空引用扫描。
  *
  * **原文链接是仓内路径唯一允许出现的位置**：归档件的读者打不开这个仓，但他要能
@@ -1255,10 +1308,45 @@ function redactMaterialLinks(storyText, ctx) {
   return lines.join('\n');
 }
 
+/**
+ * 报错按判据类分组输出。
+ *
+ * 判定逻辑一个字节不改——各判项照旧 `problems.push(一句话)`，这里只是在每个判据类
+ * 开头记一个戳（`mark(...)`），输出时按戳把连续的那一段归到一类。
+ *
+ * **为什么要分组**：一次报八十几条平铺下来，翻不到头也看不出错在哪一类，
+ * 而「报错太多」本身就是删台账的动力——删掉一件依据，报错数当场下去一片。
+ * 先给每类一行计数，人（和模型）就知道该从哪一类下手。
+ *
+ * **不封顶、不截断、不写第二个文件**：封顶要凭空定一个阈值；把明细挪进另一个文件
+ * 要求读者多走一步去开它，而人只修看得见的那些，多一步就多一次可能不做。
+ * 难读的成因是平铺，分组加计数正面解决它；行数是另一件事，没人提过。
+ *
+ * @param {string[]} problems
+ * @param {{from: number, label: string}[]} marks
+ */
+function groupedProblems(problems, marks) {
+  // 第一个戳之前也可能有报错（判据类之外的前置校验），给它一个兜底类，
+  // 这样下面一个循环就覆盖全部，不会有谁掉出去。
+  const bounds = [{ from: 0, label: '其它' }]
+    .concat(marks.filter(m => m.from < problems.length));
+  const out = [];
+  for (let i = 0; i < bounds.length; i += 1) {
+    const from = bounds[i].from;
+    const to = i + 1 < bounds.length ? bounds[i + 1].from : problems.length;
+    if (to <= from) continue;                       // 这一类这次没报错
+    out.push({ label: bounds[i].label, items: problems.slice(from, to) });
+  }
+  return out;
+}
+
 function cmdCheck(ctx) {
   // 起步先判五件台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的回声。
   requireLedgers(ctx);
   const problems = [];
+  // 判据类的分组戳：只影响输出怎么排，不影响判定。
+  const marks = [];
+  const mark = (label) => marks.push({ from: problems.length, label });
   // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
   const notes = [];
   // 离线模式（仲裁锚）：单元清单与核对记录给空，依赖它们的判项一条不判，
@@ -1270,12 +1358,13 @@ function cmdCheck(ctx) {
   const audit = ctx.offline ? { records: [] } : readJson(ctx.auditPath, null);
   if (!audit) fail(`还没有核对记录，先跑 audit：${ctx.auditPath}`);
 
+  mark('⓪a 声明的来源都在');
   // ⓪a 合同声明的来源都在
   //
   // ⓪ 防的是「枚举之后材料变了」，防不了「声明的来源压根不在」。后者更隐蔽：
   // 那一类连一个单元都枚举不出来，而后面每一条判据都只在「枚举出来的那些」上跑，
-  // 于是守恒面小了一整类，门禁却全绿。实测一轮，`ux-reference/README.md` 没被产出，
-  // UX 整类 0 个单元（上一轮那两份分别是 34 与 11），从头到尾没有一条报错提过。
+  // 于是守恒面小了一整类，门禁却全绿：某一份声明的来源没被产出时，那一类枚举出 0 个
+  // 单元，从头到尾没有一条报错提过。
   if (!ctx.offline) {
     const { missing } = scanSources(ctx);
     for (const m of missing) {
@@ -1283,11 +1372,12 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⓪ 材料未在枚举后变过');
   // ⓪ 材料没在枚举之后又变过
   //
   // 规格件在 story 写完之后还会继续长——评审裁定回填、遗漏补写。后长出来的内容
   // 永远不会成为来源单元，于是守恒面悄悄小了一圈：check 在登记那一刻是过的，
-  // 过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
+  // 过些时候重跑 audit 才露出一批三态皆空，来源全是后长出来的那些内容。
   // 这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
   const frozen = ctx.offline ? { written: false, digests: {} } : storyFrozen(ctx);
   if (!ctx.offline) {
@@ -1327,6 +1417,7 @@ function cmdCheck(ctx) {
   const titles = sections.map(s => s.title);
   const want = ctx.contract.chapters.map(c => c.title);
 
+  mark('① 章标题与顺序');
   // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
   if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
@@ -1340,6 +1431,7 @@ function cmdCheck(ctx) {
     if (!body) problems.push(`「${sec.title}」是空节——确实不涉及就写「${EMPTY_SECTION_TEXT}」一句`);
   }
 
+  mark('①b 大标题带需求编号');
   // ①b 大标题带需求编号：归档件离开这个仓库之后，编号是它与需求系统之间唯一的绳子。
   //
   // 在线时比对的是本 feature 的编号（知道答案就核答案）；离线只有一份 story，
@@ -1358,6 +1450,7 @@ function cmdCheck(ctx) {
       + '——第一行写成 `# <需求编号> <需求名称>`');
   }
 
+  mark('② 落点守恒');
   // ② 落点守恒：三态每一种都过一遍机器。
   //
   // **落点域只有 story.md**。上一版把 decisions.json 也拼进来当草垛，于是任何 token 塞进
@@ -1441,7 +1534,7 @@ function cmdCheck(ctx) {
     const chapter = sectionText.get(rec.at) ?? '';
     if (rec.by === 'author') {
       // 业务叙述不落附录：附录是查阅件，读者顺着正文读下来要能读懂这件事。
-      // 塞进附录等于让它从阅读路径上消失——首跑 224/267 条就是这么塌进去的。
+      // 塞进附录等于让它从阅读路径上消失，而附录判据松，大批单元会往那里塌。
       if (narrativeKinds.has(u.kind) && appendixTitle && rec.at === appendixTitle) {
         problems.push(`${u.key}「${u.text.slice(0, 30)}」被分到「${appendixTitle}」，`
           + `但${appendixTitle}是查阅件，业务叙述不落在那里`
@@ -1496,6 +1589,7 @@ function cmdCheck(ctx) {
     problems.push(`另有 ${missingTokens.length - 8} 个单元的落点核不住（跑 audit 看全量）`);
   }
 
+  mark('③ 编号形态');
   // ③ 编号形态
   for (const shape of ctx.contract.id_shapes?.drop ?? []) {
     let re;
@@ -1519,6 +1613,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('④ 形态守恒');
   // ④ 形态守恒：图片与 diagram 可解析、全篇唯一、**以同类形态落点**
   //
   // 上一版只判「有落点」——于是把流程图压成「A → B → C」这样的箭头文字、
@@ -1619,6 +1714,7 @@ function cmdCheck(ctx) {
   //
   // 反向的数量判据（引用率上限之类）同样不设：逼引与逼不引都是拿数量代替判断。
 
+  mark('⑤ 决策登记字段齐备');
   // ⑤ 决策登记的字段齐备（离线模式没有需求目录，这一项不判）
   //
   // **只判形式，不判数量、不判叙述**。数量下限会催生凑数议题——凑数比零议题更坏，
@@ -1664,6 +1760,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑥ 裁决核实');
   // ⑥ 裁决核实：机器定不了落点的那些，裁决者要逐条裁并附引文
   //
   // 这一条替代上一版的「靠语义判据守恒」那个空计数——说了「有 N 条机器管不了」，
@@ -1731,6 +1828,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑥b 逐问与逐章');
   // ⑥b 逐问与逐章：每章的读者问题答了没有、这一章读起来对不对
   //
   // 逐单元守的是「材料里的事实没丢」，它守不住「读者想知道的事没人回答」——
@@ -1812,6 +1910,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑦ 规约判定表');
   // ⑦ 规约判定表：激活清单的每个条目在附录的「规约判定」小节有一行，
   //    或其整域一行「整域不适用」
   //
@@ -1859,6 +1958,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑧ 术语表实体词守恒');
   // ⑧ 术语表实体词守恒：spec §0 术语映射表里、权威模块落在 in_scope 的那些词须在 story 出现
   //
   // 术语表混着两类词：**需求实体**（业务对象的名字，story 就该出现）与**工程消歧用词**
@@ -1874,6 +1974,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑨ 归档件四红线');
   // ⑨ 归档件四红线：仓内路径 / 客户端禁用词 / 悬空引用 / 图片断链
   //
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
@@ -1886,11 +1987,18 @@ function cmdCheck(ctx) {
   // 不给链接他只知道「有一份产品需求文档」。豁免只到这一节的链接语法为止——
   // 正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
   const storyForPaths = redactMaterialLinks(storyText, ctx);
-  for (const [label, text] of [['story', storyForPaths], ['review', reviewText]]) {
+  // review 的禁用词作用域比别的判据窄：人工区与「上线/管控」类议题不判，
+  // 见 `redactReviewExemptZones`。词表一个字没削，收的是作用域。
+  const reviewForBanned = redactReviewExemptZones(reviewText, ctx);
+  for (const [label, text, bannedText] of [
+    ['story', storyForPaths, storyForPaths],
+    ['review', reviewText, reviewForBanned],
+  ]) {
     if (!text) continue;
     for (const [what, kind, hits] of [
       ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot)],
-      ['客户端语境禁用词', 'banned', scanBannedTerms(text, { exemptChapters: bannedExempt })],
+      ['客户端语境禁用词', 'banned',
+        scanBannedTerms(bannedText, { exemptChapters: bannedExempt })],
       ['悬空引用', 'dangling', scanDanglingRefs(text, ctx.projectRoot)],
       ['图片断链', 'image',
         scanBrokenImages(label === 'story' ? storyText : text,
@@ -1900,6 +2008,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑩ 语言红线');
   // ⑩ 语言红线：主叙事（附录之外）不出现工程标识、规约编号、检索措辞、
   //    来源括注、文档坐标、占位标题、AI 腔标题
   //
@@ -1940,6 +2049,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑪ 可读性');
   // ⑪ 可读性：长段、长章、过长步骤清单、重复段
   //
   // 四条都满足同一个条件——**拆了一定更可读**，所以机械判它们不会被换皮受益。
@@ -1964,10 +2074,11 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑫ 附录结构');
   // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
   //
   // 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区——
-  // 首跑的产物就在附录里多长出一个「机器核对索引」小节，255 行原文占全篇 58%。
+  // 常见形态是多长出一个「机器核对索引」之类的小节，把原文整段搬进去，占掉全篇大半。
   // 判的是结构不是内容：约定之外的小节、原文围栏块、空节，三样都不该有。
   const appendixDef = appendixChapter(ctx.contract);
   const appendixSection = appendixDef
@@ -2044,6 +2155,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑫b 正文章节级形态');
   // ⑫b 正文章的节级形态：必有的小节在不在、该分节的章分没分
   //
   // **为什么要有它**：两轮四份产物、零例外——有 check 判据的形态全达成，
@@ -2079,6 +2191,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑫e 固定形式');
   // ⑫e 固定形式：该固定的那几个位置，表头由数据锁死，模型只填格子
   //
   // **为什么锁到列**：术语、关键取舍、风险、受限与异常、验收——这五处的形式是确定性的，
@@ -2139,6 +2252,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑫c 形态 lint');
   // ⑫c 形态 lint：图的承接、材料清单的行形态
   //
   // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
@@ -2189,6 +2303,7 @@ function cmdCheck(ctx) {
   // 小节编号不在这里判：它由 `number` 命令统一铺（D1）。机器保证的形态再设一条
   // 判据，判的是自己的输出——真正会漏的是机器不做的那部分。
 
+  mark('⑫d 统稿留痕');
   // ⑫d 统稿留痕：`copyedit.md` 恰好六行，一项自查一行
   //
   // 统稿（通读全篇、收重复收承接收样式）是唯一一步没有任何产物的动作，于是跳过它
@@ -2212,6 +2327,7 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑬ 评审记录只含渲染语法');
   // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
@@ -2231,8 +2347,21 @@ function cmdCheck(ctx) {
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));
   }
   if (problems.length) {
-    process.stderr.write(`[story-build check] ${problems.length} 处未通过：\n`);
-    problems.forEach((p, i) => process.stderr.write(`  ${i + 1}. ${p}\n`));
+    const groups = groupedProblems(problems, marks);
+    process.stderr.write(`[story-build check] ${problems.length} 处未通过，`
+      + `分属 ${groups.length} 类：\n`);
+    for (const g of groups) {
+      process.stderr.write(`  [${g.label}] ${g.items.length} 处\n`);
+    }
+    process.stderr.write('\n');
+    let n = 0;
+    for (const g of groups) {
+      process.stderr.write(`  [${g.label}]\n`);
+      for (const item of g.items) {
+        n += 1;
+        process.stderr.write(`  ${n}. ${item}\n`);
+      }
+    }
     process.exit(1);
   }
   process.stdout.write(
