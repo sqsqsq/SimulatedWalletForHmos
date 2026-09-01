@@ -2387,6 +2387,11 @@ def control_payload(suite: dict[str, Any], *,
             "interaction_state": record.get("interaction_state"),
             "reply_status": record.get("last_reply_status"),
             "observation_count": record.get("observation_count", 0),
+            # 停滞读数必须落在**这个**投影里：`refresh_record` 早就把它算好挂在
+            # record 上，另外两处投影也带着它，唯独 poll 输出的这一份漏了——
+            # 于是「多久没吐字了」这条告警对宿主完全不可见，而那正是它要防的那件事。
+            "events_idle_sec": record.get("events_idle_sec"),
+            "stalled": record.get("stalled"),
             "last_error": record.get("last_error"),
         } for record in records],
         "interactions": interactions or [],

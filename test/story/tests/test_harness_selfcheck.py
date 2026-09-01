@@ -115,5 +115,67 @@ class NoTimeLimitStaysExplicit(unittest.TestCase):
                               "会落回 clis.json 的全局默认，硬超时就回来了")
 
 
+class StallReadingReachesEveryCaseProjection(unittest.TestCase):
+    """停滞读数要落在**每一份** Case 投影里，不是其中几份。
+
+    由来是一个真实的漏网：`refresh_record` 把 `events_idle_sec` 算好挂在 record 上，
+    另外两处投影也带着它，唯独 `poll` 输出的那一份漏了——于是「CLI 多久没吐字了」
+    这条告警对宿主完全不可见。**它要防的正是「每个指标都正常而它已经停了」，
+    自己却以那个形态失效了一整轮。**
+
+    判法不点名某一处：把**交到宿主手上的** Case 行都找出来——同时报 `case` 与
+    `feature`、且各列是从 record 上取的那种字典——逐个要求带上读数。
+    再加一处这样的投影时它自动生效。
+
+    内部结构不在此列：新建记录的模板、attempt 记录、稳定性与 diff 快照都不是给宿主
+    看的那份，把它们一起要求只会逼出一堆无意义的字段。
+    """
+
+    RUN_MULTI = SCRIPTS / "run_multi_case.py"
+    REQUIRED = ("events_idle_sec", "stalled")
+
+    @staticmethod
+    def _reads_from_record(node: ast.Dict) -> bool:
+        """各列是 `record.get(...)` 取出来的 —— 投影的形态，不是模板的形态。"""
+        reads = 0
+        for value in node.values:
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                    and value.func.attr == "get"
+                    and isinstance(value.func.value, ast.Name)
+                    and value.func.value.id == "record"):
+                reads += 1
+        return reads >= 5
+
+    def case_row_dicts(self) -> list:
+        tree = ast.parse(self.RUN_MULTI.read_text(encoding="utf-8"),
+                         filename=str(self.RUN_MULTI))
+        rows = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            keys = {k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if {"case", "feature", "status"} <= keys and self._reads_from_record(node):
+                rows.append((node, keys))
+        return rows
+
+    def test_every_case_row_carries_the_reading(self) -> None:
+        rows = self.case_row_dicts()
+        self.assertTrue(rows, "找不到任何 Case 行投影——判据失去对象")
+        missing = []
+        for node, keys in rows:
+            for field in self.REQUIRED:
+                if field not in keys:
+                    missing.append("行 %s 缺 %s" % (node.lineno, field))
+        self.assertEqual(missing, [],
+                         "有 Case 投影不带停滞读数：" + "；".join(missing))
+
+    def test_the_reading_is_computed_somewhere(self) -> None:
+        """投影带着它，但没人算它，同样是空的。"""
+        body = self.RUN_MULTI.read_text(encoding="utf-8")
+        self.assertIn("def events_idle_sec(", body)
+        self.assertIn('record["events_idle_sec"] = ', body)
+
+
 if __name__ == "__main__":
     unittest.main()
