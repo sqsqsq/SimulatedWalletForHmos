@@ -142,7 +142,12 @@ GATES = ("material_scope", "scope_decision", "split_carrier")
 MATERIAL_CHOICES = ("supplement", "confirm_scope")
 # 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
 CARRY_ALL = "carry_all"
-ACTORS = ("human", "ai")
+# 关卡决策**只认人签**，没有 AI 代签这一档。
+#
+# 曾经有 `ai` 这个取值，配上「材料缺口时才停」这种条件式判据，后果是：模型判
+# 「材料足够」→ 条件不成立 → 不停 → 以自己的名义把关卡记掉 → 材料补充环节
+# 整个被跳过。停等的开关不能交给被停的那一方，这一行就是那道门禁。
+ACTORS = ("human",)
 # 本 AR 当前范围是**哪里定下来的**，按强度排序：
 #   user_stated —— 关卡上由人定的（他说了本次做多少、怎么切）。最强：那是决定不是推断。
 #   title / design_prefill / sr_related —— 上游材料给了范围，强度依次递减；
@@ -614,7 +619,9 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if gate not in GATES:
         raise FlowError(f"--gate 须为 {' / '.join(GATES)} 之一，实为「{gate}」")
     if args.by not in ACTORS:
-        raise FlowError(f"--by 须为 {' / '.join(ACTORS)} 之一，实为「{args.by}」")
+        raise FlowError(
+            f"关卡决策只认人签（--by human），实为「{args.by}」——"
+            "材料够不够、范围怎么定由人拍板；你的判断写进选项推荐里，不代签")
     if not (args.basis or "").strip():
         raise FlowError("--basis 不能为空：决策的依据（用户原话）是契约的审计价值所在")
 
@@ -1091,6 +1098,7 @@ def main() -> int:
                     help="关卡编号，缺省 material_scope")
     ap.add_argument("--chosen", default=None,
                     help="选中项的 key；material_scope 为 supplement / split / proceed")
+    # 取值只剩 human：留着这个参数是为了让契约里那一栏仍然显式记着「谁签的」。
     ap.add_argument("--by", default="human", choices=list(ACTORS))
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
     ap.add_argument("--scope-text", default=None,

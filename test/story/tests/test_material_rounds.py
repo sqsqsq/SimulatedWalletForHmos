@@ -127,5 +127,94 @@ class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
                              "「%s」把某一类材料说成了二等的" % word)
 
 
+
+
+class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
+    """本扩展新增的停等点只有两处，且都无条件。
+
+    ## 为什么要锁
+
+    白名单曾经是四条**条件句**：「材料缺口——**需要**人补料才能继续」。
+    需不需要由模型判，等于把停等的开关交给被停的那一方。再配上 `--by ai`
+    这一档（用户说「别逐个问」时代签关卡），实跑里就出现了：模型判「材料足够」
+    → 条件不成立 → 不停 → 以自己的名义记掉关卡 → 材料补充环节整个被跳过。
+
+    另一头是反的：契约要求模型在 S4 收口处问一次「本轮做到哪一步」，
+    于是固定长出第三个停等点。那个问题在更早的两个地方已经有答案。
+    """
+
+    SKILL = (REPO_ROOT / "doc/extensions/skills/story/SKILL.md")
+    FLOW = (REPO_ROOT / "doc/extensions/skills/story/scripts/story_flow.py")
+
+    def skill(self) -> str:
+        return self.SKILL.read_text(encoding="utf-8")
+
+    def run_decide(self, root: Path, by: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
+             "--project-root", str(root), "--gate", "material_scope",
+             "--chosen", "supplement", "--by", by, "--basis", "他说的原话"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+
+    def test_the_gate_decision_only_accepts_a_human_signature(self) -> None:
+        """**物理门禁**：`--by ai` 连参数校验都过不去。
+
+        只改文档没用——「记得停下问人」这种话模型会忘，门禁不会。
+        """
+        import ast
+        body = self.FLOW.read_text(encoding="utf-8")
+        tree = ast.parse(body)
+        actors = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                    getattr(t, "id", None) == "ACTORS" for t in node.targets):
+                actors = ast.literal_eval(node.value)
+        self.assertEqual(("human",), actors, "关卡决策不该有人以外的签署者")
+
+    def test_by_ai_is_refused_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "doc" / "features" / "AR90001" / "AR").mkdir(parents=True)
+            proc = self.run_decide(root, "ai")
+            self.assertNotEqual(0, proc.returncode, "`--by ai` 竟然被接受了")
+            self.assertIn("human", (proc.stdout or "") + (proc.stderr or ""))
+
+    def test_the_whitelist_has_no_conditional_wording(self) -> None:
+        """两处停等不许再写成条件句——条件由谁判，开关就在谁手里。"""
+        text = self.skill()
+        for conditional in ("需要人补料才能继续", "scope_gate 触发的"):
+            self.assertNotIn(conditional, text,
+                             "「%s」把停等的开关交回给了模型" % conditional)
+        self.assertIn("必停", text, "两处停等要明写无条件")
+
+    def test_the_spec_boundary_question_is_gone(self) -> None:
+        """S4 收口处那一问退场——它固定长出第三个停等点。"""
+        text = self.skill()
+        for gone in ("一次问代替逐段问", "一次讲清", "做到哪一步"):
+            self.assertNotIn(gone, text, "「%s」还在，进 spec 前仍会停一次" % gone)
+        self.assertIn("直接进 spec，不问", text)
+
+    def test_the_failure_exit_has_a_checkable_precondition(self) -> None:
+        """「修不动了」是失败上报，不是确认点，而且前提必须可核。
+
+        写成「同一处连续 3 次修不好」由模型自己判的话，试一次就能宣布修不好
+        然后合法停下——与条件式白名单是同一个毛病。
+        """
+        text = self.skill()
+        self.assertIn("失败出口", text, "失败上报要与停等点分开写")
+        self.assertIn("连续三次运行", text, "前提要可核：连续三次 check 都报同一类")
+        self.assertNotIn("触发白名单第 3 条", text, "旧的自述式出口还在被引用")
+
+    def test_no_delegated_choice_path_remains(self) -> None:
+        """代选路径整个退场——它就是材料环节被跳过的那条路。"""
+        for rel in ("doc/extensions/skills/story/rules/scope_gate.md",
+                    "doc/extensions/skills/story/rules/init_analysis.md",
+                    "doc/extensions/skills/story/SKILL.md"):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            for gone in ('by:"ai"', "AI 代选", "代选永远不选"):
+                self.assertNotIn(gone, text, "%s 里还留着代选路径：%s" % (rel, gone))
+
+
 if __name__ == "__main__":
     unittest.main()

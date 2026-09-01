@@ -154,9 +154,10 @@ export function flowProblems(featureRoot) {
         problems.push(`${at}被拒却没写 reason——人被拦了一次，审计上必须看得见为什么`);
       }
       if (!d?.at) problems.push(`${at}缺时间戳 at`);
-      if (d?.by === 'ai' && !d?.basis) {
-        // 代选免掉的是等回话，不是免留依据：无依据的代选事后无从复核，也就无从推翻
-        problems.push(`${at}为 AI 代选但缺 basis（用户授权时那句原话）`);
+      if (d?.by && d.by !== 'human') {
+        // 关卡决策只认人签。曾经有过 `ai` 这一档，配上条件式的停等判据，
+        // 后果是模型判「材料足够」就把关卡记掉，材料补充环节整个被跳过。
+        problems.push(`${at}的 by 是「${d.by}」——关卡决策只认人签（human）`);
       }
     });
   });
