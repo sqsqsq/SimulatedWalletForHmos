@@ -301,8 +301,18 @@ class MaterialOnlyIsTheOnlyWayToNotDraw(NegativeCase):
         for banned in ("不必每张都进", "引多引少", "没有数量判据"):
             self.assertNotIn(banned, page,
                              "「%s」是无限定许可句，读者会只读到前半句" % banned)
+        # 表里已经是四态，正文却还写着「只有三种」——同一份文件两句话打架，
+        # 读者读到哪句算哪句。加第四态时改了表没改这句话，栽过一次。
+        for stale in ("只有三种", "没有第四种"):
+            self.assertNotIn(stale, page,
+                             "「%s」与四行的落点表直接冲突" % stale)
         self.assertIn("图片一张不少", page, "原有的正向要求不该被顺手删掉")
-        self.assertIn("给了 `at` 就等于承诺要画", page, "缺了「分了落点＝承诺」这一半")
+        # 判据已从「这一章有没有图」改成「分了几张画了几张」，作者面要同口径：
+        # 只说「承诺要画」的话，4 张分到一章画 1 张的作者会以为自己交了。
+        self.assertIn("承诺在那一章画出这一张", page,
+                      "缺了「分了落点＝按张数承诺」这一半")
+        self.assertIn("流程图没有这一态", page,
+                      "`material_only` 已收回图片专用，作者面要说清")
 
     def test_no_count_or_ratio_judgement_anywhere(self) -> None:
         """退场的是数量判据，不是判据——**不许换个方向再加一条**。"""
