@@ -31,13 +31,16 @@ cli:
   #              F5 报告里的效率数字要与 F 修复两轮比（同宿主），与 F4 首跑/收口
   #              那组比时必须写明中间换过 codex。
   configurations:
-    - id: bailian-deepseek
-      name: opencode
-      model: bailian/deepseek-v4-flash-0731
-      profile: build
+    # 首位临时置为 GLM5.3-Flash：上一轮那两份成品就是它跑的。
+    # 本轮要比的是**机制变化**，模型必须与上一轮相同，否则两个变量纠缠着，
+    # 图片 3→0 / 流程图 6→1 这类差异归不到因上。比完可以换回去。
     - id: volcengine-glm-flash
       name: opencode
       model: volcengine/GLM5.3-Flash
+      profile: build
+    - id: bailian-deepseek
+      name: opencode
+      model: bailian/deepseek-v4-flash-0731
       profile: build
     - id: codex-luna
       name: codex

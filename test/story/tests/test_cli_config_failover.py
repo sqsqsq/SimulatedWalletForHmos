@@ -49,10 +49,16 @@ def failed_record(kind: str) -> dict:
 
 class ConfigContractTests(unittest.TestCase):
     def test_declared_priority_and_models(self) -> None:
+        """配置组的顺序就是熔断切换的顺序，所以它是契约、要锁住。
+
+        首位当前是 GLM5.3-Flash：上一轮那两份成品是它跑的，本轮要比的是**机制变化**，
+        模型必须与上一轮相同，否则模型与机制两个变量纠缠，产物差异归不到因上。
+        比完可以换回去——换的时候这条会红，那是它该做的：顺序变了就得有人确认。
+        """
         self.assertEqual(
             [
-                ("opencode", "bailian/deepseek-v4-flash-0731"),
                 ("opencode", "volcengine/GLM5.3-Flash"),
+                ("opencode", "bailian/deepseek-v4-flash-0731"),
                 ("codex", "gpt-5.6-luna"),
             ],
             [(item["name"], item["model"]) for item in multi.CLI_CONFIGURATIONS],
