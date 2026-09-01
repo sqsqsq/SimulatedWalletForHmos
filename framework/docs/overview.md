@@ -169,7 +169,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **v2.3 工具链识别（hmos-app）**       | DevEco 适配         | DevEco Studio 路径配置化、`detect-deveco.ts` 自动检测；`ut_hvigor_test` 改用 `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`                |
 | **v2.4 文档体系**         | 对外材料长期化      | `framework/docs/` 文档树 + `DOC_INVENTORY.yaml` + `--phase docs` 自动检查文档新鲜度（即本目录）                                                       |
 | **弱模型三层闭环**        | 步骤跳过 / 规则幻觉 | Layer 1（实例根全局入口 §4.1 / §5.1 / §6）+ Layer 2（`phase-completion-receipt.md` + `check-receipt.ts`）+ Layer 3（Stop hook，Claude adapter 下发）；[`agents/README.md`](../agents/README.md) |
-| **init 体检脚本化**       | 反 LLM 幻觉         | 11 项 `check-init.ts` 全脚本化；`--phase init --adapter <name>`；init-diff Hallucination Ban |
+| **init 体检脚本化**       | 反 LLM 幻觉         | 10 项 `check-init.ts` 全脚本化；`--phase init --adapter <name>`；init-diff Hallucination Ban |
 | **v2.5 可扩展**           | workflow + 实例扩展 | `workflows/spec-driven.workflow.yaml`；全局 `--phase extensions`；`doc/extensions/` manifest + lifecycle hooks；`render-agents-md` 桥接扩展 Skill |
 | **Profile 宿主解耦（2.0）** | 根目录中性化        | `profiles/hmos-app` / `generic`；`capability-registry` 按 profile 调度 `coding.compile` / `device_test.*`；宿主模板迁入 profile addendum |
 | **v2.6 compat**           | 升级撞墙过渡        | `doc/features/<feature>/compat.yaml` 可过期降级；`npm run backfill:context`；见 [`evolution/compat-protocol-v1.md`](evolution/compat-protocol-v1.md) |
@@ -179,7 +179,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | **v2.8.1 全局阶段豁免**     | init 中途被 hook 拦截 | `isGlobalPhase` skip；全局 phase 不参与 feature 闭环判据 |
 | **v2.8.2 多问题决策结构化** | framework-init 多个 y/n 并排 | Step 0.3.4 结构化收集；`multi-question single-y Ban` |
 | **v2.8.3 弱模型 tool-call 兜底** | init 渲染 entry-file 卡死 | `render-agents-md.mjs` 升为首选路径；`tool-call retry-loop Ban` |
-| **reports 外置**            | feature 产物与 submodule 分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
+| **reports 外置**            | feature 产物与 framework 发布件分离 | `paths.reports_dir_pattern` → 默认 `doc/features/<feature>/<phase>/reports/` |
 | **v2.9 Karpathy 四原则**    | Agent 行为 + 探索量化 | [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)；`context-exploration.md` schema **1.1.0**；verifier `behavior_*` 维度 |
 | **v2.10 exploration_strategy** | 大仓深度探索      | plan/coding **default-on subagent**；spec/review/ut **复合评分**；`sequential` 等价路径 |
 | **Hylyre 真机闭环（2.0）**  | device-testing 端到端      | `device_test.build` / `install` / `run`；Maison vendor 源码树 + venv（运行时代码兼容外部 legacy wheel）；标准 feature + 即席 `_adhoc`（`npm run adhoc-device-test`） |
@@ -201,7 +201,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 ```
 目标工程根
-├── framework/                      ← framework 资产（vendor 拷贝或 git submodule）
+├── framework/                      ← Maison 已验证发布件的落盘目录
 │   ├── README.md                     入门 + 命令清单
 │   ├── MIGRATION.md                  升级 / 迁移指引
 │   ├── RELEASE-NOTES-v*.md           大版本发布说明
@@ -230,7 +230,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 | 阶段 | Skill                                                                  | 职责                              | 关键产物                                              | 主要门禁（BLOCKER）                                                                                                            |
 | ---- | ---------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；宿主 `.gitignore` 补齐（含 harness 根误落 `decision.json`/`context.json` 等 init staging 残留）；S2 staging 仅 OS 临时目录绝对路径（CLI 拒绝相对路径与 `framework/harness` 内路径）；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；**UPDATE** 时 `cleanup-deprecated` 备份删除遗留 skill 跳板（含语义旧名 `prd-design` / `requirement-design` 等，保留 `spec` / `plan` / `coding`）；init 后可 `npm test`（= `check:global`） |
+| ★    | [`framework-init`](../skills/project/framework-init/SKILL.md)             | 接入 / 升级 framework             | `framework.config.json` + agent 入口 + `doc/` 骨架    | adapter 显式选定；存在性体检；S2 staging 仅 OS 临时目录绝对路径（CLI 拒绝相对路径与 `framework/harness` 内路径）；DevEco 工具链路径配置；S3 `run-global-phases` 验收（catalog/glossary/docs）；**UPDATE** 时 `cleanup-deprecated` 备份删除遗留 skill 跳板（含语义旧名 `prd-design` / `requirement-design` 等，保留 `spec` / `plan` / `coding`）；init 后可 `npm test`（= `check:global`） |
 | 0    | [`catalog-bootstrap`](../skills/project/catalog-bootstrap/SKILL.md)         | 模块画像 + 术语表自举             | `module-catalog.yaml` / `glossary.yaml`               | `easily_confused_with` 对称、`key_exports_fresh_vs_index`、种子技术词拦截                                                       |
 | 1    | [`spec`](../skills/feature/spec/SKILL.md)                       | spec 撰写                          | `spec.md` + `acceptance.yaml`                          | **术语映射表**（人工逐条确认）+ **Scope 声明** + 术语模块 ⊆ Scope                                                               |
 | 2    | [`plan`](../skills/feature/plan/SKILL.md)       | 技术设计                          | `plan.md` + `contracts.yaml` + `use-cases.yaml`*    | Scope 继承一致性、`architecture_impact` 声明、`use-cases.yaml` schema                                                          |
@@ -386,41 +386,11 @@ UT (DAG + *.test.ets, it() 标签 [BRANCH-x][AC-Y])
 Test Plan（由 acceptance `device_focus` 派生）
 ```
 
-### 2.6 使用方式（接入工程的两种部署模式）
+### 2.6 使用方式（发布件唯一集成）
 
-#### 模式 A · Vendor（推荐默认）
+Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。接入方在目标工程根解压，得到 `framework/`，然后执行 `/framework-init` 完成 `npm install`、S3 `run-global-phases` 与 harness 验证；DevEco 路径由 personal setup 写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
 
-直接拷贝 `framework/` 目录到目标工程根，**1 步手动复制 + 后续全自动**：
-
-```bash
-# Linux / macOS
-rsync -av --exclude=node_modules --exclude=dist --exclude='reports/*' \
-      --exclude=trace path/to/framework-source/framework/ ./framework/
-
-# Windows PowerShell
-robocopy path\to\framework-source\framework .\framework /E ^
-         /XD node_modules dist trace ^
-         /XF reports
-```
-
-之后**所有**初始化工作（宿主 `.gitignore` 补齐 / `npm install` / S3 `run-global-phases` / harness 验证）由 `/framework-init` Skill 自动完成；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。详见 [`../MIGRATION.md`](../MIGRATION.md)。
-
-#### 模式 B · Submodule
-
-```bash
-git submodule add <framework-repo-url> framework
-git submodule update --init --recursive
-```
-
-之后同样跑 `/framework-init` 完成所有自动化步骤。Submodule 升级走 `git submodule update --remote framework` + `/framework-init UPDATE`（UPDATE 会清理实例根遗留 skill 跳板，勿跳过 `cleanup-deprecated`）。
-
-#### 选择建议
-
-| 优先级                   | 模式               | 理由                                                |
-| ------------------------ | ------------------ | --------------------------------------------------- |
-| 工程内网 / 不能加 submodule | Vendor             | 一次拷贝即可，`/framework-init` 自动化所有后续步骤 |
-| 多仓共享 framework        | Submodule          | 升级集中管理，diff 走 git submodule update         |
-| 需要在 framework 仓直接改   | Submodule + 反推    | 在 submodule 工作树里改、commit、push 回 framework 仓 |
+升级时用新的已验证发布件镜像覆盖 `framework/`，再运行 `/framework-init UPDATE`。宿主是否使用 Git、是否 add/stage/commit、HEAD 是否仍是旧版本均不是 Maison 前置；package version/source_commit/manifest SHA 用于非阻断身份呈现。framework 不是 Git submodule，也不支持第二种 Git 布局。
 
 #### 日常需求（一条 feature 完整流程）
 
@@ -525,7 +495,7 @@ git submodule update --init --recursive
 
 **解法（部分已落地，持续推进）**：
 
-1. **Data-driven over LLM-driven**：adapter 拷贝、`render-agents-md.mjs` 占位符渲染、`merge-framework-config.mjs` 等已脚本化；`check-init.ts` 11 项体检 + init-diff Hallucination Ban 已 BLOCKER
+1. **Data-driven over LLM-driven**：adapter 拷贝、`render-agents-md.mjs` 占位符渲染、`merge-framework-config.mjs` 等已脚本化；`check-init.ts` 10 项体检 + init-diff Hallucination Ban 已 BLOCKER
 2. **三分区纪律**：受管文档划分 `<!-- framework:skeleton/data/narrative -->` 三区（skeleton/data 区 sha256 / 重渲染比对 —— 推进中）
 3. **正向 over 负向**：能用白名单 / "仅 X" 表达的不用"不要 X"
 4. **negation-diff verifier**：独立 verifier 子 agent 逐句比对极性词翻转（规划中）

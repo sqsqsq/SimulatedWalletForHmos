@@ -319,15 +319,49 @@ function nativeStep(step: unknown): HylyreStepResult | null {
   return step as HylyreStepResult;
 }
 
+// plan a6c4e9f2 T4 返修：以下三个 helper 原来读的是 0.3 flat 字段
+// （`step.status` / `step.evidence` / `selector.candidate_count` / `selector.selected_id`）。
+// v1 把成败与观测收进 `outcome`、把选择器事实收进 `selector.resolution`，
+// 旧读法在真实 v1 上一律取到 undefined——门禁会静默失去判据，而不是报错。
+
 function selectorCandidateCount(step: HylyreStepResult): number | null {
-  const selector = step.selector;
-  return selector && Number.isInteger(selector.candidate_count) ? selector.candidate_count : null;
+  const count = step.selector?.resolution?.candidate_count;
+  return Number.isInteger(count) ? (count as number) : null;
 }
 
-function evidenceObject(step: HylyreStepResult): Record<string, unknown> | null {
-  return step.evidence && typeof step.evidence === 'object' && !Array.isArray(step.evidence)
-    ? step.evidence
+/** v1 的断言观测：只在 `passed` 上存在，且必须是 assertion 面。 */
+function assertionObservation(step: HylyreStepResult): Record<string, unknown> | null {
+  if (step.outcome?.status !== 'passed') return null;
+  const observation = step.outcome.observation as unknown as Record<string, unknown> | undefined;
+  if (!observation || observation.kind !== 'assertion') return null;
+  return observation;
+}
+
+function observationFacts(step: HylyreStepResult): Record<string, unknown> | null {
+  const facts = assertionObservation(step)?.facts;
+  return facts && typeof facts === 'object' && !Array.isArray(facts)
+    ? (facts as Record<string, unknown>)
     : null;
+}
+
+/**
+ * 身份护栏（plan §139/§346、spec「Identity guardrail」）：**P0 checkpoint 的
+ * required/forbidden 身份证据必须由 `by_id` 断言承载**。`required_element_ids` 是 id，
+ * 一次成功的 `by_text` 观测不构成 id 身份证明。
+ *
+ * 不加这层会留两个真实缺口：
+ *   - `by_text` + `unique` + `selected.id` 恰好等于目标 id → 闭合 required；
+ *   - `by_text` + `not_found` → 闭合 forbidden（"某段文字没找到"不等于"某个 id 不在场"）。
+ *
+ * 注意作用域：这条限定只属于 **P0 身份覆盖** 这条路径。冻结契约与 spec 明确禁止把
+ * **运行时 selector 门**写成按 `request.kind` 的固定旁路——那里语义随执行路径走
+ * （native by_text 合法地产出 not_attempted）。两者不是同一道门，不要互相搬。
+ */
+function requestProvesIdentity(step: HylyreStepResult, targetId: string): boolean {
+  const request = step.selector?.request;
+  if (!request) return false;
+  if (request.kind !== 'by_id') return false;
+  return typeof request.value === 'string' && request.value === targetId;
 }
 
 function selectorEvidenceMatches(
@@ -337,20 +371,20 @@ function selectorEvidenceMatches(
   plannedSelector?: ReturnType<typeof normalizePlannedStep>['selector'],
   canonicalIds: string[] = [],
 ): boolean {
-  const selector = step.selector;
-  if (!selector) return false;
-  if (absence) return selector.candidate_count === 0 && (selector.selected_id ?? null) === null;
-  if (selector.selected_id !== targetId) return false;
-  if (selector.candidate_count === 1) return true;
-  return selector.candidate_count > 1 &&
-    Boolean(plannedSelector?.body && plannedSelector && (
-      plannedSelector.body.index !== undefined ||
-      plannedSelector.body.scope !== undefined ||
-      plannedSelector.body.within !== undefined ||
-      plannedSelector.body.all !== undefined
-    )) &&
-    typeof selector.bounds === 'string' && selector.bounds.trim().length > 0 &&
-    canonicalIds.includes(targetId);
+  const resolution = step.selector?.resolution;
+  if (!resolution) return false;
+  // 请求面先过身份护栏：请求的不是这个 id，解析结果再漂亮也不构成该 id 的身份证据。
+  if (!requestProvesIdentity(step, targetId)) return false;
+  const selectedId = resolution.selected?.id ?? null;
+  // absence 的正例是 resolver 确认零候选（v1 的 not_found），不是"没解析过"。
+  if (absence) return resolution.candidate_count === 0 && selectedId === null;
+  if (selectedId !== targetId) return false;
+  // plan a6c4e9f2 T4 返修：0.3 时代这里还有一条"candidate_count>1 但已由
+  // index/scope/within/all 消歧、且带 bounds"的放行分支。冻结契约 §6.1 明确
+  // **Schema 直接拒绝 `candidate_count>1` + 非空 `selected`**——该分支在合法 v1 上
+  // 永不可达，留着只会让人以为那种形态可接受。v1 里消歧表达在
+  // `request.constraints.index`，resolver 应用谓词后回 `unique`/count=1。
+  return resolution.candidate_count === 1;
 }
 
 function assertionEvidenceMatches(
@@ -360,16 +394,17 @@ function assertionEvidenceMatches(
   plannedSelector?: ReturnType<typeof normalizePlannedStep>['selector'],
   canonicalIds: string[] = [],
 ): boolean {
-  if (step.role !== 'assertion' || step.status !== 'passed') return false;
-  const evidence = evidenceObject(step);
-  if (!evidence) return false;
+  if (step.role !== 'assertion' || step.outcome?.status !== 'passed') return false;
+  const observation = assertionObservation(step);
+  const facts = observationFacts(step);
+  if (!observation || !facts) return false;
   if (absence) {
-    if (evidence.assertion !== 'absence' || evidence.observed_present !== false) return false;
-    const count = typeof evidence.candidate_count === 'number' ? evidence.candidate_count : selectorCandidateCount(step);
+    if (observation.assertion_type !== 'absence' || facts.observed_present !== false) return false;
+    const count = typeof facts.candidate_count === 'number' ? facts.candidate_count : selectorCandidateCount(step);
     return count === 0 && selectorEvidenceMatches(step, targetId, true, plannedSelector, canonicalIds);
   }
-  if (evidence.assertion !== 'presence' || evidence.observed_present !== true) return false;
-  const count = typeof evidence.candidate_count === 'number' ? evidence.candidate_count : selectorCandidateCount(step);
+  if (observation.assertion_type !== 'presence' || facts.observed_present !== true) return false;
+  const count = typeof facts.candidate_count === 'number' ? facts.candidate_count : selectorCandidateCount(step);
   return count !== null && count > 0 && selectorEvidenceMatches(step, targetId, false, plannedSelector, canonicalIds);
 }
 
@@ -424,7 +459,10 @@ function evaluateNativeCase(
   const nativeSteps = Array.isArray(traceCase.steps) ? traceCase.steps.map(nativeStep) : [];
   if (traceCase.expected_check_mode === 'checked_vlm') {
     const expected = nativeSteps.find(step => step?.kind === 'expected_check');
-    if (!expected || expected.role !== 'assertion' || expected.status !== 'passed' || !evidenceObject(expected)) {
+    if (
+      !expected || expected.role !== 'assertion' ||
+      expected.outcome?.status !== 'passed' || !assertionObservation(expected)
+    ) {
       reasons.push('expected_check_mode=checked_vlm 但 expected_check StepResult 未通过/缺证据');
     }
   }
@@ -444,7 +482,8 @@ function evaluateNativeCase(
     const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
     const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
     if (
-      !action || action.index !== actionIndex || action.role !== 'action' || action.status !== 'passed' ||
+      !action || action.index !== actionIndex || action.role !== 'action' ||
+      action.outcome?.status !== 'passed' ||
       !selectorEvidenceMatches(
         action,
         cp!.action!.target_element_id!,
@@ -626,7 +665,7 @@ function nativeGateFailureResult(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: evaluation.gateFailure ?? 'native StepResult acceptance 对账未通过',
-    suggestion: '升级/核验 Hylyre 0.4.1 + trace schema 0.3-p0 后重跑；不得用旧 case status 或报告散文补证据。',
+    suggestion: '升级/核验 Hylyre 0.5.0 + trace schema 0.4-p0 + hylyre.step-outcome/1 后重跑；不得用旧 case status 或报告散文补证据。',
   };
 }
 

@@ -80,13 +80,13 @@
 ### hypium 临时目录（`tmp_hypium/`）
 
 - **来源**：Hylyre 传递依赖 **hypium** 在进程 **cwd** 下创建 `./tmp_hypium`（UI 树 `*_tmp_uitree.json`、截图等），非本仓库业务代码。
-- **Framework 行为**（`hylyre-spawn.ts` / `device-test-run.ts`）：所有 `python -m hylyre …` 子进程（含 `doctor` / `run` / `dump-ui` / `app page save` / `session start`）的 **cwd** 统一为 `<features_dir>/<feature>/testing/reports/.hypium-workdir`，故 `tmp_hypium` 落在 **`…/reports/.hypium-workdir/tmp_hypium/`**（已在 `<features_dir>/*/*/reports/*` gitignore 内）；段首 **best-effort 清理** 工程根遗留 `<repo>/tmp_hypium/`。
+- **Framework 行为**（`hylyre-spawn.ts` / `device-test-run.ts`）：所有 `python -m hylyre …` 子进程（含 `doctor` / `run` / `dump-ui` / `app page save` / `session start`）的 **cwd** 统一为 `<features_dir>/<feature>/testing/reports/.hypium-workdir`，故 `tmp_hypium` 落在 **`…/reports/.hypium-workdir/tmp_hypium/`**（即 feature 报告目录内，不落工程根）；段首 **best-effort 清理** 工程根遗留 `<repo>/tmp_hypium/`。
 - **污染检测**：ensure/run 结束写入 `hylyre-ready.meta.json` / `device-test-run.meta.json` 的 `root_pollution`；stderr/log 锚点 `ROOT_HYLYRE_POLLUTION=1`（非 BLOCKER，`check-testing` WARN）。
-- **cwd 隔离为主**；canonical `**/tmp_hypium/`（framework-init）仅作兜底，**勿**把工程根 `/reports/` 当作 harness 报告目录。
+- **cwd 隔离是唯一机制**（Maison 不再代写宿主忽略规则，故没有 ignore 层兜底）；**勿**把工程根 `/reports/` 当作 harness 报告目录。
 
 ### App 快照缓存（`doc/app-snapshot-cache/`）
 
-- 默认根目录与 `doc/features/` **同级**，跨 feature 共享；**`.gitignore`** 忽略该目录（由 framework-init 写入）。
+- 默认根目录与 `doc/features/` **同级**，跨 feature 共享；宿主如需忽略该目录，请自行在 `.gitignore` 中登记（Maison 不代写）。
 - Runner 在子进程环境中设置 **`HYLYRE_APP_STORE_DIR=<绝对路径>`**；**不要**对 `run --plan` 传入 `--store-dir`（CLI 不接受）。
 - **`hylyre run --plan`** 本身不消费该目录；**`hylyre app page save/load/find`** 与 **`hylyre find`** 在派生/探索阶段使用缓存。
 
@@ -98,7 +98,7 @@
   - 表头 **7 列** 固定顺序：`用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC`
   - **测试步骤**列：每条逻辑步骤为 **单行 JSON**；多条以 **`;` / `；`** 分隔；**禁止 `<br/>`**；列内禁止未转义 `|`
   - JSON 根键以 Hylyre `planned_step_keys` 为准（含 `action` / `touch` / `input` / `swipe` / `scroll` / **`scroll_to`** / **`back`** / `home` / `wait_for` / `assert_toast` 等；以 vendor 源码树 `src/hylyre/api/planned_step_keys.py` 为 SSOT）
-- **selector 查找顺序与真值边界**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` → 设备 dump；后两级只发现候选。任何 `by_id` 必须反解到当前 feature/screen 的 ui-spec node；正式 `by_text` 必须显式写 `match: exact|contains`，且该选择由 acceptance 意图决定，禁止按数字/日期等字符特征启发式放宽、禁止运行时 fallback。`derive-hylyre-plan-hint.selector_contract.entries[]` 只提供 canonical 节点查询。`SELECTOR-SPEC-001` 首版 WARN；即使真机跑过（如历史 `next_step_btn`）也不等于有契约依据。无法校验则补 ui-spec/锚点，否则该 TC 不写入派生计划并显式跳过。
+- **selector 查找顺序与真值边界（开放世界）**：`contracts.yaml` → `plan.md` → `doc/app-snapshot-cache/<bundle>/` → 设备 dump；后两级只发现候选。正式 `by_text` 必须显式写 `match: exact|contains`，且该选择由 acceptance 意图决定，禁止按数字/日期等字符特征启发式放宽、禁止运行时 fallback。**feature ui-spec 只建模本 feature 新增页面**，首页/卡包/添加卡片等既有入口天然缺席：selector 不在 ui-spec 只给 `SELECTOR-SPEC-001` provenance **WARN 并放行**，最终真值是本轮 native StepResult 的 selector evidence。静态 BLOCKER 只保留可确定错误（非法 selector/match、缺显式 `match`、ui-spec 已证明的同屏多映射无消歧、`contains` 只命中带 children 的聚合 Text/Row、同一 checkpoint 结构化 `target_element_id` ≠ 计划 `by_id`）。`derive-hylyre-plan-hint.selector_contract.entries[]` 只提供 canonical 节点**查询**，不是白名单；不得把 ui-spec ∪ acceptance ∪ contracts 合成第二套 registry。**没有可靠 selector 时不能改成跳过**：`channel=hylyre` 的 case 编译不了就整份 Hylyre 计划不启动，并回报该 TC 根因与下一责任阶段。
 - **富选择器（Hylyre 0.2+）**：同名文案/同类型多组件（如 bindSheet 半模态「下一步」 vs 背后页面「下一步」）优先用 `scope:"top_overlay"`、`within`/`below`/`above`、`all`、`index`、`visible`/`enabled` 等（详见 [hylyre-planned-step-fields.md](reference/hylyre-planned-step-fields.md)）；`by_text` 无论是否带富字段都必须显式 `match`，勿仅写裸 `by_text` 碰运气。
 - **长列表**：屏外项用 **`scroll_to`** 或 touch 内 `scroll_into_view`，勿盲猜 `scroll` 步数。Hylyre 0.3+ `scroll_to` 对已在屏目标先匹配再滚。
 - **单行 JSON 约束**：每步一个 JSON 对象；`touch` / `input` / `scroll` / `swipe` / `action` 等形态以 Hylyre `agent-plan-a` 为准。多条步骤用 **`;` 或 `；`** 串联，**禁止** HTML 换行与未转义 `|`。模板示例中的 Markdown 反引号包裹仅为可读性；若运行时提示 **「非 JSON」**，请使用**无反引号**的纯 JSON 填入表格单元格（与已验证可解析的烟测格一致）。
@@ -119,7 +119,7 @@
 
 ### `hylyre dump-ui` 与快照缓存
 
-- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；dump 结果仅是候选：先补回 ui-spec node/anchor 注入并通过 `SELECTOR-SPEC-001` 校验，再回写 `plan.md` / `contracts.yaml` 派生，禁止把运行时实现原样抄成真值。
+- 当契约/设计里没有可靠 selector 时，在设备已连接、`HYLYRE_APP_STORE_DIR` 已指向 **`doc/app-snapshot-cache/`** 的前提下，用 **`hylyre dump-ui`**（及同类探索子命令，以 Hylyre `--help` 为准）抓取当前屏结构；dump 结果**仅是候选**，既不授权静态 PASS，也不因此成为 canonical 真值：回写 `plan.md` / `contracts.yaml` 时按真实来源补，禁止把运行时实现原样抄成真值。一次历史真机命中同样不构成静态真值——每轮以本轮 StepResult selector evidence 为准。
 - **`hylyre run` 结束后自动快照**：`device_test.run` 在 **`hylyre run --plan …` 返回后** 会再执行 **`python -m hylyre app page save <BUNDLE> <PAGE_NAME> [--ability …] [--device-sn …]`**（**位置参数**，无 `--bundle`）。默认 page slug **`home`**；环境变量优先级：**`HARNESS_HYLYRE_PAGE_SAVE_NAMES`**（逗号分隔，多名）> **`HARNESS_HYLYRE_PAGE_SAVE_NAME`**（旧单名）> `home`。写入 **`doc/app-snapshot-cache/<bundle>/pages/<slug>.json`**。该步骤**失败不会**把本次 `run` 判为失败；stderr 全文见 phase 级 **`reports/<feature>/testing/hylyre-page-save.log`**，结构化摘要见 **`device-test-run.meta.json` → `hylyre_page_save`**（含 `names[]` 明细）。
 - **步骤失败诊断（Hylyre 0.2+）**：`hylyre run` 传 **`--failure-dir <reportOutDir>/failures`**（与本轮 `test-report.md` 同目录下的 `failures/`），失败步骤自动落 UI dump + 截图；路径写入 **`device-test-run.meta.json` → `failure_dir`**。
 - **冷重启（Hylyre 0.2+ / testing 阶段）**：默认 **`tools.hylyre.cold_restart_before_run: true`**（`aa force-stop` positional + `aa start`）；可用 **`HARNESS_DEVICE_TEST_COLD_RESTART=0/1`** 覆盖。即席默认仍见 Step 4.B `ADHOC_COLD_RESTART`。
@@ -198,6 +198,6 @@
 
 ### 应用工程同步 framework（WalletForHarmonyOS 等）
 
-- **SSOT**：`SimulatedWalletForHmos/framework/`（或 git submodule）为 harness / device-testing 源码；应用工程须 **同步 ≥ 当前 framework HEAD**（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等）。
+- **SSOT**：应用工程集成的 Maison 发布件为 harness / device-testing 源码；须使用包含所需能力的已验证发布版本（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等），不以宿主 HEAD/commit 判断版本。
 - **同步后**：在应用工程根执行 framework-init render（或手动复制 `.cursor/rules/framework-agent-execution.mdc`、device-testing 跳板）；重跑 `npm run adhoc-device-test -- --bundle <id> --steps "…"` 刷新 `derive-adhoc-last.json`（schema 4 + `cache_layout_*`）。
 - **Cache**：若 stderr `ADHOC_CACHE_LAYOUT_MISMATCH=1`，将根目录 page JSON 迁入 `pages/` 或修 page save；**勿** agent Write 根目录替代。

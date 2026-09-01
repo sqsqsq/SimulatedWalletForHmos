@@ -1,6 +1,15 @@
 # Hylyre test-report.md contract (L4/L5 SSOT)
-# L5 harness enforces headings, execution status, pass-rate tiers, verdict, plan↔report, trace.
+# L5 harness enforces headings, execution status, pass-rate tiers, verdict, plan<->report, trace.
+#
+# VERSION DISPATCH — read this first.
+# The Markdown report shape below is protocol-agnostic and applies to every
+# schema version. Everything that IS protocol-specific lives under `current:`
+# (0.4-p0 + hylyre.step-outcome/1) or `legacy:` (read-only historical shapes).
+# A consumer MUST dispatch on (schema_version, result_protocol) and MUST NOT
+# interpret a v1 trace with the legacy flat taxonomy, or vice versa.
+# See step-outcome-v1.md section 14.
 
+# ---------------------------------------------------------------- report shape
 report_required_sections:
   - "测试概览"
   - "测试执行结果"
@@ -15,7 +24,10 @@ execution_status_values:
   - "阻塞"
   - "跳过"
 
-trace_schema_version: "0.3-p0"
+verdict_values:
+  - "达标"
+  - "有条件达标"
+  - "不达标"
 
 expected_check_mode_values:
   - "checked_vlm"
@@ -23,21 +35,66 @@ expected_check_mode_values:
   - "unavailable_no_vlm"
   - "empty"
 
-failure_kind_values:
-  - "assertion"
-  - "selector"
-  - "capability"
-  - "infrastructure"
-
-verdict_values:
-  - "达标"
-  - "有条件达标"
-  - "不达标"
-
-# 通过率统计小节必须出现的分级（与 §7.5 一致）；非 P0/P1/P2 的优先级在 emit 中并入 P2 统计
+# 通过率统计小节必须出现的分级；非 P0/P1/P2 的优先级在 emit 中并入 P2 统计
 pass_rate_required_tiers:
   - "P0"
   - "P1"
   - "P2"
 
 pass_rate_overall_label: "总体"
+
+# ------------------------------------------------- current protocol (evidence)
+# The only shape that may be treated as new StepResult evidence.
+current:
+  trace_schema_version: "0.4-p0"
+  result_protocol: "hylyre.step-outcome/1"
+  outcome_status_values:
+    - "passed"
+    - "failed"
+    - "blocked"
+    - "skipped"
+  failure_domain_values:
+    - "contract"
+    - "selector"
+    - "assertion"
+    - "capability"
+    - "infrastructure"
+    - "internal"
+  cause_type_values:
+    - "prior_step"
+    - "capability"
+    - "infrastructure"
+  reason_type_values:
+    - "policy"
+    - "not_applicable"
+  resolution_state_values:
+    - "not_attempted"
+    - "not_found"
+    - "unique"
+    - "ambiguous"
+    - "unresolvable"
+
+# ---------------------------------------------------- legacy (read-only only)
+# Retained so historical artifacts stay readable. These shapes are NOT valid for
+# hylyre.step-outcome/1 and MUST NOT be used to fill in or reinterpret a v1
+# trace. Legacy traces never declare result_protocol.
+legacy:
+  "0.3-p0":
+    trace_schema_version: "0.3-p0"
+    result_protocol: null
+    evidence_eligible: false
+    # Flat 0.3-p0 taxonomy. Superseded by failure.domain / cause.type /
+    # reason.type in the current protocol; kept only to read old artifacts.
+    failure_kind_values:
+      - "assertion"
+      - "selector"
+      - "capability"
+      - "infrastructure"
+  "0.2-p4":
+    trace_schema_version: "0.2-p4"
+    result_protocol: null
+    evidence_eligible: false
+  "0.1-p0":
+    trace_schema_version: "0.1-p0"
+    result_protocol: null
+    evidence_eligible: false

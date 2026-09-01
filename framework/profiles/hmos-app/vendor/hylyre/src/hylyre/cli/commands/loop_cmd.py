@@ -59,14 +59,45 @@ async def _run_atomic_ledger_step(
     payload: dict[str, Any],
     *,
     case_id: str = "atomic-step",
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     """Execute an atomic planned step through the shared ledger."""
 
-    from hylyre.scenario.ledger import execute_ledger_step
+    from dataclasses import replace
 
-    return (await execute_ledger_step(
-        agent, payload, index=0, case_id=case_id
-    )).to_dict()
+    from hylyre.api.failure_diag import capture_failure_boundary
+    from hylyre.scenario.ledger import execute_ledger_step
+    from hylyre.scenario.step_builder import step_response
+
+    # Same builder as the plan runner, same protocol declaration as the trace:
+    # an atomic step is not a separate result shape, and passing a failure_dir
+    # must not turn it into a batch response.
+    step = await execute_ledger_step(agent, payload, index=0, case_id=case_id)
+
+    failure = step.failure or {}
+    if (
+        step.status == "failed"
+        and failure.get("domain") in ("selector", "assertion")
+        and step.device_session
+    ):
+        artifacts, capture_error = await capture_failure_boundary(
+            agent, failure_dir=failure_dir, label=f"{case_id}-0"
+        )
+        if artifacts:
+            step = replace(step, artifacts=tuple(a.to_dict() for a in artifacts))
+        else:
+            step = replace(
+                step,
+                extensions={
+                    **step.extensions,
+                    "hylyre.capture": {
+                        "screen": "unavailable",
+                        "reason_code": "infrastructure.transport_failure",
+                        "detail": (capture_error or "capture unavailable")[:500],
+                    },
+                },
+            )
+    return step_response(step)
 
 
 def execute_screenshot_bytes(
@@ -196,6 +227,7 @@ def execute_run_action(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     if session_file is not None:
         result = _session_ipc(session_file, "run_action", {"payload": payload})
@@ -204,7 +236,7 @@ def execute_run_action(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -223,6 +255,7 @@ def execute_run_tap(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     if session_file is not None:
         result = _session_ipc(session_file, "run_tap", {"payload": payload})
@@ -231,7 +264,7 @@ def execute_run_tap(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -250,6 +283,7 @@ def execute_run_input(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     if session_file is not None:
         result = _session_ipc(session_file, "run_input", {"payload": payload})
@@ -258,7 +292,7 @@ def execute_run_input(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -277,6 +311,7 @@ def execute_run_swipe(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     if session_file is not None:
         result = _session_ipc(session_file, "run_swipe", {"payload": payload})
@@ -285,7 +320,7 @@ def execute_run_swipe(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -368,6 +403,7 @@ def execute_run_scroll(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     if session_file is not None:
         result = _session_ipc(session_file, "run_scroll", {"payload": payload})
@@ -376,7 +412,7 @@ def execute_run_scroll(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -395,6 +431,7 @@ def execute_dispatch_planned_step(
     mock_port: int | None = None,
     lyrebird_url: str | None = None,
     session_file: Path | None = None,
+    failure_dir: Any = None,
 ) -> dict[str, Any]:
     """Run any planned JSON step via ``dispatch_planned_step``."""
     if session_file is not None:
@@ -404,7 +441,7 @@ def execute_dispatch_planned_step(
         return result
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:
-        return await _run_atomic_ledger_step(agent, payload)
+        return await _run_atomic_ledger_step(agent, payload, failure_dir=failure_dir)
 
     return asyncio.run(
         _with_hypium_agent(
@@ -447,15 +484,23 @@ def run_planned_step_json(
         typer.secho(str(e), err=True)
         raise typer.Exit(code=1) from e
     typer.echo(json.dumps(step_result, ensure_ascii=False))
-    if step_result.get("status") == "failed" or step_result.get("status") == "blocked":
+    if _atomic_status(step_result) in {"failed", "blocked"}:
         raise typer.Exit(code=1)
+
+
+def _atomic_status(response: dict[str, Any]) -> str:
+    """Read the status from the declared envelope, not from a flat alias."""
+
+    step = response.get("step_result", response)
+    outcome = step.get("outcome") if isinstance(step, dict) else None
+    return str(outcome.get("status", "")) if isinstance(outcome, dict) else ""
 
 
 def _emit_atomic_step_result(step_result: dict[str, Any]) -> None:
     import typer
 
     typer.echo(json.dumps(step_result, ensure_ascii=False))
-    if step_result.get("status") in {"failed", "blocked"}:
+    if _atomic_status(step_result) in {"failed", "blocked"}:
         raise typer.Exit(code=1)
 
 

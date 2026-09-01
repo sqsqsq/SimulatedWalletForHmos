@@ -11,6 +11,14 @@ from hylyre.api.exceptions import (
     CapabilityUnsupported,
     StepSkipped,
 )
+from hylyre.api.outcome import (
+    ActionObservation,
+    OperationOutcome,
+    OperationPassed,
+    SelectorEvidence,
+    SelectorRequest,
+    SelectorResolution,
+)
 from hylyre.api.selector_ops import (
     scroll_until_visible,
     tree_from_dump,
@@ -24,6 +32,80 @@ from hylyre.api.selectors import require_selector
 from hylyre.diagnostic_log import diagnostic_log
 from hylyre.drivers.base import MockControllerBase, UiDriverBase, VlmClientBase
 from hylyre.ui_dump_hints import augment_ui_dump_payload, parse_bounds_rect
+
+
+def _passed_action(
+    operation: str,
+    *,
+    selector: SelectorEvidence | None = None,
+    performed: bool = True,
+    **facts: Any,
+) -> OperationPassed:
+    """A successful operation, stated per-operation rather than inferred.
+
+    Every call site names its own operation and facts; there is no generic
+    "whatever dict came back is the evidence" step anywhere in the chain.
+    """
+
+    return OperationPassed(
+        observation=ActionObservation(operation, performed, facts),
+        selector=selector,
+    )
+
+
+def _hit_selector(pred: dict[str, Any] | None, hit: Any) -> SelectorEvidence:
+    """Selector evidence for a resolver hit (unique by construction)."""
+
+    from hylyre.api.selector_contract import selector_request
+
+    target_id = getattr(hit, "id", "") or None
+    bounds = getattr(hit, "tap_bounds", None) or None
+    return SelectorEvidence(
+        selector_request(pred),
+        SelectorResolution(
+            "unique",
+            1,
+            {"id": target_id, "bounds": bounds},
+            ({"id": target_id, "bounds": bounds},),
+        ),
+    )
+
+
+def _native_selector(
+    pred: dict[str, Any] | None, *, observed: bool | None = None
+) -> SelectorEvidence:
+    """Selector evidence for a native (Hypium-side) target.
+
+    ``resolution`` must describe what the executor actually found, so it is
+    derived from the observation, never from the request:
+
+    * target observed present, and the request carries a structured identity
+      (``by_id``/``by_key``) — ``unique`` with that id;
+    * target observed absent — ``not_found``;
+    * observed present but requested by text — ``not_attempted``: Hypium
+      resolved it, Hylyre saw no node identity, and copying the requested text
+      into ``selected`` would be exactly the request backfill the protocol
+      forbids (requirement section 3.3, spec section 6.1);
+    * nothing observed (the provider could not answer) — ``not_attempted``.
+
+    ``observed=None`` means "no observation to derive from" and is used by the
+    action paths, where success is carried by the action observation instead.
+    """
+
+    from hylyre.api.selector_contract import selector_request
+
+    request = selector_request(pred)
+    structured = request.kind in ("by_id", "by_key") and bool(request.value)
+
+    if observed is False:
+        return SelectorEvidence(request, SelectorResolution.not_found())
+    if observed is None and not structured:
+        return SelectorEvidence(request, SelectorResolution.not_attempted())
+    if structured and observed is not False:
+        return SelectorEvidence(
+            request, SelectorResolution.unique(str(request.value))
+        )
+    return SelectorEvidence(request, SelectorResolution.not_attempted())
 
 
 def _start_app_failure_hint(bundle: str, page_name: str | None) -> str:
@@ -68,6 +150,17 @@ class HylyreAgent:
     @property
     def vlm(self) -> VlmClientBase | None:
         return self._vlm
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether a device session is actually established right now.
+
+        This is the machine fact behind ``StepResult.device_session``, which
+        decides whether a root failure owes a failure-boundary screen artifact.
+        It is read from the live connection state, never assumed.
+        """
+
+        return self._ui_connected
 
     def _require_vlm(self) -> VlmClientBase:
         if self._vlm is None:
@@ -207,45 +300,33 @@ class HylyreAgent:
             kwargs = self._touch_from_payload(touch)
             kwargs["wait_time"] = wt
             await self._ui.touch(**kwargs)
-            return {
-                "selector": selector_evidence(
-                    touch,
-                    engine="native",
-                    candidate_count=1,
-                    selected_id=str(touch.get("by_id")) if touch.get("by_id") else None,
-                ),
-                "evidence": {"operation": "touch", "coordinates": None},
-            }
+            return _passed_action(
+                "touch",
+                selector=None if (has_x and has_y) else _native_selector(touch),
+                engine="native",
+            )
 
         if uses_resolver(touch):
-            from hylyre.api.selector_ops import resolve_touch_hit
+            from hylyre.api.selector_ops import (
+                pred_from_touch_block,
+                resolve_touch_hit,
+            )
 
             hit = await resolve_touch_hit(self, touch)
             await self._ui.touch(x=hit.center[0], y=hit.center[1], wait_time=wt)
-            return {
-                "selector": {
-                    "engine": hit.engine,
-                    "requested_match": hit.requested_match,
-                    "effective_match": hit.effective_match,
-                    "candidate_count": hit.candidate_count,
-                    "selected_id": hit.id or None,
-                    "bounds": hit.tap_bounds,
-                },
-                "evidence": {
-                    "operation": "touch",
-                    "center": list(hit.center),
-                    "resolution_kind": hit.resolution_kind,
-                    "fragment_bounds": hit.fragment_bounds,
-                },
-            }
+            return _passed_action(
+                "touch",
+                selector=_hit_selector(pred_from_touch_block(touch), hit),
+                engine=hit.engine,
+                center=list(hit.center),
+                resolution_kind=hit.resolution_kind,
+                fragment_bounds=hit.fragment_bounds,
+            )
 
         kwargs = self._touch_from_payload(touch)
         kwargs["wait_time"] = wt
         await self._ui.touch(**kwargs)
-        return {
-            "selector": selector_evidence(touch, engine="native", candidate_count=1),
-            "evidence": {"operation": "touch"},
-        }
+        return _passed_action("touch", selector=_native_selector(touch), engine="native")
 
     async def _apply_input_block(
         self,
@@ -256,6 +337,7 @@ class HylyreAgent:
         by_id: str | None,
     ) -> dict[str, Any]:
         from hylyre.api.selector_ops import (
+            pred_from_input_block,
             resolve_input_hit,
             uses_native_input_only,
             uses_resolver_for_input,
@@ -272,13 +354,12 @@ class HylyreAgent:
             await self._ui.input_text(
                 str(text), by_text=bt, by_id=bid, match=block.get("match"), mode=mode
             )
-            return {
-                "selector": selector_evidence(
-                    block, engine="native", candidate_count=1,
-                    selected_id=str(bid) if bid else None,
-                ),
-                "evidence": {"operation": "input", "text_supplied": True},
-            }
+            return _passed_action(
+                "input",
+                selector=_native_selector(block),
+                engine="native",
+                text_supplied=True,
+            )
         if uses_resolver_for_input(block):
             hit = await resolve_input_hit(self, block)
             focus_wait = float(block.get("focus_wait", 0.15))
@@ -286,29 +367,20 @@ class HylyreAgent:
                 x=hit.center[0], y=hit.center[1], wait_time=focus_wait
             )
             await self._ui.input_text(str(text), mode=mode)
-            return {
-                "selector": {
-                    "engine": hit.engine,
-                    "requested_match": hit.requested_match,
-                    "effective_match": hit.effective_match,
-                    "candidate_count": hit.candidate_count,
-                    "selected_id": hit.id or None,
-                    "bounds": hit.tap_bounds,
-                },
-                "evidence": {"operation": "input", "text_supplied": True},
-            }
+            return _passed_action(
+                "input",
+                selector=_hit_selector(pred_from_input_block(block), hit),
+                engine=hit.engine,
+                text_supplied=True,
+            )
         bt = block.get("by_text", by_text)
         bid = block.get("by_id", by_id)
         await self._ui.input_text(
             str(text), by_text=bt, by_id=bid, match=block.get("match"), mode=mode
         )
-        return {
-            "selector": selector_evidence(
-                block, engine="native", candidate_count=1,
-                selected_id=str(bid) if bid else None,
-            ),
-            "evidence": {"operation": "input", "text_supplied": True},
-        }
+        return _passed_action(
+            "input", selector=_native_selector(block), engine="native", text_supplied=True
+        )
 
     async def _apply_action_block(self, act: dict[str, Any]) -> dict[str, Any]:
         t = act.get("type")
@@ -386,18 +458,29 @@ class HylyreAgent:
         return answer
 
     @staticmethod
-    def interpret_assert_payload(raw: dict[str, Any]) -> dict[str, Any]:
-        """Raise ``AssertionError`` unless ``ok`` is true (VLM-shaped assert JSON)."""
-        if not raw.get("ok", False):
-            raise AssertionMismatch(
-                str(raw.get("reason", "assertion failed")),
-                evidence={
-                    "channel": "vlm",
-                    "result": False,
-                    "reason": str(raw.get("reason", "assertion failed")),
-                },
-            )
-        return {"channel": "vlm", "result": True, "checked": True}
+    def interpret_assert_payload(raw: dict[str, Any]) -> OperationOutcome:
+        """Turn a VLM-shaped assert JSON into an expected-check outcome.
+
+        A missing or false ``ok`` is a mismatch the checker actually observed,
+        so it is ``assertion.mismatch`` with the observation attached — never a
+        silent pass and never a selector failure.
+        """
+
+        from hylyre.api.outcome import (
+            Failure,
+            OperationFailed,
+            expected_checked,
+        )
+
+        matched = bool(raw.get("ok", False))
+        observation = expected_checked(matched, channel="vlm")
+        if matched:
+            return OperationPassed(observation=observation)
+        return OperationFailed(
+            failure=Failure("assertion", "assertion.mismatch", {"assertion": "expected"}),
+            observation=observation,
+            diagnostic=str(raw.get("reason", "assertion failed")),
+        )
 
     async def run_planned_action(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Apply one UI step from external JSON matching ``response_schema="action"`` (no VLM)."""
@@ -540,21 +623,9 @@ class HylyreAgent:
             **area_kw,
         )
         selector = (
-            {
-                "engine": area_hit.engine,
-                "requested_match": area_hit.requested_match,
-                "effective_match": area_hit.effective_match,
-                "candidate_count": area_hit.candidate_count,
-                "selected_id": area_hit.id or None,
-                "bounds": area_hit.tap_bounds,
-            }
-            if area_hit is not None
-            else None
+            _hit_selector(area_pred, area_hit) if area_hit is not None else None
         )
-        return {
-            "selector": selector,
-            "evidence": {"operation": "swipe", "result": True},
-        }
+        return _passed_action("swipe", selector=selector, direction=str(direction))
 
     @staticmethod
     def _scroll_xy_or_none(
@@ -679,21 +750,9 @@ class HylyreAgent:
             **sel_kw,
         )
         selector = (
-            {
-                "engine": at_hit.engine,
-                "requested_match": at_hit.requested_match,
-                "effective_match": at_hit.effective_match,
-                "candidate_count": at_hit.candidate_count,
-                "selected_id": at_hit.id or None,
-                "bounds": at_hit.tap_bounds,
-            }
-            if at_hit is not None
-            else None
+            _hit_selector(at_pred, at_hit) if at_hit is not None else None
         )
-        return {
-            "selector": selector,
-            "evidence": {"operation": "scroll", "result": True},
-        }
+        return _passed_action("scroll", selector=selector)
 
     async def _auto_scroll_center(self) -> tuple[int | None, int | None]:
         """Pick center of first scrollable container from dump hints."""
@@ -743,23 +802,15 @@ class HylyreAgent:
         )
         if block.get("tap") is True:
             await self._ui.touch(x=hit.center[0], y=hit.center[1], wait_time=0.1)
-        return {
-            "selector": {
-                "engine": hit.engine,
-                "requested_match": hit.requested_match,
-                "effective_match": hit.effective_match,
-                "candidate_count": hit.candidate_count,
-                "selected_id": hit.id or None,
-                "bounds": hit.tap_bounds,
-            },
-            "evidence": {
-                "operation": "scroll_to",
-                "tap": block.get("tap") is True,
-                "center": list(hit.center),
-                "resolution_kind": hit.resolution_kind,
-                "fragment_bounds": hit.fragment_bounds,
-            },
-        }
+        return _passed_action(
+            "scroll_to",
+            selector=_hit_selector(self._selector_predicate(block), hit),
+            engine=hit.engine,
+            tap=block.get("tap") is True,
+            center=list(hit.center),
+            resolution_kind=hit.resolution_kind,
+            fragment_bounds=hit.fragment_bounds,
+        )
 
     async def run_planned_swipe(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Apply ``swipe`` block (Hypium directional swipe; no VLM)."""
@@ -792,12 +843,12 @@ class HylyreAgent:
             side=str(block.get("side", "RIGHT")),
             height=float(block.get("height", 0.5)),
         )
-        return {"evidence": {"operation": "back", "result": True}}
+        return _passed_action("back", times=int(block.get("times", 1)))
 
     async def _apply_home_block(self, block: dict[str, Any]) -> dict[str, Any]:
         _ = block
         await self._ui.press_home()
-        return {"evidence": {"operation": "home", "result": True}}
+        return _passed_action("home")
 
     async def _apply_stop_app_block(self, block: dict[str, Any]) -> dict[str, Any]:
         bundle = block.get("bundle")
@@ -807,59 +858,162 @@ class HylyreAgent:
             str(bundle),
             wait_time=float(block.get("wait_time", 0.5)),
         )
-        return {"evidence": {"operation": "stop_app", "result": True}}
+        return _passed_action("stop_app", bundle_stopped=True)
 
     async def _apply_clear_app_block(self, block: dict[str, Any]) -> dict[str, Any]:
         bundle = block.get("bundle")
         if not bundle:
             raise ValueError("clear_app requires bundle")
         await self._ui.clear_app_data(str(bundle))
-        return {"evidence": {"operation": "clear_app", "result": True}}
+        return _passed_action("clear_app", data_cleared=True)
 
     async def _apply_wait_block(self, block: dict[str, Any]) -> dict[str, Any]:
         sec = block.get("seconds")
         if sec is None:
             raise ValueError("wait requires seconds")
         await self._ui.wait_seconds(float(sec))
-        return {"evidence": {"operation": "wait", "seconds": float(sec)}}
+        return _passed_action("wait", seconds=float(sec))
 
-    async def _apply_wait_for_block(self, block: dict[str, Any]) -> dict[str, Any]:
+    def _native_presence_outcome(
+        self,
+        block: dict[str, Any],
+        raw: Any,
+        *,
+        want_gone: bool,
+    ) -> OperationOutcome:
+        """Interpret a native wait_for/wait_gone driver return, explicitly.
+
+        The driver may answer with a structured dict, a bare bool, or nothing
+        at all. ``None`` means the provider could not report the assertion —
+        that is a capability gap discovered after dispatch, never a pass. The
+        0.3-p0 ledger turned exactly this case into a silent green step.
+        """
+
+        from hylyre.api.outcome import (
+            Failure,
+            OperationFailed,
+            absence_observed,
+            presence_observed,
+        )
+
+        observed: bool | None = None
+        facts: dict[str, Any] = {}
+        if isinstance(raw, dict):
+            evidence = raw.get("evidence") if isinstance(raw.get("evidence"), dict) else raw
+            if isinstance(evidence.get("observed_present"), bool):
+                observed = bool(evidence["observed_present"])
+            facts = {
+                k: v
+                for k, v in evidence.items()
+                if k in ("candidate_count", "raw_return_present")
+            }
+        elif isinstance(raw, bool):
+            observed = raw
+        elif raw is not None:
+            observed = True
+
+        # `observed is None` carries two different facts. On an action path it
+        # means "succeeded, no boolean to report"; here it means the provider
+        # could not answer at all — spec section 6.1, native table row 4. Only
+        # the call site knows which, so it decides rather than the helper.
+        selector = (
+            SelectorEvidence(
+                _native_selector(block).request, SelectorResolution.not_attempted()
+            )
+            if observed is None
+            else _native_selector(block, observed=observed)
+        )
+        if observed is None:
+            return OperationFailed(
+                failure=Failure(
+                    "capability",
+                    "capability.unsupported",
+                    {
+                        "capability_id": "wait_gone" if want_gone else "wait_for",
+                        "provider_id": type(self._ui).__name__,
+                        "dispatched": True,
+                        "reason": "driver reported no observation",
+                    },
+                ),
+                selector=selector,
+                diagnostic=(
+                    "native assertion returned no observable result; "
+                    "an unobserved assertion is not a pass"
+                ),
+            )
+
+        observation = (
+            absence_observed(observed, **facts)
+            if want_gone
+            else presence_observed(observed, **facts)
+        )
+        if observation.matched:
+            return OperationPassed(observation=observation, selector=selector)
+        return OperationFailed(
+            failure=Failure(
+                "assertion",
+                "assertion.mismatch",
+                {"assertion": "absence" if want_gone else "presence"},
+            ),
+            observation=observation,
+            selector=selector,
+        )
+
+    async def _apply_wait_for_block(self, block: dict[str, Any]) -> OperationOutcome:
         if has_rich_selector_fields(block) or block.get("scope") is not None:
             return await wait_rich_selector(
                 self, block, timeout=float(block.get("timeout", 10.0)), want_gone=False
             )
         sel = require_selector(block, step="wait_for")
-        return await self._ui.wait_for_selector(
+        raw = await self._ui.wait_for_selector(
             **sel,
             match=block.get("match"),
             timeout=float(block.get("timeout", 10.0)),
         )
+        return self._native_presence_outcome(block, raw, want_gone=False)
 
-    async def _apply_wait_gone_block(self, block: dict[str, Any]) -> dict[str, Any]:
+    async def _apply_wait_gone_block(self, block: dict[str, Any]) -> OperationOutcome:
         if has_rich_selector_fields(block) or block.get("scope") is not None:
             return await wait_rich_selector(
                 self, block, timeout=float(block.get("timeout", 10.0)), want_gone=True
             )
         sel = require_selector(block, step="wait_gone")
-        return await self._ui.wait_for_selector_gone(
+        raw = await self._ui.wait_for_selector_gone(
             **sel,
             match=block.get("match"),
             timeout=float(block.get("timeout", 10.0)),
         )
+        return self._native_presence_outcome(block, raw, want_gone=True)
 
     async def _apply_wait_idle_block(self, block: dict[str, Any]) -> dict[str, Any]:
         await self._ui.wait_for_idle(
             idle_time=float(block.get("idle_time", 0.7)),
             timeout=float(block.get("timeout", 10.0)),
         )
-        return {"evidence": {"operation": "wait_idle", "result": True}}
+        return _passed_action("wait_idle", idle_reached=True)
 
-    async def _apply_assert_toast_block(self, block: dict[str, Any]) -> dict[str, Any]:
+    async def _apply_assert_toast_block(self, block: dict[str, Any]) -> OperationOutcome:
+        """Toast assertion as a typed outcome.
+
+        ``trigger_window_covered`` records whether the listener was started
+        before the triggering action. It does not change ``matched``: an
+        uncovered window is explicit non-verifying evidence, and the reducer
+        turns it into ``evidence=incomplete`` rather than a silent pass.
+        """
+
+        from hylyre.api.outcome import (
+            Failure,
+            OperationFailed,
+            OperationSkipped,
+            Reason,
+            toast_observed,
+        )
+
         text = block.get("text")
         if text is None:
             raise ValueError("assert_toast requires text")
         on_unsupported = str(block.get("on_unsupported") or "error").strip().lower()
-        listener_was_prestarted = self._toast_listener_started
+        covered = self._toast_listener_started
         try:
             result = await self._ui.assert_toast(
                 str(text),
@@ -868,63 +1022,100 @@ class HylyreAgent:
                 poll_interval=float(block.get("poll_interval", 0.3)),
                 on_unsupported=on_unsupported,
             )
-        except StepSkipped:
-            if on_unsupported == "skip":
-                raise
-            raise RuntimeError("toast assertion skipped but on_unsupported is not skip")
-        except AssertionMismatch as exc:
-            raise AssertionMismatch(
-                str(exc),
-                evidence={
-                    **(getattr(exc, "evidence", None) or {}),
-                    "trigger_window": (
-                        "pre_action" if listener_was_prestarted else "assertion_only"
-                    ),
-                    "trigger_window_covered": listener_was_prestarted,
-                },
-                selector=getattr(exc, "selector", None),
-            ) from exc
-        except CapabilityUnsupported as exc:
-            if on_unsupported == "skip":
-                raise StepSkipped(
-                    str(exc),
-                    evidence=getattr(exc, "evidence", None),
+        except StepSkipped as exc:
+            if on_unsupported != "skip":
+                raise RuntimeError(
+                    "toast assertion skipped but on_unsupported is not skip"
                 ) from exc
-            raise
+            return OperationSkipped(
+                reason=Reason(
+                    "policy",
+                    "optional_check.on_unsupported_skip",
+                    {
+                        "probe_status": "unsupported",
+                        "probe_source": f"driver.{type(self._ui).__name__}.assert_toast",
+                        "capability_id": "toast_listener",
+                    },
+                ),
+                diagnostic=str(exc)[:4000],
+            )
+        except AssertionMismatch as exc:
+            return OperationFailed(
+                failure=Failure("assertion", "assertion.mismatch", {"assertion": "toast"}),
+                observation=toast_observed(
+                    False, trigger_window_covered=covered, channel="driver"
+                ),
+                diagnostic=str(exc)[:4000],
+            )
+        except CapabilityUnsupported as exc:
+            # Discovered after dispatch: a failure, not a pre-dispatch block.
+            if on_unsupported == "skip":
+                return OperationSkipped(
+                    reason=Reason(
+                        "policy",
+                        "optional_check.on_unsupported_skip",
+                        {
+                            "probe_status": "unsupported",
+                            "probe_source": f"driver.{type(self._ui).__name__}.assert_toast",
+                            "capability_id": "toast_listener",
+                        },
+                    ),
+                    diagnostic=str(exc)[:4000],
+                )
+            return OperationFailed(
+                failure=Failure(
+                    "capability",
+                    "capability.unsupported",
+                    {
+                        "capability_id": "toast_listener",
+                        "provider_id": type(self._ui).__name__,
+                        "dispatched": True,
+                    },
+                ),
+                diagnostic=str(exc)[:4000],
+            )
         finally:
             self._toast_listener_started = False
-        trigger_window = "pre_action" if listener_was_prestarted else "assertion_only"
-        if result is False or (
-            isinstance(result, dict) and result.get("result") is False
-        ):
-            raise AssertionMismatch(
-                f"toast assertion mismatch for {text!r}",
-                evidence={
-                    **(result if isinstance(result, dict) else {"result": False}),
-                    "trigger_window": trigger_window,
-                    "trigger_window_covered": listener_was_prestarted,
-                },
-            )
+
+        observed: bool | None = None
+        extra: dict[str, Any] = {}
         if isinstance(result, dict):
-            return {
-                "evidence": {
-                    **result,
-                    "trigger_window": trigger_window,
-                    "trigger_window_covered": listener_was_prestarted,
-                }
-            }
-        if result is True:
-            return {
-                "evidence": {
-                    "channel": "driver",
-                    "result": True,
-                    "boolean_return": True,
-                    "trigger_window": trigger_window,
-                    "trigger_window_covered": listener_was_prestarted,
-                }
-            }
-        raise RuntimeError(
-            "assert_toast driver returned no boolean result; assertion evidence is incomplete"
+            extra = {k: v for k, v in result.items() if k not in ("result", "channel")}
+            if isinstance(result.get("result"), bool):
+                observed = bool(result["result"])
+        elif isinstance(result, bool):
+            observed = result
+
+        if observed is None:
+            return OperationFailed(
+                failure=Failure(
+                    "capability",
+                    "capability.unsupported",
+                    {
+                        "capability_id": "toast_listener",
+                        "provider_id": type(self._ui).__name__,
+                        "dispatched": True,
+                        "reason": "driver returned no boolean toast result",
+                    },
+                ),
+                diagnostic=(
+                    "assert_toast driver returned no boolean result; "
+                    "assertion evidence is incomplete"
+                ),
+            )
+
+        observation = toast_observed(
+            observed,
+            trigger_window_covered=covered,
+            channel=str(result.get("channel", "driver")) if isinstance(result, dict) else "driver",
+            trigger_window="pre_action" if covered else "assertion_only",
+            **extra,
+        )
+        if observed:
+            return OperationPassed(observation=observation)
+        return OperationFailed(
+            failure=Failure("assertion", "assertion.mismatch", {"assertion": "toast"}),
+            observation=observation,
         )
 
     async def _apply_start_app_block(self, block: dict[str, Any]) -> dict[str, Any]:
@@ -937,7 +1128,7 @@ class HylyreAgent:
             params=str(block.get("params") or ""),
             wait_time=float(block.get("wait_time", 1.0)),
         )
-        return {"evidence": {"operation": "start_app", "result": True}}
+        return _passed_action("start_app", bundle_started=True)
 
     async def run_planned_back(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self._ensure_ui()
@@ -1152,18 +1343,19 @@ class HylyreAgent:
         timeout: float = 10.0,
         interval: float = 0.5,
     ) -> None:
+        # ai_assert reports a mismatch as an *outcome*, so waiting on an
+        # exception would treat the very first negative answer as success.
         deadline = time.monotonic() + timeout
-        last_err: AssertionError | None = None
-        while time.monotonic() < deadline:
-            try:
-                await self.ai_assert(instruction)
+        last: str | None = None
+        while True:
+            outcome = await self.ai_assert(instruction)
+            if outcome.outcome_dict()["status"] == "passed":
                 return
-            except AssertionError as e:
-                last_err = e
-                await asyncio.sleep(interval)
-        raise TimeoutError(
-            last_err.args[0] if last_err else f"wait_for timeout: {instruction!r}"
-        )
+            last = outcome.diagnostic
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(interval)
+        raise TimeoutError(last or f"wait_for timeout: {instruction!r}")
 
     async def ai_locate(self, instruction: str) -> dict[str, Any]:
         await self._ensure_ui()

@@ -18,9 +18,9 @@
 
 **门禁提示**：`device_test.run` 未 SKIP 时，脚本以顶层 `test-plan.md` 为 SSOT 校验 Hylyre 派生覆盖：派生表 TC ∪ `explicit_skip_tc_ids`（派生 md frontmatter 或同目录 `derive-manifest.json`）须覆盖顶层全部 `TC-xxx`；否则 BLOCKER，并更新 `derive-hint-from-plan.json`（`schema: 2`，含 `missing_tc_ids`/`rejected_placeholder_paths`）。含烟测占位标记的派生文件无效；多目录并存按 `test-plan.hylyre.md` 的 mtime 选最新有效派生。CLI：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`。
 
-**4.5.1 解析 TC 表**：打开 `<features_dir>/<feature>/testing/test-plan.md`，定位「测试用例清单」章节；读取第一条用例行表（列须覆盖用例编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC）；每行建立工作项 TC-xxx。
+**4.5.1 解析 TC 表**：打开 `<features_dir>/<feature>/testing/test-plan.md`，定位「测试用例清单」章节；读取第一条用例行表（列须覆盖用例编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC/**执行通道**）；每行建立工作项 TC-xxx。**执行通道是编译期分派的唯一真源**：值域冻结为 `hylyre|visual|manual|provider:<capability-id>`，由测试计划作者声明并经 review。派生器**只编译 `channel=hylyre` 的全集**，不得新增、删除或改写通道，也不得产出 `explicit_skip_tc_ids`；缺列/缺值/非法值是一次性迁移要求（BLOCKER），harness 不按用例名、优先级或步骤散文替你猜通道。
 
-**4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏候选（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。**四级优先级只负责发现候选，不授予真值地位**：任何来源的 `by_id` 都 MUST 经同一 normalizer 反解到当前 feature/screen 的 ui-spec node；正式 `by_text` MUST 显式声明 `match: exact|contains`，由 acceptance 意图选择，禁止按数字/日期等字符特征启发式放宽，也禁止运行时 fallback。运行 `derive-hylyre-plan-hint` 可读 `selector_contract.entries[]` 查询 canonical 节点；派生 lint 以 `STEP-007` 硬拦缺失/非法 match，以 `SELECTOR-SPEC-001` 结构化 WARN 报告无依据 selector。无法校验时先补 ui-spec/anchor 注入；仍无可靠 selector 的 TC 不写入派生表行，但须在 frontmatter 或 `derive-manifest.json` 登记 `explicit_skip_tc_ids`，Step 5 标跳过并写原因。
+**4.5.2 发现 selector**（按顺序尝试）：①`contracts.yaml`（components/资源键/UI 相关 id）；②`plan.md`（组件树/按钮文案/路由名）；③`doc/app-snapshot-cache/<bundle>/`（历史 `hylyre app page save` 页面结构，每次 `runHylyreDeviceTest` 结束后自动尝试）；④设备连线时用 `adhoc-device-test --dump-ui-only` 抓取当前屏候选（**禁止**在实例工程根直跑 `python -m hylyre dump-ui`）。**四级优先级只负责发现候选，不授予真值地位**；正式 `by_text` MUST 显式声明 `match: exact|contains`，由 acceptance 意图选择，禁止按数字/日期等字符特征启发式放宽，也禁止运行时 fallback。**feature ui-spec 是开放世界静态提示**：它只建模本 feature 新增页面，首页/卡包等既有入口天然缺席——`by_id`/`by_text` 不在 ui-spec 只给 `SELECTOR-SPEC-001` provenance **WARN 并放行**，最终合法性由本轮 native StepResult 的 selector evidence 裁决。静态 BLOCKER 只保留可确定错误：非法 selector/match、缺显式 `match`（`STEP-007`）、ui-spec 已证明的同屏多映射无消歧、`contains` 只命中带 children 的聚合 Text/Row，以及同一 checkpoint 结构化绑定的 `target_element_id` 与计划 `by_id` 明确不等。运行 `derive-hylyre-plan-hint` 可读 `selector_contract.entries[]` 查询 canonical 节点（**只是查询，不是白名单**；不要把 ui-spec ∪ acceptance ∪ contracts 合成第二套 registry）。**派生器没有 skip 决策权**：任一 `channel=hylyre` case 编译不了（含首个 assertion 前无同 case setup/navigation action，`STEP-SETUP`），就不产出可运行计划，改为回报该 TC 根因与下一责任阶段——不得写 `explicit_skip_tc_ids`。
 
 **4.5.3 翻译为 Hylyre JSON**：每步译为单行裸 JSON（禁止 Markdown 反引号包裹单元格）；根键以 `planned_step_keys` 为准（touch/input/swipe/scroll/back/home/wait_for/assert_toast 等）；正式 `by_text` selector 每次都写 `"match":"exact"` 或 `"match":"contains"`，动态文本是否 contains 由 acceptance 意图判断而不是字符形态；推荐 canonical 直接根键形态（`{"touch":{"by_text":"…","match":"exact"}}`），`{"action":{"type":"touch",…}}` 为兼容形态勿混用；action 默认唯一性由 Hylyre 契约提供，需要消歧时只复用 `index`/`scope`/`within`/`all`；禁止步骤列写 `start_app`（harness 已预启）与 `dump_ui`/CLI 命令名作根键；同格多步用 `;`/`；`拼接（禁止 `<br/>`，格内禁未转义 `|`）；派生前可读 `derive-hylyre-plan-hint`/`derive-adhoc-hylyre-hint` 输出（hint JSON 内含 `allowed_step_roots`/`step_shape_catalog` 机读步骤目录，翻译时以此为准），`snapshot_cache_empty:true` 先 warmup 或 dump-ui；若步骤语法不在当前上下文（长会话被压缩后常见），翻译前重读 `profile-skill-asset:device-testing` 的 `reference/hylyre-planned-step-fields.md`。
 
@@ -116,11 +116,13 @@
   重派生/消歧，capability defer，infrastructure 回 external/toolchain。无 StepResult 的 explicit skip/未执行 case 保持 testing-owned FAIL、零
   自动 coding。三重判据任一不满足时标记 `legacy_assertion_evidence_untrusted`，默认升级后重跑；
   既有完整 telemetry 只能证明其实际采到的特定 checkpoint，不生成通用 CaseResult.steps[]。
-- **selector 两层门**：静态只认 canonical ui-spec；`match=exact` 精确等值，
-  `match=contains` 必须唯一或使用既有 `index/scope/within/all` 消歧。运行时只认 StepResult
-  selector evidence 的 candidate_count；多候选无真实消歧拒绝，禁止 exact→contains fallback、
-  父 Text/Row 中心点击、OCR 与坐标估算。静态/runtime/P0 共用 planned-step normalizer；
-  `selected_id` 必须属于计划 selector 的 canonical target 集。
+- **selector 两层门（开放世界）**：静态门只拦可确定错误——非法 selector/match、缺显式
+  `match`、ui-spec 已证明的同屏多映射无消歧、`contains` 只命中聚合 Text/Row、同一 checkpoint
+  结构化 `target_element_id` 与计划 `by_id` 明确不等。selector 不在 feature ui-spec 只给
+  provenance WARN 并放行（既有入口本就不重复建模）。运行时只认本轮 StepResult 的 selector
+  evidence：唯一命中且有真实 selected target 才通过，0/多候选无真实消歧一律拒绝；禁止
+  exact→contains fallback、父 Text/Row 中心点击、OCR 与坐标估算。静态/runtime/P0 共用
+  planned-step normalizer。
 - **mock 数据可辨识**：多实体场景（多卡/多账户）各实体可见身份（掩码后卡号等）必须唯一
   可区分——掩码口径要避免「前 4+后 4 恒相同」（bc-openCard：全部卡显示 6225 **** 0001）。
 

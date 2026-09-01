@@ -23,6 +23,7 @@ vendor/hylyre/
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
+- 当前 vendored source：Hylyre `0.5.0`，309 文件，`source.tree_sha256 = 8f00a37f2fc08237e21d5523ddd77d084eac90597cd9e9a3770dc76f9924d38d`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`。
 - schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash；本仓 `.gitattributes` 全局 `eol=lf`，checkout 字节与声明恒等。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
@@ -56,7 +57,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 同步后 Hylyre 发布包内如仍带 `integration_docs` 等移交文件，**不要**提交进 Maison；`.whl` 同样不得进入本目录。把 harness 侧变更摘要补进下文「Framework 集成要点」。
 
-## Framework 集成要点（vendor 0.4.1）
+## Framework 集成要点（vendor 0.5.0）
 
 以下由 harness 已落地，消费者读 profile 文档即可，无需另附移交清单。
 
@@ -84,19 +85,20 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 - 阶段入口（coding / ut / testing）内联 **`ensurePersonalSetup`**：半就绪 `framework.local.json`（如只记 `agent_adapter`、缺 DevEco）会在放行前自动确定性 repair（单 adapter / DevEco 探测）。
 - `init-orchestrate record-adapter` 写 local 后 **best-effort** 补 DevEco；探测不到时不失败任务，阶段入口仍会校验 DevEco。
 
-### Hylyre 0.4.1 CLI / 步骤与证据能力
+### Hylyre 0.5.0 CLI / 步骤与证据能力
 
 - **`input`**：支持与 `touch` 一致的 `by_type` / 富选择器（`scope`/`within`/`index`/`all`/`visible` 等），或一步式 `into` 定位输入；无选择器时落当前聚焦框（仍建议先 `touch` 聚焦）。
 - **`scroll_to`**：滚动前先匹配已在屏目标，避免对已可见项空滚。
+- **steps-file fake**：`run --steps-file/--steps ... --use-fakes` 在进入 session/Hypium 之前走纯 fake builder；与 `--session` 同用会显式拒绝，不再静默连接第一台设备。fake action 可通过，但离线无法观察的断言必须 `blocked/capability`，不得伪造 PASS。
 - 选择器 `match` 只接受 `exact` / `contains`；显式 `exact` 失败不会再静默放宽为 `contains`，动作多命中时 fail-closed，并使用 `index` / `scope` / `within` / `all` 等既有字段消歧。
-- 消费 trace/report 时以 `cases[].steps[]` 为证据真源，`tool_calls` 仅为兼容投影；先按 `failure_kind`、再按 `failure_code` 路由，`verification=inconclusive` 或 `evidence=incomplete` 不得判为已验证。
-- 要求验证的断言必须有非空 evidence；Toast 断言的触发动作应紧邻断言，未覆盖触发窗口时不得作为验证证据。最低接入版本为 `hylyre>=0.4.1`，trace schema 为 `0.3-p0`；结构化 selector identity（`by_id` / `by_key` / `id` / `key` / `selected_id`）逐字保留，用户文本和值继续脱敏。
+- 消费 trace/report 时以 `cases[].steps[]` 为证据真源，`tool_calls` 仅为兼容投影；责任路由只消费 `outcome.status=failed`，先按 `outcome.failure.domain`、再按 namespaced `outcome.failure.code` 解释，绝不读取已退役的 flat `failure_kind`/`failure_code`；`verification=inconclusive` 或 `evidence=incomplete` 不得判为已验证。
+- 要求验证的断言必须有非空 evidence；Toast 断言的触发动作应紧邻断言，未覆盖触发窗口时不得作为验证证据。最低接入版本为 `hylyre>=0.5.0`，结果协议为 `hylyre.step-outcome/1`、trace schema 为 `0.4-p0`；发布件内 `hylyre/contracts/` 与冻结契约包逐字一致（`contracts_tree_sha256`），可据此证明发布件逐字携带契约；结构化 selector identity（`by_id` / `by_key` / `id` / `key` / `selected_id`）逐字保留，用户文本和值继续脱敏。
 - 富选择器、`--failure-dir` 失败诊断等见 [`../../skills/device-testing/reference/hylyre-planned-step-fields.md`](../../skills/device-testing/reference/hylyre-planned-step-fields.md) 与 device-testing profile addendum。
 - 上游能力需求与真机踩坑记录留在 **Hylyre 仓** 或开发 plan，不进本 vendor 目录。
 
 ## 升级原则
 
-- Commit message 建议：`chore(vendor): hylyre <旧版本> -> <新版本>`（如 `0.4.0 -> 0.4.1`）
+- Commit message 建议：`chore(vendor): hylyre <旧版本> -> <新版本>`（如 `0.4.1 -> 0.5.0`）
 - 正文粘贴 `release.manifest.json` 中关键字段（如 `hylyre_version`、`source.tree_sha256`）
 - **覆盖 vendor 后无需手删 `.hylyre/venv`**：协作者/用户用自然语言重新发起 **device-testing 真机测试**即可；**agent 在 device-testing Step 7 自跑 testing harness** 时，**`ensureHylyreReady`** 会按 manifest 版本与工件指纹自动 pip 对齐（`tools.hylyre.auto_install=true` 且未设置 `HYLYRE_PYTHON` 时）。**用户不直接执行 harness 脚本。**
 

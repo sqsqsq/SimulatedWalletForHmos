@@ -1,4 +1,11 @@
-"""Serializable scenario result contract shared by runner and reporters."""
+"""Serializable scenario result contract (Step Outcome Protocol v1).
+
+``StepResult`` is the single authoritative per-step ledger row. It is produced
+only by :mod:`hylyre.scenario.step_builder` and reduced only by
+:mod:`hylyre.scenario.reducer`; nothing else may construct or interpret it.
+
+See ``hylyre/contracts/step-outcome-v1.md``.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +13,6 @@ from dataclasses import dataclass, field
 import re
 from typing import Any, Literal
 
-from hylyre.api.exceptions import StepSkipped, classify_exception
-from hylyre.api.selector_contract import selector_evidence
 from hylyre.scenario.plan_parse import TestCase
 
 Execution = Literal["completed", "aborted", "infrastructure_failed"]
@@ -18,19 +23,6 @@ ExpectedCheckMode = Literal[
 ]
 StepRole = Literal["action", "assertion"]
 StepStatus = Literal["passed", "failed", "blocked", "skipped"]
-FailureKind = Literal["assertion", "selector", "capability", "infrastructure"]
-
-FAILURE_CODES = frozenset(
-    {
-        "assertion_mismatch",
-        "selector_not_found",
-        "selector_ambiguous",
-        "inline_target_unresolvable",
-        "capability_unsupported",
-        "device_unavailable",
-        "driver_failure",
-    }
-)
 
 _SENSITIVE_KEY_PARTS = (
     "password",
@@ -70,7 +62,7 @@ _SENSITIVE_TEXT_PATTERNS = (
 # canonical UI target and must remain comparable in serialized evidence.
 _SELECTOR_VALUE_KEYS = frozenset({"by_id", "by_key", "id", "key", "selected_id"})
 # Bounds are machine evidence too, not user-facing text.
-_STRUCTURED_SCALAR_KEYS = frozenset({"bounds"})
+_STRUCTURED_SCALAR_KEYS = frozenset({"bounds", "fragment_bounds"})
 _STRUCTURED_VALUE_KEYS = _SELECTOR_VALUE_KEYS | _STRUCTURED_SCALAR_KEYS
 _SENSITIVE_VALUE_KEYS = frozenset(
     {
@@ -84,6 +76,9 @@ _SENSITIVE_VALUE_KEYS = frozenset(
         "by_value",
     }
 )
+
+#: Selector request kinds whose ``value`` is a structured identity, not user text.
+_STRUCTURED_REQUEST_KINDS = frozenset({"by_id", "by_key", "by_type"})
 
 
 def redact_text(value: str | None) -> str | None:
@@ -128,57 +123,137 @@ def redact_evidence(value: Any, *, key: str = "") -> Any:
     return value
 
 
+def redact_selector(selector: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Redact a v1 selector without breaking structured target identity.
+
+    ``request.value`` is verbatim for ``by_id``/``by_key``/``by_type`` (a
+    canonical target name) and redacted for ``by_text`` (user-visible copy).
+    ``resolution.selected``/``candidates`` ids, types and bounds are machine
+    evidence and stay verbatim; ``fragment_anchor`` is text and does not.
+    """
+
+    if not selector:
+        return None
+    request = dict(selector.get("request") or {})
+    resolution = dict(selector.get("resolution") or {})
+
+    kind = str(request.get("kind", ""))
+    constraints = request.get("constraints") or {}
+    if kind == "composite":
+        # A composite request keeps the identity of whichever predicate is
+        # primary: a composite built around by_id is still a structured target,
+        # and redacting it would undo the 0.4.1 selector-identity fix.
+        kind = str(constraints.get("primary") or "by_text")
+    value = request.get("value")
+    if value is not None and kind not in _STRUCTURED_REQUEST_KINDS:
+        value = redact_text(str(value))
+    safe_request = {
+        "kind": request.get("kind"),
+        "value": value,
+        "match": request.get("match"),
+        "constraints": redact_evidence(request.get("constraints") or {}),
+    }
+
+    def _target(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return redact_evidence(item)
+        out = {k: item[k] for k in ("id", "type", "bounds") if k in item}
+        return out
+
+    safe_resolution: dict[str, Any] = {
+        "state": resolution.get("state"),
+        "candidate_count": resolution.get("candidate_count"),
+        "selected": _target(resolution["selected"]) if resolution.get("selected") else None,
+        "candidates": [_target(c) for c in resolution.get("candidates") or []],
+    }
+    if resolution.get("state") == "unresolvable":
+        safe_resolution["reason_code"] = resolution.get("reason_code")
+        facts = dict(resolution.get("facts") or {})
+        if facts.get("fragment_anchor") is not None:
+            facts["fragment_anchor"] = redact_text(str(facts["fragment_anchor"]))
+        safe_resolution["facts"] = facts
+    return {"request": safe_request, "resolution": safe_resolution}
+
+
 @dataclass(frozen=True)
 class StepResult:
+    """One planned step's authoritative ledger row (Step Outcome Protocol v1).
+
+    ``outcome`` holds the already-discriminated outcome object; there is no
+    second, flat representation of the same facts.
+    """
+
     index: int
     kind: str
     role: StepRole
-    status: StepStatus
-    failure_kind: FailureKind | None = None
-    failure_code: str | None = None
     duration_ms: float = 0.0
+    device_session: bool = False
+    outcome: dict[str, Any] = field(default_factory=dict)
     selector: dict[str, Any] | None = None
-    evidence: dict[str, Any] | None = None
-    error: str | None = None
+    artifacts: tuple[dict[str, Any], ...] = ()
+    diagnostic: str | None = None
+    extensions: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    @property
+    def status(self) -> StepStatus:
+        return str(self.outcome.get("status", ""))  # type: ignore[return-value]
+
+    @property
+    def failure(self) -> dict[str, Any] | None:
+        return self.outcome.get("failure")
+
+    @property
+    def cause(self) -> dict[str, Any] | None:
+        return self.outcome.get("cause")
+
+    @property
+    def reason(self) -> dict[str, Any] | None:
+        return self.outcome.get("reason")
+
+    @property
+    def observation(self) -> dict[str, Any] | None:
+        return self.outcome.get("observation")
+
+    def raw_dict(self) -> dict[str, Any]:
+        """Serialized shape *without* privacy redaction, for reduction only."""
+
         return {
             "index": int(self.index),
             "kind": self.kind,
             "role": self.role,
-            "status": self.status,
-            "failure_kind": self.failure_kind,
-            "failure_code": self.failure_code,
             "duration_ms": round(float(self.duration_ms), 3),
-            "selector": redact_evidence(self.selector),
-            "evidence": redact_evidence(self.evidence),
-            "error": redact_text(self.error),
+            "device_session": bool(self.device_session),
+            "outcome": self.outcome,
+            "selector": self.selector,
+            "artifacts": [dict(a) for a in self.artifacts],
+            "diagnostic": self.diagnostic,
+            "extensions": dict(self.extensions),
         }
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialized shape as persisted: redacted, structured identity intact."""
 
-def _project_legacy_status(
-    *,
-    execution: str,
-    verification: str,
-    steps: tuple[StepResult, ...],
-) -> str:
-    if execution == "infrastructure_failed":
-        return "阻塞"
-    if verification == "passed":
-        return "通过"
-    if any(s.status == "failed" for s in steps):
-        return "失败"
-    if any(s.status == "blocked" for s in steps):
-        return "阻塞"
-    if steps and all(s.status == "skipped" for s in steps):
-        return "跳过"
-    # Inconclusive execution must never retain the historical false-pass label.
-    return "跳过"
+        return {
+            "index": int(self.index),
+            "kind": self.kind,
+            "role": self.role,
+            "duration_ms": round(float(self.duration_ms), 3),
+            "device_session": bool(self.device_session),
+            "outcome": redact_evidence(self.outcome),
+            "selector": redact_selector(self.selector),
+            "artifacts": [dict(a) for a in self.artifacts],
+            "diagnostic": redact_text(self.diagnostic),
+            "extensions": redact_evidence(dict(self.extensions)),
+        }
 
 
 @dataclass(frozen=True)
 class CaseResult:
-    """Case identity plus the single authoritative per-step result ledger."""
+    """Case identity plus the single authoritative per-step result ledger.
+
+    The three axes and the legacy status are *reduced* from ``steps`` by
+    :mod:`hylyre.scenario.reducer`; no entry may set them freely.
+    """
 
     case: TestCase
     status: str = ""
@@ -189,18 +264,20 @@ class CaseResult:
     expected_check_mode: ExpectedCheckMode = "empty"
     steps: tuple[StepResult, ...] = field(default_factory=tuple)
 
-    def __post_init__(self) -> None:
-        if self.status:
-            return
-        object.__setattr__(
-            self,
-            "status",
-            _project_legacy_status(
-                execution=self.execution,
-                verification=self.verification,
-                steps=self.steps,
-            ),
-        )
+    def raw_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.case.case_id,
+            "name": self.case.name,
+            "priority": self.case.priority,
+            "ac_ref": self.case.ac_ref,
+            "status": self.status,
+            "notes": self.notes or "",
+            "execution": self.execution,
+            "verification": self.verification,
+            "evidence": self.evidence,
+            "expected_check_mode": self.expected_check_mode,
+            "steps": [step.raw_dict() for step in self.steps],
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -218,242 +295,16 @@ class CaseResult:
         }
 
 
-def result_from_exception(
-    *,
-    exc: BaseException,
-    index: int,
-    kind: str,
-    role: StepRole,
-    duration_ms: float,
-    selector: dict[str, Any] | None = None,
-    evidence: dict[str, Any] | None = None,
-) -> StepResult:
-    failure_kind, failure_code = classify_exception(exc)
-    if failure_kind not in {"assertion", "selector", "capability", "infrastructure"}:
-        failure_kind, failure_code = "infrastructure", "driver_failure"
-    if failure_code not in FAILURE_CODES:
-        failure_code = {
-            "assertion": "assertion_mismatch",
-            "selector": "selector_not_found",
-            "capability": "capability_unsupported",
-            "infrastructure": "driver_failure",
-        }[failure_kind]
-    exc_evidence = getattr(exc, "evidence", None)
-    if isinstance(exc_evidence, dict):
-        evidence = {**(evidence or {}), **exc_evidence}
-    if isinstance(exc, StepSkipped):
-        status: StepStatus = "skipped"
-    elif failure_kind == "capability":
-        # A capability limitation blocks a required operation; it is never a
-        # normal assertion failure.  Optional Toast handling can convert it to
-        # StepSkipped before this function is called.
-        status = "blocked"
-    elif failure_kind == "infrastructure" and failure_code == "device_unavailable":
-        status = "blocked"
-    else:
-        status = "failed"
-    serialized_selector = selector
-    if serialized_selector is None:
-        serialized_selector = getattr(exc, "selector", None)
-    if isinstance(serialized_selector, dict):
-        required_selector_keys = {
-            "engine",
-            "requested_match",
-            "effective_match",
-            "candidate_count",
-        }
-        if not required_selector_keys.issubset(serialized_selector):
-            candidate_count = 0
-            if isinstance(evidence, dict) and isinstance(
-                evidence.get("candidate_count"), int
-            ):
-                candidate_count = int(evidence["candidate_count"])
-            serialized_selector = selector_evidence(
-                serialized_selector,
-                engine=str(serialized_selector.get("engine") or "resolver"),
-                candidate_count=candidate_count,
-                selected_id=(
-                    str(serialized_selector["selected_id"])
-                    if serialized_selector.get("selected_id") is not None
-                    else None
-                ),
-                bounds=(
-                    str(serialized_selector["bounds"])
-                    if serialized_selector.get("bounds") is not None
-                    else None
-                ),
-            )
-    return StepResult(
-        index=index,
-        kind=kind,
-        role=role,
-        status=status,
-        failure_kind=failure_kind,  # type: ignore[arg-type]
-        failure_code=failure_code,
-        duration_ms=duration_ms,
-        selector=serialized_selector,
-        evidence=evidence,
-        error=redact_text(str(exc)[:4000]),
-    )
-
-
-def _has_evidence(value: Any) -> bool:
-    return isinstance(value, dict) and bool(value)
-
-
-def _toast_window_covered(step: StepResult) -> bool:
-    if step.kind != "assert_toast":
-        return True
-    return (
-        isinstance(step.evidence, dict)
-        and step.evidence.get("trigger_window_covered") is True
-    )
-
-
-def required_assertion_steps(
-    steps: tuple[StepResult, ...],
-    *,
-    expected_check_mode: ExpectedCheckMode,
-) -> tuple[StepResult, ...]:
-    """Return assertions that participate in the case verification gate."""
-
-    return tuple(
-        step
-        for step in steps
-        if step.role == "assertion"
-        and not (
-            step.kind == "expected_check"
-            and expected_check_mode in {"disabled_by_flag", "unavailable_no_vlm"}
-        )
-    )
-
-
-def case_verdict(
-    steps: tuple[StepResult, ...],
-    *,
-    expected_check_mode: ExpectedCheckMode,
-    execution: Execution = "completed",
-) -> tuple[Verification, EvidenceStatus, str]:
-    """Compute verification/evidence/legacy status from steps only."""
-
-    assertion_steps = list(
-        required_assertion_steps(
-            steps,
-            expected_check_mode=expected_check_mode,
-        )
-    )
-    failed_assertions = [s for s in assertion_steps if s.status == "failed"]
-    blocked_assertions = [s for s in assertion_steps if s.status == "blocked"]
-    skipped_assertions = [s for s in assertion_steps if s.status == "skipped"]
-    failed_steps = [s for s in steps if s.status == "failed"]
-    blocked_steps = [s for s in steps if s.status == "blocked"]
-
-    if execution != "completed":
-        # An aborted/infrastructure-failed execution can never be verified,
-        # even when an earlier assertion happened to pass.
-        verification: Verification = "failed"
-    elif failed_steps or failed_assertions:
-        verification = "failed"
-    elif blocked_steps or blocked_assertions:
-        verification = "failed"
-    elif skipped_assertions:
-        verification = "inconclusive"
-    else:
-        expected_rows = [s for s in steps if s.kind == "expected_check"]
-        expected_ok = expected_check_mode != "checked_vlm" or (
-            len(expected_rows) == 1
-            and expected_rows[0].status == "passed"
-            and _has_evidence(expected_rows[0].evidence)
-        )
-        all_required_assertions_pass = bool(assertion_steps) and all(
-            s.status == "passed"
-            and _has_evidence(s.evidence)
-            and _toast_window_covered(s)
-            for s in assertion_steps
-        )
-        if all_required_assertions_pass and expected_ok:
-            verification = "passed"
-        else:
-            verification = "inconclusive"
-
-    required_ids = {id(step) for step in assertion_steps}
-    evidence_complete = all(
-        _has_evidence(step.evidence)
-        if step.status == "passed"
-        or (step.role == "assertion" and id(step) in required_ids)
-        else True
-        for step in steps
-    )
-    if any(
-        step.role == "assertion"
-        and id(step) in required_ids
-        and step.status == "passed"
-        and (
-            not _has_evidence(step.evidence)
-            or not _toast_window_covered(step)
-        )
-        for step in steps
-    ):
-        evidence_complete = False
-    evidence_status: EvidenceStatus = "complete" if evidence_complete else "incomplete"
-    if verification == "passed" and evidence_status != "complete":
-        verification = "inconclusive"
-    legacy = _project_legacy_status(
-        execution=execution,
-        verification=verification,
-        steps=steps,
-    )
-    return verification, evidence_status, legacy
-
-
-def outcome_from_case_results(case_results: Any) -> str:
-    """Project cases to the historical run outcome using the same rule everywhere."""
-
-    cases = list(case_results)
-    if not cases:
-        return "aborted"
-    if all(
-        case.execution == "completed"
-        and case.verification == "passed"
-        and case.evidence == "complete"
-        for case in cases
-    ):
-        return "success"
-
-    has_blocked = any(
-        case.execution == "infrastructure_failed"
-        or case.status == "阻塞"
-        or any(step.status == "blocked" for step in case.steps)
-        for case in cases
-    )
-    has_failed = any(
-        case.verification == "failed" or case.status == "失败"
-        for case in cases
-    )
-    has_passed = any(
-        case.execution == "completed"
-        and case.verification == "passed"
-        and case.evidence == "complete"
-        for case in cases
-    )
-    if has_blocked:
-        return "failed"
-    if has_failed and has_passed:
-        return "partial"
-    if has_failed:
-        return "failed"
-    return "partial"
-
-
 __all__ = [
     "CaseResult",
+    "EvidenceStatus",
+    "Execution",
     "ExpectedCheckMode",
-    "FAILURE_CODES",
     "StepResult",
-    "case_verdict",
+    "StepRole",
+    "StepStatus",
+    "Verification",
     "redact_evidence",
+    "redact_selector",
     "redact_text",
-    "result_from_exception",
-    "outcome_from_case_results",
-    "required_assertion_steps",
 ]

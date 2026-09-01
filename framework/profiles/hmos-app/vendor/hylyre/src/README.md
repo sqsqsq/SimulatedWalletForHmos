@@ -66,7 +66,7 @@ openspec list
 
 ## 当前阶段
 
-**0.4.1 结构化 selector identity 修复已完成代码与离线契约验收**：trace schema 继续为 `0.3-p0`，`StepResult` ledger 与严格 selector/Toast/wait 语义保持不变；结构化 selector identity 不再按文本规则脱敏，真机复验仍按 [docs/migration-0.4.md](docs/migration-0.4.md) 标记 pending。
+**0.5.0 引入 Step Outcome Protocol v1（破坏性）**：trace schema 升至 `0.4-p0`，所有结果 envelope 声明 `result_protocol: "hylyre.step-outcome/1"`。`StepResult.outcome` 是判别联合——`passed` 带 observation、`failed` 带 failure、`blocked` 带 cause、`skipped` 带 reason，互不兼容；status 只由「是否实际尝试」决定；selector 拆成 `request`/`resolution`；`blocked` 后缀指向根步骤而不再复制其失败分类。机器契约（Schema、规范、判定表、参考 reducer、218 个 golden fixtures）随包发布在 [`hylyre/contracts/`](hylyre/contracts/)，可离线读取与校验；消费方迁移见 [docs/migration-0.5.md](docs/migration-0.5.md)。真机复验仍为 pending。
 
 ## License
 

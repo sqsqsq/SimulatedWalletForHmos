@@ -49,6 +49,12 @@ import {
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
 import type { RuntimeStepTelemetry } from '../../../../harness/scripts/utils/runtime-step-evidence';
+import { requireV1ForGate } from '../../../../harness/scripts/utils/hylyre-result-protocol';
+import type {
+  CaseResultV1,
+  SelectorV1,
+  StepResultV1,
+} from '../../../../harness/scripts/utils/hylyre-result-protocol';
 
 export { buildHylyreAppPageSaveArgv, resolveHylyrePageSaveSlug, resolveHylyrePageSaveNames } from '../device-test-page-save';
 // d9e4b7c1 T2：evidence 合成入口（check-testing 协调层经 capability dispatch 调用）
@@ -68,21 +74,16 @@ export const provider: CapabilityProvider = {
   ],
 };
 
-export const MIN_NATIVE_HYLYRE_VERSION = '0.4.1';
-export const NATIVE_TRACE_SCHEMA_VERSION = '0.3-p0';
-export const LEGACY_TRACE_SCHEMA_VERSIONS = new Set(['0.1-p0', '0.2-p4']);
+// plan a6c4e9f2 T7a/T7b（inventory §一 G10）：最低版本/trace 门随 Step Outcome v1 一并提升。
+// 这两条常量与 `hylyre-result-protocol.ts` 的 dispatch 判别键必须同步——M1 的 typed consumer
+// 只消费 v1，若这道三重判据仍钉在 0.3-p0，合法 v1 trace 会被判非 native，两者互斥。
+// 代价如实：宿主装上 0.5.0 之前，testing 的 native 证据链无法闭合（plan 既定终局）。
+export const MIN_NATIVE_HYLYRE_VERSION = '0.5.0';
+export const NATIVE_TRACE_SCHEMA_VERSION = '0.4-p0';
+export const NATIVE_RESULT_PROTOCOL = 'hylyre.step-outcome/1';
+/** 只读诊断可用、绝不闭合 evidence 的历史 schema（0.3-p0 自本版起并入 legacy）。 */
+export const LEGACY_TRACE_SCHEMA_VERSIONS = new Set(['0.1-p0', '0.2-p4', '0.3-p0']);
 
-export type HylyreFailureKind = 'assertion' | 'selector' | 'capability' | 'infrastructure';
-export type HylyreFailureCode =
-  | 'assertion_mismatch'
-  | 'selector_not_found'
-  | 'selector_ambiguous'
-  | 'inline_target_unresolvable'
-  | 'capability_unsupported'
-  | 'device_unavailable'
-  | 'driver_failure';
-export type HylyreStepRole = 'action' | 'assertion';
-export type HylyreStepStatus = 'passed' | 'failed' | 'blocked' | 'skipped';
 export type HylyreCaseExecution = 'completed' | 'aborted' | 'infrastructure_failed';
 export type HylyreCaseVerification = 'passed' | 'failed' | 'inconclusive';
 export type HylyreCaseEvidence = 'complete' | 'incomplete';
@@ -92,34 +93,23 @@ export type HylyreExpectedCheckMode =
   | 'unavailable_no_vlm'
   | 'empty';
 
-export interface HylyreSelectorEvidence {
-  engine: string;
-  requested_match: string | null;
-  effective_match: 'exact' | 'contains' | null;
-  candidate_count: number;
-  selected_id?: string | null;
-  bounds?: string | null;
-  [key: string]: unknown;
-}
-
-export interface HylyreStepResult {
-  index: number;
-  kind: string;
-  role: HylyreStepRole;
-  status: HylyreStepStatus;
-  failure_kind: HylyreFailureKind | null;
-  failure_code: HylyreFailureCode | null;
-  duration_ms: number;
-  selector: HylyreSelectorEvidence | null;
-  evidence: Record<string, unknown> | null;
-  error: string | null;
-  [key: string]: unknown;
-}
+// plan a6c4e9f2 T4 返修：这里原来是 0.3 flat 形状
+// （顶层 status/failure_kind/failure_code/evidence/error + 旧 selector
+//  requested_match/effective_match/selected_id）。实测把冻结包**合法** golden
+// `golden/trace/valid/bc-opencard-1.json` 喂给本文件的 native gate，得
+// `native=false / mode=unsupported / 54 条 reasons`，首条 `steps[0].status 值域非法：undefined`
+// ——信封已经升到 0.4-p0，内核还钉在 0.3，于是真实 v1 一律闭合不了证据，
+// 反倒是"0.3 flat 套 0.4-p0 信封"的混装产物更容易被当成 native。
+// 现在直接复用 `hylyre-result-protocol` 的 typed view，不再维护第二套形状定义。
+export type HylyreSelectorEvidence = SelectorV1;
+export type HylyreStepResult = StepResultV1;
 
 export interface HylyreTraceEnvironment {
   hylyre_version: string;
   hypium_version: string;
   trace_schema_version: string;
+  /** v1 下 environment 侧同样声明协议，且必须与 trace root 一致。 */
+  result_protocol?: string;
   selector_engine: string;
   [key: string]: unknown;
 }
@@ -243,7 +233,14 @@ export interface HylyreReleaseManifest extends HylyreVendorManifestShape {
   note?: string;
 }
 
-/** hylyre trace.json `cases[]` 子项 */
+/**
+ * hylyre trace.json `cases[]` 子项。
+ *
+ * 字段保持可选是**有意**的：本类型也用来承载 legacy/畸形 trace 的只读诊断，
+ * 那些文档确实缺三轴。合法性判定不在类型层，而在 `requireV1ForGate`
+ * （冻结 schema + 跨行不变量）——类型宽、门禁严，比反过来安全。
+ * 判为 v1 之后应改用 `CaseResultV1` 消费。
+ */
 export interface HylyreTraceCase {
   id: string;
   status: '通过' | '失败' | '阻塞' | '跳过';
@@ -259,8 +256,18 @@ export interface HylyreTraceCase {
   [key: string]: unknown;
 }
 
+/** 已判定为 v1 后的 case 视图——消费侧应尽量用这个而不是上面的宽类型。 */
+export type HylyreNativeCase = CaseResultV1;
+
 export interface HylyreTrace {
   schema_version: string;
+  /**
+   * v1 结果协议声明。与 `schema_version` 共同构成**唯一** dispatch 判别键
+   * （见 `harness/scripts/utils/hylyre-result-protocol.ts`）。
+   * `0.4-p0` 下必需且为 `hylyre.step-outcome/1`；`0.3-p0`/`0.2-p4`/`0.1-p0` 下**禁止**出现。
+   * 解析层必须原样保留它——丢掉这个字段会让下游把合法 v1 误判成"缺协议"。
+   */
+  result_protocol?: string;
   feature: string;
   phase: string;
   outcome: string;
@@ -2060,7 +2067,12 @@ export function parseHylyreTrace(tracePath: string): HylyreTrace | null {
   if (typeof raw.feature !== 'string' || typeof raw.outcome !== 'string') return null;
   const cases = Array.isArray(raw.cases) ? (raw.cases as HylyreTraceCase[]) : undefined;
   return {
+    // 先摊开原始文档：本函数返回的是**投影**，而冻结 schema 校验的是完整文档。
+    // 只保留下面这些具名字段会丢掉 `model_backend` 等契约必填项，
+    // 于是合法 trace 会被 schema 判成"缺必填字段"——投影不得成为校验对象的裁剪器。
+    ...raw,
     schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : '',
+    ...(typeof raw.result_protocol === 'string' ? { result_protocol: raw.result_protocol } : {}),
     feature: raw.feature,
     phase: typeof raw.phase === 'string' ? raw.phase : '',
     outcome: raw.outcome,
@@ -2089,18 +2101,6 @@ const EXPECTED_CHECK_MODES = new Set([
   'unavailable_no_vlm',
   'empty',
 ]);
-const STEP_ROLES = new Set(['action', 'assertion']);
-const STEP_STATUSES = new Set(['passed', 'failed', 'blocked', 'skipped']);
-const FAILURE_KINDS = new Set(['assertion', 'selector', 'capability', 'infrastructure']);
-const FAILURE_CODES = new Set([
-  'assertion_mismatch',
-  'selector_not_found',
-  'selector_ambiguous',
-  'inline_target_unresolvable',
-  'capability_unsupported',
-  'device_unavailable',
-  'driver_failure',
-]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -2124,144 +2124,29 @@ function requiredEnum(
   }
 }
 
-function validateNativeSelector(
-  value: unknown,
-  label: string,
-  errors: string[],
-): void {
-  if (value === null) return;
-  if (!isRecord(value)) {
-    errors.push(`${label} 必须为 object 或 null`);
-    return;
-  }
-  requiredString(value, 'engine', label, errors);
-  for (const key of ['requested_match', 'effective_match', 'candidate_count']) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) {
-      errors.push(`${label}.${key} 缺失`);
-    }
-  }
-  if (value.requested_match !== null && typeof value.requested_match !== 'string') {
-    errors.push(`${label}.requested_match 值域非法`);
-  }
-  if (value.effective_match !== null && value.effective_match !== 'exact' && value.effective_match !== 'contains') {
-    errors.push(`${label}.effective_match 值域非法：${String(value.effective_match)}`);
-  }
-  if (!Number.isInteger(value.candidate_count) || Number(value.candidate_count) < 0) {
-    errors.push(`${label}.candidate_count 必须为非负整数`);
-  }
-  for (const key of ['selected_id', 'bounds']) {
-    if (Object.prototype.hasOwnProperty.call(value, key) && value[key] !== null && typeof value[key] !== 'string') {
-      errors.push(`${label}.${key} 必须为 string 或 null`);
-    }
-  }
-}
-
-function validateNativeStep(
-  value: unknown,
-  index: number,
-  caseId: string,
-  errors: string[],
-): void {
-  const label = `${caseId}.steps[${index}]`;
-  if (!isRecord(value)) {
-    errors.push(`${label} 必须为 object`);
-    return;
-  }
-  if (!Number.isInteger(value.index) || Number(value.index) !== index || Number(value.index) < 0) {
-    errors.push(`${label}.index 必须与数组序号一致且为非负整数`);
-  }
-  requiredString(value, 'kind', label, errors);
-  requiredEnum(value, 'role', STEP_ROLES, label, errors);
-  requiredEnum(value, 'status', STEP_STATUSES, label, errors);
-  if (!Object.prototype.hasOwnProperty.call(value, 'failure_kind')) {
-    errors.push(`${label}.failure_kind 缺失`);
-  } else if (value.failure_kind !== null && (typeof value.failure_kind !== 'string' || !FAILURE_KINDS.has(value.failure_kind))) {
-    errors.push(`${label}.failure_kind 值域非法：${String(value.failure_kind)}`);
-  }
-  if (!Object.prototype.hasOwnProperty.call(value, 'failure_code')) {
-    errors.push(`${label}.failure_code 缺失`);
-  } else if (value.failure_code !== null && (typeof value.failure_code !== 'string' || !FAILURE_CODES.has(value.failure_code))) {
-    errors.push(`${label}.failure_code 值域非法：${String(value.failure_code)}`);
-  }
-  if (
-    (value.failure_kind === null) !== (value.failure_code === null)
-  ) {
-    errors.push(`${label}.failure_kind/failure_code 必须同时为 null 或同时在场`);
-  }
-  if (typeof value.duration_ms !== 'number' || !Number.isFinite(value.duration_ms) || value.duration_ms < 0) {
-    errors.push(`${label}.duration_ms 必须为非负有限数`);
-  }
-  if (!Object.prototype.hasOwnProperty.call(value, 'selector')) {
-    errors.push(`${label}.selector 缺失`);
-  } else {
-    validateNativeSelector(value.selector, `${label}.selector`, errors);
-  }
-  if (!Object.prototype.hasOwnProperty.call(value, 'evidence')) {
-    errors.push(`${label}.evidence 缺失`);
-  } else if (value.evidence !== null && !isRecord(value.evidence)) {
-    errors.push(`${label}.evidence 必须为 object 或 null`);
-  }
-  if (!Object.prototype.hasOwnProperty.call(value, 'error')) {
-    errors.push(`${label}.error 缺失`);
-  } else if (value.error !== null && typeof value.error !== 'string') {
-    errors.push(`${label}.error 必须为 string 或 null`);
-  }
-}
-
-function validateNativeTraceShape(trace: HylyreTrace | null): string[] {
-  const errors: string[] = [];
+/**
+ * trace 内容合法性判定。
+ *
+ * plan a6c4e9f2 T4 返修：这里原来是一套**手写的 0.3 形状校验**
+ * （逐字段查 status/failure_kind/failure_code/evidence/error 与旧 selector 三件套）。
+ * 它有两个致命后果——合法 v1 因为没有那些 flat 字段而被判非法；而 0.3 内核套上
+ * 0.4-p0 信封时，这套校验反而"看得懂"。第二套形状定义本身就是错误来源。
+ *
+ * 现在委派给唯一裁决入口 `requireV1ForGate`：dispatch 键 → 冻结
+ * `output-schema.json` 运行期校验 → 跨行不变量（判据移植自冻结包 reference_reducer）。
+ * 本函数只保留 schema 管不到、且属于 **Maison 侧期望**的检查：
+ *   - `phase === 'testing'`：契约不关心 phase 取值，是本仓要求 trace 来自 testing 阶段。
+ * 版本链一致性（manifest/installed/trace）仍由 `evaluateHylyreNativeEvidenceGate` 自己判——
+ * 那是部署问题，不是 Hylyre 契约问题。
+ */
+function validateNativeTraceShape(trace: HylyreTrace | null, frameworkRoot?: string | null): string[] {
   if (!trace) return ['trace 不可解析'];
-  if (trace.schema_version !== NATIVE_TRACE_SCHEMA_VERSION) {
-    errors.push(`trace.schema_version=${String(trace.schema_version)}，期望 ${NATIVE_TRACE_SCHEMA_VERSION}`);
+  const verdict = requireV1ForGate(trace, { frameworkRoot });
+  if (!verdict.ok) {
+    return [verdict.detail, verdict.suggestion].filter(Boolean);
   }
+  const errors: string[] = [];
   if (trace.phase !== 'testing') errors.push(`trace.phase=${String(trace.phase)} 非 testing`);
-  if (!['success', 'partial', 'failed', 'aborted'].includes(trace.outcome)) {
-    errors.push(`trace.outcome 值域非法：${String(trace.outcome)}`);
-  }
-  if (!isRecord(trace.environment)) {
-    errors.push('trace.environment 缺失或非法');
-  } else {
-    requiredString(trace.environment, 'hylyre_version', 'trace.environment', errors);
-    requiredString(trace.environment, 'hypium_version', 'trace.environment', errors);
-    if (trace.environment.trace_schema_version !== NATIVE_TRACE_SCHEMA_VERSION) {
-      errors.push(
-        `trace.environment.trace_schema_version=${String(trace.environment.trace_schema_version)}，期望 ${NATIVE_TRACE_SCHEMA_VERSION}`,
-      );
-    }
-    requiredString(trace.environment, 'selector_engine', 'trace.environment', errors);
-  }
-  if (!Array.isArray(trace.tool_calls)) errors.push('trace.tool_calls 缺失或非法');
-  if (!Array.isArray(trace.cases) || trace.cases.length === 0) {
-    errors.push('trace.cases 缺失或为空');
-    return errors;
-  }
-  const seenCaseIds = new Set<string>();
-  trace.cases.forEach((caseValue, caseIndex) => {
-    const label = `cases[${caseIndex}]`;
-    if (!isRecord(caseValue)) {
-      errors.push(`${label} 必须为 object`);
-      return;
-    }
-    requiredString(caseValue, 'id', label, errors);
-    const id = typeof caseValue.id === 'string' ? caseValue.id.trim().toUpperCase() : `${caseIndex}`;
-    if (seenCaseIds.has(id)) errors.push(`cases 重复 id：${id}`);
-    seenCaseIds.add(id);
-    requiredString(caseValue, 'priority', label, errors);
-    requiredString(caseValue, 'ac_ref', label, errors);
-    if (!Object.prototype.hasOwnProperty.call(caseValue, 'notes') || typeof caseValue.notes !== 'string') {
-      errors.push(`${label}.notes 缺失或非法`);
-    }
-    requiredEnum(caseValue, 'status', CASE_STATUSES, label, errors);
-    requiredEnum(caseValue, 'execution', CASE_EXECUTIONS, label, errors);
-    requiredEnum(caseValue, 'verification', CASE_VERIFICATIONS, label, errors);
-    requiredEnum(caseValue, 'evidence', CASE_EVIDENCE, label, errors);
-    requiredEnum(caseValue, 'expected_check_mode', EXPECTED_CHECK_MODES, label, errors);
-    if (!Array.isArray(caseValue.steps) || caseValue.steps.length === 0) {
-      errors.push(`${label}.steps 缺失或为空`);
-      return;
-    }
-    caseValue.steps.forEach((step, stepIndex) => validateNativeStep(step, stepIndex, id, errors));
-  });
   return errors;
 }
 
@@ -2288,6 +2173,8 @@ export function evaluateHylyreNativeEvidenceGate(opts: {
   installedVersion?: string | null;
   readyManifestVersion?: string | null;
   manifestVersion?: string | null;
+  /** 定位随发布件下发的 vendored 冻结 schema；省略时从模块位置向上推断。 */
+  frameworkRoot?: string | null;
 }): HylyreEvidenceGateResult {
   const ready = isRecord(opts.readyMeta) ? opts.readyMeta : null;
   const installedVersion = (
@@ -2332,7 +2219,17 @@ export function evaluateHylyreNativeEvidenceGate(opts: {
   if (opts.trace?.schema_version !== NATIVE_TRACE_SCHEMA_VERSION || traceSchemaVersion !== NATIVE_TRACE_SCHEMA_VERSION) {
     reasons.push(`trace schema 链不满足 ${NATIVE_TRACE_SCHEMA_VERSION}`);
   }
-  reasons.push(...validateNativeTraceShape(opts.trace));
+  // 协议声明与 schema 同为判别键：root 与 environment 都必须声明且一致，
+  // 否则就是产出方自己不自洽——比未知 schema 更危险，不得当 native 消费。
+  if (opts.trace?.result_protocol !== NATIVE_RESULT_PROTOCOL) {
+    reasons.push(`trace.result_protocol=${String(opts.trace?.result_protocol)}，期望 ${NATIVE_RESULT_PROTOCOL}`);
+  }
+  if (opts.trace?.environment && opts.trace.environment.result_protocol !== NATIVE_RESULT_PROTOCOL) {
+    reasons.push(
+      `trace.environment.result_protocol=${String(opts.trace.environment.result_protocol)}，期望 ${NATIVE_RESULT_PROTOCOL}`,
+    );
+  }
+  reasons.push(...validateNativeTraceShape(opts.trace, opts.frameworkRoot));
 
   const native = reasons.length === 0;
   const legacy = Boolean(

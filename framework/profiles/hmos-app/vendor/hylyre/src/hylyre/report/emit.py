@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import hylyre
+from hylyre.contracts import RESULT_PROTOCOL, TRACE_SCHEMA_V1
 from hylyre.scenario.runner import ScenarioRunResult, resolved_outcome
-from hylyre.scenario.results import redact_evidence, redact_text
+from hylyre.scenario.results import redact_text
 
-TRACE_SCHEMA_VERSION = "0.3-p0"
-LEGACY_TRACE_SCHEMA_VERSIONS = frozenset({"0.1-p0", "0.2-p4"})
+TRACE_SCHEMA_VERSION = TRACE_SCHEMA_V1
+LEGACY_TRACE_SCHEMA_VERSIONS = frozenset({"0.1-p0", "0.2-p4", "0.3-p0"})
 _TIERS = ("P0", "P1", "P2")
 
 
@@ -80,6 +81,28 @@ def _safe_cell(value: Any) -> str:
     return str(value).replace("|", "/").replace("\n", " ").strip()
 
 
+def _attribution(step: Any) -> tuple[str, str]:
+    """Human-readable attribution for the Markdown table.
+
+    This is a projection of the outcome carrier, not a second classification:
+    a blocked step shows its own cause, never the root step's failure.
+    """
+
+    outcome = step.to_dict()["outcome"]
+    status = outcome["status"]
+    if status == "failed":
+        return f"failure.{outcome['failure']['domain']}", outcome["failure"]["code"]
+    if status == "blocked":
+        cause = outcome["cause"]
+        if cause["type"] == "prior_step":
+            return "cause.prior_step", f"step {cause['step_index']}"
+        return f"cause.{cause['type']}", cause["code"]
+    if status == "skipped":
+        return f"reason.{outcome['reason']['type']}", outcome["reason"]["code"]
+    observation = outcome.get("observation") or {}
+    return f"observation.{observation.get('kind', '-')}", "-"
+
+
 def _markdown_report(
     result: ScenarioRunResult,
     *,
@@ -134,11 +157,20 @@ def _markdown_report(
             )
             + " |"
         )
-    lines.extend(["", "## 步骤证据", "", "| 用例编号 | index | kind | role | status | failure_kind | failure_code | evidence |", "| --- | --- | --- | --- | --- | --- | --- | --- |"])
+    lines.extend(
+        [
+            "",
+            "## 步骤证据",
+            "",
+            "| 用例编号 | index | kind | role | status | 归因 | code | outcome |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for cr in result.case_results:
         for step in cr.steps:
-            evidence = json.dumps(
-                redact_evidence(step.evidence), ensure_ascii=False, sort_keys=True
+            carrier, code = _attribution(step)
+            outcome_json = json.dumps(
+                step.to_dict()["outcome"], ensure_ascii=False, sort_keys=True
             )
             lines.append(
                 "| "
@@ -149,9 +181,9 @@ def _markdown_report(
                         _safe_cell(step.kind),
                         _safe_cell(step.role),
                         _safe_cell(step.status),
-                        _safe_cell(step.failure_kind),
-                        _safe_cell(step.failure_code),
-                        _safe_cell(evidence),
+                        _safe_cell(carrier),
+                        _safe_cell(code),
+                        _safe_cell(outcome_json),
                     ]
                 )
                 + " |"
@@ -197,7 +229,9 @@ def _trace_environment(
         "hylyre_version": hylyre.__version__,
         "hypium_version": supplied.get("hypium_version", "unavailable"),
         "trace_schema_version": schema_version,
+        "result_protocol": RESULT_PROTOCOL,
         "selector_engine": "fake" if result.use_fakes else "mixed",
+        "ui_driver": supplied.get("ui_driver", "unknown"),
     }
 
 
@@ -211,6 +245,7 @@ def _trace_object(
     cases = [cr.to_dict() for cr in result.case_results]
     trace: dict[str, Any] = {
         "schema_version": schema_version,
+        "result_protocol": RESULT_PROTOCOL,
         "feature": result.feature,
         "phase": "testing",
         "outcome": outcome,
@@ -224,14 +259,12 @@ def _trace_object(
         "cases": cases,
     }
     if schema_version == TRACE_SCHEMA_VERSION:
-        environment = _trace_environment(
+        trace["environment"] = _trace_environment(
             result, schema_version=schema_version
         )
-        trace["environment"] = environment
-        # Keep flat aliases for consumers that read the older trace envelope.
-        trace["hylyre_version"] = environment["hylyre_version"]
-        trace["hypium_version"] = environment["hypium_version"]
-        trace["selector_engine"] = environment["selector_engine"]
+    else:
+        # Legacy envelopes never declare the v1 protocol.
+        trace.pop("result_protocol", None)
     return trace
 
 

@@ -242,86 +242,102 @@ async def wait_rich_selector(
     timeout: float,
     want_gone: bool,
     poll_interval: float = 0.4,
-) -> dict[str, Any]:
+):
+    """Rich-selector presence/absence assertion as a typed outcome.
+
+    A timeout is not a selector failure: the resolver ran to completion and
+    observed the target absent (or still present). That is an assertion that
+    executed and did not match, so it reports ``assertion.mismatch`` with the
+    observation attached — reporting ``selector.not_found`` here is the
+    ``role=assertion + observed_present=false + failure_kind=selector``
+    contradiction the protocol exists to remove.
+    """
+
+    from hylyre.api.outcome import (
+        Failure,
+        OperationFailed,
+        OperationPassed,
+        SelectorEvidence,
+        SelectorResolution,
+        absence_observed,
+        presence_observed,
+    )
+    from hylyre.api.selector_contract import selector_request
+
     pred = {
         k: v
         for k, v in block.items()
         if k not in ("timeout",) and v is not None
     }
+    request = selector_request(pred)
     deadline = time.monotonic() + float(timeout)
-    last_err: Exception | None = None
-    while time.monotonic() < deadline:
+    hits: list[Any] = []
+    while True:
         payload = await agent.dump_ui()
         tree = tree_from_dump(payload)
         hits = resolve_targets(tree, pred)
         present = len(hits) > 0
         if want_gone and not present:
-            return {
-                "selector": {
-                    "engine": "resolver",
-                    "requested_match": pred.get("match"),
-                    "effective_match": pred.get("match") or "contains",
-                    "candidate_count": 0,
-                    "selected_id": None,
-                    "bounds": None,
-                },
-                "evidence": {
-                    "assertion": "absence",
-                    "observed_present": False,
-                    "candidate_count": 0,
-                },
-            }
+            return OperationPassed(
+                observation=absence_observed(False, candidate_count=0),
+                selector=SelectorEvidence(request, SelectorResolution.not_found()),
+            )
         if not want_gone and present:
             first = hits[0]
-            return {
-                "selector": {
-                    "engine": "resolver",
-                    "requested_match": first.requested_match,
-                    "effective_match": first.effective_match,
-                    "candidate_count": len(hits),
-                    "selected_id": first.id or None,
-                    "bounds": first.tap_bounds,
-                },
-                "evidence": {
-                    "assertion": "presence",
-                    "observed_present": True,
-                    "candidate_count": len(hits),
-                },
-            }
-        last_err = SelectorResolutionError(
-            f"wait {'gone' if want_gone else 'for'}: target not in desired state"
-        )
+            return OperationPassed(
+                observation=presence_observed(True, candidate_count=len(hits)),
+                selector=SelectorEvidence(
+                    request,
+                    SelectorResolution(
+                        "unique" if len(hits) == 1 else "ambiguous",
+                        len(hits),
+                        (
+                            {"id": first.id or None, "bounds": first.tap_bounds}
+                            if len(hits) == 1
+                            else None
+                        ),
+                        [
+                            {"id": h.id or None, "bounds": h.tap_bounds}
+                            for h in hits[: max(len(hits), 1) if len(hits) > 1 else 1]
+                        ],
+                    ),
+                ),
+            )
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval)
-    if want_gone:
-        raise AssertionMismatch(
-            f"wait_gone timeout for selector {pred!r} after {timeout}s: target remains",
-            selector={
-                "engine": "resolver",
-                "requested_match": pred.get("match"),
-                "effective_match": pred.get("match") or "contains",
-                "candidate_count": len(resolve_targets(tree, pred)) if "tree" in locals() else None,
-                "selected_id": None,
-                "bounds": None,
-            },
-            evidence={
-                "assertion": "absence",
-                "observed_present": True,
-                "candidate_count": len(resolve_targets(tree, pred)) if "tree" in locals() else None,
-            },
-        )
-    msg = (
-        f"wait_for timeout for selector {pred!r} after {timeout}s"
-        + (f": {last_err}" if last_err else "")
+
+    observed_present = len(hits) > 0
+    observation = (
+        absence_observed(observed_present, candidate_count=len(hits))
+        if want_gone
+        else presence_observed(observed_present, candidate_count=len(hits))
     )
-    raise SelectorResolutionError(
-        msg,
-        selector=selector_evidence(
-            pred,
-            engine="resolver",
-            candidate_count=0,
+    resolution = (
+        SelectorResolution.not_found()
+        if not hits
+        else SelectorResolution(
+            "unique" if len(hits) == 1 else "ambiguous",
+            len(hits),
+            (
+                {"id": hits[0].id or None, "bounds": hits[0].tap_bounds}
+                if len(hits) == 1
+                else None
+            ),
+            [{"id": h.id or None, "bounds": h.tap_bounds} for h in hits],
+        )
+    )
+    return OperationFailed(
+        failure=Failure(
+            "assertion",
+            "assertion.mismatch",
+            {"assertion": "absence" if want_gone else "presence", "timeout_s": float(timeout)},
         ),
-        failure_code="selector_not_found",
-        evidence={"assertion": "presence", "observed_present": False},
+        observation=observation,
+        selector=SelectorEvidence(request, resolution),
+        diagnostic=(
+            f"wait_{'gone' if want_gone else 'for'} timed out after {timeout}s"
+        ),
     )
 
 

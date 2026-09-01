@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.scenario.step_builder import step_response
+
 import base64
 import json
 import os
@@ -99,7 +101,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
         result = await execute_ledger_step(
             agent, payload, index=0, case_id="mcp-atomic-step"
         )
-        return json.dumps({"step_result": result.to_dict()}, ensure_ascii=False)
+        return json.dumps(step_response(result), ensure_ascii=False)
 
     async def _live_ui_payload_full(
         *,
@@ -409,7 +411,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return json.dumps({"step_result": result}, ensure_ascii=False)
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_action", _run)
 
@@ -438,7 +440,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return json.dumps({"step_result": result}, ensure_ascii=False)
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_tap", _run)
 
@@ -467,7 +469,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return json.dumps({"step_result": result}, ensure_ascii=False)
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_input", _run)
 
@@ -499,7 +501,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return json.dumps({"step_result": result}, ensure_ascii=False)
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_swipe", _run)
 
@@ -531,7 +533,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
                     lyrebird_url=lyrebird_url,
                 )
             )
-            return json.dumps({"step_result": result}, ensure_ascii=False)
+            return json.dumps(result, ensure_ascii=False)
 
         return await _call_logged_async("hylyre_run_scroll", _run)
 

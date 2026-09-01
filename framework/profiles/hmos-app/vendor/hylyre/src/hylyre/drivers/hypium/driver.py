@@ -789,24 +789,17 @@ class HypiumDriver(UiDriverBase):
             "selected_id": str(by_id) if by_id is not None else None,
             "bounds": None,
         }
-        if result is None:
-            raise SelectorResolutionError(
-                f"wait_for timeout for selector {selector!r} after {to}s",
-                selector=selector,
-                failure_code="selector_not_found",
-                evidence={
-                    "assertion": "presence",
-                    "observed_present": False,
-                    "raw_return": None,
-                },
-            )
+        # A timeout is an observation, not an exception: the assertion ran and
+        # saw the target absent. Raising a selector error here is what put a
+        # `selector` failure on an assertion row — the exact contradiction the
+        # protocol removes. Classification belongs to the agent.
         return {
             "selector": selector,
             "evidence": {
                 "assertion": "presence",
-                "observed_present": True,
-                "candidate_count": 1,
-                "raw_return_present": True,
+                "observed_present": result is not None,
+                "candidate_count": 1 if result is not None else 0,
+                "raw_return_present": result is not None,
             },
         }
 
@@ -848,24 +841,16 @@ class HypiumDriver(UiDriverBase):
             "selected_id": str(by_id) if by_id is not None else None,
             "bounds": None,
         }
-        if result is not None:
-            raise AssertionMismatch(
-                f"wait_gone timeout for selector {selector!r} after {to}s: target remains",
-                selector=selector,
-                evidence={
-                    "assertion": "absence",
-                    "observed_present": True,
-                    "candidate_count": 1,
-                    "raw_return_present": True,
-                },
-            )
+        # Same here: "target remains" is an absence observation the agent turns
+        # into assertion.mismatch, not a negative result smuggled as an
+        # exception past the outcome boundary.
         return {
             "selector": selector,
             "evidence": {
                 "assertion": "absence",
-                "observed_present": False,
-                "candidate_count": 0,
-                "raw_return": None,
+                "observed_present": result is not None,
+                "candidate_count": 1 if result is not None else 0,
+                "raw_return_present": result is not None,
             },
         }
 

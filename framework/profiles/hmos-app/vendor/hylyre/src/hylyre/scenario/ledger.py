@@ -7,9 +7,19 @@ import time
 from typing import Any
 
 from hylyre.api.agent import HylyreAgent
-from hylyre.api.exceptions import StepSkipped
+from hylyre.api.exceptions import PlannedStepContractError
+from hylyre.api.outcome import (
+    ActionObservation,
+    OperationOutcome,
+    OperationPassed,
+)
 from hylyre.api.step_dispatch import dispatch_planned_step
-from hylyre.scenario.results import StepResult, redact_evidence, redact_text, result_from_exception
+from hylyre.scenario.results import StepResult, redact_evidence, redact_text
+from hylyre.scenario.step_builder import (
+    blocked_by_prior_step,
+    build_step_result,
+    outcome_from_exception,
+)
 from hylyre.scenario.step_text import (
     json_step_syntax_error,
     looks_like_planned_json,
@@ -50,38 +60,6 @@ def toast_assertion_on_unsupported(step: Any) -> str | None:
     if not isinstance(block, dict):
         return None
     return str(block.get("on_unsupported") or "error").strip().lower()
-
-
-def blocked_step_result(
-    step: Any,
-    *,
-    index: int,
-    reason: str,
-    root_failure: StepResult | None = None,
-) -> StepResult:
-    """Create the ledger row for a planned step that was not executed."""
-
-    failure_kind = (
-        root_failure.failure_kind
-        if root_failure is not None and root_failure.failure_kind is not None
-        else "infrastructure"
-    )
-    failure_code = (
-        root_failure.failure_code
-        if root_failure is not None and root_failure.failure_code is not None
-        else "driver_failure"
-    )
-    return StepResult(
-        index=index,
-        kind=planned_step_kind(step),
-        role=planned_step_role(step),  # type: ignore[arg-type]
-        status="blocked",
-        failure_kind=failure_kind,  # type: ignore[arg-type]
-        failure_code=failure_code,
-        duration_ms=0.0,
-        evidence={"executed": False, "blocked_by": reason},
-        error=f"planned step blocked: {reason}",
-    )
 
 
 def planned_step_kind(step: Any) -> str:
@@ -130,19 +108,6 @@ def planned_step_role(step: Any) -> str:
     return "action"
 
 
-def _operation_parts(value: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    if not isinstance(value, dict):
-        return None, None
-    selector = value.get("selector")
-    evidence = value.get("evidence")
-    if isinstance(selector, dict) or isinstance(evidence, dict):
-        return (
-            selector if isinstance(selector, dict) else None,
-            evidence if isinstance(evidence, dict) else None,
-        )
-    return None, value
-
-
 async def _execute_step_value(agent: HylyreAgent, step: Any, *, case_id: str) -> Any:
     if isinstance(step, dict):
         return await dispatch_planned_step(agent, step, case_id=case_id)
@@ -150,17 +115,31 @@ async def _execute_step_value(agent: HylyreAgent, step: Any, *, case_id: str) ->
         raise TypeError(f"{case_id}: planned step must be a JSON object or text")
     normalized = normalize_planned_step_text(step)
     if not normalized:
-        return {"evidence": {"operation": "empty"}}
+        raise PlannedStepContractError(f"{case_id}: planned step is empty")
     if looks_like_planned_json(step):
         try:
             payload = json.loads(normalized)
         except json.JSONDecodeError as e:
-            raise ValueError(json_step_syntax_error(case_id, e, step)) from e
+            raise PlannedStepContractError(json_step_syntax_error(case_id, e, step)) from e
         if not isinstance(payload, dict):
-            raise ValueError(f"{case_id}: planned JSON step must be an object")
+            raise PlannedStepContractError(
+            f"{case_id}: planned JSON step must be an object"
+        )
         return await dispatch_planned_step(agent, payload, case_id=case_id)
     if agent.vlm is None:
-        raise ValueError(non_json_step_error(case_id))
+        # Proven unavailable before the operation is dispatched: a capability
+        # block, not a failure and not a policy skip.
+        from hylyre.api.outcome import CapabilityCause, OperationBlocked
+
+        return OperationBlocked(
+            cause=CapabilityCause(
+                code="capability.not_configured",
+                capability_id="vlm_natural_language_step",
+                probe_status="not_configured",
+                probe_source="agent.vlm_preflight",
+            ),
+            diagnostic=non_json_step_error(case_id),
+        )
     return await agent.ai_action(normalized)
 
 
@@ -170,43 +149,62 @@ async def execute_ledger_step(
     *,
     index: int,
     case_id: str,
+    device_session: bool | None = None,
 ) -> StepResult:
-    """Execute one step and always return one finalized StepResult."""
+    """Execute one step and always return one finalized StepResult.
+
+    The operation returns a typed outcome; this function only measures the
+    step and hands it to the single builder. It never inspects a dict to guess
+    what happened, and an assertion that returns nothing is never a pass.
+    """
 
     kind = planned_step_kind(step)
     role = planned_step_role(step)
     t0 = time.perf_counter()
     try:
-        value = await _execute_step_value(agent, step, case_id=case_id)
-    except Exception as exc:
-        return result_from_exception(
-            exc=exc,
-            index=index,
-            kind=kind,
-            role=role,  # type: ignore[arg-type]
-            duration_ms=(time.perf_counter() - t0) * 1000.0,
-        )
-    selector, evidence = _operation_parts(value)
-    if role == "assertion" and value is None:
-        return StepResult(
-            index=index,
-            kind=kind,
-            role=role,  # type: ignore[arg-type]
-            status="passed",
-            duration_ms=(time.perf_counter() - t0) * 1000.0,
-            selector=selector,
-            evidence=None,
-        )
-    if evidence is None:
-        evidence = {"operation": kind, "result": True}
-    return StepResult(
+        value: Any = await _execute_step_value(agent, step, case_id=case_id)
+        outcome = _require_outcome(value, kind=kind, case_id=case_id)
+    except Exception as exc:  # noqa: BLE001 - unexpected only; expected paths return outcomes
+        # A wiring bug (an operation returning something that is not an
+        # outcome) must still produce a ledger row: "every dispatched step has
+        # a StepResult" is the invariant, and letting a TypeError escape here
+        # would break it precisely when something is already wrong.
+        outcome = outcome_from_exception(exc)
+    # Read the session fact *after* the operation: the agent connects lazily,
+    # so sampling it beforehand would report "no session" for the first step of
+    # every run and silently exempt it from the failure-boundary obligation.
+    session = agent.is_connected if device_session is None else device_session
+    return build_step_result(
+        outcome,
         index=index,
         kind=kind,
-        role=role,  # type: ignore[arg-type]
-        status="passed",
+        role=role,
         duration_ms=(time.perf_counter() - t0) * 1000.0,
-        selector=selector,
-        evidence=evidence,
+        device_session=session,
+    )
+
+
+def _require_outcome(
+    value: Any, *, kind: str, case_id: str
+) -> OperationOutcome:
+    """Every operation must speak the protocol; nothing else is interpreted."""
+
+    from hylyre.api.exceptions import PlannedStepContractError
+    from hylyre.api.outcome import (
+        OperationBlocked,
+        OperationFailed,
+        OperationSkipped,
+    )
+
+    if isinstance(
+        value,
+        (OperationPassed, OperationFailed, OperationBlocked, OperationSkipped),
+    ):
+        return value
+    raise TypeError(
+        f"{case_id}: operation {kind!r} returned {type(value).__name__}, "
+        "not an OperationOutcome; every driver/agent operation must return the "
+        "typed union (see hylyre/contracts/step-outcome-v1.md section 7)"
     )
 
 
@@ -216,35 +214,34 @@ async def execute_expected_assertion(
     *,
     index: int,
     case_id: str,
+    device_session: bool | None = None,
 ) -> StepResult:
     """Run the expected-result VLM check as a normal assertion ledger row."""
 
     t0 = time.perf_counter()
     try:
-        value = await agent.ai_assert(instruction)
-    except Exception as exc:
-        return result_from_exception(
-            exc=exc,
-            index=index,
-            kind="expected_check",
-            role="assertion",
-            duration_ms=(time.perf_counter() - t0) * 1000.0,
-        )
-    _selector, evidence = _operation_parts(value)
-    if evidence is None:
-        evidence = {"channel": "vlm", "instruction_checked": True, "result": True}
-    return StepResult(
+        value: Any = await agent.ai_assert(instruction)
+        outcome = _require_outcome(value, kind="expected_check", case_id=case_id)
+    except Exception as exc:  # noqa: BLE001
+        outcome = outcome_from_exception(exc)
+    session = agent.is_connected if device_session is None else device_session
+    return build_step_result(
+        outcome,
         index=index,
         kind="expected_check",
         role="assertion",
-        status="passed",
         duration_ms=(time.perf_counter() - t0) * 1000.0,
-        evidence=evidence,
+        device_session=session,
     )
 
 
 def step_result_to_batch_row(step: StepResult, raw_step: Any) -> dict[str, Any]:
-    """Compatibility projection for the existing steps-file CLI response."""
+    """Compatibility projection for the ``run --steps-file`` CLI response.
+
+    ``step_result`` is the v1 row and the only source of truth here; the flat
+    ``status`` stays for humans reading the batch JSON and is never read back
+    to reconstruct a classification.
+    """
 
     status = "ok" if step.status == "passed" else (
         "skipped" if step.status == "skipped" else "error"
@@ -260,15 +257,15 @@ def step_result_to_batch_row(step: StepResult, raw_step: Any) -> dict[str, Any]:
         "elapsed_ms": step.duration_ms,
         "step_result": step.to_dict(),
     }
-    if step.error:
-        row["error"] = redact_text(step.error)
-    if step.evidence and step.evidence.get("failure_artifacts"):
-        row["diagnostics"] = step.evidence["failure_artifacts"]
+    if step.diagnostic:
+        row["error"] = redact_text(step.diagnostic)
+    if step.artifacts:
+        row["diagnostics"] = [a["path"] for a in step.artifacts]
     return row
 
 
 __all__ = [
-    "blocked_step_result",
+    "blocked_by_prior_step",
     "execute_expected_assertion",
     "execute_ledger_step",
     "planned_step_kind",

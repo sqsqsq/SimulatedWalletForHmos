@@ -380,7 +380,8 @@ export function composeDeviceTestEvidence(
   } catch (error) {
     return { ok: false, reason: `trace 不可读：${(error as Error).message}` };
   }
-  if (trace.schema_version === '0.3-p0') {
+  // inventory §一 G11：native evidence 合成的判据随协议提升到 v1。
+  if (trace.schema_version === '0.4-p0') {
     return {
       ok: true,
       doc: {

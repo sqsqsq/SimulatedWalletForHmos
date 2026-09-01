@@ -11,6 +11,7 @@ import {
   selectBestNonPlaceholderDerivedPlan,
   tryParseYamlFrontmatter,
 } from './derived-hylyre-plan';
+import { dispatchHylyreResult } from './hylyre-result-protocol';
 import { getSectionContent, extractTables, extractDeclaredVerdict, type MdTable } from './markdown-parser';
 import type { UseCaseDef, UseCasesSpec } from './types';
 import type { DeviceTestTimingDocument } from '../../../profiles/hmos-app/harness/device-test-timings';
@@ -52,25 +53,43 @@ function nativeCasePassed(caseValue: HylyreTraceCase): boolean {
 }
 
 function nativeTraceCaseHasBlockedStep(caseValue: HylyreTraceCase): boolean {
-  return (caseValue.steps ?? []).some(step => step.status === 'blocked');
+  // v1 把成败收进 outcome；读 `step.status` 在真实 v1 上恒为 undefined，
+  // 于是"有阻塞步骤"永远判不出来——这条只在已判 native 的分支上调用。
+  return (caseValue.steps ?? []).some(step => step.outcome?.status === 'blocked');
 }
 
 /** Evaluate whether Hylyre trace represents a passing device test run (gate semantics). */
 export function evaluateHylyreRunOutcome(trace: HylyreTrace | null): HylyreRunOutcomeEvaluation {
   const cases = trace?.cases ?? [];
-  const native = trace?.schema_version === '0.3-p0';
-  const failed = native
-    ? cases.filter(c => c.execution !== 'completed' || c.verification === 'failed')
-    : cases.filter(c => c.status === '失败');
-  const blocked = native
-    ? cases.filter(c => c.execution === 'infrastructure_failed' || nativeTraceCaseHasBlockedStep(c))
-    : cases.filter(c => c.status === '阻塞');
-  const skipped = native
-    ? cases.filter(c => c.verification === 'inconclusive')
-    : cases.filter(c => c.status === '跳过');
-  const passed = native
-    ? cases.filter(nativeCasePassed)
-    : cases.filter(c => c.status === '通过');
+  // inventory §二 F/§一 G8：旧实现在 schema 不是 0.3-p0 时**回落到中文 case status**
+  // （失败/阻塞/跳过/通过）来判 run outcome——这正是 plan T5 第 20 条点名的 legacy fallback。
+  //
+  // plan a6c4e9f2 T4 返修：上一轮只把注释改成"legacy 不再产 native 判定"，代码里
+  // `: cases.filter(c => c.status === '失败')` 那一路**原样留着**——非 v1 时依然靠中文
+  // status 算通过数，全通过就 verdict='pass'。中文 status 在 v1 里是**派生投影**、
+  // 可以与 steps 完全脱节，拿它当独立事实源正是必须消灭的那条回落路径。
+  // 现在改成：非 v1 直接 fail，且不产出任何计数——不给"看起来全通过"留出口。
+  const native = dispatchHylyreResult(trace).kind === 'v1';
+  if (trace && !native) {
+    return {
+      verdict: 'fail',
+      failedCount: 0,
+      blockedCount: 0,
+      skippedCount: 0,
+      passedCount: 0,
+      outcome: trace.outcome ?? null,
+      failedCaseIds: [],
+      blockedCaseIds: [],
+      reasonLines: [
+        `authoritative trace 的结果协议不是 ${'hylyre.step-outcome/1'}（schema_version=${String(trace.schema_version)}），` +
+        '不得据此判定 run outcome：中文 case status 是派生投影，不是独立事实源。',
+      ],
+    };
+  }
+  const failed = cases.filter(c => c.execution !== 'completed' || c.verification === 'failed');
+  const blocked = cases.filter(c => c.execution === 'infrastructure_failed' || nativeTraceCaseHasBlockedStep(c));
+  const skipped = cases.filter(c => c.verification === 'inconclusive');
+  const passed = cases.filter(nativeCasePassed);
   const outcome = trace?.outcome ?? null;
 
   const reasonLines: string[] = [];
@@ -218,6 +237,12 @@ export interface ReportTimingReconciliationInput {
   timing: DeviceTestTimingDocument;
   /** The final build meta timestamp; when supplied it must be copied verbatim into the report. */
   buildTimestamp?: string | null;
+  /**
+   * plan a6c4e9f2 T3：顶层声明 `execution_channel=hylyre` 的 TC 集合（大写）。
+   * 提供时，timing 精确集合只与该子集闭合——visual/manual/provider TC 由各自证据链
+   * 对账，不得被误报成"不在最终 timing 中"。缺省=legacy 计划（无通道列），沿旧口径。
+   */
+  hylyreTcIds?: string[];
 }
 
 function isReportNullMarker(value: string): boolean {
@@ -363,8 +388,12 @@ export function reconcileReportWithDeviceTestTiming(
     }
   }
   const timingIds = new Set(timing.cases.map(timingCase => timingCase.id.toUpperCase()));
+  const hylyreScope = input.hylyreTcIds ? new Set(input.hylyreTcIds.map(id => id.toUpperCase())) : null;
   for (const row of reportRows) {
     if (timingIds.has(row.id)) continue;
+    // 通道精确对账：顶层声明为 visual/manual/provider 的 TC 本就不进 Hylyre timing，
+    // 由各自证据链裁决；它们仍留在报告总分母，但不在这里误报缺 timing。
+    if (hylyreScope && !hylyreScope.has(row.id)) continue;
     // 顶层计划中未进入 Hylyre 的 explicit skip 可以出现在报告，但不能伪造
     // 一个来自 timing 的执行耗时；其它额外/执行行都说明报告拼接了旧轮数据。
     if (normalizeExecStatus(row.status) !== '跳过') {
@@ -399,9 +428,18 @@ export interface ReportTraceReconciliationResult {
 }
 
 /** Full reconciliation: top-level test-report vs authoritative hylyre trace. */
+export interface ReportTraceReconciliationOptions {
+  /**
+   * plan a6c4e9f2 T3：顶层声明 `execution_channel=hylyre` 的 TC 集合（大写）。
+   * 提供时，报告中登记但不在 trace 的 TC 只有落在该子集内才算 mismatch。
+   */
+  hylyreTcIds?: string[];
+}
+
 export function reconcileReportWithHylyreTrace(
   reportMd: string,
   tracePath: string | null,
+  options?: ReportTraceReconciliationOptions,
 ): ReportTraceReconciliationResult {
   const mismatches: string[] = [];
   const warnings: string[] = [];
@@ -447,9 +485,13 @@ export function reconcileReportWithHylyreTrace(
     }
   }
 
+  const hylyreScope = options?.hylyreTcIds ? new Set(options.hylyreTcIds.map(id => id.toUpperCase())) : null;
   for (const [tcId, reportStatus] of reportStatuses) {
     const traceCase = traceCases.find(c => c.id.toUpperCase() === tcId);
     if (!traceCase) {
+      // 通道精确对账：顶层声明为 visual/manual/provider 的 TC 不进 Hylyre trace，
+      // 由各自证据链裁决；它们仍在报告总分母，但不在这里误报 trace missing。
+      if (hylyreScope && !hylyreScope.has(tcId)) continue;
       // explicit_skip / 未进 Hylyre 派生表的 TC 在报告中标「跳过」，不要求 trace.cases 登记
       if (normalizeExecStatus(reportStatus) === '跳过') continue;
       mismatches.push(`${tcId}：报告=${reportStatus}，trace 无该用例记录`);

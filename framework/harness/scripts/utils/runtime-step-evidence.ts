@@ -211,7 +211,9 @@ export function composeRuntimeFidelityEvidence(
   if (!trace || trace.feature !== opts.feature) {
     return { ok: false, reason: 'trace 不可解析或 feature 身份不匹配' };
   }
-  if (trace.schema_version === '0.3-p0') {
+  // inventory §一 G7：legacy telemetry 桥只对**非 native** trace 适用。native 判据随协议
+  // 提升到 v1——0.3-p0 自本版起并入 legacy，故这里认的是 v1 的 trace schema。
+  if (trace.schema_version === '0.4-p0') {
     return { ok: true, applicable: false };
   }
   const envelopeIssue = validateTelemetryEnvelope(trace.runtime_step_telemetry, opts);

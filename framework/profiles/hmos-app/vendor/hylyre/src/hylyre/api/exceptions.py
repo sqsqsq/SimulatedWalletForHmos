@@ -20,6 +20,15 @@ class StepSkipped(Exception):
         self.evidence = evidence
 
 
+class PlannedStepContractError(ValueError):
+    """A planned step's own shape is invalid (decision row D-18).
+
+    Only this type maps to ``contract.*``. A bare ``ValueError`` from inside a
+    driver is a driver bug, and blaming the test plan for it is exactly the
+    mis-attribution 0.3-p0 made in the other direction.
+    """
+
+
 class SelectorResolutionError(Exception):
     """No matching UI target for a rich selector predicate."""
 
@@ -93,33 +102,10 @@ class CapabilityUnsupported(RuntimeError):
         self.evidence = evidence
 
 
-def classify_exception(exc: BaseException) -> tuple[str, str]:
-    """Return stable machine fields for a planned-step exception.
-
-    Callers must use these fields instead of parsing the human-readable message.
-    """
-
-    kind = getattr(exc, "failure_kind", None)
-    code = getattr(exc, "failure_code", None)
-    if isinstance(kind, str) and isinstance(code, str):
-        return kind, code
-    if isinstance(exc, SelectorResolutionError):
-        return "selector", "selector_not_found"
-    if isinstance(exc, AssertionError):
-        return "assertion", "assertion_mismatch"
-    name = type(exc).__name__.lower()
-    message = str(exc).lower()
-    if any(
-        token in name or token in message
-        for token in (
-            "devicenotfound",
-            "device not found",
-            "device unavailable",
-            "no device",
-            "device is offline",
-        )
-    ):
-        return "infrastructure", "device_unavailable"
-    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
-        return "infrastructure", "device_unavailable"
-    return "infrastructure", "driver_failure"
+# ``classify_exception`` is deliberately gone. It classified by searching the
+# exception's class name and message for tokens like "device not found", which
+# is how a plain ValueError became ``infrastructure/driver_failure``. Mapping is
+# now by exception *type* only, in
+# :mod:`hylyre.api.outcome_from_error`, and the ``failure_kind``/``failure_code``
+# attributes above are internal control-flow signals: they identify which typed
+# outcome to build and never reach a trace.

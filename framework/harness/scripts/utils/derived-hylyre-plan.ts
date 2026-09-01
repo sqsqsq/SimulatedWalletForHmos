@@ -13,6 +13,7 @@ import {
   PLANNED_STEP_ROOT_KEY_SET,
 } from './hylyre-planned-step-keys';
 import { validatePlannedStepObject } from './hylyre-planned-step-lint';
+import { normalizePlannedSteps } from './planned-step-normalizer';
 
 const PLACEHOLDER_BODY_PATTERNS: RegExp[] = [
   /烟测占位/,
@@ -165,6 +166,46 @@ export type EvaluateCoverageResult = {
   missing: string[];
   extra: string[];
 };
+
+export type EvaluateChannelCoverageInput = {
+  /** 顶层声明 execution_channel=hylyre 的 TC 集合 */
+  hylyreTcIds: string[];
+  derivedTcIds: string[];
+  /** 历史产物里的 explicit skip（只用于**解释**缺口，绝不参与减除） */
+  legacyExplicitSkipTcIds?: string[];
+};
+
+export type EvaluateChannelCoverageResult = {
+  ok: boolean;
+  /** hylyre − derived：派生器必须全有或全无，缺任何一条都不得启动整份计划 */
+  missing: string[];
+  /** derived − hylyre：派生器无权把其它通道的 TC 拉进 Hylyre 执行集合 */
+  extra: string[];
+  /** missing ∩ legacy explicit skip：显式点名"被 skip 洗掉"的缺口，仍计入 missing */
+  laundered_skips: string[];
+};
+
+/**
+ * plan a6c4e9f2 T3：通道精确覆盖。与 legacy `evaluateDerivedCoverage` 的关键差别是
+ * **explicit skip 不再减除缺口**——派生器没有 skip 决策权，Hylyre 集合由顶层通道声明，
+ * 少一条就是编译失败而不是"已覆盖"。
+ */
+export function evaluateChannelDerivedCoverage(
+  inp: EvaluateChannelCoverageInput,
+): EvaluateChannelCoverageResult {
+  const hylyre = [...new Set(inp.hylyreTcIds.map(x => x.toUpperCase()))];
+  const derived = new Set(inp.derivedTcIds.map(x => x.toUpperCase()));
+  const hylyreSet = new Set(hylyre);
+  const skips = new Set((inp.legacyExplicitSkipTcIds ?? []).map(x => x.toUpperCase()));
+  const missing = hylyre.filter(id => !derived.has(id)).sort();
+  const extra = [...derived].filter(id => !hylyreSet.has(id)).sort();
+  return {
+    ok: missing.length === 0 && extra.length === 0,
+    missing,
+    extra,
+    laundered_skips: missing.filter(id => skips.has(id)),
+  };
+}
 
 /** missing = top − derived − skip；extra = derived − top */
 export function evaluateDerivedCoverage(inp: EvaluateCoverageInput): EvaluateCoverageResult {
@@ -326,6 +367,7 @@ export type StepLintViolation = {
     | 'STEP-005'
     | 'STEP-006'
     | 'STEP-007'
+    | 'STEP-SETUP'
     | 'STEP-WAIT'
     | 'STEP-WAIT-SECONDS';
   severity: 'BLOCKER' | 'WARN';
@@ -385,6 +427,31 @@ export function lintHylyrePlanStepRules(
         suggested_fix: '{"touch":{"by_text":"…","match":"exact"}}',
       });
       continue;
+    }
+
+    // plan a6c4e9f2 D4/T3（wrong-screen 最低防线）：每个 Hylyre case 的首个 assertion
+    // 之前必须在同 case 至少有一个 setup/navigation action。这是结构最小规则，不解析
+    // precondition 散文、不推导跨 case screen state、不建可达性状态机。
+    // 事故形态：入口 case 被跳过后，TC-015 的首断言直接在首页求值——设备从未进入目标页，
+    // 失败却被当成产品缺陷。
+    const normalizedForSetup = normalizePlannedSteps(parsed.steps);
+    const firstAssertionIndex = normalizedForSetup.findIndex(step => step.role === 'assertion');
+    if (firstAssertionIndex >= 0) {
+      const hasPrecedingAction = normalizedForSetup
+        .slice(0, firstAssertionIndex)
+        .some(step => step.role === 'action');
+      if (!hasPrecedingAction) {
+        violations.push({
+          rule_id: 'STEP-SETUP',
+          severity: 'BLOCKER',
+          tc_id: row.tc_id,
+          message:
+            `首个 assertion（step #${firstAssertionIndex}）之前没有同 case 的 setup/navigation action：` +
+            '该断言会在未进入目标页时求值，失败会被误归产品缺陷。请在本 case 内补入口动作，' +
+            '不要依赖其它 case 遗留的屏幕状态。',
+          suggested_fix: '在首个断言前补同 case 入口动作，例如 {"touch":{"by_id":"…"}} 或 {"back":{}}',
+        });
+      }
     }
 
     for (let stepIndex = 0; stepIndex < parsed.steps.length; stepIndex++) {

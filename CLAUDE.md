@@ -10,7 +10,7 @@
 | 项目名 | `SimulatedWalletForHmos` |
 | 项目类型 | `app` |
 | project profile | `hmos-app`（子型：`app`） |
-| Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
+| Framework 接入方式 | `framework/` 子目录（Maison 发布件 zip 解压集成，非 git submodule） |
 | 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口见 DSL `cross_module_exports_file` |
 
 详细架构说明：[doc/architecture.md](doc/architecture.md)。
@@ -41,7 +41,7 @@
 | 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
 | 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | verifier behavior_* |
 | 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
-| 9 | framework 只读 | `framework/` 是 vendored 发布件，不改不新建任何文件（含 untracked 临时脚本）；升级唯一途径 framework-init UPDATE；临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | framework_integrity / framework_foreign_file / PreToolUse hook |
+| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
 
 ## 四、工作流与 Skill 路由
 
@@ -51,11 +51,13 @@
 
 | 档 | 触发 | 管线 | 门禁 |
 |---|---|---|---|
-| L0 direct | 小修小改/文案/单文件 bug | 不进管线，直接改 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
+| L0 direct | 小修小改/文案/单文件 bug；其它无需框架管线的日常任务 | 不进 Skill 管线，直接完成主动作 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
 | L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
 | L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
+
+**普通请求由主 Agent 负责**：分档与执行都在主 Agent，`framework-init` **不是**全局请求路由、preflight 或 public gate。只有明确的 init 动作（显式选择/调用、首次接入发布件、创建/补齐/迁移 `framework.config.json`、集成新发布件后刷新 config/adapters/物化产物）才进入该 Skill；仅出现 framework、Framework 产物或衍生物名词不构成 init 意图。「先完成 X，再执行 `/framework-init`」由主 Agent 按顺序处理：先完成 X，到明确 init 动作时才调用。
 
 **修正三问**（中途 NL 修正必答，先分层再动手）：
 

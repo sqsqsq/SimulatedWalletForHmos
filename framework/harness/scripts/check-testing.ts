@@ -47,6 +47,7 @@ import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from './u
 import {
   extractTcIdsFromPlanTable,
   selectBestNonPlaceholderDerivedPlan,
+  evaluateChannelDerivedCoverage,
   evaluateDerivedCoverage,
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
@@ -160,7 +161,16 @@ import {
 import { collectGoldenPositiveTargetIds, collectP0VisualTargetIds, resolveGoldenCaptureTargets } from '../../profiles/hmos-app/harness/visual-diff-targets';
 import { resolveHylyreRuntimeWorkDir } from '../../profiles/hmos-app/harness/hylyre-spawn';
 import { parseUiChangeFromSpecMarkdown, loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
-import { lintDerivedPlanSelectorContract } from '../../profiles/hmos-app/harness/selector-contract';
+import {
+  lintDerivedPlanSelectorContract,
+  type AcceptanceActionBinding,
+} from '../../profiles/hmos-app/harness/selector-contract';
+import {
+  EXECUTION_CHANNEL_DOMAIN,
+  evaluateExecutionChannelDeclaration,
+  type ExecutionChannelDeclarationResult,
+} from './utils/execution-channel';
+import { requireV1ForGate } from './utils/hylyre-result-protocol';
 import { checkFactsArtifact } from './utils/context-facts';
 import {
   evaluateHylyreRunOutcome,
@@ -179,12 +189,15 @@ import {
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
+
+import { evaluateSelectorRuntimeV1 } from './utils/hylyre-selector-gates-v1';
+import { collectFailureRoutesV1 } from './utils/hylyre-failure-routing-v1';
 import {
-  collectHylyreFailureRoutes,
-  compareNativeAndLegacyTelemetry,
-  type HylyreFailureRouteContext,
-} from './utils/hylyre-failure-routing';
-import { evaluateRuntimeSelectorGate } from './utils/hylyre-selector-gates';
+  bindChannelEvidence,
+  loadVisualScreenVerdicts,
+  PROVIDER_EVIDENCE_CONTRACT,
+} from './utils/execution-channel-evidence';
+import { evaluateFailureBoundary, resolveArtifact } from './utils/hylyre-artifact-resolution';
 import {
   parseRecordedNativeBinding,
   validateNativeTraceArtifactBinding,
@@ -2021,16 +2034,40 @@ function collectReportOnlyDerivedPlanStaticIssues(
   const derivedPath = pick.selected.hylyrePath;
   const derivedIds = extractTcIdsFromPlanTable(pick.selected.content);
   const explicitSkips = loadExplicitSkipTcIds(derivedPath, pick.selected.content);
-  const coverage = evaluateDerivedCoverage({
-    topTcIds: topIds,
-    derivedTcIds: derivedIds,
-    explicitSkipTcIds: explicitSkips,
-  });
-  if (coverage.extra.length > 0) {
-    issues.push(`派生计划包含顶层未声明的 TC：${coverage.extra.join(', ')}`);
-  }
-  if (coverage.missing.length > 0) {
-    issues.push(`派生计划缺少顶层 TC：${coverage.missing.join(', ')}`);
+  const channelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
+  if (channelDecl.ok) {
+    // 通道精确对账：派生集合必须**恰好等于** channel=hylyre 集合，explicit skip 不减除。
+    const coverage = evaluateChannelDerivedCoverage({
+      hylyreTcIds: channelDecl.hylyre_tc_ids,
+      derivedTcIds: derivedIds,
+      legacyExplicitSkipTcIds: explicitSkips,
+    });
+    if (coverage.extra.length > 0) {
+      issues.push(`派生计划包含非 channel=hylyre 的 TC：${coverage.extra.join(', ')}（派生器无权改写通道）`);
+    }
+    if (coverage.missing.length > 0) {
+      issues.push(
+        `派生计划缺少 channel=hylyre 的 TC：${coverage.missing.join(', ')}` +
+        (coverage.laundered_skips.length > 0
+          ? `（其中 ${coverage.laundered_skips.join(', ')} 被 explicit skip 洗掉——skip 不能减除缺口）`
+          : ''),
+      );
+    }
+    if (explicitSkips.length > 0) {
+      issues.push(`正式派生计划不得再产出 explicit_skip_tc_ids：${explicitSkips.join(', ')}`);
+    }
+  } else {
+    const coverage = evaluateDerivedCoverage({
+      topTcIds: topIds,
+      derivedTcIds: derivedIds,
+      explicitSkipTcIds: explicitSkips,
+    });
+    if (coverage.extra.length > 0) {
+      issues.push(`派生计划包含顶层未声明的 TC：${coverage.extra.join(', ')}`);
+    }
+    if (coverage.missing.length > 0) {
+      issues.push(`派生计划缺少顶层 TC：${coverage.missing.join(', ')}`);
+    }
   }
   const derivedStat = fs.statSync(derivedPath);
   if (topStat && derivedStat.mtimeMs < topStat.mtimeMs) {
@@ -2223,7 +2260,9 @@ function checkReportReconcileOnlyPipeline(
   if (reconciledEvidenceGate && !reconciledEvidenceGate.native) {
     issues.push(...reconciledEvidenceGate.reasons.map(reason => `native evidence gate：${reason}`));
   }
-  if (trace?.schema_version === '0.3-p0' && (!reconciledEvidenceGate || reconciledEvidenceGate.native)) {
+  // inventory §一 G1：旧实现按 `schema === '0.3-p0'` 才跑 completeness，schema 一变这道
+  // required gate 就静默消失。现在无条件调用——不是合法 v1 由 completeness 自己产 BLOCKER。
+  if (trace) {
     const completeness = checkHylyreCaseExecutionCompleteness(
       ctx,
       trace,
@@ -2490,9 +2529,11 @@ function checkReportReconcileOnlyPipeline(
   }
 
   if (report && timingDoc) {
+    const channelDecl = loadExecutionChannelDeclaration(ctx, plan);
     const reportTiming = reconcileReportWithDeviceTestTiming(report, {
       timing: timingDoc,
       ...(buildAt.raw ? { buildTimestamp: buildAt.raw } : {}),
+      ...(channelDecl.column_declared ? { hylyreTcIds: channelDecl.hylyre_tc_ids } : {}),
     });
     issues.push(...reportTiming.mismatches);
   }
@@ -2609,7 +2650,7 @@ function checkReportReconcileOnlyPipeline(
             ].join('\n'),
         suggestion: reconciledEvidenceGate.native
           ? 'P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。'
-          : '升级/核验 Hylyre 0.4.0、trace schema 0.3-p0 与 ready version chain 后重跑。',
+          : '升级/核验 Hylyre 0.5.0、trace schema 0.4-p0 + hylyre.step-outcome/1 与 ready version chain 后重跑。',
       }]
     : [];
   return [reconcileResult, buildResult, installResult, runResult, ...evidenceResult, ...selectorResult];
@@ -3154,19 +3195,121 @@ export function writeDeviceTestEvidenceIfEligible(
   }];
 }
 
-function loadBoundNativePlanContext(
+/**
+ * Q5 artifact 完整性 + §8.1 failure-boundary 义务（plan a6c4e9f2 T4 返修接入生产）。
+ *
+ * 在此之前 `resolveArtifact` / `evaluateFailureBoundary` **只被单测调用**：artifact 文件
+ * 不存在、sha256 对不上、路径经 junction 逃出 trace 目录树、根失败没留失败边界截图——
+ * 生产链上一个 BLOCKER 都不会产生。写了校验器却不接门禁，等于没写。
+ *
+ * 基准是 authoritative trace **文件所在目录**（冻结 §8.1），因此本门必须拿到 tracePath 而不只是
+ * 解析后的对象；这也是 Hylyre 那个 producer bug 的回归面，不得改成 fallback 搜索。
+ */
+/**
+ * 缺陷身份 slug（tasks 6.6b）。
+ *
+ * 这两道门原来用**位置序号**做 check id（`testing_failure_routing_${index+1}`）。
+ * 问题不在可读性，在下游：`repair-candidates` 的 `item_fingerprint` 由
+ * `(id, files, summary)` 派生，而该指纹正是 goal 模式**防震荡 attempted 集合**的键
+ * （`!attempted.has(c.item_fingerprint)`）与 `roundFingerprintOfCandidates` 的输入。
+ *
+ * 位置序号会随"同一轮里更靠前的缺陷被修掉"而整体前移：同一个缺陷（同 case、同 step、
+ * 同 code）在下一轮换了 id、换了指纹，于是被当成**全新候选**重新投递——
+ * 防震荡与"已尝试过"记账同时失效，正好是本 plan 要消灭的那种放大效应的账本版本。
+ *
+ * 改成按缺陷身份取 id：case + step 唯一确定一条 route/disposition
+ * （跨行 verifier 已保证同 case 内 step index 不重复），因此 id 稳定且不冲突。
+ */
+function defectSlug(caseId: string, stepIndex: number): string {
+  const normalized = String(caseId).toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${normalized.slice(0, 48) || 'UNKNOWN-CASE'}_s${stepIndex}`;
+}
+
+function checkHylyreArtifactIntegrity(
   ctx: CheckContext,
-  derivedPlanPath?: string | null,
-): HylyreFailureRouteContext {
-  const planPath = derivedPlanPath && fs.existsSync(derivedPlanPath)
-    ? derivedPlanPath
-    : null;
-  let derivedMd: string | null = null;
-  if (planPath) {
-    try { derivedMd = fs.readFileSync(planPath, 'utf-8'); } catch { derivedMd = null; }
+  tracePath: string | null,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+): CheckResult[] {
+  const id = 'testing_artifact_integrity';
+  const description = 'Hylyre artifact 定位/哈希与 failure-boundary 义务';
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'authoritative trace 缺失，无法核对 artifact 与失败边界义务。',
+      suggestion: '用同一 native run 重新产出 trace 后重跑。',
+    }];
   }
-  const uiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-  return { derivedMd, uiSpec };
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过，再核对 artifact。',
+    }];
+  }
+  if (!tracePath) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'artifact 的解析基准是 authoritative trace 文件所在目录，但 trace 文件路径不可知。',
+      suggestion: '让 device-test 绑定同一 timestamp 目录的 trace.json 后重跑；不得改用 reports 根等第二基准。',
+    }];
+  }
+  const verdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!verdict.ok || !verdict.trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: verdict.detail, suggestion: verdict.suggestion,
+    }];
+  }
+
+  const problems: string[] = [];
+  for (const traceCase of verdict.trace.cases ?? []) {
+    for (const step of traceCase.steps ?? []) {
+      for (const artifact of step.artifacts ?? []) {
+        const resolved = resolveArtifact(tracePath, artifact);
+        if (!resolved.ok) {
+          problems.push(`${traceCase.id} step ${step.index} artifact[${artifact.kind}]：${resolved.detail}`);
+        }
+      }
+      const boundary = evaluateFailureBoundary({
+        deviceSession: step.device_session === true,
+        status: step.outcome.status,
+        failureDomain: step.outcome.status === 'failed' ? step.outcome.failure.domain : undefined,
+        artifacts: step.artifacts ?? [],
+        extensions: step.extensions,
+        caseEvidence: String(traceCase.evidence),
+      });
+      if (boundary.kind === 'violated') {
+        problems.push(`${traceCase.id} step ${step.index}：${boundary.detail}`);
+      }
+    }
+  }
+
+  if (problems.length === 0) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
+      details: 'artifact 全部可定位、哈希相符、停留在 trace 目录树内；根失败的失败边界义务已满足。',
+    }];
+  }
+  return [{
+    id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+    failure_kind: 'artifact',
+    details: [
+      `artifact/失败边界核对 FAIL（${problems.length} 项）：`,
+      ...problems.slice(0, 12).map(p => `  - ${p}`),
+    ].join('\n'),
+    suggestion:
+      'artifact.path 相对 trace 文件所在目录、必须留在该目录树内（符号链接/junction 也不行）、sha256 必须相符；' +
+      'device-session 内的 selector/assertion 根失败必须留 screenshot/ui_dump/visible_elements 之一，' +
+      '或如实记录 capture unavailable 并把该 case 的 evidence 降为 incomplete。不得补造证据文件。',
+  }];
 }
 
 function checkHylyreFailureRouting(
@@ -3175,16 +3318,55 @@ function checkHylyreFailureRouting(
   evidenceGate: HylyreEvidenceGateResult | null | undefined,
   derivedPlanPath?: string | null,
 ): CheckResult[] {
-  if (!trace || !evidenceGate?.native) return [];
-  const routes = collectHylyreFailureRoutes(trace, loadBoundNativePlanContext(ctx, derivedPlanPath));
-  return routes.map((route, index) => ({
-    id: `testing_failure_routing_${index + 1}`,
+  // plan a6c4e9f2 T4 返修：原为 `if (!trace || !evidenceGate?.native) return []`。
+  // required gate 不存在"静默不适用"形态——缺 trace / evidence gate 未闭合都必须显式 BLOCKER，
+  // 否则一次 native 判定失误就会把整条责任路由链一起抹掉。
+  if (!trace) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: 'authoritative trace 缺失，无法做 Step Outcome v1 责任路由。',
+      suggestion: '用同一 native run 重新产出 trace；不得从 diagnostic/日志/报告散文推断责任。',
+    }];
+  }
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过（版本链/协议/契约三者一致），再谈责任路由。',
+    }];
+  }
+  const verdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!verdict.ok || !verdict.trace) {
+    return [{
+      id: 'testing_failure_routing_protocol',
+      category: 'structure', description: 'Hylyre 责任路由的结果协议判别',
+      severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: verdict.detail, suggestion: verdict.suggestion,
+    }];
+  }
+  // plan a6c4e9f2 T4：只消费实际尝试且实际失败的 step；未执行的 blocked/skipped 零 route。
+  // 旧实现按"非 passed 即路由"，一次 run 把 1 根失败放大成 70 个 BLOCKER。
+  const { routes, dispositions } = collectFailureRoutesV1(verdict.trace);
+  const routeResults: CheckResult[] = routes.map(route => ({
+    id: `testing_failure_routing_${defectSlug(route.caseId, route.stepIndex)}`,
     category: 'structure' as const,
-    description: 'Hylyre failure_kind/failure_code 机器路由',
+    description: 'Step Outcome v1 责任路由（outcome.failure.domain）',
     severity: 'BLOCKER' as const,
     status: 'FAIL' as const,
-    ...(route.failureKind ? { failure_kind: route.failureKind } : {}),
-    ...(route.failureCode ? { failure_code: route.failureCode } : {}),
+    failure_kind: route.domain,
+    failure_code: route.code,
     coding_candidate: route.codingCandidate,
     ...(route.repairCategory
       ? { repair_owner: route.repairCategory }
@@ -3194,11 +3376,27 @@ function checkHylyreFailureRouting(
     ...(route.owner === 'capability' || route.owner === 'external'
       ? { blocking_class: route.owner === 'capability' ? 'externalBlocked' : 'device_toolchain' }
       : {}),
-    details: `${route.caseId}${route.stepIndex === null ? '' : ` step ${route.stepIndex}`}：${route.reason}`,
+    details: `${route.caseId} step ${route.stepIndex}：${route.reason}`,
     suggestion: route.codingCandidate
-      ? '由既有 summary repair-candidates 链投递 coding/product；仅限 assertion+assertion_mismatch。'
-      : '按机器路由修复/重派生/能力 defer；不得从 error、TC 名称或报告散文推断责任。',
+      ? '由既有 summary repair-candidates 链投递 coding/product。'
+      : '按 outcome.failure.domain 修复/重派生/能力 defer；不得从 diagnostic、TC 名称或报告散文推断责任。',
   }));
+  // 机器证明的 blocked capability/infrastructure 根：零 failure route，各投影一次既有 disposition。
+  const dispositionResults: CheckResult[] = dispositions.map(item => ({
+    id: `testing_cause_disposition_${defectSlug(item.caseId, item.stepIndex)}`,
+    category: 'structure' as const,
+    description: '未执行 blocked 根因的 capability/external disposition',
+    severity: 'BLOCKER' as const,
+    status: 'FAIL' as const,
+    failure_kind: item.causeType,
+    failure_code: item.code,
+    coding_candidate: false,
+    repair_owner: item.causeType === 'capability' ? 'capability' : 'external',
+    blocking_class: item.causeType === 'capability' ? 'externalBlocked' : 'device_toolchain',
+    details: `${item.caseId} step ${item.stepIndex}：${item.reason}`,
+    suggestion: '这是未尝试的机器阻塞，不产生 failure route 也不投 coding；按能力/工具链处置。',
+  }));
+  return [...routeResults, ...dispositionResults];
 }
 
 function checkHylyreRuntimeSelectorGate(
@@ -3209,7 +3407,28 @@ function checkHylyreRuntimeSelectorGate(
 ): CheckResult[] {
   const id = 'hylyre_selector_runtime_gate';
   const description = 'Hylyre StepResult selector evidence 运行时门';
-  if (!evidenceGate?.native) return [];
+  // plan a6c4e9f2 T4 返修：原为 `if (!evidenceGate?.native) return []`，与责任路由门同病。
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: 'authoritative trace 缺失，selector 运行时门无判据。',
+      suggestion: '用同一 native run 重新产出 trace 后重跑。',
+    }];
+  }
+  // evidenceGate=null 只表示"本 feature 没有 P0 device AC，三重身份门不适用"，
+  // 不代表 v1 协议非法——它是在 runtimeEvidenceRequired 为真时才生成的。
+  // 把 null 当失败会让合法 v1 run 平白吃 BLOCKER；口径与 completeness 门对齐。
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details:
+        `native evidence gate 未闭合（mode=${String(evidenceGate.mode)}）：` +
+        `${evidenceGate.reasons.slice(0, 4).join('；') || '无原因记录'}`,
+      suggestion: '先让 native evidence gate 通过，再消费 selector 身份事实。',
+    }];
+  }
   const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
   let selected: { content: string } | null = null;
   if (derivedPlanPath && fs.existsSync(derivedPlanPath)) {
@@ -3226,7 +3445,17 @@ function checkHylyreRuntimeSelectorGate(
     }];
   }
   const uiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
-  const violations = evaluateRuntimeSelectorGate(trace, selected.content, uiSpec);
+  const v1 = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!v1.ok || !v1.trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: v1.detail, suggestion: v1.suggestion,
+    }];
+  }
+  // plan a6c4e9f2 D1：本门只消费 selector 的**身份事实**与状态机不变量，
+  // 不裁决步骤成败（成败读 outcome），也不做 canonical ui-spec 封闭世界判定。
+  const violations = evaluateSelectorRuntimeV1(v1.trace).violations;
   if (violations.length > 0) {
     return [{
       id,
@@ -3247,30 +3476,6 @@ function checkHylyreRuntimeSelectorGate(
   return [{
     id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS',
     details: 'native StepResult selector evidence 已通过 candidate_count/消歧/absence assertion 运行时门。',
-  }];
-}
-
-function checkNativeTelemetryConsistency(
-  trace: HylyreTrace | null,
-  evidenceGate: HylyreEvidenceGateResult | null | undefined,
-): CheckResult[] {
-  if (!evidenceGate?.native || !trace?.runtime_step_telemetry) return [];
-  const mismatches = compareNativeAndLegacyTelemetry(trace);
-  return [{
-    id: 'hylyre_native_telemetry_consistency',
-    category: 'structure',
-    description: 'native StepResult 与 legacy telemetry 一致性诊断',
-    severity: 'MINOR',
-    status: mismatches.length > 0 ? 'WARN' : 'PASS',
-    details: mismatches.length > 0
-      ? [
-          '检测到 native/legacy telemetry 不一致；native StepResult 仍是唯一 verdict source：',
-          ...mismatches.slice(0, 12).map(item => `  - ${item}`),
-        ].join('\n')
-      : 'native StepResult 与同时在场的 legacy telemetry 未发现一致性差异；仍不合并两套证据。',
-    suggestion: mismatches.length > 0
-      ? '仅诊断并修复 telemetry 过渡链；不得让 legacy telemetry 覆盖 native verdict。'
-      : '保持 native StepResult 为唯一 verdict source。',
   }];
 }
 
@@ -3334,10 +3539,11 @@ function checkP0RuntimeStepEvidenceGate(
     featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
   );
   const trace = tracePath ? parseHylyreTrace(tracePath) : null;
-  if (!tracePath || !trace || trace.schema_version !== '0.3-p0') {
+  // inventory §一 G2：本就是唯一 fail-closed 的正例，判据换成统一 dispatch。
+  if (!tracePath || !trace || !requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot }).ok) {
     return [{
       id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
-      details: 'native evidence gate 已声明，但 authoritative trace 不可用或 schema 不是 0.3-p0。',
+      details: 'native evidence gate 已声明，但 authoritative trace 不可用，或其结果协议不是可消费的 v1。',
       suggestion: '使用同一 native Hylyre run 重新产生 trace；不得从 telemetry/log 合成 StepResult。',
     }];
   }
@@ -3490,6 +3696,36 @@ function writeDeriveHintFromPlanJson(ctx: CheckContext, aug?: DeriveHintAugment)
  * excludes build/install/run, trace, and holder mutation: those remain runtime
  * pipeline facts inside checkDeviceTestRunGate.
  */
+/**
+ * plan a6c4e9f2 T3：顶层 test-plan.md 的执行通道声明（编译期分派唯一真源）。
+ * 读取一次即可——通道是计划 identity 的一部分，不在 derive/回灌时重算或改写。
+ */
+function loadExecutionChannelDeclaration(
+  ctx: CheckContext,
+  planRaw?: string | null,
+): ExecutionChannelDeclarationResult {
+  if (typeof planRaw === 'string') return evaluateExecutionChannelDeclaration(planRaw);
+  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+  const raw = fs.existsSync(resolved.actualPath) ? fs.readFileSync(resolved.actualPath, 'utf-8') : '';
+  return evaluateExecutionChannelDeclaration(raw);
+}
+
+/**
+ * plan a6c4e9f2 T2：把 acceptance.yaml 的**结构化** checkpoint action 目标交给 selector
+ * 静态门，作为唯一一条散文外的冲突判据。只读 `criteria[].checkpoint.action.target_element_id`，
+ * 不解析 description/precondition/expected，也不把它当第二套 canonical selector 真源。
+ */
+function collectAcceptanceActionBindings(ctx: CheckContext): AcceptanceActionBinding[] {
+  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  if (!doc) return [];
+  return doc.criteria.flatMap(ac => {
+    const target = ac.checkpoint?.action?.target_element_id;
+    return typeof ac.id === 'string' && ac.id.trim() && typeof target === 'string' && target.trim()
+      ? [{ ac_id: ac.id.trim(), target_element_id: target.trim() }]
+      : [];
+  });
+}
+
 function collectDeviceTestStaticPlanGates(
   ctx: CheckContext,
   derivedContent: string,
@@ -3502,7 +3738,9 @@ function collectDeviceTestStaticPlanGates(
   const stepLint = lintHylyrePlanStepRules(derivedContent);
   const selectorUiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const selectorWarnings = selectorUiSpec
-    ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature)
+    ? lintDerivedPlanSelectorContract(derivedContent, selectorUiSpec, ctx.feature, {
+        acceptanceActionBindings: collectAcceptanceActionBindings(ctx),
+      })
     : [];
   const topCases = extractTopPlanTestCasesForDeriveHint(topPlanRaw);
   const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
@@ -3579,11 +3817,40 @@ function checkDeviceTestRunGate(
     const derivedContent = pick.selected.content;
     const explicitSkips = loadExplicitSkipTcIds(derivedPath, derivedContent);
     const derivedIds = extractTcIdsFromPlanTable(derivedContent);
-    const cov = evaluateDerivedCoverage({
-      topTcIds: topIds,
-      derivedTcIds: derivedIds,
-      explicitSkipTcIds: explicitSkips,
-    });
+    // plan a6c4e9f2 T3：顶层已声明通道时，派生集合必须**恰好等于** channel=hylyre 集合；
+    // explicit skip 不再减除缺口（派生器没有 skip 决策权），且新正式派生不得再产出 skip。
+    const runChannelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
+    // 只有声明**整体闭合**才按通道口径对账；部分缺值/非法/重复时上游已 SKIP 掉整段设备
+    // 流水线，这里保持 legacy 口径仅为不产生第二套矛盾判定。
+    const cov = runChannelDecl.ok
+      ? evaluateChannelDerivedCoverage({
+          hylyreTcIds: runChannelDecl.hylyre_tc_ids,
+          derivedTcIds: derivedIds,
+          legacyExplicitSkipTcIds: explicitSkips,
+        })
+      : evaluateDerivedCoverage({
+          topTcIds: topIds,
+          derivedTcIds: derivedIds,
+          explicitSkipTcIds: explicitSkips,
+        });
+    if (runChannelDecl.ok && explicitSkips.length > 0) {
+      return [
+        {
+          id,
+          category: 'structure',
+          description: desc,
+          severity: 'BLOCKER',
+          status: 'FAIL',
+          details:
+            `正式派生计划仍登记 explicit_skip_tc_ids：${explicitSkips.join(', ')}。` +
+            '执行通道由顶层 test-plan.md 声明，派生器不再拥有 skip 决策权；' +
+            '任一 channel=hylyre case 无法编译时应报根因并让整份 Hylyre 计划不启动，而不是改成 skip。',
+          suggestion:
+            '删除派生 frontmatter / derive-manifest.json 的 explicit_skip_tc_ids，重新按 channel=hylyre 全集编译；' +
+            '编译不了的 case 交回顶层计划作者改通道或补入口定义。',
+        },
+      ];
+    }
 
     const derivedStat = fs.statSync(derivedPath);
     const derivedMtimeIso = new Date(derivedStat.mtimeMs).toISOString();
@@ -3632,7 +3899,7 @@ function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          details: `派生 Hylyre 计划未覆盖顶层 test-plan.md 中的用例：${cov.missing.join(', ')}。请在派生表补全或在 YAML frontmatter / derive-manifest.json 登记 explicit_skip_tc_ids。\n${hintLine}`,
+          details: `派生 Hylyre 计划未覆盖顶层 test-plan.md 中的用例：${cov.missing.join(', ')}。请在派生表补全。执行责任由顶层 test-plan.md 的 execution_channel 声明，派生器没有 skip 决策权——不要登记 explicit_skip_tc_ids，改为按一次性迁移补齐「执行通道」列。\n${hintLine}`,
         },
       ];
     }
@@ -3958,7 +4225,8 @@ function checkDeviceTestRunGate(
       if (!binding.ok) evidenceGate = gateWithNativeBindingFailure(evidenceGate, binding);
       hapHolder.hylyreEvidenceGate = evidenceGate;
     }
-    const executionCompleteness = run.trace?.schema_version === '0.3-p0'
+    // inventory §一 G3：同 G1，schema 不匹配不再让门消失。
+    const executionCompleteness = run.trace
       ? checkHylyreCaseExecutionCompleteness(ctx, run.trace, evidenceGate, runPlanPath)
       : [];
     const runGatePass = outcomeEval.verdict === 'pass' &&
@@ -4025,7 +4293,7 @@ function checkDeviceTestRunGate(
                 ].join('\n'),
             suggestion: evidenceGate.native
               ? 'P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。'
-              : '确认 installed/manifest/trace version 链、schema=0.3-p0 与所有 CaseResult/StepResult 字段后重跑 testing。',
+              : '确认 installed/manifest/trace version 链、schema=0.4-p0 + hylyre.step-outcome/1 与所有 CaseResult/StepResult 字段后重跑 testing。',
           }]
         : []),
       {
@@ -4411,7 +4679,12 @@ function checkReportTraceReconciliation(
     /* explicit: never use top-level backfill as SSOT */
   }
 
-  const recon = reconcileReportWithHylyreTrace(report, tracePath);
+  const reconChannelDecl = loadExecutionChannelDeclaration(ctx);
+  const recon = reconcileReportWithHylyreTrace(
+    report,
+    tracePath,
+    reconChannelDecl.column_declared ? { hylyreTcIds: reconChannelDecl.hylyre_tc_ids } : undefined,
+  );
 
   if (!recon.ok) {
     return [{
@@ -4451,9 +4724,33 @@ function checkHylyreCaseExecutionCompleteness(
   derivedPlanPath?: string | null,
 ): CheckResult[] {
   const id = 'testing_case_execution_completeness';
-  const description = '顶层测试用例执行完整性（含 explicit skip）';
-  if (!trace || trace.schema_version !== '0.3-p0') return [];
-  if (evidenceGate && !evidenceGate.native) return [];
+  const description = '顶层测试用例执行完整性';
+  // plan a6c4e9f2 T7a：这是 inventory §一 G4 点名的 fail-open 反例——旧实现在
+  // schema 不匹配或 gate 非 native 时 `return []`，等于让这道 required gate 静默消失。
+  // 现在统一走 dispatch：不是合法 v1 一律显式 BLOCKER。
+  if (!trace) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: 'authoritative trace 缺失，无法证明顶层 TC 已执行。',
+      suggestion: '用同一 native run 重新产出 trace；不得从 telemetry/log 合成执行事实。',
+    }];
+  }
+  const gateVerdict = requireV1ForGate(trace, { frameworkRoot: ctx.frameworkRoot });
+  if (!gateVerdict.ok) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'unsupported_result_protocol',
+      details: gateVerdict.detail,
+      suggestion: gateVerdict.suggestion,
+    }];
+  }
+  if (evidenceGate && !evidenceGate.native) {
+    return [{
+      id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL',
+      details: `native evidence gate 未通过，执行完整性无法闭合：${evidenceGate.reasons.join('；')}`,
+      suggestion: '先修复 version/schema/字段三重判据再重跑；此门不因 gate 未通过而消失。',
+    }];
+  }
   const topPlanPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
   const topIds = fs.existsSync(topPlanPath)
     ? extractTcIdsFromPlanTable(fs.readFileSync(topPlanPath, 'utf-8')).map(value => value.toUpperCase())
@@ -4474,24 +4771,61 @@ function checkHylyreCaseExecutionCompleteness(
   const traceIds = (trace?.cases ?? [])
     .map(value => typeof value.id === 'string' ? value.id.trim().toUpperCase() : '')
     .filter(Boolean);
+  // plan a6c4e9f2 T3：derived/trace 的**精确集合**只与 channel=hylyre 子集闭合。
+  // 非 Hylyre 通道的 TC 仍留在报告总分母，但它们的裁决在
+  // `testing_channel_evidence_obligation`——per-TC 证据绑定建立前一律 FAIL/UNVERIFIED，
+  // 这里不得暗示它们"已由各自证据链裁决"（同一份报告内不能自相矛盾）。
+  const channelDecl = loadExecutionChannelDeclaration(ctx);
+  const channelScoped = channelDecl.column_declared;
+  const expectedIds = channelScoped ? channelDecl.hylyre_tc_ids : topIds;
   const topSet = new Set(topIds);
   const derivedSet = new Set(derivedIds);
   const traceSet = new Set(traceIds);
-  const missingFromTrace = topIds.filter(value => !traceSet.has(value));
+  const missingFromTrace = expectedIds.filter(value => !traceSet.has(value));
   const extraInTrace = traceIds.filter(value => !topSet.has(value));
-  const missingFromDerived = topIds.filter(value => !derivedSet.has(value) && !explicitSkipIds.includes(value));
+  const offChannelInTrace = channelScoped
+    ? traceIds.filter(value => topSet.has(value) && !expectedIds.includes(value))
+    : [];
+  const missingFromDerived = channelScoped
+    ? expectedIds.filter(value => !derivedSet.has(value))
+    : topIds.filter(value => !derivedSet.has(value) && !explicitSkipIds.includes(value));
   const details: string[] = [];
   if (!trace) details.push('authoritative trace 缺失，无法证明顶层 TC 已执行');
-  if (!selected) details.push('缺 authoritative derived plan，无法核对 explicit skip 与执行集合');
-  if (missingFromDerived.length > 0) details.push(`derived plan 缺少未登记 skip 的顶层 TC：${missingFromDerived.join(', ')}`);
+  if (!selected) details.push('缺 authoritative derived plan，无法核对执行集合');
+  if (missingFromDerived.length > 0) {
+    const laundered = missingFromDerived.filter(value => explicitSkipIds.includes(value));
+    details.push(
+      channelScoped
+        ? `derived plan 缺少 channel=hylyre 的 TC：${missingFromDerived.join(', ')}` +
+          (laundered.length > 0 ? `（其中 ${laundered.join(', ')} 被 explicit skip 洗掉——skip 不减除缺口）` : '')
+        : `derived plan 缺少未登记 skip 的顶层 TC：${missingFromDerived.join(', ')}`,
+    );
+  }
   if (missingFromTrace.length > 0) {
     const explicitMissing = missingFromTrace.filter(value => explicitSkipIds.includes(value));
     const otherMissing = missingFromTrace.filter(value => !explicitSkipIds.includes(value));
     if (explicitMissing.length > 0) details.push(`explicit skip/未执行且无 StepResult：${explicitMissing.join(', ')}`);
-    if (otherMissing.length > 0) details.push(`顶层 TC 未进入 authoritative trace：${otherMissing.join(', ')}`);
+    if (otherMissing.length > 0) {
+      details.push(
+        channelScoped
+          ? `channel=hylyre 的 TC 未进入 authoritative trace：${otherMissing.join(', ')}`
+          : `顶层 TC 未进入 authoritative trace：${otherMissing.join(', ')}`,
+      );
+    }
   }
   if (extraInTrace.length > 0) details.push(`trace 含顶层计划外 TC：${extraInTrace.join(', ')}`);
+  if (offChannelInTrace.length > 0) {
+    details.push(`trace 含非 channel=hylyre 的 TC：${offChannelInTrace.join(', ')}（通道由顶层声明，执行侧不得改写）`);
+  }
+  if (channelScoped && channelDecl.manual_tc_ids.length > 0) {
+    details.push(
+      `manual 通道 TC 无机器证据载体，持续留在分母 FAIL/UNVERIFIED：${channelDecl.manual_tc_ids.join(', ')}`,
+    );
+  }
   const ok = details.length === 0;
+  const nonHylyreNote = channelScoped
+    ? `；非 Hylyre 通道 ${topIds.length - expectedIds.length} 个仍在报告总分母，由 testing_channel_evidence_obligation 裁决（per-TC 证据绑定建立前保持 FAIL/UNVERIFIED）`
+    : '';
   return [{
     id,
     category: 'structure',
@@ -4499,15 +4833,36 @@ function checkHylyreCaseExecutionCompleteness(
     severity: 'BLOCKER',
     status: ok ? 'PASS' : 'FAIL',
     details: ok
-      ? `顶层/derived/trace TC 集合已精确闭合（${topIds.length} 个）；explicit skip 为 0，未执行 case 为 0。`
+      ? `derived/trace 与 ${channelScoped ? 'channel=hylyre' : '顶层'} TC 集合已精确闭合（${expectedIds.length} 个）；` +
+        `explicit skip 为 0，未执行 case 为 0${nonHylyreNote}。`
       : [
-          '任何顶层 TC（含 P1/P2）缺失 trace CaseResult 都保持 testing FAIL；不从名称/AC/散文推断原因。',
+          '任何应执行的 TC（含 P1/P2）缺失 trace CaseResult 都保持 testing FAIL；不从名称/AC/散文推断原因。',
           ...details.map(value => `  - ${value}`),
         ].join('\n'),
     suggestion: ok
       ? '继续消费同一 trace 的 CaseResult.steps[]。'
       : '补齐同一最终 run 的 CaseResult；explicit skip 不能绕过 testing FAIL，只有 trace 内机器 capability failure 才走 capability defer。',
   }];
+}
+
+/**
+ * tasks 6.5b 返修：证据义务门已从声明门里独立出来，且**必须在 visual 之后**执行。
+ * 测试入口跟着分开——把它仍挂在声明门上，等于把"时序"这条判据本身测没了。
+ */
+export function __testing_checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[] = [],
+  hapPath?: string | null,
+): CheckResult[] {
+  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath);
+}
+
+export function __testing_checkExecutionChannelDeclaration(
+  ctx: CheckContext,
+  plan: string | null,
+): CheckResult[] {
+  return checkExecutionChannelDeclaration(ctx, plan);
 }
 
 export function __testing_checkHylyreCaseExecutionCompleteness(
@@ -4517,6 +4872,39 @@ export function __testing_checkHylyreCaseExecutionCompleteness(
   derivedPlanPath?: string | null,
 ): CheckResult[] {
   return checkHylyreCaseExecutionCompleteness(ctx, trace, evidenceGate, derivedPlanPath);
+}
+
+/**
+ * 三道随 v1 一起收紧的 required gate 的测试入口。
+ *
+ * 它们各自的 `evidenceGate` 参数有一个容易踩的语义：`null/undefined` 表示
+ * **本 feature 没有 P0 device AC，三重身份门不适用**（gate 只在
+ * `runtimeEvidenceRequired` 为真时生成），而不是"协议非法"。
+ * 曾经把 null 当失败处理，结果是"没有 P0 AC 但确实跑了合法 v1"的 feature 平白吃三条
+ * BLOCKER——因此这三个入口一起导出，回归必须把这条口径钉住。
+ */
+export function __testing_checkHylyreV1RequiredGates(
+  ctx: CheckContext,
+  tracePath: string | null,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  return [
+    ...checkHylyreArtifactIntegrity(ctx, tracePath, trace, evidenceGate),
+    ...checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath),
+    ...checkHylyreRuntimeSelectorGate(ctx, trace, evidenceGate, derivedPlanPath),
+  ];
+}
+
+/** tasks 6.6b 回归入口：直接取责任路由/disposition 的 CheckResult 形状。 */
+export function __testing_checkHylyreFailureRouting(
+  ctx: CheckContext,
+  trace: HylyreTrace | null,
+  evidenceGate: HylyreEvidenceGateResult | null | undefined,
+  derivedPlanPath?: string | null,
+): CheckResult[] {
+  return checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath);
 }
 
 function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
@@ -4529,6 +4917,130 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * plan a6c4e9f2 T3：顶层执行通道声明门。
+ * - 缺列/缺值/非法值 → BLOCKER（一次性迁移；harness 不猜通道）。
+ * - manual 在场 → 显式记为未自动取证义务：manual 没有机器质量 PASS 载体，
+ *   这些 TC 持续留在分母 FAIL/UNVERIFIED，本 feature testing 因此无法 PASS。
+ *   这里就是它的"载体"，且刻意不提供任何人工提交入口/receipt/resume。
+ */
+/**
+ * plan a6c4e9f2 T3（review P1）：设备流水线准入的**唯一**判据。
+ * - report-only 按契约零设备/零 provider 调用，无论声明是否闭合都完整只读重算
+ *   （通道迁移 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
+ * - 其余情况必须先看 `decl.ok`：缺列/缺值/非法值/同 TC 重复一律不进 build/install/
+ *   Hylyre/device，也**不跑"合法子集"**（那会产出半份 trace）。
+ */
+export function shouldRunDevicePipeline(
+  declaration: { ok: boolean },
+  reportReconcileOnly: boolean,
+): { device: boolean; reportOnly: boolean } {
+  if (reportReconcileOnly) return { device: false, reportOnly: true };
+  return { device: declaration.ok, reportOnly: false };
+}
+
+function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null): CheckResult[] {
+  const id = 'testing_execution_channel';
+  const description = '顶层 test-plan 每 TC 唯一编译期 execution_channel';
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const results: CheckResult[] = [];
+  results.push({
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: decl.ok ? 'PASS' : 'FAIL',
+    ...(decl.ok ? {} : { failure_kind: 'plan_contract' as const }),
+    details: decl.ok
+      ? `通道声明完整：hylyre=${decl.hylyre_tc_ids.length}、visual=${decl.visual_tc_ids.length}、` +
+        `provider=${decl.provider_tc_ids.length}、manual=${decl.manual_tc_ids.length}。` +
+        `派生器只编译 hylyre 集合，不得新增/删除/改写通道。`
+      : decl.detail,
+    suggestion: decl.ok
+      ? '通道属计划 identity：修改必须经 test-plan review，不在 derive/回灌时静默重写。'
+      : `在顶层 test-plan.md「测试用例」表补「执行通道」列，每条 TC 取值 ${EXECUTION_CHANNEL_DOMAIN}；由测试计划作者决定并进入 review。`,
+  });
+  // plan a6c4e9f2 §2.2「未取证不通过」（review P0）：非 Hylyre 通道的 TC 已被移出
+  // derived/trace/timing 的精确对账，如果这里不给它们一个**裁决**载体，它们就只剩报告
+  // 里一行自填状态——那正是把"通道分派"变成新逃生口。因此 fail-closed：
+  //   - manual：设计上就没有机器质量 PASS 载体；
+  //   - visual / provider：Maison 当前没有 per-TC 的证据绑定（既没有 TC→visual target，
+  //     也没有 TC→capability evidence 的机器映射），无法证明某条 TC 已取证。
+  // 三者一律留在分母 FAIL/UNVERIFIED。要让它们能通过，得先建立 per-TC 证据绑定
+  // （T3 未完成项），而不是靠报告行自称通过。
+  // 证据义务**不在这里**：它必须晚于 visual 产出与 visual 门本身
+  // （详见 checkChannelEvidenceObligation 的注释）。本函数只管"通道声明是否合法"。
+  return results;
+}
+
+/**
+ * 非 Hylyre 通道 TC 的机器证据义务（tasks 6.5b；返修：外部 review 查出三处错）。
+ *
+ * **执行时点是判据的一部分**：第一版把它塞在 `checkExecutionChannelDeclaration` 里，
+ * 而那道门跑在 build / device / visual capture **之前**——真正的 visual diff 要晚得多。
+ * 结果是它只可能消费上一轮的旧文件，根本证明不了本轮结果。现在独立成门，
+ * 由主链在 visual 检查之后调用，并把**本轮 `visual_diff` 的实际结论**传进去；
+ * 该结论不是 PASS 就没有本轮视觉证据可消费。
+ *
+ * 另外两处返修见 `execution-channel-evidence.ts` 头注：读错路径、自造弱解析器。
+ */
+function checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[],
+  hapPath?: string | null,
+): CheckResult[] {
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const nonHylyreCount =
+    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
+  if (nonHylyreCount === 0) return [];
+
+  const visualGate = [...priorResults].reverse().find(r => r.id === 'visual_diff');
+  const bindings = bindChannelEvidence({
+    planMd: plan,
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    visual: loadVisualScreenVerdicts({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      currentBuildFingerprint: hapPath ? computeHapBuildFingerprint(hapPath) : null,
+      visualGateStatus: visualGate?.status ?? null,
+    }),
+    visualTcIds: decl.visual_tc_ids,
+    providerTcIds: decl.provider_tc_ids,
+    manualTcIds: decl.manual_tc_ids,
+  });
+  const blocking = bindings.filter(b => b.verdict.kind !== 'covered');
+  const covered = bindings.filter(b => b.verdict.kind === 'covered');
+  return [{
+    id: 'testing_channel_evidence_obligation',
+    category: 'structure',
+    description: '非 Hylyre 通道 TC 的机器证据义务',
+    severity: 'BLOCKER',
+    status: blocking.length === 0 ? 'PASS' : 'FAIL',
+    ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    details: blocking.length === 0
+      ? [
+          `非 hylyre 通道 ${covered.length} 条 TC 全部由机器证据闭合：`,
+          ...covered.map(b => `  - [${b.channel}] ${b.verdict.detail}`),
+        ].join('\n')
+      : [
+          '以下 TC 声明为非 hylyre 通道，但未由机器证据闭合，',
+          '因此留在分母 FAIL/UNVERIFIED，本 feature 的 testing 无法 PASS：',
+          ...blocking.map(b => `  - [${b.channel}/${b.verdict.kind}] ${b.tc_id}：${b.verdict.detail}`),
+          ...(covered.length > 0
+            ? ['', `已闭合 ${covered.length} 条：${covered.map(b => b.tc_id).join(', ')}`]
+            : []),
+        ].join('\n'),
+    suggestion: blocking.length === 0
+      ? 'visual 通道的结论来自本轮 visual-diff.json 的逐屏 verdict + 截图 hash/build 指纹复核；'
+        + '改结论必须重跑视觉采集，不得改报告行或手改 JSON。'
+      : '短期：把确实要在本轮验证的 TC 改回 execution_channel=hylyre 并补齐可执行步骤，'
+        + '或补齐 visual 通道所缺的「关联 AC」/checkpoint 屏声明/本轮视觉产物。'
+        + `provider 通道：${PROVIDER_EVIDENCE_CONTRACT}`
+        + '任何情况下都不接受人工确认、confirmed_by、质量 receipt 或 manual resume 作为本轮通过证据。',
+  }];
 }
 
 function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
@@ -4853,8 +5365,30 @@ const checker: PhaseChecker = {
       installOk: false,
       hapSha256Full: null,
     };
-    if (ctx.reportReconcileOnly) {
+    // plan a6c4e9f2 T3（review P1）：通道声明是**编译期分派**，必须在任何 build/install/
+    // Hylyre/device 动作之前解析一次。否则"缺列 / 缺值 / 非法值 / 同 TC 重复"这类计划
+    // 契约错误会在烧掉一次真机 run 之后才被报出来，且期间只跑了合法子集，产出半份 trace。
+    // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
+    results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
+    const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
+    // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
+    // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
+    // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
+    const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
+    if (pipelinePlan.reportOnly) {
       results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report));
+    } else if (!pipelinePlan.device) {
+      results.push({
+        id: 'device_test_run',
+        category: 'structure',
+        description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
+        severity: 'BLOCKER',
+        status: 'SKIP',
+        details:
+          '顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
+          channelDeclaration.detail,
+        suggestion: `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
+      });
     } else {
       results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
       results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
@@ -5018,6 +5552,12 @@ const checker: PhaseChecker = {
       deviceTestHapHolder.hylyreEvidenceGate,
       deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
     ));
+    results.push(...checkHylyreArtifactIntegrity(
+      ctx,
+      failureTracePath,
+      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
+      deviceTestHapHolder.hylyreEvidenceGate,
+    ));
     results.push(...checkHylyreFailureRouting(
       ctx,
       failureTracePath ? parseHylyreTrace(failureTracePath) : null,
@@ -5030,11 +5570,11 @@ const checker: PhaseChecker = {
       deviceTestHapHolder.hylyreEvidenceGate,
       deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
     ));
-    results.push(...checkNativeTelemetryConsistency(
-      failureTracePath ? parseHylyreTrace(failureTracePath) : null,
-      deviceTestHapHolder.hylyreEvidenceGate,
+    // 6.5b：证据义务必须晚于 visual 产出与 visual 门本身。
+    results.push(...safeRun(
+      () => checkChannelEvidenceObligation(ctx, plan, results, deviceTestHapHolder.hapPath ?? null),
+      'testing_channel_evidence_obligation',
     ));
-
     results.push(...checkP0RuntimeStepEvidenceGate(ctx, results, deviceTestHapHolder));
 
     results.push(buildTestingRunStatusResult(plan, report, results));

@@ -48,7 +48,8 @@ export function parseCaseDurationsFromLogAndTrace(
   logContent: string,
   traceRaw: Record<string, unknown> | null,
 ): DeviceTestTimingCase[] {
-  if (traceRaw?.schema_version === '0.3-p0' && Array.isArray(traceRaw.cases)) {
+  // inventory §一 G12：native 口径改判 v1；legacy 才回落日志 cost 分配。
+  if (traceRaw?.schema_version === '0.4-p0' && Array.isArray(traceRaw.cases)) {
     // Native StepResult.duration_ms is the execution-time SSOT. tool_calls and
     // log cost lines are compatibility projections and may include blocked,
     // skipped, or expected_check rows without a corresponding cost line.
