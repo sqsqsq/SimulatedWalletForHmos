@@ -220,10 +220,14 @@ feature ui-spec 只建模本 feature 新增的页面，首页/卡包/添加卡�
    须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
    ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
    P0 用例 skip 继续 fail-closed：旧 `p0_skip_waiver` confirmation receipt 只读且不 gate。
-   缺口属于既有 `explicit_skip_tc_ids` 登记时，
-   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测；
-   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器
-   `failure_kind`/`blocking_class` 信号的外部阻塞才走既有 DEFERRED。
+   （下面这段 explicit-skip 口径已被 3.0.0 的「顶层测试计划新增 `execution_channel`」一节取代，
+   仅保留为历史记录：）~~缺口属于既有 `explicit_skip_tc_ids` 登记时，
+   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测。~~
+   **3.0.0 现行口径**：新计划与派生器禁止写 `explicit_skip_tc_ids`（登记即 BLOCKER），历史登记
+   仅只读诊断——保持 testing FAIL 且**零自动 coding candidate**。
+   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器 blocked/failed
+   `capability`/`infrastructure` 事实（`outcome.cause` 或 `outcome.failure`）或
+   `blocking_class` 信号的外部阻塞才走既有 DEFERRED。
    `await_human_p0_skip` 主动首触 halt 已退役，仅保留历史事件读取兼容。
    此外，每条 `ut_layer=device|both` 的 P0 AC 必须由至少一条 P0 TC 覆盖；把相关 TC
    降为 P1/P2 会由既有 `acceptance_to_test_case` 原地 BLOCKER，不得借降档退出 P0 分母。

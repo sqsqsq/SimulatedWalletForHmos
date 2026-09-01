@@ -95,11 +95,12 @@
 {"assert_toast":{"text":"成功","timeout":3}}
 ```
 
-## Toast 断言（Hylyre 0.2+ 降级约定）
+## Toast 断言（能力不可用的机器归因）
 
 部分 HarmonyOS 版本 / 设备上 `assert_toast` 可能因环境不支持而失败（非被测应用缺陷）。**处理约定**：
 
-- 若 trace 明确为 toast 捕获不可用：在 **test-report.md** 标 **跳过** 并备注「环境不支持 toast 断言」，**勿**当作应用 P0 硬失败。
+- 归 `blocked` 还是 `failed` 由 Hylyre 按冻结 builder 判定表的 **attempted 事实**决定，不由报告作者选择：dispatch **之前**探针已证明缺失 → `outcome.status=blocked` + `cause.type=capability`；已 dispatch **之后**才返回不支持 → `outcome.status=failed` + `failure.domain=capability`。
+- 报告按 trace 的实际结论如实登记（**阻塞** / **失败**），**不得**改写成人工「跳过」，也**勿**当作应用 P0 硬失败。Maison 只消费 nested `outcome.cause` / `outcome.failure` 投 capability defer，零 coding candidate。
 - 步骤失败时 Hylyre 0.2 会在 **`--failure-dir`** 下落 UI dump + 截图（见 profile addendum）；失败截图 NoneType 崩溃已在 0.2 修复。
 
 ## 观察 UI（非 planned step）

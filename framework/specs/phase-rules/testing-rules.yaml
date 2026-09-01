@@ -66,9 +66,10 @@ structure_checks:
 
   p0_coverage_integrity:
     description: >
-      P0 用例覆盖 fail-closed（goal-fakepass-hardening t5 → c7e4a2d9）：explicit_skip/
-      未执行的 P0 一律 BLOCKER；legacy p0_skip_waiver receipt 可读但不参与判定。derive
-      manifest 只有 TC id 而无 StepResult 时，explicit skip/未执行缺口保持 testing FAIL，
+      P0 用例覆盖 fail-closed（goal-fakepass-hardening t5 → c7e4a2d9）：未执行的 P0
+      一律 BLOCKER；legacy p0_skip_waiver receipt 与历史产物中的 legacy
+      explicit_skip_tc_ids 均只读、不参与判定，也不贡献 PASS。derive
+      manifest 只有 TC id 而无 StepResult 时，未执行缺口保持 testing FAIL，
       不得按 TC 名称、AC 关联或报告散文推测 coding；只有既有 capability resolution 给出
       provider 缺失机器事实时才走 DEFERRED。真实外部条件走既有 DEFERRED，不得由 waiver
       降级 WARN 或制造人工等待态。不新增 skip 原因枚举、责任阶段字段或专用 halt
@@ -83,7 +84,8 @@ structure_checks:
     description: >
       P0 结构化状态迁移证据改由 Hylyre authoritative trace 的 CaseResult.steps[] 提供：
       case.execution=completed、verification=passed、evidence=complete，且 checkpoint 的
-      required_element_ids 均映射到 role=assertion/status=passed，forbidden_element_ids 均
+      required_element_ids 均映射到 role=assertion 且 outcome.status=passed 的 StepResult
+      （状态读 outcome.status，不读已退役的 flat status），forbidden_element_ids 均
       映射到通过的 absence assertion；禁纯动作/纯 wait/旧 case 状态冒充。普通 interactive
       与 goal 同源消费 StepResult，goal 额外保留 run/attempt/HAP/device 身份绑定。
 
@@ -175,9 +177,11 @@ structure_checks:
     description: >
       当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时，
       harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace；
-      脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：派生 hylyre
-      表须覆盖全部 TC，或由派生文件 YAML frontmatter / 同目录 derive-manifest.json 登记
-      explicit_skip_tc_ids；烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
+      脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：每条 TC 声明唯一
+      execution_channel（hylyre | visual | manual | provider:<capability-id>），派生 hylyre 表须与
+      channel=hylyre 的集合完全相等（missing/extra 均 BLOCKER）。正式派生计划禁止写
+      explicit_skip_tc_ids（登记即 BLOCKER），历史产物中的该字段仅只读诊断、不减除缺口、不贡献 PASS；
+      烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime
       选取最新有效计划。
       **门禁语义**：run.ok 仅表示 runner 未崩溃；本检查还须 trace.outcome=success 且无失败/阻塞 case，
       否则 BLOCKER FAIL（partial/failed/aborted 不得 PASS）。
@@ -282,7 +286,7 @@ structure_checks:
       「测试执行结果」必须包含每条用例的执行状态表，
       状态值限于：通过 / 失败 / 阻塞 / 跳过，并包含最终 run 的耗时列；耗时使用精确整数
       毫秒 `Nms`（读取侧可兼容合法千分位）；已进入 trace/timing 的 skip/block case 使用 `0ms`，
-      未进入 trace/timing 的 explicit skip 使用 `—`。
+      未进入 trace/timing 的用例（非 hylyre 通道或历史 legacy skip）使用 `—`。
     severity: BLOCKER
     rule:
       file: "test-report.md"
