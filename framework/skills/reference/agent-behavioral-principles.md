@@ -16,6 +16,18 @@
 
 ### Framework 约束
 
+0. **进入 phase、动笔之前先跑一次作者起手入口**——六个 feature 阶段共用同一条：
+
+   ```bash
+   cd framework/harness && npx ts-node scripts/author-context.ts --phase <phase> --feature <feature>
+   ```
+
+   它把 framework → profile → 实例扩展三层的 `on_context_load` 内容交给你，是这些要求**唯一**
+   在你动笔前送达的通道。零输出 = 本阶段确实没有额外要求；**非零退出码 = 取不全，别当成没有**，
+   先修好它报的那个钩子。输出里每段首行的 `<!-- hook:on_context_load:<层>:<仓内相对路径> -->`
+   就是坐标：把那个路径写进 `context-exploration.md` 的 `key_inputs_read`。
+   **不要靠门禁报错反推本阶段要写什么**——报错负责指出哪条既定条件没满足，不是第一次告诉你规则。
+
 1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘 `context-exploration.md`（`schema_version: "1.1.0"`）。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；harness 会验证磁盘存在。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。

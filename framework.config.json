@@ -168,6 +168,66 @@
         "path": "harness/scripts/utils/verifier-plan.ts",
         "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
         "approved_by": "WYK"
+      },
+      {
+        "path": "harness/scripts/author-context.ts",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/hooks-dispatcher.ts",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/harness-runner.ts",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "skills/reference/agent-behavioral-principles.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "skills/feature/device-testing/SKILL.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "specs/lifecycle-hooks-schema.yaml",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "docs/concepts/phase-terminology.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "profiles/hmos-app/skills/spec/templates/spec-template.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "profiles/hmos-app/skills/plan/templates/plan-template.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "profiles/generic/skills/spec/templates/spec-template.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "profiles/generic/skills/plan/templates/plan-template.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "skills/feature/spec/SKILL.md",
+        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
       }
     ]
   },

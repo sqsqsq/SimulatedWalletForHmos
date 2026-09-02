@@ -68,8 +68,8 @@ python test/story/scripts/bootstrap_local_story.py --verify AR90006    # 装上�
 正式测试统一使用 `scripts/run_multi_case.py`，即使只运行一个 Case，也不直接运行 `run_case.py`。
 
 ```powershell
-python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数> --isolated-workspaces
-python test/story/scripts/run_multi_case.py start --all --jobs <实际Case数> --isolated-workspaces `
+python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数>
+python test/story/scripts/run_multi_case.py start --all --jobs <实际Case数> `
   --suite-id story-suite-20260822-140000 --authorize-non-sandbox
 python test/story/scripts/run_multi_case.py poll --suite-id story-suite-20260822-140000 --wait-sec 0
 ```
@@ -509,7 +509,7 @@ python -m unittest discover -s test/story/tests
 python -m unittest discover -s tools/cli/tests
 python -m compileall -q tools/cli test/story/scripts
 python -m tools.cli.scripts.validate_clis
-python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数> --isolated-workspaces
+python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数>
 python test/story/scripts/check_failure_modes.py
 node --check <每个 doc/extensions 下的 .mjs>
 ```
@@ -567,6 +567,17 @@ python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 ```powershell
 python -m unittest discover -s test/story/tests -p "test_verifier_smoke.py"
 ```
+
+### 7.0.2 作者起手通道
+
+```powershell
+python -m unittest discover -s test/story/tests -p "test_author_context_entry.py"
+cd framework\harness; npx ts-node scripts/author-context.ts --phase <phase> --feature <feature>
+```
+
+第二条是执行者在动笔前跑的那一条，维护侧手查通道时也用它：六个阶段应各自输出自己的
+`<!-- hook:on_context_load:extension:doc/extensions/hooks/<phase>/author.md -->`。
+零输出 = 该阶段确实没登记钩子；**非零退出码 = 取不全**，不是「没有要求」。
 
 ### 7.1 失效形态全量回归
 

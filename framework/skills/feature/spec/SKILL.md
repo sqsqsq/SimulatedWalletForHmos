@@ -19,7 +19,7 @@
 
 ## 概述
 
-按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是流水线**第一环**，输出 `spec.md` 供下游各阶段消费。宿主扩展通过 `doc/extensions/knowledge/`、`hooks/spec/on_context_load.md`、`phase_rules_overlays.spec` 叠加。
+按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是流水线**第一环**，输出 `spec.md` 供下游各阶段消费。宿主扩展通过 `doc/extensions/knowledge/`、`hooks/spec/on_context_load.md`（动笔前跑 `scripts/author-context.ts --phase spec` 取得）、`phase_rules_overlays.spec` 叠加。
 
 **Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 spec/acceptance/UI 契约产物；不得修改 plan、实现源码、UT 或 testing 产物。runner 会按 invoke 前后哈希归因；越权字节仅作为未受信输入保留，本轮证据作废并自动回唯一 owner 全量重验，不能用人工确认豁免。
 
