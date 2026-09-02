@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "d3bcfea60f8aee1d3014b825d2129eb652541fb3",
-  "built_at": "2026-09-01T16:24:13.286Z",
+  "source_commit": "fa2c122623eb254308a62edcdcee2b371101f0c7",
+  "built_at": "2026-09-02T03:08:58.313Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -1374,7 +1374,7 @@
     },
     {
       "path": "harness/scripts/utils/p0-semantic-gates.ts",
-      "sha256": "c28c75fcd0a4169c9eb2ee4d73b3c63b0b332509562aedbc5faf1837ddc02230"
+      "sha256": "ab1a8766b9135166e6d6c3c8b97c826dfca9df0c9fc862692dab719958259f6c"
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
@@ -1890,7 +1890,7 @@
     },
     {
       "path": "profiles/generic/skills/device-testing/templates/test-report-template.md",
-      "sha256": "dcea8ca102d237ce626148bc8e6df33872c59ffc3f03bce9d6670b0d29b2cb99"
+      "sha256": "ba349d171005532c47a9d0e34d5b1030880eb51cd8650007d10a84bd5c051ea9"
     },
     {
       "path": "profiles/generic/skills/framework-init/profile-addendum.md",
@@ -2594,7 +2594,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-report-template.md",
-      "sha256": "cee521bce863f3bd629760975cf5e9d1ace8904ae59c7298aca1e790f5fb3041"
+      "sha256": "4d98a25ec340157e7110d2f6f5ede76b77c60b0a1b764908c445458adfe1b938"
     },
     {
       "path": "profiles/hmos-app/skills/framework-init/profile-addendum.md",
