@@ -516,18 +516,14 @@ node --check <每个 doc/extensions 下的 .mjs>
 
 verifier 发布器另有三条，见 §7.0；verifier smoke 见 §7.0.1。
 
-**`test_run_measurement.py` 里有一条 `expectedFailure`**：docx 内嵌图片落 `<feature>/assets/`，
-而材料指纹只覆盖 RR/SR/AR 四份文本与 `ux-reference/` 目录——**只补图片不形成新材料版本**，
-且没有任何信号。按 TEST.md §2.2，那是图片进来的**唯一**路径。这条不在测试域修（修它要改
-Extension 的材料版本定义），标记着等 material manifest 单一真源落地；届时它会意外通过、
-unittest 报错，逼着摘掉标记，不会被忘掉。
+`test_run_measurement.py` 有 1 条 `expectedFailure`（已登记的材料版本缺口），
+输出里的 `expected failures=1` 是预期结果，不是坏了。理由见该用例 docstring。
 
 这些命令不启动真实被测 CLI，只检查接口、状态转换、清理预检、稳定观测和确定性规则。
 
 ### 7.0 verifier 发布器（OpenCode）
 
-宿主 opencode 的 verifier 结论由 `.opencode/plugin/record-verifier-report.js` 在 `task` 工具完成时
-发布（机制名 `task_tool_result`）。三条命令，都不启动真实 CLI：
+opencode 的 verifier 结论由 `.opencode/plugin/record-verifier-report.js` 发布。三条命令都不启动真实 CLI：
 
 ```powershell
 python -m unittest discover -s test/story/tests -p "test_opencode_verifier_publisher.py"
@@ -535,27 +531,13 @@ npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓�
 node --check framework/agents/opencode/templates/plugin/record-verifier-report.js
 ```
 
-第一条同时锚三件事，缺哪件都会让「报告在磁盘上、闭环说它不存在」这类故障无声发生：
-
-| 段 | 判据 |
-|---|---|
-| 正例 | 发布出的 JSON 能被 framework 现有 `loadVerifierEvidence` 原样接受——发布面与验真面是同一份契约 |
-| 反例 | 每种绑定不成立的形态各自落 bedside 且**不产生** canonical 件（审错对象、迟到、篡改、无独立执行体、终稿被截断……） |
-| 跨实现等值 | 插件里的 subject 派生与结论指纹是 TS SSOT 的复刻，同一输入必须同一哈希 |
-
-它用 node 直接加载插件（ESM 的 `.js`），需要 **Node ≥ 22.7**（靠模块语法自动识别）；TS 侧走
-`framework/harness/node_modules/ts-node` 的 require 钩子，不改任何 framework 文件。
-
-**框架完整性**：本步骤改了 vendored `framework/`，靠 `framework.config.json` 的
-`integrity.drift_allowlist` 具名放行。上游补丁经 framework-init UPDATE 回本仓后**这些条目即失效，
-必须删除**——留着就会掩盖真实漂移。核对命令见 `harness-runner.ts` 的整体门禁输出中的
-`framework_integrity` / `framework_foreign_file` 两项。
+第一条直接加载插件（ESM 的 `.js`），需要 **Node ≥ 22.7**；TS 侧走
+`framework/harness/node_modules/ts-node`，不改任何 framework 文件。
 
 ### 7.0.1 verifier smoke（真实 CLI，独立于 Story）
 
-`test/story/verifier-smoke/` 是一个**永久独立**的低成本真实需求：用「隐藏余额开关」六条规则跑到
-spec 闭环，验证 verifier 那条链真的通了。它**不在 `cases/*` 里，不进 `--all`**，跑它不影响 Story
-Case 的发现与统计。
+`test/story/verifier-smoke/` 用一个固定小需求跑到 spec 闭环，验证 verifier 链路。
+它**不在 `cases/*` 里、不进 `--all`**，跑它不影响 Story Case 的发现与统计。
 
 ```powershell
 python test/story/verifier-smoke/run_smoke.py build  --workspace <隔离目录> --force
@@ -564,18 +546,12 @@ python test/story/verifier-smoke/run_smoke.py run    --workspace <隔离目录> 
 python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 ```
 
-`build` 用**真正的 init**（`init-orchestrate.ts`）物化 `.opencode/`，所以 smoke 里的 verifier 子 agent
-与发布器和真实消费仓拿到的完全同源。工程是合成的最小 `generic` 工程（coding/ut/testing 禁用、
-UI/视觉全 SKIP、**不挂 Extension**），架构/画像/术语表三份都在 `fixture/doc/` 里。
+`build` 会调真正的 init 物化 `.opencode/`；工程是合成的最小 `generic` 工程，**不挂 Extension**，
+架构/画像/术语表在 `fixture/doc/`。
 
-**两个结论要分开记**，不能混成一句「smoke 过了」：
-
-| 结论 | 判据 | 不成立时 |
-|---|---|---|
-| A · Framework 能力 | `verify` 六项绑定检查全 PASS + receipt 闭环 | 回开步骤 1，标记阻塞 |
-| B · 语义审查是否有效 | verifier 是否真读了六条需求与 spec、判断是否与产物相关（人看 `report_text`） | 不抹掉 A；但步骤 3 以后暂停，先修步骤 7 |
-
-**结论只绑实际跑的 `cli_config_id`**，不外推到别的宿主或模型。
+**两个结论分开记**，不能混成一句「smoke 过了」：**A 链路**（`verify` 六项绑定检查 + receipt 闭环，
+脚本判）与 **B 语义**（verifier 是否真读了需求与 spec、判断是否与产物相关，人看 `report_text`）。
+链路通不等于审查有效。**结论只绑实际跑的 `cli_config_id`**，不外推到别的宿主或模型。
 
 三条现场纪律：
 
@@ -584,17 +560,13 @@ UI/视觉全 SKIP、**不挂 Extension**），架构/画像/术语表三份都�
 - 确认按 `confirmation-registry.yaml` 的 portable 菜单文案匹配（`fixture/replies.yaml`），
   **不按轮次序号**。没有条目命中就停等报 `unknown_question`，不盲答。
 - `spec.feature_path` 冲突、以及 verifier request 生成前的 Research / 术语 / track / 冻结门 BLOCKER，
-  一律归 `environment_or_fixture_failed`：修夹具或环境后重跑，**不计为 D1 失败**，也不在驱动里绕过门禁。
+  一律归 `environment_or_fixture_failed`：修夹具或环境后重跑，**不算被测对象的账**，也不在驱动里绕过门禁。
 
 离线判据（不启动 CLI）：
 
 ```powershell
 python -m unittest discover -s test/story/tests -p "test_verifier_smoke.py"
 ```
-
-它锚的是「夹具与判定逻辑本身可不可信」：回复表的匹配键必须在 registry 里真实存在、未知确认必须
-停等、链路校验的每种绑定不成立形态都判 FAIL。这三条不先在离线锚死，实跑失败时分不清是被测对象
-的问题还是夹具的问题。
 
 ### 7.1 失效形态全量回归
 
@@ -662,17 +634,10 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
 | 7 | `doc/extensions` 非知识层行数 | ≤ 7500（未达成时如实写「未达成」，不改本目标） | 基线 10358 |
 
-**读这些数之前先知道两件事**（否则会把「没测到」读成「达标了」）：
+**读数口径**：第 2、3 项只看工具**入参**（读了什么），第 4 项只看工具**输出**（门禁报了什么），
+同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 `cat` 一次不算两轮。
 
-1. **门禁结论只在 `tool_output` 里**。旧口径只读事件正文与 `tool_input`，而且 check id 的
-   形态写反了（真实输出是 `FAIL [BLOCKER] <id>`，id 在后），于是第 4 项在任何一份真实事件流上
-   **恒为空**——看上去像「没有反复失败」。修好后回读历史轮次，立刻看见
-   `verifier_provider_unavailable` 失败 5 轮、`lifecycle_hook_post_check_extension` 4 轮。
-   同一 id 按**门禁轮次**去重计数：一份报告被 console 打一次、又被 `cat` 一次不算两轮。
-2. **路径类指标只看输入面**。Read 的输出带整份文件正文；把输出掺进去，一份提到 `framework/`
-   的 `spec.md` 就会被算成「在猜门禁要什么」。
-
-新增三个字段：`gate_rounds_with_fail`（有 FAIL 的门禁轮次）、`gap_sec_by_kind`
+三个字段：`gate_rounds_with_fail`（有 FAIL 的门禁轮次）、`gap_sec_by_kind`
 （门禁 / verifier / 成文 / 其它的时间去向，**是按事件间隔归属的近似值**——事件流里没有工具开始
 事件，拿不到真实 span，字段名如实标注）、`human_wait_sec`（**由驱动器累计**，与模型耗时分开；
 读不到时报 `null` 而不是 0——「这轮没人等过」和「这份记录里没这个字段」是两件事）。
