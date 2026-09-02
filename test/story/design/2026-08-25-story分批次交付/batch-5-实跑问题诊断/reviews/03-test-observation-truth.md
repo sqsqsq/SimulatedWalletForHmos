@@ -100,3 +100,12 @@
   用户只授权了步骤 1，步骤 4 开始前必须重新取得是否允许在本工程修改 `framework/` 的明确决定；
   未获授权时状态为「阻塞」，且不得用 Extension wrapper 或根 AGENTS 加长替代）。
 - 带给步骤 6 的输入：P9 的实证与 `expectedFailure` 标记。
+
+## 独立复审（Claude，2026-09-03）
+
+- 结论：**通过，附一条返修**。复审者复跑 story 538（1 expectedFailure = P9 缺口标记）、cli 18、失效形态 73、`compileall`；
+  用修好的 `measure_run.py` 回读 `20260901-230253-23468`：`verifier_provider_unavailable` 5 轮、`lifecycle_hook_post_check_extension` 4 轮、
+  `feature_to_acceptance` 4 轮、有 FAIL 的门禁 6 轮、读规则文本 112、上下文 +572K——与诊断件 P4/P8 的人工读数一致。
+  `run_case.py` 的 `phase_intent` 改法正确：三个调用点传的都是意图，不再抬 `highest_phase_reached`。
+- **返修**：`TEST.md:71,72,512` 仍写 `--isolated-workspaces`，`run_multi_case.py` 无此参数，照抄即报错。步骤 2 记录已把它归给步骤 3，本步未改。
+  重新打开步骤 3 只改这三行（隔离已是唯一形态，删参数即可），再关闭。

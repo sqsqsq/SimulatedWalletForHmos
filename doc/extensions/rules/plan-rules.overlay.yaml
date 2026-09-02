@@ -53,3 +53,14 @@ semantic_checks:
       每条附引文：从评审记录里抄该议题那一行的原文。
       有任一议题没有表态即判 **WARN**（本项 MINOR，不阻断——它要的是「谁还没表态」被看见）；
       连开放议题都列不出来的，该条按**未裁**处理。
+
+# 作者起手内容的读没读过：唯一的机械留痕。
+# 本阶段的 author 钩子由 manifest 的 `on_context_load` 送达（执行者跑
+# `scripts/author-context.ts --phase plan`），送达之后没有任何东西能证明它被读了——
+# 除非作者把来源坐标写进 `context-exploration.md` 的 `key_inputs_read`。
+# 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
+# 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
+# 字符串必须与入口输出的来源标识逐字一致（钩子的仓内相对路径）。
+exploration_thresholds:
+  phase_input_snippets_extra:
+    - doc/extensions/hooks/plan/author.md

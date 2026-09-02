@@ -2,13 +2,13 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **步骤 1、3 通过；步骤 2 装置已交付、实跑待验证（WYK 授权暂缓）；步骤 4 待授权** |
+| 状态 | **步骤 1～5 已通过独立复审（4+5 合审，唯一 blocker 已改）；步骤 4 已提交 `8a8d8a51`，步骤 5 随本次提交。下一步：步骤 6** |
 | 输入 | 批次 1～4 全部需求/方案/判据/报告与提交史；F8 局部优化现场；外网 suite `20260901-230253-23468`；内网反馈 |
 | 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置） |
 | 决策记录 | [03-方案讨论决策.md](03-方案讨论决策.md)（D1～D11 与 Q1～Q29 共识；D12 不适用） |
 | 范围 | 批次 1～4；批次 0 与更早轮次只作根因追溯证据 |
 | 方案文件 | [05-实施方案总览.md](05-实施方案总览.md)；`steps/01`～`steps/11` |
-| 评审规则 | [reviews/README.md](reviews/README.md)；每步一份独立报告 |
+| 评审规则 | [reviews/README.md](reviews/README.md)；审核点 A(4+5)、B(6+8)、7、9、10、11，每步仍各自一提交 |
 
 ## 步骤状态
 
@@ -16,9 +16,9 @@
 |---|---|---|
 | 1 OpenCode verifier adapter | **通过** | [reviews/01-opencode-verifier-adapter.md](reviews/01-opencode-verifier-adapter.md) |
 | 2 OpenCode verifier Spec smoke | **已实施（装置）；实跑待验证** | [reviews/02-opencode-verifier-smoke.md](reviews/02-opencode-verifier-smoke.md) |
-| 3 测试观测与效率事实 | **通过** | [reviews/03-test-observation-truth.md](reviews/03-test-observation-truth.md) |
-| 4 Framework 作者上下文入口 | 未开始；实施前重新取得 Framework 修改授权 | 待生成 |
-| 5 Extension 六阶段作者入口 | 未开始 | 待生成 |
+| 3 测试观测与效率事实 | **通过**；返修已做：`TEST.md` 三处失效的 `--isolated-workspaces` 已删（`80f5cc3e`） | [reviews/03-test-observation-truth.md](reviews/03-test-observation-truth.md) |
+| 4 Framework 作者上下文入口 | **通过**；已提交 `8a8d8a51`（framework + config + TEST），交接件 `artifacts/04-*` 随步骤 5 提交 | [reviews/04-05-author-context-channel.md](reviews/04-05-author-context-channel.md) |
+| 5 Extension 六阶段作者入口 | **通过**；本次提交（扩展 + 入口文件 + 测试） | 同上（4+5 合并一份） |
 | 6 材料版本与流程状态 SSOT | 未开始 | 待生成 |
 | 7 Story 语义审查资格门 | 未开始 | 待生成 |
 | 8 Story/Review 确定性生成 | 未开始 | 待生成 |
@@ -216,3 +216,86 @@ unittest 报错，逼着摘标记，忘不掉。
 
 **下一步**：`steps/04` 有授权门——用户只授权了步骤 1；步骤 4 开始前须重新取得是否允许在本工程
 修改 `framework/` 的明确决定，未获授权即为「阻塞」。
+- 2026-09-03 独立评审者（Claude）复审步骤 1～3：步骤 1、2 结论与自审一致（步骤 2 为装置通过、A/B 未取得）；步骤 3 通过并附返修
+  （`TEST.md` 三处失效参数）。复审结论追加在各 `reviews/0N` 末尾。主仓残留待清理：`framework/harness/state/last-verifier-report.*`、
+  `framework/harness/reports/_global/catalog`。
+- 2026-09-03 评审者按 25 次实跑的 author.md 读取时序核实步骤 4 的必要性（spec 14/16 写前读到，plan 3/3 与 coding 1/1 写后才读），
+  判定步骤 4 的五处 Framework 改动必要且最小；建议并落盘：留痕借用既有 `context_exploration_inputs_coverage` 门禁
+  （extension overlay 的 `exploration_thresholds.phase_input_snippets_extra` 声明 author 钩子路径），Framework 零新增门禁与状态。
+  `steps/04`、`steps/05` 已按此更新。**用户 2026-09-03 授权步骤 4 在本工程修改 `framework/`**，纪律同步骤 1（具名 allowlist 带失效条件、上游补丁与交接件）。
+
+
+## 步骤 4+5 实施记录（2026-09-03）
+
+**授权**：用户 2026-09-03 明确授权本步在当前工程直接修改 vendored `framework/`，范围 = `steps/04`
+允许范围；纪律同步骤 1（只为实际修改的文件加真人具名 allowlist、写明失效条件、产出上游补丁）。
+用户同时指示本轮 4、5 一起做完再等评审。
+
+**基线** `80f5cc3e`。先清了评审提的两项：`TEST.md` 三处 `--isolated-workspaces`（参数已退场，
+隔离是唯一形态）；主仓遗留的 `last-verifier-report.*` 与误跑留下的 `reports/_global/catalog`。
+交接件数字 24/499 → 25/500 同步订正。
+
+**病根**：`on_context_load` 一直能产出片段，但全仓唯一调用点在 `harness-runner.ts` 的 verifier
+装配处——**通道存在、接错了对象**。片段只进 verifier 上下文，作者一次也看不到。25 次实跑里
+plan 到达 3 次全部先写完 `plan.md` 再读作者要求（晚 2～70 分钟），coding 到达 1 次先改代码后读；
+spec 正常是因为 `/story` 链自己指向了它，不是机制在起作用。
+
+**改法（零新增机制）**：新增只读入口 `harness/scripts/author-context.ts`（复用 `loadResolvedProfile`
++ `dispatchLifecycleHooks`，顺序与 harness 内部一致）；六个 feature Skill 共用
+`agent-behavioral-principles.md` 的**约束 0**（device-testing 补上缺失引用，原本 6 缺 1）；
+删掉 harness 里那个错误的后置调用；manifest 六个 phase 登记现有 `author.md`（**author 正文一字未动**）；
+五份 overlay 声明 author 钩子路径为既有门禁 `context_exploration_inputs_coverage` 的必需片段。
+没有新生命周期、新 hook 事件、新状态、新门禁、新 adapter 能力。
+
+**一处全局裁决**：片段来源标识由**文件名**改为**仓内相对路径**。六个阶段的钩子都叫 `author.md`，
+只写 basename 时六份标识一模一样——既指不出阶段，也没法被 `key_inputs_read` 逐字覆盖（门禁做子串
+匹配，`author.md` 会命中任何阶段，等于不设防）。已确认全仓无程序解析该标识。
+
+**A05 抓到一次真实疏漏**：先只改了 `CLAUDE.md`，仓根给 codex/opencode 用的 `AGENTS.md` 没同步，
+`A05-entry-misses-section` 立刻 FAIL——这条形态正是为此而设，按设计工作了。
+
+**验收**：13 条行为回归（六阶段各取到自己那一份、标识是相对路径而非文件名、互不串台、无扩展→空且
+零失败、钩子抛错→明确失败不降级为空、入口无写操作、harness 不再发 `on_context_load`、声明字符串与
+入口标识逐字一致、testing 无门禁如实不声明、author 正文全仓仅一份、入口文件不再逐阶段传输）；
+离线全绿 story 551 / cli 18 / 失效形态 73/73 / 完整性四项（allowlist 放行 21 = 3 + 6 + 12）；
+上游补丁 `artifacts/04-*` 在 `source_commit` 基线上 apply 通过、逐字节一致。
+
+**仍未证的一条**：执行者会不会**真的**在动笔前跑那一条，只有真实实跑能看到。本轮交付的是通道与
+机械留痕，不是行为证据；在步骤 11 读到数之前，不要说「A03/A05 已解决」。
+
+## 步骤 4+5 评审处置与全批校准（2026-09-03）
+
+**评审结论**：`reviews/04-05-author-context-channel.md` §7 判「不通过（仅一项，交付面文案）」。
+全批校准见 [08-批次5校准.md](08-批次5校准.md)：12 条 AGENTS 条款核为未偏离，5 条偏离（X1～X5）。
+
+**X1（blocker）已改**：三处把本仓实跑读数写进了交付面（`harness-runner.ts`、`author-context.ts`、
+`manifest.yaml` 注释），其中两处随上游补丁出仓——违反 AGENTS §5.3「交付面不含某次运行数字与维护故事」。
+已全部改写成失效形态描述，`artifacts/04-*.patch` 重新生成并复验：12 个文件在纯净基线上 apply 后逐字节一致。
+
+**X5 的处置调整并说明理由**：校准建议把 §7.2 扫描词表扩成 `实测|实跑|实证`，归步骤 11。
+我先试扫了一遍——扩词后捞出一条**既有**命中：`doc/extensions/skills/story/phases/story-verify.md:106`
+「两轮实证，「2 秒」与「10KB」」。它不在步骤 4/5 范围内，且该文件在步骤 9 要退场。
+所以**本步不改词表**：现在扩词会让每次提交都显示一条我无权修的命中，反而训练人忽略这条扫描。
+词表扩展与那条既有命中一并留给步骤 9/11 处理，此处只登记发现。
+
+**X2**：步骤 1～5 的实施与自审同会话（各报告 §0 已自述），由用户的外部独立复审补偿；
+后续按 05 §4 分会话。自审文件已定位为「实施记录」，结论以评审者的 `## 独立评审` 节为准。
+
+**X3**：4、5 分两次提交；本条补登 `80f5cc3e`——它是计划外的未编号提交，内容是把 TEST.md 收回操作协议
+（删掉我在步骤 1～3 塞进去的实现背景与批次内部编号，那些各自已有真源），属清理不属新增能力。
+
+**X4**：05 §5 补写审核分组（A(4+5)、B(6+8)、7、9、10、11；分组只改何时审，每步仍各自一提交）；
+本表状态行同步。
+
+**步骤 1 的遗留（校准 X1 后半，按校准裁定不单独起一步）**：`agents/opencode/adapter.yaml` 的入册凭据里
+写了会话 id 片段与模型名。宿主版本号属框架既有惯例可留，会话 id 与模型名要删。
+**下次触碰该文件时一并删除并重生成 `artifacts/01` 补丁**——挂在这里，别丢。
+
+**提交前复跑（2026-09-03，实施者）**：story 551（1 expectedFailure = P9 钉子）、cli 18、compileall、
+`validate_clis`、失效形态 73/73、`node --check` 全部 `.mjs`、§7.2 五条扫描（前四条只有既有占位与 XML 噪声，
+第五条零命中）全绿。
+
+**新登记一条测试域脆弱点（不在步骤 4/5 范围，挂给步骤 3 的所有者或步骤 11）**：
+`test_story_build.TestKnowledgeUnits.test_repo_manifest_derives_units_too` 直接 `int(proc.stdout)`，
+当宿主终端让 node 判定为 TTY 时，输出带 ANSI 颜色码（`[33m15[39m`），用例报 ValueError 而非断言失败。
+本次首跑撞到，`NO_COLOR=1 FORCE_COLOR=0` 后 551 全绿。修法是用例侧剥色或给子进程固定关色，不是改被测脚本。

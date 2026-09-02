@@ -107,3 +107,13 @@ hook 模板——`git status` 逐项确认未出现。真实 CLI 实跑在临时
 - 允许提交：**是**（仅本步允许范围 + STATUS + 本报告）
 - 下一步是否可开始：**是**（步骤 2）。步骤 2 须把 R1 作为显式观察点：若真实 smoke 里 request 生成后
   始终等不到报告，先查插件是否被装上，再查语义。
+
+## 7. 独立复审（Claude，2026-09-02 晚；原独立报告被本文件的自审版本覆盖，此处保留结论）
+
+- 结论：**通过**。证据全部由复审者亲自复跑：25 条发布器回归、story 500、cli 18、失效形态 73、adapter 一致性、`node --check`；
+  上游补丁在 HEAD 干净工作树 `git apply --check --directory=framework` 通过且六文件逐字节一致；
+  opencode 本地库 `session` 表核实子会话 `parent_id` 指向主会话、工具面只有 read×2 / glob×2。
+- 与自审不同的两处措辞：① `oc-e2e` 的 `summary.json` 只有两个键、`request.json` 三个指纹为 null、`task-prompt.txt` 为手写指令——
+  实证覆盖的是「宿主 → 子会话 → 插件 → evidence 接受」，receipt/closure 未跑；② 主仓 `framework/harness/state/last-verifier-report.*`
+  是实施会话 claude 子 agent 触发主仓钩子留下的 bedside（15:16Z），起跑任何 CLI 前删除。
+- 其余 advisory：交接件数字（24/499 → 25/500）；本仓 `.opencode/` 未物化 verifier agent 与插件；`--isolated-workspaces` 已失效归步骤 3。

@@ -101,3 +101,10 @@ minimist 静默忽略，于是两次都跑在**主工程**上：写了 `framewor
 - 下一步是否可开始：**是（按用户授权）**，但 `STATUS` 与后续每一步的报告都须带上「步骤 2 实跑待验证」
   这一条前提；步骤 3 起的结论不得建立在「smoke 已通过」之上。
 - 待验证项恢复方式：按 `TEST.md §7.0.1` 三条命令跑一次，把 A/B 两个结论分别写回本报告的新轮次小节。
+
+## 独立复审（Claude，2026-09-03）
+
+- 结论：**装置通过；结论 A/B 未取得**（用户授权暂不实跑）。复审者复跑 `test_verifier_smoke.py` 15 条通过；
+  `replies.yaml` 四条匹配键逐条对应 `confirmation-registry.yaml` 的 portable 文案；`verify()` 六项检查与 `check-receipt` 闭环判定只读 workspace 磁盘原件。
+- 与自审一致的一条边界：合成 `generic` 工程不挂 Extension，所以结论 B 只能证明 verifier 读了六条需求与 spec，证明不了它对扩展的 `pre_verifier` 判据有区分力——那是步骤 7 的事。
+- 待清理：主仓 `framework/harness/state/last-verifier-report.*` 与 `framework/harness/reports/_global/catalog` 仍在（后者是本步误跑留下的），起跑前处理。

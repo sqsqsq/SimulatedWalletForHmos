@@ -60,9 +60,9 @@ opencode 没有 SubagentStop 这一层事件。但它的 `task` 工具**建的�
 
 ## 消费仓验证情况
 
-- 24 条发布器回归（正例经真实 `loadVerifierEvidence` 接受；每种绑定不成立形态各自落 bedside 且零 canonical；
+- 25 条发布器回归（正例经真实 `loadVerifierEvidence` 接受；每种绑定不成立形态各自落 bedside 且零 canonical；
   与 TS SSOT 的 subject/指纹跨实现等值）：全过；
-- 全量离线 499 条、失效形态自检 73/73、`check-adapter-catalog-consistency`、
+- 全量离线 500 条、失效形态自检 73/73、`check-adapter-catalog-consistency`、
   `framework_integrity` / `framework_foreign_file`：全过；
 - **真实 CLI 全链**：opencode + deepseek 起一次 spec 审查 → 独立子会话 verifier 只读读完材料 →
   插件发布 canonical → framework 验真面返回 `ok: true`，`invocation_subject == result_subject ==

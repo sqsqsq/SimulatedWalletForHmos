@@ -43,33 +43,51 @@ provides:
 
   # 挂载分步进行：manifest 里任何一条路径不存在，加载器会**清空全部 provides**
   # （全有全无，不降级），所以只登记已交付的钩子。
+  #
+  # 三个事件各有各的消费者，别混：
+  #   on_context_load → **作者**，动笔之前（执行者跑 scripts/author-context.ts 取）；
+  #   post_check      → 门禁，产物落盘之后；
+  #   pre_verifier    → verifier 的上下文。
+  # 不登记在这里的作者要求，只能靠执行者自己去翻，通常在产物落盘之后才读到。
   hooks:
     spec:
+      on_context_load:
+        - hooks/spec/author.md
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     plan:
+      on_context_load:
+        - hooks/plan/author.md
       post_check:
         - hooks/plan/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     coding:
+      on_context_load:
+        - hooks/coding/author.md
       post_check:
         - hooks/coding/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     review:
+      on_context_load:
+        - hooks/review/author.md
       post_check:
         - hooks/review/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     ut:
+      on_context_load:
+        - hooks/ut/author.md
       post_check:
         - hooks/ut/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     testing:
+      on_context_load:
+        - hooks/testing/author.md
       post_check:
         - hooks/testing/post_check.mjs
       pre_verifier:

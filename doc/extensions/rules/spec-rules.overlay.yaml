@@ -99,3 +99,14 @@ semantic_checks:
       对象是**拆分表里 carrier 不是本 feature 的每一份**，逐份核。
       **每条裁决附引文**：从AR/design.md 的拆分表与 spec 的功能清单抄一段连续 12 字以上的原文（能检索到的）。
       引文为空、或只是把story-flow.json 的 scope 字段复制一遍的，该条按**未裁**处理。
+
+# 作者起手内容的读没读过：唯一的机械留痕。
+# 本阶段的 author 钩子由 manifest 的 `on_context_load` 送达（执行者跑
+# `scripts/author-context.ts --phase spec`），送达之后没有任何东西能证明它被读了——
+# 除非作者把来源坐标写进 `context-exploration.md` 的 `key_inputs_read`。
+# 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
+# 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
+# 字符串必须与入口输出的来源标识逐字一致（钩子的仓内相对路径）。
+exploration_thresholds:
+  phase_input_snippets_extra:
+    - doc/extensions/hooks/spec/author.md
