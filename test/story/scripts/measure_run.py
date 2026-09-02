@@ -32,6 +32,20 @@ CHECKER_PATH_RE = re.compile(r"framework/harness/scripts/check-[a-z]+\.ts")
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
 BASH_READ_RE = re.compile(r"\b(cat|head|tail|sed|less|type)\b")
 
+#: 门禁在**控制台输出**里报一条 check 的形态（report-generator 的 printReportToConsole）：
+#:     ``  ✗ FAIL [BLOCKER] feature_artifact_resolution``
+#: 只锚 ASCII 段。徽标里的 ✗ 在 Windows 控制台常被转成乱码，中文 details 更是整段花掉；
+#: 旧口径写成 ``<id>\s*(FAIL|未通过)``——**方向正好相反**，真实输出里 id 在 FAIL 之后，
+#: 所以它在任何一份真实事件流上都恒为空。
+CHECK_LINE_RE = re.compile(r"(FAIL|WARN)\s*\[(BLOCKER|MAJOR|MINOR)\]\s*([A-Za-z0-9_.]+)")
+
+#: chalk 在非 TTY 下不上色，但捕获链路里偶有残留；剥掉再匹配，别让颜色码把 id 切断。
+ANSI_RE = re.compile("\x1b\\[[0-9;]*m")
+
+#: 一次 harness 调用 = 一轮门禁。判「同一 check id 反复 FAIL」要按轮次去重，
+#: 不能按文本出现次数——同一份报告被 console 打一次、又被 cat 一次就会翻倍。
+HARNESS_CMD_RE = re.compile(r"harness-runner")
+
 #: `story-build check` 通过时打印的两个数：多少条机器核实、多少条交给模型裁。
 #: 它说明守恒有多少压在模型层上——模型层的保证只能靠对抗测试证明，
 #: 这个数越大，那份对抗测试就越要紧。**只报数，不判达标**（G8）。
@@ -59,15 +73,31 @@ def _ts(value: str | None) -> datetime | None:
         return None
 
 
-def _text_of(event: dict) -> str:
-    """事件里可能提到路径的地方：工具入参与内容。"""
+def _request_text(event: dict) -> str:
+    """**作者要什么**：工具入参与事件正文。路径类判定只看这里。
+
+    绝不把 `tool_output` 掺进来：Read 的输出里带着整份文件正文，一份 `doc/features/` 产物
+    只要正文里提了 `framework/`，就会被算成「在读规则文本」。输入面才是作者的意图。
+    """
     parts = [str(event.get("content") or "")]
     ti = event.get("tool_input")
     parts.append(json.dumps(ti, ensure_ascii=False) if isinstance(ti, (dict, list)) else str(ti or ""))
     return "\n".join(parts)
 
 
-def measure(events_path: Path) -> dict:
+def _output_text(event: dict) -> str:
+    """**工具回了什么**：门禁报的 check id、失败轮次、守恒两层的数都只在这里。
+
+    旧口径整个漏了这一面（只读 content + tool_input），于是「反复 FAIL 的 check」在任何
+    真实事件流上恒为空——不是「没有反复失败」，是压根没看那半边。ANSI 先剥掉再匹配。
+    """
+    out = event.get("tool_output")
+    if isinstance(out, (dict, list)):
+        out = json.dumps(out, ensure_ascii=False)
+    return ANSI_RE.sub("", str(out or ""))
+
+
+def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     events = list(_iter_events(events_path))
     if not events:
         raise SystemExit(f"[measure_run] {events_path} 里没有可解析的事件——不是「指标为零」，是读不到数据")
@@ -78,7 +108,13 @@ def measure(events_path: Path) -> dict:
     tools = Counter()
     context_first = context_last = None
     harness_runs = 0
+    gate_rounds_with_fail = 0
     check_fail_counts: Counter[str] = Counter()
+    # 分段耗时：事件流里**没有工具开始事件**（一次调用只有一条 completed/error），
+    # 所以拿不到真实 span。这里用「上一条事件到本条事件的间隔」归给本条，是**近似**，
+    # 字段名带 _gap_sec 明说这一点——不把近似值包装成实测值。
+    gap_by_kind: dict[str, float] = {"gate": 0.0, "verifier": 0.0, "authoring": 0.0, "other": 0.0}
+    prev_ts = None
     conservation: tuple[int, int] | None = None
     first_ts = last_ts = None
 
@@ -89,6 +125,9 @@ def measure(events_path: Path) -> dict:
             last_ts = ts
 
         etype = e.get("type")
+        gap = (ts - prev_ts).total_seconds() if (ts and prev_ts) else 0.0
+        if ts:
+            prev_ts = ts
         if etype == "usage":
             total = (e.get("usage") or {}).get("context_total")
             if isinstance(total, int):
@@ -102,27 +141,43 @@ def measure(events_path: Path) -> dict:
 
         name = str(e.get("tool_name") or "").lower()
         tools[name] += 1
-        blob = _text_of(e)
+        request = _request_text(e)
+        output = _output_text(e)
 
         looks_like_read = name in {"read", "grep", "glob"} or (
-            name == "bash" and BASH_READ_RE.search(blob))
+            name == "bash" and BASH_READ_RE.search(request))
         if looks_like_read:
-            if CHECKER_PATH_RE.search(blob):
+            if CHECKER_PATH_RE.search(request):
                 reads_checker += 1
-            if RULE_PATH_RE.search(blob):
+            if RULE_PATH_RE.search(request):
                 reads_rule += 1
-            elif "doc/features/" in blob:
+            elif "doc/features/" in request:
                 reads_own += 1
 
-        if name == "bash" and "harness-runner" in blob:
+        is_harness = name == "bash" and HARNESS_CMD_RE.search(request)
+        if is_harness:
             harness_runs += 1
 
-        # 门禁报出的 check id：同一个反复 FAIL 说明作者在逐层试
-        for m in re.finditer(r"\b(lifecycle_hook_\w+|[a-z_]{6,})\b\s*(?:FAIL|未通过)", blob):
-            check_fail_counts[m.group(1)] += 1
+        # 门禁报出的 check id 只在**输出**里。按「这一次工具调用」去重后再计数：
+        # 同一份报告在 console 打一次、被 cat 再打一次，按文本次数算就会翻倍，
+        # 而判据问的是「同一个 id 在多少**轮**门禁里失败」。
+        failed_ids = {m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"}
+        for cid in failed_ids:
+            check_fail_counts[cid] += 1
+        if failed_ids:
+            gate_rounds_with_fail += 1
 
-        # story 守恒的两层各担多少条——取最后一次通过时的数
-        hit = CONSERVATION_RE.search(blob)
+        if is_harness:
+            gap_by_kind["gate"] += gap
+        elif name == "task":
+            gap_by_kind["verifier"] += gap
+        elif name in {"write", "edit", "patch", "multiedit"}:
+            gap_by_kind["authoring"] += gap
+        else:
+            gap_by_kind["other"] += gap
+
+        # story 守恒的两层各担多少条——取最后一次通过时的数（也在输出面）
+        hit = CONSERVATION_RE.search(output)
         if hit:
             conservation = (int(hit.group(1)), int(hit.group(2)))
 
@@ -144,10 +199,32 @@ def measure(events_path: Path) -> dict:
         "context_last": context_last,
         "context_growth": (context_last - context_first
                            if context_first is not None and context_last is not None else None),
+        "gate_rounds_with_fail": gate_rounds_with_fail,
         "repeated_check_fails": check_fail_counts.most_common(5),
+        "worst_repeated_check": (check_fail_counts.most_common(1)[0] if check_fail_counts else None),
+        "gap_sec_by_kind": {k: round(v, 1) for k, v in gap_by_kind.items()},
         "conservation_machine": conservation[0] if conservation else None,
         "conservation_model": conservation[1] if conservation else None,
+        **_human_wait(run_dir or events_path.parent),
     }
+
+
+def _human_wait(run_dir: Path) -> dict:
+    """人工等待由**驱动器**累计（它才知道什么时候开始等、什么时候等到）。
+
+    读不到就报 ``None`` 而不是 0：「这轮没人等过」和「这份记录里没有这个字段」是两件事，
+    压成同一个 0 之后，任何一次统计都无法分辨自己看的是事实还是缺省值。
+    """
+    try:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"human_wait_sec": None, "human_wait_events": None, "human_wait_source": "unavailable"}
+    raw = state.get("human_wait_sec")
+    if raw is None:
+        return {"human_wait_sec": None, "human_wait_events": None, "human_wait_source": "not_recorded"}
+    return {"human_wait_sec": float(raw),
+            "human_wait_events": int(state.get("human_wait_events") or 0),
+            "human_wait_source": "run_state"}
 
 
 def render(result: dict) -> str:
@@ -167,7 +244,15 @@ def render(result: dict) -> str:
         "",
         "  ── 门禁 ──",
         f"    harness 运行 {result['harness_runs']} 次",
-        f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（未识别到）'}   目标 同一 id ≤2 次",
+        f"    有 FAIL 的门禁轮次：{result['gate_rounds_with_fail']} 轮",
+        f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（本轮没有 FAIL）'}   目标 同一 id ≤2 轮",
+        "",
+        "  ── 时间去哪了（间隔归属的近似值，不是实测 span）──",
+        f"    门禁 {result['gap_sec_by_kind']['gate']}s｜verifier {result['gap_sec_by_kind']['verifier']}s"
+        f"｜成文 {result['gap_sec_by_kind']['authoring']}s｜其它 {result['gap_sec_by_kind']['other']}s",
+        (f"    人工等待：{result['human_wait_sec']}s（{result['human_wait_events']} 次）  —— 独立计时，不进上面四项"
+         if result["human_wait_sec"] is not None
+         else f"    人工等待：未知（{result['human_wait_source']}）  —— 不是 0，是这份记录里没有"),
         "",
         "  ── story 守恒两层各担多少 ──",
         (f"    机器核实 {result['conservation_machine']} 条 / 模型裁决 "
@@ -202,7 +287,7 @@ def main() -> int:
     if not path.exists():
         raise SystemExit(f"[measure_run] 读不到 {path}")
 
-    result = measure(path)
+    result = measure(path, run_dir=path.parent)
     result["source"] = str(path)
     print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result))
     return 0

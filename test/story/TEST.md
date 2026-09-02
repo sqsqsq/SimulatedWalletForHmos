@@ -514,7 +514,13 @@ python test/story/scripts/check_failure_modes.py
 node --check <每个 doc/extensions 下的 .mjs>
 ```
 
-verifier 发布器另有三条，见 §7.0。
+verifier 发布器另有三条，见 §7.0；verifier smoke 见 §7.0.1。
+
+**`test_run_measurement.py` 里有一条 `expectedFailure`**：docx 内嵌图片落 `<feature>/assets/`，
+而材料指纹只覆盖 RR/SR/AR 四份文本与 `ux-reference/` 目录——**只补图片不形成新材料版本**，
+且没有任何信号。按 TEST.md §2.2，那是图片进来的**唯一**路径。这条不在测试域修（修它要改
+Extension 的材料版本定义），标记着等 material manifest 单一真源落地；届时它会意外通过、
+unittest 报错，逼着摘掉标记，不会被忘掉。
 
 这些命令不启动真实被测 CLI，只检查接口、状态转换、清理预检、稳定观测和确定性规则。
 
@@ -655,6 +661,21 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 5 | spec 阶段上下文增量 | ≤ 150K | +397K（全程 11K → 818K，零 compaction） |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
 | 7 | `doc/extensions` 非知识层行数 | ≤ 7500（未达成时如实写「未达成」，不改本目标） | 基线 10358 |
+
+**读这些数之前先知道两件事**（否则会把「没测到」读成「达标了」）：
+
+1. **门禁结论只在 `tool_output` 里**。旧口径只读事件正文与 `tool_input`，而且 check id 的
+   形态写反了（真实输出是 `FAIL [BLOCKER] <id>`，id 在后），于是第 4 项在任何一份真实事件流上
+   **恒为空**——看上去像「没有反复失败」。修好后回读历史轮次，立刻看见
+   `verifier_provider_unavailable` 失败 5 轮、`lifecycle_hook_post_check_extension` 4 轮。
+   同一 id 按**门禁轮次**去重计数：一份报告被 console 打一次、又被 `cat` 一次不算两轮。
+2. **路径类指标只看输入面**。Read 的输出带整份文件正文；把输出掺进去，一份提到 `framework/`
+   的 `spec.md` 就会被算成「在猜门禁要什么」。
+
+新增三个字段：`gate_rounds_with_fail`（有 FAIL 的门禁轮次）、`gap_sec_by_kind`
+（门禁 / verifier / 成文 / 其它的时间去向，**是按事件间隔归属的近似值**——事件流里没有工具开始
+事件，拿不到真实 span，字段名如实标注）、`human_wait_sec`（**由驱动器累计**，与模型耗时分开；
+读不到时报 `null` 而不是 0——「这轮没人等过」和「这份记录里没这个字段」是两件事）。
 
 **第 3 项是最直接的信号**：作者去读 checker 源码，说明它从别处拿不到要求——
 批次 3 的作者面通道（入口文件 → `hooks/<phase>/author.md` → 模板 → 报错文案）就是为它建的。

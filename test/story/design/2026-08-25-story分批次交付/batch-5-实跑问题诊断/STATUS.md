@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **步骤 1 通过；步骤 2 装置已交付、实跑待验证（WYK 授权暂缓）；进入步骤 3** |
+| 状态 | **步骤 1、3 通过；步骤 2 装置已交付、实跑待验证（WYK 授权暂缓）；步骤 4 待授权** |
 | 输入 | 批次 1～4 全部需求/方案/判据/报告与提交史；F8 局部优化现场；外网 suite `20260901-230253-23468`；内网反馈 |
 | 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置） |
 | 决策记录 | [03-方案讨论决策.md](03-方案讨论决策.md)（D1～D11 与 Q1～Q29 共识；D12 不适用） |
@@ -16,7 +16,7 @@
 |---|---|---|
 | 1 OpenCode verifier adapter | **通过** | [reviews/01-opencode-verifier-adapter.md](reviews/01-opencode-verifier-adapter.md) |
 | 2 OpenCode verifier Spec smoke | **已实施（装置）；实跑待验证** | [reviews/02-opencode-verifier-smoke.md](reviews/02-opencode-verifier-smoke.md) |
-| 3 测试观测与效率事实 | 未开始 | 待生成 |
+| 3 测试观测与效率事实 | **通过** | [reviews/03-test-observation-truth.md](reviews/03-test-observation-truth.md) |
 | 4 Framework 作者上下文入口 | 未开始；实施前重新取得 Framework 修改授权 | 待生成 |
 | 5 Extension 六阶段作者入口 | 未开始 | 待生成 |
 | 6 材料版本与流程状态 SSOT | 未开始 | 待生成 |
@@ -179,3 +179,40 @@ glossary）、六条需求 prompt、按 `confirmation-registry.yaml` 的 portabl
 工作区干净；这条事实已写进驱动文件头与 `TEST.md §7.0.1` 的现场纪律。
 
 **离线全绿**：story 514、失效形态 73/73、`compileall`。
+
+## 步骤 3 实施记录（2026-09-02）
+
+**基线** `49f9ed54`。只改测试域四个文件，Framework / Extension / 产品源码一字未动。
+
+**P8 的根因比诊断记录的深一层，是两处同时坏**：`_text_of` 完全没读 `tool_output`；且 check id
+正则写成 `<id> FAIL`，而真实控制台输出是 `FAIL [BLOCKER] <id>`——**方向相反**。叠加结果是
+「反复 FAIL 的 check」在任何真实事件流上恒为空，读起来像「没有反复失败」。现在拆成
+`_request_text`（作者要什么，路径类判定只看它）与 `_output_text`（工具回了什么，门禁结论只看它），
+并按**门禁轮次**去重。回读历史轮次立刻兑现：`verifier_provider_unavailable` 失败 5 轮、
+`lifecycle_hook_post_check_extension` 4 轮、`feature_to_acceptance` 4 轮、读 checker 源码 1 次、
+上下文 11.7K→584K——这些数此前一个都读不出来。
+
+**P10**：`refresh_worker_lease(phase=...)` 把参数无条件写成 `current_phase` /
+`highest_phase_reached` / `phase_source="runner_hint"`，而三个调用点传的分别是起跑阶段、下一个
+未闭环阶段、`gates_started` 时的 **`end_phase`（本轮目标）**——没有一个是「模型到了哪」的证据。
+现改为只写 `phase_intent` 留痕；阶段一律由 `derive_phase_state` 从 framework 状态与真实产物推导。
+`observe.py` / `phase_state.py` 未改——推导本就只认证据，坏的是喂给它的 hint。
+
+**人工等待独立计时**：驱动器在等待循环里累计 `human_wait_sec` / `human_wait_events`；度量侧只读，
+读不到报 `null` 而不是 0。新增 `gate_rounds_with_fail` 与 `gap_sec_by_kind`（门禁/verifier/成文/其它，
+**按事件间隔归属的近似值**——事件流里没有工具开始事件，拿不到真实 span，字段名如实标注）。
+
+**P9 判为责任错位，外送步骤 6**：按 `TEST.md §2.2`，图片进来只有一条路——docx 内嵌、导入时抽出、
+落 `<feature>/assets/<stem>/`；而 `material_inputs` 只覆盖 RR/SR/AR 四份文本与 `ux-reference/`。
+**实证**：`assets/` 下加一张图，`material_fingerprint` 一字不变，「只补图片」对轮次完全隐形。
+修它要改 Extension 的材料版本定义（步骤 6 的 material manifest 单一真源），`steps/03` 明令此时
+停下回报。缺口以 `unittest.expectedFailure` 钉成机械事实：步骤 6 落地后它会意外通过、
+unittest 报错，逼着摘标记，忘不掉。
+
+**顺带修正一条既有测试的旧契约**：`test_heartbeat_renews_the_lease_atomically` 原先断言
+`phase="plan"` 会写进 `last_phase`——那正是 P10 的病。改为断言新规则，原主题（心跳/租约原子性）未动。
+
+**离线全绿**：story 538（含 1 条 expectedFailure = P9 缺口标记）、cli 18、失效形态 73/73。
+
+**下一步**：`steps/04` 有授权门——用户只授权了步骤 1；步骤 4 开始前须重新取得是否允许在本工程
+修改 `framework/` 的明确决定，未获授权即为「阻塞」。

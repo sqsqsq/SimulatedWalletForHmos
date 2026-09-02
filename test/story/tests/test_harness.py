@@ -445,8 +445,13 @@ class StateMachineTest(unittest.TestCase):
             published = rc.read_state(root)
             self.assertEqual(published["heartbeat_epoch"], 100.0)
             self.assertEqual(published["lease_expires_epoch"], 100.0 + rc.WORKER_LEASE_SEC)
-            self.assertEqual(published["last_phase"], "plan")
             self.assertEqual(published["last_event"]["name"], "cli_poll")
+            # `phase` 参数是**驱动器要去哪**，不是**模型到了哪**：它只作意图留痕，
+            # 不写 last_phase / current_phase / highest_phase_reached。
+            # 旧口径把它直接写成阶段，于是「准备跑 plan 的门禁」被记成「到达了 plan」。
+            self.assertEqual(published["phase_intent"]["phase"], "plan")
+            self.assertNotEqual(published.get("last_phase"), "plan",
+                                "提示不得抬升阶段——阶段只由 framework 状态与真实产物推进")
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

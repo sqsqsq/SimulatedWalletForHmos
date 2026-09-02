@@ -239,6 +239,10 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
         refresh_worker_lease(out_dir, state)
         text = pop_pending_reply(out_dir)
         if text:
+            # 人工等待单独累计：它与模型耗时性质完全不同，混进总墙钟就再也分不出
+            # 「跑得慢」和「没人回话」。度量侧只读这两个字段，不自己去重建等待区间。
+            state["human_wait_sec"] = round(float(state.get("human_wait_sec") or 0.0) + waited, 1)
+            state["human_wait_events"] = int(state.get("human_wait_events") or 0) + 1
             state.update(status="running", awaiting_since=None,
                          awaiting_prompt=None, awaiting_prompt_source=None)
             refresh_worker_lease(out_dir, state, force=True, event="human_reply")
@@ -763,17 +767,13 @@ def refresh_worker_lease(out_dir: Path, state: dict, *, force: bool = False,
     if event:
         state["last_event"] = {"name": event, "at": _clock_text(current)}
     if phase:
-        phase_order = ("story", *PHASE_ORDER)
-        if phase in phase_order:
-            state["last_phase"] = phase
-            state["current_phase"] = phase
-            previous = str(state.get("highest_phase_reached") or phase)
-            if previous not in phase_order:
-                previous = phase
-            state["highest_phase_reached"] = max(previous, phase,
-                                                   key=phase_order.index)
-            state["phase_source"] = "runner_hint"
-            state["phase_observed_at"] = _clock_text(current)
+        # `phase` 是**驱动器要去哪**，不是**模型到了哪**——三个调用点传的分别是起跑阶段、
+        # 下一个未闭环阶段、以及 `end_phase`（目标）。它曾被无条件写进
+        # current_phase / highest_phase_reached，于是「准备跑 plan 的门禁」被记成「到达了
+        # plan」：实测两个 Case 就这样在没有任何 plan 产物时被报成到达 plan。
+        # 现在它只作**意图留痕**，阶段状态一律由 derive_phase_state 从 framework 状态与
+        # 真实阶段产物推导——目标阶段、runner 提示、准备执行 gate、模型口头宣告都不算数。
+        state["phase_intent"] = {"phase": phase, "event": event, "at": _clock_text(current)}
     state.update(derive_phase_state(REPO_ROOT, str(state.get("feature") or ""), state,
                                     observed_at=_clock_text(current)))
     previous = float(state.get("heartbeat_epoch") or 0)
