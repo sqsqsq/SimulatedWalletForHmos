@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "fa2c122623eb254308a62edcdcee2b371101f0c7",
-  "built_at": "2026-09-02T03:08:58.313Z",
+  "source_commit": "7cb87c17905db8e7e80089265b3b7d597e583b72",
+  "built_at": "2026-09-02T08:57:25.426Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -462,7 +462,7 @@
     },
     {
       "path": "harness/capability-registry.ts",
-      "sha256": "25ddd05f1c42514f27ef4a41f7f6da31fa89494f63a317b64d339e7d62f7f94a"
+      "sha256": "0578f5a6702a742f7187911f6983e484c6ffbf768ad09b95f07b245668f759cf"
     },
     {
       "path": "harness/code-graph/anchor-hash.ts",
@@ -686,7 +686,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "55825beae7b54c684cb3ed4deafbcf8dafbdbfd757cfbd49e69c87302800ae58"
+      "sha256": "a7b0c0e8a631abc94df4075e2fa9947cd90ca9eb9564dadeda93482c11b432f9"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -706,7 +706,7 @@
     },
     {
       "path": "harness/scripts/derive-hylyre-plan-hint.ts",
-      "sha256": "2011d52f89cf2fa3401271afe57270ae44f573224a5b794d0961d6ab08c1d621"
+      "sha256": "29cdd71c6fdd5778b2204abf874da38d1d2c31dbafe5a202b3189c5d412baf79"
     },
     {
       "path": "harness/scripts/detect-deveco.ts",
@@ -1002,7 +1002,7 @@
     },
     {
       "path": "harness/scripts/utils/derived-hylyre-plan.ts",
-      "sha256": "74d3ed1cf19809425e8a4f81fccffed9d70d94b03e220a9a31d018637e642476"
+      "sha256": "845cc04f5eba78cc6d52fa05684d8795cfc2e5d22bd4a77c5234c423a9344a62"
     },
     {
       "path": "harness/scripts/utils/device-credential-store.ts",
@@ -1058,7 +1058,7 @@
     },
     {
       "path": "harness/scripts/utils/execution-channel.ts",
-      "sha256": "f95d86815dfe9922fb10c77613e18ffe1ab652b4ff87cc11bdf4e1b98a90a4ac"
+      "sha256": "c947bc279711b05b23984b2fba16a76a8091ed2518b1cc8a04a1c1c1f436089d"
     },
     {
       "path": "harness/scripts/utils/exploration-strategy.ts",
@@ -1266,7 +1266,7 @@
     },
     {
       "path": "harness/scripts/utils/hylyre-planned-step-keys.ts",
-      "sha256": "4fc7ca6d6d072ec223e283200dec610d57c8ab31f0eeb27788270bb763b4c3d7"
+      "sha256": "f54ac59c5631c41adebb648fa4787d9d978c411aee5debcfcec905b0becfd178"
     },
     {
       "path": "harness/scripts/utils/hylyre-planned-step-lint.ts",
@@ -1286,7 +1286,7 @@
     },
     {
       "path": "harness/scripts/utils/hylyre-standard-derive-knowledge.ts",
-      "sha256": "8b3daef78584e13904559428dcd09fe11b55cf29ad27fb961b0056f812b3c529"
+      "sha256": "4a28885cb81a251519fa8e5a5a918e05d02b5b23ceb9384cc3fbfc0e1921900e"
     },
     {
       "path": "harness/scripts/utils/hylyre-steps-normalize.ts",
@@ -2038,7 +2038,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/device-install-diag.ts",
-      "sha256": "aeba7f39568cc5bb07f4ab89116d6d63744f16cfe1b7edb807136f768d0eaf9d"
+      "sha256": "3bfb6ac8af7527fbd91d216e2b534f093a3eda10b817733fb7338b94eeb6af4e"
     },
     {
       "path": "profiles/hmos-app/harness/device-recovery-bridge.ts",
@@ -2086,7 +2086,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/fidelity-snapshot-check.ts",
-      "sha256": "7b11c2af6e6550d0ffa30c5b8a1ae546174b4ce2238b76fe4b7b9b14c3321ccd"
+      "sha256": "7d37927ad3c5f10aef6443a45593d0939ac71dce9e336c930bd64c8890d166a8"
     },
     {
       "path": "profiles/hmos-app/harness/generated-source-classifier.ts",
@@ -2106,7 +2106,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/hdc-runner.ts",
-      "sha256": "22a88bab3429b26571803b8e2df1d26de324b91c8a643f58341fa9173e4cce0c"
+      "sha256": "34f2b4a4634e9e44d91fe78e168ff302caf48b78aa63a51ffed003a3d8c5fa3d"
     },
     {
       "path": "profiles/hmos-app/harness/hmos-graph-extractor.ts",
@@ -2138,7 +2138,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/image-toolkit.ts",
-      "sha256": "bbb1274b1024d9a8e37567483c6c26325a94c3cbf4127a92bb1d47c307b7391c"
+      "sha256": "8b3468364c7722dc3a58821ef81784786fd23a36406bff6e02d2abff59a05f94"
     },
     {
       "path": "profiles/hmos-app/harness/layout-oracle-calibrate.ts",
@@ -2214,7 +2214,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-install.ts",
-      "sha256": "7a08b19ac3677bc7fb541285f8f4da62c1dca24396cb519305df631bb708b386"
+      "sha256": "1989edb61a80a867ee4edec59cafc887096fae5f4721f60fc6d587c498f6b383"
     },
     {
       "path": "profiles/hmos-app/harness/providers/device-test-run.ts",
@@ -2246,7 +2246,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/spec-visual-handoff.ts",
-      "sha256": "5d1aa6022ec25bfee333b753d9dd3be60032f0eead83580e84c90c125e14cf39"
+      "sha256": "f654ee34ef1895ad67bf53627715c6f2703d86a7be672776172aa1b1f496fdd0"
     },
     {
       "path": "profiles/hmos-app/harness/providers/types.ts",
@@ -2350,11 +2350,11 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-capture.ts",
-      "sha256": "3b21f6d59c68705a6a98b5dc2ebd8433a4f217d93c1e9faaab2f4b9b51f1ed5b"
+      "sha256": "e49c71eb22eee67f3f959664359562486c98c1332bbceba0389159d8026b9c1d"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "52667f4e86831ad30c38c88d70a448d0c34be2a3ecfbddc3ae0208408e1ef7a8"
+      "sha256": "97b282ebc8519b518044cd58a6f90e9e800fcf70db9aa1ed10d8162a9b241a3b"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -2370,7 +2370,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-ocr-gates.ts",
-      "sha256": "1f07d81faed90ae225edaf9c46d79552e10f886f4095cbb05fa4b3cdc5a76816"
+      "sha256": "34af51d5a08f384e62999144acf8a750de5c7347b88d318c32ff29b8d4332abe"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-targets.ts",
@@ -2386,7 +2386,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-provider-review.ts",
-      "sha256": "bd4ee94f59ef700b21d028e7e2c8aa53723d42c9489b558dbc5f78e8af62df08"
+      "sha256": "884d3d256964e2a4e6be73838cb0dfad7e0d787da0e8cb9939930ee6058e4537"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -2578,11 +2578,11 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/profile-addendum.md",
-      "sha256": "6cb2ed2d53ce9e563ad06b11c0484dba6aea990b119ce696bf078dc39e380656"
+      "sha256": "d22c8ef54c6475192798e7887e0c3b034da6a73794b8e69d6018231a45662cb7"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
-      "sha256": "13d39c35f191637570c87a56d1093441af2b4177989ef8a30a665b9d320f6102"
+      "sha256": "4d6a9b8cc137a6fc04e034f971216601ef655bd544d994d8ad059fd8c974fc66"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-plan-hylyre-template.md",
@@ -2670,19 +2670,19 @@
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/README.md",
-      "sha256": "1c0fb58b7cec0c796243cf5ac0a863adfda1d7919bce7943439e972b4974eaf9"
+      "sha256": "891230b54aa37759297c9fd6fb70871e74fb28c0c6da5bb0567f4ea56790c003"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/release.manifest.json",
-      "sha256": "7dd0b6fd670edbebdc0227b1497ac8f036748d2f5b902b28798da499d02bdd39"
+      "sha256": "f3ce9293d5b311f84e0aaca4afea9fa524cc92a3c7b84a8d58205be019e1d3e9"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/README.md",
-      "sha256": "445397e115e01928154294d8285227fbc91c7dc5792558d902ea71960cde1469"
+      "sha256": "ad9f127853430df29b666f3b158526b911c867f7e67eee83d71fbdcbf1f82a65"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/hylyre/__init__.py",
-      "sha256": "4bf3b141be75c6b245d1da4a45d3f9ea9c9bfa2c33333cd77498ca2e36f960e8"
+      "sha256": "7056bdfd0be1f817b6422cd9a6d88052c3f7d212e32ae6eb2b0fd1c18a1b6143"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/hylyre/__main__.py",
@@ -2762,7 +2762,7 @@
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/hylyre/cli/__main__.py",
-      "sha256": "2c3a793c2162b9c12eb0f86f6372d2d554198025ff91a5cd0397179207d6fe18"
+      "sha256": "1c27bd893331e6fbf60ef30a2286dfbfcf5be4b9002288bdf5d93c0be89726b2"
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/hylyre/cli/commands/__init__.py",
@@ -3910,7 +3910,7 @@
     },
     {
       "path": "profiles/hmos-app/vendor/hylyre/src/pyproject.toml",
-      "sha256": "95dfaec7871a2da8c3cc4c62cf875b18a4edba94b88ca4ce19d277263d4b47ef"
+      "sha256": "4e7dec9b7143015ec202008c40442934ad5e7a2484d44a073b1514c2af561fd3"
     },
     {
       "path": "profiles/hmos-app/vendor/tessdata/chi_sim.traineddata",
@@ -3974,7 +3974,7 @@
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
-      "sha256": "e63ccc05f819b5a3492fa0b748a6b237808dad7512f011bfcc0918551c81de2c"
+      "sha256": "1b83085a179c134c3cc1658710eba7eccaeaedea8c29bef68e5fc42713491ac2"
     },
     {
       "path": "skills/feature/device-testing/contract.yaml",
@@ -4010,7 +4010,7 @@
     },
     {
       "path": "skills/feature/spec/reference/visual-handoff.md",
-      "sha256": "8c286ea098fa0c1b15b2c6895d76d8c914517dbab6eb272da6c3bea6c3ae1535"
+      "sha256": "6ffc478b5347b7021a576761d6789c80b43347d8d69092cff69c8499e678b780"
     },
     {
       "path": "skills/feature/spec/templates/_PROFILE-ASSETS-NOT-HERE.md",
@@ -4150,7 +4150,7 @@
     },
     {
       "path": "skills/reference/device-testing-workflow-detail.md",
-      "sha256": "9f3d4827871d096038ba9b4eb7e239bd037766f9a061fee7cc8029db18c86e26"
+      "sha256": "271cf88743484435c7f99875f3a42ccfe4f167b6412a453a29aa6bb2e9a78feb"
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
@@ -4330,11 +4330,11 @@
     },
     {
       "path": "specs/phase-rules/spec-rules.yaml",
-      "sha256": "9b188385697481808fbc35bc486e2d16f4068a7802759c53f93c4825b101a2ec"
+      "sha256": "a735ef3e565b434db62212291ea7a62d7d503896a0f4506592a14144a96a5bed"
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
-      "sha256": "a63836d604afb26f3008cc56fc2f7f510f744bda0ca55857a059e153fa4d0b9e"
+      "sha256": "9e25173d1b70b79aa8bf9a72af6317f31242a711fe7f0bbe2531e781ec786531"
     },
     {
       "path": "specs/phase-rules/ut-rules.yaml",

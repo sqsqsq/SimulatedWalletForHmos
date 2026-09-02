@@ -7,7 +7,7 @@
 
 与 [`hylyre-planned-step-keys.ts`](../../../../../harness/scripts/utils/hylyre-planned-step-keys.ts) 同步：
 
-`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app`（即席 harness **禁止** steps 内 `start_app`）
+`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app`（正式派生：`stop_app`/`start_app` 仅允许作为 case 首部恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 derive hint 的 reset_preamble 字段；即席 harness **禁止** steps 内 `start_app`）
 
 **禁止作为步骤根键的 CLI 名**：`dump_ui` / `dump-ui` / `page_save` / `screenshot` 等（见 `FORBIDDEN_STEP_ROOT_KEYS`）。
 
@@ -121,6 +121,6 @@
 
 ## 版本
 
-- Hylyre vendor 发布件：`0.5.0`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
+- Hylyre vendor 发布件：`0.5.1`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
 - 结果协议：`hylyre.step-outcome/1`；trace schema：`0.4-p0`。发布件内 `hylyre/contracts/` 与冻结契约包逐字一致（`contracts_tree_sha256 = cc738c272324…1bae`）
 - 字段变更时：同步更新 vendor 发布件、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`
