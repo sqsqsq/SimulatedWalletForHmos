@@ -419,7 +419,9 @@ heartbeat 提示词必须包含当前 suite-id，并要求：每次只执行一�
 ## 5. 状态与证据
 
 静默不是终态，`awaiting_reply` 必须处理。历史清理的 `completed_with_warnings` 不是 Case 失败；只要安全预检通过，
-协调器继续测试并在下一轮起跑重试残留。权威状态只来自 `state.json` 和运行事件。典型目录：
+协调器继续测试并在下一轮起跑重试残留。权威状态只来自 `state.json` 和运行事件。
+同仓多个会话并存时，状态归属以本会话实际执行命令的 transcript 与状态写入事件为证据，不按消息时间或谁先结束猜测。
+典型目录：
 
 ```text
 output/story/<suite-id>/
@@ -531,26 +533,27 @@ node --check <每个 doc/extensions 下的 .mjs>
 
 ### 7.2 机制层负面扫描
 
-提交前固定跑，期望全部零命中（对应台账 M01–M04）：
+本节是机制层负面扫描命令的唯一维护位置。提交前固定运行；前四项检查知识/工程标识与绝对路径，
+第五项检查交付面是否混入维护历史：
 
 ```powershell
-grep -rnE "\b[A-Z]{2,8}-[0-9]{2}\b" doc/extensions --exclude-dir=knowledge
-grep -rnE "\b(AR|DTS|ISSUE)-?[0-9]{4,}\b" doc/extensions --exclude-dir=knowledge
-grep -rnE "\b0[1-9]-[A-Z][A-Za-z]{3,}\b" doc/extensions --exclude-dir=knowledge
-grep -rnE "[A-Za-z]:[\\/]|\bbackup/" doc/extensions
+rg -n '\b[A-Z]{2,8}-[0-9]{2}\b' doc/extensions -g '!doc/extensions/knowledge/**'
+rg -n '\b(AR|DTS|ISSUE)-?[0-9]{4,}\b' doc/extensions -g '!doc/extensions/knowledge/**'
+rg -n '\b0[1-9]-[A-Z][A-Za-z]{3,}\b' doc/extensions -g '!doc/extensions/knowledge/**'
+rg -n '[A-Za-z]:[\\/]|\bbackup/' doc/extensions
+rg -n '实测[^。]{0,40}[0-9]|首跑 [0-9]|批次 *[0-9]|上一轮那|F[0-9]+ (首版|实测)' doc/extensions -g '!doc/extensions/knowledge/**'
 ```
 
-**扫描面含 `.md`**：早先只扫代码、放过 Markdown（理由是「写作指令允许出现形态示例」），
-实测 16 处硬编码里有 10 处藏在注入件里全部逃检——注入件恰恰是模型直接读到的东西，
-它写死了域名，新增一个域时模型就照着旧清单干活。
+扫描面包含 Markdown、提示词、注释、docstring 和合同说明；这些内容都会进入执行者上下文，按交付物处理。
+业务词不在命令中维护固定清单，由 M02 从当前 Case 动态派生。
 
 人工快查会有噪声（占位形态、反例说明、激活清单本身都会命中），准确判定以
 `check_failure_modes.py` 的 M01/M17 为准：它们的基准从激活清单派生，
 能区分「真实标识」「占位形态」「查无此物的死判据」三种情况。
 
-### 7.3 三条维护不变量的机械回归
+### 7.3 维护不变量的机械回归
 
-`AGENTS.md §2` 的四条约束各有对应形态，**只写文档会被跳过，机械回归不依赖记忆**：
+`AGENTS.md` 的关键约束各有对应形态，**只写文档会被跳过，机械回归不依赖记忆**：
 
 | 不变量 | 台账形态 |
 |---|---|

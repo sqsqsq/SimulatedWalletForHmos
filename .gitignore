@@ -91,7 +91,12 @@ doc/extensions/adapt/
 **/.cac/settings.local.json
 output/
 **.pyc
-test/story/design/
+# Story 设计过程默认不跟踪；批次 5 是当前正式方案与逐步评审真源，单独放行。
+test/story/design/*
+!test/story/design/2026-08-25-story分批次交付/
+test/story/design/2026-08-25-story分批次交付/*
+!test/story/design/2026-08-25-story分批次交付/batch-5-实跑问题诊断/
+!test/story/design/2026-08-25-story分批次交付/batch-5-实跑问题诊断/**
 test/story/spec/
 .bak/
 

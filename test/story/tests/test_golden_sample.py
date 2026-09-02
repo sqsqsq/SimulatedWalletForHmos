@@ -7,7 +7,7 @@
 所以先有金样，再有判据。规则只有一条：**任何判据若拦金样，错的是判据**。
 这份测试守两件事：
 
-  ① 金样与它同轮的四份材料一个字节没变（指纹 + 形态数）；
+  ① 唯一金样正本与构造场景所需的同轮材料一个字节没变（指纹 + 形态数）；
   ② 现行判据对金样零 FAIL——判据改动先跑这一行。
 """
 from __future__ import annotations
@@ -19,24 +19,36 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-GOLDEN = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90004"
+GOLDEN = REPO_ROOT / "test" / "story" / "golden"
+INPUT_FIXTURE = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90004"
+GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
 BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 
 #: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
-#: 两处 image 是同一对文件的两个落点：金样正文按 `assets/x.png` 引，
-#: 界面材料按需求目录的 `../assets/<文档名>/x.png` 引——两条链都要能解析。
-FINGERPRINTS = {
-    "AR/story.md": "c392539c51339d8e",
+#: 金样正文与归档图片只在 test/story/golden 维护；原始材料夹具保留自己的来源图片。
+GOLDEN_FINGERPRINTS = {
+    "story-金样-AR90004.md": "c392539c51339d8e",
+    "assets/image1.png": "7a0b672988d707e2",
+    "assets/image2.png": "da8a096f4a859ddb",
+}
+
+INPUT_FINGERPRINTS = {
     "AR/design.md": "ed2119f15893b568",
-    "AR/assets/image1.png": "7a0b672988d707e2",
-    "AR/assets/image2.png": "da8a096f4a859ddb",
     "RR/prd.md": "ff0013420c4c0741",
     "SR/design.md": "d9ccbd10489f89d1",
     "spec/spec.md": "8ea24b8250376bc4",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
+}
+
+EXPECTED_CANONICAL_FILES = {
+    "README.md",
+    "story-金样-AR90004.md",
+    "review-金样-AR90006.md",
+    "assets/image1.png",
+    "assets/image2.png",
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
@@ -58,20 +70,41 @@ def offline_check(story: Path) -> tuple[int, str]:
 
 class GoldenIsFrozen(unittest.TestCase):
     def test_every_file_matches_its_fingerprint(self) -> None:
-        for rel, want in FINGERPRINTS.items():
+        for root, fingerprints in ((GOLDEN, GOLDEN_FINGERPRINTS),
+                                   (INPUT_FIXTURE, INPUT_FINGERPRINTS)):
+            for rel, want in fingerprints.items():
+                path = root / rel
+                with self.subTest(file=path.relative_to(REPO_ROOT)):
+                    self.assertTrue(path.is_file(), f"金样或输入夹具少了 {path}")
+                    self.assertEqual(
+                        want, digest(path),
+                        f"{path} 变了——金样正本或冻结输入只有维护者能改，改了要同步指纹")
+
+    def test_no_duplicate_golden_outputs_in_fixture(self) -> None:
+        for rel in ("AR/story.md", "AR/review.md", "AR/assets/image1.png", "AR/assets/image2.png"):
+            with self.subTest(file=rel):
+                path = INPUT_FIXTURE / rel
+                self.assertFalse(path.exists(), f"{path} 重复保存金样输出；测试须直接读取 test/story/golden")
+
+    def test_input_fixture_has_only_frozen_inputs(self) -> None:
+        """输入夹具只保存构造场景需要的材料，不保存 story/review 金样副本。"""
+        actual = {p.relative_to(INPUT_FIXTURE).as_posix()
+                  for p in INPUT_FIXTURE.rglob("*") if p.is_file()}
+        self.assertEqual(set(INPUT_FINGERPRINTS), actual)
+
+    def test_canonical_golden_files_exist(self) -> None:
+        for rel in GOLDEN_FINGERPRINTS:
             with self.subTest(file=rel):
                 path = GOLDEN / rel
                 self.assertTrue(path.is_file(), f"金样少了 {rel}")
-                self.assertEqual(want, digest(path),
-                                 f"{rel} 变了——金样定稿后只有维护者能改，改了要同步这里的指纹")
 
-    def test_no_extra_files_slipped_in(self) -> None:
-        """多出来的文件也是改动：判据会把它当材料读进去。"""
-        actual = {p.relative_to(GOLDEN).as_posix() for p in GOLDEN.rglob("*") if p.is_file()}
-        self.assertEqual(set(FINGERPRINTS), actual)
+    def test_canonical_directory_has_no_unregistered_files(self) -> None:
+        actual = {p.relative_to(GOLDEN).as_posix()
+                  for p in GOLDEN.rglob("*") if p.is_file()}
+        self.assertEqual(EXPECTED_CANONICAL_FILES, actual)
 
     def test_shape_is_unchanged(self) -> None:
-        lines = (GOLDEN / "AR" / "story.md").read_text(encoding="utf-8").split("\n")
+        lines = GOLDEN_STORY.read_text(encoding="utf-8").split("\n")
         actual = {
             "lines": len(lines) - (1 if lines and lines[-1] == "" else 0),
             "chapters": sum(1 for x in lines if x.startswith("## ")),
@@ -87,7 +120,7 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
 
     def test_offline_check_is_clean(self) -> None:
-        code, out = offline_check(GOLDEN / "AR" / "story.md")
+        code, out = offline_check(GOLDEN_STORY)
         self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")
 
     def test_the_offline_judgements_actually_run(self) -> None:
@@ -100,7 +133,9 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / "AR"
-            shutil.copytree(GOLDEN / "AR", work)
+            work.mkdir(parents=True)
+            shutil.copy2(GOLDEN_STORY, work / "story.md")
+            shutil.copytree(GOLDEN / "assets", work / "assets")
             story = work / "story.md"
             text = story.read_text(encoding="utf-8")
             marker = "\n\n这里塞一个 queryLossEligibility 进主叙事：" + "复述一遍没有信息量的话，" * 20

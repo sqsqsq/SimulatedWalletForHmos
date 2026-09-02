@@ -2466,7 +2466,8 @@ def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     return Outcome(False, f"check 未过（非固定形式原因）：{out[:200]}")
 
 
-GOLDEN_STORY = REPO_ROOT / "test/story/fixtures/golden/AR90004/AR/story.md"
+GOLDEN_STORY = REPO_ROOT / "test/story/golden/story-金样-AR90004.md"
+GOLDEN_ASSETS = REPO_ROOT / "test/story/golden/assets"
 
 
 @checker
@@ -2500,7 +2501,9 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     # 反分支：塞一个工程标识与一段超长的话进主叙事，判项应当各自点名
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "AR"
-        shutil.copytree(GOLDEN_STORY.parent, work)
+        work.mkdir(parents=True)
+        shutil.copy2(GOLDEN_STORY, work / "story.md")
+        shutil.copytree(GOLDEN_ASSETS, work / "assets")
         story = work / "story.md"
         text = read_text(story)
         head = text.split("\n## ", 2)

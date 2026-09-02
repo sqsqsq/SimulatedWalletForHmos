@@ -27,14 +27,13 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-GOLDEN = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90006" / "AR" / "review.md"
+GOLDEN = REPO_ROOT / "test" / "story" / "golden" / "review-金样-AR90006.md"
 BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
 
-#: 立样时点 2026-08-30（晚四修：三级分层定稿）。副本与 `test/story/golden/` 的正本
-#: 逐字节一致——正本是效果定义，这里是机器台账消费的副本。sha256 前 16 位。
+#: 立样时点 2026-08-30（晚四修：三级分层定稿）。本文件直接读取唯一金样正本。sha256 前 16 位。
 FINGERPRINT = "62a20067aad7705a"
 
 def categories() -> list[dict]:
@@ -104,7 +103,7 @@ def parse_golden() -> list[dict]:
 
 class ReviewGoldenIsFrozen(unittest.TestCase):
     def test_fingerprint(self) -> None:
-        self.assertTrue(GOLDEN.is_file(), "review 金样不在夹具里")
+        self.assertTrue(GOLDEN.is_file(), "review 金样正本不存在")
         actual = hashlib.sha256(GOLDEN.read_bytes()).hexdigest()[:16]
         self.assertEqual(FINGERPRINT, actual,
                          "review 金样变了——只有维护者能改，改了要同步这里的指纹")
