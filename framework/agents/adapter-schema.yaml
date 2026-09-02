@@ -71,6 +71,8 @@ optional_fields:
     description: |
       slash 命令路由文件（Claude Code 的 .claude/commands/*.md 是此字段的典型用例）。
       若 adapter 所依附的 agent 不支持 slash（例如 Cursor），置为 null。
+      `target_dir`/`template_dir` 与下面的 `subagents` **各自独立生效**：只需要落子 agent
+      配置、不需要 slash 的 adapter（opencode）只写 `subagents` 一段即可。
     fields:
       target_dir:
         type: string
@@ -83,7 +85,10 @@ optional_fields:
       subagents:
         type: object | null
         description: |
-          可选。agent 支持子 agent 配置时使用（Claude Code 的 .claude/agents/*.md）。
+          可选。agent 支持子 agent 配置时使用（Claude Code 的 .claude/agents/*.md、
+          opencode 的 .opencode/agent/*.md）。子 agent 的**只读约束写在它自己的配置里**
+          （claude=`tools:` 白名单，opencode=frontmatter `permission:` 逐工具 deny），
+          不由 framework 在调用时另加参数。
         fields:
           target_dir:
             type: string
@@ -169,9 +174,11 @@ optional_fields:
   hooks:
     type: object | null
     description: |
-      Adapter 客户端 hook 脚本目录（Claude Code 的 .claude/hooks/*.mjs 是典型用例）。
-      hook 脚本由 settings_file 注册并由客户端进程触发；framework 自身不直接调用。
-      若 agent 没有 hooks 机制，置为 null。
+      Adapter 客户端 hook / 插件脚本目录（Claude Code 的 .claude/hooks/*.mjs 是典型用例）。
+      脚本由客户端进程触发，framework 自身不直接调用；**宿主怎么发现它由宿主决定**——
+      claude 靠 settings_file 显式注册，opencode 的 .opencode/plugin/*.js 由宿主自动发现，
+      两种都用本字段落地（本字段只负责「把模板目录原样复制到宿主约定目录」）。
+      若 agent 没有 hook / 插件机制，置为 null。
       落地方式：将目录下所有文件原样复制（不做占位符替换；hook 脚本应通过 stdin
       或 `${CLAUDE_PROJECT_DIR}` 等运行时变量获取上下文）。
     fields:
@@ -430,8 +437,9 @@ optional_fields:
         · policy 判 off / not_applicable → 与本字段无关，恒 disabled、零产物。
 
       **入册纪律（BLOCKER）**：`modes` 只登记**真实实测过**的运行模式。claude / codeagent
-      的 interactive 已由宿主 SubagentStop 实抓验收；headless / goal 目前仍走 bedside
-      旁路，未验收前不得预填——虚标会让 runner 生成一份永远没人发布的 request。
+      的 interactive 已由宿主 SubagentStop 实抓验收，opencode 的 interactive 已由宿主
+      task 工具完成事件实抓验收；headless / goal 目前仍走 bedside 旁路，未验收前不得
+      预填——虚标会让 runner 生成一份永远没人发布的 request。
     fields:
       transport:
         type: string
@@ -444,13 +452,21 @@ optional_fields:
           大文件不过传输面，抄错任何字段 → subject 重算失配 → 明确失败。
       publisher:
         type: string
-        enum: ["subagent_stop"]
+        enum: ["subagent_stop", "task_tool_result"]
         description: |
-          结论的发布机制 id。subagent_stop：由 SubagentStop hook
-          （agents/claude/templates/hooks/record-verifier-report.mjs，claude-kernel 家族共享）
-          做四方对账（request 自述 subject == 重算 subject == summary 现值 == 终态块回显，
-          且 prompt_path/prompt_sha256 与磁盘相符）后发布
-          `verifier.report.<subject>.json`。
+          结论的发布机制 id（**机制名非厂商名**）。两种机制做**同一套四方对账**
+          （request 自述 subject == 重算 subject == summary 现值 == 终态块回显，且
+          prompt_path/prompt_sha256 与磁盘相符），发布**同一份** `verifier.report.<subject>.json`；
+          差别只在宿主把绑定材料交出来的位置。
+
+          · subagent_stop：宿主在子 agent 结束时拉起 hook 进程，hook 从 stdin payload 取
+            终态消息、从子 agent 转录取首条调用 prompt（agents/claude/templates/hooks/
+            record-verifier-report.mjs，claude-kernel 家族共享）。
+          · task_tool_result：宿主在**子 agent 任务工具完成**时把「调用参数 + 子会话身份 +
+            终稿信封」一次交给宿主内插件，插件据此发布（agents/opencode/templates/plugin/
+            record-verifier-report.js）。调用 prompt 是工具入参本身，不必读转录。
+            终稿信封可能被宿主按 tool_output 上限截断——发布器必须改读全文旁路件，
+            否则末尾的终态块会被切掉而静默审空。
       modes:
         type: list
         description: |

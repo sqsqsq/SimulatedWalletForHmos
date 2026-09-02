@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **独立方案评审已处置；方案重新冻结，等待步骤 1 实施** |
+| 状态 | **步骤 1 通过并提交；步骤 2 待开工** |
 | 输入 | 批次 1～4 全部需求/方案/判据/报告与提交史；F8 局部优化现场；外网 suite `20260901-230253-23468`；内网反馈 |
 | 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置） |
 | 决策记录 | [03-方案讨论决策.md](03-方案讨论决策.md)（D1～D11 与 Q1～Q29 共识；D12 不适用） |
@@ -14,7 +14,7 @@
 
 | 步骤 | 状态 | 评审报告 |
 |---|---|---|
-| 1 OpenCode verifier adapter | 未开始 | 待生成 |
+| 1 OpenCode verifier adapter | **通过** | [reviews/01-opencode-verifier-adapter.md](reviews/01-opencode-verifier-adapter.md) |
 | 2 OpenCode verifier Spec smoke | 未开始 | 待生成 |
 | 3 测试观测与效率事实 | 未开始 | 待生成 |
 | 4 Framework 作者上下文入口 | 未开始；实施前重新取得 Framework 修改授权 | 待生成 |
@@ -99,3 +99,52 @@
   不把等待上游合入设成本批 D1 blocker。Story 改为任务包一次给全、按章原子落盘和缺章续写；verifier 资格绑定 `cli_config_id`；
   Spec §10/§11 改为 `knowledge-use.yaml` 生成区；非占位仅检查空正文/明确 marker；材料 hash 由唯一 `materials.json` 模块计算。
   A1/A2/A3/A4/A6 已进入对应步骤，A7 经正本图片、零旧路径引用和离线测试核实关闭。方案重新冻结。
+
+## 步骤 1 实施记录（2026-09-02）
+
+**基线** HEAD `e1b73b00`，工作区无用户在途改动。**实跑配置** opencode 1.18.26 +
+`bailian/deepseek-v4-flash-0731`（用户指定），对应 `cli_config_id = bailian-deepseek`。
+
+**机制裁决**：opencode 没有 SubagentStop 这一层，但它的 `task` 工具建的是**子会话**，完成时经插件钩子
+`tool.execute.after` 一次交出调用入参（= request JSON 原文）、子/主会话 id 与终稿信封。publisher 因此取
+机制名 `task_tool_result`，不冒充 `subagent_stop`。transport 复用 `repo_file_request`；subject 派生、
+request 契约、报告 JSON、`loadVerifierEvidence`/receipt/closure 全部零改动；物化复用既有的 `hooks` 与
+`commands.subagents` 两个通用目录复制字段，未新建物化通道；TypeScript 里未加任何 adapter 名分支。
+
+**改动**（六个 Framework 文件 + 测试域）：`agents/opencode/templates/plugin/record-verifier-report.js`（新增，
+发布器）、`agents/opencode/templates/agents/verifier.md`（新增，只读子 agent）、`agents/opencode/adapter.yaml`、
+`agents/adapter-schema.yaml`、`agents/README.md`、`harness/scripts/utils/verifier-plan.ts`；
+`test/story/tests/test_opencode_verifier_publisher.py`（新增 25 条）、`TEST.md §7.0`、
+`test_verifier_report_protocol.py`（只改已过时的「opencode 没有这个钩子」表述）、`framework.config.json`
+（6 条具名 drift allowlist，`approved_by: WYK`，rationale 写明上游合入后即失效须删除）。
+
+**两条宿主行为差点让实现静默失效，已处置并各有机械回归**：
+
+1. **终稿截断**——工具输出超 `tool_output` 上限（默认 2000 行 / 51200 字节）会**从头部保留**、全文另存
+   `metadata.outputPath`。终态块在末尾，只读可见正文会得到「无终态块」而误判成 verifier 没给结论。
+2. **装载器会把每一个导出的函数当插件入口调一遍**（实抓证实）。首版有具名导出，于是
+   `publishFromTaskResult(PluginInput)` 抛错、**整个插件注册中断**——第一次真实实跑的现场就是
+   「task 跑完了，canonical 和 bedside 都没有」，没有任何报错指向插件。现改为只导出 default。
+
+**验收证据**：
+- 能力面三态：opencode `required×interactive` 由 `blocked` → `enabled`；其余 adapter 与其它 policy 态一字未变；
+- 25 条发布器回归全过——正例经真实 `loadVerifierEvidence` 接受；主执行者自写、无独立执行体、信封会话不符、
+  子任务失败、错 subject、迟到 subject、能力 off、篡改字段、夹带键、追加散文、prompt 换代、prompt 缺失、
+  跨 feature/越界路径、缺终态块、双终态块、冲突结论、截断不可恢复——各自落 bedside 且零 canonical；
+  幂等与 conflict 单调升级成立；与 TS SSOT 的 subject/规范化串/结论指纹跨实现等值；
+- 离线全绿：story 500、cli 18、失效形态 73/73、`check-adapter-catalog-consistency` PASS、
+  `framework_integrity` / `framework_foreign_file` / `manifest_selfcheck` / `workspace_tmp_hygiene` 全 PASS
+  （allowlist 真人签放行 9 项 = 原有 3 + 本步 6）；机制层负面扫描零命中；
+- **真实 CLI 全链**：opencode + deepseek 起一次 spec 审查 → 独立子会话（`agent_id` 是子会话 id、≠ 主会话）
+  只读读完 ai-prompt 与 spec 并逐项引证 → 插件发布 canonical → framework 验真面返回 `ok: true`，
+  `invocation_subject == result_subject == summary 现值`；运行前后产品源码零差异；
+- 上游补丁 `artifacts/01-framework-opencode-verifier.patch` 以 `source_commit 7401f22` 为基线，
+  在纯净 framework 树上 `git apply` 通过、结果与本仓逐字节一致（行尾归一，与完整性校验同口径）；
+  交接说明见 `artifacts/01-upstream-handoff.md`。
+
+**交付边界**：本仓验证通过 ≠ 内网已获得该能力。上游合入并经 framework-init UPDATE 回本仓前，内网 P3 原样存在，
+且那 6 条 allowlist 届时即失效、必须删除。
+
+**顺带发现，未在本步处理**：`TEST.md` §1/§7 的 `run_multi_case.py plan --all --jobs N --isolated-workspaces`
+里 `--isolated-workspaces` 已不被脚本接受（`unrecognized arguments`），照抄会直接报错；去掉该参数后 plan 正常。
+属步骤 3 测试域范围，本步未改。

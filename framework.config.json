@@ -138,6 +138,36 @@
         "path": "harness/state/.gitkeep",
         "rationale": "目录占位文件，行尾与复制差异使哈希与清单不一致；不影响任何运行行为。",
         "approved_by": "WYK"
+      },
+      {
+        "path": "agents/opencode/adapter.yaml",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "agents/opencode/templates/plugin/record-verifier-report.js",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "agents/opencode/templates/agents/verifier.md",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "agents/adapter-schema.yaml",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "agents/README.md",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
+      },
+      {
+        "path": "harness/scripts/utils/verifier-plan.ts",
+        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "approved_by": "WYK"
       }
     ]
   },

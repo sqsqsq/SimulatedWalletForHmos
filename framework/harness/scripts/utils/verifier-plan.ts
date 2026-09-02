@@ -67,8 +67,16 @@ export interface VerifierPlan {
 export const VERIFIER_CAPABILITY_TRANSPORTS = ['repo_file_request'] as const;
 export type VerifierCapabilityTransport = (typeof VERIFIER_CAPABILITY_TRANSPORTS)[number];
 
-/** 证据发布机制 id。 */
-export const VERIFIER_CAPABILITY_PUBLISHERS = ['subagent_stop'] as const;
+/**
+ * 证据发布机制 id（**机制名非厂商名**——多个 adapter 可共用同一机制）。
+ *
+ * · `subagent_stop`：宿主在子 agent 结束时触发一个 hook 进程，hook 从子 agent 的终态
+ *   消息与调用侧转录取证后发布（claude / codeagent）。
+ * · `task_tool_result`：宿主在**子 agent 任务工具完成**时把「调用参数 + 子会话身份 +
+ *   终稿信封」一起交给宿主内插件，插件据此发布（opencode）。两者的绑定材料同源，
+ *   差别只在宿主把材料交出来的位置，所以四方对账与产物格式完全一致。
+ */
+export const VERIFIER_CAPABILITY_PUBLISHERS = ['subagent_stop', 'task_tool_result'] as const;
 export type VerifierCapabilityPublisher = (typeof VERIFIER_CAPABILITY_PUBLISHERS)[number];
 
 /** 可登记的运行模式（= RuntimeMode；**只登记真实实测过的**，不许预填）。 */

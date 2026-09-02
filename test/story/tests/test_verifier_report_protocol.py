@@ -6,15 +6,16 @@
 - 声明了 ``publisher: subagent_stop`` 的（claude / codeagent）：报告不由 verifier
   自己写，SubagentStop 钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
   ``verifier.report.<64位subject>.json``；
-- **没声明的（opencode / codex / generic）**：那个宿主没有这个钩子，框架也不为它
+- **没声明的（codex / generic / cursor）**：那个宿主没有对应的发布机制，框架也不为它
   生成 request，报告由执行方自己写成文件（历史上四种文件名）。
+
+opencode 自批次 5 步骤 1 起属于**前一类**（publisher `task_tool_result`），不再是自写方。
 
 两个断点，方向相反，这一份两边都锚：
 
 1. 升级后扩展只按旧文件名找报告 → 带 hash 的 JSON 一种都不匹配 → 判「报告缺失」
    → 有钩子的宿主上 spec 闭环第三步必卡；
-2. 反过来只认 JSON → 没有钩子的那半边宿主上，裁决核对被整条砍断，而那恰恰是
-   当前被测宿主（opencode）。
+2. 反过来只认 JSON → 没有发布机制的那半边宿主上，裁决核对被整条砍断。
 
 所以两种都认**不是双轨**：同一个宿主上只有一种协议在产出。认少了就是在某半边
 宿主上失明，而判据要服务的是所有宿主，不是当前这台机器上跑的那一个。
@@ -119,11 +120,11 @@ class VerifierReportProtocol(unittest.TestCase):
 
         谁写这份报告取决于宿主 adapter 的 `verifier_capability`：声明了
         `publisher: subagent_stop` 的（claude / codeagent）由钩子从终态消息生成
-        JSON；**没声明的（opencode / codex / generic）根本没有那个钩子**，框架也不
+        JSON；**没声明的（codex / generic / cursor）根本没有对应的发布机制**，框架也不
         为它生成 request，报告由执行方自己落成文件。
 
-        所以这不是双轨——同一个宿主上只有一种协议在产出。只认 JSON 会在没有钩子的
-        那半边宿主上把裁决核对整条砍断，而那恰恰是当前被测宿主。
+        所以这不是双轨——同一个宿主上只有一种协议在产出。只认 JSON 会在没有发布机制的
+        那半边宿主上把裁决核对整条砍断。
         """
         for name in ("verifier.report.md", "verifier-spec.md",
                      "verify-spec.md", "verifier-spec-result.yaml"):

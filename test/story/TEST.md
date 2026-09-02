@@ -514,7 +514,36 @@ python test/story/scripts/check_failure_modes.py
 node --check <每个 doc/extensions 下的 .mjs>
 ```
 
+verifier 发布器另有三条，见 §7.0。
+
 这些命令不启动真实被测 CLI，只检查接口、状态转换、清理预检、稳定观测和确定性规则。
+
+### 7.0 verifier 发布器（OpenCode）
+
+宿主 opencode 的 verifier 结论由 `.opencode/plugin/record-verifier-report.js` 在 `task` 工具完成时
+发布（机制名 `task_tool_result`）。三条命令，都不启动真实 CLI：
+
+```powershell
+python -m unittest discover -s test/story/tests -p "test_opencode_verifier_publisher.py"
+npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\framework   # 在 framework/harness 下跑
+node --check framework/agents/opencode/templates/plugin/record-verifier-report.js
+```
+
+第一条同时锚三件事，缺哪件都会让「报告在磁盘上、闭环说它不存在」这类故障无声发生：
+
+| 段 | 判据 |
+|---|---|
+| 正例 | 发布出的 JSON 能被 framework 现有 `loadVerifierEvidence` 原样接受——发布面与验真面是同一份契约 |
+| 反例 | 每种绑定不成立的形态各自落 bedside 且**不产生** canonical 件（审错对象、迟到、篡改、无独立执行体、终稿被截断……） |
+| 跨实现等值 | 插件里的 subject 派生与结论指纹是 TS SSOT 的复刻，同一输入必须同一哈希 |
+
+它用 node 直接加载插件（ESM 的 `.js`），需要 **Node ≥ 22.7**（靠模块语法自动识别）；TS 侧走
+`framework/harness/node_modules/ts-node` 的 require 钩子，不改任何 framework 文件。
+
+**框架完整性**：本步骤改了 vendored `framework/`，靠 `framework.config.json` 的
+`integrity.drift_allowlist` 具名放行。上游补丁经 framework-init UPDATE 回本仓后**这些条目即失效，
+必须删除**——留着就会掩盖真实漂移。核对命令见 `harness-runner.ts` 的整体门禁输出中的
+`framework_integrity` / `framework_foreign_file` 两项。
 
 ### 7.1 失效形态全量回归
 
