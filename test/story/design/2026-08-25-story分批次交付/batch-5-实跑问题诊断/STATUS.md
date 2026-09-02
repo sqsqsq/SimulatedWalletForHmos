@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **步骤 1 通过并提交；步骤 2 待开工** |
+| 状态 | **步骤 1 通过；步骤 2 装置已交付、实跑待验证（WYK 授权暂缓）；进入步骤 3** |
 | 输入 | 批次 1～4 全部需求/方案/判据/报告与提交史；F8 局部优化现场；外网 suite `20260901-230253-23468`；内网反馈 |
 | 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置） |
 | 决策记录 | [03-方案讨论决策.md](03-方案讨论决策.md)（D1～D11 与 Q1～Q29 共识；D12 不适用） |
@@ -15,7 +15,7 @@
 | 步骤 | 状态 | 评审报告 |
 |---|---|---|
 | 1 OpenCode verifier adapter | **通过** | [reviews/01-opencode-verifier-adapter.md](reviews/01-opencode-verifier-adapter.md) |
-| 2 OpenCode verifier Spec smoke | 未开始 | 待生成 |
+| 2 OpenCode verifier Spec smoke | **已实施（装置）；实跑待验证** | [reviews/02-opencode-verifier-smoke.md](reviews/02-opencode-verifier-smoke.md) |
 | 3 测试观测与效率事实 | 未开始 | 待生成 |
 | 4 Framework 作者上下文入口 | 未开始；实施前重新取得 Framework 修改授权 | 待生成 |
 | 5 Extension 六阶段作者入口 | 未开始 | 待生成 |
@@ -148,3 +148,34 @@ request 契约、报告 JSON、`loadVerifierEvidence`/receipt/closure 全部零�
 **顺带发现，未在本步处理**：`TEST.md` §1/§7 的 `run_multi_case.py plan --all --jobs N --isolated-workspaces`
 里 `--isolated-workspaces` 已不被脚本接受（`unrecognized arguments`），照抄会直接报错；去掉该参数后 plan 正常。
 属步骤 3 测试域范围，本步未改。
+
+## 步骤 2 实施记录（2026-09-02）
+
+**基线** `4334ba5c`。**两项用户裁定**已写回 `steps/02`：工程用**最小合成工程、不挂 Extension**
+（本仓 Extension 的 spec post_check 即使跳过 story 判据，§9/§10/§11 三章仍无条件强制，挂上就等于
+顺带测了 Extension 的 spec 要求，而那些失败归不到 D1）；`cli_config_id` 用 **`bailian-deepseek`**
+（与步骤 1 取得全链实证的宿主一致，不中途换模型）。
+
+**交付**：`test/story/verifier-smoke/`——合成 `generic` 工程夹具（config + architecture/catalog/
+glossary）、六条需求 prompt、按 `confirmation-registry.yaml` 的 portable 菜单文案索引的固定回复表、
+`run_smoke.py`（build / run / verify）；`test/story/tests/test_verifier_smoke.py` 14 条离线判据；
+`TEST.md §7.0.1`。物化走**真正的 init**（`init-orchestrate.ts`），不另写物化器——顺带把步骤 1 的
+物化声明从「只读探测通过」加强为「真实 init 落地通过」。
+
+**⚠ 实跑未执行**：用户 2026-09-02 明确「写完 smoke 不进行 CLI 测试，留着，登记待验证（WYK 授权），
+并进入下一阶段」。因此：
+
+- 步骤 2 的**结论 A（Framework 能力）与结论 B（语义审查是否有效）均未取得**；
+- `steps/03`～`steps/11` 的进入条件「步骤 2 允许继续」是**授权跳过**，不是证据满足；
+- 后续引用「D1 已验证」时只能限定为**步骤 1 的探针级全链实证**（opencode 1.18.26 +
+  `bailian/deepseek-v4-flash-0731`），不得说成「smoke 已通过」；
+- `reviews/01` 的残余 R1「插件注册失败无声」本指望本步覆盖，仍未覆盖。
+
+**恢复方式**：按 `TEST.md §7.0.1` 三条命令跑一次，把 A/B 两个结论分别写回 `reviews/02` 的新轮次小节。
+
+**本步发现并已修复的现场**：调试时把 `harness-runner.ts` 当成接受 `--project-root` 的命令跑了两次
+——它不接受该参数、minimist 静默忽略，两次都跑在**主工程**上（覆盖了 gitignored 的
+`framework/harness/reports/_global/catalog/`，并误建 `doc/features/hide-balance-toggle/`）。两处已清理，
+工作区干净；这条事实已写进驱动文件头与 `TEST.md §7.0.1` 的现场纪律。
+
+**离线全绿**：story 514、失效形态 73/73、`compileall`。

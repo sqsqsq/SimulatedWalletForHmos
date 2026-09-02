@@ -545,6 +545,51 @@ node --check framework/agents/opencode/templates/plugin/record-verifier-report.j
 必须删除**——留着就会掩盖真实漂移。核对命令见 `harness-runner.ts` 的整体门禁输出中的
 `framework_integrity` / `framework_foreign_file` 两项。
 
+### 7.0.1 verifier smoke（真实 CLI，独立于 Story）
+
+`test/story/verifier-smoke/` 是一个**永久独立**的低成本真实需求：用「隐藏余额开关」六条规则跑到
+spec 闭环，验证 verifier 那条链真的通了。它**不在 `cases/*` 里，不进 `--all`**，跑它不影响 Story
+Case 的发现与统计。
+
+```powershell
+python test/story/verifier-smoke/run_smoke.py build  --workspace <隔离目录> --force
+python test/story/verifier-smoke/run_smoke.py run    --workspace <隔离目录> `
+  --cli-config bailian-deepseek --evidence <隔离目录>\smoke-evidence.json
+python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
+```
+
+`build` 用**真正的 init**（`init-orchestrate.ts`）物化 `.opencode/`，所以 smoke 里的 verifier 子 agent
+与发布器和真实消费仓拿到的完全同源。工程是合成的最小 `generic` 工程（coding/ut/testing 禁用、
+UI/视觉全 SKIP、**不挂 Extension**），架构/画像/术语表三份都在 `fixture/doc/` 里。
+
+**两个结论要分开记**，不能混成一句「smoke 过了」：
+
+| 结论 | 判据 | 不成立时 |
+|---|---|---|
+| A · Framework 能力 | `verify` 六项绑定检查全 PASS + receipt 闭环 | 回开步骤 1，标记阻塞 |
+| B · 语义审查是否有效 | verifier 是否真读了六条需求与 spec、判断是否与产物相关（人看 `report_text`） | 不抹掉 A；但步骤 3 以后暂停，先修步骤 7 |
+
+**结论只绑实际跑的 `cli_config_id`**，不外推到别的宿主或模型。
+
+三条现场纪律：
+
+- `harness-runner.ts` **没有** `--project-root`，它按自身位置解析工程根。阶段门禁由被测模型在
+  workspace 内自己跑；**别在主工程跑它**——跑了会把报告写进主仓、还会误建 `doc/features/<feature>/`。
+- 确认按 `confirmation-registry.yaml` 的 portable 菜单文案匹配（`fixture/replies.yaml`），
+  **不按轮次序号**。没有条目命中就停等报 `unknown_question`，不盲答。
+- `spec.feature_path` 冲突、以及 verifier request 生成前的 Research / 术语 / track / 冻结门 BLOCKER，
+  一律归 `environment_or_fixture_failed`：修夹具或环境后重跑，**不计为 D1 失败**，也不在驱动里绕过门禁。
+
+离线判据（不启动 CLI）：
+
+```powershell
+python -m unittest discover -s test/story/tests -p "test_verifier_smoke.py"
+```
+
+它锚的是「夹具与判定逻辑本身可不可信」：回复表的匹配键必须在 registry 里真实存在、未知确认必须
+停等、链路校验的每种绑定不成立形态都判 FAIL。这三条不先在离线锚死，实跑失败时分不清是被测对象
+的问题还是夹具的问题。
+
 ### 7.1 失效形态全量回归
 
 `check_failure_modes.py` 跑 `regression/failure-modes.yaml` 的全部形态，两段缺一不可：

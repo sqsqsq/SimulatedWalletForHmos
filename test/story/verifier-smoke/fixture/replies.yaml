@@ -1,0 +1,46 @@
+# verifier smoke 的固定回复表
+#
+# 匹配键是 confirmation-registry.yaml 每个确认点的 `portable_menu` 里的**独有片段**。
+# 为什么用它而不是 turn 序号：序号一漂移，后面所有条目就全错位且没有任何信号——批次 4 的
+# interaction-script 就是这么大面积跳过的。portable 菜单文案由 registry 单点维护，模型按
+# interaction-renderer 规则（opencode 无结构化 widget，portable 必附）原样输出，是稳定锚。
+#
+# 没有条目命中时驱动**停等并报 `unknown_question`**，绝不盲答——smoke 要证明的是
+# 「确认发生在正确时机」，猜一个答案会把这条判据变成摆设。
+#
+# `expect_phase` 只用于留痕对账（回复发生时模型自称在哪一步），不参与是否发送的判定。
+
+replies:
+  - id: feature.track
+    registry_portable: "1=接受建议档 2=升 full 3=保持 lite"
+    match: "1=接受建议档"
+    expect_phase: "spec 起手判档"
+    reply: "2"
+    reason: "夹具冻结 full track：这一轮要跑完整 spec 链，不进 lite。"
+
+  - id: spec.terminology
+    registry_portable: "1=全部确认high行 2=逐行确认 3=逐行修改"
+    match: "1=全部确认"
+    expect_phase: "spec Step 1.5 术语映射"
+    reply: "1"
+    reason: "术语表由合成 glossary 直接支撑，需求方对映射没有异议。"
+
+  - id: spec.freeze
+    registry_portable: "1=冻结spec可进plan 2=继续改spec"
+    match: "1=冻结 spec"
+    expect_phase: "spec Step 5 输出与归档"
+    reply: "1"
+    reason: "规格到位即冻结——smoke 的终点是 spec 闭环。"
+
+  - id: phase.next_step
+    registry_portable: "1=执行 assess 推荐动作 2=暂停 3=其它"
+    match: "2=暂停"
+    expect_phase: "spec 闭环之后"
+    reply: "2"
+    reason: "本轮终点就是 spec；不进 plan。"
+
+# 出现即判环境/夹具失败，不是 D1 失败：干净 workspace 不该有路径冲突。
+fixture_failures:
+  - id: spec.feature_path
+    match: "1=换 feature 名"
+    reason: "workspace 应当是全新的，出现 feature 路径冲突说明夹具没清干净。"

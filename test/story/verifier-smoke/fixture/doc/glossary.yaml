@@ -1,0 +1,92 @@
+# SSOT: 业务术语 ↔ 权威模块 (Glossary) —— verifier smoke 合成工程 PocketLedger
+# 覆盖固定需求六条会用到的自然语言名词，让 spec 的术语映射表有可校验基准。
+schema_version: "1.0"
+terms:
+  - term: "首页"
+    canonical_module: "HomeFeature"
+    owner_layer: "app"
+    aliases: ["主页"]
+    sample_usage: "需求里说“首页总余额”时，指的是应用启动后第一屏上方的金额区域。"
+    confidence_hint: "精确命中 HomeFeature.typical_business_terms。"
+    easily_confused_with:
+      - term: "我的"
+        module: "ProfileFeature"
+        disambiguation: |
+          若说的是**余额怎么展示** → HomeFeature。
+          若说的是**设置项、开关放在哪一页** → ProfileFeature。
+
+  - term: "总余额"
+    canonical_module: "HomeFeature"
+    owner_layer: "app"
+    aliases: ["余额合计"]
+    sample_usage: "“开启后首页总余额显示 ****”里的那个金额。"
+    confidence_hint: "精确命中 HomeFeature.typical_business_terms。"
+    easily_confused_with:
+      - term: "卡片余额"
+        module: "HomeFeature"
+        disambiguation: |
+          **首页顶部的合计金额** → 总余额。
+          **单张卡片上的金额**是另一处展示，本需求明确不改动它。
+
+  - term: "我的"
+    canonical_module: "ProfileFeature"
+    owner_layer: "app"
+    aliases: ["个人中心"]
+    sample_usage: "“「我的」页提供隐藏余额开关”里的那一页。"
+    confidence_hint: "精确命中 ProfileFeature.typical_business_terms。"
+    easily_confused_with:
+      - term: "首页"
+        module: "HomeFeature"
+        disambiguation: |
+          **开关控件所在页** → ProfileFeature。
+          **受开关影响的金额展示** → HomeFeature。
+
+  - term: "开关"
+    canonical_module: "ProfileFeature"
+    owner_layer: "app"
+    aliases: ["设置开关", "切换项"]
+    sample_usage: "“隐藏余额开关，默认关闭”里的那个控件。"
+    confidence_hint: "精确命中 ProfileFeature.typical_business_terms。"
+    easily_confused_with:
+      - term: "本地设置"
+        module: "SettingsStore"
+        disambiguation: |
+          **控件本身** → ProfileFeature。
+          **控件背后那个被存下来的值** → SettingsStore。
+
+  - term: "本地设置"
+    canonical_module: "SettingsStore"
+    owner_layer: "app"
+    aliases: ["偏好持久化", "本地存储"]
+    sample_usage: "“开关状态保存在本地，应用重启后保持”说的就是它。"
+    confidence_hint: "精确命中 SettingsStore.typical_business_terms。"
+    easily_confused_with:
+      - term: "开关"
+        module: "ProfileFeature"
+        disambiguation: |
+          **存储与默认值** → SettingsStore。
+          **界面上那个可点的控件** → ProfileFeature。
+
+  - term: "默认值"
+    canonical_module: "SettingsStore"
+    owner_layer: "app"
+    aliases: ["出厂默认"]
+    sample_usage: "“默认关闭”“清除应用数据后恢复默认关闭”里的那个默认。"
+    confidence_hint: "精确命中 SettingsStore.typical_business_terms。"
+    easily_confused_with:
+      - term: "本地设置"
+        module: "SettingsStore"
+        disambiguation: |
+          两者同属 SettingsStore：**默认值**是没写入过时读到什么，**本地设置**是写入后存在哪儿。
+
+  - term: "交易摘要"
+    canonical_module: "HomeFeature"
+    owner_layer: "app"
+    aliases: ["最近交易"]
+    sample_usage: "首页余额下方的那几条记录；本需求明确不改动它。"
+    confidence_hint: "精确命中 HomeFeature.typical_business_terms。"
+    easily_confused_with:
+      - term: "总余额"
+        module: "HomeFeature"
+        disambiguation: |
+          同属 HomeFeature：**合计金额** vs **记录列表**，本需求只动前者。

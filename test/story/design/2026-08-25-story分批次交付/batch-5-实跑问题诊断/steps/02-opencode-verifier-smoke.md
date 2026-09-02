@@ -20,8 +20,13 @@
 
 - 建立永久的 `test/story/verifier-smoke/` 专用夹具和驱动；不放进 `cases/*`，不加入 Story `--all`。
 - 预置 full track 与最小有效工程事实，直接进入 Spec；不经过 `/story`，不使用需求系统、补料、图片、范围选择或人工决策。
+- **工程为最小合成工程，不挂 Extension**（用户 2026-09-02 裁定）。理由：本仓 Extension 的 spec post_check 即使在
+  `AR/story-flow.json` 缺席时跳过 story 判据，§9 技术契约 / §10 规约约束 / §11 设计模式候选三章仍无条件强制；
+  挂上就等于把 Extension 的 spec 要求一并测了，与「此处不测试 Story 成文能力」相斥，且失败多半归不到 D1。
+  「挂 Extension 时 verifier 闭环是否同样成立」留给步骤 11 的真实 Story 实跑。
 - 终点只有 Spec 闭环，不生成 Story/Review，不进入 Plan。
-- 默认使用 `volcengine-glm-flash`，实际结论绑定最终运行的 `cli_config_id`；认证或环境失败时不静默切换配置，由维护者决定重跑配置。
+- 使用 `bailian-deepseek`（用户 2026-09-02 裁定：与步骤 1 取得全链实证的宿主一致，避免中途换模型多一个变量）；
+  结论绑定实际运行的 `cli_config_id`，不外推；认证或环境失败时不静默切换配置，由维护者决定重跑配置。
 - 夹具用稳定确认 ID 维护必要的回复及触发时机；未知问题停等，不按 turn 序号盲答。
 - 显式命令和产物位置只写入 `TEST.md` 的 verifier smoke 专节。
 

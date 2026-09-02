@@ -1,0 +1,72 @@
+# SSOT: 模块画像目录 (Module Catalog) —— verifier smoke 合成工程 PocketLedger
+# 三个模块，一个外层，够 Scope 守门与术语守门有可校验基准即可；不追求业务完整。
+schema_version: "1.0"
+modules:
+  - name: "HomeFeature"
+    layer: "app"
+    format: "application"
+    one_liner: "首页：展示总余额与最近交易摘要；总余额的显示形态（真实金额或遮蔽）由本模块渲染。"
+    responsibilities:
+      - "渲染首页总余额区域，按当前显示偏好决定展示真实金额还是遮蔽形态。"
+      - "渲染最近交易摘要列表。"
+      - "首页进入时从 SettingsStore 读取显示偏好。"
+    NOT_responsible_for:
+      - "不负责偏好的持久化与默认值——归 SettingsStore。"
+      - "不负责「我的」页的任何开关控件——归 ProfileFeature。"
+      - "不负责交易明细页与支付流程。"
+    typical_business_terms:
+      - "首页"
+      - "总余额"
+      - "交易摘要"
+    easily_confused_with:
+      - module: "ProfileFeature"
+        disambiguation: |
+          **总余额怎么显示** → HomeFeature（本模块）。
+          **开关控件放在哪一页、长什么样** → ProfileFeature。
+      - module: "SettingsStore"
+        disambiguation: |
+          **读到偏好之后怎么渲染** → HomeFeature（本模块）。
+          **偏好存哪儿、默认值是什么、清数据后怎么办** → SettingsStore。
+
+  - name: "ProfileFeature"
+    layer: "app"
+    format: "application"
+    one_liner: "「我的」页：承载用户级偏好设置的入口与控件，本身不持久化任何偏好。"
+    responsibilities:
+      - "渲染「我的」页的设置项列表与开关控件。"
+      - "把用户在控件上的操作转成对 SettingsStore 的写入请求。"
+    NOT_responsible_for:
+      - "不负责偏好的存储位置与默认值——归 SettingsStore。"
+      - "不负责首页余额区域的渲染——归 HomeFeature。"
+      - "不负责账号、支付与卡片管理。"
+    typical_business_terms:
+      - "我的"
+      - "设置项"
+      - "开关"
+    easily_confused_with:
+      - module: "SettingsStore"
+        disambiguation: |
+          **开关在界面上的位置、文案、默认呈现** → ProfileFeature（本模块）。
+          **开关值存哪儿、重启后还在不在** → SettingsStore。
+
+  - name: "SettingsStore"
+    layer: "app"
+    format: "library"
+    one_liner: "用户偏好的本地持久化：读写键值、给出默认值、定义清除应用数据后的行为；零界面。"
+    responsibilities:
+      - "以键值形式在本地持久化用户偏好，进程重启后可读回。"
+      - "为未写入过的键提供声明式默认值。"
+      - "应用数据被清除后，读取回到默认值。"
+    NOT_responsible_for:
+      - "不负责任何界面渲染与控件——归 HomeFeature / ProfileFeature。"
+      - "不负责把偏好同步到服务端。"
+      - "不负责业务语义（哪个偏好影响哪块 UI）。"
+    typical_business_terms:
+      - "本地设置"
+      - "偏好持久化"
+      - "默认值"
+    easily_confused_with:
+      - module: "HomeFeature"
+        disambiguation: |
+          **存与默认值** → SettingsStore（本模块）。
+          **读到之后首页怎么画** → HomeFeature。

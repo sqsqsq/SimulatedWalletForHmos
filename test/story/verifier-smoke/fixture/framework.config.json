@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "project_name": "PocketLedger",
+  "project_profile": {
+    "name": "generic"
+  },
+  "materialized_adapters": ["opencode"],
+  "architecture": {
+    "outer_layers": [
+      { "id": "app", "can_depend_on": [], "intra_layer_deps": "dag" }
+    ],
+    "module_inner_layers": ["content"],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index"
+  },
+  "paths": {
+    "features_dir": "doc/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "architecture_md": "doc/architecture.md",
+    "state_file": "framework/harness/state/.current-phase.json",
+    "receipt_dir_pattern": "doc/features/<feature>/<phase>",
+    "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
+    "docs_committed": false
+  },
+  "active_workflow": "spec-driven",
+  "lifecycle_hooks_enabled": false
+}
