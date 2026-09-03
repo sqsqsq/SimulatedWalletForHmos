@@ -170,5 +170,117 @@ class VerifierReportProtocol(unittest.TestCase):
         self.assertEqual("FAIL", out["status"], f"没有正文字段却放行了：{out}")
 
 
+STORY_MD = """# 甲需求（SMPFEAT）
+
+## 背景
+
+用户现在拿不到凭据。
+"""
+
+STORY_REVIEW_DRIVER = """
+const [, , modulePath, projectRoot, feature, phase, storyPath] = process.argv;
+const mod = await import(modulePath);
+const out = mod.storyReviewProblems({ projectRoot, feature, phase }, storyPath);
+process.stdout.write(JSON.stringify(out));
+"""
+
+CLEAN_BLOCK = """## story_reader_review
+
+blocking_findings: []
+
+advisories:
+- 术语章「凭证」与「交易详情」的区别可以更靠前
+
+逐章过了：背景、术语、范围、业务方案、业务流程、功能说明、异常与恢复、验收、交付与上线、附录。
+"""
+
+BLOCK_MISSING_ADVISORIES = """## story_reader_review
+
+blocking_findings: []
+"""
+
+BLOCK_AS_PER_UNIT_TABLE = """## story_reader_review
+
+blocking_findings: []
+
+advisories: []
+
+| 单元键 | 裁决 | 引文 |
+|---|---|---|
+| PRD:7:2c7fc380 | 讲清 | 用户现在拿不到凭据 |
+"""
+
+
+class StoryReviewLanding(unittest.TestCase):
+    """注入了不等于执行了 —— 报告里找不到这一项，就等于这一轮没审。
+
+    只核形态：结果块在不在、两类结论齐不齐、有没有做成另一件事。
+    报几条、报得对不对是资格门用成对样本量的，门禁判不了。
+    """
+
+    def _run(self, *, reports: dict, with_story: bool = True) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            feature_root = root / "doc" / "features" / "SMPFEAT"
+            (feature_root / "spec" / "reports").mkdir(parents=True)
+            if with_story:
+                (feature_root / "AR").mkdir(parents=True)
+                (feature_root / "AR" / "story.md").write_text(STORY_MD, encoding="utf-8")
+            for name, body in reports.items():
+                (feature_root / "spec" / "reports" / name).write_text(body, encoding="utf-8")
+
+            driver = root / "driver.mjs"
+            driver.write_text(STORY_REVIEW_DRIVER, encoding="utf-8")
+            r = subprocess.run(
+                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec",
+                 str(feature_root / "AR" / "story.md")],
+                capture_output=True, text=True, encoding="utf-8",
+            )
+            self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
+            return json.loads(r.stdout)
+
+    @staticmethod
+    def _report(text: str) -> dict:
+        return {f"verifier.report.{SUBJECT}.json": json.dumps(
+            {"schema_version": 1, "state": "published", "feature": "SMPFEAT",
+             "phase": "spec", "subject_id": SUBJECT, "verdict": "PASS",
+             "blocker_count": 0, "report_text": text},
+            ensure_ascii=False)}
+
+    def test_a_report_without_the_block_fails(self) -> None:
+        out = self._run(reports=self._report("结论如下。一切正常。\n"))
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("story_reader_review", out["problems"][0])
+        self.assertIn("等于这一轮没审", out["problems"][0])
+
+    def test_empty_lists_are_a_conclusion(self) -> None:
+        """审过而没发现问题，与没审是两件事——前者留得下痕迹。"""
+        out = self._run(reports=self._report(CLEAN_BLOCK))
+        self.assertEqual("PASS", out["status"], out)
+        self.assertEqual([], out["problems"])
+
+    def test_a_missing_section_is_named(self) -> None:
+        out = self._run(reports=self._report(BLOCK_MISSING_ADVISORIES))
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("advisories", out["problems"][0])
+
+    def test_a_per_unit_table_is_named_as_the_wrong_shape(self) -> None:
+        """做成逐单元裁决表 = 做成了另一件事：那张表的量随材料条数涨。"""
+        out = self._run(reports=self._report(BLOCK_AS_PER_UNIT_TABLE))
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("逐单元裁决表", out["problems"][0])
+
+    def test_no_story_is_not_applicable(self) -> None:
+        out = self._run(reports=self._report(CLEAN_BLOCK), with_story=False)
+        self.assertEqual("NOT_APPLICABLE", out["status"])
+        self.assertEqual([], out["problems"])
+
+    def test_no_report_yet_is_not_applicable(self) -> None:
+        """首跑时报告还不存在——那不是通过，是还轮不到判。"""
+        out = self._run(reports={})
+        self.assertEqual("NOT_APPLICABLE", out["status"])
+        self.assertEqual([], out["problems"])
+
+
 if __name__ == "__main__":
     unittest.main()
