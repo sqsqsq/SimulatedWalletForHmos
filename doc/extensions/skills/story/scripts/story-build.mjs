@@ -267,6 +267,28 @@ function sourceDocs(ctx) {
 }
 
 /**
+ * 激活规约条目 —— 派生失败要出声，不能当作「本需求没有规约」。
+ *
+ * 离线仲裁只有一份 story，没有工程上下文，此时给空数组：依赖它的判项自然不判，
+ * 而不是拿一份空清单去判「一条规约都没判到」。
+ */
+function activeKnowledgeEntries(ctx) {
+  if (ctx.offline) return [];
+  try {
+    return activeKnowledge(ctx.projectRoot).entries ?? [];
+  } catch (e) {
+    fail(`激活知识派生失败：${e.message}——规约判定表无从核对，不能当作「没有规约」通过`);
+    return [];
+  }
+}
+
+/** ⑨ 用的材料单元：只为拿 token，离线时没有材料可读，给空。 */
+function materialUnitsForRedline(ctx) {
+  if (ctx.offline) return [];
+  return materialUnitsNow(ctx, sourceDocs(ctx));
+}
+
+/**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
  * 上一版这里是 `if (text !== null) out.push(...)`：读不到就静默跳过。
@@ -556,6 +578,29 @@ function buildTokenExclusion(ctx) {
   return (t) => res.some(re => re.test(t));
 }
 
+/**
+ * 按当前材料现场枚举来源单元 —— `init` 与 `check` 共用同一套参数。
+ *
+ * 各写一份的话，两边的排除表、编号形态或模板约定差一项，枚举出来的 token 集合就不同，
+ * 而这类不同是静默的：判据照跑，只是认得的标识少了几个。
+ */
+function materialUnitsNow(ctx, docs) {
+  const idShapes = [...(ctx.contract.id_shapes?.keep ?? [])];
+  const excludeToken = buildTokenExclusion(ctx);
+  const units = [];
+  for (const d of docs) {
+    units.push(...enumerateUnits(d.text, d.doc, {
+      idShapes,
+      excludeToken,
+      machineFacing: ctx.contract.machine_facing ?? {},
+      templateNotes: d.notes,
+      idTokensOnly: d.derived,
+      docPath: d.rel,
+    }));
+  }
+  return units;
+}
+
 function cmdInit(ctx) {
   refuseIfFrozen(ctx, 'init');
   const { docs, missing } = scanSources(ctx);
@@ -571,19 +616,7 @@ function cmdInit(ctx) {
       + '守恒面小了一圈，门禁全绿也证明不了什么。');
   }
   // 只把 `keep` 的编号形态交给枚举器：`drop` 的那些不该进 story，也就不该成为守恒对象
-  const idShapes = [...(ctx.contract.id_shapes?.keep ?? [])];
-  const excludeToken = buildTokenExclusion(ctx);
-  const units = [];
-  for (const d of docs) {
-    units.push(...enumerateUnits(d.text, d.doc, {
-      idShapes,
-      excludeToken,
-      machineFacing: ctx.contract.machine_facing ?? {},
-      templateNotes: d.notes,
-      idTokensOnly: d.derived,
-      docPath: d.rel,
-    }));
-  }
+  const units = materialUnitsNow(ctx, docs);
   if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
 
   // 激活规约条目也是来源单元：逐条判定要和材料里的事实走同一条守恒链
@@ -1991,8 +2024,10 @@ function cmdCheck(ctx) {
   //
   // 落点在**附录**而不是主叙事的某一章：规约编号是工程标识，读者对不上，
   // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
-  const kUnits = doc.units.filter(u => u.kind === 'knowledge');
-  if (kUnits.length) {
+  // 激活规约的编号**直接取激活清单**：经「材料单元」那一层只是把同一份数据换个形状，
+  // 而多一层就多一处会与清单失同步的地方——判定表少判一条规约是静默的。
+  const kEntries = activeKnowledgeEntries(ctx);
+  if (kEntries.length) {
     const appendix = appendixChapter(ctx.contract);
     const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
     const verdictName = (appendix?.subsections ?? []).find(n => n.includes('规约')) ?? '规约判定';
@@ -2012,12 +2047,13 @@ function cmdCheck(ctx) {
         if (id) rows.set(id, { verdict, basis });
         if (verdict === DOMAIN_NA) domainRows.set(domain, true);
       }
-      for (const u of kUnits) {
-        const id = u.tokens[0];
+      for (const e of kEntries) {
+        const id = e.id;
+        const domain = e.domainTitle ?? '';
         const row = rows.get(id);
         if (!row) {
-          if (domainRows.has(u.domain)) continue;   // 整域不适用，覆盖域内全部条目
-          problems.push(`规约 ${id}（${u.domain}）在附录·${verdictName}的判定表里没有行`
+          if (domainRows.has(domain)) continue;   // 整域不适用，覆盖域内全部条目
+          problems.push(`规约 ${id}（${domain}）在附录·${verdictName}的判定表里没有行`
             + `——判「不命中」也要有一行；整域不适用就给该域一行「${DOMAIN_NA}」`);
           continue;
         }
@@ -2094,15 +2130,17 @@ function cmdCheck(ctx) {
   const redlineKinds = ctx.contract.language_redline?.kinds;
   if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
     const appendix = appendixChapter(ctx.contract);
+    // 工程标识**现场按材料算**，不读 init 落盘的那份清单：判据要认的是「材料里出现过的
+    // 标识」，那是材料本身的性质，不该取决于清单是什么时候落的盘。
     const identifiers = [];
-    for (const u of doc.units) {
+    for (const u of materialUnitsForRedline(ctx)) {
       for (const t of u.tokens ?? []) {
         if (isEngineeringIdentifier(t, ownIds)) identifiers.push(t);
       }
     }
     const hits = scanLanguageRedline(storyText, {
       appendixTitle: appendix?.title,
-      ruleIds: doc.units.filter(u => u.kind === 'knowledge').map(u => u.tokens[0]),
+      ruleIds: kEntries.map(e => e.id),
       identifiers,
       kinds: redlineKinds,
       harnessTerms: ctx.contract.language_redline?.harness_terms ?? [],
