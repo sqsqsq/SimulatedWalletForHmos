@@ -22,7 +22,7 @@
 | 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
-| 9 正向 Story 作者路径切换 | 第一段（按章落盘）已实施；**第二段·小段 1 返修已做，等待评审**；小段 2、3 待做 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
+| 9 正向 Story 作者路径切换 | 第一段（按章落盘）与小段 1（换输入模型）已过评审返修；**小段 2（删逐单元判据 + 迁台账）已实施，等待评审**；小段 3 待做 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
@@ -700,3 +700,80 @@ A4（异常与验收章没有掏空变体）按评审建议不预先加，实跑
 2. **其余红线逐条相同**：金样 + 两份快照 + 四反例共九次运行，⑦ 与 ⑨ 报错逐条相同（`diff` 无差异）。
 3. **回归**：失效形态 73/73（委派 0）、story 619 全绿。
 4. **预算**：`semantic_proxy` 计数不升（预算门 5 条通过）；`scripts_mjs` 因删代码净减。
+
+
+## 步骤 9 第二段 · 小段 2（2026-09-03）：删五类逐单元判据并迁台账 · 已实施，等待评审
+
+**基线** `41ff385f`。范围：`story-build.mjs` 的判据、`failure-modes.yaml`、
+`check_failure_modes.py`、三份测试。`audit` 命令、`init` 枚举、`source-units.mjs`、
+作业书都没动（归小段 3）；不夹带步骤 10。
+
+**判据退场**
+
+五类整段删除，不缩不改：② 落点守恒、④ 形态守恒、⑥ 裁决核实、⑥b 逐问与逐章、
+⑧ 术语表实体词守恒。⓪a 与 ⓪（来源齐备、材料未在枚举后变过）不在本段范围。
+
+**一处误删已纠正**：图片枚举与图片身份两块物理上挂在「④ 形态守恒」这个 mark 底下，
+跟着被删，S10/S11/S17 三条形态当场失去发现者。它们判的是「引用可不可解析、在不在登记里」，
+属 `steps/09` 脚本分工里的「链接/图片」，与「分几张画几张」无关——救出来独立成
+`④ 图片身份`，名字不再挂在形态守恒下面。
+
+**台账迁移**
+
+三条形态因判据退场而失去机械发现者，登记为 `observed`（`c8ad6f47` 建的委派档），
+各带 `reason` / `approved_by`（用户 2026-09-03 D10 修订签字）/ `observed_by`：
+
+| 形态 | 真实 Story 里由谁看什么 |
+|---|---|
+| `C01-story-conservation` | `story_reader_review` 的 blocking 是否点出关键业务事实缺失；用户按 TEST §10「产物结果」一轴看他在成品里找到的遗漏审查者报没报 |
+| `R01-verdict-echo` | 审查结论的定位与引用是否指向 story 自己的原文而非材料原话；用户按同一轴复核结论是否站得住 |
+| `S01-diagram-degraded` | 审查「图与文的配合」这一维度是否点出流程表达降级；用户看成品里的图是否还原了材料的结构 |
+
+`checker` / `bad_fixture` / `good_fixture` 三个字段随之删除——发现者不是脚本了，留着就是
+零消费者配置。`check_failure_modes` 对 `observed` 只核字段（缺 `observed_by` 判 FAIL），
+夹具自检与真实目标两步都不跑，回归里单列一档。委派档补了 `observed` 这一目：
+`verifier` / `behavior_test` 说的是「换给哪个执行体」，而这三条是「在真实结果里看」，
+是观察安排不是换执行体。
+
+**测试退场（按三分类，71 条）**
+
+判定按**类主题**，不按当次是红是绿——一个类整体守的是刚退场的判据时，它里面还绿的那几条
+是假绿（判据没了，断言「应该通过」自然通过），留着比红更糟。
+
+| 类 | 处置 | 条数 | 守的是 |
+|---|---|---|---|
+| `test_negative_guards.FiguresMustNotVanish` | 整类 | 4 | 形态守恒·图与图片消失 |
+| `test_negative_guards.FormShortfallIsVisibleWhileWriting` | 整类 | 5 | 形态欠账 |
+| `test_negative_guards.FormShortfallCountsPerChapterPerKind` | 整类 | 10 | 形态欠账粒度 |
+| `test_negative_guards.MaterialOnlyIsTheOnlyWayToNotDraw` | 整类 | 6 | audit 的 material_only 三态 |
+| `test_negative_guards.DiagramsHaveNoMaterialOnly` | 整类 | 2 | 同上 |
+| `test_negative_guards.IdentifiersMustBeConservedWhereTheyLand` | 整类 | 4 | 标识符落点守恒 |
+| `test_negative_guards.GlossaryEntitiesMustReachTheStory` | 整类 | 5 | 术语实体词守恒 |
+| `test_story_build.TestMachinePlacement` | 整类 | 2 | 落点守恒·机器落点 |
+| `test_story_build.TestHardFactConservation` | 整类 | 3 | 落点守恒·硬事实 |
+| `test_story_build.TestAllocationDomain` | 整类 | 3 | 落点守恒·分配域 |
+| `test_story_build.TestAuthorPlacement` | 整类 | 3 | 落点守恒·作者落点三态 |
+| `test_story_build.TestMachineFacingColumns` | 整类 | 2 | 落点守恒·机器面列 |
+| `test_story_build.TestVerdicts` | 整类 | 7 | 裁决核实 |
+| `test_story_build.TestQuoteSentenceBounds` | 整类 | 9 | 裁决核实·引文句边界 |
+| `test_story_build.TestGlossaryAndRedlines` | 方法 | 2 | 术语实体词守恒（留仓内路径红线那条） |
+| `test_story_build.TestDecisionUnits` | 方法 | 1 | 落点守恒（留其余四条） |
+| `test_story_build.TestErrorWordingPointsAtForm` | 方法 | 2 | 落点与术语的报错文案（留文案风格那条） |
+| `test_story_allocate_render.TestAllocation` | 方法 | 1 | `covered_by` 落点（留 audit 分配那三条） |
+
+**第二类（保留断言、只改搭建）本段只有一处**：`TheLibraryItselfIsComplete` 守「反例库
+不许有缺号」，退掉九条之后编号断了。判据一个字没动，动的是它比对的基线——剩下三条重新
+编号 N1..N3、`NEGATIVE_COUNT` 改 3。真正因搭建依赖 `audit` / `source-units` 而红的一条没有：
+那两样本段都还在。
+
+**那条测试间干扰不属本段**：`CliRuntimeIsolationTest` 在小段 1 的提交点 `41ff385f` 上
+全量跑是绿的，本段改动后也绿——先前那次「全量红、单跑绿」是我的诊断脚本传了精简 `env`
+造成的假阳性，仓库里没有这个问题。
+
+**验收**
+
+- 73 条对账仍是 73：FAIL 0、委派 3、PASS 70；
+- `check_failure_modes` 对 `observed` 只核字段、不跑夹具；
+- 不新增任何数量或相似度判据；预算门 5 条通过，`semantic_proxy` 30 处（ceiling 37）只降不升；
+- story 548 全绿（619 − 71 条退场）、cli 18、金样离线 check 通过、`node --check` 通过；
+- `story-build.mjs` 2411 行（判据删了五类、救回图片两块、净减）。

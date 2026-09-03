@@ -18,9 +18,12 @@
 #   severity          BLOCKER | WARN
 #   status            fixed（永久回归） | pending_capability（目标能力未建，只做夹具自检）
 #                     | retired（须 reason + approved_by）
-#   responsibility    发现者是谁：不写 = script（跑 checker）；verifier / behavior_test =
-#                     责任已委派，两步都不跑，回归里单列一档。委派须 reason + approved_by——
-#                     把一条形态从脚本手里拿走，等于承认「机械发现者缺席、由别的东西兜底」
+#   responsibility    发现者是谁：不写 = script（跑 checker）；observed / verifier /
+#                     behavior_test = 责任已委派，两步都不跑，回归里单列一档。
+#                     委派须 reason + approved_by——把一条形态从脚本手里拿走，等于承认
+#                     「机械发现者缺席、由别的东西兜底」。observed 还须 observed_by：
+#                     写清真实运行里谁在什么时候看什么，否则「由真实结果兜底」只是一句话
+#   observed_by       仅 observed：真实 Story 运行里由谁看什么
 #   variant_of        若为既有形态的新变体，指向原形态 id（旧检查保留，另增新检查）
 #
 # 回归语义（check_failure_modes.py）：
@@ -746,13 +749,16 @@ modes:
     found_round: "2026-08-28"
     form: story 的守恒判不出材料里丢了什么——按「章 × 数量」或按「作者自述」守恒，而不是按事实 token 整篇判
     clause: E7 / KC-1 / KC-2 / 冻结 01-C1
-    checker: c01_story_conservation
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/C01-story-conservation/bad
-    good_fixture: test/story/fixtures/failure-modes/C01-story-conservation/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字）
+    reason: >
+      守恒判据按事实 token 逐单元核对，量随材料条数涨而读者拿到的判断不增加，随逐单元系统在步骤 9 退场。「材料里丢了什么」改由独立审查按读者问题判。
+    observed_by: >
+      真实 Story 运行：story_reader_review 的 blocking_findings 是否点出关键业务事实缺失；以及用户按 TEST §10 三轴评分里的「产物结果」一轴，看他在成品里找到的遗漏审查者报没报。
     scope_note: >
       1.0 按逐章守恒（每章把取材节的每行写全）→ 同一事实被四个章节合同各指一次、被强制写四遍；
       上一版按作者自述（自由文本 reason 只判非空）→ 实测 161/272 单元「不进」、理由去重后 2 种。
@@ -764,13 +770,16 @@ modes:
     found_round: "2026-08-28"
     form: S5 的裁决用回声当引文——把来源单元的原话抄回证据列，证明不了 story 讲清了它
     clause: E7 / KR-1c
-    checker: r01_verdict_echo
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/R01-verdict-echo/bad
-    good_fixture: test/story/fixtures/failure-modes/R01-verdict-echo/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字）
+    reason: >
+      回声判据核的是逐字引文，而逐字引文本身是要退的形态——它逼着作者保留材料原话，与「把材料改写成人话」直接冲突。裁决表随逐单元系统在步骤 9 退场，判据一并退。
+    observed_by: >
+      真实 Story 运行：审查结论里的定位与引用是否指向 story 自己的原文（而不是把材料原话抄回来）；用户按 TEST §10「产物结果」一轴复核审查结论是否站得住。
     scope_note: >
       机器定不了落点的单元交给 S5 裁决者逐条裁，裁决要附引文。引文若是来源单元原文的子串，
       它证明的是「材料这么说」而不是「story 讲清了」——上一轮 verifier 报告 272 行证据
@@ -801,13 +810,16 @@ modes:
     found_round: 2026-08-29
     form: 材料里的流程图在 story 里被压成「A → B → C」箭头文字——上一版只判「图有落点」，箭头文字也算落点
     clause: KV-3 / M4 / 1.0 rules 第 2 条「表达形态与数量不得降级」
-    checker: s01_diagram_degraded
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S01-diagram-degraded/bad
-    good_fixture: test/story/fixtures/failure-modes/S01-diagram-degraded/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字）
+    reason: >
+      「源里有几张图、story 里就要有几张」按材料条数增长，属形态守恒那一类，随逐单元系统在步骤 9 退场。图被压成箭头文字算不算讲清，要读上下文。
+    observed_by: >
+      真实 Story 运行：story_reader_review 审「图与文的配合」这一维度时是否点出流程表达降级；用户按 TEST §10「产物结果」一轴看成品里的图是否还原了材料的结构。
     scope_note: >
       读者要的是那张图一眼看出的结构：哪几条分支、各自去哪。文字复述做不到。判的是形态不是语义——源里是图的，落点章里就得还是图；story 的图数不少于源。实证：批次 3 的 AR90005 里源材料的流程图整个没进 story，而当时的判据全绿。
 

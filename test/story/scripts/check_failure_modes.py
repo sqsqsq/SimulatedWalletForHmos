@@ -2852,7 +2852,11 @@ class Report:
 
 
 #: 发现者不是脚本时它是谁。缺省 script —— 不写这个字段的形态照旧跑 checker。
-DELEGATES = ("verifier", "behavior_test")
+#:
+#: - ``verifier`` / ``behavior_test``：判据挪给另一个执行体；
+#: - ``observed``：不挪给谁，就在真实运行的结果里看。这一档必须写 ``observed_by``——
+#:   不写清「谁在什么时候看什么」，「由真实结果兜底」就只是一句话。
+DELEGATES = ("observed", "verifier", "behavior_test")
 
 
 def delegated_to(mode: dict) -> str:
@@ -3007,9 +3011,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         who = delegated_to(mode)
         if who:
-            if not mode.get("reason") or not mode.get("approved_by"):
+            missing = [k for k in ("reason", "approved_by") if not mode.get(k)]
+            if who == "observed" and not mode.get("observed_by"):
+                missing.append("observed_by")
+            if missing:
                 report.add(ModeResult(mode["id"], "ledger", "-", "FAIL",
-                                      "责任委派缺 reason/approved_by——换发现者要有人签字"))
+                                      f"责任委派缺 {'/'.join(missing)}——换发现者要有人签字，"
+                                      "observed 还要写清真实运行里谁看什么"))
             else:
                 report.add(ModeResult(mode["id"], "delegated", who, "SKIP", mode["reason"]))
             continue

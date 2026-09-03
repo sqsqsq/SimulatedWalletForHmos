@@ -132,23 +132,7 @@ class TestAllocation(AllocateRenderCase):
         homeless = [r for r in self.records
                     if not r.get("at") and not r.get("covered_by") and not r.get("machine_facing")]
         self.assertEqual(homeless, [], "分配完成后不该还有无家可归的单元")
-
-    def test_covered_by_must_point_at_an_allocated_unit(self) -> None:
-        """`covered_by` 指向的那条自己要有落点，否则两条一起悬空。"""
-        self.allocate()
-        self.render(self.chapters())
-        self.run_build("audit")
-        records = self.records
-        target = next(r for r in records if r.get("at"))
-        victim = next(r for r in records if r.get("at") and r["key"] != target["key"])
-        victim.pop("at", None)
-        victim.pop("by", None)
-        victim["covered_by"] = "SOMETHING:0:deadbeef"      # 指向不存在的单元
-        (self.src / "audit.json").write_text(
-            json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
-        proc = self.run_build("check")
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("covered_by 指向不存在的单元", proc.stderr + proc.stdout)
+
 
 
 class TestChapterRendering(AllocateRenderCase):
