@@ -93,7 +93,6 @@ class ArchivedDocMustStayReadableOutsideThisRepo(NegativeCase):
         review.write_text(existing + "\n本方案采用灰度发布，先放开一部分用户。\n",
                           encoding="utf-8")
         self.init_audit()
-        self.settle()
         self.assert_check_names("review 出现客户端语境禁用词")
 
 
@@ -149,54 +148,36 @@ class DeclaredSourcesMustExist(NegativeCase):
         """缺失一律**可见**——根因是零信号，不是没拦。
 
         夹具本身就缺好几个声明来源。它们不该拦（最小夹具是正常形态），
-        但必须在 init 的来源账里以 0 出现、并各记一笔。
+        但每一份缺的都要在 init 的输出里各记一笔。
         """
         proc = self.run_build("init")
         self.assertEqual(proc.returncode, 0, "可选来源缺失不该拦：" + proc.stderr)
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("来源：", out)
         self.assertIn("不存在", out)
         self.assertIn("记一笔：", out)
 
 
 class LedgersMustAllExist(NegativeCase):
-    """五件台账缺一件都要被点名。
+    """台账缺一件都要被点名。
 
     冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
-    实跑里裁决台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
+    实跑里台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
 
-    改动前只有三件拦得住：`story-verdicts.md` **只在存在 `by: author` 记录时**
-    才被要求，而机器恰好定得了全部落点时删掉它一声不吭。批次 4 把五件统一到起步判。
+    逐单元系统退场后台账收到两件：决策登记与统稿留痕。判据一个字没动，基线跟着走。
     """
 
-    LEDGERS = ("source-units.json", "audit.json", "decisions.json",
-               "story-verdicts.md", "copyedit.md")
+    LEDGERS = ("decisions.json", "copyedit.md")
 
     def test_each_missing_ledger_is_named(self) -> None:
         for name in self.LEDGERS:
             with self.subTest(ledger=name):
                 self.setUp()
                 self.init_audit()
-                self.settle()
                 (self.src / name).unlink(missing_ok=True)
                 code, out = self.check_output()
                 self.assertNotEqual(code, 0, name + " 缺失居然没拦：" + out)
                 self.assertIn(name, out, "拦是拦了，但没点名是哪一件：" + out)
                 self.assertIn("不是把同伴文件删掉", out, "报错没堵住删台账那条路")
-
-    def test_N3_verdicts_ledger_deleted_without_author_records(self) -> None:
-        """坏产物：裁决台账被整份删除，而机器恰好定得了全部落点。
-
-        （批次 4 已转正。这正是改动前唯一漏掉的那一件——没有作者态时它不被要求。）
-        """
-        self.init_audit()
-        (self.src / "story-verdicts.md").unlink(missing_ok=True)
-        out = self.assert_check_names("story-verdicts.md")
-        self.assertIn("不是把同伴文件删掉", out)
-        # 拦它的是**起步那一道**，不是「有作者态才要裁决件」那条旧判据——
-        # 后者在机器定得了全部落点时不生效，正是原先漏掉的那种情形。
-        self.assertIn("台账缺", out)
-        self.assertNotIn("需要裁决者逐条裁", out)
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
         """清理、冻结、存在性三处说的必须是同一批文件——各写一份就会改一处忘一处。"""
@@ -237,23 +218,24 @@ class CheckOutputIsGroupedByJudgement(NegativeCase):
     ITEM_RE = re.compile(r"^  (\d+)\. (.*)$")
 
     def broken(self) -> str:
-        """造一份多类报错的坏产物：图没画、图片没引、大标题掉编号。"""
-        self.seed_images(2)
-        self.seed_diagrams(2)
+        """造一份多类报错的坏产物：大标题掉编号、残留模板占位符、主叙事塞工程标识。
+
+        三类分属三条仍在的判据（①b / ⑫a / ⑩），足以验分组、计数与零截断——
+        这条测的是**输出形态**，不是哪几条判据，所以判据换了它照样成立。
+        """
         self.init_audit()
-        self.settle()
-        by_key = {u["key"]: u for u in self.units}
-        data = self.audit
-        for record in data["records"]:
-            u = by_key.get(record["key"])
-            if u and u.get("kind") in ("image", "diagram"):
-                for k in [k for k in record if k != "key"]:
-                    del record[k]
-                record["at"] = "功能说明"
-        self.write_audit(data)
         text = self.story()
-        self.story_path.write_text(
-            text.replace(text.split("\n")[0], "# 没有编号的大标题"), encoding="utf-8")
+        first = text.split("\n")[0]
+        body = text.replace(first, "# 没有编号的大标题", 1)
+        # 再塞两类：残留的模板占位符，以及主叙事里的工程标识
+        for line in body.split("\n"):
+            if line.startswith("## ") and "附录" not in line:
+                body = body.replace(
+                    line,
+                    line + "\n\n这里留一个 {{待替换的占位}}，还写了 queryLossEligibility。",
+                    1)
+                break
+        self.story_path.write_text(body, encoding="utf-8")
         _, out = self.check_output()
         return out
 
@@ -312,7 +294,7 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
     # 本段退掉九条：它们守的判据（落点守恒、形态守恒、裁决核实、逐问逐章、术语实体词）
     # 随逐单元系统一起退场。剩下三条重新编号 N1..N3——「不许缺号」这条元判据比的是基线，
     # 基线跟着退场走，判据本身一个字没动。
-    NEGATIVE_COUNT = 3
+    NEGATIVE_COUNT = 2
 
     def test_negatives_are_numbered_without_gaps(self) -> None:
         body = self.THIS.read_text(encoding="utf-8")
@@ -404,14 +386,12 @@ class ReviewBannedTermsScope(NegativeCase):
         """人工区是**人的表态**，不是产品承诺——「文案回退为上一版」不该被拦。"""
         self.write_review("甲议题的澄清正文。", human="不同意时改什么：文案回退为上一版。")
         self.init_audit()
-        self.settle()
         self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
 
     def test_the_freeform_zone_is_not_judged(self) -> None:
         """「其他意见」章整章是人写的，同理不判。"""
         self.write_review("甲议题的澄清正文。", freeform="上游说没有运营灰度诉求。")
         self.init_audit()
-        self.settle()
         self.assertEqual(self.banned_hits(), "", "freeform 区被当成产品承诺判了")
 
     def test_an_exempt_category_is_not_judged(self) -> None:
@@ -419,7 +399,6 @@ class ReviewBannedTermsScope(NegativeCase):
         self.write_review("上游约定：分享功能开关默认关闭，随版本放开。",
                           category="入口与管控")
         self.init_audit()
-        self.settle()
         self.assertEqual(self.banned_hits(), "", "上线/管控类议题被误伤")
 
     def test_a_non_exempt_category_is_still_judged(self) -> None:
@@ -427,7 +406,6 @@ class ReviewBannedTermsScope(NegativeCase):
         self.write_review("本方案采用灰度发布，先放开一部分用户。",
                           category="规则与数值")
         self.init_audit()
-        self.settle()
         self.assertNotEqual(self.banned_hits(), "",
                             "非豁免类议题的机器区放行了——本项设计错，要回退重做")
 

@@ -1,4 +1,4 @@
-"""成文流程的第三步是「统稿」——逐章渲染之后必须有一次通读全篇。
+"""成文流程的第两步是「统稿」——逐章渲染之后必须有一次通读全篇。
 
 ②③ 把整篇切成十次有界的小任务，代价是没有任何一步从头读到尾：同一件事在三章
 各讲一遍、两句逐字重复、图连图没有承接、图题一章一个样子——每章单看都对，
@@ -30,25 +30,25 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
         spec = read("phases/spec.md")
         self.assertIn("③b 统稿", spec)
-        self.assertLess(spec.index("③ 逐章渲染"), spec.index("③b 统稿"),
-                        "统稿在逐章渲染之后")
-        self.assertLess(spec.index("③b 统稿"), spec.index("④ 裁决"),
-                        "统稿在裁决之前——裁决面对的应当是收过口的全篇")
+        self.assertLess(spec.index("③ 按章写"), spec.index("③b 统稿"),
+                        "统稿在按章写之后")
+        self.assertLess(spec.index("③b 统稿"), spec.index("④ 渲染 review"),
+                        "统稿在渲染 review 之前——评审记录面对的应当是收过口的全篇")
 
     def test_the_authoring_guide_carries_the_checklist(self) -> None:
         guide = read("phases/story-write.md")
-        self.assertIn("# 第三步 · 统稿", guide)
-        section = guide.split("# 第三步 · 统稿", 1)[1].split("\n# ", 1)[0]
+        self.assertIn("# 第二步 · 统稿", guide)
+        section = guide.split("# 第二步 · 统稿", 1)[1].split("\n# ", 1)[0]
         items = re.findall(r"^\d+\. ", section, flags=re.M)
         self.assertEqual(6, len(items), f"自查清单应是六项，现在 {len(items)} 项")
         for needle in ("同一件事", "逐字", "引导", "承接", "样式约定", "读者视角"):
             self.assertIn(needle, section, f"自查清单少了「{needle}」那一项")
 
-    def test_the_guide_says_three_steps_not_two(self) -> None:
+    def test_the_guide_says_two_steps(self) -> None:
         """两处说同一件事时先问该由谁说——步数只在开头声明一次，别处引用它。"""
         guide = read("phases/story-write.md")
-        self.assertNotIn("成文分两步", guide)
-        self.assertIn("成文分三步", guide)
+        self.assertNotIn("成文分三步", guide)
+        self.assertIn("成文分两步", guide)
 
 
 class TestChapterDimensions(unittest.TestCase):
@@ -80,7 +80,7 @@ class TestFinalPassLeavesATrace(unittest.TestCase):
 
     def test_the_guide_asks_for_exactly_six_lines(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("# 第三步 · 统稿", 1)[1]
+        section = guide.split("# 第二步 · 统稿", 1)[1]
         self.assertIn("copyedit.md", section)
         self.assertIn("恰好六行", section)
         self.assertIn("写多不奖励", section, "防苦役条款要写在作业书里")

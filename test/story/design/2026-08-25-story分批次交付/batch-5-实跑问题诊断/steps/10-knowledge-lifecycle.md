@@ -73,3 +73,14 @@ Spec 的“规约约束要求”和“设计模式候选登记”保留为人读
 - 修改 YAML 中一条 Constraint 为不命中后，重新生成会同步改变 Spec §10 和 Story 知识摘要；直接手改 §10 被判为编辑生成区；
 - 全树搜索不存在继续要求作者手填 §10/§11 的指令，旧三方 ID 核无消费者；
 - P6 与 Knowledge 相关失效形态已有新发现者；旧回归发现器保留至步骤 11。
+
+## 预算（对照 `test/story/regression/mechanism-budget.yaml`）
+
+| 类别 | 预计 | 归属 |
+|---|---|---|
+| hooks_mjs | **净减 ≥ 400**：`paraphrase.mjs` 整体退场，`pre_verifier.mjs` 逐行必答表与相似度排序退场，`knowledge.mjs` 的复述检查退场；新增 manifest → YAML → 生成区 → contracts → 下游分派的集合一致性检查 | 新增归 D2 §4「上下游 ID、义务集合、verifier subject 或报告身份不一致」「某项检查因前置缺失没有运行却表现成通过」 |
+| prompts_md | 持平或小增：Spec/Plan 模板的手写 §10/§11 义务删除，`knowledge-use.yaml` 的作者说明新增 | — |
+| data | 小增：`knowledge-use.yaml` 的合同形态 | — |
+| semantic_proxy | pre_verifier 10、paraphrase 8、knowledge 1、post_check 6 归零；verifier-report 6 随引文核实退场归零 | — |
+
+完成后把 `hooks_mjs`、`semantic_proxy` 的 ceiling 压到现值。预计超 ceiling 的情形：无。

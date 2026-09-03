@@ -36,7 +36,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
   澄清叙述里的 `**根据**` 要指名材料或核查（哪份稿怎么说的、查了工程什么）。
   分层、编号与表态位由脚本生成——状态分章、类型成节、`N.M.K` 顺出，登记表里不存序号。
   **表态位只能由评审人填**：「审核结果：」后面那几句话，你一个字都不写。
-  `story-build build` 重渲染时只重算机器区，人工区逐字节保留；它在 story 成文之后跑（见下方顺序 ⑤）。
+  `story-build build` 重渲染时只重算机器区，人工区逐字节保留；它在 story 成文之后跑（见下方顺序 ④）。
   代填表态即 BLOCKER——归档件上「同意」若不是评审人自己写的，它就不可信。
 
 **story 不是 spec 的排版件**：spec 的可标识事实、PRD 的业务语境、SE 的全局方案，以及无编号的
@@ -58,20 +58,16 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 **把材料里没有的选择写死进正文或附录，就是漏登记。**
 
 ```bash
-node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
-#                              ② 分配：每个单元定一个落点，落 audit.json
-node .../story-build.mjs audit --feature <feature>   #    「待你分配 0 条」才算分完
-#    机器先归位两类：带硬事实标记的、技术契约小节的行；剩给模型的都是纯中文叙述
-node .../story-build.mjs skeleton --feature <feature>   # ③ 建十章骨架（只跑一次）
-#                              ③ 逐章渲染：一次写一章，经 `story-build chapter` 原子落盘
-#                                 每章写完跑一次 audit（它会打印未渲染章）
+node .../story-build.mjs init     --feature <feature>  # ① 材料齐备 + 决策登记骨架
+node .../story-build.mjs skeleton --feature <feature>  # ② 建十章骨架（只跑一次）
+#                              ③ 按章写：一次写一章，经 `story-build chapter` 原子落盘；
+#                                 每次落盘都报还剩哪几章带着待写 marker
 #                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
 #                                 六项自查各写一行到 AR/story-src/copyedit.md（恰好六行）；
-#                                 改完重跑 audit
-#                              ④ 裁决：audit 里还有 by: author 时，按 phases/story-verify.md 裁
-node .../story-build.mjs build --feature <feature>   # ⑤ 渲染 review.md（story 成文之后）
-python .../story_flow.py story --feature <feature>   # ⑥ 登记（自带 check）
-#                              ⑦ 跑 spec harness
+#                                 改的那几章仍逐章落盘
+node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（story 成文之后）
+python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
+#                              ⑥ 跑 spec harness
 ```
 
 - **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
@@ -79,15 +75,14 @@ python .../story_flow.py story --feature <feature>   # ⑥ 登记（自带 check
   自查清单见 `story-write.md` 第三步。
 - **② 与 ③ 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。
   分配先把「每件事去哪一章」定死并落盘，渲染就变成逐章有界的小任务，写完即落盘、断了能续。
-- **④ 只在 `audit.json` 出现 `by: author` 记录时才需要**：机器定不了落点的单元只有模型能判。
-- **⑤ 在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
+- **④ 在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
   写到某一章才发现材料两处打架、才发现某个取舍要人拍板。这些新判断先登记进 `decisions.json`，
   再渲染，台账才是完整的。`build` 会先看 `AR/story.md` 有没有章，没有就拒绝渲染。
-- **⑥ 自带门禁**：先跑 `story-build number`（章序、小节序、图题序号由机器统一铺——
+- **⑤ 自带门禁**：先跑 `story-build number`（章序、小节序、图题序号由机器统一铺——
   你只写业务名标题与图题），再重跑 `story-build check`，通过才登记 `story_written`。
   登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
-- **⑦ 之前必须走完 ①–⑥**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
+- **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 
 ## 三、§9 技术契约怎么写
 

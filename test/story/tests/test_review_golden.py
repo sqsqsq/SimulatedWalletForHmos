@@ -207,7 +207,7 @@ class FieldsAreRequired(RendererCase):
     """三个字段缺一条，渲染出来就是半个议题——check 要点名，不是渲个空格出去。"""
 
     def run_check(self) -> tuple[int, str]:
-        for cmd in ("init", "audit"):
+        for cmd in ("init",):
             self.assertEqual(0, self.run_build(cmd).returncode)
         proc = self.run_build("check")
         return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()

@@ -1,51 +1,45 @@
 /**
- * story 的登记、核对与校验 —— 四个命令，围绕**一份文档写成**这件事。
+ * story 的登记、核对与校验 —— 六个命令，围绕**一份文档写成**这件事。
  *
- * ## 与 1.0 逐章生产线的区别
+ * ## 成文怎么走
  *
- * 1.0 的做法是先生成逐章任务书（每章一份取材路标 + 逐章必答），各章分别写完再装配，守恒判「每章把取材节的每行表格/数值/反引号写全」。后果是**同一个事实
- * 被四个章节合同各指一次，于是被强制写四遍**。
+ * 材料齐备之后，作者拿到一次给全的任务包（材料、知识、合同、样式），按合同顺序
+ * 一次写一章、经 `chapter` 原子替换落盘，十章写完再统稿。每步输出有界、写完即落盘、
+ * 断了能续——整篇一次重出是全有或全无，中途断了磁盘上什么都没有。
  *
- * 这里没有逐章任务书、没有逐章文件、没有装配。成文分三步：**先分配、后逐章渲染、最后统稿**——
- * 作者给每个来源单元定一个落点（`audit.json`），再按合同顺序一次写一章、追加落盘。
- * 守恒改判「材料里每个可核对 token 在 story 整篇有落点」。
+ * ## 判据的边界
  *
- * **区别不在按不按章写，在谁来分配**：1.0 由合同按关键词把材料路由给章，同一个事实
- * 被四个章节合同各指一次；这里由作者分配、机器强制「一个单元一条记录一个落点」，
- * 事实只出现一次。逐章渲染换来的是每步输出有界、写完即落盘、断了能续。
+ * 这里只判**确定性不变量**：章标题与顺序、编号、附录结构、图片身份与落点、
+ * 语言红线、决策登记字段、材料清单形态、台账随稿冻结。凡是要读懂内容才判得了的
+ * ——讲清没讲清、贴不贴合、图题说的是不是这张图——都不在这里，归 verifier 的
+ * 语义判据与真实结果观察。用字符串近似语义，模型只会照着字符串改。
  *
- * ## 四个命令
+ * ## 六个命令
  *
  * | 命令 | 做什么 |
  * |------|--------|
- * | `init`  | 枚举来源单元 → `source-units.json`；建 `decisions.json` 骨架 |
- * | `audit` | 三态核对：`at` / `covered_by` / `machine_facing`，写 `audit.json` |
+ * | `init`  | 检查材料齐备；建 `decisions.json` 骨架 |
  * | `skeleton` | 建十章骨架：每章一个稳定章锚 + 一个待写 marker |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
- * | `check` | 章标题与顺序、整篇 token 守恒、章节与附录形态、图与 diagram 落点、决策字段齐 |
+ * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
- *
- * `audit.json` 只认三态，**没有自由文本理由**——只判非空的自由文本理由字段，
- * 大半单元会填同一句套话，等于给漏写开了一个合法出口。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decisionUnits, enumerateUnits, knowledgeUnits, linkDuplicates } from './source-units.mjs';
 import { normalizeHeading, renumberStory } from './headings.mjs';
 import {
   baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
-  scanImageForm, scanLanguageRedline, scanLocalPaths, scanMaterialList, scanReadability,
-  tableHeadersOf,
+  scanLanguageRedline, scanLocalPaths, scanMaterialList,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
 } from './review-render.mjs';
 
-const COMMANDS = ['init', 'audit', 'check', 'build', 'number', 'skeleton', 'chapter'];
+const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter'];
 
 /** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
@@ -157,7 +151,7 @@ function createOfflineContext(args) {
     args, projectRoot, contract, offline: true,
     featureRoot: path.dirname(path.dirname(storyPath)),
     storyPath,
-    unitsPath: '', auditPath: '', decisionsPath: '', verdictsPath: '',
+    decisionsPath: '',
     copyeditPath: '', reviewPath: '',
   };
 }
@@ -179,10 +173,7 @@ function createContext(args) {
   const srcDir = path.join(featureRoot, 'AR', 'story-src');
   return {
     args, projectRoot, contract, featureRoot, srcDir,
-    unitsPath: path.join(srcDir, 'source-units.json'),
-    auditPath: path.join(srcDir, 'audit.json'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
-    verdictsPath: path.join(srcDir, 'story-verdicts.md'),
     copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
@@ -198,8 +189,7 @@ function createContext(args) {
  * 各写一份就会改一处忘一处。
  */
 const STORY_SRC_LEDGERS = [
-  ['unitsPath', 'init'], ['auditPath', 'audit'], ['decisionsPath', 'init'],
-  ['verdictsPath', '裁决'], ['copyeditPath', '统稿'],
+  ['decisionsPath', 'init'], ['copyeditPath', '统稿'],
 ];
 
 /**
@@ -219,7 +209,7 @@ function requireLedgers(ctx) {
     .map(([key, how]) => `${path.basename(ctx[key])}（跑 ${how} 产出）`);
   if (!missing.length) return;
   fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
-    + '  这五件是这份 story 据以成文的全部依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
+    + '  这两件是这份 story 据以成文的全部依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
     + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
     + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
 }
@@ -323,7 +313,7 @@ function scanSources(ctx) {
         doc, rel, text,
         notes: obj.notes ?? [],
         // `derived`＝这一份是本轮流程自己生成的中间产物，不是上游给的材料。
-        // 它只守业务编号，工程细节的家是它自己——见 enumerateUnits 的 idTokensOnly。
+        // 它只守业务编号，工程细节的家是它自己。
         derived: obj.derived === true,
       });
       continue;
@@ -370,102 +360,9 @@ function chapterForms(sections) {
   }]));
 }
 
-/**
- * 形态欠账：分了落点章、那一章却没有同类形态的那些单元。
- *
- * **同一个函数在两个时刻跑**——`audit`（写完一章就报）与 `check ④`（收口时拦）。
- * 判定逻辑只有这一份：两处各写一份的话，只要有一处认得不一样，作者就会在
- * 「audit 说没事、check 说不行」之间打转（D4 的教训推广到这里）。
- *
- * 为什么要前移：图是 token 守恒链上最薄的一环——图片单元的 token 只有文件
- * basename，画了才有、没画就没有；流程图的 token 近乎空。所以文字事实丢了会被
- * 整篇 token 守恒在任意位置捞回来，**图丢了只有这一条形态判**。而它原先只在
- * `check` 跑，也就是全篇写完之后——图分了落点章却一张没画时，作者要一路写到最后
- * 才被告知。
- *
- * **只判已渲染的章**：还没写的章当然没有图，那不是欠账。
- *
- * **判的是「分了几张画了几张」，不是「这一章有没有图」。** 只问有无时，一章分到多张
- * 只画一张也算过关：其余几张被压成箭头散文，一条都不会报。
- *
- * **它不会退回「材料有几张就得塞几张」**：分母是**作者自己给的 `at` 数**，不是材料总数。
- * 不该进 story 的图片标 `material_only`、被自绘图覆盖的标 `covered_by`，两者都不进分母，
- * 分配数当场降下来。30 张界面图给 2 张 `at` + 28 张 `material_only`，这里一条都不报。
- *
- * @returns {{at: string, kind: 'image'|'diagram'|'table_row', units: object[],
- *            want?: number, drawn?: number}[]}
- */
-function formShortfall(units, recByKey, sections) {
-  const forms = chapterForms(sections);
-  const rendered = new Set(sections.map(s => s.title));
-  const bucket = new Map();                 // `${at} ${kind}` → {at, kind, units}
-  const rows = new Map();                   // at → table_row units
-  for (const u of units) {
-    const at = recByKey.get(u.key)?.at;
-    if (!at || !rendered.has(at)) continue;
-    if (!forms.has(at)) continue;
-    if (u.kind === 'diagram' || u.kind === 'image') {
-      const k = `${at} ${u.kind}`;
-      if (!bucket.has(k)) bucket.set(k, { at, kind: u.kind, units: [] });
-      bucket.get(k).units.push(u);
-    } else if (u.kind === 'table_row') {
-      pushInto(rows, at, u);
-    }
-  }
-  const out = [];
-  for (const item of bucket.values()) {
-    // **图片的身份是文件**：两个单元指向同一个文件时，story 引一次就够——引两次
-    // 另有判据拦（「同一张图被两个路径引用」）。所以图片按文件名去重后比数，否则
-    // 同一张图登记两次就凭空欠一张。流程图没有文件，逐单元算。
-    const want = item.kind === 'image'
-      ? new Set(item.units.map(u => (u.tokens ?? [])[0] ?? u.key)).size
-      : item.units.length;
-    const drawn = forms.get(item.at)?.[item.kind] ?? 0;
-    if (want > drawn) out.push({ ...item, want, drawn });
-  }
-  // 表行：**该章分到 ≥2 条时**才要求成表——只有一行的不构成表（一行的表读起来
-  // 比一句话更费劲），那时只要求这一行的内容在该章出现，由整篇 token 守恒管。
-  for (const [at, list] of rows) {
-    if (list.length >= 2 && !forms.get(at)?.table) {
-      out.push({ at, kind: 'table_row', units: list });
-    }
-  }
-  return out;
-}
-
 function pushInto(map, key, value) {
   if (!map.has(key)) map.set(key, []);
   map.get(key).push(value);
-}
-
-/**
- * 形态欠账报成一句话——`audit` 与 `check` 共用这一份措辞。
- *
- * **一张都没画**时逐单元报，指到来源行，作者好回去看那是什么图；
- * **画了但不够**时报两个数，作者要知道还差几张，逐单元列反而看不出差额。
- */
-function formShortfallLine(item) {
-  const where = `落在「${item.at}」，但那一章`;
-  if (item.kind === 'diagram') {
-    if (item.drawn > 0) {
-      return [`材料里分到「${item.at}」的图有 ${item.want} 张，那一章只画了 ${item.drawn} 张`
-        + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构；'
-        + 'story 自己画的那张已经覆盖了其中几张，就给那几条标 covered_by'];
-    }
-    return item.units.map(u => `来源材料里的图（${u.doc}:${u.line}）${where}没有图`
-      + '——把流程图压成箭头文字算降级，读者要的是一眼看出的结构');
-  }
-  if (item.kind === 'image') {
-    if (item.drawn > 0) {
-      return [`材料里分到「${item.at}」的图片有 ${item.want} 张，那一章只引了 ${item.drawn} 张`
-        + '——图片承载的信息，文字复述替代不了；'
-        + '确实不必进正文的那几张标 material_only 并各写一句理由'];
-    }
-    return item.units.map(u => `来源材料里的图片（${u.doc}:${u.line}）${where}没有图片引用`
-      + '——图片承载的信息，文字复述替代不了');
-  }
-  return [`材料里的表有 ${item.units.length} 行${where}没有表`
-    + '——把表压成散文，逐项比对的那几列就没了（最先丢的是触发条件与编号）'];
 }
 
 /**
@@ -572,29 +469,6 @@ function buildTokenExclusion(ctx) {
   return (t) => res.some(re => re.test(t));
 }
 
-/**
- * 按当前材料现场枚举来源单元 —— `init` 与 `check` 共用同一套参数。
- *
- * 各写一份的话，两边的排除表、编号形态或模板约定差一项，枚举出来的 token 集合就不同，
- * 而这类不同是静默的：判据照跑，只是认得的标识少了几个。
- */
-function materialUnitsNow(ctx, docs) {
-  const idShapes = [...(ctx.contract.id_shapes?.keep ?? [])];
-  const excludeToken = buildTokenExclusion(ctx);
-  const units = [];
-  for (const d of docs) {
-    units.push(...enumerateUnits(d.text, d.doc, {
-      idShapes,
-      excludeToken,
-      machineFacing: ctx.contract.machine_facing ?? {},
-      templateNotes: d.notes,
-      idTokensOnly: d.derived,
-      docPath: d.rel,
-    }));
-  }
-  return units;
-}
-
 function cmdInit(ctx) {
   refuseIfFrozen(ctx, 'init');
   const { docs, missing } = scanSources(ctx);
@@ -609,75 +483,25 @@ function cmdInit(ctx) {
       + '而后面每一条判据都只在「枚举出来的那些」上跑——'
       + '守恒面小了一圈，门禁全绿也证明不了什么。');
   }
-  // 只把 `keep` 的编号形态交给枚举器：`drop` 的那些不该进 story，也就不该成为守恒对象
-  const units = materialUnitsNow(ctx, docs);
-  if (!units.length) fail('材料切不出任何来源单元——枚举器或材料有问题，不是「材料是空的」');
 
-  // 激活规约条目也是来源单元：逐条判定要和材料里的事实走同一条守恒链
-  try {
-    const k = activeKnowledge(ctx.projectRoot);
-    const ku = knowledgeUnits(k.entries);
-    if (!ku.length) fail('激活清单派生不出规约条目——不是「本需求没有规约」，是派生坏了');
-    units.push(...ku);
-  } catch (e) {
-    fail(`激活知识派生失败：${e.message}——判定表无从核对，不能当作「没有规约」通过`);
-  }
 
-  // 决策登记也是来源单元：取舍理由在材料里本来就没有，它是起草时判出来的。
-  // 不给它落点义务，守恒链永远不会要求它出现——实测两份产物一份一条取舍、一份零条。
+  // 决策登记的骨架：没有它，取舍在 story 里就没有来源。
+  //
+  // 骨架只有一个空数组：曾经这里还预置六类议题的空槽，判据只核「零条目时写了没写
+  // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过。
   const registered = readJson(ctx.decisionsPath, null);
-  const decisions = decisionUnits(registered?.decisions);
-  units.push(...decisions);
-  if (!decisions.length) {
+  if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
+  else if (!(registered.decisions ?? []).length) {
     process.stdout.write('[story-build init] 决策登记里一条都没有——'
       + '取舍在 story 里就没有来源。是还没登记，还是这个需求真的一个判断都没做过？\n');
   }
 
-  linkDuplicates(units);
-
-  writeJson(ctx.unitsPath, {
-    generated_from: docs.map(d => d.rel),
-    // 枚举时各份材料的指纹。check 拿它比对当前值——材料在枚举之后还在长，
-    // 后长出来的那些永远不会成为单元，守恒面就悄悄小了一圈。
-    source_digests: Object.fromEntries(docs.map(d => [d.rel, digestOf(d.text)])),
-    unit_count: units.length,
-    token_count: units.reduce((n, u) => n + u.tokens.length, 0),
-    units,
-  });
-
-  // 骨架只有一个空数组：曾经这里还预置六类议题的空槽，判据只核「零条目时写了没写
-  // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过，而同一批
-  // 工程决策在别的轮次实打实登记了十条。类型词表作为扫描地图留在作业书里，
-  // 骨架义务删掉：扫描地图是给人的，空槽是给机器数的。
-  if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
-
-  const noToken = units.filter(u => !u.machine_facing && u.tokens.length === 0).length;
-  process.stdout.write(
-    `[story-build init] ${units.length} 个单元、${units.reduce((n, u) => n + u.tokens.length, 0)} 个 token`
-    + `（机器面 ${units.filter(u => u.machine_facing).length} 个；`
-    + `无 token ${noToken} 个——纯中文叙事，机器不判落点，由你分配、由裁决者逐条裁）\n`);
-
-  // 来源账：哪一类贡献了多少单元。**缺席的那些显示为 0 并写明原因**——
-  // 只报总数时，「少了一整类」和「这一类本来就少」长得一模一样。
-  const perDoc = new Map();
-  for (const u of units) {
-    const d = String(u.key ?? '').split(':')[0];
-    perDoc.set(d, (perDoc.get(d) ?? 0) + 1);
-  }
-  const line = [];
-  for (const d of docs) line.push(`${d.doc} ${perDoc.get(d.doc) ?? 0}`);
-  for (const m of missing) {
-    line.push(`${m.doc} 0（${m.rel} 不存在${m.required ? '，必备' : '，可选'}）`);
-  }
-  process.stdout.write(`  来源：${line.join('、')}\n`);
+  process.stdout.write(`[story-build init] 材料齐备（${docs.length} 份）；决策登记骨架就位。`
+    + '接着跑 skeleton 建十章骨架\n');
   for (const m of missing) {
     process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
   }
 }
-
-// --------------------------------------------------------------------------
-// audit：三态核对
-// --------------------------------------------------------------------------
 
 /**
  * story 正文按 `## ` 标题切节。
@@ -701,95 +525,9 @@ function storySections(storyText) {
   return out.map(s => ({ title: normalizeHeading(s.raw), raw: s.raw, text: s.body.join('\n') }));
 }
 
-/**
- * 切出裁决产物里的三张表。
- *
- * **按表头认，不按标题认**：标题是给人读的，作者改一个字表就找不着了；
- * 表头是契约里定死的那几列。三表分开是因为任务不同——逐单元问「材料里这件事讲了没有」，
- * 逐问问「读者这一章想知道的答了没有」，逐章问「这一章读起来对不对」。
- *
- * @returns {{units: Map, questions: {chapter,question,verdict,quote}[],
- *            chapters: {chapter,dimension,verdict,basis}[]}}
- */
-function parseVerdictTables(text) {
-  const out = { units: new Map(), questions: [], chapters: [] };
-  if (text === null || text === undefined) return out;
-  let mode = null;
-  for (const line of String(text).split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s.startsWith('|')) continue;
-    const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.replace(/[`*]/g, '').trim());
-    if (/^[-: ]*$/.test(c[0])) continue;             // 分隔行
-    if (c[0] === '单元键') { mode = 'units'; continue; }
-    if (c[0] === '章' && c[1] === '问题') { mode = 'questions'; continue; }
-    if (c[0] === '章' && c[1] === '维度') { mode = 'chapters'; continue; }
-    if (mode === 'units' && c.length >= 3) {
-      out.units.set(c[0], { verdict: c[1], quote: c[2] });
-    } else if (mode === 'questions' && c.length >= 4) {
-      out.questions.push({ chapter: c[0], question: c[1], verdict: c[2], quote: c[3] });
-    } else if (mode === 'chapters' && c.length >= 4) {
-      out.chapters.push({ chapter: c[0], dimension: c[1], verdict: c[2], basis: c[3] });
-    }
-  }
-  return out;
-}
-
 /** 附录那一章（合同里标了 `appendix` 的那个）。没有就返回 null。 */
 function appendixChapter(contract) {
   return (contract.chapters ?? []).find(c => c.appendix) ?? null;
-}
-
-/**
- * 核不住的落点，报错该说什么 —— **按 token 的类别指路，不裸列字面**。
- *
- * 上一版报的是「落点标在某章，那一章里核不到」外加一串裸 token。
- * 模型逐轮照做：把那串字面一个个抄进附录。倾倒区不是模型自己想出来的，
- * 是门禁一条一条教出来的（失败数 35→11→9→1→6→18，修一轴破另一轴）。
- *
- * 所以报错只说**这一类事实的落点长什么样**。字面仍然出现——不点名作者不知道说的是哪一条
- * ——但它出现在一句指路的话里，而不是一张待抄清单里。
- * 类别与落点名全部来自合同数据，本函数不认识任何具体业务词。
- */
-function lostHint(unit, lost, contract, at) {
-  const token = lost[0];
-  const appendix = appendixChapter(contract);
-  const subs = appendix?.subsections ?? [];
-  const keep = (contract.id_shapes?.keep ?? []).some(p => {
-    try { return new RegExp(`^(?:${p})$`).test(token); } catch { return false; }
-  });
-  if (keep) {
-    return `验收编号 ${token} 要在验收那一章有独立一行，并写出可观察的通过条件`
-      + '——合并进别人那一行，读者就对不上上游这条到底做没做';
-  }
-  if (/^\d/.test(token)) {
-    return `阈值「${token}」要随它所属的那句叙述或验收行一起讲`
-      + '——单独摆着的数字，读者不知道它约束的是哪一步';
-  }
-  if (appendix && (appendixBound(unit, contract) || /^[A-Za-z_]/.test(token))) {
-    const where = subs.slice(0, 2).map(s => `「${appendix.title}·${s}」`).join('或');
-    return `接口、字段、键名这一类的落点是${where}表`
-      + `——「${token}」在那张表里有一行吗？主叙事里写它的中文业务名`;
-  }
-  return `这条事实要在「${at}」那一章讲出来：${unit.text.slice(0, 30)}`;
-}
-
-/**
- * 这个单元是不是**机器直接归附录**的那一类（合同 `allocation.appendix_bound`）。
- *
- * 技术契约小节的表行——接口、字段、存储键、配置项、事件、交接——落点只可能是
- * 附录的那两张表。让模型逐条去想「这一行读者在哪一章想知道」纯属苦役：
- * 答案对每一行都一样，而模型每轮都要重答一遍。规则来自合同数据，本文件不认识
- * 任何具体小节号。
- */
-function appendixBound(unit, contract) {
-  for (const rule of contract.allocation?.appendix_bound ?? []) {
-    if (rule.doc && unit.doc !== rule.doc) continue;
-    if (!rule.section_re) continue;
-    let re;
-    try { re = new RegExp(rule.section_re); } catch { continue; }
-    if (re.test(String(unit.section ?? ''))) return true;
-  }
-  return false;
 }
 
 /**
@@ -846,15 +584,6 @@ function subsectionSpan(storyText, chapterTitle, name) {
   return start >= 0 ? { start, end: lines.length } : null;
 }
 
-/** 一章里全部 `###` 小节的业务名（序号已剥）。 */
-/**
- * 表头比对：声明的列**逐列逐字相等**，其后允许附加列。
- *
- * 逐字是有意的——列头是形不是内容，模板给出表头照抄即过；判「差不多」的话，
- * 同一份文档里同类的表会长出五种列名，读者每张表都要重新认一遍。
- * 附加列放行是因为真实存在（验收表可选的「主责」列）。
- */
-/** 需求目录内的相对路径（正斜杠），报错与目录比对都按它说话。 */
 /**
  * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
  *
@@ -932,10 +661,6 @@ function joinPosix(base, ref) {
   return parts.join('/');
 }
 
-function headerMatches(actual, want) {
-  return (want ?? []).every((col, i) => (actual[i] ?? '').trim() === String(col).trim());
-}
-
 function subsectionNames(sectionText) {
   const out = [];
   let inFence = false;
@@ -948,308 +673,9 @@ function subsectionNames(sectionText) {
   return out;
 }
 
-/**
- * 机器给落点：单元的 token 在哪一节命中得最多，`at` 就填哪一节。
- *
- * **只认硬事实**。token 是改写时本该逐字保留的那些东西——接口名、字段名、
- * 阈值与量纲、图片名、验收编号。它们在人话改写里也不会变，所以「机器核得到」
- * 与「读者读得下去」不冲突。
- *
- * **不判纯中文叙事的落点**。上一版拿 ≥8 字的正文片段做子串兜底，于是守恒同时
- * 要求「把材料改写成人话」和「逐字保留原句」——两条互斥，把材料原文整段抄进
- * 一个倾倒区是唯一同时满足的解，而门禁会判它通过——大半单元会塌进附录那个倾倒区，
- * 机器全绿。改写后的中文归裁决者逐条裁，灵敏度由删事实对抗测试验。
- *
- * **不要求全部 token 同节**——上一版正是这么判的，于是「把一件事分两处讲清楚」
- * 被判成无落点，作者只好把它们硬塞进同一段。
- */
-function autoPlace(unit, sections) {
-  if (!unit.tokens.length) return null;      // 纯中文叙事：机器不定落点，交作者与裁决者
-  let best = null;
-  for (const sec of sections) {
-    const hit = unit.tokens.filter(t => sec.text.includes(t)).length;
-    if (hit > 0 && (!best || hit > best.hit)) best = { title: sec.title, hit };
-  }
-  return best;
-}
-
 /** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
 function norm(s) {
   return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
-}
-
-/** 引文比对面上再多剥两个字符：`` ` `` 与 `*`。
- *
- * 裁决表的格子被 `parseVerdictTables` 剥过这两个（表格里的行内代码与加粗会把
- * 格子切乱），story 正文侧却留着。两端口径不一致时，凡是抄了带行内代码或加粗的
- * 那句话，都会被判成「在这一章里检索不到」——附录表里的事实几乎条条如此。
- */
-function normQuote(s) {
-  return norm(s).replace(/[`*]/g, '');
-}
-
-/**
- * 规范化的同时留下每个字符在原文里的下标。
- *
- * 句边界要在**原文**上判：`norm` 把句号问号全剥了，规范化之后的串里根本没有句子。
- * 于是引文先按规范化面定位（作者抄的时候标点常有出入），再用这张表把位置换回原文。
- */
-function normIndex(s) {
-  const src = String(s ?? '');
-  const drop = /[\s，。、；：!?！？（）()「」【】`*]/;
-  let text = '';
-  const idx = [];
-  for (let i = 0; i < src.length; i++) {
-    if (drop.test(src[i])) continue;
-    text += src[i];
-    idx.push(i);
-  }
-  return { src, text, idx };
-}
-
-// 句读：一句话可以停在这里。引文的规范化形态里没有它们，所以判的是引文之后紧跟着的原文。
-// 冒号也算：「前一段是本特性，后一段由兄弟特性承载，分工如下：」是完整的一句，
-// 它引出下面那张表——这种目的句成片出现，判据不认它就会把好形态拦掉。
-const SENTENCE_END = /[。？！；：:]/;
-// 一句话可以从这里起头：行首、上一句的句读之后、导语冒号之后、列表标记之后、表格的格子里。
-const SENTENCE_START = /[\n。？！；：:|>]/;
-const LIST_MARK = /[-*+]/;
-// 往两边跳过的装饰：空白与包裹符号，它们既不结束一句话也不开始一句话。
-const TRIM_AROUND = /[ \t`*（()）「」【】]/;
-
-/** 这个位置是不是一行的开头（只隔着空白）。 */
-function atLineHead(src, pos) {
-  return /(^|\n)[ \t]*$/.test(src.slice(0, pos));
-}
-
-/**
- * 这个字符是不是一个块的起头标记——无序列表的 `-`，或有序列表的 `1.` / `1)`。
- *
- * 有序列表要单独认：流程章常写成 `1. **进入与资格**：…` 这种编号步骤，
- * 只认 `-` 的话，那一章每一步的第一句都会被判成「开头掐在半句里」。
- */
-function isBlockMark(src, i) {
-  if (LIST_MARK.test(src[i]) && atLineHead(src, i)) return true;
-  if (src[i] !== '.' && src[i] !== ')') return false;
-  let k = i - 1;
-  while (k >= 0 && /\d/.test(src[k])) k--;
-  return k < i - 1 && atLineHead(src, k + 1);
-}
-
-/**
- * 引文在原文的这一处，是不是**起止于句边界**。
- *
- * 这一条替代不了「引文讲的是不是这件事」，它只堵掉一种做法：从该章里切一段
- * 十来个字的窗口交上来。窗口满足「够长、是这一章的原文、不是来源原话」，
- * 却连一句话都不是——实测一轮，抽样十行里十行都是这种切片。
- *
- * 表格行里的事实按**格子**判：`|` 两侧就是这条事实的起止，整格即合法引文。
- */
-function atSentenceBounds(src, start, end) {
-  let i = start - 1;
-  while (i >= 0 && TRIM_AROUND.test(src[i])) i--;
-  const okStart = i < 0 || SENTENCE_START.test(src[i]) || isBlockMark(src, i);
-  let j = end + 1;
-  while (j < src.length && TRIM_AROUND.test(src[j])) j++;
-  const okEnd = j >= src.length || src[j] === '\n' || src[j] === '|'
-    || SENTENCE_END.test(src[j]);
-  return { okStart, okEnd };
-}
-
-/**
- * 引文在这一章里的**任一处**起止于句边界，就算数。
- *
- * 同一句话在一章里出现两次是常事（表里一条、正文里一条）。要求处处都合规，
- * 等于拿另一处的排版去否掉作者抄对了的那一处。
- *
- * @returns {{found:boolean, okStart:boolean, okEnd:boolean}}
- */
-function quoteBounds(chapterRaw, quote) {
-  const map = normIndex(chapterRaw);
-  const q = normQuote(quote);
-  if (!q) return { found: false, okStart: false, okEnd: false };
-  let best = null;
-  for (let at = map.text.indexOf(q); at >= 0; at = map.text.indexOf(q, at + 1)) {
-    const hit = atSentenceBounds(map.src, map.idx[at], map.idx[at + q.length - 1]);
-    if (hit.okStart && hit.okEnd) return { found: true, ...hit };
-    if (!best || (hit.okStart ? 1 : 0) + (hit.okEnd ? 1 : 0)
-        > (best.okStart ? 1 : 0) + (best.okEnd ? 1 : 0)) best = hit;
-  }
-  return best ? { found: true, ...best } : { found: false, okStart: false, okEnd: false };
-}
-
-function cmdAudit(ctx) {
-  refuseIfFrozen(ctx, 'audit');
-  const doc = readJson(ctx.unitsPath, null);
-  if (!doc) fail(`还没有来源单元清单，先跑 init：${ctx.unitsPath}`);
-  // story.md 还不存在 = **一章都没渲染**，不是错误：分配先于正文，
-  // 这一步正是用来核「每个单元都分到了地方」的。渲染过程中它是「渲染了几章」的中间态。
-  const storyText = readText(ctx.storyPath) ?? '';
-  const sections = storySections(storyText);
-  const prev = readJson(ctx.auditPath, { records: [] });
-  const prevByKey = new Map((prev.records ?? []).map(r => [r.key, r]));
-
-  const appendixTitle = appendixChapter(ctx.contract)?.title ?? null;
-  const records = [];
-  for (const u of doc.units) {
-    if (u.machine_facing) {
-      records.push({ key: u.key, machine_facing: true });
-      continue;
-    }
-    // 开放议题不进落点账：它还没有结论，正文里写它等于把未定的事说成定了。
-    // 它在 review.md 里逐条摆给评审人——那才是它的去处。
-    if (u.kind === 'decision' && u.status === 'open') continue;
-    const old = prevByKey.get(u.key);
-    // 作者填的 covered_by 保留——它是作者的判断，机器只核不重算
-    if (old?.covered_by) {
-      records.push({ key: u.key, covered_by: old.covered_by });
-      continue;
-    }
-    // 图类的 material_only 同理：作者判定这张图不必进 story，机器不重算、只核形态
-    if (old?.material_only && IMAGE_KINDS.has(u.kind)) {
-      records.push({ key: u.key, material_only: old.material_only });
-      continue;
-    }
-    // 技术契约的那些行由机器直接归附录：落点对每一行都一样，不值得让模型逐条重想
-    if (appendixTitle && appendixBound(u, ctx.contract)) {
-      records.push({ key: u.key, at: appendixTitle, by: 'machine' });
-      continue;
-    }
-    // 机器每次重算：story 改了落点就该跟着变。**不沿用上一次的机器结果**，
-    // 否则 story 删了一段、落点还留在那儿，守恒就成了历史快照。
-    const placed = autoPlace(u, sections);
-    if (placed) {
-      records.push({ key: u.key, at: placed.title, by: 'machine' });
-      continue;
-    }
-    // 机器定不了：保留作者填的章名，由裁决者逐条裁「讲清没讲清」。
-    // **不沿用机器上次的结果**——`by` 标记就是为了让这两种来源不再混成一个 `at`。
-    //
-    // `by` 缺省即作者：它是**机器写的来源标记**，分配时作者只写 `at`，
-    // 机器核实通过才盖上 `by: machine`。要求作者自己填 `by: author` 等于把
-    // 内部记账字段摊给他记，漏填一次那条就悄悄变成「无落点」。
-    if (old?.at && old.by !== 'machine') {
-      records.push({ key: u.key, at: old.at, by: 'author' });
-      continue;
-    }
-    records.push({ key: u.key });                       // 三态皆空 → check 会报它
-  }
-  writeJson(ctx.auditPath, { records });
-
-  const open = records.filter(r => !r.at && !r.covered_by && !r.machine_facing);
-  process.stdout.write(
-    `[story-build audit] ${records.length} 条；待你分配 ${open.length} 条`
-    + `（机器已归位 ${records.length - open.length} 条：硬事实按 token 定章、`
-    + `技术契约行直接进附录）\n`
-    + `  待你分配的都是纯中文叙述：给每条一个正文章名 at，`
-    + `或标 covered_by 指向已分配的另一条\n`);
-
-  // 分布：两个总数不够用来定批量策略。二百条待分配时要先看它们**长什么样**——
-  // 集中在哪几段来源、机器归位的那些去了哪几章——才谈得上分批。
-  // 实测过一轮：这些数模型自己写脚本 Counter 了一遍，而数据本来就在这儿。
-  const tri = {
-    at: records.filter(r => r.at).length,
-    covered_by: records.filter(r => r.covered_by).length,
-    machine_facing: records.filter(r => r.machine_facing).length,
-    open: open.length,
-  };
-  process.stdout.write(
-    `  三态：at ${tri.at}｜covered_by ${tri.covered_by}`
-    + `｜机器面 ${tri.machine_facing}｜待分配 ${tri.open}\n`);
-  const bySource = new Map();
-  for (const r of open) {
-    const u = doc.units.find(x => x.key === r.key);
-    const src = u?.source ?? u?.doc ?? '(未知来源)';
-    bySource.set(src, (bySource.get(src) ?? 0) + 1);
-  }
-  if (bySource.size) {
-    process.stdout.write(`  待分配按来源：`
-      + `${[...bySource].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s} ${n}`).join('、')}\n`);
-  }
-  const landed = new Map();
-  for (const r of records) {
-    if (r.at) landed.set(r.at, (landed.get(r.at) ?? 0) + 1);
-  }
-  if (landed.size) {
-    process.stdout.write(`  已分配按落点章：`
-      + `${[...landed].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join('、')}\n`);
-  }
-
-  const SHOW = 10;
-  for (const r of open.slice(0, SHOW)) {
-    const u = doc.units.find(x => x.key === r.key);
-    process.stdout.write(`  - ${r.key}｜${(u?.text ?? '').slice(0, 60)}\n`);
-  }
-  if (open.length > SHOW) {
-    process.stdout.write(`  …另 ${open.length - SHOW} 条同形，全部明细在 `
-      + `${path.basename(ctx.auditPath)}（三态皆空的那些）\n`);
-  }
-
-  // 渲染进度：哪几章还没写、每章还有多少条落点机器核不住。
-  // 成文是**逐章追加**的，中途断了要知道从哪一章续——这两行就是那个位置。
-  const rendered = new Set(sections.map(s => s.title));
-  const pending = ctx.contract.chapters.map(c => c.title).filter(t => !rendered.has(t));
-  const byChapter = new Map();
-  for (const r of records) {
-    if (r.by === 'author' && r.at) byChapter.set(r.at, (byChapter.get(r.at) ?? 0) + 1);
-  }
-  process.stdout.write(
-    `  未渲染章 ${pending.length}/${ctx.contract.chapters.length}`
-    + `${pending.length ? '：' + pending.join('、') : '（全部已渲染）'}\n`);
-  process.stdout.write(
-    `  各章待核单元（机器核不住、交裁决者）：`
-    + `${byChapter.size ? [...byChapter].map(([t, n]) => `${t} ${n}`).join('、') : '无'}\n`);
-
-  // 形态欠账：写完一章就说这一章欠什么，不必等到全篇写完被 check 一次性告知。
-  // 与 `check ④` **同一个函数**（`formShortfall`）——判定一致，只是这里报、那里拦。
-  const shortfall = formShortfall(doc.units, new Map(records.map(r => [r.key, r])), sections);
-  if (shortfall.length) {
-    process.stdout.write('  形态欠账（已渲染章）：\n');
-    for (const item of shortfall) {
-      const what = { image: '图片', diagram: '图', table_row: '表行' }[item.kind];
-      const who = item.units.slice(0, 4)
-        .map(u => `${u.key}「${String(u.text ?? '').replace(/\s+/g, ' ').slice(0, 24)}」`)
-        .join('、');
-      const short = item.want === undefined
-        ? `欠${what} ${item.units.length} 个`
-        : `分${what} ${item.want}、画了 ${item.drawn}，还欠 ${item.want - item.drawn}`;
-      process.stdout.write(
-        `    ${item.at} —— ${short}：${who}`
-        + `${item.units.length > 4 ? '…' : ''}\n`);
-    }
-  }
-
-  // 下一个待写章欠什么：第二步的输入表写着「分给本章的那些单元正文」，
-  // **而在此之前没有任何东西产出这份清单**——作者得自己把几百条按章 join 一遍，
-  // 靠记忆对，图这种只占几条的自然掉出去。这里把它交到手上。
-  //
-  // 只列 `pending[0]` 一章：一次给全十章就回到 1.0 逐章任务书的体量了。
-  // 1.0 真正的问题是**合同按关键词把材料路由给章**，同一事实被四个章节合同各指一次；
-  // 这里投影的是作者自己定的一对一分配，按构造不可能重复。
-  if (pending.length) {
-    const next = pending[0];
-    const mine = records.filter(r => r.at === next);
-    const byKind = new Map();
-    const unitOf = new Map(doc.units.map(u => [u.key, u]));
-    for (const r of mine) {
-      const u = unitOf.get(r.key);
-      if (u) pushInto(byKind, u.kind ?? 'paragraph', u);
-    }
-    process.stdout.write(`  下一个待写章「${next}」分到 ${mine.length} 条：\n`);
-    for (const kind of ['diagram', 'image', 'table_row']) {
-      const list = byKind.get(kind);
-      if (!list?.length) continue;
-      const what = { diagram: '图', image: '图片', table_row: '表行' }[kind];
-      const who = list.map(u => `${u.key}「${String(u.text ?? '')
-        .replace(/\s+/g, ' ').slice(0, 30)}」`).join('、');
-      process.stdout.write(`    ${what} ${list.length} 个：${who}\n`);
-    }
-    const rest = [...byKind].filter(([k]) => !['diagram', 'image', 'table_row'].includes(k));
-    if (rest.length) {
-      process.stdout.write(`    其余：`
-        + rest.map(([k, v]) => `${k} ${v.length}`).join('、') + '\n');
-    }
-  }
 }
 
 // --------------------------------------------------------------------------
@@ -1442,22 +868,24 @@ function cmdCheck(ctx) {
   const mark = (label) => marks.push({ from: problems.length, label });
   // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
   const notes = [];
-  // 离线模式（仲裁锚）：单元清单与核对记录给空，依赖它们的判项一条不判，
+  // 离线模式（仲裁锚）：没有工程上下文，依赖材料与清单的判项一条不判，
   // 不依赖的照跑——同一个函数，不是另写一套。
-  const doc = ctx.offline ? { units: [] } : readJson(ctx.unitsPath, null);
-  if (!doc) fail(`还没有来源单元清单，先跑 init：${ctx.unitsPath}`);
   const storyText = readText(ctx.storyPath);
   if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
-  const audit = ctx.offline ? { records: [] } : readJson(ctx.auditPath, null);
-  if (!audit) fail(`还没有核对记录，先跑 audit：${ctx.auditPath}`);
+
+  const sections = storySections(storyText);
+  // 章正文按标题索引：非占位那条按章取正文。
+  const sectionText = new Map(sections.map(s2 => [s2.title, s2.text]));
+  // 本需求自己的编号不算工程标识——归档件里它是读者回到需求系统的绳子。
+  const ownIds = ownIdentifiers(ctx.args.feature);
+  const titles = sections.map(s2 => s2.title);
+  const want = ctx.contract.chapters.map(c => c.title);
 
   mark('⓪a 声明的来源都在');
   // ⓪a 合同声明的来源都在
   //
-  // ⓪ 防的是「枚举之后材料变了」，防不了「声明的来源压根不在」。后者更隐蔽：
-  // 那一类连一个单元都枚举不出来，而后面每一条判据都只在「枚举出来的那些」上跑，
-  // 于是守恒面小了一整类，门禁却全绿：某一份声明的来源没被产出时，那一类枚举出 0 个
-  // 单元，从头到尾没有一条报错提过。
+  // 声明的来源压根不在是隐蔽的：那一份材料的内容从头到尾没进过任何一条判据的视野，
+  // 门禁却全绿。所以缺一份就各记一笔——必备来源缺了拦，可选来源缺了只记。
   if (!ctx.offline) {
     const { missing } = scanSources(ctx);
     for (const m of missing) {
@@ -1465,54 +893,22 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⓪ 材料未在枚举后变过');
-  // ⓪ 材料没在枚举之后又变过
+  mark('⓪b 台账没在登记之后被换过');
+  // ⓪b 台账没在登记之后被换过
   //
-  // 规格件在 story 写完之后还会继续长——评审裁定回填、遗漏补写。后长出来的内容
-  // 永远不会成为来源单元，于是守恒面悄悄小了一圈：check 在登记那一刻是过的，
-  // 过些时候重跑 audit 才露出一批三态皆空，来源全是后长出来的那些内容。
-  // 这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
-  const frozen = ctx.offline ? { written: false, digests: {} } : storyFrozen(ctx);
+  // story 定稿于登记那一刻，台账记的是它据以成文的依据，于是两者一起冻。
+  // 拒绝 init 挡的是命令，挡不住有人直接改文件——指纹核对补上那一面。
   if (!ctx.offline) {
-    const before = readJson(ctx.unitsPath, {}).source_digests ?? null;
-    if (before) {
-      const drifted = sourceDocs(ctx)
-        .filter(d => before[d.rel] && before[d.rel] !== digestOf(d.text))
-        .map(d => d.rel);
-      const added = sourceDocs(ctx).filter(d => !(d.rel in before)).map(d => d.rel);
-      if (drifted.length || added.length) {
-        // 登记之后这不再是问题：story 定稿于登记那一刻，是**快照**。材料继续演化
-        // 与它无关——评审回稿修订规格件正是常态路径。此前这里指路「重跑 init」，
-        // 而 init 在冻结之后会拒绝执行，两条一起就把人锁死在中间。
-        if (frozen.written) {
-          notes.push(`材料在成文登记之后变了：${[...drifted, ...added].join('、')}`
-            + '——story 与台账是定稿那一刻的快照，不随材料演化；这里只记一笔，不必处置');
-        } else {
-          problems.push(`材料在枚举之后变了：${[...drifted, ...added].join('、')}`
-            + '——重跑 init，audit 会把新增单元列进待分配（你已经分好的那些按 key 保留）');
-        }
-      }
-    }
-    // ⓪b 台账没在登记之后被换过。拒绝 init/audit 挡的是这两条命令，
-    // 挡不住有人直接改文件——指纹核对补上那一面。
-    for (const [name, want] of Object.entries(frozen.digests)) {
+    for (const [name, want2] of Object.entries(storyFrozen(ctx).digests)) {
       const now = digestOf(readText(path.join(ctx.srcDir, name)));
-      if (want === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
-      if (want !== now) {
+      if (want2 === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
+      if (want2 !== now) {
         problems.push(`${name} 与成文登记时的台账对不上——`
           + 'story 定稿之后台账随稿冻结，它记的是这份 story 据以成文的依据；'
           + '改了它，产物与依据就对不上了');
       }
     }
   }
-
-  const sections = storySections(storyText);
-  // 章正文按标题索引：非占位、章节级形态、固定形式几条都按章取正文。
-  const sectionText = new Map(sections.map(s => [s.title, s.text]));
-  // 本需求自己的编号不算工程标识——归档件里它是读者回到需求系统的绳子。
-  const ownIds = ownIdentifiers(ctx.args.feature);
-  const titles = sections.map(s => s.title);
-  const want = ctx.contract.chapters.map(c => c.title);
 
   mark('① 章标题与顺序');
   // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
@@ -1804,31 +1200,6 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⑪ 可读性');
-  // ⑪ 可读性：长段、长章、过长步骤清单、重复段
-  //
-  // 四条都满足同一个条件——**拆了一定更可读**，所以机械判它们不会被换皮受益。
-  // 没有句长判据：为凑短而在逗号处断开只会写出半截话，那比长句更难读，
-  // 而那正是最省力的过关方式。句子啰嗦不啰嗦归裁决者。
-  const readability = ctx.contract.readability ?? {};
-  if (storyText && Object.keys(readability).some(k => !k.startsWith('_'))) {
-    const byKind = new Map();
-    for (const h of scanReadability(storyText, readability)) {
-      if (!byKind.has(h.kind)) byKind.set(h.kind, []);
-      byKind.get(h.kind).push(h);
-    }
-    const label = {
-      long_paragraph: '过长的段落', long_chapter: '一整章没有停顿',
-      long_ordered_list: '过长的步骤清单', duplicate_paragraph: '重复的段落',
-      duplicate_table_row: '表里重复的行',
-    };
-    for (const [kind, list] of byKind) {
-      const sample = list.slice(0, 3).map(h => `${h.line} 行 ${h.detail}`).join('，');
-      problems.push(`${label[kind] ?? kind} ${list.length} 处（${sample}`
-        + `${list.length > 3 ? ' …' : ''}）——${list[0].hint}`);
-    }
-  }
-
   mark('⑫ 附录结构');
   // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
   //
@@ -1948,115 +1319,15 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⑫b 正文章节级形态');
-  // ⑫b 正文章的节级形态：必有的小节在不在、该分节的章分没分
-  //
-  // **为什么要有它**：两轮四份产物、零例外——有 check 判据的形态全达成，
-  // 只有模板占位与注释的形态全不达成（附录五节全中、03 章三小节全中；
-  // 而 04/05/09 的节级只写在注释里，两份产物全部平铺成散文）。
-  // 节级正是信息架构的精华：一条恢复支线一节、关键取舍一节、回退设计一节，
-  // 读者按节回找；压成一坨散文，他只能从头读到尾。
-  //
-  // **只有三条，不加码**：必有的小节在不在、有已定决策时取舍成没成节、
-  // 该分节的章有没有分节。「每章几节」这种配额一律不设——配额逼出来的是凑数的小标题。
-  for (const chapter of ctx.contract.chapters ?? []) {
-    if (chapter.appendix) continue;                 // 附录的小节枚举由 ⑫ 管
-    const body = sectionText.get(chapter.title);
-    if (body === undefined) continue;               // 章缺失由 ① 报，这里不重复
-    // 空章豁免：正文恰是那一句，它已明说这件事不在本需求里，节级形态也就无从谈起
-    if (norm(body) === norm(EMPTY_SECTION_TEXT)) continue;
-    const present = new Set(subsectionNames(body).map(s => s.name));
-    const settled = (Array.isArray(decisions?.decisions) ? decisions.decisions : [])
-      .filter(d => d?.status === 'settled').length;
-    const required = [
-      ...(chapter.section_required ?? []),
-      ...(settled ? (chapter.section_required_with_settled_decisions ?? []) : []),
-    ];
-    for (const want of required) {
-      if (present.has(normalizeHeading(want))) continue;
-      problems.push(`「${chapter.title}」缺「${want}」这一节`
-        + `——${chapter.section_note ?? '这一节是本章的必答内容'}`);
-    }
-    const min = Number(chapter.min_sections) || 0;
-    if (min && present.size < min) {
-      problems.push(`「${chapter.title}」只有 ${present.size} 个小节（至少 ${min} 个）`
-        + `——${chapter.section_note ?? '这一章要分节，读者按节回找'}`);
-    }
-  }
-
-  mark('⑫e 固定形式');
-  // ⑫e 固定形式：该固定的那几个位置，表头由数据锁死，模型只填格子
-  //
-  // **为什么锁到列**：术语、关键取舍、风险、受限与异常、验收——这五处的形式是确定性的，
-  // 效果定义已示范、模板已写明，两轮四份产物照样违反（取舍写成两段散文、受限与异常混成一张表、
-  // 验收全 bullet、术语章整段散文）。规律与编号那件事同根：**确定性的形式写在注释里
-  // 就是自由发挥区**，只有变成机器动作或判据才存在。
-  //
-  // **锁的是「本来就该是表的位置」，不是鼓励表格**：背景、方案叙述、流程图文、功能行为、
-  // 交付路径一条表格类判据都不加——能一句话说清的仍然不建表，那一面归裁决面的贴合维。
-  for (const chapter of ctx.contract.chapters ?? []) {
-    const spec = chapter.section_form;
-    if (!spec) continue;
-    const body = sectionText.get(chapter.title);
-    if (body === undefined) continue;
-    if (norm(body) === norm(EMPTY_SECTION_TEXT)) continue;      // 空章豁免
-    for (const [where, want] of Object.entries(spec)) {
-      if (where === '__two_tables__') {
-        const heads = tableHeadersOf(body);
-        for (const columns of want) {
-          if (!heads.some(h => headerMatches(h.columns, columns))) {
-            problems.push(`「${chapter.title}」缺一张表头为「${columns.join(' / ')}」的表`
-              + '——两类分开列：设计内的受限结果与真正的失败混在一张表里，'
-              + '读者分不清哪些要处理、哪些本来就是这么设计的');
-          }
-        }
-        continue;
-      }
-      if (where === '__each_h3__') {
-        for (const sub of subsectionNames(body)) {
-          const inner = subsectionText(body, sub.name);
-          if (inner === null || /不涉及[:：]\s*\S/.test(inner)) continue;
-          if (!tableHeadersOf(inner).some(h => headerMatches(h.columns, want.columns))) {
-            problems.push(`「${chapter.title}·${sub.raw}」不是一张表头为`
-              + `「${want.columns.join(' / ')}」的表——组名自拟，形态固定：`
-              + '一条一行、编号独立、通过条件可观察；写成 bullet 就没法逐条比对');
-          }
-        }
-        continue;
-      }
-      const scope = where === '__chapter__' ? body : subsectionText(body, where);
-      if (scope === null) continue;                 // 缺节由 ⑫b 报，这里不重复
-      if (/不涉及[:：]\s*\S/.test(scope)) continue;
-      if (want.columns
-          && !tableHeadersOf(scope).some(h => headerMatches(h.columns, want.columns))) {
-        problems.push(`「${chapter.title}${where === '__chapter__' ? '' : '·' + where}」`
-          + `要的是一张表头为「${want.columns.join(' / ')}」的表`
-          + '——这几列是固定的，内容填进格子里；写成散文，逐项比对的那几列就没了');
-      }
-      const budget = Number(want.prose_budget);
-      if (Number.isFinite(budget)) {
-        const prose = proseBlocks(scope).filter(p => !/不涉及[:：]\s*\S/.test(p.text));
-        if (prose.length > budget) {
-          problems.push(`「${chapter.title}${where === '__chapter__' ? '' : '·' + where}」`
-            + `表外有 ${prose.length} 段正文（至多 ${budget} 段）`
-            + '——该进表的内容写进表里，别在表外另起一段');
-        }
-      }
-    }
-  }
-
   mark('⑫c 形态 lint');
   // ⑫c 形态 lint：图的承接、材料清单的行形态
   //
   // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
   // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、材料能不能定位」。
   // 图题编号与小节编号已归 `number` 机器铺，不再判。
-  for (const h of scanImageForm(storyText)) {
-    // 悬空指图点的是**那句话**，不是图——「第 N 行的图」会让人去那一行找一张不存在的图
-    problems.push(h.kind === 'image_dangling'
-      ? `第 ${h.line} 行写着「${h.hit}」，附近却没有图——${h.hint}`
-      : `第 ${h.line} 行的图不合形态——${h.hint}`);
-  }
+  // 图的承接与图题**不在这里判**：「这句话指的是不是这张图」要读上下文，
+  // 那是独立审查按效果判的事。这里只留材料清单的行形态——它是材料清单集合判据的搭档，
+  // 判的是「这一行有没有链接、链到的地方在不在清单里」，是确定性的。
   {
     const appendix = appendixChapter(ctx.contract);
     const name = materialSubsectionName(ctx.contract);
@@ -2394,7 +1665,6 @@ function main() {
   if (args.command === 'init') cmdInit(ctx);
   else if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
-  else if (args.command === 'audit') cmdAudit(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);
@@ -2406,4 +1676,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   main();
 }
 
-export { normQuote, quoteBounds };
+

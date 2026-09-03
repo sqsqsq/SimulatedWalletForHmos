@@ -1935,9 +1935,8 @@ def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
 def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
     """跑 init → audit →（可选写裁决表）→ check，返回 check 的退出码与输出。
 
-    **在夹具的副本上跑**：这几条命令会写 source-units.json / audit.json / story-verdicts.md，
-    直接在夹具里跑会把它写脏，且上一次的产物会影响下一次的判定（实测 bad 跑完留下的裁决表
-    让 good 那面读到了错的引文）。
+    **在夹具的副本上跑**：`init` 会写决策登记骨架，直接在夹具里跑会把它写脏，
+    且上一次的产物会影响下一次的判定。
     """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / root.name
@@ -1965,12 +1964,9 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
             ["node", str(build), cmd, "--feature", "AR90001", "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
-    for cmd in ("init", "audit"):
-        r = run(cmd)
-        if r.returncode != 0:
-            return r.returncode, f"{cmd} 跑不起来：{(r.stderr or r.stdout or '')[:200]}"
-
-    _seed_author_side(root, extra_verdict)
+    r = run("init")
+    if r.returncode != 0:
+        return r.returncode, f"init 跑不起来：{(r.stderr or r.stdout or '')[:200]}"
 
     r = run("check")
     return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()
@@ -1981,50 +1977,6 @@ _NORM_RE = re.compile(r"[\s，。、；：!?！？（）()「」【】｜|*`>-]"
 
 def _norm(text: str) -> str:
     return _NORM_RE.sub("", str(text or ""))
-
-
-def _seed_author_side(root: Path, extra_verdict: str | None) -> None:
-    """把「作者已分配、裁决者已裁」这一段补齐——它现在是纯中文单元的**唯一**通路。
-
-    机器只给硬事实（token）定落点；纯中文叙事一律留给作者，再由裁决者逐条裁。
-    夹具只带材料与 story，跑一遍 init/audit 之后那些单元必然三态皆空——
-    那是流程还没走完，不是夹具坏了。这里替作者与裁决者把该做的做掉，
-    好让形态类判据（图、表、长度、语言）验的是它们自己，而不是「流程没走完」。
-
-    落点按**作者会怎么放**来定：这条单元的正文在哪一章能找到就放哪一章。
-    这不是判据（判据里没有片段匹配了），是测试装置在模拟一个尽职的作者。
-    """
-    src = root / "doc" / "features" / "AR90001" / "AR" / "story-src"
-    audit_path = src / "audit.json"
-    units_path = src / "source-units.json"
-    story_path = root / "doc" / "features" / "AR90001" / "AR" / "story.md"
-    if not (audit_path.is_file() and units_path.is_file() and story_path.is_file()):
-        return
-    data = json.loads(read_text(audit_path))
-    units = {u["key"]: u for u in json.loads(read_text(units_path)).get("units", [])}
-    bodies = _chapter_bodies(story_path)
-    fallback = next((t for t, b in bodies.items() if b and not _is_empty_chapter(b)), None)
-    if fallback is None:
-        return
-
-    rows = []
-    used: dict = {}
-    for rec in data.get("records", []):
-        if any(rec.get(k) for k in ("at", "covered_by", "machine_facing")):
-            continue
-        unit = units.get(rec["key"], {})
-        if unit.get("kind") == "knowledge":
-            continue                      # 规约条目走判定表，不占章节落点
-        text = unit.get("text") or ""
-        at = _chapter_for(text, bodies) or fallback
-        rec["at"], rec["by"] = at, "author"
-        rows.append((rec["key"], "讲清",
-                     _quote_for(bodies.get(at, ""), text, extra_verdict,
-                                used, unit.get("tokens") or [])))
-    audit_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    (src / "story-verdicts.md").write_text(
-        _verdict_tables(REPO_ROOT, extra_verdict or "本章按此写就", rows, story_path),
-        encoding="utf-8")
 
 
 def _chapter_for(text: str, bodies: dict) -> str | None:
@@ -2525,13 +2477,16 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
         injected = text.replace(
             "\n## " + head[2].split("\n", 1)[0],
             "\n## " + head[2].split("\n", 1)[0]
-            + "\n\n这里塞一个 queryLossEligibility 进主叙事：" + "复述一遍没有信息量的话，" * 20,
+            + "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。",
             1)
         story.write_text(injected, encoding="utf-8")
         bad_code, bad_out = run(story)
     if bad_code == 0:
-        return Outcome(False, "往金样里塞了工程标识与超长段落却仍然全过——判项在空转")
-    missed = [w for w in ("工程标识", "过长的段落") if w not in bad_out]
+        return Outcome(False, "往金样里塞了工程标识与模板占位符却仍然全过——判项在空转")
+    # 两个违例都取**确定性的明确记号**：工程标识与模板占位符。原先用的「超长段落」
+    # 归可读性，那条随固定形式类判据退场了——反分支要验的是判项没空转，
+    # 不该挂在一条会退场的判据上。
+    missed = [w for w in ("工程标识", "模板占位符") if w not in bad_out]
     if missed:
         return Outcome(False, f"注入的违例没被点名：{missed}；实际输出 {bad_out[:200]}")
     return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
@@ -2640,7 +2595,12 @@ def f02_verifier_task_not_well_defined(root: Path, ctx: Ctx) -> Outcome:
     再核它们没有出现在裁决者的作业书里。同一条作业要求只该待在一份作业书里。
     """
     write_doc = _find_phase_doc(root, "story-write.md")
-    verify_doc = _find_phase_doc(root, "story-verify.md")
+    # 独立审查的任务已经不是一份独立作业书了，它是 spec overlay 里的一条判据。
+    # 旧文件没了就返回「未启用」是静默放过——判据要跟着对象走。
+    overlay = _ext_file(root, "rules/spec-rules.overlay.yaml")
+    if overlay is None:
+        overlay = DEFAULT_EXTENSION_DIR / "rules" / "spec-rules.overlay.yaml"
+    verify_doc = overlay if overlay.is_file() else None
     if write_doc is None or verify_doc is None:
         return Outcome(True, "作业书不全（该形态未启用）")
     dimensions = _self_check_dimensions(read_text(write_doc))

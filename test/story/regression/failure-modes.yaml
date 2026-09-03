@@ -828,13 +828,16 @@ modes:
     found_round: 2026-08-29
     form: 材料里的表在 story 里被摊成散文，逐项比对的那几列丢了
     clause: KV-3 / M4 / 冻结 01-C1
-    checker: s02_terms_not_table
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S02-terms-not-table/bad
-    good_fixture: test/story/fixtures/failure-modes/S02-terms-not-table/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「术语」章的读者问题看近义词差别讲清没有；用户按 TEST §10「产物结果」一轴读术语章是否一看就懂。
     scope_note: >
       最先丢的是非首列——触发条件、编号、责任方。三行表摊成一句话，读者要靠数分号对齐，而术语表本来是给他随时回查的。单行不构成表，故只有 ≥2 行落在同一章时才要求成表——这条与「一行不成表」的表达规则对齐，否则机器要建表、裁决者判不该建表。
 
@@ -843,13 +846,16 @@ modes:
     found_round: 2026-08-29
     form: 一段几百字的散文，读者找不到结论也找不到停顿
     clause: KV-3 / M5 / Microsoft 写作风格（短句短段、结论先行）
-    checker: s03_long_paragraph
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S03-long-paragraph/bad
-    good_fixture: test/story/fixtures/failure-modes/S03-long-paragraph/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按章级维度里的「表达贴合」看有没有读不下去的长段；用户按同一轴通读时的实际感受。
     scope_note: >
       阈值满足「拆了一定更可读」这个条件，所以机械判它不会被换皮受益：把长段拆开、把结论提到段首，两件事都只会让文档更好读。**不设句长阈值**——中文 45–60 字的复句很常见，为凑短在逗号处一刀切只会写出半截话，那正是最省力的过关方式。
 
@@ -858,13 +864,16 @@ modes:
     found_round: 2026-08-29
     form: 同一段话在两章各写一遍——「不重复」这一轴此前只有「分配恰好一处」在守，那管不住作者
     clause: KV-3 / KV-7 / 冻结 01-C2
-    checker: s04_duplicate_paragraph
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S04-duplicate-paragraph/bad
-    good_fixture: test/story/fixtures/failure-modes/S04-duplicate-paragraph/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「同一件事在两处完整表述」这一维度跨章看；用户按同一轴看有没有重复读到同一件事。
     scope_note: >
       分配恰好一处管的是来源单元，管不住作者在两章各写同样的话。规范化（去空白标点与强调标记）后逐段比对，改个标点也认得出。下限 duplicate_min_chars 是合同数据：低于它，「本需求不涉及。」这类模板句会被判成重复。
 
@@ -982,13 +991,16 @@ modes:
     found_round: "2026-08-30"
     form: 已定决策成堆而方案章没有取舍这一节——取舍化进散文，评审者要读完整章才拼得出「否掉了什么」
     clause: KG-3 / B2-9
-    checker: s08_solution_chapter_flat
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S08-solution-chapter-flat/bad
-    good_fixture: test/story/fixtures/failure-modes/S08-solution-chapter-flat/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「业务方案」章的读者问题看参与方、取舍、风险是否各自可回找；用户按同一轴看方案章能不能按节回查。
     scope_note: >
       两轮四份产物零例外：有 check 判据的形态全达成（附录五节、范围三小节），
       只写在模板注释或占位里的形态全不达成（方案章与交付章的节级）。节级正是信息架构
@@ -1000,13 +1012,16 @@ modes:
     found_round: "2026-08-30"
     form: 有内容的流程章一个小节都没有——主路径与全部支线压在一坨散文里
     clause: KG-3 / B2-9
-    checker: s09_flow_chapter_flat
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S09-flow-chapter-flat/bad
-    good_fixture: test/story/fixtures/failure-modes/S09-flow-chapter-flat/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「业务流程」章的读者问题看主路径与分支去向是否分得开；用户按同一轴看流程能不能读出分支。
     variant_of: S08-solution-chapter-flat
     scope_note: >
       与 S08 同源，判的是「该分节的章分没分」。**不设「每章几节」的配额**——
@@ -1052,13 +1067,16 @@ modes:
     found_round: "2026-08-30"
     form: 关键取舍那一节写成散文——「否了什么、为什么被否的不行」两列被化进句子里，读者拼不出来
     clause: KG-3 / B2-9
-    checker: s12_tradeoff_prose
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S12-tradeoff-prose/bad
-    good_fixture: test/story/fixtures/failure-modes/S12-tradeoff-prose/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「每个关键取舍：选了什么、否了什么、为什么」这一问看取舍是否可逐项对照；用户按同一轴看被否方案与理由在不在。
     scope_note: >
       与 S08（缺节）互补：节在，形态塌了。模板明写「成表」，两轮四份产物照样写成两段散文
       ——确定性的形式写在注释里就是自由发挥区。表头逐列逐字锁死，模型只填格子。
@@ -1068,13 +1086,16 @@ modes:
     found_round: "2026-08-30"
     form: 设计内的受限结果与真正的失败混进同一张表——读者分不清哪些要处理、哪些本来就是这么设计的
     clause: KG-3 / B2-9
-    checker: s13_limited_and_error_in_one_table
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S13-limited-and-error-in-one-table/bad
-    good_fixture: test/story/fixtures/failure-modes/S13-limited-and-error-in-one-table/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「正常受限结果与真正异常分开说明」这一维度看；用户按同一轴看读者能不能分清哪些要处理。
     scope_note: >
       判的是「两张表头可区分的分立表在不在」，不判每一行归哪张——行归属是语义，
       归裁决者的逐章维度。空章豁免。
@@ -1084,13 +1105,16 @@ modes:
     found_round: "2026-08-30"
     form: 验收写成 bullet——编号、通过条件与主责挤在一行文字里，没法逐条比对
     clause: KG-3 / B2-9
-    checker: s14_acceptance_bulleted
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S14-acceptance-bulleted/bad
-    good_fixture: test/story/fixtures/failure-modes/S14-acceptance-bulleted/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「每条原始验收编号的场景与可观察通过条件」这一问看；用户按同一轴看验收能不能逐条判定。
     scope_note: >
       组名自拟不判——按「要验的事」分组是作者的判断；判的是每个小节里那张表的头。
 
@@ -1186,13 +1210,16 @@ modes:
     found_round: "2026-08-31"
     form: 悬空的指图句——这一段写着「下图」，前后两块之内却没有图
     clause: KG5-2 / 坑 #37
-    checker: s20_dangling_figure_ref
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S20-dangling-figure-ref/bad
-    good_fixture: test/story/fixtures/failure-modes/S20-dangling-figure-ref/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
+    responsibility: observed
+    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    reason: >
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+    observed_by: >
+      审查者按「图与文的配合」这一维度看指图的那句话附近有没有图；用户按同一轴看图文对不对得上。
     scope_note: >
       承接判（image_lead）只从图往回看一行，图迁走之后它无从判起——留在原地的
       那句话没有任何判据管。这一条从话往外看：前后各两个块之内没有图就点名。

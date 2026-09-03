@@ -47,9 +47,6 @@ class AllocateRenderCase(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     @property
-    def units(self) -> list[dict]:
-        return json.loads((self.src / "source-units.json").read_text("utf-8"))["units"]
-
     @property
     def records(self) -> list[dict]:
         return json.loads((self.src / "audit.json").read_text("utf-8"))["records"]
@@ -98,89 +95,6 @@ class AllocateRenderCase(unittest.TestCase):
             records.append({"key": unit["key"], "at": at})
         (self.src / "audit.json").write_text(
             json.dumps({"records": records}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-class TestAllocation(AllocateRenderCase):
-    """KF-7a：分配即恰好一处。"""
-
-    def test_audit_runs_before_any_chapter_exists(self) -> None:
-        """story.md 还不存在 = 一章都没渲染，不是错误——分配先于正文。"""
-        self.assertFalse(self.story.exists())
-        proc = self.run_build("audit")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("未渲染章", proc.stdout)
-
-    def test_unallocated_units_are_listed(self) -> None:
-        """没分配时，纯中文那些都该被列成「待你分配」——这是分配的任务清单。
-
-        机器已归位的条数同时报出来：这两个数一起看，才知道模型真正要做多少事。
-        """
-        proc = self.run_build("audit")
-        open_count = sum(1 for r in self.records
-                         if not r.get("at") and not r.get("covered_by") and not r.get("machine_facing"))
-        self.assertGreater(open_count, 0)
-        self.assertIn(f"待你分配 {open_count} 条", proc.stdout)
-        self.assertIn("机器已归位", proc.stdout)
-
-    def test_one_record_per_unit_and_none_homeless(self) -> None:
-        self.allocate()
-        self.render(self.chapters())
-        self.assertEqual(self.run_build("audit").returncode, 0)
-        keys = [r["key"] for r in self.records]
-        self.assertEqual(len(keys), len(set(keys)), "一个单元只能有一条记录")
-        self.assertEqual({u["key"] for u in self.units}, set(keys), "记录与单元一一对应")
-        homeless = [r for r in self.records
-                    if not r.get("at") and not r.get("covered_by") and not r.get("machine_facing")]
-        self.assertEqual(homeless, [], "分配完成后不该还有无家可归的单元")
-
-
-
-class TestChapterRendering(AllocateRenderCase):
-    """KF-7b：逐章渲染可续写。"""
-
-    def test_pending_chapters_shrink_as_rendering_proceeds(self) -> None:
-        self.allocate()
-        titles = self.chapters()
-        first = self.run_build("audit").stdout
-        self.assertIn(f"未渲染章 {len(titles)}/{len(titles)}", first)
-
-        self.render(titles[:2])
-        second = self.run_build("audit").stdout
-        self.assertIn(f"未渲染章 {len(titles) - 2}/{len(titles)}", second)
-        for done in titles[:2]:
-            self.assertNotIn(done, second.split("未渲染章")[1].split("\n")[0])
-
-    def test_rendering_a_chapter_only_verifies_that_chapter(self) -> None:
-        """渲染一章，只有落在这一章、且正文里核得到的单元变 `by: machine`。"""
-        self.allocate()
-        by_key = {u["key"]: u for u in self.units}
-        allocated = json.loads((self.src / "audit.json").read_text("utf-8"))["records"]
-        # 挑一个「章里确实核得到它的 token」的落点，否则渲染完机器仍然定不了，测不到东西
-        target = next(
-            r["at"] for r in allocated
-            if r.get("at") and any(t in self.chapter_text(r["at"])
-                                   for t in (by_key[r["key"]].get("tokens") or [])))
-        self.render([target])
-        self.assertEqual(self.run_build("audit").returncode, 0)
-        machine = [r for r in self.records if r.get("by") == "machine"]
-        self.assertTrue(machine, "渲染过的章里应当有单元被机器核实")
-        self.assertTrue(all(r["at"] == target for r in machine),
-                        "未渲染章里的单元不该被标成已核实")
-
-    def test_continuation_does_not_rewrite_finished_chapters(self) -> None:
-        """续写只追加：已写好的章逐字节不变。"""
-        self.allocate()
-        titles = self.chapters()
-        self.render(titles[:2])
-        before = self.story.read_text("utf-8")
-        self.run_build("audit")
-        self.render(titles[2:4])
-        after = self.story.read_text("utf-8")
-        self.assertTrue(after.startswith(before), "续写不得改动已渲染的章")
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RegistrationSweepsScratchFiles(unittest.TestCase):

@@ -43,7 +43,6 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | S4 生成 design.md | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
 | 成文：分配与逐章渲染 | [phases/story-write.md](phases/story-write.md) |
-| 成文：裁决者怎么裁 | [phases/story-verify.md](phases/story-verify.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 推进契约

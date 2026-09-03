@@ -76,10 +76,9 @@ POSITIONING = ("AR", "story-src", ".positioning.json")
 SCOPE_OPTIONS = ("AR", "story-src", ".scope-options.json")
 DESIGN = ("AR", "design.md")
 # 成文态登记时随稿冻结的台账：story 定稿了，它据以成文的账本也就定稿了。
-# 登记之后重跑 init/audit 会把这几份重算一遍：story.md 冻了，账本被后一次重跑冲掉。
+# 登记之后重跑 init 会把这几份重算一遍：story.md 冻了，账本被后一次重跑冲掉。
 STORY_SRC_FROZEN = (
-    "source-units.json", "audit.json", "decisions.json",
-    "story-verdicts.md", "copyedit.md",
+    "decisions.json", "copyedit.md",
 )
 
 
@@ -966,7 +965,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
-    # 之后 `story-build check` 拿它核对，`init`/`audit` 直接拒绝重算。
+    # 之后 `story-build check` 拿它核对，`init` 直接拒绝重算。
     src = feature_root / "AR" / "story-src"
     for stray in sweep_story_src(src):
         log(f"清理中间件：{stray}")

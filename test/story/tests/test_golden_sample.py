@@ -138,12 +138,12 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
             shutil.copytree(GOLDEN / "assets", work / "assets")
             story = work / "story.md"
             text = story.read_text(encoding="utf-8")
-            marker = "\n\n这里塞一个 queryLossEligibility 进主叙事：" + "复述一遍没有信息量的话，" * 20
+            marker = "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。"
             story.write_text(text.replace("## 2. 术语", "## 2. 术语" + marker, 1), encoding="utf-8")
             code, out = offline_check(story)
         self.assertEqual(1, code)
         self.assertIn("工程标识", out)
-        self.assertIn("过长的段落", out)
+        self.assertIn("模板占位符", out)
 
 
 if __name__ == "__main__":

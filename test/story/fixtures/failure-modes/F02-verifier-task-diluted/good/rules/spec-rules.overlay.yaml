@@ -1,0 +1,11 @@
+phase: spec
+version: "1.1"
+semantic_checks:
+  story_reader_review:
+    description: >
+      归档叙事件的独立审查：按读者会问什么审背景、范围、方案、流程、功能、异常、验收、
+      交付、图与文的配合、判断与事实是否分开。
+    severity: MAJOR
+    ai_prompt_hint: >
+      结论只写两类：blocking_findings 与 advisories。
+      引用材料或 story 时抄原文定位，不要复述；零 blocking 时说明逐章都过了什么。

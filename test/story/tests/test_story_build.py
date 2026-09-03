@@ -1,11 +1,11 @@
-"""`story-build` 三个命令的单元断言——init 派生什么、audit 记什么、check 拦什么。
+"""`story-build` 各命令的单元断言——init 派生什么、chapter 怎么落盘、check 拦什么。
 
 台账（`check_failure_modes.py`）判的是**形态回不回来**：一个已知会犯的错，机制现在抓不抓得住。
 本文件判的是**判据本身的边界**：同一条判据，改一个字符就该翻面的那些地方。两者都要有，
 因为台账只覆盖曾经真实发生过的错，而边界是它没走到的地方。
 
 夹具借用 `R01-verdict-echo/good`——它是一份最小但完整的工作区（材料 + story + 激活清单 +
-决策件）。每个用例在**副本**上跑：这几条命令会写 `source-units.json` / `audit.json`，
+决策件）。每个用例在**副本**上跑：这几条命令会写 `decisions.json` 与 `story.md`，
 在夹具原地跑会把它写脏，且上一个用例的产物会影响下一个。
 """
 from __future__ import annotations
@@ -84,46 +84,6 @@ def _appendix_title() -> str:
     return (hit or {}).get("title", "")
 
 
-def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
-    """按合同派生裁决者的三张表：逐单元 / 逐问 / 逐章。
-
-    逐问与逐章的行由**合同**决定（章、问题、维度），不在测试里写死：合同改了夹具
-    自动跟着变；写死的话，改合同就要同步改一堆夹具，而没人保证会改。
-
-    引文取该章自己的一段原文——用同一句填满所有章会被 check 判「引文在该章里
-    检索不到」，那正是它该做的。
-    """
-    import json as _json
-    contract = _json.loads((Path(repo_root) / "doc/extensions/skills/story/contracts"
-                            / "story-chapters.json").read_text(encoding="utf-8"))
-    verdicts = contract.get("verdicts") or {}
-    question_ok = (verdicts.get("question_words") or ["答了"])[0]
-    chapter_ok = (verdicts.get("chapter_words") or ["达标"])[0]
-    bodies = _chapter_bodies(story_path)
-
-    lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
-    lines += ["| {} | {} | {} |".format(k, v, q) for k, v, q in unit_rows]
-
-    lines += ["", "| 章 | 问题 | 裁决 | 引文 |", "|---|---|---|---|"]
-    for chapter in contract.get("chapters") or []:
-        body = bodies.get(chapter["title"], "")
-        if _is_empty_chapter(body):
-            continue
-        evidence = _chapter_quote(body) or quote
-        for question in chapter.get("questions") or []:
-            lines.append("| {} | {} | {} | {} |".format(
-                chapter["title"], question, question_ok, evidence))
-
-    lines += ["", "| 章 | 维度 | 裁决 | 依据 |", "|---|---|---|---|"]
-    for chapter in contract.get("chapters") or []:
-        if chapter.get("appendix") or _is_empty_chapter(bodies.get(chapter["title"], "")):
-            continue
-        for dimension in verdicts.get("chapter_dimensions") or []:
-            lines.append("| {} | {} | {} | 本章按此写就 |".format(
-                chapter["title"], dimension, chapter_ok))
-    return "\n".join(lines) + "\n"
-
-
 class StoryBuildCase(unittest.TestCase):
     """每个用例一份新工作区；子类只关心自己那一条判据。"""
 
@@ -144,9 +104,12 @@ class StoryBuildCase(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def init_audit(self) -> None:
-        for command in ("init", "audit"):
-            proc = self.run_build(command)
-            self.assertEqual(proc.returncode, 0, f"{command} 跑不起来：{proc.stderr}")
+        """起手：材料齐备检查 + 决策登记骨架。
+
+        名字留着不改是因为几十处在用；`audit` 那一半随逐单元系统退场，没有对象了。
+        """
+        proc = self.run_build("init")
+        self.assertEqual(proc.returncode, 0, f"init 跑不起来：{proc.stderr}")
 
     def check_output(self) -> tuple[int, str]:
         proc = self.run_build("check")
@@ -161,25 +124,6 @@ class StoryBuildCase(unittest.TestCase):
 
     # ---- 产物读写 ----
 
-    @property
-    def units(self) -> list[dict]:
-        return json.loads((self.src / "source-units.json").read_text(encoding="utf-8"))["units"]
-
-    @property
-    def audit(self) -> dict:
-        return json.loads((self.src / "audit.json").read_text(encoding="utf-8"))
-
-    def write_audit(self, data: dict) -> None:
-        (self.src / "audit.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def write_verdicts(self, rows: list[tuple[str, str, str]]) -> None:
-        """三张表一起写——裁决者的产物本来就是三张，只写一张 check 会判缺表。"""
-        fallback = next((q for _, verdict, q in rows
-                         if verdict == "讲清" and len(q) >= 12), "")
-        (self.src / "story-verdicts.md").write_text(
-            _verdict_tables(REPO_ROOT, fallback, rows, self.story_path), encoding="utf-8")
-
     def story(self) -> str:
         return self.story_path.read_text(encoding="utf-8")
 
@@ -188,340 +132,18 @@ class StoryBuildCase(unittest.TestCase):
         self.assertIn(old, text, "夹具变了，用例要跟着改")
         self.story_path.write_text(text.replace(old, new), encoding="utf-8")
 
-    @staticmethod
-    def _quote_for(body: str, unit_text: str, tokens: list, used: dict) -> str:
-        """给这一条单元挑一句引文：**讲它的那一句**，不是全章第一句。
 
-        装置模拟的是尽职的裁决者。拿同一句给全章所有单元作证，正是 check ⑥ 要拦的
-        形态（一句章级总述句能满足够长、是原文、非回声三条）——装置这么做，
-        那条判据就永远测不出来。
-        """
-        cands = []
-        for line in body.split("\n"):
-            cand = line.strip()
-            if cand.startswith("|"):
-                cells = [c.strip() for c in cand.strip("|").split("|")]
-                cells = [c for c in cells if c and not set(c) <= set("-: ")]
-                if not cells:
-                    continue
-                cand = max(cells, key=len)
-            if len(cand) >= 14 and cand not in unit_text and not cand.startswith("#"):
-                cands.append(cand)
-        if QUOTE in body and QUOTE not in unit_text:
-            cands.insert(0, QUOTE)
-        for cand in cands:
-            if any(t and t in cand for t in tokens):
-                used[cand] = used.get(cand, 0) + 1
-                return cand
-        for cand in cands:
-            if used.get(cand, 0) < 2:
-                used[cand] = used.get(cand, 0) + 1
-                return cand
-        return cands[0] if cands else ""
+class TestArchiveRedlines(StoryBuildCase):
+    """归档件四红线里机器判得了的那条：正文不许出现仓内路径。
 
-    def settle(self) -> list[str]:
-        """把机器定不了落点的单元交给作者并配上裁决——夹具的基线态。
-
-        `check` 要求三态之一齐备：机器定不了的那些，正式链路上由 S5 裁决者处置。
-        用例要断言「某一条判据翻面」，基线就得是通过态，否则测的是别的问题。
-        """
-        data = self.audit
-        by_key = {u["key"]: u for u in self.units}
-        bodies = _chapter_bodies(self.story_path)
-        # 表行要落在有表的那一章：把材料的表摊进一章散文里，check ④ 判它降级——
-        # 那是它该做的，但这里要的是通过态基线，不是去撞那条判据
-        appendix = _appendix_title()
-        with_table = next((t for t, b in bodies.items()
-                           if t != appendix
-                           and any(x.strip().startswith("|") for x in b.split("\n"))), None)
-        rows = []
-        used: dict = {}
-        for record in data["records"]:
-            if any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
-                continue
-            kind = by_key.get(record["key"], {}).get("kind")
-            at = with_table if (kind == "table_row" and with_table) else "功能说明"
-            record["at"], record["by"] = at, "author"
-            body = bodies.get(at, "")
-            unit_text = by_key.get(record["key"], {}).get("text") or ""
-            tokens = by_key.get(record["key"], {}).get("tokens") or []
-            quote = self._quote_for(body, unit_text, tokens, used)
-            rows.append((record["key"], "讲清", quote or QUOTE))
-        self.write_audit(data)
-        if rows:
-            self.write_verdicts(rows)
-        return [k for k, _, _ in rows]
-
-    def hand_to_author(self) -> list[str]:
-        """把机器定不了落点的那些交给作者，返回它们的键。
-
-        夹具里所有单元机器都能定位，所以这里主动造一条：拿走一个单元的机器落点，
-        改标成作者落点——`check ⑥` 的裁决核实只对 `by: author` 生效。
-        """
-        data = self.audit
-        keys = []
-        for record in data["records"]:
-            if record.get("at") and record.get("by") == "machine":
-                record["at"], record["by"] = "功能说明", "author"
-                keys.append(record["key"])
-                break
-        self.assertTrue(keys, "夹具里没有可改判的记录")
-        for record in data["records"]:
-            if not any(record.get(k) for k in ("at", "covered_by", "machine_facing")):
-                record["at"], record["by"] = "功能说明", "author"
-                keys.append(record["key"])
-        self.write_audit(data)
-        self.write_verdicts([(k, "讲清", QUOTE) for k in keys])
-        return keys
-
-
-class TestTokenExclusion(StoryBuildCase):
-    """守恒对象与归档件红线不能互相打架——同一个词不能既要求出现又禁止出现。"""
-
-    def test_drop_shaped_id_never_becomes_a_token(self) -> None:
-        """`drop` 的编号 check ③ 明令不许进 story，它就不能是守恒要求出现的 token。"""
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n功能 F7 与场景 S2 在本期一起上。\n",
-                       encoding="utf-8")
-        self.init_audit()
-        tokens = {t for u in self.units for t in (u.get("tokens") or [])}
-        self.assertNotIn("F7", tokens)
-        self.assertNotIn("S2", tokens)
-
-    def test_drop_shaped_id_in_story_still_fails(self) -> None:
-        """排除的是守恒对象，不是红线——编号真写进 story 仍要被拦。"""
-        self.init_audit()
-        self.settle()
-        self.rewrite_story("本需求不涉及。\n\n## 术语", "功能 F7 已完成。\n\n## 术语")
-        self.assert_check_names("story 里出现了仓内工作编号")
-
-
-class TestTemplateNotes(StoryBuildCase):
-    """模板生成的文字不是材料——按生成它的模板约定判，不按样本形状判。"""
-
-    def test_spec_blockquotes_leave_the_author_facing_set(self) -> None:
-        """spec 模板的 `>` 块只承载登记项与作业说明，没有可讲的事实。
-
-        它们留在材料面时，审稿者只能对着「**版本**: v1.0」盖一个「讲清」——
-        实测 43/43 全「讲清」、0「未讲清」，区分力就是这么被稀释掉的。
-        """
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        spec.parent.mkdir(parents=True, exist_ok=True)
-        spec.write_text(
-            "\n".join([
-                "# 甲需求 spec",
-                "",
-                "> **版本**: v1.0",
-                "> **状态**: 草稿（评审中）",
-                "",
-                "## 0. 术语映射表",
-                "",
-                "> 本节是本 spec 的第一道 BLOCKER：业务名词必须映射到真实存在的模块名。",
-                "",
-                "| 原始术语 | 权威模块 |",
-                "|---|---|",
-                "| 等待态 | 甲模块 |",
-                "",
-            ]),
-            encoding="utf-8")
-        self.init_audit()
-        spec_bq = [u for u in self.units if u["doc"] == "SPEC" and u["kind"] == "blockquote"]
-        self.assertTrue(spec_bq, "夹具的 spec 里应当有 > 块")
-        for unit in spec_bq:
-            self.assertTrue(unit["machine_facing"], f"{unit['key']} 仍在材料面：{unit['text'][:30]}")
-            self.assertEqual(unit["tokens"], [], "机器面单元不参与 token 守恒")
-
-    def test_author_written_blockquotes_are_untouched(self) -> None:
-        """PRD 是人写的，它的 `>` 块该留在材料面——判据只对声明了 notes 的那份材料生效。"""
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8")
-                       + "\n> 产品强调：断网时也要能打开已经存下来的凭证。\n",
-                       encoding="utf-8")
-        self.init_audit()
-        prd_bq = [u for u in self.units if u["doc"] == "PRD" and u["kind"] == "blockquote"]
-        self.assertTrue(prd_bq, "PRD 里应当有 > 块")
-        self.assertTrue(all(not u["machine_facing"] for u in prd_bq),
-                        "人写的 > 块不该被打成机器面")
-
-
-class TestDerivedSourceTokens(StoryBuildCase):
-    """合同声明 `derived` 的那份材料只守业务编号。
-
-    spec.md 是本轮流程自己生成的中间产物。它的工程 token（元素类型词、夹具名、
-    毫秒数、包名）此前全背落点义务，实测 194 个——归档叙事件不该写这些词，
-    于是它们只能挤进附录表后的散文尾巴与材料清单，倾倒区就是这么长出来的。
-    业务编号仍守恒：那是评审人认得、也会在验收里回找的东西。
+    术语表实体词守恒随逐单元系统退场，这个类只剩红线这一面。
     """
-
-    SPEC_BODY = "\n".join([
-        "# 甲需求 spec",
-        "",
-        "## 9. 技术契约",
-        "",
-        "验收 AC-7 覆盖等待态；接口 submitTicket 超时 1500ms 后转失败，"
-        "承接名为 TicketFixture，宿主配置写在 oh-package.json5。",
-        "",
-    ])
-
-    def put_spec(self) -> None:
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        spec.parent.mkdir(parents=True, exist_ok=True)
-        spec.write_text(self.SPEC_BODY, encoding="utf-8")
-
-    def test_only_business_ids_survive_in_a_derived_source(self) -> None:
-        self.put_spec()
-        self.init_audit()
-        tokens = [t for u in self.units if u["doc"] == "SPEC" for t in (u.get("tokens") or [])]
-        self.assertIn("AC-7", tokens, "验收编号是业务编号，仍要守恒")
-        for engineering in ("submitTicket", "1500ms", "TicketFixture", "oh-package.json5"):
-            self.assertNotIn(engineering, tokens,
-                             f"{engineering} 是工程细节，它的家是 spec 自己")
-
-    def test_the_text_of_a_derived_unit_is_unchanged(self) -> None:
-        """收窄的是机器核对义务，不是信息可见性——分配与渲染仍读得到整行。"""
-        self.put_spec()
-        self.init_audit()
-        hit = [u for u in self.units
-               if u["doc"] == "SPEC" and "submitTicket" in (u.get("text") or "")]
-        self.assertTrue(hit, "spec 单元的正文该原样留着")
-
-    def test_the_other_sources_keep_every_token(self) -> None:
-        """回归：只有声明 `derived` 的那一份变，人写的材料一个 token 都不少。"""
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8")
-                       + "\n签约接口 signContract 超时 1500ms 后转失败。\n",
-                       encoding="utf-8")
-        self.put_spec()
-        self.init_audit()
-        prd_tokens = [t for u in self.units if u["doc"] == "PRD" for t in (u.get("tokens") or [])]
-        self.assertIn("signContract", prd_tokens, "上游材料的接口名照旧守恒")
-        self.assertIn("1500ms", prd_tokens, "上游材料的带单位数值照旧守恒")
-
-    def test_a_source_without_the_flag_is_not_narrowed(self) -> None:
-        """开关在合同数据里，机制不认识任何一份材料的名字——把标记摘掉，token 就回来。"""
-        contract = (REPO_ROOT / "doc/extensions/skills/story/contracts"
-                    / "story-chapters.json")
-        data = json.loads(contract.read_text(encoding="utf-8"))
-        derived = [k for k, v in (data.get("sources") or {}).items()
-                   if isinstance(v, dict) and v.get("derived")]
-        self.assertEqual(derived, ["SPEC"],
-                         "本轮只有 spec 是中间产物；再多一份要连同报告一起说明")
-
-
-class TestKnowledgeUnits(StoryBuildCase):
-    """KR-2a/2b：激活规约条目是来源单元，判定逐条落在合规章的表里。"""
-
-    def test_entries_become_units_with_domain_and_id(self) -> None:
-        self.init_audit()
-        knowledge = [u for u in self.units if u["key"].startswith("KNOWLEDGE:")]
-        self.assertTrue(knowledge, "激活清单里的规约条目应当派生成来源单元")
-        for unit in knowledge:
-            self.assertTrue(unit.get("domain"), f"{unit['key']} 缺域名")
-            self.assertIn(unit["key"].split(":", 1)[1], unit["text"] + str(unit.get("tokens")))
-
-    def test_repo_manifest_derives_units_too(self) -> None:
-        """本仓自己的激活清单也要派生得出来——夹具过了不代表真清单过。"""
-        script = (
-            "import {activeKnowledge} from './doc/extensions/hooks/shared/knowledge.mjs';"
-            "import {knowledgeUnits} from './doc/extensions/skills/story/scripts/source-units.mjs';"
-            "console.log(knowledgeUnits(activeKnowledge(process.cwd()).entries).length);")
-        proc = subprocess.run(["node", "--input-type=module", "-e", script],
-                              cwd=REPO_ROOT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertGreater(int(proc.stdout.strip()), 0, "本仓激活清单派生出 0 个规约单元")
-
-    def test_missing_row_is_named(self) -> None:
-        self.init_audit()
-        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |\n", "")
-        self.assert_check_names("判定表里没有行")
-
-    def test_verdict_word_is_closed(self) -> None:
-        self.init_audit()
-        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 |", "| 甲域约束 | SMP-02 | 大概不涉及 |")
-        self.assert_check_names("不是 命中 / 不命中 / 整域不适用 之一")
-
-    def test_basis_cannot_be_empty(self) -> None:
-        self.init_audit()
-        self.rewrite_story("| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |",
-                           "| 甲域约束 | SMP-02 | 不命中 |  |")
-        self.assert_check_names("没写依据")
-
-    def test_domain_level_row_covers_every_entry(self) -> None:
-        """整域不适用时给该域一行即可，域内条目不必逐条列。"""
-        self.init_audit()
-        self.settle()
-        self.rewrite_story(
-            "| 甲域约束 | SMP-01 | 命中 | 本需求新增提交入口，受理单编号在入口生成 |\n"
-            "| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |",
-            "| 甲域约束 | — | 整域不适用 | 本需求不触及该域的任何场景 |")
-        code, out = self.check_output()
-        self.assertEqual(code, 0, f"域级判定应当覆盖域内全部条目：{out}")
-
-
-class TestGlossaryAndRedlines(StoryBuildCase):
-    """KR-4a：merge-story 并进来的两件事——术语表实体词守恒与归档件四红线。"""
-
-    def write_spec(self, term: str) -> None:
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        spec.parent.mkdir(parents=True, exist_ok=True)
-        spec.write_text(
-            "# 甲需求 spec\n\n## 0. 术语映射表\n\n"
-            "| 原始术语 | 权威模块 | 解释 |\n|---|---|---|\n"
-            f"| {term} | 甲模块 | 一次提交的唯一标识 |\n",
-            encoding="utf-8")
 
     def test_repo_path_in_story_is_named(self) -> None:
         self.init_audit()
         self.rewrite_story("本需求不涉及。\n\n## 术语",
                            "详见 doc/features/AR90001/AR/design.md。\n\n## 术语")
         self.assert_check_names("仓内路径")
-
-
-class TestSourceDrift(StoryBuildCase):
-    """材料在枚举之后又变过，check 就要拦。
-
-    规格件在 story 写完之后还会继续长——评审裁定回填、遗漏补写。后长出来的内容
-    永远不会成为来源单元，守恒面悄悄小了一圈：登记那一刻 check 是过的，
-    过些时候重跑 audit 才露出一批三态皆空（首跑实测 27 条，全部来自规格件）。
-    这是**物理门禁**而不是流程约定：「记得重跑一次 init」这种话，模型会忘。
-    """
-
-    def test_edited_material_is_named(self) -> None:
-        self.init_audit()
-        self.settle()
-        self.assertEqual(0, self.check_output()[0])
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：超时后允许重试一次。\n",
-                       encoding="utf-8")
-        out = self.assert_check_names("材料在枚举之后变了")
-        self.assertIn("RR/prd.md", out)
-        self.assertIn("重跑 init", out)
-
-    def test_a_material_added_after_enumeration_is_named(self) -> None:
-        self.init_audit()
-        self.settle()
-        spec_dir = self.root / "doc" / "features" / FEATURE / "spec"
-        spec_dir.mkdir(parents=True, exist_ok=True)
-        (spec_dir / "spec.md").write_text("# 甲需求 规格\n\n## 1. 范围\n\n只改提交入口。\n",
-                                          encoding="utf-8")
-        self.assert_check_names("材料在枚举之后变了")
-
-    def test_reenumerating_clears_it_and_keeps_author_placements(self) -> None:
-        """重跑 init 之后门禁放行，而且已经分好的落点还在——不然没人敢重跑。"""
-        self.init_audit()
-        self.settle()
-        placed = {r["key"]: r["at"] for r in self.audit["records"] if r.get("by") == "author"}
-        self.assertTrue(placed)
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：超时后允许重试一次。\n",
-                       encoding="utf-8")
-        self.init_audit()
-        after = {r["key"]: r.get("at") for r in self.audit["records"]}
-        for key, at in placed.items():
-            self.assertEqual(at, after.get(key), f"{key} 的作者落点在重跑后丢了")
-        out = self.check_output()[1]
-        self.assertNotIn("材料在枚举之后变了", out)
 
 
 class TestErrorWordingPointsAtForm(StoryBuildCase):
@@ -602,7 +224,6 @@ class TestReviewForm(StoryBuildCase):
     def test_legacy_fields_in_the_review_are_named(self) -> None:
         """人工区之外又长回签署字段与状态行时，check 要点名。"""
         self.init_audit()
-        self.settle()
         self.review_path.write_text(
             "# 评审记录\n\n### 1. 提交入口与补卡由两张开发单分别承接\n\n"
             "审核结果：\n\n"
@@ -619,7 +240,6 @@ class TestRequirementIdInTitle(StoryBuildCase):
 
     def test_title_without_the_id_is_named(self) -> None:
         self.init_audit()
-        self.settle()
         first = self.story().split("\n", 1)[0]
         self.rewrite_story(first, "# " + first[2:].replace(FEATURE, "").strip())
         out = self.assert_check_names("大标题缺需求编号")
@@ -649,21 +269,18 @@ class TestRedlineScope(StoryBuildCase):
 
     def test_search_phrase_in_the_appendix_is_named(self) -> None:
         self.init_audit()
-        self.settle()
         self.assertEqual(0, self.check_output()[0])
         self._put_in_appendix("检索挂失回执封装零命中。")
         self.assert_check_names("这是起草过程")
 
     def test_harness_word_in_the_appendix_is_named(self) -> None:
         self.init_audit()
-        self.settle()
         self._put_in_appendix("本次交付先以模拟实现替代真实通道。")
         self.assert_check_names("造它的装置与流程说的话")
 
     def test_identifiers_stay_legal_in_the_appendix(self) -> None:
         """附录仍是工程标识的落点——顺手把它一起收紧，作者就无处可写了。"""
         self.init_audit()
-        self.settle()
         self._put_in_appendix("| 接口 | 用途 |\n|---|---|\n| queryLossState | 查挂失结果 |")
         self.assertEqual(0, self.check_output()[0])
 
@@ -701,26 +318,6 @@ class TestDecisionUnits(StoryBuildCase):
         data["decisions"] = decisions if decisions is not None else self.DECISIONS["decisions"]
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def test_each_decision_becomes_one_unit(self) -> None:
-        self.write_decisions()
-        self.assertEqual(0, self.run_build("init").returncode)
-        units = [u for u in self.units if u["kind"] == "decision"]
-        self.assertEqual(3, len(units), "三条决策该切出三个单元")
-        settled = next(u for u in units if u["key"] == "DECISION:DEC-001")
-        self.assertIn("以卡片服务的回执为准", settled["text"])
-        self.assertIn("本端只有请求态", settled["text"], "理由要进正文——它正是取舍的那一半")
-        self.assertEqual([], settled["tokens"], "取舍是纯中文叙述，机器不判落点")
-
-    def test_open_issues_carry_no_landing_duty(self) -> None:
-        """开放议题还没有结论——正文里写它，等于把未定的事说成定了。"""
-        self.write_decisions()
-        self.init_audit()
-        keys = {r["key"] for r in self.audit["records"]}
-        self.assertIn("DECISION:DEC-001", keys)
-        self.assertNotIn("DECISION:DEC-003", keys)
-        self.settle()
-        self.assertEqual(0, self.check_output()[0])
-
     def test_an_empty_register_speaks_up(self) -> None:
         """一条决策都没登记时要出声——不能当作「这个需求没做过任何判断」静默通过。"""
         self.write_decisions([])
@@ -732,7 +329,6 @@ class TestDecisionUnits(StoryBuildCase):
         """决策件是流程里的活件：评审回填、遗漏补写都是既定动作，不该撞指纹门禁。"""
         self.write_decisions()
         self.init_audit()
-        self.settle()
         self.assertEqual(0, self.check_output()[0])
         self.write_decisions(self.DECISIONS["decisions"] + [
             {"id": "DEC-004", "status": "open", "title": "回执超时的等待时长",
@@ -743,37 +339,6 @@ class TestDecisionUnits(StoryBuildCase):
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn("材料在枚举之后变了", out)
-
-
-class TestDuplicateAcrossParagraphs(StoryBuildCase):
-    """重复判的是逐字相等，粒度到句——最常见的那一种跨在两段之间。"""
-
-    SENTENCE = "上一轮办到哪一步由服务端的受理记录决定，本端不自己记账。"
-
-    def _append_to_chapter(self, extra: str) -> None:
-        bodies = _chapter_bodies(self.story_path)
-        title = next(t for t, b in bodies.items()
-                     if t != _appendix_title() and not _is_empty_chapter(b))
-        anchor = bodies[title].split("\n")[0]
-        self.rewrite_story(anchor, anchor + extra)
-
-    def test_a_sentence_repeated_in_another_paragraph_is_named(self) -> None:
-        """长段的末句被另起一段整句重说：两边的「段」不同，句子逐字相同。"""
-        self.init_audit()
-        self.settle()
-        self.assertEqual(0, self.check_output()[0])
-        self._append_to_chapter(
-            "\n\n用户回到页面时看到的是上一轮的进度。" + self.SENTENCE
-            + "\n\n" + self.SENTENCE)
-        out = self.assert_check_names("重复")
-        self.assertIn("行重复", out, "报错要指回第一次出现的行")
-
-    def test_saying_it_once_passes(self) -> None:
-        self.init_audit()
-        self.settle()
-        self._append_to_chapter(
-            "\n\n用户回到页面时看到的是上一轮的进度。" + self.SENTENCE)
-        self.assertEqual(0, self.check_output()[0])
 
 
 class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
@@ -796,7 +361,6 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
     def test_the_title_carrying_the_id_passes(self) -> None:
         self._put_id_in_materials()
         self.init_audit()
-        self.settle()
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertIn(FEATURE, self.story().split("\n", 1)[0], "夹具的大标题本来就带编号")
@@ -805,98 +369,9 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
         """放行的只有本需求编号这一个——别的标识照拦，不然等于把 ⑩ 关掉。"""
         self._put_id_in_materials()
         self.init_audit()
-        self.settle()
         first = self.story().split("\n", 1)[0]
         self.rewrite_story(first, first + "\n\n提交走 queryLossEligibility 这个接口。")
         self.assert_check_names("工程标识")
-
-
-class TestChapterSections(StoryBuildCase):
-    """正文章的节级形态：必有的小节在不在、该分节的章分没分。
-
-    实测规律（两轮四份产物零例外）：有 check 判据的形态全达成，只写在模板注释或
-    占位里的形态全不达成。节级此前只有注释承载，于是方案章、流程章、交付章全部平铺。
-
-    **判据恰三条**，本类的后两条守的正是「没有加码」：菜单项不是配额、
-    每章几节不设下限。配额逼出来的是凑数小标题，那比平铺更难读。
-    """
-
-    SOLUTION = ("本需求由钱包端发起挂失请求，卡片服务判定结果。\n\n"
-                "### 4.1 参与方与分工\n\n"
-                "钱包端负责入口与结果展示，卡片服务负责判定与状态落库。\n")
-
-    def put_chapter(self, title: str, body: str) -> None:
-        text = self.story()
-        head = "## {}\n\n".format(title)
-        start = text.index(head) + len(head)
-        end = text.index("\n## ", start)
-        self.story_path.write_text(text[:start] + body + text[end:], encoding="utf-8")
-
-    def write_decisions(self, decisions: list) -> None:
-        (self.src / "decisions.json").write_text(
-            json.dumps({"decisions": decisions}, ensure_ascii=False, indent=2),
-            encoding="utf-8")
-
-    SETTLED = {
-        "id": "DEC-001", "status": "settled",
-        "title": "挂失结果以卡片服务的回执为准",
-        "clarification": "**要定的事**：以哪一侧为准。\n\n**根据**：本端只有请求态。\n\n"
-                         "**结论与影响**：以回执为准。",
-        "decider": "需求负责人",
-    }
-
-    def test_a_required_section_missing_is_named(self) -> None:
-        """必有的小节缺席要点名，并说清这一节是干什么的。"""
-        self.put_chapter("业务方案", "钱包端发起、卡片服务判定，两侧以回执为准。\n")
-        self.init_audit()
-        self.settle()
-        out = self.assert_check_names("参与方与分工")
-        self.assertIn("这一节", out)
-
-    def test_an_empty_chapter_is_exempt(self) -> None:
-        """空章豁免：它已明说这件事不在本需求里，节级形态无从谈起。"""
-        self.init_audit()
-        self.settle()
-        self.assertIn("## 业务方案\n\n本需求不涉及。", self.story())
-        self.assertEqual(0, self.check_output()[0])
-
-    def test_settled_decisions_require_the_tradeoff_section(self) -> None:
-        """有已定决策却没有取舍那一节——取舍化进散文，读者拼不出「否掉了什么」。"""
-        self.put_chapter("业务方案", self.SOLUTION)
-        self.write_decisions([self.SETTLED])
-        self.init_audit()
-        self.settle()
-        out = self.assert_check_names("关键取舍")
-
-        # 同一份正文，没有已定决策时不要求——判据跟着登记走，不是无条件加一节
-        self.write_decisions([])
-        self.init_audit()
-        self.settle()
-        self.assertEqual(0, self.check_output()[0], out)
-
-    def test_a_flat_chapter_that_must_be_sectioned_is_named(self) -> None:
-        self.put_chapter("业务流程", "用户进入入口、提交、等回执，回执到达即结束。\n")
-        self.init_audit()
-        self.settle()
-        self.assert_check_names("个小节")
-
-    def test_the_menu_is_not_a_quota(self) -> None:
-        """菜单是命名参考：只写必有的那一节，其余菜单项缺席照样通过。"""
-        self.put_chapter("业务方案", self.SOLUTION)
-        self.init_audit()
-        self.settle()
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-
-    def test_no_lower_bound_on_how_many_sections(self) -> None:
-        """一节也够：`min_sections` 只区分「分了没分」，不数够不够多。"""
-        self.put_chapter(
-            "业务流程",
-            "### 5.1 提交与回执\n\n用户提交之后等回执，回执到达即结束。\n")
-        self.init_audit()
-        self.settle()
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
 
 
 class TestCopyeditTrace(StoryBuildCase):
@@ -915,13 +390,11 @@ class TestCopyeditTrace(StoryBuildCase):
     def test_missing_file_is_named(self) -> None:
         (self.src / "copyedit.md").unlink()
         self.init_audit()
-        self.settle()
         self.assert_check_names("copyedit.md")
 
     def test_exactly_six_lines_passes(self) -> None:
         self.write_copyedit(self.SIX)
         self.init_audit()
-        self.settle()
         code, out = self.check_output()
         self.assertEqual(0, code, out)
 
@@ -929,13 +402,11 @@ class TestCopyeditTrace(StoryBuildCase):
         """写成检查报告不加分——不然下一轮就有人为了显得认真而灌水。"""
         self.write_copyedit(self.SIX + "另外还查了一遍标题。\n")
         self.init_audit()
-        self.settle()
         self.assert_check_names("恰好 6 行")
 
     def test_blank_lines_do_not_count(self) -> None:
         self.write_copyedit(self.SIX.replace("\n", "\n\n"))
         self.init_audit()
-        self.settle()
         self.assertEqual(0, self.check_output()[0])
 
 
@@ -964,17 +435,10 @@ class TestFormLints(StoryBuildCase):
 
     # ---- lint 1：图前承接 + 图题形态 ----
 
-    def test_an_image_right_after_a_heading_is_named(self) -> None:
-        self.put_features("### 6.1 提交与回执\n\n" + self.IMAGE + "\n")
-        self.init_audit()
-        self.settle()
-        self.assert_check_names("图前一句承接")
-
     def test_an_image_with_a_lead_sentence_passes(self) -> None:
         self.put_features("### 6.1 提交与回执\n\n图 1 是提交入口的位置：\n\n"
                           + self.IMAGE + "\n")
         self.init_audit()
-        self.settle()
         code, out = self.check_output()
         self.assertNotIn("图前一句承接", out)
         self.assertNotIn("图题", out)
@@ -984,13 +448,11 @@ class TestFormLints(StoryBuildCase):
     def test_a_material_list_written_as_a_table_is_named(self) -> None:
         self.put_materials("| 材料 | 贡献 |\n|---|---|\n| 甲需求 PRD | 状态取值 |\n")
         self.init_audit()
-        self.settle()
         self.assert_check_names("材料清单用列表不用表")
 
     def test_a_material_row_without_a_link_is_named(self) -> None:
         self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。\n")
         self.init_audit()
-        self.settle()
         self.assert_check_names("每份材料给一条原文链接")
 
     def test_a_link_that_cannot_be_opened_is_named(self) -> None:
@@ -1004,7 +466,6 @@ class TestFormLints(StoryBuildCase):
         self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
                            "原文：[RR/prd.md](RR/prd.md)\n")
         self.init_audit()
-        self.settle()
         out = self.assert_check_names("链接点不开")
         self.assertIn("RR/prd.md", out, "报错要把点不开的那个目标给出来")
 
@@ -1013,7 +474,6 @@ class TestFormLints(StoryBuildCase):
         self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
                            "原文：[RR/prd.md](../RR/prd.md)\n")
         self.init_audit()
-        self.settle()
         code, out = self.check_output()
         self.assertNotIn("链接点不开", out)
 
@@ -1026,7 +486,6 @@ class TestFormLints(StoryBuildCase):
         self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
                            "原文：[RR/prd.md](RR/prd.md)\n")
         self.init_audit()
-        self.settle()
         proc = subprocess.run(
             ["node", str(BUILD), "check", "--offline", "--story", str(self.story_path),
              "--project-root", str(self.root)],
@@ -1036,7 +495,6 @@ class TestFormLints(StoryBuildCase):
     def test_the_material_link_is_the_one_place_a_repo_path_may_appear(self) -> None:
         """豁免只到这一节的链接语法：正文里的仓内路径照拦。"""
         self.init_audit()
-        self.settle()
         code, out = self.check_output()
         self.assertEqual(0, code, out)          # 夹具的材料清单本来就带链接
 
@@ -1146,7 +604,7 @@ class TestGoldenNumbering(unittest.TestCase):
 
 
 class TestSmallLedgerItems(StoryBuildCase):
-    """六件小账里能机器判的那几条：表行查重、澄清正文禁标题行、装置词表。"""
+    """六件小账里能机器判的那几条：澄清正文禁标题行、装置词表。"""
 
     def decisions(self) -> dict:
         return json.loads((self.src / "decisions.json").read_text(encoding="utf-8"))
@@ -1154,32 +612,6 @@ class TestSmallLedgerItems(StoryBuildCase):
     def write_decisions(self, data: dict) -> None:
         (self.src / "decisions.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def test_two_identical_rows_in_one_table_are_named(self) -> None:
-        """同一张表里两行逐字相同——段落查重看不到表行这一面。"""
-        self.init_audit()
-        self.settle()
-        text = self.story()
-        row = next(l for l in text.split("\n")
-                   if l.strip().startswith("|") and "|---" not in l
-                   and len(l.strip()) > 20)
-        self.rewrite_story(row, row + "\n" + row)
-        out = self.assert_check_names("表里重复的行")
-        self.assertIn("逐字相同", out)
-
-    def test_a_repeated_header_across_tables_is_not_named(self) -> None:
-        """多张表共用同一个表头是形态要求（每个小节一张表，表头由数据锁死）——
-        跨表比对会把这种正确形态判成重复，所以只在一张表内比。"""
-        self.init_audit()
-        self.settle()
-        text = self.story()
-        head = next(i for i, l in enumerate(text.split("\n"))
-                    if l.strip().startswith("|"))
-        rows = text.split("\n")
-        table = rows[head:head + 3]
-        self.rewrite_story("\n".join(table), "\n".join(table) + "\n\n" + "\n".join(table))
-        _, out = self.check_output()
-        self.assertNotIn("表里重复的行", out)
 
     def a_decision(self, clarification: str) -> dict:
         """一条字段齐备的决策——本用例只想让澄清正文那一条判据翻面。"""
@@ -1196,7 +628,6 @@ class TestSmallLedgerItems(StoryBuildCase):
     def test_a_heading_line_in_the_clarification_is_named(self) -> None:
         """澄清正文里的小标题写成加粗段首，不用 `#` 标题行。"""
         self.init_audit()
-        self.settle()
         self.write_decisions({"decisions": [
             self.a_decision("### 背景\n\n本条说明这件事的来龙去脉。")]})
         out = self.assert_check_names("的澄清正文里有标题行")
@@ -1205,7 +636,6 @@ class TestSmallLedgerItems(StoryBuildCase):
     def test_a_bold_lead_in_the_clarification_passes(self) -> None:
         """反面：加粗段首是定稿形态，不该被拦。"""
         self.init_audit()
-        self.settle()
         self.write_decisions({"decisions": [
             self.a_decision("**背景**：本条说明这件事的来龙去脉。")]})
         _, out = self.check_output()
@@ -1226,7 +656,6 @@ class TestSmallLedgerItems(StoryBuildCase):
     def test_a_harness_word_in_the_appendix_is_still_named(self) -> None:
         """装置词的作用域是全篇——换个位置它仍然不是需求事实。"""
         self.init_audit()
-        self.settle()
         appendix = _appendix_title()
         text = self.story()
         marker = f"## {appendix}"
@@ -1293,8 +722,7 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
     产物还在，它据以成文的依据换了一批，谁也看不出来。
     """
 
-    FROZEN = ("source-units.json", "audit.json", "decisions.json",
-              "story-verdicts.md", "copyedit.md")
+    FROZEN = ("decisions.json", "copyedit.md")
 
     def ledger_digest(self, name: str) -> str | None:
         path = self.src / name
@@ -1315,7 +743,6 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
 
     def test_init_is_refused_after_registration(self) -> None:
         self.init_audit()
-        self.settle()
         self.register()
         proc = self.run_build("init")
         self.assertEqual(1, proc.returncode, "登记之后 init 还能跑，台账就没冻住")
@@ -1323,51 +750,27 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
         self.assertIn("台账随稿冻结", out)
         self.assertNotIn("撤登记", out, "登记单向，报错不该指向一个不存在的动作")
 
-    def test_audit_is_refused_after_registration(self) -> None:
-        """audit 也要拒：它会写落点账，只拦 init 等于只冻了一半。"""
-        self.init_audit()
-        self.settle()
-        self.register()
-        proc = self.run_build("audit")
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("台账随稿冻结", (proc.stderr or "") + (proc.stdout or ""))
-
     def test_a_changed_ledger_is_named_by_check(self) -> None:
         """拒绝两条命令挡不住有人直接改文件——指纹核对补上那一面。"""
         self.init_audit()
-        self.settle()
         self.register()
-        audit = self.audit
-        audit["records"].append({"key": "PRD:999:deadbeef", "at": "功能说明", "by": "author"})
-        self.write_audit(audit)
+        path = self.src / "decisions.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.setdefault("decisions", []).append({
+            "id": "sneaked-in", "status": "settled", "title": "登记之后偷加的一条",
+            "category": "范围与拆分",
+            "clarification": "**要定的事**：无。\n\n**根据**：无。\n\n**结论与影响**：无。",
+            "decider": "需求负责人",
+        })
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         out = self.assert_check_names("与成文登记时的台账对不上")
-        self.assertIn("audit.json", out)
+        self.assertIn("decisions.json", out)
 
     def test_nothing_changes_before_registration(self) -> None:
         """登记之前一切照旧——冻结只在定稿之后生效。"""
         self.init_audit()
-        self.settle()
-        for command in ("init", "audit"):
-            self.assertEqual(0, self.run_build(command).returncode,
-                             f"没登记就拦 {command}，那是把正常流程拦了")
-
-    def test_material_drift_after_registration_is_only_noted(self) -> None:
-        """定稿之后材料继续演化是常态（评审回稿就在修订规格件）——记一笔，不拦。
-
-        此前这里指路「重跑 init」，而 init 在冻结之后会拒绝执行；两条一起，
-        人就被锁在中间，而且没有任何出口。
-        """
-        self.init_audit()
-        self.settle()
-        self.register()
-        prd = self.root / "doc" / "features" / FEATURE / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n评审回稿补的一句话。\n",
-                       encoding="utf-8")
-        code, out = self.check_output()
-        self.assertEqual(0, code, f"材料演化不该拦住定稿产物：{out}")
-        self.assertIn("定稿那一刻的快照", out)
-        self.assertNotIn("重跑 init", out)
-
+        self.assertEqual(0, self.run_build("init").returncode,
+                         "没登记就拦 init，那是把正常流程拦了")
 
 class Step8Case(StoryBuildCase):
     """本组用例都要一份真的材料清单——它由 `story_flow.py round` 按磁盘现状生成。"""
@@ -1678,6 +1081,25 @@ class ChaptersLandOneAtATime(Step8Case):
         for title, before in done.items():
             with self.subTest(chapter=title):
                 self.assertEqual(before, self.chapter_text(title), "已完成的章被动过了")
+
+    def test_no_unit_ledger_is_produced_at_any_point(self) -> None:
+        """全程零 audit：从 init 到写满十章再到 check，逐单元台账一个都不该出现。
+
+        逐单元系统退场的机械证据。它们只要还被生成，就还有人会去读、去维护，
+        退场就只是名义上的。
+        """
+        gone = ("source-units.json", "audit.json", "story-verdicts.md")
+        stages = ["init"]
+        self.assertEqual(0, self.run_build("init").returncode)
+        for i, title in enumerate(self.titles()):
+            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+            stages.append(f"chapter {i + 1}")
+            for name in gone:
+                self.assertFalse((self.src / name).exists(),
+                                 f"{stages[-1]} 之后冒出了 {name}")
+        self.check_output()
+        for name in gone:
+            self.assertFalse((self.src / name).exists(), f"check 之后冒出了 {name}")
 
     def test_a_copyedit_pass_replaces_one_chapter_only(self) -> None:
         """统稿夹具：十章写完之后只改第 5 章，其余九章字节相同。"""

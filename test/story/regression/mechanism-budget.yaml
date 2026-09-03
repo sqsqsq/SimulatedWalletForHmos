@@ -1,0 +1,78 @@
+# 机制层预算 —— 一次**完整需求**（一个批次）对 doc/extensions 非知识层规模的承诺。
+#
+# 三个角色各做一件事：
+#   · 维护者定方案时**同时给出预算**：本需求进行中的峰值（interim_ceiling）与完成后的上限（target），
+#     每个数字具名 + reason（新增脚本行归 D2 §4 哪一类确定性失败、退掉什么）；
+#   · 执行者改完后**自检**：超出峰值是否合理（方案估错就回方案改预算并写原因，不是砍方案）；
+#     远低于预期是否有遗漏（该建的没建、该退的没退）；
+#   · 评审在测试后**发现差异并申请特别审视**：对照本文件 diff 与方案的预算，超与不足都要给理由。
+#
+# 它不按步骤拦中间态：需求进行中允许先加后删，只要不超过方案自己声明的峰值；需求完成
+# （status: closed）时必须回到 target 以内，这是完成条件的一部分。语义代理标识（semantic_proxy）
+# 不分进行中与完成——它不是规模，是方向：脚本里再出现相似度、复述、最短引文这类词，就是又在用
+# 字符串近似「讲清没讲清」，任何时候都不合入。
+#
+# 判据由 test/story/tests/test_mechanism_budget.py 机械执行，进全量离线回归；红了先读报错里
+# 指的 AGENTS 条款。改本文件任何数字都要具名 + reason，和 drift_allowlist、retired 形态同一套纪律。
+#
+# 计数口径（与测试脚本一致）：doc/extensions 下、knowledge/ 之外；行数按文件行；类别按路径与后缀。
+# 数字只是围栏，不表达质量；表达质量的判据在 AGENTS §4.2 与 D2 §4。
+version: 1
+frozen_at: "2026-09-03"
+frozen_commit: "d8e21177"
+
+# 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
+requirement:
+  id: batch-5
+  status: in_progress
+  approved_by: WYK
+  reason: "批次 5 方案的预算声明：峰值按步骤 9/10 先加后删估算，完成后上限按退场计划正推"
+
+categories:
+  scripts_mjs:
+    description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
+    interim_ceiling: 3144
+    target: 2000
+    approved_by: WYK
+    reason: "步骤 9 退场后压到现值 3144（source-units.mjs 整份删除、五类逐单元判据与 audit 命令退场、lint-rules 缩到确定性路径用到的部分）：先加后删的那一段已经过去，峰值不再需要留 5200 的余量；完成后 story-build ≤1000、lint ≤300"
+  scripts_py:
+    description: skills/**.py（story_flow、import_sources、materials）
+    interim_ceiling: 2000
+    target: 1900
+    approved_by: WYK
+    reason: "峰值留 10%；无退场计划"
+  hooks_mjs:
+    description: hooks/**.mjs（六阶段 post_check + shared）
+    interim_ceiling: 4000
+    target: 3000
+    approved_by: WYK
+    reason: "峰值：步骤 10 先建集合一致性再退 paraphrase 与逐行 adjudication"
+  prompts_md:
+    description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
+    interim_ceiling: 3300
+    target: 2800
+    approved_by: WYK
+    reason: "逐单元系统退场后净减；旧 story-verify 任务与 source-units 已删"
+  data:
+    description: contracts/*.json、rules/*.yaml、manifest.yaml
+    interim_ceiling: 1000
+    target: 900
+    approved_by: WYK
+    reason: "峰值留余量给 knowledge-use 合同"
+
+total:
+  interim_ceiling: 15000
+  target: 9500
+  approved_by: WYK
+  reason: "峰值 15000；完成后总量必须低于批次 3 收口（9764），即建新链之前的水平。TEST §8 第 7 项的 7500 仍是长期方向，步骤 11 拿到实测数后再定"
+
+# 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
+# 现值是待退场的旧判据；退场后必须为 0，任何新增当场红。
+semantic_proxy:
+  pattern: "similarity|paraphrase|levenshtein|jaccard|min_quote_chars|回声"
+  scope: [scripts_mjs, scripts_py, hooks_mjs]
+  ceiling: 34
+  # 不分进行中/完成：现值是待退场的旧判据，退场后为 0，任何时候都不得增长。
+  target: 0
+  approved_by: WYK
+  reason: "步骤 9 退场后压到现值 34（story-build 由 6 降到 3，逐字引文裁决那几处随裁决核实判据一起走）：paraphrase.mjs 8、pre_verifier 10、verifier-report 6、post_check 6、knowledge 1 归步骤 10 退"

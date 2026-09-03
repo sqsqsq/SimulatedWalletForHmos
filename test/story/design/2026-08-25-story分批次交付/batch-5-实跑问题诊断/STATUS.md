@@ -22,7 +22,7 @@
 | 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
-| 9 正向 Story 作者路径切换 | 第一段（按章落盘）与小段 1（换输入模型）已过评审返修；**小段 2（删逐单元判据 + 迁台账）已实施，等待评审**；小段 3 待做 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
+| 9 正向 Story 作者路径切换 | 第一段、小段 1（含返修）、小段 2 **通过**；小段 3 已实施等待评审：生产环节（`audit` 与 `init` 枚举）、`source-units.mjs`、固定形式类判据（⑪/⑫c 图承接/固定表头）、作业书三步改两步 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
@@ -777,3 +777,59 @@ A4（异常与验收章没有掏空变体）按评审建议不预先加，实跑
 - 不新增任何数量或相似度判据；预算门 5 条通过，`semantic_proxy` 30 处（ceiling 37）只降不升；
 - story 548 全绿（619 − 71 条退场）、cli 18、金样离线 check 通过、`node --check` 通过；
 - `story-build.mjs` 2411 行（判据删了五类、救回图片两块、净减）。
+- 2026-09-03 独立评审小段 1 返修与小段 2：通过。复跑 548 全绿、73 条（委派 3）、预算门通过、语义代理 34。登记三座桥给小段 3：`requireLedgers` 仍要五件台账；固定形式类判据（⑫e/⑫b/⑪/⑫c）尚无退场步骤，随作业书改写一起退并迁 observed；`materialUnitsNow`/`init` 枚举/`source-units.mjs` 一起退。advisory：observed 三条在步骤 11 各写实际观察；全量测试出现过一次 24 分钟 + 1 error 的不稳定运行。
+
+## 步骤 9 第二段 · 小段 3（2026-09-03）：生产环节与作业书退场 · 已实施，等待评审
+
+**做了什么**
+
+| 退场项 | 处置 |
+|---|---|
+| `audit` 命令 | `cmdAudit` 整段删除；`story-build` 从五个命令收到六个里的四个生产命令（init / skeleton / chapter / check / build / number），没有一条再生成或读取逐单元台账 |
+| `init` 的单元枚举 | 只做材料齐备检查与 `decisions.json` 骨架；`source-units.json` 不再产出 |
+| `source-units.mjs` | 整份删除（322 行）；`story-build.mjs` 的 import 与 `materialUnitsNow` / `formShortfall` 一并删 |
+| ⓪ 材料漂移记一笔 | 随材料清单 SSOT（步骤 6）退场——材料版本已由 `materials.json` 的 digest 表达 |
+| ⑪ 可读性 | 长段、长章、长步骤清单、重复段、表行重复五类整条退场；`lint-rules.mjs` 的 `scanReadability` 与合同 `readability` 阈值块一并删 |
+| ⑫c 图承接 | 承接句与悬空指图句退场，⑫c 只留材料清单的行形态；`scanImageForm` / `scanDanglingFigureRefs` 删 |
+| 固定表头 | `tableHeadersOf` 无消费者，删 |
+| `story-verify.md` / `baseline_coverage.py` | 删除（连同 `verdict_audit.py`、`golden_quote_calibration.mjs`、`replay_quote_bounds.mjs` 三个逐字引文工具） |
+| 台账冻结清单 | `STORY_SRC_FROZEN` 从五件收到两件：`decisions.json`、`copyedit.md` |
+| 作业书 | 「分配 → 逐章渲染 → 统稿」改为「任务包一次给全 → 按章经命令落盘 → 统稿逐章替换」两步；`rules.md` 前三条按新流程重写 |
+
+**两处误删当场救回**
+
+- ⓪b 台账冻结指纹核对：删 ⓪ 材料漂移时被整段带走。它是仍在的确定性不变量（story 定稿之后
+  台账随稿冻结，改文件要被点名），独立成块补回，报错文案逐字不变。
+- `test_story_build` 的类头 `TestGlossaryAndRedlines`：术语实体词那几条测试退场时类头被一起
+  删掉，剩下的「仓内路径」那条漂进基类 `StoryBuildCase`，于是每个子类都继承它、
+  `ChaptersLandOneAtATime` 的 setUp 与它不兼容而红。恢复成独立类 `TestArchiveRedlines`。
+
+**台账**：S02、S03、S04、S08、S09、S12、S13、S14、S20 九条迁 `observed`（各带 reason /
+`approved_by` / `observed_by`），加上小段 2 的三条共 12 条委派。73 条对账仍是 73。
+
+**测试处置**：505 条全绿（小段 2 后 548 − 43 条随判据退场）。按三分类：断言已删判据行为的
+整条删（可读性五类、图承接、固定表头、材料漂移记一笔、`audit` 命令）；断言仍在的不变量、
+只是搭建依赖 audit 的，保留断言只改搭建（`init_audit` 只跑 init、冻结核对改用
+`decisions.json`、`broken()` 换成大标题掉编号 / 残留占位符 / 主叙事工程标识三类）；
+基线跟着走的改基线（`LEDGERS` 与 `FROZEN` 两件、`NEGATIVE_COUNT` 2、金样注入违例换占位符）。
+新增一条 `test_no_unit_ledger_is_produced_at_any_point`：从 init 到写满十章再到 check，
+`source-units.json` / `audit.json` / `story-verdicts.md` 一个都不出现——这是「全程零 audit」
+的机械证据。
+
+**验收**
+
+- 正式入口不再生成或读取 source-units、audit、逐字裁决：全仓 grep 只剩设计文档里的历史记录；
+- 第 4 章中断夹具全程零 audit：前三章逐字节不变，且逐单元台账一份都没落盘；
+- check 现存 15 条判据全是确定性不变量：⓪a 来源在、⓪b 台账冻结、① 章标题与顺序、
+  ①b 大标题带编号、③ 编号形态、⑤ 决策登记字段、⑦ 规约判定表、④ 图片身份、⑨ 归档件四红线、
+  ⑩ 语言红线、⑫ 附录结构、⑫a 非占位、⑫c 材料清单行形态、⑫d 统稿留痕、⑬ 评审记录渲染语法；
+- 预算门 ceiling 压到现值：`scripts_mjs` 5200 → 3144，`semantic_proxy` 37 → 34；
+  `story-build.mjs` 2411 → 1679 行，`lint-rules.mjs` 890 → 565 行，机制层总量 12074；
+- 73 条对账仍是 73：FAIL 0、委派 12、PASS 61。
+
+**留给后续**
+
+- 判据编号跳号（②④⑥⑧⑪ 空缺，④ 图片身份排在 ⑦ 之后）是退场痕迹。重排会打断台账与测试里
+  的编号引用，留到步骤 11 收口统一处理。
+- `test_multi_case_cli.WorkspaceBoundaryTest` 全量跑时出现过一次 `PermissionError [WinError 5]`
+  （临时目录文件锁），单跑与复跑全量均绿，与本段改动无关。

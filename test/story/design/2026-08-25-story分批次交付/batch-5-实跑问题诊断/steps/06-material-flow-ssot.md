@@ -18,7 +18,7 @@
 ## 实施内容
 
 1. `AR/story-src/materials.json` 是唯一 material manifest；由一个共享 Python 模块枚举材料并计算文件/资产 hash 与总 digest；
-2. 需求系统初始化、inbox 导入和补料入口在落盘成功后调用同一 manifest 写入者；其他脚本只读，不重复计算材料 hash；
+2. manifest 的（重）计算只由**机制层命令**承担：`story_flow.py round`（或专门的 `materials` 子命令）每次被调用时按磁盘现状重算；需求系统对接层（`story.js` 等各部署环境自备的 js）只负责落盘，**不知道 manifest 的存在**——否则内网每一份自备 js 都要改，而机制层对它没有约束力。其他脚本只读，不重复计算材料 hash；
 3. `import_sources.py` 不再写独立导入回执；成功结果直接返回本次事件摘要，持久材料事实只在 manifest；
 4. `story-flow.json` 删除 `inputs` 与逐文件 hash，只保存 manifest 的路径和 digest 引用；轮次的新旧只比较该 digest；
 5. 图片只登记权威来源路径和资产身份，不再由 README 与复制目录各写一份；
@@ -39,7 +39,7 @@
 ## 完成条件
 
 - 同一组材料重复导入 digest 不变；正文或图片任一字节改变 digest 改变；
-- 全仓消费者扫描证明材料文件 hash 只在唯一 manifest 模块计算；
+- 全仓消费者扫描证明材料文件 hash 只在唯一 manifest 模块计算；`story.js` / `review.js` / `token.js` 对 manifest 零引用；用一份不调用任何写入者的替身 js 取材后跑 `round`，manifest 仍正确生成；
 - 独立导入回执已删除，`story-flow.json` 不含 `inputs`，只引用 manifest path/digest；
 - README 删除或变化不影响材料身份；图片没有第二份登记真源；
 - 同一 material digest 下分析内容可修订并正常收口；
