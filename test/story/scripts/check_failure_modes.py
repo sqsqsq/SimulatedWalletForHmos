@@ -1947,6 +1947,16 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
     if build is None:
         build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
 
+    # 先让材料清单就位：图片身份与材料清单集合这两条判据都问它，没有清单它们只会
+    # 说「未执行」——而夹具自检要的是**判据真的跑过**，跳过等于放过。
+    flow = _ext_file(root, "skills/story/scripts/story_flow.py")
+    if flow is None:
+        flow = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story_flow.py"
+    subprocess.run(
+        [sys.executable, str(flow), "round", "--feature", "AR90001",
+         "--project-root", str(root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
     def run(cmd: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["node", str(build), cmd, "--feature", "AR90001", "--project-root", str(root)],

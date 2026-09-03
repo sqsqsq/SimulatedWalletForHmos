@@ -824,6 +824,68 @@ function subsectionSpan(storyText, chapterTitle, name) {
  * 附加列放行是因为真实存在（验收表可选的「主责」列）。
  */
 /** 需求目录内的相对路径（正斜杠），报错与目录比对都按它说话。 */
+/**
+ * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
+ *
+ * 早先这份登记是从材料正文的 `![](…)` 语法枚举出来的，于是「有没有被登记」取决于
+ * 有没有人给它写过一条 markdown 链接：界面参考目录里只写了名字的那几张图因此不算数，
+ * 目录里四张、登记里两张，作者只能把差额标成「不进 story」。
+ *
+ * 清单枚举的是磁盘上真实存在的图片文件，与谁给它写没写链接无关；同一张图复制到第二个
+ * 落点时它按内容合并成一条，`paths` 列出全部落点——**图片的身份是它的内容，不是路径**。
+ *
+ * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
+ *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
+ */
+function materialImages(ctx) {
+  if (ctx.offline || !ctx.srcDir) return null;
+  const text = readText(path.join(ctx.srcDir, 'materials.json'));
+  if (text === null) return null;
+  let data;
+  try { data = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
+  const list = data?.materials;
+  if (!Array.isArray(list)) return 'broken';
+  return list.filter(m => m?.kind === 'image' && Array.isArray(m.paths) && m.paths.length);
+}
+
+/**
+ * 材料清单那一节**应当**列到的材料 —— 同样出自 `materials.json`。
+ *
+ * 这一节回答的是「据哪几份材料写成」。谁来定这个集合，决定了它是账还是倾倒区：
+ * 由作者自由罗列时，实测出现过把本轮自己生成的规格链进去、把图片文件单列成行的形态，
+ * 也出现过漏掉一整份的形态——读者据这一节把材料找出来，漏一份等于那份材料没人知道。
+ *
+ * 集合按两条定：
+ *
+ * - **必列**：流程正在消费的那几份正文（清单里 `kind: doc` 且真的在盘上的）；
+ * - **可列**：收件箱里的原件。它们的内容已经并入正文，读者顺正文也能看到；
+ *   但「这份材料是人另外给的、没走需求系统」本身是信息，作者愿意指出来就允许。
+ *
+ * 图片不在其中：图随它所在的那份材料走，不单列成行（单列会把清单变成文件列表）。
+ * 中间产物也不在其中——本轮自己生成的规格与记录不是材料，它们压根不进清单。
+ *
+ * @returns {{must: string[], mayAlso: string[]} | null | 'broken'}
+ */
+function materialListTargets(ctx) {
+  if (ctx.offline || !ctx.srcDir) return null;
+  const text = readText(path.join(ctx.srcDir, 'materials.json'));
+  if (text === null) return null;
+  let data;
+  try { data = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
+  if (!Array.isArray(data?.materials)) return 'broken';
+  const must = data.materials
+    .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths))
+    .flatMap(m => m.paths);
+  const mayAlso = (Array.isArray(data.sources) ? data.sources : [])
+    .map(x => `inbox/${x?.file}`);
+  return { must, mayAlso };
+}
+
+/** 两份文件是不是同一份字节。读不到就不是——断链另有判据报。 */
+function sameBytes(a, b) {
+  try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch { return false; }
+}
+
 function relFromFeature(ctx, target) {
   return path.relative(ctx.featureRoot, target).split(path.sep).join('/');
 }
@@ -1636,51 +1698,55 @@ function cmdCheck(ctx) {
   // 说明段。复制出来的副本谁也不会去维护，改名之后更没人看得出它就是原来那张。
   // 判据只问两件事：引的这张在登记里吗、同一张图有没有被两个名字引用。
   {
-    const registered = new Map();          // 登记的图片文件名 → 它在材料里的位置与落盘目录
-    for (const u of doc.units) {
-      if (u.kind !== 'image') continue;
-      const name = (u.tokens ?? [])[0];
-      if (!name) continue;
-      const ref = /!\[[^\]]*\]\(([^)\s]+)/.exec(u.text ?? '')?.[1] ?? name;
-      registered.set(name, {
-        at: `${u.doc}:${u.line}`,
-        dir: path.posix.dirname(joinPosix(path.dirname(u.docPath ?? ''), ref)),
-      });
-    }
-    if (registered.size) {
-      // **按落盘位置判，不只按文件名**：只比文件名，改名的拦得住、同名复制进一个新目录的
-      // 拦不住——实测一轮，模型自建了一个图片目录，全树因此有五份同一张图。
-      // 允许的位置是「材料里那些图既有的落盘目录」加上归档件自己的图片目录（合同数据）。
-      const allowDirs = new Set(registered.values().map(v => v.dir));
-      const storyImageDir = ctx.contract.story_image_dir;
-      if (storyImageDir) {
-        allowDirs.add(joinPosix(path.dirname(relFromFeature(ctx, ctx.storyPath)), storyImageDir));
-      }
-      const byName = new Map();            // 文件名 → story 里引到它的那些路径
+    // 图片身份：引到的每一张都要是材料里登记过的那一张，按**内容**认，不按文件名认。
+    //
+    // 只比文件名时，改名的拦得住、同名复制进一个新目录的拦不住——实测一轮，模型自建了
+    // 一个图片目录，全树因此有五份同一张图。归档件自己的图片目录是允许的副本区，
+    // 但放进去的必须真的是材料里那张图的副本，而不是另一张图顶着这个名字。
+    const registered = materialImages(ctx);
+    if (registered === 'broken') {
+      problems.push('AR/story-src/materials.json 读不出材料清单——图片引用无从核对身份。'
+        + '它只应由脚本写入，若曾手工编辑，删掉后重跑 `story_flow.py round`');
+    } else if (!registered) {
+      notes.push('没有材料清单（AR/story-src/materials.json），图片身份与落点判据未执行'
+        + '——跑 `story_flow.py round` 生成它之后这条才判得了');
+    } else if (registered.length) {
+      const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
+      const byPath = new Map();
+      registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
+      const archiveDir = ctx.contract.story_image_dir
+        ? joinPosix(storyDir, ctx.contract.story_image_dir) : null;
+      const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
       for (const src of seen) {
         if (/^(https?:|data:)/i.test(src)) continue;
-        const name = src.split(/[\\/]/).pop();
-        const dir = path.posix.dirname(
-          joinPosix(path.dirname(relFromFeature(ctx, ctx.storyPath)), src));
-        if (!registered.has(name)) {
+        const rel = joinPosix(storyDir, src);
+        let idx = byPath.has(rel) ? byPath.get(rel) : -1;
+        const inArchive = archiveDir && (rel === archiveDir || rel.startsWith(`${archiveDir}/`));
+        if (idx < 0 && inArchive) {
+          // 归档副本区：按字节找出它是材料里的哪一张
+          const here = path.join(ctx.featureRoot, ...rel.split('/'));
+          idx = registered.findIndex(m => m.paths.some(
+            p2 => sameBytes(here, path.join(ctx.featureRoot, ...p2.split('/')))));
+          if (idx < 0) {
+            problems.push(`归档目录里的图片「${src}」不是材料里任何一张图的副本`
+              + '——归档目录只放材料里那些图的副本，放别的等于凭空多出一张没有出处的图');
+            continue;
+          }
+        }
+        if (idx < 0) {
           problems.push(`story 引用的图片「${src}」不在材料的图片登记里`
-            + '——引它在仓里的既有落盘位置，不要复制一份到归档目录再改名；'
+            + '——引它在仓里的既有落盘位置，不要复制一份到别处再改名；'
             + '副本没人维护，改了名读者也认不出它就是原来那张');
           continue;
         }
-        if (!allowDirs.has(dir)) {
-          problems.push(`story 引用的图片「${src}」在一个新建的图片目录里`
-            + `（登记在 ${registered.get(name).at}）——引它既有的落盘位置，别另建目录再复制一份；`
-            + '同一张图散在几个目录里，改了一处其余几处就成了旧图');
-          continue;
-        }
-        if (!byName.has(name)) byName.set(name, []);
-        byName.get(name).push(src);
+        if (!usedBy.has(idx)) usedBy.set(idx, []);
+        usedBy.get(idx).push(src);
       }
-      for (const [name, srcs] of byName) {
+      for (const [idx, srcs] of usedBy) {
         if (srcs.length < 2) continue;
         problems.push(`同一张图被两个路径引用：${srcs.join('、')}`
-          + `（登记在 ${registered.get(name).at}）——同一张图只引一次，一处说清它画的是什么`);
+          + `（材料里登记为 ${registered[idx].paths.join('、')}）`
+          + '——同一张图只引一次，一处说清它画的是什么');
       }
     }
   }
@@ -2157,6 +2223,34 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑫a 非占位');
+  // ⑫a 非占位：章有正文、模板占位符已经换掉。**只有这两件事**。
+  //
+  // 「这一章写没写」是可以机械判的，「写得够不够」不是。所以这里不设字数、行数、
+  // 表格数、图片数与条目数的下限——一句合法内容的章照样通过。凡是设了下限的判据，
+  // 逼出来的都是凑数：给一个不涉及表格的章设「至少一张表」，作者只会造一张空表。
+  // 写得够不够、讲清没讲清由独立审查判，那是它能判而脚本判不了的事。
+  for (const chapter of ctx.contract.chapters ?? []) {
+    const body = sectionText.get(chapter.title);
+    if (body === undefined) continue;               // 章缺失由 ① 报，这里不重复
+    if (!norm(body)) {
+      problems.push(`「${chapter.title}」只有标题没有正文`
+        + `——本需求真的不涉及它时写「${EMPTY_SECTION_TEXT}」，那是明说过的结论；`
+        + '空着分不清「判过了不涉及」与「还没写」');
+    }
+  }
+  {
+    // 模板占位符：`{{…}}` 是模板留给作者替换的位置，留在成品里就是没写完。
+    // 判的是这个明确记号本身，不是「这段像不像占位」——后者是猜。
+    const lines = storyText.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const hit = /\{\{[^}]*\}\}/.exec(lines[i]);
+      if (!hit) continue;
+      problems.push(`第 ${i + 1} 行还留着模板占位符「${hit[0]}」`
+        + '——它是模板留给你替换的位置，换成这一节真正要写的内容');
+    }
+  }
+
   mark('⑫b 正文章节级形态');
   // ⑫b 正文章的节级形态：必有的小节在不在、该分节的章分没分
   //
@@ -2272,10 +2366,13 @@ function cmdCheck(ctx) {
     const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
     if (span) {
       const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
-      // 链接按「相对 story.md 解析后落在需求目录的哪一段」判：`../RR/prd.md` 是 RR，
-      // 裸文件名是 story 自己那一层（归档件本身所在的目录），不判。
+      const want = materialListTargets(ctx);
+      const haveManifest = want && want !== 'broken';
+      // 行形态（有没有链接、是不是写成了表格）一直判；**链到的地方允不允许**分两条路：
+      // 有材料清单时按清单逐份对（下面那段），没有清单才退回按目录白名单粗判。
+      // 两条同时开会对同一行报两遍——同一件事报两次，读的人以为是两个问题。
       for (const h of scanMaterialList(body, span.start + 1,
-        { allowDirs: ctx.contract.material_dirs ?? [] })) {
+        { allowDirs: haveManifest ? [] : (ctx.contract.material_dirs ?? []) })) {
         problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
       }
       // 链接得能点开 —— 只在线上判，因为只有线上才知道那份文件在不在。
@@ -2298,6 +2395,36 @@ function cmdCheck(ctx) {
               + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态，'
               + '指错了等于没指');
           }
+        }
+      }
+      // 集合面：列到的与真正在手里的那几份材料对得上
+      if (want === 'broken') {
+        problems.push('AR/story-src/materials.json 读不出材料清单——'
+          + `「${appendix.title}·${name}」列得全不全无从核对。`
+          + '它只应由脚本写入，若曾手工编辑，删掉后重跑 `story_flow.py round`');
+      } else if (!want) {
+        notes.push(`没有材料清单（AR/story-src/materials.json），`
+          + `「${appendix.title}·${name}」的集合判据未执行`
+          + '——跑 `story_flow.py round` 生成它之后这条才判得了');
+      } else {
+        const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
+        const listed = new Set();
+        for (const [, target] of materialLinkTargets(body, span.start + 1)) {
+          if (/^(https?:|mailto:)/i.test(target)) continue;
+          listed.add(joinPosix(storyDir, target));
+        }
+        const allowed = new Set([...want.must, ...want.mayAlso]);
+        for (const rel of want.must) {
+          if (!listed.has(rel)) {
+            problems.push(`「${appendix.title}·${name}」少了一份材料：${rel}`
+              + '——它在这一轮的材料里，读者据这一节把材料找出来，漏一份等于那份材料没人知道');
+          }
+        }
+        for (const rel of listed) {
+          if (allowed.has(rel)) continue;
+          problems.push(`「${appendix.title}·${name}」列了不是材料的东西：${rel}`
+            + '——这一节回答「据哪几份材料写成」，本轮自己生成的规格与记录、单张图片文件都不是材料。'
+            + '图随它所在的那份材料走，不单列成行');
         }
       }
     }
@@ -2398,9 +2525,31 @@ function cmdNumber(ctx) {
 // build：渲染 review.md（机器区重算、人工区逐字节保留）
 // --------------------------------------------------------------------------
 
+/**
+ * review 只能在 story 成文之后渲染 —— 顺序本身就是一条判据。
+ *
+ * review 是**判断的台账**，而判断在成文过程中还会长出来：写到某一章才发现材料两处打架、
+ * 才发现某个取舍得由人拍板。先渲染 review 等于把台账定在「只读过 spec」那个时点上，
+ * 之后新登记的议题要么被忘掉，要么得靠人记得回来重跑一次。
+ *
+ * 实测的形态是「story 还没写完，review 先出来了」——那不是模型跑偏，是作业顺序把它排在了前面。
+ *
+ * 判据取「story 里有没有章」而不是「文件在不在」：`init` 会先落一份空骨架，
+ * 文件存在证明不了成文发生过。
+ */
+function requireStoryFirst(ctx) {
+  const text = readText(ctx.storyPath);
+  if (text && /^##\s+\S/m.test(text)) return;
+  fail('story 还没成文，review 不能先渲染。\n'
+    + '  review 是判断的台账，而判断在成文过程中还会长出来——写到某一章才发现材料打架、\n'
+    + '  才发现某个取舍要人拍板。台账定在「只读过 spec」那个时点上，后面新登记的议题就进不来了。\n'
+    + '  顺序：先按合同逐章写完 AR/story.md，把新发现的判断登记进 decisions.json，再跑 build。');
+}
+
 function cmdBuild(ctx) {
   const decisions = readJson(ctx.decisionsPath, null);
   if (!decisions) fail(`缺 ${ctx.decisionsPath}——先跑 init 建骨架`);
+  requireStoryFirst(ctx);
   const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
   const old = readText(ctx.reviewPath) ?? '';
 

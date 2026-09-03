@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "sto
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
+FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story_flow.py"
 
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
@@ -1789,6 +1791,248 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
         self.assertEqual(0, code, f"材料演化不该拦住定稿产物：{out}")
         self.assertIn("定稿那一刻的快照", out)
         self.assertNotIn("重跑 init", out)
+
+
+class Step8Case(StoryBuildCase):
+    """本组用例都要一份真的材料清单——它由 `story_flow.py round` 按磁盘现状生成。"""
+
+    review_path = property(
+        lambda self: self.root / "doc" / "features" / FEATURE / "AR" / "review.md")
+
+    def feature_root(self) -> Path:
+        return self.root / "doc" / "features" / FEATURE
+
+    def round_now(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(FLOW), "round", "--feature", FEATURE,
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def write_decision(self, extra: list[dict] | None = None) -> None:
+        rows = [{
+            "id": "submit-boundary", "status": "settled",
+            "title": "提交入口与补卡由两张开发单分别承接",
+            "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。\n\n"
+                             "**根据**：上游已经拆成两张开发单。\n\n"
+                             "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
+            "decider": "需求负责人",
+        }] + (extra or [])
+        (self.src / "decisions.json").write_text(
+            json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
+
+
+class TestReviewComesAfterTheStory(Step8Case):
+    """review 是判断的台账，而判断在成文过程中还会长出来。
+
+    实测形态是「story 还没写完，review 先出来了」——那不是模型跑偏，
+    是作业顺序把渲染排在了成文前面。顺序本身因此要成为一条判据。
+    """
+
+    def test_build_refuses_before_the_story_is_written(self) -> None:
+        self.write_decision()
+        self.story_path.write_text("# 交通卡紧急挂失（AR90001）\n", encoding="utf-8")
+        proc = self.run_build("build")
+        self.assertEqual(1, proc.returncode, "story 还没成文，review 却渲染出来了")
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertIn("story 还没成文", out)
+        self.assertFalse(self.review_path.exists(), "拒绝渲染却还是落了一份 review")
+
+    def test_build_runs_once_the_story_has_chapters(self) -> None:
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.assertIn("提交入口与补卡由两张开发单分别承接",
+                      self.review_path.read_text(encoding="utf-8"))
+
+    def test_rebuilding_is_byte_stable(self) -> None:
+        """同一份登记表渲染两次，字节完全相同——机器区没有随机量。"""
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        first = self.review_path.read_bytes()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.assertEqual(first, self.review_path.read_bytes())
+
+    def test_a_decision_found_while_writing_reaches_the_review(self) -> None:
+        """成文时才发现的判断，登记之后能进 review，人已经填的表态不动。"""
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        text = self.review_path.read_text(encoding="utf-8")
+        filled = text.replace(
+            "审核结果：\n\n<!-- decision: submit-boundary -->",
+            "审核结果：范围要含补卡入口。\n\n<!-- decision: submit-boundary -->")
+        self.assertNotEqual(text, filled, "夹具变了，用例要跟着改")
+        self.review_path.write_text(filled, encoding="utf-8")
+
+        self.write_decision(extra=[{
+            "id": "receipt-timeout", "status": "open",
+            "title": "回执超时后由谁重试",
+            "clarification": "**要定的事**：写第五章时发现材料没说超时之后谁重试。\n\n"
+                             "**根据**：PRD 只写了超时按未提交处理。\n\n"
+                             "**结论与影响**：待评审人定。",
+            "decider": "需求负责人",
+        }])
+        self.assertEqual(0, self.run_build("build").returncode)
+        again = self.review_path.read_text(encoding="utf-8")
+        self.assertIn("回执超时后由谁重试", again, "成文中新登记的判断没进 review")
+        self.assertIn("审核结果：范围要含补卡入口。", again, "人填的表态被重渲染冲掉了")
+
+    def test_the_machine_zone_cannot_be_maintained_by_hand(self) -> None:
+        """机器区改了也会被重算回来——它不是第二份真源，改它等于白改。"""
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        text = self.review_path.read_text(encoding="utf-8")
+        self.review_path.write_text(
+            text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
+            encoding="utf-8")
+        self.assertEqual(0, self.run_build("build").returncode)
+        again = self.review_path.read_text(encoding="utf-8")
+        self.assertIn("提交入口与补卡由两张开发单分别承接", again)
+        self.assertNotIn("手改过的标题", again, "机器区被人维护成了第二份真源")
+
+
+class TestImageIdentityComesFromTheManifest(Step8Case):
+    """图片的身份是它的内容，登记只有一处：材料清单。
+
+    早先登记是从材料正文的 `![](…)` 语法枚举的，于是「算不算数」取决于有没有人
+    给它写过一条 markdown 链接——目录里四张、登记里两张，作者只能把差额标成不进 story。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.material_image = self.feature_root() / "assets" / "上游文档" / "image1.png"
+        self.material_image.parent.mkdir(parents=True, exist_ok=True)
+        self.material_image.write_bytes(b"PNGDATA1")
+        self.round_now()
+        self.init_audit()
+
+    def put_image_ref(self, *refs: str) -> None:
+        block = "\n\n".join(f"![图 {i + 1} 上游页面示意]({ref})" for i, ref in enumerate(refs))
+        self.rewrite_story("## 业务方案", block + "\n\n## 业务方案")
+
+    def test_a_reference_to_a_registered_image_passes(self) -> None:
+        self.put_image_ref("../assets/上游文档/image1.png")
+        _, out = self.check_output()
+        self.assertNotIn("不在材料的图片登记里", out)
+        self.assertNotIn("同一张图被两个路径引用", out)
+
+    def test_an_unregistered_image_is_named(self) -> None:
+        self.put_image_ref("../assets/别处/image9.png")
+        self.assert_check_names("不在材料的图片登记里")
+
+    def test_the_same_image_under_two_paths_is_named(self) -> None:
+        """同一张图改个名复制进归档目录——只比文件名的判据拦不住这一种。"""
+        copy = self.feature_root() / "AR" / "assets" / "签约页.png"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(self.material_image.read_bytes())
+        self.put_image_ref("../assets/上游文档/image1.png", "assets/签约页.png")
+        self.assert_check_names("同一张图被两个路径引用")
+
+    def test_a_stranger_in_the_archive_dir_is_named(self) -> None:
+        """归档目录只放材料里那些图的副本，放别的等于凭空多出一张没有出处的图。"""
+        stray = self.feature_root() / "AR" / "assets" / "自己画的.png"
+        stray.parent.mkdir(parents=True, exist_ok=True)
+        stray.write_bytes(b"SOMETHINGELSE")
+        self.put_image_ref("assets/自己画的.png")
+        self.assert_check_names("不是材料里任何一张图的副本")
+
+    def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
+        """没有清单时不许静默放过：说清楚这条判据没执行、怎么让它能执行。"""
+        (self.src / "materials.json").unlink()
+        self.put_image_ref("../assets/别处/image9.png")
+        _, out = self.check_output()
+        self.assertIn("图片身份与落点判据未执行", out)
+        self.assertIn("story_flow.py round", out)
+
+
+class TestMaterialListMatchesTheManifest(Step8Case):
+    """材料清单列到的，与这一轮真正在手里的那几份材料对得上。"""
+
+    LISTED = "- 甲需求 PRD：提交回执的业务诉求与状态取值。原文：[RR/prd.md](../RR/prd.md)"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.round_now()
+        self.init_audit()
+
+    def test_the_listed_material_passes(self) -> None:
+        _, out = self.check_output()
+        self.assertNotIn("少了一份材料", out)
+        self.assertNotIn("列了不是材料的东西", out)
+
+    def test_a_missing_material_is_named(self) -> None:
+        """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
+        self.rewrite_story(self.LISTED, "- 甲需求 PRD：提交回执的业务诉求与状态取值。"
+                                        "原文：[别的](../AR/story-src/decisions.json)")
+        out = self.assert_check_names("少了一份材料")
+        self.assertIn("RR/prd.md", out)
+
+    def test_an_intermediate_product_is_named(self) -> None:
+        """本轮自己生成的记录不是材料，进了清单就把它变成倾倒区。"""
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n- 本轮的落点账：原文：[audit](../AR/story-src/audit.json)")
+        self.assert_check_names("列了不是材料的东西")
+
+    def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
+        (self.src / "materials.json").unlink()
+        self.rewrite_story(self.LISTED, "- 甲需求 PRD：提交回执的业务诉求与状态取值。"
+                                        "原文：[别的](../AR/story-src/decisions.json)")
+        _, out = self.check_output()
+        self.assertIn("的集合判据未执行", out)
+
+    def test_one_wrong_row_is_reported_once(self) -> None:
+        """有清单时按清单逐份对，目录白名单那条粗判让位——同一行报两遍，读的人以为是两个问题。
+
+        图片文件单列成行同时踩两条：它所在的目录不在白名单里，它本身也不是「一份材料」。
+        """
+        image = self.feature_root() / "assets" / "入口原型说明" / "image1.png"
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(b"PNGDATA1")
+        self.round_now()
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n- 入口原型图：原文：[图 1](../assets/入口原型说明/image1.png)")
+        _, out = self.check_output()
+        hits = [line for line in out.splitlines() if "assets/入口原型说明/image1.png" in line]
+        self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
+        self.assertIn("列了不是材料的东西", hits[0])
+
+
+class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
+    """「写没写」可以机械判，「写得够不够」不行。
+
+    所以这里只认两件事：章有正文、模板占位符换掉了。设了下限的判据逼出来的都是凑数——
+    给不涉及表格的章设「至少一张表」，作者只会造一张空表。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+
+    def test_a_chapter_with_only_a_title_is_named(self) -> None:
+        text = self.story()
+        marker = "## 背景\n"
+        start = text.index(marker) + len(marker)
+        end = text.index("## 术语")
+        self.story_path.write_text(text[:start] + "\n" + text[end:], encoding="utf-8")
+        self.assert_check_names("只有标题没有正文")
+
+    def test_a_leftover_template_placeholder_is_named(self) -> None:
+        self.rewrite_story("## 术语", "## 术语\n\n{{在这里写本需求的术语}}\n")
+        out = self.assert_check_names("模板占位符")
+        self.assertIn("{{在这里写本需求的术语}}", out)
+
+    def test_one_sentence_in_a_chapter_is_enough(self) -> None:
+        """最短正例：某章只有一句合法内容，不因为「太短」被拦。"""
+        text = self.story()
+        marker = "## 背景\n"
+        start = text.index(marker) + len(marker)
+        end = text.index("## 术语")
+        self.story_path.write_text(
+            text[:start] + "\n本需求把提交回执的等待态补齐。\n\n" + text[end:],
+            encoding="utf-8")
+        _, out = self.check_output()
+        self.assertNotIn("只有标题没有正文", out)
+        for quota in ("至少", "不少于", "过短", "太短"):
+            self.assertNotIn(quota, out, "有判据在拿长度下限说话：%s" % quota)
 
 
 if __name__ == "__main__":
