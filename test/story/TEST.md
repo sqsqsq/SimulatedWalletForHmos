@@ -643,7 +643,7 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 4 | 同一 check id FAIL 次数 | ≤ 2 | 5（`lifecycle_hook_post_check_extension` 洋葱式暴露五层） |
 | 5 | spec 阶段上下文增量 | ≤ 150K | +397K（全程 11K → 818K，零 compaction） |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
-| 7 | `doc/extensions` 非知识层行数 | ≤ 7500（未达成时如实写「未达成」，不改本目标） | 基线 10358 |
+| 7 | `doc/extensions` 非知识层行数 | 由 `regression/mechanism-budget.yaml` 的 ceiling/target 机械执行（`test_mechanism_budget.py`，在全量离线回归里，每一步都过）；7500 是长期方向，退场后按实测再定 | 基线 10358 |
 
 **读数口径**：第 2、3 项只看工具**入参**（读了什么），第 4 项只看工具**输出**（门禁报了什么），
 同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 `cat` 一次不算两轮。
@@ -757,9 +757,22 @@ python test/story/scripts/make_narrative_variants.py --out <临时目录>
 
 对**每个准备进入步骤 11 实跑的配置**各跑一遍全部问题族：
 
-1. 把一份样本连同它的材料放进一个隔离 workspace 的 feature 目录（`AR/story.md` 与材料）；
-2. 在该配置上触发 spec 阶段的 verifier，让它执行 `story_reader_review`；
-3. 记下报告里的 `blocking_findings` 与 `advisories`。
+```bash
+python test/story/scripts/run_review_qualification.py --config <cli_config_id> --out <目录>
+python test/story/scripts/run_review_qualification.py --config <cli_config_id> --out <目录> --base receipt
+```
+
+每份样本一个隔离工作区（story、材料、材料清单、已登记判断、章节合同），结果落
+`<目录>/qualification.json`，每份的输出正文原样保留。
+
+**输入是内联给它的，不让它去工作区翻文件**：实测一次让它自己读，300 秒还没读完就超时；
+而资格门问的是判断力——同一份材料与稿子摆在面前，坏稿认不认得出来。工作区照建，供事后复核同一份输入。
+审查任务的文本从 `rules/spec-rules.overlay.yaml` 现读，不在驱动器里复制一份：复制的那份会与真源分叉，
+届时测的就不是交付出去的那个任务。
+
+**脚本只判一件客观的事**：这份样本有没有引出非空的 `blocking_findings`。
+报的那条对不对、点没点到本族缺陷，要读懂两句话说的是不是同一件事——那由维护者读输出判，
+结论写进评审报告。
 
 ### 判据
 

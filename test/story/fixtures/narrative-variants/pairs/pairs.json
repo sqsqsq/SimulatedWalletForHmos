@@ -5,7 +5,7 @@
   "bases": {
     "receipt": {
       "story": "base-receipt.story.md",
-      "material": "../brief.md",
+      "material": "base-receipt.brief.md",
       "domain": "交易凭证下载"
     },
     "queue": {
