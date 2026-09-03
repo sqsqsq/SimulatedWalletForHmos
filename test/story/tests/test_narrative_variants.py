@@ -50,9 +50,9 @@ class TheFixtureItselfHolds(unittest.TestCase):
                                         "这一族的变体都在同一个业务域里")
 
     def test_the_six_families_are_all_there(self) -> None:
-        """六种缺陷齐备：删事实、掏空章、编造、删流程表达、知识回显、同义改写。"""
+        """六种缺陷齐备：删事实、掏空章、编造、清零界面图、知识回显、同义改写。"""
         self.assertEqual(
-            {"fact_deleted", "chapter_hollow", "fabricated", "flow_gutted",
+            {"fact_deleted", "chapter_hollow", "fabricated", "image_dropped",
              "knowledge_echo", "same_meaning"},
             {f["key"] for f in self.spec["families"]})
 

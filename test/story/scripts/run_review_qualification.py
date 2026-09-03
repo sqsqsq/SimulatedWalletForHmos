@@ -36,6 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 OVERLAY = REPO / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml"
+PAIRS_DIR = (REPO / "test" / "story" / "fixtures" / "narrative-variants" / "pairs")
 CONTRACT_REL = "doc/extensions/skills/story/contracts/story-chapters.json"
 FLOW = REPO / "doc" / "extensions" / "skills" / "story" / "scripts" / "story_flow.py"
 FEATURE = "AR90001"
@@ -91,6 +92,14 @@ def build_workspace(root: Path, sample: dict) -> Path:
     contract_dst.parent.mkdir(parents=True, exist_ok=True)
     contract_dst.write_text((REPO / CONTRACT_REL).read_text(encoding="utf-8"),
                             encoding="utf-8", newline="\n")
+    # 界面图跟着进工作区：story 引用的是仓内既有落盘位置，图不在就成了断链
+    assets_src = PAIRS_DIR / "assets"
+    if assets_src.is_dir():
+        assets_dst = feature_root / "assets"
+        assets_dst.mkdir(parents=True, exist_ok=True)
+        for png in sorted(assets_src.glob("*.png")):
+            (assets_dst / png.name).write_bytes(png.read_bytes())
+    (ws / TASK_FILE).write_text(task_document(sample), encoding="utf-8", newline="\n")
     # 材料清单由机制层命令按磁盘现状生成，与真实链路同一条路
     subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE,
                     "--project-root", str(ws)],
@@ -113,12 +122,15 @@ def reader_questions() -> str:
     return "\n".join(lines)
 
 
-def prompt_for(sample: dict) -> str:
-    """输入全部内联。
+TASK_FILE = "REVIEW-TASK.md"
+
+
+def task_document(sample: dict) -> str:
+    """审查任务的全文：判据原文 + 读者问题 + 材料 + 已登记判断 + 待审稿。
 
     让它自己去工作区翻文件，预算会花在找文件上（实测一次 300 秒还没读完就超时），
     而资格门问的是**判断力**：同一份材料与稿子摆在面前，坏稿认不认得出来。
-    工作区仍然照建，供人事后复核同一份输入。
+    所以把这些放进**一份**文件，它读一次就齐了。
     """
     decision = DECISIONS[sample["base"]]
     return "\n".join([
@@ -150,6 +162,16 @@ def prompt_for(sample: dict) -> str:
     ])
 
 
+def prompt_for(sample: dict) -> str:
+    """命令行只留一句指引 —— 任务全文在工作区的文件里。
+
+    实测同一段长 prompt 走命令行参数时，一个模型收到了全文，另一个回
+    「判据和归档叙事件都没提供」。它带着 story 全文，注定长；走文件就不受这个摆布。
+    """
+    return (f"读工作区根目录下的 `{TASK_FILE}`，按它里面那条判据审查它里面那份归档叙事件。"
+            "**只做这一件事**，不要改任何文件，把结论直接写在回复里。")
+
+
 def parse_blocking(text: str) -> tuple[bool, str]:
     """有没有非空的 blocking_findings —— 这一件是客观的，脚本只判这一件。
 
@@ -163,8 +185,17 @@ def parse_blocking(text: str) -> tuple[bool, str]:
     nxt = rest.find("advisories")
     block = rest[:nxt] if nxt > 0 else rest[:1500]
     body = block.strip().lstrip(":").strip()
-    empty = (not body) or body.startswith("[]") or re.match(
-        r"^(无|没有|none|\(无\)|\(none\))", body, re.I)
+    # 「- （无）」「`[]（无）`」「**无**」「```yaml\n[]」都是空结论。装饰性符号一律剥掉再判，
+    # 否则「没报」会被记成「报了」——那正好把区分力读反，据此做的每一步判断都是假的。
+    head = body
+    for _ in range(6):
+        stripped = re.sub(r"^(```[a-z]*\s*|[\s\-*·—`>]+|[0-9]+[.、]\s*|[（(\[])", "",
+                          head, count=1)
+        if stripped == head:
+            break
+        head = stripped
+    empty = (not head) or head.startswith("]") or bool(re.match(
+        r"^(无|没有|none|n/a|na|空|暂无)", head, re.I))
     return (not empty), body[:600]
 
 
@@ -188,10 +219,17 @@ def run_one(sample: dict, ws: Path, entry: dict) -> dict:
             break
     status = getattr(result, "status", "")
     has_blocking, excerpt = parse_blocking(text)
+    # 「没跑出来」与「审查者看过之后没报」是两件事，混成一个 False 会把装置故障
+    # 读成区分力缺口。超时、失败、空输出一律记 no_output，不进命中率。
+    if status not in ("succeeded", "completed") or not text.strip():
+        verdict = "no_output"
+    else:
+        verdict = "blocking" if has_blocking else "clean"
     return {
         "id": sample["id"], "family": sample["family"], "expect": sample["expect"],
         "base": sample["base"], "domain": sample["domain"],
-        "cli_status": status, "seconds": round(elapsed, 1), "output_chars": len(text),
+        "cli_status": status, "verdict": verdict,
+        "seconds": round(elapsed, 1), "output_chars": len(text),
         "has_blocking": has_blocking, "blocking_excerpt": excerpt, "output": text,
     }
 
@@ -231,28 +269,48 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    summary = out_dir / "qualification.json"
+
+    def flush(rows: list[dict]) -> None:
+        """每份跑完就落一次盘——中途停掉时已跑的读数与正文都还在。"""
+        summary.write_text(
+            json.dumps({"cli_config_id": args.config, "model": entry["model"],
+                        "samples": rows}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8", newline="\n")
+
+    # 续跑：已经有读数的样本不重跑，只补没跑过的那几份
     rows = []
+    done = set()
+    if summary.is_file():
+        try:
+            rows = json.loads(summary.read_text(encoding="utf-8")).get("samples", [])
+            done = {r["id"] for r in rows if r.get("verdict") != "no_output"}
+        except ValueError:
+            rows, done = [], set()
+
     for i, sample in enumerate(chosen, 1):
+        if sample["id"] in done:
+            print(f"[{i}/{len(chosen)}] {sample['id']} 已有读数，跳过", file=sys.stderr, flush=True)
+            continue
         ws = build_workspace(out_dir, sample)
         print(f"[{i}/{len(chosen)}] {sample['id']}（期望 {sample['expect']}）……",
               file=sys.stderr, flush=True)
         row = run_one(sample, ws, entry)
-        rows.append(row)
-        mark = "报了" if row["has_blocking"] else "没报"
+        rows = [r for r in rows if r["id"] != row["id"]] + [row]
+        flush(rows)
+        mark = {"blocking": "报了", "clean": "没报", "no_output": "没跑出来"}[row["verdict"]]
         print(f"    {row['cli_status']} {row['seconds']}s {row['output_chars']} 字 → {mark}",
               file=sys.stderr, flush=True)
 
-    result = {"cli_config_id": args.config, "model": entry["model"],
-              "samples": rows}
-    (out_dir / "qualification.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    rows.sort(key=lambda r: r["id"])
+    flush(rows)
 
-    print("\n| 样本 | 族 | 期望 | 报了 blocking | 秒 | 输出字数 |", file=sys.stderr)
+    print("\n| 样本 | 族 | 期望 | 实际 | 秒 | 输出字数 |", file=sys.stderr)
     print("|---|---|---|---|---|---|", file=sys.stderr)
     for row in rows:
         print(f"| {row['id']} | {row['family']} | {row['expect']} | "
-              f"{'是' if row['has_blocking'] else '否'} | {row['seconds']} | "
-              f"{row['output_chars']} |", file=sys.stderr)
+              f"{row['verdict']} | {row['seconds']} | {row['output_chars']} |",
+              file=sys.stderr)
     return 0
 
 
