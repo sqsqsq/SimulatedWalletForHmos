@@ -19,9 +19,9 @@
 | 3 测试观测与效率事实 | **通过**；返修已做：`TEST.md` 三处失效的 `--isolated-workspaces` 已删（`80f5cc3e`） | [reviews/03-test-observation-truth.md](reviews/03-test-observation-truth.md) |
 | 4 Framework 作者上下文入口 | **通过**；已提交 `8a8d8a51`（framework + config + TEST），交接件 `artifacts/04-*` 随步骤 5 提交 | [reviews/04-05-author-context-channel.md](reviews/04-05-author-context-channel.md) |
 | 5 Extension 六阶段作者入口 | **通过**；本次提交（扩展 + 入口文件 + 测试） | 同上（4+5 合并一份） |
-| 6 材料版本与流程状态 SSOT | **已实施，等待评审**（与 8 合审） | 待生成 |
-| 7 Story 语义审查资格门 | 未开始 | 待生成 |
-| 8 Story/Review 确定性生成 | **已实施，等待评审**（与 6 合审） | 待生成 |
+| 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
+| 7 Story 语义审查资格门 | **已实施（装置）；资格实跑待授权** | 待生成 |
+| 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | 未开始 | 待生成 |
 | 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
@@ -409,3 +409,57 @@ Knowledge 应用各 100 分且不互相补偿；维护者只给建议分，用�
 
 **离线**：story 586（新增 18 条）、cli 18、失效形态 73/73、`node --check` 全部 `.mjs`、
 compileall、TEST §7.2 五条扫描（命中与本步之前逐条相同，全是既有占位与 XML 噪声）。
+- 2026-09-03 独立评审者复审 B 组（6+8）：通过。裁定①材料清单节「集合由 manifest 派生核对、贡献说明由作者写」不算偏离 D8；裁定②步骤 6/8 名下 15 条形态的旧 checker 保留为登记迁移桥，responsibility 改写与退场在步骤 9/11。已回写 `steps/08`、D8 表、06 矩阵与 05 §3。下一步：步骤 7。
+
+
+## 步骤 7 实施记录（2026-09-03）
+
+**基线** `4e9a6d21`。允许范围按 `steps/07`：Extension 的 Story verifier 任务与 prompt 组装、
+`test/story/fixtures/narrative-variants/**` 与对应资格测试、`TEST.md` 的资格测试入口。
+工作区里用户并行写入的 `TEST.md §10`、`09-AGENTS维护契约审核.md` 与几份 steps/design 文本不纳入本步；
+`TEST.md` 因为要写 §8.1 与 §9.1 而与用户那段改动同处一个文件。
+
+**用户 2026-09-03 裁定：CLI 实跑先暂缓**，与步骤 2 的 verifier smoke 一并等授权。
+本步交付的是**装置**：审查任务、成对夹具、判据与入口全部就位，资格结论登记为待验证。
+
+**做了什么**
+
+| 位置 | 改动 |
+|---|---|
+| `rules/spec-rules.overlay.yaml` | 新增 `story_reader_review`：独立的归档叙事件审查。输入是材料清单指向的每一份材料、已确认范围、已登记判断与 spec 已成立的约束；按合同里每章的读者问题与章级维度审十个方面；**不逐条核来源单元、不出裁决表**；结论只有 `blocking_findings` 与 `advisories` 两类 |
+| `fixtures/narrative-variants/pairs/base-receipt.story.md` | good 基底一：交易凭证下载，十章齐全的完整稿 |
+| `fixtures/narrative-variants/pairs/base-queue.{brief,story}.md` | good 基底二：门店排队叫号提醒，业务名、术语、编号与基底一完全不同 |
+| `fixtures/narrative-variants/pairs/pairs.json` | 六族缺陷 × 每族两个变体的**精确编辑**定义（删事实、掏空章、编造、删流程图、知识回显、同义改写） |
+| `scripts/make_narrative_variants.py` | 由基底 + 编辑现生成样本；锚点在基底里不是恰好一次就停下报错 |
+| `tests/test_narrative_variants.py` | 13 条：夹具立不立得住、六族齐备、每族跨两个业务域、good 基底十章齐、生成确定性、锚点漂移会被拦、**交付面零泄漏**、审查任务已登记且不要裁决表 |
+| `TEST.md §9.1` | 资格门入口：器材怎么生成、怎么跑、判据表（good 与同义改写零 blocking，其余五族须点名到本族缺陷）、按配置记结论、small/large 尺度观察、与 §9 的并存关系 |
+| `TEST.md §8.1` + `baseline_coverage.py` | 消费者审计结论落盘（见下） |
+
+**几处判断，评审重点看**
+
+1. **样本不整份存仓，只存「差在哪」。** 六族两变体是十二份 bad 加两份 good；整份存进去，
+   改一句基底就要同步改十四处，而它们本该只差声明的那一处，差异还会淹没在整篇文本里。
+   现在仓里只有两份基底和一份 `pairs.json`，样本由脚本现生成；锚点在基底里不是恰好出现一次
+   就停下报错——那说明基底改过而定义没跟上，再生成出来的样本已经不是它自称的那种缺陷。
+2. **第二个基底换的是业务，不是措辞。** 门店排队叫号与交易凭证下载在术语、编号、参与方上
+   没有一处重叠。同一种缺陷只在一个业务里测得出来的话，测的是它有没有记住固定文本。
+3. **审查任务不要那张逐单元裁决表。** 逐条核来源单元的量随材料条数涨，而读者拿到的判断
+   不增加——那正是要退的形态。新任务判的是机器判不了的那一类：讲了没有、讲清没有、是不是编的。
+   旧的三张表仍在正式路径上，两边并存到它的退场步骤。
+4. **`baseline_coverage.py` 的消费者审计结论：随步骤 9 退场。** 新的语义链不消费它；
+   它的枚举依赖 `source-units.mjs`，那是逐单元系统的一部分。在那之前只作历史诊断、
+   不参与任何 PASS/FAIL。结论写进了工具自己的 docstring 与 `TEST.md §8.1`，不只写在这里。
+
+**没做什么（登记，不静默略过）**
+
+- **资格实跑未进行**（用户裁定暂缓）。因此这几条完成条件登记为待验证：每族 good 通过 / bad 命中、
+  「十章在而内容大量丢失」稳定失败、报告规模按问题族增长、各配置的独立资格结论与配置矩阵、
+  small/large 尺度观测。步骤 11 的 `cli_config_id` 必须来自将来的通过集合，现在没有通过集合。
+- **P11、C01、R01、F02 及相关 S 类形态的台账未改。** 新发现者（`story_reader_review`）已上线，
+  旧发现者仍在守——这正是 D10 的次序。responsibility 的改写与旧发现者退场归步骤 9/11，
+  与步骤 6、8 的处置一致。
+- 未新增任何 token、相似度或数量 checker：本步只有一条 verifier 任务文本、两份基底、
+  一份编辑定义与一个生成器，生成器里没有阈值。
+
+**离线**：story 599（新增 13 条）、cli 18、失效形态 73/73、compileall、
+`TEST §7.2` 五条扫描（命中与本步之前逐条相同）。真实 CLI 未运行。

@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "note": "成对样本的定义：good 基底 + 一组精确编辑 = bad 样本。样本本身不落盘，由 make_narrative_variants.py 现生成——放十几份完整 story 进仓，改一句基底就要同步改十几份，而它们本该只差那一处。每个 family 至少两个变体，落在两个不同业务的基底上：同一种缺陷换个业务名、换种表达仍要被发现，否则测的是记住了固定文本。",
+  "expect_note": "blocking = 审查者必须报 blocking_findings；clean = 不该报 blocking，至多 advisories。",
+  "bases": {
+    "receipt": {
+      "story": "base-receipt.story.md",
+      "material": "../brief.md",
+      "domain": "交易凭证下载"
+    },
+    "queue": {
+      "story": "base-queue.story.md",
+      "material": "base-queue.brief.md",
+      "domain": "门店排队叫号提醒"
+    }
+  },
+  "families": [
+    {
+      "key": "fact_deleted",
+      "what": "删除关键业务事实：材料里明说的一条入口条件在 story 里没有了",
+      "expect": "blocking",
+      "variants": [
+        {
+          "id": "fact_deleted_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "delete",
+              "old": "只有完成态交易展示凭证入口。待处理与失败的交易不展示——它们的结果还可能变化，\n定格出来的凭证会与后来的事实矛盾。\n\n"
+            }
+          ]
+        },
+        {
+          "id": "fact_deleted_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "delete",
+              "old": "只有等待中的号展示订阅入口。已办理与已过号不展示——它们的叫号已经发生或不会再发生，\n订阅了也不会有提醒。\n\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "chapter_hollow",
+      "what": "十章仍在，但核心章只剩一句空泛短句",
+      "expect": "blocking",
+      "variants": [
+        {
+          "id": "chapter_hollow_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "replace_span",
+              "from": "### 从入口到文件送出\n",
+              "to": "## 功能说明",
+              "new": "本需求的业务流程按标准流程执行，各环节配合完成。\n\n"
+            }
+          ]
+        },
+        {
+          "id": "chapter_hollow_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "replace_span",
+              "from": "### 取号页订阅入口\n",
+              "to": "## 异常与恢复",
+              "new": "功能按页面既有方式实现，满足用户需要。\n\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fabricated",
+      "what": "写下材料与已登记判断都不支持的确定结论",
+      "expect": "blocking",
+      "variants": [
+        {
+          "id": "fabricated_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "质量指标只有一条来自工程设定：常见要素规模下渲染在数秒内完成。",
+              "new": "凭证自生成起 7 天内有效，过期后文件自动失效需重新生成。质量指标只有一条来自工程设定：常见要素规模下渲染在数秒内完成。"
+            }
+          ]
+        },
+        {
+          "id": "fabricated_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "夜间免打扰生效时，叫号只在应用内留记录，不推送；",
+              "new": "下发失败后系统自动重发，最多三次，每次间隔三十秒。夜间免打扰生效时，叫号只在应用内留记录，不推送；"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "flow_gutted",
+      "what": "删掉流程图，分支去向只剩正文里的一句概述",
+      "expect": "blocking",
+      "variants": [
+        {
+          "id": "flow_gutted_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "replace_span",
+              "from": "```mermaid\nflowchart TD\n    A[详情页 · 完成态]",
+              "to": "渲染任务的状态从空闲进入渲染中",
+              "new": ""
+            }
+          ]
+        },
+        {
+          "id": "flow_gutted_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "replace_span",
+              "from": "```mermaid\nflowchart TD\n    A[取号页 · 等待中]",
+              "to": "订阅任务的状态从空闲进入已订阅",
+              "new": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "knowledge_echo",
+      "what": "规约判定的依据成了规约名回显或原文复述，说不出落在哪",
+      "expect": "blocking",
+      "variants": [
+        {
+          "id": "knowledge_echo_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "| 敏感信息不落盘 | 命中 | 临时文件不含完整对方账号，且在四种时机删除 |\n| 埋点不带敏感字段 | 命中 | 三个事件只带不可逆摘要、格式与失败分类 |",
+              "new": "| 敏感信息不落盘 | 命中 | 依据「敏感信息不落盘」规约 |\n| 埋点不带敏感字段 | 命中 | 按埋点不带敏感字段的规约执行 |"
+            }
+          ]
+        },
+        {
+          "id": "knowledge_echo_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "| 敏感信息不落盘 | 命中 | 本地订阅记录不含手机号，且在三种时机删除 |\n| 埋点不带敏感字段 | 命中 | 三个事件只带门店编号、方式与失败分类 |",
+              "new": "| 敏感信息不落盘 | 命中 | 敏感信息不得落盘，本需求遵守该规约 |\n| 埋点不带敏感字段 | 命中 | 埋点不得携带敏感字段，本需求遵守该规约 |"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "same_meaning",
+      "what": "同一件事换一种同等清楚的表达：表改成列表、表改成段落",
+      "expect": "clean",
+      "variants": [
+        {
+          "id": "same_meaning_receipt",
+          "base": "receipt",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "| 异常 | 系统行为 | 用户可见结果 | 业务结果 | 恢复方式 |\n|---|---|---|---|---|\n| 交易要素查询失败 | 不进入渲染 | 提示稍后再试 | 未生成凭证 | 用户重试 |\n| 渲染失败 | 删除临时文件，不展示分享入口 | 提示失败原因分类 | 未生成凭证 | 用户重试或换一种格式 |\n| 用户中途离开 | 取消渲染并删除临时文件 | 无 | 未生成凭证 | 重新进入详情页发起 |\n| 埋点上报失败 | 只记录本地日志 | 无 | 不影响凭证生成 | 无需恢复 |",
+              "new": "- **交易要素查询失败**：不进入渲染，页面提示稍后再试；未生成凭证，用户可重试。\n- **渲染失败**：删除临时文件、不展示分享入口，提示失败原因分类；未生成凭证，用户可重试或换一种格式。\n- **用户中途离开**：取消渲染并删除临时文件，界面无提示；未生成凭证，重新进入详情页可再次发起。\n- **埋点上报失败**：只记录本地日志，用户无感知；凭证生成不受影响，无需恢复。"
+            }
+          ]
+        },
+        {
+          "id": "same_meaning_queue",
+          "base": "queue",
+          "edits": [
+            {
+              "op": "replace",
+              "old": "| 术语 | 含义 |\n|---|---|\n| 号 | 用户在门店取到的排队凭据，有等待中、已办理、已过号三种状态 |\n| 订阅 | 用户对某一个号登记的提醒意向，被叫到时触发一次提醒 |\n| 夜间免打扰 | 用户设定的时段，其间不推送提醒，只在应用内留记录 |",
+              "new": "**号**指用户在门店取到的排队凭据，它有等待中、已办理、已过号三种状态。\n**订阅**指用户对某一个号登记的提醒意向，被叫到时触发一次提醒。\n**夜间免打扰**指用户设定的时段，其间不推送提醒，只在应用内留记录。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -20,6 +20,13 @@
 
 不进生产链：它读的是基线夹具，那是评测数据，被测流程不该知道它存在。
 
+## 退场已登记
+
+消费者审计的结论：新的语义链不消费它。它的枚举依赖 `source-units.mjs`，那是逐单元系统的
+一部分，随它一起在**步骤 9** 退场；在那之前只作历史诊断，不参与任何 PASS/FAIL。
+留着不是因为还需要它，是因为退场要和它依赖的那套一起走——单独删掉会让那几份基线
+在还没有接手者的时候先失去唯一的读法。
+
 用法：
     python baseline_coverage.py <新 story 路径> --baseline AR90004
     python baseline_coverage.py <新 story 路径> --baseline AR90004 --json

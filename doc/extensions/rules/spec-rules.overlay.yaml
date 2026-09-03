@@ -100,6 +100,33 @@ semantic_checks:
       **每条裁决附引文**：从AR/design.md 的拆分表与 spec 的功能清单抄一段连续 12 字以上的原文（能检索到的）。
       引文为空、或只是把story-flow.json 的 scope 字段复制一遍的，该条按**未裁**处理。
 
+  story_reader_review:
+    description: >
+      归档叙事件的独立审查：读者拿这一份能不能读懂这个需求。审查对象是最终的
+      `doc/features/{module}/AR/story.md`，输入是它据以成文的东西——材料清单
+      `AR/story-src/materials.json` 指向的每一份材料、`AR/story-flow.json` 里已确认的本 AR 范围、
+      `AR/story-src/decisions.json` 里已登记的判断、spec 已经成立的产品约束。
+      按**读者会问什么**审查十个方面：背景、范围、方案、流程、功能、异常、验收、交付、
+      图与文的配合、判断与事实是否分开。每章要回答的读者问题与章级质量维度写在
+      `doc/extensions/skills/story/contracts/story-chapters.json`（`chapters[].questions`
+      与 `verdicts.chapter_dimensions`），按那份合同审，不另立标准。
+      **不逐条核来源单元、不出裁决表**：那是机器已经核过的落点，再核一遍只是把
+      同一件事按材料条数抄一遍，抄的量随材料涨，读者得到的判断却不增加。
+      你要判的是机器判不了的那一类：这件事讲了没有、讲清没有、是不是编的。
+      结论只有两类，见 ai_prompt_hint。`AR/story.md` 不存在时本检查 SKIP。
+    severity: MAJOR
+    ai_prompt_hint: >
+      先读材料与已登记的判断，再读 story，最后按章过一遍合同里的读者问题与维度。
+      报告里只写两类结论，别的都不要写：
+      **blocking_findings** —— 关键业务事实缺失、核心章只剩空泛短句、材料与已登记判断
+      都不支持的确定结论（编造）、前后矛盾、超出或漏掉已确认范围、验收条件无法判定。
+      逐项写清三件事：在哪一章哪一句、缺的或错的是什么、对读者的影响是什么。
+      **advisories** —— 不影响正确与完整的表达建议，不阻止 PASS。
+      判据是**内容**不是形态：同一件事写成表还是写成段、标题怎么起、几个小节，
+      都不构成 finding；反过来，十章齐全、字数不少而某一章只有空泛短句，是 blocking。
+      引用材料或 story 时抄原文定位，不要复述。零 blocking 时说明你逐章都过了什么，
+      不要只写一句「未发现问题」——那与没审同形。
+
 # 作者起手内容的读没读过：唯一的机械留痕。
 # 本阶段的 author 钩子由 manifest 的 `on_context_load` 送达（执行者跑
 # `scripts/author-context.ts --phase spec`），送达之后没有任何东西能证明它被读了——
