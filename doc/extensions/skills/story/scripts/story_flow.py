@@ -6,13 +6,13 @@
 契约同时是这条流程的**状态机**：`status` 子命令读它就能回答「现在走到哪、下一步干什么」。
 所以 skill 正文不必维护成篇的分支判定文本——位置由数据回答，不由记忆回答。
 
-契约里绝大多数内容是机械事实——文件哈希、时间戳、轮次边界、收件箱里还有没有没导过的料。
+契约里绝大多数内容是机械事实——时间戳、轮次边界、收件箱里还有没有没导过的料。
 这类事实靠记忆复现就会失真，所以一律由脚本自取。
 
 分工因此是：**判断留 AI，执行归脚本**（与 `import_sources.py` 的归类件同一条边界）。
 AI 只传它真正知道而脚本无从得知的东西——人选了哪一项、依据是什么；其余一律脚本自己取。
-本轮导入了什么也在「脚本自己取」这一侧：`import_sources.py` 成功后把回执落在
-`AR/.last-import.json`，`round` 读它并在登记后销毁——回执是一次性的。
+本轮导入了什么也在「脚本自己取」这一侧：`round` 每次调用都让 `materials.py` 按磁盘现状
+重算材料清单，从清单里读出哪些原件已经并入正文——没有回执，也不需要谁记住发生过什么。
 
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
@@ -28,7 +28,7 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
 **参数只放标量**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——同一条命令
 bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据一律走文件：
 选项集走 `AR/story-src/.gate-options.json`、本 AR 定位走 `AR/story-src/.positioning.json`、
-拆分份表走 `AR/story-src/.split-parts.json`，脚本读后即销毁（一次性，同导入回执）。
+拆分份表走 `AR/story-src/.split-parts.json`，脚本读后即销毁（一次性）。
 
 退出码（`decide` 的退出码回答「能不能按这个选择往下走」）：
 
@@ -38,8 +38,10 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
 核心不变量：
 
-- **一轮 = 一次初析**。轮次边界由 `AR/init-analysis.md` 的 sha256 判定：哈希没变就不是
-  新一轮（幂等），假轮次因此不可能被造出来；
+- **一轮 = 一次材料状态**。轮次边界只由材料清单的 `digest` 判定（`AR/story-src/materials.json`）：
+  材料一个字节没变就不是新一轮（幂等），补料导入则必然换版本。初析件在同一轮内可以从
+  盘点版改到完整版，它的哈希照实登记，但不划轮次——否则「材料没动、重写一遍分析」
+  就能造出一个新轮次；
 - **一次关卡交互 = 一条 gate 记录**，含未生效的那次。校验与记录是同一次调用，
   所以不存在"忘了记"；
 - **摆过的选项与选中的那项一起记**。只记 `chosen` 的话，「看过选项后选了不拆」与
@@ -58,12 +60,12 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+import materials
+
 SCHEMA = 3
 CONTRACT = ("AR", "story-flow.json")
 ANALYSIS = ("AR", "init-analysis.md")
-# import_sources.py 落下的导入回执（一次性，登记后销毁）
-RECEIPT = ("AR", ".last-import.json")
-# 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（同导入回执，一次性）
+# 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
 SPLIT_PARTS = ("AR", "story-src", ".split-parts.json")
 # 选项集侧车：本次关卡摆给人的全部选项。每条 gate 一份，读后销毁
 GATE_OPTIONS = ("AR", "story-src", ".gate-options.json")
@@ -78,32 +80,10 @@ DESIGN = ("AR", "design.md")
 STORY_SRC_FROZEN = (
     "source-units.json", "audit.json", "decisions.json",
     "story-verdicts.md", "copyedit.md",
+    # 材料清单也随稿冻结：story 定稿时手里是哪份材料，跟据以成文的账本同等重要。
+    # 它由 round 按磁盘重算，不是造 story 的脚手架，所以清理时也不能扫掉。
+    materials.MANIFEST[-1],
 )
-# 材料输入 —— 「这一轮拿到了什么」的完整定义，轮次指纹按它算。
-#
-# 四份文本源 + 界面参考目录。**界面参考与四份文本同等，都是材料本身**：它在材料清单里
-# 占一行，初析要消费它，story 的图片单元从它来。只盯四份文本时，补料如果只有图
-# （转换后只落 `ux-reference/`），四份文本一个字节没变 → 指纹不变 → 不算新一轮
-# → 关卡列表永不重置 → 流程卡死。实跑撞到过一次。
-SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
-#: 目录形态的材料源：目录下每个文件各自进指纹，加一张图就是材料变了。
-SOURCE_DIRS = ("ux-reference",)
-
-
-def material_inputs(feature_root: Path) -> dict[str, str | None]:
-    """本轮的材料输入逐份取哈希 —— 文件源与目录源同等对待。
-
-    目录不存在时不贡献任何键，与「四份文本时代」的指纹口径一致：
-    没有界面参考的单子，指纹不因为多了一个空目录概念而变。
-    """
-    inputs = {rel: digest(feature_root / rel) for rel in SOURCE_DOCS}
-    for rel in SOURCE_DIRS:
-        d = feature_root / rel
-        if not d.is_dir():
-            continue
-        for f in sorted(x for x in d.iterdir() if x.is_file()):
-            inputs[f.relative_to(feature_root).as_posix()] = digest(f)
-    return inputs
 
 
 def sweep_story_src(src: Path) -> list[str]:
@@ -181,13 +161,6 @@ def features_dir(project_root: Path) -> str:
     return "doc/features"
 
 
-def digest(path: Path) -> str | None:
-    """不存在的源记 null 而非省略——「没有」和「没查」是两件事。"""
-    if not path.is_file():
-        return None
-    return "sha256:" + sha256(path.read_bytes()).hexdigest()[:16]
-
-
 def ledger_digest(path: Path) -> str | None:
     """台账指纹：**换行差异不算改动**（同一份文件在两台机器上可能行尾不同）。
 
@@ -230,28 +203,8 @@ def require(contract: dict | None) -> dict:
 # ---------------------------------------------------------------------------
 # round：登记一轮初析
 
-def read_receipt(feature_root: Path) -> list[str]:
-    """本轮导入了什么：读 import_sources 落下的回执。没有回执 = 本轮没导入。"""
-    path = feature_root / Path(*RECEIPT)
-    if not path.is_file():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except ValueError as exc:
-        raise FlowError(f"{'/'.join(RECEIPT)} 不是合法 JSON：{exc}") from exc
-    return list(payload.get("converted") or [])
-
-
-def consume_receipt(feature_root: Path) -> None:
-    """回执是一次性的：登记进契约后即销毁，否则下一轮会把它当成本轮的导入再读一遍。
-
-    只在契约落盘成功之后调用——先删后写会在写失败时丢掉这份事实。
-    """
-    (feature_root / Path(*RECEIPT)).unlink(missing_ok=True)
-
-
 def consume_sidecar(feature_root: Path, parts: tuple[str, ...]) -> None:
-    """侧车同回执，一次性：登记进契约后销毁，否则下一次调用会把陈旧内容当成本次的输入。"""
+    """侧车是一次性的：登记进契约后销毁，否则下一次调用会把陈旧内容当成本次的输入。"""
     (feature_root / Path(*parts)).unlink(missing_ok=True)
 
 
@@ -430,23 +383,7 @@ def read_gate_options(feature_root: Path) -> list[dict]:
     return normalized
 
 
-def material_fingerprint(inputs: dict[str, str | None]) -> str:
-    """本轮材料的指纹：材料输入逐份哈希的有序摘要（见 `material_inputs`）。
-
-    **一轮 = 一次材料状态**。轮次边界曾以初析件 sha 划分，那是「先分析后确认材料」时代的
-    残留：材料还没确认就得先写出完整初析，材料一变分析全废，每轮补料重做一遍。
-    现在材料确认在前、分析在后，轮次自然应该跟着**材料**走——补料导入 → 材料变 → 新一轮；
-    材料没变，重跑 round 幂等。
-
-    「防伪造轮次」的职责也由它承接，而且更贴事实：重析的正当理由本来就是材料变了，
-    拿分析件的哈希当轮次边界，等于允许「材料没动、重写一遍分析」造出一个新轮次。
-    """
-    payload = json.dumps(inputs, ensure_ascii=False, sort_keys=True)
-    return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()[:16]
-
-
 def cmd_round(feature_root: Path) -> dict:
-    imported = read_receipt(feature_root)
     # 定位与选项集侧车都是 S2b（需求分析）的产物，此刻通常还不存在——
     # round 发生在材料盘点之后、分析之前。写了就消费，没写不失败：
     # 该不该有由 next_step 判（材料没确认前它根本不该有）。
@@ -454,11 +391,17 @@ def cmd_round(feature_root: Path) -> dict:
     scope_options = read_scope_options(feature_root)
 
     # 事实一律取当下：调用时机不确定（导入完全可能发生在 round 之后），
-    # 所以每次调用都重算，绝不沿用上一次的快照。
-    inputs = material_inputs(feature_root)
-    fingerprint = material_fingerprint(inputs)
+    # 所以每次调用都让清单按磁盘现状重算，绝不沿用上一次的快照。
+    try:
+        manifest = materials.refresh(feature_root)
+    except materials.MaterialError as exc:
+        raise FlowError(str(exc)) from exc
+    digest = manifest["digest"]
+    reference = {"path": "/".join(materials.MANIFEST), "digest": digest}
+    # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不再自己记一遍哈希
+    ingested = sorted(s["file"] for s in manifest["sources"] if s.get("ingested"))
     # 分析件可有可无：材料盘点阶段它还没写完整版
-    analysis_sha = digest(feature_root / Path(*ANALYSIS))
+    analysis_sha = materials.file_digest(feature_root / Path(*ANALYSIS))
 
     contract = load(feature_root) or {
         "schema": SCHEMA, "feature": feature_root.name, "status": "in_progress",
@@ -468,14 +411,13 @@ def cmd_round(feature_root: Path) -> dict:
         "design_generated_at": None,
     }
     rounds = contract["rounds"]
-    # `imported` 记的是**本轮新导入**的：导入重跑会再落一份内容相同的回执，
-    # 累计计入会让「哪一轮导的」永远说不清。
+    # `imported` 记的是**本轮新并入**的：清单每次都报全量已并入，累计计入会让
+    # 「哪一轮导的」永远说不清。
     already = {name for r in rounds for name in r.get("imported", [])}
 
     def stamp(entry: dict) -> None:
         """把本次调用取到的事实盖进轮次条目（新轮与幂等轮共用）。"""
-        entry["inputs"] = inputs
-        entry["materials"] = fingerprint
+        entry["materials"] = reference
         if analysis_sha:
             # 同一轮内分析件会从盘点版演进到完整版，照实更新，不当成新一轮
             entry["analysis"] = {"path": "AR/init-analysis.md", "sha256": analysis_sha}
@@ -485,27 +427,25 @@ def cmd_round(feature_root: Path) -> dict:
             entry["scope_options"] = scope_options
 
     # 材料没变就不是新一轮。「幂等」只意味着**不新建轮次**，不意味着不更新事实。
-    if rounds and rounds[-1].get("materials") == fingerprint:
+    if rounds and (rounds[-1].get("materials") or {}).get("digest") == digest:
         current = rounds[-1]
         stamp(current)
-        fresh = sorted(set(imported) - (already - set(current.get("imported", []))))
+        fresh = sorted(set(ingested) - (already - set(current.get("imported", []))))
         if fresh:
-            current["imported"] = sorted(set(current.get("imported", [])) | set(fresh))
+            current["imported"] = fresh
         save(feature_root, contract)
-        consume_receipt(feature_root)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
-        log(f"材料未变（{fingerprint}），仍在第 {current['round']} 轮（已刷新事实快照）")
-        return {"round": current["round"], "created": False, "materials": fingerprint,
+        log(f"材料未变（{digest}），仍在第 {current['round']} 轮（已刷新事实快照）")
+        return {"round": current["round"], "created": False, "materials": digest,
                 "positioning": bool(current.get("positioning")),
                 "scopeOptions": len(current.get("scope_options") or [])}
 
     entry = {
         "round": len(rounds) + 1,
-        "imported": sorted(set(imported) - already),
+        "imported": sorted(set(ingested) - already),
         "analysis": None,
-        "inputs": inputs,
-        "materials": fingerprint,
+        "materials": reference,
         "positioning": None,
         "scope_options": None,
         "gates": [],
@@ -513,11 +453,10 @@ def cmd_round(feature_root: Path) -> dict:
     stamp(entry)
     rounds.append(entry)
     save(feature_root, contract)
-    consume_receipt(feature_root)
     consume_sidecar(feature_root, POSITIONING)
     consume_sidecar(feature_root, SCOPE_OPTIONS)
-    log(f"登记第 {entry['round']} 轮（材料 {fingerprint}，本轮导入 {len(entry['imported'])} 件）")
-    return {"round": entry["round"], "created": True, "materials": fingerprint,
+    log(f"登记第 {entry['round']} 轮（材料 {digest}，本轮并入 {len(entry['imported'])} 件）")
+    return {"round": entry["round"], "created": True, "materials": digest,
             "positioning": bool(entry.get("positioning")),
             "scopeOptions": len(entry.get("scope_options") or [])}
 
@@ -525,19 +464,19 @@ def cmd_round(feature_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 # decide：追加一条关卡决策
 
-def pending_material(feature_root: Path, contract: dict) -> list[str]:
-    """收件箱里还没导过的料。
+def pending_material(feature_root: Path) -> list[str]:
+    """收件箱里还没并入正文的料。
 
-    原件导入后留在收件箱存档，所以「有文件」不等于「有新料」——账本是各轮的
-    `imported` 并集，AI 记不住，脚本记得住。
+    原件导入后留在收件箱存档，所以「有文件」不等于「有新料」。答案不在账本里而在磁盘上：
+    材料清单拿收件箱那批料重转一遍与正文比对，对不上的就是还没导的——同名原件被换了内容
+    也照样算新料，而这是任何一份「导过什么」的名单都记不住的。
     """
-    inbox = feature_root / "inbox"
-    if not inbox.is_dir():
-        return []
-    done = {name for r in contract["rounds"] for name in r.get("imported", [])}
-    return sorted(p.name for p in inbox.iterdir()
-                  if p.is_file() and not p.name.startswith(".")
-                  and p.name.lower() not in SKIP_INBOX and p.name not in done)
+    try:
+        manifest = materials.refresh(feature_root)
+    except materials.MaterialError as exc:
+        raise FlowError(str(exc)) from exc
+    return sorted(name for name in materials.pending(manifest)
+                  if name.lower() not in SKIP_INBOX)
 
 
 def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
@@ -682,7 +621,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     outcome, reason, code = "accepted", None, 0
     if gate == "material_scope" and chosen == "supplement":
-        pending = pending_material(feature_root, contract)
+        pending = pending_material(feature_root)
         if not pending:
             outcome, code = "rejected", 2
             reason = ("inbox/ 里没有未导入的材料：请把文档或界面设计图放进 "
@@ -961,7 +900,7 @@ def cmd_complete(feature_root: Path) -> dict:
     # 收口时的 design.md 快照。**不作校验用**——归档会覆盖这个文件（spec 阶段
     # post_check 对此有专门处理），拿它比对当前哈希必然误报。它回答的是审计问题：
     # 这份契约收口时对应的是哪一版提取件。
-    contract["design"] = {"sha256": digest(feature_root / Path(*DESIGN))}
+    contract["design"] = {"sha256": materials.file_digest(feature_root / Path(*DESIGN))}
     contract["design_generated_at"] = now()
     contract["status"] = "complete"
     save(feature_root, contract)
@@ -1072,8 +1011,8 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
 
     contract["archived"] = {
         "at": now(),
-        "story": digest(story),
-        "review": digest(review),
+        "story": materials.file_digest(story),
+        "review": materials.file_digest(review),
     }
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，装配只备份不重建")

@@ -20,6 +20,7 @@ STORY_SCRIPTS = REPO / "doc" / "extensions" / "skills" / "story" / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
+import materials  # noqa: E402
 import measure_run  # noqa: E402
 import phase_state  # noqa: E402
 import story_flow  # noqa: E402
@@ -250,7 +251,7 @@ class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
 
 
 class MaterialVersionSeesSupplements(unittest.TestCase):
-    """P9：只补图片算不算新材料版本。"""
+    """只补图片算不算新材料版本 —— 图片进来的两条路都要算。"""
 
     def _root(self) -> Path:
         d = Path(tempfile.mkdtemp())
@@ -259,7 +260,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         return d
 
     def _fingerprint(self, root: Path) -> str:
-        return story_flow.material_fingerprint(story_flow.material_inputs(root))
+        return materials.compute_digest(materials.collect_materials(root))
 
     def test_text_change_changes_the_version(self):
         """基线正样本：正文变了必须换版本，否则这个指纹什么都证明不了。"""
@@ -276,18 +277,13 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         (root / "ux-reference" / "flow.png").write_bytes(b"PNG")
         self.assertNotEqual(before, self._fingerprint(root))
 
-    @unittest.expectedFailure
     def test_docx_embedded_image_supplement_changes_the_version(self):
-        """**已知缺口（归步骤 6）**：docx 内嵌图落 `assets/`，材料版本看不见它。
+        """文档内嵌图落 `assets/`，材料版本必须看见它。
 
-        按 TEST.md §2.2，图片进来**只有这一条路**：人给的 docx 里内嵌，导入时抽出来，
-        落 `<feature>/assets/<stem>/`。而材料指纹只覆盖 `RR/SR/AR` 四份文本与
-        `ux-reference/` 目录——于是「补了一份只多几张图的文档」这件事对轮次完全隐形，
-        既不换轮次，也没有任何信号说材料变过。
-
-        这条不在步骤 3 里修：修它要改 Extension 的材料版本定义，那是步骤 6 的
-        material manifest 单一真源。这里只把缺口钉成机械事实——步骤 6 落地后本用例会
-        意外通过，unittest 会因此报错，逼着把这个标记摘掉，不会被忘掉。
+        按 TEST.md §2.2，图片进来只有一条路：人给的 docx 里内嵌，导入时抽出来落
+        `<feature>/assets/<源文档名>/`；判为界面图的再从那里复制一份进 `ux-reference/`。
+        材料版本一度只覆盖四份文本与 `ux-reference/`——于是「补了一份只多几张图的文档」
+        对轮次完全隐形：既不换轮次，也没有任何信号说材料变过。
         """
         root = self._root()
         (root / "assets" / "supp").mkdir(parents=True)
@@ -296,6 +292,22 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         (root / "assets" / "supp" / "image2.png").write_bytes(b"PNG2")
         self.assertNotEqual(before, self._fingerprint(root),
                             "只补图片没有形成新材料版本")
+
+    def test_the_same_image_in_two_places_is_one_material(self):
+        """同一张图复制到第二个落点是同一张图，不是两张。
+
+        界面图按规则要从内嵌位置复制一份到 `ux-reference/` 起语义名。两处各登记一条时，
+        下游看到的是两张一模一样的图，于是要么重复引用、要么各引各的。
+        """
+        root = self._root()
+        (root / "assets" / "supp").mkdir(parents=True)
+        (root / "assets" / "supp" / "image1.png").write_bytes(b"PNG1")
+        (root / "ux-reference").mkdir()
+        (root / "ux-reference" / "签约页.png").write_bytes(b"PNG1")
+        images = [m for m in materials.collect_materials(root) if m["kind"] == "image"]
+        self.assertEqual(1, len(images), "同一张图被登记成了两张")
+        self.assertEqual(["assets/supp/image1.png", "ux-reference/签约页.png"],
+                         images[0]["paths"], "两个落点没有都记下来")
 
 
 class BatchFiveArtifactsStayVersioned(unittest.TestCase):

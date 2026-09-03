@@ -82,11 +82,17 @@ export function flowProblems(featureRoot) {
 
   rounds.forEach((r, i) => {
     const where = `AR/story-flow.json 第 ${i + 1} 轮`;
-    // 一轮 = 一次初析：轮次由初析件哈希划界，两轮哈希相同说明是伪造的轮次
-    const sha = r?.analysis?.sha256;
-    if (!sha) problems.push(`${where}缺 analysis.sha256——无从证明这一轮确实重新初析过`);
-    else if (i > 0 && sha === rounds[i - 1]?.analysis?.sha256) {
-      problems.push(`${where}与上一轮的 analysis.sha256 相同——初析没重做，不构成新一轮`);
+    // 一轮 = 一次材料状态：轮次只由材料清单的 digest 划界。
+    //
+    // 这里**不查初析件哈希**。初析在同一轮内会从盘点版改到完整版，拿它划轮次，
+    // 等于「材料没动、重写一遍分析」也能造出一轮，而真正补了料却在分析之前跑 round 的
+    // 那一轮反倒被判成伪造。材料变没变是磁盘上的事实，由 `materials.py` 按现状算。
+    const digest = String(r?.materials?.digest ?? '');
+    if (!digest) {
+      problems.push(`${where}缺 materials.digest——轮次没有材料版本可依，`
+        + '重跑 `scripts/story_flow.py round` 让它按磁盘现状重算。' + FLOW_FIX);
+    } else if (i > 0 && digest === rounds[i - 1]?.materials?.digest) {
+      problems.push(`${where}与上一轮的 materials.digest 相同——材料一个字节没变，不构成新一轮`);
     }
 
     // 本 AR 定位是整条范围链的起点：没有它，「本 AR 承载什么」就没有依据，

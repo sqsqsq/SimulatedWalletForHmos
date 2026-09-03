@@ -27,6 +27,10 @@ UX 参考落点。下游（AR/design 生成、章节装配、spec）消费的仍
 
 stdout 单行 JSON；人类可读日志走 stderr。任何失败都不写盘——整批要么都落，要么一个
 字节不动，不存在「部分导入成功」的中间态。
+
+stdout 是**本次事件**的摘要，不是持久事实。材料现在是什么、哪些原件已经并入正文，一律去
+`materials.py` 的清单里按磁盘现状问。导入不另留一份回执：同一事实两处写，其中一处过期
+或被清掉时，两边都还理直气壮。
 """
 from __future__ import annotations
 
@@ -51,8 +55,6 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 SKIP_NAMES = {"readme.md"}
 # AI 写、脚本读的归类件；与它一样的点文件都是控制件，不是材料
 CLASSIFY_FILE = ".classify.json"
-# 导入回执：story_flow.py round 自取，不经 AI 转述、不过 shell
-RECEIPT = Path("AR/.last-import.json")
 
 CLASSES = ("RR", "SR", "AR", "UX")
 
@@ -363,6 +365,40 @@ def preview(path: Path) -> dict:
             "images": sorted(blobs.keys())}
 
 
+def convert_sources(sources: list[Path], classify: dict[str, str]
+                    ) -> tuple[dict[str, list[tuple[str, str]]],
+                               dict[str, dict[str, bytes]], list[Path]]:
+    """把这批材料整批转换到内存：正文按类分节、docx 内嵌图按源文档归组、界面图单列。
+
+    返回的就是「这批料落盘后该长成什么样」。`materials.py` 反过来拿它问磁盘：正文是不是
+    这批料的转换结果——判「已并入」与真正写进去的东西必须出自同一个算法，否则两边会分叉。
+    """
+    doc_sections: dict[str, list[tuple[str, str]]] = {c: [] for c in CLASSES}
+    media: dict[str, dict[str, bytes]] = {}
+    ux_images: list[Path] = []
+
+    for path in sources:
+        cls = classify[path.name]
+        if path.suffix.lower() in IMAGE_EXTS:
+            if cls != "UX":
+                raise ImportError_(
+                    f"「{path.name}」是图片但归类为 {cls}：图片只能归 UX（界面设计）")
+            ux_images.append(path)
+            continue
+        stem = path.stem
+        if path.suffix.lower() == DOC_EXT:
+            # docx 是压缩包，必须脚本转：zip + OOXML，顺带把内嵌图抽出来
+            markdown, blobs = docx_to_markdown(path, f"../assets/{stem}")
+            if blobs:
+                media[stem] = blobs
+        else:
+            # 文本原样并入——它已经是可读格式，任何"转换"都只会丢东西
+            markdown = path.read_text(encoding="utf-8").strip()
+        doc_sections[cls].append((stem, markdown))
+
+    return doc_sections, media, ux_images
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 inbox/ 里的人工材料导入上游正文")
     ap.add_argument("--feature", required=False,
@@ -410,28 +446,7 @@ def main() -> int:
         validate(sources, classify)
 
         # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
-        doc_sections: dict[str, list[tuple[str, str]]] = {c: [] for c in CLASSES}
-        media: dict[str, dict[str, bytes]] = {}
-        ux_images: list[Path] = []
-
-        for path in sources:
-            cls = classify[path.name]
-            if path.suffix.lower() in IMAGE_EXTS:
-                if cls != "UX":
-                    raise ImportError_(
-                        f"「{path.name}」是图片但归类为 {cls}：图片只能归 UX（界面设计）")
-                ux_images.append(path)
-                continue
-            stem = path.stem
-            if path.suffix.lower() == DOC_EXT:
-                # docx 是压缩包，必须脚本转：zip + OOXML，顺带把内嵌图抽出来
-                markdown, blobs = docx_to_markdown(path, f"../assets/{stem}")
-                if blobs:
-                    media[stem] = blobs
-            else:
-                # 文本原样并入——它已经是可读格式，任何"转换"都只会丢东西
-                markdown = path.read_text(encoding="utf-8").strip()
-            doc_sections[cls].append((stem, markdown))
+        doc_sections, media, ux_images = convert_sources(sources, classify)
 
         # ── 写盘 ────────────────────────────────────────────────────────
         written: list[str] = []
@@ -466,11 +481,6 @@ def main() -> int:
         result.update(success=True,
                       converted=[p.name for p in sources],
                       targets=written)
-        # 回执落盘供 story_flow round 自取：「本轮导入了什么」是兄弟脚本知道的事实，
-        # 不该让 AI 把 stdout 复制过去——多一道失真，还多过一次 shell。
-        receipt = feature_root / RECEIPT
-        receipt.parent.mkdir(parents=True, exist_ok=True)
-        receipt.write_text(json.dumps(result, ensure_ascii=False) + "\n", encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

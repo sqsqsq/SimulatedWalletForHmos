@@ -4,7 +4,7 @@
 |---|---|
 | 状态 | **步骤 1～5 已通过独立复审（4+5 合审，唯一 blocker 已改）；步骤 4 已提交 `8a8d8a51`，步骤 5 随本次提交。下一步：步骤 6** |
 | 输入 | 批次 1～4 全部需求/方案/判据/报告与提交史；F8 局部优化现场；外网 suite `20260901-230253-23468`；内网反馈 |
-| 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置） |
+| 诊断文件 | [00-问题记录与原因分析.md](00-问题记录与原因分析.md)（P1–P16，行为链/所有者/批次分类与实跑证据）<br>[01-四批次全量问题与根因审计.md](01-四批次全量问题与根因审计.md)（两个维护认知根因、十个机制根因、处置边界与方案制定方式）<br>[02-AGENTS重写与信息迁移审计.md](02-AGENTS重写与信息迁移审计.md)（旧内容逐项保留、去重、迁移或退役）<br>[04-失效形态长期要求审计.md](04-失效形态长期要求审计.md)（73 条逐项分为长期不变量、目标迁移、旧实现专属）<br>[06-验收追踪矩阵.md](06-验收追踪矩阵.md)（P1～P16、D1～D12、73 条到步骤的完整对账）<br>[07-方案评审意见.md](07-方案评审意见.md)（独立评审原文及维护者逐项处置）<br>[09-AGENTS维护契约审核.md](09-AGENTS维护契约审核.md)（grill-me Q1～Q18、长期规则修正与三轴评分基线） |
 | 决策记录 | [03-方案讨论决策.md](03-方案讨论决策.md)（D1～D11 与 Q1～Q29 共识；D12 不适用） |
 | 范围 | 批次 1～4；批次 0 与更早轮次只作根因追溯证据 |
 | 方案文件 | [05-实施方案总览.md](05-实施方案总览.md)；`steps/01`～`steps/11` |
@@ -19,7 +19,7 @@
 | 3 测试观测与效率事实 | **通过**；返修已做：`TEST.md` 三处失效的 `--isolated-workspaces` 已删（`80f5cc3e`） | [reviews/03-test-observation-truth.md](reviews/03-test-observation-truth.md) |
 | 4 Framework 作者上下文入口 | **通过**；已提交 `8a8d8a51`（framework + config + TEST），交接件 `artifacts/04-*` 随步骤 5 提交 | [reviews/04-05-author-context-channel.md](reviews/04-05-author-context-channel.md) |
 | 5 Extension 六阶段作者入口 | **通过**；本次提交（扩展 + 入口文件 + 测试） | 同上（4+5 合并一份） |
-| 6 材料版本与流程状态 SSOT | 未开始 | 待生成 |
+| 6 材料版本与流程状态 SSOT | **已实施，等待评审**（与 8 合审） | 待生成 |
 | 7 Story 语义审查资格门 | 未开始 | 待生成 |
 | 8 Story/Review 确定性生成 | 未开始 | 待生成 |
 | 9 正向 Story 作者路径切换 | 未开始 | 待生成 |
@@ -299,3 +299,55 @@ spec 正常是因为 `/story` 链自己指向了它，不是机制在起作用�
 `test_story_build.TestKnowledgeUnits.test_repo_manifest_derives_units_too` 直接 `int(proc.stdout)`，
 当宿主终端让 node 判定为 TTY 时，输出带 ANSI 颜色码（`[33m15[39m`），用例报 ValueError 而非断言失败。
 本次首跑撞到，`NO_COLOR=1 FORCE_COLOR=0` 后 551 全绿。修法是用例侧剥色或给子进程固定关色，不是改被测脚本。
+
+## AGENTS 维护契约审核（2026-09-03）
+
+用户与维护者用 grill-me 完成 Q1～Q18，结论见 [09-AGENTS维护契约审核.md](09-AGENTS维护契约审核.md)。
+AGENTS 删除测试字段和“一次成文”等批次实现细节，允许有退出条件的分步中间态，补齐三类 Knowledge 生命周期、
+正向提示、内容守恒边界、Demo 问题处置和 checker 读取的综合判定。TEST §10 新增 Story init 三轴评分：产物结果、性能、
+Knowledge 应用各 100 分且不互相补偿；维护者只给建议分，用户确认最终分数。批次 5 成功后，该量表与确认结果晋升为后续演进基线。
+
+
+## 步骤 6 实施记录（2026-09-03）
+
+**基线** `00c46802`。允许范围按 `steps/06`：`import_sources.py`、`story_flow.py`、`flow-check.mjs`、
+新增的唯一 manifest 写入模块、材料合同及其直接测试。工作区里用户并行写入的
+`TEST.md §10`、`09-AGENTS维护契约审核.md` 与几份 steps 文本**不纳入本步**，只有 STATUS 这一份
+因为要写实施记录而与用户本轮的 AGENTS 审核段落同处一个文件。
+
+**做了什么**
+
+| 位置 | 改动 |
+|---|---|
+| 新增 `scripts/materials.py` | 材料清单 `AR/story-src/materials.json` 的唯一算法与唯一写入者：枚举四份正文 + `ux-reference/` + `assets/`，逐份记身份，算出 `digest` |
+| `story_flow.py` | 删掉自己那份 `material_inputs` / `material_fingerprint` / `digest`；`round` 改调 `materials.refresh()` 按磁盘现状重算；轮次条目只留 `materials: {path, digest}`，`inputs` 删除 |
+| `story_flow.py` | 删掉导入回执的读取与销毁；`imported` 改由清单里「已并入」的原件派生；`pending_material` 改问清单，不再靠契约里的导入账本 |
+| `import_sources.py` | 不再落 `AR/.last-import.json`；转换逻辑抽成 `convert_sources()`，与清单判「已并入」共用同一套算法 |
+| `flow-check.mjs` | 轮次判据从 `analysis.sha256` 改为 `materials.digest`——初析件不再划轮次 |
+| `rules/init_analysis.md`、`SKILL.md` | 轮次定义与产物表同步：材料清单进产物表，回执的说法删除 |
+| `test_material_rounds.py` | 补 15 条：契约只指向清单、导入不留回执、放料未导算 pending、导入后换版本、同名换内容重新 pending、重复导入幂等、坏归类件停下、空材料仍有清单、README 变化不动图片身份、改初析不开新轮、契约不镜像 Framework phase、哈希只有一处算法、对接层零引用、替身 js 取材后 `round` 仍生成清单 |
+| `test_run_measurement.py` | P9 的 `expectedFailure` 摘除（`assets/` 补图现在换版本），另加「同一张图两个落点仍是一张图」 |
+
+**几处判断，评审重点看**
+
+1. **「已并入」按磁盘判，不按事件判。** 删掉回执后，「这份原件导没导过」的答案改从磁盘取：
+   把收件箱那批料用 `convert_sources` 重转一遍与正文比对，一致即已并入。代价是每次 `round`
+   要重解析一遍 docx；换来的是同名原件被换了内容也算新料——那是任何一份「导过什么」的名单都记不住的。
+2. **图片按内容归并，一张图一条登记。** 界面图按规则要从内嵌位置复制一份到 `ux-reference/`
+   起语义名。逐路径各记一条的话，下游看到的是两张一模一样的图。清单因此对 image 按内容合并，
+   `paths` 列出它的全部落点；正文不做这种归并（两份内容相同的文档仍是两份材料）。
+3. **`materials.json` 进了 `STORY_SRC_FROZEN`。** 否则成文登记时的 `story-src/` 清扫会把它删掉。
+   它随稿冻结这件事本身也成立：story 定稿时手里是哪份材料，与据以成文的台账同等重要。
+4. **收件箱不进 digest。** 料放进收件箱还没导，流程消费的仍是旧正文，材料版本不该动；
+   导入之后正文变了，版本随之变——「补料开出新一轮」因此是机械事实而不是约定。
+
+**没做什么（登记，不静默略过）**
+
+- 6 条主要迁移到本步的失效形态（M05、M06、S10、S11、S16、S17）**checker 一行未改**。清单现在是
+  图片身份的唯一真源，但消费它的那一侧（材料清单生成、图片单元枚举）在步骤 8/9；旧路径还没被替代完，
+  此时把 checker 改成 `generated_by_construction` 会留下一段没有发现者的空窗。台账留给步骤 8/9 一并处置。
+- `rules/init_analysis.md` 的命令表里仍写着 `--by human|ai`，而 `story_flow.py` 的 `ACTORS` 只剩 `human`。
+  这是既有的文本与实现相斥，不在本步允许范围（代选路径的退场归更早的轮次），此处登记发现。
+
+**离线**：story 566（新增 15 条，P9 的 expectedFailure 已摘）、cli 18、失效形态 73/73、
+`node --check` flow-check、compileall 全绿。真实 Story 未运行（本步不需要）。

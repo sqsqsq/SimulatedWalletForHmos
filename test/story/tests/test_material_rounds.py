@@ -17,7 +17,9 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story_flow.py"
+STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+FLOW = STORY_SCRIPTS / "story_flow.py"
+MATERIALS = STORY_SCRIPTS / "materials.py"
 FEATURE = "AR90001"
 
 
@@ -119,9 +121,9 @@ class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
     def test_the_input_definition_names_no_extras(self) -> None:
         """定义里不许出现「额外 / 附加 / extra」——那正是这个 bug 的根。
 
-        把界面参考写成附加项，下一次谁再加一类材料源，又会被漏在指纹外面。
+        把界面参考写成附加项，下一次谁再加一类材料源，又会被漏在版本外面。
         """
-        body = FLOW.read_text(encoding="utf-8")
+        body = MATERIALS.read_text(encoding="utf-8")
         for word in ("EXTRA", "额外", "附加"):
             self.assertNotIn(word, body,
                              "「%s」把某一类材料说成了二等的" % word)
@@ -214,6 +216,200 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
             for gone in ('by:"ai"', "AI 代选", "代选永远不选"):
                 self.assertNotIn(gone, text, "%s 里还留着代选路径：%s" % (rel, gone))
+
+
+class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
+    """材料现在是什么、导没导过，只有 `AR/story-src/materials.json` 说了算。"""
+
+    def manifest(self) -> dict:
+        path = self.feature_root / "AR" / "story-src" / "materials.json"
+        self.assertTrue(path.is_file(), "round 之后没有材料清单")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def contract(self) -> dict:
+        return json.loads((self.feature_root / "AR" / "story-flow.json")
+                          .read_text(encoding="utf-8"))
+
+    def put_inbox(self, name: str, body: str, cls: str) -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text(body, encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = cls
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    def import_now(self) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
+             "--feature", FEATURE, "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+
+    def test_the_contract_only_points_at_the_manifest(self) -> None:
+        """契约不再自己存一份逐文件哈希，只留清单的位置与版本。
+
+        同一份材料事实两处写，改一处忘一处时，两边都还理直气壮。
+        """
+        self.round_now()
+        entry = self.contract()["rounds"][-1]
+        self.assertNotIn("inputs", entry, "契约里还留着第二份材料哈希")
+        self.assertEqual("AR/story-src/materials.json", entry["materials"]["path"])
+        self.assertEqual(self.manifest()["digest"], entry["materials"]["digest"])
+
+    def test_importing_leaves_no_receipt(self) -> None:
+        """导入不再落一次性回执：本次导了什么，去清单里按磁盘现状问。"""
+        self.put_inbox("上游需求.md", "# 上游\n\n正文。\n", "AR")
+        proc = self.import_now()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertFalse((self.feature_root / "AR" / ".last-import.json").exists(),
+                         "导入回执又回来了")
+        for script in ("story_flow.py", "import_sources.py"):
+            self.assertNotIn(".last-import",
+                             (STORY_SCRIPTS / script).read_text(encoding="utf-8"),
+                             "%s 还在读写导入回执" % script)
+
+    def test_material_placed_but_not_imported_is_pending(self) -> None:
+        """放进收件箱还没导 —— 材料版本不动，但清单要说这份料还没并入。"""
+        before = self.round_now()
+        self.put_inbox("上游需求.md", "# 上游\n\n正文。\n", "AR")
+        after = self.round_now()
+        self.assertEqual(before["materials"], after["materials"],
+                         "料还没导进正文，材料版本就变了")
+        sources = self.manifest()["sources"]
+        self.assertEqual(["上游需求.md"], [s["file"] for s in sources])
+        self.assertFalse(sources[0]["ingested"], "没导的料被记成已并入")
+
+    def test_importing_marks_it_ingested_and_moves_the_version(self) -> None:
+        """导入之后：正文变了 → 新一轮；清单说它已并入；契约记下本轮并入了它。"""
+        before = self.round_now()
+        self.put_inbox("上游需求.md", "# 上游\n\n正文。\n", "AR")
+        self.assertEqual(0, self.import_now().returncode)
+        after = self.round_now()
+        self.assertNotEqual(before["materials"], after["materials"])
+        self.assertTrue(self.manifest()["sources"][0]["ingested"])
+        self.assertEqual(["上游需求.md"], self.contract()["rounds"][-1]["imported"])
+
+    def test_replacing_a_source_with_new_content_is_pending_again(self) -> None:
+        """同名原件换了内容就是新料 —— 任何一份「导过什么」的名单都记不住这件事。"""
+        self.put_inbox("上游需求.md", "# 上游\n\n第一版。\n", "AR")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        self.assertTrue(self.manifest()["sources"][0]["ingested"])
+        self.put_inbox("上游需求.md", "# 上游\n\n第二版。\n", "AR")
+        self.round_now()
+        self.assertFalse(self.manifest()["sources"][0]["ingested"],
+                         "同名料被换了内容，却仍算已并入")
+
+    def test_reimporting_the_same_material_is_idempotent(self) -> None:
+        """同一组材料重复导入，材料版本一个字节都不该动。"""
+        self.put_inbox("上游需求.md", "# 上游\n\n正文。\n", "AR")
+        self.assertEqual(0, self.import_now().returncode)
+        first = self.round_now()
+        self.assertEqual(0, self.import_now().returncode)
+        second = self.round_now()
+        self.assertEqual(first["materials"], second["materials"])
+
+    def test_a_broken_classify_file_is_not_an_empty_inbox(self) -> None:
+        """归类件坏了要停下报错，不能算成「收件箱是空的」放过去。"""
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / "上游需求.md").write_text("# 上游\n", encoding="utf-8")
+        (inbox / ".classify.json").write_text("{坏了", encoding="utf-8")
+        proc = self.run_flow("round")
+        self.assertEqual(1, proc.returncode, "坏归类件没有让 round 停下")
+        self.assertIn("不是合法 JSON", proc.stdout + proc.stderr)
+
+    def test_an_empty_feature_still_has_a_manifest(self) -> None:
+        """真的一份材料都没有，也要有清单说「四份正文都不在」——空与没查是两件事。"""
+        for rel in ("RR/prd.md", "SR/design.md", "AR/design.md"):
+            (self.feature_root / rel).unlink()
+        self.round_now()
+        entries = {m["paths"][0]: m["sha256"] for m in self.manifest()["materials"]}
+        self.assertEqual({"RR/prd.md": None, "SR/design.md": None,
+                          "AR/design.md": None, "AR/upstream.md": None}, entries)
+
+    def test_a_readme_change_does_not_move_any_image_identity(self) -> None:
+        """图片的身份是它的内容与落点，不由任何一份说明文件的链接决定。"""
+        self.add_ux("签约页.png")
+        self.round_now()
+        images = [m for m in self.manifest()["materials"] if m["kind"] == "image"]
+        readme = self.feature_root / "ux-reference" / "README.md"
+        readme.write_text("# 界面参考\n\n这里一个链接都没有。\n", encoding="utf-8")
+        self.round_now()
+        again = [m for m in self.manifest()["materials"] if m["kind"] == "image"]
+        self.assertEqual(images, again, "改了说明文件，图片登记跟着变了")
+
+    def test_revising_the_analysis_does_not_open_a_round(self) -> None:
+        """同一材料版本内，初析可以从盘点版改到完整版，不划新轮次。"""
+        first = self.round_now()
+        analysis = self.feature_root / "AR" / "init-analysis.md"
+        analysis.write_text("# 初析\n\n盘点版。\n", encoding="utf-8")
+        second = self.round_now()
+        self.assertEqual(first["round"], second["round"])
+        analysis.write_text("# 初析\n\n完整版，结论改了。\n", encoding="utf-8")
+        third = self.round_now()
+        self.assertEqual(first["round"], third["round"],
+                         "重写一遍分析就造出了一个新轮次")
+        self.assertTrue(self.contract()["rounds"][-1]["analysis"]["sha256"],
+                        "分析件哈希仍要照实登记，只是不划轮次")
+
+    def test_the_flow_never_mirrors_a_framework_phase(self) -> None:
+        """Story flow 只记材料、范围与承载，不镜像 Framework 的阶段状态。"""
+        self.round_now()
+        body = json.dumps(self.contract(), ensure_ascii=False)
+        for word in ("highest_phase", "phase_source", "spec_done"):
+            self.assertNotIn(word, body, "契约里长出了 Framework 阶段状态：%s" % word)
+
+
+class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
+    """材料哈希只有一处算法；对接层不知道清单的存在。"""
+
+    def test_no_other_script_hashes_material_files(self) -> None:
+        """全仓只有清单模块自己算材料文件的哈希。
+
+        第二处算法一旦出现，两边差一个换行就会变成「材料每次都在变」。
+        """
+        offenders = [path.name for path in sorted(STORY_SCRIPTS.glob("*.py"))
+                     if path.name != "materials.py"
+                     and "read_bytes()).hexdigest" in path.read_text(encoding="utf-8")]
+        self.assertEqual([], offenders, "这些脚本自己又算了一遍材料哈希：%s" % offenders)
+
+    def test_the_data_layer_never_hears_about_the_manifest(self) -> None:
+        """对接层的 js 各部署环境自备、不随包交付，不能要求它们跟着改。"""
+        for name in ("story.js", "review.js", "token.js"):
+            text = (STORY_SCRIPTS / name).read_text(encoding="utf-8")
+            for word in ("materials.json", "manifest"):
+                self.assertNotIn(word, text,
+                                 "%s 里出现了 %s —— 清单的事不该落到对接层" % (name, word))
+
+
+class AManifestAppearsWithoutAnyDataLayer(unittest.TestCase):
+    """材料是谁放的都不影响清单：换一份不认识清单的替身取材，round 照样算得出来。"""
+
+    def test_a_stand_in_data_layer_still_gets_a_manifest(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        feature_root = root / "doc" / "features" / FEATURE
+        # 替身「对接层」：只把正文与图片放到该在的位置，对清单一无所知
+        (feature_root / "RR").mkdir(parents=True)
+        (feature_root / "RR" / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
+        (feature_root / "ux-reference").mkdir(parents=True)
+        (feature_root / "ux-reference" / "签约页.png").write_bytes(b"PNG")
+
+        proc = subprocess.run(
+            [sys.executable, str(FLOW), "round", "--feature", FEATURE,
+             "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        manifest = json.loads(
+            (feature_root / "AR" / "story-src" / "materials.json")
+            .read_text(encoding="utf-8"))
+        self.assertTrue(manifest["digest"])
+        self.assertIn("ux-reference/签约页.png",
+                      [p for m in manifest["materials"] for p in m["paths"]])
 
 
 if __name__ == "__main__":
