@@ -20,7 +20,7 @@
 | 4 Framework 作者上下文入口 | **通过**；已提交 `8a8d8a51`（framework + config + TEST），交接件 `artifacts/04-*` 随步骤 5 提交 | [reviews/04-05-author-context-channel.md](reviews/04-05-author-context-channel.md) |
 | 5 Extension 六阶段作者入口 | **通过**；本次提交（扩展 + 入口文件 + 测试） | 同上（4+5 合并一份） |
 | 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
-| 7 Story 语义审查资格门 | **装置通过**；返修待做：`story_reader_review` 的执行证明（必答清单 + 报告核对）；资格实跑按授权暂缓 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
+| 7 Story 语义审查资格门 | **装置通过**；返修已做（`story_reader_review` 的执行证明落报告核对）；资格实跑按授权暂缓 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | 未开始 | 待生成 |
 | 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
@@ -465,3 +465,27 @@ compileall、TEST §7.2 五条扫描（命中与本步之前逐条相同，全�
 `TEST §7.2` 五条扫描（命中与本步之前逐条相同）。真实 CLI 未运行。
 - 2026-09-03 独立评审者复审步骤 7：装置通过、区分力结论未取得（授权暂缓）。返修一条：扩展的「注入≠执行」收口只覆盖 `knowledge_` 前缀判据，`story_reader_review` 无执行证明，须在步骤 9 切换前补进必答清单与报告核对。四条 advisory 见评审。
 - 2026-09-03 用户裁定：步骤 7 资格门与步骤 2 smoke 一并暂缓，合入步骤 11 的唯一 CLI 窗口，顺序固定为 smoke → 资格门 → 真实 Story → 退场，任一环不成立即停。前提：步骤 7 执行证明返修离线完成；9、10 不删旧发现者。已写入 05 §3 与 `steps/11`。
+
+
+## 步骤 7 评审返修（2026-09-03）
+
+`reviews/07` 判「装置通过，附一条返修（须在步骤 9 切换前落地）」。返修已补，未重做任何设计。
+
+**§4 执行证明缺失**：判据注入了 verifier 的上下文，不等于它被执行——实测过整份必答清单
+一条没裁而 harness 照收 PASS。步骤 9 之后 `story_reader_review` 是 story 语义质量的唯一发现者，
+同一形态重演时没人会知道那一轮根本没审。
+
+补法（只核形态，不核内容）：
+
+| 位置 | 改动 |
+|---|---|
+| `hooks/shared/verifier-report.mjs` | 新增 `storyReviewProblems()`：报告里要有以 `story_reader_review` 为标记的结果块，块内 `blocking_findings` 与 `advisories` 两个小节。**空列表是合法结论**——审过而没发现问题，与没审是两件事；块里出现逐单元裁决表的表头则点名「做成了另一件事」 |
+| `hooks/spec/post_check.mjs` | 登记为 `story_review_persisted`；story.md 不在或报告还没有时 NOT_APPLICABLE（那不是通过，是还轮不到判） |
+| `rules/spec-rules.overlay.yaml` | 审查任务补上落盘约定：结果写成那一块、两个小节、没有阻断问题就写空列表，只写在 YAML 输出里不算 |
+| `tests/test_verifier_report_protocol.py` | 新增 6 条：缺结果块点名、空列表通过、缺小节点名、逐单元表点名形态不对、无 story 与无报告各为 NOT_APPLICABLE |
+
+**advisory 的处置**：A1（资格门驱动器）与 A3（第二基底用的是简报而非四源）都要等实跑恢复才谈得上，
+随实跑一并处理；A2（`blocking_findings` 非空是否映射为 BLOCKER）归步骤 9 定，它属于作者路径切换时的收敛口径；
+A4（异常与验收章没有掏空变体）按评审建议不预先加，实跑后按误判情况再定。
+
+**离线**：story 605（返修新增 6 条）、失效形态 73/73、全部 `.mjs` `node --check`。
