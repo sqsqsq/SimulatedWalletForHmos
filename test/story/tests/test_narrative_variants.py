@@ -139,11 +139,12 @@ class TheReviewTaskIsRegistered(unittest.TestCase):
         self.assertIn("advisories", text)
 
     def test_it_does_not_ask_for_a_per_unit_verdict_table(self) -> None:
-        """逐条核来源单元的量随材料涨，读者拿到的判断却不增加——新任务不要那张表。"""
+        """逐条对账的量随材料涨，读者拿到的判断却不增加——新任务不要那张表。"""
         block = self.overlay().split("story_reader_review:")[1].split("\n\n")[0]
-        for gone in ("裁决表", "逐条核来源单元", "source-units.json"):
-            self.assertNotIn(gone, block.replace("不逐条核来源单元、不出裁决表", ""),
-                             f"审查任务又要了一张逐单元表：{gone}")
+        # 那一句本身是**否定**表述（「不做逐条对账、不出裁决表」），先把它摘掉再判
+        body = block.replace("不做逐条对账、不出裁决表", "")
+        for gone in ("裁决表", "逐条对账", "source-units.json"):
+            self.assertNotIn(gone, body, f"审查任务又要了一张逐条对账表：{gone}")
 
     def test_it_reads_the_material_manifest(self) -> None:
         """审查的输入是材料清单指向的材料，不是作者转述的摘要。"""

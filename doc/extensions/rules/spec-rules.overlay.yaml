@@ -110,8 +110,8 @@ semantic_checks:
       图与文的配合、判断与事实是否分开。每章要回答的读者问题与章级质量维度写在
       `doc/extensions/skills/story/contracts/story-chapters.json`（`chapters[].questions`
       与 `verdicts.chapter_dimensions`），按那份合同审，不另立标准。
-      **不逐条核来源单元、不出裁决表**：那是机器已经核过的落点，再核一遍只是把
-      同一件事按材料条数抄一遍，抄的量随材料涨，读者得到的判断却不增加。
+      **不做逐条对账、不出裁决表**：把材料一条条比回 story、给每条打一个勾，
+      抄的量随材料条数涨，读者得到的判断却不增加。
       你要判的是机器判不了的那一类：这件事讲了没有、讲清没有、是不是编的。
       结论只有两类，见 ai_prompt_hint。`AR/story.md` 不存在时本检查 SKIP。
     severity: MAJOR

@@ -6,9 +6,8 @@
 **不重建 story、不重新归档**：story 定稿于评审时点，系统上那份就是评审依据。
 重建 story 是人显式发起新一轮评审时的动作，终止权在人，不在流程。
 
-**冻结件登记之后只读。** `AR/story-src/` 那两件（`decisions.json` / `copyedit.md`，加上
-`decisions.json` / `story-verdicts.md` / `copyedit.md`）随 story 登记冻结，是这份 story
-据以成文的全部依据。评审引起的状态变化只记进处置台账 `AR/review-disposition.json`，
+**冻结件登记之后只读。** `AR/story-src/` 那两件（`decisions.json` / `copyedit.md`）
+随 story 登记冻结，是这份 story 据以成文的全部依据。评审引起的状态变化只记进处置台账 `AR/review-disposition.json`，
 **不回写冻结件**——把评审 status 写回 `decisions.json` 会被门禁拦下，而那是拦对了：
 依据一旦可以事后改写，「当时是按什么定的」就查不回来了。
 

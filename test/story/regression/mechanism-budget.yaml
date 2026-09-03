@@ -31,10 +31,10 @@ requirement:
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 3144
+    interim_ceiling: 2979
     target: 2000
     approved_by: WYK
-    reason: "步骤 9 退场后压到现值 3144（source-units.mjs 整份删除、五类逐单元判据与 audit 命令退场、lint-rules 缩到确定性路径用到的部分）：先加后删的那一段已经过去，峰值不再需要留 5200 的余量；完成后 story-build ≤1000、lint ≤300"
+    reason: "步骤 9 退场后压到现值 2979（source-units.mjs 整份删除、五类逐单元判据与 audit 命令退场、lint-rules 缩到确定性路径用到的部分、返修删八个无调用函数）：先加后删的那一段已经过去，峰值不再需要留 5200 的余量；完成后 story-build ≤1000、lint ≤300"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 2000
@@ -71,8 +71,8 @@ total:
 semantic_proxy:
   pattern: "similarity|paraphrase|levenshtein|jaccard|min_quote_chars|回声"
   scope: [scripts_mjs, scripts_py, hooks_mjs]
-  ceiling: 34
+  ceiling: 31
   # 不分进行中/完成：现值是待退场的旧判据，退场后为 0，任何时候都不得增长。
   target: 0
   approved_by: WYK
-  reason: "步骤 9 退场后压到现值 34（story-build 由 6 降到 3，逐字引文裁决那几处随裁决核实判据一起走）：paraphrase.mjs 8、pre_verifier 10、verifier-report 6、post_check 6、knowledge 1 归步骤 10 退"
+  reason: "步骤 9 收口后 story-build 归零（min_quote_chars 与回声注释随裁决核实一起走），现值 31 全在 hooks 侧：paraphrase.mjs 8、pre_verifier 10、verifier-report 6、post_check 6、knowledge 1，归步骤 10 退"

@@ -22,7 +22,7 @@
 | 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
-| 9 正向 Story 作者路径切换 | 第一段、小段 1（含返修）、小段 2 **通过**；小段 3 已实施等待评审：生产环节（`audit` 与 `init` 枚举）、`source-units.mjs`、固定形式类判据（⑪/⑫c 图承接/固定表头）、作业书三步改两步 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
+| 9 正向 Story 作者路径切换 | 第一段、小段 1（含返修）、小段 2 **通过**；小段 3（`b991a22d`）返修后通过，B1–B5 已实施 → **步骤 9 收口** | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
@@ -833,3 +833,30 @@ A4（异常与验收章没有掏空变体）按评审建议不预先加，实跑
   的编号引用，留到步骤 11 收口统一处理。
 - `test_multi_case_cli.WorkspaceBoundaryTest` 全量跑时出现过一次 `PermissionError [WinError 5]`
   （临时目录文件锁），单跑与复跑全量均绿，与本段改动无关。
+- 2026-09-04 独立评审小段 3：返修后通过。复跑 505 全绿、cli 18、73 条（委派 12）、预算门通过、framework 零差异；三座桥 B1/B2/B3 全部收到。返修项 B1–B5 只删只改措辞：作业书与 spec.md 里的分配/裁决者措辞、flow-check 处置指引、review_reflow 改坏的一句、story-build 八个无调用函数与三个无引用常量及旧文案、合同里 section_form/min_sections/allocation/machine_facing 等死数据。advisory：实施自述「全仓 grep 只剩历史记录」与事实不符；12 条 observed 形态的夹具目录与 check_failure_modes 死 helper 归步骤 11。
+
+## 步骤 9 第二段 · 小段 3 返修（2026-09-04）：B1–B5 只删只改措辞
+
+评审 `reviews/09-story-authoring-cutover.md` §3 的五项，全部只删只改措辞，不加判据。
+
+| 项 | 改了什么 |
+|---|---|
+| B1 作业书与 spec.md | `story-write.md` 六处：决策落点不再说「单元 / 待分配清单」；「分给这一章的十几条单元」改成「材料里与这一章有关的部分」；四处「裁决者」改指语义审查（`story_reader_review`）。`spec.md` 三处：五步改六步、作业书两步、「第三步」改「第二步」、②③ 分开的理由改成「骨架先落十个章锚」 |
+| B2 flow-check 处置指引 | 叙事件未登记时打印的修法改成与 spec.md 同一口径：init → skeleton → 按章 chapter 落盘 → 统稿 → build → 登记 |
+| B3 review_reflow | 「那两件（…，加上 `decisions.json` / `story-verdicts.md` / `copyedit.md`）」半句旧文删掉 |
+| B4 story-build 死代码与旧文案 | 删八个无调用函数（`sourceDocs`、`chapterForms`、`pushInto`、`isEngineeringIdentifier`、`fencedText`、`appendixRowFor`、`buildTokenExclusion`、`missingGlossaryTerms`）与三个无引用常量（`VERDICT_WORDS`、`IMAGE_KINDS`、`minQuoteChars`）；删 `sourceDocs` 留下的孤立 jsdoc；十处文案改写（`refuseIfFrozen`、`cmdInit` 阻断、`requireLedgers` 与冻结清单的「五件」、离线上下文的「单元清单与核对记录」、⑫c 与统稿留痕注释里的「裁决者」）。`story_flow.py` 的 `sweep_story_src` 与 `cmd_story` 文档串同改 |
+| B5 合同死数据 | 删 `section_form`（含 `prose_budget`）、`min_sections`、`section_required`、`section_required_with_settled_decisions`、`section_note`、`machine_facing`、`section_form_note`、整个 `allocation` 块、`verdicts.unit_words`、`verdicts.quote_reuse_max`；`note` 与 `verdicts._note` 按新流程重写。保留 `subsection_form`、`questions`、`chapter_dimensions`、`id_shapes`（有消费者）与 `min_quote_chars`（消费者是 `verifier-report.mjs`，归步骤 10） |
+
+顺带两处同类：`rules/init_analysis.md` 的「裁决者」、`rules/spec-rules.overlay.yaml` 的
+「不逐条核来源单元、不出裁决表」改成「不做逐条对账、不出裁决表」——后者带着
+`test_narrative_variants` 里那条测试的白名单串一起改（判据一个字没动，改的是它摘掉的那一句）。
+
+**验收**
+
+- 交付面 grep `audit|source-units|story-verify|story-verdicts|by: author|裁决者|待分配|来源单元`
+  在 `doc/extensions`（knowledge 之外）剩三处，全部归步骤 10：`verifier-report.mjs` 与
+  overlay 里说「审查不做逐条对账」的两句否定表述、合同 `min_quote_chars_note`；
+- `semantic_proxy` 现值 31（story-build 归零），ceiling 37 → 31；
+  `scripts_mjs` 现值 2979，ceiling 3144 → 2979；`data` 736（不压，步骤 10 要建 knowledge-use 合同）；
+- story 505 全绿、cli 48、73 条对账 FAIL 0、预算门 5 条通过、`framework/` 零差异；
+- `story-build.mjs` 1679 → 1514 行，机制层总量 12074 → 11806。

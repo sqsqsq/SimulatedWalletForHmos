@@ -96,3 +96,73 @@
 ### 5. 后续
 
 - 允许提交：已提交。小段 3 可开工，范围 = 原定内容 + 上面 B1、B2、B3。
+
+## 小段 3「生产环节与作业书退场」（`b991a22d`）· 独立评审（Claude，2026-09-04）
+
+### 1. 结论
+
+- 状态：**返修后通过**——机制面对了，交付面的文字与死代码没跟上。需要一个返修提交（只删只改措辞，不加判据），不重做。
+- 复审者复跑：story 505 全绿（46 s）；cli 18；失效形态 73 条：FAIL 0、委派 12、PASS 61；预算门 5 条通过；`node --check` 三个 `.mjs` 通过；
+  `framework/` 零差异。机制层现值：scripts_mjs 3144（= ceiling）、scripts_py 1810、hooks_mjs 3567、prompts_md 2714（已低于 target 2800）、data 839、总 12074。
+- 三座桥全部收到：B1 `requireLedgers` 与 `STORY_SRC_FROZEN` 同收为 `decisions.json` + `copyedit.md`；B2 ⑫e/⑫b/⑪/⑫c 图承接随作业书改写退场，
+  S02/S03/S04/S08/S09/S12/S13/S14/S20 九条迁 `observed`，`observed_by` 逐条对得上合同 `chapter_dimensions` 与 overlay `story_reader_review` 的维度；
+  B3 `materialUnitsNow`、`init` 枚举、`source-units.mjs` 一并删除。
+- 两处「误删救回」核实：⓪b 台账指纹核对独立成块、报错文案与改前一致；`TestArchiveRedlines` 类头恢复，仓内路径红线那条测试仍在。
+
+### 2. 行为重建
+
+- `story-build` 六个命令：`init` 只查材料齐备、建 `decisions.json` 骨架；`skeleton` / `chapter` 不变；`check` 现存 15 条判据
+  （⓪a ⓪b ① ①b ③ ⑤ ⑦ ④ ⑨ ⑩ ⑫ ⑫a ⑫c ⑫d ⑬），逐条看过，没有一条读内容判语义；`audit` 命令与入口分派删除。
+- 新测试 `test_no_unit_ledger_is_produced_at_any_point`：init → 十章 chapter → check，三份逐单元台账全程不落盘。这是完成条件第一条的机械证据。
+- `check_failure_modes.py`：`_seed_author_side` 删除；G01 反例改注入占位符，不再挂在已退场的可读性判据上；F02 改核 overlay 而非已删的 `story-verify.md`——判据跟着对象走，没有静默放过。
+- 预算：`scripts_mjs` ceiling 5200 → 3144、`semantic_proxy` 37 → 34，reason 写明退了什么，符合 steps/09 预算节「第二段完成后压到现值」。
+
+### 3. 要返修的（交付面）
+
+**B1 · 作者作业书仍在描述已退场的角色与步骤。** 这是给作者读的正式文本，步骤 11 真实跑时作者会照着找不存在的东西：
+- `phases/story-write.md`：L97–100「决策单元…落点…开放议题不在待分配清单里」；L134–136「分给这一章的十几条单元是素材…一条单元对应一个句子」；
+  L200「由裁决者按语义判」；L231「裁决者逐条对齐单元、也不看整篇」；L254「内容真不真由裁决者与抽样人核管」；
+  L275–276「裁决者不看它们——他的任务是逐条对齐『这个单元 → 那一章讲没讲』」。裁决者这个角色已经不存在，语义面现在是 `story_reader_review`；
+  「分给本章的单元」这件事也不存在了——材料整份在作者手上。
+- `phases/spec.md`：L48–49「按下面五步走完…（分配、逐章渲染、统稿各一段）」（下方实际是 ①–⑥、作业书是两步）；L70「自查清单见 story-write.md 第三步」（现在是第二步）；
+  L74–75「② 与 ③ 分开…分配先把『每件事去哪一章』定死并落盘」（② 现在是 skeleton，没有分配）。
+
+**B2 · spec harness 给作者的处置指引指向不存在的步骤。** `scripts/flow-check.mjs` L307–308：「`story-build.mjs init` → 分配落点 → 逐章渲染 → 统稿 → 按 story-write.md 逐章落盘 → 登记」。
+这是叙事件未登记时 harness 打印给作者的修法，顺序错、步骤名错。应与 `phases/spec.md` 的 ①–⑤ 同一口径：init → skeleton → 按章 chapter 落盘 → 统稿 → build → `story_flow.py story` 登记。
+
+**B3 · `rules/review_reflow.md` L9–10 是一句改坏的话**：「那两件（`decisions.json` / `copyedit.md`，加上 `decisions.json` / `story-verdicts.md` / `copyedit.md`）」——半句旧文没删，还点名了已删除的 `story-verdicts.md`。
+
+**B4 · `story-build.mjs` 里没有消费者的代码与过时的对外文案。**
+- 无调用者的函数：`sourceDocs`、`chapterForms`、`pushInto`、`isEngineeringIdentifier`、`fencedText`、`appendixRowFor`、`buildTokenExclusion`、`missingGlossaryTerms`；
+  无引用的常量与函数：`VERDICT_WORDS`、`IMAGE_KINDS`、`minQuoteChars`。它们是本段与小段 2 退掉的判据的残肢，AGENTS §8「无消费者代码」不允许留到步骤 11。
+  删掉 `minQuoteChars` 与 L863 那句「回声」注释后，`story-build.mjs` 的语义代理标识归零（34 → 31），与 steps/09 预算节「story-build 归零」一致。
+- 对外文案仍说旧流程：`refuseIfFrozen` L233–234「那一刻的来源单元、落点账、裁决与决策登记」；`cmdInit` 阻断文案 L482–484「这一类材料缺席时枚举不出任何单元…守恒面小了一圈」（init 已不枚举）；
+  注释 L447「init：枚举来源单元」、L195–201「五件台账…裁决件只在存在 by: author 记录时」、L135–138「单元清单与核对记录给空」、L61–68 `material_only`/`at`/`covered_by` 三态说明、L1326「归裁决者」。
+- `story_flow.py` `sweep_story_src` 文档串 L86–98 仍说「只留台账那五件」。
+
+**B5 · 合同里没人读的数据。** `contracts/story-chapters.json` 仍带 `section_form`（含 `__two_tables__` / `__each_h3__` / `prose_budget`）、`min_sections`、`section_required`、
+`section_required_with_settled_decisions`、`section_note`、`allocation.appendix_bound`、`machine_facing`——全仓 `.mjs/.py/.yaml/.md` 没有消费者（`subsection_form`、`questions`、
+`chapter_dimensions`、`id_shapes` 仍有消费者，保留）。判据在本段退场，它们的数据应同段退，否则下一个维护者会去找「谁在读 section_form」。
+`verdicts.min_quote_chars` 的消费者只剩 `hooks/shared/verifier-report.mjs`，归步骤 10 随引文核实一起退。
+
+返修的结果判据：B1–B5 全部只删只改措辞；story 505、cli 18、73/73、预算门仍绿；`semantic_proxy` 现值降到 31 后把 ceiling 压到 31；交付面 grep
+`audit|source-units|story-verify|story-verdicts|by: author|裁决者|待分配|来源单元` 在 `doc/extensions`（knowledge 之外）为零命中（设计模式候选登记里的「适用单元」是另一个概念，不在此列）。
+
+### 4. advisory
+
+- **A1** 实施记录写「全仓 grep 只剩设计文档里的历史记录」，与 B1–B4 的事实不符。按 AGENTS §7.3，自述不替代审查；下次自述里附 grep 命令与命中数。
+- **A2** 12 条 `observed` 形态的夹具目录（`fixtures/failure-modes/C01、R01、S01、S02、S03、S04、S08、S09、S12、S13、S14、S20`，约 200 个文件）已无任何消费者，
+  只有批次 3/4 的历史文档提到。按 steps/11「删除旧回归 checker、夹具」处理，本段不动。
+- **A3** `check_failure_modes.py` 里 `_chapter_for`、`_quote_for`、`_verdict_tables` 只剩定义；`_story_build_cycle` 文档串仍写「init → audit」。测试域，归步骤 11 清理。
+- **A4** 判据编号跳号（②④⑥⑧⑪ 空缺、④ 排在 ⑦ 后）：同意留到步骤 11 统一重排。
+- **A5** P13 作者侧：作业书把作者指向 `materials.json`（每张图 kind / paths / sha256），满足「从 materials.json 逐张列出含路径」的最小形态；作者拿到的是 JSON 而非渲染清单，
+  步骤 11 要观察作者是否真按这些路径引图。
+
+### 5. 范围与预算
+
+- 允许范围内；保护区（framework、knowledge、金样、真实 Case 输入）零差异。
+- 预算：本段净减 scripts_mjs −1049、prompts_md 净减、data −7；未超任何峰值；prompts_md 已低于 target。B4/B5 返修后 scripts_mjs 与 data 再降，ceiling 随之压到现值。
+
+### 6. 后续
+
+- 允许提交：已提交。**返修一个提交**（B1–B5），评审通过后步骤 9 收口，步骤 10 可开工。

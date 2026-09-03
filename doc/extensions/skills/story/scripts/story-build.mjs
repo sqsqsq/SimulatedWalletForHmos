@@ -41,33 +41,8 @@ import {
 
 const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter'];
 
-/** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
-const VERDICT_WORDS = ['讲清', '未讲清'];
-/**
- * 引文的最短长度 —— **数在合同里**（`verdicts.min_quote_chars`），这里只读。
- *
- * 它有两个消费者：本文件的 check 与 hooks 侧的裁决核对。各写一份 12 时，
- * 改一处忘一处两边就不一致，而且**两边都是绿的**——那种不一致没人看得见。
- * 合同读不到时回落到 12 并照判：判据不能因为配置缺一项就整条失效。
- */
-function minQuoteChars(contract) {
-  return contract?.verdicts?.min_quote_chars ?? 12;
-}
-
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 6;
-
-/**
- * 能标 `material_only`（留在材料、不进 story）的单元 —— **只有图片**。
- *
- * 图片与文字事实不对称：一张图片不引用时，读者还能顺材料清单里的原文链接去看原件；
- * 一条文字事实不进 story 就是丢了，没有第二条路。所以「不进 story」对图片是合法状态。
- *
- * **流程图不在这里。** 开这一态是为了「PRD 里 30 张界面图不必都进 story」那个场景，
- * 而流程图在材料里通常只有三五张，从来没有塞不下的压力。流程图的合法出路只有
- * `at`（画出来）与 `covered_by`（story 自绘一张覆盖它）。
- */
-const IMAGE_KINDS = new Set(['image']);
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
@@ -132,10 +107,10 @@ function featuresDir(projectRoot) {
  *
  * **为什么要有它**：判据得有个仲裁锚。理想产物冻结在夹具里，任何一条判据改动
  * 都先拿它跑一遍——拦住理想产物的判据，错的是判据。而理想产物没有需求目录、
- * 没有单元清单、没有核对记录，正常的 check 连门都进不去。
+ * 没有台账，正常的 check 连门都进不去。
  *
  * 走的是**同一个 `cmdCheck`**，不是另写一套：另写一套就会与生产链漂移，
- * 到那时「拿它跑过了」什么也证明不了。单元清单与核对记录给空，
+ * 到那时「拿它跑过了」什么也证明不了。需求目录侧的输入给空，
  * 依赖它们的判项自然一条不判；不依赖的照跑。
  */
 function createOfflineContext(args) {
@@ -182,9 +157,9 @@ function createContext(args) {
 }
 
 /**
- * 随稿冻结的五件台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
+ * 随稿冻结的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
  *
- * 文件名的真源在 `story_flow.py` 的 `STORY_SRC_FROZEN`：那五件是登记时要算指纹、
+ * 文件名的真源在 `story_flow.py` 的 `STORY_SRC_FROZEN`：那两件是登记时要算指纹、
  * 登记后拒绝重算、归档时随稿走的同一批。清理、冻结、存在性三处说的必须是同一批文件，
  * 各写一份就会改一处忘一处。
  */
@@ -193,12 +168,10 @@ const STORY_SRC_LEDGERS = [
 ];
 
 /**
- * 五件台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
+ * 台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
  *
  * 冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
- * 实跑里裁决台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
- * 原先五件里只有三件缺失拦得住——裁决件**只在存在 `by: author` 记录时**才被要求，
- * 机器恰好定得了全部落点时删掉它一声不吭。
+ * 实跑里台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
  *
  * 报错文案要把这条路直接堵死：缺的那件是**补产出**，不是删同伴文件。
  */
@@ -231,29 +204,18 @@ function storyFrozen(ctx) {
 function refuseIfFrozen(ctx, command) {
   if (!storyFrozen(ctx).written) return;
   fail(`story 已定稿登记（story_written），台账随稿冻结，${command} 不再执行。\n`
-    + '  定稿是一个时点的快照：那一刻的来源单元、落点账、裁决与决策登记，'
+    + '  定稿是一个时点的快照：那一刻的决策登记与统稿留痕，'
     + '就是这份 story 据以成文的全部依据。\n'
     + '  重算它们等于换掉已定稿产物的依据，而 story.md 不会跟着变——'
     + '实测过一次，登记时的台账被二十分钟后的一次重跑冲掉。\n'
     + '  材料在定稿之后继续演化是正常的，与这份 story 无关：它讲的是定稿那一刻的事。');
 }
 
-/**
- * 材料文件：合同 `sources` 声明的那几份，存在即读。
- *
- * 两种写法都认：`"PRD": "RR/prd.md"`（人写的材料，整篇都是事实），
- * 或 `{ path, notes: [...] }`——`notes` 是「按生成它的模板约定，这几类单元不是事实」，
- * 比如 spec.md 里的 `>` 块只承载登记项与作业说明。判据来自模板约定，不来自样本形状。
- */
 /** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
 function digestOf(text) {
   return crypto.createHash('sha256')
     .update(String(text ?? '').replace(/\r\n/g, '\n'), 'utf-8')
     .digest('hex').slice(0, 16);
-}
-
-function sourceDocs(ctx) {
-  return scanSources(ctx).docs;
 }
 
 /**
@@ -276,11 +238,8 @@ function activeKnowledgeEntries(ctx) {
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
  * 上一版这里是 `if (text !== null) out.push(...)`：读不到就静默跳过。
- * 后果是守恒面能凭空缩掉一整类而零信号：某一份来源没被产出时，那一类枚举出 0 个单元，
+ * 后果是一整类材料凭空缺席而零信号：那一份的内容从头到尾没进过任何一条判据的视野，
  * 从 init 到 check 没有一条报错提过这件事。
- *
- * 这与 ⓪ 的立意是同一件事（它防「枚举之后材料变了，守恒面悄悄小一圈」），
- * 但 ⓪ 管的是**变了**，管不了**压根不在**。
  *
  * 缺失分两档，由合同数据定，本文件不写死任何路径：
  *
@@ -347,32 +306,7 @@ function scanSources(ctx) {
 const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/gmi;
 
 /**
- * 一章里画了几张图 / 引了几张图片 / 有没有表。
- *
- * **图与图片数个数，表判有无**：表行不是一行一张表，一章一张表就够，所以表只问有无。
- */
-function chapterForms(sections) {
-  return new Map(sections.map(s => [s.title, {
-    diagram: (s.text.match(DIAGRAM_FENCE) ?? []).length,
-    image: (s.text.match(/!\[[^\]]*\]\(/g) ?? []).length,
-    table: /^\s*\|/m.test(s.text),
-    text: s.text,
-  }]));
-}
-
-function pushInto(map, key, value) {
-  if (!map.has(key)) map.set(key, []);
-  map.get(key).push(value);
-}
-
-/**
- * 工程标识的形态判定 —— **check ⑩ 与 token 守恒共用这一个判定式**。
- *
- * 两处必须是同一个真源：⑩ 判「主叙事里不许出现工程标识」，守恒判「这个 token 要在
- * 落点核得到」。各写一份时，只要有一个 token 被一边认成标识符、另一边不认，
- * 同一个单元就被两条判据夹死——写进正文违反⑩，不写违反守恒，作者怎么写都是错的
- * （内网问题 6 就是这个）。
- */
+/** 工程标识的形态判定 —— check ⑩ 判「主叙事里不许出现工程标识」时用它。 */
 const IDENTIFIER_SHAPE = /^[A-Za-z][A-Za-z0-9_]{3,}$/;
 
 /**
@@ -386,88 +320,23 @@ function ownIdentifiers(feature) {
   return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
 }
 
-/** 这个 token 是不是工程标识形态（本需求自己的编号除外）。 */
-function isEngineeringIdentifier(token, own) {
-  return !own.has(token) && IDENTIFIER_SHAPE.test(token);
-}
-
-/**
- * 一段正文里被围栏包住的部分。
- *
- * 语言红线只管围栏之外（`lint-rules.mjs` 的 `inFence` 分支直接跳过）：围栏里是图与代码，
- * 不是面向人的叙述。守恒要跟它同一个作用域——图的类型词（`flowchart` 这类）本来就只在
- * 围栏里出现，把它按「主叙事不许有工程标识」赶去附录，是拿一条不管这里的判据管这里。
- */
-function fencedText(text) {
-  const out = [];
-  let inFence = false;
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    if (/^\s*(?:```|~~~)/.test(line)) { inFence = !inFence; out.push(line); continue; }
-    if (inFence) out.push(line);
-  }
-  return out.join('\n');
-}
-
-/**
- * 附录里承载这个单元的那一行。
- *
- * 技术契约类单元在附录的表里各占一行。守恒核工程标识时**只看那一行**——
- * 只要「附录里任何位置出现过」就算核到的话，附录是个大草垛，
- * 与「这个单元的事实在附录有落点」不是一回事。
- *
- * 怎么认那一行：拿单元自己的 token 去附录逐行找，命中最多的那一行就是它的行。
- * 找不到就返回空串（守恒随之报「核不住」，这是对的——它确实没落点）。
- */
-function appendixRowFor(unit, appendixText) {
-  const tokens = unit.tokens ?? [];
-  if (!tokens.length || !appendixText) return '';
-  let best = '', hit = 0;
-  for (const line of String(appendixText).split(/\r?\n/)) {
-    const n = tokens.filter(tk => line.includes(tk)).length;
-    if (n > hit) { hit = n; best = line; }
-  }
-  return best;
-}
-
 /** 缺失来源报成一句话——BLOCKER 与「记一笔」共用这一份措辞。 */
 function missingSourceLine(m) {
   if (m.siblings > 0) {
     return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
       + `——但 ${m.siblingDir}/ 里有 ${m.siblings} 个文件。`
       + '图片在而索引不在，是导入做了一半：把它们登记进索引，'
-      + '否则这一类材料一个单元都枚举不出来，守恒面会悄悄小一圈';
+      + '否则这一类材料的内容一条都到不了作者手上';
   }
   return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
     + (m.required
-      ? '——它是必备来源，缺了这一轮的守恒面就不完整'
+      ? '——它是必备来源，缺了这一轮的材料就不完整'
       : '（可选来源，缺了是正常的）');
 }
 
 // --------------------------------------------------------------------------
-// init：枚举来源单元 + 建决策骨架
+// init：材料齐备检查 + 建决策骨架
 // --------------------------------------------------------------------------
-
-/**
- * 组装 token 排除函数——**规则全部来自合同数据**，本文件不写任何具体词。
- *
- * 只排除 `id_shapes.drop`（`F1` / `S2` / `DEC-3` 这类仓内工作编号）：check ③ 明令它们
- * 不许出现在 story 里，那它们就不能同时是守恒要求出现的 token。两条判据要求相反时，
- * 作者怎么写都是错的。
- *
- * **模块名与单据号不再排除。** 上一版把它们排掉，是因为守恒要求 token 出现在 story，
- * 而红线不许写模块名——两条相斥，只能让守恒让步。现在附录成了工程标识的唯一落点：
- * 模块名写进附录的改动边界表，守恒在那里核得到，语言红线只管附录之外的主叙事。
- * 相斥消失了，排除也就没必要了——**排除掉的东西是不受任何判据保护的**，
- * 那正是「模块名从 story 里整个消失也没人发现」的成因。
- */
-function buildTokenExclusion(ctx) {
-  const res = [];
-  for (const p of ctx.contract.id_shapes?.drop ?? []) {
-    try { res.push(new RegExp(p)); } catch { /* 形态写错不该让枚举崩掉 */ }
-  }
-  if (!res.length) return null;
-  return (t) => res.some(re => re.test(t));
-}
 
 function cmdInit(ctx) {
   refuseIfFrozen(ctx, 'init');
@@ -475,13 +344,13 @@ function cmdInit(ctx) {
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
   }
-  // 导入做了一半要在**枚举之前**拦住：枚举完再说，作者已经拿着残缺的守恒面往下走了。
+  // 导入做了一半要在动笔**之前**拦住：拦晚了，作者已经拿着残缺的材料往下走了。
   const blocking = missing.filter(m => m.blocking);
   if (blocking.length) {
     fail(blocking.map(missingSourceLine).join('\n  ') + '\n'
-      + '  补齐它再跑 init。这一类材料缺席时枚举不出任何单元，'
-      + '而后面每一条判据都只在「枚举出来的那些」上跑——'
-      + '守恒面小了一圈，门禁全绿也证明不了什么。');
+      + '  补齐它再跑 init。这一类材料缺席时，它承载的事实一条也到不了作者手上，'
+      + '而门禁只判写出来的那些——'
+      + '少了一整类材料，全绿也证明不了什么。');
   }
 
 
@@ -699,38 +568,6 @@ function glossaryMainName(cell) {
   return bare || String(cell ?? '').trim();
 }
 
-/**
- * spec §0 术语映射表里、应当出现在 story 的业务实体词，哪些没出现。
- *
- * 层身份按依赖方向从架构 DSL 派生（`can_depend_on` 为空者是平台能力层），不写层名字面——
- * 写死名字换个工程就静默失效。无该列或派生不到时不过滤，保持向后兼容。
- *
- * 核的是**主名**（见 `glossaryMainName`），报的是**原单元格**——报错要让人一眼
- * 认出是术语表里的哪一行。
- */
-function missingGlossaryTerms(specText, storyText, projectRoot) {
-  const rows = [];
-  let inTable = false;
-  for (const line of specText.split(/\r?\n/)) {
-    const s = line.trim();
-    if (/^#{1,4}\s/.test(s)) { inTable = /术语映射表/.test(s); continue; }
-    if (!inTable || !s.startsWith('|')) continue;
-    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.replace(/[`*]/g, '').trim());
-    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
-    rows.push(cells);
-  }
-  if (!rows.length) return [];
-  const header = rows.find(c => /^原始术语$|^术语$/.test(c[0]));
-  const layerIdx = header ? header.findIndex(h => /所属层/.test(h)) : -1;
-  const baseLayers = baseLayerIds(projectRoot);
-  return rows
-    .filter(c => c.length >= 2 && !/^原始术语$|^术语$/.test(c[0]))
-    .filter(c => layerIdx < 0 || !baseLayers.length
-      || !baseLayers.some(id => (c[layerIdx] ?? '').includes(id)))
-    .map(c => c[0])
-    .filter(t => t && !storyText.includes(glossaryMainName(t)));
-}
-
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */
 function materialSubsectionName(contract) {
   const appendix = appendixChapter(contract);
@@ -860,7 +697,7 @@ function groupedProblems(problems, marks) {
 }
 
 function cmdCheck(ctx) {
-  // 起步先判五件台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的回声。
+  // 起步先判台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的余波。
   requireLedgers(ctx);
   const problems = [];
   // 判据类的分组戳：只影响输出怎么排，不影响判定。
@@ -1269,8 +1106,7 @@ function cmdCheck(ctx) {
     // 读者读到那句话时手边没有图，要翻到最后再翻回来。
     //
     // 这一条与「每张登记的图都必须被引用」是**合围**：图进不了附录，又不能不出现，
-    // 于是只剩一个去处——它讲的那一章。落点判做不到这件事：图片单元的落点是按
-    // 「在哪被引用」反推的，图放哪儿落点就跟到哪儿，那条判据对放错位置恒真。
+    // 于是只剩一个去处——它讲的那一章。
     const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
       .map(m => m[1]);
     if (inAppendix.length) {
@@ -1322,9 +1158,8 @@ function cmdCheck(ctx) {
   mark('⑫c 形态 lint');
   // ⑫c 形态 lint：图的承接、材料清单的行形态
   //
-  // 两条此前都只写在模板注释里，实测一条都没达成。判的是形态不是内容：
-  // 承接句写得好不好归裁决者，这里只问「图前有没有那一句、材料能不能定位」。
-  // 图题编号与小节编号已归 `number` 机器铺，不再判。
+  // 材料清单的行形态此前只写在模板注释里，实测一条都没达成。判的是形态不是内容：
+  // 只问「这一行能不能把材料定位到原件」。图题编号与小节编号已归 `number` 机器铺，不再判。
   // 图的承接与图题**不在这里判**：「这句话指的是不是这张图」要读上下文，
   // 那是独立审查按效果判的事。这里只留材料清单的行形态——它是材料清单集合判据的搭档，
   // 判的是「这一行有没有链接、链到的地方在不在清单里」，是确定性的。
@@ -1405,7 +1240,7 @@ function cmdCheck(ctx) {
   //
   // 统稿（通读全篇、收重复收承接收样式）是唯一一步没有任何产物的动作，于是跳过它
   // 零成本——实测两份产物都有「同一件事讲三遍」「图题一章一个样」这类只有通读才看得见
-  // 的毛病，而门禁全绿。留痕不是为了核内容（内容真不真由裁决面与抽样人核管），
+  // 的毛病，而门禁全绿。留痕不是为了核内容（写没写到位由语义审查与抽样人核），
   // 是为了让「没做」这件事留下痕迹。
   //
   // **只写六行，写多不奖励**：把它写成检查报告，下一轮就有人为了显得认真而灌水。
