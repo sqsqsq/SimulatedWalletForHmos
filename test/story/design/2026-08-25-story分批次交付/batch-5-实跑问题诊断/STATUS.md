@@ -23,7 +23,7 @@
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | 第一段、小段 1（含返修）、小段 2 **通过**；小段 3（`b991a22d`）返修后通过，B1–B5 已实施 → **步骤 9 收口** | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
-| 10 三类 Knowledge 消费与传递 | 未开始 | 待生成 |
+| 10 三类 Knowledge 消费与传递 | 拆四小段（见下方分段计划）；小段 1 已实施，等待评审 | 待生成 |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
 ## 事件日志
@@ -860,3 +860,49 @@ A4（异常与验收章没有掏空变体）按评审建议不预先加，实跑
   `scripts_mjs` 现值 2979，ceiling 3144 → 2979；`data` 736（不压，步骤 10 要建 knowledge-use 合同）；
 - story 505 全绿、cli 48、73 条对账 FAIL 0、预算门 5 条通过、`framework/` 零差异；
 - `story-build.mjs` 1679 → 1514 行，机制层总量 12074 → 11806。
+
+## 步骤 10 · 分段计划（2026-09-04）
+
+步骤 10 一次改到底会横跨 spec/plan 两阶段、六个 hooks、模板与下游分派，一个提交回不去。
+按可回退单元拆四小段，每段一个提交、逐段审：
+
+| 小段 | 做什么 | 验收 |
+|---|---|---|
+| 1 | `knowledge-use.yaml` 成为 spec 侧知识判断的唯一真源；§10/§11 改为从它确定性生成的只读区；作者面改成「只编辑 YAML」 | 改 YAML 一条为不命中，重新生成同步改 §10；手改生成区被判为编辑生成区；激活条目漏一条被点名；73 条对账不变 |
+| 2 | 旧路径退场：`idSetProblems` 三方核、`isPureCopy` / `paraphrase.mjs`、`pre_verifier` 的逐行必答表与相似度排序、`verifier-report` 的引文核实 | `semantic_proxy` 归零；overlay 的知识判据改成按 YAML 判语义；全树搜不到旧三方 ID 核的消费者 |
+| 3 | Plan 承接：pattern 选型与 constraint 落点写进 `contracts.yaml`，plan post_check 改读 YAML 而不是解析 spec 的表；下游分派集合一致 | 候选集 → 裁定集 → contracts 义务 → 下游分派四段集合一致；同一结论无双写 |
+| 4 | Story 知识摘要从 YAML 生成；中性 Knowledge 行为测试；P6 与 knowledge 相关失效形态的新发现者；预算 ceiling 压到现值 | 新增中性 Facts/Constraint/Pattern 无需改通用脚本即可到达正确消费者 |
+
+## 步骤 10 · 小段 1（2026-09-04）：knowledge-use.yaml 成为唯一真源 · 已实施，等待评审
+
+**做了什么**
+
+- 新增 `hooks/shared/knowledge-use.mjs`（库 + 命令）：读 `spec/knowledge-use.yaml`、
+  按激活清单判完备性与在册性、渲染 §10/§11 的生成区、核对生成区与 YAML 是否一致。
+  `render` 子命令把生成区写进 `spec.md`。
+- `hooks/spec/post_check.mjs`：`knowledgeExitProblems` 不再解析人写的两张表——
+  改为读 YAML → `coverageProblems` → `zoneProblems` → acceptance 集合一致。
+  表解析 helper（`tableRowsIn`、`cellOf`）与 `isPureCopy` 在 spec 侧失去调用点（模块本身归小段 2 退）。
+- 作者面：`hooks/spec/author.md` 与 `templates/spec-sections.md` 改成「§10/§11 不手写，
+  你编辑 YAML 再跑生成命令」；逐字段怎么填写在 spec-sections 的两节注释里。
+
+**判据的边界**：这里只判机器答得了的——判全了吗、编号在册吗、候选在册吗、投影跟 YAML 一致吗。
+要求是不是本需求的设计、信号指不指向真实业务特征，仍是语义判断，归 verifier（小段 2 改判据措辞）。
+
+**台账当场抓到四条**，都是真问题，已修：M05（新文件里一处 CRLF 不安全分行）、
+M16（四个导出没有跨文件消费者 = 死代码，改成模块内私有）、A03（author.md 涨到 74 行，
+超过「只做索引」的 60 行上限，压回 60）、W01（非 story 需求也要 `knowledge-use.yaml`，
+夹具补了一份并生成投影）。
+
+补 W01 夹具时暴露一个迁移期的真问题：生成区插进去了，那一章原先手写的表还在，
+两张表说同一件事而只有一张跟着 YAML 走。加了一条判据点名它——**生成器不删人写的字节**，
+只报出来，删哪一张由人决定。
+
+**验收**
+
+- 改 YAML 里一条 constraint 为不命中，重新生成后 §10 同步改变（`test_a_changed_judgement_changes_the_projection`）；
+- 手改生成区被判「与 YAML 对不上」；生成区之外留着旧手写表也被点名；
+- 激活条目没有去处、编号或候选不在册、命中没写要求、依据只有「不涉及」、在 spec 里选型、
+  digest 与激活清单对不上，逐条有测试；
+- 新增 22 条测试（`test_knowledge_use.py`），story 全量 527 绿，73 条对账 FAIL 0、委派 12；
+- `hooks_mjs` 3984（ceiling 4000，小段 2 退 paraphrase 后净减）。

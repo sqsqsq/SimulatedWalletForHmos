@@ -23,8 +23,10 @@ import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/
 import { adjudicationProblems, storyReviewProblems } from '../shared/verifier-report.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
-import { activeKnowledge, paraphraseSources, selfCheck } from '../shared/knowledge.mjs';
-import { isPureCopy } from '../shared/paraphrase.mjs';
+import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
+import {
+  coverageProblems, readUse, renderZones, UseError, zoneProblems,
+} from '../shared/knowledge-use.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -191,30 +193,6 @@ function sectionRange(lines, startIdx) {
   return { start: startIdx, end: lines.length };
 }
 
-/** 区间内的表格数据行（按列名取值）。 */
-function tableRowsIn(lines, range, headerKeywords) {
-  if (!range) return { headers: null, rows: [] };
-  let headers = null;
-  const rows = [];
-  for (let i = range.start; i < range.end; i++) {
-    const s = lines[i].trim();
-    if (!s.startsWith('|')) continue;
-    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-    if (!headers) {
-      if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
-      continue;
-    }
-    if (cells.every(c => /^[-: ]*$/.test(c))) continue;
-    rows.push({ line: i + 1, cells });
-  }
-  return { headers, rows };
-}
-
-function cellOf(cells, headers, keyword) {
-  const i = (headers ?? []).findIndex(h => h.includes(keyword));
-  return i >= 0 && i < cells.length ? cells[i] : '';
-}
-
 /**
  * 知识判定的两个出口（BLOCKER）。
  *
@@ -247,8 +225,12 @@ function knowledgeExitProblems(ctx, lines) {
   if (exitIdx === -1) {
     return [
       '缺「规约约束要求」章——判定产生的代码要求没有落点，到编码那里就等于不存在。'
-      + `形态见 ${SECTIONS_DOC}：按命中条目逐条一行，不为任何域预留固定小节。`,
+      + `形态见 ${SECTIONS_DOC}：这一章的正文由 spec/knowledge-use.yaml 生成，不手写。`,
     ];
+  }
+  if (patternIdx === -1) {
+    problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
+      + '空着分不清「判过了不需要」与「压根没想这件事」');
   }
   // 独立成节：不得落在技术契约章的区间内
   for (const [idx, name] of [[exitIdx, '规约约束要求'], [patternIdx, '设计模式候选登记']]) {
@@ -258,86 +240,45 @@ function knowledgeExitProblems(ctx, lines) {
     }
   }
 
-  const exitRange = sectionRange(lines, exitIdx);
-  const { headers, rows } = tableRowsIn(lines, exitRange, ['编号', '要求']);
-  if (!headers) {
-    problems.push('「规约约束要求」章缺表格（表头须含「编号」与「本需求的要求」两列）');
-    return problems;
+  // 判断的真源是 knowledge-use.yaml；§10/§11 是它的投影。
+  //
+  // 此前两章的 markdown 表既是给人读的，也是机器要解析回结构的真源，于是每条判据
+  // 都先要「解析得动人写的表」——表头找列、单元格剥装饰、编号抽正则，而作者每次手填
+  // 都可能把表写歪一点点。现在作者只编辑 YAML，投影由生成器写；投影与 YAML 对不上时，
+  // 错的一定是投影。
+  let use;
+  try {
+    use = readUse(ctx.projectRoot, ctx.feature);
+  } catch (e) {
+    if (e instanceof UseError) return [...problems, e.message];
+    throw e;
   }
+  problems.push(...coverageProblems(ctx.projectRoot, knowledge, use));
+  if (problems.length) return problems;      // 判断本身不成立时，投影核了也没有意义
 
+  const specText = lines.join(String.fromCharCode(10));
+  problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
+
+  // 命中且产生代码要求的那些，要在 acceptance 里有对应验收条目
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
-  const specIds = new Set();
-  for (const { line, cells } of rows) {
-    const rawId = cellOf(cells, headers, '编号').replace(/[`*]/g, '').trim();
-    if (/^\{.*\}$/.test(rawId)) continue;                    // 模板占位行
-    const ids = rawId.match(/\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g) ?? [];
-    if (!ids.length) {
-      problems.push(`spec.md:${line} 约束要求的编号列「${rawId}」未到条目级`
-        + '——按域前缀判会让整域漏判照样放行，一条目一行');
-      continue;
-    }
-    for (const id of ids) {
-      specIds.add(id);
-      const entry = byId.get(id);
-      if (!entry) {
-        problems.push(`spec.md:${line} 编号 ${id} 不在激活清单里——编号写错，或那条规约已下架`);
-        continue;
-      }
-      if (entry.reviewAction) {
-        problems.push(`spec.md:${line} ${id} 的处置标了（评审动作），不产生代码要求，不应写进本章`
-          + '——它的动作归《决策与评审记录》的跨团队协同');
-        continue;
-      }
-      const requirement = cellOf(cells, headers, '要求');
-      const { copied, source } = isPureCopy(requirement, paraphraseSources(knowledge, id));
-      if (copied) {
-        problems.push(`spec.md:${line} ${id} 的要求是规约原文的复制或子串（来源「${source}…」）`
-          + '——写本需求的设计：它落在哪个接口、存储键、字段或业务步骤上');
-      }
-    }
-  }
-
-  // 模式候选章：只登记不选型，零候选也要显式声明
-  if (patternIdx === -1) {
-    problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
-      + '空着分不清「判过了不需要」与「压根没想这件事」');
-  } else {
-    const pr = tableRowsIn(lines, sectionRange(lines, patternIdx), ['适用单元', '候选']);
-    const real = pr.rows.filter(r => !/^\{.*\}$/.test(cellOf(r.cells, pr.headers, '适用单元')));
-    if (!pr.headers || !real.length) {
-      problems.push('「设计模式候选登记」章没有登记任何适用单元');
-    }
-    for (const { line, cells } of real) {
-      const cand = cellOf(cells, pr.headers, '候选').replace(/[`*]/g, '').trim();
-      if (!cand || /^(无候选|—|-)$/.test(cand)) {
-        if (!cellOf(cells, pr.headers, '信号').trim()) {
-          problems.push(`spec.md:${line} 该单元判无候选但没写理由`);
-        }
-        continue;
-      }
-      if (!knowledge.patternIds.includes(cand)) {
-        problems.push(`spec.md:${line} 候选「${cand}」不在册`
-          + `（在册的：${knowledge.patternIds.join('、') || '无'}）——候选只能查表填，通用模式名不是合法值`);
-      }
-    }
-  }
-
-  // 三方 ID 集合一致：story 判「是」集 / spec 出口集 / acceptance 的 knowledge_rule 集
-  problems.push(...idSetProblems(ctx, knowledge, specIds));
+  const specIds = new Set(use.constraints
+    .filter(r => r.applicable === true && !byId.get(String(r.id ?? '').trim())?.reviewAction)
+    .map(r => String(r.id ?? '').trim()));
+  problems.push(...idSetProblems(ctx, specIds));
   return problems;
 }
 
 /**
- * 三方 ID 集合一致（机械收口）。
+ * 命中条目与验收条目的集合一致（机械收口）。
  *
- * **这是集合一致性，不是「知识已被应用」**——后者由 verifier 逐行裁决。
- * 机械层越权下语义结论，就会变成「写了字就算做了」。
+ * **这是集合一致性，不是「知识已被应用」**——后者是语义判断，机械层越权下语义结论，
+ * 就会变成「写了字就算做了」。
  */
-function idSetProblems(ctx, knowledge, specIds) {
+function idSetProblems(ctx, specIds) {
   const problems = [];
   const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
 
-  // **不再和第二份登记表比对**：§10 的表本身就是判定登记，spec 阶段的判定结论只有一份。
+  // **不和第二份登记表比对**：spec 阶段的判定结论只有 knowledge-use.yaml 一份。
   // 上一版另有一份独立的判定记录文件，于是同一条结论有两处写法、两处判定，
   // 评审者看到互相矛盾的结论时无从知道哪个是准的。归档件的符合性附录由 writer 直接写。
 

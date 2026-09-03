@@ -1,0 +1,476 @@
+/**
+ * knowledge-use —— spec 阶段知识判断的**唯一结构化真源**与它的投影。
+ *
+ * ## 这份文件解决什么
+ *
+ * 判断「哪条规约命中、本需求要求做什么」「哪些模式是候选」，此前直接写在 `spec.md`
+ * 的 §10/§11 两张 markdown 表里。人读的表同时当机器真源，代价是每一条机械判据都要
+ * 先把表解析回结构（表头找列、单元格剥装饰、编号抽正则），而作者每次手填都可能把
+ * 表写歪一点点——判据于是不断在「解析得动人写的表」上加补丁。
+ *
+ * 现在倒过来：作者只编辑 `spec/knowledge-use.yaml`，§10/§11 是从它**确定性生成**的
+ * 只读区。人读的投影不再是判断的真源，两者不一致时错的一定是投影。
+ *
+ * ## 三类知识各自的生命周期（合同）
+ *
+ * - **facts**：激活即事实，不判命中与否。这里只记「用它做了什么」，供评审者回查。
+ * - **constraints**：spec 判命中，命中的写清**本需求要求做什么**；不命中的给可回查依据。
+ *   落点（哪个接口、哪个存储键）与验证方式由 plan 定，不在这里。
+ * - **patterns**：spec **只登记候选，不选型**。选型缺方案上下文，那是 plan 的事。
+ *
+ * ## 完备性怎么判
+ *
+ * 激活清单里的每一条约束条目，都要在这份文件里有去处：要么逐条登记（命中或不命中），
+ * 要么被一条「整域不适用」覆盖。漏一条就是**没判过**——而没判过与判了不命中，
+ * 对读者是完全不同的两件事。
+ *
+ * 既是库也是命令：`node knowledge-use.mjs render --feature <名> [--project-root <路径>]`
+ * 把生成区写进 `spec.md`。
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { parseYaml } from './yaml-lite.mjs';
+import { activeKnowledge } from './knowledge.mjs';
+import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
+
+const SCHEMA = 1;
+const USE_FILE = ['spec', 'knowledge-use.yaml'];
+
+/** 生成区的边界标记。两个标记之间的每一个字节都由本模块写。 */
+const BEGIN = '<!-- knowledge-use:begin ';
+const END = '<!-- knowledge-use:end -->';
+
+/** 生成区的名字 —— 同时是 spec 里那两章的标题关键词。 */
+const ZONES = [
+  { key: 'constraints', name: '规约约束要求', heading: /规约约束要求/ },
+  { key: 'patterns', name: '设计模式候选登记', heading: /设计模式候选/ },
+];
+
+const NO_CANDIDATE = '无候选';
+
+export class UseError extends Error {}
+
+function fail(message) {
+  throw new UseError(message);
+}
+
+function usePath(projectRoot, feature) {
+  return path.join(featureRoot(projectRoot, feature), ...USE_FILE);
+}
+
+/**
+ * 激活清单的指纹 —— 知识变了而这份判断没重做，要看得出来。
+ *
+ * 算的是**清单里每个文件的内容**，不是 manifest 自己：改 manifest 的注释不该让
+ * 全仓需求的判断作废，而改一条规约的正文必须。
+ */
+export function manifestDigest(projectRoot) {
+  const root = extensionRoot(projectRoot);
+  const raw = readTextOrNull(path.join(root, 'manifest.yaml'));
+  if (raw === null) fail('读不到 manifest.yaml');
+  const list = parseYaml(raw)?.provides?.knowledge ?? [];
+  const h = createHash('sha256');
+  for (const rel of list) {
+    const relPosix = String(rel).replace(/\\/g, '/');
+    const text = readTextOrNull(path.join(root, ...relPosix.split('/').filter(Boolean)));
+    if (text === null) fail(`激活清单登记的文件读不到：${relPosix}`);
+    h.update(relPosix).update('\0').update(text.replace(/\r\n/g, '\n')).update('\0');
+  }
+  return 'sha256:' + h.digest('hex').slice(0, 16);
+}
+
+function asList(value, field) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) fail(`knowledge-use.yaml 的 ${field} 不是列表`);
+  return value;
+}
+
+function text(row, field) {
+  return String(row?.[field] ?? '').trim();
+}
+
+/** 读这份判断。文件不在、坏了、schema 不对，三种都要分得清。 */
+export function readUse(projectRoot, feature) {
+  const p = usePath(projectRoot, feature);
+  const raw = readTextOrNull(p);
+  if (raw === null) {
+    fail(`缺 ${relDisplay(projectRoot, p)} —— spec 阶段的知识判断写在这里：`
+      + 'facts 用了什么、每条规约命中与否、模式有哪些候选。'
+      + '它是唯一真源，§10/§11 由它生成');
+  }
+  let data;
+  try {
+    data = parseYaml(raw);
+  } catch (e) {
+    fail(`${relDisplay(projectRoot, p)} 解析失败（解析失败不当作空判断）：${e.message}`);
+  }
+  if (Number(data?.schema) !== SCHEMA) {
+    fail(`${relDisplay(projectRoot, p)} 的 schema 是 ${data?.schema}，本版要求 ${SCHEMA}`);
+  }
+  return {
+    schema: SCHEMA,
+    manifestDigest: text(data, 'manifest_digest'),
+    facts: asList(data.facts, 'facts'),
+    domains: asList(data.constraint_domains, 'constraint_domains'),
+    constraints: asList(data.constraints, 'constraints'),
+    patterns: asList(data.patterns, 'patterns'),
+  };
+}
+
+/**
+ * 这份判断与激活清单对不对得上 —— **集合一致，不判内容质量**。
+ *
+ * 内容真不真（要求是不是本需求的设计、信号指不指向真实业务特征）是语义判断，
+ * 归 verifier。这里只回答机器答得了的那几问：判全了吗、编号在册吗、候选在册吗。
+ */
+export function coverageProblems(projectRoot, knowledge, use) {
+  const problems = [];
+
+  const want = manifestDigest(projectRoot);
+  if (use.manifestDigest && use.manifestDigest !== want) {
+    problems.push(`knowledge-use.yaml 记的 manifest_digest 是 ${use.manifestDigest}，`
+      + `激活清单现在是 ${want} —— 知识改过了而这份判断没重做。`
+      + '逐条看一遍改动是否影响本需求的判断，再把 digest 更新成新值');
+  } else if (!use.manifestDigest) {
+    problems.push(`knowledge-use.yaml 缺 manifest_digest（当前应为 ${want}）`
+      + ' —— 没有它就看不出「判断做的时候知识是哪一版」');
+  }
+
+  // facts：激活即事实，只判「登记的那些在册」，不要求逐条登记——
+  // 用没用到某一份事实是作者的判断，机器数不出来。
+  const factNames = new Set();
+  for (const f of knowledge.facts) {
+    factNames.add(f.file);
+    if (f.name) factNames.add(f.name);
+    factNames.add(path.basename(f.file, '.md'));
+  }
+  for (const row of use.facts) {
+    const id = text(row, 'id');
+    if (!id) { problems.push('facts 里有一行没写 id'); continue; }
+    if (!factNames.has(id)) {
+      problems.push(`facts 里的「${id}」不在激活清单的事实件里`
+        + `（在册的：${[...factNames].filter(n => !n.includes('/')).join('、')}）`);
+    }
+    if (!text(row, 'used_for')) {
+      problems.push(`facts 的「${id}」没写 used_for —— 用它做了什么是评审者要回查的`);
+    }
+  }
+
+  // constraints：激活的每一条都要有去处
+  const naDomains = new Map();
+  for (const row of use.domains) {
+    const prefix = text(row, 'prefix');
+    if (!prefix) { problems.push('constraint_domains 里有一行没写 prefix'); continue; }
+    if (!knowledge.prefixes.includes(prefix)) {
+      problems.push(`constraint_domains 的域前缀「${prefix}」不在激活清单里`
+        + `（在册的：${knowledge.prefixes.join('、')}）`);
+      continue;
+    }
+    if (row.applicable !== false) {
+      problems.push(`constraint_domains 的「${prefix}」写了 applicable: true —— `
+        + '这一段只用来登记**整域不适用**；域内有命中条目时逐条登记到 constraints');
+      continue;
+    }
+    const reason = text(row, 'reason');
+    if (reason.length < 6 || /^不涉及。?$/.test(reason)) {
+      problems.push(`constraint_domains 的「${prefix}」判整域不适用但依据太薄（「${reason}」）`
+        + ' —— 依据要可回查：「本需求无新增对外开放页面或接口」是依据，「不涉及」不是');
+    }
+    naDomains.set(prefix, reason);
+  }
+
+  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+  const seen = new Set();
+  for (const row of use.constraints) {
+    const id = text(row, 'id');
+    if (!id) { problems.push('constraints 里有一行没写 id'); continue; }
+    if (seen.has(id)) problems.push(`constraints 里的 ${id} 登记了两次`);
+    seen.add(id);
+    const entry = byId.get(id);
+    if (!entry) {
+      problems.push(`constraints 里的 ${id} 不在激活清单里 —— 编号写错，或那条规约已下架`);
+      continue;
+    }
+    if (naDomains.has(entry.prefix)) {
+      problems.push(`${id} 所在的域 ${entry.prefix} 已判整域不适用，却又逐条登记了 —— `
+        + '两种判法留一种：域不适用就不逐条登记，域里有命中就不判整域');
+      continue;
+    }
+    if (row.applicable === true) {
+      if (entry.reviewAction) {
+        problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
+          + '它的动作归《决策与评审记录》的跨团队协同，不写进本需求的要求');
+      }
+      if (!text(row, 'requirement')) {
+        problems.push(`${id} 判命中却没写 requirement —— 命中而不说要求做什么，编码那里拿不到`);
+      }
+    } else if (row.applicable === false) {
+      const reason = text(row, 'reason');
+      if (reason.length < 6 || /^不涉及。?$/.test(reason)) {
+        problems.push(`${id} 判不命中但依据太薄（「${reason}」）—— 依据要可回查`);
+      }
+    } else {
+      problems.push(`${id} 的 applicable 不是 true / false（现在是「${row.applicable}」）`);
+    }
+  }
+
+  const missing = knowledge.entries
+    .filter(e => !seen.has(e.id) && !naDomains.has(e.prefix))
+    .map(e => e.id);
+  if (missing.length) {
+    problems.push(`这些激活条目在 knowledge-use.yaml 里没有去处：${missing.join('、')} —— `
+      + '要么逐条登记命中与否，要么用 constraint_domains 判它整域不适用。'
+      + '漏一条是「没判过」，与「判了不命中」是两件事');
+  }
+
+  // patterns：只登记候选，候选须在册
+  if (!use.patterns.length) {
+    problems.push('patterns 一个适用单元都没登记 —— 零候选是正常结论，'
+      + '但要写出单元与「为什么都不需要」，空着分不清「判过了不需要」与「压根没想这件事」');
+  }
+  for (const row of use.patterns) {
+    const unit = text(row, 'unit');
+    if (!unit) { problems.push('patterns 里有一行没写 unit'); continue; }
+    const cand = text(row, 'candidate');
+    if (!text(row, 'signal')) {
+      problems.push(`patterns 的「${unit}」没写 signal —— `
+        + '命中要给信号，不命中要给反证，两种都是举证');
+    }
+    if (!cand) {
+      problems.push(`patterns 的「${unit}」没写 candidate（没有候选就写「${NO_CANDIDATE}」）`);
+      continue;
+    }
+    if (cand === NO_CANDIDATE) continue;
+    if (!knowledge.patternIds.includes(cand)) {
+      problems.push(`patterns 的候选「${cand}」不在册`
+        + `（在册的：${knowledge.patternIds.join('、') || '无'}）—— `
+        + '候选只能查表填，通用模式名不是合法值');
+    }
+    if (text(row, 'chosen') || row.chosen !== undefined) {
+      problems.push(`patterns 的「${unit}」写了 chosen —— spec 只登记候选不选型，`
+        + '选型缺方案上下文，那是 plan 的事，结论落 contracts.yaml');
+    }
+  }
+  return problems;
+}
+
+function cell(value) {
+  return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+}
+
+/** §10 的正文：命中条目逐条一行，整域不适用各一行。 */
+function renderConstraints(knowledge, use) {
+  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+  const hits = use.constraints.filter(r => r.applicable === true
+    && !(byId.get(text(r, 'id'))?.reviewAction));
+  const out = [];
+  out.push('| 编号 | 本需求的要求 | 落点契约名 |');
+  out.push('|---|---|---|');
+  if (!hits.length) {
+    out.push('| （无命中条目） | 本需求没有产生代码要求的规约条目 | — |');
+  }
+  for (const row of hits) {
+    out.push(`| ${cell(text(row, 'id'))} | ${cell(text(row, 'requirement'))} `
+      + `| ${cell(text(row, 'contract') || '—')} |`);
+  }
+  const na = use.constraints.filter(r => r.applicable === false);
+  if (use.domains.length || na.length) {
+    out.push('');
+    out.push('不命中的依据：');
+    for (const row of use.domains) {
+      out.push(`- 整域 ${cell(text(row, 'prefix'))} 不适用：${cell(text(row, 'reason'))}`);
+    }
+    for (const row of na) {
+      out.push(`- ${cell(text(row, 'id'))}：${cell(text(row, 'reason'))}`);
+    }
+  }
+  return out.join('\n');
+}
+
+/** §11 的正文：逐个适用单元一行，只登记不选型。 */
+function renderPatterns(knowledge, use) {
+  const out = ['| 适用单元 | 候选 | 命中信号或反证 |', '|---|---|---|'];
+  for (const row of use.patterns) {
+    out.push(`| ${cell(text(row, 'unit'))} | ${cell(text(row, 'candidate'))} `
+      + `| ${cell(text(row, 'signal'))} |`);
+  }
+  return out.join('\n');
+}
+
+/** 两个生成区的正文。键与 ZONES 对齐。 */
+export function renderZones(knowledge, use) {
+  return {
+    constraints: renderConstraints(knowledge, use),
+    patterns: renderPatterns(knowledge, use),
+  };
+}
+
+function zoneBlock(zone, body) {
+  return `${BEGIN}${zone.name} · 由 spec/knowledge-use.yaml 生成，手改会被门禁拒绝 -->\n`
+    + `${body}\n${END}`;
+}
+
+/**
+ * 从 spec 正文里取出一个生成区。
+ *
+ * @returns {{found:boolean, body:string|null, start:number, end:number}}
+ */
+function zoneOf(specText, zone) {
+  const head = `${BEGIN}${zone.name} `;
+  const start = specText.indexOf(head);
+  if (start < 0) return { found: false, body: null, start: -1, end: -1 };
+  const bodyStart = specText.indexOf('-->', start);
+  const end = specText.indexOf(END, start);
+  if (bodyStart < 0 || end < 0) return { found: false, body: null, start, end: -1 };
+  return {
+    found: true,
+    body: specText.slice(bodyStart + 4, end).replace(/\n$/, ''),
+    start,
+    end: end + END.length,
+  };
+}
+
+/**
+ * 把生成区写进 spec 正文 —— 幂等：已有生成区就整块替换，没有就追加到该章标题之后。
+ *
+ * 章不存在时不代写标题：那一章该不该在、叫什么名字，由模板定，不由生成器造。
+ */
+function applyZones(specText, rendered) {
+  let out = specText.replace(/\r\n/g, '\n');
+  for (const zone of ZONES) {
+    const block = zoneBlock(zone, rendered[zone.key]);
+    const found = zoneOf(out, zone);
+    if (found.found) {
+      out = out.slice(0, found.start) + block + out.slice(found.end);
+      continue;
+    }
+    const rows = out.split(/\r?\n/);
+    const idx = rows.findIndex(l => /^#{2,3}\s/.test(l) && zone.heading.test(l));
+    if (idx < 0) {
+      fail(`spec.md 里找不到「${zone.name}」章 —— 生成器不代写章标题：`
+        + '那一章该不该在、叫什么名字由模板定');
+    }
+    let insert = idx + 1;
+    while (insert < rows.length && rows[insert].trim() === '') insert += 1;
+    // 章标题后的 HTML 注释是模板给作者的写法说明，生成区排在它之后
+    if (rows[insert]?.trimStart().startsWith('<!--') && !rows[insert].includes(BEGIN.trim())) {
+      while (insert < rows.length && !rows[insert].includes('-->')) insert += 1;
+      insert += 1;
+    }
+    rows.splice(insert, 0, '', block);
+    out = rows.join('\n');
+  }
+  return out;
+}
+
+/**
+ * 一章的正文范围：标题行之后到下一个同级或更高级标题之前。
+ *
+ * @returns {{start:number, end:number}|null} 行下标，左闭右开
+ */
+function chapterSpan(rows, heading) {
+  const start = rows.findIndex(l => /^#{2,3}\s/.test(l) && heading.test(l));
+  if (start < 0) return null;
+  const level = (rows[start].match(/^#+/) ?? ['##'])[0].length;
+  for (let i = start + 1; i < rows.length; i += 1) {
+    const m = rows[i].match(/^#+/);
+    if (m && m[0].length <= level) return { start: start + 1, end: i };
+  }
+  return { start: start + 1, end: rows.length };
+}
+
+/**
+ * 生成区与 YAML 对不对得上 —— 手改生成区、以及生成区之外的旧手写表，都在这里被判出来。
+ *
+ * 后一条是迁移期真会遇到的：这一章原先是人手填的表，加了生成区之后旧表还在，
+ * 于是同一章有两张表说同一件事，而只有一张跟着 YAML 走。
+ */
+export function zoneProblems(projectRoot, specText, rendered) {
+  const problems = [];
+  const rows = specText.split(/\r?\n/);
+  for (const zone of ZONES) {
+    const found = zoneOf(specText, zone);
+    if (!found.found) {
+      problems.push(`spec.md 的「${zone.name}」章没有生成区 —— `
+        + '跑 `node doc/extensions/hooks/shared/knowledge-use.mjs render --feature <名>` 生成');
+      continue;
+    }
+    if (found.body !== rendered[zone.key]) {
+      problems.push(`spec.md 的「${zone.name}」生成区与 spec/knowledge-use.yaml 对不上 —— `
+        + '这一区由 YAML 生成，手改它等于让人读的表与机器真源各说各话。'
+        + '改判断请改 YAML，再跑 `knowledge-use.mjs render` 重新生成');
+    }
+    const span = chapterSpan(rows, zone.heading);
+    if (!span) continue;
+    let inZone = false;
+    const stray = [];
+    for (let i = span.start; i < span.end; i += 1) {
+      const line = rows[i];
+      if (line.includes(BEGIN.trim())) { inZone = true; continue; }
+      if (line.includes(END)) { inZone = false; continue; }
+      if (!inZone && line.trimStart().startsWith('|')) stray.push(i + 1);
+    }
+    if (stray.length) {
+      problems.push(`spec.md 的「${zone.name}」章在生成区之外还有表`
+        + `（第 ${stray.slice(0, 3).join('、')} 行${stray.length > 3 ? ' …' : ''}）`
+        + ' —— 这一章的正文只有生成区一份。旧的手写表删掉，判断改到 knowledge-use.yaml 里');
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 命令行：render
+// ---------------------------------------------------------------------------
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a.startsWith('--')) out[a.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = argv[++i];
+  }
+  return out;
+}
+
+function main(argv) {
+  const [command, ...rest] = argv;
+  if (command !== 'render') {
+    process.stderr.write('用法：knowledge-use.mjs render --feature <名> [--project-root <路径>]\n');
+    process.exit(2);
+  }
+  const args = parseArgs(rest);
+  if (!args.feature) {
+    process.stderr.write('缺 --feature <需求名>\n');
+    process.exit(2);
+  }
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const projectRoot = path.resolve(args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..'));
+  try {
+    const knowledge = activeKnowledge(projectRoot);
+    const use = readUse(projectRoot, args.feature);
+    const problems = coverageProblems(projectRoot, knowledge, use);
+    if (problems.length) {
+      process.stderr.write(`knowledge-use.yaml 还不能生成，先修这 ${problems.length} 处：\n`);
+      for (const p of problems) process.stderr.write(`  · ${p}\n`);
+      process.exit(1);
+    }
+    const specPath = path.join(featureRoot(projectRoot, args.feature), 'spec', 'spec.md');
+    const specText = readTextOrNull(specPath);
+    if (specText === null) {
+      process.stderr.write(`读不到 ${relDisplay(projectRoot, specPath)}\n`);
+      process.exit(1);
+    }
+    const next = applyZones(specText, renderZones(knowledge, use));
+    fs.writeFileSync(specPath, next, 'utf-8');
+    process.stdout.write(`[knowledge-use] 生成区已写入 ${relDisplay(projectRoot, specPath)}\n`);
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`);
+    process.exit(1);
+  }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main(process.argv.slice(2));
+}

@@ -1,0 +1,17 @@
+schema: 1
+manifest_digest: "sha256:51ae05a1ad7fa2ce"
+facts:
+  - id: sample-facts
+    used_for: 提交入口落在哪个模块按它取
+constraints:
+  - id: SMP-01
+    applicable: true
+    requirement: 提交入口生成一次受理单编号并随请求透传，重试复用同一个编号
+    contract: 提交办理请求接口
+  - id: SMP-02
+    applicable: false
+    reason: 本需求没有任何上报动作，提交结果只在本次会话内展示
+patterns:
+  - unit: 提交与结果展示
+    candidate: 无候选
+    signal: 单一线性流程，没有多分支多步，模式索引里的适用条件不成立
