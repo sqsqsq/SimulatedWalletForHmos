@@ -20,6 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
 FLOW = STORY_SCRIPTS / "story_flow.py"
 MATERIALS = STORY_SCRIPTS / "materials.py"
+
+sys.path.insert(0, str(STORY_SCRIPTS))
+import story_flow  # noqa: E402
 FEATURE = "AR90001"
 
 
@@ -410,6 +413,31 @@ class AManifestAppearsWithoutAnyDataLayer(unittest.TestCase):
         self.assertTrue(manifest["digest"])
         self.assertIn("ux-reference/签约页.png",
                       [p for m in manifest["materials"] for p in m["paths"]])
+
+
+class TheManifestSurvivesTheStorySweep(unittest.TestCase):
+    """成文登记时清扫 `story-src/`：材料清单留下，但不随稿冻结。
+
+    它是材料真源，会随材料继续演化；定稿那一刻手里是哪版材料，记在契约当轮的
+    `materials.digest` 里——那才是快照。把它也当台账冻结，材料一变 check 就报
+    「台账被换过」，而那正是**正常**的。
+    """
+
+    def test_the_sweep_keeps_the_manifest(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = Path(tmp.name) / "story-src"
+        src.mkdir()
+        (src / "materials.json").write_text("{}", encoding="utf-8")
+        (src / "decisions.json").write_text("{}", encoding="utf-8")
+        (src / "分章草稿.md").write_text("脚手架", encoding="utf-8")
+        swept = story_flow.sweep_story_src(src)
+        self.assertEqual(["分章草稿.md"], swept)
+        self.assertTrue((src / "materials.json").is_file(), "材料清单被当成脚手架扫掉了")
+
+    def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
+        self.assertNotIn("materials.json", story_flow.STORY_SRC_FROZEN,
+                         "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
 
 
 if __name__ == "__main__":

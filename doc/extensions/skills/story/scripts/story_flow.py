@@ -80,9 +80,6 @@ DESIGN = ("AR", "design.md")
 STORY_SRC_FROZEN = (
     "source-units.json", "audit.json", "decisions.json",
     "story-verdicts.md", "copyedit.md",
-    # 材料清单也随稿冻结：story 定稿时手里是哪份材料，跟据以成文的账本同等重要。
-    # 它由 round 按磁盘重算，不是造 story 的脚手架，所以清理时也不能扫掉。
-    materials.MANIFEST[-1],
 )
 
 
@@ -97,13 +94,18 @@ def sweep_story_src(src: Path) -> list[str]:
     要算指纹的台账，清理与冻结说的必须是同一批文件——各写一份，改一处忘一处时，
     要么清掉了要算指纹的，要么留下了不该留的。
 
+    材料清单是这条规则之外的**一件**：它不是造 story 的脚手架，而是材料本身的真源，
+    由 `round` 按磁盘现状重算，也会随材料继续演化——所以它留下，但不随稿冻结。
+    story 定稿那一刻手里是哪版材料，记在契约当轮的 `materials.digest` 里，那才是快照。
+
     只扫这一层，不递归、不碰别的目录；清掉的逐个报出来，不静默删。
     """
     if not src.is_dir():
         return []
+    keep = set(STORY_SRC_FROZEN) | {materials.MANIFEST[-1]}
     swept = []
     for item in sorted(src.iterdir()):
-        if item.name in STORY_SRC_FROZEN:
+        if item.name in keep:
             continue
         if item.is_dir():
             shutil.rmtree(item, ignore_errors=True)
