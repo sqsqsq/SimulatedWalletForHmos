@@ -18,6 +18,9 @@
 #   severity          BLOCKER | WARN
 #   status            fixed（永久回归） | pending_capability（目标能力未建，只做夹具自检）
 #                     | retired（须 reason + approved_by）
+#   responsibility    发现者是谁：不写 = script（跑 checker）；verifier / behavior_test =
+#                     责任已委派，两步都不跑，回归里单列一档。委派须 reason + approved_by——
+#                     把一条形态从脚本手里拿走，等于承认「机械发现者缺席、由别的东西兜底」
 #   variant_of        若为既有形态的新变体，指向原形态 id（旧检查保留，另增新检查）
 #
 # 回归语义（check_failure_modes.py）：

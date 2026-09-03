@@ -10,6 +10,9 @@
    正夹具必须被判 PASS。自检不过说明 checker 本身失效，比漏检更危险，整体判 FAIL。
 2. **真实目标** —— 仅 ``status == fixed`` 的形态跑；``pending_capability``（目标能力
    尚未建）报 SKIP 并计数，不算失败。能力交付后把 status 改 fixed 即自动生效。
+3. **责任已委派** —— ``responsibility`` 写成 ``verifier`` 或 ``behavior_test`` 的形态
+   两步都不跑：它的发现者不是脚本了。回归里单列一档报出来，「这一条现在靠谁守」
+   因此在每次输出里都看得见，而不是从台账里消失。
 
 用法::
 
@@ -2848,6 +2851,20 @@ class Report:
         return [r for r in self.results if r.status == "SKIP"]
 
 
+#: 发现者不是脚本时它是谁。缺省 script —— 不写这个字段的形态照旧跑 checker。
+DELEGATES = ("verifier", "behavior_test")
+
+
+def delegated_to(mode: dict) -> str:
+    """这一条的发现者是不是已经换人了。
+
+    换人要有人签字（reason + approved_by）：把一条形态从脚本手里拿走，等于承认
+    「机械发现者缺席、由别的东西兜底」，那是需要有人负责的决定，不是改个字段。
+    """
+    who = str(mode.get("responsibility", "")).strip()
+    return who if who in DELEGATES else ""
+
+
 def load_ledger() -> list[dict]:
     if not LEDGER.exists():
         print(f"[FATAL] 台账不存在：{LEDGER}", file=sys.stderr)
@@ -2988,10 +3005,20 @@ def main(argv: list[str] | None = None) -> int:
             if not mode.get("reason") or not mode.get("approved_by"):
                 report.add(ModeResult(mode["id"], "ledger", "-", "FAIL", "retired 缺 reason/approved_by"))
             continue
+        who = delegated_to(mode)
+        if who:
+            if not mode.get("reason") or not mode.get("approved_by"):
+                report.add(ModeResult(mode["id"], "ledger", "-", "FAIL",
+                                      "责任委派缺 reason/approved_by——换发现者要有人签字"))
+            else:
+                report.add(ModeResult(mode["id"], "delegated", who, "SKIP", mode["reason"]))
+            continue
         self_check(mode, report)
 
     if not args.self_check:
         for mode in modes:
+            if delegated_to(mode):
+                continue
             if mode["status"] != "fixed":
                 if mode["status"] == "pending_capability":
                     report.add(
@@ -3054,14 +3081,19 @@ def main(argv: list[str] | None = None) -> int:
 
     total = len(by_mode)
     failed = {r.mode_id for r in report.failed}
+    delegated = {mid for mid, rs in by_mode.items()
+                 if mid not in failed and any(r.stage == "delegated" for r in rs)}
     skipped_only = {
-        mid for mid, rs in by_mode.items() if mid not in failed and all(r.status == "SKIP" for r in rs)
+        mid for mid, rs in by_mode.items()
+        if mid not in failed and mid not in delegated and all(r.status == "SKIP" for r in rs)
     }
     print("\n" + "=" * 78)
     print(
         f"形态 {total} 条：FAIL {len(failed)}，SKIP(能力未建) {len(skipped_only)}，"
-        f"PASS {total - len(failed) - len(skipped_only)}"
+        f"委派 {len(delegated)}，PASS {total - len(failed) - len(skipped_only) - len(delegated)}"
     )
+    if delegated:
+        print("责任已委派（发现者不是脚本）：" + "、".join(sorted(delegated)))
     if failed:
         print("失败形态：" + "、".join(sorted(failed)))
     print("=" * 78)
