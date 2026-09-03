@@ -254,8 +254,6 @@ export function scanLanguageRedline(text, opts = {}) {
   const scopes = opts.kinds ? redlineScopes(opts.kinds)
     : new Map(Object.keys(REDLINE_HINTS).map(k => [k, 'non_appendix']));
   const ruleIds = (opts.ruleIds ?? []).filter(id => typeof id === 'string' && id.trim());
-  const identifiers = new Set((opts.identifiers ?? []).filter(
-    id => typeof id === 'string' && /^[A-Za-z][A-Za-z0-9_]{3,}$/.test(id)));
   const harnessTerms = (opts.harnessTerms ?? []).filter(t => typeof t === 'string' && t.trim());
   const hits = [];
   let inFence = false;
@@ -295,9 +293,11 @@ export function scanLanguageRedline(text, opts = {}) {
     for (const re of [CAMEL_CASE_RE, SNAKE_CASE_RE]) {
       for (const m of outsideCode.matchAll(re)) push(line, 'repo_identifier', m[0], raw);
     }
-    for (const word of outsideCode.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? []) {
-      if (identifiers.has(word)) push(line, 'repo_identifier', word, raw);
-    }
+    // **不拿材料派生的词表来判**：那份词表是按标识形态从材料里切出来的，
+    // `（share-setup.png）` 会切出 `share` 这种伪标识，红线于是拦下 story 里的图片引用行，
+    // 与「图片一张不少」直接互斥，作者只剩「不进 story」一条出路。
+    // 主叙事里某个英文词该不该出现要读上下文，那是独立审查判的事；
+    // 这里只认**形态本身就是工程标识**的那几种（行内代码、驼峰、下划线、仓内路径）。
 
     for (const id of ruleIds) {
       if (raw.includes(id)) push(line, 'rule_id', id, raw);

@@ -282,12 +282,6 @@ function activeKnowledgeEntries(ctx) {
   }
 }
 
-/** ⑨ 用的材料单元：只为拿 token，离线时没有材料可读，给空。 */
-function materialUnitsForRedline(ctx) {
-  if (ctx.offline) return [];
-  return materialUnitsNow(ctx, sourceDocs(ctx));
-}
-
 /**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
@@ -2130,18 +2124,9 @@ function cmdCheck(ctx) {
   const redlineKinds = ctx.contract.language_redline?.kinds;
   if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
     const appendix = appendixChapter(ctx.contract);
-    // 工程标识**现场按材料算**，不读 init 落盘的那份清单：判据要认的是「材料里出现过的
-    // 标识」，那是材料本身的性质，不该取决于清单是什么时候落的盘。
-    const identifiers = [];
-    for (const u of materialUnitsForRedline(ctx)) {
-      for (const t of u.tokens ?? []) {
-        if (isEngineeringIdentifier(t, ownIds)) identifiers.push(t);
-      }
-    }
     const hits = scanLanguageRedline(storyText, {
       appendixTitle: appendix?.title,
       ruleIds: kEntries.map(e => e.id),
-      identifiers,
       kinds: redlineKinds,
       harnessTerms: ctx.contract.language_redline?.harness_terms ?? [],
     });
