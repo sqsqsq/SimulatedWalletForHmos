@@ -2035,5 +2035,114 @@ class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
             self.assertNotIn(quota, out, "有判据在拿长度下限说话：%s" % quota)
 
 
+class ChaptersLandOneAtATime(Step8Case):
+    """落盘只有一条路：一次一章，其余字节不动。
+
+    作者拿编辑工具直接改整篇时，「已完成的章一个字节没动」只是期望；经这条命令落盘，
+    它是机械事实。统稿也走它——要改第五章就替换第五章，不重新输出整篇：
+    整篇重出是全有或全无，中途断了磁盘上什么都没有。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink()
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+
+    def titles(self) -> list[str]:
+        return [c["title"] for c in json.loads(
+            (REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json")
+            .read_text(encoding="utf-8"))["chapters"]]
+
+    def put_chapter(self, title: str, body: str) -> subprocess.CompletedProcess:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(BUILD), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", title, "--from", str(src)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def chapter_text(self, title: str) -> str:
+        text = self.story()
+        start = text.index(f"## {title}")
+        rest = text[start + 3:]
+        nxt = rest.find("\n## ")
+        return rest if nxt < 0 else rest[:nxt]
+
+    def test_the_skeleton_has_every_chapter_and_a_pending_mark(self) -> None:
+        text = self.story()
+        for title in self.titles():
+            self.assertIn(f"## {title}", text)
+            self.assertIn(f"<!-- 待写：{title} -->", text)
+
+    def test_the_skeleton_never_overwrites_an_existing_story(self) -> None:
+        """骨架命令重跑不能把写过的内容抹掉——它是起手动作，不是重置键。"""
+        self.put_chapter("背景", "用户现在拿不到凭据。\n")
+        before = self.story_path.read_bytes()
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+        self.assertEqual(before, self.story_path.read_bytes())
+
+    def test_writing_one_chapter_leaves_the_others_byte_identical(self) -> None:
+        others_before = {t: self.chapter_text(t) for t in self.titles() if t != "背景"}
+        self.assertEqual(0, self.put_chapter("背景", "用户现在拿不到凭据。\n").returncode)
+        self.assertIn("用户现在拿不到凭据。", self.chapter_text("背景"))
+        for title, before in others_before.items():
+            with self.subTest(chapter=title):
+                self.assertEqual(before, self.chapter_text(title))
+
+    def test_an_interrupted_run_only_writes_what_is_still_pending(self) -> None:
+        """第 4 章中断：恢复时前三章逐字节不变，只写仍带 marker 的那几章。"""
+        titles = self.titles()
+        for i, title in enumerate(titles[:3]):
+            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+        done = {t: self.chapter_text(t) for t in titles[:3]}
+        proc = self.put_chapter(titles[3], "第 4 章的正文。\n")
+        self.assertEqual(0, proc.returncode)
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertIn("还剩 6 章待写", out, "剩几章要报出来，恢复时才知道从哪续")
+        for title, before in done.items():
+            with self.subTest(chapter=title):
+                self.assertEqual(before, self.chapter_text(title), "已完成的章被动过了")
+
+    def test_a_copyedit_pass_replaces_one_chapter_only(self) -> None:
+        """统稿夹具：十章写完之后只改第 5 章，其余九章字节相同。"""
+        titles = self.titles()
+        for i, title in enumerate(titles):
+            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+        before = {t: self.chapter_text(t) for t in titles}
+        self.assertEqual(0, self.put_chapter(titles[4], "统稿之后的第 5 章。\n").returncode)
+        for title in titles:
+            with self.subTest(chapter=title):
+                if title == titles[4]:
+                    self.assertIn("统稿之后的第 5 章。", self.chapter_text(title))
+                else:
+                    self.assertEqual(before[title], self.chapter_text(title))
+
+    def test_an_unknown_chapter_is_refused(self) -> None:
+        proc = self.put_chapter("并不存在的章", "随便写点。\n")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("合同里没有", (proc.stderr or "") + (proc.stdout or ""))
+
+    def test_an_empty_body_is_refused(self) -> None:
+        """空正文不是一章：真的不涉及时那句话本身就是结论。"""
+        proc = self.put_chapter("背景", "   \n")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("空正文不是一章", (proc.stderr or "") + (proc.stdout or ""))
+
+    def test_the_content_goes_through_a_file_not_an_argument(self) -> None:
+        """正文走文件：它带换行、引号与 markdown，任何 shell 都会再解析一遍。"""
+        proc = subprocess.run(
+            ["node", str(BUILD), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", "背景"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("--from", (proc.stderr or "") + (proc.stdout or ""))
+
+    def test_check_names_the_chapters_still_pending(self) -> None:
+        """骨架当成品交，要被点名——marker 是明确记号，判它不用读懂任何一句话。"""
+        self.init_audit()
+        out = self.assert_check_names("待写 marker")
+        self.assertIn("背景", out)
+
+
 if __name__ == "__main__":
     unittest.main()

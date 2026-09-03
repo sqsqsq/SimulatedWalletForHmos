@@ -62,7 +62,8 @@ node .../story-build.mjs init  --feature <feature>   # ① 枚举来源单元
 #                              ② 分配：每个单元定一个落点，落 audit.json
 node .../story-build.mjs audit --feature <feature>   #    「待你分配 0 条」才算分完
 #    机器先归位两类：带硬事实标记的、技术契约小节的行；剩给模型的都是纯中文叙述
-#                              ③ 逐章渲染：按合同顺序一次写一章，追加到 AR/story.md
+node .../story-build.mjs skeleton --feature <feature>   # ③ 建十章骨架（只跑一次）
+#                              ③ 逐章渲染：一次写一章，经 `story-build chapter` 原子落盘
 #                                 每章写完跑一次 audit（它会打印未渲染章）
 #                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
 #                                 六项自查各写一行到 AR/story-src/copyedit.md（恰好六行）；

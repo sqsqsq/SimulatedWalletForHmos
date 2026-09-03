@@ -20,6 +20,8 @@
  * |------|--------|
  * | `init`  | 枚举来源单元 → `source-units.json`；建 `decisions.json` 骨架 |
  * | `audit` | 三态核对：`at` / `covered_by` / `machine_facing`，写 `audit.json` |
+ * | `skeleton` | 建十章骨架：每章一个稳定章锚 + 一个待写 marker |
+ * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
  * | `check` | 章标题与顺序、整篇 token 守恒、章节与附录形态、图与 diagram 落点、决策字段齐 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
@@ -43,7 +45,7 @@ import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
 } from './review-render.mjs';
 
-const COMMANDS = ['init', 'audit', 'check', 'build', 'number'];
+const COMMANDS = ['init', 'audit', 'check', 'build', 'number', 'skeleton', 'chapter'];
 
 /** 裁决的取值与引文下限——同 verifier-report 的 evidenceVerified 口径。 */
 const VERDICT_WORDS = ['讲清', '未讲清'];
@@ -103,6 +105,8 @@ function parseArgs(argv) {
     if (argv[i] === '--feature') args.feature = argv[++i];
     else if (argv[i] === '--project-root') args.projectRoot = argv[++i];
     else if (argv[i] === '--story') args.story = argv[++i];
+    else if (argv[i] === '--chapter') args.chapter = argv[++i];
+    else if (argv[i] === '--from') args.from = argv[++i];
     else if (argv[i] === '--offline') args.offline = true;
   }
   return args;
@@ -2240,6 +2244,16 @@ function cmdCheck(ctx) {
     }
   }
   {
+    // 待写 marker：骨架给每章留的那个记号，写完一章就该被那一章的内容顶掉。
+    // 它还在，说明这一章还没写——把骨架当成品交是实测出现过的形态。
+    const left = pendingChapters(storyText);
+    if (left.length) {
+      problems.push(`还有 ${left.length} 章带着待写 marker：${left.join('、')}`
+        + '——每章写完用 `story-build chapter --chapter <章名> --from <文件>` 落盘，'
+        + '那条命令会把 marker 连同占位一起换掉');
+    }
+  }
+  {
     // 模板占位符：`{{…}}` 是模板留给作者替换的位置，留在成品里就是没写完。
     // 判的是这个明确记号本身，不是「这段像不像占位」——后者是猜。
     const lines = storyText.split(/\r?\n/);
@@ -2522,6 +2536,126 @@ function cmdNumber(ctx) {
 }
 
 // --------------------------------------------------------------------------
+// skeleton / chapter：骨架与逐章原子落盘
+// --------------------------------------------------------------------------
+
+/**
+ * 待写块的 marker —— **明确记号**，不是「看起来像没写完」。
+ *
+ * 判它不需要读懂任何一句话：在就是没写完，不在就是写过了。中断恢复据它决定还剩哪几章，
+ * check 据它拦住「骨架当成品交」。
+ */
+const PENDING_MARK = '待写';
+const PENDING_RE = /<!--\s*待写[:：]\s*([^>]*?)\s*-->/g;
+
+function pendingMark(title) {
+  return `<!-- ${PENDING_MARK}：${title} -->`;
+}
+
+/** story 里还带着待写 marker 的章名。 */
+function pendingChapters(storyText) {
+  const out = [];
+  for (const m of String(storyText ?? '').matchAll(PENDING_RE)) out.push(m[1]);
+  return out;
+}
+
+/**
+ * 一章在全文里的字节区间 —— 从它的 `## ` 那一行，到下一个 `## ` 之前。
+ *
+ * 按行找而不是正则整篇匹配：正文里可能有代码块，块里出现 `## ` 时整篇正则会切错，
+ * 而切错的后果是替换一章时吃掉了别的章。
+ *
+ * @returns {{start:number, end:number}|null} 字符下标区间
+ */
+function chapterSpan(storyText, title) {
+  const text = String(storyText ?? '');
+  // CRLF 安全：按 `\r?\n` 切，回推下标时把真实分隔符长度还回去——
+  // 少还一个字节，替换区间就整体错位一位，吃掉相邻章的第一个字符。
+  const lines = text.split(/\r?\n/);
+  let start = -1;
+  let offset = 0;
+  let inFence = false;
+  const offsets = [];
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    if (inFence || !line.startsWith('## ')) continue;
+    if (start < 0) {
+      if (normalizeHeading(line.slice(3).trim()) === normalizeHeading(title)) start = i;
+      continue;
+    }
+    return { start: offsets[start], end: offsets[i] };
+  }
+  if (start < 0) return null;
+  return { start: offsets[start], end: text.length };
+}
+
+function cmdSkeleton(ctx) {
+  refuseIfFrozen(ctx, 'skeleton');
+  const existing = readText(ctx.storyPath);
+  if (existing !== null) {
+    const left = pendingChapters(existing);
+    process.stdout.write(`[story-build skeleton] AR/story.md 已存在，未改动`
+      + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）\n`);
+    return;
+  }
+  const titles = ctx.contract.chapters.map(c => c.title);
+  const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
+  for (const title of titles) {
+    body.push(`## ${title}`, '', pendingMark(title), '');
+  }
+  fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
+  fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
+  process.stdout.write(`[story-build skeleton] 建了 ${titles.length} 章骨架：`
+    + `每章一个章锚 + 一个待写 marker。写完一章跑一次 chapter 落盘\n`);
+}
+
+/**
+ * 把一章的内容原子替换进 story.md —— **落盘只有这一条路**。
+ *
+ * 作者拿编辑工具直接改整篇时，「已完成的章一个字节没动」只是期望；经这条命令落盘，
+ * 它是机械事实：替换的区间就是那一章，别处一个字节都碰不到。统稿也走它——
+ * 统稿要改第五章就替换第五章，不重新输出整篇。整篇重出是全有或全无，
+ * 中途断了磁盘上什么都没有。
+ */
+function cmdChapter(ctx) {
+  refuseIfFrozen(ctx, 'chapter');
+  const title = String(ctx.args.chapter ?? '').trim();
+  if (!title) fail('缺 --chapter <章名>：要替换哪一章');
+  const from = ctx.args.from;
+  if (!from) fail('缺 --from <文件>：这一章的内容写在文件里，不走命令行参数——'
+    + '正文里有换行、引号与 markdown，任何 shell 都会再解析一遍');
+  const body = readText(path.resolve(from));
+  if (body === null) fail(`读不到 ${from}`);
+  if (!body.trim()) fail(`${from} 是空的：空正文不是一章，本需求真的不涉及时写「${EMPTY_SECTION_TEXT}」`);
+
+  const story = readText(ctx.storyPath);
+  if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架，再一章一章落盘');
+  const known = ctx.contract.chapters.map(c => c.title);
+  if (!known.some(t => normalizeHeading(t) === normalizeHeading(title))) {
+    fail(`合同里没有「${title}」这一章。章名取自章节合同：${known.join('、')}`);
+  }
+  const span = chapterSpan(story, title);
+  if (!span) fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
+    + '章锚是逐章落盘的定位点，别手工改动它');
+
+  const trimmed = body.replace(/\s+$/, '');
+  const replaced = `## ${title}\n\n${trimmed}\n\n`;
+  const next = story.slice(0, span.start) + replaced + story.slice(span.end);
+  fs.writeFileSync(ctx.storyPath, next, 'utf-8');
+
+  const left = pendingChapters(next);
+  process.stdout.write(`[story-build chapter] 「${title}」已落盘`
+    + `（其余 ${known.length - 1} 章一个字节未动）；`
+    + (left.length ? `还剩 ${left.length} 章待写：${left.join('、')}\n`
+                   : '十章都写完了，接着做统稿\n'));
+}
+
+// --------------------------------------------------------------------------
 // build：渲染 review.md（机器区重算、人工区逐字节保留）
 // --------------------------------------------------------------------------
 
@@ -2577,6 +2711,8 @@ function main() {
   }
   const ctx = createContext(args);
   if (args.command === 'init') cmdInit(ctx);
+  else if (args.command === 'skeleton') cmdSkeleton(ctx);
+  else if (args.command === 'chapter') cmdChapter(ctx);
   else if (args.command === 'audit') cmdAudit(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
