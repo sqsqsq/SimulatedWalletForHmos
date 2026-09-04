@@ -384,6 +384,15 @@ def read_gate_options(feature_root: Path) -> list[dict]:
     return normalized
 
 
+def after_complete(contract: dict) -> bool:
+    """流程收口了没有——**收口那一刻及其之后都算**。
+
+    `complete` 之后还有 `story_written` 与归档；材料在这些状态下再变，同样不该开新轮。
+    """
+    return (contract.get("status") in ("complete", "story_written")
+            or bool(contract.get("archived")))
+
+
 def cmd_round(feature_root: Path) -> dict:
     # 定位与选项集侧车都是 S2b（需求分析）的产物，此刻通常还不存在——
     # round 发生在材料盘点之后、分析之前。写了就消费，没写不失败：
@@ -448,7 +457,11 @@ def cmd_round(feature_root: Path) -> dict:
     # 曾经开轮，代价是死锁：新轮没有任何决策，而 `decide` 被 status=complete 挡住，
     # 于是既走不下去也退不回来——实跑里模型最后手改契约文件才出来，那在正式路径上
     # 是不允许的。要重新决策请显式跑 `reopen`。
-    if contract.get("status") == "complete" and rounds:
+    #
+    # **判的是「收口及之后」不是「恰好在 complete」**：`story_written` 与已归档比它更靠后，
+    # 而 story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料，
+    # 那份已经定稿的 story 就对不上它自己声称的依据了。
+    if after_complete(contract) and rounds:
         current = rounds[-1]
         stamp(current)
         current["materials_changed_after_complete"] = {
@@ -784,7 +797,7 @@ def cmd_reopen(feature_root: Path) -> dict:
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status != "complete":
+    if not after_complete(contract):
         raise FlowError(f"流程不在收口态（现在是 {status}），没有需要重新打开的东西")
     contract["status"] = "in_progress"
     contract.setdefault("reopened", []).append({

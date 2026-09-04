@@ -308,13 +308,12 @@ function scanSources(ctx) {
     if (dir) {
       try { siblings = fs.readdirSync(dir).length; } catch { siblings = 0; }
     }
+    // 缺来源一律不拦（一律记一笔）。图片的登记在 materials.json，不在这些索引文件里。
     missing.push({
       doc, rel,
       required: obj.required === true,
       siblings,
       siblingDir: obj.warn_if_siblings ?? null,
-      // 缺来源一律不拦。图片的登记在 materials.json，不在这些索引文件里。
-      blocking: false,
     });
   }
   return { docs, missing };
@@ -727,7 +726,7 @@ function cmdCheck(ctx) {
   if (!ctx.offline) {
     const { missing } = scanSources(ctx);
     for (const m of missing) {
-      (m.blocking ? problems : notes).push(missingSourceLine(m));
+      notes.push(missingSourceLine(m));
     }
   }
 
@@ -1324,7 +1323,8 @@ function cmdCheck(ctx) {
 function cmdNumber(ctx) {
   const before = readText(ctx.storyPath);
   if (before === null) fail(`没有 AR/story.md 可编号（${ctx.storyPath}）`);
-  const after = renumberStory(before, ctx.contract.chapters ?? []);
+  const after = renumberStory(before, ctx.contract.chapters ?? [],
+                              ctx.contract.heading_counters ?? []);
   if (after === before) {
     process.stdout.write('[story-build number] 编号已经是对的，未改动\n');
     return;

@@ -24,7 +24,7 @@
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
-| 11 集成实跑与旧发现者退场 | 首跑（`story-suite-20260904-091600`）**不计分**——verifier 证据是被测主模型手造的、18 分钟流程死锁、上下文 525K；二跑前的七条修正（E1–E4 环境、M1–M3 机制）**已实施，四个提交等评审**；之后做清理与预算收口，再跑一次 CLI 才计分 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
+| 11 集成实跑与旧发现者退场 | 首跑不计分。二跑前修正：E1–E4、M1 **通过**；M2 通过附返修（`story_written`/`archived` 后同样不开轮）；**M3 不通过**（量词白名单误伤：元/秒/天/小时/位/方/月，改为按小节序位判定，`normalizeHeading` 不剥裸序号）。一个返修提交后进入退场与预算压缩 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
 
 ## 事件日志
 
@@ -1157,3 +1157,4 @@ pid 复用会让历史现场清理误判。
 评审通过这四个提交之后：73 条收口与清理 → 预算压到 target → 全量绿 →
 **CLI 再跑一次**（硬条件：verifier 证据必须由插件发布，`agent_id` 不是 stub、
 `state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后插件没触发就**当场停，不修不重试**）→ 三轴评分由用户确认。
+- 2026-09-04 独立评审二跑前七条修正：复跑 554 全绿、73 条对账、预算门通过、framework 零差异。E1–E4、M1 通过；M2 漏 story_written/archived 两态；M3 不通过——裸序号靠 16 字量词表放行，「20 元面额」「30 秒超时」「4 位密码」等被剥掉首字，且 normalizeHeading 被十几处标题匹配共用；改为 renumberStory 内按序位判定。返修一个提交。

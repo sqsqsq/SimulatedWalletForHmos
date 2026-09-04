@@ -9,26 +9,34 @@
  * 附录小节名、语言红线的作用域边界、落点归章。逐处放宽是上一版的做法——
  * 放宽了三处、漏了第四处，结果整个附录被当成主叙事扫，报出几十条本该允许的标识。
  *
- * 剥三种前缀（都要求后面跟空白）：`1. `/`4.1 ` 带点或分级、`1 `/`12 ` 裸序号、
- * `A. ` 字母。**裸序号这一档是实测补的**：作者按顺序编了 `1 `、`2 `，`number` 再铺
- * 一层章节号就成了 `### 1.1 1 闸机前的窘境`——一次实跑 39 处标题里 32 处如此。
+ * 剥两种前缀，都要求**后面跟空白**，且数字形态必须带点或分级：
+ *   - `1. ` / `10. ` / `4.1 ` / `8.2.1 `
+ *   - `A. ` / `B、`
+ * 「2026 年改版」这种以数字开头的正常标题不被误剥（无点且非分级）。
+ *
+ * **裸序号（`1 闸机前的窘境`）不在这里剥**：本函数被十几处标题匹配共用而没有位置信息，
+ * 剥错一个字那一节就「找不到」。它由 `renumberStory` 按位置剥，见 `takeAuthorNumber`。
  */
 
 /** `1. ` `10. ` `4.1 ` `8.2.1 ` —— 单级须带点，分级可省略尾点。 */
 const NUMBER_PREFIX = /^(?:\d+(?:\.\d+)+|\d+\.)\s*/;
 
-/**
- * 数字后面跟着它就是内容不是序号：`3 种`、`5 步`。中文量词，与业务域无关。
- *
- * **只收不做词首的那些**：「成」「分」「位」「年」也是量词，但「成功」「分析」
- * 都以它们开头，收进来 `3 成功怎么衡量` 的序号就剥不掉（实测撞到过）。
- * 四位数（`2026 年改版`）由位数那一档挡，不靠这张表。
- */
-const COUNTER_AFTER_NUMBER =
-  /^(?:种|个|类|条|张|步|级|次|项|款|页|行|列|台|套|份)/;
-
 /** `1 ` `12 ` —— 作者手写的裸序号。最多两位：小节不会编到 100。 */
 const BARE_NUMBER_PREFIX = /^(\d{1,2})\s+(?=\S)/;
+
+/**
+ * 开头那个裸数字是不是作者写的序号？是就返回剥掉它的名字，否则 null。
+ *
+ * **判据是位置**：作者编号是从 1 起的递增序列，`expected` 是它的下一个。用序列而非
+ * 机器算的序位，因为作者会漏编某节（实跑里「页面状态」没编号，后面那节写 3、序位是 4）。
+ * 量词（合同 `heading_counters`）是第二道，挡「内容数字恰好接上序列」。
+ */
+function takeAuthorNumber(name, expected, counters) {
+  const hit = BARE_NUMBER_PREFIX.exec(name);
+  if (!hit || Number(hit[1]) !== expected) return null;
+  const rest = name.slice(hit[0].length);
+  return counters.some(c => rest.startsWith(c)) ? null : rest;
+}
 
 /** `A. ` `B、` —— 附录小节的字母序号。 */
 const LETTER_PREFIX = /^[A-Z][.、]\s*/;
@@ -42,11 +50,6 @@ const LETTER_PREFIX = /^[A-Z][.、]\s*/;
 export function normalizeHeading(title) {
   let s = String(title ?? '').trim();
   s = s.replace(NUMBER_PREFIX, '');
-  // 裸序号只在**后面不是量词**时才剥——`3 种签约情形` 的 3 是内容
-  const bare = BARE_NUMBER_PREFIX.exec(s);
-  if (bare && !COUNTER_AFTER_NUMBER.test(s.slice(bare[0].length))) {
-    s = s.slice(bare[0].length);
-  }
   s = s.replace(LETTER_PREFIX, '');
   return s.trim();
 }
@@ -66,9 +69,10 @@ const FIGURE_PREFIX = /^图\s*\d+\s*(?:[·・]\s*)?/;
  *
  * @param {string} text story 全文
  * @param {{title:string, appendix?:boolean}[]} chapters 合同章序
+ * @param {string[]} counters 合同 `heading_counters`——裸序号判定的第二道
  * @returns {string}
  */
-export function renumberStory(text, chapters = []) {
+export function renumberStory(text, chapters = [], counters = []) {
   const order = new Map();
   const appendix = new Set();
   (chapters ?? []).forEach((c, i) => {
@@ -84,6 +88,9 @@ export function renumberStory(text, chapters = []) {
   let sub = 0;
   let subsub = 0;
   let figure = 0;
+  // 作者自己编到第几个了。每章重置；H4 的序列在每个新 H3 处重置。
+  let authorSub = 0;
+  let authorSubsub = 0;
 
   // 分行按 CRLF 安全的通道走；回写统一 LF——重编号本来就是重写整篇，
   // 顺手把行尾统一掉，比留着两种行尾在同一份文件里好。
@@ -99,14 +106,22 @@ export function renumberStory(text, chapters = []) {
         chapterNo = order.get(name) ?? 0;
         inAppendix = appendix.has(name);
         sub = 0; subsub = 0;
+        authorSub = 0; authorSubsub = 0;
         // 合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的
         return chapterNo ? `## ${chapterNo}. ${name}` : raw;
       }
       if (!chapterNo || inAppendix) return raw;
-      if (level === 3) { sub += 1; subsub = 0; return `### ${chapterNo}.${sub} ${name}`; }
+      if (level === 3) {
+        sub += 1; subsub = 0; authorSubsub = 0;
+        const stripped = takeAuthorNumber(name, authorSub + 1, counters);
+        if (stripped !== null) authorSub += 1;
+        return `### ${chapterNo}.${sub} ${stripped ?? name}`;
+      }
       if (!sub) return raw;       // 没有上级小节的 H4 编不出号，留给判据说话
       subsub += 1;
-      return `#### ${chapterNo}.${sub}.${subsub} ${name}`;
+      const strippedSub = takeAuthorNumber(name, authorSubsub + 1, counters);
+      if (strippedSub !== null) authorSubsub += 1;
+      return `#### ${chapterNo}.${sub}.${subsub} ${strippedSub ?? name}`;
     }
 
     return raw.replace(/!\[([^\]]*)\]/g, (whole, alt) => {

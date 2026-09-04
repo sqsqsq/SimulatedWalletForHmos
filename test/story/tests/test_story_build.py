@@ -504,55 +504,92 @@ class TestFormLints(StoryBuildCase):
 
 
 class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
-    """作者自己写的裸序号要先剥掉，否则 `number` 再铺一层就成了两个号。
+    """作者自己写的裸序号要先剥掉，否则 `number` 再铺一层就是两个号。
 
     实测（`story-suite-20260904-091600`）：39 处小节标题里 32 处长成
     `### 1.1 1 闸机前的窘境`——`1.1` 是机器铺的，后面那个 `1` 是作者写的。
-    证据是那两处干净的：`### 6.3 页面状态` 作者没写序号，所以没有叠加。
 
-    **误伤面靠量词挡**：`3 种签约情形` 里的 3 是内容，形态与序号一模一样，
-    但中文里这类数字必然带量词，而序号后面直接跟业务名。
+    **判据是位置不是词**：作者编号是一条从 1 开始的递增序列，一个裸整数接得上
+    这条序列才算序号。上一版拿「后面不是量词」当主判据，被钱包域最常见的形态打穿——
+    `20 元面额`、`30 秒超时`、`4 位密码`、`7 天内生效` 全会被剥掉第一个字，
+    而量词白名单是一张会不断长的词表。量词现在退为第二道，只挡「内容数字恰好接上序列」。
+
+    剥的动作在 `renumberStory` 里，不在 `normalizeHeading`——后者没有位置信息，
+    而它被十几处标题匹配共用，剥错一个字那一节就「找不到」。
     """
 
     @staticmethod
-    def normalize(title: str) -> str:
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "import { normalizeHeading } from "
-             + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
-                          .resolve().as_uri())
-             + ";process.stdout.write(normalizeHeading(process.argv[1]));",
-             "--", title],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    def renumber(*subsections: str) -> list[str]:
+        """把几个小节摆进同一章重编号，返回 `### ` 行。"""
+        body = "".join(f"### {t}\n\n正文。\n\n" for t in subsections)
+        doc = "# X\n\n## 背景\n\n" + body
+        script = (
+            "import { renumberStory } from "
+            + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
+                         .resolve().as_uri())
+            + ";import { readFileSync } from 'node:fs';"
+            + "const c = JSON.parse(readFileSync("
+            + json.dumps(str(REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json"))
+            + ", 'utf-8'));"
+            + "process.stdout.write(renumberStory(process.argv[1], c.chapters, c.heading_counters));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", doc],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
         assert proc.returncode == 0, proc.stderr
-        return proc.stdout
+        return [l for l in proc.stdout.split("\n") if l.startswith("### ")]
 
-    def test_a_bare_author_number_is_stripped(self) -> None:
-        for title, want in (
-            ("1 闸机前的窘境", "闸机前的窘境"),
-            ("2 本需求改变什么", "本需求改变什么"),
-            ("12 附加说明", "附加说明"),
-            ("3 成功怎么衡量", "成功怎么衡量"),      # 「成」是量词但也是词首，不能挡
-        ):
+    def test_a_bare_sequence_is_stripped(self) -> None:
+        """1、2、3 接得上序列，全剥。"""
+        self.assertEqual(
+            ["### 1.1 闸机前的窘境", "### 1.2 本需求改变什么", "### 1.3 成功怎么衡量"],
+            self.renumber("1 闸机前的窘境", "2 本需求改变什么", "3 成功怎么衡量"))
+
+    def test_an_unnumbered_section_does_not_break_the_sequence(self) -> None:
+        """作者漏编中间某节：他自己的序列没断，后面那个仍是序号。
+
+        这正是实跑产物 6 章的形状——1、2、（页面状态无号）、3。
+        按「等于机器序位」判就剥不掉最后那个，按序列判剥得掉。
+        """
+        self.assertEqual(
+            ["### 1.1 签约入口", "### 1.2 签约页", "### 1.3 页面状态", "### 1.4 管理页"],
+            self.renumber("1 签约入口", "2 签约页", "页面状态", "3 管理页"))
+
+    def test_content_numbers_are_never_touched(self) -> None:
+        """业务名开头的数字是内容——它们接不上序列，一个都不许动。
+
+        这九个是复审者拿钱包域试出来的：上一版全被剥掉了第一个字。
+        """
+        for title in ("20 元面额的取舍", "30 秒超时", "7 天内生效", "24 小时",
+                      "4 位密码", "6 位验证码", "3 方联调", "12 月账单", "2 期分批"):
             with self.subTest(title=title):
-                self.assertEqual(want, self.normalize(title))
+                self.assertEqual([f"### 1.1 {title}"], self.renumber(title))
 
-    def test_a_number_that_is_content_survives(self) -> None:
-        """数字后面跟量词就是内容，不是序号。"""
-        for title in ("3 种签约情形", "5 步完成签约", "2 条验收", "3 个月回顾"):
+    def test_a_content_number_that_lands_on_the_sequence_is_held_by_the_counter(self) -> None:
+        """第二道：内容数字恰好接上序列时，看它后面是不是量词。"""
+        self.assertEqual(["### 1.1 3 种签约情形"], self.renumber("3 种签约情形"))
+        self.assertEqual(["### 1.1 1 元起充"], self.renumber("1 元起充"))
+
+    def test_a_number_that_skips_the_sequence_stays(self) -> None:
+        """作者跳号（1 之后直接写 3）是他写错了——留着让人看见，不猜。"""
+        self.assertEqual(["### 1.1 签约入口", "### 1.2 3 管理页"],
+                         self.renumber("1 签约入口", "3 管理页"))
+
+    def test_normalize_heading_does_not_strip_bare_numbers(self) -> None:
+        """`normalizeHeading` 被十几处标题匹配共用，它不碰裸序号。"""
+        script = ("import { normalizeHeading } from "
+                  + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
+                               .resolve().as_uri())
+                  + ";process.stdout.write(normalizeHeading(process.argv[1]));")
+        for title, want in (("1 闸机前的窘境", "1 闸机前的窘境"),   # 不剥
+                            ("1.1 已经带号", "已经带号"),
+                            ("1. 单级带点", "单级带点"),
+                            ("A. 接口", "接口")):
             with self.subTest(title=title):
-                self.assertEqual(title, self.normalize(title))
-
-    def test_a_four_digit_number_is_never_a_section_number(self) -> None:
-        """小节不会编到 100——`2026 年改版` 由位数那一档挡住，不靠量词表。"""
-        self.assertEqual("2026 年改版", self.normalize("2026 年改版"))
-        self.assertEqual("100 条验收", self.normalize("100 条验收"))
-
-    def test_the_existing_forms_still_work(self) -> None:
-        for title, want in (("1.1 已经带号", "已经带号"), ("1. 单级带点", "单级带点"),
-                            ("A. 接口", "接口"), ("背景", "背景")):
-            with self.subTest(title=title):
-                self.assertEqual(want, self.normalize(title))
+                proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", title],
+                                      capture_output=True, text=True, encoding="utf-8",
+                                      errors="replace", timeout=60)
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                self.assertEqual(want, proc.stdout)
 
 
 class TestNumbering(StoryBuildCase):

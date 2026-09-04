@@ -31,10 +31,10 @@ requirement:
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 3014
+    interim_ceiling: 3024
     target: 2000
     approved_by: WYK
-    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014，用户 2026-09-04 批准。完成后 story-build ≤1000、lint ≤300"
+    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014，用户 2026-09-04 批准。步骤 11 的 M3 把裸序号判定从「查量词表」换成「按作者编号序列」——评审判定词表方向不通过（钱包域的 20 元/30 秒/4 位密码全会被剥掉第一个字），位置判定多 10 行，峰值 3024，用户 2026-09-04 批准；量词表已移进合同当数据。完成后 story-build ≤1000、lint ≤300"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 2000

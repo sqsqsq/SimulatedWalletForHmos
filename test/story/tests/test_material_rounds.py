@@ -150,12 +150,12 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         return json.loads(
             (self.feature_root / "AR" / "story-flow.json").read_text(encoding="utf-8"))
 
-    def complete_it(self) -> None:
+    def complete_it(self, status: str = "complete") -> None:
         """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。"""
         self.round_now()
         path = self.feature_root / "AR" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["status"] = "complete"
+        data["status"] = status
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_material_change_after_complete_opens_no_round(self) -> None:
@@ -205,6 +205,37 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         result = self.round_now()
         self.assertTrue(result.get("created"))
         self.assertEqual(before + 1, len(self.contract()["rounds"]))
+
+    def test_story_written_also_opens_no_round(self) -> None:
+        """`story_written` 比 `complete` 更靠后，同样不开轮。
+
+        story 的材料快照就是**当轮的 digest**——新轮一开，快照所指就换了一批材料，
+        那份已经定稿的 story 就对不上它自己声称的依据了。
+        """
+        self.complete_it("story_written")
+        before = len(self.contract()["rounds"])
+        self.add_ux("after-written.png")
+        result = self.round_now()
+        self.assertFalse(result.get("created"), "成文登记之后还开新轮，story 的依据就换了")
+        self.assertTrue(result.get("afterComplete"))
+        self.assertEqual(before, len(self.contract()["rounds"]))
+
+    def test_archived_also_opens_no_round(self) -> None:
+        """已归档同理——它比成文登记还靠后。"""
+        self.complete_it("story_written")
+        path = self.feature_root / "AR" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["archived"] = {"at": "2026-09-04T00:00:00+08:00"}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        before = len(self.contract()["rounds"])
+        self.add_ux("after-archive.png")
+        self.assertFalse(self.round_now().get("created"))
+        self.assertEqual(before, len(self.contract()["rounds"]))
+
+    def test_reopen_works_from_story_written_too(self) -> None:
+        self.complete_it("story_written")
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        self.assertEqual("in_progress", self.contract()["status"])
 
     def test_reopen_refuses_when_not_complete(self) -> None:
         """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""
