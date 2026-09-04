@@ -200,7 +200,7 @@ function parseConstraintFile(absPath, rel) {
   const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
   const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
   // applies_when 是域级命中条件：`always` 的域每条都要判，条件域先判域再逐条
-  // （消费者：归档装配的域级判定、spec/plan 的必答集派生）。
+  // （消费者：归档装配的域级判定、story 的规约判定表核对）。
   const appliesWhen = String(fm.applies_when ?? '').trim();
   return {
     file: rel,

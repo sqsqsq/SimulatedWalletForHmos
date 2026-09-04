@@ -23,7 +23,7 @@
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
-| 10 三类 Knowledge 消费与传递 | 小段 1 **通过**；小段 2+3 合并与小段 4 已实施，等待评审（两个提交，进入条件 7 项逐条给了证据） | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
+| 10 三类 Knowledge 消费与传递 | 小段 1 **通过**；2+3（`d158c5c6`）与 4（`57524cc3`）机制面**通过**；用户裁定 B1/B2 已签，返修（签名归位、B3 交付面残留、B4 下游分派）已实施，等待评审 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
 ## 事件日志
@@ -1028,3 +1028,53 @@ story 附录的「规约判定」表是给评审者的完备性回显（含不�
 - story 全量 **532 绿**（523 + 9 中性）；失效形态 70 条活跃 FAIL 0、委派 15、retired 3；
 - 语义代理在可执行代码里 **0**；`hooks_mjs` 3451（ceiling 压到现值）；
 - `scripts_mjs` 2979 → 3014：story 侧新增的一致性判据 +35 行，具名调整峰值，target 2000 不动。
+- 2026-09-04 独立评审步骤 10 小段 2+3 与小段 4：机制面通过。复跑 532 全绿、73 条（活跃 70：委派 15、retired 3）、预算门通过、语义代理可执行代码 0、hooks 零死函数、framework 零差异。待用户裁定：B1 六条台账（B02/M11/P11 retired，P02–P04 迁 verifier）的 approved_by 写的是「评审进入条件」，须换成用户裁定；B2 预算测试改为只数可执行行、scripts_mjs ceiling 2979→3014，须用户签字。返修：B3 交付面残留（上轮四处未清 + 本段新增 spec/post_check 注释、plan/author.md 两条已删门禁）；B4 中性知识补一条下游分派测试。advisory：非知识判据的 12 字引文口径、P02–P04 夹具、慢跑归因关闭。
+- 2026-09-04 用户裁定：B1 同意（B02/M11/P11 retired，P02–P04 迁 verifier），B2 OK（计数只数可执行行、ceiling 0、scripts_mjs 3014）。执行会话出一个返修提交：改签名措辞、清 B3 残留、补 B4 下游分派测试。
+
+## 步骤 10 · 返修（2026-09-04）：签名、交付面残留、下游分派
+
+按评审 §3 与用户裁定 §7 做四件事。
+
+**B1 签名**：六条形态的 `approved_by` 从「用户（2026-09-04 步骤 10 评审进入条件 1/5）」
+改成「用户（2026-09-04 裁定，见 reviews/10 §7）」。**上一轮我把评审里写给执行会话的
+「进入条件」当成了用户签字**——那不是签字。台账的 `approved_by` 记的是谁裁定的，
+写错了等于让一条退场看起来有人批过而其实没有。理由（reason）不动，用户裁定同意原理由。
+
+**B2 预算签名**：语义代理计数改为只数可执行行、`semantic_proxy.ceiling` 归零、
+`scripts_mjs.interim_ceiling` 2979 → 3014，三处的 reason 末尾补「用户 2026-09-04 批准」。
+
+**B3 交付面残留**：用宽词 `分配|裁决|逐行|必答|复制|三方` 在 `doc/extensions`
+（knowledge 之外）过一遍，81 处命中逐条人工筛，改了十一处：
+
+| 处 | 改了什么 |
+|---|---|
+| `skills/story/SKILL.md` | 入口图「story：分配落点 → 逐章渲染 → 裁决 → 登记」改为「建骨架 → 按章写、按章落盘 → 统稿 → 登记」；索引行「成文：分配与逐章渲染」、推进契约里的「成文与裁决」、「裁决衔接链」小标题同改 |
+| `phases/spec.md` | 产物表里 story 的作者列「AI（分配 → 逐章渲染）」 |
+| `hooks/plan/author.md` | 门禁清单里两条本段已删的（`must.text` 是原文复制、报告没有逐行裁决表）；命中集说明改指真源 |
+| `hooks/plan/post_check.mjs` | 分节注释「text 不是原文复制」 |
+| `hooks/spec/post_check.mjs` | 文件头两处、函数注释里的「三方 ID 集合一致」「要求列不是原文的复制」「verifier 全集裁决」、L316「按注入的必答清单逐行裁决」 |
+| `hooks/shared/knowledge.mjs` | 消费者清单里的「spec/plan 的必答集派生」 |
+| `hooks/shared/verifier-report.mjs` | 历史举例「整份必答清单一条没裁」——机制没了，读者会去找一个不存在的东西 |
+| `story-build.mjs` | `glossaryMainName` 零消费者（术语实体词守恒在步骤 9 退场时它的调用点就没了） |
+| 合同 `story-chapters.json` | `subsection_form.prose_budget` 无消费者 |
+
+**筛掉不动的**（说的是仍成立的事）：`pre_verifier` / `verifier-report` 里交代「为什么退场」
+的注释与「不要做的事」；图片复制（`inbox_import`、`materials.py`、`rules.md`、模板）；
+业务含义的三方分工与拆分裁决；议题的「必答内容」；`chapter_dimensions` 的逐章维度；
+「编号一经分配不复用」；表解析的「逐行取数据行」（那个函数仍在用）。
+
+**这轮的教训**：三次点名同一批残留，前两次都报「grep 零命中」。八个词的词表以外的东西
+grep 不出来——**词表外的残留只能靠人读**。这次改用宽词加人工筛。
+
+**B4 下游分派**：`test_neutral_knowledge.py` 补两条（共 11 条）。中性域的 `NEU-01`
+挂进 contracts 的 `must` 并写 `verify: ut`，ut 阶段的钩子要把它列进本阶段义务；
+反面是 `verify: device` 时 ut 不认领它。验的是**分派按 `must.verify` 走，不按编号前缀写死**。
+
+**台账又抓到一条**：`hooks/plan/author.md` 因为我补的两句涨到 63 行，超过 A03 的
+「author.md 只做索引」60 行上限，压回 60。
+
+**验收**
+
+- story 全量 **534 绿**；失效形态 70 条活跃 FAIL 0、委派 15、retired 3；
+- 宽词复查：`doc/extensions`（knowledge、rules、story-adaptation 之外）命中全部是仍成立的表述；
+- 语义代理在可执行代码里 **0**；`hooks_mjs` 3450、`scripts_mjs` 2999（均在 ceiling 内）、总量 11701。

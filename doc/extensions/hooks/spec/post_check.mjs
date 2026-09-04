@@ -3,10 +3,10 @@
  *
  * 作用：把**本阶段产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
  *   1. 本阶段三份产物：spec.md（代码要求）、AR/review.md（归档件·决策件）、
- *      AR/story.md（归档件·叙事主件，在阶段内分配落点后逐章渲染成文、登记态即判据）；
+ *      AR/story.md（归档件·叙事主件，在阶段内按章写、按章落盘成文，登记态即判据）；
  *   2. §9 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
  *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
- *      编号到条目级且在册、与 acceptance 的桥接键一致、要求列不是规约原文的复制；
+ *      与 spec/knowledge-use.yaml 这份真源一致、命中集与 acceptance 的桥接键一致；
  *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
  *   5. story 前置流程契约（AR/story-flow.json）已收口且决策留痕齐备。
  *
@@ -199,10 +199,9 @@ function sectionRange(lines, startIdx) {
  * 机械层只判**结构与集合**，不判内容对错：
  *   1. 两章独立成节，且不落在技术契约章的区间内（并进去会让守恒从按名退化成按号）；
  *   2. 编号粒度到条目级、编号在册（只写域前缀会让整域漏判照样放行）；
- *   3. 三方 ID 集合一致（story 判「是」集 = spec 出口集 = acceptance 的 knowledge_rule 集）；
- *   4. 要求列不是规约原文的复制或子串。
+ *   3. 命中集与 acceptance 的 knowledge_rule 集一致。
  *
- * 「这条要求是不是本需求的设计」是语义判断，归 verifier 全集裁决——本函数不下这个结论。
+ * 「这条要求是不是本需求的设计」是语义判断，归 verifier——本函数不下这个结论。
  */
 function knowledgeExitProblems(ctx, lines) {
   const problems = [];
@@ -313,7 +312,7 @@ function acceptanceCoverage(ctx, specIds) {
  * 与「spec 只装与最终代码有关的内容」相悖——它落在归档件「影响面与合规」章的判定表里，
  * 由叙事件承载、`story-build check` 核。
  * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
- * 结论是不是本需求的设计，由 verifier 按注入的必答清单逐行裁决——那是判断，脚本判不了。
+ * 结论是不是本需求的设计，由 verifier 对着真源与材料判——那是判断，脚本判不了。
  */
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },

@@ -21,7 +21,7 @@ S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
    ↓
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
-   └─ story：分配落点 → 逐章渲染 → 裁决 → `story_flow.py story` 登记
+   └─ story：建骨架 → 按章写、按章落盘 → 统稿 → `story_flow.py story` 登记
    ↓
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```
@@ -42,7 +42,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 生成 design.md | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
-| 成文：分配与逐章渲染 | [phases/story-write.md](phases/story-write.md) |
+| 成文：按章写与统稿 | [phases/story-write.md](phases/story-write.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 推进契约
@@ -53,7 +53,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 
 | 层 | 谁说了算 | 怎么推进 |
 |---|---|---|
-| **story 流程段内**：S1→S4、spec 阶段内的成文与裁决、S5 归档 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，不逐段问 |
+| **story 流程段内**：S1→S4、spec 阶段内的成文与登记、S5 归档 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，不逐段问 |
 | **framework 阶段之间**：spec 闭环 → plan 及之后 | framework 的推进策略 | 本节管不着，见下 |
 
 **story 契约 `next` 覆盖的就是第一层**：`init → 材料 → 关卡 → design.md → spec 闭环
@@ -103,7 +103,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 归档、恢复这类不可逆或覆盖线上内容的操作，有它们**既有的**确认点。
 那不是本扩展新增的停等，按各自的规则走。
 
-### 裁决衔接链
+### 成文到闭环的衔接链
 
 `story-build check` 通过之后，到阶段闭环是**一条义务链，链内没有停等点**：
 

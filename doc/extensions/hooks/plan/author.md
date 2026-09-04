@@ -50,11 +50,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <�
 
 - 缺「知识决策（设计输入）」章，或它排在第一个设计章之后。
 - `must` 挂在实体顶层（如 `data_models.X` 而不是它的 `fields[]`），或挂在允许之外的集合上。
-- **两边对不上**：§10 判了命中而契约里没有实体扛着（知识在设计阶段就丢了），
-  或契约里的 `must.rule` 不在 §10 的命中集内（评审者会看到互相矛盾的结论）。
-- `must.rule` 不在激活清单里（编号写错，或那条规约已下架）；`must.text` 缺失或是原文复制。
+- **两边对不上**：spec 判了命中而契约里没有实体扛着（知识在设计阶段就丢了），或契约里的
+  `must.rule` 不在命中集内。命中集读 `spec/knowledge-use.yaml`，不是 spec.md 里那张投影表。
+- `must.rule` 不在激活清单里（编号写错，或那条规约已下架）；`must.text` 缺失。
 - `verify` 不是封闭取值之一；标了 `probe` 但该条目的规约表没有探针（coding 执行不了）。
 - `files[].pattern` 不在册；标了 pattern 却没写 role；role 不是该模式声明过的角色。
-- verifier 报告里没有逐行裁决表。
+- verifier 报告里没有本阶段判据的结论。（`must.text` 写的是不是本需求的设计由 verifier 判，门禁只问写没写。）
 
 spec 全部单元都写「无候选」时，本阶段不应凭空选出一个模式——那说明选型依据不是从需求来的。

@@ -234,7 +234,7 @@ export default guard('plan', async (ctx) => {
     }
   }
 
-  // ---- 5. 每条 must 自身：编号在册、text 不是原文复制、verify 封闭、探针可执行 ----
+  // ---- 5. 每条 must 自身：编号在册、text 写了没有、verify 封闭、探针可执行 ----
   for (const ob of obligations) {
     const at = ob.entityPath || '(未知实体)';
     if (!ob.rule) {

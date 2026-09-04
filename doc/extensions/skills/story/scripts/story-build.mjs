@@ -576,21 +576,6 @@ function norm(s) {
 
 const EMPTY_SECTION_TEXT = '本需求不涉及。';
 
-/**
- * 术语单元格的**主名**——括注剥掉之后剩下的那部分。
- *
- * 术语表的单元格普遍写成「主名（同义提示）」或「主名（取值枚举）」：括号里是给读者的
- * 提示，不是要求 story 逐字复述的内容。拿整个单元格去 story 做子串匹配，主名明明在
- * 也会判成缺失，而术语表里带括注的行往往占大多数。
- *
- * **剥空不静默**：整格就是一个括注时按原串判，否则「（仅括注）」这种写坏的格子
- * 会因为主名为空而被无声跳过，看起来像通过了。
- */
-function glossaryMainName(cell) {
-  const bare = String(cell ?? '').replace(/[（(][^）)]*[）)]/g, '').trim();
-  return bare || String(cell ?? '').trim();
-}
-
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */
 function materialSubsectionName(contract) {
   const appendix = appendixChapter(contract);

@@ -5,7 +5,7 @@
 
   spec：完备性判据要求它有去处（漏了就点名），生成区里出现它；
   plan：命中的约束要在契约里有实体扛着，登记的候选要在选型表里有结论；
-  下游：义务经 contracts 分派。
+  下游：义务经 contracts 的 `must.verify` 分派到对应阶段。
 
 为什么要有它：判据里凡是写死了域前缀、条目编号、模式名的地方，在现有知识上都测不出来
 ——现有知识恰好满足那些写死的假设。只有塞一条机制从没见过的知识，才知道它是按数据走的，
@@ -303,6 +303,52 @@ class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
             "            text: 重试复用同一个标识\n            verify: ut\n",
             encoding="utf-8")
         self.assertIn("不在 spec 的命中集内", self.plan_check())
+
+
+class TheObligationReachesTheDownstream(NeutralKnowledgeCase):
+    """约束的消费者不止 plan —— `must.verify` 是四阶段分派的单源。
+
+    这一条验的是**分派不按编号前缀写死**：机制从没见过 NEU 这个域，
+    但只要契约里挂着它、`verify` 写了 `ut`，ut 阶段就该把它当成本阶段的义务。
+    """
+
+    def write_contracts(self, verify: str = "ut") -> None:
+        (self.feature_root / "contracts.yaml").write_text(
+            "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"
+            "    methods:\n      - name: emitWithTrace\n"
+            "        must:\n          - rule: NEU-01\n"
+            "            text: 入口生成标识并透传给后两步\n"
+            f"            verify: {verify}\n", encoding="utf-8")
+
+    def ut_check(self) -> str:
+        (self.feature_root / "ut").mkdir(parents=True, exist_ok=True)
+        proc = node("--input-type=module", "-e",
+                    f"const hook = (await import({as_url(self.ext / 'hooks/ut/post_check.mjs')})).default;"
+                    f"const out = await hook({{ phase: 'ut', feature: {json.dumps(FEATURE)},"
+                    f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                    "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout or "{}").get("message") or ""
+
+    def test_the_new_rule_is_dispatched_to_ut(self) -> None:
+        """挂了 verify: ut 的中性条目，ut 阶段认它——报错点名的是 NEU-01。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_contracts("ut")
+        message = self.ut_check()
+        self.assertIn("NEU-01", message,
+                      f"ut 阶段没把中性域的义务列进来——分派按编号前缀写死了：{message}")
+
+    def test_a_rule_for_another_phase_is_not_claimed_here(self) -> None:
+        """反面：verify 写的是别的阶段，ut 就不该认领它。
+
+        分派是按 `verify` 走的，不是按「契约里有什么就都算我的」——
+        后者会让每个阶段都为别人的义务报错。
+        """
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_contracts("device")
+        self.assertNotIn("NEU-01 缺", self.ut_check())
 
 
 if __name__ == "__main__":

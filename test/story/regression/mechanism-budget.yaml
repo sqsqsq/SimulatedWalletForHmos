@@ -34,7 +34,7 @@ categories:
     interim_ceiling: 3014
     target: 2000
     approved_by: WYK
-    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014。完成后 story-build ≤1000、lint ≤300"
+    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014，用户 2026-09-04 批准。完成后 story-build ≤1000、lint ≤300"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 2000
@@ -79,4 +79,4 @@ semantic_proxy:
   # 那时代码里没有这些词，而知道它们为什么不该回来的那段文字也没了。
   target: 0
   approved_by: WYK
-  reason: "步骤 10 收口归零：paraphrase.mjs 与 verdict-set.mjs 整份删除，pre_verifier 的相似度排序、verifier-report 的引文核实与 min_quote_chars、两处 post_check 的复制检查全部退场"
+  reason: "步骤 10 收口归零：paraphrase.mjs 与 verdict-set.mjs 整份删除，pre_verifier 的相似度排序、verifier-report 的引文核实与 min_quote_chars、两处 post_check 的复制检查全部退场。计数口径改为只数可执行行，连同 ceiling 归零，用户 2026-09-04 批准"

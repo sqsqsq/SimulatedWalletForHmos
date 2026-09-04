@@ -186,7 +186,7 @@ modes:
     applicable_when: 存在 pre_verifier 注入机制
     severity: BLOCKER
     status: retired
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       逐行裁决整条在步骤 10 退场：pre_verifier 不再注入必答清单，也就没有「只送一部分去裁」
       这件事。当初的修法是「风险标记只排序、不筛选」——那个口径本身建立在「全集逐行裁」
@@ -318,7 +318,7 @@ modes:
   - id: P02-appendix-conclusion-paraphrase
     dimension: knowledge
     responsibility: verifier
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       形态还在——附录的结论列仍然可能是规约原文的复制。换的是发现者：机械复制检查
       （子串 + 相似度）在步骤 10 退场，因为它只拦得住逐字复制，而「同义改写」正好绕过它，
@@ -336,7 +336,7 @@ modes:
   - id: P03-spec-exit-paraphrase
     dimension: knowledge
     responsibility: verifier
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       同 P02：形态在产物侧仍可能发生，发现者从机械复制检查换成 spec overlay 的
       `knowledge_spec_exit_substance`。判断的真源现在是 `spec/knowledge-use.yaml`，
@@ -352,7 +352,7 @@ modes:
   - id: P04-plan-obligation-paraphrase
     dimension: knowledge
     responsibility: verifier
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       同 P02，落在 plan 侧：由 plan overlay 的 `knowledge_obligation_substance` 判
       ——那一章的设计里是否真的因为这条义务多出了字段、方法、状态或校验。
@@ -454,7 +454,7 @@ modes:
     applicable_when: 存在 <phase>/reports 下的 verifier 报告
     severity: BLOCKER
     status: retired
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       「漏裁」是相对必答集说的：集合里有 8 条、报告里裁了 0 条。必答集在步骤 10 退场之后
       没有可数的分母，这个形态失去定义。
@@ -675,7 +675,7 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: retired
-    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1）
+    approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       不是「换了发现者」，是**产生这个形态的机制没了**。证据列来自「逐行裁决 + 每行附引文」
       那套要求：注入必答清单 → 逐行裁 → 门禁核对键与引文。步骤 10 把整条链退场之后，
