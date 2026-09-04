@@ -200,12 +200,20 @@ class ReadingItLeavesExactlyOneTrace(unittest.TestCase):
 
 class ManifestKeepsOneSourceOfTruth(unittest.TestCase):
     def test_six_phases_register_their_author_hook(self):
+        """每个阶段的作者坐标是那份 `author.md`，而且排在第一位。
+
+        坐标要唯一：`context-exploration` 的 `key_inputs_read` 逐字引用它。
+        同阶段再挂一个 `.mjs` 生成任务包不动摇这一点——`.mjs` 只产内容、不带来源标识行，
+        它的内容属于那个坐标。所以判据是「第一项是 author.md、其余只能是同阶段的 author.mjs」。
+        """
         doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
         hooks = doc["provides"]["hooks"]
         for phase in PHASES:
             with self.subTest(phase=phase):
-                self.assertEqual([f"hooks/{phase}/author.md"],
-                                 hooks[phase]["on_context_load"])
+                registered = hooks[phase]["on_context_load"]
+                self.assertEqual(f"hooks/{phase}/author.md", registered[0])
+                self.assertTrue(set(registered[1:]) <= {f"hooks/{phase}/author.mjs"},
+                                f"{phase} 挂了别的 on_context_load 钩子：{registered}")
 
     def test_author_content_is_not_duplicated_anywhere(self):
         """一份真源：author 正文不许被复制进 Skill / AGENTS / 模板。

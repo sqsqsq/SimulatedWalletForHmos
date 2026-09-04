@@ -1240,3 +1240,65 @@ pid 复用会让历史现场清理误判。
 - 2026-09-04 评审者通读二跑全日志（100 分钟闭环）补六条：verifier 跑了三次共 26 分钟（首次漏做、resume 不发布、subject 换代整份重审）、章文件带标题致两跑都重建骨架、S1–S4 侧车形状靠读源码、facts frontmatter 与 inputs_coverage 红、验收 schema 猜路径、启动 4.5 分钟零事件。13 号加 D9–D12 与上游清单。
 - 2026-09-04 评审者修订 12/13 号：story 审查不改 framework 协议与 adapter（协议只认一种 request kind，三个发布器同构；resume 未发布是自由文本调用违反协议）；改用协议内完整版方案 B：全部 overlay 判据进输出要求、单一 YAML 格式、门只读插件 JSON、任务书含图片逐张问。多 kind 请求作为 framework 需求登记。
 - 2026-09-04 评审者对 13 号逐项做代码可行性核对（起因：方案 A 未核协议）：D1 钩子 .mjs 可返回片段但无来源标识，author.md 保留为登记标识；D3 caption 须存点文件 .captions.json 由 refresh 合并；其余可行且不改 framework/adapter。不可保证项：模型照做与单会话审查者报丢图，由第三跑判。
+
+## 步骤 12 · 第一个提交：作者链（D1+D2+D5+D6+D10+D11+D12）· 已实施，等待评审
+
+按 13 号 §6 的四提交划分做第一个。**这一个提交只解决一件事：作者动笔之前手上有没有它该有的东西。**
+两跑里它为找答案切片读扩展脚本 68 次（`story-build.mjs` 34、`knowledge-use.mjs` 17、`story_flow.py` 9、
+其余 8），而那些答案全是确定的、早就在合同与激活清单里——缺的是送达。
+
+### 做了什么
+
+| 项 | 改动 | 替代了什么 |
+|---|---|---|
+| **D1** | 新增 `hooks/spec/author.mjs`：从合同、激活清单、流程契约渲染**本次任务包**（七段）；`author.md` 收缩到 40 行原则页 | `author.md` 的「门禁会拦什么」长段与读文件清单 |
+| **D2** | `knowledge-use.mjs init --feature <名>`：按激活清单生成骨架，15 条约束一条不落、`applicable` 留空、在册候选与「无候选」字面就在眼前 | 手写整份 YAML、为字段读脚本 |
+| **D5** | `story_flow.py` 新增 `spec_stage_step`：收口之后按磁盘上有什么回答「下一步跑什么」，并给出这一段的完整顺序（harness 在成文登记之后） | `phases/spec.md` 靠散文讲顺序；两跑都先跑 harness 再写 story |
+| **D6** | 客户端语境词表迁进合同 `language_redline.client_vocabulary`（词 + 改法），`lint-rules.mjs` 从合同取 | 脚本内词表；作者只能撞门禁才知道 |
+| **D10** | `chapter` 命令剥掉章文件开头的 H1 与同名 H2 | 两跑都发生的「标题重复 → rm story.md 重建骨架重灌十章」 |
+| **D11** | `status` 在需要侧车的那一步给出它的 JSON 骨架（字段与合法值从本模块常量派生），关卡步另给「先签关卡再导入」 | 为侧车形状切片读 `story_flow.py` 六次；先导后签被拒重做 |
+| **D12** | 任务包首段直接给出要登记进 `key_inputs_read` 的那一行 | 在 `context_exploration_inputs_coverage` 上红一轮才知道 |
+
+### 任务包实际渲染（`AR90006`，7332 字节 / 上限 12 KB）
+
+七段：登记义务 → 你现在在哪（`story_flow.py status` 的原话 + 侧车骨架）→ 知识判断（激活 15 条、
+域清单、在册候选、命中/不命中怎么写）→ 决策登记（六个键 + 11 个 category + 三段式）→
+材料里的图（逐张列路径与 caption，写明「用或写明不用」的义务）→ 十章各答什么（合同 30 条读者问题）→
+写字三条硬规则（9 个禁用词带改法、数值三选一、acceptance 桥）→ 门禁判什么（六条，不带脚本名）。
+
+**它是投影不是副本**：测试里改一次合同的 `questions`，任务包当场跟着变；词表、章节问题、
+条目数、图片清单没有一处是手写进 `.mjs` 的。
+
+### 退场核对（grep 命中数）
+
+| 命令 | 期望 | 实际 |
+|---|---|---|
+| `grep -rc "const BANNED_TERMS" doc/extensions/` | 0 个文件 | 0 |
+| `wc -l doc/extensions/hooks/spec/author.md` | ≤40 | 40 |
+| `wc -l .../templates/spec-sections.md` | 190 → 更少 | 178 |
+
+### 预算读数
+
+| 类别 | 步骤 11 收口 | 现在 | 本轮 interim |
+|---|---|---|---|
+| scripts_mjs | 1886 | 1904 | 1930 |
+| scripts_py | 1182 | 1239 | 1270 |
+| hooks_mjs | 2403 | **2626** | 2760 |
+| prompts_md | 1996 | 1971 | 2050 |
+| data | 648 | 687 | 750 |
+| **总量** | 8115 | **8427** | 8610 |
+
+`semantic_proxy` 仍是 0。**要提请评审注意**：`hooks_mjs` 现在 2626，已超 target 2450 约 176 行，
+D4 的读者审查消费还没进来；13 号 §5 估「hooks +200」时就已经与 target 冲突。
+按纪律不砍方案——收口时按实际交用户裁定重定 target 或另开退场。
+
+### 验收
+
+- story 全量 **580 绿**（新增 `test_author_task_package.py` 19 条：任务包是投影不是副本、
+  骨架条目一条不落且不替作者判断、`status` 给顺序与侧车形状、章文件标题剥除四态）；
+- 失效形态 70 条 FAIL 0、委派 15；`framework/` 零差异；
+- 中途撞到一条 M05（`split('\n')` CRLF 不安全）当场修掉。
+
+### 下一个提交
+
+D3（图片登记脚本化 + caption + `check ④` 集合一致）。

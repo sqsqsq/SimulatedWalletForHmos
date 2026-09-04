@@ -52,7 +52,10 @@ provides:
   hooks:
     spec:
       on_context_load:
+        # author.md 是原则页，也是 context-exploration 里 key_inputs_read 能逐字引用的坐标；
+        # author.mjs 从合同、激活清单与流程契约渲染**这一次**的任务包。两个一起送到作者手上。
         - hooks/spec/author.md
+        - hooks/spec/author.mjs
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:

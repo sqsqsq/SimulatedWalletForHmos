@@ -395,14 +395,21 @@ class ReviewBannedTermsScope(NegativeCase):
                             "非豁免类议题的机器区放行了——本项设计错，要回退重做")
 
     def test_the_word_list_itself_is_untouched(self) -> None:
-        """收的是作用域，不是词表：`BANNED_TERMS` 的成员数不许少。
+        """收的是作用域，不是词表：合同里的词条数不许少。
 
-        降级词表会让 story 侧一起失守，那是另一码事。
+        降级词表会让 story 侧一起失守，那是另一码事。词表 2026-09-04 从脚本搬进合同——
+        作者要在动笔前读到它，脚本里再留一份副本就是两个真源。
         """
+        contract = json.loads((
+            REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json"
+        ).read_text(encoding="utf-8"))
+        vocabulary = contract["language_redline"]["client_vocabulary"]
+        self.assertGreaterEqual(len(vocabulary), 6, "禁用词表被削了")
+        self.assertTrue(all(v.get("term") and v.get("hint") for v in vocabulary),
+                        "每个词都要带改法——只说不许用，作者不知道该写什么")
         rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/lint-rules.mjs"
                  ).read_text(encoding="utf-8")
-        body = rules.split("const BANNED_TERMS = [", 1)[1].split("];", 1)[0]
-        self.assertGreaterEqual(body.count("term:"), 6, "禁用词表被削了")
+        self.assertNotIn("const BANNED_TERMS", rules, "脚本里又留了一份词表副本")
 
     def test_the_exempt_set_comes_from_the_contract(self) -> None:
         """豁免类别由合同数据给，脚本不写死类别名——写死名字换个工程就静默失效。"""

@@ -1414,6 +1414,30 @@ function cmdSkeleton(ctx) {
  * 统稿要改第五章就替换第五章，不重新输出整篇。整篇重出是全有或全无，
  * 中途断了磁盘上什么都没有。
  */
+/**
+ * 章文件开头的标题行剥掉——命令自己会加 `## <章名>`。
+ *
+ * 作者写章文件时很自然会带上本章标题；命令再包一层，story 里就出现两行一样的标题。
+ * 两跑的作者看见重复都选了同一条路：删掉 story.md、重建骨架、十章重灌。
+ *
+ * 只剥两种：**H1**（它只属于骨架，章文件里出现就是错位）与**与本章同名的 H2**。
+ * 章内的小节标题（`### 3.1 …`）是正文，一个字不动。
+ */
+function stripOwnHeading(body, title) {
+  const want = normalizeHeading(title);
+  const lines = body.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    if (!line) { i += 1; continue; }
+    const head = /^(#{1,2})\s+(.+)$/.exec(line);
+    if (!head) break;
+    if (head[1] === '##' && normalizeHeading(head[2]) !== want) break;
+    i += 1;
+  }
+  return lines.slice(i).join('\n');
+}
+
 function cmdChapter(ctx) {
   refuseIfFrozen(ctx, 'chapter');
   const title = String(ctx.args.chapter ?? '').trim();
@@ -1435,7 +1459,8 @@ function cmdChapter(ctx) {
   if (!span) fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
     + '章锚是逐章落盘的定位点，别手工改动它');
 
-  const trimmed = body.replace(/\s+$/, '');
+  const trimmed = stripOwnHeading(body, title).replace(/\s+$/, '');
+  if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
   const replaced = `## ${title}\n\n${trimmed}\n\n`;
   const next = story.slice(0, span.start) + replaced + story.slice(span.end);
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');

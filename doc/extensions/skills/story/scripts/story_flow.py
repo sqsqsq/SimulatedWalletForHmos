@@ -723,6 +723,73 @@ def settled_this_round(contract: dict) -> bool:
             and split.get("settled_round") == contract["rounds"][-1].get("round"))
 
 
+def spec_stage_step(feature_root: Path) -> tuple[str, str]:
+    """收口之后、成文登记之前——spec 阶段内做到哪儿了。
+
+    两跑的作者都在这一段先跑了 harness，三轮 FAIL 全是「story 未登记」：它手上没有
+    这一段的顺序，只能靠门禁一轮轮告诉它还差什么。顺序本身是确定的，按磁盘上有什么就能说清。
+    """
+    def have(*rel: str) -> bool:
+        return (feature_root / Path(*rel)).is_file()
+
+    order = ("顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
+             "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记 → "
+             "story-build build → harness → verifier。"
+             "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
+    if not have("spec", "knowledge-use.yaml"):
+        return ("spec_knowledge_use_init",
+                "进 /spec。第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
+                "（激活条目一条不落，你只填 applicable 与依据）。" + order)
+    if not have("spec", "spec.md"):
+        return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + order
+    if not have("AR", "story.md"):
+        return ("story_skeleton",
+                "spec.md 已在。接着 `story-build skeleton` 建骨架，再逐章 `chapter --from <文件>`"
+                "（章文件只放正文，不带章标题）。" + order)
+    return ("register_story",
+            "story.md 已在。十章都写完、`story-build check` 通过之后，"
+            "跑 `story_flow.py story` 登记成文——**登记之前跑 harness 一定红**。" + order)
+
+
+def sidecar_shape(step: str) -> dict | None:
+    """这一步要写的侧车长什么样：字段、合法值、为什么要它。
+
+    两跑的作者都为弄清这几个文件的形状去切片读本脚本。形状是确定的，
+    该在需要它的那一步就摆出来，而不是等它读源码或撞报错。
+    合法值取自本模块的常量，不另立一份。
+    """
+    if step == "run_analysis":
+        return {
+            "写这两份": [
+                {"path": "/".join(POSITIONING),
+                 "shape": {"scope_source": " | ".join(SCOPE_SOURCES),
+                           "scope_text": "本 AR 当前范围，一句话；取全量时也要写出全量是什么",
+                           "sr_related_ars": [{"ar": "同一 SR 下的**其它** AR 单号",
+                                               "scope": "那一份承载什么"}]}},
+                {"path": "/".join(SCOPE_OPTIONS),
+                 "shape": [{"key": CARRY_ALL, "label": "按当前范围整体承载：列出功能点"},
+                           {"key": "<切法标识>", "label": "按什么切、切成几份",
+                            "parts": [{"seq": 1, "scope": "这一份承载什么", "depends_on": []},
+                                      {"seq": 2, "scope": "另一份承载什么", "depends_on": [1]}]}],
+                 "note": f"固定首项 {CARRY_ALL} 必须在——不切永远是一个可选项；"
+                         "切法至少两份，没有份表的切法是空壳"},
+            ],
+        }
+    if step.startswith("await_gate:"):
+        return {
+            "写这份，再去问人": {
+                "path": "/".join(GATE_OPTIONS),
+                "shape": [{"key": "<选项标识>", "label": "人能看懂的选项文字",
+                           "recommended": "true/false，可省"}],
+                "note": "先把摆给人的**全部**选项写进这份文件，再跑 `decide` 记录人选了哪个。"
+                        "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」",
+            },
+            "顺序": "**先签关卡，再导入材料**——补料是关卡的结果，不是它的前提；"
+                    "先导后签会被判为「没摆选项」而重做",
+        }
+    return None
+
+
 def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
@@ -732,11 +799,12 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
     if contract.get("status") == "story_written":
-        return "run_archived", "叙事件已成文并登记，spec 可闭环；之后 `/story archive` 归档"
+        return ("run_archived",
+                "叙事件已登记成文。接着：`story-build build` 渲染 AR/review.md → "
+                "跑 harness（spec 闭环）→ verifier 一次 → `/story archive` 归档。"
+                "**verifier 之后不再改产物**：改了 subject 就换代，整份要重审")
     if contract.get("status") == "complete":
-        return ("enter_spec",
-                "流程已收口，进 /spec。**成文在 spec 阶段内**——三份产物一次 pass 出齐，"
-                "顺序见 phases/spec.md §二")
+        return spec_stage_step(feature_root)
 
     current = contract["rounds"][-1]
     gates = round_gates(contract)
@@ -817,8 +885,12 @@ def cmd_reopen(feature_root: Path) -> dict:
 def cmd_status(feature_root: Path) -> dict:
     contract = load(feature_root)
     step, action = next_step(feature_root, contract)
+    shape = sidecar_shape(step)
     if contract is None:
-        return {"exists": False, "next": step, "action": action}
+        out = {"exists": False, "next": step, "action": action}
+        if shape:
+            out["sidecar"] = shape
+        return out
 
     current = contract["rounds"][-1] if contract.get("rounds") else {}
     # 只列**当前轮**：与 next 的判据一致，免得人看着历史决策去对现在的位置。
@@ -837,6 +909,7 @@ def cmd_status(feature_root: Path) -> dict:
         "archived": bool(contract.get("archived")),
         "next": step,
         "action": action,
+        **({"sidecar": shape} if shape else {}),
     }
 
 

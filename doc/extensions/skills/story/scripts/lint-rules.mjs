@@ -4,8 +4,10 @@
  * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 story-build.mjs check（校验 story.md）共用，
  * 避免两处各维护一份词表而漂移。
  *
- * 本文件是禁用词表的**唯一真源**：story 撰写红线只描述「不用服务端发布术语」这条纪律，
- * 具体词表不复述——复述就要两处同步，而同步这件事没有任何机制保证。
+ * **词表本身在章节合同里**（`language_redline.client_vocabulary`）：作者要在动笔前看到
+ * 「哪些词不能用、改说什么」，门禁要按同一份判。词留在脚本里，作者就只能撞了门禁才知道，
+ * 或者去读脚本——两轮实跑都发生了后者。本文件保留的是**判定形态**：作用域、豁免语境、
+ * 代码块与整章豁免——它们是形态不是词，写成数据反而说不清。
  *
  * **工程形态一律运行时推导，不硬编码**：模块目录形态取自 `framework.config.json` 的分层声明，
  * 知识文件名取自激活清单（不扫目录——目录里躺着的未启用文件不参与判定）。硬编码的快照会过期：
@@ -14,21 +16,30 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import { normalizeHeading } from './headings.mjs';
 
-/** 客户端语境禁用词：服务器侧词汇，单独使用也算 */
-const BANNED_TERMS = [
-  { term: '灰度', hint: '改说「功能开关管控」/「市场·管理台放量」' },
-  { term: '回滚', hint: '改说「功能开关关闭」' },
-  { term: '回退', hint: '改说「功能开关关闭」/「恢复旧版本表现」（数据/状态层面的回退不在此列，见豁免）' },
-  { term: '部署', hint: '客户端无部署概念，改说「随版本发布」' },
-  { term: '集群', hint: '服务器侧概念，端侧不涉及' },
-  { term: 'QPS', hint: '改说「端云接口请求量与触发频次」' },
-  { term: 'TPS', hint: '同 QPS' },
-  { term: '熔断', hint: '服务器侧概念' },
-  { term: '限流', hint: '服务器侧概念；端侧防重入请写「防抖/幂等」' },
-];
+const CONTRACT_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), '..', 'contracts', 'story-chapters.json');
+
+let vocabularyCache = null;
+
+/**
+ * 客户端语境禁用词，取自章节合同。
+ *
+ * 合同缺这一段就是漏交付：判据默默不判比报错更坏——归档件里的服务端词会一路带到编码。
+ */
+export function clientVocabulary() {
+  if (vocabularyCache) return vocabularyCache;
+  const raw = JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf-8'));
+  const list = raw?.language_redline?.client_vocabulary;
+  if (!Array.isArray(list) || list.length === 0) {
+    throw new Error('章节合同缺 language_redline.client_vocabulary：客户端语境词表是合同数据，脚本里不留副本');
+  }
+  vocabularyCache = list.map(x => ({ term: String(x.term), hint: String(x.hint ?? '') }));
+  return vocabularyCache;
+}
 
 /**
  * 豁免语境：命中这些模式的行不判违规。
@@ -146,7 +157,7 @@ export function scanBannedTerms(text, opts = {}) {
     if (heading) inExemptChapter = exempt.has(normalizeHeading(heading[1]));
     if (inExemptChapter) continue;
     if (EXEMPT_LINE_PATTERNS.some(re => re.test(line))) continue;
-    for (const { term, hint } of BANNED_TERMS) {
+    for (const { term, hint } of clientVocabulary()) {
       if (line.includes(term)) hits.push({ line: i + 1, term, hint, text: line.trim().slice(0, 100) });
     }
   }

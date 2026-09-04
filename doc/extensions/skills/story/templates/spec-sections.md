@@ -113,19 +113,9 @@
 
 ## 10. 规约约束要求
 
-<!-- 这一章的正文**由机器生成**，不手写。
-
-  你要编辑的是 `spec/knowledge-use.yaml`：激活清单里的每条规约在那里各有一行，
-  写 `applicable: true/false`；命中的写 `requirement`（本需求要求做什么）与 `contract`
-  （§9 里已登记的接口/存储键/配置项名），不命中的写 `reason`。
-  整域都不适用时用 `constraint_domains` 一行带过，不必逐条登记——但依据要可回查：
-  「本需求无新增对外开放页面或接口」是依据，「不涉及」不是。
-
-  写完跑：
-
-      node doc/extensions/hooks/shared/knowledge-use.mjs render --feature <需求名>
-
-  它把本章与 §11 的正文写进生成区。**手改生成区会被门禁拒绝**——改判断请改 YAML 再重新生成。
+<!-- 这一章的正文**由机器生成**，不手写：你编辑的是 `spec/knowledge-use.yaml`。
+  字段怎么填、跑哪条命令，`init` 生成的骨架与本阶段任务包里都有，这里不复述。
+  **手改生成区会被门禁拒绝**——改判断请改 YAML 再重新生成。
 
   **怎么写 requirement**：写清它在本需求里具体要求做什么，可实现、可测——落在哪个接口、
   哪个存储键、哪个字段、哪个业务步骤上。写每一行前先自问三句：
@@ -140,9 +130,7 @@
 
 ## 11. 设计模式候选登记
 
-<!-- 同样由 `spec/knowledge-use.yaml` 生成。你在 YAML 的 `patterns` 段逐个适用单元一行：
-  `unit`（流程段或页面）、`candidate`（在册 pattern_id 或「无候选」）、
-  `signal`（命中信号或反证）。
+<!-- 同样由 `spec/knowledge-use.yaml` 的 `patterns` 段生成（字段见骨架与任务包）。
 
   **只登记候选，不做选型**——选型缺少方案上下文，那是 plan 的事，结论落 `contracts.yaml`。
   在 YAML 里写 `chosen` 会被拦。

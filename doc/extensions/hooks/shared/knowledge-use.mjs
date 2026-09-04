@@ -472,6 +472,67 @@ export function zoneProblems(projectRoot, specText, rendered) {
 // 命令行：render
 // ---------------------------------------------------------------------------
 
+/**
+ * 骨架正文。**只摆结构，不替作者判断**——applicable 留空，依据留空。
+ *
+ * 说明写进文件本身而不是只写在文档里：作者打开的是这份 YAML，它得自己说清怎么填。
+ */
+function renderSkeleton(projectRoot, knowledge) {
+  const rows = [
+    '# 本阶段知识判断的唯一真源。spec 的 §10/§11 由它生成，那两章不手写。',
+    '#',
+    '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（本需求要做什么，',
+    '# 写得下一个人照着能编码），不命中写 reason（可回查的依据；「不涉及」三个字不算依据）。',
+    '# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。',
+    `schema: ${SCHEMA}`,
+    `manifest_digest: ${manifestDigest(projectRoot)}`,
+    '',
+    '# 用到了哪几份项目知识，各自用来做了什么。没用到的不必登记。',
+    'facts:',
+  ];
+  for (const f of knowledge.facts) {
+    rows.push(`  - id: ${f.name || path.basename(f.file, '.md')}`, '    used_for: ""');
+  }
+  rows.push(
+    '',
+    '# 整域都不适用时登记在这里（prefix / applicable: false / reason）。',
+    '# 域里只要有一条命中，就不判整域、改为逐条登记到 constraints。',
+    'constraint_domains: []',
+    '',
+    'constraints:',
+  );
+  for (const e of knowledge.entries) {
+    rows.push(`  - id: ${e.id}`,
+      '    applicable:   # true → 补 requirement 与 contract；false → 补 reason');
+  }
+  rows.push(
+    '',
+    '# 设计模式候选：**只登记不选型**（选型是 plan 的事）。',
+    `# 在册候选：${knowledge.patternIds.join(' / ') || '（激活清单里没有候选）'}`,
+    `# 这个单元没有合适的候选时，candidate 写「${NO_CANDIDATE}」，signal 里说明为什么没有。`,
+    'patterns:',
+    '  - unit: ""      # 哪一段业务；按业务切，不是整个需求一个单元',
+    '    candidate: ""',
+    '    signal: ""    # 从本需求的哪个事实看出它像这个模式',
+    '',
+  );
+  return rows.join('\n');
+}
+
+/** 骨架只在开头生成一次：已经有判断在里面时不许覆盖。 */
+function cmdInit(projectRoot, feature) {
+  const target = usePath(projectRoot, feature);
+  if (fs.existsSync(target)) {
+    process.stderr.write(`${relDisplay(projectRoot, target)} 已经在了`
+      + '——骨架只在开头生成一次，重来会盖掉已经做过的判断\n');
+    process.exit(1);
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, renderSkeleton(projectRoot, activeKnowledge(projectRoot)), 'utf-8');
+  process.stdout.write(`[knowledge-use] 骨架已写入 ${relDisplay(projectRoot, target)}`
+    + '：逐条填 applicable 与依据，填完跑 render\n');
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -483,8 +544,10 @@ function parseArgs(argv) {
 
 function main(argv) {
   const [command, ...rest] = argv;
-  if (command !== 'render') {
-    process.stderr.write('用法：knowledge-use.mjs render --feature <名> [--project-root <路径>]\n');
+  if (command !== 'render' && command !== 'init') {
+    process.stderr.write('用法：knowledge-use.mjs <init|render> --feature <名> [--project-root <路径>]\n'
+      + '  init   —— 按激活清单生成骨架（条目一条不落，判断留空）\n'
+      + '  render —— 判断填完之后，把 spec 的 §10/§11 生成出来\n');
     process.exit(2);
   }
   const args = parseArgs(rest);
@@ -495,6 +558,7 @@ function main(argv) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..'));
   try {
+    if (command === 'init') { cmdInit(projectRoot, args.feature); return; }
     const knowledge = activeKnowledge(projectRoot);
     const use = readUse(projectRoot, args.feature);
     const specPath = path.join(featureRoot(projectRoot, args.feature), 'spec', 'spec.md');
