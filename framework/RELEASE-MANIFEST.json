@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "662032c45fdaab76b6ff9eff08a6f90da2958d74",
-  "built_at": "2026-09-04T04:52:49.961Z",
+  "source_commit": "d6e55321d67a5b1cc262f5f840ff26ee7507a915",
+  "built_at": "2026-09-04T07:22:44.685Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -690,7 +690,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "a7208744e88ff691d7ccf1adfb5791937f115f887aa952ac65743fe40dff285c"
+      "sha256": "23709757f7532aacfe468f54d3cdbda4f80777876c717d07e6d6ede8b378208b"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -1286,7 +1286,7 @@
     },
     {
       "path": "harness/scripts/utils/hylyre-standard-derive-knowledge.ts",
-      "sha256": "395b0917b901151e02ce81742b99805312b2e4148f4196b89e7b115ee47c92c7"
+      "sha256": "d10709521711769670558d6c92824c7d6a8a4f31cb75669bc1cd36244ef80c5f"
     },
     {
       "path": "harness/scripts/utils/hylyre-steps-normalize.ts",
@@ -1374,11 +1374,11 @@
     },
     {
       "path": "harness/scripts/utils/p0-identity-injection.ts",
-      "sha256": "60cb5b217b4b41c7575481d9184332b8d56d8d4bc3964d8bf9439275633db475"
+      "sha256": "7523492e5ce17acc5a33cb6c8e0d65095829b76ab7e3ca23607feaf29f21390a"
     },
     {
       "path": "harness/scripts/utils/p0-semantic-gates.ts",
-      "sha256": "fb7cfd326668af82c4824926f16fe8e99876a3996c90ee0b6acaceb95318b740"
+      "sha256": "444ee0eef98c8f85638a1490ce5c77e7ddcec6fb004282f282d6b3584025f0d9"
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
@@ -2602,7 +2602,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
-      "sha256": "cb8b90c91578ace9c31963207161266c0822638761f4817b7924587a672a54ad"
+      "sha256": "ee177b0fc2bed1d5590346051cc5295c6d5b80dc9b58da4e451a650f12418e5b"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-plan-hylyre-template.md",
