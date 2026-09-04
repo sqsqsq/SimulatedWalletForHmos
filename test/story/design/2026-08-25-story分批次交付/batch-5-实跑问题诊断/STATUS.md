@@ -25,7 +25,7 @@
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
 | 11 集成实跑与旧发现者退场 | 首跑不计分；二跑前七条修正与返修**已通过**；预算口径改代码行、注释规则入 AGENTS、退场清理与预算收口**已实施，等待评审**；评审通过后跑 CLI（那一跑才计三轴分） | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
-| 12 验收前正向重设计（13 号） | 四个提交机制面**通过**（600 全绿、并行 32 s、73 条对账、退场 grep 为零、新判据在二跑真产物上抓到三张丢图）；**返修一个提交**：清交付面实跑故事（含任务包与审查任务书里的）、散文回 md 脚本只出数据、④ 注释改措辞、测试模板建一次与并行规约 | [reviews/12-forward-redesign.md](reviews/12-forward-redesign.md) |
+| 12 验收前正向重设计（13 号） | **通过（收口）**：四提交 + 返修 `44ddf5da`；交付面轮次叙述归零并进 M02，散文回 md，任务包 4.8KB，非界面图有说明动作，离线回归默认并行（32 s）。hooks_mjs 2657 高于 target 207 行属必要增长，收口签字 | [reviews/12-forward-redesign.md](reviews/12-forward-redesign.md) |
 
 ## 事件日志
 
@@ -1550,3 +1550,4 @@ M02 加一档 **轮次叙述**：原来只拦「带数字的计数」，而这�
 ### 下一步
 
 等评审。通过后跑第三次 CLI（`TEST.md §4` 的三轴验收）。
+- 2026-09-05 独立评审步骤 12 返修：通过，步骤 12 收口。B1–B5 与两条 advisory 全部核实（任务包重渲染 4813 字节、--caption-image、TEST §7.9、M02 轮次叙述档）。全量并行 32 s 600 绿、73 条对账、framework 零差异。进入 CLI 三跑，硬条件与观察项见评审 §8。

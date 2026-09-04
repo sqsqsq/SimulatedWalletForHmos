@@ -635,7 +635,7 @@ rg -n '实测[^。]{0,40}[0-9]|首跑 [0-9]|批次 *[0-9]|上一轮那|F[0-9]+ (
 ## 7.9 离线回归怎么跑
 
 ```powershell
-python -m pytest test/story/tests -n auto            # 默认：并行
+python -m pytest test/story/tests -n auto --dist loadscope   # 默认：并行
 python -m pytest test/story/tests -q --durations 10  # 想看谁最慢
 python -m unittest discover test/story/tests         # 只在排障时用：串行、输出线性
 ```
@@ -646,7 +646,9 @@ python -m unittest discover test/story/tests         # 只在排障时用：串�
 - **每条测试只写自己的临时目录**。落到 `%TEMP%` 下固定名字的路径不算「自己的」——
   几个 worker 会撞同一条；要带上进程号或用 `TemporaryDirectory`。
 - **重夹具一个类建一次**（`setUpClass`）。工作区模板这类要复制整棵工程树的夹具，
-  一条用例建一次就够整轮跑的时间翻倍。
+  一条用例建一次就够整轮跑的时间翻倍。并行时加 `--dist loadscope`：同一个类的用例
+  落到同一个 worker，那份夹具才真的只建一次（默认的 `load` 按用例散开，
+  拿到该类用例的每个 worker 都会各建一份）。
 - **慢的要报出来**：`--durations 10` 看最慢十条；单条超过 5 秒，要么让它快，
   要么在测试文档字符串里写明它为什么必须慢。
 

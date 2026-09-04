@@ -84,3 +84,21 @@ CLI 用例层面本来就并行（`jobs ≥ Case 数`）。规约缺的是：离
 **多出一条要返修的（B5）**：说明只能经 `--register-ux` 写，而它会把图复制进 `ux-reference/`。材料里不是界面的图——二跑的 `image3`（服务端触发与扣款流程图）——没有登记路径：
 任务包对它写着「没有说明，登记时补一句」，作者要么把流程图误登成界面参考（framework 的 `ux_reference_mapping` 随即 WARN 它未映射到屏），要么让它一直没有说明。
 改法：给任何材料图片写说明的动作与「复制为界面参考」分开（例如 `--caption-image <路径> --caption "…"`，不复制）；`inbox_import.md` 在判图那一步要求**每张抽出的图**都给一句说明，界面图另加 `--register-ux`。
+
+## 8. 返修（`44ddf5da`）· 独立评审（Claude，2026-09-05）
+
+- 状态：**通过，步骤 12 收口。** 复跑：`pytest -n auto` 600 全过 32 s（本机）；73 条 FAIL 0、委派 15；语义代理 0；9 个 `.mjs` 语法通过；无无调用函数；`framework/` 与 `.opencode/` 零差异。
+- B1：交付面轮次叙述与实跑计数归零（剩两处「上一版」是 `/story restore` 的产品概念）；M02 加「轮次叙述」一档，不带数字也算；AGENTS §5.3/§8 同步。
+- B2：`author.mjs` 只剩数据渲染（151 行，纯文字段从 47 降到 23 且都是字段标签），门禁清单删；`reader-review-task.mjs` 93 行，判据定义只留 overlay；决策六键从 `DECISION_FIELDS` 派生；散文回 `author.md`（59 行，≤60）与 `story-write.md`；
+  任务包 7332 → 4813 字节、六段，复审者重新渲染核过。`story-write.md` 输入表与 `rules.md` 登记字段 JSON 已退。
+- B3：「合围」旧注释已改。
+- B4：`TEST.md §7.9` 离线回归规约（默认并行、只写自己的临时目录、重夹具一类一次、最慢十条且 >5 s 说明）；`AGENTS §8` 同步；模板测试 `setUpClass` 一次；并行还暴露并修了两处固定 `%TEMP%` 路径撞车。
+- B5：`--caption-image` 只写说明不动文件，`--register-ux` 是复制为界面参考外加说明；`inbox_import.md` 要求每张抽出的图都有一句说明；顺带把重复的哈希计算收回 `materials.file_digest`。
+- advisory：`POSITIONING_FIELDS` 与 `SPEC_STAGE_ORDER` 已抽成一处。
+- 预算：scripts_mjs 1907、scripts_py 1342、hooks_mjs 2657、prompts_md 1995、data 683，总 8584（峰值 8700 内）。`hooks_mjs` 高于 target 2450 的 207 行属第一档（任务包、审查任务书、骨架三段数据渲染），收口时按用户 09-05 裁定签字。
+- 小观察（不阻塞）：xdist 下 `setUpClass` 建的 150 MB 模板在拿到该类用例的每个 worker 上各建一次；用 `--dist loadscope` 可让同类用例落同一 worker。
+
+### 进入 CLI 三跑的条件（已满足）
+
+步骤 9、10、11（首二跑）、12 全部通过；全量离线、金样、73 条、静态测试全绿；硬条件不变：verifier 证据由插件发布、`agent_id` 非 stub、插件不触发当场停。
+三跑观察项：任务包是否被读（`key_inputs_read` 含 `author.md`）、读脚本 0、图片逐张有去处且审查逐张答复、上下文 ≤150K、verifier 只跑一次、framework 前置单列。
