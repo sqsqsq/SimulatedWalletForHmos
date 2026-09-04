@@ -27,9 +27,19 @@ spec 之所以正常，是因为实例的 `/story` 链自己指向了 spec 的 a
 | 项 | 值 |
 |---|---|
 | 补丁文件 | `04-framework-author-context.patch` |
-| 基线 | `RELEASE-MANIFEST.json` 的 `source_commit` = `7401f221daf1bca082176bc87f61ea94506b4955`（3.0.0） |
+| 生成基线 | `7401f221daf1bca082176bc87f61ea94506b4955`（3.0.0 候选） |
+| **在 3.0.0 正式版上复验** | `Br_release_3.0.0` @ `51a37875`（2026-09-03，含 `docs(release): 3.0.0 发布材料`）：`git apply --check` **零冲突通过**，不需要重做补丁 |
 | 路径基准 | Framework 仓根（已剥掉消费仓的 `framework/` 前缀） |
 | 验证 | 纯净 framework 树上 `git apply` 通过，结果与消费仓逐字节一致（行尾归一） |
+
+**上游 3.0.0 正式版仍未包含本改动**，逐项核过（`51a37875`）：
+
+- `harness/scripts/author-context.ts` —— 不存在；
+- `harness/harness-runner.ts` 第 1083 行 —— 仍是 `checks.push(...(await emitLifecycle('on_context_load')))`，即仍挂在 verifier 装配处；
+- `harness/hooks-dispatcher.ts` —— 片段来源标识仍是 `path.basename(slot.absPath)`；
+- `specs/lifecycle-hooks-schema.yaml` —— `on_context_load` 的描述仍是「While assembling ai-prompt.md」。
+
+也就是说：**这条通道在正式版里依然接在 verifier 一侧，六个阶段的作者在动笔前拿不到任何扩展要求。**
 
 ## 十二个文件
 
@@ -68,6 +78,20 @@ spec 之所以正常，是因为实例的 `/story` 链自己指向了 spec 的 a
   `framework_integrity` / `framework_foreign_file` / manifest 自校验；
 - 未运行真实 Story（按步骤边界，只用最小 phase 夹具）。
 
+## 补充证据（2026-09-04，两轮真实 CLI 实跑）
+
+交接件初版只有夹具级验证。此后消费仓跑了两轮真实需求（opencode + deepseek，story → spec 闭环），
+这条通道的实际效果有了直接证据：
+
+- **作者确实在动笔前取到了内容**：产物 `context/facts.md` 的 `key_inputs_read` 逐字含
+  `doc/extensions/hooks/spec/author.md` ——即入口输出的标识与 overlay 声明的字符串对上了，
+  既有门禁 `context_exploration_inputs_coverage` 因此有效（裁决 2 的设计成立）；
+- **作者读规则文本的次数下降**：同一 Case 在同一配置下，前一轮 113 次 → 本轮 74 次；
+  「反复撞门禁再回头补读」的形态相应减少（有 FAIL 的门禁轮次 5 轮 → 1 轮）。
+
+这两条都不构成「必须纳入」的独立理由——它们是**通道接对之后**才可能出现的读数；
+在正式版的老接法下，扩展只能靠 `/story` 链自己指向 spec 的 author.md，其余五个阶段无解。
+
 ## 交付边界
 
 **消费仓验证通过 ≠ 内网已获得该能力。** 本地改动靠 `framework.config.json` 的
@@ -76,3 +100,8 @@ spec 之所以正常，是因为实例的 `/story` 链自己指向了 spec 的 a
 
 **allowlist 失效条件**：上游补丁经 framework-init UPDATE 回到消费仓后，本步的 12 条 allowlist
 条目即失效，**必须删除**——留着会掩盖真实漂移。条目的 `rationale` 里已写明。
+
+**内网现状（2026-09-04）**：内网已升级到 3.0.0 正式版，因而**失去了这条通道**——
+扩展的作者要求在六个阶段都送不到，执行者按扩展文档去跑 `scripts/author-context.ts` 会因
+文件不存在而失败。在上游纳入之前，消费方只能把这份补丁重新打在正式版上（已验证零冲突）。
+这不是消费方的偏好，是扩展能力的前提条件。
