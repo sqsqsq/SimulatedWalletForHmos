@@ -785,9 +785,18 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                 "excluded", encoding="utf-8")
             (source / "framework" / "harness" / "state").mkdir(parents=True, exist_ok=True)
             (source / "framework" / "harness" / "state" / "phase.json").write_text("state", encoding="utf-8")
-            for relative in run_multi_case.WORKSPACE_ALLOWED_FILES:
+            for relative in ("AGENTS.md", "framework.config.json", "oh-package.json5"):
                 (source / relative).parent.mkdir(parents=True, exist_ok=True)
                 (source / relative).write_text(relative, encoding="utf-8")
+            # 黑名单之后这些也该跟着进工作区：宿主目录与依赖，被测工程用得上
+            (source / ".opencode" / "plugin").mkdir(parents=True, exist_ok=True)
+            (source / ".opencode" / "plugin" / "publish.js").write_text("x", encoding="utf-8")
+            (source / "framework" / "harness" / "node_modules" / "pkg").mkdir(parents=True)
+            (source / "framework" / "harness" / "node_modules" / "pkg" / "i.js").write_text(
+                "dep", encoding="utf-8")
+            (source / "doc" / "features" / "REAL01").mkdir(parents=True)
+            (source / "doc" / "features" / "REAL01" / "spec.md").write_text(
+                "真实需求", encoding="utf-8")
             suite_root.mkdir(parents=True)
             template, workspace_root = run_multi_case.create_workspace_template(
                 suite_root, "boundary-test")
@@ -798,6 +807,14 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertFalse((template / ".git").exists())
             self.assertFalse((template / "framework" / "harness" / "state" / "phase.json").exists())
             self.assertFalse((template / "01-Product" / "nested" / "tools").exists())
+            # 黑名单之后跟着进来的：宿主目录与依赖（工作区就是一个能直接跑的工程）
+            self.assertTrue((template / ".opencode" / "plugin" / "publish.js").is_file(),
+                            "宿主目录没进工作区——首跑漏 .opencode 那次 verifier 轴整个失真")
+            self.assertTrue(
+                (template / "framework" / "harness" / "node_modules" / "pkg" / "i.js").is_file(),
+                "依赖没进工作区——被测模型又要花两分钟装它")
+            # 仍然不能进来的：真实需求（Case 的需求由播种放入）
+            self.assertFalse((template / "doc" / "features" / "REAL01").exists())
             boundary = run_multi_case.read_json(suite_root / "workspace-boundary.json")
             self.assertIn("copied", boundary)
             self.assertIn("excluded", boundary)

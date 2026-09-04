@@ -79,16 +79,23 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
                     self.assertTrue((template / rel).is_file(),
                                     f"工作区模板里没有 {rel}——被测侧就没有 verifier 或作者入口")
 
-    def test_node_modules_does_not_ride_along(self) -> None:
-        """`.opencode/` 下有 opencode 自装的依赖，那些不该进工作区。"""
+    def test_dependencies_ride_along_so_nothing_needs_installing(self) -> None:
+        """依赖跟着进工作区（用户 2026-09-04 裁定）——工作区就是一个能直接跑的工程。
+
+        这条 2026-09-04 换了边。原来断言的是「不带依赖」，理由是体积；
+        二跑给出了代价的另一半：工作区不带 `framework/harness/node_modules`，
+        被测模型开跑先花两分钟 `npm install`，那两分钟每一轮都要付一次。
+        """
         with tempfile.TemporaryDirectory() as tmp:
             suite_root = Path(tmp) / "suite"
             suite_root.mkdir(parents=True)
             template, _ = self.runner.create_workspace_template(
                 suite_root, "verifier-chain-nm")
             self.addCleanup(shutil.rmtree, template.parent, True)
-            self.assertFalse((template / ".opencode" / "node_modules").exists(),
-                             "node_modules 跟着进了工作区")
+            harness_deps = template / "framework" / "harness" / "node_modules"
+            if (self.runner.REPO_ROOT / "framework" / "harness" / "node_modules").is_dir():
+                self.assertTrue(harness_deps.is_dir(),
+                                "harness 依赖没进工作区——被测模型又要现装一遍")
 
 
 if __name__ == "__main__":

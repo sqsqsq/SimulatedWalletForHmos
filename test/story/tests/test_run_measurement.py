@@ -166,6 +166,53 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual(1, r["reads_checker_source"])
         self.assertEqual(1, r["reads_rule_text"])
 
+    def test_reading_checker_through_bash_is_counted_too(self):
+        """一轮实跑读判据脚本 68 次全走 `node -e readFileSync`，而报表写着 0。
+
+        度量报 0 而实际 68，比没有这项度量更坏——它让人以为这条已经解决了。
+        """
+        r = self._measure([{
+            "tool_name": "bash",
+            "tool_input": {"command":
+                           "node -e \"const s=require('fs')"
+                           ".readFileSync('doc/extensions/skills/story/scripts/story-build.mjs',"
+                           "'utf8');console.log(s.slice(0,400))\""},
+            "tool_output": "function cmdCheck(ctx) {",
+        }])
+        self.assertEqual(1, r["reads_checker_source"],
+                         "bash 里读判据脚本没被算进去——那正是实跑里唯一的读法")
+
+    def test_extension_checkers_count_not_just_framework_ones(self):
+        """被读得最多的是扩展自己的判据脚本，不是 framework 的 check-*.ts。"""
+        r = self._measure([{
+            "tool_name": "read",
+            "tool_input": {"filePath": "doc/extensions/hooks/shared/knowledge-use.mjs"},
+            "tool_output": "export function coverageProblems() {}",
+        }])
+        self.assertEqual(1, r["reads_checker_source"])
+
+    def test_reading_knowledge_is_not_reverse_engineering(self):
+        """反样本：知识层是给模型实现需求用的内容，读它正当，不算逆向判据。"""
+        r = self._measure([{
+            "tool_name": "read",
+            "tool_input": {"filePath": "doc/extensions/knowledge/constraints/ux.md"},
+            "tool_output": "UX-01 …",
+        }])
+        self.assertEqual(0, r["reads_checker_source"])
+        self.assertEqual(1, r["reads_rule_text"])
+
+    def test_startup_gap_measures_until_the_model_moves(self):
+        """起跑到模型动第一下。装置起跑当场就写事件，拿它当锚点量到的是装置自己。"""
+        r = self._measure([_harness(GATE_PASS)],
+                          state={"started_at": "2026-09-04 14:20:51"})
+        self.assertIsNotNone(r["startup_gap_sec"])
+        self.assertEqual("run_state", r["startup_gap_source"])
+
+    def test_startup_gap_unknown_is_not_zero(self):
+        r = self._measure([_harness(GATE_PASS)])
+        self.assertIsNone(r["startup_gap_sec"])
+        self.assertEqual("unavailable", r["startup_gap_source"])
+
     def test_human_wait_unknown_is_not_zero(self):
         """没记录人工等待时报 None：0 会被当成「这轮没人等过」，那是编数。"""
         r = self._measure([_harness(GATE_PASS)])

@@ -27,10 +27,21 @@ from pathlib import Path
 RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
 
 #: checker 源码：读它 = 在逆向判据。目标是 0 次。
-CHECKER_PATH_RE = re.compile(r"framework/harness/scripts/check-[a-z]+\.ts")
+#:
+#: 两处都要认：framework 的 `check-*.ts`，以及**扩展自己的判据脚本**——
+#: 一轮实跑里被读得最多的正是后者（`story-build.mjs` 34 次、`knowledge-use.mjs` 17 次）。
+#: 知识层（`doc/extensions/knowledge/`）不算：那是给模型实现需求用的内容，读它是正当的。
+CHECKER_PATH_RE = re.compile(
+    r"framework/harness/scripts/check-[a-z]+\.ts"
+    r"|doc/extensions/(?:hooks|skills)/[\w/.-]+\.(?:mjs|py|ts)")
 
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
-BASH_READ_RE = re.compile(r"\b(cat|head|tail|sed|less|type)\b")
+#:
+#: `node -e "readFileSync(...)"` 也是读：一轮实跑里 68 次读判据脚本**全部**走这条，
+#: 而当时的口径只认 `cat/head/sed`，于是报表上写着「读 checker 源码 0 次」。
+#: 度量报 0 而实际 68，比没有这项度量更坏——它让人以为这条已经解决了。
+BASH_READ_RE = re.compile(
+    r"\b(cat|head|tail|sed|less|type|grep|rg|awk)\b|readFileSync|readFile\b|open\(")
 
 #: 门禁在**控制台输出**里报一条 check 的形态（report-generator 的 printReportToConsole）：
 #:     ``  ✗ FAIL [BLOCKER] feature_artifact_resolution``
@@ -117,6 +128,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     prev_ts = None
     conservation: tuple[int, int] | None = None
     first_ts = last_ts = None
+    # 模型动的第一下——装置起跑当场就写事件，用它算空档量到的是装置自己
+    first_model_ts = None
 
     for e in events:
         ts = _ts(e.get("timestamp"))
@@ -125,6 +138,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
             last_ts = ts
 
         etype = e.get("type")
+        if ts and first_model_ts is None and etype in {"tool", "usage"}:
+            first_model_ts = ts
         gap = (ts - prev_ts).total_seconds() if (ts and prev_ts) else 0.0
         if ts:
             prev_ts = ts
@@ -206,7 +221,29 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "conservation_machine": conservation[0] if conservation else None,
         "conservation_model": conservation[1] if conservation else None,
         **_human_wait(run_dir or events_path.parent),
+        **_startup_gap(run_dir or events_path.parent, first_model_ts),
     }
+
+
+def _startup_gap(run_dir: Path, first_model_ts) -> dict:
+    """起跑到**模型动第一下**之间空了多久。
+
+    二跑这一段是 4.5 分钟零事件。是宿主在准备工作区、还是被测模型首轮延迟，
+    没有数就只能猜。这里只报数——它不进任何 PASS 条件，是查因的入口。
+
+    量的锚点是第一条工具调用或用量上报：装置起跑当场就会写一条自己的事件，
+    拿它当锚点，算出来的空档恒等于零。
+    """
+    if first_model_ts is None:
+        return {"startup_gap_sec": None, "startup_gap_source": "no_model_events"}
+    try:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        started = datetime.strptime(str(state["started_at"]), "%Y-%m-%d %H:%M:%S")
+    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+        return {"startup_gap_sec": None, "startup_gap_source": "unavailable"}
+    first = first_model_ts.replace(tzinfo=None) if first_model_ts.tzinfo else first_model_ts
+    return {"startup_gap_sec": round((first - started).total_seconds(), 1),
+            "startup_gap_source": "run_state"}
 
 
 def _human_wait(run_dir: Path) -> dict:
@@ -253,6 +290,9 @@ def render(result: dict) -> str:
         (f"    人工等待：{result['human_wait_sec']}s（{result['human_wait_events']} 次）  —— 独立计时，不进上面四项"
          if result["human_wait_sec"] is not None
          else f"    人工等待：未知（{result['human_wait_source']}）  —— 不是 0，是这份记录里没有"),
+        (f"    起跑空档：{result['startup_gap_sec']}s  —— 起跑到第一条会话事件，查因用"
+         if result.get("startup_gap_sec") is not None
+         else f"    起跑空档：未知（{result.get('startup_gap_source')}）"),
         "",
         "  ── story 守恒两层各担多少 ──",
         (f"    机器核实 {result['conservation_machine']} 条 / 模型裁决 "

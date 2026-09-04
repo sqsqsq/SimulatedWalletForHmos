@@ -230,16 +230,13 @@ class TestCoordinatorWiring(FixtureCase):
     def test_the_local_requirement_system_is_never_copied_into_a_workspace(self) -> None:
         """人装的那套需求系统不能进被测 workspace——进去了模型 `ls` 就看见了。
 
-        它在 `test/` 下，而复制白名单里没有 `test/`；这条把「天然看不到」钉成回归，
-        免得哪天有人往白名单里加了 `test` 而没想到这一层。
+        它在 `test/` 下。工作区 2026-09-04 改成按黑名单排除之后，这条守的就是
+        「`test` 一直在黑名单里」——哪天有人把它拿掉，本地需求系统会整个跟进工作区。
         """
-        allowed = run_multi_case.WORKSPACE_ALLOWED_DIRS
-        self.assertNotIn("test", allowed)
-        for entry in allowed:
-            self.assertFalse(entry.startswith("test/"),
-                             f"复制白名单里出现了 {entry}——本地需求系统会跟着进 workspace")
-        for entry in run_multi_case.WORKSPACE_ALLOWED_FILES:
-            self.assertFalse(entry.startswith("test/"), entry)
+        self.assertIn("test", run_multi_case.WORKSPACE_EXCLUDED_DIR_NAMES,
+                      "test 不在排除名单里——本地需求系统会跟着进 workspace")
+        self.assertIn("doc/features", run_multi_case.WORKSPACE_EXCLUDED_DIRS,
+                      "真实需求目录会跟着进被测侧")
 
     def test_the_default_dir_never_leaks_into_any_case(self) -> None:
         """机械回归：人装了本地需求系统之后，装置给任何 Case 的指针都不指向它。"""

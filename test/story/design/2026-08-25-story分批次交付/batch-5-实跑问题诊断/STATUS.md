@@ -1405,3 +1405,67 @@ D4 + D9（story 审查在 framework 协议内做对、verifier 只跑一次且�
 ### 下一个提交
 
 D7（装置：黑名单复制含 node_modules、`measure_run` 补 bash 读脚本口径、启动空档记录）。
+
+## 步骤 12 · 第四个提交：装置（D7）· 已实施，等待评审
+
+三件，都是「量错了或白等了」这一类——不改被测机制。
+
+### 一、工作区按黑名单排除，不按白名单挑
+
+白名单每加一个宿主就漏一次：首跑漏 `.opencode/`，被测侧既没有 verifier 也没有 skill，
+主模型自己写了证据 JSON，那一跑的 verifier 轴整个失真。仓库根现有
+`.agents .cac .claude .codex .cursor scripts` 等对目标工程都是合法内容；
+「哪些不该在」是一份短得多、也稳定得多的清单：
+`.git / output / test / tools / scratch / .bak / oh_modules / 构建产物 / __pycache__`
+加按路径排除的 `doc/features`（真实需求不进被测侧，Case 的需求由播种放入）。
+
+**`node_modules` 不排除**（用户 2026-09-04 裁定）：工作区就是一个能直接跑的工程，
+被测模型不该花两分钟装依赖——二跑实测 `npm install` 用掉 2 分钟。
+体积代价：`framework/harness/node_modules` 94 MB + `.opencode/node_modules` 60 MB，
+每个 Case 的工作区多约 154 MB。`oh_modules` 仍排除（只在编译时要，到 spec 为止的 Case 不编译）。
+
+### 二、度量补上它自己的盲区
+
+二跑作者读判据脚本 **68 次**，报表写着 **0**。两个口径都太窄：认「在读文件」只认
+`cat/head/sed`，不认 `node -e "readFileSync(...)"`（实跑里 68 次全走这一种）；
+认「checker 源码」只认 framework 的 `check-*.ts`，不认扩展自己的判据脚本——
+而被读得最多的正是 `story-build.mjs`（34）与 `knowledge-use.mjs`（17）。
+
+修正后在二跑的真实事件流上复算：**读 checker 源码 68 次**（与人工统计一致）、
+读规则文本从 61 修正为 113。知识层不计入——读知识是正当的，有反样本守着。
+
+> 度量报 0 而实际 68，比没有这项度量更坏：它让人以为这条已经解决了。
+
+### 三、起跑空档记下来
+
+二跑起跑到模型动第一下之间 4.5 分钟零事件，此前没人记过。`measure_run` 加
+`startup_gap_sec`，锚点是第一条**模型活动**（工具调用或用量上报）——装置起跑当场就写
+自己的事件，拿它当锚点算出来恒等于零（第一版就是这样，0.3s）。
+在二跑数据上复算得 **270.2s**，与评审通读日志得到的 4.5 分钟吻合。**本步只记录不修**。
+
+### 验收
+
+- story 全量 **600 绿**（`test_run_measurement.py` 新增 5 条、`test_multi_case_cli.py`
+  与 `test_material_delivery.py` 的边界断言跟着黑名单改判据；
+  `test_verifier_chain_in_workspace.py` 里「node_modules 不该进工作区」那条**换边**，
+  改成「依赖跟着进，否则每轮现装两分钟」）；
+- 失效形态 70 条 FAIL 0、委派 15；`framework/` 零差异；
+- `TEST.md §8` 的读数口径与 `run_multi_case.py` 的策略串跟着改。
+
+## 步骤 12 · 四个提交全部完成，等待评审
+
+| # | 提交 | 内容 |
+|---|---|---|
+| 1 | `ebd48e04` | 作者链：D1 任务包生成、D2 判断骨架、D5 阶段内顺序、D6 词表进合同、D10 章标题剥除、D11 侧车形状、D12 登记义务 |
+| 2 | `0615dd95` | 图片：D3 `register-ux` 登记、caption 真源、`check ④` 集合一致 |
+| 3 | `08784d77` | 审查：D4 送达/一种格式/一处真源/问对问题，D9 verifier 只跑一次且在最后 |
+| 4 | 本次 | 装置：D7 黑名单复制、度量补口径、起跑空档 |
+
+**两处要评审拍板的取舍**（都已在各自小节写明理由与代价）：
+
+1. `hooks_mjs` 收口时回不到 target 2450——13 号 §5 估「hooks +200」时就与 target 冲突；
+2. verifier 证据只认发布器 JSON，没有发布器的宿主（本仓 `codex-luna`）上这一项记
+   `NOT_APPLICABLE`。
+
+按 13 号 §6：四个提交都通过后，全量离线、金样、静态测试全绿，再跑第三次 CLI。
+**跑之前等评审结论**（用户 2026-09-04 要求）。

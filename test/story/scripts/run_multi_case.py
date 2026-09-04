@@ -98,29 +98,22 @@ OWNED_SUITE_DIR = re.compile(
     r"(?:story-suite-[A-Za-z0-9._-]+|\d{8}-\d{6}-\d+)$")
 WORKSPACE_TEMPLATE_NAME = "workspace-template"
 WORKSPACES_ROOT_NAME = "workspaces"
-# `.opencode` 在列，是因为 **verifier 链住在那里**：`agent/verifier.md`（只读子代理）、
-# `plugin/record-verifier-report.js`（结论发布器）、`skill/story/SKILL.md`（作者入口）。
-# 不带它，被测侧就没有 verifier 也没有 skill——首跑实测的后果是主模型自己写了
-# verifier 报告与证据 JSON（`agent_id: storiesuite-verifier-stub`），那一跑的 verifier 轴失真。
-# 目录里的 `node_modules` 由 WORKSPACE_EXCLUDED_DIR_NAMES 排除，不随工作区复制。
-WORKSPACE_ALLOWED_DIRS = (
-    "01-Product", "02-Feature", "04-BusinessBase", "05-SystemBase",
-    "AppScope", "framework", "hvigor", "libs", "doc/extensions", ".opencode",
-)
-WORKSPACE_ALLOWED_FILES = (
-    "AGENTS.md", "CLAUDE.md", "README.md", "build-profile.json5",
-    "code-linter.json5", "framework.config.json", "framework.local.json",
-    "hvigorfile.ts", "oh-package.json5", "oh-package-lock.json5",
-)
-WORKSPACE_ALLOWED_DOC_FILES = (
-    "doc/architecture.md", "doc/module-catalog.yaml", "doc/glossary.yaml",
-    "doc/glossary-seed.txt", "doc/glossary-seed-allowlist.txt",
-)
+# 工作区**按黑名单排除**，不按白名单挑（2026-09-04 改）。
+#
+# 白名单每加一个宿主就漏一次：首跑漏了 `.opencode/`，于是被测侧既没有 verifier
+# 也没有 skill——主模型自己写了 verifier 报告与证据 JSON（`agent_id: storiesuite-verifier-stub`），
+# 那一跑的 verifier 轴整个失真。仓库根现有 `.agents .cac .claude .codex .cursor scripts` 等，
+# 对目标工程都是合法内容；「哪些不该在」是一份短得多、也稳定得多的清单。
+#
+# `node_modules` **不排除**（用户 2026-09-04 裁定）：工作区就是一个能直接跑的工程，
+# 被测模型不该花两分钟装依赖——二跑实测 `npm install` 用掉 2 分钟。
+# `oh_modules` 仍排除：它只在编译时要，而到 spec 为止的 Case 不编译。
 WORKSPACE_EXCLUDED_DIR_NAMES = {
-    ".git", "output", "test", "tools", "features", "oh_modules",
-    ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
-    "node_modules", "scratch",
+    ".git", "output", "test", "tools", "scratch", ".bak",
+    "oh_modules", ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
 }
+#: 按**路径**排除：真实需求不得进被测侧（Case 的需求由播种放入）。
+WORKSPACE_EXCLUDED_DIRS = {"doc/features"}
 # 按**路径**排除的运行态目录：新 workspace 不能带上一轮的阶段状态，否则起跑点不干净。
 # 不用裸目录名排除（曾用 "state"）——裸名会连带误伤任何叫 state 的产品源码目录，
 # 而且会把该目录里**发布件声明的占位文件**一起丢掉，触发 framework_integrity「缺失」。
@@ -167,17 +160,19 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
-    """Copy only the explicit product/runtime allowlist into a Case workspace."""
+    """把仓库树复制进 Case 工作区，按黑名单排除。"""
     copied: list[str] = []
 
     def visit(current: Path, target: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
         for child in sorted(current.iterdir(), key=lambda item: item.name):
             if child.is_symlink():
-                raise SystemExit(f"[multi] 工作区白名单拒绝软链接: {child}")
+                raise SystemExit(f"[multi] 工作区拒绝软链接: {child}")
             if child.is_dir() and child.name in WORKSPACE_EXCLUDED_DIR_NAMES:
                 continue
             relative = child.relative_to(REPO_ROOT).as_posix()
+            if child.is_dir() and relative in WORKSPACE_EXCLUDED_DIRS:
+                continue
             if child.is_dir() and relative in WORKSPACE_STATEFUL_DIRS:
                 # 目录本身要建（发布清单声明它存在），内容不带过来，只留占位文件
                 keep_target = target / child.name
@@ -200,7 +195,7 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
 
 
 def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
-    """Create a short-path allowlisted template; no .git/test/tools are copied."""
+    """建一份短路径的工作区模板：整棵仓库树减去黑名单。"""
     workspace_root = (Path(tempfile.gettempdir()) / "sw-story" / suite_id).resolve()
     template = (workspace_root / WORKSPACE_TEMPLATE_NAME).resolve()
     if not template.is_relative_to(workspace_root):
@@ -209,26 +204,16 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
         raise SystemExit(f"[multi] workspace template 已存在，拒绝覆盖: {template}")
     workspace_root.mkdir(parents=True, exist_ok=False)
     template.mkdir(parents=True, exist_ok=False)
-    copied: list[str] = []
-    for relative in WORKSPACE_ALLOWED_DIRS:
-        source = REPO_ROOT / relative
-        if source.is_dir():
-            copied.extend(_copy_workspace_tree(source, template / relative))
-    for relative in (*WORKSPACE_ALLOWED_FILES, *WORKSPACE_ALLOWED_DOC_FILES):
-        source = REPO_ROOT / relative
-        if not source.is_file():
-            continue
-        destination = template / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        copied.append(relative)
+    copied = _copy_workspace_tree(REPO_ROOT, template)
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
     write_json(suite_root / "workspace-boundary.json", {
         "schema_version": 2,
         "copied": sorted(copied),
-        "excluded": ["output/**", "test/**", "tools/**", "doc/features/**",
-                     ".git/**", "other Case inputs", "historical suite data"],
+        "excluded": sorted(
+            [f"{name}/**" for name in WORKSPACE_EXCLUDED_DIR_NAMES]
+            + [f"{rel}/**" for rel in WORKSPACE_EXCLUDED_DIRS]
+            + ["other Case inputs", "historical suite data"]),
         "case_seeded": {},
         "created_at": now(),
     })
@@ -2538,7 +2523,7 @@ def command_plan(plans: list[CasePlan], jobs: int,
             "same_feature_parallelism": 0,
             "coding_parallelism": jobs,
             "awaiting_reply": "host_reply_required_per_isolated_case",
-            "workspace_copy": "allowlist_without_output_test_tools_features_git",
+            "workspace_copy": "denylist_without_output_test_tools_features_git",
             "interaction_interval_sec": INTERACTION_INTERVAL_SEC,
             "automation_interval_sec": AUTOMATION_INTERVAL_SEC,
             "automation_stability_confirmations": 2,

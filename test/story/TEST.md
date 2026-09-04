@@ -657,7 +657,11 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 这个数字不是门禁，`mechanism-budget.yaml` 里也不写它；它是下一批维护者定预算时的参照：
 新的 target 应当低于 8350 并朝 5200 走，而不是又一次回填改完之后的现值。
 
-**读数口径**：第 2、3 项只看工具**入参**（读了什么），第 4 项只看工具**输出**（门禁报了什么），
+**读数口径**：第 2、3 项只看工具**入参**（读了什么）——**含 bash 里的读**
+（`cat` / `sed` / `grep`，以及 `node -e "readFileSync(...)"`：一轮实跑读判据脚本 68 次
+全走最后这一种，而当时的口径只认前几种，报表上写着 0）；
+第 3 项的对象含 framework 的 `check-*.ts` 与**扩展自己的判据脚本**（`hooks/`、`skills/` 下的
+`.mjs`/`.py`），不含知识层——读知识是正当的。第 4 项只看工具**输出**（门禁报了什么），
 同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 `cat` 一次不算两轮。
 
 三个字段：`gate_rounds_with_fail`（有 FAIL 的门禁轮次）、`gap_sec_by_kind`
