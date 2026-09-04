@@ -7,23 +7,26 @@
  * 靠的都是挂在编码者本来就要读的契约字段上。
  *
  * 所以本阶段只判两件事：
- *   ① **集合一致**——spec §10 判命中的条目，在契约里都有实体扛着；反过来也不多出来；
- *   ② **挂对地方、写的是本需求的设计**——must 只能挂五类实体，text 不能是规约原文的复制。
+ *   ① **集合一致**——spec 判命中的条目，在契约里都有实体扛着；反过来也不多出来；
+ *   ② **挂对地方**——must 只能挂五类实体，编号在册，verify 取值封闭，探针可执行。
  *
- * 「义务是不是真的被应用了」是语义判断，归 verifier（overlay 的义务实质判据）。
- * 机械层越权下语义结论，就会变成「写了字就算做了」。
+ * **真源是 `spec/knowledge-use.yaml`**，不是 spec.md 里那两张表：那两张表是它的投影，
+ * 解析投影等于让判据依赖渲染格式。
+ *
+ * 「义务是不是真的被应用了」「text 写的是不是本需求的设计」都是语义判断，
+ * 归 verifier（overlay 的义务实质判据）。机械层越权下语义结论，
+ * 就会变成「写了字就算做了」。
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
 import * as path from 'node:path';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
-import { activeKnowledge, entryById, paraphraseSources } from '../shared/knowledge.mjs';
+import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, VERIFY_KINDS }
   from '../shared/obligations.mjs';
-import { isPureCopy } from '../shared/paraphrase.mjs';
+import { readUse, UseError } from '../shared/knowledge-use.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { adjudicationProblems } from '../shared/verifier-report.mjs';
 import { contractsPath, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
 
 const AUTHOR_DOC = 'doc/extensions/hooks/plan/author.md';
@@ -58,24 +61,28 @@ function findHeadings(text) {
   return { decision, design };
 }
 
-/** spec §10「规约约束要求」章里登记的条目编号集——本阶段义务集的比对基准。 */
-function specExitIds(projectRoot, feature) {
-  const p = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
-  const text = readTextOrNull(p);
-  if (text === null) return null;
-  const rows = lines(text);
-  const start = rows.findIndex(l => /^#{2,4}\s+.*规约约束要求/.test(l.trim()));
-  if (start < 0) return null;
-  const level = (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
+/**
+ * spec 判命中、且产生代码要求的条目编号集 —— 本阶段义务集的比对基准。
+ *
+ * 读的是 `spec/knowledge-use.yaml` 这份**真源**，不是 spec.md 里那张投影表：
+ * 解析投影，判据就依赖渲染格式，改一次表头就静默失灵。
+ *
+ * @returns {Set<string>|null} 读不到那份判断时 null——调用方据此记「这条没执行」
+ */
+function specHitIds(projectRoot, feature, knowledge) {
+  let use;
+  try {
+    use = readUse(projectRoot, feature);
+  } catch (e) {
+    if (e instanceof UseError) return null;
+    throw e;
+  }
   const ids = new Set();
-  for (let i = start + 1; i < rows.length; i++) {
-    const h = rows[i].trim().match(/^(#{2,4})\s+/);
-    if (h && h[1].length <= level) break;
-    const s = rows[i].trim();
-    if (!s.startsWith('|')) continue;
-    const first = s.replace(/^\||\|$/g, '').split('|')[0]?.trim() ?? '';
-    if (/^\{.*\}$/.test(first)) continue;
-    for (const m of first.matchAll(/\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g)) ids.add(m[0]);
+  for (const row of use.constraints) {
+    if (row?.applicable !== true) continue;
+    const id = String(row.id ?? '').trim();
+    // 处置标「（评审动作）」的条目是纯流程动作，不产生代码要求，不进契约
+    if (id && !entryById(knowledge, id)?.reviewAction) ids.add(id);
   }
   return ids;
 }
@@ -114,23 +121,24 @@ function chapterAt(rows, re) {
 }
 
 /**
- * spec §11 判「命中」的候选：`{ 适用单元 → 候选 }`。
+ * spec 登记了候选的适用单元：`{ 适用单元 → 候选 }`。
  *
- * 「无候选」是正常结论，不进这个集合——本判据核的是**命中了却在 plan 消失或被空手否掉**。
+ * 同样读真源。「无候选」是正常结论，不进这个集合——本判据核的是
+ * **登记了候选却在 plan 消失或被空手否掉**。
  */
 function specPatternHits(projectRoot, feature) {
-  const p = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
-  const text = readTextOrNull(p);
-  if (text === null) return null;
-  const rows = lines(text);
-  const at = chapterAt(rows, /^#{2,4}\s+.*设计模式候选登记/);
-  if (!at) return null;
+  let use;
+  try {
+    use = readUse(projectRoot, feature);
+  } catch (e) {
+    if (e instanceof UseError) return null;
+    throw e;
+  }
   const hits = new Map();
-  for (const cells of tableRows(rows, at.start + 1, at.level)) {
-    const [unit, candidate] = cells;
-    if (!unit || !candidate) continue;
-    if (/^\{.*\}$/.test(unit) || /^\{.*\}$/.test(candidate)) continue;   // 模板占位行
-    if (candidate.includes('无候选')) continue;
+  for (const row of use.patterns) {
+    const unit = String(row?.unit ?? '').trim();
+    const candidate = String(row?.candidate ?? '').trim();
+    if (!unit || !candidate || candidate.includes('无候选')) continue;
     hits.set(unit, candidate);
   }
   return hits;
@@ -153,15 +161,6 @@ function planPatternChoices(planText) {
     out.set(unit, { choice: choice ?? '', reason: reason ?? '' });
   }
   return out;
-}
-
-/** 逐行裁决核对：知识派生失败不静默通过——那会让本判据恒真。 */
-function adjudicationLanding(ctx, knowledge, targetPaths) {
-  try {
-    return adjudicationProblems(ctx, knowledge, targetPaths);
-  } catch (e) {
-    return { status: STATUS.FAIL, problems: [`逐行裁决无从核对：${e.message}`], detail: e.message };
-  }
 }
 
 export default guard('plan', async (ctx) => {
@@ -210,29 +209,27 @@ export default guard('plan', async (ctx) => {
   }
 
   const obligations = obligationsFromContracts(contracts);
-  const specIds = specExitIds(ctx.projectRoot, ctx.feature);
+  const wanted = specHitIds(ctx.projectRoot, ctx.feature, knowledge);
 
   // ---- 4. 集合一致（双向差集）----
-  if (specIds === null) {
-    skipped.push({ what: '义务集合一致', why: 'spec.md 里找不到「规约约束要求」章' });
+  if (wanted === null) {
+    skipped.push({ what: '义务集合一致', why: '读不到 spec/knowledge-use.yaml' });
   } else {
-    // 处置标「（评审动作）」的条目不产生代码要求，不进契约
-    const wanted = new Set([...specIds].filter(id => !entryById(knowledge, id)?.reviewAction));
     const got = new Set(obligations.map(o => o.rule).filter(Boolean));
 
     if (wanted.size > 0 && got.size === 0) {
       // 派生为空要出声，不能静默当「没有义务」通过（G7）
-      problems.push(`spec §10 判了 ${wanted.size} 条命中，契约里却一条 must 都没有`
+      problems.push(`spec 判了 ${wanted.size} 条命中，契约里却一条 must 都没有`
         + `——义务没有落到实体上，下游零注入。处置：按 ${SECTIONS_DOC} 把每条挂到对应实体`);
     }
     const missing = [...wanted].filter(id => !got.has(id));
     if (missing.length) {
-      problems.push(`这些条目在 spec §10 判了命中，契约里没有任何实体扛着：${missing.join('、')}`
+      problems.push(`这些条目在 spec 判了命中，契约里没有任何实体扛着：${missing.join('、')}`
         + '——判了命中却没有代码要求，等于知识在设计阶段就丢了');
     }
     const unknown = [...got].filter(id => !wanted.has(id));
     if (unknown.length) {
-      problems.push(`契约里的这些 must.rule 不在 spec §10 的命中集内：${unknown.join('、')}`
+      problems.push(`契约里的这些 must.rule 不在 spec 的命中集内：${unknown.join('、')}`
         + '——两处判定对不上，评审者会看到互相矛盾的结论；要么回 spec 补登记，要么去掉');
     }
   }
@@ -250,13 +247,9 @@ export default guard('plan', async (ctx) => {
       continue;
     }
     if (!ob.text) {
+      // text 写得对不对是语义判断（它是本需求的设计，还是规约原文换个说法）——
+      // 归 verifier。机械层只问「写没写」。
       problems.push(`${at} 的 ${ob.rule} 缺 text——要写本次要落实成什么，不是只标个编号`);
-    } else {
-      const { copied, source } = isPureCopy(ob.text, paraphraseSources(knowledge, ob.rule));
-      if (copied) {
-        problems.push(`${at} 的 ${ob.rule} text 是规约原文的复制或子串（来源「${source}…」）`
-          + '——写本需求的设计：它在这个实体上具体要求做什么');
-      }
     }
     if (!VERIFY_KINDS.includes(ob.verify)) {
       problems.push(`${at} 的 ${ob.rule} verify「${ob.verify || '(空)'}」不是封闭取值之一`
@@ -299,17 +292,17 @@ export default guard('plan', async (ctx) => {
     const hits = specPatternHits(ctx.projectRoot, ctx.feature);
     const choices = planPatternChoices(planText);
     if (hits === null) {
-      skipped.push({ what: '设计模式候选的交叉核对', why: 'spec.md 里没有候选登记章' });
+      skipped.push({ what: '设计模式候选的交叉核对', why: '读不到 spec/knowledge-use.yaml' });
     } else if (choices === null) {
       if (hits.size) {
-        problems.push(`spec 判命中 ${hits.size} 条设计模式候选，plan.md 却没有「设计模式选型」表`
+        problems.push(`spec 登记了 ${hits.size} 条设计模式候选，plan.md 却没有「设计模式选型」表`
           + '——命中的候选要逐条给结论，选或不选都算');
       }
     } else {
       for (const [unit, candidate] of hits) {
         const row = choices.get(unit);
         if (!row) {
-          problems.push(`spec 判「${unit}」命中候选 ${candidate}，plan 的设计模式选型表里没有这一行`
+          problems.push(`spec 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
             + '——命中的候选逐条给结论，漏一行它就在闭环里悄悄消失了');
           continue;
         }
@@ -322,10 +315,6 @@ export default guard('plan', async (ctx) => {
     }
   }
 
-  // ---- 7. 逐行裁决落盘 ----
-  const adj = adjudicationLanding(ctx, knowledge, [planPath, contractsPath(ctx.projectRoot, ctx.feature)]);
-  problems.push(...adj.problems);
-
   return gate(ctx, {
     problems,
     skipped,
@@ -333,7 +322,6 @@ export default guard('plan', async (ctx) => {
     checks: [
       { id: 'knowledge_obligation_on_entity', status: problems.length ? STATUS.FAIL : STATUS.PASS,
         detail: `义务 ${obligations.length} 条；问题 ${problems.length} 条` },
-      { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
     ],
     inputs: [planPath, contractsPath(ctx.projectRoot, ctx.feature)],
   });

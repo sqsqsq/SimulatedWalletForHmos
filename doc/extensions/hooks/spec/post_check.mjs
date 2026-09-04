@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/flow-check.mjs';
-import { adjudicationProblems, storyReviewProblems } from '../shared/verifier-report.mjs';
+import { storyReviewProblems } from '../shared/verifier-report.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
@@ -253,10 +253,10 @@ function knowledgeExitProblems(ctx, lines) {
     if (e instanceof UseError) return [...problems, e.message];
     throw e;
   }
-  problems.push(...coverageProblems(ctx.projectRoot, knowledge, use));
+  const specText = lines.join(String.fromCharCode(10));
+  problems.push(...coverageProblems(ctx.projectRoot, knowledge, use, specText));
   if (problems.length) return problems;      // 判断本身不成立时，投影核了也没有意义
 
-  const specText = lines.join(String.fromCharCode(10));
   problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
 
   // 命中且产生代码要求的那些，要在 acceptance 里有对应验收条目
@@ -469,12 +469,8 @@ export default guard('spec', async (ctx) => {
     if (numericProblems.length > 5) problems.push(`另有 ${numericProblems.length - 5} 处数值来源问题`);
   }
 
-  // ---- 逐行裁决落盘 ----
-  // 闭环第三步（主 agent 重跑 harness 回填凭证）时 verifier 报告已在，本判据那时才真正生效。
-  const adj = adjudicationLanding(ctx, specPath);
-  problems.push(...adj.problems);
-
   // ---- story 审查执行落盘 ----
+  // 闭环第三步（主 agent 重跑 harness 回填凭证）时 verifier 报告已在，本判据那时才真正生效。
   // 同上：注入了不等于执行了。这一项只核「结果块在不在、两类结论齐不齐」，不核内容。
   const storyReview = storyReviewLanding(ctx, featureRoot);
   problems.push(...storyReview.problems);
@@ -484,7 +480,6 @@ export default guard('spec', async (ctx) => {
     skipped,
     checks: [
       { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
-      { id: 'knowledge_adjudication_persisted', status: adj.status, detail: adj.detail },
       { id: 'story_review_persisted', status: storyReview.status, detail: storyReview.detail },
     ],
     inputs: [specPath],
@@ -501,11 +496,3 @@ function storyReviewLanding(ctx, featureRoot) {
   }
 }
 
-/** 逐行裁决核对：知识派生失败时不静默通过——那会让本判据恒真。 */
-function adjudicationLanding(ctx, specPath) {
-  try {
-    return adjudicationProblems(ctx, activeKnowledge(ctx.projectRoot), [specPath]);
-  } catch (e) {
-    return { status: STATUS.FAIL, problems: [`逐行裁决无从核对：${e.message}`], detail: e.message };
-  }
-}

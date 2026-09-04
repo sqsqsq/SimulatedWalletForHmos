@@ -166,3 +166,15 @@
 ### 6. 后续
 
 - 允许提交：已提交。**返修一个提交**（B1–B5），评审通过后步骤 9 收口，步骤 10 可开工。
+
+## 小段 3 返修（`20f7841f`）· 独立评审（Claude，2026-09-04）
+
+- 状态：**通过，步骤 9 收口**。B1–B5 逐项核过：作业书与 spec.md 不再有分配/裁决者；flow-check 指引与 spec.md ①–⑤ 同口径；
+  review_reflow 那句已改好；八个无调用函数与三个常量已删，`story-build.mjs` 语义代理标识 0；合同死键已删（`prose_budget` 见下）。
+  复跑：story 505 → 527 全绿（含步骤 10 小段 1 的 22 条）、73 条 FAIL 0 委派 12、预算门通过、`framework/` 零差异；
+  ceiling 压到现值：scripts_mjs 2979、semantic_proxy 31。
+- **grep 漏网四处**（不另开返修，随步骤 10 下一个提交顺手清，步骤 11 前必须为零）：
+  `skills/story/SKILL.md:24`「story：分配落点 → 逐章渲染 → 裁决 → 登记」是 skill 入口图，作者第一眼看到的就是它；
+  `hooks/spec/post_check.mjs:6` 注释「分配落点后逐章渲染」；`story-build.mjs:566` `glossaryMainName` 随 `missingGlossaryTerms` 删除后成了新的无调用函数；
+  合同 `story-chapters.json:157` `prose_budget: 1` 无消费者。
+- 实施记录这次附了 grep 结论但仍漏了 SKILL.md——grep 词表里没有「裁决」单字形态。下次用 `分配落点|裁决|单元` 这种宽词再人工筛。

@@ -1,6 +1,6 @@
-"""spec §11 判命中的候选，在 plan 有没有给结论——以及不选时有没有写理由。
+"""spec 登记的模式候选，在 plan 有没有给结论——以及不选时有没有写理由。
 
-实测一轮：spec §11 正确命中了两条候选（业务信号真实），plan 用「演示仓储一步完成」
+实测一轮：spec 正确登记了两条候选（业务信号真实），plan 用「演示仓储一步完成」
 「加节点表会扩大文件面」把它们否了——拿临时承载形态当信号输入。否决在闭环内完成，
 没有任何人过目。
 
@@ -45,12 +45,93 @@ class PlanPatternCrossCheck(unittest.TestCase):
             raise unittest.SkipTest("F4 实跑存档不在，跳过（判据本身由构造反例守）")
 
     def workspace(self) -> Path:
-        """把存档摆成一个 projectRoot：doc/extensions + doc/features/<feature>。"""
+        """把存档摆成一个 projectRoot：doc/extensions + doc/features/<feature>。
+
+        存档是批次 4 的实跑产物，那时知识判断还写在 spec 的 §10/§11 两张表里。
+        真源换成 `spec/knowledge-use.yaml` 之后，**不回头改存档**——历史轮次的产物
+        是证据，改了就不是它当时的样子了。工作区里按那两张表现搭一份真源即可：
+        判据读的是同一批结论，只是换了个入口。
+        """
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         shutil.copytree(REPO_ROOT / "doc" / "extensions", tmp / "doc" / "extensions")
         shutil.copytree(ARCHIVE, tmp / "doc" / "features" / FEATURE)
+        self.write_knowledge_use(tmp)
         return tmp
+
+    def write_knowledge_use(self, root: Path) -> None:
+        """按存档 spec 的 §10/§11 现搭 `spec/knowledge-use.yaml`。
+
+        激活清单里没出现在 §10 的条目逐条判不命中——完备性判据要求每条都有去处，
+        而存档那一轮的 §10 只列命中项。
+        """
+        spec = (root / "doc" / "features" / FEATURE / "spec" / "spec.md")
+        text = spec.read_text(encoding="utf-8")
+        hits = self.table_rows(text, "规约约束要求")
+        candidates = self.table_rows(text, "设计模式候选登记")
+
+        rows = ["schema: 1", f'manifest_digest: "{self.digest(root)}"',
+                "facts:", "  - id: component-profile",
+                "    used_for: 本部件的组件边界按它取", "constraints:"]
+        hit_ids = {cells[0] for cells in hits if cells}
+        for cells in hits:
+            rows += [f"  - id: {cells[0]}", "    applicable: true",
+                     f"    requirement: {self.one_line(cells[1])}"]
+        for entry in self.active_entries(root):
+            if entry in hit_ids:
+                continue
+            rows += [f"  - id: {entry}", "    applicable: false",
+                     "    reason: 本轮的分享链路不触及这条约束管的那类改动"]
+        rows.append("patterns:")
+        for cells in candidates:
+            rows += [f"  - unit: {self.one_line(cells[0])}",
+                     f"    candidate: {self.one_line(cells[1])}",
+                     f"    signal: {self.one_line(cells[2]) or '按存档登记'}"]
+        (root / "doc" / "features" / FEATURE / "spec" / "knowledge-use.yaml").write_text(
+            "\n".join(rows) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def one_line(cell: str) -> str:
+        """YAML 的纯量：去掉反引号与冒号后的歧义——这里只要能被读回来。"""
+        return re.sub(r"[`*]", "", cell).replace(":", "：").strip()
+
+    def table_rows(self, text: str, heading: str) -> list[list[str]]:
+        rows = text.split("\n")
+        start = next(i for i, l in enumerate(rows) if heading in l and l.startswith("#"))
+        out = []
+        for line in rows[start + 1:]:
+            if line.startswith("#"):
+                break
+            s = line.strip()
+            if not s.startswith("|"):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if all(re.fullmatch(r"[-: ]*", c) for c in cells):
+                continue
+            if cells[0] in ("编号", "适用单元"):
+                continue
+            out.append(cells)
+        return out
+
+    def node_eval(self, root: Path, expr: str) -> str:
+        module = (root / "doc/extensions/hooks/shared/knowledge-use.mjs").resolve().as_uri()
+        km = (root / "doc/extensions/hooks/shared/knowledge.mjs").resolve().as_uri()
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             f"const u = await import({json.dumps(module)});"
+             f"const k = await import({json.dumps(km)});"
+             f"const root = {json.dumps(root.as_posix())};"
+             f"process.stdout.write(String({expr}));"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout.strip()
+
+    def digest(self, root: Path) -> str:
+        return self.node_eval(root, "u.manifestDigest(root)")
+
+    def active_entries(self, root: Path) -> list[str]:
+        return self.node_eval(
+            root, "k.activeKnowledge(root).entries.map(e => e.id).join(',')").split(",")
 
     def run_hook(self, root: Path) -> str:
         proc = subprocess.run(

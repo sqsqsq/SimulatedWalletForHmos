@@ -91,6 +91,45 @@ function text(row, field) {
   return String(row?.[field] ?? '').trim();
 }
 
+/**
+ * 「没写依据」的确定性形态：空，或者恰好就是那三个字。
+ *
+ * 不设字数下限——**多少字算够是配额，不是不变量**：一句十二字的套话与一句八字的
+ * 具体依据，长度分不出高下。依据站不站得住是语义判断，归 verifier。
+ */
+function isEmptyReason(reason) {
+  return !reason || /^不涉及[。.]?$/.test(reason);
+}
+
+/**
+ * §9 技术契约章里登记的名字 —— `constraints[].contract` 只能引用这里面的。
+ *
+ * 这个字段是**spec 内部**的落点声明：命中的规约要求落在哪个已登记的接口、存储键、
+ * 配置项上。plan 侧的实体落点（`contracts.yaml` 的 `must` 挂在哪个实体）是另一层，
+ * 由 plan 定，两者不互为抄本。不核的话它就是一列没人读的字，写错写空都没有信号。
+ *
+ * **§9 那一章只在走 `/story` 时才写**，所以找不到它返回 null，调用方不判这一条——
+ * 那不是「缺了一章」，是这个需求本来就不写它。直接跑 spec 的需求里，
+ * 这一列是自由文本，扩展对它们要保持隐形。
+ */
+function contractNames(specText) {
+  const rows = String(specText ?? '').split(/\r?\n/);
+  const start = rows.findIndex(l => /^#{2,4}\s+.*技术契约/.test(l.trim()));
+  if (start < 0) return null;
+  const level = (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
+  const names = new Set();
+  for (let i = start + 1; i < rows.length; i += 1) {
+    const h = rows[i].trim().match(/^(#{2,4})\s+/);
+    if (h && h[1].length <= level) break;
+    const line = rows[i].trim();
+    if (!line.startsWith('|')) continue;
+    const first = line.replace(/^\||\|$/g, '').split('|')[0]?.replace(/[`*]/g, '').trim() ?? '';
+    if (!first || /^[-: ]*$/.test(first) || /^\{.*\}$/.test(first)) continue;
+    names.add(first);
+  }
+  return names;
+}
+
 /** 读这份判断。文件不在、坏了、schema 不对，三种都要分得清。 */
 export function readUse(projectRoot, feature) {
   const p = usePath(projectRoot, feature);
@@ -125,8 +164,10 @@ export function readUse(projectRoot, feature) {
  * 内容真不真（要求是不是本需求的设计、信号指不指向真实业务特征）是语义判断，
  * 归 verifier。这里只回答机器答得了的那几问：判全了吗、编号在册吗、候选在册吗。
  */
-export function coverageProblems(projectRoot, knowledge, use) {
+export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   const problems = [];
+  // §9 里登记了哪些名字。那一章只在走 /story 时写，没有它就不判这一条（见 contractNames）。
+  const contracts = specText === null ? null : contractNames(specText);
 
   const want = manifestDigest(projectRoot);
   if (use.manifestDigest && use.manifestDigest !== want) {
@@ -173,12 +214,11 @@ export function coverageProblems(projectRoot, knowledge, use) {
         + '这一段只用来登记**整域不适用**；域内有命中条目时逐条登记到 constraints');
       continue;
     }
-    const reason = text(row, 'reason');
-    if (reason.length < 6 || /^不涉及。?$/.test(reason)) {
-      problems.push(`constraint_domains 的「${prefix}」判整域不适用但依据太薄（「${reason}」）`
+    if (isEmptyReason(text(row, 'reason'))) {
+      problems.push(`constraint_domains 的「${prefix}」判整域不适用但没写依据`
         + ' —— 依据要可回查：「本需求无新增对外开放页面或接口」是依据，「不涉及」不是');
     }
-    naDomains.set(prefix, reason);
+    naDomains.set(prefix, text(row, 'reason'));
   }
 
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
@@ -206,10 +246,17 @@ export function coverageProblems(projectRoot, knowledge, use) {
       if (!text(row, 'requirement')) {
         problems.push(`${id} 判命中却没写 requirement —— 命中而不说要求做什么，编码那里拿不到`);
       }
+      // 落点名只能引 §9 已登记的：写一个不存在的名字，下游按名字找不到东西，
+      // 而「找不到」和「没写」在产物上长得一模一样。
+      const at = text(row, 'contract');
+      if (at && contracts && contracts.size && !contracts.has(at)) {
+        problems.push(`${id} 的 contract「${at}」不在 §9 技术契约里`
+          + `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
+          + ' —— 这一列引的是 §9 登记过的接口、存储键或配置项名，先在那里登记');
+      }
     } else if (row.applicable === false) {
-      const reason = text(row, 'reason');
-      if (reason.length < 6 || /^不涉及。?$/.test(reason)) {
-        problems.push(`${id} 判不命中但依据太薄（「${reason}」）—— 依据要可回查`);
+      if (isEmptyReason(text(row, 'reason'))) {
+        problems.push(`${id} 判不命中但没写依据 —— 依据要可回查，「不涉及」三个字不算`);
       }
     } else {
       problems.push(`${id} 的 applicable 不是 true / false（现在是「${row.applicable}」）`);
@@ -450,16 +497,16 @@ function main(argv) {
   try {
     const knowledge = activeKnowledge(projectRoot);
     const use = readUse(projectRoot, args.feature);
-    const problems = coverageProblems(projectRoot, knowledge, use);
-    if (problems.length) {
-      process.stderr.write(`knowledge-use.yaml 还不能生成，先修这 ${problems.length} 处：\n`);
-      for (const p of problems) process.stderr.write(`  · ${p}\n`);
-      process.exit(1);
-    }
     const specPath = path.join(featureRoot(projectRoot, args.feature), 'spec', 'spec.md');
     const specText = readTextOrNull(specPath);
     if (specText === null) {
       process.stderr.write(`读不到 ${relDisplay(projectRoot, specPath)}\n`);
+      process.exit(1);
+    }
+    const problems = coverageProblems(projectRoot, knowledge, use, specText);
+    if (problems.length) {
+      process.stderr.write(`knowledge-use.yaml 还不能生成，先修这 ${problems.length} 处：\n`);
+      for (const p of problems) process.stderr.write(`  · ${p}\n`);
       process.exit(1);
     }
     const next = applyZones(specText, renderZones(knowledge, use));

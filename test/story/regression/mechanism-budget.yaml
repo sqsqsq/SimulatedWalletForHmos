@@ -43,10 +43,10 @@ categories:
     reason: "峰值留 10%；无退场计划"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 4000
+    interim_ceiling: 3454
     target: 3000
     approved_by: WYK
-    reason: "峰值：步骤 10 先建集合一致性再退 paraphrase 与逐行 adjudication"
+    reason: "步骤 10 退场后压到现值 3454：paraphrase.mjs 与 verdict-set.mjs 整份删除、逐行裁决与引文核实退场、pre_verifier 从注入必答表改为指路；新增的 knowledge-use.mjs 已计入"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
     interim_ceiling: 3300
@@ -58,7 +58,7 @@ categories:
     interim_ceiling: 1000
     target: 900
     approved_by: WYK
-    reason: "峰值留余量给 knowledge-use 合同"
+    reason: "峰值留余量给 knowledge-use 的合同形态；现值 731"
 
 total:
   interim_ceiling: 15000
@@ -71,8 +71,12 @@ total:
 semantic_proxy:
   pattern: "similarity|paraphrase|levenshtein|jaccard|min_quote_chars|回声"
   scope: [scripts_mjs, scripts_py, hooks_mjs]
-  ceiling: 31
-  # 不分进行中/完成：现值是待退场的旧判据，退场后为 0，任何时候都不得增长。
+  ceiling: 0
+  # 不分进行中/完成：这些词在可执行代码里出现，就是又在用字符串近似语义，任何时候都不合入。
+  #
+  # **只数可执行的那部分**（判据实现见 test_mechanism_budget）：注释里交代
+  # 「这条路径为什么退场」正是该写的话；把退场理由一起数进来，下一轮就只能靠删注释过关，
+  # 那时代码里没有这些词，而知道它们为什么不该回来的那段文字也没了。
   target: 0
   approved_by: WYK
-  reason: "步骤 9 收口后 story-build 归零（min_quote_chars 与回声注释随裁决核实一起走），现值 31 全在 hooks 侧：paraphrase.mjs 8、pre_verifier 10、verifier-report 6、post_check 6、knowledge 1，归步骤 10 退"
+  reason: "步骤 10 收口归零：paraphrase.mjs 与 verdict-set.mjs 整份删除，pre_verifier 的相似度排序、verifier-report 的引文核实与 min_quote_chars、两处 post_check 的复制检查全部退场"

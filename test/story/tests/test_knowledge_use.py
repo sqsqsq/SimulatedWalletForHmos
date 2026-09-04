@@ -32,6 +32,14 @@ ALL_DOMAINS = ("UX", "SEC", "DFX", "OBS", "RES", "COMPAT", "ENV", "DLV")
 
 SPEC_HEAD = """# {feature} spec
 
+## 9. 技术契约
+
+### 9.2 数据存储
+
+| 名称 | 用途 |
+|---|---|
+| wallet_receipt_temp | 凭证渲染产物的临时落点 |
+
 ## 10. 规约约束要求
 
 <!-- 判定产生的代码要求，按命中条目派生。 -->
@@ -148,10 +156,20 @@ class TestTheJudgementMustCoverEveryActiveEntry(KnowledgeUseCase):
         self.write_use(domains=list(ALL_DOMAINS))
         self.assert_render_names("已判整域不适用，却又逐条登记")
 
-    def test_a_thin_reason_is_named(self) -> None:
+    def test_a_reason_that_is_only_the_two_words_is_named(self) -> None:
+        """判的是**确定性形态**：空，或者恰好就是「不涉及」那三个字。
+
+        不设字数下限——多少字算够是配额不是不变量，依据站不站得住归 verifier。
+        """
         self.write_use(domains=[d for d in ALL_DOMAINS if d != "SEC"],
                        constraints=f"  - id: {HIT}\n    applicable: false\n    reason: 不涉及")
-        self.assert_render_names("依据太薄")
+        self.assert_render_names("没写依据")
+
+    def test_a_short_but_concrete_reason_passes(self) -> None:
+        """八个字的具体依据照过——它比一句十二字的套话更能回查。"""
+        self.write_use(domains=[d for d in ALL_DOMAINS if d != "SEC"],
+                       constraints=f"  - id: {HIT}\n    applicable: false\n    reason: 无任何出口")
+        self.render_ok()
 
     def test_a_hit_without_a_requirement_is_named(self) -> None:
         self.write_use(constraints=f"  - id: {HIT}\n    applicable: true")
@@ -266,8 +284,9 @@ class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
         self.write_use(constraints=f"  - id: {HIT}\n    applicable: false\n"
                                    "    reason: 本需求不产生任何出口，凭证只在端侧生成不外传")
         text = self.render_ok()
-        self.assertNotIn("wallet_receipt_temp", text)
-        self.assertIn("本需求不产生任何出口", text)
+        zone = text.split("knowledge-use:begin 规约约束要求")[1].split("knowledge-use:end")[0]
+        self.assertNotIn("wallet_receipt_temp", zone, "改判之后生成区还留着旧的落点")
+        self.assertIn("本需求不产生任何出口", zone)
 
     def test_the_zone_goes_after_the_template_note(self) -> None:
         """生成区排在模板给作者的写法说明之后——说明是给人看的，不被生成器吃掉。"""

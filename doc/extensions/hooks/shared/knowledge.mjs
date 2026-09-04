@@ -345,17 +345,6 @@ export function entryById(knowledge, id) {
 }
 
 /**
- * 复述判定的来源文本：该条目的约束列、处置列与所属域的落法附注。
- * **不含**渲染出的「要求」列——那本就是原文，纳入比较会把全员误杀（判据唯一性要求）。
- */
-export function paraphraseSources(knowledge, id) {
-  const e = entryById(knowledge, id);
-  if (!e) return [];
-  const domain = knowledge.constraints.find(c => c.file === e.file);
-  return [e.constraint, e.handling, domain?.notes ?? ''].filter(Boolean);
-}
-
-/**
  * 知识层自检 —— 结构级边界，不判内容对错（那是人和 verifier 的事）。
  *
  * 扫描面是**全部激活文件**（三类知识 + 索引件），四项判据全部从激活清单与目录结构派生：

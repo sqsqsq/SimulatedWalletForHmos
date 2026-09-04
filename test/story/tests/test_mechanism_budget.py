@@ -101,13 +101,22 @@ class MechanismBudget(unittest.TestCase):
         self.assertLessEqual(total, limit, f"机制层总量 {total} 行，超过{why} {limit}。" + REMINDER)
 
     def test_semantic_proxy_identifiers_do_not_grow(self):
-        """脚本里再出现相似度/复述/最短引文这类词，就是又在用字符串近似语义。"""
+        """脚本里再出现相似度/复述/最短引文这类词，就是又在用字符串近似语义。
+
+        **只数可执行的那部分**：注释里交代「这条路径为什么退场」正是该写的话
+        （`test_writing_flow` 的同类判据是同一口径）。把退场理由一起数进来，
+        下一轮就只能靠删掉注释过关——那时代码里没有这些词，而知道它们为什么不该回来的
+        那段文字也没了。
+        """
         sp = self.budget["semantic_proxy"]
         pat = re.compile(sp["pattern"], re.I)
         hits: dict[str, int] = {}
         for cat in sp["scope"]:
             for p in self.files.get(cat, []):
-                n = len(pat.findall(p.read_text(encoding="utf-8", errors="replace")))
+                code = "\n".join(
+                    ln for ln in p.read_text(encoding="utf-8", errors="replace").split("\n")
+                    if not ln.lstrip().startswith(("//", "*", "/*", "#")))
+                n = len(pat.findall(code))
                 if n:
                     hits[p.relative_to(EXT).as_posix()] = n
         total = sum(hits.values())

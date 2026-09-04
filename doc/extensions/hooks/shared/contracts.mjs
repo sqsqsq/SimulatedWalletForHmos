@@ -176,4 +176,4 @@ export function knowledgeCriteria(acceptance) {
   return out;
 }
 
-export { asArray, entityName };
+export { entityName };

@@ -22,8 +22,8 @@
 | 6 材料版本与流程状态 SSOT | **通过**（`da35bbb7`、`cb7b7797`） | [reviews/06-08-material-and-deterministic.md](reviews/06-08-material-and-deterministic.md) |
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
-| 9 正向 Story 作者路径切换 | 第一段、小段 1（含返修）、小段 2 **通过**；小段 3（`b991a22d`）返修后通过，B1–B5 已实施 → **步骤 9 收口** | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
-| 10 三类 Knowledge 消费与传递 | 拆四小段（见下方分段计划）；小段 1 已实施，等待评审 | 待生成 |
+| 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
+| 10 三类 Knowledge 消费与传递 | 小段 1（`fcef8a01`）**通过**，桥 B1（plan 仍读投影）、B2（hooks_mjs 余 16 行）；评审意见：小段 2+3 合并、小段 4 同批交付，剩余一次做完、两个提交、一次评审，进入条件见评审 §6 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
 ## 事件日志
@@ -906,3 +906,68 @@ M16（四个导出没有跨文件消费者 = 死代码，改成模块内私有�
   digest 与激活清单对不上，逐条有测试；
 - 新增 22 条测试（`test_knowledge_use.py`），story 全量 527 绿，73 条对账 FAIL 0、委派 12；
 - `hooks_mjs` 3984（ceiling 4000，小段 2 退 paraphrase 后净减）。
+- 2026-09-04 独立评审步骤 9 小段 3 返修：通过，步骤 9 收口；grep 漏网四处（SKILL.md 入口图、spec/post_check 注释、glossaryMainName、prose_budget）随步骤 10 下一提交清。独立评审步骤 10 小段 1：通过。复跑 527 全绿、73 条（委派 12）、预算门通过；判据全为集合与字段不变量，spec 侧 isPureCopy 退出。桥：plan post_check 仍解析投影表；hooks_mjs 3984/4000。advisory：reason 六字阈值是配额、YAML contract 字段归属、overlay 引文长度。分段裁定建议：小段 2+3 合并（同一批文件、先退后建避免预算悬崖），小段 4 独立提交但同批交付一次评审。
+
+## 步骤 10 · 小段 2+3 合并（2026-09-04）：旧路径退场 + plan 侧换真源 · 已实施，等待评审
+
+评审 §5 判定小段 2 与 3 应合并（同一批文件、避免留下「plan 读投影」这座桥与 16 行的预算悬崖），
+本段按它做：**先退后建，同一提交净减**。
+
+**退场**
+
+| 退掉什么 | 为什么 |
+|---|---|
+| `paraphrase.mjs`、`verdict-set.mjs` 两份文件 | 相似度分类与必答集派生，只服务逐行裁决 |
+| `verifier-report.mjs` 的 `evidenceVerified`、`minQuoteChars`、`adjudicationProblems` | 引文核实与逐行裁决核对 |
+| `pre_verifier.mjs` 的必答清单注入与相似度排序（整份重写） | 它把判定全集拆成一张表要求逐行裁，裁决量随材料条数涨而判断不增加；证据列退化成回声，于是又加「引文 ≥12 字且能在产物里检索到」——那是另一道找字符串的题 |
+| `knowledge.mjs` 的 `paraphraseSources` | 复述比对的来源，无消费者 |
+| spec 与 plan 两侧 post_check 的 `isPureCopy` 调用 | 「text 是不是本需求的设计」是语义判断 |
+| 合同的 `verdicts.min_quote_chars` 与它的 note | 消费者只剩引文核实 |
+| B02-evidence-echo 形态与它的夹具 | **不是换发现者，是产生它的机制没了**：证据列来自「逐行裁决 + 每行附引文」，那套要求撤销之后报告里没有证据列，也就无所谓回声。台账记 `retired` 并写清替代它的是什么 |
+
+`pre_verifier` 现在只给三样：判断的真源在哪、按什么判、结论写成什么。裁多少条由 verifier 按需要定。
+
+**plan 侧换真源**
+
+`specExitIds`（解析 spec §10 表）→ `specHitIds`（读 `spec/knowledge-use.yaml`）；
+`specPatternHits` 同改。解析投影，判据就依赖渲染格式，改一次表头就静默失灵。
+
+**overlay 判据改措辞**：spec 的两条与 plan 的两条都改成「按真源判语义」——不逐条对账、
+不出裁决表、不为每条结论找一段够长的引文。
+
+**A1/A2 两条 advisory**
+
+- A1：「依据太薄」的 `reason.length < 6` 是配额不是不变量。改成只判两种确定性形态：
+  空，或恰好就是「不涉及」那三个字。八个字的具体依据照过——它比一句十二字的套话更能回查。
+- A2：`constraints[].contract` 定为 **spec 内部**的落点声明（引 §9 技术契约里登记的名字），
+  并核起来：写一个不存在的名字会被点名。§9 那一章只在走 `/story` 时才写，
+  没有它就不判这一条——那不是缺了一章，是这个需求本来就不写它（W01 形态的要求）。
+
+**语义代理归零**：现值 0（可执行代码里）。计数口径同时对齐 `test_writing_flow` 的同类判据——
+**只数可执行的那部分**：注释里交代「这条路径为什么退场」正是该写的话，把退场理由一起数进来，
+下一轮就只能靠删注释过关，那时代码里没有这些词，而知道它们为什么不该回来的那段文字也没了。
+
+**测试处置**（按三类分）
+
+| 处置 | 哪些 | 条数 |
+|---|---|---|
+| 整份退场 | `test_adjudication_parity.py`（必答集的 JS/Python 口径一致性，那个集合没了） | 5 |
+| 整条删 | `test_verifier_report_protocol` 里断言「逐行裁决齐不齐」的三条 | 3 |
+| 保留断言、改搭建 | 同文件里判**报告读取层**的四条（两种协议、多份 subject、坏文件不冒充「还没跑」、缺正文字段）——那条路径 story 审查仍在用，改成经 `storyReviewProblems` 入口 | 4 |
+| 保留断言、改搭建 | `test_plan_pattern_crosscheck`：判据一个字没动，工作区里按存档的 §10/§11 现搭一份 YAML 真源。**存档不改**——它是批次 4 的实跑证据 | 6 |
+
+**台账当场抓到三条**，都是真问题，已修：M16（`asArray` 随 verdict-set 退场失去跨文件消费者）、
+W01（非 story 需求没有 §9，`contract` 不该拦）、B02（如上，退场）。
+步骤 9 返修漏网的最后一处（`verifier-report` 里「不核来源单元」）一并清零。
+
+**验收**
+
+- 交付面 grep `audit|source-units|story-verify|story-verdicts|by: author|裁决者|待分配|来源单元`
+  在 `doc/extensions`（knowledge 之外）**零命中**；
+- `paraphrase|similarity|levenshtein|jaccard|min_quote_chars|回声` 在可执行代码里 **0 处**；
+- story 全量 523 绿；失效形态 FAIL 0、委派 12、retired 1（台账仍 73 条，活跃 72）；
+- `hooks_mjs` 3984 → 3454（ceiling 压到现值），`semantic_proxy` ceiling 31 → 0，
+  机制层总量 12221 → 11686。
+
+**一处不稳定**：这次全量跑用了 35 分钟（平时 50 秒），结果全绿。与评审在小段 2 记过的
+「24 分钟 + 1 error」同型，怀疑是 node 子进程在本机被外部扫描拖慢；复跑正常。归步骤 11 观察。

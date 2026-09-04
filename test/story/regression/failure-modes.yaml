@@ -655,17 +655,18 @@ modes:
     found_round: "2026-08-28"
     form: 裁决的证据是回声——把注入清单里给的话抄回证据列，机械层只查「同行含键 + 有裁决词」就放行
     clause: E4 / KB-5
-    checker: b02_evidence_echo
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/B02-evidence-echo/bad
-    good_fixture: test/story/fixtures/failure-modes/B02-evidence-echo/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
-    scope_note: >
-      实测 verifier 报告 272 行证据只有 14 种字符串、全是被检文本的复制，零条「落点错/漏了」，
-      而门禁照收 PASS。判据改为：引文非空且 ≥12 字、是目标产物的子串、一行只裁一个对象。
-      与 pre_verifier 不再注入被检文本是同一件事的两面——不给原文，才可能拿到真引文。
+    status: retired
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1）
+    reason: >
+      不是「换了发现者」，是**产生这个形态的机制没了**。证据列来自「逐行裁决 + 每行附引文」
+      那套要求：注入必答清单 → 逐行裁 → 门禁核对键与引文。步骤 10 把整条链退场之后，
+      报告里不再有证据列，也就无所谓证据是不是回声。
+      当初为它加的引文核实（非空、≥12 字、是目标产物的子串）本身就是又一层字符串近似——
+      拿它治回声，治出来的是「去产物里找一段够长的话抄过来」。
+      现在 verifier 只被要求写「判出问题的那几条与依据」，不出裁决表，没有可回声的列。
 
   - id: R03-author-chain-dangling
     dimension: knowledge
