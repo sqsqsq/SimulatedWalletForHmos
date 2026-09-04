@@ -6,11 +6,13 @@ the existing per-case runner and its immutable run evidence.
 from __future__ import annotations
 
 import json
+import os
 import unittest
 import sys
 import tempfile
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -897,6 +899,68 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             run_multi_case.REPO_ROOT = original_repo
             run_multi_case.FEATURES_ROOT = original_features
             shutil.rmtree(root, ignore_errors=True)
+
+
+class PidReuseDoesNotBlockCleanup(unittest.TestCase):
+    """判进程存活要比身份——只比 pid 号会被系统的号码复用骗到。
+
+    实测（首跑起跑前）：三个几天前的 worker 早已退出，pid 被发给了别的进程
+    （37520→conhost、23876→cmd、10456→VSCode 安装程序），于是历史现场清理预检报
+    「active state, pid or lease」，新 suite 起不来。那三份 state 的 status 都是终态、
+    lease 过期二十万秒以上，只有 pid 那一项把它们判成活的。
+    """
+
+    def test_a_live_pid_with_an_ancient_started_at_is_not_the_same_process(self) -> None:
+        """同一个活着的 pid，配一条三天前的启动记录 → 那是号码被复用了。"""
+        ancient = datetime.fromtimestamp(time.time() - 3 * 86400).strftime("%Y-%m-%d %H:%M:%S")
+        self.assertFalse(run_multi_case._pid_alive(os.getpid(), ancient),
+                         "创建时间比记录晚三天，仍被当成同一个进程")
+
+    def test_the_same_pid_with_a_fresh_record_is_alive(self) -> None:
+        """反面：记录就是刚才写的，那就是它本人，不能误判成死。"""
+        fresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.assertTrue(run_multi_case._pid_alive(os.getpid(), fresh))
+
+    def test_without_a_record_it_falls_back_to_the_pid(self) -> None:
+        """拿不到启动记录时退回只比 pid：**宁可判成活的**。
+
+        误判成活只是拦住清理（有人来看），误判成死会删掉正在跑的现场。
+        """
+        self.assertTrue(run_multi_case._pid_alive(os.getpid(), None))
+        self.assertTrue(run_multi_case._pid_alive(os.getpid(), ""))
+
+    def test_state_evidence_stops_calling_a_reused_pid_active(self) -> None:
+        """整条预检：一个终态 + lease 过期 + pid 被复用的历史 run，不该判 active。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "cases" / "auto-topup" / "20260831-215912-21320-718c965a"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({
+                "case": "auto-topup",
+                "pid": os.getpid(),                       # 活着，但不是当初那个
+                "status": "stopped",
+                "started_at": datetime.fromtimestamp(
+                    time.time() - 3 * 86400).strftime("%Y-%m-%d %H:%M:%S"),
+                "lease_expires_epoch": time.time() - 200000,
+            }, ensure_ascii=False), encoding="utf-8")
+            evidence = run_multi_case._state_evidence(Path(tmp))
+            self.assertEqual(1, len(evidence))
+            self.assertFalse(evidence[0]["active"],
+                             f"pid 复用仍被判成活的：{evidence[0]}")
+
+    def test_a_genuinely_running_worker_is_still_protected(self) -> None:
+        """真的在跑的现场不能被删——这是上一条的反面，两条一起才是判据。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "cases" / "auto-topup" / "run-live"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({
+                "case": "auto-topup",
+                "pid": os.getpid(),
+                "status": "running",
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "lease_expires_epoch": time.time() + 600,
+            }, ensure_ascii=False), encoding="utf-8")
+            evidence = run_multi_case._state_evidence(Path(tmp))
+            self.assertTrue(evidence[0]["active"], "正在跑的现场被判成可删")
 
 
 if __name__ == "__main__":

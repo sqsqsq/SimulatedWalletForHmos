@@ -98,9 +98,14 @@ OWNED_SUITE_DIR = re.compile(
     r"(?:story-suite-[A-Za-z0-9._-]+|\d{8}-\d{6}-\d+)$")
 WORKSPACE_TEMPLATE_NAME = "workspace-template"
 WORKSPACES_ROOT_NAME = "workspaces"
+# `.opencode` 在列，是因为 **verifier 链住在那里**：`agent/verifier.md`（只读子代理）、
+# `plugin/record-verifier-report.js`（结论发布器）、`skill/story/SKILL.md`（作者入口）。
+# 不带它，被测侧就没有 verifier 也没有 skill——首跑实测的后果是主模型自己写了
+# verifier 报告与证据 JSON（`agent_id: storiesuite-verifier-stub`），那一跑的 verifier 轴失真。
+# 目录里的 `node_modules` 由 WORKSPACE_EXCLUDED_DIR_NAMES 排除，不随工作区复制。
 WORKSPACE_ALLOWED_DIRS = (
     "01-Product", "02-Feature", "04-BusinessBase", "05-SystemBase",
-    "AppScope", "framework", "hvigor", "libs", "doc/extensions",
+    "AppScope", "framework", "hvigor", "libs", "doc/extensions", ".opencode",
 )
 WORKSPACE_ALLOWED_FILES = (
     "AGENTS.md", "CLAUDE.md", "README.md", "build-profile.json5",
@@ -1129,9 +1134,58 @@ def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
     }
 
 
-def _pid_alive(pid: int | None) -> bool:
+# 进程创建时间比 state 记的启动时刻晚这么多，就不可能是同一个进程了。
+# 放宽到一分钟：worker 先起、state 后写，两者相差通常在秒级。
+PID_REUSE_TOLERANCE_SEC = 60.0
+
+
+def _process_create_epoch(pid: int) -> float | None:
+    """进程的创建时刻（epoch 秒）。拿不到返回 None —— **拿不到不等于复用**。"""
+    if sys.platform == "win32":
+        access = 0x1000 | 0x0400
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(access, False, int(pid))
+        if not handle:
+            return None
+        try:
+            creation = ctypes.c_ulonglong()
+            exit_t = ctypes.c_ulonglong()
+            kernel_t = ctypes.c_ulonglong()
+            user_t = ctypes.c_ulonglong()
+            ok = kernel32.GetProcessTimes(
+                handle, ctypes.byref(creation), ctypes.byref(exit_t),
+                ctypes.byref(kernel_t), ctypes.byref(user_t))
+            if not ok or not creation.value:
+                return None
+            # FILETIME：100 纳秒为单位，起点 1601-01-01；转 Unix epoch
+            return creation.value / 10_000_000.0 - 11_644_473_600.0
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8") as handle:
+            fields = handle.read().rsplit(")", 1)[-1].split()
+        ticks = float(fields[19])                       # starttime，第 22 个字段
+        with open("/proc/uptime", encoding="utf-8") as handle:
+            uptime = float(handle.read().split()[0])
+        hz = os.sysconf("SC_CLK_TCK")
+        return time.time() - uptime + ticks / hz
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def _pid_alive(pid: int | None, started_at: str | None = None) -> bool:
+    """这个 pid 上跑的，还是不是当初那个进程。
+
+    **只比 pid 号会被复用骗到**：几天前的 worker 早退出了，系统把号发给了别人，
+    而那个别人活得好好的。所以拿到 `started_at` 时再比一次创建时间——
+    进程比记录晚生一分钟以上，它就是另一个进程。
+
+    `started_at` 缺失或创建时间读不出来时退回只比 pid：**宁可判成活的**，
+    误判成活只是拦住清理（有人来看），误判成死会删掉正在跑的现场。
+    """
     if not pid:
         return False
+    running = False
     if sys.platform == "win32":
         access = 0x1000 | 0x0400
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -1140,21 +1194,43 @@ def _pid_alive(pid: int | None) -> bool:
             exit_code = ctypes.c_ulong()
             try:
                 if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                    return exit_code.value == 259
+                    running = exit_code.value == 259
             finally:
                 kernel32.CloseHandle(handle)
+        else:
+            try:
+                os.kill(int(pid), 0)
+                running = True
+            except PermissionError:
+                running = True
+            except (OSError, ProcessLookupError):
+                running = False
+    else:
         try:
             os.kill(int(pid), 0)
-            return True
-        except PermissionError:
-            return True
+            running = True
         except (OSError, ProcessLookupError):
-            return False
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ProcessLookupError):
-        return False
-    return True
+            running = False
+    if not running or not started_at:
+        return running
+    recorded = _parse_epoch(started_at)
+    created = _process_create_epoch(int(pid))
+    if recorded is None or created is None:
+        return True
+    return created <= recorded + PID_REUSE_TOLERANCE_SEC
+
+
+def _parse_epoch(text: str) -> float | None:
+    """state 里的时刻字符串 → epoch 秒。两种写法都认，认不出返回 None。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(raw[:19], fmt).timestamp()
+        except ValueError:
+            continue
+    return None
 
 
 def _process_inventory() -> tuple[bool, list[dict[str, Any]], str | None]:
@@ -1246,7 +1322,7 @@ def _state_evidence(output_path: Path) -> list[dict[str, Any]]:
         pid = int(state.get("pid")) if state.get("pid") else None
         lease_expires = float(state.get("lease_expires_epoch") or 0)
         status = str(state.get("status") or "")
-        alive = _pid_alive(pid)
+        alive = _pid_alive(pid, state.get("started_at"))
         lease_active = lease_expires > time.time()
         active = alive or (lease_active and status not in TERMINAL_STATUS)
         evidence.append({
@@ -1328,7 +1404,12 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
             pids = [int(item.get("worker_pid")) for item in
                     (suite.get("case_states") or {}).values()
                     if isinstance(item, dict) and item.get("worker_pid")]
-            live_pids = [pid for pid in pids if _pid_alive(pid)]
+            live_pids = [
+                int(item["worker_pid"]) for item in
+                (suite.get("case_states") or {}).values()
+                if isinstance(item, dict) and item.get("worker_pid")
+                and _pid_alive(int(item["worker_pid"]), item.get("started_at"))
+            ]
             target.update({"suite_status": suite.get("status"),
                            "case_statuses": statuses, "worker_pids": pids,
                            "live_worker_pids": live_pids})

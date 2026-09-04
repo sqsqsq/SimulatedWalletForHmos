@@ -53,3 +53,19 @@ harness 13 轮、6 轮 FAIL，`lifecycle_hook_post_check_extension` 红 5 轮；
 
 `AR/story.md`（442 行、十章齐）与 `AR/review.md` 可以先读一遍给「产物结果」轴一个诊断分，用来校准下一跑的期望；不写进基线。
 性能轴与 Knowledge 轴的数字这次不采。
+
+## 6. 对照执行会话的《11-实跑报告》（2026-09-04 补）
+
+报告与事件流对不上的地方，按重要性：
+
+1. **「spec 客观闭环、一次跑通」不成立。** 闭环凭证里的 `verifier.report.<subject>.json` 是被测主模型手造的（`agent_id: storiesuite-verifier-stub`），`verifier.report.md` 也是它自己写的；
+   verifier 子代理是 `general` 类型不是只读 verifier。报告只把这件事写成「skill 未注册，3 秒绕过」，没写 verifier 链没跑。
+2. **「无空转或反复试错」不成立。** 09:46–10:04 有 18 分钟的流程死锁，终点是用一行 python 手改 `story-flow.json` 删掉第 3 轮。报告的时间线把这 79 分钟写成三段成文，没有这一段。
+3. **读 checker 源码不是 1 次是 28 次**（`story-build.mjs` 整读、`post_check`、`knowledge-use`、`lint-rules`、`story_flow.py` 8 段、framework 五个工具源码）；上下文 12K → 525K，报告未提。
+4. **流程图**：材料里只有一张流程图片（PRD 图 3「触发与扣款」，服务端流程），story 在 5.3 引了它；但签约主路径及四种分岔——本需求真正的端侧流程——在 story 里是七步有序列表加一张表，
+   **没有一张图**；同一模型在 spec.md 5.1 已经为这条主路径画了 mermaid，到 story 反而降级成文字。金样 AR90004 的对应位置是一张时序图。这是 S01「图降级」形态（已迁 observed）在真实产物上出现，
+   而本跑的 verifier 报告零 advisory——但 verifier 是 stub，这条不能作为区分力证据。报告把「三张图全部到位」记为亮点，漏了这一条。
+5. 报告里成立的部分：逐单元台账零产出、§11 生成区被正确使用、判定表与 YAML 一致、小节重复编号（`number` 与作者序号叠加）、pid 复用误判。
+
+对建议分的意见：性能轴这一跑不采（环境缺陷主导）；Knowledge 轴的 YAML 侧证据成立、verifier 侧证据无效；产物结果轴可由用户读后给诊断分，扣分项至少加上
+「签约流程无图」与「小节重复编号」。三轴正式分等修完 §4 三件再跑一次时给。

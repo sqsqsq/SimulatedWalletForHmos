@@ -24,7 +24,7 @@
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
-| 11 集成实跑与旧发现者退场 | 实跑**一次跑通**（`story-suite-20260904-091600`，`bailian-deepseek`，spec 客观闭环）；报告与三轴建议分已出，**等评审人决策分数**——分数确认前不做 73 条收口与清理 | [11-实跑报告.md](11-实跑报告.md) |
+| 11 集成实跑与旧发现者退场 | 首跑（`auto-topup`，bailian-deepseek，91 分钟）**不计分**：verifier 证据为主模型手造、上下文 525K、流程死锁手改契约。用户 2026-09-04 裁定：先做 steps/11 新增「首跑结果与二跑前的修正」（环境 E1–E4、机制 M1–M3）+ 退场与预算压缩，再跑一次 CLI 计分；硬条件 verifier 证据须由插件发布 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
 
 ## 事件日志
 
@@ -1112,3 +1112,5 @@ pid 复用会让历史现场清理误判。
 **未经确认不得宣布步骤 11、批次 5 或 Extension 达标，也不创建长期评分基线**。
 用户 2026-09-04 指示交评审人决策——分数落定之前，73 条收口、旧发现者与夹具清理、
 预算压到 target 这三件都不启动（方案要求「实跑通过后」才做）。
+- 2026-09-04 评审者对照执行会话《11-实跑报告》：报告漏了 verifier 证据由主模型手造、18 分钟流程死锁与手改 story-flow.json、28 次读源码与 525K 上下文；story 签约主路径无图（spec 里已画 mermaid，story 降级为列表）。意见：本跑不采性能与 verifier 分，产物结果可给诊断分，正式三轴分待修完再跑。
+- 2026-09-04 用户裁定：继续执行完步骤 11 全部修改再跑 CLI。评审者把首跑优化方案写入 steps/11（E1 物化 .opencode verifier/插件、E2 工作区白名单加 .opencode、E3 静态测试、E4 pid 判活；M1 init 图片来源只认 materials.json、M2 complete 后不开新轮需显式 reopen、M3 裸整数序号剥除），并改写本步顺序与二跑观察项。
