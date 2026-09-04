@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "d6e55321d67a5b1cc262f5f840ff26ee7507a915",
-  "built_at": "2026-09-04T07:22:44.685Z",
+  "source_commit": "85e266f185fbaec92263377dc71f6c15512ea3db",
+  "built_at": "2026-09-04T08:48:14.668Z",
   "files": [
     {
       "path": "MIGRATION.md",
