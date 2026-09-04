@@ -654,26 +654,6 @@ def m10_unscoped_identifier_scan(root: Path, ctx: Ctx) -> Outcome:
             return Outcome(False, f"{path.name} 的仓内标识扫描无作用域排除")
     return Outcome(True, "归档件扫描均有作用域排除")
 
-
-@checker
-def m11_flagged_only_adjudication(root: Path, ctx: Ctx) -> Outcome:
-    """必答清单必须是全集；风险标记只排序，不决定裁决覆盖面。"""
-    targets = [p for p in iter_files(root, (".mjs",), ()) if "verifier" in p.name]
-    if not targets:
-        return Outcome(True, "无 verifier 注入模块（不适用）")
-    bad_filter = re.compile(
-        r"\.filter\(\s*[\w$]+\s*=>\s*[\w$.]*\.(flagged|suspect|similarity|score)\b"
-    )
-    for path in targets:
-        text = read_text(path)
-        m = bad_filter.search(text)
-        if m:
-            return Outcome(False, f"{path.name} 按风险标记过滤必答清单：`{m.group(0)}`")
-        if "pre_verifier" in path.name and not re.search(r"全集|all rows|逐行", text):
-            return Outcome(False, f"{path.name} 未声明全集裁决口径")
-    return Outcome(True, "必答清单为全集，标记只排序")
-
-
 @checker
 def m12_normalize_folds_identifiers(root: Path, ctx: Ctx) -> Outcome:
     """复述判定的规范化必须保留标识符字符。"""
@@ -989,81 +969,6 @@ def p01_appendix_prefix_granularity(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "；".join(bad[:5]))
     return Outcome(True, "附录编号全部到条目级")
 
-
-@checker
-def p02_appendix_conclusion_paraphrase(root: Path, ctx: Ctx) -> Outcome:
-    """附录「结论或落点」列不得是同行要求列或规约原文的子串（E1/E2）。"""
-    story = _story_path(root)
-    if story is None:
-        return Outcome(True, "无 story 成品（不适用）")
-    text = read_text(story)
-    headers = header_index(text, APPENDIX_HEADERS)
-    if not headers:
-        return Outcome(True, "无规约符合性附录（不适用）")
-    entries = load_constraint_entries(ctx.knowledge_root)
-    bad = []
-    for line_no, cells in md_table_rows(text, APPENDIX_HEADERS):
-        conclusion = cell(cells, headers, "结论")
-        requirement = cell(cells, headers, "要求")
-        entry_id = (ENTRY_ID_RE.findall(cell(cells, headers, "编号")) or [""])[0]
-        hit = cell(cells, headers, "命中")
-        if "否" in hit:
-            continue
-        sources = [requirement] + sources_for(entry_id, entries)
-        copied, src = is_pure_copy(conclusion, sources)
-        if copied:
-            bad.append(f"{story.name}:{line_no} {entry_id} 结论是原文子串（来源「{src}…」）")
-    if bad:
-        return Outcome(False, "；".join(bad[:5]))
-    return Outcome(True, "附录结论列无纯复制")
-
-
-@checker
-def p03_spec_exit_paraphrase(root: Path, ctx: Ctx) -> Outcome:
-    """spec 约束出口「本需求的要求」列不得复述规约原文（E2）。"""
-    spec = _spec_path(root)
-    if spec is None:
-        return Outcome(True, "无 spec（不适用）")
-    text = read_text(spec)
-    headers = header_index(text, ["编号", "本需求的要求"])
-    if not headers:
-        return Outcome(True, "无规约约束要求章（不适用）")
-    entries = load_constraint_entries(ctx.knowledge_root)
-    if not entries:
-        return Outcome(True, "无激活规约条目可比对（证据不足，不判）")
-    bad = []
-    for line_no, cells in md_table_rows(text, ["编号", "本需求的要求"]):
-        entry_id = (ENTRY_ID_RE.findall(cell(cells, headers, "编号")) or [""])[0]
-        requirement = cell(cells, headers, "本需求的要求")
-        copied, src = is_pure_copy(requirement, sources_for(entry_id, entries))
-        if copied:
-            bad.append(f"{spec.name}:{line_no} {entry_id} 要求是规约原文子串（来源「{src}…」）")
-    if bad:
-        return Outcome(False, "；".join(bad[:5]))
-    return Outcome(True, "spec 约束出口无纯复制")
-
-
-@checker
-def p04_plan_obligation_paraphrase(root: Path, ctx: Ctx) -> Outcome:
-    """plan 冻结的 obligation 不得复述规约原文。"""
-    freeze = _freeze(root)
-    if freeze is None:
-        return Outcome(True, "无知识冻结块（不适用）")
-    entries = load_constraint_entries(ctx.knowledge_root)
-    if not entries:
-        return Outcome(True, "无激活规约条目可比对（证据不足，不判）")
-    bad = []
-    for ob in _obligations(freeze):
-        rule = str(ob.get("rule", ""))
-        text = str(ob.get("obligation", ""))
-        copied, src = is_pure_copy(text, sources_for(rule, entries))
-        if copied:
-            bad.append(f"{rule} 的 obligation 是规约原文子串（来源「{src}…」）")
-    if bad:
-        return Outcome(False, "；".join(bad[:5]))
-    return Outcome(True, "plan 冻结义务无纯复制")
-
-
 @checker
 def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
     """anchor 不得指回知识决策声明章；landing 不得为空。"""
@@ -1194,53 +1099,6 @@ def p10_duplicate_image_reference(root: Path, ctx: Ctx) -> Outcome:
     if dupes:
         return Outcome(False, "图片重复引用：" + "；".join(dupes[:5]))
     return Outcome(True, f"{len(seen)} 张图片各引用一次")
-
-
-@checker
-def p11_verifier_zero_adjudication(root: Path, ctx: Ctx) -> Outcome:
-    """verifier 报告必须对必答集逐条给出裁决。
-
-    必答集从**登记源**派生，与扩展侧 ``adjudication.mjs`` 同口径（两边的一致性由
-    ``test_adjudication_parity.py`` 绑定）：命中的条目 + 判整域不适用的域 + 模式候选单元。
-    归档件附录是登记源的渲染，不作为口径来源——渲染会把域前缀换成中文域名。
-
-    判据是**同一行**既含这个键、又含裁决词：报告里别处提过这个编号不算裁过它。
-    """
-    reports: list[Path] = []
-    for pattern in (
-        # 现协议：按 subject 分区的 JSON 是机器真源，结论正文在它的 report_text 字段里。
-        "*/reports/**/verifier.report.*.json",
-        "reports/**/verifier.report.*.json",
-        # 历史命名（正文即文件内容）。这里判的是「裁没裁」，读得到就读——
-        # 换过名字的旧产物照样要能核，否则回看旧轮次时判据自己先失明。
-        "*/reports/**/verifier.report.md",
-        "*/reports/**/verifier-*.md",
-        "*/reports/**/verify-*.md",
-        "reports/**/verifier.report.md",
-        "verifier.report.md",
-    ):
-        reports.extend(root.glob(pattern))
-    reports = sorted(set(reports))
-    if not reports:
-        return Outcome(True, "无 verifier 报告（不适用）")
-    spec_path = root / "spec" / "spec.md"
-    if not spec_path.exists():
-        return Outcome(True, "无 spec.md（不适用）")
-    required = adjudication_keys(read_text(spec_path))
-    if not required:
-        return Outcome(True, "必答集为空（spec §10 没有任何命中条目）")
-    lines = "\n".join(read_text(p) for p in reports).splitlines()
-    missing = [
-        key for key in required
-        if not any(key in line and VERDICT_WORD_RE.search(line) for line in lines)
-    ]
-    if missing:
-        return Outcome(
-            False,
-            f"verifier 报告漏裁 {len(missing)}/{len(required)} 条：" + "、".join(missing[:8]),
-        )
-    return Outcome(True, f"必答集 {len(required)} 条全部有裁决")
-
 
 @checker
 def p12_numeric_index_paragraph(root: Path, ctx: Ctx) -> Outcome:

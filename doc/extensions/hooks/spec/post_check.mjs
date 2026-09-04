@@ -264,17 +264,17 @@ function knowledgeExitProblems(ctx, lines) {
   const specIds = new Set(use.constraints
     .filter(r => r.applicable === true && !byId.get(String(r.id ?? '').trim())?.reviewAction)
     .map(r => String(r.id ?? '').trim()));
-  problems.push(...idSetProblems(ctx, specIds));
+  problems.push(...acceptanceCoverage(ctx, specIds));
   return problems;
 }
 
 /**
- * 命中条目与验收条目的集合一致（机械收口）。
+ * 命中条目在 acceptance 里有没有对应验收条目（机械收口）。
  *
  * **这是集合一致性，不是「知识已被应用」**——后者是语义判断，机械层越权下语义结论，
  * 就会变成「写了字就算做了」。
  */
-function idSetProblems(ctx, specIds) {
+function acceptanceCoverage(ctx, specIds) {
   const problems = [];
   const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
 

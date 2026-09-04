@@ -30,6 +30,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
+import { readUse, UseError } from '../../../hooks/shared/knowledge-use.mjs';
 import {
   baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths, scanMaterialList,
@@ -231,6 +232,28 @@ function activeKnowledgeEntries(ctx) {
   } catch (e) {
     fail(`激活知识派生失败：${e.message}——规约判定表无从核对，不能当作「没有规约」通过`);
     return [];
+  }
+}
+
+/**
+ * spec 侧那份判断里，每条规约命中与否 —— `{ 编号 → 是否命中 }`。
+ *
+ * 读不到那份 YAML 时返回 null：走 `/story` 之外的路径、或者 spec 还没写到那一步，
+ * 都是正常形态，此时这一条不判（**不是判过了**）。
+ */
+function knowledgeUseVerdicts(ctx) {
+  if (ctx.offline) return null;
+  try {
+    const use = readUse(ctx.projectRoot, ctx.args.feature);
+    const out = new Map();
+    for (const row of use.constraints) {
+      const id = String(row?.id ?? '').trim();
+      if (id) out.set(id, row.applicable === true);
+    }
+    return out;
+  } catch (e) {
+    if (e instanceof UseError) return null;
+    throw e;
   }
 }
 
@@ -861,7 +884,12 @@ function cmdCheck(ctx) {
   // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
   // 激活规约的编号**直接取激活清单**：经「材料单元」那一层只是把同一份数据换个形状，
   // 而多一层就多一处会与清单失同步的地方——判定表少判一条规约是静默的。
+  //
+  // 命中与否的**结论**另有真源：`spec/knowledge-use.yaml`。这张表是给评审者的
+  // 完备性回显，写法与粒度都不同，所以不从那份 YAML 生成；但两处说的必须是同一件事，
+  // 对不上就是两处判定打架，评审者无从知道哪个是准的。
   const kEntries = activeKnowledgeEntries(ctx);
+  const useVerdicts = knowledgeUseVerdicts(ctx);
   if (kEntries.length) {
     const appendix = appendixChapter(ctx.contract);
     const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
@@ -896,6 +924,13 @@ function cmdCheck(ctx) {
           problems.push(`规约 ${id} 的判定「${row.verdict}」不是 ${KNOWLEDGE_VERDICTS.join(' / ')} 之一`);
         } else if (!row.basis) {
           problems.push(`规约 ${id} 的判定没写依据——「不涉及」三个字不是依据`);
+        } else if (useVerdicts && useVerdicts.has(id)) {
+          const want = useVerdicts.get(id) ? '命中' : '不命中';
+          if (row.verdict !== DOMAIN_NA && row.verdict !== want) {
+            problems.push(`规约 ${id} 在这张表里判「${row.verdict}」，`
+              + `而 spec/knowledge-use.yaml 判的是「${want}」`
+              + '——同一条结论有了两种说法。判断的真源是那份 YAML，改这张表跟上它');
+          }
         }
       }
     }

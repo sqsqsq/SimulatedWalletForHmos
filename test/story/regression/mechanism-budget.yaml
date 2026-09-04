@@ -31,10 +31,10 @@ requirement:
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 2979
+    interim_ceiling: 3014
     target: 2000
     approved_by: WYK
-    reason: "步骤 9 退场后压到现值 2979（source-units.mjs 整份删除、五类逐单元判据与 audit 命令退场、lint-rules 缩到确定性路径用到的部分、返修删八个无调用函数）：先加后删的那一段已经过去，峰值不再需要留 5200 的余量；完成后 story-build ≤1000、lint ≤300"
+    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014。完成后 story-build ≤1000、lint ≤300"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 2000
@@ -43,10 +43,10 @@ categories:
     reason: "峰值留 10%；无退场计划"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 3454
+    interim_ceiling: 3451
     target: 3000
     approved_by: WYK
-    reason: "步骤 10 退场后压到现值 3454：paraphrase.mjs 与 verdict-set.mjs 整份删除、逐行裁决与引文核实退场、pre_verifier 从注入必答表改为指路；新增的 knowledge-use.mjs 已计入"
+    reason: "步骤 10 退场后压到现值 3451：paraphrase.mjs 与 verdict-set.mjs 整份删除、逐行裁决与引文核实退场、pre_verifier 从注入必答表改为指路；新增的 knowledge-use.mjs 已计入"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
     interim_ceiling: 3300

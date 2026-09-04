@@ -182,13 +182,16 @@ modes:
     found_round: "2026-08-24"
     form: 只把风险标记（相似度/专名命中）命中的行送 verifier 裁决 → 「可信专名 + 低相似改写」整类逃逸
     clause: B1-13 / 坑 #15
-    checker: m11_flagged_only_adjudication
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/M11-flagged-only-adjudication/bad
-    good_fixture: test/story/fixtures/failure-modes/M11-flagged-only-adjudication/good
     applicable_when: 存在 pre_verifier 注入机制
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    reason: >
+      逐行裁决整条在步骤 10 退场：pre_verifier 不再注入必答清单，也就没有「只送一部分去裁」
+      这件事。当初的修法是「风险标记只排序、不筛选」——那个口径本身建立在「全集逐行裁」
+      之上，而全集逐行裁正是被退掉的那套要求。
+      现在 verifier 拿到的是判断的真源与判据，裁哪几条由它按需要定。
 
   - id: M12-normalize-folds-identifiers
     dimension: knowledge
@@ -314,39 +317,49 @@ modes:
 
   - id: P02-appendix-conclusion-paraphrase
     dimension: knowledge
+    responsibility: verifier
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    reason: >
+      形态还在——附录的结论列仍然可能是规约原文的复制。换的是发现者：机械复制检查
+      （子串 + 相似度）在步骤 10 退场，因为它只拦得住逐字复制，而「同义改写」正好绕过它，
+      于是判据教会的是换个说法而不是写本需求的设计。
+      现在由 spec overlay 的 `knowledge_spec_exit_substance` 按真源判：
+      把编号遮住这句话还能不能指导编码。
     found_round: "2026-08-24"
     form: 附录「结论或落点」列是规约原文的复制或子串（E1/E2），只列已命中冒充已应用
     clause: B1-12 / B1-14 / 坑 #14 / N8
-    checker: p02_appendix_conclusion_paraphrase
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P02-appendix-conclusion-paraphrase/bad
-    good_fixture: test/story/fixtures/failure-modes/P02-appendix-conclusion-paraphrase/good
     applicable_when: 存在 AR/story.md 规约符合性附录
     severity: BLOCKER
     status: fixed
 
   - id: P03-spec-exit-paraphrase
     dimension: knowledge
+    responsibility: verifier
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    reason: >
+      同 P02：形态在产物侧仍可能发生，发现者从机械复制检查换成 spec overlay 的
+      `knowledge_spec_exit_substance`。判断的真源现在是 `spec/knowledge-use.yaml`，
+      审查对着它与材料看 requirement 落在哪个具体名字上。
     found_round: "2026-08-24"
     form: spec 约束出口「本需求的要求」列复述规约原文，到编码那里等于没有要求
     clause: B1-12 / B1-14 / N8
-    checker: p03_spec_exit_paraphrase
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P03-spec-exit-paraphrase/bad
-    good_fixture: test/story/fixtures/failure-modes/P03-spec-exit-paraphrase/good
     applicable_when: 存在 spec/spec.md 规约约束要求章
     severity: BLOCKER
     status: fixed
 
   - id: P04-plan-obligation-paraphrase
     dimension: knowledge
+    responsibility: verifier
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    reason: >
+      同 P02，落在 plan 侧：由 plan overlay 的 `knowledge_obligation_substance` 判
+      ——那一章的设计里是否真的因为这条义务多出了字段、方法、状态或校验。
     found_round: "2026-08-24"
     form: plan 冻结的 obligation 是规约原文改写，没有本需求的设计结论
     clause: B1-10 / B1-12 / B1-14
-    checker: p04_plan_obligation_paraphrase
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P04-plan-obligation-paraphrase/bad
-    good_fixture: test/story/fixtures/failure-modes/P04-plan-obligation-paraphrase/good
     applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
     status: fixed
@@ -437,13 +450,16 @@ modes:
     form: verifier 报告缺少扩展判据的逐条裁决，harness 照收 PASS（实测 0/8、后又 10/11 未裁决）；
       必答集 = 登记源的命中条目 + 判整域不适用的域 + 模式候选单元，判据是同一行既含键又含裁决词
     clause: B1-16「逐行裁决落盘」 / G4 / 坑 #18
-    checker: p11_verifier_zero_adjudication
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P11-verifier-zero-adjudication/bad
-    good_fixture: test/story/fixtures/failure-modes/P11-verifier-zero-adjudication/good
-    applicable_when: 存在 <phase>/reports 下的 verifier 报告 且 存在 AR/story-src/knowledge.json
+    applicable_when: 存在 <phase>/reports 下的 verifier 报告
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 用户（2026-09-04 步骤 10 评审进入条件 1/5）
+    reason: >
+      「漏裁」是相对必答集说的：集合里有 8 条、报告里裁了 0 条。必答集在步骤 10 退场之后
+      没有可数的分母，这个形态失去定义。
+      **它守的那件事没有落空**：verifier 有没有执行仍由报告落盘核对（story 审查那一项，
+      `verifier-report.mjs`），只是核的从「每一行都在」变成「结果块在、两类结论齐」。
 
   - id: P12-numeric-index-paragraph
     dimension: readability
