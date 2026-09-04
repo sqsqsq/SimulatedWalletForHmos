@@ -19,15 +19,13 @@
  */
 import * as path from 'node:path';
 import { extensionRoot, lines, readTextOrNull } from './paths.mjs';
+import { readerReviewTask } from './reader-review-task.mjs';
 
-/**
- * 知识类语义判据的命名前缀。
- *
- * 用**命名约定**而不是一份 id 清单来认它们：清单要跟着 overlay 改，改漏了就静默失效；
- * 前缀是数据形态，新增一条知识判据自动被认。同一份 overlay 里的其它判据
- * （叙述质量、上游覆盖等）不是知识类，不进本清单。
- */
+/** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
+
+/** 读者审查那一项。它要的输入与问题清单与知识判据不同，单独成段。 */
+const READER_REVIEW_ID = 'story_reader_review';
 
 /** 本阶段知识判断的真源。spec 自己写，之后各阶段读 plan 冻结的结果。 */
 const SOURCE_OF_TRUTH = {
@@ -64,18 +62,17 @@ function overlayCheckIds(projectRoot, phase) {
     if (m) ids.push(m[1]);
   }
   if (!ids.length) return { ids: [], error: `${phase} overlay 的 semantic_checks 解析出零条判据` };
-  const known = ids.filter(id => id.startsWith(KNOWLEDGE_CHECK_PREFIX));
-  // 本阶段 overlay 没有知识类判据 —— 不是错误，是这一阶段不判知识
-  if (!known.length) return { ids: [], error: null, skip: true };
-  return { ids: known, error: null };
+  // **全部送达**，不按前缀挑。framework 的任务清单只列它自己那些，overlay-only 的项
+  // 不由它送；这里漏掉哪一条，哪一条就不是「任务」——二跑的 story 审查就是这么没做成的。
+  return { ids, error: null };
 }
 
 export default async function preVerifier(ctx) {
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
   const source = SOURCE_OF_TRUTH[phase] ?? SOURCE_OF_TRUTH.plan;
-  const { ids: checkIds, error, skip } = overlayCheckIds(ctx.projectRoot, phase);
-  if (skip) return {};
+  const { ids: checkIds, error } = overlayCheckIds(ctx.projectRoot, phase);
+  if (!error && !checkIds.length) return {};
   if (error) {
     return {
       promptFragments: [[
@@ -88,6 +85,16 @@ export default async function preVerifier(ctx) {
       ].join('\n')],
     };
   }
+
+  const knowledgeIds = checkIds.filter(id => id.startsWith(KNOWLEDGE_CHECK_PREFIX));
+  const fragments = [];
+
+  // 读者审查放最前：它要通读一份 300 行的归档件与全部材料，是这批判据里最重的一项。
+  // 排在后面时它最容易被当成附注跳过——二跑就是这样。
+  if (checkIds.includes(READER_REVIEW_ID)) {
+    fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));
+  }
+  if (!knowledgeIds.length) return { promptFragments: fragments };
 
   const fragment = [
     '## 实例扩展知识判据（BLOCKER）',
@@ -111,10 +118,11 @@ export default async function preVerifier(ctx) {
     '',
     '### 输出要求（BLOCKER）',
     '',
-    `在输出 YAML 的 \`checks:\` 中，为 ${checkIds.map(id => `\`${id}\``).join(' 与 ')} 各追加一条，`,
+    `在输出 YAML 的 \`checks:\` 中，为 ${knowledgeIds.map(id => `\`${id}\``).join(' 与 ')} 各追加一条，`,
     '`details` 写你判出问题的那几条：是哪一条、问题是什么、依据是产物或材料里的什么事实。',
     '判不出问题就写清你按什么看过、看了哪几条。相应调整 `summary.total` 与计数。',
   ].join('\n');
 
-  return { promptFragments: [fragment] };
+  fragments.push(fragment);
+  return { promptFragments: fragments };
 }

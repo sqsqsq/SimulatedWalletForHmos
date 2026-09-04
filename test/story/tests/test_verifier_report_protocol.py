@@ -9,26 +9,23 @@
 
 报几条、报得对不对由人抽查，门禁判不了。
 
-## 两种落盘方式并存，按宿主能力分流
+## 只认发布器落盘的那一份（2026-09-04 换边）
 
-谁写这份报告，取决于宿主 adapter 声明的 ``verifier_capability``：
+谁写这份报告，取决于宿主 adapter 声明的 ``verifier_capability``：声明了的
+（claude / codeagent 的 ``subagent_stop``、opencode 的 ``task_tool_result``）由钩子
+从子 agent 的**终态消息**生成，按 subject 分区落盘 ``verifier.report.<64位subject>.json``。
 
-- 声明了 ``publisher: subagent_stop`` 的（claude / codeagent）：报告不由 verifier
-  自己写，SubagentStop 钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
-  ``verifier.report.<64位subject>.json``；
-- **没声明的（codex / generic / cursor）**：那个宿主没有对应的发布机制，框架也不为它
-  生成 request，报告由执行方自己写成文件（历史上四种文件名）。
+早先这里还认执行方自己写的四种文件名，理由是「没有发布机制的宿主也得能核」。
+一次真实实跑给了反例：审查项没做成，最后是**主模型把 verifier 的文本转写成
+`verifier-report.md`**，门收下了、harness 判 PASS。主模型能写出来的东西作不了
+「它被独立审查过」的证据。代价如实记：没有发布器的宿主上这一项记 NOT_APPLICABLE。
 
-opencode 自批次 5 步骤 1 起属于**前一类**（publisher `task_tool_result`），不再是自写方。
+## 送达与任务定义，比结果块更早的两道
 
-两个断点，方向相反，这一份两边都锚：
-
-1. 升级后扩展只按旧文件名找报告 → 带 hash 的 JSON 一种都不匹配 → 判「报告缺失」
-   → 有钩子的宿主上 spec 闭环第三步必卡；
-2. 反过来只认 JSON → 没有发布机制的那半边宿主上，裁决核对被整条砍断。
-
-所以两种都认**不是双轨**：同一个宿主上只有一种协议在产出。认少了就是在某半边
-宿主上失明，而判据要服务的是所有宿主，不是当前这台机器上跑的那一个。
+二跑的失效不在落盘那一步：判据压根没进 verifier 的任务清单（framework 只送它自己那些，
+扩展这边又按 `knowledge_` 前缀过滤掉了读者审查），而任务里也没有一条问
+「材料登记的每张图用了没有」——于是三张图全丢，审查判「零阻断」。
+这两道也在这一份里锚住。
 """
 import json
 import subprocess
@@ -38,6 +35,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 MODULE = REPO / "doc" / "extensions" / "hooks" / "shared" / "verifier-report.mjs"
+PRE_VERIFIER = REPO / "doc" / "extensions" / "hooks" / "shared" / "pre_verifier.mjs"
+CONTRACT = REPO / "doc/extensions/skills/story/contracts/story-chapters.json"
 
 SUBJECT = "a" * 64
 OTHER_SUBJECT = "b" * 64
@@ -154,23 +153,23 @@ class StoryReviewLanding(unittest.TestCase):
         self.assertEqual([], out["problems"])
 
 
-    def test_self_written_reports_are_recognised_too(self) -> None:
-        """执行方自己写的报告也得认——那不是旧协议，是另一半宿主的现协议。
+    def test_a_self_written_file_is_not_evidence(self) -> None:
+        """执行方自己写的文件不算证据——它证明不了「被独立审查过」。
 
-        谁写这份报告取决于宿主 adapter 的 `verifier_capability`：声明了
-        `publisher: subagent_stop` 的（claude / codeagent）由钩子从终态消息生成
-        JSON；**没声明的（codex / generic / cursor）根本没有对应的发布机制**，框架也不
-        为它生成 request，报告由执行方自己落成文件。
+        这条 2026-09-04 换了边。原来认四种自写文件名，理由是「没有发布器的宿主
+        （codex / generic / cursor）也得能核」。一次真实实跑给了反例：审查项没做成，
+        最后是**主模型把 verifier 的文本转写成 `verifier-report.md`**，门收下了、
+        harness 判 PASS。主模型能写出来的东西作不了它自己被审过的证明。
 
-        所以这不是双轨——同一个宿主上只有一种协议在产出。只认 JSON 会在没有发布机制的
-        那半边宿主上把报告核对整条砍断。
+        代价如实记：没有发布器的宿主上，这一项记 **NOT_APPLICABLE**——
+        那台宿主证明不了，不等于没审，所以不判 FAIL。这比收一份可伪造的证明诚实。
         """
         for name in ("verifier.report.md", "verifier-spec.md",
                      "verify-spec.md", "verifier-spec-result.yaml"):
             with self.subTest(name=name):
                 out = self._run(reports={name: CLEAN_BLOCK})
-                self.assertEqual("PASS", out["status"],
-                                 f"{name} 没被当报告读——没有钩子的宿主就核不了：{out}")
+                self.assertEqual("NOT_APPLICABLE", out["status"],
+                                 f"{name} 被当成了证据——主模型自己就能写出它：{out}")
 
     def test_all_subjects_are_collected(self) -> None:
         """一个阶段可能有多份 subject 报告，得全收集合并判。
@@ -198,6 +197,69 @@ class StoryReviewLanding(unittest.TestCase):
         body = json.dumps({"subject_id": SUBJECT, "verdict": "PASS"}, ensure_ascii=False)
         out = self._run(reports={f"verifier.report.{SUBJECT}.json": body})
         self.assertEqual("FAIL", out["status"], f"没有正文字段却放行了：{out}")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ReviewTaskReachesTheVerifier(unittest.TestCase):
+    """判据要先成为「任务」，才谈得上做没做。
+
+    二跑 verifier 第一次的报告里完全没有 story 审查：framework 的任务清单只列它自己的项，
+    而扩展的注入又按 `knowledge_` 前缀把读者审查滤掉了——两道都漏，它就不是任务。
+    """
+
+    def inject(self, feature: str = "AR90006") -> str:
+        driver = f"""
+        import(process.argv[2]).then(async m => {{
+          const out = await m.default({{ projectRoot: process.argv[3],
+                                         feature: process.argv[4], phase: 'spec' }});
+          process.stdout.write((out.promptFragments || []).join('\\n\\n'));
+        }});
+        """
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "drive.mjs"
+            script.write_text(driver, encoding="utf-8")
+            r = subprocess.run(
+                ["node", str(script), PRE_VERIFIER.as_uri(), str(REPO), feature],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60)
+            self.assertEqual(0, r.returncode, r.stderr[:600])
+            return r.stdout
+
+    def test_the_reader_review_is_injected_not_filtered_out(self) -> None:
+        text = self.inject()
+        self.assertIn("story_reader_review", text,
+                      "读者审查又被滤掉了——二跑就是这样一次没做")
+
+    def test_it_comes_first(self) -> None:
+        """它要通读一份 300 行的归档件，排在后面最容易被当附注跳过。"""
+        text = self.inject()
+        self.assertLess(text.index("story_reader_review"), text.index("知识判据"))
+
+    def test_the_task_asks_about_every_image(self) -> None:
+        """任务里没有的问题，审查者不会去问——两轮丢图，它一次都没报。"""
+        text = self.inject()
+        self.assertIn("材料里的图，逐张回答", text)
+        self.assertIn("story 用了没有", text)
+
+    def test_the_task_carries_the_contract_questions(self) -> None:
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        text = self.inject()
+        for chapter in contract["chapters"]:
+            self.assertIn(chapter["questions"][0], text,
+                          f"「{chapter['title']}」的读者问题没送到")
+
+    def test_one_format_only(self) -> None:
+        """结论只按 framework 的 YAML 契约写——两套格式让二跑补做又失败一次。"""
+        text = self.inject()
+        self.assertIn("blocking_findings", text)
+        self.assertIn("advisories", text)
+        self.assertNotIn("为标记的一块", text, "又要求了 markdown 块")
+
+    def test_it_says_self_written_files_are_not_evidence(self) -> None:
+        self.assertIn("不要另写文件", self.inject())
 
 
 if __name__ == "__main__":

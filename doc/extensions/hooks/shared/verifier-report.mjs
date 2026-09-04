@@ -18,31 +18,21 @@ import * as path from 'node:path';
 import { extensionRoot, featureRoot, readTextOrNull } from './paths.mjs';
 
 /**
- * verifier 报告落在哪 —— **两种协议，按宿主能力二选一，不是新旧接替**。
+ * verifier 报告落在哪 —— **只认发布器按 subject 落盘的那一份**。
  *
- * 谁写这份报告，取决于宿主 adapter 声明的 `verifier_capability`：
+ * 宿主 adapter 声明了 `verifier_capability`（`publisher: subagent_stop` 或插件）时，
+ * 报告不由 verifier 自己写，而是钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
+ * `verifier.report.<64位subject>.json`（＋同名 .md 人读投影，机器侧不解析）。
  *
- * - **声明了的**（`publisher: subagent_stop`）：报告不由 verifier 自己写，而是
- *   SubagentStop 钩子从子 agent 的**终态消息**生成，按 subject 分区落盘
- *   `verifier.report.<64位subject>.json`（＋同名 .md 人读投影，机器侧不解析）。
- * - **没声明的**：那个宿主没有这个钩子，框架也不会为它生成 request——
- *   报告由执行方**自己写成文件**，文件名由作业书约定（历史上出现过下面四种）。
+ * 早先这里还认执行方自己写的几种文件名，理由是「没有发布器的宿主也得能用」。
+ * 一次真实实跑说明了那条路的代价：审查项没做成，最后是**主模型把文本转写成
+ * `verifier-report.md`**，门收下了。主模型能写出来的东西不能作为「它被独立审查过」的证据——
+ * 那不是宽容，是把判据变成了自证。
  *
- * 所以这里两种都认，且**不是双轨**：同一个宿主上只有一种协议在产出，
- * 认少了就是在那半边宿主上把裁决核对整条砍断。判据要服务的是所有宿主，
- * 不是当前这台机器上跑的那一个。
- *
- * 取正文的方式也随之分两路：JSON 取 `report_text` 字段，其余取文件内容本身。
+ * 收紧的代价如实说：没有发布器的宿主上，这一项从此记 NOT_APPLICABLE。
+ * 「这台宿主证明不了」比「收一份可伪造的证明」诚实。
  */
 const REPORT_JSON_RE = /^verifier\.report\.[0-9a-f]{64}\.json$/i;
-
-/** 执行方自己落盘时的文件名形态（无 subagent_stop 钩子的宿主走这条）。 */
-const REPORT_FILE_RES = [
-  /^verifier\.report\.md$/i,
-  /^verifier-.*\.md$/i,
-  /^verify-.*\.md$/i,
-  /^verifier-.*-result\.ya?ml$/i,
-];
 
 /** JSON 里承载 verifier 结论正文的字段（record-verifier-report.mjs 的 `report_text`）。 */
 const REPORT_TEXT_FIELD = 'report_text';
@@ -60,23 +50,22 @@ const STORY_REVIEW_SECTIONS = ['blocking_findings', 'advisories'];
  */
 const PER_UNIT_TABLE_RE = /\|\s*单元键\s*\|/;
 
-/** 报告目录下所有 verifier 报告的绝对路径（两种协议都收）。 */
+/** 报告目录下发布器落盘的那些 verifier 报告。 */
 function verifierReportFiles(projectRoot, feature, phase) {
   const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
   // 目录不存在 = verifier 还没执行，是合法状态；目录在却读不动是异常，
   // 让它抛出去由调用方判 FAIL——吞掉的话「读失败」会伪装成「还没跑」。
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
-    .filter(n => REPORT_JSON_RE.test(n) || REPORT_FILE_RES.some(re => re.test(n)))
+    .filter(n => REPORT_JSON_RE.test(n))
     .map(n => path.join(dir, n));
 }
 
 /**
- * 取出各报告的结论正文 —— 按落盘形态分两路取。
+ * 取出各报告的结论正文 —— 发布器 JSON 的 `report_text` 字段。
  *
- * 钩子发布的 JSON 取 `report_text` 字段；执行方自己写的文件，正文就是文件内容。
  * 一个阶段可能有多份报告（换代、并发、多 subject），全收集合并判——
- * 少收一份就可能把「裁过了」判成「没裁」。
+ * 少收一份就可能把「审过了」判成「没审」。
  *
  * 解析不动或没有正文字段的文件**记名单独报出**，不静默跳过：
  * 那与「verifier 没跑」是两回事，混在一起就没法查。
@@ -86,12 +75,6 @@ function reportTexts(files) {
   const unreadable = [];
   for (const file of files) {
     const raw = readTextOrNull(file);
-    // 执行方自己写的报告：正文就是文件本身，不进 JSON 解析这条路。
-    if (!REPORT_JSON_RE.test(path.basename(file))) {
-      if (raw === null) unreadable.push(path.basename(file));
-      else texts.push(raw);
-      continue;
-    }
     let doc = null;
     try {
       doc = raw === null ? null : JSON.parse(raw);

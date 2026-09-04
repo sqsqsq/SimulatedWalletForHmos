@@ -1356,3 +1356,52 @@ caption 存 `ux-reference/.captions.json`（点文件不进清单），**按 sha
 ### 下一个提交
 
 D4 + D9（story 审查在 framework 协议内做对、verifier 只跑一次且在最后）。
+
+## 步骤 12 · 第三个提交：story 审查在协议内做对（D4+D9）· 已实施，等待评审
+
+12 号 §9 定的方案 B：不改 framework 协议、不改任何 adapter，在协议内把四件事做对。
+
+### 四件事
+
+| 件 | 二跑的失效 | 这次改成 |
+|---|---|---|
+| **送达** | 扩展注入按 `knowledge_` 前缀过滤，`story_reader_review` 被滤掉；framework 的任务清单又只列它自己那十项——两道都漏，它不是「任务」，verifier 第一次报告里完全没有它 | `pre_verifier` 送达 **overlay 里全部**扩展判据；读者审查**排在最前**（它要通读 300 行归档件，排后面最容易被当附注跳过） |
+| **一种格式** | verifier 按 framework 契约输出 YAML `checks[]`，扩展另要一块 markdown「以 id 为标记、两个小节」；补做时按 YAML 写、门按 markdown 判，再红一次 | 只按 YAML 契约：`checks[]` 里一条 `story_reader_review`，`details` 下 `blocking_findings` 与 `advisories` 两个列表。overlay 里那段 markdown 块要求删除 |
+| **一处真源** | 门读任意匹配文件名，最后是**主模型把 verifier 的文本转写成 `verifier-report.md`** 过的门 | 只读发布器按 subject 落盘的 `verifier.report.<subject>.json` 的 `report_text` |
+| **问对问题** | 合同十章有读者问题，却没有一条问「材料登记的每张图用了没有」——三张图全丢，审查判「零阻断」 | 新增 `hooks/shared/reader-review-task.mjs`：从合同渲染十章问题与章级维度、从 `materials.json` **逐张列图与说明**、要求逐张回答「用了没有／不用的理由成不成立」 |
+
+任务书也能单独看：`story-build review-task --feature <名>` 打出与注入同一份。
+任务定义是这一项成不成的关键，它该是可读、可评审的东西，不该只存在于某一次 prompt 里。
+
+### D9 · verifier 只跑一次，而且在最后
+
+二跑 verifier 跑了**三次共 26 分钟**：第一次没做审查；resume 用自由文本补做，插件按协议
+不发布；harness 重跑后 subject 换代，回执要求绑定新 subject，**整份重审 11 分钟**——
+那 11 分钟审的东西与第二次一模一样。
+
+`phases/spec.md` 的阶段内顺序补第 ⑦ 步，并写清两条纪律：verifier 之后不再改产物
+（改了 subject 就换代）、调用只带 request JSON（自由文本重跑的终态发布器不收，
+那次结论落不了盘）。任务包与 `story_flow.py status` 的成文后提示同口径。
+
+### 一处要评审拍板的取舍：收紧的代价
+
+`storyReviewProblems` 从「两种协议都认」收成「只认发布器 JSON」。原来那条立场是成立的
+——没有发布器的宿主（codex / generic / cursor）报告由执行方自己写成文件，只认 JSON
+会在那半边把核对整条砍断。二跑给了它反例：**主模型能写出来的东西，作不了它自己被审过的证据**。
+
+代价如实记：**没有发布器的宿主上，这一项从此记 `NOT_APPLICABLE`**（不是 FAIL——
+那台宿主证明不了，不等于没审）。本仓 CLI 配置里 `codex-luna` 属于这一类，
+它跑出来的轮次这一项无从核对，评审时按此看待。测试已改向并写明理由。
+
+### 验收
+
+- story 全量 **595 绿**（`test_verifier_report_protocol.py` 新增 6 条：读者审查进不进任务、
+  排不排在最前、任务问不问图片、合同问题送没送到、格式是不是只有一种、有没有说清自写文件不算证据；
+  另一条断言改向：自写文件从「认」改为「NOT_APPLICABLE」）；
+- 失效形态 70 条 FAIL 0、委派 15；`framework/` 零差异，**adapter 一个字没改**；
+- 预算：`hooks_mjs` 2715（interim 2760）、`scripts_mjs` 1906、`scripts_py` 1303、
+  `prompts_md` 1984、`data` 683，总 **8591** / interim 8670。
+
+### 下一个提交
+
+D7（装置：黑名单复制含 node_modules、`measure_run` 补 bash 读脚本口径、启动空档记录）。

@@ -30,6 +30,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
+import { readerReviewTask } from '../../../hooks/shared/reader-review-task.mjs';
 import { readUse, UseError } from '../../../hooks/shared/knowledge-use.mjs';
 import {
   baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
@@ -40,7 +41,7 @@ import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
 } from './review-render.mjs';
 
-const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter'];
+const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter', 'review-task'];
 
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 6;
@@ -1441,6 +1442,18 @@ function stripOwnHeading(body, title) {
   return lines.slice(i).join('\n');
 }
 
+/**
+ * 读者审查的任务书 —— 注入给 verifier 的就是这一份，这里只是让人也看得见。
+ *
+ * 任务定义是这一项成不成的关键：合同里十章各有读者问题，却一直没有一条问
+ * 「材料登记的每张图用了没有」，于是两轮实跑丢的图，审查者一次都没报。
+ * 任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
+ */
+function cmdReviewTask(ctx) {
+  process.stdout.write(
+    readerReviewTask(ctx.projectRoot, ctx.args.feature, 'story_reader_review') + '\n');
+}
+
 function cmdChapter(ctx) {
   refuseIfFrozen(ctx, 'chapter');
   const title = String(ctx.args.chapter ?? '').trim();
@@ -1533,6 +1546,7 @@ function main() {
   if (args.command === 'init') cmdInit(ctx);
   else if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
+  else if (args.command === 'review-task') cmdReviewTask(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);

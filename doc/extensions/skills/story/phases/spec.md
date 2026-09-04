@@ -45,7 +45,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
-`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面六步走完。
+`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面七步走完。
 作业规则见 [`phases/story-write.md`](story-write.md)（按章写、统稿各一段）。
 
 **什么算一条议题**：review 是**判断的台账**——已决策的呈现结果供评审人过目，
@@ -68,6 +68,7 @@ node .../story-build.mjs skeleton --feature <feature>  # ② 建十章骨架（�
 node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（story 成文之后）
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
 #                              ⑥ 跑 spec harness
+#                              ⑦ 确定性门全绿之后，verifier 跑一次；之后不再改产物
 ```
 
 - **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
@@ -83,6 +84,10 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
   登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
 - **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
+- **⑦ 只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
+  产物，指纹就换代，那份结论对不上新产物，只能整份重审——一次真实实跑为此重复审了 11 分钟。
+  所以确定性门全绿、产物定稿，才叫它。**调用只带 request JSON**：自由文本重跑的终态
+  发布器按协议不收，那次审查的结论落不了盘，等于没审。
 
 ## 三、§9 技术契约怎么写
 

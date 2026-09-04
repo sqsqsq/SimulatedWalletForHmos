@@ -126,9 +126,10 @@ semantic_checks:
       都不构成 finding；反过来，十章齐全、字数不少而某一章只有空泛短句，是 blocking。
       引用材料或 story 时抄原文定位，不要复述。零 blocking 时说明你逐章都过了什么，
       不要只写一句「未发现问题」——那与没审同形。
-      **结果要落进本阶段的 verifier 报告**：写成以 `story_reader_review` 为标记的一块，
-      块内两个小节 `blocking_findings` 与 `advisories`；没有阻断问题就写成空列表——
-      空列表是结论，缺席分不清是没发现还是没审。只写在 YAML 输出里不算，那份输出不落盘。
+      **结果按 framework 的输出契约写**：`checks[]` 里一条 `id: story_reader_review`，
+      `details` 下两个键 `blocking_findings` 与 `advisories`，都是列表；
+      没有阻断问题就写成空列表——空列表是结论，缺席分不清是没发现还是没审。
+      不另写文件、不用自由文本重跑：报告由插件按你的终态发布，别的落盘方式都不算证据。
 
 # 作者起手内容的读没读过：唯一的机械留痕。
 # 本阶段的 author 钩子由 manifest 的 `on_context_load` 送达（执行者跑
