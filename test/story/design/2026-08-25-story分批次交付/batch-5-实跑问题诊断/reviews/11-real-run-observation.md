@@ -206,3 +206,61 @@ CLI 一次（硬条件不变：verifier 证据由插件发布，`agent_id` 非 s
 ### 用户裁定（2026-09-04）
 
 同意：8350 作为批次 5 收口 target。收口提交里补两条：yaml reason 与 `05` 总览写明「批次 5 不压缩，压缩另开需求」；`TEST.md §8` 第 7 项保留长期方向作下一批预算起点。可以跑 CLI。
+
+## 12. 二跑观察（`story-suite-20260904-141250`，写于 15:50，spec 尚未闭环）
+
+**硬条件达成**：`.opencode` 在，`skill story` 找到；verifier 是 `verifier` 子代理；证据 JSON 由插件发布（`agent_type: verifier`、`state: published`、agent_id 是会话 id）。
+story 十章 3 分钟写完、`check` 两处小修即过、**业务流程章有一张 mermaid**；零流程死锁；`read` 工具读脚本 0 次。
+
+**但 87 分钟仍未闭环，时间去向**（事件流，工具 359 次，上下文 13K → 415K）：
+
+| 时段 | 分钟 | 在做什么 | 归谁 |
+|---|---|---|---|
+| 14:20–14:25 | 4.5 | opencode 启动到第一条会话事件 | 宿主/装置 |
+| 14:25–14:42 | 17 | story S1–S4，五次关卡（首跑三次）；一次「先导入后签关卡」被拒重做 | 流程本身 |
+| 14:42–15:05 | 23 | framework 的 spec 前置：`node_modules` 未装（`npm install` 2 分钟）、personal-setup 三次、fidelity、视觉自测卷、OCR 两张占位线框、explore 子代理 2.6 分钟、facts.md | framework + 装置 |
+| 15:05–15:18 | 13 | 写 spec / knowledge-use；render 因候选写成 `no_candidate` 失败一次；harness 三轮 FAIL（story 未写就先跑、禁用词、acceptance.yaml 缺）；其间用 `node -e readFileSync` 切片读 `knowledge-use.mjs` 17 次、`story-build.mjs` 27 次 | 作者 + 度量盲区 |
+| 15:18–15:26 | 8 | 十章落盘、check、build、acceptance 补 11 条 knowledge_rule | 成文（正常） |
+| 15:27–15:47 | 20 | verifier 第一次 8.5 分钟，**报告里完全没有 `story_reader_review`**；主模型读 `verifier-report.mjs` 与 2171 行 ai-prompt 找原因；resume verifier 6 分钟补块；块缺两小节再 FAIL；主模型把补好的文本写成 `verifier-report.md` 才过 | 扩展协议 + verifier |
+
+**三个新发现（进步骤 11 收口清单或下一批）**：
+
+1. **度量盲区**：`measure_run.py` 只数 `read` 工具，模型改用 `node -e "readFileSync(...)"` 切片读脚本 **75 次**（story-build 27、knowledge-use 17、check-spec.ts 9、story_flow 8…），报表却显示「读 checker 源码 0」。
+   度量要把 bash 里读 `.mjs/.py/.ts` 的命令一并计入。行为本身没变：作者仍靠读脚本弄清门禁要什么——`knowledge-use.yaml` 的字段与合法值、决策登记的字段，作者面文档没给到位。
+2. **`story_reader_review` 的落盘协议是本跑最大的单项耗时（20 分钟）**：verifier 按 framework 的 YAML `checks` 契约出报告，而扩展另要一块 markdown「以 id 为标记、两个小节」——两套格式，2171 行 ai-prompt 里那一段被忽略。
+   第二次补块又缺小节，最后是**主模型转写成 `verifier-report.md`** 让门过的——门读的是任何一个匹配文件名，不限于插件发布的 JSON。改法归下一批：块的形态判据接受 YAML `checks[].id == story_reader_review` 的 details 里两个键，且只读插件发布的 `report_text`。
+3. **装置**：工作区不带 `framework/harness/node_modules`（`node_modules` 按名排除），每跑一次都要 `npm install`；4.5 分钟的启动空档要查是宿主装依赖还是首轮模型延迟。
+
+作者自身的返修（story 未写先跑 harness、禁用词、候选写成英文 key、acceptance 少 11 条）合计约 6 分钟，不是主因。
+
+**对三轴的意见**（等闭环后按 `measure_run.py` 与产物再定）：verifier 轴这次是真的，可以评；性能轴的墙钟 87+ 分钟里约 47 分钟是宿主/framework 前置/verifier 协议，成文本身 8 分钟；产物结果轴先看流程图（有）、小节编号（待看）、`story_reader_review` 的四条 advisory 与用户读感。
+
+### §12 更正与补充（用户指出，2026-09-04 16:00）
+
+**评审漏判**：我只核了 mermaid，没有核图片，也没有通读 runlog 的成文段。事实：二跑的 `AR/story.md` **零图片**——`materials.json` 登记的三张图
+（`image1` 签约页、`image2` 管理页、`image3` 触发与扣款流程）一张都没进正文；首跑是三张全在。verifier 的 `story_reader_review` 判「零阻断」，四条 advisory 也没提图。
+**这是 S01「图降级」迁 observed 之后的第一次真实检验：审查者没报，用户报了。** 这条要写进步骤 11 的区分力观察，作为负面证据；三轴评分的产物结果轴按它扣。
+
+**为什么这次会丢**（对照首跑）：首跑模型自己写了 `ux-reference/README.md`（有图名与说明），成文时图进了正文；二跑 M1 之后 README 不再必备，模型只 `cp` 了两张图、没写 README，
+作者拿到的关于图片的信息只剩 `materials.json` 里的 kind / paths / sha256——**没有一个字说这张图是什么**。图片的语义登记（哪张是签约页、哪张是流程图）此前寄生在一份可选的、
+手写的 README 上；M1 去掉了对它的依赖却没有给语义登记一个确定的家，于是作者面上图片「存在但不可用」。`check ④` 只核被引用的图（alt、重复、在册、字节同），
+没有一条要求材料图片进 story——那一条随逐单元系统退场了。
+
+**用户观察 1 · 工作区复制该按黑名单排除，不按白名单挑。** 仓库根现有 `.agents .cac .claude .codex .cursor .opencode scripts` 等，对目标工程都是合法内容；
+白名单 `WORKSPACE_ALLOWED_DIRS` 每加一个宿主就漏一次（首跑漏 `.opencode`）。改法（步骤 3 装置，不改机制）：复制仓库根下全部内容，排除 `.git`、`output`、`test`、`tools`、
+`scratch`、`node_modules`、`oh_modules`、构建产物、`doc/features`（真实需求不得进被测侧，Case 由播种放入）、`framework/harness/state` 内容；`_verify_workspace_boundary` 仍作最后一道。
+`framework/harness/node_modules` 是否随复制（每跑省 2 分钟 `npm install`）由维护者按体积定。
+
+**用户观察 2 · `ux-reference` 没有稳定产出足够的信息，而后续流程依赖它。** 首跑 README 无链接、二跑无 README，两次都是模型手写/手拷。评审意见：图片的登记（复制到
+`ux-reference/` 起语义名 + 一句「这张图是什么」+ 刷新 `materials.json`）改为**脚本动作**，作者只给名字与一句说明，落盘与索引由脚本生成——这是 D2 §4「生成区」的形态，
+不是新增语义判据；`materials.json` 的 image 条目带上 `caption`，作者任务包从它逐张列出「路径 + 是什么」。是否再加一条确定性集合判据「材料图片 ⊆ story 引用 ∪ 附录材料清单里的图片行」，
+由维护者与用户定：它是集合一致性，不判内容，但与「图片不必都进 story」的立场要说清。
+
+以上两条都是行为变更，不在步骤 11「不改行为」的范围内；按方案规则**回开步骤 6/8（材料真源）与步骤 3（装置）**，还是记入下一批，请用户裁定。二跑的三轴分照常按现产物给。
+
+### §12 根因补记（2026-09-04 16:20）
+
+verifier 环节 20 分钟返工与「图丢了没报」的根因链已核实（事实见 `12-story审查正向设计.md` §2）：
+扩展的三条 overlay 判据没有进 verifier 的任务清单（framework 要 profile 的 `verify-spec.overlay.md` 声明，扩展没有）；
+`pre_verifier.mjs` 只把 `knowledge_` 前缀写进输出要求，`story_reader_review` 被过滤——**这是步骤 10 小段 2+3 的实现缺陷，我评审时没看出来**；
+格式两套；门读任意同名文件；一个会话 12+ 项加通读；任务里没有「图片逐张」这一问。正向方案见 12 号文件，待用户裁定是否作为步骤 12 在评分前实施。
