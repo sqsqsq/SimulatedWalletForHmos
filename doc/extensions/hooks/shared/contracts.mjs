@@ -25,9 +25,9 @@ const ENTITY_KINDS = [
 /**
  * 契约的路径——**与 framework 同一份**（`spec-loader.ts` 读 feature 根下这一份）。
  *
- * 曾经读 plan 子目录下的另一份，于是同一份契约在仓里有两个物理位置：
- * framework 读 feature 根、扩展读子目录。实测被测模型只能复制一份去同步，
- * 而义务（实体上的 `must`）就挂在那份副本上——「每类数据一份真源」被绕开了。
+ * 读 plan 子目录下的另一份，会让同一份契约在仓里有两个物理位置：framework 读
+ * feature 根、扩展读子目录。那时执行者只能复制一份去同步，而义务（实体上的 `must`）
+ * 就挂在那份副本上——「每类数据一份真源」被绕开了。
  */
 export function contractsPath(projectRoot, feature) {
   return path.join(featureRoot(projectRoot, feature), 'contracts.yaml');

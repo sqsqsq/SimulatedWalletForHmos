@@ -643,7 +643,7 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 4 | 同一 check id FAIL 次数 | ≤ 2 | 5（`lifecycle_hook_post_check_extension` 洋葱式暴露五层） |
 | 5 | spec 阶段上下文增量 | ≤ 150K | +397K（全程 11K → 818K，零 compaction） |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
-| 7 | `doc/extensions` 非知识层行数 | 由 `regression/mechanism-budget.yaml` 的 ceiling/target 机械执行（`test_mechanism_budget.py`，在全量离线回归里，每一步都过）；7500 是长期方向，退场后按实测再定 | 基线 10358 |
+| 7 | `doc/extensions` 非知识层**代码行**（注释与空行不计） | 由 `regression/mechanism-budget.yaml` 的 ceiling/target 机械执行（`test_mechanism_budget.py`，在全量离线回归里，每一步都过）。**配额限的是机制规模不是文字长短**：注释算进去，省下来的只会是解释；逐类怎么剥注释见预算文件头部 | 新口径基线 8116 |
 
 **读数口径**：第 2、3 项只看工具**入参**（读了什么），第 4 项只看工具**输出**（门禁报了什么），
 同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 `cat` 一次不算两轮。

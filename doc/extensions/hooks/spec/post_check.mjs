@@ -278,7 +278,7 @@ function acceptanceCoverage(ctx, specIds) {
   const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
 
   // **不和第二份登记表比对**：spec 阶段的判定结论只有 knowledge-use.yaml 一份。
-  // 上一版另有一份独立的判定记录文件，于是同一条结论有两处写法、两处判定，
+  // 另设一份独立的判定记录文件，会让同一条结论有两处写法、两处判定，
   // 评审者看到互相矛盾的结论时无从知道哪个是准的。归档件的符合性附录由 writer 直接写。
 
   // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）

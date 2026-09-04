@@ -15,68 +15,75 @@
 # 判据由 test/story/tests/test_mechanism_budget.py 机械执行，进全量离线回归；红了先读报错里
 # 指的 AGENTS 条款。改本文件任何数字都要具名 + reason，和 drift_allowlist、retired 形态同一套纪律。
 #
-# 计数口径（与测试脚本一致）：doc/extensions 下、knowledge/ 之外；行数按文件行；类别按路径与后缀。
+# ## 计数口径：**代码行，不含注释与空行**
+#
+# 配额限的是机制的规模，不是文字的长短。把注释算进配额，省下来的只会是解释——
+# 而解释正是下一个维护者判断「这条判据还该不该在」的依据。
+#
+# 范围：doc/extensions 下、knowledge/ 之外；类别按路径与后缀。逐类剥注释：
+#   · .mjs  —— `//` 行与 `/* */` 块
+#   · .py   —— `#` 行与 docstring
+#   · .yaml —— `#` 行
+#   · .json —— 说明键（键名以 `_` 开头或以 note 结尾）
+#   · .md   —— 提示词正文本身是内容，只去空行
+#
 # 数字只是围栏，不表达质量；表达质量的判据在 AGENTS §4.2 与 D2 §4。
-version: 1
-frozen_at: "2026-09-03"
-frozen_commit: "d8e21177"
+version: 2
+frozen_at: "2026-09-04"
+frozen_commit: "a1026080"
 
 # 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
 requirement:
   id: batch-5
   status: in_progress
   approved_by: WYK
-  reason: "批次 5 方案的预算声明：峰值按步骤 9/10 先加后删估算，完成后上限按退场计划正推"
+  reason: "批次 5 方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行，各类别按当时现值重定峰值、按原收缩比例折算 target"
 
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 3024
-    target: 2000
+    interim_ceiling: 1886
+    target: 1250
     approved_by: WYK
-    reason: "步骤 9 退场后压到 2979；步骤 10 为完成条件「同一结论无双写」在 story 侧加了一条一致性判据（规约判定表与 spec/knowledge-use.yaml 的命中结论对不上即点名，+35 行），峰值随之定为现值 3014，用户 2026-09-04 批准。步骤 11 的 M3 把裸序号判定从「查量词表」换成「按作者编号序列」——评审判定词表方向不通过（钱包域的 20 元/30 秒/4 位密码全会被剥掉第一个字），位置判定多 10 行，峰值 3024，用户 2026-09-04 批准；量词表已移进合同当数据。完成后 story-build ≤1000、lint ≤300"
+    reason: "峰值取新口径现值；target 按旧口径 2000/3024 的收缩比例折算，用户 2026-09-04 签字"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
-    interim_ceiling: 2000
-    target: 1900
+    interim_ceiling: 1200
+    target: 1200
     approved_by: WYK
-    reason: "峰值留 10%；无退场计划"
+    reason: "现值 1183 已低于折算 target，峰值取 target；留给流程契约的收口动作，用户 2026-09-04 签字"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 3451
-    target: 3000
+    interim_ceiling: 2403
+    target: 2100
     approved_by: WYK
-    reason: "步骤 10 退场后压到现值 3451：paraphrase.mjs 与 verdict-set.mjs 整份删除、逐行裁决与引文核实退场、pre_verifier 从注入必答表改为指路；新增的 knowledge-use.mjs 已计入"
+    reason: "峰值取新口径现值；target 按旧口径 3000/3450 的收缩比例折算，用户 2026-09-04 签字"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
-    interim_ceiling: 3300
-    target: 2800
+    interim_ceiling: 2050
+    target: 2050
     approved_by: WYK
-    reason: "逐单元系统退场后净减；旧 story-verify 任务与 source-units 已删"
+    reason: "现值 1996 已低于折算 target，峰值取 target；提示词正文即内容，用户 2026-09-04 签字"
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
-    interim_ceiling: 1000
-    target: 900
+    interim_ceiling: 750
+    target: 750
     approved_by: WYK
-    reason: "峰值留余量给 knowledge-use 的合同形态；现值 731"
+    reason: "现值 648 已低于折算 target，峰值取 target；余量留给 knowledge-use 的合同形态，用户 2026-09-04 签字"
 
 total:
-  interim_ceiling: 15000
-  target: 9500
+  interim_ceiling: 8116
+  target: 6500
   approved_by: WYK
-  reason: "峰值 15000；完成后总量必须低于批次 3 收口（9764），即建新链之前的水平。TEST §8 第 7 项的 7500 仍是长期方向，步骤 11 拿到实测数后再定"
+  reason: "峰值取新口径现值；target 按旧口径 9500/11824 的收缩比例折算，用户 2026-09-04 签字"
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
-# 现值是待退场的旧判据；退场后必须为 0，任何新增当场红。
+# 它本来就只数可执行行，口径不变。
 semantic_proxy:
   pattern: "similarity|paraphrase|levenshtein|jaccard|min_quote_chars|回声"
   scope: [scripts_mjs, scripts_py, hooks_mjs]
   ceiling: 0
   # 不分进行中/完成：这些词在可执行代码里出现，就是又在用字符串近似语义，任何时候都不合入。
-  #
-  # **只数可执行的那部分**（判据实现见 test_mechanism_budget）：注释里交代
-  # 「这条路径为什么退场」正是该写的话；把退场理由一起数进来，下一轮就只能靠删注释过关，
-  # 那时代码里没有这些词，而知道它们为什么不该回来的那段文字也没了。
   target: 0
   approved_by: WYK
-  reason: "步骤 10 收口归零：paraphrase.mjs 与 verdict-set.mjs 整份删除，pre_verifier 的相似度排序、verifier-report 的引文核实与 min_quote_chars、两处 post_check 的复制检查全部退场。计数口径改为只数可执行行，连同 ceiling 归零，用户 2026-09-04 批准"
+  reason: "相似度、复述、引文长度核实三条路径已全部退场，现值 0；任何新增当场红"

@@ -304,7 +304,7 @@ export function scanLanguageRedline(text, opts = {}) {
     }
     // 来源括注在**表格里不判**：它之所以是病，是因为插在句子中间打断阅读；
     // 表格的一格里「谁定的」是结构化事实，读者一眼扫过去，不构成打断。
-    // 实测：理想产物的关键取舍表用它标「这条已由上游定死」，那正是评审者要看的。
+    // 关键取舍表用它标「这条已由上游定死」是正当写法，那正是评审者要看的判断。
     const isTableRow = raw.trim().startsWith('|');
     for (const [kind, re] of [['search_phrase', SEARCH_PHRASE_RE],
                               ['source_tag', SOURCE_TAG_RE],

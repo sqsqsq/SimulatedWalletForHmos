@@ -43,7 +43,8 @@
 
 ### 三、本步顺序（改后的）
 
-1. 一、二两组改完并逐个评审通过；
+1. 一、二两组改完并逐个评审通过（已通过，见 `reviews/11` §7–§8）；
+1b. **预算口径与注释规则**（用户 2026-09-04 裁定，内容见 `reviews/11` §9.2）：预算只数代码行并按 §9.1 重算配额；注释只写当前说明、不写演进史与测试数据，写进 AGENTS；清扫交付面注释并把兜底扩进 M02。一个提交，评审后进下一项；
 2. 「73 条与清理」与「预算」节照做：退场、死代码、夹具清理、ceiling 压到 target（压不到按类别列差额交用户裁定，不砍判据）；`requirement.status` 保持 `in_progress`；
 3. 全量离线、金样、73 条、E3 静态测试全绿；
 4. **CLI 一次**（`auto-topup` 到 spec，配置按 `test.yaml` 现顺序）。**硬条件**：verifier 证据 JSON 必须由插件发布——`agent_id` 不是 stub、`state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后若插件未触发，**当场停，不修不重试**，写总结回开步骤 1；
@@ -133,6 +134,6 @@ E1–E4 不在 `doc/extensions`，不计入。M1 净减（去掉 siblings 阻断
 
 ## 预算（对照 `test/story/regression/mechanism-budget.yaml`）
 
-本步是收口：把各类别与总量的 ceiling 压到 target（总量 9500、`semantic_proxy` 0）并全绿，作为完成条件之一。
+本步是收口：把各类别与总量的 ceiling 压到 target（按 1b 重算后的数字；`semantic_proxy` 0）并全绿，作为完成条件之一。
 压不到的类别不改 target 迁就，按类别列出差额与原因交用户裁定：是退场没做完（回开对应步骤），还是 target 定错（用户签字改 target）。
 本步自身预计只减不增：删旧回归发现者、无消费者 helper、`baseline_coverage.py` 及其引用。

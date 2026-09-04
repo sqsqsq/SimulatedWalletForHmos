@@ -268,7 +268,7 @@ function parseFactFile(absPath, rel) {
  * 读激活清单并派生知识。
  *
  * **清单只有一份**（`provides.knowledge`）；「这个文件属于哪类」写在文件自己的
- * frontmatter `kind` 里。曾经是两份——清单里再按类分一次组——那意味着新增一个知识文件
+ * frontmatter `kind` 里。清单里再按类分一次组就成了两份，那意味着新增一个知识文件
  * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
  *
  * @returns {{facts: object[], constraints: object[], patterns: object[], indexes: object[],

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """机制层预算门：一次完整需求对 doc/extensions（knowledge 之外）规模的承诺（规则见 AGENTS §7.5）。
 
+**数的是代码行，注释与空行不计**。配额限的是机制的规模，不是文字的长短——把注释算进配额，
+省下来的只会是解释，而解释正是下一个维护者判断「这条判据还该不该在」的依据。
+
 它不按步骤拦中间态：需求进行中只核「没超过方案自己声明的峰值 interim_ceiling」；需求完成
 （requirement.status = closed）时核「回到完成后上限 target 以内」。语义代理标识不分进行中与完成——
 那是方向不是规模，任何时候都不得增长。红了先读报错里指的 AGENTS 条款；为了过门禁砍方案，才是错。
 """
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -43,6 +47,56 @@ def classify(path: Path) -> str | None:
     return None
 
 
+def code_lines(path: Path) -> int:
+    """这个文件有多少行**代码**——注释与空行不算。
+
+    配额限的是机制的规模，不是文字的长短。把注释算进去，省下来的只会是解释，
+    而解释正是下一个维护者判断「这条判据还该不该在」的依据。
+
+    各类文件的注释形态不同，逐类剥：
+      · `.mjs` —— `//` 起头的行与 `/* */` 块；
+      · `.py`  —— `#` 起头的行与三引号 docstring；
+      · `.yaml`—— `#` 起头的行；
+      · `.json`—— 说明键（键名以 `_` 开头或以 `note` 结尾）；
+      · `.md`  —— 提示词正文本身就是内容，只去空行。
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    suffix = path.suffix
+    if suffix == ".mjs":
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        rows = [ln for ln in text.split("\n") if not ln.lstrip().startswith("//")]
+    elif suffix == ".py":
+        rows = _python_code_rows(text)
+    elif suffix in (".yaml", ".yml"):
+        rows = [ln for ln in text.split("\n") if not ln.lstrip().startswith("#")]
+    elif suffix == ".json":
+        rows = [ln for ln in text.split("\n")
+                if not re.match(r'\s*"(?:_[^"]*|[^"]*note)"\s*:', ln)]
+    else:
+        rows = text.split("\n")
+    return sum(1 for ln in rows if ln.strip())
+
+
+def _python_code_rows(text: str) -> list[str]:
+    """去掉 `#` 行与 docstring。docstring 用 ast 定位，靠猜引号会把普通字符串也剥掉。"""
+    rows = text.split("\n")
+    drop: set[int] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return [ln for ln in rows if not ln.lstrip().startswith("#")]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = getattr(node, "body", None) or []
+        first = body[0] if body else None
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            drop.update(range(first.lineno - 1, (first.end_lineno or first.lineno)))
+    return [ln for i, ln in enumerate(rows)
+            if i not in drop and not ln.lstrip().startswith("#")]
+
+
 def measure() -> tuple[dict[str, int], dict[str, list[Path]]]:
     lines: dict[str, int] = {}
     files: dict[str, list[Path]] = {}
@@ -52,8 +106,7 @@ def measure() -> tuple[dict[str, int], dict[str, list[Path]]]:
         cat = classify(p)
         if cat is None:
             continue
-        n = len(p.read_text(encoding="utf-8", errors="replace").splitlines())
-        lines[cat] = lines.get(cat, 0) + n
+        lines[cat] = lines.get(cat, 0) + code_lines(p)
         files.setdefault(cat, []).append(p)
     return lines, files
 
@@ -116,7 +169,7 @@ class MechanismBudget(unittest.TestCase):
                 code = "\n".join(
                     ln for ln in p.read_text(encoding="utf-8", errors="replace").split("\n")
                     if not ln.lstrip().startswith(("//", "*", "/*", "#")))
-                n = len(pat.findall(code))
+                n = len(pat.findall(code))   # 同「只数代码行」那把尺子
                 if n:
                     hits[p.relative_to(EXT).as_posix()] = n
         total = sum(hits.values())

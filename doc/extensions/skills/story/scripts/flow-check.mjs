@@ -33,7 +33,7 @@ const FLOW_FIX = "处置：回 /story 走完三级关卡（材料够不够 → �
  * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）→ `archived`（已送审）。
  *
  * **每道判据问的都是「到没到某个点」，答案是一段区间，不是一个值。**
- * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：实测把「须 complete」写成
+ * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：「须 complete」写成
  * `status !== 'complete'`，成文登记后 spec harness 一重跑就 FAIL，`upstream_verdict_gate`
  * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。回归形态见测试域台账。
  */
@@ -161,7 +161,7 @@ export function flowProblems(featureRoot) {
       }
       if (!d?.at) problems.push(`${at}缺时间戳 at`);
       if (d?.by && d.by !== 'human') {
-        // 关卡决策只认人签。曾经有过 `ai` 这一档，配上条件式的停等判据，
+        // 关卡决策只认人签。留一个 `ai` 档配上条件式的停等判据，
         // 后果是模型判「材料足够」就把关卡记掉，材料补充环节整个被跳过。
         problems.push(`${at}的 by 是「${d.by}」——关卡决策只认人签（human）`);
       }
@@ -285,11 +285,11 @@ export function isStoryFeature(featureRoot) {
  * 叙事件成文了没有——spec 阶段三份产物里的第三份。
  *
  * spec 一次 pass 产出 `spec.md` / `AR/review.md` / `AR/story.md`，三者事实同源。
- * 判据不查文件在不在：**手写一份简版照样过**（基线就这么判，实测被绕过）。
+ * 判据不查文件在不在：只查存在的话，**手写一份简版照样过**。
  * 查的是登记态——`story_flow.py story` 登记前会重跑 `story-build check`，
  * 登记成功即等于九项判据都过了。一处判定，一处真源。
  *
- * 曾经把成文挪到 spec 之后当独立一步，触发条件写「归档之前」；本地单没有归档，
+ * 把成文挪到 spec 之后当独立一步、触发条件写「归档之前」的话：本地单没有归档，
  * 这个时点不存在，于是四个阶段全绿而 story 从来没被写出来。成文回到 spec 阶段内，
  * 它就有阶段边界守着了。
  */

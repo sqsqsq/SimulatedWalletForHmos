@@ -465,9 +465,21 @@ def m18_knowledge_boundary_leak(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
-    """机制层不得出现测试 Case 的单号或业务特征词（反过拟合）。"""
+    """机制层不得出现测试数据（反过拟合）。
+
+    执行者会直接打开脚本读。注释里的测试数据就成了它照着写的样板，
+    测出来的是「照抄那一次」而不是「在未知需求上做对」。
+
+    四种形态，词表都从配置与 Case 目录取，不写死：
+      · 需求单号（`AR-1234` 这类形态）；
+      · 业务特征词（补充文档名、资产目录名——它们会变成路径）；
+      · Case 名与 suite 前缀（配置里登记的那些）；
+      · 某次运行的计数（「实测 3 处」「首跑 91 分钟」这类）。
+    """
     case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")
+    run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
     business_words = _case_business_words()
+    case_names = _case_and_suite_names()
     hits = []
     for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
@@ -476,13 +488,48 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
             if m:
                 hits.append(f"{rel}:{n} `{m.group(0)}`")
                 continue
-            for word in business_words:
-                if word in line:
-                    hits.append(f"{rel}:{n} 业务特征词「{word}」")
-                    break
+            m = run_counts.search(line)
+            if m:
+                hits.append(f"{rel}:{n} 运行计数「{m.group(0)}」")
+                continue
+            hit_word = next((w for w in business_words if w in line), None) \
+                or next((w for w in case_names if w in line), None)
+            if hit_word:
+                hits.append(f"{rel}:{n} 测试数据「{hit_word}」")
     if hits:
-        return Outcome(False, "机制层出现测试特征：" + "；".join(hits[:5]))
-    return Outcome(True, f"机制层零测试特征（业务词表 {len(business_words)} 项）")
+        return Outcome(False, "机制层出现测试数据：" + "；".join(hits[:5]))
+    return Outcome(True,
+                   f"机制层零测试数据（业务词 {len(business_words)}、Case 与 suite 名 {len(case_names)}）")
+
+
+def _case_and_suite_names() -> list[str]:
+    """Case 目录名、`case.yaml` 里的 id 与 suite 前缀——**从配置取，不写死**。
+
+    机制层出现它们，就是它照着某一轮的测试装置写的。
+    """
+    names: set[str] = set()
+    cases_dir = REPO_ROOT / "test" / "story" / "cases"
+    if cases_dir.is_dir():
+        for case_yaml in cases_dir.glob("*/case.yaml"):
+            names.add(case_yaml.parent.name)
+            try:
+                data = yaml.safe_load(read_text(case_yaml)) or {}
+            except yaml.YAMLError:
+                continue
+            if isinstance(data, dict) and data.get("id"):
+                names.add(str(data["id"]))
+    config = REPO_ROOT / "test" / "story" / "config" / "test.yaml"
+    if config.is_file():
+        try:
+            data = yaml.safe_load(read_text(config)) or {}
+        except yaml.YAMLError:
+            data = {}
+        for item in ((data.get("cli") or {}).get("configurations") or []):
+            for key in ("id", "model"):
+                if isinstance(item, dict) and item.get(key):
+                    names.add(str(item[key]))
+    names.add("story-suite-")
+    return sorted(n for n in names if len(n) >= 6)
 
 
 def _case_business_words() -> list[str]:

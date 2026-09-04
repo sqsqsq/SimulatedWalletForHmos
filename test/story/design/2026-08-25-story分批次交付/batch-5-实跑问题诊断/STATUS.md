@@ -1158,3 +1158,4 @@ pid 复用会让历史现场清理误判。
 **CLI 再跑一次**（硬条件：verifier 证据必须由插件发布，`agent_id` 不是 stub、
 `state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后插件没触发就**当场停，不修不重试**）→ 三轴评分由用户确认。
 - 2026-09-04 独立评审二跑前七条修正：复跑 554 全绿、73 条对账、预算门通过、framework 零差异。E1–E4、M1 通过；M2 漏 story_written/archived 两态；M3 不通过——裸序号靠 16 字量词表放行，「20 元面额」「30 秒超时」「4 位密码」等被剥掉首字，且 normalizeHeading 被十几处标题匹配共用；改为 renumberStory 内按序位判定。返修一个提交。
+- 2026-09-04 独立评审返修 `a1026080`：通过（M3 按序列判、金样不变且幂等、首跑 32 处重复编号归零、九个单位词标题不动；M2 覆盖 story_written/archived；M1 死字段删）。advisory：reopen 从 story_written 回退未撤销成文登记。用户新裁定：预算只数代码行（现值 scripts_mjs 1886 / py 1183 / hooks 2403 / prompts 1996 / data 648 / 总 8116，target 按占比折算）；注释只写当前说明、不含演进史与测试数据；写进 AGENTS 并清扫交付面、兜底扩进 M02。交执行会话一个提交（steps/11 第 1b 项），之后才是退场与预算压缩，再 CLI。
