@@ -31,7 +31,8 @@
     "UX": {
       "path": "ux-reference/README.md",
       "required": false,
-      "warn_if_siblings": "ux-reference"
+      "warn_if_siblings": "ux-reference",
+      "_note": "界面参考目录的说明文件。**它不是图片登记**——图片的身份与落点在 AR/story-src/materials.json，那是唯一真源。这里保留它只为「有则读、作可选材料」；缺了记一笔，不拦。warn_if_siblings 现在只影响记一笔的措辞。"
     }
   },
   "chapters": [

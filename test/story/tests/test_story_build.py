@@ -869,6 +869,44 @@ class TestReviewComesAfterTheStory(Step8Case):
         self.assertNotIn("手改过的标题", again, "机器区被人维护成了第二份真源")
 
 
+class TestUxReferenceNeedsNoReadme(Step8Case):
+    """`ux-reference/` 有图而没有 README，不再阻断 init。
+
+    那一档判据当初的话是「图片在而索引不在，导入做了一半」——它建立在
+    **README 承载图片登记**之上。步骤 6/8 把登记收成 `materials.json` 一处真源之后，
+    README 不再是登记，这个形状就不是缺陷了。
+
+    实跑里它的代价是具体的：`init` 被拦下 → 模型补 README → 材料指纹变了 →
+    契约开出新一轮 → 撞上轮次死锁，一共 18 分钟。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        ux = self.feature_root() / "ux-reference"
+        ux.mkdir(parents=True, exist_ok=True)
+        (ux / "signup.png").write_bytes(b"\x89PNG\r\n\x1a\n1")
+        (ux / "manage.png").write_bytes(b"\x89PNG\r\n\x1a\n2")
+        self.assertFalse((ux / "README.md").exists(), "夹具要的就是没有 README")
+
+    def test_init_passes_and_only_notes_it(self) -> None:
+        proc = self.run_build("init")
+        self.assertEqual(0, proc.returncode,
+                         f"有图无 README 又把 init 拦住了：{proc.stderr}")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("合同声明的来源 UX 不存在", out, "缺了要可见——不拦不等于不说")
+        self.assertIn("材料清单", out, "要说清图片的登记在哪儿")
+        self.assertNotIn("导入做了一半", out, "那句话属于已退场的判据")
+
+    def test_the_image_check_still_reads_the_manifest(self) -> None:
+        """不拦不等于放弃判据：④ 图片身份照旧按 materials.json 认图。"""
+        self.round_now()
+        self.init_audit()
+        self.rewrite_story("## 业务方案",
+                           "![图 1 签约页](../ux-reference/signup.png)\n\n## 业务方案")
+        _, out = self.check_output()
+        self.assertNotIn("不在材料的图片登记里", out, "清单里有的图被判成没登记")
+
+
 class TestImageIdentityComesFromTheManifest(Step8Case):
     """图片的身份是它的内容，登记只有一处：材料清单。
 

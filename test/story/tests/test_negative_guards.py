@@ -118,31 +118,16 @@ class DeclaredSourcesMustExist(NegativeCase):
         return {k: (v if isinstance(v, str) else v.get("path")) for k, v in raw.items()}
 
     def test_the_hole_is_real(self) -> None:
-        """先证明这个洞确实存在：夹具缺了五个声明来源。"""
+        """先证明这个洞确实存在：夹具缺了好几个声明来源。
+
+        它们**一律不拦、一律记一笔**。曾有一档是 BLOCKER（目录里有图而索引不在，
+        判「导入做了一半」），那条建立在「README 承载图片登记」之上；
+        步骤 6/8 把登记收成 `materials.json` 一处真源之后它失去对象，随步骤 11 退场。
+        """
         missing = [rel for rel in self.declared_sources().values()
                    if rel and not (self.feature_root() / rel).exists()]
         self.assertGreaterEqual(len(missing), 2,
                                 "夹具变了——它本该缺好几个声明来源，这条反例才有对象")
-
-    def test_N2_import_half_done_index_missing_while_files_present(self) -> None:
-        """坏产物：`ux-reference/` 里有图片，却没有索引 README——导入做了一半。
-
-        这就是实跑那一次的形状：2 张 png 在、`README.md` 不在，于是 UX 整类
-        枚举出 0 个单元，全程零报错。**这一档没有误伤面**：目录里有文件是客观事实，
-        索引缺席是客观缺陷。
-
-        （批次 2 已转正。原先这条写成「任何声明来源缺失都该拦」，实测那样会让
-        114 个单测与 23 条失效形态变红——它们都是最小夹具，一份材料测一条判据。
-        新增义务同样要先量误伤面，见 `scanSources` 的注释。）
-        """
-        ux = self.feature_root() / "ux-reference"
-        ux.mkdir(parents=True, exist_ok=True)
-        (ux / "signup.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-        proc = self.run_build("init")
-        self.assertNotEqual(proc.returncode, 0, "导入做了一半居然没拦")
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertIn("合同声明的来源 UX 不存在", out)
-        self.assertIn("导入做了一半", out)
 
     def test_missing_optional_source_is_visible_but_not_blocking(self) -> None:
         """缺失一律**可见**——根因是零信号，不是没拦。
@@ -294,7 +279,7 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
     # 本段退掉九条：它们守的判据（落点守恒、形态守恒、裁决核实、逐问逐章、术语实体词）
     # 随逐单元系统一起退场。剩下三条重新编号 N1..N3——「不许缺号」这条元判据比的是基线，
     # 基线跟着退场走，判据本身一个字没动。
-    NEGATIVE_COUNT = 2
+    NEGATIVE_COUNT = 1
 
     def test_negatives_are_numbered_without_gaps(self) -> None:
         body = self.THIS.read_text(encoding="utf-8")

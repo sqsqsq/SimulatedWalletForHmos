@@ -264,12 +264,13 @@ function knowledgeUseVerdicts(ctx) {
  * 后果是一整类材料凭空缺席而零信号：那一份的内容从头到尾没进过任何一条判据的视野，
  * 从 init 到 check 没有一条报错提过这件事。
  *
- * 缺失分两档，由合同数据定，本文件不写死任何路径：
+ * **一律记一笔，不拦**（`required` 只决定措辞轻重）。
  *
- * - **`warn_if_siblings` 指的那个目录有别的文件、偏偏没有这一份 → BLOCKER。**
- *   图片在而索引不在，说明导入做了一半，不是「本需求没有界面」。
- *   这一档**没有误伤面**：目录里有文件是客观事实，索引缺席是客观缺陷。
- * - **其余缺失 → 记一笔**（`required` 只决定措辞轻重，不决定拦不拦）。
+ * 曾经有一档是 BLOCKER：`warn_if_siblings` 指的目录里有文件、偏偏没有那一份索引，
+ * 判「图片在而索引不在，导入做了一半」。**那条判据建立在「README 承载图片登记」之上**——
+ * 步骤 6/8 把图片登记收成 `materials.json` 一处真源之后，README 不再是登记，
+ * 有图无 README 也就不再是缺陷。实测它的代价：真实实跑里 `init` 被它拦下，
+ * 模型去补 README，补完材料指纹变了、契约开出新一轮，接着撞上轮次死锁，耗掉 18 分钟。
  *
  * **为什么必备来源缺失也不拦**：这条判据是新增的正向义务，按「放宽前先写命中面」
  * 的同一把尺子，新增义务也要先量误伤面。实测：把「必备来源缺失」判成 BLOCKER，
@@ -312,8 +313,8 @@ function scanSources(ctx) {
       required: obj.required === true,
       siblings,
       siblingDir: obj.warn_if_siblings ?? null,
-      // 只有「兄弟文件在而索引不在」才拦——那一档没有误伤面。见本函数注释。
-      blocking: siblings > 0,
+      // 缺来源一律不拦。图片的登记在 materials.json，不在这些索引文件里。
+      blocking: false,
     });
   }
   return { docs, missing };
@@ -343,13 +344,13 @@ function ownIdentifiers(feature) {
   return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
 }
 
-/** 缺失来源报成一句话——BLOCKER 与「记一笔」共用这一份措辞。 */
+/** 缺失来源报成一句话。都是「记一笔」，措辞按有没有兄弟文件、是不是必备分三种。 */
 function missingSourceLine(m) {
   if (m.siblings > 0) {
     return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
       + `——但 ${m.siblingDir}/ 里有 ${m.siblings} 个文件。`
-      + '图片在而索引不在，是导入做了一半：把它们登记进索引，'
-      + '否则这一类材料的内容一条都到不了作者手上';
+      + '图片的登记在材料清单（AR/story-src/materials.json），不在这份索引里，'
+      + '所以判据不受影响；要不要给这个目录写一份说明文件，由你定';
   }
   return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
     + (m.required
@@ -366,14 +367,6 @@ function cmdInit(ctx) {
   const { docs, missing } = scanSources(ctx);
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
-  }
-  // 导入做了一半要在动笔**之前**拦住：拦晚了，作者已经拿着残缺的材料往下走了。
-  const blocking = missing.filter(m => m.blocking);
-  if (blocking.length) {
-    fail(blocking.map(missingSourceLine).join('\n  ') + '\n'
-      + '  补齐它再跑 init。这一类材料缺席时，它承载的事实一条也到不了作者手上，'
-      + '而门禁只判写出来的那些——'
-      + '少了一整类材料，全绿也证明不了什么。');
   }
 
 
