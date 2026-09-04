@@ -124,3 +124,16 @@ AGENTS §7.5：改预算任何数字要具名与理由——数字与口径都�
 - **B1 同意**：B02、M11、P11 标 `retired`；P02、P03、P04 改 `responsibility: verifier`。六条的 `approved_by` 改写为「用户（2026-09-04 裁定，见 reviews/10 §7）」，reason 不动。
 - **B2 OK**：语义代理计数只数可执行行、`semantic_proxy.ceiling` 0、`scripts_mjs.interim_ceiling` 3014 三处生效。两条 reason 末尾补「用户 2026-09-04 批准」。
 - 返修提交范围：改上述签名措辞；清 B3 全部残留（宽词 `分配|裁决|逐行|必答|复制|三方` 过一遍再人工筛，实施自述附命令与命中数）；补 B4 一条下游分派测试。通过后步骤 10 收口。
+
+### 8. 返修（`6c7c9ed2`）· 独立评审（Claude，2026-09-04）
+
+- 状态：**通过，步骤 10 收口。**
+- B1/B2：六条台账 `approved_by` 改为「用户（2026-09-04 裁定，见 reviews/10 §7）」；两条预算 reason 末尾补「用户 2026-09-04 批准」。签名与 §7 一致。
+- B3：上轮四处全清（SKILL.md 入口图改为「建骨架 → 按章写、按章落盘 → 统稿 → 登记」、spec 钩子注释、`glossaryMainName`、`prose_budget`）；
+  本段新增的也清了（spec 钩子函数注释、plan 作者文档两条已删门禁改成「`must.text` 缺失」与「报告里没有本阶段判据的结论」）。
+  宽词 `分配落点|裁决|逐行|必答|复制|三方|来源单元|audit|source-units|story-verdicts|by: author|待分配` 复跑：剩余命中全是退场理由注释、overlay 里「不出裁决表」的否定表述、
+  图片规则里的「不复制文件」、SR 的「三方分工」——没有一处在描述已不存在的机制。
+- B4：新增 `TheObligationReachesTheDownstream` 两条：挂 `verify: ut` 的 NEU-01 被 ut 阶段钩子点名；`verify: device` 的不被 ut 认领。分派按 `must.verify` 走，不按前缀。
+- 复跑：story 534 全绿（55 s）；73 条 = 活跃 70（FAIL 0、委派 15）+ retired 3；预算门通过；改动的 5 个 `.mjs` 语法通过；hooks 与 story-build 零无调用函数；`framework/` 零差异。
+  scripts_mjs 现值 2999（ceiling 3014，删 `glossaryMainName` 后余 15 行）。
+- 留给步骤 11：A1（非知识类判据的「12 字引文」口径）、A2（P02–P04 与 12 条 observed 的夹具目录）、判据编号重排。

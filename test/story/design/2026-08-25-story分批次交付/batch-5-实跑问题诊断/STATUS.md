@@ -23,7 +23,7 @@
 | 7 Story 语义审查资格门 | **装置通过**；资格实跑按 D10 修订撤销，夹具与驱动器留为离线诊断器材，区分力由步骤 11 真实结果观察 | [reviews/07-story-semantic-oracle.md](reviews/07-story-semantic-oracle.md) |
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
-| 10 三类 Knowledge 消费与传递 | 小段 1 **通过**；2+3（`d158c5c6`）与 4（`57524cc3`）机制面**通过**；用户裁定 B1/B2 已签，返修（签名归位、B3 交付面残留、B4 下游分派）已实施，等待评审 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
+| 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
 | 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
 
 ## 事件日志
@@ -1078,3 +1078,4 @@ grep 不出来——**词表外的残留只能靠人读**。这次改用宽词�
 - story 全量 **534 绿**；失效形态 70 条活跃 FAIL 0、委派 15、retired 3；
 - 宽词复查：`doc/extensions`（knowledge、rules、story-adaptation 之外）命中全部是仍成立的表述；
 - 语义代理在可执行代码里 **0**；`hooks_mjs` 3450、`scripts_mjs` 2999（均在 ceiling 内）、总量 11701。
+- 2026-09-04 独立评审步骤 10 返修：通过，步骤 10 收口。签名归位、交付面宽词复核零残留、中性知识到 ut 阶段两条测试。复跑 534 全绿、73 条（活跃 70）、预算门通过、framework 零差异。步骤 11 进入条件齐备（步骤 9、10 均通过）。
