@@ -1079,3 +1079,4 @@ grep 不出来——**词表外的残留只能靠人读**。这次改用宽词�
 - 宽词复查：`doc/extensions`（knowledge、rules、story-adaptation 之外）命中全部是仍成立的表述；
 - 语义代理在可执行代码里 **0**；`hooks_mjs` 3450、`scripts_mjs` 2999（均在 ceiling 内）、总量 11701。
 - 2026-09-04 独立评审步骤 10 返修：通过，步骤 10 收口。签名归位、交付面宽词复核零残留、中性知识到 ut 阶段两条测试。复跑 534 全绿、73 条（活跃 70）、预算门通过、framework 零差异。步骤 11 进入条件齐备（步骤 9、10 均通过）。
+- 2026-09-04 评审者观察步骤 11 首跑（auto-topup，bailian-deepseek，91 分钟）：不能作正式三轴证据。工作区无 .opencode（allowlist 不含且本仓从未物化 verifier agent/插件）→ verifier 由主模型手写报告与证据 JSON；上下文 525K、读脚本源码 28 次；story-build init 仍要求 ux-reference/README 并引出 18 分钟流程死锁（模型手改 story-flow.json）。成文本身 12 分钟通过。处置见 reviews/11 §4：物化并带上 .opencode、init 的 UX 来源改读 materials.json、complete 后新轮要有出口，修完再跑一次。
