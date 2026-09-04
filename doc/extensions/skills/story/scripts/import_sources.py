@@ -56,9 +56,13 @@ SKIP_NAMES = {"readme.md"}
 # AI 写、脚本读的归类件；与它一样的点文件都是控制件，不是材料
 CLASSIFY_FILE = ".classify.json"
 
-CLASSES = ("RR", "SR", "AR", "UX")
+#: `IMAGES` 是「只抽图、正文不动」：补料是为了补图时走它。
+#: 系统上已有同类正文，而这份补料是原稿或参考稿——把它并进正文会用草稿盖掉定稿，
+#: 而人要的只是里面的图。选哪一档由归类时判断，不另外问人一次。
+CLASSES = ("RR", "SR", "AR", "UX", "IMAGES")
 
-# 各类的落点。UX 分两路：图片进框架既有的参考图目录，文档并入其 README。
+# 各类正文的落点。UX 分两路：图片进框架既有的参考图目录，文档并入其 README。
+# `IMAGES` 不在这里——它没有正文落点，那正是它与别的类的区别。
 DOC_TARGET = {
     "RR": Path("RR/prd.md"),
     "SR": Path("SR/design.md"),
@@ -394,6 +398,12 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
         else:
             # 文本原样并入——它已经是可读格式，任何"转换"都只会丢东西
             markdown = path.read_text(encoding="utf-8").strip()
+        if cls == "IMAGES":
+            if not media.get(stem):
+                raise ImportError_(
+                    f"「{path.name}」归类为 IMAGES（只抽图）但里面没有图——"
+                    "要并入正文的话改归 RR / SR / AR / UX")
+            continue          # 图已经在 media 里，正文丢掉：这一档就是不动正文
         doc_sections[cls].append((stem, markdown))
 
     return doc_sections, media, ux_images
@@ -553,7 +563,7 @@ def main() -> int:
 
         # ── 写盘 ────────────────────────────────────────────────────────
         written: list[str] = []
-        for cls in CLASSES:
+        for cls in DOC_TARGET:          # 只有有正文落点的类才写盘
             if not doc_sections[cls]:
                 continue  # 该类无材料 → 目标不动（收敛语义是「不动」，不是「清空」）
             target = feature_root / DOC_TARGET[cls]

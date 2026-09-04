@@ -732,6 +732,12 @@ def settled_this_round(contract: dict) -> bool:
             and split.get("settled_round") == contract["rounds"][-1].get("round"))
 
 
+#: 进 spec 的授权：`/story` 启动时就声明了范围，收口这一步原样回显。
+#: 不回显的话，模型在阶段边界只能按 framework 的默认策略再问一次——它没错，是链没接上。
+SPEC_STAGE_AUTHORIZATION = (
+    "本轮授权：`/story <AR>` 的启动语义是「做到 spec 闭环并归档」（batch 多阶段声明），"
+    "spec 阶段在声明范围内，**不必再要一次授权**；plan 及其之后仍按 framework 默认策略停等。")
+
 #: 这一段的顺序，四个分支共用一句。
 SPEC_STAGE_ORDER = (
     "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
@@ -751,7 +757,8 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
 
     if not have("spec", "knowledge-use.yaml"):
         return ("spec_knowledge_use_init",
-                "进 /spec。第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
+                SPEC_STAGE_AUTHORIZATION
+                + " 进 /spec：第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
                 "（激活条目一条不落，你只填 applicable 与依据）。" + SPEC_STAGE_ORDER)
     if not have("spec", "spec.md"):
         return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
@@ -800,6 +807,27 @@ def sidecar_shape(step: str) -> dict | None:
     return None
 
 
+def opened_by_supplement(contract: dict) -> bool:
+    """本轮是补料开出来的——上一轮的材料关卡选了补充且被接受。"""
+    rounds = contract.get("rounds") or []
+    if len(rounds) < 2:
+        return False
+    prev = last_gate(rounds[-2].get("gates") or [], "material_scope")
+    return bool(prev and prev.get("chosen") == "supplement"
+                and prev.get("outcome") == "accepted")
+
+
+def material_settled_by_supplement(feature_root: Path, contract: dict) -> bool:
+    """补料开出的新一轮里，材料算已确认，不再单独停一次。
+
+    人选「补充材料」就是对「材料够不够」的回答；补完再问一次问的是同一件事。
+    **例外**：模型在新一轮盘点出**新的**缺口时会摆出选项侧车，那时仍要停——
+    侧车在不在就是判据（`decide` 会消费掉它，盘上留着的只会是这一轮新写的）。
+    """
+    return (opened_by_supplement(contract)
+            and not (feature_root / Path(*GATE_OPTIONS)).is_file())
+
+
 def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
@@ -822,11 +850,11 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     # 第一级：材料够不够。**先于任何需求分析**——材料不全时做的范围判断注定作废，
     # 每轮补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
-    if material is None:
+    if material is None and not material_settled_by_supplement(feature_root, contract):
         return ("await_gate:material_scope",
-                "S3 第一级：带出材料清单（逐项标来源与状态）与一句缺口判断，"
-                "取得选择——补充材料 / 材料充足，开始需求分析")
-    if material["chosen"] == "supplement":
+                "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
+                "取得选择：补充材料 / 材料充足，开始需求分析")
+    if material and material["chosen"] == "supplement":
         if material["outcome"] == "accepted":
             return "import_and_reanalyze", "回 S2：导入 inbox/ 新料 → 重新盘点材料 → 重跑 `round`"
         return "await_gate:material_scope", "补料被拒（inbox 无新料），在第一级重新取得选择"

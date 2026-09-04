@@ -13,16 +13,21 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "test" / "story" / "scripts"
 sys.path.insert(0, str(REPO_ROOT))
+STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(STORY_SCRIPTS))
+import materials  # noqa: E402
 import run_multi_case  # noqa: E402
 
 
@@ -327,3 +332,97 @@ class TestCoordinatorWiring(FixtureCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
+    """补料是为了补图时，正文不动。
+
+    导入此前只有一条路——正文整体覆盖目标文件。于是「原稿放进去了，图在里面」
+    这句话的后果是系统上的定稿被一份草稿盖掉：人要的是图，机制把正文也换了。
+    """
+
+    TEXT = "# 定稿\n\n这是系统上的正文，补图不该动它。\n"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature_root = self.root / "doc" / "features" / "IM90002"
+        (self.feature_root / "RR").mkdir(parents=True)
+        (self.feature_root / "RR" / "prd.md").write_text(self.TEXT, encoding="utf-8")
+        self.inbox = self.feature_root / "inbox"
+        self.inbox.mkdir()
+
+    def write_docx(self, name: str = "原稿.docx") -> Path:
+        """最小 docx：一段正文 + 一张内嵌图。"""
+        path = self.inbox / name
+        document = (
+            '<?xml version="1.0"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<w:body><w:p><w:r><w:t>草稿正文，比定稿旧</w:t></w:r></w:p>'
+            '<w:p><w:r><w:drawing><a:blip xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+            ' r:embed="rId1"/></w:drawing></w:r></w:p></w:body></w:document>'
+        )
+        rels = (
+            '<?xml version="1.0"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+            'relationships/image" Target="media/image1.png"/></Relationships>'
+        )
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("word/document.xml", document)
+            zf.writestr("word/_rels/document.xml.rels", rels)
+            zf.writestr("word/media/image1.png", b"\x89PNG\r\n\x1a\nfigure")
+        return path
+
+    def classify(self, cls: str) -> None:
+        (self.inbox / ".classify.json").write_text(
+            json.dumps({"原稿.docx": cls}, ensure_ascii=False), encoding="utf-8")
+
+    def run_import(self) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "doc/extensions/skills/story/scripts/import_sources.py"),
+             "--feature", "IM90002", "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+
+    def test_the_text_survives_and_the_figure_lands(self) -> None:
+        self.write_docx()
+        self.classify("IMAGES")
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(self.TEXT,
+                         (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"),
+                         "补图那一档把正文也换了")
+        self.assertTrue((self.feature_root / "assets" / "原稿" / "image1.png").is_file(),
+                        "图没抽出来——这一档抽图是它唯一要做的事")
+
+    def test_the_default_class_still_overwrites(self) -> None:
+        """反样本：归 RR 就是要覆盖正文——这一档不是把覆盖废掉。"""
+        self.write_docx()
+        self.classify("RR")
+        self.assertEqual(0, self.run_import().returncode)
+        self.assertNotEqual(self.TEXT,
+                            (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"))
+
+    def test_a_docx_without_figures_is_refused_in_that_class(self) -> None:
+        """没有图却归了只抽图——那是归类错了，不能静默丢掉正文。"""
+        path = self.inbox / "原稿.docx"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("word/document.xml",
+                        '<?xml version="1.0"?><w:document xmlns:w="http://schemas.'
+                        'openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+                        '<w:p><w:r><w:t>只有字</w:t></w:r></w:p></w:body></w:document>')
+        self.classify("IMAGES")
+        proc = self.run_import()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("没有图", proc.stdout + proc.stderr)
+
+    def test_the_material_version_still_moves(self) -> None:
+        """正文没动，但材料确实变了——图是材料，轮次要看得见它。"""
+        self.write_docx()
+        self.classify("IMAGES")
+        before = materials.compute_digest(materials.collect_materials(self.feature_root))
+        self.assertEqual(0, self.run_import().returncode)
+        after = materials.compute_digest(materials.collect_materials(self.feature_root))
+        self.assertNotEqual(before, after, "只抽图没有形成新材料版本")

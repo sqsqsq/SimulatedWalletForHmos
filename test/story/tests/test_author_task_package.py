@@ -198,6 +198,17 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertIn("knowledge-use.mjs init", action)
         self.assertIn("harness", action)
 
+    def test_it_repeats_the_authorization_for_entering_spec(self) -> None:
+        """进 spec 的授权是 `/story` 启动时声明的，收口这一步要原样打出来。
+
+        不打的话，模型在 framework 的阶段边界只能按默认策略再问一次授权——
+        它没错，是「/story 即声明做到 spec 闭环」这条链没有接到 framework 认的形态上。
+        """
+        self.write_contract("complete")
+        action = self.status()["action"]
+        self.assertIn("本轮授权", action)
+        self.assertIn("不必再要一次授权", action)
+
     def test_it_moves_on_once_the_judgement_exists(self) -> None:
         self.write_contract("complete")
         (self.feature_root / "spec" / "knowledge-use.yaml").write_text("schema: 1\n", encoding="utf-8")

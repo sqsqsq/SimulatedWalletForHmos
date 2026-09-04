@@ -28,6 +28,7 @@
 这两道也在这一份里锚住。
 """
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -35,8 +36,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 MODULE = REPO / "doc" / "extensions" / "hooks" / "shared" / "verifier-report.mjs"
-PRE_VERIFIER = REPO / "doc" / "extensions" / "hooks" / "shared" / "pre_verifier.mjs"
 CONTRACT = REPO / "doc/extensions/skills/story/contracts/story-chapters.json"
+FEATURE = "RT90001"
 
 SUBJECT = "a" * 64
 OTHER_SUBJECT = "b" * 64
@@ -206,11 +207,27 @@ if __name__ == "__main__":
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。
 
-    二跑 verifier 第一次的报告里完全没有 story 审查：framework 的任务清单只列它自己的项，
-    而扩展的注入又按 `knowledge_` 前缀把读者审查滤掉了——两道都漏，它就不是任务。
+    注入的清单只列 framework 自己那十项、扩展这边又按前缀过滤，两道都漏，
+    读者审查就不是「任务」，审查者不会去做它。
+
+    输入自带：临时工作区里造一个最小需求目录。拿仓内真实需求当输入的话，
+    CLI 起跑时装置会把 `doc/features` 整个迁走，测试跟着一起塌。
     """
 
-    def inject(self, feature: str = "AR90006") -> str:
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        (self.root / "doc").mkdir(parents=True)
+        shutil.copytree(REPO / "doc" / "extensions", self.root / "doc" / "extensions")
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        src.mkdir(parents=True)
+        (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
+        (src / "materials.json").write_text(json.dumps({"materials": [
+            {"kind": "image", "paths": ["assets/doc-a/one.png"], "caption": "签约页"},
+        ]}, ensure_ascii=False), encoding="utf-8")
+
+    def inject(self, feature: str = FEATURE) -> str:
         driver = f"""
         import(process.argv[2]).then(async m => {{
           const out = await m.default({{ projectRoot: process.argv[3],
@@ -218,15 +235,14 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
           process.stdout.write((out.promptFragments || []).join('\\n\\n'));
         }});
         """
-        with tempfile.TemporaryDirectory() as d:
-            script = Path(d) / "drive.mjs"
-            script.write_text(driver, encoding="utf-8")
-            r = subprocess.run(
-                ["node", str(script), PRE_VERIFIER.as_uri(), str(REPO), feature],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=60)
-            self.assertEqual(0, r.returncode, r.stderr[:600])
-            return r.stdout
+        script = self.root / "drive.mjs"
+        script.write_text(driver, encoding="utf-8")
+        hook = self.root / "doc/extensions/hooks/shared/pre_verifier.mjs"
+        r = subprocess.run(
+            ["node", str(script), hook.resolve().as_uri(), str(self.root), feature],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return r.stdout
 
     def test_the_reader_review_is_injected_not_filtered_out(self) -> None:
         text = self.inject()
@@ -239,9 +255,11 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertLess(text.index("story_reader_review"), text.index("知识判据"))
 
     def test_the_task_asks_about_every_image(self) -> None:
-        """任务里没有的问题，审查者不会去问——两轮丢图，它一次都没报。"""
+        """任务里没有的问题，审查者不会去问。图逐张列出，连它是什么一起。"""
         text = self.inject()
         self.assertIn("材料里的图，逐张回答", text)
+        self.assertIn("assets/doc-a/one.png", text)
+        self.assertIn("签约页", text)
         self.assertIn("story 用了没有", text)
 
     def test_the_task_carries_the_contract_questions(self) -> None:

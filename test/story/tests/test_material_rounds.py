@@ -275,6 +275,57 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
 
 
+class SupplementAnswersTheMaterialGate(MaterialRoundCase):
+    """人选「补充材料」就是对「材料够不够」的回答，补完不再问第二遍。
+
+    停等要留给**新的**判断：模型在新一轮盘点出新缺口时摆出选项侧车，那时才停。
+    侧车在不在就是判据——`decide` 会消费掉它，盘上留着的只会是这一轮新写的。
+    """
+
+    def write_gate_options(self) -> None:
+        src = self.feature_root / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / ".gate-options.json").write_text(json.dumps([
+            {"key": "supplement", "label": "补充材料"},
+            {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
+        ], ensure_ascii=False), encoding="utf-8")
+
+    def next_of(self) -> str:
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout[proc.stdout.index("{"):])["next"]
+
+    def supplement_round(self) -> None:
+        """走完一轮：摆选项 → 人选补料 → 放新料 → 开新一轮。"""
+        self.round_now()
+        self.write_gate_options()
+        (self.feature_root / "inbox").mkdir(exist_ok=True)
+        (self.feature_root / "inbox" / "原稿.md").write_text("# 原稿\n\n补的材料。\n",
+                                                            encoding="utf-8")
+        proc = self.run_flow("decide", "--gate", "material_scope", "--chosen", "supplement",
+                             "--by", "human", "--basis", "补充材料，产品原稿已放入需求目录。")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.add_ux("signup.png")          # 料真的进来了，材料指纹随之变
+        self.round_now()
+
+    def test_no_new_gap_means_no_second_stop(self) -> None:
+        self.supplement_round()
+        self.assertEqual("run_analysis", self.next_of(),
+                         "补料之后又停了一次——问的是同一件事")
+
+    def test_a_new_gap_stops_again(self) -> None:
+        """模型在新一轮盘点出新缺口 → 摆出选项 → 仍要停。"""
+        self.supplement_round()
+        self.write_gate_options()
+        self.assertEqual("await_gate:material_scope", self.next_of(),
+                         "模型摆出了新选项，却没有停")
+
+    def test_the_first_round_still_stops(self) -> None:
+        """第一轮照停：那一次不是补料开出来的。"""
+        self.round_now()
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+
 class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
     """本扩展新增的停等点只有两处，且都无条件。
 

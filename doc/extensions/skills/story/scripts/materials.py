@@ -183,13 +183,23 @@ def collect_sources(feature_root: Path) -> list[dict]:
 
         if docs:
             try:
-                sections, _, _ = import_sources.convert_sources(
+                sections, media, _ = import_sources.convert_sources(
                     docs, {p.name: cls for p in docs})
             except (import_sources.ImportError_, OSError, ValueError) as exc:
                 raise MaterialError(
                     f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
-            target = feature_root / import_sources.DOC_TARGET[cls]
-            if target.is_file() and _same_text(
+            if cls not in import_sources.DOC_TARGET:
+                # 只抽图那一档没有正文落点：图落地了就算并入
+                for p in docs:
+                    blobs = media.get(p.stem) or {}
+                    asset_dir = feature_root / "assets" / p.stem
+                    entries[p.name]["ingested"] = bool(blobs) and all(
+                        (asset_dir / name).is_file()
+                        and (asset_dir / name).read_bytes() == blob
+                        for name, blob in blobs.items())
+                docs = []
+            target = feature_root / import_sources.DOC_TARGET[cls] if docs else None
+            if target is not None and target.is_file() and _same_text(
                     target.read_text(encoding="utf-8", errors="replace"),
                     import_sources.render_target(sections[cls])):
                 for p in docs:
