@@ -24,7 +24,7 @@
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
-| 11 集成实跑与旧发现者退场 | 未开始 | 待生成 |
+| 11 集成实跑与旧发现者退场 | 实跑**一次跑通**（`story-suite-20260904-091600`，`bailian-deepseek`，spec 客观闭环）；报告与三轴建议分已出，**等评审人决策分数**——分数确认前不做 73 条收口与清理 | [11-实跑报告.md](11-实跑报告.md) |
 
 ## 事件日志
 
@@ -1080,3 +1080,35 @@ grep 不出来——**词表外的残留只能靠人读**。这次改用宽词�
 - 语义代理在可执行代码里 **0**；`hooks_mjs` 3450、`scripts_mjs` 2999（均在 ceiling 内）、总量 11701。
 - 2026-09-04 独立评审步骤 10 返修：通过，步骤 10 收口。签名归位、交付面宽词复核零残留、中性知识到 ut 阶段两条测试。复跑 534 全绿、73 条（活跃 70）、预算门通过、framework 零差异。步骤 11 进入条件齐备（步骤 9、10 均通过）。
 - 2026-09-04 评审者观察步骤 11 首跑（auto-topup，bailian-deepseek，91 分钟）：不能作正式三轴证据。工作区无 .opencode（allowlist 不含且本仓从未物化 verifier agent/插件）→ verifier 由主模型手写报告与证据 JSON；上下文 525K、读脚本源码 28 次；story-build init 仍要求 ux-reference/README 并引出 18 分钟流程死锁（模型手改 story-flow.json）。成文本身 12 分钟通过。处置见 reviews/11 §4：物化并带上 .opencode、init 的 UX 来源改读 materials.json、complete 后新轮要有出口，修完再跑一次。
+
+## 步骤 11 实跑（2026-09-04）：auto-topup 到 spec 一次跑通 · 三轴分数待评审人决策
+
+完整证据见 [11-实跑报告.md](11-实跑报告.md)。这里只留状态与待办。
+
+**跑了什么**：`auto-topup`（AR90006）从取材到 spec 闭环，`cli_config_id = bailian-deepseek`，
+attempt 1、无重跑、无配置熔断，终态 `finished`（**spec 客观闭环，装置自己停的，不是宿主 conclude**）。
+91 分钟，宿主以需求方身份回话 3 次（材料缺口 / 两版冲突 / 范围拍板），无空等。
+
+配置顺序按用户 2026-09-04 裁定改为 `deepseek > glm > luna`，锁顺序的契约测试同步更新基线。
+
+**本批机制在真实产物上成立**
+
+| 本批改的 | 实跑里看到的 |
+|---|---|
+| 步骤 9 逐单元系统退场 | `story-src/` 只有 `decisions.json` / `copyedit.md` / `materials.json` —— 全程零 audit、零 source-units、零 story-verdicts |
+| 步骤 10 真源与生成区 | 模型**自己认出 §11 是生成区**，去改 YAML 源再跑 `knowledge-use.mjs render`，没有手改投影 |
+| 步骤 10 判定表 ↔ YAML | 附录 15 条与 `applicable` 逐条一致；`DLV-02` 正确识别为评审动作不产生代码要求 |
+| 批次 4 遗留的图片形态 | 三张图全部到位且落在讲它的那一章——上一轮「图片 3→0、流程图 6→1」未重现 |
+
+**四件剩余风险**（详见报告 §6）：opencode 上 `skill "story" not found`（任务包送达通道断，
+模型 3 秒读 `SKILL.md` 绕过）；小节标题重复编号（`number` 与作者自写序号叠加，39 处里 32 处）；
+报错未说清期望格式导致作者去读 checker 源码；`run_multi_case.py` 判进程存活只比 pid 号，
+pid 复用会让历史现场清理误判。
+
+**维护者建议分**：产物结果 **88** / 性能 **72** / Knowledge 应用 **92**。
+按量表三项均 ≥90 才算达到评分目标，故建议分下为**未达目标但不失败**（均 ≥70）。
+
+**下一步卡在这里**：`TEST.md` 要求三项最终分由用户确认或调整，
+**未经确认不得宣布步骤 11、批次 5 或 Extension 达标，也不创建长期评分基线**。
+用户 2026-09-04 指示交评审人决策——分数落定之前，73 条收口、旧发现者与夹具清理、
+预算压到 target 这三件都不启动（方案要求「实跑通过后」才做）。
