@@ -12,8 +12,13 @@
 允许单选、多选或全选。确认前复述实际 Case、feature、目标阶段、隔离 workspace 和回灌范围；只能执行
 `plan` 等只读检查，不能创建 suite、迁移 features 或启动 CLI。
 
-用户已授权宿主模型启动外层协调器时使用非沙箱环境。`start` 必须在非沙箱环境执行并传入
-`--authorize-non-sandbox`。这不是要求被测模型切换环境，也不得写入 Case prompt。
+**CLI 测试一律以非沙箱启动**（用户长期授权，2026-09-04 复述确认）：`start` 必须传
+`--authorize-non-sandbox`，`plan`、`poll`、`reply`、`conclude`、`finalize` 同样在非沙箱环境跑。
+驱动器要拉起并探测子进程、读写隔离 workspace、把产物回灌进本仓，沙箱里这些都做不成。
+每一轮不必重新征求授权。
+
+这条只管**宿主**：不是要求被测模型切换环境，也不得写入 Case prompt。
+宿主自身的权限层若拦下某条命令，请用户放行，不要改写命令绕开——绕过去的那一跑不算数。
 
 ### 0.1 测试目标与观测边界
 
@@ -73,6 +78,8 @@ python test/story/scripts/run_multi_case.py start --all --jobs <实际Case数> `
   --suite-id story-suite-20260822-140000 --authorize-non-sandbox
 python test/story/scripts/run_multi_case.py poll --suite-id story-suite-20260822-140000 --wait-sec 0
 ```
+
+四步都在非沙箱环境执行（§0）。
 
 一轮跑下来就这四步，其余都是它们的细则：
 
