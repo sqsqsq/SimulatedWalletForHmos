@@ -961,14 +961,16 @@ class TestReviewComesAfterTheStory(Step8Case):
 
 
 class TestUxReferenceNeedsNoReadme(Step8Case):
-    """`ux-reference/` 有图而没有 README，不再阻断 init。
+    """`ux-reference/` 有图而没有 README —— 不阻断，也不再提起。
 
     那一档判据当初的话是「图片在而索引不在，导入做了一半」——它建立在
-    **README 承载图片登记**之上。步骤 6/8 把登记收成 `materials.json` 一处真源之后，
-    README 不再是登记，这个形状就不是缺陷了。
+    **README 承载图片登记**之上。登记收成 `materials.json` 一处真源之后，
+    README 不再是登记；图片的语义（哪张是签约页）也有了确定的家（`.captions.json`），
+    于是它连「可选来源」都不是了，合同里那一条随之退场。
 
-    实跑里它的代价是具体的：`init` 被拦下 → 模型补 README → 材料指纹变了 →
-    契约开出新一轮 → 撞上轮次死锁，一共 18 分钟。
+    实跑里这条的代价是具体的：首跑 `init` 被拦下 → 补 README → 材料指纹变了 →
+    契约开出新一轮 → 轮次死锁，18 分钟；二跑它降成记一笔，仍出现两次，
+    作者两次都停下来处理，其中一次顺手删了附录材料清单里的那一行。
     """
 
     def setUp(self) -> None:
@@ -979,13 +981,13 @@ class TestUxReferenceNeedsNoReadme(Step8Case):
         (ux / "manage.png").write_bytes(b"\x89PNG\r\n\x1a\n2")
         self.assertFalse((ux / "README.md").exists(), "夹具要的就是没有 README")
 
-    def test_init_passes_and_only_notes_it(self) -> None:
+    def test_init_passes_without_mentioning_the_readme(self) -> None:
         proc = self.run_build("init")
         self.assertEqual(0, proc.returncode,
                          f"有图无 README 又把 init 拦住了：{proc.stderr}")
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("合同声明的来源 UX 不存在", out, "缺了要可见——不拦不等于不说")
-        self.assertIn("材料清单", out, "要说清图片的登记在哪儿")
+        self.assertNotIn("ux-reference/README.md", out,
+                         "README 已不是来源，不该再被提起——那一笔两跑各出现两次")
         self.assertNotIn("导入做了一半", out, "那句话属于已退场的判据")
 
     def test_the_image_check_still_reads_the_manifest(self) -> None:

@@ -46,6 +46,9 @@ SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
 # 某个 README 的链接里又一份，两份对不上时下游只能挑一份信，而链接那份漏了谁就等于谁不存在。
 SOURCE_DIRS = ("ux-reference", "assets")
 INBOX = "inbox"
+# 图片说明的落点：点开头，不进清单本身。按 sha256 键——图片的身份是内容不是路径，
+# 同一张图复制到第二个落点、换个名字，说明仍然跟着它。
+CAPTIONS = ("ux-reference", ".captions.json")
 
 
 class MaterialError(Exception):
@@ -63,6 +66,28 @@ def kind_of(path: Path) -> str:
     return "image" if path.suffix.lower() in import_sources.IMAGE_EXTS else "doc"
 
 
+def read_captions(feature_root: Path) -> dict[str, str]:
+    """读图片说明。坏了当没有——说明缺失不该让整份清单算不出来。"""
+    try:
+        data = json.loads((feature_root / Path(*CAPTIONS)).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v.strip()}
+
+
+def write_caption(feature_root: Path, sha: str, caption: str) -> Path:
+    """登记一张图是什么。同一张图重登记就覆盖——说明可以改，图还是那张。"""
+    path = feature_root / Path(*CAPTIONS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = read_captions(feature_root)
+    data[sha] = caption
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    return path
+
+
 def collect_materials(feature_root: Path) -> list[dict]:
     """枚举权威材料：四份正文按固定顺序在前，目录源按路径排序在后。
 
@@ -73,7 +98,12 @@ def collect_materials(feature_root: Path) -> list[dict]:
     正文不做这种归并：两份内容相同的文档仍是两份材料。
 
     顺序固定 = digest 稳定。点开头的文件是控制件不是材料，不进清单。
+
+    图片条目带 `caption`（这张图是什么）——作者任务包与读者审查逐张列它。
+    没登记说明的图**仍然在清单里**，caption 为空串：漏登记要看得见，不能悄悄消失。
+    caption 不进 `compute_digest`：说明变了不是材料变了。
     """
+    captions = read_captions(feature_root)
     items: list[dict] = [
         {"kind": "doc", "paths": [rel], "sha256": file_digest(feature_root / rel)}
         for rel in SOURCE_DOCS
@@ -95,7 +125,8 @@ def collect_materials(feature_root: Path) -> list[dict]:
                 if found:
                     found["paths"].append(rel_path)
                 else:
-                    images[sha] = {"kind": kind, "paths": [rel_path], "sha256": sha}
+                    images[sha] = {"kind": kind, "paths": [rel_path], "sha256": sha,
+                                   "caption": captions.get(sha, "")}
                     extra.append(images[sha])
             else:
                 extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})

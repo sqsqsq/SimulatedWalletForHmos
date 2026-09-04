@@ -35,6 +35,7 @@ stdout 是**本次事件**的摘要，不是持久事实。材料现在是什么
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -399,6 +400,36 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
     return doc_sections, media, ux_images
 
 
+def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> dict:
+    """把一张图登记成界面参考：复制到 `ux-reference/` 起语义名，写下它是什么。
+
+    图片的身份是内容，所以说明按 sha256 记，跟着这张图走；名字只是给人看的。
+    登记完刷新材料清单——清单是唯一真源，作者任务包与读者审查都从它逐张读。
+    """
+    import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
+
+    if not source.is_file():
+        raise ImportError_(f"读不到 {source}——要登记的图得先在磁盘上")
+    if source.suffix.lower() not in IMAGE_EXTS:
+        raise ImportError_(f"{source.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
+    if not caption.strip():
+        raise ImportError_(
+            "缺 --caption：一句「这张图是什么」。没有它，下游拿到的只有路径与哈希，"
+            "作者无从知道该在哪一章用它——两轮实跑丢图都是从这里开始的")
+
+    stem = name.strip() or source.stem
+    dest = feature_root / UX_IMAGE_DIR / f"{stem}{source.suffix.lower()}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    blob = source.read_bytes()
+    if not dest.is_file() or dest.read_bytes() != blob:
+        dest.write_bytes(blob)
+    sha = "sha256:" + hashlib.sha256(blob).hexdigest()[:16]
+    materials.write_caption(feature_root, sha, caption.strip())
+    manifest = materials.refresh(feature_root)
+    return {"path": dest.relative_to(feature_root).as_posix(), "sha256": sha,
+            "caption": caption.strip(), "digest": manifest.get("digest")}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 inbox/ 里的人工材料导入上游正文")
     ap.add_argument("--feature", required=False,
@@ -406,6 +437,10 @@ def main() -> int:
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--preview", default=None, metavar="PATH",
                     help="只读预览一份材料的正文与图清单，不落盘（归类判断的输入）")
+    ap.add_argument("--register-ux", default=None, metavar="PATH",
+                    help="把这张图登记成界面参考：复制到 ux-reference/ 起名，并记下它是什么")
+    ap.add_argument("--name", default="", help="--register-ux 的语义名（不带后缀）")
+    ap.add_argument("--caption", default="", help="--register-ux 必填：一句「这张图是什么」")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -425,6 +460,26 @@ def main() -> int:
         log(f"预览 {out['file']}：正文 {len(out['text'])} 字，图 {len(out['images'])} 张")
         payload = {"mode": "preview", "ok": True, **out}
         sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return 0
+
+    if args.register_ux:
+        if not args.feature:
+            sys.stdout.write(json.dumps(
+                {"mode": "register-ux", "ok": False, "error": "登记界面图需要 --feature"},
+                ensure_ascii=False) + "\n")
+            return 1
+        project_root = Path(args.project_root).resolve() if args.project_root else \
+            Path(__file__).resolve().parents[5]
+        feature_root = project_root / features_dir(project_root) / args.feature
+        try:
+            out = register_ux(feature_root, Path(args.register_ux), args.name, args.caption)
+        except (ImportError_, OSError) as exc:
+            sys.stdout.write(json.dumps({"mode": "register-ux", "ok": False, "error": str(exc)},
+                                        ensure_ascii=False) + "\n")
+            return 1
+        log(f"界面图已登记：{out['path']}——{out['caption']}")
+        sys.stdout.write(json.dumps({"mode": "register-ux", "ok": True, **out},
+                                    ensure_ascii=False) + "\n")
         return 0
 
     if not args.feature:

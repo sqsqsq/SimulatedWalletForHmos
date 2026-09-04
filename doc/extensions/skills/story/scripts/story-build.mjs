@@ -293,20 +293,8 @@ function scanSources(ctx) {
       });
       continue;
     }
-    // 兄弟文件在而这一份不在：导入做了一半
-    let siblings = 0;
-    const dir = obj.warn_if_siblings
-      ? path.join(ctx.featureRoot, obj.warn_if_siblings) : null;
-    if (dir) {
-      try { siblings = fs.readdirSync(dir).length; } catch { siblings = 0; }
-    }
     // 缺来源一律不拦（一律记一笔）。图片的登记在 materials.json，不在这些索引文件里。
-    missing.push({
-      doc, rel,
-      required: obj.required === true,
-      siblings,
-      siblingDir: obj.warn_if_siblings ?? null,
-    });
+    missing.push({ doc, rel, required: obj.required === true });
   }
   return { docs, missing };
 }
@@ -335,14 +323,8 @@ function ownIdentifiers(feature) {
   return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
 }
 
-/** 缺失来源报成一句话。都是「记一笔」，措辞按有没有兄弟文件、是不是必备分三种。 */
+/** 缺失来源报成一句话。都是「记一笔」，措辞按是不是必备分两种。 */
 function missingSourceLine(m) {
-  if (m.siblings > 0) {
-    return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
-      + `——但 ${m.siblingDir}/ 里有 ${m.siblings} 个文件。`
-      + '图片的登记在材料清单（AR/story-src/materials.json），不在这份索引里，'
-      + '所以判据不受影响；要不要给这个目录写一份说明文件，由你定';
-  }
   return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
     + (m.required
       ? '——它是必备来源，缺了这一轮的材料就不完整'
@@ -473,6 +455,12 @@ function subsectionSpan(storyText, chapterTitle, name) {
  * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
  *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
  */
+/** 路径的最后一段。判「正文提没提到这张图」用它——作者写文件名比写全路径自然。 */
+function basename(rel) {
+  const parts = String(rel).split('/');
+  return parts[parts.length - 1];
+}
+
 function materialImages(ctx) {
   if (ctx.offline || !ctx.srcDir) return null;
   const text = readText(path.join(ctx.srcDir, 'materials.json'));
@@ -969,6 +957,21 @@ function cmdCheck(ctx) {
         problems.push(`同一张图被两个路径引用：${srcs.join('、')}`
           + `（材料里登记为 ${registered[idx].paths.join('、')}）`
           + '——同一张图只引一次，一处说清它画的是什么');
+      }
+
+      // 集合一致：清单里的每张图，要么被引用，要么在正文里点名说明为什么不用。
+      //
+      // 判的是**去处**不是义务：图可以不用——参考稿废弃了、两张画的是同一件事，
+      // 都是正当理由。不正当的是它在清单里而全篇一个字没提，读者无从知道你看没看过它。
+      // 理由成不成立由读者审查判，这里只报差集。
+      const orphans = registered
+        .map((m, i) => [i, m])
+        .filter(([i, m]) => !usedBy.has(i)
+          && !m.paths.some(rel => storyText.includes(basename(rel))));
+      for (const [, m] of orphans) {
+        problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
+          + '在 story 里既没被引用，也没被提到——'
+          + '要么在讲它的那一章引用它，要么在附录材料清单那一行写明不引用的理由');
       }
     }
   }
