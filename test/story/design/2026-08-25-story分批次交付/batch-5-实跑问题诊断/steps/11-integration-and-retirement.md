@@ -63,6 +63,22 @@
 E1–E4 不在 `doc/extensions`，不计入。M1 净减（去掉 siblings 阻断分支）；M2 小增（记一笔 + `reopen` 入口，估 ≤40 行 `scripts_py`，在 2000 峰值内）；M3 +1 行。
 不申请抬任何 ceiling；本步收口时仍按「预算」节压到 target。
 
+## 三跑观察后的修正（用户 2026-09-05 裁定，四跑前完成；证据见 `reviews/11` §13）
+
+story 段停等目标：**两次**——放材料、确认范围。补料之后不再为「确认材料」单独停，只在模型发现**新缺口**时再停。
+
+| 编号 | 改动 | 验收 |
+|---|---|---|
+| T1 | 材料关卡改为「补料后只在发现新缺口时再停」：`next_step` 对由 `supplement` 开出的新一轮不再要求第二次 `confirm_scope`——补料回话本身就是确认；模型若在新一轮盘点出新缺口，写新的 `gate-options` 侧车再停。SKILL「停等点」节、`init_analysis.md`、用例脚本（`init-wrap-up` 那条改为仅在新缺口时使用）同步 | 夹具：补料后无新缺口 → `status.next` 直接进分析，不出现第二个材料关卡；有新缺口 → 再停一次 |
+| T2 | 导入加「只抽图、正文不动」一档，**由模型按材料判断选用，不新增问人的选项**：系统已有同类正文且补料是原稿/参考稿时走这一档，RR 正文不被覆盖 | 夹具：docx 走只抽图档 → 三张图进 `assets/`、RR 字节不变、材料指纹变 |
+| T3 | `ar_design_init.md` 第 4 条删「须经用户确认」：S4 生成提取件覆盖预填版，旧版进 `.backup/`，不停 | 全树无「不静默覆盖」停等；`OnlyTwoStopsAndBothUnconditional` 仍绿 |
+| T4 | 进 spec 的授权转成 framework 认得的形态：`/story` 启动语义在 SKILL 里明写为「做到 spec 闭环」的 batch 声明，`status` 在 S4 收口时原样回显；或 `complete` 时写 `phase.next_step` 确认——按 framework 契约二选一 | 夹具：收口后 `status.action` 含授权原话；四跑在 spec 入口不问 |
+| T5 | **停等消息要简洁明确**：SKILL 加「停等消息格式」——三段固定：一句现状、一句缺口或问题、编号选项各一行（推荐标出）；不放材料总表、不复述已知、不解释流程；上限 12 行。`init_analysis.md`/`scope_gate.md` 里的关卡报告示例按此改写 | 四跑每次停等消息 ≤12 行；用例脚本的回话保持一句话 |
+
+| T6 | 需求方回话只回选项或一句短语（已由评审改入 `TEST.md §3.0` 与三个用例的 `interaction-script.yaml`）；四跑执行会话照此回话 | 四跑每次回话 ≤1 句 |
+
+预算：T1/T2 各 +30 行以内（`story_flow.py`、`import_sources.py`），T3/T5 净减，T4 按所选形态 ≤20 行；属必要增长，reason 写明。
+
 ## 实跑选择
 
 默认只运行 `auto-topup` 到 Spec：它同时覆盖需求系统、按需 docx 补料、图片、范围/承载、Story/Review、Knowledge 和 verifier，

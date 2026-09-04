@@ -1,5 +1,6 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+# 只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
 replies:
   - id: hand-over-the-ui-doc
     expected_turn: 1
@@ -8,16 +9,16 @@ replies:
     # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
     deliver:
       - 紧急挂失界面原型说明.docx
-    text: 界面那部分产品没走需求系统归档，文档在我这儿——我把产品同事给的原型说明放进需求目录了，你看一下。
+    text: 补充材料，原型说明已放入需求目录。
 
   - id: this-ticket-is-loss-only
     expected_turn: 2
     expected_kind: story_gate
     expected_phase: story
-    text: 上游已经把这件事分成挂失和补卡两张单了，这张只做挂失；补卡那张我另外找人做。你把冻结结果交出去就行，别把补卡也一起做了。
+    text: 只做挂失，不做补卡。
 
   - id: review-comments
     expected_turn: 3
     expected_kind: story_gate
     expected_phase: archived
-    text: 评审的意见我已经写在系统上了，你拉回来按上面写的处理。开关那条一定要改，别的按我写的表态来。
+    text: 评审意见已写在系统上，拉回来处理；开关那条要改。

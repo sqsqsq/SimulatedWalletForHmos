@@ -1,5 +1,6 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+# 只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
 # expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
 replies:
   - id: hand-over-the-product-doc
@@ -9,19 +10,19 @@ replies:
     # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
     deliver:
       - 数字车钥匙分享.docx
-    text: 产品的需求稿在我这儿，刚放进需求目录了，你按它来。界面图也都在里面。
+    text: 补充材料，产品需求稿已放入需求目录，按它来。
 
   - id: product-doc-wins-on-grace-window
     expected_turn: 2
     expected_kind: story_gate
     expected_phase: story
-    text: 撤销那个时限按产品稿的 24 小时来，车云那份写 48 是早先的数，他们还没改过来。另外产品稿里写明还没定的那两件，这轮就保持没定，别写成结论。
+    text: 撤销时限按产品稿 24 小时；未定的两件保持未定。
 
   - id: init-wrap-up
     expected_turn: 3
     expected_kind: story_gate
     expected_phase: story
-    text: 材料就这些了，一次做完不拆单，按这些定稿往下走吧。
+    text: 材料就这些，不拆单，往下走。
 
   - id: hand-over-the-accept-doc
     expected_turn: 4
@@ -29,16 +30,16 @@ replies:
     expected_phase: story
     deliver:
       - 车钥匙接受侧界面说明.docx
-    text: 接受那一侧的界面说明也给你，放进需求目录了——对方看到什么、怎么添加进钱包都在这份里。
+    text: 补充材料，接受侧界面说明已放入需求目录。
 
   - id: terms-confirmed
     expected_turn: 5
     expected_kind: story_gate
     expected_phase: spec
-    text: 术语我看过了，口径没有歧义，就按你列的这些定。
+    text: 术语确认，按你列的定。
 
   - id: review-comments
     expected_turn: 6
     expected_kind: story_gate
     expected_phase: spec
-    text: 我看过了，大方向没问题。有一条要改：撤销中那个状态，用户那边看到的说法要写成「正在收回」，别用「撤销中」这种单据腔——对方是家人，措辞别吓人。改完按你写的走；没拍板的那两件仍然保持不定。
+    text: 通过。撤销中的用户文案改为「正在收回」；未定两件保持未定。
