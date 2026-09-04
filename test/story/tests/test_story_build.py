@@ -503,6 +503,58 @@ class TestFormLints(StoryBuildCase):
         self.assert_check_names("仓内路径")
 
 
+class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
+    """作者自己写的裸序号要先剥掉，否则 `number` 再铺一层就成了两个号。
+
+    实测（`story-suite-20260904-091600`）：39 处小节标题里 32 处长成
+    `### 1.1 1 闸机前的窘境`——`1.1` 是机器铺的，后面那个 `1` 是作者写的。
+    证据是那两处干净的：`### 6.3 页面状态` 作者没写序号，所以没有叠加。
+
+    **误伤面靠量词挡**：`3 种签约情形` 里的 3 是内容，形态与序号一模一样，
+    但中文里这类数字必然带量词，而序号后面直接跟业务名。
+    """
+
+    @staticmethod
+    def normalize(title: str) -> str:
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "import { normalizeHeading } from "
+             + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
+                          .resolve().as_uri())
+             + ";process.stdout.write(normalizeHeading(process.argv[1]));",
+             "--", title],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        return proc.stdout
+
+    def test_a_bare_author_number_is_stripped(self) -> None:
+        for title, want in (
+            ("1 闸机前的窘境", "闸机前的窘境"),
+            ("2 本需求改变什么", "本需求改变什么"),
+            ("12 附加说明", "附加说明"),
+            ("3 成功怎么衡量", "成功怎么衡量"),      # 「成」是量词但也是词首，不能挡
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(want, self.normalize(title))
+
+    def test_a_number_that_is_content_survives(self) -> None:
+        """数字后面跟量词就是内容，不是序号。"""
+        for title in ("3 种签约情形", "5 步完成签约", "2 条验收", "3 个月回顾"):
+            with self.subTest(title=title):
+                self.assertEqual(title, self.normalize(title))
+
+    def test_a_four_digit_number_is_never_a_section_number(self) -> None:
+        """小节不会编到 100——`2026 年改版` 由位数那一档挡住，不靠量词表。"""
+        self.assertEqual("2026 年改版", self.normalize("2026 年改版"))
+        self.assertEqual("100 条验收", self.normalize("100 条验收"))
+
+    def test_the_existing_forms_still_work(self) -> None:
+        for title, want in (("1.1 已经带号", "已经带号"), ("1. 单级带点", "单级带点"),
+                            ("A. 接口", "接口"), ("背景", "背景")):
+            with self.subTest(title=title):
+                self.assertEqual(want, self.normalize(title))
+
+
 class TestNumbering(StoryBuildCase):
     """`number`：章序、小节序、图题序号由机器铺。
 
