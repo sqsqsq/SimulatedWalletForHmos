@@ -24,7 +24,7 @@
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
-| 11 集成实跑与旧发现者退场 | 首跑（`auto-topup`，bailian-deepseek，91 分钟）**不计分**：verifier 证据为主模型手造、上下文 525K、流程死锁手改契约。用户 2026-09-04 裁定：先做 steps/11 新增「首跑结果与二跑前的修正」（环境 E1–E4、机制 M1–M3）+ 退场与预算压缩，再跑一次 CLI 计分；硬条件 verifier 证据须由插件发布 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
+| 11 集成实跑与旧发现者退场 | 首跑（`story-suite-20260904-091600`）**不计分**——verifier 证据是被测主模型手造的、18 分钟流程死锁、上下文 525K；二跑前的七条修正（E1–E4 环境、M1–M3 机制）**已实施，四个提交等评审**；之后做清理与预算收口，再跑一次 CLI 才计分 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
 
 ## 事件日志
 
@@ -1114,3 +1114,46 @@ pid 复用会让历史现场清理误判。
 预算压到 target 这三件都不启动（方案要求「实跑通过后」才做）。
 - 2026-09-04 评审者对照执行会话《11-实跑报告》：报告漏了 verifier 证据由主模型手造、18 分钟流程死锁与手改 story-flow.json、28 次读源码与 525K 上下文；story 签约主路径无图（spec 里已画 mermaid，story 降级为列表）。意见：本跑不采性能与 verifier 分，产物结果可给诊断分，正式三轴分待修完再跑。
 - 2026-09-04 用户裁定：继续执行完步骤 11 全部修改再跑 CLI。评审者把首跑优化方案写入 steps/11（E1 物化 .opencode verifier/插件、E2 工作区白名单加 .opencode、E3 静态测试、E4 pid 判活；M1 init 图片来源只认 materials.json、M2 complete 后不开新轮需显式 reopen、M3 裸整数序号剥除），并改写本步顺序与二跑观察项。
+
+## 步骤 11 · 二跑前的七条修正（2026-09-04）· 已实施，等待评审
+
+评审判定首跑不计正式三轴分，理由三条：verifier 证据 JSON 由被测主模型手造
+（`agent_id: storiesuite-verifier-stub`）、上下文涨到 525K、18 分钟流程死锁靠手改
+`story-flow.json` 走出。用户裁定：**先改完全部内容，再跑一次 CLI**，那一次才计分。
+
+**我的实跑报告漏了要害，先记下来**：报告写「spec 客观闭环、一次跑通、无空转」，
+而事实是 verifier 链根本没跑（凭证是手造的）、中间有 18 分钟死锁、读 checker 源码 28 次
+不是 1 次、上下文 525K 没提、签约主路径无图（S01 图降级形态）被我记成了「三张图全部到位」。
+根子在于我只看工具调用统计与产物内容，没查凭证来源、没逐段读时间线、没跑 `measure_run.py`。
+**自述不能替代审查**——这条纪律这一轮又被验证一次。
+
+### 环境组（一个提交 `6d8bea7e`，回开步骤 1、3）
+
+| 编号 | 改了什么 |
+|---|---|
+| E1 | 本仓 `.opencode/` 从没物化过 verifier 子代理与发布插件（`reviews/01` 记为 advisory 后一直没做）。按 adapter.yaml 落 `agent/verifier.md` 与 `plugin/record-verifier-report.js`，入库 |
+| E2 | 工作区白名单不含 `.opencode`，被测侧既没有 skill 入口也没有 verifier——首跑的三个后果（skill 找不到、verifier 是 `general` 全工具子代理、证据 JSON 手造）都由它来。白名单加 `.opencode` |
+| E3 | 新增 `test_verifier_chain_in_workspace.py`（4 条 + 9 subtests）：本仓物化了没有、git 有没有忽略、工作区模板里在不在、`node_modules` 有没有跟进去。**不跑模型、不是 smoke** |
+| E4 | `_pid_alive` 只比 pid 号，被系统的号码复用骗到（实测 37520→conhost、23876→cmd、10456→VSCode 安装程序）。改为拿进程创建时间与 `started_at` 对；读不到就退回只比 pid——**宁可判成活的**，误判成活只是拦住清理，误判成死会删掉正在跑的现场。5 条测试含正反两面 |
+
+### 机制组（各一个提交，逐个评审）
+
+| 编号 | 提交 | 根因与改动 |
+|---|---|---|
+| M1 | `b2dc77ed` | 「图片在而索引不在，导入做了一半」这句话建立在 **README 承载图片登记**之上；步骤 6/8 把登记收成 `materials.json` 一处真源之后它失去对象——**判据比它守的东西活得久**，是 P13 根因回潮。缺来源一律记一笔不拦；N2 随判据退场，新增正向夹具两条（有图无 README 时 init 过，且 ④ 图片身份仍按清单认图） |
+| M2 | `95611620` | 轮次边界只看材料指纹，没有「收口之后材料又变了」这一态 → 新轮无决策而 `decide` 被 `complete` 挡住，既走不下去也退不回来。`round` 在收口态不开轮、只更新指纹并记一笔；新增 `reopen` 做状态迁移并留痕。**选独立命令不选 `decide --reopen`**：decide 的语义是追加一条关卡决策，加个改状态的旗子会让它做两件事。6 条测试含「没收口时 reopen 拒绝」（防它变成万能重置键） |
+| M3 | `84773c56` | `normalizeHeading` 只剥带点或分级的序号，作者写的裸 `1 ` 漏网，`number` 再铺一层就是两个号。加「1–2 位裸整数」一档，误伤靠量词挡。**量词表只收不做词首的字**——第一版收了「成」，`3 成功怎么衡量` 的序号就剥不掉（拿实跑产物验时撞到的）。真产物验证：39 处标题重复编号 32 → 0，幂等 |
+
+### 验收
+
+- story 全量 **554 绿**（首跑时 534，本轮新增 20 条）；失效形态 70 条活跃 FAIL 0、委派 15、retired 3；
+- 预算门通过：M3 一度让 `scripts_mjs` 超 ceiling 7 行，**没有申请抬 ceiling**（方案明令），
+  压缩两段注释到必要信息后 3009，在 3014 内；
+- 不改的一条：`check-spec.ts` 的 AC↔F 交叉引用报错没说清期望格式（作者因此去读源码）——
+  那是 framework 判据，按方案记入上游观察，本批不动。
+
+### 下一步
+
+评审通过这四个提交之后：73 条收口与清理 → 预算压到 target → 全量绿 →
+**CLI 再跑一次**（硬条件：verifier 证据必须由插件发布，`agent_id` 不是 stub、
+`state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后插件没触发就**当场停，不修不重试**）→ 三轴评分由用户确认。
