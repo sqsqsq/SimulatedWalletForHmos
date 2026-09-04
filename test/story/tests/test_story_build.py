@@ -352,7 +352,9 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
     """
 
     def _put_id_in_materials(self) -> None:
+        # 目录自己建：夹具里的空目录不进版本控制，clone 出来就没有
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
         spec.write_text(
             "# " + FEATURE + " 规格\n\n"
             "## 1. 范围\n\n本单 " + FEATURE + " 只改提交入口。\n",

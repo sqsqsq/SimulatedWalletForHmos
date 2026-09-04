@@ -947,15 +947,6 @@ def _story_path(root: Path) -> Path | None:
             return p
     return None
 
-
-def _spec_path(root: Path) -> Path | None:
-    for rel in ("spec/spec.md", "spec.md"):
-        p = root / rel
-        if p.exists():
-            return p
-    return None
-
-
 def _contracts_path(root: Path) -> Path | None:
     """契约只有一份，在 feature 根下——与 framework 同路径。
 
@@ -1718,125 +1709,6 @@ def b01_probe_no_discrimination(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "；".join(bad))
     return Outcome(True, f"两个探针都放行（扫 {out['absent']['scanned']} 个文件）")
 
-
-@checker
-def b02_evidence_echo(root: Path, ctx: Ctx) -> Outcome:
-    """裁决的证据是回声——把清单里给的话抄回来，不是读过产物。
-
-    实测：verifier 报告 272 行证据只有 14 种字符串、全是被检文本的复制，零条
-    「落点错/漏了」，而「同行含键 + 有裁决词」的判据照收 PASS。
-    本条调真实的 ``evidenceVerified``，验它能不能把回声判成「未裁」。
-    """
-    vr = _ext_file(root, "hooks/shared/verifier-report.mjs")
-    if vr is None:
-        return Outcome(False, "找不到 verifier-report.mjs——判定基准不存在，不当作通过")
-    report, target = root / "verifier.report.md", root / "target.md"
-    if not report.exists() or not target.exists():
-        return Outcome(True, "夹具里没有报告与目标产物（该形态未启用）")
-
-    script = "\n".join([
-        f"import {{ evidenceVerified }} from {json.dumps(vr.resolve().as_uri())};",
-        "import * as fs from 'node:fs';",
-        f"const lines = fs.readFileSync({json.dumps(str(report.resolve()))},'utf-8').split(/\\r?\\n/);",
-        f"const target = fs.readFileSync({json.dumps(str(target.resolve()))},'utf-8');",
-        "console.log(JSON.stringify(evidenceVerified(['R-01','R-02'], lines, [target])));",
-    ])
-    out, err = _run_node(root, "_evidence_check.mjs", script)
-    if out is None:
-        return Outcome(False, f"引文核实{err}")
-
-    # 同 b01：如实判，不按夹具名分支
-    if out["unadjudicated"]:
-        why = "；".join(f"{u['key']}（{u['why'][:40]}）" for u in out["unadjudicated"][:3])
-        return Outcome(False, f"{len(out['unadjudicated'])} 个对象未裁：{why}")
-    return Outcome(True, f"引文全部可在目标产物里检索到（{out['verified']} 条）")
-
-
-def _chapter_bodies(story_path) -> dict:
-    """把 story 切成 {章标题: 正文}——夹具的引文要从真正的那一章里取。"""
-    out, cur, buf = {}, None, []
-    if story_path is None or not Path(story_path).is_file():
-        return out
-    for line in Path(story_path).read_text(encoding="utf-8").split("\n"):
-        if line.startswith("## "):
-            if cur:
-                out[cur] = "\n".join(buf).strip()
-            cur, buf = line[3:].strip(), []
-            continue
-        if cur is not None:
-            buf.append(line)
-    if cur:
-        out[cur] = "\n".join(buf).strip()
-    return out
-
-
-def _is_empty_chapter(body: str) -> bool:
-    """空章：正文恰是那一句。它已明说这件事不在本需求里，读者的问题也就不存在。"""
-    return body.strip() == "本需求不涉及。"
-
-
-def _chapter_quote(body: str) -> str:
-    """取该章正文的一段连续原文作引文。
-
-    不能只找散文句：术语章与异常章天然是表、业务流程章天然是图，
-    它们里面的文字同样是「答了这个问题」的证据。所以按**原文顺序**拼，
-    取够长的一段——check 只要求它是该章的逐字子串且 ≥12 字。
-    """
-    for line in body.split("\n"):
-        s = line.strip()
-        if not s or s.startswith(("#", "```", "~~~")):
-            continue
-        if s.startswith("|"):
-            cells = [c.strip() for c in s.strip("|").split("|")]
-            cells = [c for c in cells if c and not set(c) <= set("-: ")]
-            if not cells:
-                continue
-            s = max(cells, key=len)
-        if len(s) >= 14:
-            return s[:60]
-    return ""
-
-
-def _verdict_tables(repo_root, quote: str, unit_rows, story_path=None) -> str:
-    """按合同派生裁决者的三张表：逐单元 / 逐问 / 逐章。
-
-    逐问与逐章的行由**合同**决定（章、问题、维度），不在测试里写死：合同改了夹具
-    自动跟着变；写死的话，改合同就要同步改一堆夹具，而没人保证会改。
-
-    引文取该章自己的一段原文——用同一句填满所有章会被 check 判「引文在该章里
-    检索不到」，那正是它该做的。
-    """
-    import json as _json
-    contract = _json.loads((Path(repo_root) / "doc/extensions/skills/story/contracts"
-                            / "story-chapters.json").read_text(encoding="utf-8"))
-    verdicts = contract.get("verdicts") or {}
-    question_ok = (verdicts.get("question_words") or ["答了"])[0]
-    chapter_ok = (verdicts.get("chapter_words") or ["达标"])[0]
-    bodies = _chapter_bodies(story_path)
-
-    lines = ["| 单元键 | 裁决 | 引文 |", "|---|---|---|"]
-    lines += ["| {} | {} | {} |".format(k, v, q) for k, v, q in unit_rows]
-
-    lines += ["", "| 章 | 问题 | 裁决 | 引文 |", "|---|---|---|---|"]
-    for chapter in contract.get("chapters") or []:
-        body = bodies.get(chapter["title"], "")
-        if _is_empty_chapter(body):
-            continue
-        evidence = _chapter_quote(body) or quote
-        for question in chapter.get("questions") or []:
-            lines.append("| {} | {} | {} | {} |".format(
-                chapter["title"], question, question_ok, evidence))
-
-    lines += ["", "| 章 | 维度 | 裁决 | 依据 |", "|---|---|---|---|"]
-    for chapter in contract.get("chapters") or []:
-        if chapter.get("appendix") or _is_empty_chapter(bodies.get(chapter["title"], "")):
-            continue
-        for dimension in verdicts.get("chapter_dimensions") or []:
-            lines.append("| {} | {} | {} | 本章按此写就 |".format(
-                chapter["title"], dimension, chapter_ok))
-    return "\n".join(lines) + "\n"
-
-
 def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
     """跑 init → audit →（可选写裁决表）→ check，返回 check 的退出码与输出。
 
@@ -1882,81 +1754,6 @@ _NORM_RE = re.compile(r"[\s，。、；：!?！？（）()「」【】｜|*`>-]"
 
 def _norm(text: str) -> str:
     return _NORM_RE.sub("", str(text or ""))
-
-
-def _chapter_for(text: str, bodies: dict) -> str | None:
-    """这条单元的内容在哪一章能找到——模拟作者的分配判断。"""
-    frags = sorted((_norm(p) for p in str(text).split("｜")), key=len, reverse=True)
-    for frag in frags:
-        if len(frag) < 8:
-            continue
-        for title, body in bodies.items():
-            if frag in _norm(body):
-                return title
-    return None
-
-
-def _quote_for(body: str, unit_text: str, extra_verdict: str | None,
-               used: dict | None = None, tokens: list | None = None) -> str:
-    """引文要是该章的逐字子串，而且是**讲这条单元**的那一句。
-
-    checker 指定了引文就用它——**回声与否由判据判，装置不代判**：R01 那条形态
-    的反夹具给的正是一句回声，装置替它换掉，那条形态就永远测不出来了。
-    没指定时才自己找一段：跳过表格分隔与标题，表行取最长的那一格，
-    并且避开来源单元自己的原话（不然装置每次都在制造回声）。
-
-    **优先带这条单元硬事实的那一句，其次挑还没被用满的**：装置模拟的是尽职的裁决者。
-    拿全章第一句给所有单元作证，正是判据要拦的形态——装置这么做，那条判据就测不出来。
-    """
-    want = _norm(extra_verdict or "")
-    if want and (want in _norm(body) or want in _norm(unit_text)):
-        # 在该章里找得到 → 正常引文；与来源单元原话重合 → checker 就是要拿它当回声
-        return extra_verdict
-    cands = []
-    for line in body.split("\n"):
-        s = line.strip()
-        if not s or s.startswith(("#", "```", "~~~")):
-            continue
-        if s.startswith("|"):
-            cells = [c.strip() for c in s.strip("|").split("|")]
-            cells = [c for c in cells if c and not set(c) <= set("-: ")]
-            if not cells:
-                continue
-            s = max(cells, key=len)
-        if len(_norm(s)) >= 12 and _norm(s) not in _norm(unit_text):
-            cands.append(s)
-    if not cands:
-        return _chapter_quote(body)
-    counts = used if used is not None else {}
-    for cand in cands:
-        if any(_norm(t) and _norm(t) in _norm(cand) for t in (tokens or [])):
-            counts[cand] = counts.get(cand, 0) + 1
-            return cand
-    for cand in cands:
-        if counts.get(cand, 0) < 2:
-            counts[cand] = counts.get(cand, 0) + 1
-            return cand
-    return cands[0]
-
-
-@checker
-def r01_verdict_echo(root: Path, ctx: Ctx) -> Outcome:
-    """S5 的裁决用回声当引文——把来源单元的原话抄回来，证明不了 story 讲清了它。
-
-    机器定不了落点的单元交给 S5 裁决者裁，裁决要附引文。引文若是**来源单元原文的子串**，
-    它证明的是「材料这么说」，不是「story 讲清了」——那正是上一轮 verifier 报告里
-    272 行证据全是回声的形态。本条调真实的 story-build check。
-    """
-    quote_file = root / "verdict-quote.txt"
-    if not quote_file.exists():
-        return Outcome(True, "夹具没有裁决引文（该形态未启用）")
-    code, out = _story_build_cycle(root, read_text(quote_file).strip())
-    if code == 0:
-        return Outcome(True, "引文出自 story，裁决可核实")
-    if "回声" in out:
-        return Outcome(False, "引文是来源单元原文的回声，被判未裁")
-    return Outcome(False, f"check 未过（非回声原因）：{out[:200]}")
-
 
 @checker
 def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
@@ -2040,78 +1837,6 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, f"门禁回话里提了 story 专属要求 {leaked}——对这个需求它们不存在")
     return Outcome(True, "非 story 需求只写两节即通过，回话里没有 story 专属要求")
 
-
-@checker
-def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
-    """材料里的流程图在 story 里被压成「A → B → C」箭头文字。
-
-    上一版只判「图有落点」——箭头文字也算落点，于是压扁能过。读者要的是那张图
-    一眼看出的结构：哪几条分支、各自去哪，文字复述做不到。
-    判的是**形态不是语义**：源里是图的，落点章里就得还是图。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "材料里的图以图的形态落在 story 里")
-    if "那一章没有图" in out or "数量不该少于源" in out:
-        return Outcome(False, "图被压成文字后被点名")
-    return Outcome(False, f"check 未过（非形态降级原因）：{out[:200]}")
-
-
-@checker
-def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
-    """材料里的表在 story 里被摊成散文，逐项比对的那几列就没了。
-
-    最先丢的是非首列——触发条件、编号、责任方。三行表摊成一句话，读者要靠数
-    分号来对齐，而术语表本来是给他随时回查的。
-    单行的表不在此列（一行不构成表），只有 ≥2 行落在同一章时才要求成表。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "材料里的表以表的形态落在 story 里")
-    if "那一章没有表" in out:
-        return Outcome(False, "表被摊成散文后被点名")
-    return Outcome(False, f"check 未过（非形态降级原因）：{out[:200]}")
-
-
-@checker
-def s03_long_paragraph(root: Path, ctx: Ctx) -> Outcome:
-    """一段几百字的散文。
-
-    阈值满足「拆了一定更可读」，所以机械判它不会被换皮受益——把长段拆开、
-    把结论提到段首，两件事都只会让文档更好读。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "没有超长段落")
-    if "过长的段落" in out:
-        return Outcome(False, "超长段落被点名并给出字数")
-    return Outcome(False, f"check 未过（非长度原因）：{out[:200]}")
-
-
-@checker
-def s04_duplicate_paragraph(root: Path, ctx: Ctx) -> Outcome:
-    """同一段话在两章各出现一次。
-
-    「不重复」这一轴此前只有「分配恰好一处」在守——那管的是来源单元，管不住
-    作者在两章各写一遍同样的话。规范化后逐段比对，改个标点也认得出。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root,
-                                 "签约成功之后，详情页顶部显示当前的触发门限与单笔面额，用户可以随时改。")
-    if code == 0:
-        return Outcome(True, "没有重复的段落")
-    if "重复的段落" in out:
-        return Outcome(False, "重复段被点名并指出与哪一行相同")
-    return Outcome(False, f"check 未过（非重复原因）：{out[:200]}")
-
-
 @checker
 def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     """工程标识、规约编号、检索措辞出现在主叙事里——打断了面向人的阅读。
@@ -2172,43 +1897,6 @@ def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "签署字段与状态行被点名")
     return Outcome(False, f"check 未过（非评审表单原因）：{out[:200]}")
 
-
-@checker
-def s08_solution_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
-    """已定决策成堆，方案章却没有取舍这一节——取舍散在正文里，读者找不到。
-
-    实测两轮四份产物零例外：有 check 判据的形态全达成，只写在模板注释里的形态全不达成。
-    取舍成节此前只在注释里，两份产物都把取舍化进散文，评审者要从头读完才拼得出
-    「否掉了什么」。判的是节在不在，不判它写得好不好——后者归裁决者。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "有已定决策的方案章里，取舍单独成节")
-    if "这一节" in out:
-        return Outcome(False, "必有的小节缺席被点名")
-    return Outcome(False, f"check 未过（非节级原因）：{out[:200]}")
-
-
-@checker
-def s09_flow_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
-    """流程章整章平铺，一个小节都没有——主路径与支线混在一坨散文里。
-
-    与 S08 同源：节级形态此前只有模板占位承载，实测两份产物的流程章全部平铺。
-    这一条判的是「该分节的章分没分」，不设「每章几节」的配额——
-    配额逼出来的是凑数的小标题。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "有内容的流程章分了小节")
-    if "个小节" in out:
-        return Outcome(False, "整章平铺被点名")
-    return Outcome(False, f"check 未过（非节级原因）：{out[:200]}")
-
-
 @checker
 def s10_image_path_copied(root: Path, ctx: Ctx) -> Outcome:
     """图片被复制进归档目录、改个名再引用——副本没人维护，改名后认不出是原来那张。
@@ -2242,33 +1930,6 @@ def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
     if "同一张图被两个路径引用" in out:
         return Outcome(False, "同图两名被点名")
     return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
-
-
-@checker
-def s12_tradeoff_prose(root: Path, ctx: Ctx) -> Outcome:
-    """关键取舍那一节写成散文——被否方案与理由化进句子，读者拼不出来。
-
-    与 S08 互补：那条判「节在不在」，这条判「节在、形态塌没塌」。模板明写成表，
-    两轮四份产物照样写成两段散文——确定性的形式写在注释里就是自由发挥区。
-    """
-    return _form_case(root, "要的是一张表头为", "取舍成表，四列齐")
-
-
-@checker
-def s13_limited_and_error_in_one_table(root: Path, ctx: Ctx) -> Outcome:
-    """设计内的受限结果与真正的失败混进同一张表。
-
-    读者分不清哪些要处理、哪些本来就是这么设计的。判的是两张表头可区分的分立表在不在，
-    不判每一行归哪张——行归属是语义，归裁决者。
-    """
-    return _form_case(root, "缺一张表头为", "受限与异常各成一张表")
-
-
-@checker
-def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
-    """验收写成 bullet——编号与通过条件挤在一行文字里，没法逐条比对。"""
-    return _form_case(root, "不是一张表头为", "验收每个小节都是一张编号表")
-
 
 @checker
 def s15_appendix_prose_tail(root: Path, ctx: Ctx) -> Outcome:
@@ -2316,13 +1977,6 @@ def s18_appendix_image(root: Path, ctx: Ctx) -> Outcome:
 def s19_material_list_prose_head(root: Path, ctx: Ctx) -> Outcome:
     """材料清单的列表之前塞散文——上一版只看列表之后。"""
     return _form_case(root, "目的句之外还有", "材料清单只有目的句和列表行")
-
-
-@checker
-def s20_dangling_figure_ref(root: Path, ctx: Ctx) -> Outcome:
-    """这一段说「下图」，前后两块之内却没有图。"""
-    return _form_case(root, "附近却没有图", "指图的话旁边真有图")
-
 
 def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     """A 档固定形式的五条共用同一套跑法：good 该过，bad 该被点名。"""
@@ -2602,41 +2256,6 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     if unclosed:
         return Outcome(False, f"契约被判未收口：{unclosed[0][:120]}")
     return Outcome(True, f"收口判定正确（其余 {len(problems)} 条与本形态无关）")
-
-
-@checker
-def c01_story_conservation(root: Path, ctx: Ctx) -> Outcome:
-    """story 的整篇守恒判不出材料里丢了什么。
-
-    1.0 按「章 × 数量」守恒（每章把取材节的每行写全），上一版按「作者自述」守恒
-    （自由文本 `reason` 只判非空，实测 161/272 单元「不进」、理由去重后 2 种）。
-    两版共同的根因是**守恒的粒度与位置都错**：不是按事实 token 整篇判。
-
-    本条调**真实的 story-build**（init → audit → check），验它能不能：
-      ① 点名 story 里找不到的那个事实（不是笼统说「有缺失」）；
-      ② 拒绝三态之外的记录——自由文本理由在新形态下无法表达。
-
-    夹具是一个迷你需求目录（`doc/features/AR90001/`），所以 `root` 传进来的是夹具根。
-    """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story 与材料（该形态未启用）")
-
-    code, out = _story_build_cycle(root)
-    if code == 0:
-        return Outcome(True, "整篇守恒通过：材料里的事实在 story 都有落点")
-    # 判据不是「报了错」，是**点名了具体哪个事实**——笼统说「有缺失」等于没有区分力
-    named = [t for t in ("applicationId", "createBusinessOrder") if t in out]
-    if not named and "没有任何落点" not in out:
-        return Outcome(False, f"check 报了错却没点名具体缺失：{out[:200]}")
-    return Outcome(False, f"守恒判出缺失（点名 {named or ['无落点单元']}）：{out[:160]}")
-
-
-VERDICT_WORD_RE = re.compile(r"(PASS|FAIL|WARN|不适用|设计|复述)")
-
-
-#: spec §10 表里条目编号的形态（不写死任何域前缀，只约束形态）。
-_ENTRY_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{1,7}-\d{2}$")
-
 
 def adjudication_keys(spec_text: str) -> list[str]:
     """必答集的核对键 —— 与扩展侧 ``verdict-set.mjs`` 的 ``specSet`` 同口径。

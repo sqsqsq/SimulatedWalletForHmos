@@ -37,15 +37,15 @@ requirement:
   id: batch-5
   status: in_progress
   approved_by: WYK
-  reason: "批次 5 方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行，各类别按当时现值重定峰值、按原收缩比例折算 target"
+  reason: "本轮方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行；target 同日按实际重定——新口径不数注释，剩下的都是在用的判据实现，再压就是删判据"
 
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 1886
-    target: 1250
+    interim_ceiling: 1900
+    target: 1900
     approved_by: WYK
-    reason: "峰值取新口径现值；target 按旧口径 2000/3024 的收缩比例折算，用户 2026-09-04 签字"
+    reason: "target 按实际重定（用户 2026-09-04 裁定）：新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。现值 1886，留 14 行余量"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 1200
@@ -54,10 +54,10 @@ categories:
     reason: "现值 1183 已低于折算 target，峰值取 target；留给流程契约的收口动作，用户 2026-09-04 签字"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 2403
-    target: 2100
+    interim_ceiling: 2450
+    target: 2450
     approved_by: WYK
-    reason: "峰值取新口径现值；target 按旧口径 3000/3450 的收缩比例折算，用户 2026-09-04 签字"
+    reason: "target 按实际重定（用户 2026-09-04 裁定）：新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。现值 2403，留 47 行余量给步骤 10 之后的 knowledge 链收口"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
     interim_ceiling: 2050
@@ -72,10 +72,10 @@ categories:
     reason: "现值 648 已低于折算 target，峰值取 target；余量留给 knowledge-use 的合同形态，用户 2026-09-04 签字"
 
 total:
-  interim_ceiling: 8116
-  target: 6500
+  interim_ceiling: 8350
+  target: 8350
   approved_by: WYK
-  reason: "峰值取新口径现值；target 按旧口径 9500/11824 的收缩比例折算，用户 2026-09-04 签字"
+  reason: "总量取各类 target 之和（用户 2026-09-04 裁定）。折算出的 6500 比各类之和还小 850——每类都压到也到不了，那个数字本身不成立"
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。

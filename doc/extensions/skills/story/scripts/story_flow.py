@@ -694,11 +694,6 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 # ---------------------------------------------------------------------------
 # status：现在走到哪、下一步干什么
 
-def all_gates(contract: dict) -> list[dict]:
-    """全流程的关卡记录，**仅供统计与展示**。位置判定一律用 `round_gates`。"""
-    return [g for r in contract.get("rounds", []) for g in r.get("gates", [])]
-
-
 def round_gates(contract: dict) -> list[dict]:
     """**当前轮**的关卡记录。
 
@@ -788,25 +783,35 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
 def cmd_reopen(feature_root: Path) -> dict:
     """把收口的流程重新打开——**唯一的回退出口**。
 
-    收口之后材料又变、而且变到需要重新拍板范围时走它。它只做一件事：
-    status 从 `complete` 回到 `in_progress`，于是下一次 `round` 会照常开新轮、
-    `decide` 也不再被挡。
+    收口之后材料又变、而且变到需要重新拍板范围时走它。status 回到 `in_progress`，
+    于是下一次 `round` 会照常开新轮、`decide` 也不再被挡。
 
-    留痕：谁在什么时候把它打开的记在契约里。收口是一次有后果的判断，
-    撤销它同样是——没有留痕的话，产物为什么与当初那一轮对不上就查不回来了。
+    **已成文的话，成文登记一起撤销**：`story_written_at` 与 `story_src_digests` 是
+    「这份 story 据以成文的依据」的快照。status 退回而它们留着就成了两说——流程说还没成文，
+    契约里却记着成文时刻与台账指纹，而台账冻结只看 status，重开后台账可以重算，
+    那份快照指的却是重算之前的东西。
+
+    留痕：收口与成文都是有后果的判断，撤销它们同样是——没有留痕的话，
+    产物为什么与当初那一轮对不上就查不回来了。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
     if not after_complete(contract):
         raise FlowError(f"流程不在收口态（现在是 {status}），没有需要重新打开的东西")
+    undone = {key: contract.pop(key) for key in ("story_written_at", "story_src_digests")
+              if key in contract}
     contract["status"] = "in_progress"
     contract.setdefault("reopened", []).append({
         "at": now(),
+        "from_status": status,
         "from_round": contract["rounds"][-1]["round"] if contract.get("rounds") else None,
+        "story_registration_undone": sorted(undone),
     })
     save(feature_root, contract)
-    log("流程已重新打开（complete → in_progress）：下一次 `round` 会按材料现状开新轮")
-    return {"status": "in_progress", "rounds": len(contract.get("rounds") or [])}
+    log(f"流程已重新打开（{status} → in_progress）：下一次 `round` 会按材料现状开新轮"
+        + ("；成文登记已一并撤销，story 要重新登记" if undone else ""))
+    return {"status": "in_progress", "rounds": len(contract.get("rounds") or []),
+            "storyRegistrationUndone": sorted(undone)}
 
 
 def cmd_status(feature_root: Path) -> dict:
@@ -1078,15 +1083,6 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，装配只备份不重建")
     return {"archived": True, "at": contract["archived"]["at"]}
-
-
-def is_archived(feature_root: Path) -> bool:
-    try:
-        return bool((load(feature_root) or {}).get("archived"))
-    except FlowError:
-        return False
-
-
 # ---------------------------------------------------------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")

@@ -24,7 +24,7 @@
 | 8 Story/Review 确定性生成 | **通过**（`4e9a6d21`；两条裁定见评审 §4） | 同上 |
 | 9 正向 Story 作者路径切换 | **通过（收口）**：三段全部通过，小段 3 返修（`20f7841f`）通过；grep 漏网四处随步骤 10 下一提交清零 | [reviews/09-story-authoring-cutover.md](reviews/09-story-authoring-cutover.md) |
 | 10 三类 Knowledge 消费与传递 | **通过（收口）**：小段 1、2+3、4 与返修（`6c7c9ed2`）全部通过；B1/B2 经用户裁定签字；留步骤 11：非知识判据 12 字引文口径、P02–P04 与 observed 夹具清理、判据编号重排 | [reviews/10-knowledge-lifecycle.md](reviews/10-knowledge-lifecycle.md) |
-| 11 集成实跑与旧发现者退场 | 首跑不计分。二跑前修正：E1–E4、M1 **通过**；M2 通过附返修（`story_written`/`archived` 后同样不开轮）；**M3 不通过**（量词白名单误伤：元/秒/天/小时/位/方/月，改为按小节序位判定，`normalizeHeading` 不剥裸序号）。一个返修提交后进入退场与预算压缩 | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
+| 11 集成实跑与旧发现者退场 | 首跑不计分；二跑前七条修正与返修**已通过**；预算口径改代码行、注释规则入 AGENTS、退场清理与预算收口**已实施，等待评审**；评审通过后跑 CLI（那一跑才计三轴分） | [reviews/11-real-run-observation.md](reviews/11-real-run-observation.md) |
 
 ## 事件日志
 
@@ -1159,3 +1159,75 @@ pid 复用会让历史现场清理误判。
 `state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后插件没触发就**当场停，不修不重试**）→ 三轴评分由用户确认。
 - 2026-09-04 独立评审二跑前七条修正：复跑 554 全绿、73 条对账、预算门通过、framework 零差异。E1–E4、M1 通过；M2 漏 story_written/archived 两态；M3 不通过——裸序号靠 16 字量词表放行，「20 元面额」「30 秒超时」「4 位密码」等被剥掉首字，且 normalizeHeading 被十几处标题匹配共用；改为 renumberStory 内按序位判定。返修一个提交。
 - 2026-09-04 独立评审返修 `a1026080`：通过（M3 按序列判、金样不变且幂等、首跑 32 处重复编号归零、九个单位词标题不动；M2 覆盖 story_written/archived；M1 死字段删）。advisory：reopen 从 story_written 回退未撤销成文登记。用户新裁定：预算只数代码行（现值 scripts_mjs 1886 / py 1183 / hooks 2403 / prompts 1996 / data 648 / 总 8116，target 按占比折算）；注释只写当前说明、不含演进史与测试数据；写进 AGENTS 并清扫交付面、兜底扩进 M02。交执行会话一个提交（steps/11 第 1b 项），之后才是退场与预算压缩，再 CLI。
+- 2026-09-04 独立评审 `79ba8818`（预算只数代码行、注释只讲当前）：通过。门的读数与独立计量逐类相同（总 8116）；target 折算为 1250/1200/2100/2050/750、总 6500；交付面 33 文件只改注释与措辞、代码行零变化；M02 扩到四种形态且词表从配置取。advisory：AGENTS §8 的 grep 会命中产品概念「上一版」「步骤 2」5 处，文案要说明例外。下一步：退场与清理 → 预算压到新 target → 全绿 → CLI 一次。
+
+## 步骤 11 · 退场清理与预算收口（2026-09-04）· 已实施，等待评审
+
+评审 §10 通过预算口径与注释规则之后的收尾。**CLI 二跑前的最后一个提交。**
+
+### 收的两条 advisory
+
+- **A1**（`reopen` 与成文登记）：`story_written_at` 与 `story_src_digests` 是「这份 story
+  据以成文的依据」的快照。status 退回而它们留着就成了两说——流程说还没成文，契约里却记着
+  成文时刻与台账指纹，而台账冻结只看 status，重开后台账可重算、那份快照指的却是重算之前的。
+  `reopen` 现在把它们一并撤销并留痕（`from_status`、`story_registration_undone`）。补 2 条测试。
+- **A2**（自检 grep 与兜底口径不一）：AGENTS §8 那条改成与 M02 同一把尺子，
+  并写明产品概念里的「上一版」「步骤 N」不算命中。
+
+### 清理
+
+| 清了什么 | 量 | 依据 |
+|---|---|---|
+| 委派条目的死夹具 | 14 个目录、187 个文件 | 委派条目不跑夹具，那些是死资产 |
+| 失去消费者的 checker | 13 个函数 | 随委派与退场条目走 |
+| 连锁失效的私有 helper | 7 个 | 删 checker 后逐轮重扫直到不再有 |
+| `story_flow.py` 的死函数 | `all_gates`、`is_archived` | 全树零消费者 |
+
+`check_failure_modes.py` 净减 381 行。全树扫过：无 TODO/FIXME 类临时标记（命中的三处是
+占位符示例与报错文案）、无静默 catch、`doc/extensions` 零无消费者函数。
+
+**一处教训**：我第一次连 `R01-verdict-echo` 一起删了——它是三个测试的基础工作区，
+95 条测试当场红。方案第 4 条写着「删除前**再次扫描消费者**」，我跳过了那一步。
+恢复后按消费者重判，只删真正无人引用的 14 个。
+
+顺带修了一个更早就在的隐患：那三个测试依赖夹具里的 `spec/` **空目录**，而空目录不进版本控制
+——换台机器 clone 出来同样会红。改成测试自己建目录。
+
+### 73 条对账
+
+总数 **73 不变**：`fixed` 66、`pending_capability` 4、`retired` 3；
+发现者 = 脚本 58、`verifier` 3、`observed` 12。非 retired 条目全部有现行发现者，
+委派条目登记了观察方式、不造夹具。
+
+### 预算：target 按实际重定（用户 2026-09-04 裁定）
+
+压不到 target，而且折算出的 target 本身不成立——**各类 target 之和 7350，total target 却是 6500**，
+每类都压到也到不了。差额的来源不是「注释多」（新口径已经不数注释），是在用的判据实现：
+`scripts_mjs` 差 636、`hooks_mjs` 差 303，再压就是删判据，而本步不得改行为。
+
+按用户裁定重定：
+
+| 类别 | 现值 | target | 余量 |
+|---|---|---|---|
+| scripts_mjs | 1886 | 1900 | 14 |
+| scripts_py | 1182 | 1200 | 18 |
+| hooks_mjs | 2403 | 2450 | 47 |
+| prompts_md | 1996 | 2050 | 54 |
+| data | 648 | 750 | 102 |
+| **total** | **8115** | **8350**（= 各类之和） | 235 |
+
+`semantic_proxy` 仍是 0。
+
+### 验收
+
+- story 全量 **561 绿**；形态 70 条活跃 FAIL 0、委派 15、retired 3；
+- 预算门通过；`framework/` 零差异；
+- 正式路径 grep `source-units|paraphrase|min_quote_chars|逐行裁决|必答清单` 只剩两处否定表述
+  （pre_verifier 说「不注入必答清单」、verifier-report 说「不核逐行裁决表」）；
+- `baseline_coverage.py` 已在步骤 9 删除。
+
+### 下一步（等评审）
+
+评审通过后跑 CLI 一次。**硬条件**：verifier 证据 JSON 必须由插件发布——`agent_id` 不是 stub、
+`state: published` 来自 `record-verifier-report.js`；首个 verifier 完成事件后插件未触发，
+**当场停，不修不重试**，写总结回开步骤 1。之后三轴评分由用户确认。

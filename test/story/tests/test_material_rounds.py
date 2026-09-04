@@ -237,6 +237,36 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(0, self.run_flow("reopen").returncode)
         self.assertEqual("in_progress", self.contract()["status"])
 
+    def test_reopen_undoes_the_story_registration(self) -> None:
+        """已成文时 reopen 要把成文登记一起撤销——留着就成了两说。
+
+        `story_written_at` 与 `story_src_digests` 是「这份 story 据以成文的依据」的快照。
+        status 退回而它们还在：流程说还没成文，契约里却记着成文时刻与台账指纹，
+        而台账冻结只看 status，重开后台账可以重算，那份快照指的却是重算之前的东西。
+        """
+        self.complete_it("story_written")
+        path = self.feature_root / "AR" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["story_written_at"] = "2026-09-04T00:00:00+08:00"
+        data["story_src_digests"] = {"decisions.json": "sha", "copyedit.md": "sha"}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        contract = self.contract()
+        self.assertNotIn("story_written_at", contract)
+        self.assertNotIn("story_src_digests", contract)
+        trace = contract["reopened"][-1]
+        self.assertEqual("story_written", trace["from_status"])
+        self.assertEqual(["story_src_digests", "story_written_at"],
+                         trace["story_registration_undone"],
+                         "撤销了什么要留痕——不然查不回来产物为什么对不上")
+
+    def test_reopen_from_complete_has_nothing_to_undo(self) -> None:
+        """还没成文时没有成文登记可撤——留痕里就是空的，不编造。"""
+        self.complete_it()
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        self.assertEqual([], self.contract()["reopened"][-1]["story_registration_undone"])
+
     def test_reopen_refuses_when_not_complete(self) -> None:
         """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""
         self.round_now()
