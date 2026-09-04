@@ -30,8 +30,20 @@ BUDGET = REPO / "test" / "story" / "regression" / "mechanism-budget.yaml"
 
 
 def classify(path: Path) -> str | None:
+    """这个文件算不算进机制规模。
+
+    不算的三类：知识层（内容归目标工程）、依赖目录，以及**安装期工具**——
+    `skills/story-adaptation/**` 与它的输入 `framework-patch.yaml` 是把这套机制装到
+    别的工程去的东西，装完就不参与任何一次需求；预算限的是「本需求的机制有多大」，
+    把安装器算进去，等于让「更好装」和「机制更小」互相挤占（用户 2026-09-05 裁定）。
+    """
     rel = path.relative_to(EXT).as_posix()
     if rel.startswith("knowledge/") or "node_modules" in path.parts:
+        return None
+    if rel.startswith("skills/story-adaptation/") or rel == "framework-patch.yaml":
+        return None
+    # 点开头的目录是工作件（adapt 的 `.adapt-<版本>/` 就是一例），不随包交付
+    if any(seg.startswith(".") for seg in rel.split("/")[:-1]):
         return None
     suf = path.suffix
     if rel.startswith("skills/") and suf == ".mjs":

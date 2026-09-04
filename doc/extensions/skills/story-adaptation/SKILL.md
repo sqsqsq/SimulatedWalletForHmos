@@ -23,10 +23,17 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 **framework 本身的问题不归 adapt 管**，也不必在这里提——它装的是扩展包，
 framework 是它运行的地基，地基归 framework 自己的升级路径。
 
-**扩展对 framework 没有版本强依赖。** 唯一按宿主能力分流的地方是 verifier 报告怎么收：
-扩展看宿主的 adapter 声明里有没有「verifier 能力」这个字段——有就从终态消息里取报告，
-没有就认执行方自己写下的报告文件。声明该字段是较新 framework 才有的事，没有它的宿主
-自然走后一条路，两条都通。所以低版本 framework 配新版扩展能工作，不要因为版本号低就停下来问。
+**扩展对 framework 没有版本强依赖，但有一份具名的依赖清单。** 见 §2.5：包内
+`framework-patch.yaml` 声明「本扩展依赖、而上游还没合入的 framework 改动」，
+逐条带 `why`。不要因为版本号低就停下来问；要看的是那份清单里的东西目标有没有。
+
+**verifier 报告只认发布器落盘的那一份。** 宿主 adapter 声明了 `verifier_capability`
+（发布机制 `subagent_stop` / `task_tool_result` 等）时，报告由宿主钩子从子 agent 的终态
+消息生成、按 subject 分区落盘；**没有声明的宿主上，framework 判 verifier 为 blocked**
+——脚本检查照常完整执行，脚本 PASS 后按「provider 不可用」处理。
+扩展与它同口径：不认执行方自己写下的报告文件（主模型写得出来的东西，作不了它自己
+被独立审查过的证据）。所以在没有发布器的宿主上，story 读者审查这一项记「不适用」，
+**这是如实报告，不是故障**；要让它变成「适用」，得先给那个宿主入册 verifier 能力。
 
 ## 1 判态
 
@@ -64,8 +71,36 @@ framework 是它运行的地基，地基归 framework 自己的升级路径。
 | `manifest.yaml` | 手写合成：`schema_version`/`version`/`description`、`provides.hooks`、`provides.phase_rules_overlays`、`provides.skills` 里本包自带的两项抄包；`provides.knowledge` = 已确认的事实文件 + 全部规约与模式（含目标自加）+ 各级 README；目标其它 `skills` 与 `skill_assets` 原样保留 | 同左 |
 | 目标自己的其它 `skills/*`、包不认识的任何文件 | 不动、不复制 | 不动 |
 | `framework.config.json` 里包要求的配置键 | 核对；缺的在方案里提议值（目录类的值须是目标真实存在的目录；列表类只追加不删目标已有条目）；用户点头才写 | 同左 |
+| `<extension_dir>/framework-patch.yaml`（包声明的 framework 依赖） | 复制到目标——目标要知道自己装了哪几条、将来怎么退场；文件本身不进 `manifest.yaml` 的任何清单 | 同左（整份覆盖：它是包的声明，不是目标的内容） |
 | `<extension_dir>/.adapt-<包 version>/`（本命令的工作目录：`plan.md`、`before.json`、`installed.md`） | 目标所有；本次写入 | 不删；下次覆盖同名文件。**包不交付它**。目录名带版本，两个版本的工作件互不覆盖；点开头是为了在目标工程里一眼看出它是临时件。旧的 `adapt/` 目录（本命令早先版本留下的）是历史工作件，不迁移不删除，可手动清理。`installed.md` 只记日期、发起方、缺口清单——**不记版本**，版本的唯一真源是 `manifest.yaml` |
 | 包新增的知识字段 / 表列 | **不补列**（缺列由框架按声明默认值派生）；方案第三段登记「包新增字段 X，目标知识待填」 | 同左 |
+
+## 2.5 framework 补丁：扩展依赖的地基
+
+扩展有时要求 framework 侧的改动（比如作者取本阶段要求的入口）。这些改动在包的仓库里
+已经验证过，但还没合入 framework 上游——**不带过去，扩展在目标工程就是残的，
+而且通常不报错、只是某个能力不生效**。
+
+包内 `framework-patch.yaml` 逐条声明它们（没有这份文件 = 不依赖，本节整节跳过）。
+两类，带不带由目标决定：
+
+| kind | 判据 | 带不带 |
+|---|---|---|
+| `extension_dependency` | 扩展跑不起来就缺它 | **无条件带** |
+| `host_capability`（带 `host`） | 某个宿主的能力补丁 | 目标物化了那个宿主才带；没物化就**不带，但在方案里列出来并写明为什么不带** |
+
+判据是这两个类别，不是 adapter 名单——换个宿主时规则不用改。
+
+**带文件还不够，必须同时登记**：目标的 framework 完整性校验会把这些文件判成漂移。
+每带一条，就往目标 `framework.config.json > integrity.drift_allowlist` 追加一条
+（`path` 同名，`rationale` 取那条的 `why` + 「上游合入后失效须删」，`approved_by` 取确认人）；
+已有同 `path` 的不重复追加。**只带不登记 = 目标第一次跑 harness 就红在完整性上。**
+
+**目标已经改过同一个文件**时（扫描报「不同」）不静默覆盖：方案里单列，写明
+「目标这份与包不同，覆盖会丢掉目标的改动」，由人确认——与知识文件同一套纪律。
+
+**退场**：上游合入之后，包里删掉 `framework-patch.yaml` 整份；下一次 adapt 会报
+「包不再要求任何 framework 补丁，目标 allowlist 里这些条目已失效」，删不删由目标工程定。
 
 ## 3 读两棵树
 
@@ -73,7 +108,8 @@ framework 是它运行的地基，地基归 framework 自己的升级路径。
 node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目标根>
 ```
 
-它列出：机制目录逐文件（目标独有 / 包独有 / 同名有差异）、目标知识文件的 frontmatter 与所在目录、
+它列出：**framework 补丁逐条**（带不带、为什么、目标里有没有、内容同不同、登记了没有）
+与目标已物化的 adapter；机制目录逐文件（目标独有 / 包独有 / 同名有差异）、目标知识文件的 frontmatter 与所在目录、
 **包内知识文件清单**（`package_knowledge`——方案第二段写变更提案时的比对对象）、
 目标 `provides.knowledge` 清单、包内对接 js 是否自述替身、目标自定义文件的内容指纹，
 并写 `<目标 extension_dir>/.adapt-<包 version>/before.json`。**清单是给你看的，判断由你按 §2 表做。**
@@ -85,6 +121,8 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 方案第一段开头记一行目标 `framework/package.json` 的 `version`——给人参考，不是门槛。
 
 1. **机制与跳板**：新增 / 删除 / 覆盖逐文件；目标本地改动过的机制文件与迁回建议；
+   **framework 补丁**：要带哪几条（逐条写 why 与目标当前状态）、不带哪几条与为什么不带、
+   要追加哪几条 `drift_allowlist`；再写一句「这些是临时件，上游合入后连同白名单一起删」；
 2. **知识**：事实文件逐个 保留 / 移动到 / 补键；**包内同名知识文件的变更提案**——逐个写
    「包内这份相对目标当前内容差在哪 / 建议怎么合并 / 合并后目标失去什么」，人确认一条写一条，
    没确认的一律保持目标原样；目标自加文件的保留清单；
@@ -101,7 +139,10 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 第一步先**给目标工程的 `.gitignore` 追加一行 `doc/extensions/.adapt-*/`**（已有就跳过；`doc/extensions` 换成目标真实的 `extension_dir`）——工作目录是临时件，不加这一行它会被误提交进目标工程的库。
 
-然后按顺序：机制 → 知识 → 数据对接 → 索引 README → manifest → 配置键 → **入口文件**。
+然后按顺序：**framework 补丁（复制文件 → 追加 drift_allowlist）** → 机制 → 知识 →
+数据对接 → 索引 README → manifest → 配置键 → **入口文件**。
+
+补丁排在最前，因为机制里的钩子要靠它才跑得起来；顺序反了的话，写完机制先跑校验会红一次。
 
 **入口文件只写标记区之内。** 「实例扩展」节不止 adapt 一个写者——framework 的
 `render-agents-md` 也往这一节生成 Skill 表格。整节替换会把宿主刚生成的表格连同
@@ -129,7 +170,8 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 ```
 
 前者确认 manifest 每条路径都存在（有一条不存在，框架会清空全部扩展能力，而且不会在阶段里报错）。
-后者核五件事：机制目录 == 包、**目标所有的知识文件**（事实 / 规约 / 模式一视同仁）旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文**连同标记区**（包没有该文件时跳过）。
+后者核六件事：**framework 补丁该带的都在目标里且内容同包、每条都登记进了 `drift_allowlist`、
+不该带的没被带过去**；机制目录 == 包、**目标所有的知识文件**（事实 / 规约 / 模式一视同仁）旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文**连同标记区**（包没有该文件时跳过）。
 
 入口段那条有两种报法：「没有标记区」= 内容在但标记没包上，按 §6 表第二行原位补标记；「未含扩展段」= 整段没写进去，按第三行追加。
 

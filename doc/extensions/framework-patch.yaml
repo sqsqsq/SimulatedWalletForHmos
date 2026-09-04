@@ -1,0 +1,83 @@
+# 本扩展依赖的 framework 改动 —— **临时件**。
+#
+# 这些改动在本仓已验证，但尚未合入 framework 上游。装到别的工程时，扩展需要它们才完整：
+# 缺了地基，扩展的对应能力在那个工程里就是残的，而且往往不报错、只是不生效。
+#
+# 每条必须写 `why`：往别人的工程里放一份 framework 文件，要说得出为什么非它不可。
+#
+# ## 两类，带不带由目标工程决定
+#
+#   · extension_dependency —— 扩展跑不起来就缺它。**无条件带**。
+#   · host_capability      —— 某个宿主的能力补丁。**只在目标工程用同一宿主时才带**；
+#                             宿主是谁由目标已物化的 adapter 决定，不由本文件写死。
+#
+# 判据是这两个类别，不是 adapter 名单：换一个宿主时规则不用改，数据自己给出不同结果。
+#
+# ## 退场
+#
+# 上游合入之后整份删掉本文件。下一次 adapt 会报「包不再要求任何 framework 补丁；
+# 目标 drift_allowlist 里这些条目已失效」，删不删由目标工程定。
+#
+# `path` 相对目标的 `framework/`。
+version: 1
+patches:
+  - path: harness/scripts/author-context.ts
+    kind: extension_dependency
+    why: 作者取本阶段要求的入口；扩展的 on_context_load 钩子靠它把内容送到执行者手上，没有它扩展的作者指引一个字也到不了
+  - path: harness/hooks-dispatcher.ts
+    kind: extension_dependency
+    why: 让 .mjs 钩子能返回 promptFragments；扩展的生成式作者任务包靠它生效，缺了就只剩静态 .md
+  - path: harness/harness-runner.ts
+    kind: extension_dependency
+    why: on_context_load 的事件装配从 verifier 一侧接到作者一侧
+  - path: specs/lifecycle-hooks-schema.yaml
+    kind: extension_dependency
+    why: on_context_load 在钩子事件表里的声明；扩展 manifest 登记这个事件时按它校验
+  - path: skills/reference/agent-behavioral-principles.md
+    kind: extension_dependency
+    why: 把「动笔前先取本阶段要求」写进行为原则，否则执行者不知道要跑作者入口
+  - path: skills/feature/spec/SKILL.md
+    kind: extension_dependency
+    why: spec 阶段正文里指向作者入口的那一句
+  - path: skills/feature/device-testing/SKILL.md
+    kind: extension_dependency
+    why: 同上，真机测试阶段的那一句
+  - path: docs/concepts/phase-terminology.md
+    kind: extension_dependency
+    why: on_context_load 的阶段术语说明，与 schema 同步
+  - path: profiles/hmos-app/skills/spec/templates/spec-template.md
+    kind: extension_dependency
+    why: 模板里给扩展章节留的锚点；扩展的 §9/§10/§11 按它追加
+  - path: profiles/hmos-app/skills/plan/templates/plan-template.md
+    kind: extension_dependency
+    why: 同上，plan 侧的锚点
+  - path: profiles/generic/skills/spec/templates/spec-template.md
+    kind: extension_dependency
+    why: 同上，generic profile 的 spec 锚点（目标工程用哪个 profile 由它自己定，两份都带）
+  - path: profiles/generic/skills/plan/templates/plan-template.md
+    kind: extension_dependency
+    why: 同上，generic profile 的 plan 锚点
+  - path: agents/opencode/adapter.yaml
+    kind: host_capability
+    host: opencode
+    why: 声明 opencode 的 verifier 发布能力，required×interactive 由 blocked 变 enabled
+  - path: agents/opencode/templates/agents/verifier.md
+    kind: host_capability
+    host: opencode
+    why: opencode 的只读 verifier 子代理定义
+  - path: agents/opencode/templates/plugin/record-verifier-report.js
+    kind: host_capability
+    host: opencode
+    why: opencode 的结论发布器：从任务工具完成事件取证并发布 canonical 报告
+  - path: agents/adapter-schema.yaml
+    kind: host_capability
+    host: opencode
+    why: 发布机制枚举加 task_tool_result；只为上面那个发布器而改
+  - path: agents/README.md
+    kind: host_capability
+    host: opencode
+    why: 发布机制表里 task_tool_result 那一行
+  - path: harness/scripts/utils/verifier-plan.ts
+    kind: host_capability
+    host: opencode
+    why: 同一个枚举值在能力解析处的登记；不带 opencode 时这一条也不需要

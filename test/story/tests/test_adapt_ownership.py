@@ -18,6 +18,7 @@ SKILL.md §2 记着那次的教训——「只有模型读得懂哪些内容是�
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -33,10 +34,26 @@ LAUNCHERS = (
 )
 
 
+def package_framework_patches() -> list[dict]:
+    """包声明的 framework 依赖，读那份 YAML 的三个键。"""
+    out: list[dict] = []
+    cur: dict | None = None
+    for line in (PKG_EXT / "framework-patch.yaml").read_text(encoding="utf-8").splitlines():
+        item = re.match(r"^\s*-\s+path:\s*(\S+)", line)
+        if item:
+            cur = {"path": item.group(1), "kind": "", "why": ""}
+            out.append(cur)
+            continue
+        kv = re.match(r"^\s+(kind|host|why):\s*(.+)$", line)
+        if kv and cur is not None:
+            cur[kv.group(1)] = kv.group(2).strip()
+    return out
+
+
 class AdaptOwnershipCase(unittest.TestCase):
     """每个用例搭一个「已装好扩展」的目标工程，跑真 `adapt-scan`。"""
 
-    def setUp(self) -> None:
+    def setUp(self) -> None:  # noqa: D102
         if shutil.which("node") is None:
             self.skipTest("环境里没有 node")
         self._tmp = tempfile.TemporaryDirectory()
@@ -45,8 +62,20 @@ class AdaptOwnershipCase(unittest.TestCase):
         (self.target / "framework").mkdir(parents=True)
         (self.target / "framework" / "package.json").write_text(
             json.dumps({"name": "framework", "version": "0.0.1"}), encoding="utf-8")
+        # 包声明的 framework 依赖：装好的目标里要有这些文件，并登记进漂移白名单。
+        # 这是 adapt 写入时做的事，夹具照做——否则测别的判据的用例会被 ⑥ 顺带拖红。
+        allow = []
+        for patch in package_framework_patches():
+            if patch["kind"] != "extension_dependency":
+                continue
+            src = REPO_ROOT / "framework" / patch["path"]
+            dst = self.target / "framework" / patch["path"]
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            allow.append({"path": patch["path"], "rationale": patch["why"], "approved_by": "夹具"})
         (self.target / "framework.config.json").write_text(json.dumps({
             "paths": {"extension_dir": "doc/extensions"},
+            "integrity": {"drift_allowlist": allow},
         }, ensure_ascii=False), encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))

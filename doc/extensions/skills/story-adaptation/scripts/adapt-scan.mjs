@@ -15,6 +15,7 @@ const MODES = ['--scan', '--check'];
 const ROOT_FILES = ['.cac/commands/story.md', '.claude/commands/story.md',
   '.codex/skills/story/SKILL.md', '.opencode/skill/story/SKILL.md', 'framework.config.json'];
 const MOCK_MARKERS = ['本地替身', '模拟实现'];   // 包内对接脚本的自述；不认任何仓的具体标识符
+const PATCH_FILE = 'framework-patch.yaml';      // 包声明的 framework 依赖；没有这份文件就是不依赖
 
 const argv = process.argv.slice(2);
 const mode = MODES.find((m) => argv.includes(m));
@@ -130,6 +131,62 @@ const WORK = join(TDIR, `.adapt-${PKG_VERSION}`), BEFORE = join(WORK, 'before.js
 const PKG_FILES = new Set(walk(PDIR));
 const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
 
+/**
+ * 包声明的 framework 补丁。**没有这份文件 = 不依赖任何 framework 改动**，不是错误。
+ *
+ * 解析只认三个键 + host：整份是给人读的声明，不做通用 YAML 解析——
+ * 装一个解析器进来，下一次就会有人往里加结构。
+ */
+function frameworkPatches(dir) {
+  const raw = existsSync(join(dir, PATCH_FILE)) ? read(join(dir, PATCH_FILE)) : '';
+  const out = [];
+  let cur = null;
+  for (const line of raw.split(/\r?\n/)) {
+    const item = line.match(/^\s*-\s+path:\s*(\S+)/);
+    if (item) { cur = { path: item[1], kind: null, host: null, why: '' }; out.push(cur); continue; }
+    if (!cur) continue;
+    const kv = line.match(/^\s+(kind|host|why):\s*(.+)$/);
+    if (kv) cur[kv[1]] = kv[2].trim();
+  }
+  return out;
+}
+
+/** 目标工程物化了哪些 adapter —— host_capability 带不带看它，不看包里写死的名单。 */
+function targetAdapters(root) {
+  const cfg = existsSync(join(root, 'framework.config.json'))
+    ? JSON.parse(read(join(root, 'framework.config.json'))) : {};
+  const list = cfg?.materialized_adapters ?? [];
+  return new Set(Array.isArray(list) ? list.map(String) : []);
+}
+
+/** 目标 framework.config.json 的漂移白名单里已登记的路径。 */
+function targetAllowlist(root) {
+  const cfg = existsSync(join(root, 'framework.config.json'))
+    ? JSON.parse(read(join(root, 'framework.config.json'))) : {};
+  const list = cfg?.integrity?.drift_allowlist ?? [];
+  return new Set((Array.isArray(list) ? list : []).map((e) => String(e?.path ?? '')));
+}
+
+/**
+ * 每条补丁的去向：带，还是不带、为什么。
+ *
+ * `extension_dependency` 无条件带——扩展缺了它就是残的。
+ * `host_capability` 只在目标用同一宿主时带：同一份声明在不同目标上给出不同结果，
+ * 而规则只有一条。`kind` 认不出的**当场报错**，不静默跳过：漏带一份地基，
+ * 目标那边的表现是「某个能力莫名其妙不生效」，最难查。
+ */
+function patchPlan(patches, adapters) {
+  return patches.map((x) => {
+    if (x.kind === 'extension_dependency') return { ...x, carry: true, reason: '扩展依赖' };
+    if (x.kind === 'host_capability') {
+      const on = adapters.has(String(x.host));
+      return { ...x, carry: on, reason: on ? `目标用 ${x.host}` : `目标未物化 ${x.host}` };
+    }
+    die(`${PATCH_FILE} 里 ${x.path} 的 kind 认不出：${x.kind ?? '(缺)'}`);
+    return null;
+  });
+}
+
 // ── --scan ──────────────────────────────────────────────────────────────────
 if (mode === '--scan') {
   const tf = walk(TDIR), pf = walk(PDIR), pSet = new Set(pf);
@@ -155,6 +212,15 @@ if (mode === '--scan') {
       package: pick(pf, PDIR, 'js').map((x) => x.p), target: pick(tf, TDIR, 'js').map((x) => x.p),
     },
     custom: pick(tf, TDIR, 'custom').map(({ p, f }) => ({ path: p, sha: sha(f) })),
+    framework_patch: patchPlan(frameworkPatches(PDIR), targetAdapters(TARGET)).map((x) => ({
+      path: x.path, kind: x.kind, host: x.host, why: x.why, carry: x.carry, reason: x.reason,
+      in_target: existsSync(join(TARGET, 'framework', x.path)),
+      same_as_package: existsSync(join(TARGET, 'framework', x.path))
+        && existsSync(join(PKG, 'framework', x.path))
+        && sha(join(TARGET, 'framework', x.path)) === sha(join(PKG, 'framework', x.path)),
+      allowlisted: targetAllowlist(TARGET).has(x.path),
+    })),
+    target_adapters: [...targetAdapters(TARGET)],
     root_files: ROOT_FILES.map((p) => ({ path: p, in_target: existsSync(join(TARGET, p)),
       same_as_package: existsSync(join(TARGET, p)) && existsSync(join(PKG, p)) && sha(join(TARGET, p)) === sha(join(PKG, p)) })),
   };
@@ -245,5 +311,26 @@ if (existsSync(join(PDIR, SECTION))) {
   }
 }
 
+// ⑥ framework 补丁：该带的带了、带了的登记进目标 drift_allowlist
+//
+// 只登记不复制 = 目标缺地基；只复制不登记 = 目标第一次跑 harness 就红在完整性上。
+// 两件事都核。不带的那些反过来核：它们**不该**出现在目标的 allowlist 里。
+{
+  const allow = targetAllowlist(TARGET);
+  for (const x of patchPlan(frameworkPatches(PDIR), targetAdapters(TARGET))) {
+    const at = join(TARGET, 'framework', x.path);
+    if (!x.carry) {
+      if (allow.has(x.path)) bad.push(`⑥ 不该带的补丁登记进了 allowlist：${x.path}（${x.reason}）`);
+      continue;
+    }
+    if (!existsSync(at)) { bad.push(`⑥ framework 补丁缺文件：${x.path}——${x.why}`); continue; }
+    if (sha(at) !== sha(join(PKG, 'framework', x.path))) bad.push(`⑥ framework 补丁内容不同于包：${x.path}`);
+    if (!allow.has(x.path)) {
+      bad.push(`⑥ 补丁没登记进 drift_allowlist：${x.path}`
+        + '——目标的 framework 完整性校验会把它判成漂移，第一次跑 harness 就红');
+    }
+  }
+}
+
 if (bad.length) { console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`); bad.forEach((b) => console.error(`  ${b}`)); process.exit(1); }
-console.log('[adapt-scan] 核对通过：机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）');
+console.log('[adapt-scan] 核对通过：机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）/ framework 补丁齐且已登记');
