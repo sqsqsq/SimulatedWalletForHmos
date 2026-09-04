@@ -798,8 +798,9 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             (source / "doc" / "features" / "REAL01" / "spec.md").write_text(
                 "真实需求", encoding="utf-8")
             suite_root.mkdir(parents=True)
+            suite_id = f"boundary-test-{os.getpid()}"
             template, workspace_root = run_multi_case.create_workspace_template(
-                suite_root, "boundary-test")
+                suite_root, suite_id)
             self.assertTrue((template / "01-Product" / "main.ets").is_file())
             self.assertFalse((template / "test").exists())
             self.assertFalse((template / "tools").exists())
@@ -819,11 +820,11 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertIn("copied", boundary)
             self.assertIn("excluded", boundary)
             self.assertIn("case_seeded", boundary)
-            self.assertTrue(str(workspace_root).endswith("boundary-test"))
+            self.assertTrue(str(workspace_root).endswith(suite_id))
         finally:
             run_multi_case.REPO_ROOT = original_root
             shutil.rmtree(root, ignore_errors=True)
-            shutil.rmtree(Path(tempfile.gettempdir()) / "sw-story" / "boundary-test",
+            shutil.rmtree(Path(tempfile.gettempdir()) / "sw-story" / suite_id,
                           ignore_errors=True)
 
     def test_failed_terminal_case_promotes_document_and_source_with_labels(self) -> None:

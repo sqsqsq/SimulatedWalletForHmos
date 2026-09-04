@@ -220,6 +220,15 @@ def read_sidecar(feature_root: Path, parts: tuple[str, ...]) -> object | None:
         raise FlowError(f"{path.name} 不是合法 JSON：{exc}") from exc
 
 
+#: 定位侧车的字段。读取函数按它校验，`status` 按它给骨架——写两份的话，
+#: 改了字段名骨架不会跟着变，作者照骨架写出来的东西会被读取函数拒掉。
+POSITIONING_FIELDS = {
+    "scope_source": None,          # 合法值来自 SCOPE_SOURCES，骨架里现填
+    "scope_text": "本 AR 当前范围，一句话；取全量时也要写出全量是什么",
+    "sr_related_ars": "同一 SR 下的**其它** AR：[{ar, scope}]，没有就给空数组",
+}
+
+
 def read_positioning(feature_root: Path) -> dict | None:
     """读本 AR 定位侧车：初析三源核对后收敛出的「本 AR 当前范围」。
 
@@ -723,49 +732,50 @@ def settled_this_round(contract: dict) -> bool:
             and split.get("settled_round") == contract["rounds"][-1].get("round"))
 
 
+#: 这一段的顺序，四个分支共用一句。
+SPEC_STAGE_ORDER = (
+    "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
+    "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记 → "
+    "story-build build → harness → verifier。"
+    "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
+
+
 def spec_stage_step(feature_root: Path) -> tuple[str, str]:
     """收口之后、成文登记之前——spec 阶段内做到哪儿了。
 
-    两跑的作者都在这一段先跑了 harness，三轮 FAIL 全是「story 未登记」：它手上没有
-    这一段的顺序，只能靠门禁一轮轮告诉它还差什么。顺序本身是确定的，按磁盘上有什么就能说清。
+    手上没有这一段的顺序时，作者会先跑 harness，再靠门禁一轮轮告诉它还差什么——
+    而那些红全是「产物不齐」。顺序本身是确定的，按磁盘上有什么就能说清。
     """
     def have(*rel: str) -> bool:
         return (feature_root / Path(*rel)).is_file()
 
-    order = ("顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
-             "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记 → "
-             "story-build build → harness → verifier。"
-             "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
     if not have("spec", "knowledge-use.yaml"):
         return ("spec_knowledge_use_init",
                 "进 /spec。第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
-                "（激活条目一条不落，你只填 applicable 与依据）。" + order)
+                "（激活条目一条不落，你只填 applicable 与依据）。" + SPEC_STAGE_ORDER)
     if not have("spec", "spec.md"):
-        return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + order
+        return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
     if not have("AR", "story.md"):
         return ("story_skeleton",
                 "spec.md 已在。接着 `story-build skeleton` 建骨架，再逐章 `chapter --from <文件>`"
-                "（章文件只放正文，不带章标题）。" + order)
+                "（章文件只放正文，不带章标题）。" + SPEC_STAGE_ORDER)
     return ("register_story",
             "story.md 已在。十章都写完、`story-build check` 通过之后，"
-            "跑 `story_flow.py story` 登记成文——**登记之前跑 harness 一定红**。" + order)
+            "跑 `story_flow.py story` 登记成文——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
 
 def sidecar_shape(step: str) -> dict | None:
     """这一步要写的侧车长什么样：字段、合法值、为什么要它。
 
-    两跑的作者都为弄清这几个文件的形状去切片读本脚本。形状是确定的，
-    该在需要它的那一步就摆出来，而不是等它读源码或撞报错。
+    形状是确定的，该在需要它的那一步就摆出来，而不是等作者去读源码或撞报错。
     合法值取自本模块的常量，不另立一份。
     """
     if step == "run_analysis":
+        positioning = dict(POSITIONING_FIELDS)
+        positioning["scope_source"] = " | ".join(SCOPE_SOURCES)
         return {
             "写这两份": [
-                {"path": "/".join(POSITIONING),
-                 "shape": {"scope_source": " | ".join(SCOPE_SOURCES),
-                           "scope_text": "本 AR 当前范围，一句话；取全量时也要写出全量是什么",
-                           "sr_related_ars": [{"ar": "同一 SR 下的**其它** AR 单号",
-                                               "scope": "那一份承载什么"}]}},
+                {"path": "/".join(POSITIONING), "shape": positioning},
                 {"path": "/".join(SCOPE_OPTIONS),
                  "shape": [{"key": CARRY_ALL, "label": "按当前范围整体承载：列出功能点"},
                            {"key": "<切法标识>", "label": "按什么切、切成几份",

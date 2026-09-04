@@ -43,6 +43,18 @@ import {
 
 const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter', 'review-task'];
 
+/**
+ * 一条决策登记要写满的字段，与「缺了会怎样」。
+ *
+ * 导出，因为作者任务包要照它列——字段名在校验里写一遍、在提示词里再写一遍，
+ * 就是两份真源，改了一处另一处静默过期。
+ */
+export const DECISION_FIELDS = [
+  ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
+  ['clarification', '带小标题分段的澄清正文'],
+  ['decider', '请谁确认'],
+];
+
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 6;
 
@@ -173,7 +185,7 @@ const STORY_SRC_LEDGERS = [
  * 台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
  *
  * 冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
- * 实跑里台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
+ * 台账错到成百上千条时，整份删掉能让 check 的报错数当场归零。
  *
  * 报错文案要把这条路直接堵死：缺的那件是**补产出**，不是删同伴文件。
  */
@@ -799,11 +811,7 @@ function cmdCheck(ctx) {
   else {
     const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
     for (const dec of list) {
-      for (const [field, what] of [
-        ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
-        ['clarification', '带小标题分段的澄清正文'],
-        ['decider', '请谁确认'],
-      ]) {
+      for (const [field, what] of DECISION_FIELDS) {
         if (!String(dec?.[field] ?? '').trim()) {
           problems.push(`决策 ${dec?.id ?? '（无编号）'} 缺${what}——`
             + '这一条渲染出来会是半个议题，评审人看不出要他表什么态');
@@ -1110,11 +1118,11 @@ function cmdCheck(ctx) {
       }
     }
 
-    // 附录里不放图。三轮复发同一种形态：正文各章写着「下图是…」，图却整批迁进附录，
+    // 附录里不放图。反复出现的形态是：正文各章写着「下图是…」，图却整批迁进附录，
     // 读者读到那句话时手边没有图，要翻到最后再翻回来。
     //
-    // 这一条与「每张登记的图都必须被引用」是**合围**：图进不了附录，又不能不出现，
-    // 于是只剩一个去处——它讲的那一章。
+    // 与集合一致那一条合起来看：登记的图要有去处，而附录不是去处。用它就放在讲它的那一章，
+    // 不用它就在材料清单那一行写明理由——理由是文字，不是把图挪到附录充数。
     const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
       .map(m => m[1]);
     if (inAppendix.length) {
@@ -1422,7 +1430,7 @@ function cmdSkeleton(ctx) {
  * 章文件开头的标题行剥掉——命令自己会加 `## <章名>`。
  *
  * 作者写章文件时很自然会带上本章标题；命令再包一层，story 里就出现两行一样的标题。
- * 两跑的作者看见重复都选了同一条路：删掉 story.md、重建骨架、十章重灌。
+ * 看见重复，作者多半会删掉 story.md 重建骨架、十章重灌——十次落盘白做。
  *
  * 只剥两种：**H1**（它只属于骨架，章文件里出现就是错位）与**与本章同名的 H2**。
  * 章内的小节标题（`### 3.1 …`）是正文，一个字不动。
@@ -1445,9 +1453,8 @@ function stripOwnHeading(body, title) {
 /**
  * 读者审查的任务书 —— 注入给 verifier 的就是这一份，这里只是让人也看得见。
  *
- * 任务定义是这一项成不成的关键：合同里十章各有读者问题，却一直没有一条问
- * 「材料登记的每张图用了没有」，于是两轮实跑丢的图，审查者一次都没报。
- * 任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
+ * 任务定义是这一项成不成的关键：任务里没有的问题，审查者不会去问。
+ * 所以任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
  */
 function cmdReviewTask(ctx) {
   process.stdout.write(

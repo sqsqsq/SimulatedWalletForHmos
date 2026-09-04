@@ -35,7 +35,6 @@ stdout 是**本次事件**的摘要，不是持久事实。材料现在是什么
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import shutil
@@ -400,8 +399,32 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
     return doc_sections, media, ux_images
 
 
+def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
+    """给材料里的一张图写下「它是什么」。**不复制、不改名、不动文件**。
+
+    不是界面的图也要有说明——流程图、时序图、状态机都算。成文时作者面上关于一张图的
+    全部信息就是路径与这句话；没有它，作者无从知道该在哪一章用它。
+    """
+    import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
+
+    if not target.is_file():
+        raise ImportError_(f"读不到 {target}——要写说明的图得先在磁盘上")
+    if target.suffix.lower() not in IMAGE_EXTS:
+        raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
+    if not caption.strip():
+        raise ImportError_("缺 --caption：一句「这张图是什么」")
+    # 身份由清单模块算——两处各算一份，差一位截断就会静默挂不上
+    sha = materials.file_digest(target)
+    materials.write_caption(feature_root, sha, caption.strip())
+    manifest = materials.refresh(feature_root)
+    return {"sha256": sha, "caption": caption.strip(), "digest": manifest.get("digest")}
+
+
 def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> dict:
-    """把一张图登记成界面参考：复制到 `ux-reference/` 起语义名，写下它是什么。
+    """把一张图登记成**界面参考**：复制到 `ux-reference/` 起语义名，并写下它是什么。
+
+    只给界面用。不是界面的图（流程图、时序图）写说明走 `--caption-image`——
+    复制进 `ux-reference/` 会让视觉链路把它当成一屏去匹配，然后报它没映射到任何页面。
 
     图片的身份是内容，所以说明按 sha256 记，跟着这张图走；名字只是给人看的。
     登记完刷新材料清单——清单是唯一真源，作者任务包与读者审查都从它逐张读。
@@ -415,7 +438,7 @@ def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> di
     if not caption.strip():
         raise ImportError_(
             "缺 --caption：一句「这张图是什么」。没有它，下游拿到的只有路径与哈希，"
-            "作者无从知道该在哪一章用它——两轮实跑丢图都是从这里开始的")
+            "作者无从知道该在哪一章用它")
 
     stem = name.strip() or source.stem
     dest = feature_root / UX_IMAGE_DIR / f"{stem}{source.suffix.lower()}"
@@ -423,7 +446,7 @@ def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> di
     blob = source.read_bytes()
     if not dest.is_file() or dest.read_bytes() != blob:
         dest.write_bytes(blob)
-    sha = "sha256:" + hashlib.sha256(blob).hexdigest()[:16]
+    sha = materials.file_digest(dest)
     materials.write_caption(feature_root, sha, caption.strip())
     manifest = materials.refresh(feature_root)
     return {"path": dest.relative_to(feature_root).as_posix(), "sha256": sha,
@@ -439,8 +462,10 @@ def main() -> int:
                     help="只读预览一份材料的正文与图清单，不落盘（归类判断的输入）")
     ap.add_argument("--register-ux", default=None, metavar="PATH",
                     help="把这张图登记成界面参考：复制到 ux-reference/ 起名，并记下它是什么")
+    ap.add_argument("--caption-image", default=None, metavar="PATH",
+                    help="给材料里的一张图写说明，不复制不改名（流程图这类走它）")
     ap.add_argument("--name", default="", help="--register-ux 的语义名（不带后缀）")
-    ap.add_argument("--caption", default="", help="--register-ux 必填：一句「这张图是什么」")
+    ap.add_argument("--caption", default="", help="一句「这张图是什么」")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -460,6 +485,29 @@ def main() -> int:
         log(f"预览 {out['file']}：正文 {len(out['text'])} 字，图 {len(out['images'])} 张")
         payload = {"mode": "preview", "ok": True, **out}
         sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return 0
+
+    if args.caption_image:
+        if not args.feature:
+            sys.stdout.write(json.dumps(
+                {"mode": "caption-image", "ok": False, "error": "写图片说明需要 --feature"},
+                ensure_ascii=False) + "\n")
+            return 1
+        project_root = Path(args.project_root).resolve() if args.project_root else \
+            Path(__file__).resolve().parents[5]
+        feature_root = project_root / features_dir(project_root) / args.feature
+        target = Path(args.caption_image)
+        if not target.is_absolute():
+            target = feature_root / target
+        try:
+            out = caption_image(feature_root, target, args.caption)
+        except (ImportError_, OSError) as exc:
+            sys.stdout.write(json.dumps({"mode": "caption-image", "ok": False, "error": str(exc)},
+                                        ensure_ascii=False) + "\n")
+            return 1
+        log(f"图片说明已记下：{args.caption_image}——{out['caption']}")
+        sys.stdout.write(json.dumps({"mode": "caption-image", "ok": True, **out},
+                                    ensure_ascii=False) + "\n")
         return 0
 
     if args.register_ux:

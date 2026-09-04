@@ -474,10 +474,14 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
       · 需求单号（`AR-1234` 这类形态）；
       · 业务特征词（补充文档名、资产目录名——它们会变成路径）；
       · Case 名与 suite 前缀（配置里登记的那些）；
-      · 某次运行的计数（「实测 3 处」「首跑 91 分钟」这类）。
+      · 某次运行的计数（「实测 3 处」这类）；
+      · 轮次叙述（「两跑的作者都…」「一次真实实跑说明了…」——不带数字也算）。
     """
     case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")
     run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
+    # 轮次叙述：不带数字也算。「两跑的作者都…」「一次真实实跑说明了…」都是维护痕迹，
+    # 交付面用现在时讲道理就够。`上一轮` 不在列——那是流程概念（round 开出的上一轮）。
+    run_narrative = re.compile(r"实跑|首跑|[一二三四两]跑|[两三四]轮(?!次)")
     business_words = _case_business_words()
     case_names = _case_and_suite_names()
     hits = []
@@ -491,6 +495,11 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
             m = run_counts.search(line)
             if m:
                 hits.append(f"{rel}:{n} 运行计数「{m.group(0)}」")
+                continue
+            m = run_narrative.search(line)
+            if m:
+                hits.append(f"{rel}:{n} 轮次叙述「{m.group(0)}」——交付面用现在时讲道理，"
+                            "不讲哪一跑发生过什么")
                 continue
             hit_word = next((w for w in business_words if w in line), None) \
                 or next((w for w in case_names if w in line), None)

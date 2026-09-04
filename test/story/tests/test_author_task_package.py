@@ -100,7 +100,7 @@ class TaskPackageIsRendered(WorkspaceCase):
     def test_active_constraints_are_counted_from_the_manifest(self) -> None:
         """条目数从激活清单来：作者要知道这一轮要判几条，不是「若干条」。"""
         package = self.task_package()
-        self.assertRegex(package, r"本轮激活 \*\*\d+ 条\*\*约束")
+        self.assertRegex(package, r"激活 \*\*\d+ 条\*\*约束")
 
     def test_it_names_the_line_to_register_in_key_inputs_read(self) -> None:
         """D12：登记义务直接给出那一行——二跑为这条红过一轮。"""

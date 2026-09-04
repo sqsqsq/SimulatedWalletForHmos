@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import sys
 import tempfile
@@ -45,8 +46,25 @@ def load_runner():
 
 
 class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
-    def setUp(self) -> None:
-        self.runner = load_runner()
+    """模板一个类建一次：它是只读夹具，而建一次要复制一份带依赖的完整工程。"""
+
+    template: Path
+    _tmp: tempfile.TemporaryDirectory
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.runner = load_runner()
+        cls._tmp = tempfile.TemporaryDirectory()
+        suite_root = Path(cls._tmp.name) / "suite"
+        suite_root.mkdir(parents=True)
+        # suite-id 带进程号：模板落在共享的系统临时目录下，并行跑时几个 worker 会撞同一条路径
+        cls.template, _ = cls.runner.create_workspace_template(
+            suite_root, f"verifier-chain-test-{os.getpid()}")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.template.parent, ignore_errors=True)
+        cls._tmp.cleanup()
 
     def test_the_repo_has_the_chain_materialised(self) -> None:
         """先看本仓：模板没物化的话，工作区带什么都带不出来。"""
@@ -67,35 +85,23 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
                                     f"{rel} 被 git 忽略了——它是随仓交付的协议件")
 
     def test_the_workspace_template_carries_the_chain(self) -> None:
-        """建一次模板，三件都要在里面。这是白名单真的生效的唯一证据。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            suite_root = Path(tmp) / "suite"
-            suite_root.mkdir(parents=True)
-            template, _ = self.runner.create_workspace_template(
-                suite_root, "verifier-chain-test")
-            self.addCleanup(shutil.rmtree, template.parent, True)
-            for rel in CHAIN:
-                with self.subTest(file=str(rel)):
-                    self.assertTrue((template / rel).is_file(),
-                                    f"工作区模板里没有 {rel}——被测侧就没有 verifier 或作者入口")
+        """三件都要在模板里。这是复制规则真的生效的唯一证据。"""
+        for rel in CHAIN:
+            with self.subTest(file=str(rel)):
+                self.assertTrue((self.template / rel).is_file(),
+                                f"工作区模板里没有 {rel}——被测侧就没有 verifier 或作者入口")
 
     def test_dependencies_ride_along_so_nothing_needs_installing(self) -> None:
         """依赖跟着进工作区（用户 2026-09-04 裁定）——工作区就是一个能直接跑的工程。
 
-        这条 2026-09-04 换了边。原来断言的是「不带依赖」，理由是体积；
-        二跑给出了代价的另一半：工作区不带 `framework/harness/node_modules`，
-        被测模型开跑先花两分钟 `npm install`，那两分钟每一轮都要付一次。
+        这条 2026-09-04 换了边。原来断言的是「不带依赖」，理由是体积；代价的另一半是：
+        工作区不带 `framework/harness/node_modules`，被测模型开跑先装一遍依赖，
+        那几分钟每一轮都要付一次。
         """
-        with tempfile.TemporaryDirectory() as tmp:
-            suite_root = Path(tmp) / "suite"
-            suite_root.mkdir(parents=True)
-            template, _ = self.runner.create_workspace_template(
-                suite_root, "verifier-chain-nm")
-            self.addCleanup(shutil.rmtree, template.parent, True)
-            harness_deps = template / "framework" / "harness" / "node_modules"
-            if (self.runner.REPO_ROOT / "framework" / "harness" / "node_modules").is_dir():
-                self.assertTrue(harness_deps.is_dir(),
-                                "harness 依赖没进工作区——被测模型又要现装一遍")
+        if not (self.runner.REPO_ROOT / "framework" / "harness" / "node_modules").is_dir():
+            self.skipTest("本仓还没装 harness 依赖，无从判断它带没带过来")
+        self.assertTrue((self.template / "framework" / "harness" / "node_modules").is_dir(),
+                        "harness 依赖没进工作区——被测模型又要现装一遍")
 
 
 if __name__ == "__main__":
