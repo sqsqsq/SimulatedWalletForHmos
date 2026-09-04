@@ -442,6 +442,29 @@ def cmd_round(feature_root: Path) -> dict:
                 "positioning": bool(current.get("positioning")),
                 "scopeOptions": len(current.get("scope_options") or [])}
 
+    # 收口之后材料又变了：**不开新轮**。收口的含义是「本轮范围已定、可以进 spec」，
+    # 此后补一份说明文件、改一个错字都不该把流程推回未定状态。
+    #
+    # 曾经开轮，代价是死锁：新轮没有任何决策，而 `decide` 被 status=complete 挡住，
+    # 于是既走不下去也退不回来——实跑里模型最后手改契约文件才出来，那在正式路径上
+    # 是不允许的。要重新决策请显式跑 `reopen`。
+    if contract.get("status") == "complete" and rounds:
+        current = rounds[-1]
+        stamp(current)
+        current["materials_changed_after_complete"] = {
+            "digest": digest, "at": now(),
+            "note": "收口后材料有变；未开新轮。要重新决策跑 `story_flow.py reopen`",
+        }
+        save(feature_root, contract)
+        consume_sidecar(feature_root, POSITIONING)
+        consume_sidecar(feature_root, SCOPE_OPTIONS)
+        log(f"收口后材料有变（{digest}）：只更新第 {current['round']} 轮的材料指纹，未开新轮。"
+            "要重新决策跑 `story_flow.py reopen`")
+        return {"round": current["round"], "created": False, "materials": digest,
+                "afterComplete": True,
+                "positioning": bool(current.get("positioning")),
+                "scopeOptions": len(current.get("scope_options") or [])}
+
     entry = {
         "round": len(rounds) + 1,
         "imported": sorted(set(ingested) - already),
@@ -749,6 +772,30 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     return "run_complete", "跑 `story_flow.py complete` 收口"
 
 
+def cmd_reopen(feature_root: Path) -> dict:
+    """把收口的流程重新打开——**唯一的回退出口**。
+
+    收口之后材料又变、而且变到需要重新拍板范围时走它。它只做一件事：
+    status 从 `complete` 回到 `in_progress`，于是下一次 `round` 会照常开新轮、
+    `decide` 也不再被挡。
+
+    留痕：谁在什么时候把它打开的记在契约里。收口是一次有后果的判断，
+    撤销它同样是——没有留痕的话，产物为什么与当初那一轮对不上就查不回来了。
+    """
+    contract = require(load(feature_root))
+    status = contract.get("status")
+    if status != "complete":
+        raise FlowError(f"流程不在收口态（现在是 {status}），没有需要重新打开的东西")
+    contract["status"] = "in_progress"
+    contract.setdefault("reopened", []).append({
+        "at": now(),
+        "from_round": contract["rounds"][-1]["round"] if contract.get("rounds") else None,
+    })
+    save(feature_root, contract)
+    log("流程已重新打开（complete → in_progress）：下一次 `round` 会按材料现状开新轮")
+    return {"status": "in_progress", "rounds": len(contract.get("rounds") or [])}
+
+
 def cmd_status(feature_root: Path) -> dict:
     contract = load(feature_root)
     step, action = next_step(feature_root, contract)
@@ -1031,7 +1078,8 @@ def is_archived(feature_root: Path) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
-                    choices=["init", "round", "decide", "status", "complete", "story", "archived"])
+                    choices=["init", "round", "decide", "status", "complete", "reopen",
+                             "story", "archived"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
@@ -1071,6 +1119,8 @@ def main() -> int:
             result.update(cmd_story(feature_root, project_root))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
+        elif args.mode == "reopen":
+            result.update(cmd_reopen(feature_root))
         else:
             result.update(cmd_complete(feature_root))
 

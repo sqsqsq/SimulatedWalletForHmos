@@ -134,6 +134,86 @@ class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
 
 
 
+class CompleteThenMaterialChanged(MaterialRoundCase):
+    """收口之后材料又变了：不开新轮，只记一笔；要重新决策显式 `reopen`。
+
+    死锁的形状（首跑实测，耗掉 18 分钟）：
+      收口 → 补一份说明文件 → 材料指纹变 → `round` 开出新轮 →
+      新轮没有任何决策，而 `decide` 被 `status=complete` 挡住 →
+      既走不下去也退不回来，模型最后**手改 story-flow.json 删掉那一轮**才出来。
+
+    根因是轮次边界只看材料指纹，没有「收口之后材料又变了」这一态。
+    收口的含义是「本轮范围已定、可以进 spec」，此后补个说明文件不该把流程推回未定。
+    """
+
+    def contract(self) -> dict:
+        return json.loads(
+            (self.feature_root / "AR" / "story-flow.json").read_text(encoding="utf-8"))
+
+    def complete_it(self) -> None:
+        """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。"""
+        self.round_now()
+        path = self.feature_root / "AR" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["status"] = "complete"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def test_material_change_after_complete_opens_no_round(self) -> None:
+        self.complete_it()
+        before = len(self.contract()["rounds"])
+        self.add_ux("signup.png")
+        result = self.round_now()
+        self.assertFalse(result.get("created"), "收口之后又开了新轮——死锁就是这么来的")
+        self.assertTrue(result.get("afterComplete"))
+        self.assertEqual(before, len(self.contract()["rounds"]))
+
+    def test_the_change_is_recorded_not_swallowed(self) -> None:
+        """不开轮不等于当没发生：那一轮的材料指纹要更新，并留下一条可查的记录。"""
+        self.complete_it()
+        digest_before = self.contract()["rounds"][-1]["materials"]["digest"]
+        self.add_ux("manage.png")
+        self.round_now()
+        current = self.contract()["rounds"][-1]
+        self.assertNotEqual(digest_before, current["materials"]["digest"],
+                            "材料变了而指纹没跟上——那份快照就不是当下的事实了")
+        note = current.get("materials_changed_after_complete") or {}
+        self.assertIn("reopen", str(note.get("note", "")), "记一笔要说清出口在哪")
+
+    def test_status_stays_at_complete(self) -> None:
+        """补料不改变流程状态——它仍然是收口的，仍然可以进 spec。"""
+        self.complete_it()
+        self.add_ux("extra.png")
+        self.round_now()
+        self.assertEqual("complete", self.contract()["status"])
+
+    def test_reopen_puts_it_back_and_leaves_a_trace(self) -> None:
+        """`reopen` 是唯一出口：状态回到进行中，且谁在什么时候开的要留痕。"""
+        self.complete_it()
+        proc = self.run_flow("reopen")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        contract = self.contract()
+        self.assertEqual("in_progress", contract["status"])
+        self.assertEqual(1, len(contract.get("reopened") or []),
+                         "撤销收口是有后果的判断，没有留痕就查不回来")
+
+    def test_after_reopen_a_material_change_opens_a_round_again(self) -> None:
+        """打开之后一切照旧：补料照常开新轮。"""
+        self.complete_it()
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        before = len(self.contract()["rounds"])
+        self.add_ux("after-reopen.png")
+        result = self.round_now()
+        self.assertTrue(result.get("created"))
+        self.assertEqual(before + 1, len(self.contract()["rounds"]))
+
+    def test_reopen_refuses_when_not_complete(self) -> None:
+        """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""
+        self.round_now()
+        proc = self.run_flow("reopen")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
+
+
 class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
     """本扩展新增的停等点只有两处，且都无条件。
 

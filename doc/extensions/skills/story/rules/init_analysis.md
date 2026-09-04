@@ -167,6 +167,8 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 | **任何时候拿不准走到哪** | `python …/story_flow.py status --feature <AR>` → 看 `next` 与 `action` |
 | S3 每次关卡交互后 | `python …/story_flow.py decide --feature <AR> [--gate material_scope\|scope_decision\|split_carrier] --chosen <选项 key> --by human\|ai --basis "<用户原话>"` |
 | S4 生成 design.md 后 | `python …/story_flow.py complete --feature <AR>` |
+| **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
+| **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`，然后照常 `round` → `decide` → `complete`。它是唯一的回退出口，会留痕 |
 
 ### 侧车文件
 
