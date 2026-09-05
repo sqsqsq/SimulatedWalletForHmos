@@ -226,6 +226,55 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         self.assertEqual("FAIL", out["status"])
         self.assertIn("advisories", out["problems"][0])
 
+    def test_key_names_outside_the_fence_are_not_the_keys(self) -> None:
+        """围栏外的附注里出现键名不算数——那是在讲这两个键，不是这一项的结论。"""
+        report = row("FAIL") + (
+            "\n```yaml\n"
+            "verification_result:\n"
+            "  checks:\n"
+            "    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details: {}\n"
+            "```\n"
+            "\n"
+            "附注：blocking_findings 与 advisories 的写法见任务书。\n")
+        out = self._run(report)
+        self.assertEqual("FAIL", out["status"], f"围栏外的字样被当成了键：{out}")
+        self.assertIn("它自己的明细里缺", out["problems"][0])
+
+    def test_a_prose_details_is_not_two_conclusions(self) -> None:
+        """`details:` 是一段话时，里面写着「未提供 blocking_findings 和 advisories」
+        恰恰说明这两类结论**没有**——子串搜却会判它有。
+        """
+        report = row("FAIL") + (
+            "\n```yaml\n"
+            "verification_result:\n"
+            "  checks:\n"
+            "    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details: |\n"
+            "        未提供 blocking_findings 和 advisories，只写了一段说明。\n"
+            "```\n")
+        out = self._run(report)
+        self.assertEqual("FAIL", out["status"], f"一段散文被当成了两类结论：{out}")
+        self.assertIn("它自己的明细里缺", out["problems"][0])
+
+    def test_a_details_entry_at_the_end_of_the_yaml_still_reads(self) -> None:
+        """本项排在末尾、后面跟着 `summary:` 时，范围止于围栏，键照样读得出来。"""
+        report = row("FAIL") + (
+            "\n```yaml\n"
+            "verification_result:\n"
+            "  checks:\n"
+            "    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details:\n"
+            "        blocking_findings:\n"
+            "          - 第 5 章与第 8 章对不上\n"
+            "        advisories: []\n"
+            "```\n")
+        out = self._run(report)
+        self.assertEqual("PASS", out["status"], f"正常的 FAIL 明细被拒了：{out}")
+
     def test_a_per_unit_table_is_named_as_the_wrong_shape(self) -> None:
         """做成逐单元裁决表 = 做成了另一件事：那张表的量随材料条数涨。"""
         out = self._run(row("PASS") + PER_UNIT_TABLE)

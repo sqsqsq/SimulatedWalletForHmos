@@ -23,6 +23,7 @@
  */
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { parseYaml } from './yaml-lite.mjs';
 
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';
@@ -83,18 +84,51 @@ function summaryRow(text) {
 }
 
 /**
- * 明细里 `story_reader_review` 那一条的范围 —— 到下一条 `- id:` 为止。
+ * 明细里 `story_reader_review` 那一条 —— **只有这一条**，而且按 YAML 结构读。
  *
- * 在全文里搜两个键，别项的键会算到本项头上：一份报告里另一条 check 写全了
- * `blocking_findings` 与 `advisories`，而读者审查这一条只有一段话，全文搜是搜得到的。
- * 判的是**这一条自己**说清没说清。
+ * 两件事各拦一种误判：
+ *
+ * - **范围**：到下一条 `- id:` 或围栏结束为止，取先到者。不划范围的话，
+ *   另一条 check 写全了两个键，而读者审查这一条只有一段话，全文搜是搜得到的；
+ *   不看围栏的话，围栏外的附注里出现键名也算数。
+ * - **结构**：两个键要是本项 `details` 之下的键，不是正文里的字样。
+ *   `details: {}`、`details: |` 后面跟一段「未提供 blocking_findings 和 advisories」，
+ *   子串搜都命中，而它们恰恰是**没有**这两类结论。
+ *
+ * 解析不动就是没有结构（`details: |` 是一段文本，本来就不带键），返回 null，
+ * 由调用方按「缺键」报——不吞成「有」。
+ *
+ * @returns {Record<string, unknown> | null} 本项的 `details` 映射；不是映射时 null
  */
-function detailBlock(text) {
-  const at = text.search(new RegExp(`-\\s*id:\\s*\`?${STORY_REVIEW_ID}\`?\\b`));
-  if (at < 0) return null;
-  const rest = text.slice(at + 1);
-  const next = rest.search(/-\s*id:\s*/);
-  return next < 0 ? rest : rest.slice(0, next);
+function readerReviewDetails(text) {
+  const lines = text.split(/\r?\n/);
+  const head = new RegExp(`^(\\s*)-\\s*id:\\s*\`?${STORY_REVIEW_ID}\`?\\s*$`);
+  let from = -1;
+  let indent = '';
+  for (let i = 0; i < lines.length; i++) {
+    const m = head.exec(lines[i]);
+    if (m) { from = i; indent = m[1]; break; }
+  }
+  if (from < 0) return null;
+  let to = lines.length;
+  for (let i = from + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) { to = i; break; }          // 围栏结束
+    if (/^\s*-\s*id:\s*/.test(line)) { to = i; break; }   // 下一条
+  }
+  // 去掉本项的公共缩进，整条就是一个单元素序列，交给解析器读结构。
+  const body = lines.slice(from, to)
+    .map(l => (l.startsWith(indent) ? l.slice(indent.length) : l))
+    .join('\n');
+  let doc;
+  try {
+    doc = parseYaml(body);
+  } catch {
+    return null;                                          // 不是结构，是一段文本
+  }
+  const entry = Array.isArray(doc) ? doc[0] : null;
+  const details = entry && typeof entry === 'object' ? entry.details : null;
+  return details && typeof details === 'object' && !Array.isArray(details) ? details : null;
 }
 
 /**
@@ -157,8 +191,8 @@ export function storyReviewProblems(projectRoot, feature, phase) {
   }
 
   if (status !== 'PASS') {
-    const block = detailBlock(text) ?? '';
-    const missing = DETAIL_KEYS.filter(k => !block.includes(k));
+    const details = readerReviewDetails(text) ?? {};
+    const missing = DETAIL_KEYS.filter(k => !(k in details));
     if (missing.length) {
       return {
         status: 'FAIL',
