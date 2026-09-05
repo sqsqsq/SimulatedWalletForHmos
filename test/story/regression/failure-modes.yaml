@@ -831,7 +831,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s01_diagram_degraded
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字）
     reason: >
       「源里有几张图、story 里就要有几张」按材料条数增长，属形态守恒那一类，随逐单元系统在步骤 9 退场。图被压成箭头文字算不算讲清，要读上下文。
@@ -849,7 +850,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s02_terms_not_table
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
@@ -1012,7 +1014,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s08_solution_chapter_flat
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
@@ -1033,7 +1036,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s09_flow_chapter_flat
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
@@ -1088,7 +1092,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s12_tradeoff_prose
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
@@ -1107,7 +1112,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s13_limited_and_error_in_one_table
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
@@ -1126,7 +1132,8 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: fixed
-    responsibility: observed
+    checker: s14_acceptance_bulleted
+    self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
       固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。

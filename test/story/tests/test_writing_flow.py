@@ -172,16 +172,30 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
             self.assertIn(f"| {key} |", table, f"作业书的扫描表里没有「{key}」")
 
 
-class TestTemplateDoesNotRepeatWhatCheckHolds(unittest.TestCase):
-    """判据在的地方不再写一遍约定——两份说法迟早对不上，而没人保证会同步。"""
+class TestFormHasOneSourceOfTruth(unittest.TestCase):
+    """形态只有一处真源——两份说法迟早对不上，而没人保证会同步。
 
-    def test_the_style_block_keeps_only_what_no_check_covers(self) -> None:
-        template = read("templates/story-template.md")
-        block = template.split("全篇样式约定", 1)[1].split("归档件自包含", 1)[0]
-        for kept in ("表前一句引导", "小节名用常规业务名", "只占一个结构位置"):
+    形态在章节合同的 `form` 里：骨架把 note 渲染成章注释、任务包逐章给出、
+    check ⑪ 核那几个槽位。作业书只留机器不判、要作者自己把关的几条。
+    """
+
+    def test_the_retired_template_is_gone(self) -> None:
+        self.assertFalse((SKILL / "templates" / "story-template.md").exists(),
+                         "story-template.md 该随形态进合同一起退场")
+
+    def test_the_guide_keeps_only_what_no_check_covers(self) -> None:
+        block = read("phases/story-write.md").split("机器不判、要你自己把关", 1)[1]
+        for kept in ("表前一句引导", "小节名", "只占一个结构位置"):
             self.assertIn(kept, block, f"「{kept}」没有判据接，约定要留着")
-        for dropped in ("编号体系一处不缺", "图题写进图片的替换文本"):
-            self.assertNotIn(dropped, block, f"「{dropped}」已由 check 接住，约定不再重复")
+
+    def test_every_chapter_declares_its_form(self) -> None:
+        import json
+        contract = json.loads((SKILL / "contracts" / "story-chapters.json")
+                              .read_text(encoding="utf-8"))
+        for ch in contract["chapters"]:
+            self.assertIn("form", ch, f"{ch['id']} 没有形态声明")
+            self.assertTrue(str(ch["form"].get("note", "")).strip(),
+                            f"{ch['id']} 的形态没有说明文字——骨架注释与任务包都从它渲染")
 
 
 if __name__ == "__main__":

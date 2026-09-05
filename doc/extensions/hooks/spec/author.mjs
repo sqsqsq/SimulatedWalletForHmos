@@ -69,7 +69,25 @@ function knowledgeSection(projectRoot, feature) {
       : `先跑 \`node doc/extensions/hooks/shared/knowledge-use.mjs init --feature ${feature}\` 生成骨架`
         + '（激活条目一条不落，你只填判断），填完跑 `render`。',
     '',
+    ...acceptanceKeys(useFile),
     '怎么填、什么算依据，见 `author.md`。'];
+}
+
+/**
+ * 判为 applicable 的规约，各要在 `spec/acceptance.yaml` 接回一条验收。
+ *
+ * 漏接是 harness 的常见首红：判了 applicable 却没有对应的 `knowledge_rule`。
+ * 编号列出来，作者照着接；骨架还没填时给规则本身。
+ */
+function acceptanceKeys(useFile) {
+  const text = fs.existsSync(useFile) ? fs.readFileSync(useFile, 'utf-8') : '';
+  const ids = [...text.matchAll(/^\s*-?\s*id:\s*(\S+)[\s\S]*?applicable:\s*true/gm)].map(m => m[1]);
+  return [ids.length
+    ? `判 \`applicable: true\` 的每一条，都要在 \`spec/acceptance.yaml\` 有一条带 `
+      + `\`knowledge_rule: <编号>\` 的 criteria。本轮已判 applicable：${ids.join('、')}。`
+    : '判 `applicable: true` 的每一条，都要在 `spec/acceptance.yaml` 有一条带 '
+      + '`knowledge_rule: <编号>` 的 criteria——填完骨架再回头对一遍。',
+  ''];
 }
 
 function decisionSection(contract) {
@@ -94,10 +112,16 @@ function imageSection(projectRoot, feature) {
     rows.push('材料清单里现在没有图片。');
     return rows;
   }
-  rows.push('每张要么在讲它的那一章引用，要么在附录材料清单那一行写明不引用的理由。', '');
+  rows.push('每张要么在讲它的那一章引用，要么在附录材料清单那一行写明不引用的理由。',
+    '**引用串原样粘**——路径是相对 `AR/story.md` 的，自己拼容易少一层 `../`：', '');
   for (const img of images) {
-    const where = Array.isArray(img.paths) ? img.paths.join('、') : (img.path ?? '');
-    rows.push(`- \`${where}\`：${img.caption || '**没有说明**——它是什么，登记时补一句'}`);
+    const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);
+    const caption = img.caption || '';
+    for (const p of paths) {
+      const rel = path.posix.relative('AR', String(p).split(path.sep).join('/'));
+      rows.push(`- \`![${caption || '这张图是什么'}](${rel})\``
+        + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句'));
+    }
   }
   return rows;
 }
@@ -106,8 +130,17 @@ function chapterSection(contract) {
   const rows = ['## 5. 十章各回答读者什么', ''];
   for (const c of contract.chapters ?? []) {
     rows.push(`- **${c.title}**：${(c.questions ?? []).join('；')}`);
+    if (c.form?.note) rows.push(`  - 主要用什么写：${c.form.note}`);
+    for (const [at, cols] of Object.entries(c.form?.tables ?? {})) {
+      const where = at === '' ? '这一章' : at === '*' ? '每个小节' : `「${at}」`;
+      for (const one of String(cols).split(';')) {
+        rows.push(`  - 机器核：${where}要有一张表`
+          + (one ? `，表头含「${one.split('|').join('」「')}」` : ''));
+      }
+    }
   }
-  rows.push('', '章文件只放正文，不带 `## 章名`、不带 H1。');
+  rows.push('', '章文件只放正文，不带 `## 章名`、不带 H1。',
+    '骨架已经把术语起始行、spec §5 的图与附录五节打好底——改措辞、往下加，别重打。');
   return rows;
 }
 

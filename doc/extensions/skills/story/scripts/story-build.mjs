@@ -555,6 +555,190 @@ function norm(s) {
   return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
 }
 
+/**
+ * markdown 表的表头列 —— 分隔行上面那一行就是表头。
+ *
+ * 返回每张表一组列名（规范化过），check ⑪ 拿它核必有列。列名剥掉行内标记：
+ * 作者给表头加粗是常事，`**编号**` 与 `编号` 不该判成两列。
+ */
+function tableHeaders(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const head = lines[i].trim();
+    const sep = lines[i + 1].trim();
+    if (!head.startsWith('|') || !/^\|[-: |]+\|$/.test(sep)) continue;
+    out.push(head.replace(/^\||\|$/g, '').split('|').map(c => norm(c.replace(/[`*]/g, ''))));
+  }
+  return out;
+}
+
+/**
+ * 按名字找一个小节的正文 —— 先精确，再包含。
+ *
+ * 合同给的是这一节要讲什么（「交接约定」），作者按业务命名（「与补卡的交接约定」）。
+ * 精确匹配会把后者判成「缺这一节」，而后者恰恰更好。
+ */
+function findSubsection(text, name) {
+  const exact = subsectionText(text, name);
+  if (exact !== null) return exact;
+  const want = normalizeHeading(name);
+  const hit = subsectionNames(text).find(x => x.name.includes(want));
+  return hit ? subsectionText(text, hit.name) : null;
+}
+
+/** 有没有作者画的图 —— 图围栏一个就够。正则带 /g，每次用前把游标归零。 */
+function hasDiagram(text) {
+  DIAGRAM_FENCE.lastIndex = 0;
+  return DIAGRAM_FENCE.test(String(text ?? ''));
+}
+
+/**
+ * 条件槽位成不成立。条件只取已经在盘上的数据，不另立一份声明。
+ *
+ * `siblings` 看流程契约里的份表有没有兄弟单据——单特性的分工是叙述不是对照表，
+ * 硬核一张表只会逼出一张一列的表。`ui_images` 看材料清单里有没有界面图——
+ * 没有界面图就没有页面状态可言。读不到就是不成立：判据宁可不响，不可空响。
+ */
+function slotApplies(ctx, when) {
+  if (!when) return true;
+  if (when === 'siblings') {
+    const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-flow.json'), null);
+    return (flow?.split?.parts ?? []).length > 1;
+  }
+  if (when === 'ui_images') {
+    const imgs = materialImages(ctx);
+    return Array.isArray(imgs) && imgs.length > 0;
+  }
+  return true;
+}
+
+// --------------------------------------------------------------------------
+// 从 spec 派生：story 相对 spec 只能增加，不能减少
+// --------------------------------------------------------------------------
+
+/**
+ * spec.md 全文。路径取自合同声明的来源，不写死。
+ *
+ * 读不到就返回 null——骨架照建，只是少了打底的那几行；spec 缺失另有判据报。
+ */
+function specText(ctx) {
+  const rel = ctx.contract?.sources?.SPEC?.path;
+  if (!rel || ctx.offline || !ctx.featureRoot) return null;
+  return readText(path.join(ctx.featureRoot, ...rel.split('/')));
+}
+
+/** spec 里某一节的正文：从命中标题的那一行到下一个同级或更高级标题之前。 */
+function specSection(text, re) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const start = lines.findIndex(l => /^#{2,3}\s/.test(l.trim()) && re.test(l));
+  if (start < 0) return '';
+  const level = (lines[start].trim().match(/^#+/) ?? ['##'])[0].length;
+  const body = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const head = lines[i].trim().match(/^(#+)\s/);
+    if (head && head[1].length <= level) break;
+    body.push(lines[i]);
+  }
+  return body.join('\n');
+}
+
+/** 一段文本里的表：每张给 {header, rows}，单元格已去掉首尾空串与行内标记。 */
+function pipeTables(text) {
+  const out = [];
+  let cur = null;
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('|')) { cur = null; continue; }
+    const cells = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    if (/^[-: ]+$/.test(cells.join(''))) continue;
+    if (!cur) { cur = { header: cells, rows: [] }; out.push(cur); continue; }
+    cur.rows.push(cells);
+  }
+  return out;
+}
+
+/** 模板占位单元格（`{ 接口名 }` 这种）——spec 没填时不该派生进 story。 */
+function isPlaceholderRow(cells) {
+  return cells.every(c => !c || /^\{.*\}$/.test(c) || /^[-—]$/.test(c));
+}
+
+/**
+ * spec §0 里属于本需求的业务术语 → `[[术语, 解释]]`。
+ *
+ * 只取权威模块落在 `in_scope_modules` 里的行：那几行才是本需求的业务词汇，
+ * 也是 spec 的 post_check 要求写「解释」的那几行。基础能力与模块名不进来——
+ * story 是给业务评审者看的读物，模块名对他没有意义。
+ */
+function specTerms(text) {
+  const scope = new Set(scopeList(text, 'in_scope_modules'));
+  const table = pipeTables(specSection(text, /术语映射表/))[0];
+  if (!table || !scope.size) return [];
+  const at = (needle) => table.header.findIndex(h => h.includes(needle));
+  const [term, mod, why] = [0, at('权威模块'), at('解释')];
+  if (mod < 0 || why < 0) return [];
+  return table.rows
+    .filter(r => scope.has((r[mod] ?? '').trim()) && !isPlaceholderRow(r))
+    .map(r => [(r[term] ?? '').trim(), (r[why] ?? '').trim()])
+    .filter(([t, w]) => t && w && w !== '—');
+}
+
+/** spec 头部声明的模块清单（`in_scope_modules` / `out_of_scope_modules`）。 */
+function scopeList(text, key) {
+  const block = String(text ?? '').match(new RegExp(key + String.raw`:\s*\n((?:\s*-\s*.+\n)+)`));
+  return (block?.[1] ?? '').split(/\r?\n/)
+    .map(l => l.match(/^\s*-\s*(.+?)\s*$/)?.[1]).filter(Boolean);
+}
+
+/**
+ * 附录·改动边界的两行 —— 「这次改了哪里、哪里保证不动」就是 Scope 的两份清单。
+ *
+ * 「对评审意味着什么」那一列留给作者：清单说的是范围，影响面要他判断。
+ */
+function scopeBoundaryRows(spec) {
+  const rows = [];
+  const inScope = scopeList(spec, 'in_scope_modules');
+  const outScope = scopeList(spec, 'out_of_scope_modules');
+  if (inScope.length) rows.push(['改动', inScope.join('、'), '{{对评审意味着什么}}']);
+  if (outScope.length) rows.push(['只复用', outScope.join('、'), '{{对评审意味着什么}}']);
+  return rows;
+}
+
+/** spec §5 的第一个图围栏，原样复制。作者可以改节点文字、可以再加图。 */
+function specDiagram(text) {
+  const body = specSection(text, /^##\s*5[.．]/);
+  const m = body.match(/^[ \t]*```mermaid[\s\S]*?^[ \t]*```/m);
+  return m ? m[0] : null;
+}
+
+//: 附录三节各从 spec §9 的哪几个小节生成。附录的读者要「拿着回查」，
+//: 所以行必须齐——集合核（⑫）盯的就是这里。
+const APPENDIX_FROM_SPEC = [
+  ['接口', [/^###\s*9\.1/]],
+  ['数据、配置与事件', [/^###\s*9\.2/, /^###\s*9\.3/, /^###\s*9\.4/]],
+  ['改动边界', [/^###\s*9\.5/]],
+];
+
+/** 某个附录小节该有的表：spec 对应几节就给几张，表头原样带过来。 */
+function appendixTables(spec, name) {
+  const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
+  if (!spec || !from) return [];
+  const out = [];
+  for (const re of from[1]) {
+    for (const t of pipeTables(specSection(spec, re))) {
+      const rows = t.rows.filter(r => !isPlaceholderRow(r));
+      if (rows.length) out.push({ header: t.header, rows });
+    }
+  }
+  return out;
+}
+
+/** 一张表渲染成 markdown 行。 */
+function renderTable(header, rows) {
+  return [`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`,
+    ...rows.map(r => `| ${r.join(' | ')} |`)];
+}
+
 // --------------------------------------------------------------------------
 // check：整篇守恒与形态
 // --------------------------------------------------------------------------
@@ -1053,6 +1237,58 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑪ 形态守恒');
+  // ⑪ 形态守恒：合同 `form` 说这一章要有哪几个槽位，就核它们在不在。
+  //
+  // **一条判据读数据**，不为每个槽位各写一条：加一个槽位改合同，这段代码不动。
+  // 核的只有存在与必有列——不核行数、不核表的总数、不核槽位之外有没有表。
+  // 形态来自内容的关系；把「这个需求适合有」写成「每个需求都要有」，
+  // 判据就开始替作者编内容，而那正是形态判据上一次失败的地方。
+  //
+  // 报错带上合同里那句形态说明：作者看到的是「这一章该怎么写」，不是「第几条判据红了」。
+  for (const ch of ctx.contract.chapters) {
+    const form = ch.form;
+    const text = sectionText.get(ch.title);
+    if (!form || text === undefined) continue;        // 章缺失由 ① 报，这里不重复
+    if (text.trim() === EMPTY_SECTION_TEXT) continue;  // 空节已明说不涉及，没有形态可言
+    const subs = subsectionNames(text);
+    if (form.sections === 'none' && subs.length) {
+      problems.push(`「${ch.title}」不该拆小节（有「${subs[0].raw}」）——${form.note ?? ''}`);
+    }
+    if (form.sections === 'named') {
+      for (const want of ch.subsections ?? []) {
+        if (findSubsection(text, want) === null) {
+          problems.push(`「${ch.title}」缺「${want}」这一节——${ch.subsections_note ?? form.note ?? ''}`);
+        }
+      }
+    }
+    for (const [at, wantCols] of Object.entries(form.tables ?? {})) {
+      if (!slotApplies(ctx, (form.tables_when ?? {})[at])) continue;
+      const targets = at === '*'
+        ? subs.map(x => [`${ch.title}·${x.raw}`, subsectionText(text, x.name)])
+        : at === ''
+          ? [[ch.title, text]]
+          : [[`${ch.title}·${at}`, findSubsection(text, at)]];
+      for (const [label, body] of targets) {
+        if (body === null) continue;                  // 小节在不在由 sections 档与语义审查管
+        // 逐张配对消费：一张表只能顶一个槽位。`;` 隔开两个槽位却让同一张表
+        // 把两个都满足的话，「受限与异常混进一张表」就照样过。
+        const pool = tableHeaders(body);
+        for (const one of String(wantCols).split(';')) {
+          const cols = one ? one.split('|').map(norm) : [];
+          const hit = pool.findIndex(h => cols.every(c => h.includes(c)));
+          if (hit >= 0) { pool.splice(hit, 1); continue; }
+          problems.push(`「${label}」缺一张表`
+            + (cols.length ? `（表头要有「${one.split('|').join('」「')}」这一列）` : '')
+            + `——${form.note ?? ''}`);
+        }
+      }
+    }
+    if (form.diagram && !hasDiagram(text)) {
+      problems.push(`「${ch.title}」一张图都没有——${form.note ?? ''}`);
+    }
+  }
+
   mark('⑫ 附录结构');
   // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
   //
@@ -1130,6 +1366,30 @@ function cmdCheck(ctx) {
         + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`
         + '——图片放它讲的那一章，跟着讲它的那句话走；'
         + `${appendixDef.title}是查阅件，读者不会为了看一张图翻到这里来`);
+    }
+  }
+
+  mark('⑫b spec 契约不丢行');
+  // ⑫b 附录 A/B/C 的行 ⊇ spec §9 对应表的行（按第一列的标识对齐）。
+  //
+  // 成文顺序里 spec 先于 story，附录三节是它的投影而不是重写。手抄一遍必然更少：
+  // 接口丢掉入参出参与错误码、几个埋点合成一行都是见过的形态，
+  // 而评审者正是拿着附录回查契约的。
+  // 只核标识在不在：措辞、列的增减、行的顺序都由作者定。
+  const specForRows = specText(ctx);
+  if (specForRows && appendixSection) {
+    for (const [name] of APPENDIX_FROM_SPEC) {
+      const want = appendixTables(specForRows, name).flatMap(t => t.rows.map(r => r[0]));
+      if (!want.length) continue;
+      const body = subsectionText(appendixSection.text, name) ?? '';
+      const have = new Set(pipeTables(body).flatMap(t => t.rows.map(r => norm(r[0]))));
+      const missing = want.filter(id => !have.has(norm(id)));
+      if (missing.length) {
+        problems.push(`「${appendixDef?.title ?? '附录'}·${name}」少了 spec §9 里的 `
+          + `${missing.length} 行：${missing.slice(0, 4).join('、')}`
+          + `${missing.length > 4 ? '…' : ''}`
+          + '——附录是 spec 契约的投影，评审者拿着它回查；可以改措辞、可以加列，不能少行');
+      }
     }
   }
 
@@ -1398,6 +1658,81 @@ function chapterSpan(storyText, title) {
   return { start: offsets[start], end: text.length };
 }
 
+/**
+ * 一章的骨架正文：形态注释 + 能派生的内容 + 待写 marker。
+ *
+ * 形态注释来自合同，作者写完连注释一起删；派生的几段是 spec 与登记数据里已有的东西，
+ * 他改措辞、往下加，不用重打。附录五节各有真源：A/B/C 是 spec §9，D 是判断骨架，
+ * E 是材料清单——手抄一遍抄出来的总比 spec 少。
+ */
+function chapterSkeleton(ctx, ch, spec) {
+  const rows = [];
+  if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
+  for (const [at, cols] of Object.entries(ch.form?.tables ?? {})) {
+    if (!slotApplies(ctx, (ch.form?.tables_when ?? {})[at])) continue;
+    const where = at === '' ? '这一章' : at === '*' ? '每个小节' : `「${at}」`;
+    for (const one of String(cols).split(';')) {
+      rows.push(`<!-- 机器核：${where}要有一张表`
+        + (one ? `，表头含「${one.split('|').join('」「')}」` : '') + ' -->');
+    }
+  }
+  if (rows.length && rows[rows.length - 1] !== '') rows.push('');
+  const derived = chapterDerived(ctx, ch, spec);
+  if (derived.length) rows.push(...derived, '');
+  rows.push(pendingMark(ch.title));
+  return rows;
+}
+
+/** 这一章能从真源派生出来的内容。派生不到就空着——空着比编出来强。 */
+function chapterDerived(ctx, ch, spec) {
+  if (ch.id === '02-terms') {
+    const terms = specTerms(spec);
+    return terms.length ? renderTable(['术语', '在本需求里的意思'], terms) : [];
+  }
+  if (ch.id === '05-flow') {
+    const diagram = specDiagram(spec);
+    return diagram ? diagram.split(/\r?\n/) : [];
+  }
+  if (ch.appendix) {
+    const out = [];
+    for (const name of ch.subsections ?? []) {
+      out.push(`### ${name}`, '', '<!-- 一句这一节给评审者看什么 -->', '');
+      if (normalizeHeading(name) === normalizeHeading('改动边界')) {
+        const rows = scopeBoundaryRows(spec);
+        if (rows.length) out.push(...renderTable(['', '范围', '对评审意味着什么'], rows), '');
+      }
+      for (const t of appendixTables(spec, name)) out.push(...renderTable(t.header, t.rows), '');
+      if (normalizeHeading(name).includes(normalizeHeading('规约判定'))) {
+        out.push(...verdictSkeleton(ctx), '');
+      }
+      if (normalizeHeading(name) === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
+        out.push(...materialListSkeleton(ctx), '');
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+/** 附录·规约判定的整张表：激活条目一条不落，判定取自判断骨架，依据由作者补。 */
+function verdictSkeleton(ctx) {
+  const entries = activeKnowledgeEntries(ctx);
+  if (!entries.length) return [];
+  const verdicts = knowledgeUseVerdicts(ctx);
+  return renderTable(['规约域', '编号', '判定', '依据'], entries.map(e => [
+    e.domainTitle ?? '', e.id,
+    verdicts?.has(e.id) ? (verdicts.get(e.id) ? '命中' : '不命中') : '{{命中/不命中}}',
+    '{{依据}}',
+  ]));
+}
+
+/** 附录·材料清单的每一行：类别与链接由清单给，内容贡献由作者写。 */
+function materialListSkeleton(ctx) {
+  const targets = materialListTargets(ctx);
+  if (!targets || targets === 'broken') return [];
+  return targets.must.map(rel => `- [${basename(rel)}](${rel})：{{这份材料贡献了什么}}`);
+}
+
 function cmdSkeleton(ctx) {
   refuseIfFrozen(ctx, 'skeleton');
   const existing = readText(ctx.storyPath);
@@ -1408,14 +1743,17 @@ function cmdSkeleton(ctx) {
     return;
   }
   const titles = ctx.contract.chapters.map(c => c.title);
+  const spec = specText(ctx);
   const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
-  for (const title of titles) {
-    body.push(`## ${title}`, '', pendingMark(title), '');
+  for (const ch of ctx.contract.chapters) {
+    body.push(`## ${ch.title}`, '', ...chapterSkeleton(ctx, ch, spec), '');
   }
   fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
   fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
   process.stdout.write(`[story-build skeleton] 建了 ${titles.length} 章骨架：`
-    + `每章一个章锚 + 一个待写 marker。写完一章跑一次 chapter 落盘\n`);
+    + `每章一个章锚 + 形态说明 + 一个待写 marker`
+    + `${spec ? '；术语、流程图与附录已按 spec 与登记数据打底' : ''}。`
+    + `写完一章跑一次 chapter 落盘\n`);
 }
 
 /**

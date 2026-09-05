@@ -1940,6 +1940,155 @@ def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "同图两名被点名")
     return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
 
+# --------------------------------------------------------------------------
+# 形态守恒（check ⑪）的七条：正反例都是一段章正文
+# --------------------------------------------------------------------------
+
+#: 底样：十章齐、附录合法的一份 story。除被测那一章外，其余章都是「本需求不涉及。」，
+#: ⑪ 对空节豁免，所以这份底样只会响被测的那一条。
+FORM_BASE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
+             / "R01-verdict-echo" / "good")
+
+
+def _story_with_chapter(chapter: str, body: str) -> tuple[int, str]:
+    """把底样的某一章换成给定正文，跑一次 story-build check。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "work"
+        shutil.copytree(FORM_BASE, work)
+        path = work / "doc" / "features" / "AR90001" / "AR" / "story.md"
+        lines = path.read_text(encoding="utf-8").split("\n")
+        out, skipping = [], False
+        for line in lines:
+            if line.startswith("## "):
+                skipping = line[3:].strip() == chapter
+                out.append(line)
+                if skipping:
+                    out.append("")
+                    out.extend(body.strip().split("\n"))
+                    out.append("")
+                continue
+            if not skipping:
+                out.append(line)
+        path.write_text("\n".join(out), encoding="utf-8")
+        return _story_build_in(work, "待提交状态：用户点了提交但未收到回执")
+
+
+def _form_outcome(chapter: str, bad: str, good: str, needle: str) -> Outcome:
+    """反例必须被点名，正例必须放行——两头都验，判据才既有区分力又不误伤。"""
+    _, out = _story_with_chapter(chapter, bad)
+    if needle not in out:
+        return Outcome(False, f"反例没被点名（找「{needle}」）：{out[:200]}")
+    _, out = _story_with_chapter(chapter, good)
+    if "形态守恒" in out:
+        return Outcome(False, f"正例被形态判据拦下：{out[:200]}")
+    return Outcome(True, "反例被点名、正例放行")
+
+
+@checker
+def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
+    """流程图压成「A → B → C」箭头文字——上一版只判「图有落点」，箭头文字也算落点。"""
+    return _form_outcome(
+        "业务流程",
+        "主路径：进入页面 → 查询资格 → 风险确认 → 提交 → 查询结果。\n\n"
+        "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。",
+        "一次挂失从卡包进入，到看到真实结果结束：\n\n"
+        "```mermaid\nflowchart TD\n  A[进入页面] --> B[查询资格]\n  B --> C[风险确认]\n"
+        "  C --> D[提交]\n  D --> E[查询冻结结果]\n```\n\n"
+        "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。",
+        "一张图都没有")
+
+
+@checker
+def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
+    """材料里的表在 story 里被摊成散文，逐项比对的那几列丢了。"""
+    return _form_outcome(
+        "术语",
+        "紧急挂失是用户发现卡遗失后发起的冻结流程；冻结结果是卡云给出的最终答复；"
+        "卡云是管理交通卡状态的云端服务。",
+        "| 术语 | 在本需求里的意思 |\n|---|---|\n"
+        "| 紧急挂失 | 用户发现交通卡遗失后发起的冻结原卡流程。 |\n"
+        "| 冻结结果 | 卡云对一份挂失申请给出的最终答复。 |",
+        "缺一张表")
+
+
+@checker
+def s08_solution_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
+    """已定决策成堆而方案章没有分工这一节——参与方与取舍化进散文，评审者要读完整章。"""
+    return _form_outcome(
+        "业务方案",
+        "钱包主应用负责页面与提交，账号能力负责身份，卡云是冻结结果的唯一裁判；"
+        "成功的判定上我们只认云侧明确返回已冻结。",
+        "### 参与方与分工\n\n"
+        "| 参与方 | 拿到什么 | 守住什么 |\n|---|---|---|\n"
+        "| 钱包主应用 | 用户动作与各方返回 | 不自行认定冻结成功 |\n"
+        "| 卡云 | 脱敏卡片标识 | 资格与冻结结果的唯一事实源 |\n\n"
+        "业务结果以卡云为准。",
+        "缺「参与方与分工」这一节")
+
+
+@checker
+def s09_flow_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
+    """有内容的流程章一个小节都没有——主路径与全部支线压在一坨散文里。"""
+    return _form_outcome(
+        "业务流程",
+        "```mermaid\nflowchart TD\n  A[进入] --> B[提交]\n```\n\n"
+        "用户进入页面查询资格，确认风险后提交，云侧受理后查询真实冻结结果；"
+        "身份未完成时先去补身份，状态冲突时刷新后重新确认。",
+        "```mermaid\nflowchart TD\n  A[进入] --> B[提交]\n```\n\n"
+        "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。\n\n"
+        "### 身份未完成的恢复\n\n**什么时候发生**：查询资格时身份未完成。",
+        "缺「主路径」这一节")
+
+
+@checker
+def s12_tradeoff_prose(root: Path, ctx: Ctx) -> Outcome:
+    """关键取舍那一节写成散文——「否了什么、为什么被否的不行」被化进句子里。"""
+    return _form_outcome(
+        "业务方案",
+        "### 参与方与分工\n\n| 参与方 | 守住什么 |\n|---|---|\n| 卡云 | 唯一事实源 |\n\n"
+        "### 关键取舍\n\n"
+        "成功的判定上我们选择只认云侧明确返回已冻结，没有采用端侧提交成功即宣告冻结的做法，"
+        "因为那样在响应丢失时会出现假冻结。",
+        "### 参与方与分工\n\n| 参与方 | 守住什么 |\n|---|---|\n| 卡云 | 唯一事实源 |\n\n"
+        "### 关键取舍\n\n"
+        "| 取舍 | 选了什么 | 否了什么 | 为什么被否的不行 |\n|---|---|---|---|\n"
+        "| 成功的判定 | 云侧明确返回已冻结才展示成功 | 端侧提交成功即宣告冻结 | "
+        "响应丢失时宣告成功是假冻结，用户以为卡安全了而原卡还能用。 |",
+        "缺一张表")
+
+
+@checker
+def s13_limited_and_error_in_one_table(root: Path, ctx: Ctx) -> Outcome:
+    """设计内的受限结果与真正的失败混进同一张表——读者分不清哪些要处理。"""
+    return _form_outcome(
+        "异常与恢复",
+        "| 情况 | 用户看到什么 |\n|---|---|\n"
+        "| 身份未完成 | 身份说明与检查点提示 |\n"
+        "| 提交响应丢失 | 处理中，可确认结果 |",
+        "先分清两类。设计内的受限状态：\n\n"
+        "| 受限状态 | 用户看到什么 | 出路 |\n|---|---|---|\n"
+        "| 身份未完成 | 身份说明与检查点提示 | 完成身份流程后从检查点继续 |\n\n"
+        "真正的异常：\n\n"
+        "| 异常 | 用户看到什么 | 系统怎么处理 |\n|---|---|---|\n"
+        "| 提交响应丢失 | 处理中，可确认结果 | 用同一幂等标识查既有申请 |",
+        "缺一张表")
+
+
+@checker
+def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
+    """验收写成 bullet——编号与通过条件挤在一行文字里，没法逐条比对。"""
+    return _form_outcome(
+        "验收",
+        "### 主流程\n\n"
+        "- AC-R1：正常用户完成提交，只创建一次申请。\n"
+        "- AC-1：未确认时提交不可用。",
+        "### 主流程\n\n"
+        "| 编号 | 可观察的通过条件 |\n|---|---|\n"
+        "| AC-R1 | 正常用户完成提交，只创建一次申请。 |\n"
+        "| AC-1 | 未确认时提交不可用，确认后可进入提交中。 |",
+        "缺一张表")
+
+
 @checker
 def s15_appendix_prose_tail(root: Path, ctx: Ctx) -> Outcome:
     """附录表后挂散文尾巴——没地方去的工程细节挤成段。
