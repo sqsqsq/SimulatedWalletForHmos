@@ -149,4 +149,5 @@ flowchart LR
 
 ## 宿主扩展（可选）
 
-鸿蒙专有细则（ArkUI 导航、能力权限、存储类型等）通过 `doc/extensions/knowledge/`、`hooks/plan/on_context_load.md` 与 `phase_rules_overlays.plan` 叠加。
+鸿蒙专有细则（ArkUI 导航、能力权限、存储类型等）通过 `doc/extensions/knowledge/`、`hooks/plan/on_context_load.md`
+（动笔前跑 `scripts/author-context.ts --phase plan` 取得）与 `phase_rules_overlays.plan` 叠加。

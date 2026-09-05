@@ -1145,7 +1145,11 @@ async function main(): Promise<void> {
   }
 
   checks.push(...(await emitLifecycle('pre_verifier')));
-  checks.push(...(await emitLifecycle('on_context_load')));
+  // `on_context_load` **不在这里**：它是**作者**的阶段起手内容，消费者是即将动笔的执行者，
+  // 不是 verifier。挂在这一行时，那些「写之前该知道什么」只进 verifier 的上下文，作者在动笔前
+  // 看不到它，只能在门禁报错之后补读。
+  // 现由 `scripts/author-context.ts` 在进入 phase、动笔之前调用同一个 dispatcher。
+  // `pre_verifier` 继续只服务 verifier，两个事件各自只有一个消费者。
   checks.push(...(await emitLifecycle('post_verifier')));
   checks.push(...(await emitLifecycle('post_phase')));
 

@@ -100,6 +100,20 @@ export function collectHookSlots(
   ];
 }
 
+/**
+ * 片段的来源标识：**仓内相对路径**，不是文件名。
+ *
+ * 六个阶段的 Extension 钩子都叫 `author.md`，只写 basename 时六个片段的标识一模一样——
+ * 既指不出是哪一阶段的，也没法被 `context-exploration.md` 的 `key_inputs_read` 逐字覆盖
+ * （那条既有门禁做的是子串匹配，`author.md` 会命中任何一个阶段，等于不设防）。
+ * 用相对路径，标识本身就是唯一的、可被逐字引用的坐标。
+ * 越出工程根时退回绝对路径的 posix 形态——如实指出它在树外，不硬凑一个相对路径。
+ */
+function hookRef(projectRoot: string, absPath: string): string {
+  const rel = path.relative(projectRoot, absPath).replace(/\\/g, '/');
+  return rel && !rel.startsWith('..') ? rel : absPath.replace(/\\/g, '/');
+}
+
 function runMarkdownHook(absPath: string): string {
   return fs.readFileSync(absPath, 'utf-8');
 }
@@ -162,7 +176,7 @@ export async function dispatchLifecycleHooks(
       if (lower.endsWith('.md')) {
         const body = runMarkdownHook(slot.absPath);
         if (body.trim().length > 0) {
-          promptFragments.push(`<!-- hook:${event}:${slot.source}:${path.basename(slot.absPath)} -->\n${body}`);
+          promptFragments.push(`<!-- hook:${event}:${slot.source}:${hookRef(payload.projectRoot, slot.absPath)} -->\n${body}`);
         }
       } else if (lower.endsWith('.mjs')) {
         const result = runMjsHook(slot.absPath, ctxPayload, timeoutMs);
