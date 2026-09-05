@@ -879,10 +879,12 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
     if contract.get("status") == "story_written":
+        # verifier 之后不再跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
+        # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
         return ("run_archived",
-                "叙事件已登记成文。接着：`story-build build` 渲染 AR/review.md → "
-                "跑 harness（spec 闭环）→ verifier 一次 → `/story archive` 归档。"
-                "**verifier 之后不再改产物**：改了 subject 就换代，整份要重审")
+                "叙事件已登记成文。按这个顺序走完，中间不回头：`story-build build` 渲染 AR/review.md"
+                " → 跑 harness（spec 闭环）→ verifier 一次 → 回填 phase-completion-receipt.md → "
+                "check-receipt → `/story archive` 归档。**verifier 之后不再跑 harness、不再改产物**")
     if contract.get("status") == "complete":
         return spec_stage_step(feature_root)
 

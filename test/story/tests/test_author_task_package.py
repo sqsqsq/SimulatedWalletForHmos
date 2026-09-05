@@ -220,6 +220,19 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertIn("story-build build", action)
         self.assertIn("verifier", action)
 
+    def test_the_road_after_verifier_is_spelled_out(self) -> None:
+        """verifier PASS 之后做什么，得有下文。
+
+        只写「之后不再改产物」的话，PASS 之后顺手再跑一次 harness 是很自然的动作——
+        时间戳换了 subject，check-receipt 报证据缺失，verifier 只好再来一次，
+        而产物一个字节没动。
+        """
+        self.write_contract("story_written")
+        action = self.status()["action"]
+        for step in ("phase-completion-receipt", "check-receipt", "archive"):
+            self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
+        self.assertIn("不再跑 harness", action)
+
     def test_a_gate_step_shows_the_shape_of_the_file_to_write(self) -> None:
         """S1–S4 的侧车形状：二跑为弄清它切片读了本脚本六次。"""
         self.write_contract("in_progress")

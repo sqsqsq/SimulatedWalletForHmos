@@ -69,6 +69,7 @@ node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（st
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
 #                              ⑥ 跑 spec harness
 #                              ⑦ 确定性门全绿之后，verifier 跑一次；之后不再改产物
+#                              ⑧ verifier PASS → 回填回执 → check-receipt → /story archive
 ```
 
 - **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
@@ -87,6 +88,10 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
 - **⑦ 只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
   产物，指纹就换代，那份结论对不上新产物，只能整份重审。所以确定性门全绿、产物定稿，才叫它。**调用只带 request JSON**：自由文本重跑的终态
   发布器按协议不收，那次审查的结论落不了盘，等于没审。
+- **⑧ verifier PASS 之后：回填 `phase-completion-receipt.md` → `check-receipt.ts` → `/story archive`。
+  中间不再跑 harness**——harness 每跑一次都重新派生 subject，换了代就要重审，而产物一个字节
+  没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，并且重跑之后 verifier 也要再来一次：
+  那时换代是真的（材料变了），不是自己写盘写出来的。
 
 ## 三、§9 技术契约怎么写
 
