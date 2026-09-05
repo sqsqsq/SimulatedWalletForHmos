@@ -85,6 +85,8 @@ doc/features/*/ux-reference/_fidelity-cache/
 # 目录名带包版本（`.adapt-<version>/`），两个版本的工作件互不覆盖；`adapt/` 是早先
 # 版本留下的历史工作件，一并忽略。
 doc/extensions/.adapt-*/
+# story 章草稿：作者在这里写、登记成功即删；中途断了会留下，不入库
+doc/features/**/AR/story-src/drafts/
 doc/extensions/adapt/
 
 # Personal / local agent settings (per developer, gitignored)

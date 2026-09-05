@@ -43,7 +43,8 @@ framework 是它运行的地基，地基归 framework 自己的升级路径。
 |---|---|
 | 目标无 `manifest.yaml` | **首次** |
 | 低于包 | **升级** |
-| 与包相同 | **重适配** = 升级动作的子集：§2 表的机制行**不执行**，只做知识结构、索引表行、manifest、配置键。无变化就报「当前适配仍有效」，不动任何文件。但若 §3 扫描发现机制目录不等于包（上次升级中断），改按升级走 |
+| 与包相同，且 §3 扫描的 `mechanism_digest` 两边相同 | **重适配** = 升级动作的子集：§2 表的机制行**不执行**，只做知识结构、索引表行、manifest、配置键。无变化就报「当前适配仍有效」，不动任何文件 |
+| 与包相同，但 `mechanism_digest` 不同（扫描 `state: package_not_bumped`） | **停**：包改了机制没升版。回包里升 `manifest.version` 再来；不擅自复制、不静默跳过。上次升级中断也会长这样——先看目标的 `.adapt-<版本>/installed.md` 在不在，在就是中断，按升级走 |
 | 无 `version`，命中下方历史签名全部三条 | **旧版**，按升级走 |
 | 无 `version`，签名只中一部分 | **停下问用户**来源版本，不要自行判定 |
 
@@ -108,7 +109,8 @@ framework 是它运行的地基，地基归 framework 自己的升级路径。
 node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目标根>
 ```
 
-它列出：**framework 补丁逐条**（带不带、为什么、目标里有没有、内容同不同、登记了没有）
+它列出：判态 `state`（首次 / 升级 / 重适配 / 包未升版）与两边的机制指纹；目标 `.gitignore` 该有的两行在不在；
+**framework 补丁逐条**（带不带、为什么、目标里有没有、内容同不同、登记了没有）
 与目标已物化的 adapter；机制目录逐文件（目标独有 / 包独有 / 同名有差异）、目标知识文件的 frontmatter 与所在目录、
 **包内知识文件清单**（`package_knowledge`——方案第二段写变更提案时的比对对象）、
 目标 `provides.knowledge` 清单、包内对接 js 是否自述替身、目标自定义文件的内容指纹，
@@ -137,7 +139,14 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目�
 
 ## 6 写入
 
-第一步先**给目标工程的 `.gitignore` 追加一行 `doc/extensions/.adapt-*/`**（已有就跳过；`doc/extensions` 换成目标真实的 `extension_dir`）——工作目录是临时件，不加这一行它会被误提交进目标工程的库。
+第一步先**给目标工程的 `.gitignore` 追加两行**（已有的跳过；具体两行以 §3 扫描输出的 `gitignore` 为准，路径按目标的 `extension_dir` 与 `features_dir` 算好了）：
+
+```
+doc/extensions/.adapt-*/                 # adapt 工作目录
+doc/features/**/AR/story-src/drafts/     # 章草稿：登记成功即删，中途断了会留下
+```
+
+两处都是临时件，不加就会被误提交进目标工程的库。
 
 然后按顺序：**framework 补丁（复制文件 → 追加 drift_allowlist）** → 机制 → 知识 →
 数据对接 → 索引 README → manifest → 配置键 → **入口文件**。
@@ -170,8 +179,8 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 ```
 
 前者确认 manifest 每条路径都存在（有一条不存在，框架会清空全部扩展能力，而且不会在阶段里报错）。
-后者核六件事：**framework 补丁该带的都在目标里且内容同包、每条都登记进了 `drift_allowlist`、
-不该带的没被带过去**；机制目录 == 包、**目标所有的知识文件**（事实 / 规约 / 模式一视同仁）旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文**连同标记区**（包没有该文件时跳过）。
+后者核八件事：判态不是「包未升版」；**framework 补丁该带的都在目标里且内容同包、每条都登记进了 `drift_allowlist`、
+不该带的没被带过去**；`.gitignore` 两行在；机制目录 == 包、**目标所有的知识文件**（事实 / 规约 / 模式一视同仁）旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文**连同标记区**（包没有该文件时跳过）。
 
 入口段那条有两种报法：「没有标记区」= 内容在但标记没包上，按 §6 表第二行原位补标记；「未含扩展段」= 整段没写进去，按第三行追加。
 

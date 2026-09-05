@@ -1,9 +1,15 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-# 1.3.0：机制面有判据行为变化——形态判据从「这一章有没有图」换成「分了几张画了几张」、
-# 归档件禁用词在 review 上按结构分区收窄作用域、术语核主名不核括注、报错按判据类分组。
-# 目标工程升上来会看到不同的报错集合，所以是 minor 不是 patch。
-version: "1.4.0"
+# 版本随机制行为走：目标工程升上来会看到不同的产物形态与报错集合，就是 minor。
+# 1.5.0：作者在章草稿上写（skeleton 生成 AR/story-src/drafts/，chapter 消费草稿）；附录 A–D 是
+#        spec §9 与 knowledge-use.yaml 的机器投影（story-build project，落盘与登记各投一次）；
+#        材料关卡按轮次与本级侧车判停，侧车带 gate 字段；导入加 IMAGES 档（只抽图不动正文）；
+#        章节合同带 form（主形态 + 机器核的槽位），check 加 ⑪ 形态守恒与 ⑫b 集合核；
+#        story-template.md 退场；verifier PASS 之后直接 check-receipt → archive，不再跑 harness。
+# 1.4.0：adapt 带上扩展依赖的 framework 补丁（framework-patch.yaml）。
+# 1.3.0：形态判据从「这一章有没有图」换成「分了几张画了几张」、归档件禁用词按结构分区收窄、
+#        术语核主名不核括注、报错按判据类分组。
+version: "1.5.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:

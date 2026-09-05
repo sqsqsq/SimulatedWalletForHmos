@@ -118,6 +118,10 @@ def iter_files(root: Path, suffixes: tuple[str, ...], exclude_dirs: tuple[str, .
             continue
         if "node_modules" in rel or "__pycache__" in rel:
             continue
+        # 点开头的目录是工作件（adapt 的 `.adapt-<版本>/` 就是一例），不随包交付，
+        # 与预算门同一口径；扫进去会把扫描自己写的清单当成机制层报出来
+        if any(part.startswith(".") for part in p.relative_to(root).parts[:-1]):
+            continue
         out.append(p)
     return out
 

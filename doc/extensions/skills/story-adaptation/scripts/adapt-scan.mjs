@@ -115,6 +115,16 @@ const knowledgeList = (txt) => {
   return out;
 };
 const versionOf = (txt) => (txt.match(/^version:\s*"?([^"\s]+)"?/m) || [])[1] || null;
+/** 版本比较：按点分段数值比，缺段按 0。返回 -1 / 0 / 1。 */
+const cmpVersion = (a, b) => {
+  const pa = String(a ?? '').split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b ?? '').split('.').map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+};
 
 // ── 前置 ────────────────────────────────────────────────────────────────────
 if (!mode) die(`缺模式，用 ${MODES.join(' | ')}`);
@@ -130,6 +140,43 @@ const WORK = join(TDIR, `.adapt-${PKG_VERSION}`), BEFORE = join(WORK, 'before.js
 /** 包里有哪些文件 —— `classOf` 判对接层归属时要它。包自身的文件按定义都在其中。 */
 const PKG_FILES = new Set(walk(PDIR));
 const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
+
+/**
+ * 机制指纹：机制目录逐文件 sha 按路径排序后再做一次 sha。
+ *
+ * 判态不能只看版本号——机制改了、版本没动，按版本号判就是「重适配」，
+ * 机制行一条不执行，目标拿到的还是旧脚本，而且不报错。指纹把这件事变成可见的停。
+ */
+function mechanismDigest(dir) {
+  const files = walk(dir).filter((p) => classOf(p) === 'mech').sort();
+  const h = createHash('sha256');
+  for (const p of files) h.update(`${p}\n${sha(join(dir, p))}\n`);
+  return h.digest('hex').slice(0, 16);
+}
+
+/**
+ * 判态（SKILL §1 的数据面）。`package_not_bumped` = 版本相同而机制指纹不同：
+ * 停下回包里升版，不擅自复制、不静默跳过。
+ */
+function adaptState(pkgVersion, tgtVersion, pkgDigest, tgtDigest) {
+  if (!tgtVersion) return 'first';
+  const c = cmpVersion(tgtVersion, pkgVersion);
+  if (c < 0) return 'upgrade';
+  if (c > 0) return 'target_newer';
+  return pkgDigest === tgtDigest ? 'readapt' : 'package_not_bumped';
+}
+
+/** 目标 `.gitignore` 该有的两行：adapt 工作目录、章草稿目录——都是临时件。 */
+function gitignoreLines(root) {
+  let features = 'doc/features';
+  try { features = JSON.parse(read(join(root, 'framework.config.json')))?.paths?.features_dir || features; } catch { /* 缺省 */ }
+  return [`${extDir(root)}/.adapt-*/`, `${features}/**/AR/story-src/drafts/`];
+}
+function gitignoreStatus(root) {
+  const f = join(root, '.gitignore');
+  const have = existsSync(f) ? read(f).split(/\r?\n/).map((l) => l.trim()) : [];
+  return gitignoreLines(root).map((line) => ({ line, present: have.includes(line) }));
+}
 
 /**
  * 包声明的 framework 补丁。**没有这份文件 = 不依赖任何 framework 改动**，不是错误。
@@ -192,10 +239,16 @@ if (mode === '--scan') {
   const tf = walk(TDIR), pf = walk(PDIR), pSet = new Set(pf);
   const pick = (files, dir, k) => files.filter((p) => classOf(p) === k).map((p) => ({ p, f: join(dir, p) }));
   const tMech = pick(tf, TDIR, 'mech'), pMech = pick(pf, PDIR, 'mech'), tMechSet = new Set(tMech.map((x) => x.p));
+  const pkgDigest = mechanismDigest(PDIR), tgtDigest = existsSync(TDIR) ? mechanismDigest(TDIR) : null;
+  const pkgVersion = versionOf(manifestOf(PDIR)), tgtVersion = versionOf(manifestOf(TDIR));
+  const state = adaptState(pkgVersion, tgtVersion, pkgDigest, tgtDigest);
   const out = {
     generated_at: new Date().toISOString(),
     package_root: PKG, target_root: TARGET,
-    package_version: versionOf(manifestOf(PDIR)), target_version: versionOf(manifestOf(TDIR)),
+    package_version: pkgVersion, target_version: tgtVersion,
+    state,
+    mechanism_digest: { package: pkgDigest, target: tgtDigest },
+    gitignore: gitignoreStatus(TARGET),
     mechanism: {
       target_only: tMech.filter((x) => !pSet.has(x.p)).map((x) => x.p),
       package_only: pMech.filter((x) => !tMechSet.has(x.p)).map((x) => x.p),
@@ -228,6 +281,10 @@ if (mode === '--scan') {
   writeFileSync(BEFORE, JSON.stringify(out, null, 2));
   console.log(JSON.stringify(out, null, 2));
   console.error(`[adapt-scan] 清单已写入 ${BEFORE}——判断按 SKILL.md §2 表逐文件做`);
+  if (state === 'package_not_bumped') {
+    console.error(`[adapt-scan] 停：包与目标版本都是 ${pkgVersion}，机制指纹却不同（${pkgDigest} ≠ ${tgtDigest}）`
+      + '——包改了机制没升版。回包里升 manifest.version，再来');
+  }
   process.exit(0);
 }
 
@@ -311,6 +368,11 @@ if (existsSync(join(PDIR, SECTION))) {
   }
 }
 
+// ⓪ 判态：扫描时该停的这里再拦一次——扫描只报，不写盘
+if (before.state === 'package_not_bumped') {
+  bad.push('⓪ 包未升版：包与目标版本相同而机制指纹不同——回包里升 manifest.version，再重新 --scan');
+}
+
 // ⑥ framework 补丁：该带的带了、带了的登记进目标 drift_allowlist
 //
 // 只登记不复制 = 目标缺地基；只复制不登记 = 目标第一次跑 harness 就红在完整性上。
@@ -332,5 +394,10 @@ if (existsSync(join(PDIR, SECTION))) {
   }
 }
 
+// ⑦ 目标 .gitignore 有那两行：adapt 工作目录与章草稿目录都是临时件，不加就会被提交进目标的库
+for (const g of gitignoreStatus(TARGET)) {
+  if (!g.present) bad.push(`⑦ 目标 .gitignore 缺一行：${g.line}`);
+}
+
 if (bad.length) { console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`); bad.forEach((b) => console.error(`  ${b}`)); process.exit(1); }
-console.log('[adapt-scan] 核对通过：机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）/ framework 补丁齐且已登记');
+console.log('[adapt-scan] 核对通过：版本相符 / 机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）/ framework 补丁齐且已登记 / .gitignore 两行在');

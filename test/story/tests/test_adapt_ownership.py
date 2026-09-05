@@ -77,6 +77,9 @@ class AdaptOwnershipCase(unittest.TestCase):
             "paths": {"extension_dir": "doc/extensions"},
             "integrity": {"drift_allowlist": allow},
         }, ensure_ascii=False), encoding="utf-8")
+        # 目标 .gitignore 该有的两行：adapt 写入时做的事，夹具照做——判据 ⑦ 要它们在。
+        (self.target / ".gitignore").write_text(
+            "doc/extensions/.adapt-*/\ndoc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         for rel in LAUNCHERS:
@@ -188,6 +191,47 @@ class TheRuleIsOwnershipNotAFileList(unittest.TestCase):
                          if not l.strip().startswith(("*", "//", "/*")))
         for name in ("node_modules", "package.json", "pnpm-lock"):
             self.assertNotIn(name, code, "判定逻辑写死了「%s」" % name)
+
+
+class TheStateComesFromTheMechanismNotJustTheVersion(AdaptOwnershipCase):
+    """判态看机制指纹，不只看版本号。
+
+    包改了机制、版本没动，按版本号判就是「重适配」——机制行一条不执行，目标拿到的
+    还是旧脚本，而且不报错。1.4.0 之后就发生过一次。
+    """
+
+    def scan_json(self) -> dict:
+        proc = self.run_scan("--scan")
+        self.assertEqual(0, proc.returncode, (proc.stderr or "")[:400])
+        return json.loads(proc.stdout)
+
+    def test_same_version_same_mechanism_is_a_readapt(self) -> None:
+        self.assertEqual("readapt", self.scan_json()["state"])
+
+    def test_same_version_but_changed_mechanism_stops(self) -> None:
+        hook = self.ext / "hooks" / "shared" / "gate.mjs"
+        hook.write_text(hook.read_text(encoding="utf-8") + "\n// 目标上的旧版本\n", encoding="utf-8")
+        scan = self.run_scan("--scan")
+        self.assertEqual("package_not_bumped", json.loads(scan.stdout)["state"])
+        self.assertIn("包改了机制没升版", scan.stderr)
+        proc = self.run_scan("--check")
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("⓪ 包未升版", proc.stderr)
+
+    def test_a_lower_target_version_is_an_upgrade(self) -> None:
+        m = self.ext / "manifest.yaml"
+        m.write_text(re.sub(r'^version: ".*"$', 'version: "0.9.0"', m.read_text(encoding="utf-8"),
+                            count=1, flags=re.M), encoding="utf-8")
+        self.assertEqual("upgrade", self.scan_json()["state"])
+
+    def test_the_gitignore_lines_are_checked(self) -> None:
+        """两行临时件目录：少一行 ⑦ 就报，扫描也把该有的两行算好给出。"""
+        lines = [g["line"] for g in self.scan_json()["gitignore"]]
+        self.assertEqual(["doc/extensions/.adapt-*/", "doc/features/**/AR/story-src/drafts/"], lines)
+        (self.target / ".gitignore").write_text("doc/extensions/.adapt-*/\n", encoding="utf-8")
+        proc = self.check()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("⑦ 目标 .gitignore 缺一行：doc/features/**/AR/story-src/drafts/", proc.stderr)
 
 
 if __name__ == "__main__":
