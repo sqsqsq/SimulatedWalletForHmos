@@ -149,6 +149,10 @@ framework 已有 `context_exploration_inputs_coverage`：它要求 `context-expl
    本提案选前者的理由是「作者动笔在 harness 之外」，但如果你们已有面向执行者的入口约定，
    应当并入那里。
 3. **来源标识**：改成仓内相对路径是否会影响其它已依赖 basename 形态的消费者。
+   我们这侧核过全仓无程序解析该标识；另可参照你们在 `maison-verifier-request@2` 里的同类判断
+   ——把 `source_commit_sha` / `worktree_digest` 排除出 subject 的规范化输入，理由是
+   「随任何无关改动变化，进来只会无效换代」。本提案改标识是同一类问题的另一面：
+   标识要**足够唯一**才能被逐字引用，`author.md` 六阶段同名等于不设防。
 4. **留痕方式**：借用 `context_exploration_inputs_coverage` 是否恰当。它原本的语义是
    「探索输入覆盖」，本提案把「读没读作者要求」也挂了进去——若你们认为语义不该扩张，
    这条留痕可以换成别的形式，本提案的主体不依赖它。
@@ -198,6 +202,16 @@ pre_verifier 继续只服务 verifier；四份 profile 模板、lifecycle schema
    白名单登记——vendored 的 framework 被本地改动后要具名放行，否则完整性校验会红）、
    `test/story/TEST.md`（消费仓测试域的文档）。**其余 12 个文件就是 §4 列的那些。**
 
-改动基于 3.0.0。截至撰写本文时，上游 `Br_release_3.0.0` 尚未包含这几项，
-`harness-runner.ts` 里的 `on_context_load` 仍挂在 verifier 装配处。
-消费仓侧已在两轮真实需求上运行过这套改动，作者读到要求的时刻与产物落盘的先后关系符合预期。
+**在当前 3.0.0 上完整重放过**。消费仓 2026-09-05 把地基整体换到 `85e266f`
+（framework 3.0.0，1098 文件），然后把这 12 处改动重新应用了一遍：
+
+- `git apply` **零冲突**——12 个文件都能直接打在 `85e266f` 上，不需要为新版本重做；
+- 重放后的验证全过：扩展离线回归 608 条全绿；`author-context.ts --phase spec --feature <名>`
+  实跑退出 0 并打印出扩展片段，来源标识是仓内相对路径；
+  `harness-runner.ts` 里 `emitLifecycle('on_context_load')` 零命中。
+
+**上游 `85e266f` 仍未包含这几项**：`harness/scripts/author-context.ts` 不存在，
+`harness-runner.ts` 的 `on_context_load` 仍挂在 verifier 装配处，
+`hooks-dispatcher.ts` 的来源标识仍是 `path.basename`。
+
+消费仓侧另有两轮真实需求跑过这套改动，作者读到要求的时刻与产物落盘的先后关系符合预期。
