@@ -1529,5 +1529,71 @@ class DraftsFollowWhatIsStillUnwritten(RealRunCase):
         self.assertTrue(self.draft("03-范围.md").exists(), "还没写的章该有草稿")
 
 
+class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
+    """投影要认真源的每一种合法写法，也要跟着它变空。
+
+    作者按 `knowledge-use.yaml` 的规矩写「整域不适用」，投影却说他缺依据；
+    spec 某一节被删空，story 里挂着上一版冒充现状——两样都是「机器区不认真源」。
+    """
+
+    def landed_appendix(self) -> str:
+        self.build("skeleton")
+        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        return self.story()
+
+    def use_file(self):
+        return self.feature / "spec" / "knowledge-use.yaml"
+
+    def test_a_domain_marked_not_applicable_projects_one_row(self) -> None:
+        """整域不适用：一个域一行，域内条目不必逐条登记——那份 YAML 就是这么规定的。"""
+        self.landed_appendix()
+        use = self.use_file()
+        text = use.read_text(encoding="utf-8")
+        start = text.index("  - id: RES-01")
+        end = text.index("  - id: ", start + 10)
+        text = (text[:start] + text[end:]).replace(
+            "constraint_domains: []",
+            "constraint_domains:\n  - prefix: RES\n    applicable: false\n"
+            "    reason: 本需求不新增任何工程资源，整域不适用。", 1)
+        # RES 域里另一条也要移走，整域才谈得上「不逐条登记」
+        start = text.index("  - id: RES-02")
+        end = text.index("  - id: ", start + 10)
+        use.write_text(text[:start] + text[end:], encoding="utf-8")
+
+        self.build("project")
+        story = self.story()
+        self.assertIn("| 整域不适用 |", story, "整域那一行没投出来")
+        self.assertIn("本需求不新增任何工程资源", story, "域级依据没投出来")
+        self.assertNotIn("| RES-01 |", story, "整域不适用时域内条目不该再逐条出现")
+
+    def test_a_source_gone_empty_takes_the_old_zone_with_it(self) -> None:
+        """spec 那一节被删空：旧区要删，不能留着上一版冒充现状。"""
+        story = self.landed_appendix()
+        self.assertIn("story-build:begin 接口", story)
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        start = text.index("### 9.1")
+        end = text.index("### 9.2")
+        spec.write_text(text[:start] + "### 9.1 端云接口\r\n\r\n" + text[end:], encoding="utf-8")
+        self.build("project")
+        self.assertNotIn("story-build:begin 接口", self.story(),
+                         "真源空了，旧机器区还挂着")
+
+    def test_a_not_applicable_line_reaches_the_appendix(self) -> None:
+        """§9.5 写「不涉及：…」也是结论——丢了它，story 相对 spec 就减了一条。"""
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        start = text.index("### 9.5")
+        end = text.index("## 10.") if "## 10." in text[start:] else len(text)
+        end = text.index("## 10.", start)
+        spec.write_text(text[:start]
+                        + "### 9.5 依赖变更\r\n\r\n不涉及：本需求不新增任何三方依赖。\r\n\r\n"
+                        + text[end:], encoding="utf-8")
+        story = self.landed_appendix()
+        boundary = story.split("### 改动边界", 1)[1].split("###", 1)[0]
+        self.assertIn("不涉及：本需求不新增任何三方依赖。", boundary)
+        self.assertIn("| 改动 |", boundary, "Scope 两行也要在")
+
+
 if __name__ == "__main__":
     unittest.main()

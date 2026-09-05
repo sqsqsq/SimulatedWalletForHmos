@@ -258,17 +258,24 @@ function knowledgeUseVerdicts(ctx) {
   if (ctx.offline) return null;
   try {
     const use = readUse(ctx.projectRoot, ctx.args.feature);
-    const out = new Map();
+    const rows = new Map();
     for (const row of use.constraints) {
       const id = String(row?.id ?? '').trim();
       // 依据也一起带回来：判断已经写在那份 YAML 里（命中写 requirement、
       // 不命中写 reason），让作者对着它再抄一遍，抄出来的只会更短。
       if (id) {
-        out.set(id, { applicable: row.applicable === true,
+        rows.set(id, { applicable: row.applicable === true,
           basis: String((row.applicable === true ? row.requirement : row.reason) ?? '').trim() });
       }
     }
-    return out;
+    // 整域不适用是那份 YAML 允许的另一种登记：一个域一行，域内条目不必逐条写。
+    // 不认它的话，作者按规矩写完，投影反倒说他缺依据。
+    const naDomains = new Map();
+    for (const row of use.domains ?? []) {
+      const prefix = String(row?.prefix ?? '').trim();
+      if (prefix) naDomains.set(prefix, String(row?.reason ?? '').trim());
+    }
+    return { rows, naDomains };
   } catch (e) {
     if (e instanceof UseError) return null;
     throw e;
@@ -1773,7 +1780,14 @@ function appendixProjection(ctx, spec, name) {
   if (want === normalizeHeading('改动边界')) {
     const rows = scopeBoundaryRows(spec);
     const out = rows.length ? renderTable(['', '范围'], rows.map(r => r.slice(0, 2))) : [];
-    for (const t of appendixTables(spec, name)) out.push('', ...renderTable(t.header, t.rows));
+    const tables = appendixTables(spec, name);
+    for (const t of tables) out.push('', ...renderTable(t.header, t.rows));
+    // §9.5 写「不涉及：…」时把那一句投过来：依赖没有变更也是结论，
+    // 丢了它，story 相对 spec 就减了一条。
+    if (!tables.length) {
+      const na = specNotApplicable(spec, name);
+      if (na) out.push('', na);
+    }
     return ['Scope 模块清单与 spec §9.5', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
@@ -1782,15 +1796,9 @@ function appendixProjection(ctx, spec, name) {
   const tables = appendixTables(spec, name);
   const rows = tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
     : renderTable(t.header, t.rows));
-  // spec 那一节合法为空（写了一行「不涉及：<依据>」）时把那一句投过来：
-  // 那也是结论，评审者要看到它，而不是看到一个空节。
-  const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
-  if (!rows.length && spec && from) {
-    for (const re of from[1]) {
-      const hit = specSection(spec, re).split(/\r?\n/)
-        .map(l => l.trim()).find(l => /^不涉及[:：]\s*\S/.test(l));
-      if (hit) return ['spec §9', [hit]];
-    }
+  if (!rows.length) {
+    const na = specNotApplicable(spec, name);
+    return ['spec §9', na ? [na] : []];
   }
   return ['spec §9', rows];
 }
@@ -1805,6 +1813,23 @@ function appendixProjection(ctx, spec, name) {
  *
  * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
  */
+/**
+ * spec 那一节写的「不涉及：<依据>」——它也是结论，评审者要看到。
+ *
+ * 读不出这样一行就返回 null：那时那一节是真的空，旧机器区该删掉，
+ * 由 `check ⑫` 报空节，而不是让上一版的内容留在归档件里冒充现状。
+ */
+function specNotApplicable(spec, name) {
+  const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
+  if (!spec || !from) return null;
+  for (const re of from[1]) {
+    const hit = specSection(spec, re).split(/\r?\n/)
+      .map(l => l.trim()).find(l => /^不涉及[:：]\s*\S/.test(l));
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function projectAppendix(ctx, storyText) {
   const appendix = appendixChapter(ctx.contract);
   if (!appendix) return { text: storyText, zones: 0 };
@@ -1826,14 +1851,17 @@ function projectAppendix(ctx, storyText) {
   for (const name of appendix.subsections ?? []) {
     if (normalizeHeading(name) === materialName) continue;    // 材料清单归作者
     const [source, rows] = appendixProjection(ctx, spec, name);
-    // 真源那一节合法为空（spec 写「不涉及：<依据>」）时投一行说明，不是留个空节：
-    // 附录每节要么有内容、要么有一行不涉及，删了区那一节就只剩目的句，
-    // 而那一节本来就不该由作者写。
-    if (!rows.length) continue;
+    const at0 = zoneSpan(lines, name);
+    // 真源那一节现在什么都没有了（规约全退出激活清单、spec 那一节被删或改空）：
+    // 旧区要删，不能留着上一版冒充现状。删完那一节由 `check ⑫` 报空节——
+    // 那是正确的告警，它指向真源，不指向作者。
+    if (!rows.length) {
+      if (at0) lines = [...lines.slice(0, at0.start), ...lines.slice(at0.end)];
+      continue;
+    }
     const block = zoneBlock(name, source, rows);
     zones += 1;
-    const at = zoneSpan(lines, name);
-    if (at) { lines = [...lines.slice(0, at.start), ...block, ...lines.slice(at.end)]; continue; }
+    if (at0) { lines = [...lines.slice(0, at0.start), ...block, ...lines.slice(at0.end)]; continue; }
     // 作者那一节还没有机器区：插到该节末尾。节都没有就说明附录章还没落盘，跳过。
     const want = normalizeHeading(name);
     const head = lines.findIndex(l => /^###\s+/.test(l.trim())
@@ -1878,17 +1906,29 @@ function verdictSkeleton(ctx) {
   // 机器区里不写占位：作者改不了它（下一次投影会盖回来），挂着又永远不会被填。
   // 骨架在而某一条没依据，就在这里停下把话说清——判断本来就该先写进那份 YAML，
   // 它自己的门禁也要求每条有 requirement 或 reason。
-  const missing = entries.filter(e => !use.get(e.id)?.basis);
+  const covered = (e) => use.naDomains.has(e.prefix);
+  const missing = entries.filter(e => !covered(e) && !use.rows.get(e.id)?.basis);
   if (missing.length) {
     fail(`spec/knowledge-use.yaml 里这 ${missing.length} 条还没有判断依据：`
       + `${missing.slice(0, 4).map(e => e.id).join('、')}${missing.length > 4 ? '…' : ''}`
-      + '——命中写 requirement、不命中写 reason，填完再投影。'
-      + '附录的判定表是它的投影，投影不替你编依据');
+      + '——命中写 requirement、不命中写 reason，整域不适用写进 constraint_domains，'
+      + '填完再投影。附录的判定表是它的投影，投影不替你编依据');
   }
-  return renderTable(['规约域', '编号', '判定', '依据'], entries.map(e => {
-    const row = use.get(e.id);
-    return [e.domainTitle ?? '', e.id, row.applicable ? '命中' : '不命中', row.basis];
-  }));
+  // 整域不适用的域投一行域级结论；域内条目不再逐条出现——那正是那份 YAML 的写法，
+  // `check ⑦` 也认这一行覆盖全域。
+  const seenDomain = new Set();
+  const rows = [];
+  for (const e of entries) {
+    if (covered(e)) {
+      if (seenDomain.has(e.prefix)) continue;
+      seenDomain.add(e.prefix);
+      rows.push([e.domainTitle ?? '', e.prefix, DOMAIN_NA, use.naDomains.get(e.prefix)]);
+      continue;
+    }
+    const row = use.rows.get(e.id);
+    rows.push([e.domainTitle ?? '', e.id, row.applicable ? '命中' : '不命中', row.basis]);
+  }
+  return renderTable(['规约域', '编号', '判定', '依据'], rows);
 }
 
 /** 附录·材料清单的每一行：类别、文件名与链接由清单给，贡献由作者写。 */
