@@ -6,8 +6,6 @@
 
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
-- **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)（Karpathy 四原则）。其中**约束 0 是本阶段动笔前的第一件事**：跑 `scripts/author-context.ts --phase testing`，取本阶段的作者起手内容。
-
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**设备策略（BLOCKER）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，不得当成"未配置"引导重新登记）；**只看 `code` 不看 `configured`**（坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`）；harness-runner 在需设备 phase 另有进程级入口门（同一 `code`，设备操作前 fail-fast + 目标解析一次注入全链）作兜底；`code=device_policy_unset` 就**先问用户四选一**再碰设备（选 ③ 须追问 `existing`/`managed`，禁默认托管）。与 goal 模式同一契约；PIN 只能由用户在自己终端登记，**绝不进对话**。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
 **Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/acceptance/contracts(可选)/use-cases(可选)/test-plan(本阶段产出)）；legacy `device-testing-todo.md` 存在仅 WARN 迁移提示，不得作 SSOT；输入缺失回上游补齐。
@@ -15,6 +13,7 @@
 ## 条件加载索引
 
 - 存在 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md` 时先读（宿主 toolchain/打包装机/设备探测细则）。
+- **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)。
 - **Step 1.5 打包装机协议 / Step 4.5 Hylyre 派生计划全套 / Step 4.B 即席模式全套 / Step 4.6 视觉 diff 回环（含全部事故派生判裁规则）/ Step 5.1 机器报告读取 / Step 6 自检完整清单**：完整读 [device-testing-workflow-detail.md](../../reference/device-testing-workflow-detail.md)。
 - `` `profile-skill-asset:<skill>/<asset_key>` `` 按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
 
@@ -22,7 +21,7 @@
 
 按当前 `project_profile` 自适配的设备/系统测试工程师：基于 acceptance 标准与 Spec 契约生成测试计划，执行后产出标准化测试报告。流水线**第六环（最终环）**，上游 business-ut 的 DAG 和 UT 代码，输出是功能模块质量交付的最终把关。
 
-**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner；越权字节仅作为未受信输入保留，本轮证据作废，不能用人工确认豁免。
+**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。 本阶段若改了产品源码，`review_closure_attestation` 会分级列出所需的一次复核并如实标注未复核。
 
 ## 触发条件
 
@@ -92,9 +91,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 **AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
 
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
 
 ## 阶段闭环判定（全局入口 §5.1）
 

@@ -126,92 +126,12 @@
     "drift_allowlist": [
       {
         "path": "agents/opencode/adapter.yaml",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "agents/opencode/templates/plugin/record-verifier-report.js",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "rationale": "opencode verifier 登记：verifier_subagent 布尔 + 入册凭据，以及子代理模板的物化落点（commands.subagents → .opencode/agent）。本仓 story 分支的 CLI 测试装置，不含 framework 逻辑改动，不交上游；framework-init UPDATE 遇到本文件选「保留」。",
         "approved_by": "WYK"
       },
       {
         "path": "agents/opencode/templates/agents/verifier.md",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "agents/adapter-schema.yaml",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "agents/README.md",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "harness/scripts/utils/verifier-plan.ts",
-        "rationale": "批次5步骤1（D1）：OpenCode interactive verifier adapter 本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "harness/scripts/author-context.ts",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "harness/hooks-dispatcher.ts",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "harness/harness-runner.ts",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "skills/reference/agent-behavioral-principles.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "skills/feature/device-testing/SKILL.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "specs/lifecycle-hooks-schema.yaml",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "docs/concepts/phase-terminology.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "profiles/hmos-app/skills/spec/templates/spec-template.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "profiles/hmos-app/skills/plan/templates/plan-template.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "profiles/generic/skills/spec/templates/spec-template.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "profiles/generic/skills/plan/templates/plan-template.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
-        "approved_by": "WYK"
-      },
-      {
-        "path": "skills/feature/spec/SKILL.md",
-        "rationale": "批次5步骤4（D3）：interactive 作者上下文入口本仓验证。上游补丁经 framework-init UPDATE 回本仓后本条即失效，须删除。",
+        "rationale": "opencode verifier 子代理定义：正文取上游 claude 模板，只换 frontmatter 为 opencode 形式（mode: subagent、逐工具 deny）。同上，本仓装置，不交上游。",
         "approved_by": "WYK"
       }
     ]

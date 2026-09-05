@@ -17,7 +17,7 @@ framework/agents/
 │   └── templates/
 │       ├── commands/            ← 每个 slash 一个 *.md 模板
 │       ├── agents/              ← 子 agent 模板（如 verifier.md）
-│       ├── settings.json        ← 客户端配置（注册 Stop / SubagentStop 等 hook）
+│       ├── settings.json        ← 客户端配置（注册 Stop / PreToolUse hook）
 │       └── hooks/               ← Claude Code hook 脚本（Layer 3 物理拦截）
 ├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
 │   ├── adapter.yaml
@@ -104,7 +104,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
 | `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
-| `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md`、`.opencode/agent/verifier.md`、`.opencode/plugin/*.js`（插件自动发现，无 settings 注册文件） |
+| `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
 | `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/verifier.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
@@ -201,7 +201,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 | codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
-| opencode | AGENTS.md | —（技能自动注册 slash）+ `.opencode/agent/verifier.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | —（插件自动发现，无需注册文件） | `.opencode/plugin/*.js` |
+| opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
@@ -210,99 +210,50 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 的 Layer 3 物理拦截能力（详见 `CLAUDE.md` §5.1；两者共享同一份 hook 脚本模板，settings.json 仅差
 目录与项目根变量——claude=`${CLAUDE_PROJECT_DIR}`、codeagent=`${CODEAGENT3_PROJECT_DIR}`）：
 
-- `settings_file` 注册 `Stop` / `SubagentStop` hook；
+- `settings_file` 注册 `Stop` / `PreToolUse` hook；
 - `hooks/check-phase-completion.mjs` 在主 agent 即将结束消息时按 CLAUDE.md §5.1 四条件物理拦截"假完成"；
-- `hooks/record-verifier-report.mjs` 在 verifier 子 agent 结束时**做身份绑定后**发布
-  `verifier.report.<subject>.json`（唯一机器真源），供 `check-receipt.ts` 与其余机器消费者经
-  `loadVerifierEvidence()` 读取；同名 `.md` 只是它生成的人读投影。
+- `hooks/guard-framework-write.mjs` 在 PreToolUse 拦截对只读发布件 `framework/` 的编辑类写入。
 
-### verifier 能力声明（plan a9d4e7c2）
+（verifier 报告的发布 hook 已随 plan d2f7a9c4 删除：报告由调用方写入 `summary.verifier_report`。）
 
-verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence policy + **adapter 能力**动态
-启用的能力。adapter 侧的声明面是 `adapter.yaml` 的 `verifier_capability`
-（`transport` / `publisher` / `modes`），运行时由 `resolveVerifierPlan` 解析为
-`disabled | enabled | blocked` 三态，runner / check-receipt / Skill 指引共享同一结果。
+### verifier 子代理声明（plan a9d4e7c2 / d2f7a9c4）
 
-**只登记真实实测过的 mode**：claude / codeagent 的 `interactive` 已由 SubagentStop 实抓验收，
-opencode 的 `interactive` 已由 task 工具完成事件实抓验收；headless / goal 目前仍走 bedside 旁路，
-未验收前不得预填——虚标会让 runner 生成一份永远没人发布的 request。未声明该字段的 adapter =
-无能力：`required` × `interactive` 下解析为 `blocked`（脚本诊断照常完整执行，脚本 PASS 后才报
-`INCOMPLETE / verifier_provider_unavailable`）。
+verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence policy + **adapter 有没有审查员**
+动态启用的能力。adapter 侧的声明面是 `adapter.yaml` 的布尔 `verifier_subagent`，运行时由
+`resolveVerifierPlan` 解析为 `disabled | enabled` 二态，runner / check-receipt / Skill 指引共享
+同一结果。**三种运行模式（interactive / headless / goal）解析结果完全一致**。
 
-`publisher` 是**机制名不是厂商名**，当前两种：
+调用与报告协议 **adapter 无关**：
 
-| publisher | 宿主把绑定材料交在哪 | 实现 |
-|---|---|---|
-| `subagent_stop` | 子 agent 结束时拉起 hook 进程：终态消息在 stdin payload，调用正文要读子代理转录 | `agents/claude/templates/hooks/record-verifier-report.mjs`（claude-kernel 家族共享） |
-| `task_tool_result` | 子 agent 任务工具完成时触发宿主内插件：调用入参、子会话 id 与终稿信封一次给全，不必读转录 | `agents/opencode/templates/plugin/record-verifier-report.js` |
+1. runner 在 `summary.verifier_request` 写一份几十行的 request JSON，在 `summary.verifier_report`
+   写好报告落点；
+2. 调用方（phase executor / 主 agent）把那份 JSON **整段**作为 Task prompt 投给
+   `subagent_type: verifier`——共享规则 `framework-agent-execution.mdc` §3 对每个 adapter 都这么要求；
+3. verifier 按 `prompt_path` 自读磁盘原件，回复完整报告，末尾恰好一个终态块（契约写在 7 份
+   `harness/prompts/verify-*.md` 里，随 ai-prompt.md 渲染）；
+4. **调用方**把回复原样全文写入 `summary.verifier_report` 指向的路径，然后跑 check-receipt。
 
-两者做**同一套四方对账**、发布**同一份** `verifier.report.<subject>.json`，验真面
-（`loadVerifierEvidence`）对它们一视同仁。**新增 publisher 只能加枚举值**：解析器里出现
-adapter 名就是与声明面平行的第二真源。
+写者只有一个，且不是 verifier 自己：verifier 保持只读工具集。闭环侧只校验三条——文件在、终态块
+回显的 subject 等于 `summary.verifier_subject_id`、verdict 与 blocker_count 一致。
 
-### SubagentStop payload 消费契约（plan e5b8c3f7 / a9d4e7c2）
+**只登记宿主实跑观测过的 adapter**（入册纪律）：claude / codeagent / codex 已登记；
+cursor / opencode / chrys / generic 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode
+明写 `.opencode/rules/*` 不被自动加载，chrys 的 rules 是「引用可达」，generic 是任意外部 CLI。
+虚标会让每个阶段走「report missing → 重跑 → 仍 missing」。
 
-hook 消费的字段：`agent_id`（子 agent 身份）、`agent_transcript_path`（**子代理**转录，取首条
-user prompt —— 它必须恰好是那份 request JSON）、`last_assistant_message`（子代理终答，取唯一
-版本化终态块）、`agent_type`（来源标注）。`transcript_path` 指**主会话**，身份与结论都不从它取。
-`agent_type` 可能是空串（发射点为 `a ?? ""`），故只如实记录、不据此 fail-closed。
+未登记 = 无审查员：plan 判 `disabled / adapter_has_no_reviewer`，**不生成 request、不重跑、不阻断**，
+check-receipt 以 WARN 如实披露 verifier 轴 `not_reviewed`。起不了子代理是环境事实，不是产物缺陷；
+阻断会让整条 full track 在该 adapter 上不可用。
 
-绑定=四方对账：request 自述 subject == 按 request 字段**重算**的 subject ==
-`summary.verifier_subject_id` == 终态块回显；且 `prompt_path` 等于由 config 推导的 canonical
-路径、`prompt_sha256` 等于该文件的磁盘实测哈希（subject 本身按 `material_sha256` 审前材料视图派生，模板时间戳不换代；材料变了但历史有 PASS 时 check-receipt 沿用闭环并登记差异）。任一字段缺失、转录不可读、request 不可解析
-（手抄/夹带/改字段）、subject 不等或已换代、prompt 已被新一轮 harness 换代 → 落
-`framework/harness/state/last-verifier-report.json` 的 **bedside** 非权威记录（带机器可读
-`reason`），canonical 证据一字不动，`.current-phase.json` 一字不写。
+> **已删除（plan d2f7a9c4，不得恢复）**：`verifier_capability`（transport / publisher / modes 矩阵）、
+> SubagentStop hook `record-verifier-report.mjs` 及其在两份 settings.json 的注册、canonical
+> `verifier.report.<subject>.json`、结论指纹、conflict 状态机、bedside 旁路、`blocked` 态与
+> `verifier_provider_unavailable`。它们整体服务于「主 agent 不能伪造 PASS」这一个防篡改目标，
+> 而其 fail-closed 教条把「发布手续失败」判成「检查根本不存在」：宿主 bc-openCard-1 两轮无人值守
+> goal run 在 harness PASS、verifier 真跑且 PASS 的情况下仍 `closure_wall_repeated` 熔断；codex 等
+> 无 hook 的 adapter 自 2026-08-29 起被判 `blocked`、full track 事实不可用。放弃的准确性写在
+> plan d2f7a9c4「一、放弃的准确性」：报告可被伪造或事后修改而不被机器识别，兜底靠下游门禁与人。
 
-**降级矩阵**：
-
-| adapter | payload 实证 | 状态 |
-| --- | --- | --- |
-| claude | 已实证（Claude Code 2.1.246 发行二进制内 zod schema + 发射点） | 支持 verifier 闭环 |
-| codeagent | 已实证（宿主采集 2026-08-29） | 支持 verifier 闭环，共享同一份 hook、无 adapter-specific 分支 |
-| opencode | 已实证（opencode 1.18.26 宿主实抓，publisher=`task_tool_result`） | 支持 verifier 闭环，见下方 task 工具消费契约 |
-| cursor / codex / generic / … | 无 SubagentStop 物理层，也无等价的完成事件消费面 | 未声明 `verifier_capability` = 无能力；`required` × interactive 下解析为 `blocked`（脚本诊断不受影响） |
-
-codeagent 侧的两点实抓事实：payload 多出 `is_kia_repo` / `process_id`（本 hook 不消费，未知字段
-一律忽略），少一个 claude 侧本就可选的 `prompt_id`；**SubagentStop 的 matcher 不按 agent type
-过滤**，注册项一律触发。后者不改变任何结论——非 verifier 子 agent 的转录里没有机器块，一律
-`invocation_request_unparseable` → bedside——但意味着 **settings.json 的 matcher 只是提示、不是过滤器**，
-任何 adapter 都不得把它当身份闸门。（非 verifier 子 agent 的转录首条 prompt 不是一份合法 request JSON，一律 `invocation_request_unparseable` → bedside。）
-
-> codeagent 的 hard_hook 档位对外声明以 plan c7a9e2f4 T6 宿主验收（PreToolUse exit2 真拒写 /
-> Stop 真拦收尾 / SubagentStop 真落报告）完成为准；其中 SubagentStop 一项已由 2026-08-29 的
-> payload 实抓覆盖。
-
-### task 工具完成事件消费契约（publisher=`task_tool_result`）
-
-opencode 没有 SubagentStop 这一层，但它的 `task` 工具**建的是一个子会话**，完成时通过插件钩子
-`tool.execute.after` 一次交出全部绑定材料——比读转录更直接，因为调用正文就是工具入参本身。
-
-插件消费的字段：
-
-| 字段 | 是什么 |
-|---|---|
-| `input.args.prompt` | 主 agent 实际投给子 agent 的调用正文，必须恰好是那份 request JSON |
-| `input.args.subagent_type` | 来源标注（**不作身份闸门**，理由同 claude 的 matcher） |
-| `output.metadata.sessionId` | 子会话 id = 独立执行体身份，落进报告的 `agent_id` |
-| `output.metadata.parentSessionId` | 主会话 id；与子会话相同即「没有独立执行体」，fail-closed |
-| `output.output` | `<task id state><task_result>终稿</task_result></task>` 信封，取唯一版本化终态块 |
-| `output.metadata.truncated` / `outputPath` | 宿主按 `tool_output` 上限（默认 2000 行 / 51200 字节）**头部截断**时的全文旁路件 |
-
-绑定=四方对账（与 `subagent_stop` 同一套），另加一条本机制特有的**执行体独立性**校验：子会话 id
-存在、≠ 主会话 id、且 == 终稿信封 `<task id="…">` 自述的会话 id。
-
-**截断必须处理**：终态块在终稿末尾，头部截断会把它整块切掉。只读 `output.output` 会得到「无终态块」
-而误判成 verifier 没输出结论。`truncated === true` 时必须改读 `outputPath` 全文，读不到即 bedside
-（`final_draft_truncated`），绝不按截断正文下结论。
-
-**只读手段**：写在子 agent 自己的 `.opencode/agent/verifier.md` frontmatter 里（`permission:` 逐工具
-`deny`），不由 framework 在调用时另加参数。宿主实证：声明 deny 时子 agent 工具面只剩只读工具、
-零写类事件；去掉该声明的对照组立刻拿到写工具并调用它。`--auto` 只自动批准未被显式 deny 的权限。
-
-**插件落地**：`.opencode/plugin/*.js` 由 opencode **自动发现**，不需要 settings 注册文件；因此
-opencode 的 `settings_file` 仍为 null，只用 `hooks` 字段把模板目录复制过去。插件对宿主一律
-fail-open（异常绝不打断会话），对证据一律 fail-closed（绑定不成立只落 bedside）。
 
 `cursor` / `generic` adapter 暂无等价物理层，闭环依赖 Layer 1（CLAUDE.md §5.1 + §6.5）+ Layer 2
 （`framework/harness/templates/phase-completion-receipt.md` + `framework/harness/scripts/check-receipt.ts`）

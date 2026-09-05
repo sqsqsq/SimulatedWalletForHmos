@@ -14,15 +14,7 @@ commands:
   subagents:
     target_dir: .opencode/agent
     template_dir: templates/agents
-    update_policy: auto_overwrite               # verifier 等为协议级子 agent 配置
-
-# opencode 的插件：`.opencode/plugin/*.js` 由宿主**自动发现**，不需要注册文件
-# （与 claude 的 settings.json 注册相对）。落地方式同为「模板目录原样复制」。
-# record-verifier-report.js 是 verifier 结论的发布器，见下方 verifier_capability。
-hooks:
-  target_dir: .opencode/plugin
-  template_dir: templates/plugin
-  update_policy: auto_overwrite                 # 与 harness 契约绑定
+    update_policy: auto_overwrite               # verifier 为协议级子 agent 配置
 
 skill_bridge:
   target_dir: .opencode/skill
@@ -68,29 +60,14 @@ goal_capability:
       write_mode: full-access
       approval_mode: never
 
-# verifier 能力声明（plan a9d4e7c2 的能力面，本 adapter 于批次 5 步骤 1 补齐）：
-# transport=repo_file_request（与 claude-kernel 家族同一份 request 契约，runner 侧零改动）；
-# publisher=task_tool_result——opencode 在 `task` 工具完成时触发插件钩子 tool.execute.after，
-# 一次交出调用入参（= 那份 request JSON 原文）、子会话 id 与终稿信封，
-# templates/plugin/record-verifier-report.js 据此做四方对账后发布
-# verifier.report.<subject>.json。**不叫 subagent_stop**：本宿主没有那个事件，机制名要如实。
-#
-# 入册凭据（宿主 opencode 1.18.26 真实 invocation 实证，模型 bailian/deepseek-v4-flash-0731）：
-#   一次 task 调用的 tool.execute.after 载荷同时给出
-#   metadata.sessionId=ses_f9d802…（子会话）≠ metadata.parentSessionId=ses_f9d803…（主会话）、
-#   args.prompt=投递的 request JSON 原文、args.subagent_type、
-#   output.output=`<task id state><task_result>终稿</task_result></task>`。
-#   只读手段 A/B 实证：子 agent frontmatter 写 permission 逐工具 deny 时，
-#   工具面只剩 glob/grep/read/skill、零写类事件；去掉该声明的对照组立刻拿到 write 并调用它
-#   （即：只读来自声明，不是模型自述）。`--auto` 只自动批准未被显式 deny 的权限。
-#   **截断边界**：宿主对工具输出有 tool_output 上限（默认 2000 行 / 51200 字节），
-#   超限**从头部保留**、全文另存 metadata.outputPath；终态块在终稿末尾，
-#   发布器必须在 truncated 时改读 outputPath，否则会静默误判「无终态块」。
-# modes 只登记实测过的：interactive 已验收；headless / goal 未验收，不得预填。
-verifier_capability:
-  transport: repo_file_request
-  publisher: task_tool_result
-  modes: ["interactive"]
+# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行模式、
+# 发布机制无关。调用协议 adapter 无关——共享规则 bundle 与 AGENTS.md 要求 task 工具触发
+# subagent_type=verifier、prompt = request JSON 整段；报告由**调用方**把 verifier 回复原样
+# 写入 summary.verifier_report，本 adapter 不参与发布。
+# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出
+# subagent_type=verifier 的子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md
+# 并交回带终态块的回复；只读来自 frontmatter 的逐工具 deny 声明（对照组去掉即可写）。
+verifier_subagent: true
 
 post_install_hooks: []
 
