@@ -1613,9 +1613,9 @@ function cmdCheck(ctx) {
   //
   // 材料清单的行形态：判的是形态不是内容——
   // 只问「这一行能不能把材料定位到原件」。图题编号与小节编号已归 `number` 机器铺，不再判。
-  // 图的承接与图题**不在这里判**：「这句话指的是不是这张图」要读上下文，
-  // 那是独立审查按效果判的事。这里只留材料清单的行形态——它是材料清单集合判据的搭档，
-  // 判的是「这一行有没有链接、链到的地方在不在清单里」，是确定性的。
+  // **「这句话指的是不是这张图」仍不在这里判**：那要读上下文，归独立审查。
+  // 这里只判两件不用读懂任何一句话就能看见的事——图前面有没有一句话、两张图挨着没有。
+  problems.push(...danglingFigures(storyText, ctx.contract));
   {
     const appendix = appendixChapter(ctx.contract);
     const name = materialSubsectionName(ctx.contract);
@@ -1778,6 +1778,50 @@ function receiptRunner(harness) {
   } catch {
     return null;
   }
+}
+
+/**
+ * 图有没有被正文接住 —— 两件机械可见的事，不判「这句话说的是不是这张图」。
+ *
+ * 引一张图的正常写法是：先一句话说它画的是什么，再是图，图后接着讲。
+ * 两种形态不用读懂任何一句话就能看出不对：
+ *
+ * - **图连图**：两张图挨在一起，中间没有一句话。读者不知道该看哪张、看什么。
+ * - **图前没有承接句**：上一非空行是标题、是另一张图，或者图就在节首。
+ *   那说明这张图是被贴进来的，不是被讲到的——「按清单把图都引上」正是这个形态。
+ *
+ * 附录不看：图本来就不该在那里，由「附录里不放图」那条判。
+ */
+function danglingFigures(storyText, contract) {
+  const appendix = appendixChapter(contract);
+  const out = [];
+  const lines = String(storyText ?? '').split(/\r?\n/);
+  const isImage = (l) => /^\s*!\[[^\]]*\]\(/.test(l);
+  let inAppendix = false;
+  let prev = null;                                   // 上一非空行
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const h = line.trim().match(/^##\s+(.+?)\s*$/);
+    if (h) {
+      inAppendix = appendix ? normalizeHeading(h[1]) === normalizeHeading(appendix.title) : false;
+      prev = line;
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (isImage(line) && !inAppendix) {
+      const why = prev === null || /^#{1,6}\s/.test(prev.trim()) ? '它就在小节开头'
+        : isImage(prev) ? '它紧挨着上一张图'
+          : null;
+      if (why) {
+        out.push(`第 ${i + 1} 行的图前面没有一句话（${why}）`
+          + '——引一张图先说它画的是什么，再是图，图后接着讲。'
+          + '接不上一句话的图，说明它是被贴进来的，不是被讲到的：'
+          + '本需求用不上就别引，在材料清单那一行写「未引用：<理由>」');
+      }
+    }
+    prev = line;
+  }
+  return out;
 }
 
 /**

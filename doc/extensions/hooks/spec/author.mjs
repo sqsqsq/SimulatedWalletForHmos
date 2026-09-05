@@ -121,7 +121,9 @@ function imageSection(projectRoot, feature) {
     rows.push('材料清单里现在没有图片。');
     return rows;
   }
-  rows.push('每张要么在讲它的那一章引用，要么在附录材料清单那一行写明不引用的理由。',
+  rows.push('**只引正文讲到的，不是把清单里的都贴上**：先一句话说这张图画的是什么，'
+    + '再是图，图后接着讲。用不上的那些在附录材料清单那一行写「未引用：<理由>」——'
+    + '理由是文字，不是把图挪个地方充数。',
     '**引用串原样粘**——路径是相对 `AR/story.md` 的，自己拼容易少一层 `../`：', '');
   for (const img of images) {
     const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);

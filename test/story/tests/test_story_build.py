@@ -1550,6 +1550,37 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertIn("story-build:begin 接口", story)
 
 
+class FiguresMustBeIntroduced(StoryBuildCase):
+    """图连图、图前没有一句话 —— 两件不用读懂任何一句话就看得见的事。
+
+    「按清单把图都引上」正是这个形态：图一张接一张贴进来，没有一句话说它画的是什么。
+    「这句话说的是不是这张图」仍归独立审查——那要读上下文。
+    """
+
+    FLOW = "## 业务流程\n\n本需求不涉及。\n"
+
+    def put_in_flow(self, *rows: str) -> None:
+        self.init_audit()
+        self.rewrite_story(self.FLOW, "## 业务流程\n\n" + "\n".join(rows) + "\n")
+
+    def test_two_images_in_a_row_are_named(self) -> None:
+        self.put_in_flow("签约分两步。", "", "![签约页](../assets/a.png)", "",
+                         "![验证页](../assets/b.png)", "")
+        self.assert_check_names("紧挨着上一张图")
+
+    def test_an_image_at_the_top_of_a_section_is_named(self) -> None:
+        self.put_in_flow("![签约页](../assets/a.png)", "", "上图是签约页。", "")
+        self.assert_check_names("就在小节开头")
+
+    def test_an_introduced_image_is_left_alone(self) -> None:
+        """先一句话、再图、图后接着讲——这是正常写法，不该有信号。"""
+        self.put_in_flow("签约页把门限与面额放在一屏里。", "",
+                         "![签约页](../assets/a.png)", "",
+                         "确认之后进入免密验证。", "")
+        _, out = self.check_output()
+        self.assertNotIn("图前面没有一句话", out, out[:600])
+
+
 class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
     """图属于哪块内容，内容落在哪，图就该在哪——机械只核「每张各有一个围栏带着」。
 

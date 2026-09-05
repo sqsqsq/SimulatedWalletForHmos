@@ -5,7 +5,7 @@
 a:blip 内嵌图、w:b 粗体）。材料正文以数据结构形式内联在各 build_* 函数里，
 docx 入库后本脚本保留用于再生。
 
-用法：python make_case_assets.py car-key-sharing
+用法：python make_case_assets.py <car-key-sharing|auto-topup>
 """
 from __future__ import annotations
 
@@ -103,6 +103,113 @@ def png_accept_page() -> bytes:
         rect(200, 306, 760, 362, GREY, border=LINE)     # 有效期与来自谁
         rect(320, 396, 640, 452, GREEN, border=LINE)    # 添加到钱包
     return _png(960, 500, paint)
+
+
+def png_topup_detail_entry() -> bytes:
+    """交通卡详情页：卡片 + 余额 + 「自动充值」入口行。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(120, 70, 840, 230, BLUE, border=LINE)      # 卡片
+        rect(120, 250, 840, 306, GREY, border=LINE)     # 余额行
+        rect(120, 326, 840, 382, GREEN, border=LINE)    # 自动充值入口行
+        rect(120, 402, 840, 458, GREY, border=LINE)     # 充值记录行
+    return _png(960, 500, paint)
+
+
+def png_topup_signup() -> bytes:
+    """签约页：门限单选 + 面额单选 + 协议勾选 + 开启按钮。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        for i in range(4):                              # 门限四档
+            rect(40 + i * 230, 90, 220 + i * 230, 150, GREY, border=LINE)
+        for i in range(3):                              # 面额三档
+            rect(40 + i * 306, 190, 300 + i * 306, 250, GREY, border=LINE)
+        rect(40, 290, 919, 330, ORANGE, border=LINE)    # 协议勾选条
+        rect(300, 380, 660, 440, GREEN, border=LINE)    # 开启按钮
+    return _png(960, 500, paint)
+
+
+def png_topup_verify() -> bytes:
+    """免密验证页：额度说明 + 验证方式 + 确认。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(160, 80, 800, 190, BLUE, border=LINE)      # 免密额度说明
+        rect(160, 210, 800, 266, GREY, border=LINE)     # 验证方式
+        rect(160, 286, 800, 342, GREY, border=LINE)     # 协议链接
+        rect(330, 380, 630, 440, GREEN, border=LINE)    # 确认
+    return _png(960, 500, paint)
+
+
+def png_topup_manage() -> bytes:
+    """管理页：签约状态卡 + 充值记录列表（含一条失败）。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(40, 66, 919, 150, BLUE, border=LINE)       # 当前签约状态
+        y = 172
+        for color in (GREEN, GREEN, ORANGE, GREY):
+            rect(40, y, 919, y + 60, color, border=LINE)
+            y += 70
+    return _png(960, 500, paint)
+
+
+def png_topup_disabled() -> bytes:
+    """停用态：停用横幅 + 失败原因 + 重新签约按钮。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(40, 66, 919, 130, ORANGE, border=LINE)     # 已停用横幅
+        rect(40, 150, 919, 250, GREY, border=LINE)      # 连续三次失败原因
+        rect(320, 300, 640, 360, GREEN, border=LINE)    # 重新签约
+    return _png(960, 420, paint)
+
+
+def png_topup_signup_v01() -> bytes:
+    """v0.1 的签约页：门限用输入框，已废弃。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(40, 90, 919, 150, GREY, border=LINE)       # 门限输入框
+        rect(40, 170, 919, 230, GREY, border=LINE)      # 面额输入框
+        rect(300, 280, 660, 340, GREY, border=LINE)     # 提交
+    return _png(960, 400, paint)
+
+
+def png_topup_signup_small() -> bytes:
+    """同一张签约页的小屏截图，只作适配参考。"""
+    def paint(rect):
+        rect(0, 0, 639, 40, DARK)
+        for i in range(2):
+            rect(30, 70 + i * 80, 609, 130 + i * 80, GREY, border=LINE)
+        rect(30, 240, 609, 280, ORANGE, border=LINE)
+        rect(180, 310, 460, 360, GREEN, border=LINE)
+    return _png(640, 400, paint)
+
+
+def png_topup_competitor() -> bytes:
+    """友商方案截图：三步向导式签约，本需求不采用。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, GREY)
+        for i in range(3):
+            rect(60 + i * 300, 90, 300 + i * 300, 330, BLUE, border=LINE)
+    return _png(960, 400, paint)
+
+
+def png_topup_ops_console() -> bytes:
+    """运营管理台的开关配置页：属管理台，不属钱包端。"""
+    def paint(rect):
+        rect(0, 0, 959, 60, GREY, border=LINE)          # 管理台导航条
+        rect(0, 60, 220, 499, GREY, border=LINE)        # 左侧菜单
+        rect(250, 90, 919, 150, BLUE, border=LINE)      # 开关行
+        rect(250, 170, 919, 470, GREY, border=LINE)     # 配置表
+    return _png(960, 500, paint)
+
+
+def png_topup_other_feature() -> bytes:
+    """另一单需求的页面：交通卡余额提醒设置页。"""
+    def paint(rect):
+        rect(0, 0, 959, 46, DARK)
+        rect(40, 70, 919, 160, ORANGE, border=LINE)     # 提醒开关
+        rect(40, 180, 919, 260, GREY, border=LINE)      # 提醒时间
+        rect(40, 280, 919, 360, GREY, border=LINE)      # 提醒方式
+    return _png(960, 420, paint)
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +409,132 @@ def build_car_key_accept(out_dir: Path) -> Path:
     return path
 
 
+def build_auto_topup(out_dir: Path) -> Path:
+    """交通卡自动充值的产品需求说明。
+
+    **十张界面图，只有五张是本需求真正要引的**：详情页入口、签约页、免密验证页、
+    管理页、停用态。另五张是原稿里常见的陪衬——旧版页面、同页面的小屏截图、
+    友商参考、运营管理台的配置页、另一单需求的页面。每一张不该引的，
+    正文里都写明了它为什么不属于本需求：作者据此判断该不该引，
+    而不是「清单里有几张就引几张」。
+
+    流程图不放图片：它是流程不是界面，画在 SR 的设计稿里（mermaid），
+    一环一环往下带。
+    """
+    blocks = [
+        ("h", 1, "交通卡自动充值"),
+        ("h", 2, "交通卡自动充值 产品需求说明"),
+        ("p", "文档状态：草稿（尚未在需求系统归档，先以本文档为准）"),
+        ("p", "撰写：钱包产品组　　版本：v0.4"),
+        ("h", 3, "一、背景与目标"),
+        ("p", "交通卡余额用尽只有在闸机前才会被发现，用户被迫在人流中完成充值，"
+              "是当前交通卡投诉量最高的场景。手工充值本身并不复杂，问题在于触发时机——"
+              "用户没有理由在余额还够的时候主动打开钱包。"),
+        ("p", "本需求让用户一次签约之后，余额低于自己设定的门限时由系统自动完成充值，"
+              "把「想起来充值」这件事从用户身上移走。"),
+        ("p", "**目标：签约用户的闸机余额不足发生率下降到万分之五以下；"
+              "签约转化率不低于交通卡月活的 8%。**"),
+        ("h", 3, "二、参与方"),
+        ("t", [["参与方", "在本需求里做什么", "归属"],
+               ["钱包客户端", "签约、免密验证、管理与记录展示", "本需求交付"],
+               ["交通卡服务端", "余额上报、门限判定、扣款与写卡", "本需求交付"],
+               ["支付免密服务", "签约态与单笔额度校验", "既有能力，只用不改"],
+               ["运营管理台", "配置签约入口的功能开关", "**属管理台，不属钱包端**，本需求不交付它的页面"]]),
+        ("h", 3, "三、用户旅程"),
+        ("p", "1. 用户在交通卡详情页看到「自动充值」入口，点击进入签约页；"),
+        ("p", "2. 用户选择触发门限（余额低于多少时充）与单笔面额，阅读并同意免密扣款协议；"),
+        ("p", "3. 首次签约要过一次免密验证，确认单笔额度；"),
+        ("p", "4. 签约完成，详情页显示「自动充值已开启」以及当前的门限与面额；"),
+        ("p", "5. 此后余额低于门限时系统自动完成充值，用户无需任何操作；"),
+        ("p", "6. 用户可以随时在同一入口查看充值记录、修改门限面额或关闭自动充值。"),
+        ("h", 3, "四、界面设计"),
+        ("p", "交通卡详情页上「自动充值」是一整行入口，余额行之下、充值记录之上（图 1）："),
+        ("img", "detail-entry.png"),
+        ("p", "图 1　交通卡详情页的自动充值入口"),
+        ("p", "签约页门限与面额均为单选，协议勾选后「开启」按钮才可点击（图 2）："),
+        ("img", "signup-page.png"),
+        ("p", "图 2　自动充值签约页"),
+        ("p", "首次签约要过一次免密验证，这一页要把单笔额度说清楚（图 3）："),
+        ("img", "verify-page.png"),
+        ("p", "图 3　免密验证页"),
+        ("p", "开启后的管理页顶部为当前签约状态，下方为最近的自动充值记录，"
+              "失败记录需要展示失败原因（图 4）："),
+        ("img", "manage-page.png"),
+        ("p", "图 4　自动充值管理页与记录列表"),
+        ("p", "连续扣款失败停用之后，管理页顶部换成停用横幅并给出失败原因（图 5）："),
+        ("img", "disabled-state.png"),
+        ("p", "图 5　停用态"),
+        ("p", "两个页面的视觉规范沿用交通卡详情页现有样式，不新增控件类型。"),
+        ("h", 3, "五、附图（仅存档，非本需求交付内容）"),
+        ("p", "以下五张随稿留档，**都不是本需求要做的页面**，各自的原因写在图后。"),
+        ("img", "signup-page-v0.1.png"),
+        ("p", "附图 A　v0.1 的签约页。门限当时用输入框，评审后改成四档单选——"
+              "**已废弃，留作对照**，本需求按图 2 做。"),
+        ("img", "signup-page-small.png"),
+        ("p", "附图 B　图 2 那一页在小屏机型上的截图。**同一个页面的不同分辨率**，"
+              "只作适配参考，不是另一个页面。"),
+        ("img", "competitor-ref.png"),
+        ("p", "附图 C　友商的三步向导式签约。**本需求不采用**这个交互，"
+              "我们的签约在一屏内完成。"),
+        ("img", "ops-console.png"),
+        ("p", "附图 D　运营管理台里配置功能开关的页面。**属管理台，不属钱包端**"
+              "（见「二、参与方」），本需求不交付它。"),
+        ("img", "balance-alert.png"),
+        ("p", "附图 E　交通卡余额提醒设置页。**属 RR90007「交通卡余额提醒」，另单交付**，"
+              "与本需求无关，放在这里只因为它和自动充值都在交通卡详情页里。"),
+        ("h", 3, "六、业务流程"),
+        ("p", "自动充值的判定与扣款全部发生在服务端，用户侧无感。"
+              "签约与管理这两条路径的流程图画在《交通卡自动充值 系统设计》里，本稿不重复。"),
+        ("p", "需要特别说明的是：判定的输入是服务端记录的余额，不是手机上显示的余额。"
+              "用户离线刷卡后手机上的余额会长时间不准，按它判定会扣出用户预期之外的钱。"),
+        ("h", 3, "七、产品规则"),
+        ("t", [["规则项", "取值", "说明"],
+               ["触发门限档位", "5 元 / 10 元 / 20 元 / 30 元", "用户签约时单选，签约后可修改"],
+               ["单笔充值面额", "20 元 / 50 元 / 100 元", "用户签约时单选，签约后可修改"],
+               ["单日充值上限", "200 元", "达到上限当日不再触发，次日零点恢复"],
+               ["连续失败停用", "连续 3 次扣款失败自动停用", "停用后需用户重新签约，失败原因要能看到"],
+               ["功能开关", "运营侧可关闭签约入口", "已经签约的用户不受影响，继续自动充值"]]),
+        ("p", "免密扣款的单笔上限按用户选择的面额设置，不设置成固定值——"
+              "用户选 20 元面额却签出 100 元的免密额度，是说不通的。"),
+        ("h", 3, "八、不做什么"),
+        ("p", "本期不做：按日期或按行程预约充值、多张卡共用一份签约、家庭成员代充。"
+              "这三项都需要新的账户模型，不在本期范围。"),
+        ("h", 3, "九、验收意图"),
+        ("p", "· 未实名用户看不到签约入口，也无法通过任何路径完成签约；"),
+        ("p", "· 签约成功后余额低于门限时，用户不做任何操作即可完成充值，并能在记录里看到这笔；"),
+        ("p", "· 扣款连续失败三次后自动停用，用户打开管理页能看到停用状态与失败原因；"),
+        ("p", "· 关闭功能开关后新用户看不到入口，已签约用户的自动充值照常发生；"),
+        ("p", "· 充值记录中的卡号按现有规则脱敏展示。"),
+    ]
+    path = out_dir / "交通卡自动充值.docx"
+    write_docx(path, blocks, {
+        "detail-entry.png": png_topup_detail_entry(),
+        "signup-page.png": png_topup_signup(),
+        "verify-page.png": png_topup_verify(),
+        "manage-page.png": png_topup_manage(),
+        "disabled-state.png": png_topup_disabled(),
+        "signup-page-v0.1.png": png_topup_signup_v01(),
+        "signup-page-small.png": png_topup_signup_small(),
+        "competitor-ref.png": png_topup_competitor(),
+        "ops-console.png": png_topup_ops_console(),
+        "balance-alert.png": png_topup_other_feature(),
+    })
+    return path
+
+
+BUILDERS = {
+    "car-key-sharing": lambda d: [build_car_key_prd(d), build_car_key_accept(d)],
+    "auto-topup": lambda d: [build_auto_topup(d)],
+}
+
+
 def main() -> None:
     target = sys.argv[1] if len(sys.argv) > 1 else "car-key-sharing"
-    if target != "car-key-sharing":
-        raise SystemExit(f"未知目标: {target}")
-    out_dir = CASES / "car-key-sharing" / "supplements"
-    for path in (build_car_key_prd(out_dir), build_car_key_accept(out_dir)):
+    build = BUILDERS.get(target)
+    if build is None:
+        raise SystemExit(f"未知目标: {target}（可选：{'、'.join(BUILDERS)}）")
+    out_dir = CASES / target / "supplements"
+    for path in build(out_dir):
         print(f"[assets] {path} ({path.stat().st_size} bytes)")
 
 

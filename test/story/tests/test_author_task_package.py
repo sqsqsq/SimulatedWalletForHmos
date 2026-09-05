@@ -148,7 +148,8 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("assets/x/one.png", package)
         self.assertIn("签约页", package)
         self.assertIn("assets/x/two.png", package)
-        self.assertIn("要么在讲它的那一章引用", package)
+        self.assertIn("只引正文讲到的", package)
+        self.assertIn("未引用：", package, "用不上的那些要有写理由的去处")
 
 
 class SkeletonLeavesOnlyTheJudgement(WorkspaceCase):
