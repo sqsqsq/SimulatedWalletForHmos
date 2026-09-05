@@ -1,5 +1,5 @@
 ---
-description: 项目级 Framework 接入/升级（config、架构、多 adapter 物化）
+description: 显式选择或调用 framework-init、首次接入 Maison 发布件、创建/补齐/迁移 framework.config，或集成新发布件后刷新 config、adapters 与 materialized artifacts
 argument-hint: <optional-notes>
 ---
 
@@ -7,28 +7,20 @@ argument-hint: <optional-notes>
 
 **用户输入（自由文本）**：$ARGUMENTS
 
+<!-- framework-init-applicability-gate -->
+> **第一执行动作（BLOCKER）**：完整读取 [canonical framework-init Skill](../../framework/skills/project/framework-init/SKILL.md)，先执行其中“适用性”。显式 `/framework-init` 直接进入 canonical Tier_1 readiness→S1，S3 仍须 S2 批准；明确取消只终止尚未完成的 init，不产生 S3/报告。若本命令上下文被错误加载而最新消息并非正向 init 意图，则按 canonical 立即停止、零 init 副作用：不运行 readiness/S1/planner/harness，不生成或复述 init 结果，不询问是否执行 init；普通任务由主 Agent 正常处理。
+> **结果只属于当前 turn**：S4 只证明产生它的那次 S3 run；本 turn 未新建 init run/报告时，不得宣称本轮 init 已完成、复述旧计数或列出旧报告路径。
+
+<!-- adapter-candidates:start -->
+**S2 `init.materialized_adapters` 菜单口径（BLOCKER）**：选项 = S1 `InitTaskPlan.adapter_catalog[]` 原样渲染（`value` / `label` / `portable`；禁止写死成员名）。当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX` 时 portable 编号多选为主；widget 须分页（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略。
+<!-- adapter-candidates:end -->
+
 > 运行身份：codeagent（薄入口，逻辑以 framework SKILL 为准；勿被同名 `.claude/commands/framework-init.md` 误导）
 
 > **BLOCKER — 用户交互**：编排决策须先调 **AskUserQuestion**（registry `init.task_plan` / `init.materialized_adapters` / `init.task_decision`）；**禁止** Q1=y 自由文本。
 > 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
 
 > **BLOCKER — 职责分离**：项目 init 写 `framework.config.json` 与 **materialized_adapters** 物化产物；**个人** active adapter 与 DevEco 由阶段入口 `check-personal-setup.ts --json --ensure` 内联写入 `framework.local.json`（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
-
-## 执行流（4 大步，无小数子步）
-
-<!-- adapter-candidates:start -->
-**S2 `init.materialized_adapters` 菜单口径（BLOCKER）**：选项 = S1 `InitTaskPlan.adapter_catalog[]` 原样渲染（`value` / `label` / `portable`；禁止写死成员名）。当 `adapter_catalog.length` > `CURSOR_ASKQUESTION_MULTISELECT_MAX` 时 portable 编号多选为主（见 user-confirmation-ux §4.1）；widget 须分页（每页 ≤`CURSOR_ASKQUESTION_MULTISELECT_MAX`）或省略。
-<!-- adapter-candidates:end -->
-
-| 步 | 动作 |
-|----|------|
-| **S0 Tier_1** | `cd framework/harness && node scripts/init-readiness.mjs`；`ok=false` 时先 `npm install`（timeout ≥5m，超时后重跑 readiness）；**禁止** npm install 后在同一 shell 再次 `cd framework/harness` |
-| **S1 探测** | readiness `ok=true` 后：`npx ts-node scripts/init-orchestrate.ts --scope project --project-root <repo-root>` → 只读 `InitTaskPlan` JSON |
-| **S2 计划批准** | 渲染任务表 + `init.task_plan`（智能/手动）+ `init.materialized_adapters` 多选（**菜单口径见上 adapter-candidates 段**）；registry 答案即批准记录，不再二次询问“确认后进入 S3？”；仅 CREATE / 手动 / 需 doc payload 时预览 `--emit-staging-template --materialized-adapters <list>` |
-| **S3 执行** | 智能 UPDATE：显式使用 `--smart-auto --materialized-adapters <list>`（不创建外部 staging；CLI 隐式改道仅作兼容容错）；通用：`--execute --decision-file ... --context-file ...` |
-| **S4 摘要** | S3 stdout 即 `buildRunSummary` 摘要（含 `run_log` / `summary`）；通用 staging 路径须清理 OS 临时目录并汇报结果；仅列可选下一步；**S4 已闭环**——禁止再附 `init.task_plan` / `init.materialized_adapters` portable 脚注 |
-
-> **话术约束**：UPDATE 保留磁盘既有 `architecture` / `intra_layer_deps` 时，复述为“沿用已有 architecture DSL”；不要称为 profile 默认 preset，除非 S2 明确选择了某个 preset。
 
 # 跳板文件
 

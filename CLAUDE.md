@@ -10,7 +10,7 @@
 | 项目名 | `SimulatedWalletForHmos` |
 | 项目类型 | `app` |
 | project profile | `hmos-app`（子型：`app`） |
-| Framework 接入方式 | `framework/` 子目录（可能为 git submodule） |
+| Framework 接入方式 | `framework/` 子目录（Maison 发布件 zip 解压集成，非 git submodule） |
 | 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口见 DSL `cross_module_exports_file` |
 
 详细架构说明：[doc/architecture.md](doc/architecture.md)。
@@ -27,6 +27,10 @@
 | ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
 | 阶段规则/校验脚本 | [framework/specs/phase-rules/](framework/specs/phase-rules/) / [framework/harness/scripts/](framework/harness/scripts/) | BLOCKER 级门禁 |
 
+### 2.1 全局设计原则（BLOCKER）
+
+所有阶段遵循 [framework/docs/overview.md §1.2.1](framework/docs/overview.md#121-四条总设计原则) 的“效率优先、简单优先、回退重签、协作可恢复”。在满足用户目标、确定性正确性、安全与数据完整性以及用户明确要求后，使用覆盖当前真实风险的最小验证；不得为过程证据完美、绝对防篡改或假设风险追加无新信息的阶段、模型轮次、工具调用与重复验证。速度与准确度的边界缺少实证时，披露已知缺口并依据真实宿主反馈迭代，不为寻找理论最优先造比较实验或额外机制。
+
 ## 三、红线清单（无论在哪个阶段都必须遵守，BLOCKER 除标注外）
 
 | # | 红线 | 判据一句话 | enforced_by |
@@ -39,9 +43,9 @@
 3. 不允许出现 `any`、硬编码字符串、未定义资源 key、以及在跨模块导出入口文件（由实例 `architecture.cross_module_exports_file` 指定文件名）中遗漏本应导出的符号。 | compile capabilities |
 | 5 | 文档与代码同步 | contracts.yaml/use-cases.yaml 为强契约真源；架构影响声明非 none 才更新架构文档 | plan Step 12 |
 | 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
-| 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | verifier behavior_* |
+| 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | agent-behavioral-principles + Layer 2 量化门禁 |
 | 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
-| 9 | framework 只读 | `framework/` 是 vendored 发布件，不改不新建任何文件（含 untracked 临时脚本）；升级唯一途径 framework-init UPDATE；临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | framework_integrity / framework_foreign_file / PreToolUse hook |
+| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
 
 ## 四、工作流与 Skill 路由
 
@@ -51,11 +55,13 @@
 
 | 档 | 触发 | 管线 | 门禁 |
 |---|---|---|---|
-| L0 direct | 小修小改/文案/单文件 bug | 不进管线，直接改 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
+| L0 direct | 小修小改/文案/单文件 bug；其它无需框架管线的日常任务 | 不进 Skill 管线，直接完成主动作 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
 | L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
 | L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
 
 **一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
+
+**普通请求由主 Agent 负责**：分档与执行都在主 Agent，`framework-init` **不是**全局请求路由、preflight 或 public gate。只有明确的 init 动作（显式选择/调用、首次接入发布件、创建/补齐/迁移 `framework.config.json`、集成新发布件后刷新 config/adapters/物化产物）才进入该 Skill；仅出现 framework、Framework 产物或衍生物名词不构成 init 意图。「先完成 X，再执行 `/framework-init`」由主 Agent 按顺序处理：先完成 X，到明确 init 动作时才调用。
 
 **修正三问**（中途 NL 修正必答，先分层再动手）：
 
@@ -65,9 +71,14 @@
 | Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-`--correction-init` 按上述事实自动路由责任阶段，不再要求人签。只改根因层 SSOT
-产物，再级联重跑落点层及下游已闭环 phase 的脚本门禁——重验 ≠ 重做；用户反馈是 successor/correction
-输入，不是对上一 run 的签名。
+`--correction-init` 按上述事实自动路由责任阶段，不要求人签，也不写状态、没有收口命令。只改根因层 SSOT
+产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]` 让落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口
+（语义 verifier 不重审：材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）
+——重验 ≠ 重做，不重新进入六阶段流程，不重写 spec/plan/review 全文（在相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
+重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；
+导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review
+（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。
+用户反馈是 successor/correction 输入，不是对上一 run 的签名。
 
 ### 4.0.1 阶段 Skill 总表
 
@@ -110,7 +121,7 @@
 
 ## 五、交付凭证与阶段闭环判定
 
-每阶段完成须在 `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环四条件缺一不可**：trace.json 存在 + harness verdict=PASS + verifier verdict=PASS + 完成回执经 `check-receipt.ts` 校验通过；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
+每阶段完成须在 `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环 = harness verdict=PASS + verifier 一次 PASS + `check-receipt.ts` 通过**（trace.json 由 harness 产出；verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标 `completed_with_prior_review`；回执是 harness 只读投影，agent 不手填，备注写 `<phase>/notes.md`；harness 输出末尾的 `NEXT:` 行就是下一步）；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
 
 **跨会话恢复**：新会话/继续 feature 前须先 `check-receipt.ts --feature <feature> --phase <phase>`（或 `harness-runner.ts --sync-closure`）；exit 0 → 已闭环，停等 `phase.next_step`，禁止重跑。清理陈旧状态：`harness-runner.ts --clear-state`。会话边界表/resume 完整机制见 reference。
 

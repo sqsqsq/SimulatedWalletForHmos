@@ -1,22 +1,9 @@
 // ============================================================================
-// p0-semantic-gates.ts — P0 结构化业务状态迁移证明 + skip 治理
-// （goal-fakepass-hardening t4/t5；openspec harness-gates delta）
+// p0-semantic-gates.ts — P0 acceptance coverage + native StepResult reconciliation
+// （testing-stepresult-evidence；openspec harness-gates delta）
 // ============================================================================
-// 事故对位（bc-openCard）：
-//   - TC-006「点银行→直达成功页」在 trace 里"通过"，但验的是 fast path——"有动作+有断言"
-//     级别的规则杀不死它（codex 二轮 P0-1）；必须要求 checkpoint 级状态迁移证据与
-//     linked_flow 中间屏有序出现；
-//   - 18 用例 explicit_skip 11 条（含正好能抓 bug 的 TC-011/017），通过率按已执行子集
-//     100% 判「达标」——P0 skip 必须 fail-closed，双口径强制重算；人工 waiver 无效。
-//
-// 证据层次（诚实边界声明）：
-//   本门禁对账的是【派生 Hylyre 计划的 step 序列】（真机实际执行物，trace outcome 证实
-//   已执行）+ trace case 状态。当前 Hylyre trace 无 step 级运行时观测（页面签名/逐步
-//   layout dump），坐标 touch 的运行时 hit-test 与 forbidden_element 运行时缺席证明
-//   需要 provider 采集扩展——作为显式 deferred 项记录于 change tasks，不假装已覆盖。
-//   即便如此，本层已确定性击杀事故形态：纯 wait 冒充（TC-007/008）、动作不指向
-//   checkpoint 目标元素（TC-006 fast path 的 steps 不含 card_type_sheet 锚点）、
-//   中间屏边无已执行 TC 支撑。
+// CaseResult.execution/verification/evidence 与同一 case 的 steps[] 是唯一执行事实；
+// 计划只提供 checkpoint 义务和 step index，旧 status/报告文本不能洗白缺证据或 explicit skip。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -34,6 +21,23 @@ import {
 } from './derived-hylyre-plan';
 import { extractTables, getSectionContent } from './markdown-parser';
 import type { CheckResult } from './types';
+import type {
+  HylyreEvidenceGateResult,
+  HylyreStepResult,
+  HylyreTrace,
+  HylyreTraceCase,
+} from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import {
+  loadUiSpecFile,
+  uiSpecAbsPath,
+  type UiSpecDoc,
+} from './ui-spec-shared';
+import {
+  buildCanonicalSelectorIndex,
+  canonicalIdsForPlannedStep,
+  normalizePlannedStep,
+  type CanonicalSelectorIndex,
+} from './planned-step-normalizer';
 
 // ----------------------------------------------------------------------------
 // acceptance.yaml 扩展 schema（flows + checkpoint + requirement_ref）
@@ -96,7 +100,7 @@ export function isP0DeviceInteractive(ac: AcceptanceCriterion): boolean {
   return ac.priority === 'P0' && (layer === 'device' || layer === 'both') && Boolean(ac.linked_flow);
 }
 
-function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
+export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
   return Boolean(
     cp &&
       cp.pre_screen &&
@@ -128,6 +132,18 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
   for (const ac of p0) {
     if (!checkpointComplete(ac.checkpoint)) {
       failures.push(`${ac.id}：缺完整结构化 checkpoint（pre_screen/action.target_element_id/post_screen/required_element_ids）`);
+    }
+  }
+
+  // ①' plan 07a41ec6 T2：checkpoint.action.type 必须是可绑定动作——assert_visible 之类不是动作，
+  //    结构上永远绑不到 StepResult；在 spec 期就报，不等跑完真机。
+  for (const ac of p0) {
+    const type = ac.checkpoint?.action?.type;
+    if (typeof type === 'string' && type.trim() && !CHECKPOINT_ACTION_TYPES.has(type.trim().toLowerCase())) {
+      failures.push(
+        `${ac.id}：checkpoint.action.type=${type.trim()} 不是可绑定动作（可用：${[...CHECKPOINT_ACTION_TYPES].join('/')}）；` +
+          'assert_visible 类改为指定触发动作，并把要看见的元素放进 required_element_ids',
+      );
     }
   }
 
@@ -233,7 +249,7 @@ export function evaluateFlowContract(
 }
 
 // ----------------------------------------------------------------------------
-// t4b/t5：check-testing 侧——状态迁移证据 + 中间屏有序链 + skip 治理 + 双口径
+// Native CaseResult/StepResult acceptance reconciliation and denominator gates
 // ----------------------------------------------------------------------------
 
 interface PlanTcEntry {
@@ -264,264 +280,667 @@ export function parsePlanTcEntries(planMd: string): PlanTcEntry[] {
 
 type ParsedStep = Record<string, unknown>;
 
-function stepKind(step: ParsedStep): { kind: string; byId?: string; byText?: string } {
-  const key = Object.keys(step)[0] ?? '';
-  const body = (step[key] ?? {}) as Record<string, unknown>;
-  return {
-    kind: key,
-    byId: typeof body.by_id === 'string' ? body.by_id : undefined,
-    byText: typeof body.by_text === 'string' ? body.by_text : undefined,
-  };
-}
+export const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
+/** acceptance checkpoint.action.type 的可绑定值域（tap/click 是 touch 的 acceptance 侧写法） */
+export const CHECKPOINT_ACTION_TYPES = new Set(['tap', 'touch', 'click', 'input', 'swipe', 'scroll']);
+/** trace 里 selector 为 null 的动作种类：checkpoint 经其后的身份断言（post-state）绑定，不要求 selector 身份 */
+const IDENTITY_FREE_ACTION_KINDS = new Set(['scroll', 'swipe']);
 
-const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
+/**
+ * plan 07a41ec6 T3：身份断言的**精确形状**——{"wait_for"|"wait_gone":{"by_id":<id>,"timeout":N}}。
+ * 不维护 Hylyre 约束键镜像：多任何一个键都不是身份断言（那是 UX 断言，保留但不算身份）。
+ */
+export function isBareIdentityAssertion(step: unknown, kind: 'wait_for' | 'wait_gone', elementId: string): boolean {
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
+  const root = step as Record<string, unknown>;
+  const keys = Object.keys(root);
+  if (keys.length !== 1 || keys[0] !== kind) return false;
+  const body = root[kind];
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const bodyKeys = Object.keys(body as Record<string, unknown>);
+  if (bodyKeys.some(k => k !== 'by_id' && k !== 'timeout')) return false;
+  return (body as Record<string, unknown>).by_id === elementId;
+}
 
 export interface P0GateInputs {
   projectRoot: string;
   feature: string;
   planMd: string;
   reportMd: string;
-  /** trace case 状态（id → 通过/失败/阻塞/跳过）；null=无 trace */
-  traceCaseStatus: Map<string, string> | null;
+  /** Native trace is the only accepted execution evidence for production P0 gates. */
+  trace?: HylyreTrace | null;
+  /** T4 gate decision produced from the same final trace/ready/manifest chain. */
+  evidenceGate?: HylyreEvidenceGateResult | null;
+  /** Authoritative derived plan bound to this trace; never fall back to a newer plan. */
+  derivedPlanPath?: string | null;
   /** 报告结论声明（parseReportConclusionVerdict 输出） */
   reportConclusion: string | null;
+  /** plan 07a41ec6 T2：静态三态判定出的 unsupported_gap TC——留在分母、不算 PASS/FAIL、不阻止完成 */
+  unsupportedGapTcIds?: readonly string[];
   now?: () => Date;
 }
 
+interface NativeCaseEvaluation {
+  caseId: string;
+  passed: boolean;
+  reasons: string[];
+  acIds: string[];
+}
+
+interface NativeP0Evaluation {
+  p0Entries: PlanTcEntry[];
+  passedCaseIds: string[];
+  skippedCaseIds: string[];
+  explicitSkipCaseIds: string[];
+  traceSkipCaseIds: string[];
+  unexecutedCaseIds: string[];
+  caseEvaluations: NativeCaseEvaluation[];
+  acceptedAcIds: Set<string>;
+  acFailures: string[];
+  /** unsupported_gap 的 P0 TC（留分母） */
+  gapCaseIds: string[];
+  /** 只被 gap TC 引用、因此本轮无法验证的 P0 AC */
+  gapAcIds: string[];
+  gateFailure?: string;
+}
+
+function canonicalIdsForStep(
+  step: ParsedStep,
+  index: CanonicalSelectorIndex,
+  screenId?: string,
+): string[] {
+  return canonicalIdsForPlannedStep(normalizePlannedStep(step), index, screenId);
+}
+
+function nativeStep(step: unknown): HylyreStepResult | null {
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return null;
+  return step as HylyreStepResult;
+}
+
+// plan a6c4e9f2 T4 返修：以下三个 helper 原来读的是 0.3 flat 字段
+// （`step.status` / `step.evidence` / `selector.candidate_count` / `selector.selected_id`）。
+// v1 把成败与观测收进 `outcome`、把选择器事实收进 `selector.resolution`，
+// 旧读法在真实 v1 上一律取到 undefined——门禁会静默失去判据，而不是报错。
+
+function selectorCandidateCount(step: HylyreStepResult): number | null {
+  const count = step.selector?.resolution?.candidate_count;
+  return Number.isInteger(count) ? (count as number) : null;
+}
+
+/** v1 的断言观测：只在 `passed` 上存在，且必须是 assertion 面。 */
+function assertionObservation(step: HylyreStepResult): Record<string, unknown> | null {
+  if (step.outcome?.status !== 'passed') return null;
+  const observation = step.outcome.observation as unknown as Record<string, unknown> | undefined;
+  if (!observation || observation.kind !== 'assertion') return null;
+  return observation;
+}
+
+function observationFacts(step: HylyreStepResult): Record<string, unknown> | null {
+  const facts = assertionObservation(step)?.facts;
+  return facts && typeof facts === 'object' && !Array.isArray(facts)
+    ? (facts as Record<string, unknown>)
+    : null;
+}
+
 /**
- * t5→c7e4a2d9：P0 覆盖 fail-closed。skip/未执行的 P0 一律 BLOCKER；缺口
- * **全部属于既有 explicit_skip_tc_ids 登记**时才复用既有
- * failure_kind=code_regression + actionability=agent_fixable（默认回 coding 恢复可测性/
- * 修复产品缺陷——不降低验收标准，修复不是授权行为）；status 为空或未经登记的 trace skip
- * 不产 coding 候选（留在 testing 补执行/派生事实）；外部条件仍由既有 envBlocked/DEFERRED
- * 优先处置，不伪装 explicit skip；任何 P0 skip 存在时报告结论不得
- * 无条件「达标」；双口径（全分母执行覆盖率+通过率）写入 details，与"已执行子集 100%"话术对账。
+ * 身份护栏（plan §139/§346、spec「Identity guardrail」）：**P0 checkpoint 的
+ * required/forbidden 身份证据必须由 `by_id` 断言承载**。`required_element_ids` 是 id，
+ * 一次成功的 `by_text` 观测不构成 id 身份证明。
+ *
+ * 不加这层会留两个真实缺口：
+ *   - `by_text` + `unique` + `selected.id` 恰好等于目标 id → 闭合 required；
+ *   - `by_text` + `not_found` → 闭合 forbidden（"某段文字没找到"不等于"某个 id 不在场"）。
+ *
+ * 注意作用域：这条限定只属于 **P0 身份覆盖** 这条路径。冻结契约与 spec 明确禁止把
+ * **运行时 selector 门**写成按 `request.kind` 的固定旁路——那里语义随执行路径走
+ * （native by_text 合法地产出 not_attempted）。两者不是同一道门，不要互相搬。
  */
-export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
+function requestProvesIdentity(step: HylyreStepResult, targetId: string): boolean {
+  const request = step.selector?.request;
+  if (!request) return false;
+  if (request.kind !== 'by_id') return false;
+  return typeof request.value === 'string' && request.value === targetId;
+}
+
+function selectorEvidenceMatches(
+  step: HylyreStepResult,
+  targetId: string,
+  absence: boolean,
+  plannedSelector?: ReturnType<typeof normalizePlannedStep>['selector'],
+  canonicalIds: string[] = [],
+): boolean {
+  const resolution = step.selector?.resolution;
+  if (!resolution) return false;
+  // 请求面先过身份护栏：请求的不是这个 id，解析结果再漂亮也不构成该 id 的身份证据。
+  if (!requestProvesIdentity(step, targetId)) return false;
+  const selectedId = resolution.selected?.id ?? null;
+  // absence 的正例是 resolver 确认零候选（v1 的 not_found），不是"没解析过"。
+  if (absence) return resolution.candidate_count === 0 && selectedId === null;
+  if (selectedId !== targetId) return false;
+  // plan a6c4e9f2 T4 返修：0.3 时代这里还有一条"candidate_count>1 但已由
+  // index/scope/within/all 消歧、且带 bounds"的放行分支。冻结契约 §6.1 明确
+  // **Schema 直接拒绝 `candidate_count>1` + 非空 `selected`**——该分支在合法 v1 上
+  // 永不可达，留着只会让人以为那种形态可接受。v1 里消歧表达在
+  // `request.constraints.index`，resolver 应用谓词后回 `unique`/count=1。
+  return resolution.candidate_count === 1;
+}
+
+function assertionEvidenceMatches(
+  step: HylyreStepResult,
+  targetId: string,
+  absence: boolean,
+  plannedSelector?: ReturnType<typeof normalizePlannedStep>['selector'],
+  canonicalIds: string[] = [],
+): boolean {
+  if (step.role !== 'assertion' || step.outcome?.status !== 'passed') return false;
+  const observation = assertionObservation(step);
+  const facts = observationFacts(step);
+  if (!observation || !facts) return false;
+  if (absence) {
+    if (observation.assertion_type !== 'absence' || facts.observed_present !== false) return false;
+    const count = typeof facts.candidate_count === 'number' ? facts.candidate_count : selectorCandidateCount(step);
+    return count === 0 && selectorEvidenceMatches(step, targetId, true, plannedSelector, canonicalIds);
+  }
+  if (observation.assertion_type !== 'presence' || facts.observed_present !== true) return false;
+  const count = typeof facts.candidate_count === 'number' ? facts.candidate_count : selectorCandidateCount(step);
+  return count !== null && count > 0 && selectorEvidenceMatches(step, targetId, false, plannedSelector, canonicalIds);
+}
+
+function isAssertionPlanKind(kind: string): boolean {
+  return kind === 'wait_for' || kind === 'wait_gone' || kind === 'assert_toast';
+}
+
+/**
+ * plan a6c4e9f2 D1（T4 返修 2026-09-02）：计划步骤 → checkpoint 元素的**绑定**是开放世界的。
+ *
+ * `by_id` 是字面身份——计划写的就是这个 id，feature ui-spec 有没有登记它与"绑得上绑不上"
+ * 无关：feature ui-spec 只建模本 feature 触碰的页面，既有入口天然缺席。此前这里只经
+ * `canonicalIdsForPlannedStep` 绑定，等于把 ui-spec 当封闭白名单——宿主 T8 的 AC-1/10/14
+ * 正是这样被判成"计划中无 canonical action"，还被归咎为宿主 spec 没建模 ui-spec。
+ *
+ * 只有 `by_text` 没有字面身份，才需要借 ui-spec 的 canonical 文本映射（保留 screen 限定
+ * 与 ui-spec 已证明的歧义）。这里只回答"计划里哪一步在说这个 id"；身份是否成立另由
+ * selectorEvidenceMatches 用 native resolution 证明，两层不要互相搬。
+ */
+export function plannedStepBindsTarget(
+  info: ReturnType<typeof normalizePlannedStep>,
+  targetId: string,
+  canonical: CanonicalSelectorIndex | null,
+  screenId?: string,
+): boolean {
+  const selector = info.selector;
+  if (!selector) return false;
+  if (selector.kind === 'by_id') return selector.value === targetId;
+  if (selector.kind === 'by_text') return canonical ? canonicalIdsForPlannedStep(info, canonical, screenId).includes(targetId) : false;
+  return false;
+}
+
+/** 绑定 checkpoint 元素的全部 action 候选；多个 step 可以是同一流程中的合法重复触发。 */
+export function findActionStepCandidates(
+  steps: ParsedStep[],
+  targetId: string,
+  canonical: CanonicalSelectorIndex | null,
+  screenId?: string,
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < steps.length; i += 1) {
+    const info = normalizePlannedStep(steps[i], i);
+    if (!ACTION_KINDS.has(info.kind)) continue;
+    if (plannedStepBindsTarget(info, targetId, canonical, screenId)) out.push(i);
+  }
+  return out;
+}
+
+/** 注入与消费共用触发区间；目标自身不唯一才是歧义，重复触发不是歧义。 */
+export function resolveCheckpointActionWindows(
+  steps: ParsedStep[],
+  targetId: string,
+  canonical: CanonicalSelectorIndex | null,
+  screenId?: string,
+): { windows: Array<{ actionIndex: number; endIndex: number }>; ambiguousSteps: number[] } {
+  const candidates = findActionStepCandidates(steps, targetId, canonical, screenId);
+  const ambiguousSteps = candidates.filter(i => {
+    const info = normalizePlannedStep(steps[i], i);
+    return info.selector?.kind === 'by_text' && canonical !== null &&
+      canonicalIdsForPlannedStep(info, canonical, screenId).length !== 1;
+  });
+  const windows = candidates.map((actionIndex, n) => {
+    let endIndex = candidates[n + 1] ?? steps.length;
+    for (let i = actionIndex + 1; i < endIndex; i += 1) {
+      if (['back', 'home', 'stop_app', 'start_app', 'clear_app'].includes(normalizePlannedStep(steps[i], i).kind)) {
+        endIndex = i;
+        break;
+      }
+    }
+    return { actionIndex, endIndex };
+  });
+  return { windows, ambiguousSteps };
+}
+
+function findPlannedStepIndex(
+  steps: ParsedStep[],
+  targetId: string,
+  canonical: CanonicalSelectorIndex,
+  screenId: string | undefined,
+  afterIndex: number,
+  absence: boolean,
+  endIndex: number,
+): number | null {
+  for (let i = Math.max(0, afterIndex + 1); i < endIndex; i += 1) {
+    const info = normalizePlannedStep(steps[i], i);
+    if (!isAssertionPlanKind(info.kind)) continue;
+    if (absence !== (info.kind === 'wait_gone')) continue;
+    if (isBareIdentityAssertion(steps[i], absence ? 'wait_gone' : 'wait_for', targetId)) return i;
+    // UX 谓词断言不是身份；by_text 抢先仍按既有 STEP-BYTEXT-ORDER 判无效，不能冒充裸 by_id。
+    if (info.selector?.kind === 'by_text' && plannedStepBindsTarget(info, targetId, canonical, screenId)) return i;
+  }
+  return null;
+}
+
+function evaluateNativeCase(
+  traceCase: HylyreTraceCase | undefined,
+  acs: AcceptanceCriterion[],
+  derivedSteps: ParsedStep[],
+  canonical: CanonicalSelectorIndex,
+  plannedCaseId?: string,
+): NativeCaseEvaluation {
+  // plan 07a41ec6 T2：未执行的 case 也要按计划 id 点名，诊断不得只剩 "(missing)"
+  const caseId = traceCase?.id?.toUpperCase() ?? plannedCaseId?.toUpperCase() ?? '(missing)';
+  const reasons: string[] = [];
+  if (!traceCase) return { caseId, passed: false, reasons: ['trace 无该 CaseResult，未执行 case 不得凭计划状态通过'], acIds: acs.map(ac => ac.id) };
+  if (traceCase.execution !== 'completed') reasons.push(`execution=${String(traceCase.execution)}`);
+  if (traceCase.verification !== 'passed') reasons.push(`verification=${String(traceCase.verification)}`);
+  if (traceCase.evidence !== 'complete') reasons.push(`evidence=${String(traceCase.evidence)}`);
+  if (!Array.isArray(traceCase.steps) || traceCase.steps.length === 0) reasons.push('CaseResult.steps[] 缺失或为空');
+  const nativeSteps = Array.isArray(traceCase.steps) ? traceCase.steps.map(nativeStep) : [];
+  if (traceCase.expected_check_mode === 'checked_vlm') {
+    const expected = nativeSteps.find(step => step?.kind === 'expected_check');
+    if (
+      !expected || expected.role !== 'assertion' ||
+      expected.outcome?.status !== 'passed' || !assertionObservation(expected)
+    ) {
+      reasons.push('expected_check_mode=checked_vlm 但 expected_check StepResult 未通过/缺证据');
+    }
+  }
+
+  for (const ac of acs) {
+    const cp = ac.checkpoint;
+    if (!checkpointComplete(cp)) {
+      reasons.push(`${ac.id} checkpoint 不完整`);
+      continue;
+    }
+    const { windows, ambiguousSteps } = resolveCheckpointActionWindows(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
+    if (windows.length === 0) {
+      reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）——改法：在该 TC 补一步 touch/input/swipe/scroll 触发动作，或修正 checkpoint.action.target_element_id`);
+      continue;
+    }
+    if (ambiguousSteps.length > 0) {
+      reasons.push(`${caseId} ${ac.id} 候选 action step ${ambiguousSteps.join(', ')} 的 by_text 对应多个目标，缺唯一 selector 绑定；补 by_id 或现有 scope/index 消歧，保留全部导航动作`);
+      continue;
+    }
+    for (const { actionIndex, endIndex } of windows) {
+      const action = nativeSteps[actionIndex];
+      const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
+      const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
+      // plan 07a41ec6 T2：scroll/swipe 在 trace 里 selector 为 null——按步骤种类与顺序定位后经其后的
+      // 身份断言（post-state）绑定，不要求 selector 身份；真实用户动作是 scroll 就保留 scroll，不改 touch。
+      const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
+      const actionOk = Boolean(
+        action && action.index === actionIndex && action.kind === actionPlan.kind && action.role === 'action' && action.outcome?.status === 'passed' &&
+        (identityFree || selectorEvidenceMatches(action, cp!.action!.target_element_id!, false, actionPlan.selector, actionCanonicalIds)),
+      );
+      if (!actionOk) {
+        reasons.push(
+          `${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过` +
+            (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${cp!.action!.target_element_id}）`),
+        );
+      }
+      for (const elementId of cp!.required_element_ids ?? []) {
+        const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, false, endIndex);
+        const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
+        const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
+        const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical, cp!.post_screen!);
+        if (
+          plannedIndex === null ||
+          !isBareIdentityAssertion(derivedSteps[plannedIndex], 'wait_for', elementId) ||
+          !step ||
+          step.index !== plannedIndex ||
+          step.kind !== 'wait_for' ||
+          !assertionEvidenceMatches(step, elementId, false, planned?.selector, canonicalIds)
+        ) {
+          reasons.push(
+            plannedIndex === null
+              ? `${ac.id} action step ${actionIndex} 后、step ${endIndex} 前 required=${elementId}：计划中无裸 by_id 身份断言（期望形状 {"wait_for":{"by_id":"${elementId}","timeout":N}}，不得借用其它触发区间的证据；UX 谓词断言保留）`
+              : `${ac.id} required=${elementId}：step ${plannedIndex} 的 presence StepResult 未通过或身份不匹配（request.kind 须为 by_id 且 selected.id=${elementId}）`,
+          );
+        }
+      }
+      // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
+      // 才能证明它不在场，自相矛盾（宿主 AC-3 的 forbidden 只属 pre_screen）。by_id 字面绑定后
+      // 限屏本就无意义；by_text 用不限屏的 canonical 映射。
+      for (const elementId of cp!.forbidden_element_ids ?? []) {
+        const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, undefined, actionIndex, true, endIndex);
+        const step = plannedIndex === null ? null : nativeSteps[plannedIndex];
+        const planned = plannedIndex === null ? null : normalizePlannedStep(derivedSteps[plannedIndex], plannedIndex);
+        const canonicalIds = plannedIndex === null ? [] : canonicalIdsForStep(derivedSteps[plannedIndex], canonical);
+        if (
+          plannedIndex === null ||
+          !isBareIdentityAssertion(derivedSteps[plannedIndex], 'wait_gone', elementId) ||
+          !step ||
+          step.index !== plannedIndex ||
+          step.kind !== 'wait_gone' ||
+          !assertionEvidenceMatches(step, elementId, true, planned?.selector, canonicalIds)
+        ) {
+          reasons.push(
+            plannedIndex === null
+              ? `${ac.id} action step ${actionIndex} 后、step ${endIndex} 前 forbidden=${elementId}：计划中无裸 by_id 缺席断言（期望形状 {"wait_gone":{"by_id":"${elementId}","timeout":N}}，不得借用其它触发区间的证据）`
+              : `${ac.id} forbidden=${elementId}：step ${plannedIndex} 的 absence StepResult 未通过或身份不匹配（request.kind 须为 by_id，candidate_count=0）`,
+          );
+        }
+      }
+    }
+  }
+  return { caseId, passed: reasons.length === 0 && acs.length > 0, reasons, acIds: acs.map(ac => ac.id) };
+}
+
+function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
+  const p0Entries = parsePlanTcEntries(inp.planMd).filter(entry => entry.priority.toUpperCase() === 'P0');
+  const gate = inp.evidenceGate;
+  if (!gate?.native) {
+    const reason = gate?.reasons.join('；') || '缺少 native Hylyre evidence gate 结果';
+    return {
+      p0Entries,
+      passedCaseIds: [],
+      skippedCaseIds: p0Entries.map(entry => entry.id),
+      explicitSkipCaseIds: [],
+      traceSkipCaseIds: [],
+      unexecutedCaseIds: p0Entries.map(entry => entry.id),
+      caseEvaluations: [],
+      acceptedAcIds: new Set(),
+      acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
+      gateFailure: `native evidence 未启用：${reason}；legacy case status 不得贡献 verification=passed`,
+    };
+  }
+  const trace = inp.trace;
+  if (!trace) {
+    return {
+      p0Entries,
+      passedCaseIds: [],
+      skippedCaseIds: p0Entries.map(entry => entry.id),
+      explicitSkipCaseIds: [],
+      traceSkipCaseIds: [],
+      unexecutedCaseIds: p0Entries.map(entry => entry.id),
+      caseEvaluations: [],
+      acceptedAcIds: new Set(),
+      acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
+      gateFailure: 'authoritative trace 缺失，无法消费 CaseResult.steps[]',
+    };
+  }
+  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature);
+  const p0Acs = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
+  const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
+  const selected = inp.derivedPlanPath
+    ? fs.existsSync(inp.derivedPlanPath)
+      ? { hylyrePath: inp.derivedPlanPath, content: fs.readFileSync(inp.derivedPlanPath, 'utf-8') }
+      : null
+    : (() => {
+        const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
+        return pick.selected ? { hylyrePath: pick.selected.hylyrePath, content: pick.selected.content } : null;
+      })();
+  if (!selected) {
+    return {
+      p0Entries,
+      passedCaseIds: [],
+      skippedCaseIds: p0Entries.map(entry => entry.id),
+      explicitSkipCaseIds: [],
+      traceSkipCaseIds: [],
+      unexecutedCaseIds: p0Entries.map(entry => entry.id),
+      caseEvaluations: [],
+      acceptedAcIds: new Set(),
+      acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
+      gateFailure: '无 authoritative 派生 Hylyre 计划，无法按 step index 对账',
+    };
+  }
+  const selectorDoc = loadUiSpecFile(uiSpecAbsPath(inp.projectRoot, inp.feature));
+  if (!selectorDoc) {
+    return {
+      p0Entries,
+      passedCaseIds: [],
+      skippedCaseIds: p0Entries.map(entry => entry.id),
+      explicitSkipCaseIds: [],
+      traceSkipCaseIds: [],
+      unexecutedCaseIds: p0Entries.map(entry => entry.id),
+      caseEvaluations: [],
+      acceptedAcIds: new Set(),
+      acFailures: [],
+      gapCaseIds: [],
+      gapAcIds: [],
+      gateFailure: 'canonical ui-spec 不可解析，required/forbidden selector 映射拒绝通过',
+    };
+  }
+  const canonical = buildCanonicalSelectorIndex(selectorDoc);
+  const explicitSkips = new Set(loadExplicitSkipTcIds(selected.hylyrePath, selected.content));
+  const derivedByTc = new Map<string, ParsedStep[]>();
+  for (const row of extractDerivedPlanCases(selected.content)) {
+    const parsed = parsePlannedStepsFromCell(row.steps_raw);
+    derivedByTc.set(row.tc_id.toUpperCase(), parsed.ok ? parsed.steps : []);
+  }
+  const traceByTc = new Map((trace.cases ?? []).map(row => [row.id.toUpperCase(), row]));
+  const evaluations: NativeCaseEvaluation[] = [];
+  const passedCaseIds: string[] = [];
+  const skippedCaseIds: string[] = [];
+  const explicitSkipCaseIds: string[] = [];
+  const traceSkipCaseIds: string[] = [];
+  const unexecutedCaseIds: string[] = [];
+  const acceptedAcIds = new Set<string>();
+  // plan 07a41ec6 T2：unsupported_gap 的 P0 TC 不进 pass/fail 评估，但留在分母（五数口径）
+  const gapSet = new Set((inp.unsupportedGapTcIds ?? []).map(id => id.toUpperCase()));
+  const gapCaseIds: string[] = [];
+  for (const entry of p0Entries) {
+    if (gapSet.has(entry.id.toUpperCase())) {
+      gapCaseIds.push(entry.id);
+      continue;
+    }
+    const acs = p0Acs.filter(ac => entry.acRefs.includes(ac.id));
+    const traceCase = traceByTc.get(entry.id);
+    const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical, entry.id);
+    evaluations.push(evaluation);
+    if (evaluation.passed) {
+      passedCaseIds.push(entry.id);
+      for (const acId of evaluation.acIds) acceptedAcIds.add(acId);
+    } else {
+      skippedCaseIds.push(entry.id);
+      if (explicitSkips.has(entry.id) && (!traceCase || !Array.isArray(traceCase.steps) || traceCase.steps.length === 0)) {
+        explicitSkipCaseIds.push(entry.id);
+      } else if (traceCase?.status === '跳过') {
+        traceSkipCaseIds.push(entry.id);
+      } else if (!traceCase) {
+        unexecutedCaseIds.push(entry.id);
+      }
+    }
+  }
+  const gapAcIds = p0Acs
+    .filter(ac => !acceptedAcIds.has(ac.id))
+    .filter(ac => {
+      const refs = p0Entries.filter(entry => entry.acRefs.includes(ac.id));
+      return refs.length > 0 && refs.every(entry => gapSet.has(entry.id.toUpperCase()));
+    })
+    .map(ac => ac.id);
+  const gapAcSet = new Set(gapAcIds);
+  const acFailures = p0Acs
+    .filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id))
+    .map(ac => {
+      const related = evaluations.filter(e => e.acIds.includes(ac.id));
+      const reason = related.flatMap(e => e.reasons).slice(0, 3).join('；') || '无通过的 StepResult 证据';
+      return `${ac.id}：${reason}`;
+    });
+  return {
+    p0Entries,
+    passedCaseIds,
+    skippedCaseIds,
+    explicitSkipCaseIds,
+    traceSkipCaseIds,
+    unexecutedCaseIds,
+    caseEvaluations: evaluations,
+    acceptedAcIds,
+    acFailures,
+    gapCaseIds,
+    gapAcIds,
+  };
+}
+
+function nativeGateFailureResult(
+  id: string,
+  description: string,
+  evaluation: NativeP0Evaluation,
+): CheckResult {
+  return {
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: evaluation.gateFailure ?? 'native StepResult acceptance 对账未通过',
+    suggestion: '升级/核验 Hylyre 0.5.0 + trace schema 0.4-p0 + hylyre.step-outcome/1 后重跑；不得用旧 case status 或报告散文补证据。',
+  };
+}
+
+function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_coverage_integrity';
-  const description = 'P0 用例覆盖 fail-closed（skip 不可豁免；双口径重算；达标结论对账）';
-  const entries = parsePlanTcEntries(inp.planMd);
-  const p0 = entries.filter((e) => e.priority.toUpperCase() === 'P0');
-  if (p0.length === 0) {
+  const description = 'P0 用例覆盖（CaseResult 三轴 + StepResult required/forbidden 对账）';
+  const evaluation = evaluateNativeP0(inp);
+  if (evaluation.p0Entries.length === 0) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '计划无 P0 用例（或表格无法解析）。' }];
   }
-
-  const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
-  const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
-  const explicitSkips = new Set(
-    pick.selected ? loadExplicitSkipTcIds(pick.selected.hylyrePath, pick.selected.content) : [],
-  );
-
-  const status = (tc: string): string => inp.traceCaseStatus?.get(tc) ?? '';
-  const executedPassed = p0.filter((e) => status(e.id) === '通过');
-  // 三组分别计算（c7e4a2d9）：explicit skip（既有 explicit_skip_tc_ids 登记）/
-  // trace 明确 skip（未经登记的「跳过」）/ status 为空（未执行且无任何登记）。
-  const skipped = p0.filter((e) => explicitSkips.has(e.id) || status(e.id) === '跳过' || status(e.id) === '');
-  const isExplicit = (tc: string): boolean => explicitSkips.has(tc);
-
-  const unexecutedExplicit: string[] = [];
-  const unexecutedTraceOrEmpty: string[] = [];
-  for (const e of skipped) {
-    (isExplicit(e.id) ? unexecutedExplicit : unexecutedTraceOrEmpty).push(e.id);
+  if (evaluation.gateFailure) {
+    return [
+      nativeGateFailureResult(id, description, evaluation),
+      {
+        id: 'p0_pass_rate_dual_metrics',
+        category: 'structure',
+        description: 'P0 通过率与全分母对账',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: 'native evidence gate 未通过，不能计算或宣称 P0 acceptance 通过率。',
+        suggestion: '先补齐同一最终 run 的 native CaseResult/StepResult 证据。',
+      },
+    ];
   }
-
-  const coverage = `${executedPassed.length}/${p0.length}`;
-  const dual = `全分母口径：P0 执行通过 ${coverage}（覆盖率 ${Math.round((executedPassed.length / p0.length) * 100)}%），skip ${skipped.length}`;
-
-  const results: CheckResult[] = [];
-  if (unexecutedExplicit.length > 0 || unexecutedTraceOrEmpty.length > 0) {
-    const explicitOnly = unexecutedTraceOrEmpty.length === 0;
-    const items = [...unexecutedExplicit, ...unexecutedTraceOrEmpty];
-    const fail: CheckResult = {
-      id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'FAIL',
-      details:
-        `P0 用例被跳过/未执行（${items.length}）：${items.slice(0, 10).join('、')}${items.length > 10 ? '…' : ''}。\n${dual}。\n` +
-        (explicitOnly
-          ? '全部缺口均属既有 explicit_skip_tc_ids 登记——仓内需恢复可执行性的缺陷（code_regression），' +
-            '默认回 coding 修复最小可测性/产品缺陷并重测；人工 waiver 不能降低 P0 标准。'
-          : '含 status 为空或未经 explicit_skip_tc_ids 登记的 trace skip——留在 testing 恢复执行/派生计划；' +
-            '外部环境阻塞走既有 DEFERRED；人工 waiver 不能改写执行事实。'),
-      suggestion: explicitOnly
-        ? '不降低验收标准的修复不是授权行为：回 coding 恢复可测性/修复缺陷后重跑；同指纹无进展由既有熔断收口。'
-        : '在 testing 补 P0 执行或派生事实后重跑；外部阻塞按 DEFERRED 登记。',
-    };
-    if (explicitOnly) {
-      // c7e4a2d9：未豁免缺口全为 explicit skip → 复用既有 code_regression（agent_fixable），
-      // testing summary writer 据此产普通 RepairCandidate(category=coding)，不注册整个 check。
-      fail.failure_kind = 'code_regression';
-      fail.actionability = 'agent_fixable';
-    }
-    results.push(fail);
-  } else {
-    results.push({
-      id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'PASS',
-      details: `${dual}。P0 全量执行通过。`,
-    });
-  }
-
-  // 达标结论对账：存在任何 P0 skip（含 waived）时不得无条件「达标」
-  if (skipped.length > 0 && inp.reportConclusion === '达标') {
+  // plan 07a41ec6 T2：五数口径——gap 留在原始总分母、不算 PASS、不算 FAIL（codex 二轮 review）
+  const total = evaluation.p0Entries.length;
+  const verifiedPass = evaluation.passedCaseIds.length;
+  const gapCount = evaluation.gapCaseIds.length;
+  const failed = total - verifiedPass - gapCount;
+  const coveragePct = Math.round((verifiedPass / total) * 1000) / 10;
+  const rate = `P0 total ${total} / verified_pass ${verifiedPass} / unsupported_gap ${gapCount} / failed ${failed} / verified_coverage ${coveragePct}%`;
+  const structured = {
+    p0_total: total,
+    verified_pass: verifiedPass,
+    unsupported_gap: gapCount,
+    failed,
+    verified_coverage: coveragePct,
+    gap_case_ids: evaluation.gapCaseIds,
+    gap_ac_ids: evaluation.gapAcIds,
+  };
+  const failedEvaluations = evaluation.caseEvaluations.filter(item => !item.passed);
+  const result: CheckResult = {
+    id,
+    category: 'structure',
+    description,
+    severity: 'BLOCKER',
+    status: failed === 0 ? 'PASS' : 'FAIL',
+    structured,
+    details: [
+      rate,
+      gapCount > 0
+        ? `unsupported_gap ${gapCount} 条（留在分母、不算 PASS、不阻止普通开发完成；报告与 completion_status 须披露 COMPLETE_WITH_P0_GAPS）：${evaluation.gapCaseIds.join(', ')}`
+        : null,
+      failed > 0
+        ? `缺口分类：explicit skip ${evaluation.explicitSkipCaseIds.length}，trace skip ${evaluation.traceSkipCaseIds.length}，无执行记录 ${evaluation.unexecutedCaseIds.length}，执行了但证据不足 ${failed - evaluation.explicitSkipCaseIds.length - evaluation.traceSkipCaseIds.length - evaluation.unexecutedCaseIds.length}`
+        : null,
+      ...failedEvaluations.slice(0, 10).map(item => `  - ${item.caseId}：${item.reasons.slice(0, 3).join('；') || '无完整 acceptance evidence'}`),
+    ].filter((line): line is string => typeof line === 'string').join('\n'),
+    suggestion: failed === 0
+      ? (gapCount > 0
+          ? '已验证的 P0 全部通过；unsupported_gap 按缺口类别登记在报告结论，completion_status 为 COMPLETE_WITH_P0_GAPS，不阻止完成。'
+          : '继续由当前 authoritative trace 驱动 report/summary/quality axes。')
+      : '逐条按上面 TC/step 的原因处理：缺身份断言→重跑 harness 让注入生效或补触发动作；StepResult 未通过→修产品或修计划；未执行→补跑该 TC。explicit skip 留在 testing，零自动 coding。',
+  };
+  const results: CheckResult[] = [result];
+  if (failed > 0 && inp.reportConclusion === '达标') {
     results.push({
       id: 'p0_pass_rate_dual_metrics',
       category: 'structure',
-      description: '通过率双口径对账（skip 计入分母；结论不得以已执行子集冒充全量）',
-      severity: 'BLOCKER', status: 'FAIL',
-      details:
-        `报告结论声明「达标」，但 ${dual}——已执行子集通过率不构成全量达标` +
-        '（bc-openCard：7/7=100% 冒充 18 条全量）。结论应为「有条件达标」并列示全分母双口径。',
+      description: 'P0 通过率与全分母对账',
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details: `报告声明「达标」，但 native evidence 五数口径为 ${rate}，不得以旧 case status 或已执行子集冒充全量。`,
+      suggestion: '将报告结论改为真实状态并补齐未覆盖的 native StepResult evidence。',
     });
   } else {
     results.push({
       id: 'p0_pass_rate_dual_metrics',
       category: 'structure',
-      description: '通过率双口径对账（skip 计入分母；结论不得以已执行子集冒充全量）',
-      severity: 'BLOCKER', status: 'PASS',
-      details: dual,
+      description: 'P0 通过率与全分母对账',
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details: `native evidence 五数口径：${rate}。`,
     });
   }
   return results;
 }
 
-/**
- * t4b：P0 状态迁移证据（对账派生计划 step 序列——真机实际执行物）：
- *   ①映射完整：每个 P0 交互 AC → ≥1 计划 TC（ac_refs）；
- *   ②纯 wait 冒充：已执行 P0 TC（映射交互 AC）步序无任何动作 step → FAIL；
- *   ③动作指向：checkpoint.action.target_element_id 必须出现在某动作 step 的 by_id；
- *   ④后置断言：目标动作之后存在 wait_for/assert 且 by_id ∈ required_element_ids；
- *   ⑤中间屏有序链：flow 每条边须有 ≥1 已执行且通过的 owning TC（缺中间屏证据=事故死刑条款）。
- */
+/** P0 coverage is always computed from the authoritative native trace. */
+export function evaluateP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
+  return evaluateNativeP0CoverageIntegrity(inp);
+}
+
+/** P0 acceptance coverage is keyed by plan obligations and same-index StepResults. */
 export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_semantic_coverage_integrity';
-  const description = 'P0 结构化状态迁移证据（checkpoint 对账派生计划 step 序列 + 中间屏有序链）';
-  const doc = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature);
-  const p0Acs = (doc?.criteria ?? []).filter(isP0DeviceInteractive);
-  if (!doc || p0Acs.length === 0) {
-    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device 交互 AC（或 acceptance 不可解析）。' }];
+  const description = 'P0 acceptance coverage（计划要求 × CaseResult.steps[] 实际证据）';
+  const evaluation = evaluateNativeP0(inp);
+  if (evaluation.p0Entries.length === 0) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow 或 P0 测试用例。' }];
   }
-
-  const planEntries = parsePlanTcEntries(inp.planMd);
-  const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
-  const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
-  if (!pick.selected) {
-    return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'FAIL', details: '无有效派生 Hylyre 计划——P0 状态迁移证据无从对账。' }];
-  }
-  const derivedCases = extractDerivedPlanCases(pick.selected.content);
-  const explicitSkips = new Set(loadExplicitSkipTcIds(pick.selected.hylyrePath, pick.selected.content));
-  const stepsByTc = new Map<string, ParsedStep[]>();
-  for (const row of derivedCases) {
-    const parsed = parsePlannedStepsFromCell(row.steps_raw);
-    stepsByTc.set(row.tc_id.toUpperCase(), parsed.ok ? parsed.steps : []);
-  }
-  const passedTc = (tc: string): boolean => (inp.traceCaseStatus?.get(tc) ?? '') === '通过';
-  const executedTcFor = (acId: string): string[] =>
-    planEntries
-      .filter((e) => e.acRefs.includes(acId))
-      .map((e) => e.id)
-      .filter((tc) => stepsByTc.has(tc) && !explicitSkips.has(tc));
-
-  const failures: string[] = [];
-  const acEvidenceOk = new Map<string, boolean>();
-
-  for (const ac of p0Acs) {
-    const mapped = planEntries.filter((e) => e.acRefs.includes(ac.id));
-    if (mapped.length === 0) {
-      failures.push(`${ac.id}：无任何计划 TC 引用（映射缺失——test-plan 用例行须含 ${ac.id}）`);
-      acEvidenceOk.set(ac.id, false);
-      continue;
-    }
-    const cp = ac.checkpoint;
-    if (!checkpointComplete(cp)) {
-      failures.push(`${ac.id}：acceptance 缺完整 checkpoint（spec 门禁应已拦截，此处兜底）`);
-      acEvidenceOk.set(ac.id, false);
-      continue;
-    }
-    const executed = executedTcFor(ac.id);
-    if (executed.length === 0) {
-      // 全部 skip → 归 t5 治理；本门禁记边无证据
-      acEvidenceOk.set(ac.id, false);
-      continue;
-    }
-    let acOk = false;
-    const acWhy: string[] = [];
-    for (const tc of executed) {
-      const steps = stepsByTc.get(tc) ?? [];
-      const kinds = steps.map(stepKind);
-      const actionIdx = kinds.findIndex((k) => ACTION_KINDS.has(k.kind));
-      if (actionIdx < 0) {
-        acWhy.push(`${tc}：纯 wait 序列（无任何动作 step——TC-007/008 型冒充）`);
-        continue;
-      }
-      const targetIdx = kinds.findIndex((k) => ACTION_KINDS.has(k.kind) && k.byId === cp!.action!.target_element_id);
-      if (targetIdx < 0) {
-        acWhy.push(`${tc}：动作未指向 checkpoint 目标元素 ${cp!.action!.target_element_id}`);
-        continue;
-      }
-      const required = new Set(cp!.required_element_ids ?? []);
-      const postAssert = kinds.slice(targetIdx + 1).some((k) => k.kind === 'wait_for' && k.byId !== undefined && required.has(k.byId));
-      if (!postAssert) {
-        acWhy.push(`${tc}：目标动作后无 wait_for(by_id ∈ required_element_ids=${[...required].join(',')}) 后置断言`);
-        continue;
-      }
-      if (passedTc(tc)) {
-        acOk = true;
-        break;
-      }
-      acWhy.push(`${tc}：步序合规但 trace 非通过`);
-    }
-    acEvidenceOk.set(ac.id, acOk);
-    if (!acOk) failures.push(`${ac.id}：无一执行 TC 提供合规状态迁移证据（${acWhy.slice(0, 3).join('；')}）`);
-  }
-
-  // ⑤ 中间屏有序链：每条 flow 边须有 owning AC 的证据成立
-  for (const [flowName, screens] of Object.entries(doc.flows)) {
-    if (!p0Acs.some((ac) => ac.linked_flow === flowName)) continue;
-    for (let i = 0; i + 1 < screens.length; i++) {
-      const owners = p0Acs.filter(
-        (ac) =>
-          ac.linked_flow === flowName &&
-          checkpointComplete(ac.checkpoint) &&
-          ac.checkpoint!.pre_screen === screens[i] &&
-          ac.checkpoint!.post_screen === screens[i + 1],
-      );
-      if (owners.length === 0) continue; // spec 门禁已拦无主边
-      if (!owners.some((ac) => acEvidenceOk.get(ac.id))) {
-        failures.push(
-          `flow ${flowName}：边 ${screens[i]}→${screens[i + 1]} 无已执行且通过的证据 TC` +
-          `（缺中间屏证据——「点银行直达成功页」的确定性死刑条款）`,
-        );
-      }
-    }
-  }
-
-  if (failures.length > 0) {
+  if (evaluation.gateFailure) return [nativeGateFailureResult(id, description, evaluation)];
+  if (evaluation.acFailures.length > 0) {
     return [{
-      id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `P0 状态迁移证据不成立（${failures.length} 项）：\n` + failures.slice(0, 10).join('\n') + (failures.length > 10 ? '\n…' : ''),
-      suggestion:
-        '派生计划各 P0 TC 须：动作 step 指向 checkpoint.target_element_id + 其后 wait_for required_element_ids；' +
-        'flow 每条边须有已执行通过的 owning TC。运行时 hit-test/页面签名扩展见 change tasks deferred 项。',
+      id,
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      details:
+        `P0 acceptance coverage 未成立（${evaluation.acFailures.length} 项）：\n` +
+        evaluation.acFailures.slice(0, 12).map(item => `  - ${item}`).join('\n'),
+      suggestion: '仅以 authoritative trace 的 CaseResult 三轴和同 index 的 assertion StepResult 对账；缺 required/forbidden evidence 留在 testing，不得从旧 status 或报告散文补齐。',
     }];
   }
-  // This gate intentionally proves only the planned step contract. Runtime
-  // observations are now enforced independently by p0_runtime_step_evidence;
-  // keeping the boundaries separate avoids treating a plan match as a hit-test.
   return [
     {
-      id, category: 'structure', description,
-      severity: 'BLOCKER', status: 'PASS',
-      details: `P0 交互 AC ${p0Acs.length} 条状态迁移证据（计划 step 级）成立；flow 中间屏边全部有已执行通过的 owning TC。`,
+      id,
+      category: 'structure',
+      description,
+      severity: 'BLOCKER',
+      status: 'PASS',
+      details:
+        `P0 acceptance coverage 已按 ${evaluation.acceptedAcIds.size} 个 checkpoint 的 required/forbidden StepResult evidence 完整对账` +
+        (evaluation.gapAcIds.length > 0 ? `；unsupported_gap 覆盖的 AC（本轮无法验证、已披露）：${evaluation.gapAcIds.join(', ')}` : '') + '。',
     },
     {
       id: 'p0_runtime_step_evidence_boundary',
       category: 'structure',
-      description: 'P0 计划级与运行时证据边界',
-      severity: 'MINOR', status: 'PASS',
-      details:
-        '本检查只证明派生计划步序与 trace case 结果一致；实际 hit target、bounds、pre/post 屏幕签名、' +
-        'required/forbidden 观测由独立 BLOCKER 检查 p0_runtime_step_evidence 负责。',
+      description: 'P0 native StepResult 证据边界',
+      severity: 'MINOR',
+      status: 'PASS',
+      details: 'CaseResult.execution/verification/evidence 与 CaseResult.steps[] 是唯一执行证据；不读取日志、tool_calls 或报告散文重建步骤。',
     },
   ];
 }

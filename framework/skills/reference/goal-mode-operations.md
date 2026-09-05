@@ -22,13 +22,13 @@
 | `needs_adapter_choice` | 无 local 且多候选 → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；然后用返回的 `activeAdapter`，`adapterSource=registry`；或 **STOP**→`/framework-init` |
 | `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
 
-3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`（gitignored）；要换别的 adapter 请讲。
+3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`；要换别的 adapter 请讲。
 
 同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
 对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
 phase evidence 对历史 3.0.0 事故 manifest 仅容忍该审计字段差异；其它任意字节漂移仍判 stale。
 
-**边界**：写 `framework.local.json`（个人、gitignored）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
+**边界**：写 `framework.local.json`（个人级本地配置）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
 
 ## 可执行命令（从实例工程的 `framework/harness/` 目录运行）
 
@@ -190,3 +190,21 @@ npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --sinc
 ### 模拟器降级不得冒充真机
 
 `ut` 允许在模拟器上 PASS；`testing` 在 `target_kind ∈ {emulator, unknown}` 时由 runner 依可信 device session **封顶 PARTIAL/DEFERRED**——不看 agent summary 自报（自报即可绕过）。`unknown` 与 `emulator` 同等对待：判不出机型绝不等于是真机。
+
+## 效率优先入口（3.0.0 · plan 07a41ec6）
+
+公共入口只有三个新命令，其余机器化步骤全部内部化（从实例工程的 `framework/harness/` 运行）：
+
+| 命令 | 作用 | 不做什么 |
+|---|---|---|
+| `harness-runner.ts --revalidate --feature <f> [--from <phase>]` | 检查执行器：按链找 stale 阶段，逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；账本 `<feature>/revalidation.json` | 不推进阶段、不建第二套状态机、不重跑 verifier（材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，结果标 `script_revalidated` / `semantic_not_reverified`） |
+| `harness-runner.ts --force-device --phase testing --feature <f>` | 忽略同执行键复用，强制真机真跑（fresh / N 轮稳定性） | 不改变报告与门禁口径 |
+| `harness-runner.ts --measure --feature <f> [--screen <id>]` | 视觉量测：bounds/间距/重叠/与参考图差值/取色 → `device-screenshots/measure-<screen>.json`，并补 visual-diff.json 的 defects[].note | 不裁决、不改 ui-spec、不改 verdict；geometry PASS 不解除 visual/release block |
+
+配套纪律：
+
+- **phase executor**：Claude 原生 `/goal` 路径下主会话是薄 driver，每个阶段最多派发一个 `subagent_type: phase-executor`（模板 `agents/claude/templates/agents/phase-executor.md`），只投递最小输入、收回 summary 路径与终态块；与本 Skill 的 GoalPhaseRuntime 互斥，不同时推进同一任务。
+- **子代理等待**：同步等待或先做无关工作；禁止 sleep / 轮询 / 后台等待器；verifier 未返回前不改其输入材料。
+- **闭环判据**：harness PASS + verifier 一次 PASS + `check-receipt` 通过；回执是 harness 只读投影（receipt_schema 2.1），备注写 `<phase>/notes.md`；harness 输出末尾 `NEXT:` 行即下一步。
+- **verifier 结论**：只有 BLOCKER 级 FAIL 触发修正与重审；WARN/UNKNOWN 记 notes.md 带到下一阶段。
+- **漂移分级**：review 后源码变化按类型给一次复核（文档不复审；测试代码只跑相关测试；逻辑做 scoped diff review；布局/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review），`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核并如实标注。

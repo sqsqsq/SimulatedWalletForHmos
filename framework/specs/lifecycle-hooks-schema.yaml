@@ -26,10 +26,7 @@ hook_events:
   - id: post_verifier
     description: After verifier completes (when applicable).
   - id: on_context_load
-    description: >-
-      Author start-of-phase context. Consumed by scripts/author-context.ts, which the
-      executor runs BEFORE writing the phase's main artifact — not during ai-prompt
-      assembly. Fragments never reach the verifier prompt; pre_verifier serves that.
+    description: While assembling ai-prompt.md / context for the phase.
   - id: on_violation
     description: When a check returns BLOCKER or MAJOR (after classification).
 

@@ -2,14 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hylyre.dev/contracts/trace-output.json",
   "title": "HylyreTrace",
-  "description": "trace.json for Hylyre runs (P4+).",
+  "description": "Versioned Hylyre trace output. 0.4-p0 traces carry the Step Outcome Protocol v1 ledger (hylyre.step-outcome/1). 0.3-p0 and older remain readable legacy shapes and may never declare the v1 protocol.",
   "type": "object",
   "required": ["schema_version", "feature", "phase", "outcome"],
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["0.1-p0", "0.2-p4"]
+      "enum": ["0.1-p0", "0.2-p4", "0.3-p0", "0.4-p0"]
     },
+    "result_protocol": { "type": "string", "enum": ["hylyre.step-outcome/1"] },
     "feature": { "type": "string", "minLength": 1 },
     "phase": { "type": "string", "enum": ["testing"] },
     "outcome": {
@@ -19,24 +20,1433 @@
     "model_backend": { "type": "string" },
     "tool_calls": {
       "type": "array",
-      "items": { "type": "object", "additionalProperties": true }
+      "items": { "type": "object" }
     },
     "retries": { "type": "integer", "minimum": 0 },
-    "artifacts": { "type": "object", "additionalProperties": true },
-    "cases": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id", "status"],
+    "artifacts": { "type": "object" },
+    "environment": { "type": "object" },
+    "cases": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "0.3-p0" } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": ["environment", "cases", "tool_calls"],
+        "not": { "required": ["result_protocol"] },
         "properties": {
-          "id": { "type": "string" },
-          "status": { "type": "string" },
-          "priority": { "type": "string" },
-          "ac_ref": { "type": "string" },
-          "notes": { "type": "string" }
-        },
-        "additionalProperties": true
+          "environment": { "$ref": "#/$defs/environmentLegacy" },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/caseResult" }
+          }
+        }
       }
+    },
+    {
+      "if": {
+        "properties": { "schema_version": { "enum": ["0.1-p0", "0.2-p4"] } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "not": { "required": ["result_protocol"] },
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/legacyCase" }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "0.4-p0" } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": [
+          "schema_version",
+          "result_protocol",
+          "feature",
+          "phase",
+          "outcome",
+          "environment",
+          "cases",
+          "tool_calls"
+        ],
+        "properties": {
+          "schema_version": { "const": "0.4-p0" },
+          "result_protocol": { "const": "hylyre.step-outcome/1" },
+          "feature": { "type": "string", "minLength": 1 },
+          "phase": { "const": "testing" },
+          "outcome": { "enum": ["success", "partial", "failed", "aborted"] },
+          "model_backend": { "type": "string" },
+          "retries": { "type": "integer", "minimum": 0 },
+          "artifacts": { "type": "object" },
+          "environment": { "$ref": "#/$defs/environmentV1" },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/caseResultV1" }
+          },
+          "tool_calls": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/toolCallV1" }
+          },
+          "extensions": { "$ref": "#/$defs/extensions" }
+        },
+        "additionalProperties": false
+      }
+    }
+  ],
+
+  "$defs": {
+    "extensions": {
+      "description": "Explicit namespaced extension point. Core fields are never overridden or reinterpreted here.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9_-]*\\.[a-z0-9][a-z0-9_.-]*$"
+      },
+      "additionalProperties": { "type": "object" }
+    },
+
+    "vendorCodeSuffix": {
+      "$comment": "Vendor/adapter code segment shape used by every namespaced code plane.",
+      "type": "string",
+      "pattern": "^x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$"
+    },
+
+    "probeStatus": {
+      "description": "Machine probe verdict. Core values are frozen; vendors extend with an x_ prefixed token.",
+      "type": "string",
+      "anyOf": [
+        { "enum": ["unsupported", "unavailable", "not_configured", "offline"] },
+        { "pattern": "^x_[a-z0-9]+(_[a-z0-9]+)*$" }
+      ]
+    },
+    "probeFacts": {
+      "description": "Structured machine evidence backing a capability/infrastructure disposition. Never free prose.",
+      "type": "object",
+      "required": ["probe_status", "probe_source"],
+      "properties": {
+        "probe_status": { "$ref": "#/$defs/probeStatus" },
+        "probe_source": { "type": "string", "minLength": 1 },
+        "resource_kind": { "type": "string", "minLength": 1 },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "provider_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+
+    "environmentV1": {
+      "type": "object",
+      "required": [
+        "hylyre_version",
+        "hypium_version",
+        "trace_schema_version",
+        "result_protocol",
+        "selector_engine"
+      ],
+      "properties": {
+        "hylyre_version": { "type": "string", "minLength": 1 },
+        "hypium_version": { "type": "string", "minLength": 1 },
+        "trace_schema_version": { "const": "0.4-p0" },
+        "result_protocol": { "const": "hylyre.step-outcome/1" },
+        "selector_engine": { "type": "string", "minLength": 1 },
+        "ui_driver": { "type": "string", "minLength": 1 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+
+    "artifactRef": {
+      "type": "object",
+      "required": ["kind", "path", "sha256"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["screenshot", "ui_dump", "visible_elements", "log"]
+        },
+        "path": {
+          "description": "Artifact location, relative to the directory of the authoritative trace file that carries this StepResult: resolved_path = resolve(dirname(trace_path), path). It must stay inside that directory tree, and there is no second base - not a run directory, not a reports root, and never the process working directory. For entries that write no trace (atomic CLI/MCP, inline batch), the base is the caller-supplied failure_dir.",
+          "$comment": "Relative only. Rejects POSIX-absolute, Windows drive-absolute, backslash-rooted, UNC, and any parent-traversal segment under either separator.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "failureDomain": {
+      "type": "string",
+      "enum": [
+        "contract",
+        "selector",
+        "assertion",
+        "capability",
+        "infrastructure",
+        "internal"
+      ]
+    },
+    "failureCode": {
+      "description": "Namespaced failure code carried by a StepResult. First segment MUST equal failure.domain. Core codes are registered; vendor codes use <domain>.x_<vendor>.<name>. contract.empty_case is deliberately absent: an empty case has no legal StepResult and is only ever a pre-run reject code.",
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "contract.invalid_step",
+            "contract.invalid_selector",
+            "contract.invalid_match",
+            "selector.not_found",
+            "selector.ambiguous",
+            "selector.inline_unresolvable",
+            "assertion.mismatch",
+            "capability.unsupported",
+            "infrastructure.device_unavailable",
+            "infrastructure.transport_failure",
+            "internal.unexpected_exception"
+          ]
+        },
+        {
+          "pattern": "^(contract|selector|assertion|capability|infrastructure|internal)\\.x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$"
+        }
+      ]
+    },
+    "domainCodeAgreement": {
+      "$comment": "Shared domain/code prefix rules. Referenced by failureV1 and by the tool_calls projection so a projection can never carry a classification the ledger would reject.",
+      "allOf": [
+        {
+          "if": { "properties": { "domain": { "const": "contract" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^contract\\." } } }
+        },
+        {
+          "if": { "properties": { "domain": { "const": "selector" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^selector\\." } } }
+        },
+        {
+          "if": { "properties": { "domain": { "const": "assertion" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^assertion\\." } } }
+        },
+        {
+          "if": { "properties": { "domain": { "const": "capability" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^capability\\." } } }
+        },
+        {
+          "if": { "properties": { "domain": { "const": "infrastructure" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^infrastructure\\." } } }
+        },
+        {
+          "if": { "properties": { "domain": { "const": "internal" } }, "required": ["domain"] },
+          "then": { "properties": { "code": { "pattern": "^internal\\." } } }
+        }
+      ]
+    },
+    "failureV1": {
+      "type": "object",
+      "required": ["domain", "code"],
+      "properties": {
+        "domain": { "$ref": "#/$defs/failureDomain" },
+        "code": { "$ref": "#/$defs/failureCode" },
+        "facts": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/domainCodeAgreement" }]
+    },
+
+    "causeCapabilityCode": {
+      "type": "string",
+      "anyOf": [
+        { "enum": ["capability.unsupported", "capability.not_configured"] },
+        { "pattern": "^capability\\.x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$" }
+      ]
+    },
+    "causeInfrastructureCode": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "infrastructure.device_unavailable",
+            "infrastructure.transport_unavailable"
+          ]
+        },
+        { "pattern": "^infrastructure\\.x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$" }
+      ]
+    },
+    "causeV1": {
+      "description": "Why a step was NOT attempted. Never a failure route.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "step_index"],
+          "properties": {
+            "type": { "const": "prior_step" },
+            "step_index": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "code", "capability_id", "facts"],
+          "properties": {
+            "type": { "const": "capability" },
+            "code": { "$ref": "#/$defs/causeCapabilityCode" },
+            "capability_id": { "type": "string", "minLength": 1 },
+            "provider_id": { "type": "string", "minLength": 1 },
+            "facts": { "$ref": "#/$defs/probeFacts" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "code", "facts"],
+          "properties": {
+            "type": { "const": "infrastructure" },
+            "code": { "$ref": "#/$defs/causeInfrastructureCode" },
+            "facts": { "$ref": "#/$defs/probeFacts" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "reasonPolicyCode": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "expected_check.disabled_by_flag",
+            "expected_check.unavailable_no_vlm",
+            "optional_check.on_unsupported_skip"
+          ]
+        },
+        { "pattern": "^x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$" }
+      ]
+    },
+    "reasonNotApplicableCode": {
+      "type": "string",
+      "anyOf": [
+        { "enum": ["expected_check.empty"] },
+        { "pattern": "^x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$" }
+      ]
+    },
+    "reasonV1": {
+      "description": "Why a step was deliberately not executed. Never a capability failure.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "code"],
+          "properties": {
+            "type": { "const": "policy" },
+            "code": { "$ref": "#/$defs/reasonPolicyCode" },
+            "facts": { "$ref": "#/$defs/probeFacts" }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "expected_check.unavailable_no_vlm",
+                      "optional_check.on_unsupported_skip"
+                    ]
+                  }
+                },
+                "required": ["code"]
+              },
+              "then": { "required": ["facts"] }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "required": ["type", "code"],
+          "properties": {
+            "type": { "const": "not_applicable" },
+            "code": { "$ref": "#/$defs/reasonNotApplicableCode" },
+            "facts": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "observationV1": {
+      "description": "What this step actually did or actually observed. Only produced for attempted steps.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "operation", "performed", "facts"],
+          "properties": {
+            "kind": { "const": "action" },
+            "operation": { "type": "string", "minLength": 1 },
+            "performed": { "type": "boolean" },
+            "facts": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "assertion_type", "matched", "facts"],
+          "properties": {
+            "kind": { "const": "assertion" },
+            "assertion_type": {
+              "type": "string",
+              "enum": ["presence", "absence", "toast", "expected", "custom"]
+            },
+            "matched": { "type": "boolean" },
+            "facts": { "type": "object" }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": { "assertion_type": { "const": "presence" } },
+                "required": ["assertion_type"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "type": "object",
+                    "required": ["expected_present", "observed_present"],
+                    "properties": {
+                      "expected_present": { "const": true },
+                      "observed_present": { "type": "boolean" }
+                    }
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed_present": { "const": true } },
+                          "required": ["observed_present"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": true } } }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed_present": { "const": false } },
+                          "required": ["observed_present"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": false } } }
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "assertion_type": { "const": "absence" } },
+                "required": ["assertion_type"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "type": "object",
+                    "required": ["expected_present", "observed_present"],
+                    "properties": {
+                      "expected_present": { "const": false },
+                      "observed_present": { "type": "boolean" }
+                    }
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed_present": { "const": false } },
+                          "required": ["observed_present"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": true } } }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed_present": { "const": true } },
+                          "required": ["observed_present"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": false } } }
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "assertion_type": { "const": "toast" } },
+                "required": ["assertion_type"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "type": "object",
+                    "required": ["channel", "observed", "trigger_window_covered"],
+                    "properties": {
+                      "channel": { "type": "string", "minLength": 1 },
+                      "observed": { "type": "boolean" },
+                      "trigger_window_covered": { "type": "boolean" }
+                    }
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed": { "const": true } },
+                          "required": ["observed"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": true } } }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "observed": { "const": false } },
+                          "required": ["observed"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": false } } }
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "assertion_type": { "const": "expected" } },
+                "required": ["assertion_type"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "type": "object",
+                    "required": ["channel", "instruction_checked", "matched"],
+                    "properties": {
+                      "channel": { "type": "string", "minLength": 1 },
+                      "instruction_checked": { "const": true },
+                      "matched": { "type": "boolean" }
+                    }
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "matched": { "const": true } },
+                          "required": ["matched"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": true } } }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "facts": {
+                          "properties": { "matched": { "const": false } },
+                          "required": ["matched"]
+                        }
+                      },
+                      "required": ["facts"]
+                    },
+                    "then": { "properties": { "matched": { "const": false } } }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    "outcomeV1": {
+      "description": "The single discriminated execution result. Illegal carrier combinations are unrepresentable.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "observation"],
+          "properties": {
+            "status": { "const": "passed" },
+            "observation": { "$ref": "#/$defs/observationV1" }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "observation": {
+                    "properties": { "kind": { "const": "assertion" } },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["observation"]
+              },
+              "then": {
+                "properties": {
+                  "observation": { "properties": { "matched": { "const": true } } }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "observation": {
+                    "properties": { "kind": { "const": "action" } },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["observation"]
+              },
+              "then": {
+                "properties": {
+                  "observation": { "properties": { "performed": { "const": true } } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "required": ["status", "failure"],
+          "properties": {
+            "status": { "const": "failed" },
+            "failure": { "$ref": "#/$defs/failureV1" },
+            "observation": { "$ref": "#/$defs/observationV1" }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "observation": {
+                    "properties": { "kind": { "const": "assertion" } },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["observation"]
+              },
+              "then": {
+                "properties": {
+                  "observation": { "properties": { "matched": { "const": false } } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "required": ["status", "cause"],
+          "properties": {
+            "status": { "const": "blocked" },
+            "cause": { "$ref": "#/$defs/causeV1" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "skipped" },
+            "reason": { "$ref": "#/$defs/reasonV1" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "selectorRequestV1": {
+      "type": "object",
+      "required": ["kind", "value", "match", "constraints"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "by_id",
+            "by_text",
+            "by_key",
+            "by_type",
+            "coordinates",
+            "composite"
+          ]
+        },
+        "value": { "type": ["string", "null"] },
+        "match": { "type": ["string", "null"], "enum": ["exact", "contains", null] },
+        "constraints": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "selectorCandidateV1": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "type": { "type": ["string", "null"] },
+        "bounds": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "selectorSelectedV1": {
+      "$comment": "A resolved target may legitimately have no structured id (a node matched purely by text): then bounds carries the identity. What stays forbidden is a contentless selected, and backfilling the request into it.",
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": ["string", "null"], "minLength": 1 },
+        "bounds": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        { "properties": { "id": { "type": "string" } }, "required": ["id"] },
+        { "properties": { "bounds": { "type": "string" } }, "required": ["bounds"] }
+      ]
+    },
+    "resolutionReasonCode": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "selector.dump_unavailable",
+            "selector.dump_unreadable",
+            "selector.request_incomplete",
+            "selector.resolver_unsupported_form",
+            "selector.inline_fragment_unresolvable",
+            "selector.provider_unavailable"
+          ]
+        },
+        { "pattern": "^selector\\.x_[a-z0-9]+(_[a-z0-9]+)*\\.[a-z0-9_]+$" }
+      ]
+    },
+    "unresolvableFacts": {
+      "type": "object",
+      "required": [
+        "dump_status",
+        "request_complete",
+        "resolver_entered",
+        "candidate_countable"
+      ],
+      "properties": {
+        "dump_status": {
+          "type": "string",
+          "enum": ["available", "unavailable", "unreadable"]
+        },
+        "request_complete": { "type": "boolean" },
+        "resolver_entered": { "type": "boolean" },
+        "candidate_countable": { "type": "boolean" },
+        "fragment_anchor": { "type": ["string", "null"] },
+        "fragment_bounds": { "type": ["string", "null"] },
+        "provider_probe": { "$ref": "#/$defs/probeFacts" }
+      },
+      "additionalProperties": true
+    },
+    "selectorResolutionV1": {
+      "description": "What the executor actually found. Never the plan's intent.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "candidate_count", "selected", "candidates"],
+          "properties": {
+            "state": { "const": "not_attempted" },
+            "candidate_count": { "type": "null" },
+            "selected": { "type": "null" },
+            "candidates": { "type": "array", "maxItems": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "candidate_count", "selected", "candidates"],
+          "properties": {
+            "state": { "const": "not_found" },
+            "candidate_count": { "const": 0 },
+            "selected": { "type": "null" },
+            "candidates": { "type": "array", "maxItems": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "candidate_count", "selected", "candidates"],
+          "properties": {
+            "state": { "const": "unique" },
+            "candidate_count": { "const": 1 },
+            "selected": { "$ref": "#/$defs/selectorSelectedV1" },
+            "candidates": {
+              "type": "array",
+              "maxItems": 1,
+              "items": { "$ref": "#/$defs/selectorCandidateV1" }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "candidate_count", "selected", "candidates"],
+          "properties": {
+            "state": { "const": "ambiguous" },
+            "candidate_count": { "type": "integer", "minimum": 2 },
+            "selected": { "type": "null" },
+            "candidates": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "$ref": "#/$defs/selectorCandidateV1" }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "candidate_count",
+            "selected",
+            "candidates",
+            "reason_code",
+            "facts"
+          ],
+          "properties": {
+            "state": { "const": "unresolvable" },
+            "candidate_count": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "selected": { "type": "null" },
+            "candidates": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/selectorCandidateV1" }
+            },
+            "reason_code": { "$ref": "#/$defs/resolutionReasonCode" },
+            "facts": { "$ref": "#/$defs/unresolvableFacts" }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "facts": {
+                    "properties": { "candidate_countable": { "const": false } },
+                    "required": ["candidate_countable"]
+                  }
+                },
+                "required": ["facts"]
+              },
+              "then": { "properties": { "candidate_count": { "type": "null" } } }
+            },
+            {
+              "$comment": "A resolver/provider capability gap must name the actual probe source.",
+              "if": {
+                "properties": {
+                  "reason_code": {
+                    "enum": [
+                      "selector.resolver_unsupported_form",
+                      "selector.provider_unavailable"
+                    ]
+                  }
+                },
+                "required": ["reason_code"]
+              },
+              "then": {
+                "properties": {
+                  "facts": { "required": ["provider_probe"] }
+                }
+              }
+            },
+            {
+              "$comment": "An inline/fragment miss must state the fragment clues explicitly; null is a valid answer, absence is not.",
+              "if": {
+                "properties": {
+                  "reason_code": { "const": "selector.inline_fragment_unresolvable" }
+                },
+                "required": ["reason_code"]
+              },
+              "then": {
+                "properties": {
+                  "facts": { "required": ["fragment_anchor", "fragment_bounds"] }
+                }
+              }
+            },
+            {
+              "$comment": "A dump-based reason_code must agree with the observed dump_status.",
+              "if": {
+                "properties": {
+                  "reason_code": { "const": "selector.dump_unavailable" }
+                },
+                "required": ["reason_code"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "properties": { "dump_status": { "const": "unavailable" } }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "reason_code": { "const": "selector.dump_unreadable" }
+                },
+                "required": ["reason_code"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "properties": { "dump_status": { "const": "unreadable" } }
+                  }
+                }
+              }
+            },
+            {
+              "$comment": "An incomplete plan-side request cannot claim the resolver was entered.",
+              "if": {
+                "properties": {
+                  "reason_code": { "const": "selector.request_incomplete" }
+                },
+                "required": ["reason_code"]
+              },
+              "then": {
+                "properties": {
+                  "facts": {
+                    "properties": { "request_complete": { "const": false } }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "selectorV1": {
+      "type": ["object", "null"],
+      "required": ["request", "resolution"],
+      "properties": {
+        "request": { "$ref": "#/$defs/selectorRequestV1" },
+        "resolution": { "$ref": "#/$defs/selectorResolutionV1" }
+      },
+      "additionalProperties": false
+    },
+
+    "stepResultV1": {
+      "description": "One planned step's authoritative ledger row. Reusable by trace cases, atomic CLI/MCP/session responses and batch rows.",
+      "type": "object",
+      "required": [
+        "index",
+        "kind",
+        "role",
+        "duration_ms",
+        "device_session",
+        "outcome",
+        "selector",
+        "artifacts",
+        "diagnostic",
+        "extensions"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["action", "assertion"] },
+        "duration_ms": { "type": "number", "minimum": 0 },
+        "device_session": { "type": "boolean" },
+        "outcome": { "$ref": "#/$defs/outcomeV1" },
+        "selector": { "$ref": "#/$defs/selectorV1" },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactRef" }
+        },
+        "diagnostic": { "type": ["string", "null"] },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "role and observation must describe the same thing; role=assertion with an action observation was one of the 0.3-p0 contradictions.",
+          "if": {
+            "properties": {
+              "role": { "const": "assertion" },
+              "outcome": { "required": ["observation"] }
+            },
+            "required": ["role", "outcome"]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "observation": { "properties": { "kind": { "const": "assertion" } } }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": { "const": "action" },
+              "outcome": { "required": ["observation"] }
+            },
+            "required": ["role", "outcome"]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "observation": { "properties": { "kind": { "const": "action" } } }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A step that was never attempted cannot report a resolution it never performed.",
+          "if": {
+            "properties": {
+              "outcome": {
+                "properties": { "status": { "enum": ["blocked", "skipped"] } },
+                "required": ["status"]
+              },
+              "selector": { "type": "object" }
+            },
+            "required": ["outcome", "selector"]
+          },
+          "then": {
+            "properties": {
+              "selector": {
+                "properties": {
+                  "resolution": { "properties": { "state": { "const": "not_attempted" } } }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "An assertion that ran and did not match is an assertion failure; a selector failure means the assertion never produced an observation.",
+          "if": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "status": { "const": "failed" },
+                  "observation": {
+                    "properties": {
+                      "kind": { "const": "assertion" },
+                      "matched": { "const": false }
+                    },
+                    "required": ["kind", "matched"]
+                  }
+                },
+                "required": ["status", "observation"]
+              }
+            },
+            "required": ["outcome"]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "failure": { "properties": { "domain": { "const": "assertion" } } }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Failure-boundary screen artifact for a real root failure inside an established device session.",
+          "if": {
+            "properties": {
+              "device_session": { "const": true },
+              "outcome": {
+                "properties": {
+                  "status": { "const": "failed" },
+                  "failure": {
+                    "properties": {
+                      "domain": { "enum": ["selector", "assertion"] }
+                    },
+                    "required": ["domain"]
+                  }
+                },
+                "required": ["status", "failure"]
+              }
+            },
+            "required": ["device_session", "outcome"]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "artifacts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "enum": ["screenshot", "ui_dump", "visible_elements"]
+                        }
+                      },
+                      "required": ["kind"]
+                    }
+                  }
+                },
+                "required": ["artifacts"]
+              },
+              {
+                "properties": {
+                  "extensions": {
+                    "type": "object",
+                    "properties": {
+                      "hylyre.capture": {
+                        "type": "object",
+                        "properties": { "screen": { "const": "unavailable" } },
+                        "required": ["screen"]
+                      }
+                    },
+                    "required": ["hylyre.capture"]
+                  }
+                },
+                "required": ["extensions"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+
+    "caseResultV1": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "priority",
+        "ac_ref",
+        "notes",
+        "execution",
+        "verification",
+        "evidence",
+        "expected_check_mode",
+        "steps"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["通过", "失败", "阻塞", "跳过"] },
+        "priority": { "type": "string" },
+        "ac_ref": { "type": "string" },
+        "notes": { "type": "string" },
+        "execution": {
+          "type": "string",
+          "enum": ["completed", "aborted", "infrastructure_failed"]
+        },
+        "verification": {
+          "type": "string",
+          "enum": ["passed", "failed", "inconclusive"]
+        },
+        "evidence": { "type": "string", "enum": ["complete", "incomplete"] },
+        "expected_check_mode": {
+          "type": "string",
+          "enum": [
+            "checked_vlm",
+            "disabled_by_flag",
+            "unavailable_no_vlm",
+            "empty"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stepResultV1" }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+
+    "toolCallOutcomeV1": {
+      "description": "Lossy outcome projection. Same nested field names as StepResult; never a second evidence source.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status"],
+          "properties": { "status": { "const": "passed" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status", "failure"],
+          "properties": {
+            "status": { "const": "failed" },
+            "failure": {
+              "type": "object",
+              "required": ["domain", "code"],
+              "properties": {
+                "domain": { "$ref": "#/$defs/failureDomain" },
+                "code": { "$ref": "#/$defs/failureCode" }
+              },
+              "additionalProperties": false,
+              "allOf": [{ "$ref": "#/$defs/domainCodeAgreement" }]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status", "cause"],
+          "properties": {
+            "status": { "const": "blocked" },
+            "cause": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "step_index"],
+                  "properties": {
+                    "type": { "const": "prior_step" },
+                    "step_index": { "type": "integer", "minimum": 0 }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "code"],
+                  "properties": {
+                    "type": { "const": "capability" },
+                    "code": { "$ref": "#/$defs/causeCapabilityCode" }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "code"],
+                  "properties": {
+                    "type": { "const": "infrastructure" },
+                    "code": { "$ref": "#/$defs/causeInfrastructureCode" }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "skipped" },
+            "reason": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "code"],
+                  "properties": {
+                    "type": { "const": "policy" },
+                    "code": { "$ref": "#/$defs/reasonPolicyCode" }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "code"],
+                  "properties": {
+                    "type": { "const": "not_applicable" },
+                    "code": { "$ref": "#/$defs/reasonNotApplicableCode" }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "toolCallV1": {
+      "type": "object",
+      "required": ["case", "index", "kind", "role", "outcome"],
+      "properties": {
+        "case": { "type": "string", "minLength": 1 },
+        "index": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["action", "assertion"] },
+        "outcome": { "$ref": "#/$defs/toolCallOutcomeV1" }
+      },
+      "additionalProperties": false
+    },
+
+    "preRunRejectCode": {
+      "type": "string",
+      "enum": [
+        "contract.empty_case",
+        "contract.invalid_step",
+        "contract.invalid_selector",
+        "contract.invalid_match"
+      ]
+    },
+    "pre_run_reject": {
+      "description": "Machine protocol for a plan-validation reject decided before any device is contacted. Emitted as the only stdout JSON object with exit code 2; no trace/report is created or rewritten.",
+      "type": "object",
+      "required": ["result_protocol", "command_status", "phase", "rejection"],
+      "properties": {
+        "result_protocol": { "const": "hylyre.step-outcome/1" },
+        "command_status": { "const": "rejected" },
+        "phase": { "const": "pre_run_validation" },
+        "rejection": {
+          "type": "object",
+          "required": ["domain", "code", "case_id", "step_index", "path", "summary"],
+          "properties": {
+            "domain": { "const": "contract" },
+            "code": { "$ref": "#/$defs/preRunRejectCode" },
+            "case_id": { "type": ["string", "null"] },
+            "step_index": { "type": ["integer", "null"], "minimum": 0 },
+            "path": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "environmentLegacy": {
+      "type": "object",
+      "required": [
+        "hylyre_version",
+        "hypium_version",
+        "trace_schema_version",
+        "selector_engine"
+      ],
+      "properties": {
+        "hylyre_version": { "type": "string", "minLength": 1 },
+        "hypium_version": { "type": "string", "minLength": 1 },
+        "trace_schema_version": { "type": "string", "const": "0.3-p0" },
+        "selector_engine": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "environment": { "$ref": "#/$defs/environmentLegacy" },
+    "selector": {
+      "type": ["object", "null"],
+      "required": ["engine", "requested_match", "effective_match", "candidate_count"],
+      "properties": {
+        "engine": { "type": "string", "minLength": 1 },
+        "requested_match": { "type": ["string", "null"] },
+        "effective_match": { "type": ["string", "null"], "enum": ["exact", "contains", null] },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "selected_id": { "type": ["string", "null"] },
+        "bounds": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "stepResult": {
+      "type": "object",
+      "required": [
+        "index",
+        "kind",
+        "role",
+        "status",
+        "failure_kind",
+        "failure_code",
+        "duration_ms",
+        "selector",
+        "evidence",
+        "error"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["action", "assertion"] },
+        "status": { "type": "string", "enum": ["passed", "failed", "blocked", "skipped"] },
+        "failure_kind": {
+          "type": ["string", "null"],
+          "enum": ["assertion", "selector", "capability", "infrastructure", null]
+        },
+        "failure_code": {
+          "type": ["string", "null"],
+          "enum": [
+            "assertion_mismatch",
+            "selector_not_found",
+            "selector_ambiguous",
+            "inline_target_unresolvable",
+            "capability_unsupported",
+            "device_unavailable",
+            "driver_failure",
+            null
+          ]
+        },
+        "duration_ms": { "type": "number", "minimum": 0 },
+        "selector": { "$ref": "#/$defs/selector" },
+        "evidence": { "type": ["object", "null"] },
+        "error": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "caseResult": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "priority",
+        "ac_ref",
+        "notes",
+        "execution",
+        "verification",
+        "evidence",
+        "expected_check_mode",
+        "steps"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["通过", "失败", "阻塞", "跳过"] },
+        "priority": { "type": "string" },
+        "ac_ref": { "type": "string" },
+        "notes": { "type": "string" },
+        "execution": { "type": "string", "enum": ["completed", "aborted", "infrastructure_failed"] },
+        "verification": { "type": "string", "enum": ["passed", "failed", "inconclusive"] },
+        "evidence": { "type": "string", "enum": ["complete", "incomplete"] },
+        "expected_check_mode": { "type": "string", "enum": ["checked_vlm", "disabled_by_flag", "unavailable_no_vlm", "empty"] },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stepResult" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "legacyCase": {
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "priority": { "type": "string" },
+        "ac_ref": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

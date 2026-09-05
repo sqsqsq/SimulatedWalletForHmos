@@ -15,7 +15,7 @@
 
 ## 硬性前置
 
-**[`framework-init`](project/framework-init/SKILL.md)** 是所有其它 Skill 的前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。未完成前请勿执行下表中的 feature phase skill。
+**[`framework-init`](project/framework-init/SKILL.md)** 是其它 Maison Skill 的项目就绪前置：实例根须先有有效的 `framework.config.json` 以及初始化约定的目录与入口文件（路径以配置中 `paths` 为准）。只有显式选择/调用 framework-init，或明确接入发布件、创建/补齐/迁移 config、集成新发布件后刷新 adapters 才进入该 Skill；Skill 名称/链接被动出现不触发。普通请求由主 Agent 按正常路径处理，不选择、不读取、不经过 framework-init。
 
 **个人 setup**：无独立 skill 目录；各 feature phase 入口 `--ensure` 内联，SSOT 见 [`reference/personal-setup-gate.md`](reference/personal-setup-gate.md)。
 
@@ -30,7 +30,7 @@
 | [reference/user-confirmation-ux.md](reference/user-confirmation-ux.md) | gate / enum / artifact 渐进增强 SSOT |
 | [reference/confirmation-registry.yaml](reference/confirmation-registry.yaml) | 全库确认点登记 |
 | [reference/host-harness-readiness.md](reference/host-harness-readiness.md) | harness npm 前置 |
-| [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例禁止改 `framework/` submodule |
+| [reference/consumer-framework-boundary.md](reference/consumer-framework-boundary.md) | 消费者实例的 Maison 发布件边界与写保护 |
 
 **贡献门禁**：修改 Skill 中任何用户确认步骤时，须先更新 `confirmation-registry.yaml`，Skill 正文只链 SSOT（≤10 行），并跑 `cd framework/harness && npm test`（含 `check-skills-confirmation-ux`；**源仓回归**；消费者侧 `npm test` = `check:global`）。
 
@@ -75,7 +75,7 @@ profile-skill-asset:<skill-id>/<asset_key>
 
 | Skill id | 路径 | 摘要 |
 |----------|------|------|
-| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 接入 submodule、生成/更新 config、agent 产物与 `doc/` 骨架 |
+| framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 显式选择/调用，或明确接入发布件 / 创建/迁移 config / 刷新 adapters |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
 | goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |

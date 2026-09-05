@@ -120,10 +120,9 @@ goal_capability:
 4. 跑 `check-receipt.ts`；
 5. 关环用 `harness-runner.ts --sync-closure --phase <phase> --feature <feature>`。
 
-**第 5 步的口径变了**：`subject` 现在**按实际审查材料寻址**（`prompt_sha256` 直接哈希磁盘
-`ai-prompt.md` 字节，没有任何 canonical 投影）。因为组装出的 prompt 内嵌时间戳与整份 script
-report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifier 证据随之失效。`--sync-closure`
-不重跑脚本 harness、也不重发 request，正是为关环这一步存在的入口。
+**第 5 步的口径变了**：`subject` 按 `material_sha256` 审前材料视图寻址，`prompt_sha256` 只用于核对
+verifier 读取的磁盘原件，不参与 subject。重跑完整 harness 不会仅因模板时间戳换代 subject；
+closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要。
 
 **summary 升级到 1.3。** `ai_prompt` / `verifier_subject_id` / `verifier_request` 成为**条件字段**
 （仅 `enabled` 时在场）；`1.2` 仍可读，作为上一代闭环域。
@@ -134,10 +133,26 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 - 3.0.0 生成但**未闭环**的 subject/ai-prompt 不再继续发布：只需**重跑当前 phase 的 harness**
   （分钟级）拿到新 request，再按上面五步走完即可。**不回退业务代码、不重写上游产物、
   不从 spec 重走、也不要求提交。**
-- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/receipt →
+- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/check-receipt →
   下游因 freshness 变 stale → 从下游继续。不清空 feature。
 
 ---
+
+### 3.0.0：效率优先闭环——回执退出输入、verifier 一次化、证据按输入复用（Breaking，plan 07a41ec6）
+
+设计原则见 docs/overview.md §1.2.1（效率优先、可复用可带缺口完成但必须诚实标注）。消费者需要知道的变化：
+
+- **回执退出闭环输入**：新闭环只消费 base summary、verifier evidence 与 policy；`summary.closure_status=closed` 提交后才 best-effort 生成 `phase-completion-receipt.md` 只读投影（`receipt_schema: "2.1"`），投影失败只 WARN、不改变闭环，agent 不手填。`receipt_status` / `receipt_path` 仅为旧消费者兼容输出；3.0 之前手写的 legacy 回执（无 receipt_schema）在隔离分支只读兼容、不重写。
+- **修正命令删除**：`--correction-check` 与 hook 侧 correction gate 删除；feature 修正不再写 `.current-correction.json`（`--correction-init` 只打印责任阶段），重验统一走 `--revalidate --feature <f> [--from <phase>]`（检查执行器：只重跑脚本门禁并按既有闭环路径收口，FAIL 即停；账本 `<feature>/revalidation.json`；summary readiness_signals 标 `script_revalidated`）。
+- **verifier 一次化**：request schema 升为 1.1，subject 按**审前材料视图**（`material_sha256`：phase 输入/产物、verifier 会读的源码/图片、规则、模板、gate 指纹、脚本报告 id/status/severity 投影）派生，模板时间戳不再换代；每个 subject 落 `verifier.material.<subject>.json`。材料未变 → 复用既有报告；材料变了但本 phase 历史已有 PASS → check-receipt 沿用闭环并在 `summary.verifier_closure` 登记 `completed_with_prior_review` 与 `current_material_not_reverified`（WARN `verifier_prior_pass_reused`）；从未 PASS 过仍是 BLOCKER。ai-prompt 瘦身：脚本报告只带非 PASS 项，上游文档与源码只给路径清单；verify-*.md 删可读性/行为项、加跨产物引用核对、输出改"汇总表 + 非 PASS 明细"；verifier 的 WARN/UNKNOWN 本轮不修（记 notes.md），只有 BLOCKER 级 FAIL 触发重审。
+- **执行通道三态**：值域 `hylyre | visual | manual:<gap_class> | provider:<capability-id>`。固定 known class 且工具确无原语的 manual、inactive/SKIP provider 归 `unsupported_gap`（留分母、不算 PASS）；裸/未知 manual、未登记 provider、active 但当前无 per-TC producer 的 provider 归跑机前 `invalid_test`。P0 identity 断言由 harness 注入（`checkpoint-injection.json`），不再要求 agent 手写。
+- **真机证据按输入复用**：执行键（HAP 摘要 + 注入后派生计划 + 设备/显示环境 + 复位方式 + 工具链版本 + flags）相同，且**最新一条带 execution-key 的真实 attempt** 同键、成功、证据完整时才复用；最新是其他 key 或同键失败就真跑，不回捞任意历史 run。`--force-device` 强制真跑；每个 run 目录落 `execution-key.json`，稳定性按同键分组（含失败轮）写 `reports/stability.json`；TC 行行为内容变化会使派生计划 stale，表外标题/说明不触发。
+- **测试报告机器生成**：`test-report.md` 由 harness 从 trace/timing/visual-diff 生成（每轴结论 + 总体 达标/有条件达标/不达标），旧手写报告移到 `testing/notes.legacy-report.md`；review 报告统计表由 checker 自动回写，新增 `review_reference_lint`（path:line 新鲜度与计数自洽，WARN）。
+- **漂移分级**：`review_closure_attestation`（testing）与 `ut_no_src_mutation`（UT，review 后改产品代码）不再永久 BLOCKER：按改动类型列出所需的一次复核（文档不复审；测试代码只跑相关测试；逻辑 scoped diff review；布局/资源真机截图或 `--measure`；多类同时变化最终合并 diff review），未做时 WARN 并如实标注；UT 期改产品代码归类为 coding change（`structured.reclassified_as`）。
+- **视觉量测**：`--measure --feature <f> [--screen <id>]` 输出 `device-screenshots/measure-<screen>.json`（bounds/间距/重叠/与参考图差值/取色，三轴 geometry/content/style），补 visual-diff.json 的 defects[].note；不改 ui-spec，不改 verdict。无 delegated 视觉 provider 时 region_attest / critic 回执类证明 SKIP（`[no_provider]`）。
+- **phase executor 与 NEXT 行**：新增子 agent 模板 `agents/claude/templates/agents/phase-executor.md`（Claude 原生 /goal 路径每阶段最多一个 executor，与 GoalPhaseRuntime 互斥）；harness 输出末尾新增 `NEXT:` 动作行；`--failures-only` 已是默认。
+- **summary 新字段**：`verifier_closure`（沿用既往 PASS 时在场）；readiness_signal `script_revalidated`；`device_test_run.structured.execution_key / reused_by_execution_key`。
+- **codex review 收敛（2026-09-03）**：回执整体退出新闭环输入与 Stop 判据，只在 closed 后 best-effort 投影；freshness 只看 manifest 自身完整性与输入/产物哈希。subject 派生不含时间、`source_commit_sha` / `worktree_digest`；机器测试报告用权威 run 时间，材料视图纳入最新真机 run trace、visual-diff.json 与 lifecycle fragments。`ut_no_src_mutation` 的 goal/direct 路径统一分级 WARN；TC 行行为字段决定派生新鲜度；执行键只复用最新真实 attempt，稳定性结论需 ≥2 轮同键执行（含失败轮）；inactive provider 是 `unsupported_gap`，active 无 producer 是跑机前 `invalid_test`；completion 重投影保留 P0 gaps，`semantic_not_reverified` 进 readiness_signals；整屏 geometry 须全部元素定位且 PASS；`NEXT:` 一次列出全部 blocker。
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
@@ -153,21 +168,48 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入 gitignored 的 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
 
 ---
 
-## 防漂移完整性门禁（framework_integrity）
+## framework 控制面写边界（3.0.0 Breaking：runtime Git/hash 家族退场）
 
-发布件随包下发 `framework/RELEASE-MANIFEST.json`（每文件 sha256）。harness 启动时（普通模式与 goal 模式一致）跑全局 `framework_integrity` preflight：以 manifest 为准逐文件比对 `framework/`，**发现源码漂移默认判 BLOCKER**。
+原先的做法是：发布件随包下发 `framework/RELEASE-MANIFEST.json`，harness 启动时逐文件 sha256 比对，漂移判 BLOCKER；随后为保护这个事后检查本身，又依次长出 manifest sidecar 自校验、外来文件扫描、真人具名 drift allowlist 与六 subtype 的 halt/恢复矩阵。
 
-- **目的**：杜绝在消费者侧（尤其 goal-mode 无人值守代理）静默改 framework 源码——发现即拦，逼其走上游回灌而非本地漂移。
-- **升级即生效**：解压新发布件覆盖 `framework/` 后首次跑 harness 即启用。**若你此前对 `framework/` 有本地改动，会立即判 BLOCKER**。
-- **两条出路**：(1) 把本地修复回灌 agent-maison 上游、重新发布（推荐）；(2) 确需本地 fork：由**真人**在 `framework.config.json` 具名审批放行（P1-5 起 legacy 布尔/字符串形态一律无效照报）——按路径精确放行 `"integrity": { "drift_allowlist": [{ "path": "harness/scripts/check-testing.ts", "rationale": "本地 fork：<原因>", "approved_by": "<真人名>" }] }`，或整体降 WARN `"integrity": { "allow_local_drift": { "enabled": true, "rationale": "<原因>", "approved_by": "<真人名>" } }`。`approved_by` 须真人（自动化身份 / `user_requirement` 无效）；**agent 不得自改 framework 后自批放行**（自加条目无效，发现框架问题应 halt 上报）。
-- **dev/source layout**（framework 自身仓，无包内 manifest）自动 no-op，不影响其 `npm test`。
+它不是安全边界：manifest、sidecar 与被校验文件同处一个可写目录，同一主体能一并修改。范围也被推到最大——2026-08-31 的直接反例：一份**不参与运行**的 vendor 移交文档只少了一个文末空行，hash 事实无误，却让 catalog、testing 与设备执行全部 BLOCKER。
+
+**3.0.0 起改为把写权限从宿主身份拿走，并彻底删除普通运行的 Git 身份裁决**：
+
+- **谁能写由执行环境授予**：host consumer task 对 framework 控制面**物理只读**（task sandbox / 只读挂载 / 受限 OS token + ACL），只有用户或 CI 显式启动的 updater 在升级窗口内临时可写，完成后恢复只读。env、`framework.config.json`、agent 自报身份、当前目录都可伪造，一律不构成身份。
+- **无法强隔离时只保留合作式编辑工具守卫**：覆盖 Write/Edit/MultiEdit/NotebookEdit，判定异常 fail-open；shell、脚本、`node -e` 与场外进程不在射程。没有 Git/hash/manifest 查时 detector 兜底。
+- **宿主 Git 完全无关**：是否为 Git 仓、tracked/staged/committed/clean、HEAD 是否仍是旧发布件均不影响 Maison init/phase verdict 或 Framework identity。
+
+### 消费者需要动手的地方
+
+- **新运行不再有 framework integrity 结果**：不生产 `framework_integrity`、`framework_control_plane_dirty`，也不保留永久 SKIP/PASS 空壳。旧 summary 的 `framework_drift` / foreign / manifest subtype 仍可只读展示，不批量重写。
+- **`framework.config.json` 的放行字段失效**：`integrity.drift_allowlist` 与 `integrity.allow_local_drift` 可为存量配置无损读取保留，但读取即忽略、不能解锁守卫、不能影响 verdict，也不再产生运行时迁移 advisory。请在后续配置维护中删除。
+- **包 hash 仍在可信边界**：Maison `release:pack`/`release:verify` 与明确 updater/集成操作保留校验；普通 phase 不读取或重算 per-file manifest。包身份（version / source_commit / built_at / sidecar 声明的 manifest SHA）继续可读，只作展示。
+- **`docs/vendor/**` 不再进发布件**：它是与外部 vendor 的交接材料，不参与运行。升级后该目录不会出现在 `framework/` 下。
+- **dev/source layout**（framework 自身仓，无包内 manifest）只会显示 identity unknown/SKIP，不影响其 `npm test`；不存在 runtime integrity gate。
+
+## 顶层测试计划新增 `execution_channel`（3.0.0 Breaking）
+
+`test-plan.md`「测试用例清单」表每条 TC 必须声明唯一**执行通道**，值域冻结为 `hylyre | visual | manual:<gap_class> | provider:<capability-id>`。缺列、缺值或非法值都会让 testing FAIL，并要求一次性迁移——harness **不会**按用例名、优先级或步骤散文替你猜通道。
+
+- **为什么**：此前派生器可以自行写 `explicit_skip_tc_ids`。静态门拒绝入口 selector 后，它没有回报"无法编译"，而是把入口 TC 挪进 skip 仍宣称覆盖完整；剩余用例的前置状态随之全部失真，设备停在首页，一整轮执行级联失败。执行责任必须由测试计划作者声明，不能由编译器自行处置。
+- **派生器不再有 skip 决策权**：正式派生只编译 `channel=hylyre` 的**全集**，不得新增/删除/改写通道，也不再产出 `explicit_skip_tc_ids`（历史产物仍可读）。任一 `hylyre` case 编译失败——含"首个断言之前没有同 case 的 setup/navigation 动作"——则整份 Hylyre 计划不启动，并回报该 TC 的根因与下一责任阶段。
+- **manual/provider 三态**：固定 known class 且当前工具确无原语的 `manual:<gap_class>`、inactive/SKIP provider 为 `unsupported_gap`（留分母、不算 PASS）；裸 `manual`、未知 class、未登记 provider、active 但无 per-TC producer 的 provider 为跑机前 `invalid_test`。框架不接受人工确认、`confirmed_by`、质量 receipt 或 manual resume 把 gap 洗成 PASS。
+- **对账按通道精确**：derived/trace/timing 的精确集合只与 `channel=hylyre` 闭合，visual/manual/provider 的 TC 不再被误报成"缺 trace"；报告总分母仍覆盖全部顶层 TC。
+- **迁移动作**：在顶层 `test-plan.md` 用例表末尾加一列「执行通道」，逐条填写并进入 plan review。改动任一 TC 的通道都会改变计划 identity，不得在派生或回灌时静默重写。
+
+## selector 静态门恢复开放世界语义（3.0.0）
+
+feature ui-spec 只建模本 feature 新增的页面，首页/卡包/添加卡片等既有入口天然缺席。因此 selector **不在 ui-spec 只给 provenance WARN 并放行**，最终合法性由本轮真机 StepResult 的 selector evidence 裁决。
+
+静态 BLOCKER 收窄为可确定错误：非法 selector/match、正式 `by_text` 缺显式 `match: exact|contains`、ui-spec 已证明的同屏多映射无消歧、`contains` 只命中带 children 的聚合 Text/Row，以及同一 acceptance checkpoint 结构化绑定的 `target_element_id` 与计划 `by_id` 明确不等。框架**不会**把 ui-spec、acceptance 与 contracts 合成第二套 canonical selector registry，也不从散文抽取目标 ID。
 
 ---
 
@@ -193,10 +235,14 @@ report，**再跑一次完整 harness 会换代 subject**，刚发布的 verifie
    须声明 `flows`（有序屏链）与逐 AC `checkpoint`/`requirement_ref`（源片段 sha256 验存）
    ——存量 feature 重跑 spec 时须补齐（check-spec `acceptance_flow_structure` BLOCKER）。
    P0 用例 skip 继续 fail-closed：旧 `p0_skip_waiver` confirmation receipt 只读且不 gate。
-   缺口属于既有 `explicit_skip_tc_ids` 登记时，
-   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测；
-   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器
-   `failure_kind`/`blocking_class` 信号的外部阻塞才走既有 DEFERRED。
+   （下面这段 explicit-skip 口径已被 3.0.0 的「顶层测试计划新增 `execution_channel`」一节取代，
+   仅保留为历史记录：）~~缺口属于既有 `explicit_skip_tc_ids` 登记时，
+   testing 保持 FAIL，但会产出 coding repair candidate，由 goal 回退 coding 修复并重测。~~
+   **3.0.0 现行口径**：新计划与派生器禁止写 `explicit_skip_tc_ids`（登记即 BLOCKER），历史登记
+   仅只读诊断——保持 testing FAIL 且**零自动 coding candidate**。
+   status 为空或未经登记的 trace skip 留在 testing 恢复执行；只有带机器 blocked/failed
+   `capability`/`infrastructure` 事实（`outcome.cause` 或 `outcome.failure`）或
+   `blocking_class` 信号的外部阻塞才走既有 DEFERRED。
    `await_human_p0_skip` 主动首触 halt 已退役，仅保留历史事件读取兼容。
    此外，每条 `ut_layer=device|both` 的 P0 AC 必须由至少一条 P0 TC 覆盖；把相关 TC
    降为 P1/P2 会由既有 `acceptance_to_test_case` 原地 BLOCKER，不得借降档退出 P0 分母。
@@ -376,91 +422,31 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 
 ---
 
-## 把 framework 部署到目标工程：两种模式
+## 把 framework 发布件集成到目标工程
 
-### 模式 A：Vendor（直接拷源码，无独立 git 仓库）
+Maison 只交付已经过 pack/release verify 的 `framework-<semver>.zip`。在目标工程根解压，得到 `<repo-root>/framework/`；升级时用新发布件镜像覆盖旧目录。不要从源仓直接挑文件复制，也不要采用第二种 Git 布局。
 
-适用场景：framework 不作为独立 git 仓库管理，作为**目标工程仓库的一部分**跟随提交；典型如「壳子工程训练 framework，定期同步到一个或多个真实业务工程」。
-
-> **设计原则**：用户/AI 唯一的**手工**动作 = "把 `framework/` 整目录搬到目标工程根"。同步完成后跑 `/framework-init`，**剩下所有事**（npm install、S3 `run-global-phases`、配 `framework.config.json`、harness 验收）**全部由 framework-init S3 内部完成**；DevEco 路径由 personal setup（阶段 `--ensure`）写入 `framework.local.json`。绝不要让用户在 vendor 之后再手工跑额外命令。
-
-#### 首次部署 / 升级（同一组命令）
-
-在**当前 framework 源仓库**（即维护 framework 的工程）根目录执行：
-
-```bash
-# Linux / macOS / WSL
-rsync -a --delete \
-  --exclude 'node_modules' \
-  --exclude 'dist' \
-  --exclude 'reports/*' \
-  --exclude 'trace' \
-  framework/ <target-repo>/framework/
-```
-
-```powershell
-# Windows PowerShell
-robocopy .\framework <target-repo>\framework /MIR /XD node_modules dist reports trace
-```
-
-排除项说明（这些都是运行产物，已被 `.gitignore`，不是 framework 本体）：
-- `node_modules` / `dist` — npm 安装结果与 ts 编译产物，目标工程会自己重建
-- `reports/*` — harness 跑出的报告（保留 `reports/.gitkeep`）
-- `trace` — 调试 trace 目录
-
-同步到目标工程后，在工程根跑 **`/framework-init`**（S1–S4 编排）。`ensure-gitignore` 等 mechanism 任务在 **S3 批准后** 由 executor 执行（不再在探测阶段写盘）。
+集成完成后，在工程根跑 **`/framework-init`**（S1–S4 编排）。mechanism 任务在 **S3 批准后**由 executor 执行。宿主的 SCM 状态与配置都不参与 init/catalog/其它 phase 裁决：init **不读取、不诊断、不创建、也不修改**宿主 `.gitignore`，也不从 SCM 历史恢复 `framework.config.json`。
 
 | 阶段 | 做的事 |
 |------|--------|
 | **S1** | 只读 `InitTaskPlan`（`init-orchestrate.ts --scope project`） |
 | **S2** | 确认元数据 / 架构 DSL / **`materialized_adapters` 多选**；生成 decision + context JSON |
-| **S3** | executor：config merge/写入、adapter 物化、gitignore、harness-install、全局 phase 等 |
+| **S3** | executor：config merge/写入、adapter 物化、harness-install、全局 phase 等 |
 | **S4** | 结构化摘要 + 提醒团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`** |
 
 **严禁**：
 
-- 在 S1 探测阶段写 `.gitignore` / adapter 产物 / config（副作用仅在 S3）。
+- 在 S1 探测阶段写 adapter 产物 / config（副作用仅在 S3）。
 - 在项目 init 里配置 personal `agent_adapter` 或 DevEco 路径（走 setup → `framework.local.json`）。
 - 用 legacy **Q1=y / Step 0.3.4** 文本协议代替 registry widget（已废弃）。
-- 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明 vendor 漏文件、init 未完成或 framework bug。
-
-### 模式 B：Submodule（framework 独立 git 仓库）
-
-适用场景：framework 已抽取为独立 repo，被 3+ 个工程通过 `git submodule` 共用；维护者希望"一处发布、多处升级"。
-
-#### 首次部署
-
-```bash
-# 在目标工程根执行
-git submodule add <framework-repo-url> framework
-git submodule update --init --recursive
-# 之后跑 /framework-init，与 Vendor 模式同步完成后的流程一致
-```
-
-#### 升级
-
-```bash
-git submodule update --remote framework
-# 或进入 framework 目录按你们托管方式 pull / checkout 指定 tag
-```
-
-子模块更新后，若 `framework.config.json` 的 `schema_version` 或 harness 契约有破坏性变更，维护者应在 **framework 的 CHANGELOG / 发布说明**中注明；实例侧仍建议走一次 **`/framework-init` UPDATE**，让 Skill 根据新模板与校验规则对齐入口文件与路径说明，并触发 S3 `run-global-phases` 确认 submodule 拉得完整。
-
----
-
-## 模式选择建议
-
-| 场景 | 推荐模式 |
-|---|---|
-| 单壳子工程训练 framework + 1~2 个真实业务工程 | **Vendor**（投入小，演化期适用） |
-| framework 稳定，3+ 真实工程共用 | **Submodule**（一处升级，多处生效） |
-| framework 还在剧烈演化（如 v2.x 这个阶段） | **Vendor**（每次同步前能 diff，便于回滚单次同步） |
+- 把 S3 `run-global-phases` 失败解释为「环境问题」跳过——全局 phase 不依赖外部工具链，失败说明发布件集成不完整、init 未完成或 framework bug。
 
 ---
 
 ## 本文件与「实例侧迁移说明」的关系
 
-**本 `MIGRATION.md` 留在 `framework/` 内**，供所有引入子模块的仓库只读参考。
+**本 `MIGRATION.md` 留在发布件 `framework/` 内**，供所有接入工程只读参考。
 
 若初始化 Skill 在实例根生成「迁移备忘」或「与当前 config 对齐的检查清单」，那是**针对该工程当前状态**的一次性产物，**不替代**本文的通用约定；二者冲突时以 **Skill 流程 + `framework.config.json` + harness 实际校验** 为准。
 
@@ -513,7 +499,7 @@ git submodule update --remote framework
 
 **实例升级 checklist**：
 
-1. Vendor / submodule 更新 framework 到含本重构的版本。
+1. 集成含本重构的 Maison 已验证发布件。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4），物化**新扁平跳板名**与 inline 链接。
 3. **UPDATE init 自动清理**残留旧跳板（实例根仍使用编号形态或语义旧名 prd-design、requirement-design 等的遗留目录/文件；**不删**现行扁平跳板 spec / plan / coding 等）；删除前备份至 `.framework-backup/<timestamp>/`，可按需回滚。CREATE 模式不删除。
 4. profile `skill-assets.yaml` 与扩展 skill 引用改为扁平 slug。
@@ -530,18 +516,18 @@ git submodule update --remote framework
 | 旧 | 新 |
 |----|-----|
 | 项目 init 选单个 `agent_adapter` | 项目 init 选 **`materialized_adapters[]`**（可多选 claude/cursor/generic） |
-| `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（gitignored） |
+| `framework.config.json` 含 `agent_adapter` | 外迁到 **`framework.local.json`**（个人级本地配置） |
 | project config 写 `toolchain.devEcoStudio.installPath` | 外迁到 **local**；hmos-app 走 **`check-personal-setup --json --ensure（阶段前置门控）`** + `setup.deveco_path` |
 | Step 0.3.4 **Q1=y** 文本 | **`init.task_plan` + `init.task_decision`** widget |
-| `check-init` 探测时写 gitignore | S1 **只读**；S3 任务 `ensure-gitignore` 写盘 |
+| `check-init` 探测时写 gitignore | 已整体退场：init 不再读写宿主 `.gitignore`（3.0.0） |
 
 **实例升级 checklist**：
 
-1. **Vendor / submodule 更新** framework 到含编排器的版本。
+1. 集成含编排器的 Maison 已验证发布件。
 2. 工程根跑 **`/framework-init` UPDATE**（S1→S4）；S2 确认 `materialized_adapters` 覆盖团队使用的 IDE。
 3. S3 应执行 **`migrate-config`**（若 planner 挂载）：自动把 legacy `agent_adapter` / DevEco 路径外迁，并在 project config 写入 `materialized_adapters`。
 4. **每位开发者**跑一次 **`check-personal-setup --json --ensure（阶段前置门控）`**，确认 personal `agent_adapter`（仅能从已物化列表选）。
-5. 确认 `.gitignore` 含 **`framework.local.json`**（canonical 第 19 条；S3 `ensure-gitignore` 可补齐）。
+5. `framework.local.json` 是个人级本地配置；是否忽略它由宿主自行在 `.gitignore` 决定（Maison 不代写）。
 6. 跑 feature phase 前：`getFrameworkPersonalSetupStatus().source !== 'fallback'`（harness-runner 否则 exit 1）。
 
 **CLI 速查（工程根）**：
@@ -575,7 +561,7 @@ cd framework/harness && npx ts-node scripts/init-orchestrate.ts --scope personal
 **实例 checklist**：
 
 1. 跑 `/framework-init` UPDATE；planner 若挂 **`confirm-fields` / `migrate-config`**，在 S2 用 registry 确认；S3 执行 `merge-framework-config` 写入 `paths.reports_dir_pattern`（**非手改 JSON**）。
-2. 宿主 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则）；保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局。
+2. 如需忽略新报告路径，宿主可自行在 `.gitignore` 增加 **`doc/features/*/*/reports/*`**（或等价宽泛规则），并保留 `framework/harness/reports/*` 以对齐全局阶段与遗留布局；这一步由宿主自行决定，init 不代写。
 3. 如有历史产物在 `framework/harness/reports/<feature>/`，可选执行下文「Legacy 报告手动迁移」专节（init **不自动搬文件**）。
 
 #### Legacy 报告手动迁移（opt-in · init S3 之后）
@@ -716,7 +702,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 - 若实例工程的 `doc/` 下仍存有 v2.3 之前从 framework 同步过来的总览类文档（典型文件名：`HarmonyOS-AI研发框架全景介绍.md` / `业务级UT策划.md` / `Harness全链路验证说明.md` / `自然语言到技术模块-演进路线图.md`），**应在升级到 v2.4 后删除**——它们已被 `framework/docs/` 内的对应版本取代。
 - 实例工程**自有的**文档（如功能 spec、plan、test-plan、PPT 复盘材料等）**不受影响**，照常留在 `doc/` 下。
-- vendor 模式同步 framework 时，确保 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）一并随 framework 目录拷贝过去。
+- 集成发布件时，确认 `framework/docs/`（包括 `DOC_INVENTORY.yaml`）完整在场。
 - 接入 v2.4 后跑一次 `npx ts-node harness-runner.ts --phase docs` 自检；若有 MAJOR，按 [`docs/operations/harness-runbook.md`](docs/operations/harness-runbook.md) §6.4 的对照表处理。
 
 **回归方法**：
@@ -731,7 +717,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 **升级要点（实例侧需要做的事）**：
 
 1. **DevEco 路径改走 personal setup（编排化重构后）**
-   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（gitignored），**不在** project `framework.config.json`。
+   - 形态见 [framework/harness/config.ts](harness/config.ts) `ToolchainConfig`；写入 **`framework.local.json`**（个人级本地配置），**不在** project `framework.config.json`。
    - 推荐：团队成员跑 **`check-personal-setup --json --ensure（阶段前置门控）`**（framework-initb）；hmos-app 用 registry **`setup.deveco_path`** 确认探测候选。
    - 也可手工编辑 `framework.local.json` 后跑 `cd <repo-root> && npx ts-node framework/harness/scripts/detect-deveco.ts --path "<your-path>" --json` 验证（cwd 见 [skills/reference/harness-cli-cwd.md](skills/reference/harness-cli-cwd.md)）。
 
@@ -756,7 +742,7 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 
 ### v2.5：workflow、extensions 元阶段、lifecycle hooks、instance_skill_bridge（当前）
 
-适用：已包含 `framework/workflows/`、`extension-loader`、`hooks-dispatcher`、`check-extensions` 与 adapter `instance_skill_bridge` 的 framework vendor。
+适用：已集成包含 `framework/workflows/`、`extension-loader`、`hooks-dispatcher`、`check-extensions` 与 adapter `instance_skill_bridge` 的 Maison 发布件。
 
 **建议在实例 `framework.config.json`（UPDATE diff 确认）补齐：**
 
@@ -839,7 +825,7 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 
 **`reports_dir_pattern` 默认值 SSOT**：`config.ts` → `DEFAULT_PATHS.reports_dir_pattern`（`normalizeConfig` 与 BACKFILL 自动注入；极旧磁盘 config 未配置时 `featurePhaseReportsDir` 仍回退 legacy `framework/harness/reports/`）。
 
-1. 升级 `framework/` submodule 后跑 `/framework-init` UPDATE（S1→S4）。
+1. 镜像覆盖新的 Maison 已验证发布件后跑 `/framework-init` UPDATE（S1→S4）。
 2. S1 planner / check-init 查看 `missing_keys` / `migration_keys` / `confirm_keys`。
 3. S2 批准 `backfill-config` / `migrate-config` / `confirm-fields` 决策。
 4. S3 executor 写回 config（**非手改 JSON**）。
@@ -863,14 +849,14 @@ legacy 顶层 `project_type` 由 **MIGRATION_RULES**（Pass 2）在 migrate-conf
 
 ### adapter `update_policy` + `.framework-backup/`（实例侧 hooks/settings 等与 framework 对齐）
 
-适用：已从本仓库 vendor / submodule **更新 framework** 后，老实例的 Claude Code **`hooks`、`settings.json`、verifier 子 agent** 等仍停在旧版本，导致 `npm test`（hook 行为）或其它 harness 契约回归。
+适用：已集成新的 Maison 发布件后，老实例的 Claude Code **`hooks`、`settings.json`、verifier 子 agent** 等仍停在旧版本，导致 `npm test`（hook 行为）或其它 harness 契约回归。
 
 **行为摘要**：
 
 - [adapter-schema.yaml](agents/adapter-schema.yaml) 各段可选 `update_policy`：`prompt_if_changed`（**缺省**）或 `auto_overwrite`。Claude adapter 已对 `hooks` / `settings_file` / `commands.subagents` 声明 **`auto_overwrite`**。
 - [check-init.ts](harness/scripts/check-init.ts)：体检 **#3 逐文件展开**， stdout / `check-init.json` 中带 `update_policy` 列；`auto_overwrite` 且 POPULATED **不进入** S2 `init.task_decision`（由 S3 `sync-auto-overwrite:*` 自动对齐）。
 - **编排化重构后**：机制对齐**不在** check-init PASS 时写盘；须在 S2 批准 S3 任务 `sync-auto-overwrite:*` / `materialize-adapter:<name>`，executor 备份至 `.framework-backup/<UTC>/` 后覆盖。
-- `.framework-backup/` 已计入体检 **#11** canonical `.gitignore`；缺则 S3 `ensure-gitignore` 补齐。
+- `.framework-backup/` 是 init 的本地备份目录；宿主如需忽略它，自行在 `.gitignore` 登记（Maison 不代写）。
 
 **实例 checklist**：
 
@@ -937,11 +923,11 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 - 回填成功仅生成**待补全骨架**；须 agent 完成真实探索、填 Code Facts / source_code_paths 后手动设 `ready_to_produce: true`，再跑 harness。
 - 脚本对骨架预期未过门禁时 **warn 而非 exit 2**（便于批量生成占位文件）；真正 BLOCKER 在用户/agent 跑 `--phase <phase> --feature <name>` 时触发。
 
-**实例维护者动作**（vendor / submodule 更新 framework 后）：
+**实例维护者动作**（集成新的 Maison 发布件后）：
 
 1. 阅读 [agent-behavioral-principles.md](skills/reference/agent-behavioral-principles.md)（agent 会话级约束已写入 `AGENTS.md` §3.7）。
 2. 可选：对 in-flight feature 的 `context-exploration.md` 升级到 1.1.0 并补全 Code Facts（或依赖 v2.6 compat 临时降级至过期日）。
-3. hmos-app 实例：确认 `framework/profiles/hmos-app/harness/exploration-snippets.yaml` 已 vendor；无需改 `framework.config.json`。
+3. hmos-app 实例：确认发布件包含 `framework/profiles/hmos-app/harness/exploration-snippets.yaml`；无需改 `framework.config.json`。
 4. 重跑 `cd framework/harness && npm test`；对受影响 feature 重跑对应 `--phase` harness + verifier。
 
 **零回归保证**：
@@ -974,7 +960,7 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 
 **实例维护者**：
 
-1. vendor framework 后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
+1. 集成发布件后确认 5 个 `phase-rules/*.yaml` 含 `exploration_strategy`
 2. 新 feature 的 `context-exploration.md` 填写变更信号 frontmatter
 3. plan/coding 默认 `exploration_mode: subagent`；Chrys/generic 用 sequential + 更高量化阈值
 
@@ -1045,7 +1031,7 @@ check-personal-setup --json --ensure（阶段前置门控）  # 每位开发者�
 3. 8 个 Skill slash（`spec` … `glossary-bootstrap`）注入 Widget BLOCKER 段；**不改** `framework-init.md`。
 4. [harness/scripts/check-skills-confirmation-ux.ts](harness/scripts/check-skills-confirmation-ux.ts) — 增量 lint Claude templates。
 
-**实例维护者**（vendor framework 后 **自行** UPDATE init；agent 不代写 `.claude/`）：
+**实例维护者**（集成新发布件后 **自行** UPDATE init；agent 不代写 `.claude/`）：
 
 ```text
 /framework-init   # UPDATE；S2 init.task_decision 覆盖 rules/commands 漂移项 → S3 物化

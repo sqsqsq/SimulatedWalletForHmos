@@ -1,0 +1,355 @@
+// ============================================================================
+// execution-channel.ts — 顶层 test-plan 的编译期执行通道（plan a6c4e9f2 D2 / T3）
+// ----------------------------------------------------------------------------
+// 事故根因（2026-08-31 bc-openCard-1 首次宿主回灌）：派生 AI 拥有 `explicit_skip_tc_ids`
+// 这个自由逃生口——静态门拒绝入口 selector 后，它没有回报"无法编译"，而是把入口 TC
+// 从 executable 集合挪进 skip，仍宣称顶层 30 条已覆盖；剩余 case 的前置状态随后全部
+// 失真，设备停在首页，14 个执行 case 级联失败。
+//
+// 修复不是再加一层可达性状态机（那只能在错误发生后拦结果，仍回答不了"这些 case 该
+// 由谁执行"），而是把"谁做"从派生器手里拿回给测试作者：顶层 test-plan.md 每条 TC 声明
+// 唯一 `execution_channel`，派生器只编译 `hylyre` 集合，不得新增/删除/改写通道，也不
+// 再产出新的 explicit skip。
+//
+// 边界：channel 是**编译期分派声明**，不是执行状态，不构成第二套结果账本。
+// ============================================================================
+
+import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
+import { normalizeCapabilityKey } from './capability-alias';
+
+export type ExecutionChannelKind = 'hylyre' | 'visual' | 'manual' | 'provider';
+
+export interface ExecutionChannel {
+  kind: ExecutionChannelKind;
+  /** kind='provider' 时的 capability id（其余为 undefined） */
+  provider_id?: string;
+  /** kind='manual' 时声明的缺口类别（`manual:<class>`；plan 07a41ec6 T2 三态） */
+  gap_reason?: string;
+  /** 计划中的原始字面量（用于报错回显与 identity 比对） */
+  raw: string;
+}
+
+/** 冻结值域文案——报错与模板共用一处，避免两边漂移。 */
+export const EXECUTION_CHANNEL_DOMAIN = 'hylyre | visual | manual:<gap_class> | provider:<capability-id>';
+
+/**
+ * plan 07a41ec6 T2 三态：`manual:<class>` 只有引用这些固定的"当前工具无原语"类别才成立为 unsupported_gap；
+ * Hylyre 步骤原语能表达的用例写成 manual 一律 invalid_test（防止难写的 P0 被随手改 manual）。
+ */
+export const NO_PRIMITIVE_GAP_CLASSES = [
+  'system_settings',
+  'perf_sampling',
+  'memory_sampling',
+  'resource_variant',
+  'data_injection',
+  'external_precondition',
+] as const;
+export type NoPrimitiveGapClass = (typeof NO_PRIMITIVE_GAP_CLASSES)[number];
+
+export type ExecutionChannelState = 'executable' | 'unsupported_gap' | 'invalid_test';
+
+const PROVIDER_PREFIX = 'provider:';
+/** capability id 与既有 capability registry 同形：小写字母/数字/点/下划线/连字符 */
+const PROVIDER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+
+/**
+ * 解析单个 channel 字面量。非法/缺失一律返回 null——**不猜**：
+ * 不按用例名、优先级、步骤散文或能力启发式推断通道。
+ */
+export function parseExecutionChannel(raw: unknown): ExecutionChannel | null {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim().replace(/^`|`$/g, '').trim();
+  if (!value) return null;
+  const lowered = value.toLowerCase();
+  if (lowered === 'hylyre' || lowered === 'visual' || lowered === 'manual') {
+    return { kind: lowered, raw: value };
+  }
+  if (lowered.startsWith('manual:')) {
+    const reason = lowered.slice('manual:'.length).trim();
+    if (/^[a-z][a-z0-9_]*$/.test(reason)) return { kind: 'manual', gap_reason: reason, raw: value };
+  }
+  if (lowered.startsWith(PROVIDER_PREFIX)) {
+    const providerId = value.slice(PROVIDER_PREFIX.length).trim();
+    if (PROVIDER_ID_RE.test(providerId)) {
+      return { kind: 'provider', provider_id: providerId, raw: value };
+    }
+  }
+  return null;
+}
+
+export interface ExecutionChannelRow {
+  tc_id: string;
+  /** null = 缺失或非法（由 raw 区分：raw 为空即缺失） */
+  channel: ExecutionChannel | null;
+  raw: string;
+}
+
+export interface ExecutionChannelTable {
+  /** 顶层「测试用例」表是否**声明了**执行通道列。false = legacy 计划（无列） */
+  column_declared: boolean;
+  rows: ExecutionChannelRow[];
+}
+
+function pickColumnIndex(table: MdTable, keywords: string[]): number {
+  for (const kw of keywords) {
+    const idx = table.headers.findIndex(h => h.toLowerCase().includes(kw.toLowerCase()));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/** 从顶层 test-plan.md「测试用例」首表读取每 TC 的执行通道。 */
+export function extractExecutionChannels(planMd: string): ExecutionChannelTable {
+  const section = getSectionContent(planMd, '测试用例') ?? getSectionContent(planMd, '测试用例清单') ?? '';
+  const tables = extractTables(section || planMd);
+  if (tables.length === 0) return { column_declared: false, rows: [] };
+  const table = tables[0];
+  const idCol = pickColumnIndex(table, ['用例编号', '编号', 'TC-ID', 'TC ID']);
+  const channelCol = pickColumnIndex(table, ['执行通道', 'execution_channel', 'execution channel']);
+  const rows: ExecutionChannelRow[] = [];
+  for (const row of table.rows) {
+    const tcRaw = (idCol >= 0 ? row[idCol] : row[0] || '').trim();
+    const matched = tcRaw.match(/TC-\d+/i);
+    if (!matched) continue;
+    const raw = channelCol >= 0 ? (row[channelCol] ?? '').trim() : '';
+    rows.push({ tc_id: matched[0].toUpperCase(), raw, channel: parseExecutionChannel(raw) });
+  }
+  return { column_declared: channelCol >= 0, rows };
+}
+
+export interface ExecutionChannelDeclarationResult {
+  ok: boolean;
+  column_declared: boolean;
+  /** 声明了列但该 TC 单元格为空 */
+  missing: string[];
+  /** 单元格非空但不在冻结值域内 */
+  illegal: Array<{ tc_id: string; raw: string }>;
+  /**
+   * 同一 TC 出现多行。契约是"每 TC **唯一** channel"——重复即使取值相同也无法证明唯一，
+   * 取值不同更是把同一个 TC 同时塞进两个通道集合（会让 hylyre 精确对账和分母同时失真）。
+   */
+  duplicates: Array<{ tc_id: string; raws: string[] }>;
+  /** channel=hylyre 的 TC（大写、去重、稳定顺序） */
+  hylyre_tc_ids: string[];
+  /** channel=manual 的 TC；具体由三态拆成 unsupported_gap / invalid_test。 */
+  manual_tc_ids: string[];
+  /** channel=visual 的 TC */
+  visual_tc_ids: string[];
+  /** channel=provider:<id> 的 TC 及其 capability id */
+  provider_tc_ids: Array<{ tc_id: string; provider_id: string }>;
+  /**
+   * plan b3d7e5a1 T2：capability registry 未登记的 provider id（传入 registeredCapabilityIds 时才判）。
+   * 匹配 = 双方经 normalizeCapabilityKey 后精确相等；不做分隔符/大小写/相似度归一——harness 不按名字猜能力。
+   */
+  unknown_provider: Array<{ tc_id: string; provider_id: string }>;
+  /**
+   * plan 07a41ec6 T2 三态：unsupported_gap = 机器证明的工具缺口（manual:<固定类别> / inactive provider）
+   * ——留在分母、不算 PASS、不阻止普通开发完成，报告与 completion_status 必须披露。
+   */
+  unsupported_gap: Array<{ tc_id: string; channel: 'manual' | 'provider'; reason: string }>;
+  unsupported_gap_tc_ids: string[];
+  /** invalid_test = 写法错误，跑机前必修：裸 manual / 未知缺口类别 / 未登记 provider / active 但无 per-TC producer */
+  invalid_test: Array<{ tc_id: string; raw: string; why: string; fix: string }>;
+  /**
+   * plan b3d7e5a1 T2（codex P1）：通道集合是否可用——列已声明且无缺值/非法/重复。与 `ok` 的差别只有
+   * registry 未登记的 provider id：那是声明 BLOCKER，但 hylyre/visual/manual/provider 四个集合本身已解析，
+   * 派生/trace/timing 的精确对账必须继续按 `hylyre_tc_ids`，不得退回 legacy 全 TC 口径（否则 report-only
+   * 会对历史 run 虚报"派生计划缺少顶层 TC"）。
+   */
+  channels_resolved: boolean;
+  /** 人读迁移/修复指引（ok 时为空串） */
+  detail: string;
+}
+
+/**
+ * 评估一份顶层计划的通道声明。**正式计划**缺列或缺值都是一次性迁移要求（FAIL），
+ * 不按测试文字启发式猜执行器；legacy（无列）计划由调用方决定是否只读兼容。
+ */
+export interface EvaluateExecutionChannelOptions {
+  /**
+   * 当前 profile 已登记的 capability 键集（已 normalize）。省略 = 不查表（纯词法，行为逐字不变）。
+   * 生产唯一注入点是 check-testing 的 loadExecutionChannelDeclaration；parseExecutionChannel 永不读 profile。
+   */
+  registeredCapabilityIds?: ReadonlySet<string>;
+  /**
+   * codex review（plan 07a41ec6 T2）：已登记但当前 profile 明确不可用（severity=SKIP）的 capability 键集。
+   * provider gap 只对这些 id 成立；已登记且可用的 provider 没有 per-TC 结果时仍是 fail-closed 义务，
+   * 不能借"已登记"逃出执行。省略 = 查表模式下不产生 provider gap（纯词法模式仍按登记与否处理）。
+   */
+  inactiveCapabilityIds?: ReadonlySet<string>;
+}
+
+/** 从 profile 的 capabilities map 取键集并 normalize（severity=SKIP 也算"存在"——可用性归 capability-resolution）。 */
+export function registeredCapabilityIdsFromProfile(capabilities: Record<string, unknown> | undefined): Set<string> {
+  return new Set(Object.keys(capabilities ?? {}).map(key => normalizeCapabilityKey(key)));
+}
+
+/** profile 明确不可用（severity=SKIP / enabled=false）的 capability 键集——只有它们的 provider 通道才是 unsupported_gap。 */
+export function inactiveCapabilityIdsFromProfile(capabilities: Record<string, unknown> | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const [key, raw] of Object.entries(capabilities ?? {})) {
+    const entry = (raw && typeof raw === 'object' ? raw : {}) as { severity?: unknown; enabled?: unknown };
+    const severity = typeof entry.severity === 'string' ? entry.severity.trim().toUpperCase() : '';
+    if (severity === 'SKIP' || entry.enabled === false) out.add(normalizeCapabilityKey(key));
+  }
+  return out;
+}
+
+export function evaluateExecutionChannelDeclaration(
+  planMd: string,
+  opts?: EvaluateExecutionChannelOptions,
+): ExecutionChannelDeclarationResult {
+  const table = extractExecutionChannels(planMd);
+  const missing: string[] = [];
+  const illegal: Array<{ tc_id: string; raw: string }> = [];
+  const hylyre: string[] = [];
+  const manual: string[] = [];
+  const manualReason = new Map<string, string | undefined>();
+  const manualRaw = new Map<string, string>();
+  const visual: string[] = [];
+  const provider: Array<{ tc_id: string; provider_id: string }> = [];
+
+  // 「每 TC 唯一 channel」先于逐行取值判定：重复行必须整体拒绝，绝不能让同一个 TC
+  // 同时进入两个通道集合（那会让 hylyre 精确对账与报告分母同时失真）。
+  const rowsByTc = new Map<string, string[]>();
+  for (const row of table.rows) {
+    rowsByTc.set(row.tc_id, [...(rowsByTc.get(row.tc_id) ?? []), row.raw]);
+  }
+  const duplicates = [...rowsByTc.entries()]
+    .filter(([, raws]) => raws.length > 1)
+    .map(([tc_id, raws]) => ({ tc_id, raws }))
+    .sort((a, b) => a.tc_id.localeCompare(b.tc_id));
+
+  for (const row of table.rows) {
+    if (rowsByTc.get(row.tc_id)!.length > 1) continue; // 重复 TC 不进任何通道集合
+
+    if (!row.raw) {
+      missing.push(row.tc_id);
+      continue;
+    }
+    if (!row.channel) {
+      illegal.push({ tc_id: row.tc_id, raw: row.raw });
+      continue;
+    }
+    if (row.channel.kind === 'hylyre') hylyre.push(row.tc_id);
+    else if (row.channel.kind === 'manual') {
+      manual.push(row.tc_id);
+      manualReason.set(row.tc_id, row.channel.gap_reason);
+      manualRaw.set(row.tc_id, row.raw);
+    }
+    else if (row.channel.kind === 'visual') visual.push(row.tc_id);
+    else provider.push({ tc_id: row.tc_id, provider_id: row.channel.provider_id! });
+  }
+  // plan b3d7e5a1 T2：计划期 registry 存在性——自拟的 provider id 不该跑完真机才被判"永远不可能通过"。
+  const registry = opts?.registeredCapabilityIds;
+  const unknownProvider = registry
+    ? provider.filter(item => !registry.has(normalizeCapabilityKey(item.provider_id)))
+    : [];
+  // plan 07a41ec6 T2 三态判定
+  const unsupportedGap: Array<{ tc_id: string; channel: 'manual' | 'provider'; reason: string }> = [];
+  const invalidTest: Array<{ tc_id: string; raw: string; why: string; fix: string }> = [];
+  const gapClasses: ReadonlySet<string> = new Set<string>(NO_PRIMITIVE_GAP_CLASSES);
+  for (const tc of manual) {
+    const reason = manualReason.get(tc);
+    if (reason && gapClasses.has(reason)) {
+      unsupportedGap.push({ tc_id: tc, channel: 'manual', reason });
+    } else {
+      invalidTest.push({
+        tc_id: tc,
+        raw: manualRaw.get(tc) ?? 'manual',
+        why: reason ? `缺口类别 ${reason} 不在固定枚举内` : '未声明机器可证明的缺口类别',
+        fix: `当前工具确无原语时写成 manual:<${NO_PRIMITIVE_GAP_CLASSES.join('|')}>；Hylyre 步骤原语能表达的一律改 hylyre 并写出步骤`,
+      });
+    }
+  }
+  const unknownProviderTc = new Set(unknownProvider.map(item => item.tc_id));
+  for (const item of provider) {
+    if (unknownProviderTc.has(item.tc_id)) {
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: 'capability registry 未登记',
+        fix: '改通道（hylyre/visual/manual:<class>）或先在 profile capabilities 登记该能力并提供 provider',
+      });
+    } else if (!registry) {
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: '未提供 capability registry，无法证明 provider 已登记且 inactive',
+        fix: '在 profile capabilities 登记该能力；inactive/SKIP 才能作为 unsupported_gap，接入 per-TC producer 后才能 executable',
+      });
+    } else if (opts?.inactiveCapabilityIds?.has(normalizeCapabilityKey(item.provider_id))) {
+      // 只有 profile 明确不可用（SKIP/disabled）的 capability 才是 gap。
+      unsupportedGap.push({ tc_id: item.tc_id, channel: 'provider', reason: `provider_inactive:${item.provider_id}` });
+    } else {
+      // 3.0.0 尚无 per-TC provider producer：active capability 不能执行该 TC，跑机前判 invalid_test。
+      invalidTest.push({
+        tc_id: item.tc_id,
+        raw: `provider:${item.provider_id}`,
+        why: 'capability 已登记且 active，但当前框架没有对应的 per-TC provider producer',
+        fix: '改为 hylyre/visual；工具确不可用时将 capability 标为 SKIP/disabled；将来接入 per-TC producer 后再使用 provider 通道',
+      });
+    }
+  }
+
+  const lines: string[] = [];
+  if (!table.column_declared) {
+    lines.push(
+      `顶层 test-plan.md「测试用例」表缺「执行通道」列：每条 TC 必须声明唯一 execution_channel（${EXECUTION_CHANNEL_DOMAIN}）。`,
+      '这是一次性迁移：由测试计划作者按用例实际取证方式填写并进入 plan review；harness 不按用例名/优先级/步骤散文替你猜通道。',
+    );
+  } else {
+    if (missing.length > 0) {
+      lines.push(`以下 TC 未声明 execution_channel：${missing.join(', ')}（值域：${EXECUTION_CHANNEL_DOMAIN}）`);
+    }
+    for (const item of illegal) {
+      lines.push(`${item.tc_id} 的 execution_channel=${JSON.stringify(item.raw)} 不在冻结值域内（${EXECUTION_CHANNEL_DOMAIN}）`);
+    }
+  }
+  for (const item of duplicates) {
+    lines.push(
+      `${item.tc_id} 在测试用例表中出现 ${item.raws.length} 次（execution_channel=${item.raws.map(r => JSON.stringify(r)).join(' / ')}）：` +
+      '每条 TC 只能声明唯一执行通道，重复行一律拒绝——即使取值相同也无法证明唯一。请合并为一行。',
+    );
+  }
+  if (unknownProvider.length > 0) {
+    const registered = [...registry!].sort();
+    for (const item of unknownProvider) {
+      lines.push(
+        `${item.tc_id} 的 execution_channel=provider:${item.provider_id}：该能力不存在（capability registry 未登记），此 TC 不可能通过。` +
+        '请改通道（hylyre/visual/manual:<gap_class>）或先在 profile capabilities 登记该能力；harness 不按名字猜能力。',
+      );
+    }
+    lines.push(
+      registered.length > 0
+        ? `当前 profile 已登记的 capability 键（normalize 后、字典序）：${registered.join(', ')}`
+        : '当前 profile 未登记任何 capability。',
+    );
+  }
+  for (const item of invalidTest) {
+    lines.push(`${item.tc_id} 的 execution_channel=${JSON.stringify(item.raw)} 判 invalid_test：${item.why}。改法：${item.fix}`);
+  }
+  if (unsupportedGap.length > 0) {
+    lines.push(
+      `unsupported_gap（留在原始分母、不算 PASS、不阻止普通开发完成；报告结论与 completion_status 须披露）：` +
+      unsupportedGap.map(item => `${item.tc_id}[${item.channel}:${item.reason}]`).join(', '),
+    );
+  }
+  return {
+    ok: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0 && invalidTest.length === 0,
+    channels_resolved: table.column_declared && missing.length === 0 && illegal.length === 0 && duplicates.length === 0,
+    column_declared: table.column_declared,
+    missing,
+    illegal,
+    duplicates,
+    hylyre_tc_ids: [...new Set(hylyre)].sort(),
+    manual_tc_ids: [...new Set(manual)].sort(),
+    visual_tc_ids: [...new Set(visual)].sort(),
+    provider_tc_ids: provider,
+    unknown_provider: unknownProvider,
+    unsupported_gap: unsupportedGap,
+    unsupported_gap_tc_ids: [...new Set(unsupportedGap.map(item => item.tc_id))].sort(),
+    invalid_test: invalidTest,
+    detail: lines.join('\n'),
+  };
+}

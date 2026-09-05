@@ -461,6 +461,16 @@ structure_checks:
     rule:
       expect: "fidelity_snapshot_offline_promise"
 
+  visual_reference_viewport:
+    description: >
+      plan b3d7e5a1 T5：参考图与设备视口尺寸兼容性前置门。lock.viewport 在场时逐屏比对 ref_id 参考图
+      高宽比（阈值 ×1.15，与 ocr-gates 整页启发式同一常量）；不兼容 → pixel_1to1 BLOCKER FAIL / 低档 ratchet WARN，
+      出路=作者建模：长页按锚点拆成多个 viewport 尺寸 screen（各自 ref_id + nav 末步 scroll_to）；lock 无 viewport → WARN 推迟到 testing；全部兼容 → 零结果。
+      不做 reference_region / 自动 crop / 分段 / 拼接。
+    severity: BLOCKER
+    rule:
+      expect: "visual_reference_viewport_precheck"
+
   structured_ref_elements:
     description: >
       第二刀（可选）：lock.structured_bundle 存在时程序化推导 ref-elements 分母并注入 CheckContext 内存 manifest
@@ -481,32 +491,6 @@ structure_checks:
 # 语义约束 — AI Harness 做语义级检查
 # --------------------------------------------------------------------------
 semantic_checks:
-
-  overview_clarity:
-    description: >
-      「功能概述」必须是一句简洁明确的描述，说明模块的核心价值，
-      而非"xxx功能"这种空泛表述
-    severity: MAJOR
-    ai_prompt_hint: >
-      检查「功能概述」是否满足：(1) 一句话概括核心价值；
-      (2) 包含目标用户或使用场景的暗示；(3) 不使用空泛词汇
-
-  user_scenario_specificity:
-    description: >
-      「目标用户与使用场景」必须明确用户角色和具体场景描述，
-      场景应包含前置条件和用户意图
-    severity: MAJOR
-    ai_prompt_hint: >
-      检查每个使用场景是否包含：(1) 具体的用户角色；
-      (2) 明确的操作目标；(3) 前置条件
-
-  feature_description_actionable:
-    description: >
-      功能清单中每项的「描述」必须具体到可实现，不允许仅有抽象描述
-    severity: MAJOR
-    ai_prompt_hint: >
-      对功能清单中每一项，判断描述是否足够具体，
-      让开发人员无歧义地理解需要实现什么
 
   acceptance_testable:
     description: >

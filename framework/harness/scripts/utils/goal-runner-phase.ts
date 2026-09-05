@@ -204,7 +204,7 @@ export interface GoalRunEvent {
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
-  /** P0-5（plan d9b4f7e2）：framework_integrity_block 的多值 subtype（全 blocker 收集去重）。 */
+  /** 当前 integrity classification 或历史 subtype provenance（全 blocker 收集去重）。 */
   integrity_subtypes?: string[];
   advance_blocked?: boolean;
   advance_block_reason?: string;
@@ -1280,11 +1280,10 @@ export function detectHalfCompletedPhaseRecovery(
 
   const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
   if (!summary || summary.verdict !== 'PASS') return null;
-  if (summary.receipt_status !== 'passed' || summary.closure_status !== 'closed') return null;
+  if (summary.closure_status !== 'closed') return null;
 
   const startMs = new Date(unclosed.ts).getTime();
   if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
-  if (!isReceiptFreshForInvokeStart(projectRoot, feature, phase, startMs)) return null;
 
   return { phase, invokeStartTs: unclosed.ts };
 }

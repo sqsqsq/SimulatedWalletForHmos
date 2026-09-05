@@ -258,8 +258,7 @@ flowchart TD
 ## 宿主扩展治理项
 
 > **锚点章节（core 模板预留）**：管理台排期、打点/SVN、翻译回稿、TA 联调、Demo 等**流程性事项不进 core 模板**。
-> 宿主通过 `doc/extensions/knowledge/` 章节模板 + `hooks/spec/on_context_load.md`（动笔前跑
-> `scripts/author-context.ts --phase spec` 取得）+ `phase_rules_overlays.spec` 叠加。
+> 宿主通过 `doc/extensions/knowledge/` 章节模板 + `hooks/spec/on_context_load.md` + `phase_rules_overlays.spec` 叠加。
 > 见 [phase-terminology.md](../../../../docs/concepts/phase-terminology.md)。
 
 | 扩展项 | 是否涉及 | 宿主模板/检查来源 |
