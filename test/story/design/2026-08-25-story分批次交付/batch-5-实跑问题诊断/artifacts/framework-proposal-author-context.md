@@ -154,8 +154,26 @@ framework 已有 `context_exploration_inputs_coverage`：它要求 `context-expl
    这条留痕可以换成别的形式，本提案的主体不依赖它。
 5. **`device-testing` 的行为规约引用缺失**是既有的不一致，与本提案无关，可单独处理。
 
-## 附：基线
+## 附：实现在哪、基线是什么
 
-改动基于 3.0.0。截至提交本文时，上游 `Br_release_3.0.0` 尚未包含这几项，
+**实现可以直接看这一笔提交**（消费仓，公开）：
+
+```
+8a8d8a51d7a2502517acf327ae726a9a36867905
+b5.step4: 作者上下文入口——把 on_context_load 从 verifier 接到作者一侧
+```
+
+<https://github.com/sqsqsq/SimulatedWalletForHmos/commit/8a8d8a51d7a2502517acf327ae726a9a36867905>
+
+**读它时的两点说明**：
+
+1. **路径要剥掉 `framework/` 前缀**。消费仓把 framework 作为子目录 vendored 进来，
+   所以提交里是 `framework/harness/scripts/author-context.ts`，对应 framework 仓根的
+   `harness/scripts/author-context.ts`；
+2. **提交里有两个文件与本提案无关**，不必看：`framework.config.json`（消费仓自己的漂移
+   白名单登记——vendored 的 framework 被本地改动后要具名放行，否则完整性校验会红）、
+   `test/story/TEST.md`（消费仓测试域的文档）。**其余 12 个文件就是 §4 列的那些。**
+
+改动基于 3.0.0。截至撰写本文时，上游 `Br_release_3.0.0` 尚未包含这几项，
 `harness-runner.ts` 里的 `on_context_load` 仍挂在 verifier 装配处。
 消费仓侧已在两轮真实需求上运行过这套改动，作者读到要求的时刻与产物落盘的先后关系符合预期。
