@@ -7,6 +7,14 @@
  *
  * 所以这里没有成段的说明文字：讲道理的话属于 `.md`，写在脚本字符串里既不好读也不好改。
  * 数据从三处真源来——章节合同、激活清单、材料清单与流程契约，改真源这里跟着变。
+ *
+ * ## 作者动笔前自己跑它
+ *
+ *     node doc/extensions/hooks/spec/author.mjs --feature <名>
+ *
+ * 宿主的作者事件只在装配 verifier 上下文时消费，从不进入作者动笔前的上下文——
+ * 登记在那里，作者要到产物落盘之后才读得到。所以任务包由作者自己取，入口写在
+ * SKILL、CLAUDE.md 扩展段与 `story_flow.py status` 的下一步文本里。
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -153,18 +161,17 @@ function vocabularySection() {
   return rows;
 }
 
-export default function authorContext(ctx) {
-  const projectRoot = String(ctx?.projectRoot ?? process.cwd());
-  const feature = String(ctx?.feature ?? '').trim();
-  if (!feature) return { promptFragments: [] };
-
+/**
+ * 任务包正文。合同读不到就抛——任务包是它的投影，缺了没有可降级的形态，
+ * 静默出一份少了五章要求的任务包比报错更贵。
+ */
+function taskPackage(projectRoot, feature) {
   const contract = readJsonOrNull(path.join(SKILL_ROOT, 'contracts', 'story-chapters.json'));
   if (!contract) {
-    return { ok: false, severityOverride: 'MAJOR', message: '章节合同读不到：任务包是它的投影，缺了就没有任务包' };
+    throw new Error('章节合同读不到：任务包是它的投影，缺了就没有任务包');
   }
 
   const rows = [
-    '<!-- hook:on_context_load:extension:doc/extensions/hooks/spec/author.mjs -->',
     `# spec 阶段 · 本次任务包（${feature}）`,
     '',
     '`context-exploration` 的 `key_inputs_read` 要含 '
@@ -182,5 +189,27 @@ export default function authorContext(ctx) {
     '',
     ...vocabularySection(),
   ];
-  return { promptFragments: [rows.join('\n')] };
+  return rows.join('\n');
+}
+
+const USAGE = '用法：node doc/extensions/hooks/spec/author.mjs --feature <名>';
+
+function main(argv) {
+  const at = argv.indexOf('--feature');
+  const feature = at >= 0 ? String(argv[at + 1] ?? '').trim() : '';
+  if (!feature) {
+    process.stderr.write(USAGE + '\n');
+    return 2;
+  }
+  process.stdout.write(taskPackage(process.cwd(), feature) + '\n');
+  return 0;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  try {
+    process.exit(main(process.argv.slice(2)));
+  } catch (err) {
+    process.stderr.write(`${err?.message ?? err}\n`);
+    process.exit(1);
+  }
 }

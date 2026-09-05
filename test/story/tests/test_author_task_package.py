@@ -57,14 +57,8 @@ class WorkspaceCase(unittest.TestCase):
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)
 
     def task_package(self, feature: str = FEATURE) -> str:
-        hook = self.root / "doc/extensions/hooks/spec/author.mjs"
-        proc = run("node", "-e", f"""
-            import({as_url(hook)}).then(async m => {{
-              const out = await m.default({{ projectRoot: {json.dumps(self.root.as_posix())},
-                                             feature: {json.dumps(feature)}, phase: 'spec' }});
-              process.stdout.write((out.promptFragments || []).join('\\n'));
-            }});
-        """, cwd=self.root)
+        proc = run("node", "doc/extensions/hooks/spec/author.mjs", "--feature", feature,
+                   cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 

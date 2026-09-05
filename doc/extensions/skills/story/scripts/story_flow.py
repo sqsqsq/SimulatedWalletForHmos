@@ -784,6 +784,9 @@ SPEC_STAGE_AUTHORIZATION = (
 
 #: 这一段的顺序，四个分支共用一句。
 SPEC_STAGE_ORDER = (
+    "动笔前先取本阶段的作者要求：原则页 `doc/extensions/hooks/spec/author.md`，"
+    "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
+    "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
     "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
     "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记 → "
     "story-build build → harness → verifier。"

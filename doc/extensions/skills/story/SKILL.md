@@ -148,9 +148,13 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 `story-build check` 通过之后，到阶段闭环是**一条义务链，链内没有停等点**：
 
 ```
-check 通过 → 读本阶段 author.md → 写产物 → 主 agent 自己跑 harness
+check 通过 → 取本阶段作者要求 → 写产物 → 主 agent 自己跑 harness
           → 结构级 PASS → 主 agent 主动触发 verifier → 闭环
 ```
+
+**作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（六个阶段各一份）；
+spec 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>`
+拿到——你现在在哪、本轮激活几条、材料里有哪几张图、十章各答什么、哪些词不能用，都在里面。
 
 `check` FAIL 时按报错文案修，改完重跑，直到通过或触发**失败出口**（见上，有可核前提）。
 报错文案自带「缺什么 / 写到哪 / 怎么写」，不需要问该不该修。

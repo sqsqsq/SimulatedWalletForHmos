@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """作者起手内容有没有在**动笔之前**送到作者手上（A03/A05）。
 
-这条通道此前是断的：`on_context_load` 钩子一直能产出片段，但全仓唯一的调用点在 harness 的
-verifier 装配处——内容只进了 verifier 的上下文，作者一次也看不到。实跑里除了有 `/story` 链
-牵着的 spec，其余阶段都是先写完产物再读到要求。
+宿主的作者事件只在装配 verifier ai-prompt 时消费，从不进入作者动笔前的上下文——
+登记在那里，作者要到产物落盘之后才读得到。所以本扩展的作者要求由作者自己取：
+原则页是 `doc/extensions/hooks/<阶段>/author.md`，spec 阶段另有一条命令出**本次任务包**。
 
 所以这里测的不是「文件在不在」，是**通道**：
 
-1. 六个阶段各自能取到**自己那一份**（来源标识是仓内相对路径，六份互不相同）；
-2. 缺席 → 空且退出 0；损坏 → 明确失败、退出非零，**不降级成空**（静默的空和真正的空长得一样）；
-3. verifier 的上下文里**不再**出现作者片段；
-4. 「读过了」有唯一机械留痕：author 钩子路径进了 `key_inputs_read` 才过既有门禁。
+1. 六个阶段各有自己那一份原则页，spec 的任务包命令跑得出内容；
+2. 参数缺席 / 真源读不到 → 明确失败、退出非零，**不降级成空**（静默的空和真正的空长得一样）；
+3. 取法写在作者一定读得到的三处：流程的下一步文本、SKILL、入口文件的扩展段；
+4. 「读过了」有唯一机械留痕：原则页路径进了 `key_inputs_read` 才过既有门禁。
 """
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -24,159 +23,140 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-HARNESS = REPO / "framework" / "harness"
-ENTRY = HARNESS / "scripts" / "author-context.ts"
-MANIFEST = REPO / "doc" / "extensions" / "manifest.yaml"
-RULES = REPO / "doc" / "extensions" / "rules"
+EXT = REPO / "doc" / "extensions"
+MANIFEST = EXT / "manifest.yaml"
+RULES = EXT / "rules"
+AUTHOR_CLI = "doc/extensions/hooks/spec/author.mjs"
+FLOW = EXT / "skills" / "story" / "scripts" / "story_flow.py"
+SECTION = EXT / "skills" / "story" / "AGENTS.section.md"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 # context-exploration 门禁只覆盖这五个；testing 没有，如实无留痕。
 GATED_PHASES = ("spec", "plan", "coding", "review", "ut")
 
 
-def _run_entry(phase: str, *, cwd: Path = HARNESS, feature: str = "demo") -> subprocess.CompletedProcess:
-    exe = shutil.which("npx") or ("npx.cmd" if sys.platform == "win32" else "npx")
+def _node(args, cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [exe, "ts-node", str(ENTRY), "--phase", phase, "--feature", feature],
-        cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
-        stdin=subprocess.DEVNULL,
+        ["node", *args], cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", stdin=subprocess.DEVNULL,
     )
 
 
-class AuthorContextReachesTheAuthor(unittest.TestCase):
-    """真实工程上跑：六个阶段各拿到自己那一份。"""
+class AuthorRequirementsAreReachable(unittest.TestCase):
+    """六份原则页在，spec 的任务包命令出得来内容。"""
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.outputs = {p: _run_entry(p) for p in PHASES}
+        cls.task_package = _node([AUTHOR_CLI, "--feature", "demo"], REPO)
 
-    def test_every_phase_delivers_its_own_content(self):
+    def test_every_phase_has_its_own_principles_page(self):
         for phase in PHASES:
             with self.subTest(phase=phase):
-                proc = self.outputs[phase]
-                self.assertEqual(0, proc.returncode, f"入口挂了：{proc.stderr[-600:]}")
-                self.assertIn(f"doc/extensions/hooks/{phase}/author.md", proc.stdout,
-                              "没拿到本阶段的作者内容")
+                self.assertTrue((EXT / "hooks" / phase / "author.md").is_file(),
+                                f"{phase} 没有原则页，作者动笔前无从取要求")
 
-    def test_source_marker_is_a_repo_relative_path_not_a_basename(self):
-        """标识必须是仓内相对路径。
+    def test_the_task_package_command_prints_this_round(self):
+        proc = self.task_package
+        self.assertEqual(0, proc.returncode, f"任务包命令挂了：{proc.stderr[-600:]}")
+        self.assertIn("demo", proc.stdout, "任务包没带上本次 feature")
+        self.assertIn("doc/extensions/hooks/spec/author.md", proc.stdout,
+                      "任务包没指回原则页——那是 key_inputs_read 要逐字引用的坐标")
 
-        六个阶段的钩子都叫 `author.md`；只写文件名时六份标识一模一样——既指不出是哪一阶段，
-        也没法被 `key_inputs_read` 逐字覆盖（那条门禁做子串匹配，`author.md` 会命中任何阶段，
-        等于不设防）。
-        """
-        for phase in PHASES:
-            with self.subTest(phase=phase):
-                marker = next(l for l in self.outputs[phase].stdout.splitlines()
-                              if l.startswith("<!-- hook:on_context_load:"))
-                self.assertIn(f":doc/extensions/hooks/{phase}/author.md -->", marker)
-
-    def test_phases_do_not_receive_each_others_content(self):
-        """互不串台：拿到别的阶段那份，等于作者按错的要求去写。"""
-        for phase in PHASES:
-            others = [p for p in PHASES if p != phase]
-            for other in others:
-                with self.subTest(phase=phase, other=other):
-                    self.assertNotIn(f"doc/extensions/hooks/{other}/author.md",
-                                     self.outputs[phase].stdout)
+    def test_the_task_package_covers_the_four_sources(self):
+        """任务包是四处真源的投影：位置、激活清单、材料里的图、章节合同。"""
+        for needle in ("你现在在哪", "知识判断", "决策登记", "材料里的图", "十章各回答读者什么"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, self.task_package.stdout)
 
 
 class ChannelFailuresAreLoud(unittest.TestCase):
-    """缺席 / 损坏 / 关闭三种情况必须能分辨——它们的处置完全不同。"""
+    """参数缺席 / 真源读不到必须能分辨——它们的处置完全不同，都不许静默出空。"""
 
-    def setUp(self) -> None:
-        self.ws = Path(tempfile.mkdtemp())
-        shutil.copytree(REPO / "framework", self.ws / "framework",
-                        ignore=shutil.ignore_patterns("node_modules", "__pycache__", "reports", "dist"))
-        (self.ws / "framework" / "harness" / "node_modules").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(REPO / "framework.config.json", self.ws / "framework.config.json")
-        for rel in ("doc/architecture.md", "doc/module-catalog.yaml", "doc/glossary.yaml"):
-            (self.ws / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(REPO / rel, self.ws / rel)
+    def test_missing_feature_is_refused_with_the_usage(self):
+        proc = _node([AUTHOR_CLI], REPO)
+        self.assertNotEqual(0, proc.returncode, "没给 feature 却当成功返回")
+        self.assertIn("--feature", proc.stderr)
+        self.assertEqual("", proc.stdout.strip(), "失败了还印出半份任务包")
 
-    def tearDown(self) -> None:
-        shutil.rmtree(self.ws, ignore_errors=True)
+    def test_missing_contract_fails_loudly_instead_of_degrading_to_empty(self):
+        """章节合同读不到 → 明确失败，**不**降级成空。
 
-    # 临时工作区没有 node_modules，所以用主仓的 ts-node 以 transpileOnly 加载**副本**入口。
-    # 入口按 `__dirname` 自锚，加载副本就等于把工程根锚到临时工作区——正是要测的那一面。
-    DRIVER = (
-        "require(process.env.TS_NODE_MOD).register({ transpileOnly: true, "
-        "compilerOptions: { module: 'commonjs', target: 'ES2020', esModuleInterop: true } });\n"
-        "const m = require(process.env.ENTRY);\n"
-        "m.loadAuthorContext(process.env.HARNESS_ROOT, process.argv[2], 'demo')\n"
-        "  .then(r => { process.stdout.write(JSON.stringify(r)); })\n"
-        "  .catch(e => { process.stderr.write(String(e && e.message)); process.exit(1); });\n"
-    )
-
-    def _run_in_ws(self, phase: str) -> dict:
-        driver = self.ws / "driver.js"
-        driver.write_text(self.DRIVER, encoding="utf-8")
-        env = dict(
-            os.environ,
-            # 副本在临时目录，minimist 等依赖只能从主仓的 node_modules 解析。
-            NODE_PATH=str(HARNESS / "node_modules"),
-            TS_NODE_MOD=str(HARNESS / "node_modules" / "ts-node"),
-            ENTRY=str(self.ws / "framework/harness/scripts/author-context.ts"),
-            HARNESS_ROOT=str(self.ws / "framework/harness"),
-        )
-        proc = subprocess.run(
-            ["node", str(driver), phase], cwd=str(HARNESS),
-            capture_output=True, text=True, encoding="utf-8",
-            stdin=subprocess.DEVNULL, env=env,
-        )
-        self.assertEqual(0, proc.returncode, f"驱动挂了：{proc.stderr[-600:]}")
-        return json.loads(proc.stdout)
-
-    def test_no_extension_means_empty_not_failure(self):
-        """没有扩展 = 本阶段确实没有额外要求：零片段、零失败，原行为不变。"""
-        cfg = json.loads((self.ws / "framework.config.json").read_text(encoding="utf-8"))
-        cfg["paths"].pop("extension_dir", None)
-        (self.ws / "framework.config.json").write_text(json.dumps(cfg), encoding="utf-8")
-        result = self._run_in_ws("spec")
-        self.assertEqual([], result["fragments"])
-        self.assertEqual([], result["failures"])
-
-    def test_broken_hook_fails_loudly_instead_of_degrading_to_empty(self):
-        """钩子抛错 → 明确失败，**不**降级成空。
-
-        静默的空和真正的空长得一样；这条链路一旦静默失效，现场只表现为「作者又没按要求写」。
+        静默的空和真正的空长得一样；这条链路一旦静默失效，现场只表现为
+        「作者又漏了几章」。
         """
-        ext = self.ws / "doc" / "extensions"
-        (ext / "hooks" / "spec").mkdir(parents=True)
-        shutil.copy2(REPO / "doc/extensions/manifest.yaml", ext / "manifest.yaml")
-        doc = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
-        doc["provides"]["knowledge"] = []
-        doc["provides"]["skills"] = []
-        doc["provides"]["phase_rules_overlays"] = {}
-        doc["provides"]["hooks"] = {"spec": {"on_context_load": ["hooks/spec/boom.mjs"]}}
-        (ext / "manifest.yaml").write_text(yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8")
-        (ext / "hooks" / "spec" / "boom.mjs").write_text(
-            "throw new Error('钩子坏了');\n", encoding="utf-8")
+        ws = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, ws, True)
+        shutil.copytree(EXT, ws / "doc" / "extensions",
+                        ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
+        (ws / "doc/extensions/skills/story/contracts/story-chapters.json").unlink()
 
-        result = self._run_in_ws("spec")
-        self.assertEqual([], result["fragments"])
-        self.assertTrue(result["failures"], "钩子抛错却被当成「本阶段没有要求」")
+        proc = _node([AUTHOR_CLI, "--feature", "demo"], ws)
+        self.assertNotEqual(0, proc.returncode, "合同没了却照样返回成功")
+        self.assertIn("合同", proc.stderr)
+        self.assertEqual("", proc.stdout.strip())
 
 
-class VerifierNoLongerGetsAuthorContent(unittest.TestCase):
-    """`on_context_load` 与 `pre_verifier` 各有各的消费者，不许混。"""
+class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
+    """取法写在作者一定读得到的三处——文件在磁盘上不等于作者看见了。"""
 
-    def test_harness_runner_does_not_emit_on_context_load(self):
-        src = (HARNESS / "harness-runner.ts").read_text(encoding="utf-8")
-        self.assertNotIn("emitLifecycle('on_context_load')", src,
-                         "作者内容又被塞回 verifier 的 prompt 装配处了")
-        self.assertIn("emitLifecycle('pre_verifier')", src, "pre_verifier 仍应服务 verifier")
+    def test_the_flow_next_step_text_carries_the_command(self):
+        """作者逐步跟的是 `status` 的下一步文本——spec 段每一步都要带着取法。"""
+        ws = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, ws, True)
+        feature_root = ws / "doc" / "features" / "demo"
+        (feature_root / "AR").mkdir(parents=True)
+        (feature_root / "AR" / "story-flow.json").write_text(json.dumps({
+            "schema": 3, "feature": "demo", "status": "complete",
+            "rounds": [{"round": 1, "gates": []}],
+        }, ensure_ascii=False), encoding="utf-8")
 
-    def test_entry_is_read_only(self):
-        """入口不许写盘：它是把已有文本读出来，不是新的状态位。"""
-        src = ENTRY.read_text(encoding="utf-8")
-        for forbidden in ("writeFileSync", "mkdirSync", "appendFileSync", "renameSync"):
-            self.assertNotIn(forbidden, src, f"作者入口出现了写操作 {forbidden}")
+        proc = subprocess.run(
+            [sys.executable, str(FLOW), "status", "--feature", "demo",
+             "--project-root", str(ws)],
+            cwd=str(ws), capture_output=True, text=True, encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        action = json.loads(proc.stdout)["action"]
+        self.assertIn(AUTHOR_CLI, action, "流程的下一步文本没给任务包命令")
+        self.assertIn("doc/extensions/hooks/spec/author.md", action)
+
+    def test_the_skill_carries_the_command(self):
+        text = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn(AUTHOR_CLI, text)
+        self.assertIn("doc/extensions/hooks/<阶段>/author.md", text)
+
+    def test_the_entry_section_carries_the_command(self):
+        section = SECTION.read_text(encoding="utf-8")
+        self.assertIn(AUTHOR_CLI, section)
+        for f in (REPO / "CLAUDE.md", REPO / "AGENTS.md"):
+            with self.subTest(file=f.name):
+                self.assertIn(AUTHOR_CLI, f.read_text(encoding="utf-8"),
+                              "入口文件的扩展段没跟上真源")
+
+
+class TheHostChannelIsNotUsed(unittest.TestCase):
+    """作者要求不占宿主的作者事件，也不再引用已退场的框架入口。"""
+
+    def test_manifest_registers_no_author_event(self):
+        doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+        for phase, events in doc["provides"]["hooks"].items():
+            with self.subTest(phase=phase):
+                self.assertNotIn("on_context_load", events,
+                                 "作者要求又登记回宿主的作者事件了——那里到不了动笔之前")
+
+    def test_no_delivery_surface_points_at_the_retired_framework_entry(self):
+        surfaces = [MANIFEST, SECTION, EXT / "skills" / "story" / "SKILL.md"]
+        surfaces += [RULES / f"{p}-rules.overlay.yaml" for p in GATED_PHASES]
+        for f in surfaces:
+            with self.subTest(file=f.name):
+                self.assertNotIn("author-context", f.read_text(encoding="utf-8"),
+                                 "还指着已退场的框架入口")
 
 
 class ReadingItLeavesExactlyOneTrace(unittest.TestCase):
-    """「读过了」的唯一机械留痕：author 钩子路径进 `key_inputs_read`。"""
+    """「读过了」的唯一机械留痕：原则页路径进 `key_inputs_read`。"""
 
-    def test_gated_phases_declare_the_author_hook_as_required_snippet(self):
+    def test_gated_phases_declare_the_principles_page_as_required_snippet(self):
         for phase in GATED_PHASES:
             with self.subTest(phase=phase):
                 doc = yaml.safe_load((RULES / f"{phase}-rules.overlay.yaml").read_text(encoding="utf-8"))
@@ -188,40 +168,23 @@ class ReadingItLeavesExactlyOneTrace(unittest.TestCase):
         doc = yaml.safe_load((RULES / "testing-rules.overlay.yaml").read_text(encoding="utf-8"))
         self.assertIsNone(doc.get("exploration_thresholds"))
 
-    def test_declared_snippet_matches_the_entry_marker_verbatim(self):
-        """声明的字符串必须与入口输出的来源标识逐字一致，否则门禁永远命中不了。"""
+    def test_declared_snippet_is_a_file_that_exists(self):
+        """声明的字符串必须逐字等于那份原则页的路径，否则门禁永远命中不了。"""
         for phase in GATED_PHASES:
             with self.subTest(phase=phase):
                 doc = yaml.safe_load((RULES / f"{phase}-rules.overlay.yaml").read_text(encoding="utf-8"))
                 declared = doc["exploration_thresholds"]["phase_input_snippets_extra"][0]
-                proc = _run_entry(phase)
-                self.assertIn(f":{declared} -->", proc.stdout)
+                self.assertTrue((REPO / declared).is_file(), f"{declared} 不存在")
 
 
 class ManifestKeepsOneSourceOfTruth(unittest.TestCase):
-    def test_six_phases_register_their_author_hook(self):
-        """每个阶段的作者坐标是那份 `author.md`，而且排在第一位。
-
-        坐标要唯一：`context-exploration` 的 `key_inputs_read` 逐字引用它。
-        同阶段再挂一个 `.mjs` 生成任务包不动摇这一点——`.mjs` 只产内容、不带来源标识行，
-        它的内容属于那个坐标。所以判据是「第一项是 author.md、其余只能是同阶段的 author.mjs」。
-        """
-        doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
-        hooks = doc["provides"]["hooks"]
-        for phase in PHASES:
-            with self.subTest(phase=phase):
-                registered = hooks[phase]["on_context_load"]
-                self.assertEqual(f"hooks/{phase}/author.md", registered[0])
-                self.assertTrue(set(registered[1:]) <= {f"hooks/{phase}/author.mjs"},
-                                f"{phase} 挂了别的 on_context_load 钩子：{registered}")
-
     def test_author_content_is_not_duplicated_anywhere(self):
         """一份真源：author 正文不许被复制进 Skill / AGENTS / 模板。
 
         判据取每份 author.md 的首个非空标题行——它被复制出去就会在别处出现。
         """
         for phase in PHASES:
-            author = REPO / "doc" / "extensions" / "hooks" / phase / "author.md"
+            author = EXT / "hooks" / phase / "author.md"
             heading = next(l.strip() for l in author.read_text(encoding="utf-8").splitlines()
                            if l.strip().startswith("#"))
             proc = subprocess.run(
@@ -233,13 +196,11 @@ class ManifestKeepsOneSourceOfTruth(unittest.TestCase):
                 self.assertEqual([f"doc/extensions/hooks/{phase}/author.md"], hits,
                                  f"{phase} 的作者内容出现了第二份：{hits}")
 
-    def test_entry_point_no_longer_carries_per_phase_transport(self):
-        """根 AGENTS / 生成入口不再承担逐阶段内容传输，只留机制说明。"""
-        for f in (REPO / "CLAUDE.md", REPO / "doc/extensions/skills/story/AGENTS.section.md"):
-            text = f.read_text(encoding="utf-8")
-            with self.subTest(file=f.name):
-                self.assertNotIn("先完整读它", text)
-                self.assertIn("author-context.ts", text)
+    def test_the_entry_section_only_points_it_does_not_copy(self):
+        """入口段只给取法，不搬正文——搬过去就有两份要同步。"""
+        section = SECTION.read_text(encoding="utf-8")
+        self.assertLess(len(section), 1200, "扩展段变长了，像是把正文搬了进来")
+        self.assertNotIn("先完整读它", section)
 
 
 if __name__ == "__main__":
