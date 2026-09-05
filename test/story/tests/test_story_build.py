@@ -1322,5 +1322,96 @@ class SkeletonDerivesFromTheRealSpec(unittest.TestCase):
         self._assert_derived(self._skeleton(as_lf=True))
 
 
+class GeneratedZonesSurviveTheAuthor(unittest.TestCase):
+    """打底的所有权分两种，落盘时各按各的规矩。
+
+    **可重复投影**（附录五节的表）归脚本：`chapter` 是整章替换，作者不重打就会
+    随落盘消失——而重打正是这一步要消掉的事，所以生成区自动带过来。
+    **一次性种子**（术语措辞、流程图节点）归作者：种下去之后脚本不再碰它。
+    """
+
+    REAL = REPO_ROOT / "test" / "story" / "fixtures" / "real-run" / "AR90006"
+    EXTENSION = REPO_ROOT / "doc" / "extensions"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature = self.root / "doc" / "features" / "AR90006"
+        shutil.copytree(self.REAL, self.feature)
+        ext = self.root / "doc" / "extensions"
+        ext.mkdir(parents=True)
+        shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
+        shutil.copytree(self.EXTENSION / "knowledge", ext / "knowledge")
+        self.story_path = self.feature / "AR" / "story.md"
+        self._build("skeleton")
+
+    def _build(self, *args: str) -> subprocess.CompletedProcess:
+        proc = subprocess.run(
+            ["node", str(BUILD), *args, "--feature", "AR90006",
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return proc
+
+    def _chapter(self, title: str, body: str) -> str:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        self._build("chapter", "--chapter", title, "--from", str(src))
+        return self.story_path.read_text(encoding="utf-8")
+
+    #: 作者写附录时只该写这五句——表由脚本从真源投影
+    APPENDIX = "\n\n".join(
+        f"### {name}\n\n给评审看{what}。"
+        for name, what in (("接口", "本特性对外的云侧接口"),
+                           ("数据、配置与事件", "端侧存了什么、开关怎么配、埋点报什么"),
+                           ("改动边界", "改了哪里、哪里保证不动"),
+                           ("规约判定", "激活规约逐条判没判、依据是什么"),
+                           ("材料清单", "这份叙事件据哪几份材料写成")))
+
+    def test_the_appendix_tables_survive_a_bare_chapter_file(self) -> None:
+        """作者只写目的句，五节的表照样在——这一条正是 F7 被落盘路径抵消的那个洞。"""
+        story = self._chapter("附录", self.APPENDIX)
+        appendix = story.split("## 附录", 1)[1]
+        self.assertEqual(5, appendix.count("story-build:begin"), "生成区没被带过来")
+        self.assertIn("getAutoTopupPolicy", appendix, "接口表丢了")
+        self.assertIn("给评审看本特性对外的云侧接口", appendix, "作者写的目的句丢了")
+        verdict_rows = [l for l in appendix.split("\n")
+                        if l.startswith("| ") and ("UX-0" in l or "SEC-" in l or "OBS-" in l)]
+        self.assertGreaterEqual(len(verdict_rows), 3, "规约判定表丢了")
+
+    def test_the_verdict_basis_comes_from_the_source(self) -> None:
+        """R14：依据取 knowledge-use.yaml 的原文，不留 `{{依据}}` 让作者再抄一遍。"""
+        story = self.story_path.read_text(encoding="utf-8")
+        appendix = story.split("## 附录", 1)[1]
+        self.assertNotIn("{{依据}}", appendix, "判定的依据没取真源")
+        self.assertIn("方向性布局参数一律用 start/end", appendix)
+
+    def test_the_material_rows_carry_their_kind(self) -> None:
+        """R14：类别在合同里已有答案，不必让作者再判一次。"""
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertIn("- 产品需求：", story)
+        self.assertIn("- 系统设计：", story)
+
+    def test_fixed_slots_are_rendered_not_just_described(self) -> None:
+        """R13：槽位给表头 + 分隔 + 占位，不是一行「机器核」注释。"""
+        story = self.story_path.read_text(encoding="utf-8")
+        solution = story.split("## 业务方案", 1)[1].split("## 业务流程", 1)[0]
+        self.assertIn("| 参与方 |", solution)
+        self.assertIn("| {{参与方}} |", solution)
+        self.assertIn("| 否了什么 |", solution)
+        self.assertIn("| 风险 |", solution)
+        exceptions = story.split("## 异常与恢复", 1)[1].split("## 验收", 1)[0]
+        self.assertIn("要有 2 张表", exceptions, "两张表这件事没说清")
+
+    def test_the_author_seed_is_the_authors(self) -> None:
+        """一次性种子归作者：他改了措辞，`skeleton` 重跑不打回。"""
+        story = self._chapter("术语", "| 术语 | 在本需求里的意思 |\n|---|---|\n"
+                                      "| 交通卡 | 我改过的措辞 |")
+        self.assertIn("我改过的措辞", story)
+        self._build("skeleton")            # 已存在就不动它
+        self.assertIn("我改过的措辞", self.story_path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

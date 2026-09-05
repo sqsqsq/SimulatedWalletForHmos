@@ -53,10 +53,10 @@ requirement:
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 2050
-    target: 1980
+    interim_ceiling: 2100
+    target: 2070
     approved_by: WYK
-    reason: "用户 2026-09-05 第二次签字，1900→1980。步骤 15 把作者要推算的东西改成机器算好给他：check ⑪ 形态守恒一条判据读合同（本体加表头解析、图围栏、条件槽位三个 helper 共 75 行），skeleton 从 spec §0/§5/§9 与登记数据派生术语起始行、流程图、附录 A/B/C/D/E，check ⑫ 加附录对 spec §9 的集合核。上一版 target 1900 是批次 5 中途按现值定的，那时这些派生还只是方案里的估算"
+    reason: "用户 2026-09-05 第二次签字，1900→1980。步骤 15 把作者要推算的东西改成机器算好给他：check ⑪ 形态守恒一条判据读合同（本体加表头解析、图围栏、条件槽位三个 helper 共 75 行），skeleton 从 spec §0/§5/§9 与登记数据派生术语起始行、流程图、附录 A/B/C/D/E，check ⑫ 加附录对 spec §9 的集合核。上一版 target 1900 是批次 5 中途按现值定的，那时这些派生还只是方案里的估算。**2026-09-05 第三次签字 1980→2070**：评审在实现里查出三处缺陷——打底被 `chapter` 整章替换（R12）、固定槽位只写了注释没真正生成表（R13）、附录判定的依据与材料的类别没取真源（R14）。修它们要写生成区的所有权、槽位表头渲染与两处真源取值，判据块一条没加"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 1400
@@ -83,10 +83,10 @@ categories:
     reason: "用户 2026-09-05 签字，750→800。步骤 15 把各章的形态（主形态、允许的次要形态、机器核的固定槽位、小节标题档位）从散文搬进合同 story-chapters.json，语言红线再收一批 framework 档位术语——**形态进数据正是这一步的设计本身**，不是超支。§5 估 +60 至 +90（现值 683）。峰值取 target：本步 data 只增不减，没有先加后删"
 
 total:
-  interim_ceiling: 8910
-  target: 8600
+  interim_ceiling: 9010
+  target: 8700
   approved_by: WYK
-  reason: "用户 2026-09-05 签字 8350→8400，同日第二次签字 8400→8600。**总量不再是各类 target 之和**（那是 8930），它比各类之和紧——各类额度是各自的宽松上限，不允许同时用满，总量才是硬约束。8600 来自 F1 落地后的实测重估：data 739、scripts_py 1400 已定，prompts_md 因 story-template.md 退场 −175 后约 1773，hooks_mjs 约 2682，scripts_mjs 约 1980。峰值取各类 interim_ceiling 之和，容本步先加后删；收口仍须回到 8600 以内"
+  reason: "用户 2026-09-05 签字 8350→8400，同日第二次签字 8400→8600。**总量不再是各类 target 之和**（那是 8930），它比各类之和紧——各类额度是各自的宽松上限，不允许同时用满，总量才是硬约束。8600 来自 F1 落地后的实测重估：data 739、scripts_py 1400 已定，prompts_md 因 story-template.md 退场 −175 后约 1773，hooks_mjs 约 2682，scripts_mjs 约 1980。峰值取各类 interim_ceiling 之和，容本步先加后删。**2026-09-05 第三次签字 8600→8700**：步骤 15 的返修（R12/R13/R14）把打底的所有权、槽位的生成与两处真源补齐，净增 78 行。收口须回到 8700 以内"
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。

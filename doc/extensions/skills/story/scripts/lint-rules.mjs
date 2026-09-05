@@ -562,7 +562,9 @@ export function proseBlocks(text, baseLine = 0) {
     if (/^(```|~~~)/.test(s)) { inFence = !inFence; flush(); continue; }
     if (inFence) continue;
     const isRow = s.startsWith('|') || /^[-*+]\s/.test(s) || /^\d+[.、)]\s/.test(s);
-    if (!s || /^#{1,6}\s/.test(s) || isRow || s.startsWith('>') || /^!\[/.test(s)) {
+    // HTML 注释不是正文：骨架的形态说明与生成区标记都长这样，读者看不见它们。
+    if (!s || /^#{1,6}\s/.test(s) || isRow || s.startsWith('>') || /^!\[/.test(s)
+        || s.startsWith('<!--')) {
       flush();
       if (isRow) seenRow = true;
       continue;

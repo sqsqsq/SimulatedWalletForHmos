@@ -261,13 +261,27 @@ function knowledgeUseVerdicts(ctx) {
     const out = new Map();
     for (const row of use.constraints) {
       const id = String(row?.id ?? '').trim();
-      if (id) out.set(id, row.applicable === true);
+      // 依据也一起带回来：判断已经写在那份 YAML 里（命中写 requirement、
+      // 不命中写 reason），让作者对着它再抄一遍，抄出来的只会更短。
+      if (id) {
+        out.set(id, { applicable: row.applicable === true,
+          basis: String((row.applicable === true ? row.requirement : row.reason) ?? '').trim() });
+      }
     }
     return out;
   } catch (e) {
     if (e instanceof UseError) return null;
     throw e;
   }
+}
+
+/** 每份来源在归档件里的中文类别：合同的 `sources[*].label`，按路径反查。 */
+function materialKinds(ctx) {
+  const out = new Map();
+  for (const src of Object.values(ctx.contract?.sources ?? {})) {
+    if (src?.path && src?.label) out.set(src.path, src.label);
+  }
+  return out;
 }
 
 /**
@@ -742,6 +756,68 @@ function renderTable(header, rows) {
     ...rows.map(r => `| ${r.join(' | ')} |`)];
 }
 
+//: 生成区的标记。**这段的所有者是脚本**：内容从真源投影而来，`chapter` 落盘时
+//: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（spec §9、
+//: knowledge-use.yaml、materials.json），不是这里。
+//:
+//: 与作者区的分界就是所有权：术语的措辞、流程图的节点文字是**一次性种子**——
+//: 种在作者区，之后归作者，脚本不再碰；附录的这几张表是**可重复投影**，
+//: 每次都能从真源重算出同样的东西，让作者重打一遍只会打得更少。
+const ZONE_BEGIN = '<!-- story-build:begin ';
+const ZONE_END = '<!-- story-build:end -->';
+
+function zoneBlock(name, source, rows) {
+  return [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 -->`, ...rows, ZONE_END];
+}
+
+/** 一段正文里的全部生成区：`[{name, block}]`，block 含首尾标记。 */
+function zonesIn(text) {
+  const out = [];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let cur = null;
+  for (const line of lines) {
+    if (line.startsWith(ZONE_BEGIN)) {
+      cur = { name: line.slice(ZONE_BEGIN.length).split(' · ')[0].trim(), lines: [line] };
+      continue;
+    }
+    if (!cur) continue;
+    cur.lines.push(line);
+    if (line.trim() === ZONE_END) { out.push({ name: cur.name, lines: cur.lines }); cur = null; }
+  }
+  return out;
+}
+
+/**
+ * 把旧章里的生成区搬进新正文 —— **作者不必重打，也删不掉**。
+ *
+ * 作者的章文件是整章内容，落盘就是整章替换；打底的附录表在那个区间里，
+ * 他不重打就会随落盘消失。所以落盘前把生成区找回来：作者留了标记就替换标记之间，
+ * 没留就插到它所属的那一节末尾（节名即区名），连节都没有就放到章末。
+ */
+function preserveZones(oldText, newText) {
+  let lines = String(newText ?? '').split(/\r?\n/);
+  for (const zone of zonesIn(oldText)) {
+    const kept = zonesIn(lines.join('\n')).find(z => z.name === zone.name);
+    if (kept) {
+      const at = lines.findIndex(l => l.startsWith(`${ZONE_BEGIN}${zone.name} `));
+      const end = lines.findIndex((l, i) => i > at && l.trim() === ZONE_END);
+      lines = [...lines.slice(0, at), ...zone.lines, ...lines.slice(end + 1)];
+      continue;
+    }
+    const want = normalizeHeading(zone.name);
+    let at = lines.findIndex(l => /^###\s+/.test(l.trim())
+      && normalizeHeading(l.trim().slice(3)).includes(want));
+    if (at < 0) {
+      lines.push('', ...zone.lines);
+      continue;
+    }
+    let end = lines.findIndex((l, i) => i > at && /^###\s+/.test(l.trim()));
+    if (end < 0) end = lines.length;
+    lines = [...lines.slice(0, end), ...zone.lines, '', ...lines.slice(end)];
+  }
+  return lines.join('\n');
+}
+
 // --------------------------------------------------------------------------
 // check：整篇守恒与形态
 // --------------------------------------------------------------------------
@@ -1078,7 +1154,7 @@ function cmdCheck(ctx) {
         } else if (!row.basis) {
           problems.push(`规约 ${id} 的判定没写依据——「不涉及」三个字不是依据`);
         } else if (useVerdicts && useVerdicts.has(id)) {
-          const want = useVerdicts.get(id) ? '命中' : '不命中';
+          const want = useVerdicts.get(id).applicable ? '命中' : '不命中';
           if (row.verdict !== DOMAIN_NA && row.verdict !== want) {
             problems.push(`规约 ${id} 在这张表里判「${row.verdict}」，`
               + `而 spec/knowledge-use.yaml 判的是「${want}」`
@@ -1671,17 +1747,39 @@ function chapterSpan(storyText, title) {
 function chapterSkeleton(ctx, ch, spec) {
   const rows = [];
   if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
+  const derived = chapterDerived(ctx, ch, spec);
   for (const [at, cols] of Object.entries(ch.form?.tables ?? {})) {
     if (!slotApplies(ctx, (ch.form?.tables_when ?? {})[at])) continue;
-    const where = at === '' ? '这一章' : at === '*' ? '每个小节' : `「${at}」`;
-    for (const one of String(cols).split(';')) {
-      rows.push(`<!-- 机器核：${where}要有一张表`
-        + (one ? `，表头含「${one.split('|').join('」「')}」` : '') + ' -->');
+    const parts = String(cols).split(';');
+    // 真源已经给出这一章的表就不再摆占位：摆一张作者要删的空表是给他添活。
+    if (derived.length && at === '') continue;
+    if (at === '*' || !parts[0]) {
+      // 小节由作者按业务分、或这几张表的列名本就随需求定（受限与异常两张），
+      // 摆不出有意义的表头，就只说清要几张、要哪一列。
+      rows.push(`<!-- ${at === '*' ? '每个小节' : '这一章'}要有 ${parts.length} 张表`
+        + (parts[0] ? `，表头含「${parts[0].split('|').join('」「')}」` : '（列名按本需求取）')
+        + ' -->', '');
+      continue;
+    }
+    // 表头 + 分隔 + 一行占位：搭表是确定性工作，让模型搭、脚本事后挑错，
+    // 就是把确定性工作交给了模型。必有列之外的列由作者按本需求加。
+    for (const one of parts) {
+      if (at) rows.push(`### ${at}`, '');
+      const cells = one.split('|');
+      rows.push('<!-- 必有列如下；其余列按本需求加，行数按内容定 -->',
+        ...renderTable(cells, [cells.map(c => `{{${c}}}`)]), '');
     }
   }
   if (rows.length && rows[rows.length - 1] !== '') rows.push('');
-  const derived = chapterDerived(ctx, ch, spec);
-  if (derived.length) rows.push(...derived, '');
+  if (derived.length) {
+    // 附录那几段是脚本拥有的生成区，落盘时自动保留；这里打的底归作者——
+    // 章文件是整章替换，他不带上就没了。这句话必须在他眼前，不能只写在任务包里。
+    if (!ch.appendix) {
+      rows.push('<!-- 上面这几行是打好的底：写章文件时**连它一起写**'
+        + '（改措辞、往下加都行），落盘是整章替换，不带上就没了 -->', '');
+    }
+    rows.push(...derived, '');
+  }
   rows.push(pendingMark(ch.title));
   return rows;
 }
@@ -1700,40 +1798,62 @@ function chapterDerived(ctx, ch, spec) {
     const out = [];
     for (const name of ch.subsections ?? []) {
       out.push(`### ${name}`, '', '<!-- 一句这一节给评审者看什么 -->', '');
-      if (normalizeHeading(name) === normalizeHeading('改动边界')) {
-        const rows = scopeBoundaryRows(spec);
-        if (rows.length) out.push(...renderTable(['', '范围', '对评审意味着什么'], rows), '');
-      }
-      for (const t of appendixTables(spec, name)) out.push(...renderTable(t.header, t.rows), '');
-      if (normalizeHeading(name).includes(normalizeHeading('规约判定'))) {
-        out.push(...verdictSkeleton(ctx), '');
-      }
-      if (normalizeHeading(name) === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
-        out.push(...materialListSkeleton(ctx), '');
-      }
+      const [source, rows] = appendixProjection(ctx, spec, name);
+      if (rows.length) out.push(...zoneBlock(name, source, rows), '');
     }
     return out;
   }
   return [];
 }
 
-/** 附录·规约判定的整张表：激活条目一条不落，判定取自判断骨架，依据由作者补。 */
+/**
+ * 附录某一节的投影：这一节从哪个真源来、投出来是哪几行。
+ *
+ * 五节各有真源，没有一节要作者重打表——他写的是那一句「这一节给评审者看什么」。
+ */
+function appendixProjection(ctx, spec, name) {
+  const want = normalizeHeading(name);
+  if (want === normalizeHeading('改动边界')) {
+    const rows = scopeBoundaryRows(spec);
+    const out = rows.length ? renderTable(['', '范围', '对评审意味着什么'], rows) : [];
+    for (const t of appendixTables(spec, name)) out.push(...renderTable(t.header, t.rows));
+    return ['Scope 模块清单与 spec §9.5', out];
+  }
+  if (want.includes(normalizeHeading('规约判定'))) {
+    return ['spec/knowledge-use.yaml', verdictSkeleton(ctx)];
+  }
+  if (want === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
+    return ['AR/story-src/materials.json', materialListSkeleton(ctx)];
+  }
+  return ['spec §9', appendixTables(spec, name).flatMap(t => renderTable(t.header, t.rows))];
+}
+
+/**
+ * 附录·规约判定的整张表 —— **依据也取真源**。
+ *
+ * 判断已经写在 `spec/knowledge-use.yaml` 里：不命中写的是为什么不适用，
+ * 命中写的是这一轮要满足的要求。让作者对着那份 YAML 再抄一遍依据，
+ * 抄出来的只会更短。他要改的是措辞，改在这里，改完由 ⑫b 核集合。
+ */
 function verdictSkeleton(ctx) {
   const entries = activeKnowledgeEntries(ctx);
   if (!entries.length) return [];
-  const verdicts = knowledgeUseVerdicts(ctx);
-  return renderTable(['规约域', '编号', '判定', '依据'], entries.map(e => [
-    e.domainTitle ?? '', e.id,
-    verdicts?.has(e.id) ? (verdicts.get(e.id) ? '命中' : '不命中') : '{{命中/不命中}}',
-    '{{依据}}',
-  ]));
+  const use = knowledgeUseVerdicts(ctx);
+  return renderTable(['规约域', '编号', '判定', '依据'], entries.map(e => {
+    const row = use?.get(e.id);
+    return [e.domainTitle ?? '', e.id,
+      row ? (row.applicable ? '命中' : '不命中') : '{{命中/不命中}}',
+      row?.basis || '{{依据}}'];
+  }));
 }
 
-/** 附录·材料清单的每一行：类别与链接由清单给，内容贡献由作者写。 */
+/** 附录·材料清单的每一行：类别、文件名与链接由清单给，贡献由作者写。 */
 function materialListSkeleton(ctx) {
   const targets = materialListTargets(ctx);
   if (!targets || targets === 'broken') return [];
-  return targets.must.map(rel => `- [${basename(rel)}](${rel})：{{这份材料贡献了什么}}`);
+  const kinds = materialKinds(ctx);
+  return targets.must.map(rel =>
+    `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${rel})——{{这份材料贡献了什么}}`);
 }
 
 function cmdSkeleton(ctx) {
@@ -1825,7 +1945,10 @@ function cmdChapter(ctx) {
 
   const trimmed = stripOwnHeading(body, title).replace(/\s+$/, '');
   if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
-  const replaced = `## ${title}\n\n${trimmed}\n\n`;
+  // 生成区归脚本：作者的章文件是整章内容，落盘就是整章替换；附录那几张投影表
+  // 在这个区间里，他不重打就会随落盘消失——而重打正是这一步要消掉的事。
+  const kept = preserveZones(story.slice(span.start, span.end), trimmed).replace(/\s+$/, '');
+  const replaced = `## ${title}\n\n${kept}\n\n`;
   const next = story.slice(0, span.start) + replaced + story.slice(span.end);
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');
 
