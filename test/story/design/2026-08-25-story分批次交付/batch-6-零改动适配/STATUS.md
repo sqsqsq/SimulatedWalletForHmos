@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **步骤 1 实施评审不通过：R36（交付门 Windows 上 spawn EINVAL）、R37（归档 ① 未接 --deliver）待返修；步骤 2 方案待用户确认** |
+| 状态 | **步骤 1 通过收口（`reviews/01` §7.5；hooks_mjs 用户签 2800）。下一步：用户确认步骤 2** |
 | 起点 | 上游 `0143e21`（`origin/main` `ea2365d1`）；本仓 story 分支 `framework/` = `85e266f` + 18 处 |
 | 用户裁定 | framework 不改逻辑、只允许 opencode 登记两处且不交上游；`.opencode/` 只是本仓测试装置，内网用 codex；extension 支持批次 5 全部功能 |
 | 方案文件 | [00-总览.md](00-总览.md)；`steps/01`、`steps/02` |
@@ -11,7 +11,7 @@
 
 | 步骤 | 状态 | 评审报告 |
 |---|---|---|
-| 1 对齐上游与能力落回 | **已实施，评审不通过**（`reviews/01` §7：R36 交付门在 Windows 上 `npx.cmd` 不带 shell 恒 EINVAL、R37 归档块 ① 仍是普通 check；m1 无审查员宿主交付要出声；hooks_mjs 2741>2700 待签）。四提交 55b24abb / 9c0a6148 / 18581b0a / 5e0230a1。原稿问题：B1 读者审查两条路（codex 双审、post_check 里 framework 来源是死分支）、B2 verifier 定义只收 request JSON、B3 指纹未定义、B4 同步漏物化目录；§5/§6 预算矛盾；退场清单缺项 | [reviews/01-对齐上游与能力落回.md](reviews/01-对齐上游与能力落回.md) |
+| 1 对齐上游与能力落回 | **通过**：四提交 55b24abb / 9c0a6148 / 18581b0a / 5e0230a1 + 返修 4fd1b42a（R36 交付门改用 node 直起 harness 的 ts-node，Windows 实测回执跑通；R37 归档 ① 接 `--deliver`；m1/m2）。635 绿、形态 70 条 FAIL 0、drift 恰好登记两文件、预算 8932/8940；hooks_mjs 用户 2026-09-06 签 2800 | [reviews/01-对齐上游与能力落回.md](reviews/01-对齐上游与能力落回.md) |
 | 2 步骤 16 返修与追加（原批次 5 步骤 17） | 方案待确认；起点是步骤 1 落地后的实测预算 | — |
 
 ## 事件日志
@@ -53,3 +53,5 @@
   m2 `00-上游状态.md` 改成不交上游。
   预算 scripts_mjs 2220→2240（实测 2235），总量 8932 ≤ 8940。
   **仍挂着**：hooks_mjs 2741 高于 target 2700 共 41 行，评审建议签 2750，等用户裁定。
+- 2026-09-06 复核返修 `4fd1b42a`（reviews/01 §7.5）：R36 本机 Windows 实测 `check --deliver` 的 stderr 已是 `check-receipt` 原话且带 `policy_required`（opencode 登记生效）；R37 归档 ① 已改；m1 记一笔在；m2 改「不交上游」。635 绿、FAIL 0、预算 8932。步骤 1 通过；hooks_mjs 41 行超额待用户签 2750。
+- 2026-09-06 用户签字 hooks_mjs target 2700→2800（评审建议 2750），峰值同值；写进 `mechanism-budget.yaml`，总量 reason 里的挂账句改平。步骤 1 收口。
