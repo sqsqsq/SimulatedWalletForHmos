@@ -811,7 +811,10 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
         return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
     if not have("AR", "story.md"):
         return ("story_skeleton",
-                "spec.md 已在。接着 `story-build skeleton` 建骨架，再逐章 `chapter --from <文件>`"
+                "spec.md 已在。**先重取一次任务包**"
+                "（`node doc/extensions/hooks/spec/author.mjs --feature <名>`）"
+                "——spec 刚写完，它里面的图这时候才列得出来。"
+                "接着 `story-build skeleton` 建骨架，再逐章 `chapter --from <文件>`"
                 "（章文件只放正文，不带章标题）。" + SPEC_STAGE_ORDER)
     return ("register_story",
             "story.md 已在。十章都写完、`story-build check` 通过之后，"

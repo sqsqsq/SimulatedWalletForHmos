@@ -86,11 +86,12 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         self.assertIn("自动充值触发", package)
         self.assertIn("放哪一节按它讲的内容定", package)
 
-    def test_both_hops_get_their_own_section(self) -> None:
-        """两环各一节：SR 的图搬进 spec 给写 spec 的人，spec 的图搬进 story 给写 story 的人。"""
+    def test_both_upstreams_get_their_own_section(self) -> None:
+        """上游两份各一节，下游都是 story——spec 的内容归框架管，扩展不往那边搬图。"""
         package = self.package_with_spec()
-        self.assertIn("SR 里的图（搬进 spec）", package)
+        self.assertIn("系统设计里的图（搬进 story）", package)
         self.assertIn("spec 里的图（搬进 story）", package)
+        self.assertNotIn("搬进 spec", package)
 
     def test_no_diagrams_says_so(self) -> None:
         (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)

@@ -1338,9 +1338,16 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         rows = [l for l in draft.split("\n") if l.startswith("|") and "---" not in l]
         self.assertGreaterEqual(len(rows), 3, "术语起始行没从 spec §0 派生出来")
 
-    def test_the_flow_diagram_is_copied(self) -> None:
+    def test_no_diagram_is_preplaced_in_the_flow_draft(self) -> None:
+        """图不预放：上游的图逐张送到任务包，放哪一章由作者按内容定。
+
+        预放一张「第一张图」是另一条路径——它和「逐张送达、作者归位」并存，
+        同一件事就有两个说法，作者不知道该照哪个来。
+        """
         self.build("skeleton")
-        self.assertIn("```mermaid", self.draft("05-业务流程.md").read_text(encoding="utf-8"))
+        draft = self.draft("05-业务流程.md").read_text(encoding="utf-8")
+        self.assertNotIn("```mermaid", draft, "草稿又预放了一张图")
+        self.assertIn("你画的图", draft, "形态说明还得在：这一章要有一张作者自己画的图")
 
     def test_fixed_slots_are_rendered_not_just_described(self) -> None:
         """槽位给表头 + 分隔 + 占位，不是一行「机器核」注释。"""

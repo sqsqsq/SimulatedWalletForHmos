@@ -827,10 +827,19 @@ function diagramBody(d) {
   return d.lines.filter((l, i) => !(i === 0 && /^\s*%%\s*图源\s/.test(l)));
 }
 
-/** spec §5 的第一个图围栏，原样复制并带上指向它的来源标记。 */
-function specDiagram(text) {
-  const first = diagramsOf(text).find(d => /^5(\.|$)/.test(d.section));
-  return first ? carryableBlock(first, 'spec') : null;
+/**
+ * story 的上游有哪几份 —— 系统设计与 spec，读不到的那份不算，不猜。
+ *
+ * 上游只列到这两份：产品需求文档里一般不画 `mermaid`，为它留一条通道是空的；
+ * 真出现了，作者按内容搬进 story 就是，机器不为一份没有图的文档立判据。
+ */
+function upstreamDocs(ctx) {
+  const out = [];
+  for (const [label, ...rel] of [['SR', 'SR', 'design.md'], ['spec', 'spec', 'spec.md']]) {
+    const text = readText(path.join(ctx.featureRoot, ...rel));
+    if (text !== null) out.push([label, text]);
+  }
+  return out;
 }
 
 //: 不投进归档件的列。「代码现状」是 spec 写给下游 AI 的——仓内路径或检索结论，
@@ -1555,18 +1564,20 @@ function cmdCheck(ctx) {
     }
   }
 
-  // spec 每张图在 story 各有一个围栏带着它的来源标记。
+  // 上游每张图，story 里各有一个围栏带着它的来源标记。
   //
-  // 图属于哪块内容，内容在 story 落在哪，图就该在哪——不是「spec 有几张图，
-  // story 就派生几节」。所以这里不判位置、不判张数，只判登记对应；
-  // 缺了报的是**这张图讲的那件事**，作者据此去找功能，而不是去补一张图。
-  if (specForRows) {
-    for (const d of diagramsNotCarried(specForRows, 'spec', storyText)) {
-      problems.push(`spec ${d.id} 的图（${diagramTopic(d)}）在 story 里没有。`
+  // story 的上游有两份：系统设计（SR）与 spec。图属于哪块内容，内容在 story 落在哪，
+  // 图就该在哪——不是「上游有几张图，story 就派生几节」。所以这里不判位置、不判张数，
+  // **只判登记对应**：标记在，说明这张图被登记着搬过来了；它搬得对不对、
+  // 周围那句话说的是不是它，要读上下文，归独立审查。
+  // 缺了报的是**这张图讲的那件事**，作者据此去找内容，而不是去补一张图。
+  for (const [label, upstream] of upstreamDocs(ctx)) {
+    for (const d of diagramsNotCarried(upstream, label, storyText)) {
+      problems.push(`${label} ${d.id} 的图（${diagramTopic(d)}）在 story 里没有。`
         + '先看它讲的那件事在 story 哪一章：讲了而图漏了，把图搬到那一节；'
         + '没讲，是内容丢了，先补内容再搬图。'
-        + `搬的时候围栏第一行写 \`%% 图源 spec ${d.id}\`——周围的文字自己写，`
-        + 'story 讲的是来龙去脉，spec 讲的是契约，两份文字不该一样');
+        + `搬的时候围栏第一行写 \`%% 图源 ${label} ${d.id}\`——周围的文字自己写，`
+        + 'story 讲给评审者的是来龙去脉，上游那份讲的是别的事');
     }
   }
 
@@ -2028,10 +2039,6 @@ function chapterSeed(ctx, ch, spec) {
   if (ch.id === '02-terms') {
     const terms = specTerms(spec);
     return terms.length ? renderTable(['术语', '在本需求里的意思'], terms) : [];
-  }
-  if (ch.id === '05-flow') {
-    const diagram = specDiagram(spec);
-    return diagram ? diagram.split(/\r?\n/) : [];
   }
   if (ch.appendix) {
     const out = [];

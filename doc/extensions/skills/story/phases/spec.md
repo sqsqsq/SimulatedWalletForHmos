@@ -114,10 +114,6 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
 
 ## 三、§9 技术契约怎么写
 
-**上游画过的图照搬进来**：SR / PRD 里的 `mermaid` 原样放进讲对应内容的那一节，
-围栏第一行写 `%% 图源 SR §<节> #<序>`；只搬图不搬文字。有哪几张、围栏原文长什么样，
-本次任务包里列着（`node doc/extensions/hooks/spec/author.mjs --feature <名>`）。
-
 core spec 模板缺少交付流程要求 spec 承载的接口契约 / 存储 / 配置 / 埋点 / 依赖，所以在
 **§8 验收标准之后追加一章**，模板见 [`templates/spec-sections.md`](../templates/spec-sections.md)：
 9.1 端云接口 / 9.2 数据存储 / 9.3 配置项 / 9.4 埋点 / 9.5 依赖变更。

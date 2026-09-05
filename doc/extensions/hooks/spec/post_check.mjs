@@ -20,7 +20,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/flow-check.mjs';
-import { diagramsNotCarried, diagramTopic } from '../../skills/story/scripts/story-build.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
@@ -338,23 +337,6 @@ function strayProse(body) {
   return null;
 }
 
-/**
- * SR 画过的每张图，spec 里有没有一个围栏带着它的来源标记。
- *
- * SR 是产品侧的设计稿，spec 是给下游的契约——图是同一张，文字各写各的。
- * 不核位置：放在讲对应内容的地方由作者定。
- */
-function upstreamDiagrams(featureRoot, specText) {
-  const src = path.join(featureRoot, 'SR', 'design.md');
-  if (!fs.existsSync(src)) return [];
-  const upstream = fs.readFileSync(src, 'utf-8').replace(/^\ufeff/, '');
-  return diagramsNotCarried(upstream, 'SR', specText).map(d =>
-    `SR ${d.id} 的图（${diagramTopic(d)}）在 spec 里没有。`
-    + '先看它讲的那件事在 spec 哪一节：讲了而图漏了，把图搬到那一节；'
-    + '没讲，是内容丢了，先补内容再搬图。'
-    + `搬的时候围栏第一行写 \`%% 图源 SR ${d.id}\``);
-}
-
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
 ];
@@ -385,12 +367,6 @@ export default guard('spec', async (ctx) => {
 
   // ---- story 前置流程契约已收口 ----
   problems.push(...flowProblems(featureRoot));
-
-  // ---- 上游画过的图，spec 有没有带过来 ----
-  // 一环一环往下带：SR → spec → story。每一环缺了，缺的都不是「一张图」，
-  // 是那张图讲的那件事——所以报错给的是主题，让作者去找内容。
-  // 上游没有这份文件就没有对象，不判。
-  if (isStory) problems.push(...upstreamDiagrams(featureRoot, text));
 
   // ---- 三份产物齐备：第三份是叙事件（story 专属）----
   // spec 是一次 pass 产出 spec.md / AR/review.md / AR/story.md，三者事实同源。

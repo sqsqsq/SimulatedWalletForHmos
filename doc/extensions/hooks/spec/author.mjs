@@ -143,7 +143,8 @@ function imageSection(projectRoot, feature) {
  * 各讲什么、原文长什么样」摆出来，归位由作者按内容判。
  * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
  *
- * 两环各一节，同一个渲染：SR → spec 给写 spec 的人，spec → story 给写 story 的人。
+ * 上游两份各一节，同一个渲染。**下游都是 story**：spec 的内容归框架管，
+ * 扩展不往那边搬图；系统设计与 spec 画过的图，作者按内容归位进 story。
  */
 function diagramSection(heading, label, source, downstream) {
   const list = diagramsOf(source);
@@ -219,8 +220,8 @@ function taskPackage(projectRoot, feature) {
     '',
     ...imageSection(projectRoot, feature),
     '',
-    ...diagramSection('## 4b. SR 里的图（搬进 spec）', 'SR',
-      docText(projectRoot, feature, 'SR', 'design.md'), 'spec'),
+    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR',
+      docText(projectRoot, feature, 'SR', 'design.md'), 'story'),
     '',
     ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec',
       docText(projectRoot, feature, 'spec', 'spec.md'), 'story'),

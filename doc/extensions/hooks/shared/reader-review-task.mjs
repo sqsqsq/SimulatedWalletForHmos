@@ -77,8 +77,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '4. **附录 §10 那些非实体落点写的是实际影响对象吗**：'
     + '「页面」「资源」这种泛称等于没写落点；',
     '5. **上游画出来的每条路径，story 讲到了吗、讲在合适的章吗**：'
-    + '产品设计稿与 spec 的流程图里，签约之外的管理动作（改门限、关闭、停用后恢复）'
-    + '常常整条没人讲——图搬过来了不等于那件事讲过了。');
+    + '主路径之外的那几条最容易整条没人讲——图搬过来了不等于那件事讲过了。');
 
   const images = imageRows(projectRoot, feature);
   rows.push('', '### 材料里的图，逐张回答', '');
