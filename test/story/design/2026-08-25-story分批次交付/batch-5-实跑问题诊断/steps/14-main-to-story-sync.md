@@ -6,9 +6,12 @@
 
 | | |
 |---|---|
-| main | 已升级到 framework 3.0.0 正式版（上游 `Br_release_3.0.0`，26 个提交、含 `docs(release): 3.0.0 发布材料`） |
-| story | 领先 main 220 个提交；`framework/` 停在 3.0.0 候选（`source_commit` = `7401f22`） |
-| 分叉 | 升级前 main 领先 0——**story 是 main 的严格超集**，同步只是把 main 新增的那一笔并进来 |
+| main | `363c6e13`，framework `source_commit` = `85e266f`（v3.0.0，1098 文件）。本地已 `git fetch origin main:main` 同步到位 |
+| story | `framework/` 停在 `7401f22`（3.0.0 候选，1093 文件） |
+| 分叉 | main 领先 10 个提交，story 领先 221 个。升级前 main 领先 0，**这 10 个提交全是 framework 同步与 `.gitattributes` 行尾固定** |
+
+> 目标版本是 `85e266f`，**不是** `51a37875`（后者是 `Br_release_3.0.0` 分支上更早的一个点，
+> 曾用它编过一份发布包）。下面的补丁结论都在 `85e266f` 的真实树上验过。
 
 ## 2. 关键判断：`framework/` 不走三方合并
 
@@ -26,10 +29,30 @@ story 对 `framework/` 的改动**只有两笔提交、18 个文件**：
 所以：**`framework/` 整个目录取 main 侧，再把两份补丁重新打上**。
 结果可精确表述为「3.0.0 正式版 + 18 处具名改动」，而且可验证（见 §5）。
 
-**两份补丁已在 3.0.0 正式版上验过 `git apply --check`，均零冲突**：
+两份补丁在 `85e266f` 的真实树上验过 `git apply --check`：
 
-- `artifacts/04-framework-author-context.patch`（12 文件）
-- `artifacts/01-framework-opencode-verifier.patch`（6 文件）
+| 补丁 | 文件数 | 结果 |
+|---|---|---|
+| `artifacts/04-framework-author-context.patch` | 12 | **零冲突** |
+| `artifacts/01-framework-opencode-verifier.patch` | 6 | **仅 `agents/adapter-schema.yaml` 打不上**；排除它之后其余 5 个零冲突 |
+
+### 那一处冲突是什么
+
+升级期间上游动过四个与我们重叠的文件（`agents/README.md`、`agents/adapter-schema.yaml`、
+`harness/harness-runner.ts`、`skills/reference/agent-behavioral-principles.md`），
+但只有 `adapter-schema.yaml` 的**改动位置**与我们撞上了：上游改写了 `publisher` 那一段的
+description 措辞，补丁的上下文对不上。
+
+**是文本冲突，不是语义冲突**——我们要做的事没变，仍是两点：
+
+1. `verifier_capability.publisher` 的 `enum` 由 `["subagent_stop"]` 扩为
+   `["subagent_stop", "task_tool_result"]`；
+2. 该字段的 description 补一句 `task_tool_result` 的说明（宿主在子代理任务工具完成时把
+   调用参数、子会话身份与终稿信封交给插件，插件据此发布；与 `subagent_stop` 的绑定材料同源，
+   差别只在宿主把材料交出来的位置）。
+
+在新版的措辞上手工加这两点即可，**不要**为它重做整份补丁——重做会把上游新写的
+description 一并覆盖回旧措辞。
 
 ## 3. `framework.config.json` 要手工合
 
@@ -59,9 +82,13 @@ git merge --no-commit --no-ff main
 # 2. framework/ 全取 main 侧，抹掉 story 的旧版全量与 18 处改动
 git checkout main -- framework/
 
-# 3. 重新打两份补丁（路径要带 framework/ 前缀，见补丁头部说明）
+# 3. 重新打两份补丁（--directory 补上 vendored 前缀）
 git apply --directory=framework artifacts/04-framework-author-context.patch
-git apply --directory=framework artifacts/01-framework-opencode-verifier.patch
+git apply --directory=framework --exclude='framework/agents/adapter-schema.yaml' \
+          artifacts/01-framework-opencode-verifier.patch
+
+# 3b. 手工合 adapter-schema.yaml 的那一处（§2 末：enum 加 task_tool_result + 一句描述）
+#     在新版措辞上加，不要拿旧措辞覆盖
 
 # 4. framework.config.json 按 §3 手工合；.gitignore 等根文件按常规解冲突
 
@@ -84,6 +111,7 @@ git apply --directory=framework artifacts/01-framework-opencode-verifier.patch
 | 5 | 扩展装配 | `adapt-scan.mjs --scan --check --target .` | 六项全过，含 framework 补丁那一项 |
 | 6 | 作者入口真能跑 | `npx ts-node scripts/author-context.ts --phase spec --feature <任一>` | 退出 0 且打印出扩展片段，标识是仓内相对路径 |
 | 7 | verifier 能力仍在册 | 看 `adapter-catalog` 解析结果 | `opencode` 的 `verifier_capability` 在，`publisher: task_tool_result` |
+| 8 | 手工合的那一处生效 | `agents/adapter-schema.yaml` 的 `publisher.enum` 含两个值；`parseVerifierCapabilityDeclaration` 不报「未知值」 | 两条都成立——漏了第 3b 步的话，opencode 的能力声明会被判非法，verifier 静默退回 blocked |
 
 **第 3 项是主要风险面**：3.0.0 正式版新增了 testing lane、Native evidence gate、
 `--report-reconcile-only` 等，可能带来新的门禁或改过的判据形态。红了先判断是
