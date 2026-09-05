@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/lint-rules.mjs';
-import { DECISION_FIELDS } from '../../skills/story/scripts/story-build.mjs';
+import { DECISION_FIELDS, relFromStory } from '../../skills/story/scripts/story-build.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
@@ -118,8 +118,7 @@ function imageSection(projectRoot, feature) {
     const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);
     const caption = img.caption || '';
     for (const p of paths) {
-      const rel = path.posix.relative('AR', String(p).split(path.sep).join('/'));
-      rows.push(`- \`![${caption || '这张图是什么'}](${rel})\``
+      rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(p)})\``
         + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句'));
     }
   }

@@ -1212,7 +1212,12 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 草稿到此为止：story 冻结了，它就没有用途了；不进冻结台账，也不该留进归档。
     drafts = src / DRAFTS_DIR
     if drafts.is_dir():
+        # 删不掉就不登记：Windows 上文件被占用是真会发生的事，而「已清理」
+        # 一旦记进日志、状态又写成 story_written，草稿就跟着进了归档。
         shutil.rmtree(drafts, ignore_errors=True)
+        if drafts.exists():
+            raise FlowError(f"章草稿删不掉（{drafts}）：可能有编辑器占着文件。"
+                            "关掉再跑一次——story 冻结后草稿不该留在需求目录里")
         log("章草稿已清理（story 已冻结）")
     save(feature_root, contract)
     return {"status": "story_written", "story": str(story)}

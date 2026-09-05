@@ -1446,5 +1446,88 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
             self.assertEqual("", lines[i - 1], "两张表之间没有空行，markdown 会并成一张")
 
 
+class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
+    """草稿原样落盘之后，story.md 里不该留下写给作者的东西，链接也要点得开。
+
+    作者按指引「在草稿上写、写完 chapter --from 草稿」，那么草稿里的一切都会进
+    story.md：形态说明里的「spec §0」被语言红线判成工程坐标，待写标记让写完的章
+    仍被数成待写，材料链接差一层 `AR/` 点不开。三样都是脚本给他的，算对是脚本的事。
+    """
+
+    def landed(self, name: str, title: str) -> str:
+        draft = self.draft(name)
+        self.build("chapter", "--chapter", title, "--from", str(draft))
+        return self.story()
+
+    def test_guidance_never_reaches_the_archive(self) -> None:
+        self.build("skeleton")
+        story = self.landed("02-术语.md", "术语")
+        body = story.split("## 术语", 1)[1].split("## 范围", 1)[0]
+        self.assertNotIn("<!--", body, "写给作者的注释进了归档件")
+        self.assertIn("| 术语 |", body, "术语表本身该留下")
+
+    def test_a_landed_chapter_is_no_longer_pending(self) -> None:
+        """待写标记只在骨架里：它跟着草稿进正文，写完的章会一直被数成待写。"""
+        self.build("skeleton")
+        story = self.landed("02-术语.md", "术语")
+        self.assertNotIn("待写：术语", story)
+        self.assertIn("待写：范围", story, "别的章的待写标记该还在")
+
+    def test_material_links_point_from_the_story(self) -> None:
+        """链接按 story.md 所在目录算——`RR/prd.md` 在 `AR/story.md` 里点不开。"""
+        self.build("skeleton")
+        draft = self.draft("10-附录.md").read_text(encoding="utf-8")
+        self.assertIn("(../RR/prd.md)", draft)
+        self.assertNotIn("](RR/prd.md)", draft)
+
+
+class ProjectionRefusesToInventContent(RealRunCase):
+    """机器区宁可停下也不写占位——作者改不了它，挂着就永远不会被填。"""
+
+    def test_a_missing_basis_stops_the_projection(self) -> None:
+        """激活清单里有、判断骨架里没有——投影不替它编一个依据出来。"""
+        self.build("skeleton")
+        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        use = self.feature / "spec" / "knowledge-use.yaml"
+        text = use.read_text(encoding="utf-8")
+        start = text.index("  - id: UX-01")
+        end = text.index("  - id: ", start + 10)
+        use.write_text(text[:start] + text[end:], encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(BUILD), "project", "--feature", "AR90006",
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(1, proc.returncode, "缺依据还照投不误")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("UX-01", out, "没指向缺依据的那一条")
+        self.assertIn("knowledge-use.yaml", out)
+
+    def test_a_zone_outside_the_contract_is_removed(self) -> None:
+        """合同里没有的旧机器区要删：它指的真源已经没人维护了。"""
+        self.build("skeleton")
+        draft = self.draft("10-附录.md")
+        draft.write_text(draft.read_text(encoding="utf-8")
+                         + "\n\n### 旧节\n\n<!-- story-build:begin 旧节 · 由某处生成，改它请改真源 -->\n"
+                         + "| 旧 |\n|---|\n| 行 |\n<!-- story-build:end -->\n",
+                         encoding="utf-8")
+        self.build("chapter", "--chapter", "附录", "--from", str(draft))
+        story = self.story()
+        self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
+        self.assertIn("story-build:begin 接口", story)
+
+
+class DraftsFollowWhatIsStillUnwritten(RealRunCase):
+    """恢复时只补还没写的章：给已落盘的章重建初始草稿，等于把成品换回起点。"""
+
+    def test_a_landed_chapter_gets_no_fresh_draft(self) -> None:
+        self.build("skeleton")
+        draft = self.draft("02-术语.md")
+        self.build("chapter", "--chapter", "术语", "--from", str(draft))
+        draft.unlink()
+        self.build("skeleton")
+        self.assertFalse(draft.exists(), "已落盘的章又被建了一份初始草稿")
+        self.assertTrue(self.draft("03-范围.md").exists(), "还没写的章该有草稿")
+
+
 if __name__ == "__main__":
     unittest.main()

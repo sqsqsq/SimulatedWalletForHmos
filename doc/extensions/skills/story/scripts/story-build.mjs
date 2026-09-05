@@ -61,7 +61,6 @@ const COPYEDIT_ROWS = 6;
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
-const KNOWLEDGE_VERDICTS = ['命中', '不命中', DOMAIN_NA];
 
 /**
  * 评审记录里不该出现的行 —— 每一样都被裁掉过，每一样都以「更规范」的名义长回来。
@@ -276,15 +275,6 @@ function knowledgeUseVerdicts(ctx) {
   }
 }
 
-/** 每份来源在归档件里的中文类别：合同的 `sources[*].label`，按路径反查。 */
-function materialKinds(ctx) {
-  const out = new Map();
-  for (const src of Object.values(ctx.contract?.sources ?? {})) {
-    if (src?.path && src?.label) out.set(src.path, src.label);
-  }
-  return out;
-}
-
 /**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
@@ -489,15 +479,19 @@ function basename(rel) {
   return parts[parts.length - 1];
 }
 
-function materialImages(ctx) {
+function readManifest(ctx) {
   if (ctx.offline || !ctx.srcDir) return null;
   const text = readText(path.join(ctx.srcDir, 'materials.json'));
   if (text === null) return null;
-  let data;
-  try { data = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
-  const list = data?.materials;
-  if (!Array.isArray(list)) return 'broken';
-  return list.filter(m => m?.kind === 'image' && Array.isArray(m.paths) && m.paths.length);
+  try { return JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
+}
+
+function materialImages(ctx) {
+  const data = readManifest(ctx);
+  if (data === null || data === 'broken') return data;
+  if (!Array.isArray(data.materials)) return 'broken';
+  return data.materials.filter(m => m?.kind === 'image'
+    && Array.isArray(m.paths) && m.paths.length);
 }
 
 /**
@@ -519,18 +513,26 @@ function materialImages(ctx) {
  * @returns {{must: string[], mayAlso: string[]} | null | 'broken'}
  */
 function materialListTargets(ctx) {
-  if (ctx.offline || !ctx.srcDir) return null;
-  const text = readText(path.join(ctx.srcDir, 'materials.json'));
-  if (text === null) return null;
-  let data;
-  try { data = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
-  if (!Array.isArray(data?.materials)) return 'broken';
+  const data = readManifest(ctx);
+  if (data === null || data === 'broken') return data;
+  if (!Array.isArray(data.materials)) return 'broken';
   const must = data.materials
     .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths))
     .flatMap(m => m.paths);
   const mayAlso = (Array.isArray(data.sources) ? data.sources : [])
     .map(x => `inbox/${x?.file}`);
   return { must, mayAlso };
+}
+
+/**
+ * 需求目录下的相对路径 → **相对 story.md** 的路径。
+ *
+ * story.md 在 `AR/` 下，而清单记的是相对需求目录的路径（`RR/prd.md`、
+ * `assets/x.png`）。差这一层，链接就点不开、图就断链——落盘后 `check` 会逐条报，
+ * 而那几条本可以不发生：串是脚本给作者的，算对是脚本的事。
+ */
+export function relFromStory(rel) {
+  return path.posix.relative('AR', String(rel ?? '').split(path.sep).join('/'));
 }
 
 /** 两份文件是不是同一份字节。读不到就不是——断链另有判据报。 */
@@ -600,12 +602,6 @@ function findSubsection(text, name) {
   const want = normalizeHeading(name);
   const hit = subsectionNames(text).find(x => x.name.includes(want));
   return hit ? subsectionText(text, hit.name) : null;
-}
-
-/** 有没有作者画的图 —— 图围栏一个就够。正则带 /g，每次用前把游标归零。 */
-function hasDiagram(text) {
-  DIAGRAM_FENCE.lastIndex = 0;
-  return DIAGRAM_FENCE.test(String(text ?? ''));
 }
 
 /**
@@ -776,9 +772,8 @@ function renderTable(header, rows) {
 const ZONE_BEGIN = '<!-- story-build:begin ';
 const ZONE_END = '<!-- story-build:end -->';
 
-function zoneBlock(name, source, rows) {
-  return [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 -->`, ...rows, ZONE_END];
-}
+const zoneBlock = (name, source, rows) =>
+  [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 -->`, ...rows, ZONE_END];
 
 /**
  * 一段正文里某个生成区的行区间（含首尾标记），没有就返回 null。
@@ -1086,11 +1081,11 @@ function cmdCheck(ctx) {
   // 激活规约的编号**直接取激活清单**：经「材料单元」那一层只是把同一份数据换个形状，
   // 而多一层就多一处会与清单失同步的地方——判定表少判一条规约是静默的。
   //
-  // 命中与否的**结论**另有真源：`spec/knowledge-use.yaml`。这张表是给评审者的
-  // 完备性回显，写法与粒度都不同，所以不从那份 YAML 生成；但两处说的必须是同一件事，
-  // 对不上就是两处判定打架，评审者无从知道哪个是准的。
+  // **这张表是 `spec/knowledge-use.yaml` 的投影**（`story-build project` 投的），
+  // 所以判定的值域、依据非空、与 YAML 一致三件事在投影那一步就成立了：
+  // 投影只写命中/不命中，缺依据时它响亮失败。这里只剩一条——**每条规约有行**：
+  // 作者手改 story.md 删掉一行，下一次投影才会补回来，这中间要有人看见。
   const kEntries = activeKnowledgeEntries(ctx);
-  const useVerdicts = knowledgeUseVerdicts(ctx);
   if (kEntries.length) {
     const appendix = appendixChapter(ctx.contract);
     const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
@@ -1120,18 +1115,6 @@ function cmdCheck(ctx) {
           problems.push(`规约 ${id}（${domain}）在附录·${verdictName}的判定表里没有行`
             + `——判「不命中」也要有一行；整域不适用就给该域一行「${DOMAIN_NA}」`);
           continue;
-        }
-        if (!KNOWLEDGE_VERDICTS.includes(row.verdict)) {
-          problems.push(`规约 ${id} 的判定「${row.verdict}」不是 ${KNOWLEDGE_VERDICTS.join(' / ')} 之一`);
-        } else if (!row.basis) {
-          problems.push(`规约 ${id} 的判定没写依据——「不涉及」三个字不是依据`);
-        } else if (useVerdicts && useVerdicts.has(id)) {
-          const want = useVerdicts.get(id).applicable ? '命中' : '不命中';
-          if (row.verdict !== DOMAIN_NA && row.verdict !== want) {
-            problems.push(`规约 ${id} 在这张表里判「${row.verdict}」，`
-              + `而 spec/knowledge-use.yaml 判的是「${want}」`
-              + '——同一条结论有了两种说法。判断的真源是那份 YAML，改这张表跟上它');
-          }
         }
       }
     }
@@ -1335,7 +1318,8 @@ function cmdCheck(ctx) {
         }
       }
     }
-    if (form.diagram && !hasDiagram(text)) {
+    DIAGRAM_FENCE.lastIndex = 0;              // 正则带 /g，每次用前把游标归零
+    if (form.diagram && !DIAGRAM_FENCE.test(text)) {
       problems.push(`「${ch.title}」一张图都没有——${form.note ?? ''}`);
     }
   }
@@ -1721,8 +1705,7 @@ function chapterSpan(storyText, title) {
 function chapterDraft(ctx, ch, spec) {
   const rows = [`## ${ch.title}`, ''];
   if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
-  rows.push(`<!-- 读者在这一章要的答案：${(ch.questions ?? []).join('；')} -->`, '');
-  const seeded = chapterSeed(ctx, ch, spec);
+  const seeded = chapterSeed(ctx, ch, spec);   // 打完就归作者
   for (const [at, cols] of Object.entries(ch.form?.tables ?? {})) {
     if (!slotApplies(ctx, (ch.form?.tables_when ?? {})[at])) continue;
     const parts = String(cols).split(';');
@@ -1741,7 +1724,6 @@ function chapterDraft(ctx, ch, spec) {
     }
   }
   if (seeded.length) rows.push(...seeded, '');
-  if (!ch.appendix) rows.push(pendingMark(ch.title), '');
   rows.push('<!-- 写完这一章跑：story-build chapter --feature <名> --chapter '
     + `${ch.title} --from <本文件> -->`);
   return rows;
@@ -1798,8 +1780,19 @@ function appendixProjection(ctx, spec, name) {
     return ['spec/knowledge-use.yaml', verdictSkeleton(ctx)];
   }
   const tables = appendixTables(spec, name);
-  return ['spec §9', tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
-    : renderTable(t.header, t.rows))];
+  const rows = tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
+    : renderTable(t.header, t.rows));
+  // spec 那一节合法为空（写了一行「不涉及：<依据>」）时把那一句投过来：
+  // 那也是结论，评审者要看到它，而不是看到一个空节。
+  const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
+  if (!rows.length && spec && from) {
+    for (const re of from[1]) {
+      const hit = specSection(spec, re).split(/\r?\n/)
+        .map(l => l.trim()).find(l => /^不涉及[:：]\s*\S/.test(l));
+      if (hit) return ['spec §9', [hit]];
+    }
+  }
+  return ['spec §9', rows];
 }
 
 /**
@@ -1821,9 +1814,21 @@ function projectAppendix(ctx, storyText) {
   const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
   let lines = storyText.slice(span.start, span.end).split(/\r?\n/);
   let zones = 0;
+  // 集合对账：合同里有的按真源重投，合同里没有的旧区删掉——某一节退场或改名之后，
+  // 旧区会一直挂着，而它指的真源已经没人维护了。
+  const want = new Set((appendix.subsections ?? []).map(normalizeHeading));
+  for (const line of [...lines]) {
+    if (!line.startsWith(ZONE_BEGIN)) continue;
+    const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
+    const at = want.has(normalizeHeading(name)) ? null : zoneSpan(lines, name);
+    if (at) lines = [...lines.slice(0, at.start), ...lines.slice(at.end)];
+  }
   for (const name of appendix.subsections ?? []) {
     if (normalizeHeading(name) === materialName) continue;    // 材料清单归作者
     const [source, rows] = appendixProjection(ctx, spec, name);
+    // 真源那一节合法为空（spec 写「不涉及：<依据>」）时投一行说明，不是留个空节：
+    // 附录每节要么有内容、要么有一行不涉及，删了区那一节就只剩目的句，
+    // 而那一节本来就不该由作者写。
     if (!rows.length) continue;
     const block = zoneBlock(name, source, rows);
     zones += 1;
@@ -1848,8 +1853,8 @@ function cmdProject(ctx) {
   if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架');
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
-  process.stdout.write(`[story-build project] 附录机器区已按当前真源重投 ${zones} 节`
-    + `（spec §9 / knowledge-use.yaml）；材料清单归你，不动\n`);
+  process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
+    + '（spec §9 / knowledge-use.yaml）；材料清单归你，不动\n');
 }
 
 /**
@@ -1863,11 +1868,26 @@ function verdictSkeleton(ctx) {
   const entries = activeKnowledgeEntries(ctx);
   if (!entries.length) return [];
   const use = knowledgeUseVerdicts(ctx);
+  // 判断骨架还没生成（离线、或 knowledge-use.yaml 不在）：投不出来就不投，
+  // 那一节保持原样，缺表由 check ⑦ 报。这一步不代替它下结论。
+  // 文件在却读不出判断，那是它写坏了——停下把话说清，别静默跳过。
+  if (!use) {
+    if (ctx.offline || !fs.existsSync(path.join(ctx.featureRoot, 'spec', 'knowledge-use.yaml'))) return [];
+    fail('spec/knowledge-use.yaml 读不出判断：附录的判定表是它的投影，先把那份 YAML 修好');
+  }
+  // 机器区里不写占位：作者改不了它（下一次投影会盖回来），挂着又永远不会被填。
+  // 骨架在而某一条没依据，就在这里停下把话说清——判断本来就该先写进那份 YAML，
+  // 它自己的门禁也要求每条有 requirement 或 reason。
+  const missing = entries.filter(e => !use.get(e.id)?.basis);
+  if (missing.length) {
+    fail(`spec/knowledge-use.yaml 里这 ${missing.length} 条还没有判断依据：`
+      + `${missing.slice(0, 4).map(e => e.id).join('、')}${missing.length > 4 ? '…' : ''}`
+      + '——命中写 requirement、不命中写 reason，填完再投影。'
+      + '附录的判定表是它的投影，投影不替你编依据');
+  }
   return renderTable(['规约域', '编号', '判定', '依据'], entries.map(e => {
-    const row = use?.get(e.id);
-    return [e.domainTitle ?? '', e.id,
-      row ? (row.applicable ? '命中' : '不命中') : '{{命中/不命中}}',
-      row?.basis || '{{依据}}'];
+    const row = use.get(e.id);
+    return [e.domainTitle ?? '', e.id, row.applicable ? '命中' : '不命中', row.basis];
   }));
 }
 
@@ -1875,9 +1895,12 @@ function verdictSkeleton(ctx) {
 function materialListSkeleton(ctx) {
   const targets = materialListTargets(ctx);
   if (!targets || targets === 'broken') return [];
-  const kinds = materialKinds(ctx);
+  // 类别取合同的 `sources[*].label`，按路径反查——它在那里已经有答案。
+  const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
+    .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
   return targets.must.map(rel =>
-    `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${rel})——{{这份材料贡献了什么}}`);
+    `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${relFromStory(rel)})`
+    + '——{{这份材料贡献了什么}}');
 }
 
 //: 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记成功后由
@@ -1894,12 +1917,16 @@ function draftPath(ctx, index, title) {
  *
  * @returns {string[]} 这次新建的草稿文件名
  */
-function writeDrafts(ctx, spec) {
+function writeDrafts(ctx, spec, storyText) {
   const made = [];
+  // 已经落盘的章不建草稿：给它建一份初始草稿，等于把作者写好的内容替换成起点，
+  // 而他下一次落盘就会把成品覆盖掉。只补仍带待写标记的那几章。
+  const pending = storyText && new Set(pendingChapters(storyText).map(normalizeHeading));
   fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
   ctx.contract.chapters.forEach((ch, i) => {
     const file = draftPath(ctx, i, ch.title);
     if (fs.existsSync(file)) return;
+    if (pending && !pending.has(normalizeHeading(ch.title))) return;
     fs.writeFileSync(file, `${chapterDraft(ctx, ch, spec).join('\n').trimEnd()}\n`, 'utf-8');
     made.push(path.basename(file));
   });
@@ -1912,7 +1939,7 @@ function cmdSkeleton(ctx) {
   const existing = readText(ctx.storyPath);
   if (existing !== null) {
     // story 已经在了也要补草稿：中断恢复时缺的往往正是还没写的那几章。
-    const made = writeDrafts(ctx, spec);
+    const made = writeDrafts(ctx, spec, existing);
     const left = pendingChapters(existing);
     process.stdout.write(`[story-build skeleton] AR/story.md 已存在，未改动`
       + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）；`
@@ -1926,7 +1953,7 @@ function cmdSkeleton(ctx) {
   }
   fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
   fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
-  const made = writeDrafts(ctx, spec);
+  const made = writeDrafts(ctx, spec, null);
   process.stdout.write(`[story-build skeleton] ${titles.length} 章骨架 + `
     + `${made.length} 份章草稿（\`AR/story-src/${DRAFTS}/\`）：`
     + `形态说明、槽位表头${spec ? '、术语起始行、spec §5 的图' : ''}都在草稿里，`
@@ -1951,6 +1978,20 @@ function cmdSkeleton(ctx) {
  * 只剥两种：**H1**（它只属于骨架，章文件里出现就是错位）与**与本章同名的 H2**。
  * 章内的小节标题（`### 3.1 …`）是正文，一个字不动。
  */
+/**
+ * 剥掉写给作者的指引 —— 草稿里的形态说明、读者问题、命令提示与待写标记。
+ *
+ * 它们是脚手架：作者照着写，写完就该留在草稿里。原样落盘的话，形态说明里的
+ * 「spec §0」会被语言红线判成工程坐标，待写标记会让已经写完的章仍被数成待写。
+ * **归档件里不该有 HTML 注释**——机器区的首尾标记除外，那两行是投影的定位点。
+ */
+function stripGuidance(body) {
+  const keep = (l) => l.startsWith(ZONE_BEGIN) || l === ZONE_END
+    || !(l.startsWith('<!--') && l.endsWith('-->'));
+  return String(body ?? '').split(/\r?\n/).filter(l => keep(l.trim()))
+    .join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 function stripOwnHeading(body, title) {
   const want = normalizeHeading(title);
   const lines = body.split(/\r?\n/);
@@ -1998,7 +2039,7 @@ function cmdChapter(ctx) {
   if (!span) fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
     + '章锚是逐章落盘的定位点，别手工改动它');
 
-  const trimmed = stripOwnHeading(body, title).replace(/\s+$/, '');
+  const trimmed = stripGuidance(stripOwnHeading(body, title)).replace(/\s+$/, '');
   if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
   const replaced = `## ${title}\n\n${trimmed}\n\n`;
   let next = story.slice(0, span.start) + replaced + story.slice(span.end);
