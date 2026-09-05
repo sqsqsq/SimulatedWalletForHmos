@@ -20,7 +20,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/flow-check.mjs';
-import { storyReviewProblems } from '../shared/verifier-report.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
@@ -495,30 +494,14 @@ export default guard('spec', async (ctx) => {
     if (numericProblems.length > 5) problems.push(`另有 ${numericProblems.length - 5} 处数值来源问题`);
   }
 
-  // ---- story 审查执行落盘 ----
-  // verifier 报告落盘之后的运行才判得到它，本判据那时才真正生效。
-  // 同上：注入了不等于执行了。这一项只核「结果块在不在、两类结论齐不齐」，不核内容。
-  const storyReview = storyReviewLanding(ctx, featureRoot);
-  problems.push(...storyReview.problems);
-
   return gate(ctx, {
     problems,
     skipped,
     checks: [
       { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
-      { id: 'story_review_persisted', status: storyReview.status, detail: storyReview.detail },
     ],
     inputs: [specPath],
     fix: `产物：spec.md（${rel}）。${fix}`,
   });
 });
-
-/** story 审查落盘核对：读不动报告时报出来，不当作「还没跑」。 */
-function storyReviewLanding(ctx, featureRoot) {
-  try {
-    return storyReviewProblems(ctx, path.join(featureRoot, 'AR', 'story.md'));
-  } catch (e) {
-    return { status: STATUS.FAIL, problems: [`story 审查落盘无从核对：${e.message}`], detail: e.message };
-  }
-}
 

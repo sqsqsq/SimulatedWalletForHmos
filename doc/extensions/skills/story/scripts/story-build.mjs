@@ -25,6 +25,7 @@
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  */
+import { spawnSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -40,6 +41,8 @@ import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
 } from './review-render.mjs';
+
+import { storyReviewProblems } from '../../../hooks/shared/verifier-report.mjs';
 
 const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter',
   'project', 'review-task'];
@@ -91,6 +94,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--chapter') args.chapter = argv[++i];
     else if (argv[i] === '--from') args.from = argv[++i];
     else if (argv[i] === '--offline') args.offline = true;
+    else if (argv[i] === '--deliver') args.deliver = true;
   }
   return args;
 }
@@ -1634,6 +1638,16 @@ function cmdCheck(ctx) {
     }
   }
 
+  mark('⑭ 交付门');
+  // ⑭ 交付门：只有 `check --deliver` 判，普通 check 恒不判。
+  //
+  // 两个入口同一实现，按**动作**分而不按文件在不在推断阶段：登记前与返修中跑的是
+  // 普通 check，那时读者审查还没发生，判它只会得到一个恒定的「不适用」；
+  // 交付（远程单上传前、本地单闭环后）跑的是 `--deliver`，那时闭环该已经成立。
+  if (ctx.args.deliver) {
+    problems.push(...deliveryProblems(ctx));
+  }
+
   if (notes.length) {
     process.stdout.write('[story-build check] 记一笔（不拦）：\n');
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));
@@ -1657,6 +1671,45 @@ function cmdCheck(ctx) {
     process.exit(1);
   }
   process.stdout.write(`[story-build check] 通过：${sections.length} 章\n`);
+}
+
+/**
+ * 交付门 —— 阶段闭环成立了吗，读者审查这一项写成形态了吗。
+ *
+ * **闭环由框架判，扩展不重判**：报告在不在、终态块回显的 subject 对不对、
+ * verdict 与 blocker 数一致不一致、verifier 派没派，都是 `check-receipt` 的判断。
+ * 这里只跑它一次，退出码非 0 就把它的话原样带出来。
+ *
+ * 回执通过之后才轮到形态：读者审查那一项在汇总表里有没有一行、证据空不空、
+ * 非 PASS 时两类结论齐不齐。**回执通过而这一项 FAIL 是不该出现的**——它是 BLOCKER 级，
+ * FAIL 时 verdict 必为 FAIL、回执必然过不去；真出现了，交付照样拦。
+ *
+ * 跑不起来不算通过：找不到框架、npx 起不来都如实报出来，让人自己跑一次。
+ */
+function deliveryProblems(ctx) {
+  const harness = path.join(ctx.projectRoot, 'framework', 'harness');
+  const receipt = path.join(harness, 'scripts', 'check-receipt.ts');
+  const manual = 'cd framework/harness && npx ts-node scripts/check-receipt.ts '
+    + `--feature ${ctx.args.feature} --phase spec`;
+  if (!fs.existsSync(receipt)) {
+    return [`交付门跑不了：找不到 framework/harness/scripts/check-receipt.ts——`
+      + '闭环判定归框架，这个仓里没有框架就判不了交付，别把它当通过'];
+  }
+  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  const r = spawnSync(npx, ['ts-node', path.join('scripts', 'check-receipt.ts'),
+    '--feature', ctx.args.feature, '--phase', 'spec'],
+  { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
+  if (r.error) {
+    return [`交付门跑不了：${r.error.message}——自己跑一次 \`${manual}\`，`
+      + '过了再来；跑不了不等于过了'];
+  }
+  if (r.status !== 0) {
+    const say = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/)
+      .filter(Boolean).slice(-12).join(' / ');
+    return [`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`];
+  }
+
+  return storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec').problems;
 }
 
 // --------------------------------------------------------------------------
@@ -2212,6 +2265,12 @@ function main() {
   }
   if (args.offline && args.command !== 'check') {
     fail('--offline 只用于 check：它只读一份文档，登记与渲染都需要需求目录');
+  }
+  if (args.deliver && args.command !== 'check') {
+    fail('--deliver 只用于 check：它判的是这份 story 能不能交付');
+  }
+  if (args.deliver && args.offline) {
+    fail('--deliver 与 --offline 互斥：交付门要读需求目录里的闭环产物');
   }
   const ctx = createContext(args);
   if (args.command === 'init') cmdInit(ctx);

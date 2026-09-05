@@ -889,8 +889,13 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
         # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
         return ("run_archived",
                 "叙事件已登记成文。按这个顺序走完，中间不回头：`story-build build` 渲染 AR/review.md"
-                " → 跑 harness（spec 闭环）→ verifier 一次 → check-receipt → `/story archive` 归档。"
-                "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填")
+                " → 跑 harness（spec 闭环）→ 按 harness 末尾 `NEXT:` 行派 verifier"
+                "（它说没有审查员就直接下一步）→ check-receipt → "
+                "`story-build check --deliver` 交付门 → `/story archive` 归档"
+                "（本地单没有归档，交付门就是最后一道）。"
+                "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
+                "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，"
+                "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审")
     if contract.get("status") == "complete":
         return spec_stage_step(feature_root)
 
@@ -1249,15 +1254,17 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     checker = Path(__file__).resolve().parent / "story-build.mjs"
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：归档态登记要先重跑 story-build check，无法跳过")
+        raise FlowError("找不到 node：归档态登记要先重跑交付门，无法跳过")
+    # 交付门而不是普通 check：走到这里 spec 该已经闭环，读者审查也该已经落报告。
+    # 普通 check 判不到那两样，用它登记归档态等于把「审没审过」这一格空着送审。
     proc = subprocess.run(
-        [node, str(checker), "check", "--feature", feature_root.name,
+        [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
          "--project-root", str(project_root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
         log((proc.stderr or proc.stdout).strip()[:2000])
         raise FlowError(
-            "归档件未通过 story-build check（详见上方输出），拒绝登记归档态。"
+            "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
             "已经传上去的那一版是不合格的：修好后重新归档，再登记")
 
     contract["archived"] = {

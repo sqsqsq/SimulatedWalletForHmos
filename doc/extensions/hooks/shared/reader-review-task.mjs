@@ -64,8 +64,8 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     rows.push('', `章级维度：${dimensions.join('、')}。`);
   }
 
-  // 逐章问答看不到横跨两章的矛盾——五跑那次「未实名」在流程里引导去认证、
-  // 在验收里看不到入口，两章各自都说得通。跨章比对要说成一个显式动作。
+  // 逐章问答看不到横跨两章的矛盾：同一个条件在流程里说一套、在验收里说另一套时，
+  // 两章各自都说得通，只有对着读才看得出来。所以跨章比对要说成一个显式动作。
   rows.push('', '### 跨章对着读，这四问', '',
     '1. **同一个条件，各章说法一致吗**：挑关键条件（未登录、未实名、开关关闭、'
     + '余额不足这类），把流程、功能说明、异常与恢复、验收四处对着读——'
@@ -89,18 +89,20 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   rows.push('',
     '### 结论写成什么（BLOCKER）',
     '',
-    `在输出 YAML 的 \`checks:\` 里追加一条 \`id: ${checkId}\`，\`details\` 下两个键：`,
+    `汇总表里 \`${checkId}\` 一行，证据格写你逐章过了什么——**不许空**，`,
+    '空证据与没审长得一样。判 PASS 到此为止，不写明细。',
+    '',
+    '判 FAIL 或 WARN 时，另在 YAML 明细里出这一条，`details` 下两个键：',
     '',
     '```yaml',
     `    - id: ${checkId}`,
-    '      status: PASS | FAIL',
+    '      status: FAIL | WARN',
     '      details:',
     '        blocking_findings: []      # 哪一章哪一句、缺的或错的是什么、对读者的影响',
     '        advisories: []             # 不影响正确与完整的表达建议，不阻止 PASS',
     '```',
     '',
-    '**空列表是结论**，缺席不是。结论由插件按你的终态发布落盘；不要另写文件，',
-    '也不要用自由文本重跑——那样的输出不算证据。');
+    '**空列表是结论**，缺席不是。');
 
   return rows.join('\n');
 }

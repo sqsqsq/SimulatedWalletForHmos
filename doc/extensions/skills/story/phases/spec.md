@@ -70,8 +70,8 @@ node .../story-build.mjs skeleton --feature <feature>  # ② 十章骨架 + 十�
 node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（story 成文之后）
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
 #                              ⑥ 跑 spec harness
-#                              ⑦ 确定性门全绿之后，verifier 跑一次；之后不再改产物
-#                              ⑧ verifier PASS → check-receipt → /story archive
+#                              ⑦ 确定性门全绿之后，按 harness 末尾 NEXT: 行派 verifier
+#                              ⑧ check-receipt → check --deliver 交付门 → /story archive
 ```
 
 - **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
@@ -92,15 +92,24 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
   登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
 - **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
-- **⑦ 只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
-  产物，指纹就换代，那份结论对不上新产物，只能整份重审。所以确定性门全绿、产物定稿，才叫它。**调用只带 request JSON**：自由文本重跑的终态
-  发布器按协议不收，那次审查的结论落不了盘，等于没审。
-- **⑧ verifier PASS 之后：`check-receipt.ts` → `/story archive`。中间不再跑 harness**——
-  harness 每跑一次都重新派生 subject，换了代就要重审，而产物一个字节没动。
-  只有 `check-receipt` 报 subject 失配时才重跑 harness，并且重跑之后 verifier 也要再来一次：
-  那时换代是真的（材料变了），不是自己写盘写出来的。
+- **⑦ 派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次，
+  说本宿主没有审查员就直接进 ⑧——那是如实披露的状态，不是缺件，闭环不因此卡住。
+  **只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
+  产物，指纹就换代，那份结论对不上新产物，只能整份重审。所以确定性门全绿、产物定稿，才叫它。
+  **调用只带 request JSON**；verifier 的回复由你**原样全文**写到
+  `summary.verifier_report` 指向的那份文件——写报告的是你，不是它。
+- **⑧ `check-receipt.ts` → `story-build check --deliver` → `/story archive`。
+  中间不再跑 harness**——harness 每跑一次都重新派生 subject，换了代就要重审，
+  而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
+  并且重跑之后 verifier 也要再来一次：那时换代是真的（材料变了），不是自己写盘写出来的。
   **回执不用你填**：它是 harness 的只读投影（`receipt_schema` 2.1），`check-receipt`
   自己先生成再校验；要写备注写 `<phase>/notes.md`。
+  **`check --deliver` 是交付门**：它把回执再跑一次，通过之后核读者审查那一项写没写成形态。
+  远程单在上传之前跑它（`/story archive` 自带），本地单没有归档，它就是最后一道。
+- **verifier 报了阻断问题怎么办**：跑 `story_flow.py reopen` 撤销成文登记（唯一的回退出口），
+  在 `AR/story-src/drafts/` 的草稿上改，再 `chapter` → `number` → `check` →
+  `story_flow.py story` 重新登记 → harness → verifier 再审。材料变了、subject 换代，
+  这是框架定义的正常返修，不是重复审。
 
 ## 三、§9 技术契约怎么写
 
