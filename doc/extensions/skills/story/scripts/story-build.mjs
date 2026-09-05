@@ -263,9 +263,14 @@ function knowledgeUseVerdicts(ctx) {
       const id = String(row?.id ?? '').trim();
       // 依据也一起带回来：判断已经写在那份 YAML 里（命中写 requirement、
       // 不命中写 reason），让作者对着它再抄一遍，抄出来的只会更短。
+      // requirement 是列表（一条要求一句）：**全部带上**，同一格里分号隔开——
+      // 只取第一条的话，附录 D 就成了 §10 的一个截断视图。
       if (id) {
+        const req = Array.isArray(row.requirement) ? row.requirement : [row.requirement];
         rows.set(id, { applicable: row.applicable === true,
-          basis: String((row.applicable === true ? row.requirement : row.reason) ?? '').trim() });
+          basis: (row.applicable === true
+            ? req.map(x => String(x ?? '').trim()).filter(Boolean).join('；')
+            : String(row.reason ?? '').trim()) });
       }
     }
     // 整域不适用是那份 YAML 允许的另一种登记：一个域一行，域内条目不必逐条写。

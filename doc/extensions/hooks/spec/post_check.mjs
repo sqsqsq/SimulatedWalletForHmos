@@ -314,6 +314,26 @@ function acceptanceCoverage(ctx, specIds) {
  * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
  * 结论是不是本需求的设计，由 verifier 对着真源与材料判——那是判断，脚本判不了。
  */
+/**
+ * §9 某一节里表外的第一段正文，没有就返回 null。
+ *
+ * 这一节是给下游 AI 的技术契约：plan 据它编码、test-plan 据它出用例。
+ * 表外那几段承载的通常是实现取舍与待定项——它们有自己的去处，进了契约
+ * 只会让下游读到一句「由 plan 决定」。
+ * 「不涉及：<依据>」独行豁免：那是空节规则的既有形态。
+ */
+function strayProse(body) {
+  for (const raw of String(body ?? '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('|') || line.startsWith('#')) continue;
+    if (/^不涉及[:：]\s*\S/.test(line)) continue;
+    if (/^[-*+]\s/.test(line) || /^\d+[.、)]\s/.test(line)) continue;   // 列表另说
+    if (line.startsWith('<!--')) continue;
+    return line.replace(/^>\s*/, '');
+  }
+  return null;
+}
+
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
 ];
@@ -371,6 +391,13 @@ export default guard('spec', async (ctx) => {
           problems.push(`§${ch}「${name}」未填写（须给出事实或「不涉及 + 一句依据」）`);
         } else if (hasTemplatePlaceholder(body)) {
           problems.push(`§${ch}「${name}」残留模板占位「{ … }」——须替换为实际结论`);
+        } else {
+          const stray = strayProse(body);
+          if (stray) {
+            problems.push(`§${ch}「${name}」表外有段落（「${stray.slice(0, 20)}…」）`
+              + '——这一节要么是一张表，要么是一行「不涉及：<依据>」。'
+              + '约定进表格；实现取舍写 spec/notes.md；要人拍板的写决策件');
+          }
         }
       }
     }

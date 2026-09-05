@@ -243,16 +243,27 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
           + '它的动作归《决策与评审记录》的跨团队协同，不写进本需求的要求');
       }
-      if (!text(row, 'requirement')) {
+      if (!requirements(row).length) {
         problems.push(`${id} 判命中却没写 requirement —— 命中而不说要求做什么，编码那里拿不到`);
       }
-      // 落点名只能引 §9 已登记的：写一个不存在的名字，下游按名字找不到东西，
-      // 而「找不到」和「没写」在产物上长得一模一样。
+      // 落点二选一，**由作者显式声明是哪一种**：`contract` 是 §9 里的实体名（验真），
+      // `impact` 是实际影响对象（RTL、图标、文案、翻译这类本来就没有 §9 实体）。
+      // 不按「查不查得到」反推类型：接口名拼错也会滑成非实体落点，验真永远不会失败。
       const at = text(row, 'contract');
+      const impact = text(row, 'impact');
+      if (!at && !impact) {
+        problems.push(`${id} 判命中却没写落点 —— 二选一：`
+          + '`contract` 写 §9 登记过的接口/存储键/配置项名，或 `impact` 写实际影响对象'
+          + '（「页面」「资源」这种泛称不算，要点名）');
+      } else if (at && impact) {
+        problems.push(`${id} 同时写了 contract 与 impact —— 二选一：`
+          + '落在 §9 实体上就写 contract，落在别处就写 impact');
+      }
       if (at && contracts && contracts.size && !contracts.has(at)) {
         problems.push(`${id} 的 contract「${at}」不在 §9 技术契约里`
           + `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
-          + ' —— 这一列引的是 §9 登记过的接口、存储键或配置项名，先在那里登记');
+          + ' —— 这一列引的是 §9 登记过的接口、存储键或配置项名，先在那里登记；'
+          + '落点不在 §9 实体上时改用 impact');
       }
     } else if (row.applicable === false) {
       if (isEmptyReason(text(row, 'reason'))) {
@@ -319,8 +330,13 @@ function renderConstraints(knowledge, use) {
     out.push('| （无命中条目） | 本需求没有产生代码要求的规约条目 | — |');
   }
   for (const row of hits) {
-    out.push(`| ${cell(text(row, 'id'))} | ${cell(text(row, 'requirement'))} `
-      + `| ${cell(text(row, 'contract') || '—')} |`);
+    // 一条要求一行：同一个编号有几条要求就出几行。挤进一格的话，读者要在
+    // 一百多字里数分号，而每一条本来都该独立可懂。
+    const at = text(row, 'contract') ? `§9 · ${cell(text(row, 'contract'))}`
+      : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
+    for (const req of requirements(row)) {
+      out.push(`| ${cell(text(row, 'id'))} | ${cell(req)} | ${at} |`);
+    }
   }
   const na = use.constraints.filter(r => r.applicable === false);
   if (use.domains.length || na.length) {
@@ -334,6 +350,19 @@ function renderConstraints(knowledge, use) {
     }
   }
   return out.join('\n');
+}
+
+/**
+ * 一条条目的要求 —— **列表**，一条一句。
+ *
+ * 写成一段的时候，读者要在一百多字里数分号才分得出这是几件事，而每一件本来都该
+ * 独立可懂。旧写法（单句）照收：那也是一条。
+ */
+function requirements(row) {
+  const raw = row?.requirement;
+  if (Array.isArray(raw)) return raw.map(x => String(x ?? '').trim()).filter(Boolean);
+  const one = String(raw ?? '').trim();
+  return one ? [one] : [];
 }
 
 /** §11 的正文：逐个适用单元一行，只登记不选型。 */
@@ -481,7 +510,7 @@ function renderSkeleton(projectRoot, knowledge) {
   const rows = [
     '# 本阶段知识判断的唯一真源。spec 的 §10/§11 由它生成，那两章不手写。',
     '#',
-    '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（本需求要做什么，',
+    '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（列表，一条要求一句，',
     '# 写得下一个人照着能编码），不命中写 reason（可回查的依据；「不涉及」三个字不算依据）。',
     '# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。',
     `schema: ${SCHEMA}`,
@@ -503,7 +532,8 @@ function renderSkeleton(projectRoot, knowledge) {
   );
   for (const e of knowledge.entries) {
     rows.push(`  - id: ${e.id}`,
-      '    applicable:   # true → 补 requirement 与 contract；false → 补 reason');
+      '    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
+      '    #   落点二选一：contract 写 §9 登记过的名字，impact 写实际影响对象');
   }
   rows.push(
     '',

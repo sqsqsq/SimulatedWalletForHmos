@@ -321,5 +321,56 @@ class TestTheJudgementKnowsWhichKnowledgeItWasMadeAgainst(KnowledgeUseCase):
         self.assert_render_names("不是列表")
 
 
+class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
+    """一条要求一行，落点由作者显式说是哪一种。
+
+    五跑的 §10 一格 80–155 字、混着代码标识，十一行里四行落点写「—」——
+    要求没有落点，等于判了命中却没说落在哪。
+    """
+
+    def test_a_list_renders_one_row_each(self) -> None:
+        """同一个编号有几条要求就出几行：挤进一格，读者要数分号才分得出这是几件事。"""
+        self.write_use(constraints=(
+            f"  - id: {HIT}\n"
+            "    applicable: true\n"
+            "    requirement:\n"
+            "      - 凭证临时文件写 wallet_receipt_temp\n"
+            "      - 分享完成或离开页面即删\n"
+            "    contract: wallet_receipt_temp"))
+        spec = self.render_ok()
+        zone = spec.split("规约约束要求", 1)[1]
+        self.assertIn("凭证临时文件写 wallet_receipt_temp", zone)
+        self.assertIn("分享完成或离开页面即删", zone)
+        rows = [l for l in zone.split("\n") if l.startswith(f"| {HIT} |")]
+        self.assertEqual(2, len(rows), f"两条要求没各成一行：{rows}")
+
+    def test_a_hit_without_a_landing_is_named(self) -> None:
+        self.write_use(constraints=(
+            f"  - id: {HIT}\n"
+            "    applicable: true\n"
+            "    requirement: 凭证临时文件写 wallet_receipt_temp"))
+        self.assert_render_names("没写落点")
+
+    def test_both_kinds_of_landing_at_once_is_named(self) -> None:
+        """二选一：落在 §9 实体上写 contract，落在别处写 impact。"""
+        self.write_use(constraints=(
+            f"  - id: {HIT}\n"
+            "    applicable: true\n"
+            "    requirement: 凭证临时文件写 wallet_receipt_temp\n"
+            "    contract: wallet_receipt_temp\n"
+            "    impact: 交易详情页"))
+        self.assert_render_names("同时写了 contract 与 impact")
+
+    def test_an_impact_landing_is_accepted_and_prefixed(self) -> None:
+        """RTL、图标、文案这类本来就没有 §9 实体，不强挂——但要点名影响对象。"""
+        self.write_use(constraints=(
+            f"  - id: {HIT}\n"
+            "    applicable: true\n"
+            "    requirement: 方向性布局参数一律用 start/end\n"
+            "    impact: 签约页与管理页的布局参数"))
+        zone = self.render_ok().split("规约约束要求", 1)[1]
+        self.assertIn("影响 · 签约页与管理页的布局参数", zone)
+
+
 if __name__ == "__main__":
     unittest.main()
