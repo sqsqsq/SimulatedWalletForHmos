@@ -625,7 +625,10 @@ function slotApplies(ctx, when) {
 function specText(ctx) {
   const rel = ctx.contract?.sources?.SPEC?.path;
   if (!rel || ctx.offline || !ctx.featureRoot) return null;
-  return readText(path.join(ctx.featureRoot, ...rel.split('/')));
+  const text = readText(path.join(ctx.featureRoot, ...rel.split('/')));
+  // 行尾在这里归一，不在下游各处正则里补 `\r?`：真实的 spec.md 由宿主在 Windows 上写，
+  // 是 CRLF；补正则要每加一处派生就记得补一次，漏一处就是一次静默为空的派生。
+  return text === null ? null : text.replace(/\r\n/g, '\n');
 }
 
 /** spec 里某一节的正文：从命中标题的那一行到下一个同级或更高级标题之前。 */

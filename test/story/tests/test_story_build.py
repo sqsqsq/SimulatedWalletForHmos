@@ -1273,5 +1273,54 @@ class ChaptersLandOneAtATime(Step8Case):
         self.assertIn("背景", out)
 
 
+class SkeletonDerivesFromTheRealSpec(unittest.TestCase):
+    """骨架的打底要在**真实产物**上成立。
+
+    手造的最小样本全是 LF，而宿主在 Windows 上写出来的 spec 是 CRLF：
+    `scopeList` 那个要求 `:` 后紧跟换行的正则在它上面静默零命中——
+    术语章空着、改动边界少了 Scope 两行，离线却一片绿。
+    """
+
+    REAL = REPO_ROOT / "test" / "story" / "fixtures" / "real-run" / "AR90006"
+    EXTENSION = REPO_ROOT / "doc" / "extensions"
+
+    def _skeleton(self, *, as_lf: bool = False) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature = root / "doc" / "features" / "AR90006"
+            shutil.copytree(self.REAL, feature)
+            ext = root / "doc" / "extensions"
+            ext.mkdir(parents=True)
+            shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
+            shutil.copytree(self.EXTENSION / "knowledge", ext / "knowledge")
+            if as_lf:
+                spec = feature / "spec" / "spec.md"
+                spec.write_bytes(spec.read_bytes().replace(b"\r\n", b"\n"))
+
+            proc = subprocess.run(
+                ["node", str(BUILD), "skeleton", "--feature", "AR90006",
+                 "--project-root", str(root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60)
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+            return (feature / "AR" / "story.md").read_text(encoding="utf-8")
+
+    def _assert_derived(self, story: str) -> None:
+        terms = story.split("## 术语", 1)[1].split("## 范围", 1)[0]
+        rows = [l for l in terms.split("\n") if l.startswith("|") and "---" not in l]
+        self.assertGreaterEqual(len(rows), 3, "术语起始行没从 spec §0 派生出来")
+        self.assertIn("| 改动 |", story, "改动边界少了 Scope 的「改动」行")
+        self.assertIn("| 只复用 |", story, "改动边界少了 Scope 的「只复用」行")
+        self.assertIn("```mermaid", story, "spec §5 的图没复制过来")
+
+    def test_the_real_crlf_spec_derives(self) -> None:
+        """这一条红过一次：术语零行、改动边界只剩依赖表。"""
+        self._assert_derived(self._skeleton())
+
+    def test_lf_still_derives(self) -> None:
+        """归一放在读入口，两种行尾走同一条路。"""
+        self._assert_derived(self._skeleton(as_lf=True))
+
+
 if __name__ == "__main__":
     unittest.main()
