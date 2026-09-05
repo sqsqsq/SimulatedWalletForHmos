@@ -180,7 +180,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 |---|---|---|
 | `AR/story-src/.positioning.json` | 你（第 ③ 节的机器面副本） | `round` |
 | `AR/story-src/.scope-options.json` | 你（第 ⑤ 节 4 的**整个**选项集） | `round` |
-| `AR/story-src/.gate-options.json` | 你（**仅第一级**摆出的选项） | `decide --gate material_scope` |
+| `AR/story-src/.gate-options.json` | 你（本次关卡摆出的选项，**文件里写明是哪一级**） | `decide --gate <该级>` |
 | `AR/story-src/.split-parts.json` | 你（第三级定案后的份表） | `decide --gate split_carrier` |
 
 ```json
@@ -202,8 +202,17 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 `sr_related_ars` 只列**同一 SR 下的其它 AR**，没有就给空数组——**不含本 AR 自己**
 （本 AR 的范围写在 `scope_text`；把自己列进去会让下游「有兄弟 AR 就不可能承载全部」
 这条判断被自己触发）。
-`.gate-options.json` 只服务第一级，每项至少含 `key`（`supplement` / `confirm_scope`）。
-**第二、三级不用它**：第二级的选项来自契约里的 `scope_options`，
+```json
+// .gate-options.json —— 形如 {"gate": 哪一级, "options": 摆给人的全部选项}
+{"gate": "material_scope",
+ "options": [{"key": "supplement", "label": "补充材料"},
+             {"key": "confirm_scope", "label": "材料充足，开始需求分析"}]}
+```
+
+`gate` 必须写明是给哪一级摆的。三级共用这一个文件名，不写明的话，
+你为第二级摆的选项会被第一级读成「材料上又出了新缺口」，把流程拨回上一级。
+
+**选项内容只有第一级由你写**：第二级的选项来自契约里的 `scope_options`，
 第三级由脚本从选定维度的 `parts` 生成——分析定几项，关卡就只能摆几项。
 
 ### 四条纪律

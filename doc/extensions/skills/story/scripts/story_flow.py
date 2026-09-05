@@ -358,8 +358,21 @@ def split_carrier_options(current: dict) -> list[dict]:
             for p in dim.get("parts") or []]
 
 
-def read_gate_options(feature_root: Path) -> list[dict]:
-    """读本次关卡摆出的选项集。
+def sidecar_gate(feature_root: Path) -> str | None:
+    """盘上摆着的选项侧车是给哪一级摆的——没摆、或写坏了，返回 None。
+
+    三级共用一个文件名，所以它必须自报级别。不报的话，模型为第二级摆的选项
+    会被第一级读成「材料上又出了新缺口」，把已经往前走的流程拨回上一级。
+    """
+    payload = read_sidecar(feature_root, GATE_OPTIONS)
+    if not isinstance(payload, dict):
+        return None
+    at = str(payload.get("gate") or "").strip()
+    return at if at in GATES else None
+
+
+def read_gate_options(feature_root: Path, gate: str) -> list[dict]:
+    """读本次关卡摆出的选项集，并核它摆的就是这一级。
 
     每项必须有 `key`（选项标识），其余字段随关卡自由（label / scope / recommended /
     dimension …）——统一只约束标识，是为了让「chosen 必须在 options 里」这条校验
@@ -369,13 +382,26 @@ def read_gate_options(feature_root: Path) -> list[dict]:
     if payload is None:
         raise FlowError(
             "缺选项集侧车：把本次关卡摆给人的全部选项写进 "
-            f"{'/'.join(GATE_OPTIONS)}（每项含 key，可带 label / recommended 等）。"
+            f'{"/".join(GATE_OPTIONS)}（形如 {{"gate": "{gate}", "options": [{{"key": …}}]}}）。'
             "只记选中的那项，事后分不清「看过选项后这么选」与「压根没摆过选项」")
-    if not isinstance(payload, list) or not payload:
-        raise FlowError(f"{GATE_OPTIONS[-1]} 须是非空数组：每项一个选项")
+    if not isinstance(payload, dict):
+        raise FlowError(
+            f'{GATE_OPTIONS[-1]} 须是对象：{{"gate": "<哪一级>", "options": [每项一个选项]}}'
+            "——级别要写在文件里，三级共用一个文件名")
+    at = str(payload.get("gate") or "").strip()
+    if at not in GATES:
+        raise FlowError(
+            f"{GATE_OPTIONS[-1]} 的 gate 须为 {' / '.join(GATES)} 之一，实为「{at}」")
+    if at != gate:
+        raise FlowError(
+            f"侧车是给 {at} 级摆的，这一步是 {gate}——"
+            "要么摆错了级别，要么这一步走错了。`status` 的 next 说的是哪一级就摆哪一级")
+    options = payload.get("options")
+    if not isinstance(options, list) or not options:
+        raise FlowError(f"{GATE_OPTIONS[-1]} 的 options 须是非空数组：每项一个选项")
 
     keys: list[str] = []
-    for i, opt in enumerate(payload):
+    for i, opt in enumerate(options):
         if not isinstance(opt, dict):
             raise FlowError(f"{GATE_OPTIONS[-1]} 第 {i + 1} 项不是对象")
         key = str(opt.get("key") or "").strip()
@@ -386,7 +412,7 @@ def read_gate_options(feature_root: Path) -> list[dict]:
         keys.append(key)
 
     normalized = []
-    for opt in payload:
+    for opt in options:
         item = {k: v for k, v in opt.items() if k != "key"}
         item["key"] = str(opt["key"]).strip()
         normalized.append(item)
@@ -510,19 +536,26 @@ def cmd_round(feature_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 # decide：追加一条关卡决策
 
-def pending_material(feature_root: Path) -> list[str]:
-    """收件箱里还没并入正文的料。
+def supplement_has_material(feature_root: Path, current: dict) -> bool:
+    """「补充材料」这一笔成不成立——**料到了没有**，两条路都算数。
 
-    原件导入后留在收件箱存档，所以「有文件」不等于「有新料」。答案不在账本里而在磁盘上：
-    材料清单拿收件箱那批料重转一遍与正文比对，对不上的就是还没导的——同名原件被换了内容
-    也照样算新料，而这是任何一份「导过什么」的名单都记不住的。
+    一是收件箱里还有没并入正文的原件（先签后导：人签完这一笔再去放料）；
+    二是磁盘材料指纹已经不等于本轮登记的那个（先导后签：料先到了，人再回一句
+    「已放入需求目录」）。只认第一条的话，后一种顺序会被判成「inbox 无新料」而驳回，
+    人明明已经把料给了。
+
+    两条都走磁盘不走账本：材料清单拿收件箱那批料重转一遍与正文比对，同名原件被换了
+    内容也照样算新料，而这是任何一份「导过什么」的名单都记不住的。
     """
     try:
         manifest = materials.refresh(feature_root)
     except materials.MaterialError as exc:
         raise FlowError(str(exc)) from exc
-    return sorted(name for name in materials.pending(manifest)
-                  if name.lower() not in SKIP_INBOX)
+    pending = [name for name in materials.pending(manifest)
+               if name.lower() not in SKIP_INBOX]
+    if pending:
+        return True
+    return manifest["digest"] != (current.get("materials") or {}).get("digest")
 
 
 def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
@@ -624,12 +657,17 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
         raise FlowError(f"当前这一步不是 {gate}：{action}（`status` 的 next 是 {expected}）")
 
     # 选项来源按关卡分工——**只有第一级读侧车**，后两级从契约取，关卡摆不出分析没定的选项。
+    # 后两级不读它，但盘上留着别级的侧车仍要拦：那说明摆选项与走流程对不上，
+    # 放过去的话，第一级下一次会把这份别人的侧车读成「材料又有新缺口」。
     if gate == "material_scope":
-        options = read_gate_options(feature_root)
+        options = read_gate_options(feature_root, gate)
         if chosen not in MATERIAL_CHOICES:
             raise FlowError(
                 f"material_scope 的 --chosen 须为 {' / '.join(MATERIAL_CHOICES)} 之一，实为「{chosen}」")
     elif gate == "scope_decision":
+        at = sidecar_gate(feature_root)
+        if at and at != gate:
+            raise FlowError(f"盘上的选项侧车是给 {at} 级摆的，这一步是 {gate}——先清掉或改对级别")
         # 分析定几项就只能摆几项：现编的空壳选项在此被结构性挡住
         options = current.get("scope_options") or []
         if not options:
@@ -637,6 +675,9 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                 f"本轮尚未登记范围定法选项集：把需求分析产出的全部选项写进 "
                 f"{'/'.join(SCOPE_OPTIONS)} 后重跑 `round`")
     else:  # split_carrier
+        at = sidecar_gate(feature_root)
+        if at and at != gate:
+            raise FlowError(f"盘上的选项侧车是给 {at} 级摆的，这一步是 {gate}——先清掉或改对级别")
         # 份表选项由脚本从选定维度的 parts 生成——不读侧车、不混退回项，
         # 第三级只问「承载哪一份」，退回是另一件事
         options = split_carrier_options(current)
@@ -667,11 +708,11 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     outcome, reason, code = "accepted", None, 0
     if gate == "material_scope" and chosen == "supplement":
-        pending = pending_material(feature_root)
-        if not pending:
+        if not supplement_has_material(feature_root, current):
             outcome, code = "rejected", 2
-            reason = ("inbox/ 里没有未导入的材料：请把文档或界面设计图放进 "
-                      f"{feature_root.name}/inbox/ 后再选一次")
+            reason = ("材料没有变化：请把文档或界面设计图放进 "
+                      f"{feature_root.name}/inbox/ 后再选一次"
+                      "（已经放进来并导入过的，材料指纹会变，这一笔照样成立）")
 
     record = {
         "gate": gate, "options": options, "chosen": chosen, "outcome": outcome,
@@ -793,39 +834,40 @@ def sidecar_shape(step: str) -> dict | None:
             ],
         }
     if step.startswith("await_gate:"):
+        gate = step.split(":", 1)[1]
         return {
             "写这份，再去问人": {
                 "path": "/".join(GATE_OPTIONS),
-                "shape": [{"key": "<选项标识>", "label": "人能看懂的选项文字",
-                           "recommended": "true/false，可省"}],
+                "shape": {"gate": gate,
+                          "options": [{"key": "<选项标识>", "label": "人能看懂的选项文字",
+                                       "recommended": "true/false，可省"}]},
                 "note": "先把摆给人的**全部**选项写进这份文件，再跑 `decide` 记录人选了哪个。"
-                        "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」",
+                        "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」。"
+                        f"`gate` 必须写 {gate}——三级共用一个文件名，不写明是给谁摆的，"
+                        "上一级会把它当成自己这一级又出了新问题",
             },
-            "顺序": "**先签关卡，再导入材料**——补料是关卡的结果，不是它的前提；"
-                    "先导后签会被判为「没摆选项」而重做",
+            "顺序": "签与导入不分先后：料先到了再签、签完再去放料，两种都成立——"
+                    "`decide --chosen supplement` 看的是料到没到"
+                    "（inbox 里有未导入的，或材料指纹已经变了）",
         }
     return None
 
 
-def opened_by_supplement(contract: dict) -> bool:
-    """本轮是补料开出来的——上一轮的材料关卡选了补充且被接受。"""
-    rounds = contract.get("rounds") or []
-    if len(rounds) < 2:
-        return False
-    prev = last_gate(rounds[-2].get("gates") or [], "material_scope")
-    return bool(prev and prev.get("chosen") == "supplement"
-                and prev.get("outcome") == "accepted")
+def material_gate_stops(feature_root: Path, contract: dict) -> bool:
+    """第一级停不停：**第 1 轮无条件停；第 2 轮起，只在本级侧车摆在盘上时停。**
 
+    第一轮没有任何人对材料表过态，必须停。此后每一轮都是材料变了才开出来的，
+    而「材料变了」本身不是新问题——人上一次说的「补充材料」就是对「够不够」的回答。
+    要再停一次，得是模型在新一轮**盘出了新的缺口**：那时它写一份本级的选项侧车，
+    写了就停，没写就直接进分析。`decide` 会消费掉侧车，盘上留着的只会是这一轮新写的。
 
-def material_settled_by_supplement(feature_root: Path, contract: dict) -> bool:
-    """补料开出的新一轮里，材料算已确认，不再单独停一次。
-
-    人选「补充材料」就是对「材料够不够」的回答；补完再问一次问的是同一件事。
-    **例外**：模型在新一轮盘点出**新的**缺口时会摆出选项侧车，那时仍要停——
-    侧车在不在就是判据（`decide` 会消费掉它，盘上留着的只会是这一轮新写的）。
+    判据不看上一轮选了什么。看那个的话，先导后签（料先到、人再签）与先签后导
+    给出的答案不同——同一件事按顺序不同判出两种结果，而顺序本来就不该有讲究。
+    侧车必须自报级别，否则模型为第二级摆的选项会被这里读成材料上的新缺口。
     """
-    return (opened_by_supplement(contract)
-            and not (feature_root / Path(*GATE_OPTIONS)).is_file())
+    if len(contract.get("rounds") or []) <= 1:
+        return True
+    return sidecar_gate(feature_root) == "material_scope"
 
 
 def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
@@ -850,14 +892,16 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     # 第一级：材料够不够。**先于任何需求分析**——材料不全时做的范围判断注定作废，
     # 每轮补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
-    if material is None and not material_settled_by_supplement(feature_root, contract):
+    if material is None and material_gate_stops(feature_root, contract):
         return ("await_gate:material_scope",
                 "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
                 "取得选择：补充材料 / 材料充足，开始需求分析")
     if material and material["chosen"] == "supplement":
         if material["outcome"] == "accepted":
-            return "import_and_reanalyze", "回 S2：导入 inbox/ 新料 → 重新盘点材料 → 重跑 `round`"
-        return "await_gate:material_scope", "补料被拒（inbox 无新料），在第一级重新取得选择"
+            return ("import_and_reanalyze",
+                    "回 S2：inbox/ 里还有未导入的就导入 → 重新盘点材料 → 重跑 `round`"
+                    "（料在签之前就导进来了的话，这一步只剩重跑 `round`）")
+        return "await_gate:material_scope", "补料被拒（材料没有变化），在第一级重新取得选择"
 
     # 材料已确认 → 才做需求粒度分析（全景 / 本部件 / 本 AR 定位 / 功能清单 / 范围定法选项）
     if not current.get("positioning") or not current.get("scope_options"):

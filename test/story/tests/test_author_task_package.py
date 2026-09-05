@@ -227,7 +227,8 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertIn("sidecar", payload, "关卡这一步没给出要写的文件形状")
         shape = json.dumps(payload["sidecar"], ensure_ascii=False)
         self.assertIn(".gate-options.json", shape)
-        self.assertIn("先签关卡，再导入材料", shape)
+        self.assertIn("material_scope", shape, "侧车形状没写明是给哪一级摆的")
+        self.assertIn("签与导入不分先后", shape)
 
 
 class ChapterFileCarriesOnlyBody(WorkspaceCase):

@@ -276,18 +276,36 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
 
 
 class SupplementAnswersTheMaterialGate(MaterialRoundCase):
-    """人选「补充材料」就是对「材料够不够」的回答，补完不再问第二遍。
+    """第一级停不停：第 1 轮无条件，第 2 轮起只看**本级**侧车在不在。
 
-    停等要留给**新的**判断：模型在新一轮盘点出新缺口时摆出选项侧车，那时才停。
-    侧车在不在就是判据——`decide` 会消费掉它，盘上留着的只会是这一轮新写的。
+    人选「补充材料」就是对「材料够不够」的回答，补完不再问第二遍。要再停，
+    得是模型在新一轮盘出新缺口并为**这一级**摆出选项。判据不看上一轮选了什么——
+    先导后签与先签后导那样会判出两种结果，而顺序本来就不该有讲究。
     """
 
-    def write_gate_options(self) -> None:
+    def write_gate_options(self, gate: str = "material_scope") -> None:
         src = self.feature_root / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
-        (src / ".gate-options.json").write_text(json.dumps([
-            {"key": "supplement", "label": "补充材料"},
-            {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
+        options = ([{"key": "supplement", "label": "补充材料"},
+                    {"key": "confirm_scope", "label": "材料充足，开始需求分析"}]
+                   if gate == "material_scope"
+                   else [{"key": "carry_all", "label": "按当前范围整体承载"}])
+        (src / ".gate-options.json").write_text(
+            json.dumps({"gate": gate, "options": options}, ensure_ascii=False),
+            encoding="utf-8")
+
+    def write_analysis_sidecars(self) -> None:
+        """需求分析（S2b）的两份产出，round 消费进契约。"""
+        src = self.feature_root / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / ".positioning.json").write_text(json.dumps({
+            "scope_source": "user_stated",
+            "scope_text": "本 AR 承载自动充值签约与管理",
+            "sr_related_ars": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (src / ".scope-options.json").write_text(json.dumps([
+            {"key": "carry_all", "label": "按当前范围整体承载：签约、管理、扣款回执",
+             "recommended": True},
         ], ensure_ascii=False), encoding="utf-8")
 
     def next_of(self) -> str:
@@ -295,15 +313,21 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout[proc.stdout.index("{"):])["next"]
 
+    def sign_supplement(self) -> subprocess.CompletedProcess:
+        return self.run_flow("decide", "--gate", "material_scope", "--chosen", "supplement",
+                             "--by", "human", "--basis", "补充材料，产品原稿已放入需求目录。")
+
+    def put_inbox(self, name: str = "原稿.md") -> None:
+        (self.feature_root / "inbox").mkdir(exist_ok=True)
+        (self.feature_root / "inbox" / name).write_text(
+            "# 原稿\n\n补的材料。\n", encoding="utf-8")
+
     def supplement_round(self) -> None:
-        """走完一轮：摆选项 → 人选补料 → 放新料 → 开新一轮。"""
+        """走完一轮：摆选项 → 放料 → 人签补料 → 开新一轮。"""
         self.round_now()
         self.write_gate_options()
-        (self.feature_root / "inbox").mkdir(exist_ok=True)
-        (self.feature_root / "inbox" / "原稿.md").write_text("# 原稿\n\n补的材料。\n",
-                                                            encoding="utf-8")
-        proc = self.run_flow("decide", "--gate", "material_scope", "--chosen", "supplement",
-                             "--by", "human", "--basis", "补充材料，产品原稿已放入需求目录。")
+        self.put_inbox()
+        proc = self.sign_supplement()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.add_ux("signup.png")          # 料真的进来了，材料指纹随之变
         self.round_now()
@@ -314,16 +338,73 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
                          "补料之后又停了一次——问的是同一件事")
 
     def test_a_new_gap_stops_again(self) -> None:
-        """模型在新一轮盘点出新缺口 → 摆出选项 → 仍要停。"""
+        """模型在新一轮盘出新缺口 → 为这一级摆出选项 → 仍要停。"""
         self.supplement_round()
         self.write_gate_options()
         self.assertEqual("await_gate:material_scope", self.next_of(),
                          "模型摆出了新选项，却没有停")
 
     def test_the_first_round_still_stops(self) -> None:
-        """第一轮照停：那一次不是补料开出来的。"""
+        """第一轮照停：那一轮没有任何人对材料表过态。"""
         self.round_now()
         self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_signing_after_the_material_arrived_is_accepted(self) -> None:
+        """先导后签：料先到了（已并入正文、指纹变了），人再回一句「已放进去了」。
+
+        实跑里就是这个顺序——需求方把 docx 放进需求目录，再答复「补充材料」。
+        只认「inbox 有未导入的」会把这一笔驳回，而料明明已经在手上。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.add_ux("signup.png")          # 料到了，指纹与本轮登记的不同
+        proc = self.sign_supplement()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("import_and_reanalyze", self.next_of())
+
+    def test_signing_before_the_material_arrives_is_accepted(self) -> None:
+        """先签后导：人先签这一笔，料随后放进 inbox/。"""
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        proc = self.sign_supplement()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_supplement_without_any_material_is_refused(self) -> None:
+        """两条路都不成立——inbox 空、指纹也没变——才驳回。"""
+        self.round_now()
+        self.write_gate_options()
+        proc = self.sign_supplement()
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("材料没有变化", (proc.stdout or "") + (proc.stderr or ""))
+
+    def test_the_second_level_is_not_pulled_back_by_its_own_sidecar(self) -> None:
+        """补料轮走到第二级：为第二级摆的侧车不该把 next 拨回第一级。
+
+        侧车不带级别时就是这样坏的——第一级读到「盘上有侧车」，判成材料上又有新缺口，
+        于是 `next` 回到 `await_gate:material_scope`，而 `decide --gate scope_decision`
+        被「当前这一步不是它」挡住，流程卡死在两级之间。
+        """
+        self.supplement_round()
+        self.write_analysis_sidecars()
+        self.round_now()
+        self.assertEqual("await_gate:scope_decision", self.next_of())
+
+        self.write_gate_options("scope_decision")
+        self.assertEqual("await_gate:scope_decision", self.next_of(),
+                         "第二级的侧车把流程拨回了第一级")
+        proc = self.run_flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
+                             "--by", "human", "--basis", "用户回复：1（=按当前范围整体承载）")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_a_sidecar_for_another_level_is_refused(self) -> None:
+        """摆错级别当场拦下，不放它进契约。"""
+        self.round_now()
+        self.write_gate_options("scope_decision")
+        proc = self.sign_supplement()
+        self.assertEqual(1, proc.returncode)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("侧车是给 scope_decision 级摆的", out)
 
 
 class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
