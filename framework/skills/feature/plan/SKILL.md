@@ -21,7 +21,7 @@
 
 按当前 `project_profile` 自适配的实现规划师：把 spec 转化为可落地的实现计划。流水线**第二环**，上游 `spec.md`，输出流入 coding。
 
-**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec；越权字节不获信任或人工豁免。
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 plan/contracts/use-cases 产物；尤其不得新建或修补 spec-owned 的 `acceptance.yaml`、`spec.md`、`ui-spec.yaml`，也不得修改实现源码、UT 或 testing 产物。发现上游缺口只记录事实，由 runner 自动回 spec。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
 
 | 叙述产物 | 路径 | 寿命 |
 |----------|------|------|
@@ -92,9 +92,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 **AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
 
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 报告落 bedside、阶段不闭环。
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②`resolve_verifier_provider_then_rerun` → 能力声明为 required 但当前 adapter 没有登记，脚本结论仍然有效，但本阶段不得闭环；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
 
 ## 阶段闭环判定（全局入口 §5.1）
 

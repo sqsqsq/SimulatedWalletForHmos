@@ -93,7 +93,8 @@ goal_capability:
 ### verifier 能力化、短 request 投递与 summary 1.3（Breaking，plan a9d4e7c2）
 
 **verifier 不再是每阶段必跑的仪式，而是按能力启用。** 一次解析 workflow 的 `verifier_prompt`
-声明、feature track、evidence policy 与 adapter 的 `verifier_capability`，得到三态之一：
+声明、feature track、evidence policy 与 adapter 有没有审查员，得到二态之一
+（`blocked` 第三态已随 plan d2f7a9c4 删除，见下一节）：
 
 - `disabled`：**缺席即为零**——不生成 `ai-prompt.md`、不生成 request、summary 不写
   `verifier_subject_id` / `verifier_request` / `ai_prompt`，闭环也不要求 verifier 证据。
@@ -101,14 +102,8 @@ goal_capability:
   workflow 未声明 `verifier_prompt` 的 phase 都在此列。**磁盘上残留的旧 prompt/request/report
   永远不会重新激活已关闭的能力，也不需要你去清理。**
 - `enabled`：生成 `verifier.request.<subject>.json`，正常执行 verifier。
-- `blocked`：policy 声明 `required` 但当前 adapter 没有登记该模式的 verifier 能力。
-  **脚本门禁照常完整执行**——脚本 FAIL 如实报真实失败；脚本 PASS 才报
-  `INCOMPLETE / verifier_provider_unavailable`。
 
-**adapter 侧需要动手的一处**：`agents/<adapter>/adapter.yaml` 新增 `verifier_capability`
-（`transport` / `publisher` / `modes`）。claude 与 codeagent 已随发布件登记 `interactive`。
-自建 adapter 若确实具备 SubagentStop 发布链路且已实测，可照此登记；**未登记 = 无能力**，
-`full × interactive` 下会被判 `blocked`（这是如实结论，不是回归）。
+**adapter 侧需要动手的一处**：见下一节的 `verifier_subagent` 布尔字段。
 
 **投递协议改为短 request JSON（Breaking）。** 旧规则「把 `ai-prompt.md` 全文原样投递给 Task」
 已删除：真实样张可达 177KB，往返有损且机器块之外零校验。新规则——
@@ -138,6 +133,58 @@ closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要�
 
 ---
 
+### 3.0.0：verifier 报告即真源，SubagentStop 发布链整体删除（Breaking，plan d2f7a9c4）
+
+**病根**：verifier 结论此前必须由 SubagentStop hook 四方对账后发布成 canonical
+`verifier.report.<subject>.json`，check-receipt 只认这一份。而该 hook 在
+`MAISON_GOAL_HEADLESS=1` 下一律落 bedside 旁路、不发布——两条规则交集为空。宿主
+bc-openCard-1 于 2026-09-04 起的两轮无人值守 goal run，harness `verdict=PASS / blockers=[]`、
+verifier 真跑且 PASS，闭环仍永远差最后一步，最终 `closure_wall_repeated` 熔断。同一根病因还有
+第二个受害者：codex 等无 hook 的 adapter 自 2026-08-29 起被判 `blocked`，`full` track 事实不可用。
+
+hook 独占发布、四方对账、conflict 状态机、16 种 bedside 分类、结论指纹重算，整体服务于「主 agent
+不能伪造 PASS」这一个防篡改目标。按 docs/overview.md §1.2.1 的效率优先原则，这不是高优先级；
+而它的 fail-closed 教条把「发布手续失败」判成「检查根本不存在」。本次整体删除。
+
+**机器真源改为 `<reports>/verifier.report.<subject>.md`，写者是调用方。** verifier 子代理行为不变
+（只读工具集，回复完整报告，末尾恰好一个终态块）；派发它的 phase executor / 主 agent 把回复
+**原样全文**写入 `summary.verifier_report` 指向的路径，再跑 check-receipt。不摘要、不只贴终态块：
+正文里的发现是 repair candidates 与多模态审查的输入。
+
+**闭环校验只剩三条**：报告文件在、终态块回显的 subject 等于 `summary.verifier_subject_id`、
+`verdict` 与 `blocker_count` 一致。任一不成立的唯一恢复动作是重跑 verifier 并重写报告
+（loader 错误码由 10 种减到 4 种）。
+
+**adapter 声明改为一个布尔 `verifier_subagent`**，语义是「宿主实跑观测过该工具能起 verifier
+子代理」，与运行模式、发布机制无关。claude / codeagent / codex 已登记；cursor / opencode / chrys /
+generic 未登记（共享规则被物化不等于运行时会读取）。未登记 = plan 判
+`disabled / adapter_has_no_reviewer`：不生成 request、不重跑、**不阻断**，check-receipt 以 WARN 如实
+披露 verifier 轴 `not_reviewed`。
+
+**三种运行模式解析结果完全一致**，verifier 判定不再有任何 `MAISON_GOAL_HEADLESS` 分支。
+
+**报告哈希门删除**：verifier 报告不再进 evidence manifest 保护面；closure attestation 删
+`verifier_report_sha256` / `verifier_result_sha256`，只留 `verifier_subject_id`，`schema_version`
+升 `1.2`（`1.0` / `1.1` 仍可读）。一份刻意不做防篡改的文件，不能同时充当「改了就 stale」的绊线。
+
+**升级动作（实例工程）：**
+
+1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
+2. 删除实例里的 `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）；
+3. `framework/harness/state/last-verifier-report.{json,md}` 若存在可直接删除，已无消费者；
+4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
+5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
+
+**存量产物**：旧 `verifier.report.<subject>.json` 不再被读取，不必清理。已 closed 的阶段不受影响；
+被 `--revalidate` 或重跑 harness 带回 open 的阶段，若没有当代 MD 报告，需要重审一次
+（一次审查换掉整条代际分派轴——`summary.schema_version` 不再参与 verifier 证据裁决）。
+
+**放弃的准确性**（plan d2f7a9c4 一、放弃项）：报告可被伪造或事后修改而不被机器识别；同 subject
+并发不再报 conflict；不再核对子代理身份。兜底靠下游阶段门禁与人；`subject` 仍挡住「旧 PASS 冒充
+当前结果」这一真实错误源。
+
+---
+
 ### 3.0.0：效率优先闭环——回执退出输入、verifier 一次化、证据按输入复用（Breaking，plan 07a41ec6）
 
 设计原则见 docs/overview.md §1.2.1（效率优先、可复用可带缺口完成但必须诚实标注）。消费者需要知道的变化：
@@ -153,6 +200,25 @@ closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要�
 - **phase executor 与 NEXT 行**：新增子 agent 模板 `agents/claude/templates/agents/phase-executor.md`（Claude 原生 /goal 路径每阶段最多一个 executor，与 GoalPhaseRuntime 互斥）；harness 输出末尾新增 `NEXT:` 动作行；`--failures-only` 已是默认。
 - **summary 新字段**：`verifier_closure`（沿用既往 PASS 时在场）；readiness_signal `script_revalidated`；`device_test_run.structured.execution_key / reused_by_execution_key`。
 - **codex review 收敛（2026-09-03）**：回执整体退出新闭环输入与 Stop 判据，只在 closed 后 best-effort 投影；freshness 只看 manifest 自身完整性与输入/产物哈希。subject 派生不含时间、`source_commit_sha` / `worktree_digest`；机器测试报告用权威 run 时间，材料视图纳入最新真机 run trace、visual-diff.json 与 lifecycle fragments。`ut_no_src_mutation` 的 goal/direct 路径统一分级 WARN；TC 行行为字段决定派生新鲜度；执行键只复用最新真实 attempt，稳定性结论需 ≥2 轮同键执行（含失败轮）；inactive provider 是 `unsupported_gap`，active 无 producer 是跑机前 `invalid_test`；completion 重投影保留 P0 gaps，`semantic_not_reverified` 进 readiness_signals；整屏 geometry 须全部元素定位且 PASS；`NEXT:` 一次列出全部 blocker。
+
+### 3.0.0：写边界从归属门禁改为归因诊断（plan 1741b6f2）
+
+写边界原本把三件事绑成一步：发现文件变了、判断谁改的、决定 run 能否继续。后两步不可靠——`specs/artifact-schemas/inventory.yaml` 按定义只描述 skill 叙事产物（明确排除 harness 派生报告），却被拿来审判整个 feature 目录，于是 harness 自己写的 `visual-debt.json` / `visual-debt.md`、`revalidation.json`、各阶段 `notes.md` 全部解析不到 owner，被判 `phase_write_owner_unresolved` 并终结整个 run。宿主 2026-09-04 的 spec 阶段就是这样在 verdict=PASS、blockers 空、产物齐全的情况下停掉的。消费者需要知道的变化：
+
+- **归属信息不足不再是裁决依据**：owner 解析不出（未登记 / 多归属）改为落 `phase_write_observed` 事件（含路径、pre/post 哈希、候选 owner、匹配角色）后继续执行。不再产生 violation、不再 HALT。**不采用文件名排除名单**——名单堵不严，因为阶段 SKILL 要求 agent 在自己进程内跑 `harness-runner.ts`，harness 的写入必然落在归因窗口内。
+- **跨阶段写入按既有路径角色分流**：命中 inventory 登记的 **artifact 域**（需求 / 验收 / 契约等）时，既有的"作废本轮证据 + 自动回退 owner 重验"完全不变；只匹配到**产品源码或阶段工作区**的跨阶段写入不再在此抢先回退，交给本就在判它的 checker（`check-coding` 范围门、`ut_no_src_mutation`、`review_closure_attestation`）。写归因跑在 gate 之前，原先的抢先回退会让 07a41ec6 的分级 WARN 永远走不到。
+- **归因链自身故障降级**：写边界解析失败、本阶段源码域解析不出、invoke 前后快照失败，一律发 `phase_write_boundary_degraded` 诊断并跳过本阶段写归因，阶段照常出 verdict。缺归因证据不等于产物有问题。
+- **源码漂移只裁决一次**：删除 goal 运行时的 `reconcileMutablePhaseSourceDrift` 二次裁决及其强制回退与缺基线 halt；`collectCleanPassIssues` 也不再把"基线在场但对账不符"记成 `attestation_reconciled(needs_fix)`（那会让各阶段全过的 run 仍收在 PARTIAL、退出码 2 且不生成完成凭证——那是第三次阻断，不是披露）。基线**缺失**仍判 needs_fix：那是没有证据，不是有证据且已分级。漂移处置以 checker 的分级 WARN 与所需复核为准；checker 判 BLOCKER 时照常经 assess 走 `backtrack_to_phase`。testing 是链上最后一个阶段时，"未复核"通过本轮 summary 的 readiness signal `post_review_source_drift_unreviewed`（status=`unknown`）披露。
+- **退役的 halt_reason**：`phase_write_owner_unresolved`、`phase_write_boundary_unresolved`、`pre_invoke_snapshot_failed`、`post_invoke_snapshot_failed`、`unauthorized_source_mutation`、`goal_post_review_source_mutation_unresolved`、`goal_review_closure_baseline_unavailable` 新 run 不再写入；`testing_write_violation` 早已无产地。注册表条目保留并标 legacy-only，历史 `events.jsonl` 仍可解释，旧事件不改写。
+- **放弃了什么**：未登记路径与产品源码域的跨阶段写入不再"即时"阻断，改为留痕加由 checker 稍后裁决，失去一部分早期发现能力。真实编译、测试、验收失败与范围越界的处理一律不变。
+
+### 3.0.x：goal 作者前置输入——manifest 1.0 knowledge 索引注入阶段 prompt（临时，plan a7c3e9d2）
+
+`hooks/<phase>/on_context_load.md` 的片段只在装配 verifier ai-prompt 时消费（脚本 PASS 且 verifier 启用），从不进入作者动笔前的上下文；此前文档把它写成"宿主叠加指令"是误导，已订正。3.0.x 起 goal 模式在作者阶段 prompt 里注入 `doc/extensions/manifest.yaml` 的 `provides.knowledge`（1.0 字符串）索引与一句读取指令，作者动笔前即知道要读哪些文件；交互模式由 Skill 行为规约（原则 1 第 8 条）指引读取。
+
+- **宿主登记方式**：把各阶段的作者要求文件登记进 `provides.knowledge`（字符串，文件须存在）。1.0 语义是全部 Feature phase 都列出，文件名带阶段名（如 `knowledge/plan-author.md`）以便作者分辨。hooks 原样保留，仍只进 verifier。
+- **manifest 非法时**：goal 侧只 `console.warn`"作者前置输入未注入"并指向 `--phase extensions`，不新增门禁、不 HALT。
+- **升 3.1.0 的退出条件（不是无感接续）**：3.1.0 的同名 formatter 对 manifest 1.0 返回空串，升级后仍用 1.0 的宿主会**失去**这条 goal 作者提示。要保留效果，须把 knowledge 改成 1.1 对象（`{path, summary, audience: [<phase>]}`），按需再声明 `phase_bindings.<phase>.before_phase_work`；升级后段落形状不变，只是按阶段精确。
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
