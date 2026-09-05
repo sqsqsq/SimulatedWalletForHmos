@@ -48,7 +48,7 @@ requirement:
   id: batch-5
   status: in_progress
   approved_by: WYK
-  reason: "本轮方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行；target 同日按实际重定——新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。批次 5 不压缩规模，压缩另开需求，长期方向记在 TEST.md §8 第 7 项。2026-09-05 用户裁定安装期工具（story-adaptation 与 framework-patch.yaml）不占额度：口径这一变，各类现值降了 scripts_mjs 170、prompts_md 158、data 62，总量 8706→8316——**这是口径带来的余量，不是压缩出来的**，target 是否随口径重定交评审"
+  reason: "本轮方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行；target 同日按实际重定——新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。批次 5 不压缩规模，压缩另开需求，长期方向记在 TEST.md §8 第 7 项。2026-09-05 用户裁定安装期工具（story-adaptation 与 framework-patch.yaml）不占额度：口径这一变，各类现值降了 scripts_mjs 170、prompts_md 158、data 62，总量 8706→8316——**这是口径带来的余量，不是压缩出来的**。同日用户一次签下步骤 15 的四项调整（data、hooks_mjs、scripts_py 三类 target 与总量），见各处 reason"
 
 categories:
   scripts_mjs:
@@ -60,15 +60,15 @@ categories:
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 1400
-    target: 1200
+    target: 1400
     approved_by: WYK
-    reason: "用户 2026-09-04 签字。步骤 12 峰值按 13 号 §5 预算声明并按实修正：+156（图片登记与说明两条命令、caption 真源、status 扩到 spec 阶段内与侧车骨架），§5 估 +80。返修新增 caption-image——不是界面的图此前没有写说明的路径；四跑前再 +25：补料只抽图不动正文（此前「补图」只有覆盖正文一条路，会用草稿盖掉定稿）、补料后不再重复问「材料够不够」"
+    reason: "用户 2026-09-04 签字。步骤 12 峰值按 13 号 §5 预算声明并按实修正：+156（图片登记与说明两条命令、caption 真源、status 扩到 spec 阶段内与侧车骨架），§5 估 +80。返修新增 caption-image——不是界面的图此前没有写说明的路径；四跑前再 +25：补料只抽图不动正文（此前「补图」只有覆盖正文一条路，会用草稿盖掉定稿）、补料后不再重复问「材料够不够」。**用户 2026-09-05 签字 1200→1400**：现值 1371 早已越过 1200，越出的正是上面这几笔具名增长；步骤 15 的 F3 是删两函数加一函数，估 ±0。峰值与 target 同值——本步无先加后删"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
     interim_ceiling: 2760
-    target: 2450
+    target: 2700
     approved_by: WYK
-    reason: "target 按实际重定（用户 2026-09-04 裁定）：新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。步骤 12 峰值按 13 号 §5 预算声明并按实修正：作者任务包与 knowledge-use 骨架合计 +223（§5 估 +200），D4 的读者审查消费还没进来。**收口时这一类回不到 target 2450**——那时按实际交用户裁定，不砍方案"
+    reason: "用户 2026-09-05 签字，2450→2700。上一版 target 2450 是按批次 5 中途的现值定的，此后作者任务包与 knowledge-use 骨架合计 +223、D4 读者审查再进来，现值 2657；步骤 15 的任务包三处与 post_check 表头核约 +40。这一类的增长全部是「把作者要推算的东西改成机器算好给他」——上一版 reason 已预告收口时回不到 2450，此次按实际签字，不砍方案"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
     interim_ceiling: 2050
@@ -77,16 +77,16 @@ categories:
     reason: "现值 1996 已低于折算 target，峰值取 target；提示词正文即内容，用户 2026-09-04 签字"
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
-    interim_ceiling: 750
-    target: 750
+    interim_ceiling: 800
+    target: 800
     approved_by: WYK
-    reason: "现值 648 已低于折算 target，峰值取 target；余量留给 knowledge-use 的合同形态，用户 2026-09-04 签字"
+    reason: "用户 2026-09-05 签字，750→800。步骤 15 把各章的形态（主形态、允许的次要形态、机器核的固定槽位、小节标题档位）从散文搬进合同 story-chapters.json，语言红线再收一批 framework 档位术语——**形态进数据正是这一步的设计本身**，不是超支。§5 估 +60 至 +90（现值 683）。峰值取 target：本步 data 只增不减，没有先加后删"
 
 total:
-  interim_ceiling: 8740
-  target: 8350
+  interim_ceiling: 8790
+  target: 8400
   approved_by: WYK
-  reason: "target 取各类 target 之和（用户 2026-09-04 裁定）。峰值取各类 interim_ceiling 之和，容步骤 12 的先加后删；收口仍须回到 8350 以内——13 号 §5 估完成后净增 150 至 250，压不到就交用户裁定，不砍方案"
+  reason: "用户 2026-09-05 签字，8350→8400。**总量不再是各类 target 之和**（那是 8850），它比各类之和紧——各类额度是各自的宽松上限，不允许同时用满，总量才是硬约束。8400 来自步骤 15 §5 的实测估算：现值 8316，prompts_md 因 story-template.md 退场 −200、其余四类合计 +260，落在 8400 上下。峰值取各类 interim_ceiling 之和（8790），容本步先加后删；收口仍须回到 8400 以内"
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。
