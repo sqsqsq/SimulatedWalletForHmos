@@ -156,14 +156,38 @@ framework 已有 `context_exploration_inputs_coverage`：它要求 `context-expl
 
 ## 附：实现在哪、基线是什么
 
-**实现可以直接看这一笔提交**（消费仓，公开）：
-
-```
-8a8d8a51d7a2502517acf327ae726a9a36867905
-b5.step4: 作者上下文入口——把 on_context_load 从 verifier 接到作者一侧
-```
+**实现可以直接看这一笔提交**（消费仓 `story` 分支，公开）：
 
 <https://github.com/sqsqsq/SimulatedWalletForHmos/commit/8a8d8a51d7a2502517acf327ae726a9a36867905>
+
+提交信息原文如下——它记的是改动当时的自述与裁决理由，与本文 §3、§4 是同一件事的两种写法：
+
+```
+commit 8a8d8a51d7a2502517acf327ae726a9a36867905
+Date:   2026-09-03 07:18
+
+b5.step4: 作者上下文入口——把 on_context_load 从 verifier 接到作者一侧
+
+on_context_load 一直能产出片段，但全仓唯一调用点在 harness-runner 的 verifier 装配处：
+通道存在、接错了对象。那些「写之前该知道什么」只进 verifier 上下文，作者在动笔前看不到，
+只能在门禁报错之后补读。
+
+新增只读入口 harness/scripts/author-context.ts：复用 loadResolvedProfile 与
+dispatchLifecycleHooks，顺序与 harness 内部一致；缺席返回空、退出 0，钩子失败明确报错、
+退出 1，不降级为空。不写 summary/receipt/hash/phase 状态/业务产物。
+
+六个 feature Skill 共用 agent-behavioral-principles.md 的约束 0（一处覆盖六阶段，
+device-testing 补上缺失引用，原本 6 缺 1）；删掉 harness 里那个错误的后置调用，
+pre_verifier 继续只服务 verifier；四份 profile 模板、lifecycle schema 与概念文档
+的时序描述同步订正。
+
+一处全局裁决：片段来源标识由文件名改为仓内相对路径。六个阶段的钩子都叫 author.md，
+只写 basename 时六份标识一模一样，既指不出阶段也没法被 key_inputs_read 逐字覆盖
+（门禁做子串匹配，author.md 会命中任何阶段）。已确认全仓无程序解析该标识。
+
+零新增机制：无新生命周期、新 hook 事件、新状态、新门禁、新 adapter 能力。
+留痕借既有的 context_exploration_inputs_coverage，Framework 侧对此零改动。
+```
 
 **读它时的两点说明**：
 
