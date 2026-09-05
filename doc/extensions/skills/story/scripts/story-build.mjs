@@ -619,14 +619,32 @@ function findSubsection(text, name) {
  * 没有界面图就没有页面状态可言。读不到就是不成立：判据宁可不响，不可空响。
  */
 function slotApplies(ctx, when) {
+  return slotCondition(ctx, when) !== false;
+}
+
+/**
+ * 条件成不成立：`true` 成立、`false` 确证不成立、`null` **拿不准**。
+ *
+ * 拿不准与不成立必须分开：离线的仲裁锚读不到流程契约，`siblings` 若一律算不成立，
+ * 带兄弟单据的那一节就会被判成「不该有」。条件用来拦一节存在时，只认确证的 `false`。
+ */
+function slotCondition(ctx, when) {
   if (!when) return true;
   if (when === 'siblings') {
+    if (ctx.offline || !ctx.featureRoot) return null;
     const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-flow.json'), null);
-    return (flow?.split?.parts ?? []).length > 1;
+    if (!flow) return null;
+    return (flow.split?.parts ?? []).length > 1;
+  }
+  if (when === 'decisions') {
+    const decided = readJson(path.join(ctx.srcDir ?? '', 'decisions.json'), null);
+    if (!Array.isArray(decided)) return null;
+    return decided.some(x => String(x?.status ?? '') === 'settled');
   }
   if (when === 'ui_images') {
     const imgs = materialImages(ctx);
-    return Array.isArray(imgs) && imgs.length > 0;
+    if (imgs === null || imgs === 'broken') return null;
+    return imgs.length > 0;
   }
   return true;
 }
@@ -1303,31 +1321,50 @@ function cmdCheck(ctx) {
         }
       }
     }
-    for (const [at, wantCols] of Object.entries(form.tables ?? {})) {
-      if (!slotApplies(ctx, (form.tables_when ?? {})[at])) continue;
+    for (const [at, slot] of Object.entries(form.slots ?? {})) {
+      // `*` 指按业务命名的那些小节：合同点名的固定节各有自己的槽位，不套这一份。
+      const named = (ch.subsections ?? []).map(normalizeHeading);
       const targets = at === '*'
-        ? subs.map(x => [`${ch.title}·${x.raw}`, subsectionText(text, x.name)])
+        ? subs.filter(x => !named.some(n => x.name.includes(n)))
+          .map(x => [`${ch.title}·${x.raw}`, subsectionText(text, x.name)])
         : at === ''
           ? [[ch.title, text]]
           : [[`${ch.title}·${at}`, findSubsection(text, at)]];
+      if (slotCondition(ctx, slot.when) === false) {
+        // 条件不成立的节不该存在：没有兄弟单据却写了「交接约定」，那一节填进去的
+        // 只能是别的东西——五跑填的是端云约定。
+        for (const [label, body] of targets) {
+          if (at && at !== '*' && body !== null) {
+            problems.push(`「${label}」这一节不该有`
+              + `（${slot.when === 'siblings' ? '本需求没有兄弟单据' : '条件不成立'}）`
+              + `——${form.note ?? ''}`);
+          }
+        }
+        continue;
+      }
       for (const [label, body] of targets) {
         if (body === null) continue;                  // 小节在不在由 sections 档与语义审查管
-        // 逐张配对消费：一张表只能顶一个槽位。`;` 隔开两个槽位却让同一张表
-        // 把两个都满足的话，「受限与异常混进一张表」就照样过。
-        const pool = tableHeaders(body);
-        for (const one of String(wantCols).split(';')) {
-          const cols = one ? one.split('|').map(norm) : [];
-          const hit = pool.findIndex(h => cols.every(c => h.includes(c)));
-          if (hit >= 0) { pool.splice(hit, 1); continue; }
-          problems.push(`「${label}」缺一张表`
-            + (cols.length ? `（表头要有「${one.split('|').join('」「')}」这一列）` : '')
-            + `——${form.note ?? ''}`);
+        if (slot.table && !slot.table_draft_only && slotApplies(ctx, slot.table_when)) {
+          const first = slot.table_anchor || String(slot.table).split('|')[0];
+          const anchor = norm(first);
+          // 按子串比：锚说的是这张表的主语，作者用「受限状态」还是「受限情形」是措辞。
+          if (anchor && !tableHeaders(body).some(h => h.some(c => c.includes(anchor)))) {
+            problems.push(`「${label}」缺一张表（第一列是「${first}」）——${form.note ?? ''}`);
+          }
+        }
+        if (slot.ordered && !/^[ \t]*\d+[.、)]\s/m.test(body)) {
+          problems.push(`「${label}」要写成有序列表，一步一句——${form.note ?? ''}`);
+        }
+        for (const lb of slot.labels_draft_only ? [] : slot.labels ?? []) {
+          if (!body.includes(lb)) problems.push(`「${label}」缺「${lb}」这一段——${form.note ?? ''}`);
+        }
+        if (slot.diagram) {
+          DIAGRAM_FENCE.lastIndex = 0;          // 正则带 /g，每次用前把游标归零
+          if (!DIAGRAM_FENCE.test(body)) {
+            problems.push(`「${label}」一张图都没有——${form.note ?? ''}`);
+          }
         }
       }
-    }
-    DIAGRAM_FENCE.lastIndex = 0;              // 正则带 /g，每次用前把游标归零
-    if (form.diagram && !DIAGRAM_FENCE.test(text)) {
-      problems.push(`「${ch.title}」一张图都没有——${form.note ?? ''}`);
     }
   }
 
@@ -1713,26 +1750,45 @@ function chapterDraft(ctx, ch, spec) {
   const rows = [`## ${ch.title}`, ''];
   if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
   const seeded = chapterSeed(ctx, ch, spec);   // 打完就归作者
-  for (const [at, cols] of Object.entries(ch.form?.tables ?? {})) {
-    if (!slotApplies(ctx, (ch.form?.tables_when ?? {})[at])) continue;
-    const parts = String(cols).split(';');
-    if (seeded.length && at === '') continue;      // 真源已经给了这一章的表
-    if (at === '*' || !parts[0]) {
-      rows.push(`<!-- ${at === '*' ? '每个小节' : '这一章'}要有 ${parts.length} 张表`
-        + (parts[0] ? `，表头含「${parts[0].split('|').join('」「')}」` : '（列名按本需求取）')
-        + ' -->', '');
-      continue;
-    }
-    for (const one of parts) {
-      if (at) rows.push(`### ${at}`, '');
-      const cells = one.split('|');
-      rows.push('<!-- 必有列如下；其余列按本需求加，行数按内容定 -->',
-        ...renderTable(cells, [cells.map(c => `{{${c}}}`)]), '');
-    }
+  for (const [at, slot] of Object.entries(ch.form?.slots ?? {})) {
+    if (!slotApplies(ctx, slot.when)) continue;
+    if (at === '*') rows.push('<!-- 每个小节（节名按业务取）都照下面这样写 -->', '');
+    else if (at) rows.push(`### ${at}`, '');
+    rows.push(...renderSlot(ctx, slot, at === '' && seeded.length > 0));
   }
   if (seeded.length) rows.push(...seeded, '');
   rows.push('<!-- 写完这一章跑：story-build chapter --feature <名> --chapter '
     + `${ch.title} --from <本文件> -->`);
+  return rows;
+}
+
+/**
+ * 一个槽位渲染成什么 —— 六种形态各一段，搭好给作者填。
+ *
+ * 搭表、列步骤、摆标签都是确定性工作。让模型自己搭、脚本事后挑错，就是把确定性
+ * 工作交给了模型，而它每次搭出来的都不一样，判据再多也只是在追。
+ * `seeded` 为真时这一章由真源打了底（术语表、流程图），不再摆空的。
+ */
+function renderSlot(ctx, slot, seeded) {
+  const rows = [];
+  for (let i = 1; i <= (slot.prose ?? 0); i += 1) {
+    rows.push(`<!-- 第 ${i} 段 -->`, '{{这一段写什么}}', '');
+  }
+  if (slot.ordered) rows.push('1. {{第一步}}', '2. {{第二步}}', '');
+  if (Array.isArray(slot.list)) {
+    rows.push(...slot.list.map(x => `- **${x}**：{{一句}}`), '');
+  } else if (slot.list) {
+    rows.push('- {{一项一句}}', '');
+  }
+  for (const label of slot.labels ?? []) rows.push(`**${label}**：{{一句}}`, '');
+  if (slot.image) {
+    rows.push('<!-- 材料里的界面图：引用串见任务包第 4 节，引完接一句说清它画的是什么 -->', '');
+  }
+  if (slot.table && !seeded && slotApplies(ctx, slot.table_when)) {
+    const cells = String(slot.table).split('|');
+    rows.push('<!-- 表头如下，第一列是锚；其余列按本需求增减，行数按内容定 -->',
+      ...renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]), '');
+  }
   return rows;
 }
 

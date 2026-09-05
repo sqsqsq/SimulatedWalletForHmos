@@ -1349,7 +1349,12 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertIn("| 参与方 |", draft)
         self.assertIn("| {{参与方}} |", draft)
         self.assertIn("| 否了什么 |", draft)
-        self.assertIn("要有 2 张表", self.draft("07-异常与恢复.md").read_text(encoding="utf-8"))
+        # 异常两张表各自搭好，不再是一句「这一章要有 2 张表」的注释
+        exceptions = self.draft("07-异常与恢复.md").read_text(encoding="utf-8")
+        self.assertIn("### 设计内的受限结果", exceptions)
+        self.assertIn("### 需要处理的异常", exceptions)
+        self.assertIn("| 受限情形 |", exceptions)
+        self.assertIn("| 异常 |", exceptions)
 
     def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
         """附录 A–D 归机器区，草稿里不放——放了他就要在两处维护同一张表。"""

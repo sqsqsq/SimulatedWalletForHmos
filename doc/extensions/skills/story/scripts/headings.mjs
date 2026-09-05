@@ -110,7 +110,14 @@ export function renumberStory(text, chapters = [], counters = []) {
         // 合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的
         return chapterNo ? `## ${chapterNo}. ${name}` : raw;
       }
-      if (!chapterNo || inAppendix) return raw;
+      if (!chapterNo) return raw;
+      if (inAppendix) {
+        // 附录的小节用字母：A.–E. 是合同定的形态，读者按「附录 C」回找。
+        // 序号由这里统一铺，草稿与投影都不带——同章序、节序一条幂等规则。
+        if (level !== 3) return raw;
+        sub += 1;
+        return `### ${String.fromCharCode(64 + sub)}. ${name}`;
+      }
       if (level === 3) {
         sub += 1; subsub = 0; authorSubsub = 0;
         const stripped = takeAuthorNumber(name, authorSub + 1, counters);

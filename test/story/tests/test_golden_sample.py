@@ -28,7 +28,9 @@ BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
 #: 金样正文与归档图片只在 test/story/golden 维护；原始材料夹具保留自己的来源图片。
 GOLDEN_FINGERPRINTS = {
-    "story-金样-AR90004.md": "c392539c51339d8e",
+    # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
+    # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
+    "story-金样-AR90004.md": "cc5ed2249937980f",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
 }
@@ -52,7 +54,7 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 398, "chapters": 10, "subsections": 34,
+SHAPE = {"lines": 408, "chapters": 10, "subsections": 36,
          "table_rows": 159, "diagrams": 1, "images": 2}
 
 
