@@ -40,8 +40,9 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         self.assertIn("# 第二步 · 统稿", guide)
         section = guide.split("# 第二步 · 统稿", 1)[1].split("\n# ", 1)[0]
         items = re.findall(r"^\d+\. ", section, flags=re.M)
-        self.assertEqual(6, len(items), f"自查清单应是六项，现在 {len(items)} 项")
-        for needle in ("同一件事", "逐字", "引导", "承接", "样式约定", "读者视角"):
+        self.assertEqual(7, len(items), f"自查清单应是七项，现在 {len(items)} 项")
+        for needle in ("同一件事", "逐字", "引导", "承接", "样式约定", "读者视角",
+                       "各章说法一致"):
             self.assertIn(needle, section, f"自查清单少了「{needle}」那一项")
 
     def test_the_guide_says_two_steps(self) -> None:
@@ -78,11 +79,11 @@ class TestChapterDimensions(unittest.TestCase):
 class TestFinalPassLeavesATrace(unittest.TestCase):
     """统稿是唯一一步没有产物的动作，于是跳过它零成本——留痕让「没做」藏不住。"""
 
-    def test_the_guide_asks_for_exactly_six_lines(self) -> None:
+    def test_the_guide_asks_for_exactly_seven_lines(self) -> None:
         guide = read("phases/story-write.md")
         section = guide.split("# 第二步 · 统稿", 1)[1]
         self.assertIn("copyedit.md", section)
-        self.assertIn("恰好六行", section)
+        self.assertIn("恰好七行", section)
         self.assertIn("写多不奖励", section, "防苦役条款要写在作业书里")
 
     def test_the_phase_order_points_at_the_same_file(self) -> None:

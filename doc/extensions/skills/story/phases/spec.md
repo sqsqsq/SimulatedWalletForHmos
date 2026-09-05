@@ -65,7 +65,7 @@ node .../story-build.mjs skeleton --feature <feature>  # ② 十章骨架 + 十�
 #                                 一次写一章，经 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
 #                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
-#                                 六项自查各写一行到 AR/story-src/copyedit.md（恰好六行）；
+#                                 七项自查各写一行到 AR/story-src/copyedit.md（恰好七行）；
 #                                 改的那几章仍逐章落盘
 node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（story 成文之后）
 python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）

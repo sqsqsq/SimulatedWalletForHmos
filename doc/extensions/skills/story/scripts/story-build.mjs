@@ -57,7 +57,7 @@ export const DECISION_FIELDS = [
 ];
 
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
-const COPYEDIT_ROWS = 6;
+const COPYEDIT_ROWS = 7;
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
@@ -1596,19 +1596,19 @@ function cmdCheck(ctx) {
   // 判据，判的是自己的输出——真正会漏的是机器不做的那部分。
 
   mark('⑫d 统稿留痕');
-  // ⑫d 统稿留痕：`copyedit.md` 恰好六行，一项自查一行
+  // ⑫d 统稿留痕：`copyedit.md` 恰好七行，一项自查一行
   //
   // 统稿（通读全篇、收重复收承接收样式）是唯一一步没有任何产物的动作，于是跳过它
   // 零成本——「同一件事讲三遍」「图题一章一个样」这类只有通读才看得见
   // 的毛病，而门禁全绿。留痕不是为了核内容（写没写到位由语义审查与抽样人核），
   // 是为了让「没做」这件事留下痕迹。
   //
-  // **只写六行，写多不奖励**：把它写成检查报告，下一轮就有人为了显得认真而灌水。
+  // **只写七行，写多不奖励**：把它写成检查报告，下一轮就有人为了显得认真而灌水。
   if (!ctx.offline) {
     const copyedit = readText(ctx.copyeditPath);
     if (copyedit === null) {
       problems.push(`缺 ${path.basename(ctx.copyeditPath)}`
-        + '——统稿完成后在这里写六行，六项自查各一行「查了什么／改了几处或无」');
+        + '——统稿完成后在这里写七行，七项自查各一行「查了什么／改了几处或无」');
     } else {
       const rows = copyedit.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length;
       if (rows !== COPYEDIT_ROWS) {
