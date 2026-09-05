@@ -139,8 +139,11 @@ function chapterSection(contract) {
       }
     }
   }
-  rows.push('', '章文件只放正文，不带 `## 章名`、不带 H1。',
-    '骨架已经把术语起始行、spec §5 的图与附录五节打好底——改措辞、往下加，别重打。');
+  rows.push('', '**在章草稿上写**：`AR/story-src/drafts/NN-<章名>.md`，'
+    + '形态说明、槽位表头、术语起始行、spec §5 的图都已经在里面；'
+    + '写完 `story-build chapter --chapter <章名> --from <草稿>` 落盘。',
+    '附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写——'
+    + '它们是 spec §9 与 knowledge-use.yaml 的投影，要改改真源。');
   return rows;
 }
 

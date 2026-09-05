@@ -41,7 +41,8 @@ import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
 } from './review-render.mjs';
 
-const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter', 'review-task'];
+const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter',
+  'project', 'review-task'];
 
 /**
  * 一条决策登记要写满的字段，与「缺了会怎样」。
@@ -728,6 +729,12 @@ function specDiagram(text) {
   return m ? m[0] : null;
 }
 
+//: 不投进归档件的列。「代码现状」是 spec 写给下游 AI 的——仓内路径或检索结论，
+//: 读者打不开也用不上，进了归档件还会撞上「不写仓内路径」「不写检索措辞」两条红线，
+//: 而机器区作者改不了。投影策略只有这一条，不在合同里逐表登记列白名单：
+//: 那会与 spec 模板形成第二真源。
+const DROP_COLUMNS = ['代码现状'];
+
 //: 附录三节各从 spec §9 的哪几个小节生成。附录的读者要「拿着回查」，
 //: 所以行必须齐——集合核（⑫）盯的就是这里。
 const APPENDIX_FROM_SPEC = [
@@ -736,15 +743,18 @@ const APPENDIX_FROM_SPEC = [
   ['改动边界', [/^###\s*9\.5/]],
 ];
 
-/** 某个附录小节该有的表：spec 对应几节就给几张，表头原样带过来。 */
+/** 某个附录小节该有的表：spec 对应几节就给几张，表头按原顺序带过来（去掉不投的列）。 */
 function appendixTables(spec, name) {
   const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
   if (!spec || !from) return [];
   const out = [];
   for (const re of from[1]) {
     for (const t of pipeTables(specSection(spec, re))) {
-      const rows = t.rows.filter(r => !isPlaceholderRow(r));
-      if (rows.length) out.push({ header: t.header, rows });
+      const keep = t.header.map((h, i) => [h, i])
+        .filter(([h]) => !DROP_COLUMNS.some(d => h.includes(d)));
+      const rows = t.rows.filter(r => !isPlaceholderRow(r))
+        .map(r => keep.map(([, i]) => r[i] ?? ''));
+      if (rows.length) out.push({ header: keep.map(([h]) => h), rows });
     }
   }
   return out;
@@ -770,52 +780,14 @@ function zoneBlock(name, source, rows) {
   return [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 -->`, ...rows, ZONE_END];
 }
 
-/** 一段正文里的全部生成区：`[{name, block}]`，block 含首尾标记。 */
-function zonesIn(text) {
-  const out = [];
-  const lines = String(text ?? '').split(/\r?\n/);
-  let cur = null;
-  for (const line of lines) {
-    if (line.startsWith(ZONE_BEGIN)) {
-      cur = { name: line.slice(ZONE_BEGIN.length).split(' · ')[0].trim(), lines: [line] };
-      continue;
-    }
-    if (!cur) continue;
-    cur.lines.push(line);
-    if (line.trim() === ZONE_END) { out.push({ name: cur.name, lines: cur.lines }); cur = null; }
-  }
-  return out;
-}
-
 /**
- * 把旧章里的生成区搬进新正文 —— **作者不必重打，也删不掉**。
- *
- * 作者的章文件是整章内容，落盘就是整章替换；打底的附录表在那个区间里，
- * 他不重打就会随落盘消失。所以落盘前把生成区找回来：作者留了标记就替换标记之间，
- * 没留就插到它所属的那一节末尾（节名即区名），连节都没有就放到章末。
+ * 一段正文里某个生成区的行区间（含首尾标记），没有就返回 null。
  */
-function preserveZones(oldText, newText) {
-  let lines = String(newText ?? '').split(/\r?\n/);
-  for (const zone of zonesIn(oldText)) {
-    const kept = zonesIn(lines.join('\n')).find(z => z.name === zone.name);
-    if (kept) {
-      const at = lines.findIndex(l => l.startsWith(`${ZONE_BEGIN}${zone.name} `));
-      const end = lines.findIndex((l, i) => i > at && l.trim() === ZONE_END);
-      lines = [...lines.slice(0, at), ...zone.lines, ...lines.slice(end + 1)];
-      continue;
-    }
-    const want = normalizeHeading(zone.name);
-    let at = lines.findIndex(l => /^###\s+/.test(l.trim())
-      && normalizeHeading(l.trim().slice(3)).includes(want));
-    if (at < 0) {
-      lines.push('', ...zone.lines);
-      continue;
-    }
-    let end = lines.findIndex((l, i) => i > at && /^###\s+/.test(l.trim()));
-    if (end < 0) end = lines.length;
-    lines = [...lines.slice(0, end), ...zone.lines, '', ...lines.slice(end)];
-  }
-  return lines.join('\n');
+function zoneSpan(lines, name) {
+  const at = lines.findIndex(l => l.startsWith(`${ZONE_BEGIN}${name} `));
+  if (at < 0) return null;
+  const end = lines.findIndex((l, i) => i > at && l.trim() === ZONE_END);
+  return end < 0 ? null : { start: at, end: end + 1 };
 }
 
 // --------------------------------------------------------------------------
@@ -1738,31 +1710,29 @@ function chapterSpan(storyText, title) {
 }
 
 /**
- * 一章的骨架正文：形态注释 + 能派生的内容 + 待写 marker。
+ * 一章的**草稿**：形态说明 + 已经搭好的槽位表 + 从真源打的底。
  *
- * 形态注释来自合同，作者写完连注释一起删；派生的几段是 spec 与登记数据里已有的东西，
- * 他改措辞、往下加，不用重打。附录五节各有真源：A/B/C 是 spec §9，D 是判断骨架，
- * E 是材料清单——手抄一遍抄出来的总比 spec 少。
+ * 作者拿到的不该是一张白纸加一句「这一章要有表」。搭表、抄术语、复制流程图都是
+ * 确定性工作，脚本在他动笔前做完；他填的是语义——每一格写什么、每一步为什么。
+ *
+ * 草稿是**作者区**：他在草稿里改，`chapter --from` 消费草稿原子落盘。
+ * 附录的 A–D 不在这里——那四节归机器区，由 `project` 从真源投影，作者改的是真源。
  */
-function chapterSkeleton(ctx, ch, spec) {
-  const rows = [];
+function chapterDraft(ctx, ch, spec) {
+  const rows = [`## ${ch.title}`, ''];
   if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
-  const derived = chapterDerived(ctx, ch, spec);
+  rows.push(`<!-- 读者在这一章要的答案：${(ch.questions ?? []).join('；')} -->`, '');
+  const seeded = chapterSeed(ctx, ch, spec);
   for (const [at, cols] of Object.entries(ch.form?.tables ?? {})) {
     if (!slotApplies(ctx, (ch.form?.tables_when ?? {})[at])) continue;
     const parts = String(cols).split(';');
-    // 真源已经给出这一章的表就不再摆占位：摆一张作者要删的空表是给他添活。
-    if (derived.length && at === '') continue;
+    if (seeded.length && at === '') continue;      // 真源已经给了这一章的表
     if (at === '*' || !parts[0]) {
-      // 小节由作者按业务分、或这几张表的列名本就随需求定（受限与异常两张），
-      // 摆不出有意义的表头，就只说清要几张、要哪一列。
       rows.push(`<!-- ${at === '*' ? '每个小节' : '这一章'}要有 ${parts.length} 张表`
         + (parts[0] ? `，表头含「${parts[0].split('|').join('」「')}」` : '（列名按本需求取）')
         + ' -->', '');
       continue;
     }
-    // 表头 + 分隔 + 一行占位：搭表是确定性工作，让模型搭、脚本事后挑错，
-    // 就是把确定性工作交给了模型。必有列之外的列由作者按本需求加。
     for (const one of parts) {
       if (at) rows.push(`### ${at}`, '');
       const cells = one.split('|');
@@ -1770,22 +1740,21 @@ function chapterSkeleton(ctx, ch, spec) {
         ...renderTable(cells, [cells.map(c => `{{${c}}}`)]), '');
     }
   }
-  if (rows.length && rows[rows.length - 1] !== '') rows.push('');
-  if (derived.length) {
-    // 附录那几段是脚本拥有的生成区，落盘时自动保留；这里打的底归作者——
-    // 章文件是整章替换，他不带上就没了。这句话必须在他眼前，不能只写在任务包里。
-    if (!ch.appendix) {
-      rows.push('<!-- 上面这几行是打好的底：写章文件时**连它一起写**'
-        + '（改措辞、往下加都行），落盘是整章替换，不带上就没了 -->', '');
-    }
-    rows.push(...derived, '');
-  }
-  rows.push(pendingMark(ch.title));
+  if (seeded.length) rows.push(...seeded, '');
+  if (!ch.appendix) rows.push(pendingMark(ch.title), '');
+  rows.push('<!-- 写完这一章跑：story-build chapter --feature <名> --chapter '
+    + `${ch.title} --from <本文件> -->`);
   return rows;
 }
 
-/** 这一章能从真源派生出来的内容。派生不到就空着——空着比编出来强。 */
-function chapterDerived(ctx, ch, spec) {
+/**
+ * 这一章从真源打的底 —— **打完就归作者**。
+ *
+ * 术语的措辞、流程图的节点文字、材料贡献那一句，都是他要改的东西；
+ * 脚本种一次，此后不再碰。附录 A–D 不在这里：那四节每次都能从真源算出同样的东西，
+ * 归机器区。
+ */
+function chapterSeed(ctx, ch, spec) {
   if (ch.id === '02-terms') {
     const terms = specTerms(spec);
     return terms.length ? renderTable(['术语', '在本需求里的意思'], terms) : [];
@@ -1797,9 +1766,12 @@ function chapterDerived(ctx, ch, spec) {
   if (ch.appendix) {
     const out = [];
     for (const name of ch.subsections ?? []) {
-      out.push(`### ${name}`, '', '<!-- 一句这一节给评审者看什么 -->', '');
-      const [source, rows] = appendixProjection(ctx, spec, name);
-      if (rows.length) out.push(...zoneBlock(name, source, rows), '');
+      out.push(`### ${name}`, '', '{{一句这一节给评审者看什么}}', '');
+      // 材料清单是作者种子：类别与链接由清单给，「贡献了什么」只有他知道。
+      // 其余四节由 `project` 投影，草稿里不放——放了他就要在两处维护同一张表。
+      if (normalizeHeading(name) === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
+        out.push(...materialListSkeleton(ctx), '');
+      }
     }
     return out;
   }
@@ -1809,23 +1781,75 @@ function chapterDerived(ctx, ch, spec) {
 /**
  * 附录某一节的投影：这一节从哪个真源来、投出来是哪几行。
  *
- * 五节各有真源，没有一节要作者重打表——他写的是那一句「这一节给评审者看什么」。
+ * **不含任何占位**：机器区里出现「作者要填的格子」，作者填了会被下一次投影打回，
+ * 不填就一直挂着。要作者写的东西全在草稿的作者区。
+ * 材料清单不在这里——那一节的「贡献了什么」只有作者知道，它归作者。
+ * 多张表之间空一行：连着写 markdown 会把它们并成一张错表。
  */
 function appendixProjection(ctx, spec, name) {
   const want = normalizeHeading(name);
   if (want === normalizeHeading('改动边界')) {
     const rows = scopeBoundaryRows(spec);
-    const out = rows.length ? renderTable(['', '范围', '对评审意味着什么'], rows) : [];
-    for (const t of appendixTables(spec, name)) out.push(...renderTable(t.header, t.rows));
+    const out = rows.length ? renderTable(['', '范围'], rows.map(r => r.slice(0, 2))) : [];
+    for (const t of appendixTables(spec, name)) out.push('', ...renderTable(t.header, t.rows));
     return ['Scope 模块清单与 spec §9.5', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
     return ['spec/knowledge-use.yaml', verdictSkeleton(ctx)];
   }
-  if (want === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
-    return ['AR/story-src/materials.json', materialListSkeleton(ctx)];
+  const tables = appendixTables(spec, name);
+  return ['spec §9', tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
+    : renderTable(t.header, t.rows))];
+}
+
+/**
+ * 把附录的机器区投影进 story —— **投影的唯一入口**，两个时点都走它。
+ *
+ * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句与材料清单，A–D 由这里投出来，
+ *    他登记前跑 `check` 才不会因为那四节是空的而红；
+ * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判定、改一个接口），
+ *    以登记这一次为准。
+ *
+ * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
+ */
+function projectAppendix(ctx, storyText) {
+  const appendix = appendixChapter(ctx.contract);
+  if (!appendix) return { text: storyText, zones: 0 };
+  const span = chapterSpan(storyText, appendix.title);
+  if (!span) return { text: storyText, zones: 0 };
+  const spec = specText(ctx);
+  const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
+  let lines = storyText.slice(span.start, span.end).split(/\r?\n/);
+  let zones = 0;
+  for (const name of appendix.subsections ?? []) {
+    if (normalizeHeading(name) === materialName) continue;    // 材料清单归作者
+    const [source, rows] = appendixProjection(ctx, spec, name);
+    if (!rows.length) continue;
+    const block = zoneBlock(name, source, rows);
+    zones += 1;
+    const at = zoneSpan(lines, name);
+    if (at) { lines = [...lines.slice(0, at.start), ...block, ...lines.slice(at.end)]; continue; }
+    // 作者那一节还没有机器区：插到该节末尾。节都没有就说明附录章还没落盘，跳过。
+    const want = normalizeHeading(name);
+    const head = lines.findIndex(l => /^###\s+/.test(l.trim())
+      && normalizeHeading(l.trim().slice(3)).includes(want));
+    if (head < 0) { zones -= 1; continue; }
+    let end = lines.findIndex((l, i) => i > head && /^###\s+/.test(l.trim()));
+    if (end < 0) end = lines.length;
+    lines = [...lines.slice(0, end), ...block, '', ...lines.slice(end)];
   }
-  return ['spec §9', appendixTables(spec, name).flatMap(t => renderTable(t.header, t.rows))];
+  return { text: storyText.slice(0, span.start) + lines.join('\n') + storyText.slice(span.end),
+    zones };
+}
+
+function cmdProject(ctx) {
+  refuseIfFrozen(ctx, 'project');
+  const story = readText(ctx.storyPath);
+  if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架');
+  const { text, zones } = projectAppendix(ctx, story);
+  if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
+  process.stdout.write(`[story-build project] 附录机器区已按当前真源重投 ${zones} 节`
+    + `（spec §9 / knowledge-use.yaml）；材料清单归你，不动\n`);
 }
 
 /**
@@ -1856,27 +1880,58 @@ function materialListSkeleton(ctx) {
     `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${rel})——{{这份材料贡献了什么}}`);
 }
 
+//: 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记成功后由
+//: `story_flow.py story` 删掉——story 冻结了，草稿就失去用途，也不进冻结台账。
+const DRAFTS = 'drafts';
+
+function draftPath(ctx, index, title) {
+  return path.join(ctx.srcDir, DRAFTS,
+    `${String(index + 1).padStart(2, '0')}-${title}.md`);
+}
+
+/**
+ * 缺哪章补哪章，**已存在的绝不覆盖** —— 草稿里可能有作者还没落盘的内容。
+ *
+ * @returns {string[]} 这次新建的草稿文件名
+ */
+function writeDrafts(ctx, spec) {
+  const made = [];
+  fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
+  ctx.contract.chapters.forEach((ch, i) => {
+    const file = draftPath(ctx, i, ch.title);
+    if (fs.existsSync(file)) return;
+    fs.writeFileSync(file, `${chapterDraft(ctx, ch, spec).join('\n').trimEnd()}\n`, 'utf-8');
+    made.push(path.basename(file));
+  });
+  return made;
+}
+
 function cmdSkeleton(ctx) {
   refuseIfFrozen(ctx, 'skeleton');
+  const spec = specText(ctx);
   const existing = readText(ctx.storyPath);
   if (existing !== null) {
+    // story 已经在了也要补草稿：中断恢复时缺的往往正是还没写的那几章。
+    const made = writeDrafts(ctx, spec);
     const left = pendingChapters(existing);
     process.stdout.write(`[story-build skeleton] AR/story.md 已存在，未改动`
-      + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）\n`);
+      + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）；`
+      + `${made.length ? `补建草稿 ${made.length} 份` : '草稿齐备，一份未覆盖'}\n`);
     return;
   }
   const titles = ctx.contract.chapters.map(c => c.title);
-  const spec = specText(ctx);
   const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
   for (const ch of ctx.contract.chapters) {
-    body.push(`## ${ch.title}`, '', ...chapterSkeleton(ctx, ch, spec), '');
+    body.push(`## ${ch.title}`, '', pendingMark(ch.title), '');
   }
   fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
   fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
-  process.stdout.write(`[story-build skeleton] 建了 ${titles.length} 章骨架：`
-    + `每章一个章锚 + 形态说明 + 一个待写 marker`
-    + `${spec ? '；术语、流程图与附录已按 spec 与登记数据打底' : ''}。`
-    + `写完一章跑一次 chapter 落盘\n`);
+  const made = writeDrafts(ctx, spec);
+  process.stdout.write(`[story-build skeleton] ${titles.length} 章骨架 + `
+    + `${made.length} 份章草稿（\`AR/story-src/${DRAFTS}/\`）：`
+    + `形态说明、槽位表头${spec ? '、术语起始行、spec §5 的图' : ''}都在草稿里，`
+    + `你在草稿上写，写完一章跑 chapter --from 落盘。`
+    + `附录的接口/数据/边界/判定四节由 project 从真源投影，不用你写\n`);
 }
 
 /**
@@ -1945,11 +2000,14 @@ function cmdChapter(ctx) {
 
   const trimmed = stripOwnHeading(body, title).replace(/\s+$/, '');
   if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
-  // 生成区归脚本：作者的章文件是整章内容，落盘就是整章替换；附录那几张投影表
-  // 在这个区间里，他不重打就会随落盘消失——而重打正是这一步要消掉的事。
-  const kept = preserveZones(story.slice(span.start, span.end), trimmed).replace(/\s+$/, '');
-  const replaced = `## ${title}\n\n${kept}\n\n`;
-  const next = story.slice(0, span.start) + replaced + story.slice(span.end);
+  const replaced = `## ${title}\n\n${trimmed}\n\n`;
+  let next = story.slice(0, span.start) + replaced + story.slice(span.end);
+  // 落盘附录章 = 作者区 + 当前真源投影出的机器区，一次写完。
+  // 作者的附录草稿里只有目的句与材料清单，A–D 在这里投出来——不投的话他登记前
+  // 跑 check 会因为那四节是空的而红，而那四节本来就不该由他写。
+  if (normalizeHeading(title) === normalizeHeading(appendixChapter(ctx.contract)?.title ?? '')) {
+    next = projectAppendix(ctx, next).text;
+  }
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');
 
   const left = pendingChapters(next);
@@ -2017,6 +2075,7 @@ function main() {
   if (args.command === 'init') cmdInit(ctx);
   else if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
+  else if (args.command === 'project') cmdProject(ctx);
   else if (args.command === 'review-task') cmdReviewTask(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);

@@ -713,5 +713,53 @@ class TheManifestSurvivesTheStorySweep(unittest.TestCase):
                          "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
 
 
+class DraftsLiveUntilRegistration(unittest.TestCase):
+    """章草稿在登记前不能被扫掉，登记成功后才删。
+
+    `check` 没过时作者要回到草稿接着改——清扫把它当中间件删了，他的起点就没了。
+    登记成功之后 story 冻结，草稿失去用途，也不该留进归档。
+    """
+
+    def test_the_sweep_spares_the_drafts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "story-src"
+            (src / story_flow.DRAFTS_DIR).mkdir(parents=True)
+            (src / story_flow.DRAFTS_DIR / "02-术语.md").write_text("写到一半", encoding="utf-8")
+            (src / "decisions.json").write_text("[]", encoding="utf-8")
+            (src / "候选池.md").write_text("脚手架", encoding="utf-8")
+            swept = story_flow.sweep_story_src(src)
+            self.assertIn("候选池.md", swept)
+            self.assertNotIn(story_flow.DRAFTS_DIR, swept, "清扫把章草稿也删了")
+            self.assertTrue((src / story_flow.DRAFTS_DIR / "02-术语.md").is_file())
+
+    def test_drafts_are_not_frozen_into_the_ledger(self) -> None:
+        """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
+        self.assertNotIn(story_flow.DRAFTS_DIR, story_flow.STORY_SRC_FROZEN)
+
+
+class RegistrationReprojectsFirst(unittest.TestCase):
+    """登记的顺序是 project → number → check。
+
+    附录的机器区是 spec §9 与 knowledge-use.yaml 的投影，而真源在成文期间还会变；
+    以登记这一次为准，否则归档件里留的是一份会漂移的副本。
+    """
+
+    def test_the_order_is_project_then_number_then_check(self) -> None:
+        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
+                  / "scripts" / "story_flow.py").read_text(encoding="utf-8")
+        body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
+        order = [cmd for cmd in ("\"project\"", "\"number\"", "\"check\"")
+                 if cmd in body]
+        self.assertEqual(['"project"', '"number"', '"check"'], order,
+                         "登记时没有先按真源重投影")
+        self.assertLess(body.index('"project"'), body.index('"number"'))
+
+    def test_registration_deletes_the_drafts(self) -> None:
+        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
+                  / "scripts" / "story_flow.py").read_text(encoding="utf-8")
+        body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("DRAFTS_DIR", body, "登记成功后没有清理章草稿")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,8 +59,10 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 
 ```bash
 node .../story-build.mjs init     --feature <feature>  # ① 材料齐备 + 决策登记骨架
-node .../story-build.mjs skeleton --feature <feature>  # ② 建十章骨架（只跑一次）
-#                              ③ 按章写：一次写一章，经 `story-build chapter` 原子落盘；
+node .../story-build.mjs skeleton --feature <feature>  # ② 十章骨架 + 十份章草稿
+#                              ③ 按章写：**在草稿上写**（AR/story-src/drafts/NN-<章名>.md，
+#                                 形态说明、槽位表头、术语起始行、spec §5 的图都已经在里面），
+#                                 一次写一章，经 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
 #                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
 #                                 六项自查各写一行到 AR/story-src/copyedit.md（恰好六行）；
@@ -77,6 +79,12 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
   自查清单见 `story-write.md` 第二步。
 - **② 与 ③ 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。
   骨架先把十个章锚落盘，写就变成逐章有界的小任务，写完即落盘、断了知道从哪一章续。
+  草稿与骨架同时建：搭表、抄术语、复制流程图都是确定性工作，脚本在你动笔前做完，
+  你填的是语义。断了重跑 `skeleton` 会补齐缺的草稿，**写过的一个字节不动**。
+- **附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写**：它们是 spec §9 与
+  `knowledge-use.yaml` 的投影，由 `story-build project` 在落盘附录章时与登记时各投一次。
+  你在附录草稿里写的是每节那一句「给评审者看什么」，加上材料清单里「这份材料贡献了什么」。
+  要改那四节的内容，改真源。
 - **④ 在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
   写到某一章才发现材料两处打架、才发现某个取舍要人拍板。这些新判断先登记进 `decisions.json`，
   再渲染，台账才是完整的。`build` 会先看 `AR/story.md` 有没有章，没有就拒绝渲染。

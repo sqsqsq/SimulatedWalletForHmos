@@ -1273,61 +1273,10 @@ class ChaptersLandOneAtATime(Step8Case):
         self.assertIn("背景", out)
 
 
-class SkeletonDerivesFromTheRealSpec(unittest.TestCase):
-    """骨架的打底要在**真实产物**上成立。
+class RealRunCase(unittest.TestCase):
+    """拿真实一跑的产物走作者路径。
 
-    手造的最小样本全是 LF，而宿主在 Windows 上写出来的 spec 是 CRLF：
-    `scopeList` 那个要求 `:` 后紧跟换行的正则在它上面静默零命中——
-    术语章空着、改动边界少了 Scope 两行，离线却一片绿。
-    """
-
-    REAL = REPO_ROOT / "test" / "story" / "fixtures" / "real-run" / "AR90006"
-    EXTENSION = REPO_ROOT / "doc" / "extensions"
-
-    def _skeleton(self, *, as_lf: bool = False) -> str:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            feature = root / "doc" / "features" / "AR90006"
-            shutil.copytree(self.REAL, feature)
-            ext = root / "doc" / "extensions"
-            ext.mkdir(parents=True)
-            shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
-            shutil.copytree(self.EXTENSION / "knowledge", ext / "knowledge")
-            if as_lf:
-                spec = feature / "spec" / "spec.md"
-                spec.write_bytes(spec.read_bytes().replace(b"\r\n", b"\n"))
-
-            proc = subprocess.run(
-                ["node", str(BUILD), "skeleton", "--feature", "AR90006",
-                 "--project-root", str(root)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=60)
-            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-            return (feature / "AR" / "story.md").read_text(encoding="utf-8")
-
-    def _assert_derived(self, story: str) -> None:
-        terms = story.split("## 术语", 1)[1].split("## 范围", 1)[0]
-        rows = [l for l in terms.split("\n") if l.startswith("|") and "---" not in l]
-        self.assertGreaterEqual(len(rows), 3, "术语起始行没从 spec §0 派生出来")
-        self.assertIn("| 改动 |", story, "改动边界少了 Scope 的「改动」行")
-        self.assertIn("| 只复用 |", story, "改动边界少了 Scope 的「只复用」行")
-        self.assertIn("```mermaid", story, "spec §5 的图没复制过来")
-
-    def test_the_real_crlf_spec_derives(self) -> None:
-        """这一条红过一次：术语零行、改动边界只剩依赖表。"""
-        self._assert_derived(self._skeleton())
-
-    def test_lf_still_derives(self) -> None:
-        """归一放在读入口，两种行尾走同一条路。"""
-        self._assert_derived(self._skeleton(as_lf=True))
-
-
-class GeneratedZonesSurviveTheAuthor(unittest.TestCase):
-    """打底的所有权分两种，落盘时各按各的规矩。
-
-    **可重复投影**（附录五节的表）归脚本：`chapter` 是整章替换，作者不重打就会
-    随落盘消失——而重打正是这一步要消掉的事，所以生成区自动带过来。
-    **一次性种子**（术语措辞、流程图节点）归作者：种下去之后脚本不再碰它。
+    手造的最小样本全是 LF、字段规整、图片路径不带中文目录名，真实产物哪一样都不是。
     """
 
     REAL = REPO_ROOT / "test" / "story" / "fixtures" / "real-run" / "AR90006"
@@ -1344,9 +1293,9 @@ class GeneratedZonesSurviveTheAuthor(unittest.TestCase):
         shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
         shutil.copytree(self.EXTENSION / "knowledge", ext / "knowledge")
         self.story_path = self.feature / "AR" / "story.md"
-        self._build("skeleton")
+        self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
-    def _build(self, *args: str) -> subprocess.CompletedProcess:
+    def build(self, *args: str) -> subprocess.CompletedProcess:
         proc = subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
@@ -1354,63 +1303,147 @@ class GeneratedZonesSurviveTheAuthor(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return proc
 
-    def _chapter(self, title: str, body: str) -> str:
-        src = self.root / "chapter.md"
-        src.write_text(body, encoding="utf-8")
-        self._build("chapter", "--chapter", title, "--from", str(src))
+    def draft(self, name: str) -> Path:
+        return self.drafts / name
+
+    def story(self) -> str:
         return self.story_path.read_text(encoding="utf-8")
 
-    #: 作者写附录时只该写这五句——表由脚本从真源投影
-    APPENDIX = "\n\n".join(
-        f"### {name}\n\n给评审看{what}。"
-        for name, what in (("接口", "本特性对外的云侧接口"),
-                           ("数据、配置与事件", "端侧存了什么、开关怎么配、埋点报什么"),
-                           ("改动边界", "改了哪里、哪里保证不动"),
-                           ("规约判定", "激活规约逐条判没判、依据是什么"),
-                           ("材料清单", "这份叙事件据哪几份材料写成")))
 
-    def test_the_appendix_tables_survive_a_bare_chapter_file(self) -> None:
-        """作者只写目的句，五节的表照样在——这一条正是 F7 被落盘路径抵消的那个洞。"""
-        story = self._chapter("附录", self.APPENDIX)
-        appendix = story.split("## 附录", 1)[1]
-        self.assertEqual(5, appendix.count("story-build:begin"), "生成区没被带过来")
-        self.assertIn("getAutoTopupPolicy", appendix, "接口表丢了")
-        self.assertIn("给评审看本特性对外的云侧接口", appendix, "作者写的目的句丢了")
-        verdict_rows = [l for l in appendix.split("\n")
-                        if l.startswith("| ") and ("UX-0" in l or "SEC-" in l or "OBS-" in l)]
-        self.assertGreaterEqual(len(verdict_rows), 3, "规约判定表丢了")
+class DraftsCarryTheDeterministicWork(RealRunCase):
+    """作者拿到的不是白纸：形态、槽位表、术语起始行、流程图都已经在草稿里。
 
-    def test_the_verdict_basis_comes_from_the_source(self) -> None:
-        """R14：依据取 knowledge-use.yaml 的原文，不留 `{{依据}}` 让作者再抄一遍。"""
-        story = self.story_path.read_text(encoding="utf-8")
-        appendix = story.split("## 附录", 1)[1]
-        self.assertNotIn("{{依据}}", appendix, "判定的依据没取真源")
-        self.assertIn("方向性布局参数一律用 start/end", appendix)
+    这几样都是确定性工作，脚本在他动笔前做完；他填的是语义。
+    草稿是作者区——`chapter --from` 消费它，story.md 的骨架只有章锚。
+    """
 
-    def test_the_material_rows_carry_their_kind(self) -> None:
-        """R14：类别在合同里已有答案，不必让作者再判一次。"""
-        story = self.story_path.read_text(encoding="utf-8")
-        self.assertIn("- 产品需求：", story)
-        self.assertIn("- 系统设计：", story)
+    def test_a_draft_per_chapter(self) -> None:
+        self.build("skeleton")
+        made = sorted(p.name for p in self.drafts.glob("*.md"))
+        self.assertEqual(10, len(made), made)
+        self.assertTrue(made[0].startswith("01-"))
+
+    def test_the_skeleton_itself_holds_no_seed(self) -> None:
+        """种子只在草稿里：留在骨架里，作者就要把它们搬进自己的章文件。"""
+        self.build("skeleton")
+        story = self.story()
+        self.assertNotIn("```mermaid", story, "流程图不该留在骨架里")
+        self.assertNotIn("| 术语 |", story, "术语起始行不该留在骨架里")
+        self.assertIn("<!-- 待写：术语 -->", story)
+
+    def test_the_terms_seed_comes_from_the_real_crlf_spec(self) -> None:
+        """真实的 spec 是 CRLF——`scopeList` 的正则曾在它上面静默零命中。"""
+        self.build("skeleton")
+        draft = self.draft("02-术语.md").read_text(encoding="utf-8")
+        rows = [l for l in draft.split("\n") if l.startswith("|") and "---" not in l]
+        self.assertGreaterEqual(len(rows), 3, "术语起始行没从 spec §0 派生出来")
+
+    def test_the_flow_diagram_is_copied(self) -> None:
+        self.build("skeleton")
+        self.assertIn("```mermaid", self.draft("05-业务流程.md").read_text(encoding="utf-8"))
 
     def test_fixed_slots_are_rendered_not_just_described(self) -> None:
-        """R13：槽位给表头 + 分隔 + 占位，不是一行「机器核」注释。"""
-        story = self.story_path.read_text(encoding="utf-8")
-        solution = story.split("## 业务方案", 1)[1].split("## 业务流程", 1)[0]
-        self.assertIn("| 参与方 |", solution)
-        self.assertIn("| {{参与方}} |", solution)
-        self.assertIn("| 否了什么 |", solution)
-        self.assertIn("| 风险 |", solution)
-        exceptions = story.split("## 异常与恢复", 1)[1].split("## 验收", 1)[0]
-        self.assertIn("要有 2 张表", exceptions, "两张表这件事没说清")
+        """槽位给表头 + 分隔 + 占位，不是一行「机器核」注释。"""
+        self.build("skeleton")
+        draft = self.draft("04-业务方案.md").read_text(encoding="utf-8")
+        self.assertIn("| 参与方 |", draft)
+        self.assertIn("| {{参与方}} |", draft)
+        self.assertIn("| 否了什么 |", draft)
+        self.assertIn("要有 2 张表", self.draft("07-异常与恢复.md").read_text(encoding="utf-8"))
 
-    def test_the_author_seed_is_the_authors(self) -> None:
-        """一次性种子归作者：他改了措辞，`skeleton` 重跑不打回。"""
-        story = self._chapter("术语", "| 术语 | 在本需求里的意思 |\n|---|---|\n"
-                                      "| 交通卡 | 我改过的措辞 |")
-        self.assertIn("我改过的措辞", story)
-        self._build("skeleton")            # 已存在就不动它
-        self.assertIn("我改过的措辞", self.story_path.read_text(encoding="utf-8"))
+    def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
+        """附录 A–D 归机器区，草稿里不放——放了他就要在两处维护同一张表。"""
+        draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
+        self.assertIn("{{一句这一节给评审者看什么}}", draft)
+        self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
+        self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
+
+    def test_existing_drafts_are_never_overwritten(self) -> None:
+        """中断恢复：缺哪章补哪章，写过的一个字节不动。"""
+        self.build("skeleton")
+        mine = self.draft("02-术语.md")
+        mine.write_text("## 术语\n\n我写到一半的内容\n", encoding="utf-8")
+        self.draft("03-范围.md").unlink()
+        self.build("skeleton")
+        self.assertEqual("## 术语\n\n我写到一半的内容\n", mine.read_text(encoding="utf-8"))
+        self.assertTrue(self.draft("03-范围.md").exists(), "缺的那份没补回来")
+
+
+class TheMachineZoneComesFromTheSource(RealRunCase):
+    """附录 A–D 每次都从当前真源重算，不读旧 story、不含占位。
+
+    读旧的就成了「真源 + 一份会漂移的副本」；含占位则作者填了会被下一次投影打回。
+    """
+
+    def author_appendix(self) -> str:
+        """作者填完草稿里属于他的那几处。"""
+        draft = self.draft("10-附录.md")
+        text = (draft.read_text(encoding="utf-8")
+                .replace("{{一句这一节给评审者看什么}}", "给评审看这一节。")
+                .replace("{{这份材料贡献了什么}}", "给出了业务规则"))
+        draft.write_text(text, encoding="utf-8")
+        self.build("chapter", "--chapter", "附录", "--from", str(draft))
+        return self.story()
+
+    def test_landing_the_appendix_projects_a_to_d(self) -> None:
+        self.build("skeleton")
+        appendix = self.author_appendix().split("## 附录", 1)[1]
+        self.assertEqual(4, appendix.count("story-build:begin"), "A–D 四节没投影")
+        self.assertIn("getAutoTopupPolicy", appendix)
+        self.assertIn("给评审看这一节。", appendix, "作者写的目的句丢了")
+        self.assertIn("给出了业务规则", appendix, "材料贡献句丢了")
+
+    def test_the_machine_zone_holds_no_placeholder(self) -> None:
+        self.build("skeleton")
+        appendix = self.author_appendix().split("## 附录", 1)[1]
+        for zone in appendix.split("<!-- story-build:begin ")[1:]:
+            body = zone.split("<!-- story-build:end -->", 1)[0]
+            self.assertNotIn("{{", body, "机器区里有作者要填的占位")
+
+    def test_the_code_status_column_stays_out(self) -> None:
+        """「代码现状」是 spec 给下游 AI 的仓内路径与检索结论，不进归档件。"""
+        self.build("skeleton")
+        appendix = self.author_appendix().split("## 附录", 1)[1]
+        self.assertNotIn("代码现状", appendix)
+        self.assertNotIn("oh-package.json5", appendix, "仓内路径进了归档件")
+
+    def test_reprojection_follows_the_source(self) -> None:
+        """真源变了，重投影跟上；作者区一个字节不动。"""
+        self.build("skeleton")
+        self.author_appendix()
+        use = self.feature / "spec" / "knowledge-use.yaml"
+        text = use.read_text(encoding="utf-8")
+        self.assertIn("本项目界面不新增图片或图标", text)
+        use.write_text(text.replace("本项目界面不新增图片或图标",
+                                    "改过的依据：本项目界面不新增图片或图标", 1),
+                       encoding="utf-8")
+        self.build("project")
+        story = self.story()
+        self.assertIn("改过的依据", story, "重投影没跟上真源")
+        self.assertEqual(4, story.count("story-build:begin"), "重投影后机器区数量变了")
+        self.assertIn("给评审看这一节。", story)
+        self.assertIn("给出了业务规则", story)
+
+    def test_the_verdict_basis_comes_from_the_source(self) -> None:
+        """判定的依据取 knowledge-use.yaml 的原文，不留 `{{依据}}` 让作者再抄。"""
+        self.build("skeleton")
+        appendix = self.author_appendix().split("## 附录", 1)[1]
+        self.assertIn("方向性布局参数一律用 start/end", appendix)
+
+    def test_tables_do_not_run_together(self) -> None:
+        """多张投影表之间要空行——连着写会被 markdown 并成一张错表。"""
+        self.build("skeleton")
+        story = self.author_appendix()
+        data = story.split("### 数据、配置与事件", 1)[1].split("### 改动边界", 1)[0]
+        lines = [l.strip() for l in data.split("\n")]
+        # 表头 = 下一行是分隔行的那一行。分隔行必须**非空**且只由 | - : 空格组成——
+        # 少了「非空」这一条，空行也满足，于是表后的第一行数据被当成新表头。
+        heads = [i for i, l in enumerate(lines)
+                 if l.startswith("|") and i + 1 < len(lines) and lines[i + 1]
+                 and set(lines[i + 1]) <= set("|-: ")]
+        self.assertGreaterEqual(len(heads), 3, "spec §9.2/9.3/9.4 三张表没都投过来")
+        for i in heads[1:]:
+            self.assertEqual("", lines[i - 1], "两张表之间没有空行，markdown 会并成一张")
 
 
 if __name__ == "__main__":

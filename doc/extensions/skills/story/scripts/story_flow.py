@@ -80,6 +80,9 @@ DESIGN = ("AR", "design.md")
 STORY_SRC_FROZEN = (
     "decisions.json", "copyedit.md",
 )
+#: 章草稿目录。作者在这里写、`chapter --from` 从这里读，所以登记前不能扫掉——
+#: check 没过时他要回到草稿接着改。登记成功后删：story 冻结了，草稿失去用途。
+DRAFTS_DIR = "drafts"
 
 
 def sweep_story_src(src: Path) -> list[str]:
@@ -101,7 +104,7 @@ def sweep_story_src(src: Path) -> list[str]:
     """
     if not src.is_dir():
         return []
-    keep = set(STORY_SRC_FROZEN) | {materials.MANIFEST[-1]}
+    keep = set(STORY_SRC_FROZEN) | {materials.MANIFEST[-1], DRAFTS_DIR}
     swept = []
     for item in sorted(src.iterdir()):
         if item.name in keep:
@@ -1150,6 +1153,10 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
 
+    **编号之前先重投影**：附录的接口、数据、边界、判定四节是机器区，
+    真源（spec §9、knowledge-use.yaml）在成文期间还会变——补一条规约判定、改一个
+    接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
+
     **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`
     统一铺——作者写业务名标题就够了。登记之后 story 冻结，所以编号必须在这之前完成；
     命令幂等，已经对的文件一个字节都不改。
@@ -1167,6 +1174,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
+    projected = subprocess.run(
+        [node, str(checker), "project", "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if projected.returncode != 0:
+        raise FlowError(
+            "story-build project 跑不通，成文态不予登记：\n"
+            + (projected.stderr or projected.stdout or "").strip())
     numbered = subprocess.run(
         [node, str(checker), "number", "--feature", feature_root.name,
          "--project-root", str(project_root)],
@@ -1194,6 +1209,11 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["story_src_digests"] = {
         name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
     }
+    # 草稿到此为止：story 冻结了，它就没有用途了；不进冻结台账，也不该留进归档。
+    drafts = src / DRAFTS_DIR
+    if drafts.is_dir():
+        shutil.rmtree(drafts, ignore_errors=True)
+        log("章草稿已清理（story 已冻结）")
     save(feature_root, contract)
     return {"status": "story_written", "story": str(story)}
 
