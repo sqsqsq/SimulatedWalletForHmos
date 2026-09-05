@@ -11,23 +11,24 @@
 | 项 | 值 |
 |---|---|
 | 补丁文件 | `01-framework-opencode-verifier.patch` |
-| 基线 | `framework/RELEASE-MANIFEST.json` 的 `source_commit` = `7401f221daf1bca082176bc87f61ea94506b4955`（发布版本 3.0.0） |
+| 基线 | `framework/RELEASE-MANIFEST.json` 的 `source_commit` = `85e266f185fbaec92263377dc71f6c15512ea3db`（发布版本 3.0.0 正式版） |
 | 路径基准 | Framework 仓根（已剥掉消费仓的 `framework/` 前缀），`git apply` 直接可用 |
-| 验证 | 从消费仓 HEAD 还原一份纯净 framework 树 → `git apply --check` 通过 → apply 后六个文件与本仓实现逐字节一致（行尾归一后，与 `framework_integrity` 同一口径） |
+| 验证 | 从 `85e266f` 还原一份纯净 3.0.0 树 → `git apply --check` 通过 → apply 后六个文件与本仓实现**逐字节一致**（行尾归一后，与 `framework_integrity` 同一口径） |
 
 ## 六个文件
 
 | 文件 | 改动 |
 |---|---|
-| `agents/opencode/templates/plugin/record-verifier-report.js` | **新增**。发布器：`task` 工具完成时做四方对账并发布 `verifier.report.<subject>.json` |
+| `agents/opencode/templates/plugin/record-verifier-report.js` | **新增**。发布器：`task` 工具完成时做四方对账并发布 `verifier.report.<subject>.json`。subject 按 3.0.0 的 `maison-verifier-request@2` 派生，字段与顺序同 `harness/scripts/utils/verifier-request.ts` 的 `canonicalRequestInput` |
 | `agents/opencode/templates/agents/verifier.md` | **新增**。只读 verifier 子 agent 定义，`permission:` 逐工具 deny |
 | `agents/opencode/adapter.yaml` | 增 `commands.subagents`（→ `.opencode/agent`）、`hooks`（→ `.opencode/plugin`）、`verifier_capability` |
 | `harness/scripts/utils/verifier-plan.ts` | `VERIFIER_CAPABILITY_PUBLISHERS` 增枚举值 `task_tool_result` |
-| `agents/adapter-schema.yaml` | publisher 枚举与两种机制的说明；`hooks` / `commands.subagents` 的描述放宽到「宿主自动发现」这一类落地方式 |
+| `agents/adapter-schema.yaml` | publisher 枚举**加一档** `task_tool_result` 与它的说明；`hooks` / `commands.subagents` 的描述放宽到「宿主自动发现」这一类落地方式。3.0.0 正式版改写过同一段（`subagent_stop` 的措辞），本补丁是**在你们的新措辞上加档**，不覆盖它 |
 | `agents/README.md` | 新机制的消费契约、降级矩阵与产物表 |
 
-**没有新增机制的地方**：transport 复用 `repo_file_request`；subject 派生、request 契约、报告 JSON
-结构、`loadVerifierEvidence` / receipt / closure 全部零改动；物化复用既有的 `hooks` 与
+**没有新增机制的地方**：transport 复用 `repo_file_request`；subject 派生口径（`@2`）、request 契约、
+报告 JSON 结构、`loadVerifierEvidence` / receipt / closure 全部零改动——插件只是把 TS 侧的
+`canonicalRequestInput` 在 JS 里复刻一遍，两边逐项相同；物化复用既有的 `hooks` 与
 `commands.subagents` 两个通用目录复制字段，没有为 opencode 新建物化通道；TypeScript 里没有任何
 adapter 名分支——能力面仍只由 `adapter.yaml` 的声明决定。
 
@@ -62,8 +63,8 @@ opencode 没有 SubagentStop 这一层事件。但它的 `task` 工具**建的�
 
 - 25 条发布器回归（正例经真实 `loadVerifierEvidence` 接受；每种绑定不成立形态各自落 bedside 且零 canonical；
   与 TS SSOT 的 subject/指纹跨实现等值）：全过；
-- 全量离线 500 条、失效形态自检 73/73、`check-adapter-catalog-consistency`、
-  `framework_integrity` / `framework_foreign_file`：全过；
+- 全量离线 608 条、失效形态自检 70 条 FAIL 0、`check-adapter-catalog-consistency`、
+  `framework_integrity` / `framework_foreign_file`：全过（均在 3.0.0 正式版地基上复跑）；
 - **真实 CLI 全链**：opencode + deepseek 起一次 spec 审查 → 独立子会话 verifier 只读读完材料 →
   插件发布 canonical → framework 验真面返回 `ok: true`，`invocation_subject == result_subject ==
   summary 现值`，`agent_id` 是子会话 id。
