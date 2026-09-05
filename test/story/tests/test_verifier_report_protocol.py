@@ -228,6 +228,46 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertIn("check-receipt.ts", out.stderr,
                       f"交付门没接到框架回执上：{out.stderr[-600:]}")
 
+    def test_the_gate_really_spawns_the_receipt(self) -> None:
+        """门要真的把回执跑起来——起不来的话它「报了个跑不了」，等于没有门。
+
+        `npx` 在 Windows 上是 `npx.cmd`，Node 18.20 / 20.12 之后拒绝不带 shell 地起 `.cmd`。
+        这里放一个替身 runner：断言它被 node 起起来了、它的话被原样带出来。
+        替身站的是 ts-node 的位置——要回归的是**怎么起**，不是 ts-node 本身。
+        """
+        self._stub_receipt(1, "替身回执：这个阶段没闭环")
+        out = self.check("--deliver")
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn("替身回执", out.stderr,
+                      f"回执没被起起来，门只报了个「跑不了」：{out.stderr[-600:]}")
+        self.assertNotIn("交付门跑不了", out.stderr)
+
+    def _stub_receipt(self, exit_code: int, say: str) -> None:
+        """替身回执：站 ts-node 的位置，按给定退出码与话术回。"""
+        harness = self.root / "framework" / "harness"
+        (harness / "scripts").mkdir(parents=True, exist_ok=True)
+        (harness / "scripts" / "check-receipt.ts").write_text("", encoding="utf-8")
+        dist = harness / "node_modules" / "ts-node" / "dist"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist.parent / "package.json").write_text('{"name":"ts-node","version":"0.0.0"}',
+                                                  encoding="utf-8")
+        (dist / "bin.js").write_text(
+            f"process.stderr.write({say!r});process.exit({exit_code});", encoding="utf-8")
+
+    def test_a_host_without_a_reviewer_says_so_instead_of_passing_silently(self) -> None:
+        """回执过了、本宿主没审查员——不拦，但要出声。
+
+        静默通过的话，没经过读者审查的 story 就这么交出去了，事后没人看得出来。
+        """
+        self._stub_receipt(0, "回执通过")
+        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
+        reports.mkdir(parents=True)
+        (reports / "summary.json").write_text(json.dumps({"phase": "spec"}), encoding="utf-8")
+
+        out = self.check("--deliver")
+        self.assertIn("未经读者审查即交付", out.stdout,
+                      f"降级没出声：{out.stdout[-600:]}")
+
     def test_deliver_is_refused_offline(self) -> None:
         out = subprocess.run(
             ["node", str(STORY_BUILD), "check", "--deliver", "--offline",

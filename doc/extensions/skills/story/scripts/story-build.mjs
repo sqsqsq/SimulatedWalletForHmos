@@ -26,6 +26,7 @@
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  */
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -1645,7 +1646,9 @@ function cmdCheck(ctx) {
   // 普通 check，那时读者审查还没发生，判它只会得到一个恒定的「不适用」；
   // 交付（远程单上传前、本地单闭环后）跑的是 `--deliver`，那时闭环该已经成立。
   if (ctx.args.deliver) {
-    problems.push(...deliveryProblems(ctx));
+    const delivery = deliveryProblems(ctx);
+    problems.push(...delivery.problems);
+    notes.push(...delivery.notes);
   }
 
   if (notes.length) {
@@ -1674,6 +1677,22 @@ function cmdCheck(ctx) {
 }
 
 /**
+ * 框架回执的入口 —— 直接用 node 起 framework 自己那份 ts-node，不经 shell。
+ *
+ * `npx` 在 Windows 上是 `npx.cmd`，而 Node 从 18.20 / 20.12 起拒绝不带 shell 地起 `.cmd`
+ * （`EINVAL`）；带 shell 又要为参数里的空格与引号操心。装 ts-node 的是 framework/harness
+ * 自己，路径解析得到就直接把它当普通 js 跑，两边都不用碰。
+ */
+function receiptRunner(harness) {
+  try {
+    const require = createRequire(import.meta.url);
+    return require.resolve('ts-node/dist/bin.js', { paths: [harness] });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 交付门 —— 阶段闭环成立了吗，读者审查这一项写成形态了吗。
  *
  * **闭环由框架判，扩展不重判**：报告在不在、终态块回显的 subject 对不对、
@@ -1684,32 +1703,48 @@ function cmdCheck(ctx) {
  * 非 PASS 时两类结论齐不齐。**回执通过而这一项 FAIL 是不该出现的**——它是 BLOCKER 级，
  * FAIL 时 verdict 必为 FAIL、回执必然过不去；真出现了，交付照样拦。
  *
- * 跑不起来不算通过：找不到框架、npx 起不来都如实报出来，让人自己跑一次。
+ * 跑不起来不算通过：找不到框架、起不了 ts-node 都如实报出来，让人自己跑一次。
+ * 本宿主没登记审查员时读者审查这一项判不了——那不是失败，但**要出声**：
+ * 静默通过的话，没经过审查的 story 就这么交出去了，事后没人看得出来。
+ *
+ * @returns {{problems: string[], notes: string[]}}
  */
 function deliveryProblems(ctx) {
   const harness = path.join(ctx.projectRoot, 'framework', 'harness');
   const receipt = path.join(harness, 'scripts', 'check-receipt.ts');
   const manual = 'cd framework/harness && npx ts-node scripts/check-receipt.ts '
     + `--feature ${ctx.args.feature} --phase spec`;
+  const fail = (msg) => ({ problems: [msg], notes: [] });
   if (!fs.existsSync(receipt)) {
-    return [`交付门跑不了：找不到 framework/harness/scripts/check-receipt.ts——`
-      + '闭环判定归框架，这个仓里没有框架就判不了交付，别把它当通过'];
+    return fail('交付门跑不了：找不到 framework/harness/scripts/check-receipt.ts——'
+      + '闭环判定归框架，这个仓里没有框架就判不了交付，别把它当通过');
   }
-  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const r = spawnSync(npx, ['ts-node', path.join('scripts', 'check-receipt.ts'),
-    '--feature', ctx.args.feature, '--phase', 'spec'],
-  { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
+  const runner = receiptRunner(harness);
+  if (!runner) {
+    return fail('交付门跑不了：framework/harness 里没有 ts-node——'
+      + `先在那个目录装依赖，再自己跑一次 \`${manual}\`；跑不了不等于过了`);
+  }
+  const r = spawnSync(process.execPath,
+    [runner, path.join('scripts', 'check-receipt.ts'),
+      '--feature', ctx.args.feature, '--phase', 'spec'],
+    { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
   if (r.error) {
-    return [`交付门跑不了：${r.error.message}——自己跑一次 \`${manual}\`，`
-      + '过了再来；跑不了不等于过了'];
+    return fail(`交付门跑不了：${r.error.message}——自己跑一次 \`${manual}\`，`
+      + '过了再来；跑不了不等于过了');
   }
   if (r.status !== 0) {
     const say = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/)
       .filter(Boolean).slice(-12).join(' / ');
-    return [`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`];
+    return fail(`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`);
   }
 
-  return storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec').problems;
+  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
+  return {
+    problems: review.problems,
+    notes: review.status === 'NOT_APPLICABLE'
+      ? [`story 未经读者审查即交付：${review.detail}`]
+      : [],
+  };
 }
 
 // --------------------------------------------------------------------------
