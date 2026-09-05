@@ -111,6 +111,13 @@ function isEmptyReason(reason) {
  * **§9 那一章只在走 `/story` 时才写**，所以找不到它返回 null，调用方不判这一条——
  * 那不是「缺了一章」，是这个需求本来就不写它。直接跑 spec 的需求里，
  * 这一列是自由文本，扩展对它们要保持隐形。
+ *
+ * **只收数据行**：表头那一格是列名（「云侧接口」「键名/表名」这类），不是实体。
+ * 把它收进来，`contract: 云侧接口` 就验得过——而那是一列的名字，不是任何一个落点。
+ * 表头认得出来：它的下一行是分隔行。
+ *
+ * **章在而一个实体都没有，返回的是空集合，不是 null**：那两件事的处置相反——
+ * 没有这一章 = 不判；有这一章而空 = 任何 `contract` 都引不到东西，逐条都要报。
  */
 function contractNames(specText) {
   const rows = String(specText ?? '').split(/\r?\n/);
@@ -118,11 +125,14 @@ function contractNames(specText) {
   if (start < 0) return null;
   const level = (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
   const names = new Set();
+  const isSeparator = (l) => /^\|[\s:|-]+\|?$/.test(String(l ?? '').trim());
   for (let i = start + 1; i < rows.length; i += 1) {
     const h = rows[i].trim().match(/^(#{2,4})\s+/);
     if (h && h[1].length <= level) break;
     const line = rows[i].trim();
     if (!line.startsWith('|')) continue;
+    if (isSeparator(line)) continue;
+    if (isSeparator(rows[i + 1])) continue;          // 下一行是分隔行 = 这行是表头
     const first = line.replace(/^\||\|$/g, '').split('|')[0]?.replace(/[`*]/g, '').trim() ?? '';
     if (!first || /^[-: ]*$/.test(first) || /^\{.*\}$/.test(first)) continue;
     names.add(first);
@@ -259,9 +269,13 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         problems.push(`${id} 同时写了 contract 与 impact —— 二选一：`
           + '落在 §9 实体上就写 contract，落在别处就写 impact');
       }
-      if (at && contracts && contracts.size && !contracts.has(at)) {
-        problems.push(`${id} 的 contract「${at}」不在 §9 技术契约里`
-          + `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
+      // `contracts === null` = 这个需求不写 §9，本条不判；空集合是**判得了的**：
+      // 那一章在，只是一个实体都没登记，于是任何 `contract` 都引不到东西。
+      if (at && contracts && !contracts.has(at)) {
+        const listed = contracts.size
+          ? `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
+          : '（§9 现在一个实体都没登记）';
+        problems.push(`${id} 的 contract「${at}」不在 §9 技术契约里${listed}`
           + ' —— 这一列引的是 §9 登记过的接口、存储键或配置项名，先在那里登记；'
           + '落点不在 §9 实体上时改用 impact');
       }

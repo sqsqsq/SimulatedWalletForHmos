@@ -485,7 +485,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
     # 轮次叙述：不带数字也算。「两跑的作者都…」「一次真实实跑说明了…」都是维护痕迹，
     # 交付面用现在时讲道理就够。`上一轮` 不在列——那是流程概念（round 开出的上一轮）。
-    run_narrative = re.compile(r"实跑|首跑|[一二三四两]跑|[两三四]轮(?!次)")
+    run_narrative = re.compile(r"实跑|首跑|[一二三四五六七八九十两]跑|[两三四]轮(?!次)")
     business_words = _case_business_words()
     case_names = _case_and_suite_names()
     hits = []

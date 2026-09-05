@@ -322,10 +322,14 @@ function acceptanceCoverage(ctx, specIds) {
  * 「不涉及：<依据>」独行豁免：那是空节规则的既有形态。
  */
 function strayProse(body) {
-  for (const raw of String(body ?? '').split(/\r?\n/)) {
+  // 收到的是 `sectionBody` 切出来的**行数组**。先拼成字符串再按行切，数组会以逗号
+  // 连成一整行，节首那个空行也就不再是空行——真实 spec 的每一节都被判成「表外有段落」。
+  // 行的边界由上游给，这里不重新猜。
+  for (const raw of Array.isArray(body) ? body : String(body ?? '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('|') || line.startsWith('#')) continue;
     if (/^不涉及[:：]\s*\S/.test(line)) continue;
+    if (/^([-*_])\1{2,}$/.test(line)) continue;      // 分隔线：章与章之间的横线，不是段落
     if (/^[-*+]\s/.test(line) || /^\d+[.、)]\s/.test(line)) continue;   // 列表另说
     if (line.startsWith('<!--')) continue;
     return line.replace(/^>\s*/, '');

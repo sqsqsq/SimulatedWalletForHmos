@@ -1342,7 +1342,7 @@ function cmdCheck(ctx) {
           : [[`${ch.title}·${at}`, findSubsection(text, at)]];
       if (slotCondition(ctx, slot.when) === false) {
         // 条件不成立的节不该存在：没有兄弟单据却写了「交接约定」，那一节填进去的
-        // 只能是别的东西——五跑填的是端云约定。
+        // 只能是别的东西——常见的是把端云约定塞进来充数。
         for (const [label, body] of targets) {
           if (at && at !== '*' && body !== null) {
             problems.push(`「${label}」这一节不该有`
