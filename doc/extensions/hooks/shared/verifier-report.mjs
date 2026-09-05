@@ -3,9 +3,10 @@
  *
  * ## 为什么这条判据挂在 post_check 上
  *
- * 阶段闭环是框架定义的三步：harness 第一次运行 → verifier 子 agent 语义审查 → **主 agent 重跑 harness 回填凭证**。
- * post_check 在每次 harness 运行时执行，所以回填那一次运行必然看得到 verifier 的报告。
- * 第一次运行时报告还不存在，本判据记 `NOT_APPLICABLE`——那不是通过，是「还轮不到判」。
+ * 阶段闭环是框架定义的三步：harness 运行 → verifier 子 agent 语义审查 → `check-receipt` 收口
+ * （回执是 harness 的只读投影，`check-receipt` 自己生成并校验，没有「重跑 harness 回填」这一步）。
+ * post_check 在每次 harness 运行时执行，第一次运行时报告还不存在，本判据记 `NOT_APPLICABLE`——
+ * 那不是通过，是「还轮不到判」；报告落盘之后的任何一次运行都判得到。
  *
  * ## 判的是形态，不是内容
  *

@@ -144,7 +144,11 @@ export default guard('coding', async (ctx) => {
     fix: FIX,
     checks: [
       { id: 'knowledge_landing_in_code', status: problems.length ? STATUS.FAIL : STATUS.PASS,
-        detail: `义务 ${obligations.length} 条、角色 ${roles.length} 个；问题 ${problems.length} 条`
+        // 这一条判的是**契约实体标识在不在**（按范围找实体），不是「义务落实了没有」——
+        // 后者是语义判断，由 overlay 的同名 semantic_check 交给 verifier。
+        // 名字沿用是因为它已经进了 trace 与回执；措辞在这里说清，免得被当成落实的证明。
+        detail: `契约实体标识存在：义务 ${obligations.length} 条、角色 ${roles.length} 个；`
+          + `问题 ${problems.length} 条`
           + (warnings.length ? `；告警 ${warnings.length} 条：${warnings.join('；')}` : '') },
     ],
     inputs: present.map(rel => path.resolve(ctx.projectRoot, rel)),

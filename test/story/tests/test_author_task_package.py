@@ -229,9 +229,12 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         """
         self.write_contract("story_written")
         action = self.status()["action"]
-        for step in ("phase-completion-receipt", "check-receipt", "archive"):
+        for step in ("check-receipt", "archive"):
             self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
         self.assertIn("不再跑 harness", action)
+        # 回执是 harness 的只读投影（receipt_schema 2.1），agent 零手填——
+        # 让模型去回填一份它不该碰的文件，轻则白做，重则被判手写凭证。
+        self.assertNotIn("回填", action, "还在让模型回填 framework 的凭证")
 
     def test_a_gate_step_shows_the_shape_of_the_file_to_write(self) -> None:
         """S1–S4 的侧车形状：二跑为弄清它切片读了本脚本六次。"""

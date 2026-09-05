@@ -883,8 +883,8 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
         # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
         return ("run_archived",
                 "叙事件已登记成文。按这个顺序走完，中间不回头：`story-build build` 渲染 AR/review.md"
-                " → 跑 harness（spec 闭环）→ verifier 一次 → 回填 phase-completion-receipt.md → "
-                "check-receipt → `/story archive` 归档。**verifier 之后不再跑 harness、不再改产物**")
+                " → 跑 harness（spec 闭环）→ verifier 一次 → check-receipt → `/story archive` 归档。"
+                "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填")
     if contract.get("status") == "complete":
         return spec_stage_step(feature_root)
 

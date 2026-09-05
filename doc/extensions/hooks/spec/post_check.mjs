@@ -469,7 +469,7 @@ export default guard('spec', async (ctx) => {
   }
 
   // ---- story 审查执行落盘 ----
-  // 闭环第三步（主 agent 重跑 harness 回填凭证）时 verifier 报告已在，本判据那时才真正生效。
+  // verifier 报告落盘之后的运行才判得到它，本判据那时才真正生效。
   // 同上：注入了不等于执行了。这一项只核「结果块在不在、两类结论齐不齐」，不核内容。
   const storyReview = storyReviewLanding(ctx, featureRoot);
   problems.push(...storyReview.problems);

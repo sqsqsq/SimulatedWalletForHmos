@@ -102,10 +102,11 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 「门禁报错了要不要修」「check 过了下一步做什么」「进 harness 还是进 verifier」
 「这一步做完了要不要继续」**都不是停等点**——那是义务不是选择题。
 
-**verifier PASS 之后的顺序是固定的**：回填 `phase-completion-receipt.md` → `check-receipt`
-→ `/story archive`，**中间不再跑 harness**。harness 每跑一次都重新派生 subject，换了代
-就要重审，而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
+**verifier PASS 之后的顺序是固定的**：`check-receipt` → `/story archive`，
+**中间不再跑 harness**。harness 每跑一次都重新派生 subject，换了代就要重审，
+而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
 并且那之后 verifier 要再来一次。
+**完成回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己生成并校验。
 
 ### 停等消息怎么写：三段，不超过 12 行
 
