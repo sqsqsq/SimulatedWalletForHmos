@@ -132,7 +132,8 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
         """落点写了、文件不在 = 派了 verifier 却没把回复写下来。"""
         out = self.run_with(None)
         self.assertEqual("FAIL", out["status"])
-        self.assertIn("原样写到", out["problems"][0])
+        self.assertIn("原样全文", out["problems"][0])
+        self.assertIn("重新写到", out["problems"][0])
 
 
 class TheSummaryRowIsTheConclusion(unittest.TestCase):
@@ -178,6 +179,47 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
     def test_a_non_pass_row_needs_both_keys(self) -> None:
         out = self._run(row("FAIL") + DETAILS)
         self.assertEqual("PASS", out["status"], f"带两键的 FAIL 报告解析不过：{out}")
+
+    def test_a_three_column_row_is_not_evidence(self) -> None:
+        """少一列时最后一格是 severity，非空——按「取最后一格」判会把它当证据放过去。"""
+        out = self._run("| id | status | severity |\n|---|---|---|\n"
+                        "| story_reader_review | PASS | BLOCKER |\n")
+        self.assertEqual("FAIL", out["status"], out)
+        self.assertIn("少了证据列", out["problems"][0])
+
+    def test_another_checks_keys_do_not_count_as_this_ones(self) -> None:
+        """两个键要在**这一条自己**的 details 下——全文搜的话别项的键会算到它头上。"""
+        borrowed = (
+            "\n```yaml\n"
+            "verification_result:\n"
+            "  checks:\n"
+            "    - id: other_check\n"
+            "      status: FAIL\n"
+            "      details:\n"
+            "        blocking_findings: []\n"
+            "        advisories: []\n"
+            "    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details: |\n"
+            "        第 5 章与第 8 章对不上。\n"
+            "```\n")
+        out = self._run(row("FAIL") + borrowed)
+        self.assertEqual("FAIL", out["status"], f"借了别项的键就放行：{out}")
+        self.assertIn("它自己的明细里缺", out["problems"][0])
+
+    def test_the_fix_hint_never_asks_the_author_to_write_the_report(self) -> None:
+        """读报错的是作者，而报告必须是子代理回复的原样落盘——叫他补就是叫他伪造证据。"""
+        reports = {
+            "缺行": "| id | status | severity | 证据 |\n|---|---|---|---|\n",
+            "证据空": row("PASS", ""),
+            "缺键": row("FAIL"),
+        }
+        for name, report in reports.items():
+            with self.subTest(shape=name):
+                out = self._run(report)
+                self.assertEqual("FAIL", out["status"])
+                self.assertIn("不要自己补", out["problems"][0])
+                self.assertIn("再投给 verifier", out["problems"][0])
 
     def test_a_non_pass_row_missing_a_key_fails(self) -> None:
         out = self._run(row("FAIL") + DETAILS_MISSING_ADVISORIES)

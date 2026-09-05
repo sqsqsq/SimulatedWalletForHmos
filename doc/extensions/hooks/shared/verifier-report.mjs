@@ -30,6 +30,19 @@ const STORY_REVIEW_ID = 'story_reader_review';
 /** 非 PASS 时明细里必须有的两个键。可以是空列表，但不能缺席。 */
 const DETAIL_KEYS = ['blocking_findings', 'advisories'];
 
+/** 汇总表的列数：id / status / severity / 一行证据。列序见框架的输出契约。 */
+const SUMMARY_COLUMNS = 4;
+
+/**
+ * 报错说给**读报错的那个人**听 —— 他是作者，不是审查员。
+ *
+ * 报告必须是子代理回复的原样落盘，作者照着报错去补一行、补一个键，补出来的是
+ * 伪造的审查证据。所以缺什么都不叫他写，叫他把同一份 request 再投一次。
+ */
+const INVALID_EVIDENCE =
+  '这份回复不是有效证据：把同一份 request 再投给 verifier，拿到完整回复后原样全文落盘。'
+  + '**不要自己补**——补出来的不是审查结论。';
+
 /**
  * 逐单元裁决表的表头特征 —— 审查任务明说不出这张表，出了就是**做成了另一件事**。
  *
@@ -53,19 +66,35 @@ function reportLocation(projectRoot, feature, phase) {
 }
 
 /**
- * 汇总表里 `story_reader_review` 那一行。
+ * 汇总表里 `story_reader_review` 那一行，原样返回它的格子。
  *
  * 认的是「以 | 分格、第一格是这个 id」的行，不认散落在正文里的同名字样——
- * 后者在讲这一项，不是这一项的结论。
+ * 后者在讲这一项，不是这一项的结论。**不在这里判够不够格**：格子少了是一种
+ * 具体的写法问题，要能与「压根没这一行」分开报。
  */
 function summaryRow(text) {
   for (const line of text.split(/\r?\n/)) {
     const raw = line.trim();
     if (!raw.startsWith('|')) continue;
     const cells = raw.split('|').slice(1, -1).map(c => c.trim());
-    if (cells.length >= 2 && cells[0].replace(/`/g, '') === STORY_REVIEW_ID) return cells;
+    if (cells.length && cells[0].replace(/`/g, '') === STORY_REVIEW_ID) return cells;
   }
   return null;
+}
+
+/**
+ * 明细里 `story_reader_review` 那一条的范围 —— 到下一条 `- id:` 为止。
+ *
+ * 在全文里搜两个键，别项的键会算到本项头上：一份报告里另一条 check 写全了
+ * `blocking_findings` 与 `advisories`，而读者审查这一条只有一段话，全文搜是搜得到的。
+ * 判的是**这一条自己**说清没说清。
+ */
+function detailBlock(text) {
+  const at = text.search(new RegExp(`-\\s*id:\\s*\`?${STORY_REVIEW_ID}\`?\\b`));
+  if (at < 0) return null;
+  const rest = text.slice(at + 1);
+  const next = rest.search(/-\s*id:\s*/);
+  return next < 0 ? rest : rest.slice(0, next);
 }
 
 /**
@@ -90,7 +119,7 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     return {
       status: 'FAIL',
       problems: [`verifier 报告不在落点上：${abs}——`
-        + '报告由派 verifier 的那个 agent 把子代理回复原样写到 `summary.verifier_report`；'
+        + '把 verifier 的回复**原样全文**重新写到 `summary.verifier_report` 指向的那份文件；'
         + '没有它，读者审查有没有执行无从核对'],
       detail: '报告缺席',
     };
@@ -102,29 +131,40 @@ export function storyReviewProblems(projectRoot, feature, phase) {
       status: 'FAIL',
       problems: [`verifier 报告的汇总表里没有 ${STORY_REVIEW_ID} 这一行——`
         + '这一项是 story 语义质量的发现者，汇总表里找不到它就等于这一轮没审。'
-        + '按输出契约补一行：id、status、severity、一行证据'],
+        + INVALID_EVIDENCE],
       detail: '汇总表缺行',
     };
   }
+  // 汇总表四列（id / status / severity / 证据），列序见框架的输出契约。
+  // 少一列时最后一格是 severity，非空——按「取最后一格」判会把它当证据放过去。
+  if (row.length < SUMMARY_COLUMNS) {
+    return {
+      status: 'FAIL',
+      problems: [`${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
+        + '汇总表是 id、status、severity、一行证据四格。' + INVALID_EVIDENCE],
+      detail: `汇总表只有 ${row.length} 列`,
+    };
+  }
   const status = row[1].replace(/`|\*/g, '').toUpperCase();
-  const evidence = row[row.length - 1];
+  const evidence = row[SUMMARY_COLUMNS - 1];
   if (!evidence || /^[-—–]+$/.test(evidence)) {
     return {
       status: 'FAIL',
       problems: [`${STORY_REVIEW_ID} 那一行的证据格是空的——`
-        + '空证据与没审长得一样。写一行你逐章过了什么，不必长'],
+        + '空证据与没审长得一样。' + INVALID_EVIDENCE],
       detail: '证据格为空',
     };
   }
 
   if (status !== 'PASS') {
-    const missing = DETAIL_KEYS.filter(k => !text.includes(k));
+    const block = detailBlock(text) ?? '';
+    const missing = DETAIL_KEYS.filter(k => !block.includes(k));
     if (missing.length) {
       return {
         status: 'FAIL',
-        problems: [`${STORY_REVIEW_ID} 判了 ${status}，明细里却缺 ${missing.join('、')}——`
-          + '两类结论都要在：阻断问题与提醒各归各的键，没有就写成空列表；'
-          + '缺席分不清它是没发现还是没审'],
+        problems: [`${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
+          + '两类结论都要在这一条的 `details` 下：阻断问题与提醒各归各的键，'
+          + '没有就写成空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
         detail: `缺 ${missing.join('、')}`,
       };
     }

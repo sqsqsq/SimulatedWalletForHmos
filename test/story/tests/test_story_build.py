@@ -1363,6 +1363,35 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
 
+    def test_a_written_chapter_gets_its_draft_back_from_the_current_story(self) -> None:
+        """返修要有落点：成文登记删掉草稿目录，之后 verifier 报了阻断问题，
+        作者手上就没有可改的东西了。补回来的必须是**现稿**——补起点等于把成品换掉，
+        而他下一次落盘就把成品覆盖了。
+        """
+        self.build("skeleton")
+        draft = self.draft("02-术语.md")
+        mine = "| 术语 | 在本需求里的意思 |\n|---|---|\n| 自动充值 | 余额低于阈值时自动补 |\n"
+        draft.write_text(mine, encoding="utf-8")
+        self.build("chapter", "--chapter", "术语", "--from", str(draft))
+
+        shutil.rmtree(self.drafts)          # 成文登记做的就是这件事
+        self.build("skeleton")
+
+        back = self.draft("02-术语.md").read_text(encoding="utf-8")
+        self.assertIn("自动充值", back, "补回来的是起点，不是现稿——作者改完会把成品覆盖掉")
+        self.assertNotIn("<!-- 待写", back)
+        # 恒等：原样再落一次盘，story 一个字节不变
+        before = self.story()
+        self.build("chapter", "--chapter", "术语", "--from", str(self.draft("02-术语.md")))
+        self.assertEqual(before, self.story(), "按现稿补回的草稿再落盘却改动了 story")
+
+    def test_a_pending_chapter_still_gets_the_seed(self) -> None:
+        """还没写的章补的仍是起点：形态说明、槽位表头都在里面。"""
+        self.build("skeleton")
+        shutil.rmtree(self.drafts)
+        self.build("skeleton")
+        self.assertIn("{{参与方}}", self.draft("04-业务方案.md").read_text(encoding="utf-8"))
+
     def test_existing_drafts_are_never_overwritten(self) -> None:
         """中断恢复：缺哪章补哪章，写过的一个字节不动。"""
         self.build("skeleton")
@@ -1521,16 +1550,24 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertIn("story-build:begin 接口", story)
 
 
-class DraftsFollowWhatIsStillUnwritten(RealRunCase):
-    """恢复时只补还没写的章：给已落盘的章重建初始草稿，等于把成品换回起点。"""
+class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
+    """恢复时缺哪章补哪章，但**已落盘的章补的是现稿**，不是起点。
 
-    def test_a_landed_chapter_gets_no_fresh_draft(self) -> None:
+    补起点等于把成品换回白纸，作者下一次落盘就把成品覆盖了。补现稿是恒等：
+    不动它什么也不变，动了改的正是他要改的那一章。
+    """
+
+    def test_a_landed_chapter_comes_back_as_the_current_story_not_the_seed(self) -> None:
         self.build("skeleton")
         draft = self.draft("02-术语.md")
+        draft.write_text("| 术语 | 在本需求里的意思 |\n|---|---|\n| 甲词 | 甲词的意思 |\n",
+                         encoding="utf-8")
         self.build("chapter", "--chapter", "术语", "--from", str(draft))
         draft.unlink()
         self.build("skeleton")
-        self.assertFalse(draft.exists(), "已落盘的章又被建了一份初始草稿")
+        back = draft.read_text(encoding="utf-8")
+        self.assertIn("甲词", back, "补回来的是起点，成品丢了")
+        self.assertNotIn("<!-- 待写", back)
         self.assertTrue(self.draft("03-范围.md").exists(), "还没写的章该有草稿")
 
 

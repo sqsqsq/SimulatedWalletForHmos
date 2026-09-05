@@ -106,10 +106,11 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
   自己先生成再校验；要写备注写 `<phase>/notes.md`。
   **`check --deliver` 是交付门**：它把回执再跑一次，通过之后核读者审查那一项写没写成形态。
   远程单在上传之前跑它（`/story archive` 自带），本地单没有归档，它就是最后一道。
-- **verifier 报了阻断问题怎么办**：跑 `story_flow.py reopen` 撤销成文登记（唯一的回退出口），
-  在 `AR/story-src/drafts/` 的草稿上改，再 `chapter` → `number` → `check` →
-  `story_flow.py story` 重新登记 → harness → verifier 再审。材料变了、subject 换代，
-  这是框架定义的正常返修，不是重复审。
+- **verifier 报了阻断问题怎么办**：`story_flow.py reopen` 撤销成文登记（唯一的回退出口）
+  → `story-build skeleton`（登记时草稿已随 story 冻结被删，这一步把已写完的章按现稿补回来，
+  story.md 一个字节不动）→ 在那一章的草稿上改 → `chapter --from <草稿>` → `number` →
+  `check` → `story_flow.py story` 重新登记 → harness → verifier 再审。
+  材料变了、subject 换代，这是框架定义的正常返修，不是重复审。
 
 ## 三、§9 技术契约怎么写
 

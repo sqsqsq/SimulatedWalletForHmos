@@ -2104,19 +2104,34 @@ function draftPath(ctx, index, title) {
 /**
  * 缺哪章补哪章，**已存在的绝不覆盖** —— 草稿里可能有作者还没落盘的内容。
  *
+ * 两种补法，按这一章写没写分：
+ *
+ * - **还带着待写标记**：补一份起点草稿（形态说明、槽位表头、术语行、spec 的图都在里面）；
+ * - **已经写完**：补一份**现稿正文**。它不是起点——用起点会把成品换掉，而下一次落盘
+ *   就把成品覆盖了。用现稿则是恒等：不落盘什么也不变，落盘也只是把原文写回去。
+ *
+ * 为什么已写的章也要补：成文登记会删掉整个草稿目录（story 冻结了，草稿没有用途）。
+ * 之后审查报了阻断问题，`reopen` 撤销登记，作者要改的正是某一章——那时他手上
+ * 没有可改的东西。补回来，返修就有落点。
+ *
  * @returns {string[]} 这次新建的草稿文件名
  */
 function writeDrafts(ctx, spec, storyText) {
   const made = [];
-  // 已经落盘的章不建草稿：给它建一份初始草稿，等于把作者写好的内容替换成起点，
-  // 而他下一次落盘就会把成品覆盖掉。只补仍带待写标记的那几章。
   const pending = storyText && new Set(pendingChapters(storyText).map(normalizeHeading));
+  const written = storyText
+    ? new Map(storySections(storyText).map(s2 => [normalizeHeading(s2.title), s2.text]))
+    : new Map();
   fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
   ctx.contract.chapters.forEach((ch, i) => {
     const file = draftPath(ctx, i, ch.title);
     if (fs.existsSync(file)) return;
-    if (pending && !pending.has(normalizeHeading(ch.title))) return;
-    fs.writeFileSync(file, `${chapterDraft(ctx, ch, spec).join('\n').trimEnd()}\n`, 'utf-8');
+    const key = normalizeHeading(ch.title);
+    const done = pending && !pending.has(key);
+    const body = done ? written.get(key) : null;
+    if (done && body === undefined) return;         // 章缺失由 check ① 报，这里不猜
+    const text = done ? body : chapterDraft(ctx, ch, spec).join('\n');
+    fs.writeFileSync(file, `${text.trimEnd()}\n`, 'utf-8');
     made.push(path.basename(file));
   });
   return made;
@@ -2132,7 +2147,8 @@ function cmdSkeleton(ctx) {
     const left = pendingChapters(existing);
     process.stdout.write(`[story-build skeleton] AR/story.md 已存在，未改动`
       + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）；`
-      + `${made.length ? `补建草稿 ${made.length} 份` : '草稿齐备，一份未覆盖'}\n`);
+      + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
+        : '草稿齐备，一份未覆盖'}\n`);
     return;
   }
   const titles = ctx.contract.chapters.map(c => c.title);
