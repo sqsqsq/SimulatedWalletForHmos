@@ -75,6 +75,11 @@ verifier 或真实 CLI。局部能力组合成用户可见行为时，再沿完�
 适配行为回 Adaptation，观测与测量错误回测试域。缺少 Framework 能力时明确提出或补齐 Framework 能力，
 不在 Extension 内复制一套旁路框架。
 
+`.opencode/` 是**本仓 story 分支的 CLI 测试装置**：外网实跑用 opencode，内网用 codex。
+它不进 `story-adaptation` 的包，也不为内网适配。opencode 的 `verifier_subagent` 登记与
+子代理模板是本仓对 framework 的仅有两处差异，不含逻辑改动，按 drift 具名长期放行、
+不交上游；framework 升级时 `init.task_decision` 对这两处选「保留」。
+
 Framework 的正式交付落在其权威源，并由 framework-init UPDATE 进入消费仓。本工程 vendored `framework/` 只有在用户明确授权的
 单步验证中可以临时修改；本地验证通过不等于上游或内网已经获得能力，交付时须保留上游基线、可复现补丁和临时放行的失效条件。
 

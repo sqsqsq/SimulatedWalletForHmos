@@ -4,16 +4,12 @@
 黑盒跑真实 hook（node + stdin JSON），不 import 内部函数——判据是「同仓两个会话时
 hook 的对外行为对不对」，而不是某个函数返回了什么。
 
-覆盖两件事：
-  1. 本会话跑过这个阶段的 harness → 未闭环时拦截（exit 2）；
-  2. 归属不成立时 record hook 不把报告写进 feature 目录、更不新建那个目录。
+覆盖一件事：本会话跑过这个阶段的 harness → 未闭环时拦截（exit 2）。
 
-原本还有第三条「本会话没跑过 → 放行且不把 state 盖成自己的」，F6 合并
-framework 3.0.0 后退役：新协议不再按 transcript 判归属，报告改为按 subject
-分区落盘（verifier.report.<64位subject>.json），谁也没有能力覆盖另一个 subject
-的文件；Stop 新鲜度只读 session_id + updated_at。「同仓两个会话抢 state」这个
-被批次 1 T0-T18 修过的形态，在新协议下不再由归属判定承载，因此这条判据没有
-对象了。它是否真的被覆盖，看冒烟短程里 verifier 留痕正不正常。
+报告落盘那两条判据没有对象了：报告不再由钩子从子 agent 的终态消息生成，
+而是由派 verifier 的那个 agent 原样写到 `summary.verifier_report` 指向的路径，
+落点由 harness 按 subject 定死，谁也覆盖不了另一个 subject 的文件。
+「同仓两个会话抢 state」这个形态，在新协议下不再由归属判定承载。
 """
 import json
 import os
@@ -97,18 +93,6 @@ class TestSessionOwnership(unittest.TestCase):
             r = _run("check-phase-completion.mjs", payload)
             self.assertEqual(r.returncode, 2,
                              f"跑过 harness 的会话未闭环时应被拦截；stderr={r.stderr[:300]}")
-
-    def test_report_not_written_into_feature_dir_without_ownership(self):
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d)
-            payload = _make_project(tmp, ran_harness=False, spawned_verifier=True)
-            r = _run("record-verifier-report.mjs", payload)
-            self.assertEqual(r.returncode, 0)
-            self.assertFalse((tmp / "doc" / "features" / FEATURE).exists(),
-                             "不是本会话的 state，不该凭 hook 触发建出 feature 目录")
-            self.assertTrue((tmp / "framework" / "harness" / "state"
-                             / "last-verifier-report.md").exists(),
-                            "归属不成立时报告应落到 state 兜底目录，不能丢")
 
 
 if __name__ == "__main__":

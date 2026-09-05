@@ -139,36 +139,42 @@ class SmokeFixture(unittest.TestCase):
 
 
 class SmokeChainVerification(unittest.TestCase):
-    """verify() 只从磁盘原件重建链路——每种绑定不成立的形态都必须判 FAIL。"""
+    """verify() 只从磁盘原件重建链路——每种绑定不成立的形态都必须判 FAIL。
 
-    def _ws(self, tmp: Path, *, summary_subject=SUBJECT, report: dict | None = None,
-            request: bool = True) -> Path:
+    报告由**调用方**原样写出，落点写在 `summary.verifier_report`：没有钩子代它发布，
+    所以「谁发布的」「子会话是不是独立的」这两面在仓内没有对象了。
+    留下的是三件仍然可核的事：落点声明了没有、那份 MD 写了没有、
+    它的终态块认不认这一版产物。
+    """
+
+    def _ws(self, tmp, *, summary_subject=SUBJECT, landing: bool = True,
+            report: str | None = None, request: bool = True):
         ws = tmp / "ws"
         reports = ws / "doc" / "features" / run_smoke.FEATURE / run_smoke.PHASE / "reports"
         reports.mkdir(parents=True)
         summary = {"schema_version": "2.0"}
         if summary_subject:
             summary["verifier_subject_id"] = summary_subject
+        rel = (f"doc/features/{run_smoke.FEATURE}/{run_smoke.PHASE}/reports"
+               f"/verifier.report.{summary_subject}.md")
+        if landing and summary_subject:
+            summary["verifier_report"] = rel
         (reports / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
         if request and summary_subject:
             (reports / f"verifier.request.{summary_subject}.json").write_text("{}", encoding="utf-8")
         if report is not None:
-            (reports / f"verifier.report.{summary_subject}.json").write_text(
-                json.dumps(report, ensure_ascii=False), encoding="utf-8")
+            (ws / rel).write_text(report, encoding="utf-8")
         return ws
 
     @staticmethod
-    def _good_report(subject=SUBJECT) -> dict:
-        return {
-            "schema_version": "2.0", "state": "published",
-            "feature": run_smoke.FEATURE, "phase": run_smoke.PHASE,
-            "subject_id": subject, "invocation_subject": subject, "result_subject": subject,
-            "agent_id": "ses_child", "verdict": "PASS", "blocker_count": 0,
-            "audit": {"parent_session_id": "ses_parent",
-                      "recorded_by": "opencode/plugin/record-verifier-report.js"},
-        }
+    def _good_report(subject=SUBJECT) -> str:
+        return ("审查结论：通过。\n\n"
+                "<!-- maison-verifier-result:v1 -->\n"
+                f"verifier_subject_id: {subject}\n"
+                "verdict: PASS\nblocker_count: 0\n"
+                "<!-- /maison-verifier-result:v1 -->\n")
 
-    def _ids(self, ws: Path) -> dict[str, str]:
+    def _ids(self, ws) -> dict:
         return {c["id"]: c["status"] for c in run_smoke.verify(ws, quiet=True)["checks"]}
 
     def test_missing_subject_is_reported_as_no_request(self):
@@ -176,39 +182,28 @@ class SmokeChainVerification(unittest.TestCase):
             ws = self._ws(Path(d), summary_subject=None)
             self.assertEqual("FAIL", self._ids(ws)["request_generated"])
 
-    def test_missing_report_fails(self):
+    def test_a_summary_without_a_landing_fails(self):
+        """没有落点 = 本宿主没登记审查员；冒烟跑的是登记过的那台，缺了就是链路断了。"""
+        with tempfile.TemporaryDirectory() as d:
+            ws = self._ws(Path(d), landing=False)
+            self.assertEqual("FAIL", self._ids(ws)["report_landing_declared"])
+
+    def test_a_declared_landing_with_no_file_fails(self):
         with tempfile.TemporaryDirectory() as d:
             ws = self._ws(Path(d))
-            self.assertEqual("FAIL", self._ids(ws)["report_published"])
+            self.assertEqual("FAIL", self._ids(ws)["report_written"])
 
     def test_subject_mismatch_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            report = self._good_report()
-            report["result_subject"] = OTHER
-            ws = self._ws(Path(d), report=report)
+            ws = self._ws(Path(d), report=self._good_report(OTHER))
             self.assertEqual("FAIL", self._ids(ws)["subject_bound"])
 
-    def test_verifier_sharing_the_main_session_fails(self):
-        with tempfile.TemporaryDirectory() as d:
-            report = self._good_report()
-            report["agent_id"] = "ses_parent"
-            ws = self._ws(Path(d), report=report)
-            self.assertEqual("FAIL", self._ids(ws)["verifier_independent"])
-
-    def test_report_from_another_publisher_fails(self):
-        """不是本机制发布的报告不算数——主 agent 手写一份同名文件在这里被挡。"""
-        with tempfile.TemporaryDirectory() as d:
-            report = self._good_report()
-            report["audit"]["recorded_by"] = "手写"
-            ws = self._ws(Path(d), report=report)
-            self.assertEqual("FAIL", self._ids(ws)["published_by_plugin"])
-
-    def test_bound_report_passes_the_binding_checks(self):
+    def test_a_bound_report_passes_the_binding_checks(self):
         with tempfile.TemporaryDirectory() as d:
             ws = self._ws(Path(d), report=self._good_report())
             ids = self._ids(ws)
-            for cid in ("request_generated", "request_on_disk", "report_published",
-                        "subject_bound", "verifier_independent", "published_by_plugin"):
+            for cid in ("request_generated", "request_on_disk",
+                        "report_landing_declared", "report_written", "subject_bound"):
                 self.assertEqual("PASS", ids[cid], cid)
 
 

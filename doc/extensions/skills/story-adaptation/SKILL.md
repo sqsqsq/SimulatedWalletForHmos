@@ -27,13 +27,13 @@ framework 是它运行的地基，地基归 framework 自己的升级路径。
 `framework-patch.yaml` 声明「本扩展依赖、而上游还没合入的 framework 改动」，
 逐条带 `why`。不要因为版本号低就停下来问；要看的是那份清单里的东西目标有没有。
 
-**verifier 报告只认发布器落盘的那一份。** 宿主 adapter 声明了 `verifier_capability`
-（发布机制 `subagent_stop` / `task_tool_result` 等）时，报告由宿主钩子从子 agent 的终态
-消息生成、按 subject 分区落盘；**没有声明的宿主上，framework 判 verifier 为 blocked**
-——脚本检查照常完整执行，脚本 PASS 后按「provider 不可用」处理。
-扩展与它同口径：不认执行方自己写下的报告文件（主模型写得出来的东西，作不了它自己
-被独立审查过的证据）。所以在没有发布器的宿主上，story 读者审查这一项记「不适用」，
-**这是如实报告，不是故障**；要让它变成「适用」，得先给那个宿主入册 verifier 能力。
+**verifier 报告由调用方写。** 派 verifier 的那个 agent 把子代理的回复原样全文写到
+`summary.verifier_report` 指向的路径，落点由 harness 按 subject 定死；没有钩子代它发布，
+报告的身份（文件在、终态块回显的 subject 对、verdict 与计数一致）由 `check-receipt` 判。
+宿主 adapter 的 `verifier_subagent` 没登记时，framework 判 verifier `disabled`——
+脚本检查照常完整执行，闭环不阻断，回执如实标 `not_reviewed`。
+扩展与它同口径：那样的宿主上，story 读者审查这一项记「不适用」，
+**这是如实报告，不是故障**；要让它变成「适用」，得先给那个宿主入册 verifier 子代理能力。
 
 ## 1 判态
 

@@ -1,6 +1,10 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
 # 版本随机制行为走：目标工程升上来会看到不同的产物形态与报错集合，就是 minor。
+# 1.6.0：作者要求由作者动笔前自己取（原则页 hooks/<phase>/author.md，spec 另有一条命令出
+#        本次任务包），不再登记宿主的作者事件——那个事件只进 verifier 上下文；
+#        读者审查的报告改读调用方写出的 MD（落点在 summary.verifier_report），
+#        核对时点从 post_check 挪到 check --deliver 交付门；不再依赖任何 framework 补丁。
 # 1.5.0：作者在章草稿上写（skeleton 生成 AR/story-src/drafts/，chapter 消费草稿）；附录 A–D 是
 #        spec §9 与 knowledge-use.yaml 的机器投影（story-build project，落盘与登记各投一次）；
 #        材料关卡按轮次与本级侧车判停，侧车带 gate 字段；导入加 IMAGES 档（只抽图不动正文）；
@@ -9,7 +13,7 @@ name: wallet-sdk-demo
 # 1.4.0：adapt 带上扩展依赖的 framework 补丁（framework-patch.yaml）。
 # 1.3.0：形态判据从「这一章有没有图」换成「分了几张画了几张」、归档件禁用词按结构分区收窄、
 #        术语核主名不核括注、报错按判据类分组。
-version: "1.5.0"
+version: "1.6.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   skills:

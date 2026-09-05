@@ -35,10 +35,17 @@ LAUNCHERS = (
 
 
 def package_framework_patches() -> list[dict]:
-    """包声明的 framework 依赖，读那份 YAML 的三个键。"""
+    """包声明的 framework 依赖，读那份 YAML 的三个键。
+
+    文件不在 = 本包不依赖任何 framework 改动，`adapt-scan` 对这种情况整节跳过——
+    夹具照它的语义走，不造一份不存在的清单出来。
+    """
+    declaration = PKG_EXT / "framework-patch.yaml"
+    if not declaration.is_file():
+        return []
     out: list[dict] = []
     cur: dict | None = None
-    for line in (PKG_EXT / "framework-patch.yaml").read_text(encoding="utf-8").splitlines():
+    for line in declaration.read_text(encoding="utf-8").splitlines():
         item = re.match(r"^\s*-\s+path:\s*(\S+)", line)
         if item:
             cur = {"path": item.group(1), "kind": "", "why": ""}

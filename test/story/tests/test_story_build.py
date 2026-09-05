@@ -803,7 +803,7 @@ class TestRetiredThings(unittest.TestCase):
         目标工程。红了就一起改，别只把断言改绿。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.5.0"', manifest)
+        self.assertIn('version: "1.6.0"', manifest)
 
 
 class TestLedgerFrozenAfterRegistration(StoryBuildCase):

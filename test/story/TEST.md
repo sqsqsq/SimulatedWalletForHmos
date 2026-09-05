@@ -538,18 +538,18 @@ verifier 发布器另有三条，见 §7.0；verifier smoke 见 §7.0.1。
 
 这些命令不启动真实被测 CLI，只检查接口、状态转换、清理预检、稳定观测和确定性规则。
 
-### 7.0 verifier 发布器（OpenCode）
+### 7.0 verifier 通道（OpenCode）
 
-opencode 的 verifier 结论由 `.opencode/plugin/record-verifier-report.js` 发布。三条命令都不启动真实 CLI：
+opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；报告由派它的那个
+agent 原样写到 `summary.verifier_report`，没有发布器这一环。两条命令都不启动真实 CLI：
 
 ```powershell
-python -m unittest discover -s test/story/tests -p "test_opencode_verifier_publisher.py"
+python -m unittest discover -s test/story/tests -p "test_verifier_chain_in_workspace.py"
 npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\framework   # 在 framework/harness 下跑
-node --check framework/agents/opencode/templates/plugin/record-verifier-report.js
 ```
 
-第一条直接加载插件（ESM 的 `.js`），需要 **Node ≥ 22.7**；TS 侧走
-`framework/harness/node_modules/ts-node`，不改任何 framework 文件。
+第一条核工作区带没带上子代理定义与作者入口、定义说的是不是当前这一版协议；
+第二条走 `framework/harness/node_modules/ts-node`。
 
 ### 7.0.1 verifier smoke（真实 CLI，独立于 Story）
 
@@ -566,8 +566,8 @@ python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 `build` 会调真正的 init 物化 `.opencode/`；工程是合成的最小 `generic` 工程，**不挂 Extension**，
 架构/画像/术语表在 `fixture/doc/`。
 
-**两个结论分开记**，不能混成一句「smoke 过了」：**A 链路**（`verify` 六项绑定检查 + receipt 闭环，
-脚本判）与 **B 语义**（verifier 是否真读了需求与 spec、判断是否与产物相关，人看 `report_text`）。
+**两个结论分开记**，不能混成一句「smoke 过了」：**A 链路**（`verify` 的逐项绑定检查 + receipt 闭环，
+脚本判）与 **B 语义**（verifier 是否真读了需求与 spec、判断是否与产物相关，人看那份报告 MD）。
 链路通不等于审查有效。**结论只绑实际跑的 `cli_config_id`**，不外推到别的宿主或模型。
 
 三条现场纪律：
@@ -589,12 +589,13 @@ python -m unittest discover -s test/story/tests -p "test_verifier_smoke.py"
 
 ```powershell
 python -m unittest discover -s test/story/tests -p "test_author_context_entry.py"
-cd framework\harness; npx ts-node scripts/author-context.ts --phase <phase> --feature <feature>
+node doc/extensions/hooks/spec/author.mjs --feature <feature>
 ```
 
-第二条是执行者在动笔前跑的那一条，维护侧手查通道时也用它：六个阶段应各自输出自己的
-`<!-- hook:on_context_load:extension:doc/extensions/hooks/<phase>/author.md -->`。
-零输出 = 该阶段确实没登记钩子；**非零退出码 = 取不全**，不是「没有要求」。
+第二条是执行者在动笔前跑的那一条，维护侧手查通道时也用它。
+各阶段的原则页是 `doc/extensions/hooks/<phase>/author.md`，作者按 SKILL、
+CLAUDE.md 扩展段与 `story_flow.py status` 的下一步文本去取。
+**非零退出码 = 取不全**，不是「没有要求」：缺 `--feature` 退 2，章节合同读不到退 1。
 
 ### 7.1 失效形态全量回归
 

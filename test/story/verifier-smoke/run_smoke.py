@@ -152,7 +152,6 @@ def build(ws: Path, *, force: bool = False) -> dict[str, Any]:
     # 物化到位才算 build 成功：这两份是 verifier 闭环的两个必要件，缺任一后面全是空跑。
     required = [
         ws / ".opencode" / "agent" / "verifier.md",
-        ws / ".opencode" / "plugin" / "record-verifier-report.js",
         ws / ".opencode" / "skill" / "spec" / "SKILL.md",
         ws / "AGENTS.md",
     ]
@@ -348,24 +347,18 @@ def verify(ws: Path, *, quiet: bool = False) -> dict[str, Any]:
     request = _read_json(reports / f"verifier.request.{subject}.json")
     add("request_on_disk", request is not None, f"verifier.request.{subject}.json")
 
-    report = _read_json(reports / f"verifier.report.{subject}.json")
-    add("report_published", bool(report) and report.get("state") == "published",
-        f"state={(report or {}).get('state')}")
-    if report:
-        subs = {report.get("subject_id"), report.get("invocation_subject"), report.get("result_subject"), subject}
-        add("subject_bound", len(subs) == 1, f"仓内三值与 summary 现值：{sorted(s for s in subs if s)}")
-        agent_id = report.get("agent_id") or ""
-        parent = ((report.get("audit") or {}).get("parent_session_id")) or ""
-        add("verifier_independent", bool(agent_id) and agent_id != parent,
-            f"子会话={agent_id} 主会话={parent}")
-        add("published_by_plugin",
-            ((report.get("audit") or {}).get("recorded_by")) == "opencode/plugin/record-verifier-report.js",
-            f"recorded_by={(report.get('audit') or {}).get('recorded_by')}")
-
-    bedside = _read_json(ws / "framework" / "harness" / "state" / "last-verifier-report.json")
-    if bedside:
-        checks.append({"id": "bedside_present", "status": "INFO",
-                       "detail": f"reason={bedside.get('reason')}（绑定失败过；不一定是本轮）"})
+    # 报告由**调用方**原样写出，落点是 summary 里那条相对路径——不再有钩子代它发布，
+    # 所以这里判的是「那份 MD 在不在、它的终态块认不认这一版产物」。
+    rel = (summary or {}).get("verifier_report")
+    landing = (ws / rel) if isinstance(rel, str) and rel.strip() else None
+    add("report_landing_declared", landing is not None,
+        f"summary.verifier_report={rel}" if rel else "summary.json 没写报告落点")
+    if landing is not None:
+        text = _read_text(landing)
+        add("report_written", text is not None, str(rel))
+        if text is not None:
+            add("subject_bound", subject in text,
+                f"终态块回显的 subject 与 summary 现值{'一致' if subject in text else '不一致'}")
 
     receipt = _run_ts_in_ws(ws, "scripts/check-receipt.ts", "--feature", FEATURE, "--phase", PHASE)
     add("receipt_closed", receipt.returncode == 0,
@@ -382,6 +375,13 @@ def _finish(checks: list[dict[str, Any]], quiet: bool) -> dict[str, Any]:
             print(f"  [{c['status']:4}] {c['id']}: {c['detail']}")
         print(f"  Verdict: {out['verdict']}")
     return out
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
