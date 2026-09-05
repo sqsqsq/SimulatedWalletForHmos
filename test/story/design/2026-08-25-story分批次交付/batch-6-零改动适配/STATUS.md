@@ -44,3 +44,12 @@
   读者审查的报告读法换成汇总表解析后与旧的 JSON 解析等量，没有省下来。
   hooks_mjs 2741 仍高于 target 2700 共 41 行，挂账等收口裁定。
 - 2026-09-05 评审步骤 1 四提交（reviews/01 §7）：同步、登记、退场、作者输入、读者审查读法与离线证据全部亲核一致；执行者五处方案修正采纳四处。不通过两项：R36 `check --deliver` 用 `spawnSync('npx.cmd')` 不带 shell，Node 24 实测 EINVAL，交付门在 Windows 上恒「跑不了」，夹具没有一条真 spawn；R37 SKILL 归档块 ① 仍是普通 check，`--deliver` 只在 ③ 登记时跑，上传前拦不住。小项 m1（无审查员宿主静默通过要记一笔）、m2（上游状态件措辞）。预算 8909/8940，hooks_mjs 2741 高于 2700 待用户签。
+- 2026-09-06 实施评审 §7 返修（`4fd1b42a`）：
+  R36 交付门原来 spawn `npx.cmd`，Windows 上 Node 拒绝不带 shell 起 `.cmd`（实测 EINVAL），
+  门恒走「跑不了」——改成解析 framework/harness 自己那份 ts-node 用 node 直接起，
+  本仓实跑核到 stderr 已是 `check-receipt` 自己的话；补两条真接线夹具。
+  R37 `SKILL.md` 归档块 ① 改 `check --deliver`。
+  m1 无审查员宿主上交付门不拦但出声，走 check 的「记一笔」通道，夹具一条。
+  m2 `00-上游状态.md` 改成不交上游。
+  预算 scripts_mjs 2220→2240（实测 2235），总量 8932 ≤ 8940。
+  **仍挂着**：hooks_mjs 2741 高于 target 2700 共 41 行，评审建议签 2750，等用户裁定。
