@@ -137,28 +137,34 @@ function imageSection(projectRoot, feature) {
 }
 
 /**
- * spec 里的图 —— 逐张给主题与可粘贴的围栏，**不指定放哪一章**。
+ * 上游某一份文档里的图 —— 逐张给主题与可粘贴的围栏，**不指定放哪一节**。
  *
- * 图属于哪块内容，内容在 story 落在哪，图就该在哪。所以这里只把「有哪几张、
+ * 图属于哪块内容，内容在下游落在哪，图就该在哪。所以这里只把「有哪几张、
  * 各讲什么、原文长什么样」摆出来，归位由作者按内容判。
- * 文字不搬：story 讲的是来龙去脉，spec 讲的是契约，两份文字不该一样。
+ * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
+ *
+ * 两环各一节，同一个渲染：SR → spec 给写 spec 的人，spec → story 给写 story 的人。
  */
-function specDiagramSection(projectRoot, feature) {
-  const specPath = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
-  const text = fs.existsSync(specPath) ? fs.readFileSync(specPath, 'utf-8') : '';
-  const list = diagramsOf(text);
-  const rows = ['## 4b. spec 里的图', ''];
+function diagramSection(heading, label, source, downstream) {
+  const list = diagramsOf(source);
+  const rows = [heading, ''];
   if (!list.length) {
-    rows.push('spec 里现在没有图。');
+    rows.push(`${label} 里现在没有图。`);
     return rows;
   }
-  rows.push('每一张都要在 story 里出现一次，放哪一章按它讲的内容定——'
+  rows.push(`每一张都要在 ${downstream} 里出现一次，放哪一节按它讲的内容定——`
     + '**围栏第一行的来源标记原样保留**，机器核的就是它。周围的文字自己写。', '');
   for (const d of list) {
-    rows.push(`- **spec ${d.id}**（${diagramTopic(d)}）`, '',
-      carryableBlock(d, 'spec'), '');
+    rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`, '',
+      carryableBlock(d, label), '');
   }
   return rows;
+}
+
+/** 上游与本阶段产物的正文；读不到就是空，不猜。 */
+function docText(projectRoot, feature, ...rel) {
+  const abs = path.join(featureRoot(projectRoot, feature), ...rel);
+  return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : '';
 }
 
 function chapterSection(contract) {
@@ -213,7 +219,11 @@ function taskPackage(projectRoot, feature) {
     '',
     ...imageSection(projectRoot, feature),
     '',
-    ...specDiagramSection(projectRoot, feature),
+    ...diagramSection('## 4b. SR 里的图（搬进 spec）', 'SR',
+      docText(projectRoot, feature, 'SR', 'design.md'), 'spec'),
+    '',
+    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec',
+      docText(projectRoot, feature, 'spec', 'spec.md'), 'story'),
     '',
     ...chapterSection(contract),
     '',

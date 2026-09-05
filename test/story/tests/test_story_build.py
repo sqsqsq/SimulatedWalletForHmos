@@ -803,7 +803,7 @@ class TestRetiredThings(unittest.TestCase):
         目标工程。红了就一起改，别只把断言改绿。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.6.0"', manifest)
+        self.assertIn('version: "1.7.0"', manifest)
 
 
 class TestLedgerFrozenAfterRegistration(StoryBuildCase):
@@ -1548,6 +1548,34 @@ class ProjectionRefusesToInventContent(RealRunCase):
         story = self.story()
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
         self.assertIn("story-build:begin 接口", story)
+
+
+class BranchSectionsCarryTheirLabels(StoryBuildCase):
+    """5.x 的分支与恢复路径固定三段，与 9.3 的回退设计同一口径：⑪ 照核标签在不在。
+
+    合同里 5.x 只固定「主路径」一节，其余就是分支与恢复路径——
+    「这一节是不是分支节」不用机器猜，写在那里的就是。
+    """
+
+    FLOW = "## 业务流程\n\n本需求不涉及。\n"
+
+    def put_branch(self, *rows: str) -> None:
+        self.init_audit()
+        self.rewrite_story(
+            self.FLOW,
+            "## 业务流程\n\n### 5.2 身份未完成时的恢复\n\n" + "\n".join(rows) + "\n")
+
+    def test_a_missing_label_is_named(self) -> None:
+        self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
+                        "**方案**：转入既有身份流程。", "")
+        self.assert_check_names("缺「走向」这一段")
+
+    def test_all_three_labels_pass(self) -> None:
+        self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
+                        "**方案**：转入既有身份流程。", "",
+                        "**走向**：回来之后重新查询资格，回到离开时的位置。", "")
+        _, out = self.check_output()
+        self.assertNotIn("这一段", out, out[:400])
 
 
 class FiguresMustBeIntroduced(StoryBuildCase):

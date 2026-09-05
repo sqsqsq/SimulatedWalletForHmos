@@ -30,7 +30,7 @@ BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 GOLDEN_FINGERPRINTS = {
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "82dfcd73acbbaa4f",
+    "story-金样-AR90004.md": "f491d24c5152d00b",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
 }
@@ -54,7 +54,7 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 408, "chapters": 10, "subsections": 36,
+SHAPE = {"lines": 404, "chapters": 10, "subsections": 35,
          "table_rows": 159, "diagrams": 1, "images": 2}
 
 

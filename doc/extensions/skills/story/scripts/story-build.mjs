@@ -1438,7 +1438,7 @@ function cmdCheck(ctx) {
         if (slot.ordered && !/^[ \t]*\d+[.、)]\s/m.test(body)) {
           problems.push(`「${label}」要写成有序列表，一步一句——${form.note ?? ''}`);
         }
-        for (const lb of slot.labels_draft_only ? [] : slot.labels ?? []) {
+        for (const lb of slot.labels ?? []) {
           if (!body.includes(lb)) problems.push(`「${label}」缺「${lb}」这一段——${form.note ?? ''}`);
         }
         if (slot.diagram) {

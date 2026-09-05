@@ -81,10 +81,16 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         self.assertIn("C[余额上报]", package, "围栏原文没给，作者得自己回去抄")
 
     def test_it_names_the_topic_and_not_a_chapter(self) -> None:
-        """放哪一章由作者按内容定——任务包不预设位置。"""
+        """放哪一节由作者按内容定——任务包不预设位置。"""
         package = self.package_with_spec()
         self.assertIn("自动充值触发", package)
-        self.assertIn("放哪一章按它讲的内容定", package)
+        self.assertIn("放哪一节按它讲的内容定", package)
+
+    def test_both_hops_get_their_own_section(self) -> None:
+        """两环各一节：SR 的图搬进 spec 给写 spec 的人，spec 的图搬进 story 给写 story 的人。"""
+        package = self.package_with_spec()
+        self.assertIn("SR 里的图（搬进 spec）", package)
+        self.assertIn("spec 里的图（搬进 story）", package)
 
     def test_no_diagrams_says_so(self) -> None:
         (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
