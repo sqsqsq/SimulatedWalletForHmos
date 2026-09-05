@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | **步骤 1 方案第二次重写（opencode 登记、读者审查留在 framework verifier），待用户确认；步骤 2 方案待用户确认（依赖步骤 1）** |
+| 状态 | **步骤 1 已实施（四个提交），等评审；步骤 2 方案待用户确认** |
 | 起点 | 上游 `0143e21`（`origin/main` `ea2365d1`）；本仓 story 分支 `framework/` = `85e266f` + 18 处 |
 | 用户裁定 | framework 不改逻辑、只允许 opencode 登记两处且不交上游；`.opencode/` 只是本仓测试装置，内网用 codex；extension 支持批次 5 全部功能 |
 | 方案文件 | [00-总览.md](00-总览.md)；`steps/01`、`steps/02` |
@@ -11,7 +11,7 @@
 
 | 步骤 | 状态 | 评审报告 |
 |---|---|---|
-| 1 对齐上游与能力落回 | **方案重写待确认**（用户 2026-09-05 指定评审直接改）。原稿问题：B1 读者审查两条路（codex 双审、post_check 里 framework 来源是死分支）、B2 verifier 定义只收 request JSON、B3 指纹未定义、B4 同步漏物化目录；§5/§6 预算矛盾；退场清单缺项 | [reviews/01-对齐上游与能力落回.md](reviews/01-对齐上游与能力落回.md) |
+| 1 对齐上游与能力落回 | **已实施待评审**（55b24abb / 9c0a6148 / 18581b0a / 5e0230a1）。原稿问题：B1 读者审查两条路（codex 双审、post_check 里 framework 来源是死分支）、B2 verifier 定义只收 request JSON、B3 指纹未定义、B4 同步漏物化目录；§5/§6 预算矛盾；退场清单缺项 | [reviews/01-对齐上游与能力落回.md](reviews/01-对齐上游与能力落回.md) |
 | 2 步骤 16 返修与追加（原批次 5 步骤 17） | 方案待确认；起点是步骤 1 落地后的实测预算 | — |
 
 ## 事件日志
@@ -24,3 +24,22 @@
 - 2026-09-05 用户三条裁定：读者审查不在扩展里另建派发链（AGENTS §3）；opencode 参考 claude / codex 的方式登记，只登记不改逻辑；不交上游，story 分支支持即可。评审第二次重写 steps/01：drift 收到 2 文件长期放行；overlay / pre_verifier / 任务书不动；`verifier-report.mjs` 改读 `summary.verifier_report` 的 MD、从 post_check 挪到归档门（原位置在正常流程里永远 NOT_APPLICABLE）；overlay severity MAJOR→BLOCKER 与任务书对齐；⑦ 看 NEXT 行、⑧ 补 reopen 恢复路径；manifest 1.6.0；预算 8856→约 8840。reviews/01 加后记。
 - 2026-09-05 外部第十二轮三条核实成立：① 归档顺序是 check → 上传 → 登记，本地单无归档——落盘核对改进 `story-build check`（未派 N/A、已派未落盘 FAIL、在则判），远程单在上传前拦、本地单在 ⑧ 闭环后跑 check 作交付门；framework 在 verifier 之后没有钩子点（post_verifier 在 harness 内触发）。② 上游 PASS 只进汇总表、明细只列非 PASS——扩展不设例外：PASS 汇总行证据非空即可，非 PASS 明细带两键。③ summary.json 在 `<phase>/reports/`，改口径。文档同步：总览完成条件改两文件差异；步骤 2 起点 8840、超约 4 行。
 - 2026-09-05 外部第十三轮三条成立：① 落盘核对靠 summary 在不在推断阶段是错的——改为 `check`（恒 N/A）与 `check --deliver`（先 spawn framework `check-receipt`，退出 0 再核报告内容）两个入口同一实现，归档 ① 与本地单 ⑧ 都用 `--deliver`；② 交付门通过 = 回执通过且报告内容三条，FAIL 报告只算解析通过；③ 步骤 2 verifier 判据同步 PASS 新格式。用户裁定预算上限改为测算值 + 100：步骤 1 8940、步骤 2 起点 + 164，写进 mechanism-budget.yaml。
+
+- 2026-09-05 执行会话实施步骤 1，四个提交。实施前核出方案五处要修，都按修正后的做法落地：
+  ① `git checkout origin/main -- .cac` 会冲掉 `.cac/commands/story.md`（story 扩展入口），
+  checkout 与验收路径收窄成 `.cac/agents .cac/hooks .cac/settings.json`；
+  ② 上游 opencode `commands: null`，只加一行布尔的话子代理模板没有物化落点，
+  adapter.yaml 同时补 `commands.subagents`（仍是两个文件，但「只加一行布尔」不成立，
+  drift 理由如实写成「登记 + 子代理物化落点」）；
+  ③ 五个 overlay 的注释都指着已退场的 `author-context.ts`，一并改写；
+  ④ `--deliver` 在 verifier plan 为 `disabled` 的宿主上报告本就不存在，判 NOT_APPLICABLE 而非 FAIL；
+  ⑤ `framework/agents/claude/templates/hooks/record-verifier-report.mjs` 上游已删、checkout 不会删它，
+  §3.1 的 `git rm` 清单漏了这一件。
+- 实施结果：framework 与物化目录同 `origin/main` 的差异恰好是登记那两个文件；离线全量 633 passed；
+  失效形态 FAIL 0；`adapt-scan --check` 通过；预算 8909（上限 8940）。
+  `resolveVerifierPlan` 实测：`verifier_subagent=true → enabled/policy_required`，
+  缺省 → `disabled/adapter_has_no_reviewer`。
+- 预算与方案 §6 的差异（已具名记进 `mechanism-budget.yaml`）：scripts_mjs 实际 +37（方案估 +12），
+  多出来的是交付门的接线与三条失败路径；hooks_mjs 净 +7（方案估 −30），
+  读者审查的报告读法换成汇总表解析后与旧的 JSON 解析等量，没有省下来。
+  hooks_mjs 2741 仍高于 target 2700 共 41 行，挂账等收口裁定。
