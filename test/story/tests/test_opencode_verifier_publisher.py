@@ -106,15 +106,19 @@ def _sha256(text: str) -> str:
 
 
 def _canonical(fields: dict) -> str:
+    """与 `verifier-request.ts` 的 `canonicalRequestInput` 逐字符一致。
+
+    `@2` 起，subject 只认审前材料视图 `material_sha256`；
+    `prompt_sha256` / `source_commit_sha` / `worktree_digest` 仍是 request 的审计字段，
+    但**不进这一串**——它们随任何无关提交或工作区改动变化，进来只会让 subject 无效换代。
+    """
     return "\n".join([
-        "maison-verifier-request@1",
+        "maison-verifier-request@2",
         f"feature={fields['feature']}",
         f"phase={fields['phase']}",
         f"prompt_path={fields['prompt_path']}",
-        f"prompt_sha256={fields['prompt_sha256']}",
+        f"material_sha256={fields['material_sha256']}",
         f"gate_fingerprint={fields['gate_fingerprint'] or '<absent>'}",
-        f"source_commit_sha={fields['source_commit_sha'] or '<absent>'}",
-        f"worktree_digest={fields['worktree_digest'] or '<absent>'}",
     ])
 
 
@@ -125,6 +129,9 @@ def _build_request(prompt_text: str, *, feature: str = FEATURE, phase: str = PHA
         "phase": phase,
         "prompt_path": prompt_path or f"doc/features/{feature}/{phase}/reports/ai-prompt.md",
         "prompt_sha256": _sha256(prompt_text),
+        # 审前材料视图：夹具里没有真实材料树，用 prompt 派生一个稳定值即可——
+        # 本组用例判的是绑定与对账，不是材料视图本身怎么算
+        "material_sha256": _sha256("material:" + prompt_text),
         "gate_fingerprint": None,
         "source_commit_sha": None,
         "worktree_digest": None,
@@ -528,7 +535,10 @@ class OpenCodeVerifierPublisher(unittest.TestCase):
                 "phase": PHASE,
                 "prompt_path": f"doc/features/{FEATURE}/{PHASE}/reports/ai-prompt.md",
                 "prompt_sha256": _sha256(AI_PROMPT),
+                "material_sha256": _sha256("material:" + AI_PROMPT),
                 "gate_fingerprint": None,
+                # 这两个仍在 request 里、但不进 subject：给上非空值，
+                # 正好验证两侧都真的把它们排除在规范化输入之外
                 "source_commit_sha": "abc123",
                 "worktree_digest": None,
             },
