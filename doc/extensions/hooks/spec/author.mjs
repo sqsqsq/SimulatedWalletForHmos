@@ -154,7 +154,9 @@ function diagramSection(heading, label, source, downstream) {
     return rows;
   }
   rows.push(`每一张都要在 ${downstream} 里出现一次，放哪一节按它讲的内容定——`
-    + '**围栏第一行的来源标记原样保留**，机器核的就是它。周围的文字自己写。', '');
+    + '**开头那行来源标记原样保留**，机器核的就是它。周围的文字自己写。',
+    '两节列的是同一张图时（系统设计画过、spec 的流程图就是它），'
+    + `${downstream} 里只放一张，两行标记都写在这个围栏开头。`, '');
   for (const d of list) {
     rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`, '',
       carryableBlock(d, label), '');

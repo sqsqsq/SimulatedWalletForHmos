@@ -1628,6 +1628,18 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
             "### 5.2 自动充值触发\n\n"
             "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
 
+    def carried_for(self, upstream: str, label: str, story: str):
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]);"
+             "process.stdout.write(JSON.stringify("
+             "m.diagramsNotCarried(process.argv[2], process.argv[3], process.argv[4])"
+             ".map(d => d.id)));",
+             BUILD.resolve().as_uri(), upstream, label, story],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        return json.loads(proc.stdout)
+
     def carried(self, story: str):
         proc = subprocess.run(
             ["node", "--input-type=module", "-e",
@@ -1657,6 +1669,27 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
         topics = dict(self.carried(""))
         self.assertIn("余额上报", topics["§5.2 #1"])
         self.assertIn("自动充值触发", topics["§5.2 #1"])
+
+    def test_one_fence_can_carry_two_upstream_marks(self) -> None:
+        """同一张图两份上游都画过时，story 里只该有一张——两行标记写在同一个围栏开头。
+
+        一个围栏只认一个标记的话，作者要么把同一张图贴两遍，要么必然被报一条
+        「在 story 里没有」。判据逼出重复内容，那是设计问题不是作者问题。
+        """
+        sr = "## 1. 协作\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n"
+        spec_one = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
+                    "```mermaid\n%% 图源 SR §1 #1\ngraph TD\nA[入口] --> B[签约]\n```\n")
+        story = ("## 五\n\n签约这条路径这样走。\n\n```mermaid\n"
+                 "%% 图源 SR §1 #1\n%% 图源 spec §5.1 #1\n"
+                 "graph TD\nA --> B\n```\n")
+        self.assertEqual([], self.carried_for(sr, "SR", story), "SR 那份登记没认")
+        self.assertEqual([], self.carried_for(spec_one, "spec", story), "spec 那份登记没认")
+
+    def test_a_marker_inside_the_body_is_not_a_registration(self) -> None:
+        """只认开头连续那几行：图正文里再出现的 `%%` 是注释，不是登记。"""
+        story = ("## 五\n\n```mermaid\ngraph TD\nA --> B\n"
+                 "%% 图源 spec §5.1 #1\n```\n")
+        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(i for i, _ in self.carried(story)))
 
     def test_an_upstream_marker_riding_along_does_not_confuse_it(self) -> None:
         """上一环的标记随围栏带过来无妨：换成指向直接上游的那一行即可。"""

@@ -783,11 +783,20 @@ export function diagramsOf(text) {
     for (; j < lines.length && !/^[ \t]*```/.test(lines[j]); j += 1) body.push(lines[j]);
     const index = (seq.get(section) ?? 0) + 1;
     seq.set(section, index);
-    const mark = (body[0] ?? '').trim().match(/^%%\s*图源\s+(.+?)\s*$/);
+    // 围栏开头**连续的**几行 `%% 图源` 都算标记：同一张图常常两份上游都画过
+    // （系统设计画一遍，spec 的业务流程图就是它），story 里只该有一张——
+    // 两行标记写在同一个围栏里，两处的登记各自成立。只认开头那几行：
+    // 图正文里再出现的 `%%` 是注释，不是登记。
+    const marks = [];
+    for (const line of body) {
+      const m = line.trim().match(/^%%\s*图源\s+(.+?)\s*$/);
+      if (!m) break;
+      marks.push(m[1]);
+    }
     out.push({
       section, index, title,
       id: `§${section} #${index}`,
-      source: mark ? mark[1] : null,
+      sources: marks,
       //: 按**行**给，不拼成字符串——拼了下游就要再切一遍，而切法一旦与这里不同，
       //: CRLF 的文件每行尾会挂个 `\r`，行尾判据从此静默零命中。
       lines: lines.slice(i + 1, j),
@@ -812,7 +821,7 @@ export function diagramTopic(d) {
  * 缺了指向的是**功能**不是图——图漏了先找它讲的那件事在下游哪里。
  */
 export function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
-  const carried = new Set(diagramsOf(downstreamText).map(d => d.source).filter(Boolean));
+  const carried = new Set(diagramsOf(downstreamText).flatMap(d => d.sources));
   return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
 }
 
@@ -822,9 +831,9 @@ export function carryableBlock(d, upstreamLabel) {
     ...diagramBody(d), '```'].join('\n');
 }
 
-/** 围栏正文：去掉它自报的那行来源标记，换标记时不叠加。 */
+/** 围栏正文：去掉开头那几行来源标记，换标记时不叠加。 */
 function diagramBody(d) {
-  return d.lines.filter((l, i) => !(i === 0 && /^\s*%%\s*图源\s/.test(l)));
+  return d.lines.slice(d.sources.length);
 }
 
 /**
