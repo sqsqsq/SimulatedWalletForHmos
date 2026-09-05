@@ -68,32 +68,68 @@ story 相对 main 在这份文件上只改了两处：`integrity.drift_allowlist
 | 步骤 1（opencode verifier） | 6 | **保留**——同上 |
 | 历史遗留（`trace.schema.json`、`gap-notes.template.md`、`state/.gitkeep`） | 3 | **逐条复核**：新版 `RELEASE-MANIFEST` 可能已修正这几处，失效的要删（留着会掩盖真实漂移） |
 
-## 4. 步骤
+## 4. 分三步执行，每步一个提交
+
+拆开的理由：三件事的失败现场互不掩盖——地基换没换、opencode 那条链在不在、
+作者入口通不通，各自可验、各自可回退。代价是中间态会红，所以每步都写明
+**这一步之后什么该绿、什么还该红**；把预期中的红当事故，会白白回滚一次。
+
+### 第 0 步 · 前置
 
 ```bash
-# 0. 前置：story 全绿、工作区干净、main 已推送
 python -m pytest test/story/tests -n auto --dist loadscope     # 608 绿
 python test/story/scripts/check_failure_modes.py               # 70 条 FAIL 0
-git tag pre-sync-3.0.0 story                                   # 出事就回这里
-
-# 1. 起合并，先不提交
-git merge --no-commit --no-ff main
-
-# 2. framework/ 全取 main 侧，抹掉 story 的旧版全量与 18 处改动
-git checkout main -- framework/
-
-# 3. 重新打两份补丁（--directory 补上 vendored 前缀）
-git apply --directory=framework artifacts/04-framework-author-context.patch
-git apply --directory=framework --exclude='framework/agents/adapter-schema.yaml' \
-          artifacts/01-framework-opencode-verifier.patch
-
-# 3b. 手工合 adapter-schema.yaml 的那一处（§2 末：enum 加 task_tool_result + 一句描述）
-#     在新版措辞上加，不要拿旧措辞覆盖
-
-# 4. framework.config.json 按 §3 手工合；.gitignore 等根文件按常规解冲突
-
-# 5. 验证（§5）后再提交
+git status --short                                             # 干净
+git tag pre-sync-3.0.0                                         # 出事回这里
 ```
+
+### 步骤 1.1 · main 反合 story（只换地基）
+
+```bash
+git merge --no-commit --no-ff main
+git checkout main -- framework/          # framework/ 全取 main，含抹掉我们那 18 处
+# framework.config.json 按 §3 手工合；.gitignore 等根文件按常规解冲突
+```
+
+**这一步之后的预期**：
+
+| 项 | 预期 | 说明 |
+|---|---|---|
+| `framework/` 内容 | == main 侧，逐字节 | 纯 3.0.0（`85e266f`），我们的改动一处不剩 |
+| `author-context.ts` | **不存在** | 它是我们加的，被抹掉了 |
+| 扩展离线全量 | **会红** | 至少作者入口相关的测试红；红几条、红在哪，**逐条记进提交信息**，作为 1.3 的验收对照 |
+| `framework_integrity` | 只报 allowlist 内路径 | 此刻 18 条 allowlist 指向的文件已不漂移，条目变成「暂时无用但不错误」，**不要删** |
+
+提交信息要写清：换到哪个 `source_commit`、红了哪些、为什么现在允许红。
+
+### 步骤 1.2 · 重新应用 opencode 适配（6 处）
+
+```bash
+git apply --directory=framework --exclude='framework/agents/adapter-schema.yaml' \
+          test/story/design/.../artifacts/01-framework-opencode-verifier.patch
+# 再手工合 agents/adapter-schema.yaml 的那一处（§2 末：enum 加 task_tool_result + 一句描述）
+```
+
+**这一步之后的预期**：
+
+| 项 | 预期 |
+|---|---|
+| `agents/opencode/adapter.yaml` | 含 `verifier_capability`，`publisher: task_tool_result` |
+| `agents/adapter-schema.yaml` | `publisher.enum` 两个值；**上游新写的 description 保留**，只是多了一句 |
+| `verifier-plan.ts` | `VERIFIER_CAPABILITY_PUBLISHERS` 两个值 |
+| 能力解析 | `parseVerifierCapabilityDeclaration` 不报「未知值」——漏了手工合的话它会判非法，verifier 静默退回 `blocked` |
+| 扩展离线全量 | **仍会红**（作者入口还没接回来），红的条目应当**只剩 1.1 记下的那些的子集** |
+
+### 步骤 1.3 · 重新应用 author 适配（12 处）
+
+```bash
+git apply --directory=framework \
+          test/story/design/.../artifacts/04-framework-author-context.patch
+```
+
+**这一步之后**：§5 的八项全部要过，扩展离线全量回到 **608 绿**。
+1.1 记下的红条目应当**一条不剩**——还剩的话，那是 3.0.0 引入的新行为，不是补丁没打上，
+按 §5 第 3 项处置。
 
 **`--directory=framework` 是必须的**：两份补丁以 framework 仓根为路径基准（给上游用），
 打进消费仓要补上 vendored 前缀。
