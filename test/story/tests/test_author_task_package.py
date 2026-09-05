@@ -63,6 +63,35 @@ class WorkspaceCase(unittest.TestCase):
         return proc.stdout
 
 
+class SpecDiagramsReachTheAuthor(WorkspaceCase):
+    """spec 里的图逐张给主题与可粘贴围栏，**不指定放哪一章**。"""
+
+    SPEC = ("# 甲需求\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
+            "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
+
+    def package_with_spec(self) -> str:
+        spec = self.feature_root / "spec" / "spec.md"
+        spec.write_text(self.SPEC, encoding="utf-8")
+        return self.task_package()
+
+    def test_each_diagram_comes_with_a_pasteable_fence(self) -> None:
+        package = self.package_with_spec()
+        self.assertIn("spec 里的图", package)
+        self.assertIn("%% 图源 spec §5.2 #1", package, "围栏没带上来源标记，粘过去就核不到")
+        self.assertIn("C[余额上报]", package, "围栏原文没给，作者得自己回去抄")
+
+    def test_it_names_the_topic_and_not_a_chapter(self) -> None:
+        """放哪一章由作者按内容定——任务包不预设位置。"""
+        package = self.package_with_spec()
+        self.assertIn("自动充值触发", package)
+        self.assertIn("放哪一章按它讲的内容定", package)
+
+    def test_no_diagrams_says_so(self) -> None:
+        (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "spec" / "spec.md").write_text("# 甲需求\n", encoding="utf-8")
+        self.assertIn("spec 里现在没有图", self.task_package())
+
+
 class TaskPackageIsRendered(WorkspaceCase):
     """任务包是真源的投影，不是又一页手写说明。"""
 

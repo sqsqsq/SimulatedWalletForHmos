@@ -1550,6 +1550,55 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertIn("story-build:begin 接口", story)
 
 
+class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
+    """图属于哪块内容，内容落在哪，图就该在哪——机械只核「每张各有一个围栏带着」。
+
+    身份由位置给（`§<节> #<该节内第几张>`），来源由围栏第一行自报。
+    不核位置、不核张数：放哪一章由作者按内容定，判据管不了也不该管。
+    """
+
+    SPEC = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
+            "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
+            "### 5.2 自动充值触发\n\n"
+            "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
+
+    def carried(self, story: str):
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]);"
+             "const [spec, story] = [process.argv[2], process.argv[3]];"
+             "process.stdout.write(JSON.stringify("
+             "m.diagramsNotCarried(spec, 'spec', story)"
+             ".map(d => [d.id, m.diagramTopic(d)])));",
+             BUILD.resolve().as_uri(), self.SPEC, story],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        return json.loads(proc.stdout)
+
+    def test_identity_comes_from_the_position(self) -> None:
+        """作者不用给图起名：它在哪一节、是那一节的第几张，就是它的身份。"""
+        missing = dict(self.carried(""))
+        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(missing))
+
+    def test_only_the_first_line_of_the_fence_counts(self) -> None:
+        """标记只认围栏第一行——正文里提一句「图源 spec §5.2 #1」不算带过来。"""
+        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.1 #1\ngraph TD\nA-->B\n```\n"
+                 "\n这一节的图来自 图源 spec §5.2 #1。\n")
+        self.assertEqual(["§5.2 #1"], [i for i, _ in self.carried(story)])
+
+    def test_the_report_names_the_topic_not_the_count(self) -> None:
+        """缺了指向的是那件事，不是「少了一张图」——所以报的是主题。"""
+        topics = dict(self.carried(""))
+        self.assertIn("余额上报", topics["§5.2 #1"])
+        self.assertIn("自动充值触发", topics["§5.2 #1"])
+
+    def test_an_upstream_marker_riding_along_does_not_confuse_it(self) -> None:
+        """上一环的标记随围栏带过来无妨：换成指向直接上游的那一行即可。"""
+        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.2 #1\n%% 图源 SR §3 #1\n"
+                 "graph TD\nC-->D\n```\n")
+        self.assertEqual(["§5.1 #1"], [i for i, _ in self.carried(story)])
+
+
 class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
     """恢复时缺哪章补哪章，但**已落盘的章补的是现稿**，不是起点。
 

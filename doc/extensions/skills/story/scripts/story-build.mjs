@@ -753,11 +753,84 @@ function scopeBoundaryRows(spec) {
   return rows;
 }
 
-/** spec §5 的第一个图围栏，原样复制。作者可以改节点文字、可以再加图。 */
+/**
+ * 一份文档里的每张图 —— 身份由**位置**给，来源由**围栏第一行**自报。
+ *
+ * 身份 `§<节> #<该节内第几张>`：图不需要作者起名，位置就是它的名字。
+ * 来源标记 `%% 图源 <文档> §<节> #<序>` 指向**直接上游**那一张；只有围栏第一行算标记，
+ * 所以一张图从 SR 经 spec 到 story，每一环换一次标记，上一环的那行随围栏带过去也无妨。
+ *
+ * 节取标题的前导编号（`### 5.2 自动充值触发` → `5.2`）；没有编号就用业务名——
+ * 编号是给人对位用的，取不到时身份仍要唯一。
+ */
+export function diagramsOf(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const seq = new Map();
+  const out = [];
+  let section = '';
+  let title = '';
+  for (let i = 0; i < lines.length; i += 1) {
+    const h = lines[i].trim().match(/^#{2,4}\s+(.+?)\s*$/);
+    if (h) {
+      title = h[1].trim();
+      const num = title.match(/^(\d+(?:[.．]\d+)*)[.．]?\s*/);
+      section = num ? num[1].replace(/．/g, '.') : normalizeHeading(title);
+      continue;
+    }
+    if (!/^[ \t]*```[ \t]*mermaid\b/.test(lines[i])) continue;
+    const body = [];
+    let j = i + 1;
+    for (; j < lines.length && !/^[ \t]*```/.test(lines[j]); j += 1) body.push(lines[j]);
+    const index = (seq.get(section) ?? 0) + 1;
+    seq.set(section, index);
+    const mark = (body[0] ?? '').trim().match(/^%%\s*图源\s+(.+?)\s*$/);
+    out.push({
+      section, index, title,
+      id: `§${section} #${index}`,
+      source: mark ? mark[1] : null,
+      //: 按**行**给，不拼成字符串——拼了下游就要再切一遍，而切法一旦与这里不同，
+      //: CRLF 的文件每行尾会挂个 `\r`，行尾判据从此静默零命中。
+      lines: lines.slice(i + 1, j),
+    });
+    i = j;
+  }
+  return out;
+}
+
+/** 这张图讲的是什么 —— 小节标题 + 首层节点，给的是**主题**，不是「少了一张图」。 */
+export function diagramTopic(d) {
+  const nodes = [...d.lines.join('\n').matchAll(/[[({]([^\])}|]{1,20})[\])}]/g)]
+    .map(m => m[1].trim()).filter(Boolean);
+  const uniq = [...new Set(nodes)].slice(0, 4);
+  return uniq.length ? `${d.title}：${uniq.join(' → ')}` : d.title;
+}
+
+/**
+ * 上游每张图，下游有没有一个围栏带着它的来源标记。
+ *
+ * 只核登记对应：图搬没搬对、周围文字写没写好由语义审查判。
+ * 缺了指向的是**功能**不是图——图漏了先找它讲的那件事在下游哪里。
+ */
+export function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
+  const carried = new Set(diagramsOf(downstreamText).map(d => d.source).filter(Boolean));
+  return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
+}
+
+/** 把上游那张图变成可以直接粘贴的围栏：首行换成指向它的来源标记。 */
+export function carryableBlock(d, upstreamLabel) {
+  return ['```mermaid', `%% 图源 ${upstreamLabel} ${d.id}`,
+    ...diagramBody(d), '```'].join('\n');
+}
+
+/** 围栏正文：去掉它自报的那行来源标记，换标记时不叠加。 */
+function diagramBody(d) {
+  return d.lines.filter((l, i) => !(i === 0 && /^\s*%%\s*图源\s/.test(l)));
+}
+
+/** spec §5 的第一个图围栏，原样复制并带上指向它的来源标记。 */
 function specDiagram(text) {
-  const body = specSection(text, /^##\s*5[.．]/);
-  const m = body.match(/^[ \t]*```mermaid[\s\S]*?^[ \t]*```/m);
-  return m ? m[0] : null;
+  const first = diagramsOf(text).find(d => /^5(\.|$)/.test(d.section));
+  return first ? carryableBlock(first, 'spec') : null;
 }
 
 //: 不投进归档件的列。「代码现状」是 spec 写给下游 AI 的——仓内路径或检索结论，
@@ -1479,6 +1552,21 @@ function cmdCheck(ctx) {
           + `${missing.length > 4 ? '…' : ''}`
           + '——附录是 spec 契约的投影，评审者拿着它回查；可以改措辞、可以加列，不能少行');
       }
+    }
+  }
+
+  // spec 每张图在 story 各有一个围栏带着它的来源标记。
+  //
+  // 图属于哪块内容，内容在 story 落在哪，图就该在哪——不是「spec 有几张图，
+  // story 就派生几节」。所以这里不判位置、不判张数，只判登记对应；
+  // 缺了报的是**这张图讲的那件事**，作者据此去找功能，而不是去补一张图。
+  if (specForRows) {
+    for (const d of diagramsNotCarried(specForRows, 'spec', storyText)) {
+      problems.push(`spec ${d.id} 的图（${diagramTopic(d)}）在 story 里没有。`
+        + '先看它讲的那件事在 story 哪一章：讲了而图漏了，把图搬到那一节；'
+        + '没讲，是内容丢了，先补内容再搬图。'
+        + `搬的时候围栏第一行写 \`%% 图源 spec ${d.id}\`——周围的文字自己写，`
+        + 'story 讲的是来龙去脉，spec 讲的是契约，两份文字不该一样');
     }
   }
 

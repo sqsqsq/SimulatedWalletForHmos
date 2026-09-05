@@ -23,7 +23,8 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/lint-rules.mjs';
-import { DECISION_FIELDS, relFromStory } from '../../skills/story/scripts/story-build.mjs';
+import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
+  from '../../skills/story/scripts/story-build.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
@@ -133,6 +134,31 @@ function imageSection(projectRoot, feature) {
   return rows;
 }
 
+/**
+ * spec 里的图 —— 逐张给主题与可粘贴的围栏，**不指定放哪一章**。
+ *
+ * 图属于哪块内容，内容在 story 落在哪，图就该在哪。所以这里只把「有哪几张、
+ * 各讲什么、原文长什么样」摆出来，归位由作者按内容判。
+ * 文字不搬：story 讲的是来龙去脉，spec 讲的是契约，两份文字不该一样。
+ */
+function specDiagramSection(projectRoot, feature) {
+  const specPath = path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md');
+  const text = fs.existsSync(specPath) ? fs.readFileSync(specPath, 'utf-8') : '';
+  const list = diagramsOf(text);
+  const rows = ['## 4b. spec 里的图', ''];
+  if (!list.length) {
+    rows.push('spec 里现在没有图。');
+    return rows;
+  }
+  rows.push('每一张都要在 story 里出现一次，放哪一章按它讲的内容定——'
+    + '**围栏第一行的来源标记原样保留**，机器核的就是它。周围的文字自己写。', '');
+  for (const d of list) {
+    rows.push(`- **spec ${d.id}**（${diagramTopic(d)}）`, '',
+      carryableBlock(d, 'spec'), '');
+  }
+  return rows;
+}
+
 function chapterSection(contract) {
   const rows = ['## 5. 十章各回答读者什么', ''];
   for (const c of contract.chapters ?? []) {
@@ -184,6 +210,8 @@ function taskPackage(projectRoot, feature) {
     ...decisionSection(contract),
     '',
     ...imageSection(projectRoot, feature),
+    '',
+    ...specDiagramSection(projectRoot, feature),
     '',
     ...chapterSection(contract),
     '',
