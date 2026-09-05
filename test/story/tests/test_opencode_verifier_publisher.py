@@ -37,6 +37,18 @@ PARENT_SESSION = "ses_parent000000000000000000"
 CHILD_SESSION = "ses_child0000000000000000000"
 OTHER_CHILD = "ses_child1111111111111111111"
 
+def _schema_version_in(path: Path, name: str) -> str:
+    """从源码里取常量现值——写死数字的话，上游升版本时这条对账自己先失效。"""
+    hit = re.search(rf"{name}\s*=\s*['\"]([\d.]+)['\"]", path.read_text(encoding="utf-8"))
+    assert hit, f"{path} 里找不到 {name}"
+    return hit.group(1)
+
+
+#: framework 的 request schema 现值：插件、物化件、夹具都跟着它走，不写死。
+REQUEST_SCHEMA_VERSION = _schema_version_in(
+    HARNESS / "scripts" / "utils" / "verifier-request.ts", "VERIFIER_REQUEST_SCHEMA_VERSION")
+PLUGIN_MATERIALISED = REPO / ".opencode" / "plugin" / "record-verifier-report.js"
+
 AI_PROMPT = "# 审查指令\n\n本轮待审产物：spec.md。逐项判定后输出终态块。\n"
 
 # 发布器调用驱动：把一次 task 完成事件喂给插件，回显发布结果。
@@ -137,7 +149,7 @@ def _build_request(prompt_text: str, *, feature: str = FEATURE, phase: str = PHA
         "worktree_digest": None,
     }
     return {
-        "schema_version": "1.0",
+        "schema_version": REQUEST_SCHEMA_VERSION,
         "kind": "maison_verifier_request",
         "subject_id": _sha256(_canonical(fields)),
         **fields,
@@ -568,6 +580,43 @@ class OpenCodeVerifierPublisher(unittest.TestCase):
         self.assertEqual(out["ts_result_sha"], out["plugin_result_sha"], "结论指纹已漂移")
         # 同时锚住 python 侧的第三方复算，防三边一起改还互相对上。
         self.assertEqual(_sha256(_canonical(fixture["fields"])), out["ts_subject"])
+
+
+class TheRequestSchemaFollowsTheFramework(unittest.TestCase):
+    """插件认的 request 版本必须跟着 framework 走。
+
+    实测过一次：framework 把 request schema 升到 1.1，插件的常量还是 1.0，
+    于是 verifier 交了稿、插件整份拒收（`invocation_request_unparseable`），
+    结论只落 bedside，主模型从那一刻起在 framework 里查因。
+    而两边夹具都写 1.0，发布器那组测试全绿——**测试与被测同错，就什么也测不到**。
+    所以这里从源码读现值，三处对账。
+    """
+
+    def test_the_plugin_and_its_materialised_copy_agree(self) -> None:
+        for path in (PLUGIN, PLUGIN_MATERIALISED):
+            self.assertEqual(
+                REQUEST_SCHEMA_VERSION,
+                _schema_version_in(path, "VERIFIER_REQUEST_SCHEMA_VERSION"),
+                f"{path.name} 认的 request 版本与 framework 的 verifier-request.ts 不一致——"
+                "真实 request 会被整份拒收，而夹具照样绿")
+
+
+class ARequestAtTheCurrentSchemaGoesThrough(OpenCodeVerifierPublisher):
+    """按 framework 现值造的 request，一路走到 canonical 落盘。
+
+    上一条比的是常量，这一条走的是链路：解析 → 四方对账 → 发布。
+    版本一旦对不上，这里会停在 `invocation_request_unparseable`。
+    """
+
+    def test_it_publishes(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            req = _build_request(AI_PROMPT)
+            self.assertEqual(REQUEST_SCHEMA_VERSION, req["schema_version"])
+            reports = self._project(root, summary_subject=req["subject_id"])
+            out = json.loads(self._publish(root, self._payload(root, req)))
+            self.assertEqual("published", out["state"], out)
+            self.assertTrue(self._canonical_file(reports, req["subject_id"]).is_file())
 
 
 if __name__ == "__main__":

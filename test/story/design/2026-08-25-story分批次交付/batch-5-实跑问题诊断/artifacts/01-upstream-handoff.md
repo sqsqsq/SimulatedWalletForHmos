@@ -19,7 +19,7 @@
 
 | 文件 | 改动 |
 |---|---|
-| `agents/opencode/templates/plugin/record-verifier-report.js` | **新增**。发布器：`task` 工具完成时做四方对账并发布 `verifier.report.<subject>.json`。subject 按 3.0.0 的 `maison-verifier-request@2` 派生，字段与顺序同 `harness/scripts/utils/verifier-request.ts` 的 `canonicalRequestInput` |
+| `agents/opencode/templates/plugin/record-verifier-report.js` | **新增**。发布器：`task` 工具完成时做四方对账并发布 `verifier.report.<subject>.json`。subject 按 3.0.0 的 `maison-verifier-request@2` 派生，字段与顺序同 `harness/scripts/utils/verifier-request.ts` 的 `canonicalRequestInput`；request 认 `schema_version` **1.1**（与 `VERIFIER_REQUEST_SCHEMA_VERSION` 同值——两处分叉时插件会把真实 request 整份拒收，结论只落 bedside） |
 | `agents/opencode/templates/agents/verifier.md` | **新增**。只读 verifier 子 agent 定义，`permission:` 逐工具 deny |
 | `agents/opencode/adapter.yaml` | 增 `commands.subagents`（→ `.opencode/agent`）、`hooks`（→ `.opencode/plugin`）、`verifier_capability` |
 | `harness/scripts/utils/verifier-plan.ts` | `VERIFIER_CAPABILITY_PUBLISHERS` 增枚举值 `task_tool_result` |

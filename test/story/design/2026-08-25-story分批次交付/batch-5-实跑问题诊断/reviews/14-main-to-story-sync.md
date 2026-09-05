@@ -30,3 +30,13 @@
 - §4.2 对 T1 的判法（看上一轮有没有选过 supplement）仍绑在 gate 记录上，覆盖不到探针证明的第二级关卡回拨（`reviews/11` §14.4 E1）；步骤 15 的 F3 按轮次与本级侧车判，两处一起关。
 - §6 第 2 条「读 checker 源码 41 次要查读的是哪几个」：已查明——`story-build.mjs` 12 次、`story_flow.py` 6 次、`knowledge-use.mjs` 2 次，起因分别是图片引用串、附录 D/E 形态、补料顺序（`reviews/11` §14.4）。
 - 三轴建议分：性能 72 与 Knowledge 90 无异议；**产物结果 90 偏高**——除报告已扣的「主路径没画图」外，还有术语成列表、异常九段标签、验收九节各一条、`§9.1` 病句、评审记录漏进 framework 档位术语、附录 A/B 相对 spec §9 略写（`reviews/11` §14.8、步骤 15 §0）。我的建议是 80–85；最终由用户定。
+
+## 5. 五跑首次起跑暴露的同步遗漏（2026-09-05 15:50）· 评审漏判
+
+五跑（`story-suite-20260905-145704`）story 段 3 次停等（材料、范围、术语），T1 生效；verifier 15:35 起跑、15:42 交稿，但插件把 request 判成 `invocation_request_unparseable`，报告只落 bedside，主模型从 15:42 起在 framework 里查原因，卡住。
+
+根因：framework 3.0.0 正式版把 verifier request 的 `schema_version` 从 1.0 升到 1.1（`verifier-request.ts` 第 32 行，claude 钩子模板同步为 1.1），而步骤 14 · 1.2 重打 opencode 适配时只跟上了 subject @2 的派生，`record-verifier-report.js` 第 55 行的 `VERIFIER_REQUEST_SCHEMA_VERSION` 仍是 `"1.0"`——插件第 160 行按它整份拒收。字段集两边一致，只差这一个常量。`.opencode/plugin/` 物化件同样是 1.0，测试夹具（`test_opencode_verifier_publisher.py` 第 140 行）也写的 1.0，所以 24 条全绿。
+
+我在 §2 核 @2 时只比了 `canonicalRequestInput` 的字段与顺序，没比 schema 常量——漏判。
+
+修法（执行会话）：模板与物化件常量改 `"1.1"`；夹具改 1.1 并加一条「harness 现值 schema 与插件常量相等」的对账（从 `verifier-request.ts` 读，不写死）；`artifacts/01-*.patch` 重生成。这一跑的工作区带的是旧插件，修完要重跑。

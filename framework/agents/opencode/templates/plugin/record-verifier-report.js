@@ -52,7 +52,7 @@ const RESULT_BLOCK_OPEN = "<!-- maison-verifier-result:v1 -->"
 const RESULT_BLOCK_CLOSE = "<!-- /maison-verifier-result:v1 -->"
 const SUBJECT_ID_PATTERN = /^[0-9a-f]{64}$/
 // request 契约（SSOT: harness/scripts/utils/verifier-request.ts）——逐字符复刻。
-const VERIFIER_REQUEST_SCHEMA_VERSION = "1.0"
+const VERIFIER_REQUEST_SCHEMA_VERSION = "1.1"
 const VERIFIER_REQUEST_KIND = "maison_verifier_request"
 const VERIFIER_REQUEST_SUBJECT_SCHEMA = "maison-verifier-request@2"
 const AI_PROMPT_FILENAME = "ai-prompt.md"
