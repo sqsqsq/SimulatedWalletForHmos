@@ -1458,6 +1458,18 @@ def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
             diagnostics[f"harness_{phase}"] = {
                 "status": "skipped", "reason": "阶段没有 reports/ 之外的真实产物"}
             continue
+        # **已闭环的阶段不重跑**：harness 每跑一次都重新派生 verifier subject，
+        # 跑完 summary 记的就是一个没有报告的 subject——观察动作改了被观察物。
+        # 它自己定稿的那份 summary 已经回答了「这个阶段过没过」，读它就够。
+        closed, _missing = phase_evidence_complete(feature, phase)
+        if closed:
+            gates[f"harness_{phase}"] = "pass"
+            diagnostics[f"harness_{phase}"] = {
+                "status": "pass", "source": "existing_summary",
+                "reason": "阶段已闭环（四件凭证齐 + summary 正式收口），读既有结论；"
+                          "重跑 harness 会换掉 verifier subject，把被观察的产物改成未闭环",
+            }
+            continue
         gate_status, diagnosis = run_phase_harness(feature, phase, out_dir)
         gates[f"harness_{phase}"] = gate_status
         diagnostics[f"harness_{phase}"] = diagnosis

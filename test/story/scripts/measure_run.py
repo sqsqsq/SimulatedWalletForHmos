@@ -40,6 +40,10 @@ CHECKER_PATH_RE = re.compile(
 #: `node -e "readFileSync(...)"` 也是读：一轮实跑里 68 次读判据脚本**全部**走这条，
 #: 而当时的口径只认 `cat/head/sed`，于是报表上写着「读 checker 源码 0 次」。
 #: 度量报 0 而实际 68，比没有这项度量更坏——它让人以为这条已经解决了。
+#: 图围栏——与 story-build check 的形态判据同一个口径（mermaid 及几种等价标记）。
+DIAGRAM_FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b",
+                              re.IGNORECASE)
+
 BASH_READ_RE = re.compile(
     r"\b(cat|head|tail|sed|less|type|grep|rg|awk)\b|readFileSync|readFile\b|open\(")
 
@@ -220,9 +224,34 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "gap_sec_by_kind": {k: round(v, 1) for k, v in gap_by_kind.items()},
         "conservation_machine": conservation[0] if conservation else None,
         "conservation_model": conservation[1] if conservation else None,
+        **_diagrams(run_dir or events_path.parent),
         **_human_wait(run_dir or events_path.parent),
         **_startup_gap(run_dir or events_path.parent, first_model_ts),
     }
+
+
+def _diagrams(run_dir: Path) -> dict:
+    """产物里画了几张图，流程章有没有图。
+
+    图是形态里唯一「有没有」一眼可数的东西，而它恰恰是连续几跑都没自发出现的那一项。
+    不数它的话，三轴评分里「产物结果」那一轴只能靠人翻产物才知道图画没画。
+    按章分：流程章为 0 单独标出——那一章没有图，等于主路径只剩文字复述。
+    """
+    story = next(iter(sorted(run_dir.rglob("story.md"))), None)
+    if story is None:
+        return {"diagrams_total": None, "diagrams_in_flow_chapter": None}
+    total = 0
+    in_flow = 0
+    chapter = ""
+    for line in story.read_text(encoding="utf-8", errors="replace").split("\n"):
+        head = line.strip()
+        if head.startswith("## "):
+            chapter = head[3:].strip()
+        if DIAGRAM_FENCE_RE.match(line):
+            total += 1
+            if "流程" in chapter:
+                in_flow += 1
+    return {"diagrams_total": total, "diagrams_in_flow_chapter": in_flow}
 
 
 def _startup_gap(run_dir: Path, first_model_ts) -> dict:

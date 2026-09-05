@@ -213,6 +213,39 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertIsNone(r["startup_gap_sec"])
         self.assertEqual("unavailable", r["startup_gap_source"])
 
+    def _measure_with_story(self, story_text: str) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "events.jsonl").write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False)
+                          for r in _events(_harness(GATE_PASS))),
+                encoding="utf-8")
+            work = run / "work" / "AR"
+            work.mkdir(parents=True)
+            (work / "story.md").write_text(story_text, encoding="utf-8")
+            return measure_run.measure(run / "events.jsonl", run_dir=run)
+
+    def test_diagrams_are_counted_per_chapter(self):
+        """图数得出来，而且分得清流程章有没有。"""
+        r = self._measure_with_story(
+            "# AR90001\n\n## 业务流程\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\n"
+            "## 功能说明\n\n```mermaid\nstateDiagram\n  s1 --> s2\n```\n")
+        self.assertEqual(2, r["diagrams_total"])
+        self.assertEqual(1, r["diagrams_in_flow_chapter"])
+
+    def test_a_flow_chapter_without_a_diagram_shows_zero(self):
+        """流程章一张图都没有时它是零，不是「没测」——那正是连着几跑的形态。"""
+        r = self._measure_with_story(
+            "# AR90001\n\n## 业务流程\n\n主路径：进入 → 提交 → 结果。\n\n"
+            "## 功能说明\n\n```mermaid\nstateDiagram\n  s1 --> s2\n```\n")
+        self.assertEqual(1, r["diagrams_total"])
+        self.assertEqual(0, r["diagrams_in_flow_chapter"])
+
+    def test_no_story_means_unknown_not_zero(self):
+        """没有产物时不报零——「没画图」与「没产物」是两件事。"""
+        r = self._measure([_harness(GATE_PASS)])
+        self.assertIsNone(r["diagrams_total"])
+
     def test_human_wait_unknown_is_not_zero(self):
         """没记录人工等待时报 None：0 会被当成「这轮没人等过」，那是编数。"""
         r = self._measure([_harness(GATE_PASS)])

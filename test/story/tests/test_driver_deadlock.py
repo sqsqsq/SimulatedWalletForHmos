@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -151,6 +153,43 @@ class SpecRequirementProvider(unittest.TestCase):
         self.assertIn("fidelity-intent-init", branch,
                       "absent 分支没告诉模型跑什么命令，L2 需求缺失就成了死胡同")
         self.assertIn("--requirement", branch)
+
+
+class ObservingDoesNotChangeTheObserved(unittest.TestCase):
+    """收工后不再对已闭环的阶段跑 harness。
+
+    harness 每跑一次都重新派生 verifier subject，跑完 summary 记的就是一个没有报告的
+    subject——被观察的产物因为观察动作本身，从「已闭环」变成「证据缺失」。
+    阶段自己定稿的那份 summary 已经回答了「过没过」，读它就够。
+    """
+
+    def _run_gates(self, *, closed: bool) -> tuple[dict, list]:
+        called = []
+
+        def fake_harness(feature, phase, out_dir):
+            called.append(phase)
+            return "pass", {"status": "ran"}
+
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            with unittest.mock.patch.object(run_case, "phase_was_reached",
+                                            lambda *a, **k: True), \
+                 unittest.mock.patch.object(run_case, "phase_evidence_complete",
+                                            lambda *a, **k: (closed, [])), \
+                 unittest.mock.patch.object(run_case, "run_phase_harness", fake_harness):
+                gates = run_case.run_gates("AR90001", out, end_phase="plan",
+                                           start_phase="plan")
+        return gates, called
+
+    def test_a_closed_phase_is_read_not_rerun(self) -> None:
+        gates, called = self._run_gates(closed=True)
+        self.assertEqual([], called, "阶段已闭环还去跑 harness——换掉 subject 就是改了被观察物")
+        self.assertEqual("pass", gates["harness_plan"])
+
+    def test_an_unclosed_phase_still_runs(self) -> None:
+        """没闭环的照跑：不跑就不知道它过没过，那是另一种失真。"""
+        _, called = self._run_gates(closed=False)
+        self.assertEqual(["plan"], called)
 
 
 if __name__ == "__main__":
