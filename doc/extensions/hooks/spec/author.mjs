@@ -143,6 +143,16 @@ function decisionSection(contract) {
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。'];
 }
 
+/**
+ * 一个参数交给 shell 之前包起来 —— 图名带空格是常事（`page one.png`）。
+ *
+ * 裸拼的话 bash 把它拆成两个参数，作者复制过去得到 `unrecognized arguments: one.png`。
+ * 双引号 bash 与 Windows 的 cmd 都认；内部的双引号与反斜杠转义掉。
+ */
+function shellArg(value) {
+  return `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
+}
+
 function imageSection(projectRoot, feature) {
   const materials = readJsonOrNull(path.join(featureRoot(projectRoot, feature),
     'AR', 'story-src', 'materials.json'));
@@ -177,7 +187,7 @@ function imageSection(projectRoot, feature) {
       // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
       '  python doc/extensions/skills/story/scripts/import_sources.py'
-        + ` --feature ${feature} --caption-image ${featureDir}/${p}`
+        + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${p}`)}`
         + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),
       '  ```',
       '');

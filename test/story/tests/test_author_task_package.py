@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -222,16 +223,19 @@ class TaskPackageIsRendered(WorkspaceCase):
                       "规则要单向：把图引进正文再解释是六跑那次的形态")
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
 
+    #: 图名带空格是常事——导入从文档里抽出来的图常常沿用原文里的名字。
+    SPACED = "assets/x/page one.png"
+
     def seed_two_images(self) -> None:
-        """盘上放两张图并登记：一张要用、一张已登记不用。"""
-        for rel in ("assets/x/one.png", "assets/x/two.png"):
+        """盘上放两张图并登记：一张要用、一张已登记不用（名字带空格）。"""
+        for rel in ("assets/x/one.png", self.SPACED):
             img = self.feature_root / rel
             img.parent.mkdir(parents=True, exist_ok=True)
             img.write_bytes(b"PNG")
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             json.dumps({"items": [
-                {"kind": "image", "paths": ["assets/x/one.png"], "caption": "签约页"},
-                {"kind": "image", "paths": ["assets/x/two.png"], "unused": "旧版对照稿"},
+                {"kind": "image", "paths": [self.SPACED], "caption": "签约页"},
+                {"kind": "image", "paths": ["assets/x/one.png"], "unused": "旧版对照稿"},
             ]}, ensure_ascii=False), encoding="utf-8")
 
     def test_every_image_gets_a_command_that_runs_as_written(self) -> None:
@@ -245,7 +249,7 @@ class TaskPackageIsRendered(WorkspaceCase):
                 if l.strip().startswith("python ") and "--caption-image" in l]
         self.assertEqual(2, len(cmds), f"每张图各要一条可跑的命令，实际 {len(cmds)} 条")
         for line in cmds:
-            arg = line.split("--caption-image", 1)[1].split()[0]
+            arg = shlex.split(line)[shlex.split(line).index("--caption-image") + 1]
             self.assertTrue(arg.startswith("doc/features/"),
                             f"命令的路径不是相对工程根：{arg}")
             self.assertTrue((self.root / arg).exists(), f"命令指到一个不存在的文件：{arg}")
@@ -263,6 +267,7 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertTrue(cmds, "没有渲染出可跑的取舍命令")
         line = next(c for c in cmds if "--unused" in c).replace(
             '"<为什么它不属于本需求>"', '"属别的需求的页面"')
+        self.assertIn("page one.png", line, "跑的应当是名字带空格的那张")
         proc = subprocess.run(line, shell=True, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=90,
                               cwd=self.root)
@@ -302,25 +307,94 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
                 .replace("{{看到什么算过}}", "只显示末四位")
                 .replace("{{规约编号}}", rule))
 
+    RULE = "SEC-01"
+
+    SPEC_HEAD = """# {feature} spec
+
+## 9. 技术契约
+
+### 9.1 端云接口
+
+| 名称 | 用途 |
+|---|---|
+| 建立签约接口 | 建立自动充值签约 |
+
+## 10. 规约约束要求
+
+<!-- 由 knowledge-use.yaml 生成 -->
+
+## 11. 设计模式候选登记
+
+<!-- 由 knowledge-use.yaml 生成 -->
+"""
+
+    def stage_a_spec_that_reaches_the_bridge(self) -> None:
+        """把上下文搭到「桥接那一条真的会跑」——少一样它就提前返回，夹具就成了空跑。
+
+        要的三样：spec.md（缺了整个 hook `skipped`）、一份对得上真实知识的判断
+        （对不上时判断本身先红，投影与桥接都到不了）、§10/§11 的生成区
+        （由 render 写，投影核不过同样先红）。
+        """
+        spec_dir = self.feature_root / "spec"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "spec.md").write_text(
+            self.SPEC_HEAD.format(feature=FEATURE), encoding="utf-8")
+
+        shared = self.root / "doc" / "extensions" / "hooks" / "shared"
+        proc = run("node", "--input-type=module", "-e",
+                   f"const u = await import({as_url(shared / 'knowledge-use.mjs')});"
+                   f"process.stdout.write(u.manifestDigest({json.dumps(self.root.as_posix())}));",
+                   cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+        rows = ["schema: 1", f'manifest_digest: "{proc.stdout.strip()}"', "facts: []',".rstrip("',"),
+                "constraint_domains:"]
+        for prefix in ("UX", "DFX", "OBS", "RES", "COMPAT", "ENV", "DLV"):
+            rows += [f"  - prefix: {prefix}", "    applicable: false",
+                     f"    reason: 本需求不涉及 {prefix} 域管的那类改动"]
+        rows += ["constraints:",
+                 f"  - id: {self.RULE}",
+                 "    applicable: true",
+                 "    requirement: 卡号在充值记录与日志两个出口都按现有规则脱敏",
+                 "    basis: 产品原稿 §3 写明记录列表展示脱敏卡号",
+                 "    contract: 建立签约接口",
+                 "patterns:",
+                 "  - unit: 充值记录列表的卡号展示",
+                 "    candidate: page-interaction",
+                 "    signal: 单页一次读取一次渲染，没有跨步骤的状态传递"]
+        (spec_dir / "knowledge-use.yaml").write_text(
+            "\n".join(rows) + "\n", encoding="utf-8")
+
+        proc = run("node", str(shared / "knowledge-use.mjs"), "render",
+                   "--feature", FEATURE, "--project-root", str(self.root), cwd=self.root)
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+
     def test_the_extension_side_reads_the_rule_out_of_the_example(self) -> None:
         """把示例当成作者写出来的 acceptance.yaml，跑真的 spec post_check。
 
-        它按 `knowledge_rule: <编号>` 找验收桥；示例的键名或值形状一漂移，
+        它按 `knowledge_rule: <编号>` 找验收桥；示例的键名或层级一漂移，
         这里就报「有代码要求但 acceptance.yaml 没有对应验收条目」。
         """
-        rule = "SEC-01"
+        self.stage_a_spec_that_reaches_the_bridge()
         (self.feature_root / "acceptance.yaml").write_text(
-            self.example_yaml(rule), encoding="utf-8")
-        (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "spec" / "knowledge-use.yaml").write_text(
-            "constraints:\n"
-            f"  - id: {rule}\n"
-            "    applicable: true\n"
-            "    requirement: 卡号在任何出口都脱敏\n"
-            "    basis: 产品原稿 §3\n", encoding="utf-8")
+            self.example_yaml(self.RULE), encoding="utf-8")
         message = self.spec_check()
+        self.assertNotIn("跳过", message, f"这条检查压根没跑：{message[:400]}")
         self.assertNotIn("没有对应验收条目", message, message[:400])
         self.assertNotIn("指向了 spec 里没有要求的条目", message, message[:400])
+
+    def test_the_bridge_check_really_runs_on_the_example(self) -> None:
+        """对照：同一份上下文，把示例的编号换成 spec 里没有的那条，桥接当场报两句。
+
+        没有这一条的话，上面那条「没有出错字样」在检查根本没执行时也是绿的。
+        """
+        self.stage_a_spec_that_reaches_the_bridge()
+        (self.feature_root / "acceptance.yaml").write_text(
+            self.example_yaml("ZZZ-99"), encoding="utf-8")
+        message = self.spec_check()
+        self.assertIn("没有对应验收条目", message, message[:400])
+        self.assertIn(self.RULE, message)
+        self.assertIn("指向了 spec 里没有要求的条目", message, message[:400])
 
     def test_the_framework_side_sees_a_criteria_item_with_an_id(self) -> None:
         """框架侧读的是 `criteria` 数组里的对象与它的 `id`
