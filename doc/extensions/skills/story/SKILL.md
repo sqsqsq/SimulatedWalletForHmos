@@ -28,7 +28,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 
 **`/story <AR>` 的启动语义 = 做到 spec 闭环并通过交付门**（归档送审与进入 plan 由用户在交付门之后选）。这一句是本扩展对 framework 推进策略的
 batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8.1 第 2 条、§8.2）：
-声明范围 = 从取材到 spec 阶段闭环、再到 `/story archive`。**范围之内不再逐阶段要授权**，
+声明范围 = 从取材到 spec 阶段闭环并通过交付门。**范围之内不再逐阶段要授权**，
 超出这个范围（plan 及其之后）仍按 framework 的默认策略停等。
 `status` 在收口那一步会把这句声明原样打出来。
 
