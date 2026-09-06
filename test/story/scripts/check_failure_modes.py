@@ -172,11 +172,17 @@ def cell(cells: list[str], headers: list[str], name: str) -> str:
     return ""
 
 
+#: 附录那一行标题：`## 附录`、`## 10. 附录`、`### 附录：规约符合性` 都算。
+#: 章编号由 `number` 机器铺，成文的归档件带的正是带编号那种——不认它的话，
+#: 整份 story 会被当成主叙事，附录里的规约表与材料清单于是被判成泄漏。
+APPENDIX_HEADING = re.compile(r"^#{1,3}\s*(?:[0-9]+[.、)]\s*)?附录")
+
+
 def split_main_and_appendix(text: str) -> tuple[str, str]:
-    """按第一个 ``## 附录`` 切主叙事与附录（M10/P07/P08 的作用域口径）。"""
+    """按第一个附录标题切主叙事与附录（M10/P07/P08 的作用域口径）。"""
     lines = split_lines(text)
     for i, line in enumerate(lines):
-        if re.match(r"^#{1,3}\s*附录", line.strip()):
+        if APPENDIX_HEADING.match(line.strip()):
             return "\n".join(lines[:i]), "\n".join(lines[i:])
     return text, ""
 

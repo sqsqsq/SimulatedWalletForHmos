@@ -409,6 +409,13 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
     return doc_sections, media, ux_images
 
 
+def _no_such_image(target: Path) -> str:
+    """读不到的时候，把正确的写法一起给出来——只说「读不到」等于让人去翻脚本。"""
+    return (f"读不到 {target}——路径相对工程根，"
+            "例如 `doc/features/<需求名>/assets/<文件名>`；"
+            "绝对路径也认。`--feature <名>` 那次导入打印出来的路径可以直接复制")
+
+
 def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
     """给材料里的一张图写下「它是什么」。**不复制、不改名、不动文件**。
 
@@ -418,7 +425,7 @@ def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
     import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
 
     if not target.is_file():
-        raise ImportError_(f"读不到 {target}——要写说明的图得先在磁盘上")
+        raise ImportError_(_no_such_image(target))
     if target.suffix.lower() not in IMAGE_EXTS:
         raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
     if not caption.strip():
@@ -430,12 +437,23 @@ def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
     return {"sha256": sha, "caption": caption.strip(), "digest": manifest.get("digest")}
 
 
+def resolve_image_arg(project_root: Path, raw: str) -> Path:
+    """图片参数落到哪个文件——**相对工程根**，或者绝对路径。
+
+    只认一种基准。「先按工程根找、找不到再按需求目录找」这种回落，在两处恰好同名时
+    会取到另一张图而且不报错；而 `--feature` 打印出来的就是相对工程根的写法，
+    作者手上本来就有一份可以直接复制的串。
+    """
+    path = Path(raw)
+    return path if path.is_absolute() else project_root / path
+
+
 def _image_for_mark(feature_root: Path, target: Path) -> str:
     """取舍写在哪张图上——身份由清单模块算，两处各算一份会差一位截断。"""
     import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
 
     if not target.is_file():
-        raise ImportError_(f"读不到 {target}——要登记取舍的图得先在磁盘上")
+        raise ImportError_(_no_such_image(target))
     if target.suffix.lower() not in IMAGE_EXTS:
         raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
     return materials.file_digest(target)
@@ -480,7 +498,7 @@ def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> di
     import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
 
     if not source.is_file():
-        raise ImportError_(f"读不到 {source}——要登记的图得先在磁盘上")
+        raise ImportError_(_no_such_image(source))
     if source.suffix.lower() not in IMAGE_EXTS:
         raise ImportError_(f"{source.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
     if not caption.strip():
@@ -548,9 +566,7 @@ def main() -> int:
         project_root = Path(args.project_root).resolve() if args.project_root else \
             Path(__file__).resolve().parents[5]
         feature_root = project_root / features_dir(project_root) / args.feature
-        target = Path(args.caption_image)
-        if not target.is_absolute():
-            target = feature_root / target
+        target = resolve_image_arg(project_root, args.caption_image)
         # 三件事共用一条路：写说明、登记不用的理由、撤掉理由。图只有一个身份，
         # 分成三个入口的话作者要记三种路径写法。
         mode = "image-used" if args.used else ("image-unused" if args.unused
@@ -586,7 +602,8 @@ def main() -> int:
             Path(__file__).resolve().parents[5]
         feature_root = project_root / features_dir(project_root) / args.feature
         try:
-            out = register_ux(feature_root, Path(args.register_ux), args.name, args.caption)
+            out = register_ux(feature_root, resolve_image_arg(project_root, args.register_ux),
+                               args.name, args.caption)
         except (ImportError_, OSError) as exc:
             sys.stdout.write(json.dumps({"mode": "register-ux", "ok": False, "error": str(exc)},
                                         ensure_ascii=False) + "\n")

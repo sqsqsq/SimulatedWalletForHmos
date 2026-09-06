@@ -150,9 +150,26 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         return subprocess.run(
             ["python", "doc/extensions/skills/story/scripts/import_sources.py",
              "--feature", FEATURE, "--caption-image",
-             "ux-reference/signup-page.png", "--unused", reason],
+             f"doc/features/{FEATURE}/ux-reference/signup-page.png", "--unused", reason],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
+
+    def test_a_feature_relative_path_is_refused_with_the_right_one(self) -> None:
+        """只认相对工程根的写法，报错把正确的一起给出来。
+
+        「先按工程根找、找不到再按需求目录找」这种回落，在两处恰好同名时会取到
+        另一张图而且不报错；只说「读不到」的话，作者只能去翻脚本找基准。
+        """
+        proc = subprocess.run(
+            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+             "--feature", FEATURE, "--caption-image",
+             "ux-reference/signup-page.png", "--caption", "签约页"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=90, cwd=self.root)
+        self.assertEqual(1, proc.returncode)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("路径相对工程根", out)
+        self.assertIn("doc/features/<需求名>/assets/<文件名>", out)
 
     def test_an_image_nobody_mentions_is_reported_by_name(self) -> None:
         out = self.check_output()
@@ -175,7 +192,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         proc = subprocess.run(
             ["python", "doc/extensions/skills/story/scripts/import_sources.py",
              "--feature", FEATURE, "--caption-image",
-             "ux-reference/signup-page.png", "--used"],
+             f"doc/features/{FEATURE}/ux-reference/signup-page.png", "--used"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)

@@ -200,6 +200,33 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
 
 
+class TheAcceptanceExampleIsRealShape(WorkspaceCase):
+    """任务包给的那条最小示例，形状要与消费方一致——漂移了作者照抄就红。
+
+    `acceptance.schema.yaml` 只约束顶层 `criteria`，不定义条目字段：不给示例，
+    作者只能去 grep 框架的判据与本扩展的 post_check，为的只是搞清
+    `knowledge_rule` 放在哪一层。
+    """
+
+    def test_the_example_puts_the_rule_key_inside_a_criteria_item(self) -> None:
+        package = self.task_package()
+        self.assertIn("criteria:", package)
+        block = package.split("一条最小的长这样", 1)[1].split("```", 2)[1]
+        lines = [l for l in block.split("\n") if l.strip()]
+        item = next(i for i, l in enumerate(lines) if l.strip().startswith("- id:"))
+        rule = next(i for i, l in enumerate(lines) if "knowledge_rule" in l)
+        self.assertGreater(rule, item, "knowledge_rule 跑到条目外面去了")
+        self.assertEqual(lines[item].index("-") + 2, len(lines[rule])
+                         - len(lines[rule].lstrip()),
+                         "knowledge_rule 与 id 不平级")
+
+    def test_the_example_key_is_the_one_post_check_reads(self) -> None:
+        """键名取自实际消费它的那一处，不是另起一个名字。"""
+        post = (EXT / "hooks" / "spec" / "post_check.mjs").read_text(encoding="utf-8")
+        self.assertIn("knowledge_rule", post)
+        self.assertIn("knowledge_rule:", self.task_package())
+
+
 class SkeletonLeavesOnlyTheJudgement(WorkspaceCase):
     """判断骨架：结构归脚本，判断归作者。"""
 

@@ -381,6 +381,83 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
         self.add_ux("signup.png")          # 料真的进来了，材料指纹随之变
         self.round_now()
 
+    def out_of(self, proc) -> str:
+        return (proc.stdout or "") + (proc.stderr or "")
+
+    def test_material_in_the_inbox_says_import_it(self) -> None:
+        """R64：料已在收件箱——直接导入，不再问人放好了没有。
+
+        内网那次首次补料后模型仍让人「放好后回复」：`accepted` 只说「记录了」，
+        它手上没有下一个动作，只好把问题又抛回去。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        out = self.out_of(self.sign_supplement())
+        self.assertIn("直接跑", out)
+        self.assertIn("不用再问人放好了没有", out)
+
+    def test_material_already_imported_says_just_recount(self) -> None:
+        """R64：原件已经进正文、只是指纹变了——重跑盘点即可，不用再导一次。"""
+        self.round_now()
+        self.write_gate_options()
+        self.add_ux("signup.png")          # 先导后签：料已经落在正文侧
+        out = self.out_of(self.sign_supplement())
+        self.assertIn("重跑", out)
+        self.assertNotIn("直接跑 `import_sources", out)
+
+    def test_the_next_step_says_how_to_decide_whether_to_stop(self) -> None:
+        """R65：盘点完怎么定停不停，要说出口。
+
+        只说「重新盘点 → 重跑 round」的话，模型把上一轮的选项再摆一遍，流程又停一次。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        self.assertEqual(0, self.sign_supplement().returncode)
+        proc = self.run_flow("status")
+        out = self.out_of(proc)
+        self.assertIn("上一轮缺的补上了没有", out)
+        self.assertIn("材料够了就直接进需求分析，不再问", out)
+
+    def test_a_second_round_request_must_say_what_is_still_missing(self) -> None:
+        """R65：补齐一轮之后再停，问的必须是剩余的缺口。"""
+        self.supplement_round()
+        self.write_gate_options()          # 补料选项没写 missing / why
+        proc = self.sign_supplement()
+        self.assertEqual(1, proc.returncode)
+        out = self.out_of(proc)
+        self.assertIn("missing", out)
+        self.assertIn("剩余的缺口", out)
+
+    def test_a_second_round_request_with_the_gap_named_is_accepted(self) -> None:
+        """写清了还缺什么、为什么不够，就可以再停一次——这不是无效询问。"""
+        self.supplement_round()
+        src = self.feature_root / "AR" / "story-src"
+        (src / ".gate-options.json").write_text(json.dumps({
+            "gate": "material_scope",
+            "options": [
+                {"key": "supplement", "label": "补充材料",
+                 "missing": "管理页的界面图",
+                 "why": "补来的原稿只有签约页，管理页那一节没有可参照的界面"},
+                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        self.put_inbox("管理页.md")
+        self.assertEqual(0, self.sign_supplement().returncode)
+
+    def test_a_non_request_option_needs_no_gap_fields(self) -> None:
+        """「材料充足，继续」不是缺口，不受这一条约束。"""
+        self.supplement_round()
+        src = self.feature_root / "AR" / "story-src"
+        (src / ".gate-options.json").write_text(json.dumps({
+            "gate": "material_scope",
+            "options": [{"key": "confirm_scope", "label": "材料充足，开始需求分析"}],
+        }, ensure_ascii=False), encoding="utf-8")
+        proc = self.run_flow("decide", "--gate", "material_scope",
+                             "--chosen", "confirm_scope", "--by", "human",
+                             "--basis", "用户回复：2（=材料充足）")
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+
     def test_no_new_gap_means_no_second_stop(self) -> None:
         self.supplement_round()
         self.assertEqual("run_analysis", self.next_of(),

@@ -95,6 +95,10 @@ function knowledgeSection(projectRoot, feature) {
  *
  * 漏接是 harness 的常见首红：判了 applicable 却没有对应的 `knowledge_rule`。
  * 编号列出来，作者照着接；骨架还没填时给规则本身。
+ *
+ * **条目长什么样也一并给**：`acceptance.schema.yaml` 只约束顶层 `criteria`，
+ * 不定义条目字段，渲染不出形状；作者于是去 grep 框架的 `check-acceptance.ts`
+ * 与本扩展的 `post_check.mjs`，为的只是搞清 `knowledge_rule` 放哪一层。
  */
 function acceptanceKeys(useFile, projectRoot, feature) {
   const text = fs.existsSync(useFile) ? fs.readFileSync(useFile, 'utf-8') : '';
@@ -104,6 +108,20 @@ function acceptanceKeys(useFile, projectRoot, feature) {
       + `\`knowledge_rule: <编号>\` 的 criteria。本轮已判 applicable：${ids.join('、')}。`
     : `判 \`applicable: true\` 的每一条，都要在 \`${acceptancePath(projectRoot, feature)}\` 有一条带 `
       + '`knowledge_rule: <编号>` 的 criteria——填完骨架再回头对一遍。',
+  '',
+  '一条最小的长这样（`knowledge_rule` 与 `id` 平级，都在 `criteria` 的条目下）：',
+  '',
+  '```yaml',
+  'criteria:',
+  '  - id: AC-K1',
+  '    priority: P2',
+  '    description: {{这条规约在本需求上要保证什么，用可观察的话写}}',
+  '    testable: true',
+  '    verification_steps:',
+  '      - {{怎么验}}',
+  '    expected_result: {{看到什么算过}}',
+  '    knowledge_rule: {{规约编号}}',
+  '```',
   ''];
 }
 
