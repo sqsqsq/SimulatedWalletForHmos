@@ -479,13 +479,30 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
       · 业务特征词（补充文档名、资产目录名——它们会变成路径）；
       · Case 名与 suite 前缀（配置里登记的那些）；
       · 某次运行的计数（「实测 3 处」这类）；
-      · 轮次叙述（「两跑的作者都…」「一次真实实跑说明了…」——不带数字也算）。
+      · 轮次叙述（「两跑的作者都…」「一次真实实跑说明了…」——不带数字也算）；
+      · 历史与替代叙述（「此前…」「早先…」「三态勾选块退场」——讲这段以前怎么样）；
+      · 以错误为参照的指路（「不必去读 Y」——正确的位置本身就是答案）。
+
+    「不在 X 下」这一形状不入词表：它同时覆盖规则本身的禁止（`不在归档目录下造副本`），
+    机械分不开，归评审按 `AGENTS.md` §5.3 逐句读。
+
+    后两样与前四样同一类：**非当前信息进了交付面**。它们的家在 `test/story/`
+    的方案、评审与提交说明里，那里正需要说清「为什么改」。
+
+    豁免按语境登记，逐条具名（见 `M02_EXEMPT`）：产品动作本身用这些词、
+    合同数据里的业务项、禁用词的替换说法。
     """
     case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")
     run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
     # 轮次叙述：不带数字也算。「两跑的作者都…」「一次真实实跑说明了…」都是维护痕迹，
     # 交付面用现在时讲道理就够。`上一轮` 不在列——那是流程概念（round 开出的上一轮）。
     run_narrative = re.compile(r"实跑|首跑|[一二三四五六七八九十两]跑|[两三四]轮(?!次)")
+    # 历史与替代叙述：讲这段以前怎么样、什么退场了。只收有区分力的字面——
+    # 「旧的」「不在 X 下」这类同时覆盖规则本身的禁止（`不读旧 story`、
+    # `不在归档目录下造副本`），机械分不开，那一类归评审按 §5.3 逐句读。
+    history = re.compile(r"此前|早先|原先|曾经|迁移期|不再是|退场")
+    # 「不必去读源码」这类：正确的位置本身就是答案，不用拿错误当参照。
+    negative_pointer = re.compile(r"不必去|不要去|别去")
     business_words = _case_business_words()
     case_names = _case_and_suite_names()
     hits = []
@@ -505,6 +522,17 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
                 hits.append(f"{rel}:{n} 轮次叙述「{m.group(0)}」——交付面用现在时讲道理，"
                             "不讲哪一跑发生过什么")
                 continue
+            if not _m02_exempt(rel, line):
+                m = history.search(line)
+                if m:
+                    hits.append(f"{rel}:{n} 历史叙述「{m.group(0)}」——"
+                                "只写现在是什么、为什么这样；为什么改写在方案与评审里")
+                    continue
+                m = negative_pointer.search(line)
+                if m:
+                    hits.append(f"{rel}:{n} 以错误为参照「{m.group(0)}」——"
+                                "直接给出正确的位置或做法，它本身就是答案")
+                    continue
             hit_word = next((w for w in business_words if w in line), None) \
                 or next((w for w in case_names if w in line), None)
             if hit_word:
@@ -513,6 +541,29 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "机制层出现测试数据：" + "；".join(hits[:5]))
     return Outcome(True,
                    f"机制层零测试数据（业务词 {len(business_words)}、Case 与 suite 名 {len(case_names)}）")
+
+
+#: M02 的豁免，逐条具名。词表是兜底，判断归评审——所以豁免也具名，不写成通配。
+M02_EXEMPT = (
+    # 产品动作本身就叫这个：`/story restore` 恢复到上一版、archive 覆盖后的状态转移。
+    ("skills/story/SKILL.md", "上一版"),
+    ("hooks/spec/post_check.mjs", "不再是"),
+    ("skills/story/scripts/story-build.mjs", "上一版"),
+    # 版本头注就是给升级方看的行为变化清单，那是它的用途。
+    ("manifest.yaml", "退场"),
+    # 合同数据里的业务项与禁用词的替换说法。
+    ("contracts/story-chapters.json", "旧版本"),
+    ("skills/story/scripts/lint-rules.mjs", "旧版本"),
+    # adapt 面对的是目标工程里可能真的存在的旧目录。
+    ("skills/story-adaptation/SKILL.md", "退场"),
+    ("skills/story-adaptation/SKILL.md", "旧的"),
+    ("skills/story-adaptation/SKILL.md", "早先"),
+)
+
+
+def _m02_exempt(rel: str, line: str) -> bool:
+    """这一行按语境豁免吗——文件与词一起登记，避免整份文件开天窗。"""
+    return any(f in rel and w in line for f, w in M02_EXEMPT)
 
 
 def _case_and_suite_names() -> list[str]:

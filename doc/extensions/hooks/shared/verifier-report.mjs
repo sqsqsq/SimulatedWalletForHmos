@@ -170,7 +170,7 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     };
   }
   // 汇总表四列（id / status / severity / 证据），列序见框架的输出契约。
-  // 少一列时最后一格是 severity，非空——按「取最后一格」判会把它当证据放过去。
+  // 证据取第 4 格：格数不够就是这一行少了证据列，与「压根没这一行」分开报。
   if (row.length < SUMMARY_COLUMNS) {
     return {
       status: 'FAIL',

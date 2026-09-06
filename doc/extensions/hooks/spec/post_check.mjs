@@ -240,10 +240,8 @@ function knowledgeExitProblems(ctx, lines) {
 
   // 判断的真源是 knowledge-use.yaml；§10/§11 是它的投影。
   //
-  // 此前两章的 markdown 表既是给人读的，也是机器要解析回结构的真源，于是每条判据
-  // 都先要「解析得动人写的表」——表头找列、单元格剥装饰、编号抽正则，而作者每次手填
-  // 都可能把表写歪一点点。现在作者只编辑 YAML，投影由生成器写；投影与 YAML 对不上时，
-  // 错的一定是投影。
+  // 作者只编辑 YAML，投影由生成器写；判据核投影与真源一致，
+  // 对不上时错的一定是投影。
   let use;
   try {
     use = readUse(ctx.projectRoot, ctx.feature);
@@ -322,9 +320,8 @@ function acceptanceCoverage(ctx, specIds) {
  * 「不涉及：<依据>」独行豁免：那是空节规则的既有形态。
  */
 function strayProse(body) {
-  // 收到的是 `sectionBody` 切出来的**行数组**。先拼成字符串再按行切，数组会以逗号
-  // 连成一整行，节首那个空行也就不再是空行——真实 spec 的每一节都被判成「表外有段落」。
-  // 行的边界由上游给，这里不重新猜。
+  // 收到的是 `sectionBody` 切出来的**行数组**，按数组逐行判。
+  // 行的边界由上游给，这里不重新猜——重新切一遍就有第二种切法。
   for (const raw of Array.isArray(body) ? body : String(body ?? '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('|') || line.startsWith('#')) continue;

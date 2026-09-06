@@ -2,7 +2,7 @@
 
 需求系统里 PRD/SE 有时没及时归档，现场只能人工拿到文档或设计图。本脚本负责把它们
 接进既有流程：docx 转 md 覆盖对应上游正文（图片抽出保留引用），设计图分发到框架的
-UX 参考落点。下游（AR/design 生成、章节装配、spec）消费的仍是原来那几个权威文件，
+UX 参考落点。下游（AR/design 生成、章节装配、spec）消费的是那几个权威文件，
 感知不到材料来源。
 
     python import_sources.py --feature <AR> [--project-root <abs>]

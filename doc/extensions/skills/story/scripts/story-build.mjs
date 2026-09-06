@@ -480,9 +480,8 @@ function subsectionSpan(storyText, chapterTitle, name) {
 /**
  * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
  *
- * 早先这份登记是从材料正文的 `![](…)` 语法枚举出来的，于是「有没有被登记」取决于
- * 有没有人给它写过一条 markdown 链接：界面参考目录里只写了名字的那几张图因此不算数，
- * 目录里四张、登记里两张，作者只能把差额标成「不进 story」。
+ * 登记的唯一来源是清单：它枚举磁盘上真实存在的图片文件，与谁给它写没写过
+ * markdown 链接无关——按链接枚举的话，界面参考目录里只写了名字的那几张就不算数。
  *
  * 清单枚举的是磁盘上真实存在的图片文件，与谁给它写没写链接无关；同一张图复制到第二个
  * 落点时它按内容合并成一条，`paths` 列出全部落点——**图片的身份是它的内容，不是路径**。
@@ -542,7 +541,10 @@ function materialImages(ctx) {
  * 再在图题里解释，读者于是要在归档件里读到别的需求的页面。
  * 中间产物不在其中——本轮自己生成的规格与记录不是材料，它们压根不进清单。
  *
- * @returns {{must: string[], mayAlso: string[]} | null | 'broken'}
+ * **一份材料一行**：`paths` 有几个是它落了几处（同一张图既在素材目录也在界面参考目录），
+ * 不是几份材料。所以 `must` 的每一项是一组等价路径，列到其中任意一个就算数。
+ *
+ * @returns {{must: string[][], mayAlso: string[]} | null | 'broken'}
  */
 function materialListTargets(ctx) {
   const data = readManifest(ctx);
@@ -550,8 +552,8 @@ function materialListTargets(ctx) {
   if (!Array.isArray(data.materials)) return 'broken';
   const must = data.materials
     .filter(m => (m?.kind === 'doc' && m.sha256 || m?.kind === 'image')
-      && Array.isArray(m.paths))
-    .flatMap(m => m.paths);
+      && Array.isArray(m.paths) && m.paths.length)
+    .map(m => m.paths);
   const mayAlso = (Array.isArray(data.sources) ? data.sources : [])
     .map(x => `inbox/${x?.file}`);
   return { must, mayAlso };
@@ -1215,8 +1217,7 @@ function cmdCheck(ctx) {
   // ⑦ 规约判定表：激活清单的每个条目在附录的「规约判定」小节有一行，
   //    或其整域一行「整域不适用」
   //
-  // 逐条判定原先落在一份独立的判定记录文件里，那份文件退场后既无作业指引也无门禁——
-  // 规约的「知识应用」在 story 侧就这么丢过一次。判定回到 story 里，评审者才拿得到完备性回显。
+  // 判定写在 story 里：评审者据这一节回显完备性——激活了几条、各自命中与否、依据是什么。
   //
   // 落点在**附录**而不是主叙事的某一章：规约编号是工程标识，读者对不上，
   // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
@@ -1265,9 +1266,8 @@ function cmdCheck(ctx) {
   mark('④ 图片身份');
   // ④ 图片身份：story 引了哪些图、每一张是不是材料清单里登记过的那一张。
   //
-  // 它原先挂在「形态守恒」底下，而那条判的是「分了几张就要画几张」——按材料条数增长的
-  // 证明表，已随逐单元系统退场。图片这两条不是那一类：它们是确定性的链接与图片检查，
-  // 判据的对象是「引用可不可解析、在不在登记里」，与作者画了几张无关。
+  // 这两条是确定性的链接与图片检查，单独成块：判的是「引用可不可解析、
+  // 在不在登记里」，与作者画了几张无关，所以不跟形态守恒放一起。
   const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
   const seen = new Set();
   for (const [, alt, src] of imgs) {
@@ -1726,10 +1726,10 @@ function cmdCheck(ctx) {
           if (/^(https?:|mailto:)/i.test(target)) continue;
           listed.add(joinPosix(storyDir, target));
         }
-        const allowed = new Set([...want.must, ...want.mayAlso]);
-        for (const rel of want.must) {
-          if (!listed.has(rel)) {
-            problems.push(`「${appendix.title}·${name}」少了一份材料：${rel}`
+        const allowed = new Set([...want.must.flat(), ...want.mayAlso]);
+        for (const group of want.must) {
+          if (!group.some(rel => listed.has(rel))) {
+            problems.push(`「${appendix.title}·${name}」少了一份材料：${group[0]}`
               + '——它在这一轮的材料里，读者据这一节把材料找出来，漏一份等于那份材料没人知道');
           }
         }
@@ -2196,7 +2196,7 @@ function projectAppendix(ctx, storyText) {
   const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
   let lines = storyText.slice(span.start, span.end).split(/\r?\n/);
   let zones = 0;
-  // 集合对账：合同里有的按真源重投，合同里没有的旧区删掉——某一节退场或改名之后，
+  // 集合对账：合同里有的按真源重投，合同里没有的区块删掉——某一节从合同去掉或改名之后，
   // 旧区会一直挂着，而它指的真源已经没人维护了。
   const want = new Set((appendix.subsections ?? []).map(normalizeHeading));
   for (const line of [...lines]) {
@@ -2297,7 +2297,7 @@ function materialListSkeleton(ctx) {
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
   const entries = materialImages(ctx);
   const images = new Set(Array.isArray(entries) ? entries.flatMap(m => m.paths) : []);
-  return targets.must.map(rel => images.has(rel)
+  return targets.must.map(([rel]) => images.has(rel)
     ? `- 界面图：[${basename(rel)}](${relFromStory(rel)})`
       + '——{{这张图讲了什么 / 未引用：为什么它不属于本需求}}'
     : `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${relFromStory(rel)})`

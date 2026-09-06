@@ -1098,6 +1098,25 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
         self.assertIn("列了不是材料的东西", hits[0])
 
+    def test_one_material_is_one_row_even_with_two_paths(self) -> None:
+        """同一张图落两处（素材目录与界面参考目录）是一份材料，不是两份。
+
+        按路径算的话 E 里要为同一张图写两行，读者看见两个条目、以为是两张图。
+        """
+        rel = "assets/入口原型说明/image1.png"
+        image = self.feature_root() / rel
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(b"PNGDATA1")
+        twin = self.feature_root() / "ux-reference" / "entry.png"
+        twin.parent.mkdir(parents=True, exist_ok=True)
+        twin.write_bytes(b"PNGDATA1")            # 同内容 = 同一份材料的另一个落点
+        self.round_now()
+        self.rewrite_story(
+            self.LISTED,
+            self.LISTED + "\n- 界面图：[image1.png](../" + rel + ")——未引用：属别的需求")
+        _, out = self.check_output()
+        self.assertNotIn("少了一份材料", out, "同一份材料被当成两份，E 要写两行")
+
     def test_a_registered_image_belongs_in_the_list(self) -> None:
         """图逐张列进清单是**要求**：不属于本需求的图，它的去向只能写在这里。
 
