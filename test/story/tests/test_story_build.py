@@ -1439,6 +1439,26 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertTrue(self.draft("03-范围.md").exists(), "缺的那份没补回来")
 
 
+class TheContractSaysWhatEachSlotAnswers(RealRunCase):
+    """槽位自己不说该答什么，作者只好各写一句概括。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.build("init")
+        self.build("skeleton")
+
+    def test_a_branch_section_says_what_each_label_answers(self) -> None:
+        draft = self.draft("05-业务流程.md").read_text(encoding="utf-8")
+        self.assertIn("**时机**：{{什么条件触发", draft)
+        self.assertIn("**方案**：{{用户看到什么", draft)
+        self.assertIn("**走向**：{{回到主路径", draft)
+
+    def test_the_deliverables_section_is_a_table(self) -> None:
+        """只写「交什么」，评审者读不出谁在等、拿去做什么、缺了会卡谁。"""
+        draft = self.draft("09-交付与上线.md").read_text(encoding="utf-8")
+        self.assertIn("| 交付物 | 给谁 | 做什么用 | 什么时候要 |", draft)
+
+
 class TheMachineZoneComesFromTheSource(RealRunCase):
     """附录 A–D 每次都从当前真源重算，不读旧 story、不含占位。
 
@@ -1811,7 +1831,30 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         story = self.landed_appendix()
         boundary = story.split("### 改动边界", 1)[1].split("###", 1)[0]
         self.assertIn("不涉及：本需求不新增任何三方依赖。", boundary)
-        self.assertIn("| 改动 |", boundary, "Scope 两行也要在")
+        self.assertIn("| 改动 |", boundary, "Scope 的模块行也要在")
+
+    def boundary_zone(self) -> str:
+        """只取机器区——目的句在它外面，那一句归作者。"""
+        section = self.landed_appendix().split("### 改动边界", 1)[1].split("###", 1)[0]
+        return section.split("story-build:begin", 1)[1].split("story-build:end", 1)[0]
+
+    def test_the_boundary_is_one_table_with_one_row_per_module(self) -> None:
+        """一个模块一行。两份清单各挤成一格的话，评审者要在一串顿号里找自己那个模块。"""
+        zone = self.boundary_zone()
+        self.assertIn("| 模块 | 本单怎么动 | 依据 |", zone)
+        for module in ("WalletMain", "AccountManager"):
+            self.assertIn(f"| {module} |", zone, f"{module} 没有自己那一行")
+        seps = [l for l in zone.split("\n") if set(l.replace("|", "").strip()) <= {"-"}
+                and l.strip()]
+        self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
+
+    def test_the_scope_rationale_is_quoted_once_not_split(self) -> None:
+        """Scope 的说明是一整段、不分模块——脚本不猜哪一句对应哪个模块，原样引一次。"""
+        self.assertIn("**Scope 的说明原文**", self.boundary_zone())
+
+    def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
+        """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
+        self.assertNotIn("{{", self.boundary_zone(), "机器区还留着作者要填的格子")
 
 
 if __name__ == "__main__":

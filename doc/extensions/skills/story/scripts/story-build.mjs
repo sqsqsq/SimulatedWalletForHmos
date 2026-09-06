@@ -745,17 +745,35 @@ function scopeList(text, key) {
 }
 
 /**
- * 附录·改动边界的两行 —— 「这次改了哪里、哪里保证不动」就是 Scope 的两份清单。
+ * 附录·改动边界 —— 「这次改了哪里、哪里保证不动」就是 Scope 的两份清单。
  *
- * 「对评审意味着什么」那一列留给作者：清单说的是范围，影响面要他判断。
+ * **一个模块一行**。两份清单各挤成一格的话，评审者要在一串顿号里找自己那个模块，
+ * 而「它是改还是不改」正是他打开这一节要问的第一件事。
  */
 function scopeBoundaryRows(spec) {
   const rows = [];
-  const inScope = scopeList(spec, 'in_scope_modules');
-  const outScope = scopeList(spec, 'out_of_scope_modules');
-  if (inScope.length) rows.push(['改动', inScope.join('、'), '{{对评审意味着什么}}']);
-  if (outScope.length) rows.push(['只复用', outScope.join('、'), '{{对评审意味着什么}}']);
+  for (const m of scopeList(spec, 'in_scope_modules')) {
+    rows.push([m, '改动', 'Scope 的 `in_scope_modules`']);
+  }
+  for (const m of scopeList(spec, 'out_of_scope_modules')) {
+    rows.push([m, '不改', 'Scope 的 `out_of_scope_modules`']);
+  }
   return rows;
+}
+
+/**
+ * Scope 的说明段 —— **原样引一次**，不拆。
+ *
+ * 它是一整段，讲的是这一轮为什么这么切；脚本不猜哪一句对应哪个模块——
+ * 猜错了读者会把别的模块的理由读到自己那一行上。
+ */
+function scopeRationale(spec) {
+  const block = String(spec ?? '').match(/rationale:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
+  if (!block) return null;
+  const lines = block[1].replace(/\s+$/, '').split(/\r?\n/);
+  const indent = Math.min(...lines.filter(l => l.trim())
+    .map(l => l.match(/^[ \t]*/)[0].length));
+  return lines.map(l => l.slice(indent)).join('\n').trim() || null;
 }
 
 /**
@@ -2059,7 +2077,12 @@ function renderSlot(ctx, slot, seeded) {
   } else if (slot.list) {
     rows.push('- {{一项一句}}', '');
   }
-  for (const label of slot.labels ?? []) rows.push(`**${label}**：{{一句}}`, '');
+  // 标签自己不说这一段该答什么，作者只好各写一句概括。提示由合同给（`label_hints`），
+  // 判据仍只核标签在不在——讲清没讲清归读者审查。
+  for (const label of slot.labels ?? []) {
+    const hint = slot.label_hints?.[label];
+    rows.push(`**${label}**：{{${hint ?? '一句'}}}`, '');
+  }
   if (slot.image) {
     rows.push('<!-- 材料里的界面图：引用串见任务包第 4 节，引完接一句说清它画的是什么 -->', '');
   }
@@ -2110,15 +2133,25 @@ function appendixProjection(ctx, spec, name) {
   const want = normalizeHeading(name);
   if (want === normalizeHeading('改动边界')) {
     const rows = scopeBoundaryRows(spec);
-    const out = rows.length ? renderTable(['', '范围'], rows.map(r => r.slice(0, 2))) : [];
     const tables = appendixTables(spec, name);
-    for (const t of tables) out.push('', ...renderTable(t.header, t.rows));
-    // §9.5 写「不涉及：…」时把那一句投过来：依赖没有变更也是结论，
-    // 丢了它，story 相对 spec 就减了一条。
-    if (!tables.length) {
-      const na = specNotApplicable(spec, name);
-      if (na) out.push('', na);
+    // §9.5 的依赖变更并进同一张表：评审者问的是「这一轮动了什么」，
+    // 模块与依赖是同一个问题的两半，分成两张形状不一的表要读两遍。
+    for (const t of tables) {
+      for (const r of t.rows) {
+        if (isPlaceholderRow(r)) continue;
+        rows.push([(r[0] ?? '').trim(), (r[1] ?? '').trim() || '变更',
+          'spec §9.5 依赖变更']);
+      }
     }
+    if (!tables.length) {
+      // 依赖没有变更也是结论，丢了它 story 相对 spec 就减了一条。
+      const na = specNotApplicable(spec, name);
+      rows.push(['依赖', '不涉及', na ? `spec §9.5：${na}` : 'spec §9.5 无依赖变更']);
+    }
+    const out = rows.length ? renderTable(['模块', '本单怎么动', '依据'], rows) : [];
+    const why = scopeRationale(spec);
+    out.push('', why ? `**Scope 的说明原文**：${why.replace(/\n/g, ' ')}`
+      : '**Scope 未提供说明**。');
     return ['Scope 模块清单与 spec §9.5', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
