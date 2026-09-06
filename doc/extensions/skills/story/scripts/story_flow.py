@@ -788,8 +788,8 @@ SPEC_STAGE_ORDER = (
     "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
     "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
     "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
-    "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记 → "
-    "story-build build → harness → verifier。"
+    "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记"
+    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
 
 
@@ -891,8 +891,9 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
         # verifier 之后不再跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
         # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
         return ("run_archived",
-                "叙事件已登记成文。按这个顺序走完，中间不回头：`story-build build` 渲染 AR/review.md"
-                " → 跑 harness（spec 闭环）→ 按 harness 末尾 `NEXT:` 行派 verifier"
+                "叙事件已登记成文（review.md 已在登记那一步渲染并核过）。"
+                "按这个顺序走完，中间不回头："
+                "跑 harness（spec 闭环）→ 按 harness 末尾 `NEXT:` 行派 verifier"
                 "（它说没有审查员就直接下一步）→ check-receipt → "
                 "`story-build check --deliver` 交付门 → `/story archive` 归档"
                 "（本地单没有归档，交付门就是最后一道）。"
@@ -1204,6 +1205,17 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(
             "story-build number 跑不通，成文态不予登记：\n"
             + (numbered.stderr or numbered.stdout or "").strip())
+    # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
+    # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
+    # 归档件红线（⑨）于是要等到交付门才报，而那时 story 已经冻结，只能 reopen 重来。
+    rendered = subprocess.run(
+        [node, str(checker), "build", "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if rendered.returncode != 0:
+        raise FlowError(
+            "story-build build 跑不通，成文态不予登记：\n"
+            + (rendered.stderr or rendered.stdout or "").strip())
     proc = subprocess.run(
         [node, str(checker), "check", "--feature", feature_root.name,
          "--project-root", str(project_root)],

@@ -194,7 +194,9 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("assets/x/one.png", package)
         self.assertIn("签约页", package)
         self.assertIn("assets/x/two.png", package)
-        self.assertIn("只引正文讲到的", package)
+        self.assertIn("不属于本需求的不进正文", package)
+        self.assertIn("引进正文再在图题里解释不算", package,
+                      "规则要单向：把图引进正文再解释是六跑那次的形态")
         self.assertIn("未引用：", package, "用不上的那些要有写理由的去处")
 
 
@@ -284,11 +286,13 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         (self.feature_root / "spec" / "knowledge-use.yaml").write_text("schema: 1\n", encoding="utf-8")
         self.assertIn("spec.md", self.status()["action"])
 
-    def test_after_registration_it_points_at_build_then_harness(self) -> None:
+    def test_after_registration_it_points_at_harness_not_build(self) -> None:
+        """登记那一步已经渲染并核过 review——再叫作者去 build 就是两处说法。"""
         self.write_contract("story_written")
         action = self.status()["action"]
-        self.assertIn("story-build build", action)
+        self.assertIn("harness", action)
         self.assertIn("verifier", action)
+        self.assertNotIn("`story-build build` 渲染", action)
 
     def test_the_road_after_verifier_is_spelled_out(self) -> None:
         """verifier PASS 之后做什么，得有下文。

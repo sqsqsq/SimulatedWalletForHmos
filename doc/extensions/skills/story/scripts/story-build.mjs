@@ -490,6 +490,19 @@ function subsectionSpan(storyText, chapterTitle, name) {
  * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
  *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
  */
+/**
+ * 材料清单那一行说「未引用」了吗 —— 认的是**这一行**，不是整节。
+ *
+ * 一节里十行各说各的，按整节搜「未引用」会把别人的理由算到这张图头上。
+ */
+function notReferencedInList(listBody, rel) {
+  const name = basename(rel);
+  for (const line of String(listBody ?? '').split(/\r?\n/)) {
+    if (line.includes(name) && /未引用/.test(line)) return true;
+  }
+  return false;
+}
+
 /** 路径的最后一段。判「正文提没提到这张图」用它——作者写文件名比写全路径自然。 */
 function basename(rel) {
   const parts = String(rel).split('/');
@@ -515,7 +528,7 @@ function materialImages(ctx) {
  * 材料清单那一节**应当**列到的材料 —— 同样出自 `materials.json`。
  *
  * 这一节回答的是「据哪几份材料写成」。谁来定这个集合，决定了它是账还是倾倒区：
- * 由作者自由罗列时，容易把本轮自己生成的规格链进去、把图片文件单列成行，
+ * 由作者自由罗列时，容易把本轮自己生成的规格链进去，
  * 也出现过漏掉一整份的形态——读者据这一节把材料找出来，漏一份等于那份材料没人知道。
  *
  * 集合按两条定：
@@ -524,8 +537,10 @@ function materialImages(ctx) {
  * - **可列**：收件箱里的原件。它们的内容已经并入正文，读者顺正文也能看到；
  *   但「这份材料是人另外给的、没走需求系统」本身是信息，作者愿意指出来就允许。
  *
- * 图片不在其中：图随它所在的那份材料走，不单列成行（单列会把清单变成文件列表）。
- * 中间产物也不在其中——本轮自己生成的规格与记录不是材料，它们压根不进清单。
+ * **图也逐张列**：不属于本需求的图不进正文，它的去向只能写在这一节
+ * （「未引用：<理由>」）——不给它一行，那句理由就没有落点，作者只能把图引进正文
+ * 再在图题里解释，读者于是要在归档件里读到别的需求的页面。
+ * 中间产物不在其中——本轮自己生成的规格与记录不是材料，它们压根不进清单。
  *
  * @returns {{must: string[], mayAlso: string[]} | null | 'broken'}
  */
@@ -534,7 +549,8 @@ function materialListTargets(ctx) {
   if (data === null || data === 'broken') return data;
   if (!Array.isArray(data.materials)) return 'broken';
   const must = data.materials
-    .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths))
+    .filter(m => (m?.kind === 'doc' && m.sha256 || m?.kind === 'image')
+      && Array.isArray(m.paths))
     .flatMap(m => m.paths);
   const mayAlso = (Array.isArray(data.sources) ? data.sources : [])
     .map(x => `inbox/${x?.file}`);
@@ -1275,6 +1291,14 @@ function cmdCheck(ctx) {
         + '——跑 `story_flow.py round` 生成它之后这条才判得了');
     } else if (registered.length) {
       const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
+      // 材料清单那一节的正文：判「说了不引却引了」要按行看它自己那一行。
+      const listChapter = appendixChapter(ctx.contract);
+      const listName = materialSubsectionName(ctx.contract);
+      const listSpan = listChapter && listName
+        ? subsectionSpan(storyText, listChapter.title, listName) : null;
+      const materialListBody = listSpan
+        ? storyText.split(/\r?\n/).slice(listSpan.start, listSpan.end).join("\n")
+        : "";
       const byPath = new Map();
       registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
       const archiveDir = ctx.contract.story_image_dir
@@ -1323,8 +1347,21 @@ function cmdCheck(ctx) {
           && !m.paths.some(rel => storyText.includes(basename(rel))));
       for (const [, m] of orphans) {
         problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
-          + '在 story 里既没被引用，也没被提到——'
-          + '要么在讲它的那一章引用它，要么在附录材料清单那一行写明不引用的理由');
+          + '在 story 里既没被引用，也没在附录材料清单那一行说明——'
+          + '属于本需求就在讲它的那一章引用（图前一句说清它画的是什么），'
+          + '不属于本需求就只在清单那一行写「未引用：<理由>」，正文不引');
+      }
+
+      // 说了不引却引了 —— 两处对不上，读者按哪一处理解都不对。
+      // 机械只判这个一致；这张图该不该引由读者审查判。
+      for (const [i, m] of registered.map((m2, i2) => [i2, m2])) {
+        if (!usedBy.has(i)) continue;
+        const declined = m.paths.some(rel => notReferencedInList(materialListBody, rel));
+        if (declined) {
+          problems.push(`附录材料清单里「${m.paths[0]}」写着「未引用」，正文却引了它——`
+            + '二者取其一：不属于本需求就把正文里那处删掉，'
+            + '属于本需求就把清单那一行的理由换成它讲了什么');
+        }
       }
     }
   }
@@ -1699,8 +1736,8 @@ function cmdCheck(ctx) {
         for (const rel of listed) {
           if (allowed.has(rel)) continue;
           problems.push(`「${appendix.title}·${name}」列了不是材料的东西：${rel}`
-            + '——这一节回答「据哪几份材料写成」，本轮自己生成的规格与记录、单张图片文件都不是材料。'
-            + '图随它所在的那份材料走，不单列成行');
+            + '——这一节回答「据哪几份材料写成」，本轮自己生成的规格与记录不是材料。'
+            + '登记过的材料与图逐份逐张列，别的不列');
         }
       }
     }
@@ -2235,9 +2272,13 @@ function materialListSkeleton(ctx) {
   // 类别取合同的 `sources[*].label`，按路径反查——它在那里已经有答案。
   const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
-  return targets.must.map(rel =>
-    `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${relFromStory(rel)})`
-    + '——{{这份材料贡献了什么}}');
+  const entries = materialImages(ctx);
+  const images = new Set(Array.isArray(entries) ? entries.flatMap(m => m.paths) : []);
+  return targets.must.map(rel => images.has(rel)
+    ? `- 界面图：[${basename(rel)}](${relFromStory(rel)})`
+      + '——{{这张图讲了什么 / 未引用：为什么它不属于本需求}}'
+    : `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${relFromStory(rel)})`
+      + '——{{这份材料贡献了什么}}');
 }
 
 //: 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记成功后由

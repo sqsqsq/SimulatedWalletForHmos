@@ -32,8 +32,9 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         self.assertIn("③b 统稿", spec)
         self.assertLess(spec.index("③ 按章写"), spec.index("③b 统稿"),
                         "统稿在按章写之后")
-        self.assertLess(spec.index("③b 统稿"), spec.index("④ 渲染 review"),
-                        "统稿在渲染 review 之前——评审记录面对的应当是收过口的全篇")
+        self.assertLess(spec.index("③b 统稿"), spec.index("④ 登记"),
+                        "统稿在登记之前——登记那一步会渲染 review，"
+                        "评审记录面对的应当是收过口的全篇")
 
     def test_the_authoring_guide_carries_the_checklist(self) -> None:
         guide = read("phases/story-write.md")

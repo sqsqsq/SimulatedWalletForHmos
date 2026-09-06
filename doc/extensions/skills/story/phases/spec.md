@@ -67,11 +67,10 @@ node .../story-build.mjs skeleton --feature <feature>  # ② 十章骨架 + 十�
 #                              ③b 统稿：通读全篇一遍，收重复、收承接、收样式；
 #                                 七项自查各写一行到 AR/story-src/copyedit.md（恰好七行）；
 #                                 改的那几章仍逐章落盘
-node .../story-build.mjs build --feature <feature>   # ④ 渲染 review.md（story 成文之后）
-python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check）
-#                              ⑥ 跑 spec harness
-#                              ⑦ 确定性门全绿之后，按 harness 末尾 NEXT: 行派 verifier
-#                              ⑧ check-receipt → check --deliver 交付门 → /story archive
+python .../story_flow.py story --feature <feature>   # ④ 登记（自带 number / build / check）
+#                              ⑤ 跑 spec harness
+#                              ⑥ 确定性门全绿之后，按 harness 末尾 NEXT: 行派 verifier
+#                              ⑦ check-receipt → check --deliver 交付门 → /story archive
 ```
 
 - **③b 是唯一一次通读全篇**：②③ 把整篇切成十次有界的小任务，代价就是没有人从头读到尾——
@@ -84,21 +83,21 @@ python .../story_flow.py story --feature <feature>   # ⑤ 登记（自带 check
 - **附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写**：它们是 spec §9 与
   `knowledge-use.yaml` 的投影，`story-build project` 在落盘附录章时与登记时各投一次。
   你写的是每节那句「给评审者看什么」与材料清单里「这份材料贡献了什么」；要改内容，改真源。
-- **④ 在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
+- **登记在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
   写到某一章才发现材料两处打架、才发现某个取舍要人拍板。这些新判断先登记进 `decisions.json`，
   再渲染，台账才是完整的。`build` 会先看 `AR/story.md` 有没有章，没有就拒绝渲染。
-- **⑤ 自带门禁**：先跑 `story-build number`（章序、小节序、图题序号由机器统一铺——
-  你只写业务名标题与图题），再重跑 `story-build check`，通过才登记 `story_written`。
+- **④ 是一个动作**：`story` 自己跑 `project` → `number`（章序、小节序、图题序号由机器统一铺——
+  你只写业务名标题与图题）→ `build`（review 的机器区按当前决策件重算，人工区逐字节保留）→ `check`（review 已在，归档件红线一并核），通过才登记 `story_written`。**不必也不该自己先 build**：登记那一刻 review 不在，红线就要等到交付门才报，而那时 story 已冻结，只能 reopen 重来。
   登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
   story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
-- **⑥ 之前必须走完 ①–⑤**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
-- **⑦ 派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次，
+- **⑤ 之前必须走完 ①–④**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
+- **⑥ 派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次，
   说本宿主没有审查员就直接进 ⑧——那是如实披露的状态，不是缺件，闭环不因此卡住。
   **只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
   产物，指纹就换代，那份结论对不上新产物，只能整份重审。所以确定性门全绿、产物定稿，才叫它。
   **调用只带 request JSON**；verifier 的回复由你**原样全文**写到
   `summary.verifier_report` 指向的那份文件——写报告的是你，不是它。
-- **⑧ `check-receipt.ts` → `story-build check --deliver` → `/story archive`。
+- **⑦ `check-receipt.ts` → `story-build check --deliver` → `/story archive`。
   中间不再跑 harness**——harness 每跑一次都重新派生 subject，换了代就要重审，
   而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
   并且重跑之后 verifier 也要再来一次：那时换代是真的（材料变了），不是自己写盘写出来的。

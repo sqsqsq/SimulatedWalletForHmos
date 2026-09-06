@@ -1090,20 +1090,30 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         self.assertIn("的集合判据未执行", out)
 
     def test_one_wrong_row_is_reported_once(self) -> None:
-        """有清单时按清单逐份对，目录白名单那条粗判让位——同一行报两遍，读的人以为是两个问题。
+        """有清单时按清单逐份对，目录白名单那条粗判让位——同一行报两遍，读的人以为是两个问题。"""
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n- 本轮的判断：原文：[decisions](../AR/story-src/decisions.json)")
+        _, out = self.check_output()
+        hits = [line for line in out.splitlines() if "story-src/decisions.json" in line]
+        self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
+        self.assertIn("列了不是材料的东西", hits[0])
 
-        图片文件单列成行同时踩两条：它所在的目录不在白名单里，它本身也不是「一份材料」。
+    def test_a_registered_image_belongs_in_the_list(self) -> None:
+        """图逐张列进清单是**要求**：不属于本需求的图，它的去向只能写在这里。
+
+        不给它一行，那句「未引用：<理由>」就没有落点，作者只能把图引进正文
+        再在图题里解释——读者于是要在归档件里读到别的需求的页面。
         """
         image = self.feature_root() / "assets" / "入口原型说明" / "image1.png"
         image.parent.mkdir(parents=True, exist_ok=True)
         image.write_bytes(b"PNGDATA1")
         self.round_now()
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n- 入口原型图：原文：[图 1](../assets/入口原型说明/image1.png)")
+                           + "\n- 界面图：[image1.png](../assets/入口原型说明/image1.png)"
+                             "——未引用：属别的需求的页面")
         _, out = self.check_output()
-        hits = [line for line in out.splitlines() if "assets/入口原型说明/image1.png" in line]
-        self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
-        self.assertIn("列了不是材料的东西", hits[0])
+        self.assertNotIn("列了不是材料的东西", out, out[:500])
+        self.assertNotIn("少了一份材料", out, out[:500])
 
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):

@@ -74,3 +74,4 @@
 ### E. 材料清单
 
 - 甲需求 PRD：提交回执的业务诉求与状态取值。原文：[RR/prd.md](../RR/prd.md)
+- 界面图：[image1.png](../assets/入口原型说明/image1.png)——原型页面的样子

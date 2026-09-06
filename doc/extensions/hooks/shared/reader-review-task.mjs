@@ -83,7 +83,11 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   rows.push('', '### 材料里的图，逐张回答', '');
   if (images.length) {
     rows.push(...images, '',
-      '每一张两问：**story 用了没有**；没用的话，**它给的理由成不成立**。');
+      '每一张三问：**story 用了没有**；',
+      '**用了的，这张图属不属于本需求、有没有必要进正文**'
+      + '——旧版页面、同页面的另一张截图、友商参考、别的部件或别的单的页面，'
+      + '进了正文就是 finding：读者要在归档件里读到不属于这个需求的东西；',
+      '**没用的，它给的理由成不成立**。');
   } else {
     rows.push('材料清单里没有图片，这一问不适用。');
   }

@@ -148,7 +148,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
     def test_an_image_nobody_mentions_is_reported_by_name(self) -> None:
         out = self.check_output()
         self.assertIn("ux-reference/signup-page.png", out)
-        self.assertIn("写明不引用的理由", out)
+        self.assertIn("未引用：<理由>", out)
 
     def test_naming_it_in_the_material_list_settles_it(self) -> None:
         """写明为什么不用，就算有去处——判的是集合，不是理由。"""
@@ -157,6 +157,53 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
             text + "\n参考稿 signup-page.png 与最终交互不一致，本文不引用它。\n",
             encoding="utf-8")
         self.assertNotIn("既没被引用，也没被提到", self.check_output())
+
+    def insert_after_heading(self, level: str, title: str, text: str) -> None:
+        """在某个标题下面插一段。
+
+        **按标题名找，不按编号找**：编号由 `number` 机器铺，骨架阶段还没有，
+        写死「### E.」的夹具在骨架上一定找不到。
+        """
+        lines = self.story.read_text(encoding="utf-8").split("\n")
+        at = next((i for i, l in enumerate(lines)
+                   if l.startswith(f"{level} ") and l.rstrip().endswith(title)), None)
+        self.assertIsNotNone(at, f"骨架里没有「{title}」这一节，夹具要跟着改")
+        lines[at + 1:at + 1] = ["", *text.split("\n")]
+        self.story.write_text("\n".join(lines), encoding="utf-8")
+
+    def put_in_list(self, row: str) -> None:
+        """写进附录材料清单**那一节**。
+
+        写在别处不算：判据按那一节逐行读，附录末尾随手加一行既不在清单里，
+        也会被「附录里不放图」另报一次。
+        """
+        # 骨架只有章锚，附录的小节由 `chapter --from` 落盘时才有——夹具自己搭这一节。
+        self.insert_after_heading(
+            "##", "附录", "### 材料清单" + "\n" * 2 + row)
+
+    def put_in_body(self, block: str) -> None:
+        """写进正文某一章——附录不算正文，图放那里另有判据管。"""
+        self.insert_after_heading("##", "功能说明", block)
+
+    DECLINED = ("- 界面图：[signup-page.png](../ux-reference/signup-page.png)"
+                "——未引用：属别的需求的页面")
+
+    def test_declining_in_the_list_and_using_it_in_the_body_is_reported(self) -> None:
+        """说了不引却引了——两处对不上，读者按哪一处理解都不对。
+
+        六跑那次十张图全进正文、理由写在图题里：形式上说得通，读者却要在归档件里
+        读到别的单的页面。规则改单向之后，机械只盯这一处一致；该不该引归读者审查。
+        """
+        self.put_in_list(self.DECLINED)
+        self.put_in_body("签约页长这样。\n\n"
+                         "![图 1 · 签约页](../ux-reference/signup-page.png)\n")
+        self.assertIn("正文却引了它", self.check_output())
+
+    def test_declining_only_in_the_list_is_left_alone(self) -> None:
+        self.put_in_list(self.DECLINED)
+        out = self.check_output()
+        self.assertNotIn("正文却引了它", out)
+        self.assertNotIn("既没被引用", out)
 
     def test_using_it_settles_it_too(self) -> None:
         text = self.story.read_text(encoding="utf-8")
