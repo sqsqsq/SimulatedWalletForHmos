@@ -62,6 +62,29 @@ class WorkspaceCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
+    def spec_check(self) -> str:
+        """跑真的 spec post_check——判据怎么读这份文件，这里就怎么读。"""
+        hook = self.root / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
+        proc = run("node", "--input-type=module", "-e",
+                   f"const hook = (await import({as_url(hook)})).default;"
+                   f"const out = await hook({{ phase: 'spec', feature: {json.dumps(FEATURE)},"
+                   f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                   "process.stdout.write(JSON.stringify(out));",
+                   cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout or "{}").get("message") or ""
+
+    def parse_like_the_framework(self, target: Path) -> dict:
+        """用框架自己那份 yaml 解析——它读 acceptance.yaml 走的就是这个包。"""
+        proc = run("node", "--input-type=module", "-e",
+                   "const YAML = (await import('yaml')).default;"
+                   "const fs = await import('node:fs');"
+                   f"const doc = YAML.parse(fs.readFileSync({json.dumps(target.as_posix())}, 'utf-8'));"
+                   "process.stdout.write(JSON.stringify(doc));",
+                   cwd=REPO_ROOT / "framework" / "harness")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout or "{}")
+
 
 class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
     """作者动笔前该拿到的两样：验收落在哪、禁用词在哪不算。
@@ -199,6 +222,31 @@ class TaskPackageIsRendered(WorkspaceCase):
                       "规则要单向：把图引进正文再解释是六跑那次的形态")
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
 
+    def test_every_image_gets_a_command_that_runs_as_written(self) -> None:
+        """展示的引用串相对 `AR/story.md`，命令的路径相对工程根——两个基准不一样。
+
+        写成「上面那一行的路径」的话，作者照抄必错，又要回头去翻脚本找基准。
+        """
+        for rel in ("assets/x/one.png", "assets/x/two.png"):
+            img = self.feature_root / rel
+            img.parent.mkdir(parents=True, exist_ok=True)
+            img.write_bytes(b"PNG")
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"items": [
+                {"kind": "image", "paths": ["assets/x/one.png"], "caption": "签约页"},
+                {"kind": "image", "paths": ["assets/x/two.png"], "unused": "旧版对照稿"},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        package = self.task_package()
+        # 命令参数自成一行；正文里提到 `--caption-image` 的句子不算
+        cmds = [l.strip() for l in package.split("\n")
+                if l.strip().startswith("--caption-image")]
+        self.assertEqual(2, len(cmds), f"每张图各要一条可跑的命令，实际 {len(cmds)} 条")
+        for line in cmds:
+            arg = line.split("--caption-image", 1)[1].split()[0]
+            self.assertTrue(arg.startswith("doc/features/"),
+                            f"命令的路径不是相对工程根：{arg}")
+            self.assertTrue((self.root / arg).exists(), f"命令指到一个不存在的文件：{arg}")
+
 
 class TheAcceptanceExampleIsRealShape(WorkspaceCase):
     """任务包给的那条最小示例，形状要与消费方一致——漂移了作者照抄就红。
@@ -220,11 +268,51 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
                          - len(lines[rule].lstrip()),
                          "knowledge_rule 与 id 不平级")
 
-    def test_the_example_key_is_the_one_post_check_reads(self) -> None:
-        """键名取自实际消费它的那一处，不是另起一个名字。"""
-        post = (EXT / "hooks" / "spec" / "post_check.mjs").read_text(encoding="utf-8")
-        self.assertIn("knowledge_rule", post)
-        self.assertIn("knowledge_rule:", self.task_package())
+    def example_yaml(self, rule: str = "SEC-01") -> str:
+        """把任务包里那条示例取出来，占位换成真值——作者照抄写出来的就是这个。"""
+        block = self.task_package().split("一条最小的长这样", 1)[1].split("```", 2)[1]
+        body = block.split("\n", 1)[1] if block.startswith("yaml") else block
+        return (body
+                .replace("{{这条规约在本需求上要保证什么，用可观察的话写}}", "卡号在任何出口都脱敏")
+                .replace("{{怎么验}}", "打开充值记录列表看卡号")
+                .replace("{{看到什么算过}}", "只显示末四位")
+                .replace("{{规约编号}}", rule))
+
+    def test_the_extension_side_reads_the_rule_out_of_the_example(self) -> None:
+        """把示例当成作者写出来的 acceptance.yaml，跑真的 spec post_check。
+
+        它按 `knowledge_rule: <编号>` 找验收桥；示例的键名或值形状一漂移，
+        这里就报「有代码要求但 acceptance.yaml 没有对应验收条目」。
+        """
+        rule = "SEC-01"
+        (self.feature_root / "acceptance.yaml").write_text(
+            self.example_yaml(rule), encoding="utf-8")
+        (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "spec" / "knowledge-use.yaml").write_text(
+            "constraints:\n"
+            f"  - id: {rule}\n"
+            "    applicable: true\n"
+            "    requirement: 卡号在任何出口都脱敏\n"
+            "    basis: 产品原稿 §3\n", encoding="utf-8")
+        message = self.spec_check()
+        self.assertNotIn("没有对应验收条目", message, message[:400])
+        self.assertNotIn("指向了 spec 里没有要求的条目", message, message[:400])
+
+    def test_the_framework_side_sees_a_criteria_item_with_an_id(self) -> None:
+        """框架侧读的是 `criteria` 数组里的对象与它的 `id`
+        （`framework/harness/scripts/check-plan.ts` 的 spec→plan 约束追溯）。
+
+        用框架自己那份 yaml 解析，示例的层级一错——`knowledge_rule` 跑到条目外、
+        或 `criteria` 不是数组——这里当场报出来。
+        """
+        acc = self.feature_root / "acceptance.yaml"
+        acc.write_text(self.example_yaml(), encoding="utf-8")
+        doc = self.parse_like_the_framework(acc)
+        self.assertIsInstance(doc.get("criteria"), list, "criteria 不是数组")
+        item = doc["criteria"][0]
+        self.assertIsInstance(item, dict, "条目不是对象")
+        self.assertTrue(str(item.get("id") or "").strip(), "条目没有 id")
+        self.assertIn("knowledge_rule", item, "knowledge_rule 不在条目里")
 
 
 class SkeletonLeavesOnlyTheJudgement(WorkspaceCase):

@@ -897,9 +897,10 @@ def sidecar_shape(step: str) -> dict | None:
     return None
 
 
-def material_gate_stops(feature_root: Path, contract: dict) -> bool:
-    """第一级停不停：**第 1 轮无条件停；第 2 轮起，只在本级侧车摆在盘上时停。**
+def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str | None]:
+    """第一级停不停，以及本级侧车缺什么——**一次问完**。
 
+    停不停：第 1 轮无条件停；第 2 轮起，只在本级侧车摆在盘上时停。
     第一轮没有任何人对材料表过态，必须停。此后每一轮都是材料变了才开出来的，
     而「材料变了」本身不是新问题——人上一次说的「补充材料」就是对「够不够」的回答。
     要再停一次，得是模型在新一轮**盘出了新的缺口**：那时它写一份本级的选项侧车，
@@ -908,10 +909,22 @@ def material_gate_stops(feature_root: Path, contract: dict) -> bool:
     判据不看上一轮选了什么。看那个的话，先导后签（料先到、人再签）与先签后导
     给出的答案不同——同一件事按顺序不同判出两种结果，而顺序本来就不该有讲究。
     侧车必须自报级别，否则模型为第二级摆的选项会被这里读成材料上的新缺口。
+
+    **侧车立不立得住在这里一并判**（第二个返回值）：校验只写在 `decide` 里的话，
+    顺序是 `status` 说停 → 人被问了一次 → `decide` 才拒收。人已经答过，
+    缺的字段却要模型回头补，那一次询问白问了——而它问的正是「还缺什么」
+    这件模型自己没说清的事。
     """
     if len(contract.get("rounds") or []) <= 1:
-        return True
-    return sidecar_gate(feature_root) == "material_scope"
+        return True, None
+    if sidecar_gate(feature_root) != "material_scope":
+        return False, None
+    try:
+        read_gate_options(feature_root, "material_scope",
+                          contract["rounds"][-1].get("round", 1))
+    except FlowError as exc:
+        return True, str(exc)
+    return True, None
 
 
 def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
@@ -945,7 +958,11 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     # 第一级：材料够不够。**先于任何需求分析**——材料不全时做的范围判断注定作废，
     # 每轮补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
-    if material is None and material_gate_stops(feature_root, contract):
+    stops, problem = material_gate_state(feature_root, contract)
+    if material is None and problem:
+        return ("fix_gate_options",
+                f"这一级的选项侧车还立不住，先补齐再问人：{problem}")
+    if material is None and stops:
         return ("await_gate:material_scope",
                 "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
                 "取得选择：补充材料 / 材料充足，开始需求分析")

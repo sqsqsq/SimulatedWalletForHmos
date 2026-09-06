@@ -420,6 +420,36 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
         self.assertIn("上一轮缺的补上了没有", out)
         self.assertIn("材料够了就直接进需求分析，不再问", out)
 
+    def test_status_refuses_to_stop_on_a_sidecar_that_will_be_rejected(self) -> None:
+        """校验要在 `status` 决定停不停之前。
+
+        只写在 `decide` 里的话，顺序是：`status` 说停 → 人被问了一次 → `decide` 才拒收。
+        人已经答过，缺的字段却要模型回头补，那一次询问白问了。
+        """
+        self.supplement_round()
+        self.write_gate_options()          # 第 2 轮的补料选项没写 missing / why
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertNotEqual("await_gate:material_scope", payload["next"],
+                            "侧车立不住却先把人拦下来问了")
+        self.assertEqual("fix_gate_options", payload["next"])
+        self.assertIn("missing", self.out_of(proc))
+
+    def test_status_still_stops_when_the_sidecar_is_complete(self) -> None:
+        """写清了还缺什么，该停照停。"""
+        self.supplement_round()
+        src = self.feature_root / "AR" / "story-src"
+        (src / ".gate-options.json").write_text(json.dumps({
+            "gate": "material_scope",
+            "options": [
+                {"key": "supplement", "label": "补充材料",
+                 "missing": "管理页的界面图",
+                 "why": "补来的原稿只有签约页"},
+                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
     def test_a_second_round_request_must_say_what_is_still_missing(self) -> None:
         """R65：补齐一轮之后再停，问的必须是剩余的缺口。"""
         self.supplement_round()
@@ -464,9 +494,20 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
                          "补料之后又停了一次——问的是同一件事")
 
     def test_a_new_gap_stops_again(self) -> None:
-        """模型在新一轮盘出新缺口 → 为这一级摆出选项 → 仍要停。"""
+        """模型在新一轮盘出新缺口 → 为这一级摆出选项 → 仍要停。
+
+        第 2 轮起，提补料请求的选项要写清还缺什么、为什么不够（R65）；
+        写清了就该停，这一条问的正是「停不停」。
+        """
         self.supplement_round()
-        self.write_gate_options()
+        src = self.feature_root / "AR" / "story-src"
+        (src / ".gate-options.json").write_text(json.dumps({
+            "gate": "material_scope",
+            "options": [
+                {"key": "supplement", "label": "补充材料",
+                 "missing": "管理页的界面图", "why": "补来的原稿只有签约页"},
+                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
+            ]}, ensure_ascii=False), encoding="utf-8")
         self.assertEqual("await_gate:material_scope", self.next_of(),
                          "模型摆出了新选项，却没有停")
 
