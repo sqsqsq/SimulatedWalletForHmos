@@ -2148,10 +2148,13 @@ function appendixProjection(ctx, spec, name) {
       const na = specNotApplicable(spec, name);
       rows.push(['依赖', '不涉及', na || '上游没有登记依赖变更']);
     }
-    const out = rows.length ? renderTable(['模块', '本单怎么动', '依据'], rows) : [];
+    // 说明原文进表里成一行，不挂在表后当散文：附录的形态是「一句目的句 + 表格行」，
+    // 表后的散文段由 ⑫ 判为倾倒区。机器区没有作者——挂在表后的话，
+    // 他删掉、`project` 写回来，判据再报，他只能去改门禁。
     const why = scopeRationale(spec);
-    out.push('', why ? `**Scope 的说明原文**：${why.replace(/\n/g, ' ')}`
-      : '**Scope 未提供说明**。');
+    rows.push(['范围说明', '—', why ? why.replace(/\s*\n\s*/g, ' ')
+      : '本单的范围声明里没有写为什么这么切']);
+    const out = renderTable(['模块', '本单怎么动', '依据'], rows);
     return ['本单的范围声明与上游的依赖变更', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {

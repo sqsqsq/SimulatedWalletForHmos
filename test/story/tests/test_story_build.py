@@ -1848,9 +1848,16 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                 and l.strip()]
         self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
 
-    def test_the_scope_rationale_is_quoted_once_not_split(self) -> None:
-        """Scope 的说明是一整段、不分模块——脚本不猜哪一句对应哪个模块，原样引一次。"""
-        self.assertIn("**Scope 的说明原文**", self.boundary_zone())
+    def test_the_scope_rationale_is_carried_as_a_row_not_a_tail(self) -> None:
+        """Scope 的说明是一整段、不分模块——原样引一次，**进表成行**。
+
+        挂在表后当散文的话，⑫ 判它是表外零散文；而机器区没有作者，
+        他删掉、`project` 写回来，他只能去改门禁。一次实跑就卡在这里。
+        """
+        zone = self.boundary_zone()
+        self.assertIn("| 范围说明 |", zone, "说明原文没有进表")
+        row = next(l for l in zone.split("\n") if l.startswith("| 范围说明 |"))
+        self.assertGreater(len(row), 40, "说明原文没跟着那一行走")
 
     def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
         """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
@@ -1876,6 +1883,8 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                  f"const hits = ["
                  f"  ...m.formatHits(m.scanDanglingRefs(t, {json.dumps(str(self.root))}), 'dangling'),"
                  f"  ...m.formatHits(m.scanLocalPaths(t, {json.dumps(str(self.root))}), 'path'),"
+                 f"  ...m.proseBlocks(t).filter(p => p.afterRows)"
+                 f"    .map(p => '表后散文：' + p.text.slice(0, 24)),"
                  f"];"
                  "process.stdout.write(JSON.stringify(hits));"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
