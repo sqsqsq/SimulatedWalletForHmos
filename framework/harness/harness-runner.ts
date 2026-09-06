@@ -35,9 +35,11 @@ import {
 } from './scripts/utils/report-generator';
 import {
   buildVerifierMaterialView,
+  readVerifierMaterialOrNull,
   writeVerifierMaterial,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
+import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
 import { resolveAuthoritativeHylyreTracePath } from './scripts/utils/testing-trace-gates';
 import {
@@ -48,6 +50,7 @@ import {
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
   HarnessRunSummary,
+  isCheckNotApplicable,
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
@@ -118,7 +121,10 @@ import {
 import {
   ensurePersonalSetup,
 } from './scripts/utils/personal-setup-gate';
-import { buildSummaryRepairCandidates } from './scripts/utils/repair-candidates';
+import {
+  buildSummaryRepairCandidates,
+  findUnreadableDiagnosisChecks,
+} from './scripts/utils/repair-candidates';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
@@ -144,13 +150,16 @@ import {
   renderVerifierRequest,
   verifierRequestFilename,
 } from './scripts/utils/verifier-request';
-import { verifierReportMdFilename } from './scripts/utils/verifier-subject';
+import { SUBJECT_ID_PATTERN, verifierReportMdFilename } from './scripts/utils/verifier-subject';
 import {
+  canProduceVerifierRequest,
   resolveVerifierPlan,
   workflowVerifierPrompt,
   type VerifierPlan,
+  type VerifierRequestEligibility,
 } from './scripts/utils/verifier-plan';
 import { resolveVerifierSubagentDeclared } from './scripts/utils/adapter-catalog';
+import { readRunControl } from './scripts/utils/goal-run-control';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
@@ -421,7 +430,7 @@ Harness — Spec/Harness 验证工具
   --measure                 视觉量测（只测量不裁决）：对 ui-spec 声明元素输出 bounds/间距/重叠/与参考图差值/取色，写 device-screenshots/measure-<screen>.json（需 --feature；可选 --screen <id>；由 profile 提供）
                             不重跑 verifier：材料未变复用既有报告，材料变了但历史有 PASS 标 completed_with_prior_review
   --report-reconcile-only   testing 专属：只读既有 trace/plan/timing/meta，完整重算报告门禁，不调用设备/provider/视觉/lifecycle hook
-  --force-device            testing 专属：忽略同执行键复用，强制真机真跑（用户要求 fresh 或 N 轮稳定性时用）
+  --force-device            testing / ut：忽略同执行键复用，强制真机真跑（用户要求 fresh 或 N 轮稳定性时用）
   --summary                 输出稳定短摘要，并写入实例解析的报告目录（同 phase）summary.json
   --failures-only           控制台只打印 FAIL/WARN/BLOCKER-SKIP 项（默认已启用；保留给脚本显式表达）
   --skip-visual-handoff     spec 阶段跳过 Visual Handoff 脚本检查（应急）；建议设置环境变量 HARNESS_SKIP_VISUAL_HANDOFF_REASON 留审计说明
@@ -1148,21 +1157,21 @@ async function main(): Promise<void> {
   const reportDirRel = relFeaturePhaseReportsDir(projectRoot, feature, phase, paths.frameworkRoot);
   let finalReport = scriptReport;
 
-  // Step 4 门控（plan a9d4e7c2 T1 阶梯）：**只有 `enabled` ∧ 脚本 verdict=PASS 才装配**。
-  //   · adapter 无审查员 → 已在 plan 侧判 disabled（如实披露、不阻断），同样零产物；
+  // Step 4 门控（plan a9d4e7c2 T1 阶梯 + plan 3a7f9c12 D1 窄例外）：资格由
+  // `canProduceVerifierRequest` 单点求解，writer 侧复核同一函数。
+  //   · adapter 无审查员 → 已在 plan 侧判 disabled（如实披露、不阻断），零产物；
   //   · disabled → 缺席即为零：不装配、不生成 request/subject。磁盘上可能还留着上一代
   //     enabled 时的产物——不清理、也不因它们复活能力（当前是否启用只由本次解析决定）；
-  //   · 脚本非 PASS → verifier 子 agent 的契约本就禁止在脚本 FAIL 时被调用，
-  //     留一份"看起来可以调用"的 prompt/request 只会诱导违规调用。
+  //   · 脚本非 PASS → **默认**仍不产出调用面（留一份"看起来可以调用"的 prompt 只会诱导
+  //     违规调用）；唯二例外是 D1 已复现的两类可诊断产品失败（review 负面裁决、UT 真实
+  //     断言失败），它们的回修候选本就依赖 verifier 逐条确认，不放行就只能原地重试到耗尽。
+  //     产品 verdict/closure 一律不变——诊断不是通过。
   // plan 07a41ec6 T7：审前材料视图——subject 按它寻址（不再按 ai-prompt.md 字节）。
   let verifierMaterial: VerifierMaterialView | null = null;
-  const verifierProductionAllowed =
-    verifierPlan.mode === 'enabled' && scriptReport.summary.verdict === 'PASS';
+  const verifierEligibility = resolveVerifierRequestEligibility(projectRoot, scriptReport, verifierPlan.mode);
+  const verifierProductionAllowed = verifierEligibility.allowed;
   if (!verifierProductionAllowed) {
-    const why =
-      verifierPlan.mode === 'enabled'
-        ? `脚本 verdict=${scriptReport.summary.verdict}（非 PASS 时不产出 verifier 调用面）`
-        : verifierPlan.message;
+    const why = verifierPlan.mode === 'enabled' ? verifierEligibility.reason : verifierPlan.message;
     console.log(`🤖 Step 4: 跳过 AI Harness prompt 装配 —— ${why}`);
   } else {
     try {
@@ -1195,6 +1204,12 @@ async function main(): Promise<void> {
           // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
           // enabled 时 resolveVerifierPlan 必带出该路径。
           verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
+          // D1/D2（plan 3a7f9c12）：负面分支的诊断说明——内存选项，不新增 request 字段
+          // 或持久模式。verifier 仍读**原始 FAIL 报告**，不投影成假 PASS。
+          repairDiagnosis:
+            verifierEligibility.kind === 'repair_diagnosis'
+              ? { failedCheckIds: verifierEligibility.diagnosticCheckIds, reason: verifierEligibility.reason }
+              : undefined,
         },
       );
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
@@ -1370,7 +1385,11 @@ async function main(): Promise<void> {
       console.log('  🔧 请修复 BLOCKER 项后重新运行');
     }
   }
-  console.log(`  ${buildNextLine(runSummary, phase, String(feature))}`);
+  console.log(
+    `  ${buildNextLine(runSummary, phase, String(feature), {
+      outerGoalRerun: outerGoalHarnessWillRerun(projectRoot, String(feature)),
+    })}`,
+  );
   console.log('='.repeat(60) + '\n');
 
   process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
@@ -1456,6 +1475,37 @@ function consumeVisualRoundPayload(
     return receipt;
   }
   return undefined;
+}
+
+/**
+ * D1（plan 3a7f9c12）：request 生产资格的**唯一求解点**——Step 4 门控与
+ * `writeRunSummaryBase` 的 writer 复核共用它，两处输入必须一致。
+ *
+ * `has_blocked` / `report_validity` 复用 `deriveSummaryVerdictLattice` 的既有纯投影
+ * （不再运行 provider、不另算一套）；lattice 是纯函数，算两次的代价可忽略，换来的是
+ * "Step 4 允许装配、writer 却判不许签发"这类错位不可能发生。
+ */
+function resolveVerifierRequestEligibility(
+  projectRoot: string,
+  report: ScriptReport,
+  planMode: VerifierPlan['mode'] | undefined,
+): VerifierRequestEligibility {
+  const lattice = deriveSummaryVerdictLattice(
+    report.checks,
+    resolveAxisApplicability(projectRoot, report.feature, report.phase),
+    report.capability_resolution_contract_fingerprint === null
+      ? undefined
+      : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
+  );
+  return canProduceVerifierRequest({
+    planMode: planMode ?? 'disabled',
+    phase: report.phase,
+    scriptVerdict: report.summary.verdict,
+    checks: report.checks,
+    reportValidity: lattice.report_validity,
+    hasBlockedCapability: lattice.has_blocked,
+    parseClassificationFromDetails: extractFailureClassification,
+  });
 }
 
 /**
@@ -1723,8 +1773,12 @@ export function writeRunSummaryBase(
       suggestion: c.suggestion,
       ...(c.source ? { source: c.source } : {}),
     }));
+  // plan 7b3e9a15 D2（codex 实施 review 一轮 medium）：SKIP+BLOCKER 的语义是"门禁没跑完"。
+  // 已确认不适用的章节（check-plan 的 n/a 出口）同样是 SKIP+BLOCKER，进这里就会让
+  // decideNextAction 提前返回 review_blocking_skips_then_verifier——把不适用说成待办，
+  // 还绕过 disabled 与 verifier FAIL 两条分支。按机读标注排除，status/severity 不动。
   const blockingSkips = report.checks
-    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER')
+    .filter(c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c))
     .map(c => ({
       id: c.id,
       blocking_class: c.blocking_class,
@@ -1825,20 +1879,59 @@ export function writeRunSummaryBase(
     projectRoot,
     (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? []).map(l => l.id),
   );
-  // 与 Step 4 同一判据：`enabled` ∧ 脚本 PASS。writer 侧独立复核 verdict，
-  // 保证即使调用方漏传门控也不会凭空产出一份没有 prompt 的凭证。
-  const verifierIssued =
-    opts?.verifierPlan?.mode === 'enabled' && report.summary.verdict === 'PASS'
-      ? issueVerifierRequest({
-          dir,
-          report,
-          projectRoot,
-          gateFingerprint: gateFingerprint ?? null,
-          sourceCommitSha,
-          worktreeDigest,
-          material: opts?.verifierMaterial ?? null,
-        })
-      : null;
+  // 与 Step 4 **同一函数**（plan 3a7f9c12 D1）：writer 侧独立复核，保证即使调用方漏传
+  // 门控也不会凭空产出一份没有 prompt 的凭证；同时保证 Step 4 装了 prompt 而 writer 拒签
+  // 这类错位不可能发生（两处判据只有一处实现）。
+  const eligibility = resolveVerifierRequestEligibility(projectRoot, report, opts?.verifierPlan?.mode);
+  const verifierIssued = eligibility.allowed
+    ? issueVerifierRequest({
+        dir,
+        report,
+        projectRoot,
+        gateFingerprint: gateFingerprint ?? null,
+        sourceCommitSha,
+        worktreeDigest,
+        material: opts?.verifierMaterial ?? null,
+      })
+    : null;
+  // S0b（plan 7b3e9a15 D1）：policy off = "不要求"，**不等于"忽略"**。disabled 时不签发新
+  // 凭证，但同一份材料上已经存在的有效负面结论不得被静默丢弃——沿用上一轮的 subject。
+  const carriedVerifierSubjectId = verifierIssued
+    ? null
+    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null);
+  const anchoredSubjectId = verifierIssued?.subjectId ?? carriedVerifierSubjectId;
+  const verifierEvidence = resolveVerifierEvidenceState(
+    projectRoot,
+    report,
+    frameworkRoot,
+    opts?.verifierPlan?.mode,
+    anchoredSubjectId,
+    carriedVerifierSubjectId !== null,
+  );
+  // plan a9d4e7c2 P1-5：锚到本轮刚签发的 subject（不传 subjectId 会读到**上一轮**的
+  // 磁盘 summary 现值）。此处提到 candidate 组装之前是因为 D3/D4 的正文可采信性判定
+  // 与候选组装读的必须是同一份正文。S0b：沿用态锚到沿用的 subject（同样是显式 subject，
+  // 不是"读磁盘现值"）。
+  const verifierReportText = loadVerifierReportTextOrNull(
+    projectRoot,
+    report.feature,
+    report.phase,
+    { frameworkRoot, subjectId: anchoredSubjectId },
+  );
+  // D3/D4（codex 一轮 medium）：终态自洽 ≠ 正文可采信。诊断轮的必需检查项读不出来
+  // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
+  // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
+  // 分支里给出"先按原始回复重写报告"的出口），不新增动作字符串/状态机。
+  const unreadableDiagnosisChecks =
+    eligibility.kind === 'repair_diagnosis' && verifierReportText
+      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText)
+      : [];
+  if (unreadableDiagnosisChecks.length > 0) {
+    console.warn(
+      `   ⚠ [verifier-report] 诊断轮正文读不出必需检查项（${unreadableDiagnosisChecks.join('、')}）——` +
+        '按报告格式修复处理：先用 verifier 的原始回复重写报告，不要改产品。',
+    );
+  }
   if (mismatch) {
     // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
@@ -1881,13 +1974,16 @@ export function writeRunSummaryBase(
       effectiveVerdict,
       capabilityBlocked: hasBlocked,
       verifierMode: opts?.verifierPlan?.mode,
-      verifierEvidence: resolveVerifierEvidenceState(
-        projectRoot,
-        report,
-        frameworkRoot,
-        opts?.verifierPlan?.mode,
-        verifierIssued?.subjectId ?? null,
-      ),
+      verifierEvidence,
+      // D1/D2（plan 3a7f9c12）：产品 FAIL 但失败可诊断，且当前 subject 还没有可用正文
+      // → 先去跑 verifier。有正文（pass/fail）时不设，让它落回既有"先修 blocker"分流，
+      // 此时候选已由本轮 buildSummaryRepairCandidates 重算并进 summary。
+      repairDiagnosisNeedsVerifier:
+        eligibility.kind === 'repair_diagnosis' &&
+        Boolean(verifierIssued) &&
+        (verifierEvidence === 'absent' ||
+          verifierEvidence === 'invalid' ||
+          unreadableDiagnosisChecks.length > 0),
     }),
     closure_status: 'open',
     assurance: report.assurance,
@@ -1910,7 +2006,14 @@ export function writeRunSummaryBase(
           verifier_request: verifierIssued.requestRel,
           verifier_report: verifierIssued.reportRel,
         }
-      : {}),
+      : carriedVerifierSubjectId
+        ? {
+            // S0b：沿用态只保留身份锚与报告落点——本轮**没有**签发新凭证，写
+            // verifier_request 会指向一份不属于本轮的 request，诱导调用方再投一次。
+            verifier_subject_id: carriedVerifierSubjectId,
+            verifier_report: rel(verifierReportMdFilename(carriedVerifierSubjectId)),
+          }
+        : {}),
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
@@ -1939,14 +2042,10 @@ export function writeRunSummaryBase(
         report.phase === 'review'
           ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
           : null,
-      // plan a9d4e7c2 P1-5：**锚到本轮刚签发的 subject**。不传 subjectId 的话 loader 会读
-      // 磁盘 summary 现值——而此刻它还是**上一轮**的（本 base summary 尚未落盘），于是
-      // 上一个 subject 的 verifier 正文会被算进这一轮的 repair_candidates。
-      // 本轮没签发凭证（disabled/脚本非 PASS/签发失败）→ 传 null = 零候选。
-      verifierReportText: loadVerifierReportTextOrNull(projectRoot, report.feature, report.phase, {
-        frameworkRoot,
-        subjectId: verifierIssued?.subjectId ?? null,
-      }),
+      // 上面已按本轮 subject 读出（不传 subjectId 的话 loader 会读磁盘 summary 现值——
+      // 而此刻它还是**上一轮**的）。本轮没签发凭证（disabled/脚本非 PASS/签发失败）
+      // → null = 零候选。
+      verifierReportText,
       parseClassificationFromDetails: extractFailureClassification,
     });
     if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
@@ -1977,8 +2076,13 @@ function resolveVerifierEvidenceState(
   frameworkRoot: string,
   mode: 'disabled' | 'enabled' | undefined,
   issuedSubjectId: string | null,
+  /**
+   * S0b（plan 7b3e9a15 D1）：本轮 policy off，但沿用到了一份**已验真的非 PASS** 报告
+   * （由 resolveCarriedVerifierSubject 判定）。此时 mode 仍是 disabled，却必须报 'fail'。
+   */
+  carriedFail = false,
 ): 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid' {
-  if (mode !== 'enabled') return 'not_applicable';
+  if (mode !== 'enabled') return carriedFail ? 'fail' : 'not_applicable';
   if (!issuedSubjectId) return 'absent';
   const loaded = loadVerifierEvidenceForSubject(
     projectRoot,
@@ -1989,6 +2093,125 @@ function resolveVerifierEvidenceState(
   );
   if (loaded.ok) return loaded.evidence.verdict === 'PASS' ? 'pass' : 'fail';
   return loaded.code === 'report_missing' ? 'absent' : 'invalid';
+}
+
+/**
+ * S0b（plan 7b3e9a15 D1）：policy off 下"当前 subject 已有的有效负面结论"的取法。
+ *
+ * disabled 时 Step 4 被 policy 关闭，`buildVerifierMaterialView` 的**全部**输入在 writer 里
+ * 取不到（模板 / phase 规则文本 / contextFiles），无法重算 subject。改为按**既有材料身份**
+ * 判定沿用：拿上一轮落盘 summary 的 `verifier_subject_id`，再把它当初签发时落盘的材料视图
+ * （`verifier.material.<subject>.json`）与**本轮以 policy 无关输入重算**的材料视图逐面比较。
+ *
+ * 参与比较的是材料视图里 policy 无关的三面（见 carriedMaterialStillCurrent）：
+ *   · phase 输入/产物文件哈希（`resolvePhaseEvidenceManifest`，与 policy 无关）；
+ *   · `gate_fingerprint`；
+ *   · `script_checks` 投影（`<id>=<status>/<severity>`）。
+ *
+ * **刻意不用 `source_commit_sha` / `worktree_digest`**（codex 实施 review 第 1 轮 high）：
+ * 二者早已退出 subject 派生（verifier-request.ts `canonicalRequestInput`），且
+ * `worktree_digest` 把 `framework.config.json` 算在内（worktree-digest.ts ROOT_CONFIG_PATHSPECS）
+ * ——用它们当沿用判据时，"strict 轮跑出有效 FAIL → 只把 evidence_profile 改成 balanced"
+ * 就会因摘要漂移丢弃 subject，脚本 PASS 直接放行。那是**少否决**，恰是本条要堵的洞。
+ *
+ * 放弃的准确性：模板 / phase 规则 / contextFiles（源码、用例、图片）三面在 disabled 下取不到，
+ * 明确**排除**在比较之外——"prompt 模板或被审源码已改而 manifest 文件与脚本结论未变"仍会沿用
+ * 旧 FAIL（多否决，不是少否决）。解除它需要跑一轮 strict 让 verifier 自己撤回结论——只有
+ * verifier 能收回 verifier 的负面结论，改配置不构成洗白。
+ */
+function resolveCarriedVerifierSubject(
+  projectRoot: string,
+  report: ScriptReport,
+  frameworkRoot: string,
+  mode: 'disabled' | 'enabled' | undefined,
+  gateFingerprint: string | null,
+): string | null {
+  if (mode === 'enabled') return null;
+  const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
+  let prior: Record<string, unknown>;
+  try {
+    prior = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return null; // 无上一轮 summary / 不可解析 → 无沿用锚，零要求
+  }
+  const subjectId = typeof prior.verifier_subject_id === 'string' ? prior.verifier_subject_id.trim() : '';
+  if (!SUBJECT_ID_PATTERN.test(subjectId)) return null;
+  // 材料视图缺席（凭证由更早的、还不落材料视图的世代签发）→ 无从核实身份，不沿用。
+  const priorMaterial = readVerifierMaterialOrNull(dir, subjectId);
+  if (!priorMaterial) return null;
+  if (
+    !carriedMaterialStillCurrent(
+      priorMaterial,
+      // policy 无关的材料面：manifest 文件 + gate + 脚本报告投影。取不到的三面传空值——
+      // 它们不参与比较（carriedMaterialStillCurrent 只读上面三面）。
+      buildVerifierMaterialView({
+        projectRoot,
+        feature: report.feature,
+        phase: report.phase,
+        frameworkRoot,
+        gateFingerprint,
+        phaseRuleText: '',
+        templateText: '',
+        checks: report.checks,
+        contextFiles: [],
+      }),
+      phaseEvidenceManifestCandidatePaths({
+        projectRoot,
+        feature: report.feature,
+        phase: report.phase as Phase,
+        // reports 面的排除与上面 buildVerifierMaterialView 同参解析（自定义 reports_dir_pattern
+        // 下两边必须算出同一个 reports 目录，否则归属判定分叉——codex 三轮 medium）。
+        frameworkRoot,
+      }),
+    )
+  ) {
+    return null;
+  }
+  const loaded = loadVerifierEvidenceForSubject(projectRoot, report.feature, report.phase, subjectId, {
+    frameworkRoot,
+  });
+  // 只沿用**已验真的负面结论**：PASS 不需要沿用（policy off 本就不要求这条轴），
+  // 无效/缺席同样落回零要求——balanced 买到的正是"没有报告时不阻断"。
+  if (!loaded.ok || loaded.evidence.verdict === 'PASS') return null;
+  console.log(
+    `   ℹ [verifier] policy off，但当前 subject ${subjectId.slice(0, 12)}… 已有有效 ` +
+      `verdict=${loaded.evidence.verdict} 报告（${loaded.evidence.md_path_rel}）——沿用该否决，不签发新凭证。`,
+  );
+  return subjectId;
+}
+
+/**
+ * 沿用判据：签发时的材料视图与本轮重算视图在 **policy 无关的三面**上全等。
+ *
+ * 文件面**双向**核对（codex 实施 review 二轮 medium）：
+ *   · 本轮材料面里的每个文件，签发时视图必须有同路径同哈希；
+ *   · 签发时视图里**属于 manifest 面**（`phaseEvidenceManifestCandidatePaths`）的文件，
+ *     本轮必须仍在且同哈希。
+ * 单向比较漏掉删除——`resolvePhaseEvidenceManifest` 的可选条目「存在才纳入」，被删的可选
+ * 输入（如 review 的 spec.md）整条从本轮 manifest 消失，正向遍历永远看不到它。
+ *
+ * 签发时视图多出来的 context-only 条目（contextFiles 带进去的源码/用例/图片，以及
+ * `reports_dir_pattern` 落在 phase 目录内时被构建器当运行期产出排除掉的那些产物）仍**排除**
+ * 在外——disabled 下算不出来，比较它们只会把"多否决"变成"少否决"。候选集与构建器共用
+ * `createRuntimeArtifactPredicate`，归属判定逐字同源（codex 三轮 medium）。
+ */
+function carriedMaterialStillCurrent(
+  prior: VerifierMaterialView,
+  current: VerifierMaterialView,
+  manifestFace: ReadonlySet<string>,
+): boolean {
+  if ((prior.gate_fingerprint ?? null) !== (current.gate_fingerprint ?? null)) return false;
+  if (prior.script_checks.join('\n') !== current.script_checks.join('\n')) return false;
+  const priorFiles = new Map(prior.files.map(f => [f.path, f.sha256]));
+  const currentFiles = new Map(current.files.map(f => [f.path, f.sha256]));
+  for (const [p, sha] of currentFiles) {
+    if (!priorFiles.has(p) || priorFiles.get(p) !== sha) return false;
+  }
+  for (const [p, sha] of priorFiles) {
+    if (!manifestFace.has(p)) continue;
+    if (!currentFiles.has(p) || currentFiles.get(p) !== sha) return false;
+  }
+  return true;
 }
 
 /**
@@ -2052,17 +2275,27 @@ function issueVerifierRequest(input: {
   return { subjectId: request.subject_id, requestRel: rel(requestAbs), reportRel: rel(reportAbs) };
 }
 
-/** 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。 */
-let cachedHeadSha: string | null | undefined;
+/**
+ * 当前 git HEAD（best-effort；非 git 环境返回 null）——run identity 锚。
+ *
+ * 缓存**按 projectRoot 分键**：生产里一个进程只服务一个工程，但 writer 已被 `export`，
+ * 单进程内为两个不同工程各写一次 summary 是合法调用（单测即如此）。全局单值缓存会把第一个
+ * 工程的 HEAD 算到第二个头上，落盘一份 `source_commit_sha` 与自身 HEAD 不符的 summary
+ * （check-receipt 侧表现为 `slim_summary_source_sha_stale`）。
+ */
+const cachedHeadShaByRoot = new Map<string, string | null>();
 function resolveGitHeadSha(projectRoot: string): string | null {
-  if (cachedHeadSha !== undefined) return cachedHeadSha;
+  const hit = cachedHeadShaByRoot.get(projectRoot);
+  if (hit !== undefined) return hit;
+  let sha: string | null;
   try {
     const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', shell: false });
-    cachedHeadSha = r.status === 0 ? r.stdout.trim() : null;
+    sha = r.status === 0 ? r.stdout.trim() : null;
   } catch {
-    cachedHeadSha = null;
+    sha = null;
   }
-  return cachedHeadSha;
+  cachedHeadShaByRoot.set(projectRoot, sha);
+  return sha;
 }
 
 /** 原子写 JSON（tmp+rename）——崩溃不留半截文件。 */
@@ -2198,9 +2431,33 @@ export function buildNextLine(
   },
   phase: string,
   feature: string,
+  opts?: {
+    /**
+     * D2.5（plan 3a7f9c12）：本轮由 goal 外层 runner 在 invocation 结束后重跑 gate harness。
+     * 缺省 false = 保守告知调用方自己重跑（多跑一次只是浪费；少跑一次则本阶段卡死）。
+     */
+    outerGoalRerun?: boolean;
+  },
 ): string {
   const rerun = `然后重跑：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
   const firstLine = (s: string | undefined): string => (s ?? '').split(/\r?\n/)[0].trim();
+  // D1/D2：产品 FAIL 但失败可诊断——必须先于"非 PASS 都先修 blocker"的通用分支。
+  // 一行里给齐三样：投哪份 request、报告写到哪、写完之后干什么。
+  if (summary.next_action === 'run_verifier_for_repair') {
+    const after = opts?.outerGoalRerun
+      ? '写完即结束本轮并回传当前 FAIL 与这两个路径（goal 外层 runner 会重跑 harness 并重算回修候选，你不要自己再跑一次）'
+      : `写完后重跑一次本阶段 harness 以重算回修候选：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
+    return (
+      `NEXT: 本轮产品 FAIL 但失败可诊断（脚本 FAIL 仍签发了 verifier request）——` +
+      `把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
+      `把回复原样全文写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；${after}。` +
+      // D3/D4：报告已在但读不出必需检查项时，出路是**修报告格式**而不是改产品——
+      // 上面的 warn 已点名是哪几项；重投 request 只是没有原始回复时的兜底。
+      '若该报告已存在却读不出必需检查项（缺项/状态冲突/占位符），先按 verifier 的原始回复重写这一份，' +
+      '确无有效回复才重投 request——不要因此去改产品。' +
+      '产品 FAIL 与 open 闭环状态不因此改变——先别改产品，等逐条确认。'
+    );
+  }
   if (summary.verdict !== 'PASS') {
     // codex review：一轮处理全部已知阻断再重跑——列出全部 blocker（最多 6 条），不是只给第一个。
     const blockers = summary.blockers ?? [];
@@ -2235,6 +2492,36 @@ export function buildNextLine(
 /** 本轮 verifier 证据现状（仅在 plan=enabled 时有意义）。 */
 type VerifierEvidenceState = 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid';
 
+/**
+ * D2.5（plan 3a7f9c12）：本轮 harness 结束后，**goal 外层 runner 会不会自己再跑一次
+ * gate harness**（主循环 agent 返回后无条件 `runHarnessPhase`）。会跑 → agent 写完
+ * verifier 报告就该结束本轮，再自跑一次纯属重复。
+ *
+ * 判据刻意比 `isAgentSideGoalHarness()` 更严：光有环境变量不算——残留的
+ * `MAISON_GOAL_RUN_ID` 会把普通交互轮误判成 goal 轮，然后没有任何人重算候选，阶段卡死。
+ * 三件事都成立才承认编排仍会重跑（codex 一轮 medium：只查文件可读不够）：
+ *  ① 本次 invocation 带着编排发下来的 attempt 身份（`MAISON_GOAL_ATTEMPT`，与 run id
+ *    同批注入——见 goal-phase-runtime 的 gateInjectedEnv）；缺席=残留环境变量；
+ *  ② 盘上读得到**该 run 自己的** run-control；
+ *  ③ 该 run 的 owner 仍是 `active`。`released` / `orphaned_session` 表示编排已交出或
+ *    失联——此时没人会重算候选；`quiescing` 表示正在收尾，同样不承诺再跑一轮。
+ * 任一不成立就保守返回 false（多跑一次 harness 只是浪费，少跑一次是死锁）。
+ */
+function outerGoalHarnessWillRerun(projectRoot: string, feature: string): boolean {
+  if (!isAgentSideGoalHarness()) return false;
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (!runId || !process.env.MAISON_GOAL_ATTEMPT?.trim()) return false;
+  try {
+    const control = readRunControl(
+      path.join(featureDir(projectRoot, feature), 'goal-runs', runId),
+      runId,
+    );
+    return control?.owner?.state === 'active';
+  } catch {
+    return false;
+  }
+}
+
 function decideNextAction(
   report: ScriptReport,
   blockers: HarnessRunSummary['blockers'],
@@ -2248,8 +2535,17 @@ function decideNextAction(
     verifierMode?: 'disabled' | 'enabled';
     /** 当前 subject 的证据现状；enabled 时由 writer 探测后传入。 */
     verifierEvidence?: VerifierEvidenceState;
+    /**
+     * D1/D2（plan 3a7f9c12）：本轮已按 D1 窄例外签发诊断 request，且当前 subject 还没有
+     * 可用正文。**必须最先处理**——UT 面板的 `can_claim_done=NO` 分支在下面，产品 FAIL 的
+     * UT 诊断恰恰恒满足它，落进去就会把调用方指去"修 run_status"（那正是 verifier 要核对
+     * 的东西），诊断永远轮不到。资格已由 canProduceVerifierRequest 排除全部材料/环境失败，
+     * 前置于具名 blocker 链不会吞掉任何真实的先修出路。
+     */
+    repairDiagnosisNeedsVerifier?: boolean;
   },
 ): string {
+  if (opts?.repairDiagnosisNeedsVerifier === true) return 'run_verifier_for_repair';
   // plan c8e5b3f1 t2：effective verdict = 顶层钳制后的最终值（capability blocked 时 ≠ legacy PASS）。
   // 开头的 legacy INCOMPLETE/device-external 分支保持原语义（legacy 变 INCOMPLETE 的唯一路径就是
   // device-external 例外），不得换成 effective。
@@ -2307,13 +2603,15 @@ function decideNextAction(
     // 旧实现恒返回 `run_verifier_then_receipt`，于是 disabled 的阶段被指去跑一个不存在的
     // verifier，已有 PASS 证据的阶段被指去重跑（同 subject 重跑只会造 conflict）。
     const mode = opts?.verifierMode ?? 'enabled';
+    // S0b（plan 7b3e9a15 D1）：'fail' 必须**先于** disabled 早退处理。policy off 下 writer
+    // 仍可能沿用当前 subject 的有效负面报告（resolveCarriedVerifierSubject），若让 disabled
+    // 先返回闭环指令，这条 case 永远读不到，等于把已有的否决换成一句"去填回执"。
+    // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
+    if (opts?.verifierEvidence === 'fail') return 'fix_verifier_findings_then_rerun_harness';
     if (mode === 'disabled') return 'fill_receipt_then_sync_closure';
     switch (opts?.verifierEvidence) {
       case 'pass':
         return 'fill_receipt_then_sync_closure';
-      case 'fail':
-        // 同 subject 重跑 verifier 只会撞出 conflict：必须先改材料，让 subject 换代。
-        return 'fix_verifier_findings_then_rerun_harness';
       case 'invalid':
         return 'rerun_verifier_with_current_request';
       default:
@@ -2329,7 +2627,8 @@ function decideNextAction(
   return 'fix_blockers_then_rerun';
 }
 
-function extractFailureClassification(details: string): string | undefined {
+/** 归因文本回退解析（**全仓唯一**"失败归因：xxx"实现）；导出供测试与 D1 判据注入，禁止复制第二份。 */
+export function extractFailureClassification(details: string): string | undefined {
   const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
   return match?.[1];
 }
@@ -3164,6 +3463,9 @@ function printAvailableSpecs(
 
 export { decideNextAction };
 export { capabilityBlockedReadinessSignals };
+// D2.5：编排有效性判据（NEXT 的 goal/非 goal 分流唯一输入）——按既有 decideNextAction
+// 先例导出供单测直驱，不为测试另建注入面。
+export { outerGoalHarnessWillRerun };
 
 if (require.main === module) {
   main().catch(err => {

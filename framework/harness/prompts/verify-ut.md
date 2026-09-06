@@ -34,9 +34,10 @@
 1. **禁止修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。
 2. **可测性缺口交回 coding**：如确实无法通过 UT/Spy/Stub/原型替换绕过，记录文件、变更签名、技术理由和影响面，产出 coding repair candidate；由 coding owner 修改后重走 review→ut。
 3. **人工授权不放行**：用户回复、署名、receipt 或 legacy `gap-notes.md > approved_src_mutations[]` 只可作为历史/普通输入，不得把源码漂移改判为 PASS。
-4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` BLOCKER 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）；UT invocation 内任何业务源码改动都会 FAIL 并回 coding，**提交与否不影响结论**。
+4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）。**它已不是永久 BLOCKER**：漂移按风险分级记 MAJOR WARN（`check-ut.ts` `utDriftTieredWarn`），归类为 coding change 并列出所需复核，不阻塞 UT 闭环；纪律不变——UT 阶段仍禁止改业务源码，漂移仍要回 coding 纳入并按分级复核，**提交与否不影响结论**。你不得据此把已退役的硬门重新施加回来（把 WARN 说成 BLOCKER 就是），也不得反过来把它当作"改码没关系"。
 5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 plan.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 spec/plan 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
 6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
+   > **例外（产品失败诊断请求）**：本 prompt 若带「本轮为产品失败诊断」一节，则 harness 已确认这是它主动签发的诊断请求——`ut.compile` 通过、`ut.run` 是**真实用例断言失败**（归因 `code_regression`）、且没有其它 BLOCKER FAIL/SKIP。此时**照常**逐项完成语义检查，尤其是 `end_to_end_driving` 与 `business_assertion_value` 这两项（它们的 PASS/FAIL 决定这次失败该回 coding 改产品还是回 UT 改测试）。`ut.run` 的产品执行 FAIL 由 harness 原样保留，**不由你的报告继承**：`summary.verdict` / `blocker_count` 只表示**本轮语义检查**的结论——你自己判出的 BLOCKER 级 FAIL 有几条就写几条，一条都没有就写 `PASS / 0`。把产品 FAIL 抄进终态并跳过这两项检查，只会让本该产生的回修候选整批消失。原生编译/执行约束在常规验证请求下不降低。
 
 > 典型违规迹象（请特别留意）：
 > - 业务源码树（非测试目录）里新增了看似仅为 UT 服务的函数，但该函数**没有对应的 spec/plan 条目**；
@@ -131,15 +132,19 @@
 
 - **严重等级**: **BLOCKER**
 - **评估方法**:
-  1. 对每个 `it()` 用例，检查下面三项是否同时成立：
+- **适用范围（先判用例形态，再套下面第 1 条的三项）**：
+  - **流程类用例** = 驱动 coordinator / 涉及 data_boundary 替身 / 有阶段状态迁移。第 1 条三项**逐字适用**，判定逻辑不变。
+  - **纯函数 / 单规则用例** = 无 data_boundary 替身、无多阶段状态迁移。它既没有替身可断言调用序列，也没有中间态可断——第 1 条的「callLog / 调用序列断言」与「状态多阶段断言」两项按**不适用**处理（不是"不成立"，不判 FAIL），只要求：该 `it` 若被错误实现会失败 + 覆盖了该规则的边界/异常。
+  - 形态由**被测对象**决定（有替身/有阶段就是流程类），verifier 按代码判，**不接受**"我说它是纯函数"。
+  1. 对每个 `it()` 用例，检查下面三项是否同时成立（后两项按上面的适用范围）：
      - **命名入口驱动**：用例通过调用 `ui_bindings.user_actions.calls` 声明的命名函数（或 `coordinator` 的方法）驱动业务，而不是直接构造一个数据对象、绕过业务编排检查 Repository
      - **callLog / 调用序列断言**：对 data_boundary 替身（`SpyXxx` / `FakeXxx` / `StubXxx` / 原型替换）的 `callLog` 或 `called*` 计数断言至少出现 1 次
      - **状态多阶段断言**：对业务状态字段（`phase` / `errorCode` / 业务 model 的关键字段）做 `expect` 至少 2 次，且覆盖**中间态与终态**
   2. 对比对应 branch 的 `expected_phase_sequence` 与 `expected_port_calls` / `not_called`：UT 的断言是否与之一致
   3. 若 `use-cases.yaml` 不存在：退化判定——用例必须至少调用一个**真实业务函数**（而非仅 `expect(repo.getX().length).assertLargerThan(0)` 的单数据接口断言）
   4. 判定逻辑：
-     - 三项全部成立 → PASS
-     - 任一项不成立 → FAIL（BLOCKER）
+     - **适用的**各项全部成立 → PASS
+     - **适用的**任一项不成立 → FAIL（BLOCKER）
      - 信息不足 → WARN
 
 - **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL
@@ -149,10 +154,10 @@
 - **严重等级**: **BLOCKER**
 - **评估方法**:
   1. 每个 `it()` 必须能说明它验证了哪条业务规则，而不是只验证"函数能返回"或"数组非空"。
-  2. happy path 至少包含三类断言中的两类：返回值 / 状态迁移 / data_boundary 调用序列 / 持久化结果。
+  2. happy path 至少包含三类断言中的两类：返回值 / 状态迁移 / data_boundary 调用序列 / 持久化结果。**适用范围**：本项只对**流程类用例**（驱动 coordinator / 涉及 data_boundary 替身 / 有阶段状态迁移）要求；**纯函数 / 单规则用例**不作此要求（它只有返回值一类可断言），判据回到第 1 项与下面第 5 项。
   3. 异常 path 必须断言错误状态、错误码、回滚行为或 `not_called`，不能只断言"不会 crash"。
   4. Spy/Stub 的预设值必须与业务场景相关；重复的 mock 值但不同 `it()` 名称不算有效分支覆盖。
-  5. 若发现形式化 UT（例如每个 it 只有 1 个 expect，或只测 repository 静态数据结构而 acceptance 要求业务流程），判定 FAIL。
+  5. 判据是**该 `it` 若被错误实现会不会失败**，以及**是否覆盖了该规则的边界/异常**——不是断言条数。用单条精确断言完整验证一个纯函数是**合法形态**，不得因此判 FAIL；反之，堆三条 `assertLargerThan(0)` 却对错误实现照样通过的空壳用例仍判 FAIL。「只测 repository 静态数据结构而 acceptance 要求业务流程」这一支**保留**（它判的是测错了对象，不是数量），判定 FAIL。
 
 - **输出**：逐个 `it()` 标注业务规则、断言类型数量、是否覆盖异常语义。
 

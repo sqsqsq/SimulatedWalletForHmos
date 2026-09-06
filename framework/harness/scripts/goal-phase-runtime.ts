@@ -224,19 +224,9 @@ import {
 } from './utils/critic-receipt-producer';
 import { collectAuthoritativeImagePaths } from './utils/multimodal-probe';
 import {
-  buildInlineCanaryBlock,
-  generateRandomCanaryAnswerKey,
-  renderCanaryImage,
-  resolveCanaryCacheDecision,
-  resolveCanaryStdoutEnvelope,
   resolveInvokeHardCliFailure,
-  type CanaryAnswerKey,
 } from './utils/vision-canary';
 import * as os from 'os';
-import {
-  capabilityReceiptPath,
-  writeCapabilityReceipt,
-} from './utils/effective-vision-context';
 import { reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
 import {
   classifySourceDrift,
@@ -490,6 +480,9 @@ export interface SummaryJson {
     evidence_manifest_path?: string;
   };
   next_action?: string;
+  /** D2（plan 3a7f9c12）：诊断请求的两个路径——失败回喂据此给出可执行动作。 */
+  verifier_request?: string;
+  verifier_report?: string;
   blockers?: Array<{
     id?: string;
     blocking_class?: string;
@@ -828,7 +821,16 @@ export function buildCurrentAttemptFailureProjection(input: {
   blockerSignature: string;
   failureKindForEvent?: FailureKind;
 } {
-  const hasEvidence = input.decisionSummary !== null || input.hasRuntimeFailureEvidence;
+  // plan 2f8a6d40 D1：**有 summary ≠ 有失败**。收紧前 `decisionSummary !== null` 单独成立，
+  // 于是 `PASS + blockers:[] + advance_blocked=closure_open + retry` 这一支（宿主 run
+  // 20260905T103028Z-79d3fd 第 85 行）被 catch-all 打上 code_regression——closure 未闭环
+  // 是工作流状态，与产品代码无关。现在 summary 只有**自己表达了失败**（verdict 非 PASS，
+  // 或 blockers 非空）才算失败事实；`hasRuntimeFailureEvidence`（超时/agent 失败/非零退出/
+  // closure 定稿错误/可信缺陷等）逐字不动，仍单独充分。
+  const summaryStatesFailure =
+    input.decisionSummary !== null &&
+    (input.decisionSummary.verdict !== 'PASS' || (input.decisionSummary.blockers ?? []).length > 0);
+  const hasEvidence = summaryStatesFailure || input.hasRuntimeFailureEvidence;
   return {
     hasEvidence,
     blockingMeta: extractBlockingMeta(input.decisionSummary),
@@ -1039,6 +1041,19 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
   if (lines.length === 0) {
     const meta = extractBlockingMeta(summary);
     if (meta.failure_kind) lines.push(`- failure_kind: ${meta.failure_kind}`);
+  }
+  // D2（plan 3a7f9c12）：产品失败诊断轮——回喂必须给出可执行动作，否则 agent 只看到一串
+  // blocker 就去改产品，而这些失败恰恰要先由 verifier 逐条确认才知道该改哪儿。
+  if (summary.next_action === 'run_verifier_for_repair') {
+    lines.push(
+      '- next_action: run_verifier_for_repair — this product FAIL is diagnosable, and the harness issued a verifier ' +
+        'request despite the script FAIL. Do NOT edit product code yet.',
+      `  1) deliver ${summary.verifier_request ?? 'summary.verifier_request'} verbatim as the Task prompt to subagent_type=verifier;`,
+      `  2) write its reply verbatim to ${summary.verifier_report ?? 'summary.verifier_report'};`,
+      '  3) end this invocation and report the current FAIL plus those two paths — the outer runner re-runs the gate ' +
+        'harness and recomputes repair candidates. Do NOT re-run the harness yourself, and do NOT wait for candidates ' +
+        'or closure before returning (the product is still FAIL; the phase cannot close yet).',
+    );
   }
   return [`Verdict: ${verdict}`, ...lines].join('\n');
 }
@@ -1525,11 +1540,20 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
   return lines;
 }
 
+/**
+ * plan 5e1c7a93 D4：本块拆两段，**正文一字不改，只改归属**——
+ * - 模式段（headless 声明 / approval_mode / MUST NOT stop to ask / 覆盖 phase SKILL 停等 /
+ *   逐门自动决议与 headless-assumptions 账本）：**只注入 detached**；
+ * - 红线段（gate-integrity 四条 + deterministicDetectorLines）：两种形态**照常注入**。
+ * attended 走 AttendedGoalPhaseExecutor 的 bridge，phase SKILL 的停等确认按原义执行——
+ * 不能再被同一份提示词同时要求「停下来问」和「停下来问 = 任务失败」。
+ */
 function buildUnattendedExecutionBlock(
   manifest: GoalManifest,
   phase: FeaturePhase,
   projectRoot: string,
   capabilityAdvisory?: CapabilityAdvisory,
+  attended = false,
 ): string[] {
   // plan a8e5c3f9 t6：prompt 用 effective 权限（恒 never）——不再随旧 manifest 摇摆。
   const approval = effectiveHeadlessUnattended(manifest.unattended).approval_mode;
@@ -1555,7 +1579,7 @@ function buildUnattendedExecutionBlock(
         '  per-screen signature path. Register genuinely undecidable items in the blind-review',
         '  pending list (see phase SKILL) instead of fabricating a verdict or endlessly re-attempting.',
       ];
-  return [
+  const modeLines = [
     '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
     '',
     'This run is **headless / unattended**. There is **no interactive user** in this session.',
@@ -1569,8 +1593,8 @@ function buildUnattendedExecutionBlock(
     '',
     'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
     '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
-    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; check-receipt`,
-    '  BLOCKER-validates schema and registry completeness — a gate without a ledger line fails the phase closure):',
+    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; the ledger is an`,
+    '  audit trail — it is not authorization, and a missing ledger line does not by itself veto phase closure):',
     '  `{"decision_id":"<unique>","run_id":"<this run id>","phase":"<phase>","gate_id":"<registry id>",' +
       '"class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<what you chose, or n/a: reason>",' +
       '"must_review":true|false,"source":"agent","ts":"<ISO 8601>"}`',
@@ -1585,12 +1609,25 @@ function buildUnattendedExecutionBlock(
     '  authorization: the runner three-source chain will still HALT on any protected-source change they',
     '  "approve". Even if a gap-note claims a seam was approved, do NOT (re-)implement it — log the request',
     '  as must_review and continue without the mutation.',
-    '- Product source under test phases is attestation-locked: any product-code change after review closure',
-    '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
-    '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
+    '- Product source after review closure is reconciled against the closure attestation: a drift is graded by',
+    '  risk and reported as a WARN naming the review it still owes (`review_closure_attestation` in testing,',
+    '  `ut_no_src_mutation` in ut) — it does not silently pass, and it is not a licence to keep editing.',
+    '  You still own the drift: fold it back into coding and re-close review, or do the graded review it names.',
+    '  Test seams MUST NOT alter user-visible flows or default behavior — a `*_FAST_PATH`-style switch',
+    '  defaulting to true is a blocker, not a workaround.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',
+  ];
+  const attendedModeLines = [
+    '## Attended execution (session owner)',
+    '',
+    'This run is **attended**: a session owner is present and reachable through the executor bridge.',
+    "Phase SKILL stop-and-ask confirmations execute as written — stop, ask, and wait for the owner's reply;",
+    'the bridge relays it back. This is not a licence to widen scope or to ask instead of doing the work.',
+    '',
+  ];
+  const redLineLines = [
     '**Gate-integrity red lines (BLOCKER — violations are task failure, not a path to completion):**',
     '- NEVER write legacy quality-signature fields such as `confirmed_by`; current quality conclusions require machine evidence.',
     '- `bbox_verified_by` / `approved_by` / `user_requirement` may only carry their narrowly defined provenance or external-authority semantics; they never override quality FAIL.',
@@ -1601,6 +1638,7 @@ function buildUnattendedExecutionBlock(
     '  and allow_local_drift are retired and ignored on read. Found a framework bug? HALT and report it upstream.',
     ...deterministicDetectorLines,
   ];
+  return [...(attended ? attendedModeLines : modeLines), ...redLineLines];
 }
 
 /**
@@ -3238,14 +3276,13 @@ export function resolveClosureReadRequirement(
 /** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
 /**
  * runner-owned-machine-facts 追补（codex review）：spec closure-only 轮的只读取证指令。
- * 冻结的是产物，不是只读视觉取证——vl_multimodal 终签 invocation-bound，只认**本次
- * invoke** 的逐张验读回执；closure 轮不读图 → refs 回执 partial → 终签结构性拒收
- * （宿主实锤 run 20260815T070732Z-013297：i3 零读图，content_retry_exhausted 终局）。
+ * 冻结的是产物，不是只读视觉取证。plan 8d2b4f60 D3：终签已改材料寻址（本 run 内读过且
+ * 内容未变的图即可采信），closure 轮**不再被要求逐图重读**——原先"必须重读满"与 FROZEN
+ * 自相矛盾，且 20260815T070732Z-013297 的 content_retry_exhausted 正是它造成的。
  *
  * plan c4e8a1f7 T3（评审 P1 修复）：入参是 `resolveClosureReadRequirement` 归一后的
  * 二态值（'structured_events' | 'none'）——
- *  · 'structured_events'（hasVision ∧ 可审计）：本 invoke 逐图 Read 是**可达且被要求**的
- *    （本 invoke 的 Read 事件可签 refs receipt，争取 vl_multimodal 终签）；
+ *  · 'structured_events'（hasVision ∧ 可审计）：列出权威参考图，图变了要重读；
  *  · 'none'（无视觉 / none-provenance / 盲+structured）：要求"每张 Read"是结构性不可达
  *    的——图片照常可读可用，但产物必须诚实写 `verified: unverified`，不得宣称
  *    vl_multimodal（软档 WARN 可继续、hard contract 由既有 gate FAIL）。
@@ -3260,15 +3297,15 @@ export function buildClosureVisualEvidenceBlock(
   return [
     '',
     isStructured
-      ? '## Mandatory read-only visual evidencing for THIS invocation (spec closure — REQUIRED)'
-      : '## Visual evidencing for THIS invocation (spec closure — honest unverified exit)',
+      ? '## Read-only visual evidencing (spec closure)'
+      : '## Visual evidencing (spec closure — honest unverified exit)',
     '',
-    'FROZEN applies to artifacts, NOT to read-only evidencing. The vl_multimodal final sign-off is',
-    'invocation-bound: it only accepts reference images actually read during THIS invocation.',
+    'FROZEN applies to artifacts, NOT to read-only evidencing. Reference images already read earlier in',
+    'THIS run still count as long as their content has not changed; any image that changed must be re-read.',
     ...(isStructured
       ? [
-          'Before filling the receipt, read EVERY authoritative reference image below with your file-read',
-          'tool. Reading them is required and allowed; modifying any artifact remains forbidden:',
+          'The authoritative reference images for this feature are listed below. Reading them is allowed;',
+          'modifying any artifact remains forbidden:',
         ]
       : [
           'This invocation does not have both working vision and structured per-image Read auditing',
@@ -3281,9 +3318,6 @@ export function buildClosureVisualEvidenceBlock(
     '',
     ...refRelPaths.map(p => `- ${p}`),
     '',
-    ...(isStructured
-      ? ['Skipping any image leaves the refs receipt partial and fails ui_spec_fidelity_gate for this attempt.', '']
-      : []),
   ].join('\n');
 }
 
@@ -3412,6 +3446,11 @@ export function buildPhasePrompt(
   phaseWriteBoundary?: PhaseWriteBoundaryResolution,
   /** plan a7c3e9d2：实例扩展的作者前置输入段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
   extensionInputs?: string,
+  /**
+   * plan 5e1c7a93 D4：本轮是否 attended（session owner 在场）。true = 不注入无人值守模式段，
+   * 只注入完整性红线与确定性检测段。缺省 false，既有调用逐字不变。
+   */
+  attended?: boolean,
 ): string {
   const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
   const parts = [
@@ -3422,7 +3461,7 @@ export function buildPhasePrompt(
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
     ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
-    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined),
+    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined, attended === true),
     '',
     '## Orchestrator constraints (BLOCKER)',
     '',
@@ -4146,6 +4185,17 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   const runtimeOwnerKind = runtimeOwnerKindRaw as RunOwnerKind;
   if (runtimeOwnerKind === 'session' && executorMode !== 'attended') {
     console.error('[goal-phase-runtime] BLOCKER: session owner 只能使用 attended executor');
+    return 1;
+  }
+  // plan 8d2b4f60 D7（第2轮 plan review finding 13）：反向约束。owner.kind 已升格为
+  // vl_multimodal 终签的执行形态判据（attended ⇒ 结构性不可达），双向蕴含缺一半就是旁路：
+  // `--runtime-executor attended --runtime-owner process` 会让 gate 判不出 attended，
+  // 从而把先前 detached 轮的 refs 读取记录当本轮证据终签。
+  if (executorMode === 'attended' && runtimeOwnerKind !== 'session') {
+    console.error(
+      '[goal-phase-runtime] BLOCKER: attended executor 必须配 session owner（detached 只能配 process owner）；' +
+        'owner.kind 是 attended 的唯一机内判据，错配会让视觉终签误采信先前 invocation 的读取记录。',
+    );
     return 1;
   }
   const attachCreatedRunId = typeof argv['attach-created'] === 'string'
@@ -6398,22 +6448,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           break;
         }
 
-        // visual-capability-truth S3（路径 B）：spec 期 inline canary——runner 随机出题
-        // （答案只在内存），业务产出与答题同 invocation；判卷通过才签 invocation_bound。
-        let inlineCanaryKey: CanaryAnswerKey | null = null;
-        let inlineCanaryBlock = '';
-        if (!dryRun && phase === 'spec' && capabilityAdvisory?.hasVision) {
-          try {
-            inlineCanaryKey = generateRandomCanaryAnswerKey();
-            const canaryPng = path.join(phaseDir, 'inline-canary.png');
-            await renderCanaryImage(canaryPng, inlineCanaryKey);
-            inlineCanaryBlock = buildInlineCanaryBlock(canaryPng);
-          } catch (e) {
-            inlineCanaryKey = null;
-            console.warn(`[S3] inline canary 生成失败（不阻断，能力停留 run_probed）：${(e as Error).message}`);
-          }
-        }
-
         // 【pass snapshot 已整体退役 · runner-owned-machine-facts（codex 审计定案）】
         // closure-only 是上一轮权威 phase_verdict 的流程状态（PASS+advance_blocked+retry）。
         // PASS 产物的防篡改不再靠冻结快照/恢复：改坏了下一轮 harness FAIL，改了仍合法则
@@ -6586,7 +6620,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phaseWriteBoundary ?? undefined,
           // cp→main: 先 cp 写边界批次（plan 1741b6f2）再 cp 本批，避免上一实参的上下文冲突；主干 loadResolvedProfile 同样挂 extensionBundle，此行无需改。
           extensionInputsForPhase(projectRoot, String(phase)),
-        ) + inlineCanaryBlock +
+          // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
+          // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
+          executorMode === 'attended',
+        ) +
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0
             ? buildBacktrackReviewFocusBlock(backtrackReviewFocus)
@@ -7580,104 +7617,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // 三轮 review P0-2：runner-owned receipt 的可信边界=顺序信任——每个 spec invocation
-        // 结束后 runner **先清理**两张回执文件（agent 在 invocation 内伪造的文件被压尾清除），
-        // 再按判卷/审计结果重签发，并把回执文件 sha256 写入事件；消费面校验"该 invoke 的
-        // 最后一条 runner 事件 + 文件 hash 一致"，非 runner 签发即拒。
-        if (!dryRun && phase === 'spec') {
-          try {
-            fs.rmSync(capabilityReceiptPath(projectRoot, manifest.feature), { force: true });
-            fs.rmSync(specRefsReceiptPath(projectRoot, manifest.feature), { force: true });
-          } catch (e) {
-            console.warn(`[S3] 回执清理异常（不阻断，消费面 fail-closed）：${(e as Error).message}`);
-          }
-        }
-
-        // visual-capability-truth S3（路径 B 判卷，plan c4e8a1f7 T3）：inline canary 答卷
-        // → 签发/拒签 invocation_bound receipt。未答/答错/CANNOT_SEE_IMAGE → 不签
-        // （能力停留 run_probed，vl_multimodal 终签自然被拒）——不阻断 phase，走盲档工作法。
-        // 判卷 SSOT 统一复用 resolveCanaryCacheDecision/parseCanaryAnswer（不再保留
-        // isCanaryAnswerComplete + classifyCanaryResponse(raw) 分叉）：
-        //  · structured adapter 从**纯 agent-events.jsonl** 的终态 result 语义取答卷
-        //    （parseCanaryAnswer 内部做信封投影；events 缺失/无终态 → 不判卷不签发）；
-        //  · 非结构化 adapter **只消费本次 invoke 的 stdout** 与 exitCode/timed_out/
-        //    silent_killed/skipped 事实——不读 stderr、prompt echo、人读混合日志
-        //    （旧实现读整份 agent-output.log，prompt 自带 CANNOT_SEE_IMAGE 污染判卷，
-        //    宿主 run 20260823T161102Z-68480b 三轮拒签实锤）。
-        if (!dryRun && phase === 'spec' && inlineCanaryKey) {
-          try {
-            // plan e6b3f8d2 t1：信封方言分派。claude 家族走三文件分流的 agent-events.jsonl；
-            // codex 的 JSONL 就在本次 invoke 的 stdout 上（tool_event_provenance 仍是 none，
-            // 不产 agent-events.jsonl——**terminal 事件流 ≠ 工具证据流**，不得混用）。
-            const canaryEnvelope = resolveCanaryStdoutEnvelope(
-              manifest.adapter ?? 'generic',
-              cap.capability?.tool_event_provenance,
-            );
-            const structuredStdout = canaryEnvelope !== 'none';
-            let decisionStdout = '';
-            if (canaryEnvelope === 'claude_stream_json') {
-              const eventsAbs = agentEventsLogPath(outputLogPath);
-              const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
-              decisionStdout = eventsRaw;
-              if (!decisionStdout) {
-                console.log('[S3] inline canary：agent-events.jsonl 缺失/为空（断流?）——不判卷不签发');
-              }
-            } else {
-              // 非结构化：本次 invocation 的 stdout 事实（内存保留 64KB 上限，答卷足够）。
-              decisionStdout = invoke.stdout ?? '';
-            }
-            let issued = false;
-            if (decisionStdout) {
-              const decision = resolveCanaryCacheDecision({
-                stdout: decisionStdout,
-                exitCode: invoke.exitCode,
-                timed_out: invoke.timed_out,
-                silent_killed: invoke.silent_killed,
-                skipped: invoke.skipped,
-                structured_stdout: structuredStdout,
-                ...(structuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
-              }, inlineCanaryKey);
-              if (decision.kind === 'valid' && decision.classify.verdict === 'tool_read') {
-                writeCapabilityReceipt(projectRoot, manifest.feature, {
-                  adapter: manifest.adapter ?? 'generic',
-                  run_id: manifest.run_id,
-                  invoke_id: invokeId,
-                  binding_path: 'inline_canary',
-                  verdict: 'tool_read',
-                  model: 'unknown',
-                });
-                issued = true;
-              } else {
-                console.log(
-                  `[S3] inline canary 未通过/未作答（${decision.kind === 'valid' ? `verdict=${decision.classify.verdict}` : decision.detail}）——` +
-                    'invocation_bound 不签发（vl_multimodal 终签将被拒，走盲档/能力路由）',
-                );
-              }
-            }
-            goalEvents.emit({
-              type: 'capability_receipt',
-              phase,
-              invoke_id: invokeId,
-              status: issued ? 'issued_inline_canary' : 'not_issued',
-              // P0-2 事件锚：签发态携带回执文件 sha256（消费面比对，agent 伪造文件即失配）
-              ...(issued
-                ? { receipt_sha256: sha256FileFull(capabilityReceiptPath(projectRoot, manifest.feature)) }
-                : {}),
-            });
-            if (!issued) {
-              console.log('[S3] inline canary 未通过/未作答——invocation_bound 不签发（vl_multimodal 终签将被拒，走盲档/能力路由）');
-            }
-          } catch (e) {
-            console.warn(`[S3] inline canary 判卷异常（不签发，不阻断）：${(e as Error).message}`);
-          }
-        }
-
         // visual-capability-truth S3：spec 期参考图验读回执——vl_multimodal 终签的证据面
         // （canary 只证能看测试图；本回执证"逐张读过本需求参考图"）。无解析器 adapter →
         // 不产出 → 终签结构性被拒（正是 20260718 cursor 自签形态的解药）。
         // plan c4e8a1f7 T2：期望分母=共享发现集合（正文显式 ∪ source 直接父目录；仅空集
         // 回退 ux-reference）——不再从 agent 产出的 spec.md 自算较小分母（宿主实锤：spec
         // 漏一张回执分母跟着缩水，无法证明 runner 发现的全集均已建模/验读）。
+        // plan 8d2b4f60 D2（codex finding 2）：**attended 不生产回执**。阶段日志路径按 phase
+        // 固定（phases/<phase>/agent-output.log），attended 走 phase_execute_request、不碰这
+        // 两个文件——盘上仍是上一轮 detached 的 agent-events.jsonl，审计它等于把遗留日志重签
+        // 成新材料证据。守卫加 executorMode==='detached'，attended 只发 skipped 事件不写盘。
         if (!dryRun && phase === 'spec' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const refAbsPaths = resolveRequirementReferenceImages(
@@ -7686,7 +7635,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
               manifest.requirement,
               { requirementSourceFiles: manifest.requirement_source_files },
             );
-            if (refAbsPaths.length > 0) {
+            if (refAbsPaths.length > 0 && executorMode !== 'detached') {
+              goalEvents.emit({
+                type: 'spec_refs_receipt_produced',
+                phase,
+                invoke_id: invokeId,
+                status: 'skipped',
+                reason: 'attended_no_invoke_audit',
+              });
+              console.log('[S3] spec refs 回执跳过：attended 轮无本次 invocation 的逐图审计（不覆盖既有回执，vl_multimodal 结构性不可达）');
+            } else if (refAbsPaths.length > 0) {
               const producedRefs = produceSpecRefsReceipt({
                 projectRoot,
                 feature: manifest.feature,
@@ -7696,6 +7654,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 eventsLogAbsPath: agentEventsLogPath(outputLogPath),
                 refAbsPaths,
               });
+              const carriedOver = producedRefs.carriedOver?.length ?? 0;
               goalEvents.emit({
                 type: 'spec_refs_receipt_produced',
                 phase,
@@ -7703,15 +7662,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 status: producedRefs.produced
                   ? (producedRefs.unread?.length ? 'partial' : 'complete')
                   : 'skipped',
-                // P0-2 事件锚：产出态携带回执文件 sha256
+                // 诊断用（D2：已无消费者校验它，事件锚校验随顺序信任一并删除）
                 ...(producedRefs.produced
                   ? { receipt_sha256: sha256FileFull(specRefsReceiptPath(projectRoot, manifest.feature)) }
                   : {}),
+                // D4：本轮未读、沿用本 run 先前 invocation 记录（内容未变）的张数
+                ...(producedRefs.produced ? { carried_over: carriedOver } : {}),
               });
               if (!producedRefs.produced) {
                 console.log(`[S3] spec refs 回执未签发（${producedRefs.reason}）——vl_multimodal 不可签`);
               } else if (producedRefs.unread?.length) {
                 console.log(`[S3] spec refs 回执：${producedRefs.unread.length} 张参考图无验读记录（unread）`);
+              } else if (carriedOver > 0) {
+                console.log(`[S3] spec refs 回执：${carriedOver} 张读取记录沿用本 run 先前 invocation（内容未变）`);
               }
             }
           } catch (e) {

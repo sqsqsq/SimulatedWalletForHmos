@@ -2262,9 +2262,11 @@ function checkItDrivesFlow(
     status: 'WARN',
     details: `${weak.length} 个 it() 用例驱动力不足：\n${truncateList(weak, 15)}`,
     affected_files: [...new Set(affected)],
+    // plan 7b3e9a15 D3：数量是本 WARN 的**触发线索**，不是判据（severity/status 与判定式
+    // 一字不改，只把建议从"补够条数"改回"确认这条 it 真的在驱动业务"）。
     suggestion: strict
-      ? '有 use-cases.yaml 时每条 it() 应：(1) 调用 coordinator 的命名方法驱动；(2) 对 Spy/Fake/Stub 的 callLog/.calls 做 ≥2 次调用序列断言；(3) 对业务状态/phase 做 ≥2 次断言。'
-      : '每条 it() 至少包含 ≥2 个 expect()，避免空断言用例。',
+      ? '数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移（纯函数/单规则用例只需保证错误实现会让它失败并覆盖边界/异常）。'
+      : '数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移，而不是补足 expect() 条数。',
   }];
 }
 
@@ -4514,12 +4516,16 @@ const checker: PhaseChecker = {
     // 时 tsc 保持 FAIL（仅存护城河不降级）。降级逻辑在 profile checkUtTscCompiles 内。
     results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
+    // plan 5e1c7a93 D1：collector 按次创建，生命周期就是这一次 check-ut——build 侧写入、
+    // test 侧命中即跳过内建出包，同一门禁内同 (module, product) 只出一次 ohosTest 包。
+    const utBuilds = new Map<string, unknown>();
     const hvigorBuildResults = safeRun(
       // 显式目标文件（repair）必须进编译/执行集合，即使不在 scoped
       () => utHost.checkUtHvigorBuild(
         ctx,
         [...scopedUtFiles, ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path))],
         featureNewUtFiles,
+        utBuilds,
       ),
       'ut_hvigor_build',
     );
@@ -4576,7 +4582,7 @@ const checker: PhaseChecker = {
         ...scopedUtFiles,
         ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path)),
       ];
-      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases), 'ut_hvigor_test'));
+      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));

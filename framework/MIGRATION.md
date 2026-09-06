@@ -170,8 +170,8 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 **升级动作（实例工程）：**
 
 1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
-2. 删除实例里的 `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）；
-3. `framework/harness/state/last-verifier-report.{json,md}` 若存在可直接删除，已无消费者；
+2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
+3. `framework/harness/state/last-verifier-report.{json,md}` 是运行时状态，已无生产消费者，可保留，无须清理；
 4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
 5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
 
@@ -219,6 +219,34 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **宿主登记方式**：把各阶段的作者要求文件登记进 `provides.knowledge`（字符串，文件须存在）。1.0 语义是全部 Feature phase 都列出，文件名带阶段名（如 `knowledge/plan-author.md`）以便作者分辨。hooks 原样保留，仍只进 verifier。
 - **manifest 非法时**：goal 侧只 `console.warn`"作者前置输入未注入"并指向 `--phase extensions`，不新增门禁、不 HALT。
 - **升 3.1.0 的退出条件（不是无感接续）**：3.1.0 的同名 formatter 对 manifest 1.0 返回空串，升级后仍用 1.0 的宿主会**失去**这条 goal 作者提示。要保留效果，须把 knowledge 改成 1.1 对象（`{path, summary, audience: [<phase>]}`），按需再声明 `phase_bindings.<phase>.before_phase_work`；升级后段落形状不变，只是按阶段精确。
+
+### 3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）
+
+回修候选依赖 verifier 逐条确认，而 verifier request 此前只在脚本 `verdict=PASS` 时签发——于是 review 的负面裁决（`negative_verdict_closure` / `conditional_pass_closure`）与 UT 的真实用例断言失败这两类产品失败，永远拿不到能驱动回修的证据，只能原地重试到预算耗尽。3.0.x 起 harness 对这两类**已复现**的失败照样装配 `ai-prompt.md` 并签发 request。
+
+- **产品裁决一字不改**：`verdict=FAIL`、exit 1、`closure_status=open` 全部保持。verifier 的 PASS 只证明"这份报告可信"，不构成产品通过；失败的 phase 也不要求先闭环。
+- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL/SKIP。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
+- **新的 `next_action` 取值 `run_verifier_for_repair`**：不是新阶段、不是新状态机。控制台 `NEXT` 行会给齐 request 路径、报告落盘路径与后续命令。goal 编排下写完报告即回传本轮（外层 runner 会重跑 gate harness 并重算候选，agent **不要**自己再跑一次）；非 goal 才由调用方自己重跑一次本阶段 harness。
+- **报告终态口径不变，但现在写明了**：`blocker_count` 只数**本轮 verifier 自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，`verdict=PASS` 当且仅当为 0。确认了 N 条产品缺陷但审查自身无 BLOCKER FAIL 时，正确终态是 `PASS / 0`——不要把产品 FAIL 抄进终态，那会让逐条 confirmed 派生的回修候选整批消失。
+- **verifier 报告的机器解析改读正式汇总表**：`verify-*.md` §7.1 的 `| id | status | ... |` 表现在可被机器读取（此前只认 §7.2 的 YAML，而 YAML 按契约只列非 PASS 项，于是所有 PASS 对机器不可见）。旧 YAML 形态继续兼容；同条一致重复去重，**冲突或坏状态一律不采信**（不会选择有利的 PASS），落回既有"未确认/修格式"通道。宿主无需改写历史报告。
+- **UT 真实断言失败现在带机器归因**：全部选中模块真跑完、且每个失败模块确实跑出用例并有用例失败、无工具缺失/超时/装机预检阻塞/结构化设备故障时，`ut_hvigor_test` 会带 `failure_kind=code_regression`。环境类失败保持原归因，不会被改判成产品缺陷。
+- **消费者需要动手**：重新物化 `.claude/agents/verifier.md`、`phase-executor.md` 与 Stop hook（`.cac` 同），使它们的调用前置由"脚本 PASS 才可调用"改为"harness 签发了 request 才可调用"。未刷新的实例只会继续拒绝在脚本 FAIL 时派发 verifier，即改动前的行为，不会出错。
+- **放弃的准确性**：只开放已复现的两类失败，其余可诊断失败仍需新证据才登记；诊断请求不能证明 verifier 诚实读了 FAIL 报告而非盖章放行（兜底是产品裁决不变 + 逐条 confirmed 合取，不是防篡改）；既非正式表格也非旧 YAML 的自由文本报告仍无法采信，须修格式；`code_regression` 由"没有环境证据"反推，某种无结构化证据的真机故障仍可能被误读为产品缺陷——但它只解锁一次语义审查，永不改写产品裁决。
+
+### 3.0.x：视觉终签改绑材料，invoke 级金丝雀回执停产（非 Breaking，plan 8d2b4f60 / openspec vision-evidence-material-binding）
+
+`vl_multimodal` 终签此前把两件事都绑在**一次 agent 调用**上：能力证明（prompt 内嵌金丝雀，答案必须写在终态输出末尾）与材料证据（参考图逐张读取回执）。两条绑定各烧掉整轮：收口轮被 completion probe 杀进程 → 答卷从未产生 → 拒签（宿主 run `20260905T103028Z-79d3fd` spec-i4，三张参考图明明都读过）；closure 轮不重读图 → 回执 partial → 拒签 → `content_retry_exhausted`（run `20260815T070732Z-013297`）。3.0.x 起能力回落 **run 级 preflight 金丝雀**，材料证据改按**内容哈希**寻址。
+
+- **`vision/capability-receipt.json` 停止产出**：类型、读写函数、`invocation_bound` 能力档、`capability_receipt` 事件与 prompt 内嵌金丝雀块整套删除。**盘上残留无害**——已无任何消费者，不影响任何门禁结论，无需迁移动作。preflight 金丝雀的出题/渲染/TTL/采信谓词、completion probe 与独立 visual provider 一字未动。
+- **能力条件必须来自实测 probe**：终签要求能力档 `scope=run_probed` **且来源是 probe**（即金丝雀分支写的 `canary_probed_at` 在场）。设了 `vision.image_input_override` 的宿主**拿不到 `vl_multimodal`**：override 分支先返回、根本不读金丝雀，而 preflight 见 override 即跳过探测，本 run 零实测证据。出路是删掉 override 让 preflight 实测一次，或诚实写 `verified: unverified`（软档 WARN 可继续、hard pixel contract 仍 FAIL）。拒签文案不会宣称"实测"。
+- **`vision/spec-refs-receipt.json` 升 schema `1.1`，loader 只收 1.1**：删顶层 `invoke_id`，每张图增 `read_at_invoke`。旧 `1.0` 回执一律视同"无回执"——消费面报"尚未生成"、生产面从零重算。**不能靠 `goal_run_id` 作废**：同 run resume 时它恰好等于当前 run，只有版本判据挡得住。**无需迁移脚本**：回执是每轮可重算的派生物，重算成本=一次事件日志解析。
+- **跨 invoke 取并集，图变即作废**：同一 run 内先前 invoke 读过的图，只要内容哈希未变就继续采信；图被替换即判 unread、必须重读。closure 轮因此不再被要求逐张重读，提示词里"必须读满"与"产物 FROZEN"的自相矛盾一并删除。跨 run 仍精确等值不复用。
+- **同名异路径不再算读**：Read 命中改为规范化完整路径等值（win32 不分大小写）。此前"读了 `tmp/1-home.png`、签了 `ux-reference/1-home.png` 的哈希"是成立的。
+- **attended 轮不生产回执**：阶段日志路径按 phase 固定，attended 轮不产生本次调用的工具事件，若照签就会把**上一轮 detached 的**日志配上新图哈希，拼出一张看似崭新的回执。现在 attended 只发 `spec_refs_receipt_produced` 的 `status:'skipped'`+`reason:'attended_no_invoke_audit'`，不写盘、不覆盖既有回执。配套：runtime 拒绝 `attended` executor 配 `process` owner（此前只禁 `session`+`detached`），否则 gate 判不出 attended。
+- **拒签文案分四态**：不可达（执行形态/无逐图审计能力）> 未实测（本 run 无 probe 金丝雀）> 尚未生成（回执由 runner 在 invoke 结束后签发，阶段内自跑 harness 的首轮必然还没有它）> 验证不通过（材料核对失败）。**不新增 check id、不改严重度阶梯**。此前"无回执"被一律当成"执行形态不支持"，会在正常首轮教模型自降档。
+- **沿用先前 invocation 的读取记录会被披露**：`spec_refs_receipt_produced` 事件带 `carried_over` 计数，`goal-report.md` 多渲染一行 `↳ 参考图读取` 注记（与既有"预算提示""模型核验"同段同写法）。不新增 check/WARN/summary 字段。
+- **删掉了事件锚**：不再校验"该 invoke 的最后一条 runner 事件 + 回执文件 sha256 一致"。**放弃的准确性**：agent 在调用窗口内伪造回执不再被顺序信任拆穿；兜底仍是冻结 manifest 重算分母（不可自缩）与逐张哈希核对。其余取舍：能力粒度从"这次调用能看图"退到"这个 run 实测能看图"（run 中途被切到盲模型不当场察觉，兜底为 `pin_verify_mismatch` 告警与 `vision_output_counterevidence` 产物反证）；后续轮改了产物却没重读图仍带签名（图一变即失效）；Windows 上仅大小写不同的两个真实文件被判同一张（NTFS 默认不区分大小写，实际不可构造）；closure 提示词不再提前劝阻，图被替换时多绕一轮。
+- **消费者无需动手**：无配置变更、无产物迁移、无模板重新物化。
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
@@ -485,6 +513,154 @@ coding 只读 contracts —— 不 scaffold 就判「未物化」、scaffold 就
 - **pass 契约**：`verdict=pass` 屏不得含 blocker/major defect（含则 pixel_1to1 FAIL、否则 WARN）。
 - **pixel_1to1 须逐屏枚举**：finalized verdict 的 `defects` 缺失（`undefined`）在 pixel_1to1 下判 **BLOCKER/FAIL**（补 `defects[]`、确无缺陷写 `[]` 即解除），与既有 `reverse_missing` 对称——**消费者旧 `visual-diff.json` 在 pixel_1to1 下会硬挂，须重跑 device-testing（采集层重写 + VL 逐屏枚举 defects）或手动补 `defects[]`**。非 pixel_1to1 不受影响。
 - **边缘哨兵**：采集层对 ref/shot 算结构散度，超阈 tile 未被 `defect.bbox` 覆盖且达地板 → WARN（低置信、永不 gate）；若属误报可补对应 `missing_render` defect 的 bbox 或复核该区域。
+
+---
+
+## 构建执行复用与报告分层（execution-reuse-and-report-layering）
+
+本节全部为**消费者无需动手**的行为变化：没有新 env、没有新 CLI、没有新产物格式要迁移；旧记录不带执行键即不参与复用，自然失效。
+
+### UT 一次门禁只出一次 ohosTest 包
+
+同一次 `--phase ut` 里，`ut_hvigor_build` 出的包直接交给 `ut_hvigor_test` 用，test 阶段不再用同参数重跑一次 `genOnDeviceTestHap`。
+
+- **可见变化**：`hvigor-ut-build.<module>.log` 与同名 `.meta.json` 在 test 阶段跑完后**仍是 build 阶段那一份**（此前会被第二次构建覆盖，事后无法证明第一次编译发生过）。
+- **不承诺节省量**：「hvigor 命中 cache 只需毫秒」在仓内无任何证据（`HvigorRunResult` 无 cache 字段、诊断不解析该信号），本次确定收回的只是**一次无条件进程 spawn** 与上面那次日志覆盖；真实耗时以宿主实测为准。
+- **放弃的准确性**：test 阶段不再顺手重建包。包在两次门禁之间被外力删改时，从「第二次构建重新出包」退化为 `hap_not_found` 报错——判据仍是真实产物在盘。
+
+### UT 执行键复用（新目录 `<reports>/<feature>/ut/<stamp>/ut/`）
+
+UT 装机执行开始沿用 testing 侧既有的执行键复用：输入完全没变、上一轮同键成功且证据齐备时，回填冻结件重算门禁，**不发一条装机/执行 hdc**（`hdc list targets` / `wm size` 这类**设备身份查询**不算执行调用，仍会发生）。
+
+- **新落盘目录**：`doc/features/<feature>/ut/<stamp>/ut/`，内含 `execution-key.json` 与逐模块冻结件 `frozen.ut-result.<module>.json` / `frozen.hdc-test.<module>.log`；顶层同时留一份 `ut-result.<module>.json`。旧 run 目录不带执行键记录，天然不参与复用。
+- **整轮键、不做半复用**：HAP 摘要、选中用例集、hvigor invocation fingerprint 三项**按模块名排序逐模块拼接后再 sha256**。任一模块的任一项变 → 整轮真跑。这样 suite 棘轮的「全部模块已执行」判据永远看的是同一轮结果，不会拿到跨轮拼装。
+- **四类一律真跑**：本次调用没真的出过包（例如直调 test helper 的路径）、任一输入变、最新同键 attempt 失败、执行事实冻结件缺失、设备身份未知、`--force-device`。
+- **`--force-device` 覆盖面**：help 文案由「testing 专属」改为「testing / ut」，语义不变——仍是唯一显式逃生口。
+- **`timing_complete` 字段一名两义**：hylyre leg 仍是「timing 覆盖全部 case」，UT leg 是「全部选中模块的结果与 hdc 日志已逐模块冻结」。字段名沿用以免动 testing 侧 schema 与消费者，含义差异见 `execution-key.ts` 的类型注释。
+- **每轮都留一条描述自己结局的记录**：UT 在 dispatch **之前**先落一条 `outcome:'started'` 的非成功记录，跑完覆盖成真实结果。跑挂/被杀/抛异常的那轮因此留下的最新记录是非成功的，下一轮不会把更早的成功当成「最新」。
+
+### `hdc-test.log` 改为 `hdc-test.<module>.log`（Breaking：只影响按字面名找日志的人工习惯）
+
+多 ohosTest 模块时旧的固定名会被第二个模块覆盖。现在按模块命名，实际路径见 `ut_hvigor_test` 结果的日志落盘行。若你的脚本或笔记里硬编码了 `hdc-test.log`，改成按 check 结果给出的路径读。
+
+### report-only 对账区分执行事实与派生统计
+
+`--report-reconcile-only` 的 check id（`report_reconcile_only`）、BLOCKER 严重度与「零设备调用」承诺全部不变，缺口分两类处置：
+
+- **执行事实缺口**（哪个包 / 哪台设备 / 哪次 run / 哪些 case 真跑过；含源 meta 本身缺 `reused` 布尔或 `hapBuiltAt`）→ 仍是 **BLOCKER FAIL**。
+- **派生统计缺口**（timing 文件缺失或陈旧、pipeline 段耗时、case 耗时行、报告正文与 timing 不符）→ **先重建**（timing 由 trace + meta 重算，报告正文由既有生成器重算），重建后闭合即 PASS；仍不闭合才 `status: WARN`（severity 仍 BLOCKER）+ `failure_kind: derived_statistic_unavailable`，details 明写「该统计项为 UNKNOWN，不构成执行事实结论」。**没有新增 check id、没有新增 CheckStatus 成员。**
+- **原始协议缺口不是派生统计缺口**：v1 结果缺 schema 必填（含 `stepResultV1.duration_ms`）仍由冻结 schema 门判 `unsupported_result_protocol`，是 hard。
+- **性能类 AC 例外**：test-plan「关联 AC」列写了 `NFR-*`、且该 id 在 spec 的 `acceptance.performance[]` 里声明时，该 TC 的耗时缺口**不接受重建**，留在 hard 桶。两侧任一没写就识别不到，按 soft 处理——这是 spec 书写约定的已知边界，本次**不加新校验**。
+
+### 「没量到」不再写成 `0ms`
+
+`device-test-timing.json` 的 `cases[].duration_ms` 放宽为 `number | null`。legacy `0.3-p0` 日志 cost 分配分支里没有对应 cost 行的 case 记 `null`；报告对应耗时格写空值占位（`—`），不再写假的 `0ms`。**v1（`0.4-p0`）分支一行未改**：`steps=[]` 的 skip case 求和得 `0` 是**正确的 0**，照旧写 `0ms`。`UNKNOWN` 字面量只出现在 check details 与报告备注列，绝不写进被耗时解析读的格子。
+
+### attended 不再被注入无人值守禁问块
+
+attended（session owner 在场、走 executor bridge）的 phase prompt 不再包含 `## Unattended execution` 模式段（headless 声明、`approval_mode`、"MUST NOT stop to ask"、覆盖 phase SKILL 停等、逐门自动决议与 `headless-assumptions` 账本指令），改为一句诚实说明：phase SKILL 的停等确认按原义执行、经 bridge 回传。**完整性红线与确定性检测段两种形态照常注入，正文一字未改。**
+
+顺带纠正 detached 正文里一条失效话术：账本缺行会让 `check-receipt` BLOCKER 判 phase closure 失败——该否决已退役，现改为「账本是审计留痕，不构成授权，也不单独否决 closure」。attended 的 `headless-assumptions.jsonl` 会因此更稀疏，该账本本就无门禁消费者。
+
+---
+
+## 失败归因与 prior review 消费一致（attribution-and-prior-review-consistency）
+
+本节全部为**消费者无需动手**的行为变化：没有新 env、没有新 CLI、没有新分类、没有新状态；旧 run 的相关字段仍可读，只作历史看。
+
+### PASS、无 blocker 且无 runtime 失败事实的轮次不再输出 `failure_kind_classified`
+
+判据由「本轮有 summary」收紧为「本轮有失败」：summary 必须**自己表达失败**（`verdict` 非 `PASS`，或 `blockers` 非空）才算失败事实；缺 `verdict` 的 summary 按 fail-closed 仍算失败。满足收紧条件的轮次，`phase_verdict` 不再带 `failure_kind_classified`，`reconcile_observation.phase_outcome` 不再带 `failure_kind`，也不再合成 blocker 签名。
+
+- **典型现场**：脚本 PASS、零 blocker、`harness_exit=0`、`advance_blocked=true` / `advance_block_reason=closure_open`、`action=retry` 的那一轮。closure 未闭环是**工作流状态**，此前却被 catch-all 标成 `code_regression`，还经 `--resume` 的 continuation 带进下一轮。
+- **不是「PASS 就一定没有 kind」**：`hasRuntimeFailureEvidence` 一字未改，仍单独充分——超时、API 错、空产出、操作者中断、`agent_failed`、harness 非零退出、closure 定稿错误、可信缺陷或 unverified 非空，任一在场时 PASS 轮照常输出该字段。按「PASS 就没有 kind」去排障会读错。
+- **FAIL / INCOMPLETE 一字未改**，`advance_block_reason` / `assess_recommendation.reason` / blocker 列表照常落盘。
+- **放弃的准确性**：无失败事实的那一轮读不到任何 kind 字样，事后排障改看上面三项。这正是 P1-8 立项时接受的代价，本次只是把它从 `advance` 支补齐到 `retry` 支。
+
+### `ui_spec_fidelity_gate` 的归因由 `code_regression` 改 `spec_capture_gap`
+
+该门禁的每个 FAIL 出口（`unreachable` / `not_probed` / `not_yet` / `mismatch`，以及「有视觉能力却没核对原图」）说的都是**验读证据没建立起来**，没有一支指向产品源码。此前落 catch-all 后会触发「查 goal-run 起始 commit 以来改过的文件、先把上一轮改动 revert 掉」的重试指导——对一个缺视觉回执的 spec 阶段是错向指令，改后不再触发。
+
+- **熔断/累计 halt/责任归属全部不变**：`spec_capture_gap` 不在 signature halt、累计 halt 家族与外部重试责任三个集合里，与 `code_regression` 今天的待遇逐字相同；该 blocker 仍是 `agent_fixable`，回喂与签名过滤不变。
+- **没有新增分类**：不新增 `FailureKind` 成员、`CheckStatus`、check id 或 blocker schema 字段。B02 的四态措辞继续只做人读文案，留在 blocker 的 `details` / `suggestion` 里逐条回喂。
+- **放弃的准确性**：①事件层分不出 `mismatch` 与 `not_probed`，差别只在 `details`/`suggestion`；②归因按 id 落位而非写 `CheckResult.failure_kind`，故这四个出口的 blocker `classification` 仍为空——重试 prompt 里这一条是无标签的 `- ui_spec_fidelity_gate` + details + suggestion，不会出现 `[spec_capture_gap]` 字样；③本次**不**给它加 actionability 注册项，结构性 `unreachable` 仍按 agent 可修重试。
+
+### goal 阶段存档在沿用既往 PASS 时会出现 `verifier.report.md`
+
+以 `completed_with_prior_review` 闭环的 phase，其 run 级存档（`<run>/phases/<phase>/harness/`）此前是 `verifier_evidence: null` + `verifier.report.md: null`——同目录 `summary.json` 副本却写着「沿用既往 PASS 闭环、材料未重审」，只读存档的下游会读成「这阶段根本没有可采信的 verifier 结论」。
+
+- **现在**：存档按「当前 subject 优先，回落 `summary.verifier_closure.reviewed_subject_id`」取第一份验真通过的证据，把**被沿用的那份报告**复制为 `verifier.report.md`，并在 `verifier_evidence` 上置 `reused_from_prior_review: true`。
+- **两条反例不变**：当前 subject 自己有验真报告时取当前证据、**不**标沿用；本 phase 从未 PASS 过时存档仍是 null + 文件 null，不会凭空回落到一份 FAIL 或不存在的报告。
+- **文件名与快照集合未变**，也没有新增 evidence 校验状态。
+- **放弃的准确性**：存档里的 `verifier.report.md` 可能不针对当前材料——靠 `reused_from_prior_review`、同目录 `verifier_closure` 与 `semantic_not_reverified` 三处并陈防误读。goal report 的 MD 正文本就不渲染该字段，本次也不新开渲染面。
+
+### prior review 的复用政策一字未改
+
+`findPriorPassVerifierEvidence` 的择新规则、「从未 PASS 过仍是 BLOCKER」、WARN `verifier_prior_pass_reused` 的 id 与严重度、`current_material_not_reverified` 的 diff 口径、以及非 goal NEXT「先去跑 verifier」与 check-receipt 兜底沿用的先后关系，全部保持原样。
+
+---
+
+## 显式 `evidence_profile: balanced` 现在在 goal/headless 也生效（B05）
+
+**缺省不写该字段的工程零变化**——三个 mode 下仍逐一等值于 strict。此前 `resolveEvidencePolicy` 在 `mode !== 'interactive'` 时直接返回 strict，`config` 参数根本不参与求解：宿主在 `framework.config.json` 里写了 `evidence_profile: "balanced"`，goal 编排的每一轮都被无声丢弃。现在降档只由 config 显式声明触发，与 mode 无关；档位仍写进 `evidence_policy_snapshot.profile_resolved` 与控制台。
+
+声明 balanced 后的代价分**两条范围不同**的轴，不要合并理解：
+
+| 轴 | 范围 | 效果 |
+|---|---|---|
+| **verifier** | plan / review / ut / testing **四个** phase | 关闭：不签发 request、闭环不要求该轴。**spec / coding 仍 required**（保留集写死为 `{spec, coding}`，`balanced_verifier_retained_phases` 未接线，宿主不可调） |
+| **trace** | **全部六个** feature phase（**含仍要求 verifier 的 spec / coding**） | 缺失由 FAIL 降 WARN。**"提供但损坏"仍恒 BLOCKER**——本批同批修好了 legacy 回执路径上的一个洞：过去是否去读磁盘由回执自报的 `trace_json.exists/path` 决定，canonical 路径上一份损坏 trace.json 配一句 `trace_json: {}` 就能在 optional 档下降成 missing WARN。现在**以盘上文件为准**，回执声明只在 canonical 缺席时作兼容回退 |
+
+`receipt` 两档同为 `not_applicable`（07a41ec6 T4 起已退出闭环输入），`exploration` 两档同为 `required`——这两条零变化。脚本门禁、编译/执行、契约闭包、范围与漂移判定、`product_behavior_switch_scan` / `p0_coverage_integrity` / pixel_1to1 等红线**一律不降**。
+
+**policy off 只是"不要求"，不等于"忽略"。** 当前 subject 已有一份验真通过（终态块回显 subject 匹配、verdict 与 blocker_count 自洽）且 verdict ≠ PASS 的 verifier 报告时，即使该 phase 的 verifier 已被关掉，闭环仍照常否决（`verifier_not_pass` BLOCKER），summary 保留 `verifier_subject_id` / `verifier_report` 并把 `next_action` 定为 `fix_verifier_findings_then_rerun_harness`。沿用的前提是**材料身份未变**：该 subject 签发时落盘的材料视图（`verifier.material.<subject>.json`）与本轮重算的材料面在 phase 输入/产物文件哈希、`gate_fingerprint`、脚本报告投影三项上全等。**改 `evidence_profile` 本身不构成材料换代**——档位不在材料面内，所以"strict 轮跑出 FAIL、随后改成 balanced"不会把这份否决洗掉；改了 phase 输入/产物文件才会。（prompt 模板与被审源码这两面在关轴后算不出来，明确排除在比较外：它们变了仍会沿用旧 FAIL，是多否决方向。）**报告缺席或为 PASS 时才是零要求、不阻断**——这正是 balanced 买到的东西。解除一份已记录的 FAIL 需要跑一轮 strict 让 verifier 自己撤回结论；改配置不构成通过。
+
+## plan 三章节可声明「不适用：<依据>」（B05）
+
+`data_model_typed` / `interface_signatures_complete` / `component_tree_per_page` 过去只认代码块，纯逻辑或无新页面的 feature 只能编造一个空 `interface` 过门。现在章节在场且正文含 `不适用：<依据>` 行时：
+
+- `contracts.yaml` 对应集合（`data_models` / `interfaces` / `components`）为空 **且真源可信** → 记 **SKIP**（severity 各自不变），`details` 写明判据来源与作者依据；
+- 集合里有条目却写不适用 → **假 n/a**，按各自原 severity 记 **FAIL** 并点名 contracts 条目（两个 BLOCKER 项因此阻断本阶段；`component_tree_per_page` 是 MAJOR，属 check FAIL 而非阶段阻断）；
+- **真源不可信一律不接受声明**：`contracts.yaml` 缺失、根节点非 mapping 解析失败、或该集合有 `shape_issues` 留痕（例如 `data_models: {}` 被归空）时落回今天的判定，绝不给 SKIP。
+
+章节本身仍必须在场（由 `required_chapters` 独立要求）；判据只看 contracts 集合是否为空，不推断 contracts 自身有没有漏声明，也不解读 `components[].kind`。
+
+## verify-ut 不再按 expect 数量判 FAIL（B05）
+
+检查 4B 第 5 条改为按"该 `it` 若被错误实现会不会失败 + 是否覆盖该规则的边界/异常"判定：**用单条精确断言完整验证一个纯函数是合法形态**，不再因"只有 1 个 expect"判 BLOCKER FAIL；堆三条 `assertLargerThan(0)` 却对错误实现照样通过的空壳用例仍判 FAIL，"只测 repository 静态数据结构而 acceptance 要求业务流程"这一支保留。
+
+配套给检查 4 第 1 条与 4B 第 2 条各加了适用范围（否则单断言用例仍会被这两条判 FAIL）：
+
+- **纯函数 / 单规则用例**（无 data_boundary 替身、无多阶段状态迁移）：调用序列断言与中间态/终态断言按**不适用**处理，4B 第 2 条的"两类断言"不作要求；
+- **流程类用例**（驱动 coordinator / 涉及 data_boundary / 有阶段迁移）：三项要求与两类断言**逐字保留**，判定逻辑不变。
+
+形态由被测对象决定，verifier 按代码判，不接受"我说它是纯函数"。脚本侧 `it_drives_flow` 的 severity/status/判定式**一字未改**（本就是 MAJOR WARN），只是它的建议不再指向数字。
+
+---
+
+## 3.0.x：consumer golden evaluator 加 `--feature`（非 Breaking，plan 4d9c1f72 D7）
+
+`harness/scripts/consumer-golden/evaluate-bc-opencard.ts` 此前把 feature 名写死为 `bc-openCard`，宿主的 feature 目录叫别的名字（例如 `bc-openCard-1`）时，`featureDir`、当前 build 指纹、coding 素材门三处一起读到不存在的路径，`run_binding` 必 FAIL，`candidate:promote` 也就永远拿不到 `verdict=PASS`。
+
+- **新增 `--feature <name>`**（导出 API 同步加可选 `GoldenEvalInput.feature`），贯通全部四个消费点：build 指纹、`featureDir`（goal-runs 事件 / device-testing 证据）、coding `summary.json` 素材门、报告体的 `feature` 字段。
+- **默认值仍是 `bc-openCard`**：不传该参数（或传空白）时四处取值与加参数之前**逐字相同**，报告除时间戳外逐字节相等（回归用例见 `harness/tests/unit/consumer-golden.unit.test.ts`）。
+- **消费者动作**：宿主 feature 目录名不是 `bc-openCard` 时，跑包内 evaluator 要显式加 `--feature <宿主 feature 目录名>`；`candidate:build` 打印的第 3 步提示已同步带上该参数。名字就是 `bc-openCard` 的宿主无需任何改动。
+
+---
+
+## 3.0.x 索引：六阶段重构 B01–B05（只索引，各节正文见对应小节）
+
+3.0.x 的五批改动各自已有小节，本节**只做索引**，不重复正文。**唯一需要消费者动手的是 B01**；其余四批升级后即生效，无需任何动作。
+
+| 批 | 小节标题（本文件内） | 一句话 | 消费者动作 |
+|---|---|---|---|
+| B01 | 「3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）」 | review 的负面裁决与 UT 的真实断言失败这两类**已复现**的产品失败，现在照样签发 verifier request 驱动回修；产品裁决（`verdict=FAIL` / exit 1 / `closure_status=open`）一字不改 | **需要动手**：重新物化 `.claude/agents/verifier.md`、`phase-executor.md` 与 Stop hook（`.cac` 同），把调用前置由"脚本 PASS 才可调用"改为"harness 签发了 request 才可调用"。未刷新只会保持改动前行为，不会出错 |
+| B02 | 「3.0.x：视觉终签改绑材料，invoke 级金丝雀回执停产（非 Breaking，plan 8d2b4f60 / openspec vision-evidence-material-binding）」 | `vl_multimodal` 的能力证明回落到 run 级 preflight 金丝雀、材料证据改按内容哈希寻址，`vision/capability-receipt.json` 与 `capability_receipt` 事件整套停产 | 无需动手。盘上残留的旧回执文件无消费者、不影响任何门禁结论，不必清理 |
+| B03 | 「构建执行复用与报告分层（execution-reuse-and-report-layering）」（含其下四个 `###`：UT 一次出包 / UT 执行键复用 / `hdc-test.<module>.log` / report-only 对账分层 / 「没量到」不写 `0ms` / attended 不再注入无人值守禁问块） | UT 一次门禁只出一次 ohosTest 包；同输入第二次调用按执行键复用冻结件、零装机零执行；report-only 对账把"执行事实"与"派生统计"分成 FAIL / WARN 两桶 | 无需动手。只有"按字面名 `hdc-test.log` 找日志"的人工习惯要改成 `hdc-test.<module>.log` |
+| B04 | 「失败归因与 prior review 消费一致（attribution-and-prior-review-consistency）」（含其下四个 `###`） | PASS、无 blocker 且无 runtime 失败事实的轮不再输出 `failure_kind_classified`；`ui_spec_fidelity_gate` 的归因由 `code_regression` 改 `spec_capture_gap`；沿用既往 PASS 的阶段存档会带 `verifier.report.md` | 无需动手。prior review 的复用**政策**一字未改，变的只是呈现与归因 |
+| B05 | 「显式 `evidence_profile: balanced` 现在在 goal/headless 也生效（B05）」+「plan 三章节可声明「不适用：\<依据\>」（B05）」+「verify-ut 不再按 expect 数量判 FAIL（B05）」三节 | 显式 balanced 在 goal/headless 与 interactive 同解（**默认仍是 strict**，不写该键行为不变）；plan 三章节可声明「不适用：\<依据\>」；verify-ut 不再按 `expect` 条数硬判 FAIL | 无需动手。想降档才写 `evidence_profile: balanced`；关轴 ≠ 忽略已有负面结论（`verifier_not_pass` 仍拦） |
+
+> **标题层级不齐（已知，不改）**：B01/B02 两节是 `###`（挂在本文件开头 3.0.0 大节之下），B03–B05 是 `##`。本索引按实际层级指路——统一层级会打断已发出的锚点引用，收益为零。
 
 ---
 

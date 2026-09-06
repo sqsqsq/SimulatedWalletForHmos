@@ -90,9 +90,9 @@ export default function dashboardRepoTest() {
 
 ## Step 7.6 UT 装机运行闭环
 
-探测设备：输出为空**不允许**继续跑或用"本地无设备"为由标绿；须先准备设备重新探测。装机执行：`harness-runner.ts --phase ut --feature <feature-name>` 同时触发 compile+run。**自闭环策略**：failed>0→读完整 `hdc-test.log` 找堆栈定位是 UT 逻辑错/Spy 预设错/还是业务真 bug（真 bug 仍走约束#12 HARD STOP）；total=0→测试入口未启动，核对 profile 测试配置；失败阶段 metadata/artifact_not_found/install→回 7.5 或查 toolchain 配置。
+探测设备：输出为空**不允许**继续跑或用"本地无设备"为由标绿；须先准备设备重新探测。装机执行：`harness-runner.ts --phase ut --feature <feature-name>` 同时触发 compile+run。**自闭环策略**：failed>0→读完整 `hdc-test.<module>.log` 找堆栈定位是 UT 逻辑错/Spy 预设错/还是业务真 bug（真 bug 仍走约束#12 HARD STOP）；total=0→测试入口未启动，核对 profile 测试配置；失败阶段 metadata/artifact_not_found/install→回 7.5 或查 toolchain 配置。
 
-**`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，runner 仅允许一次有界确认性重跑，同 signature 重复即 halt。
+**`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.<module>.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，runner 仅允许一次有界确认性重跑，同 signature 重复即 halt。
 
 sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSkipped` / `signingConfigMissing` 任一结构化证据存在时成立。三项证据全无时仍 HARD STOP，但只能表述为“核对构建产物路径与 genOnDeviceTestHap 日志”，不得复用签名缺口话术。
 
@@ -118,8 +118,8 @@ UT 只拥有 profile 测试/夹具源目录，不拥有受保护业务源码。�
 
 1. 不在 UT invocation 内修改 `src/main` 或等价业务实现根；用户回复、署名或 legacy `approved_src_mutations[]` 不构成例外。
 2. 记录具体文件、所需签名、UT 层无法规避的技术理由和影响面，形成 coding repair candidate。
-3. runner 回退 coding owner 完成改造，并完整重走 review→ut→testing；回到 UT 后重新生成 testability audit。
-4. `ut_no_src_mutation` 对 review 闭环后的任一产品源码漂移保持 BLOCKER，不读取人工授权名单。review 正式闭环后基线=review closure attestation 的逐文件内容哈希——coding 阶段的合法产物即使从未提交也不在裁决域，把改动 `git commit` 掉同样洗不白；出路只有两条：回 coding 纳入并重走 review 闭环，或从编辑器本地历史/备份取回 review 时的文件内容后用 attestation 的 sha256 核对（attestation 只存 `{path, sha256}` 不存内容，能验证不能还原；coding 产物也可能从未提交，git 里未必有旧版本）。删除 review 闭环产物不是出路——闭环证据残缺会 fail-closed。**不得要求用户提交 coding 产物来过门禁。**
+3. runner 回退 coding owner 完成改造，回到 UT 后重新生成 testability audit；review 侧按分级补对应复核（**不必重走整套 review 闭环**）。
+4. `ut_no_src_mutation` 对 review 闭环后的产品源码漂移，在 attestation 基线下**按风险分级记 MAJOR WARN**（纪律不变，不读取人工授权名单）。review 正式闭环后基线=review closure attestation 的逐文件内容哈希——coding 阶段的合法产物即使从未提交也不在裁决域，把改动 `git commit` 掉同样洗不白；处置按 `check-ut.ts` 该 WARN 的 suggestion 给出的分级复核清单执行（典型两条：回 coding 纳入实现并补对应复核，或从编辑器本地历史/备份取回 review 时的文件内容后用 attestation 的 sha256 核对——attestation 只存 `{path, sha256}` 不存内容，能验证不能还原；coding 产物也可能从未提交，git 里未必有旧版本）。删除 review 闭环产物不是出路——闭环证据残缺会 fail-closed。**不得要求用户提交 coding 产物来过门禁。**
 5. 对“报错顺手抽函数/改 public/新增工具函数/改 barrel”等便利性修改同样适用。
 
 在不改业务源码的前提下，优先使用 UT/Spy、类型安全的替身或原型恢复；若方案本身需要新架构或需求变化，分别回 plan/spec owner，而不是在 UT 内越权补洞。
