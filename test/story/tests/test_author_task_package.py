@@ -303,7 +303,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         """
         self.write_contract("story_written")
         action = self.status()["action"]
-        for step in ("check-receipt", "archive"):
+        for step in ("check-receipt", "--deliver", "plan"):
             self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
         self.assertIn("不再跑 harness", action)
         # 回执是 harness 的只读投影（receipt_schema 2.1），agent 零手填——

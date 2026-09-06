@@ -1819,6 +1819,9 @@ function cmdCheck(ctx) {
     process.exit(1);
   }
   process.stdout.write(`[story-build check] 通过：${sections.length} 章\n`);
+  // 交付门通过 = 这份 story 可以交出去了。往下有两条路，**由人选**——
+  // 归档送审与进入 plan 都是正当的下一步，谁先谁后取决于这个需求的排期。
+  if (ctx.args.deliver) process.stdout.write(deliveryNextSteps(ctx));
 }
 
 /**
@@ -1879,6 +1882,26 @@ function danglingFigures(storyText, contract) {
     prev = line;
   }
   return out;
+}
+
+/**
+ * 交付门通过之后往哪走 —— 打印选项，**不替人选**。
+ *
+ * 远程单可以先归档送审再进 plan，也可以两边同时开始；本地单没有归档，只剩 plan。
+ * 这是脚本给的确定性文本，与 `story_flow.py status` 同一口径。
+ */
+function deliveryNextSteps(ctx) {
+  const remote = readJson(ctx.flowPath, null) !== null
+    && !/^local[-_]/i.test(String(ctx.args.feature ?? ''));
+  const rows = remote
+    ? ['  1  归档送审：`/story archive <AR>`',
+      '  2  进入 plan：按 framework 的 `phase.next_step` 走',
+      '  3  先归档，再进 plan', '',
+      '两条互不阻塞，可以并行开始；评审回流改了 spec 之后，'
+      + '已经开工的 plan 产物按 framework 的修正流程更新，不是不管。']
+    : ['  本地单没有归档：进入 plan，按 framework 的 `phase.next_step` 走。'];
+  return ['', '[story-build check] 交付门通过。下一步由你选：', '',
+    ...rows, ''].join('\n');
 }
 
 /**

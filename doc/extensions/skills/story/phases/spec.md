@@ -138,9 +138,15 @@ core spec 模板缺少交付流程要求 spec 承载的接口契约 / 存储 / �
 
 ## 四、闭环后的下一步
 
-spec 闭环时三份产物都已在手，下一步**必须以「人工评审 → 归档」为首选链路**：`AR/review.md`
-是首版草稿，请开发按其中议题逐条审核并写下意见
-→ `/story archive` 送审 `AR/story.md` 与 `AR/review.md`。
+**交付门通过之后停下问一次**（成文登记不是闭环——那时 harness、verifier、交付门
+都还没跑）。`check --deliver` 通过时会把选项打印出来，按它给的问：远程单是
+「归档送审 / 进入 plan / 先归档再进 plan」，本地单没有归档，只有进 plan。
+用户确认点按 `interaction-renderer` 走 widget 加 portable 编号。
+
+`AR/review.md` 是首版草稿，请开发按其中议题逐条审核并写下意见；
 AI 不代填表态、不动人工区。表态完成度看的是**每条「审核结果：」后面有非空内容**；
-还空着的议题在进 plan 时逐条列出。「进入 plan」只能作为其后的选项列出，
-并注明「建议先完成评审与归档」。
+还空着的议题在进 plan 时逐条列出。
+
+**两条互不阻塞，指的是可以并行开始，不是下游可以不管上游变更**：选了 plan 之后
+评审回流改了 spec，按 CLAUDE.md 的修正三问走 framework 的 `--correction-init`
+与 `--revalidate`，受影响的 plan 产物按既有修正流程更新。

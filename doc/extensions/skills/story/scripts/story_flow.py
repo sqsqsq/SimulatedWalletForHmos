@@ -779,7 +779,7 @@ def settled_this_round(contract: dict) -> bool:
 #: 进 spec 的授权：`/story` 启动时就声明了范围，收口这一步原样回显。
 #: 不回显的话，模型在阶段边界只能按 framework 的默认策略再问一次——它没错，是链没接上。
 SPEC_STAGE_AUTHORIZATION = (
-    "本轮授权：`/story <AR>` 的启动语义是「做到 spec 闭环并归档」（batch 多阶段声明），"
+    "本轮授权：`/story <AR>` 的启动语义是「做到 spec 闭环并通过交付门」（batch 多阶段声明），"
     "spec 阶段在声明范围内，**不必再要一次授权**；plan 及其之后仍按 framework 默认策略停等。")
 
 #: 这一段的顺序，四个分支共用一句。
@@ -895,8 +895,9 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
                 "按这个顺序走完，中间不回头："
                 "跑 harness（spec 闭环）→ 按 harness 末尾 `NEXT:` 行派 verifier"
                 "（它说没有审查员就直接下一步）→ check-receipt → "
-                "`story-build check --deliver` 交付门 → `/story archive` 归档"
-                "（本地单没有归档，交付门就是最后一道）。"
+                "`story-build check --deliver` 交付门。"
+                "**交付门通过之后按它打印的选择走**：归档送审、进入 plan，或先归档再进 plan；"
+                "本地单没有归档，只有进 plan。"
                 "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，"
                 "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审")

@@ -26,7 +26,7 @@ S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```
 
-**`/story <AR>` 的启动语义 = 做到 spec 闭环并归档**。这一句是本扩展对 framework 推进策略的
+**`/story <AR>` 的启动语义 = 做到 spec 闭环并通过交付门**（归档送审与进入 plan 由用户在交付门之后选）。这一句是本扩展对 framework 推进策略的
 batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8.1 第 2 条、§8.2）：
 声明范围 = 从取材到 spec 阶段闭环、再到 `/story archive`。**范围之内不再逐阶段要授权**，
 超出这个范围（plan 及其之后）仍按 framework 的默认策略停等。
@@ -103,8 +103,8 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 「这一步做完了要不要继续」**都不是停等点**——那是义务不是选择题。
 
 **verifier PASS 之后的顺序是固定的**：`check-receipt` →
-`story-build check --deliver`（交付门）→ `/story archive`，
-**中间不再跑 harness**。harness 每跑一次都重新派生 subject，换了代就要重审，
+`story-build check --deliver`（交付门）→ **停下问一次**：归档送审、进入 plan，
+或先归档再进 plan（本地单只有进 plan）。**中间不再跑 harness**。harness 每跑一次都重新派生 subject，换了代就要重审，
 而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
 并且那之后 verifier 要再来一次。
 **完成回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己生成并校验。
