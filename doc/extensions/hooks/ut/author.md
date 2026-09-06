@@ -10,7 +10,7 @@
 | 文件 | 拿什么 |
 |---|---|
 | `contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
-| `spec/acceptance.yaml` | `knowledge_rule` 指回规约条目的那条验收条目，按它的 `ut_focus` 写断言 |
+| 需求根目录的 `acceptance.yaml` | `knowledge_rule` 指回规约条目的那条验收条目，按它的 `ut_focus` 写断言 |
 
 ## 二、产出形态
 

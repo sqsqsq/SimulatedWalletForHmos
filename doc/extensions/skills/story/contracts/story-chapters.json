@@ -310,7 +310,7 @@
       "import_sources",
       "人话"
     ],
-    "client_vocabulary_note": "客户端语境禁用词：服务器侧词汇，单独使用也算。词与改法都在这里——作者动笔前从任务包读到它，门禁按同一份判。豁免不在这里：整章豁免看 chapters[].banned_exempt，行级豁免（规则文件自身在定义禁用词、引用上游规约章节名、「回退」的数据语义）是**语境形态**不是词，判定留在 lint-rules.mjs。",
+    "client_vocabulary_note": "客户端语境禁用词：服务器侧词汇，单独使用也算。词与改法都在这里——作者动笔前从任务包读到它，门禁按同一份判。豁免不在这里：整章豁免看 chapters[].banned_terms_exempt、决策类别豁免看 decision_categories[].banned_terms_exempt，行级豁免（规则文件自身在定义禁用词、引用上游规约章节名、「回退」的数据语义）是**语境形态**不是词，判定留在 lint-rules.mjs。",
     "client_vocabulary": [
       {
         "term": "灰度",

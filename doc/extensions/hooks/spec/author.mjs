@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { featureRoot, readJsonOrNull } from '../shared/paths.mjs';
+import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/lint-rules.mjs';
 import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
@@ -70,33 +70,47 @@ function knowledgeSection(projectRoot, feature) {
   return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
     '',
     `激活 **${knowledge.entries.length} 条**约束（域：${knowledge.prefixes.join('、')}）、`
-    + `**${knowledge.facts.length} 份**项目知识；在册模式候选：`
+    + `**${knowledge.facts.length} 份**项目事实；在册模式候选：`
     + `${knowledge.patternIds.join(' / ') || '（无）'}。`,
+    '',
+    // 事实文件逐份列路径与它讲什么：规则里说「见部件画像」，画像在哪只有这里说得出来
+    //（清单是目标仓的，机制不写死任何一个文件名）。
+    '项目事实这几份，规则里提到「画像」「工程事实」时来这里找：',
+    ...knowledge.facts.map(f => `- \`doc/extensions/${f.file}\`——${f.facets.join('、')}`),
     '',
     fs.existsSync(useFile)
       ? '骨架已在磁盘上，逐条填 `applicable` 与依据；填完跑 `knowledge-use.mjs render --feature <名>`。'
       : `先跑 \`node doc/extensions/hooks/shared/knowledge-use.mjs init --feature ${feature}\` 生成骨架`
         + '（激活条目一条不落，你只填判断），填完跑 `render`。',
     '',
-    ...acceptanceKeys(useFile),
+    ...acceptanceKeys(useFile, projectRoot, feature),
     '怎么填、什么算依据，见 `author.md`。'];
 }
 
 /**
- * 判为 applicable 的规约，各要在 `spec/acceptance.yaml` 接回一条验收。
+ * 判为 applicable 的规约，各要在需求根目录的 `acceptance.yaml` 接回一条验收。
+ *
+ * **路径按框架解析的那一个给**：它读 `<features_dir>/<feature>/acceptance.yaml`，
+ * 不是 `spec/` 下面。写错一个层级，作者会为了确认到底在哪去翻框架源码。
  *
  * 漏接是 harness 的常见首红：判了 applicable 却没有对应的 `knowledge_rule`。
  * 编号列出来，作者照着接；骨架还没填时给规则本身。
  */
-function acceptanceKeys(useFile) {
+function acceptanceKeys(useFile, projectRoot, feature) {
   const text = fs.existsSync(useFile) ? fs.readFileSync(useFile, 'utf-8') : '';
   const ids = [...text.matchAll(/^\s*-?\s*id:\s*(\S+)[\s\S]*?applicable:\s*true/gm)].map(m => m[1]);
   return [ids.length
-    ? `判 \`applicable: true\` 的每一条，都要在 \`spec/acceptance.yaml\` 有一条带 `
+    ? `判 \`applicable: true\` 的每一条，都要在 \`${acceptancePath(projectRoot, feature)}\` 有一条带 `
       + `\`knowledge_rule: <编号>\` 的 criteria。本轮已判 applicable：${ids.join('、')}。`
-    : '判 `applicable: true` 的每一条，都要在 `spec/acceptance.yaml` 有一条带 '
+    : `判 \`applicable: true\` 的每一条，都要在 \`${acceptancePath(projectRoot, feature)}\` 有一条带 `
       + '`knowledge_rule: <编号>` 的 criteria——填完骨架再回头对一遍。',
   ''];
+}
+
+/** 验收落在哪 —— 框架解析的是需求根目录那一份，不是 `spec/` 下面。 */
+function acceptancePath(projectRoot, feature) {
+  return `${relDisplay(projectRoot, path.join(featureRoot(projectRoot, feature),
+    'acceptance.yaml'))}`;
 }
 
 function decisionSection(contract) {
@@ -191,9 +205,33 @@ function chapterSection(contract) {
   return rows;
 }
 
-function vocabularySection() {
+/**
+ * 禁用词：词表 + **在哪不算**。
+ *
+ * 词表一直在这里；缺的是作用域——哪几章整章豁免、review 的哪几类议题豁免、
+ * 哪几种语境下同一个词不算。这三样此前只写在脚本注释与合同 note 里，
+ * 于是作者为了确认「我这句算不算」去读判定脚本。豁免从合同渲染，不另立一份。
+ */
+function vocabularySection(contract) {
   const rows = ['## 6. 这些词不能用（服务器侧词汇，单独使用也算）', ''];
   for (const { term, hint } of clientVocabulary()) rows.push(`- 「${term}」→ ${hint}`);
+
+  const chapters = (contract.chapters ?? [])
+    .filter(c => c?.banned_terms_exempt).map(c => c.title);
+  const categories = (contract.decision_categories ?? [])
+    .filter(c => c?.banned_terms_exempt).map(c => c.key);
+  rows.push('', '**在哪不算**：', '',
+    chapters.length
+      ? `- 整章豁免：「${chapters.join('」「')}」——这几章讲的就是发布与回退动作本身；`
+      : '- 没有整章豁免的章；',
+    categories.length
+      ? `- 决策议题豁免：类别为「${categories.join('」「')}」的那几条，`
+        + 'review 里它们照原样写；'
+      : '- 没有豁免的决策类别；',
+    '- 同一个词的另一种语义不算：数据或状态层面的「回退」（缓存缺失回退云侧查询、'
+    + '事务回滚）说的不是发布动作；',
+    '- 引用上游规约的章节名不算——那是在指路，不是在用这个词；',
+    '- 讲禁用词本身的地方不算（比如这一节）。');
   rows.push('', '数值怎么标来源、验收怎么接回规约，见 `author.md`。');
   return rows;
 }
@@ -230,7 +268,7 @@ function taskPackage(projectRoot, feature) {
     '',
     ...chapterSection(contract),
     '',
-    ...vocabularySection(),
+    ...vocabularySection(contract),
   ];
   return rows.join('\n');
 }

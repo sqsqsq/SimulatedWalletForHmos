@@ -63,6 +63,45 @@ class WorkspaceCase(unittest.TestCase):
         return proc.stdout
 
 
+class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
+    """作者动笔前该拿到的两样：验收落在哪、禁用词在哪不算。
+
+    这两条都是实跑里逼着作者去翻源码的：路径写错一个层级，他去框架里找真相；
+    豁免只写在脚本注释里，他去读判定脚本。
+    """
+
+    def test_the_acceptance_path_is_the_one_the_framework_reads(self) -> None:
+        """框架读的是需求根目录那一份，不是 `spec/` 下面。"""
+        package = self.task_package()
+        self.assertIn(f"doc/features/{FEATURE}/acceptance.yaml", package)
+        self.assertNotIn("spec/acceptance.yaml", package)
+
+    def test_no_delivery_surface_still_says_spec_acceptance(self) -> None:
+        """四处消费者一起改——留一处，作者照样会撞上说法不一。"""
+        import subprocess
+        proc = subprocess.run(
+            ["git", "grep", "-l", "--fixed-strings", "spec/acceptance.yaml",
+             "--", "doc/extensions"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual("", proc.stdout.strip(), f"还有地方写着旧路径：{proc.stdout}")
+
+    def test_the_banned_words_come_with_where_they_do_not_count(self) -> None:
+        """词表一直在；缺的是作用域——哪几章、哪几类议题、同词的另一种语义。"""
+        package = self.task_package()
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        chapters = [c["title"] for c in contract["chapters"] if c.get("banned_terms_exempt")]
+        cats = [c["key"] for c in contract.get("decision_categories", [])
+                if c.get("banned_terms_exempt")]
+        self.assertIn("在哪不算", package)
+        for name in chapters:
+            with self.subTest(chapter=name):
+                self.assertIn(name, package.split("在哪不算", 1)[1])
+        for key in cats:
+            with self.subTest(category=key):
+                self.assertIn(key, package.split("在哪不算", 1)[1])
+        self.assertTrue(chapters and cats, "合同里一个豁免都没有，这条夹具没有对象")
+
+
 class SpecDiagramsReachTheAuthor(WorkspaceCase):
     """spec 里的图逐张给主题与可粘贴围栏，**不指定放哪一章**。"""
 
