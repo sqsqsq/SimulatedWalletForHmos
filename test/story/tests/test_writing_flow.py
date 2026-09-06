@@ -41,7 +41,12 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         self.assertIn("# 第二步 · 统稿", guide)
         section = guide.split("# 第二步 · 统稿", 1)[1].split("\n# ", 1)[0]
         items = re.findall(r"^\d+\. ", section, flags=re.M)
-        self.assertEqual(7, len(items), f"自查清单应是七项，现在 {len(items)} 项")
+        # 判据里的 `COPYEDIT_ROWS` 就是这个数：它的依据是这份清单，
+        # 两处对不上时改的应当是清单，判据跟着走。
+        build = read("scripts/story-build.mjs")
+        want = int(re.search(r"COPYEDIT_ROWS = (\d+)", build).group(1))
+        self.assertEqual(want, len(items),
+                         f"自查清单 {len(items)} 项，而判据要求 {want} 行——两处对不上")
         for needle in ("同一件事", "逐字", "引导", "承接", "样式约定", "读者视角",
                        "各章说法一致"):
             self.assertIn(needle, section, f"自查清单少了「{needle}」那一项")
