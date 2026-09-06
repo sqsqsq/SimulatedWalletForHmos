@@ -165,6 +165,24 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         self.assertIn("对着这十一类过一遍", guide)
         self.assertIn("这是扫描地图，不是配额", guide)
 
+    def test_the_guide_says_what_the_lead_figure_should_show(self) -> None:
+        """章首那张图讲给评审者什么——不说清的话，作者会把契约图复制一遍。
+
+        七跑那次章首的图与上游契约图逐字节相同：作者知道「要有一张图」，
+        不知道这张图该回答什么。
+        """
+        guide = read("phases/story-write.md")
+        self.assertIn("端到端旅程", guide)
+        self.assertIn("关键对象的状态变化", guide)
+        self.assertIn("不为了与上游不同而刻意画不同", guide,
+                      "只说「要不一样」会逼出为了不同而不同的图")
+
+    def test_the_guide_registers_a_declined_image_outside_the_appendix(self) -> None:
+        """不用的图，理由登记在材料清单里；附录那一节只列初始资料。"""
+        guide = read("phases/story-write.md")
+        self.assertIn("--unused", guide)
+        self.assertIn("附录的材料清单不列图", guide)
+
     def test_the_scan_map_and_the_contract_word_list_agree(self) -> None:
         """作业书里的类型名与合同 `decision_categories` 的 key 一一对上——
         对不上时，模型按作业书写的类别会被 check 判「不在词表里」。

@@ -134,6 +134,55 @@ class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
 
 
 
+class TheCaptionStoreHoldsTwoIndependentFacts(MaterialRoundCase):
+    """一张图记两件事：它是什么，以及本需求为什么不用它。
+
+    两件事各自可改：改说明不该把「为什么不用」抹掉，标记不用也不该把说明抹掉。
+    库按 sha256 键，所以复制到第二个落点、换个名字，两件事都跟着这张图走。
+    """
+
+    def store(self):
+        import importlib
+        materials = importlib.import_module("materials")
+        return materials
+
+    def a_sha(self) -> str:
+        return "sha256:" + "a" * 16
+
+    def test_writing_a_reason_keeps_the_caption(self) -> None:
+        m = self.store()
+        m.write_caption(self.feature_root, self.a_sha(), "签约页")
+        m.write_unused(self.feature_root, self.a_sha(), "属别的需求")
+        entry = m.read_captions(self.feature_root)[self.a_sha()]
+        self.assertEqual("签约页", entry["caption"])
+        self.assertEqual("属别的需求", entry["unused"])
+
+    def test_rewriting_the_caption_keeps_the_reason(self) -> None:
+        m = self.store()
+        m.write_unused(self.feature_root, self.a_sha(), "属别的需求")
+        m.write_caption(self.feature_root, self.a_sha(), "签约页：换个说法")
+        entry = m.read_captions(self.feature_root)[self.a_sha()]
+        self.assertEqual("属别的需求", entry["unused"], "改说明把取舍抹掉了")
+
+    def test_clearing_the_reason_keeps_the_caption(self) -> None:
+        m = self.store()
+        m.write_caption(self.feature_root, self.a_sha(), "签约页")
+        m.write_unused(self.feature_root, self.a_sha(), "先不用")
+        m.clear_unused(self.feature_root, self.a_sha())
+        entry = m.read_captions(self.feature_root)[self.a_sha()]
+        self.assertEqual("签约页", entry["caption"])
+        self.assertNotIn("unused", entry)
+
+    def test_a_bare_string_is_read_as_a_caption(self) -> None:
+        """只记说明的写法：读到字符串按说明升格，已经登记过的一句不丢。"""
+        m = self.store()
+        path = self.feature_root / "ux-reference" / ".captions.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({self.a_sha(): "签约页"}, ensure_ascii=False),
+                        encoding="utf-8")
+        self.assertEqual("签约页", m.read_captions(self.feature_root)[self.a_sha()]["caption"])
+
+
 class CompleteThenMaterialChanged(MaterialRoundCase):
     """收口之后材料又变了：不开新轮，只记一笔；要重新决策显式 `reopen`。
 

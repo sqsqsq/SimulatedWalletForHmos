@@ -14,14 +14,21 @@ function contractOf(projectRoot) {
     'skills', 'story', 'contracts', 'story-chapters.json'));
 }
 
-/** 材料清单里的图，逐张给「路径 + 这是什么」。没有说明的照列，空着更要看见。 */
+/**
+ * 材料清单里的图，逐张给「路径 + 这是什么 + 作者说用不用」。
+ *
+ * 没有说明的照列，空着更要看见；作者登记的「不用」原样带上——审查要判的正是
+ * 那句理由成不成立，不给理由就只能凭空猜。
+ */
 function imageRows(projectRoot, feature) {
   const manifest = readJsonOrNull(path.join(featureRoot(projectRoot, feature),
     'AR', 'story-src', 'materials.json'));
   const images = (manifest?.materials ?? []).filter(m => m?.kind === 'image');
   return images.map(m => {
     const where = Array.isArray(m.paths) ? m.paths.join('、') : '';
-    return `- \`${where}\`：${m.caption || '（登记时没写说明）'}`;
+    const unused = String(m.unused ?? '').trim();
+    return `- \`${where}\`：${m.caption || '（登记时没写说明）'}`
+      + (unused ? `　**作者登记不用**：${unused}` : '');
   });
 }
 
@@ -77,7 +84,11 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '4. **附录 §10 那些非实体落点写的是实际影响对象吗**：'
     + '「页面」「资源」这种泛称等于没写落点；',
     '5. **上游画出来的每条路径，story 讲到了吗、讲在合适的章吗**：'
-    + '主路径之外的那几条最容易整条没人讲——图搬过来了不等于那件事讲过了。');
+    + '主路径之外的那几条最容易整条没人讲——图搬过来了不等于那件事讲过了；',
+    '6. **业务流程章章首那张图，讲清了端到端过程、关键状态与全部分支去向吗**：'
+    + '评审者顺它就能看懂这条业务走到哪、岔在哪、各自到哪个终态；'
+    + '只把上游的契约图复制一遍、只画了主路径、分支去向缺一条，都是 finding。'
+    + '与上游那张长得一样本身不是问题——问题是它没回答评审者要问的事。');
 
   const images = imageRows(projectRoot, feature);
   rows.push('', '### 材料里的图，逐张回答', '');
@@ -87,7 +98,8 @@ export function readerReviewTask(projectRoot, feature, checkId) {
       '**用了的，这张图属不属于本需求、有没有必要进正文**'
       + '——旧版页面、同页面的另一张截图、同类产品的参考稿、别的部件或别的单的页面，'
       + '进了正文就是 finding：读者要在归档件里读到不属于这个需求的东西；',
-      '**没用的，它给的理由成不成立**。');
+      '**没用的，它给的理由成不成立**——理由跟在上面那一行后面，'
+      + '没有理由的图在 story 里也没露面，那是缺口。');
   } else {
     rows.push('材料清单里没有图片，这一问不适用。');
   }

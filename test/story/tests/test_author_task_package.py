@@ -197,7 +197,7 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("不属于本需求的不进正文", package)
         self.assertIn("引进正文再在图题里解释不算", package,
                       "规则要单向：把图引进正文再解释是六跑那次的形态")
-        self.assertIn("未引用：", package, "用不上的那些要有写理由的去处")
+        self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
 
 
 class SkeletonLeavesOnlyTheJudgement(WorkspaceCase):

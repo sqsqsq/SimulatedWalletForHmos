@@ -114,7 +114,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
 
 
 class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
-    """集合一致：清单里的图，要么被引用，要么被点名说明为什么不用。"""
+    """每张图都有去处：要么正文引了，要么登记了本需求为什么不用它。"""
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -145,18 +145,42 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         proc = self.build("check")
         return (proc.stdout or "") + (proc.stderr or "")
 
+    def mark_unused(self, reason: str) -> subprocess.CompletedProcess:
+        """登记这张图为什么不用——与作者手上跑的是同一条命令。"""
+        return subprocess.run(
+            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+             "--feature", FEATURE, "--caption-image",
+             "ux-reference/signup-page.png", "--unused", reason],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=90, cwd=self.root)
+
     def test_an_image_nobody_mentions_is_reported_by_name(self) -> None:
         out = self.check_output()
         self.assertIn("ux-reference/signup-page.png", out)
-        self.assertIn("未引用：<理由>", out)
+        self.assertIn("--unused", out, "报错要给出登记去向的那条命令")
 
-    def test_naming_it_in_the_material_list_settles_it(self) -> None:
-        """写明为什么不用，就算有去处——判的是集合，不是理由。"""
-        text = self.story.read_text(encoding="utf-8")
-        self.story.write_text(
-            text + "\n参考稿 signup-page.png 与最终交互不一致，本文不引用它。\n",
-            encoding="utf-8")
-        self.assertNotIn("既没被引用，也没被提到", self.check_output())
+    def test_registering_why_it_is_unused_settles_it(self) -> None:
+        """登记了为什么不用，就算有去处——判的是有没有去向，理由成不成立归审查。"""
+        self.assertEqual(0, self.mark_unused("参考稿与最终交互不一致").returncode)
+        self.assertNotIn("没被引用", self.check_output())
+
+    def test_the_reason_survives_a_recount(self) -> None:
+        """`round` 每次从磁盘重建条目——取舍按图的内容存，重算之后还在。"""
+        self.assertEqual(0, self.mark_unused("参考稿与最终交互不一致").returncode)
+        self.assertEqual("参考稿与最终交互不一致", self.images()[0]["unused"])
+
+    def test_marking_it_used_again_clears_the_reason(self) -> None:
+        """后来又要用它：撤掉理由，说明留着。"""
+        self.assertEqual(0, self.mark_unused("先不用").returncode)
+        proc = subprocess.run(
+            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+             "--feature", FEATURE, "--caption-image",
+             "ux-reference/signup-page.png", "--used"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=90, cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", self.images()[0].get("unused", ""))
+        self.assertEqual("签约页", self.images()[0]["caption"], "撤取舍不该动说明")
 
     def insert_after_heading(self, level: str, title: str, text: str) -> None:
         """在某个标题下面插一段。
@@ -185,32 +209,23 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         """写进正文某一章——附录不算正文，图放那里另有判据管。"""
         self.insert_after_heading("##", "功能说明", block)
 
-    DECLINED = ("- 界面图：[signup-page.png](../ux-reference/signup-page.png)"
-                "——未引用：属别的需求的页面")
-
-    def test_declining_in_the_list_and_using_it_in_the_body_is_reported(self) -> None:
-        """说了不引却引了——两处对不上，读者按哪一处理解都不对。
+    def test_declining_it_and_using_it_is_reported(self) -> None:
+        """说了不用却引了——两处对不上，读者按哪一处理解都不对。
 
         六跑那次十张图全进正文、理由写在图题里：形式上说得通，读者却要在归档件里
         读到别的单的页面。规则改单向之后，机械只盯这一处一致；该不该引归读者审查。
         """
-        self.put_in_list(self.DECLINED)
+        self.assertEqual(0, self.mark_unused("属别的需求的页面").returncode)
         self.put_in_body("签约页长这样。\n\n"
                          "![图 1 · 签约页](../ux-reference/signup-page.png)\n")
         self.assertIn("正文却引了它", self.check_output())
-
-    def test_declining_only_in_the_list_is_left_alone(self) -> None:
-        self.put_in_list(self.DECLINED)
-        out = self.check_output()
-        self.assertNotIn("正文却引了它", out)
-        self.assertNotIn("既没被引用", out)
 
     def test_using_it_settles_it_too(self) -> None:
         text = self.story.read_text(encoding="utf-8")
         self.story.write_text(
             text + "\n![图 1 · 签约页](../ux-reference/signup-page.png)\n", encoding="utf-8")
         out = self.check_output()
-        self.assertNotIn("既没被引用，也没被提到", out)
+        self.assertNotIn("没被引用", out)
         self.assertNotIn("不在材料的图片登记里", out)
 
 

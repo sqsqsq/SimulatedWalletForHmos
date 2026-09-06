@@ -137,15 +137,25 @@ function imageSection(projectRoot, feature) {
   }
   rows.push('**单向**：属于本需求的图才进正文，先一句话说它画的是什么，再是图，图后接着讲；'
     + '**不属于本需求的不进正文**（旧版页面、同页面的另一张截图、同类产品的参考稿、'
-    + '别的部件或别的单的页面），只在附录材料清单那一行写「未引用：<为什么不属于本需求>」。'
-    + '引进正文再在图题里解释不算——读者要在归档件里读到不属于这个需求的页面。',
+    + '别的部件或别的单的页面）。它的去向登记在材料清单里：',
+    '',
+    '```',
+    'python doc/extensions/skills/story/scripts/import_sources.py --feature <名> \\\\',
+    '  --caption-image <上面那一行的路径> --unused "<为什么它不属于本需求>"',
+    '```',
+    '',
+    '登记过就不必在正文里交代它，附录的材料清单也不列图——那一节只列上游正文与收件箱原件。'
+    + '引进正文再在图题里解释不算：读者要在归档件里读到不属于这个需求的页面。',
+    '',
     '**引用串原样粘**——路径是相对 `AR/story.md` 的，自己拼容易少一层 `../`：', '');
   for (const img of images) {
     const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);
     const caption = img.caption || '';
+    const unused = String(img.unused ?? '').trim();
     for (const p of paths) {
       rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(p)})\``
-        + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句'));
+        + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
+        + (unused ? ` ← **已登记不用**：${unused}（要用就加 \`--used\` 撤掉）` : ''));
     }
   }
   return rows;
@@ -168,6 +178,10 @@ function diagramSection(heading, label, source, downstream) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
+  rows.push('业务流程章**章首那张图先按评审者要看的过程画**：用户、本部件、云侧'
+    + '各自做什么，走到哪几个终态，分支岔在哪。下面这些是上游的，'
+    + '讲的是接口与分支——放在讲它内容的那一节。'
+    + '两者恰好是同一张也可以，不必为了不同而画不同。', '');
   rows.push(`每一张都要在 ${downstream} 里出现一次，放哪一节按它讲的内容定——`
     + '**开头那行来源标记原样保留**，机器核的就是它。周围的文字自己写。',
     '两节列的是同一张图时（系统设计画过、spec 的流程图就是它），'

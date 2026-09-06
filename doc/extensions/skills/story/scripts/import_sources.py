@@ -430,6 +430,44 @@ def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
     return {"sha256": sha, "caption": caption.strip(), "digest": manifest.get("digest")}
 
 
+def _image_for_mark(feature_root: Path, target: Path) -> str:
+    """取舍写在哪张图上——身份由清单模块算，两处各算一份会差一位截断。"""
+    import materials  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
+
+    if not target.is_file():
+        raise ImportError_(f"读不到 {target}——要登记取舍的图得先在磁盘上")
+    if target.suffix.lower() not in IMAGE_EXTS:
+        raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
+    return materials.file_digest(target)
+
+
+def mark_unused(feature_root: Path, target: Path, reason: str) -> dict:
+    """登记本需求为什么不用这张图。**不复制、不改名、不动文件**。
+
+    材料里的图不都属于本需求——废弃的对照稿、友商参考、别的单据的页面都可能在里面。
+    它们的去向要有个落点：写在这里，作者任务包与读者审查逐张读得到，
+    归档件里也就不必为了解释一张不用的图而把它引进正文。
+    """
+    import materials
+
+    if not reason.strip():
+        raise ImportError_("缺 --unused 的理由：一句「本需求为什么不用它」")
+    sha = _image_for_mark(feature_root, target)
+    materials.write_unused(feature_root, sha, reason.strip())
+    manifest = materials.refresh(feature_root)
+    return {"sha256": sha, "unused": reason.strip(), "digest": manifest.get("digest")}
+
+
+def mark_used(feature_root: Path, target: Path) -> dict:
+    """这张图要用了——撤掉「不用」的理由，说明留着。"""
+    import materials
+
+    sha = _image_for_mark(feature_root, target)
+    materials.clear_unused(feature_root, sha)
+    manifest = materials.refresh(feature_root)
+    return {"sha256": sha, "unused": "", "digest": manifest.get("digest")}
+
+
 def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> dict:
     """把一张图登记成**界面参考**：复制到 `ux-reference/` 起语义名，并写下它是什么。
 
@@ -476,6 +514,10 @@ def main() -> int:
                     help="给材料里的一张图写说明，不复制不改名（流程图这类走它）")
     ap.add_argument("--name", default="", help="--register-ux 的语义名（不带后缀）")
     ap.add_argument("--caption", default="", help="一句「这张图是什么」")
+    ap.add_argument("--unused", default="", metavar="REASON",
+                    help="与 --caption-image 同用：登记本需求为什么不用这张图")
+    ap.add_argument("--used", action="store_true",
+                    help="与 --caption-image 同用：撤掉「不用」的理由（说明留着）")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -509,14 +551,28 @@ def main() -> int:
         target = Path(args.caption_image)
         if not target.is_absolute():
             target = feature_root / target
+        # 三件事共用一条路：写说明、登记不用的理由、撤掉理由。图只有一个身份，
+        # 分成三个入口的话作者要记三种路径写法。
+        mode = "image-used" if args.used else ("image-unused" if args.unused
+                                               else "caption-image")
         try:
-            out = caption_image(feature_root, target, args.caption)
+            if args.used:
+                out = mark_used(feature_root, target)
+            elif args.unused:
+                out = mark_unused(feature_root, target, args.unused)
+            else:
+                out = caption_image(feature_root, target, args.caption)
         except (ImportError_, OSError) as exc:
-            sys.stdout.write(json.dumps({"mode": "caption-image", "ok": False, "error": str(exc)},
+            sys.stdout.write(json.dumps({"mode": mode, "ok": False, "error": str(exc)},
                                         ensure_ascii=False) + "\n")
             return 1
-        log(f"图片说明已记下：{args.caption_image}——{out['caption']}")
-        sys.stdout.write(json.dumps({"mode": "caption-image", "ok": True, **out},
+        if args.used:
+            log(f"这张图要用了：{args.caption_image}——「不用」的理由已撤")
+        elif args.unused:
+            log(f"图的取舍已记下：{args.caption_image}——未引用：{out['unused']}")
+        else:
+            log(f"图片说明已记下：{args.caption_image}——{out['caption']}")
+        sys.stdout.write(json.dumps({"mode": mode, "ok": True, **out},
                                     ensure_ascii=False) + "\n")
         return 0
 

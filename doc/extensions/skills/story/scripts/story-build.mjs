@@ -489,19 +489,6 @@ function subsectionSpan(storyText, chapterTitle, name) {
  * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
  *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
  */
-/**
- * 材料清单那一行说「未引用」了吗 —— 认的是**这一行**，不是整节。
- *
- * 一节里十行各说各的，按整节搜「未引用」会把别人的理由算到这张图头上。
- */
-function notReferencedInList(listBody, rel) {
-  const name = basename(rel);
-  for (const line of String(listBody ?? '').split(/\r?\n/)) {
-    if (line.includes(name) && /未引用/.test(line)) return true;
-  }
-  return false;
-}
-
 /** 路径的最后一段。判「正文提没提到这张图」用它——作者写文件名比写全路径自然。 */
 function basename(rel) {
   const parts = String(rel).split('/');
@@ -530,33 +517,33 @@ function materialImages(ctx) {
  * 由作者自由罗列时，容易把本轮自己生成的规格链进去，
  * 也出现过漏掉一整份的形态——读者据这一节把材料找出来，漏一份等于那份材料没人知道。
  *
- * 集合按两条定：
+ * 集合 = **这一轮拿到的初始资料**：流程正在消费的那几份正文（清单里 `kind: doc`
+ * 且真的在盘上的），加收件箱里的原件——那份是人另外给的、没走需求系统，
+ * 读者要知道有它。中间产物不在其中：本轮自己生成的规格与记录不是材料，
+ * 它们压根不进清单。
  *
- * - **必列**：流程正在消费的那几份正文（清单里 `kind: doc` 且真的在盘上的）；
- * - **可列**：收件箱里的原件。它们的内容已经并入正文，读者顺正文也能看到；
- *   但「这份材料是人另外给的、没走需求系统」本身是信息，作者愿意指出来就允许。
+ * **图不在这一节**。图的去向是「引了没有、不引为什么」，那是每张图自己的属性，
+ * 跟着内容走（同一张图换个名字、复制到第二个落点，判断还是那个）——所以登记在
+ * 材料清单的说明库里（`--caption-image … --unused`），由 ④ 逐张核。
+ * 写进这一节的话，读者要在「据哪几份材料写成」里读到十行图，
+ * 而其中一半是别的需求的页面。
  *
- * **图也逐张列**：不属于本需求的图不进正文，它的去向只能写在这一节
- * （「未引用：<理由>」）——不给它一行，那句理由就没有落点，作者只能把图引进正文
- * 再在图题里解释，读者于是要在归档件里读到别的需求的页面。
- * 中间产物不在其中——本轮自己生成的规格与记录不是材料，它们压根不进清单。
+ * **一份材料一行**：`paths` 有几个是它落了几处，不是几份材料。所以 `must` 的每一项
+ * 是一组等价路径，列到其中任意一个就算数。
  *
- * **一份材料一行**：`paths` 有几个是它落了几处（同一张图既在素材目录也在界面参考目录），
- * 不是几份材料。所以 `must` 的每一项是一组等价路径，列到其中任意一个就算数。
- *
- * @returns {{must: string[][], mayAlso: string[]} | null | 'broken'}
+ * @returns {{must: string[][]} | null | 'broken'}
  */
 function materialListTargets(ctx) {
   const data = readManifest(ctx);
   if (data === null || data === 'broken') return data;
   if (!Array.isArray(data.materials)) return 'broken';
   const must = data.materials
-    .filter(m => (m?.kind === 'doc' && m.sha256 || m?.kind === 'image')
-      && Array.isArray(m.paths) && m.paths.length)
+    .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths) && m.paths.length)
     .map(m => m.paths);
-  const mayAlso = (Array.isArray(data.sources) ? data.sources : [])
-    .map(x => `inbox/${x?.file}`);
-  return { must, mayAlso };
+  for (const src of (Array.isArray(data.sources) ? data.sources : [])) {
+    if (src?.file) must.push([`inbox/${src.file}`]);
+  }
+  return { must };
 }
 
 /**
@@ -1291,14 +1278,6 @@ function cmdCheck(ctx) {
         + '——跑 `story_flow.py round` 生成它之后这条才判得了');
     } else if (registered.length) {
       const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
-      // 材料清单那一节的正文：判「说了不引却引了」要按行看它自己那一行。
-      const listChapter = appendixChapter(ctx.contract);
-      const listName = materialSubsectionName(ctx.contract);
-      const listSpan = listChapter && listName
-        ? subsectionSpan(storyText, listChapter.title, listName) : null;
-      const materialListBody = listSpan
-        ? storyText.split(/\r?\n/).slice(listSpan.start, listSpan.end).join("\n")
-        : "";
       const byPath = new Map();
       registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
       const archiveDir = ctx.contract.story_image_dir
@@ -1336,31 +1315,24 @@ function cmdCheck(ctx) {
           + '——同一张图只引一次，一处说清它画的是什么');
       }
 
-      // 集合一致：清单里的每张图，要么被引用，要么在正文里点名说明为什么不用。
+      // 每张图都有去处：要么正文引了，要么在材料清单里登记了为什么不用。
       //
-      // 判的是**去处**不是义务：图可以不用——参考稿废弃了、两张画的是同一件事，
-      // 都是正当理由。不正当的是它在清单里而全篇一个字没提，读者无从知道你看没看过它。
-      // 理由成不成立由读者审查判，这里只报差集。
-      const orphans = registered
-        .map((m, i) => [i, m])
-        .filter(([i, m]) => !usedBy.has(i)
-          && !m.paths.some(rel => storyText.includes(basename(rel))));
-      for (const [, m] of orphans) {
-        problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
-          + '在 story 里既没被引用，也没在附录材料清单那一行说明——'
-          + '属于本需求就在讲它的那一章引用（图前一句说清它画的是什么），'
-          + '不属于本需求就只在清单那一行写「未引用：<理由>」，正文不引');
-      }
-
-      // 说了不引却引了 —— 两处对不上，读者按哪一处理解都不对。
-      // 机械只判这个一致；这张图该不该引由读者审查判。
+      // 判的是**去处**不是义务：图可以不用——参考稿废弃了、那是友商的、
+      // 那是别的单据的页面，都是正当理由。不正当的是它在材料里而去向没人说过，
+      // 读者无从知道你看没看过它。理由成不成立由读者审查判，这里只报缺口。
+      const mark = rel => '`import_sources.py --feature <名> --caption-image ' + rel;
       for (const [i, m] of registered.map((m2, i2) => [i2, m2])) {
-        if (!usedBy.has(i)) continue;
-        const declined = m.paths.some(rel => notReferencedInList(materialListBody, rel));
-        if (declined) {
-          problems.push(`附录材料清单里「${m.paths[0]}」写着「未引用」，正文却引了它——`
-            + '二者取其一：不属于本需求就把正文里那处删掉，'
-            + '属于本需求就把清单那一行的理由换成它讲了什么');
+        const declined = String(m.unused ?? '').trim();
+        if (usedBy.has(i) && declined) {
+          problems.push(`「${m.paths[0]}」登记着不用的理由（${declined}），正文却引了它——`
+            + '二者取其一：属于本需求就 ' + mark(m.paths[0]) + ' --used` 清掉理由，'
+            + '不属于本需求就把正文里那处删掉');
+        } else if (!usedBy.has(i) && !declined) {
+          problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
+            + '在 story 里没被引用，也没登记为什么不用——'
+            + '属于本需求就在讲它的那一章引用（图前一句说清它画的是什么），'
+            + '不属于本需求就跑 ' + mark(m.paths[0]) + ' --unused "<为什么不用它>"`；'
+            + '归档件不为一张不用的图留正文');
         }
       }
     }
@@ -1726,7 +1698,7 @@ function cmdCheck(ctx) {
           if (/^(https?:|mailto:)/i.test(target)) continue;
           listed.add(joinPosix(storyDir, target));
         }
-        const allowed = new Set([...want.must.flat(), ...want.mayAlso]);
+        const allowed = new Set(want.must.flat());
         for (const group of want.must) {
           if (!group.some(rel => listed.has(rel))) {
             problems.push(`「${appendix.title}·${name}」少了一份材料：${group[0]}`
@@ -1735,9 +1707,10 @@ function cmdCheck(ctx) {
         }
         for (const rel of listed) {
           if (allowed.has(rel)) continue;
-          problems.push(`「${appendix.title}·${name}」列了不是材料的东西：${rel}`
-            + '——这一节回答「据哪几份材料写成」，本轮自己生成的规格与记录不是材料。'
-            + '登记过的材料与图逐份逐张列，别的不列');
+          problems.push(`「${appendix.title}·${name}」列了不是初始资料的东西：${rel}`
+            + '——这一节回答「据哪几份材料写成」：上游那几份正文与收件箱原件，'
+            + '各一行。本轮自己生成的规格与记录不是材料；'
+            + '图的去向登记在材料清单里（`--caption-image … --unused`），不写在这一节');
         }
       }
     }
@@ -1876,7 +1849,8 @@ function danglingFigures(storyText, contract) {
         out.push(`第 ${i + 1} 行的图前面没有一句话（${why}）`
           + '——引一张图先说它画的是什么，再是图，图后接着讲。'
           + '接不上一句话的图，说明它是被贴进来的，不是被讲到的：'
-          + '本需求用不上就别引，在材料清单那一行写「未引用：<理由>」');
+          + '本需求用不上就别引，跑 `import_sources.py --feature <名> '
+          + '--caption-image <这张图> --unused "<为什么不用它>"` 登记它的去向');
       }
     }
     prev = line;
@@ -2293,15 +2267,12 @@ function materialListSkeleton(ctx) {
   const targets = materialListTargets(ctx);
   if (!targets || targets === 'broken') return [];
   // 类别取合同的 `sources[*].label`，按路径反查——它在那里已经有答案。
+  // 收件箱原件不在合同的来源表里（它是人另外给的），落到「原件」。
   const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
-  const entries = materialImages(ctx);
-  const images = new Set(Array.isArray(entries) ? entries.flatMap(m => m.paths) : []);
-  return targets.must.map(([rel]) => images.has(rel)
-    ? `- 界面图：[${basename(rel)}](${relFromStory(rel)})`
-      + '——{{这张图讲了什么 / 未引用：为什么它不属于本需求}}'
-    : `- ${kinds.get(rel) ?? '材料'}：[${basename(rel)}](${relFromStory(rel)})`
-      + '——{{这份材料贡献了什么}}');
+  return targets.must.map(([rel]) =>
+    `- ${kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
+    + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
 //: 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记成功后由

@@ -66,26 +66,69 @@ def kind_of(path: Path) -> str:
     return "image" if path.suffix.lower() in import_sources.IMAGE_EXTS else "doc"
 
 
-def read_captions(feature_root: Path) -> dict[str, str]:
-    """读图片说明。坏了当没有——说明缺失不该让整份清单算不出来。"""
+def read_captions(feature_root: Path) -> dict[str, dict]:
+    """读图片说明与取舍。坏了当没有——缺了不该让整份清单算不出来。
+
+    每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它）。
+    值也可能是一个光秃秃的字符串，那是只记说明的写法：读到字符串按
+    ``{"caption": 它}`` 升格，已经登记过的说明不丢。
+    """
     try:
         data = json.loads((feature_root / Path(*CAPTIONS)).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
         return {}
-    return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v.strip()}
+    out: dict[str, dict] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            entry = {"caption": value} if value.strip() else {}
+        elif isinstance(value, dict):
+            entry = {k: v for k, v in value.items()
+                     if k in ("caption", "unused") and isinstance(v, str) and v.strip()}
+        else:
+            continue
+        if entry:
+            out[str(key)] = entry
+    return out
+
+
+def _write_entry(feature_root: Path, sha: str, field: str, value: str | None) -> Path:
+    """只动 ``field`` 这一个字段，另一个原样留着。
+
+    说明与取舍是两件独立的事：改说明不该把「为什么不用」抹掉，
+    标记不用也不该把说明抹掉。
+    """
+    path = feature_root / Path(*CAPTIONS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = read_captions(feature_root)
+    entry = dict(data.get(sha, {}))
+    if value is None:
+        entry.pop(field, None)
+    else:
+        entry[field] = value
+    if entry:
+        data[sha] = entry
+    else:
+        data.pop(sha, None)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    return path
 
 
 def write_caption(feature_root: Path, sha: str, caption: str) -> Path:
     """登记一张图是什么。同一张图重登记就覆盖——说明可以改，图还是那张。"""
-    path = feature_root / Path(*CAPTIONS)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = read_captions(feature_root)
-    data[sha] = caption
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8")
-    return path
+    return _write_entry(feature_root, sha, "caption", caption)
+
+
+def write_unused(feature_root: Path, sha: str, reason: str) -> Path:
+    """登记本需求为什么不用这张图。"""
+    return _write_entry(feature_root, sha, "unused", reason)
+
+
+def clear_unused(feature_root: Path, sha: str) -> Path:
+    """这张图要用了——把「不用」的理由撤掉。"""
+    return _write_entry(feature_root, sha, "unused", None)
 
 
 def collect_materials(feature_root: Path) -> list[dict]:
@@ -99,9 +142,11 @@ def collect_materials(feature_root: Path) -> list[dict]:
 
     顺序固定 = digest 稳定。点开头的文件是控制件不是材料，不进清单。
 
-    图片条目带 `caption`（这张图是什么）——作者任务包与读者审查逐张列它。
-    没登记说明的图**仍然在清单里**，caption 为空串：漏登记要看得见，不能悄悄消失。
-    caption 不进 `compute_digest`：说明变了不是材料变了。
+    图片条目带 `caption`（这张图是什么）与 `unused`（本需求为什么不用它）——
+    作者任务包与读者审查逐张列它们。没登记的图**仍然在清单里**，两个字段为空串：
+    漏登记要看得见，不能悄悄消失。两者都不进 `compute_digest`：说明或取舍变了
+    不是材料变了。反过来图的内容变了 sha 就变、取舍归零，作者要重新判——
+    内容变了取舍本来就该重判。
     """
     captions = read_captions(feature_root)
     items: list[dict] = [
@@ -125,8 +170,10 @@ def collect_materials(feature_root: Path) -> list[dict]:
                 if found:
                     found["paths"].append(rel_path)
                 else:
+                    entry = captions.get(sha, {})
                     images[sha] = {"kind": kind, "paths": [rel_path], "sha256": sha,
-                                   "caption": captions.get(sha, "")}
+                                   "caption": entry.get("caption", ""),
+                                   "unused": entry.get("unused", "")}
                     extra.append(images[sha])
             else:
                 extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})

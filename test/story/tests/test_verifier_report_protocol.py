@@ -425,6 +425,22 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("签约页", text)
         self.assertIn("story 用了没有", text)
 
+    def test_the_task_asks_whether_the_lead_figure_earns_its_place(self) -> None:
+        """章首那张图讲没讲清这条业务——机器只核有没有图，讲得怎么样归审查。
+
+        七跑那次章首的图与契约图逐字节相同：机器看得见「有图」，
+        看不见「它没回答评审者要问的事」。
+        """
+        text = self.inject()
+        self.assertIn("章首那张图", text)
+        self.assertIn("端到端过程", text)
+        self.assertIn("分支去向", text)
+
+    def test_the_task_shows_why_an_image_was_declined(self) -> None:
+        """作者登记的「不用」原样带上——审查判的正是那句理由成不成立。"""
+        text = self.inject()
+        self.assertIn("理由成不成立", text)
+
     def test_the_task_carries_the_contract_questions(self) -> None:
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         text = self.inject()

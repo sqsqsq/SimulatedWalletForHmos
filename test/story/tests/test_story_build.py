@@ -1067,7 +1067,7 @@ class TestMaterialListMatchesTheManifest(Step8Case):
     def test_the_listed_material_passes(self) -> None:
         _, out = self.check_output()
         self.assertNotIn("少了一份材料", out)
-        self.assertNotIn("列了不是材料的东西", out)
+        self.assertNotIn("列了不是初始资料的东西", out)
 
     def test_a_missing_material_is_named(self) -> None:
         """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
@@ -1080,7 +1080,7 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         """本轮自己生成的记录不是材料，进了清单就把它变成倾倒区。"""
         self.rewrite_story(self.LISTED, self.LISTED
                            + "\n- 本轮的落点账：原文：[audit](../AR/story-src/audit.json)")
-        self.assert_check_names("列了不是材料的东西")
+        self.assert_check_names("列了不是初始资料的东西")
 
     def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
         (self.src / "materials.json").unlink()
@@ -1096,43 +1096,43 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         _, out = self.check_output()
         hits = [line for line in out.splitlines() if "story-src/decisions.json" in line]
         self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
-        self.assertIn("列了不是材料的东西", hits[0])
+        self.assertIn("列了不是初始资料的东西", hits[0])
 
-    def test_one_material_is_one_row_even_with_two_paths(self) -> None:
-        """同一张图落两处（素材目录与界面参考目录）是一份材料，不是两份。
-
-        按路径算的话 E 里要为同一张图写两行，读者看见两个条目、以为是两张图。
-        """
+    def register_an_image(self) -> str:
+        """盘上放一张图并重算清单，返回它相对需求目录的路径。"""
         rel = "assets/入口原型说明/image1.png"
         image = self.feature_root() / rel
         image.parent.mkdir(parents=True, exist_ok=True)
         image.write_bytes(b"PNGDATA1")
-        twin = self.feature_root() / "ux-reference" / "entry.png"
-        twin.parent.mkdir(parents=True, exist_ok=True)
-        twin.write_bytes(b"PNGDATA1")            # 同内容 = 同一份材料的另一个落点
         self.round_now()
-        self.rewrite_story(
-            self.LISTED,
-            self.LISTED + "\n- 界面图：[image1.png](../" + rel + ")——未引用：属别的需求")
-        _, out = self.check_output()
-        self.assertNotIn("少了一份材料", out, "同一份材料被当成两份，E 要写两行")
+        return rel
 
-    def test_a_registered_image_belongs_in_the_list(self) -> None:
-        """图逐张列进清单是**要求**：不属于本需求的图，它的去向只能写在这里。
+    def test_an_image_does_not_belong_in_this_section(self) -> None:
+        """图不进材料清单：这一节回答「据哪几份材料写成」，列的是初始资料。
 
-        不给它一行，那句「未引用：<理由>」就没有落点，作者只能把图引进正文
-        再在图题里解释——读者于是要在归档件里读到别的需求的页面。
+        图的去向（引了没有、不引为什么）跟着图的内容走，登记在材料清单里；
+        写进这一节的话，读者要在这里读到十行图，其中一半是别的需求的页面。
         """
-        image = self.feature_root() / "assets" / "入口原型说明" / "image1.png"
-        image.parent.mkdir(parents=True, exist_ok=True)
-        image.write_bytes(b"PNGDATA1")
-        self.round_now()
-        self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n- 界面图：[image1.png](../assets/入口原型说明/image1.png)"
-                             "——未引用：属别的需求的页面")
+        rel = self.register_an_image()
+        self.rewrite_story(self.LISTED,
+                           self.LISTED + "\n- 界面图：[image1.png](../" + rel + ")——参考")
+        out = self.assert_check_names("列了不是初始资料的东西")
+        self.assertIn(rel, out)
+
+    def test_an_image_on_disk_does_not_make_this_section_incomplete(self) -> None:
+        """盘上有图不等于这一节少了一份材料——图压根不在这个集合里。"""
+        self.register_an_image()
         _, out = self.check_output()
-        self.assertNotIn("列了不是材料的东西", out, out[:500])
         self.assertNotIn("少了一份材料", out, out[:500])
+
+    def test_the_inbox_original_is_required(self) -> None:
+        """收件箱原件是人另外给的、没走需求系统——读者要知道有这份。"""
+        manifest = self.src / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["sources"] = [{"file": "补充说明.docx", "ingested": True}]
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        out = self.assert_check_names("少了一份材料")
+        self.assertIn("inbox/补充说明.docx", out)
 
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
