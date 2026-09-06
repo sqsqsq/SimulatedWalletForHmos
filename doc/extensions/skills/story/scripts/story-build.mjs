@@ -753,10 +753,10 @@ function scopeList(text, key) {
 function scopeBoundaryRows(spec) {
   const rows = [];
   for (const m of scopeList(spec, 'in_scope_modules')) {
-    rows.push([m, '改动', 'Scope 的 `in_scope_modules`']);
+    rows.push([m, '改动', '本单的范围声明']);
   }
   for (const m of scopeList(spec, 'out_of_scope_modules')) {
-    rows.push([m, '不改', 'Scope 的 `out_of_scope_modules`']);
+    rows.push([m, '不改', '本单的范围声明']);
   }
   return rows;
 }
@@ -2140,19 +2140,19 @@ function appendixProjection(ctx, spec, name) {
       for (const r of t.rows) {
         if (isPlaceholderRow(r)) continue;
         rows.push([(r[0] ?? '').trim(), (r[1] ?? '').trim() || '变更',
-          'spec §9.5 依赖变更']);
+          '上游的依赖变更结论']);
       }
     }
     if (!tables.length) {
       // 依赖没有变更也是结论，丢了它 story 相对 spec 就减了一条。
       const na = specNotApplicable(spec, name);
-      rows.push(['依赖', '不涉及', na ? `spec §9.5：${na}` : 'spec §9.5 无依赖变更']);
+      rows.push(['依赖', '不涉及', na || '上游没有登记依赖变更']);
     }
     const out = rows.length ? renderTable(['模块', '本单怎么动', '依据'], rows) : [];
     const why = scopeRationale(spec);
     out.push('', why ? `**Scope 的说明原文**：${why.replace(/\n/g, ' ')}`
       : '**Scope 未提供说明**。');
-    return ['Scope 模块清单与 spec §9.5', out];
+    return ['本单的范围声明与上游的依赖变更', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
     return ['spec/knowledge-use.yaml', verdictSkeleton(ctx)];
@@ -2162,9 +2162,9 @@ function appendixProjection(ctx, spec, name) {
     : renderTable(t.header, t.rows));
   if (!rows.length) {
     const na = specNotApplicable(spec, name);
-    return ['spec §9', na ? [na] : []];
+    return ['上游登记的技术契约', na ? [na] : []];
   }
-  return ['spec §9', rows];
+  return ['上游登记的技术契约', rows];
 }
 
 /**

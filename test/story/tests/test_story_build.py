@@ -1856,6 +1856,34 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
         self.assertNotIn("{{", self.boundary_zone(), "机器区还留着作者要填的格子")
 
+    def test_every_machine_zone_passes_the_archive_redlines(self) -> None:
+        """投影吐出来的每一个字都随归档走，所以它自己要过红线。
+
+        **机器区没有作者**：它写出违规内容时，作者删掉，下一次 `project` 又写回来，
+        check 再报——他赢不了，只能转去改判据或改脚本。一次实跑就这么卡了 25 分钟：
+        「依据」列写着 `spec §9.5 依赖变更`，而 spec.md 不随归档，⑨ 判它悬空。
+        """
+        story = self.landed_appendix()
+        zones = [z.split("story-build:end", 1)[0]
+                 for z in story.split("story-build:begin")[1:]]
+        self.assertTrue(zones, "一节机器区都没有，这条守卫在空跑")
+        lint = self.EXTENSION / "skills" / "story" / "scripts" / "lint-rules.mjs"
+        for i, zone in enumerate(zones):
+            proc = subprocess.run(
+                ["node", "--input-type=module", "-e",
+                 f"const m = await import({json.dumps(lint.resolve().as_uri())});"
+                 f"const t = {json.dumps(zone)};"
+                 f"const hits = ["
+                 f"  ...m.formatHits(m.scanDanglingRefs(t, {json.dumps(str(self.root))}), 'dangling'),"
+                 f"  ...m.formatHits(m.scanLocalPaths(t, {json.dumps(str(self.root))}), 'path'),"
+                 f"];"
+                 "process.stdout.write(JSON.stringify(hits));"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            hits = json.loads(proc.stdout or "[]")
+            self.assertEqual([], hits, f"第 {i + 1} 节机器区自己撞了归档件红线：{hits}")
+
 
 if __name__ == "__main__":
     unittest.main()
