@@ -222,11 +222,8 @@ class TaskPackageIsRendered(WorkspaceCase):
                       "规则要单向：把图引进正文再解释是六跑那次的形态")
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
 
-    def test_every_image_gets_a_command_that_runs_as_written(self) -> None:
-        """展示的引用串相对 `AR/story.md`，命令的路径相对工程根——两个基准不一样。
-
-        写成「上面那一行的路径」的话，作者照抄必错，又要回头去翻脚本找基准。
-        """
+    def seed_two_images(self) -> None:
+        """盘上放两张图并登记：一张要用、一张已登记不用。"""
         for rel in ("assets/x/one.png", "assets/x/two.png"):
             img = self.feature_root / rel
             img.parent.mkdir(parents=True, exist_ok=True)
@@ -236,16 +233,43 @@ class TaskPackageIsRendered(WorkspaceCase):
                 {"kind": "image", "paths": ["assets/x/one.png"], "caption": "签约页"},
                 {"kind": "image", "paths": ["assets/x/two.png"], "unused": "旧版对照稿"},
             ]}, ensure_ascii=False), encoding="utf-8")
+
+    def test_every_image_gets_a_command_that_runs_as_written(self) -> None:
+        """展示的引用串相对 `AR/story.md`，命令的路径相对工程根——两个基准不一样。
+
+        写成「上面那一行的路径」的话，作者照抄必错，又要回头去翻脚本找基准。
+        """
+        self.seed_two_images()
         package = self.task_package()
-        # 命令参数自成一行；正文里提到 `--caption-image` 的句子不算
         cmds = [l.strip() for l in package.split("\n")
-                if l.strip().startswith("--caption-image")]
+                if l.strip().startswith("python ") and "--caption-image" in l]
         self.assertEqual(2, len(cmds), f"每张图各要一条可跑的命令，实际 {len(cmds)} 条")
         for line in cmds:
             arg = line.split("--caption-image", 1)[1].split()[0]
             self.assertTrue(arg.startswith("doc/features/"),
                             f"命令的路径不是相对工程根：{arg}")
             self.assertTrue((self.root / arg).exists(), f"命令指到一个不存在的文件：{arg}")
+
+    def test_the_command_in_the_fence_runs_as_written(self) -> None:
+        """把围栏里那条命令**原样交给 shell**，认它真的落了盘。
+
+        只核路径与文件存在的话，行尾多一个反斜杠这种事看不见：shell 把它当字面参数，
+        续行接不上，作者复制过去就报 `unrecognized arguments`。
+        """
+        self.seed_two_images()
+        package = self.task_package()
+        cmds = [l.strip() for l in package.split("\n")
+                if l.strip().startswith("python ") and "--caption-image" in l]
+        self.assertTrue(cmds, "没有渲染出可跑的取舍命令")
+        line = next(c for c in cmds if "--unused" in c).replace(
+            '"<为什么它不属于本需求>"', '"属别的需求的页面"')
+        proc = subprocess.run(line, shell=True, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=90,
+                              cwd=self.root)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(0, proc.returncode, out)
+        self.assertIn('"ok":true', out.replace(" ", ""), out[:400])
+        self.assertNotIn("\\", line, "命令里还有续行的反斜杠——shell 会把它当字面参数")
 
 
 class TheAcceptanceExampleIsRealShape(WorkspaceCase):

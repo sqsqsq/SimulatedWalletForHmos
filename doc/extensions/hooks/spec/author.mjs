@@ -174,10 +174,11 @@ function imageSection(projectRoot, feature) {
         + (unused ? ` ← **已登记不用**：${unused}` : ''),
       '',
       '  ```',
-      `  python doc/extensions/skills/story/scripts/import_sources.py --feature ${feature} \\\\`,
-      unused
-        ? `    --caption-image ${featureDir}/${p} --used`
-        : `    --caption-image ${featureDir}/${p} --unused "<为什么它不属于本需求>"`,
+      // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
+      // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
+      '  python doc/extensions/skills/story/scripts/import_sources.py'
+        + ` --feature ${feature} --caption-image ${featureDir}/${p}`
+        + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),
       '  ```',
       '');
     }
