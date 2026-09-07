@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "d87359c298da2ada8adf72d061d14d7b5c4de8d0",
-  "built_at": "2026-09-07T06:12:50.119Z",
+  "source_commit": "09f76804afa6ecaa840950da2d514c4a7900c416",
+  "built_at": "2026-09-07T08:41:48.041Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "2e6d33a0bcfed805710625be4eefb6854787cc9c7bc9031e70e82259ad117c56"
+      "sha256": "ffe49081188573a97ab99a0942a20357ecab20fe214f7d46d517a9c05ca0c5e0"
     },
     {
       "path": "README.md",
@@ -66,7 +66,7 @@
     },
     {
       "path": "agents/claude/templates/commands/device-testing.md",
-      "sha256": "5f078588e523a4e63a7d1d660f2a7927e896977d420e6498e263d8cc928273ac"
+      "sha256": "93a3aa1e2ab6bce56f585b4d012132e171ac295cac305034e5c647cc78a61554"
     },
     {
       "path": "agents/claude/templates/commands/framework-init.md",
@@ -138,7 +138,7 @@
     },
     {
       "path": "agents/codeagent/templates/commands/device-testing.md",
-      "sha256": "f04c7cecfbd23b5236c2c59e283864e8cbb37adb190eb00d15ca165efc6a891d"
+      "sha256": "78216e7817bb891d26d57786b3771c2343d970a6437dede2fc2b895ee17da26e"
     },
     {
       "path": "agents/codeagent/templates/commands/framework-init.md",
@@ -210,7 +210,7 @@
     },
     {
       "path": "agents/cursor/templates/commands/device-testing.md",
-      "sha256": "3b2f35e4a767396f3bfc48c56db55c1d5cd564d05cb8d5f6be6a83fe5c1a0245"
+      "sha256": "8dc182c75b8f62f1a271f82acb7dc2adf602f7834ca4aee29431a0d865b934b8"
     },
     {
       "path": "agents/cursor/templates/commands/framework-init.md",
@@ -262,7 +262,7 @@
     },
     {
       "path": "agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc",
-      "sha256": "dcc3714119e7e4d0cfe501fbfa831060a9ac1223661099b79253e917de33d230"
+      "sha256": "f4529b76e939e70d8e7ef6eef891b880266b434a82e154dfd58576c91e94c3af"
     },
     {
       "path": "agents/shared/agent-bundle/templates/rules/framework.mdc",
@@ -506,7 +506,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "deabd72c21e3fc6d6db432b334e36a9bc2aeaa3574323cccbf1ac32f45454d54"
+      "sha256": "73ed7d33df2e61b3ecd9636487a93ab68859ea008ec6a45d066e120420c0e6f1"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -514,7 +514,7 @@
     },
     {
       "path": "harness/package.json",
-      "sha256": "0ceb8b0342600e80d0b15d0248e105c6c6da33ed635383301c4f212d20efb289"
+      "sha256": "f68397d9f935827da0143819d5e5638fe4b14ecf775bdeab81192bdada0a6751"
     },
     {
       "path": "harness/profile-host-loader.ts",
@@ -590,7 +590,7 @@
     },
     {
       "path": "harness/scripts/adhoc-device-test.ts",
-      "sha256": "5451428e73907e91d2616f9a18804562deca91f77063792533217b1b44c662b1"
+      "sha256": "91df8dd616fde36f3777e76397613bfb57a0790425abf18c5a8b23f5fa5f0fd3"
     },
     {
       "path": "harness/scripts/assess.ts",
@@ -714,7 +714,7 @@
     },
     {
       "path": "harness/scripts/device-policy.ts",
-      "sha256": "7acd0de2b5d73dfd79cd089726671d8af1ded3a13c112fa7e2a91a17bdc92d2c"
+      "sha256": "04fa53be4a3aab1daf8c1264ab3a4a710138419f23dc9a7f9702332d7d0051b8"
     },
     {
       "path": "harness/scripts/fidelity-intent-init.ts",
@@ -846,7 +846,7 @@
     },
     {
       "path": "harness/scripts/utils/adhoc-trace-placeholder.ts",
-      "sha256": "f1d61a856456c517001899d5a30576d966659e61bb9fe535c3ae4da624eced6f"
+      "sha256": "c41a086e49e9c7fc01597f0c7f95c8b65b6ca7e3c7164c42969e7ac9915f3bb5"
     },
     {
       "path": "harness/scripts/utils/adhoc-ui-reset-meta.ts",
@@ -1006,11 +1006,11 @@
     },
     {
       "path": "harness/scripts/utils/device-readiness-deps.ts",
-      "sha256": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82"
+      "sha256": "74b7fd95ef31d83a348fe86180ad9852545d69c62990e5089d8c0319402df5fe"
     },
     {
       "path": "harness/scripts/utils/device-readiness-gate.ts",
-      "sha256": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1"
+      "sha256": "49b735fe81c062dedb6927f44c3b92750b9080b71b5c66434e1bbe2a6d989fbc"
     },
     {
       "path": "harness/scripts/utils/device-runtime-recovery.ts",
@@ -3994,7 +3994,7 @@
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
-      "sha256": "72be2f20b0873785f4c952e184361abfc864a50557b88fba6b23558c0e2e9f9c"
+      "sha256": "1798b4fe80e3b39d07479e307d9a63b3565a0aff40a4c57953d5bdad2f0b9b99"
     },
     {
       "path": "skills/feature/device-testing/contract.yaml",
@@ -4002,7 +4002,7 @@
     },
     {
       "path": "skills/feature/device-testing/reference/hylyre-host-preflight.md",
-      "sha256": "cc57abcc1062a4212c870039d193d7ab1df537e297c6ab6049cd06eeabb33431"
+      "sha256": "f09b1aa18f6dc14047315a29b8ad38ca6bf34c987930f0bf4f5e6884ef01db62"
     },
     {
       "path": "skills/feature/plan/SKILL.md",
@@ -4158,7 +4158,7 @@
     },
     {
       "path": "skills/reference/confirmation-registry.yaml",
-      "sha256": "fc9260d3d0626044d1a1a4afe05d9888acf99a93667cad03e9ad730e8134921a"
+      "sha256": "89b9728c3c92242a5fba865a03b74218fc578d085c54eecb6c76a47759f12b2b"
     },
     {
       "path": "skills/reference/consumer-framework-boundary.md",
@@ -4166,15 +4166,15 @@
     },
     {
       "path": "skills/reference/device-policy-gate.md",
-      "sha256": "49ce011b952824f826735ad0cc835aff122ee4c501848b68a27e75d0f7b37359"
+      "sha256": "c33acf7dce53e232c8a00845f5cb91c1d36db9a6df1167713dc67433c6536d0a"
     },
     {
       "path": "skills/reference/device-testing-workflow-detail.md",
-      "sha256": "8992d3eef37a53f489a918f8c351c8dd1caf8294704c211236a7c0727e188e3c"
+      "sha256": "43fe2738b0aa76515328681f5a14c8c6e4563914d7751f6b41f3fee948685bdd"
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "f823bd7b73d3c39f0f56c94368694ec587d56aa61e2422b27de2df0216a0acec"
+      "sha256": "7dc8224f57571d97298c3f0965a385d35b78849a928112d55087bba8d3b95bd7"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
