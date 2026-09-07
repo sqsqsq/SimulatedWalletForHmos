@@ -396,6 +396,52 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
         self.assertIn(self.RULE, message)
         self.assertIn("指向了 spec 里没有要求的条目", message, message[:400])
 
+    def test_a_criteria_without_the_field_is_plain_business_acceptance(self) -> None:
+        """一条需求里绝大多数验收点与规约无关，它们不写这个字段——那不是漏写。
+
+        为它们各报一条的话，真正缺的那几条会被淹掉。
+        """
+        self.stage_a_spec_that_reaches_the_bridge()
+        (self.feature_root / "acceptance.yaml").write_text(
+            self.example_yaml(self.RULE)
+            + "  - id: AC-9\n    priority: P1\n"
+              "    description: 充值记录列表按时间倒序\n    testable: true\n",
+            encoding="utf-8")
+        message = self.spec_check()
+        self.assertNotIn("跳过", message, f"这条检查压根没跑：{message[:400]}")
+        self.assertNotIn("AC-9", message, message[:400])
+
+    def test_a_list_of_rules_in_one_criteria_is_named(self) -> None:
+        """一条 criteria 写一串编号——下游按编号分派时对不到场景。
+
+        正则扫只看「文件里出现过这个编号」，这种形态它照样判过，
+        而作者会以为自己已经桥接过了。
+        """
+        self.stage_a_spec_that_reaches_the_bridge()
+        (self.feature_root / "acceptance.yaml").write_text(
+            self.example_yaml(self.RULE).replace(
+                f"knowledge_rule: {self.RULE}",
+                f"knowledge_rule: [{self.RULE}, ZZZ-99]"),
+            encoding="utf-8")
+        message = self.spec_check()
+        self.assertIn("不是一个编号", message, message[:400])
+
+    def test_a_real_acceptance_with_block_scalars_reads_through(self) -> None:
+        """真实产物里有块标量（`knowledge_rule_bridge: |`）——读取器要认它。
+
+        不认的话，桥接只能改用正则去扫，而正则分不清编号写在哪一层。
+        """
+        self.stage_a_spec_that_reaches_the_bridge()
+        (self.feature_root / "acceptance.yaml").write_text(
+            "knowledge_rule_bridge: |\n"
+            "  命中规约经 knowledge_rule 桥接：一条 criteria 一个编号。\n"
+            "  评审动作条目不建验收条目。\n"
+            + self.example_yaml(self.RULE), encoding="utf-8")
+        message = self.spec_check()
+        self.assertNotIn("跳过", message, f"这条检查压根没跑：{message[:400]}")
+        self.assertNotIn("读不出结构", message, message[:400])
+        self.assertNotIn("没有对应验收条目", message, message[:400])
+
     def test_the_framework_side_sees_a_criteria_item_with_an_id(self) -> None:
         """框架侧读的是 `criteria` 数组里的对象与它的 `id`
         （`framework/harness/scripts/check-plan.ts` 的 spec→plan 约束追溯）。

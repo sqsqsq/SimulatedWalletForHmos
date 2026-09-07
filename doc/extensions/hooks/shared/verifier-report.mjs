@@ -83,52 +83,63 @@ function summaryRow(text) {
   return null;
 }
 
+/** 文档里的 YAML 围栏，一个不落地取出来——报告的结构就写在里面。 */
+function yamlBlocks(text) {
+  const out = [];
+  const fence = /^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```/gm;
+  for (let m = fence.exec(text); m; m = fence.exec(text)) out.push(m[1]);
+  return out;
+}
+
 /**
- * 明细里 `story_reader_review` 那一条 —— **只有这一条**，而且按 YAML 结构读。
+ * 结构里那一串 check —— 顶层直接是 `checks`，或者包在结果对象里（各认一层）。
  *
- * 两件事各拦一种误判：
+ * **只认这个键名，不按形状搜**：形状搜（「任何一个带 id 的数组」）会撞上报告里
+ * 别的列表——findings、items 都长这样——撞上了就静默读到另一批东西，而判据全绿。
+ */
+function checksIn(doc) {
+  if (Array.isArray(doc?.checks)) return doc.checks;
+  for (const value of Object.values(doc ?? {})) {
+    if (Array.isArray(value?.checks)) return value.checks;
+  }
+  return null;
+}
+
+/**
+ * 明细里 `story_reader_review` 那一条的 `details` —— **整段解析，按 id 取项**。
  *
- * - **范围**：到下一条 `- id:` 或围栏结束为止，取先到者。不划范围的话，
- *   另一条 check 写全了两个键，而读者审查这一条只有一段话，全文搜是搜得到的；
- *   不看围栏的话，围栏外的附注里出现键名也算数。
- * - **结构**：两个键要是本项 `details` 之下的键，不是正文里的字样。
- *   `details: {}`、`details: |` 后面跟一段「未提供 blocking_findings 和 advisories」，
- *   子串搜都命中，而它们恰恰是**没有**这两类结论。
+ * 整段读、按 id 取，不划文本范围。划范围要靠「到下一条 `- id:` 或围栏结束」这类
+ * 启发式，而报告里每条 check 的 `details` 都可能是块标量，块里出现什么字样都是正文——
+ * 边界一旦被块里的内容带偏，读出来的就是另一条的结论，判据却照样给出答案。
  *
- * 解析不动就是没有结构（`details: |` 是一段文本，本来就不带键），返回 null，
- * 由调用方按「缺键」报——不吞成「有」。
+ * **能读出结构不等于这一条写全了**：`details` 是一段文本（`details: |`）时它下面
+ * 没有任何键，照样按缺键报——那正是「没有这两类结论」。
  *
- * @returns {Record<string, unknown> | null} 本项的 `details` 映射；不是映射时 null
+ * @returns {{details: object|null, unreadable: string|null}}
+ *   `unreadable` 非空 = 这份 YAML 读不出结构，与「缺键」是两回事，要分开报。
  */
 function readerReviewDetails(text) {
-  const lines = text.split(/\r?\n/);
-  const head = new RegExp(`^(\\s*)-\\s*id:\\s*\`?${STORY_REVIEW_ID}\`?\\s*$`);
-  let from = -1;
-  let indent = '';
-  for (let i = 0; i < lines.length; i++) {
-    const m = head.exec(lines[i]);
-    if (m) { from = i; indent = m[1]; break; }
+  let unreadable = null;
+  for (const body of yamlBlocks(text)) {
+    let doc;
+    try {
+      doc = parseYaml(body);
+    } catch (e) {
+      unreadable = unreadable ?? String(e?.message ?? e);
+      continue;
+    }
+    const checks = checksIn(doc);
+    if (!checks) continue;
+    const entry = checks.find(c => c
+      && String(c.id ?? '').replace(/`/g, '').trim() === STORY_REVIEW_ID);
+    if (!entry) continue;
+    const details = entry.details;
+    return {
+      details: details && typeof details === 'object' && !Array.isArray(details) ? details : {},
+      unreadable: null,
+    };
   }
-  if (from < 0) return null;
-  let to = lines.length;
-  for (let i = from + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\s*```/.test(line)) { to = i; break; }          // 围栏结束
-    if (/^\s*-\s*id:\s*/.test(line)) { to = i; break; }   // 下一条
-  }
-  // 去掉本项的公共缩进，整条就是一个单元素序列，交给解析器读结构。
-  const body = lines.slice(from, to)
-    .map(l => (l.startsWith(indent) ? l.slice(indent.length) : l))
-    .join('\n');
-  let doc;
-  try {
-    doc = parseYaml(body);
-  } catch {
-    return null;                                          // 不是结构，是一段文本
-  }
-  const entry = Array.isArray(doc) ? doc[0] : null;
-  const details = entry && typeof entry === 'object' ? entry.details : null;
-  return details && typeof details === 'object' && !Array.isArray(details) ? details : null;
+  return { details: null, unreadable };
 }
 
 /**
@@ -191,8 +202,19 @@ export function storyReviewProblems(projectRoot, feature, phase) {
   }
 
   if (status !== 'PASS') {
-    const details = readerReviewDetails(text) ?? {};
-    const missing = DETAIL_KEYS.filter(k => !(k in details));
+    const { details, unreadable } = readerReviewDetails(text);
+    if (unreadable) {
+      // 读不出结构与「缺这两个键」是两回事：说成缺键的话，作者会去补两个已经写着的键，
+      // 补完还报，他只能去翻这个脚本。
+      return {
+        status: 'FAIL',
+        problems: [`verifier 报告里的结构块读不出来（${unreadable}）——`
+          + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。`
+          + '把 verifier 的回复原样重写一遍，结构块写成合法 YAML。' + INVALID_EVIDENCE],
+        detail: '结构块读不出来',
+      };
+    }
+    const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
     if (missing.length) {
       return {
         status: 'FAIL',

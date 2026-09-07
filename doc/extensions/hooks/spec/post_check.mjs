@@ -18,6 +18,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { parseYaml } from '../shared/yaml-lite.mjs';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/lint-rules.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/flow-check.mjs';
 import { STATUS } from '../shared/evidence.mjs';
@@ -281,8 +282,27 @@ function acceptanceCoverage(ctx, specIds) {
   // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）
   const accPath = path.join(featureDir, 'acceptance.yaml');
   if (fs.existsSync(accPath)) {
-    const raw = fs.readFileSync(accPath, 'utf-8');
-    const accIds = new Set([...raw.matchAll(/knowledge_rule\s*:\s*["']?([A-Z][A-Z0-9]{1,7}-\d{2})/g)].map(m => m[1]));
+    // **按结构读，不按正则扫**：正则扫的是「文件里出现过这个编号」，
+    // 它分不清编号写在哪一层，也认不出「一条 criteria 写了一串编号」这种形态——
+    // 那形态下游分派不了，而作者会以为自己已经桥接过了。
+    let criteria = null;
+    try {
+      criteria = parseYaml(fs.readFileSync(accPath, 'utf-8'))?.criteria;
+    } catch (e) {
+      problems.push(`acceptance.yaml 读不出结构（${e?.message ?? e}）——`
+        + '知识义务的桥接在它的 criteria 里，读不出就核不了');
+    }
+    const accIds = new Set();
+    for (const row of Array.isArray(criteria) ? criteria : []) {
+      // **没有这个字段的 criteria 是普通业务验收**，不是漏写：一条需求里绝大多数
+      // 验收点与规约无关，为它们各报一条会把真正缺的那几条淹掉。
+      if (!row || typeof row !== 'object' || !('knowledge_rule' in row)) continue;
+      const value = row.knowledge_rule;
+      if (typeof value === 'string' && value.trim()) { accIds.add(value.trim()); continue; }
+      problems.push(`criteria「${String(row.id ?? '（没写 id）')}」的 knowledge_rule 不是一个编号——`
+        + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
+        + '写成列表或留空的话，下游按编号分派时对不到场景（形状见任务包 §2）');
+    }
     if (accIds.size || specIds.size) {
       const missing = [...specIds].filter(id => !accIds.has(id));
       if (missing.length) {

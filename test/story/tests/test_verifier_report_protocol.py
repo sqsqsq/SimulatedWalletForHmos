@@ -275,6 +275,67 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         out = self._run(report)
         self.assertEqual("PASS", out["status"], f"正常的 FAIL 明细被拒了：{out}")
 
+    def with_checks(self, *blocks: str) -> str:
+        """一份带 YAML 结构块的报告；`blocks` 是 `checks` 下的几条，按给的顺序排。"""
+        return row("FAIL") + ("\n```yaml\nverification_result:\n  checks:\n"
+                              + "".join(blocks) + "```\n")
+
+    #: 读者审查那一条，写全了两类结论。
+    GOOD = ("    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details:\n"
+            "        blocking_findings:\n"
+            "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
+            "        advisories: []\n")
+
+    #: 别的一条，正文是块标量——真实报告里几乎每条都长这样。
+    OTHER = ("    - id: visual_handoff_semantics\n"
+             "      status: WARN\n"
+             "      details: |\n"
+             "        §4 说界面规格以产品原稿为准，而 handoff 块声明没有参考图，\n"
+             "        两处对不上；authoritative_refs 是空数组。\n"
+             "      suggestion: |\n"
+             "        把参考图填进 authoritative_refs，或说明为什么维持降级。\n")
+
+    def test_it_reads_wherever_this_item_sits(self) -> None:
+        """排最前、夹在中间、排最后都读得到——位置不该改变结论。
+
+        此前是切片读：从这一条划到下一条或围栏结束。**别的条目里的块标量会把范围搅乱**，
+        于是同一份报告换个顺序就判出不同结果，而作者写的是合法 YAML。
+        """
+        for name, report in (
+            ("排最前", self.with_checks(self.GOOD, self.OTHER)),
+            ("夹中间", self.with_checks(self.OTHER, self.GOOD, self.OTHER)),
+            ("排最后", self.with_checks(self.OTHER, self.GOOD)),
+        ):
+            with self.subTest(位置=name):
+                out = self._run(report)
+                self.assertEqual("PASS", out["status"], f"{name}时读不出来：{out}")
+
+    def test_a_block_scalar_in_this_item_does_not_hide_its_keys(self) -> None:
+        """本条自己也有块标量字段时，两个键照样读得出来。"""
+        item = self.GOOD.replace(
+            "        advisories: []\n",
+            "        advisories: []\n      suggestion: |\n        先补第 8 章那条验收。\n")
+        out = self._run(self.with_checks(self.OTHER, item))
+        self.assertEqual("PASS", out["status"], out)
+
+    def test_yaml_that_cannot_be_parsed_is_said_so(self) -> None:
+        """读不出结构与「缺这两个键」是两回事。
+
+        说成缺键的话，作者会去补两个已经写着的键，补完还报，他只能去翻这个脚本。
+        """
+        broken = self.with_checks(
+            "    - id: story_reader_review\n"
+            "      status: FAIL\n"
+            "      details:\n"
+            "        blocking_findings: []\n"
+            "           advisories: []\n")     # 缩进对不上，整块读不出结构
+        out = self._run(broken)
+        self.assertEqual("FAIL", out["status"], out)
+        self.assertIn("读不出来", out["problems"][0], out["problems"][0])
+        self.assertNotIn("明细里缺", out["problems"][0], "读不出结构被说成了缺键")
+
     def test_a_per_unit_table_is_named_as_the_wrong_shape(self) -> None:
         """做成逐单元裁决表 = 做成了另一件事：那张表的量随材料条数涨。"""
         out = self._run(row("PASS") + PER_UNIT_TABLE)

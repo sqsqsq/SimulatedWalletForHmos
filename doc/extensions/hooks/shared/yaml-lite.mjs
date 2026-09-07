@@ -1,8 +1,9 @@
 /**
  * 最小 YAML 读取器 —— 只覆盖 contracts / acceptance / manifest 实际用到的子集。
  *
- * 支持：嵌套映射、序列（块式 `- ` 与行内 `[a, b]`）、标量（引号可选）、`#` 注释、空行。
- * 不支持：锚点别名、多行标量（`|` / `>`）、复杂键、流式映射 `{a: 1}`。
+ * 支持：嵌套映射、序列（块式 `- ` 与行内 `[a, b]`）、标量（引号可选）、
+ * 块标量（`|` `|-` `>` `>-`）、`#` 注释、空行。
+ * 不支持：锚点别名、复杂键、流式映射 `{a: 1}`。
  *
  * 两条实现纪律：
  * 1. **一律 `\r?\n` 分行**——按 '\n' 切会让 CRLF 文件每行尾挂个 `\r`，
@@ -16,6 +17,8 @@ import { lines } from './paths.mjs';
 
 const KV_RE = /^(\s*)([^\s#][^:]*?)\s*:\s*(.*)$/;
 const ITEM_RE = /^(\s*)-\s*(.*)$/;
+//: 块标量的引导符：`|` 原样保留换行，`>` 折成一行；`-` 是「末尾不留换行」。
+const BLOCK_RE = /^([|>])([-+]?)\s*(?:#.*)?$/;
 
 /** 标量解析：去引号、识别 true/false/null/数字，其余原样。 */
 function scalar(raw) {
@@ -31,6 +34,35 @@ function scalar(raw) {
   if (/^-?\d+$/.test(cut)) return Number(cut);
   if (/^-?\d*\.\d+$/.test(cut)) return Number(cut);
   return cut;
+}
+
+/**
+ * 块标量 —— `key: |` 之后那几行更深缩进的原样文本。
+ *
+ * 真实产物里它很常见：verifier 报告的 `details: |`、acceptance 的桥接说明。
+ * 不认它的话，下游读不出结构，只能改用切片或正则去猜边界——
+ * **读取器的局限就成了作者的限制**：他按合法 YAML 写，反被判成写错了。
+ *
+ * 内容的缩进按块内**第一行**定，与本文件的缩进纪律一致（不假设两空格）。
+ * 块内不剥注释：`#` 在这里是正文的一个字符。
+ */
+function blockScalar(rows, at, rest, baseIndent) {
+  const m = BLOCK_RE.exec(String(rest).trim());
+  if (!m) return null;
+  let first = at + 1;
+  while (first < rows.length && !rows[first].trim()) first++;
+  const indent = first < rows.length ? indentOf(rows[first]) : null;
+  if (indent === null || indent <= baseIndent) return { value: '', next: at + 1 };
+  const out = [];
+  let i = at + 1;
+  for (; i < rows.length; i++) {
+    if (!rows[i].trim()) { out.push(''); continue; }
+    if (indentOf(rows[i]) < indent) break;
+    out.push(rows[i].slice(indent));
+  }
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  const body = m[1] === '>' ? out.join(' ') : out.join('\n');
+  return { value: m[2] === '-' ? body : `${body}\n`, next: i };
 }
 
 /** 行内序列 `[a, b, c]`；元素里带括号的场景本子集不支持，原样落回标量。 */
@@ -106,6 +138,8 @@ function parseBlock(rows, start, baseIndent) {
     const rest = kv[3];
 
     if (rest.trim()) {
+      const block = blockScalar(rows, i, rest, baseIndent);
+      if (block) { map[key] = block.value; i = block.next; continue; }
       const arr = inlineSeq(rest);
       map[key] = arr === null ? scalar(rest) : arr;
       i++;
