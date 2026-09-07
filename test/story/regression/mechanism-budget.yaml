@@ -46,7 +46,7 @@ frozen_commit: "a1026080"
 # 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
 requirement:
   id: batch-6
-  status: in_progress
+  status: closed
   approved_by: WYK
   reason: "本轮方案的预算声明。计数口径 2026-09-04 由用户裁定改为只数代码行；target 同日按实际重定——新口径不数注释，剩下的都是在用的判据实现，再压就是删判据。批次 5 不压缩规模，压缩另开需求，长期方向记在 TEST.md §8 第 7 项。2026-09-05 用户裁定安装期工具（story-adaptation 与 framework-patch.yaml）不占额度：口径这一变，各类现值降了 scripts_mjs 170、prompts_md 158、data 62，总量 8706→8316——**这是口径带来的余量，不是压缩出来的**。同日用户一次签下步骤 15 的四项调整（data、hooks_mjs、scripts_py 三类 target 与总量），见各处 reason。**2026-09-05 转入批次 6 步骤 1**：上游把 verifier 报告的真源改回调用方写出的 MD、作者事件的语义订正为只进 verifier 上下文，本步据此把作者输入改成扩展自己的命令、把读者审查的落盘核对改成交付门。用户裁定本步上限 = 测算值 + 100 = 8940，替代批次 5 的 8900；两类按实测抬额度，见各处 reason"
 
