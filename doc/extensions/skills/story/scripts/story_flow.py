@@ -431,6 +431,13 @@ def read_gate_options(feature_root: Path, gate: str,
     if not isinstance(options, list) or not options:
         raise FlowError(f"{GATE_OPTIONS[-1]} 的 options 须是非空数组：每项一个选项")
 
+    # 第一级的 label 由合同给，作者写了也以合同为准——契约里留痕的必须是
+    # **摆给人的那两句**，而它们是固定的。作者要说的缺口在 missing / why 里。
+    if gate == "material_scope":
+        fixed = {o["key"]: o["label"] for o in material_options()}
+        for opt in options:
+            opt["label"] = fixed.get(str(opt.get("key") or "").strip(), opt.get("label"))
+
     keys: list[str] = []
     for i, opt in enumerate(options):
         if not isinstance(opt, dict):
@@ -931,6 +938,7 @@ def sidecar_shape(step: str) -> dict | None:
                 "shape": {"gate": gate,
                           "options": [{"key": "<选项标识>", "label": "人能看懂的选项文字",
                                        "recommended": "true/false，可省"}]},
+                "第一级不用写 label": "那两句固定，脚本按 key 填；缺什么写进 missing / why",
                 "note": "先把摆给人的**全部**选项写进这份文件，再跑 `decide` 记录人选了哪个。"
                         "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」。"
                         f"`gate` 必须写 {gate}——三级共用一个文件名，不写明是给谁摆的，"

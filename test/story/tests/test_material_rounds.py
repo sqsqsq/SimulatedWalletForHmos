@@ -667,6 +667,26 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
 
     # -- 选项集只有一处登记 ---------------------------------------------------
 
+    def test_the_labels_are_fixed_whatever_the_author_writes(self) -> None:
+        """两句标签固定：作者写了自己的措辞，落进契约的仍是合同那两句。
+
+        实跑里他把「材料已补齐，放进 inbox，请导入」改成了「**界面设计图**已放进…」——
+        往标签里塞了一个具体类别。标签可改写的话，摆给人的那句话是合同给的还是他当场
+        编的，事后分不出来，而那正是「他问了什么」的全部内容。本轮缺什么走 missing / why。
+        """
+        self.round_now()
+        编的 = [dict(o, label="界面设计图已放进 doc/features/AR90001/inbox/，请导入")
+              for o in self.gate_options()]
+        self.write_gate_options(options=编的)
+        self.put_inbox()
+        self.assertEqual(0, self.sign_supplied().returncode)
+        gates = json.loads((self.feature_root / "AR" / "story-flow.json")
+                           .read_text(encoding="utf-8"))["rounds"][-1]["gates"]
+        landed = {o["key"]: o.get("label") for o in gates[-1]["options"]}
+        for o in story_flow.material_options():
+            self.assertEqual(o["label"], landed[o["key"]],
+                             f"{o['key']} 的标签被作者的措辞盖掉了")
+
     def test_the_option_keys_live_in_the_contract_only(self) -> None:
         """键只登记在合同里：脚本与流程校验都从那里读，谁也不另存一份字面。
 
