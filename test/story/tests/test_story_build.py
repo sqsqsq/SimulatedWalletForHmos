@@ -899,6 +899,53 @@ class TestReviewComesAfterTheStory(Step8Case):
     是作业顺序把渲染排在了成文前面。顺序本身因此要成为一条判据。
     """
 
+    def mark_written(self) -> None:
+        """把契约摆成已登记成文——这条判据只在那之后才问。"""
+        (self.feature_root() / "AR" / "story-flow.json").write_text(
+            json.dumps({"schema": 3, "status": "story_written",
+                        "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False),
+            encoding="utf-8")
+
+    def test_decisions_registered_but_never_rendered_is_caught(self) -> None:
+        """登记齐了不等于渲染出来了。
+
+        实测形态：decisions.json 写得满满当当，review.md 只剩三个空章——
+        `build` 没跑、跑到一半失败、或者被一份空模板盖掉，留下的都是这一种。
+        **评审人打开的是评审记录，登记表他看不到**，所以这一步不核就等于没有评审记录。
+        """
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.review_path.write_text(
+            "# 评审记录" + chr(10) * 2 + "## 1. 待确认事项" + chr(10) * 2
+            + "## 2. 已定事项" + chr(10) * 2 + "## 3. 其他意见" + chr(10),
+            encoding="utf-8")
+        self.mark_written()
+        proc = self.run_build("check")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, f"空模板被判通过了：{out[:400]}")
+        self.assertIn("评审记录里缺", out)
+        self.assertIn("submit-boundary", out, "没点名是哪一条没渲染")
+        self.assertIn("story-build build", out, "没说清怎么补")
+
+    def test_a_rendered_review_passes_this_check(self) -> None:
+        """正常渲染出来的照常通过——不然上一条是在拦所有人。"""
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.mark_written()
+        out = self.run_build("check").stdout + self.run_build("check").stderr
+        self.assertNotIn("评审记录里缺", out, out[:400])
+
+    def test_before_the_story_is_registered_it_does_not_ask(self) -> None:
+        """登记之前不问：作者还在改登记表、还没渲染，那是正常的中间态。
+
+        拦它只多出一圈返修——而登记那一步内部就跑 `build`，两边到时自然是齐的。
+        """
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.review_path.write_text("# 评审记录" + chr(10), encoding="utf-8")
+        out = self.run_build("check").stdout + self.run_build("check").stderr
+        self.assertNotIn("评审记录里缺", out, "登记之前就拦了")
+
     def test_build_refuses_before_the_story_is_written(self) -> None:
         self.write_decision()
         self.story_path.write_text("# 交通卡紧急挂失（AR90001）\n", encoding="utf-8")

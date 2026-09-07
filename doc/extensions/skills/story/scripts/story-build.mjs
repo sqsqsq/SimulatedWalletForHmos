@@ -1802,7 +1802,35 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⑬ 评审记录只含渲染语法');
+  mark('⑬ 评审记录渲染齐了、只含渲染语法');
+  // **登记了不等于渲染出来了。** `build` 没跑、跑到一半失败、review.md 被一份空模板
+  // 盖掉，留下的都是同一种形态：决策登记满满当当，评审记录只有三个空章——
+  // 而评审人打开的是后者，登记表他看不到。
+  //
+  // 按议题锚（`<!-- decision: <id> -->`）逐条核：锚由渲染器写，作者写不出来，
+  // 所以它在不在就是「这一条渲染过没有」的确定性事实。
+  //
+  // **只核少的那一向。** 多出来的议题（登记表撤了条目而 review 还留着）不判：
+  // `build` 每次全量重渲染，那一条下次就没了；而作者改完登记表、还没重渲染就跑 check
+  // 是正常的中间态，拦它只会多出一圈返修。
+  //
+  // **只在成文登记之后核**：登记那一步内部就跑 `build`，所以登记完两边本该是齐的。
+  // 在那之前作者还在改登记表、还没渲染，是正常的中间态——拦它只多出一圈返修。
+  if (!ctx.offline && decisions && readJson(ctx.flowPath, null)?.status === 'story_written') {
+    const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
+    const ids = list.map(d => String(d?.id ?? '').trim()).filter(Boolean);
+    const anchors = new Set([...reviewText.matchAll(/<!--\s*decision:\s*(\S+?)\s*-->/g)]
+      .map(m => m[1]));
+    const missing = ids.filter(id => !anchors.has(id));
+    if (missing.length) {
+      problems.push(`决策登记了 ${ids.length} 条，评审记录里缺 ${missing.length} 条的议题：`
+        + `${missing.slice(0, 4).join('、')}${missing.length > 4 ? '…' : ''}`
+        + '——跑 `story-build build --feature <名>` 按登记表渲染，'
+        + '它重算议题正文、逐字节保留「审核结果：」后面已经填的内容');
+    }
+  }
+
+
   // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
