@@ -391,8 +391,10 @@ function cmdInit(ctx) {
   // 骨架只有一个空数组。预置分类空槽是无效机制：判据只核得了「零条目时写了没写
   // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过。
   const registered = readJson(ctx.decisionsPath, null);
+  const listed = registered === null ? null : decisionList(registered);
   if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
-  else if (!(registered.decisions ?? []).length) {
+  else if (listed === null) fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
+  else if (!listed.length) {
     process.stdout.write('[story-build init] 决策登记里一条都没有——'
       + '取舍在 story 里就没有来源。是还没登记，还是这个需求真的一个判断都没做过？\n');
   }
@@ -919,6 +921,28 @@ function renderTable(header, rows) {
     ...rows.map(r => `| ${r.join(' | ')} |`)];
 }
 
+/**
+ * 登记表里的条目 —— **两种写法都收，认不出来返回 null**。
+ *
+ * `{"decisions": [ … ]}` 是骨架给的形状；顶层直接写 `[ … ]` 是把它当一个列表，
+ * JSON 里那是同样自然的直觉。两种都能无歧义读出同一批条目，认它不算纵容。
+ *
+ * **认不出来时不返回空数组**：空数组与「一条都没登记」同形，而后者是合法状态
+ * （骨架刚建完就是零条）。混成一件的代价是整类失效没有声音——渲染器照常跑完、
+ * 打印「已渲染 0 个议题」、退出码 0，而评审人打开的是一份空模板。
+ *
+ * 宽进有边界：单数 `decision`、空壳 `{}` 这类不猜，交给调用方报错说清形状。
+ */
+function decisionList(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === 'object' && Array.isArray(raw.decisions)) return raw.decisions;
+  return null;
+}
+
+//: 登记表形状不对时说什么 —— 五个读点同一句，形状只在这里描述一次。
+const DECISION_SHAPE = '读不出条目：顶层要么是 `{"decisions": [ … ]}`，要么直接是 `[ … ]`'
+  + '——骨架由 `story-build init` 生成，照它的形状填';
+
 //: 生成区的标记。**这段的所有者是脚本**：内容从真源投影而来，`chapter` 落盘时
 //: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（spec §9、
 //: knowledge-use.yaml、materials.json），不是这里。
@@ -1018,7 +1042,7 @@ function redactReviewExemptZones(reviewText, ctx) {
   const exemptCats = new Set((ctx.contract.decision_categories ?? [])
     .filter(c => c?.banned_terms_exempt).map(c => c.key));
   const catOf = new Map();
-  for (const dec of (readJson(ctx.decisionsPath, null)?.decisions ?? [])) {
+  for (const dec of decisionList(readJson(ctx.decisionsPath, null)) ?? []) {
     if (dec?.id) catOf.set(String(dec.id), String(dec.category ?? ''));
   }
   // CRLF 安全：这里只喂给禁用词扫描，它自己也按同样的切法，行号对得上就行。
@@ -1218,8 +1242,10 @@ function cmdCheck(ctx) {
   const decisions = ctx.offline ? null : readJson(ctx.decisionsPath, null);
   if (ctx.offline) { /* 仲裁锚只判文档本身 */ }
   else if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
-  else {
-    const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
+  else if (decisionList(decisions) === null) {
+    problems.push(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
+  } else {
+    const list = decisionList(decisions);
     for (const dec of list) {
       for (const [field, what] of DECISION_FIELDS) {
         if (!String(dec?.[field] ?? '').trim()) {
@@ -1802,35 +1828,7 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⑬ 评审记录渲染齐了、只含渲染语法');
-  // **登记了不等于渲染出来了。** `build` 没跑、跑到一半失败、review.md 被一份空模板
-  // 盖掉，留下的都是同一种形态：决策登记满满当当，评审记录只有三个空章——
-  // 而评审人打开的是后者，登记表他看不到。
-  //
-  // 按议题锚（`<!-- decision: <id> -->`）逐条核：锚由渲染器写，作者写不出来，
-  // 所以它在不在就是「这一条渲染过没有」的确定性事实。
-  //
-  // **只核少的那一向。** 多出来的议题（登记表撤了条目而 review 还留着）不判：
-  // `build` 每次全量重渲染，那一条下次就没了；而作者改完登记表、还没重渲染就跑 check
-  // 是正常的中间态，拦它只会多出一圈返修。
-  //
-  // **只在成文登记之后核**：登记那一步内部就跑 `build`，所以登记完两边本该是齐的。
-  // 在那之前作者还在改登记表、还没渲染，是正常的中间态——拦它只多出一圈返修。
-  if (!ctx.offline && decisions && readJson(ctx.flowPath, null)?.status === 'story_written') {
-    const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
-    const ids = list.map(d => String(d?.id ?? '').trim()).filter(Boolean);
-    const anchors = new Set([...reviewText.matchAll(/<!--\s*decision:\s*(\S+?)\s*-->/g)]
-      .map(m => m[1]));
-    const missing = ids.filter(id => !anchors.has(id));
-    if (missing.length) {
-      problems.push(`决策登记了 ${ids.length} 条，评审记录里缺 ${missing.length} 条的议题：`
-        + `${missing.slice(0, 4).join('、')}${missing.length > 4 ? '…' : ''}`
-        + '——跑 `story-build build --feature <名>` 按登记表渲染，'
-        + '它重算议题正文、逐字节保留「审核结果：」后面已经填的内容');
-    }
-  }
-
-
+  mark('⑬ 评审记录只含渲染语法');
   // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
@@ -2600,7 +2598,8 @@ function cmdBuild(ctx) {
   const decisions = readJson(ctx.decisionsPath, null);
   if (!decisions) fail(`缺 ${ctx.decisionsPath}——先跑 init 建骨架`);
   requireStoryFirst(ctx);
-  const list = Array.isArray(decisions.decisions) ? decisions.decisions : [];
+  const list = decisionList(decisions);
+  if (list === null) fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
   const old = readText(ctx.reviewPath) ?? '';
 
   // 分层与编号都在渲染器里按登记顺序算，不进登记表：登记表里存序号，

@@ -899,52 +899,62 @@ class TestReviewComesAfterTheStory(Step8Case):
     是作业顺序把渲染排在了成文前面。顺序本身因此要成为一条判据。
     """
 
-    def mark_written(self) -> None:
-        """把契约摆成已登记成文——这条判据只在那之后才问。"""
-        (self.feature_root() / "AR" / "story-flow.json").write_text(
-            json.dumps({"schema": 3, "status": "story_written",
-                        "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False),
-            encoding="utf-8")
+    def write_raw_decisions(self, payload) -> None:
+        """按给定的顶层形状写登记表——形状本身就是这几条要问的事。"""
+        (self.src / "decisions.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    def test_decisions_registered_but_never_rendered_is_caught(self) -> None:
-        """登记齐了不等于渲染出来了。
+    ROWS = [{
+        "id": "submit-boundary", "status": "settled",
+        "title": "提交入口与补卡由两张开发单分别承接",
+        "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。" + chr(10) * 2
+                         + "**根据**：上游已经拆成两张开发单。" + chr(10) * 2
+                         + "**结论与影响**：本单只做提交与回执展示。",
+        "decider": "需求负责人",
+    }]
 
-        实测形态：decisions.json 写得满满当当，review.md 只剩三个空章——
-        `build` 没跑、跑到一半失败、或者被一份空模板盖掉，留下的都是这一种。
-        **评审人打开的是评审记录，登记表他看不到**，所以这一步不核就等于没有评审记录。
+    def test_a_bare_array_is_read_as_the_register(self) -> None:
+        """顶层直接写 `[ … ]` 也认——JSON 里把一个列表写成列表是同样自然的直觉。
+
+        不认的话，读取处拿到 undefined 就走「零条」那一支：渲染器照常跑完、
+        打印「已渲染 0 个议题」、退出码 0，而评审人打开的是一份空模板。
         """
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.review_path.write_text(
-            "# 评审记录" + chr(10) * 2 + "## 1. 待确认事项" + chr(10) * 2
-            + "## 2. 已定事项" + chr(10) * 2 + "## 3. 其他意见" + chr(10),
-            encoding="utf-8")
-        self.mark_written()
+        self.write_raw_decisions(self.ROWS)
+        proc = self.run_build("build")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("submit-boundary",
+                      self.review_path.read_text(encoding="utf-8"), "议题没渲染出来")
+
+    def test_a_shape_that_cannot_be_read_speaks_up(self) -> None:
+        """读不出来与「一条都没有」是两回事——后者合法，前者要当场喊。
+
+        混成一件的代价是整类失效没有声音：作者看到的是成功，产物是空的。
+        """
+        for name, payload in (("单数键", {"decision": self.ROWS}),
+                              ("空壳", {}),
+                              ("字符串", "决策还没登记")):
+            with self.subTest(形状=name):
+                self.write_raw_decisions(payload)
+                proc = self.run_build("build")
+                out = proc.stdout + proc.stderr
+                self.assertEqual(1, proc.returncode, f"{name}被默默当成了零条：{out[:300]}")
+                self.assertIn("读不出条目", out)
+                self.assertIn('{"decisions"', out, "没说清该长什么样")
+
+    def test_an_empty_register_is_still_legal(self) -> None:
+        """零条决策是合法状态（骨架刚建完就是），不能与读不出来同判。"""
+        self.write_raw_decisions({"decisions": []})
+        proc = self.run_build("build")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertNotIn("读不出条目", proc.stdout + proc.stderr)
+
+    def test_check_names_the_shape_too(self) -> None:
+        """`check` 那一侧同样点名，不静默放行。"""
+        self.write_raw_decisions({"decision": self.ROWS})
         proc = self.run_build("check")
         out = proc.stdout + proc.stderr
-        self.assertEqual(1, proc.returncode, f"空模板被判通过了：{out[:400]}")
-        self.assertIn("评审记录里缺", out)
-        self.assertIn("submit-boundary", out, "没点名是哪一条没渲染")
-        self.assertIn("story-build build", out, "没说清怎么补")
-
-    def test_a_rendered_review_passes_this_check(self) -> None:
-        """正常渲染出来的照常通过——不然上一条是在拦所有人。"""
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.mark_written()
-        out = self.run_build("check").stdout + self.run_build("check").stderr
-        self.assertNotIn("评审记录里缺", out, out[:400])
-
-    def test_before_the_story_is_registered_it_does_not_ask(self) -> None:
-        """登记之前不问：作者还在改登记表、还没渲染，那是正常的中间态。
-
-        拦它只多出一圈返修——而登记那一步内部就跑 `build`，两边到时自然是齐的。
-        """
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.review_path.write_text("# 评审记录" + chr(10), encoding="utf-8")
-        out = self.run_build("check").stdout + self.run_build("check").stderr
-        self.assertNotIn("评审记录里缺", out, "登记之前就拦了")
+        self.assertEqual(1, proc.returncode, f"check 放行了读不出的登记表：{out[:300]}")
+        self.assertIn("读不出条目", out)
 
     def test_build_refuses_before_the_story_is_written(self) -> None:
         self.write_decision()
