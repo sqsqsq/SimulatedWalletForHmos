@@ -7,6 +7,8 @@
 
 3.0.0 把 phase 合格性与 goal 跨阶段推进收敛为机器契约：
 
+- **资源引用门禁退役**：删除 coding 阶段的 `media_reference_integrity` BLOCKER，补齐此前 `resource_integrity` 的退役；资源引用合法性统一由 `coding_compile` 真实编译承担。升级后，受该静态门禁误报阻断的 feature 重跑 coding harness 即可，无需扩充 `contracts.modules` 或补占位素材。
+
 ### contracts.yaml 文件引用闭包（Breaking）
 
 - plan closure 现在把 contracts 中 schema 声明的文件字段解析为内存视图，并要求它们全部属于规范化后的顶层 `contracts.files`。覆盖 data model/interface/component 文件、`resource_keys` 的 `path`/`media`、`navigation.config_files`、HAR build/export 文件和 `prd_to_code_traceability[].key_files`。
@@ -260,6 +262,14 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **行为变化**：结构化视觉 defect 只有 `severity=major|blocker` 才产 coding 回修候选，`minor` 留在报告 WARN 与视觉债务台账（`needs_fix` 仍阻断 release）、不再消耗回退预算（宿主 run `20260906T143404Z-ab463c` 的两次已用回退均为真实修复，其 12 条 minor 声明差曾以 coding 候选身份错误请求第三次回退，因预算耗尽触发 `backtrack_limit` 停机）；T8 hard 命中被转录成 `minor` 现在由 `visual_diff_finding_transcription` 拦下（hard 合同 FAIL、best_effort WARN，文案给出下限 major）；testing 同键复用时若 `MAISON_GOLDEN_CONTRACT` 生效，`visual_diff_capture` 不再直接记 PASS，而是走既有采集入口只补采集（device_test/UT 不重跑，nav 参数读顶层已回填的 `device-test-run.meta.json`），两分支的 `visual_diff_capture` details 都多一行 `golden_contract=<sha256 前 16 位>|none`。defect schema、回退预算、T8 档位、verifier 模板、golden 夹具、执行键一律未动，消费者无需动手。
 - **放弃的准确性**：verifier 误标为 `minor` 的真实产品缺陷本轮不产候选，等下一轮 verifier 或人工升级；只守 hard 档，warn 档 T8 转录成 minor 后不进回修是本意；复用分支不防 `env -u`——代理清掉 golden 变量时框架只能如实写 `golden_contract=none`，由 evaluator 既有的 run 绑定把这种 PASS 判 FAIL。
 
+### 3.0.x：复用轮证据按执行键身份采信，装机复用回传完整摘要，长图参考按顶部一屏推导（非 Breaking，plan 9b2d5e7c / openspec reuse-evidence-binding-and-reference-derivation）
+
+- **复用证据采信口径**：goal 模式下同键复用轮此前写不出 `device-test-evidence.json`（写出门槛要求本轮真装），写出了也过不了采信（要求本轮真装 + run meta 落本 attempt 时间窗，而复用回填的是被复用 run 的冻结 meta）——宿主 run `20260907T063800Z-26c3b0` i2 因此以 `unverifiable_must_fix` 白烧一次 retry。3.0.x 起写出门槛改为"装机事实已知（真装成功或复用同 HAP）∧ 设备执行事实存在（真跑或同键复用）"，doc 增可选字段 `install_reused` / `reused_by_execution_key` / `execution_key` / `reused_run_dir`（schema 仍 1.1，旧 doc 逐字按旧规则校验）；采信端对复用 doc 改核被复用 run 的执行键记录身份（与 `decideReuse` 共用 `isExecutionRecordReusable`：同键、成功、trace 在盘、执行事实冻结件齐；派生统计不齐不是拒绝理由）并跳过 run meta 时间窗，对装机复用改核当前盘上 HAP 的完整摘要（由 `device-test-install.meta.json` 的 hapPath/mtime/size/12 位短指纹 + 文件字节三核算出）。**放弃的准确性**：采信的是记录身份 + 冻结件 + 键相等，不再要求本轮装机与本轮时间——手改冻结件能骗过它；防篡改不是优先级。
+- **装机复用摘要**：install provider 的复用分支此前不回传 `hapSha256Full`，执行键的 HAP 输入为 null，代理侧与外层 gate 的键交替、复用被"最新一条是别键"挡住（同一 HAP 一小时内真机跑了四遍）。3.0.x 起复用分支与真装分支同源计算当前 HAP 文件的 64 位 sha256 回传，两路径同键；不做 12 位短指纹回落，不跳过 hap=null 的旧记录（会掩盖较新失败）。**放弃的准确性**：摘要来自当前文件字节，没有任何回落；盘上旧的 null 记录不迁移，最多再导致一次正常真跑。
+- **顶部一屏推导**：参考图与设备视口**同宽但更高**（高宽比超出 ×1.15）时不再整屏剔除，改由框架每次把原图顶部 `shot.h` 像素重裁到 `device-testing/device-screenshots/_derived-ref/<ref_id>.top<shotH>.png` 作为比对输入，采集像素度量、delegated provider、检查前置门与 OCR 比对域、spec 前置门五处共用同一判据（`resolveCompareReference`）；宽度不同仍按现状剔除 FAIL/WARN。比对范围只按 ui-spec 声明的归一化 bbox 划分（`y+h ≤ ratio` 内 / `y ≥ ratio` 外 / 跨线或无 bbox 未确定），provider 覆盖预检与 `visual_diff_region_attest` 只要求范围内子集；范围外与未确定的 must_have 元素记**未验证**——`visual_reference_viewport` 出 MINOR WARN 行（含范围外 N / 未确定 M）并新增同 id 的视觉债务来源（清偿只认 testing 侧证据：该 check 缺席或只剩 PASS 行时，须本轮 `visual_diff` PASS 且 `structured.kind==='visual_diff'` 才 closed——参考资产换成单视口图并跑通视觉流水线后转绿；spec 前置门的 PASS 行、SKIP / 缺报告 / 解析失败都不清偿），`visual_diff` details 注"按顶部一屏比对；其余部分未验证"。attest crop 与 refs 回执仍绑原图；`capture_completeness_external` 分母不动。**放弃的准确性**：只覆盖进入态一屏，其余零证据、以 WARN + 债务显式披露而非静默剔除；范围划分只信声明 bbox，声明错位会把元素划错范围（划外＝少验一个，划内＝可能误报缺失），由既有 defect-review 纠正；长图若非页顶截取，得到显式 WARN/FAIL。
+- **归因**：`hasRuntimeFailureEvidence` 不再把 unverified（证据身份不齐待重采：绑定失败、截图/build 身份不匹配）当失败事实——仅此类 unverified 的 PASS+retry 轮不带 `failure_kind_classified`/blocker_signature；绑定通过且根 case 失败的可信真机证据（含走 unverified 通路的 test_contract 分类）仍算失败事实，`test_contract` 归因照旧持久化；同轮有 harness FAIL 或可信缺陷时归因照旧。
+- **消费者无需动手**：无配置变更；`_derived-ref/` 为框架产物，可随 device-screenshots 一并清理。
+
 ### 3.0.x：即席跑机内置设备门 + `device:ready` 独立就绪入口（Breaking，plan c7d2a9e4 / openspec adhoc-device-entry-gate）
 
 即席设备 CLI（`adhoc-device-test`）此前**从未接入设备入口门**：全文只有一行读 `HARNESS_HDC_TARGET`，而普通模式/goal 之外没有任何人注入它；恢复桥又只消费已注入的目标（`未显式指定目标，跳过就绪检查`），于是"凭据登记好了却永远不触发自动解锁"，锁屏上跑即席只会一路撞到 `screen is locked`。同时全仓没有任何"只解锁 / 只确认设备"的命令，解锁只是重跑设备阶段的副作用。3.0.x 起两件事收口：即席三个碰设备分支内置同一道门，另加一个独立就绪入口。
@@ -271,6 +281,16 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 - **请删掉自写的解锁脚本**：临时补接线用的脚本（直调 `ensureUnlocked` / `buildUnlockDeps` / 硬编码凭据版本、绕过 `collectPolicyStatus` 策略入口）现在没有存在理由，改用 `device:ready` 或即席 CLI。**若它落在 `framework/` 目录下尤须删除**——那里是发布件解压目录，消费者写入违反 consumer-framework-boundary，下次 UPDATE 会被覆盖。
 - **未改动**：PIN 仍只能由用户本人在真实 TTY 用 `--enroll` 登记（agent 不代跑、口令不进对话），`ensureDeviceReady` / `runPhaseEntryDeviceGate` 的冻结放行 / `ensureDeviceReadyAtRuntime` / `collectPolicyStatus` / 恢复桥的判定一律未动，即席也没有变成 phase。
 - **放弃的准确性**：① 每次即席执行多一次 wake+快照，managed 档下门可能起模拟器实例；② `--ready` 在 managed 档只能证明"能起来并就绪"，随即回收；③ 冻结上下文里的 `--ready` 只做运行期恢复，探测判不出（`unknown`）报 `ok=false, code='blocked'`（"无法确认锁屏状态"）而不放行——独立命令没有后续操作可验证，宁可让人看一眼手机；④ `--ready` 成功不等于此后一直解锁，锁屏超时后仍由既有运行期恢复桥再解一次，不加轮询保活。
+
+### 3.0.x：Codex verifier 子代理模板收编（Breaking，plan 7b2e9d4c / openspec codex-verifier-subagent-template）
+
+宿主 `.codex/agents/verifier.toml` 一直是宿主 2026-05-25 手工提交带入的私产（Cursor 会话手写），framework 的 codex adapter 从未有过 agents 模板，两份宿主的内容都停在 5 月契约。3.0.x 起它被收编为受管模板：由 claude 的 `agents/claude/templates/agents/verifier.md` 渲染成 `agents/codex/templates/agents/verifier.toml`（`cd harness && npm run sync:codex-agents`；等值由 unit test 守护），随发布件下发。
+
+- **行为变化（Breaking）**：UPDATE 起 `.codex/agents/verifier.toml` 由 framework 模板**自动对齐**（顶层 `subagents` + `update_policy: auto_overwrite`）。**宿主手写版被无提示覆盖是预期行为**；旧文件先备份到 `.framework-backup/<stamp>/.codex/agents/verifier.toml`，需要旧话术就去备份里取。
+- **verifier 行为差异**：新模板按 request / `prompt_path` 契约工作——`ai-prompt.md` 是本轮权威指令，**不再自读** `verify-<phase>.md`、`verify-*.overlay.md` 与 `phase-rules/<phase>-rules.yaml`（旧 toml 每阶段都在白读三份文件），输出末尾恰好一个终态块（`verifier_subject_id` 逐字回显），并带上"收到的不是纯 request JSON 时声明不可入闭环"一节。
+- **`sandbox_mode = "read-only"` 只是角色默认值**，不是隔离保证：Codex 在 spawn_agent 时先套角色配置、再用**父线程实时权限覆盖**，Maison goal 的 codex 父进程恒为 `danger-full-access`，所以 goal 路径下 verifier 子线程是全权限。"不写盘"由模板正文的硬性规则承担，与 5 月以来的实际状态一致。
+- **宿主不应再手改该文件**：要改审查员人设，改 `agents/claude/templates/agents/verifier.md`、重跑 `npm run sync:codex-agents`、重新发布。
+- **未改动**：`verifier_subagent` 布尔语义与位置、claude / codeagent 的 `commands.subagents` 声明与模板、`harness/prompts/verify-*.md` 与 ai-prompt 装配、codex 的 hooks（Stop hook 不做、写守卫暂缓，裁决登记在 `agents/codex/adapter.yaml` notes）。
 
 ## 首选路径：初始化 Skill 的 UPDATE 模式（编排化 · S1–S4）
 
