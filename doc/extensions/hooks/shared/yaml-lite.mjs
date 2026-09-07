@@ -117,6 +117,14 @@ function parseBlock(rows, start, baseIndent) {
         i = sub.next;
         continue;
       }
+      const block = blockScalar(rows, i, rest, baseIndent);
+      if (block) {
+        // `- |` / `- >`：一项本身就是一段多行文本。verifier 把一条 advisory 写成多行
+        // 就是这个形态；不认它的话，读取器的局限又一次被说成作者写错了。
+        seq.push(block.value);
+        i = block.next;
+        continue;
+      }
       if (KV_RE.test(rest)) {
         // `- key: value`：本项是个映射，其后续键与 `-` 后第一个字符同列。
         // 把 `-` 换成空格再按普通映射块解析——否则递归会重新撞上同一个 `-`。

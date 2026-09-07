@@ -320,6 +320,23 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         out = self._run(self.with_checks(self.OTHER, item))
         self.assertEqual("PASS", out["status"], out)
 
+    def test_a_multi_line_advisory_is_still_a_list_item(self) -> None:
+        """一条 advisory 写成多行就是 `- |`，那是合法 YAML。
+
+        不认它的话，读取器的局限又一次被说成作者写错了——他会被要求重写报告。
+        """
+        item = ("    - id: story_reader_review\n"
+                "      status: WARN\n"
+                "      details:\n"
+                "        blocking_findings: []\n"
+                "        advisories:\n"
+                "          - |\n"
+                "            第 5 章说未实名可下单，\n"
+                "            第 8 章验收里没有这个入口。\n"
+                "          - 图 3 前面没有承接句\n")
+        out = self._run(self.with_checks(self.OTHER, item))
+        self.assertEqual("PASS", out["status"], f"多行 advisory 被判成读不出结构：{out}")
+
     def test_yaml_that_cannot_be_parsed_is_said_so(self) -> None:
         """读不出结构与「缺这两个键」是两回事。
 

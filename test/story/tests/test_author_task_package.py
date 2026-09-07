@@ -28,6 +28,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
 CONTRACT = EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "story_flow.py"
 FEATURE = "TP90001"
 
 # 任务包体量上限：作者要在动笔前一次读完它
@@ -396,6 +397,15 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
         self.assertIn(self.RULE, message)
         self.assertIn("指向了 spec 里没有要求的条目", message, message[:400])
 
+    def test_the_lead_figure_rule_is_stated_once(self) -> None:
+        """章首那张怎么画只说一次——它讲的是本需求的过程，与列的是哪份上游无关。
+
+        两节各印一遍的话，作者读到第二遍会以为这两处说的是两件事。
+        """
+        package = self.task_package()
+        self.assertEqual(1, package.count("画哪种看第 4 章的参与方表"),
+                         "章首那张图的选法印了不止一次")
+
     def test_a_criteria_without_the_field_is_plain_business_acceptance(self) -> None:
         """一条需求里绝大多数验收点与规约无关，它们不写这个字段——那不是漏写。
 
@@ -517,10 +527,19 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         return json.loads(proc.stdout)
 
     def write_contract(self, status: str) -> None:
-        (self.feature_root / "AR" / "story-flow.json").write_text(json.dumps({
-            "schema": 3, "feature": FEATURE, "status": status,
-            "rounds": [{"round": 1, "gates": []}],
-        }, ensure_ascii=False), encoding="utf-8")
+        """一份走到某个状态的契约。
+
+        **材料指纹要带上当下的那个**：不带的话「材料变了」先于关卡成立，
+        `status` 会先让人去重跑 `round`——那是对的行为，但不是这几条要问的事。
+        """
+        proc = run(sys.executable, str(FLOW_SCRIPT), "round",
+                   "--feature", FEATURE, "--project-root", str(self.root), cwd=self.root)
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        path = self.feature_root / "AR" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["status"] = status
+        data["rounds"][-1]["gates"] = []
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     def test_after_the_flow_closes_it_gives_the_spec_stage_order(self) -> None:
         """两跑都先跑了 harness 再写 story，三轮 FAIL 全是「产物不齐」。"""

@@ -511,6 +511,10 @@ def cmd_round(feature_root: Path) -> dict:
         if scope_options:
             entry["scope_options"] = scope_options
 
+    frozen = frozen_inbox_note(feature_root, contract)
+    if frozen:
+        log(frozen)
+
     # 材料没变就不是新一轮。「幂等」只意味着**不新建轮次**，不意味着不更新事实。
     if rounds and (rounds[-1].get("materials") or {}).get("digest") == digest:
         current = rounds[-1]
@@ -575,6 +579,27 @@ def cmd_round(feature_root: Path) -> dict:
 
 # ---------------------------------------------------------------------------
 # decide：追加一条关卡决策
+
+def frozen_inbox_note(feature_root: Path, contract: dict) -> str:
+    """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
+
+    这时不能顺手导：导入会改正文，而已经定稿的 story 声称的依据是当轮的材料快照，
+    导完两边就对不上了。所以出口是显式的 `reopen`，不是静默导入。
+
+    但不提它，那份文件从此没有任何人知道——`round` 只看已导入的指纹说「材料未变」，
+    `status` 只说下一步走 spec 那条路。**下游没有动作时要说明为什么不适用，
+    缺席不代表不适用。**
+    """
+    if not after_complete(contract) or not contract.get("rounds"):
+        return ""
+    pending = material_state(feature_root, contract["rounds"][-1])["pending"]
+    if not pending:
+        return ""
+    more = f" 等 {len(pending)} 份" if len(pending) > 3 else ""
+    return (f"收件箱里有 {len(pending)} 份还没导入的原件（{'、'.join(pending[:3])}{more}）："
+            "story 已经冻结，要把它们纳入就先跑 `story_flow.py reopen`，"
+            "再导入、重跑 `round`；不纳入就留在收件箱，本轮不受影响")
+
 
 def material_state(feature_root: Path, current: dict) -> dict:
     """料现在什么样——**两个事实，一次问完**：谁还没并入正文、材料变没变。
@@ -693,9 +718,21 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     # 只能做流程当前允许的那一步。顺序由 `next_step` 一处定义，decide 不自己判前置——
     # 两处各写一套「什么时候能做什么」，迟早对不上。
-    expected, action = next_step(feature_root, contract)
-    if expected != f"await_gate:{gate}":
-        raise FlowError(f"当前这一步不是 {gate}：{action}（`status` 的 next 是 {expected}）")
+    #
+    # **第一级例外，它问的是另一件事**：`next_step` 回答「下一步做什么」，
+    # 而收件箱里有料时那一步是导入。人能不能表态与导入没做没关系——
+    # 他可以放好料先答一句，也可以等导完再答，两种都是同一次表态。
+    # 所以这一级的前置是「本轮这一级还没有定下来」，不比对 next 的字面。
+    if gate == "material_scope":
+        settled = last_gate(round_gates(contract), gate)
+        if settled and settled["outcome"] == "accepted":
+            raise FlowError(
+                f"本轮第一级已经定了（{settled['chosen']}）——材料再变会开出新一轮，"
+                "那时才轮到重新表态；现在按 `status` 的 next 往下走")
+    else:
+        expected, action = next_step(feature_root, contract)
+        if expected != f"await_gate:{gate}":
+            raise FlowError(f"当前这一步不是 {gate}：{action}（`status` 的 next 是 {expected}）")
 
     # 选项来源按关卡分工——**只有第一级读侧车**，后两级从契约取，关卡摆不出分析没定的选项。
     # 后两级不读它，但盘上留着别级的侧车仍要拦：那说明摆选项与走流程对不上，
@@ -935,6 +972,12 @@ def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str |
     return True, None
 
 
+def frozen_tail(feature_root: Path, contract: dict) -> str:
+    """冻结态的下一步末尾那一句：收件箱里有没有没人管的原件。`next` 本身不变。"""
+    note = frozen_inbox_note(feature_root, contract)
+    return f"。**另外**：{note}" if note else ""
+
+
 def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
@@ -956,12 +999,32 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
                 "本地单没有归档，只有进 plan。"
                 "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，"
-                "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审")
+                "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审"
+                + frozen_tail(feature_root, contract))
     if contract.get("status") == "complete":
-        return spec_stage_step(feature_root)
+        step, action = spec_stage_step(feature_root)
+        return step, action + frozen_tail(feature_root, contract)
 
     current = contract["rounds"][-1]
     gates = round_gates(contract)
+
+    # **已到的材料先处理完，再谈别的**——人回答没回答都一样。
+    #
+    # 收件箱里躺着原件而流程往下走的话，那份料要到成文登记时才被发现，
+    # 在那之前的每一个判断都建立在一份不全的材料上。文件已经在盘上，
+    # 导入是脚本的活，不用问人「放好了吗」。
+    # 表态与导入互不挡路：第一级的 `decide` 看的是「这一级定没定」，不看这里给的是什么。
+    # 收口之后不走这条——那时材料再变归 `reopen`，见上面 `story_written` 那支。
+    state = material_state(feature_root, current)
+    if state["pending"]:
+        more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
+        return ("import_materials",
+                "收件箱里有还没并入正文的原件，先导入："
+                "`python doc/extensions/skills/story/scripts/import_sources.py --feature <名>`"
+                f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
+    if state["changed"]:
+        return ("run_round",
+                "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
 
     # 第一级：材料。**先于任何需求分析**——材料不全时做的范围判断注定作废，
     # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
@@ -978,25 +1041,6 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     if material and material["outcome"] == "rejected":
         return ("await_gate:material_scope",
                 "上一笔被驳回（收件箱里没有新文件、材料也没变），在第一级重新取得选择")
-
-    # 人已经对材料表过态：**已到的材料先处理完，再谈别的。**
-    #
-    # 收件箱里躺着原件而流程往下走的话，那份料要到成文登记时才被发现，
-    # 在那之前的每一个判断都建立在一份不全的材料上。人回的是哪一项不改变这件事——
-    # 文件已经在盘上，导入是脚本的活，不用再问一次「放好了吗」。
-    # 排在关卡**之后**：关卡是人表态的地方，`decide` 要求这一步正是它，
-    # 排到前面去，人刚放好料那一笔就永远签不下去。
-    # 收口之后不走这条——那时材料再变归 `round` 开新一轮，见上面 `story_written` 那支。
-    state = material_state(feature_root, current)
-    if state["pending"]:
-        more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
-        return ("import_materials",
-                "收件箱里有还没并入正文的原件，先导入："
-                "`python doc/extensions/skills/story/scripts/import_sources.py --feature <名>`"
-                f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
-    if state["changed"]:
-        return ("run_round",
-                "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
 
     # 材料已确认 → 才做需求粒度分析（全景 / 本部件 / 本 AR 定位 / 功能清单 / 范围定法选项）
     if not current.get("positioning") or not current.get("scope_options"):

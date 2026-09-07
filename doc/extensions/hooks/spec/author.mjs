@@ -206,6 +206,22 @@ function imageSection(projectRoot, feature) {
  * 上游两份各一节，同一个渲染。**下游都是 story**：spec 的内容归框架管，
  * 扩展不往那边搬图；系统设计与 spec 画过的图，作者按内容归位进 story。
  */
+/**
+ * 章首那张图怎么画 —— **整份任务包只说一次**。
+ *
+ * 它讲的是本需求的端到端过程，与上游哪一份画过什么无关；挂在某一份上游那一节里的话，
+ * 那份上游没有图时这段就整个不见了，而作者照样要画章首那张。
+ */
+function leadFigureSection() {
+  return ['## 4a. 业务流程章章首那张图', '',
+    '**先按评审者要看的过程画**：用户、本部件、云侧各自做什么，走到哪几个终态，'
+    + '分支岔在哪。',
+    '**画哪种看第 4 章的参与方表**：三个以上参与方画时序图或泳道图，'
+    + '讲清谁先调谁、结果回到谁；两个以内画流程图或状态图。',
+    '它与上游某张恰好是同一张也可以，那就把来源标记写进它的围栏——'
+    + '不必为了不同而画不同。', ''];
+}
+
 function diagramSection(heading, label, source, downstream) {
   const list = diagramsOf(source);
   const rows = [heading, ''];
@@ -213,12 +229,7 @@ function diagramSection(heading, label, source, downstream) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
-  rows.push('业务流程章**章首那张图先按评审者要看的过程画**：用户、本部件、云侧'
-    + '各自做什么，走到哪几个终态，分支岔在哪。'
-    + '**画哪种看第 4 章的参与方表**：三个以上参与方画时序图或泳道图，'
-    + '讲清谁先调谁、结果回到谁；两个以内画流程图或状态图。'
-    + '下面这些是上游的，讲的是接口与分支——放在讲它内容的那一节。'
-    + '两者恰好是同一张也可以，不必为了不同而画不同。', '');
+  rows.push('这几张是上游的，讲的是接口与分支——放在讲它内容的那一节。', '');
   rows.push(`每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
     + '**开头那行来源标记原样保留**，机器核的就是它。周围的文字自己写。',
     '**对应的含义是标记指向它，不是照抄**：把上游的流程改画成时序、'
@@ -313,6 +324,8 @@ function taskPackage(projectRoot, feature) {
     ...decisionSection(contract),
     '',
     ...imageSection(projectRoot, feature),
+    '',
+    ...leadFigureSection(),
     '',
     ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR',
       docText(projectRoot, feature, 'SR', 'design.md'), 'story'),

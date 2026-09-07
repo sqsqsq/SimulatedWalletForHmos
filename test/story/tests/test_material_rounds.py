@@ -286,6 +286,34 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
                             "成文之后还引导导入，story 的依据就被改掉了")
         self.assertEqual("run_archived", payload["next"])
 
+    def put_inbox_file(self, name: str = "后到的稿.md") -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text("# 后到的稿" + chr(10) * 2 + "冻结之后才来的材料。" + chr(10),
+                                  encoding="utf-8")
+
+    def test_a_frozen_story_still_says_what_is_sitting_in_the_inbox(self) -> None:
+        """冻结之后放的料不能顺手导（导了 story 就对不上它自己声称的依据），
+        但要**说出来**——不提的话那份文件从此没人知道，`round` 只会说「材料未变」。
+        """
+        self.complete_it("story_written")
+        self.put_inbox_file("补的界面稿.md")
+        proc = self.run_flow("round")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("补的界面稿.md", out, "收件箱里那份原件一个字都没提")
+        self.assertIn("reopen", out, "没说清要纳入该走哪条路")
+
+        proc = self.run_flow("status")
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertEqual("run_archived", payload["next"], "冻结态的下一步被改掉了")
+        self.assertIn("补的界面稿.md", (proc.stdout or "") + (proc.stderr or ""))
+
+    def test_an_empty_inbox_after_freezing_says_nothing_extra(self) -> None:
+        """没有待导入的原件就不多说一句——每次都提一遍，读的人就不看它了。"""
+        self.complete_it("story_written")
+        proc = self.run_flow("status")
+        self.assertNotIn("收件箱里有", (proc.stdout or "") + (proc.stderr or ""))
+
     def test_archived_also_opens_no_round(self) -> None:
         """已归档同理——它比成文登记还靠后。"""
         self.complete_it("story_written")
@@ -439,6 +467,51 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         """第一轮照停：那一轮没有任何人对材料表过态。"""
         self.round_now()
         self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_material_on_disk_is_imported_before_anyone_answers(self) -> None:
+        """料到了，关卡还没人回答——下一步就是导入，不必等表态。
+
+        等表态才导的话，人回答之前流程里每一个判断都建立在一份不全的材料上；
+        而文件已经在盘上，导入是脚本的活。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        self.assertEqual("import_materials", self.next_of())
+
+    def test_answering_still_works_while_the_import_is_pending(self) -> None:
+        """`status` 说去导入，不挡人表态——两件事互不排斥。
+
+        表态的前置是「本轮这一级还没定」，不是「下一步恰好是这一级」：
+        挂在后者上的话，人刚放好料那一笔就永远签不下去。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        self.assertEqual("import_materials", self.next_of())
+        proc = self.sign_supplied()
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        self.assertEqual("import_materials", self.next_of(), "签完下一步变了")
+
+    def test_the_same_level_cannot_be_signed_twice_in_one_round(self) -> None:
+        """本轮这一级定过了就不再收——材料再变会开新一轮，那时才轮到重新表态。"""
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        self.assertEqual(0, self.sign_supplied().returncode)
+        self.write_gate_options()
+        proc = self.sign("confirm_scope")
+        self.assertEqual(1, proc.returncode, "同一轮里签了两次")
+        self.assertIn("本轮第一级已经定了", self.out_of(proc))
+
+    def test_after_a_rejection_new_material_points_at_the_import(self) -> None:
+        """上一笔被驳回、人这才把料放上来：下一步是导入，不是再问一遍。"""
+        self.round_now()
+        self.write_gate_options()
+        self.assertEqual(2, self.sign_supplied().returncode)
+        self.assertEqual("await_gate:material_scope", self.next_of())
+        self.put_inbox()
+        self.assertEqual("import_materials", self.next_of())
 
     def test_saying_the_material_is_all_there_still_imports_the_inbox(self) -> None:
         """人说「现有材料就是全部」，收件箱里的原件照样先导入。
