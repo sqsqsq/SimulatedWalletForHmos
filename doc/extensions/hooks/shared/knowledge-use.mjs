@@ -249,8 +249,20 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
     }
     if (row.applicable === true) {
       if (entry.reviewAction) {
-        problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
-          + '它的动作归《决策与评审记录》的跨团队协同，不写进本需求的要求');
+        // 它照样可能命中——命中的结果是一次跨团队的动作，不是代码要求。
+        // 判命中就报错的话，作者要绕开只能写「不命中」，那份判断从此与事实不符，
+        // 而下游读的正是它。所以这里只核两件事：说清为什么命中；别写成代码要求。
+        if (isEmptyReason(text(row, 'reason'))) {
+          problems.push(`${id} 是评审动作条目，判命中要写 reason —— `
+            + '说清这一轮为什么命中它；要做的动作登记进《决策与评审记录》');
+        }
+        const wrote = ['requirement', 'contract', 'impact']
+          .filter(f => (f === 'requirement' ? requirements(row).length : text(row, f)));
+        if (wrote.length) {
+          problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
+            + `${wrote.join(' / ')} 留空；它的动作归《决策与评审记录》的跨团队协同`);
+        }
+        continue;
       }
       if (!requirements(row).length) {
         problems.push(`${id} 判命中却没写 requirement —— 命中而不说要求做什么，编码那里拿不到`);
@@ -349,6 +361,19 @@ function renderConstraints(knowledge, use) {
       : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
     for (const req of requirements(row)) {
       out.push(`| ${cell(text(row, 'id'))} | ${cell(req)} | ${at} |`);
+    }
+  }
+  // 命中的评审动作单列：它们不产生代码要求，混进上面那张表读者会当成要写的代码；
+  // 从表里删掉又等于说「没命中」，而它确实命中了。
+  const actions = use.constraints.filter(r => r.applicable === true
+    && byId.get(text(r, 'id'))?.reviewAction);
+  if (actions.length) {
+    out.push('');
+    out.push('评审动作（命中，不产生代码要求）：');
+    for (const row of actions) {
+      const entry = byId.get(text(row, 'id'));
+      out.push(`- ${cell(text(row, 'id'))} — ${cell(entry?.handling ?? '')}`
+        + ` — ${cell(text(row, 'reason'))}`);
     }
   }
   const na = use.constraints.filter(r => r.applicable === false);
@@ -544,8 +569,15 @@ function renderSkeleton(projectRoot, knowledge) {
     'constraints:',
   );
   for (const e of knowledge.entries) {
-    rows.push(`  - id: ${e.id}`,
-      '    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
+    rows.push(`  - id: ${e.id}`);
+    if (e.reviewAction) {
+      // 这一条命中也不产生代码要求，填法与别的不同——写在它自己这一行下面，
+      // 作者不必先去别处弄清「评审动作」是什么意思才敢填。
+      rows.push('    applicable:   # 处置是评审动作：命中与否照判，两种都补 reason',
+        '    #   不写 requirement / contract / impact；要做的动作登记进《决策与评审记录》');
+      continue;
+    }
+    rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
       '    #   落点二选一：contract 写 §9 登记过的名字，impact 写实际影响对象');
   }
   rows.push(

@@ -175,17 +175,57 @@ class TestTheJudgementMustCoverEveryActiveEntry(KnowledgeUseCase):
         self.write_use(constraints=f"  - id: {HIT}\n    applicable: true")
         self.assert_render_names("命中而不说要求做什么")
 
-    def test_a_review_action_entry_is_not_a_code_requirement(self) -> None:
-        """标了（评审动作）的条目不产生代码要求，判它命中即点名。"""
+    def with_review_action(self, tail: str) -> None:
+        """一份判断，最后一条是评审动作条目；`tail` 是它 applicable 之后那几行。"""
         self.write_use(domains=[d for d in ALL_DOMAINS if d not in ("SEC", "DLV")],
                        constraints=(
                            f"  - id: {HIT}\n    applicable: true\n"
                            "    requirement: 凭证临时文件写 wallet_receipt_temp，离开即删\n"
+                           "    contract: wallet_receipt_temp\n"
                            "  - id: DLV-01\n    applicable: false\n"
                            "    reason: 本需求不新增也不修改任何面向用户的字符串\n"
-                           f"  - id: {REVIEW_ACTION}\n    applicable: true\n"
-                           "    requirement: 归档接口说明文档"))
-        self.assert_render_names("不产生代码要求")
+                           f"  - id: {REVIEW_ACTION}\n" + tail))
+
+    def test_a_review_action_entry_may_be_a_hit(self) -> None:
+        """它照样可能命中——命中的结果是一次跨团队的动作，不是代码要求。
+
+        判命中就报错的话，作者要绕开只能写「不命中」，那份判断从此与事实不符，
+        而下游读的正是它。
+        """
+        self.with_review_action("    applicable: true\n"
+                                "    reason: 本需求新增了对外开放的签约查询接口，"
+                                "它的说明文档要随本轮归档\n")
+        out = self.render_ok()
+        self.assertIn(REVIEW_ACTION, out)
+
+    def test_a_review_action_hit_must_say_why(self) -> None:
+        """命中要说清为什么——那句话是评审者回查的依据。"""
+        self.with_review_action("    applicable: true\n")
+        self.assert_render_names("判命中要写 reason")
+
+    def test_a_review_action_entry_is_not_a_code_requirement(self) -> None:
+        """写成代码要求才点名，而且点名的是写了哪几个字段。"""
+        self.with_review_action("    applicable: true\n"
+                                "    reason: 本需求新增了对外开放接口，说明文档要随本轮归档\n"
+                                "    requirement: 归档接口说明文档\n")
+        out = self.assert_render_names("不产生代码要求")
+        self.assertIn("requirement", out, "没点名是哪个字段写错了")
+
+    def test_a_review_action_hit_gets_its_own_section(self) -> None:
+        """它不进 §10 的命中表——混进去读者会当成要写的代码；
+        从表里删掉又等于说「没命中」，而它确实命中了。所以单列一小节。
+        """
+        self.with_review_action("    applicable: true\n"
+                                "    reason: 本需求新增了对外开放接口，说明文档要随本轮归档\n")
+        out = self.render_ok()
+        section = out.split("评审动作（命中，不产生代码要求）：", 1)
+        self.assertEqual(2, len(section), "命中的评审动作没有自己那一小节")
+        line = section[1].strip().split("\n")[0]
+        self.assertIn(REVIEW_ACTION, line)
+        self.assertIn("归档状态", line, "处置原文没带上，读者不知道命中之后要做什么")
+        self.assertIn("说明文档要随本轮归档", line, "依据没带上")
+        table = out.split("| 编号 | 本需求的要求 | 落点契约名 |", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn(REVIEW_ACTION, table, "评审动作混进了命中表")
 
 
 class TestPatternsAreCandidatesOnly(KnowledgeUseCase):

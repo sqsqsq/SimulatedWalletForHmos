@@ -40,7 +40,8 @@ import {
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
 import {
-  FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, renderReview,
+  FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, ProjectionConflict,
+  projectionDigest, recordedDigest, renderReview,
 } from './review-render.mjs';
 
 import { storyReviewProblems } from '../../../hooks/shared/verifier-report.mjs';
@@ -259,8 +260,10 @@ function activeKnowledgeEntries(ctx) {
  * 读不到那份 YAML 时返回 null：走 `/story` 之外的路径、或者 spec 还没写到那一步，
  * 都是正常形态，此时这一条不判（**不是判过了**）。
  */
-function knowledgeUseVerdicts(ctx) {
+function knowledgeUseVerdicts(ctx, entries = []) {
   if (ctx.offline) return null;
+  const reviewActions = new Map(entries.filter(e => e.reviewAction)
+    .map(e => [e.id, e.handling ?? '']));
   try {
     const use = readUse(ctx.projectRoot, ctx.args.feature);
     const rows = new Map();
@@ -272,10 +275,15 @@ function knowledgeUseVerdicts(ctx) {
       // 只取第一条的话，附录 D 就成了 §10 的一个截断视图。
       if (id) {
         const req = Array.isArray(row.requirement) ? row.requirement : [row.requirement];
+        // 评审动作条目命中时没有 requirement——它的结果是一次跨团队的动作。
+        // 依据取 reason，前面带上处置原文：评审者看这一行要知道命中之后做了什么。
+        const action = reviewActions.get(id);
+        const reason = String(row.reason ?? '').trim();
         rows.set(id, { applicable: row.applicable === true,
           basis: (row.applicable === true
-            ? req.map(x => String(x ?? '').trim()).filter(Boolean).join('；')
-            : String(row.reason ?? '').trim()) });
+            ? (action !== undefined ? [action, reason].filter(Boolean).join('：')
+              : req.map(x => String(x ?? '').trim()).filter(Boolean).join('；'))
+            : reason) });
       }
     }
     // 整域不适用是那份 YAML 允许的另一种登记：一个域一行，域内条目不必逐条写。
@@ -753,10 +761,10 @@ function scopeList(text, key) {
 function scopeBoundaryRows(spec) {
   const rows = [];
   for (const m of scopeList(spec, 'in_scope_modules')) {
-    rows.push([m, '改动', '本单的范围声明']);
+    rows.push([m, '改动']);
   }
   for (const m of scopeList(spec, 'out_of_scope_modules')) {
-    rows.push([m, '不改', '本单的范围声明']);
+    rows.push([m, '不改']);
   }
   return rows;
 }
@@ -921,8 +929,31 @@ function renderTable(header, rows) {
 const ZONE_BEGIN = '<!-- story-build:begin ';
 const ZONE_END = '<!-- story-build:end -->';
 
+//: 投影区落盘时是什么样，记在起始标记里。重投前拿它与盘上的内容比：相等说明这一段
+//: 还是上次投出来的原样，覆盖它不丢任何人写的东西；不等说明有人在这里写过字。
+//: 摘要口径与 review 的议题共用一份（`projectionDigest`）——两处各写一份的话，
+//: 同一份产物在两条路上会判出不同的「有没有被人改过」。
 const zoneBlock = (name, source, rows) =>
-  [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 -->`, ...rows, ZONE_END];
+  [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 · sha256:${projectionDigest(rows)} -->`,
+    ...rows, ZONE_END];
+
+/**
+ * 盘上这一段，是不是有人动过手 —— 动过就返回它现在的样子，没动过返回 null。
+ *
+ * 标记里带摘要：与盘上内容比，相等就是没人动过（真源变没变不影响这个判断，
+ * 那是下一步的事）。
+ *
+ * 标记里没有摘要，那是**旧稿**：只能与这一次投出来的比，一样就是没人动过、
+ * 补上摘要即可；不一样就无从分辨「真源变了」与「有人改了」，按改过处理——
+ * 让人自己说哪一种，比替他猜错要好。
+ */
+function zoneHandEdited(lines, at, freshRows) {
+  const body = lines.slice(at.start + 1, at.end - 1);
+  const recorded = recordedDigest(lines[at.start]);
+  const now = projectionDigest(body);
+  if (recorded) return now === recorded ? null : body;
+  return now === projectionDigest(freshRows) ? null : body;
+}
 
 /**
  * 一段正文里某个生成区的行区间（含首尾标记），没有就返回 null。
@@ -1425,6 +1456,8 @@ function cmdCheck(ctx) {
   }
 
   mark('⑪ 形态守恒');
+  const labelGaps = [];                 // 缺了段落标签的小节，一节一行
+  const labelNotes = new Set();         // 它们的写法说明，同一份只说一次
   // ⑪ 形态守恒：合同 `form` 说这一章要有哪几个槽位，就核它们在不在。
   //
   // **一条判据读数据**，不为每个槽位各写一条：加一个槽位改合同，这段代码不动。
@@ -1483,8 +1516,12 @@ function cmdCheck(ctx) {
         if (slot.ordered && !/^[ \t]*\d+[.、)]\s/m.test(body)) {
           problems.push(`「${label}」要写成有序列表，一步一句——${form.note ?? ''}`);
         }
-        for (const lb of slot.labels ?? []) {
-          if (!body.includes(lb)) problems.push(`「${label}」缺「${lb}」这一段——${form.note ?? ''}`);
+        // 一节一行：三段都没写就报三条的话，一章下来十几行说的是同一件事，
+        // 每条还各拖一遍同样的写法说明。说明留到这一类的末尾说一次。
+        const missing = (slot.labels ?? []).filter(lb => !body.includes(lb));
+        if (missing.length) {
+          labelGaps.push(`「${label}」少了${missing.map(m => `「${m}」`).join('')}`);
+          labelNotes.add(form.note ?? '');
         }
         if (slot.diagram) {
           DIAGRAM_FENCE.lastIndex = 0;          // 正则带 /g，每次用前把游标归零
@@ -1495,6 +1532,9 @@ function cmdCheck(ctx) {
       }
     }
   }
+
+  for (const gap of labelGaps) problems.push(gap);
+  for (const note of labelNotes) if (note) problems.push(`这几段各答什么：${note}`);
 
   mark('⑫ 附录结构');
   // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
@@ -1749,13 +1789,15 @@ function cmdCheck(ctx) {
     const copyedit = readText(ctx.copyeditPath);
     if (copyedit === null) {
       problems.push(`缺 ${path.basename(ctx.copyeditPath)}`
-        + '——统稿完成后在这里写七行，七项自查各一行「查了什么／改了几处或无」');
+        + `——统稿完成后在这里写 ${COPYEDIT_ROWS} 行，`
+        + `${COPYEDIT_ROWS} 项自查各一行「查了什么／改了几处或无」`);
     } else {
       const rows = copyedit.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length;
       if (rows !== COPYEDIT_ROWS) {
         problems.push(`${path.basename(ctx.copyeditPath)} 有 ${rows} 行`
           + `（要求恰好 ${COPYEDIT_ROWS} 行，空行不计）`
-          + '——六项自查各一行；写成检查报告不加分，下一轮只会有人为了显得认真而灌水');
+          + `——${COPYEDIT_ROWS} 项自查各一行；写成检查报告不加分，`
+          + '下一轮只会有人为了显得认真而灌水');
       }
     }
   }
@@ -2121,6 +2163,15 @@ function chapterSeed(ctx, ch, spec) {
   return [];
 }
 
+/** 附录里由脚本投影的那张表的表头 —— 登记在合同，脚本不留字面。 */
+function appendixTableHeader(ctx, name) {
+  const want = normalizeHeading(name);
+  const table = Object.entries(appendixChapter(ctx.contract)?.subsection_tables ?? {})
+    .find(([k]) => normalizeHeading(k) === want)?.[1];
+  if (!table) fail(`合同的附录没登记「${name}」这一节的表头（subsection_tables）`);
+  return String(table).split('|').map(h => h.trim());
+}
+
 /**
  * 附录某一节的投影：这一节从哪个真源来、投出来是哪几行。
  *
@@ -2136,25 +2187,28 @@ function appendixProjection(ctx, spec, name) {
     const tables = appendixTables(spec, name);
     // §9.5 的依赖变更并进同一张表：评审者问的是「这一轮动了什么」，
     // 模块与依赖是同一个问题的两半，分成两张形状不一的表要读两遍。
+    //
+    // **第一列原样搬 spec 的**：⑫b 按第一列对齐集合核「附录 ⊇ spec §9」，
+    // 加个前缀这一行就对不上了——而机器区没有作者，他删不掉也改不动。
+    // 「这一行讲的是依赖」放第二列说。
     for (const t of tables) {
       for (const r of t.rows) {
         if (isPlaceholderRow(r)) continue;
-        rows.push([(r[0] ?? '').trim(), (r[1] ?? '').trim() || '变更',
-          '上游的依赖变更结论']);
+        rows.push([(r[0] ?? '').trim(), `依赖：${(r[1] ?? '').trim() || '变更'}`]);
       }
     }
     if (!tables.length) {
       // 依赖没有变更也是结论，丢了它 story 相对 spec 就减了一条。
       const na = specNotApplicable(spec, name);
-      rows.push(['依赖', '不涉及', na || '上游没有登记依赖变更']);
+      rows.push(['依赖', na || '不涉及']);
     }
     // 说明原文进表里成一行，不挂在表后当散文：附录的形态是「一句目的句 + 表格行」，
     // 表后的散文段由 ⑫ 判为倾倒区。机器区没有作者——挂在表后的话，
     // 他删掉、`project` 写回来，判据再报，他只能去改门禁。
     const why = scopeRationale(spec);
-    rows.push(['范围说明', '—', why ? why.replace(/\s*\n\s*/g, ' ')
-      : '本单的范围声明里没有写为什么这么切']);
-    const out = renderTable(['模块', '本单怎么动', '依据'], rows);
+    rows.push(['为什么这么切', why ? why.replace(/\s*\n\s*/g, ' ')
+      : '本单的范围声明里没有写']);
+    const out = renderTable(appendixTableHeader(ctx, name), rows);
     return ['本单的范围声明与上游的依赖变更', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
@@ -2227,6 +2281,13 @@ function projectAppendix(ctx, storyText) {
       continue;
     }
     const block = zoneBlock(name, source, rows);
+    if (at0 && zoneHandEdited(lines, at0, rows)) {
+      // 停在这里，不盖。他写的那几行是他花时间想出来的；静默盖掉的话，
+      // 东西没了而他不知道，下一次还会再写一遍。
+      fail(`「${name}」这一节由${source}投影，盘上的内容与投影对不上——`
+        + '要改结论，改真源之后重跑；'
+        + '要撤销这里的手改，把这一节（含首尾两行标记）删掉再跑，投影会重新写出来');
+    }
     zones += 1;
     if (at0) { lines = [...lines.slice(0, at0.start), ...block, ...lines.slice(at0.end)]; continue; }
     // 作者那一节还没有机器区：插到该节末尾。节都没有就说明附录章还没落盘，跳过。
@@ -2262,7 +2323,7 @@ function cmdProject(ctx) {
 function verdictSkeleton(ctx) {
   const entries = activeKnowledgeEntries(ctx);
   if (!entries.length) return [];
-  const use = knowledgeUseVerdicts(ctx);
+  const use = knowledgeUseVerdicts(ctx, entries);
   // 判断骨架还没生成（离线、或 knowledge-use.yaml 不在）：投不出来就不投，
   // 那一节保持原样，缺表由 check ⑦ 报。这一步不代替它下结论。
   // 文件在却读不出判断，那是它写坏了——停下把话说清，别静默跳过。
@@ -2516,7 +2577,13 @@ function cmdBuild(ctx) {
 
   // 分层与编号都在渲染器里按登记顺序算，不进登记表：登记表里存序号，
   // 插一条就要手工重排后面全部；类别成章的名字来自合同词表，机制不认识任何一类。
-  const out = renderReview(list, old, ctx.contract.decision_categories ?? []);
+  let out;
+  try {
+    out = renderReview(list, old, ctx.contract.decision_categories ?? []);
+  } catch (e) {
+    if (e instanceof ProjectionConflict) fail(e.message);
+    throw e;
+  }
 
   fs.mkdirSync(path.dirname(ctx.reviewPath), { recursive: true });
   fs.writeFileSync(ctx.reviewPath, out, 'utf-8');

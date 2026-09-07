@@ -34,8 +34,40 @@
  * 拿它承载「怎么填」等于没写。提示全篇只出现两处（顶部一条、其他意见处一条），
  * 不在每个议题里重复。
  */
+import * as crypto from 'node:crypto';
+
 /** 机器区与人工区的分界：这一行之前确定性重渲染，之后逐字节保留。 */
 export const HUMAN_ZONE_MARK = '审核结果：';
+
+//: 议题正文的所有者是脚本：整段由登记表决定，每次 build 重渲染。与 story 的附录
+//: 同一条纪律——重投前拿摘要与盘上的比，有人在这里写过字就停下问他，不静默盖掉。
+//: 人工区（「审核结果：」那一行往后）不在其内：那一段本来就归人，逐字节保留。
+const ISSUE_MARK = '<!-- story-build:begin 议题 ';
+//: 只认 `sha256:` 那一段：标记里的散文与分隔符是给人读的，改了措辞不该让摘要失效。
+const DIGEST_IN_MARK = /sha256:([0-9a-f]{16})\s*-->\s*$/;
+
+const issueMark = (id, digest) =>
+  `${ISSUE_MARK}${id} · 由决策登记表生成，改它请改真源 · sha256:${digest} -->`;
+
+/**
+ * 投影区的内容摘要 —— **story 的附录与 review 的议题共用这一份口径**。
+ *
+ * 两处各写一份的话，口径迟早分叉：一处忽略行尾空白、另一处不忽略，
+ * 同一份产物在两条路上会判出不同的「有没有被人改过」。
+ *
+ * 忽略每行尾部空白与末尾空行：编辑器保存时顺手删掉一个行尾空格，不是改动。
+ */
+export const projectionDigest = (text) => crypto.createHash('sha256')
+  .update((Array.isArray(text) ? text.join('\n') : String(text))
+    .replace(/\s+$/, '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).join('\n'))
+  .digest('hex').slice(0, 16);
+
+/** 起始标记里记着的摘要；旧稿的标记没有它，返回 null。 */
+export const recordedDigest = (markLine) =>
+  DIGEST_IN_MARK.exec(String(markLine ?? ''))?.[1] ?? null;
+
+/** 盘上有人动过投影区 —— 调用方停下问人，不替他决定。 */
+export class ProjectionConflict extends Error {}
 
 /** 计划外意见区的边界标记。 */
 export const FREEFORM_OPEN = '<!-- freeform-zone -->';
@@ -119,6 +151,38 @@ function humanZoneStart(reviewText, end) {
     at = reviewText.lastIndexOf(HUMAN_ZONE_MARK, at - 1);
   }
   return at;
+}
+
+/**
+ * 从既有 review 里切出某议题的**机器区**：`#### ` 那一行起，到人工区之前。
+ *
+ * 范围不靠标记划——机器区永远以 `#### ` 开头，旧稿没有标记也切得出来。
+ * 标记只承载摘要：它在（是上一行），就用它记的；不在就是旧稿。
+ */
+function machineZoneOf(reviewText, id) {
+  const end = reviewText.indexOf(`<!-- decision: ${id} -->`);
+  if (end < 0) return null;
+  const human = humanZoneStart(reviewText, end);
+  if (human < 0) return null;
+  const head = reviewText.lastIndexOf('\n#### ', human);
+  if (head < 0) return null;
+  const prevStart = reviewText.lastIndexOf('\n', head - 1) + 1;
+  const prev = reviewText.slice(prevStart, head);
+  return { mark: prev.startsWith(`${ISSUE_MARK}${id} `) ? prev : null,
+    body: reviewText.slice(head + 1, human) };
+}
+
+/**
+ * 这一段有人动过手吗。
+ *
+ * 标记里带摘要：与盘上内容比，相等就是没人动过。没有摘要那是**旧稿**：
+ * 只能与这一次渲染出来的比，一样就是没人动过；不一样就无从分辨「登记表变了」
+ * 与「有人改了」，按改过处理——让人自己说是哪一种，比替他猜错要好。
+ */
+function issueHandEdited(zone, fresh) {
+  const recorded = recordedDigest(zone.mark);
+  const now = projectionDigest(zone.body);
+  return recorded ? now !== recorded : now !== projectionDigest(fresh);
 }
 
 /** 从既有 review 里切出某议题的人工区（人工填写内容的唯一真源） */
@@ -216,8 +280,19 @@ export function renderReview(list, previous = '', categories = []) {
     groupByCategory(mine, categories).forEach((group, gi) => {
       parts.push(`### ${no}.${gi + 1} ${group.name}\n`);
       group.items.forEach((dec, ii) => {
+        const machine = renderMachineZone(dec, `${no}.${gi + 1}.${ii + 1}`);
+        const was = machineZoneOf(old, dec.id);
+        if (was && issueHandEdited(was, machine)) {
+          // 停在这里，不盖。评审人要说的话写在「审核结果：」后面，那一段逐字节保留；
+          // 写在议题正文里的，起草方要么把它接进登记表，要么明确不接——两样都比抹掉好。
+          throw new ProjectionConflict(
+            `议题 ${dec.id} 的正文由决策登记表生成，盘上的内容与它对不上——`
+            + '要改议题怎么说，改登记表之后重跑；'
+            + '要撤销这里的手改，把这一段（含它上面那行标记）删掉再跑，会重新写出来；'
+            + '评审意见写在「审核结果：」后面，那一段不会被动');
+        }
         const human = extractHumanZone(old, dec.id) ?? renderHumanZone(dec);
-        parts.push(`${renderMachineZone(dec, `${no}.${gi + 1}.${ii + 1}`)}\n${human}\n`);
+        parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);
       });
     });
     out.push(parts.join('\n'));

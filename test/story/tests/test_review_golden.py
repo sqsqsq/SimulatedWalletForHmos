@@ -34,7 +34,9 @@ FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
 FEATURE = "AR90001"
 
 #: 立样时点 2026-08-30（晚四修：三级分层定稿）。本文件直接读取唯一金样正本。sha256 前 16 位。
-FINGERPRINT = "62a20067aad7705a"
+#: 2026-09-07：每条议题的正文前多一行投影标记（带内容摘要）——议题正文由登记表
+#: 生成，重投前拿摘要与盘上的比，有人在这里写过字就停下问他。人工区不在其内。
+FINGERPRINT = "fb41c0826b6b9574"
 
 def categories() -> list[dict]:
     """类型词表在合同里：扫描指引用 `key`，成章用 `section`。"""

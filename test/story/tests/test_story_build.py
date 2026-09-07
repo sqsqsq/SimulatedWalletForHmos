@@ -946,18 +946,59 @@ class TestReviewComesAfterTheStory(Step8Case):
         self.assertIn("回执超时后由谁重试", again, "成文中新登记的判断没进 review")
         self.assertIn("审核结果：范围要含补卡入口。", again, "人填的表态被重渲染冲掉了")
 
-    def test_the_machine_zone_cannot_be_maintained_by_hand(self) -> None:
-        """机器区改了也会被重算回来——它不是第二份真源，改它等于白改。"""
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
+    def hand_edit_the_machine_zone(self) -> None:
         text = self.review_path.read_text(encoding="utf-8")
         self.review_path.write_text(
             text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
             encoding="utf-8")
+
+    def test_the_machine_zone_is_not_a_second_source(self) -> None:
+        """议题正文由登记表生成——改它不生效，所以别让人以为改了就算数。
+
+        它**不是**「改了会被重算回来」：那样他写的东西没了而他不知道，
+        下一次还会再写一遍。停下来告诉他真源在哪，才是这一段的正确出口。
+        """
+        self.write_decision()
         self.assertEqual(0, self.run_build("build").returncode)
+        self.hand_edit_the_machine_zone()
+        proc = self.run_build("build")
+        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
+        out = proc.stdout + proc.stderr
+        self.assertIn("由决策登记表生成", out, "没说清这一段的真源是什么")
+        self.assertIn("手改过的标题",
+                      self.review_path.read_text(encoding="utf-8"),
+                      "拒绝了却还是把文件改了")
+
+    def test_deleting_the_zone_lets_the_projection_write_it_again(self) -> None:
+        """撤销手改的出口：把这一段连同标记删掉，重跑就重新写出来。
+
+        没有出口的拒绝等于把人锁在原地——他只能去改判据。
+        """
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.hand_edit_the_machine_zone()
+        self.assertEqual(1, self.run_build("build").returncode)
+
+        text = self.review_path.read_text(encoding="utf-8")
+        head = text.index("<!-- story-build:begin 议题 ")
+        tail = text.index("审核结果：", head)
+        self.review_path.write_text(text[:head] + text[tail:], encoding="utf-8")
+
+        self.assertEqual(0, self.run_build("build").returncode, "删干净了还是不让过")
         again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("提交入口与补卡由两张开发单分别承接", again)
-        self.assertNotIn("手改过的标题", again, "机器区被人维护成了第二份真源")
+        self.assertIn("提交入口与补卡由两张开发单分别承接", again, "投影没有重新写出来")
+        self.assertNotIn("手改过的标题", again)
+
+    def test_a_source_change_still_reprojects(self) -> None:
+        """真源变了照常重投——这条纪律拦的是手改，不是拦更新。"""
+        self.write_decision()
+        self.assertEqual(0, self.run_build("build").returncode)
+        rows = json.loads((self.src / "decisions.json").read_text(encoding="utf-8"))
+        rows["decisions"][0]["title"] += "（复议）"
+        (self.src / "decisions.json").write_text(
+            json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(0, self.run_build("build").returncode)
+        self.assertIn("（复议）", self.review_path.read_text(encoding="utf-8"))
 
 
 class TestUxReferenceNeedsNoReadme(Step8Case):
@@ -1624,7 +1665,21 @@ class BranchSectionsCarryTheirLabels(StoryBuildCase):
     def test_a_missing_label_is_named(self) -> None:
         self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
                         "**方案**：转入既有身份流程。", "")
-        self.assert_check_names("缺「走向」这一段")
+        self.assert_check_names("少了「走向」")
+
+    def test_one_section_takes_one_line_however_many_are_missing(self) -> None:
+        """三段都没写也只报一行——一节一行。
+
+        一段一条的话，一章十几节报出来的是同一件事的几十行，写法说明还各拖一遍；
+        作者要在里面找的是「哪一节没写全」，那正好被淹掉。
+        """
+        self.put_branch("这一节只有一句话，三段都没写。", "")
+        _, out = self.check_output()
+        lines = [l for l in out.split("\n") if "5.2" in l and "少了" in l]
+        self.assertEqual(1, len(lines), f"三段缺失报了 {len(lines)} 行：{lines}")
+        for label in ("时机", "方案", "走向"):
+            self.assertIn(label, lines[0], f"{label} 没在这一行里点名")
+        self.assertEqual(1, out.count("这几段各答什么："), "写法说明不止说了一次")
 
     def test_all_three_labels_pass(self) -> None:
         self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
@@ -1768,6 +1823,89 @@ class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
         self.assertTrue(self.draft("03-范围.md").exists(), "还没写的章该有草稿")
 
 
+class TheProjectedBytesBelongToTheProjection(RealRunCase):
+    """投影区的字节归投影者：真源变了照常重投，有人在这里写过字就停下问他。
+
+    静默盖掉的代价是具体的：他花时间写的几行没了，而他不会知道——
+    下一次打开还会再写一遍，直到他发现「这里写什么都不算数」。
+    """
+
+    def land(self) -> str:
+        self.build("skeleton")
+        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        return self.story()
+
+    def project(self) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(BUILD), "project", "--feature", "AR90006",
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def edit_zone(self, text: str) -> str:
+        """在改动边界那一段机器区里加一行——作者会做的事。"""
+        at = text.index("story-build:begin 改动边界")
+        end = text.index("story-build:end", at)
+        cut = text.rindex("\n", at, end)
+        return text[:cut] + "\n| 我加的一行 | 改动 |" + text[cut:]
+
+    def test_a_hand_edit_stops_the_reprojection(self) -> None:
+        self.story_path.write_text(self.edit_zone(self.land()), encoding="utf-8")
+        proc = self.project()
+        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
+        out = proc.stdout + proc.stderr
+        self.assertIn("改动边界", out, "没说清是哪一节")
+        self.assertIn("删掉再跑", out, "拒绝了却没给撤销的出口")
+        self.assertIn("我加的一行", self.story(), "拒绝了却还是把文件改了")
+
+    def test_deleting_the_zone_lets_it_be_written_again(self) -> None:
+        """撤销手改的出口：连同首尾标记删掉这一节，重跑就重新写出来。"""
+        text = self.edit_zone(self.land())
+        at = text.index("<!-- story-build:begin 改动边界")
+        end = text.index("story-build:end -->", at) + len("story-build:end -->")
+        self.story_path.write_text(text[:at] + text[end:], encoding="utf-8")
+        self.assertEqual(0, self.project().returncode, "删干净了还是不让过")
+        story = self.story()
+        self.assertIn("story-build:begin 改动边界", story, "投影没有重新写出来")
+        self.assertNotIn("我加的一行", story)
+
+    def test_a_source_change_reprojects_as_usual(self) -> None:
+        """真源变了照常重投——这条纪律拦的是手改，不是拦更新。"""
+        self.land()
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        spec.write_text(text.replace("out_of_scope_modules:",
+                                     "out_of_scope_modules:\n    - NewlyExcluded", 1),
+                        encoding="utf-8")
+        self.assertEqual(0, self.project().returncode)
+        self.assertIn("| NewlyExcluded | 不改 |", self.story(), "真源改了却没重投")
+
+    def test_an_old_zone_without_a_digest_just_gets_one(self) -> None:
+        """旧稿没有摘要：内容与投影一致，说明没人动过，补上摘要即可。"""
+        text = self.land()
+        at = text.index("<!-- story-build:begin 改动边界")
+        end = text.index("-->", at) + 3
+        marker = text[at:end]
+        self.assertIn("sha256:", marker)
+        stripped = marker[:marker.index(" · sha256:")] + " -->"
+        self.story_path.write_text(text[:at] + stripped + text[end:], encoding="utf-8")
+        self.assertEqual(0, self.project().returncode, "旧稿没人动过却被拦下")
+        self.assertIn("sha256:", self.story()[at:at + 200], "摘要没补上")
+
+    def test_an_old_zone_that_differs_is_not_overwritten(self) -> None:
+        """旧稿而内容对不上：无从分辨「真源变了」与「有人改了」，按改过处理。
+
+        替他猜错的代价是他写的东西没了；让他自己说是哪一种，代价只是一次停顿。
+        """
+        text = self.edit_zone(self.land())
+        at = text.index("<!-- story-build:begin 改动边界")
+        end = text.index("-->", at) + 3
+        marker = text[at:end]
+        stripped = marker[:marker.index(" · sha256:")] + " -->"
+        self.story_path.write_text(text[:at] + stripped + text[end:], encoding="utf-8")
+        self.assertEqual(1, self.project().returncode, "旧稿的手改被盖掉了")
+        self.assertIn("我加的一行", self.story())
+
+
 class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
     """投影要认真源的每一种合法写法，也要跟着它变空。
 
@@ -1841,7 +1979,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
     def test_the_boundary_is_one_table_with_one_row_per_module(self) -> None:
         """一个模块一行。两份清单各挤成一格的话，评审者要在一串顿号里找自己那个模块。"""
         zone = self.boundary_zone()
-        self.assertIn("| 模块 | 本单怎么动 | 依据 |", zone)
+        self.assertIn("| 模块 | 本单怎么动 |", zone)
         for module in ("WalletMain", "AccountManager"):
             self.assertIn(f"| {module} |", zone, f"{module} 没有自己那一行")
         seps = [l for l in zone.split("\n") if set(l.replace("|", "").strip()) <= {"-"}
@@ -1855,9 +1993,33 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         他删掉、`project` 写回来，他只能去改门禁。一次实跑就卡在这里。
         """
         zone = self.boundary_zone()
-        self.assertIn("| 范围说明 |", zone, "说明原文没有进表")
-        row = next(l for l in zone.split("\n") if l.startswith("| 范围说明 |"))
+        self.assertIn("| 为什么这么切 |", zone, "说明原文没有进表")
+        row = next(l for l in zone.split("\n") if l.startswith("| 为什么这么切 |"))
         self.assertGreater(len(row), 40, "说明原文没跟着那一行走")
+
+    def test_the_table_has_only_columns_that_carry_something(self) -> None:
+        """两列。第三列「依据」逐行重复同一句来源，读者读它读不出任何新东西。"""
+        zone = self.boundary_zone()
+        header = next(l for l in zone.split("\n") if l.startswith("| 模块 |"))
+        self.assertEqual(2, header.count("|") - 1, f"表不是两列：{header}")
+
+    def test_the_dependency_row_keeps_the_upstream_id_verbatim(self) -> None:
+        """依赖行的第一列一个字都不改——⑫b 按第一列核「附录 ⊇ spec §9」。
+
+        加个「依赖：」前缀这一行就与 spec 对不上，⑫b 当场报少行；而机器区没有作者，
+        他删不掉也改不动，唯一的出路是去改门禁。「这一行讲的是依赖」放第二列说。
+        """
+        zone = self.boundary_zone()
+        row = next(l for l in zone.split("\n") if "| 依赖：" in l)
+        first = row.split("|")[1].strip()
+        spec = (self.feature / "spec" / "spec.md").read_text(encoding="utf-8")
+        self.assertIn(f"| {first} |", spec, "依赖行的第一列不是 spec 里的那个原文")
+        proc = subprocess.run(
+            ["node", str(BUILD), "check", "--feature", "AR90006",
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        out = proc.stdout + proc.stderr
+        self.assertNotIn("少了 spec §9", out, out[:600])
 
     def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
         """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""

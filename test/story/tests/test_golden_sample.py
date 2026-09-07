@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,9 +30,12 @@ BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
 #: 金样正文与归档图片只在 test/story/golden 维护；原始材料夹具保留自己的来源图片。
 GOLDEN_FINGERPRINTS = {
+    # 2026-09-07 用户裁定：章首那张时序图补两行来源标记——它同时承接
+    # SR §3 的端到端时序与 spec §5.1 的流程图（改画成了时序），
+    # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "f491d24c5152d00b",
+    "story-金样-AR90004.md": "abac36c868bfd782",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
 }
@@ -54,7 +59,7 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 404, "chapters": 10, "subsections": 35,
+SHAPE = {"lines": 406, "chapters": 10, "subsections": 35,
          "table_rows": 159, "diagrams": 1, "images": 2}
 
 
@@ -116,6 +121,57 @@ class GoldenIsFrozen(unittest.TestCase):
             "images": sum(x.count("![") for x in lines),
         }
         self.assertEqual(SHAPE, actual)
+
+
+class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
+    """章首那张时序图同时承接两份上游，两行标记写在同一个围栏里。
+
+    「对应」的含义是标记指向它，不是照抄：SR §3 画的端到端时序与 spec §5.1 的
+    流程图讲的是同一件事，金样把它们合成一张、改画成时序——一个围栏、两行标记。
+    这正是「重复来源可以合并」的形态，也是它唯一能被机器核到的形态。
+
+    这里跑的是非 offline 的 `check`（offline 读不到上游，⑫b 那一段根本不执行）。
+    **只核图对应这一类**：金样的冻结件是那份文稿，配套的台账与材料清单是流程件，
+    不随它冻结，所以整体退出码在这个工作区里说明不了金样本身。
+    """
+
+    MARKS = "%% 图源 SR §3 #1\n%% 图源 spec §5.1 #1\n"
+
+    def diagram_complaints(self, story: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature = root / "doc" / "features" / "AR90004"
+            shutil.copytree(INPUT_FIXTURE, feature)
+            shutil.copytree(REPO_ROOT / "doc" / "extensions",
+                            root / "doc" / "extensions",
+                            ignore=shutil.ignore_patterns("node_modules"))
+            (feature / "AR" / "story.md").write_text(story, encoding="utf-8")
+            src = feature / "AR" / "story-src"
+            src.mkdir(parents=True, exist_ok=True)
+            (src / "decisions.json").write_text("[]", encoding="utf-8")
+            (src / "copyedit.md").write_text(
+                "\n".join(f"{i + 1}. 查了，无" for i in range(7)) + "\n", encoding="utf-8")
+            proc = subprocess.run(
+                ["node", str(BUILD), "check", "--feature", "AR90004",
+                 "--project-root", str(root)],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=90)
+        out = proc.stdout + proc.stderr
+        return [l.strip() for l in out.split("\n") if "的图（" in l]
+
+    def test_both_upstream_diagrams_are_carried(self) -> None:
+        complaints = self.diagram_complaints(
+            GOLDEN_STORY.read_text(encoding="utf-8"))
+        self.assertEqual([], complaints, "上游有图没被金样带着")
+
+    def test_dropping_the_marks_is_caught(self) -> None:
+        """去掉标记就该报——不然上一条是在空跑。"""
+        story = GOLDEN_STORY.read_text(encoding="utf-8")
+        self.assertIn(self.MARKS, story, "金样的两行标记不在了")
+        complaints = self.diagram_complaints(story.replace(self.MARKS, ""))
+        self.assertEqual(2, len(complaints), f"该报两条，实报 {len(complaints)}：{complaints}")
+        self.assertTrue(any("SR §3" in c for c in complaints))
+        self.assertTrue(any("spec §5.1" in c for c in complaints))
 
 
 class JudgementsDoNotBlockTheGolden(unittest.TestCase):
