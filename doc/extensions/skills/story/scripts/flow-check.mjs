@@ -9,6 +9,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * story 前置流程契约（`AR/story-flow.json`，见 SKILL.md「初析与流程契约」章）。
@@ -21,14 +22,19 @@ import * as path from 'node:path';
  */
 const FLOW_FILE = ['AR', 'story-flow.json'];
 const FLOW_SCHEMA = 3;
-// 三级关卡，每级只问一件事：材料够不够 → 范围怎么定 → 承载哪一份
+// 三级关卡，每级只问一件事：材料 → 范围怎么定 → 承载哪一份
 const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier']);
 // 只有第一级的值域是闭合的；第二级除固定的 carry_all 外是具名维度、第三级是份序号，
-// 都由「chosen 必须在 options 里」把关——它们是本次分析的产物，枚举不了
-const FLOW_MATERIAL_CHOICES = new Set(['supplement', 'confirm_scope']);
+// 都由「chosen 必须在 options 里」把关——它们是本次分析的产物，枚举不了。
+// 闭合的那一份登记在章节合同里，`story_flow.py` 写、这里读：两边各存一份字面的话，
+// 只改一处，写进契约的选择就会在这里被判非法。
+const FLOW_MATERIAL_CHOICES = new Set(JSON.parse(fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)),
+            '..', 'contracts', 'story-chapters.json'), 'utf-8').replace(/^\uFEFF/, ''))
+  .gates.material_scope.options.map(o => o.key));
 const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);
-const FLOW_FIX = "处置：回 /story 走完三级关卡（材料够不够 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
+const FLOW_FIX = "处置：回 /story 走完三级关卡（材料 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
 /**
  * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）→ `archived`（已送审）。
  *
@@ -138,7 +144,8 @@ export function flowProblems(featureRoot) {
         problems.push(`${at}的 chosen「${d?.chosen}」不在 options 里——选的必须是摆出来的`);
       }
       if (gate === 'material_scope' && !FLOW_MATERIAL_CHOICES.has(d?.chosen)) {
-        problems.push(`${at}的 chosen 非法（material_scope 须为 supplement / confirm_scope 之一）`);
+        problems.push(`${at}的 chosen 非法（material_scope 须为 `
+          + `${[...FLOW_MATERIAL_CHOICES].join(' / ')} 之一）`);
       }
       // 第二级摆出的选项必须就是分析定下的那些——多一项就是现编的
       if (gate === 'scope_decision' && Array.isArray(r?.scope_options) && Array.isArray(d?.options)) {

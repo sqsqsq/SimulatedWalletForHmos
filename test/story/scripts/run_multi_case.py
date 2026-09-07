@@ -2595,7 +2595,8 @@ def command_status(suite_id: str) -> int:
 #: 宿主这一句话是哪一种，直接决定它对观测的影响，所以要分开记账而不是只数次数。
 #:   planned   —— 按规划条目表达需求方的立场（`--step` 指名是哪一条）
 #:   answered  —— 回答模型主动提出的问题
-#:   neutral   —— 模型没有提问，只给一句中性的推进，不含任何做法或写作指引
+#:   neutral   —— 模型没有提问，只给一句不含事实的推进：不替它确认材料、范围、口径，
+#:                不含做法或写作指引，也不重放上一条的编号（下一轮可能是另一组选项）
 #:   improvised—— 以上都不是：宿主自己的话。**这一类会污染观测**，评测时要单独看
 HOST_REPLY_KINDS = ("planned", "answered", "neutral", "improvised")
 

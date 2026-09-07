@@ -34,7 +34,7 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
     0  成功
     1  用法/参数/前置不满足——**没有任何写入**
-    2  仅 decide：选择已记录，但校验不通过，**不得前进**（如选了补料却没放料）
+    2  仅 decide：选择已记录，但校验不通过，**不得前进**（如说了料已放进 inbox，盘上却没有）
 
 核心不变量：
 
@@ -115,18 +115,16 @@ def sweep_story_src(src: Path) -> list[str]:
             item.unlink(missing_ok=True)
         swept.append(item.name)
     return swept
-# 三级关卡，**每级只问一件事**：材料够不够 → 范围怎么定 → 承载哪一份。
+# 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
 #
 # 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
 # 而它们本有先后——材料不全时范围判断本身就不可靠，在一个还会变的范围上讨论怎么切，
 # 讨论了也白讨论。
 GATES = ("material_scope", "scope_decision", "split_carrier")
-#: 材料级里「我还要料」的那些选项。第 2 轮起它们要写清剩余缺口（见 read_gate_options）；
-#: 「材料够了，继续」这类不在其中——那不是缺口。
-MATERIAL_REQUEST_KEYS = ("supplement",)
-# 第一级的值域是闭合的；第二、三级的值域由本次选项集自己定义（维度名、份序号），
-# 统一由「chosen 必须在 options 里」把关，不为每级各写一套枚举。
-MATERIAL_CHOICES = ("supplement", "confirm_scope")
+#: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，本脚本与
+#: `flow-check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
+#: 选择会在阶段门禁上被判非法。
+STORY_CONTRACT = Path(__file__).resolve().parent.parent / "contracts" / "story-chapters.json"
 # 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
 CARRY_ALL = "carry_all"
 # 关卡决策**只认人签**，没有 AI 代签这一档。
@@ -147,6 +145,27 @@ SKIP_INBOX = {"readme.md"}
 
 class FlowError(Exception):
     """可预期的失败：带可执行的补救动作，直接呈给人。退出码 1，不写盘。"""
+
+
+def material_options() -> list[dict]:
+    """第一级摆给人的选项：键、默认 label、是不是一次「我还要料」的请求。"""
+    try:
+        data = json.loads(STORY_CONTRACT.read_text(encoding="utf-8").lstrip("\ufeff"))
+        options = data["gates"]["material_scope"]["options"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise FlowError(
+            f"{STORY_CONTRACT.name} 的 gates.material_scope.options 读不出来（{exc}）："
+            "第一级的选项集登记在那里") from exc
+    return options
+
+
+_MATERIAL_OPTIONS = material_options()
+#: 第一级的值域是闭合的；第二、三级的值域由本次选项集自己定义（维度名、份序号），
+#: 统一由「chosen 必须在 options 里」把关，不为每级各写一套枚举。
+MATERIAL_CHOICES = tuple(o["key"] for o in _MATERIAL_OPTIONS)
+#: 「我还要料」的那一项。第 2 轮起它要写清剩余缺口（见 read_gate_options）；
+#: 「现有材料就是全部」不在其中——那不是缺口。
+MATERIAL_REQUEST_KEYS = tuple(o["key"] for o in _MATERIAL_OPTIONS if o.get("request"))
 
 
 def log(msg: str) -> None:
@@ -557,31 +576,27 @@ def cmd_round(feature_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 # decide：追加一条关卡决策
 
-def supplement_material_state(feature_root: Path, current: dict) -> str:
-    """「补充材料」这一笔，料现在是什么状态——三种，下一步照它分。
+def material_state(feature_root: Path, current: dict) -> dict:
+    """料现在什么样——**两个事实，一次问完**：谁还没并入正文、材料变没变。
 
-    ``pending`` 收件箱里还有没并入正文的原件（先签后导：人签完这一笔再去放料）；
-    ``imported`` 原件已经导进正文了，只是材料指纹跟本轮登记的对不上（先导后签：
-    料先到了，人再回一句「已放入需求目录」）；``absent`` 料还没到。
+    ``pending`` 是收件箱里还没导进正文的原件；``changed`` 是材料指纹与本轮登记的
+    对不上（原件已经导进去了，本轮还没重新登记）。两者都走磁盘不走账本：材料清单
+    拿收件箱那批料重转一遍与正文比对，同名原件被换了内容也照样算新料，而这是任何
+    一份「导过什么」的名单都记不住的。
 
-    只认前一种的话，后一种顺序会被判成「inbox 无新料」而驳回，人明明已经把料给了。
-    两种都走磁盘不走账本：材料清单拿收件箱那批料重转一遍与正文比对，同名原件被换了
-    内容也照样算新料，而这是任何一份「导过什么」的名单都记不住的。
+    不写盘：`status` 只回答现在是什么样，落盘归 `round`。
 
-    分出来是为了**把下一步说出口**：只回一句「记录了，待料到位」的话，
-    模型手上没有动作，只好再问人一次「放好了吗」——而料明明已经在收件箱里。
+    要这两个事实，是为了**把下一步说出口**。只回一句「记录了，待料到位」的话，
+    模型手上没有动作，只好再问人一次「放好了吗」——而料明明已经在收件箱里躺着。
     """
     try:
-        manifest = materials.refresh(feature_root)
+        manifest = materials.build(feature_root)
     except materials.MaterialError as exc:
         raise FlowError(str(exc)) from exc
     pending = [name for name in materials.pending(manifest)
                if name.lower() not in SKIP_INBOX]
-    if pending:
-        return "pending"
-    if manifest["digest"] != (current.get("materials") or {}).get("digest"):
-        return "imported"
-    return "absent"
+    return {"pending": pending,
+            "changed": manifest["digest"] != (current.get("materials") or {}).get("digest")}
 
 
 def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
@@ -665,7 +680,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if args.by not in ACTORS:
         raise FlowError(
             f"关卡决策只认人签（--by human），实为「{args.by}」——"
-            "材料够不够、范围怎么定由人拍板；你的判断写进选项推荐里，不代签")
+            "材料到齐没有、范围怎么定由人拍板；你的判断写进选项推荐里，不代签")
     if not (args.basis or "").strip():
         raise FlowError("--basis 不能为空：决策的依据（用户原话）是契约的审计价值所在")
 
@@ -733,20 +748,14 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                     f"（{mine['scope']}）——选择与定案对不上，改份表的 carrier 或改 --chosen")
 
     outcome, reason, code = "accepted", None, 0
-    supplement_next = None
-    if gate == "material_scope" and chosen == "supplement":
-        state = supplement_material_state(feature_root, current)
-        if state == "absent":
+    if gate == "material_scope" and chosen in MATERIAL_REQUEST_KEYS:
+        # 人陈述的是事实：料放进去了。磁盘上却既没有待导入的原件、材料也没变，
+        # 那这一笔记下去下一步无处可去——原地重提，让人再放一次。
+        state = material_state(feature_root, current)
+        if not state["pending"] and not state["changed"]:
             outcome, code = "rejected", 2
-            reason = ("材料没有变化：请把文档或界面设计图放进 "
-                      f"{feature_root.name}/inbox/ 后再选一次"
-                      "（已经放进来并导入过的，材料指纹会变，这一笔照样成立）")
-        elif state == "pending":
-            supplement_next = ("料已在收件箱：直接跑 `import_sources.py --feature <名>` 导入，"
-                         "再重跑 `round` 盘点。**不用再问人放好了没有**")
-        else:
-            supplement_next = ("料已导入正文：重跑 `round` 盘点即可，不用再导一次，"
-                         "也不用再问人放好了没有")
+            reason = ("收件箱里没有新文件、材料也没变：把文档或界面设计图放进 "
+                      f"{feature_root.name}/inbox/ 后再选一次")
 
     record = {
         "gate": gate, "options": options, "chosen": chosen, "outcome": outcome,
@@ -769,13 +778,13 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
         consume_sidecar(feature_root, SPLIT_PARTS)
     log(f"第 {current['round']} 轮记录 {gate}：{chosen} → {outcome}"
         + (f"（{reason}）" if reason else ""))
-    if supplement_next:
-        log(f"下一步：{supplement_next}")
     result = {"round": current["round"], "gate": gate, "chosen": chosen, "outcome": outcome}
     if reason:
         result["reason"] = reason
-    if supplement_next:
-        result["next"] = supplement_next
+    # 下一步与 `status` 同一处算：两处各写一套「记完这一笔该干什么」，迟早对不上。
+    step, action = next_step(feature_root, contract)
+    log(f"下一步：{action}")
+    result["next"], result["nextAction"] = step, action
     return result, code
 
 
@@ -879,7 +888,7 @@ def sidecar_shape(step: str) -> dict | None:
         }
     if step.startswith("await_gate:"):
         gate = step.split(":", 1)[1]
-        return {
+        note = {
             "写这份，再去问人": {
                 "path": "/".join(GATE_OPTIONS),
                 "shape": {"gate": gate,
@@ -890,11 +899,12 @@ def sidecar_shape(step: str) -> dict | None:
                         f"`gate` 必须写 {gate}——三级共用一个文件名，不写明是给谁摆的，"
                         "上一级会把它当成自己这一级又出了新问题",
             },
-            "顺序": "签与导入不分先后：料先到了再签、签完再去放料，两种都成立——"
-                    "`decide --chosen supplement` 看的是料到没到"
-                    "（inbox 里有未导入的，或材料指纹已经变了）",
         }
-    return None
+    if step == "await_gate:material_scope":
+        # 这一级问的是事实：料放进去了，或者现有材料就是全部。够不够仍由你盘点、
+        # 由人定，机器不判——所以键是固定的两个，label 可以按本轮缺口改写。
+        note["这一级摆哪两项"] = material_options()
+    return note if step.startswith("await_gate:") else None
 
 
 def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str | None]:
@@ -902,12 +912,10 @@ def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str |
 
     停不停：第 1 轮无条件停；第 2 轮起，只在本级侧车摆在盘上时停。
     第一轮没有任何人对材料表过态，必须停。此后每一轮都是材料变了才开出来的，
-    而「材料变了」本身不是新问题——人上一次说的「补充材料」就是对「够不够」的回答。
-    要再停一次，得是模型在新一轮**盘出了新的缺口**：那时它写一份本级的选项侧车，
+    再停一次得是模型拿新材料**重新盘出了缺口**：那时它写一份本级的选项侧车，
     写了就停，没写就直接进分析。`decide` 会消费掉侧车，盘上留着的只会是这一轮新写的。
 
-    判据不看上一轮选了什么。看那个的话，先导后签（料先到、人再签）与先签后导
-    给出的答案不同——同一件事按顺序不同判出两种结果，而顺序本来就不该有讲究。
+    判据不看上一轮选了什么：那一次回答的是上一轮的缺口，这一轮问的是**还缺什么**。
     侧车必须自报级别，否则模型为第二级摆的选项会被这里读成材料上的新缺口。
 
     **侧车立不立得住在这里一并判**（第二个返回值）：校验只写在 `decide` 里的话，
@@ -955,8 +963,8 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     current = contract["rounds"][-1]
     gates = round_gates(contract)
 
-    # 第一级：材料够不够。**先于任何需求分析**——材料不全时做的范围判断注定作废，
-    # 每轮补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
+    # 第一级：材料。**先于任何需求分析**——材料不全时做的范围判断注定作废，
+    # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
     stops, problem = material_gate_state(feature_root, contract)
     if material is None and problem:
@@ -965,18 +973,30 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     if material is None and stops:
         return ("await_gate:material_scope",
                 "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
-                "取得选择：补充材料 / 材料充足，开始需求分析")
-    if material and material["chosen"] == "supplement":
-        if material["outcome"] == "accepted":
-            state = supplement_material_state(feature_root, current)
-            how = ("回 S2：inbox/ 里的原件先导入（`import_sources.py --feature <名>`），"
-                   "再重跑 `round`" if state == "pending"
-                   else "回 S2：料已经在正文里了，重跑 `round` 即可，不用再导一次")
-            return ("import_and_reanalyze",
-                    f"{how}。然后**用新增的材料重新盘点：上一轮缺的补上了没有**。"
-                    "确实还缺的，写材料侧车，每项写清还缺什么、为什么现有材料不够；"
-                    "材料够了就直接进需求分析，不再问")
-        return "await_gate:material_scope", "补料被拒（材料没有变化），在第一级重新取得选择"
+                "取得选择："
+                + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
+    if material and material["outcome"] == "rejected":
+        return ("await_gate:material_scope",
+                "上一笔被驳回（收件箱里没有新文件、材料也没变），在第一级重新取得选择")
+
+    # 人已经对材料表过态：**已到的材料先处理完，再谈别的。**
+    #
+    # 收件箱里躺着原件而流程往下走的话，那份料要到成文登记时才被发现，
+    # 在那之前的每一个判断都建立在一份不全的材料上。人回的是哪一项不改变这件事——
+    # 文件已经在盘上，导入是脚本的活，不用再问一次「放好了吗」。
+    # 排在关卡**之后**：关卡是人表态的地方，`decide` 要求这一步正是它，
+    # 排到前面去，人刚放好料那一笔就永远签不下去。
+    # 收口之后不走这条——那时材料再变归 `round` 开新一轮，见上面 `story_written` 那支。
+    state = material_state(feature_root, current)
+    if state["pending"]:
+        more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
+        return ("import_materials",
+                "收件箱里有还没并入正文的原件，先导入："
+                "`python doc/extensions/skills/story/scripts/import_sources.py --feature <名>`"
+                f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
+    if state["changed"]:
+        return ("run_round",
+                "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
 
     # 材料已确认 → 才做需求粒度分析（全景 / 本部件 / 本 AR 定位 / 功能清单 / 范围定法选项）
     if not current.get("positioning") or not current.get("scope_options"):
@@ -1362,7 +1382,7 @@ def main() -> int:
     ap.add_argument("--gate", default=None, choices=list(GATES),
                     help="关卡编号，缺省 material_scope")
     ap.add_argument("--chosen", default=None,
-                    help="选中项的 key；material_scope 为 supplement / split / proceed")
+                    help="选中项的 key；material_scope 为 " + " / ".join(MATERIAL_CHOICES))
     # 取值只剩 human：留着这个参数是为了让契约里那一栏仍然显式记着「谁签的」。
     ap.add_argument("--by", default="human", choices=list(ACTORS))
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")

@@ -2,8 +2,8 @@
 
 轮次指纹曾只算四份文本源（`RR/prd.md`、`SR/design.md`、`AR/design.md`、
 `AR/upstream.md`）。补料如果只有界面图，转换后只落 `ux-reference/`，四份文本
-一个字节没变 → 指纹不变 → 不算新一轮 → 关卡列表永不重置 → 流程卡死在
-`import_and_reanalyze`。实跑撞到过一次：模型只能自己改机制层绕过去。
+一个字节没变 → 指纹不变 → 不算新一轮 → 关卡列表永不重置 → 流程停在
+「回去导入再盘点」上出不来，导多少次都一样。模型只能自己改机制层绕过去。
 
 这一份锁的就是「什么算材料变了」这个定义的完整性。
 """
@@ -269,6 +269,23 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertTrue(result.get("afterComplete"))
         self.assertEqual(before, len(self.contract()["rounds"]))
 
+    def test_status_after_the_story_is_written_gives_no_import(self) -> None:
+        """成文登记之后放料，`status` 不引导导入——那条路归 `round` 与 `reopen`。
+
+        引导导入的话，材料会并进正文，而已经定稿的 story 声称的依据是当轮的快照，
+        两边当场对不上。此后材料再变只有一个出口：显式 `reopen`。
+        """
+        self.complete_it("story_written")
+        (self.feature_root / "inbox").mkdir(exist_ok=True)
+        (self.feature_root / "inbox" / "补的稿.md").write_text(
+            "# 补的稿\n\n后到的材料。\n", encoding="utf-8")
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertNotEqual("import_materials", payload["next"],
+                            "成文之后还引导导入，story 的依据就被改掉了")
+        self.assertEqual("run_archived", payload["next"])
+
     def test_archived_also_opens_no_round(self) -> None:
         """已归档同理——它比成文登记还靠后。"""
         self.complete_it("story_written")
@@ -324,24 +341,42 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
 
 
-class SupplementAnswersTheMaterialGate(MaterialRoundCase):
-    """第一级停不停：第 1 轮无条件，第 2 轮起只看**本级**侧车在不在。
+class TheMaterialGateAsksForFacts(MaterialRoundCase):
+    """第一级请人陈述事实：料放进去了，或者现有材料就是全部。
 
-    人选「补充材料」就是对「材料够不够」的回答，补完不再问第二遍。要再停，
-    得是模型在新一轮盘出新缺口并为**这一级**摆出选项。判据不看上一轮选了什么——
-    先导后签与先签后导那样会判出两种结果，而顺序本来就不该有讲究。
+    够不够由作者盘点、由人定——**文件到了不等于内容够了**，机器不判这件事。
+    人回的是哪一项，收件箱里的原件都会被导入；导完重新盘点，还缺什么才再停一次。
+    上一轮缺的没补上照样可以再问，问的是「还缺什么」而不是「够不够」。
     """
 
-    def write_gate_options(self, gate: str = "material_scope") -> None:
+    def gate_options(self) -> list[dict]:
+        """第一级摆哪两项——**从合同取**，夹具与脚本读的是同一份登记。
+
+        夹具自己抄一份 key 的话，合同改了它照样绿：它守的就不再是「两边一致」。
+        """
+        return [dict(o) for o in story_flow.material_options()]
+
+    def write_gate_options(self, gate: str = "material_scope",
+                           options: list[dict] | None = None) -> None:
         src = self.feature_root / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
-        options = ([{"key": "supplement", "label": "补充材料"},
-                    {"key": "confirm_scope", "label": "材料充足，开始需求分析"}]
-                   if gate == "material_scope"
-                   else [{"key": "carry_all", "label": "按当前范围整体承载"}])
+        if options is None:
+            options = (self.gate_options() if gate == "material_scope"
+                       else [{"key": "carry_all", "label": "按当前范围整体承载"}])
         (src / ".gate-options.json").write_text(
             json.dumps({"gate": gate, "options": options}, ensure_ascii=False),
             encoding="utf-8")
+
+    def write_gap_options(self, missing: str = "管理页的界面图",
+                          why: str = "来的原稿只有签约页，管理页那一节没有可参照的界面",
+                          with_gap: bool = True) -> None:
+        """摆一次带缺口的第一级选项：`missing` / `why` 是第 2 轮起的硬要求。"""
+        options = self.gate_options()
+        if with_gap:
+            for opt in options:
+                if opt["key"] in story_flow.MATERIAL_REQUEST_KEYS:
+                    opt["missing"], opt["why"] = missing, why
+        self.write_gate_options(options=options)
 
     def write_analysis_sidecars(self) -> None:
         """需求分析（S2b）的两份产出，round 消费进契约。"""
@@ -359,66 +394,159 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
 
     def next_of(self) -> str:
         proc = self.run_flow("status")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
         return json.loads(proc.stdout[proc.stdout.index("{"):])["next"]
 
-    def sign_supplement(self) -> subprocess.CompletedProcess:
-        return self.run_flow("decide", "--gate", "material_scope", "--chosen", "supplement",
-                             "--by", "human", "--basis", "补充材料，产品原稿已放入需求目录。")
+    def sign(self, chosen: str) -> subprocess.CompletedProcess:
+        return self.run_flow("decide", "--gate", "material_scope", "--chosen", chosen,
+                             "--by", "human", "--basis", f"用户回复：{chosen}")
+
+    def sign_supplied(self) -> subprocess.CompletedProcess:
+        return self.sign(story_flow.MATERIAL_REQUEST_KEYS[0])
 
     def put_inbox(self, name: str = "原稿.md") -> None:
-        (self.feature_root / "inbox").mkdir(exist_ok=True)
-        (self.feature_root / "inbox" / name).write_text(
-            "# 原稿\n\n补的材料。\n", encoding="utf-8")
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text(f"# {name}\n\n后放进来的材料。\n", encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = "AR"
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
 
-    def supplement_round(self) -> None:
-        """走完一轮：摆选项 → 放料 → 人签补料 → 开新一轮。"""
+    def import_now(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
+             "--feature", FEATURE, "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+
+    def one_supply_round(self) -> None:
+        """走完一次完整的补料：摆选项 → 放料 → 人陈述事实 → 导入 → 开新一轮。"""
         self.round_now()
         self.write_gate_options()
         self.put_inbox()
-        proc = self.sign_supplement()
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.add_ux("signup.png")          # 料真的进来了，材料指纹随之变
+        self.assertEqual(0, self.sign_supplied().returncode)
+        self.import_now()
         self.round_now()
 
     def out_of(self, proc) -> str:
         return (proc.stdout or "") + (proc.stderr or "")
 
-    def test_material_in_the_inbox_says_import_it(self) -> None:
-        """R64：料已在收件箱——直接导入，不再问人放好了没有。
+    # -- 人回哪一项，料都进来 -------------------------------------------------
 
-        内网那次首次补料后模型仍让人「放好后回复」：`accepted` 只说「记录了」，
-        它手上没有下一个动作，只好把问题又抛回去。
+    def test_the_first_round_always_stops(self) -> None:
+        """第一轮照停：那一轮没有任何人对材料表过态。"""
+        self.round_now()
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_saying_the_material_is_all_there_still_imports_the_inbox(self) -> None:
+        """人说「现有材料就是全部」，收件箱里的原件照样先导入。
+
+        不导的话，那份料要到成文登记时才被发现，之前每个判断都建立在一份不全的材料上。
+        人回的是「不再补了」，不是「盘上那份不算数」。
         """
         self.round_now()
         self.write_gate_options()
         self.put_inbox()
-        out = self.out_of(self.sign_supplement())
-        self.assertIn("直接跑", out)
-        self.assertIn("不用再问人放好了没有", out)
+        self.assertEqual(0, self.sign("confirm_scope").returncode)
+        self.assertEqual("import_materials", self.next_of())
 
-    def test_material_already_imported_says_just_recount(self) -> None:
-        """R64：原件已经进正文、只是指纹变了——重跑盘点即可，不用再导一次。"""
+    def test_the_import_step_names_the_files_and_gives_the_command(self) -> None:
+        """命令给全、点名是哪几件——不问人，直接做。"""
         self.round_now()
         self.write_gate_options()
-        self.add_ux("signup.png")          # 先导后签：料已经落在正文侧
-        out = self.out_of(self.sign_supplement())
-        self.assertIn("重跑", out)
-        self.assertNotIn("直接跑 `import_sources", out)
-
-    def test_the_next_step_says_how_to_decide_whether_to_stop(self) -> None:
-        """R65：盘点完怎么定停不停，要说出口。
-
-        只说「重新盘点 → 重跑 round」的话，模型把上一轮的选项再摆一遍，流程又停一次。
-        """
-        self.round_now()
-        self.write_gate_options()
-        self.put_inbox()
-        self.assertEqual(0, self.sign_supplement().returncode)
+        self.put_inbox("签约页.md")
+        self.assertEqual(0, self.sign("confirm_scope").returncode)
         proc = self.run_flow("status")
         out = self.out_of(proc)
-        self.assertIn("上一轮缺的补上了没有", out)
-        self.assertIn("材料够了就直接进需求分析，不再问", out)
+        self.assertIn("import_sources.py --feature", out, "没给出可跑的导入命令")
+        self.assertIn("签约页.md", out, "没点名要导的是哪一件")
+
+    def test_after_importing_it_asks_to_register_the_new_round(self) -> None:
+        """导完材料就变了：先登记新一轮，再拿新材料重新盘点。"""
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        self.assertEqual(0, self.sign_supplied().returncode)
+        self.import_now()
+        self.assertEqual("run_round", self.next_of())
+
+    # -- 「放进去了」是一句会被当场核对的事实 --------------------------------
+
+    def test_saying_supplied_with_material_in_the_inbox_is_accepted(self) -> None:
+        """人把料放进收件箱、回一句「放进去了」——成立，下一步是导入。"""
+        self.round_now()
+        self.write_gate_options()
+        self.put_inbox()
+        proc = self.sign_supplied()
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        self.assertEqual("import_materials", self.next_of())
+
+    def test_saying_supplied_after_the_material_landed_is_accepted(self) -> None:
+        """料已经并进正文、只是本轮还没登记——同样成立，下一步是登记新一轮。
+
+        「料到没到」看的是磁盘：收件箱里有没导的，或者材料指纹已经不是本轮那个。
+        只认前一种的话，料先落进正文的那条路会被驳回，而料明明已经在手上。
+        """
+        self.round_now()
+        self.write_gate_options()
+        self.add_ux("signup.png")
+        proc = self.sign_supplied()
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        self.assertEqual("run_round", self.next_of())
+
+    def test_saying_supplied_with_nothing_on_disk_is_refused(self) -> None:
+        """盘上什么都没有——那一笔记下去下一步无处可去，原地重提。"""
+        self.round_now()
+        self.write_gate_options()
+        proc = self.sign_supplied()
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("收件箱里没有新文件", self.out_of(proc))
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+    # -- 导入之后：还缺什么才再停 --------------------------------------------
+
+    def test_no_new_gap_goes_straight_to_analysis(self) -> None:
+        """盘完不缺了就直接进需求分析，不把上一轮的选项再摆一遍。"""
+        self.one_supply_round()
+        self.assertEqual("run_analysis", self.next_of())
+
+    def test_a_new_gap_stops_again(self) -> None:
+        """盘出剩下的缺口、写进侧车 → 再停一次。这不是无效询问。"""
+        self.one_supply_round()
+        self.write_gap_options()
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_the_same_gap_can_be_asked_again(self) -> None:
+        """上一轮缺的没补上，照样可以再问——问的是「还缺什么」，不是「够不够」。
+
+        「人上一次已经回答过」不成立：他上一次回答的是上一轮的缺口。
+        """
+        self.one_supply_round()
+        self.write_gap_options(missing="管理页的界面图", why="这一份补来的还是签约页")
+        self.assertEqual("await_gate:material_scope", self.next_of())
+        self.put_inbox("管理页.md")
+        self.assertEqual(0, self.sign_supplied().returncode)
+
+    def test_a_second_round_request_must_say_what_is_still_missing(self) -> None:
+        """补过一轮之后再停，问的必须是**剩余**的缺口，不能把旧选项原样再摆。"""
+        self.one_supply_round()
+        self.write_gap_options(with_gap=False)
+        proc = self.sign_supplied()
+        self.assertEqual(1, proc.returncode)
+        out = self.out_of(proc)
+        self.assertIn("missing", out)
+        self.assertIn("剩余的缺口", out)
+
+    def test_a_non_request_option_needs_no_gap_fields(self) -> None:
+        """「现有材料就是全部」不是缺口，不受这一条约束。"""
+        self.one_supply_round()
+        self.write_gate_options(options=[
+            o for o in self.gate_options()
+            if o["key"] not in story_flow.MATERIAL_REQUEST_KEYS])
+        proc = self.sign("confirm_scope")
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
 
     def test_status_refuses_to_stop_on_a_sidecar_that_will_be_rejected(self) -> None:
         """校验要在 `status` 决定停不停之前。
@@ -426,133 +554,25 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
         只写在 `decide` 里的话，顺序是：`status` 说停 → 人被问了一次 → `decide` 才拒收。
         人已经答过，缺的字段却要模型回头补，那一次询问白问了。
         """
-        self.supplement_round()
-        self.write_gate_options()          # 第 2 轮的补料选项没写 missing / why
+        self.one_supply_round()
+        self.write_gap_options(with_gap=False)
         proc = self.run_flow("status")
         self.assertEqual(0, proc.returncode, self.out_of(proc))
         payload = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertNotEqual("await_gate:material_scope", payload["next"],
-                            "侧车立不住却先把人拦下来问了")
-        self.assertEqual("fix_gate_options", payload["next"])
+        self.assertEqual("fix_gate_options", payload["next"],
+                         "侧车立不住却先把人拦下来问了")
         self.assertIn("missing", self.out_of(proc))
 
-    def test_status_still_stops_when_the_sidecar_is_complete(self) -> None:
-        """写清了还缺什么，该停照停。"""
-        self.supplement_round()
-        src = self.feature_root / "AR" / "story-src"
-        (src / ".gate-options.json").write_text(json.dumps({
-            "gate": "material_scope",
-            "options": [
-                {"key": "supplement", "label": "补充材料",
-                 "missing": "管理页的界面图",
-                 "why": "补来的原稿只有签约页"},
-                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
-            ]}, ensure_ascii=False), encoding="utf-8")
-        self.assertEqual("await_gate:material_scope", self.next_of())
-
-    def test_a_second_round_request_must_say_what_is_still_missing(self) -> None:
-        """R65：补齐一轮之后再停，问的必须是剩余的缺口。"""
-        self.supplement_round()
-        self.write_gate_options()          # 补料选项没写 missing / why
-        proc = self.sign_supplement()
-        self.assertEqual(1, proc.returncode)
-        out = self.out_of(proc)
-        self.assertIn("missing", out)
-        self.assertIn("剩余的缺口", out)
-
-    def test_a_second_round_request_with_the_gap_named_is_accepted(self) -> None:
-        """写清了还缺什么、为什么不够，就可以再停一次——这不是无效询问。"""
-        self.supplement_round()
-        src = self.feature_root / "AR" / "story-src"
-        (src / ".gate-options.json").write_text(json.dumps({
-            "gate": "material_scope",
-            "options": [
-                {"key": "supplement", "label": "补充材料",
-                 "missing": "管理页的界面图",
-                 "why": "补来的原稿只有签约页，管理页那一节没有可参照的界面"},
-                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
-            ]}, ensure_ascii=False), encoding="utf-8")
-        self.put_inbox("管理页.md")
-        self.assertEqual(0, self.sign_supplement().returncode)
-
-    def test_a_non_request_option_needs_no_gap_fields(self) -> None:
-        """「材料充足，继续」不是缺口，不受这一条约束。"""
-        self.supplement_round()
-        src = self.feature_root / "AR" / "story-src"
-        (src / ".gate-options.json").write_text(json.dumps({
-            "gate": "material_scope",
-            "options": [{"key": "confirm_scope", "label": "材料充足，开始需求分析"}],
-        }, ensure_ascii=False), encoding="utf-8")
-        proc = self.run_flow("decide", "--gate", "material_scope",
-                             "--chosen", "confirm_scope", "--by", "human",
-                             "--basis", "用户回复：2（=材料充足）")
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
-
-    def test_no_new_gap_means_no_second_stop(self) -> None:
-        self.supplement_round()
-        self.assertEqual("run_analysis", self.next_of(),
-                         "补料之后又停了一次——问的是同一件事")
-
-    def test_a_new_gap_stops_again(self) -> None:
-        """模型在新一轮盘出新缺口 → 为这一级摆出选项 → 仍要停。
-
-        第 2 轮起，提补料请求的选项要写清还缺什么、为什么不够（R65）；
-        写清了就该停，这一条问的正是「停不停」。
-        """
-        self.supplement_round()
-        src = self.feature_root / "AR" / "story-src"
-        (src / ".gate-options.json").write_text(json.dumps({
-            "gate": "material_scope",
-            "options": [
-                {"key": "supplement", "label": "补充材料",
-                 "missing": "管理页的界面图", "why": "补来的原稿只有签约页"},
-                {"key": "confirm_scope", "label": "材料充足，开始需求分析"},
-            ]}, ensure_ascii=False), encoding="utf-8")
-        self.assertEqual("await_gate:material_scope", self.next_of(),
-                         "模型摆出了新选项，却没有停")
-
-    def test_the_first_round_still_stops(self) -> None:
-        """第一轮照停：那一轮没有任何人对材料表过态。"""
-        self.round_now()
-        self.assertEqual("await_gate:material_scope", self.next_of())
-
-    def test_signing_after_the_material_arrived_is_accepted(self) -> None:
-        """先导后签：料先到了（已并入正文、指纹变了），人再回一句「已放进去了」。
-
-        实跑里就是这个顺序——需求方把 docx 放进需求目录，再答复「补充材料」。
-        只认「inbox 有未导入的」会把这一笔驳回，而料明明已经在手上。
-        """
-        self.round_now()
-        self.write_gate_options()
-        self.add_ux("signup.png")          # 料到了，指纹与本轮登记的不同
-        proc = self.sign_supplement()
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("import_and_reanalyze", self.next_of())
-
-    def test_signing_before_the_material_arrives_is_accepted(self) -> None:
-        """先签后导：人先签这一笔，料随后放进 inbox/。"""
-        self.round_now()
-        self.write_gate_options()
-        self.put_inbox()
-        proc = self.sign_supplement()
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-
-    def test_supplement_without_any_material_is_refused(self) -> None:
-        """两条路都不成立——inbox 空、指纹也没变——才驳回。"""
-        self.round_now()
-        self.write_gate_options()
-        proc = self.sign_supplement()
-        self.assertEqual(2, proc.returncode)
-        self.assertIn("材料没有变化", (proc.stdout or "") + (proc.stderr or ""))
+    # -- 三级共用一个侧车文件名，级别要写明 ----------------------------------
 
     def test_the_second_level_is_not_pulled_back_by_its_own_sidecar(self) -> None:
-        """补料轮走到第二级：为第二级摆的侧车不该把 next 拨回第一级。
+        """走到第二级：为第二级摆的侧车不该把 next 拨回第一级。
 
         侧车不带级别时就是这样坏的——第一级读到「盘上有侧车」，判成材料上又有新缺口，
-        于是 `next` 回到 `await_gate:material_scope`，而 `decide --gate scope_decision`
-        被「当前这一步不是它」挡住，流程卡死在两级之间。
+        于是 `next` 回到第一级，而 `decide --gate scope_decision` 被
+        「当前这一步不是它」挡住，流程卡死在两级之间。
         """
-        self.supplement_round()
+        self.one_supply_round()
         self.write_analysis_sidecars()
         self.round_now()
         self.assertEqual("await_gate:scope_decision", self.next_of())
@@ -562,16 +582,34 @@ class SupplementAnswersTheMaterialGate(MaterialRoundCase):
                          "第二级的侧车把流程拨回了第一级")
         proc = self.run_flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
                              "--by", "human", "--basis", "用户回复：1（=按当前范围整体承载）")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
 
     def test_a_sidecar_for_another_level_is_refused(self) -> None:
         """摆错级别当场拦下，不放它进契约。"""
         self.round_now()
         self.write_gate_options("scope_decision")
-        proc = self.sign_supplement()
+        proc = self.sign_supplied()
         self.assertEqual(1, proc.returncode)
-        out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("侧车是给 scope_decision 级摆的", out)
+        self.assertIn("侧车是给 scope_decision 级摆的", self.out_of(proc))
+
+    # -- 选项集只有一处登记 ---------------------------------------------------
+
+    def test_the_option_keys_live_in_the_contract_only(self) -> None:
+        """键只登记在合同里：脚本与流程校验都从那里读，谁也不另存一份字面。
+
+        各存一份的话，只改一处，`decide` 写进契约的选择会在阶段门禁上被判非法——
+        而那两处相隔一个目录，改的人看不见另一处。
+        """
+        contract = json.loads(
+            (STORY_SCRIPTS.parent / "contracts" / "story-chapters.json")
+            .read_text(encoding="utf-8"))
+        keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
+        self.assertEqual(list(story_flow.MATERIAL_CHOICES), keys)
+        for path in (FLOW, STORY_SCRIPTS / "flow-check.mjs"):
+            text = path.read_text(encoding="utf-8")
+            for key in keys:
+                self.assertNotIn(f"'{key}'", text, f"{path.name} 里还留着 {key} 的字面")
+                self.assertNotIn(f'"{key}"', text, f"{path.name} 里还留着 {key} 的字面")
 
 
 class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
@@ -598,7 +636,8 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
              "--project-root", str(root), "--gate", "material_scope",
-             "--chosen", "supplement", "--by", by, "--basis", "他说的原话"],
+             "--chosen", story_flow.MATERIAL_CHOICES[0],
+             "--by", by, "--basis", "他说的原话"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=120, cwd=str(REPO_ROOT))
 

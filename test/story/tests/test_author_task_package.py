@@ -531,7 +531,12 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         shape = json.dumps(payload["sidecar"], ensure_ascii=False)
         self.assertIn(".gate-options.json", shape)
         self.assertIn("material_scope", shape, "侧车形状没写明是给哪一级摆的")
-        self.assertIn("签与导入不分先后", shape)
+        # 这一级摆哪两项也随形状一起给：键是固定的，作者要改的只有 label。
+        # 不给的话他得先去别处找键叫什么，而 `decide` 只认合同登记的那两个。
+        keys = [o["key"] for o in json.loads(CONTRACT.read_text(encoding="utf-8"))
+                ["gates"]["material_scope"]["options"]]
+        for key in keys:
+            self.assertIn(key, shape, f"侧车形状里没给出 {key} 这一项")
 
 
 class ChapterFileCarriesOnlyBody(WorkspaceCase):
