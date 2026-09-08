@@ -93,14 +93,8 @@ doc/extensions/adapt/
 **/.cac/settings.local.json
 output/
 **.pyc
-# Story 设计过程默认不跟踪；批次 5、批次 6 是正式方案与逐步评审真源，单独放行。
-test/story/design/*
-!test/story/design/2026-08-25-story分批次交付/
-test/story/design/2026-08-25-story分批次交付/*
-!test/story/design/2026-08-25-story分批次交付/batch-5-实跑问题诊断/
-!test/story/design/2026-08-25-story分批次交付/batch-5-实跑问题诊断/**
-!test/story/design/2026-08-25-story分批次交付/batch-6-零改动适配/
-!test/story/design/2026-08-25-story分批次交付/batch-6-零改动适配/**
+# Story 设计过程不入库：方案、评审与状态记录都留在工作区，不归档。
+test/story/design/
 test/story/spec/
 .bak/
 

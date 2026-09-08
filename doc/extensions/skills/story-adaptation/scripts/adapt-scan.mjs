@@ -110,21 +110,41 @@ function knowledgeBlock(manifestText) {
   while (to < lines.length && !/^ {2}\S/.test(lines[to])) to += 1;
   // 尾随空行留给下一段
   while (to > at + 1 && lines[to - 1].trim() === '') to -= 1;
-  return { from, to, text: lines.slice(from, to).join('\n') };
+  return { from, at, to, text: lines.slice(from, to).join('\n') };
 }
 
 /**
- * 合成 manifest：包的为底，目标现有的知识清单原样放回。
+ * 首次安装建的知识骨架：各类 README，一份不多。
  *
- * 它是写入面上唯一一个「一个文件两种所有权」的地方，所以 diff 判它也是单独一条
- * （§3）：其余键与包相同，`provides.knowledge` 与升级前逐字相同。
+ * 它们是读法与清单说明（`kind: index`），派生出来四类皆空——正是「这个仓还没配置
+ * 知识」该有的样子。包里的知识正文一份不带：那是 Demo 自己的业务内容（A3）。
  */
-function composeManifest(pkgText, tgtText) {
-  if (!tgtText) return pkgText;
+function skeletonKnowledge(pdir) {
+  return walk(join(pdir, KNOWLEDGE), pdir).filter(p => p.endsWith('README.md')).sort();
+}
+
+/**
+ * 合成 manifest：包的为底，知识清单按两态各走各的。
+ *
+ * 它是写入面上唯一一个「一个文件两种所有权」的地方（§3）：其余键与包相同，
+ * `provides.knowledge` 归目标。
+ *
+ * **升级**：目标现有的清单原样放回——知识激活随目标，不因升级重选。
+ * **首次**：换成刚建的骨架。照抄包的清单会登记 Demo 那十几份知识正文，而目标里
+ * 一份都没有，`activeKnowledge` 当场报「登记的文件读不到」——新仓装完第一件事是撞墙。
+ *
+ * 清单上面的注释块两态都保留：它讲的是这份清单怎么读，与登记了什么无关。
+ */
+function composeManifest(pkgText, tgtText, skeleton) {
   const mine = knowledgeBlock(pkgText);
-  const theirs = knowledgeBlock(tgtText);
-  if (!mine || !theirs) return pkgText;
+  if (!mine) return pkgText;
   const lines = pkgText.split(/\r?\n/);
+  if (!tgtText) {
+    const body = (skeleton ?? []).map(p => `    - ${p}`);
+    return [...lines.slice(0, mine.at + 1), ...body, ...lines.slice(mine.to)].join('\n');
+  }
+  const theirs = knowledgeBlock(tgtText);
+  if (!theirs) return pkgText;
   return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
 }
 
@@ -231,6 +251,15 @@ if (mode === '--apply') {
   if (!isRepo(TARGET)) {
     die(`目标不是 git 仓库：${TARGET}\n  升级的确认靠 git diff，没有 git 就没有「哪些文件变了」这个答案。`);
   }
+  // 包先查：跳板清单是包自己在 manifest 里登记的，登记了却没有文件是包坏了，不是可选项。
+  // 排在目标那几条之前——包坏了跟目标的状态无关，先说这件事，人才不必先去收拾工作区。
+  const noBridge = BRIDGES.filter(b => !existsSync(join(PKG, ...b.split('/'))));
+  if (noBridge.length) {
+    console.error(`[adapt-scan] 停：包里登记了跳板却没有文件（${noBridge.length} 个）：`);
+    noBridge.forEach(b => console.error(`  ${b}`));
+    die('包坏了——补上文件，或从 manifest 的 provides.bridges 里撤掉登记。目标一个字节未写', 2);
+  }
+
   const dirty = dirtyPaths(TARGET).filter(p => inWriteFace(TARGET, p, BRIDGES));
   if (dirty.length) {
     console.error(`[adapt-scan] 停：写入面上有 ${dirty.length} 处未提交改动，升级会盖掉它们：`);
@@ -260,17 +289,17 @@ if (mode === '--apply') {
 
   // 2. manifest 合成：机制登记归包，知识激活清单归目标
   const composed = composeManifest(
-    PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '');
+    PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '',
+    skeletonKnowledge(PDIR));
   if (!existsSync(tgtManifest) || read(tgtManifest) !== composed) {
     mkdirSync(dirname(tgtManifest), { recursive: true });
     writeFileSync(tgtManifest, composed, 'utf8');
     written.push('manifest.yaml');
   }
 
-  // 3. 跳板：扩展自有的宿主入口文件，直接覆盖
+  // 3. 跳板：扩展自有的宿主入口文件，直接覆盖（缺文件已由前置拦下）
   for (const b of BRIDGES) {
     const from = join(PKG, ...b.split('/'));
-    if (!existsSync(from)) { console.error(`[adapt-scan] 包里缺跳板 ${b}，跳过`); continue; }
     const to = join(TARGET, ...b.split('/'));
     if (existsSync(to) && sha(from) === sha(to)) continue;
     mkdirSync(dirname(to), { recursive: true });
@@ -313,9 +342,9 @@ if (mode === '--apply') {
       written.push('framework.config.json');
     }
     // 知识只建目录与各类 README（读法与清单说明），不放包里的知识正文——
-    // 那是这个仓自己的东西，从空的开始（A3）。
-    for (const p of walk(join(PDIR, KNOWLEDGE), PDIR)) {
-      if (!p.endsWith('/README.md')) continue;
+    // 那是这个仓自己的东西，从空的开始（A3）。**与写进 manifest 的是同一份清单**：
+    // 各扫一遍的话，登记的与建出来的会在下一次改动时错开。
+    for (const p of skeletonKnowledge(PDIR)) {
       const to = join(TDIR, ...p.split('/'));
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(join(PDIR, ...p.split('/')), to);
@@ -372,19 +401,29 @@ if (!SAME_TREE) {
   } else {
     const changed = dirtyPaths(TARGET);
     const ext = extDir(TARGET);
+    const relManifest = `${ext}/manifest.yaml`;
+    // 这次动作是首次安装还是升级：看**上一个提交里**有没有 manifest。盘上那份刚被
+    // `--apply` 写出来，拿它判会把每一次首次安装都当成升级。
+    //
+    // 两态判的东西不同：首次安装的写入面**含**知识骨架（§3 表最后一行），
+    // 那几个 README 就是这次装出来的；升级则一条都不许碰。
+    const wasInstalled = git(TARGET, ['cat-file', '-e', `HEAD:${relManifest}`]).ok;
+    const isSkeleton = p => p.endsWith('/README.md');
     for (const p of changed) {
       if (!p.startsWith(`${ext}/`)) continue;
       const inner = p.slice(ext.length + 1);
-      if (inner.startsWith(`${KNOWLEDGE}/`)) {
-        bad.push(`升级动了目标的知识：${p}——已集成仓升级 knowledge 不修改、不补写、不合并（A2）`);
+      if (inner.startsWith(`${KNOWLEDGE}/`) && !(!wasInstalled && isSkeleton(inner))) {
+        bad.push(wasInstalled
+          ? `升级动了目标的知识：${p}——已集成仓升级 knowledge 不修改、不补写、不合并（A2）`
+          : `首次安装往知识目录写了正文：${p}——只建目录与各类 README，知识从空的开始（A3）`);
       }
       if (inner.startsWith(`${ADAPTERS}/`)) {
         bad.push(`升级动了目标的对接层：${p}——${ADAPTERS}/ 归目标仓自己实现，升级一个字节不碰`);
       }
     }
-    // manifest 是写入面上唯一一个「一个文件两种所有权」的：机制登记归包、知识清单归目标
-    const relManifest = `${extDir(TARGET)}/manifest.yaml`;
-    if (changed.includes(relManifest)) {
+    // manifest 是写入面上唯一一个「一个文件两种所有权」的：机制登记归包、知识清单归目标。
+    // 首次安装没有「升级前」可比，清单就是这次建的骨架，不判。
+    if (wasInstalled && changed.includes(relManifest)) {
       const head = git(TARGET, ['show', `HEAD:${relManifest}`]);
       if (head.ok) {
         const was = knowledgeBlock(head.out);

@@ -72,8 +72,8 @@ function knowledgeSection(projectRoot, feature) {
   if (!knowledge.entries.length && !knowledge.facts.length && !knowledge.patterns.length) {
     return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
       '',
-      '**本仓未配置知识**——`manifest.yaml` 的 `provides.knowledge` 是空的，'
-      + '没有规约、项目事实或模式要判。这一节不用写，`knowledge-use.yaml` 也不用建。',
+      '**本仓未配置知识**——激活清单里没有登记任何规约、项目事实或模式，'
+      + '没有要判的东西。这一节不用写，`knowledge-use.yaml` 也不用建。',
       ''];
   }
   return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',

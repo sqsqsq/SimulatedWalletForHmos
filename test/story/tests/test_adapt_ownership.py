@@ -232,6 +232,69 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
         self.assertIn("当前适配仍有效", self.out(second))
 
 
+class AFreshInstallRunsOutOfTheBox(AdaptCase):
+    """空仓装完就能跑 —— 清单登记的是刚建的骨架，不是包里的 Demo 知识。
+
+    照抄包的清单会登记十几份目标里根本没有的知识正文，`activeKnowledge` 当场报
+    「登记的文件读不到」：新仓装完第一件事是撞墙。而「装完就能跑」是 A3 的直接后果——
+    首次安装只建目录与各类 README，知识从空的开始。
+    """
+
+    def setUp(self) -> None:  # noqa: D102
+        super().setUp()
+        # 把「已装好」的那一份撤掉，只留一个空仓：配置键 + 入口文件
+        shutil.rmtree(self.ext)
+        self.commit("空仓")
+
+    def test_the_manifest_registers_the_skeleton_not_the_demo(self) -> None:
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        block = manifest.split("  knowledge:\n", 1)[1].split("\n  hooks:", 1)[0]
+        listed = [l.strip()[2:] for l in block.splitlines() if l.strip().startswith("- ")]
+        self.assertTrue(listed, "首次安装的清单是空的——各类 README 一份都没登记")
+        for rel in listed:
+            self.assertTrue(rel.endswith("README.md"), f"首次安装登记了知识正文：{rel}")
+            self.assertTrue((self.ext / rel).is_file(), f"登记了却没建出来：{rel}")
+
+    def test_the_derivation_runs_on_a_fresh_install(self) -> None:
+        """装完直接跑知识派生：四类皆空、不抛——这是「装完就能跑」的判据本身。"""
+        self.assertEqual(0, self.adapt("--apply").returncode)
+        probe = (
+            "const k = await import(process.argv[1]);"
+            "const kn = k.activeKnowledge(process.argv[2]);"
+            "process.stdout.write(JSON.stringify({"
+            "  facts: kn.facts.length, constraints: kn.constraints.length,"
+            "  patterns: kn.patterns.length, entries: kn.entries.length,"
+            "  problems: k.selfCheck(process.argv[2], kn).length }));"
+        )
+        module = (self.ext / "hooks" / "shared" / "knowledge.mjs").resolve().as_uri()
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", probe, module, str(self.target)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, f"空仓装完派生就抛了：{proc.stderr}")
+        self.assertEqual({"facts": 0, "constraints": 0, "patterns": 0,
+                          "entries": 0, "problems": 0}, json.loads(proc.stdout))
+
+    def test_a_fresh_install_passes_its_own_check(self) -> None:
+        """刚装完跑 `--check` 要过：首次安装的写入面含知识骨架，那几个 README 是这次建的。
+
+        两态不分的话，判据会把自己刚写出来的东西判成「升级动了目标的知识」。
+        """
+        self.assertEqual(0, self.adapt("--apply").returncode)
+        proc = self.adapt("--check")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+
+    def test_a_fresh_install_still_refuses_knowledge_prose(self) -> None:
+        """反向锁：首次安装往知识目录写了正文，`--check` 仍要报——放行的只有各类 README。"""
+        self.assertEqual(0, self.adapt("--apply").returncode)
+        (self.ext / "knowledge" / "facts" / "smuggled.md").write_text(
+            "---\nkind: facts\n---\n\n# 混进来的\n", encoding="utf-8")
+        proc = self.adapt("--check")
+        self.assertEqual(1, proc.returncode, "首次安装写了知识正文却判通过了")
+        self.assertIn("smuggled.md", self.out(proc))
+
+
 class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
     """⑧ 判的是包：`scripts/` 那一层只有 core/ 与 adapters/。"""
 

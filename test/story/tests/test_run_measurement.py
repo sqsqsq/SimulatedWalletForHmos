@@ -390,15 +390,27 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
                          images[0]["paths"], "两个落点没有都记下来")
 
 
-class BatchFiveArtifactsStayVersioned(unittest.TestCase):
-    """只做回归确认，不另建第二份状态记录。"""
+class DesignArtifactsStayOutOfTheIndex(unittest.TestCase):
+    """设计过程不入库（用户 2026-09-08 裁定）：方案、评审与状态记录留在工作区。
 
-    def test_batch5_design_dir_is_tracked(self):
-        d = REPO / "test/story/design/2026-08-25-story分批次交付/batch-5-实跑问题诊断"
-        self.assertTrue(d.is_dir())
-        proc = subprocess.run(["git", "check-ignore", str(d / "STATUS.md")],
+    它们是过程件，读者是当轮的执行者与评审；入库之后每一次改动都要过一遍提交，
+    而改动本身正是这类文档的常态。盘上要在——不入库不等于不写。
+    """
+
+    def test_the_design_and_spec_dirs_are_ignored(self):
+        for rel in ("test/story/design", "test/story/spec"):
+            d = REPO / rel
+            self.assertTrue(d.is_dir(), f"{rel} 不在盘上了——不入库不等于不写")
+            proc = subprocess.run(["git", "check-ignore", str(d)],
+                                  cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual("", proc.stdout.strip(), f"{rel} 还会被提交进库")
+
+    def test_nothing_from_them_is_still_tracked(self):
+        """已入库的那些要撤出索引——忽略规则不会自动撤，留着就还会被改动带进提交。"""
+        proc = subprocess.run(["git", "ls-files", "test/story/design", "test/story/spec"],
                               cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual("", proc.stdout.strip(), "批次 5 方案目录被 .gitignore 吞了")
+        self.assertEqual("", proc.stdout.strip(),
+                         "还有设计件躺在索引里：git rm -r --cached 一次")
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。
