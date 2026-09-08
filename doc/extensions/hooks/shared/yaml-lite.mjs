@@ -24,8 +24,18 @@ const BLOCK_RE = /^([|>])([-+]?)\s*(?:#.*)?$/;
 function scalar(raw) {
   const s = String(raw ?? '').trim();
   if (!s) return '';
-  const m = s.match(/^(['"])([\s\S]*)\1$/);
-  if (m) return m[2];
+  // 引号标量：找到收尾的那个引号，它之后只能是行尾注释。
+  //
+  // **不能先判「整串被引号包裹」再剥注释**：`"值" # 说明` 两头不对称，于是落到下面
+  // 剥注释那一支，剥完却不再处理引号——读出来的值多带一对引号。它与不带注释的
+  // 同一份写法在 YAML 里是同一个值，而下游拿它做相等判断时，多出的两个字符会把
+  // 判断带向相反的一边。引号内的 `#` 是内容，不是注释的起点。
+  const quote = s[0];
+  if (quote === '"' || quote === "'") {
+    const end = s.indexOf(quote, 1);
+    const rest = end > 0 ? s.slice(end + 1).trim() : null;
+    if (rest === '' || rest?.startsWith('#')) return s.slice(1, end);
+  }
   // 行尾注释：只在非引号标量上剥，且要求 # 前有空白（`a#b` 是内容不是注释）
   const cut = s.replace(/\s+#.*$/, '').trim();
   if (cut === 'true') return true;

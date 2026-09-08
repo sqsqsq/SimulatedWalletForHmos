@@ -180,7 +180,9 @@ class SourceKindCase(unittest.TestCase):
         self.commit(target, "自己实现对接层")
 
         for written in ('name: "wallet-sdk-demo"', "name: 'wallet-sdk-demo'",
-                        "name: wallet-sdk-demo  # 就是它"):
+                        "name: wallet-sdk-demo  # 就是它",
+                        'name: "wallet-sdk-demo"  # 引号加注释',
+                        "name: 'wallet-sdk-demo'  # 引号加注释"):
             pkg = self.root / "quoted-pkg"
             if pkg.exists():
                 shutil.rmtree(pkg)
