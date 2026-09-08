@@ -3,13 +3,14 @@
  * story adapt —— 把这套扩展装进一个目标工程，或把已装的升到包的版本。
  *
  * **所有权由目录表达**，不靠推断：
- *   `<ext>/skills/story/scripts/core/`      公共，升级整份换掉（包里不再有的自然消失）
- *   `<ext>/skills/story/scripts/adapters/`  目标仓自己实现，升级一个字节不碰
- *   `<ext>/knowledge/`                      目标的知识，升级不读不写
- *   其余 `<ext>/**`                         机制，升级整份换掉
+ *   `<ext>/skills/story/scripts/core/`      公共，整份换掉（包里不再有的自然消失）
+ *   `<ext>/skills/story/scripts/adapters/`  对接实现；Demo 来源不碰，业务仓之间复刻时覆盖
+ *   `<ext>/knowledge/`                      目标的知识，不读不写
+ *   `<ext>/manifest.yaml`                   机制登记归包，name / description / 知识清单归目标
+ *   其余 `<ext>/**`                         机制，整份换掉
  *
- * 边界这么一分，「升级之后哪些文件变了」本身就是答案——所以确认用 `git diff`，
- * 不再读两棵树逐文件比 sha256、也不再有第三种要模型判断的情形。
+ * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
+ * `--check` 据此核**安装结果**——这个目标现在装的是不是包的这一版。
  *
  * 用法: node adapt-scan.mjs --apply|--check --target <目标根> [--package <包根>]
  * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
@@ -68,27 +69,38 @@ const extDir = root => config(root)?.paths?.extension_dir || 'doc/extensions';
 const featuresDir = root => config(root)?.paths?.features_dir || 'doc/features';
 
 /**
- * 递归列文件（相对 base 的 posix 路径），跳过点开头的目录与运行产物。
+ * 递归列文件（相对 base 的 posix 路径），`skip` 里的子树整棵不进。
  *
- * 点开头的目录是工作件，`__pycache__` 是跑过脚本就有的字节码——两样都既不入库
- * 也不交付，混进写入面会让 diff 永远核不平。
+ * **不进去，而不是进去再筛**：`adapters/` 下躺着目标为对接实现装的 `node_modules`，
+ * 走一遍它跟升级要做的事毫无关系，而升级的成本本该只取决于固定机制有多大。
+ * 点开头的目录是工作件，`__pycache__` 是跑过脚本就有的字节码——两样都既不入库也不交付。
  */
-function walk(dir, base = dir) {
+function walk(dir, base = dir, skip = new Set()) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const f = join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === '__pycache__' || e.name.startsWith('.')) return [];
-      return walk(f, base);
+      if (skip.has(rel(base, f))) return [];
+      return walk(f, base, skip);
     }
     return [rel(base, f)];
   });
 }
 
-/** 包里归本机制所有的那些文件：`<ext>/` 下去掉知识与对接层，manifest 另按合成规则处理。 */
-function packageMechanism(pdir) {
-  return walk(pdir).filter(p => p !== 'manifest.yaml'
-    && !p.startsWith(`${KNOWLEDGE}/`) && !p.startsWith(`${ADAPTERS}/`));
+/**
+ * 这一次要覆盖的范围：`<ext>/` 下除了知识与（按来源）对接层的一切。
+ *
+ * **一处生成，四处共用**——写入前检查、复制、清理包里不再有的文件、`--check` 核安装结果，
+ * 问的都是同一个「这次该管哪些文件」。各算各的话，解除了复制的过滤而自检还在拦，
+ * 或者反过来，都只有跑一遍才发现。
+ *
+ * `manifest.yaml` 不在其中：它一个文件里同时装着归包的机制登记与归目标的身份和知识清单，
+ * 按 `composeManifest` 的规则单独合成。
+ */
+function coveredFiles(root, withAdapters) {
+  const skip = new Set(withAdapters ? [KNOWLEDGE] : [KNOWLEDGE, ADAPTERS]);
+  return walk(root, root, skip).filter(p => p !== 'manifest.yaml');
 }
 
 // ── manifest：机制登记归包，知识激活清单归目标 ───────────────────────────────
@@ -133,19 +145,61 @@ function skeletonKnowledge(pdir) {
  * **首次**：换成刚建的骨架。照抄包的清单会登记 Demo 那十几份知识正文，而目标里
  * 一份都没有，`activeKnowledge` 当场报「登记的文件读不到」——新仓装完第一件事是撞墙。
  *
- * 清单上面的注释块两态都保留：它讲的是这份清单怎么读，与登记了什么无关。
+ * **目标登记了空清单，那就是空清单。** 一个还没配置知识的仓是正常状态（`knowledge.mjs`
+ * 明确这么读），拿包的清单去补齐等于替它重新激活了一批 Demo 知识——它自己的选择被一次
+ * 升级改掉了，而这正是「知识激活随目标」要挡的事。
+ *
+ * 清单上面的注释块三态都保留：它讲的是这份清单怎么读，与登记了什么无关。
+ *
+ * `name` 与 `description` 同样归目标（`identity`）：它们说的是**这个仓**叫什么、是什么，
+ * 一次升级把它们改成包的，目标就顶着发布源的名字了。`version` 反过来归包——
+ * 目标只能从它看出自己拿到的是哪一批产物形态。
  */
-function composeManifest(pkgText, tgtText, skeleton) {
-  const mine = knowledgeBlock(pkgText);
-  if (!mine) return pkgText;
-  const lines = pkgText.split(/\r?\n/);
-  if (!tgtText) {
-    const body = (skeleton ?? []).map(p => `    - ${p}`);
-    return [...lines.slice(0, mine.at + 1), ...body, ...lines.slice(mine.to)].join('\n');
+function composeManifest(pkgText, tgtText, skeleton, identity) {
+  const lines0 = pkgText.split(/\r?\n/);
+  const keep = { ...identity };
+  if (tgtText) {
+    for (const key of TARGET_OWNED_KEYS) {
+      const at = tgtText.split(/\r?\n/).find(l => l.startsWith(`${key}:`));
+      if (at) keep[key] = at.slice(key.length + 1).trim();
+    }
   }
+  const lines = lines0.map((l) => {
+    const key = TARGET_OWNED_KEYS.find(k => l.startsWith(`${k}:`));
+    return key && keep[key] !== undefined ? `${key}: ${keep[key]}` : l;
+  });
+  const mine = knowledgeBlock(pkgText);
+  if (!mine) return lines.join('\n');
+  const withList = items => [
+    ...lines.slice(0, mine.at + 1), ...items.map(p => `    - ${p}`), ...lines.slice(mine.to),
+  ].join('\n');
+  if (!tgtText) return withList(skeleton ?? []);
   const theirs = knowledgeBlock(tgtText);
-  if (!theirs) return pkgText;
+  if (!theirs) return withList([]);
   return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
+}
+
+/** manifest 里归目标的键：这个仓叫什么、是什么。升级不改，首次按目标仓生成。 */
+const TARGET_OWNED_KEYS = ['name', 'description'];
+
+function manifestValue(manifestText, key) {
+  const at = manifestText.split(/\r?\n/).find(l => l.startsWith(`${key}:`));
+  return at ? at.slice(key.length + 1).trim() : null;
+}
+
+/**
+ * 首次安装时这个仓叫什么、是什么。
+ *
+ * 从目标的 `framework.config.json > project_name` 派生——那是它自己登记的工程名，
+ * 拿它当初值是可核实的事实，不是编的。描述由模型在首次那一次确认里改准（SKILL §3）：
+ * 脚本知道这个仓叫什么，不知道它是干什么的。
+ */
+function freshIdentity(root) {
+  const project = config(root)?.project_name || '目标工程';
+  return {
+    name: project,
+    description: `${project} 的实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）`,
+  };
 }
 
 function bridgesOf(manifestText) {
@@ -165,22 +219,23 @@ function bridgesOf(manifestText) {
 /**
   * 目标 `.gitignore` 该有的：章草稿目录。
   *
-  * 就这一行——本命令自己不落任何工作件（确认靠 git diff，不写 before 快照），
+  * 就这一行——本命令自己不落任何工作件（自检直接核安装结果，不写 before 快照），
   * 所以没有第二行要挡的东西。
   */
 const gitignoreLines = root => [`${featuresDir(root)}/**/AR/story-src/drafts/`];
 
 /**
- * 这条路径 adapt 碰不碰得。**写入面就是所有权的另一种说法**——
- * 它答不上「是」的，diff 里出现就是错的。
+ * 这条路径这一次写不写得。**与 `coveredFiles` 同一个边界**，只是换个问法：
+ * 那个答「要覆盖哪些」，这个答「某一条在不在覆盖范围里」。写入前查工作区脏不脏用它。
  */
-function inWriteFace(root, p, bridges) {
+function inWriteFace(root, p, bridges, withAdapters) {
   if (p === '.gitignore' || ENTRIES.includes(p)) return true;
   if (bridges.includes(p)) return true;
   const ext = extDir(root);
   if (!p.startsWith(`${ext}/`)) return false;
   const inner = p.slice(ext.length + 1);
-  if (inner.startsWith(`${KNOWLEDGE}/`) || inner.startsWith(`${ADAPTERS}/`)) return false;
+  if (inner.startsWith(`${KNOWLEDGE}/`)) return false;
+  if (!withAdapters && inner.startsWith(`${ADAPTERS}/`)) return false;
   return true;
 }
 
@@ -241,6 +296,20 @@ const tgtManifest = join(TDIR, 'manifest.yaml');
 /** 两态，就这一条判据：目标有没有 manifest.yaml。历史版本识别不存在于本实现。 */
 const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
 
+/**
+ * 这一次带不带对接层。
+ *
+ * 两种来源：**Demo** 的三个 js 是本地目录模拟需求系统的替身，复制到业务仓等于把人家的
+ * 真实现盖掉；**业务仓之间**共用同一套对接实现，复刻时正该带上（A12）。
+ *
+ * 判据是包 manifest 的 `name`：它归目标、升级不改，所以每个仓的 manifest 里那个名字
+ * 始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、目录结构
+ * 或对接脚本的内容去猜。
+ */
+const MOCK_ADAPTER_PACKAGE = 'wallet-sdk-demo';
+const PKG_NAME = manifestValue(PKG_MANIFEST_TEXT, 'name');
+const WITH_ADAPTERS = PKG_NAME !== MOCK_ADAPTER_PACKAGE;
+
 // ── --apply ─────────────────────────────────────────────────────────────────
 
 if (mode === '--apply') {
@@ -249,7 +318,8 @@ if (mode === '--apply') {
   // 前置：不满足就停，不猜。工作区脏的话 diff 里混着用户自己的改动，分不清哪些是
   // 升级带来的——而「升级把用户没提交的改动盖了、diff 里还看不出来」没法补救。
   if (!isRepo(TARGET)) {
-    die(`目标不是 git 仓库：${TARGET}\n  升级的确认靠 git diff，没有 git 就没有「哪些文件变了」这个答案。`);
+    die(`目标不是 git 仓库：${TARGET}\n`
+      + '  这一次要整份换掉覆盖范围内的文件，没存档的改动被盖掉就找不回来了。');
   }
   // 包先查：跳板清单是包自己在 manifest 里登记的，登记了却没有文件是包坏了，不是可选项。
   // 排在目标那几条之前——包坏了跟目标的状态无关，先说这件事，人才不必先去收拾工作区。
@@ -260,19 +330,19 @@ if (mode === '--apply') {
     die('包坏了——补上文件，或从 manifest 的 provides.bridges 里撤掉登记。目标一个字节未写', 2);
   }
 
-  const dirty = dirtyPaths(TARGET).filter(p => inWriteFace(TARGET, p, BRIDGES));
+  const dirty = dirtyPaths(TARGET).filter(p => inWriteFace(TARGET, p, BRIDGES, WITH_ADAPTERS));
   if (dirty.length) {
     console.error(`[adapt-scan] 停：写入面上有 ${dirty.length} 处未提交改动，升级会盖掉它们：`);
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
 
-  const pkgFiles = packageMechanism(PDIR);
+  const pkgFiles = coveredFiles(PDIR, WITH_ADAPTERS);
   const written = [];
   const removed = [];
 
   // 1. 机制面整体替换：包里没有而目标有的先删，再逐个复制
-  const tgtFiles = new Set(existsSync(TDIR) ? packageMechanism(TDIR) : []);
+  const tgtFiles = new Set(existsSync(TDIR) ? coveredFiles(TDIR, WITH_ADAPTERS) : []);
   for (const p of tgtFiles) {
     if (pkgFiles.includes(p)) continue;
     rmSync(join(TDIR, ...p.split('/')));
@@ -290,7 +360,7 @@ if (mode === '--apply') {
   // 2. manifest 合成：机制登记归包，知识激活清单归目标
   const composed = composeManifest(
     PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '',
-    skeletonKnowledge(PDIR));
+    skeletonKnowledge(PDIR), freshIdentity(TARGET));
   if (!existsSync(tgtManifest) || read(tgtManifest) !== composed) {
     mkdirSync(dirname(tgtManifest), { recursive: true });
     writeFileSync(tgtManifest, composed, 'utf8');
@@ -364,7 +434,7 @@ if (mode === '--apply') {
   console.log('[adapt-scan] 下一步：跑 --check 自检；'
     + (STATE === 'fresh'
       ? '首次安装还要按 SKILL.md 写部件画像，摆给人确认一次'
-      : 'git diff 看变了哪些文件'));
+      : '`git diff` 看这次动了哪些文件'));
   process.exit(0);
 }
 
@@ -387,54 +457,45 @@ function replaceZone(text, block) {
 
 const bad = [];
 
-// diff 落点：升级之后变了哪些文件，答案要与所有权一致。
+// ① 装的是不是包的这一版：机制面逐字对包，包里没有的目标也不该有。
 //
-// **判的是「有没有碰不该碰的」，不是「diff 里只有 adapt 写的东西」**：工作区里同时
-// 躺着用户自己在别处的改动是常态，那些与本命令无关。`--apply` 的前置已经保证写入面上
-// 升级前是干净的，所以写入面内的 diff 就是 adapt 写的；剩下要问的只有一句——
-// 它有没有伸进 `knowledge/` 或 `adapters/`。
+// **判的是安装结果，不是「谁改的」。** 拿 `git status` 相对 HEAD 的差异当证据不成立：
+// 目标自己改过知识、`--apply` 一个字节没写，diff 照样把那处改动算到 adapt 头上；
+// 反过来目标把上一次升级提交了，diff 为空，装错了也看不出来。git 回答的是
+// 「相对上一个提交变了什么」，回答不了「这是谁做的」。
 //
-// 包与目标是同一棵树时（本仓自适配）diff 没有对象——那时这一条不判，剩下三组照跑。
-if (!SAME_TREE) {
-  if (!isRepo(TARGET)) {
-    bad.push('目标不是 git 仓库：升级的确认靠 git diff，没有 git 就核不了「变了哪些文件」');
-  } else {
-    const changed = dirtyPaths(TARGET);
-    const ext = extDir(TARGET);
-    const relManifest = `${ext}/manifest.yaml`;
-    // 这次动作是首次安装还是升级：看**上一个提交里**有没有 manifest。盘上那份刚被
-    // `--apply` 写出来，拿它判会把每一次首次安装都当成升级。
-    //
-    // 两态判的东西不同：首次安装的写入面**含**知识骨架（§3 表最后一行），
-    // 那几个 README 就是这次装出来的；升级则一条都不许碰。
-    const wasInstalled = git(TARGET, ['cat-file', '-e', `HEAD:${relManifest}`]).ok;
-    const isSkeleton = p => p.endsWith('/README.md');
-    for (const p of changed) {
-      if (!p.startsWith(`${ext}/`)) continue;
-      const inner = p.slice(ext.length + 1);
-      if (inner.startsWith(`${KNOWLEDGE}/`) && !(!wasInstalled && isSkeleton(inner))) {
-        bad.push(wasInstalled
-          ? `升级动了目标的知识：${p}——已集成仓升级 knowledge 不修改、不补写、不合并（A2）`
-          : `首次安装往知识目录写了正文：${p}——只建目录与各类 README，知识从空的开始（A3）`);
-      }
-      if (inner.startsWith(`${ADAPTERS}/`)) {
-        bad.push(`升级动了目标的对接层：${p}——${ADAPTERS}/ 归目标仓自己实现，升级一个字节不碰`);
-      }
-    }
-    // manifest 是写入面上唯一一个「一个文件两种所有权」的：机制登记归包、知识清单归目标。
-    // 首次安装没有「升级前」可比，清单就是这次建的骨架，不判。
-    if (wasInstalled && changed.includes(relManifest)) {
-      const head = git(TARGET, ['show', `HEAD:${relManifest}`]);
-      if (head.ok) {
-        const was = knowledgeBlock(head.out);
-        const now = knowledgeBlock(read(tgtManifest));
-        if ((was?.text ?? null) !== (now?.text ?? null)) {
-          bad.push('manifest 的 provides.knowledge 被升级改过'
-            + '——知识激活随目标，不因升级重选（01 分册 §4）');
-        }
-      }
+// 所有权已经由目录定死，`--apply` 的写入面天然不含 `knowledge/` 与 `adapters/`
+// （`packageMechanism` 一开始就把它们排除在外）——「adapt 碰没碰它们」由实现保证，
+// 不需要再找证据。这里只回答剩下的那个问题：**这个目标现在装的是不是包的这一版。**
+{
+  const pkgFiles = coveredFiles(PDIR, WITH_ADAPTERS);
+  const inPkg = new Set(pkgFiles);
+  for (const p of pkgFiles) {
+    const to = join(TDIR, ...p.split('/'));
+    if (!existsSync(to)) { bad.push(`① 机制面缺文件：${p}——跑 --apply 装上`); continue; }
+    if (sha(join(PDIR, ...p.split('/'))) !== sha(to)) {
+      bad.push(`① 机制面与包不同：${p}——机制归包，目标改了它下一次升级也会被换回去`);
     }
   }
+  for (const p of (existsSync(TDIR) ? coveredFiles(TDIR, WITH_ADAPTERS) : [])) {
+    if (!inPkg.has(p)) bad.push(`① 机制面多出包里没有的文件：${p}——跑 --apply 清掉`);
+  }
+}
+
+// ② manifest：合成一遍，看等不等于盘上那份。
+//
+// 它是唯一一个「一个文件两种所有权」的地方，而合成规则本身就是那条所有权的表达——
+// 拿它当判据，机制段与包不同、知识清单被升级动过，两种都露出来，不必各写一条。
+if (existsSync(tgtManifest)) {
+  const tgtText = read(tgtManifest);
+  if (composeManifest(PKG_MANIFEST_TEXT, tgtText, skeletonKnowledge(PDIR),
+    freshIdentity(TARGET)) !== tgtText) {
+    bad.push('② manifest 不是这个包合成出来的：机制登记（version / skills / bridges / hooks /'
+      + ' overlay）要与包相同，name / description / provides.knowledge 归目标'
+      + '——跑 --apply 重新合成');
+  }
+} else {
+  bad.push(`② 目标没有 manifest.yaml：这个仓还没装过，跑 --apply`);
 }
 
 // ⑤ 入口文件含扩展段与标记区
@@ -501,6 +562,6 @@ if (bad.length) {
   bad.forEach(b => console.error(`  ${b}`));
   process.exit(1);
 }
-console.log('[adapt-scan] 核对通过：'
-  + (SAME_TREE ? '（包即目标，diff 无对象）' : 'diff 全落在写入面内 / manifest 的知识清单未动 / ')
-  + '入口文件含扩展段与标记区 / .gitignore 有章草稿那一行 / 包的 scripts 只有 core 与 adapters');
+console.log('[adapt-scan] 核对通过：机制面与包一致 / manifest 按所有权合成 / '
+  + '入口文件含扩展段与标记区 / .gitignore 有章草稿那一行 / 包的 scripts 只有 core 与 adapters'
+  + (WITH_ADAPTERS ? '（来源带对接实现）' : ''));

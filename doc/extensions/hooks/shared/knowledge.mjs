@@ -294,8 +294,16 @@ export function activeKnowledge(projectRoot) {
   }
   // 没登记就没有要读的东西：这个仓还没配置知识，不是失败。登记了却读不到仍然报错
   // （下面逐条读），那是读取失败被吞成空——两件事在这里分开。
-  const list = Array.isArray(manifest?.provides?.knowledge)
-    ? manifest.provides.knowledge : [];
+  //
+  // **「写错了」是第三件事**：`knowledge:` 写成字符串或映射，说明有人想登记什么但写坏了，
+  // 与「还没配置」是相反的处境。都降成空集的话，一个填错的清单会安静地表现成一个
+  // 什么都没登记的仓，而那正是它看起来最正常的样子。
+  const declared = manifest?.provides?.knowledge;
+  if (declared !== undefined && declared !== null && !Array.isArray(declared)) {
+    fail(`manifest 的 provides.knowledge 不是列表（读到 ${typeof declared}）——`
+      + '要么逐行列出激活的知识文件，要么整条不写；写成别的形状没有「还没配置」的含义');
+  }
+  const list = Array.isArray(declared) ? declared : [];
 
   const out = { facts: [], constraints: [], patterns: [], indexes: [] };
   const seen = new Set();

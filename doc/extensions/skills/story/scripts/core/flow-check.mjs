@@ -75,7 +75,7 @@ export function flowProblems(featureRoot) {
   if (flow?.schema !== FLOW_SCHEMA) {
     return [
       `AR/story-src/story-flow.json 的 schema 为 ${flow?.schema ?? '缺失'}，本阶段要求 ${FLOW_SCHEMA}。` +
-        `契约应由 scripts/story_flow.py 写入，请勿手工维护。${FLOW_FIX}`,
+        `契约应由 scripts/core/story_flow.py 写入，请勿手工维护。${FLOW_FIX}`,
     ];
   }
 
@@ -96,7 +96,7 @@ export function flowProblems(featureRoot) {
     const digest = String(r?.materials?.digest ?? '');
     if (!digest) {
       problems.push(`${where}缺 materials.digest——轮次没有材料版本可依，`
-        + '重跑 `scripts/story_flow.py round` 让它按磁盘现状重算。' + FLOW_FIX);
+        + '重跑 `scripts/core/story_flow.py round` 让它按磁盘现状重算。' + FLOW_FIX);
     } else if (i > 0 && digest === rounds[i - 1]?.materials?.digest) {
       problems.push(`${where}与上一轮的 materials.digest 相同——材料一个字节没变，不构成新一轮`);
     }

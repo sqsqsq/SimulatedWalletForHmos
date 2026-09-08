@@ -148,13 +148,6 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertEqual(body, mine.read_text(encoding="utf-8"), "升级盖掉了目标的知识")
 
-    def test_touching_the_knowledge_is_named_by_check(self) -> None:
-        """反向锁：知识真被动过时，`--check` 要报出来——否则这条判据形同虚设。"""
-        (self.ext / "knowledge" / "facts" / "component-profile.md").write_text(
-            "改过了\n", encoding="utf-8")
-        proc = self.adapt("--check")
-        self.assertEqual(1, proc.returncode, "知识被动过却判通过了")
-        self.assertIn("知识", self.out(proc))
 
 
 class TheMechanismFollowsThePackage(AdaptCase):
@@ -285,14 +278,6 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
 
-    def test_a_fresh_install_still_refuses_knowledge_prose(self) -> None:
-        """反向锁：首次安装往知识目录写了正文，`--check` 仍要报——放行的只有各类 README。"""
-        self.assertEqual(0, self.adapt("--apply").returncode)
-        (self.ext / "knowledge" / "facts" / "smuggled.md").write_text(
-            "---\nkind: facts\n---\n\n# 混进来的\n", encoding="utf-8")
-        proc = self.adapt("--check")
-        self.assertEqual(1, proc.returncode, "首次安装写了知识正文却判通过了")
-        self.assertIn("smuggled.md", self.out(proc))
 
 
 class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):

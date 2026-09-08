@@ -1,6 +1,6 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达，升级 = 换 core/ + 覆盖跳板 + 一次 git diff 确认；知识与对接层一个字节不碰。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现；知识与目标身份一个字节不碰。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
@@ -10,16 +10,26 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 ## 所有权由目录表达
 
-| 目录 | 归谁 | 升级时 |
+| 目录 | 归谁 | 复制时 |
 |---|---|---|
 | `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
-| `<ext>/skills/story/scripts/adapters/` | **目标仓自己实现**（`story.js`、`token.js`、`review.js`） | 一个字节不碰 |
+| `<ext>/skills/story/scripts/adapters/`（`story.js`、`token.js`、`review.js`） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
 | `<ext>/knowledge/` | 目标 | 不读不写 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
-| `<ext>/manifest.yaml` | 机制登记归包，`provides.knowledge` 归目标 | 按这条规则合成 |
+| `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
 
-边界这么一分，「升级之后哪些文件变了」本身就是答案——所以确认用 `git diff`，不必读两棵树逐文件比。
 **没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
+
+### 两种来源
+
+| 来源 | 对接层 | 为什么 |
+|---|---|---|
+| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它那三个 js 是用本地目录模拟需求系统的替身，装进业务仓会往一个不存在的地方读写单据 |
+| **另一个业务仓** | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现（A12） |
+
+判来源看包 `manifest.yaml` 的 `name`——它归目标、升级不改，所以每个仓的 manifest 里那个名字始终是它自己的。不靠仓名长相、目录结构或脚本内容猜。
+
+Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同自己实现三个，或者从一个已经实现好的业务仓复刻过来。
 
 ## 你要做的四件事
 
@@ -31,8 +41,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 它先查三件，任一不满足就退出并点名：
 
-- **目标是 git 仓库的根**——升级的确认靠 `git diff`，没有 git 就没有「哪些文件变了」这个答案；
-- **写入面上没有未提交改动**——工作区脏的话 diff 里混着目标自己的改动，分不清哪些是升级带来的，而「升级把没提交的改动盖了、diff 里还看不出来」没法补救；
+- **目标是 git 仓库的根**、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
 - **包与目标都读得到**（各自的 `framework.config.json` 与包的 `manifest.yaml`）。
 
 **不替用户动他的工作区**：不自动 stash、不自动提交。报错会点名脏的路径，让他自己先提交或暂存。
@@ -51,7 +60,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 **首次安装多两件**，其中一件归你：
 
-- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），建知识目录与各类 `README.md`（读法与清单说明）。**不放包里的知识正文**——那是目标仓自己的东西，从空的开始。
+- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），建知识目录与各类 `README.md`（读法与清单说明），按目标的 `project_name` 生成 manifest 的 `name` 与 `description`。**不放包里的知识正文**——那是目标仓自己的东西，从空的开始。
 - **你做的：写部件画像**。这是首次安装里唯一归模型的一件事：
 
 | 项 | 内容 |
@@ -59,7 +68,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 | 看什么 | 目标仓的 `framework.config.json` 架构 DSL（层、模块、跨模块出口文件）、`doc/module-catalog.yaml`、`doc/architecture.md`；三者缺的按仓内目录实扫 |
 | 写什么 | 部件画像。**落点与形态照 `<ext>/knowledge/facts/README.md` 写**——那份说明归知识侧，文件名与节结构都在它里面，机制不复述一遍 |
 | 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；查不到的写「未确认」，不写推断 |
-| 停一次问人 | 摆出这份画像与 `framework.config.json` 的配置键，人改过再落盘。首次安装保留这一次确认，因为这里有两处真实取舍 |
+| 停一次问人 | 摆出这份画像、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
 
 画像写完记得登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。
 
@@ -73,13 +82,18 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 
 | 组 | 判什么 |
 |---|---|
-| diff 落点 | 升级没有伸进 `knowledge/` 与 `scripts/adapters/`；`manifest.yaml` 的 `provides.knowledge` 与升级前逐字相同 |
+| ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
+| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `provides.knowledge` 跟目标 |
 | ⑤ | 入口文件（`AGENTS.md` / `CLAUDE.md`）含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
 | ⑦ | 目标 `.gitignore` 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
 | ⑧ | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
 
-`--check` 不查工作区干不干净（那是 `--apply` 的前置）：它只读，而本仓自适配跑的就是它。
-包与目标是同一棵树时 diff 没有对象，那一组不判，⑤⑦⑧ 照跑。
+`--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
+**这个目标现在装的是不是包的这一版**。
+
+拿 `git diff` 判「升级碰了什么」不成立：目标自己改过知识、`--apply` 一个字节没写，
+diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提交了，diff 为空，装错了也看不出来。
+「adapt 碰没碰 `knowledge/` 与 `adapters/`」由复制范围保证，不需要事后找证据。
 
 ## 对接层的输出合同
 
