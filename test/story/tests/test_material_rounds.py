@@ -1090,11 +1090,17 @@ class RegistrationReprojectsFirst(unittest.TestCase):
                          "登记时没有先按真源重投影")
         self.assertLess(body.index('"project"'), body.index('"number"'))
 
-    def test_registration_deletes_the_drafts(self) -> None:
+    def test_registration_leaves_the_drafts_alone(self) -> None:
+        """登记不动章草稿——它是「这份 story 怎么写出来的」唯一的现场。
+
+        草稿走不漏：`archive` 只上传 story.md 与 review.md，`drafts/` 又在 .gitignore 里。
+        删掉的代价倒是实的——`reopen` 之后作者要改某一章，手上却没有可改的东西。
+        """
         source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
                   / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
-        self.assertIn("DRAFTS_DIR", body, "登记成功后没有清理章草稿")
+        for gone in ("DRAFTS_DIR", "rmtree"):
+            self.assertNotIn(gone, body, f"登记还在动章草稿（{gone}）")
 
 
 if __name__ == "__main__":

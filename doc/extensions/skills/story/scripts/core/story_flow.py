@@ -81,8 +81,14 @@ DESIGN = ("AR", "design.md")
 STORY_SRC_FROZEN = (
     "decisions.json", "copyedit.md",
 )
-#: 章草稿目录。作者在这里写、`chapter --from` 从这里读，所以登记前不能扫掉——
-#: check 没过时他要回到草稿接着改。登记成功后删：story 冻结了，草稿失去用途。
+#: 章草稿目录。作者在这里写、`chapter --from` 从这里读。
+#:
+#: **登记之后也留着**（用户 2026-09-08 裁定）：出了问题它是唯一能看出「这份 story 是
+#: 怎么写出来的」的东西。它不会走漏到任何读者手上——`archive` 只上传 story.md 与
+#: review.md，而 `story-src/drafts/` 在目标的 .gitignore 里；留着的唯一去处就是本地。
+#:
+#: 反过来删掉的代价是实的：`reopen` 撤销登记后作者要改某一章，手上却没有可改的东西，
+#: 只能从成稿倒推一份回来——而倒推拿不回他写到一半的思路与划掉的段落。
 DRAFTS_DIR = "drafts"
 
 
@@ -1373,16 +1379,6 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["story_src_digests"] = {
         name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
     }
-    # 草稿到此为止：story 冻结了，它就没有用途了；不进冻结台账，也不该留进归档。
-    drafts = src / DRAFTS_DIR
-    if drafts.is_dir():
-        # 删不掉就不登记：Windows 上文件被占用是真会发生的事，而「已清理」
-        # 一旦记进日志、状态又写成 story_written，草稿就跟着进了归档。
-        shutil.rmtree(drafts, ignore_errors=True)
-        if drafts.exists():
-            raise FlowError(f"章草稿删不掉（{drafts}）：可能有编辑器占着文件。"
-                            "关掉再跑一次——story 冻结后草稿不该留在需求目录里")
-        log("章草稿已清理（story 已冻结）")
     save(feature_root, contract)
     return {"status": "story_written", "story": str(story)}
 
