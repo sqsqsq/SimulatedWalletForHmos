@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "1d82b276e5758c8342205a5fd6eada7609acc030",
-  "built_at": "2026-09-07T11:47:01.436Z",
+  "source_commit": "bb4aed6734e4b9f007c17f6f3fd81d2f813106b6",
+  "built_at": "2026-09-08T11:26:29.398Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "5e9e8b4fd812816b33fca30acbc9d97f536c3ebe1568d58d9785c7ca0f7e1467"
+      "sha256": "cfeb30c1e464d52ab099d694fe03c486fcd0ae319b51c37e3bbc0c4afdf441b3"
     },
     {
       "path": "README.md",
@@ -338,7 +338,7 @@
     },
     {
       "path": "docs/concepts/acceptance-layering.md",
-      "sha256": "ac0a751a3ff5b543fffaccb24e3434c7ba6b3e3d634bf9f7824042eb572f830e"
+      "sha256": "8c4fa2a5d8f9ba83a64cf4e52ef73da225fae4f3336a79b309b3f4df10adf123"
     },
     {
       "path": "docs/concepts/capability-degradation.md",
@@ -510,7 +510,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "73ed7d33df2e61b3ecd9636487a93ab68859ea008ec6a45d066e120420c0e6f1"
+      "sha256": "153b7fa7d6224af769318ef98080f062200079d846d831dadc22fb17bd9e0b2c"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -690,7 +690,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "5c1610c16bb6b4c4ef1213807c94e2a8e1d1add97fb2fa27a5fb32e7e8aca298"
+      "sha256": "16b5c105aaee4f03713770b4f9559faa0443a8bb613e40c4cf7b00f58c3f84f0"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -1470,7 +1470,7 @@
     },
     {
       "path": "harness/scripts/utils/quality-axes.ts",
-      "sha256": "bfdb30397948cd76306d08dd1491e9944b768342a53c82870f8a63a50b90a498"
+      "sha256": "e6a24eb27de68a61b9ec527f118951c045a98355e8c452cdf41a30d73ddc1091"
     },
     {
       "path": "harness/scripts/utils/read-image-evidence.ts",
@@ -1514,7 +1514,7 @@
     },
     {
       "path": "harness/scripts/utils/runtime-step-evidence.ts",
-      "sha256": "5c8a866ba4192be44481f8fd21c98fb4ff42785b82b82add8073d9e07123f7b7"
+      "sha256": "7dd3bbcead53cca5463f2870a1bc3c45982aeb8490578e9ea44e76c3b3ab17d2"
     },
     {
       "path": "harness/scripts/utils/scope-parser.ts",
@@ -1654,7 +1654,7 @@
     },
     {
       "path": "harness/scripts/utils/verify-feature-completion.ts",
-      "sha256": "a3ab51f505884428f6661594e65eea4f7403470c767e99674a5c73c0448ff745"
+      "sha256": "81d0553e075192d3305223ac4d769cfd666e4063f42a022bf1f7d7d44a42b763"
     },
     {
       "path": "harness/scripts/utils/vision-canary-interactive.ts",
@@ -1670,7 +1670,7 @@
     },
     {
       "path": "harness/scripts/utils/visual-debt.ts",
-      "sha256": "b1ea730339c2470f4b243339d8a3631d334b51614f25344cbefc7c6b364c0eaf"
+      "sha256": "15ddeee8a8a668ec2c5b688ab2e9f1916113b8cc89f9960b475fc1cd6be98e8d"
     },
     {
       "path": "harness/scripts/utils/visual-observation-sidecar.ts",
@@ -2046,7 +2046,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/coding-visual-parity-check.ts",
-      "sha256": "f615e355865bb13e06799321848d6c2046148b0269668af973f68e5a026cf1a4"
+      "sha256": "44385b405c8ca0b71d792289ee76bd35df34ca8fb0f3c052bb1eba16074dcf85"
     },
     {
       "path": "profiles/hmos-app/harness/demo/fidelity-fetch-stub.mjs",
@@ -2290,7 +2290,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/render-visibility.ts",
-      "sha256": "242c3d48aa449c520dda2909681019e98b696a7f1616d964a3ca3c21ea16879c"
+      "sha256": "faf2300c85ff8295635e1a9efe3ddde1c63fd58b3cf48a56b677a324f1e1fc1b"
     },
     {
       "path": "profiles/hmos-app/harness/resolve-main-ability.ts",
@@ -2382,7 +2382,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "751828cc66f2be278dfea7bce2f39637864886bd5c61ba18c641f34ce03ab179"
+      "sha256": "f5fa62357f36038fb594ca6cb0fdc511a5f37740a8a1c09b30f4a90318005bac"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -4366,7 +4366,7 @@
     },
     {
       "path": "specs/phase-rules/testing-rules.yaml",
-      "sha256": "9e25173d1b70b79aa8bf9a72af6317f31242a711fe7f0bbe2531e781ec786531"
+      "sha256": "f53307ed2a01c63a8220927e68e5b00a9e80eb74f6e1f784c10c0870fb8ca3c3"
     },
     {
       "path": "specs/phase-rules/ut-rules.yaml",
