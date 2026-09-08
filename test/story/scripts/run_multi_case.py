@@ -698,7 +698,7 @@ def gate_phase_ready(record: dict[str, Any], expected_phase: str) -> bool:
         if not workspace_text:
             return False
         flow = (Path(workspace_text) / "doc" / "features"
-                / str(record.get("feature") or "") / "AR" / "story-flow.json")
+                / str(record.get("feature") or "") / "AR" / "story-src" / "story-flow.json")
         try:
             return bool(json.loads(flow.read_text(encoding="utf-8")).get("archived"))
         except (OSError, ValueError):

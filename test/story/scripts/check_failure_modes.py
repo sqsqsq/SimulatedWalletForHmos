@@ -1894,7 +1894,7 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
     if result is None:
         return Outcome(False, "spec post_check 跑不起来")
     ok, message = result
-    has_flow = (root / "doc" / "features" / "AR90001" / "AR" / "story-flow.json").exists()
+    has_flow = (root / "doc" / "features" / "AR90001" / "AR" / "story-src" / "story-flow.json").exists()
     if has_flow:
         # 有流程契约 = 走了 /story：该被要求写全，拦住才对
         if ok:
@@ -2421,7 +2421,7 @@ def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
     `story-build check`，登记成功即九项判据都过了。
     """
     feature_root = root / "doc" / "features" / "AR90001"
-    if not (feature_root / "AR" / "story-flow.json").exists():
+    if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     problems = _flow_check_call(root, feature_root, "storyProduced")
     if problems is None:
@@ -2458,7 +2458,7 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     `upstream_verdict_gate` 再把 coding、review 一并判 FAIL——四个已闭环的阶段集体翻红。
     """
     feature_root = root / "doc" / "features" / "AR90001"
-    if not (feature_root / "AR" / "story-flow.json").exists():
+    if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     script = (
         "import {pathToFileURL} from 'node:url';"

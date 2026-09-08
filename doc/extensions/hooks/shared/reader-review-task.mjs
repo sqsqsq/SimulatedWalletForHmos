@@ -52,7 +52,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '- `AR/story.md` —— 审查对象，通读全篇；',
     '- `AR/story-src/materials.json` —— 据以成文的材料清单（含每张图是什么）；',
     '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
-    '- `AR/story-flow.json` —— 已确认的本 AR 范围；',
+    '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
     '- `spec/spec.md` —— 已经成立的产品约束。',
   ];
 

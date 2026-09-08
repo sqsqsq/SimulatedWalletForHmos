@@ -38,11 +38,11 @@ class TestSpecStoryGate(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.feature_root = Path(self._tmp.name) / "doc" / "features" / FEATURE
-        (self.feature_root / "AR").mkdir(parents=True)
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True)
 
     def write_flow(self, status: str | None) -> None:
         """status=None 表示这个 feature 没走过 /story（没有契约文件）。"""
-        path = self.feature_root / "AR" / "story-flow.json"
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         if status is None:
             path.unlink(missing_ok=True)
             return
@@ -84,7 +84,7 @@ class TestSpecStoryGate(unittest.TestCase):
 
     def test_broken_contract_says_it_cannot_tell(self) -> None:
         """读不出状态就判不了成文态：既不当作没成文，也不当作成文了。"""
-        (self.feature_root / "AR" / "story-flow.json").write_text("{ 坏的", encoding="utf-8")
+        (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text("{ 坏的", encoding="utf-8")
         problems = self.problems()
         self.assertEqual(len(problems), 1)
         self.assertIn("不是合法 JSON", problems[0])

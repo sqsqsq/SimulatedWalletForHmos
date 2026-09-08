@@ -44,7 +44,7 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
         shutil.copytree(REAL, cls.root / "doc" / "features" / FEATURE)
         # §9 那一章只在走过 /story 的 feature 上判——夹具里补一份流程契约，
         # 否则这一整组判据整块跳过，测出来的绿是「没判」不是「判过」。
-        (cls.root / "doc" / "features" / FEATURE / "AR" / "story-flow.json").write_text(
+        (cls.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps({"schema": 3, "feature": FEATURE, "status": "complete",
                         "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False),
             encoding="utf-8")

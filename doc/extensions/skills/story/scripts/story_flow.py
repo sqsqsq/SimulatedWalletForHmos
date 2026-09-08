@@ -1,4 +1,4 @@
-"""story_flow.py — init→spec 流程契约（`AR/story-flow.json`）的**唯一写入者**。
+"""story_flow.py — init→spec 流程契约（`AR/story-src/story-flow.json`）的**唯一写入者**。
 
 契约记录每一步的输入、输出与交互：**摆出了哪些选项**、谁在什么依据下选了哪一项，
 事后可查、可推翻。
@@ -60,11 +60,12 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+import import_sources
 import materials
 
 SCHEMA = 3
-CONTRACT = ("AR", "story-flow.json")
-ANALYSIS = ("AR", "init-analysis.md")
+CONTRACT = ("AR", "story-src", "story-flow.json")
+ANALYSIS = ("AR", "story-src", "init-analysis.md")
 # 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
 SPLIT_PARTS = ("AR", "story-src", ".split-parts.json")
 # 选项集侧车：本次关卡摆给人的全部选项。每条 gate 一份，读后销毁
@@ -92,19 +93,26 @@ def sweep_story_src(src: Path) -> list[str]:
     跟台账混在一个目录里进归档。归档件的读者分不清哪些是交付物、
     哪些是造它时的脚手架，而脚手架里往往还有半成品与废弃版本。
 
-    白名单**就是 STORY_SRC_FROZEN 本身**，不在这里另列一份：那两件是随稿冻结、
-    要算指纹的台账，清理与冻结说的必须是同一批文件——各写一份，改一处忘一处时，
-    要么清掉了要算指纹的，要么留下了不该留的。
+    保留集分两类：
 
-    材料清单是这条规则之外的**一件**：它不是造 story 的脚手架，而是材料本身的真源，
-    由 `round` 按磁盘现状重算，也会随材料继续演化——所以它留下，但不随稿冻结。
-    story 定稿那一刻手里是哪版材料，记在契约当轮的 `materials.digest` 里，那才是快照。
+    **随稿冻结的台账**就是 STORY_SRC_FROZEN 本身，不在这里另列一份——那两件要算指纹，
+    清理与冻结说的必须是同一批文件；各写一份，改一处忘一处时，要么清掉了要算指纹的，
+    要么留下了不该留的。
+
+    **留下但不冻结的四件**：材料清单、流程契约、需求分析件、导入落点。它们不是造 story
+    的脚手架，而是各自的真源，登记之后还要继续写——契约要记 `story_written_at` 与归档态，
+    清单与落点随材料重算，分析件的指纹记在契约的 `analysis_sha` 里。名字都从各自的常量取，
+    不在这里另抄一份字面。story 定稿那一刻手里是哪版材料，记在契约当轮的 `materials.digest`
+    里，那才是快照。
 
     只扫这一层，不递归、不碰别的目录；清掉的逐个报出来，不静默删。
     """
     if not src.is_dir():
         return []
-    keep = set(STORY_SRC_FROZEN) | {materials.MANIFEST[-1], DRAFTS_DIR}
+    keep = set(STORY_SRC_FROZEN) | {
+        materials.MANIFEST[-1], DRAFTS_DIR,
+        CONTRACT[-1], ANALYSIS[-1], import_sources.DOC_TARGET["AR"].name,
+    }
     swept = []
     for item in sorted(src.iterdir()):
         if item.name in keep:
@@ -210,7 +218,7 @@ def load(feature_root: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
     except ValueError as exc:
         raise FlowError(
-            f"AR/story-flow.json 不是合法 JSON（{exc}）：它应当只由本脚本写入。"
+            f"AR/story-src/story-flow.json 不是合法 JSON（{exc}）：它应当只由本脚本写入。"
             "若曾手工编辑，请修正语法或删除后回到 S2 重新登记轮次") from exc
 
 
@@ -512,7 +520,7 @@ def cmd_round(feature_root: Path) -> dict:
         entry["materials"] = reference
         if analysis_sha:
             # 同一轮内分析件会从盘点版演进到完整版，照实更新，不当成新一轮
-            entry["analysis"] = {"path": "AR/init-analysis.md", "sha256": analysis_sha}
+            entry["analysis"] = {"path": "/".join(ANALYSIS), "sha256": analysis_sha}
         if positioning:
             entry["positioning"] = positioning
         if scope_options:

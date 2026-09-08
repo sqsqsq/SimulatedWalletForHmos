@@ -29,7 +29,7 @@
       "label": "开发需求"
     },
     "UPSTREAM": {
-      "path": "AR/upstream.md",
+      "path": "AR/story-src/upstream.md",
       "required": false,
       "label": "上游澄清"
     }

@@ -829,7 +829,7 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
             "rounds": [{"round": 1, "gates": []}],
             "story_src_digests": {n: self.ledger_digest(n) for n in self.FROZEN},
         }
-        (self.root / "doc" / "features" / FEATURE / "AR" / "story-flow.json").write_text(
+        (self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_init_is_refused_after_registration(self) -> None:
@@ -890,6 +890,36 @@ class Step8Case(StoryBuildCase):
         }] + (extra or [])
         (self.src / "decisions.json").write_text(
             json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
+
+
+class TestArRootStaysClean(StoryBuildCase):
+    """`AR/` 根下只放交付文档与单据身份，辅助件一律进 `story-src/`。
+
+    守的是一个**持续的性质**：机制不往交付层散辅助件。所以是白名单不是黑名单——
+    黑名单挡不住下一个往根下写的新文件，而下一个总会有。
+    """
+
+    def ar_root(self):
+        return self.story_path.parent
+
+    def test_a_stray_file_is_named_and_told_where_to_go(self) -> None:
+        (self.ar_root() / "notes.md").write_text("随手记的东西", encoding="utf-8")
+        out = self.assert_check_names("AR/notes.md 不该在这一层")
+        self.assertIn("story-src", out,
+                      "点名了还要说挪去哪——只说错了，作者不知道下一步做什么")
+
+    def test_directories_are_left_alone(self) -> None:
+        """`story-src/`、`.review-backup/`、`assets/` 都是正当落点，限制它们没有意义。"""
+        for name in (".review-backup", "assets"):
+            (self.ar_root() / name).mkdir(exist_ok=True)
+        _, out = self.check_output()
+        self.assertNotIn("不该在这一层", out)
+
+    def test_the_delivery_documents_pass(self) -> None:
+        """白名单上的照过——`detail.json` 由对接层写，它是这一层的正当住户。"""
+        (self.ar_root() / "detail.json").write_text('{"id": "AR90001"}', encoding="utf-8")
+        _, out = self.check_output()
+        self.assertNotIn("不该在这一层", out)
 
 
 class TestReviewComesAfterTheStory(Step8Case):

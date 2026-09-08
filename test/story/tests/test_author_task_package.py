@@ -535,7 +535,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         proc = run(sys.executable, str(FLOW_SCRIPT), "round",
                    "--feature", FEATURE, "--project-root", str(self.root), cwd=self.root)
         self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
-        path = self.feature_root / "AR" / "story-flow.json"
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
         data["rounds"][-1]["gates"] = []

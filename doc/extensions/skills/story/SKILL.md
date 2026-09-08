@@ -124,7 +124,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 流程解释、命令、文件路径、判据名。选项文字写成他的话——「不拆，整体承载」，
 不是「carry_all」。
 
-需要展开的证据留在产物里：他要细节时会去读 `AR/init-analysis.md`，
+需要展开的证据留在产物里：他要细节时会去读 `AR/story-src/init-analysis.md`，
 那是它存在的理由。
 
 ### 失败出口（不是确认点）
@@ -248,11 +248,11 @@ AI 依据人的决定写回文件，不要求用户手动编辑文件或运行�
 |---|---|
 | `RR/prd.md` | 业务上为什么做、要什么价值（外部输入） |
 | `SR/design.md` | 整体方案、三方分工、系统级约定（外部输入） |
-| `AR/upstream.md` | 人工补录的本部件上游材料（外部输入） |
+| `AR/story-src/upstream.md` | 人工补录的本部件上游材料（外部输入） |
 | `ux-reference/` | 界面参考图与设计基准（外部输入） |
-| `AR/init-analysis.md` | 关卡决策的支撑分析（**非交付件**：/spec 不读、归档不含） |
+| `AR/story-src/init-analysis.md` | 关卡决策的支撑分析（**非交付件**：/spec 不读、归档不含） |
 | `AR/story-src/materials.json` | 手上有哪些材料、各自的身份与版本；收件箱里哪些原件还没并入正文 |
-| `AR/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
+| `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
 | `AR/design.md` | 上游要**本部件（本 AR 范围内）**做什么 |
 | `spec/spec.md` | 本部件**要做什么**（需求侧规格，意图 SSOT） |
 | `AR/review.md` | 上线要定什么、评审看过什么、评审定了什么（**人的决策**，AI 不得覆盖） |

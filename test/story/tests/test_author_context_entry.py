@@ -103,8 +103,8 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         ws = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, ws, True)
         feature_root = ws / "doc" / "features" / "demo"
-        (feature_root / "AR").mkdir(parents=True)
-        (feature_root / "AR" / "story-flow.json").write_text(json.dumps({
+        (feature_root / "AR" / "story-src").mkdir(parents=True)
+        (feature_root / "AR" / "story-src" / "story-flow.json").write_text(json.dumps({
             "schema": 3, "feature": "demo", "status": "complete",
             "rounds": [{"round": 1, "gates": []}],
         }, ensure_ascii=False), encoding="utf-8")

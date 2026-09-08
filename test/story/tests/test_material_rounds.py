@@ -1,7 +1,7 @@
 """一轮 = 一次材料状态 —— **界面参考也是材料**。
 
 轮次指纹曾只算四份文本源（`RR/prd.md`、`SR/design.md`、`AR/design.md`、
-`AR/upstream.md`）。补料如果只有界面图，转换后只落 `ux-reference/`，四份文本
+`AR/story-src/upstream.md`）。补料如果只有界面图，转换后只落 `ux-reference/`，四份文本
 一个字节没变 → 指纹不变 → 不算新一轮 → 关卡列表永不重置 → 流程停在
 「回去导入再盘点」上出不来，导多少次都一样。模型只能自己改机制层绕过去。
 
@@ -197,12 +197,12 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
 
     def contract(self) -> dict:
         return json.loads(
-            (self.feature_root / "AR" / "story-flow.json").read_text(encoding="utf-8"))
+            (self.feature_root / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
 
     def complete_it(self, status: str = "complete") -> None:
         """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。"""
         self.round_now()
-        path = self.feature_root / "AR" / "story-flow.json"
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -317,7 +317,7 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
     def test_archived_also_opens_no_round(self) -> None:
         """已归档同理——它比成文登记还靠后。"""
         self.complete_it("story_written")
-        path = self.feature_root / "AR" / "story-flow.json"
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["archived"] = {"at": "2026-09-04T00:00:00+08:00"}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -339,7 +339,7 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         而台账冻结只看 status，重开后台账可以重算，那份快照指的却是重算之前的东西。
         """
         self.complete_it("story_written")
-        path = self.feature_root / "AR" / "story-flow.json"
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["story_written_at"] = "2026-09-04T00:00:00+08:00"
         data["story_src_digests"] = {"decisions.json": "sha", "copyedit.md": "sha"}
@@ -680,7 +680,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.write_gate_options(options=编的)
         self.put_inbox()
         self.assertEqual(0, self.sign_supplied().returncode)
-        gates = json.loads((self.feature_root / "AR" / "story-flow.json")
+        gates = json.loads((self.feature_root / "AR" / "story-src" / "story-flow.json")
                            .read_text(encoding="utf-8"))["rounds"][-1]["gates"]
         landed = {o["key"]: o.get("label") for o in gates[-1]["options"]}
         for o in story_flow.material_options():
@@ -802,7 +802,7 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         return json.loads(path.read_text(encoding="utf-8"))
 
     def contract(self) -> dict:
-        return json.loads((self.feature_root / "AR" / "story-flow.json")
+        return json.loads((self.feature_root / "AR" / "story-src" / "story-flow.json")
                           .read_text(encoding="utf-8"))
 
     def put_inbox(self, name: str, body: str, cls: str) -> None:
@@ -902,7 +902,7 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         self.round_now()
         entries = {m["paths"][0]: m["sha256"] for m in self.manifest()["materials"]}
         self.assertEqual({"RR/prd.md": None, "SR/design.md": None,
-                          "AR/design.md": None, "AR/upstream.md": None}, entries)
+                          "AR/design.md": None, "AR/story-src/upstream.md": None}, entries)
 
     def test_a_readme_change_does_not_move_any_image_identity(self) -> None:
         """图片的身份是它的内容与落点，不由任何一份说明文件的链接决定。"""
@@ -918,7 +918,7 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
     def test_revising_the_analysis_does_not_open_a_round(self) -> None:
         """同一材料版本内，初析可以从盘点版改到完整版，不划新轮次。"""
         first = self.round_now()
-        analysis = self.feature_root / "AR" / "init-analysis.md"
+        analysis = self.feature_root / "AR" / "story-src" / "init-analysis.md"
         analysis.write_text("# 初析\n\n盘点版。\n", encoding="utf-8")
         second = self.round_now()
         self.assertEqual(first["round"], second["round"])
@@ -1010,6 +1010,43 @@ class TheManifestSurvivesTheStorySweep(unittest.TestCase):
     def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
         self.assertNotIn("materials.json", story_flow.STORY_SRC_FROZEN,
                          "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
+
+
+class TheMovedInThreeSurviveTheStorySweep(unittest.TestCase):
+    """流程契约、需求分析件、导入落点住进 `story-src/` 之后，清扫要认得它们。
+
+    三件在登记之后还要写：契约要记归档态、`reopen` 要撤销登记，清单与落点随材料重算，
+    分析件的指纹记在契约的 `analysis` 里。当成脚手架扫掉，登记之后的每一步都走不通。
+    """
+
+    NAMES = property(lambda self: [
+        story_flow.CONTRACT[-1], story_flow.ANALYSIS[-1],
+        story_flow.import_sources.DOC_TARGET["AR"].name,
+    ])
+
+    def test_the_sweep_keeps_all_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "story-src"
+            src.mkdir(parents=True)
+            for name in self.NAMES:
+                (src / name).write_text("x", encoding="utf-8")
+            (src / "决策候选.md").write_text("脚手架", encoding="utf-8")
+            swept = story_flow.sweep_story_src(src)
+            self.assertEqual(["决策候选.md"], swept)
+            for name in self.NAMES:
+                self.assertTrue((src / name).is_file(), f"{name} 被当成脚手架扫掉了")
+
+    def test_none_of_them_is_a_frozen_ledger(self) -> None:
+        """三件都留，但都不随稿冻结——冻结的是「据以成文的依据」，它们还要继续变。"""
+        for name in self.NAMES:
+            self.assertNotIn(name, story_flow.STORY_SRC_FROZEN)
+
+    def test_they_live_under_story_src_not_the_ar_root(self) -> None:
+        """路径本身就是判据：`AR/` 根下只放交付文档，辅助件在 `story-src/` 这一层。"""
+        self.assertEqual(("AR", "story-src", "story-flow.json"), story_flow.CONTRACT)
+        self.assertEqual(("AR", "story-src", "init-analysis.md"), story_flow.ANALYSIS)
+        self.assertEqual("AR/story-src/upstream.md",
+                         story_flow.import_sources.DOC_TARGET["AR"].as_posix())
 
 
 class DraftsLiveUntilRegistration(unittest.TestCase):

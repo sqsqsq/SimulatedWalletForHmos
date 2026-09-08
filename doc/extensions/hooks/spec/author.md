@@ -7,7 +7,7 @@
 
 ## 先分清你在哪一组
 
-这个需求走了 `/story` 链吗（需求目录里有 `AR/story-flow.json`）？
+这个需求走了 `/story` 链吗（需求目录里有 `AR/story-src/story-flow.json`）？
 
 | | 走 `/story` | 直接跑 spec |
 |---|---|---|

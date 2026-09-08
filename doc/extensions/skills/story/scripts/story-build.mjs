@@ -64,6 +64,17 @@ export const DECISION_FIELDS = [
 /** 统稿留痕的行数：作业书的自查清单有几项，这里就是几行。 */
 const COPYEDIT_ROWS = 7;
 
+/**
+ * `AR/` 根下允许的独立文件 —— 三份交付文档，加一份单据身份。
+ *
+ * `detail.json` 不是本机制的产物（写它的是目标仓自己实现的对接脚本），但它是这一层的
+ * 正当住户：单号、类型、父单号是这份需求与需求系统之间的绳子，跟交付文档同级。
+ *
+ * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
+ * 持续的性质——机制不往交付层散辅助件。
+ */
+const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'detail.json'];
+
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
 
@@ -172,7 +183,7 @@ function createContext(args) {
     copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureRoot, 'AR', 'story.md'),
     reviewPath: path.join(featureRoot, 'AR', 'review.md'),
-    flowPath: path.join(featureRoot, 'AR', 'story-flow.json'),
+    flowPath: path.join(featureRoot, 'AR', 'story-src', 'story-flow.json'),
   };
 }
 
@@ -657,7 +668,7 @@ function slotCondition(ctx, when) {
   if (!when) return true;
   if (when === 'siblings') {
     if (ctx.offline || !ctx.featureRoot) return null;
-    const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-flow.json'), null);
+    const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
     if (!flow) return null;
     return (flow.split?.parts ?? []).length > 1;
   }
@@ -1840,6 +1851,24 @@ function cmdCheck(ctx) {
     for (const { name } of banned) {
       problems.push(`评审记录里出现「${name}」——评审人要填的只有「审核结果：」后面那几句话；`
         + '填写说明、签署字段、状态行都被裁掉过，它们只会让人在答不上来的格子里胡填');
+    }
+  }
+
+  mark('⑮ AR 根下只有交付文档');
+  // ⑮ AR 根下只有交付文档：`AR/` 这一层的独立文件只有白名单那几个，辅助件进 `story-src/`。
+  //
+  // **只判文件，目录一律放过**：`story-src/`、`.review-backup/`、`assets/` 都是正当的
+  // 落点，限制它们没有意义。判的是「这一层散没散」，不是「这一层该有什么」——白名单里
+  // 的文件缺了不报，各有各的判据管。
+  {
+    const arDir = path.join(ctx.featureRoot, 'AR');
+    const strays = fs.existsSync(arDir)
+      ? fs.readdirSync(arDir, { withFileTypes: true })
+        .filter(e => e.isFile() && !AR_ROOT_FILES.includes(e.name)).map(e => e.name)
+      : [];
+    for (const name of strays) {
+      problems.push(`AR/${name} 不该在这一层——根下只放交付文档与单据身份`
+        + `（${AR_ROOT_FILES.join('、')}）。把它挪进 AR/story-src/；目录不受这条限制`);
     }
   }
 

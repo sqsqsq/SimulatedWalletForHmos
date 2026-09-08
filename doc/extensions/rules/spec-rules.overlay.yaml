@@ -46,7 +46,7 @@ semantic_checks:
       （接口名/存储键/事件名/配置项名/模块名/错误码），且该名字在 spec、SR 或代码中确实存在、
       语义一致；「不涉及」条目附有判断依据（现状扫描或 Scope 声明）；无凭空推断。
       **spec 不写文档坐标**（见 evidence-rules §0 独立审计原则）——核对靠按名回查，不靠产物给出处。
-      **未走 /story 的 feature（无 AR/story-flow.json）本检查 SKIP**——§9 技术契约与 story
+      **未走 /story 的 feature（无 AR/story-src/story-flow.json）本检查 SKIP**——§9 技术契约与 story
       回显表都是扩展新增的落点，那种场景下两者都不存在。
     severity: MAJOR
     ai_prompt_hint: >
@@ -81,14 +81,14 @@ semantic_checks:
       引文为空、或只是把spec 自己的 §9.1 表格复制一遍的，该条按**未裁**处理。
   split_boundary_consistency:
     description: >
-      拆分边界一致性：AR/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
+      拆分边界一致性：AR/story-src/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
       Scope 与验收标准须与 AR/design.md「本 AR 范围与拆分说明」的拆分表一致——
       表里归兄弟 AR 或「待立项」的份额不属于本次，其功能不得进入本 AR 的功能清单与验收；
       这些内容涉及的模块若登记 out_of_scope_modules，rationale 须写明归属（「归属 ARxxxx」
       或「待立项」），而不是笼统的「本需求不做」。**split.decided != "split" 时本检查 SKIP。**
     severity: MAJOR
     ai_prompt_hint: >
-      先读 doc/features/{module}/AR/story-flow.json 的 split 字段：decided 不是 "split" 即 SKIP。
+      先读 doc/features/{module}/AR/story-src/story-flow.json 的 split 字段：decided 不是 "split" 即 SKIP。
       是 "split" 时取 parts（或 AR/design.md §1.2 的拆分表），列出 carrier 不是本 feature 的
       那几份及其 scope。再逐条核对 doc/features/{module}/spec/spec.md 的功能清单与验收标准：
       是否有功能实质属于那几份的 scope——有即 FAIL（把兄弟 AR 的活揽进了本次范围）。
@@ -102,7 +102,7 @@ semantic_checks:
     description: >
       归档叙事件的独立审查：读者拿这一份能不能读懂这个需求。审查对象是最终的
       `doc/features/{module}/AR/story.md`，输入是它据以成文的东西——材料清单
-      `AR/story-src/materials.json` 指向的每一份材料、`AR/story-flow.json` 里已确认的本 AR 范围、
+      `AR/story-src/materials.json` 指向的每一份材料、`AR/story-src/story-flow.json` 里已确认的本 AR 范围、
       `AR/story-src/decisions.json` 里已登记的判断、spec 已经成立的产品约束。
       按**读者会问什么**审查十个方面：背景、范围、方案、流程、功能、异常、验收、交付、
       图与文的配合、判断与事实是否分开。每章要回答的读者问题与章级质量维度写在

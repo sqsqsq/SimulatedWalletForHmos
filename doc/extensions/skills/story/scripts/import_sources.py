@@ -67,7 +67,7 @@ DOC_TARGET = {
     "RR": Path("RR/prd.md"),
     "SR": Path("SR/design.md"),
     # AR 类不落 design.md —— 那是会被重生成的草稿，材料写进去就丢了
-    "AR": Path("AR/upstream.md"),
+    "AR": Path("AR/story-src/upstream.md"),
     "UX": Path("ux-reference/README.md"),
 }
 UX_IMAGE_DIR = Path("ux-reference")

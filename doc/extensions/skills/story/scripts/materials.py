@@ -38,7 +38,7 @@ SCHEMA = 1
 MANIFEST = ("AR", "story-src", "materials.json")
 
 # 权威材料的正文源：四份文本，位置固定。不存在的记 null——「没有」和「没查」是两件事。
-SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/upstream.md")
+SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/story-src/upstream.md")
 # 目录形态的材料源：目录下每个文件各自进清单，加一张图就是材料变了。
 #
 # 两个目录都是图片的落点，也都是**权威落点**：界面参考图由导入平铺进 `ux-reference/`，
