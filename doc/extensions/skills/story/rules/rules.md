@@ -103,8 +103,8 @@
 ## 完成动作
 
 ```bash
-node doc/extensions/skills/story/scripts/story-build.mjs build --feature <feature>
-node doc/extensions/skills/story/scripts/story-build.mjs check --feature <feature>
+node doc/extensions/skills/story/scripts/core/story-build.mjs build --feature <feature>
+node doc/extensions/skills/story/scripts/core/story-build.mjs check --feature <feature>
 ```
 
 两条全绿只说明**没有明显缺陷**，不说明这是一份好的评审材料。

@@ -41,7 +41,7 @@
 **读 `.docx` 用预览，不要自己写解析**：
 
 ```bash
-python doc/extensions/skills/story/scripts/import_sources.py --preview <docx 路径>
+python doc/extensions/skills/story/scripts/core/import_sources.py --preview <docx 路径>
 ```
 
 它输出正文与图清单、**不落盘任何东西**，用的是导入那一步同一个解析器——
@@ -51,7 +51,7 @@ python doc/extensions/skills/story/scripts/import_sources.py --preview <docx 路
 ## 落盘：先写判断，再跑脚本
 
 1. 写 `doc/features/<AR>/inbox/.classify.json`，内容 `{"<文件名>":"RR|SR|AR|UX", ...}`；
-2. `python doc/extensions/skills/story/scripts/import_sources.py --feature <AR>`
+2. `python doc/extensions/skills/story/scripts/core/import_sources.py --feature <AR>`
 
 **为什么写文件而不是当参数传**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——
 同一条命令在有的宿主下原样送达、在有的宿主下双引号被吞掉。写文件不过 shell，哪都一样。
@@ -76,13 +76,13 @@ docx 里的图混着流程图与界面图。判据以**图在正文中的上下�
 然后报它没映射到任何页面。
 
 ```
-python doc/extensions/skills/story/scripts/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --caption "<这张图是什么>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --caption "<这张图是什么>"
 ```
 
 判为界面设计图的**再多一步当场登记**，一张一条命令：
 
 ```
-python doc/extensions/skills/story/scripts/import_sources.py --feature <需求名> \
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名> \
   --register-ux assets/<源文档名>/<图> --name <语义名> --caption "<这张图是什么>"
 ```
 

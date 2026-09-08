@@ -37,5 +37,5 @@ argument-hint: <init|archive|restore|review|adapt|help> [AR|目标工程]
 | — | `/story help` | 输出本流程说明 |
 
 `init` 之后不需要人再敲命令——中断后用
-`python doc/extensions/skills/story/scripts/story_flow.py status --feature <编号>`
+`python doc/extensions/skills/story/scripts/core/story_flow.py status --feature <编号>`
 问「现在走到哪、下一步干什么」。

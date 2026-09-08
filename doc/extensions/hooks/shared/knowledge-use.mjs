@@ -580,17 +580,22 @@ function renderSkeleton(projectRoot, knowledge) {
     rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
       '    #   落点二选一：contract 写 §9 登记过的名字，impact 写实际影响对象');
   }
-  rows.push(
-    '',
-    '# 设计模式候选：**只登记不选型**（选型是 plan 的事）。',
-    `# 在册候选：${knowledge.patternIds.join(' / ') || '（激活清单里没有候选）'}`,
-    `# 这个单元没有合适的候选时，candidate 写「${NO_CANDIDATE}」，signal 里说明为什么没有。`,
-    'patterns:',
-    '  - unit: ""      # 哪一段业务；按业务切，不是整个需求一个单元',
-    '    candidate: ""',
-    '    signal: ""    # 从本需求的哪个事实看出它像这个模式',
-    '',
-  );
+  rows.push('', '# 设计模式候选：**只登记不选型**（选型是 plan 的事）。');
+  // 一个候选都不在册时不摆填写占位：那个空条目问的是「这一段像哪个模式」，
+  // 而候选集是空的，作者只能填「无候选」——注定只有一种答案的问题不该问。
+  if (!knowledge.patternIds.length) {
+    rows.push('# 激活清单里没有候选，这一节无从登记。', 'patterns: []', '');
+  } else {
+    rows.push(
+      `# 在册候选：${knowledge.patternIds.join(' / ')}`,
+      `# 这个单元没有合适的候选时，candidate 写「${NO_CANDIDATE}」，signal 里说明为什么没有。`,
+      'patterns:',
+      '  - unit: ""      # 哪一段业务；按业务切，不是整个需求一个单元',
+      '    candidate: ""',
+      '    signal: ""    # 从本需求的哪个事实看出它像这个模式',
+      '',
+    );
+  }
   return rows.join('\n');
 }
 

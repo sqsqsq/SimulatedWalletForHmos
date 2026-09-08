@@ -166,13 +166,13 @@ class LedgersMustAllExist(NegativeCase):
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
         """清理、冻结、存在性三处说的必须是同一批文件——各写一份就会改一处忘一处。"""
-        flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/story_flow.py"
+        flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py"
                 ).read_text(encoding="utf-8")
         block = flow.split("STORY_SRC_FROZEN = (", 1)[1].split(")", 1)[0]
         self.assertEqual(tuple(sorted(re.findall(r'"([^"]+)"', block))),
                          tuple(sorted(self.LEDGERS)))
 
-        build = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+        build = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
                  ).read_text(encoding="utf-8")
         ledgers = build.split("const STORY_SRC_LEDGERS = [", 1)[1].split("];", 1)[0]
         keys = re.findall(r"\['(\w+Path)'", ledgers)
@@ -249,7 +249,7 @@ class CheckOutputIsGroupedByJudgement(NegativeCase):
 
     def test_no_second_artifact_and_no_threshold(self) -> None:
         """不写第二个文件、不设「超过 N 条才聚合」的阈值。"""
-        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
                 ).read_text(encoding="utf-8")
         self.assertNotIn("check-detail", body, "又长出了第二个明细文件")
         seg = body.split("function groupedProblems", 1)[1].split("\n}\n", 1)[0]
@@ -407,13 +407,13 @@ class ReviewBannedTermsScope(NegativeCase):
         self.assertGreaterEqual(len(vocabulary), 6, "禁用词表被削了")
         self.assertTrue(all(v.get("term") and v.get("hint") for v in vocabulary),
                         "每个词都要带改法——只说不许用，作者不知道该写什么")
-        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/lint-rules.mjs"
+        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/lint-rules.mjs"
                  ).read_text(encoding="utf-8")
         self.assertNotIn("const BANNED_TERMS", rules, "脚本里又留了一份词表副本")
 
     def test_the_exempt_set_comes_from_the_contract(self) -> None:
         """豁免类别由合同数据给，脚本不写死类别名——写死名字换个工程就静默失效。"""
-        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
                 ).read_text(encoding="utf-8")
         seg = body.split("function redactReviewExemptZones", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("banned_terms_exempt", seg)

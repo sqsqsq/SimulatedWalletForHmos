@@ -21,11 +21,11 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story-build.mjs"
+BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
-FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story_flow.py"
+FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
@@ -159,7 +159,7 @@ class TestErrorWordingPointsAtForm(StoryBuildCase):
 
     def test_the_bare_token_list_style_is_gone_from_the_source(self) -> None:
         """禁止样式在源码里也不该留——留着下一轮就会有人接回去。"""
-        source = (REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+        source = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
                   ).read_text(encoding="utf-8")
         self.assertNotIn("但那一章里找不到", source)
 
@@ -527,7 +527,7 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
         doc = "# X\n\n## 背景\n\n" + body
         script = (
             "import { renumberStory } from "
-            + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
+            + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/headings.mjs")
                          .resolve().as_uri())
             + ";import { readFileSync } from 'node:fs';"
             + "const c = JSON.parse(readFileSync("
@@ -579,7 +579,7 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
     def test_normalize_heading_does_not_strip_bare_numbers(self) -> None:
         """`normalizeHeading` 被十几处标题匹配共用，它不碰裸序号。"""
         script = ("import { normalizeHeading } from "
-                  + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/headings.mjs")
+                  + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/headings.mjs")
                                .resolve().as_uri())
                   + ";process.stdout.write(normalizeHeading(process.argv[1]));")
         for title, want in (("1 闸机前的窘境", "1 闸机前的窘境"),   # 不剥
@@ -666,7 +666,7 @@ class TestGoldenNumbering(unittest.TestCase):
     def renumber(self, text: str) -> str:
         script = (
             "import * as fs from 'node:fs';"
-            "import { renumberStory } from './doc/extensions/skills/story/scripts/headings.mjs';"
+            "import { renumberStory } from './doc/extensions/skills/story/scripts/core/headings.mjs';"
             "const c = JSON.parse(fs.readFileSync("
             "'doc/extensions/skills/story/contracts/story-chapters.json','utf-8'));"
             "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>"
@@ -775,13 +775,16 @@ class TestRetiredThings(unittest.TestCase):
         for gone in ("3.0.0", "capability-resolution", "MaisonPrimaryButton"):
             self.assertNotIn(gone, text, f"「{gone}」还留在扩展包里")
 
-    def test_the_adapt_work_dir_carries_the_package_version(self) -> None:
-        """工作目录带版本、点开头——两个版本的工作件互不覆盖，且一眼看出是临时件。"""
+    def test_adapt_leaves_no_work_files_behind(self) -> None:
+        """adapt 不落任何工作件：确认靠 git diff，不写 before 快照。
+
+        写快照的做法要求「先扫一遍建基线、再核对」两步，而基线本身会过期——
+        目标在两步之间被动过，核对拿的就是一份说谎的底。git 的索引已经是那份底。
+        """
         scan = (self.EXT / "skills/story-adaptation/scripts/adapt-scan.mjs").read_text(
             encoding="utf-8")
-        self.assertIn(".adapt-${PKG_VERSION}", scan)
-        gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("doc/extensions/.adapt-*/", gitignore)
+        for gone in ("before.json", "--scan", "mkdirSync(WORK"):
+            self.assertNotIn(gone, scan, f"adapt 还在落工作件：{gone}")
 
     def test_the_entry_section_moved_into_the_skill(self) -> None:
         """入口段随 skill 走，根目录不再有它——旧路径全仓零残留。"""
@@ -798,12 +801,12 @@ class TestRetiredThings(unittest.TestCase):
         """机制变了，manifest 版本要跟着走——它是 adapt 升级路径的唯一真源。
 
         **版本号写死在这里是故意的**：谁改了机制面，这一条就会红，逼他回答
-        「这轮该不该升版本」。版本不升的代价不是洁癖问题——`adapt` 判态直接比它，
-        版本相同判「重适配」，而重适配**不执行机制行**，于是机制改动一条都装不进
-        目标工程。红了就一起改，别只把断言改绿。
+        「这轮该不该升版本」。版本不升的代价不是洁癖问题——目标工程只能从版本号
+        看出自己拿到的是哪一批产物形态与报错集合，号不动，升过没升过就成了一笔糊涂账。
+        红了就一起改，别只把断言改绿。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.7.0"', manifest)
+        self.assertIn('version: "1.8.0"', manifest)
 
 
 class TestLedgerFrozenAfterRegistration(StoryBuildCase):
@@ -2123,7 +2126,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         zones = [z.split("story-build:end", 1)[0]
                  for z in story.split("story-build:begin")[1:]]
         self.assertTrue(zones, "一节机器区都没有，这条守卫在空跑")
-        lint = self.EXTENSION / "skills" / "story" / "scripts" / "lint-rules.mjs"
+        lint = self.EXTENSION / "skills" / "story" / "scripts" / "core" / "lint-rules.mjs"
         for i, zone in enumerate(zones):
             proc = subprocess.run(
                 ["node", "--input-type=module", "-e",

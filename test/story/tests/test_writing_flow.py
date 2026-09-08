@@ -43,7 +43,7 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         items = re.findall(r"^\d+\. ", section, flags=re.M)
         # 判据里的 `COPYEDIT_ROWS` 就是这个数：它的依据是这份清单，
         # 两处对不上时改的应当是清单，判据跟着走。
-        build = read("scripts/story-build.mjs")
+        build = read("scripts/core/story-build.mjs")
         want = int(re.search(r"COPYEDIT_ROWS = (\d+)", build).group(1))
         self.assertEqual(want, len(items),
                          f"自查清单 {len(items)} 项，而判据要求 {want} 行——两处对不上")
@@ -97,7 +97,7 @@ class TestFinalPassLeavesATrace(unittest.TestCase):
 
     def test_the_check_does_not_judge_its_content(self) -> None:
         """只核行数。内容真不真归裁决面与抽样人核——机器判它必然逼出套话。"""
-        build = read("scripts/story-build.mjs")
+        build = read("scripts/core/story-build.mjs")
         block = build.split("⑫d", 1)[1].split("⑬", 1)[0]
         for metric in ("includes(", "test(", "match("):
             self.assertNotIn(metric, block, "统稿留痕只核行数，不核内容")

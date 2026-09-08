@@ -166,8 +166,8 @@ spec 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/s
 - **输出**：`doc/features/<AR>/` 下的 `RR/` `SR/` `AR/` `inbox/` 四个目录与骨架文件
 
 ```bash
-node doc/extensions/skills/story/scripts/story.js init <AR> <mcp-token>   # ① 取材
-python doc/extensions/skills/story/scripts/story_flow.py init --feature <AR>  # ② 建骨架
+node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>   # ① 取材
+python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架
 ```
 
 **② 是骨架的唯一写入者**：缺什么补什么，已有的一律不动，重跑安全。
@@ -188,9 +188,9 @@ python doc/extensions/skills/story/scripts/story_flow.py init --feature <AR>  # 
 - **archive 不修改工作区任何文件**，可以放心执行
 
 ```bash
-node doc/extensions/skills/story/scripts/story-build.mjs check --deliver --feature <AR>   # ① 交付门：回执 + 读者审查形态
-node doc/extensions/skills/story/scripts/story.js archive <AR> <mcp-token>        # ② 上传
-python doc/extensions/skills/story/scripts/story_flow.py archived --feature <AR>  # ③ 登记
+node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门：回执 + 读者审查形态
+node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ② 上传
+python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记
 ```
 
 **③ 登记之后**，`AR/review.md` **归人所有——只备份，不重建**，评审人的线上批注与
@@ -270,7 +270,7 @@ AI 依据人的决定写回文件，不要求用户手动编辑文件或运行�
 
 `story.js` 的每条命令都要 `<mcp-token>`。按顺序取，取到即用：
 
-1. 跑 `node doc/extensions/skills/story/scripts/token.js`——exit 0 时 stdout 即 token；
+1. 跑 `node doc/extensions/skills/story/scripts/adapters/token.js`——exit 0 时 stdout 即 token；
 2. 读 `~/.cac.json` 或 `~/.claude.json`（Windows 在 `%USERPROFILE%\` 下）：先看顶层
    `mcpServers.requirement-mcp.headers.X-MCP-Token`，再看
    `projects.<当前工程路径>.mcpServers.requirement-mcp.headers.X-MCP-Token`；

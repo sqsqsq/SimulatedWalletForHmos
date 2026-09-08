@@ -30,7 +30,7 @@ const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier']
 // 只改一处，写进契约的选择就会在这里被判非法。
 const FLOW_MATERIAL_CHOICES = new Set(JSON.parse(fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)),
-            '..', 'contracts', 'story-chapters.json'), 'utf-8').replace(/^\uFEFF/, ''))
+            '..', '..', 'contracts', 'story-chapters.json'), 'utf-8').replace(/^\uFEFF/, ''))
   .gates.material_scope.options.map(o => o.key));
 const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);

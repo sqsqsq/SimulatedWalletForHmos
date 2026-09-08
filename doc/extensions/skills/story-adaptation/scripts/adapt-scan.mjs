@@ -1,403 +1,467 @@
 #!/usr/bin/env node
 /**
- * story adapt 辅助脚本——只做模型不可靠的机械活：列两棵树、核对。
- * 归属与处置判断在 SKILL.md §2，由执行适配的 AI 做；本脚本不替它判。
+ * story adapt —— 把这套扩展装进一个目标工程，或把已装的升到包的版本。
  *
- * 用法: node adapt-scan.mjs --scan|--check --target <目标根> [--package <包根>]
+ * **所有权由目录表达**，不靠推断：
+ *   `<ext>/skills/story/scripts/core/`      公共，升级整份换掉（包里不再有的自然消失）
+ *   `<ext>/skills/story/scripts/adapters/`  目标仓自己实现，升级一个字节不碰
+ *   `<ext>/knowledge/`                      目标的知识，升级不读不写
+ *   其余 `<ext>/**`                         机制，升级整份换掉
+ *
+ * 边界这么一分，「升级之后哪些文件变了」本身就是答案——所以确认用 `git diff`，
+ * 不再读两棵树逐文件比 sha256、也不再有第三种要模型判断的情形。
+ *
+ * 用法: node adapt-scan.mjs --apply|--check --target <目标根> [--package <包根>]
  * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { join, relative, dirname, sep, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
+} from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const MODES = ['--scan', '--check'];
-const ROOT_FILES = ['.cac/commands/story.md', '.claude/commands/story.md',
-  '.codex/skills/story/SKILL.md', '.opencode/skill/story/SKILL.md', 'framework.config.json'];
-const MOCK_MARKERS = ['本地替身', '模拟实现'];   // 包内对接脚本的自述；不认任何仓的具体标识符
-const PATCH_FILE = 'framework-patch.yaml';      // 包声明的 framework 依赖；没有这份文件就是不依赖
+const MODES = ['--apply', '--check'];
+
+/** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
+const ADAPTERS = 'skills/story/scripts/adapters';
+/** 目标的知识：升级不读不写，首次只建目录与各类 README。 */
+const KNOWLEDGE = 'knowledge';
+/** 公共脚本的唯一落点。`scripts/` 这一层除了它与 adapters 不放东西——⑧ 守这条。 */
+const SCRIPTS_DIR = 'skills/story/scripts';
+const CORE = 'core';
+
+const EXT_BEGIN = '<!-- story-ext:begin -->';
+const EXT_END = '<!-- story-ext:end -->';
+const SECTION = 'skills/story/AGENTS.section.md';
+const ENTRIES = ['AGENTS.md', 'CLAUDE.md'];
 
 const argv = process.argv.slice(2);
-const mode = MODES.find((m) => argv.includes(m));
+const mode = MODES.find(m => argv.includes(m));
 const opt = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
 const die = (msg, code = 2) => { console.error(`[adapt-scan] ${msg}`); process.exit(code); };
 
-/** 从起点向上找含 framework.config.json 的仓库根 */
-const findRoot = (from) => {
+const read = f => readFileSync(f, 'utf8');
+const rel = (base, f) => relative(base, f).split(sep).join('/');
+const sha = f => createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
+
+/** 从起点向上找含 framework.config.json 的仓库根。 */
+function findRoot(from) {
   for (let d = resolve(from); ; d = dirname(d)) {
     if (existsSync(join(d, 'framework.config.json'))) return d;
     if (d === dirname(d)) return null;
   }
-};
-const extDir = (root) => {
-  try { return JSON.parse(readFileSync(join(root, 'framework.config.json'), 'utf8'))?.paths?.extension_dir || 'doc/extensions'; }
-  catch { return 'doc/extensions'; }
-};
-const rel = (base, f) => relative(base, f).split(sep).join('/');
-const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
-const read = (f) => readFileSync(f, 'utf8');
+}
+
+function config(root) {
+  const f = join(root, 'framework.config.json');
+  try {
+    return JSON.parse(read(f));
+  } catch (e) {
+    // 读不出不是「没配置」：扩展落点与需求目录都从它取，静默退回缺省值会让
+    // 整个写入面悄悄挪到别的路径上，而 diff 那时看起来一切正常。
+    return die(`${f} 读不出（${e.message}）：扩展落点与需求目录都从它取`);
+  }
+}
+const extDir = root => config(root)?.paths?.extension_dir || 'doc/extensions';
+const featuresDir = root => config(root)?.paths?.features_dir || 'doc/features';
 
 /**
- * 递归列文件（相对 base 的 posix 路径）；跳过本命令自己的工作目录。
+ * 递归列文件（相对 base 的 posix 路径），跳过点开头的目录与运行产物。
  *
- * 工作目录带版本号并以点开头（`.adapt-<包 version>/`）：不同版本各自一份，
- * 升到新版不会把既有的方案与 before 快照覆盖掉；点开头是为了在目标工程里
- * 一眼看出它是临时件而不是交付内容。
+ * 点开头的目录是工作件，`__pycache__` 是跑过脚本就有的字节码——两样都既不入库
+ * 也不交付，混进写入面会让 diff 永远核不平。
  */
-const isWork = (name) => name === 'adapt' || name.startsWith('.adapt-');
-/**
- * 运行产物目录：跑过脚本就会有，既不入库也不交付。
- *
- * 不排除它，`__pycache__` 里的字节码会被 classOf 判成 `skills/story/**` 下的机制内容，
- * 跟着「整体复制」搬进目标工程，再因为两边字节码不同而永远核不平。
- */
-const isRuntimeJunk = (name) => name === '__pycache__';
-const walk = (dir, base = dir) => !existsSync(dir) ? [] :
-  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+function walk(dir, base = dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const f = join(dir, e.name);
     if (e.isDirectory()) {
-      return isWork(rel(base, f)) || isRuntimeJunk(e.name) ? [] : walk(f, base);
+      if (e.name === '__pycache__' || e.name.startsWith('.')) return [];
+      return walk(f, base);
     }
     return [rel(base, f)];
   });
+}
+
+/** 包里归本机制所有的那些文件：`<ext>/` 下去掉知识与对接层，manifest 另按合成规则处理。 */
+function packageMechanism(pdir) {
+  return walk(pdir).filter(p => p !== 'manifest.yaml'
+    && !p.startsWith(`${KNOWLEDGE}/`) && !p.startsWith(`${ADAPTERS}/`));
+}
+
+// ── manifest：机制登记归包，知识激活清单归目标 ───────────────────────────────
 
 /**
- * 对接层的地盘：`skills/story/scripts/`。
+ * 抽出 `provides.knowledge:` 那一整段（含它上面的注释块）。
  *
- * 它不是「几个 .js 文件」，是**一块归目标所有的目录**——自定义对接 js 会带来
- * 依赖与锁文件（`package.json`、`node_modules/`、构建产物）。按路径长相分类时，
- * 这些统统落进「机制」，撞上「机制目录 == 包」而恒 FAIL，目标绕不过去。
- *
- * 所以这一层**按所有权判，不按路径长相判**：包里有的归包，包里没有的归目标。
- * 不写死依赖文件名——下一个依赖形态（`pnpm-lock.yaml`、`.venv/`、`dist/`）
- * 又得加一条，那是词表式补丁。
+ * 按文本块搬而不是解析后重新序列化：清单里的注释是给下一个维护者读的，
+ * 解析再吐一遍会把它们全丢掉，而丢了没人会立刻发现。
  */
-const ADAPTER_DIR = 'skills/story/scripts/';
+function knowledgeBlock(manifestText) {
+  const lines = manifestText.split(/\r?\n/);
+  const at = lines.findIndex(l => /^ {2}knowledge:/.test(l));
+  if (at < 0) return null;
+  // 往上收编紧邻的注释块——它讲的是这份清单怎么读
+  let from = at;
+  while (from > 0 && /^ {2}#/.test(lines[from - 1])) from -= 1;
+  let to = at + 1;
+  while (to < lines.length && !/^ {2}\S/.test(lines[to])) to += 1;
+  // 尾随空行留给下一段
+  while (to > at + 1 && lines[to - 1].trim() === '') to -= 1;
+  return { from, to, text: lines.slice(from, to).join('\n') };
+}
 
-/** 类别（相对 extension_dir 的路径）——与 SKILL.md §2 表一一对应 */
-const classOf = (p) =>
-  /^skills\/story\/scripts\/[^/]+\.js$/.test(p) ? 'js'
-  : p.startsWith(ADAPTER_DIR) && !PKG_FILES.has(p) ? 'custom'
-  : p === 'manifest.yaml' || /^knowledge\/[^/]+\/README\.md$/.test(p) ? 'bridge'
-  : p === 'knowledge/README.md' || /^(hooks|rules)\//.test(p) || /^skills\/(story|story-adaptation)\//.test(p) ? 'mech'
-  : /^knowledge\//.test(p) ? 'know'
-  : 'custom';
+/**
+ * 合成 manifest：包的为底，目标现有的知识清单原样放回。
+ *
+ * 它是写入面上唯一一个「一个文件两种所有权」的地方，所以 diff 判它也是单独一条
+ * （§3）：其余键与包相同，`provides.knowledge` 与升级前逐字相同。
+ */
+function composeManifest(pkgText, tgtText) {
+  if (!tgtText) return pkgText;
+  const mine = knowledgeBlock(pkgText);
+  const theirs = knowledgeBlock(tgtText);
+  if (!mine || !theirs) return pkgText;
+  const lines = pkgText.split(/\r?\n/);
+  return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
+}
 
-const frontmatter = (txt) => {
-  const m = txt.match(/^---\r?\n([\s\S]*?)\r?\n---/); const o = {};
-  if (m) for (const l of m[1].split(/\r?\n/)) { const i = l.indexOf(':'); if (i > 0) o[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
-  return o;
-};
-
-/** 事实序列：正文里非空的表格单元格与段落行，按出现顺序 */
-const factSeq = (txt) => {
+function bridgesOf(manifestText) {
+  const lines = manifestText.split(/\r?\n/);
+  const at = lines.findIndex(l => /^ {2}bridges:/.test(l));
+  if (at < 0) return [];
   const out = [];
-  for (const line of txt.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t) continue;
-    if (t.startsWith('|')) { if (/^\|[\s|:-]+\|$/.test(t)) continue; out.push(...t.split('|').map((c) => c.trim()).filter(Boolean)); }
-    else out.push(t);
+  for (let i = at + 1; i < lines.length && !/^ {2}\S/.test(lines[i]); i += 1) {
+    const m = lines[i].match(/^\s+-\s+(\S+)/);
+    if (m) out.push(m[1]);
   }
   return out;
-};
+}
 
-/** manifest 的知识清单：只读 knowledge: 段下的 `- ` 行，不做 YAML 解析 */
-const knowledgeList = (txt) => {
-  const out = []; let indent = -1;
-  for (const l of txt.split(/\r?\n/)) {
-    const head = l.match(/^(\s*)knowledge:\s*$/);
-    if (head) { indent = head[1].length; continue; }
-    if (indent < 0) continue;
-    const item = l.match(/^(\s*)-\s+(.+?)\s*$/);
-    if (item && item[1].length > indent) out.push(item[2]);
-    else if (l.trim() && !l.trim().startsWith('#')) break;
-  }
-  return out;
-};
-const versionOf = (txt) => (txt.match(/^version:\s*"?([^"\s]+)"?/m) || [])[1] || null;
-/** 版本比较：按点分段数值比，缺段按 0。返回 -1 / 0 / 1。 */
-const cmpVersion = (a, b) => {
-  const pa = String(a ?? '').split('.').map((x) => parseInt(x, 10) || 0);
-  const pb = String(b ?? '').split('.').map((x) => parseInt(x, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d) return d < 0 ? -1 : 1;
-  }
-  return 0;
-};
+// ── 写入面 ──────────────────────────────────────────────────────────────────
 
-// ── 前置 ────────────────────────────────────────────────────────────────────
-if (!mode) die(`缺模式，用 ${MODES.join(' | ')}`);
-const TARGET = opt('--target') && findRoot(opt('--target'));
+/**
+  * 目标 `.gitignore` 该有的：章草稿目录。
+  *
+  * 就这一行——本命令自己不落任何工作件（确认靠 git diff，不写 before 快照），
+  * 所以没有第二行要挡的东西。
+  */
+const gitignoreLines = root => [`${featuresDir(root)}/**/AR/story-src/drafts/`];
+
+/**
+ * 这条路径 adapt 碰不碰得。**写入面就是所有权的另一种说法**——
+ * 它答不上「是」的，diff 里出现就是错的。
+ */
+function inWriteFace(root, p, bridges) {
+  if (p === '.gitignore' || ENTRIES.includes(p)) return true;
+  if (bridges.includes(p)) return true;
+  const ext = extDir(root);
+  if (!p.startsWith(`${ext}/`)) return false;
+  const inner = p.slice(ext.length + 1);
+  if (inner.startsWith(`${KNOWLEDGE}/`) || inner.startsWith(`${ADAPTERS}/`)) return false;
+  return true;
+}
+
+// ── git ─────────────────────────────────────────────────────────────────────
+
+function git(root, args) {
+  const r = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  return { ok: r.status === 0, out: r.stdout || '', err: (r.stderr || '').trim() };
+}
+/**
+ * 目标**自己**是不是一个 git 仓库的根。
+ *
+ * 不用 `--is-inside-work-tree`：目标躺在别的 git 仓里面时它也答「是」，而那时
+ * `git status` 报的路径相对的是**外层仓的根**，拿去跟写入面（相对目标根）比会全对不上。
+ */
+function isRepo(root) {
+  const r = git(root, ['rev-parse', '--show-toplevel']);
+  return r.ok && resolve(r.out.trim()) === resolve(root);
+}
+
+/**
+ * 工作区里有未提交改动的路径（相对仓库根）。
+ *
+ * `-uall` 把未跟踪的目录展开成文件：不展开的话 git 只报一个目录名（`?? .claude/`），
+ * 而首次安装写进去的跳板恰好都在未跟踪目录里——判据会拿目录名去比路径，一条也对不上。
+ *
+ * **不 trim 整段输出**：porcelain 的状态位占两格，未暂存的改动第一格是空格
+ * （` D path`），整段 trim 会削掉第一行那个空格，之后每条路径都少一个字符。
+ */
+function dirtyPaths(root) {
+  const r = git(root, ['status', '--porcelain', '-uall']);
+  if (!r.ok) return [];
+  return r.out.split(/\r?\n/).filter(Boolean)
+    .map(l => l.slice(3).split(' -> ').pop().replace(/^"|"$/g, ''));
+}
+
+// ── 参数与两态 ──────────────────────────────────────────────────────────────
+
+if (!mode) die(`缺模式：${MODES.join(' | ')}`);
 if (!opt('--target')) die('缺 --target <目标根>');
+const TARGET = findRoot(opt('--target'));
 if (!TARGET) die(`目标不是有效仓库根（找不到 framework.config.json）：${opt('--target')}`);
-const PKG = opt('--package') ? findRoot(opt('--package')) : findRoot(dirname(fileURLToPath(import.meta.url)));
-if (!PKG) die('定位不到包根');
-const TDIR = join(TARGET, extDir(TARGET)), PDIR = join(PKG, extDir(PKG));
-const PKG_VERSION = versionOf(existsSync(join(PDIR, 'manifest.yaml'))
-  ? read(join(PDIR, 'manifest.yaml')) : '') || 'unknown';
-const WORK = join(TDIR, `.adapt-${PKG_VERSION}`), BEFORE = join(WORK, 'before.json');
-/** 包里有哪些文件 —— `classOf` 判对接层归属时要它。包自身的文件按定义都在其中。 */
-const PKG_FILES = new Set(walk(PDIR));
-const manifestOf = (d) => (existsSync(join(d, 'manifest.yaml')) ? read(join(d, 'manifest.yaml')) : '');
+const PKG = opt('--package')
+  ? findRoot(opt('--package'))
+  : findRoot(dirname(fileURLToPath(import.meta.url)));
+if (!PKG) die('包不是有效仓库根（找不到 framework.config.json）');
 
-/**
- * 机制指纹：机制目录逐文件 sha 按路径排序后再做一次 sha。
- *
- * 判态不能只看版本号——机制改了、版本没动，按版本号判就是「重适配」，
- * 机制行一条不执行，目标拿到的还是旧脚本，而且不报错。指纹把这件事变成可见的停。
- */
-function mechanismDigest(dir) {
-  const files = walk(dir).filter((p) => classOf(p) === 'mech').sort();
-  const h = createHash('sha256');
-  for (const p of files) h.update(`${p}\n${sha(join(dir, p))}\n`);
-  return h.digest('hex').slice(0, 16);
-}
+const PDIR = join(PKG, ...extDir(PKG).split('/'));
+const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+const SAME_TREE = resolve(PKG) === resolve(TARGET);
 
-/**
- * 判态（SKILL §1 的数据面）。`package_not_bumped` = 版本相同而机制指纹不同：
- * 停下回包里升版，不擅自复制、不静默跳过。
- */
-function adaptState(pkgVersion, tgtVersion, pkgDigest, tgtDigest) {
-  if (!tgtVersion) return 'first';
-  const c = cmpVersion(tgtVersion, pkgVersion);
-  if (c < 0) return 'upgrade';
-  if (c > 0) return 'target_newer';
-  return pkgDigest === tgtDigest ? 'readapt' : 'package_not_bumped';
-}
+const pkgManifest = join(PDIR, 'manifest.yaml');
+if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`);
+const PKG_MANIFEST_TEXT = read(pkgManifest);
+const BRIDGES = bridgesOf(PKG_MANIFEST_TEXT);
 
-/** 目标 `.gitignore` 该有的两行：adapt 工作目录、章草稿目录——都是临时件。 */
-function gitignoreLines(root) {
-  let features = 'doc/features';
-  try { features = JSON.parse(read(join(root, 'framework.config.json')))?.paths?.features_dir || features; } catch { /* 缺省 */ }
-  return [`${extDir(root)}/.adapt-*/`, `${features}/**/AR/story-src/drafts/`];
-}
-function gitignoreStatus(root) {
-  const f = join(root, '.gitignore');
-  const have = existsSync(f) ? read(f).split(/\r?\n/).map((l) => l.trim()) : [];
-  return gitignoreLines(root).map((line) => ({ line, present: have.includes(line) }));
-}
+const tgtManifest = join(TDIR, 'manifest.yaml');
+/** 两态，就这一条判据：目标有没有 manifest.yaml。历史版本识别不存在于本实现。 */
+const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
 
-/**
- * 包声明的 framework 补丁。**没有这份文件 = 不依赖任何 framework 改动**，不是错误。
- *
- * 解析只认三个键 + host：整份是给人读的声明，不做通用 YAML 解析——
- * 装一个解析器进来，下一次就会有人往里加结构。
- */
-function frameworkPatches(dir) {
-  const raw = existsSync(join(dir, PATCH_FILE)) ? read(join(dir, PATCH_FILE)) : '';
-  const out = [];
-  let cur = null;
-  for (const line of raw.split(/\r?\n/)) {
-    const item = line.match(/^\s*-\s+path:\s*(\S+)/);
-    if (item) { cur = { path: item[1], kind: null, host: null, why: '' }; out.push(cur); continue; }
-    if (!cur) continue;
-    const kv = line.match(/^\s+(kind|host|why):\s*(.+)$/);
-    if (kv) cur[kv[1]] = kv[2].trim();
+// ── --apply ─────────────────────────────────────────────────────────────────
+
+if (mode === '--apply') {
+  if (SAME_TREE) die('包与目标是同一棵树，没有可写的东西');
+
+  // 前置：不满足就停，不猜。工作区脏的话 diff 里混着用户自己的改动，分不清哪些是
+  // 升级带来的——而「升级把用户没提交的改动盖了、diff 里还看不出来」没法补救。
+  if (!isRepo(TARGET)) {
+    die(`目标不是 git 仓库：${TARGET}\n  升级的确认靠 git diff，没有 git 就没有「哪些文件变了」这个答案。`);
   }
-  return out;
-}
+  const dirty = dirtyPaths(TARGET).filter(p => inWriteFace(TARGET, p, BRIDGES));
+  if (dirty.length) {
+    console.error(`[adapt-scan] 停：写入面上有 ${dirty.length} 处未提交改动，升级会盖掉它们：`);
+    dirty.forEach(p => console.error(`  ${p}`));
+    die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
+  }
 
-/** 目标工程物化了哪些 adapter —— host_capability 带不带看它，不看包里写死的名单。 */
-function targetAdapters(root) {
-  const cfg = existsSync(join(root, 'framework.config.json'))
-    ? JSON.parse(read(join(root, 'framework.config.json'))) : {};
-  const list = cfg?.materialized_adapters ?? [];
-  return new Set(Array.isArray(list) ? list.map(String) : []);
-}
+  const pkgFiles = packageMechanism(PDIR);
+  const written = [];
+  const removed = [];
 
-/** 目标 framework.config.json 的漂移白名单里已登记的路径。 */
-function targetAllowlist(root) {
-  const cfg = existsSync(join(root, 'framework.config.json'))
-    ? JSON.parse(read(join(root, 'framework.config.json'))) : {};
-  const list = cfg?.integrity?.drift_allowlist ?? [];
-  return new Set((Array.isArray(list) ? list : []).map((e) => String(e?.path ?? '')));
-}
+  // 1. 机制面整体替换：包里没有而目标有的先删，再逐个复制
+  const tgtFiles = new Set(existsSync(TDIR) ? packageMechanism(TDIR) : []);
+  for (const p of tgtFiles) {
+    if (pkgFiles.includes(p)) continue;
+    rmSync(join(TDIR, ...p.split('/')));
+    removed.push(p);
+  }
+  for (const p of pkgFiles) {
+    const from = join(PDIR, ...p.split('/'));
+    const to = join(TDIR, ...p.split('/'));
+    if (existsSync(to) && sha(from) === sha(to)) continue;   // 一样就不碰，diff 才说得清
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+    written.push(p);
+  }
 
-/**
- * 每条补丁的去向：带，还是不带、为什么。
- *
- * `extension_dependency` 无条件带——扩展缺了它就是残的。
- * `host_capability` 只在目标用同一宿主时带：同一份声明在不同目标上给出不同结果，
- * 而规则只有一条。`kind` 认不出的**当场报错**，不静默跳过：漏带一份地基，
- * 目标那边的表现是「某个能力莫名其妙不生效」，最难查。
- */
-function patchPlan(patches, adapters) {
-  return patches.map((x) => {
-    if (x.kind === 'extension_dependency') return { ...x, carry: true, reason: '扩展依赖' };
-    if (x.kind === 'host_capability') {
-      const on = adapters.has(String(x.host));
-      return { ...x, carry: on, reason: on ? `目标用 ${x.host}` : `目标未物化 ${x.host}` };
+  // 2. manifest 合成：机制登记归包，知识激活清单归目标
+  const composed = composeManifest(
+    PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '');
+  if (!existsSync(tgtManifest) || read(tgtManifest) !== composed) {
+    mkdirSync(dirname(tgtManifest), { recursive: true });
+    writeFileSync(tgtManifest, composed, 'utf8');
+    written.push('manifest.yaml');
+  }
+
+  // 3. 跳板：扩展自有的宿主入口文件，直接覆盖
+  for (const b of BRIDGES) {
+    const from = join(PKG, ...b.split('/'));
+    if (!existsSync(from)) { console.error(`[adapt-scan] 包里缺跳板 ${b}，跳过`); continue; }
+    const to = join(TARGET, ...b.split('/'));
+    if (existsSync(to) && sha(from) === sha(to)) continue;
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+    written.push(b);
+  }
+
+  // 4. 入口文件的标记区：只重写标记之间，标记之外一个字节不动
+  const sectionFile = join(PDIR, ...SECTION.split('/'));
+  if (existsSync(sectionFile)) {
+    const block = `${EXT_BEGIN}\n${stripMarks(read(sectionFile))}\n${EXT_END}`;
+    for (const entry of ENTRIES) {
+      const f = join(TARGET, entry);
+      if (!existsSync(f)) continue;
+      const before = read(f);
+      const after = replaceZone(before, block);
+      if (after !== before) { writeFileSync(f, after, 'utf8'); written.push(entry); }
     }
-    die(`${PATCH_FILE} 里 ${x.path} 的 kind 认不出：${x.kind ?? '(缺)'}`);
-    return null;
-  });
-}
-
-// ── --scan ──────────────────────────────────────────────────────────────────
-if (mode === '--scan') {
-  const tf = walk(TDIR), pf = walk(PDIR), pSet = new Set(pf);
-  const pick = (files, dir, k) => files.filter((p) => classOf(p) === k).map((p) => ({ p, f: join(dir, p) }));
-  const tMech = pick(tf, TDIR, 'mech'), pMech = pick(pf, PDIR, 'mech'), tMechSet = new Set(tMech.map((x) => x.p));
-  const pkgDigest = mechanismDigest(PDIR), tgtDigest = existsSync(TDIR) ? mechanismDigest(TDIR) : null;
-  const pkgVersion = versionOf(manifestOf(PDIR)), tgtVersion = versionOf(manifestOf(TDIR));
-  const state = adaptState(pkgVersion, tgtVersion, pkgDigest, tgtDigest);
-  const out = {
-    generated_at: new Date().toISOString(),
-    package_root: PKG, target_root: TARGET,
-    package_version: pkgVersion, target_version: tgtVersion,
-    state,
-    mechanism_digest: { package: pkgDigest, target: tgtDigest },
-    gitignore: gitignoreStatus(TARGET),
-    mechanism: {
-      target_only: tMech.filter((x) => !pSet.has(x.p)).map((x) => x.p),
-      package_only: pMech.filter((x) => !tMechSet.has(x.p)).map((x) => x.p),
-      differ: pMech.filter((x) => tMechSet.has(x.p) && sha(x.f) !== sha(join(TDIR, x.p))).map((x) => x.p),
-    },
-    knowledge: pick(tf, TDIR, 'know').map(({ p, f }) => {
-      const txt = read(f), fm = frontmatter(txt);
-      return { path: p, dir: dirname(p), kind: fm.kind ?? null, confirmed: fm.confirmed ?? null, facts: factSeq(txt) };
-    }),
-    package_knowledge: pf.filter((p) => classOf(p) === 'know'),
-    manifest_knowledge: knowledgeList(manifestOf(TDIR)),
-    js: {
-      package_self_declared_mock: pick(pf, PDIR, 'js').some(({ f }) => MOCK_MARKERS.some((m) => read(f).includes(m))),
-      package: pick(pf, PDIR, 'js').map((x) => x.p), target: pick(tf, TDIR, 'js').map((x) => x.p),
-    },
-    custom: pick(tf, TDIR, 'custom').map(({ p, f }) => ({ path: p, sha: sha(f) })),
-    framework_patch: patchPlan(frameworkPatches(PDIR), targetAdapters(TARGET)).map((x) => ({
-      path: x.path, kind: x.kind, host: x.host, why: x.why, carry: x.carry, reason: x.reason,
-      in_target: existsSync(join(TARGET, 'framework', x.path)),
-      same_as_package: existsSync(join(TARGET, 'framework', x.path))
-        && existsSync(join(PKG, 'framework', x.path))
-        && sha(join(TARGET, 'framework', x.path)) === sha(join(PKG, 'framework', x.path)),
-      allowlisted: targetAllowlist(TARGET).has(x.path),
-    })),
-    target_adapters: [...targetAdapters(TARGET)],
-    root_files: ROOT_FILES.map((p) => ({ path: p, in_target: existsSync(join(TARGET, p)),
-      same_as_package: existsSync(join(TARGET, p)) && existsSync(join(PKG, p)) && sha(join(TARGET, p)) === sha(join(PKG, p)) })),
-  };
-  mkdirSync(WORK, { recursive: true });
-  writeFileSync(BEFORE, JSON.stringify(out, null, 2));
-  console.log(JSON.stringify(out, null, 2));
-  console.error(`[adapt-scan] 清单已写入 ${BEFORE}——判断按 SKILL.md §2 表逐文件做`);
-  if (state === 'package_not_bumped') {
-    console.error(`[adapt-scan] 停：包与目标版本都是 ${pkgVersion}，机制指纹却不同（${pkgDigest} ≠ ${tgtDigest}）`
-      + '——包改了机制没升版。回包里升 manifest.version，再来');
   }
+
+  // 5. `.gitignore` 两行：缺就补
+  {
+    const f = join(TARGET, '.gitignore');
+    const have = existsSync(f) ? read(f) : '';
+    const missing = gitignoreLines(TARGET)
+      .filter(l => !have.split(/\r?\n/).map(x => x.trim()).includes(l));
+    if (missing.length) {
+      writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
+      written.push('.gitignore');
+    }
+  }
+
+  // 6. 首次安装另做两件：配置键与知识骨架。升级两件都不碰。
+  if (STATE === 'fresh') {
+    const cfgFile = join(TARGET, 'framework.config.json');
+    const cfg = config(TARGET);
+    if (!cfg?.paths?.extension_dir) {
+      cfg.paths = { ...(cfg.paths || {}), extension_dir: 'doc/extensions' };
+      writeFileSync(cfgFile, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+      written.push('framework.config.json');
+    }
+    // 知识只建目录与各类 README（读法与清单说明），不放包里的知识正文——
+    // 那是这个仓自己的东西，从空的开始（A3）。
+    for (const p of walk(join(PDIR, KNOWLEDGE), PDIR)) {
+      if (!p.endsWith('/README.md')) continue;
+      const to = join(TDIR, ...p.split('/'));
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(join(PDIR, ...p.split('/')), to);
+      written.push(p);
+    }
+  }
+
+  // 一个字节都没动 = 这个目标已经在包的版本上。说出来，不要报「写入 0 个文件」——
+  // 那句话看起来像什么都没做成，而事实是没有可做的。
+  if (!written.length && !removed.length) {
+    console.log('[adapt-scan] 当前适配仍有效：目标已在包的版本上，没有要写的东西');
+    process.exit(0);
+  }
+  console.log(`[adapt-scan] ${STATE === 'fresh' ? '首次安装' : '升级'}完成：`
+    + `写入 ${written.length} 个文件，清除 ${removed.length} 个包里不再有的文件`);
+  if (removed.length) removed.forEach(p => console.log(`  - ${p}`));
+  console.log('[adapt-scan] 下一步：跑 --check 自检；'
+    + (STATE === 'fresh'
+      ? '首次安装还要按 SKILL.md 写部件画像，摆给人确认一次'
+      : 'git diff 看变了哪些文件'));
   process.exit(0);
 }
 
+/** 剥掉正文里已有的标记行——包里那一份带不带标记，写出去都只包一层。 */
+function stripMarks(text) {
+  return text.split(/\r?\n/).filter(l => !l.trim().startsWith('<!-- story-ext:')).join('\n').trim();
+}
+
+/** 标记区在就整段替换，不在就追加到末尾。标记之外一个字节不动。 */
+function replaceZone(text, block) {
+  const from = text.indexOf(EXT_BEGIN);
+  const to = text.indexOf(EXT_END);
+  if (from >= 0 && to > from) {
+    return text.slice(0, from) + block + text.slice(to + EXT_END.length);
+  }
+  return `${text.replace(/\n*$/, '\n')}\n${block}\n`;
+}
+
 // ── --check ─────────────────────────────────────────────────────────────────
-if (!existsSync(BEFORE)) die(`缺 ${BEFORE}，先跑 --scan`);
-const before = JSON.parse(read(BEFORE));
-const tf = walk(TDIR), bad = [];
-const now = (k) => tf.filter((p) => classOf(p) === k);
 
-// ① 机制目录文件集与内容 == 包
-const pMech = walk(PDIR).filter((p) => classOf(p) === 'mech'), tMech = new Set(now('mech'));
-for (const p of pMech) {
-  if (!tMech.has(p)) bad.push(`① 机制缺文件：${p}`);
-  else if (sha(join(PDIR, p)) !== sha(join(TDIR, p))) bad.push(`① 机制内容不同于包：${p}`);
-}
-for (const p of tMech) if (!pMech.includes(p)) bad.push(`① 机制多出旧文件：${p}`);
-for (const p of ROOT_FILES.slice(0, 4)) {
-  if (!existsSync(join(TARGET, p))) bad.push(`① 跳板缺失：${p}`);
-  else if (existsSync(join(PKG, p)) && sha(join(TARGET, p)) !== sha(join(PKG, p))) bad.push(`① 跳板不同于包：${p}`);
-}
+const bad = [];
 
-// ② 目标所有的知识文件：旧事实序列仍按序在新文件（允许新增列/行/键）
+// diff 落点：升级之后变了哪些文件，答案要与所有权一致。
 //
-// **守恒对象 = 目标已有的每一个知识文件**，不分事实 / 规约 / 模式。把「包里有
-// 同名的规约与模式」整类排除在守恒之外，理由是它们随包直接维护、换版本是预期——
-// 那条排除正是「升级把目标写好的知识整份盖掉而校验一声不吭」的成因：谁都没在核它。
-// 的那些」排除在外时，整份换成包版本也不会报 `知识内容丢失`。
+// **判的是「有没有碰不该碰的」，不是「diff 里只有 adapt 写的东西」**：工作区里同时
+// 躺着用户自己在别处的改动是常态，那些与本命令无关。`--apply` 的前置已经保证写入面上
+// 升级前是干净的，所以写入面内的 diff 就是 adapt 写的；剩下要问的只有一句——
+// 它有没有伸进 `knowledge/` 或 `adapters/`。
 //
-// 现在包内知识文件只有两个用途：新装时作初始样板、升级时作**变更提案**（由执行模型
-// 语义合并、人确认后写入）。目标已有的内容在任何路径与目录结构下都不被静默覆盖。
-// 索引 README 不在此列（classOf 判为 bridge / mech，按 SKILL §2 索引行合成）。
-for (const k of before.knowledge) {
-  if (k.confirmed === '未确认') continue;            // 样板被填写不在守恒对象内
-  const base = k.path.split('/').pop();
-  const f = tf.find((p) => p.endsWith(`/${base}`) && classOf(p) === 'know');
-  if (!f) { bad.push(`② 知识文件消失：${k.path}`); continue; }
-  const seq = factSeq(read(join(TDIR, f)));
-  let i = 0;
-  for (const fact of k.facts) { const at = seq.indexOf(fact, i); if (at < 0) { bad.push(`② 知识内容丢失：${f} 缺「${fact.slice(0, 40)}」`); break; } i = at + 1; }
-}
-
-// ③ 清单里没有未确认的文件，且每条路径都在
-for (const p of knowledgeList(manifestOf(TDIR))) {
-  if (!existsSync(join(TDIR, p))) { bad.push(`③ 清单路径不存在：${p}`); continue; }
-  if (frontmatter(read(join(TDIR, p))).confirmed === '未确认') bad.push(`③ 未确认的文件进了清单：${p}`);
-}
-
-// ④ 自定义文件没动过
-const nowCustom = new Map(now('custom').map((p) => [p, sha(join(TDIR, p))]));
-for (const c of before.custom) {
-  if (!nowCustom.has(c.path)) bad.push(`④ 自定义文件被删：${c.path}`);
-  else if (nowCustom.get(c.path) !== c.sha) bad.push(`④ 自定义文件被改：${c.path}`);
-}
-
-// ⑤ 入口文件含扩展段（带标记区）
-//
-// 「实例扩展」节**不止 adapt 一个写者**——framework 的 render-agents-md 也往这一节
-// 生成 Skill 表格。按整节替换会把宿主刚生成的表格连同别的内容一起盖掉。
-// 标记区划清写者边界：adapt 只重写标记之间，标记之外一律不碰。
-//
-// 目标里已有**无标记旧段**时单独报：那是首次迁移，做法是原位包上标记，
-// 不是再追加一段——两条报错文案不同，因为修法不同。
-const SECTION = 'skills/story/AGENTS.section.md', ws = (s) => s.replace(/\s+/g, ' ').trim();
-const EXT_BEGIN = '<!-- story-ext:begin -->', EXT_END = '<!-- story-ext:end -->';
-if (existsSync(join(PDIR, SECTION))) {
-  const raw = read(join(PDIR, SECTION));
-  const body = ws(raw);
-  // 剥掉标记行之后的正文，用来认出「内容在、标记没包上」的旧段
-  const bare = ws(raw.split(/\r?\n/).filter((l) => !l.trim().startsWith('<!-- story-ext:')).join('\n'));
-  for (const entry of ['AGENTS.md', 'CLAUDE.md']) {
-    const f = join(TARGET, entry);
-    if (!existsSync(f)) { if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`); continue; }
-    const got = ws(read(f));
-    if (got.includes(body)) continue;
-    if (bare && got.includes(bare)) {
-      bad.push(`⑤ 入口文件的扩展段没有标记区：${entry}`
-        + `（首次迁移：把既有那一段**原位**用 ${EXT_BEGIN} / ${EXT_END} 包起来，不要另追加一段）`);
-    } else {
-      bad.push(`⑤ 入口文件未含扩展段：${entry}（把包内扩展段连同标记区写进它的「实例扩展」节末尾）`);
+// 包与目标是同一棵树时（本仓自适配）diff 没有对象——那时这一条不判，剩下三组照跑。
+if (!SAME_TREE) {
+  if (!isRepo(TARGET)) {
+    bad.push('目标不是 git 仓库：升级的确认靠 git diff，没有 git 就核不了「变了哪些文件」');
+  } else {
+    const changed = dirtyPaths(TARGET);
+    const ext = extDir(TARGET);
+    for (const p of changed) {
+      if (!p.startsWith(`${ext}/`)) continue;
+      const inner = p.slice(ext.length + 1);
+      if (inner.startsWith(`${KNOWLEDGE}/`)) {
+        bad.push(`升级动了目标的知识：${p}——已集成仓升级 knowledge 不修改、不补写、不合并（A2）`);
+      }
+      if (inner.startsWith(`${ADAPTERS}/`)) {
+        bad.push(`升级动了目标的对接层：${p}——${ADAPTERS}/ 归目标仓自己实现，升级一个字节不碰`);
+      }
+    }
+    // manifest 是写入面上唯一一个「一个文件两种所有权」的：机制登记归包、知识清单归目标
+    const relManifest = `${extDir(TARGET)}/manifest.yaml`;
+    if (changed.includes(relManifest)) {
+      const head = git(TARGET, ['show', `HEAD:${relManifest}`]);
+      if (head.ok) {
+        const was = knowledgeBlock(head.out);
+        const now = knowledgeBlock(read(tgtManifest));
+        if ((was?.text ?? null) !== (now?.text ?? null)) {
+          bad.push('manifest 的 provides.knowledge 被升级改过'
+            + '——知识激活随目标，不因升级重选（01 分册 §4）');
+        }
+      }
     }
   }
 }
 
-// ⓪ 判态：扫描时该停的这里再拦一次——扫描只报，不写盘
-if (before.state === 'package_not_bumped') {
-  bad.push('⓪ 包未升版：包与目标版本相同而机制指纹不同——回包里升 manifest.version，再重新 --scan');
-}
-
-// ⑥ framework 补丁：该带的带了、带了的登记进目标 drift_allowlist
-//
-// 只登记不复制 = 目标缺地基；只复制不登记 = 目标第一次跑 harness 就红在完整性上。
-// 两件事都核。不带的那些反过来核：它们**不该**出现在目标的 allowlist 里。
+// ⑤ 入口文件含扩展段与标记区
 {
-  const allow = targetAllowlist(TARGET);
-  for (const x of patchPlan(frameworkPatches(PDIR), targetAdapters(TARGET))) {
-    const at = join(TARGET, 'framework', x.path);
-    if (!x.carry) {
-      if (allow.has(x.path)) bad.push(`⑥ 不该带的补丁登记进了 allowlist：${x.path}（${x.reason}）`);
-      continue;
-    }
-    if (!existsSync(at)) { bad.push(`⑥ framework 补丁缺文件：${x.path}——${x.why}`); continue; }
-    if (sha(at) !== sha(join(PKG, 'framework', x.path))) bad.push(`⑥ framework 补丁内容不同于包：${x.path}`);
-    if (!allow.has(x.path)) {
-      bad.push(`⑥ 补丁没登记进 drift_allowlist：${x.path}`
-        + '——目标的 framework 完整性校验会把它判成漂移，第一次跑 harness 就红');
+  const sectionFile = join(PDIR, ...SECTION.split('/'));
+  if (existsSync(sectionFile)) {
+    const ws = s => s.replace(/\s+/g, ' ').trim();
+    const body = ws(stripMarks(read(sectionFile)));
+    for (const entry of ENTRIES) {
+      const f = join(TARGET, entry);
+      if (!existsSync(f)) {
+        if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`);
+        continue;
+      }
+      const got = read(f);
+      if (!ws(got).includes(body)) {
+        bad.push(`⑤ 入口文件未含扩展段：${entry}（跑 --apply 把它连同标记区写进「实例扩展」节）`);
+        continue;
+      }
+      if (!got.includes(EXT_BEGIN) || !got.includes(EXT_END)) {
+        bad.push(`⑤ 入口文件的扩展段没有标记区：${entry}`
+          + `（把既有那一段**原位**用 ${EXT_BEGIN} / ${EXT_END} 包起来，不要另追加一段）`);
+      }
     }
   }
 }
 
 // ⑦ 目标 .gitignore 有那两行：adapt 工作目录与章草稿目录都是临时件，不加就会被提交进目标的库
-for (const g of gitignoreStatus(TARGET)) {
-  if (!g.present) bad.push(`⑦ 目标 .gitignore 缺一行：${g.line}`);
+{
+  const f = join(TARGET, '.gitignore');
+  const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
+  for (const line of gitignoreLines(TARGET)) {
+    if (!have.includes(line)) bad.push(`⑦ 目标 .gitignore 缺一行：${line}`);
+  }
 }
 
-if (bad.length) { console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`); bad.forEach((b) => console.error(`  ${b}`)); process.exit(1); }
-console.log('[adapt-scan] 核对通过：版本相符 / 机制 == 包 / 知识内容仍在 / 清单无未确认且路径齐 / 自定义未动 / 入口文件含扩展段（包有时）/ framework 补丁齐且已登记 / .gitignore 两行在');
+// ⑧ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录
+//
+// 判的是**包**，不是目标。所有权由目录表达，所以根这一层必须是空的：往根下放一个
+// 脚本，它归谁就又要靠推断——而「靠推断」正是这次重写要退掉的东西。
+{
+  const at = join(PDIR, ...SCRIPTS_DIR.split('/'));
+  if (existsSync(at)) {
+    for (const e of readdirSync(at, { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        if (![CORE, 'adapters', '__pycache__'].includes(e.name)) {
+          bad.push(`⑧ 包的 ${SCRIPTS_DIR}/ 下有第三个目录：${e.name}`
+            + `——公共脚本进 ${CORE}/，目标仓自己实现的进 adapters/，没有第三种`);
+        }
+        continue;
+      }
+      // README.md 是这一层的说明（两个目录各归谁、对接层的输出合同），不是脚本，
+      // 归谁的问题在它身上不存在。例外只此一个，写死在这里。
+      if (e.name === 'README.md') continue;
+      bad.push(`⑧ 包的 ${SCRIPTS_DIR}/ 根下有独立文件：${e.name}`
+        + `——公共脚本进 ${CORE}/（会随升级更新），目标仓自己实现的进 adapters/（升级不碰）；`
+        + '放在根下的那一份两边都不认，永远升级不到目标手里');
+    }
+  }
+}
+
+if (bad.length) {
+  console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`);
+  bad.forEach(b => console.error(`  ${b}`));
+  process.exit(1);
+}
+console.log('[adapt-scan] 核对通过：'
+  + (SAME_TREE ? '（包即目标，diff 无对象）' : 'diff 全落在写入面内 / manifest 的知识清单未动 / ')
+  + '入口文件含扩展段与标记区 / .gitignore 有章草稿那一行 / 包的 scripts 只有 core 与 adapters');

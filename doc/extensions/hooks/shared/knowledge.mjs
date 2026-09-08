@@ -10,8 +10,12 @@
  *
  * 三类知识的定位见 knowledge/README.md；这里只解析结构，不定义知识。
  *
- * **派生为空必须出声**：清单为空、文件缺失、条目表解析出零行，一律 `throw`。
+ * **派生为空必须出声**：清单登记了却读不到、条目表解析出零行，一律 `throw`。
  * 返回空集会让所有「集合包含」类判据恒真，那是比报错危险得多的静默失效。
+ *
+ * **「还没配置」是另一件事**：清单本身缺失或为空，说明这个仓尚未配置知识——那是新装
+ * 的仓的正常状态，返回四类皆空的集合，链条照走。两件事的区别在于**登记过没有**：
+ * 没登记就没有要读的东西，登记了读不到才是读取失败被吞成空。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -288,10 +292,10 @@ export function activeKnowledge(projectRoot) {
   } catch (e) {
     fail(`激活清单解析失败（解析失败不当作空清单）：${e.message}`);
   }
-  const list = manifest?.provides?.knowledge;
-  if (!Array.isArray(list) || !list.length) {
-    fail('派生为空：manifest 的 provides.knowledge 缺失或为空 —— 阶段不扫描知识目录，没有清单就没有知识');
-  }
+  // 没登记就没有要读的东西：这个仓还没配置知识，不是失败。登记了却读不到仍然报错
+  // （下面逐条读），那是读取失败被吞成空——两件事在这里分开。
+  const list = Array.isArray(manifest?.provides?.knowledge)
+    ? manifest.provides.knowledge : [];
 
   const out = { facts: [], constraints: [], patterns: [], indexes: [] };
   const seen = new Set();
@@ -317,13 +321,6 @@ export function activeKnowledge(projectRoot) {
     if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix));
     else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix));
     else out.facts.push(parseFactFile(abs, relPosix));
-  }
-
-  for (const kind of KNOWLEDGE_KINDS) {
-    if (!out[kind].length) {
-      fail(`派生为空：激活清单里没有任何 kind=${kind} 的文件 —— `
-        + '三类知识各自都要有内容，缺哪类都要显式说明');
-    }
   }
 
   const entries = out.constraints.flatMap(c => c.entries);

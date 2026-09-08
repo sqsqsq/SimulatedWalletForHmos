@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = REPO_ROOT / "test" / "story" / "golden"
 INPUT_FIXTURE = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90004"
 GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
-BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 
 #: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。

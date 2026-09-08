@@ -24,7 +24,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "test" / "story" / "scripts"
 sys.path.insert(0, str(REPO_ROOT))
-STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
 import materials  # noqa: E402
@@ -382,7 +382,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
 
     def run_import(self) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(REPO_ROOT / "doc/extensions/skills/story/scripts/import_sources.py"),
+            [sys.executable, str(REPO_ROOT / "doc/extensions/skills/story/scripts/core/import_sources.py"),
              "--feature", "IM90002", "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
 

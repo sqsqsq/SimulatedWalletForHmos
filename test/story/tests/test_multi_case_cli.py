@@ -1040,7 +1040,7 @@ class MechanismContaminationIsAlwaysVisible(unittest.TestCase):
         """`doc/extensions` 有未提交改动 → suite 终态变 `harness_contaminated`。"""
         suite = self.suite_all_finished()
         dirty = {"checked": True, "clean": False,
-                 "status": " M doc/extensions/skills/story/scripts/story_flow.py",
+                 "status": " M doc/extensions/skills/story/scripts/core/story_flow.py",
                  "diff": "@@ -1 +1 @@\n-a\n+b\n"}
         with mock.patch.object(run_multi_case, "mechanism_contamination",
                                return_value=dirty):

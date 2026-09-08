@@ -35,7 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 MODULE = REPO / "doc" / "extensions" / "hooks" / "shared" / "verifier-report.mjs"
-STORY_BUILD = REPO / "doc/extensions/skills/story/scripts/story-build.mjs"
+STORY_BUILD = REPO / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 CONTRACT = REPO / "doc/extensions/skills/story/contracts/story-chapters.json"
 FEATURE = "RT90001"
 

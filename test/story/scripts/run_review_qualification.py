@@ -38,7 +38,7 @@ REPO = HERE.parents[2]
 OVERLAY = REPO / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml"
 PAIRS_DIR = (REPO / "test" / "story" / "fixtures" / "narrative-variants" / "pairs")
 CONTRACT_REL = "doc/extensions/skills/story/contracts/story-chapters.json"
-FLOW = REPO / "doc" / "extensions" / "skills" / "story" / "scripts" / "story_flow.py"
+FLOW = REPO / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "AR90001"
 
 sys.path.insert(0, str(HERE))

@@ -27,7 +27,7 @@ EXT = REPO / "doc" / "extensions"
 MANIFEST = EXT / "manifest.yaml"
 RULES = EXT / "rules"
 AUTHOR_CLI = "doc/extensions/hooks/spec/author.mjs"
-FLOW = EXT / "skills" / "story" / "scripts" / "story_flow.py"
+FLOW = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 SECTION = EXT / "skills" / "story" / "AGENTS.section.md"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 # context-exploration 门禁只覆盖这五个；testing 没有，如实无留痕。

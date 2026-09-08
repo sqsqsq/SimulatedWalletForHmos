@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
 FLOW = STORY_SCRIPTS / "story_flow.py"
 MATERIALS = STORY_SCRIPTS / "materials.py"
 
@@ -694,7 +694,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         而那两处相隔一个目录，改的人看不见另一处。
         """
         contract = json.loads(
-            (STORY_SCRIPTS.parent / "contracts" / "story-chapters.json")
+            (STORY_SCRIPTS.parents[1] / "contracts" / "story-chapters.json")
             .read_text(encoding="utf-8"))
         keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
         self.assertEqual(list(story_flow.MATERIAL_CHOICES), keys)
@@ -720,7 +720,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
     """
 
     SKILL = (REPO_ROOT / "doc/extensions/skills/story/SKILL.md")
-    FLOW = (REPO_ROOT / "doc/extensions/skills/story/scripts/story_flow.py")
+    FLOW = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py")
 
     def skill(self) -> str:
         return self.SKILL.read_text(encoding="utf-8")
@@ -953,7 +953,7 @@ class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
     def test_the_data_layer_never_hears_about_the_manifest(self) -> None:
         """对接层的 js 各部署环境自备、不随包交付，不能要求它们跟着改。"""
         for name in ("story.js", "review.js", "token.js"):
-            text = (STORY_SCRIPTS / name).read_text(encoding="utf-8")
+            text = (STORY_SCRIPTS.parent / "adapters" / name).read_text(encoding="utf-8")
             for word in ("materials.json", "manifest"):
                 self.assertNotIn(word, text,
                                  "%s 里出现了 %s —— 清单的事不该落到对接层" % (name, word))
@@ -1082,7 +1082,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
 
     def test_the_order_is_project_then_number_then_check(self) -> None:
         source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
-                  / "scripts" / "story_flow.py").read_text(encoding="utf-8")
+                  / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         order = [cmd for cmd in ("\"project\"", "\"number\"", "\"check\"")
                  if cmd in body]
@@ -1092,7 +1092,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
 
     def test_registration_deletes_the_drafts(self) -> None:
         source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
-                  / "scripts" / "story_flow.py").read_text(encoding="utf-8")
+                  / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("DRAFTS_DIR", body, "登记成功后没有清理章草稿")
 

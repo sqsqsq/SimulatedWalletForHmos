@@ -1,200 +1,93 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程：换机制、搬知识、重写清单。含逐类处置表、判态规则、方案确认与写入后校验。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达，升级 = 换 core/ + 覆盖跳板 + 一次 git diff 确认；知识与对接层一个字节不碰。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
 
-**包** = 发起本命令的仓库（缺省当前仓）。**目标** = `/story adapt <目标工程>` 的参数（缺省当前仓自身 = 重适配）。
+**包** = 发起本命令的仓库（缺省当前仓）。**目标** = `/story adapt <目标工程>` 的参数。
 路径相对各自 `framework.config.json > paths.extension_dir`（缺省 `doc/extensions`）。
 
-一句话：**换机制、搬知识、重写清单**。你读完包与目标两棵树，按 §2 表逐文件判，写成一页方案，
-用户点头后再写入，写完跑校验。方案没点头之前，目标一个字节都不写。
+## 所有权由目录表达
 
-## 0 前置（不满足就停，不要继续）
-
-- 目标根有 `framework/` 与 `framework.config.json`；
-- 缺它：列出缺什么，停——framework 的补齐不归本命令管。
-
-**framework 的版本只记录，不设门槛。** 读一下目标 `framework/package.json` 的 `version`，
-写进方案页供人参考即可；不因为它低就停。实证：一个低于原门槛的目标工程升级过程完全正常，
-那道最低版本门槛判错了，把本来能装的工程挡在了外面。
-
-**framework 本身的问题不归 adapt 管**，也不必在这里提——它装的是扩展包，
-framework 是它运行的地基，地基归 framework 自己的升级路径。
-
-**扩展对 framework 没有版本强依赖，但有一份具名的依赖清单。** 见 §2.5：包内
-`framework-patch.yaml` 声明「本扩展依赖、而上游还没合入的 framework 改动」，
-逐条带 `why`。不要因为版本号低就停下来问；要看的是那份清单里的东西目标有没有。
-
-**verifier 报告由调用方写。** 派 verifier 的那个 agent 把子代理的回复原样全文写到
-`summary.verifier_report` 指向的路径，落点由 harness 按 subject 定死；没有钩子代它发布，
-报告的身份（文件在、终态块回显的 subject 对、verdict 与计数一致）由 `check-receipt` 判。
-宿主 adapter 的 `verifier_subagent` 没登记时，framework 判 verifier `disabled`——
-脚本检查照常完整执行，闭环不阻断，回执如实标 `not_reviewed`。
-扩展与它同口径：那样的宿主上，story 读者审查这一项记「不适用」，
-**这是如实报告，不是故障**；要让它变成「适用」，得先给那个宿主入册 verifier 子代理能力。
-
-## 1 判态
-
-读目标 `<extension_dir>/manifest.yaml` 的 `version`，与包的比：
-
-| 情况 | 态 |
-|---|---|
-| 目标无 `manifest.yaml` | **首次** |
-| 低于包 | **升级** |
-| 与包相同，且 §3 扫描的 `mechanism_digest` 两边相同 | **重适配** = 升级动作的子集：§2 表的机制行**不执行**，只做知识结构、索引表行、manifest、配置键。无变化就报「当前适配仍有效」，不动任何文件 |
-| 与包相同，但 `mechanism_digest` 不同（扫描 `state: package_not_bumped`） | **停**：包改了机制没升版。回包里升 `manifest.version` 再来；不擅自复制、不静默跳过。上次升级中断也会长这样——先看目标的 `.adapt-<版本>/installed.md` 在不在，在就是中断，按升级走 |
-| 无 `version`，命中下方历史签名全部三条 | **旧版**，按升级走 |
-| 无 `version`，签名只中一部分 | **停下问用户**来源版本，不要自行判定 |
-
-历史版本结构签名（识别数据，随版本而变）：`hooks/constraint-application.md` 存在 ＋
-知识文件平铺在 `knowledge/` 根下、没有按类分目录 ＋ 没有 `knowledge/facts/` 目录。
-
-## 2 每个文件怎么办
-
-**知识全域归目标工程。** 包内的知识文件只有两个用途：新装时作**初始样板**，
-升级时作**变更提案**。目标已有的知识文件——事实、规约、模式一视同仁——在任何路径与
-目录结构下都不被静默覆盖；要改它，走方案页让人确认。
-
-按路径把「规约与模式」判成随包维护的机制内容、同名即换包版本，正是「目标工程写好的
-知识被一次升级整份盖掉」的成因：**只有模型读得懂哪些内容是这个
-工程的业务定义，路径读不懂。** 索引 `README.md` 不在此列——它是读法与清单，按下表的索引行合成。
-
-| 目标仓里的东西 | 首次安装 | 升级 |
+| 目录 | 归谁 | 升级时 |
 |---|---|---|
-| `hooks/**`、`rules/**`、`skills/story/**`（`scripts/*.js` 除外）、`skills/story-adaptation/**`、`knowledge/README.md`（`skills/story/AGENTS.section.md` 就在 `skills/story/**` 里：包有才有，它是写进入口文件「实例扩展」节的那一段）；仓库根四个 story 跳板 | 从包整体复制 | 目标这些目录**整体删掉**，再从包整体复制——旧文件自然消失，新文件自然出现。目标改过的机制文件在方案第一段点名「升级会覆盖，改动迁到哪」 |
-| `skills/story/scripts/*.js`（需求系统对接） | **看发起方**：包内这些 js 文件头自述为「本地替身 / 模拟」→ 不复制，目标要按自己的需求系统写，方案登记「数据对接待适配」；否则（已适配仓发起）→ 整目录覆盖 | 同左 |
-| `knowledge/constraints/*.md`、`knowledge/design-patterns/*.md` —— **包里有的** | 从包复制，默认已确认、**默认在清单**（缺 SDK 或既有案例只在方案里登记证据缺口，不删文件、不撤出清单） | 目标已有同名的：**不覆盖**，包内那份作**变更提案**——方案第二段列「包内这份相对目标当前内容差在哪」，由你语义合并、人确认后写入；**包新增的域 / 模式**复制过去，默认已确认、默认在清单 |
-| 目标自己加的规约域 / 模式文件（包里没有同名的） | — | **原样保留**，仍在清单 |
-| `knowledge/facts/*.md`（工程事实） | 从包复制为样板、frontmatter 加 `confirmed: 未确认`、**不进清单**；方案第三段按目标真实源码逐面填成已确认（附文件:行），填不了的登记证据缺口 | **正文一字不动**；目录结构迁移（如按类分目录）作为提案的一种同样过方案页；补 frontmatter 键；包新增的事实面文件作样板未确认 |
-| `knowledge/*/README.md`（索引） | 无表的整抄包（它只是读法）；有表的表前抄包、表行按目标目录里实际文件重算（目标原有行照抄，新文件取包内行） | 同左 |
-| `manifest.yaml` | 手写合成：`schema_version`/`version`/`description`、`provides.hooks`、`provides.phase_rules_overlays`、`provides.skills` 里本包自带的两项抄包；`provides.knowledge` = 已确认的事实文件 + 全部规约与模式（含目标自加）+ 各级 README；目标其它 `skills` 与 `skill_assets` 原样保留 | 同左 |
-| 目标自己的其它 `skills/*`、包不认识的任何文件 | 不动、不复制 | 不动 |
-| `framework.config.json` 里包要求的配置键 | 核对；缺的在方案里提议值（目录类的值须是目标真实存在的目录；列表类只追加不删目标已有条目）；用户点头才写 | 同左 |
-| `<extension_dir>/framework-patch.yaml`（包声明的 framework 依赖） | 复制到目标——目标要知道自己装了哪几条、将来怎么退场；文件本身不进 `manifest.yaml` 的任何清单 | 同左（整份覆盖：它是包的声明，不是目标的内容） |
-| `<extension_dir>/.adapt-<包 version>/`（本命令的工作目录：`plan.md`、`before.json`、`installed.md`） | 目标所有；本次写入 | 不删；下次覆盖同名文件。**包不交付它**。目录名带版本，两个版本的工作件互不覆盖；点开头是为了在目标工程里一眼看出它是临时件。旧的 `adapt/` 目录（本命令早先版本留下的）是历史工作件，不迁移不删除，可手动清理。`installed.md` 只记日期、发起方、缺口清单——**不记版本**，版本的唯一真源是 `manifest.yaml` |
-| 包新增的知识字段 / 表列 | **不补列**（缺列由框架按声明默认值派生）；方案第三段登记「包新增字段 X，目标知识待填」 | 同左 |
+| `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
+| `<ext>/skills/story/scripts/adapters/` | **目标仓自己实现**（`story.js`、`token.js`、`review.js`） | 一个字节不碰 |
+| `<ext>/knowledge/` | 目标 | 不读不写 |
+| `<ext>/` 下其余一切 | 包 | 整份换掉 |
+| `<ext>/manifest.yaml` | 机制登记归包，`provides.knowledge` 归目标 | 按这条规则合成 |
 
-## 2.5 framework 补丁：扩展依赖的地基
+边界这么一分，「升级之后哪些文件变了」本身就是答案——所以确认用 `git diff`，不必读两棵树逐文件比。
+**没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
 
-扩展有时要求 framework 侧的改动（比如作者取本阶段要求的入口）。这些改动在包的仓库里
-已经验证过，但还没合入 framework 上游——**不带过去，扩展在目标工程就是残的，
-而且通常不报错、只是某个能力不生效**。
+## 你要做的四件事
 
-包内 `framework-patch.yaml` 逐条声明它们（没有这份文件 = 不依赖，本节整节跳过）。
-两类，带不带由目标决定：
-
-| kind | 判据 | 带不带 |
-|---|---|---|
-| `extension_dependency` | 扩展跑不起来就缺它 | **无条件带** |
-| `host_capability`（带 `host`） | 某个宿主的能力补丁 | 目标物化了那个宿主才带；没物化就**不带，但在方案里列出来并写明为什么不带** |
-
-判据是这两个类别，不是 adapter 名单——换个宿主时规则不用改。
-
-**带文件还不够，必须同时登记**：目标的 framework 完整性校验会把这些文件判成漂移。
-每带一条，就往目标 `framework.config.json > integrity.drift_allowlist` 追加一条
-（`path` 同名，`rationale` 取那条的 `why` + 「上游合入后失效须删」，`approved_by` 取确认人）；
-已有同 `path` 的不重复追加。**只带不登记 = 目标第一次跑 harness 就红在完整性上。**
-
-**目标已经改过同一个文件**时（扫描报「不同」）不静默覆盖：方案里单列，写明
-「目标这份与包不同，覆盖会丢掉目标的改动」，由人确认——与知识文件同一套纪律。
-
-**退场**：上游合入之后，包里删掉 `framework-patch.yaml` 整份；下一次 adapt 会报
-「包不再要求任何 framework 补丁，目标 allowlist 里这些条目已失效」，删不删由目标工程定。
-
-## 3 读两棵树
+### 1 前置（脚本自己查，不过就停）
 
 ```
-node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --scan --target <目标根>
+node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目标根> --package <包根>
 ```
 
-它列出：判态 `state`（首次 / 升级 / 重适配 / 包未升版）与两边的机制指纹；目标 `.gitignore` 该有的两行在不在；
-**framework 补丁逐条**（带不带、为什么、目标里有没有、内容同不同、登记了没有）
-与目标已物化的 adapter；机制目录逐文件（目标独有 / 包独有 / 同名有差异）、目标知识文件的 frontmatter 与所在目录、
-**包内知识文件清单**（`package_knowledge`——方案第二段写变更提案时的比对对象）、
-目标 `provides.knowledge` 清单、包内对接 js 是否自述替身、目标自定义文件的内容指纹，
-并写 `<目标 extension_dir>/.adapt-<包 version>/before.json`。**清单是给你看的，判断由你按 §2 表做。**
+它先查三件，任一不满足就退出并点名：
 
-## 4 写方案
+- **目标是 git 仓库的根**——升级的确认靠 `git diff`，没有 git 就没有「哪些文件变了」这个答案；
+- **写入面上没有未提交改动**——工作区脏的话 diff 里混着目标自己的改动，分不清哪些是升级带来的，而「升级把没提交的改动盖了、diff 里还看不出来」没法补救；
+- **包与目标都读得到**（各自的 `framework.config.json` 与包的 `manifest.yaml`）。
 
-写到 `<目标 extension_dir>/.adapt-<包 version>/plan.md`，四段固定标题：
+**不替用户动他的工作区**：不自动 stash、不自动提交。报错会点名脏的路径，让他自己先提交或暂存。
 
-方案第一段开头记一行目标 `framework/package.json` 的 `version`——给人参考，不是门槛。
+### 2 判态（脚本判，你不猜）
 
-1. **机制与跳板**：新增 / 删除 / 覆盖逐文件；目标本地改动过的机制文件与迁回建议；
-   **framework 补丁**：要带哪几条（逐条写 why 与目标当前状态）、不带哪几条与为什么不带、
-   要追加哪几条 `drift_allowlist`；再写一句「这些是临时件，上游合入后连同白名单一起删」；
-2. **知识**：事实文件逐个 保留 / 移动到 / 补键；**包内同名知识文件的变更提案**——逐个写
-   「包内这份相对目标当前内容差在哪 / 建议怎么合并 / 合并后目标失去什么」，人确认一条写一条，
-   没确认的一律保持目标原样；目标自加文件的保留清单；
-3. **待核实**：每个待填的事实面、每条随包能力在目标的对应物——已核实的写证据（`文件:行`），
-   核实不了的写「证据缺口」；包新增字段待填项；manifest 与索引 README 的合成说明；配置键提议；
-4. **执行**：写入顺序；写完要跑哪些校验。
+目标有没有 `manifest.yaml`——**有就是升级，没有就是首次**。历史版本识别、结构签名、混合状态处理都不存在于本实现。
+版本相同且没有文件要写时，它报「当前适配仍有效」并退出 0。
 
-## 5 确认（用户拍板）
+### 3 写入
 
-展示 `plan.md` 全文，再给选项：`1=按方案执行` / `2=修改方案` / `3=放弃适配`。
-同轮附编号菜单。**选 1 才动手**；动手前先把决策复述一遍。
+`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 那一行。
+你只下命令、读结果。
 
-## 6 写入
+**升级不停等**：一次升级指令授权到写入完成加自检，只有失败才回头问人。写入面已由目录边界完全确定，没有可拍板的选项。
 
-第一步先**给目标工程的 `.gitignore` 追加两行**（已有的跳过；具体两行以 §3 扫描输出的 `gitignore` 为准，路径按目标的 `extension_dir` 与 `features_dir` 算好了）：
+**首次安装多两件**，其中一件归你：
 
-```
-doc/extensions/.adapt-*/                 # adapt 工作目录
-doc/features/**/AR/story-src/drafts/     # 章草稿：登记成功即删，中途断了会留下
-```
+- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），建知识目录与各类 `README.md`（读法与清单说明）。**不放包里的知识正文**——那是目标仓自己的东西，从空的开始。
+- **你做的：写部件画像**。这是首次安装里唯一归模型的一件事：
 
-两处都是临时件，不加就会被误提交进目标工程的库。
-
-然后按顺序：**framework 补丁（复制文件 → 追加 drift_allowlist）** → 机制 → 知识 →
-数据对接 → 索引 README → manifest → 配置键 → **入口文件**。
-
-补丁排在最前，因为机制里的钩子要靠它才跑得起来；顺序反了的话，写完机制先跑校验会红一次。
-
-**入口文件只写标记区之内。** 「实例扩展」节不止 adapt 一个写者——framework 的
-`render-agents-md` 也往这一节生成 Skill 表格。整节替换会把宿主刚生成的表格连同
-别的内容一并盖掉。包内 `skills/story/AGENTS.section.md` 的正文自带标记：
-
-```
-<!-- story-ext:begin -->
-…扩展须知正文…
-<!-- story-ext:end -->
-```
-
-写入规则（包有该文件时才做；漏掉这一步，目标的主 agent 不知道要先读各阶段须知）：
-
-| 目标 AGENTS.md / CLAUDE.md 的状态 | 怎么写 |
+| 项 | 内容 |
 |---|---|
-| 已有标记区 | **只重写标记之间**，标记之外一个字节都不动 |
-| 没有标记，但认得出既有的无标记须知段（按包内正文的首行标题与首句比对） | **原位包上标记**——替换那一段，不要另追加，否则第一次升级之后新旧两段并存 |
-| 认不出既有段 | 在「实例扩展」节**末尾追加**带标记的整段，并在方案页写一句「请人工查一遍该节有无重复须知」 |
+| 看什么 | 目标仓的 `framework.config.json` 架构 DSL（层、模块、跨模块出口文件）、`doc/module-catalog.yaml`、`doc/architecture.md`；三者缺的按仓内目录实扫 |
+| 写什么 | 部件画像。**落点与形态照 `<ext>/knowledge/facts/README.md` 写**——那份说明归知识侧，文件名与节结构都在它里面，机制不复述一遍 |
+| 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；查不到的写「未确认」，不写推断 |
+| 停一次问人 | 摆出这份画像与 `framework.config.json` 的配置键，人改过再落盘。首次安装保留这一次确认，因为这里有两处真实取舍 |
 
-## 7 校验
+画像写完记得登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。
+
+### 4 确认
 
 ```
-cd <目标>/framework/harness && npx ts-node harness-runner.ts --phase extensions
-node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目标根>
+node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目标根> --package <包根>
 ```
 
-前者确认 manifest 每条路径都存在（有一条不存在，框架会清空全部扩展能力，而且不会在阶段里报错）。
-后者核八件事：判态不是「包未升版」；**framework 补丁该带的都在目标里且内容同包、每条都登记进了 `drift_allowlist`、
-不该带的没被带过去**；`.gitignore` 两行在；机制目录 == 包、**目标所有的知识文件**（事实 / 规约 / 模式一视同仁）旧内容仍在、清单里没有未确认的文件且路径都在、自定义文件没动过、入口文件（AGENTS.md，及存在的 CLAUDE.md）含 `skills/story/AGENTS.section.md` 全文**连同标记区**（包没有该文件时跳过）。
+四组，全过退出 0：
 
-入口段那条有两种报法：「没有标记区」= 内容在但标记没包上，按 §6 表第二行原位补标记；「未含扩展段」= 整段没写进去，按第三行追加。
+| 组 | 判什么 |
+|---|---|
+| diff 落点 | 升级没有伸进 `knowledge/` 与 `scripts/adapters/`；`manifest.yaml` 的 `provides.knowledge` 与升级前逐字相同 |
+| ⑤ | 入口文件（`AGENTS.md` / `CLAUDE.md`）含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
+| ⑦ | 目标 `.gitignore` 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
+| ⑧ | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
 
-任一 FAIL → **照它报的那几项改，再重跑校验**。它点的是具体位置——机制缺哪个文件、
-知识缺哪条事实、清单里哪个还是未确认、哪个自定义文件被动了——直接改到位即可。
-**证据缺口不是失败**：未确认的事实文件不进清单、在 `installed.md` 里列出来，
-目标工程把槽填了之后重跑一次本命令即可。
+`--check` 不查工作区干不干净（那是 `--apply` 的前置）：它只读，而本仓自适配跑的就是它。
+包与目标是同一棵树时 diff 没有对象，那一组不判，⑤⑦⑧ 照跑。
 
-## 8 收口
+## 对接层的输出合同
 
-写 `<目标 extension_dir>/.adapt-<包 version>/installed.md`（日期、发起方、缺口清单），
-再报告：态、动作计数、未确认清单与证据缺口、下一步。
+`adapters/` 里那三个由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
 
-## 9 填事实的取证顺序
+## 不做的事
 
-目标源码 > 目标配置与依赖 > 目标既有业务案例 > 用户口述。
-**核实不了就不写**——登记成证据缺口，不照抄包里的内容，不虚构 API、事件或结果。
+- **不做历史兼容**：旧结构、混合目录、部分迁移状态都不进设计、不进分支、不进验收。已有产物由用户手动调整。
+- **不动 knowledge 内容**：升级不读不写，首次不填包里的正文。
+- **不动 framework**：包不依赖任何 framework 改动。
+- **不动目标 `framework.config.json` 的其它键**：它是目标工程的架构 DSL 真源，adapt 只在首次安装时确保 `paths.extension_dir` 存在。

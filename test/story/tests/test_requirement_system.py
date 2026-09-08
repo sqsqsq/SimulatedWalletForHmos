@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "adapters"
 STORY_JS = SCRIPTS / "story.js"
 
 AR = "AR70001"

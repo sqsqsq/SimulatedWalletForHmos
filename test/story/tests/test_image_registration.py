@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
-IMPORTER = "doc/extensions/skills/story/scripts/import_sources.py"
+IMPORTER = "doc/extensions/skills/story/scripts/core/import_sources.py"
 FEATURE = "IM90001"
 
 PNG_ONE = b"\x89PNG\r\n\x1a\nsignup"
@@ -118,7 +118,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", "doc/extensions/skills/story/scripts/story-build.mjs", *args,
+            ["node", "doc/extensions/skills/story/scripts/core/story-build.mjs", *args,
              "--feature", FEATURE],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
@@ -148,7 +148,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
     def mark_unused(self, reason: str) -> subprocess.CompletedProcess:
         """登记这张图为什么不用——与作者手上跑的是同一条命令。"""
         return subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              f"doc/features/{FEATURE}/ux-reference/signup-page.png", "--unused", reason],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -161,7 +161,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         另一张图而且不报错；只说「读不到」的话，作者只能去翻脚本找基准。
         """
         proc = subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              "ux-reference/signup-page.png", "--caption", "签约页"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -190,7 +190,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         """后来又要用它：撤掉理由，说明留着。"""
         self.assertEqual(0, self.mark_unused("先不用").returncode)
         proc = subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/import_sources.py",
+            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              f"doc/features/{FEATURE}/ux-reference/signup-page.png", "--used"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",

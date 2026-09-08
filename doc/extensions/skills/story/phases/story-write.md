@@ -140,7 +140,7 @@ node .../story-build.mjs chapter  --feature <名> --chapter <章名> --from <这
   另一张截图、同类产品的参考稿、别的部件或别的单的页面，跑一句登记它为什么不用：
 
   ```
-  python doc/extensions/skills/story/scripts/import_sources.py --feature <名> \
+  python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名> \
     --caption-image <这张图的路径> --unused "<为什么它不属于本需求>"
   ```
 
@@ -341,7 +341,7 @@ node .../story-build.mjs chapter  --feature <名> --chapter <章名> --from <这
 全部章都渲染完之后跑：
 
 ```bash
-node doc/extensions/skills/story/scripts/story-build.mjs check --feature <名>
+node doc/extensions/skills/story/scripts/core/story-build.mjs check --feature <名>
 ```
 
 判据全过才算完。**check 没过就别交。**

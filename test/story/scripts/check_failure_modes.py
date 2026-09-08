@@ -554,12 +554,12 @@ M02_EXEMPT = (
     # 产品动作本身就叫这个：`/story restore` 恢复到上一版、archive 覆盖后的状态转移。
     ("skills/story/SKILL.md", "上一版"),
     ("hooks/spec/post_check.mjs", "不再是"),
-    ("skills/story/scripts/story-build.mjs", "上一版"),
+    ("skills/story/scripts/core/story-build.mjs", "上一版"),
     # 版本头注就是给升级方看的行为变化清单，那是它的用途。
     ("manifest.yaml", "退场"),
     # 合同数据里的业务项与禁用词的替换说法。
     ("contracts/story-chapters.json", "旧版本"),
-    ("skills/story/scripts/lint-rules.mjs", "旧版本"),
+    ("skills/story/scripts/core/lint-rules.mjs", "旧版本"),
     # adapt 面对的是目标工程里可能真的存在的旧目录。
     ("skills/story-adaptation/SKILL.md", "退场"),
     ("skills/story-adaptation/SKILL.md", "旧的"),
@@ -1467,20 +1467,26 @@ def a01_adapt_couples_to_mechanism(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"adapt 交付件只认类别边界（基准：{len(phases)} 阶段 / {len(slugs)} 知识文件）")
 
 
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace")
+
+
 def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess:
-    """在给定的包/目标上跑真实 ``--scan`` 建基线，施加 ``after/`` 变更，再跑 ``--check``。
+    """把目标做成一个提交过的 git 仓，施加 ``after/`` 的变更，再跑真实 ``--check``。
+
+    核对靠 `git diff`：没有基线提交就没有「哪些文件变了」，那时脚本报的是「目标不是
+    git 仓库」，与「四项核对判不判得出」不是同一件事。所以先 init + commit，
+    再把 ``after/``（写入后的状态）盖上去——差集就是这次适配动过的东西。
 
     判定不在这里重实现：调真实脚本，退出码即结论（同 M15 / M18 的做法）。
     """
     script = package / "doc" / "extensions" / ADAPT_SCRIPT
     if not script.exists():
         script = REPO_ROOT / "doc" / "extensions" / ADAPT_SCRIPT
-    run = lambda mode: subprocess.run(
-        ["node", str(script), mode, "--target", str(target), "--package", str(package)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
-    scan = run("--scan")
-    if scan.returncode != 0:
-        return scan
+    _git(target, "init", "-q")
+    _git(target, "add", "-A")
+    _git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "baseline")
     after = target.parent / "after"
     if after.exists():
         for src in sorted(after.rglob("*")):
@@ -1488,15 +1494,18 @@ def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess
                 dst = target / src.relative_to(after)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(src.read_bytes())
-    return run("--check")
+    return subprocess.run(
+        ["node", str(script), "--check", "--target", str(target), "--package", str(package)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
 
 
 @checker
 def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
     """适配后的核对判不出已知违规（核对形同虚设）。
 
-    四项各自要有区分力：① 机制目录留着旧文件 ② 目标知识正文被改写 ③ 未确认的事实面进了
-    启用清单 ④ 目标自定义文件被动过。这四种只要有一种漏过，「适配完成」就只是句口号。
+    所有权由目录表达之后，核对要有区分力的是三件：① 升级伸进了目标的知识 ② 升级动了
+    目标自己实现的对接层 ③ 入口文件的扩展段或标记区没写进去。只要有一种漏过，
+    「适配完成」就只是句口号——而这三件恰好是升级唯一能造成不可逆损失的地方。
 
     夹具自带 ``package/`` 与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
     临时目录再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
@@ -1792,15 +1801,15 @@ def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[in
 
 
 def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
-    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
+    build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
-        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
+        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 
     # 先让材料清单就位：图片身份与材料清单集合这两条判据都问它，没有清单它们只会
     # 说「未执行」——而夹具自检要的是**判据真的跑过**，跳过等于放过。
-    flow = _ext_file(root, "skills/story/scripts/story_flow.py")
+    flow = _ext_file(root, "skills/story/scripts/core/story_flow.py")
     if flow is None:
-        flow = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story_flow.py"
+        flow = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story_flow.py"
     subprocess.run(
         [sys.executable, str(flow), "round", "--feature", "AR90001",
          "--project-root", str(root)],
@@ -2226,9 +2235,9 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     两个分支都验。只验「零 FAIL」不够：判项集体空转时也是零 FAIL，
     那种「通过」比拦错更难发现。
     """
-    build = _ext_file(root, "skills/story/scripts/story-build.mjs")
+    build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
-        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "story-build.mjs"
+        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
     if not GOLDEN_STORY.exists():
         return Outcome(False, "金样不在库里——判据失去仲裁锚")
 
@@ -2437,9 +2446,9 @@ def _flow_check_call(root: Path, feature_root: Path, fn: str) -> list[str] | Non
         "import {pathToFileURL} from 'node:url';"
         "const m=await import(pathToFileURL(process.argv[1]).href);"
         "console.log(JSON.stringify(m[process.argv[3]](process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/flow-check.mjs")
+    check = _ext_file(root, "skills/story/scripts/core/flow-check.mjs")
     if check is None:
-        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "flow-check.mjs"
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow-check.mjs"
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root), fn],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
@@ -2464,9 +2473,9 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         "import {pathToFileURL} from 'node:url';"
         "const m=await import(pathToFileURL(process.argv[1]).href);"
         "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/flow-check.mjs")
+    check = _ext_file(root, "skills/story/scripts/core/flow-check.mjs")
     if check is None:
-        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "flow-check.mjs"
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow-check.mjs"
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)

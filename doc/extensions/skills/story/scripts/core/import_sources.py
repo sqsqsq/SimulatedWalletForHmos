@@ -564,7 +564,7 @@ def main() -> int:
                 ensure_ascii=False) + "\n")
             return 1
         project_root = Path(args.project_root).resolve() if args.project_root else \
-            Path(__file__).resolve().parents[5]
+            Path(__file__).resolve().parents[6]
         feature_root = project_root / features_dir(project_root) / args.feature
         target = resolve_image_arg(project_root, args.caption_image)
         # 三件事共用一条路：写说明、登记不用的理由、撤掉理由。图只有一个身份，
@@ -599,7 +599,7 @@ def main() -> int:
                 ensure_ascii=False) + "\n")
             return 1
         project_root = Path(args.project_root).resolve() if args.project_root else \
-            Path(__file__).resolve().parents[5]
+            Path(__file__).resolve().parents[6]
         feature_root = project_root / features_dir(project_root) / args.feature
         try:
             out = register_ux(feature_root, resolve_image_arg(project_root, args.register_ux),
@@ -622,7 +622,7 @@ def main() -> int:
     result: dict = {"mode": "import", "reqNo": ar}
     try:
         project_root = Path(args.project_root).resolve() if args.project_root else \
-            Path(__file__).resolve().parents[5]
+            Path(__file__).resolve().parents[6]
         feature_root = project_root / features_dir(project_root) / ar
         inbox = feature_root / "inbox"
 

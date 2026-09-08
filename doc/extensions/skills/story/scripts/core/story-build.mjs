@@ -32,19 +32,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
-import { readerReviewTask } from '../../../hooks/shared/reader-review-task.mjs';
-import { readUse, UseError } from '../../../hooks/shared/knowledge-use.mjs';
+import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
+import { readUse, UseError } from '../../../../hooks/shared/knowledge-use.mjs';
 import {
   baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths, scanMaterialList,
 } from './lint-rules.mjs';
-import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
+import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
 import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, ProjectionConflict,
   projectionDigest, recordedDigest, renderReview,
 } from './review-render.mjs';
 
-import { storyReviewProblems } from '../../../hooks/shared/verifier-report.mjs';
+import { storyReviewProblems } from '../../../../hooks/shared/verifier-report.mjs';
 
 const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter',
   'project', 'review-task'];
@@ -148,8 +148,8 @@ function createOfflineContext(args) {
   if (!args.story) fail('缺 --story <story.md 路径>');
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(
-    args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..', '..'));
-  const contract = readJson(path.join(scriptDir, '..', 'contracts', 'story-chapters.json'), null);
+    args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..', '..', '..'));
+  const contract = readJson(path.join(scriptDir, '..', '..', 'contracts', 'story-chapters.json'), null);
   if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
   const storyPath = path.resolve(args.story);
   if (readText(storyPath) === null) fail(`读不到 ${storyPath}`);
@@ -167,8 +167,8 @@ function createContext(args) {
   if (!args.feature) fail('缺 --feature');
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(
-    args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..', '..'));
-  const skillRoot = path.join(scriptDir, '..');
+    args.projectRoot ?? path.join(scriptDir, '..', '..', '..', '..', '..', '..'));
+  const skillRoot = path.join(scriptDir, '..', '..');
   const contract = readJson(path.join(skillRoot, 'contracts', 'story-chapters.json'), null);
   if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
   if (!Array.isArray(contract.chapters) || contract.chapters.length === 0) {

@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "story-build.mjs"
+BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
@@ -114,7 +114,7 @@ class RegistrationSweepsScratchFiles(unittest.TestCase):
         而两种都不会报错。
         """
         src = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
-               / "story_flow.py").read_text(encoding="utf-8")
+               / "core" / "story_flow.py").read_text(encoding="utf-8")
         body = src[src.index("def sweep_story_src"):]
         body = body[:body.index("\ndef ")]
         self.assertIn("STORY_SRC_FROZEN", body, "清理没有引用冻结清单——那就是第二份真源")
@@ -124,7 +124,7 @@ class RegistrationSweepsScratchFiles(unittest.TestCase):
     def test_scratch_files_are_swept_and_the_ledger_survives(self) -> None:
         import shutil as _shutil
         import sys as _sys
-        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"))
+        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"))
         import story_flow
 
         with tempfile.TemporaryDirectory() as d:
@@ -147,7 +147,7 @@ class RegistrationSweepsScratchFiles(unittest.TestCase):
 
     def test_a_missing_directory_is_not_an_error(self) -> None:
         import sys as _sys
-        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"))
+        _sys.path.insert(0, str(REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"))
         import story_flow
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual([], story_flow.sweep_story_src(Path(d) / "nope"))

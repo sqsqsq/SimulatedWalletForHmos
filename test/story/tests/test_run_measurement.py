@@ -16,7 +16,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "test" / "story" / "scripts"
-STORY_SCRIPTS = REPO / "doc" / "extensions" / "skills" / "story" / "scripts"
+STORY_SCRIPTS = REPO / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
@@ -175,7 +175,7 @@ class MeasureReadsRealEvents(unittest.TestCase):
             "tool_name": "bash",
             "tool_input": {"command":
                            "node -e \"const s=require('fs')"
-                           ".readFileSync('doc/extensions/skills/story/scripts/story-build.mjs',"
+                           ".readFileSync('doc/extensions/skills/story/scripts/core/story-build.mjs',"
                            "'utf8');console.log(s.slice(0,400))\""},
             "tool_output": "function cmdCheck(ctx) {",
         }])

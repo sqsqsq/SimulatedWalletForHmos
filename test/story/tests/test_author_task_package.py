@@ -28,7 +28,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
 CONTRACT = EXT / "skills" / "story" / "contracts" / "story-chapters.json"
-FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "story_flow.py"
+FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "TP90001"
 
 # 任务包体量上限：作者要在动笔前一次读完它
@@ -521,7 +521,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
     """位置与文件形状由 `status` 回答，任务包引用同一处。"""
 
     def status(self) -> dict:
-        proc = run(sys.executable, "doc/extensions/skills/story/scripts/story_flow.py",
+        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/story_flow.py",
                    "status", "--feature", FEATURE, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
@@ -608,7 +608,7 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
     """章文件带了本章标题时命令自己剥掉——两跑都为标题重复重建过骨架。"""
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
-        return run("node", "doc/extensions/skills/story/scripts/story-build.mjs",
+        return run("node", "doc/extensions/skills/story/scripts/core/story-build.mjs",
                    *args, "--feature", FEATURE, cwd=self.root)
 
     def setUp(self) -> None:

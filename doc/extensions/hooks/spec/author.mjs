@@ -22,9 +22,9 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { clientVocabulary } from '../../skills/story/scripts/lint-rules.mjs';
+import { clientVocabulary } from '../../skills/story/scripts/core/lint-rules.mjs';
 import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
-  from '../../skills/story/scripts/story-build.mjs';
+  from '../../skills/story/scripts/core/story-build.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
@@ -53,7 +53,7 @@ function positionSection(projectRoot, feature) {
   const status = flowStatus(projectRoot, feature);
   if (!status || status.exists === false) {
     return ['## 1. 你现在在哪', '',
-      `跑 \`python doc/extensions/skills/story/scripts/story_flow.py status --feature ${feature}\``
+      `跑 \`python doc/extensions/skills/story/scripts/core/story_flow.py status --feature ${feature}\``
       + '：现在在哪、下一步跑什么、这一步要写的文件长什么样。'];
   }
   const rows = ['## 1. 你现在在哪', '', `**下一步**：${status.action}`];
@@ -67,6 +67,15 @@ function positionSection(projectRoot, feature) {
 function knowledgeSection(projectRoot, feature) {
   const useFile = path.join(featureRoot(projectRoot, feature), 'spec', 'knowledge-use.yaml');
   const knowledge = activeKnowledge(projectRoot);
+  // 清单为空 = 这个仓还没配置知识。说这一句，不要渲染出「激活 0 条约束（域：）」——
+  // 那种句子看起来像派生坏了，作者会去翻机制找原因，而事实是这里本来就没东西可判。
+  if (!knowledge.entries.length && !knowledge.facts.length && !knowledge.patterns.length) {
+    return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
+      '',
+      '**本仓未配置知识**——`manifest.yaml` 的 `provides.knowledge` 是空的，'
+      + '没有规约、项目事实或模式要判。这一节不用写，`knowledge-use.yaml` 也不用建。',
+      ''];
+  }
   return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
     '',
     `激活 **${knowledge.entries.length} 条**约束（域：${knowledge.prefixes.join('、')}）、`
@@ -186,7 +195,7 @@ function imageSection(projectRoot, feature) {
       '  ```',
       // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
-      '  python doc/extensions/skills/story/scripts/import_sources.py'
+      '  python doc/extensions/skills/story/scripts/core/import_sources.py'
         + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${p}`)}`
         + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),
       '  ```',

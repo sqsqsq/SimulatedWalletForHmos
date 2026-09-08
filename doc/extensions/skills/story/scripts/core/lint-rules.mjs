@@ -17,11 +17,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeKnowledge } from '../../../hooks/shared/knowledge.mjs';
+import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
 import { normalizeHeading } from './headings.mjs';
 
 const CONTRACT_PATH = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), '..', 'contracts', 'story-chapters.json');
+  path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'contracts', 'story-chapters.json');
 
 let vocabularyCache = null;
 

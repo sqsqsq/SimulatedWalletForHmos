@@ -132,7 +132,7 @@ GATES = ("material_scope", "scope_decision", "split_carrier")
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，本脚本与
 #: `flow-check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
 #: 选择会在阶段门禁上被判非法。
-STORY_CONTRACT = Path(__file__).resolve().parent.parent / "contracts" / "story-chapters.json"
+STORY_CONTRACT = Path(__file__).resolve().parents[2] / "contracts" / "story-chapters.json"
 # 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
 CARRY_ALL = "carry_all"
 # 关卡决策**只认人签**，没有 AI 代签这一档。
@@ -1036,7 +1036,7 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
         more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
         return ("import_materials",
                 "收件箱里有还没并入正文的原件，先导入："
-                "`python doc/extensions/skills/story/scripts/import_sources.py --feature <名>`"
+                "`python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名>`"
                 f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
     if state["changed"]:
         return ("run_round",
@@ -1246,7 +1246,7 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
     put("SR/design.md", placeholder.format(title="系统级设计（占位）"))
     put("AR/design.md", ar_design_skeleton(ids))
 
-    readme = Path(__file__).resolve().parent.parent / "templates" / "inbox-readme.md"
+    readme = Path(__file__).resolve().parents[2] / "templates" / "inbox-readme.md"
     put("inbox/README.md",
         readme.read_text(encoding="utf-8") if readme.is_file()
         else "# 收件箱\n\n把手上的需求材料放进本目录，导入步骤会归类并写入对应上游文件。\n")
@@ -1459,7 +1459,7 @@ def main() -> int:
     result: dict = {"mode": args.mode, "reqNo": args.feature}
     try:
         project_root = Path(args.project_root).resolve() if args.project_root \
-            else Path(__file__).resolve().parents[5]
+            else Path(__file__).resolve().parents[6]
         feature_root = project_root / features_dir(project_root) / args.feature
 
         code = 0

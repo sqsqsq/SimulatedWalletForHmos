@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = REPO_ROOT / "test" / "story" / "golden" / "review-金样-AR90006.md"
-BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/story-build.mjs"
+BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
