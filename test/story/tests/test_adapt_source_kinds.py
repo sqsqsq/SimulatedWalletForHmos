@@ -1,16 +1,4 @@
-"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。
-
-Demo 包里的 `story.js` / `token.js` / `review.js` 是**替身**——用本地目录模拟需求系统，
-复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，
-共用同一套实现，复刻时正该带上。
-
-判来源看包 `manifest.yaml` 的 `name`。它归目标、升级不改，所以每个仓的 manifest 里
-那个名字始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、
-目录结构或对接脚本的内容去猜。
-
-这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份
-（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。
-"""
+"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。\n\nDemo 包里的 `story.js` / `token.js` / `review.js` 是**替身**——用本地目录模拟需求系统，\n复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，\n共用同一套实现，复刻时正该带上。\n\n判来源看包 `manifest.yaml` 的 `name`。它归目标、升级不改，所以每个仓的 manifest 里\n那个名字始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、\n目录结构或对接脚本的内容去猜。\n\n这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份\n（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。\n"""
 from __future__ import annotations
 
 import json
@@ -96,11 +84,7 @@ class SourceKindCase(unittest.TestCase):
     # ---- Demo 来源 ----
 
     def test_a_demo_install_does_not_hand_over_the_stand_ins(self) -> None:
-        """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。
-
-        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。
-        目标要自己实现，合同在 `scripts/README.md`。
-        """
+        """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。\n\n        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。\n        目标要自己实现，合同在 `scripts/README.md`。\n        """
         target = self.blank_repo("BizA")
         proc = self.adapt("--apply", target, REPO_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
@@ -108,11 +92,7 @@ class SourceKindCase(unittest.TestCase):
         self.assertTrue((target / "doc/extensions/skills/story/scripts/core").is_dir())
 
     def test_a_demo_upgrade_never_overwrites_a_real_implementation(self) -> None:
-        """目标自己实现之后再从 Demo 升级：那三个文件一个字节不动。
-
-        这是本设计要挡的最坏一种后果——业务仓的真实现被一次常规升级换成替身，
-        而它跑起来还像是好的，只是读写的是另一个地方。
-        """
+        """目标自己实现之后再从 Demo 升级：那三个文件一个字节不动。\n\n        这是本设计要挡的最坏一种后果——业务仓的真实现被一次常规升级换成替身，\n        而它跑起来还像是好的，只是读写的是另一个地方。\n        """
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
         self.write_adapters(target, "BizA 的真实现")
@@ -168,12 +148,7 @@ class SourceKindCase(unittest.TestCase):
         self.assertIn("BizA 的真实现", self.adapter_text(target))
 
     def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
-        """`name` 取的是 YAML 的**值**，不是那一行的字面。
-
-        `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 是同一个值。拿字面去比，
-        加一对引号就把 Demo 判成业务仓——而那一判之下 `--apply` 会把目标的真实现
-        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。
-        """
+        """`name` 取的是 YAML 的**值**，不是那一行的字面。\n\n        `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 是同一个值。拿字面去比，\n        加一对引号就把 Demo 判成业务仓——而那一判之下 `--apply` 会把目标的真实现\n        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。\n        """
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
         self.write_adapters(target, "BizA 的真实现")
@@ -224,10 +199,7 @@ class SourceKindCase(unittest.TestCase):
     # ---- 安装结果 ----
 
     def test_a_broken_bridge_is_caught(self) -> None:
-        """跳板在 `<ext>/` 之外，覆盖范围扫不到——不单独核，装坏的宿主入口没人管。
-
-        而它正是人每天敲 `/story` 打进来的地方（A7）。
-        """
+        """跳板在 `<ext>/` 之外，覆盖范围扫不到——不单独核，装坏的宿主入口没人管。\n\n        而它正是人每天敲 `/story` 打进来的地方（A7）。\n        """
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
         self.commit(target, "装好")
@@ -238,11 +210,7 @@ class SourceKindCase(unittest.TestCase):
         self.assertIn("story.md", self.out(proc))
 
     def test_crlf_in_the_manifest_is_not_a_failure(self) -> None:
-        """目标用什么换行是它的排版自由，不是「装错了」。
-
-        合成结果一律 LF，直接与盘上原文比字符串的话，一个内容完全正确的 CRLF 仓
-        会一直红，而报错还指着知识清单——修的人会去翻一份根本没问题的清单。
-        """
+        """目标用什么换行是它的排版自由，不是「装错了」。\n\n        合成结果一律 LF，直接与盘上原文比字符串的话，一个内容完全正确的 CRLF 仓\n        会一直红，而报错还指着知识清单——修的人会去翻一份根本没问题的清单。\n        """
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
         manifest = target / "doc" / "extensions" / "manifest.yaml"
@@ -253,13 +221,83 @@ class SourceKindCase(unittest.TestCase):
         proc = self.adapt("--check", target, REPO_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
 
+    # ---- 装到一个真实仓里 ----
+
+    def test_it_adds_nothing_to_a_gitignore_that_already_covers_the_drafts(self) -> None:
+        """需求目录整个不入库时，不再补那一行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。\n        """
+        target = self.blank_repo("BizA")
+        (target / ".gitignore").write_text("doc/features/\nbuild/\n", encoding="utf-8")
+        self.commit(target, "需求目录整个不入库")
+
+        proc = self.adapt("--apply", target, REPO_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertEqual("doc/features/\nbuild/\n",
+                         (target / ".gitignore").read_text(encoding="utf-8"),
+                         "已经被挡住了还往 .gitignore 里加")
+        self.assertEqual(0, self.adapt("--check", target, REPO_ROOT).returncode)
+
+    def test_the_section_lands_inside_the_extension_chapter(self) -> None:
+        """扩展段落在讲实例扩展的那一节里，不是文件末尾。\n\n        入口文件是给读者的路标；追加在末尾的那一段，人打开文件时早就走过了。\n        原有内容不被打断，后面的章节也不该跑到它前面去。\n        """
+        target = self.root / "WithChapter"
+        target.mkdir()
+        (target / "framework.config.json").write_text(
+            json.dumps({"project_name": "WithChapter",
+                        "paths": {"extension_dir": "doc/extensions"}}), encoding="utf-8")
+        (target / ".gitignore").write_text("doc/features/\n", encoding="utf-8")
+        (target / "CLAUDE.md").write_text(
+            "# 目标工程\n\n## 四、工作流\n\n### 实例扩展 Skill（doc/extensions）\n\n"
+            "> 这一节原本就有的一句话。\n\n## 五、交付凭证\n\n收尾的内容。\n",
+            encoding="utf-8")
+        for rel in LAUNCHERS:
+            dst = target / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO_ROOT / rel, dst)
+        self.commit(target, "baseline")
+
+        proc = self.adapt("--apply", target, REPO_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        text = (target / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("<!-- story-ext:begin -->"), text.index("## 五、交付凭证"),
+                        "扩展段跑到后面的章节去了")
+        self.assertLess(text.index("这一节原本就有的一句话"),
+                        text.index("<!-- story-ext:begin -->"),
+                        "扩展段插在了原有内容前面，把它挤开了")
+
+    def test_one_entry_file_is_enough(self) -> None:
+        """目标有哪个入口文件是它自己的事——挂 Claude 的仓只有 `CLAUDE.md`。\n\n        要求某一个必须存在，等于替目标决定它用哪个宿主。\n        """
+        target = self.blank_repo("BizA")
+        (target / "AGENTS.md").unlink()
+        (target / "CLAUDE.md").write_text("# 目标工程\n\n## 实例扩展\n", encoding="utf-8")
+        self.commit(target, "这个仓只有 CLAUDE.md")
+
+        self.assertEqual(0, self.adapt("--apply", target, REPO_ROOT).returncode)
+        proc = self.adapt("--check", target, REPO_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+
+    def test_the_packages_release_notes_do_not_travel(self) -> None:
+        """`version:` 上面那段是发布包的演进记录，对装它的工程没有意义。\n\n        搬过去只会把目标写在同一处的话盖掉——目标想说的多半是「我们这个仓怎么用它」。\n        """
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        manifest = target / "doc" / "extensions" / "manifest.yaml"
+        head = manifest.read_text(encoding="utf-8").split("version:", 1)[0]
+        self.assertNotIn("#", head, "包的演进记录跟着装进目标了")
+
+        # 目标自己在那儿写了两句，升级不该动它。
+        # 按行找 `version:` 那一行——`schema_version:` 也含这个子串，字符串替换会插错地方。
+        rows = manifest.read_text(encoding="utf-8").split("\n")
+        at = next(i for i, l in enumerate(rows) if l.startswith("version:"))
+        rows[at:at] = ["# 这个仓怎么用它：只走 story 链。", "# 升级由平台组统一推。"]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(target, "目标写了自己的说明")
+        self.adapt("--apply", target, REPO_ROOT)
+        after = manifest.read_text(encoding="utf-8")
+        self.assertIn("只走 story 链", after, "升级把目标自己的说明盖了")
+        self.assertNotIn("1.7.0", after.split("version:", 1)[0])
+
     # ---- 目标的身份 ----
 
     def test_the_target_keeps_its_own_name_and_description(self) -> None:
-        """`name` 与 `description` 归目标：首次按它的工程名生成，之后任何升级都不改。
-
-        改掉的话，目标的 manifest 就顶着发布源的名字——两个仓的产物看起来出自同一处。
-        """
+        """`name` 与 `description` 归目标：首次按它的工程名生成，之后任何升级都不改。\n\n        改掉的话，目标的 manifest 就顶着发布源的名字——两个仓的产物看起来出自同一处。\n        """
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
         manifest = target / "doc" / "extensions" / "manifest.yaml"

@@ -174,14 +174,43 @@ function composeManifest(pkgText, tgtText, skeleton, identity) {
   const withList = items => [
     ...lines.slice(0, mine.at + 1), ...items.map(p => `    - ${p}`), ...lines.slice(mine.to),
   ].join('\n');
-  if (!tgtText) return withList(skeleton ?? []);
-  const theirs = knowledgeBlock(tgtText);
-  if (!theirs) return withList([]);
-  return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
+  const merged = (() => {
+    if (!tgtText) return withList(skeleton ?? []);
+    const theirs = knowledgeBlock(tgtText);
+    if (!theirs) return withList([]);
+    return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
+  })();
+  return withVersionNotes(merged, tgtText);
+}
+
+/** 把 `version:` 上面那段注释换成目标自己的（首次安装时目标没有，那里就干净一行）。 */
+function withVersionNotes(composed, tgtText) {
+  const mine = versionNotes(composed);
+  if (!mine) return composed;
+  const theirs = tgtText ? versionNotes(tgtText) : null;
+  const lines = composed.split(/\r?\n/);
+  return [...lines.slice(0, mine.from), ...(theirs?.lines ?? []), ...lines.slice(mine.at)]
+    .join('\n');
 }
 
 /** manifest 里归目标的键：这个仓叫什么、是什么。升级不改，首次按目标仓生成。 */
 const TARGET_OWNED_KEYS = ['name', 'description'];
+
+/**
+ * `version:` 上面那一段注释 —— 返回它的范围与内容。
+ *
+ * 发布包在那里记自己的演进（哪一版改了什么产物形态），那是**这个包的历史**，对装它的
+ * 工程没有意义：搬过去只会把目标写在同一处的话盖掉，而目标想说的多半是「我们这个仓
+ * 怎么用它」。所以这一段与 `name` / `description` 同类，归目标。
+ */
+function versionNotes(text) {
+  const lines = text.split(/\r?\n/);
+  const at = lines.findIndex(l => l.startsWith('version:'));
+  if (at < 0) return null;
+  let from = at;
+  while (from > 0 && lines[from - 1].startsWith('#')) from -= 1;
+  return { from, at, lines: lines.slice(from, at) };
+}
 
 /**
  * 取 manifest 顶层某个键的**值**，不是它那一行的字面。
@@ -229,12 +258,25 @@ function bridgesOf(manifestText) {
 // ── 写入面 ──────────────────────────────────────────────────────────────────
 
 /**
-  * 目标 `.gitignore` 该有的：章草稿目录。
-  *
-  * 就这一行——本命令自己不落任何工作件（自检直接核安装结果，不写 before 快照），
-  * 所以没有第二行要挡的东西。
-  */
-const gitignoreLines = root => [`${featuresDir(root)}/**/AR/story-src/drafts/`];
+ * 目标 `.gitignore` 还缺哪几行。
+ *
+ * 要挡的只有章草稿目录——本命令自己不落工作件，没有第二样东西。
+ *
+ * **先问 git 它是不是已经被挡住了**：需求目录整个不入库是常见做法（`doc/features/`
+ * 一行就盖住了它下面的一切），那时再加一条只是噪声——一条永远不起作用的规则，
+ * 下一个维护者还得花时间弄清它为什么在。
+ *
+ * 问 git 而不是自己比对模式：两条模式等不等价，字符串比不出来。目标不是 git 仓时
+ * 按「没挡住」处理，照常补。
+ */
+function missingGitignoreLines(root) {
+  const want = `${featuresDir(root)}/**/AR/story-src/drafts/`;
+  const probe = `${featuresDir(root)}/_probe/AR/story-src/drafts/x.md`;
+  if (git(root, ['check-ignore', '-q', '--no-index', probe]).ok) return [];
+  const f = join(root, '.gitignore');
+  const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
+  return have.includes(want) ? [] : [want];
+}
 
 /**
  * 这条路径这一次写不写得。**与 `coveredFiles` 同一个边界**，只是换个问法：
@@ -402,17 +444,17 @@ if (mode === '--apply') {
       const f = join(TARGET, entry);
       if (!existsSync(f)) continue;
       const before = read(f);
-      const after = replaceZone(before, block);
+      const { text: after, note } = replaceZone(before, block);
       if (after !== before) { writeFileSync(f, after, 'utf8'); written.push(entry); }
+      if (note) console.error(`[adapt-scan] ${entry}：${note}`);
     }
   }
 
-  // 5. `.gitignore` 两行：缺就补
+  // 5. `.gitignore`：真的还没被挡住才补
   {
     const f = join(TARGET, '.gitignore');
     const have = existsSync(f) ? read(f) : '';
-    const missing = gitignoreLines(TARGET)
-      .filter(l => !have.split(/\r?\n/).map(x => x.trim()).includes(l));
+    const missing = missingGitignoreLines(TARGET);
     if (missing.length) {
       writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
       written.push('.gitignore');
@@ -462,12 +504,48 @@ function stripMarks(text) {
 
 /** 标记区在就整段替换，不在就追加到末尾。标记之外一个字节不动。 */
 function replaceZone(text, block) {
-  const from = text.indexOf(EXT_BEGIN);
-  const to = text.indexOf(EXT_END);
-  if (from >= 0 && to > from) {
-    return text.slice(0, from) + block + text.slice(to + EXT_END.length);
+  // 按**行**做，不按字符偏移：行是按 CRLF / LF 两种都认的方式拆的，而偏移若按 LF
+  // 重新拼算，CRLF 的文件每行少算一个字符——插入点整体提前，正文被从中间切开。
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const rows = block.split(/\r?\n/);
+  const from = lines.findIndex(l => l.includes(EXT_BEGIN));
+  const to = lines.findIndex(l => l.includes(EXT_END));
+  if (from >= 0 && to >= from) {
+    return { text: [...lines.slice(0, from), ...rows, ...lines.slice(to + 1)].join(eol), note: null };
   }
-  return `${text.replace(/\n*$/, '\n')}\n${block}\n`;
+  const at = extensionSectionEnd(lines);
+  if (at !== null) {
+    return { text: [...lines.slice(0, at), '', ...rows, ...lines.slice(at)].join(eol), note: null };
+  }
+  return {
+    text: [...lines, '', ...rows, ''].join(eol),
+    note: '入口文件里没有讲实例扩展的那一节，扩展段先追加在文件末尾'
+      + '——它是给读者的路标，位置不对等于没放：挪进讲扩展与 Skill 路由的那一节，标记区一起带走',
+  };
+}
+
+/**
+ * 入口文件里「实例扩展」那一节到哪一行为止 —— 返回该插入的行号，找不到返回 null。
+ *
+ * 首次安装往哪儿写，答案不是「文件末尾」：入口文件是给读者的路标，扩展段落在讲
+ * Skill 路由的那一节里才有人读到；追加在末尾的那一段，人打开文件时早就走过了。
+ *
+ * 锚点取标题里的「实例扩展」四个字，不写死某个具体标题——不同工程的标题层级与后缀
+ * 都不一样，而这四个字正是这一节之所以是这一节的原因。找到就插在该节末尾
+ * （下一个同级或更高级标题之前），跟在已有内容后面，不打断它。
+ */
+function extensionSectionEnd(lines) {
+  const at = lines.findIndex(l => /^#{2,6}\s.*实例扩展/.test(l));
+  if (at < 0) return null;
+  const depth = lines[at].match(/^#+/)[0].length;
+  let end = lines.length;
+  for (let i = at + 1; i < lines.length; i += 1) {
+    const m = lines[i].match(/^(#+)\s/);
+    if (m && m[1].length <= depth) { end = i; break; }
+  }
+  while (end > at + 1 && lines[end - 1].trim() === '') end -= 1;
+  return end;
 }
 
 // ── --check ─────────────────────────────────────────────────────────────────
@@ -529,17 +607,21 @@ if (existsSync(tgtManifest)) {
 }
 
 // ⑤ 入口文件含扩展段与标记区
+//
+// **目标有哪个入口文件是它自己的事**：挂 Claude 的仓只有 `CLAUDE.md`，别的宿主只有
+// `AGENTS.md`，两个都有的也不少。要求某一个必须存在，等于替目标决定它用哪个宿主。
+// 有几个核几个；一个都没有才是真缺——那时扩展段无处可放，人也读不到入口。
 {
   const sectionFile = join(PDIR, ...SECTION.split('/'));
   if (existsSync(sectionFile)) {
     const ws = s => s.replace(/\s+/g, ' ').trim();
     const body = ws(stripMarks(read(sectionFile)));
-    for (const entry of ENTRIES) {
+    const present = ENTRIES.filter(e => existsSync(join(TARGET, e)));
+    if (!present.length) {
+      bad.push(`⑤ 一个入口文件都没有（${ENTRIES.join(' / ')}）：扩展段无处可放，人也读不到入口`);
+    }
+    for (const entry of present) {
       const f = join(TARGET, entry);
-      if (!existsSync(f)) {
-        if (entry === 'AGENTS.md') bad.push(`⑤ 入口文件缺失：${entry}`);
-        continue;
-      }
       const got = read(f);
       if (!ws(got).includes(body)) {
         bad.push(`⑤ 入口文件未含扩展段：${entry}（跑 --apply 把它连同标记区写进「实例扩展」节）`);
@@ -553,13 +635,10 @@ if (existsSync(tgtManifest)) {
   }
 }
 
-// ⑦ 目标 .gitignore 有那两行：adapt 工作目录与章草稿目录都是临时件，不加就会被提交进目标的库
-{
-  const f = join(TARGET, '.gitignore');
-  const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
-  for (const line of gitignoreLines(TARGET)) {
-    if (!have.includes(line)) bad.push(`⑦ 目标 .gitignore 缺一行：${line}`);
-  }
+// ⑦ 章草稿目录被挡住了：它是临时件，不挡就会被提交进目标的库。
+// 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。
+for (const line of missingGitignoreLines(TARGET)) {
+  bad.push(`⑦ 章草稿目录没被 .gitignore 挡住：补一行 ${line}`);
 }
 
 // ⑧ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录
