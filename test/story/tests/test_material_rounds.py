@@ -987,54 +987,31 @@ class AManifestAppearsWithoutAnyDataLayer(unittest.TestCase):
                       [p for m in manifest["materials"] for p in m["paths"]])
 
 
-class TheManifestSurvivesTheStorySweep(unittest.TestCase):
-    """成文登记时清扫 `story-src/`：材料清单留下，但不随稿冻结。
+class TheManifestIsNotAFrozenLedger(unittest.TestCase):
+    """材料清单留在 `story-src/`，但不随稿冻结。
 
     它是材料真源，会随材料继续演化；定稿那一刻手里是哪版材料，记在契约当轮的
     `materials.digest` 里——那才是快照。把它也当台账冻结，材料一变 check 就报
     「台账被换过」，而那正是**正常**的。
     """
 
-    def test_the_sweep_keeps_the_manifest(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        src = Path(tmp.name) / "story-src"
-        src.mkdir()
-        (src / "materials.json").write_text("{}", encoding="utf-8")
-        (src / "decisions.json").write_text("{}", encoding="utf-8")
-        (src / "分章草稿.md").write_text("脚手架", encoding="utf-8")
-        swept = story_flow.sweep_story_src(src)
-        self.assertEqual(["分章草稿.md"], swept)
-        self.assertTrue((src / "materials.json").is_file(), "材料清单被当成脚手架扫掉了")
-
     def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
         self.assertNotIn("materials.json", story_flow.STORY_SRC_FROZEN,
                          "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
 
 
-class TheMovedInThreeSurviveTheStorySweep(unittest.TestCase):
-    """流程契约、需求分析件、导入落点住进 `story-src/` 之后，清扫要认得它们。
+class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
+    """流程契约、需求分析件、导入落点住在 `story-src/`，但都不随稿冻结。
 
     三件在登记之后还要写：契约要记归档态、`reopen` 要撤销登记，清单与落点随材料重算，
-    分析件的指纹记在契约的 `analysis` 里。当成脚手架扫掉，登记之后的每一步都走不通。
+    分析件的指纹记在契约的 `analysis` 里。当成台账冻结，登记之后的每一步都会被判成
+    「台账被换过」。
     """
 
     NAMES = property(lambda self: [
         story_flow.CONTRACT[-1], story_flow.ANALYSIS[-1],
         story_flow.import_sources.DOC_TARGET["AR"].name,
     ])
-
-    def test_the_sweep_keeps_all_three(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "story-src"
-            src.mkdir(parents=True)
-            for name in self.NAMES:
-                (src / name).write_text("x", encoding="utf-8")
-            (src / "决策候选.md").write_text("脚手架", encoding="utf-8")
-            swept = story_flow.sweep_story_src(src)
-            self.assertEqual(["决策候选.md"], swept)
-            for name in self.NAMES:
-                self.assertTrue((src / name).is_file(), f"{name} 被当成脚手架扫掉了")
 
     def test_none_of_them_is_a_frozen_ledger(self) -> None:
         """三件都留，但都不随稿冻结——冻结的是「据以成文的依据」，它们还要继续变。"""
@@ -1049,28 +1026,11 @@ class TheMovedInThreeSurviveTheStorySweep(unittest.TestCase):
                          story_flow.import_sources.DOC_TARGET["AR"].as_posix())
 
 
-class DraftsLiveUntilRegistration(unittest.TestCase):
-    """章草稿在登记前不能被扫掉，登记成功后才删。
-
-    `check` 没过时作者要回到草稿接着改——清扫把它当中间件删了，他的起点就没了。
-    登记成功之后 story 冻结，草稿失去用途，也不该留进归档。
-    """
-
-    def test_the_sweep_spares_the_drafts(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "story-src"
-            (src / story_flow.DRAFTS_DIR).mkdir(parents=True)
-            (src / story_flow.DRAFTS_DIR / "02-术语.md").write_text("写到一半", encoding="utf-8")
-            (src / "decisions.json").write_text("[]", encoding="utf-8")
-            (src / "候选池.md").write_text("脚手架", encoding="utf-8")
-            swept = story_flow.sweep_story_src(src)
-            self.assertIn("候选池.md", swept)
-            self.assertNotIn(story_flow.DRAFTS_DIR, swept, "清扫把章草稿也删了")
-            self.assertTrue((src / story_flow.DRAFTS_DIR / "02-术语.md").is_file())
+class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
+    """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
 
     def test_drafts_are_not_frozen_into_the_ledger(self) -> None:
-        """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
-        self.assertNotIn(story_flow.DRAFTS_DIR, story_flow.STORY_SRC_FROZEN)
+        self.assertNotIn("drafts", story_flow.STORY_SRC_FROZEN)
 
 
 class RegistrationReprojectsFirst(unittest.TestCase):
@@ -1090,17 +1050,17 @@ class RegistrationReprojectsFirst(unittest.TestCase):
                          "登记时没有先按真源重投影")
         self.assertLess(body.index('"project"'), body.index('"number"'))
 
-    def test_registration_leaves_the_drafts_alone(self) -> None:
-        """登记不动章草稿——它是「这份 story 怎么写出来的」唯一的现场。
+    def test_registration_deletes_nothing_under_story_src(self) -> None:
+        """登记不删 `story-src/` 里的任何过程件——它们是「这份 story 怎么写出来的」现场。
 
-        草稿走不漏：`archive` 只上传 story.md 与 review.md，`drafts/` 又在 .gitignore 里。
+        过程件走不漏：归档只上传 story.md 与 review.md，这一层整个留在本地。
         删掉的代价倒是实的——`reopen` 之后作者要改某一章，手上却没有可改的东西。
         """
         source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
                   / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
-        for gone in ("DRAFTS_DIR", "rmtree"):
-            self.assertNotIn(gone, body, f"登记还在动章草稿（{gone}）")
+        for gone in ("rmtree", "unlink", "sweep"):
+            self.assertNotIn(gone, body, f"登记还在删 story-src/ 下的东西（{gone}）")
 
 
 if __name__ == "__main__":

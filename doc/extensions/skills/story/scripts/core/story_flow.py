@@ -81,54 +81,6 @@ DESIGN = ("AR", "design.md")
 STORY_SRC_FROZEN = (
     "decisions.json", "copyedit.md",
 )
-#: 章草稿目录。作者在这里写、`chapter --from` 从这里读。
-#:
-#: **登记之后也留着**（用户 2026-09-08 裁定）：出了问题它是唯一能看出「这份 story 是
-#: 怎么写出来的」的东西。它不会走漏到任何读者手上——`archive` 只上传 story.md 与
-#: review.md，而 `story-src/drafts/` 在目标的 .gitignore 里；留着的唯一去处就是本地。
-#:
-#: 反过来删掉的代价是实的：`reopen` 撤销登记后作者要改某一章，手上却没有可改的东西，
-#: 只能从成稿倒推一份回来——而倒推拿不回他写到一半的思路与划掉的段落。
-DRAFTS_DIR = "drafts"
-
-
-def sweep_story_src(src: Path) -> list[str]:
-    """登记前把 story-src/ 扫干净——只留台账那两件。
-
-    模型会在这里造一堆工作草稿（分章文本、候选池、映射表），
-    跟台账混在一个目录里进归档。归档件的读者分不清哪些是交付物、
-    哪些是造它时的脚手架，而脚手架里往往还有半成品与废弃版本。
-
-    保留集分两类：
-
-    **随稿冻结的台账**就是 STORY_SRC_FROZEN 本身，不在这里另列一份——那两件要算指纹，
-    清理与冻结说的必须是同一批文件；各写一份，改一处忘一处时，要么清掉了要算指纹的，
-    要么留下了不该留的。
-
-    **留下但不冻结的四件**：材料清单、流程契约、需求分析件、导入落点。它们不是造 story
-    的脚手架，而是各自的真源，登记之后还要继续写——契约要记 `story_written_at` 与归档态，
-    清单与落点随材料重算，分析件的指纹记在契约的 `analysis_sha` 里。名字都从各自的常量取，
-    不在这里另抄一份字面。story 定稿那一刻手里是哪版材料，记在契约当轮的 `materials.digest`
-    里，那才是快照。
-
-    只扫这一层，不递归、不碰别的目录；清掉的逐个报出来，不静默删。
-    """
-    if not src.is_dir():
-        return []
-    keep = set(STORY_SRC_FROZEN) | {
-        materials.MANIFEST[-1], DRAFTS_DIR,
-        CONTRACT[-1], ANALYSIS[-1], import_sources.DOC_TARGET["AR"].name,
-    }
-    swept = []
-    for item in sorted(src.iterdir()):
-        if item.name in keep:
-            continue
-        if item.is_dir():
-            shutil.rmtree(item, ignore_errors=True)
-        else:
-            item.unlink(missing_ok=True)
-        swept.append(item.name)
-    return swept
 # 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
 #
 # 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
@@ -1373,9 +1325,12 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["story_written_at"] = now()
     # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
     # 之后 `story-build check` 拿它核对，`init` 直接拒绝重算。
+    #
+    # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
+    # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
+    # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
+    # 写出来的」的现场；`reopen` 撤销登记后作者要改某一章，手上也才有可改的东西。
     src = feature_root / "AR" / "story-src"
-    for stray in sweep_story_src(src):
-        log(f"清理中间件：{stray}")
     contract["story_src_digests"] = {
         name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
     }
