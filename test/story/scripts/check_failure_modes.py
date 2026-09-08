@@ -1429,6 +1429,25 @@ def p18_step_equals_criterion(root: Path, ctx: Ctx) -> Outcome:
 ADAPT_SCRIPT = "skills/story-adaptation/scripts/adapt-scan.mjs"
 
 
+def manifest_hook_phases(root: Path) -> list[str]:
+    """扩展登记了哪几个阶段钩子——阶段名的真源是 manifest，不是 ``hooks/`` 的目录长相。"""
+    text = read_text(root / "manifest.yaml")
+    if not text:
+        return []
+    lines = split_lines(text)
+    at = next((i for i, l in enumerate(lines) if re.match(r"^  hooks:\s*$", l)), None)
+    if at is None:
+        return []
+    out = []
+    for line in lines[at + 1:]:
+        if re.match(r"^  \S", line):
+            break
+        m = re.match(r"^    (\w+):\s*$", line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
 @checker
 def a01_adapt_couples_to_mechanism(root: Path, ctx: Ctx) -> Outcome:
     """adapt 的交付件写死了扩展内部结构。
@@ -1437,14 +1456,17 @@ def a01_adapt_couples_to_mechanism(root: Path, ctx: Ctx) -> Outcome:
     出现某个 hook 的「阶段目录 + 文件」、某个知识文件名或模式名，机制一改 adapt 就跟着废；
     而「机制大改后能用 adapt 快速适配」正是把它排在机制重构之前的全部理由（B3-10 / KD-10）。
 
-    判定基准全部派生：阶段名取 ``hooks/`` 的子目录，知识文件名与条目编号取激活清单。
-    **派生为空不当作通过**——那说明基准没建起来，不是「零命中」（G7）。
+    判定基准全部派生：**阶段名取 manifest 的 ``provides.hooks`` 键**，知识文件名与条目编号
+    取激活清单。**派生为空不当作通过**——那说明基准没建起来，不是「零命中」（G7）。
+
+    阶段不取 ``hooks/`` 的子目录名：那里还躺着 ``shared/``，它是公共件而不是某个阶段。
+    把它算进阶段，adapt 复用一份公共解析器就成了「耦合某个阶段的实现」——而这条判据
+    要防的是「机制的阶段结构一改 adapt 就废」，与共享工具的复用是两件事。
     """
     adapt_dir = root / "skills" / "story-adaptation"
     if not adapt_dir.exists():
         return Outcome(True, "无 adapt 交付件（能力未建）")
-    hooks_dir = root / "hooks"
-    phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir()) if hooks_dir.exists() else []
+    phases = sorted(manifest_hook_phases(root))
     names = activation_names(root)
     slugs, entries = names["slugs"], names["entries"]
     if not phases and not slugs:

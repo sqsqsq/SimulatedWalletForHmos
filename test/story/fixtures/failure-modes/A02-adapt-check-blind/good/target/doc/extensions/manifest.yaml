@@ -1,4 +1,5 @@
 schema_version: 1
+name: sample-pkg
 version: "2.0.0"
 provides:
   skills:

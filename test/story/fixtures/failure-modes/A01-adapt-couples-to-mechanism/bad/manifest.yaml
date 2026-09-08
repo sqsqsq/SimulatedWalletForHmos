@@ -1,6 +1,14 @@
 schema_version: 1
+name: sample-pkg
 version: "1.0.0"
 provides:
   knowledge:
     - knowledge/sample-domain.md
     - knowledge/sample-pattern.md
+  hooks:
+    alpha:
+      post_check:
+        - hooks/alpha/post_check.mjs
+    beta:
+      post_check:
+        - hooks/beta/post_check.mjs

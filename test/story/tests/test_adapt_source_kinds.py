@@ -167,6 +167,90 @@ class SourceKindCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("BizA 的真实现", self.adapter_text(target))
 
+    def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
+        """`name` 取的是 YAML 的**值**，不是那一行的字面。
+
+        `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 是同一个值。拿字面去比，
+        加一对引号就把 Demo 判成业务仓——而那一判之下 `--apply` 会把目标的真实现
+        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。
+        """
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        self.write_adapters(target, "BizA 的真实现")
+        self.commit(target, "自己实现对接层")
+
+        for written in ('name: "wallet-sdk-demo"', "name: 'wallet-sdk-demo'",
+                        "name: wallet-sdk-demo  # 就是它"):
+            pkg = self.root / "quoted-pkg"
+            if pkg.exists():
+                shutil.rmtree(pkg)
+            pkg.mkdir()
+            shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
+            shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
+                            ignore=shutil.ignore_patterns("__pycache__", ".*"))
+            for rel in LAUNCHERS:
+                dst = pkg / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO_ROOT / rel, dst)
+            manifest = pkg / "doc" / "extensions" / "manifest.yaml"
+            manifest.write_text("\n".join(
+                written if l.startswith("name:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")), encoding="utf-8")
+
+            proc = self.adapt("--apply", target, pkg)
+            self.assertEqual(0, proc.returncode, self.out(proc))
+            self.assertIn("BizA 的真实现", self.adapter_text(target),
+                          f"`{written}` 被判成业务仓，目标的真实现被替身盖了")
+
+    def test_a_package_without_a_name_stops(self) -> None:
+        """读不出名字就停：这一个值决定要不要覆盖对接实现，没有默认值可退。"""
+        target = self.blank_repo("BizA")
+        pkg = self.root / "nameless-pkg"
+        pkg.mkdir()
+        shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
+        shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
+                        ignore=shutil.ignore_patterns("__pycache__", ".*"))
+        manifest = pkg / "doc" / "extensions" / "manifest.yaml"
+        manifest.write_text("\n".join(
+            l for l in manifest.read_text(encoding="utf-8").split("\n")
+            if not l.startswith("name:")), encoding="utf-8")
+
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, "包没有 name 却照写了")
+        self.assertIn("name", self.out(proc))
+
+    # ---- 安装结果 ----
+
+    def test_a_broken_bridge_is_caught(self) -> None:
+        """跳板在 `<ext>/` 之外，覆盖范围扫不到——不单独核，装坏的宿主入口没人管。
+
+        而它正是人每天敲 `/story` 打进来的地方（A7）。
+        """
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        self.commit(target, "装好")
+        (target / ".cac" / "commands" / "story.md").write_text("坏掉的内容\n", encoding="utf-8")
+
+        proc = self.adapt("--check", target, REPO_ROOT)
+        self.assertEqual(1, proc.returncode, "跳板被改坏却判通过了")
+        self.assertIn("story.md", self.out(proc))
+
+    def test_crlf_in_the_manifest_is_not_a_failure(self) -> None:
+        """目标用什么换行是它的排版自由，不是「装错了」。
+
+        合成结果一律 LF，直接与盘上原文比字符串的话，一个内容完全正确的 CRLF 仓
+        会一直红，而报错还指着知识清单——修的人会去翻一份根本没问题的清单。
+        """
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        manifest = target / "doc" / "extensions" / "manifest.yaml"
+        raw = manifest.read_bytes()
+        raw = raw.replace(bytes([13, 10]), bytes([10])).replace(bytes([10]), bytes([13, 10]))
+        manifest.write_bytes(raw)
+
+        proc = self.adapt("--check", target, REPO_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+
     # ---- 目标的身份 ----
 
     def test_the_target_keeps_its_own_name_and_description(self) -> None:

@@ -22,6 +22,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseYaml } from '../../../hooks/shared/yaml-lite.mjs';
 
 const MODES = ['--apply', '--check'];
 
@@ -182,9 +183,20 @@ function composeManifest(pkgText, tgtText, skeleton, identity) {
 /** manifest 里归目标的键：这个仓叫什么、是什么。升级不改，首次按目标仓生成。 */
 const TARGET_OWNED_KEYS = ['name', 'description'];
 
+/**
+ * 取 manifest 顶层某个键的**值**，不是它那一行的字面。
+ *
+ * `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 在 YAML 里是同一个值，行尾
+ * 跟个注释也一样。拿字面去比，加一对引号就会把 Demo 判成业务仓——而那一判之下
+ * `--apply` 会把目标的真实现覆盖成替身，退出码还是 0。所以这里走真正的解析器。
+ */
 function manifestValue(manifestText, key) {
-  const at = manifestText.split(/\r?\n/).find(l => l.startsWith(`${key}:`));
-  return at ? at.slice(key.length + 1).trim() : null;
+  try {
+    const v = parseYaml(manifestText)?.[key];
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -308,6 +320,11 @@ const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
  */
 const MOCK_ADAPTER_PACKAGE = 'wallet-sdk-demo';
 const PKG_NAME = manifestValue(PKG_MANIFEST_TEXT, 'name');
+// 读不出名字就停：这一个值决定要不要覆盖目标的对接实现，猜错的那一边不可逆。
+if (!PKG_NAME) {
+  die(`包的 manifest 读不出 name（${pkgManifest}）：来源是替身包还是业务仓由它决定，`
+    + '读不出没有默认值可退——补上这个键再来');
+}
 const WITH_ADAPTERS = PKG_NAME !== MOCK_ADAPTER_PACKAGE;
 
 // ── --apply ─────────────────────────────────────────────────────────────────
@@ -480,6 +497,16 @@ const bad = [];
   for (const p of (existsSync(TDIR) ? coveredFiles(TDIR, WITH_ADAPTERS) : [])) {
     if (!inPkg.has(p)) bad.push(`① 机制面多出包里没有的文件：${p}——跑 --apply 清掉`);
   }
+  // 跳板在 `<ext>/` 之外，覆盖范围扫不到它们——不单独核的话，一个装坏了的宿主入口
+  // 能一直躺在那里而自检说通过，而它正是人每天敲 `/story` 打进来的地方（A7）。
+  for (const b of BRIDGES) {
+    const from = join(PKG, ...b.split('/'));
+    const to = join(TARGET, ...b.split('/'));
+    if (!existsSync(to)) { bad.push(`① 跳板缺失：${b}——跑 --apply 写上`); continue; }
+    if (existsSync(from) && sha(from) !== sha(to)) {
+      bad.push(`① 跳板与包不同：${b}——它是扩展自己的宿主入口，跑 --apply 覆盖`);
+    }
+  }
 }
 
 // ② manifest：合成一遍，看等不等于盘上那份。
@@ -488,8 +515,11 @@ const bad = [];
 // 拿它当判据，机制段与包不同、知识清单被升级动过，两种都露出来，不必各写一条。
 if (existsSync(tgtManifest)) {
   const tgtText = read(tgtManifest);
-  if (composeManifest(PKG_MANIFEST_TEXT, tgtText, skeletonKnowledge(PDIR),
-    freshIdentity(TARGET)) !== tgtText) {
+  // 比之前把换行归一：合成结果一律 LF，而目标用什么换行是它的排版自由——
+  // 拿这个判「装错了」，一个内容完全正确的 CRLF 仓会一直红，而报错还指着知识清单。
+  const sameText = (a, b) => a.split(/\r\n/).join('\n') === b.split(/\r\n/).join('\n');
+  if (!sameText(composeManifest(PKG_MANIFEST_TEXT, tgtText, skeletonKnowledge(PDIR),
+    freshIdentity(TARGET)), tgtText)) {
     bad.push('② manifest 不是这个包合成出来的：机制登记（version / skills / bridges / hooks /'
       + ' overlay）要与包相同，name / description / provides.knowledge 归目标'
       + '——跑 --apply 重新合成');
