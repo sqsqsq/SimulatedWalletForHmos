@@ -344,8 +344,11 @@ if (!ar || !/^[\w.-]+$/.test(ar)) fail(`非法 AR 单号：「${ar ?? ''}」`);
 // 本实现不校验 mcpToken；部署环境在此校验缺失即失败，并用它调 mcp
 if (!mcpToken) log('未传入 mcp-token（本地容忍；部署环境将拒绝执行）');
 
-// scripts → story → skills → extensions → doc → 实例根
-const projectRoot = path.resolve(projectRootArg ?? path.join(__dirname, '..', '..', '..', '..', '..'));
+// 本脚本住在 <实例根>/doc/extensions/skills/story/scripts/adapters/，
+// 不传 --project-root 时从这里上溯六级回到实例根：
+// adapters → scripts → story → skills → extensions → doc → 实例根
+const projectRoot = path.resolve(
+  projectRootArg ?? path.join(__dirname, '..', '..', '..', '..', '..', '..'));
 const featureRoot = path.join(projectRoot, featuresDir(projectRoot), ar);
 const localAr = path.join(featureRoot, 'AR', 'design.md');
 const system = systemRoot(projectRoot);

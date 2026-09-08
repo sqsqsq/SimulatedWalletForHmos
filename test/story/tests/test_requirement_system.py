@@ -287,5 +287,35 @@ class TestNoStaleDataSource(unittest.TestCase):
         self.assertEqual([], hits)
 
 
+class TheDefaultEntryFindsTheProjectRoot(SystemCase):
+    """不传 `--project-root` 时，脚本自己上溯到实例根。
+
+    SKILL 正文给的取材命令就是这个形态：`node doc/extensions/skills/story/scripts/
+    adapters/story.js init <AR> <token>`。上溯的级数错一级，材料落到 `doc/` 底下
+    再开一层 `doc/features/`，执行者得改扩展源码才跑得下去。
+
+    别的用例都显式传根（它们要的是隔离的工作区），所以这一条单独走默认入口。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        installed = (self.project / "doc" / "extensions" / "skills" / "story"
+                     / "scripts" / "adapters")
+        installed.mkdir(parents=True)
+        for name in ("story.js", "review.js", "token.js"):
+            (installed / name).write_bytes((SCRIPTS / name).read_bytes())
+        self.installed = installed / "story.js"
+
+    def test_material_lands_in_the_features_dir_of_the_project(self) -> None:
+        proc = subprocess.run(
+            ["node", str(self.installed), "init", AR, "token"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(AR_TEXT, (self.feature / "AR" / "design.md").read_text("utf-8"))
+        self.assertFalse((self.project / "doc" / "doc").exists(),
+                         "默认根少算一级：材料落进了 doc/ 底下的第二层 doc/features/")
+
+
 if __name__ == "__main__":
     unittest.main()
