@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.0.0",
-  "source_commit": "bb4aed6734e4b9f007c17f6f3fd81d2f813106b6",
-  "built_at": "2026-09-08T11:26:29.398Z",
+  "source_commit": "453a4df68fb72fa515500848720a3ee28887bbe1",
+  "built_at": "2026-09-09T01:08:19.279Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "cfeb30c1e464d52ab099d694fe03c486fcd0ae319b51c37e3bbc0c4afdf441b3"
+      "sha256": "be68a31d27340affb6012e509ed587ec5250c122e2ff5f02c01e2655b4d6c0fe"
     },
     {
       "path": "README.md",
@@ -690,7 +690,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "16b5c105aaee4f03713770b4f9559faa0443a8bb613e40c4cf7b00f58c3f84f0"
+      "sha256": "c5e9d8d18f0689d35a608dd1fa6c91e3026b2ac4c3e39c3b2caba58d92b66000"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -698,11 +698,11 @@
     },
     {
       "path": "harness/scripts/consumer-golden/bc-opencard.golden-contract.json",
-      "sha256": "db544f2018d5d7d845a9c58d225301a96edc93afd2051f429b6979d95cc86f15"
+      "sha256": "a2531398f0784d826122122730935ece533de377917a8800737ed204191d4776"
     },
     {
       "path": "harness/scripts/consumer-golden/evaluate-bc-opencard.ts",
-      "sha256": "5327e24f3de2285419cf1b057f861730e74202eb20fb3389a7509290c3effd4d"
+      "sha256": "8956b549bf4ad7eaa713097ced031c8f50181b20d9d45d2cc923fb673e4110a3"
     },
     {
       "path": "harness/scripts/derive-adhoc-hylyre-hint.ts",
