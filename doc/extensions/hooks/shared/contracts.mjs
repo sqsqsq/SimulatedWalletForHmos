@@ -175,5 +175,3 @@ export function knowledgeCriteria(acceptance) {
   }
   return out;
 }
-
-export { entityName };

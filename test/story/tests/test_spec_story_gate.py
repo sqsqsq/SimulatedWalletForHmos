@@ -72,11 +72,6 @@ class TestSpecStoryGate(unittest.TestCase):
         self.write_flow("story_written")
         self.assertEqual(self.problems(), [])
 
-    def test_archived_passes(self) -> None:
-        """已送审归档的自然也成过文——状态机往前走了，不该被回头拦住。"""
-        self.write_flow("archived")
-        self.assertEqual(self.problems(), [])
-
     def test_feature_without_story_flow_is_untouched(self) -> None:
         """没走 /story 的 feature 不受本判据影响——扩展不给它凭空加要求。"""
         self.write_flow(None)

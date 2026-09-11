@@ -27,21 +27,10 @@ import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import {
   coverageProblems, readUse, renderZones, UseError, zoneProblems,
 } from '../shared/knowledge-use.mjs';
+import { featureRoot, relDisplay } from '../shared/paths.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
-
-function featuresDir(projectRoot) {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'framework.config.json'), 'utf-8'));
-    if (typeof cfg?.paths?.features_dir === 'string' && cfg.paths.features_dir.trim()) {
-      return cfg.paths.features_dir.trim();
-    }
-  } catch {
-    // 配置缺失/损坏时回落默认；不在 hook 里升级为错误
-  }
-  return 'doc/features';
-}
 
 /** 提取小节正文（到下一个 ##/### 标题为止） */
 function sectionBody(lines, headingIdx) {
@@ -273,7 +262,7 @@ function knowledgeExitProblems(ctx, lines) {
  */
 function acceptanceCoverage(ctx, specIds) {
   const problems = [];
-  const featureDir = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
+  const featureDir = featureRoot(ctx.projectRoot, ctx.feature);
 
   // **不和第二份登记表比对**：spec 阶段的判定结论只有 knowledge-use.yaml 一份。
   // 另设一份独立的判定记录文件，会让同一条结论有两处写法、两处判定，
@@ -359,9 +348,9 @@ const SPEC_EXT_SECTIONS = [
 ];
 
 export default guard('spec', async (ctx) => {
-  const featureRoot = path.join(ctx.projectRoot, featuresDir(ctx.projectRoot), ctx.feature);
-  const rel = path.join(featuresDir(ctx.projectRoot), ctx.feature, 'spec', 'spec.md');
-  const specPath = path.join(featureRoot, 'spec', 'spec.md');
+  const featureDir = featureRoot(ctx.projectRoot, ctx.feature);
+  const rel = relDisplay(ctx.projectRoot, path.join(featureDir, 'spec', 'spec.md'));
+  const specPath = path.join(featureDir, 'spec', 'spec.md');
   const fix = `处置：按 ${SECTIONS_DOC} 补齐 spec 宿主扩展章节（结论写法见 ${EVIDENCE_DOC}），然后重跑 harness --phase spec。`;
 
   // spec 本身缺失由 framework 的 check-spec 负责，本 hook 只管宿主扩展部分。
@@ -373,23 +362,22 @@ export default guard('spec', async (ctx) => {
   const text = fs.readFileSync(specPath, 'utf-8').replace(/^﻿/, '');
   const lines = text.split(/\r?\n/);
   const problems = [];
-  const skipped = [];
 
   // 场景探针：走过 /story 的 feature 才有流程契约。
   // 本 hook 的检查分两类——**扩展新增的结构要求**（三份产物、§9 技术契约、术语解释列、
   // 归档件红线）只在 story 场景成立，对「口述一个需求直接跑 spec」的用法是凭空多出来的
   // 硬阻断；**知识判定的两个出口**（约束要求章、模式候选登记）与 story 无关，对所有人生效
   // ——判定产生的代码要求不进 spec，编码那里就拿不到。
-  const isStory = isStoryFeature(featureRoot);
+  const isStory = isStoryFeature(featureDir);
 
   // ---- story 前置流程契约已收口 ----
-  problems.push(...flowProblems(featureRoot));
+  problems.push(...flowProblems(featureDir));
 
   // ---- 三份产物齐备：第三份是叙事件（story 专属）----
   // spec 是一次 pass 产出 spec.md / AR/review.md / AR/story.md，三者事实同源。
   // 前两份由本文件的章节判据与 decisions 渲染管，第三份查登记态——
   // 登记前会重跑 story-build check，登记成功即九项判据都过了。
-  problems.push(...storyProduced(featureRoot));
+  problems.push(...storyProduced(featureDir));
 
   // ---- 两章的结构完整性：章在、小节齐、非空、无模板占位（story 专属）----
   // 这两章是扩展在 core 模板之上新增的，只跑原生 spec 的使用者从没被要求写过。
@@ -506,7 +494,7 @@ export default guard('spec', async (ctx) => {
     // 上游输入件而是本需求自己的产物；拿它回查等于让产物给自己背书——SR/RR 里没有的数值，
     // 会因为被覆盖的 AR 里有（那些值本就是从 spec 合成来的）而逃过校验。
     const upstreamTexts = ['SR/design.md', 'RR/prd.md', 'AR/design.md']
-      .map(p => path.join(featureRoot, p))
+      .map(p => path.join(featureDir, p))
       .filter(p => fs.existsSync(p))
       .map(p => fs.readFileSync(p, 'utf-8'))
       .filter(t => !/^>\s*源摘要：/m.test(t)); // story.md 的特征行；AR 提取件不会有
@@ -517,7 +505,6 @@ export default guard('spec', async (ctx) => {
 
   return gate(ctx, {
     problems,
-    skipped,
     checks: [
       { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
     ],

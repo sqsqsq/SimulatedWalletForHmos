@@ -35,10 +35,11 @@ import { normalizeHeading, renumberStory } from './headings.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import { readUse, UseError } from '../../../../hooks/shared/knowledge-use.mjs';
 import {
-  baseLayerIds, formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
+  formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths, scanMaterialList,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
+import { featureRoot } from '../../../../hooks/shared/paths.mjs';
 import {
   FREEFORM_CLOSE, FREEFORM_OPEN, HUMAN_ZONE_MARK, ProjectionConflict,
   projectionDigest, recordedDigest, renderReview,
@@ -127,12 +128,6 @@ function writeJson(file, data) {
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
 
-function featuresDir(projectRoot) {
-  const cfg = readJson(path.join(projectRoot, 'framework.config.json'), null);
-  const dir = cfg?.paths?.features_dir;
-  return typeof dir === 'string' && dir.trim() ? dir.trim() : 'doc/features';
-}
-
 /**
  * 只读一份 story 的上下文 —— `check --offline --story <路径>`。
  *
@@ -175,15 +170,15 @@ function createContext(args) {
     // 派生为空要出声，不能当作「没有章节要求」通过（G7）
     fail('章节合同解析不出任何章节——合同坏了，不是「本需求没有章节」');
   }
-  const featureRoot = path.join(projectRoot, featuresDir(projectRoot), args.feature);
-  const srcDir = path.join(featureRoot, 'AR', 'story-src');
+  const featureDir = featureRoot(projectRoot, args.feature);
+  const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
-    args, projectRoot, contract, featureRoot, srcDir,
+    args, projectRoot, contract, featureRoot: featureDir, srcDir,
     decisionsPath: path.join(srcDir, 'decisions.json'),
     copyeditPath: path.join(srcDir, 'copyedit.md'),
-    storyPath: path.join(featureRoot, 'AR', 'story.md'),
-    reviewPath: path.join(featureRoot, 'AR', 'review.md'),
-    flowPath: path.join(featureRoot, 'AR', 'story-src', 'story-flow.json'),
+    storyPath: path.join(featureDir, 'AR', 'story.md'),
+    reviewPath: path.join(featureDir, 'AR', 'review.md'),
+    flowPath: path.join(featureDir, 'AR', 'story-src', 'story-flow.json'),
   };
 }
 
@@ -361,21 +356,6 @@ function scanSources(ctx) {
  * 有一个 `text` 围栏）。
  */
 const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/gmi;
-
-/**
-/** 工程标识的形态判定 —— check ⑩ 判「主叙事里不许出现工程标识」时用它。 */
-const IDENTIFIER_SHAPE = /^[A-Za-z][A-Za-z0-9_]{3,}$/;
-
-/**
- * 本需求自己的编号不是工程标识。
- *
- * ①b 要求大标题带着它，材料清单也要写清这份文档出自哪张单——它是归档件与需求系统
- * 之间唯一的绳子。编号里带连字符时（`XXX-123` 这种），逐段也放行。
- */
-function ownIdentifiers(feature) {
-  const f = String(feature ?? '').trim();
-  return new Set(f.split(/[^A-Za-z0-9]+/).concat(f).map(s => s.trim()).filter(Boolean));
-}
 
 /** 缺失来源报成一句话。都是「记一笔」，措辞按是不是必备分两种。 */
 function missingSourceLine(m) {
@@ -1151,8 +1131,6 @@ function cmdCheck(ctx) {
   const sections = storySections(storyText);
   // 章正文按标题索引：非占位那条按章取正文。
   const sectionText = new Map(sections.map(s2 => [s2.title, s2.text]));
-  // 本需求自己的编号不算工程标识——归档件里它是读者回到需求系统的绳子。
-  const ownIds = ownIdentifiers(ctx.args.feature);
   const titles = sections.map(s2 => s2.title);
   const want = ctx.contract.chapters.map(c => c.title);
 

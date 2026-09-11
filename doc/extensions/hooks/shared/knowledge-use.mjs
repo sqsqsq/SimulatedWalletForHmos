@@ -31,7 +31,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseYaml } from './yaml-lite.mjs';
-import { activeKnowledge } from './knowledge.mjs';
+import { activeKnowledge, knowledgeFiles } from './knowledge.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
 
 const SCHEMA = 1;
@@ -67,12 +67,8 @@ function usePath(projectRoot, feature) {
  */
 export function manifestDigest(projectRoot) {
   const root = extensionRoot(projectRoot);
-  const raw = readTextOrNull(path.join(root, 'manifest.yaml'));
-  if (raw === null) fail('读不到 manifest.yaml');
-  const list = parseYaml(raw)?.provides?.knowledge ?? [];
   const h = createHash('sha256');
-  for (const rel of list) {
-    const relPosix = String(rel).replace(/\\/g, '/');
+  for (const relPosix of knowledgeFiles(projectRoot)) {
     const text = readTextOrNull(path.join(root, ...relPosix.split('/').filter(Boolean)));
     if (text === null) fail(`激活清单登记的文件读不到：${relPosix}`);
     h.update(relPosix).update('\0').update(text.replace(/\r\n/g, '\n')).update('\0');

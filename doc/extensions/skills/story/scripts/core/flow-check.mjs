@@ -36,14 +36,17 @@ const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);
 const FLOW_FIX = "处置：回 /story 走完三级关卡（材料 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
 /**
- * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）→ `archived`（已送审）。
+ * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）。
  *
  * **每道判据问的都是「到没到某个点」，答案是一段区间，不是一个值。**
  * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：「须 complete」写成
  * `status !== 'complete'`，成文登记后 spec harness 一重跑就 FAIL，`upstream_verdict_gate`
  * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。回归形态见测试域台账。
+ *
+ * `archived` 不是流程状态：归档是契约里独立的记录字段（`contract.archived`），
+ * 登记归档要求流程已在 `story_written`，状态本身不再前进——流程状态只写实际走到过的值。
  */
-const FLOW_STATES = ['complete', 'story_written', 'archived'];
+const FLOW_STATES = ['complete', 'story_written'];
 
 /**
  * 「流程走到了 `atLeast` 这一步没有」——两条 spec 判据共用这一个函数。

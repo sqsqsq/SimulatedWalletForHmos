@@ -203,16 +203,11 @@ function parseConstraintFile(absPath, rel) {
   // 中文域名取正文一级标题——归档件面向评审者，写仓内 slug 他们对不上
   const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
   const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
-  // applies_when 是域级命中条件：`always` 的域每条都要判，条件域先判域再逐条
-  // （消费者：归档装配的域级判定、story 的规约判定表核对）。
-  const appliesWhen = String(fm.applies_when ?? '').trim();
   return {
     file: rel,
     name: fm.name ?? '',
     title,
     domain: derived,
-    appliesWhen,
-    alwaysApplies: appliesWhen === 'always',
     entries: entries.map(e => ({ ...e, domainTitle: title })),
     notes,
   };
@@ -239,20 +234,12 @@ function parsePatternFile(absPath, rel) {
     id,
     roles,
     optionalRoles: fmList(fm.optional_roles),
-    coordinatorRole: coordinator,
   };
 }
 
-/** 索引件：只取名字，不解析条目；正文由 selfCheck 按 file 回读。 */
-function parseIndexFile(text, rel) {
-  const { frontmatter, body } = splitFrontmatter(text);
-  const fm = frontmatterPairs(frontmatter);
-  const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
-  return {
-    file: rel,
-    name: fm.name ?? '',
-    title: titleMatch ? titleMatch[1].trim() : (fm.name ?? rel),
-  };
+/** 索引件：随清单在册、正文由 selfCheck 按 file 回读；不派生条目，也不是第四类知识。 */
+function parseIndexFile(rel) {
+  return { file: rel };
 }
 
 function parseFactFile(absPath, rel) {
@@ -269,17 +256,20 @@ function parseFactFile(absPath, rel) {
 }
 
 /**
- * 读激活清单并派生知识。
+ * 读激活清单，返回登记的知识文件路径。
  *
- * **清单只有一份**（`provides.knowledge`）；「这个文件属于哪类」写在文件自己的
- * frontmatter `kind` 里。清单里再按类分一次组就成了两份，那意味着新增一个知识文件
- * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
+ * 只回答「清单登记了哪些」，不回答「读到了什么」——**清单合法不等于每个文件存在**，
+ * 存在性由各消费者按自己的职责处置（激活派生与摘要核对各自出声）。
+ * 路径保持清单顺序与重复项（重复由激活派生出声），不扫描知识目录、不去重。
  *
- * @returns {{facts: object[], constraints: object[], patterns: object[], indexes: object[],
- *            entries: object[], prefixes: string[], patternIds: string[]}}
- * @throws 清单缺失 / 文件读不到 / kind 缺失或未知 / 条目表零行 / 角色未声明
+ * 「还没配置」是正常状态：清单缺失、`provides.knowledge` 整条不写，都返回空数组。
+ * 「写错了」是相反的处境：`knowledge:` 写成字符串或映射说明有人想登记什么但写坏了，
+ * 都降成空集的话，一个填错的清单会安静地表现成一个什么都没登记的仓，
+ * 而那正是它看起来最正常的样子——所以形状不对要抛错，不当作没配置。
+ *
+ * @returns {string[]} 相对扩展根的 POSIX 斜杠路径，按清单顺序
  */
-export function activeKnowledge(projectRoot) {
+export function knowledgeFiles(projectRoot) {
   const root = extensionRoot(projectRoot);
   const manifestPath = path.join(root, MANIFEST_NAME);
   const raw = readTextOrNull(manifestPath);
@@ -292,23 +282,31 @@ export function activeKnowledge(projectRoot) {
   } catch (e) {
     fail(`激活清单解析失败（解析失败不当作空清单）：${e.message}`);
   }
-  // 没登记就没有要读的东西：这个仓还没配置知识，不是失败。登记了却读不到仍然报错
-  // （下面逐条读），那是读取失败被吞成空——两件事在这里分开。
-  //
-  // **「写错了」是第三件事**：`knowledge:` 写成字符串或映射，说明有人想登记什么但写坏了，
-  // 与「还没配置」是相反的处境。都降成空集的话，一个填错的清单会安静地表现成一个
-  // 什么都没登记的仓，而那正是它看起来最正常的样子。
   const declared = manifest?.provides?.knowledge;
   if (declared !== undefined && declared !== null && !Array.isArray(declared)) {
     fail(`manifest 的 provides.knowledge 不是列表（读到 ${typeof declared}）——`
       + '要么逐行列出激活的知识文件，要么整条不写；写成别的形状没有「还没配置」的含义');
   }
-  const list = Array.isArray(declared) ? declared : [];
+  return (Array.isArray(declared) ? declared : [])
+    .map(rel => String(rel).replace(/\\/g, '/'));
+}
 
+/**
+ * 读激活清单并派生知识。
+ *
+ * **清单只有一份**（`provides.knowledge`）；「这个文件属于哪类」写在文件自己的
+ * frontmatter `kind` 里。清单里再按类分一次组就成了两份，那意味着新增一个知识文件
+ * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
+ *
+ * @returns {{facts: object[], constraints: object[], patterns: object[], indexes: object[],
+ *            entries: object[], prefixes: string[], patternIds: string[]}}
+ * @throws 清单缺失 / 文件读不到 / kind 缺失或未知 / 条目表零行 / 角色未声明
+ */
+export function activeKnowledge(projectRoot) {
+  const root = extensionRoot(projectRoot);
   const out = { facts: [], constraints: [], patterns: [], indexes: [] };
   const seen = new Set();
-  for (const rel of list) {
-    const relPosix = String(rel).replace(/\\/g, '/');
+  for (const relPosix of knowledgeFiles(projectRoot)) {
     if (seen.has(relPosix)) fail(`${relPosix} 在激活清单里重复登记`);
     seen.add(relPosix);
 
@@ -321,7 +319,7 @@ export function activeKnowledge(projectRoot) {
       fail(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
         + `不能靠目录或文件名去猜（可用：${[...KNOWLEDGE_KINDS, INDEX_KIND].join(' / ')}）`);
     }
-    if (kind === INDEX_KIND) { out.indexes.push(parseIndexFile(text, relPosix)); continue; }
+    if (kind === INDEX_KIND) { out.indexes.push(parseIndexFile(relPosix)); continue; }
     if (!KNOWLEDGE_KINDS.includes(kind)) {
       fail(`${relPosix} 的 kind="${kind}" 不在封闭集合里`
         + `（知识三类：${KNOWLEDGE_KINDS.join(' / ')}；说明性文档写 ${INDEX_KIND}，它不形成新的知识类型）`);

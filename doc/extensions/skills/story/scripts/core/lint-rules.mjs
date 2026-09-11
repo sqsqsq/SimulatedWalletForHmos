@@ -94,32 +94,6 @@ function moduleLayerIds(projectRoot) {
   return layers.map(l => l?.id).filter(id => typeof id === 'string' && id.trim());
 }
 
-/**
- * 平台能力层（依赖链最底层）的 id。
- *
- * **判据是依赖方向，不是名字**：`can_depend_on` 为空的层不依赖任何其它层，
- * 它承载的是跨业务的平台能力。写死某个层名会在换工程时静默失效（坑 #29），
- * 而依赖方向是架构 DSL 里本来就有的语义。
- *
- * @returns {string[]} 取不到声明时返回空数组并**出声告警**——调用方据此不过滤，
- *   但这属于降级而非正常路径：静默降级会让「术语分流」这条判据无声消失。
- */
-export function baseLayerIds(projectRoot) {
-  const layers = readConfig(projectRoot)?.architecture?.outer_layers;
-  if (!Array.isArray(layers)) {
-    console.error('[lint-rules] 架构 DSL 未声明外层，无法派生平台能力层：术语分流降级为不过滤');
-    return [];
-  }
-  const ids = layers
-    .filter(l => Array.isArray(l?.can_depend_on) && l.can_depend_on.length === 0)
-    .map(l => l?.id)
-    .filter(id => typeof id === 'string' && id.trim());
-  if (!ids.length) {
-    console.error('[lint-rules] 架构 DSL 里没有依赖链最底层（can_depend_on 全非空）：术语分流降级为不过滤');
-  }
-  return ids;
-}
-
 function localPathRe(projectRoot) {
   const ids = moduleLayerIds(projectRoot);
   const alts = [...GENERIC_PATH_ALTS];

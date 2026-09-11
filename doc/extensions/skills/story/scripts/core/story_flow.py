@@ -105,8 +105,6 @@ ACTORS = ("human",)
 #   full —— 谁都没给，只能先按部件全量算。这个范围是**待确认**的，评审者有权推翻。
 # 来源本身必须落进契约：下游据它判断这个范围有多可靠。
 SCOPE_SOURCES = ("user_stated", "title", "design_prefill", "sr_related", "full")
-# 收件箱里不算材料的：目录自解释用的说明书。点文件是控制件（如 AI 写的归类件），同样不算
-SKIP_INBOX = {"readme.md"}
 
 
 class FlowError(Exception):
@@ -140,17 +138,6 @@ def log(msg: str) -> None:
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def features_dir(project_root: Path) -> str:
-    try:
-        cfg = json.loads((project_root / "framework.config.json").read_text(encoding="utf-8"))
-        value = (cfg.get("paths") or {}).get("features_dir")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    except (OSError, ValueError):
-        pass
-    return "doc/features"
 
 
 def ledger_digest(path: Path) -> str | None:
@@ -591,8 +578,7 @@ def material_state(feature_root: Path, current: dict) -> dict:
         manifest = materials.build(feature_root)
     except materials.MaterialError as exc:
         raise FlowError(str(exc)) from exc
-    pending = [name for name in materials.pending(manifest)
-               if name.lower() not in SKIP_INBOX]
+    pending = materials.pending(manifest)
     return {"pending": pending,
             "changed": manifest["digest"] != (current.get("materials") or {}).get("digest")}
 
@@ -1411,7 +1397,7 @@ def main() -> int:
     try:
         project_root = Path(args.project_root).resolve() if args.project_root \
             else Path(__file__).resolve().parents[6]
-        feature_root = project_root / features_dir(project_root) / args.feature
+        feature_root = project_root / import_sources.features_dir(project_root) / args.feature
 
         code = 0
         if args.mode == "init":

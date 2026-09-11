@@ -27,9 +27,8 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, VER
   from '../shared/obligations.mjs';
 import { readUse, UseError } from '../shared/knowledge-use.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { contractsPath, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
+import { contractsPath, readContracts } from '../shared/contracts.mjs';
 
-const AUTHOR_DOC = 'doc/extensions/hooks/plan/author.md';
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
 
