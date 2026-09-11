@@ -1276,7 +1276,8 @@ def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
     """这份 AR/design.md 还是 `init` 落的空骨架。
 
     空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引。把它留存成
-    「本轮外部输入」的话，后面的来源索引会把一份指引当成需求原话去核义务。
+    「本轮外部输入」的话，后续按原件读上游原话的作者与审查，
+    就会把一份写给模型的指引当成需求原话。
     """
     return text.replace("\r\n", "\n") == ar_design_skeleton(read_ids(feature_root, feature))
 
@@ -1360,13 +1361,22 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         live = materials.build(feature_root)
     except materials.MaterialError as exc:
         raise FlowError(str(exc)) from exc
-    if recorded.get("digest") != base:
+    keep = feature_root / Path(*AR_SOURCES) / f"r{current.get('round', 1)}.md"
+    keep_rel = keep.relative_to(feature_root).as_posix()
+    # 本轮登记的那一版 AR/design.md 的身份。**清单可能已经按提交后的现状刷新过**
+    # （断点落在刷新之后、契约保存之前）：那一步用留存件的内容换回 AR 那一格，
+    # 还能复现旧基准——这就是「除自己提交外材料未变」的确定性证据，
+    # 此时 prior_sha 取留存件的摘要。两种来源都拿不到时，清单与基准是真的对不上。
+    prior_sha = None
+    if recorded.get("digest") == base:
+        prior_sha = materials.source_sha(recorded, rel)
+    elif keep.is_file() and materials.digest_with(
+            live, rel, materials.file_digest(keep)) == base:
+        prior_sha = materials.file_digest(keep)
+    if prior_sha is None and recorded.get("digest") != base:
         raise FlowError(
             f"材料清单（{recorded.get('digest')}）与本轮登记的基准（{base}）对不上："
             "先跑 `story_flow.py round` 让轮次与清单归位，再收口")
-    prior_sha = materials.source_sha(recorded, rel)
-    keep = feature_root / Path(*AR_SOURCES) / f"r{current.get('round', 1)}.md"
-    keep_rel = keep.relative_to(feature_root).as_posix()
     kept_is_prior = keep.is_file() and materials.file_digest(keep) == prior_sha
     # 覆盖已经发生过——这是同一条命令的重试。**判据是原输入还在不在**，不是候选一个
     # 字节没变：断点可能落在覆盖写到一半，那一刻盘上既不是原输入也不是完整候选；
@@ -1434,19 +1444,23 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         current["materials"] = {"path": "/".join(materials.MANIFEST),
                                 "digest": manifest["digest"]}
         done.append("/".join(materials.MANIFEST))
+
+        # 收口时的 design.md 身份登记：`sha256` 用于认出「上一轮的提取稿」——
+        # 重试与跨轮的原输入定位都拿它对身份；`origin` 指出它盖掉的原输入在哪。
+        # 它不是冻结比对基准：归档会用评审载体覆盖这份文件，拿登记哈希去比
+        # 归档后的当前 AR 必然误报；成文依据的冻结比对走 story_src_digests 那一套。
+        contract["design"] = {"sha256": materials.file_digest(design_path), "origin": origin}
+        contract["design_generated_at"] = now()
+        contract["status"] = "complete"
+        save(feature_root, contract)     # **最后写**，同样在提交失败处理内：
+        # 这里断了，清单已是新基准而流程契约还是旧的——重跑同一条命令，
+        # 预检会凭留存件认出这个中间态，直接补上这次保存。
     except (OSError, materials.MaterialError) as exc:
         raise FlowError(
             f"提交中途失败（{exc}）。已完成：{'、'.join(done) or '无'}；"
             "流程仍是未收口，原输入与提取稿都在。修好之后重跑同一条 complete 命令"
         ) from exc
 
-    # 收口时的 design.md 快照。**不作校验用**——归档会覆盖这个文件（spec 阶段
-    # post_check 对此有专门处理），拿它比对当前哈希必然误报。它回答的是审计问题：
-    # 这份契约收口时对应的是哪一版提取件，以及它盖掉的原输入现在在哪。
-    contract["design"] = {"sha256": materials.file_digest(design_path), "origin": origin}
-    contract["design_generated_at"] = now()
-    contract["status"] = "complete"
-    save(feature_root, contract)
     log(f"流程收口：{len(contract['rounds'])} 轮、{total} 条关卡记录"
         + (f"；原输入留存于 {origin}" if origin else ""))
     return {"status": "complete", "rounds": len(contract["rounds"]), "gates": total,

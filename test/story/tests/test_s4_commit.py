@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 import sys
 import tempfile
@@ -368,6 +369,52 @@ class PrecheckFailuresChangeNothing(S4Case):
         proc = self.commit()
         self.assert_untouched(proc)
         self.assertIn("范围", proc.stderr)
+
+
+class TheFinalSaveFailureStillRecovers(S4Case):
+    """materials 已刷新、流程契约未保存的断点：重跑同一条命令仍能收口。
+
+    保存是提交的最后一步，它失败时磁盘上是「清单新基准、流程旧基准」的中间态。
+    重试要凭留存件认出它——把 AR 换回留存件那一版还能复现旧基准，
+    就证明除自己提交外材料未变，直接补上这次保存；同窗口里别的材料变了仍要拦。
+    """
+
+    def fail_the_final_save(self) -> subprocess.CompletedProcess:
+        # 真实失败：流程契约文件置为只读，最后那笔保存以 PermissionError 落败
+        flow_path = self.src / "story-flow.json"
+        flow_path.chmod(stat.S_IREAD)
+        try:
+            proc = self.commit()
+        finally:
+            flow_path.chmod(stat.S_IWRITE)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("已完成", proc.stderr, "保存失败也要报清哪些写入已完成")
+        self.assertEqual("in_progress", self.contract()["status"])
+        return proc
+
+    def test_retry_after_the_final_save_failure_completes(self) -> None:
+        self.ready_to_commit()
+        self.fail_the_final_save()
+        rounds_before = len(self.contract()["rounds"])
+        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual("complete", self.contract()["status"])
+        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"],
+                         "恢复后的 origin 仍要指真实留存件")
+        self.assertEqual(UPSTREAM_AR, self.keep.read_text(encoding="utf-8"),
+                         "恢复不得盖掉留存件——上游原话只在那里")
+        self.assertEqual(DRAFT, self.design.read_text(encoding="utf-8"))
+        self.assertEqual(rounds_before, len(self.contract()["rounds"]),
+                         "恢复不得开出新一轮")
+
+    def test_a_real_change_in_the_same_window_still_blocks(self) -> None:
+        """同窗口里 RR 真的变了：中间态不豁免，照旧拦下。"""
+        self.ready_to_commit()
+        self.fail_the_final_save()
+        self.prd.write_text("# 产品需求\n\n背景。\n\n窗口内补的。\n", encoding="utf-8")
+        proc = self.commit()
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("对不上", proc.stderr)
+        self.assertEqual("in_progress", self.contract()["status"])
 
 
 if __name__ == "__main__":
