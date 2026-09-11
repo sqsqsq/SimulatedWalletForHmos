@@ -285,7 +285,7 @@ class MultiCandidateUnits(PlanPatternCrossCheck):
         self.assertIn("登记了两次", self.run_hook(root))
 
     def test_a_candidate_plan_adds_on_its_own_is_named(self) -> None:
-        """plan 凭空加一个 spec 没提出的候选——选型只能从登记的候选里选。"""
+        """plan 凭空加一个 spec 没提出的候选——选型只能从 spec 登记的候选里选。"""
         root = self.workspace_with_patterns([
             f"  - unit: {self.UNIT}", "    candidate: decision-tree",
             "    signal: 分支各自多步推进",
@@ -295,6 +295,43 @@ class MultiCandidateUnits(PlanPatternCrossCheck):
             "| 另一段页面交互 | page-interaction | 采用 | PageHost | 想加就加 |",
         ])
         self.assertIn("spec 没有提出它", self.run_hook(root))
+
+    def test_no_candidate_is_a_note_not_a_plan_invented_pattern(self) -> None:
+        """「无候选」是说明不是模式身份：两侧同义，不进实际模式集合。
+
+        真源（knowledge-use.yaml）与选型表都写「无候选／不选／不适用依据」时，
+        反向检查不得把它当成 plan 凭空新增的模式——那会逼着作者删掉合理说明来过检查。
+        """
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: 无候选",
+            "    signal: 分支各自一步完成，没有贯穿多步的状态",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | 无候选 | 不选 | | 分支各自一步完成，没有贯穿多步的状态 |",
+        ])
+        message = self.run_hook(root)
+        self.assertNotIn("spec 没有提出它", message, message)
+        self.assertNotIn("没有这一行", message, message)
+        self.assertNotIn("理由列是空的", message, message)
+        self.assertNotIn("登记了两次", message, message)
+
+    def test_a_duplicated_plan_row_is_named_and_not_overwritten(self) -> None:
+        """plan 侧同一 (单元, 候选) 写两行要报错，且前行不被后行覆盖。
+
+        先「不选且空理由」再「采用且有理由」：只报重复而不保留前行的话，
+        空理由的那次表态就被后写悄悄盖掉了。
+        """
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 不选 | |",
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+        ])
+        message = self.run_hook(root)
+        self.assertIn("写了两行", message, message)
+        self.assertIn("理由列是空的", message, message)
 
 
 if __name__ == "__main__":

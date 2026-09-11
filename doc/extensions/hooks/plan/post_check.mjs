@@ -161,22 +161,32 @@ function specPatternHits(projectRoot, feature) {
  * 选型表就在「知识决策（设计输入）」章里——它是 plan 期的可见面，
  * 有 plan 门禁看、有 verifier 问，模式否决就该落在这里。
  * 候选列（第二列）是身份的另一半：同一单元有多个候选时，靠它才分得清谁被选谁被否。
+ * 「无候选」是说明不是模式身份，两侧同义——说明行不进这个集合，也不进 spec 侧的候选集。
+ *
+ * @returns {{choices: Map<string, Map<string, object>>, problems: string[]} | null}
+ *   表不存在时 null；同一 unit+pattern 重复两行报错，不后写覆盖前写。
  */
 function planPatternChoices(planText) {
   const rows = lines(planText);
   const at = chapterAt(rows, /^#{2,4}\s+设计模式选型/);
   if (!at) return null;
   const out = new Map();
+  const problems = [];
   for (const cells of tableRows(rows, at.start + 1, at.level)) {
     const [unit, candidate, choice, , reason] = cells;
     if (!unit || /^\{.*\}$/.test(unit)) continue;
     const pattern = String(candidate ?? '').trim();
-    if (!pattern) continue;   // 没写候选的行没有 (unit, pattern) 身份，配不了对
+    if (!pattern || pattern.includes('无候选')) continue;
     let byPattern = out.get(unit);
     if (!byPattern) { byPattern = new Map(); out.set(unit, byPattern); }
+    if (byPattern.has(pattern)) {
+      problems.push(`plan 的设计模式选型表把「${unit}」的候选 ${pattern} 写了两行——`
+        + '删掉重复行；同一单元有多个候选时各写一行，逐个给结论');
+      continue;
+    }
     byPattern.set(pattern, { choice: choice ?? '', reason: reason ?? '' });
   }
-  return out;
+  return { choices: out, problems };
 }
 
 export default guard('plan', async (ctx) => {
@@ -307,21 +317,22 @@ export default guard('plan', async (ctx) => {
   // 用措辞正则去拦，拦出来的是换一种说法的同一件事。
   {
     const specHits = specPatternHits(ctx.projectRoot, ctx.feature);
-    const choices = planPatternChoices(planText);
+    const planChoices = planPatternChoices(planText);
     if (specHits === null) {
       skipped.push({ what: '设计模式候选的交叉核对', why: '读不到 spec/knowledge-use.yaml' });
     } else {
       problems.push(...specHits.problems);
-      const hits = specHits.hits;
-      if (choices === null) {
-        const total = [...hits.values()].reduce((n, m) => n + m.size, 0);
+      if (planChoices === null) {
+        const total = [...specHits.hits.values()].reduce((n, m) => n + m.size, 0);
         if (total) {
           problems.push(`spec 登记了 ${total} 条设计模式候选，plan.md 却没有「设计模式选型」表`
             + '——命中的候选要逐条给结论，选或不选都算');
         }
       } else {
-        for (const [unit, byPattern] of hits) {
-          for (const [candidate, row] of byPattern) {
+        problems.push(...planChoices.problems);
+        const choices = planChoices.choices;
+        for (const [unit, byPattern] of specHits.hits) {
+          for (const [candidate] of byPattern) {
             const choice = choices.get(unit)?.get(candidate);
             if (!choice) {
               problems.push(`spec 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
@@ -337,7 +348,7 @@ export default guard('plan', async (ctx) => {
         }
         for (const [unit, byPattern] of choices) {
           for (const candidate of byPattern.keys()) {
-            if (!hits.get(unit)?.has(candidate)) {
+            if (!specHits.hits.get(unit)?.has(candidate)) {
               problems.push(`plan 的设计模式选型表给「${unit}」写了候选 ${candidate}，spec 没有提出它`
                 + '——模式选型只能从 spec 登记的候选里选，真需要时回 spec 补候选登记');
             }
