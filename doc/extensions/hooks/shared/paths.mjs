@@ -22,10 +22,17 @@ export function extensionRoot(projectRoot) {
   return path.join(projectRoot, ...String(rel).split(/[\\/]/).filter(Boolean));
 }
 
-/** feature 归档根（`paths.features_dir`，默认 `doc/features`）。 */
+/**
+ * feature 归档根（`paths.features_dir`，默认 `doc/features`）。
+ *
+ * 配置值只有**字符串且 trim 后非空**才采用（用 trim 后的值），其余一律回默认——
+ * 空串/空白不是「配置了空目录」；Python 侧 `import_sources.features_dir` 是同一语义，
+ * 两边必须解析出同一个目录，否则一边建的流程文件另一边找不到。
+ */
 export function featuresDir(projectRoot) {
-  const rel = readConfig(projectRoot)?.paths?.features_dir ?? 'doc/features';
-  return path.join(projectRoot, ...String(rel).split(/[\\/]/).filter(Boolean));
+  const rel = readConfig(projectRoot)?.paths?.features_dir;
+  const dir = typeof rel === 'string' && rel.trim() ? rel.trim() : 'doc/features';
+  return path.join(projectRoot, ...dir.split(/[\\/]/).filter(Boolean));
 }
 
 /** 某个 feature 的根目录。 */
