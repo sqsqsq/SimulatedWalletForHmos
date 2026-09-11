@@ -31,6 +31,59 @@ PNG_ONE = b"\x89PNG\r\n\x1a\nsignup"
 PNG_TWO = b"\x89PNG\r\n\x1a\nmanage"
 
 
+FLOW_SCRIPT = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py"
+SPEC_TEXT = "# IM90001 — 需求规格（Spec）\n\n> **模块标识**: `IM90001`\n"
+DRAFT_TEXT = (
+    "# IM90001 — 开发需求（AR）\n\n"
+    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
+    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
+    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
+    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
+    "## 5 上游已声明线索\n\n无。\n")
+
+
+def ensure_flow_state(root: Path, src: Path) -> None:
+    """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
+    if (src / "story-flow.json").is_file():
+        return
+    sys.path.insert(0, str(FLOW_SCRIPT.parent))
+    import story_flow  # noqa: PLC0415
+
+    def flow(*args: str) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(FLOW_SCRIPT), *args, "--feature", FEATURE,
+             "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(root))
+        assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
+
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "design-draft.md").write_text(DRAFT_TEXT, encoding="utf-8")
+    flow("init")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "material_scope", "options": [
+            {"key": "supplied", "label": "a", "request": True},
+            {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
+        encoding="utf-8")
+    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
+         "--by", "human", "--basis", "夹具：现有材料就是全部")
+    (src / ".positioning.json").write_text(json.dumps({
+        "scope_source": "user_stated", "scope_text": "x", "sr_related_ars": []},
+        ensure_ascii=False), encoding="utf-8")
+    (src / ".scope-options.json").write_text(json.dumps(
+        [{"key": "carry_all", "label": "按当前范围整体承载", "recommended": True}],
+        ensure_ascii=False), encoding="utf-8")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "scope_decision",
+         "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
+        ensure_ascii=False), encoding="utf-8")
+    flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
+         "--by", "human", "--basis", "夹具：整体承载")
+    flow("complete", "--from", "AR/story-src/design-draft.md")
+
+
 class RegistrationCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -105,12 +158,15 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.assertEqual(before, self.manifest()["digest"])
         self.assertEqual("签约页：改了说法，图没换", self.images()[0]["caption"])
 
-    def test_the_contract_no_longer_declares_a_readme_source(self) -> None:
-        """README 不再是任何东西的登记，也就不再是来源。"""
+    def test_the_contract_declares_the_ux_readme_as_an_optional_source(self) -> None:
+        """UX 正文来源回到合同（08 §2.1，required:false）——作者、材料贡献清单与
+        审查都能定位它；图片仍只由 materials.json 登记。"""
         contract = json.loads(
             (EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
-        self.assertNotIn("UX", contract["sources"],
-                         "合同还把 ux-reference/README.md 当来源——那一笔两跑各出现两次")
+        ux = contract["sources"].get("UX")
+        self.assertIsNotNone(ux, "合同缺 UX 正文来源——材料贡献清单与审查都没法定位它")
+        self.assertEqual("ux-reference/README.md", ux["path"])
+        self.assertFalse(ux["required"], "UX 正文是可选来源：没有 README 不该拦任何人")
 
 
 class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
@@ -128,6 +184,9 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         self.register("raw-1.png", "signup-page", "签约页")
         # 台账两件是 story 成文的依据，check 先核它们才走到图片这一条
         src = self.feature_root / "AR" / "story-src"
+        (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "spec" / "spec.md").write_text(SPEC_TEXT, encoding="utf-8")
+        ensure_flow_state(self.root, src)
         (src / "decisions.json").write_text(json.dumps({"decisions": [{
             "id": "D1", "status": "settled", "category": "交付范围",
             "title": "本单只做签约，管理页另议",

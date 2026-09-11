@@ -28,10 +28,15 @@ const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier']
 // 都由「chosen 必须在 options 里」把关——它们是本次分析的产物，枚举不了。
 // 闭合的那一份登记在章节合同里，`story_flow.py` 写、这里读：两边各存一份字面的话，
 // 只改一处，写进契约的选择就会在这里被判非法。
-const FLOW_MATERIAL_CHOICES = new Set(JSON.parse(fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)),
-            '..', '..', 'contracts', 'story-chapters.json'), 'utf-8').replace(/^\uFEFF/, ''))
-  .gates.material_scope.options.map(o => o.key));
+// 合同缺失/坏损时不在这里炸：材料选项校验退化为空集（chosen 全部非法），
+// 而「合同没了」的响亮失败由各消费者的真源读取负责——加载期崩溃谁也接不住。
+let FLOW_MATERIAL_CHOICES = new Set();
+try {
+  FLOW_MATERIAL_CHOICES = new Set(JSON.parse(fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)),
+              '..', '..', 'contracts', 'story-chapters.json'), 'utf-8')
+    .replace(/^\uFEFF/, '')).gates.material_scope.options.map(o => o.key));
+} catch { /* 契约读取失败由消费方的 loud failure 报告 */ }
 const FLOW_CARRY_ALL = 'carry_all';
 const FLOW_OUTCOMES = new Set(['accepted', 'rejected']);
 const FLOW_FIX = "处置：回 /story 走完三级关卡（材料 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
@@ -329,4 +334,38 @@ function readFlow(featureRoot) {
   } catch (err) {
     return { exists: true, flow: null, error: err.message };
   }
+}
+
+/**
+ * S4 提交时被覆盖的那一份上游原 AR，现在的落盘位置 —— 唯一的原件定位读取。
+ *
+ * 身份来自 flow 合同的 `design.origin`（C00 提交时登记）：没有 origin 说明本轮
+ * 没有可留存的原件（init 的空骨架、或者这份 feature 根本没有上游 AR），
+ * 不能猜一个固定的 r1；有 origin 就解析成已校验的绝对路径——越界、坏指针、
+ * 原件读不到都是具体的 problem，不能用当前派生 AR 顶替原件。
+ *
+ * 消费者：作者任务包（给作者真实原 AR 的路径）、C06 的源图集合、C07 的 reader。
+ * 调用方不得忽略 problem 后把它当「没有原件」。
+ *
+ * @returns {{path: string|null, problem: string|null}}
+ */
+export function originalArSource(featureRoot) {
+  const flowPath = path.join(featureRoot, ...FLOW_FILE);
+  let flow = null;
+  try {
+    flow = JSON.parse(fs.readFileSync(flowPath, 'utf-8').replace(/^﻿/, ''));
+  } catch {
+    return { path: null, problem: 'AR/story-src/story-flow.json 读不到或不是合法 JSON，原输入定位无从谈起' };
+  }
+  const origin = String(flow?.design?.origin ?? '').trim();
+  if (!origin) return { path: null, problem: null };
+  const abs = path.resolve(featureRoot, ...origin.split('/'));
+  const root = path.resolve(featureRoot);
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    return { path: null, problem: `原输入定位 ${origin} 越出了需求目录——指针坏了，先查它的来历` };
+  }
+  if (!fs.existsSync(abs)) {
+    return { path: null, problem: `原输入登记在 ${origin}，盘上却读不到——留存件丢了，先找回它再动笔` };
+  }
+  return { path: abs, problem: null };
 }

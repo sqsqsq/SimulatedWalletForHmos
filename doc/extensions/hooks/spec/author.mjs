@@ -23,6 +23,8 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/lint-rules.mjs';
+import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
+import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
   from '../../skills/story/scripts/core/story-build.mjs';
 
@@ -36,7 +38,7 @@ const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
  * 而不是退回自己判断。
  */
 function flowStatus(projectRoot, feature) {
-  const script = path.join(SKILL_ROOT, 'scripts', 'story_flow.py');
+  const script = path.join(SKILL_ROOT, 'scripts', 'core', 'story_flow.py');
   for (const exe of ['python', 'python3']) {
     const r = spawnSync(exe, [script, 'status', '--feature', feature],
       { cwd: projectRoot, encoding: 'utf-8', timeout: 20000, windowsHide: true });
@@ -152,16 +154,6 @@ function decisionSection(contract) {
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。'];
 }
 
-/**
- * 一个参数交给 shell 之前包起来 —— 图名带空格是常事（`page one.png`）。
- *
- * 裸拼的话 bash 把它拆成两个参数，作者复制过去得到 `unrecognized arguments: one.png`。
- * 双引号 bash 与 Windows 的 cmd 都认；内部的双引号与反斜杠转义掉。
- */
-function shellArg(value) {
-  return `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
-}
-
 function imageSection(projectRoot, feature) {
   const materials = readJsonOrNull(path.join(featureRoot(projectRoot, feature),
     'AR', 'story-src', 'materials.json'));
@@ -216,19 +208,29 @@ function imageSection(projectRoot, feature) {
  * 扩展不往那边搬图；系统设计与 spec 画过的图，作者按内容归位进 story。
  */
 /**
- * 章首那张图怎么画 —— **整份任务包只说一次**。
+ * S4 提交时留存下来的上游原 AR —— 唯一的原件定位读取（flow-check.originalArSource）。
  *
- * 它讲的是本需求的端到端过程，与上游哪一份画过什么无关；挂在某一份上游那一节里的话，
- * 那份上游没有图时这段就整个不见了，而作者照样要画章首那张。
+ * 它与当前的提取稿是两份文件：`AR/design.md` 在收口后是提取稿，上游原话只在
+ * 留存的那一份里。没有可留存原件时如实说「没有」；指针坏了要披露问题，
+ * 不能静默当作没有原件，也不能拿提取稿顶替上游原话。人工补录仍看 upstream.md。
  */
-function leadFigureSection() {
-  return ['## 4a. 业务流程章章首那张图', '',
-    '**先按评审者要看的过程画**：用户、本部件、云侧各自做什么，走到哪几个终态，'
-    + '分支岔在哪。',
-    '**画哪种看第 4 章的参与方表**：三个以上参与方画时序图或泳道图，'
-    + '讲清谁先调谁、结果回到谁；两个以内画流程图或状态图。',
-    '它与上游某张恰好是同一张也可以，那就把来源标记写进它的围栏——'
-    + '不必为了不同而画不同。', ''];
+function originalArSection(projectRoot, feature) {
+  const { path: abs, problem } = originalArSource(featureRoot(projectRoot, feature));
+  const rows = ['## 4a. 上游原 AR（提交时留存的原件）', ''];
+  if (problem) {
+    rows.push(`**原输入定位出了问题：${problem}**——动笔前先把这份原件找回来，`
+      + '不能拿当前的提取稿当上游原话。');
+    return rows;
+  }
+  if (!abs) {
+    rows.push('本轮没有可留存的上游原 AR（init 的空骨架不是上游给的东西）——'
+      + '按 RR/SR 与人工补录材料提取即可。');
+    return rows;
+  }
+  rows.push(`上游原话在 \`${relDisplay(projectRoot, abs)}\`（提交时留存的原件）。`
+    + '当前的 `AR/design.md` 是收口时提交的提取稿——两者是两份文件，'
+    + '读上游原话去前一份，不要拿提取稿自证。', '');
+  return rows;
 }
 
 function diagramSection(heading, label, source, downstream) {
@@ -257,27 +259,6 @@ function diagramSection(heading, label, source, downstream) {
 function docText(projectRoot, feature, ...rel) {
   const abs = path.join(featureRoot(projectRoot, feature), ...rel);
   return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : '';
-}
-
-function chapterSection(contract) {
-  const rows = ['## 5. 十章各回答读者什么', ''];
-  for (const c of contract.chapters ?? []) {
-    rows.push(`- **${c.title}**：${(c.questions ?? []).join('；')}`);
-    if (c.form?.note) rows.push(`  - 主要用什么写：${c.form.note}`);
-    for (const [at, cols] of Object.entries(c.form?.tables ?? {})) {
-      const where = at === '' ? '这一章' : at === '*' ? '每个小节' : `「${at}」`;
-      for (const one of String(cols).split(';')) {
-        rows.push(`  - 机器核：${where}要有一张表`
-          + (one ? `，表头含「${one.split('|').join('」「')}」` : ''));
-      }
-    }
-  }
-  rows.push('', '**在章草稿上写**：`AR/story-src/drafts/NN-<章名>.md`，'
-    + '形态说明、槽位表头、术语起始行、spec §5 的图都已经在里面；'
-    + '写完 `story-build chapter --chapter <章名> --from <草稿>` 落盘。',
-    '附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写——'
-    + '它们是 spec §9 与 knowledge-use.yaml 的投影，要改改真源。');
-  return rows;
 }
 
 /**
@@ -334,15 +315,13 @@ function taskPackage(projectRoot, feature) {
     '',
     ...imageSection(projectRoot, feature),
     '',
-    ...leadFigureSection(),
+    ...originalArSection(projectRoot, feature),
     '',
     ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR',
       docText(projectRoot, feature, 'SR', 'design.md'), 'story'),
     '',
     ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec',
       docText(projectRoot, feature, 'spec', 'spec.md'), 'story'),
-    '',
-    ...chapterSection(contract),
     '',
     ...vocabularySection(contract),
   ];

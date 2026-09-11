@@ -32,6 +32,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
+import { flowProblems } from './flow-check.mjs';
+import { norm, renderTable, subsectionText, subsectionNames, chapterStructureProblems }
+  from './story/chapter-contract.mjs';
+import { draftPath, writeDrafts } from './story/drafts.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import { readUse, UseError } from '../../../../hooks/shared/knowledge-use.mjs';
 import {
@@ -47,7 +51,7 @@ import {
 
 import { storyReviewProblems } from '../../../../hooks/shared/verifier-report.mjs';
 
-const COMMANDS = ['init', 'check', 'build', 'number', 'skeleton', 'chapter',
+const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter',
   'project', 'review-task'];
 
 /**
@@ -152,6 +156,7 @@ function createOfflineContext(args) {
     args, projectRoot, contract, offline: true,
     featureRoot: path.dirname(path.dirname(storyPath)),
     storyPath,
+    facts: offlineFacts(),
     decisionsPath: '',
     copyeditPath: '', reviewPath: '',
   };
@@ -174,12 +179,33 @@ function createContext(args) {
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
     args, projectRoot, contract, featureRoot: featureDir, srcDir,
+    scriptPath: fileURLToPath(import.meta.url),
+    facts: { siblings: siblingsFact({ offline: false, featureRoot: featureDir }) },
     decisionsPath: path.join(srcDir, 'decisions.json'),
     copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),
     reviewPath: path.join(featureDir, 'AR', 'review.md'),
     flowPath: path.join(featureDir, 'AR', 'story-src', 'story-flow.json'),
   };
+}
+
+/**
+ * 本轮有没有真实的兄弟单据——必要结构里「交接约定」表的条件。
+ *
+ * 只取已经在盘上的流程契约，不另立一份声明。读不到返回 `null`（拿不准）：
+ * 离线的仲裁锚读不到契约，`siblings` 若一律算不成立，带兄弟单据的那一节
+ * 就会被判成「不该有」。判据宁可不响，不可空响。
+ */
+function siblingsFact(ctx) {
+  if (ctx.offline || !ctx.featureRoot) return null;
+  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
+  if (!flow) return null;
+  return (flow.split?.parts ?? []).length > 1;
+}
+
+/** 离线仲裁锚的 facts：读不到流程契约，siblings 拿不准（null 沿原条件语义）。 */
+function offlineFacts() {
+  return { siblings: null };
 }
 
 /**
@@ -369,34 +395,6 @@ function missingSourceLine(m) {
 // init：材料齐备检查 + 建决策骨架
 // --------------------------------------------------------------------------
 
-function cmdInit(ctx) {
-  refuseIfFrozen(ctx, 'init');
-  const { docs, missing } = scanSources(ctx);
-  if (!docs.length) {
-    fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
-  }
-
-
-  // 决策登记的骨架：没有它，取舍在 story 里就没有来源。
-  //
-  // 骨架只有一个空数组。预置分类空槽是无效机制：判据只核得了「零条目时写了没写
-  // none_reason」——那是个逃生口，一句「本轮扫过，无开放议题」就能过。
-  const registered = readJson(ctx.decisionsPath, null);
-  const listed = registered === null ? null : decisionList(registered);
-  if (!registered) writeJson(ctx.decisionsPath, { decisions: [] });
-  else if (listed === null) fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
-  else if (!listed.length) {
-    process.stdout.write('[story-build init] 决策登记里一条都没有——'
-      + '取舍在 story 里就没有来源。是还没登记，还是这个需求真的一个判断都没做过？\n');
-  }
-
-  process.stdout.write(`[story-build init] 材料齐备（${docs.length} 份）；决策登记骨架就位。`
-    + '接着跑 skeleton 建十章骨架\n');
-  for (const m of missing) {
-    process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
-  }
-}
-
 /**
  * story 正文按 `## ` 标题切节。
  *
@@ -425,27 +423,9 @@ function appendixChapter(contract) {
 }
 
 /**
- * 从一章的正文里切出某个 `###` 小节。
- *
- * 附录一章里并排放着接口表、数据表、改动边界表、规约判定表——它们列数相近，
- * 在整章正文里找「四列表行」会把接口行也当成判定行读进来。所以按小节切。
+ * 从一章的正文里切出某个 `###` 小节的辅助已迁至 story/chapter-contract.mjs；
+ * 入口仍有消费者的按需 import 同一导出，不在这里保留第二份实现。
  */
-function subsectionText(sectionText, name) {
-  const want = normalizeHeading(name);
-  const lines = String(sectionText ?? '').split(/\r?\n/);
-  const body = [];
-  let hit = false;
-  for (const line of lines) {
-    const m = line.trim().match(/^###\s+(.+)$/);
-    if (m) {
-      if (hit) break;
-      hit = normalizeHeading(m[1]) === want;      // `### A. 接口` 与合同的 `接口` 是同一节
-      continue;
-    }
-    if (hit) body.push(line);
-  }
-  return hit ? body.join('\n') : null;
-}
 
 /**
  * 某个 `###` 小节在**全篇**里的行区间（正文部分，0 起）。
@@ -578,92 +558,8 @@ function joinPosix(base, ref) {
   return parts.join('/');
 }
 
-function subsectionNames(sectionText) {
-  const out = [];
-  let inFence = false;
-  for (const line of String(sectionText ?? '').split(/\r?\n/)) {
-    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    const m = line.trim().match(/^###\s+(.+)$/);
-    if (m) out.push({ raw: m[1].trim(), name: normalizeHeading(m[1]) });
-  }
-  return out;
-}
-
-/** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
-function norm(s) {
-  return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
-}
-
-/**
- * markdown 表的表头列 —— 分隔行上面那一行就是表头。
- *
- * 返回每张表一组列名（规范化过），check ⑪ 拿它核必有列。列名剥掉行内标记：
- * 作者给表头加粗是常事，`**编号**` 与 `编号` 不该判成两列。
- */
-function tableHeaders(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const out = [];
-  for (let i = 0; i + 1 < lines.length; i += 1) {
-    const head = lines[i].trim();
-    const sep = lines[i + 1].trim();
-    if (!head.startsWith('|') || !/^\|[-: |]+\|$/.test(sep)) continue;
-    out.push(head.replace(/^\||\|$/g, '').split('|').map(c => norm(c.replace(/[`*]/g, ''))));
-  }
-  return out;
-}
-
-/**
- * 按名字找一个小节的正文 —— 先精确，再包含。
- *
- * 合同给的是这一节要讲什么（「交接约定」），作者按业务命名（「与上游单的交接约定」）。
- * 精确匹配会把后者判成「缺这一节」，而后者恰恰更好。
- */
-function findSubsection(text, name) {
-  const exact = subsectionText(text, name);
-  if (exact !== null) return exact;
-  const want = normalizeHeading(name);
-  const hit = subsectionNames(text).find(x => x.name.includes(want));
-  return hit ? subsectionText(text, hit.name) : null;
-}
-
-/**
- * 条件槽位成不成立。条件只取已经在盘上的数据，不另立一份声明。
- *
- * `siblings` 看流程契约里的份表有没有兄弟单据——单特性的分工是叙述不是对照表，
- * 硬核一张表只会逼出一张一列的表。`ui_images` 看材料清单里有没有界面图——
- * 没有界面图就没有页面状态可言。读不到就是不成立：判据宁可不响，不可空响。
- */
-function slotApplies(ctx, when) {
-  return slotCondition(ctx, when) !== false;
-}
-
-/**
- * 条件成不成立：`true` 成立、`false` 确证不成立、`null` **拿不准**。
- *
- * 拿不准与不成立必须分开：离线的仲裁锚读不到流程契约，`siblings` 若一律算不成立，
- * 带兄弟单据的那一节就会被判成「不该有」。条件用来拦一节存在时，只认确证的 `false`。
- */
-function slotCondition(ctx, when) {
-  if (!when) return true;
-  if (when === 'siblings') {
-    if (ctx.offline || !ctx.featureRoot) return null;
-    const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
-    if (!flow) return null;
-    return (flow.split?.parts ?? []).length > 1;
-  }
-  if (when === 'decisions') {
-    const decided = readJson(path.join(ctx.srcDir ?? '', 'decisions.json'), null);
-    if (!Array.isArray(decided)) return null;
-    return decided.some(x => String(x?.status ?? '') === 'settled');
-  }
-  if (when === 'ui_images') {
-    const imgs = materialImages(ctx);
-    if (imgs === null || imgs === 'broken') return null;
-    return imgs.length > 0;
-  }
-  return true;
-}
+// 小节枚举/规范化/表头/表渲染的纯文本辅助已迁至 story/chapter-contract.mjs，
+// 入口仍有消费者的改 import 同一导出；旧的多条件槽位实现随固定形态一起退出。
 
 // --------------------------------------------------------------------------
 // 从 spec 派生：story 相对 spec 只能增加，不能减少
@@ -907,10 +803,7 @@ function appendixTables(spec, name) {
 }
 
 /** 一张表渲染成 markdown 行。 */
-function renderTable(header, rows) {
-  return [`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`,
-    ...rows.map(r => `| ${r.join(' | ')} |`)];
-}
+// renderTable（表格渲染）已迁至 story/chapter-contract.mjs，入口与它共用同一导出。
 
 /**
  * 登记表里的条目 —— **两种写法都收，认不出来返回 null**。
@@ -1470,86 +1363,17 @@ function cmdCheck(ctx) {
     }
   }
 
-  mark('⑪ 形态守恒');
-  const labelGaps = [];                 // 缺了段落标签的小节，一节一行
-  const labelNotes = new Set();         // 它们的写法说明，同一份只说一次
-  // ⑪ 形态守恒：合同 `form` 说这一章要有哪几个槽位，就核它们在不在。
-  //
-  // **一条判据读数据**，不为每个槽位各写一条：加一个槽位改合同，这段代码不动。
-  // 核的只有存在与必有列——不核行数、不核表的总数、不核槽位之外有没有表。
-  // 形态来自内容的关系；把「这个需求适合有」写成「每个需求都要有」，
-  // 判据就开始替作者编内容，而那正是形态判据上一次失败的地方。
-  //
-  // 报错带上合同里那句形态说明：作者看到的是「这一章该怎么写」，不是「第几条判据红了」。
+  mark('⑪ 必要结构');
+  // ⑪ 必要结构：合同 `structure` 说这一章必须有的 H3/表/图，由 chapter-contract
+  // 唯一解释——本 check 与（C03 起的）章提交共用同一解释，不在这里另写一份。
+  // 核的只有必要项在不在：其余形式（叙述、列表、图种、小节怎么切）由作者按
+  // 内容的关系定，方法在 story-write，机器不核——配额逼出来的只会是凑数。
   for (const ch of ctx.contract.chapters) {
-    const form = ch.form;
     const text = sectionText.get(ch.title);
-    if (!form || text === undefined) continue;        // 章缺失由 ① 报，这里不重复
-    if (text.trim() === EMPTY_SECTION_TEXT) continue;  // 空节已明说不涉及，没有形态可言
-    const subs = subsectionNames(text);
-    if (form.sections === 'none' && subs.length) {
-      problems.push(`「${ch.title}」不该拆小节（有「${subs[0].raw}」）——${form.note ?? ''}`);
-    }
-    if (form.sections === 'named') {
-      for (const want of ch.subsections ?? []) {
-        if (findSubsection(text, want) === null) {
-          problems.push(`「${ch.title}」缺「${want}」这一节——${ch.subsections_note ?? form.note ?? ''}`);
-        }
-      }
-    }
-    for (const [at, slot] of Object.entries(form.slots ?? {})) {
-      // `*` 指按业务命名的那些小节：合同点名的固定节各有自己的槽位，不套这一份。
-      const named = (ch.subsections ?? []).map(normalizeHeading);
-      const targets = at === '*'
-        ? subs.filter(x => !named.some(n => x.name.includes(n)))
-          .map(x => [`${ch.title}·${x.raw}`, subsectionText(text, x.name)])
-        : at === ''
-          ? [[ch.title, text]]
-          : [[`${ch.title}·${at}`, findSubsection(text, at)]];
-      if (slotCondition(ctx, slot.when) === false) {
-        // 条件不成立的节不该存在：没有兄弟单据却写了「交接约定」，那一节填进去的
-        // 只能是别的东西——常见的是把端云约定塞进来充数。
-        for (const [label, body] of targets) {
-          if (at && at !== '*' && body !== null) {
-            problems.push(`「${label}」这一节不该有`
-              + `（${slot.when === 'siblings' ? '本需求没有兄弟单据' : '条件不成立'}）`
-              + `——${form.note ?? ''}`);
-          }
-        }
-        continue;
-      }
-      for (const [label, body] of targets) {
-        if (body === null) continue;                  // 小节在不在由 sections 档与语义审查管
-        if (slot.table && !slot.table_draft_only && slotApplies(ctx, slot.table_when)) {
-          const first = slot.table_anchor || String(slot.table).split('|')[0];
-          const anchor = norm(first);
-          // 按子串比：锚说的是这张表的主语，作者用「受限状态」还是「受限情形」是措辞。
-          if (anchor && !tableHeaders(body).some(h => h.some(c => c.includes(anchor)))) {
-            problems.push(`「${label}」缺一张表（第一列是「${first}」）——${form.note ?? ''}`);
-          }
-        }
-        if (slot.ordered && !/^[ \t]*\d+[.、)]\s/m.test(body)) {
-          problems.push(`「${label}」要写成有序列表，一步一句——${form.note ?? ''}`);
-        }
-        // 一节一行：三段都没写就报三条的话，一章下来十几行说的是同一件事，
-        // 每条还各拖一遍同样的写法说明。说明留到这一类的末尾说一次。
-        const missing = (slot.labels ?? []).filter(lb => !body.includes(lb));
-        if (missing.length) {
-          labelGaps.push(`「${label}」少了${missing.map(m => `「${m}」`).join('')}`);
-          labelNotes.add(form.note ?? '');
-        }
-        if (slot.diagram) {
-          DIAGRAM_FENCE.lastIndex = 0;          // 正则带 /g，每次用前把游标归零
-          if (!DIAGRAM_FENCE.test(body)) {
-            problems.push(`「${label}」一张图都没有——${form.note ?? ''}`);
-          }
-        }
-      }
-    }
+    if (text === undefined) continue;                 // 章缺失由 ① 报，这里不重复
+    if (text.trim() === EMPTY_SECTION_TEXT) continue; // 空节已明说不涉及，没有结构可言
+    problems.push(...chapterStructureProblems(ch, text, ctx.facts));
   }
-
-  for (const gap of labelGaps) problems.push(gap);
-  for (const note of labelNotes) if (note) problems.push(`这几段各答什么：${note}`);
 
   mark('⑫ 附录结构');
   // ⑫ 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容
@@ -2134,67 +1958,6 @@ function chapterDraft(ctx, ch, spec) {
   return rows;
 }
 
-/**
- * 一个槽位渲染成什么 —— 六种形态各一段，搭好给作者填。
- *
- * 搭表、列步骤、摆标签都是确定性工作。让模型自己搭、脚本事后挑错，就是把确定性
- * 工作交给了模型，而它每次搭出来的都不一样，判据再多也只是在追。
- * `seeded` 为真时这一章由真源打了底（术语表、流程图），不再摆空的。
- */
-function renderSlot(ctx, slot, seeded) {
-  const rows = [];
-  for (let i = 1; i <= (slot.prose ?? 0); i += 1) {
-    rows.push(`<!-- 第 ${i} 段 -->`, '{{这一段写什么}}', '');
-  }
-  if (slot.ordered) rows.push('1. {{第一步}}', '2. {{第二步}}', '');
-  if (Array.isArray(slot.list)) {
-    rows.push(...slot.list.map(x => `- **${x}**：{{一句}}`), '');
-  } else if (slot.list) {
-    rows.push('- {{一项一句}}', '');
-  }
-  // 标签自己不说这一段该答什么，作者只好各写一句概括。提示由合同给（`label_hints`），
-  // 判据仍只核标签在不在——讲清没讲清归读者审查。
-  for (const label of slot.labels ?? []) {
-    const hint = slot.label_hints?.[label];
-    rows.push(`**${label}**：{{${hint ?? '一句'}}}`, '');
-  }
-  if (slot.image) {
-    rows.push('<!-- 材料里的界面图：引用串见任务包第 4 节，引完接一句说清它画的是什么 -->', '');
-  }
-  if (slot.table && !seeded && slotApplies(ctx, slot.table_when)) {
-    const cells = String(slot.table).split('|');
-    rows.push('<!-- 表头如下，第一列是锚；其余列按本需求增减，行数按内容定 -->',
-      ...renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]), '');
-  }
-  return rows;
-}
-
-/**
- * 这一章从真源打的底 —— **打完就归作者**。
- *
- * 术语的措辞、流程图的节点文字、材料贡献那一句，都是他要改的东西；
- * 脚本种一次，此后不再碰。附录 A–D 不在这里：那四节每次都能从真源算出同样的东西，
- * 归机器区。
- */
-function chapterSeed(ctx, ch, spec) {
-  if (ch.id === '02-terms') {
-    const terms = specTerms(spec);
-    return terms.length ? renderTable(['术语', '在本需求里的意思'], terms) : [];
-  }
-  if (ch.appendix) {
-    const out = [];
-    for (const name of ch.subsections ?? []) {
-      out.push(`### ${name}`, '', '{{一句这一节给评审者看什么}}', '');
-      // 材料清单是作者种子：类别与链接由清单给，「贡献了什么」只有他知道。
-      // 其余四节由 `project` 投影，草稿里不放——放了他就要在两处维护同一张表。
-      if (normalizeHeading(name) === normalizeHeading(materialSubsectionName(ctx.contract) ?? '')) {
-        out.push(...materialListSkeleton(ctx), '');
-      }
-    }
-    return out;
-  }
-  return [];
-}
 
 /** 附录里由脚本投影的那张表的表头 —— 登记在合同，脚本不留字面。 */
 function appendixTableHeader(ctx, name) {
@@ -2405,83 +2168,104 @@ function materialListSkeleton(ctx) {
     + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
-//: 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记之后也留着——
-//: 它是「这份 story 怎么写出来的」唯一的现场，不进冻结台账，也走不漏到读者手上。
-const DRAFTS = 'drafts';
-
-function draftPath(ctx, index, title) {
-  return path.join(ctx.srcDir, DRAFTS,
-    `${String(index + 1).padStart(2, '0')}-${title}.md`);
-}
-
-/**
- * 缺哪章补哪章，**已存在的绝不覆盖** —— 草稿里可能有作者还没落盘的内容。
- *
- * 两种补法，按这一章写没写分：
- *
- * - **还带着待写标记**：补一份起点草稿（形态说明、槽位表头、术语行、spec 的图都在里面）；
- * - **已经写完**：补一份**现稿正文**。它不是起点——用起点会把成品换掉，而下一次落盘
- *   就把成品覆盖了。用现稿则是恒等：不落盘什么也不变，落盘也只是把原文写回去。
- *
- * 为什么已写的章也要补：草稿缺席而章已写完，说明这份草稿在某处丢了（工作区被清理、
- * 手工删过）。那时作者要改这一章就没有落点。按现稿补一份回来是**恒等**的——
- * 不落盘什么也不变，落盘也只是把原文写回去，不会拿一份起点把成品换掉。
- *
- * 补回来的只有成稿正文，拿不回作者写到一半的思路——所以这是兜底，不是常态：
- * 常态下草稿一直在，成文登记也不删它。
- *
- * @returns {string[]} 这次新建的草稿文件名
- */
-function writeDrafts(ctx, spec, storyText) {
-  const made = [];
-  const pending = storyText && new Set(pendingChapters(storyText).map(normalizeHeading));
-  const written = storyText
-    ? new Map(storySections(storyText).map(s2 => [normalizeHeading(s2.title), s2.text]))
-    : new Map();
-  fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
-  ctx.contract.chapters.forEach((ch, i) => {
-    const file = draftPath(ctx, i, ch.title);
-    if (fs.existsSync(file)) return;
-    const key = normalizeHeading(ch.title);
-    const done = pending && !pending.has(key);
-    const body = done ? written.get(key) : null;
-    if (done && body === undefined) return;         // 章缺失由 check ① 报，这里不猜
-    const text = done ? body : chapterDraft(ctx, ch, spec).join('\n');
-    fs.writeFileSync(file, `${text.trimEnd()}\n`, 'utf-8');
-    made.push(path.basename(file));
-  });
-  return made;
-}
-
 function cmdSkeleton(ctx) {
   refuseIfFrozen(ctx, 'skeleton');
-  const spec = specText(ctx);
-  const existing = readText(ctx.storyPath);
-  if (existing !== null) {
-    // story 已经在了也要补草稿：中断恢复时缺的往往正是还没写的那几章。
-    const made = writeDrafts(ctx, spec, existing);
-    const left = pendingChapters(existing);
-    process.stdout.write(`[story-build skeleton] AR/story.md 已存在，未改动`
-      + `（还有 ${left.length} 章待写${left.length ? '：' + left.join('、') : ''}）；`
-      + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
-        : '草稿齐备，一份未覆盖'}\n`);
-    return;
-  }
-  const titles = ctx.contract.chapters.map(c => c.title);
-  const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
-  for (const ch of ctx.contract.chapters) {
-    body.push(`## ${ch.title}`, '', pendingMark(ch.title), '');
-  }
-  fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
-  fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
-  const made = writeDrafts(ctx, spec, null);
-  process.stdout.write(`[story-build skeleton] ${titles.length} 章骨架 + `
-    + `${made.length} 份章草稿（\`AR/story-src/${DRAFTS}/\`）：`
-    + `形态说明、槽位表头${spec ? '、术语起始行、spec §5 的图' : ''}都在草稿里，`
-    + `你在草稿上写，写完一章跑 chapter --from 落盘。`
-    + `附录的接口/数据/边界/判定四节由 project 从真源投影，不用你写\n`);
-}
 
+  // ---- 起手预检：全部读完、判完，才开始写盘 ----
+  const spec = specText(ctx);
+  if (spec !== null && !spec.trim()) {
+    fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
+  }
+  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
+  if (!flow) {
+    fail('AR/story-src/story-flow.json 不存在：本 feature 还没走过 /story 的 S1–S3。'
+      + '先跑 `story_flow.py init` 按关卡走完范围，收口后再起 story 骨架');
+  }
+  const flowGaps = flowProblems(ctx.featureRoot);
+  if (flowGaps.length) fail(flowGaps.join('\n'));
+  if (flow.status !== 'complete') {
+    fail(`本轮还没有收口（status: ${flow.status}）：按 status 的下一步走完 S3/S4，再起 story 骨架`);
+  }
+  const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);
+  const base = (flow.rounds?.[flow.rounds.length - 1]?.materials) ?? {};
+  if (!manifest) {
+    fail('材料清单不存在：materials.json 由 `story_flow.py round` 生成，先跑它');
+  }
+  if (manifest.digest !== base.digest) {
+    fail('材料清单与本轮登记的基准对不上：重跑 `story_flow.py round` 归位后再起骨架');
+  }
+  const remote = fs.existsSync(path.join(ctx.featureRoot, 'AR', 'detail.json'));
+  const { docs, missing } = scanSources(ctx);
+  if (!docs.length) {
+    fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
+  }
+  // 本地单没有需求系统给的 AR/detail.json：PRD/SE 可以没有，明确降为可选。
+  const adjusted = missing.map(m => (remote || (m.doc !== 'PRD' && m.doc !== 'SE'))
+    ? m : { ...m, required: false });
+  const blocking = adjusted.filter(m => m.required);
+  if (blocking.length) {
+    fail('必备来源缺失，先补齐再起骨架：'
+      + blocking.map(m => missingSourceLine(m)).join('；'));
+  }
+
+  // 决策登记：**严格读取**——坏 JSON、错误形状都当场报错，绝不静默覆盖。
+  // 骨架只有一个空数组；空数组合法（还没有判断），不逼着模型造议题。
+  const rawDecisions = readText(ctx.decisionsPath);
+  if (rawDecisions === null) {
+    writeJson(ctx.decisionsPath, { decisions: [] });
+  } else {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(rawDecisions.replace(/^﻿/, ''));
+    } catch {
+      fail(`${path.basename(ctx.decisionsPath)} 不是合法 JSON：它只应由脚本写入；`
+        + '修好或删掉这份坏件再起骨架——直接覆盖会把里面已登记的判断抹掉');
+    }
+    if (decisionList(parsed) === null) {
+      fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
+    }
+  }
+
+  const facts = {
+    terms: specTerms(spec),
+    materialListName: materialSubsectionName(ctx.contract),
+    materialListRows: materialListSkeleton(ctx),
+    siblings: siblingsFact(ctx),
+  };
+  const existing = readText(ctx.storyPath);
+  const chapterState = existing === null
+    ? { hasStory: false, written: new Map(), pending: new Set() }
+    : {
+        hasStory: true,
+        written: new Map(storySections(existing).map(s2 => [normalizeHeading(s2.title), s2.text])),
+        pending: new Set(pendingChapters(existing).map(normalizeHeading)),
+      };
+  const made = writeDrafts(ctx, facts, chapterState);
+
+  let tail;
+  if (existing !== null) {
+    const left = pendingChapters(existing);
+    tail = `AR/story.md 已存在，未改动（还有 ${left.length} 章待写）；`
+      + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
+        : '草稿齐备，一份未覆盖'}`;
+  } else {
+    const titles = ctx.contract.chapters.map(c => c.title);
+    const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
+    for (const ch of ctx.contract.chapters) {
+      body.push(`## ${ch.title}`, '', pendingMark(ch.title), '');
+    }
+    fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
+    fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
+    tail = `${titles.length} 章骨架 + ${made.length} 份章草稿（\`AR/story-src/drafts/\`）：`
+      + '每份草稿开头是本章的读者问题与必要种子，你在草稿上写，'
+      + '写完一章跑 chapter --from 落盘。'
+      + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
+  }
+  process.stdout.write(`[story-build skeleton] ${tail}\n`);
+  for (const m of adjusted.filter(m => !m.required)) {
+    process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
+  }
+}
 /**
  * 把一章的内容原子替换进 story.md —— **落盘只有这一条路**。
  *
@@ -2560,7 +2344,9 @@ function cmdChapter(ctx) {
   if (!span) fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
     + '章锚是逐章落盘的定位点，别手工改动它');
 
-  const trimmed = stripGuidance(stripOwnHeading(body, title)).replace(/\s+$/, '');
+  // 先剥写给作者的说明（章头指引、种子占位），再剥开头自己的 H1/同名 H2——
+  // 章草稿的章头是注释行，混在任何顺序里都必须先剥干净，标题比对才认得出开头。
+  const trimmed = stripOwnHeading(stripGuidance(body), title).replace(/\s+$/, '');
   if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
   const replaced = `## ${title}\n\n${trimmed}\n\n`;
   let next = story.slice(0, span.start) + replaced + story.slice(span.end);

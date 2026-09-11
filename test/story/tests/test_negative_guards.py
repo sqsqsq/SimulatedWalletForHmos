@@ -132,10 +132,10 @@ class DeclaredSourcesMustExist(NegativeCase):
     def test_missing_optional_source_is_visible_but_not_blocking(self) -> None:
         """缺失一律**可见**——根因是零信号，不是没拦。
 
-        夹具本身就缺好几个声明来源。它们不该拦（最小夹具是正常形态），
-        但每一份缺的都要在 init 的输出里各记一笔。
+        夹具本身就缺好几个声明来源。可选的（含本地单的 RR/SE）不拦——
+        skeleton 起手照走，但每一份缺的都要在输出里各记一笔。
         """
-        proc = self.run_build("init")
+        proc = self.run_build("skeleton")
         self.assertEqual(proc.returncode, 0, "可选来源缺失不该拦：" + proc.stderr)
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertIn("不存在", out)

@@ -45,6 +45,58 @@ def as_url(path: Path) -> str:
     return json.dumps(path.resolve().as_uri())
 
 
+FLOW_SCRIPT = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py"
+DRAFT_TEXT = (
+    "# AR90001 — 开发需求（AR）\n\n"
+    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
+    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
+    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
+    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
+    "## 5 上游已声明线索\n\n无。\n")
+
+
+def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
+    """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
+    if (src / "story-flow.json").is_file():
+        return
+    sys.path.insert(0, str(FLOW_SCRIPT.parent))
+    import story_flow  # noqa: PLC0415
+
+    def flow(*args: str) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(FLOW_SCRIPT), *args, "--feature", feature,
+             "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(root))
+        assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
+
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
+    flow("init")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "material_scope", "options": [
+            {"key": "supplied", "label": "a", "request": True},
+            {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
+        encoding="utf-8")
+    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
+         "--by", "human", "--basis", "夹具：现有材料就是全部")
+    (src / ".positioning.json").write_text(json.dumps({
+        "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
+        "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
+    (src / ".scope-options.json").write_text(json.dumps(
+        [{"key": "carry_all", "label": "按当前范围整体承载", "recommended": True}],
+        ensure_ascii=False), encoding="utf-8")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "scope_decision",
+         "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
+        ensure_ascii=False), encoding="utf-8")
+    flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
+         "--by", "human", "--basis", "夹具：整体承载")
+    flow("complete", "--from", "AR/story-src/design-draft.md")
+
+
 class WorkspaceCase(unittest.TestCase):
     """每个用例一份新工作区，扩展是真的那一份。"""
 
@@ -165,23 +217,6 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
 
 class TaskPackageIsRendered(WorkspaceCase):
     """任务包是真源的投影，不是又一页手写说明。"""
-
-    def test_chapter_questions_come_from_the_contract(self) -> None:
-        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        package = self.task_package()
-        for chapter in contract["chapters"]:
-            self.assertIn(chapter["title"], package,
-                          f"任务包漏了「{chapter['title']}」这一章")
-            self.assertIn(chapter["questions"][0], package,
-                          "章的读者问题没从合同渲染进来")
-
-    def test_a_new_contract_question_shows_up_without_touching_the_hook(self) -> None:
-        """改合同，任务包跟着变——这是「投影」与「副本」的分界。"""
-        path = self.root / "doc/extensions/skills/story/contracts/story-chapters.json"
-        contract = json.loads(path.read_text(encoding="utf-8"))
-        contract["chapters"][0]["questions"].append("这一轮新加的读者问题")
-        path.write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.assertIn("这一轮新加的读者问题", self.task_package())
 
     def test_banned_words_come_with_what_to_write_instead(self) -> None:
         """词表连改法一起送达：只说不许用，作者不知道该写什么。"""
@@ -397,15 +432,6 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
         self.assertIn(self.RULE, message)
         self.assertIn("指向了 spec 里没有要求的条目", message, message[:400])
 
-    def test_the_lead_figure_rule_is_stated_once(self) -> None:
-        """章首那张怎么画只说一次——它讲的是本需求的过程，与列的是哪份上游无关。
-
-        两节各印一遍的话，作者读到第二遍会以为这两处说的是两件事。
-        """
-        package = self.task_package()
-        self.assertEqual(1, package.count("画哪种看第 4 章的参与方表"),
-                         "章首那张图的选法印了不止一次")
-
     def test_a_criteria_without_the_field_is_plain_business_acceptance(self) -> None:
         """一条需求里绝大多数验收点与规约无关，它们不写这个字段——那不是漏写。
 
@@ -615,8 +641,11 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         super().setUp()
         self.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         self.first = self.contract["chapters"][0]["title"]
-        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
-            json.dumps({"items": []}, ensure_ascii=False), encoding="utf-8")
+        # skeleton 起手预检需要收口态的流程契约与材料基准（08 §2.1）
+        (self.feature_root / "spec" / "spec.md").write_text(
+            "# AR90001 — 需求规格\n\n> **模块标识**: `AR90001`\n", encoding="utf-8")
+        ensure_flow_state(self.root, FEATURE,
+                          self.feature_root / "AR" / "story-src", DRAFT_TEXT)
         self.assertEqual(0, self.build("skeleton").returncode)
 
     def write_chapter(self, body: str) -> str:

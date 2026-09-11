@@ -63,7 +63,7 @@ class AuthorRequirementsAreReachable(unittest.TestCase):
 
     def test_the_task_package_covers_the_four_sources(self):
         """任务包是四处真源的投影：位置、激活清单、材料里的图、章节合同。"""
-        for needle in ("你现在在哪", "知识判断", "决策登记", "材料里的图", "十章各回答读者什么"):
+        for needle in ("你现在在哪", "知识判断", "决策登记", "材料里的图", "上游原 AR"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, self.task_package.stdout)
 

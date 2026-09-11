@@ -1811,9 +1811,9 @@ def b01_probe_no_discrimination(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, f"两个探针都放行（扫 {out['absent']['scanned']} 个文件）")
 
 def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
-    """跑 init → audit →（可选写裁决表）→ check，返回 check 的退出码与输出。
+    """（可选写裁决表）→ check，返回 check 的退出码与输出。
 
-    **在夹具的副本上跑**：`init` 会写决策登记骨架，直接在夹具里跑会把它写脏，
+    **在夹具的副本上跑**：check 会写决策登记骨架，直接在夹具里跑会把它写脏，
     且上一次的产物会影响下一次的判定。
     """
     with tempfile.TemporaryDirectory() as tmp:
@@ -1842,9 +1842,12 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
             ["node", str(build), cmd, "--feature", "AR90001", "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
-    r = run("init")
-    if r.returncode != 0:
-        return r.returncode, f"init 跑不起来：{(r.stderr or r.stdout or '')[:200]}"
+    # init 退场（08 §2.1）：决策骨架由 skeleton 接管；S 夹具的 check 只需要
+    # 决策件在，缺了就补一份空骨架——与旧 init 等价的最小动作。
+    decisions = root / "doc" / "features" / "AR90001" / "AR" / "story-src" / "decisions.json"
+    if not decisions.exists():
+        decisions.parent.mkdir(parents=True, exist_ok=True)
+        decisions.write_text('{"decisions": []}', encoding="utf-8")
 
     r = run("check")
     return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()
@@ -2087,7 +2090,7 @@ def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
         "```mermaid\nflowchart TD\n  A[进入页面] --> B[查询资格]\n  B --> C[风险确认]\n"
         "  C --> D[提交]\n  D --> E[查询冻结结果]\n```\n\n"
         "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。",
-        "一张图都没有")
+        "章首缺一张覆盖主路径与全部分支去向的总览图")
 
 
 @checker

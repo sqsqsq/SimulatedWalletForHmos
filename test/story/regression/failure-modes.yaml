@@ -1035,12 +1035,15 @@ modes:
     target: mechanism
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
     checker: s09_flow_chapter_flat
     self_check: internal
-    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    approved_by: 用户（2026-09-11 C01/C02 分册批准退场清单；2026-09-03 D10 修订签字在案）
     reason: >
-      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+      2026-09-11 C01/C02 退场：主路径固定标题与节名是 08 §3 裁定退出的旧强制——业务流程
+      只保留章首总览图的必要结构，分支与主路径怎么切归作者按内容定（chapter-contract 只核
+      structure 数据）。原退场说明（步骤 9 作业书改写）仍成立：固定形式判据只问「是不是表、
+      有没有分节、段落多长」，而表达贴不贴合要读上下文。
     observed_by: >
       审查者按「业务流程」章的读者问题看主路径与分支去向是否分得开；用户按同一轴看流程能不能读出分支。
     variant_of: S08-solution-chapter-flat
@@ -1091,12 +1094,13 @@ modes:
     target: mechanism
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
     checker: s12_tradeoff_prose
     self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
-      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+      2026-09-11 C01/C02 退场：取舍必须成表是 08 §3 裁定退出的旧强制（强制取舍表/备选表）——取舍写清被否方案与理由仍归作者方法与语义审查，机器不再核取舍表在不在。
+      原退场说明仍成立：固定形式判据只问「是不是表、有没有分节、段落多长」，而表达贴不贴合要读上下文。
     observed_by: >
       审查者按「每个关键取舍：选了什么、否了什么、为什么」这一问看取舍是否可逐项对照；用户按同一轴看被否方案与理由在不在。
     scope_note: >
@@ -1111,12 +1115,13 @@ modes:
     target: mechanism
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
     checker: s13_limited_and_error_in_one_table
     self_check: internal
     approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
     reason: >
-      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+      2026-09-11 C01/C02 退场：异常章两个固定 H3 与两张固定表是 08 §3 裁定退出的旧强制——两类语义（设计内受限 vs 真异常）仍应区分，由作者方法与语义审查承担。
+      原退场说明仍成立：固定形式判据只问「是不是表、有没有分节、段落多长」，而表达贴不贴合要读上下文。
     observed_by: >
       审查者按「正常受限结果与真正异常分开说明」这一维度看；用户按同一轴看读者能不能分清哪些要处理。
     scope_note: >
@@ -1153,7 +1158,11 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/S15-appendix-prose-tail/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 用户（2026-09-11 C01/C02 分册批准退场清单）
+    reason: >
+      2026-09-11 C01/C02 退场：附录作者区「只许一句、第二段即倾倒」是 08 §3 裁定退出的旧强制——
+      作者区允许必要解释，倾倒由语义审查判；subsection_form 段数规则同包退出。
     scope_note: >
       与 S06（附录多长一节）同源，形态更隐蔽：节数对、围栏没有，尾巴挂在表后面。
       开头那一句目的句不算——判的是表或列表**之后**的正文段。
@@ -1222,7 +1231,12 @@ modes:
     good_fixture: test/story/fixtures/failure-modes/S19-material-list-prose-head/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 用户（2026-09-11 C01/C02 分册批准退场清单）
+    reason: >
+      2026-09-11 C01/C02 退场：材料清单目的句之外的逐段点名是 subsection_form 段数规则的
+      一部分（08 §3 裁定退出）——清单仍只列原始输入与贡献说明，倾倒由语义审查判；
+      C06 退 proseBlocks.slice(1) 第二段配额。
     variant_of: S15-appendix-prose-tail
     scope_note: >
       S15 判的是表后的尾巴，这条判的是列表**前**的那一段。实测一轮，四张图连同

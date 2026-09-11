@@ -31,6 +31,15 @@ CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
 
 
+DRAFT_TEXT = (
+    "# AR90006 — 开发需求（AR）\n\n"
+    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
+    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
+    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
+    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
+    "## 5 上游已声明线索\n\n无。\n")
+
+
 def _chapter_bodies(story_path) -> dict:
     """把 story 切成 {章标题: 正文}——夹具的引文要从真正的那一章里取。"""
     out, cur, buf = {}, None, []
@@ -84,6 +93,52 @@ def _appendix_title() -> str:
     return (hit or {}).get("title", "")
 
 
+def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
+    """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
+
+    08 §2.1 之后 skeleton 的起手预检要读流程契约与材料基准；夹具没有时，
+    用真实 story_flow 把 S1–S3 走完并提交一份提取稿——生成的契约即收口态。
+    """
+    if (src / "story-flow.json").is_file():
+        return
+    sys.path.insert(0, str(FLOW.parent))
+    import story_flow  # noqa: PLC0415
+
+    def flow(*args: str) -> dict:
+        proc = subprocess.run(
+            [sys.executable, str(FLOW), *args, "--feature", feature,
+             "--project-root", str(root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
+
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
+    flow("init")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "material_scope",
+         "options": [dict(o) for o in story_flow.material_options()]},
+        ensure_ascii=False), encoding="utf-8")
+    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
+         "--by", "human", "--basis", "夹具：现有材料就是全部")
+    (src / ".positioning.json").write_text(json.dumps({
+        "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
+        "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
+    (src / ".scope-options.json").write_text(json.dumps(
+        [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载",
+          "recommended": True}], ensure_ascii=False), encoding="utf-8")
+    flow("round")
+    (src / ".gate-options.json").write_text(json.dumps(
+        {"gate": "scope_decision",
+         "options": [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载"}]},
+        ensure_ascii=False), encoding="utf-8")
+    flow("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+         "--by", "human", "--basis", "夹具：整体承载")
+    flow("complete", "--from", "AR/story-src/design-draft.md")
+
+
 class StoryBuildCase(unittest.TestCase):
     """每个用例一份新工作区；子类只关心自己那一条判据。"""
 
@@ -98,18 +153,30 @@ class StoryBuildCase(unittest.TestCase):
     # ---- 驱动 ----
 
     def run_build(self, command: str) -> subprocess.CompletedProcess:
+        if command == "skeleton":
+            ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
         return subprocess.run(
             ["node", str(BUILD), command, "--feature", FEATURE,
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def init_audit(self) -> None:
-        """起手：材料齐备检查 + 决策登记骨架。
+        """起手状态：决策登记就位。
 
-        名字留着不改是因为几十处在用；`audit` 那一半随逐单元系统退场，没有对象了。
+        init 命令已由 skeleton 接管（08 §2.1）；这里的夹具本就带决策件，
+        缺了就补一份空骨架——等价于旧 init 为这些用例做的事。
         """
-        proc = self.run_build("init")
-        self.assertEqual(proc.returncode, 0, f"init 跑不起来：{proc.stderr}")
+        decisions = self.src / "decisions.json"
+        if not decisions.exists():
+            decisions.write_text('{"decisions": []}', encoding="utf-8")
+
+    DRAFT = (
+        "# AR90001 — 开发需求（AR）\n\n"
+        "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
+        "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
+        "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
+        "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
+        "## 5 上游已声明线索\n\n无。\n")
 
     def check_output(self) -> tuple[int, str]:
         proc = self.run_build("check")
@@ -318,12 +385,13 @@ class TestDecisionUnits(StoryBuildCase):
         data["decisions"] = decisions if decisions is not None else self.DECISIONS["decisions"]
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def test_an_empty_register_speaks_up(self) -> None:
-        """一条决策都没登记时要出声——不能当作「这个需求没做过任何判断」静默通过。"""
+    def test_an_empty_register_is_legal_and_untouched(self) -> None:
+        """空数组合法（08 §2.1）：skeleton 收下它，也绝不覆盖这份登记。"""
         self.write_decisions([])
-        proc = self.run_build("init")
-        self.assertEqual(0, proc.returncode)
-        self.assertIn("决策登记里一条都没有", proc.stdout)
+        before = (self.src / "decisions.json").read_text(encoding="utf-8")
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+        self.assertEqual(before, (self.src / "decisions.json").read_text(encoding="utf-8"),
+                         "空登记被改写了——合法状态不该被机制动过")
 
     def test_editing_a_decision_never_trips_the_material_drift_gate(self) -> None:
         """决策件是流程里的活件：评审回填、遗漏补写都是既定动作，不该撞指纹门禁。"""
@@ -835,11 +903,11 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
         (self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def test_init_is_refused_after_registration(self) -> None:
+    def test_skeleton_is_refused_after_registration(self) -> None:
         self.init_audit()
         self.register()
-        proc = self.run_build("init")
-        self.assertEqual(1, proc.returncode, "登记之后 init 还能跑，台账就没冻住")
+        proc = self.run_build("skeleton")
+        self.assertEqual(1, proc.returncode, "登记之后 skeleton 还能跑，台账就没冻住")
         out = (proc.stderr or "") + (proc.stdout or "")
         self.assertIn("台账随稿冻结", out)
         self.assertNotIn("撤登记", out, "登记单向，报错不该指向一个不存在的动作")
@@ -863,8 +931,8 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
     def test_nothing_changes_before_registration(self) -> None:
         """登记之前一切照旧——冻结只在定稿之后生效。"""
         self.init_audit()
-        self.assertEqual(0, self.run_build("init").returncode,
-                         "没登记就拦 init，那是把正常流程拦了")
+        self.assertEqual(0, self.run_build("skeleton").returncode,
+                         "没登记就拦 skeleton，那是把正常流程拦了")
 
 class Step8Case(StoryBuildCase):
     """本组用例都要一份真的材料清单——它由 `story_flow.py round` 按磁盘现状生成。"""
@@ -1112,13 +1180,12 @@ class TestUxReferenceNeedsNoReadme(Step8Case):
         (ux / "manage.png").write_bytes(b"\x89PNG\r\n\x1a\n2")
         self.assertFalse((ux / "README.md").exists(), "夹具要的就是没有 README")
 
-    def test_init_passes_without_mentioning_the_readme(self) -> None:
-        proc = self.run_build("init")
+    def test_skeleton_passes_without_mentioning_the_readme(self) -> None:
+        """UX README 现在是可选来源：没有它不拦，也不该被当成缺件提起。"""
+        proc = self.run_build("skeleton")
         self.assertEqual(0, proc.returncode,
-                         f"有图无 README 又把 init 拦住了：{proc.stderr}")
+                         f"有图无 README 又把 skeleton 拦住了：{proc.stderr}")
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertNotIn("ux-reference/README.md", out,
-                         "README 已不是来源，不该再被提起——那一笔两跑各出现两次")
         self.assertNotIn("导入做了一半", out, "那句话属于已退场的判据")
 
     def test_the_image_check_still_reads_the_manifest(self) -> None:
@@ -1380,8 +1447,8 @@ class ChaptersLandOneAtATime(Step8Case):
         退场就只是名义上的。
         """
         gone = ("source-units.json", "audit.json", "story-verdicts.md")
-        stages = ["init"]
-        self.assertEqual(0, self.run_build("init").returncode)
+        stages = ["skeleton"]
+        self.assertEqual(0, self.run_build("skeleton").returncode)
         for i, title in enumerate(self.titles()):
             self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
             stages.append(f"chapter {i + 1}")
@@ -1456,6 +1523,9 @@ class RealRunCase(unittest.TestCase):
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
+        if "skeleton" in args:
+            ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src",
+                              DRAFT_TEXT)
         proc = subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
@@ -1507,21 +1577,19 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.build("skeleton")
         draft = self.draft("05-业务流程.md").read_text(encoding="utf-8")
         self.assertNotIn("```mermaid", draft, "草稿又预放了一张图")
-        self.assertIn("你画的图", draft, "形态说明还得在：这一章要有一张作者自己画的图")
+        self.assertIn("读者问题", draft, "章头指引还得在：这一章要一张作者自己画的图")
 
-    def test_fixed_slots_are_rendered_not_just_described(self) -> None:
-        """槽位给表头 + 分隔 + 占位，不是一行「机器核」注释。"""
+    def test_optional_form_quota_branches_are_gone(self) -> None:
+        """可选形式（prose/list/labels/页面状态表）不再由草稿预置或机器核——
+        形式由作者按内容的关系定（08 §3）。保留的只有验收/交付两张表。
+        """
         self.build("skeleton")
-        draft = self.draft("04-业务方案.md").read_text(encoding="utf-8")
-        self.assertIn("| 参与方 |", draft)
-        self.assertIn("| {{参与方}} |", draft)
-        self.assertIn("| 否了什么 |", draft)
-        # 异常两张表各自搭好，不再是一句「这一章要有 2 张表」的注释
+        solution = self.draft("04-业务方案.md").read_text(encoding="utf-8")
+        self.assertNotIn("| 参与方 |", solution, "强制参与方表该退了")
+        self.assertNotIn("| 否了什么 |", solution, "取舍必须成表该退了")
         exceptions = self.draft("07-异常与恢复.md").read_text(encoding="utf-8")
-        self.assertIn("### 设计内的受限结果", exceptions)
-        self.assertIn("### 需要处理的异常", exceptions)
-        self.assertIn("| 受限情形 |", exceptions)
-        self.assertIn("| 异常 |", exceptions)
+        self.assertNotIn("### 设计内的受限结果", exceptions, "固定两个 H3 该退了")
+        self.assertNotIn("| 受限情形 |", exceptions, "固定两张表该退了")
 
     def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
         """附录 A–D 归机器区，草稿里不放——放了他就要在两处维护同一张表。"""
@@ -1529,6 +1597,17 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertIn("{{一句这一节给评审者看什么}}", draft)
         self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
+
+    def test_the_draft_head_carries_the_contract_questions(self) -> None:
+        """章头是读者问题与主要职责的唯一送达面——合同改了它跟着变。"""
+        self.build("skeleton")
+        draft = self.draft("04-业务方案.md").read_text(encoding="utf-8")
+        self.assertIn("<!-- story-draft:guide 读者问题：", draft)
+        contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts"
+                               / "story-chapters.json").read_text(encoding="utf-8"))
+        ch = next(c for c in contract["chapters"] if c["title"] == "业务方案")
+        self.assertIn(ch["questions"][0], draft, "章头没从合同渲染读者问题")
+        self.assertIn(ch["boundary"], draft, "章头没从合同渲染主要职责")
 
     def test_a_written_chapter_gets_its_draft_back_from_the_current_story(self) -> None:
         """返修要有落点：成文登记删掉草稿目录，之后 verifier 报了阻断问题，
@@ -1553,11 +1632,12 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertEqual(before, self.story(), "按现稿补回的草稿再落盘却改动了 story")
 
     def test_a_pending_chapter_still_gets_the_seed(self) -> None:
-        """还没写的章补的仍是起点：形态说明、槽位表头都在里面。"""
+        """还没写的章补的仍是起点：必要表头与章头指引都在里面。"""
         self.build("skeleton")
         shutil.rmtree(self.drafts)
         self.build("skeleton")
-        self.assertIn("{{参与方}}", self.draft("04-业务方案.md").read_text(encoding="utf-8"))
+        self.assertIn("| 编号 | 验收点 | 可观察的通过条件 |",
+                      self.draft("08-验收.md").read_text(encoding="utf-8"))
 
     def test_existing_drafts_are_never_overwritten(self) -> None:
         """中断恢复：缺哪章补哪章，写过的一个字节不动。"""
@@ -1570,19 +1650,16 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertTrue(self.draft("03-范围.md").exists(), "缺的那份没补回来")
 
 
-class TheContractSaysWhatEachSlotAnswers(RealRunCase):
-    """槽位自己不说该答什么，作者只好各写一句概括。"""
+class TheContractCarriesTheKeptSeeds(RealRunCase):
+    """保留的种子照旧打底：验收、交付两张表在草稿里就搭好。"""
 
     def setUp(self) -> None:
         super().setUp()
-        self.build("init")
         self.build("skeleton")
 
-    def test_a_branch_section_says_what_each_label_answers(self) -> None:
-        draft = self.draft("05-业务流程.md").read_text(encoding="utf-8")
-        self.assertIn("**时机**：{{什么条件触发", draft)
-        self.assertIn("**方案**：{{用户看到什么", draft)
-        self.assertIn("**走向**：{{回到主路径", draft)
+    def test_the_acceptance_seed_is_a_table(self) -> None:
+        draft = self.draft("08-验收.md").read_text(encoding="utf-8")
+        self.assertIn("| 编号 | 验收点 | 可观察的通过条件 |", draft)
 
     def test_the_deliverables_section_is_a_table(self) -> None:
         """只写「交什么」，评审者读不出谁在等、拿去做什么、缺了会卡谁。"""
@@ -1736,47 +1813,6 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
         self.assertIn("story-build:begin 接口", story)
 
-
-class BranchSectionsCarryTheirLabels(StoryBuildCase):
-    """5.x 的分支与恢复路径固定三段，与 9.3 的回退设计同一口径：⑪ 照核标签在不在。
-
-    合同里 5.x 只固定「主路径」一节，其余就是分支与恢复路径——
-    「这一节是不是分支节」不用机器猜，写在那里的就是。
-    """
-
-    FLOW = "## 业务流程\n\n本需求不涉及。\n"
-
-    def put_branch(self, *rows: str) -> None:
-        self.init_audit()
-        self.rewrite_story(
-            self.FLOW,
-            "## 业务流程\n\n### 5.2 身份未完成时的恢复\n\n" + "\n".join(rows) + "\n")
-
-    def test_a_missing_label_is_named(self) -> None:
-        self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
-                        "**方案**：转入既有身份流程。", "")
-        self.assert_check_names("少了「走向」")
-
-    def test_one_section_takes_one_line_however_many_are_missing(self) -> None:
-        """三段都没写也只报一行——一节一行。
-
-        一段一条的话，一章十几节报出来的是同一件事的几十行，写法说明还各拖一遍；
-        作者要在里面找的是「哪一节没写全」，那正好被淹掉。
-        """
-        self.put_branch("这一节只有一句话，三段都没写。", "")
-        _, out = self.check_output()
-        lines = [l for l in out.split("\n") if "5.2" in l and "少了" in l]
-        self.assertEqual(1, len(lines), f"三段缺失报了 {len(lines)} 行：{lines}")
-        for label in ("时机", "方案", "走向"):
-            self.assertIn(label, lines[0], f"{label} 没在这一行里点名")
-        self.assertEqual(1, out.count("这几段各答什么："), "写法说明不止说了一次")
-
-    def test_all_three_labels_pass(self) -> None:
-        self.put_branch("**时机**：查询资格时云侧要求先登录。", "",
-                        "**方案**：转入既有身份流程。", "",
-                        "**走向**：回来之后重新查询资格，回到离开时的位置。", "")
-        _, out = self.check_output()
-        self.assertNotIn("这一段", out, out[:400])
 
 
 class FiguresMustBeIntroduced(StoryBuildCase):

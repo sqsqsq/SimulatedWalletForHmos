@@ -198,10 +198,10 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
 
 
 class TestFormHasOneSourceOfTruth(unittest.TestCase):
-    """形态只有一处真源——两份说法迟早对不上，而没人保证会同步。
+    """结构只有一处真源——两份说法迟早对不上，而没人保证会同步。
 
-    形态在章节合同的 `form` 里：骨架把 note 渲染成章注释、任务包逐章给出、
-    check ⑪ 核那几个槽位。作业书只留机器不判、要作者自己把关的几条。
+    必要结构在章节合同的 `structure` 里：chapter-contract 唯一解释，
+    skeleton 章头与 check ⑪ 都从它走。作业书只留机器不判、要作者自己把关的几条。
     """
 
     def test_the_retired_template_is_gone(self) -> None:
@@ -213,14 +213,15 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
         for kept in ("表前一句引导", "小节名", "只占一个结构位置"):
             self.assertIn(kept, block, f"「{kept}」没有判据接，约定要留着")
 
-    def test_every_chapter_declares_its_form(self) -> None:
+    def test_every_chapter_declares_its_boundary(self) -> None:
+        """章头唯一化之后，boundary 是草稿章头与读者审查的合同数据，一章不能缺。"""
         import json
         contract = json.loads((SKILL / "contracts" / "story-chapters.json")
                               .read_text(encoding="utf-8"))
         for ch in contract["chapters"]:
-            self.assertIn("form", ch, f"{ch['id']} 没有形态声明")
-            self.assertTrue(str(ch["form"].get("note", "")).strip(),
-                            f"{ch['id']} 的形态没有说明文字——骨架注释与任务包都从它渲染")
+            self.assertTrue(str(ch.get("boundary", "")).strip(),
+                            f"{ch['id']} 没有内容边界——章头的「主要职责」从它渲染")
+            self.assertTrue(ch.get("questions"), f"{ch['id']} 没有读者问题")
 
 
 if __name__ == "__main__":
