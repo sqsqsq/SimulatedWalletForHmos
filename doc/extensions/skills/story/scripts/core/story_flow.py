@@ -1302,23 +1302,39 @@ def candidate_problems(feature_root: Path, feature: str, text: str) -> list[str]
     return []
 
 
+def ar_input_identities(feature_root: Path, feature: str, contract: dict,
+                        keep: Path) -> list[tuple[str, str | None]]:
+    """被覆盖前那一份 AR 的合法身份：`(内容摘要, 原输入定位)` 逐一列出。
+
+    三类来源各有确定证据——本轮已留存的原件、`init` 落的空骨架（不是外部输入，
+    定位为 None；行尾两种形态都认）、契约里已登记的上一轮提取稿（沿它自己的
+    origin）。这是「被覆盖的 AR 是谁」仅有的答案集：中间态识别与原输入定位
+    共用这一份枚举，出现新场景时加在这里，不在调用方各自猜。
+    """
+    keep_rel = keep.relative_to(feature_root).as_posix()
+    identities: list[tuple[str, str | None]] = []
+    if keep.is_file():
+        identities.append((materials.file_digest(keep), keep_rel))
+    skeleton = ar_design_skeleton(read_ids(feature_root, feature))
+    for text in (skeleton, skeleton.replace("\n", "\r\n")):
+        identities.append(("sha256:" + sha256(text.encode("utf-8")).hexdigest()[:16], None))
+    registered = contract.get("design") or {}
+    if registered.get("sha256"):
+        identities.append((registered["sha256"], registered.get("origin")))
+    return identities
+
+
 def prior_ar(feature_root: Path, feature: str, contract: dict,
              keep: Path, prior_sha: str | None) -> str | None:
     """被这次提交覆盖掉的那一份 AR，它的原输入定位。
 
-    三种身份各有确定性证据：本轮已留存的原件、`init` 的空骨架、契约里已登记的那一份
-    提取稿。都对不上就说明这份 AR 的来历说不清——调用方据此停下，
+    身份枚举见 `ar_input_identities`：留存件、空骨架、已登记提取稿三类各有
+    确定证据，都对不上就说明这份 AR 的来历说不清——调用方据此停下，
     不能把一份来历不明的文件默认当成上游输入存进来源。
     """
-    if keep.is_file() and materials.file_digest(keep) == prior_sha:
-        return keep.relative_to(feature_root).as_posix()
-    skeleton = ar_design_skeleton(read_ids(feature_root, feature))
-    for text in (skeleton, skeleton.replace("\n", "\r\n")):
-        if "sha256:" + sha256(text.encode("utf-8")).hexdigest()[:16] == prior_sha:
-            return None                       # 空骨架不是外部输入，没有原输入可指
-    registered = contract.get("design") or {}
-    if registered.get("sha256") == prior_sha:
-        return registered.get("origin")       # 是上一轮的提取稿：沿用它所指的原输入
+    for sha, origin in ar_input_identities(feature_root, feature, contract, keep):
+        if sha == prior_sha:
+            return origin
     raise FlowError(
         f"AR/design.md 的来历说不清（摘要 {prior_sha}）：既不是本轮已留存的原件，"
         "也不是 init 的空骨架或契约里登记过的提取稿。先确认它是谁写的，"
@@ -1364,20 +1380,25 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     keep = feature_root / Path(*AR_SOURCES) / f"r{current.get('round', 1)}.md"
     keep_rel = keep.relative_to(feature_root).as_posix()
     # 本轮登记的那一版 AR/design.md 的身份。**清单可能已经按提交后的现状刷新过**
-    # （断点落在刷新之后、契约保存之前）：那一步用留存件的内容换回 AR 那一格，
-    # 还能复现旧基准——这就是「除自己提交外材料未变」的确定性证据，
-    # 此时 prior_sha 取留存件的摘要。两种来源都拿不到时，清单与基准是真的对不上。
+    # （断点落在刷新之后、契约保存之前）：那时被覆盖的那一份在三类合法身份里，
+    # 哪一个换回 AR 那一格还能复现旧基准，哪一个就是本轮登记过的原输入——
+    # 「除自己提交外材料未变」由此有确定答案。身份枚举与 prior_ar 共用同一份。
     prior_sha = None
+    refreshed_unsaved = False
     if recorded.get("digest") == base:
         prior_sha = materials.source_sha(recorded, rel)
-    elif keep.is_file() and materials.digest_with(
-            live, rel, materials.file_digest(keep)) == base:
-        prior_sha = materials.file_digest(keep)
+    else:
+        for sha, _origin in ar_input_identities(feature_root, feature, contract, keep):
+            if sha and materials.digest_with(live, rel, sha) == base:
+                prior_sha = sha
+                refreshed_unsaved = True
+                break
     if prior_sha is None and recorded.get("digest") != base:
         raise FlowError(
             f"材料清单（{recorded.get('digest')}）与本轮登记的基准（{base}）对不上："
             "先跑 `story_flow.py round` 让轮次与清单归位，再收口")
-    kept_is_prior = keep.is_file() and materials.file_digest(keep) == prior_sha
+    kept_is_prior = keep.is_file() and prior_sha is not None \
+        and materials.file_digest(keep) == prior_sha
     # 覆盖已经发生过——这是同一条命令的重试。**判据是原输入还在不在**，不是候选一个
     # 字节没变：断点可能落在覆盖写到一半，那一刻盘上既不是原输入也不是完整候选；
     # 重跑之前又改一句提取稿也是正常的。留存件在、且摘要等于本轮登记的那一版，
@@ -1385,7 +1406,7 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     #
     # 反过来，只覆盖没留存时这里判不出重试：那份 AR 的来历没有证据，
     # 认成自己的写入等于把本轮真实的材料变化盖掉。
-    retry = design_bytes == cand_bytes or kept_is_prior
+    retry = design_bytes == cand_bytes or kept_is_prior or refreshed_unsaved
 
     # 收件箱里还躺着原件时不收口：那时定的范围建立在一份不全的材料上。
     state = material_state(feature_root, current)

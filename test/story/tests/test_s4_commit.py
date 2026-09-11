@@ -416,6 +416,48 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.assertIn("对不上", proc.stderr)
         self.assertEqual("in_progress", self.contract()["status"])
 
+    def test_the_skeleton_case_recovers_with_no_origin(self) -> None:
+        """空骨架场景的同一断点：origin 为 None，不把指引留存成上游，也不开新轮。
+
+        被覆盖的那份是 init 落的空骨架——没有原输入可指，恢复直接补登记；
+        身份解析与留存件场景共用同一份枚举，不逐场景另判。
+        """
+        self.design.unlink()                       # 让 init 落它自己的空骨架
+        self.ready_to_commit()
+        self.fail_the_final_save()
+        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual("complete", self.contract()["status"])
+        self.assertIsNone(result["origin"])
+        self.assertFalse(self.keep.exists(), "空骨架被留存成了上游输入")
+        self.assertEqual(1, len(self.contract()["rounds"]), "恢复不得开出新一轮")
+        self.assertEqual(DRAFT, self.design.read_text(encoding="utf-8"))
+
+    def test_the_registered_derivation_case_recovers_with_inherited_origin(self) -> None:
+        """已登记派生稿场景的同一断点：沿上一轮 origin，不把派生稿留成上游。
+
+        第二轮被覆盖的那份是第一轮的提取稿（契约里登记过）：恢复沿用它的
+        origin——原输入仍是 r1 那一份，不开新轮、不写 r2。
+        """
+        self.ready_to_commit()
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("reopen")
+        self.prd.write_text("# 产品需求\n\n背景。\n\n第二轮补的。\n", encoding="utf-8")
+        self.ok("round")
+        self.write_analysis()
+        self.ok("round")
+        self.gate_options("scope_decision")
+        self.ok("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+                "--by", "human", "--basis", "用户回复：整体承载")
+        self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
+        self.fail_the_final_save()
+        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual("complete", self.contract()["status"])
+        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"],
+                         "第二轮的原输入仍是第一轮留存的那一份")
+        self.assertFalse((self.keep.parent / "r2.md").exists(),
+                         "派生稿被留存成了上游输入")
+        self.assertEqual(2, len(self.contract()["rounds"]), "恢复不得开出新一轮")
+
 
 if __name__ == "__main__":
     unittest.main()
