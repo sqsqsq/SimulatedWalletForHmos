@@ -38,6 +38,15 @@ GOLDEN_FINGERPRINTS = {
     "story-金样-AR90004.md": "abac36c868bfd782",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
+    # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
+    # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
+    "story-金样-AR90006.md": "c6acfa464c41ddcb",
+    "story-金样-AR90006-说明.md": "1f0758d7d6c0d9ea",
+    "assets/AR90006/detail-entry.png": "328419dced4a2be5",
+    "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
+    "assets/AR90006/manage-page.png": "24fbb597b158d849",
+    "assets/AR90006/signup-page.png": "6c8da20cbbc6fdd4",
+    "assets/AR90006/verify-page.png": "c8b62984ec0018e2",
 }
 
 INPUT_FINGERPRINTS = {
@@ -54,8 +63,15 @@ EXPECTED_CANONICAL_FILES = {
     "README.md",
     "story-金样-AR90004.md",
     "review-金样-AR90006.md",
+    "story-金样-AR90006.md",
+    "story-金样-AR90006-说明.md",
     "assets/image1.png",
     "assets/image2.png",
+    "assets/AR90006/detail-entry.png",
+    "assets/AR90006/disabled-state.png",
+    "assets/AR90006/manage-page.png",
+    "assets/AR90006/signup-page.png",
+    "assets/AR90006/verify-page.png",
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。

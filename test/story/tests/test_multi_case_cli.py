@@ -733,6 +733,75 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             tempfile.gettempdir = original_gettempdir
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_terminal_case_pid_reuse_does_not_block_cleanup(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-terminal-reuse-"))
+        original_out = run_multi_case.OUT_ROOT
+        original_gettempdir = tempfile.gettempdir
+        try:
+            output_root = root / "output/story"
+            temp_root = root / "temp"
+            old_output = output_root / "story-suite-old"
+            new_output = output_root / "story-suite-new"
+            old_workspace = temp_root / "sw-story/story-suite-old"
+            old_output.mkdir(parents=True)
+            new_output.mkdir(parents=True)
+            old_workspace.mkdir(parents=True)
+            run_multi_case.write_json(old_output / "suite.json", {
+                "suite_id": "story-suite-old", "status": "finished",
+                "case_states": {
+                    "case-a": {"worker_pid": 999999, "status": "finished",
+                               "started_at": time.time() - 86400},
+                },
+            })
+            run_multi_case.OUT_ROOT = output_root
+            tempfile.gettempdir = lambda: str(temp_root)
+            with mock.patch.object(run_multi_case, "_pid_alive",
+                                   return_value=True), \
+                    mock.patch.object(run_multi_case, "_process_inventory",
+                                      return_value=(True, [], None)):
+                report = run_multi_case.cleanup_previous_test_runs(
+                    new_output, "story-suite-new")
+            self.assertEqual("completed", report["status"])
+            self.assertFalse(old_output.exists())
+            self.assertFalse(old_workspace.exists())
+            self.assertTrue(new_output.exists())
+        finally:
+            run_multi_case.OUT_ROOT = original_out
+            tempfile.gettempdir = original_gettempdir
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_non_terminal_case_alive_pid_still_blocks_cleanup(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-nonterminal-live-"))
+        original_out = run_multi_case.OUT_ROOT
+        original_gettempdir = tempfile.gettempdir
+        try:
+            output_root = root / "output/story"
+            old_output = output_root / "story-suite-old"
+            new_output = output_root / "story-suite-new"
+            old_output.mkdir(parents=True)
+            new_output.mkdir(parents=True)
+            run_multi_case.write_json(old_output / "suite.json", {
+                "suite_id": "story-suite-old", "status": "finished",
+                "case_states": {
+                    "case-a": {"worker_pid": 999999, "status": "running",
+                               "started_at": time.time() - 60},
+                },
+            })
+            run_multi_case.OUT_ROOT = output_root
+            tempfile.gettempdir = lambda: str(root / "temp")
+            with mock.patch.object(run_multi_case, "_pid_alive",
+                                   return_value=True), \
+                    mock.patch.object(run_multi_case, "_process_inventory",
+                                      return_value=(True, [], None)):
+                with self.assertRaises(SystemExit):
+                    run_multi_case.cleanup_previous_test_runs(
+                        new_output, "story-suite-new")
+            self.assertTrue(old_output.exists())
+        finally:
+            run_multi_case.OUT_ROOT = original_out
+            tempfile.gettempdir = original_gettempdir
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_unexpired_orphan_lease_blocks_cleanup(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-lease-"))
         original_out = run_multi_case.OUT_ROOT

@@ -394,7 +394,7 @@ modes:
     dimension: readability
     found_round: "2026-08-23"
     form: story 主叙事出现规约编号（仓内标识），评审者对不上
-    clause: B4-6 / rules.md「规约在正文只写中文名」
+    clause: B4-6 / story-write.md「主叙事里仍写中文规约名」
     checker: p07_rule_ids_in_story_body
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P07-rule-ids-in-story-body/bad
@@ -492,7 +492,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-25"
     form: 归档件的图片引用写成裸文件名或指向源材料目录，形态守恒数得到图、评审者打开是红叉
-    clause: B1-10 / rules.md 红线 2「表达形态与数量不得降级」
+    clause: B1-10 / story-write.md「源材料里是图的，到这里还得是图」
     checker: p14_image_broken_link
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P14-image-broken-link/bad

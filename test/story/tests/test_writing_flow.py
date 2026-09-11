@@ -104,13 +104,13 @@ class TestFinalPassLeavesATrace(unittest.TestCase):
 
 
 class TestIssueDefinitionIsOneText(unittest.TestCase):
-    """议题的正面定义只有一份文字，三处逐字一致——改一处忘一处就又有两份说法。"""
+    """议题的正面定义只有一份文字，送达面两处逐字一致——改一处忘一处就又有两份说法。"""
 
     ANCHOR = "**什么算一条议题**"
 
     def paragraphs(self) -> list[str]:
         out = []
-        for rel in ("phases/story-write.md", "phases/spec.md", "rules/rules.md"):
+        for rel in ("phases/story-write.md", "phases/spec.md"):
             text = read(rel)
             self.assertIn(self.ANCHOR, text, f"{rel} 里没有议题的正面定义")
             body = text.split(self.ANCHOR, 1)[1].split("\n\n", 1)[0]

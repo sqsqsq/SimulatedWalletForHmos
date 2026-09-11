@@ -1393,6 +1393,7 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                 int(item["worker_pid"]) for item in
                 (suite.get("case_states") or {}).values()
                 if isinstance(item, dict) and item.get("worker_pid")
+                and str(item.get("status")) not in TERMINAL_STATUS
                 and _pid_alive(int(item["worker_pid"]), item.get("started_at"))
             ]
             target.update({"suite_status": suite.get("status"),
