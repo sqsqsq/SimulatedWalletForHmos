@@ -66,7 +66,8 @@ CLASSES = ("RR", "SR", "AR", "UX", "IMAGES")
 DOC_TARGET = {
     "RR": Path("RR/prd.md"),
     "SR": Path("SR/design.md"),
-    # AR 类不落 design.md —— 那是会被重生成的草稿，材料写进去就丢了
+    # AR 类补料落 upstream.md —— `AR/design.md` 是上游给进来的输入件，S4 提交提取稿时
+    # 整份覆盖它；人工补录的本部件材料要有自己的落点才留得住，而它也是一份登记材料
     "AR": Path("AR/story-src/upstream.md"),
     "UX": Path("ux-reference/README.md"),
 }

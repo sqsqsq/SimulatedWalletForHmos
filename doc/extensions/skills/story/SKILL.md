@@ -1,6 +1,6 @@
 ---
 name: story
-description: /story 需求流程编排——init 拉取需求资料并生成 AR/design.md、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、review 拉回评审反馈。
+description: /story 需求流程编排——init 拉取需求资料并建工作区骨架、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、review 拉回评审反馈。
 ---
 
 # story — 需求开发流程编排
@@ -17,7 +17,7 @@ description: /story 需求流程编排——init 拉取需求资料并生成 AR/
 S1 取材        →  拉三套材料、建工作区骨架
 S2 导入+初析   →  列 inbox → 导入 → 材料盘点 →（材料确认后）需求分析
 S3 三级关卡    →  材料 → 范围怎么定 → 承载哪份
-S4 收口        →  按已定范围生成 AR/design.md，契约置 complete
+S4 收口        →  按已定范围写提取稿，`complete --from` 提交为 AR/design.md、契约置 complete
    ↓
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
@@ -46,7 +46,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | S2 导入 | [rules/inbox_import.md](rules/inbox_import.md) |
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
-| S4 生成 design.md | [rules/ar_design_init.md](rules/ar_design_init.md) |
+| S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
 | 成文：按章写与统稿 | [phases/story-write.md](phases/story-write.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |

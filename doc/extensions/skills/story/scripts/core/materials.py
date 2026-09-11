@@ -194,6 +194,28 @@ def compute_digest(materials: list[dict]) -> str:
     return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def digest_with(manifest: dict, rel: str, sha: str | None) -> str:
+    """把某一份正文源的摘要换成 ``sha`` 之后，材料版本会是多少。
+
+    S4 提交要覆盖 `AR/design.md`，而它本身就是一份材料。没有这一问的话，
+    「材料真的变了」与「这一笔差异是提交自己写下的」在版本号上完全同形，
+    只能二选一去猜；有了它，两者各有确定答案。
+    """
+    items = [dict(m) for m in manifest.get("materials", [])]
+    for item in items:
+        if item.get("paths") == [rel]:
+            item["sha256"] = sha
+    return compute_digest(items)
+
+
+def source_sha(manifest: dict, rel: str) -> str | None:
+    """清单里这份正文源登记的摘要。没登记过这份源则为 None。"""
+    for item in manifest.get("materials", []):
+        if item.get("paths") == [rel]:
+            return item.get("sha256")
+    return None
+
+
 def _same_text(disk: str, want: str) -> bool:
     """正文比对忽略行尾差异：同一份内容在两台机器上落盘的行尾可能不同。"""
     return disk.replace("\r\n", "\n") == want.replace("\r\n", "\n")
