@@ -12,7 +12,8 @@
  *
  * 校验边界：**不校验结论真假**——文档坐标可被 AI 伪造，校验格式只给虚假的安全感。
  * 结论是否成立由 AI verifier 按名称回查源文件、以及开发的证据抽查关卡把关。
- * 唯一能机器验真假的是「数值来源」：标『上游约束』时读 SR/RR 原文核对该数值是否真实存在。
+ * 数值来源也只核「标没标」这个可确定格式；标了『上游约束』的，原文所指业务量
+ * 是否属实、单位换算有没有依据，由 spec overlay 的数值依据判项承担。
  *
  * 契约：stdin JSON ctx → stdout JSON result（同 hooks/coding/pre_check.mjs 演示）。
  */
@@ -27,6 +28,7 @@ import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import {
   coverageProblems, readUse, renderZones, UseError, zoneProblems,
 } from '../shared/knowledge-use.mjs';
+import { acceptanceEntries, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, relDisplay } from '../shared/paths.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -105,23 +107,14 @@ function scanDocCoords(text) {
 /**
  * 数值来源校验（spec-sections 红线：数值必须标来源类型）。
  * 阈值/时长一类数字必须三选一标明来源：上游约束 / 本工程设定 / 平台基线。
- * 标「上游约束」时读上游原文验证该数值真实存在——这是唯一能机器验真假的一环，
- * 也是唯一能抓住「造数字 + 挂假出处」的门禁。
+ * 机械层只核**标没标**；标「上游约束」的是不是真有出处、换算是否成立，
+ * 由 spec overlay 的语义判据回查原文承担——字面命中不等于同一个量，
+ * 未命中也不等于没有真实来源，脚本裁不了这个真假。
  */
 const NUMERIC_RE = /(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)\b/gi;
 const SOURCE_TAG_RE = /(上游约束|本工程设定|平台基线|无上游依据)/;
-/** 单位同义词：回查上游时逐个试（上游可能写「30 分钟」而 spec 写「30 min」） */
-const UNIT_ALIASES = {
-  ms: ['ms', '毫秒'],
-  毫秒: ['ms', '毫秒'],
-  s: ['s', '秒'],
-  秒: ['s', '秒'],
-  min: ['min', '分钟'],
-  分钟: ['min', '分钟'],
-  次: ['次'],
-};
 
-function scanNumericSources(text, upstreamTexts) {
+function scanNumericSources(text) {
   const problems = [];
   const lines = text.split(/\r?\n/);
   let inFence = false;
@@ -139,24 +132,6 @@ function scanNumericSources(text, upstreamTexts) {
         `第 ${i + 1} 行的数值「${nums.map(m => m[0]).join('、')}」未标来源类型` +
           `（须三选一：上游约束：<文档名> / 本工程设定，无上游依据 / 平台基线）：${line.trim().slice(0, 60)}`
       );
-      continue;
-    }
-    if (/上游约束/.test(line)) {
-      for (const m of nums) {
-        const numeral = m[1];
-        // 必须**带单位**回查：裸数字（`2`、`30`）会在上游任意位置碰巧命中
-        // （`§2`、`2 个场景`、日期），带上单位才是在找同一个量
-        const units = UNIT_ALIASES[m[2].toLowerCase()] ?? [m[2]];
-        const found = upstreamTexts.some(t =>
-          units.some(u => t.includes(`${numeral}${u}`) || t.includes(`${numeral} ${u}`))
-        );
-        if (!found) {
-          problems.push(
-            `第 ${i + 1} 行声称「上游约束」，但上游文档（SR/RR）中不存在数值「${numeral}」` +
-              `——伪造出处，须改标「本工程设定，无上游依据」或回源核实：${line.trim().slice(0, 60)}`
-          );
-        }
-      }
     }
   }
   return problems;
@@ -262,48 +237,37 @@ function knowledgeExitProblems(ctx, lines) {
  */
 function acceptanceCoverage(ctx, specIds) {
   const problems = [];
-  const featureDir = featureRoot(ctx.projectRoot, ctx.feature);
 
   // **不和第二份登记表比对**：spec 阶段的判定结论只有 knowledge-use.yaml 一份。
   // 另设一份独立的判定记录文件，会让同一条结论有两处写法、两处判定，
   // 评审者看到互相矛盾的结论时无从知道哪个是准的。归档件的符合性附录由 writer 直接写。
 
   // acceptance 侧：知识义务的验证要求单源（下游 ut/testing 靠它分派）
-  const accPath = path.join(featureDir, 'acceptance.yaml');
-  if (fs.existsSync(accPath)) {
-    // **按结构读，不按正则扫**：正则扫的是「文件里出现过这个编号」，
-    // 它分不清编号写在哪一层，也认不出「一条 criteria 写了一串编号」这种形态——
-    // 那形态下游分派不了，而作者会以为自己已经桥接过了。
-    let criteria = null;
-    try {
-      criteria = parseYaml(fs.readFileSync(accPath, 'utf-8'))?.criteria;
-    } catch (e) {
-      problems.push(`acceptance.yaml 读不出结构（${e?.message ?? e}）——`
-        + '知识义务的桥接在它的 criteria 里，读不出就核不了');
+  const { acceptance, error, exists } = readAcceptance(ctx.projectRoot, ctx.feature);
+  if (!exists) return problems;
+  if (error) {
+    problems.push(`${error}——知识义务的桥接在本阶段的 criteria 里，读不出就核不了`);
+    return problems;
+  }
+  // **按结构读，不按正则扫**：正则扫的是「文件里出现过这个编号」，
+  // 它分不清编号写在哪一层，也认不出「一条 criteria 写了一串编号」这种形态——
+  // 那形态下游分派不了，而作者会以为自己已经桥接过了。
+  // Spec 只桥 criteria：boundaries 是边界场景，出现就代替不了 criteria 的桥。
+  const { entries, problems: shape } = acceptanceEntries(acceptance, ['criteria']);
+  problems.push(...shape);
+  const accIds = new Set(
+    entries.map(e => String(e.criterion.knowledge_rule).trim()));
+  if (accIds.size || specIds.size) {
+    const missing = [...specIds].filter(id => !accIds.has(id));
+    if (missing.length) {
+      problems.push(`这些条目有代码要求但 acceptance.yaml 没有对应验收条目：${missing.join('、')}`
+        + '——每条要求要有一条带 knowledge_rule 的 criteria，'
+        + '它是 ut/testing 找到「该覆盖哪个场景」的桥（分派本身由 contracts 里 must.verify 定），'
+        + '缺了下游就无从覆盖');
     }
-    const accIds = new Set();
-    for (const row of Array.isArray(criteria) ? criteria : []) {
-      // **没有这个字段的 criteria 是普通业务验收**，不是漏写：一条需求里绝大多数
-      // 验收点与规约无关，为它们各报一条会把真正缺的那几条淹掉。
-      if (!row || typeof row !== 'object' || !('knowledge_rule' in row)) continue;
-      const value = row.knowledge_rule;
-      if (typeof value === 'string' && value.trim()) { accIds.add(value.trim()); continue; }
-      problems.push(`criteria「${String(row.id ?? '（没写 id）')}」的 knowledge_rule 不是一个编号——`
-        + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
-        + '写成列表或留空的话，下游按编号分派时对不到场景（形状见任务包 §2）');
-    }
-    if (accIds.size || specIds.size) {
-      const missing = [...specIds].filter(id => !accIds.has(id));
-      if (missing.length) {
-        problems.push(`这些条目有代码要求但 acceptance.yaml 没有对应验收条目：${missing.join('、')}`
-          + '——每条要求要有一条带 knowledge_rule 的 criteria，'
-          + '它是 ut/testing 找到「该覆盖哪个场景」的桥（分派本身由 contracts 里 must.verify 定），'
-          + '缺了下游就无从覆盖');
-      }
-      const unknown = [...accIds].filter(id => !specIds.has(id));
-      if (unknown.length) {
-        problems.push(`acceptance.yaml 的 knowledge_rule 指向了 spec 里没有要求的条目：${unknown.join('、')}`);
-      }
+    const unknown = [...accIds].filter(id => !specIds.has(id));
+    if (unknown.length) {
+      problems.push(`acceptance.yaml 的 knowledge_rule 指向了 spec 里没有要求的条目：${unknown.join('、')}`);
     }
   }
   return problems;
@@ -489,16 +453,8 @@ export default guard('spec', async (ctx) => {
       );
     }
 
-    // 数值来源：读 SR/RR/AR 原文验证「上游约束」类数值真实存在（唯一能机器验真假的一环）。
-    // **排除已被 archive 覆盖的 AR/design.md**——archive 会用 story.md 覆盖它，覆盖后它不再是
-    // 上游输入件而是本需求自己的产物；拿它回查等于让产物给自己背书——SR/RR 里没有的数值，
-    // 会因为被覆盖的 AR 里有（那些值本就是从 spec 合成来的）而逃过校验。
-    const upstreamTexts = ['SR/design.md', 'RR/prd.md', 'AR/design.md']
-      .map(p => path.join(featureDir, p))
-      .filter(p => fs.existsSync(p))
-      .map(p => fs.readFileSync(p, 'utf-8'))
-      .filter(t => !/^>\s*源摘要：/m.test(t)); // story.md 的特征行；AR 提取件不会有
-    const numericProblems = scanNumericSources(text, upstreamTexts);
+    // 数值来源：机械层只核标没标（结构门）；真假归 overlay 的数值依据判项。
+    const numericProblems = scanNumericSources(text);
     numericProblems.slice(0, 5).forEach(p => problems.push(p));
     if (numericProblems.length > 5) problems.push(`另有 ${numericProblems.length - 5} 处数值来源问题`);
   }

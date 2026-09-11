@@ -37,7 +37,7 @@ coordinator_role: 交互封装
 
 | 模式概念 | 投影到 |
 |---|---|
-| 交互管理器持有者（构建动作表并触发的类） | `contracts.yaml` 的 `files` / `interfaces`；`project_knowledge.pattern_applications[].instance` |
+| 交互管理器持有者（构建动作表并触发的类） | `contracts.yaml` 的 `files`（标 `pattern` / `role`） / `interfaces`——实例是这些正常实体，不另设旁账 |
 | 动作枚举（页内执行步骤） | `contracts.yaml` 的 `interfaces`——**不进** `use-cases.yaml` |
 | 用户可触发的动作与它调用的业务方法 | `use-cases.yaml` 的 `ui_bindings.user_actions[].calls` |
 | 用户视角的一次完整操作序列 | `use-cases.yaml` 的 `branches[].user_sequence` |

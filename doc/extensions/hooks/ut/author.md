@@ -40,4 +40,4 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <需�
 - 用例名对得上而断言不相干——判据是**用例是否真的覆盖了那个场景**，
   不是用例名里有没有出现该域的词。按验收条目的 `ut_focus` 写断言。
 
-覆盖不了就回 plan 把 `must.verify` 改成 `device`，不要留一条名字对得上、断言不相干的用例充数。
+覆盖不了就回 plan 核实际验法——场景确实 UT 验不了时，由 plan 修正 `must.verify`；不要为过检查改分派，也不要留一条名字对得上、断言不相干的用例充数。

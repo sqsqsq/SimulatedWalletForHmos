@@ -163,15 +163,71 @@ export function readAcceptance(projectRoot, feature) {
   }
 }
 
-/** acceptance 中带 `knowledge_rule` 的条目：规约编号 → 验收条目。 */
-export function knowledgeCriteria(acceptance) {
-  const out = new Map();
-  for (const key of ['criteria', 'boundaries']) {
-    for (const c of asArray(acceptance?.[key])) {
-      if (c && typeof c === 'object' && c.knowledge_rule) {
-        out.set(String(c.knowledge_rule).trim(), c);
-      }
+/**
+ * acceptance 条目的规范化读取 —— 各阶段按自己的集合策略桥接前的唯一入口。
+ *
+ * **一条验收条目可以只对应一条规约，一条规约常有多个验收条目**：同一条规约在
+ * 不同场景下验收（正常路径、边界、异常恢复），下游要逐条覆盖，不能只看最后一条。
+ * 这里把「哪个集合、第几条、knowledge_rule 是什么」一次读清，各阶段只做集合选择
+ * 与差集判断，不再各写一遍逐行解析。
+ *
+ * 只读解析结果，不改输入对象，不落盘。
+ *
+ * @param {object|null} acceptance readAcceptance 解析出的 acceptance
+ * @param {string[]} sections 调用方显式传入的集合名（如 ['criteria'] 或 ['criteria','boundaries']）
+ * @returns {{entries: {section: string, criterion: object}[], problems: string[]}}
+ *   缺集合视为空；非数组集合或非对象成员报明集合与序号；`knowledge_rule` 缺省的条目
+ *   属普通业务验收（绝大多数验收点与规约无关，为它们各报一条会淹掉真正缺的），
+ *   存在时须为非空字符串——写成列表的「一条 criteria 桥一串编号」下游分派不了。
+ */
+export function acceptanceEntries(acceptance, sections) {
+  const problems = [];
+  const entries = [];
+  for (const section of sections) {
+    const value = acceptance?.[section];
+    if (value === undefined || value === null || value === '') continue;
+    if (!Array.isArray(value)) {
+      problems.push(`acceptance.yaml 的 ${section} 不是列表（读到 ${typeof value}）——`
+        + '桥接按条目逐条读，读不出结构就核不了');
+      continue;
     }
+    value.forEach((row, i) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        problems.push(`acceptance.yaml 的 ${section} 第 ${i + 1} 条不是键值对象——`
+          + '验收条目要写成「id / 场景 / 通过条件」的映射，裸值桥不到知识条目');
+        return;
+      }
+      if (!('knowledge_rule' in row)) return;
+      const rule = row.knowledge_rule;
+      if (typeof rule !== 'string' || !rule.trim()) {
+        problems.push(`${section}「${String(row.id ?? '（没写 id）')}」的 knowledge_rule 不是一个编号——`
+          + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
+          + '写成列表或留空的话，下游按编号分派时对不到场景（形状见任务包 §2）');
+        return;
+      }
+      entries.push({ section, criterion: row });
+    });
   }
-  return out;
+  return { entries, problems };
+}
+
+/**
+ * 规约编号 → 该编号下**全部**验收条目。
+ *
+ * 旧实现 `Map.set(rule, 单条)` 会在同 rule 多条 AC 时静默只留最后一条——
+ * 作者桥接了两条，下游只验一条，剩下的场景没有任何人看。这里按数组收，
+ * 消费者先处理 `problems` 再查 `byRule`，不能过滤非法行后以「剩余为空」放行。
+ *
+ * @returns {{byRule: Map<string, object[]>, problems: string[]}}
+ */
+export function knowledgeCriteria(acceptance, sections) {
+  const { entries, problems } = acceptanceEntries(acceptance, sections);
+  const byRule = new Map();
+  for (const { criterion } of entries) {
+    const rule = String(criterion.knowledge_rule).trim();
+    const list = byRule.get(rule) ?? [];
+    list.push(criterion);
+    byRule.set(rule, list);
+  }
+  return { byRule, problems };
 }

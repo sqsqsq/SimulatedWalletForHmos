@@ -351,5 +351,152 @@ class TheObligationReachesTheDownstream(NeutralKnowledgeCase):
         self.assertNotIn("NEU-01 缺", self.ut_check())
 
 
+class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
+    """acceptance 桥接一对多：同一条规约的多个验收条目逐条核，不能只留最后一条。
+
+    旧实现 `Map.set(rule, 单条)` 在同 rule 多条 AC 时静默只留最后一条——
+    作者桥接了两条，下游只验一条。解析失败也要接住报出来，不能当空集合放行。
+    """
+
+    def write_acceptance(self, text: str) -> None:
+        (self.feature_root / "acceptance.yaml").write_text(text, encoding="utf-8")
+
+    def cover(self, ids: list[str]) -> None:
+        """UT 侧的覆盖证据：报告文件里出现这些编号就算覆盖到。"""
+        report = self.feature_root / "ut" / "reports"
+        report.mkdir(parents=True, exist_ok=True)
+        (report / "ac-coverage.json").write_text(json.dumps(ids), encoding="utf-8")
+
+    def ut_message(self) -> str:
+        (self.feature_root / "contracts.yaml").write_text(
+            "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"
+            "    methods:\n      - name: emitWithTrace\n"
+            "        must:\n          - rule: NEU-01\n"
+            "            text: 入口生成标识并透传给后两步\n            verify: ut\n",
+            encoding="utf-8")
+        (self.feature_root / "ut").mkdir(parents=True, exist_ok=True)
+        proc = node("--input-type=module", "-e",
+                    f"const hook = (await import({as_url(self.ext / 'hooks/ut/post_check.mjs')})).default;"
+                    f"const out = await hook({{ phase: 'ut', feature: {json.dumps(FEATURE)},"
+                    f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                    "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout or "{}").get("message") or ""
+
+    def acceptance_with(self, body: str) -> str:
+        return ("criteria:\n"
+                "  - id: AC-1\n    knowledge_rule: NEU-01\n"
+                "    description: 正常路径拿到标识\n"
+                "  - id: AC-2\n    knowledge_rule: NEU-01\n"
+                "    description: 重试路径复用同一标识\n") + body
+
+    def test_two_entries_same_rule_must_both_be_covered(self) -> None:
+        """同 rule 的 AC-1/AC-2 只覆盖第二条：第一条必须被点名。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(self.acceptance_with(""))
+        self.cover(["AC-2"])
+        message = self.ut_message()
+        self.assertIn("AC-1", message, f"只验最后一条的话 AC-1 就静默溜了：{message}")
+        self.assertNotIn("AC-2 在 UT 侧找不到覆盖证据", message)
+
+    def test_both_entries_covered_and_plain_business_ac_not_flagged(self) -> None:
+        """两条全覆盖通过；没有 knowledge_rule 的普通业务验收不误报。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(self.acceptance_with(
+            "  - id: AC-9\n    description: 与规约无关的普通业务验收点\n"))
+        self.cover(["AC-1", "AC-2"])
+        message = self.ut_message()
+        self.assertNotIn("找不到覆盖证据", message)
+        self.assertNotIn("AC-9", message)
+        self.assertNotIn("没写 id", message)
+
+    def test_an_entry_without_an_id_is_named(self) -> None:
+        """按编号回查覆盖证据的前提是有编号——缺 id 要逐条点名。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(
+            "criteria:\n"
+            "  - id: AC-1\n    knowledge_rule: NEU-01\n"
+            "  - knowledge_rule: NEU-01\n")
+        self.cover(["AC-1"])
+        self.assertIn("没写 id", self.ut_message())
+
+    def test_a_list_shaped_rule_is_refused_not_flattened(self) -> None:
+        """一条 criteria 桥一串编号下游分派不了——报错，不悄悄拍平。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(
+            "criteria:\n"
+            "  - id: AC-1\n    knowledge_rule: [NEU-01, NEU-02]\n")
+        self.assertIn("不是一个编号", self.ut_message())
+
+    def test_a_broken_acceptance_is_surfaced_not_treated_as_empty(self) -> None:
+        """解析失败接住报出来——当空集合放行，义务就全部静默失去验收条目。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        # yaml-lite 对部分残缺输入会宽容解析；缩进不一致是它确定抛错的形态
+        self.write_acceptance("criteria:\n - id: x\n  bad: [\n")
+        self.assertIn("解析失败", self.ut_message())
+
+    def test_boundaries_count_for_ut_but_not_for_spec(self) -> None:
+        """UT 桥 criteria+boundaries 两个集合；spec 只认 criteria。
+
+        Spec 桥接只在 criteria：boundaries 是边界场景，出现在那里代替不了
+        criteria 的桥——否则 spec 判了命中却没有任何 criteria 扛，ut/testing
+        的分派照样对不到场景。
+        """
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(
+            "boundaries:\n"
+            "  - id: BD-1\n    knowledge_rule: NEU-01\n")
+        self.cover(["BD-1"])
+        message = self.ut_message()
+        self.assertNotIn("没有knowledge_rule: NEU-01 的验收条目", message,
+                         f"boundaries 的条目该计入 UT 桥：{message}")
+        spec_proc = node("--input-type=module", "-e",
+                         f"const hook = (await import({as_url(self.ext / 'hooks/spec/post_check.mjs')})).default;"
+                         f"const out = await hook({{ phase: 'spec', feature: {json.dumps(FEATURE)},"
+                         f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                         "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, spec_proc.returncode, spec_proc.stderr)
+        spec_message = json.loads(spec_proc.stdout or "{}").get("message") or ""
+        self.assertIn("没有对应验收条目", spec_message,
+                      f"spec 的桥只在 criteria——boundaries 顶替不了：{spec_message}")
+
+    def test_numeric_source_tags_are_structural_not_literal(self) -> None:
+        """数值来源机械门只核「标没标」；标了的真假归 overlay 语义判据。
+
+        标了「上游约束」的行不再因上游原文没有字面命中被拦——字面命中不等于
+        同一个量，未命中也不等于没有真实来源。未标来源类型的数值仍要被点名。
+        """
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        # 数值红线是 story 场景的判据：有流程契约的 feature 才核它
+        flow_dir = self.feature_root / "AR" / "story-src"
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        (flow_dir / "story-flow.json").write_text(json.dumps({
+            "schema": 3, "feature": FEATURE, "status": "complete",
+            "rounds": [{"round": 1, "gates": []}],
+        }), encoding="utf-8")
+        self.spec_path.write_text(
+            self.spec_path.read_text(encoding="utf-8")
+            + "\n接口响应不超过 500ms（上游约束）。\n单次重试间隔 3s。\n",
+            encoding="utf-8")
+        spec_proc = node("--input-type=module", "-e",
+                         f"const hook = (await import({as_url(self.ext / 'hooks/spec/post_check.mjs')})).default;"
+                         f"const out = await hook({{ phase: 'spec', feature: {json.dumps(FEATURE)},"
+                         f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                         "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, spec_proc.returncode, spec_proc.stderr)
+        spec_message = json.loads(spec_proc.stdout or "{}").get("message") or ""
+        self.assertIn("未标来源类型", spec_message, spec_message)
+        self.assertIn("3s", spec_message)
+        self.assertNotIn("500ms", spec_message,
+                         f"标了来源的数值不该被字面匹配拦：{spec_message}")
+
+
 if __name__ == "__main__":
     unittest.main()

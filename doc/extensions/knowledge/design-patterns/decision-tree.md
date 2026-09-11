@@ -39,7 +39,7 @@ coordinator_role: 构建与启动
 
 | 模式概念 | 投影到 |
 |---|---|
-| 树的持有者（构建并启动树的类） | `contracts.yaml` 的 `files` / `interfaces`；`project_knowledge.pattern_applications[].instance` |
+| 树的持有者（构建并启动树的类） | `contracts.yaml` 的 `files`（标 `pattern` / `role`） / `interfaces`——实例是这些正常实体，不另设旁账 |
 | 节点枚举（内部执行步骤） | `contracts.yaml` 的 `interfaces`——**不进** `use-cases.yaml` |
 | 用户或 UI 能观察到的业务状态 | `use-cases.yaml` 的 `state_model.phases` |
 | 一条完整路径（用户视角的一次业务往返） | `use-cases.yaml` 的 `branches[].user_sequence` |

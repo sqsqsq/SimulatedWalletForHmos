@@ -200,6 +200,103 @@ class PlanPatternCrossCheck(unittest.TestCase):
         self.assertNotIn("理由列是空的", message)
 
 
+class MultiCandidateUnits(PlanPatternCrossCheck):
+    """同一单元两个候选是合法业务：各配各的行，谁被选谁被否都分得清。
+
+    旧实现按单元单值记账——同单元第二个候选覆盖第一个，plan 只看最后一条，
+    漏选的那个候选在闭环里悄悄消失。这里按 (单元, 候选) 逐对核：07 的七种局面
+    各走各的应有结果，两类临时知识都用清单里在册的模式名，不绑某个业务。
+    """
+
+    UNIT = "多分支的凭证生成流程"
+
+    def workspace_with_patterns(self, pattern_rows: list[str]) -> Path:
+        root = self.workspace()
+        use = root / "doc" / "features" / FEATURE / "spec" / "knowledge-use.yaml"
+        text = use.read_text(encoding="utf-8")
+        use.write_text(
+            text.split("patterns:")[0] + "patterns:\n" + "\n".join(pattern_rows) + "\n",
+            encoding="utf-8")
+        return root
+
+    def write_plan_table(self, root: Path, table_rows: list[str]) -> None:
+        self.plan_path(root).write_text(
+            "# 计划\n\n## 知识决策（设计输入）\n\n### 设计模式选型\n\n"
+            "| 适用单元 | 候选 | 选 / 不选 | 实例名 | 理由 |\n"
+            "|---|---|---|---|---|\n" + "\n".join(table_rows) +
+            "\n\n## 2. 模块架构图\n\n略。\n", encoding="utf-8")
+
+    def test_two_candidates_can_be_split_adopt_and_reject(self) -> None:
+        """同单元双候选，一个采用一个拒绝（带理由）——两个结论都合法。"""
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+            f"  - unit: {self.UNIT}", "    candidate: page-interaction",
+            "    signal: 步骤之间有先后驱动",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+            f"| {self.UNIT} | page-interaction | 不选 | | 分支之间没有业务结果驱动的先后，各步独立返回 |",
+        ])
+        message = self.run_hook(root)
+        self.assertNotIn("没有这一行", message)
+        self.assertNotIn("理由列是空的", message)
+        self.assertNotIn("spec 没有提出它", message)
+        self.assertNotIn("登记了两次", message)
+
+    def test_two_candidates_both_adopted_pass(self) -> None:
+        """组合采用也合法——两个候选各自有行、各自给结论。"""
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+            f"  - unit: {self.UNIT}", "    candidate: page-interaction",
+            "    signal: 步骤之间有先后驱动",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+            f"| {self.UNIT} | page-interaction | 采用 | PageHost | 页内交互由业务结果驱动 |",
+        ])
+        self.assertNotIn("没有这一行", self.run_hook(root))
+
+    def test_a_missing_second_choice_is_named(self) -> None:
+        """双候选只给一个结论——另一个就在闭环里悄悄消失了。"""
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+            f"  - unit: {self.UNIT}", "    candidate: page-interaction",
+            "    signal: 步骤之间有先后驱动",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+        ])
+        self.assertIn("没有这一行", self.run_hook(root))
+
+    def test_a_duplicated_pair_is_named_not_overwritten(self) -> None:
+        """同一 unit+candidate 登记两次要报错——后写覆盖前写会让一个候选凭空消失。"""
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 另一段业务也要决策树",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+        ])
+        self.assertIn("登记了两次", self.run_hook(root))
+
+    def test_a_candidate_plan_adds_on_its_own_is_named(self) -> None:
+        """plan 凭空加一个 spec 没提出的候选——选型只能从登记的候选里选。"""
+        root = self.workspace_with_patterns([
+            f"  - unit: {self.UNIT}", "    candidate: decision-tree",
+            "    signal: 分支各自多步推进",
+        ])
+        self.write_plan_table(root, [
+            f"| {self.UNIT} | decision-tree | 采用 | TreeHost | 三个分支各自多步 |",
+            "| 另一段页面交互 | page-interaction | 采用 | PageHost | 想加就加 |",
+        ])
+        self.assertIn("spec 没有提出它", self.run_hook(root))
+
+
 if __name__ == "__main__":
     unittest.main()
 

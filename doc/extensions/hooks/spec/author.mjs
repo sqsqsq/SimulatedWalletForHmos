@@ -122,7 +122,7 @@ function acceptanceKeys(useFile, projectRoot, feature) {
   '',
   '```yaml',
   'criteria:',
-  '  - id: AC-K1',
+  '  - id: AC-1',
   '    priority: P2',
   '    description: {{这条规约在本需求上要保证什么，用可观察的话写}}',
   '    testable: true',

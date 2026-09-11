@@ -63,11 +63,13 @@ export default guard('ut', async (ctx) => {
     return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '契约里没有 must' }] });
   }
 
-  // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）
-  const { acceptance } = readAcceptance(ctx.projectRoot, ctx.feature);
-  const criteria = knowledgeCriteria(acceptance);
+  // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）。
+  // 同一规约常有多个验收条目（不同场景），逐条核，不能只看最后一条；
+  // 解析失败要接住报出来，不能当空集合放行。
+  const { acceptance, error: accError } = readAcceptance(ctx.projectRoot, ctx.feature);
+  const { byRule, problems: accProblems } = knowledgeCriteria(acceptance, ['criteria', 'boundaries']);
   const covered = coveredAcceptanceIds(ctx.projectRoot, ctx.feature);
-  const problems = [];
+  const problems = accError ? [accError] : [...accProblems];
   const notApplicable = [];
 
   for (const ob of obligations) {
@@ -77,16 +79,22 @@ export default guard('ut', async (ctx) => {
       notApplicable.push(`${rule}（verify: ${ob.verify || '未标'}，不由 UT 验）`);
       continue;
     }
-    const c = criteria.get(rule);
-    if (!c) {
+    const entries = byRule.get(rule);
+    if (!entries || !entries.length) {
       problems.push(`义务 ${rule} 标了 verify: ${ob.verify}，但 acceptance.yaml 里没有`
         + `knowledge_rule: ${rule} 的验收条目——本阶段无从知道该覆盖哪个场景`);
       continue;
     }
-    const id = String(c.id ?? '').trim();
-    if (id && !covered.has(id)) {
-      problems.push(`义务 ${rule} 的验收条目 ${id} 在 UT 侧找不到覆盖证据`
-        + `——本阶段该覆盖它却没有；确实不该由 UT 验就回 plan 把 must.verify 改成 device`);
+    for (const c of entries) {
+      const id = String(c.id ?? '').trim();
+      if (!id) {
+        problems.push(`义务 ${rule} 有一条验收条目没写 id——按编号回查覆盖证据时对不到场景`);
+        continue;
+      }
+      if (!covered.has(id)) {
+        problems.push(`义务 ${rule} 的验收条目 ${id} 在 UT 侧找不到覆盖证据`
+          + `——本阶段该覆盖它却没有；确实 UT 验不了要回 plan 核实际验法，不为过检查改分派`);
+      }
     }
   }
 

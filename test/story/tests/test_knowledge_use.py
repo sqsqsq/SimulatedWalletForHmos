@@ -245,6 +245,24 @@ class TestPatternsAreCandidatesOnly(KnowledgeUseCase):
         self.write_use(patterns="  - unit: \n    candidate: \n    signal: ")
         self.assert_render_names("没写 unit")
 
+    def test_registered_patterns_with_no_rows_are_still_named(self) -> None:
+        """有在册模式时空着不行——「判过了不需要」要写出单元与理由。"""
+        self.write_use(patterns="")
+        self.assert_render_names("一个适用单元都没登记")
+
+    def test_zero_registered_patterns_make_an_empty_list_legal(self) -> None:
+        """零在册模式是合法业务：patterns 空着不再被点名。
+
+        候选集是空的，「这一段像哪个模式」注定只有一种答案——逼作者造一行
+        假候选或假反证，得到的是凑数的登记，不是判断。
+        """
+        manifest = self.root / "doc" / "extensions" / "manifest.yaml"
+        text = "\n".join(l for l in manifest.read_text(encoding="utf-8").split("\n")
+                         if "design-patterns" not in l)
+        manifest.write_text(text, encoding="utf-8")
+        self.write_use(patterns="")
+        self.render_ok()
+
     def test_choosing_in_spec_is_refused(self) -> None:
         """在 spec 里选型即点名——那一步的结论落 plan 的 contracts.yaml。"""
         self.write_use(patterns=f"  - unit: 凭证生成\n    candidate: {PATTERN}\n"

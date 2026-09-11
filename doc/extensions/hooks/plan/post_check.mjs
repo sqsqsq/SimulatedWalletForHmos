@@ -120,10 +120,14 @@ function chapterAt(rows, re) {
 }
 
 /**
- * spec 登记了候选的适用单元：`{ 适用单元 → 候选 }`。
+ * spec 登记了候选的适用单元：`unit -> Map(candidate -> row)`。
  *
- * 同样读真源。「无候选」是正常结论，不进这个集合——本判据核的是
- * **登记了候选却在 plan 消失或被空手否掉**。
+ * 同样读真源。同一单元允许登记多个候选，各自要给结论；同一 unit+candidate
+ * 重复登记报错，不能后写覆盖前写。「无候选」是正常结论，不进这个集合——
+ * 本判据核的是**登记了候选却在 plan 消失或被空手否掉**。
+ *
+ * @returns {{hits: Map<string, Map<string, object>>, problems: string[]} | null}
+ *   读不到那份判断时 null——调用方据此记「这条没执行」
  */
 function specPatternHits(projectRoot, feature) {
   let use;
@@ -134,20 +138,29 @@ function specPatternHits(projectRoot, feature) {
     throw e;
   }
   const hits = new Map();
+  const problems = [];
   for (const row of use.patterns) {
     const unit = String(row?.unit ?? '').trim();
     const candidate = String(row?.candidate ?? '').trim();
     if (!unit || !candidate || candidate.includes('无候选')) continue;
-    hits.set(unit, candidate);
+    let byPattern = hits.get(unit);
+    if (!byPattern) { byPattern = new Map(); hits.set(unit, byPattern); }
+    if (byPattern.has(candidate)) {
+      problems.push(`spec 的 patterns 把「${unit}」的候选 ${candidate} 登记了两次——`
+        + '删掉重复行；同一单元有多个候选时各写一行，选型时逐个给结论');
+      continue;
+    }
+    byPattern.set(candidate, row);
   }
-  return hits;
+  return { hits, problems };
 }
 
 /**
- * plan 的设计模式选型表：`{ 适用单元 → { 选不选, 理由 } }`。
+ * plan 的设计模式选型表：`unit -> Map(candidate -> { 选不选, 理由 })`。
  *
  * 选型表就在「知识决策（设计输入）」章里——它是 plan 期的可见面，
  * 有 plan 门禁看、有 verifier 问，模式否决就该落在这里。
+ * 候选列（第二列）是身份的另一半：同一单元有多个候选时，靠它才分得清谁被选谁被否。
  */
 function planPatternChoices(planText) {
   const rows = lines(planText);
@@ -155,9 +168,13 @@ function planPatternChoices(planText) {
   if (!at) return null;
   const out = new Map();
   for (const cells of tableRows(rows, at.start + 1, at.level)) {
-    const [unit, , choice, , reason] = cells;
+    const [unit, candidate, choice, , reason] = cells;
     if (!unit || /^\{.*\}$/.test(unit)) continue;
-    out.set(unit, { choice: choice ?? '', reason: reason ?? '' });
+    const pattern = String(candidate ?? '').trim();
+    if (!pattern) continue;   // 没写候选的行没有 (unit, pattern) 身份，配不了对
+    let byPattern = out.get(unit);
+    if (!byPattern) { byPattern = new Map(); out.set(unit, byPattern); }
+    byPattern.set(pattern, { choice: choice ?? '', reason: reason ?? '' });
   }
   return out;
 }
@@ -284,31 +301,47 @@ export default guard('plan', async (ctx) => {
   // 把它否了——**拿临时形态当信号输入**。否决在闭环内完成，没有任何人过目，
   // 知识文件本身一个字没错。
   //
-  // 这里只判形式两件事：命中的候选有没有行、不选时理由列空不空。
+  // 这里只判形式几件事：命中的候选按 (单元, 候选) 逐对有没有行、不选时理由列空不空、
+  // plan 有没有把 spec 没提出的候选加进来。同一单元多个候选各配各的行——
   // 「理由引的是业务信号还是承载形态」是语义，归 verifier 逐问——
   // 用措辞正则去拦，拦出来的是换一种说法的同一件事。
   {
-    const hits = specPatternHits(ctx.projectRoot, ctx.feature);
+    const specHits = specPatternHits(ctx.projectRoot, ctx.feature);
     const choices = planPatternChoices(planText);
-    if (hits === null) {
+    if (specHits === null) {
       skipped.push({ what: '设计模式候选的交叉核对', why: '读不到 spec/knowledge-use.yaml' });
-    } else if (choices === null) {
-      if (hits.size) {
-        problems.push(`spec 登记了 ${hits.size} 条设计模式候选，plan.md 却没有「设计模式选型」表`
-          + '——命中的候选要逐条给结论，选或不选都算');
-      }
     } else {
-      for (const [unit, candidate] of hits) {
-        const row = choices.get(unit);
-        if (!row) {
-          problems.push(`spec 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
-            + '——命中的候选逐条给结论，漏一行它就在闭环里悄悄消失了');
-          continue;
+      problems.push(...specHits.problems);
+      const hits = specHits.hits;
+      if (choices === null) {
+        const total = [...hits.values()].reduce((n, m) => n + m.size, 0);
+        if (total) {
+          problems.push(`spec 登记了 ${total} 条设计模式候选，plan.md 却没有「设计模式选型」表`
+            + '——命中的候选要逐条给结论，选或不选都算');
         }
-        if (row.choice.includes('不选') && !row.reason) {
-          problems.push(`「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
-            + '——不选是表态有后果的决策，理由要写成业务信号的反证'
-            + '（那个业务过程为什么不满足该模式的信号），不能以当前是模拟或演示承载为由');
+      } else {
+        for (const [unit, byPattern] of hits) {
+          for (const [candidate, row] of byPattern) {
+            const choice = choices.get(unit)?.get(candidate);
+            if (!choice) {
+              problems.push(`spec 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
+                + '——命中的候选逐条给结论，漏一行它就在闭环里悄悄消失了');
+              continue;
+            }
+            if (choice.choice.includes('不选') && !choice.reason) {
+              problems.push(`「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
+                + '——不选是表态有后果的决策，理由要写成业务信号的反证'
+                + '（那个业务过程为什么不满足该模式的信号），不能以当前是模拟或演示承载为由');
+            }
+          }
+        }
+        for (const [unit, byPattern] of choices) {
+          for (const candidate of byPattern.keys()) {
+            if (!hits.get(unit)?.has(candidate)) {
+              problems.push(`plan 的设计模式选型表给「${unit}」写了候选 ${candidate}，spec 没有提出它`
+                + '——模式选型只能从 spec 登记的候选里选，真需要时回 spec 补候选登记');
+            }
+          }
         }
       }
     }
