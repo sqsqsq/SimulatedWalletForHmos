@@ -23,7 +23,8 @@ import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/lint-rules.mjs';
 import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
-import { queryFlowStatus } from '../../skills/story/scripts/core/flow/client.mjs';
+import { FLOW_SCRIPT, queryFlowStatus }
+  from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
   from '../../skills/story/scripts/core/story-build.mjs';
@@ -41,8 +42,10 @@ const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
  */
 function positionSection(projectRoot, feature) {
   const { data: status, error } = queryFlowStatus(projectRoot, feature, { timeoutMs: 20000 });
-  const command = 'python doc/extensions/skills/story/scripts/core/story_flow.py status'
-    + ` --feature ${feature} --project-root ${projectRoot}`;
+  // 照抄这一行就要能原样跑：脚本取客户端真正调的那一个，参数按 shell 规则引起来
+  // （路径带空格或 `$` 时，裸拼会被拆开或被展开）。
+  const command = `python ${shellArg(FLOW_SCRIPT)} status`
+    + ` --feature ${shellArg(feature)} --project-root ${shellArg(projectRoot)}`;
   if (error) {
     return ['## 1. 你现在在哪', '',
       `**位置没取到：${error}**`, '',

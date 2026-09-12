@@ -12,8 +12,14 @@ import { spawnSync } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-//: 正式入口就在上一级。调用方不传脚本位置：传了就等于允许两个消费者问不同的脚本。
-const FLOW_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'story_flow.py');
+/**
+ * 正式入口就在上一级。调用方不传脚本位置：传了就等于允许两个消费者问不同的脚本。
+ *
+ * 导出它是为了**渲染可复跑的命令**：作者要自己跑一次时，命令里的脚本得是这里真正调的
+ * 那一个。写相对路径的话，它只在工程与机制同一个仓、且 cwd 恰好是工程根时才跑得起来。
+ */
+export const FLOW_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)),
+  '..', 'story_flow.py');
 
 //: 两个候选名是现有行为。**只有解释器起不动才换下一个**：已经跑起来并报了业务失败
 //: 的，换个解释器只会得到同一句话，而原因在中途被换掉了。

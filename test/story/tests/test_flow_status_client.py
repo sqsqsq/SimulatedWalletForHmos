@@ -11,6 +11,7 @@ JSON，其中一份还漏了 `--project-root`——Python 于是按脚本自身�
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,7 +41,8 @@ FLOW_JSON = {
 
 class ClientCase(unittest.TestCase):
     def setUp(self) -> None:
-        if shutil.which("node") is None:
+        self.node = shutil.which("node")
+        if self.node is None:
             self.skipTest("环境里没有 node")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -59,7 +61,8 @@ class ClientCase(unittest.TestCase):
         (src / "story-flow.json").write_text(json.dumps(data, ensure_ascii=False),
                                              encoding="utf-8")
 
-    def query(self, client: Path | None = None, timeout_ms: int = 60000) -> dict:
+    def query(self, client: Path | None = None, timeout_ms: int = 60000,
+              env: dict | None = None) -> dict:
         script = (
             "import {pathToFileURL} from 'node:url';"
             "const m = await import(pathToFileURL(process.argv[1]).href);"
@@ -67,10 +70,10 @@ class ClientCase(unittest.TestCase):
             "  {timeoutMs: Number(process.argv[4])});"
             "process.stdout.write(JSON.stringify(out));")
         proc = subprocess.run(
-            ["node", "--input-type=module", "-e", script, "--",
+            [self.node, "--input-type=module", "-e", script, "--",
              str(client or CLIENT), str(self.root), FEATURE, str(timeout_ms)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=180, cwd=str(REPO_ROOT))
+            timeout=180, cwd=str(REPO_ROOT), env=env)
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
 
@@ -145,6 +148,26 @@ class BadAnswersAreNamed(ClientCase):
         self.assertIsNone(got["data"])
         self.assertIn("没跑完", got["error"])
         self.assertIn("ETIMEDOUT", got["error"], "超时要说得出是超时，不能混进「起不动」")
+
+
+class NoInterpreterIsItsOwnAnswer(ClientCase):
+    """一个解释器都起不动时，说清试过哪几个 —— 与「业务失败」不是一回事。
+
+    只有「这个候选不在」才换下一个：换候选是为了兼容 `python` / `python3` 两种装法，
+    不是把业务失败重试一遍。两个候选都不在时，错误里要看得见两个名字，
+    否则读的人会以为流程真的答了「材料没问题」。
+    """
+
+    def test_it_names_both_candidates(self) -> None:
+        self.write_flow(FLOW_JSON)
+        empty = Path(self._tmp.name) / "空 PATH"
+        empty.mkdir()
+        env = dict(os.environ)
+        env["PATH"] = str(empty)                 # 隔离：两个候选都找不到
+        got = self.query(env=env)
+        self.assertIsNone(got["data"])
+        self.assertIn("起不动 python", got["error"])
+        self.assertIn("python3", got["error"], "换过候选要看得见，否则分不清试过几个")
 
 
 if __name__ == "__main__":

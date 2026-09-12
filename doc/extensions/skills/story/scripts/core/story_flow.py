@@ -714,9 +714,16 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     contract = require(load(feature_root))
     current = contract["rounds"][-1]
-    # 本命令里的材料事实只取一次：驳回判断与末尾的下一步跟同一份清单。
-    # 这条路径不写材料，两处之间不会有第二个时点。
+    # 本命令里的材料事实**首次需要时取一份**，此后三处共用它：前置路由、补料请求的
+    # 驳回判断、末尾的下一步。这条路径不写材料，三处之间不会有第二个时点；
+    # 契约变了（多记一条关卡）不改材料基准，`changed` 不必重算。
     manifest: dict | None = None
+
+    def snapshot() -> dict:
+        nonlocal manifest
+        if manifest is None:
+            manifest = live_materials(feature_root)
+        return manifest
 
     # 只能做流程当前允许的那一步。顺序由 `next_step` 一处定义，decide 不自己判前置——
     # 两处各写一套「什么时候能做什么」，迟早对不上。
@@ -732,7 +739,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                 f"本轮第一级已经定了（{settled['chosen']}）——材料再变会开出新一轮，"
                 "那时才轮到重新表态；现在按 `status` 的 next 往下走")
     else:
-        expected, action = next_step(feature_root, contract)
+        expected, action = next_step(feature_root, contract, snapshot())
         if expected != f"await_gate:{gate}":
             raise FlowError(f"当前这一步不是 {gate}：{action}（`status` 的 next 是 {expected}）")
 
@@ -790,8 +797,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if gate == "material_scope" and chosen in MATERIAL_REQUEST_KEYS:
         # 人陈述的是事实：料放进去了。磁盘上却既没有待导入的原件、材料也没变，
         # 那这一笔记下去下一步无处可去——原地重提，让人再放一次。
-        manifest = live_materials(feature_root)
-        state = material_state(feature_root, current, manifest)
+        state = material_state(feature_root, current, snapshot())
         if not state["pending"] and not state["changed"]:
             outcome, code = "rejected", 2
             reason = ("收件箱里没有新文件、材料也没变：把文档或界面设计图放进 "
@@ -822,7 +828,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if reason:
         result["reason"] = reason
     # 下一步与 `status` 同一处算：两处各写一套「记完这一笔该干什么」，迟早对不上。
-    step, action = next_step(feature_root, contract, manifest)
+    step, action = next_step(feature_root, contract, snapshot())
     log(f"下一步：{action}")
     result["next"], result["nextAction"] = step, action
     return result, code

@@ -715,7 +715,7 @@ class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name) / "另一个工程"
+        self.root = Path(self._tmp.name) / "另一个 工程 $x"
         feature_root = self.root / "doc" / "features" / FEATURE
         (feature_root / "RR").mkdir(parents=True)
         (feature_root / "RR" / "prd.md").write_text("# 产品需求\n\n背景。\n", encoding="utf-8")
@@ -728,6 +728,23 @@ class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
         ext.mkdir(parents=True, exist_ok=True)
         shutil.copy2(EXT / "manifest.yaml", ext / "manifest.yaml")
         shutil.copytree(EXT / "knowledge", ext / "knowledge")
+
+    def test_the_rerun_command_is_quoted_and_runs(self) -> None:
+        """没走过 `/story` 时给的那条重跑命令，**原样粘过去就要能跑**。
+
+        路径带空格与 `$`：不引起来的话，作者照抄得到的是另一个工程的答案或一句
+        「unrecognized arguments」，而确定性的引用不该留给他自己处理。
+        """
+        (self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+         / "story-flow.json").unlink()
+        proc = run("node", str(REPO_ROOT / "doc" / "extensions" / "hooks" / "spec"
+                               / "author.mjs"), "--feature", FEATURE, cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        block = proc.stdout.split("```powershell", 1)[1].split("```", 1)[0].strip()
+        self.assertIn(f"'{self.root}'", block, "工程根没有按 shell 规则引起来")
+        ran = run_in_shell(block, cwd=self.root)
+        self.assertEqual(0, ran.returncode, (ran.stdout or "") + (ran.stderr or ""))
+        self.assertIn('"exists"', ran.stdout, "跑出来的不是那个工程的 status")
 
     def test_the_position_comes_from_that_project(self) -> None:
         proc = run("node", str(REPO_ROOT / "doc" / "extensions" / "hooks" / "spec"

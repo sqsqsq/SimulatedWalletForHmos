@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import json
 import stat
 import subprocess
@@ -502,6 +503,81 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         # 刷新自己也要算一遍：所以写入前恰好一次 = build 比 refresh 多一次
         self.assertEqual(len(refreshes) + 1, len(builds),
                          f"提交期间取了 {len(builds)} 次材料事实，写入前应当只取一次")
+
+
+    def decide_now(self, gate: str, chosen: str, scope_text: str = "") -> tuple[dict, int]:
+        """在进程内记一条关卡决策——要数的是**这一条命令**里读了几次磁盘。"""
+        args = argparse.Namespace(gate=gate, chosen=chosen, by="human",
+                                  basis=f"用户回复：{chosen}", scope_text=scope_text)
+        return story_flow.cmd_decide(self.feature_root, args)
+
+    def write_scope_options(self, options: list[dict]) -> None:
+        self.src.mkdir(parents=True, exist_ok=True)
+        (self.src / ".scope-options.json").write_text(
+            json.dumps(options, ensure_ascii=False), encoding="utf-8")
+
+    def first_gate_ready(self) -> None:
+        self.ok("init")
+        self.ok("round")
+        self.gate_options("material_scope")
+
+    def test_the_first_gate_asks_the_disk_once(self) -> None:
+        self.first_gate_ready()
+        builds, refreshes = self.count_material_reads()
+        _, code = self.decide_now("material_scope", "confirm_scope")
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(builds), f"第一级取了 {len(builds)} 次材料事实")
+        self.assertEqual([], refreshes, "记一条决策不刷新清单")
+
+    def test_a_rejected_supply_request_asks_the_disk_once(self) -> None:
+        """人说「料放进去了」而盘上什么也没有：原地驳回，同样只读一次。"""
+        self.first_gate_ready()
+        builds, _ = self.count_material_reads()
+        result, code = self.decide_now("material_scope",
+                                       story_flow.MATERIAL_REQUEST_KEYS[0])
+        self.assertEqual(2, code, result)
+        self.assertEqual("rejected", result["outcome"])
+        self.assertEqual(1, len(builds), f"驳回这一路取了 {len(builds)} 次材料事实")
+
+    def second_gate_ready(self, options: list[dict] | None = None) -> None:
+        self.first_gate_ready()
+        self.ok("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
+                "--by", "human", "--basis", "用户回复：现有材料就是全部")
+        self.write_analysis()
+        if options is not None:
+            self.write_scope_options(options)
+        self.ok("round")
+        self.gate_options("scope_decision")
+
+    def test_the_second_gate_asks_the_disk_once(self) -> None:
+        """正常第二级：前置路由与末尾的下一步各要一次事实，它们该是同一份。"""
+        self.second_gate_ready()
+        builds, refreshes = self.count_material_reads()
+        _, code = self.decide_now("scope_decision", story_flow.CARRY_ALL)
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(builds), f"第二级取了 {len(builds)} 次材料事实")
+        self.assertEqual([], refreshes)
+
+    def test_the_third_gate_asks_the_disk_once(self) -> None:
+        """第三级同一条调用路径：选项由脚本从份表生成，材料事实仍只取一次。"""
+        parts = [{"seq": 1, "scope": "本单承载签约入口", "depends_on": []},
+                 {"seq": 2, "scope": "兄弟单承载补卡", "depends_on": [1]}]
+        self.second_gate_ready(options=[
+            {"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载"},
+            {"key": "by_capability", "label": "按能力切两份", "parts": parts},
+        ])
+        self.ok("decide", "--gate", "scope_decision", "--chosen", "by_capability",
+                "--by", "human", "--basis", "用户回复：按能力切")
+        (self.src / ".split-parts.json").write_text(json.dumps(
+            [{"seq": 1, "carrier": FEATURE, "scope": "本单承载签约入口", "depends_on": []},
+             {"seq": 2, "carrier": "AR90002", "scope": "兄弟单承载补卡", "depends_on": [1]}],
+            ensure_ascii=False), encoding="utf-8")
+        builds, refreshes = self.count_material_reads()
+        _, code = self.decide_now("split_carrier", "1")
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(builds), f"第三级取了 {len(builds)} 次材料事实")
+        self.assertEqual([], refreshes)
+
 
 
 if __name__ == "__main__":
