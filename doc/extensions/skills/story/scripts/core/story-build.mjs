@@ -33,6 +33,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
 import { flowProblems } from './flow-check.mjs';
+import { queryFlowStatus } from './flow/client.mjs';
 import { norm, renderTable, subsectionText, subsectionNames, chapterStructureProblems }
   from './story/chapter-contract.mjs';
 import { draftPath, writeDrafts } from './story/drafts.mjs';
@@ -2144,49 +2145,30 @@ function materialListSkeleton(ctx) {
     + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
-//: story_flow 的位置里「材料在收口之后又变了」那一个。处置写在它的 action 里，
-//: 这里不另写一遍：两处各写一份，改一处另一处就静默过期。
-const MATERIALS_STALE_STEP = 'refresh_round';
-
 /**
- * 材料还是本轮登记的那一份吗 —— **判据在 story_flow 的材料链，这里只问它**。
+ * 材料现在能不能起稿 —— **事实由 story_flow 的材料链给，这里只消费**。
  *
- * 只比较两份落盘记录（清单 `digest` 与轮次基准）的话，收口之后被改的材料文件一个也
- * 发现不了：两份记录都还是旧值，彼此照样相等。变没变是磁盘上的事实，只有材料链按
- * 现状重算才知道，所以这里不另算一份 JS 摘要、不另立版本台账。
+ * 两件事都要看：`pending` 是收件箱里还没并入正文的原件，`changed` 是磁盘与本轮登记的
+ * 基准不同。只认后者的话，`round` 一登记新基准它就归假，而那份原件仍躺在收件箱里——
+ * 起手照过，而成文据以写的材料少一份，此后没有任何判据会提到它。
  *
- * 问不出来就说问不出来：把「问不到」当成「材料齐备」，等于用沉默替一份没人核过的
- * 输入背书。
+ * 拦的理由用 status 给的那句话：处置写在流程那一侧，这里再写一遍迟早与它分叉。
  *
  * @returns {string|null} 不能起手的原因（含处置）；null = 材料就位
  */
-function staleMaterials(ctx) {
-  const script = path.join(path.dirname(ctx.scriptPath), 'story_flow.py');
-  const tried = [];
-  for (const exe of ['python', 'python3']) {
-    const r = spawnSync(exe, [script, 'status', '--feature', ctx.args.feature,
-      '--project-root', ctx.projectRoot],
-    { encoding: 'utf-8', timeout: 120000, windowsHide: true });
-    if (r.error) { tried.push(`${exe}：${r.error.message}`); continue; }
-    if (r.status !== 0) {
-      return `材料现状问不出来（${exe} status 退出码 ${r.status}）：\n`
-        + `${String(r.stderr || r.stdout || '').trim()}\n`
-        + '  先让它跑通——材料变没变只有它按磁盘现状答得出来';
-    }
-    const at = String(r.stdout ?? '').indexOf('{');
-    if (at < 0) { tried.push(`${exe}：status 没有输出 JSON`); continue; }
-    let status = null;
-    try {
-      status = JSON.parse(r.stdout.slice(at));
-    } catch (err) {
-      tried.push(`${exe}：status 输出解析不了（${err.message}）`);
-      continue;
-    }
-    return status.next === MATERIALS_STALE_STEP ? String(status.action ?? '').trim() : null;
+function materialsNotReady(ctx) {
+  const { data, error } = queryFlowStatus(ctx.projectRoot, ctx.args.feature,
+    { timeoutMs: 120000 });
+  if (error) {
+    return `材料现状问不出来（${error}）：原件导没导、材料变没变由 story_flow 的材料链`
+      + '按磁盘现状答——它跑不起来就没有人能回答这件事。先让'
+      + ' `story_flow.py status --feature <名> --project-root <工程根>` 跑通，再起骨架';
   }
-  return `材料现状问不出来（${tried.join('；')}）：材料变没变由 story_flow 的材料链`
-    + '按磁盘现状判，它跑不起来就没有人能回答这件事——'
-    + '先让 `story_flow.py status --feature <名>` 跑通，再起骨架';
+  const state = data?.material_state ?? null;
+  if (!state) return null;        // 没有轮次：基准不符由上面的清单判据报
+  if (!state.pending.length && !state.changed) return null;
+  return String(data.action ?? '').trim()
+    || '材料与本轮登记的不是同一批：跑 `story_flow.py status` 看当前该做什么';
 }
 
 /**
@@ -2262,8 +2244,8 @@ function cmdSkeleton(ctx) {
   if (manifest.digest !== base.digest) {
     fail('材料清单与本轮登记的基准对不上：重跑 `story_flow.py round` 归位后再起骨架');
   }
-  const stale = staleMaterials(ctx);
-  if (stale) fail(stale);
+  const notReady = materialsNotReady(ctx);
+  if (notReady) fail(`材料还不能起稿：${notReady}`);
 
   // ---- 预检 ③：来源必需性（与交付前的 check 同一份判定） ----
   const { docs, missing, blocking } = sourceStatus(ctx);

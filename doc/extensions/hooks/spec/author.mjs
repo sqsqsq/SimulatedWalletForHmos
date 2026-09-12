@@ -16,7 +16,6 @@
  * 登记在那里，作者要到产物落盘之后才读得到。所以任务包由作者自己取，入口写在
  * SKILL、CLAUDE.md 扩展段与 `story_flow.py status` 的下一步文本里。
  */
-import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +23,7 @@ import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/lint-rules.mjs';
 import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
+import { queryFlowStatus } from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
   from '../../skills/story/scripts/core/story-build.mjs';
@@ -34,31 +34,35 @@ const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
 /**
  * 位置从 `story_flow.py status` 来，本文件不自己算一遍。
  *
- * 算两遍就会有两个答案——流程往前走一步，谁先过期都说不准。调不通时如实说「跑这条命令」，
- * 而不是退回自己判断。
+ * 算两遍就会有两个答案——流程往前走一步，谁先过期都说不准。查询走共用客户端
+ * （`flow/client.mjs`），工程根显式传给它：Python 没有 `--project-root` 时按脚本自身位置
+ * 解析工程，只设 cwd 的话，同一份任务包里位置读的是机制仓、材料与知识读的是目标工作区。
+ * 问不到就如实说问不到并给出可复跑的命令，不退回自己判断。
  */
-function flowStatus(projectRoot, feature) {
-  const script = path.join(SKILL_ROOT, 'scripts', 'core', 'story_flow.py');
-  for (const exe of ['python', 'python3']) {
-    const r = spawnSync(exe, [script, 'status', '--feature', feature],
-      { cwd: projectRoot, encoding: 'utf-8', timeout: 20000, windowsHide: true });
-    if (r.status === 0 && r.stdout) {
-      try {
-        return JSON.parse(r.stdout);
-      } catch { /* 输出不是 JSON 就当没拿到 */ }
-    }
-  }
-  return null;
-}
-
 function positionSection(projectRoot, feature) {
-  const status = flowStatus(projectRoot, feature);
+  const { data: status, error } = queryFlowStatus(projectRoot, feature, { timeoutMs: 20000 });
+  const command = 'python doc/extensions/skills/story/scripts/core/story_flow.py status'
+    + ` --feature ${feature} --project-root ${projectRoot}`;
+  if (error) {
+    return ['## 1. 你现在在哪', '',
+      `**位置没取到：${error}**`, '',
+      '它答不出来，这一步的下一动作就没有真源。先让这条命令在本工程跑通（PowerShell'
+      + '里路径带空格要引起来）：', '', '```powershell', command, '```'];
+  }
   if (!status || status.exists === false) {
     return ['## 1. 你现在在哪', '',
-      `跑 \`python doc/extensions/skills/story/scripts/core/story_flow.py status --feature ${feature}\``
-      + '：现在在哪、下一步跑什么、这一步要写的文件长什么样。'];
+      '这个需求还没走过 `/story` 的 S1–S3：先按 SKILL 走材料与范围，收口后再回来。',
+      '', '```powershell', command, '```'];
   }
   const rows = ['## 1. 你现在在哪', '', `**下一步**：${status.action}`];
+  const state = status.material_state;
+  if (state && (state.pending.length || state.changed)) {
+    // 材料事实与位置同源：作者按同一句话处置，不必自己再判一次「料齐没齐」。
+    rows.push('', state.pending.length
+      ? `**收件箱里还有 ${state.pending.length} 份原件没并入正文**`
+        + `（${state.pending.slice(0, 3).join('、')}）——先导入，它们并进正文之前不起稿。`
+      : '**材料与本轮登记的基准不一致**——按上面那一步登记之后再动笔。');
+  }
   if (status.sidecar) {
     rows.push('', '这一步要写的文件形状：', '', '```json',
       JSON.stringify(status.sidecar, null, 2), '```');

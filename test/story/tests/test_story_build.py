@@ -2274,6 +2274,30 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
         self.assertEqual(0, code, out)
         self.assertTrue(self.story_path.is_file(), out)
 
+    def put_unimported_original(self, name: str = "后到的稿.md") -> None:
+        """收件箱里放一份已归类、还没并入正文的原件。"""
+        inbox = self.feature_root() / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text("# " + name + "\n\n收口之后才到的材料。\n",
+                                  encoding="utf-8")
+        (inbox / ".classify.json").write_text(
+            json.dumps({name: "AR"}, ensure_ascii=False), encoding="utf-8")
+
+    def test_an_unimported_original_blocks_even_after_round(self) -> None:
+        """`round` 登记的是基准，不是「已经并入正文」。
+
+        上一版只认「材料变没变」：`round` 一刷新，那一项归假，而原件仍躺在收件箱里——
+        起手照过、Story 照建，成文据以写的材料少一份而没有任何信号。
+        """
+        self.put_unimported_original()
+        self.round_now()                      # 基准刷新：changed 归假，pending 仍在
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, f"未导入的原件还在，却起了手：{out}")
+        self.assertIn("导入", out)
+        self.assertIn("后到的稿.md", out)
+        self.assert_wrote_nothing(before)
+
     def test_it_says_so_when_it_cannot_ask(self) -> None:
         """问不出来就说问不出来——把「问不到」当「材料齐备」等于替没人核过的输入背书。"""
         broken = self.src / "materials.json"

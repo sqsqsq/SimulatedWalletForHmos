@@ -459,5 +459,50 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.assertEqual(2, len(self.contract()["rounds"]), "恢复不得开出新一轮")
 
 
+class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
+    """同一条命令、同一个时点只取一份材料事实。
+
+    重复 build 把同一批文件再哈希一遍、把收件箱再转一遍，而两次之间什么也没发生；
+    更要紧的是消费者会各拿一份「现在的材料」，谁也说不清自己读的是哪一份。
+    写入前后是两个**不同**的时点：提交前的现状与写入后的刷新都要有，不能互相顶替。
+    """
+
+    def count_material_reads(self) -> tuple[list, list]:
+        builds, refreshes = [], []
+        real_build = story_flow.materials.build
+        real_refresh = story_flow.materials.refresh
+
+        def counting_build(feature_root):
+            builds.append(feature_root)
+            return real_build(feature_root)
+
+        def counting_refresh(feature_root):
+            refreshes.append(feature_root)
+            return real_refresh(feature_root)
+
+        story_flow.materials.build = counting_build
+        story_flow.materials.refresh = counting_refresh
+        self.addCleanup(setattr, story_flow.materials, "build", real_build)
+        self.addCleanup(setattr, story_flow.materials, "refresh", real_refresh)
+        return builds, refreshes
+
+    def test_status_asks_the_disk_once(self) -> None:
+        self.ready_to_commit(with_draft=False)
+        builds, refreshes = self.count_material_reads()
+        story_flow.cmd_status(self.feature_root)
+        self.assertEqual(1, len(builds),
+                         f"status 取了 {len(builds)} 次材料事实——路由、提示与输出该共用一份")
+        self.assertEqual([], refreshes, "status 只读，不该刷新清单")
+
+    def test_commit_takes_one_snapshot_before_writing_and_refreshes_after(self) -> None:
+        self.ready_to_commit()
+        builds, refreshes = self.count_material_reads()
+        story_flow.cmd_complete(self.feature_root, FEATURE, "AR/story-src/design-draft.md")
+        self.assertEqual(1, len(refreshes), "写入后的刷新是另一个时点，必须仍然发生")
+        # 刷新自己也要算一遍：所以写入前恰好一次 = build 比 refresh 多一次
+        self.assertEqual(len(refreshes) + 1, len(builds),
+                         f"提交期间取了 {len(builds)} 次材料事实，写入前应当只取一次")
+
+
 if __name__ == "__main__":
     unittest.main()

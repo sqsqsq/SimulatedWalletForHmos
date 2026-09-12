@@ -369,6 +369,67 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
 
 
+    def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
+        """放一份**已归类**的原件：`round` 看得见它，而它还没并入正文。"""
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text("# " + name + "\n\n收口之后才到的材料。\n",
+                                  encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = "AR"
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    def import_inbox(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
+             "--feature", FEATURE, "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+
+    def status_payload(self) -> dict:
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
+
+    def test_registering_a_new_baseline_does_not_clear_pending(self) -> None:
+        """`round` 登记的是基准，不是「原件已经并入正文」。
+
+        只看「材料变没变」的消费者在这一步之后就再也看不到那份原件：指纹已经跟上，
+        而文件还躺在收件箱里。实测到的形状是起手照过、Story 照建，成文据以写的材料
+        少一份而没有任何信号。
+        """
+        self.complete_it()
+        self.put_classified_inbox()
+        self.round_now()
+        payload = self.status_payload()
+        state = payload["material_state"]
+        self.assertEqual(["后到的稿.md"], state["pending"], "未导入的原件没被报出来")
+        self.assertFalse(state["changed"], "基准刚登记过，这一项本来就该是假")
+        self.assertEqual("import_materials", payload["next"],
+                         "基准登记之后就不再提那份原件了")
+
+    def test_importing_then_registering_moves_on(self) -> None:
+        """处置不是死路：导入并登记之后，材料事实干净，位置回到 spec 阶段。"""
+        self.complete_it()
+        self.put_classified_inbox()
+        self.round_now()
+        self.import_inbox()
+        self.round_now()
+        payload = self.status_payload()
+        self.assertEqual([], payload["material_state"]["pending"])
+        self.assertFalse(payload["material_state"]["changed"])
+        self.assertNotEqual("import_materials", payload["next"])
+
+    def test_the_status_json_carries_the_material_facts(self) -> None:
+        """事实直接给出去：消费者按 pending/changed 判断，不去猜 `next` 的字面值。"""
+        self.complete_it()
+        payload = self.status_payload()
+        self.assertEqual({"pending": [], "changed": False}, payload["material_state"])
+        self.add_ux("manage.png")
+        self.assertTrue(self.status_payload()["material_state"]["changed"])
+
 class TheMaterialGateAsksForFacts(MaterialRoundCase):
     """第一级请人陈述事实：料放进去了，或者现有材料就是全部。
 

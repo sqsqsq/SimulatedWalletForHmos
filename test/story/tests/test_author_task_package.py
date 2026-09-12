@@ -692,5 +692,50 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         self.assertNotEqual(0, proc.returncode, "只有标题没有正文的章被收下了")
 
 
+class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
+    """用**本仓的** `author.mjs` 给另一个工程出任务包：位置读的必须是那个工程。
+
+    此前这里只设了 cwd 而没传 `--project-root`，Python 于是按脚本自身位置解析工程——
+    位置那一节回落成「跑 status 查你在哪」，而材料、知识、图读的都是目标工程。
+    同一份任务包里两半对不上，作者只能挑一半信。
+    """
+
+    FLOW = {
+        "schema": 3, "feature": FEATURE, "status": "complete",
+        "design_generated_at": "2026-09-12T00:00:00",
+        "rounds": [{
+            "round": 1,
+            "materials": {"path": "AR/story-src/materials.json", "digest": "seeded"},
+            "positioning": {"scope_text": "本 AR 承载提交与回执", "sr_related_ars": []},
+            "scope_options": [{"key": "carry_all", "label": "按当前范围整体承载"}],
+            "gates": [],
+        }],
+    }
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "另一个工程"
+        feature_root = self.root / "doc" / "features" / FEATURE
+        (feature_root / "RR").mkdir(parents=True)
+        (feature_root / "RR" / "prd.md").write_text("# 产品需求\n\n背景。\n", encoding="utf-8")
+        src = feature_root / "AR" / "story-src"
+        src.mkdir(parents=True)
+        (src / "story-flow.json").write_text(json.dumps(self.FLOW, ensure_ascii=False),
+                                             encoding="utf-8")
+        # 目标工程自己的激活清单与知识——任务包按 projectRoot 读它们，缺了会响亮失败
+        ext = self.root / "doc" / "extensions"
+        ext.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(EXT / "manifest.yaml", ext / "manifest.yaml")
+        shutil.copytree(EXT / "knowledge", ext / "knowledge")
+
+    def test_the_position_comes_from_that_project(self) -> None:
+        proc = run("node", str(REPO_ROOT / "doc" / "extensions" / "hooks" / "spec"
+                               / "author.mjs"), "--feature", FEATURE, cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("**下一步**", proc.stdout, "位置没取到目标工程的状态")
+        self.assertNotIn("位置没取到", proc.stdout, proc.stdout[:400])
+
+
 if __name__ == "__main__":
     unittest.main()

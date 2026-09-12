@@ -482,7 +482,7 @@ def cmd_round(feature_root: Path) -> dict:
         if scope_options:
             entry["scope_options"] = scope_options
 
-    frozen = frozen_inbox_note(feature_root, contract)
+    frozen = frozen_inbox_note(feature_root, contract, manifest)
     if frozen:
         log(frozen)
 
@@ -551,7 +551,7 @@ def cmd_round(feature_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 # decide：追加一条关卡决策
 
-def frozen_inbox_note(feature_root: Path, contract: dict) -> str:
+def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
 
     这时不能顺手导：导入会改正文，而已经定稿的 story 声称的依据是当轮的材料快照，
@@ -563,16 +563,31 @@ def frozen_inbox_note(feature_root: Path, contract: dict) -> str:
     """
     if not after_complete(contract) or not contract.get("rounds"):
         return ""
-    pending = material_state(feature_root, contract["rounds"][-1])["pending"]
+    pending = material_state(feature_root, contract["rounds"][-1], manifest)["pending"]
     if not pending:
         return ""
     more = f" 等 {len(pending)} 份" if len(pending) > 3 else ""
-    return (f"收件箱里有 {len(pending)} 份还没导入的原件（{'、'.join(pending[:3])}{more}）："
-            "story 已经冻结，要把它们纳入就先跑 `story_flow.py reopen`，"
-            "再导入、重跑 `round`；不纳入就留在收件箱，本轮不受影响")
+    head = f"收件箱里有 {len(pending)} 份还没导入的原件（{'、'.join(pending[:3])}{more}）："
+    if contract.get("status") == "complete" and not contract.get("archived"):
+        # 还没登记成文：这时的处置就是导入，与 `next` 给的动作是同一件事。
+        return head + "先导入、再重跑 `round` 登记，它们并进正文之前不起稿"
+    return head + ("story 已经冻结，要把它们纳入就先跑 `story_flow.py reopen`，"
+                   "再导入、重跑 `round`；不纳入就留在收件箱，本轮不受影响")
 
 
-def material_state(feature_root: Path, current: dict) -> dict:
+def live_materials(feature_root: Path) -> dict:
+    """按磁盘现状取一份材料清单 —— **同一个时点只取一次**，由调用链向内传。
+
+    同一条命令里重复 build，是把同一批文件再哈希一遍、把收件箱再转一遍，
+    而两次之间什么也没发生。写入前后是两个不同的时点，那时各取各的。
+    """
+    try:
+        return materials.build(feature_root)
+    except materials.MaterialError as exc:
+        raise FlowError(str(exc)) from exc
+
+
+def material_state(feature_root: Path, current: dict, manifest: dict | None = None) -> dict:
     """料现在什么样——**两个事实，一次问完**：谁还没并入正文、材料变没变。
 
     ``pending`` 是收件箱里还没导进正文的原件；``changed`` 是材料指纹与本轮登记的
@@ -580,18 +595,32 @@ def material_state(feature_root: Path, current: dict) -> dict:
     拿收件箱那批料重转一遍与正文比对，同名原件被换了内容也照样算新料，而这是任何
     一份「导过什么」的名单都记不住的。
 
-    不写盘：`status` 只回答现在是什么样，落盘归 `round`。
+    **两件事互不替代**：`round` 登记新基准之后 `changed` 归假，而那份原件仍躺在
+    收件箱里没并进正文——只看 `changed` 的消费者从此再也不会提到它。
 
-    要这两个事实，是为了**把下一步说出口**。只回一句「记录了，待料到位」的话，
-    模型手上没有动作，只好再问人一次「放好了吗」——而料明明已经在收件箱里躺着。
+    `manifest` 是调用方在这个时点已经取到的清单：传了就按它派生，不再读盘；
+    显式判 ``None``，合法的空清单不会被当成「没传」偷偷改回重读。
+    不写盘：`status` 只回答现在是什么样，落盘归 `round`。
     """
-    try:
-        manifest = materials.build(feature_root)
-    except materials.MaterialError as exc:
-        raise FlowError(str(exc)) from exc
-    pending = materials.pending(manifest)
-    return {"pending": pending,
+    if manifest is None:
+        manifest = live_materials(feature_root)
+    return {"pending": materials.pending(manifest),
             "changed": manifest["digest"] != (current.get("materials") or {}).get("digest")}
+
+
+def pending_import_step(state: dict) -> tuple[str, str] | None:
+    """收件箱里还躺着原件时的下一步 —— **收口前后同一句**：先导入。
+
+    登记新基准不等于原件已经并入：`round` 刷新之后「材料变了」这条判据不再响，
+    而那份文件仍在收件箱里。两处各写一句的话，其中一句迟早只说「材料没变」。
+    """
+    if not state["pending"]:
+        return None
+    more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
+    return ("import_materials",
+            "收件箱里有还没并入正文的原件，先导入："
+            "`python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名>`"
+            f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
 
 
 def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
@@ -685,6 +714,9 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     contract = require(load(feature_root))
     current = contract["rounds"][-1]
+    # 本命令里的材料事实只取一次：驳回判断与末尾的下一步跟同一份清单。
+    # 这条路径不写材料，两处之间不会有第二个时点。
+    manifest: dict | None = None
 
     # 只能做流程当前允许的那一步。顺序由 `next_step` 一处定义，decide 不自己判前置——
     # 两处各写一套「什么时候能做什么」，迟早对不上。
@@ -758,7 +790,8 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if gate == "material_scope" and chosen in MATERIAL_REQUEST_KEYS:
         # 人陈述的是事实：料放进去了。磁盘上却既没有待导入的原件、材料也没变，
         # 那这一笔记下去下一步无处可去——原地重提，让人再放一次。
-        state = material_state(feature_root, current)
+        manifest = live_materials(feature_root)
+        state = material_state(feature_root, current, manifest)
         if not state["pending"] and not state["changed"]:
             outcome, code = "rejected", 2
             reason = ("收件箱里没有新文件、材料也没变：把文档或界面设计图放进 "
@@ -789,7 +822,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if reason:
         result["reason"] = reason
     # 下一步与 `status` 同一处算：两处各写一套「记完这一笔该干什么」，迟早对不上。
-    step, action = next_step(feature_root, contract)
+    step, action = next_step(feature_root, contract, manifest)
     log(f"下一步：{action}")
     result["next"], result["nextAction"] = step, action
     return result, code
@@ -943,17 +976,21 @@ def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str |
     return True, None
 
 
-def frozen_tail(feature_root: Path, contract: dict) -> str:
+def frozen_tail(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """冻结态的下一步末尾那一句：收件箱里有没有没人管的原件。`next` 本身不变。"""
-    note = frozen_inbox_note(feature_root, contract)
+    note = frozen_inbox_note(feature_root, contract, manifest)
     return f"。**另外**：{note}" if note else ""
 
 
-def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
+def next_step(feature_root: Path, contract: dict | None,
+              manifest: dict | None = None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
     位置由数据回答而不由记忆回答——skill 正文因此不必维护成篇的「如果……那么……」，
     恢复一个中断的 feature 也不用靠翻对话。每个返回值都对应 SKILL.md 里的一个具体动作。
+
+    `manifest` 是调用方这个时点已经取到的材料清单：路由与它给出的动作要跟同一份事实，
+    消费者（`status` 的 JSON、起手预检）读的也是这一份，不在下游再各判一次。
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
@@ -971,23 +1008,29 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
                 "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，"
                 "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审"
-                + frozen_tail(feature_root, contract))
+                + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
         # 仍然彼此相等，只有按磁盘现状重算才看得见。处置是 `round`——它把这次变化
         # 记到本轮（不开新轮），要重新决策才跑 `reopen`。**没有登记过基准不算「变了」**：
         # 那是轮次自己缺了材料指纹，由流程契约的判据报，处置也不是同一个。
-        current = contract["rounds"][-1]
+        current = contract["rounds"][-1] if contract.get("rounds") else {}
+        state = material_state(feature_root, current, manifest)
+        # 未导入的原件先导入：它不会因为登记了新基准就并进正文，而此后没有任何
+        # 判据会再提到它——那份材料从此没人知道。这一句与收口前共用同一处。
+        pending = pending_import_step(state)
+        if pending:
+            return pending          # 尾巴说的就是同一件事，不再追加一遍
         base = (current.get("materials") or {}).get("digest")
-        if base and material_state(feature_root, current)["changed"]:
+        if base and state["changed"]:
             return ("refresh_round",
                     "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
                     "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
                     "再继续 spec 阶段——spec 与叙事件都按本轮登记的那批料写"
-                    + frozen_tail(feature_root, contract))
+                    + frozen_tail(feature_root, contract, manifest))
         step, action = spec_stage_step(feature_root)
-        return step, action + frozen_tail(feature_root, contract)
+        return step, action + frozen_tail(feature_root, contract, manifest)
 
     current = contract["rounds"][-1]
 
@@ -998,13 +1041,10 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
     # 导入是脚本的活，不用问人「放好了吗」。
     # 表态与导入互不挡路：第一级的 `decide` 看的是「这一级定没定」，不看这里给的是什么。
     # 收口之后不走这条——那时材料再变归 `reopen`，见上面 `story_written` 那支。
-    state = material_state(feature_root, current)
-    if state["pending"]:
-        more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
-        return ("import_materials",
-                "收件箱里有还没并入正文的原件，先导入："
-                "`python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名>`"
-                f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
+    state = material_state(feature_root, current, manifest)
+    pending = pending_import_step(state)
+    if pending:
+        return pending
     if state["changed"]:
         return ("run_round",
                 "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
@@ -1109,7 +1149,11 @@ def cmd_reopen(feature_root: Path) -> dict:
 
 def cmd_status(feature_root: Path) -> dict:
     contract = load(feature_root)
-    step, action = next_step(feature_root, contract)
+    # 材料事实**一份**：路由、冻结提示与下面的 JSON 输出读的是同一个时点的清单。
+    # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
+    # 自己拿的是哪一份。算不出来沿 FlowError 退出，不伪造 false。
+    manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
+    step, action = next_step(feature_root, contract, manifest)
     shape = sidecar_shape(step)
     if contract is None:
         out = {"exists": False, "next": step, "action": action}
@@ -1121,6 +1165,10 @@ def cmd_status(feature_root: Path) -> dict:
     # 只列**当前轮**：与 next 的判据一致，免得人看着历史决策去对现在的位置。
     # 历史查契约文件本身。
     gates = round_gates(contract) if contract.get("rounds") else []
+    # 材料事实直接给出去：消费者（起手预检、作者包）按 pending/changed 判断，
+    # 不再去猜 `next` 的字面值——那样只认得出其中一种情况。没有轮次时没有基准可比，
+    # 给 null，不用 false 冒充「材料没问题」。
+    state = material_state(feature_root, current, manifest) if manifest is not None else None
     return {
         "exists": True,
         "schema": contract.get("schema"),
@@ -1132,6 +1180,8 @@ def cmd_status(feature_root: Path) -> dict:
         "split": contract.get("split", {}).get("decided"),
         "design": bool((feature_root / Path(*DESIGN)).is_file()),
         "archived": bool(contract.get("archived")),
+        "material_state": ({"pending": state["pending"], "changed": state["changed"]}
+                           if state else None),
         "next": step,
         "action": action,
         **({"sidecar": shape} if shape else {}),
@@ -1422,7 +1472,8 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     retry = design_bytes == cand_bytes or kept_is_prior or refreshed_unsaved
 
     # 收件箱里还躺着原件时不收口：那时定的范围建立在一份不全的材料上。
-    state = material_state(feature_root, current)
+    # 用的是上面那份 live——同一条命令、同一个写入前时点，不再把同一批材料转第二遍。
+    state = material_state(feature_root, current, live)
     if state["pending"]:
         raise FlowError("收件箱里有还没并入正文的原件，先导入再收口："
                         + "、".join(state["pending"][:3]))
