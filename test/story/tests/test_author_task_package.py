@@ -657,7 +657,8 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         self.first = self.contract["chapters"][0]["title"]
         # skeleton 起手预检需要收口态的流程契约与材料基准（08 §2.1）
         (self.feature_root / "spec" / "spec.md").write_text(
-            "# AR90001 — 需求规格\n\n> **模块标识**: `AR90001`\n", encoding="utf-8")
+            '# AR90001 — 需求规格\n\n> **模块标识**: `AR90001`\n'
+            + '\n## 0. 术语映射表\n\n| 业务名 | 权威模块 | 说明 |\n|---|---|---|\n| 受理单编号 | 提交入口 | 云侧受理后返回的编号 |\n\n## 9. 技术契约\n\n### 9.1 端云接口\n\n不涉及：复用既有提交接口。\n\n### 9.2 数据存储\n\n不涉及：不落库。\n\n### 9.3 配置项\n\n不涉及：没有新增配置。\n\n### 9.4 埋点\n\n不涉及：不新增埋点。\n\n### 9.5 依赖变更\n\n不涉及：只改一处入口。\n', encoding="utf-8")
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src", DRAFT_TEXT)
         self.assertEqual(0, self.build("skeleton").returncode)

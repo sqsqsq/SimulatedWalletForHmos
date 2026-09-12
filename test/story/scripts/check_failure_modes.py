@@ -2081,7 +2081,11 @@ def _form_outcome(chapter: str, bad: str, good: str, needle: str) -> Outcome:
 
 @checker
 def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
-    """流程图压成「A → B → C」箭头文字——上一版只判「图有落点」，箭头文字也算落点。"""
+    """流程图压成「A → B → C」箭头文字：这一章一张图也没有。
+
+    判的是**这一章有没有真正的图**，不是图在第几行：总览放在章首那段或一个总览小节里
+    都合法，按位置推断它是不是总览会拦住合法产物；它讲没讲清整条业务归语义审查。
+    """
     return _form_outcome(
         "业务流程",
         "主路径：进入页面 → 查询资格 → 风险确认 → 提交 → 查询结果。\n\n"
@@ -2090,7 +2094,7 @@ def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
         "```mermaid\nflowchart TD\n  A[进入页面] --> B[查询资格]\n  B --> C[风险确认]\n"
         "  C --> D[提交]\n  D --> E[查询冻结结果]\n```\n\n"
         "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。",
-        "章首缺一张覆盖主路径与全部分支去向的总览图")
+        "没有图")
 
 
 @checker

@@ -1,103 +1,26 @@
 /**
- * 章节合同的最小必要结构 —— 必要 H3、必要表、章首图与起始种子的唯一解释。
+ * 章节合同的最小必要结构 —— 必要 H3、必要表、图与起始种子的唯一解释。
  *
  * 合同（story-chapters.json）每章给 `structure`：`h3` 是必须存在的小节（每项
  * `{title, when?}`），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
- * `at` 所属小节、`when` 条件），`diagram: "chapter-start"` 表示章首要有一张图。
+ * `at` 所属小节、`when` 条件），`diagram: true` 表示这一章要有一张真正的图。
  * 哪些章要什么全部是合同数据，这里不写死任何章名或表头——加一条必要结构改合同，代码不动。
  *
  * 同一份解释供三处用：`chapterSeedRows` 打底、`chapterStructureProblems` 核对、
  * 条件判定共用 `applies`。**打底与核对必须同位置**：否则作者第一次知道「这一章要有
  * 哪个小节」是在报错里。
  *
- * 边界：只核机械结构与渲染种子。源图对应、全局编号、投影完整性、图片身份、
- * 冻结、语义质量都不在这里；输入是已解析的数据（`facts`），本模块不读磁盘、
- * 不写文件、不输出 stdout、也不导入 story-build 入口。
+ * 边界：**只判，不切文**。围栏、小节、表头由 `document.parseChapter` 解析一次，
+ * 这里读它的结果；源图对应、全局编号、投影完整性、图片身份、冻结、语义质量都不在这里。
+ * 本模块不读磁盘、不写文件、不输出 stdout、也不导入 story-build 入口。
  */
 import { normalizeHeading } from '../headings.mjs';
-
-/** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
-export function norm(s) {
-  return String(s ?? '').replace(/[\s，。、；：!?！？（）()「」【】]/g, '');
-}
-
-/** markdown 表的表头列 —— 分隔行上面那一行就是表头。列名剥掉行内标记。 */
-function tableHeaders(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const out = [];
-  for (let i = 0; i + 1 < lines.length; i += 1) {
-    const head = lines[i].trim();
-    const sep = lines[i + 1].trim();
-    if (!head.startsWith('|') || !/^\|[-: |]+\|$/.test(sep)) continue;
-    out.push(head.replace(/^\||\|$/g, '').split('|').map(c => norm(c.replace(/[`*]/g, ''))));
-  }
-  return out;
-}
+import { hasDiagram, norm, sectionBody, tablesIn } from './document.mjs';
 
 /** 渲染一张 markdown 表：表头 + 分隔行 + 数据行。 */
 export function renderTable(header, rows) {
   return [`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`,
     ...rows.map(r => `| ${r.join(' | ')} |`)];
-}
-
-/**
- * 一章的两份视图：**章首**（第一个正文 H3 之前的原文）与**去围栏正文**。
- *
- * 章首是「总览图该在哪」的范围：图挂在某个局部小节下面，读者在章首看不到全过程。
- * 去围栏正文是标题与表的判定面：围栏里的标题和表是被引用的样例——把它们算进来，
- * 贴一段别处的示例就能顶掉本章真正缺的那一节。
- */
-function views(text) {
-  const lead = [], prose = [];
-  let inFence = false, afterH3 = false;
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    const fence = /^[ \t]*(?:```|~~~)/.test(line);
-    if (fence) inFence = !inFence;
-    if (!inFence && !fence && /^###\s+/.test(line.trim())) afterH3 = true;
-    if (!afterH3) lead.push(line);
-    if (!inFence && !fence) prose.push(line);
-  }
-  return { lead: lead.join('\n'), prose: prose.join('\n') };
-}
-
-/** 全篇正文里的 `###` 小节名（围栏里的不算——那是被引用的样例）。 */
-export function subsectionNames(sectionText) {
-  const out = [];
-  for (const line of views(sectionText).prose.split(/\r?\n/)) {
-    const m = line.trim().match(/^###\s+(.+)$/);
-    if (m) out.push({ raw: m[1].trim(), name: normalizeHeading(m[1]) });
-  }
-  return out;
-}
-
-/** 从一章的正文里切出某个 `###` 小节。 */
-export function subsectionText(sectionText, name) {
-  const want = normalizeHeading(name);
-  const body = [];
-  let hit = false;
-  for (const line of views(sectionText).prose.split(/\r?\n/)) {
-    const m = line.trim().match(/^###\s+(.+)$/);
-    if (m) {
-      if (hit) break;
-      hit = normalizeHeading(m[1]) === want;      // `### A. 接口` 与合同的 `接口` 是同一节
-      continue;
-    }
-    if (hit) body.push(line);
-  }
-  return hit ? body.join('\n') : null;
-}
-
-/**
- * 按名字找一个小节的正文 —— 先精确，再包含。
- *
- * 合同给的是这一节要讲什么，作者按业务命名；精确匹配会把后者判成「缺这一节」。
- */
-function findSubsection(text, name) {
-  const exact = subsectionText(text, name);
-  if (exact !== null) return exact;
-  const want = normalizeHeading(name);
-  const hit = subsectionNames(text).find(x => x.name.includes(want));
-  return hit ? subsectionText(text, hit.name) : null;
 }
 
 /**
@@ -126,53 +49,63 @@ function requiredTables(ch, facts) {
 const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/mi;
 
 /**
- * 这张必要表在不在 —— **认表看主语，核列看最低锚列**。
+ * 这张必要表在不在 —— **作用域内任意一张满足全部锚列就算**。
  *
  * `anchors` 第一组是这张表的主语（认出「他打算用这张表答这件事」），其余各组是这张表
  * 必须有的列；每组内任一说法命中即可，列名换措辞不算缺，加列合法。判的是**同一张表**
- * 满足全部锚列：任意一列、或把凭据散在几张表里，读者要自己拼，那不是凭据。
+ * 满足全部锚列：把凭据散在几张表里，读者要自己拼，那不是凭据。
+ *
+ * 只认第一张同主语的表就会拦住合法产物：验收章前面先放一张「编号／说明」的对照表、
+ * 后面才是完整的验收表，那一章其实是齐的。所以遍历作用域内的全部候选，
+ * 一张都不满足时才按最像的那张报缺了哪几列。
  */
-function tableProblem(ch, text, slot) {
-  const scope = slot.at ? findSubsection(text, slot.at) : text;
+function tableProblem(ch, view, slot) {
+  const scope = tablesIn(view, slot.at);
   if (scope === null) return null;             // 那一节缺席由必要 H3 那条报，这里不重复
   const groups = (slot.anchors ?? []).map(g => (Array.isArray(g) ? g : [g]));
   if (!groups.length) return null;
   const has = (cols, group) => group.some(a => cols.some(c => c.includes(norm(a))));
   const where = slot.at ? `「${ch.title}·${slot.at}」` : `「${ch.title}」`;
-  const table = tableHeaders(scope).find(cols => has(cols, groups[0]));
-  if (!table) {
+  const candidates = scope.filter(cols => has(cols, groups[0]));
+  if (candidates.some(cols => groups.every(g => has(cols, g)))) return null;
+  if (!candidates.length) {
     return `${where}缺一张表（表头含「${groups[0][0]}」，`
       + `另外这几列也要有：${groups.slice(1).map(g => g[0]).join('、') || '无'}）`;
   }
-  const miss = groups.slice(1).filter(g => !has(table, g));
-  if (miss.length) {
-    return `${where}「${groups[0][0]}」那张表缺 ${miss.map(g => `「${g[0]}」`).join('、')}`
-      + '这几列——列名可以按本需求换说法，但这几件事读者要在同一张表里看到';
-  }
-  return null;
+  // 有同主语的表但没有一张齐的：按缺得最少的那张说，作者改它就够了
+  const best = candidates
+    .map(cols => groups.slice(1).filter(g => !has(cols, g)))
+    .sort((a, b) => a.length - b.length)[0];
+  return `${where}「${groups[0][0]}」那张表缺 ${best.map(g => `「${g[0]}」`).join('、')}`
+    + '这几列——列名可以按本需求换说法，但这几件事读者要在同一张表里看到';
 }
 
 /**
  * 这一章的必要结构在不在 —— 返回问题串；正文合法的新形式不因本模块受限。
  *
- * 必要 H3 按名字找（先精确再包含）；必要表按锚列认，位置按 `at`；章首图只看章首那段。
- * 报错带实际 H3/表头与所在章，不只说「形态不对」。
+ * 必要 H3 按名字找（先精确再包含）；必要表按锚列认，位置按 `at`；`diagram` 只核这一章
+ * 真有一张图。**图在章里的位置不判**：总览可以在章首那段，也可以在一个「总览」小节里，
+ * 按位置推断它是不是总览会拦住合法产物；它讲没讲清整条业务、局部图接不接得回总览，
+ * 归语义审查。报错带实际 H3/表头与所在章，不只说「形态不对」。
+ *
+ * @param {object} ch 合同章
+ * @param {object} view `document.parseChapter` 的结果（一次解析，各判据共用）
+ * @param {object} facts 入口解析好的当前输入
  */
-export function chapterStructureProblems(ch, body, facts) {
+export function chapterStructureProblems(ch, view, facts) {
   const problems = [];
-  const { lead, prose } = views(body);
   for (const want of requiredH3(ch, facts)) {
-    if (findSubsection(prose, want.title) === null) {
+    if (sectionBody(view, want.title) === null) {
       problems.push(`「${ch.title}」缺「${want.title}」这一节`);
     }
   }
   for (const slot of requiredTables(ch, facts)) {
-    const problem = tableProblem(ch, prose, slot);
+    const problem = tableProblem(ch, view, slot);
     if (problem) problems.push(problem);
   }
-  if (ch?.structure?.diagram && !DIAGRAM_FENCE.test(lead)) {
-    problems.push(`「${ch.title}」章首缺一张覆盖主路径与全部分支去向的总览图`
-      + '——挂在某个局部小节下面的图答不了「整条业务怎么走」');
+  if (ch?.structure?.diagram && !hasDiagram(view)) {
+    problems.push(`「${ch.title}」没有图——这一章要一张覆盖主路径与全部分支去向的总览图；`
+      + '放在章首那段或一个总览小节里都行，代码围栏不算');
   }
   return problems;
 }

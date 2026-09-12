@@ -34,8 +34,8 @@ import { fileURLToPath } from 'node:url';
 import { normalizeHeading, renumberStory } from './headings.mjs';
 import { flowProblems } from './flow-check.mjs';
 import { queryFlowStatus } from './flow/client.mjs';
-import { norm, renderTable, subsectionText, subsectionNames, chapterStructureProblems }
-  from './story/chapter-contract.mjs';
+import { renderTable, chapterStructureProblems } from './story/chapter-contract.mjs';
+import { norm, parseChapter, sectionBody, sectionNames } from './story/document.mjs';
 import { draftPath, writeDrafts } from './story/drafts.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import { readUse, UseError } from '../../../../hooks/shared/knowledge-use.mjs';
@@ -450,7 +450,7 @@ function appendixChapter(contract) {
 /**
  * 某个 `###` 小节在**全篇**里的行区间（正文部分，0 起）。
  *
- * `subsectionText` 只给正文，报错就指不回原文行号；而材料清单那一节的形态判据
+ * `sectionBody` 只给正文，报错就指不回原文行号；而材料清单那一节的形态判据
  * 与仓内路径豁免都要按行说话。
  *
  * @returns {{start:number, end:number}|null}
@@ -1044,6 +1044,14 @@ function cmdCheck(ctx) {
   const sections = storySections(storyText);
   // 章正文按标题索引：非占位那条按章取正文。
   const sectionText = new Map(sections.map(s2 => [s2.title, s2.text]));
+  // **一章解析一次**：围栏、小节、表头由 document 扫一遍，下面的判据读同一份结果。
+  // 各判据自己切文的话，同一章在一次 check 里会被切上七八遍，而每一处对
+  // 「围栏里的算不算」「小节到哪结束」都有自己的一份答案。
+  const parsed = new Map();
+  const viewOf = (title) => {
+    if (!parsed.has(title)) parsed.set(title, parseChapter(sectionText.get(title) ?? ''));
+    return parsed.get(title);
+  };
   const titles = sections.map(s2 => s2.title);
   const want = ctx.contract.chapters.map(c => c.title);
 
@@ -1202,7 +1210,7 @@ function cmdCheck(ctx) {
     const appendix = appendixChapter(ctx.contract);
     const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
     const verdictName = (appendix?.subsections ?? []).find(n => n.includes('规约')) ?? '规约判定';
-    const verdictText = appendixSec ? subsectionText(appendixSec.text, verdictName) : null;
+    const verdictText = appendixSec ? sectionBody(viewOf(appendixSec.title), verdictName) : null;
     if (verdictText === null) {
       problems.push(`缺${appendix ? `「${appendix.title}」章的` : ''}「${verdictName}」小节`
         + '——激活规约的逐条判定表落在那里');
@@ -1397,7 +1405,7 @@ function cmdCheck(ctx) {
     const text = sectionText.get(ch.title);
     if (text === undefined) continue;                 // 章缺失由 ① 报，这里不重复
     if (text.trim() === EMPTY_SECTION_TEXT) continue; // 空节已明说不涉及，没有结构可言
-    problems.push(...chapterStructureProblems(ch, text, ctx.facts));
+    problems.push(...chapterStructureProblems(ch, viewOf(ch.title), ctx.facts));
   }
 
   mark('⑫ 附录结构');
@@ -1412,7 +1420,7 @@ function cmdCheck(ctx) {
   const wantSubs = (appendixDef?.subsections ?? []).map(normalizeHeading);
   const materialName = materialSubsectionName(ctx.contract);
   if (appendixSection && wantSubs.length) {
-    for (const sub of subsectionNames(appendixSection.text)) {
+    for (const sub of sectionNames(viewOf(appendixSection.title))) {
       if (!wantSubs.includes(sub.name)) {
         problems.push(`「${appendixDef.title}」多了一节「${sub.raw}」`
           + `——${appendixDef.title}只有约定的这几节：${wantSubs.join('、')}；`
@@ -1420,7 +1428,7 @@ function cmdCheck(ctx) {
       }
     }
     for (const want of wantSubs) {
-      const body = subsectionText(appendixSection.text, want);
+      const body = sectionBody(viewOf(appendixSection.title), want);
       if (body === null) {
         problems.push(`「${appendixDef.title}」缺「${want}」这一节`
           + '——确实不涉及也要留标题，写「不涉及：<依据>」一行');
@@ -1470,7 +1478,7 @@ function cmdCheck(ctx) {
     for (const [name] of APPENDIX_FROM_SPEC) {
       const want = appendixTables(specForRows, name).flatMap(t => t.rows.map(r => r[0]));
       if (!want.length) continue;
-      const body = subsectionText(appendixSection.text, name) ?? '';
+      const body = sectionBody(viewOf(appendixSection.title), name) ?? '';
       const have = new Set(pipeTables(body).flatMap(t => t.rows.map(r => norm(r[0]))));
       const missing = want.filter(id => !have.has(norm(id)));
       if (missing.length) {
@@ -2172,22 +2180,26 @@ function materialsNotReady(ctx) {
 }
 
 /**
- * 本步要消费的 Spec 结构定位得到吗 —— 定位不到各记一笔，**把后果说出来**。
+ * 本步要消费的 Spec 章节在不在 —— **起手的必需输入**，缺了回 Spec。
  *
- * skeleton 自己消费的只有术语映射表（术语那一章的起始行）；`project` 之后要 §9 的
- * 那几节投附录。定位不到不拦：Spec 合法而某一节确实不涉及是正常状态，作者按 story
- * 那一章自己起表。拦了只会逼出为过门禁而补的空表。这里不重跑 spec 阶段的语义判据。
+ * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 §9 的那几节投
+ * 附录 A–C。**「没有这一节」与「这件事不涉及」不是一回事**：后者是 Spec 里写出来的
+ * 结论（`不涉及：<依据>`），评审者读得到；前者只是没写到那儿，而起手一路往下走的话，
+ * 作者会在十章都写完之后才发现附录三节没有可投的东西。
+ *
+ * 判的只是**本步真要读的那几节在不在**：不重跑 spec 阶段的语义判据，不替这份需求
+ * 判断它有没有接口，也不要求为了过门禁补一张空表。
+ *
+ * @returns {string[]} 缺口；空数组 = 可以起手
  */
-function specSeedGaps(spec) {
-  if (spec === null) return [];
+function specGaps(spec) {
   const gaps = [];
-  if (!specTerms(spec).length) {
-    gaps.push('spec 里定位不到业务术语映射表的表行：术语那一章的起始行留空，表由你起');
+  if (!specSection(spec, /术语映射表/).trim()) {
+    gaps.push('spec 里定位不到「术语映射表」这一节：术语那一章的起始行从它派生');
   }
   for (const [name, res, label] of APPENDIX_FROM_SPEC) {
     if (res.some(re => specSection(spec, re).trim())) continue;
-    gaps.push(`spec 里定位不到 ${label}：附录「${name}」将只投得出「不涉及」或空区，`
-      + '要有内容就改那份真源');
+    gaps.push(`spec 里定位不到 ${label}：附录「${name}」要从它投影`);
   }
   return gaps;
 }
@@ -2258,12 +2270,17 @@ function cmdSkeleton(ctx) {
       + blocking.map(m => missingSourceLine(m)).join('；'));
   }
 
-  // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节定位得到 ----
+  // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节都在 ----
   const spec = specText(ctx);
   if (spec !== null && !spec.trim()) {
     fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
   }
-  const specGaps = specSeedGaps(spec);
+  const gaps = spec === null ? [] : specGaps(spec);
+  if (gaps.length) {
+    fail(`spec.md 还缺起手要读的这几节，先回 spec 补齐再起骨架：\n  · ${gaps.join('\n  · ')}\n`
+      + '  这件事确实不涉及，就在那一节里写「不涉及：<依据>」一行——'
+      + '写出来的结论评审者读得到，没写到那儿的，起手这一步分不出是哪一种');
+  }
 
   // ---- 预检 ⑤：决策登记形状合法（只读，不写） ----
   const makeDecisions = decisionsMissing(ctx);
@@ -2309,7 +2326,6 @@ function cmdSkeleton(ctx) {
   }
   process.stdout.write(`[story-build skeleton] ${tail}\n`);
   for (const m of missing) process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
-  for (const g of specGaps) process.stdout.write(`  记一笔：${g}\n`);
 }
 
 /**

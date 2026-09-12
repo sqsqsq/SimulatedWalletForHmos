@@ -2368,12 +2368,28 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assert_wrote_nothing(before)
         self.assertEqual("{ 坏了", (self.src / "decisions.json").read_text(encoding="utf-8"))
 
-    def test_the_spec_gaps_are_a_note_not_a_block(self) -> None:
-        """Spec 里定位不到要消费的那几节：说清后果，不拦——那一节确实不涉及是正常状态。"""
+    def test_a_spec_missing_the_sections_it_reads_blocks_and_writes_nothing(self) -> None:
+        """起手要读的那几节不在，就回 Spec——不是记一笔往下走。
+
+        「没有这一节」与「这件事不涉及」不是一回事：后者是 Spec 里写出来的结论，
+        评审者读得到；前者只是没写到那儿，而一路往下走的话，作者要到十章都写完、
+        附录投不出东西时才发现。
+        """
+        spec = self.feature_root() / "spec" / "spec.md"
+        spec.write_text("# 甲需求 — 需求规格（Spec）\n\n## 1. 需求概述\n\n内容未完成。\n",
+                        encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, f"Spec 缺必要章节却起了手：{out}")
+        self.assertIn("术语映射表", out)
+        self.assertIn("不涉及", out, "没告诉作者「确实不涉及」该怎么写")
+        self.assert_wrote_nothing(before)
+
+    def test_an_explicit_not_applicable_section_is_legal(self) -> None:
+        """写出来的「不涉及：<依据>」是结论，起手照常——不逼作者补一张空表。"""
         code, out = self.skeleton()
         self.assertEqual(0, code, out)
-        self.assertIn("记一笔", out)
-        self.assertIn("术语", out)
+        self.assertTrue(self.story_path.is_file(), out)
 
 
 class TestTheSubmitCommandRunsAsWritten(StoryBuildCase):
@@ -2434,6 +2450,26 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         out = self.assert_check_names("通过条件")
         self.assertIn("验收", out)
 
+    def test_a_helper_table_before_the_real_one_does_not_hide_it(self) -> None:
+        """验收章前面先放一张「编号／说明」对照表、后面才是完整验收表——这一章是齐的。
+
+        只认第一张同主语的表，合法产物就被拦在「缺通过条件」上，而作者改哪一张都不对。
+        """
+        self.set_chapter("验收",
+                         "| 编号 | 说明 |\n|---|---|\n| AC-1 | 提交成功 |\n\n"
+                         "### 提交与回执\n\n"
+                         "| 编号 | 场景与前置 | 可观察的通过条件 | 主责 |\n|---|---|---|---|\n"
+                         "| AC-1 | 已登录 | 界面显示受理单编号 | 端侧 |\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_columns_split_across_two_tables_still_fail(self) -> None:
+        """凭据散在两张表里要读者自己拼，那不是凭据——不跨表拼列。"""
+        self.set_chapter("验收",
+                         "| 编号 | 说明 |\n|---|---|\n| AC-1 | 提交成功 |\n\n"
+                         "| 场景 | 可观察的通过条件 |\n|---|---|\n| 提交成功 | 显示受理单编号 |\n")
+        self.assert_check_names("通过条件")
+
     def test_renamed_columns_in_one_table_pass(self) -> None:
         """列名按本需求换说法、加列都合法——判的是这几件事在不在同一张表里。"""
         self.set_chapter("验收",
@@ -2459,13 +2495,23 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         out = self.assert_check_names("缺「回退设计」这一节")
         self.assertIn("缺「交付物」这一节", out)
 
-    def test_the_overview_diagram_must_be_at_the_top_of_the_chapter(self) -> None:
-        """图挂在某个局部过程下面，答不了「整条业务怎么走」——章首范围才算。"""
+    def test_a_chapter_without_any_diagram_fails(self) -> None:
+        """这一章要一张图：一张都没有才是缺。"""
         self.set_chapter("业务流程",
-                         "提交之后等回执。\n\n### 回执到达前的等待\n\n"
-                         "下图是这一段的内部过程：\n\n"
-                         "```mermaid\nflowchart TD\n  提交 --> 等待\n```\n")
-        self.assert_check_names("章首缺一张")
+                         "提交之后等回执。\n\n### 回执到达前的等待\n\n界面停在等待态。\n")
+        self.assert_check_names("没有图")
+
+    def test_an_overview_inside_its_own_section_is_legal(self) -> None:
+        """总览放在一个总览小节里也行——按位置推断它是不是总览，会拦住合法产物。
+
+        它讲没讲清整条业务、局部图接不接得回总览，归语义审查；机器只认这一章真有图。
+        """
+        self.set_chapter("业务流程",
+                         "### 总览\n\n整条业务这样走：\n\n"
+                         "```mermaid\nflowchart TD\n  提交 --> 等待 --> 已回执\n  等待 --> 超时未提交\n```\n\n"
+                         "### 回执到达前的等待\n\n界面停在等待态。\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
 
     def test_a_diagram_before_the_first_subsection_passes(self) -> None:
         self.set_chapter("业务流程",
@@ -2474,6 +2520,12 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
                          "### 回执到达前的等待\n\n界面停在等待态。\n")
         code, out = self.check_output()
         self.assertEqual(0, code, out)
+
+    def test_a_plain_code_fence_is_not_a_diagram(self) -> None:
+        """普通示例代码不算图：算它的话，贴一段数据就能顶掉这一章该画的那张。"""
+        self.set_chapter("业务流程",
+                         '提交之后等回执。\n\n```json\n{"state": "waiting"}\n```\n')
+        self.assert_check_names("没有图")
 
     def make_siblings(self) -> None:
         """本轮真有兄弟单据：条件只看份表——`siblings` 由它决定，不另立一份声明。"""
