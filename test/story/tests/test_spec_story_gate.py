@@ -85,5 +85,135 @@ class TestSpecStoryGate(unittest.TestCase):
         self.assertIn("不是合法 JSON", problems[0])
 
 
+class TestOriginalArSourceIsAReadableFile(unittest.TestCase):
+    """原件定位只把**可读的普通文件**当原件——作者照着它去读上游原话。
+
+    只判「存在」的话，`design.origin` 指到一个目录也会被当成已校验的原件：
+    任务包于是告诉作者「上游原话在这里」，他打开的是一个目录。
+    """
+
+    def setUp(self) -> None:
+        self.node = shutil.which("node")
+        if self.node is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.feature_root = Path(self._tmp.name) / "doc" / "features" / FEATURE
+        self.src = self.feature_root / "AR" / "story-src"
+        self.src.mkdir(parents=True)
+
+    def write_flow(self, origin) -> None:
+        flow = dict(MINIMAL_FLOW, design={"origin": origin} if origin is not None else None)
+        (self.src / "story-flow.json").write_text(
+            json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def origin(self) -> dict:
+        script = (
+            "import {pathToFileURL} from 'node:url';"
+            "const m=await import(pathToFileURL(process.argv[1]).href);"
+            "console.log(JSON.stringify(m.originalArSource(process.argv[2])));")
+        proc = subprocess.run(
+            [self.node, "--input-type=module", "-e", script, "--",
+             str(FLOW_CHECK), str(self.feature_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_a_real_file_is_the_only_success(self) -> None:
+        keep = self.src / "sources" / "ar" / "r1.md"
+        keep.parent.mkdir(parents=True)
+        keep.write_text("# 上游原 AR\n\n原话在这里。\n", encoding="utf-8")
+        self.write_flow("AR/story-src/sources/ar/r1.md")
+        got = self.origin()
+        self.assertIsNone(got["problem"], got)
+        self.assertTrue(got["path"].endswith("r1.md"), got)
+
+    def test_a_directory_is_not_an_original(self) -> None:
+        (self.src / "sources" / "ar").mkdir(parents=True)
+        self.write_flow("AR/story-src/sources/ar")
+        got = self.origin()
+        self.assertIsNone(got["path"], got)
+        self.assertIn("不是一份文件", got["problem"])
+
+    def test_a_dead_pointer_says_where_it_pointed(self) -> None:
+        self.write_flow("AR/story-src/sources/ar/r1.md")
+        got = self.origin()
+        self.assertIsNone(got["path"])
+        self.assertIn("AR/story-src/sources/ar/r1.md", got["problem"])
+
+    def test_no_origin_is_not_a_problem(self) -> None:
+        """本轮没有可留存的原件（空骨架）：没有原件，不是出了问题。"""
+        self.write_flow(None)
+        got = self.origin()
+        self.assertIsNone(got["path"])
+        self.assertIsNone(got["problem"])
+
+    def test_a_pointer_out_of_the_feature_is_named(self) -> None:
+        self.write_flow("../../../etc/passwd")
+        got = self.origin()
+        self.assertIsNone(got["path"])
+        self.assertIn("越出了需求目录", got["problem"])
+
+
+class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
+    """第一级关卡的值域读自章节合同：**读不到要出声**，不退化成空集。
+
+    退化成空集的话，每一条合法的 `material_scope` 记录都会被判成「chosen 非法」，
+    作者拿着一份合法契约去改它，而坏掉的是合同的读取路径。
+    """
+
+    EXT = REPO_ROOT / "doc" / "extensions" / "skills" / "story"
+
+    def setUp(self) -> None:
+        self.node = shutil.which("node")
+        if self.node is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        # 按机制自己的相对定位复制一份：flow-check 从它自己的位置找 contracts/
+        self.skill = Path(self._tmp.name) / "story"
+        shutil.copytree(self.EXT / "scripts", self.skill / "scripts")
+        shutil.copytree(self.EXT / "contracts", self.skill / "contracts")
+        self.feature_root = Path(self._tmp.name) / "doc" / "features" / FEATURE
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True)
+        flow = dict(MINIMAL_FLOW)
+        flow["rounds"] = [{
+            "round": 1, "materials": {"digest": "d1"},
+            "positioning": {"scope_text": "本 AR 承载提交与回执", "sr_related_ars": []},
+            "scope_options": [{"key": "carry_all", "label": "按当前范围整体承载"}],
+            "gates": [{"gate": "material_scope", "chosen": "confirm_scope",
+                       "options": [{"key": "confirm_scope"}], "outcome": "accepted",
+                       "at": "2026-09-12T00:00:00", "by": "human"},
+                      {"gate": "scope_decision", "chosen": "carry_all",
+                       "options": [{"key": "carry_all"}], "outcome": "accepted",
+                       "at": "2026-09-12T00:00:00", "by": "human"}],
+        }]
+        flow["design_generated_at"] = "2026-09-12T00:00:00"
+        (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text(
+            json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def problems(self) -> list[str]:
+        script = (
+            "import {pathToFileURL} from 'node:url';"
+            "const m=await import(pathToFileURL(process.argv[1]).href);"
+            "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
+        proc = subprocess.run(
+            [self.node, "--input-type=module", "-e", script, "--",
+             str(self.skill / "scripts" / "core" / "flow-check.mjs"), str(self.feature_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_a_legal_contract_judges_the_choice(self) -> None:
+        self.assertEqual([], self.problems())
+
+    def test_a_broken_contract_is_reported_not_swallowed(self) -> None:
+        (self.skill / "contracts" / "story-chapters.json").write_text("{ 坏了", encoding="utf-8")
+        problems = self.problems()
+        self.assertTrue(any("章节合同" in p for p in problems), problems)
+        self.assertFalse(any("chosen 非法" in p for p in problems),
+                         f"合同读不到却去说人的选择非法：{problems}")
+
+
 if __name__ == "__main__":
     unittest.main()

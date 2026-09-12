@@ -40,6 +40,22 @@ DRAFT_TEXT = (
     "## 5 上游已声明线索\n\n无。\n")
 
 
+def run_in_shell(command: str, cwd=None) -> subprocess.CompletedProcess:
+    """把渲染出来的命令**原样交给本工程的命令行**跑一遍。
+
+    引用规则由机制那一侧定（`story/drafts.mjs` 的 `shellArg`：PowerShell 的单引号
+    字面量）；测试必须用同一个 shell 跑，否则测的是另一套规则——cmd.exe 不认单引号，
+    路径会连着引号一起进参数。找不到 PowerShell 就退回 POSIX shell：单引号在它那里
+    是同样的字面含义。
+    """
+    exe = shutil.which("pwsh") or shutil.which("powershell")
+    args = ([exe, "-NoProfile", "-Command", command + "; exit $LASTEXITCODE"]
+            if exe else ["bash", "-lc", command])
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=180,
+                          cwd=None if cwd is None else str(cwd))
+
+
 def _chapter_bodies(story_path) -> dict:
     """把 story 切成 {章标题: 正文}——夹具的引文要从真正的那一章里取。"""
     out, cur, buf = {}, None, []
@@ -1666,6 +1682,21 @@ class TheContractCarriesTheKeptSeeds(RealRunCase):
         draft = self.draft("09-交付与上线.md").read_text(encoding="utf-8")
         self.assertIn("| 交付物 | 给谁 | 做什么用 | 什么时候要 |", draft)
 
+    def test_required_sections_are_seeded_where_they_are_checked(self) -> None:
+        """必要小节的标题也进草稿，而且表打在它该在的那一节下面。
+
+        打底与核对不同位置的话，作者第一次知道「这一章要有哪个小节」是在报错里——
+        而报错不是首次交付规则的渠道。
+        """
+        rollout = self.draft("09-交付与上线.md").read_text(encoding="utf-8")
+        self.assertIn("### 回退设计", rollout)
+        self.assertIn("### 交付物", rollout)
+        self.assertIn("| 交付物 | 给谁 | 做什么用 | 什么时候要 |",
+                      rollout.split("### 交付物", 1)[1], "表没打在它该在的那一节下面")
+        scope = self.draft("03-范围.md").read_text(encoding="utf-8")
+        self.assertIn("### 特性分工", scope)
+        self.assertNotIn("### 交接约定", scope, "没有兄弟单据就不预置交接说明节")
+
 
 class TheMachineZoneComesFromTheSource(RealRunCase):
     """附录 A–D 每次都从当前真源重算，不读旧 story、不含占位。
@@ -2180,6 +2211,277 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
             self.assertEqual(0, proc.returncode, proc.stderr)
             hits = json.loads(proc.stdout or "[]")
             self.assertEqual([], hits, f"第 {i + 1} 节机器区自己撞了归档件红线：{hits}")
+
+
+class SkeletonPreflightCase(Step8Case):
+    """起手预检：**全部读完、判完，才写盘**；每一条不通过都给当前责任动作。
+
+    夹具先把 S1–S4 走完（`ensure_flow_state`），再把上一轮留下的草稿清掉——
+    这几条判的都是「这一次起手该不该开始」，盘上有没有旧草稿不该影响答案。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+        shutil.rmtree(self.src / "drafts", ignore_errors=True)
+
+    def skeleton(self) -> tuple[int, str]:
+        proc = subprocess.run(
+            ["node", str(BUILD), "skeleton", "--feature", FEATURE,
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()
+
+    def files_now(self) -> list[str]:
+        return sorted(str(p.relative_to(self.root)).replace("\\", "/")
+                      for p in self.root.rglob("*") if p.is_file())
+
+    def assert_wrote_nothing(self, before: list[str]) -> None:
+        self.assertEqual(before, self.files_now(),
+                         "预检没通过却已经写了盘——半份起手比报错更难收拾")
+
+
+class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
+    """材料在收口之后被改：**两份落盘记录彼此照样相等**，只有按磁盘现状重算才看得见。
+
+    上一版起手只比清单 `digest` 与轮次基准，两个都是旧值——改一份材料正文再起手，
+    退出码 0、Story 照建，而它据以成文的那批料已经不是登记的那批。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink(missing_ok=True)     # 复现的是「起手要新建 Story」那一刻
+
+    def change_a_material(self) -> None:
+        prd = self.feature_root() / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：回执超时后允许重试一次。\n",
+                       encoding="utf-8")
+
+    def test_a_changed_material_blocks_the_skeleton_and_writes_nothing(self) -> None:
+        self.change_a_material()
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, f"材料变了还是起了手：{out}")
+        self.assertIn("材料在收口之后又变了", out)
+        self.assertIn("round", out, "没给处置动作")
+        self.assert_wrote_nothing(before)
+
+    def test_registering_the_change_lets_it_start(self) -> None:
+        """处置不是死路：`round` 把这次变化记到本轮之后，起手照常。"""
+        self.change_a_material()
+        self.round_now()
+        code, out = self.skeleton()
+        self.assertEqual(0, code, out)
+        self.assertTrue(self.story_path.is_file(), out)
+
+    def test_it_says_so_when_it_cannot_ask(self) -> None:
+        """问不出来就说问不出来——把「问不到」当「材料齐备」等于替没人核过的输入背书。"""
+        broken = self.src / "materials.json"
+        broken.write_text("{ 这不是 JSON", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("materials.json", out)
+        self.assert_wrote_nothing(before)
+
+
+class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
+    """来源必不必需，起手与交付前的 check 是**同一份判定**。
+
+    两处各判一次的代价，实测是同一份缺件被说成两件事：起手说「本地单缺它正常」，
+    交付前的 check 说「它是必备来源」——作者只能挑一句信。
+    """
+
+    def detail_json(self) -> None:
+        """写一份需求系统的单据身份：这一份在，PRD 与系统设计就是必备来源。"""
+        (self.feature_root() / "AR" / "detail.json").write_text(
+            json.dumps({"reqNo": FEATURE, "parentNo": "SR90001", "rrNo": "RR90001"},
+                       ensure_ascii=False), encoding="utf-8")
+
+    def test_a_missing_required_source_blocks_both(self) -> None:
+        (self.feature_root() / "spec" / "spec.md").unlink()
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("必备来源缺失", out)
+        self.assertIn("spec/spec.md", out)
+        self.assert_wrote_nothing(before)
+
+        code2, out2 = self.check_output()
+        self.assertEqual(1, code2, f"起手拦了，交付前的 check 却放过：{out2}")
+        self.assertIn("spec/spec.md", out2)
+        self.assertIn("必备来源", out2)
+
+    def test_a_local_ticket_may_lack_the_remote_only_sources(self) -> None:
+        """本地单没有需求系统给的 PRD / 系统设计：记一笔，不拦——两处都不拦。"""
+        (self.feature_root() / "SR" / "design.md").unlink()
+        self.round_now()                    # 材料集合跟着变，清单按现状重算
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+        self.assertIn("本地单没有需求系统给的这一份", out)
+        _, skeleton_out = self.skeleton()
+        self.assertIn("本地单没有需求系统给的这一份", skeleton_out)
+
+    def test_a_remote_ticket_must_have_them(self) -> None:
+        """有单据身份就是远程单：同一份缺件在这里是必备缺失。"""
+        self.detail_json()
+        (self.feature_root() / "SR" / "design.md").unlink()
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("SR/design.md", out)
+        self.assertIn("必备来源", out)
+
+
+class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
+    """坏掉的决策登记：当场报错，**一个字节不写**，更不覆盖已登记的判断。"""
+
+    def test_a_broken_decision_file_writes_nothing(self) -> None:
+        (self.src / "decisions.json").write_text("{ 坏了", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("decisions.json", out)
+        self.assert_wrote_nothing(before)
+        self.assertEqual("{ 坏了", (self.src / "decisions.json").read_text(encoding="utf-8"))
+
+    def test_the_spec_gaps_are_a_note_not_a_block(self) -> None:
+        """Spec 里定位不到要消费的那几节：说清后果，不拦——那一节确实不涉及是正常状态。"""
+        code, out = self.skeleton()
+        self.assertEqual(0, code, out)
+        self.assertIn("记一笔", out)
+        self.assertIn("术语", out)
+
+
+class TestTheSubmitCommandRunsAsWritten(StoryBuildCase):
+    """草稿里那条提交命令**原样跑得通**——带上真实的工程根，参数按当前 shell 引用。
+
+    只断言命令里有 `chapter` 的话，两种错法都看不见：少了 `--project-root`，
+    作者在另一个仓里照抄就落到脚本自己的默认仓；引用规则写错，
+    路径里的空格与 `$` 会被 shell 吃掉或展开。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        # 工程根带空格与 `$`：两样都是 shell 会动手脚的字符
+        self.root = Path(self._tmp.name) / "work space $x"
+        shutil.copytree(FIXTURE, self.root)
+        self.addCleanup(self._tmp.cleanup)
+        self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+
+    def submit_command(self) -> str:
+        self.story_path.unlink(missing_ok=True)
+        proc = self.run_build("skeleton")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        draft = next(p for p in sorted((self.src / "drafts").glob("*.md"))
+                     if "术语" in p.name)
+        line = next(l for l in draft.read_text(encoding="utf-8").split("\n")
+                    if "提交：" in l)
+        return line.split("提交：", 1)[1].rsplit("-->", 1)[0].strip()
+
+    def test_the_rendered_command_lands_the_chapter(self) -> None:
+        command = self.submit_command()
+        self.assertIn("--project-root", command, "命令没带工程根")
+        draft = next(p for p in (self.src / "drafts").glob("*术语*.md"))
+        draft.write_text("| 术语 | 在本需求里的意思 |\n|---|---|\n| 受理单编号 | 云侧受理后给的编号 |\n",
+                         encoding="utf-8")
+        proc = run_in_shell(command, cwd=self.root.parent)
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        self.assertIn("受理单编号", self.story_path.read_text(encoding="utf-8"))
+
+
+class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
+    """必要结构：**位置、最低凭据、条件**三样都按合同判，围栏里的样例不算。
+
+    退掉固定标题与固定张数之后，还要拦得住三种形态：凭据散成一列（「编号」一列的
+    验收表）、表在章内错位（交付物表挂到回退设计下面）、总览图挂在某个局部小节里。
+    这三样上一版都是零问题——判据只认「章里有一张表」「章里有一张图」。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+
+    def set_chapter(self, title: str, body: str) -> None:
+        self.rewrite_story(f"## {title}\n\n本需求不涉及。", f"## {title}\n\n{body}")
+
+    def test_one_bare_id_column_is_not_acceptance_evidence(self) -> None:
+        self.set_chapter("验收", "| 编号 |\n|---|\n| AC-1 |\n")
+        out = self.assert_check_names("通过条件")
+        self.assertIn("验收", out)
+
+    def test_renamed_columns_in_one_table_pass(self) -> None:
+        """列名按本需求换说法、加列都合法——判的是这几件事在不在同一张表里。"""
+        self.set_chapter("验收",
+                         "| 原始编号 | 场景与前置 | 怎么算通过 | 主责 |\n|---|---|---|---|\n"
+                         "| AC-1 | 提交成功 | 界面显示受理单编号 | 端侧 |\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_the_delivery_table_must_sit_in_its_own_section(self) -> None:
+        """交付物那张表挂在回退设计下面：读者在「交付物」一节里什么也没看到。"""
+        self.set_chapter("交付与上线",
+                         "### 回退设计\n\n关掉提交入口，已受理的申请照常走完。\n\n"
+                         "| 交付物 | 给谁 | 做什么用 | 什么时候要 |\n|---|---|---|---|\n"
+                         "| 提交说明 | 评审人 | 过目 | 提交前 |\n\n"
+                         "### 交付物\n\n随版本发布。\n")
+        out = self.assert_check_names("交付物")
+        self.assertIn("缺一张表", out)
+
+    def test_a_fenced_example_does_not_substitute_for_the_real_section(self) -> None:
+        self.set_chapter("交付与上线",
+                         "```markdown\n### 回退设计\n\n### 交付物\n\n"
+                         "| 交付物 | 给谁 | 做什么用 | 什么时候要 |\n|---|---|---|---|\n```\n")
+        out = self.assert_check_names("缺「回退设计」这一节")
+        self.assertIn("缺「交付物」这一节", out)
+
+    def test_the_overview_diagram_must_be_at_the_top_of_the_chapter(self) -> None:
+        """图挂在某个局部过程下面，答不了「整条业务怎么走」——章首范围才算。"""
+        self.set_chapter("业务流程",
+                         "提交之后等回执。\n\n### 回执到达前的等待\n\n"
+                         "下图是这一段的内部过程：\n\n"
+                         "```mermaid\nflowchart TD\n  提交 --> 等待\n```\n")
+        self.assert_check_names("章首缺一张")
+
+    def test_a_diagram_before_the_first_subsection_passes(self) -> None:
+        self.set_chapter("业务流程",
+                         "整条业务这样走：\n\n"
+                         "```mermaid\nflowchart TD\n  提交 --> 等待 --> 已回执\n  等待 --> 超时未提交\n```\n\n"
+                         "### 回执到达前的等待\n\n界面停在等待态。\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def make_siblings(self) -> None:
+        """本轮真有兄弟单据：条件只看份表——`siblings` 由它决定，不另立一份声明。"""
+        flow_path = self.src / "story-flow.json"
+        flow = (json.loads(flow_path.read_text(encoding="utf-8"))
+                if flow_path.is_file() else {"schema": 3, "feature": FEATURE,
+                                             "status": "complete", "rounds": []})
+        flow.setdefault("split", {})["parts"] = [
+            {"seq": 1, "carrier": FEATURE, "scope": "提交与回执"},
+            {"seq": 2, "carrier": "AR90002", "scope": "补卡"},
+        ]
+        flow_path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def test_the_handover_section_is_required_only_with_real_siblings(self) -> None:
+        body = "### 特性分工\n\n本单只做提交与回执展示。\n"
+        self.set_chapter("范围", body)
+        code, out = self.check_output()
+        self.assertEqual(0, code, f"没有兄弟单据却要求交接说明：{out}")
+
+        self.make_siblings()
+        out = self.assert_check_names("缺「交接约定」这一节")
+        self.assertIn("范围", out)
+
+    def test_the_handover_section_needs_no_table(self) -> None:
+        """兄弟交接要的是说明，不是一张「约定 / 内容」表。"""
+        self.make_siblings()
+        self.set_chapter("范围",
+                         "### 特性分工\n\n本单只做提交与回执展示。\n\n"
+                         "### 交接约定\n\n受理单编号由本单生成，补卡那一单只读它；"
+                         "本单先发，补卡单在下一个版本跟上。\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
 
 
 if __name__ == "__main__":

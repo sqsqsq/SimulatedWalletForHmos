@@ -973,6 +973,19 @@ def next_step(feature_root: Path, contract: dict | None) -> tuple[str, str]:
                 "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审"
                 + frozen_tail(feature_root, contract))
     if contract.get("status") == "complete":
+        # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
+        # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
+        # 仍然彼此相等，只有按磁盘现状重算才看得见。处置是 `round`——它把这次变化
+        # 记到本轮（不开新轮），要重新决策才跑 `reopen`。**没有登记过基准不算「变了」**：
+        # 那是轮次自己缺了材料指纹，由流程契约的判据报，处置也不是同一个。
+        current = contract["rounds"][-1]
+        base = (current.get("materials") or {}).get("digest")
+        if base and material_state(feature_root, current)["changed"]:
+            return ("refresh_round",
+                    "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
+                    "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
+                    "再继续 spec 阶段——spec 与叙事件都按本轮登记的那批料写"
+                    + frozen_tail(feature_root, contract))
         step, action = spec_stage_step(feature_root)
         return step, action + frozen_tail(feature_root, contract)
 
@@ -1566,7 +1579,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
-    # 之后 `story-build check` 拿它核对，`init` 直接拒绝重算。
+    # 之后 `story-build check` 拿它核对，`skeleton` 与 `build` 直接拒绝重算。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层

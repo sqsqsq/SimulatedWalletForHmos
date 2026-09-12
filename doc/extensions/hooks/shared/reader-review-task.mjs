@@ -71,21 +71,6 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     rows.push('', `章级维度：${dimensions.join('、')}。`);
   }
 
-  // 分节小节的每一段该答什么，合同里写着（作者的草稿占位渲染的就是它）。
-  // 门禁只核标签在不在——「答没答到」要读那一段说了什么，那是你的活。
-  // 判的是遗漏与含义：漏了提示里的必要信息才是 finding；
-  // 句数、字数、用没用图都不是判据。
-  for (const chapter of contract?.chapters ?? []) {
-    for (const slot of Object.values(chapter.form?.slots ?? {})) {
-      const hints = Object.entries(slot.label_hints ?? {});
-      if (!hints.length) continue;
-      rows.push('', `**${chapter.title}** 的每条分节小节，三段各答到了吗——`
-        + hints.map(([label, hint]) => `「${label}」${hint}`).join('；') + '。'
-        + '标签写了而那一段没答到它问的事，是 finding；'
-        + '写得长不长、分几句、配没配图都不是。');
-    }
-  }
-
   // 逐章问答看不到横跨两章的矛盾：同一个条件在流程里说一套、在验收里说另一套时，
   // 两章各自都说得通，只有对着读才看得出来。所以跨章比对要说成一个显式动作。
   rows.push('', '### 跨章对着读，这四问', '',

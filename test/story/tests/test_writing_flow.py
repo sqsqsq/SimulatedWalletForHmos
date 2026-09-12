@@ -29,10 +29,10 @@ def read(rel: str) -> str:
 class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
         spec = read("phases/spec.md")
-        self.assertIn("③b 统稿", spec)
-        self.assertLess(spec.index("③ 按章写"), spec.index("③b 统稿"),
+        self.assertIn("②b 统稿", spec)
+        self.assertLess(spec.index("② 按章写"), spec.index("②b 统稿"),
                         "统稿在按章写之后")
-        self.assertLess(spec.index("③b 统稿"), spec.index("④ 登记"),
+        self.assertLess(spec.index("②b 统稿"), spec.index("③ 登记"),
                         "统稿在登记之前——登记那一步会渲染 review，"
                         "评审记录面对的应当是收过口的全篇")
 

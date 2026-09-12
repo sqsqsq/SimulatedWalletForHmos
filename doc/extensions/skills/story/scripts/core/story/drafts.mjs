@@ -24,22 +24,25 @@ export function draftPath(ctx, index, title) {
 }
 
 /**
- * 一个参数交给 shell 之前包起来 —— 图名带空格是常事（`page one.png`）。
+ * 一个参数交给 shell 之前包起来 —— **本工程的命令行是 PowerShell**。
  *
- * 裸拼的话 bash 把它拆成两个参数，作者复制过去得到 `unrecognized arguments: one.png`。
- * 双引号 bash 与 Windows 的 cmd 都认；内部的双引号与反斜杠转义掉。
+ * 单引号里 PowerShell 不做任何展开：`$`、反引号、双引号都是字面；参数自身的单引号
+ * 写两遍就是一个字面单引号。双引号不行——`$name` 与反引号会在双引号里被展开，
+ * 而反斜杠在 PowerShell 里根本不是转义符，靠它去转义只会把反斜杠本身留在参数里。
+ * 不包也不行：图名带空格是常事（`page one.png`），裸拼会被拆成两个参数，
+ * 作者复制过去得到 `unrecognized arguments: one.png`。
  */
 export function shellArg(value) {
-  return `"${String(value).replace(/(["\\])/g, '\\$1')}"`;
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 /**
  * 合同文字折成一行行内说明：换行折为空格，`-->` 转义，
  * 不让说明逃出注释、也不让注释在渲染器里提前闭合。
  */
-function guideLine(label, text) {
+function guideLine(text, label = '') {
   const one = String(text ?? '').replace(/\r?\n/g, ' ').replace(/-->/g, '--\\>').trim();
-  return `<!-- story-draft:guide ${label}：${one} -->`;
+  return `<!-- story-draft:guide ${label ? `${label}：` : ''}${one} -->`;
 }
 
 /**
@@ -49,18 +52,19 @@ function guideLine(label, text) {
  * 都在他动笔前进草稿；必要种子（术语起始行、验收/交付表头、附录投影入口）
  * 是确定性工作，脚本做完。他填的是语义——正文怎么组织、每一格写什么。
  */
-export function chapterDraft(ctx, ch, facts) {
+function chapterDraft(ctx, ch, facts) {
   const index = ctx.contract.chapters.indexOf(ch);
   const file = draftPath(ctx, index, ch.title);
   const rows = [
-    guideLine('读者问题', (ch.questions ?? []).join('；')),
-    guideLine('主要职责', ch.boundary),
-    guideLine('写前对照当前Story已写内容，本章补独有信息；'
-      + '形式方法见story-write.md「十章各自怎么组织」'),
-    guideLine('提交', `node ${shellArg(ctx.scriptPath)} chapter`
+    guideLine((ch.questions ?? []).join('；'), '读者问题'),
+    guideLine(ch.boundary, '主要职责'),
+    guideLine('写前对照当前 Story 已写内容，本章补独有信息；'
+      + '形式方法见 story-write.md「十章各自怎么组织」'),
+    guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
       + ` --chapter ${shellArg(ch.title)}`
-      + ` --from ${shellArg(file)}`),
+      + ` --from ${shellArg(file)}`
+      + ` --project-root ${shellArg(ctx.projectRoot)}`, '提交'),
     '',
     `## ${ch.title}`,
     '',

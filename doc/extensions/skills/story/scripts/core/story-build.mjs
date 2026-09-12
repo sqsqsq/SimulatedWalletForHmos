@@ -39,7 +39,7 @@ import { draftPath, writeDrafts } from './story/drafts.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import { readUse, UseError } from '../../../../hooks/shared/knowledge-use.mjs';
 import {
-  formatHits, proseBlocks, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
+  formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths, scanMaterialList,
 } from './lint-rules.mjs';
 import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
@@ -216,7 +216,7 @@ function offlineFacts() {
  * 各写一份就会改一处忘一处。
  */
 const STORY_SRC_LEDGERS = [
-  ['decisionsPath', 'init'], ['copyeditPath', '统稿'],
+  ['decisionsPath', 'skeleton'], ['copyeditPath', '统稿'],
 ];
 
 /**
@@ -336,17 +336,13 @@ function knowledgeUseVerdicts(ctx, entries = []) {
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
  *
  * 读不到就静默跳过的话，一整类材料会凭空缺席而零信号：那一份的内容从头到尾
- * 没进过任何一条判据的视野，从 init 到 check 没有一处提过。
+ * 没进过任何一条判据的视野，从起手到交付没有一处提过。
  *
- * **一律记一笔，不拦**（`required` 只决定措辞轻重）。
+ * 这里只**读合同声明**：谁读到了、谁没读到。这一轮各自必不必需（远程单/本地单）
+ * 由 `sourceStatus` 判，起手与交付前的 check 共用它，不在两处各写一份。
  *
  * 索引文件缺席**不是缺陷**：图片的身份与落点在 `materials.json`，那是唯一登记处。
  * 拿「目录里有图而索引不在」当阻断，等于要求作者为一份不承载登记的说明文件停下来。
- *
- * **为什么必备来源缺失也不拦**：最小夹具天然只备一类材料——一份材料测一条判据。
- * 把缺失判成 BLOCKER，逼出来的是更假的夹具，不是更准的判据。
- * 而要解决的问题本来就不是「没拦」，是**零信号**：一整类材料缺席而没有一处提过。
- * 让它一律可见就够了。
  *
  * @returns {{docs: object[], missing: object[]}}
  */
@@ -368,7 +364,7 @@ function scanSources(ctx) {
       });
       continue;
     }
-    // 缺来源一律不拦（一律记一笔）。图片的登记在 materials.json，不在这些索引文件里。
+    // 读不到的带回来，必需性交给 sourceStatus。
     missing.push({ doc, rel, required: obj.required === true });
   }
   return { docs, missing };
@@ -383,16 +379,39 @@ function scanSources(ctx) {
  */
 const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/gmi;
 
-/** 缺失来源报成一句话。都是「记一笔」，措辞按是不是必备分两种。 */
+/** 缺失来源报成一句话。必备与可选两种措辞，降级的那几份带上「为什么不算缺」。 */
 function missingSourceLine(m) {
   return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
     + (m.required
       ? '——它是必备来源，缺了这一轮的材料就不完整'
-      : '（可选来源，缺了是正常的）');
+      : `（${m.why ?? '可选来源'}，缺了是正常的）`);
+}
+
+//: 需求系统给的单才有的那两份。本地单没有它们是正常的——把本地单的 PRD 判成缺件，
+//: 作者除了造一份假的没有别的路。本轮自己派生的产物（Spec、AR 提取稿）两种单都必需：
+//: 跳过它等于拿不全的输入成文。
+const REMOTE_ONLY_SOURCES = ['PRD', 'SE'];
+
+/**
+ * 合同声明的来源这一轮各自必不必需 —— **起手与交付前的 check 问的是同一份判定**。
+ *
+ * 两处各判一次的代价，在实测里是同一份缺件被说成两件事：起手说「本地单缺 PRD 正常」，
+ * 交付前的 check 说「它是必备来源」。远程单的身份由既有的 `AR/detail.json` 认，
+ * 不新增声明。
+ *
+ * @returns {{docs: object[], missing: object[], blocking: object[]}}
+ */
+function sourceStatus(ctx) {
+  const { docs, missing } = scanSources(ctx);
+  const remote = fs.existsSync(path.join(ctx.featureRoot, 'AR', 'detail.json'));
+  const adjusted = missing.map(m => (remote || !REMOTE_ONLY_SOURCES.includes(m.doc)
+    ? m
+    : { ...m, required: false, why: '本地单没有需求系统给的这一份' }));
+  return { docs, missing: adjusted, blocking: adjusted.filter(m => m.required) };
 }
 
 // --------------------------------------------------------------------------
-// init：材料齐备检查 + 建决策骨架
+// 正文定位：章、小节与附录机器区
 // --------------------------------------------------------------------------
 
 /**
@@ -780,9 +799,9 @@ const DROP_COLUMNS = ['代码现状'];
 //: 附录三节各从 spec §9 的哪几个小节生成。附录的读者要「拿着回查」，
 //: 所以行必须齐——集合核（⑫）盯的就是这里。
 const APPENDIX_FROM_SPEC = [
-  ['接口', [/^###\s*9\.1/]],
-  ['数据、配置与事件', [/^###\s*9\.2/, /^###\s*9\.3/, /^###\s*9\.4/]],
-  ['改动边界', [/^###\s*9\.5/]],
+  ['接口', [/^###\s*9\.1/], '§9.1'],
+  ['数据、配置与事件', [/^###\s*9\.2/, /^###\s*9\.3/, /^###\s*9\.4/], '§9.2–9.4'],
+  ['改动边界', [/^###\s*9\.5/], '§9.5'],
 ];
 
 /** 某个附录小节该有的表：spec 对应几节就给几张，表头按原顺序带过来（去掉不投的列）。 */
@@ -825,7 +844,7 @@ function decisionList(raw) {
 
 //: 登记表形状不对时说什么 —— 五个读点同一句，形状只在这里描述一次。
 const DECISION_SHAPE = '读不出条目：顶层要么是 `{"decisions": [ … ]}`，要么直接是 `[ … ]`'
-  + '——骨架由 `story-build init` 生成，照它的形状填';
+  + '——`skeleton` 起手时不存在就建一份空骨架，照它的形状填';
 
 //: 生成区的标记。**这段的所有者是脚本**：内容从真源投影而来，`chapter` 落盘时
 //: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（spec §9、
@@ -1031,12 +1050,17 @@ function cmdCheck(ctx) {
   // ⓪a 合同声明的来源都在
   //
   // 声明的来源压根不在是隐蔽的：那一份材料的内容从头到尾没进过任何一条判据的视野，
-  // 门禁却全绿。所以缺一份就各记一笔——必备来源缺了拦，可选来源缺了只记。
+  // 门禁却全绿。必需性与起手用**同一份判定**（`sourceStatus`：远程单/本地单、可选来源
+  // 都按那里分）——两处各判一次的话，同一份缺件在起手说「本地单缺它正常」、
+  // 在这里说「它是必备来源」，作者只能挑一句信。
+  // **必备缺了拦**：归档件的依据缺了一块，评审者无从复核；可选缺了记一笔。
   if (!ctx.offline) {
-    const { missing } = scanSources(ctx);
-    for (const m of missing) {
-      notes.push(missingSourceLine(m));
+    const { missing, blocking } = sourceStatus(ctx);
+    for (const m of blocking) {
+      problems.push(`${missingSourceLine(m)}——补回它再交；`
+        + '这一轮确实不该有它，就改合同把它登记成可选来源');
     }
+    for (const m of missing.filter(x => !x.required)) notes.push(missingSourceLine(m));
   }
 
   mark('⓪b 台账没在登记之后被换过');
@@ -1407,28 +1431,6 @@ function cmdCheck(ctx) {
         problems.push(`「${appendixDef.title}·${want}」是空的`
           + '——成表或成列表，确实不涉及就写「不涉及：<依据>」一行');
         continue;
-      }
-      // 表外零散文：一句目的句 + 表格行（材料清单是列表行），其余正文段逐段点名。
-      // 散文尾巴是倾倒区的最后一种形态——附录五节被锁死之后，没地方去的工程细节
-      // 就挤到表后面成段。
-      // 「不涉及：<依据>」独行豁免：那是空节规则的既有形态，不算散文段。
-      if (appendixDef.subsection_form) {
-        // 判的是**尾巴**：开头那一句是目的句（该有的），跟在表或列表后面的那些，
-        // 是没地方去的工程细节挤出来的。
-        //
-        // **材料清单那一节例外，逐块判**：它成的是列表不是表，只看「列表之后」的话，
-        // 列表**之前**就成了不设防区——图连同
-        // 四段说明全塞在那里，判据一条都没响。这一节的形态是「一句目的句 + 列表行」，
-        // 那就按它判：目的句之外的散文块，在前在后一样点名。
-        const wholeSection = want === normalizeHeading(materialName ?? '');
-        const blocks = proseBlocks(body)
-          .filter(p => !/不涉及[:：]\s*\S/.test(p.text));
-        const tail = wholeSection ? blocks.slice(1) : blocks.filter(p => p.afterRows);
-        for (const p of tail) {
-          problems.push(`「${appendixDef.title}·${want}」${wholeSection ? '目的句之外还有' : '表后还有'}一段正文`
-            + `（「${p.text.slice(0, 18)}…」）`
-            + `——${appendixDef.subsection_form.note ?? '该进表的内容进表成行'}`);
-        }
       }
     }
     for (const line of appendixSection.text.split(/\r?\n/)) {
@@ -1933,32 +1935,6 @@ function chapterSpan(storyText, title) {
   return { start: offsets[start], end: text.length };
 }
 
-/**
- * 一章的**草稿**：形态说明 + 已经搭好的槽位表 + 从真源打的底。
- *
- * 作者拿到的不该是一张白纸加一句「这一章要有表」。搭表、抄术语、复制流程图都是
- * 确定性工作，脚本在他动笔前做完；他填的是语义——每一格写什么、每一步为什么。
- *
- * 草稿是**作者区**：他在草稿里改，`chapter --from` 消费草稿原子落盘。
- * 附录的 A–D 不在这里——那四节归机器区，由 `project` 从真源投影，作者改的是真源。
- */
-function chapterDraft(ctx, ch, spec) {
-  const rows = [`## ${ch.title}`, ''];
-  if (ch.form?.note) rows.push(`<!-- 形态：${ch.form.note} -->`, '');
-  const seeded = chapterSeed(ctx, ch, spec);   // 打完就归作者
-  for (const [at, slot] of Object.entries(ch.form?.slots ?? {})) {
-    if (!slotApplies(ctx, slot.when)) continue;
-    if (at === '*') rows.push('<!-- 每个小节（节名按业务取）都照下面这样写 -->', '');
-    else if (at) rows.push(`### ${at}`, '');
-    rows.push(...renderSlot(ctx, slot, at === '' && seeded.length > 0));
-  }
-  if (seeded.length) rows.push(...seeded, '');
-  rows.push('<!-- 写完这一章跑：story-build chapter --feature <名> --chapter '
-    + `${ch.title} --from <本文件> -->`);
-  return rows;
-}
-
-
 /** 附录里由脚本投影的那张表的表头 —— 登记在合同，脚本不留字面。 */
 function appendixTableHeader(ctx, name) {
   const want = normalizeHeading(name);
@@ -2168,14 +2144,104 @@ function materialListSkeleton(ctx) {
     + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
+//: story_flow 的位置里「材料在收口之后又变了」那一个。处置写在它的 action 里，
+//: 这里不另写一遍：两处各写一份，改一处另一处就静默过期。
+const MATERIALS_STALE_STEP = 'refresh_round';
+
+/**
+ * 材料还是本轮登记的那一份吗 —— **判据在 story_flow 的材料链，这里只问它**。
+ *
+ * 只比较两份落盘记录（清单 `digest` 与轮次基准）的话，收口之后被改的材料文件一个也
+ * 发现不了：两份记录都还是旧值，彼此照样相等。变没变是磁盘上的事实，只有材料链按
+ * 现状重算才知道，所以这里不另算一份 JS 摘要、不另立版本台账。
+ *
+ * 问不出来就说问不出来：把「问不到」当成「材料齐备」，等于用沉默替一份没人核过的
+ * 输入背书。
+ *
+ * @returns {string|null} 不能起手的原因（含处置）；null = 材料就位
+ */
+function staleMaterials(ctx) {
+  const script = path.join(path.dirname(ctx.scriptPath), 'story_flow.py');
+  const tried = [];
+  for (const exe of ['python', 'python3']) {
+    const r = spawnSync(exe, [script, 'status', '--feature', ctx.args.feature,
+      '--project-root', ctx.projectRoot],
+    { encoding: 'utf-8', timeout: 120000, windowsHide: true });
+    if (r.error) { tried.push(`${exe}：${r.error.message}`); continue; }
+    if (r.status !== 0) {
+      return `材料现状问不出来（${exe} status 退出码 ${r.status}）：\n`
+        + `${String(r.stderr || r.stdout || '').trim()}\n`
+        + '  先让它跑通——材料变没变只有它按磁盘现状答得出来';
+    }
+    const at = String(r.stdout ?? '').indexOf('{');
+    if (at < 0) { tried.push(`${exe}：status 没有输出 JSON`); continue; }
+    let status = null;
+    try {
+      status = JSON.parse(r.stdout.slice(at));
+    } catch (err) {
+      tried.push(`${exe}：status 输出解析不了（${err.message}）`);
+      continue;
+    }
+    return status.next === MATERIALS_STALE_STEP ? String(status.action ?? '').trim() : null;
+  }
+  return `材料现状问不出来（${tried.join('；')}）：材料变没变由 story_flow 的材料链`
+    + '按磁盘现状判，它跑不起来就没有人能回答这件事——'
+    + '先让 `story_flow.py status --feature <名>` 跑通，再起骨架';
+}
+
+/**
+ * 本步要消费的 Spec 结构定位得到吗 —— 定位不到各记一笔，**把后果说出来**。
+ *
+ * skeleton 自己消费的只有术语映射表（术语那一章的起始行）；`project` 之后要 §9 的
+ * 那几节投附录。定位不到不拦：Spec 合法而某一节确实不涉及是正常状态，作者按 story
+ * 那一章自己起表。拦了只会逼出为过门禁而补的空表。这里不重跑 spec 阶段的语义判据。
+ */
+function specSeedGaps(spec) {
+  if (spec === null) return [];
+  const gaps = [];
+  if (!specTerms(spec).length) {
+    gaps.push('spec 里定位不到业务术语映射表的表行：术语那一章的起始行留空，表由你起');
+  }
+  for (const [name, res, label] of APPENDIX_FROM_SPEC) {
+    if (res.some(re => specSection(spec, re).trim())) continue;
+    gaps.push(`spec 里定位不到 ${label}：附录「${name}」将只投得出「不涉及」或空区，`
+      + '要有内容就改那份真源');
+  }
+  return gaps;
+}
+
+/**
+ * 决策登记**严格读取** —— 坏 JSON、错误形状都当场报错，绝不静默覆盖。
+ *
+ * @returns {boolean} 要不要建一份空骨架（不存在才建；空数组是合法状态，不逼着造议题）
+ */
+function decisionsMissing(ctx) {
+  const raw = readText(ctx.decisionsPath);
+  if (raw === null) return true;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch {
+    fail(`${path.basename(ctx.decisionsPath)} 不是合法 JSON：它只应由脚本写入；`
+      + '修好或删掉这份坏件再起骨架——直接覆盖会把里面已登记的判断抹掉');
+  }
+  if (decisionList(parsed) === null) {
+    fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
+  }
+  return false;
+}
+
+/**
+ * 起手：十章骨架 + 每章一份草稿。
+ *
+ * **预检全部读完、判完、算完，才开始写盘**。顺序不是风格问题：一边建决策骨架一边
+ * 才发现 Spec 缺了的话，盘上留下的是半份起手，而作者拿到的报错说的是另一件事——
+ * 他要先弄清哪些已经建了，才知道重跑安不安全。
+ */
 function cmdSkeleton(ctx) {
   refuseIfFrozen(ctx, 'skeleton');
 
-  // ---- 起手预检：全部读完、判完，才开始写盘 ----
-  const spec = specText(ctx);
-  if (spec !== null && !spec.trim()) {
-    fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
-  }
+  // ---- 预检 ①：流程走到位了没有 ----
   const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
   if (!flow) {
     fail('AR/story-src/story-flow.json 不存在：本 feature 还没走过 /story 的 S1–S3。'
@@ -2186,6 +2252,8 @@ function cmdSkeleton(ctx) {
   if (flow.status !== 'complete') {
     fail(`本轮还没有收口（status: ${flow.status}）：按 status 的下一步走完 S3/S4，再起 story 骨架`);
   }
+
+  // ---- 预检 ②：材料 —— 清单在、与本轮基准一致、且磁盘现状仍是这批料 ----
   const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);
   const base = (flow.rounds?.[flow.rounds.length - 1]?.materials) ?? {};
   if (!manifest) {
@@ -2194,38 +2262,31 @@ function cmdSkeleton(ctx) {
   if (manifest.digest !== base.digest) {
     fail('材料清单与本轮登记的基准对不上：重跑 `story_flow.py round` 归位后再起骨架');
   }
-  const remote = fs.existsSync(path.join(ctx.featureRoot, 'AR', 'detail.json'));
-  const { docs, missing } = scanSources(ctx);
+  const stale = staleMaterials(ctx);
+  if (stale) fail(stale);
+
+  // ---- 预检 ③：来源必需性（与交付前的 check 同一份判定） ----
+  const { docs, missing, blocking } = sourceStatus(ctx);
   if (!docs.length) {
-    fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {}).join('、')}）`);
+    fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {})
+      .map(x => (typeof x === 'string' ? x : x?.path)).filter(Boolean).join('、')}）`);
   }
-  // 本地单没有需求系统给的 AR/detail.json：PRD/SE 可以没有，明确降为可选。
-  const adjusted = missing.map(m => (remote || (m.doc !== 'PRD' && m.doc !== 'SE'))
-    ? m : { ...m, required: false });
-  const blocking = adjusted.filter(m => m.required);
   if (blocking.length) {
     fail('必备来源缺失，先补齐再起骨架：'
       + blocking.map(m => missingSourceLine(m)).join('；'));
   }
 
-  // 决策登记：**严格读取**——坏 JSON、错误形状都当场报错，绝不静默覆盖。
-  // 骨架只有一个空数组；空数组合法（还没有判断），不逼着模型造议题。
-  const rawDecisions = readText(ctx.decisionsPath);
-  if (rawDecisions === null) {
-    writeJson(ctx.decisionsPath, { decisions: [] });
-  } else {
-    let parsed = null;
-    try {
-      parsed = JSON.parse(rawDecisions.replace(/^﻿/, ''));
-    } catch {
-      fail(`${path.basename(ctx.decisionsPath)} 不是合法 JSON：它只应由脚本写入；`
-        + '修好或删掉这份坏件再起骨架——直接覆盖会把里面已登记的判断抹掉');
-    }
-    if (decisionList(parsed) === null) {
-      fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
-    }
+  // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节定位得到 ----
+  const spec = specText(ctx);
+  if (spec !== null && !spec.trim()) {
+    fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
   }
+  const specGaps = specSeedGaps(spec);
 
+  // ---- 预检 ⑤：决策登记形状合法（只读，不写） ----
+  const makeDecisions = decisionsMissing(ctx);
+
+  // ---- 内容计算：也在写盘之前 ----
   const facts = {
     terms: specTerms(spec),
     materialListName: materialSubsectionName(ctx.contract),
@@ -2240,6 +2301,9 @@ function cmdSkeleton(ctx) {
         written: new Map(storySections(existing).map(s2 => [normalizeHeading(s2.title), s2.text])),
         pending: new Set(pendingChapters(existing).map(normalizeHeading)),
       };
+
+  // ---- 预检全过，开始写盘 ----
+  if (makeDecisions) writeJson(ctx.decisionsPath, { decisions: [] });
   const made = writeDrafts(ctx, facts, chapterState);
 
   let tail;
@@ -2262,10 +2326,10 @@ function cmdSkeleton(ctx) {
       + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
   }
   process.stdout.write(`[story-build skeleton] ${tail}\n`);
-  for (const m of adjusted.filter(m => !m.required)) {
-    process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
-  }
+  for (const m of missing) process.stdout.write(`  记一笔：${missingSourceLine(m)}\n`);
+  for (const g of specGaps) process.stdout.write(`  记一笔：${g}\n`);
 }
+
 /**
  * 把一章的内容原子替换进 story.md —— **落盘只有这一条路**。
  *

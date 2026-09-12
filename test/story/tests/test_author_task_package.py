@@ -35,6 +35,22 @@ FEATURE = "TP90001"
 MAX_PACKAGE_BYTES = 12 * 1024
 
 
+def run_in_shell(command: str, cwd=None) -> subprocess.CompletedProcess:
+    """把渲染出来的命令**原样交给本工程的命令行**跑一遍。
+
+    引用规则由机制那一侧定（`story/drafts.mjs` 的 `shellArg`：PowerShell 的单引号
+    字面量）；测试必须用同一个 shell 跑，否则测的是另一套规则——cmd.exe 不认单引号，
+    路径会连着引号一起进参数。找不到 PowerShell 就退回 POSIX shell：单引号在它那里
+    是同样的字面含义。
+    """
+    exe = shutil.which("pwsh") or shutil.which("powershell")
+    args = ([exe, "-NoProfile", "-Command", command + "; exit $LASTEXITCODE"]
+            if exe else ["bash", "-lc", command])
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=180,
+                          cwd=None if cwd is None else str(cwd))
+
+
 def run(*args: str, cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=90, cwd=cwd)
@@ -304,9 +320,7 @@ class TaskPackageIsRendered(WorkspaceCase):
         line = next(c for c in cmds if "--unused" in c).replace(
             '"<为什么它不属于本需求>"', '"属别的需求的页面"')
         self.assertIn("page one.png", line, "跑的应当是名字带空格的那张")
-        proc = subprocess.run(line, shell=True, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=90,
-                              cwd=self.root)
+        proc = run_in_shell(line, cwd=self.root)
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertEqual(0, proc.returncode, out)
         self.assertIn('"ok":true', out.replace(" ", ""), out[:400])
