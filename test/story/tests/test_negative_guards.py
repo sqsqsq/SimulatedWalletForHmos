@@ -407,7 +407,7 @@ class ReviewBannedTermsScope(NegativeCase):
         self.assertGreaterEqual(len(vocabulary), 6, "禁用词表被削了")
         self.assertTrue(all(v.get("term") and v.get("hint") for v in vocabulary),
                         "每个词都要带改法——只说不许用，作者不知道该写什么")
-        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/lint-rules.mjs"
+        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/language.mjs"
                  ).read_text(encoding="utf-8")
         self.assertNotIn("const BANNED_TERMS", rules, "脚本里又留了一份词表副本")
 

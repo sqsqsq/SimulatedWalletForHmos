@@ -196,7 +196,10 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
 
 
 class SpecDiagramsReachTheAuthor(WorkspaceCase):
-    """spec 里的图逐张给主题与可粘贴围栏，**不指定放哪一章**。"""
+    """spec 里的图逐张给身份、主题与**原件坐标**，不指定放哪一章。
+
+    不复制围栏原文：副本一旦与原件不同步，作者改的是副本；任务包也因此长到一次读不完。
+    """
 
     SPEC = ("# 甲需求\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
             "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
@@ -206,11 +209,23 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         spec.write_text(self.SPEC, encoding="utf-8")
         return self.task_package()
 
-    def test_each_diagram_comes_with_a_pasteable_fence(self) -> None:
+    def test_each_diagram_comes_with_coordinates_not_a_copy(self) -> None:
         package = self.package_with_spec()
         self.assertIn("spec 里的图", package)
-        self.assertIn("%% 图源 spec §5.2 #1", package, "围栏没带上来源标记，粘过去就核不到")
-        self.assertIn("C[余额上报]", package, "围栏原文没给，作者得自己回去抄")
+        self.assertIn("spec §5.2 #1", package, "没给身份，作者不知道标记写什么")
+        self.assertIn("`%% 图源 spec §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
+        self.assertIn("spec/spec.md", package, "没给原件路径")
+        self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
+        self.assertNotIn("C[余额上报]", package, "把原件围栏复制进任务包了——副本会与原件不同步")
+
+    def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
+        """读不到不是「没有图」：静默给一节空的，作者会以为这一轮上游没画过图。"""
+        spec = self.feature_root / "spec" / "spec.md"
+        if spec.exists():
+            spec.unlink()
+        package = self.task_package()
+        self.assertIn("读不到", package)
+        self.assertNotIn("spec 里现在没有图", package)
 
     def test_it_names_the_topic_and_not_a_chapter(self) -> None:
         """放哪一节由作者按内容定——任务包不预设位置。"""
@@ -256,13 +271,15 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertLessEqual(size, MAX_PACKAGE_BYTES,
                              f"任务包 {size} 字节，超过一次读完的上限——数据性内容要回真源")
 
-    def test_images_in_the_material_list_are_listed_one_by_one(self) -> None:
-        """材料里的图逐张列出，并写明「用或写明不用」的义务。
+    def test_one_image_is_one_task(self) -> None:
+        """材料里的图**一张一项**，并写明「用或写明不用」的义务。
 
         两跑各丢过一次图：一次主流程没画，一次三张图一张没进正文。
+        单位是图片对象不是路径：同一张图在仓里有两个落点（文档内嵌位置与
+        `ux-reference/` 下的语义名副本）时，按路径摆会让作者以为有两张。
         """
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
-            json.dumps({"items": [
+            json.dumps({"materials": [
                 {"kind": "image", "paths": ["assets/x/one.png"], "caption": "签约页"},
                 {"kind": "image", "paths": ["assets/x/two.png"]},
             ]}, ensure_ascii=False), encoding="utf-8")
@@ -279,6 +296,65 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("不属于本需求的", guide, "单向规则要在作业书里")
         self.assertIn("写明为什么不用", guide)
 
+    def test_the_other_landing_of_the_same_image_is_an_alias(self) -> None:
+        """同一张图两个落点：一项任务、一条命令，另一个落点标成别名。
+
+        按路径逐条摆的话，作者会以为有两张——于是引两次，或者为「另一张」再补一句说明。
+        """
+        for rel in ("ux-reference/签约页.png", "assets/doc/img3.png"):
+            img = self.feature_root / rel
+            img.parent.mkdir(parents=True, exist_ok=True)
+            img.write_bytes(b"PNG")
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"materials": [
+                {"kind": "image", "sha256": "sha256:aa", "caption": "签约页",
+                 "paths": ["assets/doc/img3.png", "ux-reference/签约页.png"]},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        package = self.task_package()
+        cmds = [l for l in package.split("\n")
+                if l.strip().startswith("python ") and "--caption-image" in l]
+        self.assertEqual(1, len(cmds), f"一张图该只有一条命令，实际 {len(cmds)} 条")
+        self.assertIn("同一张图的其它落点", package)
+        self.assertIn("是同一张，只引一次", package)
+
+    def test_two_different_images_are_not_merged(self) -> None:
+        for rel in ("assets/x/a.png", "assets/x/b.png"):
+            img = self.feature_root / rel
+            img.parent.mkdir(parents=True, exist_ok=True)
+            img.write_bytes(rel.encode())
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"materials": [
+                {"kind": "image", "sha256": "sha256:aa", "paths": ["assets/x/a.png"]},
+                {"kind": "image", "sha256": "sha256:bb", "paths": ["assets/x/b.png"]},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        package = self.task_package()
+        cmds = [l for l in package.split("\n")
+                if l.strip().startswith("python ") and "--caption-image" in l]
+        self.assertEqual(2, len(cmds), "两张不同的图被并成一项了")
+
+    def test_the_representative_path_is_one_that_actually_reads(self) -> None:
+        """登记里的路径可能指向已经不在的文件——拿它渲染出来的引用串与命令都是坏的。"""
+        img = self.feature_root / "ux-reference/签约页.png"
+        img.parent.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(b"PNG")
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"materials": [
+                {"kind": "image", "sha256": "sha256:aa",
+                 "paths": ["assets/doc/没有了.png", "ux-reference/签约页.png"]},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        package = self.task_package()
+        cmd = next(l for l in package.split("\n")
+                   if l.strip().startswith("python ") and "--caption-image" in l)
+        self.assertIn("签约页.png", cmd, "命令指向了读不到的那个落点")
+
+    def test_a_broken_manifest_is_not_no_images(self) -> None:
+        """读不出来不是「没有图」：静默按零张渲染，作者会以为这一轮不涉及图。"""
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            "{ 坏了", encoding="utf-8")
+        package = self.task_package()
+        self.assertIn("读不出来", package)
+        self.assertNotIn("材料清单里现在没有图片", package)
+
     #: 图名带空格是常事——导入从文档里抽出来的图常常沿用原文里的名字。
     SPACED = "assets/x/page one.png"
 
@@ -289,7 +365,7 @@ class TaskPackageIsRendered(WorkspaceCase):
             img.parent.mkdir(parents=True, exist_ok=True)
             img.write_bytes(b"PNG")
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
-            json.dumps({"items": [
+            json.dumps({"materials": [
                 {"kind": "image", "paths": [self.SPACED], "caption": "签约页"},
                 {"kind": "image", "paths": ["assets/x/one.png"], "unused": "旧版对照稿"},
             ]}, ensure_ascii=False), encoding="utf-8")

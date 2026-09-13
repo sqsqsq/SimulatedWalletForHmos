@@ -166,7 +166,7 @@ class TheMechanismFollowsThePackage(AdaptCase):
 
     def test_a_mechanism_file_changed_on_the_target_is_restored(self) -> None:
         """目标改了机制面，升级把它换回包的版本——机制不归目标。"""
-        f = self.core / "lint-rules.mjs"
+        f = self.core / "story" / "chapter-contract.mjs"
         original = f.read_text(encoding="utf-8")
         f.write_text(original + "\n// 目标自己加的\n", encoding="utf-8")
         self.commit("目标改了机制文件")
@@ -199,12 +199,12 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
 
     def test_a_dirty_write_face_stops_the_upgrade(self) -> None:
         """写入面上有未提交改动就停——盖掉了在 diff 里还看不出来，没法补救。"""
-        (self.core / "lint-rules.mjs").write_text("目标改了一半没提交\n", encoding="utf-8")
+        (self.core / "story" / "chapter-contract.mjs").write_text("目标改了一半没提交\n", encoding="utf-8")
         proc = self.adapt("--apply")
         self.assertEqual(2, proc.returncode, "工作区脏却照写了")
-        self.assertIn("lint-rules.mjs", self.out(proc), "停了却没点名是哪个文件脏")
+        self.assertIn("chapter-contract.mjs", self.out(proc), "停了却没点名是哪个文件脏")
         self.assertEqual("目标改了一半没提交\n",
-                         (self.core / "lint-rules.mjs").read_text(encoding="utf-8"),
+                         (self.core / "story" / "chapter-contract.mjs").read_text(encoding="utf-8"),
                          "停之前已经写过盘了")
 
     def test_a_target_outside_git_stops_the_upgrade(self) -> None:

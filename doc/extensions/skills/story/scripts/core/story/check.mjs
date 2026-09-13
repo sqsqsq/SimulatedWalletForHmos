@@ -29,7 +29,7 @@ import { materialListProblems, redactMaterialLinks, sourceProblems } from './sou
 import {
   formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
   scanLanguageRedline, scanLocalPaths,
-} from '../lint-rules.mjs';
+} from './language.mjs';
 
 function groupedProblems(problems, marks) {
   // 第一个戳之前也可能有报错（判据类之外的前置校验），给它一个兜底类，
@@ -151,7 +151,7 @@ export function cmdCheck(ctx) {
   // ⑨ 归档件四红线：仓内路径 / 客户端禁用词 / 悬空引用 / 图片断链
   //
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
-  // 词表与判定在 lint-rules.mjs（SSOT），这里只调。
+  // 词表与判定在 language.mjs（SSOT），这里只调。
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
   // 「灰度」「回退」是业务事实不是客户端文案——收缩的是作用域，不是词表。

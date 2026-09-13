@@ -8,7 +8,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fail, readJson, readText, specText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
-import { scanMaterialList } from '../lint-rules.mjs';
+import { originalArSource } from '../flow-check.mjs';
+import { scanMaterialList } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { normalizeHeading, subsectionSpan } from './document.mjs';
 
@@ -111,6 +112,25 @@ export function readManifest(ctx) {
 }
 
 /**
+ * 留存的上游原 AR —— **它与当前 `AR/design.md` 是两份文件**。
+ *
+ * 后者是收口时提交的**提取稿**；上游原话只在 S4 留存的那一份里。两者身份不同，
+ * 不混成一个摘要：读者据材料清单回查上游原话，指到提取稿等于自证。
+ *
+ * 指针坏了要**披露**，不能退回提取稿顶替（`problem`）。本轮确实没有可留存的原件
+ * （init 的空骨架不是上游给的东西）是合法状态，返回 null。
+ *
+ * @returns {{rel: string}|{problem: string}|null}
+ */
+function originalArTarget(ctx) {
+  if (ctx.offline) return null;            // 仲裁锚没有流程契约
+  const { path: abs, problem } = originalArSource(ctx.featureRoot);
+  if (problem) return { problem };
+  if (!abs) return null;
+  return { rel: relFromFeature(ctx, abs) };
+}
+
+/**
  * 材料清单那一节**应当**列到的材料 —— 同样出自 `materials.json`。
  *
  * 这一节回答的是「据哪几份材料写成」。谁来定这个集合，决定了它是账还是倾倒区：
@@ -143,12 +163,10 @@ function materialListTargets(ctx) {
   for (const src of (Array.isArray(data.sources) ? data.sources : [])) {
     if (src?.file) must.push([`inbox/${src.file}`]);
   }
-  return { must };
-}
-
-/** 两份文件是不是同一份字节。读不到就不是——断链另有判据报。 */
-export function sameBytes(a, b) {
-  try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch { return false; }
+  // 留存的上游原 AR 是一份**独立身份**的原始资料：清单里少了它，读者没法回查上游原话。
+  const origin = originalArTarget(ctx);
+  if (origin?.rel) must.push([origin.rel]);
+  return { must, problem: origin?.problem ?? null };
 }
 
 export function relFromFeature(ctx, target) {
@@ -233,8 +251,10 @@ export function materialListSkeleton(ctx) {
   // 收件箱原件不在合同的来源表里（它是人另外给的），落到「原件」。
   const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
+  const originRel = originalArTarget(ctx)?.rel ?? null;
   return targets.must.map(([rel]) =>
-    `- ${kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
+    `- ${rel === originRel ? '上游原件'
+      : kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
     + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
@@ -308,6 +328,12 @@ export function materialListProblems(ctx, storyText) {
     if (span) {
       const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
       const want = materialListTargets(ctx);
+      // 原件指针坏了要**披露**：清单少一份上游原件是静默的，而读者据它回查上游原话。
+      if (want && want !== 'broken' && want.problem) {
+        problems.push(`「${appendix.title}·${name}」缺留存的上游原 AR：${want.problem}`
+          + '——它与当前 `AR/design.md`（收口时提交的提取稿）是两份文件，'
+          + '读者据这一节回查上游原话，指到提取稿等于自证');
+      }
       const haveManifest = want && want !== 'broken';
       // 行形态（有没有链接、是不是写成了表格）一直判；**链到的地方允不允许**分两条路：
       // 有材料清单时按清单逐份对（下面那段），没有清单才退回按目录白名单粗判。

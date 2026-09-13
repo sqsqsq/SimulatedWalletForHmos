@@ -21,12 +21,12 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { clientVocabulary } from '../../skills/story/scripts/core/lint-rules.mjs';
+import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
-import { carryableBlock, diagramsOf, diagramTopic }
+import { diagramsOf, diagramTopic }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { relFromStory } from '../../skills/story/scripts/core/story/sources.mjs';
 import { DECISION_FIELDS } from '../../skills/story/scripts/core/story/review.mjs';
@@ -163,32 +163,67 @@ function decisionSection(contract) {
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。'];
 }
 
+/**
+ * 材料里的图 —— **一张图一项任务**。
+ *
+ * 单位是**图片对象**，不是路径：同一张图在仓里有两个落点（文档内嵌位置与
+ * `ux-reference/` 下的语义名副本）时，那仍是一张图。按路径逐条摆，作者会以为有两张，
+ * 于是引两次、或者为「另一张」再补一句说明。
+ *
+ * 代表路径取**实际读得到**的那一个：登记里的路径可能指向已经不在的文件，
+ * 拿它渲染出来的引用串与命令都是坏的。其余落点作为别名列出——他要认得出
+ * 「我在别处见过的那张就是这张」。
+ *
+ * 两张不同的图不合并：它们的取舍各自独立。
+ */
 function imageSection(projectRoot, feature) {
-  const materials = readJsonOrNull(path.join(featureRoot(projectRoot, feature),
-    'AR', 'story-src', 'materials.json'));
-  const images = (materials?.materials ?? materials?.items ?? [])
-    .filter(m => String(m?.kind ?? '').includes('image'));
+  const dir = featureRoot(projectRoot, feature);
+  const manifest = readJsonOrNull(path.join(dir, 'AR', 'story-src', 'materials.json'));
   const rows = ['## 4. 材料里的图', ''];
+  if (manifest === null) {
+    // **读不出来不是「没有图」**：静默按零张渲染，作者会以为这一轮不涉及图。
+    rows.push('材料清单（`AR/story-src/materials.json`）读不出来——它只应由脚本写入；'
+      + '删掉后重跑 `story_flow.py round` 再取这份任务包。这一节现在给不出图。');
+    return rows;
+  }
+  // 只认当前合同：`materials` 与每条的 `paths`。旧的 `items`/`path` 不再兼容——
+  // 两种形状都收的话，写入侧改了形状，读出来的是空清单而没有人知道。
+  const images = (Array.isArray(manifest.materials) ? manifest.materials : [])
+    .filter(m => String(m?.kind ?? '').includes('image'));
   if (!images.length) {
     rows.push('材料清单里现在没有图片。');
     return rows;
   }
-  rows.push('引用串可以直接粘。下面的命令**按它自己写的条件跑，不是逐张都跑**：'
+  rows.push('一张图一项：引用串可以直接粘。下面的命令**按它自己写的条件跑，不是逐张都跑**：'
     + '`--unused` 会写进「本需求不用它」，`--used` 会把这条登记撤掉，两条都改状态——'
     + '取舍没变的图什么都不用跑。引用串是相对 `AR/story.md` 的，命令的路径是相对工程根的'
     + '——两个基准不一样，自己换算容易差一层。'
     + '属于本需求的图怎么引、不属于的怎么登记，见 `story-write.md`。',
     '');
   const featureDir = relDisplay(projectRoot, featureRoot(projectRoot, feature));
-  for (const img of images) {
-    const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);
-    const caption = img.caption || '';
+  images.forEach((img, at) => {
+    const paths = (Array.isArray(img.paths) ? img.paths : []).filter(Boolean);
+    const readable = paths.filter(rel => fs.existsSync(path.join(dir, ...rel.split('/'))));
+    const main = readable[0] ?? paths[0];
+    if (!main) {
+      rows.push(`- **第 ${at + 1} 张图**：登记里没有落点——`
+        + '跑 `story_flow.py round` 重算材料清单再取这份任务包。', '');
+      return;
+    }
+    const caption = String(img.caption ?? '').trim();
     const unused = String(img.unused ?? '').trim();
-    for (const p of paths) {
-      rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(p)})\``
-        + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
-        + (unused ? ` ← **已登记不用**：${unused}` : ''),
-      '',
+    const aliases = paths.filter(rel => rel !== main);
+    rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(main)})\``
+      + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
+      + (unused ? ` ← **已登记不用**：${unused}` : ' ← 还没登记取舍'));
+    if (!readable.length) {
+      rows.push(`  登记的落点在盘上读不到（${paths.join('、')}）——`
+        + '先把原件补回原位，或重跑 `story_flow.py round`；这张图现在引不了。');
+    }
+    if (aliases.length) {
+      rows.push(`  同一张图的其它落点：${aliases.join('、')}（**是同一张，只引一次**）`);
+    }
+    rows.push('',
       // 命令写状态，所以动作的条件跟命令贴在一起：隔一段的说明管不住照抄。
       unused
         ? '  这张已经登记不用。**改主意要引用它时**才跑这条，它撤掉上面那条理由；仍然不用就不跑：'
@@ -198,25 +233,14 @@ function imageSection(projectRoot, feature) {
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
       // 围栏标 powershell：参数按本工程命令行的规则引，换 shell 要自己核。
       '  python doc/extensions/skills/story/scripts/core/import_sources.py'
-        + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${p}`)}`
+        + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${main}`)}`
         + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),
       '  ```',
       '');
-    }
-  }
+  });
   return rows;
 }
 
-/**
- * 上游某一份文档里的图 —— 逐张给主题与可粘贴的围栏，**不指定放哪一节**。
- *
- * 图属于哪块内容，内容在下游落在哪，图就该在哪。所以这里只把「有哪几张、
- * 各讲什么、原文长什么样」摆出来，归位由作者按内容判。
- * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
- *
- * 上游两份各一节，同一个渲染。**下游都是 story**：spec 的内容归框架管，
- * 扩展不往那边搬图；系统设计与 spec 画过的图，作者按内容归位进 story。
- */
 /**
  * S4 提交时留存下来的上游原 AR —— 唯一的原件定位读取（flow-check.originalArSource）。
  *
@@ -243,32 +267,57 @@ function originalArSection(projectRoot, feature) {
   return rows;
 }
 
-function diagramSection(heading, label, source, downstream) {
-  const list = diagramsOf(source);
+/**
+ * 上游某一份文档里的图 —— **给坐标，不给副本**。
+ *
+ * 从前把每张图的围栏整段复制进任务包。那份副本一旦与原件不同步，作者改的是副本；
+ * 任务包也因此长到一次读不完。现在给的是**身份、主题、原件路径与围栏行范围**，
+ * 他按坐标去读原件——原件是唯一的那一份。
+ *
+ * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。
+ * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
+ *
+ * 原件读不到时**报问题**，不静默给一节空的——那会让作者以为这一轮上游没画过图。
+ */
+function diagramSection(heading, label, rel, source, downstream) {
   const rows = [heading, ''];
+  if (source === null) {
+    rows.push(`读不到 \`${rel}\`——${label} 里有没有图、各讲什么，现在给不出来。`
+      + '先把这份上游正文找回来，再取一次这份任务包。');
+    return rows;
+  }
+  const list = diagramsOf(source);
   if (!list.length) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
-  rows.push('这几张是上游的，讲的是接口与分支——放在讲它内容的那一节。', '');
-  rows.push(`每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
-    + '**开头那行来源标记原样保留**，机器核的就是它。周围的文字自己写。',
+  rows.push(`原件在 \`${rel}\`——**按行号去读它**，这里不复制一份副本（副本会与原件不同步）。`,
+    `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
+    + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
+    + '机器核的就是它。周围的文字自己写。',
     '**对应的含义是标记指向它，不是照抄**：把上游的流程改画成时序、'
     + '按本需求补上它没画的分支，都算对应，改的是画法、讲的是同一件事。',
     '两节列的是同一张图时（系统设计画过、spec 的流程图就是它），'
     + `${downstream} 里只放一张，两行标记都写在这个围栏开头；`
     + '章首那张同时承接上游某张时，标记就写在它的围栏里。', '');
   for (const d of list) {
-    rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`, '',
-      carryableBlock(d, label), '');
+    rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
+      + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
+      + `标记写 \`%% 图源 ${label} ${d.id}\``);
   }
+  rows.push('');
   return rows;
 }
 
-/** 上游与本阶段产物的正文；读不到就是空，不猜。 */
+/**
+ * 上游与本阶段产物的正文。
+ *
+ * **读不到返回 null，不是空串**：空串与「这份文档里没有图」同形，而前者要报出来——
+ * 静默给一节空的，作者会以为这一轮上游没画过图。
+ */
 function docText(projectRoot, feature, ...rel) {
   const abs = path.join(featureRoot(projectRoot, feature), ...rel);
-  return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : '';
+  try { return fs.readFileSync(abs, 'utf-8'); } catch { return null; }
 }
 
 /**
@@ -327,10 +376,10 @@ function taskPackage(projectRoot, feature) {
     '',
     ...originalArSection(projectRoot, feature),
     '',
-    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR',
+    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR', 'SR/design.md',
       docText(projectRoot, feature, 'SR', 'design.md'), 'story'),
     '',
-    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec',
+    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec', 'spec/spec.md',
       docText(projectRoot, feature, 'spec', 'spec.md'), 'story'),
     '',
     ...vocabularySection(contract),

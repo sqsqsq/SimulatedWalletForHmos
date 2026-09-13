@@ -559,7 +559,7 @@ M02_EXEMPT = (
     ("manifest.yaml", "退场"),
     # 合同数据里的业务项与禁用词的替换说法。
     ("contracts/story-chapters.json", "旧版本"),
-    ("skills/story/scripts/core/lint-rules.mjs", "旧版本"),
+    ("skills/story/scripts/core/story/language.mjs", "旧版本"),
     # adapt 面对的是目标工程里可能真的存在的旧目录。
     ("skills/story-adaptation/SKILL.md", "退场"),
     ("skills/story-adaptation/SKILL.md", "旧的"),

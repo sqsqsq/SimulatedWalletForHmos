@@ -29,7 +29,7 @@ import { fail, readRaw, readText, refuseIfFrozen } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { relFromFeature } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
-import { scanBrokenImages } from '../lint-rules.mjs';
+import { scanBrokenImages } from './language.mjs';
 
 /**
  * 剥掉**草稿生产者自己写的**指导行 —— 只认 `story-draft:guide` 这一个标记。

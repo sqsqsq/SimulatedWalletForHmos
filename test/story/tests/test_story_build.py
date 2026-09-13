@@ -111,6 +111,42 @@ def _appendix_title() -> str:
     return (hit or {}).get("title", "")
 
 
+def list_original_ar(ar_dir: Path) -> None:
+    """把「留存的上游原 AR」补进附录·材料清单。
+
+    它与 `AR/design.md`（收口时提交的提取稿）是两份文件：读者据材料清单回查上游原话，
+    指到提取稿等于自证。夹具的 story 手写在前、原件由 S4 在后登记，所以在这里补。
+    """
+    import json as _json
+    story = ar_dir / "story.md"
+    flow = ar_dir / "story-src" / "story-flow.json"
+    if not story.is_file() or not flow.is_file():
+        return
+    try:
+        origin = str(_json.loads(flow.read_text(encoding="utf-8"))
+                     .get("design", {}).get("origin") or "").strip()
+    except ValueError:
+        return
+    text = story.read_text(encoding="utf-8")
+    if not origin or origin in text:
+        return
+    lines = text.split("\n")
+    at = next((k for k, l in enumerate(lines)
+               if l.strip().startswith("### ") and "材料清单" in l), None)
+    if at is None:
+        return
+    last = at
+    k = at + 1
+    while k < len(lines) and not lines[k].strip().startswith("### "):
+        if lines[k].strip().startswith("- "):
+            last = k
+        k += 1
+    link = origin[3:] if origin.startswith("AR/") else f"../{origin}"
+    lines[last + 1:last + 1] = [
+        f"- 上游原件：收口提交时留存的上游原 AR，上游原话在这一份。原文：[{origin}]({link})"]
+    story.write_text("\n".join(lines), encoding="utf-8")
+
+
 def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
 
@@ -155,6 +191,10 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     flow("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
          "--by", "human", "--basis", "夹具：整体承载")
     flow("complete", "--from", "AR/story-src/design-draft.md")
+    # S4 留存的上游原 AR 是一份**独立身份**的原始资料（Q7 §1）：真实作者会把它列进
+    # 附录·材料清单，读者据那一节回查上游原话。夹具的 story 是手写的，这里补上那一行。
+    list_original_ar(src.parent)
+
 
 
 class StoryBuildCase(unittest.TestCase):
@@ -1402,21 +1442,40 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
         self.put_image_ref("../assets/别处/image9.png")
         self.assert_check_names("不在材料的图片登记里")
 
-    def test_the_same_image_under_two_paths_is_named(self) -> None:
-        """同一张图改个名复制进归档目录——只比文件名的判据拦不住这一种。"""
+    def test_an_unregistered_copy_is_named_even_if_the_bytes_match(self) -> None:
+        """把材料里那张图复制进 `AR/assets/` 再改个名：**字节相同也不放行**。
+
+        从前有一条「归档副本区按字节认」的特权，而它正是「自建一个图片目录、
+        全树五份同一张图」的入口——登记里没有它，谁也说不出它是哪一轮、哪一份材料来的。
+        """
         copy = self.feature_root() / "AR" / "assets" / "签约页.png"
         copy.parent.mkdir(parents=True, exist_ok=True)
         copy.write_bytes(self.material_image.read_bytes())
-        self.put_image_ref("../assets/上游文档/image1.png", "assets/签约页.png")
-        self.assert_check_names("同一张图被两个路径引用")
+        self.put_image_ref("assets/签约页.png")
+        self.assert_check_names("不在材料的图片登记里")
 
     def test_a_stranger_in_the_archive_dir_is_named(self) -> None:
-        """归档目录只放材料里那些图的副本，放别的等于凭空多出一张没有出处的图。"""
+        """`AR/assets/` 下没登记的文件同样不放行——它凭空多出一张没有出处的图。"""
         stray = self.feature_root() / "AR" / "assets" / "自己画的.png"
         stray.parent.mkdir(parents=True, exist_ok=True)
         stray.write_bytes(b"SOMETHINGELSE")
         self.put_image_ref("assets/自己画的.png")
-        self.assert_check_names("不是材料里任何一张图的副本")
+        self.assert_check_names("不在材料的图片登记里")
+
+    def test_a_registered_assets_path_is_legal(self) -> None:
+        """已经登记进材料的 assets 路径照样合法——退的是特权，不是这个目录。"""
+        manifest = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        rel = "AR/assets/签约页.png"
+        copy = self.feature_root() / "AR" / "assets" / "签约页.png"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(self.material_image.read_bytes())
+        img = next(m for m in manifest["materials"] if "image" in str(m.get("kind", "")))
+        img["paths"] = sorted([*img["paths"], rel])
+        (self.src / "materials.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self.put_image_ref("assets/签约页.png")
+        code, out = self.check_output()
+        self.assertNotIn("不在材料的图片登记里", out, out[:400])
 
     def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
         """没有清单时不许静默放过：说清楚这条判据没执行、怎么让它能执行。"""
@@ -2753,11 +2812,13 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         check 再报——他赢不了，只能转去改判据或改脚本。一次实跑就这么卡了 25 分钟：
         「依据」列写着 `spec §9.5 依赖变更`，而 spec.md 不随归档，⑨ 判它悬空。
         """
+        # 「表后散文」那一条随段数配额退场（Q7 §1：说明是否倾倒业务内容归语义审查）；
+        # 这里留下的是真红线——悬空引用与仓内路径，它们不读懂内容就看得见。
         story = self.landed_appendix()
         zones = [z.split("story-build:end", 1)[0]
                  for z in story.split("story-build:begin")[1:]]
         self.assertTrue(zones, "一节机器区都没有，这条守卫在空跑")
-        lint = self.EXTENSION / "skills" / "story" / "scripts" / "core" / "lint-rules.mjs"
+        lint = self.EXTENSION / "skills" / "story" / "scripts" / "core" / "story" / "language.mjs"
         for i, zone in enumerate(zones):
             proc = subprocess.run(
                 ["node", "--input-type=module", "-e",
@@ -2766,8 +2827,6 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                  f"const hits = ["
                  f"  ...m.formatHits(m.scanDanglingRefs(t, {json.dumps(str(self.root))}), 'dangling'),"
                  f"  ...m.formatHits(m.scanLocalPaths(t, {json.dumps(str(self.root))}), 'path'),"
-                 f"  ...m.proseBlocks(t).filter(p => p.afterRows)"
-                 f"    .map(p => '表后散文：' + p.text.slice(0, 24)),"
                  f"];"
                  "process.stdout.write(JSON.stringify(hits));"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -2871,6 +2930,95 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
         self.assertEqual(1, code, out)
         self.assertIn("materials.json", out)
         self.assert_wrote_nothing(before)
+
+
+class TheOriginalArIsItsOwnMaterial(SkeletonPreflightCase):
+    """留存的上游原 AR 是**独立身份**的原始资料，不与当前提取稿混成一个。
+
+    `AR/design.md` 在收口后是提取稿；上游原话只在留存的那一份里。读者据材料清单
+    回查上游原话，指到提取稿等于自证。
+    """
+
+    def flow_json(self) -> dict:
+        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+
+    def write_flow(self, data: dict) -> None:
+        (self.src / "story-flow.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def list_every_material(self) -> None:
+        """把清单补齐到「这一轮的材料一份不少」。
+
+        夹具的 story 手写在前，而 `round` 按磁盘现状重算材料集合——系统设计那一份
+        只有在它没被某条用例删掉时才在集合里，所以不写死在夹具里，由要它的用例补。
+        """
+        story = self.feature_root() / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        if "SR/design.md" in text:
+            return
+        at = text.index("- 甲需求 PRD")
+        story.write_text(
+            text[:at] + "- 系统设计：本单的上游系统设计。原文："
+            + "[SR/design.md](../SR/design.md)\n" + text[at:], encoding="utf-8")
+
+    def test_the_material_list_must_carry_it(self) -> None:
+        origin = self.flow_json()["design"]["origin"]
+        story = self.feature_root() / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        self.assertIn(origin, text, "夹具起点本该列着它")
+        story.write_text(text.replace(
+            f"- 上游原件：收口提交时留存的上游原 AR，上游原话在这一份。原文：[{origin}]"
+            f"({origin[3:]})\n", ""), encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn(origin, out, "漏了上游原件却没点名")
+
+    def test_a_broken_pointer_is_disclosed_not_swapped_for_the_extract(self) -> None:
+        """指针坏了要披露：退回提取稿顶替的话，作者拿不到上游原话而没人知道。"""
+        data = self.flow_json()
+        data["design"]["origin"] = "AR/story-src/sources/ar/没有了.md"
+        self.write_flow(data)
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("缺留存的上游原 AR", out)
+        self.assertIn("提取稿", out, "没说清它与 AR/design.md 是两份")
+
+    def test_no_stored_original_is_legal(self) -> None:
+        """本轮确实没有可留存的原件（空骨架不是上游给的东西）是合法状态。"""
+        self.list_every_material()
+        data = self.flow_json()
+        data["design"].pop("origin", None)
+        self.write_flow(data)
+        story = self.feature_root() / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        story.write_text("\n".join(
+            l for l in text.split("\n") if "上游原件：" not in l), encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_the_spec_and_review_are_not_original_materials(self) -> None:
+        """本轮自己生成的规格与记录不是材料——列进去就是把自证当依据。"""
+        story = self.feature_root() / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        at = text.index("### E. 材料清单")
+        end = text.index("\n### ", at + 5) if "\n### " in text[at + 5:] else len(text)
+        story.write_text(
+            text[:end] + "\n- 本轮规格：这一轮写的规格。原文：[spec/spec.md](../spec/spec.md)\n"
+            + text[end:], encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("不是初始资料", out)
+
+    def test_two_paragraphs_of_source_notes_are_not_flagged(self) -> None:
+        """材料清单那一节写两段说明不误拦——段数配额（`proseBlocks`）已随 Q7 退场。"""
+        self.list_every_material()
+        story = self.feature_root() / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        at = text.index("### E. 材料清单") + len("### E. 材料清单")
+        story.write_text(text[:at] + "\n\n这一节回答据哪几份材料写成。\n\n"
+                         + "缺的那几份在上面的记一笔里说过。\n" + text[at:], encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
 
 
 class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):

@@ -1,5 +1,5 @@
 /**
- * lint-rules.mjs — story 扩展的共享文本校验规则（词表 SSOT）
+ * 语言红线与文本校验 —— story 扩展的共享规则，**词表在这里唯一维护**。
  *
  * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 story-build.mjs check（校验 story.md）共用，
  * 避免两处各维护一份词表而漂移。
@@ -17,11 +17,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
-import { normalizeHeading } from './story/document.mjs';
+import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
+import { normalizeHeading } from './document.mjs';
 
 const CONTRACT_PATH = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'contracts', 'story-chapters.json');
+  path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'contracts', 'story-chapters.json');
 
 let vocabularyCache = null;
 
@@ -68,7 +68,7 @@ function readConfig(projectRoot) {
   try {
     return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   } catch (e) {
-    console.error(`[lint-rules] framework.config.json 解析失败：${e.message}`
+    console.error(`[language] framework.config.json 解析失败：${e.message}`
       + '——所有从它派生的形态判据将退回通用段');
     return {};
   }
@@ -434,7 +434,7 @@ function constraintNames(projectRoot) {
       .map(k => k.file.split('/').pop().replace(/\.md$/, ''));
   } catch (e) {
     // 派生不到不静默：降级只影响裸文件名这一条规则，但必须让人看见（G7）
-    console.error(`[lint-rules] 知识文件名派生失败，裸文件名规则降级为仅框架产物名：${e.message}`);
+    console.error(`[language] 知识文件名派生失败，裸文件名规则降级为仅框架产物名：${e.message}`);
     return [];
   }
 }
@@ -511,42 +511,4 @@ export function scanBrokenImages(text, baseDir, fsMod, pathMod) {
     }
   }
   return hits;
-}
-
-/**
- * 一段文本里的**正文段**（表、列表、标题、图、围栏、引用块之外的那些）。
- *
- * 用来判「该成表的地方别写散文」与附录的「表外零散文」：附录是查阅件，
- * 每节一句目的句就够，表后再跟几段散文，那几段承载的正是没地方去的工程 token。
- *
- * `afterRows` 记它出没出现在第一行表格/列表之后——附录那条判的正是**尾巴**：
- * 开头那一句是目的句（该有的），跟在表后面的才是没地方去的东西挤出来的。
- *
- * @returns {{line:number, text:string, afterRows:boolean}[]}
- */
-export function proseBlocks(text, baseLine = 0) {
-  const out = [];
-  const lines = String(text ?? '').split(/\r?\n/);
-  let inFence = false;
-  let cur = null;
-  let seenRow = false;
-  const flush = () => { if (cur) out.push(cur); cur = null; };
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    if (/^(```|~~~)/.test(s)) { inFence = !inFence; flush(); continue; }
-    if (inFence) continue;
-    const isRow = s.startsWith('|') || /^[-*+]\s/.test(s) || /^\d+[.、)]\s/.test(s);
-    // HTML 注释不是正文：骨架的形态说明与生成区标记都长这样，读者看不见它们。
-    if (!s || /^#{1,6}\s/.test(s) || isRow || s.startsWith('>') || /^!\[/.test(s)
-        || s.startsWith('<!--')) {
-      flush();
-      if (isRow) seenRow = true;
-      continue;
-    }
-    cur = cur
-      ? { ...cur, text: `${cur.text}${s}` }
-      : { line: baseLine + i + 1, text: s, afterRows: seenRow };
-  }
-  flush();
-  return out;
 }

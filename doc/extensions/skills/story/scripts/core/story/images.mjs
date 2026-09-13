@@ -6,7 +6,7 @@
  */
 import * as path from 'node:path';
 import {
-  joinPosix, readManifest, relFromFeature, relFromStory, sameBytes, upstreamDocs,
+  joinPosix, readManifest, relFromFeature, relFromStory, upstreamDocs,
 } from './sources.mjs';
 import { appendixChapter } from './appendix.mjs';
 import { normalizeHeading } from './document.mjs';
@@ -56,6 +56,9 @@ export function diagramsOf(text) {
       section, index, title,
       id: `§${section} #${index}`,
       sources: marks,
+      //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件，
+      //: 而不是读一份被复制进任务包的副本：副本一旦与原件不同步，他改的是副本。
+      at: { from: i + 1, to: Math.min(j, lines.length - 1) + 1 },
       //: 按**行**给，不拼成字符串——拼了下游就要再切一遍，而切法一旦与这里不同，
       //: CRLF 的文件每行尾会挂个 `\r`，行尾判据从此静默零命中。
       lines: lines.slice(i + 1, j),
@@ -82,17 +85,6 @@ export function diagramTopic(d) {
 export function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
   const carried = new Set(diagramsOf(downstreamText).flatMap(d => d.sources));
   return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
-}
-
-/** 把上游那张图变成可以直接粘贴的围栏：首行换成指向它的来源标记。 */
-export function carryableBlock(d, upstreamLabel) {
-  return ['```mermaid', `%% 图源 ${upstreamLabel} ${d.id}`,
-    ...diagramBody(d), '```'].join('\n');
-}
-
-/** 围栏正文：去掉开头那几行来源标记，换标记时不叠加。 */
-function diagramBody(d) {
-  return d.lines.slice(d.sources.length);
 }
 
 /**
@@ -157,11 +149,12 @@ export function imageProblems(ctx, storyText) {
   }
 
   {
-    // 图片身份：引到的每一张都要是材料里登记过的那一张，按**内容**认，不按文件名认。
+    // 图片身份：引到的每一张都要是材料里**登记过**的那一张。
     //
-    // 只比文件名时，改名的拦得住、同名复制进一个新目录的拦不住——那种形态是自建
-    // 一个图片目录，全树因此有五份同一张图。归档件自己的图片目录是允许的副本区，
-    // 但放进去的必须真的是材料里那张图的副本，而不是另一张图顶着这个名字。
+    // 判据只有这一条：路径在登记的落点集合里。**没有「归档副本区按字节认」这条特权**——
+    // 它从前允许 `AR/assets/` 下未登记的文件靠字节相同混过去，而那正是「自建一个图片目录、
+    // 全树五份同一张图」的入口：登记里没有它，谁也说不出它是哪一轮、哪一份材料来的。
+    // 已经登记进材料的 assets 路径照样合法（它在登记集合里）。
     const registered = materialImages(ctx);
     if (registered === 'broken') {
       problems.push('AR/story-src/materials.json 读不出材料清单——图片引用无从核对身份。'
@@ -173,25 +166,11 @@ export function imageProblems(ctx, storyText) {
       const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
       const byPath = new Map();
       registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
-      const archiveDir = ctx.contract.story_image_dir
-        ? joinPosix(storyDir, ctx.contract.story_image_dir) : null;
       const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
       for (const src of seen) {
         if (/^(https?:|data:)/i.test(src)) continue;
         const rel = joinPosix(storyDir, src);
-        let idx = byPath.has(rel) ? byPath.get(rel) : -1;
-        const inArchive = archiveDir && (rel === archiveDir || rel.startsWith(`${archiveDir}/`));
-        if (idx < 0 && inArchive) {
-          // 归档副本区：按字节找出它是材料里的哪一张
-          const here = path.join(ctx.featureRoot, ...rel.split('/'));
-          idx = registered.findIndex(m => m.paths.some(
-            p2 => sameBytes(here, path.join(ctx.featureRoot, ...p2.split('/')))));
-          if (idx < 0) {
-            problems.push(`归档目录里的图片「${src}」不是材料里任何一张图的副本`
-              + '——归档目录只放材料里那些图的副本，放别的等于凭空多出一张没有出处的图');
-            continue;
-          }
-        }
+        const idx = byPath.has(rel) ? byPath.get(rel) : -1;
         if (idx < 0) {
           problems.push(`story 引用的图片「${src}」不在材料的图片登记里`
             + '——引它在仓里的既有落盘位置，不要复制一份到别处再改名；'
