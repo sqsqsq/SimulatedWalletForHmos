@@ -39,30 +39,6 @@ export function readText(file) {
  * 但章提交是**按区间把原文拼回去**，读进来少一个字节，写回去就少一个字节，
  * 而「其余章一个字节未动」这句话就不成立了。两种读法各有其用，不合成一个。
  */
-export function readRaw(file) {
-  try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
-}
-
-/**
- * 合同里的编号形态 —— **编译一次，坏的当场报出来**。
- *
- * 从前每个消费处各 `new RegExp` 一次、`catch` 掉就跳过：合同里写错一条正则，
- * 那一条判据静默不判，而门禁全绿。编译放一处，坏配置由调用方报给人看。
- *
- * @returns {{res: RegExp[], problems: string[]}}
- */
-export function idShapes(contract, kind) {
-  const res = [];
-  const problems = [];
-  for (const shape of contract?.id_shapes?.[kind] ?? []) {
-    try { res.push(new RegExp(shape, 'g')); } catch {
-      problems.push(`章节合同的 id_shapes.${kind} 里有一条不是合法正则：${shape}`
-        + '——它现在一条都判不了，改合同里那一条');
-    }
-  }
-  return { res, problems };
-}
-
 export function readJson(file, fallback) {
   const t = readText(file);
   if (t === null) return fallback;
@@ -73,19 +49,31 @@ export function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
+export function readRaw(file) {
+  try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
+}
 
-//: 本模块在 `core/story/` 下，对外入口在 `core/`：两处路径都从这一个常量退回去算，
-//: 各写一串 `..` 的话，模块再挪一层就得挨个数。
-const CORE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-/** 两种上下文共用的那两样：工程根与章节合同。合同读不出来当场失败，不降级成空。 */
-function commonInputs(args) {
-  const projectRoot = path.resolve(
-    args.projectRoot ?? path.join(CORE_DIR, '..', '..', '..', '..', '..', '..'));
-  const contract = readJson(
-    path.join(CORE_DIR, '..', '..', 'contracts', 'story-chapters.json'), null);
-  if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
-  return { projectRoot, contract };
+/**
+ * 合同里的编号形态 —— **一条命令编译一次**，结果挂在 ctx 上给所有消费者用。
+ *
+ * 从前每个消费处各 `new RegExp` 一次、`catch` 掉就跳过：合同里写错一条正则，那一条判据
+ * 静默不判而门禁全绿；而且一次 check 里十章各编译一遍，编的是同一串字面。
+ * 编译放建上下文这一刻：坏配置这时就知道，报给人看由消费者决定（章内判据不该为
+ * 「合同写错了」拦住作者的这一章）。
+ *
+ * @returns {{drop: RegExp[], keep: RegExp[], problems: string[]}}
+ */
+function compileIdShapes(contract) {
+  const out = { drop: [], keep: [], problems: [] };
+  for (const kind of ['drop', 'keep']) {
+    for (const shape of contract?.id_shapes?.[kind] ?? []) {
+      try { out[kind].push(new RegExp(shape, 'g')); } catch {
+        out.problems.push(`章节合同的 id_shapes.${kind} 里有一条不是合法正则：${shape}`
+          + '——它现在一条都判不了，改合同里那一条');
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -99,13 +87,27 @@ function commonInputs(args) {
  * 到那时「拿它跑过了」什么也证明不了。需求目录侧的输入给空，
  * 依赖它们的判项自然一条不判；不依赖的照跑。
  */
+//: 本模块在 `core/story/` 下，对外入口在 `core/`：两处路径都从这一个常量退回去算，
+//: 各写一串 `..` 的话，模块再挪一层就得挨个数。
+const CORE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** 两种上下文共用的那两样：工程根与章节合同。合同读不出来当场失败，不降级成空。 */
+function commonInputs(args) {
+  const projectRoot = path.resolve(
+    args.projectRoot ?? path.join(CORE_DIR, '..', '..', '..', '..', '..', '..'));
+  const contract = readJson(
+    path.join(CORE_DIR, '..', '..', 'contracts', 'story-chapters.json'), null);
+  if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
+  return { projectRoot, contract, idShapes: compileIdShapes(contract) };
+}
+
 function createOfflineContext(args) {
   if (!args.story) fail('缺 --story <story.md 路径>');
-  const { projectRoot, contract } = commonInputs(args);
+  const { projectRoot, contract, idShapes } = commonInputs(args);
   const storyPath = path.resolve(args.story);
   if (readText(storyPath) === null) fail(`读不到 ${storyPath}`);
   return {
-    args, projectRoot, contract, offline: true,
+    args, projectRoot, contract, idShapes, offline: true,
     featureRoot: path.dirname(path.dirname(storyPath)),
     storyPath,
     decisionsPath: '',
@@ -116,7 +118,7 @@ function createOfflineContext(args) {
 export function createContext(args) {
   if (args.offline) return createOfflineContext(args);
   if (!args.feature) fail('缺 --feature');
-  const { projectRoot, contract } = commonInputs(args);
+  const { projectRoot, contract, idShapes } = commonInputs(args);
   if (!Array.isArray(contract.chapters) || contract.chapters.length === 0) {
     // 派生为空要出声，不能当作「没有章节要求」通过（G7）
     fail('章节合同解析不出任何章节——合同坏了，不是「本需求没有章节」');
@@ -124,7 +126,7 @@ export function createContext(args) {
   const featureDir = featureRoot(projectRoot, args.feature);
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
-    args, projectRoot, contract, featureRoot: featureDir, srcDir,
+    args, projectRoot, contract, idShapes, featureRoot: featureDir, srcDir,
     scriptPath: path.join(CORE_DIR, 'story-build.mjs'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),

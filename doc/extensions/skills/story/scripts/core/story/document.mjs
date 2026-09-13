@@ -37,34 +37,69 @@ const SEPARATOR = /^\|[-: |]+\|$/;
  *   行号都是原文的 0 起下标；小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——
  *   同名小节可以有两个，按名字记归属会把后一节的表算给前一节。
  */
-export function parseChapter(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const fences = [], sections = [], tables = [];
-  let open = null;                       // 当前未闭合的围栏
-  let current = null;                    // 当前 H3
+/**
+ * 围栏范围 —— **开闭判断只有这一处**。
+ *
+ * 从前三个地方各写一份（切章、区间定位、重编号），后来收成两份（`parseChapter` 与掩码）。
+ * 两份仍然是两份：改一个边界条件要改两处，而它们只在样例上一致。这里出范围，
+ * 别处一律从范围派生——要行标记的拿 `fencedLines`，要语言与闭合状态的读这几个字段。
+ *
+ * **合法关闭行有三个条件**：同种标记、不短于开启标记，且标记之后到行末只有空白。
+ * 开启行与关闭行不是同一种语法：`` ```markdown `` 带语言信息，那是又开一段样例，
+ * 不是关上外层。少了这一条，样例里的标题与表会被当成本章的正文结构，
+ * 而真正的关闭符又被当成开启——泄漏与丢正文同时发生。
+ *
+ * 关不上的围栏也照样给出来（`closed: false`，`to` 到末行）：吞掉后半章这件事要看得见。
+ *
+ * @param {string[]} lines 已经按 `\r?\n` 切好的行
+ * @returns {{lang: string, mark: string, from: number, to: number, closed: boolean}[]}
+ */
+export function fenceRanges(lines) {
+  const out = [];
+  let open = null;
   lines.forEach((line, i) => {
     const fence = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*(\w*)/);
-    if (fence) {
-      const mark = fence[1];
-      if (!open) {
-        open = { lang: fence[2].toLowerCase(), mark, from: i, to: lines.length - 1,
-          closed: false };
-        return;
-      }
-      // **合法关闭行有三个条件**：同种标记、不短于开启标记，且标记之后到行末只有空白。
-      // 开启行与关闭行不是同一种语法：`` ```markdown `` 带语言信息，那是又开一段样例，
-      // 不是关上外层。少了这一条，样例里的标题与表会被当成本章的正文结构，
-      // 而真正的关闭符又被当成开启——泄漏与丢正文同时发生。
-      if (mark[0] === open.mark[0] && mark.length >= open.mark.length
-        && CLOSING.test(line)) {
-        open.to = i;
-        open.closed = true;
-        fences.push(open);
-        open = null;
-      }
-      return;                            // 关不上的那一行仍是围栏里的内容
+    if (!fence) return;
+    const mark = fence[1];
+    if (!open) {
+      open = { lang: fence[2].toLowerCase(), mark, from: i, to: lines.length - 1,
+        closed: false };
+      return;
     }
-    if (open) return;                    // 围栏里的东西不进正文视图
+    if (mark[0] === open.mark[0] && mark.length >= open.mark.length && CLOSING.test(line)) {
+      open.to = i;
+      open.closed = true;
+      out.push(open);
+      open = null;
+    }
+  });
+  if (open) out.push(open);
+  return out;
+}
+
+/** 由围栏范围派生的行标记：这一行在围栏里（含首尾标记行）吗。 */
+export function fencedLines(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  return maskOf(lines, fenceRanges(lines));
+}
+
+/** 同上，但调用方已经有行与范围时不重扫。 */
+function maskOf(lines, ranges) {
+  const mask = new Set();
+  for (const f of ranges) {
+    for (let i = f.from; i <= f.to && i < lines.length; i++) mask.add(i);
+  }
+  return mask;
+}
+
+export function parseChapter(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const fences = fenceRanges(lines);
+  const fenced = maskOf(lines, fences);
+  const sections = [], tables = [];
+  let current = null;                    // 当前 H3
+  lines.forEach((line, i) => {
+    if (fenced.has(i)) return;           // 围栏里的东西不进正文视图
     const h3 = line.trim().match(/^###\s+(.+)$/);
     if (h3) {
       if (current) current.to = i;
@@ -83,7 +118,6 @@ export function parseChapter(text) {
       line: i,
     });
   });
-  if (open) fences.push(open);           // 没闭合的围栏也要看得见，别把后半章吞掉
   return { text: String(text ?? ''), fences, sections, tables };
 }
 
@@ -226,9 +260,9 @@ export function renumberStory(text, chapters = [], counters = []) {
   // 分行按 CRLF 安全的通道走；回写统一 LF——重编号本来就是重写整篇，
   // 顺手把行尾统一掉，比留着两种行尾在同一份文件里好。
   const lines = String(text ?? '').split(/\r?\n/);
-  const fenced = fenceMask(lines);
+  const fenced = maskOf(lines, fenceRanges(lines));
   return lines.map((raw, at) => {
-    if (fenced[at]) return raw;          // 围栏里的标题是样例，不编号
+    if (fenced.has(at)) return raw;          // 围栏里的标题是样例，不编号
 
     const head = /^(#{2,4})\s+(.+?)\s*$/.exec(raw);
     if (head) {
@@ -276,30 +310,6 @@ export function renumberStory(text, chapters = [], counters = []) {
 // 章与小节在全文里的位置
 // --------------------------------------------------------------------------
 /**
- * 逐行标出哪些行在围栏里 —— **章级切分与区间定位共用这一份判断**。
- *
- * 从前两处各有一份：切章的那份压根不认围栏（围栏里的 `## ` 于是成了一个章边界，
- * 那一章的正文被切成两半，后半截还带着一个关不上的围栏），定位的那份只认反引号。
- * 开闭规则与 `parseChapter` 同一条：同种标记、不短于开启标记、标记之后到行末只有空白。
- */
-function fenceMask(lines) {
-  const mask = new Array(lines.length).fill(false);
-  let open = null;
-  lines.forEach((line, i) => {
-    const m = line.match(/^[ \t]*(`{3,}|~{3,})/);
-    if (m && !open) { open = m[1]; mask[i] = true; return; }
-    if (m && open && m[1][0] === open[0] && m[1].length >= open.length
-      && CLOSING.test(line)) {
-      mask[i] = true;
-      open = null;
-      return;
-    }
-    mask[i] = open !== null;
-  });
-  return mask;
-}
-
-/**
  * story 正文按 `## ` 标题切节。
  *
  * `title` 是**规范化后的业务名**（`## 1. 背景` → `背景`），`raw` 保留原样给报错用。
@@ -308,11 +318,11 @@ function fenceMask(lines) {
  */
 export function storySections(storyText) {
   const lines = String(storyText ?? '').split(/\r?\n/);
-  const fenced = fenceMask(lines);
+  const fenced = maskOf(lines, fenceRanges(lines));
   const out = [];
   let cur = null;
   lines.forEach((line, i) => {
-    const m = fenced[i] ? null : line.trim().match(/^##\s+(.+)$/);
+    const m = fenced.has(i) ? null : line.trim().match(/^##\s+(.+)$/);
     if (m) {
       cur = { raw: m[1].trim(), body: [] };
       out.push(cur);
@@ -375,10 +385,10 @@ export function chapterSpan(storyText, title) {
     offsets.push(offset);
     offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
   }
-  const fenced = fenceMask(lines);
+  const fenced = maskOf(lines, fenceRanges(lines));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (fenced[i] || !line.startsWith('## ')) continue;
+    if (fenced.has(i) || !line.startsWith('## ')) continue;
     if (start < 0) {
       if (normalizeHeading(line.slice(3).trim()) === normalizeHeading(title)) start = i;
       continue;

@@ -22,10 +22,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterStructureProblems } from './chapter-contract.mjs';
 import {
-  chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, norm, normalizeHeading, parseChapter,
-  pendingChapters, storySections,
+  chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
+  parseChapter, pendingChapters, storySections,
 } from './document.mjs';
-import { fail, idShapes, readRaw, readText, refuseIfFrozen } from './context.mjs';
+import { fail, readRaw, readText, refuseIfFrozen } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { relFromFeature } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
@@ -42,20 +42,11 @@ import { scanBrokenImages } from '../lint-rules.mjs';
 function stripGuidance(body) {
   const text = String(body ?? '');
   const fenced = fencedLines(text);
-  const lines = text.split(/\r?\n/);
-  const kept = lines.filter((l, i) => fenced.has(i)
-    || !l.trim().startsWith(`<!-- ${GUIDE_MARK}`));
-  return kept.join('\n').replace(/\n{3,}/g, '\n\n');
+  return text.split(/\r?\n/)
+    .filter((l, k) => fenced.has(k) || !l.trim().startsWith(`<!-- ${GUIDE_MARK}`))
+    .join('\n');
 }
 
-/** 围栏内部的行号集合 —— 围栏里的标题与注释是样例，任何清洗与判据都不该碰它。 */
-function fencedLines(text) {
-  const out = new Set();
-  for (const f of parseChapter(text).fences ?? []) {
-    for (let i = f.from; i <= f.to; i++) out.add(i);
-  }
-  return out;
-}
 
 /**
  * 开头那几行属于本章自己的标题，剥掉 —— 命令会加回 `## <章名>`。
@@ -162,7 +153,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
       + '——它是骨架给这一章留的记号，这一章的正文该把它顶掉');
   }
   out.push(...chapterStructureProblems(chapter, view));
-  for (const re of idShapes(ctx.contract, 'drop').res) {
+  for (const re of ctx.idShapes?.drop ?? []) {
     const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]);
     if (!hits.length) continue;
     out.push(`「${chapter.title}」里出现了仓内工作编号：`

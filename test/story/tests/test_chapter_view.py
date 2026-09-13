@@ -305,5 +305,100 @@ class OnlyACleanMarkerLineCloses(ViewCase):
                 self.assertEqual(["真的节"], v["sections"], f"「{closer}」关上了不该关的围栏")
 
 
+class OneFenceScannerForEveryConsumer(unittest.TestCase):
+    """围栏的开闭判断**只有一处**：`fenceRanges`。别处一律从它派生。
+
+    从前三份（切章、区间定位、重编号）后来两份（`parseChapter` 与掩码）。两份在样例上
+    一致不等于只有一份实现：以后改一个边界条件仍要改两处，而漏改的那一处会静默切错。
+    这一组按**实际消费者**断言，不数 helper。
+    """
+
+    #: 四种「关不上」：不同种、比开启短、标记后还有字、压根没有关闭行
+    OPEN = "`" * 4
+    CASES = {
+        "不同种": "~" * 4,
+        "更短": "`" * 3,
+        "尾随内容": "`" * 4 + " json",
+        "没有关闭行": None,
+    }
+
+    def consumers(self, chapter_body: str) -> dict:
+        """一次跑完四个消费者：章视图、切章、区间定位、重编号。"""
+        src = rf"""
+        import {{ parseChapter, storySections, chapterSpan, renumberStory, fencedLines }}
+          from {json.dumps(DOCUMENT.resolve().as_uri())};
+        const CONTRACT = JSON.parse(process.argv[3]);
+        const body = process.argv[2];
+        const story = '# AR1 夹具\n\n## 背景\n\n' + body + '\n\n## 术语\n\n正文。\n';
+        const view = parseChapter(body);
+        process.stdout.write(JSON.stringify({{
+          sections: view.sections.map(s => s.raw),
+          tables: view.tables.length,
+          closed: view.fences.map(f => f.closed),
+          chapters: storySections(story).map(s => s.raw),
+          spanEndsAtNext: (() => {{
+            const at = chapterSpan(story, '背景');
+            return at ? story.slice(at.start, at.end).includes('## 术语') : null;
+          }})(),
+          numbered: renumberStory(story, CONTRACT.chapters, CONTRACT.heading_counters)
+            .split('\\n').filter(l => /^###\\s+\\d/.test(l)),
+          fenced: [...fencedLines(body)].length,
+        }}));
+        """
+        contract = (EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+                    ).read_text(encoding="utf-8")
+        proc = subprocess.run(["node", "--input-type=module", "-e", src, "x",
+                               chapter_body, contract],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def body_for(self, closer) -> str:
+        rows = [self.OPEN, "### 样例里的节", "## 样例里的章", "| 甲 | 乙 |", "|---|---|", "| 1 | 2 |"]
+        if closer is not None:
+            rows.append(closer)
+        rows += ["### 后面的真节", "", "本节正文。"]
+        return "\n".join(rows)
+
+    def test_an_unclosable_marker_keeps_everything_inside_for_all_consumers(self) -> None:
+        """关不上就一路到末行——**四个消费者对同一段文字给同一个答案**。
+
+        「后半篇被吞掉」本身不是这里要修的事：它是围栏没关上的必然后果，
+        由章提交那一条「围栏没有闭合」拒绝（见 test_story_build）。这里锁的是一致：
+        不能出现「切章认为吞了、定位认为没吞」这种两份实现各说一套。
+        """
+        for name, closer in self.CASES.items():
+            with self.subTest(case=name):
+                out = self.consumers(self.body_for(closer))
+                self.assertEqual([], out["sections"], "围栏里的 H3 顶替了真小节")
+                self.assertEqual(0, out["tables"], "围栏里的表被算成本章的表")
+                self.assertEqual([False], out["closed"], "关不上的围栏被当成关上了")
+                self.assertEqual(["背景"], out["chapters"],
+                                 "切章与视图对「后半篇在围栏里」给出了不同答案")
+                self.assertTrue(out["spanEndsAtNext"], "定位与切章对不上")
+                self.assertEqual([], out["numbered"], "围栏里的标题被编了号")
+
+    def test_a_legal_closer_lets_the_real_structure_through(self) -> None:
+        out = self.consumers(self.body_for(self.OPEN))
+        self.assertEqual(["后面的真节"], out["sections"])
+        self.assertEqual(["背景", "术语"], out["chapters"])
+        self.assertEqual(0, out["tables"], "围栏里的表仍不算本章的")
+        # 编号只按位置铺，本用例不核它铺到第几号；这里只核**围栏里那一行没被铺上号**。
+        self.assertNotIn("样例里的节", "".join(out["numbered"]))
+
+    def test_the_open_close_rule_exists_in_exactly_one_place(self) -> None:
+        """源码核：原来那几份重复的开闭逻辑已经删掉，不是又加了一层包装。"""
+        text = DOCUMENT.read_text(encoding="utf-8")
+        code = [l for l in text.split("\n") if not l.strip().startswith(("//", "*", "/*"))]
+        body = "\n".join(code)
+        self.assertEqual(1, body.count("CLOSING.test("), "关闭行判断不止一处")
+        self.assertEqual(1, len([l for l in code if "(`{3,}|~{3,})" in l]),
+                         "围栏开启的识别不止一处")
+        for other in ("chapter.mjs", "check.mjs", "appendix.mjs"):
+            s = (DOCUMENT.parent / other).read_text(encoding="utf-8")
+            self.assertNotIn("(`{3,}|~{3,})", s, other + " 自己又写了一份围栏识别")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,7 +16,7 @@ import {
   appendixChapter, appendixStructureProblems, specRowProblems, verdictTableProblems,
 } from './appendix.mjs';
 import {
-  activeKnowledgeEntries, fail, idShapes, ledgerDigestProblems, readText, requireLedgers,
+  activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
   strayFileProblems,
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
@@ -125,11 +125,9 @@ export function cmdCheck(ctx) {
   //
   // 合同里的形态正则编译一次，坏的当场报出来：从前每个消费处各 catch 掉，
   // 写错一条就静默不判，而门禁全绿。
-  for (const kind of ['drop', 'keep']) {
-    problems.push(...idShapes(ctx.contract, kind).problems);
-  }
+  problems.push(...(ctx.idShapes?.problems ?? []));
   const acceptanceSec = sections.find(s => s.title.includes('验收'));
-  for (const re of idShapes(ctx.contract, 'keep').res) {
+  for (const re of ctx.idShapes?.keep ?? []) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
     if (!acceptanceSec) { problems.push('story 里有验收编号，却没有「质量与验收」章'); continue; }

@@ -1483,6 +1483,22 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         out = self.check()
         self.assertIn("id_shapes.drop", out, "坏配置静默吞掉了")
 
+    def test_the_shapes_are_compiled_once_per_command(self) -> None:
+        """坏配置在**一条命令里只报一次**：从前每章各编译一遍，十章就该报十次。
+
+        编译挪到建上下文那一刻，`new RegExp` 也只该出现在那一处——章内判据读现成的。
+        """
+        data = json.loads(self.contract.read_text(encoding="utf-8"))
+        data["id_shapes"]["drop"] = data["id_shapes"]["drop"] + ["S(\\d+"]
+        self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        out = self.check()
+        self.assertEqual(1, out.count("id_shapes.drop"), "同一条坏配置报了不止一次")
+        core = self.mech / "skills" / "story" / "scripts" / "core" / "story"
+        compiled = [f.name for f in sorted(core.glob("*.mjs"))
+                    if "new RegExp(shape" in f.read_text(encoding="utf-8")]
+        self.assertEqual(["context.mjs"], compiled,
+                         f"编号形态不止一处编译：{compiled}")
+
     def test_a_bad_keep_shape_is_named(self) -> None:
         data = json.loads(self.contract.read_text(encoding="utf-8"))
         data["id_shapes"]["keep"] = data["id_shapes"]["keep"] + ["AC-[0-9"]
@@ -1650,6 +1666,20 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
         self.assertEqual(0, proc.returncode, self.out(proc))
         proc2 = self.put("业务流程", body.replace("```mermaid", "```text"))
         self.assertEqual(1, proc2.returncode, "围栏外的仓内编号仍要拦")
+
+    def test_blank_lines_inside_a_fence_survive(self) -> None:
+        """清洗只去掉自有指导，**不顺手压空行**：围栏里的原文连着几个空行就是几个。
+
+        从前末尾挂着一句 `.replace(/\n{3,}/g, '\n\n')`，对整份候选生效——
+        源图标签与原文摘录里的空行都会被它改写，而那不是清洗的职责。
+        """
+        body = ("<!-- story-draft:guide 提交：跑那条命令 -->\n\n正文一句。\n\n"
+                "```text\nfirst\n\n\nsecond\n```\n")
+        proc = self.put("背景", body)
+        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertIn("first\n\n\nsecond", story, "围栏里的空行被压掉了")
+        self.assertNotIn("提交：跑那条命令", story, "自有指导没剥掉")
 
     def test_a_second_chapter_heading_after_the_body_is_refused(self) -> None:
         """H2 写在正文之后：从前重新切出来的「这一章」只到它为止，写前核对看不见后半段，
