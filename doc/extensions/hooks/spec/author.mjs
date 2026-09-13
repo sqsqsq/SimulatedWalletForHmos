@@ -26,7 +26,7 @@ import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
-import { diagramsOf, diagramTopic }
+import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { relFromStory } from '../../skills/story/scripts/core/story/sources.mjs';
 import { DECISION_FIELDS } from '../../skills/story/scripts/core/story/review.mjs';
@@ -180,16 +180,14 @@ function imageSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
   const manifest = readJsonOrNull(path.join(dir, 'AR', 'story-src', 'materials.json'));
   const rows = ['## 4. 材料里的图', ''];
-  if (manifest === null) {
-    // **读不出来不是「没有图」**：静默按零张渲染，作者会以为这一轮不涉及图。
-    rows.push('材料清单（`AR/story-src/materials.json`）读不出来——它只应由脚本写入；'
-      + '删掉后重跑 `story_flow.py round` 再取这份任务包。这一节现在给不出图。');
+  // **形状不对不是「没有图」**：清单不在、读不出、`materials` 不是数组（旧的
+  // `items`/`path` 落在这里）、`paths` 形状不对，都是缺口。静默按零张渲染的话，
+  // 作者会以为这一轮不涉及图。形状判定与全篇 check、审查任务共用 `imagesIn` 一份。
+  const { images, gap } = imagesIn(manifest);
+  if (gap) {
+    rows.push(`${gap}，再取这份任务包。这一节现在给不出图。`);
     return rows;
   }
-  // 只认当前合同：`materials` 与每条的 `paths`。旧的 `items`/`path` 不再兼容——
-  // 两种形状都收的话，写入侧改了形状，读出来的是空清单而没有人知道。
-  const images = (Array.isArray(manifest.materials) ? manifest.materials : [])
-    .filter(m => String(m?.kind ?? '').includes('image'));
   if (!images.length) {
     rows.push('材料清单里现在没有图片。');
     return rows;
@@ -202,24 +200,22 @@ function imageSection(projectRoot, feature) {
     '');
   const featureDir = relDisplay(projectRoot, featureRoot(projectRoot, feature));
   images.forEach((img, at) => {
-    const paths = (Array.isArray(img.paths) ? img.paths : []).filter(Boolean);
-    const readable = paths.filter(rel => fs.existsSync(path.join(dir, ...rel.split('/'))));
-    const main = readable[0] ?? paths[0];
+    const paths = img.paths;
+    // **真读得到**才算落点：目录、坏链接、读不了的文件渲染出来的引用串与命令都是坏的。
+    const readable = readablePaths(dir, paths);
+    const main = readable[0] ?? null;
+    const caption = String(img.caption ?? '').trim();
     if (!main) {
-      rows.push(`- **第 ${at + 1} 张图**：登记里没有落点——`
-        + '跑 `story_flow.py round` 重算材料清单再取这份任务包。', '');
+      rows.push(`- **${caption || `第 ${at + 1} 张图`}**：登记的落点一个都读不到`
+        + `（${paths.join('、')}）——先把原件补回原位，或重跑 \`story_flow.py round\`；`
+        + '这张图现在引不了，也不给可执行的命令（那条命令会指到一个读不到的路径）。', '');
       return;
     }
-    const caption = String(img.caption ?? '').trim();
     const unused = String(img.unused ?? '').trim();
     const aliases = paths.filter(rel => rel !== main);
     rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(main)})\``
       + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
       + (unused ? ` ← **已登记不用**：${unused}` : ' ← 还没登记取舍'));
-    if (!readable.length) {
-      rows.push(`  登记的落点在盘上读不到（${paths.join('、')}）——`
-        + '先把原件补回原位，或重跑 `story_flow.py round`；这张图现在引不了。');
-    }
     if (aliases.length) {
       rows.push(`  同一张图的其它落点：${aliases.join('、')}（**是同一张，只引一次**）`);
     }

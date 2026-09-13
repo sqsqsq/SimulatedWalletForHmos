@@ -347,12 +347,78 @@ class TaskPackageIsRendered(WorkspaceCase):
                    if l.strip().startswith("python ") and "--caption-image" in l)
         self.assertIn("签约页.png", cmd, "命令指向了读不到的那个落点")
 
+    def put_manifest(self, payload) -> None:
+        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
+            payload if isinstance(payload, str)
+            else json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def image_command_lines(self, package: str) -> list[str]:
+        """只取命令行本身——与 `image_commands`（连条件一起取）不是同一件事。"""
+        return [l for l in package.split("\n")
+                if l.strip().startswith("python ") and "--caption-image" in l]
+
+    def test_a_shape_that_is_not_the_current_contract_is_a_gap(self) -> None:
+        """**形状不对不是「没有图」**：静默按零张渲染，作者会以为这一轮不涉及图。
+
+        退旧兼容不等于静默漏掉旧形状——读到旧的 `items`/`path` 要说出来。
+        """
+        for name, payload in (
+            ("空对象", {}),
+            ("materials 不是数组", {"materials": "invalid"}),
+            ("旧的 items/path", {"items": [{"kind": "image", "path": "assets/x/a.png"}]}),
+            ("坏 JSON", "{ 坏了"),
+        ):
+            with self.subTest(shape=name):
+                self.put_manifest(payload)
+                package = self.task_package()
+                self.assertNotIn("材料清单里现在没有图片", package, "坏形状被当成零图")
+                self.assertIn("story_flow.py round", package, "没给修法")
+                self.assertEqual([], self.image_command_lines(package),
+                                 "形状不对却给了可执行的命令")
+
+    def test_a_legal_empty_manifest_really_means_no_images(self) -> None:
+        """合法的空清单与非图片材料：这时才是「没有图」。"""
+        self.put_manifest({"materials": [
+            {"kind": "doc", "sha256": "sha256:aa", "paths": ["RR/prd.md"]}]})
+        self.assertIn("材料清单里现在没有图片", self.task_package())
+
+    def test_a_bad_paths_shape_is_a_gap(self) -> None:
+        for name, paths in (("不是数组", "assets/x/a.png"), ("空数组", []),
+                            ("空串", [""]), ("不是字符串", [12])):
+            with self.subTest(paths=name):
+                self.put_manifest({"materials": [{"kind": "image", "paths": paths}]})
+                package = self.task_package()
+                self.assertIn("`paths` 形状不对", package)
+                self.assertEqual([], self.image_command_lines(package))
+
+    def test_an_unreadable_representative_falls_back_to_a_readable_alias(self) -> None:
+        """代表路径缺了、别名读得到：用读得到的那个，另一个仍列成别名。"""
+        img = self.feature_root / "ux-reference/签约页.png"
+        img.parent.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(b"PNG")
+        self.put_manifest({"materials": [{"kind": "image", "caption": "签约页",
+                                          "paths": ["assets/doc/没有了.png",
+                                                    "ux-reference/签约页.png"]}]})
+        package = self.task_package()
+        cmds = self.image_command_lines(package)
+        self.assertEqual(1, len(cmds))
+        self.assertIn("签约页.png", cmds[0])
+        self.assertIn("同一张图的其它落点", package)
+
+    def test_a_directory_is_not_a_readable_image(self) -> None:
+        """`existsSync` 为真不等于它能当一张图：指到目录的命令照抄必错。"""
+        (self.feature_root / "assets" / "x").mkdir(parents=True, exist_ok=True)
+        self.put_manifest({"materials": [{"kind": "image", "paths": ["assets/x"]}]})
+        package = self.task_package()
+        self.assertIn("一个都读不到", package)
+        self.assertEqual([], self.image_command_lines(package), "给了指到目录的命令")
+
     def test_a_broken_manifest_is_not_no_images(self) -> None:
         """读不出来不是「没有图」：静默按零张渲染，作者会以为这一轮不涉及图。"""
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             "{ 坏了", encoding="utf-8")
         package = self.task_package()
-        self.assertIn("读不出来", package)
+        self.assertIn("读不出材料清单", package)
         self.assertNotIn("材料清单里现在没有图片", package)
 
     #: 图名带空格是常事——导入从文档里抽出来的图常常沿用原文里的名字。

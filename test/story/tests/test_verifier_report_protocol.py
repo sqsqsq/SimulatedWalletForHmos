@@ -539,43 +539,102 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         text = self.inject()
         self.assertLess(text.index("story_reader_review"), text.index("知识判据"))
 
-    def test_the_task_asks_about_every_image(self) -> None:
-        """任务里没有的问题，审查者不会去问。图逐张列出，连它是什么一起。"""
+    def overlay_method(self) -> str:
+        """判据与结论要求的**唯一维护处**：spec overlay 的 `story_reader_review`。"""
+        text = (self.root / "doc" / "extensions" / "rules"
+                / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        at = text.index("story_reader_review:")
+        end = text.index("\n# ", at)
+        return text[at:end]
+
+    def test_the_task_lists_every_image_with_its_state(self) -> None:
+        """任务里没有的**数据**，审查者拿不到：图逐张列出，连它是什么、用不用一起。"""
         text = self.inject()
-        self.assertIn("材料里的图，逐张回答", text)
+        self.assertIn("材料里的图", text)
         self.assertIn("assets/doc-a/one.png", text)
         self.assertIn("签约页", text)
-        self.assertIn("story 用了没有", text)
 
-    def test_the_task_asks_whether_the_lead_figure_earns_its_place(self) -> None:
-        """章首那张图讲没讲清这条业务——机器只核有没有图，讲得怎么样归审查。
+    def test_a_broken_manifest_is_an_input_gap_not_no_images(self) -> None:
+        """审查端与作者端对同一份坏清单给同一个含义：**缺口**，不是「本项无图不适用」。
 
-        七跑那次章首的图与契约图逐字节相同：机器看得见「有图」，
-        看不见「它没回答评审者要问的事」。
+        `materials` 是字符串时直接 `.filter` 会抛——审查者拿到的会是一个没有来源说明的
+        TypeError，而它本该读到「清单坏了」。
         """
-        text = self.inject()
-        self.assertIn("章首那张图", text)
-        self.assertIn("端到端过程", text)
-        self.assertIn("分支去向", text)
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        for name, payload in (("空对象", "{}"),
+                              ("materials 是字符串", '{"materials":"invalid"}'),
+                              ("旧的 items/path",
+                               '{"items":[{"kind":"image","path":"a.png"}]}'),
+                              ("坏 JSON", "{ 坏了")):
+            with self.subTest(shape=name):
+                (src / "materials.json").write_text(payload, encoding="utf-8")
+                text = self.inject()
+                self.assertIn("输入有缺口", text, "坏清单被当成「无图不适用」")
+                self.assertIn("story_flow.py round", text, "没给修法")
+                self.assertNotIn("材料清单里没有图片", text)
 
-    def test_the_task_shows_why_an_image_was_declined(self) -> None:
-        """作者登记的「不用」原样带上——审查判的正是那句理由成不成立。"""
+    def test_a_legal_empty_manifest_is_no_images(self) -> None:
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        (src / "materials.json").write_text(
+            json.dumps({"materials": [{"kind": "doc", "paths": ["RR/prd.md"]}]},
+                       ensure_ascii=False), encoding="utf-8")
         text = self.inject()
-        self.assertIn("理由成不成立", text)
+        self.assertIn("材料清单里没有图片", text)
+        self.assertNotIn("输入有缺口", text)
+
+    def test_an_image_the_disk_cannot_read_is_marked(self) -> None:
+        """登记着而盘上读不到：审查要知道这一张现在看不了，不是「作者没用它」。"""
+        text = self.inject()
+        self.assertIn("盘上读不到", text)
+
+    def test_the_method_is_maintained_only_in_the_overlay(self) -> None:
+        """方法一份：overlay 维护「怎么判」，构造器只给这一次的数据。
+
+        两处各写一遍时改一处另一处静默过期——而过期的那一份仍会被送到审查者手上。
+        """
+        method = self.overlay_method()
+        for needle in ("章首那张图", "端到端过程", "分支去向", "理由成不成立",
+                       "跨章对着读", "blocking_findings", "advisories", "不许空"):
+            self.assertIn(needle, method, f"overlay 里没有「{needle}」")
+        fragment = self.inject()
+        for needle in ("章首那张图", "端到端过程", "理由成不成立", "blocking_findings"):
+            self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
+
+    def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
+        """两方之间也可能有复杂往返，多方单向直通反而不需要——不设人数门槛。"""
+        method = self.overlay_method()
+        self.assertNotIn("三个以上参与方", method)
+        self.assertIn("按实际关系判", method)
+        self.assertNotIn("三个以上参与方", self.inject())
 
     def test_the_task_carries_the_story_full_text_once(self) -> None:
         """审查对象**放全文**，一次。
 
         只给路径让它自己去开的话，截断、读旧稿、读不到都会变成「看起来审过了」，
-        而三种都分不出来。围栏用七个反引号：正文里的流程图围栏不会把它提前关上。
+        而三种都分不出来。外层围栏比正文里最长的那道再多一个反引号——固定长度时，
+        正文里合法地出现一道更长的示例围栏就会把包装提前关上。
         """
         task = self.inject()
         self.assertIn("### 审查对象：当前 `AR/story.md` 全文", task)
-        self.assertIn("```````markdown", task)
+        fence = next(l for l in task.split("\n")
+                     if l.startswith("```") and l.endswith("markdown"))
+        self.assertGreaterEqual(len(fence) - len("markdown"), 4, fence)
         for line in STORY_MD.strip().split("\n"):
             if line.strip():
                 self.assertIn(line, task, f"全文里少了这一行：{line}")
-        self.assertEqual(1, task.count("```````markdown"), "全文放了不止一次")
+        self.assertEqual(1, task.count(fence), "全文放了不止一次")
+
+    def test_a_longer_inner_fence_does_not_close_the_wrapper(self) -> None:
+        """正文里合法地出现一道更长的围栏（贴一段 markdown 示例）时，包装不能被它关上。"""
+        story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+        story.write_text(STORY_MD + "\n`````markdown\n```mermaid\nA-->B\n```\n`````\n",
+                         encoding="utf-8")
+        task = self.inject()
+        fence = next(l for l in task.split("\n")
+                     if l.startswith("```") and l.endswith("markdown"))
+        self.assertGreaterEqual(len(fence) - len("markdown"), 6, fence)
+        after = task.split(fence, 1)[1]
+        self.assertIn("`````markdown", after, "更长的内层围栏没被包进来")
 
     def test_an_unreadable_story_is_a_skip_not_an_empty_full_text(self) -> None:
         """空串冒充全文 = 审查会对着空白作答；如实 SKIP。"""
@@ -598,14 +657,17 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
             self.assertIn(chapter["questions"][0], text,
                           f"「{chapter['title']}」的读者问题没送到")
 
-    def test_the_task_follows_the_upstream_output_contract(self) -> None:
-        """PASS 只进汇总表、明细只列非 PASS——本项不设例外，否则正常 PASS 会被拒。"""
-        text = self.inject()
-        self.assertIn("汇总表", text)
-        self.assertIn("不许空", text)
-        self.assertIn("blocking_findings", text)
-        self.assertIn("advisories", text)
-        self.assertNotIn("为标记的一块", text, "又要求了 markdown 块")
+    def test_the_output_contract_lives_with_the_method(self) -> None:
+        """PASS 只进汇总表、明细只列非 PASS——本项不设例外，否则正常 PASS 会被拒。
+
+        它与方法同处一份（overlay）：输出要求与判据分在两个文件时，改一处就对不上。
+        """
+        method = self.overlay_method()
+        self.assertIn("汇总表", method)
+        self.assertIn("不许空", method)
+        self.assertIn("blocking_findings", method)
+        self.assertIn("advisories", method)
+        self.assertNotIn("为标记的一块", method, "又要求了 markdown 块")
 
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""

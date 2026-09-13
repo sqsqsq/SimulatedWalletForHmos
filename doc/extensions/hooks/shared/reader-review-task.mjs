@@ -8,6 +8,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
+import { parseYaml } from './yaml-lite.mjs';
+import { imagesIn, readablePaths }
+  from '../../skills/story/scripts/core/story/images.mjs';
 import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
 
 function contractOf(projectRoot) {
@@ -22,15 +25,20 @@ function contractOf(projectRoot) {
  * 那句理由成不成立，不给理由就只能凭空猜。
  */
 function imageRows(projectRoot, feature) {
-  const manifest = readJsonOrNull(path.join(featureRoot(projectRoot, feature),
-    'AR', 'story-src', 'materials.json'));
-  const images = (manifest?.materials ?? []).filter(m => m?.kind === 'image');
-  return images.map(m => {
-    const where = Array.isArray(m.paths) ? m.paths.join('、') : '';
+  const root = featureRoot(projectRoot, feature);
+  const manifest = readJsonOrNull(path.join(root, 'AR', 'story-src', 'materials.json'));
+  // **形状不对是缺口，不是「本项无图不适用」**：形状判定与作者包、全篇 check 共用
+  // `imagesIn` 一份。`materials` 是字符串时直接 `.filter` 会抛——审查者拿到的
+  // 会是一个没有来源说明的 TypeError，而它本该读到「清单坏了」。
+  const { images, gap } = imagesIn(manifest);
+  if (gap) return { gap };
+  return { rows: images.map((m) => {
+    const readable = readablePaths(root, m.paths);
     const unused = String(m.unused ?? '').trim();
-    return `- \`${where}\`：${m.caption || '（登记时没写说明）'}`
+    return `- \`${m.paths.join('、')}\`：${m.caption || '（登记时没写说明）'}`
+      + (readable.length ? '' : '　**盘上读不到**（原件缺失或不可读）')
       + (unused ? `　**作者登记不用**：${unused}` : '');
-  });
+  }) };
 }
 
 /**
@@ -40,7 +48,7 @@ function imageRows(projectRoot, feature) {
  * @param {string} feature
  * @param {string} checkId 判据 id —— 结果条目用它，不另起名字
  */
-export function readerReviewTask(projectRoot, feature, checkId) {
+export function readerReviewTask(projectRoot, feature, checkId, opts = {}) {
   const contract = contractOf(projectRoot);
   const root = featureRoot(projectRoot, feature);
   const rows = [
@@ -66,12 +74,14 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   // **当前全文一次**：审查的是这一份，不是宿主愿意去读的那部分。让它自己去开文件时，
   // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
-  // 围栏用七个反引号：正文里的三反引号围栏（流程图）不会把它提前关上。
+  // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
+  // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
   const origin = originalArSource(root);
+  const fence = `${'`'.repeat(longestFence(story) + 1)}markdown`;
   rows.push('', '### 审查对象：当前 `AR/story.md` 全文', '',
     `（${story.split(/\r?\n/).length} 行，下面这一段就是全文；`
     + '与盘上那一份不一致时以盘上为准，并把这件事写进结论）', '',
-    '```````markdown', story.replace(/\s+$/, ''), '```````');
+    fence, story.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));
   rows.push('', '### 另外这几份按需去读', '',
     '- `spec/spec.md` —— 已经成立的产品约束；',
     '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
@@ -94,58 +104,27 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     rows.push('', `章级维度：${dimensions.join('、')}。`);
   }
 
-  // 逐章问答看不到横跨两章的矛盾：同一个条件在流程里说一套、在验收里说另一套时，
-  // 两章各自都说得通，只有对着读才看得出来。所以跨章比对要说成一个显式动作。
-  rows.push('', '### 跨章对着读，这四问', '',
-    '1. **同一个条件，各章说法一致吗**：挑关键条件（未登录、未实名、开关关闭、'
-    + '配额用尽这类），把流程、功能说明、异常与恢复、验收四处对着读——'
-    + '同一种情况下用户看到什么、系统怎么处理，四处说的是不是同一件事；',
-    '2. **图里每条路径有后续吗**：分支画出去之后要么走到终态，要么接回某个节点，'
-    + '不能断在那里；',
-    '3. **材料自己打架的地方，作者定了口径吗**：定了的该在决策件里是 `settled`，'
-    + '定不了的该是 `open`——两样都没有，就是替需求方做了决定而他不知道；',
-    '4. **附录 §10 那些非实体落点写的是实际影响对象吗**：'
-    + '「页面」「资源」这种泛称等于没写落点；',
-    '5. **上游画出来的每条路径，story 讲到了吗、讲在合适的章吗**：'
-    + '主路径之外的那几条最容易整条没人讲——图搬过来了不等于那件事讲过了；',
-    '6. **业务流程章章首那张图，讲清了端到端过程、关键状态与全部分支去向吗**：'
-    + '评审者顺它就能看懂这条业务走到哪、岔在哪、各自到哪个终态；'
-    + '只把上游的契约图复制一遍、只画了主路径、分支去向缺一条，都是 finding。'
-    + '与上游那张长得一样本身不是问题——问题是它没回答评审者要问的事。'
-    + '**参与方表列了三个以上参与方时，还要看它讲没讲清谁先调谁、结果回到谁**：'
-    + '多方协作里出错最贵的就是次序与回程，一张只画了「有哪些方」的图答不了这个。');
-
+  // 图**是什么、用没用、不用的理由**是这一次的数据；「怎么判」在 overlay 的
+  // `story_reader_review` 里维护一份，这里不复制。
   const images = imageRows(projectRoot, feature);
-  rows.push('', '### 材料里的图，逐张回答', '');
-  if (images.length) {
-    rows.push(...images, '',
-      '每一张三问：**story 用了没有**；',
-      '**用了的，这张图属不属于本需求、有没有必要进正文**'
-      + '——旧版页面、同页面的另一张截图、同类产品的参考稿、别的部件或别的单的页面，'
-      + '进了正文就是 finding：读者要在归档件里读到不属于这个需求的东西；',
-      '**没用的，它给的理由成不成立**——理由跟在上面那一行后面，'
-      + '没有理由的图在 story 里也没露面，那是缺口。');
+  rows.push('', '### 材料里的图（这一次有哪几张）', '');
+  if (images.gap) {
+    rows.push(`**输入有缺口**：${images.gap}。`
+      + '在缺口修好之前，不要就「图用没用、取舍成不成立」下结论——'
+      + '把这件事写进结论，它是本轮的阻断问题。');
   } else {
-    rows.push('材料清单里没有图片，这一问不适用。');
+    rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
 
-  rows.push('',
-    '### 结论写成什么（BLOCKER）',
-    '',
-    `汇总表里 \`${checkId}\` 一行，证据格写你逐章过了什么——**不许空**，`,
-    '空证据与没审长得一样。判 PASS 到此为止，不写明细。',
-    '',
-    '判 FAIL 或 WARN 时，另在 YAML 明细里出这一条，`details` 下两个键：',
-    '',
-    '```yaml',
-    `    - id: ${checkId}`,
-    '      status: FAIL | WARN',
-    '      details:',
-    '        blocking_findings: []      # 哪一章哪一句、缺的或错的是什么、对读者的影响',
-    '        advisories: []             # 不影响正确与完整的表达建议，不阻止 PASS',
-    '```',
-    '',
-    '**空列表是结论**，缺席不是。');
+  // 方法与结论要求由 overlay 的 `story_reader_review` 维护一份。正常宿主已经把 overlay
+  // 装配进 verifier 的任务，这里不再复制；`review-task` 是人自己看的独立入口，
+  // 那时把**同一份**附在后面——删完只留一句指路，人在那条路上拿不到方法。
+  if (opts.withMethod) {
+    const { text, error } = reviewMethod(projectRoot, checkId);
+    rows.push('', '### 判据与结论要求（取自 spec overlay，唯一维护处）', '',
+      error ? `取不到：${error}——判据在 rules/spec-rules.overlay.yaml 的`
+        + ` \`semantic_checks.${checkId}\`，先让那份 overlay 可读` : text);
+  }
 
   return rows.join('\n');
 }
@@ -153,4 +132,33 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 /** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */
 function readOrNull(abs) {
   try { return fs.readFileSync(abs, 'utf-8'); } catch { return null; }
+}
+
+/**
+ * 从 overlay 取这一项的判据与结论要求 —— **唯一维护处在那里**，这里只取不写。
+ *
+ * 取不到就说清取不到：静默给一段空的，人会以为这一项没有判据要求。
+ */
+function reviewMethod(projectRoot, checkId) {
+  const p = path.join(extensionRoot(projectRoot), 'rules', 'spec-rules.overlay.yaml');
+  const raw = readOrNull(p);
+  if (raw === null) return { text: '', error: '读不到 rules/spec-rules.overlay.yaml' };
+  let doc;
+  try { doc = parseYaml(raw); } catch (e) { return { text: '', error: `overlay 解析失败（${e.message}）` }; }
+  const item = doc?.semantic_checks?.[checkId];
+  if (!item) return { text: '', error: `overlay 的 semantic_checks 里没有 ${checkId}` };
+  const parts = [item.description, item.ai_prompt_hint].map(x => String(x ?? '').trim())
+    .filter(Boolean);
+  if (!parts.length) return { text: '', error: `${checkId} 在 overlay 里没有描述与提示` };
+  return { text: parts.join('\n\n'), error: null };
+}
+
+/** 正文里最长的那道围栏有几个反引号（至少 3，让外层总比它长）。 */
+function longestFence(text) {
+  let most = 3;
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const m = line.match(/^[ 	]*(`{3,})/);
+    if (m && m[1].length > most) most = m[1].length;
+  }
+  return most;
 }

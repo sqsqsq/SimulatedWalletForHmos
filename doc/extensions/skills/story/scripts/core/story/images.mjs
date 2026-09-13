@@ -4,6 +4,7 @@
  * 按**内容**认图不按文件名认：只比文件名时，同名复制进一个新目录的拦不住，
  * 而那正是「全树五份同一张图」的来路。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   joinPosix, readManifest, relFromFeature, relFromStory, upstreamDocs,
@@ -156,9 +157,8 @@ export function imageProblems(ctx, storyText) {
     // 全树五份同一张图」的入口：登记里没有它，谁也说不出它是哪一轮、哪一份材料来的。
     // 已经登记进材料的 assets 路径照样合法（它在登记集合里）。
     const registered = materialImages(ctx);
-    if (registered === 'broken') {
-      problems.push('AR/story-src/materials.json 读不出材料清单——图片引用无从核对身份。'
-        + '它只应由脚本写入，若曾手工编辑，删掉后重跑 `story_flow.py round`');
+    if (registered?.gap) {
+      problems.push(`${registered.gap}——图片引用无从核对身份`);
     } else if (!registered) {
       notes.push('没有材料清单（AR/story-src/materials.json），图片身份与落点判据未执行'
         + '——跑 `story_flow.py round` 生成它之后这条才判得了');
@@ -212,6 +212,63 @@ export function imageProblems(ctx, storyText) {
   return { problems, notes };
 }
 
+/**
+ * 材料清单里的图片对象 —— **一份形状判定，三个消费者**（全篇 check、作者包、审查任务）。
+ *
+ * 「没有图」只有一种：`materials` 是数组而里面没有图片记录。别的都是**缺口**：
+ * 清单不在、读不出、`materials` 不是数组（旧的 `items`/`path` 就落在这里）、
+ * 图片记录的 `paths` 不是非空字符串数组。当成零图放过的话，作者会以为这一轮不涉及图、
+ * 审查会写「本项不适用」，而实际是清单坏了——两种在产物上看不出分别。
+ *
+ * 退旧兼容不等于静默漏掉旧形状：读到旧形状要说出来，让人去重算清单。
+ *
+ * @param {object|null} manifest 已读出的清单对象；null = 读不出或不在
+ * @returns {{images: object[], gap: string|null}}
+ */
+export function imagesIn(manifest) {
+  const fix = '——它只应由脚本写入；跑 `story_flow.py round` 重算材料清单';
+  if (manifest === null || typeof manifest !== 'object') {
+    return { images: [], gap: `AR/story-src/materials.json 读不出材料清单${fix}` };
+  }
+  if (!Array.isArray(manifest.materials)) {
+    return { images: [],
+      gap: 'AR/story-src/materials.json 里没有 `materials` 数组'
+        + `（旧的 \`items\`/\`path\` 形状已经不支持）${fix}` };
+  }
+  const images = manifest.materials.filter(m => String(m?.kind ?? '').includes('image'));
+  const bad = images.filter(m => !Array.isArray(m.paths) || !m.paths.length
+    || m.paths.some(rel => typeof rel !== 'string' || !rel.trim()));
+  if (bad.length) {
+    return { images: [],
+      gap: `AR/story-src/materials.json 里有 ${bad.length} 条图片记录的 \`paths\` 形状不对`
+        + `（要一个非空的字符串数组）${fix}` };
+  }
+  return { images, gap: null };
+}
+
+/**
+ * 这几个落点里**真读得到**的那些 —— 目录、坏链接、读不了的文件都不算。
+ *
+ * `existsSync` 为真不等于它能当一张图：指到目录时渲染出来的引用串与命令都是坏的，
+ * 而作者照着跑只会拿到一个费解的错误。
+ */
+export function readablePaths(featureRoot, paths) {
+  return (Array.isArray(paths) ? paths : []).filter((rel) => {
+    if (typeof rel !== 'string' || !rel.trim()) return false;
+    const abs = path.join(featureRoot, ...rel.split('/'));
+    try {
+      if (!fs.statSync(abs).isFile()) return false;
+      fs.accessSync(abs, fs.constants.R_OK);
+      return true;
+    } catch (err) {
+      // **只吞文件系统的错**：不在、不可读、是目录都当读不到。别的（比如漏了一个
+      // import）是这份代码自己的错，吞掉它会让「所有图都读不到」看起来像数据问题。
+      if (err?.code) return false;
+      throw err;
+    }
+  });
+}
+
 /** 上游每张图，story 里各有一个围栏带着它的来源标记。 */
 export function carriedDiagramProblems(ctx, storyText) {
   const problems = [];
@@ -237,8 +294,7 @@ export function carriedDiagramProblems(ctx, storyText) {
 
 function materialImages(ctx) {
   const data = readManifest(ctx);
-  if (data === null || data === 'broken') return data;
-  if (!Array.isArray(data.materials)) return 'broken';
-  return data.materials.filter(m => m?.kind === 'image'
-    && Array.isArray(m.paths) && m.paths.length);
+  if (data === null) return null;                 // 没有清单：由调用方记一笔
+  const { images, gap } = imagesIn(data === 'broken' ? null : data);
+  return gap ? { gap } : images;
 }
