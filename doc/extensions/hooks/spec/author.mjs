@@ -171,9 +171,11 @@ function imageSection(projectRoot, feature) {
     rows.push('材料清单里现在没有图片。');
     return rows;
   }
-  rows.push('每张图下面那条命令**原样跑**：说明与取舍都登记在材料清单里，跟着图的内容走。'
-    + '引用串是相对 `AR/story.md` 的，命令的路径是相对工程根的——两个基准不一样，'
-    + '自己换算容易差一层。属于本需求的图怎么引、不属于的怎么登记，见 `story-write.md`。',
+  rows.push('引用串可以直接粘。下面的命令**按它自己写的条件跑，不是逐张都跑**：'
+    + '`--unused` 会写进「本需求不用它」，`--used` 会把这条登记撤掉，两条都改状态——'
+    + '取舍没变的图什么都不用跑。引用串是相对 `AR/story.md` 的，命令的路径是相对工程根的'
+    + '——两个基准不一样，自己换算容易差一层。'
+    + '属于本需求的图怎么引、不属于的怎么登记，见 `story-write.md`。',
     '');
   const featureDir = relDisplay(projectRoot, featureRoot(projectRoot, feature));
   for (const img of images) {
@@ -185,6 +187,10 @@ function imageSection(projectRoot, feature) {
         + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
         + (unused ? ` ← **已登记不用**：${unused}` : ''),
       '',
+      // 命令写状态，所以动作的条件跟命令贴在一起：隔一段的说明管不住照抄。
+      unused
+        ? '  这张已经登记不用。**改主意要引用它时**才跑这条，它撤掉上面那条理由；仍然不用就不跑：'
+        : '  **决定不用它时**才跑这条，把 `<…>` 换成真的理由；要用它就不跑，把上面那串引进正文：',
       '  ```powershell',
       // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。

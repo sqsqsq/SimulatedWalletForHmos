@@ -331,6 +331,99 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertNotIn("\\", line, "命令里还有续行的反斜杠——shell 会把它当字面参数")
 
 
+    def refresh_manifest(self) -> None:
+        """用机制自己那份算法重算材料清单——手写的 materials.json 测不到取舍的写入。"""
+        core = self.root / "doc/extensions/skills/story/scripts/core"
+        proc = run(sys.executable, "-c",
+                   "import pathlib, sys;"
+                   f"sys.path.insert(0, {json.dumps(core.as_posix())});"
+                   "import materials;"
+                   f"materials.refresh(pathlib.Path({json.dumps(self.feature_root.as_posix())}))",
+                   cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def register_unused(self, rel: str, reason: str) -> None:
+        """按真脚本登记「本需求不用这张图」——状态由它写，测试不手改台账。"""
+        proc = run(sys.executable,
+                   "doc/extensions/skills/story/scripts/core/import_sources.py",
+                   "--feature", FEATURE, "--caption-image",
+                   f"doc/features/{FEATURE}/{rel}", "--unused", reason, cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def image_commands(self, package: str) -> list[tuple[str, str, str]]:
+        """逐条取出图片命令与**紧贴它上面**那句条件。
+
+        贴在一起才管得住照抄：条件写在段首、命令在十行之外的话，模型读到的最后一句
+        是「跑这条」。
+        """
+        lines = package.split("\n")
+        out: list[tuple[str, str, str]] = []
+        for i, line in enumerate(lines):
+            cmd = line.strip()
+            if not cmd.startswith("python ") or "--caption-image" not in cmd:
+                continue
+            lead = next(l.strip() for l in reversed(lines[:i])
+                        if l.strip() and not l.strip().startswith("```"))
+            out.append(("--used" if " --used" in cmd else "--unused", cmd, lead))
+        return out
+
+    def test_each_image_command_says_when_it_applies(self) -> None:
+        """两条命令写的是相反的状态，所以条件要贴着命令，且不能要求逐张都跑。
+
+        `--unused` 把「本需求不用它」写进登记，`--used` 把这条登记撤掉。任务包说
+        「每张图下面那条命令原样跑」时，照做一遍就把还要用的图登记成不用、把已经有
+        依据不用的图恢复引用——两个方向都是拿作者没做过的决定去写状态。
+        """
+        for rel in ("assets/x/one.png", self.SPACED):
+            img = self.feature_root / rel
+            img.parent.mkdir(parents=True, exist_ok=True)
+            img.write_bytes(rel.encode())          # 内容不同：两张图两个 sha
+        self.register_unused("assets/x/one.png", "旧版对照稿")
+        self.refresh_manifest()
+
+        package = self.task_package()
+        self.assertNotIn("原样跑", package, "两条命令写的状态相反，不能要求逐张跑")
+        cmds = self.image_commands(package)
+        self.assertEqual(2, len(cmds), f"每张图各一条命令，实际 {len(cmds)} 条")
+        used = [c for c in cmds if c[0] == "--used"]
+        unused = [c for c in cmds if c[0] == "--unused"]
+        self.assertEqual(1, len(used), "已登记不用的那张要给撤销命令")
+        self.assertIn("one.png", used[0][1])
+        self.assertIn("要引用它时", used[0][2], used[0][2])
+        self.assertEqual(1, len(unused), "还没登记的那张要给登记命令")
+        self.assertIn("page one.png", unused[0][1])
+        self.assertIn("决定不用它时", unused[0][2], unused[0][2])
+        self.assertIn("换成真的理由", unused[0][2], "带占位符的命令不能说原样跑")
+
+    def test_the_restore_command_really_clears_the_registration(self) -> None:
+        """撤销那条真的撤销——跑完之后同一张图给的是另一条命令，条件跟着翻。
+
+        这是「不要求逐张跑」的依据：两条命令不是同一个动作的两种写法，
+        它们把台账写向相反的方向。
+        """
+        img = self.feature_root / "assets/x/one.png"
+        img.parent.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(b"PNG-one")
+        self.register_unused("assets/x/one.png", "旧版对照稿")
+        self.refresh_manifest()
+
+        restore = self.image_commands(self.task_package())
+        self.assertEqual(["--used"], [c[0] for c in restore])
+        proc = run_in_shell(restore[0][1], cwd=self.root)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(0, proc.returncode, out)
+
+        ledger = json.loads((self.feature_root / "ux-reference" / ".captions.json")
+                            .read_text(encoding="utf-8"))
+        self.assertFalse([e for e in ledger.values() if e.get("unused")],
+                         f"「不用」的理由没被撤掉：{ledger}")
+        self.refresh_manifest()
+        after = self.image_commands(self.task_package())
+        self.assertEqual(["--unused"], [c[0] for c in after],
+                         "撤销之后再给撤销命令，作者跑一遍就把它又标成不用")
+        self.assertIn("决定不用它时", after[0][2])
+
+
 class TheAcceptanceExampleIsRealShape(WorkspaceCase):
     """任务包给的那条最小示例，形状要与消费方一致——漂移了作者照抄就红。
 

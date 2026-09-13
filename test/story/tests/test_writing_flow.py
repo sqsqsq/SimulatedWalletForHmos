@@ -57,6 +57,20 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         for needle in ("同一件事", "逐字", "引导", "承接", "读者视角", "对着读", "指代"):
             self.assertIn(needle, section, f"自查清单少了「{needle}」那一条")
 
+    def test_the_actions_do_not_order_unconditional_deletion(self) -> None:
+        """动作一判的是「这一处还回答了什么别处没回答的问题」，不是「见到重复就删」。
+
+        写后核对是作者读到的最后一段具体指令。它与第一节的「三者互补」「必要的重现
+        不是重复」相反时，赢的是最近的那一条——验收表里与正文一致的触发条件就这么
+        被删掉，而验收从此判不独立。
+        """
+        guide = read("phases/story-write.md")
+        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("有就删掉一处", section,
+                         "「逐字相同就删一处」是无条件删除，与必要重现相反")
+        for needle in ("独有用途", "完整复述", "互补", "验收独立判"):
+            self.assertIn(needle, section, f"动作一没给出判断依据「{needle}」")
+
     def test_the_guide_says_two_steps(self) -> None:
         """两处说同一件事时先问该由谁说——步数只在开头声明一次，别处引用它。"""
         guide = read("phases/story-write.md")
@@ -70,6 +84,18 @@ class TestChapterDimensions(unittest.TestCase):
         self.assertEqual(7, len(dims), "逐章维度数变了：改维度要连着改这一行")
         self.assertTrue(any("一处完整表述" in d for d in dims),
                         "缺「同一件事只在一处完整表述」这一维")
+
+    def test_the_repetition_dimension_allows_the_complementary_three(self) -> None:
+        """裁决面与作者面是同一条规则：图关系、表属性、文理由并存不算重复。
+
+        维度写着「同一个事实用表、文、图各讲一遍」是缺陷的话，独立审查会把作业书
+        要求的互补写法报成重复——按标题名误报那一类，换个位置又回来了。
+        """
+        dim = next(d for d in CONTRACT["verdicts"]["chapter_dimensions"]
+                   if "一处完整表述" in d)
+        self.assertNotIn("各讲一遍", dim,
+                         "「表、文、图各讲一遍」与作业书的三者互补相反")
+        self.assertIn("互补", dim, "维度要说清什么不算重复")
 
     def test_no_similarity_or_quota_metric_sneaked_in(self) -> None:
         """机器只守既有的两条重复判据；相似度与配额是模型判的事，机器判它必然误伤。
@@ -230,6 +256,19 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
         self.assertNotIn("不是三次机会", guide,
                          "「表文图是三次机会」与「三者互补」相反，不能两句都留着")
         self.assertIn("三者互补", guide)
+
+    def test_turning_a_table_into_prose_is_judged_by_what_is_lost(self) -> None:
+        """同一页两处说表与散文：一处要求「每一列都要有落点」，一处说「压成散文都是降级」。
+
+        两句并存时作者只能各取一条。留下的那条要给判据——丢了结构、条件、单位或例外
+        才是有损转换；转得完整就合法。源图那一半不因此撤销：图的关系退化成箭头文字仍是降级。
+        """
+        guide = read("phases/story-write.md")
+        self.assertNotIn("把表压成散文", guide,
+                         "「把表压成散文都是降级」与「表格转成散文时每一列都要有落点」相反")
+        self.assertIn("有损", guide, "留下的那条要说清什么才算有损")
+        self.assertIn("每一列都要有落点", guide)
+        self.assertIn("把流程图压成箭头文字是降级", guide, "源图的义务不因此撤销")
 
     def test_every_chapter_declares_its_boundary(self) -> None:
         """章头唯一化之后，boundary 是草稿章头与读者审查的合同数据，一章不能缺。"""
