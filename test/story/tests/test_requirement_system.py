@@ -292,7 +292,7 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
 
     SKILL 正文给的取材命令就是这个形态：`node doc/extensions/skills/story/scripts/
     adapters/story.js init <AR> <token>`。上溯的级数错一级，材料落到 `doc/` 底下
-    再开一层 `doc/features/`，执行者得改扩展源码才跑得下去。
+    再开一层 `doc/features/`，消费模型得改扩展源码才跑得下去。
 
     别的用例都显式传根（它们要的是隔离的工作区），所以这一条单独走默认入口。
     """

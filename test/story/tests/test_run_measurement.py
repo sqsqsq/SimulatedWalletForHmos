@@ -393,7 +393,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
 class DesignArtifactsStayOutOfTheIndex(unittest.TestCase):
     """设计过程不入库（用户 2026-09-08 裁定）：方案、评审与状态记录留在工作区。
 
-    它们是过程件，读者是当轮的执行者与评审；入库之后每一次改动都要过一遍提交，
+    它们是过程件，读者是当轮的维护实施者与评审；入库之后每一次改动都要过一遍提交，
     而改动本身正是这类文档的常态。盘上要在——不入库不等于不写。
     """
 

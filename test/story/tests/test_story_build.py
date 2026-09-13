@@ -274,6 +274,7 @@ class TestReviewForm(StoryBuildCase):
                                  "**根据**：上游已经拆成两张开发单。\n\n"
                                  "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
                 "decider": "需求负责人",
+                "category": "范围与拆分",
             }],
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -427,6 +428,104 @@ class TestDecisionUnits(StoryBuildCase):
         self.assertNotIn("材料在枚举之后变了", out)
 
 
+class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
+    """附录 A–D 的机器区与真源逐区逐行比 —— **不先 project 再比**。
+
+    先 project 再比是必绿的：那等于拿刚写下去的东西跟自己比。这一组直接改盘上的机器区
+    （非首列、删行、换序、破标记）与真源，check 必须发现，且**一个字节都不许写**。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+        code, out = self.check_output()
+        self.assertEqual(0, code, "夹具起点本该是干净的：" + out)
+
+    def zone_lines(self, name: str) -> tuple[int, int, list[str]]:
+        lines = self.story().split("\n")
+        at = next(i for i, l in enumerate(lines)
+                  if l.startswith("<!-- story-build:begin " + name + " "))
+        end = next(i for i in range(at + 1, len(lines))
+                   if lines[i].strip() == "<!-- story-build:end -->")
+        return at, end, lines
+
+    def rewrite(self, lines: list[str]) -> None:
+        self.story_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def expect_caught(self, needle: str = "机器区") -> None:
+        before = self.story_path.read_bytes()
+        code, out = self.check_output()
+        self.assertEqual(1, code, "改过的机器区没被发现：" + out)
+        self.assertIn(needle, out)
+        self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
+
+    def test_a_change_outside_the_first_column_is_caught(self) -> None:
+        """只比首列的老判据看不见这一类：标识没动，说明被改了。"""
+        at, end, lines = self.zone_lines("改动边界")
+        target = next(i for i in range(at + 1, end) if lines[i].startswith("| 依赖 |"))
+        lines[target] = "| 依赖 | 改成了别的说法 |"
+        self.rewrite(lines)
+        self.expect_caught()
+
+    def test_a_deleted_row_is_caught(self) -> None:
+        at, end, lines = self.zone_lines("改动边界")
+        del lines[end - 1]
+        self.rewrite(lines)
+        self.expect_caught()
+
+    def test_a_reordered_pair_of_rows_is_caught(self) -> None:
+        """行序算在内：拿 Set 比集合的老判据换了顺序也看不见。"""
+        at, end, lines = self.zone_lines("改动边界")
+        body = list(range(at + 1, end))
+        self.assertGreaterEqual(len(body), 2)
+        lines[body[-1]], lines[body[-2]] = lines[body[-2]], lines[body[-1]]
+        self.rewrite(lines)
+        self.expect_caught()
+
+    def test_a_broken_end_marker_is_caught(self) -> None:
+        at, end, lines = self.zone_lines("改动边界")
+        lines[end] = "<!-- 结束标记被改坏了 -->"
+        self.rewrite(lines)
+        self.expect_caught("结束标记")
+
+    def test_a_duplicated_zone_is_caught(self) -> None:
+        at, end, lines = self.zone_lines("改动边界")
+        self.rewrite(lines[:end + 1] + lines[at:end + 1] + lines[end + 1:])
+        self.expect_caught("两段机器区")
+
+    def test_a_changed_source_is_caught(self) -> None:
+        """真源变了而机器区没跟着变——报的是区与它的责任真源，不是让作者改机器区。"""
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        self.assertIn("没有新增或变更的端云契约", text)
+        spec.write_text(text.replace("没有新增或变更的端云契约",
+                                     "接口改名成 submitBusinessOrder"), encoding="utf-8")
+        before = self.story_path.read_bytes()
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("机器区", out)
+        self.assertIn("改真源", out, "没有指出该改的是真源")
+        self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
+
+    def test_an_unreadable_required_spec_is_not_an_empty_expectation(self) -> None:
+        """spec 读不到不等于「期望是空的」：那会让缺一整节的附录静默通过。"""
+        (self.root / "doc" / "features" / FEATURE / "spec" / "spec.md").unlink()
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("读不到 spec", out)
+
+    def test_the_authors_own_words_next_to_the_zone_are_left_alone(self) -> None:
+        """作者解释区在机器标记之外：不参加比较，也不被生成器重写。"""
+        at, end, lines = self.zone_lines("改动边界")
+        note = "这一节的取舍见业务方案章。"
+        self.rewrite(lines[:at] + [note, ""] + lines[at:])
+        code, out = self.check_output()
+        self.assertEqual(0, code, "作者写在机器区旁边的话被当成了改动：" + out)
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn(note, self.story(), "project 把作者的解释冲掉了")
+
+
 class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
     """本需求自己的编号不是工程标识。
 
@@ -438,12 +537,17 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
     """
 
     def _put_id_in_materials(self) -> None:
-        # 目录自己建：夹具里的空目录不进版本控制，clone 出来就没有
+        """在夹具的 spec 上**追加**一段带本需求编号的范围说明。
+
+        不整份覆盖：spec §9 是附录机器区的真源，换掉它等于换了真源，
+        那时 ⑫b 报「机器区与真源对不上」是对的——而这一条要测的是编号，不是附录。
+        """
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
         spec.parent.mkdir(parents=True, exist_ok=True)
+        before = spec.read_text(encoding="utf-8") if spec.is_file() else "# " + FEATURE
         spec.write_text(
-            "# " + FEATURE + " 规格\n\n"
-            "## 1. 范围\n\n本单 " + FEATURE + " 只改提交入口。\n",
+            before.rstrip("\n")
+            + "\n\n## 1. 范围\n\n本单 " + FEATURE + " 只改提交入口。\n",
             encoding="utf-8")
 
     def test_the_title_carrying_the_id_passes(self) -> None:
@@ -940,6 +1044,7 @@ class Step8Case(StoryBuildCase):
                              "**根据**：上游已经拆成两张开发单。\n\n"
                              "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
             "decider": "需求负责人",
+            "category": "范围与拆分",
         }] + (extra or [])
         (self.src / "decisions.json").write_text(
             json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
@@ -975,6 +1080,56 @@ class TestArRootStaysClean(StoryBuildCase):
         self.assertNotIn("不该在这一层", out)
 
 
+class TheFieldCheckIsOneImplementation(Step8Case):
+    """`build` 与只读 check 用同一份字段校验：**合法才渲染**。
+
+    各写一份的话，build 渲得出来而 check 说不合法，作者在两条路上收到两种答案；
+    先渲染再由 check 报错，等于让他拿着一份半成品去猜哪一条是根因。
+    """
+
+    BAD = [{"id": "x-1", "status": "settled", "title": "少了请谁确认这一项",
+            "clarification": "**要定的事**：甲。\n\n**根据**：乙。\n\n**结论与影响**：丙。",
+            "category": "范围与拆分"}]
+
+    def write_decisions(self, rows) -> None:
+        (self.src / "decisions.json").write_text(
+            json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
+
+    def test_build_refuses_and_writes_nothing(self) -> None:
+        self.write_decisions(self.BAD)
+        review = self.root / "doc" / "features" / FEATURE / "AR" / "review.md"
+        before = review.read_bytes() if review.is_file() else None
+        proc = self.run_build("build")
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn("没有渲染 review", out)
+        after = review.read_bytes() if review.is_file() else None
+        self.assertEqual(before, after, "判不过却已经渲染了")
+
+    def test_the_read_only_check_names_the_same_thing(self) -> None:
+        self.write_decisions(self.BAD)
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("请谁确认", out, "两条路要给同一个答案")
+
+    def test_a_legal_register_renders(self) -> None:
+        rows = [dict(self.BAD[0], decider="需求负责人")]
+        self.write_decisions(rows)
+        proc = self.run_build("build")
+        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
+        review = self.root / "doc" / "features" / FEATURE / "AR" / "review.md"
+        self.assertIn("少了请谁确认这一项", review.read_text(encoding="utf-8"))
+
+    def test_the_old_renderer_file_is_gone(self) -> None:
+        """同包删旧文件，不留转发壳——留着它，下一个人还会从那里 import。"""
+        core = REPO_ROOT / "doc/extensions/skills/story/scripts/core"
+        self.assertFalse((core / "review-render.mjs").exists())
+        for f in sorted(core.rglob("*.mjs")):
+            imports = [l for l in f.read_text(encoding="utf-8").split("\n")
+                       if "review-render" in l and "from" in l]
+            self.assertEqual([], imports, f"{f.name} 还在 import 已经删掉的渲染器")
+
+
 class TestReviewComesAfterTheStory(Step8Case):
     """review 是判断的台账，而判断在成文过程中还会长出来。
 
@@ -994,6 +1149,7 @@ class TestReviewComesAfterTheStory(Step8Case):
                          + "**根据**：上游已经拆成两张开发单。" + chr(10) * 2
                          + "**结论与影响**：本单只做提交与回执展示。",
         "decider": "需求负责人",
+        "category": "范围与拆分",
     }]
 
     def test_a_bare_array_is_read_as_the_register(self) -> None:
@@ -1080,6 +1236,7 @@ class TestReviewComesAfterTheStory(Step8Case):
                              "**根据**：PRD 只写了超时按未提交处理。\n\n"
                              "**结论与影响**：待评审人定。",
             "decider": "需求负责人",
+            "category": "范围与拆分",
         }])
         self.assertEqual(0, self.run_build("build").returncode)
         again = self.review_path.read_text(encoding="utf-8")

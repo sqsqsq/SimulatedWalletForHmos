@@ -9,7 +9,7 @@
  * 边界：只认结构，不判对错。哪些小节必需、表要有哪几列、图算不算总览，都在章节合同
  * 与语义审查那一侧。
  */
-import { projectionDigest, recordedDigest } from '../review-render.mjs';
+import * as crypto from 'node:crypto';
 
 /** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
 export function norm(s) {
@@ -26,17 +26,6 @@ const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
 /** 表头行的下一行是不是分隔行（`|---|---|`）。 */
 const SEPARATOR = /^\|[-: |]+\|$/;
 
-/**
- * 扫一遍，给出这一章的结构。
- *
- * @param {string} text 一章的正文（不含 `## ` 标题行）
- * @returns {{text: string,
- *   fences: {lang: string, mark: string, from: number, to: number}[],
- *   sections: {raw: string, name: string, from: number, to: number, body: string[]}[],
- *   tables: {header: string[], line: number}[]}}
- *   行号都是原文的 0 起下标；小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——
- *   同名小节可以有两个，按名字记归属会把后一节的表算给前一节。
- */
 /**
  * 围栏范围 —— **开闭判断只有这一处**。
  *
@@ -92,6 +81,17 @@ function maskOf(lines, ranges) {
   return mask;
 }
 
+/**
+ * 扫一遍，给出这一章的结构。
+ *
+ * @param {string} text 一章的正文（不含 `## ` 标题行）
+ * @returns {{text: string,
+ *   fences: {lang: string, mark: string, from: number, to: number}[],
+ *   sections: {raw: string, name: string, from: number, to: number, body: string[]}[],
+ *   tables: {header: string[], line: number}[]}}
+ *   行号都是原文的 0 起下标；小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——
+ *   同名小节可以有两个，按名字记归属会把后一节的表算给前一节。
+ */
 export function parseChapter(text) {
   const lines = String(text ?? '').split(/\r?\n/);
   const fences = fenceRanges(lines);
@@ -433,9 +433,32 @@ export const EMPTY_SECTION_TEXT = '本需求不涉及。';
 //:
 //: 与作者区的分界就是所有权：术语的措辞、流程图的节点文字是**一次性种子**——
 //: 种在作者区，之后归作者，脚本不再碰；附录的这几张表是**可重复投影**，
+//: 只认 `sha256:` 那一段：标记里的散文与分隔符是给人读的，改了措辞不该让摘要失效。
+const DIGEST_IN_MARK = /sha256:([0-9a-f]{16})\s*-->\s*$/;
+
+/**
+ * 投影区的内容摘要 —— **story 的附录与 review 的议题共用这一份口径**。
+ *
+ * 两处各写一份的话，口径迟早分叉：一处忽略行尾空白、另一处不忽略，
+ * 同一份产物在两条路上会判出不同的「有没有被人改过」。
+ *
+ * 忽略每行尾部空白与末尾空行：编辑器保存时顺手删掉一个行尾空格，不是改动。
+ */
+export const projectionDigest = (text) => crypto.createHash('sha256')
+  .update((Array.isArray(text) ? text.join('\n') : String(text))
+    .replace(/\s+$/, '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).join('\n'))
+  .digest('hex').slice(0, 16);
+
+/** 起始标记里记着的摘要；旧稿的标记没有它，返回 null。 */
+export const recordedDigest = (markLine) =>
+  DIGEST_IN_MARK.exec(String(markLine ?? ''))?.[1] ?? null;
+
+/** 盘上有人动过投影区 —— 调用方停下问人，不替他决定。 */
+export class ProjectionConflict extends Error {}
+
 //: 每次都能从真源重算出同样的东西，让作者重打一遍只会打得更少。
 export const ZONE_BEGIN = '<!-- story-build:begin ';
-const ZONE_END = '<!-- story-build:end -->';
+export const ZONE_END = '<!-- story-build:end -->';
 
 //: 投影区落盘时是什么样，记在起始标记里。重投前拿它与盘上的内容比：相等说明这一段
 //: 还是上次投出来的原样，覆盖它不丢任何人写的东西；不等说明有人在这里写过字。

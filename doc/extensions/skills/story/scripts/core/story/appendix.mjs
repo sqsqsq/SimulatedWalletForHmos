@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
   chapterSpan, norm, normalizeHeading, sectionBody, sectionNames, zoneBlock,
-  zoneHandEdited, zoneSpan, ZONE_BEGIN,
+  zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, readJson, readText, specText } from './context.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use.mjs';
@@ -209,6 +209,9 @@ export function materialSubsectionName(contract) {
   return (appendix?.subsections ?? []).find(n => n.includes('材料')) ?? null;
 }
 
+//: 规约判定那一节的真源名字——报错与投影标记共用一处字面。
+const KNOWLEDGE_USE_SOURCE = 'spec/knowledge-use.yaml';
+
 /** 附录里由脚本投影的那张表的表头 —— 登记在合同，脚本不留字面。 */
 function appendixTableHeader(ctx, name) {
   const want = normalizeHeading(name);
@@ -258,7 +261,7 @@ function appendixProjection(ctx, spec, name) {
     return ['本单的范围声明与上游的依赖变更', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
-    return ['spec/knowledge-use.yaml', verdictSkeleton(ctx)];
+    return [KNOWLEDGE_USE_SOURCE, verdictSkeleton(ctx)];
   }
   const tables = appendixTables(spec, name);
   const rows = tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
@@ -425,60 +428,6 @@ export function specGaps(spec) {
   return gaps;
 }
 
-/** 激活清单的每条规约在附录的判定表里有行，或其整域一行「整域不适用」。 */
-export function verdictTableProblems(ctx, sections, viewOf) {
-  const problems = [];
-  // ⑦ 规约判定表：激活清单的每个条目在附录的「规约判定」小节有一行，
-  //    或其整域一行「整域不适用」
-  //
-  // 判定写在 story 里：评审者据这一节回显完备性——激活了几条、各自命中与否、依据是什么。
-  //
-  // 落点在**附录**而不是主叙事的某一章：规约编号是工程标识，读者对不上，
-  // 写进主叙事就是在打断阅读；附录给了它一个不打断阅读、机器又核得到的位置。
-  // 激活规约的编号**直接取激活清单**：经「材料单元」那一层只是把同一份数据换个形状，
-  // 而多一层就多一处会与清单失同步的地方——判定表少判一条规约是静默的。
-  //
-  // **这张表是 `spec/knowledge-use.yaml` 的投影**（`story-build project` 投的），
-  // 所以判定的值域、依据非空、与 YAML 一致三件事在投影那一步就成立了：
-  // 投影只写命中/不命中，缺依据时它响亮失败。这里只剩一条——**每条规约有行**：
-  // 作者手改 story.md 删掉一行，下一次投影才会补回来，这中间要有人看见。
-  const kEntries = activeKnowledgeEntries(ctx);
-  if (kEntries.length) {
-    const appendix = appendixChapter(ctx.contract);
-    const appendixSec = appendix ? sections.find(s => s.title === appendix.title) : null;
-    const verdictName = (appendix?.subsections ?? []).find(n => n.includes('规约')) ?? '规约判定';
-    const verdictText = appendixSec ? sectionBody(viewOf(appendixSec.title), verdictName) : null;
-    if (verdictText === null) {
-      problems.push(`缺${appendix ? `「${appendix.title}」章的` : ''}「${verdictName}」小节`
-        + '——激活规约的逐条判定表落在那里');
-    } else {
-      const rows = new Map();          // 编号 → {判定, 依据}
-      const domainRows = new Map();    // 中文域名 → 判定
-      for (const line of verdictText.split(/\r?\n/)) {
-        const s = line.trim();
-        if (!s.startsWith('|')) continue;
-        const c = s.replace(/^\||\|$/g, '').split('|').map(x => x.replace(/[`*]/g, '').trim());
-        if (c.length < 4 || /^[-: ]*$/.test(c[0])) continue;
-        const [domain, id, verdict, basis] = c;
-        if (id) rows.set(id, { verdict, basis });
-        if (verdict === DOMAIN_NA) domainRows.set(domain, true);
-      }
-      for (const e of kEntries) {
-        const id = e.id;
-        const domain = e.domainTitle ?? '';
-        const row = rows.get(id);
-        if (!row) {
-          if (domainRows.has(domain)) continue;   // 整域不适用，覆盖域内全部条目
-          problems.push(`规约 ${id}（${domain}）在附录·${verdictName}的判定表里没有行`
-            + `——判「不命中」也要有一行；整域不适用就给该域一行「${DOMAIN_NA}」`);
-          continue;
-        }
-      }
-    }
-  }
-  return problems;
-}
-
 /** 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容，不放图不放围栏。 */
 export function appendixStructureProblems(ctx, sections, viewOf) {
   const problems = [];
@@ -541,33 +490,132 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
   return problems;
 }
 
-/** 附录 A/B/C 的行 ⊇ spec §9 对应表的行（按第一列的标识对齐）。 */
-export function specRowProblems(ctx, sections, viewOf) {
+/**
+ * 附录的机器区与真源对不对得上 —— **与 `project` 写进去的是同一份计算**。
+ *
+ * 从前这里有第二套：⑦ 手写逐行还原判定表、再逐条问「这个规约有行吗」；⑫b 把附录那一节
+ * 的表拆出来，只按第一列的标识比集合（`Set` 一去重，重复行与行序都看不见了，
+ * 非首列改了也看不见）。两套都是把投影出来的东西**反着解析回去**，而投影本身就在手边。
+ *
+ * 现在只有一条：对每一节，按 `appendixProjection` 算出**期望行**，与盘上那一段机器区
+ * **逐行逐格**比。作者解释区在机器标记之外，不参加比较、也不被生成器重写。
+ * 只归一 CRLF/LF 与行尾空白（编辑器保存时顺手删掉一个行尾空格不是改动），
+ * 不丢重复行、不只比首列、不忽略行序。
+ *
+ * 报错要指到**区与它的责任真源**：作者能改的是真源，不是机器区。
+ *
+ * 这一步只读：算的是纯函数 `appendixProjection`，不调会写盘的 `cmdProject`。
+ */
+export function appendixZoneProblems(ctx, storyText) {
   const problems = [];
-  const appendixDef = appendixChapter(ctx.contract);
-  const appendixSection = appendixDef
-    ? sections.find(sec => sec.title === appendixDef.title) : null;
-  // ⑫b 附录 A/B/C 的行 ⊇ spec §9 对应表的行（按第一列的标识对齐）。
-  //
-  // 成文顺序里 spec 先于 story，附录三节是它的投影而不是重写。手抄一遍必然更少：
-  // 接口丢掉入参出参与错误码、几个埋点合成一行都是见过的形态，
-  // 而评审者正是拿着附录回查契约的。
-  // 只核标识在不在：措辞、列的增减、行的顺序都由作者定。
-  const specForRows = specText(ctx);
-  if (specForRows && appendixSection) {
-    for (const [name] of APPENDIX_FROM_SPEC) {
-      const want = appendixTables(specForRows, name).flatMap(t => t.rows.map(r => r[0]));
-      if (!want.length) continue;
-      const body = sectionBody(viewOf(appendixSection.title), name) ?? '';
-      const have = new Set(pipeTables(body).flatMap(t => t.rows.map(r => norm(r[0]))));
-      const missing = want.filter(id => !have.has(norm(id)));
-      if (missing.length) {
-        problems.push(`「${appendixDef?.title ?? '附录'}·${name}」少了 spec §9 里的 `
-          + `${missing.length} 行：${missing.slice(0, 4).join('、')}`
-          + `${missing.length > 4 ? '…' : ''}`
-          + '——附录是 spec 契约的投影，评审者拿着它回查；可以改措辞、可以加列，不能少行');
+  // 离线仲裁锚只有一份文档：spec 与激活清单都不在手里，**没有真源可比**。
+  // 拿一份空真源去比，结论是「盘上多了一整段机器区」——而判据拦住理想产物时，
+  // 错的是判据。形态那几条（⑫）照跑，这一条留给线上。
+  if (ctx.offline) return problems;
+  const appendix = appendixChapter(ctx.contract);
+  if (!appendix) return problems;
+  const span = chapterSpan(storyText, appendix.title);
+  if (!span) return problems;              // 附录章缺失由 ① 报，这里不重复
+  const lines = storyText.slice(span.start, span.end).split(/\r?\n/);
+  const spec = specText(ctx);
+  const fromSpec = new Set(APPENDIX_FROM_SPEC.map(([n]) => normalizeHeading(n)));
+  const wantSpec = (appendix.subsections ?? []).some(n => fromSpec.has(normalizeHeading(n)));
+  if (spec === null && wantSpec) {
+    // **读不到必需的 spec 不等于「期望是空的」**：那会让缺一整节的附录静默通过。
+    problems.push('读不到 spec/spec.md，附录 A–C 的机器区无从核对'
+      + '——它们是 spec §9 的投影，先让 spec 可读再核附录');
+    return problems;
+  }
+  const onDisk = zonesOnDisk(lines, problems, appendix.title);
+  const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
+  for (const name of appendix.subsections ?? []) {
+    if (normalizeHeading(name) === materialName) continue;   // 材料清单归作者
+    const [source, want] = appendixProjection(ctx, spec, name);
+    const at = onDisk.get(name);
+    // **真源读不出来不等于「期望是空的」**——与上面 spec 那一条同一个道理。
+    // 规约判定的真源是 `spec/knowledge-use.yaml`：激活清单里有条目而投影是空的，
+    // 说明那份判断件不在或读不出，而它恰恰是「哪几条规约要逐条判」的唯一依据。
+    // 当成空期望的话，一份一条规约都没判的附录会静默通过。
+    if (!want.length && source === KNOWLEDGE_USE_SOURCE) {
+      const active = activeKnowledgeEntries(ctx);
+      if (active.length) {
+        problems.push(`读不出 ${source}，「${appendix.title}·${name}」无从核对`
+          + `——这一轮激活了 ${active.length} 条规约，判定表是它的投影；`
+          + '先跑 `knowledge-use.mjs init` 把判断件补上，再跑 `story-build project`');
+        continue;
       }
     }
+    if (!want.length) {
+      // 真源那一节现在什么都没有：机器区也该不在。留着就是上一版冒充现状。
+      if (at) {
+        problems.push(`「${appendix.title}·${name}」还留着机器区，而${source}那一节已经没有内容`
+          + '——跑 `story-build project` 让它跟着真源去掉');
+      }
+      continue;
+    }
+    if (!at) {
+      problems.push(`「${appendix.title}·${name}」缺机器区（由${source}投影）`
+        + '——那几行不该由你写，跑 `story-build project` 投出来；'
+        + '它旁边的目的句与解释归你，投影不碰');
+      continue;
+    }
+    const have = lines.slice(at.start + 1, at.end - 1);
+    const diff = firstDiff(have, want);
+    if (!diff) continue;
+    problems.push(`「${appendix.title}·${name}」的机器区与${source}对不上（${diff.why}`
+      + `${diff.at === null ? '' : `，第 ${diff.at + 1} 行`}）：`
+      + `${diff.have === null ? '' : `盘上是「${cut(diff.have)}」，`}`
+      + `${diff.want === null ? '' : `${source}投出来是「${cut(diff.want)}」`}`
+      + '——要改结论就改真源再跑 `story-build project`；机器区里手改的东西下一次投影会被打回');
   }
   return problems;
+}
+
+/** 截一段给人看，长的截断——报错要读得完。 */
+const cut = (s) => (String(s).length > 60 ? `${String(s).slice(0, 60)}…` : String(s));
+
+/**
+ * 盘上有哪几段机器区 —— 缺结束标记与同名两段都当场报出来。
+ *
+ * 坏标记不是「没有机器区」：那会让一段被人改过的投影区看起来像还没投过，
+ * 下一次 `project` 直接在它后面再写一段。
+ */
+function zonesOnDisk(lines, problems, chapterTitle) {
+  const out = new Map();
+  lines.forEach((line, i) => {
+    if (!line.startsWith(ZONE_BEGIN)) return;
+    const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
+    const end = lines.findIndex((l, k) => k > i && l.trim() === ZONE_END);
+    if (end < 0) {
+      problems.push(`「${chapterTitle}·${name}」的机器区只有起始标记，没有结束标记`
+        + '——那两行是投影的定位点，缺一行整段就认不出来了；'
+        + '把这一段（含首尾标记）删掉再跑 `story-build project`');
+      return;
+    }
+    if (out.has(name)) {
+      problems.push(`「${chapterTitle}·${name}」在盘上有两段机器区`
+        + '——投影只认第一段，第二段会一直挂在那里冒充现状；删掉多的那一段再跑 project');
+      return;
+    }
+    out.set(name, { start: i, end: end + 1 });
+  });
+  return out;
+}
+
+/**
+ * 第一处对不上在哪 —— 逐行逐格，**行序算在内、重复行算在内**。
+ *
+ * 只归一行尾空白：编辑器保存时顺手删掉一个行尾空格不是改动。别的一概算改动，
+ * 包括非首列改了一个字、两行换了顺序、少一行、多一行。
+ */
+function firstDiff(have, want) {
+  const norm2 = (l) => String(l ?? '').replace(/\s+$/, '');
+  const a = have.map(norm2);
+  const b = want.map(norm2);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (i >= a.length) return { why: '少了行', at: i, have: null, want: b[i] };
+    if (i >= b.length) return { why: '多了行', at: i, have: a[i], want: null };
+    if (a[i] !== b[i]) return { why: '这一行不一样', at: i, have: a[i], want: b[i] };
+  }
+  return null;
 }

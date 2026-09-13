@@ -32,13 +32,6 @@ export function readText(file) {
   try { return fs.readFileSync(file, 'utf-8').replace(/^﻿/, ''); } catch { return null; }
 }
 
-/**
- * **原样读** —— 不剥 BOM、不动行尾。要按原文坐标替换的地方读它。
- *
- * `readText` 为了让判据不必处理 BOM 而剥掉它，那对「读一份文档来判」是对的；
- * 但章提交是**按区间把原文拼回去**，读进来少一个字节，写回去就少一个字节，
- * 而「其余章一个字节未动」这句话就不成立了。两种读法各有其用，不合成一个。
- */
 export function readJson(file, fallback) {
   const t = readText(file);
   if (t === null) return fallback;
@@ -49,6 +42,13 @@ export function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
+/**
+ * **原样读** —— 不剥 BOM、不动行尾。要按原文坐标替换的地方读它。
+ *
+ * `readText` 为了让判据不必处理 BOM 而剥掉它，那对「读一份文档来判」是对的；
+ * 但章提交是**按区间把原文拼回去**，读进来少一个字节，写回去就少一个字节，
+ * 而「其余章一个字节未动」这句话就不成立了。两种读法各有其用，不合成一个。
+ */
 export function readRaw(file) {
   try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
 }
@@ -76,17 +76,6 @@ function compileIdShapes(contract) {
   return out;
 }
 
-/**
- * 只读一份 story 的上下文 —— `check --offline --story <路径>`。
- *
- * **为什么要有它**：判据得有个仲裁锚。理想产物冻结在夹具里，任何一条判据改动
- * 都先拿它跑一遍——拦住理想产物的判据，错的是判据。而理想产物没有需求目录、
- * 没有台账，正常的 check 连门都进不去。
- *
- * 走的是**同一个 `cmdCheck`**，不是另写一套：另写一套就会与生产链漂移，
- * 到那时「拿它跑过了」什么也证明不了。需求目录侧的输入给空，
- * 依赖它们的判项自然一条不判；不依赖的照跑。
- */
 //: 本模块在 `core/story/` 下，对外入口在 `core/`：两处路径都从这一个常量退回去算，
 //: 各写一串 `..` 的话，模块再挪一层就得挨个数。
 const CORE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,6 +90,17 @@ function commonInputs(args) {
   return { projectRoot, contract, idShapes: compileIdShapes(contract) };
 }
 
+/**
+ * 只读一份 story 的上下文 —— `check --offline --story <路径>`。
+ *
+ * **为什么要有它**：判据得有个仲裁锚。理想产物冻结在夹具里，任何一条判据改动
+ * 都先拿它跑一遍——拦住理想产物的判据，错的是判据。而理想产物没有需求目录、
+ * 没有台账，正常的 check 连门都进不去。
+ *
+ * 走的是**同一个 `cmdCheck`**，不是另写一套：另写一套就会与生产链漂移，
+ * 到那时「拿它跑过了」什么也证明不了。需求目录侧的输入给空，
+ * 依赖它们的判项自然一条不判；不依赖的照跑。
+ */
 function createOfflineContext(args) {
   if (!args.story) fail('缺 --story <story.md 路径>');
   const { projectRoot, contract, idShapes } = commonInputs(args);

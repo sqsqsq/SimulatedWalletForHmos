@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterProblems, placeholderProblems } from './chapter.mjs';
 import {
-  appendixChapter, appendixStructureProblems, specRowProblems, verdictTableProblems,
+  appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
 import {
   activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
@@ -140,9 +140,6 @@ export function cmdCheck(ctx) {
   mark('⑤ 决策登记字段齐备');
   if (!ctx.offline) problems.push(...decisionProblems(ctx));
 
-  mark('⑦ 规约判定表');
-  problems.push(...verdictTableProblems(ctx, sections, viewOf));
-
   mark('④ 图片身份');
   {
     const out = imageProblems(ctx, storyText);
@@ -235,8 +232,11 @@ export function cmdCheck(ctx) {
   mark('⑫ 附录结构');
   problems.push(...appendixStructureProblems(ctx, sections, viewOf));
 
-  mark('⑫b spec 契约不丢行');
-  problems.push(...specRowProblems(ctx, sections, viewOf));
+  mark('⑫b 机器区与真源一致');
+  // 附录 A–D 的机器区与真源逐区逐行比——**与 project 写进去的是同一份计算**。
+  // 「每条规约有行」「spec 的行不丢」都在其内：少一行就是一处差异，不必再各写一条
+  // 反着解析回去的判据。上游每张图的落点是跨章的事，留在这里。
+  problems.push(...appendixZoneProblems(ctx, storyText));
   problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑫c 形态 lint');

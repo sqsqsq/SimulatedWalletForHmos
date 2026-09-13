@@ -477,7 +477,7 @@ def m18_knowledge_boundary_leak(root: Path, ctx: Ctx) -> Outcome:
 def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     """机制层不得出现测试数据（反过拟合）。
 
-    执行者会直接打开脚本读。注释里的测试数据就成了它照着写的样板，
+    消费模型会直接打开脚本读。注释里的测试数据就成了它照着写的样板，
     测出来的是「照抄那一次」而不是「在未知需求上做对」。
 
     四种形态，词表都从配置与 Case 目录取，不写死：
@@ -1871,8 +1871,10 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
     if code == 0:
         return Outcome(True, "激活规约条目在判定表里逐条有行")
-    if "判定表里没有行" in out:
-        return Outcome(False, f"判定表缺行被点名：{out.split('判定表里没有行')[0][-60:]}判定表里没有行")
+    # 判定表是 `knowledge-use.yaml` 的投影（Q6）：少一条规约就是机器区少一行，
+    # 不再另有一条「逐条问这个编号有没有行」的反向解析判据。
+    if "规约判定" in out and "少了行" in out:
+        return Outcome(False, f"判定表缺行被点名：{out.split('少了行')[0][-80:]}少了行")
     return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
 
 
