@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
+import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
 
 function contractOf(projectRoot) {
   return readJsonOrNull(path.join(extensionRoot(projectRoot),
@@ -49,17 +50,39 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '',
     '### 读这些',
     '',
-    '- `AR/story.md` —— 审查对象，通读全篇；',
+    '- `AR/story.md` —— 审查对象（全文在下面「审查对象」那一节，通读它）；',
     '- `AR/story-src/materials.json` —— 据以成文的材料清单（含每张图是什么）；',
     '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
     '- `spec/spec.md` —— 已经成立的产品约束。',
   ];
 
-  if (!fs.existsSync(path.join(root, 'AR', 'story.md'))) {
-    rows.push('', '`AR/story.md` 现在不在——本项 SKIP，如实写 SKIP，不要凭空作答。');
+  const storyPath = path.join(root, 'AR', 'story.md');
+  const story = readOrNull(storyPath);
+  if (story === null || !story.trim()) {
+    rows.push('', '`AR/story.md` 现在读不到或是空的——本项 SKIP，如实写 SKIP，不要凭空作答。');
     return rows.join('\n');
   }
+
+  // **当前全文一次**：审查的是这一份，不是宿主愿意去读的那部分。让它自己去开文件时，
+  // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
+  // 围栏用七个反引号：正文里的三反引号围栏（流程图）不会把它提前关上。
+  const origin = originalArSource(root);
+  rows.push('', '### 审查对象：当前 `AR/story.md` 全文', '',
+    `（${story.split(/\r?\n/).length} 行，下面这一段就是全文；`
+    + '与盘上那一份不一致时以盘上为准，并把这件事写进结论）', '',
+    '```````markdown', story.replace(/\s+$/, ''), '```````');
+  rows.push('', '### 另外这几份按需去读', '',
+    '- `spec/spec.md` —— 已经成立的产品约束；',
+    '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
+    '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
+    origin.path
+      ? `- \`${path.relative(root, origin.path).split(path.sep).join('/')}\``
+        + ' —— 收口提交时留存的**上游原 AR**（上游原话在这一份，'
+        + '当前 `AR/design.md` 是提取稿，两者是两份文件）；'
+      : `- 上游原 AR：${origin.problem ?? '本轮没有可留存的原件'}`
+        + '——拿不到上游原话时，不要用提取稿替它下结论；',
+    '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
 
   rows.push('', '### 逐章过读者会问的问题', '');
   for (const chapter of contract?.chapters ?? []) {
@@ -125,4 +148,9 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '**空列表是结论**，缺席不是。');
 
   return rows.join('\n');
+}
+
+/** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */
+function readOrNull(abs) {
+  try { return fs.readFileSync(abs, 'utf-8'); } catch { return null; }
 }

@@ -93,12 +93,23 @@ export function deliveryProblems(ctx) {
   }
 
   const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
-  return {
-    problems: review.problems,
-    notes: review.status === 'NOT_APPLICABLE'
-      ? [`story 未经读者审查即交付：${review.detail}`]
-      : [],
-  };
+  if (review.status === 'NOT_APPLICABLE') {
+    // 本宿主没有登记审查员：沿用户批准记一笔放行，但**如实说没审过**——
+    // 说成「语义 PASS」的话，这份 story 会带着一句没发生过的结论交出去。
+    return { problems: [], notes: [`story 未经读者语义审查即交付：${review.detail}`] };
+  }
+  if (review.problems.length) return { problems: review.problems, notes: [] };
+  // 报告的**结构**没问题不等于**审查判它过了**。交付门看的是审查自己的结论：
+  // 结构齐备而 verdict 是 FAIL 时放行，等于把「审出问题」当成了「审过了」。
+  if (review.reviewVerdict !== 'PASS') {
+    return {
+      problems: [`读者语义审查判的是 ${review.reviewVerdict ?? '（取不到）'}，不是 PASS——`
+        + '按报告里那一条的阻断问题改 story，改完重跑 harness 让审查员重判；'
+        + '报告结构齐备只说明它确实审了，不说明它判过了'],
+      notes: [],
+    };
+  }
+  return { problems: [], notes: [] };
 }
 
 // --------------------------------------------------------------------------

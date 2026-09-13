@@ -432,8 +432,54 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         (reports / "summary.json").write_text(json.dumps({"phase": "spec"}), encoding="utf-8")
 
         out = self.check("--deliver")
-        self.assertIn("未经读者审查即交付", out.stdout,
+        self.assertIn("未经读者语义审查即交付", out.stdout,
                       f"降级没出声：{out.stdout[-600:]}")
+
+    def write_report(self, status: str) -> None:
+        """把审查报告放到落点上：汇总行 + 结构块（FAIL 时两类结论都写全）。"""
+        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(
+            json.dumps({"phase": "spec", "verifier_report": REPORT_REL}),
+            encoding="utf-8")
+        body = row(status)
+        if status != "PASS":
+            body += ("\n```yaml\nverification_result:\n  checks:\n"
+                     "    - id: story_reader_review\n"
+                     f"      status: {status}\n"
+                     "      details:\n"
+                     "        blocking_findings:\n"
+                     "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
+                     "        advisories: []\n```\n")
+        target = self.root / REPORT_REL
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+
+    def test_a_complete_report_that_failed_is_not_a_pass(self) -> None:
+        """报告的**结构**齐备不等于**审查判它过了**。
+
+        结构齐备而 verdict 是 FAIL 时放行，等于把「审出问题」当成了「审过了」——
+        那份 story 会带着一句没发生过的结论交出去。
+        """
+        self._stub_receipt(0, "回执通过")
+        self.write_report("FAIL")
+        out = self.check("--deliver")
+        self.assertNotEqual(0, out.returncode, (out.stdout + out.stderr)[-600:])
+        self.assertIn("判的是 FAIL", out.stdout + out.stderr)
+
+    def test_a_passing_report_raises_nothing_at_the_gate(self) -> None:
+        """审查判 PASS、回执过了、结构齐备——交付门这一类不该有问题。
+
+        这份夹具的 story 本身只有一章，别的判据照样会红；**这里只核交付门那一类**，
+        不拿整体退出码当交付结论。
+        """
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        out = self.check("--deliver")
+        both = out.stdout + out.stderr
+        self.assertNotIn("判的是", both, "审查判了 PASS 却被交付门拦住")
+        self.assertNotIn("未经读者语义审查", both, "有报告却说没审过")
+        self.assertNotIn("[⑭ 交付门]", both, f"交付门报了问题：{both[-600:]}")
 
     def test_deliver_is_refused_offline(self) -> None:
         out = subprocess.run(
@@ -516,6 +562,34 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         """作者登记的「不用」原样带上——审查判的正是那句理由成不成立。"""
         text = self.inject()
         self.assertIn("理由成不成立", text)
+
+    def test_the_task_carries_the_story_full_text_once(self) -> None:
+        """审查对象**放全文**，一次。
+
+        只给路径让它自己去开的话，截断、读旧稿、读不到都会变成「看起来审过了」，
+        而三种都分不出来。围栏用七个反引号：正文里的流程图围栏不会把它提前关上。
+        """
+        task = self.inject()
+        self.assertIn("### 审查对象：当前 `AR/story.md` 全文", task)
+        self.assertIn("```````markdown", task)
+        for line in STORY_MD.strip().split("\n"):
+            if line.strip():
+                self.assertIn(line, task, f"全文里少了这一行：{line}")
+        self.assertEqual(1, task.count("```````markdown"), "全文放了不止一次")
+
+    def test_an_unreadable_story_is_a_skip_not_an_empty_full_text(self) -> None:
+        """空串冒充全文 = 审查会对着空白作答；如实 SKIP。"""
+        (self.root / "doc" / "features" / FEATURE / "AR" / "story.md").write_text(
+            "   \n", encoding="utf-8")
+        task = self.inject()
+        self.assertIn("SKIP", task)
+        self.assertNotIn("```````markdown", task)
+
+    def test_the_task_points_at_the_stored_original_ar(self) -> None:
+        """上游原话在留存那一份里；拿不到时说清楚，不让它用提取稿替。"""
+        task = self.inject()
+        self.assertIn("上游原 AR", task)
+        self.assertIn("提取稿", task)
 
     def test_the_task_carries_the_contract_questions(self) -> None:
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))

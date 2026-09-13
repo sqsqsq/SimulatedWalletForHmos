@@ -150,12 +150,14 @@ function readerReviewDetails(text) {
 export function storyReviewProblems(projectRoot, feature, phase) {
   const { summaryFound, abs } = reportLocation(projectRoot, feature, phase);
   if (!summaryFound) {
-    return { status: 'NOT_APPLICABLE', problems: [], detail: 'harness 尚未运行，本项还轮不到判' };
+    return { status: 'NOT_APPLICABLE', problems: [], reviewVerdict: null,
+      detail: 'harness 尚未运行，本项还轮不到判' };
   }
   if (!abs) {
     return {
       status: 'NOT_APPLICABLE',
       problems: [],
+      reviewVerdict: null,
       detail: '本宿主没有登记审查员（verifier 未启用），本轮没有报告可核',
     };
   }
@@ -166,6 +168,7 @@ export function storyReviewProblems(projectRoot, feature, phase) {
       problems: [`verifier 报告不在落点上：${abs}——`
         + '把 verifier 的回复**原样全文**重新写到 `summary.verifier_report` 指向的那份文件；'
         + '没有它，读者审查有没有执行无从核对'],
+      reviewVerdict: null,
       detail: '报告缺席',
     };
   }
@@ -177,6 +180,7 @@ export function storyReviewProblems(projectRoot, feature, phase) {
       problems: [`verifier 报告的汇总表里没有 ${STORY_REVIEW_ID} 这一行——`
         + '这一项是 story 语义质量的发现者，汇总表里找不到它就等于这一轮没审。'
         + INVALID_EVIDENCE],
+      reviewVerdict: null,
       detail: '汇总表缺行',
     };
   }
@@ -187,16 +191,22 @@ export function storyReviewProblems(projectRoot, feature, phase) {
       status: 'FAIL',
       problems: [`${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
         + '汇总表是 id、status、severity、一行证据四格。' + INVALID_EVIDENCE],
+      reviewVerdict: null,
       detail: `汇总表只有 ${row.length} 列`,
     };
   }
   const status = row[1].replace(/`|\*/g, '').toUpperCase();
+  // **审查自己的结论**：从汇总行那一格规范化取来，不从 detail 的措辞倒猜。
+  // 结构完整而审查判了 FAIL 时，这个函数的 `status` 仍是 PASS（报告的结构没问题），
+  // 两件事因此要分开返回——交付门看的是 `reviewVerdict`，作者看的是 `problems`。
+  const reviewVerdict = status || null;
   const evidence = row[SUMMARY_COLUMNS - 1];
   if (!evidence || /^[-—–]+$/.test(evidence)) {
     return {
       status: 'FAIL',
       problems: [`${STORY_REVIEW_ID} 那一行的证据格是空的——`
         + '空证据与没审长得一样。' + INVALID_EVIDENCE],
+      reviewVerdict,
       detail: '证据格为空',
     };
   }
@@ -211,7 +221,8 @@ export function storyReviewProblems(projectRoot, feature, phase) {
         problems: [`verifier 报告里的结构块读不出来（${unreadable}）——`
           + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。`
           + '把 verifier 的回复原样重写一遍，结构块写成合法 YAML。' + INVALID_EVIDENCE],
-        detail: '结构块读不出来',
+        reviewVerdict,
+      detail: '结构块读不出来',
       };
     }
     const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
@@ -221,7 +232,8 @@ export function storyReviewProblems(projectRoot, feature, phase) {
         problems: [`${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
           + '两类结论都要在这一条的 `details` 下：阻断问题与提醒各归各的键，'
           + '没有就写成空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
-        detail: `缺 ${missing.join('、')}`,
+        reviewVerdict,
+      detail: `缺 ${missing.join('、')}`,
       };
     }
   }
@@ -232,8 +244,10 @@ export function storyReviewProblems(projectRoot, feature, phase) {
       problems: [`${STORY_REVIEW_ID} 的结果里出现了逐单元裁决表——`
         + '这一项不做逐条对账：那张表的量随材料条数涨，而读者拿到的判断不增加。'
         + '要判的是讲了没有、讲清没有、是不是编的'],
+      reviewVerdict,
       detail: '形态不对：逐单元表',
     };
   }
-  return { status: 'PASS', problems: [], detail: `读者审查已落报告（${status}）` };
+  return { status: 'PASS', problems: [], reviewVerdict,
+    detail: `读者审查已落报告（${status}）` };
 }
