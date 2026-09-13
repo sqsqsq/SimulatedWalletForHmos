@@ -20,6 +20,9 @@ export function norm(s) {
 //: 「这一章有没有图」就会被一段贴进来的示例顶掉。
 const DIAGRAM_LANGS = new Set(['mermaid', 'plantuml', 'puml', 'dot', 'graphviz']);
 
+//: 关闭行：一串围栏标记之后除了空格与 tab 什么都没有。
+const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
+
 /** 表头行的下一行是不是分隔行（`|---|---|`）。 */
 const SEPARATOR = /^\|[-: |]+\|$/;
 
@@ -47,9 +50,12 @@ export function parseChapter(text) {
         open = { lang: fence[2].toLowerCase(), mark, from: i, to: lines.length - 1 };
         return;
       }
-      // **只有同种、且不短于开启标记的那一行才关得上**：一个 ``` 块里贴一段 ~~~ 样例
-      // 是常事，把它当关闭符的话，样例里的标题与表会被当成本章的正文结构。
-      if (mark[0] === open.mark[0] && mark.length >= open.mark.length) {
+      // **合法关闭行有三个条件**：同种标记、不短于开启标记，且标记之后到行末只有空白。
+      // 开启行与关闭行不是同一种语法：`` ```markdown `` 带语言信息，那是又开一段样例，
+      // 不是关上外层。少了这一条，样例里的标题与表会被当成本章的正文结构，
+      // 而真正的关闭符又被当成开启——泄漏与丢正文同时发生。
+      if (mark[0] === open.mark[0] && mark.length >= open.mark.length
+        && CLOSING.test(line)) {
         open.to = i;
         fences.push(open);
         open = null;

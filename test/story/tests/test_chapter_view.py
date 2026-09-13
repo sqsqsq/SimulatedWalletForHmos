@@ -253,3 +253,55 @@ class SameNameSectionsKeepTheirOwnTables(ViewCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyACleanMarkerLineCloses(ViewCase):
+    """关闭行的三个条件：同种标记、不短于开启标记、标记之后到行末只有空白。
+
+    开启行与关闭行不是同一种语法。把带语言信息的那一行（一段样例的开启行）当成关闭符，
+    两件坏事同时发生：样例里的标题与表泄漏成本章结构，真正的关闭符又被当成新的开启，
+    它后面的真正文跟着丢掉。
+    """
+
+    BT = "`" * 3
+
+    def sample_block(self, second: str) -> str:
+        """外层是一段 text 围栏，里面贴一段样例：`second` 是样例的那一行。"""
+        return chr(10).join([
+            self.BT + "text",
+            second,
+            "### 样例里的节", "",
+            "| 甲 | 乙 |", "|---|---|",
+            self.BT,
+            "### 真的节", "",
+            "| 编号 | 可观察的通过条件 |", "|---|---|", "| AC-1 | 显示编号 |",
+        ])
+
+    def test_a_marker_with_trailing_content_does_not_close(self) -> None:
+        for second in (self.BT + "markdown", self.BT + " 说明", self.BT + ".",
+                       self.BT + "text 再来一段"):
+            with self.subTest(second=second):
+                v = self.view(self.sample_block(second))
+                self.assertEqual(["真的节"], v["sections"],
+                                 f"「{second}」被当成了关闭行，样例里的标题泄漏进结构")
+                self.assertEqual([["编号", "可观察的通过条件"]], v["全章表"],
+                                 "样例里的表算进来了，或真正文的表丢了")
+
+    def test_a_bare_marker_or_only_whitespace_closes(self) -> None:
+        for closer in (self.BT, self.BT + "   ", self.BT + "\t", "`" * 5):
+            with self.subTest(closer=closer):
+                v = self.view(chr(10).join([
+                    self.BT + "text", "样例正文。", closer, "", "### 真的节", "",
+                    "| 编号 | 可观察的通过条件 |", "|---|---|", "| AC-1 | 显示编号 |",
+                ]))
+                self.assertEqual(["真的节"], v["sections"], f"「{closer}」没关上围栏")
+                self.assertEqual([["编号", "可观察的通过条件"]], v["全章表"])
+
+    def test_a_shorter_or_different_marker_still_does_not_close(self) -> None:
+        for closer in ("~" * 3, "`" * 2):
+            with self.subTest(closer=closer):
+                v = self.view(chr(10).join([
+                    "`" * 4, "### 样例里的节", closer, "### 也在围栏里",
+                    "`" * 4, "", "### 真的节",
+                ]))
+                self.assertEqual(["真的节"], v["sections"], f"「{closer}」关上了不该关的围栏")
