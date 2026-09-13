@@ -1037,13 +1037,14 @@ class TestRetiredThings(unittest.TestCase):
         红了就一起改，别只把断言改绿。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "2.0.0"', manifest)
-        # 号升了而注释没写，目标工程仍然看不出自己拿到的是哪一批形态——两样一起才算升版本
-        # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行
+        self.assertIn('version: "1.9.1"', manifest)
+        # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
+        # 「我们这个仓怎么用它」），每一版改了什么在 test/story/release/ 的发布说明里。
+        # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
         rows = manifest.splitlines()
         at = next(i for i, l in enumerate(rows) if l.startswith("version:"))
-        notes = "\n".join(rows[:at])
-        self.assertIn("# 2.0.0：", notes, "版本号升了，版本注释里没有这一版的条目")
+        self.assertEqual([], [l for l in rows[:at] if l.lstrip().startswith("#")],
+                         "包又往 `version:` 上面写演进记录了——那一段归装它的工程")
 
 
 class TestLedgerFrozenAfterRegistration(StoryBuildCase):
