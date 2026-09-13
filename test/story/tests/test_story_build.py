@@ -1682,21 +1682,19 @@ class TheContractCarriesTheKeptSeeds(RealRunCase):
         draft = self.draft("09-交付与上线.md").read_text(encoding="utf-8")
         self.assertIn("| 交付物 | 给谁 | 做什么用 | 什么时候要 |", draft)
 
-    def test_required_sections_are_seeded_where_they_are_checked(self) -> None:
-        """必要小节的标题也进草稿，而且表打在它该在的那一节下面。
+    def test_the_located_section_is_seeded_where_the_table_is_checked(self) -> None:
+        """机器要定位的那一节进草稿，表打在它下面——打底与核对同一个位置。
 
-        打底与核对不同位置的话，作者第一次知道「这一章要有哪个小节」是在报错里——
-        而报错不是首次交付规则的渠道。
+        两处不同位置的话，作者第一次知道「这张表该在哪一节」是在报错里，而报错不是
+        首次交付规则的渠道。内容目标那类小节不预置标题：名字由作者按业务起。
         """
         rollout = self.draft("09-交付与上线.md").read_text(encoding="utf-8")
-        self.assertIn("### 回退设计", rollout)
         self.assertIn("### 交付物", rollout)
         self.assertIn("| 交付物 | 给谁 | 做什么用 | 什么时候要 |",
                       rollout.split("### 交付物", 1)[1], "表没打在它该在的那一节下面")
+        self.assertNotIn("### 回退设计", rollout, "内容目标不靠预置标题，名字由作者起")
         scope = self.draft("03-范围.md").read_text(encoding="utf-8")
-        self.assertIn("### 特性分工", scope)
-        self.assertNotIn("### 交接约定", scope, "没有兄弟单据就不预置交接说明节")
-
+        self.assertNotIn("### ", scope, "范围章没有要机器定位的小节，不预置标题")
 
 class TheMachineZoneComesFromTheSource(RealRunCase):
     """附录 A–D 每次都从当前真源重算，不读旧 story、不含占位。
@@ -2509,11 +2507,11 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         self.assertIn("缺一张表", out)
 
     def test_a_fenced_example_does_not_substitute_for_the_real_section(self) -> None:
+        """围栏里的标题与表是被引用的样例：贴一段示例不该满足本章的必要结构。"""
         self.set_chapter("交付与上线",
-                         "```markdown\n### 回退设计\n\n### 交付物\n\n"
+                         "```markdown\n### 交付物\n\n"
                          "| 交付物 | 给谁 | 做什么用 | 什么时候要 |\n|---|---|---|---|\n```\n")
-        out = self.assert_check_names("缺「回退设计」这一节")
-        self.assertIn("缺「交付物」这一节", out)
+        self.assert_check_names("缺「交付物」这一节")
 
     def test_a_chapter_without_any_diagram_fails(self) -> None:
         """这一章要一张图：一张都没有才是缺。"""
@@ -2547,37 +2545,22 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
                          '提交之后等回执。\n\n```json\n{"state": "waiting"}\n```\n')
         self.assert_check_names("没有图")
 
-    def make_siblings(self) -> None:
-        """本轮真有兄弟单据：条件只看份表——`siblings` 由它决定，不另立一份声明。"""
-        flow_path = self.src / "story-flow.json"
-        flow = (json.loads(flow_path.read_text(encoding="utf-8"))
-                if flow_path.is_file() else {"schema": 3, "feature": FEATURE,
-                                             "status": "complete", "rounds": []})
-        flow.setdefault("split", {})["parts"] = [
-            {"seq": 1, "carrier": FEATURE, "scope": "提交与回执"},
-            {"seq": 2, "carrier": "AR90002", "scope": "补卡"},
-        ]
-        flow_path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+    def test_sections_named_by_business_are_not_reported_missing(self) -> None:
+        """分工、交接、回退这些是**内容目标**：按标题名判会把用业务名起的标题说成缺了。
 
-    def test_the_handover_section_is_required_only_with_real_siblings(self) -> None:
-        body = "### 特性分工\n\n本单只做提交与回执展示。\n"
-        self.set_chapter("范围", body)
-        code, out = self.check_output()
-        self.assertEqual(0, code, f"没有兄弟单据却要求交接说明：{out}")
-
-        self.make_siblings()
-        out = self.assert_check_names("缺「交接约定」这一节")
-        self.assertIn("范围", out)
-
-    def test_the_handover_section_needs_no_table(self) -> None:
-        """兄弟交接要的是说明，不是一张「约定 / 内容」表。"""
-        self.make_siblings()
+        金样里讲清了三方分工与权威来源的那一节，却因为标题不叫「参与方与分工」被报缺失。
+        讲清没讲清读的是内容，由读者问题、章级维度与独立语义审查判；机器只定位它真要
+        定位的那几处（给表定范围的小节与附录五节）。
+        """
         self.set_chapter("范围",
-                         "### 特性分工\n\n本单只做提交与回执展示。\n\n"
-                         "### 交接约定\n\n受理单编号由本单生成，补卡那一单只读它；"
-                         "本单先发，补卡单在下一个版本跟上。\n")
+                         "### 本单与补卡单怎么分\n\n本单只做提交与回执展示；"
+                         "补卡由兄弟单承接，受理单编号由本单生成、它只读。\n")
+        self.set_chapter("业务方案",
+                         "### 三方各自做什么\n\n"
+                         "| 参与方 | 输入 | 输出 | 责任 | 失败影响 |\n|---|---|---|---|---|\n"
+                         "| 钱包端 | 用户提交 | 受理请求 | 入口与展示 | 用户看不到回执 |\n")
         code, out = self.check_output()
-        self.assertEqual(0, code, out)
+        self.assertEqual(0, code, f"按标题名判把业务名起的标题说成缺了：{out}")
 
 
 if __name__ == "__main__":

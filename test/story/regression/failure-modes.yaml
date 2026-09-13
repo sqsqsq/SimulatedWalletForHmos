@@ -1013,12 +1013,15 @@ modes:
     target: mechanism
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
     checker: s08_solution_chapter_flat
     self_check: internal
-    approved_by: 用户（2026-09-03 D10 修订签字；步骤 9 小段 3 评审 B2）
+    approved_by: 用户（2026-09-03 D10 修订签字；2026-09-13 Q4 分册批准标题代理退场）
     reason: >
-      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。判据随作业书改写在步骤 9 退场。
+      固定形式判据只问「是不是表、有没有分节、段落多长」，而这一条问的是表达贴不贴合，要读上下文。
+      2026-09-13 Q4：按标题名判「有没有参与方与分工这一节」会把用业务名起的标题说成缺了这件事
+      （金样里讲清三方分工与权威来源的那一节就是这么被报缺的）。纯标题代理退场，
+      分工讲没讲清、取舍有没有依据仍是有效风险，发现者见 observed_by。
     observed_by: >
       审查者按「业务方案」章的读者问题看参与方、取舍、风险是否各自可回找；用户按同一轴看方案章能不能按节回查。
     scope_note: >

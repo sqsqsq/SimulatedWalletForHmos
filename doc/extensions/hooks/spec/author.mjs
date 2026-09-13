@@ -171,16 +171,10 @@ function imageSection(projectRoot, feature) {
     rows.push('材料清单里现在没有图片。');
     return rows;
   }
-  rows.push('**单向**：属于本需求的图才进正文，先一句话说它画的是什么，再是图，图后接着讲；'
-    + '**不属于本需求的不进正文**（旧版页面、同页面的另一张截图、同类产品的参考稿、'
-    + '别的部件或别的单的页面）。它的去向登记在材料清单里——'
-    + '每张图下面那条命令原样跑，把理由填进去。',
-    '',
-    '登记过就不必在正文里交代它，附录的材料清单也不列图——那一节只列上游正文与收件箱原件。'
-    + '引进正文再在图题里解释不算：读者要在归档件里读到不属于这个需求的页面。',
-    '',
-    '**引用串与命令都原样粘**：引用串是相对 `AR/story.md` 的，'
-    + '命令的路径是相对工程根的——两个基准不一样，自己换算容易差一层。', '');
+  rows.push('每张图下面那条命令**原样跑**：说明与取舍都登记在材料清单里，跟着图的内容走。'
+    + '引用串是相对 `AR/story.md` 的，命令的路径是相对工程根的——两个基准不一样，'
+    + '自己换算容易差一层。属于本需求的图怎么引、不属于的怎么登记，见 `story-write.md`。',
+    '');
   const featureDir = relDisplay(projectRoot, featureRoot(projectRoot, feature));
   for (const img of images) {
     const paths = Array.isArray(img.paths) ? img.paths : [img.path].filter(Boolean);
@@ -191,9 +185,10 @@ function imageSection(projectRoot, feature) {
         + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
         + (unused ? ` ← **已登记不用**：${unused}` : ''),
       '',
-      '  ```',
+      '  ```powershell',
       // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
+      // 围栏标 powershell：参数按本工程命令行的规则引，换 shell 要自己核。
       '  python doc/extensions/skills/story/scripts/core/import_sources.py'
         + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${p}`)}`
         + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),

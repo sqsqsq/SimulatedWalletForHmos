@@ -157,7 +157,6 @@ function createOfflineContext(args) {
     args, projectRoot, contract, offline: true,
     featureRoot: path.dirname(path.dirname(storyPath)),
     storyPath,
-    facts: offlineFacts(),
     decisionsPath: '',
     copyeditPath: '', reviewPath: '',
   };
@@ -181,32 +180,12 @@ function createContext(args) {
   return {
     args, projectRoot, contract, featureRoot: featureDir, srcDir,
     scriptPath: fileURLToPath(import.meta.url),
-    facts: { siblings: siblingsFact({ offline: false, featureRoot: featureDir }) },
     decisionsPath: path.join(srcDir, 'decisions.json'),
     copyeditPath: path.join(srcDir, 'copyedit.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),
     reviewPath: path.join(featureDir, 'AR', 'review.md'),
     flowPath: path.join(featureDir, 'AR', 'story-src', 'story-flow.json'),
   };
-}
-
-/**
- * 本轮有没有真实的兄弟单据——必要结构里「交接约定」表的条件。
- *
- * 只取已经在盘上的流程契约，不另立一份声明。读不到返回 `null`（拿不准）：
- * 离线的仲裁锚读不到契约，`siblings` 若一律算不成立，带兄弟单据的那一节
- * 就会被判成「不该有」。判据宁可不响，不可空响。
- */
-function siblingsFact(ctx) {
-  if (ctx.offline || !ctx.featureRoot) return null;
-  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
-  if (!flow) return null;
-  return (flow.split?.parts ?? []).length > 1;
-}
-
-/** 离线仲裁锚的 facts：读不到流程契约，siblings 拿不准（null 沿原条件语义）。 */
-function offlineFacts() {
-  return { siblings: null };
 }
 
 /**
@@ -1406,7 +1385,7 @@ function cmdCheck(ctx) {
     const text = sectionText.get(ch.title);
     if (text === undefined) continue;                 // 章缺失由 ① 报，这里不重复
     if (text.trim() === EMPTY_SECTION_TEXT) continue; // 空节已明说不涉及，没有结构可言
-    problems.push(...chapterStructureProblems(ch, viewOf(ch.title), ctx.facts));
+    problems.push(...chapterStructureProblems(ch, viewOf(ch.title)));
   }
 
   mark('⑫ 附录结构');
@@ -2296,7 +2275,6 @@ function cmdSkeleton(ctx) {
     terms: specTerms(spec),
     materialListName: materialSubsectionName(ctx.contract),
     materialListRows: materialListSkeleton(ctx),
-    siblings: siblingsFact(ctx),
   };
   const existing = readText(ctx.storyPath);
   const chapterState = existing === null

@@ -21,7 +21,7 @@ S4 收口        →  按已定范围写提取稿，`complete --from` 提交为 
    ↓
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
-   └─ story：建骨架 → 按章写、按章落盘 → 统稿 → `story_flow.py story` 登记
+   └─ story：建骨架 → 按章写、按章落盘 → 写后核对 → `story_flow.py story` 登记
    ↓
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```
@@ -48,7 +48,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
-| 成文：按章写与统稿 | [phases/story-write.md](phases/story-write.md) |
+| 成文：按章写与写后核对 | [phases/story-write.md](phases/story-write.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 推进契约

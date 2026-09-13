@@ -26,30 +26,36 @@ def read(rel: str) -> str:
     return (SKILL / rel).read_text(encoding="utf-8")
 
 
+def read_ext(rel: str) -> str:
+    """扩展根下的文件——任务包在 hooks 那边，与作业书不在同一棵子树。"""
+    return (REPO_ROOT / "doc" / "extensions" / rel).read_text(encoding="utf-8")
+
+
 class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
         spec = read("phases/spec.md")
-        self.assertIn("②b 统稿", spec)
-        self.assertLess(spec.index("② 按章写"), spec.index("②b 统稿"),
+        self.assertIn("②b 写后核对", spec)
+        self.assertLess(spec.index("② 按章写"), spec.index("②b 写后核对"),
                         "统稿在按章写之后")
-        self.assertLess(spec.index("②b 统稿"), spec.index("③ 登记"),
+        self.assertLess(spec.index("②b 写后核对"), spec.index("③ 登记"),
                         "统稿在登记之前——登记那一步会渲染 review，"
                         "评审记录面对的应当是收过口的全篇")
 
     def test_the_authoring_guide_carries_the_checklist(self) -> None:
         guide = read("phases/story-write.md")
-        self.assertIn("# 第二步 · 统稿", guide)
-        section = guide.split("# 第二步 · 统稿", 1)[1].split("\n# ", 1)[0]
+        self.assertIn("## 四、写后核对", guide)
+        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
+        for action in ("比较信息归属", "推演关系与结果", "核重组后的表达"):
+            self.assertIn(action, section, f"写后核对少了「{action}」这个动作")
         items = re.findall(r"^\d+\. ", section, flags=re.M)
         # 判据里的 `COPYEDIT_ROWS` 就是这个数：它的依据是这份清单，
         # 两处对不上时改的应当是清单，判据跟着走。
         build = read("scripts/core/story-build.mjs")
         want = int(re.search(r"COPYEDIT_ROWS = (\d+)", build).group(1))
         self.assertEqual(want, len(items),
-                         f"自查清单 {len(items)} 项，而判据要求 {want} 行——两处对不上")
-        for needle in ("同一件事", "逐字", "引导", "承接", "样式约定", "读者视角",
-                       "各章说法一致"):
-            self.assertIn(needle, section, f"自查清单少了「{needle}」那一项")
+                         f"自查清单 {len(items)} 条，而判据要求 {want} 行——两处对不上")
+        for needle in ("同一件事", "逐字", "引导", "承接", "读者视角", "对着读", "指代"):
+            self.assertIn(needle, section, f"自查清单少了「{needle}」那一条")
 
     def test_the_guide_says_two_steps(self) -> None:
         """两处说同一件事时先问该由谁说——步数只在开头声明一次，别处引用它。"""
@@ -87,7 +93,7 @@ class TestFinalPassLeavesATrace(unittest.TestCase):
 
     def test_the_guide_asks_for_exactly_seven_lines(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("# 第二步 · 统稿", 1)[1]
+        section = guide.split("## 四、写后核对", 1)[1]
         self.assertIn("copyedit.md", section)
         self.assertIn("恰好七行", section)
         self.assertIn("写多不奖励", section, "防苦役条款要写在作业书里")
@@ -104,27 +110,27 @@ class TestFinalPassLeavesATrace(unittest.TestCase):
 
 
 class TestIssueDefinitionIsOneText(unittest.TestCase):
-    """议题的正面定义只有一份文字，送达面两处逐字一致——改一处忘一处就又有两份说法。"""
+    """议题的正面定义只维护一份：阶段页指过去，不再抄一遍。
+
+    两份逐字一致靠的是有人记得同步；改一处忘一处，作者就会在两个地方读到两种说法。
+    """
 
     ANCHOR = "**什么算一条议题**"
 
-    def paragraphs(self) -> list[str]:
-        out = []
-        for rel in ("phases/story-write.md", "phases/spec.md"):
-            text = read(rel)
-            self.assertIn(self.ANCHOR, text, f"{rel} 里没有议题的正面定义")
-            body = text.split(self.ANCHOR, 1)[1].split("\n\n", 1)[0]
-            out.append(body)
-        return out
+    def definition(self) -> str:
+        text = read("phases/story-write.md")
+        self.assertIn(self.ANCHOR, text, "作业书里没有议题的正面定义")
+        return text.split(self.ANCHOR, 1)[1].split("\n\n", 1)[0]
 
-    def test_the_three_copies_are_identical(self) -> None:
-        first, *rest = self.paragraphs()
-        for other in rest:
-            self.assertEqual(first, other)
+    def test_the_phase_page_points_at_it_instead_of_repeating(self) -> None:
+        phase = read("phases/spec.md")
+        self.assertNotIn(self.ANCHOR, phase, "阶段页又抄了一份议题定义")
+        self.assertIn("story-write.md", phase, "阶段页没给出定义在哪")
+        self.assertIn("什么算一条议题", phase, "阶段页连指路都没有，作者不知道去哪读")
 
     def test_it_names_the_admission_rule_and_the_two_registrations(self) -> None:
         """准入判据只有一条：表态「不同意」会有产物要改。两种登记态各有去处。"""
-        body = self.paragraphs()[0]
+        body = self.definition()
         for needle in ("表态", "不同意", "settled", "open", "漏登记"):
             self.assertIn(needle, body)
 
@@ -165,23 +171,29 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         self.assertIn("对着这十一类过一遍", guide)
         self.assertIn("这是扫描地图，不是配额", guide)
 
-    def test_the_guide_says_what_the_lead_figure_should_show(self) -> None:
-        """章首那张图讲给评审者什么——不说清的话，作者会把契约图复制一遍。
-
-        七跑那次章首的图与上游契约图逐字节相同：作者知道「要有一张图」，
-        不知道这张图该回答什么。
+    def test_the_guide_says_what_the_overview_figure_should_show(self) -> None:
+        """总览图讲给评审者什么——不说清的话，作者会把上游契约图复制一遍；
+        只说「要不一样」又会逼出为了不同而不同的图。图种按内容的关系选，一处维护。
         """
         guide = read("phases/story-write.md")
-        self.assertIn("端到端旅程", guide)
-        self.assertIn("关键对象的状态变化", guide)
-        self.assertIn("不为了与上游不同而刻意画不同", guide,
-                      "只说「要不一样」会逼出为了不同而不同的图")
+        flow = guide.split("### 业务流程", 1)[1].split("\n### ", 1)[0]
+        for needle in ("主路径与全部分支去向", "交接点", "不为了与上游不同而刻意画不同"):
+            self.assertIn(needle, flow, f"业务流程那一段少了「{needle}」")
+        form = guide.split("### 形式按内容的关系选", 1)[1].split("\n## ", 1)[0]
+        for relation in ("先后与分支", "状态与转移", "调用与返回"):
+            self.assertIn(relation, form, f"形式选择表里少了「{relation}」这一行")
 
     def test_the_guide_registers_a_declined_image_outside_the_appendix(self) -> None:
-        """不用的图，理由登记在材料清单里；附录那一节只列初始资料。"""
+        """不用的图，理由登记在材料清单里；附录那一节只列初始资料。
+
+        **方法在作业书，那条命令在任务包**：命令带着这一轮的真实路径，抄进方法页就成了
+        第二份会过期的写法。两边各自都要在。
+        """
         guide = read("phases/story-write.md")
-        self.assertIn("--unused", guide)
+        self.assertIn("写明为什么不用", guide, "作业书没说不用的图要登记理由")
         self.assertIn("附录的材料清单不列图", guide)
+        package = read_ext("hooks/spec/author.mjs")
+        self.assertIn("--unused", package, "任务包里没有那条登记命令")
 
     def test_the_scan_map_and_the_contract_word_list_agree(self) -> None:
         """作业书里的类型名与合同 `decision_categories` 的 key 一一对上——
@@ -208,10 +220,16 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
         self.assertFalse((SKILL / "templates" / "story-template.md").exists(),
                          "story-template.md 该随形态进合同一起退场")
 
-    def test_the_guide_keeps_only_what_no_check_covers(self) -> None:
-        block = read("phases/story-write.md").split("机器不判、要你自己把关", 1)[1]
-        for kept in ("表前一句引导", "小节名", "只占一个结构位置"):
-            self.assertIn(kept, block, f"「{kept}」没有判据接，约定要留着")
+    def test_the_guide_keeps_what_no_check_covers(self) -> None:
+        """没有判据接的约定要留着，但留在它该在的那一节，不另起一段重讲一遍。"""
+        guide = read("phases/story-write.md")
+        self.assertIn("表前有一句引导", guide.split("## 四、写后核对", 1)[1],
+                      "表前引导没有判据接，写后核对要问它")
+        self.assertIn("标题用真实业务名", guide.split("## 一、", 1)[1],
+                      "小节怎么起名没有判据接，读者原则要说")
+        self.assertNotIn("不是三次机会", guide,
+                         "「表文图是三次机会」与「三者互补」相反，不能两句都留着")
+        self.assertIn("三者互补", guide)
 
     def test_every_chapter_declares_its_boundary(self) -> None:
         """章头唯一化之后，boundary 是草稿章头与读者审查的合同数据，一章不能缺。"""

@@ -1,10 +1,13 @@
 /**
  * 章节合同的最小必要结构 —— 必要 H3、必要表、图与起始种子的唯一解释。
  *
- * 合同（story-chapters.json）每章给 `structure`：`h3` 是必须存在的小节（每项
- * `{title, when?}`），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
- * `at` 所属小节、`when` 条件），`diagram: true` 表示这一章要有一张真正的图。
+ * 合同（story-chapters.json）每章给 `structure`：`h3` 是机器要定位的小节（给表定范围的
+ * 那种与附录五节），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
+ * `at` 所属小节），`diagram: true` 表示这一章要有一张真正的图。
  * 哪些章要什么全部是合同数据，这里不写死任何章名或表头——加一条必要结构改合同，代码不动。
+ *
+ * **标题名不是内容判据**：分工讲没讲清、回退措施有没有依据，读的是内容，由读者问题、
+ * 章级维度与独立语义审查判；按标题名判会把「用业务名起了另一个标题」说成缺了这件事。
  *
  * 同一份解释供三处用：`chapterSeedRows` 打底、`chapterStructureProblems` 核对、
  * 条件判定共用 `applies`。**打底与核对必须同位置**：否则作者第一次知道「这一章要有
@@ -23,27 +26,14 @@ export function renderTable(header, rows) {
     ...rows.map(r => `| ${r.join(' | ')} |`)];
 }
 
-/**
- * 这一条必要结构现在适用吗。
- *
- * `when: "siblings"` 只在**确有**兄弟单据时必需：`facts.siblings` 三态里只有 `true`
- * 算成立。`null` 是拿不准（离线的仲裁锚读不到流程契约）——拿不准当成立，就会把
- * 没有兄弟单的那一份判成缺一节；当不成立，草稿里也就不打这个底。两样都不做。
- */
-function applies(item, facts) {
-  if (!item?.when) return true;
-  if (item.when === 'siblings') return facts?.siblings === true;
-  return false;
+/** 这一章要定位的必要 H3（给表定范围的那种，与附录五节）。 */
+function requiredH3(ch) {
+  return ch?.structure?.h3 ?? [];
 }
 
-/** 这一章适用的必要 H3。 */
-function requiredH3(ch, facts) {
-  return (ch?.structure?.h3 ?? []).filter(h => applies(h, facts));
-}
-
-/** 这一章适用的必要表。 */
-function requiredTables(ch, facts) {
-  return (ch?.structure?.tables ?? []).filter(t => applies(t, facts));
+/** 这一章的必要表。 */
+function requiredTables(ch) {
+  return ch?.structure?.tables ?? [];
 }
 
 /**
@@ -88,16 +78,15 @@ function tableProblem(ch, view, slot) {
  *
  * @param {object} ch 合同章
  * @param {object} view `document.parseChapter` 的结果（一次解析，各判据共用）
- * @param {object} facts 入口解析好的当前输入
  */
-export function chapterStructureProblems(ch, view, facts) {
+export function chapterStructureProblems(ch, view) {
   const problems = [];
-  for (const want of requiredH3(ch, facts)) {
+  for (const want of requiredH3(ch)) {
     if (sectionBody(view, want.title) === null) {
       problems.push(`「${ch.title}」缺「${want.title}」这一节`);
     }
   }
-  for (const slot of requiredTables(ch, facts)) {
+  for (const slot of requiredTables(ch)) {
     const problem = tableProblem(ch, view, slot);
     if (problem) problems.push(problem);
   }
@@ -117,15 +106,15 @@ export function chapterStructureProblems(ch, view, facts) {
  * 流程图由作者按当前业务生成，源图材料不是默认的业务总览答案。
  *
  * @param {object} ch 合同章
- * @param {object} facts 入口解析好的当前输入：terms、materialListRows、siblings
+ * @param {object} facts 入口解析好的当前输入：terms、materialListRows、materialListName
  * @returns {string[]} markdown 行
  */
 export function chapterSeedRows(ch, facts) {
   if (ch.appendix) return appendixSeedRows(ch, facts);
   const rows = [];
-  const tables = requiredTables(ch, facts).filter(t => t.seed);
+  const tables = requiredTables(ch).filter(t => t.seed);
   for (const t of tables.filter(t => !t.at)) rows.push(...tableSeed(t, facts), '');
-  for (const h of requiredH3(ch, facts)) {
+  for (const h of requiredH3(ch)) {
     rows.push(`### ${h.title}`, '');
     for (const t of tables.filter(t => normalizeHeading(t.at ?? '') === normalizeHeading(h.title))) {
       rows.push(...tableSeed(t, facts), '');

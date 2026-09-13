@@ -270,10 +270,14 @@ class TaskPackageIsRendered(WorkspaceCase):
         self.assertIn("assets/x/one.png", package)
         self.assertIn("签约页", package)
         self.assertIn("assets/x/two.png", package)
-        self.assertIn("不属于本需求的不进正文", package)
-        self.assertIn("引进正文再在图题里解释不算", package,
-                      "规则要单向：把图引进正文再解释是六跑那次的形态")
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
+        # **方法在作业书，数据与命令在任务包**：把「怎么引、怎么登记」也抄进任务包，
+        # 同一条规则就有两份会各自漂的写法。这里只核指路在、方法在它该在的地方。
+        self.assertIn("story-write.md", package, "任务包没指出方法在哪")
+        guide = (REPO_ROOT / "doc/extensions/skills/story/phases/story-write.md"
+                 ).read_text(encoding="utf-8")
+        self.assertIn("不属于本需求的", guide, "单向规则要在作业书里")
+        self.assertIn("写明为什么不用", guide)
 
     #: 图名带空格是常事——导入从文档里抽出来的图常常沿用原文里的名字。
     SPACED = "assets/x/page one.png"
