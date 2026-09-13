@@ -4,7 +4,7 @@
 这一份**不判 verifier 的区分力**——那要跑真实模型，结论按 `cli_config_id` 记在评审报告里。
 这里只保证实验器材没坏：样本能生成、每种缺陷都有换业务名的变体、good 基底结构完整、
 生成是确定性的，以及**交付面没有把答案泄漏出去**（样本路径、期望结论都不能出现在
-执行者或 verifier 读得到的机制内容里，否则测的是它有没有背过答案）。
+消费模型或 verifier 读得到的机制内容里，否则测的是它有没有背过答案）。
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ class TheFixtureItselfHolds(unittest.TestCase):
 
 
 class TheAnswerIsNotInTheDeliverable(unittest.TestCase):
-    """交付给执行者与 verifier 的机制内容里，不能有样本路径、期望结论或测试坐标。"""
+    """交付给消费模型与 verifier 的机制内容里，不能有样本路径、期望结论或测试坐标。"""
 
     def test_no_fixture_or_test_path_in_the_extension(self) -> None:
         offenders = []
