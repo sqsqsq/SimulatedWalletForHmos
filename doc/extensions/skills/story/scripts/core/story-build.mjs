@@ -204,10 +204,13 @@ function cmdSkeleton(ctx) {
  *
  * 任务定义是这一项成不成的关键：任务里没有的问题，审查者不会去问。
  * 所以任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
+ * **这个入口要带上方法**（`withMethod`）：它是人自己看的那一份，手上没有宿主装配的
+ * overlay。pre_verifier 那一条不带——宿主已经把 overlay 装进任务，带了就是两份。
  */
 function cmdReviewTask(ctx) {
   process.stdout.write(
-    readerReviewTask(ctx.projectRoot, ctx.args.feature, 'story_reader_review') + '\n');
+    readerReviewTask(ctx.projectRoot, ctx.args.feature, 'story_reader_review',
+      { withMethod: true }) + '\n');
 }
 
 function main() {

@@ -360,6 +360,73 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         self.assertIn("逐单元裁决表", out["problems"][0])
 
 
+class TheRealReviewTaskCommandCarriesTheMethod(unittest.TestCase):
+    """人自己看的那一条命令（`story-build review-task`）必须拿到**同一份**方法。
+
+    新增能力存在不等于入口用上了：`withMethod` 加在构造器上、调用处没传，
+    这个入口就一直只给数据——而人在那条路上拿不到判据，也拿不到结论要求。
+    这一组跑**正式命令**，不直接调构造器。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        (self.root / "doc").mkdir(parents=True)
+        shutil.copytree(REPO / "doc" / "extensions", self.root / "doc" / "extensions",
+                        ignore=shutil.ignore_patterns("__pycache__", "node_modules"))
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        src.mkdir(parents=True)
+        (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
+        (src / "materials.json").write_text(
+            json.dumps({"materials": []}, ensure_ascii=False), encoding="utf-8")
+        self.overlay = (self.root / "doc" / "extensions" / "rules"
+                        / "spec-rules.overlay.yaml")
+
+    def run_cli(self) -> subprocess.CompletedProcess:
+        build = (self.root / "doc" / "extensions" / "skills" / "story" / "scripts"
+                 / "core" / "story-build.mjs")
+        return subprocess.run(
+            ["node", str(build), "review-task", "--feature", FEATURE,
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+
+    def test_the_command_gives_the_full_text_and_the_overlay_method(self) -> None:
+        out = self.run_cli()
+        self.assertEqual(0, out.returncode, out.stderr[-600:])
+        task = out.stdout
+        self.assertIn("### 审查对象：当前 `AR/story.md` 全文", task)
+        for line in STORY_MD.strip().split("\n"):
+            if line.strip():
+                self.assertIn(line, task, f"全文里少了这一行：{line}")
+        self.assertIn("判据与结论要求", task, "人自己看的这一份没有方法")
+        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空"):
+            self.assertIn(needle, task, f"方法里少了「{needle}」")
+
+    def test_the_method_follows_the_overlay_not_a_second_copy(self) -> None:
+        """改 overlay，命令的输出跟着改——跟不着就说明它另抄了一份。"""
+        text = self.overlay.read_text(encoding="utf-8")
+        self.assertIn("跨章对着读", text)
+        self.overlay.write_text(
+            text.replace("跨章对着读", "夹具改过的这一句"), encoding="utf-8")
+        task = self.run_cli().stdout
+        self.assertIn("夹具改过的这一句", task, "方法没跟着 overlay 走")
+        self.assertNotIn("跨章对着读", task, "还留着另一份抄件")
+
+    def test_a_missing_overlay_is_an_explicit_gap(self) -> None:
+        """overlay 不在时不能显示成一份完整任务——那会让人以为这一项没有判据要求。"""
+        self.overlay.unlink()
+        out = self.run_cli()
+        self.assertIn("取不到", out.stdout, out.stdout[-400:])
+        self.assertIn("spec-rules.overlay.yaml", out.stdout)
+        self.assertNotIn("blocking_findings", out.stdout)
+
+    def test_a_broken_overlay_is_an_explicit_gap(self) -> None:
+        self.overlay.write_text("semantic_checks:\n  - 这不是映射\n", encoding="utf-8")
+        out = self.run_cli()
+        self.assertIn("取不到", out.stdout, out.stdout[-400:])
+
+
 class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
     """交付门只在 `--deliver` 起作用，而且跑不起来不算通过。"""
 
@@ -539,10 +606,13 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         text = self.inject()
         self.assertLess(text.index("story_reader_review"), text.index("知识判据"))
 
+    @property
+    def overlay(self) -> Path:
+        return self.root / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml"
+
     def overlay_method(self) -> str:
         """判据与结论要求的**唯一维护处**：spec overlay 的 `story_reader_review`。"""
-        text = (self.root / "doc" / "extensions" / "rules"
-                / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        text = self.overlay.read_text(encoding="utf-8")
         at = text.index("story_reader_review:")
         end = text.index("\n# ", at)
         return text[at:end]
@@ -586,6 +656,39 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         """登记着而盘上读不到：审查要知道这一张现在看不了，不是「作者没用它」。"""
         text = self.inject()
         self.assertIn("盘上读不到", text)
+
+    def test_the_host_assembly_really_carries_the_overlay_method(self) -> None:
+        """正常路径的证据：**宿主装配之后**任务里有这份方法。
+
+        只断言「fragment 里没有方法」加「overlay 文件里有那段文字」证明不了它到得了
+        审查者手上——中间那一步（框架把 overlay 合进本阶段判据）没被核过。
+        这里调框架自己那个合并函数（`mergePhaseRuleSpec`），不启动真实 CLI、不改 Framework。
+        """
+        harness = REPO / "framework" / "harness"
+        runner = harness / "node_modules" / "ts-node" / "dist" / "bin.js"
+        if not runner.is_file():
+            self.skipTest("framework/harness 里没有 ts-node")
+        script = (
+            "const { mergePhaseRuleSpec } = require('./profile-loader');"
+            "const YAML = require('yaml'); const fs = require('fs');"
+            f"const overlay = YAML.parse(fs.readFileSync({json.dumps(str(self.overlay))}, 'utf-8'));"
+            "const base = { phase: 'spec', semantic_checks: { framework_own: { description: 'x' } } };"
+            "const merged = mergePhaseRuleSpec(base, overlay);"
+            "const item = merged.semantic_checks.story_reader_review || {};"
+            "process.stdout.write(JSON.stringify({"
+            "  hint: String(item.ai_prompt_hint || ''),"
+            "  desc: String(item.description || ''),"
+            "  keptFrameworkOwn: !!merged.semantic_checks.framework_own }));")
+        out = subprocess.run(["node", str(runner), "-e", script],
+                             cwd=str(harness), capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, out.returncode, out.stderr[-600:])
+        got = json.loads(out.stdout)
+        self.assertTrue(got["keptFrameworkOwn"], "合并把框架自己那几项挤掉了")
+        both = got["desc"] + got["hint"]
+        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空",
+                       "按实际关系判"):
+            self.assertIn(needle, both, f"宿主装配后的任务里没有「{needle}」")
 
     def test_the_method_is_maintained_only_in_the_overlay(self) -> None:
         """方法一份：overlay 维护「怎么判」，构造器只给这一次的数据。
