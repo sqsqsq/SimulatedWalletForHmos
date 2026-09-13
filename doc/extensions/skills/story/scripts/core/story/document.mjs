@@ -28,10 +28,11 @@ const SEPARATOR = /^\|[-: |]+\|$/;
  *
  * @param {string} text 一章的正文（不含 `## ` 标题行）
  * @returns {{text: string,
- *   fences: {lang: string, from: number, to: number}[],
- *   sections: {raw: string, name: string, from: number, to: number}[],
- *   tables: {header: string[], section: string|null, line: number}[]}}
- *   行号都是原文的 0 起下标；`section` 是这张表所在的 H3 规范名，章首的为 null。
+ *   fences: {lang: string, mark: string, from: number, to: number}[],
+ *   sections: {raw: string, name: string, from: number, to: number, body: string[]}[],
+ *   tables: {header: string[], line: number}[]}}
+ *   行号都是原文的 0 起下标；小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——
+ *   同名小节可以有两个，按名字记归属会把后一节的表算给前一节。
  */
 export function parseChapter(text) {
   const lines = String(text ?? '').split(/\r?\n/);
@@ -39,16 +40,21 @@ export function parseChapter(text) {
   let open = null;                       // 当前未闭合的围栏
   let current = null;                    // 当前 H3
   lines.forEach((line, i) => {
-    const fence = line.trim().match(/^(?:```|~~~)\s*(\w*)/);
-    if (fence && line.match(/^[ \t]*(?:```|~~~)/)) {
-      if (open) {
+    const fence = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*(\w*)/);
+    if (fence) {
+      const mark = fence[1];
+      if (!open) {
+        open = { lang: fence[2].toLowerCase(), mark, from: i, to: lines.length - 1 };
+        return;
+      }
+      // **只有同种、且不短于开启标记的那一行才关得上**：一个 ``` 块里贴一段 ~~~ 样例
+      // 是常事，把它当关闭符的话，样例里的标题与表会被当成本章的正文结构。
+      if (mark[0] === open.mark[0] && mark.length >= open.mark.length) {
         open.to = i;
         fences.push(open);
         open = null;
-      } else {
-        open = { lang: fence[1].toLowerCase(), from: i, to: lines.length - 1 };
       }
-      return;
+      return;                            // 关不上的那一行仍是围栏里的内容
     }
     if (open) return;                    // 围栏里的东西不进正文视图
     const h3 = line.trim().match(/^###\s+(.+)$/);
@@ -66,7 +72,6 @@ export function parseChapter(text) {
     tables.push({
       header: line.trim().replace(/^\||\|$/g, '').split('|')
         .map(c => norm(c.replace(/[`*]/g, ''))),
-      section: current ? current.name : null,
       line: i,
     });
   });
@@ -96,7 +101,10 @@ export function tablesIn(view, name) {
   if (!name) return (view?.tables ?? []).map(t => t.header);
   const hit = matchSection(view, name);
   if (!hit) return null;                 // 那一节缺席，与「有节但没表」不是一回事
-  return (view.tables ?? []).filter(t => t.section === hit.name).map(t => t.header);
+  // 正文与表取**同一个节**：按名字过滤的话，第二个同名小节里的表会被算给第一个，
+  // 于是缺表的那一节通过了，而别的消费者读到的还是缺表的那一份。
+  return (view.tables ?? []).filter(t => t.line > hit.from && t.line < hit.to)
+    .map(t => t.header);
 }
 
 /** 这一章有没有真正的图围栏（画图语言的那种）。 */

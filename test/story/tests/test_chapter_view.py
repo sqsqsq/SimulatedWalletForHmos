@@ -60,7 +60,9 @@ def node_eval(script: str, *args: str) -> object:
     return json.loads(proc.stdout)
 
 
-class TheViewKeepsWhatJudgesNeed(unittest.TestCase):
+class ViewCase(unittest.TestCase):
+    """两个取法：整章视图，以及按名字查一个小节拿到的正文与表。"""
+
     def setUp(self) -> None:
         if shutil.which("node") is None:
             self.skipTest("环境里没有 node")
@@ -70,15 +72,22 @@ class TheViewKeepsWhatJudgesNeed(unittest.TestCase):
             "import {pathToFileURL} from 'node:url';"
             "const m = await import(pathToFileURL(process.argv[1]).href);"
             "const v = m.parseChapter(process.argv[2]);"
-            "process.stdout.write(JSON.stringify({text: v.text,"
-            "  sections: v.sections.map(s => s.name), tables: v.tables,"
-            "  fences: v.fences, diagram: m.hasDiagram(v),"
-            "  甲: m.sectionBody(v, '甲节'), 乙: m.sectionBody(v, '乙节'),"
-            "  缺: m.sectionBody(v, '没有这一节'),"
-            "  甲表: m.tablesIn(v, '甲节'), 乙表: m.tablesIn(v, '乙节的业务名更长'),"
-            "  缺表: m.tablesIn(v, '没有这一节'), 全章表: m.tablesIn(v)}));",
+            "process.stdout.write(JSON.stringify({text: v.text, tables: v.tables,"
+            "  sections: v.sections.map(s => s.name), fences: v.fences,"
+            "  diagram: m.hasDiagram(v), 全章表: m.tablesIn(v)}));",
             str(DOCUMENT), text)
 
+    def section(self, text: str, name: str) -> dict:
+        return node_eval(
+            "import {pathToFileURL} from 'node:url';"
+            "const m = await import(pathToFileURL(process.argv[1]).href);"
+            "const v = m.parseChapter(process.argv[2]);"
+            "process.stdout.write(JSON.stringify({body: m.sectionBody(v, process.argv[3]),"
+            "  tables: m.tablesIn(v, process.argv[3])}));",
+            str(DOCUMENT), text, name)
+
+
+class TheViewKeepsWhatJudgesNeed(ViewCase):
     def test_the_original_text_is_kept_byte_for_byte(self) -> None:
         """报错要指回原文：视图改写了原文，行号与引文就都对不上。"""
         self.assertEqual(CHAPTER, self.view()["text"])
@@ -91,26 +100,28 @@ class TheViewKeepsWhatJudgesNeed(unittest.TestCase):
         self.assertEqual(["甲节", "乙节的业务名更长"], v["sections"], "围栏里的标题成了小节")
         self.assertNotIn("交付物", json.dumps(v["tables"], ensure_ascii=False),
                          "围栏里的表算成了本章的表")
-        self.assertIn("结尾一句。", v["乙"], "围栏之后的正文被吞掉了")
+        self.assertIn("结尾一句。", self.section(CHAPTER, "乙节")["body"],
+                      "围栏之后的正文被吞掉了")
 
-    def test_a_table_knows_which_section_it_sits_in(self) -> None:
+    def test_a_table_belongs_to_the_section_it_sits_in(self) -> None:
         v = self.view()
-        self.assertEqual([{"header": ["编号", "说明"], "section": "甲节", "line": 9}],
-                         v["tables"])
-        self.assertEqual([["编号", "说明"]], v["甲表"])
-        self.assertEqual([], v["乙表"], "那一节在但没有表")
-        self.assertIsNone(v["缺表"], "那一节缺席与「有节没表」不是一回事")
+        self.assertEqual([{"header": ["编号", "说明"], "line": 9}], v["tables"])
+        self.assertEqual([["编号", "说明"]], self.section(CHAPTER, "甲节")["tables"])
+        self.assertEqual([], self.section(CHAPTER, "乙节的业务名更长")["tables"],
+                         "那一节在但没有表")
+        self.assertIsNone(self.section(CHAPTER, "没有这一节")["tables"],
+                          "那一节缺席与「有节没表」不是一回事")
         self.assertEqual([["编号", "说明"]], v["全章表"])
 
     def test_a_section_is_found_by_exact_then_containing_name(self) -> None:
-        v = self.view()
-        self.assertIn("AC-1", v["甲"])
-        self.assertIsNotNone(v["乙"], "合同给的是这一节讲什么，作者按业务命名")
-        self.assertIsNone(v["缺"])
+        self.assertIn("AC-1", self.section(CHAPTER, "甲节")["body"])
+        self.assertIsNotNone(self.section(CHAPTER, "乙节")["body"],
+                             "合同给的是这一节讲什么，作者按业务命名")
+        self.assertIsNone(self.section(CHAPTER, "没有这一节")["body"])
 
     def test_blank_lines_inside_a_section_are_kept(self) -> None:
-        v = self.view()
-        self.assertTrue(v["甲"].startswith("\n"), "小节正文的空行被吃掉了")
+        body = self.section(CHAPTER, "甲节")["body"]
+        self.assertTrue(body.startswith(chr(10)), "小节正文的空行被吃掉了")
 
     def test_only_a_drawing_fence_counts_as_a_diagram(self) -> None:
         self.assertTrue(self.view()["diagram"])
@@ -168,3 +179,77 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         # 附录那一章一次 check 里被问十来次（五个小节、名字集合、spec 契约比对）。
         self.assertEqual(2, count,
                          f"解析了 {count} 次：每章一次的话应当是 2 次（有正文的那两章）")
+
+
+class FencesCloseOnlyOnTheirOwnMarker(ViewCase):
+    """围栏只能被**同种、不短于它**的标记关闭。
+
+    一个反引号块里贴一段波浪号样例是常事；把任意围栏行都当关闭符，样例里的标题与表
+    就会被算成本章的正文结构——贴一段别处的示例即可满足必要结构，后面的范围也跟着错位。
+    """
+
+    BT = "`" * 3
+    TD = "~" * 3
+
+    def test_a_different_kind_of_fence_does_not_close_the_block(self) -> None:
+        v = self.view(chr(10).join([
+            "章首一段。", "",
+            self.BT + "text",
+            self.TD + "markdown",
+            "### 交付物", "",
+            "| 交付物 | 给谁 | 做什么用 |", "|---|---|---|", "| a | b | c |",
+            self.TD,
+            self.BT, "",
+            "后面的正文还要被认出来。", "",
+            "### 真的交付物", "",
+            "| 交付物 | 给谁 | 做什么用 |", "|---|---|---|", "| 说明 | 评审人 | 过目 |",
+        ]))
+        self.assertEqual(["真的交付物"], v["sections"], "样例里的标题成了本章小节")
+        self.assertEqual(1, len(v["tables"]), "样例里的表算成了本章的表")
+
+    def test_a_shorter_marker_of_the_same_kind_does_not_close_it(self) -> None:
+        v = self.view(chr(10).join([
+            "`" * 4, "### 假节", self.BT, "### 也在围栏里", "`" * 4, "", "### 真节",
+        ]))
+        self.assertEqual(["真节"], v["sections"])
+
+    def test_structure_after_a_real_close_is_seen_again(self) -> None:
+        v = self.view(chr(10).join([
+            self.BT + "json", '{"a": 1}', self.BT, "", "### 真节", "",
+            "| 编号 | 可观察的通过条件 |", "|---|---|", "| AC-1 | 显示编号 |",
+        ]))
+        self.assertEqual(["真节"], v["sections"])
+        self.assertEqual([["编号", "可观察的通过条件"]], v["全章表"])
+        self.assertFalse(v["diagram"], "数据围栏不是图")
+
+
+class SameNameSectionsKeepTheirOwnTables(ViewCase):
+    """两个同名小节各管自己的表：按名字记归属，后一节的表会被算给前一节。
+
+    形状是第一个「交付物」只有一句话、第二个才有完整表：查正文得到第一节，查表却拿到
+    第二节的——缺表的那一节因此通过，而别的消费者读到的还是缺表的那一份。
+    """
+
+    def test_the_body_and_the_tables_come_from_the_same_section(self) -> None:
+        text = chr(10).join([
+            "### 交付物", "", "前节无表。", "",
+            "### 交付物", "",
+            "| 交付物 | 给谁 | 做什么用 |", "|---|---|---|", "| 说明 | 评审人 | 过目 |",
+        ])
+        got = self.section(text, "交付物")
+        self.assertIn("前节无表。", got["body"])
+        self.assertEqual([], got["tables"], "拿到的是后一个同名小节的表")
+
+    def test_another_section_still_has_its_own(self) -> None:
+        """范围限定不等于只认第一个节：别的节自己那张表照样查得到。"""
+        text = chr(10).join([
+            "### 交付物", "", "前节无表。", "",
+            "### 交付物与接收方", "",
+            "| 交付物 | 给谁 | 做什么用 |", "|---|---|---|", "| 说明 | 评审人 | 过目 |",
+        ])
+        self.assertEqual([["交付物", "给谁", "做什么用"]],
+                         self.section(text, "交付物与接收方")["tables"])
+
+
+if __name__ == "__main__":
+    unittest.main()

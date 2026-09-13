@@ -46,8 +46,6 @@ function requiredTables(ch, facts) {
   return (ch?.structure?.tables ?? []).filter(t => applies(t, facts));
 }
 
-const DIAGRAM_FENCE = /^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b/mi;
-
 /**
  * 这张必要表在不在 —— **作用域内任意一张满足全部锚列就算**。
  *

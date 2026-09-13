@@ -800,9 +800,10 @@ const DROP_COLUMNS = ['代码现状'];
 //: 附录三节各从 spec §9 的哪几个小节生成。附录的读者要「拿着回查」，
 //: 所以行必须齐——集合核（⑫）盯的就是这里。
 const APPENDIX_FROM_SPEC = [
-  ['接口', [/^###\s*9\.1/], '§9.1'],
-  ['数据、配置与事件', [/^###\s*9\.2/, /^###\s*9\.3/, /^###\s*9\.4/], '§9.2–9.4'],
-  ['改动边界', [/^###\s*9\.5/], '§9.5'],
+  ['接口', [{ at: '§9.1', re: /^###\s*9\.1/ }]],
+  ['数据、配置与事件', [{ at: '§9.2', re: /^###\s*9\.2/ },
+    { at: '§9.3', re: /^###\s*9\.3/ }, { at: '§9.4', re: /^###\s*9\.4/ }]],
+  ['改动边界', [{ at: '§9.5', re: /^###\s*9\.5/ }]],
 ];
 
 /** 某个附录小节该有的表：spec 对应几节就给几张，表头按原顺序带过来（去掉不投的列）。 */
@@ -810,7 +811,7 @@ function appendixTables(spec, name) {
   const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
   if (!spec || !from) return [];
   const out = [];
-  for (const re of from[1]) {
+  for (const { re } of from[1]) {
     for (const t of pipeTables(specSection(spec, re))) {
       const keep = t.header.map((h, i) => [h, i])
         .filter(([h]) => !DROP_COLUMNS.some(d => h.includes(d)));
@@ -2024,7 +2025,7 @@ function appendixProjection(ctx, spec, name) {
 function specNotApplicable(spec, name) {
   const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
   if (!spec || !from) return null;
-  for (const re of from[1]) {
+  for (const { re } of from[1]) {
     const hit = specSection(spec, re).split(/\r?\n/)
       .map(l => l.trim()).find(l => /^不涉及[:：]\s*\S/.test(l));
     if (hit) return hit;
@@ -2197,9 +2198,14 @@ function specGaps(spec) {
   if (!specSection(spec, /术语映射表/).trim()) {
     gaps.push('spec 里定位不到「术语映射表」这一节：术语那一章的起始行从它派生');
   }
-  for (const [name, res, label] of APPENDIX_FROM_SPEC) {
-    if (res.some(re => specSection(spec, re).trim())) continue;
-    gaps.push(`spec 里定位不到 ${label}：附录「${name}」要从它投影`);
+  // **逐节核**：一节投一节的内容，三份输入不能互相替代。用「任意一节有正文」放过，
+  // 只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——而附录那一节正是从这三节投出来的。
+  for (const [name, sources] of APPENDIX_FROM_SPEC) {
+    const missing = sources.filter(src => !specSection(spec, src.re).trim());
+    if (missing.length) {
+      gaps.push(`spec 里定位不到 ${missing.map(src => src.at).join('、')}：`
+        + `附录「${name}」要从它投影`);
+    }
   }
   return gaps;
 }

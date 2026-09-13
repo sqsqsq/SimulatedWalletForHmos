@@ -2385,6 +2385,26 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assertIn("不涉及", out, "没告诉作者「确实不涉及」该怎么写")
         self.assert_wrote_nothing(before)
 
+    def test_each_projection_source_is_required_on_its_own(self) -> None:
+        """附录一节从三份输入投影，三份不能互相替代。
+
+        用「任意一节有正文」放过的话，只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——
+        而附录那一节正是从这三节一起投出来的。
+        """
+        spec = self.feature_root() / "spec" / "spec.md"
+        full = spec.read_text(encoding="utf-8")
+        for section in ("### 9.2 数据存储", "### 9.3 配置项", "### 9.4 埋点"):
+            with self.subTest(section=section):
+                cut = full.index(section)
+                end = full.index("### 9", cut + len(section))
+                spec.write_text(full[:cut] + full[end:], encoding="utf-8")
+                before = self.files_now()
+                code, out = self.skeleton()
+                self.assertEqual(1, code, f"只缺 {section} 却起了手：{out}")
+                self.assertIn(section.split()[1], out, "没说清缺的是哪一节")
+                self.assert_wrote_nothing(before)
+        spec.write_text(full, encoding="utf-8")
+
     def test_an_explicit_not_applicable_section_is_legal(self) -> None:
         """写出来的「不涉及：<依据>」是结论，起手照常——不逼作者补一张空表。"""
         code, out = self.skeleton()
