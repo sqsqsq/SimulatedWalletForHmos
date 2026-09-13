@@ -41,8 +41,9 @@ struct CardPackPage {
           Text($r('app.string.card_pack_title'))
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor($r('app.color.color_text_primary'))
             .layoutWeight(1)
+            .id('cp_page_title')
 
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(22)
@@ -83,6 +84,7 @@ struct CardPackPage {
             top: 12,
             bottom: 12
           })
+          .id('cp_add_card_btn')
           .onClick(() => {
             NavPathContext.stack().pushPath({ name: 'AddCardEntryPage' });
           })

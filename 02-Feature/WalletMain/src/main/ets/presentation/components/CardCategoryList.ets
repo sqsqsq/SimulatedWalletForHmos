@@ -1,10 +1,53 @@
 import { Context } from '@kit.AbilityKit';
+import { Logger, NavPathContext } from '@aspect/CommFunc';
 import { showToast } from '@aspect/CommUI';
 import { CardCategory } from '../../data/model/CardCategory';
+import { BankConstants } from '../../shared/constant/BankConstants';
 
 @Component
 export struct CardCategoryList {
   @Prop categories: CardCategory[] = [];
+  private lastNavAtMs: number = 0;
+
+  /** 卡种行的 element id（device 断言锚点，与 ui-spec 一致） */
+  private elementIdFor(item: CardCategory): string {
+    if (item.id === 'c1') {
+      return 'ac_bank_card_row';
+    }
+    if (item.id === 'c2') {
+      return 'ac_transit_card_row';
+    }
+    if (item.id === 'c3') {
+      return 'ac_access_card_row';
+    }
+    if (item.id === 'c4') {
+      return 'ac_car_key_row';
+    }
+    return 'ac_id_card_row';
+  }
+
+  /** 「银行卡」行进添加银行卡页面；其余卡种维持「暂不支持」提示 */
+  private handleCategoryTap(item: CardCategory): void {
+    if (item.id === 'c1') {
+      // 入栈防重入窗口（BD-3），与 AddBankCardPage.handleViewAllBanks 同构
+      const now: number = Date.now();
+      if (now - this.lastNavAtMs < BankConstants.NAV_DEBOUNCE_MS) {
+        return;
+      }
+      this.lastNavAtMs = now;
+      try {
+        NavPathContext.stack().pushPath({ name: BankConstants.ROUTE_ADD_BANK_CARD });
+      } catch (err) {
+        Logger.error(BankConstants.LOG_TAG, 'push AddBankCardPage failed');
+        // 取栈异常须提示（BD-4）
+        const navCtx = this.getUIContext().getHostContext() as Context;
+        showToast(navCtx.resourceManager.getStringSync($r('app.string.bank_nav_failed').id));
+      }
+      return;
+    }
+    const ctx = this.getUIContext().getHostContext() as Context;
+    showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
+  }
 
   private subtitleResFor(item: CardCategory): Resource {
     if (item.id === 'c1') {
@@ -66,9 +109,9 @@ export struct CardCategoryList {
             top: 14,
             bottom: 14
           })
+          .id(this.elementIdFor(item))
           .onClick(() => {
-            const ctx = this.getUIContext().getHostContext() as Context;
-            showToast(ctx.resourceManager.getStringSync($r('app.string.not_supported').id));
+            this.handleCategoryTap(item);
           })
 
           if (index < this.categories.length - 1) {

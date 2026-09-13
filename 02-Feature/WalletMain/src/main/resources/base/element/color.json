@@ -99,6 +99,50 @@
     {
       "name": "card_stack_access",
       "value": "#F5F5F5"
+    },
+    {
+      "name": "color_page_bg",
+      "value": "#F2F3F5"
+    },
+    {
+      "name": "color_card_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "color_text_primary",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "color_text_secondary",
+      "value": "#606163"
+    },
+    {
+      "name": "color_line_divider",
+      "value": "#CCCCCC"
+    },
+    {
+      "name": "color_icon_chevron",
+      "value": "#CCCCCC"
+    },
+    {
+      "name": "color_nav_btn_bg",
+      "value": "#E7E8EA"
+    },
+    {
+      "name": "color_pill_bg",
+      "value": "#F2F3F5"
+    },
+    {
+      "name": "color_link_blue",
+      "value": "#1F57C8"
+    },
+    {
+      "name": "color_badge_border",
+      "value": "#D87639"
+    },
+    {
+      "name": "color_badge_bg",
+      "value": "#FFFBEF"
     }
   ]
 }

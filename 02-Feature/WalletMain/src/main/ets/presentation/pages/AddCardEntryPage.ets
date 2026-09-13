@@ -21,6 +21,23 @@ struct AddCardEntryPage {
     this.nonLocalCount = await this.cardRepo.getNonLocalCardCount();
   }
 
+  /**
+   * 页面标题改为自绘 @Builder：系统标题栏的 ResourceStr 文本节点无法挂 .id()，
+   * 而 AC-11 / AC-13 的身份断言需要可 by_id 命中的 ac_page_title。文案与位置不变。
+   */
+  @Builder
+  private pageTitleBuilder() {
+    Row() {
+      Text($r('app.string.add_card_title'))
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.color_text_primary'))
+        .id('ac_page_title')
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
   @Builder
   private manageSheetBuilder() {
     ManageNonLocalSheet({
@@ -59,7 +76,7 @@ struct AddCardEntryPage {
           .width('100%')
           .height(48)
           .padding({ left: 16, right: 16 })
-          .id('non_local_cards_entry')
+          .id('ac_non_local_entry')
           .responseRegion({
             x: 0,
             y: 0,
@@ -84,7 +101,7 @@ struct AddCardEntryPage {
         dragBar: true
       })
     }
-    .title($r('app.string.add_card_title'))
+    .title(this.pageTitleBuilder())
     .onBackPressed(() => {
       NavPathContext.stack().pop();
       return true;

@@ -1,5 +1,12 @@
 import { NavPathContext } from '@aspect/CommFunc';
-import { buildAddCardEntryPage, buildCardPackPage, HomeTabPage, MineTabPage } from '@aspect/WalletMain';
+import {
+  buildAddBankCardPage,
+  buildAddCardEntryPage,
+  buildAllBanksPage,
+  buildCardPackPage,
+  HomeTabPage,
+  MineTabPage
+} from '@aspect/WalletMain';
 
 @Entry
 @Component
@@ -17,6 +24,10 @@ struct Index {
       buildCardPackPage();
     } else if (name === 'AddCardEntryPage') {
       buildAddCardEntryPage();
+    } else if (name === 'AddBankCardPage') {
+      buildAddBankCardPage();
+    } else if (name === 'AllBanksPage') {
+      buildAllBanksPage();
     }
   }
 

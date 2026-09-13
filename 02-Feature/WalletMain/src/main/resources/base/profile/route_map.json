@@ -15,6 +15,22 @@
       "data": {
         "description": ""
       }
+    },
+    {
+      "name": "AddBankCardPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "buildFunction": "buildAddBankCardPage",
+      "data": {
+        "description": ""
+      }
+    },
+    {
+      "name": "AllBanksPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AllBanksPage.ets",
+      "buildFunction": "buildAllBanksPage",
+      "data": {
+        "description": ""
+      }
     }
   ]
 }

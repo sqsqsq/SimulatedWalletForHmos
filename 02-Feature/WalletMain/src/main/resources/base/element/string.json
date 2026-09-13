@@ -303,6 +303,46 @@
     {
       "name": "mine_setting_help",
       "value": "帮助和反馈"
+    },
+    {
+      "name": "add_bank_card_title",
+      "value": "添加银行卡"
+    },
+    {
+      "name": "add_bank_card_no_input",
+      "value": "免输卡号添卡"
+    },
+    {
+      "name": "add_bank_card_support_count",
+      "value": "支持 20 家银行"
+    },
+    {
+      "name": "bank_more",
+      "value": "更多"
+    },
+    {
+      "name": "bank_view_all_banks",
+      "value": "查看全部银行"
+    },
+    {
+      "name": "all_banks_title",
+      "value": "全部银行"
+    },
+    {
+      "name": "bank_badge_first_bind",
+      "value": "首绑送12元券包"
+    },
+    {
+      "name": "bank_list_empty",
+      "value": "暂无可添加的银行"
+    },
+    {
+      "name": "bank_list_load_failed",
+      "value": "银行列表加载失败，请稍后重试"
+    },
+    {
+      "name": "bank_nav_failed",
+      "value": "页面跳转失败，请重试"
     }
   ]
 }
