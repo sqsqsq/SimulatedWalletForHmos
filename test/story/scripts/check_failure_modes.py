@@ -687,8 +687,19 @@ def m05_crlf_unsafe_split(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def m06_silent_empty_derivation(root: Path, ctx: Ctx) -> Outcome:
-    """知识派生模块在派生为空时必须出声（throw），不得返回空集蒙混。"""
-    targets = [p for p in iter_files(root, (".mjs",), ()) if "knowledge" in p.name]
+    """知识派生模块在派生为空时必须出声（throw），不得返回空集蒙混。
+
+    **认的是「谁把激活清单变成派生值」**，不是文件名：派生实现拆进 `knowledge-use/`
+    之后，只认文件名会漏掉真正派生的那几个模块，而门禁照样报通过；而按目录一刀切
+    又会把渲染与校验也算进来——它们返回空列表是「没问题」，不是「没派生出来」。
+
+    命令入口不在此列：它的出声方式是非零退出码，不是 throw。
+    """
+    derives = re.compile(r"knowledgeFiles|activeKnowledge|parseManifest")
+    targets = [p for p in iter_files(root, (".mjs",), ())
+               if "knowledge" in p.name or "knowledge" in p.parent.name]
+    targets = [p for p in targets
+               if derives.search(read_text(p)) and "process.argv[1]" not in read_text(p)]
     if not targets:
         return Outcome(True, "无知识派生模块（不适用）")
     for path in targets:

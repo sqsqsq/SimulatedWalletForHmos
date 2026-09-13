@@ -99,7 +99,8 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 numbe
   并且重跑之后 verifier 也要再来一次：那时换代是真的（材料变了），不是自己写盘写出来的。
   **回执不用你填**：它是 harness 的只读投影（`receipt_schema` 2.1），`check-receipt`
   自己先生成再校验；要写备注写 `<phase>/notes.md`。
-  **`check --deliver` 是交付门**：它把回执再跑一次，通过之后核读者审查那一项写没写成形态。
+  **`check --deliver` 是交付门**：它把回执再跑一次，通过之后核读者审查那一项的**实际结论**——
+  判的不是 PASS 就不交付，本宿主没登记审查员时如实记一笔「未经读者语义审查即交付」。
   远程单在上传之前跑它（`/story archive` 自带），本地单没有归档，它就是最后一道。
 - **verifier 报了阻断问题怎么办**：`story_flow.py reopen` 撤销成文登记（唯一的回退出口）
   → `story-build skeleton`（草稿一直在，登记也不删它；这一步只补缺席的那几章，

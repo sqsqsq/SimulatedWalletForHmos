@@ -114,7 +114,8 @@ class PlanPatternCrossCheck(unittest.TestCase):
         return out
 
     def node_eval(self, root: Path, expr: str) -> str:
-        module = (root / "doc/extensions/hooks/shared/knowledge-use.mjs").resolve().as_uri()
+        module = (root / "doc/extensions/hooks/shared/knowledge-use/document.mjs"
+                  ).resolve().as_uri()
         km = (root / "doc/extensions/hooks/shared/knowledge.mjs").resolve().as_uri()
         proc = subprocess.run(
             ["node", "--input-type=module", "-e",

@@ -628,7 +628,7 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
 
         shared = self.root / "doc" / "extensions" / "hooks" / "shared"
         proc = run("node", "--input-type=module", "-e",
-                   f"const u = await import({as_url(shared / 'knowledge-use.mjs')});"
+                   f"const u = await import({as_url(shared / 'knowledge-use/document.mjs')});"
                    f"process.stdout.write(u.manifestDigest({json.dumps(self.root.as_posix())}));",
                    cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)

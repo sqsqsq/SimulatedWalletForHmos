@@ -25,7 +25,7 @@ import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, VERIFY_KINDS }
   from '../shared/obligations.mjs';
-import { readUse, UseError } from '../shared/knowledge-use.mjs';
+import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readContracts } from '../shared/contracts.mjs';
 

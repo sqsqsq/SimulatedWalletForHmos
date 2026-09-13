@@ -145,7 +145,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
 
     def eval_js(self, expr: str) -> str:
         proc = node("--input-type=module", "-e",
-                    f"const u = await import({as_url(self.module('knowledge-use.mjs'))});"
+                    f"const u = await import({as_url(self.module('knowledge-use/document.mjs'))});"
                     f"const k = await import({as_url(self.module('knowledge.mjs'))});"
                     f"const root = {json.dumps(self.root.as_posix())};"
                     f"process.stdout.write(String({expr}));")

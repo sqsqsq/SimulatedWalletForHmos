@@ -79,7 +79,7 @@ class KnowledgeUseCase(unittest.TestCase):
 
     def digest(self) -> str:
         proc = node("-e", f"""
-            import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge-use.mjs')})
+            import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge-use/document.mjs')})
               .then(m => process.stdout.write(m.manifestDigest({json.dumps(self.root.as_posix())})));
         """)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -277,14 +277,15 @@ class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
         proc = node("-e", f"""
             const root = {json.dumps(self.root.as_posix())};
             Promise.all([
-              import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge-use.mjs')}),
+              import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge-use/document.mjs')}),
               import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge.mjs')}),
-            ]).then(([u, k]) => {{
+              import({as_url(self.root / 'doc/extensions/hooks/shared/knowledge-use/projection.mjs')}),
+            ]).then(([d, k, pr]) => {{
               const kn = k.activeKnowledge(root);
-              const use = u.readUse(root, {json.dumps(FEATURE)});
+              const use = d.readUse(root, {json.dumps(FEATURE)});
               const text = require('fs').readFileSync({json.dumps(self.spec_path.as_posix())}, 'utf-8');
               process.stdout.write(JSON.stringify(
-                u.zoneProblems(root, text, u.renderZones(kn, use))));
+                pr.zoneProblems(root, text, pr.renderZones(kn, use))));
             }});
         """)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -455,6 +456,58 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
             "    impact: 签约页与管理页的布局参数"))
         zone = self.render_ok().split("规约约束要求", 1)[1]
         self.assertIn("影响 · 签约页与管理页的布局参数", zone)
+
+
+class TheEntryIsOnlyACommand(unittest.TestCase):
+    """判断的读取、验证与投影各在所属模块，入口只剩两条命令。
+
+    入口若顺手把库 API 再导出一遍，调用方就有两条路径引到同一个函数——改归属时
+    只有一条被改到，另一条静默还在。所以这里按「入口导出了什么」判，不按目录长相判。
+    """
+
+    KU = EXT / "hooks" / "shared" / "knowledge-use"
+
+    def exports_of(self, module: Path) -> list[str]:
+        proc = node("--input-type=module", "-e",
+                    f"const m = await import({as_url(module)});"
+                    "process.stdout.write(Object.keys(m).sort().join(','));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return [n for n in proc.stdout.strip().split(",") if n]
+
+    def test_the_entry_exports_nothing(self) -> None:
+        self.assertEqual([], self.exports_of(MODULE),
+                         "入口又把库 API 转发了一遍——调用方会有两条路引到同一个函数")
+
+    def test_importing_the_entry_runs_no_command(self) -> None:
+        """被 import 时不许跑命令：写盘发生在「谁也没调它」的时候最难查。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            proc = node("--input-type=module", "-e",
+                        f"await import({as_url(MODULE)});"
+                        "process.stdout.write('done');", cwd=work)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            self.assertEqual("done", proc.stdout.strip(), "import 期还输出了别的")
+            self.assertEqual([], sorted(p.name for p in work.iterdir()),
+                             "import 期写了盘")
+
+    def test_each_module_owns_its_own_question(self) -> None:
+        """三个模块各答一问，导出集合就是它们的分界。"""
+        self.assertIn("readUse", self.exports_of(self.KU / "document.mjs"))
+        self.assertIn("coverageProblems", self.exports_of(self.KU / "validation.mjs"))
+        for name in ("renderZones", "zoneProblems", "applyZones"):
+            self.assertIn(name, self.exports_of(self.KU / "projection.mjs"))
+        self.assertNotIn("coverageProblems", self.exports_of(self.KU / "document.mjs"),
+                         "真源模块里还留着一份验证")
+
+    def test_the_dependency_runs_one_way(self) -> None:
+        """验证与投影都读 document 的规范化结果，document 不反过来依赖它们。"""
+        doc = (self.KU / "document.mjs").read_text(encoding="utf-8")
+        for sibling in ("validation.mjs", "projection.mjs"):
+            self.assertNotIn(sibling, doc, f"document 反向依赖了 {sibling}")
+        for name in ("validation.mjs", "projection.mjs"):
+            body = (self.KU / name).read_text(encoding="utf-8")
+            self.assertIn("from './document.mjs'", body,
+                          f"{name} 没用 document 的规范化结果，自己又读了一遍")
 
 
 if __name__ == "__main__":

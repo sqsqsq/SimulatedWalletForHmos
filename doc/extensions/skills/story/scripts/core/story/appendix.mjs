@@ -13,7 +13,7 @@ import {
   zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, readJson, readText, specText } from './context.mjs';
-import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use.mjs';
+import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';

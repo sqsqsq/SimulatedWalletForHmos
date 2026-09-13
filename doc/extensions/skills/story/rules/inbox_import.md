@@ -82,8 +82,7 @@ python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需
 判为界面设计图的**再多一步当场登记**，一张一条命令：
 
 ```
-python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名> \
-  --register-ux assets/<源文档名>/<图> --name <语义名> --caption "<这张图是什么>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --register-ux assets/<源文档名>/<图> --name <语义名> --caption "<这张图是什么>"
 ```
 
 你给两样：**语义名**（文件名是视觉链路的匹配键，`image1.png` 没有匹配价值）与**一句说明**。

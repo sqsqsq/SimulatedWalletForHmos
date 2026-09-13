@@ -188,7 +188,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 - **archive 不修改工作区任何文件**，可以放心执行
 
 ```bash
-node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门：回执 + 读者审查形态
+node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门：框架回执 + 读者审查的实际结论
 node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ② 上传
 python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记
 ```

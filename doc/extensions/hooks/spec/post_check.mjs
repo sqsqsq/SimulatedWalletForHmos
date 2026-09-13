@@ -25,9 +25,9 @@ import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
-import {
-  coverageProblems, readUse, renderZones, UseError, zoneProblems,
-} from '../shared/knowledge-use.mjs';
+import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
+import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
+import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, relDisplay } from '../shared/paths.mjs';
 
