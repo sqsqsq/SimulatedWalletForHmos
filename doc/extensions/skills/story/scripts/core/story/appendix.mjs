@@ -306,6 +306,14 @@ export function projectAppendix(ctx, storyText) {
   const span = chapterSpan(storyText, appendix.title);
   if (!span) return { text: storyText, zones: 0 };
   const spec = specText(ctx);
+  // **输入不成立就一个字节都不写**：投影会按「这一节现在没内容」把旧机器区删掉，
+  // 而真源缺的是一整节——删完盘上看起来合法，读者与评审者都看不出少了什么。
+  // 与只读侧同一份结论（`appendixSourceProblems`），不各判一次。
+  const badSource = appendixSourceProblems(ctx, spec);
+  if (badSource.length) {
+    fail(`附录的机器区投不出来，${path.basename(ctx.storyPath)} 未改动：\n`
+      + badSource.map((b, k) => `  ${k + 1}. ${b}`).join('\n'));
+  }
   const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
   let lines = storyText.slice(span.start, span.end).split(/\r?\n/);
   let zones = 0;
@@ -399,6 +407,50 @@ function verdictSkeleton(ctx) {
 }
 
 /**
+/**
+ * 投影输入还成不成立 —— **写入侧与只读侧同一份结论**。
+ *
+ * 从前只问「spec 读不到吗」：文件在、而必需那一节被删掉或清空时，投影出来是空数组，
+ * 只读侧于是按「没有期望也没有机器区」放行——文档有字不等于技术契约已明确不涉及。
+ * 这与「缺节不是不涉及」是同一条：**「不涉及」要写出来**，写出来才是结论。
+ *
+ * 起手预检（`skeleton`）用的就是 `specGaps` 那一份逐节要求，这里复用它，不另立清单。
+ *
+ * @returns {string[]} 空表示输入成立；非空时投影不该被当成「期望为空」
+ */
+function appendixSourceProblems(ctx, spec) {
+  if (ctx.offline) return [];              // 仲裁锚没有需求目录，这一层不判
+  const appendix = appendixChapter(ctx.contract);
+  const wanted = new Set((appendix?.subsections ?? []).map(normalizeHeading));
+  const fromSpec = APPENDIX_FROM_SPEC.some(([n]) => wanted.has(normalizeHeading(n)));
+  if (!fromSpec) return [];
+  if (spec === null) {
+    return ['读不到 spec/spec.md，附录 A–C 的机器区无从投影也无从核对'
+      + '——它们是 spec §9 的投影，先让 spec 可读'];
+  }
+  // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
+  return appendixSpecGaps(spec).map(g => `${g}；`
+    + '这件事确实不涉及，就在那一节里写「不涉及：<依据>」一行，写出来的结论评审者读得到');
+}
+
+/**
+ * 附录 A–C 各自要的 spec 小节在不在 —— 起手预检与只读核对共用这一份。
+ *
+ * **逐节核**：一节投一节的内容，三份输入不能互相替代。用「任意一节有正文」放过，
+ * 只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——而附录那一节正是从这三节投出来的。
+ */
+function appendixSpecGaps(spec) {
+  const gaps = [];
+  for (const [name, sources] of APPENDIX_FROM_SPEC) {
+    const missing = sources.filter(src => !specSection(spec, src.re).trim());
+    if (missing.length) {
+      gaps.push(`spec 里定位不到 ${missing.map(src => src.at).join('、')}：`
+        + `附录「${name}」要从它投影`);
+    }
+  }
+  return gaps;
+}
+/**
  * 本步要消费的 Spec 章节在不在 —— **起手的必需输入**，缺了回 Spec。
  *
  * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 §9 的那几节投
@@ -416,16 +468,9 @@ export function specGaps(spec) {
   if (!specSection(spec, /术语映射表/).trim()) {
     gaps.push('spec 里定位不到「术语映射表」这一节：术语那一章的起始行从它派生');
   }
-  // **逐节核**：一节投一节的内容，三份输入不能互相替代。用「任意一节有正文」放过，
-  // 只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——而附录那一节正是从这三节投出来的。
-  for (const [name, sources] of APPENDIX_FROM_SPEC) {
-    const missing = sources.filter(src => !specSection(spec, src.re).trim());
-    if (missing.length) {
-      gaps.push(`spec 里定位不到 ${missing.map(src => src.at).join('、')}：`
-        + `附录「${name}」要从它投影`);
-    }
-  }
-  return gaps;
+  // 附录那几节的要求与只读核对共用一份（`appendixSpecGaps`）：起手放过而交付前才报，
+  // 或者反过来，作者都只能在两条路之间猜。
+  return gaps.concat(appendixSpecGaps(spec));
 }
 
 /** 附录结构：只有合同约定的那几节，节内是表和列表，每节都有内容，不放图不放围栏。 */
@@ -518,17 +563,18 @@ export function appendixZoneProblems(ctx, storyText) {
   if (!span) return problems;              // 附录章缺失由 ① 报，这里不重复
   const lines = storyText.slice(span.start, span.end).split(/\r?\n/);
   const spec = specText(ctx);
-  const fromSpec = new Set(APPENDIX_FROM_SPEC.map(([n]) => normalizeHeading(n)));
-  const wantSpec = (appendix.subsections ?? []).some(n => fromSpec.has(normalizeHeading(n)));
-  if (spec === null && wantSpec) {
-    // **读不到必需的 spec 不等于「期望是空的」**：那会让缺一整节的附录静默通过。
-    problems.push('读不到 spec/spec.md，附录 A–C 的机器区无从核对'
-      + '——它们是 spec §9 的投影，先让 spec 可读再核附录');
+  // **投影输入不成立时不往下比**：那时「期望是空的」与「真源缺了一节」同形，
+  // 按空期望放行会让缺一整节的附录静默通过。写入侧拒绝的也是这同一份结论。
+  const badSource = appendixSourceProblems(ctx, spec);
+  if (badSource.length) {
+    problems.push(...badSource);
     return problems;
   }
   const onDisk = zonesOnDisk(lines, problems, appendix.title);
   const materialName = normalizeHeading(materialSubsectionName(ctx.contract) ?? '');
+  const checked = new Set();
   for (const name of appendix.subsections ?? []) {
+    checked.add(name);
     if (normalizeHeading(name) === materialName) continue;   // 材料清单归作者
     const [source, want] = appendixProjection(ctx, spec, name);
     const at = onDisk.get(name);
@@ -568,6 +614,16 @@ export function appendixZoneProblems(ctx, storyText) {
       + `${diff.want === null ? '' : `${source}投出来是「${cut(diff.want)}」`}`
       + '——要改结论就改真源再跑 `story-build project`；机器区里手改的东西下一次投影会被打回');
   }
+  // **集合两向都核**：上面走的是合同要的那几节；盘上多出来的名字在这里报。
+  // 合同里没有它，就没有真源与它比——既不受投影约束，也不是作者说明，
+  // 它会长期冒充现行投影。材料清单归作者，那一节本来就不该有机器区。
+  for (const name of onDisk.keys()) {
+    if (checked.has(name)) continue;
+    problems.push(`「${appendix.title}」里有一段机器区「${name}」，而${appendix.title}的`
+      + `约定小节里没有它（${(appendix.subsections ?? []).join('、')}）`
+      + '——它没有真源可比，只会一直冒充现行投影；'
+      + '要留这段内容就把它移到作者区（机器标记之外），否则连首尾标记一起删掉');
+  }
   return problems;
 }
 
@@ -575,30 +631,55 @@ export function appendixZoneProblems(ctx, storyText) {
 const cut = (s) => (String(s).length > 60 ? `${String(s).slice(0, 60)}…` : String(s));
 
 /**
- * 盘上有哪几段机器区 —— 缺结束标记与同名两段都当场报出来。
+ * 盘上有哪几段机器区 —— **一遍扫完，标记的归属只有一种解释**。
  *
- * 坏标记不是「没有机器区」：那会让一段被人改过的投影区看起来像还没投过，
- * 下一次 `project` 直接在它后面再写一段。
+ * 每个结束标记只属于**当前那个**起始标记：两个起始标记都去找后面同一个结束行的话，
+ * 同一段内容会被算给两个区，而其中一个区的边界是编出来的。
+ *
+ * 四种坏形态都要报，它们都不是「普通作者文字」：
+ *
+ * - **缺结束标记**：那两行是投影的定位点，缺一行整段就认不出来，下一次 `project`
+ *   会在它后面再写一段；
+ * - **孤立的结束标记**：前面没有起始，它指不到任何一段；
+ * - **嵌套**：起始还没关上又来一个起始——里层那段永远不会被当成一个区；
+ * - **重名**：投影只认第一段，第二段会一直挂着冒充现状。
+ *
+ * @returns {Map<string, {start:number, end:number}>} 认得出来的区；坏的进 problems
  */
 function zonesOnDisk(lines, problems, chapterTitle) {
   const out = new Map();
+  let open = null;                       // {name, start}
   lines.forEach((line, i) => {
-    if (!line.startsWith(ZONE_BEGIN)) return;
-    const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
-    const end = lines.findIndex((l, k) => k > i && l.trim() === ZONE_END);
-    if (end < 0) {
-      problems.push(`「${chapterTitle}·${name}」的机器区只有起始标记，没有结束标记`
-        + '——那两行是投影的定位点，缺一行整段就认不出来了；'
-        + '把这一段（含首尾标记）删掉再跑 `story-build project`');
+    if (line.startsWith(ZONE_BEGIN)) {
+      const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
+      if (open) {
+        problems.push(`「${chapterTitle}」第 ${i + 1} 行又开了一个机器区（${name}），`
+          + `而第 ${open.start + 1} 行那个（${open.name}）还没关上`
+          + '——里层这一段永远不会被当成一个区；把它们（含首尾标记）删掉再跑 `story-build project`');
+        return;
+      }
+      open = { name, start: i };
       return;
     }
-    if (out.has(name)) {
-      problems.push(`「${chapterTitle}·${name}」在盘上有两段机器区`
+    if (line.trim() !== ZONE_END) return;
+    if (!open) {
+      problems.push(`「${chapterTitle}」第 ${i + 1} 行是个孤立的结束标记，前面没有起始标记`
+        + '——它指不到任何一段投影；删掉它再跑 `story-build project`');
+      return;
+    }
+    if (out.has(open.name)) {
+      problems.push(`「${chapterTitle}·${open.name}」在盘上有两段机器区`
         + '——投影只认第一段，第二段会一直挂在那里冒充现状；删掉多的那一段再跑 project');
-      return;
+    } else {
+      out.set(open.name, { start: open.start, end: i + 1 });
     }
-    out.set(name, { start: i, end: end + 1 });
+    open = null;
   });
+  if (open) {
+    problems.push(`「${chapterTitle}·${open.name}」的机器区只有起始标记，没有结束标记`
+      + '——那两行是投影的定位点，缺一行整段就认不出来了；'
+      + '把这一段（含首尾标记）删掉再跑 `story-build project`');
+  }
   return out;
 }
 

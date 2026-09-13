@@ -493,6 +493,42 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.rewrite(lines[:end + 1] + lines[at:end + 1] + lines[end + 1:])
         self.expect_caught("两段机器区")
 
+    def test_a_deleted_required_spec_section_is_not_an_empty_expectation(self) -> None:
+        """只删 spec §9.1 与对应的机器区，作者区留一句说明——旧判据返回 0。
+
+        「没有这一节」与「这件事不涉及」不是一回事：后者是写出来的结论，评审者读得到。
+        """
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        start = text.index("### 9.1")
+        end = text.index("### 9.2")
+        spec.write_text(text[:start] + text[end:], encoding="utf-8")
+        at, endline, lines = self.zone_lines("接口")
+        lines[at:endline + 1] = ["这一节的接口约定见业务方案章。"]
+        self.rewrite(lines)
+        self.expect_caught("§9.1")
+
+    def test_an_unknown_machine_zone_is_not_author_text(self) -> None:
+        """合同里没有这个名字的机器区：它没有真源可比，会一直冒充现行投影。"""
+        at, endline, lines = self.zone_lines("改动边界")
+        extra = ["<!-- story-build:begin obsolete · 由某处生成，改它请改真源 -->",
+                 "| 旧 | 行 |", "|---|---|", "| 1 | 2 |", "<!-- story-build:end -->"]
+        self.rewrite(lines[:endline + 1] + [""] + extra + lines[endline + 1:])
+        self.expect_caught("obsolete")
+
+    def test_an_orphan_end_marker_is_caught(self) -> None:
+        at, endline, lines = self.zone_lines("改动边界")
+        self.rewrite(lines[:endline + 1] + ["", "<!-- story-build:end -->"]
+                     + lines[endline + 1:])
+        self.expect_caught("孤立")
+
+    def test_a_nested_begin_marker_is_caught(self) -> None:
+        """一个结束只配一个开始：两个开始都去认后面同一行，其中一段的边界是编的。"""
+        at, endline, lines = self.zone_lines("改动边界")
+        inner = "<!-- story-build:begin 接口 · 由上游登记的技术契约生成，改它请改真源 -->"
+        self.rewrite(lines[:at + 1] + [inner] + lines[at + 1:])
+        self.expect_caught("还没关上")
+
     def test_a_changed_source_is_caught(self) -> None:
         """真源变了而机器区没跟着变——报的是区与它的责任真源，不是让作者改机器区。"""
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
@@ -2037,16 +2073,24 @@ class RealRunCase(unittest.TestCase):
         self.story_path = self.feature / "AR" / "story.md"
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
-    def build(self, *args: str) -> subprocess.CompletedProcess:
+    def build_raw(self, *args: str) -> subprocess.CompletedProcess:
+        """跑一条命令，**不断言成功**——要核「它该拒绝」的用例用这一个。"""
         if "skeleton" in args:
             ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src",
                               DRAFT_TEXT)
-        proc = subprocess.run(
+        return subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def build(self, *args: str) -> subprocess.CompletedProcess:
+        proc = self.build_raw(*args)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return proc
+
+    def check_output(self) -> tuple[int, str]:
+        proc = self.build_raw("check")
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
     def draft(self, name: str) -> Path:
         return self.drafts / name
@@ -2608,18 +2652,30 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertIn("本需求不新增任何工程资源", story, "域级依据没投出来")
         self.assertNotIn("| RES-01 |", story, "整域不适用时域内条目不该再逐条出现")
 
-    def test_a_source_gone_empty_takes_the_old_zone_with_it(self) -> None:
-        """spec 那一节被删空：旧区要删，不能留着上一版冒充现状。"""
+    def test_an_emptied_required_section_stops_the_projection(self) -> None:
+        """必需小节被删空：**不是「不涉及」**，投影拒绝且 Story 不变。
+
+        文档有字不等于技术契约已明确不涉及。按空期望放行的话，`project` 会把旧机器区
+        当成「真源没内容了」删掉——删完盘上看起来合法，而少了一整节没人看得出来。
+        要说不涉及就在那一节写「不涉及：<依据>」一行，那是写出来的结论（见下一条）。
+        """
         story = self.landed_appendix()
         self.assertIn("story-build:begin 接口", story)
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
         start = text.index("### 9.1")
         end = text.index("### 9.2")
-        spec.write_text(text[:start] + "### 9.1 端云接口\r\n\r\n" + text[end:], encoding="utf-8")
-        self.build("project")
-        self.assertNotIn("story-build:begin 接口", self.story(),
-                         "真源空了，旧机器区还挂着")
+        spec.write_text(text[:start] + "### 9.1 端云接口\r\n\r\n" + text[end:],
+                        encoding="utf-8")
+        before = self.story_path.read_bytes()
+        proc = self.build_raw("project")
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn("§9.1", out)
+        self.assertEqual(before, self.story_path.read_bytes(), "拒绝了却已经写盘")
+        code, cout = self.check_output()
+        self.assertEqual(1, code, cout)
+        self.assertIn("§9.1", cout, "只读检查要给同一个结论")
 
     def test_a_not_applicable_line_reaches_the_appendix(self) -> None:
         """§9.5 写「不涉及：…」也是结论——丢了它，story 相对 spec 就减了一条。"""
