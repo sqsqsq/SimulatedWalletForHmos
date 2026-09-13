@@ -440,6 +440,39 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.write_acceptance("criteria:\n - id: x\n  bad: [\n")
         self.assertIn("解析失败", self.ut_message())
 
+    def test_a_section_that_is_not_a_list_is_named(self) -> None:
+        """集合写成一句话：读不出结构就核不了，报明是哪个集合，不当空集合放行。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance("criteria: 还没写\n")
+        message = self.ut_message()
+        self.assertIn("不是列表", message)
+        self.assertIn("criteria", message)
+
+    def test_a_bare_value_row_is_named(self) -> None:
+        """条目写成裸值：桥不到知识条目，要点名是第几条。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(
+            "criteria:\n"
+            "  - id: AC-1\n    knowledge_rule: NEU-01\n"
+            "  - 只写了一句话\n")
+        message = self.ut_message()
+        self.assertIn("不是键值对象", message)
+        self.assertIn("第 2 条", message)
+
+    def test_an_empty_rule_is_named(self) -> None:
+        """`knowledge_rule:` 留空与「没写这个字段」不是一回事：后者是普通业务验收。"""
+        self.write_use()
+        self.assertEqual(0, self.render().returncode)
+        self.write_acceptance(
+            "criteria:\n"
+            "  - id: AC-1\n    knowledge_rule: NEU-01\n"
+            '  - id: AC-2\n    knowledge_rule: ""\n')
+        message = self.ut_message()
+        self.assertIn("不是一个编号", message)
+        self.assertIn("AC-2", message)
+
     def test_boundaries_count_for_ut_but_not_for_spec(self) -> None:
         """UT 桥 criteria+boundaries 两个集合；spec 只认 criteria。
 

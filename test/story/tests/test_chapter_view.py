@@ -251,8 +251,6 @@ class SameNameSectionsKeepTheirOwnTables(ViewCase):
                          self.section(text, "交付物与接收方")["tables"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class OnlyACleanMarkerLineCloses(ViewCase):
@@ -305,3 +303,7 @@ class OnlyACleanMarkerLineCloses(ViewCase):
                     "`" * 4, "", "### 真的节",
                 ]))
                 self.assertEqual(["真的节"], v["sections"], f"「{closer}」关上了不该关的围栏")
+
+
+if __name__ == "__main__":
+    unittest.main()

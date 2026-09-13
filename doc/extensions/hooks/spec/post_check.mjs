@@ -28,7 +28,7 @@ import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import {
   coverageProblems, readUse, renderZones, UseError, zoneProblems,
 } from '../shared/knowledge-use.mjs';
-import { acceptanceEntries, readAcceptance } from '../shared/contracts.mjs';
+import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, relDisplay } from '../shared/paths.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -253,10 +253,9 @@ function acceptanceCoverage(ctx, specIds) {
   // 它分不清编号写在哪一层，也认不出「一条 criteria 写了一串编号」这种形态——
   // 那形态下游分派不了，而作者会以为自己已经桥接过了。
   // Spec 只桥 criteria：boundaries 是边界场景，出现就代替不了 criteria 的桥。
-  const { entries, problems: shape } = acceptanceEntries(acceptance, ['criteria']);
+  const { byRule, problems: shape } = knowledgeCriteria(acceptance, ['criteria']);
   problems.push(...shape);
-  const accIds = new Set(
-    entries.map(e => String(e.criterion.knowledge_rule).trim()));
+  const accIds = new Set(byRule.keys());
   if (accIds.size || specIds.size) {
     const missing = [...specIds].filter(id => !accIds.has(id));
     if (missing.length) {
