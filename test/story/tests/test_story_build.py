@@ -1384,6 +1384,196 @@ def minimal_body(title: str, text: str) -> str:
     return "\n".join(rows) + "\n"
 
 
+class AWriteThatLandedIsNeverReportedAsFailed(unittest.TestCase):
+    """落盘成立之后，接续算不出来也不冒充写入失败。
+
+    说失败他会把这一章重写一遍，而盘上已经是新的了——重写的那一份会盖掉刚落盘的，
+    或者他先去「修」一个根本没坏的东西。**故障注入在副本树上做**：
+    把接续那一步换成抛异常，写入那一步一个字没改。
+    """
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        (self.root / "doc").mkdir(parents=True)
+        self.mech = self.root / "doc" / "extensions"
+        shutil.copytree(REPO_ROOT / "doc" / "extensions", self.mech)
+        self.feature_root = self.root / "doc" / "features" / FEATURE
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True)
+        self.story_path = self.feature_root / "AR" / "story.md"
+        titles = [c["title"] for c in json.loads(
+            (REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json")
+            .read_text(encoding="utf-8"))["chapters"]]
+        rows = ["# " + FEATURE + " 夹具", ""]
+        for t in titles:
+            rows += ["## " + t, "", "<!-- 待写：" + t + " -->", ""]
+        self.story_path.write_text("\n".join(rows), encoding="utf-8")
+        self.build = self.mech / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+
+    def break_next_steps(self) -> None:
+        f = self.mech / "skills" / "story" / "scripts" / "core" / "story" / "chapter.mjs"
+        text = f.read_text(encoding="utf-8")
+        hit = "export function nextSteps(ctx, storyText, result, warnings = []) {"
+        self.assertIn(hit, text, "接续函数的签名变了，故障注入点要跟着改")
+        f.write_text(text.replace(
+            hit, hit + "\n  throw new Error('夹具注入：接续算不出来');", 1), encoding="utf-8")
+
+    def submit(self, title: str, body: str) -> subprocess.CompletedProcess:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(self.build), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", title, "--from", str(src)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def test_the_write_stands_and_the_recovery_command_is_given(self) -> None:
+        self.break_next_steps()
+        proc = self.submit("背景", "本章正文。\n")
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertEqual(0, proc.returncode, "写入成立却按失败退出——他会把这一章重写一遍：" + out)
+        self.assertIn("本章正文。", self.story_path.read_text(encoding="utf-8"),
+                      "说已落盘，盘上却没有")
+        self.assertIn("已落盘", out)
+        self.assertIn("不要重交", out)
+        self.assertIn("skeleton", out, "没给取回定位的命令")
+
+    def test_a_real_write_failure_still_fails(self) -> None:
+        """只兜住写入之后那一段；写入本身失败仍然失败。"""
+        self.story_path.unlink()
+        self.story_path.mkdir()           # 落点变成目录：写入必然失败
+        proc = self.submit("背景", "本章正文。\n")
+        self.assertNotEqual(0, proc.returncode, "写不进去却报成功")
+
+class ABrokenIdShapeIsObservable(unittest.TestCase):
+    """合同里写错一条形态正则：从前每个消费处各 catch 掉就跳过——那一条静默不判，
+    而门禁全绿。编译放一处，坏配置报给人看。
+
+    跑的是**副本树**里的入口：机制自己按相对位置找合同，副本跑起来与正本同一条路径。
+    """
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.mech = Path(self._tmp.name) / "doc" / "extensions"
+        shutil.copytree(REPO_ROOT / "doc" / "extensions", self.mech)
+        self.contract = (self.mech / "skills" / "story" / "contracts"
+                         / "story-chapters.json")
+        self.build = (self.mech / "skills" / "story" / "scripts" / "core"
+                      / "story-build.mjs")
+        self.story = REPO_ROOT / "test" / "story" / "golden" / "story-金样-AR90004.md"
+
+    def check(self) -> str:
+        proc = subprocess.run(
+            ["node", str(self.build), "check", "--offline", "--story", str(self.story)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        return (proc.stderr or "") + (proc.stdout or "")
+
+    def test_a_good_contract_says_nothing_about_id_shapes(self) -> None:
+        self.assertNotIn("id_shapes", self.check())
+
+    def test_a_bad_drop_shape_is_named(self) -> None:
+        data = json.loads(self.contract.read_text(encoding="utf-8"))
+        data["id_shapes"]["drop"] = data["id_shapes"]["drop"] + ["S(\\d+"]
+        self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        out = self.check()
+        self.assertIn("id_shapes.drop", out, "坏配置静默吞掉了")
+
+    def test_a_bad_keep_shape_is_named(self) -> None:
+        data = json.loads(self.contract.read_text(encoding="utf-8"))
+        data["id_shapes"]["keep"] = data["id_shapes"]["keep"] + ["AC-[0-9"]
+        self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertIn("id_shapes.keep", self.check(), "坏配置静默吞掉了")
+
+
+class TheCandidateKeepsWhatIsNotOurs(Step8Case):
+    """清洗只剥草稿生产者自己写的那几行，别的原样留着。
+
+    从前是「像注释就删」：作者自己的备注、围栏里的注释示例、来源标记都会在落盘那一刻
+    静默消失，而他不知道——下一次他只会再写一遍。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink()
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+
+    def put(self, title: str, body: str) -> subprocess.CompletedProcess:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(BUILD), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", title, "--from", str(src)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def test_only_the_generators_own_guide_lines_are_stripped(self) -> None:
+        body = ("<!-- story-draft:guide 读者问题：这一章要回答什么 -->\n\n"
+                "本章正文。\n\n"
+                "<!-- 作者自己的备注：这段等确认后再改 -->\n\n"
+                "```markdown\n<!-- story-draft:guide 举例：长这样 -->\n```\n")
+        proc = self.put("背景", body)
+        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertNotIn("读者问题：这一章要回答什么", story, "自有指导没剥掉")
+        self.assertIn("作者自己的备注", story, "作者写的注释被当成指导删掉了")
+        self.assertIn("举例：长这样", story, "围栏里的样例被按指导清洗了")
+
+
+class TheBytesOutsideTheChapterAreBytes(Step8Case):
+    """「其余章一个字节未动」按**字节**核，不按读出来的文本核。
+
+    读取时剥掉 BOM 对「读一份文档来判」是对的，对「按区间把原文拼回去」是错的：
+    读进来少一个字节，写回去就少一个字节，而这句声明随之不成立。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink()
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+
+    def put(self, title: str, body: str) -> subprocess.CompletedProcess:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(BUILD), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", title, "--from", str(src)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def rewrite_as(self, text: str) -> None:
+        self.story_path.write_bytes(text.encode("utf-8"))
+
+    def test_a_bom_and_crlf_story_keeps_every_byte_outside_the_target(self) -> None:
+        plain = self.story_path.read_text(encoding="utf-8")
+        self.rewrite_as("\ufeff" + plain.replace("\n", "\r\n"))
+        before = self.story_path.read_bytes()
+        title = "背景"
+        start = before.index(("## " + title).encode("utf-8"))
+        end = before.index(b"\r\n## ", start) + 2
+        proc = self.put(title, "本章正文。\n")
+        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
+        after = self.story_path.read_bytes()
+        self.assertEqual(before[:start], after[:start],
+                         "目标章之前的字节变了（BOM 很可能没了）")
+        self.assertEqual(before[end:], after[len(after) - len(before[end:]):],
+                         "目标章之后的字节变了（CRLF 很可能被改写了）")
+        self.assertTrue(after.startswith(b"\xef\xbb\xbf"), "BOM 没了")
+
+    def test_the_appendix_keeps_the_bytes_outside_it_too(self) -> None:
+        """附录那一章落盘时还要投影机器区——投影只许动它自己那一段。"""
+        plain = self.story_path.read_text(encoding="utf-8")
+        self.rewrite_as("\ufeff" + plain.replace("\n", "\r\n"))
+        before = self.story_path.read_bytes()
+        cut = before.index(b"\r\n## \xe9\x99\x84\xe5\xbd\x95")      # 「## 附录」之前
+        proc = self.put("附录", "本章正文。\n")
+        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
+        after = self.story_path.read_bytes()
+        self.assertEqual(before[:cut], after[:cut], "附录之前的字节变了")
+
+
 class TheChapterIsCheckedBeforeItLands(Step8Case):
     """写前核对：坏候选不进 story.md，作者手上只有一份要改的东西（草稿）。
 
@@ -1460,6 +1650,36 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
         self.assertEqual(0, proc.returncode, self.out(proc))
         proc2 = self.put("业务流程", body.replace("```mermaid", "```text"))
         self.assertEqual(1, proc2.returncode, "围栏外的仓内编号仍要拦")
+
+    def test_a_second_chapter_heading_after_the_body_is_refused(self) -> None:
+        """H2 写在正文之后：从前重新切出来的「这一章」只到它为止，写前核对看不见后半段，
+        而整段仍然落了盘——story 里于是多出一个章锚。"""
+        before = self.story_path.read_text(encoding="utf-8")
+        proc = self.put("背景", "本章有效正文。\n## 术语\n非法新增章。\n")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("章级标题", self.out(proc))
+        self.assertEqual(before, self.story_path.read_text(encoding="utf-8"),
+                         "拒绝了却已经写盘")
+        self.assertEqual(1, before.count("## 术语"))
+
+    def test_a_heading_inside_a_fence_is_fine(self) -> None:
+        """围栏里的标题是被引用的样例，不是新起一章。"""
+        proc = self.put("背景", "本章有效正文。\n\n```markdown\n## 举例的标题\n```\n")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+
+    def test_a_work_id_in_a_diagram_passes_the_whole_check_too(self) -> None:
+        """单章放行而全篇报同一条，就是新旧判据并存——作者只能把差别当成运气。"""
+        body = "讲这一段流程。\n\n```mermaid\ngraph TD\nS1 --> S2\n```\n"
+        self.assertEqual(0, self.put("业务流程", body).returncode)
+        self.init_audit()
+        code, out = self.check_output()
+        self.assertNotIn("仓内工作编号", out, "全篇还在用退了场的那条全文扫描")
+
+    def test_a_work_id_outside_a_fence_is_named_by_both(self) -> None:
+        body = "这一步由 S1 触发。\n"
+        proc = self.put("背景", body)
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("仓内工作编号", self.out(proc))
 
     def test_the_first_three_lines_say_what_to_do_next(self) -> None:
         """首屏前三行固定 NEXT / INPUT / RESULT：当前动作、动作要读的东西、刚才做了什么。"""

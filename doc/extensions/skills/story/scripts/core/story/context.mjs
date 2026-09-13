@@ -32,6 +32,37 @@ export function readText(file) {
   try { return fs.readFileSync(file, 'utf-8').replace(/^﻿/, ''); } catch { return null; }
 }
 
+/**
+ * **原样读** —— 不剥 BOM、不动行尾。要按原文坐标替换的地方读它。
+ *
+ * `readText` 为了让判据不必处理 BOM 而剥掉它，那对「读一份文档来判」是对的；
+ * 但章提交是**按区间把原文拼回去**，读进来少一个字节，写回去就少一个字节，
+ * 而「其余章一个字节未动」这句话就不成立了。两种读法各有其用，不合成一个。
+ */
+export function readRaw(file) {
+  try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
+}
+
+/**
+ * 合同里的编号形态 —— **编译一次，坏的当场报出来**。
+ *
+ * 从前每个消费处各 `new RegExp` 一次、`catch` 掉就跳过：合同里写错一条正则，
+ * 那一条判据静默不判，而门禁全绿。编译放一处，坏配置由调用方报给人看。
+ *
+ * @returns {{res: RegExp[], problems: string[]}}
+ */
+export function idShapes(contract, kind) {
+  const res = [];
+  const problems = [];
+  for (const shape of contract?.id_shapes?.[kind] ?? []) {
+    try { res.push(new RegExp(shape, 'g')); } catch {
+      problems.push(`章节合同的 id_shapes.${kind} 里有一条不是合法正则：${shape}`
+        + '——它现在一条都判不了，改合同里那一条');
+    }
+  }
+  return { res, problems };
+}
+
 export function readJson(file, fallback) {
   const t = readText(file);
   if (t === null) return fallback;

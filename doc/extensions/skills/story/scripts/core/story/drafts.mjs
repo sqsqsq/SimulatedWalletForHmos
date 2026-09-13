@@ -40,9 +40,11 @@ export function shellArg(value) {
  * 合同文字折成一行行内说明：换行折为空格，`-->` 转义，
  * 不让说明逃出注释、也不让注释在渲染器里提前闭合。
  */
+export const GUIDE_MARK = 'story-draft:guide';
+
 function guideLine(text, label = '') {
   const one = String(text ?? '').replace(/\r?\n/g, ' ').replace(/-->/g, '--\\>').trim();
-  return `<!-- story-draft:guide ${label ? `${label}：` : ''}${one} -->`;
+  return `<!-- ${GUIDE_MARK} ${label ? `${label}：` : ''}${one} -->`;
 }
 
 /**

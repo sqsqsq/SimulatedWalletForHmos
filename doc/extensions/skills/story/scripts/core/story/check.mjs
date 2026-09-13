@@ -16,7 +16,7 @@ import {
   appendixChapter, appendixStructureProblems, specRowProblems, verdictTableProblems,
 } from './appendix.mjs';
 import {
-  activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
+  activeKnowledgeEntries, fail, idShapes, ledgerDigestProblems, readText, requireLedgers,
   strayFileProblems,
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
@@ -118,20 +118,18 @@ export function cmdCheck(ctx) {
   }
 
   mark('③ 验收编号落在验收章');
-  // ③ 编号形态
-  for (const shape of ctx.contract.id_shapes?.drop ?? []) {
-    let re;
-    try { re = new RegExp(shape, 'g'); } catch { problems.push(`编号形态不是合法正则：${shape}`); continue; }
-    const hits = [...storyText.matchAll(re)].map(m => m[0]);
-    if (hits.length) {
-      problems.push(`story 里出现了仓内工作编号：${[...new Set(hits)].slice(0, 6).join('、')}`
-        + '——读者对不上这些标识，改写成事物本身的名字');
-    }
+  // ③ 验收编号的**全集**：哪个编号出现过、它在不在验收章。这一条要读全篇，
+  //    留在这里；**仓内工作编号那一条不在这里判**——它是章内的事，由 chapterProblems
+  //    一处判（⑪），那边还会把画图围栏内部挖掉。两处各扫一遍的话，搬来的图会被这里报出来，
+  //    而作者在那边刚被告知不用改。
+  //
+  // 合同里的形态正则编译一次，坏的当场报出来：从前每个消费处各 catch 掉，
+  // 写错一条就静默不判，而门禁全绿。
+  for (const kind of ['drop', 'keep']) {
+    problems.push(...idShapes(ctx.contract, kind).problems);
   }
   const acceptanceSec = sections.find(s => s.title.includes('验收'));
-  for (const shape of ctx.contract.id_shapes?.keep ?? []) {
-    let re;
-    try { re = new RegExp(shape, 'g'); } catch { continue; }
+  for (const re of idShapes(ctx.contract, 'keep').res) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
     if (!acceptanceSec) { problems.push('story 里有验收编号，却没有「质量与验收」章'); continue; }

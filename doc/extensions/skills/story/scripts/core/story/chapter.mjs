@@ -23,28 +23,46 @@ import * as path from 'node:path';
 import { chapterStructureProblems } from './chapter-contract.mjs';
 import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, norm, normalizeHeading, parseChapter,
-  pendingChapters, storySections, ZONE_BEGIN, ZONE_END,
+  pendingChapters, storySections,
 } from './document.mjs';
-import { fail, readText, refuseIfFrozen } from './context.mjs';
+import { fail, idShapes, readRaw, readText, refuseIfFrozen } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { relFromFeature } from './sources.mjs';
-import { draftPath, shellArg } from './drafts.mjs';
+import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages } from '../lint-rules.mjs';
 
 /**
- * 剥掉写给作者的指引 —— 草稿里的形态说明、读者问题、命令提示与待写标记。
+ * 剥掉**草稿生产者自己写的**指导行 —— 只认 `story-draft:guide` 这一个标记。
  *
- * 它们是脚手架：作者照着写，写完就该留在草稿里。原样落盘的话，形态说明里的
- * 「spec §0」会被语言红线判成工程坐标，待写标记会让已经写完的章仍被数成待写。
- * **归档件里不该有 HTML 注释**——机器区的首尾标记除外，那两行是投影的定位点。
+ * 它们是脚手架：作者照着写，写完该留在草稿里，不进归档件。**只剥自有的那些**：
+ * 作者自己写的注释、围栏里的注释示例、机器区的首尾标记、来源标记都是正文的一部分，
+ * 按「像注释」通杀的话，他写下的东西会在落盘那一刻静默消失，而他不知道。
+ * 围栏里的同名行也不剥：那是被引用的样例，不是给他看的指导。
  */
 function stripGuidance(body) {
-  const keep = (l) => l.startsWith(ZONE_BEGIN) || l === ZONE_END
-    || !(l.startsWith('<!--') && l.endsWith('-->'));
-  return String(body ?? '').split(/\r?\n/).filter(l => keep(l.trim()))
-    .join('\n').replace(/\n{3,}/g, '\n\n');
+  const text = String(body ?? '');
+  const fenced = fencedLines(text);
+  const lines = text.split(/\r?\n/);
+  const kept = lines.filter((l, i) => fenced.has(i)
+    || !l.trim().startsWith(`<!-- ${GUIDE_MARK}`));
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
+/** 围栏内部的行号集合 —— 围栏里的标题与注释是样例，任何清洗与判据都不该碰它。 */
+function fencedLines(text) {
+  const out = new Set();
+  for (const f of parseChapter(text).fences ?? []) {
+    for (let i = f.from; i <= f.to; i++) out.add(i);
+  }
+  return out;
+}
+
+/**
+ * 开头那几行属于本章自己的标题，剥掉 —— 命令会加回 `## <章名>`。
+ *
+ * 作者写章文件时很自然会带上本章标题；命令再包一层，story 里就出现两行一样的标题。
+ * 只剥 **H1**（它只属于骨架）与**与本章同名的 H2**；别的章级标题不剥，由下面那条拒绝。
+ */
 function stripOwnHeading(body, title) {
   const want = normalizeHeading(title);
   const lines = body.split(/\r?\n/);
@@ -61,11 +79,22 @@ function stripOwnHeading(body, title) {
 }
 
 /**
- * 读者审查的任务书 —— 注入给 verifier 的就是这一份，这里只是让人也看得见。
+ * 候选里**围栏外**还剩的章级标题（H1/H2）—— 一个文件只放一章。
  *
- * 任务定义是这一项成不成的关键：任务里没有的问题，审查者不会去问。
- * 所以任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
+ * 只看开头不够：H2 写在正文后半段时，重新切出来的「这一章」只到它为止，
+ * 写前核对看不到后半段，而整段仍然落了盘——story 里于是多出一个章锚，
+ * 下一次按章锚替换就切错。围栏里的标题是样例，不算。
  */
+function strayHeadings(text) {
+  const fenced = fencedLines(text);
+  const out = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (fenced.has(i)) return;
+    const head = /^(#{1,2})\s+(.+)$/.exec(line.trim());
+    if (head) out.push(head[2].trim());
+  });
+  return out;
+}
 
 /** 模板占位符 `{{…}}` —— 模板留给作者替换的位置，留在成品里就是没写完。 */
 export function placeholderProblems(text, where = '') {
@@ -133,9 +162,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
       + '——它是骨架给这一章留的记号，这一章的正文该把它顶掉');
   }
   out.push(...chapterStructureProblems(chapter, view));
-  for (const shape of ctx.contract?.id_shapes?.drop ?? []) {
-    let re;
-    try { re = new RegExp(shape, 'g'); } catch { continue; }
+  for (const re of idShapes(ctx.contract, 'drop').res) {
     const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]);
     if (!hits.length) continue;
     out.push(`「${chapter.title}」里出现了仓内工作编号：`
@@ -156,24 +183,6 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
 function chapterAnchors(storyText, title) {
   return storySections(storyText)
     .filter(s => normalizeHeading(s.raw) === normalizeHeading(title)).length;
-}
-
-/**
- * 章文件开头带的是**别人的** H2 —— 拒绝，不静默把它留在正文里。
- *
- * 从前这种文件照收：开头那行不是本章标题，剥标题那一步就停手，于是别的章的标题
- * 进了这一章的正文，`## ` 又成了一个章锚——下一次按章锚定位，切错的就是它。
- */
-function foreignLeadingHeading(body, title) {
-  const want = normalizeHeading(title);
-  for (const raw of String(body).split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const head = /^(#{1,2})\s+(.+)$/.exec(line);
-    if (!head) return null;
-    if (head[1] === '##' && normalizeHeading(head[2]) !== want) return head[2].trim();
-  }
-  return null;
 }
 
 /** 这一章在给定全文里的正文。 */
@@ -247,7 +256,9 @@ export function cmdChapter(ctx) {
     fail(`${from} 是空的：空正文不是一章，本需求真的不涉及时写「${EMPTY_SECTION_TEXT}」`);
   }
 
-  const story = readText(ctx.storyPath);
+  // **原样读**：这一步是按区间把原文拼回去，读进来少一个 BOM，写回去就少一个 BOM，
+  // 「其余章一个字节未动」这句话随之不成立。判据那一侧仍用剥过 BOM 的读法。
+  const story = readRaw(ctx.storyPath);
   if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架，再一章一章落盘');
   const chapters = ctx.contract.chapters ?? [];
   const chapter = chapters.find(c => normalizeHeading(c.title) === normalizeHeading(title));
@@ -264,17 +275,21 @@ export function cmdChapter(ctx) {
     fail(`story 里有 ${anchors} 处「${title}」章锚——替换按章锚定位，只会替掉第一处，`
       + '另一处仍是旧的，而读者会读到两遍。先把重复的那一处删掉再提交');
   }
-  const stray = foreignLeadingHeading(body, title);
-  if (stray) {
-    fail(`${from} 开头是「${stray}」的标题，不是「${title}」——一个文件只放一章：`
-      + '别的章的标题落进来会多出一个章锚，下一次按章锚替换就切错了');
-  }
-
   const span = chapterSpan(story, title);
-  // 先剥写给作者的说明（章头指引、种子占位），再剥开头自己的 H1/同名 H2——
+  // 先剥写给作者的说明（章头指引），再剥开头属于本章自己的 H1/同名 H2——
   // 章草稿的章头是注释行，混在任何顺序里都必须先剥干净，标题比对才认得出开头。
   const trimmed = stripOwnHeading(stripGuidance(body), title).replace(/\s+$/, '');
   if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
+  // 剥完还剩章级标题，说明这个文件放了不止一章。**整份候选都要看**：
+  // 只看开头的话，写在正文后半段的那个 H2 会连同它下面的正文一起落盘，
+  // story 里多出一个章锚，而写前核对只看得见被重新切出来的前半章。
+  const stray = strayHeadings(trimmed);
+  if (stray.length) {
+    fail(`${from} 里还有 ${stray.length} 个章级标题（${stray.slice(0, 3).join('、')}`
+      + `${stray.length > 3 ? '…' : ''}）——一个文件只放一章：`
+      + '别的章的标题落进来会多出一个章锚，下一次按章锚替换就切错了。'
+      + '章内的小节用 `###`；要举带标题的例子就放进代码围栏');
+  }
   let next = `${story.slice(0, span.start)}## ${title}\n\n${trimmed}\n\n${story.slice(span.end)}`;
   // 附录章 = 作者区 + 当前真源投影出的机器区。**投在写前核对之前**：那四节本就
   // 不该由他写，不投的话写前核对会因为它们空着而拦下一份合法的附录。
@@ -291,8 +306,20 @@ export function cmdChapter(ctx) {
     process.exit(1);
   }
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');
-  // 落盘已经成立。往下只是算接续，算不出来也不能反过来说提交失败——
-  // 说失败他会把这一章重写一遍，而盘上已经是新的了。
-  process.stdout.write(nextSteps(ctx, next,
-    `「${title}」已落盘（其余章一个字节未动）`));
+  // **写入到此成立。** 往下只是算接续（下一章是哪一章、草稿在哪），
+  // 算不出来也不能反过来说提交失败——说失败他会把这一章重写一遍，而盘上已经是新的了。
+  // 所以这一段单独兜住：只说清「已落盘」与怎么取回定位，不回滚、不诱导重交。
+  try {
+    process.stdout.write(nextSteps(ctx, next,
+      `「${title}」已落盘（其余章一个字节未动）`));
+  } catch (e) {
+    try {
+      process.stderr.write(`[story-build chapter] 「${title}」**已落盘**，`
+        + `接续算不出来（${e?.message ?? e}）——**不要重交这一章**。`
+        + `跑 node ${shellArg(ctx.scriptPath)} skeleton`
+        + ` --feature ${shellArg(ctx.args.feature)}`
+        + ` --project-root ${shellArg(ctx.projectRoot)} 取回定位与草稿。
+`);
+    } catch { /* 输出通道全关时给不出提示；退出码仍是 0，因为写入确实成立 */ }
+  }
 }

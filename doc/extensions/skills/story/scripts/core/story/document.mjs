@@ -214,7 +214,6 @@ export function renumberStory(text, chapters = [], counters = []) {
     if (c?.appendix) appendix.add(name);
   });
 
-  let inFence = false;
   let chapterNo = 0;              // 0＝当前不在合同认得的章里，那一段不编
   let inAppendix = false;
   let sub = 0;
@@ -226,9 +225,10 @@ export function renumberStory(text, chapters = [], counters = []) {
 
   // 分行按 CRLF 安全的通道走；回写统一 LF——重编号本来就是重写整篇，
   // 顺手把行尾统一掉，比留着两种行尾在同一份文件里好。
-  return String(text ?? '').split(/\r?\n/).map((raw) => {
-    if (/^\s*(```|~~~)/.test(raw)) { inFence = !inFence; return raw; }
-    if (inFence) return raw;
+  const lines = String(text ?? '').split(/\r?\n/);
+  const fenced = fenceMask(lines);
+  return lines.map((raw, at) => {
+    if (fenced[at]) return raw;          // 围栏里的标题是样例，不编号
 
     const head = /^(#{2,4})\s+(.+?)\s*$/.exec(raw);
     if (head) {
@@ -276,6 +276,30 @@ export function renumberStory(text, chapters = [], counters = []) {
 // 章与小节在全文里的位置
 // --------------------------------------------------------------------------
 /**
+ * 逐行标出哪些行在围栏里 —— **章级切分与区间定位共用这一份判断**。
+ *
+ * 从前两处各有一份：切章的那份压根不认围栏（围栏里的 `## ` 于是成了一个章边界，
+ * 那一章的正文被切成两半，后半截还带着一个关不上的围栏），定位的那份只认反引号。
+ * 开闭规则与 `parseChapter` 同一条：同种标记、不短于开启标记、标记之后到行末只有空白。
+ */
+function fenceMask(lines) {
+  const mask = new Array(lines.length).fill(false);
+  let open = null;
+  lines.forEach((line, i) => {
+    const m = line.match(/^[ \t]*(`{3,}|~{3,})/);
+    if (m && !open) { open = m[1]; mask[i] = true; return; }
+    if (m && open && m[1][0] === open[0] && m[1].length >= open.length
+      && CLOSING.test(line)) {
+      mask[i] = true;
+      open = null;
+      return;
+    }
+    mask[i] = open !== null;
+  });
+  return mask;
+}
+
+/**
  * story 正文按 `## ` 标题切节。
  *
  * `title` 是**规范化后的业务名**（`## 1. 背景` → `背景`），`raw` 保留原样给报错用。
@@ -283,18 +307,21 @@ export function renumberStory(text, chapters = [], counters = []) {
  * 加章序编号」与「合同存业务名」两件事同时成立，不必在每处判据各放宽一次。
  */
 export function storySections(storyText) {
+  const lines = String(storyText ?? '').split(/\r?\n/);
+  const fenced = fenceMask(lines);
   const out = [];
   let cur = null;
-  for (const line of String(storyText ?? '').split(/\r?\n/)) {
-    const m = line.trim().match(/^##\s+(.+)$/);
+  lines.forEach((line, i) => {
+    const m = fenced[i] ? null : line.trim().match(/^##\s+(.+)$/);
     if (m) {
       cur = { raw: m[1].trim(), body: [] };
       out.push(cur);
-      continue;
+      return;
     }
     if (cur) cur.body.push(line);
-  }
-  return out.map(s => ({ title: normalizeHeading(s.raw), raw: s.raw, text: s.body.join('\n') }));
+  });
+  return out.map(s => ({ title: normalizeHeading(s.raw), raw: s.raw,
+    text: s.body.join('\n') }));
 }
 
 /**
@@ -343,16 +370,15 @@ export function chapterSpan(storyText, title) {
   const lines = text.split(/\r?\n/);
   let start = -1;
   let offset = 0;
-  let inFence = false;
   const offsets = [];
   for (const line of lines) {
     offsets.push(offset);
     offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
   }
+  const fenced = fenceMask(lines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*```/.test(line)) inFence = !inFence;
-    if (inFence || !line.startsWith('## ')) continue;
+    if (fenced[i] || !line.startsWith('## ')) continue;
     if (start < 0) {
       if (normalizeHeading(line.slice(3).trim()) === normalizeHeading(title)) start = i;
       continue;
@@ -399,7 +425,7 @@ export const EMPTY_SECTION_TEXT = '本需求不涉及。';
 //: 种在作者区，之后归作者，脚本不再碰；附录的这几张表是**可重复投影**，
 //: 每次都能从真源重算出同样的东西，让作者重打一遍只会打得更少。
 export const ZONE_BEGIN = '<!-- story-build:begin ';
-export const ZONE_END = '<!-- story-build:end -->';
+const ZONE_END = '<!-- story-build:end -->';
 
 //: 投影区落盘时是什么样，记在起始标记里。重投前拿它与盘上的内容比：相等说明这一段
 //: 还是上次投出来的原样，覆盖它不丢任何人写的东西；不等说明有人在这里写过字。
