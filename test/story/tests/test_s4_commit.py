@@ -25,7 +25,12 @@ STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts
 FLOW = STORY_SCRIPTS / "story_flow.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
-import story_flow  # noqa: E402
+from flow.decisions import cmd_decide  # noqa: E402
+from flow.inputs import MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
+from flow.lifecycle import cmd_status  # noqa: E402
+from flow.state import CARRY_ALL  # noqa: E402
+from flow.submission import cmd_complete  # noqa: E402
+from materials import registry  # noqa: E402
 
 FEATURE = "AR90001"
 UPSTREAM_AR = ("# AR90001 上游预填\n\n## 上游先写下的几条\n\n"
@@ -81,9 +86,9 @@ class S4Case(unittest.TestCase):
 
     def gate_options(self, gate: str) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
-        options = ([dict(o) for o in story_flow.material_options()]
+        options = ([dict(o) for o in material_options()]
                    if gate == "material_scope"
-                   else [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载"}])
+                   else [{"key": CARRY_ALL, "label": "按当前范围整体承载"}])
         (self.src / ".gate-options.json").write_text(
             json.dumps({"gate": gate, "options": options}, ensure_ascii=False),
             encoding="utf-8")
@@ -98,7 +103,7 @@ class S4Case(unittest.TestCase):
         self.write_analysis()
         self.ok("round")
         self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
                 "--by", "human", "--basis", "用户回复：整体承载")
         if with_draft:
             self.write_draft()
@@ -112,7 +117,7 @@ class S4Case(unittest.TestCase):
             "sr_related_ars": [],
         }, ensure_ascii=False), encoding="utf-8")
         (self.src / ".scope-options.json").write_text(json.dumps(
-            [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载",
+            [{"key": CARRY_ALL, "label": "按当前范围整体承载",
               "recommended": True}], ensure_ascii=False), encoding="utf-8")
 
     def write_draft(self, text: str = DRAFT) -> Path:
@@ -301,7 +306,7 @@ class OnlyRealUpstreamInputIsKept(S4Case):
         self.write_analysis()
         self.ok("round")
         self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
                 "--by", "human", "--basis", "用户回复：整体承载")
         self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
@@ -447,7 +452,7 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.write_analysis()
         self.ok("round")
         self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
                 "--by", "human", "--basis", "用户回复：整体承载")
         self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
         self.fail_the_final_save()
@@ -470,8 +475,8 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
 
     def count_material_reads(self) -> tuple[list, list]:
         builds, refreshes = [], []
-        real_build = story_flow.materials.build
-        real_refresh = story_flow.materials.refresh
+        real_build = registry.build
+        real_refresh = registry.refresh
 
         def counting_build(feature_root):
             builds.append(feature_root)
@@ -481,16 +486,16 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
             refreshes.append(feature_root)
             return real_refresh(feature_root)
 
-        story_flow.materials.build = counting_build
-        story_flow.materials.refresh = counting_refresh
-        self.addCleanup(setattr, story_flow.materials, "build", real_build)
-        self.addCleanup(setattr, story_flow.materials, "refresh", real_refresh)
+        registry.build = counting_build
+        registry.refresh = counting_refresh
+        self.addCleanup(setattr, registry, "build", real_build)
+        self.addCleanup(setattr, registry, "refresh", real_refresh)
         return builds, refreshes
 
     def test_status_asks_the_disk_once(self) -> None:
         self.ready_to_commit(with_draft=False)
         builds, refreshes = self.count_material_reads()
-        story_flow.cmd_status(self.feature_root)
+        cmd_status(self.feature_root)
         self.assertEqual(1, len(builds),
                          f"status 取了 {len(builds)} 次材料事实——路由、提示与输出该共用一份")
         self.assertEqual([], refreshes, "status 只读，不该刷新清单")
@@ -498,7 +503,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
     def test_commit_takes_one_snapshot_before_writing_and_refreshes_after(self) -> None:
         self.ready_to_commit()
         builds, refreshes = self.count_material_reads()
-        story_flow.cmd_complete(self.feature_root, FEATURE, "AR/story-src/design-draft.md")
+        cmd_complete(self.feature_root, FEATURE, "AR/story-src/design-draft.md")
         self.assertEqual(1, len(refreshes), "写入后的刷新是另一个时点，必须仍然发生")
         # 刷新自己也要算一遍：所以写入前恰好一次 = build 比 refresh 多一次
         self.assertEqual(len(refreshes) + 1, len(builds),
@@ -509,7 +514,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         """在进程内记一条关卡决策——要数的是**这一条命令**里读了几次磁盘。"""
         args = argparse.Namespace(gate=gate, chosen=chosen, by="human",
                                   basis=f"用户回复：{chosen}", scope_text=scope_text)
-        return story_flow.cmd_decide(self.feature_root, args)
+        return cmd_decide(self.feature_root, args)
 
     def write_scope_options(self, options: list[dict]) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
@@ -534,7 +539,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         self.first_gate_ready()
         builds, _ = self.count_material_reads()
         result, code = self.decide_now("material_scope",
-                                       story_flow.MATERIAL_REQUEST_KEYS[0])
+                                       MATERIAL_REQUEST_KEYS[0])
         self.assertEqual(2, code, result)
         self.assertEqual("rejected", result["outcome"])
         self.assertEqual(1, len(builds), f"驳回这一路取了 {len(builds)} 次材料事实")
@@ -553,7 +558,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         """正常第二级：前置路由与末尾的下一步各要一次事实，它们该是同一份。"""
         self.second_gate_ready()
         builds, refreshes = self.count_material_reads()
-        _, code = self.decide_now("scope_decision", story_flow.CARRY_ALL)
+        _, code = self.decide_now("scope_decision", CARRY_ALL)
         self.assertEqual(0, code)
         self.assertEqual(1, len(builds), f"第二级取了 {len(builds)} 次材料事实")
         self.assertEqual([], refreshes)
@@ -563,7 +568,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         parts = [{"seq": 1, "scope": "本单承载签约入口", "depends_on": []},
                  {"seq": 2, "scope": "兄弟单承载补卡", "depends_on": [1]}]
         self.second_gate_ready(options=[
-            {"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载"},
+            {"key": CARRY_ALL, "label": "按当前范围整体承载"},
             {"key": "by_capability", "label": "按能力切两份", "parts": parts},
         ])
         self.ok("decide", "--gate", "scope_decision", "--chosen", "by_capability",
@@ -578,6 +583,29 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         self.assertEqual(1, len(builds), f"第三级取了 {len(builds)} 次材料事实")
         self.assertEqual([], refreshes)
 
+
+class RegistrationRunsTheRealChecker(S4Case):
+    """成文态登记的结论，就是 `story-build` 这一次的结论。
+
+    守恒判据在 story-build 那边，登记这一步只负责把它跑起来再记。跑不起来与没通过
+    必须分得开：公共 CLI 由脚本自己的位置定位，数错一层目录的表现是 spawn 失败——
+    那时报出来的是 node 找不到模块，而「哪一章不合格」一个字也看不到，
+    于是「登记被拦住了」与「检查压根没跑」在输出上同形。
+    """
+
+    def test_the_checker_runs_and_its_own_finding_is_the_verdict(self) -> None:
+        self.ready_to_commit()
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        (self.feature_root / "AR" / "story.md").write_text(
+            "# 随手写的一行\n", encoding="utf-8")
+        proc = self.flow("story")
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        error = json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
+        self.assertNotIn("Cannot find module", error,
+                         "node 找不到 story-build.mjs——公共 CLI 的定位错了")
+        self.assertIn("[story-build]", error,
+                      "登记没把 story-build 的结论带出来，只报了自己跑不通")
+        self.assertNotIn("story", self.contract(), "检查没通过却记了成文态")
 
 
 if __name__ == "__main__":

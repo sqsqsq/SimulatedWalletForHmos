@@ -166,7 +166,7 @@ class LedgersMustAllExist(NegativeCase):
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
         """清理、冻结、存在性三处说的必须是同一批文件——各写一份就会改一处忘一处。"""
-        flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py"
+        flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/flow/state.py"
                 ).read_text(encoding="utf-8")
         block = flow.split("STORY_SRC_FROZEN = (", 1)[1].split(")", 1)[0]
         self.assertEqual(tuple(sorted(re.findall(r'"([^"]+)"', block))),

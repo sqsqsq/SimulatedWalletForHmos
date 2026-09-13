@@ -19,10 +19,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
 FLOW = STORY_SCRIPTS / "story_flow.py"
-MATERIALS = STORY_SCRIPTS / "materials.py"
+MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
-import story_flow  # noqa: E402
+from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
+from flow.state import ANALYSIS, CONTRACT, STORY_SRC_FROZEN  # noqa: E402
+from materials import importer  # noqa: E402
 FEATURE = "AR90001"
 
 
@@ -143,8 +145,7 @@ class TheCaptionStoreHoldsTwoIndependentFacts(MaterialRoundCase):
 
     def store(self):
         import importlib
-        materials = importlib.import_module("materials")
-        return materials
+        return importlib.import_module("materials.registry")
 
     def a_sha(self) -> str:
         return "sha256:" + "a" * 16
@@ -443,7 +444,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
 
         夹具自己抄一份 key 的话，合同改了它照样绿：它守的就不再是「两边一致」。
         """
-        return [dict(o) for o in story_flow.material_options()]
+        return [dict(o) for o in material_options()]
 
     def write_gate_options(self, gate: str = "material_scope",
                            options: list[dict] | None = None) -> None:
@@ -463,7 +464,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         options = self.gate_options()
         if with_gap:
             for opt in options:
-                if opt["key"] in story_flow.MATERIAL_REQUEST_KEYS:
+                if opt["key"] in MATERIAL_REQUEST_KEYS:
                     opt["missing"], opt["why"] = missing, why
         self.write_gate_options(options=options)
 
@@ -491,7 +492,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
                              "--by", "human", "--basis", f"用户回复：{chosen}")
 
     def sign_supplied(self) -> subprocess.CompletedProcess:
-        return self.sign(story_flow.MATERIAL_REQUEST_KEYS[0])
+        return self.sign(MATERIAL_REQUEST_KEYS[0])
 
     def put_inbox(self, name: str = "原稿.md") -> None:
         inbox = self.feature_root / "inbox"
@@ -678,7 +679,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.one_supply_round()
         self.write_gate_options(options=[
             o for o in self.gate_options()
-            if o["key"] not in story_flow.MATERIAL_REQUEST_KEYS])
+            if o["key"] not in MATERIAL_REQUEST_KEYS])
         proc = self.sign("confirm_scope")
         self.assertEqual(0, proc.returncode, self.out_of(proc))
 
@@ -744,7 +745,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         gates = json.loads((self.feature_root / "AR" / "story-src" / "story-flow.json")
                            .read_text(encoding="utf-8"))["rounds"][-1]["gates"]
         landed = {o["key"]: o.get("label") for o in gates[-1]["options"]}
-        for o in story_flow.material_options():
+        for o in material_options():
             self.assertEqual(o["label"], landed[o["key"]],
                              f"{o['key']} 的标签被作者的措辞盖掉了")
 
@@ -758,8 +759,8 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
             (STORY_SCRIPTS.parents[1] / "contracts" / "story-chapters.json")
             .read_text(encoding="utf-8"))
         keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
-        self.assertEqual(list(story_flow.MATERIAL_CHOICES), keys)
-        for path in (FLOW, STORY_SCRIPTS / "flow-check.mjs"):
+        self.assertEqual(list(MATERIAL_CHOICES), keys)
+        for path in (FLOW, STORY_SCRIPTS / "flow" / "check.mjs"):
             text = path.read_text(encoding="utf-8")
             for key in keys:
                 self.assertNotIn(f"'{key}'", text, f"{path.name} 里还留着 {key} 的字面")
@@ -782,6 +783,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
 
     SKILL = (REPO_ROOT / "doc/extensions/skills/story/SKILL.md")
     FLOW = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py")
+    STATE = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/flow/state.py")
 
     def skill(self) -> str:
         return self.SKILL.read_text(encoding="utf-8")
@@ -790,7 +792,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
              "--project-root", str(root), "--gate", "material_scope",
-             "--chosen", story_flow.MATERIAL_CHOICES[0],
+             "--chosen", MATERIAL_CHOICES[0],
              "--by", by, "--basis", "他说的原话"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=120, cwd=str(REPO_ROOT))
@@ -801,7 +803,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
         只改文档没用——「记得停下问人」这种话模型会忘，门禁不会。
         """
         import ast
-        body = self.FLOW.read_text(encoding="utf-8")
+        body = self.STATE.read_text(encoding="utf-8")
         tree = ast.parse(body)
         actors = None
         for node in ast.walk(tree):
@@ -1057,7 +1059,7 @@ class TheManifestIsNotAFrozenLedger(unittest.TestCase):
     """
 
     def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
-        self.assertNotIn("materials.json", story_flow.STORY_SRC_FROZEN,
+        self.assertNotIn("materials.json", STORY_SRC_FROZEN,
                          "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
 
 
@@ -1070,28 +1072,28 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     """
 
     NAMES = property(lambda self: [
-        story_flow.CONTRACT[-1], story_flow.ANALYSIS[-1],
-        story_flow.import_sources.DOC_TARGET["AR"].name,
+        CONTRACT[-1], ANALYSIS[-1],
+        importer.DOC_TARGET["AR"].name,
     ])
 
     def test_none_of_them_is_a_frozen_ledger(self) -> None:
         """三件都留，但都不随稿冻结——冻结的是「据以成文的依据」，它们还要继续变。"""
         for name in self.NAMES:
-            self.assertNotIn(name, story_flow.STORY_SRC_FROZEN)
+            self.assertNotIn(name, STORY_SRC_FROZEN)
 
     def test_they_live_under_story_src_not_the_ar_root(self) -> None:
         """路径本身就是判据：`AR/` 根下只放交付文档，辅助件在 `story-src/` 这一层。"""
-        self.assertEqual(("AR", "story-src", "story-flow.json"), story_flow.CONTRACT)
-        self.assertEqual(("AR", "story-src", "init-analysis.md"), story_flow.ANALYSIS)
+        self.assertEqual(("AR", "story-src", "story-flow.json"), CONTRACT)
+        self.assertEqual(("AR", "story-src", "init-analysis.md"), ANALYSIS)
         self.assertEqual("AR/story-src/upstream.md",
-                         story_flow.import_sources.DOC_TARGET["AR"].as_posix())
+                         importer.DOC_TARGET["AR"].as_posix())
 
 
 class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
     """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
 
     def test_drafts_are_not_frozen_into_the_ledger(self) -> None:
-        self.assertNotIn("drafts", story_flow.STORY_SRC_FROZEN)
+        self.assertNotIn("drafts", STORY_SRC_FROZEN)
 
 
 class RegistrationReprojectsFirst(unittest.TestCase):
@@ -1102,8 +1104,8 @@ class RegistrationReprojectsFirst(unittest.TestCase):
     """
 
     def test_the_order_is_project_then_number_then_check(self) -> None:
-        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
-                  / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
+        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+                  / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         order = [cmd for cmd in ("\"project\"", "\"number\"", "\"check\"")
                  if cmd in body]
@@ -1117,8 +1119,8 @@ class RegistrationReprojectsFirst(unittest.TestCase):
         过程件走不漏：归档只上传 story.md 与 review.md，这一层整个留在本地。
         删掉的代价倒是实的——`reopen` 之后作者要改某一章，手上却没有可改的东西。
         """
-        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
-                  / "scripts" / "core" / "story_flow.py").read_text(encoding="utf-8")
+        source = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+                  / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         for gone in ("rmtree", "unlink", "sweep"):
             self.assertNotIn(gone, body, f"登记还在删 story-src/ 下的东西（{gone}）")

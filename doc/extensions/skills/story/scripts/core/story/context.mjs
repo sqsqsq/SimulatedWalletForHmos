@@ -138,7 +138,7 @@ export function createContext(args) {
 /**
  * 随稿冻结的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
  *
- * 文件名的真源在 `story_flow.py` 的 `STORY_SRC_FROZEN`：那两件是登记时要算指纹、
+ * 文件名的真源在 `core/flow/state.py` 的 `STORY_SRC_FROZEN`：那两件是登记时要算指纹、
  * 登记后拒绝重算、归档时随稿走的同一批。冻结与存在性两处说的必须是同一批文件，
  * 各写一份就会改一处忘一处。
  */

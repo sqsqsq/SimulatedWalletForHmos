@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
-import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
+import { originalArSource } from '../../skills/story/scripts/core/flow/check.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
@@ -238,7 +238,7 @@ function imageSection(projectRoot, feature) {
 }
 
 /**
- * S4 提交时留存下来的上游原 AR —— 唯一的原件定位读取（flow-check.originalArSource）。
+ * S4 提交时留存下来的上游原 AR —— 唯一的原件定位读取（flow/check.originalArSource）。
  *
  * 它与当前的提取稿是两份文件：`AR/design.md` 在收口后是提取稿，上游原话只在
  * 留存的那一份里。没有可留存原件时如实说「没有」；指针坏了要披露问题，

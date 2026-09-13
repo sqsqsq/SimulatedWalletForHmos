@@ -1,4 +1,4 @@
-"""materials.py — 材料清单（`AR/story-src/materials.json`）的唯一算法与唯一写入者。
+"""材料清单（`AR/story-src/materials.json`）的唯一算法与唯一写入者。
 
 这份清单回答两个问题，而且**只有它**回答：
 
@@ -6,7 +6,7 @@
 2. 收件箱里的原件哪些已经并入正文、哪些还没有。
 
 清单的 `digest` 是**材料版本**：正文或图片任何一个字节变了，digest 就变；一个字节没变，
-重算多少次都相同。轮次边界就取这个值——`story_flow.py` 不再自己算一份材料哈希。
+重算多少次都相同。轮次边界就取这个值——流程侧不再自己算一份材料哈希。
 
 ## 谁来算
 
@@ -19,7 +19,7 @@
 
 ## 「已并入」怎么判
 
-不靠导入时留下的回执，靠磁盘：拿 `import_sources.convert_sources` 把收件箱里那批料
+不靠导入时留下的回执，靠磁盘：拿 `materials/importer.py` 的转换把收件箱里那批料
 重转一遍，与正文比对。转换是确定性的，所以「正文 == 这批料的转换结果」就是「已并入」，
 反过来则说明还有料没导。这样一来，新放的料和被改过的同名料都算未并入，
 而不需要任何一方记住发生过什么。
@@ -32,7 +32,7 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-import import_sources
+from materials import importer
 
 SCHEMA = 1
 MANIFEST = ("AR", "story-src", "materials.json")
@@ -63,7 +63,7 @@ def file_digest(path: Path) -> str | None:
 
 
 def kind_of(path: Path) -> str:
-    return "image" if path.suffix.lower() in import_sources.IMAGE_EXTS else "doc"
+    return "image" if path.suffix.lower() in importer.IMAGE_EXTS else "doc"
 
 
 def read_captions(feature_root: Path) -> dict[str, dict]:
@@ -229,14 +229,14 @@ def collect_sources(feature_root: Path) -> list[dict]:
     """
     inbox = feature_root / INBOX
     try:
-        classify = import_sources.read_classify(inbox)
-    except import_sources.ImportError_ as exc:
+        classify = importer.read_classify(inbox)
+    except importer.ImportError_ as exc:
         raise MaterialError(str(exc)) from exc
 
-    sources = import_sources.scan_sources(inbox)
+    sources = importer.scan_sources(inbox)
     entries = {p.name: {"file": p.name, "sha256": file_digest(p),
                         "class": classify.get(p.name) if classify.get(p.name)
-                        in import_sources.CLASSES else None,
+                        in importer.CLASSES else None,
                         "ingested": False}
                for p in sources}
 
@@ -247,17 +247,17 @@ def collect_sources(feature_root: Path) -> list[dict]:
             grouped.setdefault(cls, []).append(path)
 
     for cls, paths in grouped.items():
-        docs = [p for p in paths if p.suffix.lower() not in import_sources.IMAGE_EXTS]
-        images = [p for p in paths if p.suffix.lower() in import_sources.IMAGE_EXTS]
+        docs = [p for p in paths if p.suffix.lower() not in importer.IMAGE_EXTS]
+        images = [p for p in paths if p.suffix.lower() in importer.IMAGE_EXTS]
 
         if docs:
             try:
-                sections, media, _ = import_sources.convert_sources(
+                sections, media, _ = importer.convert_sources(
                     docs, {p.name: cls for p in docs})
-            except (import_sources.ImportError_, OSError, ValueError) as exc:
+            except (importer.ImportError_, OSError, ValueError) as exc:
                 raise MaterialError(
                     f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
-            if cls not in import_sources.DOC_TARGET:
+            if cls not in importer.DOC_TARGET:
                 # 只抽图那一档没有正文落点：图落地了就算并入
                 for p in docs:
                     blobs = media.get(p.stem) or {}
@@ -267,16 +267,16 @@ def collect_sources(feature_root: Path) -> list[dict]:
                         and (asset_dir / name).read_bytes() == blob
                         for name, blob in blobs.items())
                 docs = []
-            target = feature_root / import_sources.DOC_TARGET[cls] if docs else None
+            target = feature_root / importer.DOC_TARGET[cls] if docs else None
             if target is not None and target.is_file() and _same_text(
                     target.read_text(encoding="utf-8", errors="replace"),
-                    import_sources.render_target(sections[cls])):
+                    importer.render_target(sections[cls])):
                 for p in docs:
                     entries[p.name]["ingested"] = True
 
         for image in images:
             # 界面图的落点是平铺的顶层，字节相同才算并入——同名换了内容也是新料
-            dest = feature_root / import_sources.UX_IMAGE_DIR / image.name
+            dest = feature_root / importer.UX_IMAGE_DIR / image.name
             if dest.is_file() and dest.read_bytes() == image.read_bytes():
                 entries[image.name]["ingested"] = True
 

@@ -20,10 +20,9 @@ STORY_SCRIPTS = REPO / "doc" / "extensions" / "skills" / "story" / "scripts" / "
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
-import materials  # noqa: E402
+from materials import registry  # noqa: E402
 import measure_run  # noqa: E402
 import phase_state  # noqa: E402
-import story_flow  # noqa: E402
 
 # 真实门禁控制台输出的形态（report-generator.printReportToConsole）。
 GATE_FAIL = """
@@ -340,7 +339,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         return d
 
     def _fingerprint(self, root: Path) -> str:
-        return materials.compute_digest(materials.collect_materials(root))
+        return registry.compute_digest(registry.collect_materials(root))
 
     def test_text_change_changes_the_version(self):
         """基线正样本：正文变了必须换版本，否则这个指纹什么都证明不了。"""
@@ -384,7 +383,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         (root / "assets" / "supp" / "image1.png").write_bytes(b"PNG1")
         (root / "ux-reference").mkdir()
         (root / "ux-reference" / "签约页.png").write_bytes(b"PNG1")
-        images = [m for m in materials.collect_materials(root) if m["kind"] == "image"]
+        images = [m for m in registry.collect_materials(root) if m["kind"] == "image"]
         self.assertEqual(1, len(images), "同一张图被登记成了两张")
         self.assertEqual(["assets/supp/image1.png", "ux-reference/签约页.png"],
                          images[0]["paths"], "两个落点没有都记下来")

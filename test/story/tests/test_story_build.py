@@ -151,12 +151,13 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
 
     08 §2.1 之后 skeleton 的起手预检要读流程契约与材料基准；夹具没有时，
-    用真实 story_flow 把 S1–S3 走完并提交一份提取稿——生成的契约即收口态。
+    用真实流程命令把 S1–S3 走完并提交一份提取稿——生成的契约即收口态。
     """
     if (src / "story-flow.json").is_file():
         return
     sys.path.insert(0, str(FLOW.parent))
-    import story_flow  # noqa: PLC0415
+    from flow.inputs import material_options  # noqa: PLC0415
+    from flow.state import CARRY_ALL  # noqa: PLC0415
 
     def flow(*args: str) -> dict:
         proc = subprocess.run(
@@ -173,7 +174,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     flow("round")
     (src / ".gate-options.json").write_text(json.dumps(
         {"gate": "material_scope",
-         "options": [dict(o) for o in story_flow.material_options()]},
+         "options": [dict(o) for o in material_options()]},
         ensure_ascii=False), encoding="utf-8")
     flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
          "--by", "human", "--basis", "夹具：现有材料就是全部")
@@ -181,14 +182,14 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
         "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
         "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
     (src / ".scope-options.json").write_text(json.dumps(
-        [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载",
+        [{"key": CARRY_ALL, "label": "按当前范围整体承载",
           "recommended": True}], ensure_ascii=False), encoding="utf-8")
     flow("round")
     (src / ".gate-options.json").write_text(json.dumps(
         {"gate": "scope_decision",
-         "options": [{"key": story_flow.CARRY_ALL, "label": "按当前范围整体承载"}]},
+         "options": [{"key": CARRY_ALL, "label": "按当前范围整体承载"}]},
         ensure_ascii=False), encoding="utf-8")
-    flow("decide", "--gate", "scope_decision", "--chosen", story_flow.CARRY_ALL,
+    flow("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
          "--by", "human", "--basis", "夹具：整体承载")
     flow("complete", "--from", "AR/story-src/design-draft.md")
     # S4 留存的上游原 AR 是一份**独立身份**的原始资料（Q7 §1）：真实作者会把它列进

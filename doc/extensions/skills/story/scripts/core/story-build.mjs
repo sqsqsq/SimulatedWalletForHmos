@@ -28,7 +28,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { flowProblems } from './flow-check.mjs';
+import { flowProblems } from './flow/check.mjs';
 import {
   EMPTY_SECTION_TEXT, normalizeHeading, pendingChapters, pendingMark, renumberStory,
   storySections,

@@ -49,9 +49,6 @@ def ensure_flow_state(root: Path, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
     if (src / "story-flow.json").is_file():
         return
-    sys.path.insert(0, str(FLOW_SCRIPT.parent))
-    import story_flow  # noqa: PLC0415
-
     def flow(*args: str) -> None:
         proc = subprocess.run(
             [sys.executable, str(FLOW_SCRIPT), *args, "--feature", FEATURE,

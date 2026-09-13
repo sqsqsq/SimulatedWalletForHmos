@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FLOW_CHECK = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
-              / "scripts" / "core" / "flow-check.mjs")
+              / "scripts" / "core" / "flow" / "check.mjs")
 FEATURE = "AR90001"
 
 MINIMAL_FLOW = {
@@ -170,7 +170,7 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
             self.skipTest("环境里没有 node")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        # 按机制自己的相对定位复制一份：flow-check 从它自己的位置找 contracts/
+        # 按机制自己的相对定位复制一份：flow/check 从它自己的位置找 contracts/
         self.skill = Path(self._tmp.name) / "story"
         shutil.copytree(self.EXT / "scripts", self.skill / "scripts")
         shutil.copytree(self.EXT / "contracts", self.skill / "contracts")
@@ -199,7 +199,7 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
             "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
         proc = subprocess.run(
             [self.node, "--input-type=module", "-e", script, "--",
-             str(self.skill / "scripts" / "core" / "flow-check.mjs"), str(self.feature_root)],
+             str(self.skill / "scripts" / "core" / "flow" / "check.mjs"), str(self.feature_root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)

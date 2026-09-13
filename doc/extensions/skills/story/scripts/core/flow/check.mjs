@@ -1,11 +1,11 @@
 /**
  * story 前置流程契约的门禁（`AR/story-src/story-flow.json`）。
  *
- * 从 hooks/spec/post_check.mjs 搬出来独立成件：这套判据校验的是 /story 链自己的产物
- * ——三级关卡问了没、决策留痕齐不齐、范围收口没有——与 spec 章节结构无关。
- * 混在 spec hook 里，读的人得先翻过两百行 spec 章节判据才看得到它。
+ * 这套判据校验的是 /story 链自己的产物——三级关卡问了没、决策留痕齐不齐、
+ * 范围收口没有——与 spec 章节结构无关，所以不放在 spec hook 里。
  *
- * 消费者：hooks/spec/post_check.mjs。契约是纯函数：给 featureRoot，回问题串数组（空 = 通过）。
+ * 契约的写入侧在同目录的 Python 流程模块；本文件是 JS 侧的只读消费者。
+ * 导出都是纯函数：给 featureRoot，回问题串数组（空 = 通过）。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -38,7 +38,7 @@ const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier']
  */
 function materialChoices() {
   const file = path.join(path.dirname(fileURLToPath(import.meta.url)),
-    '..', '..', 'contracts', 'story-chapters.json');
+    '..', '..', '..', 'contracts', 'story-chapters.json');
   let contract = null;
   try {
     contract = JSON.parse(fs.readFileSync(file, 'utf-8').replace(/^\uFEFF/, ''));
@@ -121,7 +121,7 @@ export function flowProblems(featureRoot) {
     //
     // 这里**不查初析件哈希**。初析在同一轮内会从盘点版改到完整版，拿它划轮次，
     // 等于「材料没动、重写一遍分析」也能造出一轮，而真正补了料却在分析之前跑 round 的
-    // 那一轮反倒被判成伪造。材料变没变是磁盘上的事实，由 `materials.py` 按现状算。
+    // 那一轮反倒被判成伪造。材料变没变是磁盘上的事实，由 `materials/registry.py` 按现状算。
     const digest = String(r?.materials?.digest ?? '');
     if (!digest) {
       problems.push(`${where}缺 materials.digest——轮次没有材料版本可依，`

@@ -11,7 +11,7 @@ import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
 import { parseYaml } from './yaml-lite.mjs';
 import { imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs';
+import { originalArSource } from '../../skills/story/scripts/core/flow/check.mjs';
 
 function contractOf(projectRoot) {
   return readJsonOrNull(path.join(extensionRoot(projectRoot),

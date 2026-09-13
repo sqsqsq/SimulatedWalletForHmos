@@ -2472,14 +2472,14 @@ def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
 
 
 def _flow_check_call(root: Path, feature_root: Path, fn: str) -> list[str] | None:
-    """调 flow-check.mjs 的某个导出，回问题串数组；跑不起来回 None。"""
+    """调 flow/check.mjs 的某个导出，回问题串数组；跑不起来回 None。"""
     script = (
         "import {pathToFileURL} from 'node:url';"
         "const m=await import(pathToFileURL(process.argv[1]).href);"
         "console.log(JSON.stringify(m[process.argv[3]](process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/core/flow-check.mjs")
+    check = _ext_file(root, "skills/story/scripts/core/flow/check.mjs")
     if check is None:
-        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow-check.mjs"
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow" / "check.mjs"
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root), fn],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
@@ -2504,9 +2504,9 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         "import {pathToFileURL} from 'node:url';"
         "const m=await import(pathToFileURL(process.argv[1]).href);"
         "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/core/flow-check.mjs")
+    check = _ext_file(root, "skills/story/scripts/core/flow/check.mjs")
     if check is None:
-        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow-check.mjs"
+        check = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "flow" / "check.mjs"
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)

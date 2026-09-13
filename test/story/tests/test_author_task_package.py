@@ -75,9 +75,6 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
     if (src / "story-flow.json").is_file():
         return
-    sys.path.insert(0, str(FLOW_SCRIPT.parent))
-    import story_flow  # noqa: PLC0415
-
     def flow(*args: str) -> None:
         proc = subprocess.run(
             [sys.executable, str(FLOW_SCRIPT), *args, "--feature", feature,
@@ -479,8 +476,8 @@ class TaskPackageIsRendered(WorkspaceCase):
         proc = run(sys.executable, "-c",
                    "import pathlib, sys;"
                    f"sys.path.insert(0, {json.dumps(core.as_posix())});"
-                   "import materials;"
-                   f"materials.refresh(pathlib.Path({json.dumps(self.feature_root.as_posix())}))",
+                   "from materials import registry;"
+                   f"registry.refresh(pathlib.Path({json.dumps(self.feature_root.as_posix())}))",
                    cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 

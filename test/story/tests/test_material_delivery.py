@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 STORY_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
-import materials  # noqa: E402
+from materials import registry  # noqa: E402
 import run_multi_case  # noqa: E402
 
 
@@ -422,7 +422,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         """正文没动，但材料确实变了——图是材料，轮次要看得见它。"""
         self.write_docx()
         self.classify("IMAGES")
-        before = materials.compute_digest(materials.collect_materials(self.feature_root))
+        before = registry.compute_digest(registry.collect_materials(self.feature_root))
         self.assertEqual(0, self.run_import().returncode)
-        after = materials.compute_digest(materials.collect_materials(self.feature_root))
+        after = registry.compute_digest(registry.collect_materials(self.feature_root))
         self.assertNotEqual(before, after, "只抽图没有形成新材料版本")

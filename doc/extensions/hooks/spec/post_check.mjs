@@ -21,7 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseYaml } from '../shared/yaml-lite.mjs';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/core/story/language.mjs';
-import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow-check.mjs';
+import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';

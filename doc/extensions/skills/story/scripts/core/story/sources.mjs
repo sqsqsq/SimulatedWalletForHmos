@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fail, readJson, readText, specText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
-import { originalArSource } from '../flow-check.mjs';
+import { originalArSource } from '../flow/check.mjs';
 import { scanMaterialList } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { normalizeHeading, subsectionSpan } from './document.mjs';

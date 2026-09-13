@@ -164,6 +164,24 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertFalse(stale.exists(), "包里没有的文件还留在目标上")
         self.assertIn("retired.mjs", self.out(proc), "清掉了却没报出来——静默删比不删更糟")
 
+    def test_a_python_package_arrives_and_its_flat_predecessor_goes(self) -> None:
+        """按功能分的子目录要真被装上，同名的旧平铺文件要真被清掉。
+
+        两件事都靠「整份换掉」这一条，而不靠列文件名。漏了前一半，目标上跑的命令
+        import 不到模块；漏了后一半，`core/materials.py` 与 `core/materials/` 同时在，
+        Python 认包不认模块，于是目标读的是新包、维护者看的是旧文件。
+        """
+        flat = self.core / "materials.py"
+        flat.write_text("SCHEMA = 1  # 上一版的平铺实现\n", encoding="utf-8")
+        self.commit("目标上还留着上一版的平铺材料模块")
+
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertFalse(flat.exists(), "旧的平铺文件还在，和新包同时存在")
+        for rel in ("flow/state.py", "flow/lifecycle.py",
+                    "materials/registry.py", "materials/importer.py"):
+            self.assertTrue((self.core / rel).is_file(), f"{rel} 没被装上")
+
     def test_a_mechanism_file_changed_on_the_target_is_restored(self) -> None:
         """目标改了机制面，升级把它换回包的版本——机制不归目标。"""
         f = self.core / "story" / "chapter-contract.mjs"
