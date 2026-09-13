@@ -11,7 +11,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeHeading } from '../headings.mjs';
+import { normalizeHeading } from './document.mjs';
 import { chapterSeedRows } from './chapter-contract.mjs';
 
 // 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记之后也留着——

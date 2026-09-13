@@ -48,12 +48,9 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         for action in ("比较信息归属", "推演关系与结果", "核重组后的表达"):
             self.assertIn(action, section, f"写后核对少了「{action}」这个动作")
         items = re.findall(r"^\d+\. ", section, flags=re.M)
-        # 判据里的 `COPYEDIT_ROWS` 就是这个数：它的依据是这份清单，
-        # 两处对不上时改的应当是清单，判据跟着走。
-        build = read("scripts/core/story-build.mjs")
-        want = int(re.search(r"COPYEDIT_ROWS = (\d+)", build).group(1))
-        self.assertEqual(want, len(items),
-                         f"自查清单 {len(items)} 条，而判据要求 {want} 行——两处对不上")
+        # 七条是作者的清单，不再对着机器里的一个数——那个数（COPYEDIT_ROWS）随七行
+        # 自证一起退场了。条数变了改这一行，不要回头再造一个计数判据。
+        self.assertEqual(7, len(items), f"写后核对是七条，现在 {len(items)} 条")
         for needle in ("同一件事", "逐字", "引导", "承接", "读者视角", "对着读", "指代"):
             self.assertIn(needle, section, f"自查清单少了「{needle}」那一条")
 
@@ -114,25 +111,26 @@ class TestChapterDimensions(unittest.TestCase):
                 self.assertNotIn(word, text, f"{path.name} 混进了指标类判据「{word}」")
 
 
-class TestFinalPassLeavesATrace(unittest.TestCase):
-    """统稿是唯一一步没有产物的动作，于是跳过它零成本——留痕让「没做」藏不住。"""
+class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
+    """统稿改的那几章仍逐章提交——留痕不再是另写一份七行自证。
 
-    def test_the_guide_asks_for_exactly_seven_lines(self) -> None:
+    七行自证退场（Q5）：它是「做过没做」的代理，而代理只证明有人写了七行。
+    统稿真正留下的痕迹是**被替换的那几章**，以及提交时本章判据的那一次核对。
+    """
+
+    def test_the_guide_sends_the_changed_chapter_back_through_submit(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("## 四、写后核对", 1)[1]
-        self.assertIn("copyedit.md", section)
-        self.assertIn("恰好七行", section)
-        self.assertIn("写多不奖励", section, "防苦役条款要写在作业书里")
+        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("chapter", section, "改完的章要说明怎么落盘")
+        self.assertNotIn("copyedit", section, "七行自证已退场，作业书不该还要它")
+        self.assertNotIn("恰好七行", section)
 
-    def test_the_phase_order_points_at_the_same_file(self) -> None:
-        self.assertIn("copyedit.md", read("phases/spec.md"))
-
-    def test_the_check_does_not_judge_its_content(self) -> None:
-        """只核行数。内容真不真归裁决面与抽样人核——机器判它必然逼出套话。"""
-        build = read("scripts/core/story-build.mjs")
-        block = build.split("⑫d", 1)[1].split("⑬", 1)[0]
-        for metric in ("includes(", "test(", "match("):
-            self.assertNotIn(metric, block, "统稿留痕只核行数，不核内容")
+    def test_no_seven_line_ledger_is_asked_for_anywhere(self) -> None:
+        """生产者、校验、冻结、指令四处一起退——留一处，它就还会被人当成要求。"""
+        for rel in ("phases/story-write.md", "phases/spec.md", "rules/review_reflow.md",
+                    "scripts/core/story-build.mjs", "scripts/core/story/check.mjs",
+                    "scripts/core/story/context.mjs", "scripts/core/story_flow.py"):
+            self.assertNotIn("copyedit", read(rel), f"{rel} 还在要七行自证")
 
 
 class TestIssueDefinitionIsOneText(unittest.TestCase):

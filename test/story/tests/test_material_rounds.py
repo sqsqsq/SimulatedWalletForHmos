@@ -342,7 +342,7 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["story_written_at"] = "2026-09-04T00:00:00+08:00"
-        data["story_src_digests"] = {"decisions.json": "sha", "copyedit.md": "sha"}
+        data["story_src_digests"] = {"decisions.json": "sha"}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         self.assertEqual(0, self.run_flow("reopen").returncode)

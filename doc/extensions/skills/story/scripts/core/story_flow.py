@@ -90,7 +90,7 @@ S4_STEPS = ("generate_design", "run_complete")
 # 成文态登记时随稿冻结的台账：story 定稿了，它据以成文的账本也就定稿了。
 # 登记之后重跑 init 会把这几份重算一遍：story.md 冻了，账本被后一次重跑冲掉。
 STORY_SRC_FROZEN = (
-    "decisions.json", "copyedit.md",
+    "decisions.json",
 )
 # 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
 #
@@ -883,6 +883,25 @@ SPEC_STAGE_ORDER = (
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
 
 
+
+def pending_chapters(feature_root: Path) -> int:
+    """story 里还带着待写记号的章数 —— **只读**，不在这里重做章级检查。
+
+    记号的真源是章节合同的 ``pending_mark``；读不到合同就退回默认字面，
+    路由不该因为一份读不出的合同而说不出下一步。
+    """
+    try:
+        text = (feature_root / "AR" / "story.md").read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    mark = "待写"
+    try:
+        contract = json.loads(STORY_CONTRACT.read_text(encoding="utf-8"))
+        mark = str(contract.get("pending_mark") or mark)
+    except (OSError, ValueError):
+        pass
+    return len(re.findall(r"<!--\s*" + re.escape(mark) + r"[:：]", text))
+
 def spec_stage_step(feature_root: Path) -> tuple[str, str]:
     """收口之后、成文登记之前——spec 阶段内做到哪儿了。
 
@@ -904,11 +923,18 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 "spec.md 已在。**先重取一次任务包**"
                 "（`node doc/extensions/hooks/spec/author.mjs --feature <名>`）"
                 "——spec 刚写完，它里面的图这时候才列得出来。"
-                "接着 `story-build skeleton` 建骨架，再逐章 `chapter --from <文件>`"
-                "（章文件只放正文，不带章标题）。" + SPEC_STAGE_ORDER)
+                "接着 `story-build skeleton` 建骨架，它会告诉你先写哪一章。" + SPEC_STAGE_ORDER)
+    left = pending_chapters(feature_root)
+    if left:
+        return ("story_chapters",
+                f"story.md 已在，还有 {left} 章带着待写标记。"
+                "逐章在草稿上写、`story-build chapter --from <草稿>` 落盘——"
+                "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
+                "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
     return ("register_story",
-            "story.md 已在。十章都写完、`story-build check` 通过之后，"
-            "跑 `story_flow.py story` 登记成文——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
+            "十章齐了。先把成稿从头读到尾做写后核对（要改哪章就改它的草稿再 chapter 提交），"
+            "`story-build check` 通过之后跑 `story_flow.py story` 登记成文"
+            "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
 
 def sidecar_shape(step: str) -> dict | None:

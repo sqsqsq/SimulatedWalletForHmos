@@ -17,8 +17,7 @@
  * 这里读它的结果；源图对应、全局编号、投影完整性、图片身份、冻结、语义质量都不在这里。
  * 本模块不读磁盘、不写文件、不输出 stdout、也不导入 story-build 入口。
  */
-import { normalizeHeading } from '../headings.mjs';
-import { hasDiagram, norm, sectionBody, tablesIn } from './document.mjs';
+import { hasDiagram, norm, normalizeHeading, sectionBody, tablesIn } from './document.mjs';
 
 /** 渲染一张 markdown 表：表头 + 分隔行 + 数据行。 */
 export function renderTable(header, rows) {

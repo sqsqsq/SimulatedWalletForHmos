@@ -28,7 +28,7 @@ BUILD = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
 FLOW = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
         / "scripts" / "core" / "story_flow.py")
 FEATURE = "B01FEAT"
-LEDGERS = ("decisions.json", "copyedit.md")
+LEDGERS = ("decisions.json",)
 
 
 class FeaturesDirConfigTest(unittest.TestCase):
@@ -50,7 +50,6 @@ class FeaturesDirConfigTest(unittest.TestCase):
         story_src = self.root / rel / FEATURE / "AR" / "story-src"
         story_src.mkdir(parents=True, exist_ok=True)
         (story_src / LEDGERS[0]).write_text("[]", encoding="utf-8")
-        (story_src / LEDGERS[1]).write_text("", encoding="utf-8")
 
     def check_missing_story_path(self) -> str:
         proc = subprocess.run(

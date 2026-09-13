@@ -151,7 +151,7 @@ class LedgersMustAllExist(NegativeCase):
     逐单元系统退场后台账收到两件：决策登记与统稿留痕。判据一个字没动，基线跟着走。
     """
 
-    LEDGERS = ("decisions.json", "copyedit.md")
+    LEDGERS = ("decisions.json",)
 
     def test_each_missing_ledger_is_named(self) -> None:
         for name in self.LEDGERS:
@@ -172,7 +172,7 @@ class LedgersMustAllExist(NegativeCase):
         self.assertEqual(tuple(sorted(re.findall(r'"([^"]+)"', block))),
                          tuple(sorted(self.LEDGERS)))
 
-        build = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
+        build = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/context.mjs"
                  ).read_text(encoding="utf-8")
         ledgers = build.split("const STORY_SRC_LEDGERS = [", 1)[1].split("];", 1)[0]
         keys = re.findall(r"\['(\w+Path)'", ledgers)
@@ -249,7 +249,7 @@ class CheckOutputIsGroupedByJudgement(NegativeCase):
 
     def test_no_second_artifact_and_no_threshold(self) -> None:
         """不写第二个文件、不设「超过 N 条才聚合」的阈值。"""
-        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/check.mjs"
                 ).read_text(encoding="utf-8")
         self.assertNotIn("check-detail", body, "又长出了第二个明细文件")
         seg = body.split("function groupedProblems", 1)[1].split("\n}\n", 1)[0]
@@ -413,7 +413,7 @@ class ReviewBannedTermsScope(NegativeCase):
 
     def test_the_exempt_set_comes_from_the_contract(self) -> None:
         """豁免类别由合同数据给，脚本不写死类别名——写死名字换个工程就静默失效。"""
-        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
+        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/review.mjs"
                 ).read_text(encoding="utf-8")
         seg = body.split("function redactReviewExemptZones", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("banned_terms_exempt", seg)

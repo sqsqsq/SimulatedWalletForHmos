@@ -375,8 +375,6 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         src.mkdir(parents=True)
         (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
         (src / "decisions.json").write_text("[]", encoding="utf-8")
-        rows = [f"第 {i} 项：查过，无。" for i in range(1, 8)]
-        (src / "copyedit.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(

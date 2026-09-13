@@ -18,7 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../../../../hooks/shared/knowledge.mjs';
-import { normalizeHeading } from './headings.mjs';
+import { normalizeHeading } from './story/document.mjs';
 
 const CONTRACT_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'contracts', 'story-chapters.json');

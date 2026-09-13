@@ -61,8 +61,7 @@ node .../story-build.mjs skeleton --feature <feature>  # ① 十章骨架 + 十�
 #                                 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
 #                              ②b 写后核对：通读成稿一遍，做三个动作（见 story-write.md）；
-#                                 七条自查各写一行到 AR/story-src/copyedit.md（恰好七行）；
-#                                 改的那几章仍逐章落盘
+#                                 改的那几章仍逐章落盘，落盘时本章判据先核一遍
 python .../story_flow.py story --feature <feature>   # ③ 登记（自带 number / build / check）
 #                              ④ 跑 spec harness
 #                              ⑤ 确定性门全绿之后，按 harness 末尾 NEXT: 行派 verifier

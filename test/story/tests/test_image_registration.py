@@ -197,9 +197,6 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
                              "**结论与影响**：验收不含管理页。",
             "decider": "需求方",
         }]}, ensure_ascii=False), encoding="utf-8")
-        (src / "copyedit.md").write_text(
-            "- 通读一遍，语气统一\n- 术语与材料一致\n- 表格每列都有落点\n"
-            "- 图有承接句\n- 验收逐条可观察\n- 附录只放查阅件\n", encoding="utf-8")
         self.assertEqual(0, self.build("skeleton").returncode)
         self.story = self.feature_root / "AR" / "story.md"
 

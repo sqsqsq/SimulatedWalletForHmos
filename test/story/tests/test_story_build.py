@@ -21,6 +21,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+IMAGES = (REPO_ROOT
+         / "doc/extensions/skills/story/scripts/core/story/images.mjs")
 BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
@@ -460,42 +462,6 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
         self.assert_check_names("工程标识")
 
 
-class TestCopyeditTrace(StoryBuildCase):
-    """统稿留痕：恰好七行，**内容不判**。
-
-    统稿是唯一一步没有产物的动作，于是跳过它零成本——实测两份产物都有「同一件事
-    讲三遍」「图题一章一个样」这类只有通读才看得见的毛病，而门禁全绿。
-    留痕不是为了核内容（那归裁决面与抽样人核），是为了让「没做」留下痕迹。
-    """
-
-    SIX = "\n".join("第 {} 项：查过，无需改。".format(i) for i in range(1, 8)) + "\n"
-
-    def write_copyedit(self, text: str) -> None:
-        (self.src / "copyedit.md").write_text(text, encoding="utf-8")
-
-    def test_missing_file_is_named(self) -> None:
-        (self.src / "copyedit.md").unlink()
-        self.init_audit()
-        self.assert_check_names("copyedit.md")
-
-    def test_exactly_seven_lines_passes(self) -> None:
-        self.write_copyedit(self.SIX)
-        self.init_audit()
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-
-    def test_writing_more_is_not_rewarded(self) -> None:
-        """写成检查报告不加分——不然下一轮就有人为了显得认真而灌水。"""
-        self.write_copyedit(self.SIX + "另外还查了一遍标题。\n")
-        self.init_audit()
-        self.assert_check_names("恰好 7 行")
-
-    def test_blank_lines_do_not_count(self) -> None:
-        self.write_copyedit(self.SIX.replace("\n", "\n\n"))
-        self.init_audit()
-        self.assertEqual(0, self.check_output()[0])
-
-
 class TestFormLints(StoryBuildCase):
     """三条形态 lint：图的承接与图题、材料清单的行形态、正文小节的编号。
 
@@ -611,7 +577,7 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
         doc = "# X\n\n## 背景\n\n" + body
         script = (
             "import { renumberStory } from "
-            + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/headings.mjs")
+            + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/document.mjs")
                          .resolve().as_uri())
             + ";import { readFileSync } from 'node:fs';"
             + "const c = JSON.parse(readFileSync("
@@ -663,7 +629,7 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
     def test_normalize_heading_does_not_strip_bare_numbers(self) -> None:
         """`normalizeHeading` 被十几处标题匹配共用，它不碰裸序号。"""
         script = ("import { normalizeHeading } from "
-                  + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/headings.mjs")
+                  + json.dumps((REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/document.mjs")
                                .resolve().as_uri())
                   + ";process.stdout.write(normalizeHeading(process.argv[1]));")
         for title, want in (("1 闸机前的窘境", "1 闸机前的窘境"),   # 不剥
@@ -750,7 +716,7 @@ class TestGoldenNumbering(unittest.TestCase):
     def renumber(self, text: str) -> str:
         script = (
             "import * as fs from 'node:fs';"
-            "import { renumberStory } from './doc/extensions/skills/story/scripts/core/headings.mjs';"
+            "import { renumberStory } from './doc/extensions/skills/story/scripts/core/story/document.mjs';"
             "const c = JSON.parse(fs.readFileSync("
             "'doc/extensions/skills/story/contracts/story-chapters.json','utf-8'));"
             "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>"
@@ -900,7 +866,7 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
     产物还在，它据以成文的依据换了一批，谁也看不出来。
     """
 
-    FROZEN = ("decisions.json", "copyedit.md")
+    FROZEN = ("decisions.json",)
 
     def ledger_digest(self, name: str) -> str | None:
         path = self.src / name
@@ -1388,6 +1354,132 @@ class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
             self.assertNotIn(quota, out, "有判据在拿长度下限说话：%s" % quota)
 
 
+def minimal_body(title: str, text: str) -> str:
+    """这一章的**最小合法正文**：一句话 + 合同点名要定位的那几样。
+
+    章提交现在写前先核（Q5），一句「第 N 章的正文」对有必要结构的章本来就不合法。
+    这里按合同派生，不抄一份结构清单——合同改了，夹具跟着改。
+    """
+    contract = json.loads(
+        (REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json")
+        .read_text(encoding="utf-8"))
+    ch = next((c for c in contract["chapters"] if c["title"] == title), None)
+    st = (ch or {}).get("structure") or {}
+    rows = [text]
+    if st.get("diagram"):
+        rows += ["", "```mermaid", "graph TD", "A[开始] --> B[结束]", "```"]
+    at_rows = {}
+    for tbl in st.get("tables", []):
+        cols = [a[0] for a in tbl.get("anchors") or []] or ["列"]
+        head = tbl.get("header", "|".join(cols)).split("|")
+        cells = ["填" for _ in head]
+        block = ["", "| " + " | ".join(head) + " |",
+                 "|" + "|".join("---" for _ in head) + "|",
+                 "| " + " | ".join(cells) + " |"]
+        at_rows.setdefault(tbl.get("at"), []).extend(block)
+    for h3 in st.get("h3", []):
+        rows += ["", f"### {h3['title']}", ""] + at_rows.pop(h3["title"], [])
+    for extra in at_rows.values():
+        rows += extra
+    return "\n".join(rows) + "\n"
+
+
+class TheChapterIsCheckedBeforeItLands(Step8Case):
+    """写前核对：坏候选不进 story.md，作者手上只有一份要改的东西（草稿）。
+
+    从前判据只在全篇 check 那一步跑，于是坏的那一章先落盘、再被报出来——
+    作者得同时改草稿与已经写进去的正文，而两者哪个是准的没人说得清。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink()
+        self.assertEqual(0, self.run_build("skeleton").returncode)
+
+    def put(self, title: str, body: str) -> subprocess.CompletedProcess:
+        src = self.root / "chapter.md"
+        src.write_text(body, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(BUILD), "chapter", "--feature", FEATURE,
+             "--project-root", str(self.root), "--chapter", title, "--from", str(src)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def out(self, proc) -> str:
+        return (proc.stderr or "") + (proc.stdout or "")
+
+    def test_a_bad_chapter_changes_nothing_on_disk(self) -> None:
+        before = self.story_path.read_text(encoding="utf-8")
+        proc = self.put("术语", "只有一句话，没有那张表。\n")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("术语", self.out(proc))
+        self.assertEqual(before, self.story_path.read_text(encoding="utf-8"),
+                         "判不过却已经写盘了——作者要改的东西变成两份")
+
+    def test_the_same_bad_chapter_is_named_by_the_whole_check_too(self) -> None:
+        """单章与全篇同一个实现：一处过一处不过，作者只能把差别当成运气。"""
+        bad = "只有一句话，没有那张表。\n"
+        self.assertEqual(1, self.put("术语", bad).returncode)
+        text = self.story_path.read_text(encoding="utf-8")
+        start = text.index("## 术语")
+        end = text.index("\n## ", start) + 1
+        self.story_path.write_text(text[:start] + "## 术语\n\n" + bad + "\n" + text[end:],
+                                   encoding="utf-8")
+        self.init_audit()
+        self.assert_check_names("术语")
+
+    def test_a_legal_chapter_lands_in_one_go(self) -> None:
+        proc = self.put("术语", minimal_body("术语", "本需求用到的词。"))
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertIn("本需求用到的词。", self.story_path.read_text(encoding="utf-8"))
+
+    def test_a_second_anchor_with_the_same_name_is_refused(self) -> None:
+        """两处同名章锚：替换只替得掉第一处，另一处仍是旧的而读者读到两遍。"""
+        text = self.story_path.read_text(encoding="utf-8")
+        self.story_path.write_text(text + "\n## 术语\n\n又一处。\n", encoding="utf-8")
+        proc = self.put("术语", minimal_body("术语", "本需求用到的词。"))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("章锚", self.out(proc))
+
+    def test_a_foreign_heading_at_the_top_is_refused(self) -> None:
+        """开头是别的章的标题：从前静默留在正文里，于是多出一个章锚。"""
+        proc = self.put("术语", "## 背景\n\n" + minimal_body("术语", "本需求用到的词。"))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("背景", self.out(proc))
+
+    def test_an_unclosed_fence_is_refused(self) -> None:
+        """围栏没关上，它之后的正文全被当成围栏里的东西——判据看不见，读者看见一坨代码。"""
+        body = minimal_body("术语", "本需求用到的词。") + "\n```mermaid\ngraph TD\nA-->B\n"
+        proc = self.put("术语", body)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("围栏", self.out(proc))
+
+    def test_a_work_id_inside_a_diagram_is_not_flagged(self) -> None:
+        """上游那张图是原样搬来的，里头的节点名不是作者写的字——让他改只能改坏图。"""
+        body = "讲这一段流程。\n\n```mermaid\ngraph TD\nA[AR90001 的节点] --> B[结束]\n```\n"
+        proc = self.put("业务流程", body)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        proc2 = self.put("业务流程", body.replace("```mermaid", "```text"))
+        self.assertEqual(1, proc2.returncode, "围栏外的仓内编号仍要拦")
+
+    def test_the_first_three_lines_say_what_to_do_next(self) -> None:
+        """首屏前三行固定 NEXT / INPUT / RESULT：当前动作、动作要读的东西、刚才做了什么。"""
+        proc = self.put("术语", minimal_body("术语", "本需求用到的词。"))
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        head = (proc.stdout or "").split("\n")[:3]
+        self.assertTrue(head[0].startswith("NEXT: "), head)
+        self.assertTrue(head[1].startswith("INPUT: "), head)
+        self.assertTrue(head[2].startswith("RESULT: "), head)
+        self.assertIn("术语", head[2], "RESULT 要写刚才真做过的那件事")
+        self.assertIn("drafts/", head[1], "INPUT 要给出下一章的草稿在哪")
+
+    def test_the_skeleton_never_claims_a_chapter_was_submitted(self) -> None:
+        """skeleton 的 RESULT 只写它做过的事——说成「提交过一章」，作者会以为写过了。"""
+        out = self.run_build("skeleton").stdout or ""
+        result = next(l for l in out.split("\n") if l.startswith("RESULT: "))
+        self.assertNotIn("已落盘", result)
+        self.assertIn("草稿", result)
+
+
 class ChaptersLandOneAtATime(Step8Case):
     """落盘只有一条路：一次一章，其余字节不动。
 
@@ -1446,7 +1538,7 @@ class ChaptersLandOneAtATime(Step8Case):
         """第 4 章中断：恢复时前三章逐字节不变，只写仍带 marker 的那几章。"""
         titles = self.titles()
         for i, title in enumerate(titles[:3]):
-            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+            self.assertEqual(0, self.put_chapter(title, minimal_body(title, f"第 {i + 1} 章的正文。")).returncode)
         done = {t: self.chapter_text(t) for t in titles[:3]}
         proc = self.put_chapter(titles[3], "第 4 章的正文。\n")
         self.assertEqual(0, proc.returncode)
@@ -1466,7 +1558,7 @@ class ChaptersLandOneAtATime(Step8Case):
         stages = ["skeleton"]
         self.assertEqual(0, self.run_build("skeleton").returncode)
         for i, title in enumerate(self.titles()):
-            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+            self.assertEqual(0, self.put_chapter(title, minimal_body(title, f"第 {i + 1} 章的正文。")).returncode)
             stages.append(f"chapter {i + 1}")
             for name in gone:
                 self.assertFalse((self.src / name).exists(),
@@ -1479,9 +1571,9 @@ class ChaptersLandOneAtATime(Step8Case):
         """统稿夹具：十章写完之后只改第 5 章，其余九章字节相同。"""
         titles = self.titles()
         for i, title in enumerate(titles):
-            self.assertEqual(0, self.put_chapter(title, f"第 {i + 1} 章的正文。\n").returncode)
+            self.assertEqual(0, self.put_chapter(title, minimal_body(title, f"第 {i + 1} 章的正文。")).returncode)
         before = {t: self.chapter_text(t) for t in titles}
-        self.assertEqual(0, self.put_chapter(titles[4], "统稿之后的第 5 章。\n").returncode)
+        self.assertEqual(0, self.put_chapter(titles[4], minimal_body(titles[4], "统稿之后的第 5 章。")).returncode)
         for title in titles:
             with self.subTest(chapter=title):
                 if title == titles[4]:
@@ -1551,6 +1643,17 @@ class RealRunCase(unittest.TestCase):
 
     def draft(self, name: str) -> Path:
         return self.drafts / name
+
+    def fill(self, draft: Path) -> Path:
+        """把草稿里的 `{{…}}` 填掉再提交。
+
+        它们是种子留给作者替换的位置，提交时机制会拦住没填的——夹具照抄未填的草稿，
+        测的就不是这条判据要测的东西了。
+        """
+        text = re.sub(r"\{\{([^}]*)\}\}", lambda m: f"{m.group(1)}（夹具）",
+                      draft.read_text(encoding="utf-8"))
+        draft.write_text(text, encoding="utf-8")
+        return draft
 
     def story(self) -> str:
         return self.story_path.read_text(encoding="utf-8")
@@ -1634,7 +1737,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         draft = self.draft("02-术语.md")
         mine = "| 术语 | 在本需求里的意思 |\n|---|---|\n| 自动充值 | 余额低于阈值时自动补 |\n"
         draft.write_text(mine, encoding="utf-8")
-        self.build("chapter", "--chapter", "术语", "--from", str(draft))
+        self.build("chapter", "--chapter", "术语", "--from", str(self.fill(draft)))
 
         shutil.rmtree(self.drafts)          # 成文登记做的就是这件事
         self.build("skeleton")
@@ -1644,7 +1747,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertNotIn("<!-- 待写", back)
         # 恒等：原样再落一次盘，story 一个字节不变
         before = self.story()
-        self.build("chapter", "--chapter", "术语", "--from", str(self.draft("02-术语.md")))
+        self.build("chapter", "--chapter", "术语", "--from", str(self.fill(self.draft("02-术语.md"))))
         self.assertEqual(before, self.story(), "按现稿补回的草稿再落盘却改动了 story")
 
     def test_a_pending_chapter_still_gets_the_seed(self) -> None:
@@ -1709,7 +1812,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
                 .replace("{{一句这一节给评审者看什么}}", "给评审看这一节。")
                 .replace("{{这份材料贡献了什么}}", "给出了业务规则"))
         draft.write_text(text, encoding="utf-8")
-        self.build("chapter", "--chapter", "附录", "--from", str(draft))
+        self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         return self.story()
 
     def test_landing_the_appendix_projects_a_to_d(self) -> None:
@@ -1783,7 +1886,7 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
 
     def landed(self, name: str, title: str) -> str:
         draft = self.draft(name)
-        self.build("chapter", "--chapter", title, "--from", str(draft))
+        self.build("chapter", "--chapter", title, "--from", str(self.fill(draft)))
         return self.story()
 
     def test_guidance_never_reaches_the_archive(self) -> None:
@@ -1814,7 +1917,7 @@ class ProjectionRefusesToInventContent(RealRunCase):
     def test_a_missing_basis_stops_the_projection(self) -> None:
         """激活清单里有、判断骨架里没有——投影不替它编一个依据出来。"""
         self.build("skeleton")
-        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
         use = self.feature / "spec" / "knowledge-use.yaml"
         text = use.read_text(encoding="utf-8")
         start = text.index("  - id: UX-01")
@@ -1837,7 +1940,7 @@ class ProjectionRefusesToInventContent(RealRunCase):
                          + "\n\n### 旧节\n\n<!-- story-build:begin 旧节 · 由某处生成，改它请改真源 -->\n"
                          + "| 旧 |\n|---|\n| 行 |\n<!-- story-build:end -->\n",
                          encoding="utf-8")
-        self.build("chapter", "--chapter", "附录", "--from", str(draft))
+        self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         story = self.story()
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
         self.assertIn("story-build:begin 接口", story)
@@ -1894,7 +1997,7 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
              "process.stdout.write(JSON.stringify("
              "m.diagramsNotCarried(process.argv[2], process.argv[3], process.argv[4])"
              ".map(d => d.id)));",
-             BUILD.resolve().as_uri(), upstream, label, story],
+             IMAGES.resolve().as_uri(), upstream, label, story],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
         return json.loads(proc.stdout)
@@ -1907,7 +2010,7 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
              "process.stdout.write(JSON.stringify("
              "m.diagramsNotCarried(spec, 'spec', story)"
              ".map(d => [d.id, m.diagramTopic(d)])));",
-             BUILD.resolve().as_uri(), self.SPEC, story],
+             IMAGES.resolve().as_uri(), self.SPEC, story],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
         return json.loads(proc.stdout)
@@ -1969,7 +2072,7 @@ class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
         draft = self.draft("02-术语.md")
         draft.write_text("| 术语 | 在本需求里的意思 |\n|---|---|\n| 甲词 | 甲词的意思 |\n",
                          encoding="utf-8")
-        self.build("chapter", "--chapter", "术语", "--from", str(draft))
+        self.build("chapter", "--chapter", "术语", "--from", str(self.fill(draft)))
         draft.unlink()
         self.build("skeleton")
         back = draft.read_text(encoding="utf-8")
@@ -1987,7 +2090,7 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
 
     def land(self) -> str:
         self.build("skeleton")
-        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
         return self.story()
 
     def project(self) -> subprocess.CompletedProcess:
@@ -2070,7 +2173,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
 
     def landed_appendix(self) -> str:
         self.build("skeleton")
-        self.build("chapter", "--chapter", "附录", "--from", str(self.draft("10-附录.md")))
+        self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
         return self.story()
 
     def use_file(self):

@@ -165,8 +165,6 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
             src = feature / "AR" / "story-src"
             src.mkdir(parents=True, exist_ok=True)
             (src / "decisions.json").write_text("[]", encoding="utf-8")
-            (src / "copyedit.md").write_text(
-                "\n".join(f"{i + 1}. 查了，无" for i in range(7)) + "\n", encoding="utf-8")
             proc = subprocess.run(
                 ["node", str(BUILD), "check", "--feature", "AR90004",
                  "--project-root", str(root)],

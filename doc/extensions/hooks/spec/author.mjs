@@ -26,8 +26,10 @@ import { originalArSource } from '../../skills/story/scripts/core/flow-check.mjs
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
-import { carryableBlock, DECISION_FIELDS, diagramsOf, diagramTopic, relFromStory }
-  from '../../skills/story/scripts/core/story-build.mjs';
+import { carryableBlock, diagramsOf, diagramTopic }
+  from '../../skills/story/scripts/core/story/images.mjs';
+import { relFromStory } from '../../skills/story/scripts/core/story/sources.mjs';
+import { DECISION_FIELDS } from '../../skills/story/scripts/core/story/review.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
