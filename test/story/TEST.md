@@ -527,15 +527,22 @@ finalize 前确认主工程的阶段状态文件不存在、或不属于本次 f
 
 ## 7. 离线验证
 
+**能并行的一律并行跑**：下面每条都已经带上它自己的并行参数，**照抄，不要删**。
+`-n auto` / `--jobs` / `-j` 掉一个，同一批用例就从几十秒变成几分钟，而结论一个字不变。
+串行只在排障时用（见 §7.9）。
+
 ```powershell
 python -m pytest test/story/tests -n auto --dist loadscope
 python -m pytest tools/cli/tests -n auto --dist loadscope
-python -m compileall -q tools/cli test/story/scripts
+python -m compileall -q -j 0 tools/cli test/story/scripts
 python -m tools.cli.scripts.validate_clis
 python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数>
 python test/story/scripts/check_failure_modes.py
-node --check <每个 doc/extensions 下的 .mjs>
+node --check <每个 doc/extensions 下的 .mjs>      # 逐个之间无依赖，可同时起
 ```
+
+后两条本身是单进程的：形态检查一轮几秒，`node --check` 是一堆互不依赖的单文件语法检查，
+要快就同时起几个，不必排队。
 
 相关修改先跑有区分力的用例，通过后在完整需求收口运行必要全量；无新改动或疑点不重复刷全量。verifier通道见§7.0，真实smoke见§7.0.1。跳过/预期失败按当前用例声明与实际输出逐项说明，不在本指南固定失败数量。
 
@@ -651,10 +658,16 @@ rg -n '实测[^。]{0,40}[0-9]|首跑 [0-9]|批次 *[0-9]|上一轮那|F[0-9]+ (
 ```powershell
 python -m pytest test/story/tests -n auto --dist loadscope   # 默认：并行
 python -m pytest test/story/tests -n auto --dist loadscope -q --durations 10  # 并行并查看慢项
+python -m pytest test/story/tests -n auto --dist loadscope -q -k <关键词>      # 只跑有区分力的那几条
 python -m unittest discover test/story/tests         # 只在排障时用：串行、输出线性
 ```
 
-**默认并行**。测试彼此隔离是本域的既有约束，不是并行带来的新要求——并行只是让违反它的
+**默认并行**，实测差近十倍：2026-09-13 本机同一批 884 条，`-n auto --dist loadscope`
+**45.8 秒**，串行 **439 秒**。慢的时候先看命令里 `-n auto` 还在不在——
+**为了让输出好读而加 `-p no:randomly` 时最容易连着把 `-n auto` 一起丢掉**，
+两者不冲突，要固定顺序就两个都写。
+
+测试彼此隔离是本域的既有约束，不是并行带来的新要求——并行只是让违反它的
 地方立刻现形（写到共享路径的那条会当场撞车，而串行下它一直是绿的）。三条规约：
 
 - **每条测试只写自己的临时目录**。落到 `%TEMP%` 下固定名字的路径不算「自己的」——
@@ -686,7 +699,7 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 | spec 阶段扩展占 prompt 44.3% |
 | 7 | `doc/extensions` 非知识层**代码行**（注释与空行不计） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按AGENTS §7.5区分。**配额限的是机制规模不是文字长短**：注释算进去，省下来的只会是解释；逐类怎么剥注释见预算文件头部 | 新口径基线 8116 |
 
-上表前六项目标保留为诊断参照，不自动换算为质量分、重试次数或输入截断阈值；第7项按当前签定预算执行。历史规模方向及旧计数不作为新需求的现值，新增/退出职责和实际规模按AGENTS §7.5说明。
+上表前六项目标保留为诊断参照，不自动换算为质量分、重试次数或输入截断阈值；第7项当前脚本仍检查既有签定的峰值/总量，超限处置遵循test/story/AGENTS.md §7.5。100%/125%/150%新增实现预算的机械分级尚未接线，不把现有测试通过视为分级复核已实现。历史规模方向及旧计数不作为新需求的现值，新增/退出职责和实际规模按AGENTS §7.5说明。
 
 **读数口径**：第 2、3 项只看工具**入参**（读了什么）——**含 bash 里的读**
 （`cat` / `sed` / `grep`，以及 `node -e "readFileSync(...)"`：一轮实跑读判据脚本 68 次
