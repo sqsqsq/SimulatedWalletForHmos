@@ -19,10 +19,17 @@
  * 这里读它的结果；源图对应、全局编号、投影完整性、图片身份、冻结、语义质量都不在这里。
  * 本模块不读磁盘、不写文件、不输出 stdout，也不导入 story-build 入口。
  */
-import { hasDiagram, norm, normalizeHeading, sectionBody, tablesIn } from './document.mjs';
+import {
+  DIAGRAM_SYNTAXES, hasDiagram, norm, normalizeHeading, sectionBody, tablesIn,
+} from './document.mjs';
 
 //: 写作设计选定的结构缺了时，报错多说这一句：它不是合同要求，改主意要回写作设计改。
 const PICKED = '——这是写作设计里选定的结构；改主意就同时改写作设计的结构选择';
+
+/** 一个图槽位叫什么：点名了类型的说类型，没点名的是任何一种图。 */
+const diagramName = (slot) => (slot.syntax
+  ? `${DIAGRAM_SYNTAXES[slot.syntax]}（mermaid 围栏里首个声明是 ${slot.syntax}，别的图不能顶替）`
+  : '图（画图语言的围栏）');
 
 /** 渲染一张 markdown 表：表头 + 分隔行 + 数据行。 */
 export function renderTable(header, rows) {
@@ -101,9 +108,10 @@ export function chapterStructureProblems(ch, view) {
       + '放在章首那段或一个总览小节里都行，代码围栏不算');
   }
   for (const slot of ch?.structure?.diagrams ?? []) {
-    if (slot.alsoRequired) continue;                     // 与合同那张重合：上面那条已经核过
-    if (hasDiagram(view, slot.at) !== false) continue;   // null＝那一节缺席，由必要 H3 那条报
-    problems.push(`「${ch.title}${slot.at ? `·${slot.at}` : ''}」没有图（画图语言的围栏）${PICKED}`);
+    // 与合同那张重合：有没有图由上面那条核；点名了类型的，章里有图之后再核是不是那一种
+    if (slot.alsoRequired && (!slot.syntax || !hasDiagram(view))) continue;
+    if (hasDiagram(view, slot.at, slot.syntax) !== false) continue;   // null＝那一节缺席，由必要 H3 那条报
+    problems.push(`「${ch.title}${slot.at ? `·${slot.at}` : ''}」没有${diagramName(slot)}${PICKED}`);
   }
   return problems;
 }
@@ -119,7 +127,8 @@ export function pickedStructureNames(ch) {
   return [
     ...requiredTables(ch).filter(t => t.selected)
       .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
-    ...(ch?.structure?.diagrams ?? []).filter(d => d.selected).map(d => `${where(d.at)}图`),
+    ...(ch?.structure?.diagrams ?? []).filter(d => d.selected)
+      .map(d => `${where(d.at)}${d.syntax ? DIAGRAM_SYNTAXES[d.syntax] : '图'}`),
   ];
 }
 
@@ -139,9 +148,10 @@ export function pickedStructureNames(ch) {
 export function chapterSeedRows(ch, facts, { diagramHint } = {}) {
   if (ch.appendix) return appendixSeedRows(ch, facts);
   const rows = [];
-  const hint = (at) => ((ch.structure?.diagrams ?? [])
-    .some(d => normalizeHeading(d.at) === normalizeHeading(at)) && diagramHint
-    ? [diagramHint(at), ''] : []);
+  const hint = (at) => {
+    const slot = (ch.structure?.diagrams ?? []).find(d => normalizeHeading(d.at) === normalizeHeading(at));
+    return slot && diagramHint ? [diagramHint(at, slot.syntax), ''] : [];
+  };
   const tables = requiredTables(ch).filter(t => t.seed);
   rows.push(...hint(''));
   for (const t of tables.filter(t => !t.at)) rows.push(...tableSeed(t, facts), '');
@@ -175,8 +185,8 @@ export function missingPickedSeeds(ch, view, { diagramHint } = {}) {
     rows.push(...heading(t.at ?? ''), ...tableSeed(t, {}), '');
   }
   for (const d of (ch.structure?.diagrams ?? []).filter(x => x.selected)) {
-    if (hasDiagram(view, d.at) === true) continue;
-    rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.at), ''] : []));
+    if (hasDiagram(view, d.at, d.syntax) === true) continue;
+    rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.at, d.syntax), ''] : []));
   }
   for (const h of requiredH3(ch).filter(x => x.selected)) rows.push(...heading(h.title));
   return rows;

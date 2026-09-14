@@ -20,6 +20,10 @@ export function norm(s) {
 //: 「这一章有没有图」就会被一段贴进来的示例顶掉。
 export const DIAGRAM_LANGS = new Set(['mermaid', 'plantuml', 'puml', 'dot', 'graphviz']);
 
+//: 写作设计能点名的图类型（mermaid 首个声明 → 读者看到的名字）。只收脚本要落实的那几种：
+//: 不点名的图照旧认任何画图语言；类型只证明语法类别，图里关系画得对不对归语义审查。
+export const DIAGRAM_SYNTAXES = { sequenceDiagram: '时序图' };
+
 //: 关闭行：一串围栏标记之后除了空格与 tab 什么都没有。
 const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
 
@@ -72,6 +76,16 @@ export function fencedLines(text) {
   return maskOf(lines, fenceRanges(lines));
 }
 
+/** 围栏里首个有效声明：跳过空行与 `%%` 注释行（图源标记也是注释）。图类型由它认。 */
+function firstStatement(lines, fence) {
+  const end = fence.closed ? fence.to : fence.to + 1;
+  for (let i = fence.from + 1; i < end && i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line && !line.startsWith('%%')) return line;
+  }
+  return '';
+}
+
 /** 同上，但调用方已经有行与范围时不重扫。 */
 function maskOf(lines, ranges) {
   const mask = new Set();
@@ -94,7 +108,7 @@ function maskOf(lines, ranges) {
  */
 export function parseChapter(text) {
   const lines = String(text ?? '').split(/\r?\n/);
-  const fences = fenceRanges(lines);
+  const fences = fenceRanges(lines).map(f => ({ ...f, head: firstStatement(lines, f) }));
   const fenced = maskOf(lines, fences);
   const sections = [], tables = [];
   let current = null;                    // 当前 H3
@@ -153,9 +167,11 @@ export function tablesIn(view, name) {
  * 有没有真正的图围栏（画图语言的那种）：`name` 为空看全章，否则只看那一节里的。
  *
  * 那一节缺席返回 null——与「有节但没图」不是一回事，缺节由必要 H3 那条报。
+ * 给了 `syntax`（`DIAGRAM_SYNTAXES` 里的一种）时只认首个声明是它的 mermaid 图。
  */
-export function hasDiagram(view, name = '') {
-  const drawn = (view?.fences ?? []).filter(f => DIAGRAM_LANGS.has(f.lang));
+export function hasDiagram(view, name = '', syntax = '') {
+  const drawn = (view?.fences ?? []).filter(f => DIAGRAM_LANGS.has(f.lang)
+    && (!syntax || (f.lang === 'mermaid' && String(f.head ?? '').split(/\s/)[0] === syntax)));
   if (!name) return drawn.length > 0;
   const hit = matchSection(view, name);
   if (!hit) return null;

@@ -12,7 +12,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeHeading, parseChapter } from './document.mjs';
+import { DIAGRAM_SYNTAXES, normalizeHeading, parseChapter } from './document.mjs';
 import { chapterSeedRows, missingPickedSeeds } from './chapter-contract.mjs';
 import { relFromFeature } from './sources.mjs';
 import { selectedStructure } from './writing-plan.mjs';
@@ -50,9 +50,10 @@ function guideLine(text, label = '') {
   return `<!-- ${GUIDE_MARK} ${label ? `${label}：` : ''}${one} -->`;
 }
 
-/** 选定的图只留一行作图提示：节点由作者按本需求的关系画，脚本不预放。 */
-const diagramHint = (at) => guideLine(`${at ? `「${at}」这一节` : '这一章'}要一张你在写作设计里`
-  + '选定的图——按本需求要解释的关系画，用画图语言的围栏', '作图');
+/** 选定的图只留一行作图提示：参与方与消息由作者按本需求的关系画，脚本不预放。 */
+const diagramHint = (at, syntax) => guideLine(`${at ? `「${at}」这一节` : '这一章'}要一张你在写作设计里选定的`
+  + (syntax ? `${DIAGRAM_SYNTAXES[syntax]}——mermaid 围栏首个声明写 ${syntax}，讲清谁调谁、结果回到谁、失败后谁负责`
+    : '图——按本需求要解释的关系画，用画图语言的围栏'), '作图');
 
 /**
  * 一章的草稿：章头（读者问题、主要职责、写前读什么、提交命令）+ 必要种子。

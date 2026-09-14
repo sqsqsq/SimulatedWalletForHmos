@@ -167,7 +167,7 @@ class RenderMatchesGolden(RendererCase):
                           f"<!-- decision: {entry['id']} -->", out)
 
     def test_no_checkbox_and_no_placeholder_survive(self) -> None:
-        """三态勾选块与「（暂无）」占位都已退场——它们让人在答不上来的地方打勾。"""
+        """没写 review_mode 的议题只有一行「审核结果：」：三态勾选块与「（暂无）」占位都不回来。"""
         self.write_decisions(parse_golden())
         self.assertEqual(0, self.run_build().returncode)
         out = self.review.read_text(encoding="utf-8")

@@ -234,6 +234,8 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         """
         gone = ("SCANNED_CATEGORIES", "scanned_categories", "none_reason",
                 "同意当前建议", "暂缓原因", "（暂无）", "审核结果（由评审人填写）",
+                # 所有议题只有一行自由文字、不许有选项的旧定义，随选方案 / 复核结论两种填写位退场
+                "没有勾选项", "编号列出每个选项",
                 # 编号归机器铺之后，判自己输出的那条判据与它的合同键一并退场
                 "heading_shapes",
                 # 窄准入定义（「依据不在材料里才是决策」）与六方向提示同轮退场

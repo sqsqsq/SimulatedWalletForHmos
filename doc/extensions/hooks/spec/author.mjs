@@ -158,6 +158,9 @@ function decisionSection(contract) {
     '',
     `每条要写满：\`id\`、\`status\`（\`settled\` / \`open\`）、\`category\`、${fields}。`,
     '',
+    '`review_mode` 按人在评审时实际要做的事填：从几个方案里选一个写 `choice`，复核一个已有结论写 `confirm`；'
+    + '它只决定评审记录给什么填写位，与 `status` 各管各的。',
+    '',
     `\`category\` 取自合同：${categories.join('、')}。`,
     '',
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。'];

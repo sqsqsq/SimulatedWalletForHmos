@@ -105,6 +105,9 @@ class TheProtocolIsReadInOnePlace(unittest.TestCase):
                       ["第 1 项", "表要给 columns"]),
             "协议外字段": (with_picks([{"chapter": "05-flow", "at": "", "kind": "diagram",
                                     "section": "总览"}]), ["协议外的字段 section"]),
+            "表带图类型": (with_picks([{**PICKS[0], "syntax": "sequenceDiagram"}]), ["表不带 syntax"]),
+            "不认识的图类型": (with_picks([{"chapter": "05-flow", "at": "", "kind": "diagram",
+                                     "syntax": "flowchart"}]), ["syntax 目前只认 sequenceDiagram"]),
             "未知章": (with_picks([{"chapter": "99-x", "at": "", "kind": "diagram"}]),
                      ["chapter「99-x」不是章节合同里的章 ID"]),
             "附录外小节": (with_picks([{"chapter": "10-appendix", "at": "补充说明", "kind": "diagram"}]),
@@ -366,6 +369,55 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
         body = ("提交后界面停在等待态。\n\n" + TABLE
                 + "\n### 设计里没列的一节\n\n写作中发现的另一种受限情形。\n")
         code, out = self.put("功能说明", body)
+        self.assertEqual(0, code, out)
+
+
+#: 作者点名要时序图的一节；围栏开头可以先有空行与 `%%` 注释，之后才是声明。
+SEQUENCE = {"chapter": "07-exceptions", "at": "跨方恢复", "kind": "diagram", "syntax": "sequenceDiagram"}
+FLOW_FENCE = "```mermaid\nflowchart TD\nA-->B\n```\n"
+SEQ_FENCE = ("```mermaid\n%% 先讲受理，再讲结果回到谁\n\nsequenceDiagram\n"
+             "  申请方->>受理方: 提交\n  受理方-->>申请方: 受理结果\n```\n")
+
+
+class APickedDiagramTypeIsHeld(PlanCase):
+    """点名时序图之后流程图顶替不了；与不点名的选择或合同要求重合时，一个缺口只报一次、只给一次起点。"""
+
+    def section(self, fence: str) -> str:
+        return f"中断后重新进入。\n\n### 跨方恢复\n\n两边各自重试：\n\n{fence}"
+
+    def test_a_flowchart_does_not_stand_in_for_a_sequence(self) -> None:
+        self.write_plan([SEQUENCE])
+        self.cmd("skeleton")
+        self.assertIn("时序图", self.draft("07").read_text(encoding="utf-8"), "起点没说这里要时序图")
+        code, out = self.put("异常与恢复", self.section(FLOW_FENCE))
+        self.assertEqual(1, code, out)
+        self.assertIn("「异常与恢复·跨方恢复」没有时序图", out)
+        code, out = self.put("异常与恢复", self.section(SEQ_FENCE))
+        self.assertEqual(0, code, out)
+
+    def test_an_untyped_and_a_typed_pick_at_one_place_count_once(self) -> None:
+        plain = {k: v for k, v in SEQUENCE.items() if k != "syntax"}
+        self.write_plan([plain, SEQUENCE])
+        self.cmd("skeleton")
+        draft = self.draft("07").read_text(encoding="utf-8")
+        self.assertEqual(1, draft.count("作图："), draft)
+        self.assertIn("时序图", draft, "留下的不是更具体的那项")
+        code, out = self.put("异常与恢复", self.section("没有图。\n"))
+        self.assertEqual(1, code, out)
+        self.assertEqual(1, out.count("跨方恢复」没有"), out)
+        self.assertIn("没有时序图", out)
+
+    def test_with_the_contract_diagram_the_gap_is_reported_once(self) -> None:
+        self.write_plan([{"chapter": "05-flow", "at": "", "kind": "diagram", "syntax": "sequenceDiagram"}])
+        self.cmd("skeleton")
+        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
+        code, out = self.put("业务流程", "提交之后等回执。\n")
+        self.assertEqual(1, code, out)
+        self.assertEqual(1, out.count("没有图") + out.count("没有时序图"), f"同一个缺口报了不止一次：{out}")
+        code, out = self.put("业务流程", "提交之后等回执。\n\n" + FLOW_FENCE)
+        self.assertEqual(1, code, out)
+        self.assertIn("「业务流程」没有时序图", out, "章里已有流程图时没核图类型")
+        code, out = self.put("业务流程", "提交之后等回执。\n\n" + SEQ_FENCE)
         self.assertEqual(0, code, out)
 
 

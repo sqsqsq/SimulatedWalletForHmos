@@ -32,7 +32,7 @@ components:
 
 - `must` **只能**挂在五处：`data_models[].fields[]`、`interfaces[].methods[]`、
   `components[]` 及其 `state[]`、`resource_keys[]`、`files[]`；挂在实体顶层或别的集合上都会被拦。
-  `text` 写**本次要落实成什么**，不是复述规约原文——那样等于没做设计。
+  `text` 写**本次要落实成什么**，不复述规约原文；`rule` 只写真正要求这件事的规约，业务规则不属于命中条目时不借编号挂 `must`。
 - `verify` 封闭取值：`ut` / `device` / `both` / `review` / `probe`。取 `probe` 时，
   该条目的规约表**必须有探针**（探针表达式在规约里，不写在契约里）。
 - 采用的设计模式：给每个角色文件标 `files[].pattern` + `files[].role`，`role` 取值须是

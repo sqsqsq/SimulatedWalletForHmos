@@ -10,22 +10,27 @@
  * 本模块不写盘、不输出 stdout；围栏按 document 的规则认，不另写 Markdown 解析。
  */
 import { readText } from './context.mjs';
-import { fenceRanges, norm, normalizeHeading, placeholderProblems } from './document.mjs';
+import {
+  DIAGRAM_SYNTAXES, fenceRanges, norm, normalizeHeading, placeholderProblems,
+} from './document.mjs';
 import { relFromFeature } from './sources.mjs';
 
 //: 三个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
 const PARTS = { story: '阅读主线', chapters: '章节安排', picks: '结构选择' };
 const KINDS = ['table', 'diagram'];
-const FIELDS = ['chapter', 'at', 'kind', 'columns'];
+const FIELDS = ['chapter', 'at', 'kind', 'columns', 'syntax'];
 
-/** 空壳：三部分标题、每章一个章 ID 小节、一个空数组。占位写的是这一格要回答什么。 */
+/**
+ * 空壳：三部分标题、每章一个章 ID 小节、一个空数组。占位写的是这一格要回答什么。
+ * 章内的 `####` 小节骨架由作者按本需求起，空壳不预制——统一预制就是又一张十章填空表。
+ */
 export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '', `## ${PARTS.story}`, '',
     '{{第一次读这份需求的人按什么顺序理解它：哪些参与方、对象与关系要先讲，'
     + '已定决定的依据在哪，哪些未决限制后面的叙述}}', '', `## ${PARTS.chapters}`, ''];
   for (const ch of contract.chapters ?? []) {
-    rows.push(`### ${ch.id}`, '', `{{「${ch.title}」在本需求里要回答的实际问题、主要依据位置、`
-      + '与别的章怎么互补、拟用形式及理由；不涉及就写理由}}', '');
+    rows.push(`### ${ch.id}`, '', `{{「${ch.title}」的主线与别的章怎么分工；有独立子问题就用 #### 小节`
+      + '逐个写：要回答什么、依据在哪、要解释的对象关系或先后、未决与拟用形式；不涉及就写理由}}', '');
   }
   rows.push(`## ${PARTS.picks}`, '', '```json', '[]', '```', '');
   return rows.join('\n');
@@ -152,6 +157,10 @@ function checkPick(item, where, known, say) {
     bad.push('表要给 columns：非空的列名数组，列名里不带「|」');
   }
   if (item.kind === 'diagram' && cols !== undefined) bad.push('图不带 columns');
+  if (item.syntax !== undefined && item.kind !== 'diagram') bad.push('表不带 syntax');
+  if (item.kind === 'diagram' && item.syntax !== undefined && !Object.hasOwn(DIAGRAM_SYNTAXES, item.syntax)) {
+    bad.push(`syntax 目前只认 ${Object.keys(DIAGRAM_SYNTAXES).join('、')}（不写表示任何一种图）`);
+  }
   const subs = ch?.subsections ?? [];
   if (ch?.appendix && typeof item.at === 'string' && item.at.trim()
       && !subs.some(s => normalizeHeading(s) === normalizeHeading(item.at))) {
@@ -162,7 +171,8 @@ function checkPick(item, where, known, say) {
     return null;
   }
   return { chapter: item.chapter, at: item.at.trim(), kind: item.kind,
-    ...(item.kind === 'table' ? { columns: cols.map(c => c.trim()) } : {}) };
+    ...(item.kind === 'table' ? { columns: cols.map(c => c.trim()) } : {}),
+    ...(item.syntax ? { syntax: item.syntax } : {}) };
 }
 
 /**
@@ -172,7 +182,8 @@ function addPick(plan, pick, known, say) {
   const where = `「${pick.chapter}·${pick.at || '章级'}」`;
   const twin = plan.structures.find(s => s.chapter === pick.chapter
     && normalizeHeading(s.at) === normalizeHeading(pick.at) && s.kind === pick.kind
-    && (pick.kind === 'diagram' || norm(s.columns[0]) === norm(pick.columns[0])));
+    && (pick.kind === 'diagram' ? (s.syntax ?? '') === (pick.syntax ?? '')
+      : norm(s.columns[0]) === norm(pick.columns[0])));
   if (twin) {
     if (pick.kind === 'table' && twin.columns.map(norm).join('|') !== pick.columns.map(norm).join('|')) {
       say(`的「${PARTS.picks}」第 ${twin.index} 项与第 ${pick.index} 项在${where}`
@@ -205,7 +216,8 @@ function contractTwin(ch, pick) {
  *
  * 选定的表按列生成：每一列是一组锚，第一列是主语。与合同同位置同主语的必要表是**同一张表**，
  * 合成一个槽位——合同的锚列在前、作者多出来的列补在后，表头用作者的列——只核一次、只打一次底。
- * 选定的图记位置；与合同那张章级图重合时记 `alsoRequired`，由合同那条核，不重复报。
+ * 选定的图记位置与点名的类型；与合同那张章级图重合时记 `alsoRequired`，有没有图由合同那条核，
+ * 不重复报。同一位置既有不点名的图又有点名类型的图，只留点名的那项——它更具体，缺口只报一次。
  * **重合不等于没选**：选出来的项一律带 `selected`，报错、补结构起点与「不涉及」冲突都据它
  * 认出「这是作者在写作设计里定的」。
  */
@@ -222,7 +234,7 @@ export function selectedStructure(plan, chapterId) {
       h3.push({ title: pick.at, selected: true });
     }
     if (pick.kind === 'diagram') {
-      diagrams.push({ at: pick.at, selected: true,
+      diagrams.push({ at: pick.at, selected: true, ...(pick.syntax ? { syntax: pick.syntax } : {}),
         ...(!pick.at && base.diagram ? { alsoRequired: true } : {}) });
       continue;
     }
@@ -238,5 +250,7 @@ export function selectedStructure(plan, chapterId) {
     const extra = pick.columns.filter(c => !groups.some(g => g.some(a => norm(c).includes(norm(a)))));
     Object.assign(own, slot, { anchors: [...groups, ...extra.map(c => [c])] });
   }
-  return { ...base, h3, tables, diagrams };
+  const typed = new Set(diagrams.filter(d => d.syntax).map(d => normalizeHeading(d.at)));
+  return { ...base, h3, tables,
+    diagrams: diagrams.filter(d => d.syntax || !typed.has(normalizeHeading(d.at))) };
 }

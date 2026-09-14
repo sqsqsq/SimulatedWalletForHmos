@@ -464,7 +464,7 @@ def target_reached(feature: str, end_phase: str) -> bool:
         return False
     if end_phase == STORY_REVIEW:
         # 回流的凭证是处置台账：评审意见逐条有了去向，这一趟才算走完。
-        return (REPO_ROOT / FEATURES_DIR / feature / "AR" / "review-disposition.json").is_file()
+        return (REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "review-disposition.json").is_file()
     ok, _ = phase_evidence_complete(feature, end_phase)
     return ok
 

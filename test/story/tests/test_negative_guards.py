@@ -411,6 +411,15 @@ class ReviewBannedTermsScope(NegativeCase):
         self.init_audit()
         self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
 
+    def test_a_choice_zone_is_not_judged_either(self) -> None:
+        """选方案的填写位同样是人的表态。"""
+        self.write_review("甲议题的澄清正文。", human="选 2，先灰度一周再全量。")
+        review = self.feature_root() / "AR" / "review.md"
+        review.write_text(review.read_text(encoding="utf-8").replace("审核结果：\n", "方案选择：\n", 1),
+                          encoding="utf-8")
+        self.init_audit()
+        self.assertEqual(self.banned_hits(), "", "选方案的填写位被当成产品承诺判了")
+
     def test_the_freeform_zone_is_not_judged(self) -> None:
         """「其他意见」章整章是人写的，同理不判。"""
         self.write_review("甲议题的澄清正文。", freeform="上游说没有运营灰度诉求。")

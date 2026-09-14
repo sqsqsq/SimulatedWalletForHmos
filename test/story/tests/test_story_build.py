@@ -296,13 +296,12 @@ REVIEW_HUMAN_ZONE = "审核结果：\n"
 
 
 class TestReviewForm(StoryBuildCase):
-    """评审人要填的只剩「审核结果：」一行——需要说明书就是设计错了。
+    """评审人要填的只有议题末尾那处填写位——需要说明书就是设计错了。
 
     曾经这里还有暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、
     确认依据七个字段。评审人打开它先要读一遍字段表，而其中六格他答不上来
     （责任人和期限是排期的事，确认依据是审计的事）。答不上来的格子只会被跳过或胡填。
-    三态勾选是同一个问题的轻量版：勾「需要修改」而不写改成什么，那一勾传不出任何信息；
-    既然要写字，框就是多余的。
+    没写 review_mode 的议题仍是一行「审核结果：」；选方案与复核结论两种填写位见 test_review_modes。
     """
 
     review_path = property(
@@ -362,6 +361,32 @@ class TestReviewForm(StoryBuildCase):
         out = self.assert_check_names("评审记录里出现")
         self.assertIn("确认日期", out)
         self.assertIn("状态行", out)
+
+
+class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
+    """AR 根下只有交付文档：过程件（如评审处置台账）进 story-src；两处都有时停下交人，不替人合并。"""
+
+    def ar(self) -> Path:
+        return self.root / "doc" / "features" / FEATURE / "AR"
+
+    def test_a_file_in_the_root_is_moved_as_is(self) -> None:
+        self.init_audit()
+        (self.ar() / "review-disposition.json").write_text("{}", encoding="utf-8")
+        out = self.assert_check_names("AR/review-disposition.json 不该在这一层")
+        self.assertIn("原样挪进 AR/story-src/", out)
+
+    def test_two_copies_stop_for_a_human(self) -> None:
+        self.init_audit()
+        (self.ar() / "review-disposition.json").write_text('{"items": [1]}', encoding="utf-8")
+        (self.src / "review-disposition.json").write_text('{"items": [2]}', encoding="utf-8")
+        out = self.assert_check_names("AR/review-disposition.json 与 AR/story-src/review-disposition.json 同时存在")
+        self.assertIn("不合并、不覆盖", out)
+
+    def test_the_ledger_in_story_src_is_not_a_stray(self) -> None:
+        self.init_audit()
+        (self.src / "review-disposition.json").write_text("{}", encoding="utf-8")
+        _, out = self.check_output()
+        self.assertNotIn("review-disposition.json", out)
 
 
 class TestRequirementIdInTitle(StoryBuildCase):

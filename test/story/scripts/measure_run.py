@@ -103,16 +103,34 @@ def _ts(value: str | None) -> datetime | None:
         return None
 
 
+def _strings(value) -> list[str]:
+    """结构化入参里的**真实字符串值**，逐层取出。
+
+    不先 `json.dumps` 再匹配：序列化会把 Windows 路径的每个反斜杠转义成两个，
+    `doc\\extensions\\...` 于是和任何路径正则都对不上——两份实跑的规则读取就这样被报成了 0。
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _norm_path(text: str) -> str:
+    """路径比较前归一：反斜杠当斜杠，连续的分隔符并成一个。"""
+    return re.sub(r"/{2,}", "/", text.replace("\\", "/"))
+
+
 def _request_text(event: dict) -> str:
     """**作者要什么**：工具入参与事件正文。路径类判定只看这里。
 
     绝不把 `tool_output` 掺进来：Read 的输出里带着整份文件正文，一份 `doc/features/` 产物
     只要正文里提了 `framework/`，就会被算成「在读规则文本」。输入面才是作者的意图。
     """
-    parts = [str(event.get("content") or "")]
-    ti = event.get("tool_input")
-    parts.append(json.dumps(ti, ensure_ascii=False) if isinstance(ti, (dict, list)) else str(ti or ""))
-    return "\n".join(parts)
+    parts = [str(event.get("content") or ""), *_strings(event.get("tool_input"))]
+    return _norm_path("\n".join(parts))
 
 
 def _output_text(event: dict) -> str:

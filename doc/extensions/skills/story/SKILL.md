@@ -210,7 +210,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 
 评审表态由评审人填写——**你不代填表态、不动人工区**。人可能在系统上批注，也可能直接改本地
 文件：**流程不关心来源，模型的输入唯一就是 `AR/review.md`**。处置前完整读一遍
-[rules/review_reflow.md](rules/review_reflow.md)。产物是 `AR/review-disposition.json`
+[rules/review_reflow.md](rules/review_reflow.md)。产物是 `AR/story-src/review-disposition.json`
 与被修订的 `spec/spec.md`；**`AR/story.md` 与归档件不动**——story 定稿于评审时点。
 
 ## 交互关卡语义（所有关卡统一适用）
