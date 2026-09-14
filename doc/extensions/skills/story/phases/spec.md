@@ -67,7 +67,7 @@ node .../story-build.mjs skeleton --feature <feature>  # ① 当前输入 + 写�
 #                                 都已经在里面），一次写一章，经
 #                                 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
-#                              ②b 写后核对：通读成稿一遍，做三个动作（见 story-write.md）；
+#                              ②b 写后核对：从来源核实际全文，做三项工作（见 story-write.md）；
 #                                 改的那几章仍逐章落盘，落盘时本章判据先核一遍
 python .../story_flow.py story --feature <feature>   # ③ 登记（自带 number / build / check）
 #                              ④ 跑 spec harness
@@ -75,9 +75,9 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 numbe
 #                              ⑥ check-receipt → check --deliver 交付门 → /story archive
 ```
 
-- **②b 是把成稿从头读到尾的那一次**：逐章写时已经要求比对已写内容、只补独有信息，
-  但没有一步是通读成稿的——同一件事在三章各讲一遍、图连图没有承接，合起来读才看得出来。
-  三个动作与七条自查见 `story-write.md`「写后核对」。
+- **②b 是拿成稿对着来源从头核的那一次**：逐章写时只看得到这一章，原材料里漏掉的事、
+  跨章说法不一、图前声称与图里对不上、未决被写成已定，合起来对着来源读才看得出来。
+  三项工作见 `story-write.md`「写后核对」；改的是最早出错的那一处，不写「已核对」。
 - **①b 是写作之前的整篇设计**：阅读主线、每章要回答什么与依据在哪、选定的表和图，
   写在 `AR/story-src/story-template.md`（写法见 `story-write.md`「动笔前：先有整篇写作设计」）。
   它还是空壳时，skeleton 与每次 `chapter` 提交都会让你先写它；写作中改设计不用问人，
@@ -114,9 +114,10 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 numbe
   判的不是 PASS 就不交付，本宿主没登记审查员时如实记一笔「未经读者语义审查即交付」。
   远程单在上传之前跑它（`/story archive` 自带），本地单没有归档，它就是最后一道。
 - **verifier 报了阻断问题怎么办**：`story_flow.py reopen` 撤销成文登记（唯一的回退出口）
-  → `story-build skeleton`（草稿一直在，登记也不删它；这一步只补缺席的那几章，
-  story.md 一个字节不动）→ 在那一章的草稿上改 → `chapter --from <草稿>` → `number` →
-  `check` → `story_flow.py story` 重新登记 → harness → verifier 再审。
+  → 照 reopen 给出的下一步走：范围与材料没变时是 `complete --from AR/story-src/design-draft.md`
+  重新收口，材料变了走盘点与关卡 → `story-build skeleton`（草稿一直在，登记也不删它；这一步只补
+  缺席的那几章，story.md 一个字节不动）→ 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）
+  → `chapter --from <草稿>` → `check` → `story_flow.py story` 重新登记 → harness → verifier 再审。
   材料变了、subject 换代，这是框架定义的正常返修，不是重复审。
 
 ## 三、§9 技术契约怎么写

@@ -171,7 +171,8 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
                 "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
     return ("register_story",
-            "十章齐了。先把成稿从头读到尾做写后核对（要改哪章就改它的草稿再 chapter 提交），"
+            "十章齐了。先按作业书的写后核对从来源核实际全文"
+            "（业务结论改 Spec 或决策登记，解释安排改写作设计，正文改草稿再 chapter 提交），"
             "`story-build check` 通过之后跑 `story_flow.py story` 登记成文"
             "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
@@ -277,8 +278,9 @@ def next_step(feature_root: Path, contract: dict | None,
                 "**交付门通过之后按它打印的选择走**：归档送审、进入 plan，或先归档再进 plan；"
                 "本地单没有归档，只有进 plan。"
                 "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
-                "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，"
-                "在草稿上改完重新登记——材料变了再审是正常返修，不是重复审"
+                "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，照它给出的下一步走"
+                "（范围与材料没变时先 `complete` 收口），再在草稿上改、`chapter` 提交、`story` 重新登记"
+                "——材料变了再审是正常返修，不是重复审"
                 + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，

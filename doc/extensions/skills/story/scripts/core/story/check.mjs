@@ -161,7 +161,7 @@ export function cmdCheck(ctx) {
   // 词表与判定在 language.mjs（SSOT），这里只调。
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
-  // 「灰度」「回退」是业务事实不是客户端文案——收缩的是作用域，不是词表。
+  // 「灰度」是业务事实不是客户端文案——收缩的是作用域，不是词表。
   const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来，
   // 不给链接他只知道「有一份产品需求文档」。豁免只到这一节的链接语法为止——

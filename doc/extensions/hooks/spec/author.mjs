@@ -355,14 +355,12 @@ function vocabularySection(contract) {
     .filter(c => c?.banned_terms_exempt).map(c => c.key);
   rows.push('', '**在哪不算**：', '',
     chapters.length
-      ? `- 整章豁免：「${chapters.join('」「')}」——这几章讲的就是发布与回退动作本身；`
+      ? `- 整章豁免：「${chapters.join('」「')}」——这几章讲的就是发布与开关动作本身；`
       : '- 没有整章豁免的章；',
     categories.length
       ? `- 决策议题豁免：类别为「${categories.join('」「')}」的那几条，`
         + 'review 里它们照原样写；'
       : '- 没有豁免的决策类别；',
-    '- 同一个词的另一种语义不算：数据或状态层面的「回退」（缓存缺失回退云侧查询、'
-    + '事务回滚）说的不是发布动作；',
     '- 引用上游规约的章节名不算——那是在指路，不是在用这个词；',
     '- 讲禁用词本身的地方不算（比如这一节）。');
   rows.push('', '数值怎么标来源、验收怎么接回规约，见 `author.md`。');

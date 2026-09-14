@@ -369,6 +369,38 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(1, proc.returncode)
         self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
 
+    def test_reopen_says_what_to_do_next(self) -> None:
+        """重开之后先做什么由现状回答——不说的话作者会直接去登记，而那一步会被拒。"""
+        self.complete_it("story_written")
+        proc = self.run_flow("reopen")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(0, proc.returncode, out)
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertTrue(payload.get("next") and payload.get("action"), f"reopen 没给出下一步：{payload}")
+        self.assertIn("下一步", out)
+
+    def test_registering_right_after_reopen_names_the_next_step(self) -> None:
+        """reopen 之后直接 `story`：拒绝，但说出与 `status` 同一句的下一步，不只说「没收口」。"""
+        self.complete_it("story_written")
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        status = self.run_flow("status")
+        action = json.loads(status.stdout[status.stdout.index("{"):])["action"]
+        proc = self.run_flow("story")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn("下一步", out)
+        self.assertIn(action[:16], out, "登记被拒时给的下一步与 status 不是同一句")
+
+    def test_registering_twice_says_it_is_one_time(self) -> None:
+        """已经成文登记过再来一次：说清只登记一次、要改走 reopen，不说成「没收口」。"""
+        self.complete_it("story_written")
+        proc = self.run_flow("story")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn("只登记一次", out)
+        self.assertIn("reopen", out)
+        self.assertNotIn("没收口", out)
+
 
     def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
         """放一份**已归类**的原件：`round` 看得见它，而它还没并入正文。"""

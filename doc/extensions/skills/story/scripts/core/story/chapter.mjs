@@ -223,12 +223,13 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + `「${ctx.contract.chapters[at]?.id ?? title}」那一段；当前 ${storyRel} 里已写的章；`
       + `来源 ${originals}；方法见 ${guide} 的「五、十章各自怎么组织」`);
   } else {
-    rows.push('NEXT: 十章齐了——把当前 story 从头读到尾：比较跨章的独有信息、'
-      + '挑几个关键条件推演流程与功能说明与异常与验收四处说的是不是同一件事、'
-      + '核指代与单位与可逆后果；要改哪一章就改它的草稿再跑 chapter 提交，'
+    rows.push('NEXT: 十章齐了——从来源核实际全文：对照原材料与来源初筛核覆盖、推演关键路径与决定、'
+      + '再核组织与表达；业务结论错了改 Spec 或决策登记，解释安排改写作设计，正文改草稿再跑 chapter 提交；'
       + '全篇收口后跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 当前 ${storyRel} 全文；写作设计 ${planRel}；草稿目录 `
+    rows.push(`INPUT: 当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
+      + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `
+      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；来源 ${originals}；草稿目录 `
       + `${relFromFeature(ctx, path.dirname(draftPath(ctx, 0, 'x')))}；`
       + `方法见 ${guide} 的「四、写后核对」`);
   }

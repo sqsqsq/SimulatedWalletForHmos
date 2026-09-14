@@ -774,6 +774,57 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("advisories", method)
         self.assertNotIn("为标记的一块", method, "又要求了 markdown 块")
 
+    def plan_path(self) -> Path:
+        return self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
+
+    def base_plan(self) -> str:
+        return (REPO / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
+                / "AR90001/AR/story-src/story-template.md").read_text(encoding="utf-8")
+
+    def test_the_task_carries_the_writing_design_once_and_follows_it(self) -> None:
+        """写作设计全文随任务到审查者手上一次；改了设计，任务跟着变——审查核的是这一版。"""
+        base = self.base_plan()
+        self.plan_path().write_text(
+            base.replace("## 阅读主线\n\n", "## 阅读主线\n\n设计里独有的一句甲。\n"), encoding="utf-8")
+        task = self.inject()
+        self.assertIn("### 作者的写作设计", task)
+        self.assertEqual(1, task.count("设计里独有的一句甲。"), "设计全文没送到，或送了不止一次")
+        self.assertIn("待核的作者判断", task, "没说清设计是待核的判断而不是标准")
+        self.plan_path().write_text(
+            base.replace("## 阅读主线\n\n", "## 阅读主线\n\n改过之后的一句乙。\n"), encoding="utf-8")
+        task = self.inject()
+        self.assertIn("改过之后的一句乙。", task)
+        self.assertNotIn("设计里独有的一句甲。", task, "任务没跟着当前设计走")
+
+    def test_a_missing_writing_design_is_a_gap_not_an_empty_design(self) -> None:
+        section = self.inject().split("### 作者的写作设计", 1)[1].split("###", 1)[0]
+        self.assertIn("写作设计缺口", section)
+        self.assertNotIn("```", section, "拿一段空围栏冒充审过了设计")
+
+    def test_the_task_points_at_the_original_materials(self) -> None:
+        """审查要能回到原件：原文逐份给位置；该有而读不到的点名，不替它下结论。"""
+        feature = self.root / "doc" / "features" / FEATURE
+        (feature / "RR").mkdir(parents=True, exist_ok=True)
+        (feature / "RR" / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
+        section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
+        self.assertIn("`RR/prd.md`", section)
+        self.assertIn("acceptance.yaml", section)
+        self.assertNotIn("读不到 `SR/design.md`", section, "本地单没有系统设计是正常的")
+        (feature / "AR" / "detail.json").write_text("{}", encoding="utf-8")
+        section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
+        self.assertIn("读不到 `SR/design.md`", section, "远程单缺必备来源没点名")
+
+    def test_the_overlay_judges_against_sources_not_the_design(self) -> None:
+        """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在 overlay。"""
+        method = self.overlay_method()
+        for needle in ("先独立想清楚", "写作设计", "设计漏掉的不因此算不在范围", "写了理由不等于理由成立",
+                       "还开着的决定被写成已定", "acceptance.yaml", "正文提到过", "真实待决写清了边界",
+                       "写明未验证与影响"):
+            self.assertIn(needle, method, f"overlay 里没有「{needle}」")
+        fragment = self.inject()
+        for needle in ("先独立想清楚", "设计漏掉的不因此算不在范围", "还开着的决定被写成已定"):
+            self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
+
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""
         text = self.inject()

@@ -314,6 +314,14 @@ class OnlyRealUpstreamInputIsKept(S4Case):
                          "第二轮把自己上一轮的提取稿当成了上游原话")
         self.assertFalse((self.keep.parent / "r2.md").exists())
 
+    def test_after_reopen_with_nothing_changed_the_next_step_is_to_close_again(self) -> None:
+        """范围与材料都没变：重开之后下一步就是重新收口——不是重走关卡，也不是直接去登记。"""
+        self.ready_to_commit()
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        result = self.ok("reopen")
+        self.assertEqual("run_complete", result.get("next"), result)
+        self.assertIn("complete", result.get("action", ""))
+
 
 class PrecheckFailuresChangeNothing(S4Case):
     """预检不通过时，输入、基准与流程状态一个字节都不动。"""

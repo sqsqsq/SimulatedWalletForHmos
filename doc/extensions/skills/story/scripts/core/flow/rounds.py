@@ -12,7 +12,7 @@ from flow.state import (
     ANALYSIS, FlowError, SCHEMA, after_complete, load, log, now, require, save)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
-from flow.routing import frozen_inbox_note
+from flow.routing import frozen_inbox_note, live_materials, next_step
 
 
 def cmd_round(feature_root: Path) -> dict:
@@ -152,7 +152,11 @@ def cmd_reopen(feature_root: Path) -> dict:
         "story_registration_undone": sorted(undone),
     })
     save(feature_root, contract)
-    log(f"流程已重新打开（{status} → in_progress）：下一次 `round` 会按材料现状开新轮"
-        + ("；成文登记已一并撤销，story 要重新登记" if undone else ""))
+    # 重开之后先做什么由现状回答：范围与材料没变时是 `complete` 收口，材料变了走盘点与关卡——
+    # 直接去 `story` 登记只会被拒，而拒绝那一刻作者不知道缺的是收口。
+    step, action = next_step(feature_root, contract, live_materials(feature_root))
+    log(f"流程已重新打开（{status} → in_progress）"
+        + ("；成文登记已一并撤销，story 要重新登记" if undone else "")
+        + f"。下一步：{action}")
     return {"status": "in_progress", "rounds": len(contract.get("rounds") or []),
-            "storyRegistrationUndone": sorted(undone)}
+            "storyRegistrationUndone": sorted(undone), "next": step, "action": action}

@@ -325,6 +325,44 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
                              m.group(1) + " 没写明哪一批转正")
 
 
+class ContextDependentWordsLeftTheVocabulary(unittest.TestCase):
+    """词义要读上下文才分得清的词不进词表：订单、数据、状态的撤销与恢复是正常业务语言。
+
+    服务器侧发布动作的词仍在词表里照拦；客户端文案有没有描述端侧不存在的服务器动作，
+    归语义审查看实际对象，不在脚本里叠一句句语境豁免。
+    """
+
+    LANGUAGE = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/language.mjs"
+
+    def hits(self, text: str) -> list:
+        import subprocess  # noqa: PLC0415
+        script = ("import {pathToFileURL} from 'node:url';"
+                  "const m = await import(pathToFileURL(process.argv[1]).href);"
+                  "process.stdout.write(JSON.stringify(m.scanBannedTerms(process.argv[2]).map(h => h.term)));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--",
+                               str(self.LANGUAGE), text],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_business_undo_and_recovery_are_plain_language(self) -> None:
+        for line in ("扣款失败时订单保留，已占用的额度回滚。", "缓存缺失时回退到云侧查询。",
+                     "撤销签约后状态回退为未签约。"):
+            with self.subTest(line=line):
+                self.assertEqual([], self.hits(line), "合法的业务撤销与恢复被当成服务器侧词汇拦了")
+
+    def test_server_release_words_are_still_caught(self) -> None:
+        self.assertIn("灰度", self.hits("本方案采用灰度发布。"))
+
+    def test_no_context_exemption_is_left_for_the_retired_words(self) -> None:
+        rules = self.LANGUAGE.read_text(encoding="utf-8")
+        for gone in ("数据回退", "事务回退", "状态可恢复或明确回退"):
+            self.assertNotIn(gone, rules, f"退出词表的词还留着语境豁免「{gone}」")
+        package = (REPO_ROOT / "doc/extensions/hooks/spec/author.mjs").read_text(encoding="utf-8")
+        self.assertNotIn("同一个词的另一种语义", package, "任务包还在教作者替词")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -368,8 +406,8 @@ class ReviewBannedTermsScope(NegativeCase):
         return "\n".join(l for l in out.splitlines() if "review 出现客户端语境禁用词" in l)
 
     def test_the_human_zone_is_not_judged(self) -> None:
-        """人工区是**人的表态**，不是产品承诺——「文案回退为上一版」不该被拦。"""
-        self.write_review("甲议题的澄清正文。", human="不同意时改什么：文案回退为上一版。")
+        """人工区是**人的表态**，不是产品承诺——「先灰度一周」不该被拦。"""
+        self.write_review("甲议题的澄清正文。", human="不同意时改什么：先灰度一周再全量。")
         self.init_audit()
         self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
 

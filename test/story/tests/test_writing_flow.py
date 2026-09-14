@@ -45,8 +45,11 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         guide = read("phases/story-write.md")
         self.assertIn("## 四、写后核对", guide)
         section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
-        for action in ("比较信息归属", "推演关系与结果", "核重组后的表达"):
-            self.assertIn(action, section, f"写后核对少了「{action}」这个动作")
+        # 整稿是「从来源核实际全文」，不是「通读一遍补标记」：三项工作各自回到来源、决定与表达
+        for action in ("从来源核实际覆盖", "推演关系与决定", "核组织和表达"):
+            self.assertIn(action, section, f"写后核对少了「{action}」这项工作")
+        for gone in ("比较信息归属", "推演关系与结果", "核重组后的表达"):
+            self.assertNotIn(gone, section, f"旧整稿动作「{gone}」还和新方法并存")
         items = re.findall(r"^\d+\. ", section, flags=re.M)
         # 七条是作者的清单，不再对着机器里的一个数——那个数（COPYEDIT_ROWS）随七行
         # 自证一起退场了。条数变了改这一行，不要回头再造一个计数判据。
@@ -108,6 +111,30 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
         self.assertIn("### ⑥ 来源初筛", rules)
         self.assertNotIn("`/spec` 不读它", rules, "Spec 从来源初筛起步，分析规则不能再说 Spec 不读它")
         self.assertIn("init-analysis.md", read("phases/spec.md"), "Spec 的必读输入里没有来源初筛")
+
+
+class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
+    """写一章先想清它增加什么；认识变了回到对的真源；图从要解释的关系出发。
+
+    取舍只在有真实备选时写被否方案：「写不出被否决的备选，那一行就不是决策」会逼作者编备选，
+    与第五节「不为显得有取舍编备选」相反，两句并存时作者只能各取一条。
+    """
+
+    def test_the_chapter_method_consumes_the_design(self) -> None:
+        guide = read("phases/story-write.md")
+        section = guide.split("## 三、写一章", 1)[1].split("\n## ", 1)[0]
+        for needle in ("先想清这一章要增加什么", "写作设计里本章那一段", "写着写着认识变了",
+                       "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定",
+                       "图从要解释的关系出发", "照搬它不等于讲清了", "不硬造页面"):
+            self.assertIn(needle, section, f"写一章那一节少了「{needle}」")
+
+    def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
+        guide = read("phases/story-write.md")
+        self.assertNotIn("写不出被否决的备选", guide, "旧的备选配额还在")
+        self.assertIn("只有一条合理路径", guide.split("### 决策登记", 1)[1].split("\n## ", 1)[0])
+        self.assertIn("只有一条合理路径", guide.split("### 交回前自检", 1)[1])
+        dims = CONTRACT["verdicts"]["chapter_dimensions"]
+        self.assertTrue(any("有真实备选时" in d for d in dims), "章级维度还要求每个取舍都有被否方案")
 
 
 class TestChapterDimensions(unittest.TestCase):

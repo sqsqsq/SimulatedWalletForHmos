@@ -369,6 +369,23 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
         self.assertEqual(0, code, out)
 
 
+class TheWholeDraftIsCheckedAgainstItsSources(PlanCase):
+    """十章齐了：下一步是从来源核实际全文，输入给全——全文、设计、决策登记、来源初筛与原材料。"""
+
+    def test_the_last_chapter_hands_over_to_the_source_check(self) -> None:
+        self.write_plan([])
+        self.cmd("skeleton")
+        out = ""
+        for ch in json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))["chapters"]:
+            code, out = self.put(ch["title"], minimal_body(ch["title"], f"「{ch['title']}」的正文。"))
+            self.assertEqual(0, code, out)
+        head = out.split("\n")[:2]
+        self.assertTrue(head[0].startswith("NEXT: 十章齐了——从来源核实际全文"), head)
+        for needle in ("story-template.md", "decisions.json", "init-analysis.md", "RR/prd.md",
+                       "「四、写后核对」"):
+            self.assertIn(needle, head[1], f"整稿的输入少了「{needle}」")
+
+
 class ALandedChapterStillGetsItsStarts(PlanCase):
     """已经合法提交的章，设计改了选择：原稿与 Story 字节不动，但当前缺的选定结构照样给出起点。"""
 

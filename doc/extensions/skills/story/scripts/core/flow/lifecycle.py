@@ -79,8 +79,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     **只登记一次**：story 定稿于评审时点，评审回流只改 spec.md，不动 story。
     """
     contract = require(load(feature_root))
-    if contract.get("status") != "complete":
-        raise FlowError("流程还没收口（status 不是 complete），成文态无从谈起")
+    status = contract.get("status")
+    if status == "story_written":
+        raise FlowError("成文态已经登记过：story 定稿于登记那一刻，只登记一次。"
+                        "要改先跑 `story_flow.py reopen`，按它给出的下一步走")
+    if status != "complete":
+        # reopen 之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
+        _, action = next_step(feature_root, contract, live_materials(feature_root))
+        raise FlowError(f"流程还没收口（status 是 {status}），成文态无从登记。下一步：{action}")
     story = feature_root / Path(*STORY)
     if not story.is_file():
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
