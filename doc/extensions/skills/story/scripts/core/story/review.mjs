@@ -257,7 +257,14 @@ export function decisionProblems(ctx) {
 const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
 const OPTIONS_SEGMENT = '可选的做法';
 //: 选项编号：行首或空白、标点之后的「数字＋. 、 ) ）」，数字后不再接数字（版本号、小数不算）；圈码同理。
-const OPTION_NO = /(?:^|[\s；;，,。：:（(])(?:\d+[.、)）](?!\d)|[①-⑳])/g;
+const OPTION_NO = /(?:^|[\s；;，,。：:（(])(?:(\d+)[.、)）](?!\d)|([①-⑳]))/g;
+
+/** 一行里接连出现 n 与 n+1 两个选项编号（行首列表号也算）：几个选项挤在了同一行。 */
+function optionsSqueezed(line) {
+  const nums = [...line.matchAll(OPTION_NO)]
+    .map(m => (m[1] ? Number(m[1]) : m[2].charCodeAt(0) - 0x2460 + 1));
+  return nums.some((n, i) => nums.slice(i + 1).includes(n + 1));
+}
 
 /**
  * 选方案的议题：「可选的做法」那一段是真正的有序列表，一个选项一项。
@@ -272,7 +279,7 @@ function choiceListProblems(dec) {
   const next = lines.findIndex((l, i) => at >= 0 && i > at && SEGMENT_HEAD.test(l));
   const area = at < 0 ? []
     : [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
-  if (area.some(l => (l.replace(/^\s*\d+[.)]\s+/, '').match(OPTION_NO) ?? []).length >= 2)) {
+  if (area.some(optionsSqueezed)) {
     return [`决策 ${id} 把几个选项写在了同一段——「${OPTIONS_SEGMENT}」写成有序列表，`
       + '一个选项一项（`1. …` 换行 `2. …`），评审人填的就是这个编号'];
   }

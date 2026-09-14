@@ -190,6 +190,36 @@ class OnlyTheOptionsSegmentIsChecked(ModesCase):
         self.assertEqual(0, self.build(entry("retry-owner", "choice", body)).returncode)
 
 
+class SqueezedOptionsAreCaughtInEveryArrangement(ModesCase):
+    """同一组选项三种排列：标题同一行挤、列表行里挤都拒绝且不写评审记录；各占一行通过。"""
+
+    OPTIONS = ("1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
+               "2. 提示用户手动重试：不依赖受理方去重，用户多一步。")
+    SQUEEZED = ("1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次；"
+                "2. 提示用户手动重试：不依赖受理方去重，用户多一步。")
+
+    def arrangements(self) -> dict[str, str]:
+        return {
+            "标题同一行": CHOICE_BODY.replace("**可选的做法**：\n\n" + self.OPTIONS,
+                                         "**可选的做法**：" + self.SQUEEZED),
+            "列表行里挤": CHOICE_BODY.replace(self.OPTIONS, self.SQUEEZED),
+        }
+
+    def test_squeezed_arrangements_are_refused_without_writing(self) -> None:
+        for name, body in self.arrangements().items():
+            with self.subTest(arrangement=name):
+                self.assertNotEqual(CHOICE_BODY, body, "夹具变了，用例要跟着改")
+                before = self.review.read_bytes() if self.review.exists() else None
+                proc = self.build(entry("retry-owner", "choice", body))
+                self.assertEqual(1, proc.returncode, proc.stdout)
+                self.assertIn("决策 retry-owner 把几个选项写在了同一段", proc.stderr)
+                after = self.review.read_bytes() if self.review.exists() else None
+                self.assertEqual(before, after, "结构不对却写了评审记录")
+
+    def test_one_option_per_line_passes(self) -> None:
+        self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
+
+
 class QuotedLabelsStayInsideTheHumanZone(ModesCase):
     """人工区从哪一行开始按生成时记下的正文摘要认：人在意见里引用标签，不会把意见算进机器正文。"""
 
