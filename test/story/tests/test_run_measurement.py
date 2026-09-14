@@ -359,7 +359,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
     def test_docx_embedded_image_supplement_changes_the_version(self):
         """文档内嵌图落 `assets/`，材料版本必须看见它。
 
-        按 TEST.md §2.2，图片进来只有一条路：人给的 docx 里内嵌，导入时抽出来落
+        按 test/story/cases/README.md，图片进来只有一条路：人给的 docx 里内嵌，导入时抽出来落
         `<feature>/assets/<源文档名>/`；判为界面图的再从那里复制一份进 `ux-reference/`。
         材料版本一度只覆盖四份文本与 `ux-reference/`——于是「补了一份只多几张图的文档」
         对轮次完全隐形：既不换轮次，也没有任何信号说材料变过。

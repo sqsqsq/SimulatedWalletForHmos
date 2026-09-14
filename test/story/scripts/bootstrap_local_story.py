@@ -23,6 +23,19 @@
     python test/story/scripts/bootstrap_local_story.py --only AR90006
     python test/story/scripts/bootstrap_local_story.py --reset    # 回出厂状态
     python test/story/scripts/bootstrap_local_story.py --verify AR90006   # 验证链路真的通
+
+装完不用设任何环境变量，会话里直接说 `/story init AR90006`。三点要知道：
+
+- 目录是**可写**的：`archive` 会覆盖单据正文、`restore` 会回退；想回出厂状态跑 `--reset`。
+- `doc/features/<单号>/` 已存在时脚本会**拦下来**：`story.js` 落材料时「已存在就跳过」，
+  残留会让新一轮材料拉不进来且不报错。先把它移走。
+- 补料（`supplements/` 里那些 docx）不会自动进 `inbox/`，那正是「模型会不会开口要材料」
+  要观测的东西：手跑时等它开口，你再复制过去。
+
+## 与 CLI 测试互不干扰
+
+装置给每个 Case 的需求系统指针要么指向该 Case 自己的快照、要么指向一个不存在的路径，
+绝不会落到这个目录（有机械回归守着）。
 """
 from __future__ import annotations
 

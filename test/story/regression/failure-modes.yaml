@@ -63,7 +63,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-23"
     form: 机制层或注入件出现测试 Case 的单号、业务名或其需求特征（过拟合，换个业务域就不成立）
-    clause: G7 / AGENTS.md §2「机制层零测试特征」
+    clause: G7 / AGENTS.md §3「机制层零测试特征」
     checker: m02_test_case_features
     target: mechanism
     bad_fixture: test/story/fixtures/failure-modes/M02-test-case-features/bad
@@ -252,7 +252,7 @@ modes:
     dimension: infra
     found_round: "2026-08-25"
     form: 补丁式修补的残留——零调用的死代码、catch 内静默返回空集合、跨轮次的待办标记
-    clause: AGENTS.md §2「正向实现，不打补丁」
+    clause: AGENTS.md §3「正向实现，不打补丁」
     checker: m16_patch_residue
     target: mechanism
     bad_fixture: test/story/fixtures/failure-modes/M16-patch-residue/bad
@@ -269,7 +269,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-25"
     form: 机制层引用了激活清单里不存在的条目编号或知识文件——模型照着死判据去找基准，找不到只能自己编
-    clause: G7 / AGENTS.md §2.1「引用必须真实存在」
+    clause: G7 / AGENTS.md §3「引用必须真实存在」
     checker: m17_dangling_knowledge_reference
     target: mechanism
     bad_fixture: test/story/fixtures/failure-modes/M17-dangling-knowledge-reference/bad
@@ -285,7 +285,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-25"
     form: 知识文件越出自己的边界——facts 引规约编号（把时机写进事实）、知识指向 manifest/hooks（维护信息进了模型 prompt）、规约带源码路径、知识里出现阶段矩阵
-    clause: AGENTS.md §2「知识不含维护信息，定位只写一处」/ 冻结 03-C3、C4
+    clause: AGENTS.md §3「知识不含维护信息，定位只写一处」/ 冻结 03-C3、C4
     checker: m18_knowledge_boundary_leak
     target: mechanism
     bad_fixture: test/story/fixtures/failure-modes/M18-knowledge-boundary-leak/bad
@@ -368,7 +368,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-24"
     form: 冻结义务的 anchor 指回知识决策声明表自己，或 landing 为空 → 声明冒充落点
-    clause: B1-10 / AGENTS.md §2「声明不是应用」
+    clause: B1-10 / AGENTS.md §3「声明不是应用」
     checker: p05_anchor_points_to_declaration
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/bad
@@ -479,7 +479,7 @@ modes:
     dimension: knowledge
     found_round: "2026-08-22"
     form: 下游阶段对冻结义务既无证据也无"不适用+理由"，静默跳过与做过没写事后同形
-    clause: B1-11 / AGENTS.md §2「显式不适用优于静默跳过」
+    clause: B1-11 / AGENTS.md §3「显式不适用优于静默跳过」
     checker: p13_silent_downstream_skip
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/bad

@@ -448,7 +448,7 @@ def m17_dangling_knowledge_reference(root: Path, ctx: Ctx) -> Outcome:
 def m18_knowledge_boundary_leak(root: Path, ctx: Ctx) -> Outcome:
     """知识文件越出自己的边界。
 
-    四种形态，全部由激活清单与目录结构派生（AGENTS.md §2「知识不含维护信息，定位只写一处」）：
+    四种形态，全部由激活清单与目录结构派生（AGENTS.md §3「知识不含维护信息，定位只写一处」）：
     ① 项目知识引用在册规约编号（时机与要求归规约）；② 任一知识文件指向机制
     （manifest / hooks 等目录——维护坐标不进知识）；③ 规约携带源码路径；④ 阶段消费矩阵。
 
@@ -490,7 +490,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
       · 以错误为参照的指路（「不必去读 Y」——正确的位置本身就是答案）。
 
     「不在 X 下」这一形状不入词表：它同时覆盖规则本身的禁止（`不在归档目录下造副本`），
-    机械分不开，归评审按 `AGENTS.md` §5.3 逐句读。
+    机械分不开，归评审按 `AGENTS.md` §3「机制层零测试特征」逐句读。
 
     后两样与前四样同一类：**非当前信息进了交付面**。它们的家在 `test/story/`
     的方案、评审与提交说明里，那里正需要说清「为什么改」。
@@ -505,7 +505,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     run_narrative = re.compile(r"实跑|首跑|[一二三四五六七八九十两]跑|[两三四]轮(?!次)")
     # 历史与替代叙述：讲这段以前怎么样、什么退场了。只收有区分力的字面——
     # 「旧的」「不在 X 下」这类同时覆盖规则本身的禁止（`不读旧 story`、
-    # `不在归档目录下造副本`），机械分不开，那一类归评审按 §5.3 逐句读。
+    # `不在归档目录下造副本`），机械分不开，那一类归评审按 AGENTS §3「机制层零测试特征」逐句读。
     history = re.compile(r"此前|早先|原先|曾经|迁移期|不再是|退场")
     # 「不必去读源码」这类：正确的位置本身就是答案，不用拿错误当参照。
     negative_pointer = re.compile(r"不必去|不要去|别去")

@@ -181,3 +181,31 @@ runner 输出统一的下一间隔和结构化进展变化；每轮均展示完�
 撤销后台 watch、monitor lease 和脚本阻塞循环；不再以关键词或“污染”状态自动停止测试。实际 Case
 集合完全来自 suite。workspace 改为运行依赖白名单并递归校验，记录复制、排除和 Case seed 清单。
 实现入口见 `design/2026-08-22-story主模型驱动式并行测试正向重构/00-实现与验收.md`。
+
+## 6. 运行协议的事故来源与已退场做法
+
+`TEST.md` 只保留现行规则；本节按规则登记其来源的事故、实测数字和被替代的旧做法，一行一条。
+
+- 自动应答退场（TEST §3.0）：旧版「三重比对全等就自动投逐字原话，否则回落宿主」。`expected_turn` 是绝对序号，模型多问一关即从那关起
+  全部失配、永久回落且没有任何信号（一轮五条只投出三条，评审意见那条从头到尾没排上）；回落时只给「模型说了什么」、不给「本该说什么」，
+  宿主翻漏了就临场发挥，观测里掺进宿主自己的话。15/120 秒 heartbeat 正是为「宿主当人、及时接话」而设，自动应答架空的就是它。
+- 规划指针改按 `--step` 推进（TEST §3.0）：旧版拿回复文本与脚本逐字比对推进指针，宿主用自己的话说几乎从不重合，规划条目一条条烂在后面
+  没人知道。
+- 宿主口吻泄露解法（TEST §0.2）：实测一次宿主用维护者口吻回话，把重开流程的路径直接喂给被测模型。
+- 代跑 heartbeat 脚本无出口（TEST §3.1）：后台脚本只做「poll、睡、再 poll」，两 Case 分别空等 45 分钟与 33 分钟，轮询、状态正常、
+  `last_error` 为空，只有 `next_action` 反复说该回话。
+- 1 小时等待线退场（TEST §3.6）：旧 1 小时线踩上即静默 break 并记成 `target_not_reached`，报告看不出是没人回话；上述两 Case 距该线只差
+  15 分钟。现改为无上限并每 5 分钟发 `awaiting_reply_stale`。
+- `stop` 整 suite 一档退场（TEST §3.4/§3.5）：先到终点的 Case 要陪另一个干等，实测空转 18 分钟；改为逐 Case `conclude`。
+- `target_not_reached` 拆账（TEST §5）：旧版把「模型没做完」「没人回话」「CLI 没回 session id」塞进同一终态；现分别为
+  `target_not_reached` / `concluded_by_host` / `cli_session_lost`。
+- 阶段漂移实例（TEST §3.3）：一轮两 Case 各漂一关：一个的术语确认排在 story 之后才轮到，另一个的第二份材料模型自始至终没开口要。
+- prompt 与驱动器双写（cases/README.md）：协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 进了 plan，
+  白跑一段还得人工停。
+- 读判据口径漏洞（TEST §8 第 3 项）：一轮实跑通过 `node -e "readFileSync(...)"` 读判据脚本 68 次，当时口径只认 `cat`/`sed`/`grep`，
+  报表写 0；口径已扩到 bash 内所有读取形态。
+- 离线回归并行实测（TEST §7）：2026-09-13 本机同一批 884 条，`-n auto --dist loadscope` 45.8 秒，串行 439 秒。
+- 实跑效率诊断基线（TEST §8，批次 3 之前）：门禁回环占比 49.3%（spec 47.4 min / plan 10.5 / coding 11.5）；作者读 `framework/**` +
+  `doc/extensions/**` 60 + 40 次/阶段；`check-spec.ts` 被读 9 次，14 条 bash 在 grep checker 反推判据；同一 check id FAIL 5 次
+  （`lifecycle_hook_post_check_extension` 洋葱式暴露五层）；spec 阶段上下文 +397K（全程 11K → 818K，零 compaction）；spec 阶段扩展占
+  prompt 44.3%；机制层代码行新口径基线 8116。
