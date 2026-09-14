@@ -203,9 +203,11 @@ function contractTwin(ch, pick) {
 /**
  * 这一章要核、要打底的结构 = 合同的最小必要结构 ∪ 写作设计里选定的表图。
  *
- * 选定的表按列生成：每一列是一组锚，第一列是主语；与合同同位置同主语的必要表，打底改用
- * 作者的列，核对两份都要满足。选定的图记位置；章级图合同已要求时不再重复。
- * 选出来的项带 `selected`：报错与补结构起点据它说明「这是写作设计里定的」。
+ * 选定的表按列生成：每一列是一组锚，第一列是主语。与合同同位置同主语的必要表是**同一张表**，
+ * 合成一个槽位——合同的锚列在前、作者多出来的列补在后，表头用作者的列——只核一次、只打一次底。
+ * 选定的图记位置；与合同那张章级图重合时记 `alsoRequired`，由合同那条核，不重复报。
+ * **重合不等于没选**：选出来的项一律带 `selected`，报错、补结构起点与「不涉及」冲突都据它
+ * 认出「这是作者在写作设计里定的」。
  */
 export function selectedStructure(plan, chapterId) {
   const ch = (plan?.chapters ?? []).find(c => c.id === chapterId);
@@ -220,14 +222,21 @@ export function selectedStructure(plan, chapterId) {
       h3.push({ title: pick.at, selected: true });
     }
     if (pick.kind === 'diagram') {
-      if (pick.at || !base.diagram) diagrams.push({ at: pick.at, selected: true });
+      diagrams.push({ at: pick.at, selected: true,
+        ...(!pick.at && base.diagram ? { alsoRequired: true } : {}) });
       continue;
     }
     const twin = contractTwin(ch, pick);
-    const own = twin && tables.find(t => t.header === twin.header && t.at === twin.at);
-    if (own) delete own.seed;
-    tables.push({ header: pick.columns.join('|'), anchors: pick.columns.map(c => [c]),
-      at: pick.at || undefined, seed: 'table', selected: true });
+    const own = twin && tables.find(t => !t.selected && t.header === twin.header && t.at === twin.at);
+    const slot = { header: pick.columns.join('|'), at: pick.at || undefined, seed: 'table',
+      selected: true };
+    if (!own) {
+      tables.push({ ...slot, anchors: pick.columns.map(c => [c]) });
+      continue;
+    }
+    const groups = (own.anchors ?? []).map(g => [].concat(g));
+    const extra = pick.columns.filter(c => !groups.some(g => g.some(a => norm(c).includes(norm(a)))));
+    Object.assign(own, slot, { anchors: [...groups, ...extra.map(c => [c])] });
   }
   return { ...base, h3, tables, diagrams };
 }

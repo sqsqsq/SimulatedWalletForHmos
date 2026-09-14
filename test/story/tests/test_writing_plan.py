@@ -34,6 +34,8 @@ PICKS = [{"chapter": "06-features", "at": "本地数据", "kind": "table",
           "columns": ["数据", "保存多久", "何时清除"]}]
 TABLE = ("### 本地数据\n\n| 数据 | 保存多久 | 何时清除 |\n|---|---|---|\n"
          "| 待提交内容 | 到提交成功 | 退出登录 |\n")
+#: 作者为验收章选的列：与合同那张必要表同主语，是同一张表。
+ACCEPTANCE = ["编号", "场景与前置", "可观察的通过条件", "主责"]
 
 
 def with_picks(picks) -> str:
@@ -120,16 +122,19 @@ class TheProtocolIsReadInOnePlace(unittest.TestCase):
                     self.assertIn(needle, problems)
 
     def test_repeated_picks_merge_and_a_contract_twin_seeds_from_the_authors_columns(self) -> None:
-        """同一项写两遍合并成一项；与合同同主语的必要表，打底用作者的列、核对两份都在。"""
-        columns = ["编号", "场景与前置", "可观察的通过条件", "主责"]
-        pick = {"chapter": "08-acceptance", "at": "", "kind": "table", "columns": columns}
+        """同一项写两遍合并成一项；与合同同主语的必要表是同一张表：一个槽位，表头用作者的列，
+        锚列含合同要求，而且仍记着是作者选的。"""
+        pick = {"chapter": "08-acceptance", "at": "", "kind": "table", "columns": ACCEPTANCE}
         got = read_plan(with_picks([pick, dict(pick)]))
         self.assertEqual([], got["problems"])
         self.assertEqual(1, len(got["structures"]), "重复项没合并")
         tables = got["acceptance"]["tables"]
-        seeded = [t["header"] for t in tables if t.get("seed")]
-        self.assertEqual(["|".join(columns)], seeded, "合同那张与作者选的各打一张底")
-        self.assertEqual(2, len(tables), "核对要同时满足合同的锚列与作者选的列")
+        self.assertEqual(1, len(tables), "合同那张与作者选的是同一张表，却成了两个槽位")
+        self.assertEqual("|".join(ACCEPTANCE), tables[0]["header"], "打底没用作者的列")
+        self.assertTrue(tables[0].get("selected"), "合并之后丢了「作者选过」")
+        anchors = json.dumps(tables[0]["anchors"], ensure_ascii=False)
+        for need in ("通过条件", "主责"):
+            self.assertIn(need, anchors, f"合并后的锚列少了「{need}」")
 
 
 class PlanCase(StoryBuildCase):
@@ -290,13 +295,21 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
         self.assertEqual(0, code, out)
 
     def test_not_applicable_does_not_bypass_a_picked_structure(self) -> None:
-        """设计还选着表或图、正文却写「不涉及」：两个明确声明冲突，章提交与全篇 check 都点名；
-        撤回选择之后「不涉及」照常合法。没有选择的空章从来合法。"""
+        """设计还选着表或图、正文却写「不涉及」：两个明确声明冲突，章提交与全篇 check 都点名。
+
+        作者的选择恰好与合同要求重合时同样算选过——合并只核一次，但「选过」这件事不能丢。
+        撤回选择之后，这一章回到只有合同要求的状态，「不涉及」照原语义合法。
+        """
         cases = {
-            "选定表": PICKS,
-            "选定图": [{"chapter": "06-features", "at": "", "kind": "diagram"}],
+            "新增小节表": ("功能说明", PICKS),
+            "新增章级图": ("功能说明", [{"chapter": "06-features", "at": "", "kind": "diagram"}]),
+            "新增小节图": ("异常与恢复", [{"chapter": "07-exceptions", "at": "跨方恢复",
+                                     "kind": "diagram"}]),
+            "章级图与合同重合": ("业务流程", [{"chapter": "05-flow", "at": "", "kind": "diagram"}]),
+            "表与合同重合": ("验收", [{"chapter": "08-acceptance", "at": "", "kind": "table",
+                                  "columns": ACCEPTANCE}]),
         }
-        for name, picks in cases.items():
+        for name, (title, picks) in cases.items():
             with self.subTest(case=name):
                 self.setUp()
                 self.write_plan(picks)
@@ -304,7 +317,7 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
                 src = self.root / "chapter.md"
                 src.write_bytes("本需求不涉及。\n".encode("utf-8"))
                 story_before = self.story_path.read_bytes()
-                code, out = self.cmd("chapter", "--chapter", "功能说明", "--from", str(src))
+                code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
                 self.assertEqual(1, code, out)
                 self.assertIn("两处说法冲突", out)
                 self.assertIn("撤掉这几项", out, "没给出撤回选择这条出路")
@@ -312,15 +325,39 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
                 self.assertEqual("本需求不涉及。\n".encode("utf-8"), src.read_bytes(), "候选被改了")
 
                 story = self.story_path.read_text(encoding="utf-8")
-                self.story_path.write_text(story.replace("<!-- 待写：功能说明 -->", "本需求不涉及。"),
+                self.story_path.write_text(story.replace(f"<!-- 待写：{title} -->", "本需求不涉及。"),
                                            encoding="utf-8")
                 _, out = self.cmd("check")
                 self.assertIn("两处说法冲突", out, "全篇 check 与章提交不是同一条检查")
 
                 self.story_path.write_bytes(story_before)
                 self.write_plan([])
-                code, out = self.cmd("chapter", "--chapter", "功能说明", "--from", str(src))
-                self.assertEqual(0, code, f"撤回选择之后「不涉及」该合法：{out}")
+                code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
+                self.assertEqual(0, code, f"只剩合同要求时「不涉及」该照原语义合法：{out}")
+
+    def test_a_structure_both_required_and_picked_is_reported_and_seeded_once(self) -> None:
+        """合同要求与作者选择重合：同一个缺口只报一次，起点只给一次。"""
+        self.write_plan([{"chapter": "05-flow", "at": "", "kind": "diagram"},
+                         {"chapter": "08-acceptance", "at": "", "kind": "table",
+                          "columns": ACCEPTANCE}])
+        self.cmd("skeleton")
+        header = "| " + " | ".join(ACCEPTANCE) + " |"
+        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
+        self.assertEqual(1, self.draft("08").read_text(encoding="utf-8").count(header))
+        self.assertNotIn("| 编号 | 验收点 |", self.draft("08").read_text(encoding="utf-8"))
+
+        code, out = self.put("业务流程", "提交之后等回执。\n")
+        self.assertEqual(1, code, out)
+        self.assertEqual(1, out.count("没有图"), f"同一个缺图报了不止一次：{out}")
+        code, out = self.put("验收", "验收按上游约定。\n")
+        self.assertEqual(1, code, out)
+        self.assertEqual(1, out.count("缺一张表"), f"同一个缺表报了不止一次：{out}")
+
+        for prefix in ("05", "08"):
+            self.draft(prefix).write_text("先写到这里。\n", encoding="utf-8")
+        _, out = self.cmd("skeleton")
+        self.assertEqual(1, out.count(header), f"表的起点给了不止一次：{out[-1200:]}")
+        self.assertEqual(1, out.count("作图："), f"图的起点给了不止一次：{out[-1200:]}")
 
     def test_the_design_does_not_cap_the_body(self) -> None:
         """设计没列的小节照样合法：写作中发现的有效内容不因设计未列而违规。"""

@@ -101,6 +101,7 @@ export function chapterStructureProblems(ch, view) {
       + '放在章首那段或一个总览小节里都行，代码围栏不算');
   }
   for (const slot of ch?.structure?.diagrams ?? []) {
+    if (slot.alsoRequired) continue;                     // 与合同那张重合：上面那条已经核过
     if (hasDiagram(view, slot.at) !== false) continue;   // null＝那一节缺席，由必要 H3 那条报
     problems.push(`「${ch.title}${slot.at ? `·${slot.at}` : ''}」没有图（画图语言的围栏）${PICKED}`);
   }
