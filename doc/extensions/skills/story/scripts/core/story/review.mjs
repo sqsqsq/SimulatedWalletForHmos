@@ -253,20 +253,32 @@ export function decisionProblems(ctx) {
   return problems;
 }
 
-//: 一行里写了两个以上的选项编号（「1…；2…」「①…②…」）：选项挤在同一段，人没法按编号对。
-const INLINE_OPTIONS = /(?:^|[^\d.])1[.、)）](?!\d).*(?:^|[^\d.])2[.、)）](?!\d)|①.*②/;
+//: 澄清正文的段首：加粗小标题（`**依据**：…`）。一段从它起，到下一个段首止。
+const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
+const OPTIONS_SEGMENT = '可选的做法';
+//: 选项编号：行首或空白、标点之后的「数字＋. 、 ) ）」，数字后不再接数字（版本号、小数不算）；圈码同理。
+const OPTION_NO = /(?:^|[\s；;，,。：:（(])(?:\d+[.、)）](?!\d)|[①-⑳])/g;
 
-/** 选方案的议题：可选的做法是真正的有序列表，一个选项一项。只判形状，不判选项个数。 */
+/**
+ * 选方案的议题：「可选的做法」那一段是真正的有序列表，一个选项一项。
+ *
+ * 只看那一段——决策点、依据、建议里的编号是正常的说明，不是让人选的方案。
+ * 只判形状，不判选项个数，也不判选项与建议合不合理。
+ */
 function choiceListProblems(dec) {
   const id = dec?.id ?? '（无编号）';
   const lines = String(dec?.clarification ?? '').split(/\r?\n/);
-  if (lines.some(l => INLINE_OPTIONS.test(l))) {
-    return [`决策 ${id} 把几个选项写在了同一段——「可选的做法」写成有序列表，`
+  const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === OPTIONS_SEGMENT);
+  const next = lines.findIndex((l, i) => at >= 0 && i > at && SEGMENT_HEAD.test(l));
+  const area = at < 0 ? []
+    : [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
+  if (area.some(l => (l.replace(/^\s*\d+[.)]\s+/, '').match(OPTION_NO) ?? []).length >= 2)) {
+    return [`决策 ${id} 把几个选项写在了同一段——「${OPTIONS_SEGMENT}」写成有序列表，`
       + '一个选项一项（`1. …` 换行 `2. …`），评审人填的就是这个编号'];
   }
-  if (!lines.some(l => /^\s*\d+[.)]\s+\S/.test(l))) {
-    return [`决策 ${id} 是选方案的议题（review_mode: choice），澄清正文里却没有有序列表——`
-      + '「可选的做法」一个选项一项列出，评审人按编号选；其实只是请人复核已有结论的，改成 confirm'];
+  if (!area.some(l => /^\s*\d+[.)]\s+\S/.test(l))) {
+    return [`决策 ${id} 是选方案的议题（review_mode: choice），「**${OPTIONS_SEGMENT}**」这一段却没有有序列表——`
+      + '在这个加粗段首下一个选项一项列出，评审人按编号选；其实只是请人复核已有结论的，改成 confirm'];
   }
   return [];
 }
@@ -425,44 +437,40 @@ function renderHumanZone(dec) {
 }
 
 /**
- * 人工区的起点：**本议题范围内**最后一处**行首**填写位标签（`方案选择：` 或 `审核结果：`）。
+ * 从既有 review 里切出某议题的**机器区**与**人工区**。
  *
- * 范围从上一个议题的结束标记之后算起：某条议题的人工区被整段删掉时，不会借到别的议题或
- * 顶部提示里的同名标签，把它们连同中间几个议题当成这一条的人工内容保留下来。
- * 限定行首，是因为提示里也写着这几个字（它在教人往哪写）。
+ * 范围是这一条议题：上一个议题的结束标记之后，到本议题的 `<!-- decision: ID -->`。
+ * 机器区从 `#### ` 那一行起；人工区从某一行行首的填写位标签（`方案选择：` / `审核结果：`）起。
+ * 人在意见里引用这两个标签是正常的，所以**不取最后一处**：从前往后找第一个让它之前的机器区
+ * 与标记里记的摘要（旧稿没有标记时与这次渲染出来的）对得上的标签。一个都对不上说明机器区
+ * 真被改过，这时取第一处，由调用方停下；`ambiguous` 标出范围里不止一处标签，报错时说明边界可能认不准。
+ *
+ * @returns {{machine: {mark, body}|null, human: string|null, ambiguous: boolean}|null}
  */
-function humanZoneStart(reviewText, end) {
+function issueZones(reviewText, id, fresh) {
+  const anchor = `<!-- decision: ${id} -->`;
+  const end = reviewText.indexOf(anchor);
+  if (end < 0) return null;
   const prev = reviewText.lastIndexOf('<!-- decision:', end - 1);
   const from = prev < 0 ? 0 : reviewText.indexOf('-->', prev) + 3;
-  let start = -1;
-  for (const mark of HUMAN_ZONE_MARKS) {
-    for (let at = reviewText.lastIndexOf(mark, end); at >= from; at = reviewText.lastIndexOf(mark, at - 1)) {
-      if (at === 0 || reviewText[at - 1] === '\n') {
-        start = Math.max(start, at);
-        break;
-      }
-    }
+  const heading = reviewText.indexOf('\n#### ', from);
+  const head = heading >= 0 && heading < end ? heading : -1;
+  const starts = [];
+  for (let at = head < 0 ? from : head + 1; at < end;) {
+    if ((at === 0 || reviewText[at - 1] === '\n')
+        && HUMAN_ZONE_MARKS.some(mark => reviewText.startsWith(mark, at))) starts.push(at);
+    const nl = reviewText.indexOf('\n', at);
+    if (nl < 0) break;
+    at = nl + 1;
   }
-  return start;
-}
-
-/**
- * 从既有 review 里切出某议题的**机器区**：`#### ` 那一行起，到人工区之前。
- *
- * 范围不靠标记划——机器区永远以 `#### ` 开头，旧稿没有标记也切得出来。
- * 标记只承载摘要：它在（是上一行），就用它记的；不在就是旧稿。
- */
-function machineZoneOf(reviewText, id) {
-  const end = reviewText.indexOf(`<!-- decision: ${id} -->`);
-  if (end < 0) return null;
-  const human = humanZoneStart(reviewText, end);
-  if (human < 0) return null;
-  const head = reviewText.lastIndexOf('\n#### ', human);
-  if (head < 0) return null;
-  const prevStart = reviewText.lastIndexOf('\n', head - 1) + 1;
-  const prev = reviewText.slice(prevStart, head);
-  return { mark: prev.startsWith(`${ISSUE_MARK}${id} `) ? prev : null,
-    body: reviewText.slice(head + 1, human) };
+  if (!starts.length) return { machine: null, human: null, ambiguous: false };
+  if (head < 0) return { machine: null, human: reviewText.slice(starts[0], end + anchor.length), ambiguous: false };
+  const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+  const mark = markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null;
+  const want = recordedDigest(mark) ?? projectionDigest(fresh);
+  const at = starts.find(s => projectionDigest(reviewText.slice(head + 1, s)) === want) ?? starts[0];
+  return { machine: { mark, body: reviewText.slice(head + 1, at) },
+    human: reviewText.slice(at, end + anchor.length), ambiguous: starts.length > 1 };
 }
 
 /**
@@ -478,24 +486,14 @@ function issueHandEdited(zone, fresh) {
   return recorded ? now !== recorded : now !== projectionDigest(fresh);
 }
 
-/** 从既有 review 里切出某议题的人工区（人工填写内容的唯一真源） */
-function extractHumanZone(reviewText, id) {
-  const mark = `<!-- decision: ${id} -->`;
-  const end = reviewText.indexOf(mark);
-  if (end < 0) return null;
-  const zoneStart = humanZoneStart(reviewText, end);
-  if (zoneStart < 0) return null;
-  return reviewText.slice(zoneStart, end + mark.length);
-}
-
 /**
- * 这条议题要保留的人工区；返回 null 表示按当前 `review_mode` 给首版。
+ * 这条议题要保留的人工区（人工填写内容的唯一真源）；返回 null 表示按当前 `review_mode` 给首版。
  *
  * 与某种首版逐字节相同的人工区里没有人的字，跟着当前交互方式重生成不丢任何东西。
  * 人写过的一律原样保留——交互方式后来改了也不换形式，只在 `notes` 里说一声，由人决定怎么继续。
  */
-function keptHumanZone(reviewText, dec, notes) {
-  const zone = extractHumanZone(reviewText, dec.id);
+function keptHumanZone(zones, dec, notes) {
+  const zone = zones?.human ?? null;
   const anchor = `<!-- decision: ${dec.id} -->`;
   if (zone === null
       || [...Object.values(REVIEW_MODES), PLAIN_ZONE].some(z => zone === [...z, '', anchor].join('\n'))) {
@@ -596,17 +594,19 @@ function renderReview(list, previous = '', categories = [], notes = []) {
       parts.push(`### ${no}.${gi + 1} ${group.name}\n`);
       group.items.forEach((dec, ii) => {
         const machine = renderMachineZone(dec, `${no}.${gi + 1}.${ii + 1}`);
-        const was = machineZoneOf(old, dec.id);
-        if (was && issueHandEdited(was, machine)) {
-          // 停在这里，不盖。评审人要说的话写在填写位里，那一段逐字节保留；
+        const zones = issueZones(old, dec.id, machine);
+        if (zones?.machine && issueHandEdited(zones.machine, machine)) {
+          // 停在这里，不盖，文件不动。评审人要说的话在填写位里，那一段逐字节保留；
           // 写在议题正文里的，起草方要么把它接进登记表，要么明确不接——两样都比抹掉好。
           throw new ProjectionConflict(
-            `议题 ${dec.id} 的正文由决策登记表生成，盘上的内容与它对不上——`
+            `议题 ${dec.id} 的正文由决策登记表生成，盘上的内容与它对不上，这次没有写盘——`
             + '要改议题怎么说，改登记表之后重跑；'
-            + '要撤销这里的手改，把这一段（含它上面那行标记）删掉再跑，会重新写出来；'
-            + '评审意见写在议题末尾的填写位里，那一段不会被动');
+            + '要撤销正文里的手改，只删「#### 标题」到「请…确认。」这一段（含它上面那行标记）再跑，会重新写出来；'
+            + '填写位里人写的内容不要删'
+            + (zones.ambiguous ? '。这条议题里有不止一处行首「方案选择：」或「审核结果：」，'
+              + '填写位从哪一行开始也可能认不准，先请人看一眼这一条' : ''));
         }
-        const human = keptHumanZone(old, dec, notes) ?? renderHumanZone(dec);
+        const human = keptHumanZone(zones, dec, notes) ?? renderHumanZone(dec);
         parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);
       });
     });

@@ -164,5 +164,83 @@ class WhatTheReviewerWroteStays(ModesCase):
         self.assertIn(CHOICE_ZONE + self.anchor("retry-owner"), text, "删掉的填写位没有重新给出")
 
 
+class OnlyTheOptionsSegmentIsChecked(ModesCase):
+    """选项检查只看「可选的做法」那一段：别的段里的编号是说明，不是方案。"""
+
+    def test_a_numbered_basis_next_to_real_options_passes(self) -> None:
+        body = CHOICE_BODY.replace("接口说明只写了超时按未受理处理。", "接口结果分为 1. 成功；2. 失败。")
+        proc = self.build(entry("retry-owner", "choice", body))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_a_list_only_in_the_basis_does_not_count_as_options(self) -> None:
+        body = CHOICE_BODY.replace(
+            "1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
+            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。",
+            "客户端自动重试，或者提示用户手动重试。").replace(
+            "接口说明只写了超时按未受理处理。", "接口说明写了两步：\n\n1. 提交请求\n2. 等待受理")
+        proc = self.build(entry("retry-owner", "choice", body))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("「**可选的做法**」这一段却没有有序列表", proc.stderr)
+
+    def test_any_number_of_options_and_numbers_inside_an_option_pass(self) -> None:
+        body = CHOICE_BODY.replace(
+            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。",
+            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。\n"
+            "3. 升级到 2.0 版接口后由受理方重试：每月 3、4 号维护窗口不可用。")
+        self.assertEqual(0, self.build(entry("retry-owner", "choice", body)).returncode)
+
+
+class QuotedLabelsStayInsideTheHumanZone(ModesCase):
+    """人工区从哪一行开始按生成时记下的正文摘要认：人在意见里引用标签，不会把意见算进机器正文。"""
+
+    def fill(self, old: str, new: str) -> None:
+        text = self.text()
+        self.assertIn(old, text, "夹具变了，用例要跟着改")
+        self.review.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def test_quoting_either_label_in_either_zone_is_kept(self) -> None:
+        a = entry("split", "confirm", CONFIRM_BODY)
+        b = entry("retry-owner", "choice", CHOICE_BODY)
+        self.assertEqual(0, self.build(a, b).returncode)
+        judged = ("审核结果：\n- [ ] 确认\n- [x] 不同意\n不同意原因：界面文案要统一。\n"
+                  "调整结论：请保留以下标签示例：\n方案选择：\n填写方案编号。\n\n")
+        chose = "方案选择：\n2\n补充：表单上仍叫\n审核结果：\n方案选择：\n两处都保留。\n\n"
+        self.fill(CONFIRM_ZONE + self.anchor("split"), judged + self.anchor("split"))
+        self.fill(CHOICE_ZONE + self.anchor("retry-owner"), chose + self.anchor("retry-owner"))
+
+        proc = self.build(b, a)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        text = self.text()
+        self.assertIn(judged + self.anchor("split"), text)
+        self.assertIn(chose + self.anchor("retry-owner"), text)
+
+        a.update(review_mode="choice", clarification=CHOICE_BODY)
+        proc = self.build(b, a)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn(judged + self.anchor("split"), self.text(), "改了交互方式就把人写的动了")
+
+    def test_a_label_line_inside_the_generated_body_is_not_the_zone(self) -> None:
+        body = CONFIRM_BODY + "\n\n**结论与影响**：表单上的字段名如下\n\n审核结果：\n\n以上沿用现有表单。"
+        a = entry("split", "confirm", body)
+        self.assertEqual(0, self.build(a).returncode)
+        judged = "审核结果：\n- [x] 确认\n- [ ] 不同意\n不同意原因：\n调整结论：\n\n"
+        self.fill(CONFIRM_ZONE + self.anchor("split"), judged + self.anchor("split"))
+        proc = self.build(a)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn(judged + self.anchor("split"), self.text())
+
+    def test_a_real_edit_to_the_body_is_still_refused_without_asking_to_delete_opinions(self) -> None:
+        a = entry("split", "confirm", CONFIRM_BODY)
+        self.assertEqual(0, self.build(a).returncode)
+        judged = "审核结果：\n- [ ] 确认\n- [x] 不同意\n不同意原因：\n调整结论：示例\n方案选择：\n1\n\n"
+        self.fill(CONFIRM_ZONE + self.anchor("split"), judged + self.anchor("split"))
+        self.fill("上游已经拆成两张开发单。", "手改过的依据。")
+        before = self.review.read_bytes()
+        proc = self.build(a)
+        self.assertEqual(1, proc.returncode, "正文手改被静默盖掉了")
+        self.assertEqual(before, self.review.read_bytes(), "拒绝了却写了盘")
+        self.assertIn("人写的内容不要删", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
