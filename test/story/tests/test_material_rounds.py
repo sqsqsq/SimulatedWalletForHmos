@@ -65,6 +65,58 @@ class MaterialRoundCase(unittest.TestCase):
         (ux / name).write_bytes(body)
 
 
+class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
+    """重开写进盘之后，算下一步失败不能把重开报成失败；写入本身失败也不能报成成功。
+
+    报错的后果是具体的：模型以为没重开、再跑一次 reopen，而那一次会被「不在收口态」挡回——
+    它收到的两句话都与盘上的事实相反。用真实临时文件，在进程内注入失败。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.round_now()
+        self.contract_path = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(self.contract_path.read_text(encoding="utf-8"))
+        data.update(status="story_written", story_written_at="2026-09-14T00:00:00+08:00",
+                    story_src_digests={"decisions.json": "sha"})
+        self.written = json.dumps(data, ensure_ascii=False, indent=2)
+        self.contract_path.write_text(self.written, encoding="utf-8")
+
+    def disk(self) -> dict:
+        return json.loads(self.contract_path.read_text(encoding="utf-8"))
+
+    def test_a_failing_next_step_still_reports_the_reopen(self) -> None:
+        from unittest import mock  # noqa: PLC0415
+        from flow import rounds  # noqa: PLC0415
+        from flow.state import FlowError  # noqa: PLC0415
+
+        def boom(*_args, **_kwargs):
+            raise FlowError("材料清单读不出（注入）")
+
+        for name in ("live_materials", "next_step"):
+            with self.subTest(fails=name):
+                self.contract_path.write_text(self.written, encoding="utf-8")
+                with mock.patch.object(rounds, name, boom):
+                    result = rounds.cmd_reopen(self.feature_root)
+                disk = self.disk()
+                self.assertEqual("in_progress", disk["status"], "盘上没重开")
+                self.assertNotIn("story_written_at", disk, "成文登记没撤销")
+                self.assertEqual("in_progress", result["status"])
+                self.assertIsNone(result["next"], "算不出来的下一步被编了一个")
+                self.assertIn("材料清单读不出（注入）", result["action"], "没说清为什么算不出来")
+                self.assertIn("不要再跑 reopen", result["action"], "诱导重跑 reopen")
+                self.assertIn("story_flow.py status", result["action"], "没给出恢复命令")
+
+    def test_a_failing_save_is_not_reported_as_success(self) -> None:
+        from unittest import mock  # noqa: PLC0415
+        from flow import rounds  # noqa: PLC0415
+
+        with mock.patch.object(rounds, "save", side_effect=OSError("磁盘写不进（注入）")):
+            with self.assertRaises(OSError):
+                rounds.cmd_reopen(self.feature_root)
+        self.assertEqual("story_written", self.disk()["status"], "写入失败却动了盘上的状态")
+
+
 class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
 
     def test_a_ux_only_supplement_starts_a_new_round(self) -> None:

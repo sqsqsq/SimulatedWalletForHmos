@@ -152,9 +152,15 @@ def cmd_reopen(feature_root: Path) -> dict:
         "story_registration_undone": sorted(undone),
     })
     save(feature_root, contract)
-    # 重开之后先做什么由现状回答：范围与材料没变时是 `complete` 收口，材料变了走盘点与关卡——
-    # 直接去 `story` 登记只会被拒，而拒绝那一刻作者不知道缺的是收口。
-    step, action = next_step(feature_root, contract, live_materials(feature_root))
+    # **重开到此成立。** 往下只是算下一步：范围与材料没变时是 `complete` 收口，材料变了走盘点
+    # 与关卡——直接去 `story` 登记只会被拒，而拒绝那一刻作者不知道缺的是收口。
+    # 算下一步要按磁盘现状读材料，读不出来不能反过来把重开报成失败：盘上已经是 in_progress，
+    # 再跑 reopen 只会被「不在收口态」挡回。所以只兜这一段，写入失败照常失败。
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = None, (f"下一步暂时算不出来（{exc}）。重开已经生效，不要再跑 reopen；"
+                              "按这个原因修好材料后跑 `story_flow.py status` 取下一步")
     log(f"流程已重新打开（{status} → in_progress）"
         + ("；成文登记已一并撤销，story 要重新登记" if undone else "")
         + f"。下一步：{action}")
