@@ -2,17 +2,20 @@
  * 章草稿 —— 路径、章头渲染与缺稿补建的唯一归属。
  *
  * 草稿是**作者区**：作者在草稿里改，`chapter --from` 消费草稿原子落盘。
- * 章头（读者问题、主要职责、提交命令）与必要种子由这里渲染；形态解释不在这份
- * 文件——必要结构归 chapter-contract，本模块只组合。输入是入口已解析好的数据
- * （`facts`）与现有上下文字段（`ctx`），这里不读 Spec、不扫材料、不判形态。
+ * 章头（读者问题、主要职责、写作设计里本章那一段、提交命令）与必要种子由这里渲染；
+ * 形态解释不在这份文件——必要结构归 chapter-contract，写作设计选定的结构归
+ * writing-plan，本模块只组合。输入是入口已解析好的数据（`facts`、写作设计 `plan`）
+ * 与现有上下文字段（`ctx`），这里不读 Spec、不扫材料、不判形态。
  *
  * 不保存「已读」「已规划」之类的状态：草稿就是盘上那份文件，缺了就补，
- * 已有的一个字节不覆盖。
+ * 作者动过的一个字节不覆盖。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeHeading } from './document.mjs';
-import { chapterSeedRows } from './chapter-contract.mjs';
+import { normalizeHeading, parseChapter } from './document.mjs';
+import { chapterSeedRows, missingPickedSeeds } from './chapter-contract.mjs';
+import { relFromFeature } from './sources.mjs';
+import { selectedStructure } from './writing-plan.mjs';
 
 // 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记之后也留着——
 // 它是「这份 story 怎么写出来的」唯一的现场，不进冻结台账，也走不漏到读者手上。
@@ -47,21 +50,28 @@ function guideLine(text, label = '') {
   return `<!-- ${GUIDE_MARK} ${label ? `${label}：` : ''}${one} -->`;
 }
 
+/** 选定的图只留一行作图提示：节点由作者按本需求的关系画，脚本不预放。 */
+const diagramHint = (at) => guideLine(`${at ? `「${at}」这一节` : '这一章'}要一张你在写作设计里`
+  + '选定的图——按本需求要解释的关系画，用画图语言的围栏', '作图');
+
 /**
- * 一章的草稿：章头（读者问题、主要职责、提交命令）+ 必要种子。
+ * 一章的草稿：章头（读者问题、主要职责、写前读什么、提交命令）+ 必要种子。
  *
  * 作者拿到的不该是一张白纸：本章要回答什么、写前对照什么、写完怎么提交，
- * 都在他动笔前进草稿；必要种子（术语起始行、验收/交付表头、附录投影入口）
- * 是确定性工作，脚本做完。他填的是语义——正文怎么组织、每一格写什么。
+ * 都在他动笔前进草稿；必要种子（术语起始行、必要与选定的表头、附录投影入口）
+ * 是确定性工作，脚本做完。整篇设计不复制进草稿——章头只指向写作设计里本章那一段。
+ *
+ * @param {object} ch 合同章（可已并入写作设计选定的结构）
  */
 function chapterDraft(ctx, ch, facts) {
-  const index = ctx.contract.chapters.indexOf(ch);
+  const index = ctx.contract.chapters.findIndex(c => c.id === ch.id);
   const file = draftPath(ctx, index, ch.title);
-  const rows = [
+  const plan = relFromFeature(ctx, ctx.templatePath);
+  return [
     guideLine((ch.questions ?? []).join('；'), '读者问题'),
     guideLine(ch.boundary, '主要职责'),
-    guideLine('写前对照当前 Story 已写内容，本章补独有信息；'
-      + '形式方法见 story-write.md「十章各自怎么组织」'),
+    guideLine(`写前读写作设计 ${plan} 里「${ch.id}」那一段、当前 Story 已写的章与本章要用的原文，`
+      + '本章补独有信息；形式方法见 story-write.md「十章各自怎么组织」'),
     guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
       + ` --chapter ${shellArg(ch.title)}`
@@ -70,20 +80,25 @@ function chapterDraft(ctx, ch, facts) {
     '',
     `## ${ch.title}`,
     '',
-    ...chapterSeedRows(ch, facts),
+    ...chapterSeedRows(ch, facts, { diagramHint }),
   ];
-  return rows;
 }
 
+const draftText = (ctx, ch, facts) => `${chapterDraft(ctx, ch, facts).join('\n').trimEnd()}\n`;
+
 /**
- * 缺哪章补哪章，**已存在的绝不覆盖** —— 草稿里可能有作者还没落盘的内容。
+ * 缺哪章补哪章，**作者动过的绝不覆盖** —— 草稿里可能有他还没落盘的内容。
  *
- * 两种补法，按这一章写没写分：
+ * 缺席的草稿按这一章写没写分两种补法：
  *
- * - **还带着待写标记**：补一份起点草稿（章头与必要种子在里面）；
+ * - **还带着待写标记**：补一份起点草稿（章头、必要种子与写作设计选定的结构在里面）；
  * - **已经写完**：补一份**现稿正文**。用起点会把成品换掉；用现稿则是恒等——
  *   不落盘什么也不变，落盘也只是把原文写回去。章在 Story 里缺失时不凭空
  *   重建该章，交原有的结构检查报告。
+ *
+ * 已在盘上的草稿，写作设计给这一章选了结构时再看一眼：它**逐字节还是不带选定结构的起点**
+ * （作者没动过），就换成带选定结构的起点；动过了就一个字节不改，缺的选定结构
+ * 作为起点交给入口打印，由作者按需贴。
  *
  * 补回来的只有成稿正文，拿不回作者写到一半的思路——所以这是兜底，不是常态：
  * 常态下草稿一直在，成文登记也不删它。
@@ -93,23 +108,36 @@ function chapterDraft(ctx, ch, facts) {
  * @param {object} chapterState 入口的 Story 解析结果：
  *   `{written: Map<规范章名, 正文>, pending: Set<规范章名>, hasStory: boolean}`；
  *   没有 Story 时两者均空且 hasStory 为 false。
- * @returns {string[]} 这次新建的草稿文件名
+ * @param {object} plan `writing-plan.readWritingPlan` 的结果
+ * @returns {{made: string[], seeded: string[], starts: {file: string, rows: string[]}[]}}
+ *   新建的草稿、换成带选定结构起点的草稿、动过的草稿还缺的选定结构起点
  */
-export function writeDrafts(ctx, facts, chapterState) {
-  const made = [];
+export function writeDrafts(ctx, facts, chapterState, plan) {
+  const made = [], seeded = [], starts = [];
   const written = chapterState?.written ?? new Map();
   const pending = chapterState?.pending ?? new Set();
   fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
   ctx.contract.chapters.forEach((ch, i) => {
     const file = draftPath(ctx, i, ch.title);
-    if (fs.existsSync(file)) return;
     const key = normalizeHeading(ch.title);
     const done = chapterState?.hasStory && !pending.has(key);
+    const planned = { ...ch, structure: selectedStructure(plan, ch.id) };
+    if (fs.existsSync(file)) {
+      if (done || !(plan?.structures ?? []).some(s => s.chapter === ch.id)) return;
+      const now = fs.readFileSync(file, 'utf-8').replace(/\r\n/g, '\n');
+      if (now === draftText(ctx, ch, facts)) {
+        fs.writeFileSync(file, draftText(ctx, planned, facts), 'utf-8');
+        seeded.push(path.basename(file));
+        return;
+      }
+      const rows = missingPickedSeeds(planned, parseChapter(now), { diagramHint });
+      if (rows.length) starts.push({ file, rows });
+      return;
+    }
     const body = done ? written.get(key) : null;
     if (done && body === undefined) return;         // 章缺失由结构检查报，这里不猜
-    const text = done ? body : chapterDraft(ctx, ch, facts).join('\n');
-    fs.writeFileSync(file, `${text.trimEnd()}\n`, 'utf-8');
+    fs.writeFileSync(file, done ? `${body.trimEnd()}\n` : draftText(ctx, planned, facts), 'utf-8');
     made.push(path.basename(file));
   });
-  return made;
+  return { made, seeded, starts };
 }

@@ -129,6 +129,7 @@ export function createContext(args) {
     args, projectRoot, contract, idShapes, featureRoot: featureDir, srcDir,
     scriptPath: path.join(CORE_DIR, 'story-build.mjs'),
     decisionsPath: path.join(srcDir, 'decisions.json'),
+    templatePath: path.join(srcDir, 'story-template.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),
     reviewPath: path.join(featureDir, 'AR', 'review.md'),
     flowPath: path.join(featureDir, 'AR', 'story-src', 'story-flow.json'),
@@ -138,12 +139,13 @@ export function createContext(args) {
 /**
  * 随稿冻结的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
  *
- * 文件名的真源在 `core/flow/state.py` 的 `STORY_SRC_FROZEN`：那两件是登记时要算指纹、
+ * 文件名的真源在 `core/flow/state.py` 的 `STORY_SRC_FROZEN`：那几件是登记时要算指纹、
  * 登记后拒绝重算、归档时随稿走的同一批。冻结与存在性两处说的必须是同一批文件，
- * 各写一份就会改一处忘一处。
+ * 各写一份就会改一处忘一处。第二列是缺了怎么补。
  */
 export const STORY_SRC_LEDGERS = [
-  ['decisionsPath', 'skeleton'],
+  ['decisionsPath', '跑 skeleton 产出'],
+  ['templatePath', '跑 skeleton 建空壳，再按本需求写成整篇设计'],
 ];
 
 /**
@@ -158,10 +160,10 @@ export function requireLedgers(ctx) {
   if (ctx.offline) return;                 // 仲裁锚只有一份 story，没有台账目录
   const missing = STORY_SRC_LEDGERS
     .filter(([key]) => ctx[key] && readText(ctx[key]) === null)
-    .map(([key, how]) => `${path.basename(ctx[key])}（跑 ${how} 产出）`);
+    .map(([key, how]) => `${path.basename(ctx[key])}（${how}）`);
   if (!missing.length) return;
   fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
-    + '  这两件是这份 story 据以成文的全部依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
+    + '  这几件是这份 story 据以成文的依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
     + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
     + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
 }

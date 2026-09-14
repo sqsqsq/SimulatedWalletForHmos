@@ -442,6 +442,8 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         src.mkdir(parents=True)
         (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
         (src / "decisions.json").write_text("[]", encoding="utf-8")
+        shutil.copy2(REPO / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
+                     "/AR90001/AR/story-src/story-template.md", src / "story-template.md")
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(

@@ -30,6 +30,9 @@ EXT = REPO_ROOT / "doc" / "extensions"
 CONTRACT = EXT / "skills" / "story" / "contracts" / "story-chapters.json"
 FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "TP90001"
+#: 协议齐全的最小写作设计：章提交要读得了设计，测章文件处理的用例起手前放它。
+PLAN_FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes" / "R01-verdict-echo"
+                / "good" / "doc" / "features" / "AR90001" / "AR" / "story-src" / "story-template.md")
 
 # 任务包体量上限：作者要在动笔前一次读完它
 MAX_PACKAGE_BYTES = 12 * 1024
@@ -215,14 +218,33 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
         self.assertNotIn("C[余额上报]", package, "把原件围栏复制进任务包了——副本会与原件不同步")
 
-    def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
-        """读不到不是「没有图」：静默给一节空的，作者会以为这一轮上游没画过图。"""
+    def test_a_spec_not_yet_written_is_not_reported_as_lost(self) -> None:
+        """Spec 还没写成时它的图给不出来——那是时点，不是丢件：说清什么时候给。
+
+        说成「读不到，先找回来」的话，作者会在 Spec 阶段一开头去找一份本来就还不存在的文件。
+        """
         spec = self.feature_root / "spec" / "spec.md"
         if spec.exists():
             spec.unlink()
-        package = self.task_package()
-        self.assertIn("读不到", package)
-        self.assertNotIn("spec 里现在没有图", package)
+        section = self.task_package().split("## 4c.", 1)[1]
+        self.assertIn("还没写成", section)
+        self.assertIn("story-build skeleton", section, "没说清这些图什么时候给")
+        self.assertNotIn("找回来", section)
+        self.assertNotIn("spec 里现在没有图", section, "给不出来不等于没有图")
+
+    def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
+        """远程单的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
+        (self.feature_root / "AR" / "detail.json").write_text(
+            json.dumps({"reqNo": FEATURE}, ensure_ascii=False), encoding="utf-8")
+        section = self.task_package().split("## 4b.", 1)[1].split("## 4c.", 1)[0]
+        self.assertIn("读不到 `SR/design.md`", section)
+        self.assertIn("找回来", section)
+
+    def test_a_local_ticket_without_a_system_design_is_not_a_loss(self) -> None:
+        """本地单没有需求系统给的系统设计是正常的：照合同说「本需求没有」，不报丢件。"""
+        section = self.task_package().split("## 4b.", 1)[1].split("## 4c.", 1)[0]
+        self.assertIn("本需求没有 `SR/design.md`", section)
+        self.assertNotIn("读不到", section)
 
     def test_it_names_the_topic_and_not_a_chapter(self) -> None:
         """放哪一节由作者按内容定——任务包不预设位置。"""
@@ -897,6 +919,8 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
             + '\n## 0. 术语映射表\n\n| 业务名 | 权威模块 | 说明 |\n|---|---|---|\n| 受理单编号 | 提交入口 | 云侧受理后返回的编号 |\n\n## 9. 技术契约\n\n### 9.1 端云接口\n\n不涉及：复用既有提交接口。\n\n### 9.2 数据存储\n\n不涉及：不落库。\n\n### 9.3 配置项\n\n不涉及：没有新增配置。\n\n### 9.4 埋点\n\n不涉及：不新增埋点。\n\n### 9.5 依赖变更\n\n不涉及：只改一处入口。\n', encoding="utf-8")
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src", DRAFT_TEXT)
+        # 章是照写作设计写的：这一组测章文件的标题处理，设计放一份协议齐全的最小件
+        shutil.copy2(PLAN_FIXTURE, self.feature_root / "AR" / "story-src" / "story-template.md")
         self.assertEqual(0, self.build("skeleton").returncode)
 
     def write_chapter(self, body: str) -> str:

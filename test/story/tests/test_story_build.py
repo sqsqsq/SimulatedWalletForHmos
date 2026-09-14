@@ -28,6 +28,8 @@ FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "AR90001"
 FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+#: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
+PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
 
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
@@ -1671,12 +1673,14 @@ class AWriteThatLandedIsNeverReportedAsFailed(unittest.TestCase):
         for t in titles:
             rows += ["## " + t, "", "<!-- 待写：" + t + " -->", ""]
         self.story_path.write_text("\n".join(rows), encoding="utf-8")
+        shutil.copy2(PLAN_FIXTURE, self.feature_root / "AR" / "story-src" / "story-template.md")
         self.build = self.mech / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 
     def break_next_steps(self) -> None:
         f = self.mech / "skills" / "story" / "scripts" / "core" / "story" / "chapter.mjs"
         text = f.read_text(encoding="utf-8")
-        hit = "export function nextSteps(ctx, storyText, result, warnings = []) {"
+        hit = ("export function nextSteps(ctx, storyText, result,"
+               " { warnings = [], plan = null, docs = null } = {}) {")
         self.assertIn(hit, text, "接续函数的签名变了，故障注入点要跟着改")
         f.write_text(text.replace(
             hit, hit + "\n  throw new Error('夹具注入：接续算不出来');", 1), encoding="utf-8")
@@ -2141,10 +2145,16 @@ class RealRunCase(unittest.TestCase):
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
     def build_raw(self, *args: str) -> subprocess.CompletedProcess:
-        """跑一条命令，**不断言成功**——要核「它该拒绝」的用例用这一个。"""
+        """跑一条命令，**不断言成功**——要核「它该拒绝」的用例用这一个。
+
+        起手前放好写作设计：这一组测的是作者照设计写章之后的路径，设计本身另有用例。
+        """
         if "skeleton" in args:
             ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src",
                               DRAFT_TEXT)
+            plan = self.feature / "AR" / "story-src" / "story-template.md"
+            if not plan.exists():
+                shutil.copy2(PLAN_FIXTURE, plan)
         return subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],

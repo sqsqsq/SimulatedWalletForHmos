@@ -23,13 +23,14 @@ import * as path from 'node:path';
 import { chapterStructureProblems } from './chapter-contract.mjs';
 import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
-  parseChapter, pendingChapters, storySections,
+  parseChapter, pendingChapters, placeholderProblems, storySections,
 } from './document.mjs';
 import { fail, readRaw, readText, refuseIfFrozen } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
-import { relFromFeature } from './sources.mjs';
+import { relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages } from './language.mjs';
+import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 
 /**
  * 剥掉**草稿生产者自己写的**指导行 —— 只认 `story-draft:guide` 这一个标记。
@@ -83,18 +84,6 @@ function strayHeadings(text) {
     if (fenced.has(i)) return;
     const head = /^(#{1,2})\s+(.+)$/.exec(line.trim());
     if (head) out.push(head[2].trim());
-  });
-  return out;
-}
-
-/** 模板占位符 `{{…}}` —— 模板留给作者替换的位置，留在成品里就是没写完。 */
-export function placeholderProblems(text, where = '') {
-  const out = [];
-  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
-    const hit = /\{\{[^}]*\}\}/.exec(line);
-    if (!hit) return;
-    out.push(`${where}第 ${i + 1} 行还留着模板占位符「${hit[0]}」`
-      + '——它是模板留给你替换的位置，换成这一节真正要写的内容');
   });
   return out;
 }
@@ -189,31 +178,48 @@ function chapterBodyIn(storyText, title) {
  * 作者读的是第一屏：当前要做的具体动作、这个动作要读的东西、刚才实际做了什么，
  * 三样各占一行。skeleton 与 chapter 都调它，**RESULT 只写真做过的事**——
  * skeleton 不能说提交过一章。
+ *
+ * 写作设计还读不了时，当前动作就是写它：章是照设计写的，设计还是空壳时去写章，
+ * 各章的分工只能靠上下文记忆。
+ *
+ * @param {{warnings?: string[], plan?: object, docs?: object[]}} [options]
+ *   `plan` 是调用方这一刻读到的写作设计；`docs` 是已经取得的来源（没给就按合同现读）
  */
-export function nextSteps(ctx, storyText, result, warnings = []) {
+export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, docs = null } = {}) {
   const left = pendingChapters(storyText);
   const storyRel = relFromFeature(ctx, ctx.storyPath);
+  const planRel = relFromFeature(ctx, ctx.templatePath);
   const guide = 'doc/extensions/skills/story/phases/story-write.md';
+  const originals = (docs ?? sourceStatus(ctx).docs).map(d => d.rel).join('、');
   const rows = [];
-  if (left.length) {
+  if (plan?.problems.length) {
+    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、Spec 与决策登记，`
+      + '写阅读主线、十章安排与结构选择；写完重跑'
+      + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
+      + ` --project-root ${shellArg(ctx.projectRoot)}`);
+    rows.push(`INPUT: ${planRel}；来源 ${originals}；需求分析 `
+      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；决策登记 `
+      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「二、动笔前：先有整篇写作设计」`);
+  } else if (left.length) {
     const title = left[0];
     const at = (ctx.contract.chapters ?? [])
       .findIndex(c => normalizeHeading(c.title) === normalizeHeading(title));
     const draft = draftPath(ctx, at < 0 ? 0 : at, title);
     rows.push(`NEXT: 写「${title}」（还剩 ${left.length} 章待写）`
-      + '——先读它的草稿头与当前已写的章，只补这一章独有的信息；'
+      + '——先读写作设计里本章那一段、它的草稿头与当前已写的章，只补这一章独有的信息；'
       + `改完草稿跑 node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)} --chapter ${shellArg(title)}`
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}；当前 ${storyRel} 里已写的章；`
-      + `方法见 ${guide} 的「五、十章各自怎么组织」`);
+    rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}；${planRel} 里`
+      + `「${ctx.contract.chapters[at]?.id ?? title}」那一段；当前 ${storyRel} 里已写的章；`
+      + `来源 ${originals}；方法见 ${guide} 的「五、十章各自怎么组织」`);
   } else {
     rows.push('NEXT: 十章齐了——把当前 story 从头读到尾：比较跨章的独有信息、'
       + '挑几个关键条件推演流程与功能说明与异常与验收四处说的是不是同一件事、'
       + '核指代与单位与可逆后果；要改哪一章就改它的草稿再跑 chapter 提交，'
       + '全篇收口后跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 当前 ${storyRel} 全文；草稿目录 `
+    rows.push(`INPUT: 当前 ${storyRel} 全文；写作设计 ${planRel}；草稿目录 `
       + `${relFromFeature(ctx, path.dirname(draftPath(ctx, 0, 'x')))}；`
       + `方法见 ${guide} 的「四、写后核对」`);
   }
@@ -257,6 +263,16 @@ export function cmdChapter(ctx) {
     fail(`合同里没有「${title}」这一章。章名取自章节合同：`
       + `${chapters.map(c => c.title).join('、')}`);
   }
+  // 章是照写作设计写的：设计读不了就先不落盘——空壳时写下的章没有可核的依据，
+  // 选定的表图也无从核对。报错把设计缺在哪一次列全，改完再提交。
+  const plan = readWritingPlan(ctx);
+  if (plan.problems.length) {
+    fail(`写作设计还读不了，「${title}」先不落盘（${path.basename(ctx.storyPath)} 没动）：\n`
+      + `${plan.problems.map(p => `  · ${p}`).join('\n')}\n`
+      + `  写好它再提交；当前输入与下一步跑 node ${shellArg(ctx.scriptPath)} skeleton`
+      + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
+  }
+  const planned = { ...chapter, structure: selectedStructure(plan, chapter.id) };
   const anchors = chapterAnchors(story, title);
   if (!anchors) {
     fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
@@ -288,7 +304,7 @@ export function cmdChapter(ctx) {
     next = projectAppendix(ctx, next).text;
   }
 
-  const bad = chapterProblems(ctx, chapter, chapterBodyIn(next, title));
+  const bad = chapterProblems(ctx, planned, chapterBodyIn(next, title));
   if (bad.length) {
     process.stderr.write(`[story-build chapter] 「${title}」${bad.length} 处未通过，`
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);
@@ -302,7 +318,7 @@ export function cmdChapter(ctx) {
   // 所以这一段单独兜住：只说清「已落盘」与怎么取回定位，不回滚、不诱导重交。
   try {
     process.stdout.write(nextSteps(ctx, next,
-      `「${title}」已落盘（其余章一个字节未动）`));
+      `「${title}」已落盘（其余章一个字节未动）`, { plan }));
   } catch (e) {
     try {
       process.stderr.write(`[story-build chapter] 「${title}」**已落盘**，`

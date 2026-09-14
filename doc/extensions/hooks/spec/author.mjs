@@ -28,7 +28,7 @@ import { FLOW_SCRIPT, queryFlowStatus }
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { relFromStory } from '../../skills/story/scripts/core/story/sources.mjs';
+import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { DECISION_FIELDS } from '../../skills/story/scripts/core/story/review.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
@@ -273,20 +273,30 @@ function originalArSection(projectRoot, feature) {
  * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。
  * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
  *
- * 原件读不到时**报问题**，不静默给一节空的——那会让作者以为这一轮上游没画过图。
+ * 读不到分三种说：本轮自己产出的那一份（Spec）还没写成、本需求本来没有这一份（可选来源）、
+ * 该有却读不到——只有最后一种要找回来。都说成读不到，作者会去找一份本来就不该在的文件；
+ * 静默给一节空的，他会以为这一轮上游没画过图。
+ *
+ * @param {{rel: string, text?: string, required?: boolean, why?: string}} src 来源状态里的这一份
+ * @param {boolean} derived 合同声明它是本轮流程自己生成的
  */
-function diagramSection(heading, label, rel, source, downstream) {
+function diagramSection(heading, label, src, derived) {
   const rows = [heading, ''];
-  if (source === null) {
-    rows.push(`读不到 \`${rel}\`——${label} 里有没有图、各讲什么，现在给不出来。`
-      + '先把这份上游正文找回来，再取一次这份任务包。');
+  const rel = src.rel;
+  if (typeof src.text !== 'string') {
+    rows.push(derived
+      ? `\`${rel}\` 还没写成——写成之后跑 \`story-build skeleton\`，它的输出里这一节列出其中的图。`
+      : src.required
+        ? `读不到 \`${rel}\`——${label} 里有没有图、各讲什么，现在给不出来。先把这份上游正文找回来，再取一次。`
+        : `本需求没有 \`${rel}\`（${src.why ?? '可选来源'}），这一节没有要搬的图。`);
     return rows;
   }
-  const list = diagramsOf(source);
+  const list = diagramsOf(src.text);
   if (!list.length) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
+  const downstream = 'story';
   rows.push(`原件在 \`${rel}\`——**按行号去读它**，这里不复制一份副本（副本会与原件不同步）。`,
     `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
     + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
@@ -306,14 +316,27 @@ function diagramSection(heading, label, rel, source, downstream) {
 }
 
 /**
- * 上游与本阶段产物的正文。
+ * 成文要用的当前输入 —— 材料里的图、上游原 AR、系统设计与 Spec 里的图。
  *
- * **读不到返回 null，不是空串**：空串与「这份文档里没有图」同形，而前者要报出来——
- * 静默给一节空的，作者会以为这一轮上游没画过图。
+ * `story-build skeleton` 起手与恢复时打印它，本任务包也列它：两处读同一份渲染。
+ * `sources` 是调用方这一刻已经取得的来源状态（`sourceStatus`）：上游正文从它取，不再读一遍；
+ * 缺席按合同与单据身份说。
+ *
+ * @param {{projectRoot: string, contract: object, args: {feature: string}}} ctx
+ * @param {{docs: object[], missing: object[]}} sources
  */
-function docText(projectRoot, feature, ...rel) {
-  const abs = path.join(featureRoot(projectRoot, feature), ...rel);
-  try { return fs.readFileSync(abs, 'utf-8'); } catch { return null; }
+export function storyInputs(ctx, sources) {
+  const feature = ctx.args.feature;
+  const of = (key) => sources.docs.find(d => d.doc === key)
+    ?? sources.missing.find(m => m.doc === key)
+    ?? { rel: ctx.contract.sources?.[key]?.path ?? key };
+  const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
+  return [
+    ...imageSection(ctx.projectRoot, feature), '',
+    ...originalArSection(ctx.projectRoot, feature), '',
+    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
+    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
+  ];
 }
 
 /**
@@ -356,6 +379,8 @@ function taskPackage(projectRoot, feature) {
     throw new Error('章节合同读不到：任务包是它的投影，缺了就没有任务包');
   }
 
+  const ctx = { projectRoot, featureRoot: featureRoot(projectRoot, feature), contract,
+    args: { feature } };
   const rows = [
     `# spec 阶段 · 本次任务包（${feature}）`,
     '',
@@ -368,15 +393,7 @@ function taskPackage(projectRoot, feature) {
     '',
     ...decisionSection(contract),
     '',
-    ...imageSection(projectRoot, feature),
-    '',
-    ...originalArSection(projectRoot, feature),
-    '',
-    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR', 'SR/design.md',
-      docText(projectRoot, feature, 'SR', 'design.md'), 'story'),
-    '',
-    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec', 'spec/spec.md',
-      docText(projectRoot, feature, 'spec', 'spec.md'), 'story'),
+    ...storyInputs(ctx, sourceStatus(ctx)),
     '',
     ...vocabularySection(contract),
   ];

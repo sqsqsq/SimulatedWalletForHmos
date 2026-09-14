@@ -343,7 +343,7 @@ export function storyProduced(featureRoot) {
   return [
     'spec 三份产物缺叙事件（AR/story.md 未登记成文）：spec 是一次 pass 产出 '
     + 'spec.md / AR/review.md / AR/story.md 三份。处置：按 skills/story/phases/spec.md §二'
-    + '「阶段内顺序」走完——`story-build.mjs skeleton` → 按章写、'
+    + '「阶段内顺序」走完——`story-build.mjs skeleton` → 写整篇写作设计 → 按章写、'
     + '每章经 `story-build.mjs chapter` 落盘 → 统稿 → `story-build.mjs build` → '
     + '`story_flow.py story --feature <feature>` 登记。',
   ];

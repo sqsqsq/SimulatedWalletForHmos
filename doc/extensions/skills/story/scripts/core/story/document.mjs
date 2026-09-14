@@ -149,9 +149,17 @@ export function tablesIn(view, name) {
     .map(t => t.header);
 }
 
-/** 这一章有没有真正的图围栏（画图语言的那种）。 */
-export function hasDiagram(view) {
-  return (view?.fences ?? []).some(f => DIAGRAM_LANGS.has(f.lang));
+/**
+ * 有没有真正的图围栏（画图语言的那种）：`name` 为空看全章，否则只看那一节里的。
+ *
+ * 那一节缺席返回 null——与「有节但没图」不是一回事，缺节由必要 H3 那条报。
+ */
+export function hasDiagram(view, name = '') {
+  const drawn = (view?.fences ?? []).filter(f => DIAGRAM_LANGS.has(f.lang));
+  if (!name) return drawn.length > 0;
+  const hit = matchSection(view, name);
+  if (!hit) return null;
+  return drawn.some(f => f.from > hit.from && f.from < hit.to);
 }
 
 function matchSection(view, name) {
@@ -418,6 +426,18 @@ export function pendingMark(title) {
 export function pendingChapters(storyText) {
   const out = [];
   for (const m of String(storyText ?? '').matchAll(PENDING_RE)) out.push(m[1]);
+  return out;
+}
+
+/** 模板占位符 `{{…}}` —— 模板留给作者替换的位置，留在成品里就是没写完。 */
+export function placeholderProblems(text, where = '') {
+  const out = [];
+  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
+    const hit = /\{\{[^}]*\}\}/.exec(line);
+    if (!hit) return;
+    out.push(`${where}第 ${i + 1} 行还留着模板占位符「${hit[0]}」`
+      + '——它是模板留给你替换的位置，换成这一节真正要写的内容');
+  });
   return out;
 }
 

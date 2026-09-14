@@ -11,7 +11,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { chapterProblems, placeholderProblems } from './chapter.mjs';
+import { chapterProblems } from './chapter.mjs';
+import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
@@ -21,7 +22,7 @@ import {
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
-  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, storySections,
+  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections,
 } from './document.mjs';
 import { carriedDiagramProblems, danglingFigures, imageProblems } from './images.mjs';
 import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
@@ -83,6 +84,12 @@ export function cmdCheck(ctx) {
 
   mark('⓪b 台账没在登记之后被换过');
   if (!ctx.offline) problems.push(...ledgerDigestProblems(ctx));
+
+  mark('⓪c 写作设计');
+  // 章是照写作设计写的：设计读不了，下面按章核的选定结构也就无从谈起。
+  // 离线仲裁锚只有一份文档，没有需求工作区——不假造设计，也不以它缺席拒绝那份文档。
+  const plan = ctx.offline ? null : readWritingPlan(ctx);
+  if (plan) problems.push(...plan.problems);
 
   mark('① 章标题与顺序');
   // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
@@ -224,7 +231,8 @@ export function cmdCheck(ctx) {
   for (const ch of ctx.contract.chapters ?? []) {
     const text = sectionText.get(ch.title);
     if (text === undefined) continue;             // 章缺失由 ① 报，这里不重复
-    problems.push(...chapterProblems(ctx, ch, text, () => viewOf(ch.title)));
+    const planned = plan ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
+    problems.push(...chapterProblems(ctx, planned, text, () => viewOf(ch.title)));
   }
   // 章之外那一段（大标题与前言）的占位符：逐章判覆盖不到它。
   problems.push(...placeholderProblems(storyText.split(/\n##\s/)[0]));

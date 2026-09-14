@@ -117,7 +117,8 @@ SPEC_STAGE_ORDER = (
     "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
     "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
     "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
-    "story-build skeleton → 逐章 chapter → 统稿 → story_flow.py story 登记"
+    "story-build skeleton → 写整篇写作设计 → 再跑 skeleton → 逐章 chapter → 统稿 → "
+    "story_flow.py story 登记"
     "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
 
@@ -158,14 +159,14 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
         return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
     if not have("AR", "story.md"):
         return ("story_skeleton",
-                "spec.md 已在。**先重取一次任务包**"
-                "（`node doc/extensions/hooks/spec/author.mjs --feature <名>`）"
-                "——spec 刚写完，它里面的图这时候才列得出来。"
-                "接着 `story-build skeleton` 建骨架，它会告诉你先写哪一章。" + SPEC_STAGE_ORDER)
+                "spec.md 已在。跑 `story-build skeleton`：它给出成文要用的当前输入"
+                "（材料里的图、上游原件、系统设计与 Spec 里的图），建写作设计空壳与章草稿，"
+                "并告诉你先写整篇设计还是先写哪一章。" + SPEC_STAGE_ORDER)
     left = pending_chapters(feature_root)
     if left:
         return ("story_chapters",
                 f"story.md 已在，还有 {left} 章带着待写标记。"
+                "先跑 `story-build skeleton` 取回当前输入与下一步（写作设计还没写好时它先让你写设计）；"
                 "逐章在草稿上写、`story-build chapter --from <草稿>` 落盘——"
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
                 "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
@@ -357,7 +358,7 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
             missing.append(f"范围定法选项集 → {'/'.join(SCOPE_OPTIONS)}")
         return ("run_analysis",
                 "S2b 需求粒度分析（材料已确认）：需求概览 → 本部件视角 → 本 AR 定位 → "
-                "待实现功能清单 → 范围定法选项；落盘后重跑 `round`。"
+                "待实现功能清单 → 范围定法选项 → 来源初筛；落盘后重跑 `round`。"
                 "本部件的职责范围与六类交互方在项目事实里，"
                 "路径见任务包第 2 节的清单。"
                 "待补：" + "；".join(missing))

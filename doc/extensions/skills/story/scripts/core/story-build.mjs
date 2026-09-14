@@ -3,9 +3,10 @@
  *
  * ## 成文怎么走
  *
- * 材料齐备之后，作者拿到一次给全的任务包（材料、知识、合同、样式），按合同顺序
- * 一次写一章、经 `chapter` 原子替换落盘，十章写完再统稿。每步输出有界、写完即落盘、
- * 断了能续——整篇一次重出是全有或全无，中途断了磁盘上什么都没有。
+ * 材料与 Spec 齐备之后，`skeleton` 给出成文要用的当前输入并建写作设计空壳与章草稿；
+ * 作者先写本需求的整篇写作设计，再照它一次写一章、经 `chapter` 原子替换落盘，
+ * 十章写完再统稿。每步输出有界、写完即落盘、断了能续——整篇一次重出是全有或全无，
+ * 中途断了磁盘上什么都没有。
  *
  * ## 判据的边界
  *
@@ -19,7 +20,7 @@
  * | 命令 | 做什么 |
  * |------|--------|
  * | `init`  | 检查材料齐备；建 `decisions.json` 骨架 |
- * | `skeleton` | 建十章骨架：每章一个稳定章锚 + 一个待写 marker |
+ * | `skeleton` | 建写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
@@ -39,12 +40,14 @@ import {
 } from './story/context.mjs';
 import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
 import {
-  materialListSkeleton, materialsNotReady, missingSourceLine, sourceStatus,
+  materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
 import { cmdBuild, decisionsMissing } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck } from './story/check.mjs';
+import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
+import { storyInputs } from '../../../../hooks/spec/author.mjs';
 
 const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter',
   'project', 'review-task'];
@@ -173,8 +176,12 @@ function cmdSkeleton(ctx) {
       };
 
   // ---- 预检全过，开始写盘 ----
+  // 写作设计不是预检：它还是空壳时起手照走，只是下一步变成先写它。
+  const hadPlan = fs.existsSync(ctx.templatePath);
   if (makeDecisions) writeJson(ctx.decisionsPath, { decisions: [] });
-  const made = writeDrafts(ctx, facts, chapterState);
+  if (!hadPlan) fs.writeFileSync(ctx.templatePath, writingPlanShell(ctx.contract), 'utf-8');
+  const plan = readWritingPlan(ctx);
+  const { made, seeded, starts } = writeDrafts(ctx, facts, chapterState, plan);
 
   let result;
   if (existing !== null) {
@@ -194,9 +201,20 @@ function cmdSkeleton(ctx) {
       + '（`AR/story-src/drafts/`，每份开头是本章的读者问题与必要种子）；'
       + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
   }
+  if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
+  if (seeded.length) result += `；按写作设计给 ${seeded.length} 份没动过的草稿搭好选定的表图`;
   // 首屏接续与 chapter 共用一处：各写一份的话，恢复那条路上的提示总比正常路径旧一轮。
-  process.stdout.write(nextSteps(ctx, readText(ctx.storyPath) ?? '', result,
-    missing.map(m => missingSourceLine(m))));
+  // 刚建的空壳不逐条报占位——下一步就是写它；已有的设计读不了才把缺在哪列出来。
+  process.stdout.write(nextSteps(ctx, readText(ctx.storyPath) ?? '', result, {
+    warnings: [...missing.map(m => missingSourceLine(m)), ...(hadPlan ? plan.problems : [])],
+    plan, docs,
+  }));
+  for (const { file, rows } of starts) {
+    process.stdout.write(`\n结构起点：${relFromFeature(ctx, file)} 已经动过，没有自动改；`
+      + `写作设计选定、它里面还没有的结构如下，按需贴进去：\n${rows.join('\n')}\n`);
+  }
+  // 成文要用的当前输入在这一刻取：Spec 刚写完，它的图这时才列得出来。
+  process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
 /**

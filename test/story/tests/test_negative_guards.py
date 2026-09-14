@@ -151,7 +151,7 @@ class LedgersMustAllExist(NegativeCase):
     逐单元系统退场后台账收到两件：决策登记与统稿留痕。判据一个字没动，基线跟着走。
     """
 
-    LEDGERS = ("decisions.json",)
+    LEDGERS = ("decisions.json", "story-template.md")
 
     def test_each_missing_ledger_is_named(self) -> None:
         for name in self.LEDGERS:

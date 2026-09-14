@@ -75,6 +75,41 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         self.assertIn("成文分两步", guide)
 
 
+class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
+    """整篇写作设计是成文的第一步：作业书、阶段页、分析规则与流程路由说的是同一条路。
+
+    旧路线「不另落规划文件、在各章草稿里拟标题就算设计过」要整段退出——
+    与新路线并存时，作者读到哪句就走哪条，整篇设计又会缩回十份草稿里的几个标题。
+    """
+
+    def test_the_old_route_without_a_design_is_gone(self) -> None:
+        guide = read("phases/story-write.md")
+        for gone in ("不另落规划文件", "也没有「先分配」那一步", "直接写进各章草稿的正文区"):
+            self.assertNotIn(gone, guide, f"作业书还留着旧路线「{gone}」")
+
+    def test_the_guide_says_what_the_design_holds_and_how_it_binds(self) -> None:
+        guide = read("phases/story-write.md")
+        self.assertIn("## 二、动笔前：先有整篇写作设计", guide)
+        design = guide.split("## 二、动笔前：先有整篇写作设计", 1)[1].split("\n## ", 1)[0]
+        for needle in ("`## 阅读主线`", "`## 章节安排`", "`## 结构选择`", "story-template.md",
+                       "来源初筛", "不是新的业务事实源", "设计里没列的有效内容照样写进正文", "reopen"):
+            self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
+
+    def test_the_phase_order_puts_the_design_between_skeleton_and_chapters(self) -> None:
+        spec = read("phases/spec.md")
+        self.assertLess(spec.index("① 当前输入"), spec.index("①b 写整篇写作设计"))
+        self.assertLess(spec.index("①b 写整篇写作设计"), spec.index("② 按章写"))
+        route = read("scripts/core/flow/routing.py")
+        self.assertIn("写整篇写作设计", route, "流程路由的顺序里没有写作设计")
+        self.assertNotIn("先重取一次任务包", route, "当前输入已由 skeleton 给出，路由不该再让作者重取任务包")
+
+    def test_the_analysis_keeps_its_source_screening_for_later(self) -> None:
+        rules = read("rules/init_analysis.md")
+        self.assertIn("### ⑥ 来源初筛", rules)
+        self.assertNotIn("`/spec` 不读它", rules, "Spec 从来源初筛起步，分析规则不能再说 Spec 不读它")
+        self.assertIn("init-analysis.md", read("phases/spec.md"), "Spec 的必读输入里没有来源初筛")
+
+
 class TestChapterDimensions(unittest.TestCase):
     def test_repetition_is_one_of_the_dimensions(self) -> None:
         dims = CONTRACT["verdicts"]["chapter_dimensions"]

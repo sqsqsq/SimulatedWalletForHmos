@@ -28,7 +28,7 @@ BUILD = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
 FLOW = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
         / "scripts" / "core" / "story_flow.py")
 FEATURE = "B01FEAT"
-LEDGERS = ("decisions.json",)
+LEDGERS = ("decisions.json", "story-template.md")
 
 
 class FeaturesDirConfigTest(unittest.TestCase):
@@ -49,7 +49,8 @@ class FeaturesDirConfigTest(unittest.TestCase):
         """只在预期解析到的 feature 里放台账：台账红 = JS 没归一到这个目录。"""
         story_src = self.root / rel / FEATURE / "AR" / "story-src"
         story_src.mkdir(parents=True, exist_ok=True)
-        (story_src / LEDGERS[0]).write_text("[]", encoding="utf-8")
+        for name in LEDGERS:
+            (story_src / name).write_text("[]", encoding="utf-8")
 
     def check_missing_story_path(self) -> str:
         proc = subprocess.run(

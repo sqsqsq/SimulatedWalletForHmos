@@ -37,10 +37,11 @@ AR_SOURCES = ("AR", "story-src", "sources", "ar")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")
-# 成文态登记时随稿冻结的台账：story 定稿了，它据以成文的账本也就定稿了。
-# 登记之后重跑 init 会把这几份重算一遍：story.md 冻了，账本被后一次重跑冲掉。
+# 成文态登记时随稿冻结的依据：story 定稿了，它据以成文的决策登记与写作设计也就定稿了。
+# 登记之后再改它们，story.md 冻了而依据换了一批；`reopen` 撤销登记之后才可以改。
 STORY_SRC_FROZEN = (
     "decisions.json",
+    "story-template.md",
 )
 # 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
 #
