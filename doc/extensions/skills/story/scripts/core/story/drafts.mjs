@@ -96,9 +96,10 @@ const draftText = (ctx, ch, facts) => `${chapterDraft(ctx, ch, facts).join('\n')
  *   不落盘什么也不变，落盘也只是把原文写回去。章在 Story 里缺失时不凭空
  *   重建该章，交原有的结构检查报告。
  *
- * 已在盘上的草稿，写作设计给这一章选了结构时再看一眼：它**逐字节还是不带选定结构的起点**
- * （作者没动过），就换成带选定结构的起点；动过了就一个字节不改，缺的选定结构
- * 作为起点交给入口打印，由作者按需贴。
+ * 写作设计给这一章选了结构时，**写没写过**与**能不能覆盖**分开看：只有还没写、且内容
+ * （行尾归一后）仍是不带选定结构的那份起点的草稿，才换成带选定结构的起点；写过的、
+ * 作者动过的、按现稿补回的，一个字节不改，但照样按当前设计找出缺哪些选定结构，
+ * 作为起点交给入口打印，由作者按需贴。已经有的结构不重复给。
  *
  * 补回来的只有成稿正文，拿不回作者写到一半的思路——所以这是兜底，不是常态：
  * 常态下草稿一直在，成文登记也不删它。
@@ -122,22 +123,25 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
     const key = normalizeHeading(ch.title);
     const done = chapterState?.hasStory && !pending.has(key);
     const planned = { ...ch, structure: selectedStructure(plan, ch.id) };
-    if (fs.existsSync(file)) {
-      if (done || !(plan?.structures ?? []).some(s => s.chapter === ch.id)) return;
+    const picked = (plan?.structures ?? []).some(s => s.chapter === ch.id);
+    if (!fs.existsSync(file)) {
+      const body = done ? written.get(key) : null;
+      if (done && body === undefined) return;       // 章缺失由结构检查报，这里不猜
+      fs.writeFileSync(file, done ? `${body.trimEnd()}\n` : draftText(ctx, planned, facts), 'utf-8');
+      made.push(path.basename(file));
+      if (!done) return;                            // 新起点已带选定结构
+    } else if (picked && !done) {
       const now = fs.readFileSync(file, 'utf-8').replace(/\r\n/g, '\n');
       if (now === draftText(ctx, ch, facts)) {
         fs.writeFileSync(file, draftText(ctx, planned, facts), 'utf-8');
         seeded.push(path.basename(file));
         return;
       }
-      const rows = missingPickedSeeds(planned, parseChapter(now), { diagramHint });
-      if (rows.length) starts.push({ file, rows });
-      return;
     }
-    const body = done ? written.get(key) : null;
-    if (done && body === undefined) return;         // 章缺失由结构检查报，这里不猜
-    fs.writeFileSync(file, done ? `${body.trimEnd()}\n` : draftText(ctx, planned, facts), 'utf-8');
-    made.push(path.basename(file));
+    if (!picked) return;
+    const rows = missingPickedSeeds(planned, parseChapter(fs.readFileSync(file, 'utf-8')),
+      { diagramHint });
+    if (rows.length) starts.push({ file, rows });
   });
   return { made, seeded, starts };
 }

@@ -289,6 +289,39 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
         code, out = self.put("异常与恢复", inside)
         self.assertEqual(0, code, out)
 
+    def test_not_applicable_does_not_bypass_a_picked_structure(self) -> None:
+        """设计还选着表或图、正文却写「不涉及」：两个明确声明冲突，章提交与全篇 check 都点名；
+        撤回选择之后「不涉及」照常合法。没有选择的空章从来合法。"""
+        cases = {
+            "选定表": PICKS,
+            "选定图": [{"chapter": "06-features", "at": "", "kind": "diagram"}],
+        }
+        for name, picks in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                self.write_plan(picks)
+                self.cmd("skeleton")
+                src = self.root / "chapter.md"
+                src.write_bytes("本需求不涉及。\n".encode("utf-8"))
+                story_before = self.story_path.read_bytes()
+                code, out = self.cmd("chapter", "--chapter", "功能说明", "--from", str(src))
+                self.assertEqual(1, code, out)
+                self.assertIn("两处说法冲突", out)
+                self.assertIn("撤掉这几项", out, "没给出撤回选择这条出路")
+                self.assertEqual(story_before, self.story_path.read_bytes(), "冲突却写了盘")
+                self.assertEqual("本需求不涉及。\n".encode("utf-8"), src.read_bytes(), "候选被改了")
+
+                story = self.story_path.read_text(encoding="utf-8")
+                self.story_path.write_text(story.replace("<!-- 待写：功能说明 -->", "本需求不涉及。"),
+                                           encoding="utf-8")
+                _, out = self.cmd("check")
+                self.assertIn("两处说法冲突", out, "全篇 check 与章提交不是同一条检查")
+
+                self.story_path.write_bytes(story_before)
+                self.write_plan([])
+                code, out = self.cmd("chapter", "--chapter", "功能说明", "--from", str(src))
+                self.assertEqual(0, code, f"撤回选择之后「不涉及」该合法：{out}")
+
     def test_the_design_does_not_cap_the_body(self) -> None:
         """设计没列的小节照样合法：写作中发现的有效内容不因设计未列而违规。"""
         self.write_plan(PICKS)
@@ -297,6 +330,64 @@ class PickedStructuresAreSeededAndChecked(PlanCase):
                 + "\n### 设计里没列的一节\n\n写作中发现的另一种受限情形。\n")
         code, out = self.put("功能说明", body)
         self.assertEqual(0, code, out)
+
+
+class ALandedChapterStillGetsItsStarts(PlanCase):
+    """已经合法提交的章，设计改了选择：原稿与 Story 字节不动，但当前缺的选定结构照样给出起点。"""
+
+    def starts_in(self, out: str) -> str:
+        return out.split("结构起点：", 1)[1] if "结构起点：" in out else ""
+
+    def test_changes_to_the_picks_of_a_landed_chapter(self) -> None:
+        self.write_plan(PICKS)
+        self.cmd("skeleton")
+        draft = self.draft("06")
+        draft.write_bytes(("提交后界面停在等待态。\n\n" + TABLE).encode("utf-8"))
+        code, out = self.cmd("chapter", "--chapter", "功能说明", "--from", str(draft))
+        self.assertEqual(0, code, out)
+        draft_bytes, story_bytes = draft.read_bytes(), self.story_path.read_bytes()
+
+        cases = {
+            "现有结构不变": (PICKS, []),
+            "新增一处": (PICKS + [{"chapter": "06-features", "at": "失败提示", "kind": "table",
+                                 "columns": ["情形", "用户看到什么"]}],
+                     ["### 失败提示", "| 情形 | 用户看到什么 |"]),
+            "改名": ([{**PICKS[0], "at": "本机保存的数据"}],
+                   ["### 本机保存的数据", "| 数据 | 保存多久 | 何时清除 |"]),
+            "改列": ([{**PICKS[0], "columns": ["数据", "保存多久", "何时清除", "谁能看到"]}],
+                   ["| 数据 | 保存多久 | 何时清除 | 谁能看到 |"]),
+            "撤回选择": ([], []),
+        }
+        for name, (picks, needles) in cases.items():
+            with self.subTest(case=name):
+                self.write_plan(picks)
+                code, out = self.cmd("skeleton")
+                self.assertEqual(0, code, out)
+                starts = self.starts_in(out)
+                if needles:
+                    for needle in needles:
+                        self.assertIn(needle, starts, f"缺的选定结构没给起点：{out[-800:]}")
+                    self.assertNotIn("### 本地数据", starts.replace("### 本机保存的数据", ""),
+                                     "已经有的结构又给了一遍")
+                else:
+                    self.assertEqual("", starts, "没缺什么却给了起点")
+                self.assertEqual(draft_bytes, draft.read_bytes(), "已提交章的草稿被改写了")
+                self.assertEqual(story_bytes, self.story_path.read_bytes(), "Story 被改写了")
+
+    def test_a_landed_chapter_whose_draft_is_gone_gets_current_text_and_starts(self) -> None:
+        self.write_plan(PICKS)
+        self.cmd("skeleton")
+        draft = self.draft("06")
+        draft.write_bytes(("提交后界面停在等待态。\n\n" + TABLE).encode("utf-8"))
+        self.assertEqual(0, self.cmd("chapter", "--chapter", "功能说明", "--from", str(draft))[0])
+        name = draft.name
+        draft.unlink()
+        self.write_plan(PICKS + [{"chapter": "06-features", "at": "失败提示", "kind": "diagram"}])
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+        back = (self.src / "drafts" / name).read_text(encoding="utf-8")
+        self.assertIn("待提交内容", back, "补回来的不是现稿")
+        self.assertIn("### 失败提示", self.starts_in(out))
 
 
 class TheDesignFreezesWithTheStory(PlanCase):

@@ -20,7 +20,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { chapterStructureProblems } from './chapter-contract.mjs';
+import { chapterStructureProblems, pickedStructureNames } from './chapter-contract.mjs';
 import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections,
@@ -127,7 +127,16 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
   }
   // 明说过「不涉及」的章到此为止：它没有结构可言，也没有解析的必要——
   // 空章照样解析的话，一次 check 会为九个空章各切一遍文。
-  if (norm(body) === norm(EMPTY_SECTION_TEXT)) return out;
+  // 例外只有一种：写作设计还为这一章选着表或图，两个明确声明冲突，交作者二选一。
+  if (norm(body) === norm(EMPTY_SECTION_TEXT)) {
+    const picked = pickedStructureNames(chapter);
+    if (picked.length) {
+      out.push(`「${chapter.title}」写的是「${EMPTY_SECTION_TEXT}」，写作设计却还为它选着`
+        + `${picked.join('、')}——两处说法冲突：确实不涉及，就在写作设计的结构选择里撤掉这几项；`
+        + '否则按设计把这一章写出来');
+    }
+    return out;
+  }
   const view = getView ? getView() : parseChapter(body);
   // 围栏没闭合：这一行之后的正文全被当成围栏里的东西——判据看不见它，
   // 读者那边整段变成代码块。

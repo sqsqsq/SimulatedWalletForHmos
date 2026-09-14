@@ -108,6 +108,21 @@ export function chapterStructureProblems(ch, view) {
 }
 
 /**
+ * 写作设计为这一章选定的表与图，报错用的名字。
+ *
+ * 章正文写「不涉及」而设计还选着结构时，两个明确声明冲突：由作者撤回选择或写出正文，
+ * 脚本不替他判这一章到底涉不涉及。合同自带的必要结构不在其中，空章语义照旧。
+ */
+export function pickedStructureNames(ch) {
+  const where = (at) => (at ? `「${at}」里的` : '章级');
+  return [
+    ...requiredTables(ch).filter(t => t.selected)
+      .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
+    ...(ch?.structure?.diagrams ?? []).filter(d => d.selected).map(d => `${where(d.at)}图`),
+  ];
+}
+
+/**
  * 这一章从真源打的底 —— **打完就归作者**，位置与核对处同一份解释。
  *
  * 只保留三类：必要小节的标题、术语起始行与必要表的表头、附录五节与材料清单的贡献行。
