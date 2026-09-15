@@ -22,8 +22,8 @@ import { fileURLToPath } from 'node:url';
  */
 const FLOW_FILE = ['AR', 'story-src', 'story-flow.json'];
 const FLOW_SCHEMA = 3;
-// 三级关卡，每级只问一件事：材料 → 范围怎么定 → 承载哪一份
-const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier']);
+// 三级关卡，每级只问一件事：材料 → 范围怎么定 → 承载哪一份；会议话题的裁决与第一级同一轮记
+const FLOW_GATES = new Set(['material_scope', 'scope_decision', 'split_carrier', 'meeting']);
 // 只有第一级的值域是闭合的；第二级除固定的 carry_all 外是具名维度、第三级是份序号，
 // 都由「chosen 必须在 options 里」把关——它们是本次分析的产物，枚举不了。
 /**
@@ -163,7 +163,7 @@ export function flowProblems(featureRoot) {
       const at = `${where}第 ${j + 1} 条关卡记录`;
       const gate = d?.gate;
       if (!FLOW_GATES.has(gate)) {
-        problems.push(`${at}的 gate 非法（须为 material_scope / scope_decision / split_carrier）`);
+        problems.push(`${at}的 gate 非法（须为 ${[...FLOW_GATES].join(' / ')}）`);
       }
       // 只记选中项的话，「看过选项后选了不拆」与「压根没摆过拆分选项」事后完全同形
       const options = Array.isArray(d?.options) ? d.options : null;

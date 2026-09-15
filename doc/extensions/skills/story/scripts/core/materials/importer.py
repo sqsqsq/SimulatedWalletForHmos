@@ -44,7 +44,8 @@ CLASSIFY_FILE = ".classify.json"
 #: `IMAGES` 是「只抽图、正文不动」：补料是为了补图时走它。
 #: 系统上已有同类正文，而这份补料是原稿或参考稿——把它并进正文会用草稿盖掉定稿，
 #: 而人要的只是里面的图。选哪一档由归类时判断，不另外问人一次。
-CLASSES = ("RR", "SR", "AR", "UX", "IMAGES")
+#: `MEETING` 是会议转写：讨论态的证据，不并进任何正文，解析成按版本存放的发言结构（`materials/meeting.py`）。
+CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
 
 # 各类正文的落点。RR / SR / AR 三类的路径是章节合同登记的来源（取 `sources` 的哪一项见下表），
 # 不在这里另抄一份。AR 类补料落 upstream.md：`AR/design.md` 是上游给进来的输入件，S4 提交
@@ -168,6 +169,9 @@ def validate(sources: list[Path], classify: dict[str, str]) -> None:
         if classify[path.name] not in CLASSES:
             raise ImportError_(
                 f"「{path.name}」的归类「{classify[path.name]}」非法，须为 {'/'.join(CLASSES)}")
+        if classify[path.name] == "MEETING" and ext != DOC_EXT:
+            raise ImportError_(f"「{path.name}」归类为 MEETING，但会议转写只收原始 {DOC_EXT}"
+                               "（参会人与「姓名 时间：发言」都在里面）")
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +411,8 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
 
     for path in sources:
         cls = classify[path.name]
+        if cls == "MEETING":
+            continue          # 会议转写不并进正文，由 `cmd_import` 解析成发言结构
         if path.suffix.lower() in IMAGE_EXTS:
             if cls != "UX":
                 raise ImportError_(
@@ -558,6 +564,8 @@ def cmd_import(feature_root: Path) -> dict:
 
     # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
     doc_sections, media, ux_images = convert_sources(sources, classify)
+    from materials import meeting  # 延迟导入：meeting 引用本模块，顶层互相 import 会成环
+    meetings = [(p, meeting.parse(p)) for p in sources if classify[p.name] == "MEETING"]
 
     # ── 写盘 ────────────────────────────────────────────────────────
     written: list[str] = []
@@ -588,4 +596,9 @@ def cmd_import(feature_root: Path) -> dict:
         shutil.copyfile(path, dest_dir / path.name)
         written.append(f"{UX_IMAGE_DIR.as_posix()}/{path.name}")
         log(f"UX 参考图 → {UX_IMAGE_DIR.as_posix()}/{path.name}")
+    for path, parsed in meetings:
+        # 一个源版本一个目录：同名换了内容落新目录，旧版本的原文与读会产物原样留着
+        rel = meeting.write_transcript(feature_root, path, parsed).relative_to(feature_root).as_posix()
+        written.append(rel)
+        log(f"会议转写 → {rel}（{sum(len(s['speeches']) for s in parsed['sections'])} 条发言）")
     return {"converted": [p.name for p in sources], "targets": written}

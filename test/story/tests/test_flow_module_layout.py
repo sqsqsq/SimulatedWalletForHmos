@@ -30,9 +30,10 @@ IMPORT_CLI = CORE / "import_sources.py"
 ALLOWED = {
     "state": set(),
     "inputs": {"state"},
-    "routing": {"state", "inputs"},
-    "decisions": {"state", "inputs", "routing"},
-    "rounds": {"state", "inputs", "routing"},
+    "meetings": {"state"},
+    "routing": {"state", "inputs", "meetings"},
+    "decisions": {"state", "inputs", "routing", "meetings"},
+    "rounds": {"state", "inputs", "routing", "meetings"},
     "submission": {"state", "inputs", "routing"},
     "lifecycle": {"state", "inputs", "routing"},
 }
@@ -95,9 +96,9 @@ class TheCallGraphHasOneDirection(unittest.TestCase):
 class ImportingAModuleChangesNothing(unittest.TestCase):
     """import 一个子模块不该解析参数、不该输出、不该写盘。"""
 
-    MODULES = ("flow.state", "flow.inputs", "flow.routing", "flow.decisions",
+    MODULES = ("flow.state", "flow.inputs", "flow.meetings", "flow.routing", "flow.decisions",
                "flow.rounds", "flow.submission", "flow.lifecycle",
-               "materials.registry", "materials.importer")
+               "materials.registry", "materials.importer", "materials.meeting")
 
     def test_import_is_silent_and_writes_nothing(self) -> None:
         for module in self.MODULES:

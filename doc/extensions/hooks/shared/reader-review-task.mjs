@@ -115,6 +115,13 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '- `.backup/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
       + '当前 `AR/design.md` 是提取稿，回查上游原话看它与 `RR`、`SR` 原文，不拿提取稿自证；',
     '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
+  // 会议材料只给位置：结论与证据各有唯一落点，复制进任务书就成了第二份
+  if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
+    rows.push('', '### 会议材料（逐话题核去向）', '',
+      '- `AR/story-src/meeting-notes.json` —— 每场会每个版本、每个话题的判断：变化、结论、遗留与问人的选项；',
+      '- `AR/story-src/meetings/<主名>/<版本>/evidence.json` —— 纠偏后的发言与纠偏留痕，发言编号的出处；',
+      '- `AR/story-src/doc-refresh.md` —— 人裁决之后生效的变化与已确认的原文。');
+  }
 
   rows.push('', '### 逐章过读者会问的问题', '');
   for (const chapter of contract?.chapters ?? []) {

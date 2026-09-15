@@ -103,7 +103,8 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
     for (const u of used) {
       const facet = text(u, 'facet');
       if (!fact.facets.includes(facet)) {
-        problems.push(`facts 的「${id}」没有面「${facet}」（有：${fact.facets.join('、')}）`);
+        problems.push(`facts 的「${id}」${facet ? `没有面「${facet}」` : '有一项 facet 空着——填骨架注释列出的面名'}`
+          + `（有：${fact.facets.join('、')}）`);
         continue;
       }
       if (!text(u, 'used_for')) problems.push(`facts「${id}·${facet}」没写 used_for —— 用它做了什么是评审者要回查的`);

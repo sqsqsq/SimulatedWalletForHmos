@@ -206,6 +206,13 @@ class AWaiverFollowsTheForce(ProtocolCase):
                   "used_for: 重试从哪进按它取\n        verified: src/scheduler.ets")
         self.assertEqual(0, self.render_output()[0])
 
+    def test_an_empty_facet_says_it_is_empty(self) -> None:
+        self.write_use(neutral=judgement())
+        self.edit(self.use_path, "facet: 出口登记", 'facet: ""')
+        code, out = self.render_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("facet 空着", out)
+
     def test_a_file_level_use_is_refused(self) -> None:
         self.write_use(neutral=judgement())
         self.edit(self.use_path, "    used:\n      - facet: 出口登记\n        used_for:", "    used_for:")
@@ -339,6 +346,17 @@ class TheCodeIsTheEvidence(ProtocolCase):
                             "| 红线 | 有新增出口 | 字段名用中性词")
         self.edit_knowledge("constraints/neutral-domain.md", "阻断：absent_regex", "absent_regex")
         self.assertEqual("", self.coding(bad), "不带阻断的同一个表达式只是证据缺口")
+
+    def test_a_file_probe_is_reported_once_per_rule(self) -> None:
+        """同一规约挂两处、探针不按实体收窄：扫的是同一批文件，同样的行号只报一次。"""
+        bad = self.GOOD.replace("const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });")
+        self.judged()
+        self.write_contracts(contracts().replace(
+            "      - name: reuseTrace\n        must:\n",
+            "      - name: reuseTrace\n        must:\n" + landing("NEU-03", "出口字段名不用方向词", "review")))
+        (self.root / "src").mkdir(exist_ok=True)
+        (self.root / "src" / "exit.ets").write_text(bad, encoding="utf-8")
+        self.assertEqual(1, self.hook("coding").count("而这条规约是红线"))
 
     def test_an_entity_only_in_a_comment_is_not_found(self) -> None:
         source = self.GOOD.replace("reuseTrace(prev: string)", "// reuseTrace 在这里\n  retry(prev: string)")

@@ -11,16 +11,15 @@ import json
 import re
 from pathlib import Path
 
-from materials import registry
+from materials import meeting, registry
 
 from flow.state import (
     CARRY_ALL, DESIGN_DRAFT, FlowError, SCOPE_SOURCES, STORY_CONTRACT, after_complete,
     last_gate, round_gates)
 from flow.inputs import (
-
-
     GATE_OPTIONS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, material_options,
     read_gate_options, sidecar_gate)
+from flow.meetings import pending_asks, presented, refresh_stale, unconfirmed
 
 def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
@@ -199,6 +198,9 @@ def sidecar_shape(step: str) -> dict | None:
                          "切法至少两份，没有份表的切法是空壳"},
             ],
         }
+    if step == "await_gate:meeting":
+        return {"不写侧车": "选项就是会议结论里那个话题的 options；人答完逐条跑 "
+                "`decide --gate meeting --meeting <主名>@<sha8> --item <话题 id> --chosen <key> --basis \"<人的原话>\"`"}
     if step.startswith("await_gate:"):
         gate = step.split(":", 1)[1]
         note = {
@@ -267,6 +269,10 @@ def next_step(feature_root: Path, contract: dict | None,
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
+    late = sorted(set(meeting.versions(feature_root)) - presented(contract)) if after_complete(contract) else []
+    if late:
+        return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
+                "先跑 `story_flow.py reopen`，再读会、在第一级关卡摆给人" + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written":
         # verifier 之后不再跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
         # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
@@ -322,7 +328,24 @@ def next_step(feature_root: Path, contract: dict | None,
     if state["changed"]:
         return ("run_round",
                 "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
-    return scope_step(feature_root, contract)
+    return meeting_step(feature_root, contract) or scope_step(feature_root, contract)
+
+
+def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
+    """会议转写导入之后、范围关卡之前：读会、自检、摆要问人的话题。没有要做的返回 None。"""
+    seen = meeting.inspect(feature_root)
+    if seen["problems"]:
+        return ("fix_meeting", "会议产物自检没过，先修再摆关卡：" + "；".join(seen["problems"][:6]))
+    if seen["missing"]:
+        return ("read_meeting", f"会议转写已解析、还没读（{'、'.join(seen['missing'])}）："
+                "按 `phases/meeting-read.md` 纠偏、切话题、写会议结论，写完跑 `status`")
+    asks = pending_asks(seen["notes"], contract)
+    if asks:
+        return ("await_gate:meeting", "会议结论与第一级材料关卡同一轮摆给人：每个话题一句摘要，"
+                f"下面这些逐条带推荐理由与可选结果，人一轮答完再逐条 `decide --gate meeting`：{'、'.join(asks)}")
+    if refresh_stale(feature_root, seen["notes"], contract):
+        return ("run_round", "会议有效结果与 `AR/story-src/doc-refresh.md` 对不上：跑 `story_flow.py round` 重写它")
+    return None
 
 
 def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
@@ -340,13 +363,16 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
     stops, problem = material_gate_state(feature_root, contract)
-    if material is None and problem:
+    # 会议结论还没摆给人：本轮第一级定过也再停一次——人对摆出的整体表态，没逐条问的条目才生效
+    fresh = unconfirmed(meeting.read_notes(feature_root, []), contract)
+    if (material is None or fresh) and problem:
         return ("fix_gate_options",
                 f"这一级的选项侧车还立不住，先补齐再问人：{problem}")
-    if material is None and stops:
+    if (material is None and stops) or fresh:
         return ("await_gate:material_scope",
                 "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
-                "取得选择："
+                + (f"连同会议结论（{'、'.join(fresh)}）每个话题一句摘要，" if fresh else "")
+                + "取得选择："
                 + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
     if material and material["outcome"] == "rejected":
         return ("await_gate:material_scope",

@@ -45,7 +45,9 @@ STORY_SRC_FROZEN = (
 # 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
 # 而它们本有先后——材料不全时范围判断本身就不可靠，在一个还会变的范围上讨论怎么切，
 # 讨论了也白讨论。
-GATES = ("material_scope", "scope_decision", "split_carrier")
+#
+# `meeting` 不是第四级：会议结论里要问人的话题逐条裁决，与第一级在同一轮停等里摆，不新增停等点。
+GATES = ("material_scope", "scope_decision", "split_carrier", "meeting")
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，流程侧与
 #: `flow/check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
 #: 选择会在阶段门禁上被判非法。

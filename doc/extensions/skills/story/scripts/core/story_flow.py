@@ -83,6 +83,8 @@ def main() -> int:
     ap.add_argument("--chosen", default=None,
                     help="选中项的 key；material_scope 为 " + " / ".join(MATERIAL_CHOICES))
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
+    ap.add_argument("--meeting", default=None, help="meeting：会议版本 <主名>@<sha8>")
+    ap.add_argument("--item", default=None, help="meeting：会议结论里的话题 id")
     ap.add_argument("--scope-text", default=None,
                     help="split_carrier 无份表侧车时的兜底：本 AR 的范围文字")
     ap.add_argument("--from", dest="from_path", default=None,

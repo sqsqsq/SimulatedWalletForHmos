@@ -91,6 +91,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
    | `SR/design.md`（SR90xxx） | 需求系统拉取 | 系统级设计（分工、接口、时序） | 已归档正文 |
    | `AR/design.md` | 需求系统拉取 | 本 AR 提取件现状（可能已预填） | 空模板（无预填） |
    | `inbox/xxx.docx` | 人工提供 | 待导入材料 | 待导入 |
+   | `inbox/澄清会.docx` | 人工提供 | 需求澄清会议转写 | 已转写、结论 N 条 / 待导入 |
 
    - **只列实际存在的输入源**。`AR/story-src/upstream.md` 这类**导入落点产物**不是材料，
      没有就别列——列一行「不存在」只会让人问「这是什么？该有吗？」；
@@ -161,6 +162,8 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 - 第 ④ 节功能清单、`AR/design.md` 上游索引已经表达清楚的，直接引用，不另写一张同义表；
 - **不适用**要写出来源或范围上的理由；说不出理由的，登记到「还要核实」；
 - 矛盾已经登记进 `decisions.json` 的，引用那一条；初筛不替未决的事定结论；
+- **会议按话题登记**：来源位置写 `meetings/<主名>@<版本>/T<n>`，作用写生效的变化或已确认的原文
+  （`AR/story-src/doc-refresh.md`），「还要核实」写仍未决的遗留问题——十章齐后的回看清单从这一列取；
 - 这不是逐格填满的配额：没有疑点的那一格空着。
 
 **每轮重生成整个文件**（材料变了回到 S2 即 round+1），旧版进 `.backup/`。
@@ -185,6 +188,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 | 材料盘点后 / 需求分析后 | `python …/story_flow.py round --feature <AR>`（登记轮次并消费当时已有的侧车；两个时点各跑一次） |
 | **任何时候拿不准走到哪** | `python …/story_flow.py status --feature <AR>` → 看 `next` 与 `action` |
 | S3 每次关卡交互后 | `python …/story_flow.py decide --feature <AR> [--gate material_scope\|scope_decision\|split_carrier] --chosen <选项 key> --basis "<用户原话>"` |
+| 会议话题的人裁决（与第一级同一轮） | `python …/story_flow.py decide --feature <AR> --gate meeting --meeting <主名>@<版本> --item <话题 id> --chosen <选项 key> --basis "<用户原话>"`（选项取自会议结论，不写侧车；读会见 [phases/meeting-read.md](../phases/meeting-read.md)） |
 | S4 提取稿写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`（提交为 AR/design.md 并收口） |
 | **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
 | **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`，然后照常 `round` → `decide` → `complete`。它是唯一的回退出口，会留痕 |

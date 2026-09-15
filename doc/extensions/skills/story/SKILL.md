@@ -15,7 +15,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 
 ```
 S1 取材        →  拉三套材料、建工作区骨架
-S2 导入+初析   →  列 inbox → 导入 → 材料盘点 →（材料确认后）需求分析
+S2 导入+初析   →  列 inbox → 导入 →（有会议转写时）读会 → 材料盘点 →（材料确认后）需求分析
 S3 三级关卡    →  材料 → 范围怎么定 → 承载哪份
 S4 收口        →  按已定范围写提取稿，`complete --from` 提交为 AR/design.md、契约置 complete
    ↓
@@ -44,6 +44,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 |---|---|
 | S1 骨架与占位件判读 | 本文「初始化」节 |
 | S2 导入 | [rules/inbox_import.md](rules/inbox_import.md) |
+| S2 读会（导入了会议转写时） | [phases/meeting-read.md](phases/meeting-read.md) |
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
