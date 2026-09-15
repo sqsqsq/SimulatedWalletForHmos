@@ -15,8 +15,27 @@
  * 以下面的遍历代码为准；另设一个导出的常量重列一遍只会多一处失同步点——。
  */
 
-/** `verify` 的封闭取值。`both` 不能省：旧 `ut_layer` 三态里它代表两边都要验。 */
-export const VERIFY_KINDS = ['ut', 'device', 'both', 'review', 'probe'];
+/**
+ * `verify` 的封闭取值：这处落点的证据由谁取。`ut / device / both` 是实机，`review` 只由 verifier 判。
+ * 探针不在其中——它随规约走，coding 对形态匹配的每处落点自动跑，不是作者为某处落点做的选择。
+ */
+const VERIFY_KINDS = ['ut', 'device', 'both', 'review'];
+
+/** 规约声明的执行体 → 它的每处落点允许的 `verify`。没列的执行体（模型、构建）不限定；人工条目不挂 must。 */
+const VERIFY_BY_EXECUTOR = { 实机: ['ut', 'device', 'both'] };
+
+/**
+ * 一处落点的 `verify` 与它指向的规约声明对不对得上。一条 must 就是一处落点，多处落点各自照此判。
+ * @returns {string|null} 对不上时的说明
+ */
+export function verifyProblem(entry, verify) {
+  if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一`;
+  const [executor, allowed] = Object.entries(VERIFY_BY_EXECUTOR)
+    .find(([x]) => (entry?.executors ?? []).includes(x)) ?? [];
+  return allowed && !allowed.includes(verify)
+    ? `标了 verify: ${verify}，而该规约声明要「${executor}」证据——这处落点改成 ${allowed.join(' / ')} 之一`
+    : null;
+}
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const name = (it) => String(it?.name ?? it?.path ?? it?.key ?? '').trim();

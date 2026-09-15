@@ -72,7 +72,8 @@ class PlanPatternCrossCheck(unittest.TestCase):
 
         rows = ["schema: 1", f'manifest_digest: "{self.digest(root)}"',
                 "facts:", "  - id: component-profile",
-                "    used_for: 本部件的组件边界按它取", "constraints:"]
+                "    used:", "      - facet: 部件申明",
+                "        used_for: 本部件的组件边界按它取", "constraints:"]
         hit_ids = {cells[0] for cells in hits if cells}
         for cells in hits:
             rows += [f"  - id: {cells[0]}", "    applicable: true",

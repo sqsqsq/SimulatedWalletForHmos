@@ -111,14 +111,19 @@ export function renderSkeleton(projectRoot, knowledge) {
     '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（列表，一条要求一句，',
     '# 写得下一个人照着能编码），不命中写 reason（可回查的依据；「不涉及」三个字不算依据）。',
     '# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。',
+    '# 命中但这一轮不做：applicable: true 加 waived 块（下面缩进写 reason 与 compensation）；',
+    '# 红线不能豁免，基线要写 compensation，豁免要登记进《决策与评审记录》由评审人表态。',
     `schema: ${SCHEMA}`,
     `manifest_digest: ${manifestDigest(projectRoot)}`,
     '',
-    '# 用到了哪几份项目知识，各自用来做了什么。没用到的不必登记。',
+    '# 用到了哪几份项目知识：used 逐面一项（facet 取下面列的面名，used_for 写拿它做了什么；',
+    '# 面是「未确认」的，补 verified 写核实时看的仓内路径）。没用到的整份删掉。',
     'facts:',
   ];
   for (const f of knowledge.facts) {
-    rows.push(`  - id: ${f.name || path.basename(f.file, '.md')}`, '    used_for: ""');
+    const pending = f.unconfirmed.length ? `（未确认：${f.unconfirmed.join(' / ')}）` : '';
+    rows.push(`  - id: ${f.name || path.basename(f.file, '.md')}`,
+      `    # 面：${f.facets.join(' / ')}${pending}`, '    used:', '      - facet: ""', '        used_for: ""');
   }
   rows.push(
     '',
@@ -129,7 +134,9 @@ export function renderSkeleton(projectRoot, knowledge) {
     'constraints:',
   );
   for (const e of knowledge.entries) {
-    rows.push(`  - id: ${e.id}`);
+    // 判命中要的是条目本身：强制力、要求、命中条件与验法送到这一行，作者不必另开规约文件对照
+    rows.push(`  - id: ${e.id}`,
+      `    # ${e.force} · ${e.constraint} · 命中：${e.when || '—'} · 验法：${e.executors.join(' / ')}`);
     if (e.reviewAction) {
       // 这一条命中也不产生代码要求，填法与别的不同——写在它自己这一行下面，
       // 作者不必先去别处弄清「评审动作」是什么意思才敢填。

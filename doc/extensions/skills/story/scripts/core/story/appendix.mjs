@@ -41,13 +41,14 @@ function knowledgeUseVerdicts(ctx, entries = []) {
         const req = Array.isArray(row.requirement) ? row.requirement : [row.requirement];
         // 评审动作条目命中时没有 requirement——它的结果是一次跨团队的动作。
         // 依据取 reason，前面带上处置原文：评审者看这一行要知道命中之后做了什么。
+        // 本轮豁免的命中，依据是豁免理由与补偿——评审人要对它表态。
         const action = reviewActions.get(id);
         const reason = String(row.reason ?? '').trim();
-        rows.set(id, { applicable: row.applicable === true,
-          basis: (row.applicable === true
-            ? (action !== undefined ? [action, reason].filter(Boolean).join('：')
-              : req.map(x => String(x ?? '').trim()).filter(Boolean).join('；'))
-            : reason) });
+        const w = row.waived;
+        const hit = w ? `本轮豁免：${[w.reason, w.compensation].filter(Boolean).join('；补偿：')}`
+          : action !== undefined ? [action, reason].filter(Boolean).join('：')
+            : req.map(x => String(x ?? '').trim()).filter(Boolean).join('；');
+        rows.set(id, { applicable: row.applicable === true, waived: Boolean(w), basis: row.applicable === true ? hit : reason });
       }
     }
     // 整域不适用是那份 YAML 允许的另一种登记：一个域一行，域内条目不必逐条写。
@@ -401,7 +402,7 @@ function verdictSkeleton(ctx) {
       continue;
     }
     const row = use.rows.get(e.id);
-    rows.push([e.domainTitle ?? '', e.id, row.applicable ? '命中' : '不命中', row.basis]);
+    rows.push([e.domainTitle ?? '', e.id, row.applicable ? (row.waived ? '命中·本轮豁免' : '命中') : '不命中', row.basis]);
   }
   return renderTable(['规约域', '编号', '判定', '依据'], rows);
 }

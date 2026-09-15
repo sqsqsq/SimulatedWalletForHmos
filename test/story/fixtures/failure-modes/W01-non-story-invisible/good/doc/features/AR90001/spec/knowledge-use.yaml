@@ -1,8 +1,10 @@
 schema: 1
-manifest_digest: "sha256:51ae05a1ad7fa2ce"
+manifest_digest: "sha256:be09ca07c8bc3ed0"
 facts:
   - id: sample-facts
-    used_for: 提交入口落在哪个模块按它取
+    used:
+      - facet: 网络层
+        used_for: 提交入口落在哪个模块按它取
 constraints:
   - id: SMP-01
     applicable: true

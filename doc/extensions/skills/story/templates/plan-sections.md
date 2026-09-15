@@ -94,7 +94,7 @@ components:
     must:
       - text: 方向性布局参数只用 start/end
         rule: <规约条目编号>
-        verify: probe          # 探针表达式在规约表的「探针」列，不写在这里
+        verify: review         # 规约验证列只写了「模型」：verifier 对着代码判即可
     state:
       - name: submitting
         must:
@@ -123,10 +123,18 @@ contracts 的 7 个集合作为本阶段输入，与实体无关的平行块不�
 |---|---|---|
 | `text` | 这条规约**在这个实体上**具体要求做什么，可实施可测 | 复述规约原文；换个说法的同义改写 |
 | `rule` | 条目编号，须在激活清单里 | 只写域前缀 |
-| `verify` | `ut` / `device` / `both` / `review` / `probe` 五选一 | 自造取值；标 `probe` 但该条目规约表没有探针 |
+| `verify` | `ut` / `device` / `both` / `review` 四选一，按规约验证列的执行体定（见下表） | 自造取值；规约要「实机」却标 `review` |
 
-`verify` 同时是**四阶段分派的单源**，不另建第二份分派表：coding 执行探针、review 逐条复核、
-ut 覆盖 `ut`/`both`、testing 覆盖 `device`/`both`。标 `device` 就等于说「UT 不适用于这一条」。
+一条 `must` 就是一处落点；`verify` 说**这一处的证据由谁取**，按规约声明的执行体定，多处落点各自照此：
+
+| 规约验证列声明的执行体 | 这处落点的 `verify` |
+|---|---|
+| 含「实机」 | `ut` / `device` / `both`——每处都要实机证据，一处标 `review` 就是这一处没证据 |
+| 只有「模型」（或加「构建」） | `review` 即可：verifier 对着代码判，构建由原生门禁判 |
+| 「人工」 | 不挂 `must`：那是评审动作 |
+
+`verify` 同时是**下游分派的单源**，不另建第二份分派表：ut 覆盖 `ut`/`both`、testing 覆盖 `device`/`both`、
+review 逐处落点复核。探针随规约走，coding 对形态匹配的每处落点自动跑，不在契约里选。
 
 ### 有落点 vs 没落点
 
@@ -134,5 +142,14 @@ ut 覆盖 `ut`/`both`、testing 覆盖 `device`/`both`。标 `device` 就等于�
   ——读完不知道哪个字段装流程标识；到编码那里，这条义务等于不存在。
 - ✅ 上面代码块里那条：`OrderContext.flowId` 上挂着它，编码时打开这个模型就看得见，
   review 有东西可查，探针有文件可扫。
+
+### 不是规约要求的规则写在这里
+
+合法的业务规则不属于任何命中条目时，写在承载它的实体自己的说明里（`data_models[].fields[]`、
+`components[]` 的 `props` / `state`、`interfaces[].methods[]` 的 `description`），或 plan.md 对应设计章的一句，
+**不挂 `must`**。
+
+- ❌ 借挂：把「单个清单最多 50 项」挂到兼容性条目上——编号在册、规则也合法，但那条规约并不要求这件事。
+- ✅ 写进清单模型那个字段的 `description`，设计章里说明上限从哪来。
 
 **判据一句话：义务要挂在下游真的会读的那个实体上。**

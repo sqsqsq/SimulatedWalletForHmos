@@ -1,6 +1,7 @@
 ---
 name: facts-index
 kind: index
+protocol: 1
 ---
 
 # 项目知识

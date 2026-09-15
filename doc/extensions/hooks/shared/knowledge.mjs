@@ -34,6 +34,24 @@ const MANIFEST_NAME = 'manifest.yaml';
 /** 处置列以此开头的条目是纯评审动作：不产生代码要求。 */
 const REVIEW_ACTION_MARK = '（评审动作）';
 
+/**
+ * 本机制实现的知识协议版本。三类知识的 README（`kind: index`）在 frontmatter 写 `protocol`，
+ * 写了就要与它一致：版本号证明两边读的是同一份格式，不证明知识可信。
+ */
+const PROTOCOL = 1;
+
+/** 强制力值域：未满足时怎么处理——红线阻断不许豁免，基线可豁免须补偿，建议可不做。 */
+const FORCES = ['红线', '基线', '建议'];
+
+/** 执行体值域：证据从哪来。验证列写成若干段「<执行体>：<怎么验>」，各段共同必需。 */
+const EXECUTORS = ['模型', '构建', '实机', '人工'];
+
+/** 探针列的前缀：知识作者声明「这个形态本身就是要求」。不带它的探针只是取证线索。 */
+const BLOCKING_MARK = '阻断：';
+
+/** 项目事实的面级 `confirmed` 值域；第二个是「用前先核」。 */
+const CONFIRMED = ['已确认', '未确认'];
+
 class KnowledgeError extends Error {}
 
 function fail(msg) {
@@ -133,32 +151,44 @@ const PROBE_KINDS = [
  * 新增字段的缺省值是兼容性的一部分，不是可选的礼貌。
  *
  * 表达式里的 `|` 在 markdown 表格里必须写成 `\|`，这里还原。
+ * 带 `阻断：` 前缀的记 `blocking`：形态不符就是这处落点没落实；不带的只是取证线索。
  */
 function parseProbe(raw) {
   // 只剥反引号：`*` 在正则里是量词，按 markdown 强调标记清掉会把 `\s*` 悄悄变成 `\s`。
   const cell = String(raw ?? '').replace(/`/g, '').trim();
   if (!cell || cell === '无' || cell === '—' || cell === '-') return null;
-  const expr = cell;
+  const blocking = cell.startsWith(BLOCKING_MARK);
+  const expr = blocking ? cell.slice(BLOCKING_MARK.length).trim() : cell;
   const kind = expr.split(':', 1)[0];
   if (!PROBE_KINDS.includes(kind)) {
-    fail(`探针形态未知：「${kind}」——只接受 ${PROBE_KINDS.join(' / ')}，或写「无」`);
-  }
-  if (kind === 'referenced_outside_definition') {
-    return { kind, pattern: '', count: null, raw: expr };
+    fail(`探针形态未知：「${kind}」——只接受 [${BLOCKING_MARK}]${PROBE_KINDS.join(' / ')}，或写「无」`);
   }
   const rest = expr.slice(kind.length + 1);
+  const probe = { kind, pattern: rest, count: null, raw: expr, blocking };
+  if (kind === 'referenced_outside_definition') return { ...probe, pattern: '' };
   if (!rest) fail(`探针「${kind}」缺表达式：${expr}`);
   if (kind === 'count_eq') {
     // count_eq:<re>:<n> —— 正则里可能有冒号，所以从右边切一次
     const at = rest.lastIndexOf(':');
     const n = Number(rest.slice(at + 1));
     if (at < 0 || !Number.isInteger(n)) fail(`探针 count_eq 形态应为 count_eq:<正则>:<次数>：${expr}`);
-    return { kind, pattern: rest.slice(0, at), count: n, raw: expr };
+    return { ...probe, pattern: rest.slice(0, at), count: n };
   }
-  return { kind, pattern: rest, count: null, raw: expr };
+  return probe;
 }
 
-function parseConstraintFile(absPath, rel) {
+/**
+ * 验证列里声明的执行体。段首是「<执行体>：」；整格不带冒号时按分隔符拆（`模型 / 实机`）。
+ * 反引号里的检索式可能自带冒号，先去掉再认段首。
+ */
+function parseExecutors(cell) {
+  const s = String(cell ?? '').replace(/`[^`]*`/g, '').trim();
+  return /[：:]/.test(s)
+    ? [...s.matchAll(/(?:^|[。；;]\s*)([^：:。；;\s]{1,6})\s*[：:]/g)].map(m => m[1])
+    : s.split(/[\s/、，,]+/).filter(Boolean);
+}
+
+function parseConstraintFile(absPath, rel, bad) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的规约文件读不到 —— ${rel}`);
   const { frontmatter, body } = splitFrontmatter(text);
@@ -173,16 +203,39 @@ function parseConstraintFile(absPath, rel) {
     const m = id.match(ENTRY_ID_RE);
     if (!m) continue;
     const handling = pick(cells, table.headers, '处置');
-    // 只派生有消费者的字段（复述比对、出口/冻结门禁、归档渲染、探针执行）；
-    // 强制力/命中条件/验证列由模型直接读正文，机制不派生无人读的副本。
+    const reviewAction = handling.trim().startsWith(REVIEW_ACTION_MARK);
+    // 强制力定未满足时的后果，执行体定证据从哪来，两者独立；各道门按它们执行，所以值域在载入时核。
+    const force = pick(cells, table.headers, '强制力').replace(/[`*]/g, '').trim();
+    const executors = parseExecutors(pick(cells, table.headers, '验证'));
+    const say = (msg) => bad.push(`${rel} ${id} ${msg}`);
+    if (!FORCES.includes(force)) say(`的强制力「${force || '(空)'}」不在 ${FORCES.join(' / ')} 里`);
+    const alien = executors.filter(x => !EXECUTORS.includes(x));
+    if (!executors.length || alien.length) {
+      say(`的验证列${alien.length ? `有不认识的执行体「${alien.join('、')}」` : '解析不出执行体'}`
+        + `——写成「<执行体>：<怎么验>」，执行体取 ${EXECUTORS.join(' / ')}，几段就是几种证据都要`);
+    }
+    if (reviewAction !== executors.includes('人工') && (reviewAction || executors.every(x => x === '人工'))) {
+      say(reviewAction ? '的处置是评审动作，验证列要有「人工」'
+        : `只由人工验，处置要以「${REVIEW_ACTION_MARK}」开头——不产生代码要求的条目才只靠人工`);
+    }
+    let probe = null;
+    try {
+      probe = parseProbe(pick(cells, table.headers, PROBE_COLUMN));
+    } catch (e) {
+      if (!(e instanceof KnowledgeError)) throw e;
+      say(`的${e.message}`);
+    }
     entries.push({
       id,
       prefix: m[1],
       file: rel,
       constraint: pick(cells, table.headers, '约束'),
+      when: pick(cells, table.headers, '命中条件'),
       handling,
-      reviewAction: handling.trim().startsWith(REVIEW_ACTION_MARK),
-      probe: parseProbe(pick(cells, table.headers, PROBE_COLUMN)),
+      reviewAction,
+      force,
+      executors,
+      probe,
     });
   }
   if (!entries.length) {
@@ -213,13 +266,19 @@ function parseConstraintFile(absPath, rel) {
   };
 }
 
-function parsePatternFile(absPath, rel) {
+function parsePatternFile(absPath, rel, bad) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的模式文件读不到 —— ${rel}`);
-  const { frontmatter } = splitFrontmatter(text);
+  const { frontmatter, body } = splitFrontmatter(text);
   const fm = frontmatterPairs(frontmatter);
   const id = fm.name;
   if (!id) fail(`${rel} 的 frontmatter 缺 name —— 模式标识是全链受控标识，不能缺`);
+  // 上篇给 spec / plan 选型，下篇给 coding / review 落地：缺一篇，那一侧就无从读起。
+  const halves = ['上篇', '下篇'].filter(h => !new RegExp(`^#\\s+${h}\\s*·`, 'm').test(body));
+  if (halves.length) {
+    bad.push(`${rel} 缺一级标题 ${halves.map(h => `「# ${h} · …」`).join('')}`
+      + '——模式文件分上篇（适用与选型）与下篇（结构与落地）两个一级标题');
+  }
   const roles = fmList(fm.roles);
   if (!roles.length) {
     fail(`派生为空：${rel} 未声明 roles —— 模式采用后要逐角色投影到契约实体，没有角色就无从校验`);
@@ -242,17 +301,25 @@ function parseIndexFile(rel) {
   return { file: rel };
 }
 
-function parseFactFile(absPath, rel) {
+/** 一节一面；面标题里的 `confirmed:` 核值域，「未确认」的面单列——用它的需求要写核实依据。 */
+function parseFactFile(absPath, rel, bad) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的项目知识文件读不到 —— ${rel}`);
   const { frontmatter, body } = splitFrontmatter(text);
   const fm = frontmatterPairs(frontmatter);
-  const facets = lines(body)
-    .map(l => l.match(/^##\s+(.+?)\s*$/))
-    .filter(Boolean)
-    .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim())
-    .filter(Boolean);
-  return { file: rel, name: fm.name ?? '', facets };
+  const facets = [];
+  const unconfirmed = [];
+  for (const m of lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)) {
+    const facet = m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim();
+    if (!facet) continue;
+    facets.push(facet);
+    const confirmed = m[1].match(/confirmed:\s*([^`\s]+)/)?.[1];
+    if (confirmed && !CONFIRMED.includes(confirmed)) {
+      bad.push(`${rel} 的面「${facet}」confirmed 写的是「${confirmed}」——只取 ${CONFIRMED.join(' / ')}`);
+    }
+    if (confirmed === CONFIRMED[1]) unconfirmed.push(facet);
+  }
+  return { file: rel, name: fm.name ?? '', facets, unconfirmed };
 }
 
 /**
@@ -308,6 +375,8 @@ export function activeKnowledge(projectRoot) {
   const root = extensionRoot(projectRoot);
   const out = { facts: [], constraints: [], patterns: [], indexes: [] };
   const seen = new Set();
+  // 不合协议的条目收齐再一次报：知识所有者升级机制之后要逐条改，不该改一条撞一条。
+  const bad = [];
   for (const relPosix of knowledgeFiles(projectRoot)) {
     if (seen.has(relPosix)) fail(`${relPosix} 在激活清单里重复登记`);
     seen.add(relPosix);
@@ -316,20 +385,29 @@ export function activeKnowledge(projectRoot) {
     const text = readTextOrNull(abs);
     if (text === null) fail(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`);
 
-    const kind = frontmatterPairs(splitFrontmatter(text).frontmatter).kind;
+    const fm = frontmatterPairs(splitFrontmatter(text).frontmatter);
+    const kind = fm.kind;
     if (!kind) {
       fail(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
         + `不能靠目录或文件名去猜（可用：${[...KNOWLEDGE_KINDS, INDEX_KIND].join(' / ')}）`);
     }
-    if (kind === INDEX_KIND) { out.indexes.push(parseIndexFile(relPosix)); continue; }
+    if (kind === INDEX_KIND) {
+      if (fm.protocol !== undefined && Number(fm.protocol) !== PROTOCOL) {
+        bad.push(`${relPosix} 声明知识协议 ${fm.protocol}，本机制实现的是 ${PROTOCOL}`
+          + `——升级扩展到实现 ${fm.protocol} 的版本，或把这一类知识按 ${PROTOCOL} 版写回并改 protocol`);
+      }
+      out.indexes.push(parseIndexFile(relPosix));
+      continue;
+    }
     if (!KNOWLEDGE_KINDS.includes(kind)) {
       fail(`${relPosix} 的 kind="${kind}" 不在封闭集合里`
         + `（知识三类：${KNOWLEDGE_KINDS.join(' / ')}；说明性文档写 ${INDEX_KIND}，它不形成新的知识类型）`);
     }
-    if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix));
-    else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix));
-    else out.facts.push(parseFactFile(abs, relPosix));
+    if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix, bad));
+    else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix, bad));
+    else out.facts.push(parseFactFile(abs, relPosix, bad));
   }
+  if (bad.length) fail(`知识不合协议（${bad.length} 处，按所在文件改）：\n  · ${bad.join('\n  · ')}`);
 
   const entries = out.constraints.flatMap(c => c.entries);
   const ids = entries.map(e => e.id);

@@ -21,24 +21,36 @@ function cell(value) {
   return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-/** §10 的正文：命中条目逐条一行，整域不适用各一行。 */
+/** §10 的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。 */
 function renderConstraints(knowledge, use) {
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
   const hits = use.constraints.filter(r => r.applicable === true
     && !(byId.get(text(r, 'id'))?.reviewAction));
   const out = [];
-  out.push('| 编号 | 本需求的要求 | 落点契约名 |');
-  out.push('|---|---|---|');
-  if (!hits.length) {
-    out.push('| （无命中条目） | 本需求没有产生代码要求的规约条目 | — |');
+  // 强制力与验法从知识派生：plan 挂落点、选证据来源时要的就是这两样，作者不填
+  out.push('| 编号 | 强制力 | 本需求的要求 | 落点契约名 | 验法 |');
+  out.push('|---|---|---|---|---|');
+  if (!hits.some(r => !r.waived)) {
+    out.push('| （无命中条目） | — | 本需求没有产生代码要求的规约条目 | — | — |');
   }
-  for (const row of hits) {
+  for (const row of hits.filter(r => !r.waived)) {
     // 一条要求一行：同一个编号有几条要求就出几行。挤进一格的话，读者要在
     // 一百多字里数分号，而每一条本来都该独立可懂。
+    const entry = byId.get(text(row, 'id'));
     const at = text(row, 'contract') ? `§9 · ${cell(text(row, 'contract'))}`
       : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
     for (const req of requirements(row)) {
-      out.push(`| ${cell(text(row, 'id'))} | ${cell(req)} | ${at} |`);
+      out.push(`| ${cell(text(row, 'id'))} | ${entry?.force ?? '—'} | ${cell(req)} | ${at} `
+        + `| ${(entry?.executors ?? []).join(' / ') || '—'} |`);
+    }
+  }
+  const waived = hits.filter(r => r.waived);
+  if (waived.length) {
+    out.push('', '命中但本轮豁免（评审判）：');
+    for (const row of waived) {
+      const comp = text(row.waived, 'compensation');
+      out.push(`- ${cell(text(row, 'id'))}（${byId.get(text(row, 'id'))?.force ?? ''}）— `
+        + `${cell(text(row.waived, 'reason'))}${comp ? ` — 补偿：${cell(comp)}` : ''}`);
     }
   }
   // 命中的评审动作单列：它们不产生代码要求，混进上面那张表读者会当成要写的代码；

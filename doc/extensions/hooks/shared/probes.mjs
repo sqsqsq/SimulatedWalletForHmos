@@ -22,8 +22,9 @@ import * as path from 'node:path';
  *
  * 只处理 `//` 与 `/* *\/`。字符串字面量里的 `//`（如 URL）会被误当注释起点，
  * 代价是那半行不参与匹配——宁可漏判也不误判，探针的价值在于报出来的都算数。
+ * coding 门禁找实体、找注释里的规约编号也用它：两处读法一致，注释不当作代码证据。
  */
-function blankComments(text) {
+export function blankComments(text) {
   let out = '';
   let i = 0;
   let mode = 'code';                                  // code | line | block | sq | dq | tpl

@@ -135,6 +135,28 @@ export function resolveEntityRef(contracts, ref) {
   return { ok: true, reason: '', tail: member };
 }
 
+/**
+ * 契约里用流式映射写的实体或成员（`- { name: X, type: string }`）。
+ *
+ * 扩展的 YAML 读法只认块式，流式那一项被读成一整串字符串：按名字引用它的落点从此找不到，
+ * 却没有任何报错。不扩读法去认流式，而是点名让作者改块式。
+ */
+export function flowStyleProblems(contracts) {
+  const out = [];
+  for (const kind of ENTITY_KINDS) {
+    for (const item of asArray(contracts?.[kind])) {
+      const members = typeof item === 'string' ? [[kind, item]]
+        : Object.entries(item ?? {}).filter(([, v]) => Array.isArray(v))
+          .flatMap(([key, v]) => v.map(x => [`${kind}.${entityName(item)}.${key}`, x]));
+      for (const [at, v] of members.filter(([, x]) => typeof x === 'string' && x.trim().startsWith('{'))) {
+        out.push(`契约里的 ${at} 用了流式写法「${v.trim().slice(0, 40)}」——扩展只读块式：`
+          + '每项一行 `- name: …`，其余键逐行缩进写在它下面');
+      }
+    }
+  }
+  return out;
+}
+
 /** 契约点名的实现文件（coding 阶段据此限定检索范围，不全仓扫）。 */
 export function contractFiles(contracts) {
   const out = new Set();

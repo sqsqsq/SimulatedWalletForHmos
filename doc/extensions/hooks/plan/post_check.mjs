@@ -23,11 +23,11 @@ import * as path from 'node:path';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
-import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, VERIFY_KINDS }
+import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, verifyProblem }
   from '../shared/obligations.mjs';
 import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { contractsPath, readContracts } from '../shared/contracts.mjs';
+import { contractsPath, flowStyleProblems, readContracts } from '../shared/contracts.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
@@ -78,7 +78,8 @@ function specHitIds(projectRoot, feature, knowledge) {
   }
   const ids = new Set();
   for (const row of use.constraints) {
-    if (row?.applicable !== true) continue;
+    // 本轮豁免的命中不落实，不进契约；它的去向是评审人表态
+    if (row?.applicable !== true || row.waived) continue;
     const id = String(row.id ?? '').trim();
     // 处置标「（评审动作）」的条目是纯流程动作，不产生代码要求，不进契约
     if (id && !entryById(knowledge, id)?.reviewAction) ids.add(id);
@@ -233,6 +234,7 @@ export default guard('plan', async (ctx) => {
   for (const bad of misplacedMust(contracts)) {
     problems.push(`${bad}——义务要挂在下游真的会读的那个实体上，挂在别处等于又造了一本账本`);
   }
+  problems.push(...flowStyleProblems(contracts));
 
   const obligations = obligationsFromContracts(contracts);
   const wanted = specHitIds(ctx.projectRoot, ctx.feature, knowledge);
@@ -260,7 +262,7 @@ export default guard('plan', async (ctx) => {
     }
   }
 
-  // ---- 5. 每条 must 自身：编号在册、text 写了没有、verify 封闭、探针可执行 ----
+  // ---- 5. 每条 must 自身：编号在册、text 写了没有、verify 与规约声明的执行体相符 ----
   for (const ob of obligations) {
     const at = ob.entityPath || '(未知实体)';
     if (!ob.rule) {
@@ -277,12 +279,15 @@ export default guard('plan', async (ctx) => {
       // 归 verifier。机械层只问「写没写」。
       problems.push(`${at} 的 ${ob.rule} 缺 text——要写本次要落实成什么，不是只标个编号`);
     }
-    if (!VERIFY_KINDS.includes(ob.verify)) {
-      problems.push(`${at} 的 ${ob.rule} verify「${ob.verify || '(空)'}」不是封闭取值之一`
-        + `（${VERIFY_KINDS.join(' / ')}）`);
-    } else if (ob.verify === 'probe' && !entry.probe) {
-      problems.push(`${at} 的 ${ob.rule} 标了 verify: probe，但该条目的规约表没有探针`
-        + '——没有探针表达式，coding 阶段执行不了；改用 ut / device / both / review');
+    const verify = verifyProblem(entry, ob.verify);
+    if (verify) problems.push(`${at} 的 ${ob.rule} ${verify}`);
+  }
+
+  // ---- 5b. 方法体探针要有方法落点，否则 coding 无处可跑：记为未执行，不阻断 plan ----
+  for (const rule of new Set(obligations.map(o => o.rule))) {
+    if (entryById(knowledge, rule)?.probe?.kind !== 'present_in_method') continue;
+    if (!obligations.some(o => o.rule === rule && o.entityKind === 'interfaces')) {
+      skipped.push({ what: `${rule} 的探针`, why: '探针无落点：它查方法体，而这条规约没有挂在 interfaces[].methods[] 上的 must' });
     }
   }
 

@@ -220,10 +220,10 @@ function knowledgeExitProblems(ctx, lines) {
 
   problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
 
-  // 命中且产生代码要求的那些，要在 acceptance 里有对应验收条目
+  // 命中并落实、产生代码要求的那些，要在 acceptance 里有对应验收条目（本轮豁免的不落实，不建）
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
   const specIds = new Set(use.constraints
-    .filter(r => r.applicable === true && !byId.get(String(r.id ?? '').trim())?.reviewAction)
+    .filter(r => r.applicable === true && !r.waived && !byId.get(String(r.id ?? '').trim())?.reviewAction)
     .map(r => String(r.id ?? '').trim()));
   problems.push(...acceptanceCoverage(ctx, specIds));
   return problems;

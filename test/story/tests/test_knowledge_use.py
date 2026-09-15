@@ -93,7 +93,9 @@ class KnowledgeUseCase(unittest.TestCase):
         rows = ["schema: 1", f'manifest_digest: "{digest or self.digest()}"']
         rows.append("facts:")
         rows.append("  - id: component-profile")
-        rows.append("    used_for: 本部件的组件边界按它取")
+        rows.append("    used:")
+        rows.append("      - facet: 部件申明")
+        rows.append("        used_for: 本部件的组件边界按它取")
         na = domains if domains is not None else [d for d in ALL_DOMAINS if d != "SEC"]
         if na:
             rows.append("constraint_domains:")
@@ -224,7 +226,7 @@ class TestTheJudgementMustCoverEveryActiveEntry(KnowledgeUseCase):
         self.assertIn(REVIEW_ACTION, line)
         self.assertIn("归档状态", line, "处置原文没带上，读者不知道命中之后要做什么")
         self.assertIn("说明文档要随本轮归档", line, "依据没带上")
-        table = out.split("| 编号 | 本需求的要求 | 落点契约名 |", 1)[1].split("\n\n", 1)[0]
+        table = out.split("| 编号 | 强制力 | 本需求的要求 | 落点契约名 | 验法 |", 1)[1].split("\n\n", 1)[0]
         self.assertNotIn(REVIEW_ACTION, table, "评审动作混进了命中表")
 
 

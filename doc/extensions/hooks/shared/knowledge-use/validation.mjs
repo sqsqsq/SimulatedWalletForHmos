@@ -79,23 +79,37 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
       + ' —— 没有它就看不出「判断做的时候知识是哪一版」');
   }
 
-  // facts：激活即事实，只判「登记的那些在册」，不要求逐条登记——
-  // 用没用到某一份事实是作者的判断，机器数不出来。
-  const factNames = new Set();
+  // facts：激活即事实，只判「登记的那些在册」，不要求逐份登记——
+  // 用没用到某一份事实是作者的判断，机器数不出来。登记了就按面记：用了哪一面、拿它做什么，
+  // 未确认的面还要写核实时看的位置——按文件记答不了「核的是哪个事实」。
+  const factByName = new Map();
   for (const f of knowledge.facts) {
-    factNames.add(f.file);
-    if (f.name) factNames.add(f.name);
-    factNames.add(path.basename(f.file, '.md'));
+    for (const n of [f.file, f.name, path.basename(f.file, '.md')]) if (n) factByName.set(n, f);
   }
   for (const row of use.facts) {
     const id = text(row, 'id');
     if (!id) { problems.push('facts 里有一行没写 id'); continue; }
-    if (!factNames.has(id)) {
+    const fact = factByName.get(id);
+    if (!fact) {
       problems.push(`facts 里的「${id}」不在激活清单的事实件里`
-        + `（在册的：${[...factNames].filter(n => !n.includes('/')).join('、')}）`);
+        + `（在册的：${[...factByName.keys()].filter(n => !n.includes('/')).join('、')}）`);
+      continue;
     }
-    if (!text(row, 'used_for')) {
-      problems.push(`facts 的「${id}」没写 used_for —— 用它做了什么是评审者要回查的`);
+    const used = Array.isArray(row.used) ? row.used : [];
+    if (!used.length) {
+      problems.push(`facts 的「${id}」没写 used —— 逐面一项：facet 写用了哪一面，used_for 写拿它做了什么`
+        + (row.used_for === undefined ? '' : '（整份一句的 used_for 答不了核的是哪个事实）'));
+    }
+    for (const u of used) {
+      const facet = text(u, 'facet');
+      if (!fact.facets.includes(facet)) {
+        problems.push(`facts 的「${id}」没有面「${facet}」（有：${fact.facets.join('、')}）`);
+        continue;
+      }
+      if (!text(u, 'used_for')) problems.push(`facts「${id}·${facet}」没写 used_for —— 用它做了什么是评审者要回查的`);
+      if (fact.unconfirmed.includes(facet) && !text(u, 'verified')) {
+        problems.push(`facts「${id}·${facet}」是未确认的面，没写 verified —— 写核实时看的仓内路径`);
+      }
     }
   }
 
@@ -152,6 +166,21 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         if (wrote.length) {
           problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
             + `${wrote.join(' / ')} 留空；它的动作归《决策与评审记录》的跨团队协同`);
+        }
+        continue;
+      }
+      // 命中但本轮豁免：强制力决定允不允许、补偿要不要写；豁免不写要求与落点
+      if (row.waived !== undefined) {
+        const w = row.waived;
+        if (!w || typeof w !== 'object') {
+          problems.push(`${id} 的 waived 要写成块：下面缩进写 reason 与 compensation`);
+        } else if (entry.force === '红线') {
+          problems.push(`${id} 是红线，命中就要落实，不能本轮豁免`);
+        } else {
+          if (isEmptyReason(text(w, 'reason'))) problems.push(`${id} 本轮豁免没写 reason —— 为什么这一轮不做`);
+          if (entry.force === '基线' && !text(w, 'compensation')) {
+            problems.push(`${id} 是基线，本轮豁免要写 compensation —— 不做它时用什么补上`);
+          }
         }
         continue;
       }

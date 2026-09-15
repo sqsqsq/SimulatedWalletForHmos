@@ -1,6 +1,7 @@
 ---
 name: design-patterns
 kind: index
+protocol: 1
 applies_when: always（凡需判断「这段实现该用哪种代码结构」时）
 ---
 
@@ -34,7 +35,7 @@ applies_when: always（凡需判断「这段实现该用哪种代码结构」时
 | `decision-tree` | [decision-tree.md](decision-tree.md) | 复杂分支流程：每个分支都是复杂功能，if/else 难以维护 | 编排 SDK（oh 包名 `framework`） |
 | `page-interaction` | [page-interaction.md](page-interaction.md) | 页面交互多：把交互与业务逻辑关联，业务结果驱动下一个交互 | 编排 SDK（oh 包名 `framework`） |
 
-每份模式文档分上篇（适用与选型、契约投影）与下篇（SDK 行为事实、角色、骨架、约定、反模式），末尾有按阶段的验证清单。
+每份模式文档用两个一级标题分篇：`# 上篇 · …`（适用与选型、契约投影）与 `# 下篇 · …`（SDK 行为事实、角色、骨架、约定、反模式），末尾有按阶段的验证清单。两篇缺一，这份模式载入即报。
 
 ## 候选登记规则
 

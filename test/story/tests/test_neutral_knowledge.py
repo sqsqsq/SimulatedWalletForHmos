@@ -68,9 +68,13 @@ sections:
 
 # 中性模式
 
-## 上篇 · 适用与选型
+# 上篇 · 适用与选型
 
 多步之间要传同一个标识时适用；单步完成时不适用。
+
+# 下篇 · 结构与落地
+
+标识生成者在入口生成标识，标识消费者只读不改。
 """
 
 SPEC_HEAD = """# {feature} spec
@@ -160,7 +164,9 @@ class NeutralKnowledgeCase(unittest.TestCase):
         rows = ["schema: 1", f'manifest_digest: "{self.eval_js("u.manifestDigest(root)")}"',
                 "facts:",
                 "  - id: neutral-facts",
-                "    used_for: 出口登记在哪张表按它取",
+                "    used:",
+                "      - facet: 出口登记",
+                "        used_for: 出口登记在哪张表按它取",
                 "constraint_domains:"]
         for prefix in ("UX", "SEC", "DFX", "OBS", "RES", "COMPAT", "ENV", "DLV"):
             rows += [f"  - prefix: {prefix}", "    applicable: false",
