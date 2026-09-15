@@ -89,7 +89,7 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
         self.assertIn("## 二、动笔前：先写骨架", guide)
         design = guide.split("## 二、动笔前：先写骨架", 1)[1].split("\n## ", 1)[0]
         for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`表头：列 \\| 列`",
-                       "`图：图` 或 `图：时序图`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
+                       "`图：图` 或 `图：<图种>`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
                        "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "reopen"):
             self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
         for gone in ("## 章节安排", "## 结构选择", "\"kind\": \"table\""):

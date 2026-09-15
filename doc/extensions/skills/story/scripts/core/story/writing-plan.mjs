@@ -20,7 +20,7 @@ import { relFromFeature } from './sources.mjs';
 const PARTS = { story: '阅读主线', skeleton: '骨架' };
 //: 上一版协议的两部分：读到就整份报一次，不双读。
 const RETIRED_PARTS = ['章节安排', '结构选择'];
-//: 「图：图」是任一种图；其余只认合同能核的具名类型（写键名或中文名都认）。
+//: 「图：图」是任一种图；点名图种时写中文名或 mermaid 首个声明都认，点名了哪种正文就只认那一种。
 const ANY_DIAGRAM = '图';
 const LINE = {
   note: /^-\s+(.+)$/, table: /^表头[:：]\s*(.*)$/, diagram: /^图[:：]\s*(.*)$/,
@@ -35,7 +35,7 @@ export function writingPlanShell(contract) {
   for (const ch of contract.chapters ?? []) {
     rows.push(`### ${ch.id}`, `- {{「${ch.title}」的主线一句；正文要有的每个小节写一行 #### 标题，`
       + '下面用 - 答：/ - 依据：/ - 待核：写这一节要回答什么，要表写 表头：列 | 列，'
-      + `要图写 图：${ANY_DIAGRAM} 或 图：时序图；不涉及就只写 - 不涉及：<理由>}}`, '');
+      + `要图写 图：${ANY_DIAGRAM}，已判定用哪种图就写 图：<图种>；不涉及就只写 - 不涉及：<理由>}}`, '');
   }
   return rows.join('\n');
 }
@@ -93,8 +93,8 @@ export function readWritingPlan(ctx) {
 /** `图：` 后面那个词：任一种图返回空串，具名类型返回键名，认不出返回 undefined。 */
 function diagramSyntax(value) {
   if (value === ANY_DIAGRAM) return '';
-  if (Object.hasOwn(DIAGRAM_SYNTAXES, value)) return value;
-  return Object.keys(DIAGRAM_SYNTAXES).find(key => DIAGRAM_SYNTAXES[key] === value);
+  return Object.keys(DIAGRAM_SYNTAXES)
+    .find(key => [DIAGRAM_SYNTAXES[key].name, ...DIAGRAM_SYNTAXES[key].heads].includes(value));
 }
 
 /** `## 骨架` 这一部分：逐行归到章与小节，缺口一次报全，再把表图交给 `addPick`。 */
@@ -154,8 +154,8 @@ function readSkeleton(plan, lines, range, fenced, say) {
     } else if ((m = LINE.diagram.exec(line))) {
       const syntax = diagramSyntax(m[1].trim());
       if (syntax === undefined) {
-        say(`${where()}的「图：${m[1].trim()}」不认识——写 图：${ANY_DIAGRAM}（任一种图）`
-          + `${Object.values(DIAGRAM_SYNTAXES).map(v => `或 图：${v}`).join('')}`);
+        say(`${where()}的「图：${m[1].trim()}」不认识——写 图：${ANY_DIAGRAM}（任一种图），或点名一种：`
+          + `${Object.values(DIAGRAM_SYNTAXES).map(v => v.name).join('、')}`);
       } else target.diagrams.push(syntax);
     } else {
       say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架里只写 - 说明行、表头：、图： 与 ####、##### 标题`);

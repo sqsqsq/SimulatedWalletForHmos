@@ -39,7 +39,8 @@ function subHeadings(view) {
 
 /** 一个图槽位叫什么：点名了类型的说类型，没点名的是任何一种图。 */
 const diagramName = (slot) => (slot.syntax
-  ? `${DIAGRAM_SYNTAXES[slot.syntax]}（mermaid 围栏里首个声明是 ${slot.syntax}，别的图不能顶替）`
+  ? `${DIAGRAM_SYNTAXES[slot.syntax].name}（mermaid 围栏里首个声明是 `
+    + `${DIAGRAM_SYNTAXES[slot.syntax].heads.join(' 或 ')}，别的图不能顶替）`
   : '图（画图语言的围栏）');
 
 /** 渲染一张 markdown 表：表头 + 分隔行 + 数据行。 */
@@ -147,7 +148,7 @@ export function pickedStructureNames(ch) {
     ...requiredTables(ch).filter(t => t.selected)
       .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
     ...(ch?.structure?.diagrams ?? []).filter(d => d.selected)
-      .map(d => `${where(d.at)}${d.syntax ? DIAGRAM_SYNTAXES[d.syntax] : '图'}`),
+      .map(d => `${where(d.at)}${d.syntax ? DIAGRAM_SYNTAXES[d.syntax].name : '图'}`),
   ];
 }
 

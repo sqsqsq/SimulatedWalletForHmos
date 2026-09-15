@@ -130,8 +130,8 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
             "表头没有列": (with_chapter("06-features", "#### 本地数据\n表头："), ["「表头：」要写成"]),
             "列名空": (with_chapter("06-features", "#### 本地数据\n表头：数据 |  | 何时清除"),
                      ["「表头：」要写成"]),
-            "不认识的图": (with_chapter("06-features", "#### 本地数据\n图：flowchart"),
-                       ["「图：flowchart」不认识"]),
+            "不认识的图": (with_chapter("06-features", "#### 本地数据\n图：随手画"),
+                       ["「图：随手画」不认识", "流程图", "时序图", "状态图"]),
             "不涉及还留小节": (with_chapter("06-features", "- 不涉及：没有功能变化\n#### 本地数据\n- 答：x"),
                           ["写了不涉及，却还留着"]),
             "五级标题没有上级": (with_chapter("06-features", "##### 重试入口\n- 答：x"),
@@ -435,6 +435,19 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
         self.assertEqual(1, code, out)
         self.assertIn("「异常与恢复·跨方恢复」没有时序图", out)
         self.assertEqual(0, self.put("异常与恢复", self.section(SEQ_FENCE))[0])
+
+    def test_any_named_diagram_type_is_held(self) -> None:
+        """图种由写作设计按内容判定，不偏向时序图：点名流程图，正文就要流程图，时序图也顶替不了。"""
+        self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：失败后走哪条分支\n图：流程图"))
+        self.cmd("skeleton")
+        draft = self.draft("07").read_text(encoding="utf-8")
+        self.assertIn("流程图", draft)
+        self.assertNotIn("谁调谁", draft, "作图提示还带着时序图专属的说法")
+        code, out = self.put("异常与恢复", self.section(SEQ_FENCE))
+        self.assertEqual(1, code, out)
+        self.assertIn("「异常与恢复·跨方恢复」没有流程图", out)
+        self.assertEqual(0, self.put("异常与恢复", self.section("```mermaid\ngraph TD\nA-->B\n```\n"))[0],
+                         "graph 与 flowchart 是同一种图")
 
     def test_an_untyped_and_a_typed_diagram_at_one_place_count_once(self) -> None:
         self.write_plan(with_chapter("07-exceptions", SEQUENCE + "\n图：图"))

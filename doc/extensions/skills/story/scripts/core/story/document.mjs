@@ -20,9 +20,13 @@ export function norm(s) {
 //: 「这一章有没有图」就会被一段贴进来的示例顶掉。
 export const DIAGRAM_LANGS = new Set(['mermaid', 'plantuml', 'puml', 'dot', 'graphviz']);
 
-//: 写作设计能点名的图类型（mermaid 首个声明 → 读者看到的名字）。只收脚本要落实的那几种：
-//: 不点名的图照旧认任何画图语言；类型只证明语法类别，图里关系画得对不对归语义审查。
-export const DIAGRAM_SYNTAXES = { sequenceDiagram: '时序图' };
+//: 写作设计能点名的图种：`heads` 是 mermaid 首个声明的写法，`name` 是读者看到的名字。
+//: 用哪种图由作者按要解释的关系定，这里只列认得出的写法，不偏向哪一种；不点名的图照旧认任何画图语言。
+//: 类型只证明语法类别，图里关系画得对不对归语义审查。
+export const DIAGRAM_SYNTAXES = Object.fromEntries([
+  ['flowchart', '流程图', 'graph'], ['sequenceDiagram', '时序图'], ['stateDiagram', '状态图', 'stateDiagram-v2'],
+  ['classDiagram', '类图'], ['erDiagram', '实体关系图'], ['journey', '旅程图'], ['gantt', '甘特图'], ['mindmap', '思维导图'],
+].map(([key, name, ...alias]) => [key, { name, heads: [key, ...alias] }]));
 
 //: 关闭行：一串围栏标记之后除了空格与 tab 什么都没有。
 const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
@@ -171,7 +175,8 @@ export function tablesIn(view, name) {
  */
 export function hasDiagram(view, name = '', syntax = '') {
   const drawn = (view?.fences ?? []).filter(f => DIAGRAM_LANGS.has(f.lang)
-    && (!syntax || (f.lang === 'mermaid' && String(f.head ?? '').split(/\s/)[0] === syntax)));
+    && (!syntax || (f.lang === 'mermaid'
+      && (DIAGRAM_SYNTAXES[syntax]?.heads ?? []).includes(String(f.head ?? '').split(/\s/)[0]))));
   if (!name) return drawn.length > 0;
   const hit = matchSection(view, name);
   if (!hit) return null;
