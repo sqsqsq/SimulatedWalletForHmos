@@ -71,8 +71,8 @@ function chapterDraft(ctx, ch, facts) {
   return [
     guideLine((ch.questions ?? []).join('；'), '读者问题'),
     guideLine(ch.boundary, '主要职责'),
-    guideLine(`写前读写作设计 ${plan} 里「${ch.id}」那一段、当前 Story 已写的章与本章要用的原文，`
-      + '本章补独有信息；形式方法见 story-write.md「十章各自怎么组织」'),
+    guideLine('照下面的骨架写：先答每一节骨架里的问题，再补骨架没列的；写前对照当前 Story 已写的章'
+      + `与本章要用的原文，骨架改在写作设计 ${plan} 里；形式方法见 story-write.md「五、十章各自怎么组织」`),
     guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
       + ` --chapter ${shellArg(ch.title)}`
@@ -81,7 +81,7 @@ function chapterDraft(ctx, ch, facts) {
     '',
     `## ${ch.title}`,
     '',
-    ...chapterSeedRows(ch, facts, { diagramHint }),
+    ...chapterSeedRows(ch, facts, { diagramHint, guide: (note) => guideLine(note, '骨架') }),
   ];
 }
 
@@ -119,12 +119,15 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
   const written = chapterState?.written ?? new Map();
   const pending = chapterState?.pending ?? new Set();
   fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
+  // 设计还读不了（空壳、旧协议、缺口）就不按它铺：铺进去的占位或半截骨架会让草稿看起来被动过，
+  // 设计写好之后反而换不成骨架起点。
+  const usable = Boolean(plan) && !plan.problems.length;
   ctx.contract.chapters.forEach((ch, i) => {
     const file = draftPath(ctx, i, ch.title);
     const key = normalizeHeading(ch.title);
     const done = chapterState?.hasStory && !pending.has(key);
-    const planned = { ...ch, structure: selectedStructure(plan, ch.id) };
-    const picked = (plan?.structures ?? []).some(s => s.chapter === ch.id);
+    const planned = usable ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
+    const picked = usable && plan.skeletons.has(ch.id);
     if (!fs.existsSync(file)) {
       const body = done ? written.get(key) : null;
       if (done && body === undefined) return;       // 章缺失由结构检查报，这里不猜

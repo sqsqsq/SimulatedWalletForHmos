@@ -21,7 +21,7 @@ S4 收口        →  按已定范围写提取稿，`complete --from` 提交为 
    ↓
 [framework spec 阶段闭环]
    ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
-   └─ story：起手（当前输入、写作设计空壳、章草稿）→ 写整篇写作设计 → 按章写、按章落盘 → 写后核对 → `story_flow.py story` 登记
+   └─ story：起手（当前输入、写作设计空壳、章草稿）→ 写写作设计骨架 → 照骨架按章写、按章落盘 → 回看 → `story_flow.py story` 登记
    ↓
 S5 归档        →  /story archive 上传叙事件与评审记录
 ```
@@ -48,7 +48,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | S3 三级关卡 | [rules/scope_gate.md](rules/scope_gate.md) |
 | S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序） | [phases/spec.md](phases/spec.md) |
-| 成文：按章写与写后核对 | [phases/story-write.md](phases/story-write.md) |
+| 成文：写骨架、照骨架写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
 
 ## 推进契约
@@ -251,7 +251,7 @@ AI 依据人的决定写回文件，不要求用户手动编辑文件或运行�
 | `AR/story-src/upstream.md` | 人工补录的本部件上游材料（外部输入） |
 | `ux-reference/` | 界面参考图与设计基准（外部输入） |
 | `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**：归档不含；Spec 与成文从它的来源初筛起步） |
-| `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线、十章安排与选定的表图（作者写，成文登记时随稿冻结） |
+| `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架——小节、每节要答什么、表头与图（作者写，成文登记时随稿冻结） |
 | `AR/story-src/materials.json` | 手上有哪些材料、各自的身份与版本；收件箱里哪些原件还没并入正文 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
 | `AR/design.md` | 上游要**本部件（本 AR 范围内）**做什么 |

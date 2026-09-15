@@ -34,38 +34,32 @@ def read_ext(rel: str) -> str:
 class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
         spec = read("phases/spec.md")
-        self.assertIn("②b 写后核对", spec)
-        self.assertLess(spec.index("② 按章写"), spec.index("②b 写后核对"),
-                        "统稿在按章写之后")
-        self.assertLess(spec.index("②b 写后核对"), spec.index("③ 登记"),
-                        "统稿在登记之前——登记那一步会渲染 review，"
-                        "评审记录面对的应当是收过口的全篇")
+        self.assertIn("②b 回看", spec)
+        self.assertLess(spec.index("② 按章写"), spec.index("②b 回看"), "回看在按章写之后")
+        self.assertLess(spec.index("②b 回看"), spec.index("③ 登记"),
+                        "回看在登记之前——登记那一步会渲染 review，"
+                        "评审记录面对的应当是处置过的全篇")
 
-    def test_the_authoring_guide_carries_the_checklist(self) -> None:
+    def test_the_authoring_guide_carries_the_recheck(self) -> None:
+        """回看的对象是脚本枚举的清单，动作是撞两问、处置回真源；旧的「三项工作」散文退场。"""
         guide = read("phases/story-write.md")
-        self.assertIn("## 四、写后核对", guide)
-        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
-        # 整稿是「从来源核实际全文」，不是「通读一遍补标记」：三项工作各自回到来源、决定与表达
-        for action in ("从来源核实际覆盖", "推演关系与决定", "核组织和表达"):
-            self.assertIn(action, section, f"写后核对少了「{action}」这项工作")
-        for gone in ("比较信息归属", "推演关系与结果", "核重组后的表达"):
-            self.assertNotIn(gone, section, f"旧整稿动作「{gone}」还和新方法并存")
-        items = re.findall(r"^\d+\. ", section, flags=re.M)
-        # 七条是作者的清单，不再对着机器里的一个数——那个数（COPYEDIT_ROWS）随七行
-        # 自证一起退场了。条数变了改这一行，不要回头再造一个计数判据。
-        self.assertEqual(7, len(items), f"写后核对是七条，现在 {len(items)} 条")
-        for needle in ("同一件事", "逐字", "引导", "承接", "读者视角", "对着读", "指代"):
-            self.assertIn(needle, section, f"自查清单少了「{needle}」那一条")
+        self.assertIn("## 四、回看", guide)
+        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
+        for needle in ("回看清单", "初筛疑点", "骨架待核", "这句话材料里有吗", "材料给的靠得住吗",
+                       "处置回真源，不写台账", "没有问题不制造改动", "对着读", "引导", "承接"):
+            self.assertIn(needle, section, f"回看那一节少了「{needle}」")
+        for gone in ("三项工作", "从来源核实际覆盖", "推演关系与决定", "核组织和表达"):
+            self.assertNotIn(gone, guide, f"旧整稿方法「{gone}」还和回看并存")
 
     def test_the_actions_do_not_order_unconditional_deletion(self) -> None:
-        """动作一判的是「这一处还回答了什么别处没回答的问题」，不是「见到重复就删」。
+        """判的是「这一处还回答了什么别处没回答的问题」，不是「见到重复就删」。
 
-        写后核对是作者读到的最后一段具体指令。它与第一节的「三者互补」「必要的重现
+        回看是作者读到的最后一段具体指令。它与第一节的「三者互补」「必要的重现
         不是重复」相反时，赢的是最近的那一条——验收表里与正文一致的触发条件就这么
         被删掉，而验收从此判不独立。
         """
         guide = read("phases/story-write.md")
-        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
+        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
         self.assertNotIn("有就删掉一处", section,
                          "「逐字相同就删一处」是无条件删除，与必要重现相反")
         for needle in ("独有用途", "完整复述", "互补", "验收独立判"):
@@ -92,11 +86,14 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
 
     def test_the_guide_says_what_the_design_holds_and_how_it_binds(self) -> None:
         guide = read("phases/story-write.md")
-        self.assertIn("## 二、动笔前：先有整篇写作设计", guide)
-        design = guide.split("## 二、动笔前：先有整篇写作设计", 1)[1].split("\n## ", 1)[0]
-        for needle in ("`## 阅读主线`", "`## 章节安排`", "`## 结构选择`", "story-template.md",
-                       "来源初筛", "不是新的业务事实源", "设计里没列的有效内容照样写进正文", "reopen"):
+        self.assertIn("## 二、动笔前：先写骨架", guide)
+        design = guide.split("## 二、动笔前：先写骨架", 1)[1].split("\n## ", 1)[0]
+        for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`表头：列 \\| 列`",
+                       "`图：图` 或 `图：时序图`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
+                       "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "reopen"):
             self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
+        for gone in ("## 章节安排", "## 结构选择", "\"kind\": \"table\""):
+            self.assertNotIn(gone, guide, f"旧的写作设计协议「{gone}」还在作业书里")
 
     def test_the_phase_order_puts_the_design_between_skeleton_and_chapters(self) -> None:
         spec = read("phases/spec.md")
@@ -122,8 +119,8 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
 
     def test_the_chapter_method_consumes_the_design(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("## 三、写一章", 1)[1].split("\n## ", 1)[0]
-        for needle in ("先想清这一章要增加什么", "写作设计里本章那一段", "写着写着认识变了",
+        section = guide.split("## 三、照骨架写一章", 1)[1].split("\n## ", 1)[0]
+        for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
                        "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定",
                        "图从要解释的关系出发", "照搬它不等于讲清了", "不硬造页面"):
             self.assertIn(needle, section, f"写一章那一节少了「{needle}」")
@@ -182,7 +179,7 @@ class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
 
     def test_the_guide_sends_the_changed_chapter_back_through_submit(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("## 四、写后核对", 1)[1].split("\n## ", 1)[0]
+        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
         self.assertIn("chapter", section, "改完的章要说明怎么落盘")
         self.assertNotIn("copyedit", section, "七行自证已退场，作业书不该还要它")
         self.assertNotIn("恰好七行", section)
@@ -256,8 +253,11 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         数据、依赖五个热点，模型对不上号。新表拆到「内容特征可识别」的粒度。
         """
         guide = read("phases/story-write.md")
-        self.assertIn("对着这十一类过一遍", guide)
-        self.assertIn("这是扫描地图，不是配额", guide)
+        self.assertIn("每类第三列是撞的方向，不是遍历顺序", guide)
+        self.assertIn("不是配额", guide)
+        self.assertNotIn("对着这十一类过一遍", guide, "分类又被当成了遍历顺序")
+        self.assertLess(guide.index("**登记时选 `category`**"), guide.index("## 四、回看"),
+                        "类型表要放在登记时选类别那里")
 
     def test_the_guide_says_what_the_overview_figure_should_show(self) -> None:
         """总览图讲给评审者什么——不说清的话，作者会把上游契约图复制一遍；
@@ -292,7 +292,7 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         keys = [c["key"] for c in contract["decision_categories"]]
         guide = read("phases/story-write.md")
-        table = guide.split("对着这十一类过一遍", 1)[1].split("\n\n**", 1)[0]
+        table = guide.split("每类第三列是撞的方向", 1)[1].split("\n## ", 1)[0]
         for key in keys:
             self.assertIn(f"| {key} |", table, f"作业书的扫描表里没有「{key}」")
 
@@ -311,8 +311,8 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
     def test_the_guide_keeps_what_no_check_covers(self) -> None:
         """没有判据接的约定要留着，但留在它该在的那一节，不另起一段重讲一遍。"""
         guide = read("phases/story-write.md")
-        self.assertIn("表前有一句引导", guide.split("## 四、写后核对", 1)[1],
-                      "表前引导没有判据接，写后核对要问它")
+        self.assertIn("表前有一句引导", guide.split("## 四、回看", 1)[1],
+                      "表前引导没有判据接，回看要问它")
         self.assertIn("标题用真实业务名", guide.split("## 一、", 1)[1],
                       "小节怎么起名没有判据接，读者原则要说")
         self.assertNotIn("不是三次机会", guide,

@@ -52,7 +52,7 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
 `spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面六步走完。
-作业规则见 [`phases/story-write.md`](story-write.md)（按章写、统稿各一段）。
+作业规则见 [`phases/story-write.md`](story-write.md)（写骨架、照骨架写、回看各一段）。
 
 **什么算一条议题、澄清正文怎么分段**：见 [`phases/story-write.md`](story-write.md) 的「决策登记」。
 同一条定义只维护一处，两处各写一份迟早各说各话。
@@ -61,14 +61,14 @@ spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事�
 node .../story-build.mjs skeleton --feature <feature>  # ① 当前输入 + 写作设计空壳 + 十章骨架 + 十份章草稿
 #                                 （它先把流程、材料、来源、Spec 与决策登记一次预检完，
 #                                 全过才写盘；决策登记不存在时建一份空骨架）
-#                              ①b 写整篇写作设计：AR/story-src/story-template.md，
-#                                 写完再跑一次 skeleton——它给出第一章的写作动作
-#                              ② 按章写：**照设计在草稿上写**（AR/story-src/drafts/NN-<章名>.md，
-#                                 本章读者问题与主要职责、必要小节标题与表头、术语起始行
-#                                 都已经在里面），一次写一章，经
+#                              ①b 写整篇写作设计：AR/story-src/story-template.md 的阅读主线与每章骨架，
+#                                 写完再跑一次 skeleton——它把骨架铺进草稿，给出第一章的写作动作
+#                              ② 按章写：**照骨架在草稿上写**（AR/story-src/drafts/NN-<章名>.md，
+#                                 骨架里的小节标题、每节要答的问题、表头与作图提示、读者问题与主要职责、
+#                                 术语起始行都已经在里面），一次写一章，经
 #                                 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
-#                              ②b 写后核对：从来源核实际全文，做三项工作（见 story-write.md）；
+#                              ②b 回看：十章齐后 skeleton 给出回看清单，逐条撞两问、处置回真源（见 story-write.md）；
 #                                 改的那几章仍逐章落盘，落盘时本章判据先核一遍
 python .../story_flow.py story --feature <feature>   # ③ 登记（自带 number / build / check）
 #                              ④ 跑 spec harness
@@ -76,11 +76,12 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 numbe
 #                              ⑥ check-receipt → check --deliver 交付门 → /story archive
 ```
 
-- **②b 是拿成稿对着来源从头核的那一次**：逐章写时只看得到这一章，原材料里漏掉的事、
+- **②b 是拿成稿对着来源从头核的那一次**：逐章写时只看得到这一章，初筛疑点、
   跨章说法不一、图前声称与图里对不上、未决被写成已定，合起来对着来源读才看得出来。
-  三项工作见 `story-write.md`「写后核对」；改的是最早出错的那一处，不写「已核对」。
-- **①b 是写作之前的整篇设计**：阅读主线、每章要回答什么与依据在哪、选定的表和图，
-  写在 `AR/story-src/story-template.md`（写法见 `story-write.md`「动笔前：先有整篇写作设计」）。
+  回看清单由脚本从初筛疑点、决策登记、骨架待核与图枚举，撞两问与四个出口见 `story-write.md`「回看」；
+  处置回真源，不写「已核对」。
+- **①b 是写作之前的整篇设计**：阅读主线与每章骨架（小节标题、每节要答什么与依据在哪、表头与图），
+  写在 `AR/story-src/story-template.md`（写法见 `story-write.md`「动笔前：先写骨架」）。
   它还是空壳时，skeleton 与每次 `chapter` 提交都会让你先写它；写作中改设计不用问人，
   业务结论变了回 Spec 或 `decisions.json`。成文登记时它与决策登记一起冻结。
 - **① 与 ② 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。

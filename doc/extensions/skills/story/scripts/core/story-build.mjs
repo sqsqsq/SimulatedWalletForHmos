@@ -4,8 +4,8 @@
  * ## 成文怎么走
  *
  * 材料与 Spec 齐备之后，`skeleton` 给出成文要用的当前输入并建写作设计空壳与章草稿；
- * 作者先写本需求的整篇写作设计，再照它一次写一章、经 `chapter` 原子替换落盘，
- * 十章写完再统稿。每步输出有界、写完即落盘、断了能续——整篇一次重出是全有或全无，
+ * 作者先写本需求的写作设计骨架，再照骨架一次写一章、经 `chapter` 原子替换落盘，
+ * 十章写完再按回看清单逐条处置。每步输出有界、写完即落盘、断了能续——整篇一次重出是全有或全无，
  * 中途断了磁盘上什么都没有。
  *
  * ## 判据的边界
@@ -200,7 +200,7 @@ function cmdSkeleton(ctx) {
       + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
-  if (seeded.length) result += `；按写作设计给 ${seeded.length} 份没动过的草稿搭好选定的表图`;
+  if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;
   // 首屏接续与 chapter 共用一处：各写一份的话，恢复那条路上的提示总比正常路径旧一轮。
   // 刚建的空壳不逐条报占位——下一步就是写它；已有的设计读不了才把缺在哪列出来。
   process.stdout.write(nextSteps(ctx, readText(ctx.storyPath) ?? '', result, {

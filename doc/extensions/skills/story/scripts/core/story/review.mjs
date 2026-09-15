@@ -51,7 +51,7 @@ const REVIEW_BANNED_LINES = [
  *
  * 宽进有边界：单数 `decision`、空壳 `{}` 这类不猜，交给调用方报错说清形状。
  */
-function decisionList(raw) {
+export function decisionList(raw) {
   if (Array.isArray(raw)) return raw;
   if (raw && typeof raw === 'object' && Array.isArray(raw.decisions)) return raw.decisions;
   return null;
@@ -256,6 +256,8 @@ export function decisionProblems(ctx) {
 //: 澄清正文的段首：加粗小标题（`**依据**：…`）。一段从它起，到下一个段首止。
 const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
 const OPTIONS_SEGMENT = '可选的做法';
+//: 一个选项里「做法」与「选它会怎样」之间的分隔：后面写后果。
+const OPTION_CONSEQUENCE = '——';
 //: 选项编号：行首或空白、标点之后的「数字＋. 、 ) ）」，数字后不再接数字（版本号、小数不算）；圈码同理。
 const OPTION_NO = /(?:^|[\s；;，,。：:（(])(?:(\d+)[.、)）](?!\d)|([①-⑳]))/g;
 
@@ -283,9 +285,20 @@ function choiceListProblems(dec) {
     return [`决策 ${id} 把几个选项写在了同一段——「${OPTIONS_SEGMENT}」写成有序列表，`
       + '一个选项一项（`1. …` 换行 `2. …`），评审人填的就是这个编号'];
   }
-  if (!area.some(l => /^\s*\d+[.)]\s+\S/.test(l))) {
+  const options = area.filter(l => /^\s*\d+[.)]\s+\S/.test(l));
+  if (!options.length) {
     return [`决策 ${id} 是选方案的议题（review_mode: choice），「**${OPTIONS_SEGMENT}**」这一段却没有有序列表——`
       + '在这个加粗段首下一个选项一项列出，评审人按编号选；其实只是请人复核已有结论的，改成 confirm'];
+  }
+  // 每个选项都要说选它会怎样：写不出后果差别的，不是真取舍。只判字面，不判后果写得好不好。
+  const bare = options.flatMap((line, k) => {
+    const cut = line.indexOf(OPTION_CONSEQUENCE);
+    return cut < 0 || !line.slice(cut + OPTION_CONSEQUENCE.length).trim() ? [k + 1] : [];
+  });
+  if (bare.length) {
+    return [`决策 ${id} 的「${OPTIONS_SEGMENT}」第 ${bare.join('、')} 项没写选它会怎样——每项写成`
+      + `「做法${OPTION_CONSEQUENCE}选它会怎样」，说清范围、行为、验收或交付哪一项会变；`
+      + '写不出后果差别的不是真取舍，改成 confirm'];
   }
   return [];
 }

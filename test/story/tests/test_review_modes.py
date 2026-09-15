@@ -22,8 +22,8 @@ from test_review_golden import RendererCase  # noqa: E402
 CHOICE_BODY = ("**决策点**：受理超时后由谁发起重试。\n\n"
                "**依据**：接口说明只写了超时按未受理处理。\n\n"
                "**可选的做法**：\n\n"
-               "1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
-               "2. 提示用户手动重试：不依赖受理方去重，用户多一步。\n\n"
+               "1. 客户端自动重试——用户无感，要受理方保证同一请求只处理一次。\n"
+               "2. 提示用户手动重试——不依赖受理方去重，用户多一步。\n\n"
                "**建议**：选择方案 2（提示用户手动重试）。\n\n"
                "**理由**：受理方目前没有去重承诺。")
 CONFIRM_BODY = ("**决策点**：提交与补卡由两张单分别承接。\n\n"
@@ -82,8 +82,8 @@ class EachModeGetsItsOwnZone(ModesCase):
 class ChoiceOptionsAreARealList(ModesCase):
     def test_options_squeezed_into_one_paragraph_are_named(self) -> None:
         body = CHOICE_BODY.replace(
-            "1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
-            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。",
+            "1. 客户端自动重试——用户无感，要受理方保证同一请求只处理一次。\n"
+            "2. 提示用户手动重试——不依赖受理方去重，用户多一步。",
             "1、客户端自动重试；2、提示用户手动重试。")
         proc = self.build(entry("retry-owner", "choice", body))
         self.assertEqual(1, proc.returncode)
@@ -102,6 +102,23 @@ class ChoiceOptionsAreARealList(ModesCase):
         body = CHOICE_BODY.replace("接口说明只写了超时按未受理处理。",
                                    "接口说明写了超时 1.5 秒、重试间隔 2.0 秒。")
         self.assertEqual(0, self.build(entry("retry-owner", "choice", body)).returncode)
+
+
+class EachOptionSaysWhatChoosingItChanges(ModesCase):
+    """「可选的做法」每一项写成「做法——选它会怎样」：写不出后果差别的不是真取舍。只判字面。"""
+
+    SECOND = "2. 提示用户手动重试——不依赖受理方去重，用户多一步。"
+
+    def test_an_option_without_its_consequence_is_named(self) -> None:
+        for name, line in {"没有分隔": "2. 提示用户手动重试。", "分隔之后为空": "2. 提示用户手动重试——"}.items():
+            with self.subTest(case=name):
+                proc = self.build(entry("retry-owner", "choice", CHOICE_BODY.replace(self.SECOND, line)))
+                self.assertEqual(1, proc.returncode, proc.stdout)
+                self.assertIn("决策 retry-owner 的「可选的做法」第 2 项没写选它会怎样", proc.stderr)
+                self.assertIn("confirm", proc.stderr, "没给出降级为复核这条出路")
+
+    def test_options_with_consequences_pass(self) -> None:
+        self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
 
 
 class WhatTheReviewerWroteStays(ModesCase):
@@ -174,8 +191,8 @@ class OnlyTheOptionsSegmentIsChecked(ModesCase):
 
     def test_a_list_only_in_the_basis_does_not_count_as_options(self) -> None:
         body = CHOICE_BODY.replace(
-            "1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
-            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。",
+            "1. 客户端自动重试——用户无感，要受理方保证同一请求只处理一次。\n"
+            "2. 提示用户手动重试——不依赖受理方去重，用户多一步。",
             "客户端自动重试，或者提示用户手动重试。").replace(
             "接口说明只写了超时按未受理处理。", "接口说明写了两步：\n\n1. 提交请求\n2. 等待受理")
         proc = self.build(entry("retry-owner", "choice", body))
@@ -184,19 +201,19 @@ class OnlyTheOptionsSegmentIsChecked(ModesCase):
 
     def test_any_number_of_options_and_numbers_inside_an_option_pass(self) -> None:
         body = CHOICE_BODY.replace(
-            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。",
-            "2. 提示用户手动重试：不依赖受理方去重，用户多一步。\n"
-            "3. 升级到 2.0 版接口后由受理方重试：每月 3、4 号维护窗口不可用。")
+            "2. 提示用户手动重试——不依赖受理方去重，用户多一步。",
+            "2. 提示用户手动重试——不依赖受理方去重，用户多一步。\n"
+            "3. 升级到 2.0 版接口后由受理方重试——每月 3、4 号维护窗口不可用。")
         self.assertEqual(0, self.build(entry("retry-owner", "choice", body)).returncode)
 
 
 class SqueezedOptionsAreCaughtInEveryArrangement(ModesCase):
     """同一组选项三种排列：标题同一行挤、列表行里挤都拒绝且不写评审记录；各占一行通过。"""
 
-    OPTIONS = ("1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次。\n"
-               "2. 提示用户手动重试：不依赖受理方去重，用户多一步。")
-    SQUEEZED = ("1. 客户端自动重试：用户无感，要受理方保证同一请求只处理一次；"
-                "2. 提示用户手动重试：不依赖受理方去重，用户多一步。")
+    OPTIONS = ("1. 客户端自动重试——用户无感，要受理方保证同一请求只处理一次。\n"
+               "2. 提示用户手动重试——不依赖受理方去重，用户多一步。")
+    SQUEEZED = ("1. 客户端自动重试——用户无感，要受理方保证同一请求只处理一次；"
+                "2. 提示用户手动重试——不依赖受理方去重，用户多一步。")
 
     def arrangements(self) -> dict[str, str]:
         return {

@@ -11,6 +11,8 @@ import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
 import { imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
+import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 
 function contractOf(projectRoot) {
   return readJsonOrNull(path.join(extensionRoot(projectRoot),
@@ -81,7 +83,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     + '与盘上那一份不一致时以盘上为准，并把这件事写进结论）', '',
     fence, story.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));
 
-  // 写作设计：作者这一版的解释安排与结构选择，全文一次。读不到不能拿空设计当审过，说成缺口。
+  // 写作设计：作者这一版的阅读主线与骨架，全文一次。读不到不能拿空设计当审过，说成缺口。
   const plan = readOrNull(path.join(root, 'AR', 'story-src', 'story-template.md'));
   rows.push('', '### 作者的写作设计：当前 `AR/story-src/story-template.md` 全文', '');
   if (plan === null || !plan.trim()) {
@@ -89,9 +91,16 @@ export function readerReviewTask(projectRoot, feature, checkId) {
       + '把「没有可核的写作设计」写进结论——它是本轮的阻断问题。');
   } else {
     const planFence = `${'`'.repeat(longestFence(plan) + 1)}text`;
-    rows.push('（作者对本需求的解释安排与结构选择，是待核的作者判断，不是审查标准）', '',
+    rows.push('（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
       planFence, plan.replace(/\s+$/, ''), planFence.replace(/text$/, ''));
   }
+
+  // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
+  const src = path.join(root, 'AR', 'story-src');
+  const planCtx = { contract, featureRoot: root, srcDir: src, storyPath,
+    decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
+  rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
+    ...recheckRows(recheckItems(planCtx, contract ? readWritingPlan(planCtx) : null, story)));
 
   // 原材料原文逐份给位置：审查要能回到原件，不只看作者转述之后的样子。该有而读不到的说成缺口。
   const { docs, blocking } = sourceStatus({ contract, featureRoot: root });

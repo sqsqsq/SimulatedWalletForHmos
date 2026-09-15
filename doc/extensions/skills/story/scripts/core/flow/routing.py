@@ -117,7 +117,8 @@ SPEC_STAGE_ORDER = (
     "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
     "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
     "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
-    "story-build skeleton → 写整篇写作设计 → 再跑 skeleton → 逐章 chapter → 统稿 → "
+    "story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
+    "回看清单逐条处置 → "
     "story_flow.py story 登记"
     "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
@@ -171,8 +172,8 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
                 "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
     return ("register_story",
-            "十章齐了。先按作业书的写后核对从来源核实际全文"
-            "（业务结论改 Spec 或决策登记，解释安排改写作设计，正文改草稿再 chapter 提交），"
+            "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
+            "（业务结论改 Spec 或决策登记，骨架改写作设计，正文改草稿再 chapter 提交），"
             "`story-build check` 通过之后跑 `story_flow.py story` 登记成文"
             "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 

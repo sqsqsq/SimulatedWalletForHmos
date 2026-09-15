@@ -5,7 +5,7 @@
  * 那种与附录五节），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
  * `at` 所属小节），`diagram: true` 表示这一章要有一张真正的图。
  * 哪些章要什么全部是合同数据，这里不写死任何章名或表头——加一条必要结构改合同，代码不动。
- * 写作设计选定的表图由 `writing-plan.selectedStructure` 并进同一个 `structure`（带 `selected`，
+ * 写作设计骨架里的小节与表图由 `writing-plan.selectedStructure` 并进同一个 `structure`（带 `selected`，
  * 图记在 `diagrams`），这里按同一套解释打底与核对。
  *
  * **标题名不是内容判据**：分工讲没讲清、回退措施有没有依据，读的是内容，由读者问题、
@@ -20,11 +20,22 @@
  * 本模块不读磁盘、不写文件、不输出 stdout，也不导入 story-build 入口。
  */
 import {
-  DIAGRAM_SYNTAXES, hasDiagram, norm, normalizeHeading, sectionBody, tablesIn,
+  DIAGRAM_SYNTAXES, EMPTY_SECTION_TEXT, hasDiagram, norm, normalizeHeading, sectionBody, tablesIn,
 } from './document.mjs';
 
-//: 写作设计选定的结构缺了时，报错多说这一句：它不是合同要求，改主意要回写作设计改。
-const PICKED = '——这是写作设计里选定的结构；改主意就同时改写作设计的结构选择';
+//: 骨架里定的表图缺了时，报错多说这一句：它不是合同要求，改主意就改骨架。
+const PICKED = '——这是写作设计骨架里定的结构；改主意就同时改骨架';
+//: 骨架里列的小节缺了时的两个出口。
+const SKELETON_EXITS = '——写作设计骨架里有它：补上它，或者先删掉骨架里那一行再提交';
+
+/** 正文里的 `####` 小节名（围栏里的不算）。 */
+function subHeadings(view) {
+  const inFence = (i) => (view?.fences ?? []).some(f => i >= f.from && i <= f.to);
+  return new Set(String(view?.text ?? '').split(/\r?\n/).flatMap((line, i) => {
+    const hit = !inFence(i) && /^####\s+(.+)$/.exec(line.trim());
+    return hit ? [normalizeHeading(hit[1])] : [];
+  }));
+}
 
 /** 一个图槽位叫什么：点名了类型的说类型，没点名的是任何一种图。 */
 const diagramName = (slot) => (slot.syntax
@@ -96,7 +107,13 @@ export function chapterStructureProblems(ch, view) {
   const problems = [];
   for (const want of requiredH3(ch)) {
     if (sectionBody(view, want.title) === null) {
-      problems.push(`「${ch.title}」缺「${want.title}」这一节${want.selected ? PICKED : ''}`);
+      problems.push(`「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : ''}`);
+    }
+  }
+  const subs = ch?.structure?.h4?.length ? subHeadings(view) : null;
+  for (const want of ch?.structure?.h4 ?? []) {
+    if (!subs.has(normalizeHeading(want.title))) {
+      problems.push(`「${ch.title}·${want.parent}」缺「${want.title}」这一小节（####）${SKELETON_EXITS}`);
     }
   }
   for (const slot of requiredTables(ch)) {
@@ -125,6 +142,8 @@ export function chapterStructureProblems(ch, view) {
 export function pickedStructureNames(ch) {
   const where = (at) => (at ? `「${at}」里的` : '章级');
   return [
+    ...requiredH3(ch).filter(h => h.selected).map(h => `「${h.title}」这一节`),
+    ...(ch?.structure?.h4 ?? []).map(h => `「${h.title}」这一小节`),
     ...requiredTables(ch).filter(t => t.selected)
       .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
     ...(ch?.structure?.diagrams ?? []).filter(d => d.selected)
@@ -135,31 +154,41 @@ export function pickedStructureNames(ch) {
 /**
  * 这一章从真源打的底 —— **打完就归作者**，位置与核对处同一份解释。
  *
- * 只保留三类：必要小节的标题、术语起始行与必要表的表头、附录五节与材料清单的贡献行。
- * 表头及小节名从合同与写作设计取；术语行/材料清单行来自输入（facts 已解析），这里
+ * 按骨架铺：骨架的小节标题树、每节的说明行（`guide` 由草稿生产者给出它的指引行格式）、
+ * 表头与作图提示放在骨架写的位置；合同另有、骨架没列的必要小节接在后面；
+ * 骨架写「不涉及」的章只放那一句。术语行/材料清单行来自输入（facts 已解析），这里
  * 不重读源文件。附录 A–D 不预填机器正文——那四节归投影，作者改的是真源。
- * 图不生成节点：选定的图只留一行作图提示（`diagramHint` 由草稿生产者给出它的指引行格式）。
+ * 图不生成节点：只留一行作图提示（`diagramHint`）。
  *
- * @param {object} ch 合同章（可已并入写作设计选定的结构）
+ * @param {object} ch 合同章（可已并入写作设计骨架）
  * @param {object} facts 入口解析好的当前输入：terms、materialListRows、materialListName
- * @param {{diagramHint?: (at: string) => string}} [options]
+ * @param {{diagramHint?: Function, guide?: (note: string) => string}} [options]
  * @returns {string[]} markdown 行
  */
-export function chapterSeedRows(ch, facts, { diagramHint } = {}) {
-  if (ch.appendix) return appendixSeedRows(ch, facts);
-  const rows = [];
-  const hint = (at) => {
-    const slot = (ch.structure?.diagrams ?? []).find(d => normalizeHeading(d.at) === normalizeHeading(at));
-    return slot && diagramHint ? [diagramHint(at, slot.syntax), ''] : [];
+export function chapterSeedRows(ch, facts, { diagramHint, guide } = {}) {
+  const sk = ch.structure?.skeleton;
+  const notes = (n) => (guide && n?.notes?.length ? [...n.notes.map(guide), ''] : []);
+  if (ch.appendix) return [...notes(sk), ...appendixSeedRows(ch, facts)];
+  if (sk && sk.notApplicable !== null) return [...notes(sk), EMPTY_SECTION_TEXT];
+  const same = (a, b) => normalizeHeading(a ?? '') === normalizeHeading(b ?? '');
+  const hint = (at, under = '') => {
+    const slot = (ch.structure?.diagrams ?? []).find(d => same(d.at, at) && same(d.under, under));
+    return slot && diagramHint ? [diagramHint(under || at, slot.syntax), ''] : [];
   };
-  const tables = requiredTables(ch).filter(t => t.seed);
-  rows.push(...hint(''));
-  for (const t of tables.filter(t => !t.at)) rows.push(...tableSeed(t, facts), '');
-  for (const h of requiredH3(ch)) {
-    rows.push(`### ${h.title}`, '', ...hint(h.title));
-    for (const t of tables.filter(t => normalizeHeading(t.at ?? '') === normalizeHeading(h.title))) {
-      rows.push(...tableSeed(t, facts), '');
+  const seeds = (at, under = '') => requiredTables(ch)
+    .filter(t => t.seed && same(t.at, at) && same(t.under, under))
+    .flatMap(t => [...tableSeed(t, facts), '']);
+  const rows = [...notes(sk), ...hint(''), ...seeds('')];
+  const done = new Set();
+  for (const s of sk?.sections ?? []) {
+    done.add(normalizeHeading(s.title));
+    rows.push(`### ${s.title}`, '', ...notes(s), ...hint(s.title), ...seeds(s.title));
+    for (const c of s.sections) {
+      rows.push(`#### ${c.title}`, '', ...notes(c), ...hint(s.title, c.title), ...seeds(s.title, c.title));
     }
+  }
+  for (const h of requiredH3(ch).filter(x => !done.has(normalizeHeading(x.title)))) {
+    rows.push(`### ${h.title}`, '', ...hint(h.title), ...seeds(h.title));
   }
   return rows;
 }
@@ -189,6 +218,10 @@ export function missingPickedSeeds(ch, view, { diagramHint } = {}) {
     rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.at, d.syntax), ''] : []));
   }
   for (const h of requiredH3(ch).filter(x => x.selected)) rows.push(...heading(h.title));
+  const subs = subHeadings(view);
+  for (const h of (ch.structure?.h4 ?? []).filter(x => !subs.has(normalizeHeading(x.title)))) {
+    rows.push(...heading(h.parent), `#### ${h.title}`, '');
+  }
   return rows;
 }
 

@@ -691,6 +691,15 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("`.backup/`", task)
         self.assertIn("提取稿", task)
 
+    def test_the_task_carries_the_recheck_list(self) -> None:
+        """审查拿到的回看清单与作者手里的是同一张：逐条核去向，不另编一份。"""
+        task = self.inject()
+        self.assertIn("### 回看清单", task)
+        self.assertIn("这句话材料里有吗", task.split("### 回看清单", 1)[1])
+        method = self.overlay_method()
+        for needle in ("回看清单逐条核去向", "撞点", "算没写依据"):
+            self.assertIn(needle, method, f"overlay 的审查提示里没有「{needle}」")
+
     def test_the_task_carries_the_contract_questions(self) -> None:
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         text = self.inject()

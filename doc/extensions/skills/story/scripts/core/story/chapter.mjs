@@ -31,6 +31,7 @@ import { relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages } from './language.mjs';
 import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { recheckItems, recheckRows } from './recheck.mjs';
 
 /**
  * 剥掉**草稿生产者自己写的**指导行 —— 只认 `story-draft:guide` 这一个标记。
@@ -155,8 +156,8 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
     const picked = pickedStructureNames(chapter);
     if (picked.length) {
       out.push(`「${chapter.title}」写的是「${EMPTY_SECTION_TEXT}」，写作设计却还为它选着`
-        + `${picked.join('、')}——两处说法冲突：确实不涉及，就在写作设计的结构选择里撤掉这几项；`
-        + '否则按设计把这一章写出来');
+        + `${picked.join('、')}——两处说法冲突：确实不涉及，就把写作设计骨架里这一章改成一行`
+        + '「- 不涉及：<理由>」，撤掉这几项；否则按骨架把这一章写出来');
     }
     return out;
   }
@@ -227,38 +228,39 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const rows = [];
   if (plan?.problems.length) {
     rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、Spec 与决策登记，`
-      + '写阅读主线、十章安排与结构选择；写完重跑'
+      + '写阅读主线与每章骨架；写完重跑'
       + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: ${planRel}；来源 ${originals}；需求分析 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；决策登记 `
-      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「二、动笔前：先有整篇写作设计」`);
+      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「二、动笔前：先写骨架」`);
   } else if (left.length) {
     const title = left[0];
     const at = (ctx.contract.chapters ?? [])
       .findIndex(c => normalizeHeading(c.title) === normalizeHeading(title));
     const draft = draftPath(ctx, at < 0 ? 0 : at, title);
     rows.push(`NEXT: 写「${title}」（还剩 ${left.length} 章待写）`
-      + '——先读写作设计里本章那一段、它的草稿头与当前已写的章，只补这一章独有的信息；'
+      + '——照草稿里的骨架写：先答每一节骨架里的问题，再补骨架没列的；'
       + `改完草稿跑 node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)} --chapter ${shellArg(title)}`
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}；${planRel} 里`
-      + `「${ctx.contract.chapters[at]?.id ?? title}」那一段；当前 ${storyRel} 里已写的章；`
+    rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}（骨架已铺在里面）；${planRel} 里`
+      + `「${ctx.contract.chapters[at]?.id ?? title}」的骨架；当前 ${storyRel} 里已写的章；`
       + `来源 ${originals}；方法见 ${guide} 的「五、十章各自怎么组织」`);
   } else {
-    rows.push('NEXT: 十章齐了——从来源核实际全文：对照原材料与来源初筛核覆盖、推演关键路径与决定、'
-      + '再核组织与表达；业务结论错了改 Spec 或决策登记，解释安排改写作设计，正文改草稿再跑 chapter 提交；'
-      + '全篇收口后跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
+    rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
+      + 'Spec、验收、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
+      + '处置完跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
+    rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
       + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；来源 ${originals}；草稿目录 `
       + `${relFromFeature(ctx, path.dirname(draftPath(ctx, 0, 'x')))}；`
-      + `方法见 ${guide} 的「四、写后核对」`);
+      + `方法见 ${guide} 的「四、回看」`);
   }
   rows.push(`RESULT: ${result}`);
   for (const w of warnings) rows.push(`  记一笔：${w}`);
+  if (!plan?.problems.length && !left.length) rows.push('', ...recheckRows(recheckItems(ctx, plan, storyText)));
   return `${rows.join('\n')}\n`;
 }
 
@@ -266,7 +268,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
  * 把一章的内容原子替换进 story.md —— **落盘只有这一条路**。
  *
  * 作者拿编辑工具直接改整篇时，「已完成的章一个字节没动」只是期望；经这条命令落盘，
- * 它是机械事实：替换的区间就是那一章，别处一个字节都碰不到。统稿也走它——
+ * 它是机械事实：替换的区间就是那一章，别处一个字节都碰不到。回看时改章也走它——
  * 要改第五章就替换第五章，不重新输出整篇：整篇重出是全有或全无，
  * 中途断了磁盘上什么都没有。
  *
@@ -298,7 +300,7 @@ export function cmdChapter(ctx) {
       + `${chapters.map(c => c.title).join('、')}`);
   }
   // 章是照写作设计写的：设计读不了就先不落盘——空壳时写下的章没有可核的依据，
-  // 选定的表图也无从核对。报错把设计缺在哪一次列全，改完再提交。
+  // 骨架里的小节与表图也无从核对。报错把设计缺在哪一次列全，改完再提交。
   const plan = readWritingPlan(ctx);
   if (plan.problems.length) {
     fail(`写作设计还读不了，「${title}」先不落盘（${path.basename(ctx.storyPath)} 没动）：\n`
