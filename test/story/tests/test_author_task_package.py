@@ -96,7 +96,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
             {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
         encoding="utf-8")
     flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--by", "human", "--basis", "夹具：现有材料就是全部")
+         "--basis", "夹具：现有材料就是全部")
     (src / ".positioning.json").write_text(json.dumps({
         "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
         "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
@@ -109,7 +109,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
          "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
         ensure_ascii=False), encoding="utf-8")
     flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-         "--by", "human", "--basis", "夹具：整体承载")
+         "--basis", "夹具：整体承载")
     flow("complete", "--from", "AR/story-src/design-draft.md")
 
 
@@ -226,7 +226,7 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         spec = self.feature_root / "spec" / "spec.md"
         if spec.exists():
             spec.unlink()
-        section = self.task_package().split("## 4c.", 1)[1]
+        section = self.task_package().split("## 4b.", 1)[1]
         self.assertIn("还没写成", section)
         self.assertIn("story-build skeleton", section, "没说清这些图什么时候给")
         self.assertNotIn("找回来", section)
@@ -236,13 +236,13 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         """远程单的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
         (self.feature_root / "AR" / "detail.json").write_text(
             json.dumps({"reqNo": FEATURE}, ensure_ascii=False), encoding="utf-8")
-        section = self.task_package().split("## 4b.", 1)[1].split("## 4c.", 1)[0]
+        section = self.task_package().split("## 4a.", 1)[1].split("## 4b.", 1)[0]
         self.assertIn("读不到 `SR/design.md`", section)
         self.assertIn("找回来", section)
 
     def test_a_local_ticket_without_a_system_design_is_not_a_loss(self) -> None:
         """本地单没有需求系统给的系统设计是正常的：照合同说「本需求没有」，不报丢件。"""
-        section = self.task_package().split("## 4b.", 1)[1].split("## 4c.", 1)[0]
+        section = self.task_package().split("## 4a.", 1)[1].split("## 4b.", 1)[0]
         self.assertIn("本需求没有 `SR/design.md`", section)
         self.assertNotIn("读不到", section)
 

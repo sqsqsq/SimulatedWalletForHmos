@@ -184,7 +184,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 |---|---|
 | 材料盘点后 / 需求分析后 | `python …/story_flow.py round --feature <AR>`（登记轮次并消费当时已有的侧车；两个时点各跑一次） |
 | **任何时候拿不准走到哪** | `python …/story_flow.py status --feature <AR>` → 看 `next` 与 `action` |
-| S3 每次关卡交互后 | `python …/story_flow.py decide --feature <AR> [--gate material_scope\|scope_decision\|split_carrier] --chosen <选项 key> --by human\|ai --basis "<用户原话>"` |
+| S3 每次关卡交互后 | `python …/story_flow.py decide --feature <AR> [--gate material_scope\|scope_decision\|split_carrier] --chosen <选项 key> --basis "<用户原话>"` |
 | S4 提取稿写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`（提交为 AR/design.md 并收口） |
 | **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
 | **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`，然后照常 `round` → `decide` → `complete`。它是唯一的回退出口，会留痕 |
@@ -237,7 +237,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 - **`--basis` 写人的原话**，不写你的转述——它是契约的审计价值所在；
 - **选项集必填，且 `--chosen` 必须是其中一项**：选的只能是摆出来的。只记选中项的话，
   「看过选项后选了不拆」与「压根没生成拆分选项」事后完全同形；
-- **`--by` 只有 `human` 一个取值**：三级关卡的决策没有代签这一档。留一个 `ai`，
+- **关卡只认人签**：`decide` 没有代签参数，脚本在记录里写 human。留一个代签档，
   配上「材料缺口时才停」这种条件式判据，后果是模型判「材料足够」就把关卡记掉，
   材料补充环节整个被跳过。停等的开关不能交给被停的那一方；
 - **`decide` 的退出码回答「能不能按这个选择往下走」**：`0` 能；`2` 不能——选择已记录，

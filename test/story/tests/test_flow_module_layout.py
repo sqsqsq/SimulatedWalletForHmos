@@ -182,7 +182,7 @@ class OneRuleFindsEveryResource(unittest.TestCase):
             ensure_ascii=False), encoding="utf-8")
         out = self.payload(self.flow("decide", "--gate", "material_scope",
                                      "--chosen", made_up,
-                                     "--by", "human", "--basis", "用户原话"))
+                                     "--basis", "用户原话"))
         self.assertFalse(out["success"], out)
         for key in keys:
             self.assertIn(key, out["error"], f"报错没列出合同里的 {key}")

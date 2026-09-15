@@ -1,12 +1,12 @@
-﻿"""S4 提交 —— **输入与输出是两份文件**。
+"""S4 提交 —— **输入与输出是两份文件**。
 
 `AR/design.md` 是上游给进来的输入件，也是一份登记在案的材料。S4 的提取稿曾经直接
 覆盖它：覆盖之后材料指纹变了，流程判定「材料已经变了」，把刚要收口的这一轮推回
 「重新盘点」——自己的输出把自己推回了未定状态，而永久忽略这份材料又会让上游真的
 更新时无人发现。
 
-所以提取稿另落一份，由 `complete --from` 提交：先把被覆盖的上游原话留存到
-`AR/story-src/sources/ar/rN.md`，再覆盖，再把材料基准挪到覆盖之后的现状。
+所以提取稿另落一份，由 `complete --from` 提交：被覆盖的上游那一份先进 `.backup/`
+（与导入覆盖正文同一条退路），再覆盖，再把材料基准挪到覆盖之后的现状。
 这一份锁的是这条顺序、它的失败语义，以及「哪些差异算提交自己写的、哪些仍算材料变了」。
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ class S4Case(unittest.TestCase):
         self.design = self.feature_root / "AR" / "design.md"
         self.design.write_text(UPSTREAM_AR, encoding="utf-8")
         self.src = self.feature_root / "AR" / "story-src"
-        self.keep = self.src / "sources" / "ar" / "r1.md"
+        self.backup_dir = self.feature_root / ".backup"
 
     # -- 驱动 ---------------------------------------------------------------
 
@@ -84,6 +84,17 @@ class S4Case(unittest.TestCase):
     def next_of(self) -> str:
         return self.ok("status")["next"]
 
+    def backups(self) -> list[Path]:
+        """被覆盖的 `AR/design.md` 在 `.backup/` 里的全部副本。"""
+        return sorted(self.backup_dir.glob("AR-design.md-*.md"))
+
+    def backup_upstream(self, text: str = UPSTREAM_AR) -> Path:
+        """把现场摆成「备份已经写了」——断点之前那一步的形态。"""
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        path = self.backup_dir / "AR-design.md-20260915000000.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
     def gate_options(self, gate: str) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
         options = ([dict(o) for o in material_options()]
@@ -99,12 +110,12 @@ class S4Case(unittest.TestCase):
         self.ok("round")
         self.gate_options("material_scope")
         self.ok("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-                "--by", "human", "--basis", "用户回复：现有材料就是全部")
+                "--basis", "用户回复：现有材料就是全部")
         self.write_analysis()
         self.ok("round")
         self.gate_options("scope_decision")
         self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-                "--by", "human", "--basis", "用户回复：整体承载")
+                "--basis", "用户回复：整体承载")
         if with_draft:
             self.write_draft()
 
@@ -130,6 +141,20 @@ class S4Case(unittest.TestCase):
             -> subprocess.CompletedProcess:
         return self.flow("complete", "--from", source)
 
+    def second_round_ready(self) -> None:
+        """第一轮收口后重开，第二轮由别的材料开出、AR 没换。"""
+        self.ready_to_commit()
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("reopen")
+        self.prd.write_text("# 产品需求\n\n背景。\n\n第二轮补的。\n", encoding="utf-8")
+        self.ok("round")                       # 第 2 轮：没摆第一级选项就不停在那一级
+        self.write_analysis()
+        self.ok("round")
+        self.gate_options("scope_decision")
+        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
+                "--basis", "用户回复：整体承载")
+        self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
+
 
 class TheCandidateDoesNotReopenItsOwnRound(S4Case):
     """提交自己写下的那一笔差异，不该被读成「材料变了」。"""
@@ -145,6 +170,21 @@ class TheCandidateDoesNotReopenItsOwnRound(S4Case):
                          "提交的必须是模型写的那一份，脚本不改一个字节")
         self.assertTrue(self.next_of().startswith("spec_"),
                         "收口之后该进 spec，而不是回去重新盘点材料")
+        self.assertEqual({"human"}, {g["by"] for r in self.contract()["rounds"]
+                                     for g in r.get("gates", [])},
+                         "关卡记录的签署者不是人")
+
+    def test_the_overwritten_upstream_goes_to_the_backup(self) -> None:
+        """上游预填被提取稿盖掉之前留一份：`.backup/` 是覆盖正文的通用退路。"""
+        self.ready_to_commit()
+        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual(1, len(self.backups()), "覆盖上游输入之前没有备份")
+        self.assertEqual(UPSTREAM_AR, self.backups()[0].read_text(encoding="utf-8"))
+        self.assertEqual(self.backups()[0].relative_to(self.feature_root).as_posix(),
+                         result["backup"])
+        self.assertEqual({"sha256"}, set(self.contract()["design"]),
+                         "契约里的提交登记只留身份，不再指向原件")
+        self.assertFalse((self.src / "sources").exists(), "按轮次留存的目录又长回来了")
 
     def test_a_later_round_sees_no_material_change(self) -> None:
         """收口之后再盘点一次：材料基准已随提交挪到覆盖之后，不该开出新一轮。"""
@@ -160,8 +200,7 @@ class TheCandidateDoesNotReopenItsOwnRound(S4Case):
         self.ok("complete", "--from", "AR/story-src/design-draft.md")
         again = self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertFalse(again["committed"], "重复成功的命令应当报已完成")
-        self.assertEqual(["r1.md"], sorted(p.name for p in self.keep.parent.iterdir()),
-                         "第二次提交把自己的输出又留存成了一份原输入")
+        self.assertEqual(1, len(self.backups()), "第二次提交把自己的输出又备份了一份")
 
     def test_swapping_the_draft_after_the_close_needs_reopen(self) -> None:
         """收口之后下游就在读 AR/design.md：换一份要显式 reopen，不能悄悄盖过去。"""
@@ -193,126 +232,102 @@ class RealMaterialChangesAreStillFound(S4Case):
         self.design.write_text(UPSTREAM_AR + "\n- 又加了一条。\n", encoding="utf-8")
         proc = self.commit()
         self.assertEqual(1, proc.returncode)
-        self.assertFalse(self.keep.is_file(), "预检失败却留存了一份原输入")
+        self.assertEqual([], self.backups(), "预检失败却写了备份")
         self.assertEqual("in_progress", self.contract()["status"])
 
     def test_a_change_during_a_retry_blocks_it(self) -> None:
         """覆盖已经发生、其余材料又变了：不认这个差异，也不重置基准。"""
         self.ready_to_commit()
-        self.half_commit()
+        self.backup_upstream()
+        self.design.write_text(DRAFT, encoding="utf-8")
         self.prd.write_text("# 产品需求\n\n背景。\n\n中途补的。\n", encoding="utf-8")
         proc = self.commit()
         self.assertEqual(1, proc.returncode)
         self.assertIn("材料", proc.stderr)
         self.assertEqual("in_progress", self.contract()["status"])
 
-    def half_commit(self) -> None:
-        """把现场摆成「留存与覆盖都做完了，收口没写成」——中途断掉的那个形态。"""
-        self.keep.parent.mkdir(parents=True, exist_ok=True)
-        self.keep.write_bytes(self.design.read_bytes())
-        self.design.write_text(DRAFT, encoding="utf-8")
-
 
 class InterruptedCommitsRetryTheSameCommand(S4Case):
     """中途断掉之后重跑同一条命令：不回滚、不另记进度，从磁盘现状认出做到哪了。"""
 
-    def half_commit(self) -> None:
-        self.keep.parent.mkdir(parents=True, exist_ok=True)
-        self.keep.write_bytes(self.design.read_bytes())
-        self.design.write_text(DRAFT, encoding="utf-8")
-
     def test_retry_after_the_overwrite_succeeds(self) -> None:
         self.ready_to_commit()
-        self.half_commit()
+        kept = self.backup_upstream()
+        self.design.write_text(DRAFT, encoding="utf-8")
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"])
-        self.assertEqual(UPSTREAM_AR, self.keep.read_text(encoding="utf-8"),
-                         "重试把留存件覆盖掉了——上游原话只在那里还找得到")
+        self.assertEqual([kept], self.backups(), "重试又写了一份备份")
+        self.assertEqual(kept.relative_to(self.feature_root).as_posix(), result["backup"])
+        self.assertEqual(UPSTREAM_AR, kept.read_text(encoding="utf-8"),
+                         "重试把备份改掉了——上游原话只在那里还找得到")
 
     def test_retry_after_an_edited_draft_succeeds(self) -> None:
-        """断点之后模型又改了一句提取稿：上游原话还在留存件里，这一笔仍是提交自己写的。
+        """断点之后模型又改了一句提取稿：上游原话还在备份里，这一笔仍是提交自己写的。
 
         只认「候选一个字节没变」的话，改过稿就走非重试判据，自己上一次写下的覆盖被
         判成材料变化，报错还指路 `round`——而 `round` 在未收口态照常开新一轮，把半成品
-        候选登记成 AR 材料；下一轮收口再把它写成原输入，派生稿就成了上游证据。
+        候选登记成 AR 材料。
         """
         self.ready_to_commit()
-        self.half_commit()
+        kept = self.backup_upstream()
+        self.design.write_text(DRAFT, encoding="utf-8")
         changed = DRAFT.replace("端侧承载签约入口与状态展示。", "断点之后又改了一句。")
         self.write_draft(changed)
         rounds_before = len(self.contract()["rounds"])
-        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"])
-        self.assertEqual(UPSTREAM_AR, self.keep.read_text(encoding="utf-8"),
-                         "上游原话被盖掉了——覆盖之后只有那里还找得到")
+        self.assertEqual([kept], self.backups())
         self.assertEqual(changed, self.design.read_text(encoding="utf-8"),
                          "提交上去的该是改过的那一份")
         self.assertEqual(rounds_before, len(self.contract()["rounds"]),
                          "自己写下的那一笔差异被读成材料变化，开出了新一轮")
 
     def test_a_half_written_design_is_still_recoverable(self) -> None:
-        """覆盖写到一半断掉：盘上那一份既不是原输入也不是完整候选，重跑仍要能收口。
-
-        这是「不要求盘上是某个已知形态」的理由——要求已知形态，唯一的恢复路径就没了。
-        """
+        """覆盖写到一半断掉：盘上那一份既不是原输入也不是完整候选，重跑仍要能收口。"""
         self.ready_to_commit()
-        self.keep.parent.mkdir(parents=True, exist_ok=True)
-        self.keep.write_bytes(self.design.read_bytes())
+        self.backup_upstream()
         self.design.write_text(DRAFT[: len(DRAFT) // 2], encoding="utf-8")
-        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"])
         self.assertEqual(DRAFT, self.design.read_text(encoding="utf-8"))
 
-    def test_retry_without_a_kept_source_refuses(self) -> None:
-        """覆盖发生了、原输入却没留存：这份 AR 的来历说不清，不能当自己的写入放过。"""
+    def test_retry_without_a_backup_refuses(self) -> None:
+        """覆盖发生了、上游那一份却没有备份：这份 AR 的来历说不清，不能当自己的写入放过。"""
         self.ready_to_commit()
-        self.design.write_text(DRAFT, encoding="utf-8")     # 只覆盖，没留存
+        self.design.write_text(DRAFT, encoding="utf-8")     # 只覆盖，没备份
         proc = self.commit()
         self.assertEqual(1, proc.returncode)
         self.assertIn("来历", proc.stderr)
         self.assertEqual("in_progress", self.contract()["status"])
 
-    def test_a_conflicting_kept_source_refuses(self) -> None:
-        """同一轮的原输入只有一份：留存件已在而内容不同，停下来看，别让覆盖抹掉另一份。"""
+    def test_an_unrelated_backup_does_not_count_as_this_input(self) -> None:
+        """`.backup/` 里别的内容不是本次被覆盖的那一份：按内容认，不按文件在不在认。"""
         self.ready_to_commit()
-        self.keep.parent.mkdir(parents=True, exist_ok=True)
-        self.keep.write_text("# 另一份原输入\n", encoding="utf-8")
-        proc = self.commit()
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("只有一份", proc.stderr)
-        self.assertEqual(UPSTREAM_AR, self.design.read_text(encoding="utf-8"))
+        self.backup_upstream("# 很早以前的另一份\n")
+        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        texts = [p.read_text(encoding="utf-8") for p in self.backups()]
+        self.assertIn(UPSTREAM_AR, texts, "被覆盖的上游那一份没进备份")
+        self.assertEqual(UPSTREAM_AR, (self.feature_root / result["backup"])
+                         .read_text(encoding="utf-8"))
 
 
-class OnlyRealUpstreamInputIsKept(S4Case):
-    """留存的是上游给进来的东西——空骨架与自己上一轮的提取稿都不是。"""
+class OnlyRealUpstreamInputIsBackedUp(S4Case):
+    """备份的是上游给进来的东西——空骨架与自己上一轮的提取稿都不是。"""
 
-    def test_the_empty_skeleton_is_not_kept_as_a_source(self) -> None:
+    def test_the_empty_skeleton_is_not_backed_up(self) -> None:
         self.design.unlink()                       # 让 init 落它自己的空骨架
         self.ready_to_commit()
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertIsNone(result["origin"], "空骨架被留存成了上游输入")
-        self.assertFalse(self.keep.exists())
+        self.assertIsNone(result["backup"], "空骨架被当成上游输入备份了")
+        self.assertEqual([], self.backups())
 
-    def test_a_new_round_inherits_the_first_rounds_origin(self) -> None:
-        """第二轮由别的材料开出、AR 没换：原输入仍是第一轮那一份，不再存一份派生稿。"""
-        self.ready_to_commit()
-        self.ok("complete", "--from", "AR/story-src/design-draft.md")
-        self.ok("reopen")
-        self.prd.write_text("# 产品需求\n\n背景。\n\n第二轮补的。\n", encoding="utf-8")
-        self.ok("round")                       # 第 2 轮：没摆第一级选项就不停在那一级
-        self.write_analysis()
-        self.ok("round")
-        self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-                "--by", "human", "--basis", "用户回复：整体承载")
-        self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
+    def test_a_new_round_does_not_back_up_its_own_extract(self) -> None:
+        """第二轮由别的材料开出、AR 没换：被覆盖的是上一轮的提取稿，不再备份一份派生稿。"""
+        self.second_round_ready()
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"],
-                         "第二轮把自己上一轮的提取稿当成了上游原话")
-        self.assertFalse((self.keep.parent / "r2.md").exists())
+        self.assertIsNone(result["backup"], "第二轮把自己上一轮的提取稿当成了上游输入")
+        self.assertEqual(1, len(self.backups()))
+        self.assertEqual(UPSTREAM_AR, self.backups()[0].read_text(encoding="utf-8"))
 
     def test_after_reopen_with_nothing_changed_the_next_step_is_to_close_again(self) -> None:
         """范围与材料都没变：重开之后下一步就是重新收口——不是重走关卡，也不是直接去登记。"""
@@ -330,7 +345,7 @@ class PrecheckFailuresChangeNothing(S4Case):
         self.assertEqual(1, proc.returncode, proc.stdout)
         self.assertEqual(UPSTREAM_AR, self.design.read_text(encoding="utf-8"))
         self.assertEqual("in_progress", self.contract()["status"])
-        self.assertFalse(self.keep.exists())
+        self.assertEqual([], self.backups())
 
     def test_a_missing_candidate_says_where_to_write_it(self) -> None:
         self.ready_to_commit(with_draft=False)
@@ -389,7 +404,7 @@ class TheFinalSaveFailureStillRecovers(S4Case):
     """materials 已刷新、流程契约未保存的断点：重跑同一条命令仍能收口。
 
     保存是提交的最后一步，它失败时磁盘上是「清单新基准、流程旧基准」的中间态。
-    重试要凭留存件认出它——把 AR 换回留存件那一版还能复现旧基准，
+    重试要凭被覆盖那一份的身份认出它——把 AR 换回那一版还能复现旧基准，
     就证明除自己提交外材料未变，直接补上这次保存；同窗口里别的材料变了仍要拦。
     """
 
@@ -410,12 +425,11 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.ready_to_commit()
         self.fail_the_final_save()
         rounds_before = len(self.contract()["rounds"])
-        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"],
-                         "恢复后的 origin 仍要指真实留存件")
-        self.assertEqual(UPSTREAM_AR, self.keep.read_text(encoding="utf-8"),
-                         "恢复不得盖掉留存件——上游原话只在那里")
+        self.assertEqual(1, len(self.backups()), "恢复又写了一份备份")
+        self.assertEqual(UPSTREAM_AR, self.backups()[0].read_text(encoding="utf-8"),
+                         "恢复不得改掉备份——上游原话只在那里")
         self.assertEqual(DRAFT, self.design.read_text(encoding="utf-8"))
         self.assertEqual(rounds_before, len(self.contract()["rounds"]),
                          "恢复不得开出新一轮")
@@ -430,46 +444,24 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.assertIn("对不上", proc.stderr)
         self.assertEqual("in_progress", self.contract()["status"])
 
-    def test_the_skeleton_case_recovers_with_no_origin(self) -> None:
-        """空骨架场景的同一断点：origin 为 None，不把指引留存成上游，也不开新轮。
-
-        被覆盖的那份是 init 落的空骨架——没有原输入可指，恢复直接补登记；
-        身份解析与留存件场景共用同一份枚举，不逐场景另判。
-        """
+    def test_the_skeleton_case_recovers_without_a_backup(self) -> None:
+        """空骨架场景的同一断点：被覆盖的是 init 落的空骨架，没有要备份的，恢复直接补登记。"""
         self.design.unlink()                       # 让 init 落它自己的空骨架
         self.ready_to_commit()
         self.fail_the_final_save()
-        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertIsNone(result["origin"])
-        self.assertFalse(self.keep.exists(), "空骨架被留存成了上游输入")
+        self.assertEqual([], self.backups(), "空骨架被当成上游输入备份了")
         self.assertEqual(1, len(self.contract()["rounds"]), "恢复不得开出新一轮")
         self.assertEqual(DRAFT, self.design.read_text(encoding="utf-8"))
 
-    def test_the_registered_derivation_case_recovers_with_inherited_origin(self) -> None:
-        """已登记派生稿场景的同一断点：沿上一轮 origin，不把派生稿留成上游。
-
-        第二轮被覆盖的那份是第一轮的提取稿（契约里登记过）：恢复沿用它的
-        origin——原输入仍是 r1 那一份，不开新轮、不写 r2。
-        """
-        self.ready_to_commit()
-        self.ok("complete", "--from", "AR/story-src/design-draft.md")
-        self.ok("reopen")
-        self.prd.write_text("# 产品需求\n\n背景。\n\n第二轮补的。\n", encoding="utf-8")
-        self.ok("round")
-        self.write_analysis()
-        self.ok("round")
-        self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-                "--by", "human", "--basis", "用户回复：整体承载")
-        self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
+    def test_the_registered_extract_case_recovers_without_a_new_backup(self) -> None:
+        """已登记提取稿场景的同一断点：被覆盖的是上一轮的提取稿，恢复不再备份派生稿。"""
+        self.second_round_ready()
         self.fail_the_final_save()
-        result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
+        self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
-        self.assertEqual("AR/story-src/sources/ar/r1.md", result["origin"],
-                         "第二轮的原输入仍是第一轮留存的那一份")
-        self.assertFalse((self.keep.parent / "r2.md").exists(),
-                         "派生稿被留存成了上游输入")
+        self.assertEqual(1, len(self.backups()), "派生稿被当成上游输入备份了")
         self.assertEqual(2, len(self.contract()["rounds"]), "恢复不得开出新一轮")
 
 
@@ -517,10 +509,9 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         self.assertEqual(len(refreshes) + 1, len(builds),
                          f"提交期间取了 {len(builds)} 次材料事实，写入前应当只取一次")
 
-
     def decide_now(self, gate: str, chosen: str, scope_text: str = "") -> tuple[dict, int]:
         """在进程内记一条关卡决策——要数的是**这一条命令**里读了几次磁盘。"""
-        args = argparse.Namespace(gate=gate, chosen=chosen, by="human",
+        args = argparse.Namespace(gate=gate, chosen=chosen,
                                   basis=f"用户回复：{chosen}", scope_text=scope_text)
         return cmd_decide(self.feature_root, args)
 
@@ -555,7 +546,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
     def second_gate_ready(self, options: list[dict] | None = None) -> None:
         self.first_gate_ready()
         self.ok("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-                "--by", "human", "--basis", "用户回复：现有材料就是全部")
+                "--basis", "用户回复：现有材料就是全部")
         self.write_analysis()
         if options is not None:
             self.write_scope_options(options)
@@ -580,7 +571,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
             {"key": "by_capability", "label": "按能力切两份", "parts": parts},
         ])
         self.ok("decide", "--gate", "scope_decision", "--chosen", "by_capability",
-                "--by", "human", "--basis", "用户回复：按能力切")
+                "--basis", "用户回复：按能力切")
         (self.src / ".split-parts.json").write_text(json.dumps(
             [{"seq": 1, "carrier": FEATURE, "scope": "本单承载签约入口", "depends_on": []},
              {"seq": 2, "carrier": "AR90002", "scope": "兄弟单承载补卡", "depends_on": [1]}],

@@ -19,9 +19,9 @@
  *
  * | 命令 | 做什么 |
  * |------|--------|
- * | `init`  | 检查材料齐备；建 `decisions.json` 骨架 |
- * | `skeleton` | 建写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
+ * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
+ * | `project` | 附录机器区按当前真源（spec §9、knowledge-use.yaml）重投 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
@@ -46,11 +46,9 @@ import { cmdBuild, decisionsMissing } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
-import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
 
-const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter',
-  'project', 'review-task'];
+const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project'];
 
 function parseArgs(argv) {
   const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
@@ -217,20 +215,6 @@ function cmdSkeleton(ctx) {
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
-/**
- * 读者审查的任务书 —— 注入给 verifier 的就是这一份，这里只是让人也看得见。
- *
- * 任务定义是这一项成不成的关键：任务里没有的问题，审查者不会去问。
- * 所以任务书该是可读、可评审的东西，不该只存在于某一次 prompt 里。
- * **这个入口要带上方法**（`withMethod`）：它是人自己看的那一份，手上没有宿主装配的
- * overlay。pre_verifier 那一条不带——宿主已经把 overlay 装进任务，带了就是两份。
- */
-function cmdReviewTask(ctx) {
-  process.stdout.write(
-    readerReviewTask(ctx.projectRoot, ctx.args.feature, 'story_reader_review',
-      { withMethod: true }) + '\n');
-}
-
 function main() {
   const args = parseArgs(process.argv);
   if (!COMMANDS.includes(args.command)) {
@@ -251,7 +235,6 @@ function main() {
   if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
   else if (args.command === 'project') cmdProject(ctx);
-  else if (args.command === 'review-task') cmdReviewTask(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);

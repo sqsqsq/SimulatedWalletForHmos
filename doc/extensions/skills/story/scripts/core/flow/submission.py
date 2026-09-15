@@ -1,7 +1,8 @@
-"""S4 提取稿的提交（`complete`）：候选核对、三份输入身份与原件留存。
+"""S4 提取稿的提交（`complete`）：候选核对、被覆盖输入的身份与备份。
 
-提交前先核候选是不是还是空骨架、章号是不是连续；提交时把被覆盖的那份上游原件按轮次
-留存下来——提交之后 `AR/design.md` 里是本轮提取稿，上游原话只在 sources 里还找得到。
+提交前先核候选是不是还是空骨架、章号是不是连续；提交时被覆盖的那份上游 AR 先进 `.backup/`
+——与导入覆盖正文同一条退路。提交之后 `AR/design.md` 里是本轮提取稿，上游预填的每一条
+由提取稿承接（`rules/ar_design_init.md`），被覆盖前的原文在备份里。
 """
 from __future__ import annotations
 
@@ -9,11 +10,10 @@ import re
 from hashlib import sha256
 from pathlib import Path
 
-from materials import registry
+from materials import importer, registry
 
 from flow.state import (
-    AR_SOURCES, DESIGN, DESIGN_DRAFT, FlowError, S4_STEPS, after_complete, load, log, now,
-    require, save)
+    DESIGN, DESIGN_DRAFT, FlowError, S4_STEPS, after_complete, load, log, now, require, save)
 from flow.inputs import ar_design_skeleton, read_ids
 from flow.routing import material_state, scope_step
 
@@ -60,9 +60,8 @@ def section_numbers(text: str) -> list[int]:
 def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
     """这份 AR/design.md 还是 `init` 落的空骨架。
 
-    空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引。把它留存成
-    「本轮外部输入」的话，后续按原件读上游原话的作者与审查，
-    就会把一份写给模型的指引当成需求原话。
+    空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引：它被覆盖不必备份，
+    交上来当提取稿也不算写过。
     """
     return text.replace("\r\n", "\n") == ar_design_skeleton(read_ids(feature_root, feature))
 
@@ -87,49 +86,36 @@ def candidate_problems(feature_root: Path, feature: str, text: str) -> list[str]
     return []
 
 
-def ar_input_identities(feature_root: Path, feature: str, contract: dict,
-                        keep: Path) -> list[tuple[str, str | None]]:
-    """被覆盖前那一份 AR 的合法身份：`(内容摘要, 原输入定位)` 逐一列出。
+def known_identities(feature_root: Path, feature: str, contract: dict) -> list[str]:
+    """被覆盖前那一份 AR 可以是谁：逐一列出内容摘要。
 
-    三类来源各有确定证据——本轮已留存的原件、`init` 落的空骨架（不是外部输入，
-    定位为 None；行尾两种形态都认）、契约里已登记的上一轮提取稿（沿它自己的
-    origin）。这是「被覆盖的 AR 是谁」仅有的答案集：中间态识别与原输入定位
-    共用这一份枚举，出现新场景时加在这里，不在调用方各自猜。
+    三类来源各有确定证据——`.backup/` 里已备份的上游那一份、`init` 落的空骨架（行尾两种
+    形态都认）、契约里已登记的上一轮提取稿。这是「被覆盖的 AR 是谁」仅有的答案集：
+    中间态识别与来历核对共用这一份枚举，出现新场景时加在这里，不在调用方各自猜。
     """
-    keep_rel = keep.relative_to(feature_root).as_posix()
-    identities: list[tuple[str, str | None]] = []
-    if keep.is_file():
-        identities.append((registry.file_digest(keep), keep_rel))
+    shas = [registry.file_digest(p)
+            for p in importer.backups_of(feature_root, feature_root / Path(*DESIGN))]
     skeleton = ar_design_skeleton(read_ids(feature_root, feature))
     for text in (skeleton, skeleton.replace("\n", "\r\n")):
-        identities.append(("sha256:" + sha256(text.encode("utf-8")).hexdigest()[:16], None))
-    registered = contract.get("design") or {}
-    if registered.get("sha256"):
-        identities.append((registered["sha256"], registered.get("origin")))
-    return identities
+        shas.append("sha256:" + sha256(text.encode("utf-8")).hexdigest()[:16])
+    registered = (contract.get("design") or {}).get("sha256")
+    if registered:
+        shas.append(registered)
+    return shas
 
 
-def prior_ar(feature_root: Path, feature: str, contract: dict,
-             keep: Path, prior_sha: str | None) -> str | None:
-    """被这次提交覆盖掉的那一份 AR，它的原输入定位。
-
-    身份枚举见 `ar_input_identities`：留存件、空骨架、已登记提取稿三类各有
-    确定证据，都对不上就说明这份 AR 的来历说不清——调用方据此停下，
-    不能把一份来历不明的文件默认当成上游输入存进来源。
-    """
-    for sha, origin in ar_input_identities(feature_root, feature, contract, keep):
-        if sha == prior_sha:
-            return origin
-    raise FlowError(
-        f"AR/design.md 的来历说不清（摘要 {prior_sha}）：既不是本轮已留存的原件，"
-        "也不是 init 的空骨架或契约里登记过的提取稿。先确认它是谁写的，"
-        "再跑收口——把一份来历不明的文件存成上游输入，下游就会拿它当需求原话")
+def backup_holding(feature_root: Path, sha: str | None) -> Path | None:
+    """`.backup/` 里内容就是 `sha` 的那一份被覆盖的 AR；没有返回 None。"""
+    for path in importer.backups_of(feature_root, feature_root / Path(*DESIGN)):
+        if sha and registry.file_digest(path) == sha:
+            return path
+    return None
 
 
 def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict:
     """把提取稿提交为 AR/design.md 并收口。
 
-    顺序固定：**留存原输入 → 覆盖 AR/design.md → 刷新材料与本轮基准 → 记 complete**。
+    顺序固定：**备份上游那一份 → 覆盖 AR/design.md → 刷新材料与本轮基准 → 记 complete**。
     `complete` 最后写，所以中途断掉时状态仍是未收口，重跑同一条命令即可——
     每一步都能从磁盘现状认出自己做没做过，不靠回滚副本，也不另记一份进度。
     """
@@ -162,18 +148,17 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         live = registry.build(feature_root)
     except registry.MaterialError as exc:
         raise FlowError(str(exc)) from exc
-    keep = feature_root / Path(*AR_SOURCES) / f"r{current.get('round', 1)}.md"
-    keep_rel = keep.relative_to(feature_root).as_posix()
+    identities = known_identities(feature_root, feature, contract)
     # 本轮登记的那一版 AR/design.md 的身份。**清单可能已经按提交后的现状刷新过**
-    # （断点落在刷新之后、契约保存之前）：那时被覆盖的那一份在三类合法身份里，
-    # 哪一个换回 AR 那一格还能复现旧基准，哪一个就是本轮登记过的原输入——
-    # 「除自己提交外材料未变」由此有确定答案。身份枚举与 prior_ar 共用同一份。
+    # （断点落在刷新之后、契约保存之前）：那时被覆盖的那一份在合法身份里，
+    # 哪一个换回 AR 那一格还能复现旧基准，哪一个就是本轮登记过的输入——
+    # 「除自己提交外材料未变」由此有确定答案。
     prior_sha = None
     refreshed_unsaved = False
     if recorded.get("digest") == base:
         prior_sha = registry.source_sha(recorded, rel)
     else:
-        for sha, _origin in ar_input_identities(feature_root, feature, contract, keep):
+        for sha in identities:
             if sha and registry.digest_with(live, rel, sha) == base:
                 prior_sha = sha
                 refreshed_unsaved = True
@@ -182,16 +167,15 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         raise FlowError(
             f"材料清单（{recorded.get('digest')}）与本轮登记的基准（{base}）对不上："
             "先跑 `story_flow.py round` 让轮次与清单归位，再收口")
-    kept_is_prior = keep.is_file() and prior_sha is not None \
-        and registry.file_digest(keep) == prior_sha
-    # 覆盖已经发生过——这是同一条命令的重试。**判据是原输入还在不在**，不是候选一个
-    # 字节没变：断点可能落在覆盖写到一半，那一刻盘上既不是原输入也不是完整候选；
-    # 重跑之前又改一句提取稿也是正常的。留存件在、且摘要等于本轮登记的那一版，
+    kept = backup_holding(feature_root, prior_sha)
+    # 覆盖已经发生过——这是同一条命令的重试。**判据是上游那一份还找不找得到**，不是候选
+    # 一个字节没变：断点可能落在覆盖写到一半，那一刻盘上既不是原输入也不是完整候选；
+    # 重跑之前又改一句提取稿也是正常的。备份里有摘要等于本轮登记那一版的文件，
     # 就证明上游原话已经保住，此后 `AR/design.md` 里是什么都是这条命令自己的中间产物。
     #
-    # 反过来，只覆盖没留存时这里判不出重试：那份 AR 的来历没有证据，
+    # 反过来，只覆盖没备份时这里判不出重试：那份 AR 的来历没有证据，
     # 认成自己的写入等于把本轮真实的材料变化盖掉。
-    retry = design_bytes == cand_bytes or kept_is_prior or refreshed_unsaved
+    retry = design_bytes == cand_bytes or kept is not None or refreshed_unsaved
 
     # 收件箱里还躺着原件时不收口：那时定的范围建立在一份不全的材料上。
     # 用的是上面那份 live——同一条命令、同一个写入前时点，不再把同一批材料转第二遍。
@@ -219,28 +203,23 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     problems = candidate_problems(feature_root, feature, cand_text)
     if problems:
         raise FlowError("提取稿还不能提交：" + "；".join(problems))
+    if retry and prior_sha not in identities:
+        raise FlowError(
+            f"AR/design.md 的来历说不清（摘要 {prior_sha}）：既不是 .backup/ 里已备份的上游输入，"
+            "也不是 init 的空骨架或契约里登记过的提取稿。先确认它是谁写的，再跑收口——"
+            "把一份来历不明的覆盖当成自己的写入放过，本轮真实的材料变化就被盖掉了")
 
-    registered = contract.get("design") or {}
     done: list[str] = []
     try:
         if retry:
-            origin = prior_ar(feature_root, feature, contract, keep, prior_sha)
-        elif design_bytes is None \
+            saved = kept
+        elif design_bytes is None or prior_sha == (contract.get("design") or {}).get("sha256") \
                 or is_ar_skeleton(feature_root, feature,
                                   design_bytes.decode("utf-8-sig", errors="replace")):
-            origin = None                        # 空骨架不是上游给的东西，没什么可留存
-        elif registered.get("sha256") == prior_sha:
-            origin = registered.get("origin")    # 是上一轮的提取稿：沿用它所指的原输入
-        elif keep.is_file():
-            raise FlowError(
-                f"{keep_rel} 已存在，内容却与当前 AR/design.md 不同：同一轮的原输入"
-                "只有一份。先确认这一轮到底是哪一份，别让覆盖抹掉另一份")
+            saved = None     # 空骨架与上一轮的提取稿都不是上游给的东西，没什么可备份
         else:
-            # 上游这一轮给了新的 AR：先留存，再覆盖。覆盖之后上游原话只在这里还找得到。
-            keep.parent.mkdir(parents=True, exist_ok=True)
-            keep.write_bytes(design_bytes)
-            done.append(keep_rel)
-            origin = keep_rel
+            saved = importer.backup(feature_root, design_path)
+            done.append(saved.relative_to(feature_root).as_posix())
 
         if design_bytes != cand_bytes:
             design_path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,23 +231,23 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
                                 "digest": manifest["digest"]}
         done.append("/".join(registry.MANIFEST))
 
-        # 收口时的 design.md 身份登记：`sha256` 用于认出「上一轮的提取稿」——
-        # 重试与跨轮的原输入定位都拿它对身份；`origin` 指出它盖掉的原输入在哪。
-        # 它不是冻结比对基准：归档会用评审载体覆盖这份文件，拿登记哈希去比
+        # 收口时的 design.md 身份登记：`sha256` 用于认出「上一轮的提取稿」——重试与下一轮
+        # 提交都拿它对身份。它不是冻结比对基准：归档会用评审载体覆盖这份文件，拿登记哈希去比
         # 归档后的当前 AR 必然误报；成文依据的冻结比对走 story_src_digests 那一套。
-        contract["design"] = {"sha256": registry.file_digest(design_path), "origin": origin}
+        contract["design"] = {"sha256": registry.file_digest(design_path)}
         contract["design_generated_at"] = now()
         contract["status"] = "complete"
         save(feature_root, contract)     # **最后写**，同样在提交失败处理内：
         # 这里断了，清单已是新基准而流程契约还是旧的——重跑同一条命令，
-        # 预检会凭留存件认出这个中间态，直接补上这次保存。
+        # 预检会凭备份或登记身份认出这个中间态，直接补上这次保存。
     except (OSError, registry.MaterialError) as exc:
         raise FlowError(
             f"提交中途失败（{exc}）。已完成：{'、'.join(done) or '无'}；"
-            "流程仍是未收口，原输入与提取稿都在。修好之后重跑同一条 complete 命令"
+            "流程仍是未收口，上游那一份与提取稿都在。修好之后重跑同一条 complete 命令"
         ) from exc
 
+    backup_rel = saved.relative_to(feature_root).as_posix() if saved else None
     log(f"流程收口：{len(contract['rounds'])} 轮、{total} 条关卡记录"
-        + (f"；原输入留存于 {origin}" if origin else ""))
+        + (f"；被覆盖的上游 AR 备份于 {backup_rel}" if backup_rel else ""))
     return {"status": "complete", "rounds": len(contract["rounds"]), "gates": total,
-            "committed": True, "origin": origin}
+            "committed": True, "backup": backup_rel}

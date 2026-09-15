@@ -8,7 +8,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fail, readJson, readText, specText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
-import { originalArSource } from '../flow/check.mjs';
 import { scanMaterialList } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { normalizeHeading, subsectionSpan } from './document.mjs';
@@ -112,25 +111,6 @@ export function readManifest(ctx) {
 }
 
 /**
- * 留存的上游原 AR —— **它与当前 `AR/design.md` 是两份文件**。
- *
- * 后者是收口时提交的**提取稿**；上游原话只在 S4 留存的那一份里。两者身份不同，
- * 不混成一个摘要：读者据材料清单回查上游原话，指到提取稿等于自证。
- *
- * 指针坏了要**披露**，不能退回提取稿顶替（`problem`）。本轮确实没有可留存的原件
- * （init 的空骨架不是上游给的东西）是合法状态，返回 null。
- *
- * @returns {{rel: string}|{problem: string}|null}
- */
-function originalArTarget(ctx) {
-  if (ctx.offline) return null;            // 仲裁锚没有流程契约
-  const { path: abs, problem } = originalArSource(ctx.featureRoot);
-  if (problem) return { problem };
-  if (!abs) return null;
-  return { rel: relFromFeature(ctx, abs) };
-}
-
-/**
  * 材料清单那一节**应当**列到的材料 —— 同样出自 `materials.json`。
  *
  * 这一节回答的是「据哪几份材料写成」。谁来定这个集合，决定了它是账还是倾倒区：
@@ -163,10 +143,7 @@ function materialListTargets(ctx) {
   for (const src of (Array.isArray(data.sources) ? data.sources : [])) {
     if (src?.file) must.push([`inbox/${src.file}`]);
   }
-  // 留存的上游原 AR 是一份**独立身份**的原始资料：清单里少了它，读者没法回查上游原话。
-  const origin = originalArTarget(ctx);
-  if (origin?.rel) must.push([origin.rel]);
-  return { must, problem: origin?.problem ?? null };
+  return { must };
 }
 
 export function relFromFeature(ctx, target) {
@@ -183,9 +160,6 @@ export function joinPosix(base, ref) {
   }
   return parts.join('/');
 }
-
-// 小节枚举/规范化/表头/表渲染的纯文本辅助已迁至 story/chapter-contract.mjs，
-// 入口仍有消费者的改 import 同一导出；旧的多条件槽位实现随固定形态一起退出。
 
 // --------------------------------------------------------------------------
 // 从 spec 派生：story 相对 spec 只能增加，不能减少
@@ -209,7 +183,7 @@ export function upstreamDocs(ctx) {
 /**
  * 材料清单那一节里的全部链接目标，带行号。
  *
- * 与 `scanMaterialList` 的行形态判分开：那条判「这一行有没有链接、链到的目录允不允许」，
+ * 与 `scanMaterialList` 的行形态判分开：那条判「这一行是不是列表、有没有链接」，
  * 这里只把目标取出来，交给调用方判它在不在。两件事分开，报错才说得清是哪一件不成立。
  *
  * @returns {[number, string][]} `[行号, 链接目标]`
@@ -251,10 +225,8 @@ export function materialListSkeleton(ctx) {
   // 收件箱原件不在合同的来源表里（它是人另外给的），落到「原件」。
   const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
-  const originRel = originalArTarget(ctx)?.rel ?? null;
   return targets.must.map(([rel]) =>
-    `- ${rel === originRel ? '上游原件'
-      : kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
+    `- ${kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
     + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
 }
 
@@ -328,26 +300,14 @@ export function materialListProblems(ctx, storyText) {
     if (span) {
       const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
       const want = materialListTargets(ctx);
-      // 原件指针坏了要**披露**：清单少一份上游原件是静默的，而读者据它回查上游原话。
-      if (want && want !== 'broken' && want.problem) {
-        problems.push(`「${appendix.title}·${name}」缺留存的上游原 AR：${want.problem}`
-          + '——它与当前 `AR/design.md`（收口时提交的提取稿）是两份文件，'
-          + '读者据这一节回查上游原话，指到提取稿等于自证');
-      }
-      const haveManifest = want && want !== 'broken';
-      // 行形态（有没有链接、是不是写成了表格）一直判；**链到的地方允不允许**分两条路：
-      // 有材料清单时按清单逐份对（下面那段），没有清单才退回按目录白名单粗判。
-      // 两条同时开会对同一行报两遍——同一件事报两次，读的人以为是两个问题。
-      for (const h of scanMaterialList(body, span.start + 1,
-        { allowDirs: haveManifest ? [] : (ctx.contract.material_dirs ?? []) })) {
+      // 行形态（有没有链接、是不是写成了表格）；链到的是不是这一轮的材料，由下面按材料清单逐份对
+      for (const h of scanMaterialList(body, span.start + 1)) {
         problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
       }
       // 链接得能点开 —— 只在线上判，因为只有线上才知道那份文件在不在。
       //
       // 典型写法 `[RR/prd.md](RR/prd.md)` 解析不到：story.md 在 AR/ 下，
-      // 这个裸相对路径解析出来是 `AR/RR/prd.md`——**不存在**。上面那条范围判
-      // 抓不到它：它只看链接落在需求目录的哪一段，`RR` 在允许集里就放行，
-      // 而「RR 这一段允许链」与「这个链接能不能点开」是两件事。
+      // 这个裸相对路径解析出来是 `AR/RR/prd.md`——**不存在**。
       //
       // 离线不判存在性：那时没有 feature 上下文，基准目录只能靠猜，而判据一旦
       // 开始猜就没法解释也没法回归。离线拿到的往往是一份脱离需求目录的独立文件，

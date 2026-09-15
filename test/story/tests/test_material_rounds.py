@@ -117,6 +117,28 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
         self.assertEqual("story_written", self.disk()["status"], "写入失败却动了盘上的状态")
 
 
+class RegisteringBeforeTheCloseSaysSoFirst(MaterialRoundCase):
+    """没收口就来登记成文态：先说「还没收口」，算下一步失败也不顶掉这一句。"""
+
+    def test_a_failing_next_step_does_not_hide_the_open_flow(self) -> None:
+        from unittest import mock  # noqa: PLC0415
+        from flow import lifecycle  # noqa: PLC0415
+        from flow.state import FlowError  # noqa: PLC0415
+
+        self.round_now()
+
+        def boom(*_args, **_kwargs):
+            raise FlowError("材料清单读不出（注入）")
+
+        for name in ("live_materials", "next_step"):
+            with self.subTest(fails=name), mock.patch.object(lifecycle, name, boom):
+                with self.assertRaises(FlowError) as caught:
+                    lifecycle.cmd_story(self.feature_root, self.root)
+                message = str(caught.exception)
+                self.assertIn("还没收口", message, "材料那边的错顶掉了「还没收口」")
+                self.assertIn("story_flow.py status", message, "没给出取下一步的命令")
+
+
 class MaterialFingerprintCoversEveryInput(MaterialRoundCase):
 
     def test_a_ux_only_supplement_starts_a_new_round(self) -> None:
@@ -573,7 +595,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
 
     def sign(self, chosen: str) -> subprocess.CompletedProcess:
         return self.run_flow("decide", "--gate", "material_scope", "--chosen", chosen,
-                             "--by", "human", "--basis", f"用户回复：{chosen}")
+                             "--basis", f"用户回复：{chosen}")
 
     def sign_supplied(self) -> subprocess.CompletedProcess:
         return self.sign(MATERIAL_REQUEST_KEYS[0])
@@ -800,7 +822,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual("await_gate:scope_decision", self.next_of(),
                          "第二级的侧车把流程拨回了第一级")
         proc = self.run_flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-                             "--by", "human", "--basis", "用户回复：1（=按当前范围整体承载）")
+                             "--basis", "用户回复：1（=按当前范围整体承载）")
         self.assertEqual(0, proc.returncode, self.out_of(proc))
 
     def test_a_sidecar_for_another_level_is_refused(self) -> None:
@@ -867,42 +889,26 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
 
     SKILL = (REPO_ROOT / "doc/extensions/skills/story/SKILL.md")
     FLOW = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story_flow.py")
-    STATE = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/flow/state.py")
 
     def skill(self) -> str:
         return self.SKILL.read_text(encoding="utf-8")
 
-    def run_decide(self, root: Path, by: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
-             "--project-root", str(root), "--gate", "material_scope",
-             "--chosen", MATERIAL_CHOICES[0],
-             "--by", by, "--basis", "他说的原话"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT))
-
-    def test_the_gate_decision_only_accepts_a_human_signature(self) -> None:
-        """**物理门禁**：`--by ai` 连参数校验都过不去。
+    def test_there_is_no_signer_to_choose(self) -> None:
+        """**物理门禁**：没有「谁签的」这个参数，代签连参数校验都过不去。
 
         只改文档没用——「记得停下问人」这种话模型会忘，门禁不会。
         """
-        import ast
-        body = self.STATE.read_text(encoding="utf-8")
-        tree = ast.parse(body)
-        actors = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and any(
-                    getattr(t, "id", None) == "ACTORS" for t in node.targets):
-                actors = ast.literal_eval(node.value)
-        self.assertEqual(("human",), actors, "关卡决策不该有人以外的签署者")
-
-    def test_by_ai_is_refused_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "doc" / "features" / "AR90001" / "AR").mkdir(parents=True)
-            proc = self.run_decide(root, "ai")
-            self.assertNotEqual(0, proc.returncode, "`--by ai` 竟然被接受了")
-            self.assertIn("human", (proc.stdout or "") + (proc.stderr or ""))
+            proc = subprocess.run(
+                [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
+                 "--project-root", str(root), "--gate", "material_scope",
+                 "--chosen", MATERIAL_CHOICES[0], "--by", "ai", "--basis", "他说的原话"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=120, cwd=str(REPO_ROOT))
+            self.assertNotEqual(0, proc.returncode, "代签参数竟然被接受了")
+            self.assertIn("--by", proc.stderr)
 
     def test_the_whitelist_has_no_conditional_wording(self) -> None:
         """两处停等不许再写成条件句——条件由谁判，开关就在谁手里。"""
@@ -1073,8 +1079,24 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         third = self.round_now()
         self.assertEqual(first["round"], third["round"],
                          "重写一遍分析就造出了一个新轮次")
-        self.assertTrue(self.contract()["rounds"][-1]["analysis"]["sha256"],
-                        "分析件哈希仍要照实登记，只是不划轮次")
+
+    def test_the_contract_records_no_field_without_a_reader(self) -> None:
+        """契约只记有读者的事实：分析件哈希与需求名没有任何判据读，不写。"""
+        self.round_now()
+        contract = self.contract()
+        self.assertNotIn("feature", contract, "需求名又写回契约了——目录名就是它")
+        self.assertNotIn("analysis", contract["rounds"][-1], "分析件哈希又写回契约了")
+
+    def test_status_reports_when_the_story_was_registered(self) -> None:
+        """成文登记的时刻由 status 报出来——契约里这一笔留痕的读者就是它。"""
+        from flow import lifecycle  # noqa: PLC0415
+        self.round_now()
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["story_written_at"] = "2026-09-14T00:00:00+08:00"
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual("2026-09-14T00:00:00+08:00",
+                         lifecycle.cmd_status(self.feature_root)["story_written_at"])
 
     def test_the_flow_never_mirrors_a_framework_phase(self) -> None:
         """Story flow 只记材料、范围与承载，不镜像 Framework 的阶段状态。"""
@@ -1104,6 +1126,23 @@ class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
             for word in ("materials.json", "manifest"):
                 self.assertNotIn(word, text,
                                  "%s 里出现了 %s —— 清单的事不该落到对接层" % (name, word))
+
+
+class SourceDocumentsComeFromTheContract(unittest.TestCase):
+    """正文来源的路径只在章节合同登记一份：材料清单与导入落点都从那里取。
+
+    两处各写一份的话，合同改了来源路径，清单仍按旧路径算指纹，导入仍往旧路径写。
+    """
+
+    CONTRACT = STORY_SCRIPTS.parents[1] / "contracts" / "story-chapters.json"
+
+    def test_the_manifest_and_the_import_read_the_contract(self) -> None:
+        from materials import registry  # noqa: PLC0415
+        sources = json.loads(self.CONTRACT.read_text(encoding="utf-8"))["sources"]
+        upstream = [d["path"] for d in sources.values() if not d.get("derived")]
+        self.assertEqual(upstream, registry.source_docs(), "清单的正文来源不是合同登记的那几份")
+        self.assertEqual(sources["UPSTREAM"]["path"], importer.doc_targets()["AR"].as_posix(),
+                         "AR 类补料的落点不是合同登记的那一份")
 
 
 class AManifestAppearsWithoutAnyDataLayer(unittest.TestCase):
@@ -1151,13 +1190,13 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     """流程契约、需求分析件、导入落点住在 `story-src/`，但都不随稿冻结。
 
     三件在登记之后还要写：契约要记归档态、`reopen` 要撤销登记，清单与落点随材料重算，
-    分析件的指纹记在契约的 `analysis` 里。当成台账冻结，登记之后的每一步都会被判成
+    分析件随初析演进。当成台账冻结，登记之后的每一步都会被判成
     「台账被换过」。
     """
 
     NAMES = property(lambda self: [
         CONTRACT[-1], ANALYSIS[-1],
-        importer.DOC_TARGET["AR"].name,
+        importer.doc_targets()["AR"].name,
     ])
 
     def test_none_of_them_is_a_frozen_ledger(self) -> None:
@@ -1170,7 +1209,7 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
         self.assertEqual(("AR", "story-src", "story-flow.json"), CONTRACT)
         self.assertEqual(("AR", "story-src", "init-analysis.md"), ANALYSIS)
         self.assertEqual("AR/story-src/upstream.md",
-                         importer.DOC_TARGET["AR"].as_posix())
+                         importer.doc_targets()["AR"].as_posix())
 
 
 class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):

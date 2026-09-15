@@ -46,23 +46,46 @@ CLASSIFY_FILE = ".classify.json"
 #: 而人要的只是里面的图。选哪一档由归类时判断，不另外问人一次。
 CLASSES = ("RR", "SR", "AR", "UX", "IMAGES")
 
-# 各类正文的落点。UX 分两路：图片进框架既有的参考图目录，文档并入其 README。
-# `IMAGES` 不在这里——它没有正文落点，那正是它与别的类的区别。
-DOC_TARGET = {
-    "RR": Path("RR/prd.md"),
-    "SR": Path("SR/design.md"),
-    # AR 类补料落 upstream.md —— `AR/design.md` 是上游给进来的输入件，S4 提交提取稿时
-    # 整份覆盖它；人工补录的本部件材料要有自己的落点才留得住，而它也是一份登记材料
-    "AR": Path("AR/story-src/upstream.md"),
-    "UX": Path("ux-reference/README.md"),
-}
+# 各类正文的落点。RR / SR / AR 三类的路径是章节合同登记的来源（取 `sources` 的哪一项见下表），
+# 不在这里另抄一份。AR 类补料落 upstream.md：`AR/design.md` 是上游给进来的输入件，S4 提交
+# 提取稿时整份覆盖它，人工补录的本部件材料要有自己的落点才留得住。
+# UX 分两路：图片进参考图目录，文档并入其 README——那个目录按文件登记为材料，不是合同里的来源。
+# `IMAGES` 不在这里：它没有正文落点，那正是它与别的类的区别。
+DOC_SOURCE = {"RR": "PRD", "SR": "SE", "AR": "UPSTREAM"}
+UX_DOC_TARGET = Path("ux-reference/README.md")
 UX_IMAGE_DIR = Path("ux-reference")
+#: 章节合同：正文来源的路径、是不是本轮派生，登记在它的 `sources` 里。
+STORY_CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "story-chapters.json"
 
 GENERATED_MARK = "<!-- 本文件由 import_sources.py 从 inbox/ 生成，直接编辑会在下次导入时丢失 -->"
 
 
 class ImportError_(Exception):
     """可预期的导入失败：带可执行的补救动作，直接呈给人。"""
+
+
+def contract_sources() -> dict[str, dict]:
+    """章节合同登记的正文来源。读不出来就报：当成没有来源，清单会少算整份正文而不出声。"""
+    try:
+        sources = json.loads(STORY_CONTRACT.read_text(encoding="utf-8")).get("sources")
+    except (OSError, ValueError) as exc:
+        raise ImportError_(f"读不出章节合同的来源登记（{exc}）：{STORY_CONTRACT}") from exc
+    if not isinstance(sources, dict) or not sources:
+        raise ImportError_(f"章节合同里没有来源登记 sources：{STORY_CONTRACT}")
+    return sources
+
+
+def doc_targets() -> dict[str, Path]:
+    """各类正文的落点：RR / SR / AR 取合同登记的路径，UX 并入参考图目录的说明文件。"""
+    sources = contract_sources()
+    targets: dict[str, Path] = {}
+    for cls, key in DOC_SOURCE.items():
+        rel = (sources.get(key) or {}).get("path")
+        if not rel:
+            raise ImportError_(f"章节合同的来源登记缺 {key}：「{cls}」类材料没有落点")
+        targets[cls] = Path(rel)
+    targets["UX"] = UX_DOC_TARGET
+    return targets
 
 
 def log(msg: str) -> None:
@@ -305,16 +328,24 @@ def docx_to_markdown(path: Path, asset_ref: str) -> tuple[str, dict[str, bytes]]
 # ---------------------------------------------------------------------------
 # 写盘（零依赖层）
 
+def _backup_stem(feature_root: Path, target: Path) -> str:
+    return str(target.relative_to(feature_root)).replace("/", "-").replace("\\", "-")
+
+
 def backup(feature_root: Path, target: Path) -> Path | None:
     """覆盖前留一份：被抹掉的内容必须有退路。沿用 archive 的 .backup/ 约定。"""
     if not target.exists():
         return None
     dest_dir = feature_root / ".backup"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    stem = str(target.relative_to(feature_root)).replace("/", "-").replace("\\", "-")
-    dest = dest_dir / f"{stem}-{time.strftime('%Y%m%d%H%M%S')}.md"
+    dest = dest_dir / f"{_backup_stem(feature_root, target)}-{time.strftime('%Y%m%d%H%M%S')}.md"
     shutil.copyfile(target, dest)
     return dest
+
+
+def backups_of(feature_root: Path, target: Path) -> list[Path]:
+    """`target` 在 `.backup/` 里的全部副本，按文件名排序。命名只在 `backup` 这一处定。"""
+    return sorted((feature_root / ".backup").glob(f"{_backup_stem(feature_root, target)}-*.md"))
 
 
 def demote_headings(markdown: str, shift: int) -> str:
@@ -530,15 +561,15 @@ def cmd_import(feature_root: Path) -> dict:
 
     # ── 写盘 ────────────────────────────────────────────────────────
     written: list[str] = []
-    for cls in DOC_TARGET:          # 只有有正文落点的类才写盘
+    for cls, rel in doc_targets().items():          # 只有有正文落点的类才写盘
         if not doc_sections[cls]:
             continue  # 该类无材料 → 目标不动（收敛语义是「不动」，不是「清空」）
-        target = feature_root / DOC_TARGET[cls]
+        target = feature_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         saved = backup(feature_root, target)
         target.write_text(render_target(doc_sections[cls]), encoding="utf-8")
-        written.append(str(DOC_TARGET[cls]).replace("\\", "/"))
-        log(f"{cls} → {DOC_TARGET[cls]}"
+        written.append(rel.as_posix())
+        log(f"{cls} → {rel.as_posix()}"
             f"（{len(doc_sections[cls])} 份材料{'，旧版已备份' if saved else ''}）")
 
     for stem, blobs in media.items():

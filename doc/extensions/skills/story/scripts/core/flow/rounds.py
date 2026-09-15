@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    ANALYSIS, FlowError, SCHEMA, after_complete, load, log, now, require, save)
+    FlowError, SCHEMA, after_complete, load, log, now, require, save)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import frozen_inbox_note, live_materials, next_step
@@ -32,11 +32,9 @@ def cmd_round(feature_root: Path) -> dict:
     reference = {"path": "/".join(registry.MANIFEST), "digest": digest}
     # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不再自己记一遍哈希
     ingested = sorted(s["file"] for s in manifest["sources"] if s.get("ingested"))
-    # 分析件可有可无：材料盘点阶段它还没写完整版
-    analysis_sha = registry.file_digest(feature_root / Path(*ANALYSIS))
 
     contract = load(feature_root) or {
-        "schema": SCHEMA, "feature": feature_root.name, "status": "in_progress",
+        "schema": SCHEMA, "status": "in_progress",
         "rounds": [],
         "split": {"decided": "none", "settled_round": None, "scope_text": None, "parts": []},
         "design": None,
@@ -50,9 +48,6 @@ def cmd_round(feature_root: Path) -> dict:
     def stamp(entry: dict) -> None:
         """把本次调用取到的事实盖进轮次条目（新轮与幂等轮共用）。"""
         entry["materials"] = reference
-        if analysis_sha:
-            # 同一轮内分析件会从盘点版演进到完整版，照实更新，不当成新一轮
-            entry["analysis"] = {"path": "/".join(ANALYSIS), "sha256": analysis_sha}
         if positioning:
             entry["positioning"] = positioning
         if scope_options:
@@ -107,7 +102,6 @@ def cmd_round(feature_root: Path) -> dict:
     entry = {
         "round": len(rounds) + 1,
         "imported": sorted(set(ingested) - already),
-        "analysis": None,
         "materials": reference,
         "positioning": None,
         "scope_options": None,

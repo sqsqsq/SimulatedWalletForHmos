@@ -71,6 +71,24 @@ class ScalarLexing(unittest.TestCase):
         self.assertEqual("wallet-sdk-demo", got)
         self.assertNotIn('"', got, "值里还留着引号——相等判断会走向相反的一边")
 
+    def test_a_sentence_with_a_colon_stays_one_list_item(self) -> None:
+        """列表项是一句话时，句中的冒号不是键值分隔。
+
+        当成映射的话，渲染出来是 `[object Object]`，作者只能改掉一句合法的话去绕开读取器。
+        """
+        for item in ("布局与文本对齐: 用 start/end", "返回路径 a/b: 回到上一页",
+                     "说明：全角冒号不是分隔"):
+            with self.subTest(item=item):
+                self.assertEqual({"items": [item]}, self.parse(f"items:\n  - {item}"))
+
+    def test_identifier_and_quoted_keys_still_open_mappings(self) -> None:
+        self.assertEqual({"items": [{"id": "AC-1", "text": "提交: 成功"}]},
+                         self.parse("items:\n  - id: AC-1\n    text: 提交: 成功"))
+        quoted = self.parse('deps:\n  "a/b -> c/d":\n    kind: import')["deps"]
+        self.assertEqual(1, len(quoted), quoted)
+        self.assertEqual({"kind": "import"}, next(iter(quoted.values())),
+                         "整段加引号的键没再当键读")
+
 
 if __name__ == "__main__":
     unittest.main()

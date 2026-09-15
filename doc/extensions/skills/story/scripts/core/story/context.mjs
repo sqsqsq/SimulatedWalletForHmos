@@ -265,12 +265,8 @@ export function strayFileProblems(ctx) {
         .filter(e => e.isFile() && !AR_ROOT_FILES.includes(e.name)).map(e => e.name)
       : [];
     for (const name of strays) {
-      // 挪之前 story-src 里已有同名文件：两份可能各记着人的决定，脚本与作者都不替人合并
-      problems.push(fs.existsSync(path.join(arDir, 'story-src', name))
-        ? `AR/${name} 与 AR/story-src/${name} 同时存在——根下这份该进 story-src，但那里已有一份；`
-          + '两份可能各记着人的决定，停下把两份都给人看，不合并、不覆盖'
-        : `AR/${name} 不该在这一层——根下只放交付文档与单据身份`
-          + `（${AR_ROOT_FILES.join('、')}）。把它原样挪进 AR/story-src/；目录不受这条限制`);
+      problems.push(`AR/${name} 不该在这一层——根下只放交付文档与单据身份`
+        + `（${AR_ROOT_FILES.join('、')}）。把它原样挪进 AR/story-src/；目录不受这条限制`);
     }
   }
   return problems;

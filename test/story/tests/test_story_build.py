@@ -113,42 +113,6 @@ def _appendix_title() -> str:
     return (hit or {}).get("title", "")
 
 
-def list_original_ar(ar_dir: Path) -> None:
-    """把「留存的上游原 AR」补进附录·材料清单。
-
-    它与 `AR/design.md`（收口时提交的提取稿）是两份文件：读者据材料清单回查上游原话，
-    指到提取稿等于自证。夹具的 story 手写在前、原件由 S4 在后登记，所以在这里补。
-    """
-    import json as _json
-    story = ar_dir / "story.md"
-    flow = ar_dir / "story-src" / "story-flow.json"
-    if not story.is_file() or not flow.is_file():
-        return
-    try:
-        origin = str(_json.loads(flow.read_text(encoding="utf-8"))
-                     .get("design", {}).get("origin") or "").strip()
-    except ValueError:
-        return
-    text = story.read_text(encoding="utf-8")
-    if not origin or origin in text:
-        return
-    lines = text.split("\n")
-    at = next((k for k, l in enumerate(lines)
-               if l.strip().startswith("### ") and "材料清单" in l), None)
-    if at is None:
-        return
-    last = at
-    k = at + 1
-    while k < len(lines) and not lines[k].strip().startswith("### "):
-        if lines[k].strip().startswith("- "):
-            last = k
-        k += 1
-    link = origin[3:] if origin.startswith("AR/") else f"../{origin}"
-    lines[last + 1:last + 1] = [
-        f"- 上游原件：收口提交时留存的上游原 AR，上游原话在这一份。原文：[{origin}]({link})"]
-    story.write_text("\n".join(lines), encoding="utf-8")
-
-
 def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
 
@@ -179,7 +143,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
          "options": [dict(o) for o in material_options()]},
         ensure_ascii=False), encoding="utf-8")
     flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--by", "human", "--basis", "夹具：现有材料就是全部")
+         "--basis", "夹具：现有材料就是全部")
     (src / ".positioning.json").write_text(json.dumps({
         "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
         "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
@@ -192,11 +156,8 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
          "options": [{"key": CARRY_ALL, "label": "按当前范围整体承载"}]},
         ensure_ascii=False), encoding="utf-8")
     flow("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-         "--by", "human", "--basis", "夹具：整体承载")
+         "--basis", "夹具：整体承载")
     flow("complete", "--from", "AR/story-src/design-draft.md")
-    # S4 留存的上游原 AR 是一份**独立身份**的原始资料（Q7 §1）：真实作者会把它列进
-    # 附录·材料清单，读者据那一节回查上游原话。夹具的 story 是手写的，这里补上那一行。
-    list_original_ar(src.parent)
 
 
 
@@ -364,7 +325,7 @@ class TestReviewForm(StoryBuildCase):
 
 
 class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
-    """AR 根下只有交付文档：过程件（如评审处置台账）进 story-src；两处都有时停下交人，不替人合并。"""
+    """AR 根下只有交付文档：过程件（如评审处置台账）进 story-src。"""
 
     def ar(self) -> Path:
         return self.root / "doc" / "features" / FEATURE / "AR"
@@ -374,13 +335,6 @@ class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
         (self.ar() / "review-disposition.json").write_text("{}", encoding="utf-8")
         out = self.assert_check_names("AR/review-disposition.json 不该在这一层")
         self.assertIn("原样挪进 AR/story-src/", out)
-
-    def test_two_copies_stop_for_a_human(self) -> None:
-        self.init_audit()
-        (self.ar() / "review-disposition.json").write_text('{"items": [1]}', encoding="utf-8")
-        (self.src / "review-disposition.json").write_text('{"items": [2]}', encoding="utf-8")
-        out = self.assert_check_names("AR/review-disposition.json 与 AR/story-src/review-disposition.json 同时存在")
-        self.assertIn("不合并、不覆盖", out)
 
     def test_the_ledger_in_story_src_is_not_a_stray(self) -> None:
         self.init_audit()
@@ -1557,7 +1511,7 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         self.assertIn("的集合判据未执行", out)
 
     def test_one_wrong_row_is_reported_once(self) -> None:
-        """有清单时按清单逐份对，目录白名单那条粗判让位——同一行报两遍，读的人以为是两个问题。"""
+        """同一行只报一次——同一件事报两遍，读的人以为是两个问题。"""
         self.rewrite_story(self.LISTED, self.LISTED
                            + "\n- 本轮的判断：原文：[decisions](../AR/story-src/decisions.json)")
         _, out = self.check_output()
@@ -2490,7 +2444,8 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.build("skeleton")
         draft = self.draft("10-附录.md")
         draft.write_text(draft.read_text(encoding="utf-8")
-                         + "\n\n### 旧节\n\n<!-- story-build:begin 旧节 · 由某处生成，改它请改真源 -->\n"
+                         + "\n\n### 旧节\n\n作者留在这一节的一句说明。\n\n"
+                         + "<!-- story-build:begin 旧节 · 由某处生成，改它请改真源 -->\n"
                          + "| 旧 |\n|---|\n| 行 |\n<!-- story-build:end -->\n",
                          encoding="utf-8")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
@@ -2975,19 +2930,8 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
         self.assert_wrote_nothing(before)
 
 
-class TheOriginalArIsItsOwnMaterial(SkeletonPreflightCase):
-    """留存的上游原 AR 是**独立身份**的原始资料，不与当前提取稿混成一个。
-
-    `AR/design.md` 在收口后是提取稿；上游原话只在留存的那一份里。读者据材料清单
-    回查上游原话，指到提取稿等于自证。
-    """
-
-    def flow_json(self) -> dict:
-        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-
-    def write_flow(self, data: dict) -> None:
-        (self.src / "story-flow.json").write_text(
-            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
+    """材料清单列的是这一轮拿到的初始资料：上游正文与收件箱原件，各一行。"""
 
     def list_every_material(self) -> None:
         """把清单补齐到「这一轮的材料一份不少」。
@@ -3004,40 +2948,12 @@ class TheOriginalArIsItsOwnMaterial(SkeletonPreflightCase):
             text[:at] + "- 系统设计：本单的上游系统设计。原文："
             + "[SR/design.md](../SR/design.md)\n" + text[at:], encoding="utf-8")
 
-    def test_the_material_list_must_carry_it(self) -> None:
-        origin = self.flow_json()["design"]["origin"]
-        story = self.feature_root() / "AR" / "story.md"
-        text = story.read_text(encoding="utf-8")
-        self.assertIn(origin, text, "夹具起点本该列着它")
-        story.write_text(text.replace(
-            f"- 上游原件：收口提交时留存的上游原 AR，上游原话在这一份。原文：[{origin}]"
-            f"({origin[3:]})\n", ""), encoding="utf-8")
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn(origin, out, "漏了上游原件却没点名")
-
-    def test_a_broken_pointer_is_disclosed_not_swapped_for_the_extract(self) -> None:
-        """指针坏了要披露：退回提取稿顶替的话，作者拿不到上游原话而没人知道。"""
-        data = self.flow_json()
-        data["design"]["origin"] = "AR/story-src/sources/ar/没有了.md"
-        self.write_flow(data)
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("缺留存的上游原 AR", out)
-        self.assertIn("提取稿", out, "没说清它与 AR/design.md 是两份")
-
-    def test_no_stored_original_is_legal(self) -> None:
-        """本轮确实没有可留存的原件（空骨架不是上游给的东西）是合法状态。"""
+    def test_the_overwritten_ar_backup_is_not_a_required_row(self) -> None:
+        """收口覆盖 `AR/design.md` 之前的备份是退路，不是本轮材料：清单不必列它。"""
         self.list_every_material()
-        data = self.flow_json()
-        data["design"].pop("origin", None)
-        self.write_flow(data)
-        story = self.feature_root() / "AR" / "story.md"
-        text = story.read_text(encoding="utf-8")
-        story.write_text("\n".join(
-            l for l in text.split("\n") if "上游原件：" not in l), encoding="utf-8")
         code, out = self.check_output()
         self.assertEqual(0, code, out)
+        self.assertNotIn(".backup", out)
 
     def test_the_spec_and_review_are_not_original_materials(self) -> None:
         """本轮自己生成的规格与记录不是材料——列进去就是把自证当依据。"""

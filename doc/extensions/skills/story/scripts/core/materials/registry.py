@@ -37,8 +37,9 @@ from materials import importer
 SCHEMA = 1
 MANIFEST = ("AR", "story-src", "materials.json")
 
-# 权威材料的正文源：四份文本，位置固定。不存在的记 null——「没有」和「没查」是两件事。
-SOURCE_DOCS = ("RR/prd.md", "SR/design.md", "AR/design.md", "AR/story-src/upstream.md")
+# 权威材料的正文源：章节合同 `sources` 里上游给进来的那几份（本轮派生的规格不是材料），
+# 顺序照合同，见 `source_docs`。不存在的记 null——「没有」和「没查」是两件事。
+#
 # 目录形态的材料源：目录下每个文件各自进清单，加一张图就是材料变了。
 #
 # 两个目录都是图片的落点，也都是**权威落点**：界面参考图由导入平铺进 `ux-reference/`，
@@ -53,6 +54,16 @@ CAPTIONS = ("ux-reference", ".captions.json")
 
 class MaterialError(Exception):
     """可预期的失败：材料清单算不出来。带可执行的补救动作，直接呈给人。"""
+
+
+def source_docs() -> list[str]:
+    """清单要算的正文源：合同登记的来源里不是本轮派生的那几份，顺序照合同。"""
+    try:
+        sources = importer.contract_sources()
+    except importer.ImportError_ as exc:
+        raise MaterialError(str(exc)) from exc
+    return [decl["path"] for decl in sources.values()
+            if isinstance(decl, dict) and decl.get("path") and not decl.get("derived")]
 
 
 def file_digest(path: Path) -> str | None:
@@ -132,7 +143,7 @@ def clear_unused(feature_root: Path, sha: str) -> Path:
 
 
 def collect_materials(feature_root: Path) -> list[dict]:
-    """枚举权威材料：四份正文按固定顺序在前，目录源按路径排序在后。
+    """枚举权威材料：正文源按合同顺序在前，目录源按路径排序在后。
 
     每条记 `paths`（一份材料出现的全部位置）而不是单个 path，因为**图片的身份是它的内容，
     不是它的路径**：界面图按规则要从文档内嵌位置复制一份到 `ux-reference/` 起语义名，
@@ -151,7 +162,7 @@ def collect_materials(feature_root: Path) -> list[dict]:
     captions = read_captions(feature_root)
     items: list[dict] = [
         {"kind": "doc", "paths": [rel], "sha256": file_digest(feature_root / rel)}
-        for rel in SOURCE_DOCS
+        for rel in source_docs()
     ]
     images: dict[str, dict] = {}
     extra: list[dict] = []
@@ -230,6 +241,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
     inbox = feature_root / INBOX
     try:
         classify = importer.read_classify(inbox)
+        targets = importer.doc_targets()
     except importer.ImportError_ as exc:
         raise MaterialError(str(exc)) from exc
 
@@ -257,7 +269,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
             except (importer.ImportError_, OSError, ValueError) as exc:
                 raise MaterialError(
                     f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
-            if cls not in importer.DOC_TARGET:
+            if cls not in targets:
                 # 只抽图那一档没有正文落点：图落地了就算并入
                 for p in docs:
                     blobs = media.get(p.stem) or {}
@@ -267,7 +279,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
                         and (asset_dir / name).read_bytes() == blob
                         for name, blob in blobs.items())
                 docs = []
-            target = feature_root / importer.DOC_TARGET[cls] if docs else None
+            target = feature_root / targets[cls] if docs else None
             if target is not None and target.is_file() and _same_text(
                     target.read_text(encoding="utf-8", errors="replace"),
                     importer.render_target(sections[cls])):

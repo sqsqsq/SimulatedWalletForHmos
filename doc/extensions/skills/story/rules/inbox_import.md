@@ -27,7 +27,7 @@
 | `RR` | 解决什么问题、给谁用、业务规则是什么——**用户与业务视角**（问题单、产品需求、运营规则都在此） | 背景、范围、业务流程、交付与上线各章按 PRD 读 | `RR/prd.md` |
 | `SR` | 系统怎么分工、接口/时序/数据/异常怎么定——**系统与端云视角** | 业务方案、业务流程、异常与恢复、附录各章按 SE 读 | `SR/design.md` |
 | `AR` | 本部件侧的补充说明、历史结论、部件内约束 | 初析与 `AR/design.md` 生成 | `AR/story-src/upstream.md`（**不写 `AR/design.md`**——那是会被重生成的草稿） |
-| `UX` | 界面长什么样（设计图、视觉稿、交互说明） | 视觉链路 | 图片经 `--register-ux` 进 `ux-reference/` 顶层并带上说明；文档并入 `ux-reference/README.md` |
+| `UX` | 界面长什么样（设计图、视觉稿、交互说明） | 视觉链路 | 图片经 `--register-ux` 进 `ux-reference/` 顶层并带上说明；文档并入 `ux-reference/README.md`（这个目录下的文件逐个登记为材料） |
 | `IMAGES` | **这份料是为了补图**：正文系统上已经有了，它是原稿或参考稿，值钱的是里面的图 | 各章按图取用 | 图抽进 `assets/<源文档名>/`，**正文一个字节不动** |
 
 **什么时候选 `IMAGES`**：目标正文已存在，而这份补料与它讲的是同一件事、只是版本更早或更粗。
@@ -77,6 +77,13 @@ docx 里的图混着流程图与界面图。判据以**图在正文中的上下�
 
 ```
 python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --caption "<这张图是什么>"
+```
+
+这张图不属于本需求（废弃的对照稿、别的单据的页面）时，在同一处登记不用它的理由；后来又要用它，撤掉理由：
+
+```
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --unused "<为什么它不属于本需求>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --used
 ```
 
 判为界面设计图的**再多一步当场登记**，一张一条命令：

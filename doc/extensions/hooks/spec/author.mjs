@@ -22,7 +22,6 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
-import { originalArSource } from '../../skills/story/scripts/core/flow/check.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
@@ -241,32 +240,6 @@ function imageSection(projectRoot, feature) {
 }
 
 /**
- * S4 提交时留存下来的上游原 AR —— 唯一的原件定位读取（flow/check.originalArSource）。
- *
- * 它与当前的提取稿是两份文件：`AR/design.md` 在收口后是提取稿，上游原话只在
- * 留存的那一份里。没有可留存原件时如实说「没有」；指针坏了要披露问题，
- * 不能静默当作没有原件，也不能拿提取稿顶替上游原话。人工补录仍看 upstream.md。
- */
-function originalArSection(projectRoot, feature) {
-  const { path: abs, problem } = originalArSource(featureRoot(projectRoot, feature));
-  const rows = ['## 4a. 上游原 AR（提交时留存的原件）', ''];
-  if (problem) {
-    rows.push(`**原输入定位出了问题：${problem}**——动笔前先把这份原件找回来，`
-      + '不能拿当前的提取稿当上游原话。');
-    return rows;
-  }
-  if (!abs) {
-    rows.push('本轮没有可留存的上游原 AR（init 的空骨架不是上游给的东西）——'
-      + '按 RR/SR 与人工补录材料提取即可。');
-    return rows;
-  }
-  rows.push(`上游原话在 \`${relDisplay(projectRoot, abs)}\`（提交时留存的原件）。`
-    + '当前的 `AR/design.md` 是收口时提交的提取稿——两者是两份文件，'
-    + '读上游原话去前一份，不要拿提取稿自证。', '');
-  return rows;
-}
-
-/**
  * 上游某一份文档里的图 —— **给坐标，不给副本**。
  *
  * 从前把每张图的围栏整段复制进任务包。那份副本一旦与原件不同步，作者改的是副本；
@@ -319,7 +292,7 @@ function diagramSection(heading, label, src, derived) {
 }
 
 /**
- * 成文要用的当前输入 —— 材料里的图、上游原 AR、系统设计与 Spec 里的图。
+ * 成文要用的当前输入 —— 材料里的图、系统设计与 Spec 里的图。
  *
  * `story-build skeleton` 起手与恢复时打印它，本任务包也列它：两处读同一份渲染。
  * `sources` 是调用方这一刻已经取得的来源状态（`sourceStatus`）：上游正文从它取，不再读一遍；
@@ -336,9 +309,8 @@ export function storyInputs(ctx, sources) {
   const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
   return [
     ...imageSection(ctx.projectRoot, feature), '',
-    ...originalArSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4b. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
-    ...diagramSection('## 4c. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
+    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
+    ...diagramSection('## 4b. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
   ];
 }
 

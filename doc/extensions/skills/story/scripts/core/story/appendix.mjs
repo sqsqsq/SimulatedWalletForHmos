@@ -372,7 +372,7 @@ function verdictSkeleton(ctx) {
   if (!entries.length) return [];
   const use = knowledgeUseVerdicts(ctx, entries);
   // 判断骨架还没生成（离线、或 knowledge-use.yaml 不在）：投不出来就不投，
-  // 那一节保持原样，缺表由 check ⑦ 报。这一步不代替它下结论。
+  // 那一节保持原样，缺表由 check ⑫b 报。这一步不代替它下结论。
   // 文件在却读不出判断，那是它写坏了——停下把话说清，别静默跳过。
   if (!use) {
     if (ctx.offline || !fs.existsSync(path.join(ctx.featureRoot, 'spec', 'knowledge-use.yaml'))) return [];
@@ -390,7 +390,7 @@ function verdictSkeleton(ctx) {
       + '填完再投影。附录的判定表是它的投影，投影不替你编依据');
   }
   // 整域不适用的域投一行域级结论；域内条目不再逐条出现——那正是那份 YAML 的写法，
-  // `check ⑦` 也认这一行覆盖全域。
+  // `check ⑫b` 比对的是同一份投影，也认这一行覆盖全域。
   const seenDomain = new Set();
   const rows = [];
   for (const e of entries) {
@@ -538,11 +538,10 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
 /**
  * 附录的机器区与真源对不对得上 —— **与 `project` 写进去的是同一份计算**。
  *
- * 从前这里有第二套：⑦ 手写逐行还原判定表、再逐条问「这个规约有行吗」；⑫b 把附录那一节
- * 的表拆出来，只按第一列的标识比集合（`Set` 一去重，重复行与行序都看不见了，
- * 非首列改了也看不见）。两套都是把投影出来的东西**反着解析回去**，而投影本身就在手边。
+ * 不把投影出来的表**反着解析回去**再比集合：那样只按第一列的标识比，重复行、行序与
+ * 非首列的改动都看不见，而投影本身就在手边。
  *
- * 现在只有一条：对每一节，按 `appendixProjection` 算出**期望行**，与盘上那一段机器区
+ * 对每一节，按 `appendixProjection` 算出**期望行**，与盘上那一段机器区
  * **逐行逐格**比。作者解释区在机器标记之外，不参加比较、也不被生成器重写。
  * 只归一 CRLF/LF 与行尾空白（编辑器保存时顺手删掉一个行尾空格不是改动），
  * 不丢重复行、不只比首列、不忽略行序。

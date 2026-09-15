@@ -8,7 +8,7 @@ import argparse
 from pathlib import Path
 
 from flow.state import (
-    ACTORS, FlowError, GATES, last_gate, load, log, now, require, round_gates, save)
+    FlowError, GATES, last_gate, load, log, now, require, round_gates, save)
 from flow.inputs import (
     GATE_OPTIONS, MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, SCOPE_OPTIONS, SPLIT_PARTS,
     consume_sidecar, read_gate_options, read_split_parts, sidecar_gate, split_carrier_options)
@@ -19,10 +19,6 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     gate = args.gate or GATES[0]
     if gate not in GATES:
         raise FlowError(f"--gate 须为 {' / '.join(GATES)} 之一，实为「{gate}」")
-    if args.by not in ACTORS:
-        raise FlowError(
-            f"关卡决策只认人签（--by human），实为「{args.by}」——"
-            "材料到齐没有、范围怎么定由人拍板；你的判断写进选项推荐里，不代签")
     if not (args.basis or "").strip():
         raise FlowError("--basis 不能为空：决策的依据（用户原话）是契约的审计价值所在")
 
@@ -121,9 +117,11 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
             reason = ("收件箱里没有新文件、材料也没变：把文档或界面设计图放进 "
                       f"{feature_root.name}/inbox/ 后再选一次")
 
+    # 关卡决策只认人签，没有代签这一档：模型判「材料足够」就以自己的名义记掉关卡的话，
+    # 材料补充环节整个被跳过。停等的开关不能交给被停的那一方，所以这一栏没有参数可填。
     record = {
         "gate": gate, "options": options, "chosen": chosen, "outcome": outcome,
-        "by": args.by, "basis": args.basis.strip(), "at": now(),
+        "by": "human", "basis": args.basis.strip(), "at": now(),
     }
     if reason:
         record["reason"] = reason

@@ -253,6 +253,46 @@ class SameNameSectionsKeepTheirOwnTables(ViewCase):
 
 
 
+class SectionShapesAreChecked(ViewCase):
+    """同一章里同名小节两处、小节标题下什么都没有：章提交与全篇 check 同一条判据点名。"""
+
+    CHAPTER = chr(10).join([
+        "章首一段。", "",
+        "### 取件提醒", "",
+        "### 取件提醒", "",
+        "到柜后提醒取件。", "",
+        "### 状态流转", "",
+        "```mermaid", "stateDiagram-v2", "  A --> B", "```", "",
+        "```markdown", "### 样例里的节", "### 样例里的节", "```", "",
+        "### 结尾", "",
+        "收尾一句。",
+    ])
+
+    def problems(self, text: str) -> list[str]:
+        chapter = DOCUMENT.parent / "chapter.mjs"
+        return node_eval(
+            "import {pathToFileURL} from 'node:url';"
+            "const m = await import(pathToFileURL(process.argv[1]).href);"
+            "const ctx = {storyPath: process.argv[3], idShapes: {drop: []}};"
+            "process.stdout.write(JSON.stringify("
+            "  m.chapterProblems(ctx, {title: '功能说明'}, process.argv[2])));",
+            str(chapter), text, str(REPO_ROOT / "AR" / "story.md"))
+
+    def test_a_repeated_and_an_empty_section_are_named(self) -> None:
+        got = self.problems(self.CHAPTER)
+        repeated = [p for p in got if "两个「取件提醒」" in p]
+        empty = [p for p in got if "「取件提醒」小节下面没有正文" in p]
+        self.assertEqual(1, len(repeated), got)
+        self.assertEqual(1, len(empty), got)
+        self.assertIn("合成一节", repeated[0])
+        self.assertIn("删掉这个标题", empty[0])
+
+    def test_a_diagram_only_section_and_fenced_samples_pass(self) -> None:
+        got = self.problems(self.CHAPTER)
+        self.assertFalse([p for p in got if "状态流转" in p or "样例里的节" in p or "结尾" in p],
+                         got)
+
+
 class OnlyACleanMarkerLineCloses(ViewCase):
     """关闭行的三个条件：同种标记、不短于开启标记、标记之后到行末只有空白。
 

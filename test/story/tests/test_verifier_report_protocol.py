@@ -360,71 +360,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         self.assertIn("逐单元裁决表", out["problems"][0])
 
 
-class TheRealReviewTaskCommandCarriesTheMethod(unittest.TestCase):
-    """人自己看的那一条命令（`story-build review-task`）必须拿到**同一份**方法。
 
-    新增能力存在不等于入口用上了：`withMethod` 加在构造器上、调用处没传，
-    这个入口就一直只给数据——而人在那条路上拿不到判据，也拿不到结论要求。
-    这一组跑**正式命令**，不直接调构造器。
-    """
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name) / "work"
-        (self.root / "doc").mkdir(parents=True)
-        shutil.copytree(REPO / "doc" / "extensions", self.root / "doc" / "extensions",
-                        ignore=shutil.ignore_patterns("__pycache__", "node_modules"))
-        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        src.mkdir(parents=True)
-        (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
-        (src / "materials.json").write_text(
-            json.dumps({"materials": []}, ensure_ascii=False), encoding="utf-8")
-        self.overlay = (self.root / "doc" / "extensions" / "rules"
-                        / "spec-rules.overlay.yaml")
-
-    def run_cli(self) -> subprocess.CompletedProcess:
-        build = (self.root / "doc" / "extensions" / "skills" / "story" / "scripts"
-                 / "core" / "story-build.mjs")
-        return subprocess.run(
-            ["node", str(build), "review-task", "--feature", FEATURE,
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-
-    def test_the_command_gives_the_full_text_and_the_overlay_method(self) -> None:
-        out = self.run_cli()
-        self.assertEqual(0, out.returncode, out.stderr[-600:])
-        task = out.stdout
-        self.assertIn("### 审查对象：当前 `AR/story.md` 全文", task)
-        for line in STORY_MD.strip().split("\n"):
-            if line.strip():
-                self.assertIn(line, task, f"全文里少了这一行：{line}")
-        self.assertIn("判据与结论要求", task, "人自己看的这一份没有方法")
-        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空"):
-            self.assertIn(needle, task, f"方法里少了「{needle}」")
-
-    def test_the_method_follows_the_overlay_not_a_second_copy(self) -> None:
-        """改 overlay，命令的输出跟着改——跟不着就说明它另抄了一份。"""
-        text = self.overlay.read_text(encoding="utf-8")
-        self.assertIn("跨章对着读", text)
-        self.overlay.write_text(
-            text.replace("跨章对着读", "夹具改过的这一句"), encoding="utf-8")
-        task = self.run_cli().stdout
-        self.assertIn("夹具改过的这一句", task, "方法没跟着 overlay 走")
-        self.assertNotIn("跨章对着读", task, "还留着另一份抄件")
-
-    def test_a_missing_overlay_is_an_explicit_gap(self) -> None:
-        """overlay 不在时不能显示成一份完整任务——那会让人以为这一项没有判据要求。"""
-        self.overlay.unlink()
-        out = self.run_cli()
-        self.assertIn("取不到", out.stdout, out.stdout[-400:])
-        self.assertIn("spec-rules.overlay.yaml", out.stdout)
-        self.assertNotIn("blocking_findings", out.stdout)
-
-    def test_a_broken_overlay_is_an_explicit_gap(self) -> None:
-        self.overlay.write_text("semantic_checks:\n  - 这不是映射\n", encoding="utf-8")
-        out = self.run_cli()
-        self.assertIn("取不到", out.stdout, out.stdout[-400:])
 
 
 class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
@@ -749,10 +685,10 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("SKIP", task)
         self.assertNotIn("```````markdown", task)
 
-    def test_the_task_points_at_the_stored_original_ar(self) -> None:
-        """上游原话在留存那一份里；拿不到时说清楚，不让它用提取稿替。"""
+    def test_the_task_says_where_the_overwritten_ar_is_kept(self) -> None:
+        """当前 AR/design.md 是提取稿：回查上游原话给 .backup/ 的位置，不让它用提取稿替。"""
         task = self.inject()
-        self.assertIn("上游原 AR", task)
+        self.assertIn("`.backup/`", task)
         self.assertIn("提取稿", task)
 
     def test_the_task_carries_the_contract_questions(self) -> None:

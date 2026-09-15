@@ -67,7 +67,7 @@ def ensure_flow_state(root: Path, src: Path) -> None:
             {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
         encoding="utf-8")
     flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--by", "human", "--basis", "夹具：现有材料就是全部")
+         "--basis", "夹具：现有材料就是全部")
     (src / ".positioning.json").write_text(json.dumps({
         "scope_source": "user_stated", "scope_text": "x", "sr_related_ars": []},
         ensure_ascii=False), encoding="utf-8")
@@ -80,7 +80,7 @@ def ensure_flow_state(root: Path, src: Path) -> None:
          "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
         ensure_ascii=False), encoding="utf-8")
     flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-         "--by", "human", "--basis", "夹具：整体承载")
+         "--basis", "夹具：整体承载")
     flow("complete", "--from", "AR/story-src/design-draft.md")
 
 
@@ -158,15 +158,21 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.assertEqual(before, self.manifest()["digest"])
         self.assertEqual("签约页：改了说法，图没换", self.images()[0]["caption"])
 
-    def test_the_contract_declares_the_ux_readme_as_an_optional_source(self) -> None:
-        """UX 正文来源回到合同（08 §2.1，required:false）——作者、材料贡献清单与
-        审查都能定位它；图片仍只由 materials.json 登记。"""
+    def test_the_ux_readme_is_a_material_not_a_second_source(self) -> None:
+        """界面参考目录按文件登记为材料；合同的来源表不再为它的说明文件登记第二次。
+
+        登记两次的话，没有说明文件时来源表那边报「不存在」，清单这边什么也不说——
+        同一件事两种说法。
+        """
         contract = json.loads(
             (EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
-        ux = contract["sources"].get("UX")
-        self.assertIsNotNone(ux, "合同缺 UX 正文来源——材料贡献清单与审查都没法定位它")
-        self.assertEqual("ux-reference/README.md", ux["path"])
-        self.assertFalse(ux["required"], "UX 正文是可选来源：没有 README 不该拦任何人")
+        self.assertNotIn("UX", contract["sources"], "说明文件在来源表与目录登记里各算一次")
+        readme = self.feature_root / "ux-reference" / "README.md"
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_text("# 界面说明\n\n签约页的交互。\n", encoding="utf-8")
+        self.assertEqual(0, self.register("raw-1.png", "signup-page", "签约页").returncode)
+        docs = [m["paths"] for m in self.manifest()["materials"] if m["kind"] == "doc"]
+        self.assertIn(["ux-reference/README.md"], docs, "说明文件没按目录登记成材料")
 
 
 class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):

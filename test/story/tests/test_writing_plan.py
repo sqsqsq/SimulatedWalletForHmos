@@ -187,9 +187,9 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
     def test_the_current_inputs_come_with_the_skeleton(self) -> None:
         """Spec 写完之后才列得出它的图：成文要用的输入在起手这一刻给。"""
         _, out = self.cmd("skeleton")
-        for heading in ("## 4. 材料里的图", "## 4a. 上游原 AR", "## 4c. spec 里的图"):
+        for heading in ("## 4. 材料里的图", "## 4a. 系统设计里的图", "## 4b. spec 里的图"):
             self.assertIn(heading, out)
-        self.assertNotIn("还没写成", out.split("## 4c.", 1)[1], "Spec 已在，却说还没写成")
+        self.assertNotIn("还没写成", out.split("## 4b.", 1)[1], "Spec 已在，却说还没写成")
 
     def test_a_chapter_cannot_land_on_a_shell(self) -> None:
         self.cmd("skeleton")

@@ -318,8 +318,6 @@ export function scanLanguageRedline(text, opts = {}) {
 /** 材料清单那一节的行形态修法。 */
 const IMAGE_HINTS = {
   material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
-  material_scope: '材料清单只列进 spec 之前的原始输入——本轮自己生成的中间产物、'
-    + '参考件与图片直链不是材料（图随它所在的那份材料走，不单列）',
   material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
     + '光写「产品需求文档」他不知道该找谁要哪一份',
 };
@@ -330,11 +328,9 @@ const IMAGE_HINTS = {
  * @param {string} body 该小节正文
  * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
  */
-export function scanMaterialList(body, baseLine = 0, opts = {}) {
+export function scanMaterialList(body, baseLine = 0) {
   const hits = [];
   const lines = String(body ?? '').split(/\r?\n/);
-  const allow = opts.allowDirs ?? [];
-  const from = opts.storyDir ?? '';
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i].trim();
     const line = baseLine + i;
@@ -350,34 +346,8 @@ export function scanMaterialList(body, baseLine = 0, opts = {}) {
                   hint: IMAGE_HINTS.material_link, text: s.slice(0, 100) });
       continue;
     }
-    if (!allow.length) continue;
-    for (const [, target] of links) {
-      if (/^(https?:|mailto:)/i.test(target)) continue;
-      const dir = firstSegment(from, target);
-      if (dir !== null && !allow.includes(dir)) {
-        hits.push({ line, kind: 'material_scope', hit: target,
-                    hint: IMAGE_HINTS.material_scope, text: s.slice(0, 100) });
-      }
-    }
   }
   return hits;
-}
-
-/**
- * 把一条相对链接解析到需求目录下的第一段目录名。
- *
- * 材料清单列的是**进 spec 之前的原始输入**。中间产物（本轮自己生成的规格、
- * 事实记录、参考件）与图片文件直链不是材料——它们混进来，清单就从「据哪几份材料写成」
- * 变成倾倒区：同一份规格被链好几次，连图片文件都单列成行。
- */
-function firstSegment(fromDir, target) {
-  const parts = String(fromDir ?? '').split('/').filter(Boolean);
-  for (const seg of String(target).replace(/^\.\//, '').split('/')) {
-    if (seg === '..') { parts.pop(); continue; }
-    if (seg === '.' || !seg) continue;
-    parts.push(seg);
-  }
-  return parts.length > 1 ? parts[0] : null;   // 只剩文件名 → 与 story 同目录
 }
 
 /**

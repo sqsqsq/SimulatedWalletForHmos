@@ -16,7 +16,7 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
 
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
-    python story_flow.py decide   --feature <AR> --gate <g> --chosen <c> --by <b> --basis <t>
+    python story_flow.py decide   --feature <AR> --gate <g> --chosen <c> --basis <t>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
     python story_flow.py archived --feature <AR>
@@ -62,7 +62,7 @@ from pathlib import Path
 
 from materials import importer
 
-from flow.state import ACTORS, DESIGN_DRAFT, FlowError, GATES, log
+from flow.state import DESIGN_DRAFT, FlowError, GATES, log
 from flow.inputs import MATERIAL_CHOICES, cmd_init
 from flow.decisions import cmd_decide
 from flow.rounds import cmd_reopen, cmd_round
@@ -82,8 +82,6 @@ def main() -> int:
                     help="关卡编号，缺省 material_scope")
     ap.add_argument("--chosen", default=None,
                     help="选中项的 key；material_scope 为 " + " / ".join(MATERIAL_CHOICES))
-    # 取值只剩 human：留着这个参数是为了让契约里那一栏仍然显式记着「谁签的」。
-    ap.add_argument("--by", default="human", choices=list(ACTORS))
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
     ap.add_argument("--scope-text", default=None,
                     help="split_carrier 无份表侧车时的兜底：本 AR 的范围文字")

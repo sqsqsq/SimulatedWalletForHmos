@@ -8,8 +8,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from materials import registry
-
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_SRC_FROZEN, ledger_digest, load, log,
     now, require, round_gates, save)
@@ -42,6 +40,8 @@ def cmd_status(feature_root: Path) -> dict:
         "exists": True,
         "schema": contract.get("schema"),
         "status": contract.get("status"),
+        # 成文登记的时刻：story 定稿于这一刻，重开会把它撤掉
+        "story_written_at": contract.get("story_written_at"),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
@@ -85,7 +85,11 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
                         "要改先跑 `story_flow.py reopen`，按它给出的下一步走")
     if status != "complete":
         # reopen 之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
-        _, action = next_step(feature_root, contract, live_materials(feature_root))
+        # 下一步要按磁盘现状读材料；读不出来时「还没收口」照样先说，原因附在后面。
+        try:
+            _, action = next_step(feature_root, contract, live_materials(feature_root))
+        except FlowError as exc:
+            action = f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取下一步"
         raise FlowError(f"流程还没收口（status 是 {status}），成文态无从登记。下一步：{action}")
     story = feature_root / Path(*STORY)
     if not story.is_file():
@@ -184,11 +188,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
             "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
             "已经传上去的那一版是不合格的：修好后重新归档，再登记")
 
-    contract["archived"] = {
-        "at": now(),
-        "story": registry.file_digest(story),
-        "review": registry.file_digest(review),
-    }
+    contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，装配只备份不重建")
     return {"archived": True, "at": contract["archived"]["at"]}

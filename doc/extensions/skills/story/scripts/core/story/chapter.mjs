@@ -104,6 +104,29 @@ function withoutDiagramBodies(view) {
 }
 
 /**
+ * 小节这一层一眼看得见的两件事：同名小节出现两处、小节标题下什么都没有。
+ *
+ * 同名两处时读者分不清哪一节讲哪件事；空小节是提纲留下的标题，交出去就是一行空标题。
+ * 只看本章正文里的 `###`（围栏里的样例不算）；一节里只有一张图也是正文。
+ */
+function sectionShapeProblems(title, view) {
+  const out = [];
+  const seen = new Set();
+  for (const s of view.sections ?? []) {
+    if (seen.has(s.name)) {
+      out.push(`「${title}」里有两个「${s.raw}」小节——读者分不清哪一节讲哪件事：`
+        + '合成一节，或者按各自讲的事改成不同的名字');
+    }
+    seen.add(s.name);
+    const drawn = (view.fences ?? []).some(f => f.from > s.from && f.from < s.to);
+    if (!drawn && !s.body.some(line => line.trim())) {
+      out.push(`「${title}」的「${s.raw}」小节下面没有正文——补上这一节要讲的内容，或者删掉这个标题`);
+    }
+  }
+  return out;
+}
+
+/**
  * 这一章自己能确定的那几条 —— 章提交与全篇 check 共用。
  *
  * 别的章写没写、验收编号全集齐不齐、上游每张图有没有落点，都要读别的章，不在这里。
@@ -151,6 +174,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
       + '——它是骨架给这一章留的记号，这一章的正文该把它顶掉');
   }
   out.push(...chapterStructureProblems(chapter, view));
+  out.push(...sectionShapeProblems(chapter.title, view));
   for (const re of ctx.idShapes?.drop ?? []) {
     const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]);
     if (!hits.length) continue;

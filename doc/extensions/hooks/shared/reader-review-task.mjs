@@ -8,10 +8,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
-import { parseYaml } from './yaml-lite.mjs';
 import { imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { originalArSource } from '../../skills/story/scripts/core/flow/check.mjs';
 import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 
 function contractOf(projectRoot) {
@@ -49,7 +47,7 @@ function imageRows(projectRoot, feature) {
  * @param {string} feature
  * @param {string} checkId 判据 id —— 结果条目用它，不另起名字
  */
-export function readerReviewTask(projectRoot, feature, checkId, opts = {}) {
+export function readerReviewTask(projectRoot, feature, checkId) {
   const contract = contractOf(projectRoot);
   const root = featureRoot(projectRoot, feature);
   const rows = [
@@ -77,7 +75,6 @@ export function readerReviewTask(projectRoot, feature, checkId, opts = {}) {
   // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
   // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
   // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
-  const origin = originalArSource(root);
   const fence = `${'`'.repeat(longestFence(story) + 1)}markdown`;
   rows.push('', '### 审查对象：当前 `AR/story.md` 全文', '',
     `（${story.split(/\r?\n/).length} 行，下面这一段就是全文；`
@@ -106,12 +103,8 @@ export function readerReviewTask(projectRoot, feature, checkId, opts = {}) {
     '- `spec/spec.md` —— 已经成立的产品约束；',
     '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
-    origin.path
-      ? `- \`${path.relative(root, origin.path).split(path.sep).join('/')}\``
-        + ' —— 收口提交时留存的**上游原 AR**（上游原话在这一份，'
-        + '当前 `AR/design.md` 是提取稿，两者是两份文件）；'
-      : `- 上游原 AR：${origin.problem ?? '本轮没有可留存的原件'}`
-        + '——拿不到上游原话时，不要用提取稿替它下结论；',
+    '- `.backup/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
+      + '当前 `AR/design.md` 是提取稿，回查上游原话看它与 `RR`、`SR` 原文，不拿提取稿自证；',
     '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
 
   rows.push('', '### 逐章过读者会问的问题', '');
@@ -136,41 +129,13 @@ export function readerReviewTask(projectRoot, feature, checkId, opts = {}) {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
 
-  // 方法与结论要求由 overlay 的 `story_reader_review` 维护一份。正常宿主已经把 overlay
-  // 装配进 verifier 的任务，这里不再复制；`review-task` 是人自己看的独立入口，
-  // 那时把**同一份**附在后面——删完只留一句指路，人在那条路上拿不到方法。
-  if (opts.withMethod) {
-    const { text, error } = reviewMethod(projectRoot, checkId);
-    rows.push('', '### 判据与结论要求（取自 spec overlay，唯一维护处）', '',
-      error ? `取不到：${error}——判据在 rules/spec-rules.overlay.yaml 的`
-        + ` \`semantic_checks.${checkId}\`，先让那份 overlay 可读` : text);
-  }
-
+  // 方法与结论要求只在 overlay 的 `story_reader_review` 维护一份，宿主把它装配进 verifier 的任务。
   return rows.join('\n');
 }
 
 /** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */
 function readOrNull(abs) {
   try { return fs.readFileSync(abs, 'utf-8'); } catch { return null; }
-}
-
-/**
- * 从 overlay 取这一项的判据与结论要求 —— **唯一维护处在那里**，这里只取不写。
- *
- * 取不到就说清取不到：静默给一段空的，人会以为这一项没有判据要求。
- */
-function reviewMethod(projectRoot, checkId) {
-  const p = path.join(extensionRoot(projectRoot), 'rules', 'spec-rules.overlay.yaml');
-  const raw = readOrNull(p);
-  if (raw === null) return { text: '', error: '读不到 rules/spec-rules.overlay.yaml' };
-  let doc;
-  try { doc = parseYaml(raw); } catch (e) { return { text: '', error: `overlay 解析失败（${e.message}）` }; }
-  const item = doc?.semantic_checks?.[checkId];
-  if (!item) return { text: '', error: `overlay 的 semantic_checks 里没有 ${checkId}` };
-  const parts = [item.description, item.ai_prompt_hint].map(x => String(x ?? '').trim())
-    .filter(Boolean);
-  if (!parts.length) return { text: '', error: `${checkId} 在 overlay 里没有描述与提示` };
-  return { text: parts.join('\n\n'), error: null };
 }
 
 /** 正文里最长的那道围栏有几个反引号（至少 3，让外层总比它长）。 */

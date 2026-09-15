@@ -31,9 +31,6 @@ DESIGN = ("AR", "design.md")
 # 模型把提取结果写在这里，由 `complete` 提交上去。写在同一个文件里的话，
 # 材料指纹会因为自己的输出而变，流程被自己推回未定状态。
 DESIGN_DRAFT = ("AR", "story-src", "design-draft.md")
-# 被覆盖前的那一份外部 AR 输入，按轮次留存。它是来源追溯用的原件：
-# 提交之后 `AR/design.md` 里是本轮的提取稿，上游原话只在这里还找得到。
-AR_SOURCES = ("AR", "story-src", "sources", "ar")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")
@@ -55,12 +52,6 @@ GATES = ("material_scope", "scope_decision", "split_carrier")
 STORY_CONTRACT = SKILL_ROOT / "contracts" / "story-chapters.json"
 # 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
 CARRY_ALL = "carry_all"
-# 关卡决策**只认人签**，没有 AI 代签这一档。
-#
-# 不留 `ai` 这个取值：配上「材料缺口时才停」这种条件式判据的话，模型判
-# 「材料足够」→ 条件不成立 → 不停 → 以自己的名义把关卡记掉 → 材料补充环节
-# 整个被跳过。停等的开关不能交给被停的那一方，这一行就是那道门禁。
-ACTORS = ("human",)
 # 本 AR 当前范围是**哪里定下来的**，按强度排序：
 #   user_stated —— 关卡上由人定的（他说了本次做多少、怎么切）。最强：那是决定不是推断。
 #   title / design_prefill / sr_related —— 上游材料给了范围，强度依次递减；

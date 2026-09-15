@@ -160,7 +160,7 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
     if not have("AR", "story.md"):
         return ("story_skeleton",
                 "spec.md 已在。跑 `story-build skeleton`：它给出成文要用的当前输入"
-                "（材料里的图、上游原件、系统设计与 Spec 里的图），建写作设计空壳与章草稿，"
+                "（材料里的图、系统设计与 Spec 里的图），建写作设计空壳与章草稿，"
                 "并告诉你先写整篇设计还是先写哪一章。" + SPEC_STAGE_ORDER)
     left = pending_chapters(feature_root)
     if left:
