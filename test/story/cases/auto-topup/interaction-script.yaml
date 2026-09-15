@@ -16,22 +16,30 @@ replies:
     # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
     deliver:
       - 交通卡自动充值.docx
-    text: 补充材料，产品原稿已放入需求目录。
+      - 交通卡澄清会记录-0903.docx
+    text: 补充材料，产品原稿和九月初澄清会的会议记录都放入需求目录了。
+
+  # 会上的话题摆出来要人拍板时的立场。它问什么就按这里的意思回；没问到的不主动说。
+  - id: meeting-rulings
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: 加更新接口按会上定的；AC-R1 和开关那两条按会上改；充值记录按月筛选不算这张单；调高面额要不要重新验证、授权后建约失败这两件保持待定。
 
   - id: init-wrap-up
-    expected_turn: 3
+    expected_turn: 4
     expected_kind: story_gate
     expected_phase: story
     text: 材料就这些，往下走。
 
   - id: terms-confirmed
-    expected_turn: 4
+    expected_turn: 5
     expected_kind: story_gate
     expected_phase: spec
     text: 术语确认，按你列的定。
 
   - id: review-comments
-    expected_turn: 5
+    expected_turn: 6
     expected_kind: story_gate
     expected_phase: archived
     text: 评审意见已写在系统上，拉回来处理；开关那条要改。

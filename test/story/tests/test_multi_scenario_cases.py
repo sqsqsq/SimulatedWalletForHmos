@@ -173,6 +173,7 @@ class CompositeCoverageTest(unittest.TestCase):
             "归档到系统与评审回稿处置": {"auto-topup"},
             "多方协作与多步分支流程": {"car-key-sharing"},
             "知识链传到 coding 并真实改码": {"auto-topup", "car-key-sharing"},
+            "会议转写进需求输入": {"auto-topup"},
         }
         for capability, expected in carriers.items():
             self.assertTrue(expected <= CASE_IDS, capability)
@@ -214,11 +215,37 @@ class CompositeCoverageTest(unittest.TestCase):
         prd = (CASES / "auto-topup/system/RR90006/prd.md").read_text(encoding="utf-8")
         self.assertIn("见原稿", prd)
         self.assertNotIn("![", prd)
-        supplements = definition("auto-topup")["supplements"]
+        supplements = [item for item in definition("auto-topup")["supplements"]
+                       if item.get("kind") != "meeting"]
         self.assertEqual(1, len(supplements))
         self.assertEqual("on_request", supplements[0]["deliver"])
         self.assertTrue((CASES / "auto-topup/supplements"
                          / supplements[0]["file"]).is_file())
+
+    def test_system_case_holds_a_meeting_record_after_the_archived_docs(self) -> None:
+        """会议记录是真实转写的形态，也要真的带着文档里没有的变化与没收敛的事。
+
+        解析用机制的公共脚本：Case 里这份记录解析不出议题与发言，实跑时模型就读不到它。
+        """
+        import sys  # noqa: PLC0415
+        sys.path.insert(0, str(ROOT / "doc/extensions/skills/story/scripts/core"))
+        from materials import meeting  # noqa: PLC0415
+
+        declared = [item for item in definition("auto-topup")["supplements"] if item.get("kind") == "meeting"]
+        self.assertEqual(1, len(declared))
+        self.assertEqual("on_request", declared[0]["deliver"])
+        parsed = meeting.parse(CASES / "auto-topup/supplements" / declared[0]["file"])
+        self.assertEqual(6, len(parsed["meeting"]["attendees"]))
+        self.assertEqual(3, len(parsed["sections"]))
+        speeches = [s for section in parsed["sections"] for s in section["speeches"]]
+        self.assertEqual([f"S{i}" for i in range(1, len(speeches) + 1)], [s["id"] for s in speeches])
+        text = "\n".join(s["text"] for s in speeches)
+        for token in ("updateAutoTopupContract", "AC-R1", "开关只管新签约", "先挂着", "今天不定"):
+            self.assertIn(token, text)
+        # 一场会覆盖多个需求：有一个议题明写是另一张单的
+        self.assertTrue(any("RR90007" in section["title"] for section in parsed["sections"]))
+        # 归档文档里没有新接口：会议带来的是文档之外的变化
+        self.assertNotIn("updateAutoTopupContract", case_text("auto-topup"))
 
     def test_system_case_split_is_decided_by_a_human_and_review_reply_waits(self) -> None:
         # SR 提出可拆两份、范围由人拍板——交互脚本里那句「不拆了」对应的材料前提。
@@ -289,9 +316,14 @@ class CompositeCoverageTest(unittest.TestCase):
                 self.assertEqual(".docx", path.suffix.lower(), path)
 
     def test_supplement_documents_carry_at_least_two_images(self) -> None:
+        """界面补料要带图；会议记录是语音转写，本来就没有图。"""
         import zipfile
         for directory in case_directories():
+            meetings = {item["file"] for item in definition(directory.name).get("supplements") or []
+                        if item.get("kind") == "meeting"}
             for path in (directory / "supplements").glob("*.docx"):
+                if path.name in meetings:
+                    continue
                 with zipfile.ZipFile(path) as zf:
                     media = [name for name in zf.namelist()
                              if name.startswith("word/media/")]

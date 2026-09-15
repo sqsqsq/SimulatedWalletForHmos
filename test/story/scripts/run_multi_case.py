@@ -606,6 +606,8 @@ def snapshot_workspace_sources(workspace: Path) -> dict[str, Any]:
 #: 补料的投放时机。`start` = 人手上本来就有、起跑前已放进需求目录；
 #: `on_request` = 被测模型开口要了才投——真实场景里人不会提前把所有文档铺满。
 VALID_DELIVER = frozenset({"start", "on_request"})
+#: 补料是哪一类，只给测试域用（静态检查按它分口径），不随投放告诉被测模型。缺省是普通文档。
+VALID_SUPPLEMENT_KIND = frozenset({"meeting"})
 
 
 def load_supplements(case_id: str) -> tuple[dict[str, Any], ...]:
@@ -636,9 +638,14 @@ def load_supplements(case_id: str) -> tuple[dict[str, Any], ...]:
             raise SystemExit(f"[multi] 声明的补料不存在: {case_id}: supplements/{name}")
         if source.resolve().parent != root.resolve():
             raise SystemExit(f"[multi] 补料越界: {case_id}: {name}")
+        kind = str(item.get("kind") or "").strip()
+        if kind and kind not in VALID_SUPPLEMENT_KIND:
+            raise SystemExit(
+                f"[multi] case.yaml supplements 第 {index} 项 kind 非法: {case_id}: "
+                f"{kind}（可用：{'/'.join(sorted(VALID_SUPPLEMENT_KIND))}，普通文档不写）")
         # 路径记成「相对 Case 根」：绝对路径带着本机盘符，抄进证据文件就没法跨环境读。
         output.append({"file": name, "deliver": deliver,
-                       "source": f"{case_id}/supplements/{name}"})
+                       "source": f"{case_id}/supplements/{name}", **({"kind": kind} if kind else {})})
     return tuple(output)
 
 
