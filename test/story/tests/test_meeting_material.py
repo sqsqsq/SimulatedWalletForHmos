@@ -1,8 +1,9 @@
-"""会议材料：公共转换、版本留存、逐行纠偏、引用与有效结果。
+"""会议材料：公共转换、版本留存、逐行纠偏、单话题判断与当前结果的输入绑定。
 
-锁 1.9.2 步骤 6 工作包 1 的离线验收。构造件只证明脚本按合同工作——转换搬得对、原件留得住、
-差异应用得准、引用指得到、派生按人签的结果算；**不证明模型读会的判断力**，那归独立审查与
-真实会议材料的实跑。用例刻意换几种排版，因为脚本不认语义单元，任何排版都该能转换并定位。
+锁 1.9.2 步骤 7 工作包 1 的离线验收。构造件只证明脚本按合同工作——转换搬得对、原件留得住、
+差异应用得准、话题清单立得住、人的裁决落得下、当前结果声明的输入与引用查得到；
+**不证明模型读会的判断力**，那归独立审查与真实会议材料的实跑。
+用例刻意换几种排版，因为脚本不认语义单元，任何排版都该能转换并定位。
 """
 from __future__ import annotations
 
@@ -92,27 +93,18 @@ NO_TIME = document(
     para("需求澄清会", style="Heading1"),
     para("张三：上限先按五个来"), para("李四：同意，按五个"))
 
-LIMIT = {"id": "C1", "kind": "modify", "doc": "SR/design.md", "section": "§3.2",
-         "before": "上限未定", "after": "上限五个，超出排队", "impact": "受理校验",
-         "evidence": [{"start": 5, "end": 6}]}
-NOTICE = {"kind": "add", "doc": "SR/design.md", "section": "§4", "before": "未写通知",
-          "after": "受理后短信通知", "impact": "通知章", "resolves": "O1"}
-TOPICS_INDEX = [{"id": "T1", "title": "受理上限", "evidence": [{"start": 5, "end": 7}]},
-                {"id": "T2", "title": "通知方式", "evidence": [{"start": 9, "end": 9}]}]
-NOTES_TOPICS = [
-    {"id": "T1", "ownership": "ours", "changes": [LIMIT], "open_points": [], "ask": False,
-     "conclusion": {"text": "上限五个", "scope": "受理", "evidence": [{"start": 7, "end": 7}]}},
-    {"id": "T2", "ownership": "ours", "changes": [], "ask": True, "ask_reason": "unresolved",
-     "recommend": "opt_a",
-     "open_points": [{"id": "O1", "what": "通知方式未定", "impact": "通知章", "needs": "产品定",
-                      "evidence": [{"start": 9, "end": 9}]}],
-     "options": [
-         {"key": "opt_a", "label": "按短信通知",
-          "effect": {"ownership": "ours", "apply_changes": [], "add_changes": [NOTICE],
-                     "supersedes": []}},
-         {"key": "opt_b", "label": "维持待定",
-          "effect": {"ownership": "ours", "apply_changes": [], "add_changes": [],
-                     "supersedes": [], "keep_open": ["O1"]}}]},
+#: 一份立得住的会议判断：一个话题不必问人，一个要问人。finding 是模型写的自然语言。
+TOPICS = [
+    {"id": "T1", "title": "受理上限", "ownership": "ours",
+     "evidence": [{"start": 5, "end": 7}],
+     "finding": "会上定了上限五个、超出排队；系统设计里那一节还写着未定，要按会上的改。"},
+    {"id": "T2", "title": "通知方式", "ownership": "ours",
+     "evidence": [{"start": 9, "end": 9}],
+     "finding": "通知方式会上只说下次再定，本需求的通知行为因此还没有依据。",
+     "question": "通知方式现在定下来，还是继续挂着？",
+     "recommend": "a",
+     "options": [{"key": "a", "label": "按短信通知，通知那一段据此写"},
+                 {"key": "b", "label": "维持待定，正文只写边界"}]},
 ]
 
 
@@ -143,6 +135,10 @@ class MeetingCase(unittest.TestCase):
     def status(self) -> dict:
         return self.cli("story_flow.py", "status")[1]
 
+    def contract(self) -> dict:
+        return json.loads((self.fr / "AR" / "story-src" / "story-flow.json")
+                          .read_text(encoding="utf-8"))
+
     def place(self, name: str = "澄清会.docx", xml: str = SAME_LINE,
               cls: str = "MEETING") -> Path:
         path = self.inbox / name
@@ -166,31 +162,47 @@ class MeetingCase(unittest.TestCase):
         folder = meeting.version_dir(self.fr, docx)
         return f"{docx.stem}@{folder.name}", folder
 
-    def read_meeting(self, docx: Path, *, corrections=None, topics=None, notes=None,
+    def notes_path(self) -> Path:
+        path = self.fr / "AR" / "story-src" / "meeting-notes.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def read_meeting(self, docx: Path, *, corrections=None, topics=None,
                      refresh: bool = True) -> str:
-        """写三份读会产物：默认是一份立得住的读法。"""
+        """写读会产物：一份纠偏差异、一份会议判断。默认是一份立得住的读法。"""
         key, folder = self.folder(docx)
         (folder / meeting.CORRECTIONS).write_text(
             json.dumps(corrections if corrections is not None else [], ensure_ascii=False),
             encoding="utf-8")
-        (folder / meeting.TOPICS).write_text(
-            json.dumps(topics if topics is not None else TOPICS_INDEX, ensure_ascii=False),
-            encoding="utf-8")
         source = meeting.read_json(folder / meeting.SOURCE)
         section = {"source": source["file"], "source_sha": source["sha256"],
-                   "attendee_roles": [],
-                   "topics": notes if notes is not None else NOTES_TOPICS}
-        (self.fr / "AR" / "story-src" / "meeting-notes.json").parent.mkdir(
-            parents=True, exist_ok=True)
-        (self.fr / "AR" / "story-src" / "meeting-notes.json").write_text(
+                   "title": "需求澄清会", "attendee_roles": [],
+                   "topics": topics if topics is not None else TOPICS}
+        self.notes_path().write_text(
             json.dumps({"meetings": [section]}, ensure_ascii=False), encoding="utf-8")
         if refresh:
             code, _, log = self.cli("story_flow.py", "meeting-refresh", "--meeting", key)
             self.assertEqual(0, code, log)
         return key
 
+    def write_result(self, *, basis: str | None = None, topics=("T1", "T2"),
+                     body: str = "本需求按会上的结论写。") -> Path:
+        """模型写的当前会议结果：输入绑定 + 每个话题一个标题。"""
+        notes = meeting.read_notes(self.fr, [])
+        mark = basis if basis is not None else meetings.meeting_basis(notes, self.contract())
+        key = next(iter(notes), "澄清会@00000000")
+        rows = [f"<!-- meeting-basis:{mark} -->", "", "# 当前会议结果", ""]
+        for tid in topics:
+            rows += [f"### {key}/{tid} 话题", "", body, ""]
+        path = self.fr / "AR" / "story-src" / "doc-refresh.md"
+        path.write_text("\n".join(rows), encoding="utf-8")
+        return path
+
     def problems(self) -> list[str]:
         return meeting.inspect(self.fr)["problems"]
+
+    def result_problems(self) -> list[str]:
+        return meetings.refresh_problems(self.fr, meeting.read_notes(self.fr, []), self.contract())
 
 
 class TheConverterMovesShapeNotMeaning(MeetingCase):
@@ -252,13 +264,12 @@ class AnyLayoutLandsAndCanBeCited(MeetingCase):
                 self.assertEqual("", broken)
                 hit = [i + 1 for i, line in enumerate(lines) if "上限先按五个来" in line]
                 self.assertTrue(hit, f"{name} 的原话没落进 raw.md")
-                quoted = meeting.quote(lines, {"start": hit[0], "end": hit[0]})
-                self.assertIn("上限先按五个来", quoted)
+                self.assertIn("上限先按五个来", lines[hit[0] - 1], "行号指不回那句原话")
         self.assertEqual(len(layouts), len(meeting.versions(self.fr)), "每种排版各留一版")
 
 
 class EachVersionKeepsItsOwnOriginal(MeetingCase):
-    """一个源版本一个目录，身份是原件；转换件坏了明说，不静默重建。"""
+    """一个源版本一个目录，身份是原件；转换件坏了明说，能按原件补回。"""
 
     def test_import_registers_by_the_original_and_keeps_old_versions(self) -> None:
         docx = self.place()
@@ -337,12 +348,12 @@ class TheCorrectionsAreDiffsOnly(MeetingCase):
 
     def test_a_declared_fix_lands_and_the_other_lines_stay(self) -> None:
         docx = self.imported()
-        key, folder = self.folder(docx)
+        _, folder = self.folder(docx)
         lines = meeting.raw_lines(folder)[0]
         line = next(i + 1 for i, text in enumerate(lines) if "上限先按五个来" in text)
         self.read_meeting(docx, corrections=[{
             "line": line, "original": lines[line - 1],
-            "corrected": lines[line - 1].replace("五个", "5 个"), "basis": "SR §3.2 写的是数字"}])
+            "corrected": lines[line - 1].replace("五个", "5 个"), "basis": "系统设计里写的是数字"}])
         fixed = (folder / meeting.EVIDENCE).read_text(encoding="utf-8").split("\n")
         self.assertIn("5 个", fixed[line - 1])
         self.assertEqual(len(lines), len(fixed), "行数变了")
@@ -377,192 +388,194 @@ class TheCorrectionsAreDiffsOnly(MeetingCase):
         self.assertIn("没有会议版本", out["error"])
 
 
-class TheSelfCheckNamesEachBreach(MeetingCase):
-    """引用、编号、去向、选项结果：结构上的缺口各自点名；语义归审查。"""
+class TheTopicListStandsOnItsOwn(MeetingCase):
+    """一个话题只登记一次：编号、归属、原话、finding 与要问人的那几项。"""
 
-    def test_a_sound_reading_passes_and_an_unread_one_is_pending(self) -> None:
+    def test_a_sound_reading_passes_without_any_topic_index(self) -> None:
         docx = self.imported()
-        key, _ = self.folder(docx)
+        key, folder = self.folder(docx)
         self.assertEqual([key], meeting.inspect(self.fr)["missing"])
         self.read_meeting(docx)
         seen = meeting.inspect(self.fr)
         self.assertEqual(([], [], []), (seen["problems"], seen["missing"], seen["stale"]))
+        self.assertFalse((folder / "topics.json").exists(), "还要求一份话题索引")
 
-    def test_the_index_breaches(self) -> None:
+    def test_an_old_topic_index_is_named_as_unsupported(self) -> None:
         docx = self.imported()
+        _, folder = self.folder(docx)
+        (folder / "topics.json").write_text("[]", encoding="utf-8")
+        self.read_meeting(docx)
+        self.assertTrue(any("topics.json" in p and "本轮" in p for p in self.problems()),
+                        self.problems())
+
+    def test_each_breach_in_the_list(self) -> None:
+        docx = self.imported()
+        loose = json.loads(json.dumps(TOPICS))
         cases = {
-            "编号重复": ([{"id": "T1", "evidence": [{"start": 1, "end": 1}]},
-                          {"id": "T1", "evidence": [{"start": 2, "end": 2}]}], "重复"),
-            "引用越界": ([{"id": "T1", "evidence": [{"start": 1, "end": 900}]},
-                          {"id": "T2", "evidence": [{"start": 2, "end": 2}]}], "不在 raw.md 里"),
-            "没写引用": ([{"id": "T1"}, {"id": "T2", "evidence": [{"start": 2, "end": 2}]}],
-                         "没有指回 raw.md 的行范围"),
+            "话题编号重复": ([loose[0], {**loose[0], "title": "另一说法"}], "话题 T1 重复"),
+            "没写归属": ([{**loose[0], "ownership": "x"}], "ownership 要写"),
+            "没写标题": ([{**loose[0], "title": " "}], "没写 title"),
+            "没写 finding": ([{**loose[0], "finding": ""}], "没写 finding"),
+            "引用越界": ([{**loose[0], "evidence": [{"start": 1, "end": 900}]}],
+                       "不在 raw.md 里"),
+            "没写引用": ([{**loose[0], "evidence": []}], "没有指回 raw.md 的行范围"),
+            "归属不明却不问": ([{**loose[0], "ownership": "unclear"}], "要写 question"),
+            "不问却摆了选项": ([{**loose[0], "options": [{"key": "a", "label": "x"}]}],
+                          "没有 question 却写了 options"),
+            "选项 key 重复": ([{**loose[1], "options": [
+                {"key": "a", "label": "x"}, {"key": "a", "label": "y"}]}], "选项 key 有重复"),
+            "推荐不在选项里": ([{**loose[1], "recommend": "z"}], "不在选项里"),
+            "问人却没有选项": ([{**loose[1], "options": []}], "至少一个真实选项"),
         }
         for name, (topics, needle) in cases.items():
             with self.subTest(name):
                 self.read_meeting(docx, topics=topics)
                 self.assertTrue(any(needle in p for p in self.problems()), self.problems())
 
-    def test_the_note_breaches(self) -> None:
+    def test_a_duplicate_version_section_is_refused(self) -> None:
         docx = self.imported()
-        loose = json.loads(json.dumps(NOTES_TOPICS))
-        cases = {
-            "登记的话题没去向": ([loose[0]], "没有去向"),
-            "结论没原话": ([{**loose[0], "conclusion": {"text": "上限五个"}}, loose[1]], "没有指回"),
-            "选项缺结果": ([loose[0], {**loose[1], "options": [
-                {"key": "opt_a", "label": "按短信通知"}, loose[1]["options"][1]]}], "缺 effect"),
-            "判不准却不问": ([{**loose[0], "ownership": "unclear"}, loose[1]], "要 ask: true"),
-            "写了原因却不问": ([{**loose[0], "ask_reason": "high_impact"}, loose[1]],
-                               "ask 却是 false"),
-            "问人没写原因": ([loose[0], {**loose[1], "ask_reason": "因为重要"}], "ask_reason 写"),
-            "保留的遗留不在册": ([loose[0], {**loose[1], "options": [
-                loose[1]["options"][0],
-                {**loose[1]["options"][1], "effect": {
-                    **loose[1]["options"][1]["effect"], "keep_open": ["O9"]}}]}],
-                "keep_open 要指向"),
-            "既落定又保留": ([loose[0], {**loose[1], "options": [
-                {**loose[1]["options"][0], "effect": {
-                    **loose[1]["options"][0]["effect"], "keep_open": ["O1"]}},
-                loose[1]["options"][1]]}], "既落定又保留"),
-            "替代了不存在的决定": ([loose[0], {**loose[1], "overturns": "别的会@aaaaaaaa/T1",
-                                              "options": loose[1]["options"]}], "不存在"),
-            "话题编号重复": ([loose[0], loose[1], {**loose[1], "conclusion": None}], "话题 T2 重复"),
-            "变化编号重复": ([{**loose[0], "changes": [LIMIT, {**LIMIT, "after": "另一种说法"}]},
-                              loose[1]], "变化 C1 重复"),
-            "选项 key 重复": ([loose[0], {**loose[1], "options": [
-                loose[1]["options"][0], {**loose[1]["options"][1], "key": "opt_a"}]}],
-                "选项 key 有重复"),
-            "遗留没给原话": ([loose[0], {**loose[1], "open_points": [
-                {"id": "O1", "what": "通知方式未定", "impact": "通知章", "needs": "产品定"}]}],
-                "遗留 O1：没有指回"),
-            "替代指着自己": ([loose[0], {**loose[1], "options": [
-                {**loose[1]["options"][0], "effect": {
-                    **loose[1]["options"][0]["effect"],
-                    "supersedes": ["澄清会@REPLACE/T2"]}},
-                loose[1]["options"][1]]}], "指着自己"),
-        }
-        key, _ = self.folder(self.place())
-        for name, (notes, needle) in cases.items():
-            with self.subTest(name):
-                text = json.dumps(notes, ensure_ascii=False).replace("澄清会@REPLACE", key)
-                self.read_meeting(docx, notes=json.loads(text))
-                self.assertTrue(any(needle in p for p in self.problems()), self.problems())
+        self.read_meeting(docx)
+        data = json.loads(self.notes_path().read_text(encoding="utf-8"))
+        data["meetings"].append(dict(data["meetings"][0]))
+        self.notes_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertTrue(any("有两节" in p for p in self.problems()), self.problems())
 
-
-KEY, OLD = "澄清会@aaaaaaaa", "早会@bbbbbbbb"
-
-
-def contract(*gates: dict) -> dict:
-    return {"rounds": [{"round": 1, "gates": list(gates)}]}
-
-
-def shown(*keys: str) -> dict:
-    return {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted",
-            "meetings": list(keys)}
-
-
-def signed(key: str, item: str, chosen: str, basis: str = "人的原话") -> dict:
-    return {"gate": "meeting", "meeting": key, "item": item, "chosen": chosen,
-            "outcome": "accepted", "basis": basis}
-
-
-class TheEffectiveResultsFollowTheSignatures(unittest.TestCase):
-    """人最终接受的 = 会议结论 × 契约里的裁决；未决跟着一起传，派生只有一处。"""
-
-    def results(self, notes: dict, *gates: dict) -> list[dict]:
-        return meetings.effective_meeting_results(notes, contract(*gates))
-
-    def test_an_unclear_topic_follows_the_chosen_ownership(self) -> None:
-        topic = {"id": "T1", "ownership": "unclear", "ask": True, "changes": [LIMIT], "options": [
-            {"key": "k1", "effect": {"ownership": "ours", "apply_changes": ["C1"]}},
-            {"key": "k2", "effect": {"ownership": "not_ours", "apply_changes": ["C1"]}}]}
-        notes = {KEY: {"topics": [topic]}}
-        self.assertEqual(["C1"], [c["id"] for e in self.results(notes, signed(KEY, "T1", "k1"))
-                                  for c in e["changes"]])
-        self.assertEqual([], self.results(notes, signed(KEY, "T1", "k2")), "不属于本需求的也生效了")
-
-    def test_an_unsigned_topic_does_not_take_effect(self) -> None:
-        notes = {KEY: {"topics": [NOTES_TOPICS[1]]}}
-        self.assertEqual([], self.results(notes), "没签就生效了")
-
-    def test_the_chosen_option_decides_what_is_adopted_and_what_stays_open(self) -> None:
-        notes = {KEY: {"topics": [NOTES_TOPICS[1]]}}
-        adopted = self.results(notes, signed(KEY, "T2", "opt_a", "就用短信"))[0]
-        self.assertEqual(["受理后短信通知"], [c["after"] for c in adopted["added"]])
-        self.assertEqual([], adopted["open_points"], "落定了的遗留还留着")
-        self.assertEqual({"key": "opt_a", "label": "按短信通知"}, adopted["chosen"])
-        kept = self.results(notes, signed(KEY, "T2", "opt_b", "先不定"))[0]
-        self.assertEqual([], kept["added"])
-        self.assertEqual(["O1"], [o["id"] for o in kept["open_points"]], "拒绝变化时遗留丢了")
-
-    def test_unasked_topics_wait_for_the_first_gate(self) -> None:
-        notes = {KEY: {"topics": [NOTES_TOPICS[0]]}}
-        self.assertEqual([], self.results(notes), "第一级表态之前就生效了")
-        self.assertEqual(["C1"], [c["id"] for e in self.results(notes, shown(KEY))
-                                  for c in e["changes"]])
-
-    def test_only_the_chosen_option_decides_what_an_old_decision_becomes(self) -> None:
-        old = {"id": "T1", "ownership": "ours", "ask": False, "changes": [LIMIT]}
-        new = {"id": "T1", "ownership": "ours", "ask": True, "overturns": f"{OLD}/T1",
-               "changes": [], "options": [
-                   {"key": "k1", "effect": {"ownership": "ours", "supersedes": []}},
-                   {"key": "k2", "effect": {"ownership": "ours", "supersedes": [f"{OLD}/T1"]}}]}
-        notes = {OLD: {"topics": [old]}, KEY: {"topics": [new]}}
-        refs = lambda *g: [e["ref"] for e in self.results(notes, shown(OLD), *g)]  # noqa: E731
-        self.assertIn(f"{OLD}/T1", refs(), "新版本没裁决就撤销了旧决定")
-        self.assertIn(f"{OLD}/T1", refs(signed(KEY, "T1", "k1")), "选了不替代的选项，旧决定却失效了")
-        self.assertNotIn(f"{OLD}/T1", refs(signed(KEY, "T1", "k2")), "选了替代的选项，旧决定还在")
-
-    def test_file_order_does_not_decide_which_meeting_wins(self) -> None:
-        """两场会说得不一样而谁也没声明替代：两条都在，等人裁决，不按文件名自动覆盖。"""
-        first = {"id": "T1", "ownership": "ours", "ask": False,
-                 "changes": [{**LIMIT, "after": "上限五个"}]}
-        later = {"id": "T1", "ownership": "ours", "ask": False,
-                 "changes": [{**LIMIT, "id": "C2", "after": "上限八个"}]}
-        notes = {OLD: {"topics": [first]}, KEY: {"topics": [later]}}
-        adopted = [c["after"] for e in self.results(notes, shown(OLD, KEY)) for c in e["changes"]]
-        self.assertEqual(["上限五个", "上限八个"], sorted(adopted, key=len), adopted)
-
-
-class TheRefreshShowsChangesOpenPointsAndOriginals(MeetingCase):
-    """`doc-refresh.md` 三段固定，引文取自阅读件、路径是真实文件。"""
-
-    def refresh(self, *gates: dict, notes=None) -> str:
+    def test_the_finding_is_not_read_by_the_script(self) -> None:
+        """finding 里写什么词都不改变脚本的判断：它不替模型判业务。"""
         docx = self.imported()
-        key = self.read_meeting(docx, notes=notes,
-                                topics=TOPICS_INDEX[:1] if notes else None)
-        notes = meeting.read_notes(self.fr, [])
-        bound = [{**g, **({"meeting": key} if g.get("gate") == "meeting" else {}),
-                  **({"meetings": [key]} if g.get("gate") == "material_scope" else {})}
-                 for g in gates]
-        return meetings.render(
-            self.fr, meetings.effective_meeting_results(notes, contract(*bound)))
+        for text in ("会上定了上限五个。", "未决：上限没定。", "不涉及本需求。"):
+            with self.subTest(text):
+                self.read_meeting(docx, topics=[{**TOPICS[0], "finding": text}])
+                self.assertEqual([], self.problems())
 
-    def test_the_three_sections_and_a_real_quote(self) -> None:
-        text = self.refresh(shown(), signed("", "T2", "opt_b", "先不定"))
-        for section in ("## 采纳的变化", "## 仍未决", "## 会议原结论及采纳情况"):
-            self.assertIn(section, text)
-        self.assertIn("上限五个，超出排队", text)
-        self.assertIn("通知方式未定", text.split("## 仍未决", 1)[1], "保留的遗留没传下去")
-        quoted = text.split("## 采纳的变化", 1)[1]
-        self.assertIn("raw.md:L5-L6", quoted, "引用不是真实路径与行号")
-        self.assertIn("上限先按五个来", quoted, "没给原话")
-        self.assertIn("人选「维持待定」（opt_b）", text)
 
-    def test_a_rejected_change_is_not_presented_as_accepted(self) -> None:
-        text = self.refresh(shown(), signed("", "T2", "opt_b", "先不定"))
-        adopted = text.split("## 采纳的变化", 1)[1].split("## 仍未决", 1)[0]
-        self.assertNotIn("受理后短信通知", adopted, "没被选中的变化写进了采纳")
+class TheHumanChoiceIsTheOnlyDecision(MeetingCase):
+    """问不问由 question 说了算；人选的 key 与原话落进契约，脚本不替他选。"""
 
-    def test_a_topic_without_changes_is_not_called_settled(self) -> None:
-        text = self.refresh(shown(), notes=[{**NOTES_TOPICS[0], "changes": []}])
-        tail = text.split("## 会议原结论及采纳情况", 1)[1]
-        self.assertIn("没有引出文档变化", tail)
-        self.assertNotIn("原文已确认", text, "没有变化被当成业务已收敛")
+    def setUp(self) -> None:
+        super().setUp()
+        self.docx = self.imported()
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.key = self.read_meeting(self.docx)
+
+    def decide(self, *args: str) -> tuple[int, dict, str]:
+        return self.cli("story_flow.py", "decide", "--gate", "meeting",
+                        "--meeting", self.key, "--item", "T2", *args)
+
+    def test_only_a_listed_key_is_recorded(self) -> None:
+        code, out, _ = self.decide("--chosen", "不存在", "--basis", "就用短信")
+        self.assertEqual(1, code)
+        self.assertIn("不在本次选项集里", out["error"])
+        code, _, log = self.decide("--chosen", "a", "--basis", "就用短信")
+        self.assertEqual(0, code, log)
+        gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
+        self.assertEqual(("a", "就用短信", "human"), (gate["chosen"], gate["basis"], gate["by"]))
+        self.assertEqual({"key", "label"}, set(gate["options"][0]), "关卡记录里多抄了别的东西")
+
+    def test_a_topic_without_a_question_is_never_asked(self) -> None:
+        self.assertEqual(["T2"], [a.split("/")[-1] for a in meetings.pending_asks(
+            meeting.read_notes(self.fr, []), self.contract())])
+        code, out, _ = self.cli("story_flow.py", "decide", "--gate", "meeting",
+                                "--meeting", self.key, "--item", "T1",
+                                "--chosen", "a", "--basis", "随便")
+        self.assertEqual(1, code)
+        self.assertIn("没有要问人的话题", out["error"])
+
+    def test_the_answer_the_human_actually_gave_is_what_lands(self) -> None:
+        """人给了自选答案：把它补成真实选项再记，不替他选推荐项。"""
+        topics = json.loads(json.dumps(TOPICS))
+        topics[1]["options"].append({"key": "c", "label": "先按站内信通知，短信下一轮再说"})
+        self.read_meeting(self.docx, topics=topics)
+        code, _, log = self.decide("--chosen", "c", "--basis", "先站内信")
+        self.assertEqual(0, code, log)
+        gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
+        self.assertEqual("c", gate["chosen"], "记成了推荐项")
+
+
+class TheCurrentResultIsWrittenByTheModel(MeetingCase):
+    """当前会议结果由模型写：脚本只核输入绑定、话题去向与引用，不判业务。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.docx = self.imported()
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.key = self.read_meeting(self.docx)
+
+    def settle(self) -> None:
+        """人答完两件事：会议那条与第一级材料。"""
+        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "meeting",
+                                     "--meeting", self.key, "--item", "T2",
+                                     "--chosen", "a", "--basis", "就用短信")[0])
+        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
+            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
+            encoding="utf-8")
+        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "material_scope",
+                                     "--chosen", "confirm_scope", "--basis", "材料够了")[0])
+
+    def test_the_result_is_asked_for_only_after_the_human_has_spoken(self) -> None:
+        self.assertEqual("await_gate:meeting", self.status()["next"])
+        self.assertFalse((self.fr / "AR" / "story-src" / "doc-refresh.md").exists(),
+                         "人还没表态就写了当前结果")
+        self.settle()
+        state = self.status()
+        self.assertEqual("read_meeting", state["next"])
+        self.assertIn("meeting-basis:", state["action"])
+        self.write_result()
+        self.assertEqual("run_analysis", self.status()["next"], "结果写好了却还卡在会议这一段")
+
+    def test_a_stale_basis_names_the_gap(self) -> None:
+        self.settle()
+        self.write_result(basis="0" * 16)
+        self.assertTrue(any("声明的输入是" in p for p in self.result_problems()),
+                        self.result_problems())
+
+    def test_a_changed_judgement_makes_the_old_result_stale(self) -> None:
+        self.settle()
+        self.write_result()
+        self.assertEqual([], self.result_problems())
+        topics = json.loads(json.dumps(TOPICS))
+        topics.append({"id": "T3", "title": "另一个话题", "ownership": "not_ours",
+                       "evidence": [{"start": 3, "end": 3}], "finding": "这条归别的单子。"})
+        self.read_meeting(self.docx, topics=topics)
+        self.assertTrue(self.result_problems(), "会议判断变了，旧结果却还算数")
+
+    def test_every_topic_needs_a_destination_including_the_ones_that_are_not_ours(self) -> None:
+        topics = json.loads(json.dumps(TOPICS))
+        topics.append({"id": "T3", "title": "余额提醒", "ownership": "not_ours",
+                       "evidence": [{"start": 3, "end": 3}], "finding": "另一张单子的事。"})
+        self.read_meeting(self.docx, topics=topics)
+        self.settle()
+        self.write_result(topics=("T1", "T2"))
+        problems = self.result_problems()
+        self.assertTrue(any("缺这几个话题的去向" in p and "T3" in p for p in problems), problems)
+
+    def test_a_citation_must_point_at_a_real_line(self) -> None:
+        self.settle()
+        path = self.write_result()
+        _, folder = self.folder(self.docx)
+        rel = (folder / meeting.RAW).relative_to(self.fr).as_posix()
+        path.write_text(path.read_text(encoding="utf-8") + f"\n引用 {rel}:L900\n", encoding="utf-8")
+        self.assertTrue(any("指不到真实的原文行" in p for p in self.result_problems()),
+                        self.result_problems())
+        path.write_text(path.read_text(encoding="utf-8").replace(":L900", ":L5-L6"),
+                        encoding="utf-8")
+        self.assertEqual([], self.result_problems())
+
+    def test_the_wording_of_the_result_is_not_judged(self) -> None:
+        """正文里写没写「未决」两个字，脚本不管——那是审查要读的。"""
+        self.settle()
+        self.write_result(body="这一段还没有结论。")
+        self.assertEqual([], self.result_problems())
+
+    def test_a_second_heading_for_one_topic_is_refused(self) -> None:
+        self.settle()
+        self.write_result(topics=("T1", "T2", "T2"))
+        self.assertTrue(any("有两个标题" in p for p in self.result_problems()),
+                        self.result_problems())
 
 
 class TheFlowStopsOnceForTheMeeting(MeetingCase):
-    """读会 → 出阅读件 → 与第一级同一轮摆给人 → 逐条裁决 → 有效结果写进 doc-refresh.md。"""
+    """读会 → 出阅读件 → 与第一级同一轮摆给人 → 逐条裁决 → 模型写当前结果。"""
 
     def test_read_refresh_ask_decide(self) -> None:
         docx = self.imported()
@@ -577,49 +590,14 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertEqual("await_gate:meeting", state["next"])
         self.assertEqual(["T1", "T2"], [t["topic"] for t in state["meetings"]],
                          "关卡那一轮没把全部话题摆出来")
-        self.assertEqual([None, "opt_a"], [t.get("recommend") for t in state["meetings"]])
-
-        ask = ("story_flow.py", "decide", "--gate", "meeting", "--meeting", key,
-               "--item", "T2", "--basis", "就用短信")
-        code, out, _ = self.cli(*ask, "--chosen", "不存在")
-        self.assertEqual(1, code)
-        self.assertIn("不在本次选项集里", out["error"])
-        self.assertEqual(0, self.cli(*ask, "--chosen", "opt_a")[1] and 0)
-        refresh = self.fr / "AR" / "story-src" / "doc-refresh.md"
-        self.assertIn("人工补定，原话「就用短信」", refresh.read_text(encoding="utf-8"))
-        self.assertNotIn("上限五个，超出排队", refresh.read_text(encoding="utf-8"),
-                         "没问人的话题在第一级表态前生效了")
-        self.assertEqual("await_gate:material_scope", self.status()["next"])
-
-        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
-            encoding="utf-8")
-        code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                "--chosen", "confirm_scope", "--basis", "材料够了")
-        self.assertEqual(0, code, log)
-        self.assertIn("上限五个，超出排队", refresh.read_text(encoding="utf-8"))
-        flow = json.loads((self.fr / "AR" / "story-src" / "story-flow.json").read_text(
-            encoding="utf-8"))
-        gates = flow["rounds"][-1]["gates"]
-        self.assertEqual([key], gates[-1]["meetings"], "第一级没记下摆给人的会议版本")
-        meeting_gate = next(g for g in gates if g["gate"] == "meeting")
-        self.assertEqual({"key", "label"}, set(meeting_gate["options"][0]),
-                         "关卡记录里多抄了一份 effect")
+        self.assertEqual([None, "a"], [t.get("recommend") for t in state["meetings"]])
 
     def test_every_topic_shows_up_including_the_ones_that_are_not_ours(self) -> None:
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
-        notes = [{**NOTES_TOPICS[0], "ownership": "not_ours"},
-                 {**NOTES_TOPICS[1], "ownership": "unclear",
-                  "ask_reason": "unclear_ownership",
-                  "options": [{"key": "opt_a", "label": "算本需求的",
-                               "effect": {"ownership": "ours", "apply_changes": [],
-                                          "add_changes": [], "supersedes": []}},
-                              {"key": "opt_b", "label": "不算本需求的",
-                               "effect": {"ownership": "not_ours", "apply_changes": [],
-                                          "add_changes": [], "supersedes": [],
-                                          "keep_open": ["O1"]}}]}]
-        self.read_meeting(docx, notes=notes)
+        topics = [{**TOPICS[0], "ownership": "not_ours"},
+                  {**TOPICS[1], "ownership": "unclear"}]
+        self.read_meeting(docx, topics=topics)
         rows = self.status()["meetings"]
         self.assertEqual(["not_ours", "unclear"], [r["ownership"] for r in rows])
         self.assertTrue(all(r["evidence"][0].startswith("AR/story-src/meetings/") for r in rows
@@ -631,6 +609,35 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         state = self.status()
         self.assertNotIn("meetings", state)
         self.assertEqual("await_gate:material_scope", state["next"])
+        self.assertFalse((self.fr / "AR" / "story-src" / "doc-refresh.md").exists(),
+                         "没有会议却造了一份会议结果")
+
+
+class TwoMeetingsKeepBothSources(MeetingCase):
+    """两场会：原文与判断各自留着，脚本不按文件名或时间替谁覆盖谁。"""
+
+    def test_neither_file_order_nor_time_decides(self) -> None:
+        first = self.imported(name="早会.docx")
+        later = self.imported(name="晚会.docx",
+                              xml=SAME_LINE.replace("上限先按五个来", "上限改成八个"))
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        sections = []
+        for docx, finding in ((first, "早会定的是五个。"), (later, "晚会改成八个，与早会不一致。")):
+            key, folder = self.folder(docx)
+            (folder / meeting.CORRECTIONS).write_text("[]", encoding="utf-8")
+            self.assertEqual(0, self.cli("story_flow.py", "meeting-refresh", "--meeting", key)[0])
+            source = meeting.read_json(folder / meeting.SOURCE)
+            sections.append({"source": source["file"], "source_sha": source["sha256"],
+                             "topics": [{**TOPICS[0], "finding": finding}]})
+        self.notes_path().write_text(json.dumps({"meetings": sections}, ensure_ascii=False),
+                                     encoding="utf-8")
+        self.assertEqual([], self.problems())
+        notes = meeting.read_notes(self.fr, [])
+        self.assertEqual(2, len(notes), "两场会只剩一场")
+        rows = meetings.topic_digest(self.fr, notes, self.contract())
+        self.assertEqual(2, len(rows), "摆给人的话题被合并了")
+        self.assertEqual({"早会定的是五个。", "晚会改成八个，与早会不一致。"},
+                         {r["finding"] for r in rows}, "脚本改写了模型的判断")
 
 
 if __name__ == "__main__":

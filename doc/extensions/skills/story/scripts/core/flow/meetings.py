@@ -1,24 +1,21 @@
-"""会议的有效结果：模型的判断（`meeting-notes.json`）加人的裁决（契约里的关卡记录），
-才是人最终接受的。
+"""会议这一段的确定性部分：摆给人的话题、人的裁决记录，以及当前会议结果的输入绑定与引用核对。
 
-派生只有一处（`effective_meeting_results`）：`status` 的路由与 `AR/story-src/doc-refresh.md`
-的渲染都调它——提取稿的会议输入与给人的文档刷新清单是同一份派生件。
+**业务结果由模型写**：人裁决之后，`AR/story-src/doc-refresh.md` 由读会的模型按原话与真实裁决
+写成——它是下游唯一的当前会议结果。脚本不再把变化、遗留与选项效果编译成文稿：那套中间协议
+（C/O 编号、effect、替代图）已经退出，脚本合成不出「这件事最后怎么算」，只会让模型多维护一层。
 
-生效规则：
+脚本在这里只做三件确定的事：
 
-- 要问人的话题（`ask`）只按人签的那个选项的 `effect` 生效，没签不生效；
-- 不问人的话题，要等它所在的会议版本在第一级材料关卡上摆给人、人表了态才生效——
-  第一级 accepted 的记录里带着当时摆出的版本（`meetings`），人对摆出的整体表态就是确认；
-- 归属最终不是本需求的，只记不消费；
-- 旧决定只被某个已签选项的 `supersedes` 指到才失效，新版本到了、推翻未签都不撤销它；
-- **未决跟着话题一起生效**：选项落定了哪几个遗留就减掉哪几个，其余原样保留。
-  没有变化不等于业务已收敛——那句话只能由会上的结论自己说。
+- 摆出还要问人的话题（`pending_asks`）与人能选的那几项（`topic_options`）；
+- 记下人选了哪一项（`decide` 写进契约，本模块只读）；
+- 给当前结果一个**输入绑定**（`meeting_basis`）并核它引用的原文行真实存在（`refresh_problems`）。
 
-只读契约与会议结论，写的只有 `doc-refresh.md` 与阅读件 `evidence.md`；不建会议状态机：
-版本靠目录与指纹，生效靠派生。
+绑定只证明这份结果声明的是当前这版输入，**不证明模型理解得对**——那归独立审查。
 """
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 from materials import meeting
@@ -26,6 +23,14 @@ from materials import meeting
 from flow.state import FlowError
 
 REFRESH = ("AR", "story-src", "doc-refresh.md")
+#: 当前结果的输入绑定：摘要由 `meeting_basis` 算，模型原样抄进文件开头
+BASIS_MARK = re.compile(r"<!--\s*meeting-basis:([0-9a-f]{8,64})\s*-->")
+#: 结果里的话题标题：`### <版本>/<话题 id> <标题>`
+HEADING = re.compile(r"^###\s+(\S+@[0-9a-f]{8}/\S+)\s*(.*)$")
+#: 结果里显式写出的原话引用
+CITE = re.compile(r"(AR/story-src/meetings/[^\s:：]+/raw\.md):L(\d+)(?:-L(\d+))?")
+#: 人的裁决记录里留下的字段：证据是人选了什么、依据是什么，不含任何业务合成
+GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "basis", "at", "meetings")
 
 
 def _accepted(contract: dict, gate: str) -> list[dict]:
@@ -39,170 +44,27 @@ def presented(contract: dict) -> set[str]:
 
 
 def unconfirmed(notes: dict, contract: dict) -> list[str]:
-    """有了会议结论、还没在第一级摆给人的版本。"""
+    """有了会议判断、还没在第一级摆给人的版本。"""
     return sorted(set(notes) - presented(contract))
 
 
 def pending_asks(notes: dict, contract: dict) -> list[str]:
-    """要问人而还没签的话题：`<主名>@<sha8>/<话题>`。"""
+    """要问人而还没签的话题：`<主名>@<sha8>/<话题>`。问不问由 `question` 说了算。"""
     signed = {(g.get("meeting"), g.get("item")) for g in _accepted(contract, "meeting")}
     return [f"{key}/{t.get('id')}" for key, section in sorted(notes.items())
-            for t in section.get("topics") or []
-            if t.get("ask") and (key, str(t.get("id"))) not in signed]
-
-
-def effective_meeting_results(notes: dict, contract: dict) -> list[dict]:
-    """每个生效话题一项：会上定的变化、人补定的变化、会议原结论、剩下的未决与替代关系。"""
-    shown = presented(contract)
-    signed = {(g.get("meeting"), g.get("item")): g for g in _accepted(contract, "meeting")}
-    out: list[dict] = []
-    for key, section in sorted(notes.items()):
-        for topic in section.get("topics") or []:
-            if not isinstance(topic, dict):
-                continue
-            tid = str(topic.get("id"))
-            changes = {str(c.get("id")): c for c in topic.get("changes") or [] if isinstance(c, dict)}
-            opens = [o for o in topic.get("open_points") or [] if isinstance(o, dict)]
-            chosen: dict | None = None
-            if topic.get("ask"):
-                gate = signed.get((key, tid))
-                option = next((o for o in topic.get("options") or []
-                               if gate and isinstance(o, dict) and o.get("key") == gate.get("chosen")), None)
-                if option is None:
-                    continue                      # 没签不生效
-                effect = option.get("effect") or {}
-                owner = effect.get("ownership", topic.get("ownership"))
-                picked = [changes[c] for c in effect.get("apply_changes") or [] if c in changes]
-                added = [{**c, "basis": gate.get("basis", "")}
-                         for c in effect.get("add_changes") or [] if isinstance(c, dict)]
-                supersedes = [str(s) for s in effect.get("supersedes") or []]
-                resolved = {str(c.get("resolves")) for c in added if c.get("resolves")}
-                chosen = {"key": option.get("key"), "label": str(option.get("label", ""))}
-            elif key in shown:
-                owner, picked, added, supersedes, resolved = (
-                    topic.get("ownership"), list(changes.values()), [], [], set())
-            else:
-                continue
-            if owner != "ours":
-                continue
-            out.append({"ref": f"{key}/{tid}", "version": key, "conclusion": topic.get("conclusion"),
-                        "changes": picked, "added": added, "supersedes": supersedes,
-                        "open_points": [o for o in opens if str(o.get("id")) not in resolved],
-                        "chosen": chosen})
-    gone = {s for e in out for s in e["supersedes"]}
-    return [e for e in out if e["ref"] not in gone]
-
-
-def _citer(feature_root: Path):
-    """引用渲染器：实际路径 + 行范围 + 纠偏后的原话，同一范围只引一次全文。"""
-    folders = meeting.versions(feature_root)
-    lines: dict[str, list[str]] = {}
-    seen: set[str] = set()
-
-    def cite(version: str, value) -> str:
-        folder = folders.get(version)
-        rngs = meeting.ranges(value)
-        if folder is None or not rngs:
-            return ""
-        if version not in lines:
-            lines[version] = meeting.evidence_lines(folder)
-        text = lines[version]
-        parts = []
-        for rng in rngs:
-            ref = meeting.line_ref(feature_root, folder, rng)
-            if ref in seen:
-                parts.append(f"{ref}（同上）")
-            else:
-                seen.add(ref)
-                parts.append(f"{ref}「{meeting.quote(text, rng)}」")
-        return "；".join(parts)
-
-    return cite
-
-
-def render(feature_root: Path, results: list[dict]) -> str:
-    """`doc-refresh.md`：采纳的变化、仍未决、会议原结论及采纳情况，三段固定。
-
-    未决与原结论都在同一份里：提取作者只读这一份就拿得到「定了什么」和「还没定什么」。
-    """
-    cite = _citer(feature_root)
-    rows = ["# 会议有效结果与文档刷新清单", "",
-            "<!-- 由 story_flow.py 从 meeting-notes.json 与关卡裁决派生；"
-            "改判断回会议结论或重新裁决，手改无效 -->",
-            "<!-- 引文取纠偏后的 evidence.md，行号与 raw.md 一致；纠偏依据在同目录 corrections.json -->",
-            "", "## 采纳的变化", ""]
-    changed = [(e, c, "") for e in results for c in e["changes"]] + \
-        [(e, c, c.get("basis", "")) for e in results for c in e["added"]]
-    for entry, change, basis in changed:
-        source = (f"人工补定，原话「{basis}」"
-                  + (f"；落定遗留 {change.get('resolves')}" if change.get("resolves") else "")
-                  if basis else "会上定的 —— " + (cite(entry["version"], change.get("evidence")) or "（未给原话）"))
-        rows += [f"### {change.get('doc', '')} {change.get('section', '')}（{entry['ref']}）", "",
-                 f"- 类型：{change.get('kind', '')}", f"- 改前：{change.get('before', '')}",
-                 f"- 改后：{change.get('after', '')}", f"- 影响：{change.get('impact', '')}",
-                 f"- 来源：{source}", ""]
-    if not changed:
-        rows += ["（没有采纳的变化）", ""]
-
-    rows += ["## 仍未决", ""]
-    pending = [(e, o) for e in results for o in e["open_points"]]
-    for entry, point in pending:
-        rows += [f"### {entry['ref']} · {point.get('what', '')}", "",
-                 f"- 影响：{point.get('impact', '')}", f"- 谁来定：{point.get('needs', '')}"]
-        if point.get("suggestion"):
-            rows.append(f"- 建议（仅建议，未经裁决）：{point['suggestion']}")
-        quoted = cite(entry["version"], point.get("evidence"))
-        rows += ([f"- 原话：{quoted}"] if quoted else []) + [""]
-    if not pending:
-        rows += ["（没有仍未决的事项）", ""]
-
-    rows += ["## 会议原结论及采纳情况", ""]
-    for entry in results:
-        conclusion = entry.get("conclusion") or {}
-        said = (f"{conclusion.get('text', '')}（适用：{conclusion.get('scope', '')}"
-                + (f"；原话 {q}" if (q := cite(entry["version"], conclusion.get("evidence"))) else "") + "）"
-                ) if conclusion else "会上没有收口结论"
-        taken = []
-        if entry["chosen"]:
-            taken.append(f"人选「{entry['chosen']['label'] or entry['chosen']['key']}」"
-                         f"（{entry['chosen']['key']}）")
-        counts = len(entry["changes"]) + len(entry["added"])
-        taken.append(f"采纳 {counts} 条变化" if counts else "没有引出文档变化，相关段落保持原文")
-        if entry["open_points"]:
-            taken.append(f"保留 {len(entry['open_points'])} 项未决")
-        rows.append(f"- {entry['ref']}：{said}——{'；'.join(taken)}")
-    if not results:
-        rows.append("（没有生效的会议话题）")
-    return "\n".join(rows) + "\n"
-
-
-def refresh_stale(feature_root: Path, notes: dict, contract: dict) -> bool:
-    """`doc-refresh.md` 跟不跟得上现在的会议结论与裁决。还没有任何生效结果时不要求它在。"""
-    path = feature_root.joinpath(*REFRESH)
-    results = effective_meeting_results(notes, contract)
-    if not path.is_file():
-        return bool(results)
-    return path.read_text(encoding="utf-8").replace("\r\n", "\n") != render(feature_root, results)
-
-
-def write_refresh(feature_root: Path, contract: dict) -> None:
-    """按现在的结论与裁决重写 `doc-refresh.md`；没有会议结论也没写过它时不落文件。"""
-    notes = meeting.read_notes(feature_root, [])
-    path = feature_root.joinpath(*REFRESH)
-    if notes or path.is_file():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render(feature_root, effective_meeting_results(notes, contract)),
-                        encoding="utf-8")
+            for t in meeting.topics_of(section)
+            if str(t.get("question", "")).strip() and (key, str(t.get("id"))) not in signed]
 
 
 def topic_options(feature_root: Path, version: str, item: str) -> list[dict]:
-    """`decide --gate meeting` 的选项集：取自会议结论里那个话题的 options，脚本只认 key。"""
+    """`decide --gate meeting` 的选项集：取自那个话题的 options，脚本只认 key。"""
     section = meeting.read_notes(feature_root, []).get(version) or {}
-    topic = next((t for t in section.get("topics") or [] if str(t.get("id")) == item), None)
-    if not topic or not topic.get("ask"):
-        raise FlowError(f"会议结论「{version}」里没有要问人的话题「{item}」——--meeting 写 <主名>@<sha8>，"
+    topic = next((t for t in meeting.topics_of(section) if str(t.get("id")) == item), None)
+    if not topic or not str(topic.get("question", "")).strip():
+        raise FlowError(f"会议判断「{version}」里没有要问人的话题「{item}」——--meeting 写 <主名>@<sha8>，"
                         "--item 写话题 id；待裁决的条目列在 `status` 的 meetings 里")
-    return [{"key": o.get("key"), "label": o.get("label", "")} for o in topic.get("options") or []]
+    return [{"key": o.get("key"), "label": o.get("label", "")}
+            for o in topic.get("options") or [] if isinstance(o, dict)]
 
 
 def topic_digest(feature_root: Path, notes: dict, contract: dict) -> list[dict]:
@@ -216,34 +78,91 @@ def topic_digest(feature_root: Path, notes: dict, contract: dict) -> list[dict]:
     rows: list[dict] = []
     for key, section in sorted(notes.items()):
         folder = folders.get(key)
-        for topic in section.get("topics") or []:
-            if not isinstance(topic, dict):
-                continue
+        for topic in meeting.topics_of(section):
             tid = str(topic.get("id"))
             gate = signed.get((key, tid))
-            conclusion = topic.get("conclusion") or {}
             row = {
-                "version": key, "topic": tid, "ownership": topic.get("ownership"),
-                "changes": [f"{c.get('kind', '')} {c.get('doc', '')} {c.get('section', '')}："
-                            f"{c.get('after', '')}" for c in topic.get("changes") or []
-                            if isinstance(c, dict)],
-                "conclusion": conclusion.get("text", ""),
-                "open_points": [o.get("what", "") for o in topic.get("open_points") or []
-                                if isinstance(o, dict)],
-                "ask": bool(topic.get("ask")),
+                "version": key, "topic": tid, "title": topic.get("title", ""),
+                "ownership": topic.get("ownership"), "finding": topic.get("finding", ""),
                 "settled": gate.get("chosen") if gate else None,
                 "version_confirmed": key in shown,
             }
             if folder is not None:
                 row["evidence"] = [meeting.line_ref(feature_root, folder, r)
-                                   for r in meeting.ranges(conclusion.get("evidence"))]
-            if topic.get("ask") and not gate:
-                row["ask_reason"] = topic.get("ask_reason")
+                                   for r in meeting.ranges(topic.get("evidence"))]
+            if str(topic.get("question", "")).strip() and not gate:
+                row["question"] = topic["question"]
                 row["recommend"] = topic.get("recommend")
                 row["options"] = [{"key": o.get("key"), "label": o.get("label", "")}
                                   for o in topic.get("options") or [] if isinstance(o, dict)]
             rows.append(row)
     return rows
+
+
+def meeting_basis(notes: dict, contract: dict) -> str:
+    """当前会议结果声明的输入版本：会议判断 + 人真实签下的那几笔。
+
+    只取确定性事实——判断本身与关卡记录的固定字段，键排序、列表按原顺序。
+    新会议、改判断或人又签了一笔，摘要就变；一个字节没动时它稳定，所以旧结果不会被误判成陈旧。
+    它**不证明模型理解得对**，只证明这份结果是照着这版输入写的。
+    """
+    gates = [{k: g.get(k) for k in GATE_FIELDS if k in g}
+             for gate in ("meeting", "material_scope") for g in _accepted(contract, gate)]
+    payload = json.dumps({"notes": notes, "gates": gates},
+                         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return meeting.digest(payload.encode("utf-8"))[:16]
+
+
+def refresh_problems(feature_root: Path, notes: dict, contract: dict) -> list[str]:
+    """当前会议结果立不立得住 —— 只核**能确定的四件事**。
+
+    文件在不在、声明的输入是不是当前这版、每个话题有没有去向、写出来的原话引用指不指得到。
+    结论对不对、未决有没有被替人定，读的是自然语言，归独立审查；这里不按关键词判业务，
+    也不要求最短引文。
+    """
+    path = feature_root.joinpath(*REFRESH)
+    where = "/".join(REFRESH)
+    if not notes:
+        return []
+    basis = meeting_basis(notes, contract)
+    try:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except OSError:
+        return [f"{where} 还没写：人的裁决已经齐了，按原话与裁决写出当前的会议结果，"
+                f"开头写一行 <!-- meeting-basis:{basis} -->"]
+    problems: list[str] = []
+    marks = BASIS_MARK.findall(text)
+    if len(marks) != 1:
+        problems.append(f"{where} 里要恰好有一行 <!-- meeting-basis:… -->（现在有 {len(marks)} 行）")
+    elif marks[0] != basis:
+        problems.append(f"{where} 声明的输入是 {marks[0]}，当前输入是 {basis}："
+                        "会议判断或人的裁决之后变过，按当前输入重新核一遍整份结果再换上这个标记")
+    refs, seen = [], set()
+    for line in text.split("\n"):
+        hit = HEADING.match(line.strip())
+        if not hit:
+            continue
+        if hit[1] in seen:
+            problems.append(f"{where} 里「{hit[1]}」有两个标题：一个话题讲一处")
+        seen.add(hit[1])
+        refs.append(hit[1])
+    want = {f"{key}/{t.get('id')}" for key, section in notes.items()
+            for t in meeting.topics_of(section)}
+    lost = sorted(want - set(refs))
+    if lost:
+        problems.append(f"{where} 缺这几个话题的去向：{'、'.join(lost)}"
+                        "——不属于本需求或已被后续决定替代的，也写一句去向，别静默删掉")
+    extra = sorted(set(refs) - want)
+    if extra:
+        problems.append(f"{where} 里「{'、'.join(extra)}」不在会议判断里：标题写 <版本>/<话题 id>")
+    folders = meeting.versions(feature_root)
+    for rel, start, end in CITE.findall(text):
+        folder = feature_root / rel
+        key = f"{folder.parent.parent.name}@{folder.parent.name}"
+        total = len(meeting.raw_lines(folders[key])[0]) if key in folders else 0
+        if key not in folders or not 1 <= int(start) <= int(end or start) <= total:
+            problems.append(f"{where} 引的 {rel}:L{start} 指不到真实的原文行")
+    return problems
 
 
 def cmd_meeting_refresh(feature_root: Path, version: str) -> dict:

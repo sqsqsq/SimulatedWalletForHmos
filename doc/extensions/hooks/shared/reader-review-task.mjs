@@ -136,8 +136,9 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 路径逐版列实际存在的那些——写通配形状的话，审查只能猜自己该去哪一层。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
     rows.push('', '### 会议材料（逐话题核去向）', '',
-      '- `AR/story-src/meeting-notes.json` —— 每场会每个版本、每个话题的判断：变化、结论、遗留与问人的选项；',
-      '- `AR/story-src/doc-refresh.md` —— 人裁决之后采纳的变化、仍未决与会议原结论。');
+      '- `AR/story-src/meeting-notes.json` —— 每场会每个版本、每个话题的判断（finding）与要问人的问题；',
+      '- `AR/story-src/story-flow.json` 的 `meeting` 关卡记录 —— 人真选了哪一项、原话是什么；',
+      '- `AR/story-src/doc-refresh.md` —— 模型写的当前会议结果，逐话题的去向。');
     for (const dir of meetingVersions(src)) {
       rows.push(`- \`${dir}/raw.md\` —— 原文，引用的行号指它；`
         + `\`${dir}/corrections.json\` 是纠偏留痕，\`${dir}/evidence.md\` 是纠偏后的阅读件`);

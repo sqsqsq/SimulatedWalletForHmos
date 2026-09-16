@@ -11,7 +11,6 @@
     raw.md             未纠偏的转换文本，引用的基底
     corrections.json   模型写：逐行字面纠偏 [{"line", "original", "corrected", "basis"}]
     evidence.md        脚本按差异生成的阅读件，行号与 raw.md 一一对应
-    topics.json        模型写：话题索引 [{"id", "title", "evidence": [{"start", "end"}]}]
 
 材料身份是**原件**：同名换了内容就是新版本、新目录；已经存过的版本原样复用，转换器升级
 不重算旧版——旧结论引的那几行永远指得回同一段字。
@@ -20,9 +19,12 @@
 `AR/story-src/meetings/<主名>/<sha8>/raw.md:L12-L15`。不另编发言号：编号等于脚本替模型
 划语义单元。
 
-会议结论 `AR/story-src/meeting-notes.json` 按 `<主名>@<sha8>` 分节，形状见
-`phases/meeting-read.md`。自检只核结构、引用与留痕，不判意思：纠偏改没改意思、话题漏没漏、
-结论有没有写出会上没说的，归独立审查。
+会议判断 `AR/story-src/meeting-notes.json` 按 `<主名>@<sha8>` 分节，一个话题一条：
+归属、原话引用、`finding`（定了什么、与文档差在哪、还有什么没定）、要问人时的 `question`
+与选项。形状见 `phases/meeting-read.md`。
+
+自检只核结构、引用与留痕：**不读 finding 判业务**——纠偏改没改意思、话题漏没漏、结论有没有
+写出会上没说的、未决是不是被替人定了，都要拿原话与材料对着读，归读会的模型自己与独立审查。
 
 只用标准库，stdout 无输出。
 """
@@ -37,12 +39,10 @@ from materials import importer
 MEETINGS = ("AR", "story-src", "meetings")
 NOTES = ("AR", "story-src", "meeting-notes.json")
 ORIGINAL, SOURCE, RAW = "original.docx", "source.json", "raw.md"
-CORRECTIONS, EVIDENCE, TOPICS = "corrections.json", "evidence.md", "topics.json"
+CORRECTIONS, EVIDENCE = "corrections.json", "evidence.md"
 #: 文档内嵌图跟着版本走，raw.md 里按 `media/<名>` 引用
 MEDIA = "media"
 OWNERSHIP = ("ours", "not_ours", "unclear")
-#: 值得问人的原因：归属判不准、没收敛、转写存疑、高影响修正、推翻已确认的决定
-ASK_REASONS = ("unclear_ownership", "unresolved", "transcript_doubt", "high_impact", "overturns")
 
 
 def digest(data: bytes) -> str:
@@ -210,26 +210,11 @@ def evidence_stale(folder: Path, fixed: list[str]) -> bool:
         return True
 
 
-def evidence_lines(folder: Path) -> list[str]:
-    """纠偏后的行；还没出件时退回原文——引文缺了不该让派生算不出来。"""
-    try:
-        return (folder / EVIDENCE).read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
-    except OSError:
-        return raw_lines(folder)[0]
-
-
 def line_ref(feature_root: Path, folder: Path, rng: dict) -> str:
     """给人看的引用：实际路径 + 行范围。目录形状只在这里渲一次。"""
     rel = (folder / RAW).relative_to(feature_root).as_posix()
     start, end = int(rng.get("start", 0)), int(rng.get("end", 0))
     return f"{rel}:L{start}" + (f"-L{end}" if end != start else "")
-
-
-def quote(lines: list[str], rng: dict) -> str:
-    """这一段原话。不摘要、不截断被引用的否定条件。"""
-    start, end = int(rng.get("start", 0)), int(rng.get("end", 0))
-    picked = [l.strip() for l in lines[max(start - 1, 0):end] if l.strip()]
-    return " / ".join(picked)
 
 
 def ranges(value) -> list[dict]:
@@ -253,7 +238,7 @@ def range_problems(what: str, value, total: int) -> list[str]:
 
 
 def read_notes(feature_root: Path, problems: list[str]) -> dict[str, dict]:
-    """会议结论按版本分节：`<主名>@<sha8>` → 那一节。
+    """会议判断按版本分节：`<主名>@<sha8>` → 那一节。
 
     同一个版本写了两节就报出来，不让后写的盖掉先写的——版本是引用的身份，
     盖掉之后旧引用指向的是另一份判断，而两份都还在文件里。
@@ -275,163 +260,76 @@ def read_notes(feature_root: Path, problems: list[str]) -> dict[str, dict]:
     return out
 
 
-def _topic_index(key: str, topics, total: int, problems: list[str]) -> list[str]:
-    """话题索引立不立得住：编号唯一、引用指得到真实的行。返回登记了哪些话题。"""
-    if not isinstance(topics, list):
-        problems.append(f"{key} 的 {TOPICS} 要写成数组："
-                        "[{\"id\": \"T1\", \"title\": \"话题名\", \"evidence\": [{\"start\", \"end\"}]}]")
-        return []
-    registered: list[str] = []
-    for item in topics:
-        if not isinstance(item, dict) or not str(item.get("id", "")).strip():
-            problems.append(f"{key} 的 {TOPICS} 里有条目没写 id")
+def topics_of(section: dict) -> list[dict]:
+    """一节里的话题，按原顺序。"""
+    return [t for t in section.get("topics") or [] if isinstance(t, dict)]
+
+
+def _notes_problems(key: str, section: dict, total: int, problems: list[str]) -> None:
+    """一份会议判断立不立得住——**只核结构与引用，不读 finding 判业务**。
+
+    话题漏没漏、结论对不对、未决是不是被替人定了，脚本看不出来：那要拿原话与需求材料
+    对着读，归读会的模型自己与独立审查。
+    """
+    seen: set[str] = set()
+    for topic in topics_of(section):
+        tid = str(topic.get("id", "")).strip()
+        if not tid:
+            problems.append(f"{key} 里有话题没写 id")
             continue
-        tid = str(item["id"])
-        if tid in registered:
-            problems.append(f"{key} 的 {TOPICS} 里 {tid} 重复：一个话题一条")
+        if tid in seen:
+            problems.append(f"{key} 里话题 {tid} 重复：一个编号只有一条")
             continue
-        registered.append(tid)
-        problems.extend(f"{key}/{tid} " + p for p in range_problems("的话题索引：", item.get("evidence"), total))
-    return registered
+        seen.add(tid)
 
-
-def _effect_problems(effect, topic: dict, changes: set[str], opens: set[str]) -> list[str]:
-    """一个选项选完会怎样：只核结构与引用，不判这个选择好不好。"""
-    if not isinstance(effect, dict):
-        return ["缺 effect——选了它归属定成什么、哪些变化生效、哪些遗留被落定或保留"]
-    out: list[str] = []
-    if topic.get("ownership") == "unclear" and effect.get("ownership") not in ("ours", "not_ours"):
-        out.append("归属判不准，effect.ownership 要定成 ours 或 not_ours")
-    if topic.get("overturns") and not isinstance(effect.get("supersedes"), list):
-        out.append("推翻了旧决定，要写 supersedes（可以为空列表）")
-    if not {str(c) for c in effect.get("apply_changes") or []} <= changes:
-        out.append("apply_changes 引了本话题没有的变化")
-    resolved = [str(a.get("resolves")) for a in effect.get("add_changes") or []
-                if isinstance(a, dict) and a.get("resolves")]
-    if any(r not in opens for r in resolved):
-        out.append("add_changes 的 resolves 要指向本话题的 open_points")
-    if len(resolved) != len(set(resolved)):
-        out.append("同一个遗留被两条 add_changes 落定：一个遗留只由一处解决")
-    kept = [str(k) for k in effect.get("keep_open") or []]
-    if any(k not in opens for k in kept):
-        out.append("keep_open 要指向本话题的 open_points")
-    both = sorted(set(kept) & set(resolved))
-    if both:
-        out.append(f"{'、'.join(both)} 既落定又保留：同一个遗留只能二选一")
-    return out
-
-
-def _unique(items: list, what: str, say) -> dict:
-    """按 id 建索引，重复的报出来而不是后写盖前写——id 是选择与引用的身份。"""
-    out: dict[str, dict] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        ident = str(item.get("id"))
-        if ident in out:
-            say(f"里 {what} {ident} 重复：一个编号只能有一条")
-            continue
-        out[ident] = item
-    return out
-
-
-def _notes_problems(key: str, section: dict, registered: list[str], total: int,
-                    problems: list[str], refs: dict[str, dict]) -> None:
-    topics = _unique(section.get("topics") or [], "话题",
-                     lambda msg: problems.append(f"{key} {msg}"))
-    lost = [t for t in registered if t not in topics]
-    if lost:
-        problems.append(f"{key}：{TOPICS} 登记的话题 {'、'.join(lost)} 在会议结论里没有去向"
-                        "——每个话题都要有判断（变化、结论、遗留，或不属于本需求）")
-    unknown = [t for t in topics if t not in registered]
-    if unknown:
-        problems.append(f"{key}：会议结论里的 {'、'.join(unknown)} 不在 {TOPICS} 里"
-                        "——话题索引与结论对同一批编号")
-    for tid, topic in topics.items():
         def say(msg: str) -> None:
             problems.append(f"{key}/{tid} {msg}")
 
-        refs[f"{key}/{tid}"] = topic
+        if not str(topic.get("title", "")).strip():
+            say("没写 title：给人看的一句话题名")
         if topic.get("ownership") not in OWNERSHIP:
             say(f"的 ownership 要写 {' / '.join(OWNERSHIP)} 之一")
-        changes = _unique(topic.get("changes") or [], "变化", say)
-        open_points = _unique(topic.get("open_points") or [], "遗留", say)
-        cited = [("结论", (topic.get("conclusion") or {}).get("evidence"))] if topic.get("conclusion") else []
-        cited += [(f"变化 {cid}", c.get("evidence")) for cid, c in changes.items()]
-        # 遗留也要指得回原话：它要跟着传到下游，读的人得能自己回去看那几行
-        cited += [(f"遗留 {oid}", o.get("evidence")) for oid, o in open_points.items()]
-        for what, value in cited:
-            for problem in range_problems(f"的{what}：", value, total):
-                say(problem)
-        opens = set(open_points)
-        reason = topic.get("ask_reason")
-        if not topic.get("ask"):
-            if reason in ASK_REASONS:
-                say(f"写了 ask_reason: {reason}（需要人裁决的原因），ask 却是 false")
-            if topic.get("ownership") == "unclear" or topic.get("overturns"):
-                say("归属判不准或推翻了旧决定，要 ask: true 摆给人")
-            continue
-        if reason not in ASK_REASONS:
-            say(f"要问人：ask_reason 写 {' / '.join(ASK_REASONS)} 之一")
+        for problem in range_problems("的原话引用：", topic.get("evidence"), total):
+            say(problem)
+        if not str(topic.get("finding", "")).strip():
+            say("没写 finding：这个话题定了什么、与文档差在哪、还有什么没定，一段话说清")
+        question = str(topic.get("question", "")).strip()
         options = [o for o in topic.get("options") or [] if isinstance(o, dict)]
-        keys = [str(o.get("key")) for o in options]
-        if len(options) < 2 or topic.get("recommend") not in keys:
-            say("要问人：至少两个 options，recommend 是其中一个 key")
+        if topic.get("ownership") == "unclear" and not question:
+            say("归属判不准，要写 question 摆给人")
+        if not question:
+            if options:
+                say("没有 question 却写了 options：不问人就不摆选项")
+            continue
+        keys = [str(o.get("key", "")).strip() for o in options]
+        if not options or not all(keys):
+            say("要问人：至少一个真实选项，每个带 key 与 label")
         if len(set(keys)) != len(keys):
-            say("的选项 key 有重复：人选的 key 要唯一指到一个 effect")
-        for option in options:
-            for problem in _effect_problems(option.get("effect"), topic, set(changes), opens):
-                say(f"的选项「{option.get('key')}」{problem}")
-
-
-def _relation_problems(refs: dict[str, dict], problems: list[str]) -> None:
-    """替代关系指得到、不自指、不成环——脚本只核声明过的那些。
-
-    没声明的语义矛盾（两场会说了相反的话而谁也没提对方）看不出来，那归独立审查。
-    """
-    edges: dict[str, set[str]] = {}
-    for ref, topic in refs.items():
-        targets = {str(topic["overturns"])} if topic.get("overturns") else set()
-        for option in topic.get("options") or []:
-            effect = option.get("effect") if isinstance(option, dict) else None
-            targets |= {str(t) for t in (effect or {}).get("supersedes") or []}
-        for target in sorted(targets):
-            if target == ref:
-                problems.append(f"{ref} 的替代关系指着自己")
-            elif target not in refs:
-                problems.append(f"{ref} 要替代的「{target}」不存在——写 <主名>@<sha8>/<话题 id>，"
-                                "指向已经读过的那一版")
-        edges[ref] = {t for t in targets if t in refs and t != ref}
-
-    def reaches(start: str, node: str, seen: set[str]) -> bool:
-        return any(nxt == start or (nxt not in seen and reaches(start, nxt, seen | {nxt}))
-                   for nxt in edges.get(node, ()))
-
-    problems.extend(f"{ref} 在一条替代环里：哪个决定最终有效就说不清了"
-                    for ref in sorted(edges) if reaches(ref, ref, {ref}))
+            say("的选项 key 有重复：人选的 key 要唯一指到一个做法")
+        recommend = str(topic.get("recommend", "")).strip()
+        if recommend and recommend not in keys:
+            say(f"的 recommend「{recommend}」不在选项里")
 
 
 def inspect(feature_root: Path) -> dict:
     """读会进行到哪、立不立得住。
 
-    ``missing`` 还没读的版本；``stale`` 阅读件跟不上纠偏差异的版本；``problems`` 结构、
-    引用与留痕的缺口。只读，不写盘——出件归 `meeting-refresh`。
+    ``missing`` 还没读的版本；``stale`` 阅读件跟不上纠偏差异的版本；``problems`` 结构与引用的缺口。
+    只读，不写盘——出件归 `meeting-refresh`，会议结果归模型。
     """
     problems: list[str] = []
     notes = read_notes(feature_root, problems)
     found = versions(feature_root)
     missing: list[str] = []
     stale: list[str] = []
-    refs: dict[str, dict] = {}
     for key in sorted(set(notes) - set(found)):
         problems.append(f"meeting-notes.json 的「{key}」对不上任何会议版本"
                         f"——source 与 source_sha 照抄那一版的 {SOURCE}")
-    for old in sorted(feature_root.joinpath(*MEETINGS).glob("*/*/transcript.json")):
-        # 上一轮格式的产物：本轮按行引用，发言编号那套读法已经退出
-        problems.append(f"{old.parent.parent.name}/{old.parent.name} 是上一轮格式的会议产物"
-                        "（transcript.json 与发言编号），本轮不支持：把原件放回收件箱重导、"
-                        "按新合同重读；旧目录留着不动，由维护者处置")
-    for key, folder in found.items():
+    for old in sorted(feature_root.joinpath(*MEETINGS).glob("*/*/topics.json")):
+        # 上一轮格式的产物：话题现在只在 meeting-notes.json 里登记一次
+        problems.append(f"{old.parent.parent.name}/{old.parent.name} 还留着上一轮的 topics.json："
+                        "本轮话题只登记在 meeting-notes.json 一处，删掉它再读会")
+    for key, folder in sorted(found.items()):
         lines, broken = raw_lines(folder)
         if broken:
             problems.append(broken)
@@ -443,13 +341,10 @@ def inspect(feature_root: Path) -> dict:
             problems.extend(f"{key} 的纠偏：{b}" for b in bad)
             if not bad and evidence_stale(folder, fixed):
                 stale.append(key)
-        topics = read_json(folder / TOPICS, problems)
-        if corrections is None or topics is None or key not in notes:
+        if corrections is None or key not in notes:
             missing.append(key)
             continue
-        registered = _topic_index(key, topics, len(lines), problems)
-        _notes_problems(key, notes[key], registered, len(lines), problems, refs)
-    _relation_problems(refs, problems)
+        _notes_problems(key, notes[key], len(lines), problems)
     return {"notes": notes, "missing": missing, "stale": stale, "problems": problems}
 
 

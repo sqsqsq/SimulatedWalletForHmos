@@ -13,7 +13,7 @@ from flow.inputs import (
     GATE_OPTIONS, MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, SCOPE_OPTIONS, SPLIT_PARTS,
     consume_sidecar, read_gate_options, read_split_parts, sidecar_gate, split_carrier_options)
 from flow.routing import live_materials, material_state, next_step
-from flow.meetings import topic_options, unconfirmed, write_refresh
+from flow.meetings import topic_options, unconfirmed
 from materials import meeting
 
 
@@ -48,7 +48,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     # 而收件箱里有料时那一步是导入。人能不能表态与导入没做没关系——
     # 他可以放好料先答一句，也可以等导完再答，两种都是同一次表态。
     # 所以这一级的前置是「本轮这一级还没有定下来」，不比对 next 的字面。
-    # 例外里的例外：本轮第一级定过之后又到了会议结论，要再摆给人一次（见 `scope_step`）。
+    # 例外里的例外：本轮第一级定过之后又到了会议判断，要再摆给人一次（见 `scope_step`）。
     if gate == "material_scope":
         settled = last_gate(round_gates(contract), gate)
         if settled and settled["outcome"] == "accepted" and not unconfirmed(
@@ -80,7 +80,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                 f"本轮尚未登记范围定法选项集：把需求分析产出的全部选项写进 "
                 f"{'/'.join(SCOPE_OPTIONS)} 后重跑 `round`")
     elif gate == "meeting":
-        # 选项集就是会议结论里那个话题的 options：脚本只认 key，按人选的 key 取 effect
+        # 选项集就是会议判断里那个话题的 options：脚本只认 key，人选了哪一项就记哪一项
         options = topic_options(feature_root, str(getattr(args, "meeting", "") or ""),
                                 str(getattr(args, "item", "") or ""))
     else:  # split_carrier
@@ -149,7 +149,6 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                              "scope_text": scope_text, "parts": parts}
 
     save(feature_root, contract)
-    write_refresh(feature_root, contract)
     consume_sidecar(feature_root, GATE_OPTIONS)
     if gate == "split_carrier" and outcome == "accepted" and parts:
         consume_sidecar(feature_root, SPLIT_PARTS)

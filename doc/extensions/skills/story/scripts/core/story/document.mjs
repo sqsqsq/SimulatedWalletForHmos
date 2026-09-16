@@ -122,11 +122,13 @@ export function parseChapter(text) {
     if (h3) {
       if (current) current.to = i;
       current = { raw: h3[1].trim(), name: normalizeHeading(h3[1]),
-        from: i, to: lines.length, body: [] };
+        from: i, to: lines.length, body: [], subs: [] };
       sections.push(current);
       return;
     }
     if (current) current.body.push(line);
+    const h4 = current && line.trim().match(/^####\s+(.+)$/);
+    if (h4) current.subs.push({ raw: h4[1].trim(), name: normalizeHeading(h4[1]), at: i });
     if (!line.trim().startsWith('|')) return;
     const sep = (lines[i + 1] ?? '').trim();
     if (!SEPARATOR.test(sep)) return;
@@ -136,7 +138,7 @@ export function parseChapter(text) {
       line: i,
     });
   });
-  return { text: String(text ?? ''), fences, sections, tables };
+  return { text: String(text ?? ''), lines, fenced, fences, sections, tables };
 }
 
 /** 这一章的小节名（围栏里的 `###` 是被引用的样例，不在其中）。 */
@@ -152,19 +154,18 @@ export function sectionNames(view) {
  * 围栏里的样例不该顶替真内容。
  */
 export function sectionBody(view, name) {
-  const hit = matchSection(view, name);
-  return hit ? hit.body.join('\n') : null;
+  const span = name ? scopeSpan(view, name) : null;
+  return span ? scopeLines(view, span).join('\n') : null;
 }
 
 /** 作用域内的表头：`name` 为空取全章，否则只取那一节里的。 */
 export function tablesIn(view, name) {
   if (!name) return (view?.tables ?? []).map(t => t.header);
-  const hit = matchSection(view, name);
-  if (!hit) return null;                 // 那一节缺席，与「有节但没表」不是一回事
-  // 正文与表取**同一个节**：按名字过滤的话，第二个同名小节里的表会被算给第一个，
+  const span = scopeSpan(view, name);
+  if (!span) return null;                // 那一节缺席，与「有节但没表」不是一回事
+  // 正文与表取**同一个区间**：按名字过滤的话，第二个同名小节里的表会被算给第一个，
   // 于是缺表的那一节通过了，而别的消费者读到的还是缺表的那一份。
-  return (view.tables ?? []).filter(t => t.line > hit.from && t.line < hit.to)
-    .map(t => t.header);
+  return tablesInSpan(view, span).map(t => t.header);
 }
 
 /**
@@ -175,35 +176,35 @@ export function tablesIn(view, name) {
  * 子节顶替通过。
  */
 export function scopeSpan(view, at = '', under = '') {
-  const lines = String(view?.text ?? '').split(/\r?\n/);
-  if (!at) return { from: 0, to: lines.length };
+  if (!at) return { from: 0, to: (view?.lines ?? []).length };
   const hit = matchSection(view, at);
   if (!hit) return null;
   if (!under) return { from: hit.from + 1, to: hit.to };
-  const fenced = maskOf(lines, view?.fences ?? []);
-  const heads = [];
-  for (let i = hit.from + 1; i < hit.to && i < lines.length; i++) {
-    const m = !fenced.has(i) && /^####\s+(.+?)\s*$/.exec(lines[i].trim());
-    if (m) heads.push({ name: normalizeHeading(m[1]), at: i });
-  }
+  const subs = hit.subs ?? [];
   const want = normalizeHeading(under);
-  const k = heads.findIndex(h => h.name === want) >= 0
-    ? heads.findIndex(h => h.name === want)
-    : heads.findIndex(h => h.name.includes(want));
+  const exact = subs.findIndex(h => h.name === want);
+  const k = exact >= 0 ? exact : subs.findIndex(h => h.name.includes(want));
   if (k < 0) return null;
-  return { from: heads[k].at + 1, to: heads[k + 1]?.at ?? hit.to };
+  return { from: subs[k].at + 1, to: subs[k + 1]?.at ?? hit.to };
 }
 
-/** 区间里的正文行（围栏里的不算）。 */
+/** 区间里的正文行（围栏里的不算）。行与掩码由 `parseChapter` 一次派生，这里不重切。 */
 export function scopeLines(view, span) {
-  const lines = String(view?.text ?? '').split(/\r?\n/);
-  const fenced = maskOf(lines, view?.fences ?? []);
-  return lines.slice(span.from, span.to).filter((_, k) => !fenced.has(span.from + k));
+  return (view?.lines ?? []).slice(span.from, span.to)
+    .filter((_, k) => !view.fenced.has(span.from + k));
 }
 
-/** 这个区间里有没有一张真的 Markdown 表（表头 + 分隔行，解析时已认过）。 */
+//: Markdown 的水平分隔线：三个及以上的 `*`/`-`/`_`，中间可以有空格。它一条内容都没有。
+const RULE_LINE = /^(?:\*[ \t]*){3,}$|^(?:-[ \t]*){3,}$|^(?:_[ \t]*){3,}$/;
+
+/** 这个区间里的表（表头 + 分隔行，解析时已认过）。 */
+function tablesInSpan(view, span) {
+  return (view?.tables ?? []).filter(t => t.line >= span.from && t.line < span.to);
+}
+
+/** 这个区间里有没有一张真的 Markdown 表。 */
 export function hasTable(view, span) {
-  return (view?.tables ?? []).some(t => t.line >= span.from && t.line < span.to);
+  return tablesInSpan(view, span).length > 0;
 }
 
 /**
@@ -214,6 +215,7 @@ export function hasTable(view, span) {
 export function hasList(view, span, ordered = false) {
   const re = ordered ? /^\s{0,3}\d+[.)]\s+(.+)$/ : /^\s{0,3}[-+*]\s+(.+)$/;
   return scopeLines(view, span).some(line => {
+    if (RULE_LINE.test(line.trim())) return false;      // 水平分隔线不是列表项
     const hit = re.exec(line);
     return !!hit && /[^\s\-|]/.test(hit[1]);
   });

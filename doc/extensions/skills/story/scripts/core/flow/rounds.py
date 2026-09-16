@@ -13,7 +13,6 @@ from flow.state import (
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import frozen_inbox_note, live_materials, next_step
-from flow.meetings import write_refresh
 
 
 def cmd_round(feature_root: Path) -> dict:
@@ -66,7 +65,6 @@ def cmd_round(feature_root: Path) -> dict:
         if fresh:
             current["imported"] = fresh
         save(feature_root, contract)
-        write_refresh(feature_root, contract)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
         log(f"材料未变（{digest}），仍在第 {current['round']} 轮（已刷新事实快照）")
@@ -92,7 +90,6 @@ def cmd_round(feature_root: Path) -> dict:
             "note": "收口后材料有变；未开新轮。要重新决策跑 `story_flow.py reopen`",
         }
         save(feature_root, contract)
-        write_refresh(feature_root, contract)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
         log(f"收口后材料有变（{digest}）：只更新第 {current['round']} 轮的材料指纹，未开新轮。"
@@ -113,7 +110,6 @@ def cmd_round(feature_root: Path) -> dict:
     stamp(entry)
     rounds.append(entry)
     save(feature_root, contract)
-    write_refresh(feature_root, contract)
     consume_sidecar(feature_root, POSITIONING)
     consume_sidecar(feature_root, SCOPE_OPTIONS)
     log(f"登记第 {entry['round']} 轮（材料 {digest}，本轮并入 {len(entry['imported'])} 件）")

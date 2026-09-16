@@ -3,19 +3,18 @@
 > `status` 的 next 是 `read_meeting` 或 `refresh_meeting` 时读这一页。导入已经把每一版会议材料
 > 留在 `AR/story-src/meetings/<主名>/<版本>/`：`original.docx` 是原件，`raw.md` 是转换出来的文本。
 > **内容由你理解**——谁在发言、哪一段是议题、哪句话是结论，脚本不替你划。
-> 你产出三份：纠偏差异、话题索引、会议结论。写完跑 `status`，自检不过它会点名。
+> 你产出三样：纠偏差异、会议判断、人裁决之后的当前会议结果。
 
 ## 一、这份材料是什么
 
-一场围绕需求的讨论记录。它比需求文档新，是需求变化的唯一记录；但它是讨论态：有转写错误、
+一场围绕需求的讨论记录。它比需求文档新，但**不因此更权威**：哪一条算数，看它的适用范围与
+人的真实裁决——文档里已经定过的口径，会上一句话推翻不了，要人点头。它是讨论态：有转写错误、
 有说了又改的话、有没收敛的分歧、有跳跃。一个议题通常对应一个需求，一场会常覆盖多个需求。
-**它是证据，不是定论。**
 
-要做的是找出会议对**本需求**输入的实际改变，写成会议结论，同时让人看出文档哪里过期。
+要做的是找出会议对**本需求**输入的实际改变，写清楚，并把要人定的事摆给人。
 不复述会议、不整理纪要、不改 RR / SR 正文，也不直接改 spec。
 
-`raw.md` 是**引用的基底**：所有引用都写它的行号，1 起、首尾包含。读它时记下行号
-（`status` 给的路径直接可读）。`raw.md` 与 `original.docx` 都不要改。
+`raw.md` 是**引用的基底**：所有引用都写它的行号，1 起、首尾包含。`raw.md` 与 `original.docx` 都不要改。
 
 ## 二、纠偏：只交差异（`corrections.json`，与 raw.md 同目录）
 
@@ -43,86 +42,49 @@ python doc/extensions/skills/story/scripts/core/story_flow.py meeting-refresh --
 它按差异生成 `evidence.md`：行号与 `raw.md` 一一对应，没改的行逐字保留。行号错、原文对不上、
 重复行、缺依据会一次全部报出来，改 `corrections.json` 再跑。
 
-## 三、切话题：`topics.json`（同目录）
-
-只做索引，判断不写在这里：
-
-```json
-[{"id": "T1", "title": "议题 · 话题", "evidence": [{"start": 12, "end": 15}]}]
-```
-
-一个范围可以属于多个话题，一个话题可以有几段不连续的范围；寒暄、重复、与任何需求无关的段落
-可以不引用——不要求覆盖每一行，也不要为了覆盖而编话题。
-
-## 四、会议结论：`AR/story-src/meeting-notes.json`
+## 三、会议判断：`AR/story-src/meeting-notes.json`
 
 **先整体、后逐条**：带着对需求的理解通读整场，形成每个话题「最后定了什么、中间怎么变、
-哪里没收敛」的判断，再对照文档定位每一处改变落在哪份文档的哪一段、是增强、修正还是裁剪。
-不逐句扫描。
-
-**归属**：判得准属于本需求的直接取（`ours`）；判得准不属于的写 `not_ours`，只记不消费；
-判不准的写 `unclear`，一定问人。
-
-**三个尺度**：
-
-- 会上明确收口的，你自己定为结论——判据是记录里收口的那句话，引得出来；没有那句话的一律
-  记为遗留问题，不替人定；
-- 说话人自己改口的，按后说的算；
-- 文档与会议冲突时以会议为准写进变化，但它属于修正，要问人。
-
-一份文件，每场会的每个版本一节；`source` 与 `source_sha` 照抄那一版 `source.json` 的
-`file` 与 `sha256`：
+哪里没收敛」的判断，再对照文档看它改变了什么。不逐句扫描。一个话题写一条，**只写这一处**：
 
 ```json
 {"meetings": [{
-  "source": "xxx.docx", "source_sha": "…", "title": "你读出的会名", "date": "你读出的时间",
+  "source": "xxx.docx", "source_sha": "…", "title": "你读出的会名", "date": "知道才写",
   "attendee_roles": [{"name": "张三", "role": "产品"}],
   "topics": [{
-    "id": "T3", "ownership": "ours | not_ours | unclear",
-    "changes": [{"id": "C1", "kind": "add | remove | modify", "doc": "SR/design.md", "section": "§3.2",
-                 "before": "…", "after": "…", "impact": "…", "evidence": [{"start": 12, "end": 13}]}],
-    "conclusion": {"text": "会上定了什么", "scope": "适用到哪", "evidence": [{"start": 15, "end": 15}]},
-    "open_points": [{"id": "O1", "what": "还缺什么决定或事实", "impact": "…", "needs": "谁来定",
-                     "suggestion": "（你的建议）", "evidence": [{"start": 18, "end": 19}]}],
-    "ask": true, "ask_reason": "unclear_ownership | unresolved | transcript_doubt | high_impact | overturns",
-    "overturns": "xxx.docx@a1b2c3d4/T1", "recommend": "opt_a",
-    "options": [
-      {"key": "opt_a", "label": "按会上定的改 SR §3.2，阈值取 5",
-       "effect": {"ownership": "ours", "apply_changes": ["C1"],
-                  "add_changes": [{"kind": "modify", "doc": "SR/design.md", "section": "§3.2", "before": "阈值未定",
-                                   "after": "阈值 5", "impact": "验收的数值", "resolves": "O1"}],
-                  "supersedes": ["xxx.docx@a1b2c3d4/T1"]}},
-      {"key": "opt_b", "label": "维持文档口径，阈值仍待产品定",
-       "effect": {"ownership": "ours", "apply_changes": [], "add_changes": [], "supersedes": [],
-                  "keep_open": ["O1"]}}]
+    "id": "T1", "title": "这个话题叫什么", "ownership": "ours | not_ours | unclear",
+    "evidence": [{"start": 12, "end": 18}],
+    "finding": "这个话题定了什么、与现有文档差在哪、影响本需求的什么、还有什么没定；引用不足就写明未知",
+    "question": "要人定什么（不需要问就整条省掉）",
+    "recommend": "a",
+    "options": [{"key": "a", "label": "一种做法及其后果"},
+                {"key": "b", "label": "另一种做法及其后果"}]
   }]
 }]}
 ```
 
-- `topics.json` 登记的每个话题在这里都要有一条，编号对同一批；一个话题可以同时有变化与遗留，
-  也可以只有结论没有变化；
-- `conclusion` 与每条 `changes` 都带 `evidence`：本版本 `raw.md` 的行范围；遗留有原话就一并给；
-- **值得问的才问**（`ask: true`，并写明 `ask_reason`）：归属判不准的（`unclear_ownership`）、
-  没收敛而影响本需求的（`unresolved`）、影响结论的转写存疑（`transcript_doubt`）、
-  改动范围/接口/已归档文档口径的高影响修正（`high_impact`）、推翻前面已确认决定的（`overturns`）。
-  每条带 `recommend` 与至少两个选项；
-- **每个选项自带选完的结果** `effect`：归属定成什么；`apply_changes` 会上已定的哪几条变化生效；
-  `add_changes` 人补定的决定落到需求哪里（与 changes 同形，不带 evidence，`resolves` 指向本话题的
-  遗留）；`supersedes` 替代哪些旧决定（可以为空）；`keep_open` 明确保留哪些遗留。同一个遗留
-  不能既 `resolves` 又 `keep_open`。脚本不读 label，只按人选的 key 取 effect；
-- 会上达成的写进 `changes`；人后来定的只写在选项的 `add_changes` 里，不写成会上已定；
-- **没有变化不等于已经收敛**：没定的事写进 `open_points`，它会跟着话题一起传到下游。
+- `source` 与 `source_sha` 照抄那一版 `source.json` 的 `file` 与 `sha256`；
+- `evidence` 指回本版本 `raw.md` 的行范围——话题的原话在哪，读的人要能自己回去看；
+- **`finding` 是给人和下游读的一段话**：已定与未决在同一条里说清，别把「没定」写成「定了」；
+  脚本不读它判业务，所以写不清楚没人会替你发现；
+- **归属**：判得准属于本需求的写 `ours`；判得准不属于的写 `not_ours`，只记不消费；
+  判不准写 `unclear`，**必须写 `question`**；
+- **值得问的才问**：写了 `question` 就是这一轮要人定。除了归属判不准，这几类也要问——
+  影响结论的转写存疑、改动接口或范围的高影响变化、与归档文档或既有决定冲突。
+  **会上说定了不等于不用问**：推翻已归档口径的，仍要人点头；
+- 有 `question` 时至少给一个真实选项（`key` + `label`），`recommend` 若给必须是其中一个 key；
+  简单确认不硬造两个方案。没有 `question` 就不写选项。
 
-## 五、摆给人那一轮
+**尺度**：会上明确收口的写成已定，判据是记录里那句话，引得出来；没有那句话的写成未决，不替人定。
+说话人自己改口的按后说的算。文档与会议冲突时写明冲突与你的判断，由人裁决。
+
+## 四、摆给人那一轮
 
 `status` 给出 `await_gate:meeting` 时，与第一级材料关卡一起摆给人，不另停一次。
-`status` 的 `meetings` 已经把全部版本与话题逐条列好（归属、变化、原结论、遗留、待裁决项与
-推荐选项），你不必再从文件里抄一遍；你要补的是：
-
-- 每个待裁决话题：推荐哪一项、为什么，选了各会怎样；
-- 你提出的参会人角色；
-- 摆之前回 `raw.md` 自查一遍：话题有没有漏、关键变化的原话依据指得对不对、遗留与归属跟
-  已有决定有没有冲突。
+`status` 的 `meetings` 已经把全部版本与话题逐条列好（归属、finding、原话位置、要问的问题与选项），
+你不必再从文件里抄一遍；你要补的是：每个待裁决话题推荐哪一项、为什么，选了各会怎样；
+你提出的参会人角色；以及摆之前回 `raw.md` 自查一遍——话题有没有漏、原话指得对不对、
+与已有决定的冲突有没有说出来。
 
 人一轮答完。先逐条记会议话题：
 
@@ -130,17 +92,33 @@ python doc/extensions/skills/story/scripts/core/story_flow.py meeting-refresh --
 python doc/extensions/skills/story/scripts/core/story_flow.py decide --feature <AR> --gate meeting --meeting <主名>@<版本> --item <话题 id> --chosen <key> --basis "<人的原话>"
 ```
 
-再照 `rules/init_analysis.md` 记第一级材料关卡。人对第一级表态，就是对摆出的整体的确认：
-没有逐条问的条目从这一刻生效。之后 `AR/story-src/doc-refresh.md` 由脚本写出——采纳的变化、
-仍未决、会议原结论及采纳情况三段，提取稿据它修正（`rules/ar_design_init.md`），
-它也是交给人的文档刷新清单。需求分析第 ⑥ 节按话题登记会议（`rules/init_analysis.md`）。
+人给的是选项之外的答案时，先把它补成 `options` 里的一项（新 `key` + 他说的那个做法），再记——
+**记的必须是人真说的那一项**，不能替他选推荐项。再照 `rules/init_analysis.md` 记第一级材料关卡。
+
+## 五、当前会议结果：`AR/story-src/doc-refresh.md`
+
+人表过态之后，`status` 会让你把当前结果写出来——**它由你写，不是脚本拼的**，
+因为「这件事最后怎么算」要读原话与人的裁决才说得清。它是下游唯一的会议结果：
+提取稿（`rules/ar_design_init.md`）、需求分析第 ⑥ 节、成文与审查都读它。
+
+- 开头抄一行 `status` 给你的输入绑定：`<!-- meeting-basis:<摘要> -->`。
+  它声明这份结果照的是哪一版判断与哪几笔裁决；判断或裁决之后变了，`status` 会让你按新输入
+  重新核一遍整份结果，再换上新的摘要；
+- 每个话题一个 `### <版本>/<话题 id> <标题>`，**一个都不能少**：本需求实际采纳了什么、
+  影响到哪、还有什么没定、归谁定；不属于本单或已被后续决定替代的，也写一句去向；
+- 要给原话就写 `AR/story-src/meetings/<主名>/<版本>/raw.md:L起-L止`，脚本核它指得到真实的行；
+- 同一件事跨几场会时在一处讲全，别处回指，不复制多份当前结论；
+- **暂缓不是临时定一种实现**：还没定的就写成未决与边界。
+
+脚本只核四件事：文件在不在、声明的输入是不是当前这版、每个话题有没有去向、引用指不指得到。
+写得对不对由独立审查判——它会拿 `raw.md`、`corrections.json` 与人的裁决记录对着读。
 
 ## 六、之后再来会议
 
-一场会一轮：新会议、或同名 docx 换了内容的新版本导入后开新一轮；旧版本的原文、结论与人的
+一场会一轮：新会议、或同名 docx 换了内容的新版本导入后开新一轮；旧版本的原文、判断与人的
 裁决照旧可查、照旧有效。
 
-读新会议时先取 `doc-refresh.md` 里已经生效的结果与它们的来源，再判断这一场是补充、修正还是
-冲突：**不预设会议一定比文档新，也不按文件名或时间自动覆盖**。要推翻旧决定就写 `overturns`
-并问人，人选的那个选项的 `supersedes` 决定旧决定是否失效；先后说不清或语义对不上的，
-保留成待裁决，不自己定。收口之后才到的会议，`status` 会让你先 `reopen`。
+读新会议时先取 `doc-refresh.md` 里当前的结果与它的来源，再判断这一场是补充、修正还是冲突：
+**不预设会议一定比文档新，也不按文件名或时间自动覆盖**。要推翻已经定过的事，在 `finding` 里
+说清推翻的是哪一条、依据是什么，并写 `question` 让人裁决；先后说不清或语义对不上的，保留成
+待裁决，不自己定。收口之后才到的会议，`status` 会让你先 `reopen`。

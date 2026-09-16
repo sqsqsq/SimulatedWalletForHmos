@@ -87,7 +87,7 @@ def main() -> int:
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
     ap.add_argument("--meeting", default=None,
                     help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
-    ap.add_argument("--item", default=None, help="meeting：会议结论里的话题 id")
+    ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
     ap.add_argument("--scope-text", default=None,
                     help="split_carrier 无份表侧车时的兜底：本 AR 的范围文字")
     ap.add_argument("--from", dest="from_path", default=None,

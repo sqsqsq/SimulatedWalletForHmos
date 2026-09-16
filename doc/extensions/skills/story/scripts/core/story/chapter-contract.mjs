@@ -5,8 +5,9 @@
  * 那种与附录五节），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
  * `at` 所属小节），`diagram: true` 表示这一章要有一张真正的图。
  * 哪些章要什么全部是合同数据，这里不写死任何章名或表头——加一条必要结构改合同，代码不动。
- * 写作设计骨架里的小节与表图由 `writing-plan.selectedStructure` 并进同一个 `structure`（带 `selected`，
- * 图记在 `diagrams`），这里按同一套解释打底与核对。
+ * 写作设计骨架里的小节、形式与图由 `writing-plan.selectedStructure` 并进同一个 `structure`
+ * （小节带 `selected`，图在 `diagrams`，表与列表的存在性要求在 `forms`），这里按同一套解释
+ * 打底与核对。**表的列不由模板定**：固定合同那几张按锚列核，模板选的表只核那个位置真有一张表。
  *
  * **标题名不是内容判据**：分工讲没讲清、回退措施有没有依据，读的是内容，由读者问题、
  * 章级维度与独立语义审查判；按标题名判会把「用业务名起了另一个标题」说成缺了这件事。
@@ -111,19 +112,18 @@ function tableProblem(ch, view, slot) {
   if (!groups.length) return null;
   const has = (cols, group) => group.some(a => cols.some(c => c.includes(norm(a))));
   const where = slot.at ? `「${ch.title}·${slot.at}」` : `「${ch.title}」`;
-  const tail = slot.selected ? PICKED : '';
   const candidates = scope.filter(cols => has(cols, groups[0]));
   if (candidates.some(cols => groups.every(g => has(cols, g)))) return null;
   if (!candidates.length) {
     return `${where}缺一张表（表头含「${groups[0][0]}」，`
-      + `另外这几列也要有：${groups.slice(1).map(g => g[0]).join('、') || '无'}）${tail}`;
+      + `另外这几列也要有：${groups.slice(1).map(g => g[0]).join('、') || '无'}）`;
   }
   // 有同主语的表但没有一张齐的：按缺得最少的那张说，作者改它就够了
   const best = candidates
     .map(cols => groups.slice(1).filter(g => !has(cols, g)))
     .sort((a, b) => a.length - b.length)[0];
   return `${where}「${groups[0][0]}」那张表缺 ${best.map(g => `「${g[0]}」`).join('、')}`
-    + `这几列——列名可以按本需求换说法，但这几件事读者要在同一张表里看到${tail}`;
+    + '这几列——列名可以按本需求换说法，但这几件事读者要在同一张表里看到';
 }
 
 /**
@@ -186,8 +186,6 @@ export function pickedStructureNames(ch) {
   return [
     ...requiredH3(ch).filter(h => h.selected).map(h => `「${h.title}」这一节`),
     ...(ch?.structure?.h4 ?? []).map(h => `「${h.title}」这一小节`),
-    ...requiredTables(ch).filter(t => t.selected)
-      .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
     ...(ch?.structure?.diagrams ?? []).filter(d => d.selected)
       .map(d => `${where(d.at)}${d.syntax ? DIAGRAM_SYNTAXES[d.syntax].name : '图'}`),
     ...(ch?.structure?.forms ?? []).map(f => `${where(f.under || f.at)}${formName(f)}`),
@@ -256,10 +254,9 @@ export function missingPickedSeeds(ch, view, { diagramHint, formHint } = {}) {
     named.add(key);
     return sectionBody(view, at) === null ? [`### ${at}`, ''] : [];
   };
-  // 合同的表：作者在骨架里选过它、或模板在同范围选了表格时给起点——那一处的形式要求由它接替
-  const wanted = (t) => t.selected
-    || (ch.structure?.forms ?? []).some(f => contractCovers(ch, f)
-      && normalizeHeading(f.at ?? '') === normalizeHeading(t.at ?? ''));
+  // 合同的表：模板在同范围选了表格时给起点——那一处的形式要求由这张合同表接替
+  const wanted = (t) => (ch.structure?.forms ?? []).some(f => contractCovers(ch, f)
+    && normalizeHeading(f.at ?? '') === normalizeHeading(t.at ?? ''));
   for (const t of requiredTables(ch).filter(wanted)) {
     if (tablesIn(view, t.at) !== null && !tableProblem(ch, view, t)) continue;
     rows.push(...heading(t.at ?? ''), ...tableSeed(t, {}), '');

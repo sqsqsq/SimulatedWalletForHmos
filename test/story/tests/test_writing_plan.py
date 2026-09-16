@@ -345,6 +345,18 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         code, out = self.put("功能说明", body)
         self.assertEqual(0, code, out)
 
+    def test_a_horizontal_rule_is_not_a_list(self) -> None:
+        """`* * *` 是分隔线不是列表项；真的星号列表算数。"""
+        block = "#### 继续操作\n- 答：用户还能做什么\n形式：无序列表\n- 描述：列出可继续的操作\n"
+        self.write_plan(with_chapter("06-features", block))
+        self.cmd("skeleton")
+        head = "提交后界面停在等待态。\n\n### 继续操作\n\n"
+        code, out = self.put("功能说明", head + "* * *\n")
+        self.assertEqual(1, code, out)
+        self.assertIn("缺无序列表", out, "分隔线被当成了列表项")
+        self.assertEqual(0, self.put("功能说明", head + "* 重新提交\n* 联系客服\n")[0])
+
+
     def test_a_form_is_checked_under_its_own_parent(self) -> None:
         """H4 的形式先定位父节：别的父节下的同名子节顶替不了。"""
         block = ("#### 甲路径\n- 答：甲怎么走\n##### 结果\n- 答：甲的结果\n形式：表格\n"
