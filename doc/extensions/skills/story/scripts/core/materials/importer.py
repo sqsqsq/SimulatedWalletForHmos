@@ -56,8 +56,8 @@ CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
 DOC_SOURCE = {"RR": "PRD", "SR": "SE", "AR": "UPSTREAM"}
 UX_DOC_TARGET = Path("ux-reference/README.md")
 UX_IMAGE_DIR = Path("ux-reference")
-#: 章节合同：正文来源的路径、是不是本轮派生，登记在它的 `sources` 里。
-STORY_CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "story-chapters.json"
+#: 章节合同：正文来源的路径、是不是本轮派生，登记在它的 `sources` 里。路径只在 flow.state 定一次。
+from flow.state import STORY_CONTRACT  # noqa: E402
 
 GENERATED_MARK = "<!-- 本文件由 import_sources.py 从 inbox/ 生成，直接编辑会在下次导入时丢失 -->"
 

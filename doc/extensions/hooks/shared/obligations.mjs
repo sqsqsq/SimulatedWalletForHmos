@@ -10,7 +10,7 @@
 /**
  * `must` 允许挂载的实体位置是**封闭集合**：`data_models[].fields[]`、
  * `interfaces[].methods[]`、`components[]`、`components[].state[]`、
- * `resource_keys[]`、`files[]`。多一处就是给「随便找个地方声明一下」开口子。
+ * `resource_keys.<模块>.<分类>[]`、`files[]`。多一处就是给「随便找个地方声明一下」开口子。
  *
  * 以下面的遍历代码为准；另设一个导出的常量重列一遍只会多一处失同步点——。
  */
@@ -19,6 +19,8 @@
  * `verify` 的封闭取值：这处落点的证据由谁取。`ut / device / both` 是实机，`review` 只由 verifier 判。
  * 探针不在其中——它随规约走，coding 对形态匹配的每处落点自动跑，不是作者为某处落点做的选择。
  */
+import { resourceEntries } from './contracts.mjs';
+
 const VERIFY_KINDS = ['ut', 'device', 'both', 'review'];
 
 /** 规约声明的执行体 → 它的每处落点允许的 `verify`。没列的执行体（模型、构建）不限定；人工条目不挂 must。 */
@@ -82,8 +84,8 @@ export function obligationsFromContracts(contracts) {
       push(st, 'components', `components.${name(c)}.state.${name(st)}`, null);
     }
   }
-  for (const rk of arr(contracts?.resource_keys)) {
-    push(rk, 'resource_keys', `resource_keys.${name(rk)}`, null);
+  for (const e of resourceEntries(contracts).entries) {
+    push(e.node, 'resource_keys', e.ref, null);
   }
   for (const fl of arr(contracts?.files)) {
     const p = name(fl);
@@ -109,6 +111,18 @@ export function misplacedMust(contracts) {
   for (const key of ['modules', 'navigation', 'state_management', 'integration_points']) {
     for (const it of arr(contracts?.[key])) {
       if (mustOf(it).length) bad.push(`${key}.${name(it)} 挂了 must——不在允许的五类实体内`);
+    }
+  }
+  const rk = contracts?.resource_keys;
+  if (rk && typeof rk === 'object' && !Array.isArray(rk)) {
+    for (const [module, cats] of Object.entries(rk)) {
+      if (mustOf(cats).length) bad.push(`resource_keys.${module} 模块层挂了 must——应挂在它某个分类下的资源条目上`);
+      if (!cats || typeof cats !== 'object' || Array.isArray(cats)) continue;
+      for (const [category, list] of Object.entries(cats)) {
+        if (!Array.isArray(list) && mustOf(list).length) {
+          bad.push(`resource_keys.${module}.${category} 分类层挂了 must——应挂在这个分类下的资源条目上`);
+        }
+      }
     }
   }
   if (mustOf(contracts).length) bad.push('contracts 顶层挂了 must——义务要挂在具体实体上');

@@ -23,7 +23,7 @@
  */
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
-import { parseYaml } from './yaml-lite.mjs';
+import { parseYaml } from './yaml.mjs';
 
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';

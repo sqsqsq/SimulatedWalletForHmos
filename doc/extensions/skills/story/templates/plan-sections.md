@@ -111,7 +111,22 @@ files:
 ### `must` 只能挂在这五处
 
 `data_models[].fields[]` / `interfaces[].methods[]` / `components[]` 及其 `state[]` /
-`resource_keys[]` / `files[]`。
+`resource_keys.<模块>.<分类>[]` 的资源条目 / `files[]`。`resource_keys` 是 framework 合同里的两层结构：
+
+```yaml
+resource_keys:
+  <模块名>:
+    string:
+      - key: <资源 key>
+        value: <值>
+        must:
+          - text: <本次要落实成什么>
+            rule: <条目编号>
+            verify: review
+```
+
+引用一条资源写完整的 `resource_keys.<模块>.<分类>.<key>`。参考截图这类不进运行包的材料不是运行资源，
+不因 visual-parity 告警而登记进 `resource_keys`（是不是运行资源由审查判）。
 
 挂在实体顶层（`data_models.X` 而不是它的 `fields[]`）或别的集合上，门禁会拦——
 **挂在下游不会读的地方，就是又造了一本没人读的账本**：framework 的 coding SKILL 枚举

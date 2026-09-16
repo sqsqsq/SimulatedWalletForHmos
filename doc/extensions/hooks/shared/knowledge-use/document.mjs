@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { knowledgeFiles } from '../knowledge.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../paths.mjs';
-import { parseYaml } from '../yaml-lite.mjs';
+import { parseYaml } from '../yaml.mjs';
 
 const SCHEMA = 1;
 

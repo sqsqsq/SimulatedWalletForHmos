@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PKG_EXT = REPO_ROOT / "doc" / "extensions"
@@ -39,6 +40,7 @@ class SourceKindCase(unittest.TestCase):
             json.dumps({"project_name": project,
                         "paths": {"extension_dir": "doc/extensions"}}, ensure_ascii=False),
             encoding="utf-8")
+        link_harness_yaml(at)
         (at / ".gitignore").write_text(
             "doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
         section = PKG_EXT / "skills" / "story" / "AGENTS.section.md"
@@ -165,6 +167,7 @@ class SourceKindCase(unittest.TestCase):
             shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
             shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
                             ignore=shutil.ignore_patterns("__pycache__", ".*"))
+            link_harness_yaml(pkg)
             for rel in LAUNCHERS:
                 dst = pkg / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +190,7 @@ class SourceKindCase(unittest.TestCase):
         shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
         shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".*"))
+        link_harness_yaml(pkg)
         manifest = pkg / "doc" / "extensions" / "manifest.yaml"
         manifest.write_text("\n".join(
             l for l in manifest.read_text(encoding="utf-8").split("\n")
@@ -243,6 +247,7 @@ class SourceKindCase(unittest.TestCase):
         (target / "framework.config.json").write_text(
             json.dumps({"project_name": "WithChapter",
                         "paths": {"extension_dir": "doc/extensions"}}), encoding="utf-8")
+        link_harness_yaml(target)
         (target / ".gitignore").write_text("doc/features/\n", encoding="utf-8")
         (target / "CLAUDE.md").write_text(
             "# 目标工程\n\n## 四、工作流\n\n### 实例扩展 Skill（doc/extensions）\n\n"

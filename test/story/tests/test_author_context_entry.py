@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from ext_workspace import link_harness_yaml
 
 REPO = Path(__file__).resolve().parents[3]
 EXT = REPO / "doc" / "extensions"
@@ -87,6 +88,7 @@ class ChannelFailuresAreLoud(unittest.TestCase):
         self.addCleanup(shutil.rmtree, ws, True)
         shutil.copytree(EXT, ws / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
+        link_harness_yaml(ws)
         (ws / "doc/extensions/skills/story/contracts/story-chapters.json").unlink()
 
         proc = _node([AUTHOR_CLI, "--feature", "demo"], ws)

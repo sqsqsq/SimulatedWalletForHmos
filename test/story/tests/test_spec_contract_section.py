@@ -17,6 +17,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ext_workspace import link_harness_yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
 REAL = REPO_ROOT / "test" / "story" / "fixtures" / "real-run" / "AR90006"
@@ -41,6 +43,7 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
         cls.root = Path(cls._tmp.name) / "work"
         (cls.root / "doc").mkdir(parents=True)
         shutil.copytree(EXT, cls.root / "doc" / "extensions")
+        link_harness_yaml(cls.root)
         shutil.copytree(REAL, cls.root / "doc" / "features" / FEATURE)
         # §9 那一章只在走过 /story 的 feature 上判——夹具里补一份流程契约，
         # 否则这一整组判据整块跳过，测出来的绿是「没判」不是「判过」。

@@ -331,6 +331,12 @@
     }
   },
   "gates_note": "第一级关卡的选项集，**两项固定**。人陈述的是事实——料放进去了，或者现有材料就是全部；够不够由作者盘点、由人定，机器不判。带 request 的那一项是「我还要料」，第 2 轮起它要写清剩余缺口。label 由脚本按 key 填进契约，作者不写：可改写的话，摆给人的那句话是合同给的还是作者当场编的，事后分不出来——而那正是「他问了什么」的全部内容。本轮缺什么写进选项的 missing / why 与停等正文，不进标签；标签固定，人每次看到的才是同一个问题。流程脚本与流程校验都从这里读，两边不各存一份字面：只改一处，写进契约的选择会在阶段门禁上被判非法。",
+  "flow": {
+    "schema": 3,
+    "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
+    "carry_all": "carry_all"
+  },
+  "flow_note": "流程契约（AR/story-src/story-flow.json）的常量：schema 版本、关卡名、第二级里固定的「整体承载」键。写入侧 `scripts/core/flow/state.py` 与门禁 `flow/check.mjs` 都从这里读，两边不各存一份字面。",
   "pending_mark": "待写",
   "pending_mark_note": "骨架给每章留的待写记号。JS 与 Python 两侧都要认它——各写一份字面的话，改一处忘一处，story 的进度在两条路上会说成两样。",
   "heading_counters": [

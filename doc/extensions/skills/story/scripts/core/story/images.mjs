@@ -279,13 +279,12 @@ export function carriedDiagramProblems(ctx, storyText) {
   // **只判登记对应**：标记在，说明这张图被登记着搬过来了；它搬得对不对、
   // 周围那句话说的是不是它，要读上下文，归独立审查。
   // 缺了报的是**这张图讲的那件事**，作者据此去找内容，而不是去补一张图。
+  // 一张图一行：来源位置、它讲的那件事、去向。怎么搬（围栏第一行写 `%% 图源 <来源> <编号>`、
+  // 周围文字自己写）是整类共同的写法，不逐张重复。
   for (const [label, upstream] of upstreamDocs(ctx)) {
     for (const d of diagramsNotCarried(upstream, label, storyText)) {
-      problems.push(`${label} ${d.id} 的图（${diagramTopic(d)}）在 story 里没有。`
-        + '先看它讲的那件事在 story 哪一章：讲了而图漏了，把图搬到那一节；'
-        + '没讲，是内容丢了，先补内容再搬图。'
-        + `搬的时候围栏第一行写 \`%% 图源 ${label} ${d.id}\`——周围的文字自己写，`
-        + 'story 讲给评审者的是来龙去脉，上游那份讲的是别的事');
+      problems.push(`${label} ${d.id}（${diagramTopic(d)}）在 story 里没有——`
+        + '讲这件事的那一章补图并在围栏第一行写 `%% 图源 ' + `${label} ${d.id}` + '`；那件事没讲，先补内容');
     }
   }
   return problems;

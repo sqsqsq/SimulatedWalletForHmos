@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
@@ -45,6 +46,7 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(EXT, self.root / "doc" / "extensions")
+        link_harness_yaml(self.root)
         self.ext = self.root / "doc" / "extensions"
         (self.root / "framework.config.json").write_text(
             json.dumps({"paths": {"extension_dir": "doc/extensions"}}), encoding="utf-8")

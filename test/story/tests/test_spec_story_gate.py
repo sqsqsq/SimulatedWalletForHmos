@@ -144,6 +144,43 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
         self.assertFalse(any("chosen 非法" in p for p in problems),
                          f"合同读不到却去说人的选择非法：{problems}")
 
+    def flow_path(self) -> Path:
+        return self.feature_root / "AR" / "story-src" / "story-flow.json"
+
+    def edit_flow(self, mutate) -> None:
+        data = json.loads(self.flow_path().read_text(encoding="utf-8"))
+        mutate(data)
+        self.flow_path().write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def test_the_flow_constants_come_from_the_contract(self) -> None:
+        """schema、关卡名、整体承载键只在合同的 `flow` 里：合同缺了它就判不了，不退回写死的值。"""
+        contract = self.skill / "contracts" / "story-chapters.json"
+        data = json.loads(contract.read_text(encoding="utf-8"))
+        del data["flow"]
+        contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        problems = self.problems()
+        self.assertTrue(any("flow" in p for p in problems), problems)
+        self.assertFalse(any("schema 为" in p for p in problems), "合同读不到却拿写死的 schema 去判")
+
+    def test_shape_only_fields_are_not_judged(self) -> None:
+        """签名人、时间戳、outcome 值域、被拒的 reason：写入侧已保证，手改成错形状也不改变流程走向。"""
+        def mutate(data):
+            gates = data["rounds"][0]["gates"]
+            gates[0]["by"] = "ai"
+            del gates[0]["at"]
+            gates.insert(0, {"gate": "material_scope", "chosen": "supplied",
+                             "options": [{"key": "supplied"}], "outcome": "rejected"})
+        self.edit_flow(mutate)
+        self.assertEqual([], self.problems())
+
+    def test_a_choice_outside_the_options_is_still_caught(self) -> None:
+        """改了 chosen 而没改 options——这一条决定后续流程，手改也要抓。"""
+        def mutate(data):
+            data["rounds"][0]["gates"][1]["chosen"] = "by_screen"
+        self.edit_flow(mutate)
+        problems = self.problems()
+        self.assertTrue(any("不在 options 里" in p for p in problems), problems)
+
 
 if __name__ == "__main__":
     unittest.main()

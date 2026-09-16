@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMAGES = (REPO_ROOT
@@ -1642,6 +1643,7 @@ class AWriteThatLandedIsNeverReportedAsFailed(unittest.TestCase):
         (self.root / "doc").mkdir(parents=True)
         self.mech = self.root / "doc" / "extensions"
         shutil.copytree(REPO_ROOT / "doc" / "extensions", self.mech)
+        link_harness_yaml(self.mech.parents[1])
         self.feature_root = self.root / "doc" / "features" / FEATURE
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)
         self.story_path = self.feature_root / "AR" / "story.md"
@@ -1704,6 +1706,7 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.mech = Path(self._tmp.name) / "doc" / "extensions"
         shutil.copytree(REPO_ROOT / "doc" / "extensions", self.mech)
+        link_harness_yaml(self.mech.parents[1])
         self.contract = (self.mech / "skills" / "story" / "contracts"
                          / "story-chapters.json")
         self.build = (self.mech / "skills" / "story" / "scripts" / "core"

@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = REPO_ROOT / "test" / "story" / "golden"
@@ -154,6 +155,10 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
     MARKS = "%% 图源 SR §3 #1\n%% 图源 spec §5.1 #1\n"
 
     def diagram_complaints(self, story: str) -> list[str]:
+        out = self.check_output(story)
+        return [l.strip() for l in out.split("\n") if "在 story 里没有" in l]
+
+    def check_output(self, story: str) -> str:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             feature = root / "doc" / "features" / "AR90004"
@@ -161,6 +166,7 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
             shutil.copytree(REPO_ROOT / "doc" / "extensions",
                             root / "doc" / "extensions",
                             ignore=shutil.ignore_patterns("node_modules"))
+            link_harness_yaml(root)
             (feature / "AR" / "story.md").write_text(story, encoding="utf-8")
             src = feature / "AR" / "story-src"
             src.mkdir(parents=True, exist_ok=True)
@@ -172,8 +178,7 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
                  "--project-root", str(root)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=90)
-        out = proc.stdout + proc.stderr
-        return [l.strip() for l in out.split("\n") if "的图（" in l]
+        return proc.stdout + proc.stderr
 
     def test_both_upstream_diagrams_are_carried(self) -> None:
         complaints = self.diagram_complaints(
@@ -188,6 +193,15 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
         self.assertEqual(2, len(complaints), f"该报两条，实报 {len(complaints)}：{complaints}")
         self.assertTrue(any("SR §3" in c for c in complaints))
         self.assertTrue(any("spec §5.1" in c for c in complaints))
+
+    def test_missing_carry_is_its_own_class_one_line_per_diagram(self) -> None:
+        """缺承接归自己的一类「⑫d 上游图承接」，一张图一行——不混进机器区一致性，也不逐张重复写法。"""
+        story = GOLDEN_STORY.read_text(encoding="utf-8").replace(self.MARKS, "")
+        out = self.check_output(story)
+        self.assertIn("[⑫d 上游图承接] 2 处", out)
+        lines = [l for l in out.split("\n") if "在 story 里没有" in l]
+        self.assertEqual(2, len(lines), lines)
+        self.assertTrue(all("%% 图源" in l for l in lines), "去向写法要在同一行里")
 
 
 class JudgementsDoNotBlockTheGolden(unittest.TestCase):

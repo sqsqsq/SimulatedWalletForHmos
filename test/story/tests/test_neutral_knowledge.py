@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
@@ -115,6 +116,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(EXT, self.root / "doc" / "extensions")
+        link_harness_yaml(self.root)
         self.ext = self.root / "doc" / "extensions"
 
         # ① 放三份中性知识
@@ -442,7 +444,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         """解析失败接住报出来——当空集合放行，义务就全部静默失去验收条目。"""
         self.write_use()
         self.assertEqual(0, self.render().returncode)
-        # yaml-lite 对部分残缺输入会宽容解析；缩进不一致是它确定抛错的形态
+        # 读取器与 framework 同一解析器：没收尾的流式序列是确定抛错的形态
         self.write_acceptance("criteria:\n - id: x\n  bad: [\n")
         self.assertIn("解析失败", self.ut_message())
 

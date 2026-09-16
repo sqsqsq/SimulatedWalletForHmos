@@ -20,6 +20,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ext_workspace import link_harness_yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOK = REPO_ROOT / "doc" / "extensions" / "hooks" / "plan" / "post_check.mjs"
 ARCHIVE = (REPO_ROOT / "test" / "story" / "design" / "2026-08-25-story分批次交付"
@@ -55,6 +57,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         shutil.copytree(REPO_ROOT / "doc" / "extensions", tmp / "doc" / "extensions")
+        link_harness_yaml(tmp)
         shutil.copytree(ARCHIVE, tmp / "doc" / "features" / FEATURE)
         self.write_knowledge_use(tmp)
         return tmp

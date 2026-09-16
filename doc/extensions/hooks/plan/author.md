@@ -34,7 +34,7 @@ components:
         verify: review
 ```
 - `must` **只能**挂在五处：`data_models[].fields[]`、`interfaces[].methods[]`、
-  `components[]` 及其 `state[]`、`resource_keys[]`、`files[]`；挂在实体顶层或别的集合上都会被拦。
+  `components[]` 及其 `state[]`、`resource_keys.<模块>.<分类>[]` 的资源条目、`files[]`；挂在实体顶层、模块层或分类层都会被拦。
   `text` 写**本次要落实成什么**，不复述规约原文；`rule` 只写真正要求这件事的规约。
 - **不是某条规约要求的业务规则写在这里**：承载它的实体自己的 `description`，或 plan.md 对应设计章的一句，不挂 `must`。
   把「单个清单最多 50 项」挂到兼容性条目上就是借挂——编号在册、规则合法，那条规约却不要求这件事。
@@ -49,7 +49,7 @@ components:
 ## 五、门禁会拦什么
 
 - 缺「知识决策（设计输入）」章，或它排在第一个设计章之后。
-- `must` 挂在实体顶层（如 `data_models.X` 而不是它的 `fields[]`），或挂在允许之外的集合上；契约用了流式写法 `- { … }`（扩展只读块式）。
+- `must` 挂在实体顶层（如 `data_models.X` 而不是它的 `fields[]`），或挂在允许之外的集合上；`resource_keys` 不是「模块 → 分类 → 资源列表」的两层结构。契约的 YAML 与 framework 同一读法，流式写法 `- { … }` 是合法的。
 - **两边对不上**：spec 判了命中而契约里没有实体扛着（知识在设计阶段就丢了），或契约里的
   `must.rule` 不在命中集内。命中集读 `spec/knowledge-use.yaml`，不是 spec.md 里那张投影表。
 - `must.rule` 不在激活清单里（编号写错，或那条规约已下架）；`must.text` 缺失。

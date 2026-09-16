@@ -6,7 +6,7 @@
  */
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from './paths.mjs';
-import { parseYaml } from './yaml-lite.mjs';
+import { parseYaml } from './yaml.mjs';
 
 /**
  * 实体引用语法：`<集合>.<实体>[.<成员>]`。
@@ -98,13 +98,24 @@ export function resolveEntityRef(contracts, ref) {
   if (parts.length < 2) {
     return { ok: false, reason: `引用只写了集合名，没指到具体实体`, tail };
   }
-  const bucket = asArray(contracts?.[kind]);
+  // resource_keys 是两层对象不是列表：先按两层读法摊成条目，再判空
+  const bucket = kind === 'resource_keys' ? resourceEntries(contracts).entries : asArray(contracts?.[kind]);
   if (!bucket.length) {
     return { ok: false, reason: `契约里没有 ${kind} 这一节或它是空的`, tail };
   }
 
-  // files / resource_keys 的实体名本身可能带点号（路径、键名），整体匹配
-  if (kind === 'files' || kind === 'resource_keys') {
+  // resource_keys 是两层对象，引用只认完整的 `resource_keys.<模块>.<分类>.<key>`：
+  // key 本身可以带点，所以按整串比，不按段比
+  if (kind === 'resource_keys') {
+    const hit = bucket.find(e => e.ref === raw);
+    return hit
+      ? { ok: true, reason: '', tail: hit.key }
+      : { ok: false,
+          reason: `resource_keys 里没有「${parts.slice(1).join('.')}」（引用写完整的 resource_keys.<模块>.<分类>.<key>）`,
+          tail };
+  }
+  // files 的实体名是路径，整体匹配
+  if (kind === 'files') {
     const target = parts.slice(1).join('.');
     const hit = bucket.some(it => {
       const n = entityName(it).replace(/\\/g, '/');
@@ -136,25 +147,46 @@ export function resolveEntityRef(contracts, ref) {
 }
 
 /**
- * 契约里用流式映射写的实体或成员（`- { name: X, type: string }`）。
+ * `resource_keys` 按 framework 的合同读：两层对象 `resource_keys.<模块>.<分类>` 下是资源条目列表
+ * （`framework/harness/scripts/utils/types.ts` 的 `Record<string, Record<string, ResourceEntry[]>>`）。
+ * 每条资源的引用是完整的 `resource_keys.<模块>.<分类>.<key>`；模块与分类名来自实际键，不硬编码。
  *
- * 扩展的 YAML 读法只认块式，流式那一项被读成一整串字符串：按名字引用它的落点从此找不到，
- * 却没有任何报错。不扩读法去认流式，而是点名让作者改块式。
+ * 缺这一节返回空；形状不是两层对象时报到具体模块或分类——按平铺列表读它，会把每条资源当成
+ * 模块名，作者按报错改成两层后，义务反而挂不上。
+ *
+ * @returns {{entries: {module: string, category: string, key: string, node: object, ref: string}[], problems: string[]}}
  */
-export function flowStyleProblems(contracts) {
-  const out = [];
-  for (const kind of ENTITY_KINDS) {
-    for (const item of asArray(contracts?.[kind])) {
-      const members = typeof item === 'string' ? [[kind, item]]
-        : Object.entries(item ?? {}).filter(([, v]) => Array.isArray(v))
-          .flatMap(([key, v]) => v.map(x => [`${kind}.${entityName(item)}.${key}`, x]));
-      for (const [at, v] of members.filter(([, x]) => typeof x === 'string' && x.trim().startsWith('{'))) {
-        out.push(`契约里的 ${at} 用了流式写法「${v.trim().slice(0, 40)}」——扩展只读块式：`
-          + '每项一行 `- name: …`，其余键逐行缩进写在它下面');
+export function resourceEntries(contracts) {
+  const entries = [];
+  const problems = [];
+  const rk = contracts?.resource_keys;
+  if (rk === undefined || rk === null || rk === '') return { entries, problems };
+  const shape = '——形态是 `resource_keys:` → `<模块>:` → `<分类>:` → `- key: …`（与 framework 合同一致）';
+  if (typeof rk !== 'object' || Array.isArray(rk)) {
+    problems.push(`resource_keys 不是「模块 → 分类 → 资源列表」的两层对象（读到${Array.isArray(rk) ? '列表' : typeof rk}）${shape}`);
+    return { entries, problems };
+  }
+  for (const [module, cats] of Object.entries(rk)) {
+    if (!cats || typeof cats !== 'object' || Array.isArray(cats)) {
+      problems.push(`resource_keys.${module} 下应是「分类 → 资源列表」（读到${Array.isArray(cats) ? '列表' : typeof cats}）${shape}`);
+      continue;
+    }
+    for (const [category, list] of Object.entries(cats)) {
+      if (!Array.isArray(list)) {
+        problems.push(`resource_keys.${module}.${category} 应是资源条目列表（读到 ${typeof list}）${shape}`);
+        continue;
       }
+      list.forEach((node, i) => {
+        const key = entityName(node);
+        if (!key) {
+          problems.push(`resource_keys.${module}.${category} 第 ${i + 1} 条没有 key`);
+          return;
+        }
+        entries.push({ module, category, key, node, ref: `resource_keys.${module}.${category}.${key}` });
+      });
     }
   }
-  return out;
+  return { entries, problems };
 }
 
 /** 契约点名的实现文件（coding 阶段据此限定检索范围，不全仓扫）。 */

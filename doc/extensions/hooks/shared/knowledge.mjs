@@ -20,7 +20,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
-import { parseYaml } from './yaml-lite.mjs';
+import { parseYaml } from './yaml.mjs';
 
 /** 三类知识的类型键——封闭集合。 */
 const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];

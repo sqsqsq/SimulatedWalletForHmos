@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PKG_EXT = REPO_ROOT / "doc" / "extensions"
@@ -57,6 +58,7 @@ class AdaptCase(unittest.TestCase):
             "doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
+        link_harness_yaml(self.target)
         for rel in LAUNCHERS:
             dst = self.target / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +322,7 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
         shutil.copy(self.target / "framework.config.json", pkg / "framework.config.json")
         shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
+        link_harness_yaml(pkg)
         (pkg / "doc" / "extensions" / "skills" / "story" / "scripts" / "loose.mjs").write_text(
             "export const x = 1;\n", encoding="utf-8")
 

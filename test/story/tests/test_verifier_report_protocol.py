@@ -32,6 +32,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO = Path(__file__).resolve().parents[3]
 MODULE = REPO / "doc" / "extensions" / "hooks" / "shared" / "verifier-report.mjs"
@@ -373,6 +374,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(REPO / "doc" / "extensions", self.root / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
+        link_harness_yaml(self.root)
         # 台账齐备，check 才走得到后面的判据；这一份 story 本身合不合格不是这里要判的。
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         src.mkdir(parents=True)
@@ -511,6 +513,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(REPO / "doc" / "extensions", self.root / "doc" / "extensions")
+        link_harness_yaml(self.root)
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         src.mkdir(parents=True)
         (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")

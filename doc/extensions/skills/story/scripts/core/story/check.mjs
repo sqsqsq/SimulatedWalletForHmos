@@ -243,9 +243,8 @@ export function cmdCheck(ctx) {
   mark('⑫b 机器区与真源一致');
   // 附录 A–D 的机器区与真源逐区逐行比——**与 project 写进去的是同一份计算**。
   // 「每条规约有行」「spec 的行不丢」都在其内：少一行就是一处差异，不必再各写一条
-  // 反着解析回去的判据。上游每张图的落点是跨章的事，留在这里。
+  // 反着解析回去的判据。
   problems.push(...appendixZoneProblems(ctx, storyText));
-  problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑫c 形态 lint');
   problems.push(...danglingFigures(storyText, ctx.contract));
@@ -254,6 +253,11 @@ export function cmdCheck(ctx) {
     problems.push(...out.problems);
     notes.push(...out.notes);
   }
+
+  mark('⑫d 上游图承接');
+  // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
+  // 离线仲裁锚没有上游文档，整类不判。
+  if (!ctx.offline) problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑬ 评审记录只含渲染语法');
   problems.push(...reviewFormProblems(reviewText));

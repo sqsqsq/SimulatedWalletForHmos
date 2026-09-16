@@ -21,7 +21,6 @@ SKILL_ROOT = Path(__file__).resolve().parents[3]
 CORE_DIR = SKILL_ROOT / "scripts" / "core"
 
 
-SCHEMA = 3
 CONTRACT = ("AR", "story-src", "story-flow.json")
 ANALYSIS = ("AR", "story-src", "init-analysis.md")
 
@@ -40,20 +39,10 @@ STORY_SRC_FROZEN = (
     "decisions.json",
     "story-template.md",
 )
-# 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
-#
-# 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
-# 而它们本有先后——材料不全时范围判断本身就不可靠，在一个还会变的范围上讨论怎么切，
-# 讨论了也白讨论。
-#
-# `meeting` 不是第四级：会议判断里要问人的话题逐条裁决，与第一级在同一轮停等里摆，不新增停等点。
-GATES = ("material_scope", "scope_decision", "split_carrier", "meeting")
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，流程侧与
 #: `flow/check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
 #: 选择会在阶段门禁上被判非法。
 STORY_CONTRACT = SKILL_ROOT / "contracts" / "story-chapters.json"
-# 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
-CARRY_ALL = "carry_all"
 # 本 AR 当前范围是**哪里定下来的**，按强度排序：
 #   user_stated —— 关卡上由人定的（他说了本次做多少、怎么切）。最强：那是决定不是推断。
 #   title / design_prefill / sr_related —— 上游材料给了范围，强度依次递减；
@@ -64,6 +53,37 @@ SCOPE_SOURCES = ("user_stated", "title", "design_prefill", "sr_related", "full")
 
 class FlowError(Exception):
     """可预期的失败：带可执行的补救动作，直接呈给人。退出码 1，不写盘。"""
+
+
+def contract_flow() -> dict:
+    """流程契约的常量，真源是章节合同的 `flow`；门禁 `flow/check.mjs` 读同一处。
+
+    读不出来要出声：schema、关卡名、整体承载键任何一个退化成默认值，写进契约的记录
+    都会在阶段门禁上被判非法，而坏掉的是合同的读取路径。
+    """
+    try:
+        data = json.loads(STORY_CONTRACT.read_text(encoding="utf-8").lstrip("\ufeff"))
+        flow = data["flow"]
+        return {"schema": int(flow["schema"]), "gates": tuple(str(g) for g in flow["gates"]),
+                "carry_all": str(flow["carry_all"])}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise FlowError(
+            f"{STORY_CONTRACT.name} 的 flow 读不出来（{exc}）：契约 schema、关卡名与整体承载键登记在那里"
+        ) from exc
+
+
+_FLOW = contract_flow()
+SCHEMA = _FLOW["schema"]
+# 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
+#
+# 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
+# 而它们本有先后——材料不全时范围判断本身就不可靠，在一个还会变的范围上讨论怎么切，
+# 讨论了也白讨论。
+#
+# `meeting` 不是第四级：会议判断里要问人的话题逐条裁决，与第一级在同一轮停等里摆，不新增停等点。
+GATES = _FLOW["gates"]
+# 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
+CARRY_ALL = _FLOW["carry_all"]
 
 
 def log(msg: str) -> None:

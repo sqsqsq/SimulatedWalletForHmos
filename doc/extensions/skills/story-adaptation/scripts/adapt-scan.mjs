@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseYaml } from '../../../hooks/shared/yaml-lite.mjs';
+import { parseYaml } from '../../../hooks/shared/yaml.mjs';
 
 const MODES = ['--apply', '--check'];
 
@@ -339,6 +339,20 @@ if (!PKG) die('包不是有效仓库根（找不到 framework.config.json）');
 
 const PDIR = join(PKG, ...extDir(PKG).split('/'));
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+
+// 扩展的 YAML 读取借目标 framework harness 的 `yaml` 包（hooks/shared/yaml.mjs）：装之前先确认它在。
+// 缺了也能把文件复制过去，但目标跑第一道门禁就会抛「读取器不可用」——那时人看到的是门禁坏了，不是没装依赖。
+// 只在目标**有** harness 时核：harness 本身不在是 framework 还没接入，那是 framework-init 的事，这里只提一句。
+{
+  const harness = join(TARGET, 'framework', 'harness');
+  const yamlPkg = join(harness, 'node_modules', 'yaml');
+  if (!existsSync(join(harness, 'package.json'))) {
+    console.error(`[adapt-scan] 目标还没有 ${relative(TARGET, harness)}：扩展的门禁要在接入 framework 并装好 harness 依赖之后才能跑`);
+  } else if (!existsSync(yamlPkg)) {
+    die(`目标的 framework harness 还没装依赖（缺 ${relative(TARGET, yamlPkg)}）：`
+      + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check');
+  }
+}
 const SAME_TREE = resolve(PKG) === resolve(TARGET);
 
 const pkgManifest = join(PDIR, 'manifest.yaml');

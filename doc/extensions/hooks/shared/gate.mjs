@@ -60,16 +60,24 @@ export function guard(phase, body) {
  * @param {{
  *   problems?: string[],
  *   skipped?: {what: string, why: string}[],
+ *   groups?: {name: string, problems?: string[], skipped?: {what: string, why: string}[]}[],
  *   checks?: {id: string, status: string, detail?: string}[],
  *   inputs?: string[],
  *   fix?: string,
  * }} r
  *   `problems` 逐条是「哪里不对 + 该怎么写」；`skipped` 是因前置缺失而没能执行的判据，
  *   即使本次没有 problems 也要报出来——「没报错」不等于「都查过了」。
+ *   `groups` 是按数据前置分的组：每组自己决定能否执行，能执行的全部执行，报错按组分节，
+ *   作者一眼看到每一类各有几处、还有哪一组等前置——而不是修完一类才看见下一类。
  */
 export function gate(ctx, r) {
-  const problems = (r?.problems ?? []).filter(Boolean);
-  const skipped = (r?.skipped ?? []).filter(s => s && s.what);
+  const groups = (r?.groups ?? []).map(g => ({
+    name: g.name,
+    problems: (g.problems ?? []).filter(Boolean),
+    skipped: (g.skipped ?? []).filter(s => s && s.what),
+  }));
+  const problems = [...(r?.problems ?? []).filter(Boolean), ...groups.flatMap(g => g.problems)];
+  const skipped = [...(r?.skipped ?? []).filter(s => s && s.what), ...groups.flatMap(g => g.skipped)];
   const doc = authorDoc(ctx.phase);
 
   const checks = r?.checks?.length
@@ -97,7 +105,14 @@ export function gate(ctx, r) {
 
   const parts = [`先读 ${doc}——本阶段扩展要求的全部内容都在那一页。`];
   parts.push(`以下 ${problems.length} 处需要修正（一次列全，不必逐轮试）：`);
-  problems.forEach((p, i) => parts.push(`${i + 1}. ${p}`));
+  let n = 0;
+  const ungrouped = (r?.problems ?? []).filter(Boolean);
+  ungrouped.forEach(p => parts.push(`${++n}. ${p}`));
+  for (const g of groups) {
+    if (!g.problems.length) continue;
+    parts.push(`【${g.name}】${g.problems.length} 处`);
+    g.problems.forEach(p => parts.push(`${++n}. ${p}`));
+  }
   if (skipped.length) {
     parts.push(`另有 ${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
       + skipped.map(s => `${s.what}（${s.why}）`).join('；'));

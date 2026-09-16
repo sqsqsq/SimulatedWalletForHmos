@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
@@ -122,6 +123,7 @@ class WorkspaceCase(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(EXT, self.root / "doc" / "extensions")
+        link_harness_yaml(self.root)
         self.feature_root = self.root / "doc" / "features" / FEATURE
         (self.feature_root / "spec").mkdir(parents=True)
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)

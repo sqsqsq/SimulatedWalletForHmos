@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXT = REPO_ROOT / "doc" / "extensions"
@@ -150,6 +151,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         shutil.copytree(FIXTURE, self.root)      # 工程侧：夹具自己的清单与知识不动
         self.mech = Path(self._tmp.name) / "mech" / "doc" / "extensions"
         shutil.copytree(EXT, self.mech)          # 机制侧：副本按相对位置自己找模块
+        link_harness_yaml(self.mech.parents[1])
         self.log = Path(self._tmp.name) / "parse.log"
         doc = (self.mech / "skills" / "story" / "scripts"
                / "core" / "story" / "document.mjs")

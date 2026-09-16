@@ -19,7 +19,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parseYaml } from '../shared/yaml-lite.mjs';
+import { parseYaml } from '../shared/yaml.mjs';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/core/story/language.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { STATUS } from '../shared/evidence.mjs';
@@ -158,75 +158,100 @@ function sectionRange(lines, startIdx) {
 }
 
 /**
- * 知识判定的两个出口（BLOCKER）。
+ * 知识判定的两个出口（BLOCKER）——按数据前置分四组，能判的组一次全判。
  *
  * 机械层只判**结构与集合**，不判内容对错：
  *   1. 两章独立成节，且不落在技术契约章的区间内（并进去会让守恒从按名退化成按号）；
  *   2. 编号粒度到条目级、编号在册（只写域前缀会让整域漏判照样放行）；
- *   3. 命中集与 acceptance 的 knowledge_rule 集一致。
+ *   3. 命中集与 acceptance 的 knowledge_rule 集一致；
+ *   4. §10/§11 投影与真源一致。
+ *
+ * 四组各自的前置：章节组只要 spec 可读；知识层组要激活知识可派生、knowledge-use 可读；
+ * 桥接组要判断可读（约束集合可枚举），与投影无关；投影组要判断本身成立且出口章在——
+ * 判断不成立时投影核了没意义，缺章时投影区根本不存在。前置缺的组记 skipped 说明缺什么，
+ * 不让别的组因它被屏蔽：作者修完一类才看见下一类，是性能上最贵的一种失败。
  *
  * 「这条要求是不是本需求的设计」是语义判断，归 verifier——本函数不下这个结论。
+ *
+ * @returns {{name: string, problems: string[], skipped: {what: string, why: string}[]}[]}
  */
-function knowledgeExitProblems(ctx, lines) {
-  const problems = [];
-  let knowledge;
-  try {
-    knowledge = activeKnowledge(ctx.projectRoot);
-  } catch (e) {
-    return [`激活知识派生失败：${e.message}`];
-  }
+function knowledgeExitGroups(ctx, lines) {
+  const chapter = { name: '知识出口章节', problems: [], skipped: [] };
+  const layer = { name: '知识层自检与 knowledge-use 判断', problems: [], skipped: [] };
+  const bridge = { name: '命中集合与 acceptance 桥接', problems: [], skipped: [] };
+  const projection = { name: '§10/§11 投影与真源一致', problems: [], skipped: [] };
 
-  // 知识层自身的职责边界（规约不携带实现事实、知识不维护阶段路由）。
-  // 放在这里跑：spec 是知识判定的起点，知识层坏了后面每个阶段都建在坏地基上。
-  problems.push(...selfCheck(ctx.projectRoot, knowledge));
-
+  // ---- 组 1：章节，只依赖 spec 可读 ----
   const exitIdx = findHeading(lines, /规约约束要求/);
   const patternIdx = findHeading(lines, /设计模式候选/);
   const contractIdx = findHeading(lines, /技术契约/);
   const contractRange = sectionRange(lines, contractIdx);
-
   if (exitIdx === -1) {
-    return [
-      '缺「规约约束要求」章——判定产生的代码要求没有落点，到编码那里就等于不存在。'
-      + `形态见 ${SECTIONS_DOC}：这一章的正文由 spec/knowledge-use.yaml 生成，不手写。`,
-    ];
+    chapter.problems.push('缺「规约约束要求」章——判定产生的代码要求没有落点，到编码那里就等于不存在。'
+      + `形态见 ${SECTIONS_DOC}：这一章的正文由 spec/knowledge-use.yaml 生成，不手写。`);
   }
   if (patternIdx === -1) {
-    problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
+    chapter.problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
       + '空着分不清「判过了不需要」与「压根没想这件事」');
   }
   // 独立成节：不得落在技术契约章的区间内
   for (const [idx, name] of [[exitIdx, '规约约束要求'], [patternIdx, '设计模式候选登记']]) {
     if (idx >= 0 && contractRange && idx > contractRange.start && idx < contractRange.end) {
-      problems.push(`「${name}」并进了技术契约章——三章各回答一个问题，须独立成节：`
+      chapter.problems.push(`「${name}」并进了技术契约章——三章各回答一个问题，须独立成节：`
         + '契约章登记「有什么」，要求章说「必须满足什么」，候选章说「可选什么」。');
     }
   }
 
-  // 判断的真源是 knowledge-use.yaml；§10/§11 是它的投影。
-  //
-  // 作者只编辑 YAML，投影由生成器写；判据核投影与真源一致，
-  // 对不上时错的一定是投影。
-  let use;
+  // ---- 组 2：知识层可派生、判断可读 ----
+  // 知识层自身的职责边界（规约不携带实现事实、知识不维护阶段路由）放在这里跑：
+  // spec 是知识判定的起点，知识层坏了后面每个阶段都建在坏地基上。
+  let knowledge = null;
+  let use = null;
   try {
-    use = readUse(ctx.projectRoot, ctx.feature);
+    knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    if (e instanceof UseError) return [...problems, e.message];
-    throw e;
+    layer.problems.push(`激活知识派生失败：${e.message}`);
+  }
+  if (knowledge) {
+    layer.problems.push(...selfCheck(ctx.projectRoot, knowledge));
+    // 判断的真源是 knowledge-use.yaml；§10/§11 是它的投影。作者只编辑 YAML，投影由生成器写。
+    try {
+      use = readUse(ctx.projectRoot, ctx.feature);
+    } catch (e) {
+      if (e instanceof UseError) layer.problems.push(e.message);
+      else throw e;
+    }
   }
   const specText = lines.join(String.fromCharCode(10));
-  problems.push(...coverageProblems(ctx.projectRoot, knowledge, use, specText));
-  if (problems.length) return problems;      // 判断本身不成立时，投影核了也没有意义
+  const coverage = knowledge && use ? coverageProblems(ctx.projectRoot, knowledge, use, specText) : null;
+  if (coverage) layer.problems.push(...coverage);
+  const noJudgement = !knowledge ? '激活知识派生失败' : !use ? '读不到 spec/knowledge-use.yaml' : null;
 
-  problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
+  // ---- 组 3：命中集合 → acceptance 桥，只要判断可读就核 ----
+  if (noJudgement) {
+    bridge.skipped.push({ what: '命中集合与 acceptance 桥接', why: noJudgement });
+  } else {
+    // 命中并落实、产生代码要求的那些，要在 acceptance 里有对应验收条目（本轮豁免的不落实，不建）
+    const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+    const specIds = new Set(use.constraints
+      .filter(r => r.applicable === true && !r.waived && !byId.get(String(r.id ?? '').trim())?.reviewAction)
+      .map(r => String(r.id ?? '').trim()));
+    bridge.problems.push(...acceptanceCoverage(ctx, specIds));
+  }
 
-  // 命中并落实、产生代码要求的那些，要在 acceptance 里有对应验收条目（本轮豁免的不落实，不建）
-  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
-  const specIds = new Set(use.constraints
-    .filter(r => r.applicable === true && !r.waived && !byId.get(String(r.id ?? '').trim())?.reviewAction)
-    .map(r => String(r.id ?? '').trim()));
-  problems.push(...acceptanceCoverage(ctx, specIds));
-  return problems;
+  // ---- 组 4：投影一致性，前置是判断本身成立且出口章在 ----
+  if (noJudgement) {
+    projection.skipped.push({ what: '§10/§11 投影与真源一致', why: noJudgement });
+  } else if (coverage.length) {
+    projection.skipped.push({ what: '§10/§11 投影与真源一致',
+      why: `knowledge-use.yaml 的判断有 ${coverage.length} 处不成立，先修它们再核投影` });
+  } else if (exitIdx === -1) {
+    projection.skipped.push({ what: '§10/§11 投影与真源一致', why: '缺「规约约束要求」章，投影区不存在' });
+  } else {
+    // 判据核投影与真源一致，对不上时错的一定是投影。
+    projection.problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
+  }
+  return [chapter, layer, bridge, projection];
 }
 
 /**
@@ -374,9 +399,9 @@ export default guard('spec', async (ctx) => {
     }
   }
 
-  // ---- 知识判定的两个出口 ----
+  // ---- 知识判定的两个出口（四组，各按前置判）----
   // 出口按**命中条目**派生，不为任何域预留固定小节——预留小节就是把域清单硬编码换个地方存在。
-  problems.push(...knowledgeExitProblems(ctx, lines));
+  const groups = knowledgeExitGroups(ctx, lines);
 
   // ---- 术语映射表：业务名词须有解释（story 专属）----
   // 「解释」列是扩展在 core 模板的 §0 之上追加的，附录 A 只留一句索引。
@@ -458,10 +483,12 @@ export default guard('spec', async (ctx) => {
     if (numericProblems.length > 5) problems.push(`另有 ${numericProblems.length - 5} 处数值来源问题`);
   }
 
+  const total = problems.length + groups.reduce((n, g) => n + g.problems.length, 0);
   return gate(ctx, {
     problems,
+    groups,
     checks: [
-      { id: 'knowledge_exit_structure', status: problems.length ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${problems.length} 条` },
+      { id: 'knowledge_exit_structure', status: total ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${total} 条` },
     ],
     inputs: [specPath],
     fix: `产物：spec.md（${rel}）。${fix}`,

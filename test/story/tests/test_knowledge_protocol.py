@@ -4,7 +4,7 @@
   载入——协议版本与值域不合就点名，一次列全；
   看到——骨架每条带条目内容行，§10 带强制力与验法；
   识别——本轮豁免按强制力允许，未确认的事实面要写核实位置；
-  应用——每处落点的 verify 符合规约声明的执行体，契约流式写法被点名；
+  应用——每处落点的 verify 符合规约声明的执行体，契约流式与块式同一读法、resource_keys 按 framework 两层合同；
   传递——review 一处落点一行、结论按列取准确值、未落实按强制力处置；
         coding 探针按「阻断」声明与强制力处置，注释不当代码证据，注释里的在册编号报到行号。
 改知识（执行体、强制力、阻断前缀）会改同一份产物的门禁结论——这是「知识驱动机制」的验收。
@@ -260,11 +260,37 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
         self.edit_knowledge("constraints/neutral-domain.md", "模型：核对重试分支。实机：重复触发走查", "模型：核对重试分支")
         self.assertNotIn("要「实机」证据", self.plan(contracts(v02="review")))
 
-    def test_a_flow_style_member_is_named_and_block_style_passes(self) -> None:
-        flow = "data_models:\n  - name: 出口记录\n    fields:\n      - { name: traceId, type: string }\n"
-        self.assertIn("data_models.出口记录.fields 用了流式写法", self.plan(contracts(head=flow)))
-        block = "data_models:\n  - name: 出口记录\n    fields:\n      - name: traceId\n        type: string\n"
-        self.assertNotIn("流式写法", self.plan(contracts(head=block)))
+    def test_flow_style_and_block_style_read_the_same(self) -> None:
+        """契约与 framework 同一读法：流式 `- { … }` 是合法 YAML，不再被扩展点名。
+
+        同一条 must 用两种写法挂在同一字段上，门禁给出同样的结论——读取器不再给作者加限制。
+        """
+        flow = ("data_models:\n  - name: 出口记录\n    fields:\n"
+                "      - { name: traceId, type: string,\n"
+                "          must: [ { rule: NEU-02, text: 重试复用标识, verify: ut } ] }\n")
+        block = ("data_models:\n  - name: 出口记录\n    fields:\n      - name: traceId\n        type: string\n"
+                 "        must:\n          - rule: NEU-02\n            text: 重试复用标识\n            verify: ut\n")
+        self.assertNotIn("流式", self.plan(contracts(head=flow)))
+        self.assertEqual(self.plan(contracts(head=flow)), self.plan(contracts(head=block)))
+
+    def test_resource_keys_are_read_as_the_framework_contract(self) -> None:
+        """`resource_keys` 是 framework 合同里的两层对象：模块 → 分类 → 资源条目。
+
+        义务挂在资源条目上，引用写完整的 `resource_keys.<模块>.<分类>.<key>`，key 带点也按整串认；
+        挂在分类层的 must 被点名。
+        """
+        rk = ("resource_keys:\n  中性模块:\n    string:\n"
+              "      - key: exit.trace.label\n        value: 出口标识\n"
+              "        must:\n          - rule: NEU-03\n            text: 出口文案不用方向词\n            verify: review\n"
+              "    media:\n      - key: exit_icon\n        value: 图\n")
+        message = self.plan(contracts(head=rk))
+        self.assertNotIn("resource_keys", message, message)
+        layered = ("resource_keys:\n  中性模块:\n    string:\n"
+                   "      must:\n        - rule: NEU-03\n          text: 出口文案不用方向词\n          verify: review\n")
+        self.assertIn("resource_keys.中性模块.string 分类层挂了 must", self.plan(contracts(head=layered)))
+        flat = "resource_keys:\n  - key: exit.trace.label\n    value: 出口标识\n"
+        self.assertIn("resource_keys 不是「模块 → 分类 → 资源列表」的两层对象", self.plan(contracts(head=flat)))
+
 
 
 class TheReviewTableIsOneRowPerLanding(ProtocolCase):
