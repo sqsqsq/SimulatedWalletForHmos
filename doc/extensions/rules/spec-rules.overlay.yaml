@@ -71,7 +71,8 @@ semantic_checks:
       对象是**抽查的那几条事实**（每条写清抽的是哪一行），不是整章一句总评。
       **每条裁决给得出回查位置**：指到被回查的那个文件与位置（spec / SR / RR / 源码），
       或抄一段能检索到的原文——够支撑这条判断就行，不按长度计。
-      引文为空、或只是把spec 自己的结论复制一遍的，该条按**未裁**处理。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的结论复制一遍的，
+      该条按**未裁**处理。
   upstream_inputs_coverage:
     description: >
       上游输入覆盖（信息守恒）：doc/features/{module}/ 下存在 SR/design.md 或 RR/prd.md 时，
@@ -84,8 +85,10 @@ semantic_checks:
       声明与 spec 流程图/§9.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
       或两者接口清单矛盾，即 FAIL。SR/RR 均不存在时本检查 SKIP。
       对象是 **SR 声明的每个与本部件相关的接口**，逐个核。
-      **每条裁决附引文**：从SR/design.md抄一段连续 12 字以上的原文（能检索到的）。
-      引文为空、或只是把spec 自己的 §9.1 表格复制一遍的，该条按**未裁**处理。
+      **每条裁决给得出回查位置**：指到 SR/design.md 的哪一节，或抄一段能检索到的原文——
+      够支撑这条判断就行，不按长度计。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的 §9.1 表格复制一遍的，
+      该条按**未裁**处理。
   split_boundary_consistency:
     description: >
       拆分边界一致性：AR/story-src/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
@@ -102,8 +105,10 @@ semantic_checks:
       再看 Scope 的 out_of_scope_modules：涉及那些份额的模块，rationale 是否写明了归属；
       只写「本需求不做」而不说归谁，同样记为 FAIL——评审者分不清「有人接」与「没人接」。
       对象是**拆分表里 carrier 不是本 feature 的每一份**，逐份核。
-      **每条裁决附引文**：从AR/design.md 的拆分表与 spec 的功能清单抄一段连续 12 字以上的原文（能检索到的）。
-      引文为空、或只是把story-flow.json 的 scope 字段复制一遍的，该条按**未裁**处理。
+      **每条裁决给得出回查位置**：指到 AR/design.md 的拆分表与 spec 功能清单里的哪一行，
+      或抄一段能检索到的原文——够支撑这条判断就行，不按长度计。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 story-flow.json 的 scope 字段
+      复制一遍的，该条按**未裁**处理。
 
   story_reader_review:
     description: >

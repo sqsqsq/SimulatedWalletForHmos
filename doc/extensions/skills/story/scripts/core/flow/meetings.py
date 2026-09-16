@@ -25,10 +25,16 @@ from flow.state import FlowError
 REFRESH = ("AR", "story-src", "doc-refresh.md")
 #: 当前结果的输入绑定：摘要由 `meeting_basis` 算，模型原样抄进文件开头
 BASIS_MARK = re.compile(r"<!--\s*meeting-basis:([0-9a-f]{8,64})\s*-->")
-#: 结果里的话题标题：`### <版本>/<话题 id> <标题>`
-HEADING = re.compile(r"^###\s+(\S+@[0-9a-f]{8}/\S+)\s*(.*)$")
-#: 结果里显式写出的原话引用
-CITE = re.compile(r"(AR/story-src/meetings/[^\s:：]+/raw\.md):L(\d+)(?:-L(\d+))?")
+#: 看着像话题标题的形状：`<主名>@<8 位指纹>/<话题 id>`。**不拿它取值**——
+#: 版本主名就是文件名，允许带空格；取值按已知的版本与话题匹配，形状只用来认出「像却对不上」。
+TOPIC_SHAPE = re.compile(r"@[0-9a-f]{8}/")
+#: 原话引用的尾巴。路径部分由已知版本目录反查，所以这里不猜路径里有没有空格。
+CITE_TAIL = re.compile(r"raw\.md:L(\d+)(?:-L(\d+))?")
+#: 围栏行：`(标记, 标记之后的部分)`。开启可以带语言标记（```markdown）；
+#: **关闭要同字符、不短于开启，而且标记之后只有空白**——`​```python` 是围栏里的代码行，不是关闭。
+FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
+#: 真实的三级标题；`####` 是更深的小节，不是话题标题
+H3 = re.compile(r"^###\s+(.+?)\s*$")
 #: 人的裁决记录里留下的字段：证据是人选了什么、依据是什么，不含任何业务合成
 GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "basis", "at", "meetings")
 
@@ -113,6 +119,38 @@ def meeting_basis(notes: dict, contract: dict) -> str:
     return meeting.digest(payload.encode("utf-8"))[:16]
 
 
+def _plain_lines(text: str) -> list[str]:
+    """围栏之外的行：围栏里的例子不是这份结果的标题与引用。
+
+    关闭标记要与开启的同字符、不比它短，**而且后面只有空白**——四个反引号里抄三反引号的示例、
+    围栏里写一行 ```python，都是合法 Markdown；按「见到三反引号就翻转」去数，
+    示例里的标题会被当成真的去向，真正的正文标题反而被跳过。
+    """
+    out, opened = [], ""
+    for line in text.split("\n"):
+        hit = FENCE.match(line)
+        if opened:
+            closes = (hit and hit[1][0] == opened[0]
+                      and len(hit[1]) >= len(opened) and not hit[2].strip())
+            if closes:
+                opened = ""
+            continue
+        if hit:
+            opened = hit[1]                      # 开启行允许带语言标记
+            continue
+        out.append(line)
+    return out
+
+
+def _headed(line: str, known: list[str]) -> str | None:
+    """这一行是不是某个话题的标题：真实的 `### `，再按已知的 `<版本>/<话题>` 认，长的先试。"""
+    hit = H3.match(line.strip())
+    if not hit:
+        return None
+    rest = hit[1].strip()
+    return next((ref for ref in known if rest == ref or rest.startswith(f"{ref} ")), None)
+
+
 def refresh_problems(feature_root: Path, notes: dict, contract: dict) -> list[str]:
     """当前会议结果立不立得住 —— 只核**能确定的四件事**。
 
@@ -137,31 +175,38 @@ def refresh_problems(feature_root: Path, notes: dict, contract: dict) -> list[st
     elif marks[0] != basis:
         problems.append(f"{where} 声明的输入是 {marks[0]}，当前输入是 {basis}："
                         "会议判断或人的裁决之后变过，按当前输入重新核一遍整份结果再换上这个标记")
-    refs, seen = [], set()
-    for line in text.split("\n"):
-        hit = HEADING.match(line.strip())
-        if not hit:
+    want = sorted(({f"{key}/{t.get('id')}" for key, section in notes.items()
+                    for t in meeting.topics_of(section)}), key=len, reverse=True)
+    plain = _plain_lines(text)
+    seen: set[str] = set()
+    for line in plain:
+        ref = _headed(line, want)
+        if ref is None:
+            hit = H3.match(line.strip())
+            if hit and TOPIC_SHAPE.search(hit[1]):
+                problems.append(f"{where} 里「{hit[1]}」不在会议判断里：标题写 <版本>/<话题 id>")
             continue
-        if hit[1] in seen:
-            problems.append(f"{where} 里「{hit[1]}」有两个标题：一个话题讲一处")
-        seen.add(hit[1])
-        refs.append(hit[1])
-    want = {f"{key}/{t.get('id')}" for key, section in notes.items()
-            for t in meeting.topics_of(section)}
-    lost = sorted(want - set(refs))
+        if ref in seen:
+            problems.append(f"{where} 里「{ref}」有两个标题：一个话题讲一处")
+        seen.add(ref)
+    lost = sorted(set(want) - seen)
     if lost:
         problems.append(f"{where} 缺这几个话题的去向：{'、'.join(lost)}"
                         "——不属于本需求或已被后续决定替代的，也写一句去向，别静默删掉")
-    extra = sorted(set(refs) - want)
-    if extra:
-        problems.append(f"{where} 里「{'、'.join(extra)}」不在会议判断里：标题写 <版本>/<话题 id>")
+
+    # 引用：路径由实际版本目录反查（主名可以带空格），只核它指不指得到真实的行
     folders = meeting.versions(feature_root)
-    for rel, start, end in CITE.findall(text):
-        folder = feature_root / rel
-        key = f"{folder.parent.parent.name}@{folder.parent.name}"
-        total = len(meeting.raw_lines(folders[key])[0]) if key in folders else 0
-        if key not in folders or not 1 <= int(start) <= int(end or start) <= total:
-            problems.append(f"{where} 引的 {rel}:L{start} 指不到真实的原文行")
+    paths = {key: (folder / meeting.RAW).relative_to(feature_root).as_posix()
+             for key, folder in folders.items()}
+    totals = {key: len(meeting.raw_lines(folder)[0]) for key, folder in folders.items()}
+    for line in plain:
+        for hit in CITE_TAIL.finditer(line):
+            cited = line[:hit.start()] + "raw.md"
+            key = next((k for k, rel in paths.items() if cited.endswith(rel)), None)
+            start, end = int(hit[1]), int(hit[2] or hit[1])
+            if key is None or not 1 <= start <= end <= totals[key]:
+                problems.append(f"{where} 引的 {hit.group(0)} 指不到真实的原文行"
+                                "——路径写版本目录下的 raw.md，行号在它的行数之内")
     return problems
 
 

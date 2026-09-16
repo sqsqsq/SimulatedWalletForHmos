@@ -574,6 +574,75 @@ class TheCurrentResultIsWrittenByTheModel(MeetingCase):
                         self.result_problems())
 
 
+class AMeetingNameWithSpacesStillResolves(MeetingCase):
+    """会议文件名带空格是合法的：标题与引用都按已知版本与实际目录认，不靠「没有空格」这个假设。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.docx = self.imported(name="需求 讨论.docx")
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.key = self.read_meeting(self.docx, topics=[TOPICS[0]])
+        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
+            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
+            encoding="utf-8")
+        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "material_scope",
+                                     "--chosen", "confirm_scope", "--basis", "材料够了")[0])
+        self.rel = (self.folder(self.docx)[1] / meeting.RAW).relative_to(self.fr).as_posix()
+
+    def result(self, tail: str = "") -> Path:
+        path = self.write_result(topics=("T1",))
+        if tail:
+            path.write_text(path.read_text(encoding="utf-8") + tail, encoding="utf-8")
+        return path
+
+    def test_a_heading_with_a_spaced_version_counts_as_a_destination(self) -> None:
+        self.assertIn(" ", self.key, "这一版的主名本来就带空格")
+        self.result()
+        self.assertEqual([], self.result_problems(), "带空格的版本名把正确的标题判成了缺去向")
+
+    def test_a_citation_under_a_spaced_path_is_range_checked(self) -> None:
+        self.result(f"\n原话见 {self.rel}:L999\n")
+        self.assertTrue(any("指不到真实的原文行" in p for p in self.result_problems()),
+                        self.result_problems())
+        self.result(f"\n原话见 {self.rel}:L5-L6\n")
+        self.assertEqual([], self.result_problems(), "路径带空格的合法引用被判成了越界")
+
+    #: 三种合法围栏写法：普通三反引号、波浪号、以及四反引号里再嵌一层三反引号
+    FENCES = {
+        "三反引号": ["```markdown", "示例：", "{title}", "```"],
+        "波浪号": ["~~~markdown", "示例：", "{title}", "~~~"],
+        "四反引号里包三反引号": ["````markdown", "```markdown", "{title}", "```", "````"],
+        # 带语言标记的那一行是围栏里的代码，不是关闭行
+        "围栏里还有一行带语言标记": ["```text", "```python", "{title}", "```"],
+    }
+
+    def fenced_result(self, kind: str, *, real: bool = False) -> None:
+        """把标题样例放进围栏；`real` 再在围栏之后补一个真的标题。"""
+        path = self.fr / "AR" / "story-src" / "doc-refresh.md"
+        mark = meetings.meeting_basis(meeting.read_notes(self.fr, []), self.contract())
+        title = f"### {self.key}/T1 受理上限"
+        rows = [f"<!-- meeting-basis:{mark} -->", "", "# 当前会议结果", "", "写法示例：", ""]
+        rows += [line.replace("{title}", title) for line in self.FENCES[kind]] + [""]
+        if real:
+            rows += [title, "", "本需求采纳上限五个。", ""]
+        path.write_text("\n".join(rows), encoding="utf-8")
+
+    def test_an_example_in_a_fence_is_not_a_destination(self) -> None:
+        """围栏里抄一份标题样例，不能顶替真的去向——反引号、波浪号与嵌套围栏都算。"""
+        for kind in self.FENCES:
+            with self.subTest(kind):
+                self.fenced_result(kind)
+                problems = self.result_problems()
+                self.assertTrue(any("缺这几个话题的去向" in p for p in problems), problems)
+
+    def test_a_real_heading_after_a_fence_still_counts(self) -> None:
+        """围栏关掉之后的标题是真的去向：关闭要同字符、不短于开启。"""
+        for kind in self.FENCES:
+            with self.subTest(kind):
+                self.fenced_result(kind, real=True)
+                self.assertEqual([], self.result_problems())
+
+
 class TheFlowStopsOnceForTheMeeting(MeetingCase):
     """读会 → 出阅读件 → 与第一级同一轮摆给人 → 逐条裁决 → 模型写当前结果。"""
 
