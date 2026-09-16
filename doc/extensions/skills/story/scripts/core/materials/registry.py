@@ -188,11 +188,9 @@ def collect_materials(feature_root: Path) -> list[dict]:
                     extra.append(images[sha])
             else:
                 extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})
-    # 会议转写一个源版本一份：新会议或同名换了内容都是材料变了，新一轮让人在第一级看到它。
-    # 只算解析件——证据、话题与结论是读会的产物，算进来的话读一次会就开一轮。
-    for t in sorted(feature_root.joinpath(*meeting.MEETINGS).glob(f"*/*/{meeting.TRANSCRIPT}")):
-        extra.append({"kind": "meeting", "paths": [t.relative_to(feature_root).as_posix()],
-                      "sha256": file_digest(t)})
+    # 会议材料一个源版本一份：新会议或同名换了内容都是材料变了，新一轮让人在第一级看到它。
+    # 身份取原件——转换件、阅读件与结论是读会的产物，算进来的话读一次会就开一轮。
+    extra.extend(meeting.material_items(feature_root))
     for item in extra:
         # 落点排序：同一张图在哪几处是集合不是序列，排过序才能重算即相同
         item["paths"].sort()
@@ -265,9 +263,9 @@ def collect_sources(feature_root: Path) -> list[dict]:
 
     for cls, paths in grouped.items():
         if cls == "MEETING":
-            # 会议转写没有正文落点：这一版的解析件在，就算导过
+            # 会议材料没有正文落点：这一版的原件留过，就算导过
             for p in paths:
-                entries[p.name]["ingested"] = meeting.transcript_path(feature_root, p).is_file()
+                entries[p.name]["ingested"] = meeting.saved(feature_root, p)
             continue
         docs = [p for p in paths if p.suffix.lower() not in importer.IMAGE_EXTS]
         images = [p for p in paths if p.suffix.lower() in importer.IMAGE_EXTS]

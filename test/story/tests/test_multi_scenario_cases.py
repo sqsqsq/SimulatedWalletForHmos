@@ -223,27 +223,24 @@ class CompositeCoverageTest(unittest.TestCase):
                          / supplements[0]["file"]).is_file())
 
     def test_system_case_holds_a_meeting_record_after_the_archived_docs(self) -> None:
-        """会议记录是真实转写的形态，也要真的带着文档里没有的变化与没收敛的事。
+        """会议记录要真的带着文档里没有的变化与没收敛的事，并且转换得出文本。
 
-        解析用机制的公共脚本：Case 里这份记录解析不出议题与发言，实跑时模型就读不到它。
+        转换用机制的公共脚本：这份记录转不出文本，实跑时模型就读不到它。
+        谁在发言、哪一段是议题由被测模型自己判断，这里不替它断言。
         """
         import sys  # noqa: PLC0415
         sys.path.insert(0, str(ROOT / "doc/extensions/skills/story/scripts/core"))
-        from materials import meeting  # noqa: PLC0415
+        from materials import importer  # noqa: PLC0415
 
         declared = [item for item in definition("auto-topup")["supplements"] if item.get("kind") == "meeting"]
         self.assertEqual(1, len(declared))
         self.assertEqual("on_request", declared[0]["deliver"])
-        parsed = meeting.parse(CASES / "auto-topup/supplements" / declared[0]["file"])
-        self.assertEqual(6, len(parsed["meeting"]["attendees"]))
-        self.assertEqual(3, len(parsed["sections"]))
-        speeches = [s for section in parsed["sections"] for s in section["speeches"]]
-        self.assertEqual([f"S{i}" for i in range(1, len(speeches) + 1)], [s["id"] for s in speeches])
-        text = "\n".join(s["text"] for s in speeches)
+        text = importer.docx_to_markdown(CASES / "auto-topup/supplements" / declared[0]["file"], ".")[0]
+        self.assertGreater(len(text.splitlines()), 30, "会议记录转换后几乎没有内容")
         for token in ("updateAutoTopupContract", "AC-R1", "开关只管新签约", "先挂着", "今天不定"):
             self.assertIn(token, text)
         # 一场会覆盖多个需求：有一个议题明写是另一张单的
-        self.assertTrue(any("RR90007" in section["title"] for section in parsed["sections"]))
+        self.assertIn("RR90007", text)
         # 归档文档里没有新接口：会议带来的是文档之外的变化
         self.assertNotIn("updateAutoTopupContract", case_text("auto-topup"))
 

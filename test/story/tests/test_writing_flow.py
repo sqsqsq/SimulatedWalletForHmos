@@ -86,13 +86,13 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
 
     def test_the_guide_says_what_the_design_holds_and_how_it_binds(self) -> None:
         guide = read("phases/story-write.md")
-        self.assertIn("## 二、动笔前：先写骨架", guide)
-        design = guide.split("## 二、动笔前：先写骨架", 1)[1].split("\n## ", 1)[0]
-        for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`表头：列 \\| 列`",
-                       "`图：图` 或 `图：<图种>`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
+        self.assertIn("## 二、动笔前：先设计表达", guide)
+        design = guide.split("## 二、动笔前：先设计表达", 1)[1].split(chr(10) + "## ", 1)[0]
+        for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`形式：<类型>`",
+                       "`- 描述：…`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
                        "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "reopen"):
             self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
-        for gone in ("## 章节安排", "## 结构选择", "\"kind\": \"table\""):
+        for gone in ("## 章节安排", "## 结构选择", '"kind": "table"', "表头：列"):
             self.assertNotIn(gone, guide, f"旧的写作设计协议「{gone}」还在作业书里")
 
     def test_the_phase_order_puts_the_design_between_skeleton_and_chapters(self) -> None:

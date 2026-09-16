@@ -56,6 +56,18 @@ const diagramHint = (at, syntax) => guideLine(`${at ? `「${at}」这一节` : '
     : '图——用画图语言的围栏') + '，按本需求要解释的关系画', '作图');
 
 /**
+ * 选定的表与列表：只说这里要完成什么，不预生成表头或项目。
+ *
+ * 形式是设计表达那一步定的，内容是现在这一步的事：先读本节的依据与要解释的关系，
+ * 再决定列、行与项目。给不出有依据的内容时，改设计比硬填一张空表好——
+ * 所以这一行同时说出另一个出口。
+ */
+const formHint = (at, form) => guideLine(`${at ? `「${at}」这一节` : '这一章'}要`
+  + (form.kind === 'table' ? '一张表：按本节依据与原文决定列和行，不照搬别处的列'
+    : `${form.ordered ? '一个有序列表（有先后）' : '一个无序列表'}：按依据写出各项，没有依据的不凑`)
+  + '。写作设计里选的形式在这里承载不了要解释的关系时，有依据地改设计并记下原因', '完成表达');
+
+/**
  * 一章的草稿：章头（读者问题、主要职责、写前读什么、提交命令）+ 必要种子。
  *
  * 作者拿到的不该是一张白纸：本章要回答什么、写前对照什么、写完怎么提交，
@@ -71,8 +83,9 @@ function chapterDraft(ctx, ch, facts) {
   return [
     guideLine((ch.questions ?? []).join('；'), '读者问题'),
     guideLine(ch.boundary, '主要职责'),
-    guideLine('照下面的骨架写：先答每一节骨架里的问题，再补骨架没列的；写前对照当前 Story 已写的章'
-      + `与本章要用的原文，骨架改在写作设计 ${plan} 里；形式方法见 story-write.md「五、十章各自怎么组织」`),
+    guideLine('这一步是完成表达：照骨架逐节写——先读这一节要解释什么、依据在哪，再决定列、节点与项目，'
+      + `写成正文。写前对照当前 Story 已写的章与本章要用的原文；设计要改回写作设计 ${plan}，`
+      + '并在 story-src/template-adjustments.md 记下实质调整的原因；十章怎么组织见 story-write.md 第五节'),
     guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
       + ` --chapter ${shellArg(ch.title)}`
@@ -81,7 +94,7 @@ function chapterDraft(ctx, ch, facts) {
     '',
     `## ${ch.title}`,
     '',
-    ...chapterSeedRows(ch, facts, { diagramHint, guide: (note) => guideLine(note, '骨架') }),
+    ...chapterSeedRows(ch, facts, { diagramHint, formHint, guide: (note) => guideLine(note, '骨架') }),
   ];
 }
 
@@ -144,7 +157,7 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
     }
     if (!picked) return;
     const rows = missingPickedSeeds(planned, parseChapter(fs.readFileSync(file, 'utf-8')),
-      { diagramHint });
+      { diagramHint, formHint });
     if (rows.length) starts.push({ file, rows });
   });
   return { made, seeded, starts };

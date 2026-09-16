@@ -12,6 +12,8 @@ from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_SRC_FROZEN, ledger_digest, load, log,
     now, require, round_gates, save)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
+from flow.meetings import topic_digest
+from materials import meeting
 
 
 def cmd_status(feature_root: Path) -> dict:
@@ -36,6 +38,7 @@ def cmd_status(feature_root: Path) -> dict:
     # 不再去猜 `next` 的字面值——那样只认得出其中一种情况。没有轮次时没有基准可比，
     # 给 null，不用 false 冒充「材料没问题」。
     state = material_state(feature_root, current, manifest) if manifest is not None else None
+    topics = topic_digest(feature_root, meeting.read_notes(feature_root, []), contract)
     return {
         "exists": True,
         "schema": contract.get("schema"),
@@ -51,6 +54,9 @@ def cmd_status(feature_root: Path) -> dict:
         "archived": bool(contract.get("archived")),
         "material_state": ({"pending": state["pending"], "changed": state["changed"]}
                            if state else None),
+        # 会议话题在这里机械枚举一次：全部版本、全部话题，含不属于本需求与归属判不准的。
+        # 模型据它向人呈现，不必自己把 notes 再列一遍；没有会议就没有这一项。
+        **({"meetings": topics} if topics else {}),
         "next": step,
         "action": action,
         **({"sidecar": shape} if shape else {}),

@@ -29,7 +29,7 @@
 | `AR` | 本部件侧的补充说明、历史结论、部件内约束 | 初析与 `AR/design.md` 生成 | `AR/story-src/upstream.md`（**不写 `AR/design.md`**——那是会被重生成的草稿） |
 | `UX` | 界面长什么样（设计图、视觉稿、交互说明） | 视觉链路 | 图片经 `--register-ux` 进 `ux-reference/` 顶层并带上说明；文档并入 `ux-reference/README.md`（这个目录下的文件逐个登记为材料） |
 | `IMAGES` | **这份料是为了补图**：正文系统上已经有了，它是原稿或参考稿，值钱的是里面的图 | 各章按图取用 | 图抽进 `assets/<源文档名>/`，**正文一个字节不动** |
-| `MEETING` | **需求澄清会议的语音转写**：会议信息与参会人，按议题分节，逐条「姓名 时间：发言」 | 读会（[phases/meeting-read.md](../phases/meeting-read.md)），人确认后的结果经 `AR/story-src/doc-refresh.md` 进提取稿 | 解析进 `AR/story-src/meetings/<主名>/<版本>/transcript.json`，**不并入任何正文**；只收原始 `.docx` |
+| `MEETING` | **需求澄清会议的记录**：人的讨论，有发言人、时间和来回说的话 | 读会（[phases/meeting-read.md](../phases/meeting-read.md)），人确认后的结果经 `AR/story-src/doc-refresh.md` 进提取稿 | 原件与转换文本按版本留在 `AR/story-src/meetings/<主名>/<版本>/`，**不并入任何正文**；只收原始 `.docx` |
 
 **什么时候选 `MEETING`**：内容是人的讨论记录而不是文档——有发言人、时间和来回说的话。
 它比文档新，但是讨论态的证据，不是定论，所以不覆盖任何正文；同名 docx 换了内容会存成新版本，旧版本留着。

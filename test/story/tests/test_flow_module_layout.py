@@ -35,7 +35,7 @@ ALLOWED = {
     "decisions": {"state", "inputs", "routing", "meetings"},
     "rounds": {"state", "inputs", "routing", "meetings"},
     "submission": {"state", "inputs", "routing"},
-    "lifecycle": {"state", "inputs", "routing"},
+    "lifecycle": {"state", "inputs", "routing", "meetings"},
 }
 
 

@@ -14,6 +14,23 @@ import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs'
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 
+// 盘上实际有哪几版会议材料：路径逐版列出，审查不必猜目录形状
+function meetingVersions(srcDir) {
+  const base = path.join(srcDir, 'meetings');
+  if (!fs.existsSync(base)) return [];
+  const out = [];
+  for (const stem of fs.readdirSync(base).sort()) {
+    const dir = path.join(base, stem);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    for (const version of fs.readdirSync(dir).sort()) {
+      if (fs.existsSync(path.join(dir, version, 'raw.md'))) {
+        out.push(`AR/story-src/meetings/${stem}/${version}`);
+      }
+    }
+  }
+  return out;
+}
+
 function contractOf(projectRoot) {
   return readJsonOrNull(path.join(extensionRoot(projectRoot),
     'skills', 'story', 'contracts', 'story-chapters.json'));
@@ -107,20 +124,31 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   rows.push('', '### 原材料原文', '',
     ...docs.map(d => `- \`${d.rel}\` —— ${contract?.sources?.[d.doc]?.label ?? '材料'}`),
     ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断写未验证，不替它下结论`),
-    '- `acceptance.yaml` —— 验收条目');
+    '- `acceptance.yaml` —— 验收条目',
+    '- `spec/spec.md` —— 当前阶段已经成立的产品约束，业务条件从它与原材料一起核；',
+    '- `AR/story-src/decisions.json` —— 已登记的判断：哪些定了、哪些还开着，未决的去向从它核');
   rows.push('', '### 另外这几份按需去读', '',
-    '- `spec/spec.md` —— 已经成立的产品约束；',
-    '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
     '- `.backup/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
       + '当前 `AR/design.md` 是提取稿，回查上游原话看它与 `RR`、`SR` 原文，不拿提取稿自证；',
     '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
-  // 会议材料只给位置：结论与证据各有唯一落点，复制进任务书就成了第二份
+  // 会议材料只给位置：结论与证据各有唯一落点，复制进任务书就成了第二份。
+  // 路径逐版列实际存在的那些——写通配形状的话，审查只能猜自己该去哪一层。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
     rows.push('', '### 会议材料（逐话题核去向）', '',
       '- `AR/story-src/meeting-notes.json` —— 每场会每个版本、每个话题的判断：变化、结论、遗留与问人的选项；',
-      '- `AR/story-src/meetings/<主名>/<版本>/evidence.json` —— 纠偏后的发言与纠偏留痕，发言编号的出处；',
-      '- `AR/story-src/doc-refresh.md` —— 人裁决之后生效的变化与已确认的原文。');
+      '- `AR/story-src/doc-refresh.md` —— 人裁决之后采纳的变化、仍未决与会议原结论。');
+    for (const dir of meetingVersions(src)) {
+      rows.push(`- \`${dir}/raw.md\` —— 原文，引用的行号指它；`
+        + `\`${dir}/corrections.json\` 是纠偏留痕，\`${dir}/evidence.md\` 是纠偏后的阅读件`);
+    }
+  }
+
+  // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
+  if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {
+    rows.push('', '### 写作设计的调整记录', '',
+      '- `AR/story-src/template-adjustments.md` —— 作者改掉了原来的安排与原因。'
+      + '核改动之后原来要解释的关系有没有丢；理由写了不等于成立，按正文与原材料判。');
   }
 
   rows.push('', '### 逐章过读者会问的问题', '');

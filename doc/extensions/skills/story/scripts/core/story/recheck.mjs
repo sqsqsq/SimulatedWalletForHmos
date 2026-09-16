@@ -10,8 +10,8 @@ import { readJson, readText } from './context.mjs';
 import { DIAGRAM_LANGS, parseChapter, storySections } from './document.mjs';
 import { decisionList } from './review.mjs';
 
-const RECHECK_ASK = '每一条问两件事：这句话材料里有吗？材料给的靠得住吗？——拿它去撞更晚的输入、'
-  + '材料之间、工程事实、规约与材料自己声明的目标；有问题回它的真源改，没问题不改，不写「已核对」';
+const RECHECK_ASK = '先拿有效的原材料与当前决定核关键关系：条件、行为、责任、结果、例外与未决，在受影响的位置是不是一致；核的是当前的 spec.md、story.md（含附录投影区）、review.md 与 decisions.json，有会议材料时还有 doc-refresh.md 与它引的原话。'
+  + '再用这张清单定位疑点——它帮你找问题，不是只审这几条：每一条问这句话材料里有吗、材料给的靠得住吗（拿它去撞更晚的输入、材料之间、工程事实、规约与材料自己声明的目标）；有问题回它的真源改，没问题不改，不写「已核对」';
 //: 初筛表里「没有疑点」的写法：空着、一道横线，或写「无」。
 const EMPTY_CELL = /^(?:[-—–]+|无)?$/;
 

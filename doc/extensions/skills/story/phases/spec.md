@@ -102,13 +102,16 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 numbe
 - **④ 之前必须走完 ①–③**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 - **⑤ 派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次，
   说本宿主没有审查员就直接进 ⑥——那是如实披露的状态，不是缺件，闭环不因此卡住。
-  **只跑一次，而且在最后**：它的对象是这一版产物的指纹（subject）。verifier 之后再动任何
-  产物，指纹就换代，那份结论对不上新产物，只能整份重审。所以确定性门全绿、产物定稿，才叫它。
+  **放在最后叫它**：它的对象是这一版产物的指纹（subject），所以确定性门全绿、产物定稿才派。
+  之后有两个出口，按事实走：**产物一个字节没动**就复用这份结论，不无故重跑；
+  **真发现缺陷**（verifier 的阻断项，或有内容依据的 WARN）就照常改——先判断它说的对不对，
+  该改的改在真源上，改完按 framework 现行的修正与重验入口重新绑定审查对象。
+  不能为了保住已有的报告，把一处正确的修改回滚。
   **调用只带 request JSON**；verifier 的回复由你**原样全文**写到
   `summary.verifier_report` 指向的那份文件——写报告的是你，不是它。
 - **⑥ `check-receipt.ts` → `story-build check --deliver` → `/story archive`。
-  中间不再跑 harness**——harness 每跑一次都重新派生 subject，换了代就要重审，
-  而产物一个字节没动。只有 `check-receipt` 报 subject 失配时才重跑 harness，
+  产物没变就不重跑 harness**——它每跑一次都重新派生 subject，换了代就要重审，
+  而产物一个字节没动。`check-receipt` 报 subject 失配、或你确实改了产物时才重跑 harness，
   并且重跑之后 verifier 也要再来一次：那时换代是真的（材料变了），不是自己写盘写出来的。
   **回执不用你填**：它是 harness 的只读投影（`receipt_schema` 2.1），`check-receipt`
   自己先生成再校验；要写备注写 `<phase>/notes.md`。

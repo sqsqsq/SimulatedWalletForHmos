@@ -44,7 +44,8 @@ CLASSIFY_FILE = ".classify.json"
 #: `IMAGES` 是「只抽图、正文不动」：补料是为了补图时走它。
 #: 系统上已有同类正文，而这份补料是原稿或参考稿——把它并进正文会用草稿盖掉定稿，
 #: 而人要的只是里面的图。选哪一档由归类时判断，不另外问人一次。
-#: `MEETING` 是会议转写：讨论态的证据，不并进任何正文，解析成按版本存放的发言结构（`materials/meeting.py`）。
+#: `MEETING` 是会议材料：讨论态的证据，不并进任何正文，按版本留住原件与转换文本
+#: （`materials/meeting.py`），内容由读会的模型理解。
 CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
 
 # 各类正文的落点。RR / SR / AR 三类的路径是章节合同登记的来源（取 `sources` 的哪一项见下表），
@@ -170,8 +171,8 @@ def validate(sources: list[Path], classify: dict[str, str]) -> None:
             raise ImportError_(
                 f"「{path.name}」的归类「{classify[path.name]}」非法，须为 {'/'.join(CLASSES)}")
         if classify[path.name] == "MEETING" and ext != DOC_EXT:
-            raise ImportError_(f"「{path.name}」归类为 MEETING，但会议转写只收原始 {DOC_EXT}"
-                               "（参会人与「姓名 时间：发言」都在里面）")
+            raise ImportError_(f"「{path.name}」归类为 MEETING，但会议材料只收原始 {DOC_EXT}"
+                               "：原件要按版本留住，引用才指得回同一段原文")
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +200,39 @@ def read_media(zf: zipfile.ZipFile) -> tuple[dict[str, str], dict[str, bytes]]:
 
 # ---------------------------------------------------------------------------
 # docx → markdown（xml.etree 层）
+#
+# 转换只搬形态：段落、标题、表格、软换行、制表符、超链接与图片按文档顺序搬成
+# Markdown。**不认语义单元**——谁在发言、哪一段是议题、哪一列是时间，由读它的模型判断。
+#
+# 包装型结构（内容控件、修订插入、智能标记）只是外壳，展开即可；没有正文的标记
+# （分节属性、书签、批注范围、被删除或移走的内容）跳过。两类都不是、里面却有文字或图的
+# 结构一律报出来：静默丢掉的话，下游拿到的是一份看上去完整的残稿。
+
+V = "{urn:schemas-microsoft-com:vml}"
+
+#: 展开子节点即可的包装（块级与行内共用）
+UNWRAP = {f"{W}ins", f"{W}moveTo", f"{W}smartTag", f"{W}customXml", f"{W}fldSimple",
+          f"{W}hyperlink", f"{W}bdo", f"{W}dir", f"{W}sdtContent"}
+#: 正文挂在 w:sdtContent 上的包装：外层还带着属性节点
+SDT = f"{W}sdt"
+#: 没有正文的标记：跳过，不算转换缺口
+SKIP_TAGS = {f"{W}pPr", f"{W}rPr", f"{W}sectPr", f"{W}tblPr", f"{W}tblGrid", f"{W}trPr",
+             f"{W}tcPr", f"{W}sdtPr", f"{W}sdtEndPr", f"{W}bookmarkStart", f"{W}bookmarkEnd",
+             f"{W}commentRangeStart", f"{W}commentRangeEnd", f"{W}permStart", f"{W}permEnd",
+             f"{W}del", f"{W}moveFrom", f"{W}moveFromRangeStart", f"{W}moveFromRangeEnd",
+             f"{W}moveToRangeStart", f"{W}moveToRangeEnd"}
+#: 带正文的节点：认不出的结构里有它们才算缺口
+CONTENT_TAGS = (f"{W}t", f"{W}drawing", f"{W}pict", f"{W}object")
+
+
+def _local(tag: str) -> str:
+    return tag.split("}")[-1]
+
+
+def _has_content(node: ET.Element) -> bool:
+    """这个结构里还有没有文字或图——认不出它时，据此决定是跳过还是报缺口。"""
+    return any(n.tag in CONTENT_TAGS for n in node.iter())
+
 
 def _heading_level(para: ET.Element, style_names: dict[str, str]) -> int:
     """标题级别：pStyle 名 → styles.xml 反查 → outlineLvl，三者都不中当普通段落。
@@ -224,41 +258,54 @@ def _heading_level(para: ET.Element, style_names: dict[str, str]) -> int:
     return 0
 
 
-def _run_text(run: ET.Element) -> str:
-    text = "".join(node.text or "" for node in run.iter(f"{W}t"))
-    if not text:
-        return ""
+def _images_in(node: ET.Element, rel_map: dict[str, str], asset_ref: str) -> list[str]:
+    """一处图形里引用到的图片：新式 DrawingML 与旧式 VML 都认。"""
+    names = [rel_map.get(blip.get(f"{R}embed", "")) for blip in node.iter(f"{A}blip")]
+    names += [rel_map.get(data.get(f"{R}id", "")) for data in node.iter(f"{V}imagedata")]
+    return [f"![{name}]({asset_ref}/{name})" for name in names if name]
+
+
+def _run_text(run: ET.Element, rel_map: dict[str, str], asset_ref: str) -> str:
+    """一个 run 的文本：软换行与制表符按原位保留，图片就地插入。
+
+    软换行在 Word 里是 `w:br`，它把一段分成几行——记录类文档常用它分开抬头与正文。
+    只读 `w:t` 会把两行粘成一行，而行是引用的定位单位。
+    """
+    pieces: list[str] = []
+    for node in run:
+        tag = node.tag
+        if tag == f"{W}t":
+            pieces.append(node.text or "")
+        elif tag in (f"{W}br", f"{W}cr"):
+            pieces.append("\n")
+        elif tag == f"{W}tab":
+            pieces.append("\t")
+        elif tag == f"{W}noBreakHyphen":
+            pieces.append("-")
+        elif tag in (f"{W}drawing", f"{W}pict", f"{W}object"):
+            pieces.extend(_images_in(node, rel_map, asset_ref))
+    text = "".join(pieces)
     rpr = run.find(f"{W}rPr")
-    if rpr is not None:
-        if rpr.find(f"{W}b") is not None:
-            text = f"**{text}**"
-        if rpr.find(f"{W}i") is not None:
-            text = f"*{text}*"
+    # 跨行的强调标记会把 Markdown 弄坏，这种 run 只保留文字
+    if not text.strip() or "\n" in text or rpr is None:
+        return text
+    if rpr.find(f"{W}b") is not None:
+        text = f"**{text}**"
+    if rpr.find(f"{W}i") is not None:
+        text = f"*{text}*"
     return text
 
 
 def _para_markdown(para: ET.Element, style_names: dict[str, str],
-                   rel_map: dict[str, str], asset_ref: str) -> str:
-    pieces: list[str] = []
-    for run in para.findall(f"{W}r"):
-        pieces.append(_run_text(run))
-        for blip in run.iter(f"{A}blip"):
-            embed = blip.get(f"{R}embed", "")
-            name = rel_map.get(embed)
-            if name:
-                pieces.append(f"![{name}]({asset_ref}/{name})")
-    for link in para.findall(f"{W}hyperlink"):
-        inner = "".join(_run_text(r) for r in link.findall(f"{W}r"))
-        if inner:
-            pieces.append(inner)
-
-    text = "".join(pieces).strip()
+                   rel_map: dict[str, str], asset_ref: str, gaps: set[str]) -> str:
+    text = "".join(_run_text(r, rel_map, asset_ref)
+                   for r in _walk(para, {f"{W}r"}, gaps)).strip()
     if not text:
         return ""
 
     level = _heading_level(para, style_names)
     if level:
-        return f"{'#' * level} {text}"
+        return f"{'#' * level} " + " ".join(t for t in text.split("\n") if t.strip())
 
     ppr = para.find(f"{W}pPr")
     if ppr is not None and ppr.find(f"{W}numPr") is not None:
@@ -268,19 +315,48 @@ def _para_markdown(para: ET.Element, style_names: dict[str, str],
     return text
 
 
-def _table_markdown(tbl: ET.Element, style_names: dict[str, str],
-                    rel_map: dict[str, str], asset_ref: str) -> str:
-    rows: list[list[str]] = []
-    for tr in tbl.findall(f"{W}tr"):
-        cells = []
-        for tc in tr.findall(f"{W}tc"):
-            cell = " ".join(
-                _para_markdown(p, style_names, rel_map, asset_ref).lstrip("# -")
-                for p in tc.findall(f"{W}p")
-            ).strip()
-            cells.append(cell)
-        if cells:
-            rows.append(cells)
+def _walk(node: ET.Element, want: set[str], gaps: set[str]):
+    """按文档顺序取某一层想要的节点：段落与表格、表格的行与格、段落里的 run 都走它。
+
+    包装（内容控件、超链接、修订插入）展开继续找；没有正文的标记跳过；
+    认不出而里面有文字或图的结构记成缺口——静默丢内容比报错难查得多。
+    """
+    for child in node:
+        tag = child.tag
+        if tag in want:
+            yield child
+        elif tag == SDT:
+            content = child.find(f"{W}sdtContent")
+            if content is not None:
+                yield from _walk(content, want, gaps)
+        elif tag in UNWRAP:
+            yield from _walk(child, want, gaps)
+        elif tag in SKIP_TAGS or not _has_content(child):
+            continue
+        else:
+            gaps.add(_local(tag))
+
+
+def _cell_markdown(tc: ET.Element, style_names: dict[str, str], rel_map: dict[str, str],
+                   asset_ref: str, gaps: set[str]) -> str:
+    """单元格：多段、软换行与嵌套表格都留住，用 `<br>` 连成一格，竖线转义。
+
+    一行一条记录是表格的读法，所以格内换行不能变成真的换行——那会把一行拆成几行，
+    引用的行号也就跟着错位。
+    """
+    lines = [line for block in _blocks(tc, style_names, rel_map, asset_ref, gaps)
+             for line in block.split("\n")]
+    cleaned = [re.sub(r"^\s*(?:#{1,6}\s+|-\s+)", "", line).replace("|", "\\|").strip()
+               for line in lines]
+    return "<br>".join(line for line in cleaned if line)
+
+
+def _table_markdown(tbl: ET.Element, style_names: dict[str, str], rel_map: dict[str, str],
+                    asset_ref: str, gaps: set[str]) -> str:
+    rows = [[_cell_markdown(tc, style_names, rel_map, asset_ref, gaps)
+             for tc in _walk(tr, {f"{W}tc"}, gaps)]
+            for tr in _walk(tbl, {f"{W}tr"}, gaps)]
+    rows = [r for r in rows if r]
     if not rows:
         return ""
     width = max(len(r) for r in rows)
@@ -291,8 +367,24 @@ def _table_markdown(tbl: ET.Element, style_names: dict[str, str],
     return "\n".join(out)
 
 
+def _blocks(node: ET.Element, style_names: dict[str, str], rel_map: dict[str, str],
+            asset_ref: str, gaps: set[str]) -> list[str]:
+    """按文档顺序把一层正文转成块：段落一块，表格一块。"""
+    out = []
+    for node in _walk(node, {f"{W}p", f"{W}tbl"}, gaps):
+        md = (_para_markdown(node, style_names, rel_map, asset_ref, gaps)
+              if node.tag == f"{W}p"
+              else _table_markdown(node, style_names, rel_map, asset_ref, gaps))
+        if md:
+            out.append(md)
+    return out
+
+
 def docx_to_markdown(path: Path, asset_ref: str) -> tuple[str, dict[str, bytes]]:
-    """返回 (markdown, 需落盘的媒体)。媒体只返回文档实际引用到的那些。"""
+    """返回 (markdown, 需落盘的媒体)。媒体只返回文档实际引用到的那些。
+
+    同一份 docx 转多少次都是同一份结果：不带时间戳、不编号、不推断语义。
+    """
     try:
         with zipfile.ZipFile(path) as zf:
             body = ET.fromstring(zf.read("word/document.xml")).find(f"{W}body")
@@ -314,16 +406,13 @@ def docx_to_markdown(path: Path, asset_ref: str) -> tuple[str, dict[str, bytes]]
     if body is None:
         raise ImportError_(f"「{path.name}」内容为空：Word 文档正文缺失")
 
-    blocks: list[str] = []
-    for node in body:
-        if node.tag == f"{W}p":
-            md = _para_markdown(node, style_names, rel_map, asset_ref)
-            if md:
-                blocks.append(md)
-        elif node.tag == f"{W}tbl":
-            md = _table_markdown(node, style_names, rel_map, asset_ref)
-            if md:
-                blocks.append(md)
+    gaps: set[str] = set()
+    blocks = _blocks(body, style_names, rel_map, asset_ref, gaps)
+    if gaps:
+        raise ImportError_(
+            f"「{path.name}」里有本转换器不认、而且带着文字或图的结构："
+            f"{'、'.join(sorted(gaps))}。这部分内容不会出现在转换结果里，所以整份不导："
+            "请在 Word 里把它转成普通段落或表格后重放，或提供同内容的 .md 版本")
 
     used = {name for rid, name in rel_map.items() if name in blobs}
     return "\n\n".join(blocks), {n: blobs[n] for n in sorted(used)}
@@ -565,7 +654,23 @@ def cmd_import(feature_root: Path) -> dict:
     # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
     doc_sections, media, ux_images = convert_sources(sources, classify)
     from materials import meeting  # 延迟导入：meeting 引用本模块，顶层互相 import 会成环
-    meetings = [(p, meeting.parse(p)) for p in sources if classify[p.name] == "MEETING"]
+    # 会议材料按版本留存：**这一版存过就原样复用**，不因转换器升级重转——
+    # 旧结论引的是 raw.md 的行号，重转一次就可能全错位。
+    meetings: list[tuple[Path, str, dict]] = []
+    for path in (p for p in sources if classify[p.name] == "MEETING"):
+        if meeting.saved(feature_root, path):
+            # 这一版留过：转换件缺了或被改过就按留存的原件补回来；补不成原样的明说，
+            # 不重编号、也不拿另一份文本顶替——引用记的是行号。
+            folder = meeting.version_dir(feature_root, path)
+            if meeting.raw_lines(folder)[1]:
+                failed = meeting.restore_raw(folder)
+                if failed:
+                    raise ImportError_(failed)
+                log(f"会议材料 → {folder.relative_to(feature_root).as_posix()}/{meeting.RAW}"
+                    "（按留存原件补回，摘要与登记一致）")
+            continue
+        text, blobs = docx_to_markdown(path, meeting.MEDIA)
+        meetings.append((path, text, blobs))
 
     # ── 写盘 ────────────────────────────────────────────────────────
     written: list[str] = []
@@ -596,9 +701,12 @@ def cmd_import(feature_root: Path) -> dict:
         shutil.copyfile(path, dest_dir / path.name)
         written.append(f"{UX_IMAGE_DIR.as_posix()}/{path.name}")
         log(f"UX 参考图 → {UX_IMAGE_DIR.as_posix()}/{path.name}")
-    for path, parsed in meetings:
+    for path, text, blobs in meetings:
         # 一个源版本一个目录：同名换了内容落新目录，旧版本的原文与读会产物原样留着
-        rel = meeting.write_transcript(feature_root, path, parsed).relative_to(feature_root).as_posix()
-        written.append(rel)
-        log(f"会议转写 → {rel}（{sum(len(s['speeches']) for s in parsed['sections'])} 条发言）")
+        folder, fresh = meeting.save_version(feature_root, path, text, blobs)
+        rel = folder.relative_to(feature_root).as_posix()
+        written.append(f"{rel}/{meeting.RAW}")
+        log(f"会议材料 → {rel}/（{len(text.splitlines())} 行"
+            + (f"，{len(blobs)} 张图" if blobs else "")
+            + ("" if fresh else "；这一版已经存过，原样复用") + "）")
     return {"converted": [p.name for p in sources], "targets": written}

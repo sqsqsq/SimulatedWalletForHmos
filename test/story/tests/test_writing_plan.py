@@ -1,7 +1,7 @@
 """写作设计的骨架：协议、草稿、提交核对、回看交接与随稿冻结。
 
 `AR/story-src/story-template.md` 由作者写成骨架——每章一个 `### <章 ID>`，下面是正文将要有的
-`####`/`#####` 小节、每节要答什么（`- ` 说明行）、要一张什么表（`表头：`）或图（`图：`）。
+`####`/`#####` 小节、每节要答什么（`- ` 说明行）、以及用什么形式承载（`形式：`）与它表达什么（`- 描述：`）。
 脚本只做确定的事：建空壳、读骨架、把骨架铺成草稿、提交时核骨架里的标题与表图在不在。
 这一组锁住其中确定的那几件：
 
@@ -36,7 +36,8 @@ FEATURES = ("- 本章主线：提交之后到回执之前用户看到什么\n"
             "#### 本地数据\n"
             "- 答：哪些数据存在本机、保存多久、何时清除\n"
             "- 待核：退出登录时是否清除待提交内容\n"
-            "表头：数据 | 保存多久 | 何时清除\n"
+            "形式：表格\n"
+            "- 描述：把每类本机数据与它的保存与清除时机对照起来\n"
             "#### 失败提示\n"
             "- 答：提交失败时用户看到什么、怎么继续\n"
             "##### 重试入口\n"
@@ -46,10 +47,11 @@ TABLE = ("### 本地数据\n\n| 数据 | 保存多久 | 何时清除 |\n|---|---
 FAILURE = "### 失败提示\n\n提交失败时停在原页面并说明原因。\n\n#### 重试入口\n\n在原页面再次提交。\n"
 FEATURES_BODY = "提交后界面停在等待态。\n\n" + TABLE + "\n" + FAILURE
 #: 只有一节带表的骨架，给「已落盘的章改骨架」那一组用。
-LOCAL = "#### 本地数据\n- 答：本机数据的保存与清除\n表头：数据 | 保存多久 | 何时清除\n"
-#: 作者为验收章写的表头：与合同那张必要表同主语，是同一张表。
+LOCAL = ("#### 本地数据\n- 答：本机数据的保存与清除\n形式：表格\n"
+         "- 描述：本机数据与它的保存、清除时机对照\n")
+#: 合同要求验收章有一张表；作者在骨架里只声明形式，列由写章时按内容定。
 ACCEPTANCE = ["编号", "场景与前置", "可观察的通过条件", "主责"]
-ACCEPTANCE_LINE = "表头：" + " | ".join(ACCEPTANCE)
+ACCEPTANCE_LINE = "形式：表格\n- 描述：每条验收一行，写清情形与可观察的通过条件"
 
 
 def with_chapter(chapter_id: str, block: str, base: str | None = None) -> str:
@@ -127,11 +129,16 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                        ["「### 02-terms」出现了两次"]),
             "没有骨架": (with_chapter("02-terms", ""), ["「### 02-terms」没有骨架"]),
             "缺阅读主线": (BASE.replace("## 阅读主线", "## 读法"), ["缺「## 阅读主线」"]),
-            "表头没有列": (with_chapter("06-features", "#### 本地数据\n表头："), ["「表头：」要写成"]),
-            "列名空": (with_chapter("06-features", "#### 本地数据\n表头：数据 |  | 何时清除"),
-                     ["「表头：」要写成"]),
-            "不认识的图": (with_chapter("06-features", "#### 本地数据\n图：随手画"),
-                       ["「图：随手画」不认识", "流程图", "时序图", "状态图"]),
+            "形式为空": (with_chapter("06-features", "#### 本地数据\n形式："),
+                     ["「形式：（空）」不认识", "表格", "有序列表"]),
+            "不认识的形式": (with_chapter("06-features", "#### 本地数据\n形式：随手画"),
+                        ["「形式：随手画」不认识", "流程图", "时序图", "状态图"]),
+            "旧表头写法": (with_chapter("06-features", "#### 本地数据\n表头：数据 | 何时清除"),
+                       ["是上一版写法", "形式：<类型>"]),
+            "旧图写法": (with_chapter("06-features", "#### 本地数据\n图：时序图"),
+                     ["是上一版写法", "形式：<类型>"]),
+            "形式写成说明行": (with_chapter("06-features", "#### 本地数据\n- 形式：表格"),
+                         ["形式要单起一行"]),
             "不涉及还留小节": (with_chapter("06-features", "- 不涉及：没有功能变化\n#### 本地数据\n- 答：x"),
                           ["写了不涉及，却还留着"]),
             "五级标题没有上级": (with_chapter("06-features", "##### 重试入口\n- 答：x"),
@@ -141,11 +148,6 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
             "不是骨架写法": (with_chapter("06-features", "#### 本地数据\n这一节讲本机数据。"),
                          ["不是骨架写法"]),
             "附录外小节": (with_chapter("10-appendix", "#### 补充说明\n- 答：x"), ["附录只有合同那几节"]),
-            "同主语两种列": (with_chapter("06-features",
-                                     "#### 本地数据\n表头：数据 | 保存多久\n表头：数据 | 位置"),
-                         ["给「数据」写了两种列"]),
-            "与合同必要表冲突": (with_chapter("08-acceptance", "表头：编号 | 场景"),
-                           ["与章节合同", "要求的表冲突", "通过条件"]),
         }
         for name, (text, needles) in cases.items():
             with self.subTest(case=name):
@@ -153,13 +155,13 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                 for needle in needles:
                     self.assertIn(needle, problems)
 
-    def test_the_skeleton_carries_titles_tables_diagrams_and_open_questions(self) -> None:
-        block = FEATURES + "图：时序图\n"          # 挂在「重试入口」这一小节下
+    def test_the_skeleton_carries_titles_forms_and_open_questions(self) -> None:
+        block = FEATURES + "形式：时序图\n"          # 挂在「重试入口」这一小节下
         got = read_plan(with_chapter("06-features", block))
         self.assertEqual([], got["problems"])
         picks = [{k: v for k, v in s.items() if k != "index"} for s in got["structures"]]
-        self.assertIn({"chapter": "06-features", "at": "本地数据", "kind": "table",
-                       "columns": ["数据", "保存多久", "何时清除"]}, picks)
+        self.assertIn({"chapter": "06-features", "at": "本地数据", "kind": "table"}, picks,
+                      "模板选的表格带上了列——列归写章时定")
         self.assertIn({"chapter": "06-features", "at": "失败提示", "under": "重试入口",
                        "kind": "diagram", "syntax": "sequenceDiagram"}, picks)
         self.assertEqual([{"chapter": "06-features", "at": "本地数据",
@@ -168,18 +170,20 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
         self.assertEqual(["本地数据", "失败提示"], titles)
         self.assertEqual([{"title": "重试入口", "parent": "失败提示"}], got["features"]["h4"])
 
-    def test_a_contract_twin_merges_into_one_slot_seeded_from_the_authors_columns(self) -> None:
-        """与合同同主语的必要表是同一张表：一个槽位，表头用作者的列，锚列含合同要求，仍记着是作者定的。"""
+    def test_the_template_never_fixes_the_columns(self) -> None:
+        """模板只声明形式：同位置写两遍合并成一项，合同那张必要表的锚列原样留着。"""
         got = read_plan(with_chapter("08-acceptance", f"{ACCEPTANCE_LINE}\n{ACCEPTANCE_LINE}"))
         self.assertEqual([], got["problems"])
-        self.assertEqual(1, len(got["structures"]), "同一张表写两遍没合并")
+        self.assertEqual(1, len(got["structures"]), "同一处形式写两遍没合并")
         tables = got["acceptance"]["tables"]
-        self.assertEqual(1, len(tables), "合同那张与作者写的是同一张表，却成了两个槽位")
-        self.assertEqual("|".join(ACCEPTANCE), tables[0]["header"], "打底没用作者的列")
-        self.assertTrue(tables[0].get("selected"), "合并之后丢了「作者定过」")
+        self.assertEqual(1, len(tables), "合同那张必要表被模板改掉了")
+        self.assertNotIn("selected", json.dumps(tables, ensure_ascii=False),
+                         "合同表被当成了模板选的表")
         anchors = json.dumps(tables[0]["anchors"], ensure_ascii=False)
-        for need in ("通过条件", "主责"):
-            self.assertIn(need, anchors, f"合并后的锚列少了「{need}」")
+        self.assertIn("通过条件", anchors, "合同自己的锚列丢了")
+        self.assertNotIn("主责", anchors, "模板的列混进了合同的锚列")
+        forms = got["acceptance"]["forms"]
+        self.assertEqual([{"at": "", "kind": "table", "selected": True}], forms)
 
 
 class PlanCase(StoryBuildCase):
@@ -291,8 +295,10 @@ class TheSkeletonBecomesTheDraft(PlanCase):
             self.assertIn(needle, draft)
         self.assertLess(draft.index("### 本地数据"), draft.index("### 失败提示"))
         self.assertLess(draft.index("### 失败提示"), draft.index("#### 重试入口"))
-        self.assertIn("| 数据 | 保存多久 | 何时清除 |",
-                      draft.split("### 本地数据", 1)[1].split("### 失败提示", 1)[0])
+        local = draft.split("### 本地数据", 1)[1].split("### 失败提示", 1)[0]
+        self.assertIn("完成表达", local, "草稿没说这一节要完成什么")
+        self.assertNotIn("| 数据 |", local, "模板给表造了占位表头")
+        self.assertNotIn("|---|", local, "模板给表造了占位表头")
         self.assertIn("按写作设计骨架给", out)
 
     def test_a_not_applicable_chapter_draft_carries_only_that_line(self) -> None:
@@ -329,6 +335,43 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         body = FEATURES_BODY + "\n### 骨架里没列的一节\n\n写作中发现的另一种受限情形。\n"
         self.assertEqual(0, self.put("功能说明", body)[0])
 
+    def test_two_different_column_sets_both_pass(self) -> None:
+        """模板选表格只要求这里真有一张表：两套有意义而不同的列都合法。"""
+        self.write_plan(with_chapter("06-features", FEATURES))
+        self.cmd("skeleton")
+        other = ("### 本地数据\n\n| 内容 | 存到哪 | 什么时候没了 |\n|---|---|---|\n"
+                 "| 待提交内容 | 本机 | 退出登录 |\n")
+        body = "提交后界面停在等待态。\n\n" + other + "\n" + FAILURE
+        code, out = self.put("功能说明", body)
+        self.assertEqual(0, code, out)
+
+    def test_a_form_is_checked_under_its_own_parent(self) -> None:
+        """H4 的形式先定位父节：别的父节下的同名子节顶替不了。"""
+        block = ("#### 甲路径\n- 答：甲怎么走\n##### 结果\n- 答：甲的结果\n形式：表格\n"
+                 "- 描述：甲的结果与后续对照\n#### 乙路径\n- 答：乙怎么走\n##### 结果\n- 答：乙的结果\n")
+        self.write_plan(with_chapter("06-features", block))
+        self.cmd("skeleton")
+        body = ("提交后界面停在等待态。\n\n### 甲路径\n\n甲这样走。\n\n#### 结果\n\n甲的结果说明。\n\n"
+                "### 乙路径\n\n乙这样走。\n\n#### 结果\n\n| 结果 | 后续 |\n|---|---|\n| 成功 | 结束 |\n")
+        code, out = self.put("功能说明", body)
+        self.assertEqual(1, code, out)
+        self.assertIn("甲路径·结果", out, "甲节缺的表被乙节的同名子节顶替了")
+
+    def test_a_list_form_needs_a_real_list(self) -> None:
+        """选了有序列表：无序列表与围栏里的示例都不算，真有有序项就过，不数条目。"""
+        block = ("#### 继续操作\n- 答：用户还能做什么\n形式：有序列表\n- 描述：按先后写出可继续的操作\n")
+        self.write_plan(with_chapter("06-features", block))
+        self.cmd("skeleton")
+        head = "提交后界面停在等待态。\n\n### 继续操作\n\n"
+        code, out = self.put("功能说明", head + "- 重新提交\n- 联系客服\n")
+        self.assertEqual(1, code, out)
+        self.assertIn("缺有序列表", out)
+        fenced = head + "```text\n1. 这是示例\n```\n"
+        code, out = self.put("功能说明", fenced)
+        self.assertEqual(1, code, out)
+        self.assertIn("缺有序列表", out, "围栏里的示例被当成了真列表")
+        self.assertEqual(0, self.put("功能说明", head + "1. 重新提交\n")[0])
+
     def test_changing_the_skeleton_never_rewrites_a_touched_draft(self) -> None:
         self.write_plan()
         self.cmd("skeleton")
@@ -340,11 +383,12 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         self.assertEqual(0, code, out)
         self.assertEqual(mine, draft.read_text(encoding="utf-8"), "动过的草稿被改写了")
         starts = out.split("结构起点：", 1)[1]
-        for needle in ("### 本地数据", "| 数据 | 保存多久 | 何时清除 |", "#### 重试入口"):
+        for needle in ("### 本地数据", "完成表达", "#### 重试入口"):
             self.assertIn(needle, starts)
+        self.assertNotIn("| 数据 |", starts, "起点里造了模板表头")
 
     def test_a_skeleton_diagram_is_checked_in_its_own_section(self) -> None:
-        self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：两边怎么恢复\n图：图"))
+        self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：两边怎么恢复\n形式：图"))
         self.cmd("skeleton")
         elsewhere = ("中断后重新进入。\n\n```mermaid\ngraph TD\nA-->B\n```\n\n"
                      "### 跨方恢复\n\n两边各自重试。\n")
@@ -361,8 +405,8 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         """
         cases = {
             "小节与表": ("功能说明", "06-features", FEATURES),
-            "小节图": ("异常与恢复", "07-exceptions", "#### 跨方恢复\n- 答：x\n图：图"),
-            "章级图与合同重合": ("业务流程", "05-flow", "- 本章主线：x\n图：图"),
+            "小节图": ("异常与恢复", "07-exceptions", "#### 跨方恢复\n- 答：x\n形式：图"),
+            "章级图与合同重合": ("业务流程", "05-flow", "- 本章主线：x\n形式：图"),
             "表与合同重合": ("验收", "08-acceptance", ACCEPTANCE_LINE),
         }
         for name, (title, chapter_id, block) in cases.items():
@@ -392,13 +436,13 @@ class TheSkeletonBecomesTheDraft(PlanCase):
 
     def test_a_structure_both_required_and_listed_is_reported_and_seeded_once(self) -> None:
         """合同要求与骨架重合：同一个缺口只报一次，起点只给一次。"""
-        text = with_chapter("05-flow", "- 本章主线：x\n图：图")
+        text = with_chapter("05-flow", "- 本章主线：x\n形式：图")
         self.write_plan(with_chapter("08-acceptance", ACCEPTANCE_LINE, text))
         self.cmd("skeleton")
-        header = "| " + " | ".join(ACCEPTANCE) + " |"
         self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
-        self.assertEqual(1, self.draft("08").read_text(encoding="utf-8").count(header))
-        self.assertNotIn("| 编号 | 验收点 |", self.draft("08").read_text(encoding="utf-8"))
+        acceptance = self.draft("08").read_text(encoding="utf-8")
+        self.assertEqual(1, acceptance.count("| 编号 |"), "合同那张表的起点没给或给了两次")
+        self.assertNotIn("场景与前置", acceptance, "模板的列被当成了表头")
 
         code, out = self.put("业务流程", "提交之后等回执。\n")
         self.assertEqual(1, code, out)
@@ -410,12 +454,12 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         for prefix in ("05", "08"):
             self.draft(prefix).write_text("先写到这里。\n", encoding="utf-8")
         _, out = self.cmd("skeleton")
-        self.assertEqual(1, out.count(header), f"表的起点给了不止一次：{out[-1200:]}")
+        self.assertEqual(1, out.count("| 编号 |"), f"表的起点给了不止一次：{out[-1200:]}")
         self.assertEqual(1, out.count("作图："), f"图的起点给了不止一次：{out[-1200:]}")
 
 
 #: 骨架点名要时序图的一节；围栏开头可以先有空行与 `%%` 注释，之后才是声明。
-SEQUENCE = "#### 跨方恢复\n- 答：受理结果回到谁\n图：时序图"
+SEQUENCE = "#### 跨方恢复\n- 答：受理结果回到谁\n形式：时序图"
 FLOW_FENCE = "```mermaid\nflowchart TD\nA-->B\n```\n"
 SEQ_FENCE = ("```mermaid\n%% 先讲受理，再讲结果回到谁\n\nsequenceDiagram\n"
              "  申请方->>受理方: 提交\n  受理方-->>申请方: 受理结果\n```\n")
@@ -438,7 +482,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
 
     def test_any_named_diagram_type_is_held(self) -> None:
         """图种由写作设计按内容判定，不偏向时序图：点名流程图，正文就要流程图，时序图也顶替不了。"""
-        self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：失败后走哪条分支\n图：流程图"))
+        self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：失败后走哪条分支\n形式：流程图"))
         self.cmd("skeleton")
         draft = self.draft("07").read_text(encoding="utf-8")
         self.assertIn("流程图", draft)
@@ -450,7 +494,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
                          "graph 与 flowchart 是同一种图")
 
     def test_an_untyped_and_a_typed_diagram_at_one_place_count_once(self) -> None:
-        self.write_plan(with_chapter("07-exceptions", SEQUENCE + "\n图：图"))
+        self.write_plan(with_chapter("07-exceptions", SEQUENCE + "\n形式：图"))
         self.cmd("skeleton")
         draft = self.draft("07").read_text(encoding="utf-8")
         self.assertEqual(1, draft.count("作图："), draft)
@@ -461,7 +505,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
         self.assertIn("没有时序图", out)
 
     def test_with_the_contract_diagram_the_gap_is_reported_once(self) -> None:
-        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n图：时序图"))
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：时序图"))
         self.cmd("skeleton")
         self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
         code, out = self.put("业务流程", "提交之后等回执。\n")
@@ -513,12 +557,11 @@ class ALandedChapterStillGetsItsStarts(PlanCase):
         draft, draft_bytes, story_bytes = self.land()
         cases = {
             "骨架不变": (LOCAL, []),
-            "新增一节": (LOCAL + "#### 失败提示\n表头：情形 | 用户看到什么\n",
-                     ["### 失败提示", "| 情形 | 用户看到什么 |"]),
+            "新增一节": (LOCAL + "#### 失败提示\n形式：表格\n- 描述：每种失败情形与用户看到什么\n",
+                     ["### 失败提示", "完成表达"]),
             "改名": (LOCAL.replace("本地数据", "本机保存的数据"),
-                   ["### 本机保存的数据", "| 数据 | 保存多久 | 何时清除 |"]),
-            "改列": (LOCAL.replace("何时清除", "何时清除 | 谁能看到"),
-                   ["| 数据 | 保存多久 | 何时清除 | 谁能看到 |"]),
+                   ["### 本机保存的数据", "完成表达"]),
+            "改形式": (LOCAL.replace("形式：表格", "形式：无序列表"), ["完成表达"]),
             "撤掉小节": ("- 本章主线：只讲等待态", []),
         }
         for name, (block, needles) in cases.items():
@@ -530,8 +573,8 @@ class ALandedChapterStillGetsItsStarts(PlanCase):
                 if needles:
                     for needle in needles:
                         self.assertIn(needle, starts, f"缺的结构没给起点：{out[-800:]}")
-                    self.assertNotIn("### 本地数据", starts.replace("### 本机保存的数据", ""),
-                                     "已经有的结构又给了一遍")
+                    if "本机保存的数据" not in block:
+                        self.assertNotIn("### 本地数据", starts, "已经有的结构又给了一遍")
                 else:
                     self.assertEqual("", starts, "没缺什么却给了起点")
                 self.assertEqual(draft_bytes, draft.read_bytes(), "已提交章的草稿被改写了")
@@ -541,7 +584,7 @@ class ALandedChapterStillGetsItsStarts(PlanCase):
         draft, _, _ = self.land()
         name = draft.name
         draft.unlink()
-        self.write_plan(with_chapter("06-features", LOCAL + "#### 失败提示\n图：图\n"))
+        self.write_plan(with_chapter("06-features", LOCAL + "#### 失败提示\n形式：图\n"))
         code, out = self.cmd("skeleton")
         self.assertEqual(0, code, out)
         back = (self.src / "drafts" / name).read_text(encoding="utf-8")

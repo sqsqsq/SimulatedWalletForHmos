@@ -17,6 +17,7 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
     python story_flow.py decide   --feature <AR> --gate <g> --chosen <c> --basis <t>
+    python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
     python story_flow.py archived --feature <AR>
@@ -68,6 +69,7 @@ from flow.decisions import cmd_decide
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
+from flow.meetings import cmd_meeting_refresh
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +77,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
                     choices=["init", "round", "decide", "status", "complete", "reopen",
-                             "story", "archived"])
+                             "story", "archived", "meeting-refresh"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
@@ -83,7 +85,8 @@ def main() -> int:
     ap.add_argument("--chosen", default=None,
                     help="选中项的 key；material_scope 为 " + " / ".join(MATERIAL_CHOICES))
     ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
-    ap.add_argument("--meeting", default=None, help="meeting：会议版本 <主名>@<sha8>")
+    ap.add_argument("--meeting", default=None,
+                    help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
     ap.add_argument("--item", default=None, help="meeting：会议结论里的话题 id")
     ap.add_argument("--scope-text", default=None,
                     help="split_carrier 无份表侧车时的兜底：本 AR 的范围文字")
@@ -119,6 +122,8 @@ def main() -> int:
             result.update(cmd_archived(feature_root, project_root))
         elif args.mode == "reopen":
             result.update(cmd_reopen(feature_root))
+        elif args.mode == "meeting-refresh":
+            result.update(cmd_meeting_refresh(feature_root, str(args.meeting or "").strip()))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
 

@@ -20,7 +20,8 @@
  * 本模块不读磁盘、不写文件、不输出 stdout，也不导入 story-build 入口。
  */
 import {
-  DIAGRAM_SYNTAXES, EMPTY_SECTION_TEXT, hasDiagram, norm, normalizeHeading, sectionBody, tablesIn,
+  DIAGRAM_SYNTAXES, EMPTY_SECTION_TEXT, hasDiagram, hasList, hasTable, norm, normalizeHeading,
+  scopeLines, scopeSpan, sectionBody, tablesIn,
 } from './document.mjs';
 
 //: 骨架里定的表图缺了时，报错多说这一句：它不是合同要求，改主意就改骨架。
@@ -28,13 +29,46 @@ const PICKED = '——这是写作设计骨架里定的结构；改主意就同�
 //: 骨架里列的小节缺了时的两个出口。
 const SKELETON_EXITS = '——写作设计骨架里有它：补上它，或者先删掉骨架里那一行再提交';
 
-/** 正文里的 `####` 小节名（围栏里的不算）。 */
-function subHeadings(view) {
-  const inFence = (i) => (view?.fences ?? []).some(f => i >= f.from && i <= f.to);
-  return new Set(String(view?.text ?? '').split(/\r?\n/).flatMap((line, i) => {
-    const hit = !inFence(i) && /^####\s+(.+)$/.exec(line.trim());
+/** 某个 H3 底下的 `####` 小节名。父节缺席返回 null——那由必要 H3 那条报，不在这里重复。 */
+function subHeadingsUnder(view, parent) {
+  const span = scopeSpan(view, parent);
+  if (!span) return null;
+  return new Set(scopeLines(view, span).flatMap((line) => {
+    const hit = /^####\s+(.+)$/.exec(line.trim());
     return hit ? [normalizeHeading(hit[1])] : [];
   }));
+}
+
+/** 一处选定形式叫什么：给人看的那半句。 */
+const formName = (form) => (form.kind === 'table' ? '一张表'
+  : `${form.ordered ? '有序' : '无序'}列表`);
+
+/** 形式落在哪个范围：章级、某一节，或某一节下的子节。 */
+const formWhere = (ch, form) => `「${ch.title}${form.at ? `·${form.at}` : ''}`
+  + `${form.under ? `·${form.under}` : ''}」`;
+
+/**
+ * 选定的形式在不在 —— **只核存在，不核内容**。
+ *
+ * 表格核那个范围里真有一张表，不比列名：列由写章的人按原文定。
+ * 列表核范围里有真的列表项，不数条目。叙述不进这里——它没有可机械核的形态。
+ * 同一范围固定合同已经要求一张表时，由合同那条报（它连锚列一起核），这里不重复。
+ */
+function contractCovers(ch, form) {
+  return form.kind === 'table' && !form.under && requiredTables(ch)
+    .some(t => normalizeHeading(t.at ?? '') === normalizeHeading(form.at ?? ''));
+}
+
+function formProblem(ch, view, form) {
+  const span = scopeSpan(view, form.at ?? '', form.under ?? '');
+  if (!span) return null;                 // 那一节/子节缺席由必要 H3、H4 那条报
+  if (contractCovers(ch, form)) return null;   // 同范围合同已经要一张表：由它那条连锚列一起报
+  if (form.kind === 'table') {
+    return hasTable(view, span) ? null
+      : `${formWhere(ch, form)}缺${formName(form)}——写作设计在这里选了表格${PICKED}`;
+  }
+  return hasList(view, span, form.ordered) ? null
+    : `${formWhere(ch, form)}缺${formName(form)}——写作设计在这里选了它${PICKED}`;
 }
 
 /** 一个图槽位叫什么：点名了类型的说类型，没点名的是任何一种图。 */
@@ -111,8 +145,10 @@ export function chapterStructureProblems(ch, view) {
       problems.push(`「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : ''}`);
     }
   }
-  const subs = ch?.structure?.h4?.length ? subHeadings(view) : null;
   for (const want of ch?.structure?.h4 ?? []) {
+    // 先定位父节：全章找同名 H4 的话，甲节缺的那一节会被乙节的同名子节顶替通过
+    const subs = subHeadingsUnder(view, want.parent);
+    if (subs === null) continue;              // 父节缺席由上面那条报
     if (!subs.has(normalizeHeading(want.title))) {
       problems.push(`「${ch.title}·${want.parent}」缺「${want.title}」这一小节（####）${SKELETON_EXITS}`);
     }
@@ -128,8 +164,13 @@ export function chapterStructureProblems(ch, view) {
   for (const slot of ch?.structure?.diagrams ?? []) {
     // 与合同那张重合：有没有图由上面那条核；点名了类型的，章里有图之后再核是不是那一种
     if (slot.alsoRequired && (!slot.syntax || !hasDiagram(view))) continue;
-    if (hasDiagram(view, slot.at, slot.syntax) !== false) continue;   // null＝那一节缺席，由必要 H3 那条报
-    problems.push(`「${ch.title}${slot.at ? `·${slot.at}` : ''}」没有${diagramName(slot)}${PICKED}`);
+    if (hasDiagram(view, slot.at, slot.syntax, slot.under ?? '') !== false) continue;
+    problems.push(`「${ch.title}${slot.at ? `·${slot.at}` : ''}${slot.under ? `·${slot.under}` : ''}」`
+      + `没有${diagramName(slot)}${PICKED}`);
+  }
+  for (const form of ch?.structure?.forms ?? []) {
+    const problem = formProblem(ch, view, form);
+    if (problem) problems.push(problem);
   }
   return problems;
 }
@@ -149,6 +190,7 @@ export function pickedStructureNames(ch) {
       .map(t => `${where(t.at)}表（${String(t.header).split('|').join('、')}）`),
     ...(ch?.structure?.diagrams ?? []).filter(d => d.selected)
       .map(d => `${where(d.at)}${d.syntax ? DIAGRAM_SYNTAXES[d.syntax].name : '图'}`),
+    ...(ch?.structure?.forms ?? []).map(f => `${where(f.under || f.at)}${formName(f)}`),
   ];
 }
 
@@ -166,16 +208,20 @@ export function pickedStructureNames(ch) {
  * @param {{diagramHint?: Function, guide?: (note: string) => string}} [options]
  * @returns {string[]} markdown 行
  */
-export function chapterSeedRows(ch, facts, { diagramHint, guide } = {}) {
+export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}) {
   const sk = ch.structure?.skeleton;
   const notes = (n) => (guide && n?.notes?.length ? [...n.notes.map(guide), ''] : []);
   if (ch.appendix) return [...notes(sk), ...appendixSeedRows(ch, facts)];
   if (sk && sk.notApplicable !== null) return [...notes(sk), EMPTY_SECTION_TEXT];
   const same = (a, b) => normalizeHeading(a ?? '') === normalizeHeading(b ?? '');
-  const hint = (at, under = '') => {
-    const slot = (ch.structure?.diagrams ?? []).find(d => same(d.at, at) && same(d.under, under));
-    return slot && diagramHint ? [diagramHint(under || at, slot.syntax), ''] : [];
-  };
+  // 一个位置可以有几种形式：图各留一行作图提示，表与列表各留一行「这里要完成什么」。
+  // 两者都不生成内容——列、节点与项目由写章的人按原文定。
+  const hint = (at, under = '') => [
+    ...(ch.structure?.diagrams ?? []).filter(d => same(d.at, at) && same(d.under, under))
+      .flatMap(d => (diagramHint ? [diagramHint(under || at, d.syntax), ''] : [])),
+    ...(ch.structure?.forms ?? []).filter(f => same(f.at, at) && same(f.under, under))
+      .flatMap(f => (formHint ? [formHint(under || at, f), ''] : [])),
+  ];
   const seeds = (at, under = '') => requiredTables(ch)
     .filter(t => t.seed && same(t.at, at) && same(t.under, under))
     .flatMap(t => [...tableSeed(t, facts), '']);
@@ -201,7 +247,7 @@ export function chapterSeedRows(ch, facts, { diagramHint, guide } = {}) {
  *
  * @returns {string[]} markdown 行；什么都不缺时为空
  */
-export function missingPickedSeeds(ch, view, { diagramHint } = {}) {
+export function missingPickedSeeds(ch, view, { diagramHint, formHint } = {}) {
   const rows = [];
   const named = new Set();
   const heading = (at) => {
@@ -210,17 +256,29 @@ export function missingPickedSeeds(ch, view, { diagramHint } = {}) {
     named.add(key);
     return sectionBody(view, at) === null ? [`### ${at}`, ''] : [];
   };
-  for (const t of requiredTables(ch).filter(x => x.selected)) {
+  // 合同的表：作者在骨架里选过它、或模板在同范围选了表格时给起点——那一处的形式要求由它接替
+  const wanted = (t) => t.selected
+    || (ch.structure?.forms ?? []).some(f => contractCovers(ch, f)
+      && normalizeHeading(f.at ?? '') === normalizeHeading(t.at ?? ''));
+  for (const t of requiredTables(ch).filter(wanted)) {
     if (tablesIn(view, t.at) !== null && !tableProblem(ch, view, t)) continue;
     rows.push(...heading(t.at ?? ''), ...tableSeed(t, {}), '');
   }
   for (const d of (ch.structure?.diagrams ?? []).filter(x => x.selected)) {
-    if (hasDiagram(view, d.at, d.syntax) === true) continue;
-    rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.at, d.syntax), ''] : []));
+    if (hasDiagram(view, d.at, d.syntax, d.under ?? '') === true) continue;
+    rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.under || d.at, d.syntax), ''] : []));
+  }
+  for (const f of ch.structure?.forms ?? []) {
+    if (contractCovers(ch, f)) continue;         // 起点由上面那张合同表给，一处只给一次
+    // 那一节还没有：起点给标题，也给这一处要完成什么——只补标题的话，作者不知道这里要做什么
+    const span = scopeSpan(view, f.at ?? '', f.under ?? '');
+    if (span && !formProblem(ch, view, f)) continue;
+    rows.push(...heading(f.at ?? ''), ...(formHint ? [formHint(f.under || f.at, f), ''] : []));
   }
   for (const h of requiredH3(ch).filter(x => x.selected)) rows.push(...heading(h.title));
-  const subs = subHeadings(view);
-  for (const h of (ch.structure?.h4 ?? []).filter(x => !subs.has(normalizeHeading(x.title)))) {
+  for (const h of ch.structure?.h4 ?? []) {
+    const subs = subHeadingsUnder(view, h.parent);
+    if (subs?.has(normalizeHeading(h.title))) continue;
     rows.push(...heading(h.parent), `#### ${h.title}`, '');
   }
   return rows;

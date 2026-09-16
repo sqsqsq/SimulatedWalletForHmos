@@ -168,19 +168,71 @@ export function tablesIn(view, name) {
 }
 
 /**
+ * 一个位置在章里的行区间 —— 形式与结构都按它定位，`[from, to)`，缺席返回 null。
+ *
+ * `at` 为空是整章；给了 `at` 是那个 H3 连同它的子节；再给 `under` 是该 H3 **下面**
+ * 那个 H4 段。H4 必须先定位父节：全章找同名 H4 的话，甲节缺的那张表会被乙节的同名
+ * 子节顶替通过。
+ */
+export function scopeSpan(view, at = '', under = '') {
+  const lines = String(view?.text ?? '').split(/\r?\n/);
+  if (!at) return { from: 0, to: lines.length };
+  const hit = matchSection(view, at);
+  if (!hit) return null;
+  if (!under) return { from: hit.from + 1, to: hit.to };
+  const fenced = maskOf(lines, view?.fences ?? []);
+  const heads = [];
+  for (let i = hit.from + 1; i < hit.to && i < lines.length; i++) {
+    const m = !fenced.has(i) && /^####\s+(.+?)\s*$/.exec(lines[i].trim());
+    if (m) heads.push({ name: normalizeHeading(m[1]), at: i });
+  }
+  const want = normalizeHeading(under);
+  const k = heads.findIndex(h => h.name === want) >= 0
+    ? heads.findIndex(h => h.name === want)
+    : heads.findIndex(h => h.name.includes(want));
+  if (k < 0) return null;
+  return { from: heads[k].at + 1, to: heads[k + 1]?.at ?? hit.to };
+}
+
+/** 区间里的正文行（围栏里的不算）。 */
+export function scopeLines(view, span) {
+  const lines = String(view?.text ?? '').split(/\r?\n/);
+  const fenced = maskOf(lines, view?.fences ?? []);
+  return lines.slice(span.from, span.to).filter((_, k) => !fenced.has(span.from + k));
+}
+
+/** 这个区间里有没有一张真的 Markdown 表（表头 + 分隔行，解析时已认过）。 */
+export function hasTable(view, span) {
+  return (view?.tables ?? []).some(t => t.line >= span.from && t.line < span.to);
+}
+
+/**
+ * 这个区间里有没有真的列表项：有序认数字加点或右括号，无序认 `-`/`+`/`*`。
+ *
+ * 空项与纯横线分隔不算，围栏里的示例不算；**不数条目**——几项算够是内容判断。
+ */
+export function hasList(view, span, ordered = false) {
+  const re = ordered ? /^\s{0,3}\d+[.)]\s+(.+)$/ : /^\s{0,3}[-+*]\s+(.+)$/;
+  return scopeLines(view, span).some(line => {
+    const hit = re.exec(line);
+    return !!hit && /[^\s\-|]/.test(hit[1]);
+  });
+}
+
+/**
  * 有没有真正的图围栏（画图语言的那种）：`name` 为空看全章，否则只看那一节里的。
  *
  * 那一节缺席返回 null——与「有节但没图」不是一回事，缺节由必要 H3 那条报。
  * 给了 `syntax`（`DIAGRAM_SYNTAXES` 里的一种）时只认首个声明是它的 mermaid 图。
  */
-export function hasDiagram(view, name = '', syntax = '') {
+export function hasDiagram(view, name = '', syntax = '', under = '') {
   const drawn = (view?.fences ?? []).filter(f => DIAGRAM_LANGS.has(f.lang)
     && (!syntax || (f.lang === 'mermaid'
       && (DIAGRAM_SYNTAXES[syntax]?.heads ?? []).includes(String(f.head ?? '').split(/\s/)[0]))));
   if (!name) return drawn.length > 0;
-  const hit = matchSection(view, name);
-  if (!hit) return null;
-  return drawn.some(f => f.from > hit.from && f.from < hit.to);
+  const span = scopeSpan(view, name, under);
+  if (!span) return null;
+  return drawn.some(f => f.from >= span.from && f.from < span.to);
 }
 
 function matchSection(view, name) {

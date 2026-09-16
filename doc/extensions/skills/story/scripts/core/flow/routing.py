@@ -199,8 +199,9 @@ def sidecar_shape(step: str) -> dict | None:
             ],
         }
     if step == "await_gate:meeting":
-        return {"不写侧车": "选项就是会议结论里那个话题的 options；人答完逐条跑 "
-                "`decide --gate meeting --meeting <主名>@<sha8> --item <话题 id> --chosen <key> --basis \"<人的原话>\"`"}
+        return {"不写侧车": "选项就是会议结论里那个话题的 options，全部话题在本次输出的 meetings 里；"
+                "人答完逐条跑 `decide --gate meeting --meeting <主名>@<sha8> --item <话题 id> "
+                "--chosen <key> --basis \"<人的原话>\"`"}
     if step.startswith("await_gate:"):
         gate = step.split(":", 1)[1]
         note = {
@@ -274,8 +275,8 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
                 "先跑 `story_flow.py reopen`，再读会、在第一级关卡摆给人" + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written":
-        # verifier 之后不再跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
-        # 字节没动。只有 check-receipt 报 subject 失配时才重跑，那时 verifier 也要再来一次。
+        # 产物没变就不重跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
+        # 字节没动。check-receipt 报 subject 失配、或产物确实改了才重跑，那时 verifier 也要再来一次。
         return ("run_archived",
                 "叙事件已登记成文（review.md 已在登记那一步渲染并核过）。"
                 "按这个顺序走完，中间不回头："
@@ -284,7 +285,10 @@ def next_step(feature_root: Path, contract: dict | None,
                 "`story-build check --deliver` 交付门。"
                 "**交付门通过之后按它打印的选择走**：归档送审、进入 plan，或先归档再进 plan；"
                 "本地单没有归档，只有进 plan。"
-                "**verifier 之后不再跑 harness、不再改产物**；回执由 harness 生成，不用你填。"
+                "**产物没变化就不重跑 harness、不重审**（复用已有结论）；"
+                "verifier 或门禁指出的真实缺陷——阻断项，或有内容依据的 WARN——照常改："
+                "改在真源上，再按 framework 现行的修正与重验入口重新绑定审查对象，"
+                "不为保住已有报告回滚正确的修改。回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，照它给出的下一步走"
                 "（范围与材料没变时先 `complete` 收口），再在草稿上改、`chapter` 提交、`story` 重新登记"
                 "——材料变了再审是正常返修，不是重复审"
@@ -332,17 +336,28 @@ def next_step(feature_root: Path, contract: dict | None,
 
 
 def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """会议转写导入之后、范围关卡之前：读会、自检、摆要问人的话题。没有要做的返回 None。"""
+    """会议材料留存之后、范围关卡之前：读会、出阅读件、自检、摆要问人的话题。
+
+    没有要做的返回 None——没有会议的需求走原来的路，这一段整段不出现。
+    """
     seen = meeting.inspect(feature_root)
     if seen["problems"]:
         return ("fix_meeting", "会议产物自检没过，先修再摆关卡：" + "；".join(seen["problems"][:6]))
+    if seen["stale"]:
+        return ("refresh_meeting",
+                f"纠偏差异还没出成阅读件（{'、'.join(seen['stale'])}）：逐版跑 `story_flow.py "
+                "meeting-refresh --feature <名> --meeting <主名>@<sha8>`，"
+                "它按差异生成 evidence.md，问题一次报全；evidence.md 不手写")
     if seen["missing"]:
-        return ("read_meeting", f"会议转写已解析、还没读（{'、'.join(seen['missing'])}）："
-                "按 `phases/meeting-read.md` 纠偏、切话题、写会议结论，写完跑 `status`")
+        return ("read_meeting", f"会议材料已按版本留下、还没读完（{'、'.join(seen['missing'])}）："
+                "按 `phases/meeting-read.md` 读 raw.md，写逐行纠偏差异 → `meeting-refresh` 出阅读件 → "
+                "切话题 → 写会议结论，写完跑 `status`")
     asks = pending_asks(seen["notes"], contract)
     if asks:
-        return ("await_gate:meeting", "会议结论与第一级材料关卡同一轮摆给人：每个话题一句摘要，"
-                f"下面这些逐条带推荐理由与可选结果，人一轮答完再逐条 `decide --gate meeting`：{'、'.join(asks)}")
+        return ("await_gate:meeting", "会议结论与第一级材料关卡同一轮摆给人："
+                "`status` 的 meetings 已逐条列出全部版本与话题（归属、变化、原结论、遗留、"
+                "待裁决项与推荐选项），照它向人说明并补上推荐理由；"
+                f"人一轮答完再逐条 `decide --gate meeting`：{'、'.join(asks)}")
     if refresh_stale(feature_root, seen["notes"], contract):
         return ("run_round", "会议有效结果与 `AR/story-src/doc-refresh.md` 对不上：跑 `story_flow.py round` 重写它")
     return None
