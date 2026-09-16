@@ -1128,15 +1128,15 @@ def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
 
 # 进程创建时间比 state 记的启动时刻晚这么多，就不可能是同一个进程了。
 # 放宽到一分钟：worker 先起、state 后写，两者相差通常在秒级。
+WIN_QUERY_LIMITED = 0x1000     # PROCESS_QUERY_LIMITED_INFORMATION：查存活与创建时间够用
 PID_REUSE_TOLERANCE_SEC = 60.0
 
 
 def _process_create_epoch(pid: int) -> float | None:
     """进程的创建时刻（epoch 秒）。拿不到返回 None —— **拿不到不等于复用**。"""
     if sys.platform == "win32":
-        access = 0x1000 | 0x0400
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel32.OpenProcess(access, False, int(pid))
+        handle = kernel32.OpenProcess(WIN_QUERY_LIMITED, False, int(pid))
         if not handle:
             return None
         try:
@@ -1165,6 +1165,31 @@ def _process_create_epoch(pid: int) -> float | None:
         return None
 
 
+def _win_running(pid: int) -> bool:
+    """Windows：这个 pid 上还有没有**我们起的**那个进程。
+
+    打不开分两种，错误码分得清：`ERROR_INVALID_PARAMETER`(87) 是根本没有这个进程；
+    `ERROR_ACCESS_DENIED`(5) 是有，但它属于别人（系统进程、别的用户）。
+    本装置的 worker 由本会话亲手起，自己起的进程一定打得开——**打不开就不是它**。
+    号码被系统进程复用时，创建时间也读不出来，只按「打不开＝可能活着」退让的话，
+    历史现场会被永久判成活动的，新一轮再也起不来。
+
+    **不用 `os.kill` 探活**：Windows 上它走的是 TerminateProcess，真有权限的那一下
+    会把别人的进程杀掉。
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(WIN_QUERY_LIMITED, False, int(pid))
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return exit_code.value == 259          # STILL_ACTIVE
+        return False
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int | None, started_at: str | None = None) -> bool:
     """这个 pid 上跑的，还是不是当初那个进程。
 
@@ -1179,24 +1204,7 @@ def _pid_alive(pid: int | None, started_at: str | None = None) -> bool:
         return False
     running = False
     if sys.platform == "win32":
-        access = 0x1000 | 0x0400
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel32.OpenProcess(access, False, int(pid))
-        if handle:
-            exit_code = ctypes.c_ulong()
-            try:
-                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                    running = exit_code.value == 259
-            finally:
-                kernel32.CloseHandle(handle)
-        else:
-            try:
-                os.kill(int(pid), 0)
-                running = True
-            except PermissionError:
-                running = True
-            except (OSError, ProcessLookupError):
-                running = False
+        running = _win_running(int(pid))
     else:
         try:
             os.kill(int(pid), 0)

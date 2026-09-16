@@ -1017,6 +1017,26 @@ class PidReuseDoesNotBlockCleanup(unittest.TestCase):
         self.assertTrue(run_multi_case._pid_alive(os.getpid(), None))
         self.assertTrue(run_multi_case._pid_alive(os.getpid(), ""))
 
+    @unittest.skipUnless(sys.platform == "win32", "打不开的进程这一路只在 Windows 上出现")
+    def test_a_pid_taken_over_by_a_process_we_cannot_open_is_not_ours(self) -> None:
+        """号码被系统进程接手：打不开它，创建时间也读不出来——那就不是我们的 worker。
+
+        实测（本轮起跑前）：两个历史 run 的 pid 被 dwm.exe 之类接手，`OpenProcess` 返回
+        ERROR_ACCESS_DENIED，创建时间读不到，于是按「读不出就算活着」退让，
+        两处历史现场被永久判成活动的，新 suite 起不来。
+        """
+        ancient = datetime.fromtimestamp(time.time() - 7 * 86400).strftime("%Y-%m-%d %H:%M:%S")
+        self.assertIsNone(run_multi_case._process_create_epoch(4), "系统进程的创建时间本来就读不到")
+        self.assertFalse(run_multi_case._pid_alive(4, ancient), "打不开的进程被当成了我们的 worker")
+        self.assertFalse(run_multi_case._pid_alive(4, None), "连启动记录都没有时也不该判成我们的")
+
+    def test_liveness_never_calls_os_kill_on_windows(self) -> None:
+        """Windows 上 `os.kill(pid, 0)` 走的是 TerminateProcess：有权限的那一下会杀掉进程。"""
+        source = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
+        windows_branch = source.split("def _win_running", 1)[1].split("def _pid_alive", 1)[0]
+        self.assertNotIn("os.kill(", windows_branch, "Windows 这一支又拿 os.kill 探活了")
+        self.assertIn("_win_running(int(pid))", source, "win32 分支没走这条判定")
+
     def test_state_evidence_stops_calling_a_reused_pid_active(self) -> None:
         """整条预检：一个终态 + lease 过期 + pid 被复用的历史 run，不该判 active。"""
         with tempfile.TemporaryDirectory() as tmp:
