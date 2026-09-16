@@ -355,6 +355,21 @@ class ContextDependentWordsLeftTheVocabulary(unittest.TestCase):
     def test_server_release_words_are_still_caught(self) -> None:
         self.assertIn("灰度", self.hits("本方案采用灰度发布。"))
 
+    def test_a_business_sentence_that_says_redline_is_still_judged(self) -> None:
+        """按行语境的豁免退出：一句业务话里出现「红线」「禁用」二字，不能顺带放过同一行的禁用词。"""
+        self.assertIn("灰度", self.hits("这条红线要求本期灰度发布前完成评审。"))
+
+    def test_no_word_list_for_tool_vocabulary_is_left(self) -> None:
+        """装置词表退出：合同与脚本里都不再有按字面拦「关卡」「台账」一类词的表。"""
+        contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json")
+                              .read_text(encoding="utf-8"))
+        redline = json.dumps(contract["language_redline"], ensure_ascii=False)
+        for gone in ("harness_terms", "关卡", "台账", "人话", "search_phrase", "ai_heading", "placeholder_heading"):
+            self.assertNotIn(gone, redline, f"语言红线合同里还留着「{gone}」")
+        rules = self.LANGUAGE.read_text(encoding="utf-8")
+        for gone in ("EXEMPT_LINE_PATTERNS", "AI_HEADING_TERMS", "SEARCH_PHRASE_RE", "harnessTerms", "scanDanglingRefs"):
+            self.assertNotIn(gone, rules, f"language.mjs 里还留着「{gone}」")
+
     def test_no_context_exemption_is_left_for_the_retired_words(self) -> None:
         rules = self.LANGUAGE.read_text(encoding="utf-8")
         for gone in ("数据回退", "事务回退", "状态可恢复或明确回退"):

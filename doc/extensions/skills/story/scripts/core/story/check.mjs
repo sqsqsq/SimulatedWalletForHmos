@@ -22,14 +22,14 @@ import {
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
-  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections,
+  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections, tableCells,
+  zonesByLine,
 } from './document.mjs';
 import { carriedDiagramProblems, danglingFigures, imageProblems } from './images.mjs';
 import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
-  formatHits, scanBannedTerms, scanBrokenImages, scanDanglingRefs,
-  scanLanguageRedline, scanLocalPaths,
+  formatHits, scanBannedTerms, scanBrokenImages, scanLanguageRedline, scanLocalPaths,
 } from './language.mjs';
 
 function groupedProblems(problems, marks) {
@@ -154,37 +154,46 @@ export function cmdCheck(ctx) {
     notes.push(...out.notes);
   }
 
-  mark('⑨ 归档件四红线');
-  // ⑨ 归档件四红线：仓内路径 / 客户端禁用词 / 悬空引用 / 图片断链
+  mark('⑨ 归档件红线');
+  // ⑨ 归档件红线：仓内路径 / 客户端禁用词 / 图片断链
   //
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
-  // 词表与判定在 language.mjs（SSOT），这里只调。
+  // 词表在合同、判定形态在 language.mjs，这里只调。附录里由真源投影的机器区不在这里报：
+  // 它没有作者，报在这里作者删掉、下一次投影又写回来——那些问题收到 ⑩b 报到真源。
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
-  // 「灰度」是业务事实不是客户端文案——收缩的是作用域，不是词表。
+  // 那几个词是业务事实不是客户端文案——收缩的是作用域，不是词表。
   const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
-  // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来，
-  // 不给链接他只知道「有一份产品需求文档」。豁免只到这一节的链接语法为止——
-  // 正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
+  // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
+  // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
   const storyForPaths = redactMaterialLinks(storyText, ctx);
   // review 的禁用词作用域比别的判据窄：人工区与「上线/管控」类议题不判，
   // 见 `redactReviewExemptZones`。词表一个字没削，收的是作用域。
   const reviewForBanned = redactReviewExemptZones(reviewText, ctx);
+  const storyLines = storyText.split(/\r?\n/);
+  const zones = zonesByLine(storyLines);
+  const zoneHits = [];
+  // story 的命中按行分到投影区与作者区：投影区的留给 ⑩b，作者区的就地报
+  const authored = (label, hits, what, hitOf) => (label !== 'story' ? hits : hits.filter((h) => {
+    const zone = zones.get(h.line - 1);
+    if (zone) zoneHits.push({ zone, line: h.line, what, hit: hitOf(h) });
+    return !zone;
+  }));
   for (const [label, text, bannedText] of [
     ['story', storyForPaths, storyForPaths],
     ['review', reviewText, reviewForBanned],
   ]) {
     if (!text) continue;
-    for (const [what, kind, hits] of [
-      ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot)],
+    for (const [what, kind, hits, hitOf] of [
+      ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot), h => h.path],
       ['客户端语境禁用词', 'banned',
-        scanBannedTerms(bannedText, { exemptChapters: bannedExempt })],
-      ['悬空引用', 'dangling', scanDanglingRefs(text, ctx.projectRoot)],
+        scanBannedTerms(bannedText, { exemptChapters: bannedExempt, contract: ctx.contract }), h => h.term],
       // story 的图片断链逐章判（见 ⑪，与章提交同一处）；这里只剩 review 那一份
       ['图片断链', 'image', label === 'story' ? []
-        : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path)],
+        : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path), h => h.path],
     ]) {
-      if (hits.length) problems.push(`${label} 出现${what} ${hits.length} 处：${formatHits(hits, kind)}`);
+      const own = authored(label, hits, what, hitOf);
+      if (own.length) problems.push(`${label} 出现${what} ${own.length} 处：${formatHits(own, kind)}`);
     }
   }
 
@@ -192,37 +201,52 @@ export function cmdCheck(ctx) {
   const kEntries = activeKnowledgeEntries(ctx);
 
   mark('⑩ 语言红线');
-  // ⑩ 语言红线：主叙事（附录之外）不出现工程标识、规约编号、检索措辞、
-  //    来源括注、文档坐标、占位标题、AI 腔标题
+  // ⑩ 语言红线：工程标识、规约编号、来源括注只在主叙事（附录之外）判，文档坐标全篇判；
+  //    review 只判文档坐标。类别与作用域、来源括注的词都是合同数据。
   //
-  // 这些东西不是不该在归档件里——接口名、规约编号评审者要查的时候得查得到。
-  // 问题在于**它们不能打断面向人的主叙述**：读者顺着九章读下来，每隔两行撞见一个
-  // camelCase 就得停下来判断「这是我要懂的东西吗」。附录是它们的落点。
-  //
-  // 判据全部是数据：作用域边界取合同里标了 appendix 的那一章，规约编号取激活清单，
-  // PascalCase 标识符取材料里实际出现过的 token——**不猜**。猜的代价是把产品名
-  // 判成工程标识，而作者除了删掉正确的词之外无路可走。
-  const redlineKinds = ctx.contract.language_redline?.kinds;
-  if (storyText && Array.isArray(redlineKinds) && redlineKinds.length) {
+  // 接口名、规约编号不是不该在归档件里——评审者要查的时候得查得到，它们的落点是附录。
+  // 文档坐标不一样：指向不随归档的文件，放在哪里读者都打不开。一行一类只报一条。
+  const redline = ctx.contract.language_redline ?? {};
+  if (Array.isArray(redline.kinds) && redline.kinds.length) {
     const appendix = appendixChapter(ctx.contract);
-    const hits = scanLanguageRedline(storyText, {
-      appendixTitle: appendix?.title,
-      ruleIds: kEntries.map(e => e.id),
-      kinds: redlineKinds,
-      harnessTerms: ctx.contract.language_redline?.harness_terms ?? [],
-    });
-    if (hits.length) {
-      const byKind = new Map();
-      for (const h of hits) {
-        if (!byKind.has(h.kind)) byKind.set(h.kind, []);
-        byKind.get(h.kind).push(h);
+    const kindOf = k => (typeof k === 'string' ? k : k?.kind);
+    for (const [label, text, opts] of [
+      ['story', storyForPaths, { kinds: redline.kinds, appendixTitle: appendix?.title,
+        ruleIds: kEntries.map(e => e.id), sourceTags: redline.source_tags, projectRoot: ctx.projectRoot }],
+      ['review', reviewText, { kinds: redline.kinds.filter(k => kindOf(k) === 'doc_coordinate'),
+        projectRoot: ctx.projectRoot }],
+    ]) {
+      if (!text) continue;
+      const own = authored(label, scanLanguageRedline(text, opts), '', h => h);
+      const groups = new Map();
+      for (const h of own) {
+        const key = `${h.kind}|${h.hint}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(h);
       }
-      for (const [kind, list] of byKind) {
-        const sample = list.slice(0, 3).map(h => `${h.line} 行「${h.hit}」`).join('，');
-        problems.push(`主叙事出现${kind === 'repo_identifier' ? '工程标识' : kind} ${list.length} 处`
-          + `（${sample}${list.length > 3 ? ' …' : ''}）——${list[0].hint}`);
+      for (const list of groups.values()) {
+        const sample = list.slice(0, 3).map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
+        problems.push(`${label} 出现${list[0].label} ${list.length} 处（${sample}${list.length > 3 ? ' …' : ''}）`
+          + `——${list[0].hint}`);
       }
     }
+  }
+
+  mark('⑩b 机器区里的红线（改真源）');
+  // 机器区的内容是从真源投影来的：问题报到真源那一行，改真源、重投，作者不碰机器区。
+  const byZone = new Map();
+  for (const z of zoneHits) {
+    const hit = typeof z.hit === 'string' ? { what: z.what, words: [z.hit] }
+      : { what: z.hit.label, words: z.hit.hits };
+    const raw = storyLines[z.line - 1] ?? '';
+    const row = raw.trim().startsWith('|') ? tableCells(raw)[0] : raw.trim().slice(0, 30);
+    if (!byZone.has(z.zone.name)) byZone.set(z.zone.name, { source: z.zone.source, items: [] });
+    byZone.get(z.zone.name).items.push(`${z.line} 行${hit.what}「${hit.words.join('」「')}」（那一行：${row}）`);
+  }
+  for (const [name, { source, items }] of byZone) {
+    problems.push(`附录「${name}」的机器区从${source}投影而来，里面有 ${items.length} 处红线：`
+      + `${items.slice(0, 5).join('；')}${items.length > 5 ? ' …' : ''}`
+      + `——机器区不手改：到${source}里改这几行对应的原文，再跑 \`story-build.mjs project\` 让它重投`);
   }
 
   mark('⑪ 章内必要项');

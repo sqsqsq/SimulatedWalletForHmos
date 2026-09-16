@@ -186,52 +186,30 @@
     ]
   },
   "language_redline": {
-    "_note": "默认作用域是**附录之外的主叙事**：工程标识只在附录成表，主叙事写中文业务名与中文规约名。这不是把工程细节排除掉，而是给它一个不打断阅读的落点——守恒 token 在附录表里照样可核。但有两类东西**在附录里也不该有**：起草时的检索措辞，以及测试装置与流程机构的词——它们不是需求事实，换个位置仍然不是。所以 kinds 逐类带作用域：写字符串 = 默认作用域，写 {kind, scope:\"all\"} = 全篇。正则在 scripts/core/story/language.mjs 里作为数据；装置词表是**类别词**，登记在这里。",
+    "_note": "语言红线四类，逐类带作用域：写字符串 = 默认作用域（附录之外的主叙事），写 {kind, scope:\"all\"} = 全篇。工程标识与规约编号的落点是附录，主叙事写中文业务名与中文规约名；文档坐标（指向不随归档的文件、会随重编号漂移的章节号）放在哪里读者都打不开，全篇判。来源括注的词登记在 source_tags。形态（行内代码、驼峰、下划线、文档坐标）写在 scripts/core/story/language.mjs。附录里由真源投影的机器区不就地报，check 报到真源。",
     "scope": "non_appendix",
     "kinds": [
       "repo_identifier",
       "rule_id",
       {
-        "kind": "search_phrase",
+        "kind": "doc_coordinate",
         "scope": "all"
       },
-      "source_tag",
-      "doc_coordinate",
-      "placeholder_heading",
-      "ai_heading",
-      {
-        "kind": "harness_artifact",
-        "scope": "all"
-      }
+      "source_tag"
     ],
-    "harness_terms": [
-      "模拟实现",
-      "模拟数据",
-      "打桩",
-      "桩实现",
-      "收件箱",
-      "夹具",
-      "门禁",
-      "流程关卡",
-      "关卡",
-      "守恒",
-      "回写",
-      "台账",
-      "校验脚本",
-      "冒烟",
-      "mock",
-      "lint",
-      "harness",
-      "checker",
-      "post_check",
-      "import_sources",
-      "人话"
+    "source_tags_note": "来源括注：括号里以这些词起头的那种，是起草时标「这个数是谁定的」，读者不需要，它属于附录的材料清单。表格格子里的不判。",
+    "source_tags": [
+      "本工程设定",
+      "工程设定",
+      "上游约束",
+      "上游已定",
+      "本文设定"
     ],
-    "client_vocabulary_note": "客户端语境禁用词：服务器侧词汇，单独使用也算。词与改法都在这里——作者动笔前从任务包读到它，门禁按同一份判。豁免不在这里：整章豁免看 chapters[].banned_terms_exempt、决策类别豁免看 decision_categories[].banned_terms_exempt，行级豁免（规则文件自身在定义禁用词、引用上游规约章节名）是**语境形态**不是词，判定留在 scripts/core/story/language.mjs。只收单独出现就只可能指服务器侧动作的词；订单、数据、状态的撤销与恢复是正常业务语言，客户端文案有没有描述端侧不存在的服务器动作由语义审查看实际对象。",
+    "client_vocabulary_note": "客户端语境禁用词：服务器侧词汇，单独使用也算。词与改法都在这里——作者动笔前从任务包读到它，门禁按同一份判。豁免不在这里：整章豁免看 chapters[].banned_terms_exempt、决策类别豁免看 decision_categories[].banned_terms_exempt，不设按行语境的豁免。只收单独出现就只可能指服务器侧动作的词；订单、数据、状态的撤销与恢复是正常业务语言，客户端文案有没有描述端侧不存在的服务器动作由语义审查看实际对象。",
     "client_vocabulary": [
       {
         "term": "灰度",
-        "hint": "改说「功能开关管控」/「市场·管理台放量」"
+        "hint": "改说「功能开关管控」或「按批次放量」"
       },
       {
         "term": "部署",

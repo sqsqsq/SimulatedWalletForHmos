@@ -21,24 +21,14 @@
  * 本模块不读磁盘、不写文件、不输出 stdout，也不导入 story-build 入口。
  */
 import {
-  DIAGRAM_SYNTAXES, EMPTY_SECTION_TEXT, hasDiagram, hasList, hasTable, norm, normalizeHeading,
-  scopeLines, scopeSpan, sectionBody, tablesIn,
+  ambiguousSection, DIAGRAM_SYNTAXES, EMPTY_SECTION_TEXT, hasDiagram, hasList, hasTable, norm,
+  normalizeHeading, scopeSpan, sectionBody, subsectionNames, tablesIn,
 } from './document.mjs';
 
 //: 骨架里定的表图缺了时，报错多说这一句：它不是合同要求，改主意就改骨架。
 const PICKED = '——这是写作设计骨架里定的结构；改主意就同时改骨架';
 //: 骨架里列的小节缺了时的两个出口。
 const SKELETON_EXITS = '——写作设计骨架里有它：补上它，或者先删掉骨架里那一行再提交';
-
-/** 某个 H3 底下的 `####` 小节名。父节缺席返回 null——那由必要 H3 那条报，不在这里重复。 */
-function subHeadingsUnder(view, parent) {
-  const span = scopeSpan(view, parent);
-  if (!span) return null;
-  return new Set(scopeLines(view, span).flatMap((line) => {
-    const hit = /^####\s+(.+)$/.exec(line.trim());
-    return hit ? [normalizeHeading(hit[1])] : [];
-  }));
-}
 
 /** 一处选定形式叫什么：给人看的那半句。 */
 const formName = (form) => (form.kind === 'table' ? '一张表'
@@ -141,13 +131,16 @@ function tableProblem(ch, view, slot) {
 export function chapterStructureProblems(ch, view) {
   const problems = [];
   for (const want of requiredH3(ch)) {
-    if (sectionBody(view, want.title) === null) {
-      problems.push(`「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : ''}`);
-    }
+    if (sectionBody(view, want.title) !== null) continue;
+    const ambiguous = ambiguousSection(view, want.title);
+    problems.push(ambiguous
+      ? `「${ch.title}」里「${want.title}」同时像${ambiguous.map(n => `「${n}」`).join('、')}这几节`
+        + '——把这一节的标题写成它的完整名字，或给不相干的那一节换个名字'
+      : `「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : ''}`);
   }
   for (const want of ch?.structure?.h4 ?? []) {
     // 先定位父节：全章找同名 H4 的话，甲节缺的那一节会被乙节的同名子节顶替通过
-    const subs = subHeadingsUnder(view, want.parent);
+    const subs = subsectionNames(view, want.parent);
     if (subs === null) continue;              // 父节缺席由上面那条报
     if (!subs.has(normalizeHeading(want.title))) {
       problems.push(`「${ch.title}·${want.parent}」缺「${want.title}」这一小节（####）${SKELETON_EXITS}`);
@@ -274,7 +267,7 @@ export function missingPickedSeeds(ch, view, { diagramHint, formHint } = {}) {
   }
   for (const h of requiredH3(ch).filter(x => x.selected)) rows.push(...heading(h.title));
   for (const h of ch.structure?.h4 ?? []) {
-    const subs = subHeadingsUnder(view, h.parent);
+    const subs = subsectionNames(view, h.parent);
     if (subs?.has(normalizeHeading(h.title))) continue;
     rows.push(...heading(h.parent), `#### ${h.title}`, '');
   }

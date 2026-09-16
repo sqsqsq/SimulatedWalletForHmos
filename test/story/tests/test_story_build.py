@@ -369,23 +369,27 @@ class TestRequirementIdInTitle(StoryBuildCase):
 
 
 class TestRedlineScope(StoryBuildCase):
-    """逐类作用域：多数红线只管附录之外，取证语言与装置词在附录里同样不该有。"""
+    """逐类作用域：工程标识只管附录之外，文档坐标全篇判；一行命中几种坐标只报一条。"""
 
     def _put_in_appendix(self, line: str) -> None:
         bodies = _chapter_bodies(self.story_path)
         anchor = bodies[_appendix_title()].split("\n")[0]
         self.rewrite_story(anchor, anchor + "\n\n" + line)
 
-    def test_search_phrase_in_the_appendix_is_named(self) -> None:
+    def test_a_doc_coordinate_in_the_appendix_is_named(self) -> None:
+        """附录里作者写的那部分同样随归档走：指向不随归档的文件，放在哪里读者都打不开。"""
         self.init_audit()
         self.assertEqual(0, self.check_output()[0])
-        self._put_in_appendix("检索挂失回执封装零命中。")
-        self.assert_check_names("这是起草过程")
+        self._put_in_appendix("口径以 PRD §3.2 为准。")
+        self.assert_check_names("出现文档坐标")
 
-    def test_harness_word_in_the_appendix_is_named(self) -> None:
+    def test_one_line_with_several_coordinates_is_one_report(self) -> None:
+        """同一行里既有章节坐标又有文件名：一条报错，两处都列出来——不再由两道判据各报一次。"""
         self.init_audit()
-        self._put_in_appendix("本次交付先以模拟实现替代真实通道。")
-        self.assert_check_names("造它的装置与流程说的话")
+        self._put_in_appendix("口径见 spec §5.1 与 prd.md。")
+        out = self.assert_check_names("出现文档坐标 1 处")
+        self.assertIn("「spec §5.1」「prd.md」", out)
+        self.assertNotIn("悬空引用", out)
 
     def test_identifiers_stay_legal_in_the_appendix(self) -> None:
         """附录仍是工程标识的落点——顺手把它一起收紧，作者就无处可写了。"""
@@ -548,7 +552,7 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     def test_a_nested_begin_marker_is_caught(self) -> None:
         """一个结束只配一个开始：两个开始都去认后面同一行，其中一段的边界是编的。"""
         at, endline, lines = self.zone_lines("改动边界")
-        inner = "<!-- story-build:begin 接口 · 由上游登记的技术契约生成，改它请改真源 -->"
+        inner = "<!-- story-build:begin 接口 · 由spec §9 技术契约生成，改它请改真源 -->"
         self.rewrite(lines[:at + 1] + [inner] + lines[at + 1:])
         self.expect_caught("还没关上")
 
@@ -908,7 +912,7 @@ class TestGoldenNumbering(unittest.TestCase):
 
 
 class TestSmallLedgerItems(StoryBuildCase):
-    """六件小账里能机器判的那几条：澄清正文禁标题行、装置词表。"""
+    """六件小账里能机器判的那一条：澄清正文禁标题行。"""
 
     def decisions(self) -> dict:
         return json.loads((self.src / "decisions.json").read_text(encoding="utf-8"))
@@ -945,29 +949,6 @@ class TestSmallLedgerItems(StoryBuildCase):
         _, out = self.check_output()
         self.assertNotIn("的澄清正文里有标题行", out)
 
-    def test_the_two_new_harness_words_are_registered(self) -> None:
-        """装置词表补两词——它们是造这份文档的装置说的话，不是需求事实。
-
-        词表是合同数据（按 kind 带作用域），不写死在脚本里。
-        """
-        contract = json.loads(
-            (REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json")
-            .read_text(encoding="utf-8"))
-        terms = contract["language_redline"]["harness_terms"]
-        for word in ("import_sources", "人话"):
-            self.assertIn(word, terms)
-
-    def test_a_harness_word_in_the_appendix_is_still_named(self) -> None:
-        """装置词的作用域是全篇——换个位置它仍然不是需求事实。"""
-        self.init_audit()
-        appendix = _appendix_title()
-        text = self.story()
-        marker = f"## {appendix}"
-        hit = next((l for l in text.split("\n") if l.strip().startswith(marker)), None)
-        if hit is None:
-            self.skipTest("夹具里没有附录章")
-        self.rewrite_story(hit, hit + "\n\n这一节按 import_sources 的导入结果整理。")
-        self.assert_check_names("import_sources")
 
 
 class TestRetiredThings(unittest.TestCase):
@@ -2712,6 +2693,22 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertIn("本需求不新增任何工程资源", story, "域级依据没投出来")
         self.assertNotIn("| RES-01 |", story, "整域不适用时域内条目不该再逐条出现")
 
+    def test_a_redline_in_a_machine_zone_is_reported_to_its_source(self) -> None:
+        """机器区没有作者：真源里的「PRD §」投进附录后，报错指向真源那一行，不叫作者改机器区。"""
+        self.landed_appendix()
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        cell = "| getAutoTopupPolicy | 新增 |"
+        self.assertIn(cell, text, "夹具变了，用例要跟着改")
+        spec.write_text(text.replace(cell, "| getAutoTopupPolicy | 新增（见 PRD §3） |", 1), encoding="utf-8")
+        self.build("project")
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("的机器区从", out)
+        self.assertIn("「PRD §3」", out)
+        self.assertIn("story-build.mjs project", out)
+        self.assertNotIn("story 出现文档坐标", out, "机器区里的问题又就地报给了作者")
+
     def test_an_emptied_required_section_stops_the_projection(self) -> None:
         """必需小节被删空：**不是「不涉及」**，投影拒绝且 Story 不变。
 
@@ -2811,12 +2808,13 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
 
         **机器区没有作者**：它写出违规内容时，作者删掉，下一次 `project` 又写回来，
         check 再报——他赢不了，只能转去改判据或改脚本。一次实跑就这么卡了 25 分钟：
-        「依据」列写着 `spec §9.5 依赖变更`，而 spec.md 不随归档，⑨ 判它悬空。
+        「依据」列写着 `spec §9.5 依赖变更`，而 spec.md 不随归档，红线判它是文档坐标。
         """
         # 「表后散文」那一条随段数配额退场（Q7 §1：说明是否倾倒业务内容归语义审查）；
-        # 这里留下的是真红线——悬空引用与仓内路径，它们不读懂内容就看得见。
+        # 这里留下的是真红线——文档坐标与仓内路径，它们不读懂内容就看得见。
         story = self.landed_appendix()
-        zones = [z.split("story-build:end", 1)[0]
+        # 每段去掉起始标记的余下半行：标记是注释，check 不扫它
+        zones = [z.split("story-build:end", 1)[0].split("\n", 1)[-1]
                  for z in story.split("story-build:begin")[1:]]
         self.assertTrue(zones, "一节机器区都没有，这条守卫在空跑")
         lint = self.EXTENSION / "skills" / "story" / "scripts" / "core" / "story" / "language.mjs"
@@ -2826,7 +2824,9 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                  f"const m = await import({json.dumps(lint.resolve().as_uri())});"
                  f"const t = {json.dumps(zone)};"
                  f"const hits = ["
-                 f"  ...m.formatHits(m.scanDanglingRefs(t, {json.dumps(str(self.root))}), 'dangling'),"
+                 f"  ...m.scanLanguageRedline(t, {{kinds: [{{kind: 'doc_coordinate', scope: 'all'}}],"
+                 f"    projectRoot: {json.dumps(str(self.root))}}})"
+                 f"    .map(h => `${{h.line}} 行${{h.label}}：${{h.hits.join('、')}}`),"
                  f"  ...m.formatHits(m.scanLocalPaths(t, {json.dumps(str(self.root))}), 'path'),"
                  f"];"
                  "process.stdout.write(JSON.stringify(hits));"],

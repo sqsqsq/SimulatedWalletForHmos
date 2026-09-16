@@ -7,7 +7,7 @@
  */
 import * as path from 'node:path';
 import { readJson, readText } from './context.mjs';
-import { DIAGRAM_LANGS, parseChapter, storySections } from './document.mjs';
+import { DIAGRAM_LANGS, headingEnd, parseChapter, parseDocument, storySections, tablesWithin } from './document.mjs';
 import { decisionList } from './review.mjs';
 
 const RECHECK_ASK = '先拿有效的原材料与当前决定核关键关系：条件、行为、责任、结果、例外与未决，在受影响的位置是不是一致；核的是当前的 spec.md、story.md（含附录投影区）、review.md 与 decisions.json，有会议材料时还有 doc-refresh.md 与它引的原话。'
@@ -17,23 +17,14 @@ const EMPTY_CELL = /^(?:[-—–]+|无)?$/;
 
 /** 需求分析 ⑥ 节那张表里「还要核实」非空的行：`{where: 来源位置, doubt}`。 */
 function screeningDoubts(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const at = lines.findIndex(l => /^#{2,4}\s*⑥/.test(l.trim()));
-  if (at < 0) return [];
-  const level = lines[at].trim().match(/^#+/)[0].length;
-  const out = [];
-  let col = -1;
-  for (const raw of lines.slice(at + 1)) {
-    const line = raw.trim();
-    const head = /^(#+)\s/.exec(line);
-    if (head && head[1].length <= level) break;
-    if (!line.startsWith('|')) { col = -1; continue; }
-    const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-    if (col < 0) { col = cells.findIndex(c => c.includes('还要核实')); continue; }
-    if (cells.every(c => /^:?-{3,}:?$/.test(c))) continue;
-    if (!EMPTY_CELL.test(cells[col] ?? '')) out.push({ where: cells[0], doubt: cells[col] });
-  }
-  return out;
+  const doc = parseDocument(text);
+  const at = doc.headings.find(h => h.level >= 2 && h.level <= 4 && h.raw.startsWith('⑥'));
+  if (!at) return [];
+  return tablesWithin(doc, at.at + 1, headingEnd(doc, at)).flatMap((t) => {
+    const col = t.header.findIndex(c => c.includes('还要核实'));
+    return col < 0 ? [] : t.rows.filter(r => !EMPTY_CELL.test(r[col] ?? ''))
+      .map(r => ({ where: r[0], doubt: r[col] }));
+  });
 }
 
 /** 正文里每张图所在的位置：`章` 或 `章·小节`。 */

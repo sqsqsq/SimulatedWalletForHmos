@@ -9,8 +9,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
-  chapterSpan, norm, normalizeHeading, sectionBody, sectionNames, zoneBlock,
-  zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
+  chapterSpan, findByName, headingEnd, norm, normalizeHeading, parseDocument, sectionBody,
+  sectionNames, tablesWithin, zoneBlock, zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, readJson, readText, specText } from './context.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
@@ -75,34 +75,18 @@ export function appendixChapter(contract) {
  * 入口仍有消费者的按需 import 同一导出，不在这里保留第二份实现。
  */
 
-/** spec 里某一节的正文：从命中标题的那一行到下一个同级或更高级标题之前。 */
-function specSection(text, re) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const start = lines.findIndex(l => /^#{2,3}\s/.test(l.trim()) && re.test(l));
-  if (start < 0) return '';
-  const level = (lines[start].trim().match(/^#+/) ?? ['##'])[0].length;
-  const body = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    const head = lines[i].trim().match(/^(#+)\s/);
-    if (head && head[1].length <= level) break;
-    body.push(lines[i]);
-  }
-  return body.join('\n');
-}
-
-/** 一段文本里的表：每张给 {header, rows}，单元格已去掉首尾空串与行内标记。 */
-function pipeTables(text) {
-  const out = [];
-  let cur = null;
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t.startsWith('|')) { cur = null; continue; }
-    const cells = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-    if (/^[-: ]+$/.test(cells.join(''))) continue;
-    if (!cur) { cur = { header: cells, rows: [] }; out.push(cur); continue; }
-    cur.rows.push(cells);
-  }
-  return out;
+/**
+ * spec 里某一节：命中标题（二、三级）之下、到下一个同级或更高级标题之前。
+ * 切法与定位都走 `document.parseDocument`——围栏里的样例标题与表不算。
+ *
+ * @returns {{text: string, tables: {header: string[], rows: string[][]}[]}}
+ */
+function specSection(spec, re) {
+  const doc = parseDocument(spec);
+  const h = doc.headings.find(x => x.level >= 2 && x.level <= 3 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  if (!h) return { text: '', tables: [] };
+  const end = headingEnd(doc, h);
+  return { text: doc.lines.slice(h.at + 1, end).join('\n'), tables: tablesWithin(doc, h.at + 1, end) };
 }
 
 /** 模板占位单元格（`{ 接口名 }` 这种）——spec 没填时不该派生进 story。 */
@@ -119,7 +103,7 @@ function isPlaceholderRow(cells) {
  */
 export function specTerms(text) {
   const scope = new Set(scopeList(text, 'in_scope_modules'));
-  const table = pipeTables(specSection(text, /术语映射表/))[0];
+  const table = specSection(text, /术语映射表/).tables[0];
   if (!table || !scope.size) return [];
   const at = (needle) => table.header.findIndex(h => h.includes(needle));
   const [term, mod, why] = [0, at('权威模块'), at('解释')];
@@ -170,7 +154,7 @@ function scopeRationale(spec) {
 }
 
 //: 不投进归档件的列。「代码现状」是 spec 写给下游 AI 的——仓内路径或检索结论，
-//: 读者打不开也用不上，进了归档件还会撞上「不写仓内路径」「不写检索措辞」两条红线，
+//: 读者打不开也用不上，进了归档件还会撞上「不写仓内路径」这条红线，
 //: 而机器区作者改不了。投影策略只有这一条，不在合同里逐表登记列白名单：
 //: 那会与 spec 模板形成第二真源。
 const DROP_COLUMNS = ['代码现状'];
@@ -190,7 +174,7 @@ function appendixTables(spec, name) {
   if (!spec || !from) return [];
   const out = [];
   for (const { re } of from[1]) {
-    for (const t of pipeTables(specSection(spec, re))) {
+    for (const t of specSection(spec, re).tables) {
       const keep = t.header.map((h, i) => [h, i])
         .filter(([h]) => !DROP_COLUMNS.some(d => h.includes(d)));
       const rows = t.rows.filter(r => !isPlaceholderRow(r))
@@ -259,7 +243,7 @@ function appendixProjection(ctx, spec, name) {
     rows.push(['为什么这么切', why ? why.replace(/\s*\n\s*/g, ' ')
       : '本单的范围声明里没有写']);
     const out = renderTable(appendixTableHeader(ctx, name), rows);
-    return ['本单的范围声明与上游的依赖变更', out];
+    return ['spec 的 Scope 声明与 §9.5 依赖变更', out];
   }
   if (want.includes(normalizeHeading('规约判定'))) {
     return [KNOWLEDGE_USE_SOURCE, verdictSkeleton(ctx)];
@@ -269,9 +253,9 @@ function appendixProjection(ctx, spec, name) {
     : renderTable(t.header, t.rows));
   if (!rows.length) {
     const na = specNotApplicable(spec, name);
-    return ['上游登记的技术契约', na ? [na] : []];
+    return ['spec §9 技术契约', na ? [na] : []];
   }
-  return ['上游登记的技术契约', rows];
+  return ['spec §9 技术契约', rows];
 }
 
 /**
@@ -294,7 +278,7 @@ function specNotApplicable(spec, name) {
   const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
   if (!spec || !from) return null;
   for (const { re } of from[1]) {
-    const hit = specSection(spec, re).split(/\r?\n/)
+    const hit = specSection(spec, re).text.split(/\r?\n/)
       .map(l => l.trim()).find(l => /^不涉及[:：]\s*\S/.test(l));
     if (hit) return hit;
   }
@@ -348,13 +332,11 @@ export function projectAppendix(ctx, storyText) {
     }
     zones += 1;
     if (at0) { lines = [...lines.slice(0, at0.start), ...block, ...lines.slice(at0.end)]; continue; }
-    // 作者那一节还没有机器区：插到该节末尾。节都没有就说明附录章还没落盘，跳过。
-    const want = normalizeHeading(name);
-    const head = lines.findIndex(l => /^###\s+/.test(l.trim())
-      && normalizeHeading(l.trim().slice(3)).includes(want));
-    if (head < 0) { zones -= 1; continue; }
-    let end = lines.findIndex((l, i) => i > head && /^###\s+/.test(l.trim()));
-    if (end < 0) end = lines.length;
+    // 作者那一节还没有机器区：插到该节末尾。节都没有（或名字有歧义）就跳过，由 check ⑫ 报。
+    const doc = parseDocument(lines.join('\n'));
+    const { hit } = findByName(doc.headings.filter(h => h.level === 3), name);
+    if (!hit) { zones -= 1; continue; }
+    const end = headingEnd(doc, hit);
     lines = [...lines.slice(0, end), ...block, '', ...lines.slice(end)];
   }
   return { text: storyText.slice(0, span.start) + lines.join('\n') + storyText.slice(span.end),
@@ -443,7 +425,7 @@ function appendixSourceProblems(ctx, spec) {
 function appendixSpecGaps(spec) {
   const gaps = [];
   for (const [name, sources] of APPENDIX_FROM_SPEC) {
-    const missing = sources.filter(src => !specSection(spec, src.re).trim());
+    const missing = sources.filter(src => !specSection(spec, src.re).text.trim());
     if (missing.length) {
       gaps.push(`spec 里定位不到 ${missing.map(src => src.at).join('、')}：`
         + `附录「${name}」要从它投影`);
@@ -466,7 +448,7 @@ function appendixSpecGaps(spec) {
  */
 export function specGaps(spec) {
   const gaps = [];
-  if (!specSection(spec, /术语映射表/).trim()) {
+  if (!specSection(spec, /术语映射表/).text.trim()) {
     gaps.push('spec 里定位不到「术语映射表」这一节：术语那一章的起始行从它派生');
   }
   // 附录那几节的要求与只读核对共用一份（`appendixSpecGaps`）：起手放过而交付前才报，
@@ -510,13 +492,10 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
         continue;
       }
     }
-    for (const line of appendixSection.text.split(/\r?\n/)) {
-      const fence = line.trim().match(/^(?:```|~~~)\s*(\w*)/);
-      if (fence && fence[1] && fence[1] !== 'mermaid') {
-        problems.push(`「${appendixDef.title}」里有 ${fence[1]} 围栏块`
-          + `——${appendixDef.title}是表和列表，不是原文存放处`);
-        break;
-      }
+    const dump = viewOf(appendixSection.title).fences.find(f => f.lang && f.lang !== 'mermaid');
+    if (dump) {
+      problems.push(`「${appendixDef.title}」里有 ${dump.lang} 围栏块`
+        + `——${appendixDef.title}是表和列表，不是原文存放处`);
     }
 
     // 附录里不放图。反复出现的形态是：正文各章写着「下图是…」，图却整批迁进附录，

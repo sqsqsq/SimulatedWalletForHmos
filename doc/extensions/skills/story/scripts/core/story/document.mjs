@@ -1,10 +1,11 @@
 /**
- * 一章的**一次解析** —— 围栏、小节、表头各扫一遍，判据从结果里读。
+ * 文档的**一次解析** —— 围栏、标题、表各扫一遍，全链的判据与投影从结果里读。
  *
- * 解析与判断分开：判据自己切文的话，同一章在一次 check 里会被切上七八遍，而每一处
- * 对「围栏里的东西算不算」「小节到哪里结束」都有自己的一份答案。这里只解析**当前判据
- * 真正要的那几样**：原文、去围栏正文、围栏范围与语言、H3 小节名与范围、正文表头及
- * 它所在的小节。不建通用 Markdown 语法树，不落盘，不跨命令缓存。
+ * 解析与判断分开：判据自己切文的话，同一份文档在一次 check 里会被切上七八遍，而每一处
+ * 对「围栏里的东西算不算」「小节到哪里结束」「哪一行是表头」都有自己的一份答案。
+ * story 的章、spec 的节、需求分析的初筛表、上游文档里的图，都走这里：`parseDocument`
+ * 给围栏、标题与表，`findByName` 是唯一的按名定位规则，`headingEnd` 是唯一的节尾规则。
+ * 只解析**当前判据真正要的那几样**，不建通用 Markdown 语法树，不落盘，不跨命令缓存。
  *
  * 边界：只认结构，不判对错。哪些小节必需、表要有哪几列、图算不算总览，都在章节合同
  * 与语义审查那一侧。
@@ -31,8 +32,20 @@ export const DIAGRAM_SYNTAXES = Object.fromEntries([
 //: 关闭行：一串围栏标记之后除了空格与 tab 什么都没有。
 const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
 
-/** 表头行的下一行是不是分隔行（`|---|---|`）。 */
-const SEPARATOR = /^\|[-: |]+\|$/;
+/**
+ * 表格一行的单元格：去掉首尾竖线，在未转义的竖线处切，单元格去首尾空白。
+ * 转义竖线 `\|` 原样留在格子里——投影会把格子再渲染回表，解转义就会多切出一列。
+ */
+export function tableCells(line) {
+  return String(line ?? '').trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '')
+    .split(/(?<!\\)\|/).map(c => c.trim());
+}
+
+/** 分隔行（`|---|:--:|`）：以竖线起头，每一格都只有横线与对齐冒号。 */
+function isSeparatorRow(line) {
+  const t = String(line ?? '').trim();
+  return t.startsWith('|') && tableCells(t).every(c => /^:?-+:?$/.test(c));
+}
 
 /**
  * 围栏范围 —— **开闭判断只有这一处**。
@@ -100,45 +113,102 @@ function maskOf(lines, ranges) {
 }
 
 /**
- * 扫一遍，给出这一章的结构。
+ * 扫一遍，给出这份文档的围栏、标题与表 —— **全链只有这一份切法**。
  *
- * @param {string} text 一章的正文（不含 `## ` 标题行）
- * @returns {{text: string,
- *   fences: {lang: string, mark: string, from: number, to: number}[],
- *   sections: {raw: string, name: string, from: number, to: number, body: string[]}[],
- *   tables: {header: string[], line: number}[]}}
- *   行号都是原文的 0 起下标；小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——
- *   同名小节可以有两个，按名字记归属会把后一节的表算给前一节。
+ * 围栏里的标题与表是被引用的样例，不进结果；表只认「表头行 + 紧跟的分隔行」起头的那种，
+ * 其后连续的竖线行是数据行。行号都是原文的 0 起下标。
+ *
+ * @param {string} text 任意一份 markdown（一章正文、整篇 story、spec、需求分析）
+ * @returns {{text: string, lines: string[], fenced: Set<number>,
+ *   fences: {lang: string, mark: string, from: number, to: number, closed: boolean, head: string}[],
+ *   headings: {level: number, raw: string, name: string, at: number}[],
+ *   tables: {header: string[], rows: string[][], line: number}[]}}
  */
-export function parseChapter(text) {
+export function parseDocument(text) {
   const lines = String(text ?? '').split(/\r?\n/);
   const fences = fenceRanges(lines).map(f => ({ ...f, head: firstStatement(lines, f) }));
   const fenced = maskOf(lines, fences);
-  const sections = [], tables = [];
-  let current = null;                    // 当前 H3
+  const headings = [], tables = [];
+  let table = null;
   lines.forEach((line, i) => {
-    if (fenced.has(i)) return;           // 围栏里的东西不进正文视图
-    const h3 = line.trim().match(/^###\s+(.+)$/);
-    if (h3) {
-      if (current) current.to = i;
-      current = { raw: h3[1].trim(), name: normalizeHeading(h3[1]),
-        from: i, to: lines.length, body: [], subs: [] };
-      sections.push(current);
+    if (fenced.has(i)) { table = null; return; }
+    const t = line.trim();
+    const h = /^(#{1,6})\s+(.+?)\s*$/.exec(t);
+    if (h) {
+      headings.push({ level: h[1].length, raw: h[2].trim(), name: normalizeHeading(h[2]), at: i });
+      table = null;
       return;
     }
-    if (current) current.body.push(line);
-    const h4 = current && line.trim().match(/^####\s+(.+)$/);
-    if (h4) current.subs.push({ raw: h4[1].trim(), name: normalizeHeading(h4[1]), at: i });
-    if (!line.trim().startsWith('|')) return;
-    const sep = (lines[i + 1] ?? '').trim();
-    if (!SEPARATOR.test(sep)) return;
-    tables.push({
-      header: line.trim().replace(/^\||\|$/g, '').split('|')
-        .map(c => norm(c.replace(/[`*]/g, ''))),
-      line: i,
-    });
+    if (!t.startsWith('|')) { table = null; return; }
+    if (table) {
+      if (!isSeparatorRow(t)) table.rows.push(tableCells(t));
+      return;
+    }
+    if (!fenced.has(i + 1) && isSeparatorRow(lines[i + 1])) {
+      table = { header: tableCells(t), rows: [], line: i };
+      tables.push(table);
+    }
   });
-  return { text: String(text ?? ''), lines, fenced, fences, sections, tables };
+  return { text: String(text ?? ''), lines, fenced, fences, headings, tables };
+}
+
+/** 一个标题管到哪一行为止（不含）：下一个同级或更高级标题，没有就到文末。 */
+export function headingEnd(doc, heading) {
+  const next = (doc?.headings ?? []).find(h => h.at > heading.at && h.level <= heading.level);
+  return next ? next.at : (doc?.lines ?? []).length;
+}
+
+/**
+ * 按名字挑一项 —— **全链唯一的按名定位规则**：先精确，再包含；包含只在唯一命中时成立。
+ *
+ * 合同给的是这一节要讲什么，作者按业务命名（「与上游单的交接约定」），只认精确名会把后者
+ * 判成缺节。但包含命中两个以上时（「参与方」同时像「参与方与分工」与「参与方不在本轮」），
+ * 取第一个就是替作者猜——那一节的表与图会被算到另一节头上。这时报歧义，让作者改名。
+ *
+ * @param {{name: string}[]} items 已规范化名字的候选（标题、小节）
+ * @returns {{hit: object|null, ambiguous: string[]|null}}
+ */
+export function findByName(items, name) {
+  const want = normalizeHeading(name);
+  const list = items ?? [];
+  const exact = list.find(x => x.name === want);
+  if (exact) return { hit: exact, ambiguous: null };
+  const loose = list.filter(x => x.name.includes(want));
+  if (loose.length === 1) return { hit: loose[0], ambiguous: null };
+  return { hit: null, ambiguous: loose.length > 1 ? loose.map(x => x.raw ?? x.name) : null };
+}
+
+/** 一张表是否落在 `[from, to)` 里。 */
+export function tablesWithin(doc, from, to) {
+  return (doc?.tables ?? []).filter(t => t.line >= from && t.line < to);
+}
+
+/**
+ * 一章的结构 —— `parseDocument` 之上按 H3 分节，供章级判据读。
+ *
+ * @param {string} text 一章的正文（不含 `## ` 标题行）
+ * @returns {{text: string, lines: string[], fenced: Set<number>, fences: object[],
+ *   sections: {raw: string, name: string, from: number, to: number, body: string[],
+ *     subs: {raw: string, name: string, at: number}[]}[],
+ *   tables: {header: string[], line: number}[]}}
+ *   小节的 `[from, to)` 与表的 `line` 一起定「这张表在哪一节」——同名小节可以有两个，
+ *   按名字记归属会把后一节的表算给前一节。表头已去掉行内标记并规范化，供锚列比对。
+ */
+export function parseChapter(text) {
+  const doc = parseDocument(text);
+  const h3s = doc.headings.filter(h => h.level === 3);
+  const sections = h3s.map((h, k) => {
+    const to = h3s[k + 1]?.at ?? doc.lines.length;
+    return {
+      raw: h.raw, name: h.name, from: h.at, to,
+      body: doc.lines.slice(h.at + 1, to).filter((_, j) => !doc.fenced.has(h.at + 1 + j)),
+      subs: doc.headings.filter(x => x.level === 4 && x.at > h.at && x.at < to)
+        .map(x => ({ raw: x.raw, name: x.name, at: x.at })),
+    };
+  });
+  const tables = doc.tables.map(t => ({
+    header: t.header.map(c => norm(c.replace(/[`*]/g, ''))), line: t.line }));
+  return { text: doc.text, lines: doc.lines, fenced: doc.fenced, fences: doc.fences, sections, tables };
 }
 
 /** 这一章的小节名（围栏里的 `###` 是被引用的样例，不在其中）。 */
@@ -147,11 +217,9 @@ export function sectionNames(view) {
 }
 
 /**
- * 按名字取一个小节的正文 —— **先精确，再包含**；没有这一节返回 null。
+ * 按名字取一个小节的正文（按 `findByName` 的规则）；没有这一节或名字有歧义返回 null。
  *
- * 合同给的是这一节要讲什么，作者按业务命名（「与上游单的交接约定」）；只认精确名
- * 会把后者判成缺这一节。给的是**去围栏正文**：判「有没有表、有没有行」时，
- * 围栏里的样例不该顶替真内容。
+ * 给的是**去围栏正文**：判「有没有表、有没有行」时，围栏里的样例不该顶替真内容。
  */
 export function sectionBody(view, name) {
   const span = name ? scopeSpan(view, name) : null;
@@ -177,19 +245,18 @@ export function tablesIn(view, name) {
  */
 export function scopeSpan(view, at = '', under = '') {
   if (!at) return { from: 0, to: (view?.lines ?? []).length };
-  const hit = matchSection(view, at);
+  const { hit } = findByName(view?.sections, at);
   if (!hit) return null;
   if (!under) return { from: hit.from + 1, to: hit.to };
   const subs = hit.subs ?? [];
-  const want = normalizeHeading(under);
-  const exact = subs.findIndex(h => h.name === want);
-  const k = exact >= 0 ? exact : subs.findIndex(h => h.name.includes(want));
-  if (k < 0) return null;
-  return { from: subs[k].at + 1, to: subs[k + 1]?.at ?? hit.to };
+  const sub = findByName(subs, under).hit;
+  if (!sub) return null;
+  const k = subs.indexOf(sub);
+  return { from: sub.at + 1, to: subs[k + 1]?.at ?? hit.to };
 }
 
 /** 区间里的正文行（围栏里的不算）。行与掩码由 `parseChapter` 一次派生，这里不重切。 */
-export function scopeLines(view, span) {
+function scopeLines(view, span) {
   return (view?.lines ?? []).slice(span.from, span.to)
     .filter((_, k) => !view.fenced.has(span.from + k));
 }
@@ -237,10 +304,15 @@ export function hasDiagram(view, name = '', syntax = '', under = '') {
   return drawn.some(f => f.from >= span.from && f.from < span.to);
 }
 
-function matchSection(view, name) {
-  const want = normalizeHeading(name);
-  const list = view?.sections ?? [];
-  return list.find(s => s.name === want) ?? list.find(s => s.name.includes(want)) ?? null;
+/** 某一节的名字有没有歧义：命中两个以上时给出它们的原名，否则 null。 */
+export function ambiguousSection(view, name) {
+  return findByName(view?.sections, name).ambiguous;
+}
+
+/** 某个 H3 底下的 `####` 小节名。父节缺席（或名字有歧义）返回 null。 */
+export function subsectionNames(view, parent) {
+  const { hit } = findByName(view?.sections, parent);
+  return hit ? new Set((hit.subs ?? []).map(x => x.name)) : null;
 }
 
 // --------------------------------------------------------------------------
@@ -400,21 +472,10 @@ export function renumberStory(text, chapters = [], counters = []) {
  * 加章序编号」与「合同存业务名」两件事同时成立，不必在每处判据各放宽一次。
  */
 export function storySections(storyText) {
-  const lines = String(storyText ?? '').split(/\r?\n/);
-  const fenced = maskOf(lines, fenceRanges(lines));
-  const out = [];
-  let cur = null;
-  lines.forEach((line, i) => {
-    const m = fenced.has(i) ? null : line.trim().match(/^##\s+(.+)$/);
-    if (m) {
-      cur = { raw: m[1].trim(), body: [] };
-      out.push(cur);
-      return;
-    }
-    if (cur) cur.body.push(line);
-  });
-  return out.map(s => ({ title: normalizeHeading(s.raw), raw: s.raw,
-    text: s.body.join('\n') }));
+  const doc = parseDocument(storyText);
+  const h2s = doc.headings.filter(h => h.level === 2);
+  return h2s.map((h, k) => ({ title: h.name, raw: h.raw,
+    text: doc.lines.slice(h.at + 1, h2s[k + 1]?.at ?? doc.lines.length).join('\n') }));
 }
 
 /**
@@ -426,26 +487,12 @@ export function storySections(storyText) {
  * @returns {{start:number, end:number}|null}
  */
 export function subsectionSpan(storyText, chapterTitle, name) {
-  const lines = String(storyText ?? '').split(/\r?\n/);
-  const wantChapter = normalizeHeading(chapterTitle);
-  const wantSub = normalizeHeading(name);
-  let inChapter = false;
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    const h2 = s.match(/^##\s+(.+)$/);
-    if (h2) {
-      if (start >= 0) return { start, end: i };
-      inChapter = normalizeHeading(h2[1]) === wantChapter;
-      continue;
-    }
-    const h3 = s.match(/^###\s+(.+)$/);
-    if (h3) {
-      if (start >= 0) return { start, end: i };
-      if (inChapter && normalizeHeading(h3[1]) === wantSub) start = i + 1;
-    }
-  }
-  return start >= 0 ? { start, end: lines.length } : null;
+  const doc = parseDocument(storyText);
+  const chapter = doc.headings.find(h => h.level === 2 && h.name === normalizeHeading(chapterTitle));
+  if (!chapter) return null;
+  const end = headingEnd(doc, chapter);
+  const { hit } = findByName(doc.headings.filter(h => h.level === 3 && h.at > chapter.at && h.at < end), name);
+  return hit ? { start: hit.at + 1, end: headingEnd(doc, hit) } : null;
 }
 
 /**
@@ -468,18 +515,11 @@ export function chapterSpan(storyText, title) {
     offsets.push(offset);
     offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
   }
-  const fenced = maskOf(lines, fenceRanges(lines));
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (fenced.has(i) || !line.startsWith('## ')) continue;
-    if (start < 0) {
-      if (normalizeHeading(line.slice(3).trim()) === normalizeHeading(title)) start = i;
-      continue;
-    }
-    return { start: offsets[start], end: offsets[i] };
-  }
-  if (start < 0) return null;
-  return { start: offsets[start], end: text.length };
+  const h2s = parseDocument(text).headings.filter(h => h.level === 2);
+  const k = h2s.findIndex(h => h.name === normalizeHeading(title));
+  if (k < 0) return null;
+  start = h2s[k].at;
+  return { start: offsets[start], end: h2s[k + 1] ? offsets[h2s[k + 1].at] : text.length };
 }
 
 /**
@@ -579,6 +619,27 @@ export function zoneHandEdited(lines, at, freshRows) {
   const now = projectionDigest(body);
   if (recorded) return now === recorded ? null : body;
   return now === projectionDigest(freshRows) ? null : body;
+}
+
+/**
+ * 全文每一行落在哪个投影区里：行下标 → `{name, source}`（只含首尾标记之间的内容行）。
+ *
+ * 投影区没有作者：它里面的问题要报到真源，报在这里作者删掉、下一次投影又写回来。
+ * 名字与真源都从起始标记读——那是 `zoneBlock` 写下的同一份字面。
+ */
+export function zonesByLine(lines) {
+  const out = new Map();
+  let zone = null;
+  (lines ?? []).forEach((line, i) => {
+    if (line.startsWith(ZONE_BEGIN)) {
+      const [name, from] = line.slice(ZONE_BEGIN.length).split(' · ');
+      zone = { name: name.trim(), source: (/^由(.+?)生成/.exec(from ?? '') ?? [])[1] ?? '真源' };
+      return;
+    }
+    if (line.trim() === ZONE_END) { zone = null; return; }
+    if (zone) out.set(i, zone);
+  });
+  return out;
 }
 
 /**

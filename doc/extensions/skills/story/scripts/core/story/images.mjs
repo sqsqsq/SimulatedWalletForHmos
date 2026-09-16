@@ -10,7 +10,7 @@ import {
   joinPosix, readManifest, relFromFeature, relFromStory, upstreamDocs,
 } from './sources.mjs';
 import { appendixChapter } from './appendix.mjs';
-import { normalizeHeading } from './document.mjs';
+import { normalizeHeading, parseDocument } from './document.mjs';
 
 
 /**
@@ -24,23 +24,15 @@ import { normalizeHeading } from './document.mjs';
  * 编号是给人对位用的，取不到时身份仍要唯一。
  */
 export function diagramsOf(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
+  const doc = parseDocument(text);
   const seq = new Map();
   const out = [];
-  let section = '';
-  let title = '';
-  for (let i = 0; i < lines.length; i += 1) {
-    const h = lines[i].trim().match(/^#{2,4}\s+(.+?)\s*$/);
-    if (h) {
-      title = h[1].trim();
-      const num = title.match(/^(\d+(?:[.．]\d+)*)[.．]?\s*/);
-      section = num ? num[1].replace(/．/g, '.') : normalizeHeading(title);
-      continue;
-    }
-    if (!/^[ \t]*```[ \t]*mermaid\b/.test(lines[i])) continue;
-    const body = [];
-    let j = i + 1;
-    for (; j < lines.length && !/^[ \t]*```/.test(lines[j]); j += 1) body.push(lines[j]);
+  for (const fence of doc.fences.filter(f => f.lang === 'mermaid')) {
+    const heading = doc.headings.filter(h => h.level >= 2 && h.level <= 4 && h.at < fence.from).pop();
+    const title = heading?.raw ?? '';
+    const num = title.match(/^(\d+(?:[.．]\d+)*)[.．]?\s*/);
+    const section = num ? num[1].replace(/．/g, '.') : normalizeHeading(title);
+    const body = doc.lines.slice(fence.from + 1, fence.closed ? fence.to : fence.to + 1);
     const index = (seq.get(section) ?? 0) + 1;
     seq.set(section, index);
     // 围栏开头**连续的**几行 `%% 图源` 都算标记：同一张图常常两份上游都画过
@@ -59,12 +51,11 @@ export function diagramsOf(text) {
       sources: marks,
       //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件，
       //: 而不是读一份被复制进任务包的副本：副本一旦与原件不同步，他改的是副本。
-      at: { from: i + 1, to: Math.min(j, lines.length - 1) + 1 },
+      at: { from: fence.from + 1, to: fence.to + 1 },
       //: 按**行**给，不拼成字符串——拼了下游就要再切一遍，而切法一旦与这里不同，
       //: CRLF 的文件每行尾会挂个 `\r`，行尾判据从此静默零命中。
-      lines: lines.slice(i + 1, j),
+      lines: body,
     });
-    i = j;
   }
   return out;
 }

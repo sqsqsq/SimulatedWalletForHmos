@@ -454,7 +454,7 @@ export default guard('spec', async (ctx) => {
     }
   }
 
-  // ---- 三条全文红线（词表 SSOT：skills/story/scripts/core/story/language.mjs · story 专属）----
+  // ---- 三条全文红线（客户端词表在章节合同 language_redline，判定在 story/language.mjs · story 专属）----
   // 这三条的作业指导随 story 专属注入件下发；未走 /story 的使用者只在通用注入件里读到
   // 建议形态，不该在这里被硬阻断——**注入指导与硬阻断是两件事**。
   if (isStory) {

@@ -1,24 +1,19 @@
 /**
- * 语言红线与文本校验 —— story 扩展的共享规则，**词表在这里唯一维护**。
+ * 归档件红线与语言红线的判定形态 —— 词与类别在章节合同（`language_redline`），形态在这里。
  *
- * 两组规则，供 hooks/spec/post_check.mjs（校验 spec.md）与 story-build.mjs check（校验 story.md）共用，
- * 避免两处各维护一份词表而漂移。
- *
- * **词表本身在章节合同里**（`language_redline.client_vocabulary`）：作者要在动笔前看到
- * 「哪些词不能用、改说什么」，门禁要按同一份判。词留在脚本里，作者就只能撞了门禁才知道，
- * 或者去读脚本。本文件保留的是**判定形态**：作用域、豁免语境、
- * 代码块与整章豁免——它们是形态不是词，写成数据反而说不清。
+ * 读者是 story-build check（story.md 与 review.md）与 hooks/spec/post_check.mjs（spec.md 的客户端词）。
+ * 合同给：红线有哪几类及各自作用域、来源括注的词、客户端禁用词与改法；本文件给：行内代码、
+ * 驼峰与下划线标识、文档坐标、仓内路径这几种**形态本身**。围栏与标题的切法走 `document.mjs`，
+ * 本文件不自己认围栏。
  *
  * **工程形态一律运行时推导，不硬编码**：模块目录形态取自 `framework.config.json` 的分层声明，
- * 知识文件名取自激活清单（不扫目录——目录里躺着的未启用文件不参与判定）。硬编码的快照会过期：
- * 本文件曾内置一份约束文件名清单，其中三个文件早已退役而清单没跟上；换工程时它更是直接失效
- * （模块目录形态一变，仓内路径就扫不到，归档件自包含红线**静默**失效）。
+ * 规约编号与知识文件名取自激活清单。硬编码的快照会在换工程时静默失效。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
-import { normalizeHeading } from './document.mjs';
+import { headingEnd, normalizeHeading, parseDocument } from './document.mjs';
 
 const CONTRACT_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'contracts', 'story-chapters.json');
@@ -26,32 +21,21 @@ const CONTRACT_PATH = path.join(
 let vocabularyCache = null;
 
 /**
- * 客户端语境禁用词，取自章节合同。
+ * 客户端语境禁用词，取自章节合同。已读好合同的调用方把它传进来，不再读第二遍。
  *
  * 合同缺这一段就是漏交付：判据默默不判比报错更坏——归档件里的服务端词会一路带到编码。
  */
-export function clientVocabulary() {
-  if (vocabularyCache) return vocabularyCache;
-  const raw = JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf-8'));
+export function clientVocabulary(contract) {
+  if (!contract && vocabularyCache) return vocabularyCache;
+  const raw = contract ?? JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf-8'));
   const list = raw?.language_redline?.client_vocabulary;
   if (!Array.isArray(list) || list.length === 0) {
     throw new Error('章节合同缺 language_redline.client_vocabulary：客户端语境词表是合同数据，脚本里不留副本');
   }
-  vocabularyCache = list.map(x => ({ term: String(x.term), hint: String(x.hint ?? '') }));
-  return vocabularyCache;
+  const out = list.map(x => ({ term: String(x.term), hint: String(x.hint ?? '') }));
+  if (!contract) vocabularyCache = out;
+  return out;
 }
-
-/**
- * 豁免语境：命中这些模式的行不判违规。
- * - 规则文件自身在定义/引用禁用词（含本文件、SKILL、rules）
- * - 引用上游规约原章节名（规约 §7.1.1.3 标题即含 QPS，删了就对不上溯源）
- *
- * 词义要读上下文才分得清的词不进词表，也就不在这里叠语境豁免。
- */
-const EXEMPT_LINE_PATTERNS = [
-  /禁用|红线|改说|违规|banned|BANNED/i,
-  /规约\s*§|上游规约/,
-];
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -79,8 +63,7 @@ function readConfig(projectRoot) {
  *
  * 通用段是 framework 结构（跨工程不变）：`doc/extensions|features/`、`framework/`，
  * 以及 feature 工作区内的 `RR/` `SR/` `AR/`——评审者同样打不开。
- * 业务模块目录形态**因工程而异**（有的工程用带序号的分层目录，有的是扁平的
- * `app/`、`feature-xxx/`），故从配置的分层声明现取，取不到就只用通用段。
+ * 业务模块目录形态**因工程而异**，故从配置的分层声明现取，取不到就只用通用段。
  */
 const GENERIC_PATH_ALTS = [
   String.raw`\bdoc\/(?:extensions|features)\/[\w./-]+`,
@@ -88,73 +71,47 @@ const GENERIC_PATH_ALTS = [
   String.raw`\b(?:RR|SR|AR)\/[\w.-]+\.\w+`,
 ];
 
-function moduleLayerIds(projectRoot) {
-  const layers = readConfig(projectRoot)?.architecture?.outer_layers;
-  if (!Array.isArray(layers)) return [];
-  return layers.map(l => l?.id).filter(id => typeof id === 'string' && id.trim());
-}
-
 function localPathRe(projectRoot) {
-  const ids = moduleLayerIds(projectRoot);
+  const layers = readConfig(projectRoot)?.architecture?.outer_layers;
+  const ids = Array.isArray(layers) ? layers.map(l => l?.id).filter(id => typeof id === 'string' && id.trim()) : [];
   const alts = [...GENERIC_PATH_ALTS];
   if (ids.length) alts.unshift(String.raw`\b(?:${ids.map(escapeRe).join('|')})\/[\w./-]+`);
   return new RegExp(`(?:${alts.join('|')})`, 'g');
 }
 
 /**
- * 扫描禁用词。
+ * 扫描禁用词：客户端语境里只可能指服务器侧动作的词。围栏里的不判。
  *
  * **章级豁免**（`opts.exemptChapters`，取值来自合同数据）：某些章天然在讲发布与开关动作，
- * 「灰度」在那里是业务事实而不是客户端文案。作用域收缩到章，与语言红线
- * 收缩到「附录之外」同形——不是给某个词开小灶，是承认这几个词在那一章有正当位置。
+ * 那几个词在那一章是业务事实——收缩的是作用域，不是词表。
  *
  * @param {string} text
- * @param {object} [opts]
- * @param {string[]} [opts.exemptChapters] 整章豁免的章标题（业务名，编号自动剥）
+ * @param {{exemptChapters?: string[], contract?: object}} [opts]
  * @returns {{line:number, term:string, hint:string, text:string}[]}
  */
 export function scanBannedTerms(text, opts = {}) {
-  const hits = [];
   const exempt = new Set((opts.exemptChapters ?? []).map(normalizeHeading).filter(Boolean));
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
+  const vocabulary = clientVocabulary(opts.contract);
+  const doc = parseDocument(text);
+  const chapterAt = new Map(doc.headings.filter(h => h.level === 2).map(h => [h.at, h.name]));
+  const hits = [];
   let inExemptChapter = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue; // 代码块内可能是标识符，不判
-    const heading = line.trim().match(/^##\s+(.+)$/);
-    if (heading) inExemptChapter = exempt.has(normalizeHeading(heading[1]));
-    if (inExemptChapter) continue;
-    if (EXEMPT_LINE_PATTERNS.some(re => re.test(line))) continue;
-    for (const { term, hint } of clientVocabulary()) {
+  doc.lines.forEach((line, i) => {
+    if (chapterAt.has(i)) inExemptChapter = exempt.has(chapterAt.get(i));
+    if (doc.fenced.has(i) || inExemptChapter) return;
+    for (const { term, hint } of vocabulary) {
       if (line.includes(term)) hits.push({ line: i + 1, term, hint, text: line.trim().slice(0, 100) });
     }
-  }
+  });
   return hits;
 }
 
 // ---------------------------------------------------------------------------
-// 语言红线：作用域是**附录之外的主叙事**
+// 语言红线：四类，逐类带作用域（合同 `language_redline.kinds`）
 //
-// 接口名、字段名、存储键、事件 ID、规约编号这些工程标识不是不该出现在归档件里——
-// 它们必须保留，评审者要查的时候得查得到。问题在于**它们不能打断面向人的主叙述**：
-// 读者顺着九章读下来，每隔两行撞见一个 camelCase 就得停下来判断「这是我要懂的东西吗」。
-//
-// 所以附录成为它们的唯一落点：主叙事写中文业务名与中文规约名，标识在附录成表。
-// 这不是排除，是给它一个不打断阅读、机器又核得到的位置——守恒 token 在附录表里照样可核。
-
-/** 检索措辞：把「我去搜了一下没搜到」这种起草过程写进了给读者的文档。 */
-const SEARCH_PHRASE_RE = /检索[^。；\n]{0,16}(?:零命中|未命中|无结果|没有命中|无命中)/g;
-
-/** 来源括注：起草时标注「这个数是谁定的」，读者不需要，它属于附录的材料清单。 */
-const SOURCE_TAG_RE = /（\s*(?:本工程设定|工程设定|上游约束|上游已定|本文设定)[^）]*）/g;
-
-/** 文档坐标：`xxx.md`、`§3.2` 这类只有仓内读者才用得上的定位。 */
-const DOC_COORDINATE_RE = /\b[\w-]+\.md\b|§\s*[\d.]+/g;
+// 接口名、字段名、规约编号这些工程标识不是不该出现在归档件里——评审者要查的时候得查得到。
+// 问题在于**它们不能打断面向人的主叙述**，所以它们的落点是附录。文档坐标与之不同：
+// 指向不随归档的文件，放在哪里读者都打不开，作用域是全篇。
 
 /** 代码标识符的两种形态——它们几乎不会是产品名，可以无条件判。 */
 const CAMEL_CASE_RE = /\b[a-z][a-z0-9]*(?:[A-Z][a-zA-Z0-9]*)+\b/g;
@@ -163,160 +120,138 @@ const SNAKE_CASE_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/g;
 /** 行内代码：主叙事里出现反引号，包的多半就是标识符。 */
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
 
-/** AI 腔标题：模型写小标题时的口头禅。章标题由 check ① 判，这里只判 H3/H4。 */
-const AI_HEADING_TERMS = ['综上所述', '值得注意的是', '需要指出的是', '总的来说', '综上'];
+/**
+ * 文档坐标：指向**不随归档**的文件或会随重编号漂移的位置。一行命中几种也只报一条。
+ * 随归档的只有叙事件与《决策与评审记录》两份；spec、系统设计、产品需求稿、知识文件都留在仓内。
+ */
+const DOC_COORDINATE_HEAD = { re: /\b(?:spec|SR|RR|PRD|AR)\s*§\s*[\d.]*/g,
+  hint: '这份文档不随归档，读者打不开——把那一处的结论直接写进来，或改用本文章节名' };
 
-const REDLINE_HINTS = {
-  repo_identifier: '工程标识进附录的那几张表，主叙事写中文业务名',
-  rule_id: '主叙事写中文规约名；编号进附录的规约判定表',
-  search_phrase: '这是起草过程，不是需求事实——读者不需要知道你搜没搜到',
-  source_tag: '「谁定的」进附录的材料清单，不打断正文',
-  doc_coordinate: '归档件的读者手上没有这个仓库，改用本文章节名或需求系统单号',
-  placeholder_heading: '标题用真实业务名，模板占位没填就是没写',
-  ai_heading: '标题用真实业务名，短、自然、准确概括下文',
-  harness_artifact: '这是造它的装置与流程说的话，不是需求本身——读者要的是业务事实，写它做什么、给谁用',
-};
+//: 框架产物的文件名：随工程不变。知识文件名随激活清单变，运行时取。
+const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
 
 /**
- * 全篇逐行，并标出「这一行在附录里吗」。
- *
- * 多数红线的作用域是附录之外——工程标识本来就该落在附录，扫它等于自相矛盾。
- * 但有两类东西在附录里也不该有（起草时的检索措辞、装置与流程机构的词），
- * 所以边界不能在这里一刀切掉，逐类的作用域由合同数据说了算。
- *
- * **标题过规范化通道**：归档件的附录写作 `## 10. 附录`，合同里存的是 `附录`，
- * 所以按规范化后的标题比，编号不参与——否则附录会被当主叙事扫，
- * 本该允许的接口名与字段名全被报出来。
- *
- * @returns {{line:number, text:string, inAppendix:boolean}[]} 行号是**原文行号**，报错要指得回去
+ * 文档坐标的全部形态。文件名只认**文档**：任意 `.md`，加上知识文件与框架产物的名字——
+ * 资源与代码文件名（`string.json`）是工程标识，附录里是它们的正当落点，不在这里拦。
  */
-function narrativeLines(text, appendixTitle) {
-  const out = [];
-  const want = normalizeHeading(appendixTitle);
-  const lines = String(text ?? '').split(/\r?\n/);
-  let inAppendix = false;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].trim().match(/^##\s+(.+)$/);
-    if (m && want && normalizeHeading(m[1]) === want) inAppendix = true;
-    out.push({ line: i + 1, text: lines[i], inAppendix });
-  }
-  return out;
+function docCoordinateForms(projectRoot) {
+  const names = [...new Set([...knowledgeFileNames(projectRoot), ...FRAMEWORK_ARTIFACT_NAMES])];
+  return [
+    DOC_COORDINATE_HEAD,
+    { re: /(?:见|指回|来源|源：)\s*A[1-8]\b/g, hint: '这个编号在本文里不存在——改用事物的名字' },
+    { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g,
+      hint: '这是仓内文件名加编号——改写为中文规约名（编号进附录的规约判定表）' },
+    { re: new RegExp(String.raw`\b(?:[\w-]+\.md|(?:${names.map(escapeRe).join('|')})\.(?:ya?ml|json))\b`, 'g'),
+      hint: '仓内文件名不随归档——知识文件写它的中文名，产物文件改述为本文章节名' },
+    { re: /§\s*\d[\d.]*/g, hint: '章节号会随重编号变——改用本文章节名' },
+  ];
 }
 
-/**
- * 逐类作用域：合同里写字符串 = 默认作用域（附录之外），写 `{kind, scope}` = 按它说的。
- *
- * @param {(string|{kind:string, scope?:string})[]} decls
- * @returns {Map<string, string>} kind → scope
- */
+function knowledgeFileNames(projectRoot) {
+  if (!projectRoot) return [];
+  try {
+    const k = activeKnowledge(projectRoot);
+    return [...k.constraints, ...k.patterns, ...k.facts].map(x => x.file.split('/').pop().replace(/\.md$/, ''));
+  } catch (e) {
+    // 派生不到不静默：降级只影响「知识文件名」这一种形态，但必须让人看见
+    console.error(`[language] 知识文件名派生失败，文件名形态退回为任意 .md 与框架产物名：${e.message}`);
+    return [];
+  }
+}
+
+const FORMS = {
+  repo_identifier: { label: '工程标识', hint: '工程标识进附录的那几张表，主叙事写中文业务名' },
+  rule_id: { label: '规约编号', hint: '主叙事写中文规约名；编号进附录的规约判定表' },
+  doc_coordinate: { label: '文档坐标', hint: DOC_COORDINATE_HEAD.hint },
+  source_tag: { label: '来源括注', hint: '「谁定的」进附录的材料清单，不打断正文' },
+};
+
+/** 合同里写字符串 = 默认作用域（附录之外），写 `{kind, scope}` = 按它说的。 */
 function redlineScopes(decls) {
   const out = new Map();
   for (const decl of decls ?? []) {
-    if (typeof decl === 'string') out.set(decl, 'non_appendix');
-    else if (decl && typeof decl.kind === 'string') out.set(decl.kind, decl.scope || 'non_appendix');
+    const kind = typeof decl === 'string' ? decl : decl?.kind;
+    if (!FORMS[kind]) throw new Error(`章节合同 language_redline.kinds 里的「${kind}」不是认得的红线类别`
+      + `（${Object.keys(FORMS).join(' / ')}）`);
+    out.set(kind, (typeof decl === 'object' && decl.scope) || 'non_appendix');
   }
   return out;
 }
 
+/** HTML 注释里的行（含起止行）：模板指引、待写记号、投影区标记，不是给读者的正文。 */
+function commentLines(lines) {
+  const out = new Set();
+  let open = false;
+  lines.forEach((line, i) => {
+    if (open || line.includes('<!--')) out.add(i);
+    if (line.includes('<!--')) open = !line.slice(line.lastIndexOf('<!--')).includes('-->');
+    else if (open && line.includes('-->')) open = false;
+  });
+  return out;
+}
+
 /**
- * 扫描主叙事里的语言红线。
+ * 扫描语言红线。一行一类只报一条，命中的几处词一起列出。
  *
- * **规则全部是数据**：规约编号来自激活清单，PascalCase 标识符来自材料里实际出现过的
- * token——不猜。猜的代价是把 `HarmonyOS`、`WebView` 这类产品名判成工程标识，
- * 而作者除了删掉正确的词之外无路可走。
+ * **规则全部是数据或形态**：类别与作用域来自合同，规约编号来自激活清单，来源括注的词来自合同；
+ * 驼峰、下划线、行内代码、文档坐标是形态本身——不从材料里切词表去猜。
  *
- * @param {string} text story 全文
+ * @param {string} text 全文
  * @param {object} [opts]
+ * @param {(string|{kind:string, scope?:string})[]} opts.kinds 合同登记的类别与作用域
  * @param {string} [opts.appendixTitle] 附录章标题（作用域边界）
  * @param {string[]} [opts.ruleIds] 激活清单里的规约编号
- * @param {string[]} [opts.identifiers] 材料里出现过的 ASCII 标识符
- * @param {(string|{kind:string, scope?:string})[]} [opts.kinds] 只查这几类及各自作用域；不给则全查
- * @param {string[]} [opts.harnessTerms] 装置与流程机构的类别词表（合同数据）
- * @returns {{line:number, kind:string, hit:string, hint:string, text:string}[]}
+ * @param {string[]} [opts.sourceTags] 来源括注的词（合同数据）
+ * @param {string} [opts.projectRoot] 工程根：给出则把激活知识的文件名纳入文档坐标
+ * @returns {{line:number, kind:string, label:string, hits:string[], hint:string, text:string}[]}
  */
 export function scanLanguageRedline(text, opts = {}) {
-  const scopes = opts.kinds ? redlineScopes(opts.kinds)
-    : new Map(Object.keys(REDLINE_HINTS).map(k => [k, 'non_appendix']));
+  const scopes = redlineScopes(opts.kinds);
   const ruleIds = (opts.ruleIds ?? []).filter(id => typeof id === 'string' && id.trim());
-  const harnessTerms = (opts.harnessTerms ?? []).filter(t => typeof t === 'string' && t.trim());
-  const hits = [];
-  let inFence = false;
-  let inAppendix = false;
-
-  const push = (line, kind, hit, raw) => {
-    const scope = scopes.get(kind);
-    if (!scope) return;
-    if (inAppendix && scope !== 'all') return;
-    hits.push({ line, kind, hit, hint: REDLINE_HINTS[kind], text: raw.trim().slice(0, 100) });
-  };
-
-  for (const { line, text: raw, inAppendix: atAppendix } of narrativeLines(text, opts.appendixTitle)) {
-    inAppendix = atAppendix;
-    if (/^\s*(```|~~~)/.test(raw)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;      // 围栏里是图与代码，不是叙述
-
-    const heading = raw.trim().match(/^#{3,4}\s+(.+)$/);
-    if (heading) {
-      const title = heading[1].trim();
-      if (title.includes('{{') || /<[^>]*>/.test(title)) {
-        push(line, 'placeholder_heading', title, raw);
-      }
-      if (/[？?]\s*$/.test(title)) push(line, 'ai_heading', title, raw);
-      for (const term of AI_HEADING_TERMS) {
-        if (title.includes(term)) push(line, 'ai_heading', term, raw);
-      }
-    }
-
-    for (const m of raw.matchAll(INLINE_CODE_RE)) {
-      push(line, 'repo_identifier', m[1], raw);
-    }
+  const tags = (opts.sourceTags ?? []).filter(t => typeof t === 'string' && t.trim());
+  // 来源括注只认括号里以登记词起头的那种：插在句子中间打断阅读的是它
+  const sourceTagRe = tags.length ? new RegExp(`（\\s*(?:${tags.map(escapeRe).join('|')})[^）]*）`, 'g') : null;
+  const coordinateForms = scopes.has('doc_coordinate') ? docCoordinateForms(opts.projectRoot) : [];
+  const doc = parseDocument(text);
+  const appendix = opts.appendixTitle
+    ? doc.headings.find(h => h.level === 2 && h.name === normalizeHeading(opts.appendixTitle)) : null;
+  const appendixEnd = appendix ? headingEnd(doc, appendix) : -1;
+  const comments = commentLines(doc.lines);
+  const out = [];
+  doc.lines.forEach((raw, i) => {
+    if (doc.fenced.has(i) || comments.has(i)) return;
+    const inAppendix = !!appendix && i > appendix.at && i < appendixEnd;
+    const found = new Map();
+    const add = (kind, hit, hint = FORMS[kind].hint) => {
+      const scope = scopes.get(kind);
+      if (!scope || (inAppendix && scope !== 'all')) return;
+      const f = found.get(kind) ?? { hits: [], hint };
+      if (!f.hits.some(x => x.includes(hit))) f.hits.push(hit);   // `spec §5.1` 已报就不再单列 `§5.1`
+      found.set(kind, f);
+    };
+    for (const m of raw.matchAll(INLINE_CODE_RE)) add('repo_identifier', m[1]);
     const outsideCode = raw.replace(INLINE_CODE_RE, ' ');
     for (const re of [CAMEL_CASE_RE, SNAKE_CASE_RE]) {
-      for (const m of outsideCode.matchAll(re)) push(line, 'repo_identifier', m[0], raw);
+      for (const m of outsideCode.matchAll(re)) add('repo_identifier', m[0]);
     }
-    // **不拿材料派生的词表来判**：那份词表是按标识形态从材料里切出来的，
-    // `（share-setup.png）` 会切出 `share` 这种伪标识，红线于是拦下 story 里的图片引用行，
-    // 与「图片一张不少」直接互斥，作者只剩「不进 story」一条出路。
-    // 主叙事里某个英文词该不该出现要读上下文，那是独立审查判的事；
-    // 这里只认**形态本身就是工程标识**的那几种（行内代码、驼峰、下划线、仓内路径）。
-
-    for (const id of ruleIds) {
-      if (raw.includes(id)) push(line, 'rule_id', id, raw);
+    for (const id of ruleIds) if (raw.includes(id)) add('rule_id', id);
+    // 来源括注在**表格里不判**：表格的一格里「谁定的」是结构化事实，不构成打断。
+    if (sourceTagRe && !raw.trim().startsWith('|')) {
+      for (const m of raw.matchAll(sourceTagRe)) add('source_tag', m[0]);
     }
-    // 来源括注在**表格里不判**：它之所以是病，是因为插在句子中间打断阅读；
-    // 表格的一格里「谁定的」是结构化事实，读者一眼扫过去，不构成打断。
-    // 关键取舍表用它标「这条已由上游定死」是正当写法，那正是评审者要看的判断。
-    const isTableRow = raw.trim().startsWith('|');
-    for (const [kind, re] of [['search_phrase', SEARCH_PHRASE_RE],
-                              ['source_tag', SOURCE_TAG_RE],
-                              ['doc_coordinate', DOC_COORDINATE_RE]]) {
-      if (kind === 'source_tag' && isTableRow) continue;
-      for (const m of raw.matchAll(re)) push(line, kind, m[0], raw);
+    for (const { re, hint } of coordinateForms) {
+      for (const m of raw.matchAll(re)) add('doc_coordinate', m[0].trim(), hint);
     }
-
-    // 装置词：造这份文档的工具与流程机构说的话。词表是**类别词**、由合同登记，
-    // 本文件不写具体词——写了就成了「这一轮见过的那几个词」。ASCII 词不分大小写。
-    for (const term of harnessTerms) {
-      const ascii = /^[A-Za-z0-9_.-]+$/.test(term);
-      const hit = ascii ? raw.toLowerCase().includes(term.toLowerCase()) : raw.includes(term);
-      if (hit) push(line, 'harness_artifact', term, raw);
+    for (const [kind, f] of found) {
+      out.push({ line: i + 1, kind, label: FORMS[kind].label, hits: f.hits, hint: f.hint,
+        text: raw.trim().slice(0, 100) });
     }
-  }
-  // 同一行同一类只报一次：一行里三个 camelCase 报三条，读的人只会更烦
-  const seen = new Set();
-  return hits.filter(h => {
-    const key = `${h.line}:${h.kind}:${h.hit}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
   });
+  return out;
 }
 
 /** 材料清单那一节的行形态修法。 */
-const IMAGE_HINTS = {
+const MATERIAL_LIST_HINTS = {
   material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
   material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
     + '光写「产品需求文档」他不知道该找谁要哪一份',
@@ -336,15 +271,13 @@ export function scanMaterialList(body, baseLine = 0) {
     const line = baseLine + i;
     if (s.startsWith('|')) {
       hits.push({ line, kind: 'material_row', hit: s.slice(0, 40),
-                  hint: IMAGE_HINTS.material_row, text: s.slice(0, 100) });
+                  hint: MATERIAL_LIST_HINTS.material_row, text: s.slice(0, 100) });
       continue;
     }
     if (!/^[-*+]\s/.test(s)) continue;
-    const links = [...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)];
-    if (!links.length) {
+    if (![...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].length) {
       hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
-                  hint: IMAGE_HINTS.material_link, text: s.slice(0, 100) });
-      continue;
+                  hint: MATERIAL_LIST_HINTS.material_link, text: s.slice(0, 100) });
     }
   }
   return hits;
@@ -368,93 +301,10 @@ export function scanLocalPaths(text, projectRoot) {
   return hits;
 }
 
-/**
- * 悬空引用：指向**不随归档**的文件的坐标。
- * 随归档的只有 AR/story.md（叙事主件）与 AR/review.md（决策件）两份；
- * spec.md / SR/design.md / RR/prd.md 都留在仓内，归档后这些坐标查无此物。
- * 合法的指代只有五类：本文章节号、代码模块+文件名、中文规约名+编号、需求系统单号、
- * 随归档的兄弟件（写中文书名《决策与评审记录》——`review.md` 这个文件名仍拦，
- * 评审者拿到的是上传后的文档，不是仓内路径）。
- */
-const DANGLING_REF_PATTERNS = [
-  { re: /\bspec\s*§/g, hint: 'spec.md 不随归档，改用本文章节号（如「§6.2 数据存储」）' },
-  { re: /\bSR\s*§/g, hint: 'SR/design.md 不随归档，首次溯源写「SE 设计文档 <单号>」，其余直接内联结论' },
-  { re: /\bRR\s*§|\bPRD\s*§/g, hint: 'RR/prd.md 不随归档，首次溯源写「产品需求文档 <单号>」，其余直接内联结论' },
-  { re: /\bAR\s*§/g, hint: 'AR/design.md 归档时被本文覆盖，改用本文章节号' },
-  { re: /(?:见|指回|来源|源：)\s*A[1-8]\b/g, hint: '历史 impact 小节编号，本文不存在——改用事物的名字' },
-  { re: /\bar_design_init\b|\bevidence-rules\b|\bstory-chapters\b|\bstory-src\b|SKILL\.md/g, hint: 'skill 内部规则文件不随归档，改述为自然语言' },
-  { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g, hint: 'slug 是仓内文件名，改写为中文规约名 + 编号（形如「<中文规约名> XXX-01」）' },
-];
-
-/**
- * 裸文件名（无路径分隔符）：`scanLocalPaths` 只认带 `/` 的路径，覆盖不到，故单列一条。
- *
- * 框架产物名固定；**知识文件名从激活清单派生**——它随工程启用的知识而变，硬编码就是个
- * 会过期的快照（旧清单里三个文件早已退役却还留在正则里）。
- * 也不扫目录：阶段只认清单，目录里躺着的未启用文件不参与任何判定。
- */
-const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
-
-function constraintNames(projectRoot) {
-  if (!projectRoot) return [];
-  try {
-    const knowledge = activeKnowledge(projectRoot);
-    return [...knowledge.constraints, ...knowledge.patterns, ...knowledge.facts]
-      .map(k => k.file.split('/').pop().replace(/\.md$/, ''));
-  } catch (e) {
-    // 派生不到不静默：降级只影响裸文件名这一条规则，但必须让人看见（G7）
-    console.error(`[language] 知识文件名派生失败，裸文件名规则降级为仅框架产物名：${e.message}`);
-    return [];
-  }
-}
-
-function bareFileNameRule(projectRoot) {
-  const names = [...new Set([...constraintNames(projectRoot), ...FRAMEWORK_ARTIFACT_NAMES])];
-  return {
-    re: new RegExp(String.raw`\b(?:${names.map(escapeRe).join('|')})\.(?:md|yaml|yml|json)\b`, 'g'),
-    hint: '仓内文件名不随归档——知识文件改写为它的中文名，产物文件改述为本文章节',
-  };
-}
-
-/**
- * @param {string} text 待扫描文本
- * @param {string} [projectRoot] 工程根：给出则把该工程的约束文件名一并纳入裸文件名判定
- */
-export function scanDanglingRefs(text, projectRoot) {
-  const patterns = [...DANGLING_REF_PATTERNS, bareFileNameRule(projectRoot)];
-  const hits = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
-  let inComment = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*(```|~~~)/.test(lines[i])) {
-      inFence = !inFence;
-      continue;
-    }
-    // HTML 注释块（含 ai 锚点标记与模板指引）不参与判定——它们不是给评审者读的内容
-    if (inComment) {
-      if (lines[i].includes('-->')) inComment = false;
-      continue;
-    }
-    if (/<!--/.test(lines[i])) {
-      if (!lines[i].includes('-->')) inComment = true;
-      continue;
-    }
-    if (inFence) continue;
-    for (const { re, hint } of patterns) {
-      for (const m of lines[i].matchAll(re)) {
-        hits.push({ line: i + 1, ref: m[0].trim(), hint, text: lines[i].trim().slice(0, 80) });
-      }
-    }
-  }
-  return hits;
-}
-
 /** 把扫描结果渲染成人可读的问题列表 */
 export function formatHits(hits, kind) {
   return hits.map(h => {
     if (kind === 'banned') return `第 ${h.line} 行禁用词「${h.term}」（${h.hint}）：${h.text}`;
-    if (kind === 'dangling') return `第 ${h.line} 行悬空引用「${h.ref}」——${h.hint}`;
     if (kind === 'image') return `第 ${h.line} 行图片引用「${h.path}」解析不到文件`;
     return `第 ${h.line} 行含仓内路径「${h.path}」：${h.text}`;
   });

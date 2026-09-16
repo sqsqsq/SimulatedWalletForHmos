@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -430,17 +431,103 @@ class OneFenceScannerForEveryConsumer(unittest.TestCase):
         self.assertNotIn("样例里的节", "".join(out["numbered"]))
 
     def test_the_open_close_rule_exists_in_exactly_one_place(self) -> None:
-        """源码核：原来那几份重复的开闭逻辑已经删掉，不是又加了一层包装。"""
+        """源码核：成文侧每个模块都从 document.mjs 拿围栏，没有第二份开闭或开启识别。"""
         text = DOCUMENT.read_text(encoding="utf-8")
         code = [l for l in text.split("\n") if not l.strip().startswith(("//", "*", "/*"))]
-        body = "\n".join(code)
-        self.assertEqual(1, body.count("CLOSING.test("), "关闭行判断不止一处")
-        self.assertEqual(1, len([l for l in code if "(`{3,}|~{3,})" in l]),
-                         "围栏开启的识别不止一处")
-        for other in ("chapter.mjs", "check.mjs", "appendix.mjs"):
-            s = (DOCUMENT.parent / other).read_text(encoding="utf-8")
-            self.assertNotIn("(`{3,}|~{3,})", s, other + " 自己又写了一份围栏识别")
+        self.assertEqual(1, "\n".join(code).count("CLOSING.test("), "关闭行判断不止一处")
+        self.assertEqual(1, len([l for l in code if "(`{3,}|~{3,})" in l]), "围栏开启的识别不止一处")
+        own_scanner = re.compile(r"/\^\\s\*\(?`{3}|/\^\[ \\t\]\*`{3}|\(\?:`{3}\|~{3}\)|`{3}\|~{3}")
+        for other in sorted(DOCUMENT.parent.glob("*.mjs")):
+            if other == DOCUMENT:
+                continue
+            body = other.read_text(encoding="utf-8")
+            self.assertIsNone(own_scanner.search(body), other.name + " 自己又写了一份围栏识别")
+            self.assertNotIn("inFence", body, other.name + " 自己又在逐行翻转围栏状态")
 
+
+class OneRuleOnEveryPath(unittest.TestCase):
+    """同一段带围栏样例的文字，语言红线、图身份、附录投影、材料清单四条路径给同一个答案。
+
+    样例里的标题、表、图与文档坐标都是被引用的例子：四反引号里嵌三反引号、`~~~` 围栏、
+    围栏里的 `## ` 标题，哪一条路径都不该把它们当成真的。
+    """
+
+    OUTER = "`" * 4
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+
+    def run_js(self, body: str, *argv: str):
+        script = ("import {pathToFileURL} from 'node:url';"
+                  "const at = (f) => pathToFileURL(" + json.dumps(str(DOCUMENT.parent)) + " + '/' + f).href;"
+                  + body)
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", *argv],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_the_redline_skips_quoted_samples(self) -> None:
+        text = "\n".join([
+            "# AR1 夹具", "", "## 背景", "",
+            self.OUTER + "markdown", "见 spec §5.1。", "```mermaid", "flowchart TD", "```", "## 样例章", self.OUTER, "",
+            "~~~text", "口径以 prd.md 为准。", "~~~", "",
+            "正文里写着 prd.md。",
+        ])
+        hits = self.run_js("const m = await import(at('language.mjs'));"
+                           "process.stdout.write(JSON.stringify(m.scanLanguageRedline(process.argv[1],"
+                           " {kinds: [{kind: 'doc_coordinate', scope: 'all'}]}).map(h => h.line)));", text)
+        self.assertEqual([len(text.split("\n"))], hits, "围栏里的样例被当成了正文")
+
+    def test_diagram_identity_skips_quoted_samples(self) -> None:
+        text = "\n".join([
+            "## 5. 业务流程", "",
+            self.OUTER + "markdown", "### 9.9 样例节", "```mermaid", "flowchart TD", "  X --> Y", "```", self.OUTER, "",
+            "### 5.2 真节", "",
+            "~~~mermaid", "flowchart TD", "  A --> B", "~~~",
+        ])
+        ids = self.run_js("const m = await import(at('images.mjs'));"
+                          "process.stdout.write(JSON.stringify(m.diagramsOf(process.argv[1]).map(d => d.id)));", text)
+        self.assertEqual(["§5.2 #1"], ids)
+
+    def test_the_appendix_projection_reads_the_real_section(self) -> None:
+        spec = "\n".join([
+            "in_scope_modules:", "  - 甲模块", "", "~~~markdown",
+            "## 0. 术语映射表", "", "| 术语 | 权威模块 | 解释 |", "|---|---|---|", "| 样例词 | 甲模块 | 样例解释 |",
+            "~~~", "",
+            "## 0. 术语映射表", "", "| 术语 | 权威模块 | 解释 |", "|---|---|---|", "| 真词 | 甲模块 | 真解释 |", "",
+        ])
+        terms = self.run_js("const m = await import(at('appendix.mjs'));"
+                            "process.stdout.write(JSON.stringify(m.specTerms(process.argv[1])));", spec)
+        self.assertEqual([["真词", "真解释"]], terms)
+
+    def test_the_material_list_is_located_past_quoted_headings(self) -> None:
+        story = "\n".join([
+            "# AR1 夹具", "", "## 背景", "", "~~~markdown", "## 附录", "### 材料清单", "~~~", "",
+            "## 附录", "", self.OUTER, "### 材料清单", "- 样例", self.OUTER, "",
+            "### 材料清单", "", "- 真材料",
+        ])
+        span = self.run_js("const m = await import(at('document.mjs'));"
+                           "process.stdout.write(JSON.stringify(m.subsectionSpan(process.argv[1], '附录', '材料清单')));",
+                           story)
+        self.assertEqual("- 真材料", story.split("\n")[span["start"] + 1])
+
+    def test_a_name_matching_two_sections_is_named_not_guessed(self) -> None:
+        chapter = "\n".join(["### 参与方与分工", "", "甲。", "", "### 参与方不在本轮", "", "乙。"])
+        got = self.run_js(
+            "const d = await import(at('document.mjs'));"
+            "const c = await import(at('chapter-contract.mjs'));"
+            "const v = d.parseChapter(process.argv[1]);"
+            "process.stdout.write(JSON.stringify({body: d.sectionBody(v, '参与方'),"
+            " problems: c.chapterStructureProblems({title: '业务方案', structure: {h3: [{title: '参与方'}]}}, v)}));",
+            chapter)
+        self.assertIsNone(got["body"], "两个都像时取了第一个")
+        self.assertEqual(1, len(got["problems"]), got)
+        self.assertIn("同时像「参与方与分工」、「参与方不在本轮」", got["problems"][0])
+        exact = self.run_js("const d = await import(at('document.mjs'));"
+                            "process.stdout.write(JSON.stringify(d.sectionBody(d.parseChapter(process.argv[1]), '参与方与分工')));",
+                            chapter)
+        self.assertIn("甲", exact, "精确名仍要直接命中")
 
 if __name__ == "__main__":
     unittest.main()
