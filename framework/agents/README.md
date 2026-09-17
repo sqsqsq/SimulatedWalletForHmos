@@ -83,7 +83,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 - **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（framework-init）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
 
-**全 adapter 升级清理**：UPDATE `framework-init` 的 `cleanup-deprecated` 检查发布件中全部 adapter，包含已退出 `materialized_adapters` 的历史残留。旧 skill/command 名（编号、`prd-design` / `requirement-design`、`goal-orchestration` 等）按各 adapter 的物化目录声明清理，generic 跟随 `paths.agent_bundle_root`。专属退役文件登记在 `adapter.yaml` 的 `deprecated_artifacts`；退役 hook 同时登记 `hook_configs`，先移除旧注册再删除脚本，保留宿主其他 hook/配置。所有修改先备份到 `.framework-backup/<timestamp>/`，S3 run-log 分别记录删除数与 hook 配置更新数。配置仍含脚本引用时保留脚本并记 blocked；非法配置记 failed，其余 adapter/旧跳板继续处理，最终任务如实报失败。CREATE 或跳过清理任务不执行此操作。
+**全 adapter 升级清理**：UPDATE `framework-init` 的 `cleanup-deprecated` 检查发布件中全部 adapter，包含已退出 `materialized_adapters` 的历史残留。旧 skill/command 名（编号、`prd-design` / `requirement-design`、`goal-orchestration` 等）按各 adapter 的物化目录声明清理，generic 跟随 `paths.agent_bundle_root`。专属退役文件登记在 `adapter.yaml` 的 `deprecated_artifacts`；退役 hook 同时登记 `hook_configs`，先移除旧注册再删除脚本，保留宿主其他 hook/配置。所有修改先备份到 `.framework-backup/<timestamp>/`，S3 run-log 分别记录删除数与 hook 配置更新数。配置仍含脚本引用时保留脚本并记 blocked（任务不因此 failed）；引用全部解析到工程外的绝对路径时不阻断删除本地副本，配置逐字不变并记 warning 待人工核对；非法配置/清理抛错记 failed。三类诊断都进 run-log，其余 adapter/旧跳板一律继续处理。CREATE 或跳过清理任务不执行此操作。
 
 **维护约定**：删除或迁移已发布的模板时，必须同步登记旧产物路径或共享旧 skill/command 名，并验证升级清理；仅删除发布件模板不会自动删除宿主文件。无专属退役项的 adapter 可省略 `deprecated_artifacts`，仍支持共享清理机制。共享目录内仍被其他 adapter 使用的现行产物、未知宿主自有文件不作整目录清空；“无 deprecated 需清理”仅表示已登记范围没有命中，不代表任意历史误生成文件均不存在。
 
@@ -104,7 +104,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
-| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
+| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（16 份内置跳板）、`.cursor/rules/framework.mdc` |
 | `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md`、`.codex/agents/verifier.toml`（生成物） |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
 | `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
@@ -138,6 +138,9 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 其它自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
+
+实例扩展另走 `/extension materialize`：它只读项目级 `materialized_adapters[]`，为每个已物化 adapter
+刷新 extension Skill bridge 与 AGENTS/CLAUDE 扩展段；不读个人 active adapter。
 
 ## Adapter 选定建议（personal setup · framework-initb）
 

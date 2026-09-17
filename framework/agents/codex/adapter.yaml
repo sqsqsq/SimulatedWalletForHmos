@@ -95,6 +95,9 @@ post_install_hooks: []
 # 宿主曾于 2026-05-25 手工提交（Cursor 会话）带入 Claude Stop/SubagentStop 协议脚本副本；
 # 先清旧注册再备份删除脚本（plan 7b2e9d4c F01/F11：不是 init 物化的）。
 deprecated_artifacts:
+  - path: skills/app-component-blueprint/
+    action: backup_delete
+    reason: "设计入口收敛至 component-design，P1 改为内部工作流"
   - path: hooks/check-phase-completion.mjs
     action: backup_delete
     hook_configs: [hooks.json]

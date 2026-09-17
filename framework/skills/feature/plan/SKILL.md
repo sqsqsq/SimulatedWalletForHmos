@@ -1,6 +1,6 @@
 # Plan 阶段 Skill (`plan`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `plan.scope_expansion` / `plan.ok_to_code` / `plan.arch_impact` / `plan.split_table` / `phase.next_step`。
+> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `plan.scope_expansion` / `plan.ok_to_code` / `plan.arch_impact` / `plan.split_table` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 **P3 设计输入与职责边界**：见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)，只完成请求指定的设计工作，不自动进入施工。
 
 ## 前置
 
@@ -8,7 +8,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；输入缺失（至少 `spec.md`）须报告并回到 spec 阶段补齐。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；输入缺失（至少 `spec.md`）须报告并回到 spec 阶段补齐。
 
 ## 条件加载索引
 
@@ -29,6 +29,8 @@
 | contracts.yaml / use-cases.yaml（**机器契约真源**） | `<features_dir>/<f>/` | 中生命周期（持续到 review/UT/testing） |
 
 coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.md 双源分叉。
+
+**CU-bound Feature**：先解析 `contracts.change_unit.change_unit_ref`，Feature id 必须为 canonical CU identity 的确定性派生值。`contracts.change_unit` 只按 canonical predicate/provide/design ref ID 映射 implementation/symbol/test，不复制 CU/蓝图正文；运行时施工细节只写既有 `contracts.state_management`。新事实若推翻蓝图，返回 P1 调和，不在 plan 首次发明部件 owner、主链或外部契约。
 
 ## 触发条件
 
@@ -59,17 +61,17 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 1. **读取分析 spec**：功能清单/页面列表/业务流程/数据实体/验收标准 → 功能点清单。
 2. **读架构文档 & 分析工程结构**：`doc/architecture.md` 已有模块/依赖/公共能力 → 交叉验证代码现状 → 确定新建/修改模块。
-3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的源码路径；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"，不得留空）。**plan 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
+3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的源码路径；`paths.conventions` 文件存在时必读全文并选择真正适用的 id。index 文件存在时须按 reference 的「组件选型施工投影」节读取资产并投影蓝图决定。追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"，不得留空）。**plan 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
 4. **Scope 继承与扩展提议**（详见 reference）：继承 spec Scope 并冻结 `in_scope_modules`；扩展须走提议流程经 `plan.scope_expansion` 用户确认。
 5. **功能拆分到模块**：逐功能点分配模块（须落在 in_scope 内），输出拆分表（`plan.split_table`：`1=确认` `2=修改`）。
 6. **设计模块架构**：Mermaid 依赖图 + 目录/文件结构规划 + 模块配置变更清单。
 7. **设计数据层**：数据模型（interface/class+字段）、数据仓库（方法签名+来源+异步策略）、端云接口（如有远程数据）。
-8. **设计领域层**（条件式，详见 reference 复杂度判定）：满足阈值才产出 `use-cases.yaml`；否则跳过，交 business-ut 退化模式处理。
+8. **设计领域层**（条件式，详见 reference 复杂度判定）：普通 Feature 满足阈值才产出 `use-cases.yaml`；CU-bound Feature 由 ordered steps、失败/恢复、共享消费者和生命周期事实机械派生，不接受 authored opt-out。
 9. **设计展示层**：页面组件树 + Props/回调 + 状态管理方案 + 路由设计；UI 需求须对齐 spec Visual Handoff 真源，产出 `plan/visual-parity.yaml`（映射 asset/token/组件节点 → contracts 可测项；只读 lock 规划不联网不对图）。
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。
 12. **输出与归档**：写盘 `plan.md` → 摘要供人审阅 → **立即进 Step 13**，不得先做编码。
-13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/HAR build/export 文件引用以及 `navigation.config_files[]`（3.0 canonical 的唯一 navigation 文件字段，其它承载路径的 navigation 键一律判 `unconsumed_file_field` BLOCKER）必须逐项列入，闭包失败只可回 plan 补 `files` 后重闭环，不得凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
+13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability，以及惯例文件存在时的 `conventions_applied`。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/HAR build/export 文件引用以及 `navigation.config_files[]`（3.0 canonical 的唯一 navigation 文件字段，其它承载路径的 navigation 键一律判 `unconsumed_file_field` BLOCKER）必须逐项列入，闭包失败只可回 plan 补 `files` 后重闭环，不得凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
 14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。`dsl_change` 时须同步修改 [framework.config.json](../../../framework.config.json) 的 `architecture` 段。
 
 ## 门禁清单表
@@ -92,9 +94,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 **AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
 
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
-
-**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
 **harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
@@ -107,6 +107,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
+
+`paths.conventions` 文件存在时输出条件节「遵循的既有惯例」，只列适用 id、范例路径与计划落位；
+CU 有所引蓝图时与其适用惯例一致，不适用项须在 review 台账解释。无文件时省略此节，不新增章节门禁。
 
 设计文档**必须包含 9 个章节**（模板 `` `profile-skill-asset:plan/plan_template` ``）：1 Scope 声明与继承 / 2 模块架构图 / 3 目录文件结构规划 / 4 数据模型定义 / 5 页面组件树 / 6 状态管理方案 / 7 服务层接口定义 / 8 路由导航设计 / 9 spec 功能映射表。
 

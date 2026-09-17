@@ -13,6 +13,7 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
@@ -28,6 +29,7 @@ import {
   ScriptReportCompatApplied,
   ScriptReportCompatExpired,
   ContextFileEntry,
+  RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
@@ -148,6 +150,24 @@ export function generateScriptReport(
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
   return report;
+}
+
+/** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
+export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
+  const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
+  const summary = computeSummary(finalized);
+  if (finalized.some(check => check.status === 'FAIL' || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
+    timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
+  const inputBindings = Object.fromEntries(Object.entries(ctx.resolvedInputs.values).filter(([, value]) => value.state === 'resolved').map(([id, value]) => [id, value.state === 'resolved' ? value.binding : null]));
+  const report = { ...common, checks: finalized, summary, input_bindings: inputBindings };
+  fs.mkdirSync(ctx.reportDir, { recursive: true });
+  const reportPath = path.join(ctx.reportDir, 'script-report.json');
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  const native = finalized.flatMap(check => (check.structured as { request_evidence?: unknown[] } | undefined)?.request_evidence ?? []);
+  fs.writeFileSync(path.join(ctx.reportDir, 'summary.json'), JSON.stringify({ ...common, ...summary, input_bindings: inputBindings, evidence: { script_report: path.relative(ctx.projectRoot, reportPath).replace(/\\/g, '/'), script_report_sha256: crypto.createHash('sha256').update(fs.readFileSync(reportPath)).digest('hex'), native } }, null, 2) + '\n');
+  return { verdict: summary.verdict, reportPath };
 }
 
 /**
@@ -313,6 +333,7 @@ export function assembleAIPrompt(
   frameworkRoot?: string,
   options?: {
     imageInput?: ImageInputMode;
+    extensionInstructions?: string;
     /**
      * plan a9d4e7c2 P1-1：**workflow 声明的模板路径**（`verifier_prompt`，相对 harness 根），
      * 由 `resolveVerifierPlan` 带出。调用方必须传——装配用哪个模板是 workflow 的声明说了算。
@@ -397,6 +418,9 @@ export function assembleAIPrompt(
     tail +=
       '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
+  }
+  if (options?.extensionInstructions) {
+    tail += `\n\n---\n\n${options.extensionInstructions}\n`;
   }
 
   // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，

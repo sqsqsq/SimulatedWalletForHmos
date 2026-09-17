@@ -43,6 +43,8 @@ expansions_with_user_approval:
 
 **仅当至少满足下列一条**才产出 `use-cases.yaml`：①多 UI 节点共享状态（≥2 页面/组件订阅同一业务状态且互相渲染依赖）；②多步云侧调用（一个动作触发 ≥2 次独立请求且顺序受前一次结果影响）；③存在回滚/补偿分支；④多路人机交互（≥2 次真实用户输入）。全部不满足则**不产出**，business-ut 走退化模式基于 `acceptance.yaml`+`dag.yaml` 直接对 data 层写 UT。
 
+**P2 CU-bound 覆盖规则**：存在 `contracts.change_unit` 时不使用作者自选阈值。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
+
 **若决定产出**，两份文档：
 
 1. **plan.md「业务流程 UseCase 清单」章节**（模板 `` `profile-skill-asset:plan/plan_template` `` 的 `## 六`）：业务入口映射表（ui_bindings 人话版）、状态机 Mermaid（`stateDiagram-v2`，覆盖成功/失败/取消/回滚）、数据边界清单（引用 `contracts.yaml > interfaces[].class` 已存在的 data 层类，不新造 Port）、分支清单表（每条标注对应 AC/BD）。
@@ -61,9 +63,11 @@ expansions_with_user_approval:
 | `data_models` | 数据模型定义 | `name`/`module`/`file`/`kind`（interface/class/enum）/`fields`（name+type+required） |
 | `interfaces` | 服务层接口定义 | `module`/`layer`/`file`/`class`/`methods`（name+params+return+async+description）。**UT/mock-plan 门禁**：`params` 须含完整类型文本，`return` 须准确含 `Promise<...>`——下游 `ut_mock_plan_contracts_consistent` 依赖此信息 |
 | `components` | 页面组件树+状态管理方案 | `name`/`module`/`file`/`kind`（page/component/utility）/`state`/`props`/`events`/`children` |
-| `state_management` | 状态管理方案 | — |
+| `change_unit` | canonical CU（仅 CU-bound Feature） | `change_unit_ref` + `predicate_mappings`/`provide_mappings`/`design_ref_mappings`；只映射既有 ID 到 project-relative `file[#symbol]` / test / verification 消费落点，不复制定义 |
+| `state_management` | 状态管理方案 | 运行时施工事实唯一权威；CU-bound 时以 `design_ref` 关联 P1 flow，并可含 owner/contract、ordered steps、conditional mutation/publication/subscription/consumer、lifecycle 与 recovery；禁止平行 `runtime_flow_slices` |
 | `navigation` | 路由/导航设计 | 3.0 canonical **只有** `config_files[]`（导航注册/配置文件清单，如 `main_pages.json` / `route_map.json`），逐项列入 `files`；其它承载文件路径的 navigation 键（含嵌套 `pages[]`/`routes[]` 形态、`registration_points`）一律判 `unconsumed_file_field` BLOCKER |
 | `files` | 目录/文件结构规划 | **唯一文件授权集合**；下列一切文件引用都必须以规范化路径列入此处 |
+| `conventions_applied`（可选） | plan 条件节「遵循的既有惯例」 | `id` + 非空 `planned_locations[]`；location 仅允许项目相对 POSIX 文件/目录前缀，禁 glob/绝对路径/`..`/反斜杠；有所引蓝图时须覆盖其适用且命中本 CU scope 的惯例 |
 | `resource_keys` | 宿主资源引用 | **媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
 | `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 逐项列入 `files` |
 
@@ -101,3 +105,9 @@ architecture_impact:
 - **Feature 级变更禁入 architecture.md**：既有模块内新增/修改页面组件接口数据模型、修 bug/样式/文案、in_scope 完全落在已有模块内、仅 `exposed_capabilities_public` 新增而职责未变——一律不算架构级。
 
 > **为什么这样设计**：architecture.md 负责分层/模块集合/依赖边/出口约定；module-catalog.yaml 负责模块细粒度职责与能力；git history + `<features_dir>/<feature>/` 负责 feature 级变更日志——三者各司其职。
+
+## 组件选型施工投影（index 文件存在时）
+
+字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref/rationale，bindings 才是本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
+
+依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 权责一致：goal 换选自动、下沉经 auto-replan、新边停放 await-confirm 等用户批后 resume，不能以自改 DSL 或重写需求绕过。

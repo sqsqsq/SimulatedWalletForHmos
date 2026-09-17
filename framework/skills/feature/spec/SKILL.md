@@ -1,5 +1,9 @@
 # Spec 阶段 Skill (`spec`)
 
+**P3 设计调用优先规则**：收到显式 1.1 调用时，先消费已绑定验收，只补本次未明确的行为、预期、边界与分层；叙述格式仅检查 required_outputs 中指定的 spec.md，无视觉义务不补 UI 占位件。产品共同决策缺口回 component-design，外部契约回原 owner；只请求设计时止步，不追加 plan/coding。完整规则见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)。
+
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `spec.terminology` / `spec.feature_path` / `spec.freeze` / `phase.next_step`。
 
 ## 前置
@@ -8,7 +12,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
-**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0 → 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
+**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0 → 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
 
 ## 条件加载索引
 
@@ -36,12 +40,24 @@
 
 用户仅表达"修订 spec/改验收/Scope/术语表"未同时要求"做实现计划/改 contracts"时，**只激活 spec 阶段**，不得自动滑入 plan。spec-only 回合内**不得**新建/实质改写 plan.md 技术章节或 contracts.yaml 接口契约（本 Skill 允许产物仅限 spec.md + Step 6 的 acceptance.yaml）。中途修正先跑 `--correction-init`（按 AGENTS §4.0 修正三问分层），然后直接按机器分类的责任层实施并级联重验，不设人签 gate。spec.md 落盘后须**先于**宣称"可进 plan"执行 Step 7.1（阶段边界推进原则见 AGENTS §3.8）。
 
+**CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
+
+**正式性兜底复核（M7，非阻断）**：spec 是 full 轨第一次冻结施工意图的地方，也是正式需求的兜底复核点——**正式需求的 spec 一律位于蓝图与 Change Unit 之后，spec 不再是任何正式需求的第一个设计产物**。开始 Step 1 前先按判据自查一次：
+
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+
+- 事项**符合**该判据却**没有**经过部件内设计阶段（当前 Feature 不由某个 canonical `change_unit_ref` 派生）→ 说明"这应先经 [`/component-design`](../../project/component-design/SKILL.md) 建立部件演进蓝图"，给出回退入口，由用户裁决是回退还是按当前理解继续；命中即停的成本只是一份 spec 草稿；
+- **上游显式**把它标为正式需求时，该分类具有权威性，不得用本地判断降级；
+- 信息不足以判断时**问人**，不猜测；
+- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design`、`/change-lite` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
+- 这是**指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。
+
 ## 流程骨架
 
 1. **收集输入**：功能文字描述 / 界面截图 / 功能模块名（必需）；竞品截图（可选）。**保真路由初始化（BLOCKER 前置，plan f6b2d9a4 + c8e5b3f1）**：在生成任何 spec 产物**之前**、于 `framework/harness` 目录执行 initializer。若本轮来自 attended `phase_execute_request`，必须把请求的完整上下文原样传为 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --goal-run-id <run_id> --goal-phase <phase> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；阶段驱动路径执行 `node -r ts-node/register/transpile-only scripts/fidelity-intent-init.ts --feature <feature> --requirement "<用户需求原文（含引用文档路径）>"`（超长需求可用 `--requirement-file <path>`，两者互斥）。initializer 落 `spec/reports/fidelity-intent.json`（质量目标/严格度/素材策略三轴唯一 SSOT）与 capability-snapshot；attended 分支只读精确 manifest，并在写盘前校验 run / feature / session owner / epoch / lease，同 run 有效 SSOT 只读复用。后续 ui-spec 的 `fidelity_target`/`asset_acquisition_mode` 是该 SSOT 的**投影**（照抄，不自行判断；`fidelity_capability_pregate` 会复核一致性）。**因果提示（勿让 agent 猜）**：阶段驱动路径的 `derive.requirement` 只认 SSOT 里 provenance=`explicit_cli`（=本次显式给了非空 `--requirement`/`--requirement-file`）且身份匹配的需求——**若不给需求文本**（CLI 只会落 `intent_fallback`），spec 的 requirement capability 保持 blocked → 阶段 INCOMPLETE → check-receipt 拒绝闭环，重跑多少次都一样。显式传空 `--requirement`（`""` / 空格）会 fail-fast，不会静默降级读 README/笔记/spec.md 解锁。
 2. **术语消歧**（BLOCKER，详见 reference）：必读 [doc/glossary.yaml](../../../../doc/glossary.yaml)（业务术语↔权威模块）与 [doc/module-catalog.yaml](../../../../doc/module-catalog.yaml)（模块职责画像），生成`## 0. 术语映射表`，所有行 `[x]` 用户确认后才允许生成正文；headless 例外见 reference。**`project_scale=small`**（`framework.config.json`，framework-init 按 catalog 模块数 ≤3 建议）时映射表仍须产出，但可用节末一行 `- [x] 已对照 architecture.md 模块清单一次性确认全部术语映射` 整体替代逐行 `[x]`；Scope/`diff_within_scope` 等红线不受影响。
 3. **截图分析 → ui-spec.yaml**（UI 需求，详见 reference）：分区扫描、逐屏识别、组件 taxonomy、token 表、资产清单、保真档位判定、DSL↔原图 gate。
-4. **Research Sub-Phase**（Context Facts Gate·BLOCKER，C4）：进入 Step 5 正文前必读本阶段 SSOT（glossary/catalog/architecture.md + 相关既有实现，≥2 源码文件）+ profile 必查路径；填 `context_intent`/`estimated_loc_delta`/`touches_layers`；harness 按 `exploration_strategy` 复合评分决定是否须 subagent。spec 是 full track 的**建立阶段**：在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`ready_to_produce: true` 且 `has_blocker_coverage_risk: false`）——后续 plan/coding/review/ut/testing 各阶段只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 `spec/context-exploration.md`（per-phase）仍可读但已弃用，SSOT 见 `framework/harness/scripts/utils/context-facts.ts`。
+4. **Research Sub-Phase**（Context Facts Gate·BLOCKER，C4）：进入 Step 5 正文前必读本阶段 SSOT（glossary/catalog/architecture.md + 相关既有实现，≥2 源码文件）+ profile 必查路径；`paths.conventions` 指向的文件若存在也须读全文，只作蓝图后兜底复核，禁止把其正文复制进 spec。填 `context_intent`/`estimated_loc_delta`/`touches_layers`；harness 按 `exploration_strategy` 复合评分决定是否须 subagent。spec 是 full track 的**建立阶段**：在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`ready_to_produce: true` 且 `has_blocker_coverage_risk: false`）——后续 plan/coding/review/ut/testing 各阶段只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 `spec/context-exploration.md`（per-phase）仍可读但已弃用，SSOT 见 `framework/harness/scripts/utils/context-facts.ts`。
 5. **生成 spec 初稿**：读 `` `profile-skill-asset:spec/spec_template` ``，填 10 章节（0 术语映射表 / 1 功能概述 / 2 Scope 声明 / 3 目标用户场景 / 4 功能清单 / 5 页面描述 / 6 业务流程图 / 7 异常边界 / 8 非功能性需求 / 9 验收标准）。Scope 的 `in_scope_modules` 须全部来自已确认映射表的 `canonical_module`。UI 需求须在 Scope 附近增加独立 `yaml` 块（`ui_change` 字段，见 [reference/visual-handoff.md](reference/visual-handoff.md)）；非 UI 且未 opt-in `spec.visual_handoff_enforcement: strict` 时不写该块。**Scope 填写要点**：对照 architecture.md 判断 `in_scope_modules`/`out_of_scope_modules`，`rationale` 须回答"若下游想把逻辑提到公共模块是否同意"；模块名 PascalCase；判断不清宁可窄。
 6. **质量自检**（10 项，逐项检查不通过自动修正）：功能概述非空话 / Scope yaml 块+rationale / 用户场景明确 / 功能清单含优先级 / 界面描述覆盖截图元素 / Mermaid 语法+主路径分支 / 异常场景≥3 类 / 非功能性有量化指标 / 验收标准可测试且与功能清单对应 / Visual Handoff 独立块（若 UI）+ ui-spec 已产出（若 `new_or_changed`）。**`verified` 自检口径（plan c4e8a1f7 T3，能力与可审计性分轴）**：只有**能看图 ∧ 工具事件可审计**（`hasVision=true` 且 `tool_event_provenance=structured_events`，即 canary 判真视觉 + claude/codeagent）时，`verified` 非 unverified 才是**可达且被要求**的（逐张读图 → refs receipt → vl_multimodal 终签；**本 run 内读过且图未变即可采信，closure 轮不必重读**，plan 8d2b4f60 D2/D3）；其余象限（无视觉 / `none`-provenance 如 codex / 盲 + structured）统一走既有 `unverified` 语义——继续用图片完成工作但诚实写 `verified: unverified`（伪造 `verified: verified`/`verified_method: vl_multimodal` 恒被拒；best-effort/reachable 档 WARN 可继续，hard contract 仍 FAIL）。禁止无条件要求"verified 非 unverified"——那会让不可审计/盲宿主追逐结构性不可能终签。
 7. **输出与归档**：写盘 `spec.md`（+ `ui-spec.yaml` 若 UI）→ 对话输出摘要 → **冻结/下游授权**（`spec.freeze`：`1=冻结可进 plan` `2=继续改`，口头 OK 无效）→ 进 Step 8；Step 8 完成后立即进 Step 9，**严禁**跳过 7.1。

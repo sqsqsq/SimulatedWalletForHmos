@@ -70,7 +70,7 @@ deprecated_artifacts:
     reason: "v4.0 起选项文案合入 confirmation-registry.yaml"
   - path: hooks/record-verifier-report.mjs
     action: backup_delete
-    hook_configs: [settings.json]
+    hook_configs: [settings.json, settings.local.json]
     reason: "plan d2f7a9c4：SubagentStop 发布链整体删除，verifier 报告改由调用方写出；settings.json 已无注册，遗留脚本是死文件"
 
 # 视觉委托（plan ab072691）：本 adapter 可作**只读视觉 provider**。
@@ -136,7 +136,8 @@ goal_capability:
 post_install_hooks: []
 
 notes: |
-  - 提供 12 份 slash 路由模板：catalog-bootstrap / glossary-bootstrap、goal-mode、code-graph、
+  - 提供 slash 路由模板：catalog-bootstrap / glossary-bootstrap、conventions-bootstrap / component-catalog-bootstrap、extension、goal-mode、code-graph、
+    component-design 统一设计入口、change-unit-progression / component-closure 施工与闭环入口、
     change-lite、spec/plan/coding/code-review/business-ut/device-testing 六篇 feature skill、
     framework-init（framework-init.md）。个人 setup 无 slash，由阶段入口 `--ensure` 内联完成。
   - **claude-kernel 家族模板 SSOT**（plan c7a9e2f4）：本目录 templates/ 的 agents/（verifier）、

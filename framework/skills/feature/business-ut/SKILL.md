@@ -1,8 +1,14 @@
 # 业务级 UT Skill (`business-ut` · v2.1)
 
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.dag_confirm` / `ut.ok_to_testing` / `phase.next_step`。这些交互用于普通输入/导航，不得降低质量门禁。
 
 ## 前置
+
+**现代独立与组合调用**：完整 Feature/CU 使用 P1/P3 的有效 unit/both AC、BD、NFR、契约与实际源码；无 spec.md/plan.md 不补空文档。用户只运行/补指定测试时，按 request CLI 的 targets.tests 与已有断言/明确行为目标执行，只报告本次请求，不强制整份 acceptance、testability-audit 或 mock-plan。新增断言必须有授权预期，characterization 仅证明现状。首个实际阶段按入口 factsContext 建立事实，已有基线才追加 delta。
+
+**验证层与环境分开**：unit 性能项的指标与证明方法来自有效 acceptance，计入实际单元证据；ohosTest HAP 的 build/install/device 是 UT toolchain 的一部分，不自动安排 testing。现代调用明确依赖均为 pure 时不强造 mock-plan；真实外部依赖、分支和 testability 缺口继续按原专业检查处理。完成与复用由冻结 scope 和现有证据决定，不因末段为 UT 自报 Feature 完成。
 
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
@@ -10,7 +16,7 @@
 
 **设备策略（BLOCKER，`ut.run` 需真机时）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，此时不得当成"未配置"去引导重新登记）；`code=device_policy_unset` 就**先问用户四选一**再跑装机/`aa test`（选 ③ 须追问 `existing`/`managed`，禁默认托管）。**只看 `code` 不看 `configured`**——凭据已 burned/不存在或只有 `emulator_fallback=disabled` 时，`configured=true` 而 `code=unset`。与 goal 模式同一契约——普通模式下用户同样有权知道"可以启用自动解锁"，而不是撞上一句干巴巴的"设备锁屏"。PIN 只能由用户在自己终端登记，**绝不进对话**。harness-runner 在需设备 phase 另有**进程级**入口门（同一 `code`，在任何设备操作前 fail-fast，并把设备目标解析一次注入全链），漏问不会静默跑到锁屏——但那只是兜底，四选一仍是你的活。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
 
 ## 条件加载索引
 
@@ -88,6 +94,8 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 | doc/architecture.md | ✅ | 架构与依赖红线 |
 
 **缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段（**例外**：提供脱敏日志切片时走 path-c characterization，不要求先补 spec，见三路径路由）。
+
+**CU-bound 例外**：存在 `contracts.change_unit` 时，是否需要 use-cases.yaml/DAG 由 `contracts.state_management` 的有序步骤、失败/恢复、共享消费者、生命周期事实与 `acceptance.ut_layer` 机械派生；派生为 required 时缺失即 BLOCKER，不得 authored opt-out。简单只读/首次加载且无上述复杂事实时仍走退化模式，不制造假 mutation/subscription。
 
 **保证等级**：Harness 在 checker 前一次性解析 contract capabilities 与输入 source chain，机械写入 `summary.assurance` 和 `capability_resolutions`；Skill 不得手写 `full/basic` 档位。可裁剪能力会以受控理由投影到质量轴，核心输入缺失仍不可闭环；acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 

@@ -8,9 +8,13 @@ import type { FrameworkConfig } from '../../config';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import type { InitMode } from '../check-init';
 import { validateAgentBundleRoot, type ResolvedAgentBundlePaths } from './agent-bundle-paths';
+import { isInsideProjectRoot } from './project-relative-path';
 import type { CleanupResult } from './init-sync-telemetry';
 
 export const LEGACY_SKILL_BRIDGE_IDS = [
+  'change-lite',
+  // 设计入口已收敛至 component-design；P1 仅作内部工作流。
+  'app-component-blueprint',
   // 00 / 0 前缀
   '00-framework-init',
   '0-catalog-bootstrap',
@@ -58,6 +62,8 @@ export interface LegacySkillBridgePath {
 export interface LegacySkillBridgePresence {
   count: number;
   samples: string[];
+  /** 只读探测中无法判定的路径（junction/symlink 越界等）；S3 删除时会抛错并按 adapter 记 failed */
+  skipped: Array<{ relPosix: string; reason: string }>;
 }
 
 function toPosix(p: string): string {
@@ -88,15 +94,13 @@ export function assertSafeProjectRelativePath(projectRoot: string, relPosix: str
     throw new Error(`[legacy-skill-bridge] 非法相对路径: ${relPosix}`);
   }
   const absPath = path.resolve(projectRoot, normalized);
-  const rel = path.relative(projectRoot, absPath);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+  if (absPath === path.resolve(projectRoot) || !isInsideProjectRoot(projectRoot, absPath)) {
     throw new Error(`[legacy-skill-bridge] 路径越界: ${relPosix}`);
   }
   // 删除/备份前检查现存祖先，禁止经 symlink/junction 越出宿主。
   let existing = absPath;
   while (!fs.existsSync(existing)) existing = path.dirname(existing);
-  const realRel = path.relative(fs.realpathSync(projectRoot), fs.realpathSync(existing));
-  if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+  if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(existing))) {
     throw new Error(`[legacy-skill-bridge] 实际路径越界: ${relPosix}`);
   }
   return absPath;
@@ -181,14 +185,23 @@ export function detectLegacySkillBridgePresence(
     config,
   });
   const samples: string[] = [];
+  const skipped: LegacySkillBridgePresence['skipped'] = [];
   let count = 0;
   for (const entry of paths) {
-    const absPath = assertSafeProjectRelativePath(projectRoot, entry.relPosix);
+    // 只读探测不得因单条路径不可判定（junction/symlink 越界等）整体失败——否则 S1 生不出计划。
+    // 删除路径 applyLegacySkillBridgeCleanup 仍然抛错，安全锚不变。
+    let absPath: string;
+    try {
+      absPath = assertSafeProjectRelativePath(projectRoot, entry.relPosix);
+    } catch (e) {
+      skipped.push({ relPosix: entry.relPosix, reason: (e as Error).message });
+      continue;
+    }
     if (!fs.existsSync(absPath)) continue;
     count++;
     if (samples.length < 5) samples.push(entry.relPosix);
   }
-  return { count, samples };
+  return { count, samples, skipped };
 }
 
 export function applyLegacySkillBridgeCleanup(
@@ -201,6 +214,11 @@ export function applyLegacySkillBridgeCleanup(
 
   const session = opts.backupSession;
   let backupRelDir: string | null = session?.backupRelDir ?? null;
+  // 时间戳只算**一次**：它是秒级的，放在逐条循环里会让一轮清理跨秒时落进两个
+  // `.framework-backup/<stamp>` 目录，而本函数只返回最后一个——调用方据此认为「这一轮的
+  // 备份都在这里」就会漏看前半截（逐条 `cleaned[].backup_path` 仍是对的）。
+  // 记忆化写法与 `check-init.ts` 的 backup session 一致。
+  const fallbackBackupRelDir = '.framework-backup/' + new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
   for (const entry of collectLegacySkillBridgePaths(opts)) {
     const absPath = assertSafeProjectRelativePath(opts.projectRoot, entry.relPosix);
@@ -211,8 +229,7 @@ export function applyLegacySkillBridgeCleanup(
       const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     } else {
-      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-      backupRelDir = `.framework-backup/${stamp}`;
+      backupRelDir = fallbackBackupRelDir;
       const backupAbs = assertSafeProjectRelativePath(opts.projectRoot, `${backupRelDir}/${entry.relPosix}`);
       copyPathRecursive(absPath, backupAbs);
     }

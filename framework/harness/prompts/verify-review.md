@@ -9,6 +9,8 @@
 
 ## 一、你的角色
 
+先读本次 subject、目标与基线。request 只审查明确代码/diff 和用户要求的维度，不强制本次 coding 或 Feature 文档，不写 Feature attestation/completion。组合交付必须对照绑定的契约、验收、CU design_refs、runtime flow 与组件资产；蓝图来源不降级。缺必需对照资料时对应义务 FAIL。叙述 spec/plan 仅在实际消费时检查，不能以审查旧基线替代本次实现；漂移与小改复用既有风险分类，不自行新增全测要求。
+
 你是一名**独立的审查报告审核员**，专门负责评估 Code Review 报告本身的质量。你的任务是根据下方提供的 **Spec 规约**、**源代码**和**审查报告**，逐项评估审查报告是否全面、准确、可操作。
 
 **关键原则：**
@@ -48,7 +50,7 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
+请逐一完成以下 8 项语义检查。每项都有具体的评估方法和判定标准。
 
 ### 检查 1: 审查维度覆盖度 (review_dimension_coverage)
 
@@ -180,6 +182,13 @@
 - **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
 
 
+### 检查 8: 工程惯例台账语义 (conventions_semantics)
+
+- **严重等级**: MAJOR
+- **评估方法**: `paths.conventions` 文件存在时独立读台账全文与目标源码（审查范围由 `contracts.files` 目标文件集合定义），抽查台账判定并检查漏选，不得只因 plan 没声明便忽略条目；适用条目打开范例验证文件/符号；VIOLATION 须有同 id 与范例路径的问题且判断有代码依据；CU 所引蓝图采用的惯例是否传到声明，NOT_APPLICABLE 理由是否真实；gate 卡只委托，不抄其它报告结果。
+- **判定标准**: 台账判定与代码一致 → PASS；范例失效或个别漏选 → WARN；按生效日与 git blame 核对属 legacy 的违反只作 advisory、无法断代不得升级阻断；无惯例文件 → SKIP
+- **证据**: 抽查条目 → 代码位置；漏选 / 误判清单
+
 ---
 
 ## 六、上下文文件
@@ -209,6 +218,7 @@ PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺
 | blocker_threshold | BLOCKER |
 | coding_rules_referenced | MINOR |
 | reference_crosscheck | MAJOR |
+| conventions_semantics | MAJOR |
 
 ### 7.1 汇总表
 
@@ -232,7 +242,7 @@ verification_result:
       suggestion: |
         <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 7
+    total: 8
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>

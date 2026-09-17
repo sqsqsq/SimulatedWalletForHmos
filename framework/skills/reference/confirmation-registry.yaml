@@ -305,6 +305,26 @@ entries:
         portable: "暂不确认"
 
   # --- catalog-bootstrap catalog ---
+  - id: conventions.staging_card
+    skill: "conventions-bootstrap"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "Step 5 逐条确认"
+    portable_menu: "1=y确认 2=e修改 3=s跳过 4=q作废"
+    options:
+      - value: confirm
+        label: "确认 — 将当前惯例卡写入工程惯例资产"
+        portable: "1=y确认"
+      - value: edit
+        label: "修改 — 调整当前卡片后再次确认"
+        portable: "2=e修改"
+      - value: skip
+        label: "跳过 — 保留候选但本轮不入库"
+        portable: "3=s跳过"
+      - value: void
+        label: "作废 — 丢弃当前候选"
+        portable: "4=q作废"
+
   - id: catalog.staging_module
     skill: "catalog-bootstrap"
     class: enum
@@ -452,27 +472,6 @@ entries:
       - value: continue_edit
         label: "继续改 spec — 本轮不冻结"
         portable: "2=继续改 spec"
-
-  # --- change-lite（lite 轨） ---
-  - id: feature.track
-    skill: "change-lite"
-    class: gate
-    ssot_anchor: "user-confirmation-ux.md §3.1"
-    skill_step: "S1 判档 / 中途升档"
-    portable_menu: "1=接受建议档 2=升 full 3=保持 lite"
-    notes: "agent 依 change-rules.yaml track_scoring 提议档位；一票升 full 项（pixel_1to1 / 跨模块 / goal 模式）命中时不得提议 lite。中途升档复用本 gate：确认后 feature.yaml history append，change.md 作 spec/plan 种子。"
-    options:
-      - value: accept_suggested
-        label: "接受建议档 — 按评分建议的 track 进入对应链"
-        portable: "1=接受建议档"
-        side_effect: "写 feature.yaml track/score_snapshot/selection_source"
-      - value: upgrade_full
-        label: "升 full — 走 spec→plan→coding→review→ut→testing 全链"
-        portable: "2=升 full"
-        side_effect: "feature.yaml track: full；升档时 history append + change.md 作种子"
-      - value: keep_lite
-        label: "保持 lite — 走 change→coding→exit 单文档链"
-        portable: "3=保持 lite"
 
   # --- plan ---
   - id: plan.scope_expansion
@@ -793,3 +792,22 @@ entries:
       - value: edit_plan
         label: "修改计划 — 我要调整测试计划后再跑"
         portable: "2=修改计划"
+
+  # --- component design (formal-requirement entry) ---
+  - id: design.formality_routing
+    skill: "component-design"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "正式性判定（component-design 第 0 步；spec / change-lite 首次冻结施工意图时的兜底复核共用同一确认点）"
+    portable_menu: "1=正式需求 2=非正式维护 3=信息不足"
+    notes: "仅在判据信息不足、或兜底复核发现事项符合正式需求判据却未经蓝图时询问。上游已显式标为正式需求时该分类具权威性、不再询问。这是路由确认点，不是质量门禁：不新增 track_scoring 条目、不新增档位、不加机器 BLOCKER；三处入口共用本条目，不各建状态。"
+    options:
+      - value: formal_requirement
+        label: "正式需求 — 回 /component-design 建立部件演进蓝图后再施工"
+        portable: "1=正式需求"
+      - value: non_formal_maintenance
+        label: "非正式维护 — 不改变行为/契约/数据/NFR/运行语义/架构责任，继续 L0/L1 施工分档"
+        portable: "2=非正式维护"
+      - value: needs_clarification
+        label: "信息不足 — 继续澄清后再判，不猜测、不默认按任一侧处理"
+        portable: "3=信息不足"

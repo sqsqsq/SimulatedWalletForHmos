@@ -46,7 +46,9 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath, relFeaturesDir } from '../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（素材路径 fallback 不得拼接逻辑 id）
+import { featureRelativePath } from './utils/feature-identity';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { reviewVisionForMode } from './utils/visual-provider-identity';
 import {
@@ -74,6 +76,7 @@ import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { designScopeRevisionChecks } from './utils/blueprint-skill-projection';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
 
@@ -337,7 +340,7 @@ export function maybeWriteAssetRequest(ctx: CheckContext): void {
     ...items.map(a => {
       const role = /(logo|brand)/i.test(a.key) ? 'brand_logo' : 'illustration';
       const size = role === 'brand_logo' ? '96×96（正方形，透明底 png/svg）' : '≥320×200（png/svg）';
-      const drop = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${a.key}.png`;
+      const drop = a.resolved_path ?? `${relFeaturesDir(ctx.projectRoot)}/${featureRelativePath(ctx.feature)}/spec/assets/${a.key}.png`;
       const ph = role === 'brand_logo' ? 'text_avatar（首字色块）' : 'illustration_frame（中性占位框）';
       return `| ${a.key} | ${role} | ${size} | ${drop} | ${ph} |`;
     }),
@@ -1479,6 +1482,17 @@ const checker: PhaseChecker = {
   phase: 'spec',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'spec.md')) {
+      const results = [...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
+        ...evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature, ctx.featureSpec.acceptance), ...evaluateFlowContract(ctx.projectRoot, ctx.feature, '', ctx.featureSpec.acceptance),
+        ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
+      if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'ui-spec.yaml')) {
+        const input = ctx.resolvedInputs.values.requirement;
+        const requirement = input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '';
+        results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, requirement), ...dispatchSpecUiSpec(ctx, requirement), ...dispatchSpecAssetAcquisition(ctx));
+      }
+      return [...results, ...designScopeRevisionChecks(ctx, results)];
+    }
     const prd = loadPrd(ctx);
     if (!prd) {
       const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
@@ -1577,6 +1591,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -1601,7 +1617,7 @@ const checker: PhaseChecker = {
     // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
     results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
 
-    return results;
+    return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
 

@@ -26,6 +26,9 @@ framework 控制面写权限来自模型外执行环境，不来自 env、`frame
 
 发现 framework 缺陷时，不得在宿主改门禁“让检查变绿”。应带报告/栈回灌 agent-maison 源仓，修复后重新发布，再由用户/CI 明确集成。宿主 add/stage/commit 不是 Maison 放行步骤。
 
+> 宿主发现问题的**分类与回流路径**（框架缺陷 / 输入缺口 / 宿主问题）见
+> [真实宿主准入与回灌契约](./real-host-admission-and-feedback.md)（§缺口回流路径）。
+
 历史 `integrity.drift_allowlist` 与 `integrity.allow_local_drift` 已退役：为存量 config 无损读取可继续解析，但读取即忽略，不能解锁守卫、不能改变 verdict，也不会产生运行时迁移 advisory。迁移说明见 schema/template/MIGRATION。
 
 ## 临时诊断脚本去处

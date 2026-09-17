@@ -43,6 +43,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// 发布件内共享 SSOT 加载（M5A §4.3）：hook 不携带 decoder 副本；CJS 模块经
+// createRequire 同步 require（Node ESM → CJS 互操作）。
+const requireNodeModule = (() => {
+  try {
+    return createRequire(import.meta.url);
+  } catch {
+    return null;
+  }
+})();
 
 // --------------------------------------------------------------------------
 // HOOK 端默认时间常量
@@ -181,6 +192,25 @@ function readFeaturesDirFromConfig(projectRoot) {
     return 'doc/features';
   } catch {
     return 'doc/features';
+  }
+}
+
+/**
+ * M5A §4.3：解析 feature 的物理相对路径（经发布件内唯一 SSOT）。
+ * - legacy id：原样返回（不依赖 SSOT，保持旧行为）；
+ * - `cu-` 前缀：必须经 SSOT 展开——SSOT 缺失/损坏/抛错（含非法 payload 的
+ *   fail-closed 异常）时返回 null，调用方 fail-closed（阻断或走州文件兜底），
+ *   **绝不**把编码后的逻辑 id 当物理路径（spec：“Invalid cu- identity fails
+ *   closed” / “hooks SHALL NOT read or write a path containing the encoded identity”）。
+ */
+function resolveFeatureRel(projectRoot, feature) {
+  if (typeof feature !== 'string' || !feature.startsWith('cu-')) return feature;
+  try {
+    const ssotAbs = path.resolve(projectRoot, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
+    if (!fs.existsSync(ssotAbs) || !requireNodeModule) return null;
+    return requireNodeModule(ssotAbs).featureRelativePath(feature);
+  } catch {
+    return null;
   }
 }
 
@@ -478,6 +508,10 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
     if (feature === '_global') {
       return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
     }
+    // M5A：<feature> 占位符替换为物理相对路径（唯一 SSOT 展开，见 resolveFeatureRel）；
+    // `cu-` 前缀解析失败 → null（fail-closed，禁止把编码 id 当物理路径）。
+    const featureRel = resolveFeatureRel(projectRoot, feature);
+    if (featureRel === null) return null;
     let pattern = null;
     try {
       const cfgPath = path.resolve(projectRoot, 'framework.config.json');
@@ -490,10 +524,13 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       pattern = null;
     }
     if (pattern) {
-      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+    // M5A t4：无 reports_dir_pattern 时默认形态跟随 features_dir（P2 spec
+    // “Custom features_dir … no path construction SHALL hardcode doc/features”），
+    // 而非硬编码 framework/harness/reports。
+    return path.resolve(projectRoot, readFeaturesDirFromConfig(projectRoot), featureRel, phase, "reports");
   } catch {
     return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }
@@ -563,7 +600,7 @@ export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveB
   return { count, release };
 }
 
-function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features') {
+function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features', reportsDirRel = null) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
@@ -599,10 +636,14 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           ? `Task(subagent_type=verifier, prompt=${
               summaryHint && summaryHint.verifierRequest
                 ? summaryHint.verifierRequest
-                : `<features_dir>/${feature}/${phase}/reports/verifier.request.<subject>.json`
+                : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')
             } 的完整正文)，再按下面第 3 步收尾`
           : rerunCmd
     }`,
+    // M5A：CU Feature 物理路径解析失败（identity 非法 / SSOT 缺失）时点名诊断，不生成任何伪路径。
+    ...(reportsDirRel === null && feature.startsWith('cu-')
+      ? ['  （无法解析 CU Feature 物理路径：framework SSOT 缺失/损坏或 identity 非法——请先修复 framework 安装或 CU 身份后重跑）']
+      : []),
     ...(progress && progress.max > 0
       ? [`（第 ${progress.count}/${progress.max} 次拦截；连续零进展达 ${progress.max} 次将自动放行，交还你/用户决定。）`]
       : []),
@@ -623,7 +664,7 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `       ${syncCmd}`,
           `     它会按 base summary、verifier evidence 与 policy 收口；exit 0 即闭环。receipt 只在 closed 后 best-effort 投影，不需要手填。`,
           `  2. 若它报 verifier 证据缺失且 summary.verifier_request 在场：`,
-          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : `<features_dir>/${feature}/${phase}/reports/verifier.request.<subject>.json`}`,
+          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')}`,
           `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
           `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
@@ -795,11 +836,14 @@ async function main() {
     return;
   }
 
-  // 未达阈值 → 动作优先文案 + exit 2
+  // 未达阈值 → 动作优先文案 + exit 2。reports 目录经 M5A SSOT 与 reports_dir_pattern 解析成物理路径；
+  // CU Feature 解析失败（SSOT 不可用 / identity 非法）→ null，文案点名诊断，绝不把编码后的逻辑 id 当物理路径。
+  const reportsDirAbs = resolveFeaturePhaseReportDir(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown');
+  const reportsDirRel = reportsDirAbs ? path.relative(projectRoot, reportsDirAbs).replace(/\\/g, '/') : null;
   const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
     count,
     max: maxConsecutiveBlocks,
-  }, readFeaturesDirFromConfig(projectRoot));
+  }, readFeaturesDirFromConfig(projectRoot), reportsDirRel);
   const decision = {
     decision: 'block',
     reason,

@@ -27,8 +27,11 @@ import {
   writePhaseEvidenceManifest,
 } from './phase-evidence-manifest';
 import { isPidAlive } from './goal-run-lock';
+import { validateProjectRelativePath } from './project-relative-path';
 import {
   buildSummaryRepairCandidates,
+  scopeRevisionInputFromRepairCandidates,
+  writeScopeRevisionInputToScriptReport,
   type RepairCandidateCheckInput,
 } from './repair-candidates';
 import { deriveVerifierClosureRecord, loadVerifierReportTextOrNull } from './verifier-evidence';
@@ -48,6 +51,8 @@ export interface ClosureCommitV1 {
 }
 
 export interface FinalizePhaseClosureOptions {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -208,6 +213,50 @@ function capabilityResolutionEvidenceInputs(
   return [...paths].sort();
 }
 
+/**
+ * 本阶段 PASS check 实际引用、且真实存在的项目文件（去重、项目根相对）。
+ *
+ * 这些文件就是该阶段证据的"被执行对象"。不把它们登记进 manifest，血缘对它们就是空门：
+ * 改动它们不会让任何阶段 stale，旧 PASS 报告会继续为改动后的源码背书
+ * （下游消费点 `component-closure-evidence.ts` 的 `manifestTracksAuthority`）。
+ */
+function executedEvidenceInputs(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot?: string,
+): string[] {
+  const reportAbs = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'script-report.json');
+  if (!fs.existsSync(reportAbs)) return [];
+  let checks: Array<{ status?: unknown; affected_files?: unknown }>;
+  try {
+    const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as { checks?: unknown };
+    checks = Array.isArray(doc.checks) ? (doc.checks as typeof checks) : [];
+  } catch {
+    // 报告本身损坏由所在阶段的门禁负责报告，这里不臆造证据链。
+    return [];
+  }
+  const out = new Set<string>();
+  for (const check of checks) {
+    if (check?.status !== 'PASS' || !Array.isArray(check.affected_files)) continue;
+    for (const raw of check.affected_files) {
+      if (typeof raw !== 'string' || raw.trim() === '') continue;
+      // 路径边界只认既有 SSOT，不另起一套判断（它显式禁止 `rel.startsWith('..')`，
+      // 也拒绝绝对路径——两者本模块都不得自行放宽）。
+      let rel: string;
+      try {
+        rel = validateProjectRelativePath(projectRoot, raw, `evidence affected_file:${raw}`);
+      } catch {
+        continue;
+      }
+      const abs = path.resolve(projectRoot, rel);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      out.add(rel);
+    }
+  }
+  return [...out];
+}
+
 function productionEvidence(
   opts: FinalizePhaseClosureOptions,
   summaryPath: string,
@@ -256,8 +305,9 @@ function productionEvidence(
   }
   return {
     extraInputs: [...new Set([
-      ...collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel),
+      ...(opts.resolvedInputs ? [] : collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel)),
       ...capabilityResolutionEvidenceInputs(summaryPath, opts.projectRoot),
+      ...executedEvidenceInputs(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
     ])].sort(),
     extraOutputs,
     requirementSha,
@@ -328,6 +378,8 @@ function publishEvidenceBinding(
   const manifestRel = path.relative(opts.projectRoot, manifestAbs).replace(/\\/g, '/');
   const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts, summaryPath);
   const manifest = resolvePhaseEvidenceManifest({
+    resolvedInputs: opts.resolvedInputs,
+    factsContext: opts.factsContext,
     projectRoot: opts.projectRoot,
     feature: opts.feature,
     phase: opts.phase as Phase,
@@ -620,6 +672,25 @@ function recomputeClosureRepairCandidates(
   };
   // plan a9d4e7c2 P1-5：verifier 依赖的候选只有到这一步才有可验真的证据可依。
   const closureRepairCandidates = recomputeClosureRepairCandidates(opts, reportsDir, current.parsed);
+  // D0.3：晚到的 spec/plan 归属候选（首次 writer 时 verifier 还没有产物；`--sync-closure`
+  // 也只走这条路）同样要把修订输入落进 script-report.json——在证据 manifest 重算与
+  // staged rename 之前回写，manifest 纳入的就是回写后的字节。只覆盖 PASS 闭环这一支，
+  // FAIL 支由 writer 侧那一处兜住。
+  if (closureRepairCandidates?.length) {
+    // run 身份：调用方显式给的优先，否则取**本阶段 summary 自己记的 run_id**（phase harness
+    // 跑的时候写下的）。`--sync-closure` 是独立进程、没有 MAISON_GOAL_RUN_ID，靠的就是这一条；
+    // 刻意不借 `opts.goalRunId` 从 sync-closure 侧回填——那个字段同时是 requirement 血缘严格性
+    // 的开关，借它会顺带改掉与 D0.3 无关的闭环判据。
+    const summaryRunId = (current.parsed as { run_id?: string }).run_id?.trim();
+    const revisionRunId = opts.goalRunId?.trim() || summaryRunId;
+    const revision = scopeRevisionInputFromRepairCandidates(closureRepairCandidates, {
+      projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot, feature: opts.feature,
+      ...(revisionRunId ? { runId: revisionRunId } : {}),
+    });
+    // 回写失败即抛：闭环就停在 open（本函数尚未 staged rename），不产生「候选在 summary、
+    // 修订输入却没落盘」的 closed 阶段。
+    if (revision) writeScopeRevisionInputToScriptReport(path.join(reportsDir, 'script-report.json'), revision.input, revision.candidateIds);
+  }
   const finalSummary: HarnessRunSummary = {
     // plan a9d4e7c2 T3：**保真闭环**——`{...current.parsed}` 原样带走 base 的代际与
     // verifier 字段；这里绝不把 1.3 回写成 1.2（旧写法会让 open→closed 悄悄降代，

@@ -39,6 +39,9 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { checkTypedConstructionContent, designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import * as path from 'path';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import {
   extractHeadings,
   getSectionContent,
@@ -1003,7 +1006,8 @@ const CONSTRAINT_CATEGORIES = new Set(['security', 'performance', 'dfx', 'nfr', 
 
 function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): CheckResult[] {
   const accPath = featureFilePath(ctx.projectRoot, ctx.feature, 'acceptance.yaml');
-  if (!fs.existsSync(accPath)) {
+  const typed = ctx.resolvedInputs ? ctx.featureSpec.acceptance : undefined;
+  if (!typed && !fs.existsSync(accPath)) {
     return [{
       id: 'spec_constraint_traceability',
       category: 'traceability',
@@ -1015,7 +1019,7 @@ function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): Check
   }
   let doc: { criteria?: Array<Record<string, unknown>> };
   try {
-    doc = YAML.parse(fs.readFileSync(accPath, 'utf-8')) as { criteria?: Array<Record<string, unknown>> };
+    doc = typed ?? YAML.parse(fs.readFileSync(accPath, 'utf-8')) as { criteria?: Array<Record<string, unknown>> };
   } catch (e) {
     return [{
       id: 'spec_constraint_traceability',
@@ -1044,7 +1048,8 @@ function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): Check
   }
   let contractsText = '';
   const contractsPath = featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml');
-  if (fs.existsSync(contractsPath)) {
+  if (ctx.resolvedInputs) contractsText = JSON.stringify(ctx.featureSpec.contracts ?? {});
+  else if (fs.existsSync(contractsPath)) {
     contractsText = fs.readFileSync(contractsPath, 'utf-8');
   }
   const haystack = `${plan}\n${contractsText}`;
@@ -1150,6 +1155,13 @@ const checker: PhaseChecker = {
   phase: 'plan',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'plan.md')) {
+      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''),
+        ...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
+        ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
+      if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'visual-parity.yaml')) results.push(...dispatchPlanVisualParity(ctx));
+      return [...results, ...designScopeRevisionChecks(ctx, results)];
+    }
     const design = loadDoc(ctx, 'plan.md');
     if (!design) {
       const designRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
@@ -1184,6 +1196,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
     results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
 
     if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1212,6 +1225,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -1220,7 +1235,7 @@ const checker: PhaseChecker = {
       ),
     );
 
-    return results;
+    return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
 

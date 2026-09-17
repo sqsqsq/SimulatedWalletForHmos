@@ -1,28 +1,191 @@
-// cp→main: 分支临时件（plan a7c3e9d2）。主干同路径已有 manifest 1.1 版：对 1.0 返回空串，对 1.1 渲染 knowledge / before_phase_work / mcp 三块。
-// cp 时整份取主干版本，不合并本文件；仍用 1.0 的宿主会失去 goal 作者提示，须改 1.1 声明（MIGRATION.md 3.0.x 段）。
+import * as fs from 'fs';
 import * as path from 'path';
 
-import type { ExtensionBundle } from './types';
+import type {
+  CheckResult,
+  ExtensionBundle,
+  ExtensionKnowledgeEntry,
+  ExtensionMcpAction,
+  ExtensionPhaseBindingSlot,
+} from './types';
+import {
+  checkCanonicalComponentBlueprint,
+  checkHostSeamMaterials,
+  checkMaterializationOnly,
+} from '../check-component-blueprint';
+import { MATERIALIZATION_ARTIFACT, REVIEW_FEEDBACK_ARTIFACT } from './blueprint-host-seams';
 
 function rel(projectRoot: string, target: string): string {
   return path.relative(projectRoot, target).replace(/\\/g, '/');
 }
 
+function phaseInputsActive(bundle: ExtensionBundle | undefined, phase: string): bundle is ExtensionBundle {
+  return Boolean(bundle && bundle.manifestVersion === '1.1' && bundle.errors.length === 0 && bundle.featurePhases.includes(phase));
+}
+
 /**
- * 作者阶段 prompt 的实例扩展输入段——与主干 formatExtensionPhasePrompt 同名、同签名、同标题。
- * 3.0.x 分支体只渲染 manifest 1.0 的 `provides.knowledge`（字符串；全部 Feature phase 都列出），
- * 不列 hooks、不跑 .mjs、不读正文。`phase` 在本分支不参与判断，只为对齐主干签名。
- * bundle 缺失 / errors 非空 → 空串；错误由调用入口出声（goal-phase-runtime.extensionInputsForPhase）。
+ * 该 phase 的 knowledge 条目：audience 命中（含 legacy 字符串）；`includeBound` 时并入本 phase
+ * phase_bindings 里 `kind: knowledge` 引用的条目（loader 只查引用存在、不要求 audience 命中，
+ * 而 prompt 照样渲染该绑定行）。formatter 用前者做索引，verifier 审前材料用并集。
  */
+export function extensionPhaseKnowledge(
+  bundle: ExtensionBundle | undefined,
+  phase: string,
+  opts?: { includeBound?: boolean },
+): ExtensionKnowledgeEntry[] {
+  if (!phaseInputsActive(bundle, phase)) return [];
+  const out = bundle.knowledge.filter(item => item.legacy
+    || (Array.isArray(item.audience) && item.audience.includes(phase)));
+  if (!opts?.includeBound) return out;
+  const seen = new Set(out.map(item => item.path));
+  for (const items of Object.values(bundle.phaseBindings[phase] ?? {})) {
+    for (const binding of items ?? []) {
+      if (binding.kind !== 'knowledge' || seen.has(binding.ref)) continue;
+      const entry = bundle.knowledge.find(item => item.path === binding.ref);
+      if (entry) { out.push(entry); seen.add(entry.path); }
+    }
+  }
+  return out;
+}
+
 export function formatExtensionPhasePrompt(
   bundle: ExtensionBundle | undefined,
-  _phase: string,
+  phase: string,
   projectRoot: string,
 ): string {
-  if (!bundle || bundle.errors.length > 0 || bundle.knowledgePaths.length === 0) return '';
-  const lines = ['## Instance extension inputs', '', '### Knowledge index', ''];
-  for (const abs of bundle.knowledgePaths) {
-    lines.push('- `' + rel(projectRoot, abs) + '`');
+  if (!phaseInputsActive(bundle, phase)) return '';
+  const knowledge = extensionPhaseKnowledge(bundle, phase);
+  const slots = bundle.phaseBindings[phase] ?? {};
+  if (knowledge.length === 0 && Object.keys(slots).length === 0) return '';
+  const lines = ['## Instance extension inputs', ''];
+  if (knowledge.length > 0) {
+    lines.push('### Knowledge index', '');
+    for (const item of knowledge) {
+      lines.push('- `' + rel(projectRoot, item.absPath) + '`' + (item.summary ? ` — ${item.summary}` : ''));
+    }
+    lines.push('');
+  }
+  for (const slot of ['before_phase_work', 'before_phase_verify', 'after_phase_verify_before_close'] as const) {
+    const items = slots[slot];
+    if (!items?.length) continue;
+    lines.push(`### ${slot}`, '');
+    for (const item of items) {
+      const action = item.kind === 'mcp' ? bundle.mcpActions[item.ref] : undefined;
+      lines.push(action
+        ? '- mcp `' + item.ref + '` → tool `' + action.tool + '`; ' + action.usage
+          + '; produces: ' + action.produces.map(value => '`' + value + '`').join(', ')
+        : `- ${item.kind} ` + '`' + item.ref + '`');
+    }
+    lines.push('');
   }
   return lines.join('\n').trimEnd();
+}
+
+export function checkExtensionManifest(bundle: ExtensionBundle | undefined): CheckResult[] {
+  if (!bundle || bundle.errors.length === 0) return [];
+  return bundle.errors.map((error, index) => ({
+    id: `extension_manifest_${error.code}_${index}`,
+    category: 'structure',
+    description: `实例扩展 manifest/路径合法：${error.code}`,
+    severity: 'BLOCKER',
+    status: 'FAIL',
+    details: [error.message, error.path ?? '', bundle.manifestPath ?? ''].filter(Boolean).join('\n'),
+    suggestion: '运行 /extension inspect，修复同一 manifest 诊断后重跑当前 phase。',
+  }));
+}
+
+export function inspectExtensionProduce(
+  projectRoot: string,
+  target: string,
+): { seam: string | null; issues: Array<{ id: string; message: string }> } {
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(target, 'utf8'));
+  } catch {
+    return { seam: null, issues: [] };
+  }
+  const artifact = value && typeof value === 'object' && !Array.isArray(value)
+    ? String((value as Record<string, unknown>).artifact ?? '')
+    : '';
+  if (artifact === MATERIALIZATION_ARTIFACT) {
+    const blueprintId = String((value as Record<string, unknown>).blueprint_id ?? '');
+    return {
+      seam: 'requirement-source-materialization',
+      issues: checkMaterializationOnly(projectRoot, blueprintId, target).issues
+        .filter(item => item.severity === 'BLOCKER')
+        .map(item => ({ id: item.id, message: item.message })),
+    };
+  }
+  if (artifact === REVIEW_FEEDBACK_ARTIFACT) {
+    try {
+      const blueprintId = String((value as Record<string, unknown>).blueprint_id ?? '');
+      const loaded = checkCanonicalComponentBlueprint(projectRoot, blueprintId);
+      const seam = checkHostSeamMaterials(projectRoot, loaded, { feedback: target });
+      return {
+        seam: 'blueprint-review-feedback',
+        issues: [...loaded.issues, ...seam.issues]
+          .filter(item => item.severity === 'BLOCKER')
+          .map(item => ({ id: item.id, message: item.message })),
+      };
+    } catch (error) {
+      return { seam: 'blueprint-review-feedback', issues: [{ id: 'component_blueprint_check_failed', message: (error as Error).message }] };
+    }
+  }
+  return { seam: null, issues: [] };
+}
+
+function actionProduceChecks(
+  action: ExtensionMcpAction,
+  projectRoot: string,
+  phase: string,
+  slot: ExtensionPhaseBindingSlot,
+): CheckResult[] {
+  const results: CheckResult[] = [];
+  for (let index = 0; index < action.produceAbsPaths.length; index++) {
+    const target = action.produceAbsPaths[index]!;
+    const targetRel = action.produces[index]!;
+    const id = `extension_produces_${phase}_${slot}_${action.id}_${index}`;
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+      results.push({
+        id, category: 'structure', description: `extension action ${action.id} 产物存在`,
+        severity: action.required ? action.severity : 'MINOR',
+        status: action.required ? 'FAIL' : 'SKIP',
+        details: `missing=${targetRel}; required=${action.required}`,
+        suggestion: `按 manifest usage 调用宿主工具 ${action.tool} 并生成 ${targetRel}。`,
+      });
+      continue;
+    }
+    const m7 = inspectExtensionProduce(projectRoot, target);
+    if (m7.issues.length > 0) {
+      results.push({
+        id, category: 'structure', description: `extension action ${action.id} 的 ${m7.seam} 产物通过既有接缝校验`,
+        severity: 'BLOCKER', status: 'FAIL',
+        details: `${targetRel}\n${m7.issues.map(issue => `${issue.id}: ${issue.message}`).join('\n')}`,
+        suggestion: '按 check:component-blueprint 的既有诊断修正接缝文件。',
+      });
+      continue;
+    }
+    results.push({
+      id, category: 'structure',
+      description: `extension action ${action.id} 产物可用${m7.seam ? `（${m7.seam}）` : ''}`,
+      severity: 'MINOR', status: 'PASS', details: targetRel,
+    });
+  }
+  return results;
+}
+
+export function checkExtensionBindingProduces(args: {
+  bundle: ExtensionBundle | undefined;
+  projectRoot: string;
+  phase: string;
+  slot: ExtensionPhaseBindingSlot;
+}): CheckResult[] {
+  const { bundle, projectRoot, phase, slot } = args;
+  if (!bundle || bundle.manifestVersion !== '1.1' || bundle.errors.length > 0) return [];
+  const bindings = bundle.phaseBindings[phase]?.[slot] ?? [];
+  return bindings.flatMap(binding => {
+    if (binding.kind !== 'mcp') return [];
+    const action = bundle.mcpActions[binding.ref];
+    return action ? actionProduceChecks(action, projectRoot, phase, slot) : [];
+  });
 }

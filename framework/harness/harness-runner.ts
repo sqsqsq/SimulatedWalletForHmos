@@ -24,6 +24,7 @@ import * as fs from 'fs';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
 import { SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
+import { componentReviewContext } from './scripts/utils/component-selection-check';
 import {
   generateScriptReport,
   assembleAIPrompt,
@@ -39,6 +40,7 @@ import {
   writeVerifierMaterial,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
+import { resolveFactsAbsPath } from './scripts/utils/context-facts';
 import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
 import { resolveAuthoritativeHylyreTracePath } from './scripts/utils/testing-trace-gates';
@@ -108,6 +110,9 @@ import {
   catalogPath,
   glossaryPath,
   architectureMdPath,
+  conventionsPath,
+  componentIndexPath,
+  relConventions,
   relCatalog,
   relGlossary,
   relArchitectureMd,
@@ -124,6 +129,8 @@ import {
 import {
   buildSummaryRepairCandidates,
   findUnreadableDiagnosisChecks,
+  scopeRevisionInputFromRepairCandidates,
+  writeScopeRevisionInputToScriptReport,
 } from './scripts/utils/repair-candidates';
 import { evaluateConfigPlacementGate } from './scripts/utils/config-placement-gate';
 import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-personal-prerequisites';
@@ -193,12 +200,14 @@ import {
 } from './scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
+import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
+import { runExplicitRequest } from './scripts/utils/request-phase';
 import { finalizePhaseClosure } from './scripts/utils/phase-closure-finalizer';
 import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
   collectBlockedCapabilityFacts,
-  resolveCapabilityReport,
+  resolveCapabilityInputs,
   type CapabilityResolutionReport,
 } from './scripts/utils/capability-resolution';
 import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
@@ -208,6 +217,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
+import { checkExtensionBindingProduces, checkExtensionManifest, extensionPhaseKnowledge, formatExtensionPhasePrompt } from './scripts/utils/extension-runtime';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
@@ -322,6 +332,8 @@ export function resolveHarnessFidelityContextFields(input: {
     ),
   };
 }
+import { workflowForExistingRun } from './workflow-loader';
+import { resolveExecutionScope } from './scripts/utils/execution-scope';
 import { resolveAuthoritativePath } from './scripts/utils/visual-source-resolver';
 import { parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC, uiSpecRelPath, uiSpecAbsPath } from './scripts/utils/ui-spec-shared';
 
@@ -334,8 +346,9 @@ const args = minimist(process.argv.slice(2), {
     'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
+    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path',
   ],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -400,6 +413,9 @@ export function bindAttendedGoalContext(input: {
 
 function printHelp(): void {
   console.log(`
+全局局部范围：catalog --module <name>；glossary --term <term> / --module <name>；
+module-graph --module <name> [--package-path <path>]；docs --path <inventory-path-or-directory>。
+--project-root 可显式指定宿主根；未提供局部选择参数时执行该 phase 的项目级校验。
 Harness — Spec/Harness 验证工具
 
 用法（需先 cd framework/harness）:
@@ -409,6 +425,9 @@ Harness — Spec/Harness 验证工具
   -p, --phase <phase>       指定验证阶段（合法集合由当前 workflow 决定，默认见 framework/workflows/spec-driven.workflow.yaml）
   --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
   -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
+  --request-file <path>     review/ut/testing 专项请求 JSON；必须配 --report-dir，不与 Feature/Goal 身份并用
+  --report-dir <path>       专项请求独立报告目录（项目内、Feature/framework/.git 外）
+  --prepare-request        只解析专项目标、基线和待补输入，输出 JSON，不写控制文件或运行 checker
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
   --goal-run-id <run_id>    attended phase context；须与下面三项成组传入
   --goal-attempt-id <id>    attended attempt identity（来自 phase_execute_request）
@@ -514,8 +533,47 @@ async function main(): Promise<void> {
   }
 
   const harnessRoot = __dirname;
-  const layout = detectRepoLayout(harnessRoot);
+  if (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request']) {
+    const detected = detectRepoLayout(harnessRoot);
+    try {
+      process.exitCode = await runExplicitRequest({ args, projectRoot: typeof args['project-root'] === 'string' ? path.resolve(args['project-root']) : detected.projectRoot,
+        frameworkRoot: typeof args['framework-root'] === 'string' ? path.resolve(args['framework-root']) : detected.frameworkRoot });
+    } catch (error) { console.error(String(error)); process.exitCode = 1; }
+    return;
+  }
+  const layout = typeof args['project-root'] === 'string' ? inferRepoLayout(path.resolve(args['project-root'])) : detectRepoLayout(harnessRoot);
+  if (args['framework-root'] && fs.realpathSync(path.resolve(args['framework-root'])) !== fs.realpathSync(layout.frameworkRoot)) throw new Error('--framework-root 与项目 layout 不一致');
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  // D1 §6.4：前置条件从「必须有 run 身份」放开为「有 run 或有 feature 冻结记录」——
+  // 无 run 的零设备 feature 同样不该被要求交 trace。
+  if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list) {
+    const feature = args.feature; const phase = 'testing';
+    const goalRunId = String(args['goal-run-id'] || process.env.MAISON_GOAL_RUN_ID || '') || undefined;
+    // D1.2/D1.4：无 run 的 reconcile-only 与普通 phase 走**同一个冻结入口**——锁前置、
+    // 首次冻结、候选漂移核对一次做完。绕过它就等于多一条读旧冻结范围的入口。
+    const reconcileFrozen = ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature, runId: goalRunId,
+    });
+    if (reconcileFrozen.checks.length) {
+      for (const check of reconcileFrozen.checks) {
+        console.error(`[harness] BLOCKER: ${check.details}`);
+        if (check.suggestion) console.error(`   ↳ ${check.suggestion}`);
+      }
+      process.exit(1);
+    }
+    const { loadEffectiveExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
+    const { hasNoTestingObligation } = require('./scripts/utils/execution-scope') as typeof import('./scripts/utils/execution-scope');
+    const scope = loadEffectiveExecutionScope(projectRoot, feature, goalRunId);
+    if (scope && hasNoTestingObligation(scope)) {
+      const { executionScopeEvidenceIssues } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
+      // D2: same-run evidence is not sealed yet (a revision never seals), so the terminal check is
+      // skipped for THIS run only — cross-run references keep it.
+      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope, undefined, goalRunId);
+      console.log(JSON.stringify({ subject: 'feature', feature, phase, report_reconcile_only: true, applicability: issues.length ? 'unknown' : 'not_applicable', issues }));
+      process.exit(issues.length ? 1 : 0);
+    }
+  }
+
   try {
     bindAttendedGoalContext({
       projectRoot,
@@ -569,7 +627,57 @@ async function main(): Promise<void> {
       printHelp();
       process.exit(1);
     }
+    // D1.2/D1.4：`--sync-closure` 同样是**无 run 入口**——在 receipt 校验与任何早退之前，
+    // 走与普通 phase 同一个冻结入口（锁前置 + 首次冻结 + 候选漂移核对）。
+    const syncFrozen = ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature: syncFeature,
+      runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+    });
+    if (syncFrozen.checks.length) {
+      for (const check of syncFrozen.checks) {
+        console.error(`[harness] BLOCKER: ${check.details}`);
+        if (check.suggestion) console.error(`   ↳ ${check.suggestion}`);
+      }
+      process.exit(1);
+    }
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
+    // D1 §6.5 出口②：同一条三步顺序。晚到候选（§5.1.2 ②）正是在这条路上才成立，
+    // 所以这里**同样要先应用修订再判完成**，不能只接生成函数。
+    if (exitCode === 0) {
+      try {
+        const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
+          projectRoot,
+          frameworkRoot: resolvedFrameworkRoot,
+          feature: syncFeature,
+          phase: syncPhase,
+          workflowTrack: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, syncFeature)),
+          runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+        });
+        if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
+        if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+      } catch (error) {
+        // 第四轮阻断 4：`--sync-closure` 出口同样「写 BLOCKER 进失败报告 + 非零退出」。
+        // 这条出口的报告面就是本阶段的 script-report，用既有 writer 追加一条 BLOCKER。
+        const message = (error as Error).message;
+        console.error(`   ✗ feature 范围收尾失败: ${message}`);
+        try {
+          const reportAbs = path.join(featurePhaseReportsDir(projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot), 'script-report.json');
+          if (fs.existsSync(reportAbs)) {
+            const report = JSON.parse(fs.readFileSync(reportAbs, 'utf8')) as { checks?: unknown[]; summary?: { verdict?: string; blockers?: number } };
+            report.checks = [...(report.checks ?? []), {
+              id: 'execution_scope_frozen', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+              description: 'feature 级冻结范围可用且与候选一致', details: message,
+              suggestion: '候选已变更而冻结范围未经修订：走既有 stale/correction 路径（harness-runner --correction-init）；不要手改冻结记录。',
+            }];
+            if (report.summary) { report.summary.verdict = 'FAIL'; report.summary.blockers = (report.summary.blockers ?? 0) + 1; }
+            fs.writeFileSync(reportAbs, JSON.stringify(report, null, 2) + String.fromCharCode(10), 'utf-8');
+          }
+        } catch (writeError) {
+          console.error(`   ✗ 失败报告写入失败: ${(writeError as Error).message}`);
+        }
+        process.exit(1);
+      }
+    }
     process.exit(exitCode);
   }
 
@@ -684,6 +792,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const existingRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (existingRunId && feature) {
+    const { loadGoalManifestFromRun } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
+    workflowSpec = workflowForExistingRun(workflowSpec, loadGoalManifestFromRun(projectRoot, existingRunId, { feature }), resolvedFrameworkRoot);
+  }
   const phaseIds = workflowPhaseIdSet(workflowSpec);
   if (!phaseIds.has(phase)) {
     const hint = listWorkflowPhases(workflowSpec).join(', ');
@@ -695,6 +808,12 @@ async function main(): Promise<void> {
   // 若用户显式传了 --feature 也尊重其值（便于在不同 staging 轮次下分别归档报告），
   // 否则使用哨兵值 GLOBAL_FEATURE_SENTINEL（= "_global"）。
   const phaseIsGlobal = isPhaseGlobalInWorkflow(workflowSpec, phase);
+  for (const [flag, allowed] of Object.entries({ module: ['catalog', 'glossary', 'module-graph'], term: ['glossary'], 'package-path': ['module-graph'], path: ['docs'] })) {
+    if (args[flag] !== undefined && (!phaseIsGlobal || !allowed.includes(phase) || typeof args[flag] !== 'string' || !args[flag].trim())) {
+      console.error('错误: --' + flag + ' 不适用于本次阶段或值为空'); process.exit(1);
+    }
+  }
+  if (args['package-path'] && !args.module) { console.error('错误: --package-path 需要 --module'); process.exit(1); }
   if (phaseIsGlobal) {
     if (!feature) {
       feature = GLOBAL_FEATURE_SENTINEL;
@@ -710,9 +829,22 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
-  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）
+
+  // D1.2（第三轮阻断 3）：**首次冻结必须早于 track 过滤**——否则 feature.yaml 里残留的
+  // `track: lite` 会在还没有冻结记录时把候选已请求的 review/ut 判成非法 phase。
+  // 冻结记录仍是唯一权威：这里不看候选自报，只是把「确立权威」这一步放到它该在的位置。
+  const featureScopeFreezeChecks: CheckResult[] = [];
   if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
+    featureScopeFreezeChecks.push(...ensureFeatureExecutionScopeFrozen({
+      projectRoot, frameworkRoot: resolvedFrameworkRoot, feature,
+      runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+    }).checks);
+  }
+  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
+  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）。
+  // D1.2：权威说不清（冻结入口已给出 BLOCKER）时**跳过这一步**——那时的 track 声明不可信，
+  // 真正的失败会由下方 `capabilityInputChecks` 以 execution_scope_frozen 报出来。
+  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL && !featureScopeFreezeChecks.length) {
     const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
     const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
     if (!trackChain.idSet.has(phase)) {
@@ -731,7 +863,7 @@ async function main(): Promise<void> {
   const skipPersonalGateForInitInternal =
     initInternalGlobalRun && (phase === 'catalog' || phase === 'glossary');
   if (!reportReconcileOnly && !personalSetupExemptPhases.has(phase) && !skipPersonalGateForInitInternal) {
-    const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly);
+    const resolvedForGate = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot);
     const placement = evaluateConfigPlacementGate(projectRoot);
     if (!placement.ok) {
       console.error(`   ✗ ${placement.message.replace(/\n/g, '\n     ')}`);
@@ -769,7 +901,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly);
+  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot);
 
   // ---------------------------------------------------------------------------
   // verifier 适用性解析（plan a9d4e7c2 T1 / d2f7a9c4）——**一次解析，全员消费**
@@ -816,7 +948,59 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase);
+  // Contract capability resolution is the one immutable pre-check report. It is
+  // intentionally computed before checker execution and never receives runtime
+  // build/install/run outcomes.
+  const capabilityInputChecks: CheckResult[] = [];
+  let capabilityReport: CapabilityResolutionReport | undefined;
+  let resolvedInputs: import('./scripts/utils/capability-resolution').ResolvedPhaseInputs | undefined;
+  let factsContext: import('./scripts/utils/context-facts').FactsInvocationContext | undefined;
+  if (!phaseIsGlobal) {
+    try {
+      // D1.2：冻结 / 核对已在 track 过滤**之前**做过（第三轮阻断 3），这里只把它的结论
+      // 按 §3 问题 2 的既定形状报进本阶段的 capability 输入检查——不重复执行冻结。
+      capabilityInputChecks.push(...featureScopeFreezeChecks);
+      const capabilityInput = resolveCapabilityResolutionEntryInput({
+        frameworkRoot: resolvedFrameworkRoot,
+        projectRoot,
+        feature,
+        phase,
+        featuresDir: featuresRel,
+        goalRunId: process.env.MAISON_GOAL_RUN_ID,
+        explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
+      });
+      const resolution = resolveCapabilityInputs({
+        frameworkRoot: resolvedFrameworkRoot,
+        projectRoot,
+        feature,
+        phase,
+        track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+        ...capabilityInput,
+      });
+      capabilityReport = resolution.report;
+      if (resolution.inputs) {
+        resolvedInputs = resolution.inputs;
+        factsContext = capabilityInput.factsContext;
+      }
+    } catch (error) {
+      capabilityInputChecks.push({
+        id: 'capability_resolution_contract',
+        category: 'structure',
+        description: 'feature capability contract resolves before checker execution',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: (error as Error).message,
+        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
+      });
+    }
+  }
+
+  if (capabilityInputChecks.length) {
+    const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, capabilityInputChecks, resolvedFrameworkRoot);
+    printReportToConsole(quickReport, { failuresOnly: true });
+    process.exit(1);
+  }
+  const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase, resolvedInputs);
   if (artifactInspection) {
     printFeatureArtifactInspection(projectRoot, artifactInspection, featuresRel);
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
@@ -830,7 +1014,7 @@ async function main(): Promise<void> {
   }
 
   // catalog/glossary 是全局阶段，不加载功能级规约
-  const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature);
+  const featureSpec = phaseIsGlobal ? { feature } : specLoader.loadFeatureSpec(feature, resolvedInputs);
 
   if (phaseIsGlobal) {
     console.log(`   ⊘ 全局阶段（${phase}）：跳过功能级规约加载。`);
@@ -903,6 +1087,12 @@ async function main(): Promise<void> {
     }
   }
 
+  let projectScope: ReturnType<typeof resolveExecutionScope> | undefined;
+  if (phaseIsGlobal) {
+    projectScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: [phase + ':' + (args.module ?? args.term ?? args.path ?? 'project')], requested_phases: [phase] }, facts: [], contract_fingerprints: [] }, workflowSpec);
+    console.log('本次项目请求范围: ' + JSON.stringify(projectScope));
+  }
+
   // Step 2: 运行脚本 Harness
   console.log('\n🔧 Step 2: 运行脚本 Harness...');
   const fwConfig = fwConfigEarly;
@@ -931,6 +1121,9 @@ async function main(): Promise<void> {
     phaseIsGlobal,
   });
   const context: CheckContext = {
+    module: args.module, term: args.term, packagePath: args['package-path'], docPath: args.path,
+    resolvedInputs,
+    factsContext,
     phase,
     feature,
     projectRoot,
@@ -1002,45 +1195,25 @@ async function main(): Promise<void> {
     return hookCheckResults;
   }
 
-  let checks: CheckResult[] = [];
-  // Contract capability resolution is the one immutable pre-check report. It is
-  // intentionally computed before checker execution and never receives runtime
-  // build/install/run outcomes.
-  let capabilityReport: CapabilityResolutionReport | undefined;
-  if (!phaseIsGlobal) {
-    try {
-      const capabilityInput = resolveCapabilityResolutionEntryInput({
-        projectRoot,
-        feature,
-        phase,
-        featuresDir: featuresRel,
-        goalRunId: process.env.MAISON_GOAL_RUN_ID,
-        explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
-      });
-      capabilityReport = resolveCapabilityReport({
-        frameworkRoot: resolvedFrameworkRoot,
-        projectRoot,
-        feature,
-        phase,
-        track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
-        ...capabilityInput,
-      });
-    } catch (error) {
-      checks.push({
-        id: 'capability_resolution_contract',
-        category: 'structure',
-        description: 'feature capability contract resolves before checker execution',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: (error as Error).message,
-        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
-      });
-    }
-  }
+  let checks: CheckResult[] = [...capabilityInputChecks];
+  if (projectScope) checks.push({ id: 'project_request_scope', category: 'structure', severity: 'MINOR', status: 'PASS', description: '本次项目请求范围（不代表校验通过）', details: JSON.stringify(projectScope), structured: { execution_scope: projectScope } });
   // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
   checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
   checks.push(...(await emitLifecycle('pre_phase')));
   checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
+  checks.push(...checkExtensionManifest(resolvedProfile.extensionBundle));
+  checks.push(...checkExtensionBindingProduces({
+    bundle: resolvedProfile.extensionBundle,
+    projectRoot,
+    phase,
+    slot: 'before_phase_work',
+  }));
+  checks.push(...checkExtensionBindingProduces({
+    bundle: resolvedProfile.extensionBundle,
+    projectRoot,
+    phase,
+    slot: 'before_phase_verify',
+  }));
 
   // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
   // "modules: {} 被归空后某门禁安静 PASS"属静默洗形状，此处兜底拦截（agent 可修：
@@ -1141,11 +1314,17 @@ async function main(): Promise<void> {
         throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
       }
       const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+        resolvedInputs: context.resolvedInputs,
+        factsContext: context.factsContext,
         adapterMultimodal: context.adapterMultimodal,
         adapterImageInput: context.adapterImageInput,
         specVisualSources: context.specVisualSources,
       });
       const specContent = YAML.stringify(phaseRule);
+      // 实例扩展输入（manifest 1.1）同时进 verifier prompt 与审前材料：改 knowledge / audience / 绑定 → 换 subject。
+      const extensionInstructions = formatExtensionPhasePrompt(resolvedProfile.extensionBundle, phase, projectRoot);
+      const extensionKnowledgeFiles: import('./scripts/utils/types').ContextFileEntry[] = extensionPhaseKnowledge(resolvedProfile.extensionBundle, phase, { includeBound: true })
+        .map(item => ({ label: path.relative(projectRoot, item.absPath).replace(/\\/g, '/'), kind: 'path', content: item.summary }));
 
       assembleAIPrompt(
         harnessRoot,
@@ -1160,6 +1339,7 @@ async function main(): Promise<void> {
         resolvedFrameworkRoot,
         {
           imageInput: context.adapterImageInput,
+          extensionInstructions,
           // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
           // enabled 时 resolveVerifierPlan 必带出该路径。
           verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
@@ -1173,6 +1353,8 @@ async function main(): Promise<void> {
       );
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
       verifierMaterial = buildVerifierMaterialView({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature,
         phase,
@@ -1181,8 +1363,9 @@ async function main(): Promise<void> {
         phaseRuleText: specContent,
         templateText: loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, verifierPlan.verifier_prompt ?? undefined),
         checks: scriptReport.checks,
-        contextFiles,
+        contextFiles: [...contextFiles, ...extensionKnowledgeFiles],
         lifecycleFragments: lifecycleFragments,
+        extensionInstructions,
       });
     } catch (err) {
       const e = err as Error;
@@ -1214,6 +1397,8 @@ async function main(): Promise<void> {
   // 阶段状态机：先落 base summary，再由 check-receipt 按 summary/verifier/policy 尝试 finalize。
   // receipt 只在 summary closed 后 best-effort 投影，不是输入或 Stop 判据。
   let baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+    resolvedInputs,
+    factsContext,
     verifierPlan,
     verifierMaterial,
   });
@@ -1244,6 +1429,8 @@ async function main(): Promise<void> {
   ) {
     try {
       const finalized = finalizePhaseClosure({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         frameworkRoot: resolvedFrameworkRoot,
         feature,
@@ -1273,6 +1460,8 @@ async function main(): Promise<void> {
         resolvedFrameworkRoot,
       );
       baseSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        resolvedInputs,
+        factsContext,
         verifierPlan,
         verifierMaterial,
       });
@@ -1295,6 +1484,43 @@ async function main(): Promise<void> {
       receiptValidation,
       resolvedFrameworkRoot,
     );
+  }
+  // D1 §6.5/§6.7 出口①（普通阶段尾部）：**先应用修订、再重读有效范围、最后判完成并生成原件**。
+  // 有 run 身份时整段是 no-op（run 有自己的 runtime 收尾）。三步顺序与判据与 `--sync-closure`
+  // 出口**同一个函数**，不复制。
+  let featureScopeClosingFailure: Error | undefined;
+  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL) {
+    try {
+      const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
+        projectRoot,
+        frameworkRoot: resolvedFrameworkRoot,
+        feature,
+        phase,
+        workflowTrack: closureTrack,
+        runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
+      });
+      if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
+      if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+    } catch (error) {
+      // D1.2（第四轮阻断 4）：收尾失败**两件事都要做**——把 BLOCKER 写进既有失败报告路径
+      //（宿主 agent 才看得到原因），并让进程非零退出（脚本调用方才拦得住）。
+      featureScopeClosingFailure = error as Error;
+      console.error(`   ✗ feature 范围收尾失败: ${featureScopeClosingFailure.message}`);
+      // 复用既有致命失败写入器（stage 取 `closure_finalization`——收尾同属闭环阶段，
+      // 它的 failure_kind 就是 `closure_finalization_failed`），不为此新增 stage 枚举。
+      finalReport = failScriptReportWithFatalError(
+        finalReport,
+        'closure_finalization',
+        featureScopeClosingFailure,
+        resolvedFrameworkRoot,
+      );
+      runSummary = writeRunSummaryBase(projectRoot, finalReport, resolvedFrameworkRoot, {
+        resolvedInputs,
+        factsContext,
+        verifierPlan,
+        verifierMaterial,
+      });
+    }
   }
   if (args.summary || args['failures-only']) {
     printStableSummary(runSummary);
@@ -1351,7 +1577,9 @@ async function main(): Promise<void> {
   );
   console.log('='.repeat(60) + '\n');
 
-  process.exit(finalReport.summary.verdict === 'PASS' ? 0 : 1);
+  // D1.2（第四轮阻断 4）：收尾失败已写进失败报告，退出码也必须非零——只打印会让
+  // 脚本调用方以 exit 0 溜过去。
+  process.exit(featureScopeClosingFailure || finalReport.summary.verdict !== 'PASS' ? 1 : 0);
 }
 
 /**
@@ -1705,6 +1933,8 @@ export function writeRunSummaryBase(
   report: ScriptReport,
   frameworkRoot: string,
   opts?: {
+    resolvedInputs?: CheckContext['resolvedInputs'];
+    factsContext?: CheckContext['factsContext'];
     /**
      * 本次 run 的 verifier 能力解析结果（plan a9d4e7c2）。缺省 = 调用方未解析
      * （测试桩入口）→ 按 disabled 处理：不写 verifier 字段、不生成 request。
@@ -1860,7 +2090,7 @@ export function writeRunSummaryBase(
   // 凭证，但同一份材料上已经存在的有效负面结论不得被静默丢弃——沿用上一轮的 subject。
   const carriedVerifierSubjectId = verifierIssued
     ? null
-    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null);
+    : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null, opts?.resolvedInputs, opts?.factsContext);
   const anchoredSubjectId = verifierIssued?.subjectId ?? carriedVerifierSubjectId;
   const verifierEvidence = resolveVerifierEvidenceState(
     projectRoot,
@@ -2015,6 +2245,16 @@ export function writeRunSummaryBase(
     // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
+  // D0.3：已归属 spec/plan 的候选 → 同 run 范围修订输入，回写进**磁盘** script-report.json。
+  // 位置不动（本轮 verifier subject 已锚定），因此 PASS / FAIL 两轮都到得了这里。
+  // **刻意在上面的 best-effort catch 之外**：载体写不成 = runtime 看不到修订输入，
+  // 静默吞掉会让「summary 有候选、范围却永远不修订」这种半截状态活下来。
+  if (summary.repair_candidates?.length) {
+    const revision = scopeRevisionInputFromRepairCandidates(summary.repair_candidates, {
+      projectRoot, frameworkRoot, feature: report.feature,
+    });
+    if (revision) writeScopeRevisionInputToScriptReport(path.join(dir, 'script-report.json'), revision.input, revision.candidateIds);
+  }
   // Writer fail-fast：1.2/1.3 extend the quality lattice with assurance provenance and closure state.
   const v11Errors = validateSummaryV11(summary);
   if (v11Errors.length > 0) {
@@ -2087,6 +2327,8 @@ function resolveCarriedVerifierSubject(
   frameworkRoot: string,
   mode: 'disabled' | 'enabled' | undefined,
   gateFingerprint: string | null,
+  resolvedInputs?: CheckContext['resolvedInputs'],
+  factsContext?: CheckContext['factsContext'],
 ): string | null {
   if (mode === 'enabled') return null;
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
@@ -2107,6 +2349,8 @@ function resolveCarriedVerifierSubject(
       // policy 无关的材料面：manifest 文件 + gate + 脚本报告投影。取不到的三面传空值——
       // 它们不参与比较（carriedMaterialStillCurrent 只读上面三面）。
       buildVerifierMaterialView({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature: report.feature,
         phase: report.phase,
@@ -2118,6 +2362,8 @@ function resolveCarriedVerifierSubject(
         contextFiles: [],
       }),
       phaseEvidenceManifestCandidatePaths({
+        resolvedInputs,
+        factsContext,
         projectRoot,
         feature: report.feature,
         phase: report.phase as Phase,
@@ -2162,6 +2408,7 @@ function carriedMaterialStillCurrent(
   current: VerifierMaterialView,
   manifestFace: ReadonlySet<string>,
 ): boolean {
+  if (prior.input_bindings_sha256 !== current.input_bindings_sha256) return false;
   if ((prior.gate_fingerprint ?? null) !== (current.gate_fingerprint ?? null)) return false;
   if (prior.script_checks.join('\n') !== current.script_checks.join('\n')) return false;
   const priorFiles = new Map(prior.files.map(f => [f.path, f.sha256]));
@@ -3036,13 +3283,15 @@ function recordStartCommit(
 // 上下文文件收集
 // --------------------------------------------------------------------------
 
-function collectContextFiles(
+export function collectContextFiles(
   specLoader: SpecLoader,
   layout: RepoLayout,
   phase: Phase,
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
   opts?: {
+    resolvedInputs?: CheckContext['resolvedInputs'];
+    factsContext?: CheckContext['factsContext'];
     adapterMultimodal?: boolean;
     adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
     specVisualSources?: CheckContext['specVisualSources'];
@@ -3050,6 +3299,41 @@ function collectContextFiles(
 ): import('./scripts/utils/types').ContextFileEntry[] {
   const { projectRoot } = layout;
   const files: import('./scripts/utils/types').ContextFileEntry[] = [];
+
+  if (opts?.resolvedInputs) {
+    for (const [id, value] of Object.entries(opts.resolvedInputs.values)) {
+      if (value.state !== 'resolved') continue;
+      files.push({ label: '(resolved input ' + id + ')', content: typeof value.value === 'string' ? value.value : YAML.stringify(value.value) });
+    }
+    for (const [id, content] of Object.entries(opts.resolvedInputs.artifacts)) {
+      if (!Object.values(opts.resolvedInputs.values).some(value => value.state === 'resolved' && value.value === content)) {
+        files.push({ label: '(resolved artifact ' + id + ')', content: typeof content === 'string' ? content : YAML.stringify(content) });
+      }
+    }
+    for (const name of feature ? opts.resolvedInputs.context.required_outputs : []) {
+      const content = specLoader.loadFeatureDoc(projectRoot, feature, name);
+      if (content !== null) files.push({ label: relFeatureArtifact(projectRoot, feature, name), content });
+    }
+    if (opts.factsContext) {
+      const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
+      if (fs.existsSync(factsPath)) files.push({ label: path.relative(projectRoot, factsPath).replace(/\\/g, '/'), content: fs.readFileSync(factsPath, 'utf8') });
+    }
+    if (phase === 'ut' && featureSpec.contracts?.modules?.length) {
+      const { tryLoadUtSourceRootResolver } = require('./profile-host-loader') as typeof import('./profile-host-loader');
+      const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), layout.frameworkRoot);
+      const roots = tryLoadUtSourceRootResolver(profile.profileDir)?.(projectRoot, featureSpec.contracts.modules) ?? [];
+      for (const root of roots) if (fs.existsSync(root)) collectFilesFromDir(root, projectRoot, /\.(ets|ts)$/, files, 20, true);
+      for (const module of featureSpec.contracts.modules) {
+        const dagDir = path.join(projectRoot, module.package_path, 'test', 'dag');
+        if (fs.existsSync(dagDir)) collectFilesFromDir(dagDir, projectRoot, /\.dag\.yaml$/, files, 10);
+      }
+    }
+    if (phase === 'testing') {
+      const trace = resolveAuthoritativeHylyreTracePath(featurePhaseReportsDir(projectRoot, feature, phase, layout.frameworkRoot));
+      if (trace) files.push({ label: path.relative(projectRoot, trace).replace(/\\/g, '/'), kind: 'path', content: `${fs.statSync(trace).size} bytes; authoritative native trace` });
+    }
+    return files;
+  }
 
   // catalog/glossary 是全局阶段：上下文只包含两份 SSOT 文件本身，
   // 不读任何 feature 维度的 spec.md / plan.md / 源码。
@@ -3189,20 +3473,26 @@ function collectContextFiles(
   }
 
   if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
-    // 源码不内联（宿主 ai-prompt 里源码占大头且 verifier 只抽查）：给路径清单，需要核对时 Read。
-    const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, '.ets');
+    // e4/b9：惯例/组件评审需要 verifier 读目标源码全文；其余场景源码不内联（07a41ec6）：给路径清单，需要核对时 Read。
+    const conventionsReview = phase === 'review' && (fs.existsSync(conventionsPath(projectRoot)) || fs.existsSync(componentIndexPath(projectRoot)));
+    const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, conventionsReview ? undefined : '.ets');
     let count = 0;
     for (const [filePath, content] of sourceFiles) {
-      if (count >= 200) {
+      if (!conventionsReview && count >= 200) {
         files.push({ label: '(truncated)', kind: 'path', content: `... 还有 ${sourceFiles.size - count} 个源文件未列出` });
         break;
       }
-      files.push(pathEntry(filePath, content));
+      files.push(conventionsReview ? { label: filePath, content } : pathEntry(filePath, content));
       count++;
     }
   }
 
   if (phase === 'review') {
+    files.push(...componentReviewContext(projectRoot));
+    const conventions = conventionsPath(projectRoot);
+    if (fs.existsSync(conventions)) {
+      files.push({ label: relConventions(projectRoot), content: fs.readFileSync(conventions, 'utf-8') });
+    }
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
       files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });

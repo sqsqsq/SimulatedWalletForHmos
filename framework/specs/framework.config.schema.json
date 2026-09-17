@@ -40,9 +40,15 @@
       "properties": {
         "features_dir": { "type": "string" },
         "module_catalog": { "type": "string" },
+        "component_index": { "type": "string", "description": "可选源码派生组件索引；文件存在即启用。" },
+        "component_catalog": { "type": "string", "description": "可选人工策展组件台账；引用组件索引。" },
         "glossary": { "type": "string" },
         "glossary_seed": { "type": "string" },
         "architecture_md": { "type": "string" },
+        "conventions": {
+          "type": "string",
+          "description": "可选工程惯例知识资产；默认 doc/conventions.md，文件存在即启用。"
+        },
         "state_file": { "type": "string" },
         "receipt_dir_pattern": { "type": "string" },
         "docs_committed": { "type": "boolean" },
@@ -133,7 +139,7 @@
     },
     "active_workflow": {
       "type": "string",
-      "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 spec-driven。"
+      "description": "framework/workflows/<name>.workflow.yaml 的 stem；默认 obligation-driven。"
     },
     "lifecycle_hooks_enabled": {
       "type": "boolean",

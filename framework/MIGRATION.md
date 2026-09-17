@@ -1,6 +1,133 @@
 # Framework 升级与迁移说明
 
-本文描述**实例工程**在 framework 子模块或配置演进时的预期做法。详细操作以 Skill 正文为准。
+本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
+
+## 3.1.0：按义务执行与旧运行恢复
+
+新请求默认使用 obligation-driven workflow 1.2。完整实现由主 Agent 按实际输入、目标和义务建立 Feature 候选，随后两个载体二选一：交互路径直接逐阶段跑 harness，首次调用由机器把范围冻结进 `doc/features/<feature>/execution-scope.json`；需要无人值守或 run 级预算/恢复时用现有 prepare-run/attach 产生真实运行身份（有 run 时以 run 为权威）。不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。
+
+- 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
+- framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。
+- 已有运行优先恢复原 run：旧内置定义与内部 skills/legacy/change-lite 仍可读取，冻结链与预算不重新计算。新 scope 损坏不降级；跨不兼容自定义 workflow/发布件时使用匹配的旧定义/发布件，或按既有 correction/successor 创建新运行，不批量重写历史。
+- 新 completion 1.2 必须绑定实际出生 execution_scope_fingerprint；旧 1.1 仍用原完整链合同。request 结果不是 Feature/CU 完成凭证。CU 与 Component 继续核对各自目标及组合证据。
+- 设备、RDB 与组合场景须以真实宿主证据验收；框架 fixture 和临时 consumer 成功不代表真实设备通过。
+
+入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
+
+## 3.1.0：Extension manifest 1.1 与 `/extension`
+
+3.1.0 新增 `/extension` 单一管理入口，manifest 1.1 支持 knowledge audience、宿主执行的
+`mcp_actions` 与三个 Feature phase binding 槽位。1.0 manifest 继续兼容读取且行为不变；升级不是
+强制迁移。
+
+选择升级到 1.1 时：把需物化的 Skill 全量列入 `provides.skills[]`（1.1 不再物化未声明目录），
+把 global/phase knowledge 改成对象条目，按需声明 action 与 binding；随后运行 `/extension verify`
+和 `/extension materialize`。无 ownership 标记的旧 bridge 继续保留且不接管；MCP server、URL、
+token、command、登录配置不得进入 manifest。
+
+**goal 作者前置输入（plan a7c3e9d2）**：goal 模式在作者阶段 prompt 的 `Skill absolute path` 行后注入一句读取指令加
+`formatExtensionPhasePrompt` 的输出（本阶段 audience 命中的 knowledge 索引、legacy 字符串、`phase_bindings.<phase>` 三槽），
+与 verifier ai-prompt 用同一 formatter；同一份扩展输入同时计入 verifier 审前材料（改 knowledge / audience / 绑定会换 subject，
+沿用历史 PASS 时按 `extension_instructions` 与文件路径披露未重审差异）。manifest 1.0 在作者侧不注入：要让作者动笔前看到要求，
+须升 1.1 并给 knowledge 声明 audience。manifest 非法时只 `console.warn`「作者前置输入未注入」并指向 `--phase extensions`，不 HALT。
+`hooks/<phase>/on_context_load.md` 的片段只在通过 verifier request 资格判定并装配 verifier ai-prompt 时消费（含产品失败诊断轮），
+从不进作者上下文；交互模式由行为规约原则 1 第 8 条指引作者读 knowledge。
+
+
+## 3.1.0：正式需求统一经部件内设计阶段（路由变化）
+
+3.1.0 起，**部件演进蓝图从"复杂多变更单元需求才启用的可选路线"重定位为"正式需求必经的
+部件内设计阶段"**（组织侧常称 Story Design）。
+
+**什么是正式需求**：有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义
+或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+
+**变化**：
+
+- 新增入口 Skill **`/component-design`**（`framework/skills/project/component-design/SKILL.md`）：
+  需求源物化 → 正式性确认 → 蓝图 admitted → 分解 1..N 个 canonical Change Unit → 施工
+  readiness。它的终点是**设计交接**，不进入选择器、不启动 Goal Mode、不做部件闭环；
+- 原"三条 AND 入口门"（≥2 个 CU、共享部件级决策、单独绿≠整体完成）**不再是进不进蓝图的
+  判据**，改为**条件式设计义务**——只在对应事实被发现时触发；
+- 蓝图**只有一种协议**：没有 compact/full 档位、没有升级信号、没有升级状态机。内容深度由本次
+  演进的真实影响面派生，小正式需求得到薄蓝图并拆出一个 Change Unit；
+- 视图新增与 `applicability` **正交**的 `evolution_impact`（`changed` / `verified_unchanged`）：
+  前者保持全量义务，后者须带 `unchanged_evidence` 并据此免除 target/delta 与节点义务；蓝图至少
+  要有一个 `applicable` + `changed` 视图；
+- `/spec` 与 `/change-lite` 在首次冻结施工意图处各加一道**非阻断**的正式性兜底复核，指回
+  `/component-design`；**不新增机器 BLOCKER、不改 `track_scoring`**。
+
+**不触发条件（原样保留）**：非正式维护动作继续走既有 L0 / L1 lite；**存量平铺 Feature 原样
+有效**——不迁移、不自动转成 Change Unit、不自动 credit completion，也不会被拉进任何部件闭环
+聚合。CU-bound 的 lite Feature 复用与 full 完全同一份 `contracts.yaml.change_unit` sidecar，
+不需要新格式。
+
+**宿主适配**：Maison 与宿主之间新增三条方向独立的静态接缝——
+`requirement-source-materialization`（宿主 → Maison）、`blueprint-review-publication`
+（Maison → 宿主）、`blueprint-review-feedback`（宿主 → Maison）。它们的方向、时点、字段、
+hash、authority、失败语义、两条最小接入流程、Story 类扩展职责映射、随包样例与验证命令，见
+发布件内唯一人读入口
+**[`framework/docs/operations/component-design-host-adaptation.md`](docs/operations/component-design-host-adaptation.md)**。
+三条接缝的校验都挂在既有 `check:component-blueprint` 上（`--materialization` /
+`--projection` / `--feedback`），**没有新增顶层 CLI**。
+
+**处置**：
+
+1. 升级 framework 后跑一次 **`/framework-init` UPDATE**——`/component-design` 的 slash command
+   与 skill 跳板是新增产物，只有重新物化 agent 产物后才会出现在实例根（`.claude/commands/`、
+   `.cursor/commands/`、`.cac/commands/`、各 bundle 的 skills-bridge）。未物化时仍可直接让
+   agent 读 `framework/skills/project/component-design/SKILL.md` 正文进入。
+2. 进行中的普通 Feature 无需任何操作。下一项正式需求开始前，先走 `/component-design`；已归属
+   某个 `blueprint_id` 的继续原演进工作区。
+
+**设计入口收敛**：`/app-component-blueprint` 已撤下，创建、继续、查看、质询或调和蓝图统一使用
+`/component-design`。P1 协议/checker 与三条接缝不变，内部流程位于
+`framework/skills/reference/app-component-blueprint-workflow.md`。只读、重入和重跑 checker 不升
+revision；完整交接时才补首次 CU 分解，已有 CU 复用，局部操作不强制交接或自动施工。
+
+UPDATE 的 `cleanup-deprecated` 按已物化 adapter **先备份再移除**旧入口：Cursor 的
+`.cursor/commands/app-component-blueprint.md` 与 `.cursor/skills/app-component-blueprint/`、
+Claude 的 `.claude/commands/app-component-blueprint.md`、Codeagent 的
+`.cac/commands/app-component-blueprint.md`、Codex 的 `.codex/skills/app-component-blueprint/`、
+Chrys 的 `.agents/skills/app-component-blueprint/`、OpenCode 的 `.opencode/skill/app-component-blueprint/`、generic 的
+`<agent_bundle_root>/skills/app-component-blueprint/`（使用配置路径）。备份在
+`.framework-backup/<timestamp>/`，统一入口与无关用户内容保留。跳过清理时旧入口仍存在，
+仅更新发布件或重新物化不能视为旧入口已清理。设计知识绑定使用既有
+`skill_assets` 指向 `component-design`。
+
+
+## 3.1.0：默认 receipt/reports 目录模式跟随 `paths.features_dir`（行为变化）
+
+3.1.0 起，未显式配置 `receipt_dir_pattern` / `reports_dir_pattern` 时，默认模式从
+`paths.features_dir` 派生（`<features_dir>/<feature>/<phase>` 与
+`<features_dir>/<feature>/<phase>/reports`），不再使用固定的字面量 `doc/features/...`。
+
+**触发条件**：实例工程满足以下**全部**条件时行为变化——
+
+1. 自定义了 `paths.features_dir`（非默认 `doc/features`）；
+2. `framework.config.json` **磁盘上未显式写入** `receipt_dir_pattern` / `reports_dir_pattern`。
+
+> 边界按“磁盘上是否已有显式 pattern”判定（2026-08-22 更正）：**缺失 pattern 时，
+> 3.1 的 normalize 与 framework-init UPDATE 的 BACKFILL 都从 `paths.features_dir` 派生**
+> 默认形态；**已有显式 pattern（包括旧版本曾写入的字面量 `doc/features/...`）原样保留**。
+> 因此“经过 BACKFILL 的宿主”并不豁免——若 BACKFILL 发生在自定义 features_dir 之后，
+> 其派生值同样指向自定义目录。
+
+**影响**：receipt（`phase-completion-receipt.md`）与 harness/report 产物落点从
+`doc/features/<feature>/<phase>/...` 搬到 `<features_dir>/<feature>/<phase>/...`。
+已闭环 receipt 若在新旧两个位置都被 harness 检查到，可能短暂出现重复/缺失提示；
+重跑对应 phase harness 后收敛。
+
+**不触发条件**（原样保留）：显式配置的 pattern 一律原样保留（只替换 `<feature>` /
+`<phase>` 占位符、不搬到 features_dir 下）；默认 `doc/features` 宿主行为不变。
+
+**处置**：若要维持旧落点，在 `framework.config.json` 显式写入
+`"receipt_dir_pattern": "doc/features/<feature>/<phase>"` 与
+`"reports_dir_pattern": "doc/features/<feature>/<phase>/reports"`；否则无需操作，
+重跑受影响 phase 即可。
+
+> 同一发版的演进工作区目录契约（`<features_dir>/<blueprint_id>/...`）不产生消费者迁移：
+> 该路径形态此前未发布、工作树无真实存量（见 M5A plan §3）。
 
 
 ## 3.0.0：Skill 契约、assess 调和循环与 Goal 单写者
@@ -172,7 +299,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 **升级动作（实例工程）：**
 
 1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
-2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
+2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，`.claude/settings.json` / `settings.local.json` 内的旧注册一并移除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
 3. `framework/harness/state/last-verifier-report.{json,md}` 是运行时状态，已无生产消费者，可保留，无须清理；
 4. 重新物化规则跳板与 `.claude/agents/verifier.md`（措辞已更新，工具集与输出格式不变）；
 5. 自建 adapter 若已实测能派发 verifier 子代理，在 `adapter.yaml` 写 `verifier_subagent: true`。
@@ -218,16 +345,8 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 
 - 集成新发布件后执行 `framework-init` UPDATE。`cleanup-deprecated` 检查发布件所有 adapter 的已登记退役项，包括不在本次 `materialized_adapters` 中的历史残留；不会因为当前只选 Cursor 就忽略旧 `.claude`、`.cac`、`.codex` 产物。
 - 旧 skill/command 清理路径由各 adapter 的目录声明派生，generic 跟随 `paths.agent_bundle_root`。新增清理 `framework-setup`、`goal-orchestration`、`app-component-blueprint`、`ut-audit`；共享目录内的现行入口和宿主自有文件保留。
-- 退役 hook 使用 `deprecated_artifacts[].hook_configs` 声明旧注册所在的 JSON 文件，先备份并移除注册，再删除脚本。此字段用于退役清理；adapter 顶层 `hooks_config` 用于安装当前注册，两者用途不同。配置里仍含脚本引用时保留脚本并记 `blocked`，不猜测改写复合命令；只移除删除脚本后已空的 `hooks/`，不整目录清空。
-- 全部备份在 `.framework-backup/<timestamp>/`。非法配置或未能清除的引用不阻止其他 adapter/旧跳板继续清理；最终任务标为 failed，S3 run-log 保留成功项与 `blocked`/`failed` 原因。按日志修复旧注册后重跑 UPDATE；不要直接删脚本来消除报错。CREATE 或跳过该任务不清理。
-
-### 3.0.x：goal 作者前置输入——manifest 1.0 knowledge 索引注入阶段 prompt（临时，plan a7c3e9d2）
-
-`hooks/<phase>/on_context_load.md` 的片段只在装配 verifier ai-prompt 时消费（脚本 PASS 且 verifier 启用），从不进入作者动笔前的上下文；此前文档把它写成"宿主叠加指令"是误导，已订正。3.0.x 起 goal 模式在作者阶段 prompt 里注入 `doc/extensions/manifest.yaml` 的 `provides.knowledge`（1.0 字符串）索引与一句读取指令，作者动笔前即知道要读哪些文件；交互模式由 Skill 行为规约（原则 1 第 8 条）指引读取。
-
-- **宿主登记方式**：把各阶段的作者要求文件登记进 `provides.knowledge`（字符串，文件须存在）。1.0 语义是全部 Feature phase 都列出，文件名带阶段名（如 `knowledge/plan-author.md`）以便作者分辨。hooks 原样保留，仍只进 verifier。
-- **manifest 非法时**：goal 侧只 `console.warn`"作者前置输入未注入"并指向 `--phase extensions`，不新增门禁、不 HALT。
-- **升 3.1.0 的退出条件（不是无感接续）**：3.1.0 的同名 formatter 对 manifest 1.0 返回空串，升级后仍用 1.0 的宿主会**失去**这条 goal 作者提示。要保留效果，须把 knowledge 改成 1.1 对象（`{path, summary, audience: [<phase>]}`），按需再声明 `phase_bindings.<phase>.before_phase_work`；升级后段落形状不变，只是按阶段精确。
+- 退役 hook 使用 `deprecated_artifacts[].hook_configs` 声明旧注册所在的 JSON 文件，先备份并移除注册，再删除脚本。此字段用于退役清理；adapter 顶层 `hooks_config` 用于安装当前注册，两者用途不同。配置里仍含脚本引用时保留脚本并记 `blocked`，不猜测改写复合命令；引用解析到工程外的绝对路径（指向别的仓库）不阻断删除本地副本，改记 `warning` 并点名该路径待人工核对。`blocked` / `warning` 都不会把任务判为 `failed`——`failed` 只留给非法 JSON/schema、越界路径等异常。只移除删除脚本后已空的 `hooks/`，不整目录清空。
+- 全部备份在 `.framework-backup/<timestamp>/`。非法配置或未能清除的引用都不阻止其他 adapter/旧跳板继续清理，两类都进 S3 run-log 并与成功项一并保留，但任务状态不同：异常（非法 JSON/schema、路径越界等抛错）记 `failed` 并把任务标为 failed；未能清除的引用只记 `blocked`/`warning`，是如实记录的部分结果，不把任务标为 failed。按日志修复旧注册后重跑 UPDATE；不要直接删脚本来消除报错。CREATE 或跳过该任务不清理。
 
 ### 3.0.x：可诊断的产品失败照样签发 verifier request（非 Breaking，plan 3a7f9c12 / openspec verifier-repair-diagnostics）
 
@@ -317,7 +436,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 要点：
 
 1. **项目 config 变更**（架构 DSL、`materialized_adapters`、paths 等）在 S2 收集进 `configWritePayload`，S3 由 executor 写入。
-2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.mdSKILL.md)）。
+2. **个人 `agent_adapter` 与宿主 IDE 路径**不在项目 init 配置——首次跑 catalog/spec 等阶段时 `check-personal-setup.ts --json --ensure` 内联写入个人级 `framework.local.json`（多 adapter 见 [`personal-setup-gate`](skills/reference/personal-setup-gate.md)）。
 3. **增删物化 adapter** 时更新 `materialized_adapters[]` 并重跑 S3；旧 adapter 目录可能残留，列给用户手工处理，**不自动强删**。
 
 日常 framework 版本跟进应走上述 UPDATE 编排，而不是手工散落改多份文件。
@@ -1050,7 +1169,9 @@ Get-ChildItem -LiteralPath $ReportsRoot -Directory | ForEach-Object {
 | `lifecycle_hooks_enabled` | 默认 `true`；`false` 时 harness 跳过 lifecycle hook 派发 |
 | `paths.extension_dir` | 默认 `"doc/extensions"` |
 
-**升级后动作**：S3 执行补缺扩展目录骨架；在 **`<repo-root>`** 重新执行 `node framework/harness/scripts/render-agents-md.mjs ...` 刷新入口并按 adapter 生成扩展跳板 / slash（勿在 `framework/harness/` cwd 下写 `framework/harness/scripts/...` 前缀）；`cd framework/harness && npm test`。
+**升级后动作**：需要实例扩展时运行 `/extension init` 补缺骨架，再运行 `/extension materialize`
+按项目 `materialized_adapters[]` 刷新入口与 bridge；framework-init 不创建 extension skeleton。
+最后运行 `/extension verify`。1.0 manifest 可继续原样使用。
 
 > v3.1 起这些字段（含 `state_machine.*`、`paths.state_file` / `receipt_dir_pattern` / `docs_committed`、
 > `toolchain.hvigor.*` 等）由 S3 `backfill-config` / merge-framework-config **机器化补缺合并**——见 §v3.1。
@@ -1414,6 +1535,10 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 ### v2.2：tsc 静态扫描 + 改源码门禁 + named_handler 放宽（历史）
 
 未在本文记录细节，可在 git log 里搜 `feat(harness): v2.2`。
+
+### 3.1.0 可选组件资产
+
+未生成 component-index 的 Feature 无需补合同；显式生成索引即启用，进行中的页面/UI Feature 须回 plan 补 components.asset_selection。蓝图须补 optional component-assets Seam Card，诚实记录可用性，选型经既有 CU decision refs 投影。配置路径、字段和刷新命令见 [组件资产](docs/concepts/component-assets.md)。
 
 ### 3.0.x：report-only 允许同包重装后的已验证执行复用
 

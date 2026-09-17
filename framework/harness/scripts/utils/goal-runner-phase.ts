@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { featureRelativePath } from './feature-identity';
 import { featurePhaseReportsDir, receiptFilePath } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
@@ -247,6 +248,11 @@ export interface GoalRunEvent {
   /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */
   skipped?: boolean;
   invoke_id?: string;
+  /** attended session phase_start 的正式签发元组（harness 权限注入前精确对账）。 */
+  attempt_id?: string;
+  owner_id?: string;
+  owner_epoch?: number;
+  driver?: string;
   invoke_start_ts?: string;
   chain?: string[];
   attempt?: number;
@@ -585,7 +591,7 @@ export function collectSupersededAncestorEvents(opts: {
     if (!id || visited.has(id)) continue;
     visited.add(id);
     const abs = path.join(
-      opts.projectRoot, opts.featuresDir, opts.feature, 'goal-runs', id, 'events.jsonl');
+      opts.projectRoot, opts.featuresDir, featureRelativePath(opts.feature), 'goal-runs', id, 'events.jsonl');
     const evs = load(abs);
     chainEvents.push(...evs);
     queue.push(...extractSupersedeTargets(evs));

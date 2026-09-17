@@ -21,6 +21,9 @@ import * as path from 'path';
 
 import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest } from './phase-evidence-manifest';
 import type { ContextFileEntry, Phase } from './types';
+import type { ResolvedPhaseInputs } from './capability-resolution';
+import type { FactsInvocationContext } from './context-facts';
+import { stableStringify } from './phase-evidence-manifest';
 
 export const VERIFIER_MATERIAL_SCHEMA = 'maison-verifier-material@1';
 
@@ -42,9 +45,12 @@ export interface VerifierMaterialView {
   script_checks: string[];
   /** lifecycle hook fragments（装配进 prompt 的实例/profile 片段）哈希；无片段为空串 */
   lifecycle_sha256: string;
+  /** 实例扩展输入（manifest 1.1 knowledge 索引 / 阶段绑定 / mcp usage，装配进 prompt 尾部）哈希；无则空串 */
+  extension_sha256: string;
   /** 按路径排序的材料文件 */
   files: VerifierMaterialFile[];
   material_sha256: string;
+  input_bindings_sha256?: string;
 }
 
 function sha256Text(text: string): string {
@@ -75,6 +81,8 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
       `phase_rule_sha256=${view.phase_rule_sha256}`,
       `template_sha256=${view.template_sha256}`,
       `lifecycle_sha256=${view.lifecycle_sha256 ?? ''}`,
+      `extension_sha256=${view.extension_sha256 ?? ''}`,
+      ...(view.input_bindings_sha256 ? [`input_bindings_sha256=${view.input_bindings_sha256}`] : []),
       ...view.script_checks.map(c => `check=${c}`),
       ...view.files.map(f => `file=${f.path} sha256=${f.sha256 ?? '<absent>'}`),
     ].join('\n'),
@@ -82,6 +90,8 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
 }
 
 export interface BuildVerifierMaterialInput {
+  resolvedInputs?: ResolvedPhaseInputs;
+  factsContext?: FactsInvocationContext;
   projectRoot: string;
   feature: string;
   phase: string;
@@ -95,6 +105,8 @@ export interface BuildVerifierMaterialInput {
   contextFiles: ReadonlyArray<ContextFileEntry>;
   /** 装配进 prompt 的 lifecycle hook fragments（实例 / profile / framework） */
   lifecycleFragments?: ReadonlyArray<string>;
+  /** 装配进 prompt 尾部的实例扩展输入（formatExtensionPhasePrompt 输出） */
+  extensionInstructions?: string;
 }
 
 export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): VerifierMaterialView {
@@ -106,6 +118,8 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
 
   try {
     const manifest = resolvePhaseEvidenceManifest({
+      resolvedInputs: input.resolvedInputs,
+      factsContext: input.factsContext,
       projectRoot,
       feature,
       phase: phase as Phase,
@@ -115,7 +129,8 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
       if (isRuntimeArtifact(entry.path)) continue;
       files.set(entry.path, entry.sha256);
     }
-  } catch {
+  } catch (error) {
+    if (input.resolvedInputs) throw error;
     /* manifest 解析失败（无 frameworkRoot 等）→ 只按上下文文件寻址 */
   }
 
@@ -135,12 +150,14 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
 
   const base = {
     schema: VERIFIER_MATERIAL_SCHEMA,
+    ...(input.resolvedInputs ? { input_bindings_sha256: sha256Text(stableStringify(Object.entries(input.resolvedInputs.values).map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]))) } : {}),
     feature,
     phase,
     gate_fingerprint: input.gateFingerprint,
     phase_rule_sha256: sha256Text(input.phaseRuleText),
     template_sha256: sha256Text(input.templateText),
     lifecycle_sha256: input.lifecycleFragments && input.lifecycleFragments.length > 0 ? sha256Text(input.lifecycleFragments.join('\n---\n')) : '',
+    extension_sha256: input.extensionInstructions ? sha256Text(input.extensionInstructions) : '',
     script_checks: input.checks.map(c => `${c.id}=${c.status}/${c.severity}`).sort(),
     files: [...files.entries()].map(([p, sha256]) => ({ path: p, sha256 })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
   };
@@ -184,6 +201,7 @@ export function diffVerifierMaterial(prev: VerifierMaterialView | null, curr: Ve
   if (prev.phase_rule_sha256 !== curr.phase_rule_sha256) out.push('phase_rules');
   if (prev.template_sha256 !== curr.template_sha256) out.push('verifier_prompt_template');
   if ((prev.lifecycle_sha256 ?? '') !== (curr.lifecycle_sha256 ?? '')) out.push('lifecycle_hook_fragments');
+  if ((prev.extension_sha256 ?? '') !== (curr.extension_sha256 ?? '')) out.push('extension_instructions');
   if (prev.script_checks.join('\n') !== curr.script_checks.join('\n')) out.push('script_report_checks');
   const prevFiles = new Map(prev.files.map(f => [f.path, f.sha256]));
   const currFiles = new Map(curr.files.map(f => [f.path, f.sha256]));

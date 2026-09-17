@@ -13,6 +13,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { TextDecoder } from 'util';
+import type { ResolvedPhaseInputs } from './capability-resolution';
+import { selectionShapeIssues } from './component-assets';
 import {
   Phase,
   PhaseRuleSpec,
@@ -25,8 +28,11 @@ import {
   resolvePaths,
   featuresDirPath,
   resolveFeatureArtifact,
+  enumerateFeatures,
   type FeaturePathOptions,
 } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
+import { featureRelativePath } from './feature-identity';
 import { validateProjectRelativePath } from './project-relative-path';
 import {
   normalizeContractFilePath,
@@ -118,16 +124,21 @@ export class SpecLoader {
     return { featuresDirAbs: this.featuresDir };
   }
 
+  /** M5A §4.3：feature 目录绝对路径 = featuresDir + 唯一 SSOT 物理相对路径（含 featuresDir 覆盖）。 */
+  private featureDirAbs(feature: string): string {
+    return path.join(this.featuresDir, featureRelativePath(feature));
+  }
+
   // --------------------------------------------------------------------------
   // 阶段级规约
   // --------------------------------------------------------------------------
 
-  loadPhaseRule(phase: Phase): PhaseRuleSpec {
+  loadPhaseRule(phase: Phase, explicitPath?: string): PhaseRuleSpec {
     // 已知 phase 用显式映射；其余按 `<phase>-rules.yaml` 约定派生（C0 判定单点化：
     // workflow 1.1 起 phase 集由 workflow 声明，loader 不再持有封闭枚举——lite 的
     // change/exit 与未来新 phase 一等公民）。约定文件不存在才视为未知 phase。
     const filename = PHASE_RULE_FILENAMES[phase] ?? `${phase}-rules.yaml`;
-    const filePath = path.join(this.phaseRulesDir, filename);
+    const filePath = explicitPath ?? path.join(this.phaseRulesDir, filename);
     if (!PHASE_RULE_FILENAMES[phase] && !fs.existsSync(filePath)) {
       throw new Error(`Unknown phase: ${phase}（约定规则文件 ${filename} 不存在于 ${this.phaseRulesDir}）`);
     }
@@ -158,24 +169,50 @@ export class SpecLoader {
   // 功能级规约
   // --------------------------------------------------------------------------
 
-  loadFeatureSpec(feature: string): FeatureSpec {
-    const featureDir = path.join(this.featuresDir, feature);
+  loadFeatureSpec(feature: string, resolved?: ResolvedPhaseInputs): FeatureSpec {
+    return this.loadArtifacts(feature, resolved) as FeatureSpec;
+  }
 
-    const spec: FeatureSpec = { feature };
+  loadRequestArtifacts(resolved: ResolvedPhaseInputs): Omit<FeatureSpec, 'feature'> {
+    if (!('request_sha256' in resolved.context.subject)) throw new Error('request input subject required');
+    return this.loadArtifacts(undefined, resolved);
+  }
+
+  private loadArtifacts(feature: string | undefined, resolved?: ResolvedPhaseInputs): Omit<FeatureSpec, 'feature'> & { feature?: string } {
+    if (resolved && ('feature' in resolved.context.subject ? resolved.context.subject.feature !== feature : !!feature)) {
+      throw new Error('[spec-loader] resolved input subject mismatch');
+    }
+    const featureDir = feature === undefined || (resolved && !feature) ? this.projectRoot : this.featureDirAbs(feature);
+    const read = <T>(name: string, artifact: string, issues: string[]): T | null => {
+      if (!resolved) {
+        const file = path.join(featureDir, name);
+        return fs.existsSync(file) ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+      }
+      const value = resolved.artifacts[artifact];
+      if (value !== undefined) return structuredClone(value) as T;
+      if (feature === undefined) return null;
+      // A phase's own outputs are checked as outputs, not frozen upstream inputs.
+      const file = path.join(featureDir, name);
+      return resolved.context.required_outputs.includes(name) && fs.existsSync(file)
+        ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+    };
+
+    const spec: Omit<FeatureSpec, 'feature'> & { feature?: string } = feature === undefined ? {} : { feature };
     // P0-2（plan d9b4f7e2 复审）：形状偏差留痕——由 harness-runner 产出结构化 FAIL
     // （feature_spec_shape），归一化只防崩溃，不许静默洗形状（warn 只写 console，
     // headless 下没人看，等于洗）。
     const shapeIssues: string[] = [];
 
     const contractsPath = path.join(featureDir, 'contracts.yaml');
-    if (fs.existsSync(contractsPath)) {
+    if (resolved ? resolved.artifacts['contracts@1'] !== undefined || resolved.context.required_outputs.includes('contracts.yaml') : fs.existsSync(contractsPath)) {
       // 复审修复（codex P1）：根节点守卫——YAML 解析为 null/标量/数组时，旧实现在
       // normalizeContractsFiles 解引用即 TypeError，harness 在 safeRun 之前致命退出、
       // 无 summary（比门禁 FAIL 更毒）。按"无法解析"语义处理：不挂载 + 留痕，
       // 下游 acceptance_yaml_present/契约类门禁按缺失裁决。
-      const contracts = this.loadYamlMappingOrNull<ContractsSpec>(contractsPath, shapeIssues);
+      const contracts = read<ContractsSpec>('contracts.yaml', 'contracts@1', shapeIssues);
       if (contracts) {
         normalizeContractsFiles(contracts, contractsPath, this.projectRoot, shapeIssues);
+        normalizeConventionsApplied(contracts, contractsPath, this.projectRoot, shapeIssues);
         normalizeModuleDependencies(contracts, contractsPath, shapeIssues);
         normalizeTraceability(contracts, contractsPath, shapeIssues);
         // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
@@ -189,6 +226,35 @@ export class SpecLoader {
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'data_models', contractsPath, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'interfaces', contractsPath, shapeIssues);
         normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
+        for (const [index, component] of (contracts.components ?? []).entries()) {
+          if (component.asset_selection === undefined) continue;
+          const errors = selectionShapeIssues(component.asset_selection);
+          if (errors.length) {
+            shapeIssues.push(`${path.basename(contractsPath)} components[${index}].asset_selection: ${errors.join('；')}`);
+            delete component.asset_selection;
+          }
+        }
+        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'state_management', contractsPath, shapeIssues);
+        if (contracts.change_unit && typeof contracts.change_unit === 'object' && !Array.isArray(contracts.change_unit)) {
+          const changeUnit = contracts.change_unit as unknown as Record<string, unknown>;
+          normalizeArrayField(changeUnit, 'predicate_mappings', contractsPath, shapeIssues, 'change_unit');
+          normalizeArrayField(changeUnit, 'provide_mappings', contractsPath, shapeIssues, 'change_unit');
+          normalizeArrayField(changeUnit, 'design_ref_mappings', contractsPath, shapeIssues, 'change_unit');
+        }
+        for (const state of contracts.state_management ?? []) {
+          if (!state || typeof state !== 'object') continue;
+          const record = state as unknown as Record<string, unknown>;
+          for (const field of ['contract_refs', 'ordered_steps', 'lifecycle_triggers']) {
+            if (Object.prototype.hasOwnProperty.call(record, field)) {
+              normalizeStringArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
+            }
+          }
+          for (const field of ['mutations', 'publications', 'subscriptions', 'consumers']) {
+            if (Object.prototype.hasOwnProperty.call(record, field)) {
+              normalizeArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
+            }
+          }
+        }
         // S6（visual-capability-truth P1-F）：integration_points 机器块归一——map 数组 +
         // consumer_module/provider_module 必填字符串（缺失剔除 + shape_issues 留痕，
         // 镜像 modules[] 边界行为——feature_spec_shape 结构化 BLOCKER 消费）。
@@ -230,8 +296,8 @@ export class SpecLoader {
     }
 
     const acceptancePath = path.join(featureDir, 'acceptance.yaml');
-    if (fs.existsSync(acceptancePath)) {
-      const acceptance = this.loadYamlMappingOrNull<AcceptanceSpec>(acceptancePath, shapeIssues);
+    if (resolved ? resolved.artifacts['acceptance@1'] !== undefined || resolved.context.required_outputs.includes('acceptance.yaml') : fs.existsSync(acceptancePath)) {
+      const acceptance = read<AcceptanceSpec>('acceptance.yaml', 'acceptance@1', shapeIssues);
       if (acceptance) {
         // 复审修复（cursor 阻断2）：AcceptanceSpec 的集合字段是 criteria/boundaries
         // （rev1 误写 use_cases——acceptance 根本没有该字段，等于零防护）。
@@ -243,8 +309,8 @@ export class SpecLoader {
 
     // v2: use-cases.yaml（可选）——定义业务流程 UseCase / ports / branches
     const useCasesPath = path.join(featureDir, 'use-cases.yaml');
-    if (fs.existsSync(useCasesPath)) {
-      const useCases = this.loadYamlMappingOrNull<UseCasesSpec>(useCasesPath, shapeIssues);
+    if (resolved ? resolved.artifacts['use-cases@1'] !== undefined || resolved.context.required_outputs.includes('use-cases.yaml') : fs.existsSync(useCasesPath)) {
+      const useCases = read<UseCasesSpec>('use-cases.yaml', 'use-cases@1', shapeIssues);
       if (useCases) {
         normalizeArrayField(useCases as unknown as Record<string, unknown>, 'use_cases', useCasesPath, shapeIssues);
         // P0-2 复审（codex P1/cursor）：嵌套集合在 loader 统一归一——check-ut 的 reduce、
@@ -308,11 +374,11 @@ export class SpecLoader {
     return null;
   }
 
-  inspectFeatureArtifacts(feature: string, phase?: Phase): FeatureArtifactInspection {
-    const featureDir = path.join(this.featuresDir, feature);
+  inspectFeatureArtifacts(feature: string, phase?: Phase, resolved?: ResolvedPhaseInputs): FeatureArtifactInspection {
+    const featureDir = this.featureDirAbs(feature);
     const featureDirParent = this.featuresDir;
-    const requiredFiles = phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
-    const optionalFiles = phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+    const requiredFiles = resolved ? resolved.context.required_outputs : phase ? REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
+    const optionalFiles = resolved ? [] : phase ? OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? [] : [];
 
     let pathKind: FeatureArtifactInspection['pathKind'] = 'missing';
     if (fs.existsSync(featureDir)) {
@@ -378,10 +444,9 @@ export class SpecLoader {
 
   listAvailableFeatures(): string[] {
     if (!fs.existsSync(this.featuresDir)) return [];
-
-    return fs.readdirSync(this.featuresDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .map(entry => entry.name);
+    // M5A §5.2/§5.3：共享枚举函数——返回逻辑 featureId（legacy=<目录名>，
+    // CU=`cu-`+base64url）；工作区容器只下钻不返回；孤儿/歧义/缺 yaml fail-closed。
+    return enumerateFeatures(this.projectRoot, this.featurePathOpts(this.projectRoot)).map(item => item.featureId);
   }
 
   // --------------------------------------------------------------------------
@@ -393,7 +458,12 @@ export class SpecLoader {
    * @param feature 功能模块名 (如 'home-page')
    * @param docName 文档名 (如 'spec.md', 'plan.md')
    */
-  loadFeatureDoc(projectRoot: string, feature: string, docName: string): string | null {
+  loadFeatureDoc(projectRoot: string, feature: string, docName: string, inputs?: ResolvedPhaseInputs): string | null {
+    if (inputs) {
+      const id = docName.replace(/\.md$/, '') + '@1';
+      const value = inputs.artifacts[id];
+      return typeof value === 'string' ? value : null;
+    }
     const resolved = resolveFeatureArtifact(projectRoot, feature, docName, this.featurePathOpts(projectRoot));
     if (!resolved.exists) return null;
     return fs.readFileSync(resolved.actualPath, 'utf-8');
@@ -425,7 +495,17 @@ export class SpecLoader {
 
       const fullPath = path.join(projectRoot, relativePath);
       if (fs.existsSync(fullPath)) {
-        result.set(relativePath, fs.readFileSync(fullPath, 'utf-8'));
+        if (filterExt) {
+          result.set(relativePath, fs.readFileSync(fullPath, 'utf-8'));
+        } else {
+          const bytes = fs.readFileSync(fullPath);
+          let content = '二进制资源：仅保留本文件路径引用，不作为源码文本注入。';
+          if (!bytes.includes(0)) {
+            try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+            catch { /* 非 UTF-8 字节保留路径引用。 */ }
+          }
+          result.set(relativePath, content);
+        }
       }
     }
     return result;
@@ -466,6 +546,28 @@ function coerceToPathString(raw: unknown): string | null {
     if (typeof candidate === 'string') return candidate;
   }
   return null;
+}
+
+function normalizeStringArrayField(
+  obj: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  shapeIssues: string[],
+  parentLabel?: string,
+): void {
+  const label = parentLabel ? `${parentLabel}.${field}` : field;
+  const value = obj[field];
+  if (value === undefined || value === null) return;
+  if (!Array.isArray(value)) {
+    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 应为 string[]——已按空数组防崩处理`);
+    obj[field] = [];
+    return;
+  }
+  const strings = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  if (strings.length !== value.length) {
+    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 含非空字符串以外条目——非法条目已剔除`);
+  }
+  obj[field] = strings;
 }
 
 /**
@@ -597,6 +699,70 @@ function normalizeContractsFiles(
   }
 
   contracts.files = normalized;
+}
+
+function normalizeConventionsApplied(
+  contracts: ContractsSpec,
+  contractsPath: string,
+  projectRoot: string,
+  shapeIssues: string[],
+): void {
+  const raw = (contracts as unknown as Record<string, unknown>).conventions_applied;
+  if (raw === undefined) return;
+  if (!Array.isArray(raw)) {
+    shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied\` 应为数组——已按空数组防崩处理`);
+    contracts.conventions_applied = [];
+    return;
+  }
+
+  const seen = new Set<string>();
+  const kept: NonNullable<ContractsSpec['conventions_applied']> = [];
+  raw.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}]\` 应为映射——条目已剔除`);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const locations = record.planned_locations;
+    if (!id || !Array.isArray(locations) || locations.length === 0) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}]\` 必须含非空 id 与 planned_locations——条目已剔除`);
+      return;
+    }
+    if (seen.has(id)) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied\` id 重复：${id}——重复条目已剔除`);
+      return;
+    }
+    const normalized: string[] = [];
+    let invalid = false;
+    locations.forEach((location, locationIndex) => {
+      if (
+        typeof location !== 'string' ||
+        !location.trim() ||
+        location.includes('\\') ||
+        /[*?\[\]{}]/.test(location)
+      ) {
+        invalid = true;
+        return;
+      }
+      try {
+        normalized.push(path.posix.normalize(validateProjectRelativePath(
+          projectRoot,
+          location.trim(),
+          `conventions_applied[${index}].planned_locations[${locationIndex}]`,
+        )));
+      } catch {
+        invalid = true;
+      }
+    });
+    if (invalid || normalized.length !== locations.length) {
+      shapeIssues.push(`${path.basename(contractsPath)} 的 \`conventions_applied[${index}].planned_locations\` 含绝对路径、..、反斜杠、glob 或非字符串——条目已剔除`);
+      return;
+    }
+    seen.add(id);
+    kept.push({ id, planned_locations: normalized });
+  });
+  contracts.conventions_applied = kept;
 }
 
 // ---------------------------------------------------------------------------
