@@ -6,7 +6,7 @@ protocol: 1
 
 # 规约
 
-各域同一张条目表，列义如下；判定边界见各域的「判定附注 / 落法附注」。
+各域同一张条目表，列义如下；判定边界见各域的「落法附注」。
 
 | 列 | 含义 |
 |---|---|
@@ -29,13 +29,4 @@ protocol: 1
 
 ## 域清单
 
-| 文件 | 域前缀 | applies_when |
-|---|---|---|
-| ux-consistency.md | UX | 需求含新页面/UI 改版 |
-| security-privacy.md | SEC | always |
-| dfx-baseline.md | DFX | always |
-| observability.md | OBS | 需求新增业务流程，或改变既有流程的分支/终态 |
-| resource-usage.md | RES | 需求涉及界面图片、图标或用户可见文案 |
-| compatibility-checklist.md | COMPAT | always |
-| env-exceptions.md | ENV | always |
-| deliverables.md | DLV | always |
+域清单以激活清单为准；域级命中条件见各文件 frontmatter 的 `applies_when`。

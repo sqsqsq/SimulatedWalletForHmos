@@ -8,11 +8,90 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
-import { imagesIn, readablePaths }
+import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+
+/**
+ * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
+ * 人的裁决（选了哪一项、没选哪几项、原话）、当前结果（doc-refresh.md 里这一话题的段落）。
+ * 取不到的一栏写「未取得，未验证」，不给空对象。
+ */
+function meetingTopicRows(src) {
+  const notes = readJsonOrNull(path.join(src, 'meeting-notes.json'));
+  const meetings = Array.isArray(notes?.meetings) ? notes.meetings : null;
+  if (!meetings) return ['`AR/story-src/meeting-notes.json` 读不出 `meetings` 列表——逐话题核对未取得，未验证。'];
+  const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
+  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? []).filter(g => g?.gate === 'meeting');
+  const refresh = readOrNull(path.join(src, 'doc-refresh.md'));
+  const doc = refresh === null ? null : parseDocument(refresh);
+  const quoted = new Map();
+  const out = [];
+  for (const m of meetings) {
+    const stem = String(m?.source ?? '').replace(/\.[^.]+$/, '');
+    const key = `${stem}@${String(m?.source_sha ?? '').slice(0, 8)}`;
+    const raw = readOrNull(path.join(src, 'meetings', stem, String(m?.source_sha ?? '').slice(0, 8), 'raw.md'));
+    const rawLines = raw === null ? null : raw.split(/\r?\n/);
+    for (const t of Array.isArray(m?.topics) ? m.topics : []) {
+      out.push('', `#### ${key}/${t.id} ${t.title ?? ''}`, '', `- **会议判断**：${t.finding || '（没写）'}`);
+      for (const ev of Array.isArray(t.evidence) ? t.evidence : []) {
+        const at = `raw.md L${ev.start}–L${ev.end}`;
+        const k = `${key}:${ev.start}-${ev.end}`;
+        if (quoted.has(k)) { out.push(`- **原话** ${at}：同 ${quoted.get(k)}`); continue; }
+        quoted.set(k, t.id);
+        out.push(rawLines ? `- **原话** ${at}：` : `- **原话** ${at}：未取得，未验证`,
+          ...(rawLines ? rawLines.slice(ev.start - 1, ev.end).map(l => `  > ${l}`) : []));
+      }
+      const g = gates.filter(x => x.meeting === key && x.item === t.id).pop();
+      if (g) {
+        const opts = Array.isArray(g.options) ? g.options : [];
+        const chosen = opts.find(o => o.key === g.chosen);
+        out.push(`- **人的裁决**：选了「${g.chosen}」${chosen?.label ?? ''}；没选：`
+          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话：${g.basis || '—'}`);
+      } else {
+        out.push(`- **人的裁决**：${t.question ? '未裁决——这个话题要问人，关卡记录里没有它' : '没有单独摆给人，随材料关卡一并确认'}`);
+      }
+      const h = doc?.headings.find(x => x.raw === `${key}/${t.id}` || x.raw.startsWith(`${key}/${t.id} `));
+      out.push(...(!doc ? ['- **当前结果**：`AR/story-src/doc-refresh.md` 读不到，未验证']
+        : !h ? ['- **当前结果**：doc-refresh.md 里没有这个话题的段落']
+          : ['- **当前结果**（doc-refresh.md）：',
+            ...doc.lines.slice(h.at + 1, headingEnd(doc, h)).filter(l => l.trim()).map(l => `  > ${l}`)]));
+    }
+  }
+  return out;
+}
+
+/** 围栏包一段行：外层比里面最长的围栏多一个反引号。 */
+function fenced(rows, lang) {
+  const mark = '`'.repeat(longestFence(rows.join('\n')) + 1);
+  return [`${mark}${lang}`, ...rows, mark];
+}
+
+/**
+ * 上游每张图与 story 里带同一图源标记的图并排：源图内容、承接图内容逐张给，多源合一时列全来源。
+ * 判的是关系保没保持，不是节点同不同名——并排才看得出来。
+ */
+function diagramPairRows(root, story) {
+  const carried = diagramsOf(story);
+  const out = [];
+  for (const [label, text] of upstreamDocs({ featureRoot: root })) {
+    for (const d of diagramsOf(text)) {
+      const tag = `${label} ${d.id}`;
+      out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
+      const hits = carried.filter(c => c.sources.includes(tag));
+      if (!hits.length) out.push('', 'story 里没有带这个图源标记的图。');
+      for (const c of hits) {
+        const others = c.sources.filter(x => x !== tag);
+        out.push('', `story 里承接它的图（${c.title || '章首'}${others.length ? `；同一张还承接 ${others.join('、')}` : ''}）：`,
+          '', ...fenced(c.lines, 'mermaid'));
+      }
+    }
+  }
+  return out.length ? out : ['', '上游（系统设计、spec）里没有图。'];
+}
 
 // 盘上实际有哪几版会议材料：路径逐版列出，审查不必猜目录形状
 function meetingVersions(srcDir) {
@@ -132,18 +211,22 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '- `.backup/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
       + '当前 `AR/design.md` 是提取稿，回查上游原话看它与 `RR`、`SR` 原文，不拿提取稿自证；',
     '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
-  // 会议材料只给位置：结论与证据各有唯一落点，复制进任务书就成了第二份。
-  // 路径逐版列实际存在的那些——写通配形状的话，审查只能猜自己该去哪一层。
+  // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。
+  // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
-    rows.push('', '### 会议材料（逐话题核去向）', '',
-      '- `AR/story-src/meeting-notes.json` —— 每场会每个版本、每个话题的判断（finding）与要问人的问题；',
-      '- `AR/story-src/story-flow.json` 的 `meeting` 关卡记录 —— 人真选了哪一项、原话是什么；',
-      '- `AR/story-src/doc-refresh.md` —— 模型写的当前会议结果，逐话题的去向。');
+    rows.push('', '### 会议材料：逐话题并列', '',
+      '每个话题核三句：原话里哪些是确定的；人选了什么、没选什么；当前结果里每个确定的行为有没有依据'
+      + '（没选的那一项的做法出现在结果里，算问题）。');
     for (const dir of meetingVersions(src)) {
-      rows.push(`- \`${dir}/raw.md\` —— 原文，引用的行号指它；`
+      rows.push(`- \`${dir}/raw.md\` —— 原文，行号指它；`
         + `\`${dir}/corrections.json\` 是纠偏留痕，\`${dir}/evidence.md\` 是纠偏后的阅读件`);
     }
+    rows.push(...meetingTopicRows(src));
   }
+
+  rows.push('', '### 上游图与 story 里承接它的图', '',
+    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；图种可以换，声称承接却丢了关系才算问题。',
+    ...diagramPairRows(root, story));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {

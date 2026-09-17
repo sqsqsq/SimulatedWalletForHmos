@@ -46,7 +46,8 @@ function knowledgeUseVerdicts(ctx, entries = []) {
         const reason = String(row.reason ?? '').trim();
         const w = row.waived;
         const hit = w ? `本轮豁免：${[w.reason, w.compensation].filter(Boolean).join('；补偿：')}`
-          : action !== undefined ? [action, reason].filter(Boolean).join('：')
+          : action !== undefined ? [action, reason, String(row.decision ?? '').trim() && `议题 ${String(row.decision).trim()}`]
+            .filter(Boolean).join('：')
             : req.map(x => String(x ?? '').trim()).filter(Boolean).join('；');
         rows.set(id, { applicable: row.applicable === true, waived: Boolean(w), basis: row.applicable === true ? hit : reason });
       }

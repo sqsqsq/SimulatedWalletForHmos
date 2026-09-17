@@ -275,6 +275,9 @@ def next_step(feature_root: Path, contract: dict | None,
     if late:
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
                 "先跑 `story_flow.py reopen`，再读会、在第一级关卡摆给人" + frozen_tail(feature_root, contract, manifest))
+    if contract.get("status") == "story_written" and contract.get("archived"):
+        return ("done", "本轮已归档送审。评审回流走 `/story review`；补料或改稿先 `story_flow.py reopen`"
+                + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written":
         # 产物没变就不重跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
         # 字节没动。check-receipt 报 subject 失配、或产物确实改了才重跑，那时 verifier 也要再来一次。

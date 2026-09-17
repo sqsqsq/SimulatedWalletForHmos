@@ -55,8 +55,8 @@ def cmd_status(feature_root: Path) -> dict:
         "material_state": ({"pending": state["pending"], "changed": state["changed"]}
                            if state else None),
         # 会议话题在这里机械枚举一次：全部版本、全部话题，含不属于本需求与归属判不准的。
-        # 模型据它向人呈现，不必自己把 notes 再列一遍；没有会议就没有这一项。
-        **({"meetings": topics} if topics else {}),
+        # 模型据它向人呈现，不必自己把 notes 再列一遍；只在读会与摆关卡那几步给，别的步骤用不上它。
+        **({"meetings": topics} if topics and ("meeting" in step or step == "await_gate:material_scope") else {}),
         "next": step,
         "action": action,
         **({"sidecar": shape} if shape else {}),

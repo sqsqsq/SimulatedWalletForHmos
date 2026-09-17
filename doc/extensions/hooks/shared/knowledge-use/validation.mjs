@@ -162,13 +162,20 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
           problems.push(`${id} 是评审动作条目，判命中要写 reason —— `
             + '说清这一轮为什么命中它；要做的动作登记进《决策与评审记录》');
         }
-        const wrote = ['requirement', 'contract', 'impact']
+        const wrote = ['requirement', 'contract']
           .filter(f => (f === 'requirement' ? requirements(row).length : text(row, f)));
         if (wrote.length) {
           problems.push(`${id} 的处置标了（评审动作），不产生代码要求 —— `
-            + `${wrote.join(' / ')} 留空；它的动作归《决策与评审记录》的跨团队协同`);
+            + `${wrote.join(' / ')} 留空；落点写 decision（议题 id）或 impact（谁、在哪份产物里表态）`);
+        }
+        if (text(row, 'decision') && text(row, 'impact')) {
+          problems.push(`${id} 同时写了 decision 与 impact —— 二选一：走 /story 的写议题 id，不走的写 impact`);
         }
         continue;
+      }
+      if (text(row, 'decision')) {
+        problems.push(`${id} 写了 decision —— 议题落点只给处置是（评审动作）的条目；`
+          + '这一条产生代码要求，落点写 contract 或 impact');
       }
       // 命中但本轮豁免：强制力决定允不允许、补偿要不要写；豁免不写要求与落点
       if (row.waived !== undefined) {

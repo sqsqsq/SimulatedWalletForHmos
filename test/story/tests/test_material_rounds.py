@@ -401,6 +401,19 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertFalse(self.round_now().get("created"))
         self.assertEqual(before, len(self.contract()["rounds"]))
 
+    def test_an_archived_story_routes_to_done(self) -> None:
+        """归档之后下一步是 done：不再引导跑 harness 与交付门，回流与补料各有出口。"""
+        self.complete_it("story_written")
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["archived"] = {"at": "2026-09-04T00:00:00+08:00"}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        proc = self.run_flow("status")
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertEqual("done", payload["next"])
+        self.assertEqual("story_written", payload["status"], "归档不是新的状态值")
+        self.assertIn("reopen", payload["action"])
+
     def test_reopen_works_from_story_written_too(self) -> None:
         self.complete_it("story_written")
         self.assertEqual(0, self.run_flow("reopen").returncode)

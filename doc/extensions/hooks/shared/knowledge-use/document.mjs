@@ -109,8 +109,10 @@ export function renderSkeleton(projectRoot, knowledge) {
     '# 本阶段知识判断的唯一真源。spec 的 §10/§11 由它生成，那两章不手写。',
     '#',
     '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（列表，一条要求一句，',
-    '# 写得下一个人照着能编码），不命中写 reason（可回查的依据；「不涉及」三个字不算依据）。',
+    '# 写得下一个人照着能编码），不命中写 reason：命中条件里哪个事实在本需求不成立',
+    '# （「不涉及」三个字不算依据；拿处置结果否定命中也不算）。',
     '# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。',
+    '# 值里有英文冒号加空格（「条件: 结果」）时整句加引号，否则这份 YAML 读不出来。',
     '# 命中但这一轮不做：applicable: true 加 waived 块（下面缩进写 reason 与 compensation）；',
     '# 红线不能豁免，基线要写 compensation，豁免要登记进《决策与评审记录》由评审人表态。',
     `schema: ${SCHEMA}`,
@@ -133,15 +135,27 @@ export function renderSkeleton(projectRoot, knowledge) {
     '',
     'constraints:',
   );
+  const generalOf = new Map(knowledge.constraints.map(c => [c.file, c.general ?? []]));
+  let lastFile = null;
   for (const e of knowledge.entries) {
-    // 判命中要的是条目本身：强制力、要求、命中条件与验法送到这一行，作者不必另开规约文件对照
+    if (e.file !== lastFile) {
+      lastFile = e.file;
+      for (const g of generalOf.get(e.file) ?? []) rows.push(`  # ${e.domainTitle}·通则：${g}`);
+    }
+    // 判命中要的是条目本身：约束原文、命中条件、命中后要给出什么、附注与验法，分行送到这一条下面，
+    // 作者不必另开规约文件对照。「命中后要给出」是处置，不是判命中的依据。
     rows.push(`  - id: ${e.id}`,
-      `    # ${e.force} · ${e.constraint} · 命中：${e.when || '—'} · 验法：${e.executors.join(' / ')}`);
+      `    # ${e.force} · ${e.constraint}`,
+      `    # 命中条件：${e.when || '—'}`,
+      `    # 命中后要给出：${e.handling || '—'}`,
+      ...(e.note ? [`    # 附注：${e.note}`] : []),
+      `    # 验法：${e.executors.join(' / ')}`);
     if (e.reviewAction) {
       // 这一条命中也不产生代码要求，填法与别的不同——写在它自己这一行下面，
       // 作者不必先去别处弄清「评审动作」是什么意思才敢填。
-      rows.push('    applicable:   # 处置是评审动作：命中与否照判，两种都补 reason',
-        '    #   不写 requirement / contract / impact；要做的动作登记进《决策与评审记录》');
+      rows.push('    applicable:   # 处置是评审动作：命中与否照判，两种都补 reason；不写 requirement / contract',
+        '    #   命中时落点：走 /story 的写 decision（《决策与评审记录》里登记这件事的议题 id——先登记议题再填，',
+        '    #   成文登记之后才判到就先 reopen）；不走 /story 的写 impact（谁、在哪份产物里表态）');
       continue;
     }
     rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',

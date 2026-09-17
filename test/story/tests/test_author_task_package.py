@@ -211,14 +211,15 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         spec.write_text(self.SPEC, encoding="utf-8")
         return self.task_package()
 
-    def test_each_diagram_comes_with_coordinates_not_a_copy(self) -> None:
+    def test_each_diagram_comes_with_coordinates_and_its_content(self) -> None:
+        """身份、标记写法、原件位置之外，源图内容就在这里：作者对着原图的关系画，不必再去翻原件。"""
         package = self.package_with_spec()
         self.assertIn("spec 里的图", package)
         self.assertIn("spec §5.2 #1", package, "没给身份，作者不知道标记写什么")
         self.assertIn("`%% 图源 spec §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
         self.assertIn("spec/spec.md", package, "没给原件路径")
         self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
-        self.assertNotIn("C[余额上报]", package, "把原件围栏复制进任务包了——副本会与原件不同步")
+        self.assertIn("C[余额上报]", package, "源图内容没送到，作者只能按行号自己去读")
 
     def test_a_spec_not_yet_written_is_not_reported_as_lost(self) -> None:
         """Spec 还没写成时它的图给不出来——那是时点，不是丢件：说清什么时候给。

@@ -213,8 +213,12 @@ export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}
     ...(ch.structure?.forms ?? []).filter(f => same(f.at, at) && same(f.under, under))
       .flatMap(f => (formHint ? [formHint(under || at, f), ''] : [])),
   ];
+  // 合同没指定位置的章级表，模板在某一节选了表格时就铺在那一节：同一用途只播一张，
+  // 章头与小节各铺一张的话作者要删一张，而锚列按整章核，放哪一张都过。指定了 `at` 的表留在原位。
+  const picked = (ch.structure?.forms ?? []).find(f => f.kind === 'table');
+  const place = (t) => (t.at || !picked ? [t.at, t.under] : [picked.at, picked.under]);
   const seeds = (at, under = '') => requiredTables(ch)
-    .filter(t => t.seed && same(t.at, at) && same(t.under, under))
+    .filter(t => t.seed && same(place(t)[0], at) && same(place(t)[1], under))
     .flatMap(t => [...tableSeed(t, facts), '']);
   const rows = [...notes(sk), ...hint(''), ...seeds('')];
   const done = new Set();

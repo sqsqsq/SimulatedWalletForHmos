@@ -18,6 +18,10 @@
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */
 import * as path from 'node:path';
+import { readContracts } from './contracts.mjs';
+import { activeKnowledge } from './knowledge.mjs';
+import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
+import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, lines, readTextOrNull } from './paths.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
 
@@ -27,17 +31,75 @@ const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
 /** 读者审查那一项。它要的输入与问题清单与知识判据不同，单独成段。 */
 const READER_REVIEW_ID = 'story_reader_review';
 
-/** 本阶段知识判断的真源。spec 自己写，之后各阶段读 plan 冻结的结果。 */
+/** 本阶段被审的知识判断在哪。spec 自己判，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
 const SOURCE_OF_TRUTH = {
-  spec: {
-    file: 'spec/knowledge-use.yaml',
-    what: '每条规约命中与否、命中的要求做什么、模式有哪些候选',
-  },
-  plan: {
-    file: 'contracts.yaml',
-    what: '每条命中的规约挂在哪个实体上（`must`）、模式选了哪几个（`files[].pattern`）',
-  },
+  spec: { file: 'spec/knowledge-use.yaml', what: '每条规约命中与否、命中的要求做什么、模式有哪些候选' },
+  plan: { file: 'contracts.yaml', what: '每条命中的规约挂在哪个实体上（`must`）、模式选了哪几个（`files[].pattern`）' },
+  coding: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，代码里有没有落实' },
+  review: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，复核表里一处落点一行的结论' },
+  ut: { file: 'contracts.yaml', what: '要单测证据的 `must`（`verify: ut / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
+  testing: { file: 'contracts.yaml', what: '要实机证据的 `must`（`verify: device / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
 };
+
+/** 表格一格：竖线转义、换行并成一行，空的写一横。 */
+const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ').trim() || '—';
+
+/**
+ * spec 阶段：每条激活规约一行，原条目的每一栏与作者判断并列——包括不命中、整域不适用与豁免。
+ * 原要求本身必须在表里：审查判「reason 说的是不是命中条件里的事实」「要求有没有偏离原义」，要对着原文判。
+ */
+function specJudgementTable(projectRoot, feature, knowledge) {
+  let use = null;
+  let gap = '';
+  try {
+    use = readUse(projectRoot, feature);
+  } catch (e) {
+    if (!(e instanceof UseError)) throw e;
+    gap = e.message;
+  }
+  const byId = new Map((use?.constraints ?? []).map(r => [String(r?.id ?? '').trim(), r]));
+  const na = new Map((use?.domains ?? []).map(r => [String(r?.prefix ?? '').trim(), r]));
+  const rows = ['| 编号 | 强制力 | 约束原文 | 命中条件 | 命中后要给出 | 附注 | 作者判断 | 落点 |',
+    '|---|---|---|---|---|---|---|---|'];
+  for (const e of knowledge.entries) {
+    const r = byId.get(e.id);
+    const d = na.get(e.prefix);
+    const judged = !use ? '未取得，未验证'
+      : d ? `整域不适用：${d.reason ?? ''}`
+        : !r ? '（没有去处）'
+          : r.applicable === false ? `不命中：${r.reason ?? ''}`
+            : r.applicable !== true ? `applicable 写的是「${r.applicable}」`
+              : r.waived ? `命中·本轮豁免：${r.waived?.reason ?? ''}${r.waived?.compensation ? `；补偿：${r.waived.compensation}` : ''}`
+                : `命中：${(e.reviewAction ? [r.reason] : requirements(r)).filter(Boolean).join('；')}`;
+    const landing = !r ? '—' : r.contract ? `§9 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
+      : r.decision ? `议题 ${r.decision}` : '—';
+    rows.push(`| ${e.id} | ${cell(e.force)} | ${cell(e.constraint)} | ${cell(e.when)} | ${cell(e.handling)} `
+      + `| ${cell(e.note)} | ${cell(judged)} | ${cell(landing)} |`);
+  }
+  return gap ? [`**作者判断读不到**：${gap}——下表的判断一栏是未验证，不替它下结论。`, '', ...rows] : rows;
+}
+
+/**
+ * plan 及之后：每条出现过的规约一行，原条目与契约上挂着它的全部 `must` 并列。
+ * 审查判「must 是不是这条规约要求的那件事、有没有把步骤终态写成对象状态这类原义偏离」，要对着原文判。
+ */
+function obligationTable(projectRoot, feature, knowledge) {
+  const { contracts, error, exists } = readContracts(projectRoot, feature);
+  if (error || !exists) return [`**契约读不到**：${error ?? '缺 contracts.yaml'}——原义与 must 无从并列，未验证。`];
+  const musts = obligationsFromContracts(contracts);
+  const ruleIds = [...new Set(musts.map(o => o.rule).filter(Boolean))];
+  if (!ruleIds.length) return ['契约上一条 `must` 都没有。'];
+  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+  const rows = ['| 编号 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify） |',
+    '|---|---|---|---|---|'];
+  for (const id of ruleIds) {
+    const e = byId.get(id);
+    const list = musts.filter(o => o.rule === id).map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'}`);
+    rows.push(`| ${id} | ${cell(e?.constraint ?? '（不在激活清单）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
+      + `| ${list.map(cell).join('<br>')} |`);
+  }
+  return rows;
+}
 
 /**
  * 本阶段该产出哪些知识判据结论 —— **从 overlay 现取**，不在这里维护第二份清单。
@@ -88,6 +150,17 @@ export default async function preVerifier(ctx) {
 
   const knowledgeIds = checkIds.filter(id => id.startsWith(KNOWLEDGE_CHECK_PREFIX));
   const fragments = [];
+  let knowledge = null;
+  let knowledgeGap = '';
+  try {
+    knowledge = activeKnowledge(ctx.projectRoot);
+  } catch (e) {
+    knowledgeGap = e.message;
+  }
+  const table = !knowledge ? [`**激活知识派生失败**：${knowledgeGap}——原义无从并列，按规约文件逐条读，结论写未验证的部分。`]
+    : !knowledge.entries.length ? ['激活清单里没有规约条目。']
+      : phase === 'spec' ? specJudgementTable(ctx.projectRoot, ctx.feature, knowledge)
+        : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
   // 读者审查放最前：它要通读一份 300 行的归档件与全部材料，是这批判据里最重的一项。
   // 排在后面容易被当成附注跳过。
@@ -99,8 +172,11 @@ export default async function preVerifier(ctx) {
   const fragment = [
     '## 实例扩展知识判据（BLOCKER）',
     '',
-    `本阶段的知识判断写在 **\`${source.file}\`**：${source.what}。`,
-    '它是唯一真源——产物里的表是它的投影，两者按构造一致，读哪个都行。',
+    `本阶段被审的知识判断在 **\`${source.file}\`**：${source.what}。`,
+    '**原知识与仓内事实是审查依据，这份判断与契约是被审的对象**——下表把每条规约的原条目与当前判断并列，',
+    '对着原文判，不拿判断自证。',
+    '',
+    ...table,
     '',
     '**判的是判断本身，不是它有没有被登记**（登记齐不齐、编号在不在册，机械层已经核过）：',
     '',

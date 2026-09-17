@@ -160,7 +160,11 @@ class TheJudgementSeesTheEntry(ProtocolCase):
                        "--feature", nk.FEATURE, "--project-root", str(self.root))
         self.assertEqual(0, proc.returncode, proc.stderr)
         text = self.use_path.read_text(encoding="utf-8")
-        self.assertIn("# 红线 · 重复触发时复用同一个标识 · 命中：有重试路径 · 验法：模型 / 实机", text)
+        # 条目原义分行送达：约束原文与强制力、命中条件、命中后要给出、验法——处置与命中条件不挤在一行
+        block = text.split("  - id: NEU-02", 1)[1].split("  - id: ", 1)[0]
+        for line in ("# 红线 · 重复触发时复用同一个标识", "# 命中条件：有重试路径", "# 命中后要给出：", "# 验法：模型 / 实机"):
+            self.assertIn(line, block)
+        self.assertNotIn("命中：", text, "命中条件又挤回同一行")
         self.assertIn("# 面：出口登记 / 重试入口（未确认：重试入口）", text)
 
     def test_the_projection_carries_force_and_method(self) -> None:

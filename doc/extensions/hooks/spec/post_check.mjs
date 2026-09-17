@@ -22,6 +22,7 @@ import * as path from 'node:path';
 import { parseYaml } from '../shared/yaml.mjs';
 import { scanBannedTerms, formatHits } from '../../skills/story/scripts/core/story/language.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
+import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
@@ -29,7 +30,7 @@ import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
-import { featureRoot, relDisplay } from '../shared/paths.mjs';
+import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -237,6 +238,7 @@ function knowledgeExitGroups(ctx, lines) {
       .filter(r => r.applicable === true && !r.waived && !byId.get(String(r.id ?? '').trim())?.reviewAction)
       .map(r => String(r.id ?? '').trim()));
     bridge.problems.push(...acceptanceCoverage(ctx, specIds));
+    bridge.problems.push(...reviewActionLandings(ctx, byId, use));
   }
 
   // ---- 组 4：投影一致性，前置是判断本身成立且出口章在 ----
@@ -252,6 +254,43 @@ function knowledgeExitGroups(ctx, lines) {
     projection.problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
   }
   return [chapter, layer, bridge, projection];
+}
+
+/**
+ * 命中的评审动作落到了哪里 —— 走 `/story` 的落到议题（`decision` 在决策登记里），不走的写 `impact`。
+ *
+ * 只核落点在不在、指不指得到：`impact` 写的人与产物对不对、议题是不是真在问这件事，归 verifier。
+ * 不走 /story 的需求没有决策登记，写 `decision` 指不到任何东西。
+ */
+function reviewActionLandings(ctx, byId, use) {
+  const problems = [];
+  const hits = use.constraints.filter(r => r.applicable === true && !r.waived
+    && byId.get(String(r.id ?? '').trim())?.reviewAction);
+  if (!hits.length) return problems;
+  const root = featureRoot(ctx.projectRoot, ctx.feature);
+  const story = isStoryFeature(root);
+  const list = story ? decisionList(readJsonOrNull(path.join(root, 'AR', 'story-src', 'decisions.json'))) : null;
+  const ids = list ? new Set(list.map(d => String(d?.id ?? '').trim()).filter(Boolean)) : null;
+  for (const row of hits) {
+    const id = String(row.id ?? '').trim();
+    const decision = String(row.decision ?? '').trim();
+    const impact = String(row.impact ?? '').trim();
+    if (!story) {
+      if (decision) problems.push(`${id} 写了 decision「${decision}」，而这个需求没走 /story、没有议题登记——改写 impact：谁、在哪份产物里表态`);
+      else if (!impact) problems.push(`${id} 是命中的评审动作，没写 impact——写清谁、在哪份产物里对这件事表态`);
+      continue;
+    }
+    if (!decision) {
+      problems.push(`${id} 是命中的评审动作，没写 decision——先在 AR/story-src/decisions.json 登记这件事的议题，`
+        + '再把议题 id 写进来；成文登记之后才判到的，先 reopen');
+    } else if (ids === null) {
+      problems.push(`${id} 的 decision「${decision}」核不了：AR/story-src/decisions.json 读不出议题列表`);
+    } else if (!ids.has(decision)) {
+      problems.push(`${id} 的 decision「${decision}」在 AR/story-src/decisions.json 里没有这个议题`
+        + `（现有：${[...ids].slice(0, 8).join('、') || '无'}）`);
+    }
+  }
+  return problems;
 }
 
 /**

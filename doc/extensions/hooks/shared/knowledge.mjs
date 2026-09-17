@@ -250,9 +250,31 @@ function parseConstraintFile(absPath, rel, bad) {
   if (declared && declared !== derived) {
     fail(`${rel} 声明的 domain「${declared}」与条目编号前缀「${derived}」不一致`);
   }
-  // 落法附注：判定期要拿它做复述比对的来源之一
-  const notesMatch = body.match(/^#+\s*落法附注\s*$/m);
-  const notes = notesMatch ? body.slice(notesMatch.index + notesMatch[0].length) : '';
+  // 落法附注：顶层列表项以 `**<编号>**` 起头的是那一条的附注，到下一个顶层项或标题为止（缩进的续行、
+  // 子项并成一行）；其余顶层项是整域通则。送到判断骨架与审查任务书，读它的是判命中的作者与审查者。
+  const noteOf = new Map();
+  const general = [];
+  const notesAt = body.match(/^#+\s*落法附注\s*$/m);
+  if (notesAt) {
+    let append = null;
+    for (const line of lines(body.slice(notesAt.index + notesAt[0].length))) {
+      if (/^#+\s/.test(line)) break;
+      if (!line.trim()) continue;
+      const item = line.match(/^-\s+(.*)$/);
+      if (!item) { if (append) append(line.trim().replace(/^[-*]\s+/, '')); continue; }
+      const head = item[1].match(/^\*\*([A-Z][A-Z0-9]{1,7}-\d{2})\*\*\s*[：:]?\s*(.*)$/);
+      if (head) {
+        const id = head[1];
+        if (!entries.some(e => e.id === id)) bad.push(`${rel} 的落法附注里有「${id}」，条目表里没有这个编号`);
+        noteOf.set(id, head[2].trim());
+        append = (t) => noteOf.set(id, `${noteOf.get(id)} ${t}`.trim());
+      } else {
+        general.push(item[1].trim());
+        const k = general.length - 1;
+        append = (t) => { general[k] = `${general[k]} ${t}`.trim(); };
+      }
+    }
+  }
   // 中文域名取正文一级标题——归档件面向评审者，写仓内 slug 他们对不上
   const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
   const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
@@ -261,8 +283,8 @@ function parseConstraintFile(absPath, rel, bad) {
     name: fm.name ?? '',
     title,
     domain: derived,
-    entries: entries.map(e => ({ ...e, domainTitle: title })),
-    notes,
+    entries: entries.map(e => ({ ...e, domainTitle: title, note: noteOf.get(e.id) ?? '' })),
+    general,
   };
 }
 

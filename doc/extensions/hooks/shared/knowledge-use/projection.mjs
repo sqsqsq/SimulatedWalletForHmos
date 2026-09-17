@@ -62,8 +62,10 @@ function renderConstraints(knowledge, use) {
     out.push('评审动作（命中，不产生代码要求）：');
     for (const row of actions) {
       const entry = byId.get(text(row, 'id'));
+      const landing = text(row, 'decision') ? ` — 议题 ${cell(text(row, 'decision'))}`
+        : text(row, 'impact') ? ` — 由 ${cell(text(row, 'impact'))} 表态` : '';
       out.push(`- ${cell(text(row, 'id'))} — ${cell(entry?.handling ?? '')}`
-        + ` — ${cell(text(row, 'reason'))}`);
+        + ` — ${cell(text(row, 'reason'))}${landing}`);
     }
   }
   const na = use.constraints.filter(r => r.applicable === false);

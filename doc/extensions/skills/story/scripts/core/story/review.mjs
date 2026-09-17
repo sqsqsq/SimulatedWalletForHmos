@@ -256,6 +256,7 @@ export function decisionProblems(ctx) {
 //: 澄清正文的段首：加粗小标题（`**依据**：…`）。一段从它起，到下一个段首止。
 const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
 const OPTIONS_SEGMENT = '可选的做法';
+const SUGGESTION_SEGMENT = '建议';
 //: 一个选项里「做法」与「选它会怎样」之间的分隔：后面写后果。
 const OPTION_CONSEQUENCE = '——';
 //: 选项编号：行首或空白、标点之后的「数字＋. 、 ) ）」，数字后不再接数字（版本号、小数不算）；圈码同理。
@@ -277,10 +278,25 @@ function optionsSqueezed(line) {
 function choiceListProblems(dec) {
   const id = dec?.id ?? '（无编号）';
   const lines = String(dec?.clarification ?? '').split(/\r?\n/);
-  const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === OPTIONS_SEGMENT);
-  const next = lines.findIndex((l, i) => at >= 0 && i > at && SEGMENT_HEAD.test(l));
-  const area = at < 0 ? []
-    : [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
+  const segment = (name) => {
+    const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === name);
+    const next = lines.findIndex((l, i) => at >= 0 && i > at && SEGMENT_HEAD.test(l));
+    return at < 0 ? null
+      : [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
+  };
+  // 建议段：人从几个方案里选，要先看到起草方推荐哪一个；推荐不出来也要写明缺哪个事实。
+  const suggestion = segment(SUGGESTION_SEGMENT);
+  const noSuggestion = !suggestion?.some(l => l.trim())
+    ? [`决策 ${id} 是选方案的议题，缺「**${SUGGESTION_SEGMENT}**」这一段（或它是空的）——先写选择方案几、再写理由；`
+      + '信息不够推荐不出来时，写明缺哪个事实']
+    : [];
+  const area = segment(OPTIONS_SEGMENT) ?? [];
+  const list = choiceOptionProblems(id, area);
+  return [...list, ...noSuggestion];
+}
+
+/** 「可选的做法」那一段的形状：有序列表、一项一个、每项写后果。 */
+function choiceOptionProblems(id, area) {
   if (area.some(optionsSqueezed)) {
     return [`决策 ${id} 把几个选项写在了同一段——「${OPTIONS_SEGMENT}」写成有序列表，`
       + '一个选项一项（`1. …` 换行 `2. …`），评审人填的就是这个编号'];

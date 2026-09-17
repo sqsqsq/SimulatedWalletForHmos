@@ -273,7 +273,7 @@ function diagramSection(heading, label, src, derived) {
     return rows;
   }
   const downstream = 'story';
-  rows.push(`原件在 \`${rel}\`——**按行号去读它**，这里不复制一份副本（副本会与原件不同步）。`,
+  rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自这一刻的原件）。`,
     `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
     + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
     + '机器核的就是它。周围的文字自己写。',
@@ -285,7 +285,7 @@ function diagramSection(heading, label, src, derived) {
   for (const d of list) {
     rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
       + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
-      + `标记写 \`%% 图源 ${label} ${d.id}\``);
+      + `标记写 \`%% 图源 ${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
   }
   rows.push('');
   return rows;
