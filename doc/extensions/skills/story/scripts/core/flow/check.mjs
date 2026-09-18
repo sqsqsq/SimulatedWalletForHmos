@@ -12,7 +12,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * story 前置流程契约（`AR/story-src/story-flow.json`，见 SKILL.md「初析与流程契约」章）。
+ * story 前置流程契约（`AR/story-src/story-flow.json`，规则见 rules/init_analysis.md）。
  *
  * 契约存在即表示该 feature 走了 /story：材料导入、拆分裁决、进入 spec 的授权都记在里面。
  * 未收口就进 spec，说明这些决策没走完：诊断出 PRD 缺料却径直进 /spec，人工补录的整份 PRD

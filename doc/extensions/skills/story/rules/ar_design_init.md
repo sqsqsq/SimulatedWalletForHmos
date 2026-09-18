@@ -1,5 +1,7 @@
 # ar_design_init — AR 提取稿的生成规则
 
+> 读者：S4 写提取稿的主 agent。时机：范围已定、`status` 给出 `generate_design` 时。
+
 从上游材料提取，写成 `AR/story-src/design-draft.md`，再由
 `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`
 提交为 `AR/design.md`，作为 /spec 的输入。
@@ -144,10 +146,9 @@
 
 1. 不生成开发侧章节——实现方案→plan、页面/异常→spec、安全/配置→spec §7/§9、合规与兼容判定→story 影响面、测试→acceptance.yaml；
 2. 不复述 SR 细节——引用替代转载：design.md §3.2/§4/§5 是「一句话 + 指针」粒度（§3.1 全局分工按其自身要求成段）；
-3. 不复制或重绘上游的流程图/时序图——图以 SR 为准、以 spec 业务流程图为建模载体；
+3. 提取稿里不复制或重绘上游的流程图/时序图——图以 SR 为准、以 spec 业务流程图为建模载体（成文时按 `phases/story-write.md` 把上游图搬进 story，那是另一份产物）；
 4. 不为「要不要覆盖 `AR/design.md`」停下问人——提取稿本来就是要提交上去的，上游那一份
    由收口那一步备份进 `.backup/`。需求系统拉下来的预填版每次
-   都非空，为它设一道确认等于每轮都停，而本扩展的停等点只有材料与范围两处
-   （见 SKILL「停等点」）；
+   都非空，为它设一道确认等于每轮都停（停等点以 SKILL「停等真值表」为准）；
 5. 不自己去写 `AR/design.md`——你交的是提取稿，提交那一步才覆盖它。直接写的话材料指纹
    会因为你自己的输出而变，这一轮被推回重新盘点。

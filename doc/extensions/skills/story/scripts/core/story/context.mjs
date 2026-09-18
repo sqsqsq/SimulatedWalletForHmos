@@ -185,11 +185,10 @@ function storyFrozen(ctx) {
 export function refuseIfFrozen(ctx, command) {
   if (!storyFrozen(ctx).written) return;
   fail(`story 已定稿登记（story_written），台账随稿冻结，${command} 不再执行。\n`
-    + '  定稿是一个时点的快照：那一刻的决策登记，'
-    + '就是这份 story 据以成文的全部依据。\n'
-    + '  重算它们等于换掉已定稿产物的依据，而 story.md 不会跟着变——'
-    + '重算等于换掉已定稿产物的依据，而 story.md 不会跟着变。\n'
-    + '  材料在定稿之后继续演化是正常的，与这份 story 无关：它讲的是定稿那一刻的事。');
+    + '  定稿是一个时点的快照：那一刻的决策登记，就是这份 story 据以成文的全部依据；'
+    + '重算它们等于换掉已定稿产物的依据，而 story.md 不会跟着变。\n'
+    + '  确要改这一版：先跑 `story_flow.py reopen --feature <名>` 撤销成文登记，照它给的下一步走，'
+    + '改完再 `story_flow.py story` 重新登记。');
 }
 
 /** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */

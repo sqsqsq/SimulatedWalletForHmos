@@ -1,6 +1,6 @@
 # plan 阶段 · 扩展要求（写之前读这一页）
 
-> **推进不逐段问**：门禁报错怎么修、check 过了下一步做什么、进 harness 还是进 verifier——这些是义务不是选择题。停等点与两层授权边界的唯一定义，见[story SKILL.md「推进契约」](../../skills/story/SKILL.md#推进契约)。
+> 读者：plan 阶段的作者。时机：动笔前读一遍；门禁报错时回到「门禁会拦什么」。
 
 本阶段是设计模式**唯一的选型点**，也是规约义务**唯一的落点**：下游不重做适用性与选型，它们读**你挂在契约实体上的 `must`** 与 `files` 的 `pattern` / `role`——挂错或没挂，下游零注入。
 
@@ -9,7 +9,7 @@
 | 文件 | 拿什么 |
 |---|---|
 | 当前 `spec/spec.md`（含 §10、§11）、`AR/review.md` 与 `AR/story-src/review-disposition.json`（有才读） | 要履行的业务条件、验收与未决，人已表的态与评审回稿的处置——设计的前提，不是背景。§10 每条命中都要有实体扛着，强制力与验法两列定落点要什么证据；§11 的候选是选型的出发点 |
-| `doc/extensions/skills/story/templates/plan-sections.md` | 「知识决策（设计输入）」章骨架 + `must` 的写法、`verify` 对照与借挂反例 |
+| `doc/extensions/skills/story/templates/plan-sections.md` | 「知识决策（设计输入）」章骨架与契约挂法样例 |
 | `doc/extensions/manifest.yaml` 的 `provides.knowledge` 里**命中**的那几个文件 | 条目的处置列、落法附注与**探针列**；候选模式的选型篇。未命中的域不必读 |
 
 ## 二、设计要证明它履行得了需求
@@ -36,6 +36,7 @@ components:
 - `must` **只能**挂在五处：`data_models[].fields[]`、`interfaces[].methods[]`、
   `components[]` 及其 `state[]`、`resource_keys.<模块>.<分类>[]` 的资源条目、`files[]`；挂在实体顶层、模块层或分类层都会被拦。
   `text` 写**本次要落实成什么**，不复述规约原文；`rule` 只写真正要求这件事的规约。
+  同一类实体有好几个时，挂给**本需求里真的做这件事的那一个**（「撤销后要留痕」挂在执行撤销的方法上，不挂在只读查询上）。
 - **不是某条规约要求的业务规则写在这里**：承载它的实体自己的 `description`，或 plan.md 对应设计章的一句，不挂 `must`。
   把「单个清单最多 50 项」挂到兼容性条目上就是借挂——编号在册、规则合法，那条规约却不要求这件事。
 - 一条 `must` 就是一处落点，`verify` 说这一处的证据由谁取，按该规约验证列声明的执行体定：含「实机」写

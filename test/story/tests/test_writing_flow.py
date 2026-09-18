@@ -129,7 +129,6 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
         guide = read("phases/story-write.md")
         self.assertNotIn("写不出被否决的备选", guide, "旧的备选配额还在")
         self.assertIn("只有一条合理路径", guide.split("### 决策登记", 1)[1].split("\n## ", 1)[0])
-        self.assertIn("只有一条合理路径", guide.split("### 交回前自检", 1)[1])
         dims = CONTRACT["verdicts"]["chapter_dimensions"]
         self.assertTrue(any("有真实备选时" in d for d in dims), "章级维度还要求每个取舍都有被否方案")
 
@@ -264,9 +263,9 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         只说「要不一样」又会逼出为了不同而不同的图。图种按内容的关系选，一处维护。
         """
         guide = read("phases/story-write.md")
-        flow = guide.split("### 业务流程", 1)[1].split("\n### ", 1)[0]
-        for needle in ("主路径与全部分支去向", "交接点", "不为了与上游不同而刻意画不同"):
-            self.assertIn(needle, flow, f"业务流程那一段少了「{needle}」")
+        figures = guide.split("**图从要解释的关系出发**", 1)[1].split("\n\n", 1)[0]
+        for needle in ("业务流程章", "主路径与全部分支去向", "交接点", "不为了与上游不同而刻意画不同"):
+            self.assertIn(needle, figures, f"画图那一段少了「{needle}」")
         form = guide.split("### 形式按内容的关系选", 1)[1].split("\n## ", 1)[0]
         for relation in ("先后与分支", "状态与转移", "调用与返回"):
             self.assertIn(relation, form, f"形式选择表里少了「{relation}」这一行")

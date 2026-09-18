@@ -1044,6 +1044,8 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
         out = (proc.stderr or "") + (proc.stdout or "")
         self.assertIn("台账随稿冻结", out)
         self.assertNotIn("撤登记", out, "登记单向，报错不该指向一个不存在的动作")
+        # 登记后改章只有 reopen 一条路（1.9.3 R8）：拒绝时要说出这条路
+        self.assertIn("story_flow.py reopen", out, "登记后被拒却不说怎么改")
 
     def test_a_changed_ledger_is_named_by_check(self) -> None:
         """拒绝两条命令挡不住有人直接改文件——指纹核对补上那一面。"""

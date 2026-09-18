@@ -1,12 +1,12 @@
 # `/story` 链 · spec 阶段作业包
 
-> 从 `/story` 链进入 spec 阶段时读这一页。扩展对 spec 的通用要求见
-> [`hooks/spec/author.md`](../../../hooks/spec/author.md)（那一页对所有 spec 都生效）；
-> 本页只补 `/story` 场景独有的：材料从哪来、要出几份产物、§9 怎么取证。
+> 读者：从 `/story` 链进入 spec 阶段的作者。时机：S4 收口之后、动笔之前读一遍。扩展对所有 spec 的通用要求见
+> [`hooks/spec/author.md`](../../../hooks/spec/author.md)；本页只补 `/story` 场景独有的：材料从哪来、
+> 要出几份产物、阶段内顺序、§9 怎么取证。
 
 ## 一、上游输入必读
 
-正文生成前必须读下面三份（存在时），并在 `spec/context-exploration.md` 的 `key_inputs_read` 里记录：
+正文生成前必须读下面几份（存在时），并在 `spec/context-exploration.md` 的 `key_inputs_read` 里记录：
 
 | 文件 | 是什么 |
 |---|---|
@@ -15,121 +15,77 @@
 | `doc/features/<feature>/SR/design.md` | SE 系统级设计——跨部件交互、云侧接口、系统级存储，是 §9 技术契约的取证源 |
 | `doc/features/<feature>/AR/story-src/init-analysis.md` 第 ⑥ 节 | 读材料时已经形成的来源初筛：每块内容对本需求的作用、还要核实的疑点、不适用的依据 |
 
-**来源初筛是 Spec 的起点，不是 Spec 的替身**：没变的判断直接沿用，不把材料从头再分类一遍；
-写 Spec 时只补新结论、处理新冲突。初筛里登记的作用与疑点不因 Spec 没写到就算处理完——
-成文与审查还会回来对照它和原文。
+**来源初筛是 Spec 的起点，不是 Spec 的替身**：没变的判断直接沿用，写 Spec 时只补新结论、处理新冲突。
+初筛里登记的作用与疑点不因 Spec 没写到就算处理完——成文与审查还会回来对照它和原文。
 
-**「本 AR 范围与拆分说明」是 Scope 与功能清单的边界依据**：该节含拆分表时，表里归**兄弟 AR
-或「待立项」**的那几份**不属于本次**——它们的功能不进本 AR 的功能清单，也不进验收标准。
-这些内容涉及的模块若要登记 `out_of_scope_modules`，`rationale` 写「归属 <兄弟 AR 编号>」而不是
-「本需求不做」：前者有人接、后者没人接，对评审者是两个不同的信息。
-三形态见 [`rules/ar_design_init.md`](../rules/ar_design_init.md) §3——**「无拆分」不等于「本 AR 承载全部」**，
-同 SR 有兄弟 AR 时后者是假的。
+**「本 AR 范围与拆分说明」是 Scope 与功能清单的边界依据**：拆分表里归**兄弟 AR 或「待立项」**的那几份
+**不属于本次**，不进功能清单与验收。它们涉及的模块登记 `out_of_scope_modules` 时，`rationale` 写
+「归属 <兄弟 AR 编号>」而不是「本需求不做」。**「无拆分」不等于「本 AR 承载全部」**，同 SR 有兄弟 AR 时
+后者是假的（三形态见 [`rules/ar_design_init.md`](../rules/ar_design_init.md) §3）。
 
 ## 二、本阶段产出三份文档
 
-spec 阶段是**一次 pass 产出三份**，作者与读者各不相同，事实同源，不得只交 `spec.md` 就宣告闭环：
+spec 阶段是**一次 pass 产出三份**，事实同源，不得只交 `spec.md` 就宣告闭环：
 
 | 产物 | 作者 | 持有什么 | 读者 |
 |---|---|---|---|
 | `spec/spec.md` | AI | **代码要求** | AI 编码 / 出用例 / 门禁 |
-| `AR/review.md` | AI 起草 + **人确认** | 每条决策的澄清叙述与人的填写位（选方案的「方案选择：」、复核结论的「审核结果：」） | 评审者 |
-| `AR/story.md` | AI（**按章写、按章落盘**，见下方顺序） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
+| `AR/review.md` | 由 `AR/story-src/decisions.json` 渲染 + **人确认** | 每条决策的澄清叙述与人的填写位 | 评审者 |
+| `AR/story.md` | AI（按章写、按章落盘） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
 
-- `AR/review.md` **由 `AR/story-src/decisions.json` 渲染，不手写**：AI 负责把每条决策登记成
-  五样——类型（十一类扫描表里的一类）、陈述句标题、带小标题分段的澄清叙述、请谁确认、
-  人要做的事（`review_mode`：选方案 / 复核结论）；澄清叙述里的 `**依据**` 要指名材料或核查
-  （哪份稿怎么说的、查了工程什么）。
-  分层、编号与表态位由脚本生成——状态分章、类型成节、`N.M.K` 顺出，登记表里不存序号。
-  **表态位只能由评审人填**：填写位里的编号、勾选与文字，你一个字都不写，推荐项也不替人预选。
-  `story-build build` 重渲染时只重算机器区，人工区逐字节保留；它在 story 成文之后跑（见下方顺序 ③）。
-  代填表态即 BLOCKER——归档件上「同意」若不是评审人自己写的，它就不可信。
-
-**story 不是 spec 的排版件**：spec 的可标识事实、PRD 的业务语境、SE 的全局方案，以及无编号的
-数据与交付事实，都必须在 story 有完整落点。story 可以整合、改序、改写，但不可以只保留编号、
-删掉上下文，或把全局方案缩成一段摘要；它还要补足判断、权衡、风险与合规回显。
+- `AR/review.md` **不手写**：你把每条决策登记进 `decisions.json`（什么算一条议题、澄清正文怎么分段，
+  见 [`phases/story-write.md`](story-write.md) 的「决策登记」）；分层、编号与表态位由脚本生成。
+  **表态位只能由评审人填**：填写位里的编号、勾选与文字你一个字都不写，推荐项也不替人预选——代填即 BLOCKER。
+- **story 不是 spec 的排版件**：spec 的可标识事实、PRD 的业务语境、SE 的全局方案，以及无编号的
+  数据与交付事实，都必须在 story 有完整落点；它还要补足判断、权衡、风险与合规回显。
 
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
-`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面六步走完。
-作业规则见 [`phases/story-write.md`](story-write.md)（写骨架、照骨架写、回看各一段）。
-
-**什么算一条议题、澄清正文怎么分段**：见 [`phases/story-write.md`](story-write.md) 的「决策登记」。
-同一条定义只维护一处，两处各写一份迟早各说各话。
+`spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面走完。成文方法见
+[`phases/story-write.md`](story-write.md)。
 
 ```bash
 node .../story-build.mjs skeleton --feature <feature>  # ① 当前输入 + 写作设计空壳 + 十章骨架 + 十份章草稿
-#                                 （它先把流程、材料、来源、Spec 与决策登记一次预检完，
-#                                 全过才写盘；决策登记不存在时建一份空骨架）
+#                                 （流程、材料、来源、Spec 与决策登记一次预检完，全过才写盘）
 #                              ①b 写整篇写作设计：AR/story-src/story-template.md 的阅读主线与每章骨架，
 #                                 写完再跑一次 skeleton——它把骨架铺进草稿，给出第一章的写作动作
-#                              ② 按章写：**照骨架在草稿上写**（AR/story-src/drafts/NN-<章名>.md，
-#                                 骨架里的小节标题、每节要答的问题、表头与作图提示、读者问题与主要职责、
-#                                 术语起始行都已经在里面），一次写一章，经
-#                                 `story-build chapter --from <草稿>` 原子落盘；
+#                              ② 按章写：照骨架在草稿上写，经 `story-build chapter --from <草稿>` 原子落盘；
 #                                 每次落盘都报还剩哪几章带着待写 marker
-#                              ②b 回看：十章齐后 skeleton 给出回看清单，逐条撞两问、处置回真源（见 story-write.md）；
-#                                 改的那几章仍逐章落盘，落盘时本章判据先核一遍
-python .../story_flow.py story --feature <feature>   # ③ 登记（自带 number / build / check）
+#                              ②b 回看：十章齐后 skeleton 给出回看清单，逐条撞两问、处置回真源
+python .../story_flow.py story --feature <feature>   # ③ 登记（自带 project / number / build / check）
 #                              ④ 跑 spec harness
-#                              ⑤ 确定性门全绿之后，按 harness 末尾 NEXT: 行派 verifier
-#                              ⑥ check-receipt → check --deliver 交付门 → /story archive
+#                              ⑤ 按 harness 末尾 NEXT: 行派 verifier
+#                              ⑥ check-receipt → check --deliver 交付门
 ```
 
-- **②b 是拿成稿对着来源从头核的那一次**：逐章写时只看得到这一章，初筛疑点、
-  跨章说法不一、图前声称与图里对不上、未决被写成已定，合起来对着来源读才看得出来。
-  回看清单由脚本从初筛疑点、决策登记、骨架待核与图枚举，撞两问与四个出口见 `story-write.md`「回看」；
-  处置回真源，不写「已核对」。
-- **①b 是写作之前的整篇设计**：阅读主线与每章骨架（小节标题、每节要答什么与依据在哪、表头与图），
-  写在 `AR/story-src/story-template.md`（写法见 `story-write.md`「动笔前：先写骨架」）。
-  它还是空壳时，skeleton 与每次 `chapter` 提交都会让你先写它；写作中改设计不用问人，
-  业务结论变了回 Spec 或 `decisions.json`。成文登记时它与决策登记一起冻结。
-- **① 与 ② 分开，是因为整篇写成是全有或全无**：中途断了磁盘上什么都没有，重试从零开始。
-  骨架先把十个章锚落盘，写就变成逐章有界的小任务，写完即落盘、断了知道从哪一章续。
-  草稿与骨架同时建：搭表、抄术语、复制流程图都是确定性工作，脚本在你动笔前做完，
-  你填的是语义。断了重跑 `skeleton` 补齐缺的草稿，**写过的一个字节不动**。
 - **附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写**：它们是 spec §9 与
-  `knowledge-use.yaml` 的投影，`story-build project` 在落盘附录章时与登记时各投一次。
-  你写的是每节那句「给评审者看什么」、理解契约必需的单位与格式说明，以及材料清单里
-  「这份材料贡献了什么」；要改投影出来的内容，改真源。
-- **登记在 story 写完之后，不在之前**：review 是判断的台账，而判断在成文过程中还会长出来——
-  写到某一章才发现材料两处打架、才发现某个取舍要人拍板。这些新判断先登记进 `decisions.json`，
-  再渲染，台账才是完整的。`build` 会先看 `AR/story.md` 有没有章，没有就拒绝渲染。
-- **③ 是一个动作**：`story` 自己跑 `project` → `number`（章序、小节序、图题序号由机器统一铺——
-  你只写业务名标题与图题）→ `build`（review 的机器区按当前决策件重算，人工区逐字节保留）→ `check`（review 已在，归档件红线一并核），通过才登记 `story_written`。**不必也不该自己先 build**：登记那一刻 review 不在，红线就要等到交付门才报，而那时 story 已冻结，只能 reopen 重来。
-  登记之后 story 冻结，所以编号在这之前完成；命令幂等，重跑不改已经对的文件。**只登记一次**——
-  story 定稿于评审时点，评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
+  `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。
+- **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。
+  `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后 story 冻结，
+  评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
 - **④ 之前必须走完 ①–③**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
-- **⑤ 派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次，
-  说本宿主没有审查员就直接进 ⑥——那是如实披露的状态，不是缺件，闭环不因此卡住。
-  **放在最后叫它**：它的对象是这一版产物的指纹（subject），所以确定性门全绿、产物定稿才派。
-  **回复之后闭环链不回头**：有阻断项才返修（见下面「verifier 报了阻断问题怎么办」，
-  材料变了再审是正常返修）；没有阻断项就走 ⑥，把链走完。
+- **⑤ 派不派只看 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次；说本宿主没有审查员就直接进 ⑥。
+  **调用只带 request JSON**；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件。
+- **⑤ 之后闭环链不回头（硬规则）**：有阻断项才返修（见下「失败出口」）；没有阻断项就走 ⑥，把链走完。
   **闭环之后发现的真实问题**（verifier WARN 里有内容依据的也算）走 framework 的修正入口：
   `harness-runner.ts --correction-init` 按修正三问定责任层 → 改真源 →
   `harness-runner.ts --revalidate --feature <名>`——它只重跑脚本门禁，verifier 不重审，
-  回执如实标注沿用已有 PASS。**不重跑 spec 闭环链、不手动派 verifier**：每派一次就是整份再审。
-  story 侧的改动仍经 `reopen` → `chapter` → `story` 登记，同样不派 verifier。
+  回执如实标注沿用已有 PASS。**不重跑 spec 闭环链、不手动派 verifier**：每跑一次 harness 都换一份审查对象，
+  每派一次就是整份再审。story 侧的改动仍经 `reopen` → `chapter` → `story` 登记，同样不派 verifier。
   纯表达类 WARN（措辞、标题偏好）交评审回流或下一轮，记进 `spec/notes.md` 只是登记，不算处置完成。
   交付门上人给的评审意见走 `/story review`，不算这里的修改。已经做了的正确修改不回滚。
-  **调用只带 request JSON**；verifier 的回复由你**原样全文**写到
-  `summary.verifier_report` 指向的那份文件——写报告的是你，不是它。
-- **⑥ `check-receipt.ts` → `story-build check --deliver` → `/story archive`。
-  产物没变就不重跑 harness**——它每跑一次都重新派生 subject，换了代就要重审，
-  而产物一个字节没动。只有 `check-receipt` 报 subject 失配、或为阻断项返修时才重跑 harness，
-  那之后 verifier 再来一次：那时换代是真的（材料变了），不是自己写盘写出来的。
-  闭环之后的修正走 ⑤ 说的 `--revalidate`，不走这条。
-  **回执不用你填**：它是 harness 的只读投影（`receipt_schema` 2.1），`check-receipt`
-  自己先生成再校验；要写备注写 `<phase>/notes.md`。
-  **`check --deliver` 是交付门**：它把回执再跑一次，通过之后核读者审查那一项的**实际结论**——
-  判的不是 PASS 就不交付，本宿主没登记审查员时如实记一笔「未经读者语义审查即交付」。
-  远程单在上传之前跑它（`/story archive` 自带），本地单没有归档，它就是最后一道。
-- **verifier 报了阻断问题怎么办**：`story_flow.py reopen` 撤销成文登记（唯一的回退出口）
-  → 照 reopen 给出的下一步走：范围与材料没变时是 `complete --from AR/story-src/design-draft.md`
-  重新收口，材料变了走盘点与关卡 → `story-build skeleton`（草稿一直在，登记也不删它；这一步只补
-  缺席的那几章，story.md 一个字节不动）→ 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）
-  → `chapter --from <草稿>` → `check` → `story_flow.py story` 重新登记 → harness → verifier 再审。
-  材料变了、subject 换代，这是框架定义的正常返修，不是重复审。
+- **⑥ 回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己先生成再校验；要写备注写 `<phase>/notes.md`。
+  只有 `check-receipt` 报 subject 失配时才重跑 harness（那之后 verifier 再来一次）。
+  **`check --deliver` 是交付门**：它把回执再跑一次，再核读者审查那一项的**实际结论**——判的不是 PASS 就不交付，
+  本宿主没登记审查员时如实记一笔「未经读者语义审查即交付」。通过之后按 SKILL 停等表停一次。
+
+### 失败出口：verifier 报了阻断问题
+
+`story_flow.py reopen` 撤销成文登记（唯一的回退出口）→ 照 reopen 给出的下一步走：范围与材料没变时是
+`complete --from AR/story-src/design-draft.md` 重新收口，材料变了走盘点与关卡 → `story-build skeleton`
+（只补缺席的章，story.md 一个字节不动）→ 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）
+→ `chapter --from <草稿>` → `story_flow.py story` 重新登记 → harness → verifier 再审。
+材料变了、审查对象换代，这是正常返修，不是重复审。
 
 ## 三、§9 技术契约怎么写
 
@@ -148,26 +104,15 @@ core spec 模板缺少交付流程要求 spec 承载的接口契约 / 存储 / �
 | [`reference/evidence-rules.md`](../reference/evidence-rules.md) | **怎么判**：各节取证规则、结论写法、取不到时怎么降级 |
 | 激活清单里 `kind: facts` 的项目知识 | **这个工程有什么、叫什么、在哪**：照它写。它没登记的面才实扫仓；与仓不符时以仓为准，在产物里登记「项目知识矛盾」，**不改知识文件** |
 
-**代码库现状**（仓内文件路径、检索零命中结论）是结论的一部分，作为表格的一列写进正文——
-它是「事实 = 变更意图 × 代码库现状」的另一半。别拿平台常识替代它：某个 API 在别的工程常见，
-不等于本工程在用；项目知识里已核实为「没有」的能力，不要选进新设计。
+**代码库现状**（仓内文件路径、检索零命中结论）是结论的一部分，作为表格的一列写进正文。
+别拿平台常识替代它：某个 API 在别的工程常见，不等于本工程在用；项目知识里已核实为「没有」的能力，不要选进新设计。
 
 **防重复**：写之前先查 spec 已有章节，同一件事只写一处。加密 / 脱敏 / 调用方校验归 §7.3；
 性能阈值归 §7.1；谁先上线、阻塞谁，以及管理台排期、打点归档、翻译回稿，归《决策与评审记录》。
 §9 不重复这些，core 模板的「宿主扩展治理项」章只写一句索引。
 
-## 四、闭环后的下一步
+## 四、交付门之后
 
-**交付门通过之后停下问一次**（成文登记不是闭环——那时 harness、verifier、交付门
-都还没跑）。`check --deliver` 通过时会把选项打印出来，按它给的问：远程单是
-「归档送审 / 进入 plan / 先归档再进 plan」，本地单没有归档，只有进 plan。
-用户确认点按 `interaction-renderer` 走 widget 加 portable 编号。
-
-`AR/review.md` 是首版草稿，请开发按其中议题逐条审核并写下意见；
-AI 不代填表态、不动人工区。表态完成度看的是**每条议题的填写位里有人的表态**：方案选择填了编号或
-具体方案；审核结果勾了确认，或勾了不同意并写了原因与调整结论。提示文字与空框不算；
-还空着的议题在进 plan 时逐条列出。
-
-**两条互不阻塞，指的是可以并行开始，不是下游可以不管上游变更**：选了 plan 之后
-评审回流改了 spec，按 CLAUDE.md 的修正三问走 framework 的 `--correction-init`
-与 `--revalidate`，受影响的 plan 产物按既有修正流程更新。
+`AR/review.md` 是首版草稿，请开发按其中议题逐条审核并写下意见；AI 不代填表态、不动人工区。
+表态完成度看的是**每条议题的填写位里有人的表态**：方案选择填了编号或具体方案；审核结果勾了确认，
+或勾了不同意并写了原因与调整结论。提示文字与空框不算；还空着的议题在进 plan 时逐条列出。

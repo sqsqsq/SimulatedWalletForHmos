@@ -1,6 +1,6 @@
 # 会议材料 · 读会作业书
 
-> `status` 的 next 是 `read_meeting` 或 `refresh_meeting` 时读这一页。导入已经把每一版会议材料
+> 读者：读会的主 agent。时机：`status` 的 next 是 `read_meeting` 或 `refresh_meeting` 时读这一页。导入已经把每一版会议材料
 > 留在 `AR/story-src/meetings/<主名>/<版本>/`：`original.docx` 是原件，`raw.md` 是转换出来的文本。
 > **内容由你理解**——谁在发言、哪一段是议题、哪句话是结论，脚本不替你划。
 > 你产出三样：纠偏差异、会议判断、人裁决之后的当前会议结果。

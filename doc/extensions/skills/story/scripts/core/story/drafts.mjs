@@ -84,8 +84,8 @@ function chapterDraft(ctx, ch, facts) {
     guideLine((ch.questions ?? []).join('；'), '读者问题'),
     guideLine(ch.boundary, '主要职责'),
     guideLine('这一步是完成表达：照骨架逐节写——先读这一节要解释什么、依据在哪，再决定列、节点与项目，'
-      + `写成正文。写前对照当前 Story 已写的章与本章要用的原文；设计要改回写作设计 ${plan}，`
-      + '并在 story-src/template-adjustments.md 记下实质调整的原因；十章怎么组织见 story-write.md 第五节'),
+      + '写成正文。写本章前先读已写章与本章共用的关系，再对照本章要用的原文；'
+      + `设计要改回写作设计 ${plan}，并在 story-src/template-adjustments.md 记下实质调整的原因`),
     guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
       + ` --chapter ${shellArg(ch.title)}`

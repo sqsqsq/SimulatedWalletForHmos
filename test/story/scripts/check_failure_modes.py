@@ -2440,6 +2440,11 @@ def f02_verifier_task_not_well_defined(root: Path, ctx: Ctx) -> Outcome:
     verify_doc = overlay if overlay.is_file() else None
     if write_doc is None or verify_doc is None:
         return Outcome(True, "作业书不全（该形态未启用）")
+    # 1.9.3 R7 退了 writer 的交回前自检节：整篇维度不再单列，也就没有可以泄漏的维度名。
+    # 节还在而取不出维度才是解析坏了；节不在是形态未启用。
+    if not any("自检" in line and line.lstrip().startswith("#")
+               for line in split_lines(read_text(write_doc))):
+        return Outcome(True, "writer 作业书没有交回前自检节（该形态未启用）")
     dimensions = _self_check_dimensions(read_text(write_doc))
     if not dimensions:
         return Outcome(False, "writer 作业书里派生不出自检维度——不是「没有维度」，是解析坏了")
