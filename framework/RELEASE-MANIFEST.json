@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "e1110f9e81ed8ee27950adb4845f2e9fffd102d8",
-  "built_at": "2026-09-17T07:16:14.901Z",
+  "source_commit": "3bcf5bba249c48c1a4f52ed04225b560015ece5f",
+  "built_at": "2026-09-18T02:30:52.679Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -518,7 +518,7 @@
     },
     {
       "path": "docs/operations/project-entry.md",
-      "sha256": "5d9ab6bc45ec3884472f4fd59387e864568de6379ee191de8918fdd0b2071f71"
+      "sha256": "5a2edb76f2f7ee9fb9bb37e764dfc7b643a223e89e9096ee42df24db43298592"
     },
     {
       "path": "docs/operations/release-checklist.md",
@@ -526,7 +526,7 @@
     },
     {
       "path": "docs/operations/request-harness.md",
-      "sha256": "19ae6aedcd32ef9f95bc02f54a1a649a0bbe71264b63fcca1e0af2301e4de30c"
+      "sha256": "a35d59c5efe288e3dd901c792daf082665006aa987a7e87f5da66eede35ef69e"
     },
     {
       "path": "docs/operations/samples/blueprint-review-feedback.invalid-authority.json",
@@ -598,7 +598,7 @@
     },
     {
       "path": "harness/capability-registry.ts",
-      "sha256": "13be3cc6690897303595441469c16ea739c158f91fd6b6fa9b9149a3a4f51031"
+      "sha256": "f325d924d731003c4e32e592f518d4fd6a8875f39d0db096fedfae02a4108746"
     },
     {
       "path": "harness/code-graph/anchor-hash.ts",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "62f313062b3d72699dcfa4c4aa82f4ffcbfe78d8b6df9263060e60b341f8a5d3"
+      "sha256": "d7c945dbcf2eb607edd01d20e0d2ecc695c4540006728107fe2536af6d6316c1"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1150,7 +1150,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-skill-projection.ts",
-      "sha256": "48ae36437f96380e00342e28955619013a8313669030f3c1bfaabffb5bc64125"
+      "sha256": "83e49469c8d94ef589d530163640ec56939f5e1bbca52e06bf469cea00b9daaf"
     },
     {
       "path": "harness/scripts/utils/blueprint-views.ts",
@@ -1486,7 +1486,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-execution-scope.ts",
-      "sha256": "927a5e9c12b868d69d708529ae658e679c804a677a46f97b5be22a471e69000c"
+      "sha256": "342ebda5e7a4bcffa3cb544c5a7acced44b10c9d5d358f4a7236dcb905e3f68c"
     },
     {
       "path": "harness/scripts/utils/feature-identity.d.ts",
@@ -1498,7 +1498,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-track.ts",
-      "sha256": "202947472cdd2a2f90d5415120723b40c0bf4d183b969d8c8e292bb539233ab9"
+      "sha256": "a44a010cd7ed16058f72ec7d171c28f6e368ba8722c6fa9d2872ebe0c102575f"
     },
     {
       "path": "harness/scripts/utils/fidelity-lock-shared.ts",
@@ -1906,7 +1906,7 @@
     },
     {
       "path": "harness/scripts/utils/request-phase.ts",
-      "sha256": "8465de4fbc3e0aa20d6448dce2691e94569692c480e9bf3ed74b167048f9c9d9"
+      "sha256": "1825c0bb16b1f31f14d9e10365bcdf3c37543bdbc6b92b24b83e438fad90a5ff"
     },
     {
       "path": "harness/scripts/utils/resolve-skill-path.ts",
@@ -2034,7 +2034,7 @@
     },
     {
       "path": "harness/scripts/utils/ut-it-blocks.ts",
-      "sha256": "388beec0b6b30387baff499243d7dc7f34bb62d9f820f8598a467c894b8a89c3"
+      "sha256": "31912915750fc9eb0469a99bf00f84b88de98df37a22879f15d835fa78c2e391"
     },
     {
       "path": "harness/scripts/utils/ut-suite-baseline.ts",
@@ -2566,7 +2566,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/hvigor-runner.ts",
-      "sha256": "30f4ea1a8523f5205eaf79ced87ec02e4f4ec02e19edede0e3babef36a667492"
+      "sha256": "59897637f966864af3d02cb54914b12062c3dfb9bd980a3c596f0412d1fb6eae"
     },
     {
       "path": "profiles/hmos-app/harness/hylyre-root-pollution.ts",
@@ -2710,7 +2710,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/providers/ut-run.ts",
-      "sha256": "921785a098d7b546c9343ae7e7852d1bf1be5c3a0a26781566a56852cb2fe51c"
+      "sha256": "4fdca280af376fe273ba827e91e47808f4aa6c67b340095004e74fab8d2f5264"
     },
     {
       "path": "profiles/hmos-app/harness/quiescence-sampling.ts",
@@ -4394,7 +4394,7 @@
     },
     {
       "path": "skills/feature/business-ut/SKILL.md",
-      "sha256": "1017f2fe5d1b91f6866f2447f7ea77d3baf9bfdbcada93ed368b166cbb933e1e"
+      "sha256": "3950a1eeb3e041fc15887c2887150f190213b73da2e88c81c571fb5628f38024"
     },
     {
       "path": "skills/feature/business-ut/contract.yaml",
@@ -4410,7 +4410,7 @@
     },
     {
       "path": "skills/feature/code-review/SKILL.md",
-      "sha256": "2a38d83f8880134961de55a2eee63624553574d60482f3c395b570e840c94d0c"
+      "sha256": "51bb5ee25c12af7d2c6fafe8c04465e92de2155ed1891a6bde1879095db04e96"
     },
     {
       "path": "skills/feature/code-review/contract.yaml",
@@ -4426,7 +4426,7 @@
     },
     {
       "path": "skills/feature/coding/SKILL.md",
-      "sha256": "9678c267d6fb7ec77dad858dcd598dbee9cb783dec634a8f43c91ac6976845d2"
+      "sha256": "4af8bee0f428b062a775493ab2b5142778791a3050f911226187233282864f20"
     },
     {
       "path": "skills/feature/coding/contract.yaml",
@@ -4434,7 +4434,7 @@
     },
     {
       "path": "skills/feature/device-testing/SKILL.md",
-      "sha256": "91790cc9dda4e0f0c6fb1ea62bf51371543aee265963b36b2fe272980ab5f5be"
+      "sha256": "fee623febc6684398d61bcab8a7ba1c0d5ba8ff1bfa73caf0eb55a64f8f48a9f"
     },
     {
       "path": "skills/feature/device-testing/contract.yaml",
@@ -4446,7 +4446,7 @@
     },
     {
       "path": "skills/feature/plan/SKILL.md",
-      "sha256": "821a3e42042bfbcf8d2d9e2079373a13a84f4745db7d62bff9d7c9182e08c7f0"
+      "sha256": "47f2cc8ef5e53345946fe940774dd9a8cc1d0d1c1348a4b4384a144cdc115768"
     },
     {
       "path": "skills/feature/plan/contract.yaml",
@@ -4458,7 +4458,7 @@
     },
     {
       "path": "skills/feature/spec/SKILL.md",
-      "sha256": "561225ca82bd6989b1b71cb6ce58e7372e13780e419dbd02c0107a2670848a12"
+      "sha256": "790d65a162ea44f6579f53d7fe3e1574f0a1faf4333677767da084e7033c7574"
     },
     {
       "path": "skills/feature/spec/contract.yaml",
@@ -4874,7 +4874,7 @@
     },
     {
       "path": "templates/AGENTS.md.template",
-      "sha256": "3c6c773a51444e5066b97334f240ee528d9782a2f9a9bf2bc2cb7843a4cd8ee1"
+      "sha256": "331605ab05c100dc50d2a84a4c256e05d1fc48e7f04980fa0758ebce98bbe78f"
     },
     {
       "path": "templates/framework.config.template.json",
