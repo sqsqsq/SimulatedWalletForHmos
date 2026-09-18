@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "3bcf5bba249c48c1a4f52ed04225b560015ece5f",
-  "built_at": "2026-09-18T02:30:52.679Z",
+  "source_commit": "3dffe4c17931342b96e4dcee2915927afdb3174e",
+  "built_at": "2026-09-18T15:20:03.420Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "71a152e930c03b74e74e11934042835267a4e5c1ad2f09ac9c6867977603fbd1"
+      "sha256": "991a1634ae59bcbf1b21f0cd431fbc41ab65c49c5bbca2588e578038d3801fbd"
     },
     {
       "path": "README.md",
@@ -518,7 +518,7 @@
     },
     {
       "path": "docs/operations/project-entry.md",
-      "sha256": "5a2edb76f2f7ee9fb9bb37e764dfc7b643a223e89e9096ee42df24db43298592"
+      "sha256": "cd15862637290c252c59e12a097650d91efdaca15a4e8d1966fc7e5da5bbf616"
     },
     {
       "path": "docs/operations/release-checklist.md",
@@ -4498,7 +4498,7 @@
     },
     {
       "path": "skills/project/change-unit-progression/SKILL.md",
-      "sha256": "584346b61f254067e3602027dd29227c5d2852079cffbc3220e769b089576f43"
+      "sha256": "4c9e77ebd5f8523e22e6e2894949bdeb346214cc7d30c2c35b262186653e2733"
     },
     {
       "path": "skills/project/code-graph/SKILL.md",
@@ -4874,7 +4874,7 @@
     },
     {
       "path": "templates/AGENTS.md.template",
-      "sha256": "331605ab05c100dc50d2a84a4c256e05d1fc48e7f04980fa0758ebce98bbe78f"
+      "sha256": "9873dbd088d02ae5bdcc39758c9b2d724f1f727dd8f4f5ce475b5bcfd37e208c"
     },
     {
       "path": "templates/framework.config.template.json",
