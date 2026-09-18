@@ -878,15 +878,18 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
 
         只写「接着做什么」的话，PASS 之后顺手再跑一次 harness 是很自然的动作——
         时间戳换了 subject，check-receipt 报证据缺失，verifier 只好再来一次，
-        而产物一个字节没动。反过来，写成「之后一律不改产物」又会把真实缺陷压住，
-        所以两个出口都要写出来。
+        而产物一个字节没动。出口：阻断项才返修；闭环之后的真实问题走 framework 修正入口
+        （correction-init → revalidate，verifier 不重审），不手动派 verifier
+        （1.9.3 裁定 A：「改完重新绑定审查对象」被读成重跑闭环链，实跑里一份产物被审了五六遍）。
         """
         self.write_contract("story_written")
         action = self.status()["action"]
         for step in ("check-receipt", "--deliver", "plan"):
             self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
         self.assertIn("不重跑 harness", action)
-        self.assertIn("真实缺陷", action, "真发现缺陷时怎么办没写出来")
+        self.assertIn("--correction-init", action, "闭环后的修正没指向 framework 修正入口")
+        self.assertIn("--revalidate", action, "闭环后的修正没指向 framework 重验入口")
+        self.assertIn("不手动派 verifier", action, "闭环后修正时还会手动派 verifier")
         # 回执是 harness 的只读投影（receipt_schema 2.1），agent 零手填——
         # 让模型去回填一份它不该碰的文件，轻则白做，重则被判手写凭证。
         self.assertNotIn("回填", action, "还在让模型回填 framework 的凭证")

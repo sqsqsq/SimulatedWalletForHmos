@@ -193,7 +193,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 | 材料盘点后 / 需求分析后 | `python …/story_flow.py round --feature <AR>`（登记轮次并消费当时已有的侧车；两个时点各跑一次） |
 | **任何时候拿不准走到哪** | `python …/story_flow.py status --feature <AR>` → 看 `next` 与 `action` |
 | S3 每次关卡交互后 | `python …/story_flow.py decide --feature <AR> [--gate material_scope\|scope_decision\|split_carrier] --chosen <选项 key> --basis "<用户原话>"` |
-| 会议话题的人裁决（与第一级同一轮） | `python …/story_flow.py decide --feature <AR> --gate meeting --meeting <主名>@<版本> --item <话题 id> --chosen <选项 key> --basis "<用户原话>"`（选项取自会议判断，不写侧车；读会见 [phases/meeting-read.md](../phases/meeting-read.md)） |
+| 会议话题的人裁决（材料确认之后，有要问人的话题时停一次） | `python …/story_flow.py decide --feature <AR> --gate meeting --meeting <主名>@<版本> --item <话题 id> --chosen <选项 key> --basis "<用户原话>"`（选项取自会议判断，不写侧车；读会见 [phases/meeting-read.md](../phases/meeting-read.md)） |
 | S4 提取稿写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`（提交为 AR/design.md 并收口） |
 | **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
 | **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`，然后照常 `round` → `decide` → `complete`。它是唯一的回退出口，会留痕 |

@@ -80,24 +80,25 @@ python doc/extensions/skills/story/scripts/core/story_flow.py meeting-refresh --
 
 ## 四、摆给人那一轮
 
-`status` 给出 `await_gate:meeting` 时，与第一级材料关卡一起摆给人，不另停一次。
+会议是需求材料的一种，材料关卡已经问过，这里不再问材料。会议判断里有带 `question` 的话题时，
+`status` 给出 `await_gate:meeting`，停这一次；没有要问的就不停，直接写当前会议结果。
 `status` 的 `meetings` 已经把全部版本与话题逐条列好（归属、finding、原话位置、要问的问题与选项），
 你不必再从文件里抄一遍；你要补的是：每个待裁决话题推荐哪一项、为什么，选了各会怎样；
-你提出的参会人角色；以及摆之前回 `raw.md` 自查一遍——话题有没有漏、原话指得对不对、
-与已有决定的冲突有没有说出来。
+不问的话题一句摘要说明按会议采纳了什么；你提出的参会人角色；以及摆之前回 `raw.md` 自查一遍
+——话题有没有漏、原话指得对不对、与已有决定的冲突有没有说出来。
 
-人一轮答完。先逐条记会议话题：
+人一轮答完，逐条记：
 
 ```
 python doc/extensions/skills/story/scripts/core/story_flow.py decide --feature <AR> --gate meeting --meeting <主名>@<版本> --item <话题 id> --chosen <key> --basis "<人的原话>"
 ```
 
 人给的是选项之外的答案时，先把它补成 `options` 里的一项（新 `key` + 他说的那个做法），再记——
-**记的必须是人真说的那一项**，不能替他选推荐项。再照 `rules/init_analysis.md` 记第一级材料关卡。
+**记的必须是人真说的那一项**，不能替他选推荐项。
 
 ## 五、当前会议结果：`AR/story-src/doc-refresh.md`
 
-人表过态之后，`status` 会让你把当前结果写出来——**它由你写，不是脚本拼的**，
+要问的话题人都裁决了（没有要问的就是读完之后），`status` 会让你把当前结果写出来——**它由你写，不是脚本拼的**，
 因为「这件事最后怎么算」要读原话与人的裁决才说得清。它是下游唯一的会议结果：
 提取稿（`rules/ar_design_init.md`）、需求分析第 ⑥ 节、成文与审查都读它。
 

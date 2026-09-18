@@ -36,22 +36,12 @@ FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 #: 真实的三级标题；`####` 是更深的小节，不是话题标题
 H3 = re.compile(r"^###\s+(.+?)\s*$")
 #: 人的裁决记录里留下的字段：证据是人选了什么、依据是什么，不含任何业务合成
-GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "basis", "at", "meetings")
+GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "basis", "at")
 
 
 def _accepted(contract: dict, gate: str) -> list[dict]:
     return [g for r in contract.get("rounds") or [] for g in r.get("gates") or []
             if g.get("gate") == gate and g.get("outcome") == "accepted"]
-
-
-def presented(contract: dict) -> set[str]:
-    """在第一级材料关卡上摆给人看过、人已表态的会议版本。"""
-    return {k for g in _accepted(contract, "material_scope") for k in g.get("meetings") or []}
-
-
-def unconfirmed(notes: dict, contract: dict) -> list[str]:
-    """有了会议判断、还没在第一级摆给人的版本。"""
-    return sorted(set(notes) - presented(contract))
 
 
 def pending_asks(notes: dict, contract: dict) -> list[str]:
@@ -80,7 +70,6 @@ def topic_digest(feature_root: Path, notes: dict, contract: dict) -> list[dict]:
     """
     folders = meeting.versions(feature_root)
     signed = {(g.get("meeting"), g.get("item")): g for g in _accepted(contract, "meeting")}
-    shown = presented(contract)
     rows: list[dict] = []
     for key, section in sorted(notes.items()):
         folder = folders.get(key)
@@ -91,7 +80,6 @@ def topic_digest(feature_root: Path, notes: dict, contract: dict) -> list[dict]:
                 "version": key, "topic": tid, "title": topic.get("title", ""),
                 "ownership": topic.get("ownership"), "finding": topic.get("finding", ""),
                 "settled": gate.get("chosen") if gate else None,
-                "version_confirmed": key in shown,
             }
             if folder is not None:
                 row["evidence"] = [meeting.line_ref(feature_root, folder, r)
@@ -112,8 +100,7 @@ def meeting_basis(notes: dict, contract: dict) -> str:
     新会议、改判断或人又签了一笔，摘要就变；一个字节没动时它稳定，所以旧结果不会被误判成陈旧。
     它**不证明模型理解得对**，只证明这份结果是照着这版输入写的。
     """
-    gates = [{k: g.get(k) for k in GATE_FIELDS if k in g}
-             for gate in ("meeting", "material_scope") for g in _accepted(contract, gate)]
+    gates = [{k: g.get(k) for k in GATE_FIELDS if k in g} for g in _accepted(contract, "meeting")]
     payload = json.dumps({"notes": notes, "gates": gates},
                          ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return meeting.digest(payload.encode("utf-8"))[:16]

@@ -13,8 +13,7 @@ from flow.inputs import (
     GATE_OPTIONS, MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, SCOPE_OPTIONS, SPLIT_PARTS,
     consume_sidecar, read_gate_options, read_split_parts, sidecar_gate, split_carrier_options)
 from flow.routing import live_materials, material_state, next_step
-from flow.meetings import topic_options, unconfirmed
-from materials import meeting
+from flow.meetings import topic_options
 
 
 def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]:
@@ -48,11 +47,9 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     # 而收件箱里有料时那一步是导入。人能不能表态与导入没做没关系——
     # 他可以放好料先答一句，也可以等导完再答，两种都是同一次表态。
     # 所以这一级的前置是「本轮这一级还没有定下来」，不比对 next 的字面。
-    # 例外里的例外：本轮第一级定过之后又到了会议判断，要再摆给人一次（见 `scope_step`）。
     if gate == "material_scope":
         settled = last_gate(round_gates(contract), gate)
-        if settled and settled["outcome"] == "accepted" and not unconfirmed(
-                meeting.read_notes(feature_root, []), contract):
+        if settled and settled["outcome"] == "accepted":
             raise FlowError(
                 f"本轮第一级已经定了（{settled['chosen']}）——材料再变会开出新一轮，"
                 "那时才轮到重新表态；现在按 `status` 的 next 往下走")
@@ -136,9 +133,6 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if gate == "meeting":
         # 裁决绑定会议的这一版：新版本到了，旧版本的裁决照旧指向旧原话
         record.update(meeting=args.meeting, item=args.item)
-    elif gate == "material_scope" and outcome == "accepted" and meeting.read_notes(feature_root, []):
-        # 摆给人的会议版本随这一笔记下：人对整体表了态，没逐条问的条目从此生效
-        record["meetings"] = sorted(meeting.read_notes(feature_root, []))
     current.setdefault("gates", []).append(record)
 
     if gate == "split_carrier" and outcome == "accepted":

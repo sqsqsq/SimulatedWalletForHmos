@@ -188,7 +188,7 @@ def collect_materials(feature_root: Path) -> list[dict]:
                     extra.append(images[sha])
             else:
                 extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})
-    # 会议材料一个源版本一份：新会议或同名换了内容都是材料变了，新一轮让人在第一级看到它。
+    # 会议材料一个源版本一份：新会议或同名换了内容都是材料变了，开新一轮、在需求分析之前读会。
     # 身份取原件——转换件、阅读件与结论是读会的产物，算进来的话读一次会就开一轮。
     extra.extend(meeting.material_items(feature_root))
     for item in extra:

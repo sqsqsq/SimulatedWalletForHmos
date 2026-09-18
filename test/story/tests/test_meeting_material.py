@@ -198,6 +198,20 @@ class MeetingCase(unittest.TestCase):
         path.write_text("\n".join(rows), encoding="utf-8")
         return path
 
+    def confirm_materials(self, chosen: str = "confirm_scope") -> None:
+        """人在第一级材料关卡上表态（第一轮无条件停这一次）。"""
+        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
+            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
+            encoding="utf-8")
+        code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
+                                "--chosen", chosen, "--basis", "材料够了")
+        self.assertEqual(0, code, log)
+
+    def decide_meeting(self, key: str, item: str = "T2", chosen: str = "a") -> None:
+        code, _, log = self.cli("story_flow.py", "decide", "--gate", "meeting", "--meeting", key,
+                                "--item", item, "--chosen", chosen, "--basis", "就用短信")
+        self.assertEqual(0, code, log)
+
     def problems(self) -> list[str]:
         return meeting.inspect(self.fr)["problems"]
 
@@ -456,6 +470,7 @@ class TheHumanChoiceIsTheOnlyDecision(MeetingCase):
         super().setUp()
         self.docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
         self.key = self.read_meeting(self.docx)
 
     def decide(self, *args: str) -> tuple[int, dict, str]:
@@ -499,18 +514,12 @@ class TheCurrentResultIsWrittenByTheModel(MeetingCase):
         super().setUp()
         self.docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
         self.key = self.read_meeting(self.docx)
 
     def settle(self) -> None:
-        """人答完两件事：会议那条与第一级材料。"""
-        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "meeting",
-                                     "--meeting", self.key, "--item", "T2",
-                                     "--chosen", "a", "--basis", "就用短信")[0])
-        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
-            encoding="utf-8")
-        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                     "--chosen", "confirm_scope", "--basis", "材料够了")[0])
+        """人答完会议里要他定的那一条。"""
+        self.decide_meeting(self.key)
 
     def test_the_result_is_asked_for_only_after_the_human_has_spoken(self) -> None:
         self.assertEqual("await_gate:meeting", self.status()["next"])
@@ -581,12 +590,8 @@ class AMeetingNameWithSpacesStillResolves(MeetingCase):
         super().setUp()
         self.docx = self.imported(name="需求 讨论.docx")
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
         self.key = self.read_meeting(self.docx, topics=[TOPICS[0]])
-        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
-            encoding="utf-8")
-        self.assertEqual(0, self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                     "--chosen", "confirm_scope", "--basis", "材料够了")[0])
         self.rel = (self.folder(self.docx)[1] / meeting.RAW).relative_to(self.fr).as_posix()
 
     def result(self, tail: str = "") -> Path:
@@ -644,11 +649,14 @@ class AMeetingNameWithSpacesStillResolves(MeetingCase):
 
 
 class TheFlowStopsOnceForTheMeeting(MeetingCase):
-    """读会 → 出阅读件 → 与第一级同一轮摆给人 → 逐条裁决 → 模型写当前结果。"""
+    """会议是材料的一种：问料 → 交料 → 读会 → 有要人定的话题才停一次 → 当前结果 → 需求分析。"""
 
     def test_read_refresh_ask_decide(self) -> None:
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.assertEqual("await_gate:material_scope", self.status()["next"],
+                         "第一轮先问材料，会议不排在材料关卡前面")
+        self.confirm_materials()
         self.assertEqual("read_meeting", self.status()["next"])
         key, folder = self.folder(docx)
         (folder / meeting.CORRECTIONS).write_text("[]", encoding="utf-8")
@@ -660,10 +668,65 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertEqual(["T1", "T2"], [t["topic"] for t in state["meetings"]],
                          "关卡那一轮没把全部话题摆出来")
         self.assertEqual([None, "a"], [t.get("recommend") for t in state["meetings"]])
+        self.decide_meeting(key)
+        self.assertEqual("read_meeting", self.status()["next"], "裁决之后该写当前结果")
+        self.write_result()
+        self.assertEqual("run_analysis", self.status()["next"], "会议之后又回头问了一次材料")
+
+    def test_materials_supplied_later_are_not_asked_about_again(self) -> None:
+        """人说「料放进去了」，交来的料里有会议：导入、读会，不再回头问一次材料。"""
+        (self.inbox / "readme.md").write_text("空收件箱" + chr(10), encoding="utf-8")
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        docx = self.place()
+        self.confirm_materials("supplied")
+        self.assertEqual("import_materials", self.status()["next"])
+        self.assertEqual(0, self.cli("import_sources.py")[0])
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.assertEqual("read_meeting", self.status()["next"])
+        key = self.read_meeting(docx)
+        self.assertEqual("await_gate:meeting", self.status()["next"])
+        self.decide_meeting(key)
+        self.write_result()
+        self.assertEqual("run_analysis", self.status()["next"])
+        asked = [g for r in self.contract()["rounds"] for g in r.get("gates") or []
+                 if g["gate"] == "material_scope"]
+        self.assertEqual(1, len(asked), "材料关卡问了不止一次")
+
+    def test_a_meeting_with_nothing_to_ask_does_not_stop(self) -> None:
+        docx = self.imported()
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
+        self.read_meeting(docx, topics=[TOPICS[0]])
+        state = self.status()
+        self.assertEqual("read_meeting", state["next"], "没有要问人的话题却停下来问了")
+        self.assertIn("meeting-basis:", state["action"])
+        self.write_result(topics=("T1",))
+        self.assertEqual("run_analysis", self.status()["next"])
+
+    def test_the_material_gate_is_not_reopened_by_a_meeting(self) -> None:
+        docx = self.imported()
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
+        self.read_meeting(docx)
+        code, out, _ = self.cli("story_flow.py", "decide", "--gate", "material_scope",
+                                "--chosen", "confirm_scope", "--basis", "再确认一次")
+        self.assertEqual(1, code)
+        self.assertIn("本轮第一级已经定了", out["error"])
+
+    def test_a_meeting_arriving_after_closure_reopens(self) -> None:
+        """收口之后才导进来的会议没有会议判断：先 reopen 再读会；读过的会不算迟到。"""
+        from flow import routing
+        docx = self.imported()
+        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        contract = {**self.contract(), "status": "complete"}
+        self.assertEqual("reopen_meeting", routing.next_step(self.fr, contract)[0])
+        self.read_meeting(docx)
+        self.assertNotEqual("reopen_meeting", routing.next_step(self.fr, contract)[0])
 
     def test_every_topic_shows_up_including_the_ones_that_are_not_ours(self) -> None:
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        self.confirm_materials()
         topics = [{**TOPICS[0], "ownership": "not_ours"},
                   {**TOPICS[1], "ownership": "unclear"}]
         self.read_meeting(docx, topics=topics)

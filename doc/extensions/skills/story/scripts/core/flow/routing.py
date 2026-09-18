@@ -19,8 +19,7 @@ from flow.state import (
 from flow.inputs import (
     GATE_OPTIONS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, material_options,
     read_gate_options, sidecar_gate)
-from flow.meetings import (
-    meeting_basis, pending_asks, presented, refresh_problems, unconfirmed)
+from flow.meetings import meeting_basis, pending_asks, refresh_problems
 
 def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
@@ -271,10 +270,13 @@ def next_step(feature_root: Path, contract: dict | None,
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
-    late = sorted(set(meeting.versions(feature_root)) - presented(contract)) if after_complete(contract) else []
+    # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
+    late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
+            if after_complete(contract) else [])
     if late:
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
-                "先跑 `story_flow.py reopen`，再读会、在第一级关卡摆给人" + frozen_tail(feature_root, contract, manifest))
+                "先跑 `story_flow.py reopen`，再读会；有要人定的话题时摆给人一次"
+                + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written" and contract.get("archived"):
         return ("done", "本轮已归档送审。评审回流走 `/story review`；补料或改稿先 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))
@@ -290,9 +292,12 @@ def next_step(feature_root: Path, contract: dict | None,
                 "**交付门通过之后按它打印的选择走**：归档送审、进入 plan，或先归档再进 plan；"
                 "本地单没有归档，只有进 plan。"
                 "**产物没变化就不重跑 harness、不重审**（复用已有结论）；"
-                "verifier 或门禁指出的真实缺陷——阻断项，或有内容依据的 WARN——照常改："
-                "改在真源上，再按 framework 现行的修正与重验入口重新绑定审查对象，"
-                "不为保住已有报告回滚正确的修改。回执由 harness 生成，不用你填。"
+                "verifier 回复之后闭环链不回头：有阻断项才返修（见下），没有就走完上面的链。"
+                "闭环之后发现的真实问题（有内容依据的 WARN 也算）走 framework 修正入口："
+                "`harness-runner.ts --correction-init` 定责任层 → 改真源 → "
+                "`--revalidate --feature <名>`（只重跑脚本门禁，verifier 不重审，回执标沿用已有 PASS）；"
+                "**不重跑闭环链、不手动派 verifier**。纯表达类 WARN 交评审回流或下一轮；"
+                "交付门上人的评审意见走 `/story review`。已做的正确修改不回滚。回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，照它给出的下一步走"
                 "（范围与材料没变时先 `complete` 收口），再在草稿上改、`chapter` 提交、`story` 重新登记"
                 "——材料变了再审是正常返修，不是重复审"
@@ -336,15 +341,17 @@ def next_step(feature_root: Path, contract: dict | None,
     if state["changed"]:
         return ("run_round",
                 "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
-    return meeting_step(feature_root, contract) or scope_step(feature_root, contract)
+    return scope_step(feature_root, contract)
 
 
 def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """会议材料留存之后、范围关卡之前：读会、出阅读件、自检、摆要问人的话题。
+    """材料确认之后、需求分析之前：读会、出阅读件、自检、有要问人的话题时停一次。
 
+    会议是需求材料的一种，没有自己的材料步骤：它随其它材料一起交进来、一起导入。
     没有要做的返回 None——没有会议的需求走原来的路，这一段整段不出现。
-    当前会议结果在人表态之后写（`meeting_result_step`），不在这里：人还没确认整批材料时
-    写出来的「当前结论」，下一刻就可能被那次表态改掉。
+    停不停由会议判断里有没有带 `question` 的话题决定（脚本枚举），不由模型临场判。
+    当前会议结果在人裁决之后写（`meeting_result_step`），不在这里：人还没表态时
+    写出来的「当前结论」，下一刻就可能被那次裁决改掉。
     """
     seen = meeting.inspect(feature_root)
     if seen["problems"]:
@@ -361,15 +368,15 @@ def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
                 "写完跑 `status`")
     asks = pending_asks(seen["notes"], contract)
     if asks:
-        return ("await_gate:meeting", "会议判断与第一级材料关卡同一轮摆给人："
+        return ("await_gate:meeting", "会议里有要人定的话题，停这一次："
                 "`status` 的 meetings 已逐条列出全部版本与话题（归属、finding、原话位置、"
-                "待裁决的问题与选项），照它向人说明并补上推荐理由；"
+                "待裁决的问题与选项）——要问的带选项并补上推荐理由，不问的一句摘要说明按会议采纳；"
                 f"人一轮答完再逐条 `decide --gate meeting`：{'、'.join(asks)}")
     return None
 
 
 def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """人表过态之后：把当前的会议结果写出来。没有会议或已经写好返回 None。
+    """会议话题该裁决的都裁决了：把当前的会议结果写出来。没有会议或已经写好返回 None。
 
     **由模型写，不由脚本合成**：哪条采纳了、影响到哪、还有什么没定，要读原话与人的裁决才说得清。
     脚本只核它声明的输入是不是当前这版、每个话题有没有去向、引的原文行在不在。
@@ -379,7 +386,7 @@ def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] |
     if not problems:
         return None
     return ("read_meeting",
-            "人的裁决已经齐了，现在形成当前的会议结果：读 `AR/story-src/meeting-notes.json` 与"
+            "会议判断已定、要人定的话题都已裁决，现在形成当前的会议结果：读 `AR/story-src/meeting-notes.json` 与"
             "契约里人选的那几笔，按原话写 `AR/story-src/doc-refresh.md`——每个话题一个 "
             "`### <版本>/<话题 id> <标题>`，说清本需求实际采纳什么、影响到哪、还有什么没定；"
             "不属于本单或已被后续决定替代的也写一句去向。"
@@ -390,7 +397,7 @@ def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] |
 
 
 def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
-    """本轮范围定到哪一级了——三级关卡与 S4。
+    """本轮范围定到哪一级了——材料关卡、会议、需求分析、后两级关卡与 S4。
 
     **不看材料新鲜度**：那是 `next_step` 在这之前判的。分出来是因为 S4 提交要在
     「自己刚写下的那一笔材料差异」之上问同一个问题，而那笔差异会让新鲜度判据说
@@ -404,25 +411,22 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
     stops, problem = material_gate_state(feature_root, contract)
-    # 会议判断还没摆给人：本轮第一级定过也再停一次——人对摆出的整体表态，没逐条问的条目才生效
-    fresh = unconfirmed(meeting.read_notes(feature_root, []), contract)
-    if (material is None or fresh) and problem:
+    if material is None and problem:
         return ("fix_gate_options",
                 f"这一级的选项侧车还立不住，先补齐再问人：{problem}")
-    if (material is None and stops) or fresh:
+    if material is None and stops:
         return ("await_gate:material_scope",
-                "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，"
-                + (f"连同会议判断（{'、'.join(fresh)}）每个话题一句摘要，" if fresh else "")
-                + "取得选择："
+                "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，取得选择："
                 + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
     if material and material["outcome"] == "rejected":
         return ("await_gate:material_scope",
                 "上一笔被驳回（收件箱里没有新文件、材料也没变），在第一级重新取得选择")
 
-    # 材料已确认 → 先形成当前的会议结果，再做需求粒度分析：分析与提取读的都是它
-    result = meeting_result_step(feature_root, contract)
-    if result:
-        return result
+    # 材料已确认 → 有会议就先读会（有要人定的话题停一次），形成当前的会议结果，
+    # 再做需求粒度分析：分析与提取读的都是它
+    meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
+    if meeting_now:
+        return meeting_now
 
     # 材料已确认 → 才做需求粒度分析（全景 / 本部件 / 本 AR 定位 / 功能清单 / 范围定法选项）
     if not current.get("positioning") or not current.get("scope_options"):
