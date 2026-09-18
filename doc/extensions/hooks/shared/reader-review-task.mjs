@@ -74,10 +74,10 @@ function fenced(rows, lang) {
  * 上游每张图与 story 里带同一图源标记的图并排：源图内容、承接图内容逐张给，多源合一时列全来源。
  * 判的是关系保没保持，不是节点同不同名——并排才看得出来。
  */
-function diagramPairRows(root, story) {
+function diagramPairRows(root, story, contract) {
   const carried = diagramsOf(story);
   const out = [];
-  for (const [label, text] of upstreamDocs({ featureRoot: root })) {
+  for (const [label, text] of upstreamDocs({ contract, featureRoot: root })) {
     for (const d of diagramsOf(text)) {
       const tag = `${label} ${d.id}`;
       out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
@@ -226,7 +226,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   rows.push('', '### 上游图与 story 里承接它的图', '',
     '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；图种可以换，声称承接却丢了关系才算问题。',
-    ...diagramPairRows(root, story));
+    ...diagramPairRows(root, story, contract));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {

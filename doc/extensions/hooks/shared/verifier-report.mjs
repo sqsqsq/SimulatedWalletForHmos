@@ -7,23 +7,25 @@
  * 的 `verifier_report`（仓内相对路径）。派 verifier 的那个 agent 把子代理的回复**原样全文**
  * 写到那里——写报告的是调用方，不是 verifier 自己，也没有钩子代它发布。
  *
- * 身份归框架：报告在不在、终态块回显的 subject 对不对、verdict 与 blocker 数一致不一致，
- * 由 `check-receipt` 判。这里不重复核，只判**读者审查这一项的形态**。
+ * 唯一调用方是交付门（`story-build check --deliver`，`delivery.mjs`）。身份归框架：报告在不在、
+ * 终态块回显的 subject 对不对、verdict 与 blocker 数一致不一致，由 `check-receipt` 判。
+ * 这里不重复核，只判**读者审查这一项的形态**。
  *
  * ## 判的是形态，不是内容
  *
  * 上游的输出契约是：汇总表每个检查项一行（PASS 也列，证据一行），YAML 明细只列
- * status ≠ PASS 的项。所以这里的三条判据顺着它：
+ * status ≠ PASS 的项。所以这里的两条判据顺着它：
  *
  *   ① 汇总表里有 `story_reader_review` 一行，且证据格不为空——空证据与没审同形；
- *   ② 那一行 status ≠ PASS 时，明细里有 `blocking_findings` 与 `advisories` 两个键；
- *   ③ 结果里没有逐单元裁决表——出了就是做成了另一件事。
+ *   ② 那一行 status ≠ PASS 时，明细里有 `blocking_findings` 与 `advisories` 两个键。
+ * 「不逐条对账」只写在审查任务里，不用表头形态禁一种报告写法。
  *
  * 报几条、报得对不对不判：那是资格门用成对样本量的事，不是门禁能判的。
  */
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
+import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';
@@ -43,13 +45,6 @@ const SUMMARY_COLUMNS = 4;
 const INVALID_EVIDENCE =
   '这份回复不是有效证据：把同一份 request 再投给 verifier，拿到完整回复后原样全文落盘。'
   + '**不要自己补**——补出来的不是审查结论。';
-
-/**
- * 逐单元裁决表的表头特征 —— 审查任务明说不出这张表，出了就是**做成了另一件事**。
- *
- * 认表头不认内容：表头是明确记号，判它不需要读懂任何一句话。
- */
-const PER_UNIT_TABLE_RE = /\|\s*单元键\s*\|/;
 
 /**
  * 本轮报告落在哪 —— 唯一来源是 harness 写的 `summary.verifier_report`。
@@ -77,7 +72,7 @@ function summaryRow(text) {
   for (const line of text.split(/\r?\n/)) {
     const raw = line.trim();
     if (!raw.startsWith('|')) continue;
-    const cells = raw.split('|').slice(1, -1).map(c => c.trim());
+    const cells = tableCells(raw);
     if (cells.length && cells[0].replace(/`/g, '') === STORY_REVIEW_ID) return cells;
   }
   return null;
@@ -85,10 +80,8 @@ function summaryRow(text) {
 
 /** 文档里的 YAML 围栏，一个不落地取出来——报告的结构就写在里面。 */
 function yamlBlocks(text) {
-  const out = [];
-  const fence = /^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```/gm;
-  for (let m = fence.exec(text); m; m = fence.exec(text)) out.push(m[1]);
-  return out;
+  const lines = String(text ?? '').split(/\r?\n/);
+  return fenceRanges(lines).map(f => lines.slice(f.from + 1, f.closed ? f.to : f.to + 1).join('\n'));
 }
 
 /**
@@ -238,16 +231,6 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     }
   }
 
-  if (PER_UNIT_TABLE_RE.test(text)) {
-    return {
-      status: 'FAIL',
-      problems: [`${STORY_REVIEW_ID} 的结果里出现了逐单元裁决表——`
-        + '这一项不做逐条对账：那张表的量随材料条数涨，而读者拿到的判断不增加。'
-        + '要判的是讲了没有、讲清没有、是不是编的'],
-      reviewVerdict,
-      detail: '形态不对：逐单元表',
-    };
-  }
   return { status: 'PASS', problems: [], reviewVerdict,
     detail: `读者审查已落报告（${status}）` };
 }

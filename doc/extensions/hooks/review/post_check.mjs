@@ -18,15 +18,11 @@ import { readContracts } from '../shared/contracts.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
+import { cellByHeader as cellOf, tableCells }
+  from '../../skills/story/scripts/core/story/document.mjs';
 
 const SECTION_TITLE = '知识义务复核';
 const VERDICTS = ['落实', '未落实', '不适用'];
-
-/** 按列名取单元格——列序会随编辑漂移，列名才是契约。去掉强调与代码标记后比。 */
-function cellOf(cells, headers, keyword) {
-  const i = (headers ?? []).findIndex(h => h.includes(keyword));
-  return i >= 0 && i < cells.length ? cells[i].replace(/[`*]/g, '').trim() : '';
-}
 
 /** 审查报告里的知识义务复核表。 */
 function reviewTable(text) {
@@ -41,7 +37,7 @@ function reviewTable(text) {
     if (h && h[1].length <= level) break;
     const s = rows[i].trim();
     if (!s.startsWith('|')) continue;
-    const cells = s.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    const cells = tableCells(s);
     if (!headers) { headers = cells; continue; }
     if (cells.every(c => /^[-: ]*$/.test(c))) continue;
     data.push({ line: i + 1, cells, joined: cells.join(' ') });

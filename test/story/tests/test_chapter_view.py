@@ -431,14 +431,15 @@ class OneFenceScannerForEveryConsumer(unittest.TestCase):
         self.assertNotIn("样例里的节", "".join(out["numbered"]))
 
     def test_the_open_close_rule_exists_in_exactly_one_place(self) -> None:
-        """源码核：成文侧每个模块都从 document.mjs 拿围栏，没有第二份开闭或开启识别。"""
+        """源码核：扩展里每个模块（成文侧与 hooks）都从 document.mjs 拿围栏，没有第二份开闭或开启识别。"""
         text = DOCUMENT.read_text(encoding="utf-8")
         code = [l for l in text.split("\n") if not l.strip().startswith(("//", "*", "/*"))]
         self.assertEqual(1, "\n".join(code).count("CLOSING.test("), "关闭行判断不止一处")
         self.assertEqual(1, len([l for l in code if "(`{3,}|~{3,})" in l]), "围栏开启的识别不止一处")
         own_scanner = re.compile(r"/\^\\s\*\(?`{3}|/\^\[ \\t\]\*`{3}|\(\?:`{3}\|~{3}\)|`{3}\|~{3}")
-        for other in sorted(DOCUMENT.parent.glob("*.mjs")):
-            if other == DOCUMENT:
+        extension = DOCUMENT.parents[5]          # doc/extensions：成文侧与 hooks 一起核
+        for other in sorted(extension.rglob("*.mjs")):
+            if other == DOCUMENT or "node_modules" in other.parts:
                 continue
             body = other.read_text(encoding="utf-8")
             self.assertIsNone(own_scanner.search(body), other.name + " 自己又写了一份围栏识别")

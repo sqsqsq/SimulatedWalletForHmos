@@ -227,8 +227,7 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
             done.append(rel)
 
         manifest = registry.refresh(feature_root)
-        current["materials"] = {"path": "/".join(registry.MANIFEST),
-                                "digest": manifest["digest"]}
+        current["materials"] = {"digest": manifest["digest"]}
         done.append("/".join(registry.MANIFEST))
 
         # 收口时的 design.md 身份登记：`sha256` 用于认出「上一轮的提取稿」——重试与下一轮

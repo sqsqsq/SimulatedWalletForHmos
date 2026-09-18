@@ -22,7 +22,6 @@ CORE_DIR = SKILL_ROOT / "scripts" / "core"
 
 
 CONTRACT = ("AR", "story-src", "story-flow.json")
-ANALYSIS = ("AR", "story-src", "init-analysis.md")
 
 
 DESIGN = ("AR", "design.md")
@@ -43,12 +42,6 @@ STORY_SRC_FROZEN = (
 #: `flow/check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
 #: 选择会在阶段门禁上被判非法。
 STORY_CONTRACT = SKILL_ROOT / "contracts" / "story-chapters.json"
-# 本 AR 当前范围是**哪里定下来的**，按强度排序：
-#   user_stated —— 关卡上由人定的（他说了本次做多少、怎么切）。最强：那是决定不是推断。
-#   title / design_prefill / sr_related —— 上游材料给了范围，强度依次递减；
-#   full —— 谁都没给，只能先按部件全量算。这个范围是**待确认**的，评审者有权推翻。
-# 来源本身必须落进契约：下游据它判断这个范围有多可靠。
-SCOPE_SOURCES = ("user_stated", "title", "design_prefill", "sr_related", "full")
 
 
 class FlowError(Exception):

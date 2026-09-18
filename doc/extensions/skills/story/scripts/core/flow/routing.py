@@ -14,7 +14,7 @@ from pathlib import Path
 from materials import meeting, registry
 
 from flow.state import (
-    CARRY_ALL, DESIGN_DRAFT, FlowError, SCOPE_SOURCES, STORY_CONTRACT, after_complete,
+    CARRY_ALL, DESIGN_DRAFT, FlowError, STORY_CONTRACT, after_complete,
     last_gate, round_gates)
 from flow.inputs import (
     GATE_OPTIONS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, material_options,
@@ -185,7 +185,6 @@ def sidecar_shape(step: str) -> dict | None:
     """
     if step == "run_analysis":
         positioning = dict(POSITIONING_FIELDS)
-        positioning["scope_source"] = " | ".join(SCOPE_SOURCES)
         return {
             "写这两份": [
                 {"path": "/".join(POSITIONING), "shape": positioning},
@@ -208,8 +207,7 @@ def sidecar_shape(step: str) -> dict | None:
             "写这份，再去问人": {
                 "path": "/".join(GATE_OPTIONS),
                 "shape": {"gate": gate,
-                          "options": [{"key": "<选项标识>", "label": "人能看懂的选项文字",
-                                       "recommended": "true/false，可省"}]},
+                          "options": [{"key": "<选项标识>", "label": "人能看懂的选项文字"}]},
                 "第一级不用写 label": "那两句固定，脚本按 key 填；缺什么写进 missing / why",
                 "note": "先把摆给人的**全部**选项写进这份文件，再跑 `decide` 记录人选了哪个。"
                         "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」。"

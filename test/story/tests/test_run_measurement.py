@@ -230,6 +230,41 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual(0, r["reads_rule_text"])
         self.assertEqual(0, r["reads_checker_source"])
 
+    def test_running_a_checker_and_piping_its_output_is_not_a_read(self):
+        """执行判据脚本再截输出不是读它的源码（算法 v2）：`tail` 作用于管道，不作用于路径。"""
+        r = self._measure([{
+            "tool_name": "bash",
+            "tool_input": {"command":
+                           "node doc/extensions/skills/story/scripts/core/story-build.mjs check "
+                           "--feature X | tail -20"},
+            "tool_output": "[story-build check] 通过",
+        }])
+        self.assertEqual(0, r["reads_checker_source"])
+        self.assertEqual(0, r["reads_rule_text"])
+        self.assertEqual(1, r["bash_rule_path_not_read"], "执行判据脚本要记成未分类，看得见")
+        self.assertEqual("v2", r["read_algorithm"])
+
+    def test_read_and_execute_in_one_command_counts_the_read(self):
+        """读与执行混在一条命令里：读的那一段照算，执行的那一段不算。"""
+        r = self._measure([{
+            "tool_name": "bash",
+            "tool_input": {"command":
+                           "cat doc/extensions/hooks/spec/post_check.mjs && "
+                           "node doc/extensions/skills/story/scripts/core/story-build.mjs check | head"},
+        }])
+        self.assertEqual(1, r["reads_checker_source"])
+        self.assertEqual(0, r["bash_rule_path_not_read"])
+
+    def test_powershell_wrapped_read_is_seen(self):
+        """PowerShell 外壳里的读取动词照样认。"""
+        r = self._measure([{
+            "tool_name": "bash",
+            "tool_input": {"command":
+                           "\"C:\\Windows\\powershell.exe\" -Command "
+                           "\"Get-Content doc/extensions/hooks/spec/post_check.mjs | Select-Object -First 40\""},
+        }])
+        self.assertEqual(1, r["reads_checker_source"])
+
     def test_reading_knowledge_is_not_reverse_engineering(self):
         """反样本：知识层是给模型实现需求用的内容，读它正当，不算逆向判据。"""
         r = self._measure([{

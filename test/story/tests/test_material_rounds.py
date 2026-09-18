@@ -23,7 +23,7 @@ MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
-from flow.state import ANALYSIS, CONTRACT, STORY_SRC_FROZEN  # noqa: E402
+from flow.state import CONTRACT, STORY_SRC_FROZEN  # noqa: E402
 from materials import importer  # noqa: E402
 FEATURE = "AR90001"
 
@@ -292,16 +292,16 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(before, len(self.contract()["rounds"]))
 
     def test_the_change_is_recorded_not_swallowed(self) -> None:
-        """不开轮不等于当没发生：那一轮的材料指纹要更新，并留下一条可查的记录。"""
+        """不开轮不等于当没发生：那一轮的材料指纹要更新，日志说清出口在哪。"""
         self.complete_it()
         digest_before = self.contract()["rounds"][-1]["materials"]["digest"]
         self.add_ux("manage.png")
-        self.round_now()
+        proc = self.run_flow("round")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         current = self.contract()["rounds"][-1]
         self.assertNotEqual(digest_before, current["materials"]["digest"],
                             "材料变了而指纹没跟上——那份快照就不是当下的事实了")
-        note = current.get("materials_changed_after_complete") or {}
-        self.assertIn("reopen", str(note.get("note", "")), "记一笔要说清出口在哪")
+        self.assertIn("reopen", proc.stderr, "记一笔要说清出口在哪")
 
     def test_status_stays_at_complete(self) -> None:
         """补料不改变流程状态——它仍然是收口的，仍然可以进 spec。"""
@@ -311,14 +311,12 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual("complete", self.contract()["status"])
 
     def test_reopen_puts_it_back_and_leaves_a_trace(self) -> None:
-        """`reopen` 是唯一出口：状态回到进行中，且谁在什么时候开的要留痕。"""
+        """`reopen` 是唯一出口：状态回到进行中，日志说清从哪个状态退回。"""
         self.complete_it()
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        contract = self.contract()
-        self.assertEqual("in_progress", contract["status"])
-        self.assertEqual(1, len(contract.get("reopened") or []),
-                         "撤销收口是有后果的判断，没有留痕就查不回来")
+        self.assertEqual("in_progress", self.contract()["status"])
+        self.assertIn("complete → in_progress", proc.stderr)
 
     def test_after_reopen_a_material_change_opens_a_round_again(self) -> None:
         """打开之后一切照旧：补料照常开新轮。"""
@@ -433,21 +431,22 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         data["story_src_digests"] = {"decisions.json": "sha"}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        self.assertEqual(0, self.run_flow("reopen").returncode)
+        proc = self.run_flow("reopen")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         contract = self.contract()
         self.assertNotIn("story_written_at", contract)
         self.assertNotIn("story_src_digests", contract)
-        trace = contract["reopened"][-1]
-        self.assertEqual("story_written", trace["from_status"])
-        self.assertEqual(["story_src_digests", "story_written_at"],
-                         trace["story_registration_undone"],
-                         "撤销了什么要留痕——不然查不回来产物为什么对不上")
+        out = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertEqual(["story_src_digests", "story_written_at"], out["storyRegistrationUndone"],
+                         "撤销了什么要说出来——不然查不回来产物为什么对不上")
 
     def test_reopen_from_complete_has_nothing_to_undo(self) -> None:
         """还没成文时没有成文登记可撤——留痕里就是空的，不编造。"""
         self.complete_it()
-        self.assertEqual(0, self.run_flow("reopen").returncode)
-        self.assertEqual([], self.contract()["reopened"][-1]["story_registration_undone"])
+        proc = self.run_flow("reopen")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        out = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertEqual([], out["storyRegistrationUndone"])
 
     def test_reopen_refuses_when_not_complete(self) -> None:
         """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""
@@ -988,14 +987,14 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
             timeout=120, cwd=str(REPO_ROOT))
 
     def test_the_contract_only_points_at_the_manifest(self) -> None:
-        """契约不再自己存一份逐文件哈希，只留清单的位置与版本。
+        """契约不再自己存一份逐文件哈希，只留清单的版本（清单位置是固定的，不另记）。
 
         同一份材料事实两处写，改一处忘一处时，两边都还理直气壮。
         """
         self.round_now()
         entry = self.contract()["rounds"][-1]
         self.assertNotIn("inputs", entry, "契约里还留着第二份材料哈希")
-        self.assertEqual("AR/story-src/materials.json", entry["materials"]["path"])
+        self.assertEqual({"digest"}, set(entry["materials"]), "契约里材料只该记版本")
         self.assertEqual(self.manifest()["digest"], entry["materials"]["digest"])
 
     def test_importing_leaves_no_receipt(self) -> None:
@@ -1022,14 +1021,14 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         self.assertFalse(sources[0]["ingested"], "没导的料被记成已并入")
 
     def test_importing_marks_it_ingested_and_moves_the_version(self) -> None:
-        """导入之后：正文变了 → 新一轮；清单说它已并入；契约记下本轮并入了它。"""
+        """导入之后：正文变了 → 新一轮；清单说它已并入（导过什么只在清单里，契约不再记一遍）。"""
         before = self.round_now()
         self.put_inbox("上游需求.md", "# 上游\n\n正文。\n", "AR")
         self.assertEqual(0, self.import_now().returncode)
         after = self.round_now()
         self.assertNotEqual(before["materials"], after["materials"])
         self.assertTrue(self.manifest()["sources"][0]["ingested"])
-        self.assertEqual(["上游需求.md"], self.contract()["rounds"][-1]["imported"])
+        self.assertNotIn("imported", self.contract()["rounds"][-1], "并入名单又落回契约")
 
     def test_replacing_a_source_with_new_content_is_pending_again(self) -> None:
         """同名原件换了内容就是新料 —— 任何一份「导过什么」的名单都记不住这件事。"""
@@ -1208,7 +1207,7 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     """
 
     NAMES = property(lambda self: [
-        CONTRACT[-1], ANALYSIS[-1],
+        CONTRACT[-1], "init-analysis.md",
         importer.doc_targets()["AR"].name,
     ])
 
@@ -1220,7 +1219,6 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     def test_they_live_under_story_src_not_the_ar_root(self) -> None:
         """路径本身就是判据：`AR/` 根下只放交付文档，辅助件在 `story-src/` 这一层。"""
         self.assertEqual(("AR", "story-src", "story-flow.json"), CONTRACT)
-        self.assertEqual(("AR", "story-src", "init-analysis.md"), ANALYSIS)
         self.assertEqual("AR/story-src/upstream.md",
                          importer.doc_targets()["AR"].as_posix())
 

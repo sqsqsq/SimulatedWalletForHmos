@@ -354,16 +354,6 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         self.assertIn("读不出来", out["problems"][0], out["problems"][0])
         self.assertNotIn("明细里缺", out["problems"][0], "读不出结构被说成了缺键")
 
-    def test_a_per_unit_table_is_named_as_the_wrong_shape(self) -> None:
-        """做成逐单元裁决表 = 做成了另一件事：那张表的量随材料条数涨。"""
-        out = self._run(row("PASS") + PER_UNIT_TABLE)
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("逐单元裁决表", out["problems"][0])
-
-
-
-
-
 class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
     """交付门只在 `--deliver` 起作用，而且跑不起来不算通过。"""
 

@@ -31,8 +31,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { flowProblems } from './flow/check.mjs';
 import {
-  EMPTY_SECTION_TEXT, normalizeHeading, pendingChapters, pendingMark, renumberStory,
-  storySections,
+  normalizeHeading, pendingChapters, pendingMark, renumberStory, storySections,
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {

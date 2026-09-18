@@ -7,10 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fail, readJson, readText } from './context.mjs';
-import { appendixChapter } from './appendix.mjs';
-import {
-  normalizeHeading, ProjectionConflict, projectionDigest, recordedDigest,
-} from './document.mjs';
+import { ProjectionConflict, projectionDigest, recordedDigest } from './document.mjs';
 
 /**
  * 一条决策登记要写满的字段，与「缺了会怎样」。
@@ -22,21 +19,6 @@ export const DECISION_FIELDS = [
   ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
   ['clarification', '带小标题分段的澄清正文'],
   ['decider', '请谁确认'],
-];
-
-/**
- * 评审记录里不该出现的行 —— 每一样都被裁掉过，每一样都以「更规范」的名义长回来。
- *
- * 判的是**行首形态**而不是词：`确认人：` 是签署字段，而评审人在自己的意见里写
- * 「这条要找确认人」是正常的话。只判机器渲染出来的那种独立字段行。
- */
-const REVIEW_BANNED_LINES = [
-  { name: '如何填写', re: /^#{1,6}?\s*\**\s*(?:如何填写|填写说明|使用说明)/ },
-  { name: '确认人', re: /^[-*]?\s*\**确认人\**\s*[:：]/ },
-  { name: '确认日期', re: /^[-*]?\s*\**确认日期\**\s*[:：]/ },
-  { name: '确认依据', re: /^[-*]?\s*\**确认依据\**\s*[:：]/ },
-  { name: '状态行', re: /^[-*]?\s*\**状态\**\s*[:：]/ },
-  { name: '下一步', re: /^#{1,6}?\s*\**\s*下一步\**\s*[:：]?\s*$/ },
 ];
 
 /**
@@ -320,15 +302,16 @@ function choiceOptionProblems(id, area) {
 }
 
 /** 评审记录只含渲染语法：填写说明、签署字段、状态行、下一步都是表单在膨胀。 */
-export function reviewFormProblems(reviewText) {
+export function reviewFormProblems(reviewText, contract) {
   const problems = [];
   // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
   //
   // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
   // 而它们的实际后果是评审人先读一遍字段表，再在答不上来的格子里胡填。
   if (reviewText) {
-    const banned = REVIEW_BANNED_LINES.filter(
-      ({ re }) => reviewText.split(/\r?\n/).some(l => re.test(l.trim())));
+    const lines = reviewText.split(/\r?\n/).map(l => l.trim());
+    const banned = (contract?.review_form_banned_lines ?? [])
+      .filter(({ pattern }) => lines.some(l => new RegExp(pattern).test(l)));
     for (const { name } of banned) {
       problems.push(`评审记录里出现「${name}」——评审人要填的只有每条议题末尾那处填写位；`
         + '填写说明、签署字段、状态行都被裁掉过，它们只会让人在答不上来的格子里胡填');

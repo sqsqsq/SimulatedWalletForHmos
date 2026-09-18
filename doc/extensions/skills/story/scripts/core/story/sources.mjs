@@ -6,11 +6,11 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fail, readJson, readText, specText } from './context.mjs';
+import { readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { scanMaterialList } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
-import { normalizeHeading, subsectionSpan } from './document.mjs';
+import { subsectionSpan } from './document.mjs';
 
 /**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
@@ -37,7 +37,6 @@ function scanSources(ctx) {
     if (text !== null) {
       docs.push({
         doc, rel, text,
-        notes: obj.notes ?? [],
         // `derived`＝这一份是本轮流程自己生成的中间产物，不是上游给的材料。
         // 它只守业务编号，工程细节的家是它自己。
         derived: obj.derived === true,
@@ -85,6 +84,12 @@ export function sourceStatus(ctx) {
 // 正文定位：章、小节与附录机器区
 // --------------------------------------------------------------------------
 
+/** 路径的最后一段。判「正文提没提到这张图」用它——作者写文件名比写全路径自然。 */
+export function basename(rel) {
+  const parts = String(rel).split('/');
+  return parts[parts.length - 1];
+}
+
 /**
  * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
  *
@@ -97,12 +102,6 @@ export function sourceStatus(ctx) {
  * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
  *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
  */
-/** 路径的最后一段。判「正文提没提到这张图」用它——作者写文件名比写全路径自然。 */
-export function basename(rel) {
-  const parts = String(rel).split('/');
-  return parts[parts.length - 1];
-}
-
 export function readManifest(ctx) {
   if (ctx.offline || !ctx.srcDir) return null;
   const text = readText(path.join(ctx.srcDir, 'materials.json'));
@@ -173,8 +172,10 @@ export function joinPosix(base, ref) {
  */
 export function upstreamDocs(ctx) {
   const out = [];
-  for (const [label, ...rel] of [['SR', 'SR', 'design.md'], ['spec', 'spec', 'spec.md']]) {
-    const text = readText(path.join(ctx.featureRoot, ...rel));
+  // 标签是图源标记里写的那个名字；路径以合同 `sources` 为准
+  for (const [label, key] of [['SR', 'SE'], ['spec', 'SPEC']]) {
+    const rel = ctx.contract.sources?.[key]?.path;
+    const text = rel ? readText(path.join(ctx.featureRoot, rel)) : null;
     if (text !== null) out.push([label, text]);
   }
   return out;
@@ -287,7 +288,7 @@ export function sourceProblems(ctx) {
 export function materialListProblems(ctx, storyText) {
   const problems = [];
   const notes = [];
-  // ⑫c 形态 lint：图的承接、材料清单的行形态
+  // ⑫c 材料清单的行形态
   //
   // 材料清单的行形态：判的是形态不是内容——
   // 只问「这一行能不能把材料定位到原件」。图题编号与小节编号已归 `number` 机器铺，不再判。

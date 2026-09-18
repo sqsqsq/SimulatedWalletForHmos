@@ -22,10 +22,9 @@ import {
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
-  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections, tableCells,
-  zonesByLine,
+  EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { carriedDiagramProblems, danglingFigures, imageProblems } from './images.mjs';
+import { carriedDiagramProblems, imageProblems } from './images.mjs';
 import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -108,8 +107,7 @@ export function cmdCheck(ctx) {
   mark('①b 大标题带需求编号');
   // ①b 大标题带需求编号：归档件离开这个仓库之后，编号是它与需求系统之间唯一的绳子。
   //
-  // 在线时比对的是本 feature 的编号（知道答案就核答案）；离线只有一份 story，
-  // 此时退一格核**形态**——首个词是编号形态即可。两条路都拦得住「标题只有需求名」。
+  // 在线时比对的是本 feature 的编号；离线只有一份 story、不知道编号，这一类不判。
   const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
   const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
   if (!h1Text) {
@@ -119,9 +117,6 @@ export function cmdCheck(ctx) {
       problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
         + '——归档件流转出去之后，读者靠这个编号回到需求系统');
     }
-  } else if (!/^[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*(\s|$)/.test(h1Text)) {
-    problems.push(`大标题缺需求编号：「${h1Text.slice(0, 30)}」`
-      + '——第一行写成 `# <需求编号> <需求名称>`');
   }
 
   mark('③ 验收编号落在验收章');
@@ -270,8 +265,7 @@ export function cmdCheck(ctx) {
   // 反着解析回去的判据。
   problems.push(...appendixZoneProblems(ctx, storyText));
 
-  mark('⑫c 形态 lint');
-  problems.push(...danglingFigures(storyText, ctx.contract));
+  mark('⑫c 材料清单');
   {
     const out = materialListProblems(ctx, storyText);
     problems.push(...out.problems);
@@ -284,7 +278,7 @@ export function cmdCheck(ctx) {
   if (!ctx.offline) problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑬ 评审记录只含渲染语法');
-  problems.push(...reviewFormProblems(reviewText));
+  problems.push(...reviewFormProblems(reviewText, ctx.contract));
 
   mark('⑮ AR 根下只有交付文档');
   if (!ctx.offline) problems.push(...strayFileProblems(ctx));
@@ -328,9 +322,3 @@ export function cmdCheck(ctx) {
   // 归档送审与进入 plan 都是正当的下一步，谁先谁后取决于这个需求的排期。
   if (ctx.args.deliver) process.stdout.write(deliveryNextSteps(ctx));
 }
-
-/**
- * 编号由机器铺，作者只写业务名标题与图题。
- *
- * 幂等：已经对的文件重跑一个字节都不改，所以放在登记步跑第二遍也无副作用。
- */

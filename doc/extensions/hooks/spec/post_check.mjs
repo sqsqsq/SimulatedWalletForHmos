@@ -19,8 +19,10 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parseYaml } from '../shared/yaml.mjs';
-import { scanBannedTerms, formatHits } from '../../skills/story/scripts/core/story/language.mjs';
+import { CROSS_DOC_COORDINATES, scanBannedTerms, formatHits }
+  from '../../skills/story/scripts/core/story/language.mjs';
+import { headingEnd, parseDocument, tableCells }
+  from '../../skills/story/scripts/core/story/document.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { STATUS } from '../shared/evidence.mjs';
@@ -36,22 +38,34 @@ const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
 
 /** 提取小节正文（到下一个 ##/### 标题为止） */
+//: 一份 spec 只解析一次：标题、节尾、围栏都从 `document.parseDocument` 读，不在这里另切一遍。
+const parsed = new WeakMap();
+function docOf(lines) {
+  if (!parsed.has(lines)) parsed.set(lines, parseDocument(lines.join('\n')));
+  return parsed.get(lines);
+}
+
+/** 按标题关键词定位章节（二到四级；标题编号由 `normalizeHeading` 剥掉）。找不到返回 -1。 */
+function findHeading(lines, titleRe) {
+  const h = docOf(lines).headings.find(x => x.level >= 2 && x.level <= 4 && titleRe.test(x.name));
+  return h ? h.at : -1;
+}
+
+/** 某个标题管到的行区间 `[start, end)`。 */
+function sectionRange(lines, startIdx) {
+  if (startIdx < 0) return null;
+  const doc = docOf(lines);
+  const h = doc.headings.find(x => x.at === startIdx);
+  return { start: startIdx, end: h ? headingEnd(doc, h) : lines.length };
+}
+
 function sectionBody(lines, headingIdx) {
-  const body = [];
-  for (let i = headingIdx + 1; i < lines.length; i++) {
-    if (/^#{2,3}\s/.test(lines[i])) break;
-    body.push(lines[i]);
-  }
-  return body;
+  const range = sectionRange(lines, headingIdx);
+  return range ? lines.slice(range.start + 1, range.end) : [];
 }
 
 function isSeparatorRow(line) {
   return /^\|[\s:|-]+\|?\s*$/.test(line);
-}
-
-function rowCells(line) {
-  // 不在转义竖线（\|）处切列
-  return line.split(/(?<!\\)\|/).map(c => c.replace(/\\\|/g, '|').trim());
 }
 
 /** 模板占位残留：章节模板的待填处写作「{ … }」，出现即表示该节未填写 */
@@ -70,7 +84,7 @@ function sectionFilled(body) {
         sawSeparator = true;
         continue;
       }
-      if (sawSeparator && rowCells(line).some(c => c.length > 0)) return true;
+      if (sawSeparator && tableCells(line).some(c => c.length > 0)) return true;
       continue;
     }
     sawSeparator = false; // 离开表格块，下一张表须重新经过表头+分隔行
@@ -86,22 +100,17 @@ function sectionFilled(body) {
  * 坐标是 AI 自己写的、可以伪造（写「≤1500 ms（SR §3.1）」而该章节根本没有时延数字），
  * 换个文档就失效，且会一路带进不含这些源文件的归档件。
  */
-const DOC_COORD_RE = /(?:\bspec\s*§|\bSR\s*§|\bRR\s*§|\bAR\s*§|(?:见|指回|来源)\s*A[1-8]\b)/g;
-
 function scanDocCoords(text) {
   const hits = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*(```|~~~)/.test(lines[i])) {
-      inFence = !inFence;
-      continue;
+  const doc = parseDocument(text);
+  doc.lines.forEach((line, i) => {
+    if (doc.fenced.has(i) || line.trim().startsWith('<!--')) return;
+    for (const { re } of CROSS_DOC_COORDINATES) {
+      for (const m of line.matchAll(re)) {
+        hits.push({ line: i + 1, coord: m[0].trim(), text: line.trim().slice(0, 80) });
+      }
     }
-    if (inFence || lines[i].trim().startsWith('<!--')) continue;
-    for (const m of lines[i].matchAll(DOC_COORD_RE)) {
-      hits.push({ line: i + 1, coord: m[0].trim(), text: lines[i].trim().slice(0, 80) });
-    }
-  }
+  });
   return hits;
 }
 
@@ -117,15 +126,11 @@ const SOURCE_TAG_RE = /(上游约束|本工程设定|平台基线|无上游依�
 
 function scanNumericSources(text) {
   const problems = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
+  const doc = parseDocument(text);
+  const lines = doc.lines;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence || line.trim().startsWith('<!--') || line.trim().startsWith('>')) continue;
+    if (doc.fenced.has(i) || line.trim().startsWith('<!--') || line.trim().startsWith('>')) continue;
     const nums = [...line.matchAll(NUMERIC_RE)];
     if (nums.length === 0) continue;
     if (!SOURCE_TAG_RE.test(line)) {
@@ -138,25 +143,6 @@ function scanNumericSources(text) {
   return problems;
 }
 
-
-/** 按标题关键词定位章节（容忍编号差异：`## 9. 技术契约` / `## 技术契约` 均可） */
-function findHeading(lines, titleRe) {
-  return lines.findIndex(l => {
-    const h = l.trim().match(/^(#{2,4})\s+(.*)$/);
-    return h ? titleRe.test(h[2].replace(/^[\d.、\s]+/, '')) : false;
-  });
-}
-
-/** 从某个二级标题起到下一个同级标题为止的行区间。 */
-function sectionRange(lines, startIdx) {
-  if (startIdx < 0) return null;
-  const level = (lines[startIdx].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length;
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    const h = lines[i].trim().match(/^(#{2,4})\s+/);
-    if (h && h[1].length <= level) return { start: startIdx, end: i };
-  }
-  return { start: startIdx, end: lines.length };
-}
 
 /**
  * 知识判定的两个出口（BLOCKER）——按数据前置分四组，能判的组一次全判。
@@ -310,14 +296,14 @@ function acceptanceCoverage(ctx, specIds) {
   const { acceptance, error, exists } = readAcceptance(ctx.projectRoot, ctx.feature);
   if (!exists) return problems;
   if (error) {
-    problems.push(`${error}——知识义务的桥接在本阶段的 criteria 里，读不出就核不了`);
+    problems.push(`${error}——知识义务的桥接在验收的 criteria 与 boundaries 里，读不出就核不了`);
     return problems;
   }
   // **按结构读，不按正则扫**：正则扫的是「文件里出现过这个编号」，
   // 它分不清编号写在哪一层，也认不出「一条 criteria 写了一串编号」这种形态——
   // 那形态下游分派不了，而作者会以为自己已经桥接过了。
   // Spec 只桥 criteria：boundaries 是边界场景，出现就代替不了 criteria 的桥。
-  const { byRule, problems: shape } = knowledgeCriteria(acceptance, ['criteria']);
+  const { byRule, problems: shape } = knowledgeCriteria(acceptance);
   problems.push(...shape);
   const accIds = new Set(byRule.keys());
   if (accIds.size || specIds.size) {
@@ -465,19 +451,17 @@ export default guard('spec', async (ctx) => {
         if (/^#{2,3}\s/.test(l)) break;
         if (!l.startsWith('|')) { sawSep = false; continue; }
         if (isSeparatorRow(l)) { sawSep = true; continue; }
-        const cells = rowCells(l);
+        const cells = tableCells(l);
         if (!sawSep) { headerCells = cells; continue; }
         rows.push(cells);
       }
-      // rowCells 对带行尾竖线的行会多出末位空串，故「解释」列须按表头定位而非按末位索引。
-      // 框架 parser（markdown-parser.parsePipeRow）要求数据行带行尾竖线才能解析，两者必须兼容。
-      // 表头与数据行同为「行首空串 + 各列 +（行尾空串）」结构，表头索引可直接用于数据行。
+      // 「解释」与「权威模块」列按表头定位，不按位置：列序随编辑漂移，列名才是契约。
       const explainIdx = headerCells
         ? headerCells.findIndex(h => h.trim().includes('解释'))
         : -1;
       const moduleIdx = headerCells
         ? headerCells.findIndex(h => h.trim().includes('权威模块'))
-        : 2;
+        : 1;
       const business = rows.filter(c => inScope.has((c[moduleIdx] ?? '').trim()));
       const noExplain = business.filter(c => {
         const last = (c[explainIdx] ?? '').trim();
@@ -485,7 +469,7 @@ export default guard('spec', async (ctx) => {
       });
       if (rows.length > 0 && noExplain.length > 0) {
         problems.push(
-          `术语映射表有 ${noExplain.length} 个业务名词没写「解释」：${noExplain.map(c => (c[1] ?? c[0] ?? '').trim()).join('、')}` +
+          `术语映射表有 ${noExplain.length} 个业务名词没写「解释」：${noExplain.map(c => (c[0] ?? '').trim()).join('、')}` +
             '——它们的权威模块在本需求 Scope 内，是本需求的业务词汇；评审叙事件的术语表从这里抄，' +
             '漏了评审者在归档件里就查不到这个词。基础能力类术语可留「—」'
         );

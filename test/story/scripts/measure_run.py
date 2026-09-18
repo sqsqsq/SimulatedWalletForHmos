@@ -59,8 +59,31 @@ CHECKER_PATH_RE = re.compile(
 DIAGRAM_FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml|dot|graphviz)\b",
                               re.IGNORECASE)
 
-BASH_READ_RE = re.compile(
-    r"\b(cat|head|tail|sed|less|type|grep|rg|awk)\b|readFileSync|readFile\b|open\(")
+#:
+#: **读取动词要直接作用于那条路径**（算法 v2，1.9.3 步骤 7）：命令按管道、`&&`、`;` 切段，
+#: 只有「段首是读取动词」或「段里有内联读文件」且路径在同一段里，才算读。
+#: `node …/story-build.mjs check | tail -20` 是执行判据脚本再截输出，不是读它的源码——
+#: v1 把整条命令里任意一处 `tail` 当成读，执行一次就记一次「逆向判据」。
+READ_ALGORITHM = "v2"
+READ_VERB_RE = re.compile(
+    r"^(?:cat|head|tail|sed|less|more|type|grep|rg|awk|findstr|get-content|gc|select-string|sls)\b",
+    re.IGNORECASE)
+INLINE_READ_RE = re.compile(r"readFileSync|readFile\b|open\(")
+SEGMENT_SPLIT_RE = re.compile(r"\|\||&&|[|;\n]")
+#: PowerShell 包了一层：`"…powershell.exe" -Command "rg …"`——剥掉外壳再切段
+POWERSHELL_WRAPPER_RE = re.compile(r"^.*?-command\s+[\"']?", re.IGNORECASE)
+
+
+def _read_segments(command: str) -> list[str]:
+    """bash 命令里真正在读文件的那几段（读取动词打头，或段内有内联读文件）。"""
+    out = []
+    for seg in SEGMENT_SPLIT_RE.split(command):
+        if "-command" in seg.lower():
+            seg = POWERSHELL_WRAPPER_RE.sub("", seg, count=1)
+        s = seg.strip().strip("\"'").strip()
+        if READ_VERB_RE.match(s) or INLINE_READ_RE.search(s):
+            out.append(s)
+    return out
 
 #: 门禁在**控制台输出**里报一条 check 的形态（report-generator 的 printReportToConsole）：
 #:     ``  ✗ FAIL [BLOCKER] feature_artifact_resolution``
@@ -153,6 +176,7 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     reads_rule = 0            # 读框架/扩展的规则文本
     reads_own = 0             # 读自己的产物
     reads_checker = 0         # 读 checker 源码
+    bash_unclassified = 0     # 提到规则路径、却既不是读也不是跑门禁的 bash（执行脚本等）
     tools = Counter()
     context_first = context_last = None
     harness_runs = 0
@@ -196,17 +220,24 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         request = _request_text(e)
         output = _output_text(e)
 
-        looks_like_read = name in {"read", "grep", "glob"} or (
-            name == "bash" and BASH_READ_RE.search(request))
-        if looks_like_read:
-            if CHECKER_PATH_RE.search(request):
+        if name in {"read", "grep", "glob"}:
+            read_text = request
+        elif name == "bash":
+            read_text = " ".join(_read_segments(request))
+        else:
+            read_text = ""
+        if read_text:
+            if CHECKER_PATH_RE.search(read_text):
                 reads_checker += 1
-            if RULE_PATH_RE.search(request):
+            if RULE_PATH_RE.search(read_text):
                 reads_rule += 1
-            elif "doc/features/" in request:
+            elif "doc/features/" in read_text:
                 reads_own += 1
 
         is_harness = name == "bash" and HARNESS_CMD_RE.search(request)
+        if (name == "bash" and not is_harness and RULE_PATH_RE.search(request)
+                and not RULE_PATH_RE.search(read_text)):
+            bash_unclassified += 1
         if is_harness:
             harness_runs += 1
 
@@ -245,6 +276,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "reads_rule_text": reads_rule,
         "reads_own_artifacts": reads_own,
         "reads_checker_source": reads_checker,
+        "read_algorithm": READ_ALGORITHM,
+        "bash_rule_path_not_read": bash_unclassified,
         "rule_over_own_ratio": (round(reads_rule / reads_own, 2) if reads_own else None),
         "harness_runs": harness_runs,
         "context_first": context_first,

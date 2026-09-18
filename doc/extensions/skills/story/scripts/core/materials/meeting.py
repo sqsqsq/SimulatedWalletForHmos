@@ -325,10 +325,6 @@ def inspect(feature_root: Path) -> dict:
     for key in sorted(set(notes) - set(found)):
         problems.append(f"meeting-notes.json 的「{key}」对不上任何会议版本"
                         f"——source 与 source_sha 照抄那一版的 {SOURCE}")
-    for old in sorted(feature_root.joinpath(*MEETINGS).glob("*/*/topics.json")):
-        # 上一轮格式的产物：话题现在只在 meeting-notes.json 里登记一次
-        problems.append(f"{old.parent.parent.name}/{old.parent.name} 还留着上一轮的 topics.json："
-                        "本轮话题只登记在 meeting-notes.json 一处，删掉它再读会")
     for key, folder in sorted(found.items()):
         lines, broken = raw_lines(folder)
         if broken:

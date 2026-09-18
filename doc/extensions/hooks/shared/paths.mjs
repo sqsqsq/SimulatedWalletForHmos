@@ -54,7 +54,6 @@ export function readTextOrNull(abs) {
   }
 }
 
-/** 一律 `\r?\n` 分行——按 '\n' 切行会让 CRLF 文件的行尾带 `\r`，正则静默零命中。 */
 /** 读一份 JSON。读不出、解析不动都当作「没有」——调用方据此走缺省路径。 */
 export function readJsonOrNull(abs) {
   const raw = readTextOrNull(abs);

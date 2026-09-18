@@ -10,7 +10,7 @@
     python import_sources.py --feature <AR> --caption-image <图> --unused <理由>
     python import_sources.py --feature <AR> --register-ux <图> --name <名> --caption <一句话>
 
-归类读 `inbox/.classify.json`，内容是 `{"文件名": "RR|SR|AR|UX"}`。**归类判断不是脚本的活**：
+归类读 `inbox/.classify.json`，内容是 `{"文件名": "<类>"}`（值域见 `materials/importer.py` 的 `CLASSES`）。**归类判断不是脚本的活**：
 它需要读文件名、内容语义与人在关卡上的说明，属语义判断，由 AI 做出后写进该文件；
 脚本只负责执行与收敛。没给归类的文件不会被默默忽略——那等于人以为导了、实际没导。
 

@@ -9,10 +9,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
-  chapterSpan, findByName, headingEnd, norm, normalizeHeading, parseDocument, sectionBody,
-  sectionNames, tablesWithin, zoneBlock, zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
+  chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock, zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
-import { fail, activeKnowledgeEntries, readJson, readText, specText } from './context.mjs';
+import { fail, activeKnowledgeEntries, specText } from './context.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
@@ -70,11 +69,6 @@ function knowledgeUseVerdicts(ctx, entries = []) {
 export function appendixChapter(contract) {
   return (contract.chapters ?? []).find(c => c.appendix) ?? null;
 }
-
-/**
- * 从一章的正文里切出某个 `###` 小节的辅助已迁至 story/chapter-contract.mjs；
- * 入口仍有消费者的按需 import 同一导出，不在这里保留第二份实现。
- */
 
 /**
  * spec 里某一节：命中标题（二、三级）之下、到下一个同级或更高级标题之前。
@@ -186,9 +180,6 @@ function appendixTables(spec, name) {
   return out;
 }
 
-/** 一张表渲染成 markdown 行。 */
-// renderTable（表格渲染）已迁至 story/chapter-contract.mjs，入口与它共用同一导出。
-
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */
 export function materialSubsectionName(contract) {
   const appendix = appendixChapter(contract);
@@ -260,16 +251,6 @@ function appendixProjection(ctx, spec, name) {
 }
 
 /**
- * 把附录的机器区投影进 story —— **投影的唯一入口**，两个时点都走它。
- *
- * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句与材料清单，A–D 由这里投出来，
- *    他登记前跑 `check` 才不会因为那四节是空的而红；
- * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判定、改一个接口），
- *    以登记这一次为准。
- *
- * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
- */
-/**
  * spec 那一节写的「不涉及：<依据>」——它也是结论，评审者要看到。
  *
  * 读不出这样一行就返回 null：那时那一节是真的空，旧机器区该删掉，
@@ -286,6 +267,16 @@ function specNotApplicable(spec, name) {
   return null;
 }
 
+/**
+ * 把附录的机器区投影进 story —— **投影的唯一入口**，两个时点都走它。
+ *
+ * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句与材料清单，A–D 由这里投出来，
+ *    他登记前跑 `check` 才不会因为那四节是空的而红；
+ * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判定、改一个接口），
+ *    以登记这一次为准。
+ *
+ * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
+ */
 export function projectAppendix(ctx, storyText) {
   const appendix = appendixChapter(ctx.contract);
   if (!appendix) return { text: storyText, zones: 0 };
@@ -469,7 +460,6 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
   const appendixSection = appendixDef
     ? sections.find(sec => sec.title === appendixDef.title) : null;
   const wantSubs = (appendixDef?.subsections ?? []).map(normalizeHeading);
-  const materialName = materialSubsectionName(ctx.contract);
   if (appendixSection && wantSubs.length) {
     for (const sub of sectionNames(viewOf(appendixSection.title))) {
       if (!wantSubs.includes(sub.name)) {

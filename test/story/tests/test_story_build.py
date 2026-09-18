@@ -354,19 +354,6 @@ class TestRequirementIdInTitle(StoryBuildCase):
         out = self.assert_check_names("大标题缺需求编号")
         self.assertIn(FEATURE, out, "报错要把该写的编号给出来")
 
-    def test_offline_falls_back_to_the_shape(self) -> None:
-        """离线只有一份 story，不知道 feature 叫什么——此时核形态，不放过去。"""
-        story = Path(self._tmp.name) / "AR" / "story.md"
-        story.parent.mkdir(parents=True, exist_ok=True)
-        text = self.story()
-        story.write_text(text.replace(text.split("\n", 1)[0], "# 某需求"), encoding="utf-8")
-        proc = subprocess.run(
-            ["node", str(BUILD), "check", "--offline", "--story", str(story),
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("大标题缺需求编号", (proc.stderr or "") + (proc.stdout or ""))
-
 
 class TestRedlineScope(StoryBuildCase):
     """逐类作用域：工程标识只管附录之外，文档坐标全篇判；一行命中几种坐标只报一条。"""
@@ -2439,37 +2426,6 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
         self.assertIn("story-build:begin 接口", story)
 
-
-
-class FiguresMustBeIntroduced(StoryBuildCase):
-    """图连图、图前没有一句话 —— 两件不用读懂任何一句话就看得见的事。
-
-    「按清单把图都引上」正是这个形态：图一张接一张贴进来，没有一句话说它画的是什么。
-    「这句话说的是不是这张图」仍归独立审查——那要读上下文。
-    """
-
-    FLOW = "## 业务流程\n\n本需求不涉及。\n"
-
-    def put_in_flow(self, *rows: str) -> None:
-        self.init_audit()
-        self.rewrite_story(self.FLOW, "## 业务流程\n\n" + "\n".join(rows) + "\n")
-
-    def test_two_images_in_a_row_are_named(self) -> None:
-        self.put_in_flow("签约分两步。", "", "![签约页](../assets/a.png)", "",
-                         "![验证页](../assets/b.png)", "")
-        self.assert_check_names("紧挨着上一张图")
-
-    def test_an_image_at_the_top_of_a_section_is_named(self) -> None:
-        self.put_in_flow("![签约页](../assets/a.png)", "", "上图是签约页。", "")
-        self.assert_check_names("就在小节开头")
-
-    def test_an_introduced_image_is_left_alone(self) -> None:
-        """先一句话、再图、图后接着讲——这是正常写法，不该有信号。"""
-        self.put_in_flow("签约页把门限与面额放在一屏里。", "",
-                         "![签约页](../assets/a.png)", "",
-                         "确认之后进入免密验证。", "")
-        _, out = self.check_output()
-        self.assertNotIn("图前面没有一句话", out, out[:600])
 
 
 class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):

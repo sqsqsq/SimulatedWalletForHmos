@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readJson, readText } from './context.mjs';
+import { readJson } from './context.mjs';
 import { storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
 
 /**

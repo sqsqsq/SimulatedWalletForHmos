@@ -211,14 +211,12 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 
 ```json
 // .positioning.json
-{"scope_source": "user_stated|title|design_prefill|sr_related|full",
- "scope_text": "本 AR 当前范围一句话",
+{"scope_text": "本 AR 当前范围一句话",
  "sr_related_ars": [{"ar": "AR900xx", "scope": "该 AR 承载什么"}]}
 
 // .scope-options.json —— 首项必须是 carry_all；切法必须带 parts（≥2 份）
 [{"key": "carry_all",
-  "label": "按当前范围整体承载：<列出功能点>",
-  "recommended": true},
+  "label": "按当前范围整体承载：<列出功能点>"},
  {"key": "<维度名>",
   "label": "按<维度>切：<切成几份、每份是什么>",
   "parts": [{"seq": 1, "scope": "…", "depends_on": []},

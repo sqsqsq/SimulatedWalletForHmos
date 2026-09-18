@@ -17,9 +17,7 @@ from flow.meetings import topic_options
 
 
 def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]:
-    gate = args.gate or GATES[0]
-    if gate not in GATES:
-        raise FlowError(f"--gate 须为 {' / '.join(GATES)} 之一，实为「{gate}」")
+    gate = args.gate or GATES[0]     # 值域由 argparse 的 choices 拦
     if not (args.basis or "").strip():
         raise FlowError("--basis 不能为空：决策的依据（用户原话）是契约的审计价值所在")
 
@@ -97,12 +95,12 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     if gate == "split_carrier":
         # 承载定案：份表此时才成形（哪一份归本 AR 由这一步的选择决定）
         parts = read_split_parts(feature_root, feature_root.name)
-        if not parts and not (args.scope_text or "").strip():
+        if not parts:
             raise FlowError(
                 "split_carrier 缺定案内容：把拆分份表写进 "
                 f"{'/'.join(SPLIT_PARTS)}（每份含 seq / carrier / scope / depends_on，"
-                "carrier 为本 AR 的恰好一份 = 用户选中的那份，其余份写兄弟 AR 单号或「待立项」），"
-                "或退而用 --scope-text 给出本 AR 的范围文字。只留在对话里，会话一断就丢")
+                "carrier 为本 AR 的恰好一份 = 用户选中的那份，其余份写兄弟 AR 单号或「待立项」）。"
+                "只留在对话里，会话一断就丢")
         if parts:
             # 定案的必须是选中的：人选了第 k 份，份表就得把第 k 份给本 AR。
             # 两处各写一次，不核对的话「选的」与「记的」可以完全无关而全绿。
@@ -137,8 +135,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
 
     if gate == "split_carrier" and outcome == "accepted":
         # scope_text 由本 AR 那一份推导，不单独登记——同一事实两处写，迟早各说各话
-        scope_text = (next(p["scope"] for p in parts if p["carrier"] == feature_root.name)
-                      if parts else args.scope_text.strip())
+        scope_text = next(p["scope"] for p in parts if p["carrier"] == feature_root.name)
         contract["split"] = {"decided": "split", "settled_round": current["round"],
                              "scope_text": scope_text, "parts": parts}
 

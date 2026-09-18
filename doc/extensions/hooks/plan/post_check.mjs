@@ -28,6 +28,7 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, ver
 import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readContracts, resourceEntries } from '../shared/contracts.mjs';
+import { cellByHeader, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
@@ -99,18 +100,11 @@ function tableRows(rows, from, level) {
     const h = rows[i].trim().match(/^(#{2,4})\s+/);
     if (h && h[1].length <= level) break;
     const s = rows[i].trim();
-    if (s.startsWith('|')) pipes.push(s);
+    if (s.startsWith('|')) pipes.push(tableCells(s));
   }
-  const cellsOf = (s) =>
-    s.replace(/^\||\|$/g, '').split('|').map(c => c.replace(/[`*]/g, '').trim());
-  const isSeparator = (s) => cellsOf(s).every(c => /^[-: ]*$/.test(c));
-  const out = [];
-  for (let i = 0; i < pipes.length; i++) {
-    if (isSeparator(pipes[i])) continue;
-    if (i + 1 < pipes.length && isSeparator(pipes[i + 1])) continue;   // 表头
-    out.push(cellsOf(pipes[i]));
-  }
-  return out;
+  const isSeparator = (cells) => cells.every(c => /^[-: ]*$/.test(c));
+  const headers = pipes.length > 1 && isSeparator(pipes[1]) ? pipes[0] : null;
+  return { headers, rows: pipes.filter((c, i) => !isSeparator(c) && !(headers && i === 0)) };
 }
 
 /** 某一章的起始行号与它的标题级别。 */
@@ -173,8 +167,10 @@ function planPatternChoices(planText) {
   if (!at) return null;
   const out = new Map();
   const problems = [];
-  for (const cells of tableRows(rows, at.start + 1, at.level)) {
-    const [unit, candidate, choice, , reason] = cells;
+  const { headers, rows: body } = tableRows(rows, at.start + 1, at.level);
+  for (const cells of body) {
+    const [unit, candidate, choice, reason] = ['单元', '候选', '不选', '理由']
+      .map(key => cellByHeader(cells, headers, key));
     if (!unit || /^\{.*\}$/.test(unit)) continue;
     const pattern = String(candidate ?? '').trim();
     if (!pattern || pattern.includes('无候选')) continue;

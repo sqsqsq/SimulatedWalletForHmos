@@ -481,12 +481,11 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.assertIn("不是一个编号", message)
         self.assertIn("AC-2", message)
 
-    def test_boundaries_count_for_ut_but_not_for_spec(self) -> None:
-        """UT 桥 criteria+boundaries 两个集合；spec 只认 criteria。
+    def test_boundaries_count_for_spec_and_ut_alike(self) -> None:
+        """spec 核桥接、UT/testing 按桥接分派，读的是同一组集合：criteria + boundaries。
 
-        Spec 桥接只在 criteria：boundaries 是边界场景，出现在那里代替不了
-        criteria 的桥——否则 spec 判了命中却没有任何 criteria 扛，ut/testing
-        的分派照样对不到场景。
+        从前 spec 只认 criteria、UT/testing 认两个集合：同一条桥在 spec 那里算断链，
+        到下游却分派得到——同链路两种读法（1.9.3 步骤 7 统一）。
         """
         self.write_use()
         self.assertEqual(0, self.render().returncode)
@@ -504,8 +503,8 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
                          "process.stdout.write(JSON.stringify(out));")
         self.assertEqual(0, spec_proc.returncode, spec_proc.stderr)
         spec_message = json.loads(spec_proc.stdout or "{}").get("message") or ""
-        self.assertIn("没有对应验收条目", spec_message,
-                      f"spec 的桥只在 criteria——boundaries 顶替不了：{spec_message}")
+        self.assertNotIn("没有对应验收条目", spec_message,
+                         f"boundaries 的条目该计入 spec 的桥：{spec_message}")
 
     def test_numeric_source_tags_are_structural_not_literal(self) -> None:
         """数值来源机械门只核「标没标」；标了的真假归 overlay 语义判据。

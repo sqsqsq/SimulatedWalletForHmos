@@ -229,14 +229,17 @@ export function readAcceptance(projectRoot, feature) {
  * 两次遍历。只读解析结果，不改输入对象，不落盘。
  *
  * @param {object|null} acceptance readAcceptance 解析出的 acceptance
- * @param {string[]} sections 调用方显式传入的集合名（如 ['criteria'] 或 ['criteria','boundaries']）
+ * @param {string[]} [sections] 桥接所在的集合名，默认 `ACCEPTANCE_SECTIONS`
  * @returns {{byRule: Map<string, object[]>, problems: string[]}}
  *   缺集合视为空；非数组集合或非对象成员报明集合与序号；`knowledge_rule` 缺省的条目属
  *   普通业务验收（绝大多数验收点与规约无关，为它们各报一条会淹掉真正缺的），存在时须为
  *   非空字符串——写成列表的「一条 criteria 桥一串编号」下游分派不了。
  *   消费者先处理 `problems` 再查 `byRule`，不能过滤非法行后以「剩余为空」放行。
  */
-export function knowledgeCriteria(acceptance, sections) {
+/** 验收里能桥接规约的集合：spec 核桥接、UT/testing 按桥接分派，读的是同一组。 */
+const ACCEPTANCE_SECTIONS = ['criteria', 'boundaries'];
+
+export function knowledgeCriteria(acceptance, sections = ACCEPTANCE_SECTIONS) {
   const problems = [];
   const byRule = new Map();
   for (const section of sections) {

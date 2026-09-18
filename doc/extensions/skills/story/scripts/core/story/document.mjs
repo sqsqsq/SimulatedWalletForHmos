@@ -11,6 +11,7 @@
  * 与语义审查那一侧。
  */
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 
 /** 规范化：去空白与标点——「点了提交、但没收到回执」与原文只差标点时仍算同一句。 */
 export function norm(s) {
@@ -39,6 +40,12 @@ const CLOSING = /^[ \t]*(?:`{3,}|~{3,})[ \t]*$/;
 export function tableCells(line) {
   return String(line ?? '').trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '')
     .split(/(?<!\\)\|/).map(c => c.trim());
+}
+
+/** 按列名取单元格——列序会随编辑漂移，列名才是契约。去掉强调与代码标记后比。 */
+export function cellByHeader(cells, headers, keyword) {
+  const i = (headers ?? []).findIndex(h => h.includes(keyword));
+  return i >= 0 && i < cells.length ? cells[i].replace(/[`*]/g, '').trim() : '';
 }
 
 /** 分隔行（`|---|:--:|`）：以竖线起头，每一格都只有横线与对齐冒号。 */
@@ -528,10 +535,17 @@ export function chapterSpan(storyText, title) {
  * 判它不需要读懂任何一句话：在就是没写完，不在就是写过了。中断恢复据它决定还剩哪几章，
  * check 据它拦住「骨架当成品交」。
  */
-//: 记号的真源是章节合同的 `pending_mark`；这里与 Python 侧各按它写一份字面，
-//: 改合同要同时改这两处——document 不读业务合同，读了它就成了第二个合同解释者。
-const PENDING_MARK = '待写';
-const PENDING_RE = /<!--\s*待写[:：]\s*([^>]*?)\s*-->/g;
+//: 记号的真源是章节合同的 `pending_mark`，这里与 Python 侧都从它读，不各写一份字面。
+const PENDING_MARK = (() => {
+  const url = new URL('../../../contracts/story-chapters.json', import.meta.url);
+  try {
+    return String(JSON.parse(fs.readFileSync(url, 'utf-8').replace(/^\uFEFF/, '')).pending_mark);
+  } catch (err) {
+    throw new Error(`\u7AE0\u8282\u5408\u540C\u8BFB\u4E0D\u51FA\u6765\uFF08${err.message}\uFF09\uFF1A\u5F85\u5199\u8BB0\u53F7 pending_mark \u767B\u8BB0\u5728\u90A3\u91CC`);
+  }
+})();
+const PENDING_RE = new RegExp(`<!--\\s*${PENDING_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`
+  + '[:：]\\s*([^>]*?)\\s*-->', 'g');
 
 export function pendingMark(title) {
   return `<!-- ${PENDING_MARK}：${title} -->`;

@@ -71,7 +71,7 @@ export default guard('testing', async (ctx) => {
   // 同一规约常有多个验收条目（不同场景），逐条核，不能只看最后一条；
   // 解析失败要接住报出来，不能当空集合放行。
   const { acceptance, error: accError } = readAcceptance(ctx.projectRoot, ctx.feature);
-  const { byRule, problems: accProblems } = knowledgeCriteria(acceptance, ['criteria', 'boundaries']);
+  const { byRule, problems: accProblems } = knowledgeCriteria(acceptance);
   const problems = accError ? [accError] : [...accProblems];
   const notApplicable = [];
 

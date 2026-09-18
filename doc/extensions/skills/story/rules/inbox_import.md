@@ -19,7 +19,7 @@
 
 ## 归类：这份内容将来被哪一章按哪个源读取
 
-**归类由你判断**，四类。按内容主体归，不是按文件名像什么归：
+**归类由你判断**，六类。按内容主体归，不是按文件名像什么归：
 
 | 类 | 内容判据（回答什么问题） | 谁来消费 | 落点 |
 |---|---|---|---|
@@ -64,7 +64,7 @@ python doc/extensions/skills/story/scripts/core/import_sources.py --preview <doc
 旧内容自动进 `.backup/`。某类没有材料则该类目标不动。图片抽到 `assets/<文件名>/`，
 正文用 `../assets/<文件名>/…` 引用。
 
-**之后**：本轮导入的文件名记入契约当轮 `imported`（见 [init_analysis.md](init_analysis.md)），
+**之后**：导过哪些原件由材料清单 `AR/story-src/materials.json` 的 `sources` 说明，
 归类结果与转换情况随初析摘要在 S3 关卡**一屏带出**
 （「本批导入：X.docx→RR、首页.png→UX…」）——归类错了用户会当场指出，重导即可。
 

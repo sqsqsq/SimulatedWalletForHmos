@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    FlowError, SCHEMA, after_complete, load, log, now, require, save)
+    FlowError, SCHEMA, after_complete, load, log, require, save)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import frozen_inbox_note, live_materials, next_step
@@ -29,7 +29,7 @@ def cmd_round(feature_root: Path) -> dict:
     except registry.MaterialError as exc:
         raise FlowError(str(exc)) from exc
     digest = manifest["digest"]
-    reference = {"path": "/".join(registry.MANIFEST), "digest": digest}
+    reference = {"digest": digest}
     # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不再自己记一遍哈希
     ingested = sorted(s["file"] for s in manifest["sources"] if s.get("ingested"))
 
@@ -41,9 +41,6 @@ def cmd_round(feature_root: Path) -> dict:
         "design_generated_at": None,
     }
     rounds = contract["rounds"]
-    # `imported` 记的是**本轮新并入**的：清单每次都报全量已并入，累计计入会让
-    # 「哪一轮导的」永远说不清。
-    already = {name for r in rounds for name in r.get("imported", [])}
 
     def stamp(entry: dict) -> None:
         """把本次调用取到的事实盖进轮次条目（新轮与幂等轮共用）。"""
@@ -61,9 +58,6 @@ def cmd_round(feature_root: Path) -> dict:
     if rounds and (rounds[-1].get("materials") or {}).get("digest") == digest:
         current = rounds[-1]
         stamp(current)
-        fresh = sorted(set(ingested) - (already - set(current.get("imported", []))))
-        if fresh:
-            current["imported"] = fresh
         save(feature_root, contract)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
@@ -85,10 +79,6 @@ def cmd_round(feature_root: Path) -> dict:
     if after_complete(contract) and rounds:
         current = rounds[-1]
         stamp(current)
-        current["materials_changed_after_complete"] = {
-            "digest": digest, "at": now(),
-            "note": "收口后材料有变；未开新轮。要重新决策跑 `story_flow.py reopen`",
-        }
         save(feature_root, contract)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
@@ -101,7 +91,6 @@ def cmd_round(feature_root: Path) -> dict:
 
     entry = {
         "round": len(rounds) + 1,
-        "imported": sorted(set(ingested) - already),
         "materials": reference,
         "positioning": None,
         "scope_options": None,
@@ -112,7 +101,7 @@ def cmd_round(feature_root: Path) -> dict:
     save(feature_root, contract)
     consume_sidecar(feature_root, POSITIONING)
     consume_sidecar(feature_root, SCOPE_OPTIONS)
-    log(f"登记第 {entry['round']} 轮（材料 {digest}，本轮并入 {len(entry['imported'])} 件）")
+    log(f"登记第 {entry['round']} 轮（材料 {digest}，已并入正文的原件 {len(ingested)} 件）")
     return {"round": entry["round"], "created": True, "materials": digest,
             "positioning": bool(entry.get("positioning")),
             "scopeOptions": len(entry.get("scope_options") or [])}
@@ -129,8 +118,7 @@ def cmd_reopen(feature_root: Path) -> dict:
     契约里却记着成文时刻与台账指纹，而台账冻结只看 status，重开后台账可以重算，
     那份快照指的却是重算之前的东西。
 
-    留痕：收口与成文都是有后果的判断，撤销它们同样是——没有留痕的话，
-    产物为什么与当初那一轮对不上就查不回来了。
+    撤销了什么由返回值与日志说出来；契约只记现在的状态。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
@@ -139,12 +127,6 @@ def cmd_reopen(feature_root: Path) -> dict:
     undone = {key: contract.pop(key) for key in ("story_written_at", "story_src_digests")
               if key in contract}
     contract["status"] = "in_progress"
-    contract.setdefault("reopened", []).append({
-        "at": now(),
-        "from_status": status,
-        "from_round": contract["rounds"][-1]["round"] if contract.get("rounds") else None,
-        "story_registration_undone": sorted(undone),
-    })
     save(feature_root, contract)
     # **重开到此成立。** 往下只是算下一步：范围与材料没变时是 `complete` 收口，材料变了走盘点
     # 与关卡——直接去 `story` 登记只会被拒，而拒绝那一刻作者不知道缺的是收口。

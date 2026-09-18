@@ -20,6 +20,8 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
+    python story_flow.py story    --feature <AR>
+    python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
@@ -88,8 +90,6 @@ def main() -> int:
     ap.add_argument("--meeting", default=None,
                     help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
     ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
-    ap.add_argument("--scope-text", default=None,
-                    help="split_carrier 无份表侧车时的兜底：本 AR 的范围文字")
     ap.add_argument("--from", dest="from_path", default=None,
                     help="complete：要提交的提取稿，落点 " + "/".join(DESIGN_DRAFT))
     args = ap.parse_args()

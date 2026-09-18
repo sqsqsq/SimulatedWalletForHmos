@@ -2130,71 +2130,6 @@ def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def s08_solution_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
-    """已定决策成堆而方案章没有分工这一节——参与方与取舍化进散文，评审者要读完整章。"""
-    return _form_outcome(
-        "业务方案",
-        "钱包主应用负责页面与提交，账号能力负责身份，卡云是冻结结果的唯一裁判；"
-        "成功的判定上我们只认云侧明确返回已冻结。",
-        "### 参与方与分工\n\n"
-        "| 参与方 | 拿到什么 | 守住什么 |\n|---|---|---|\n"
-        "| 钱包主应用 | 用户动作与各方返回 | 不自行认定冻结成功 |\n"
-        "| 卡云 | 脱敏卡片标识 | 资格与冻结结果的唯一事实源 |\n\n"
-        "业务结果以卡云为准。",
-        "缺「参与方与分工」这一节")
-
-
-@checker
-def s09_flow_chapter_flat(root: Path, ctx: Ctx) -> Outcome:
-    """有内容的流程章一个小节都没有——主路径与全部支线压在一坨散文里。"""
-    return _form_outcome(
-        "业务流程",
-        "```mermaid\nflowchart TD\n  A[进入] --> B[提交]\n```\n\n"
-        "用户进入页面查询资格，确认风险后提交，云侧受理后查询真实冻结结果；"
-        "身份未完成时先去补身份，状态冲突时刷新后重新确认。",
-        "```mermaid\nflowchart TD\n  A[进入] --> B[提交]\n```\n\n"
-        "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。\n\n"
-        "### 身份未完成的恢复\n\n**时机**：查询资格时身份未完成。\n\n"
-        "**方案**：转入既有身份流程。\n\n**走向**：回来后重新查询资格。",
-        "缺「主路径」这一节")
-
-
-@checker
-def s12_tradeoff_prose(root: Path, ctx: Ctx) -> Outcome:
-    """关键取舍那一节写成散文——「否了什么、为什么被否的不行」被化进句子里。"""
-    return _form_outcome(
-        "业务方案",
-        "### 参与方与分工\n\n| 参与方 | 守住什么 |\n|---|---|\n| 卡云 | 唯一事实源 |\n\n"
-        "### 关键取舍\n\n"
-        "成功的判定上我们选择只认云侧明确返回已冻结，没有采用端侧提交成功即宣告冻结的做法，"
-        "因为那样在响应丢失时会出现假冻结。",
-        "### 参与方与分工\n\n| 参与方 | 守住什么 |\n|---|---|\n| 卡云 | 唯一事实源 |\n\n"
-        "### 关键取舍\n\n"
-        "| 取舍 | 选了什么 | 否了什么 | 为什么被否的不行 |\n|---|---|---|---|\n"
-        "| 成功的判定 | 云侧明确返回已冻结才展示成功 | 端侧提交成功即宣告冻结 | "
-        "响应丢失时宣告成功是假冻结，用户以为卡安全了而原卡还能用。 |",
-        "缺一张表")
-
-
-@checker
-def s13_limited_and_error_in_one_table(root: Path, ctx: Ctx) -> Outcome:
-    """设计内的受限结果与真正的失败混进同一张表——读者分不清哪些要处理。"""
-    return _form_outcome(
-        "异常与恢复",
-        "| 情况 | 用户看到什么 |\n|---|---|\n"
-        "| 身份未完成 | 身份说明与检查点提示 |\n"
-        "| 提交响应丢失 | 处理中，可确认结果 |",
-        "先分清两类。\n\n"
-        "### 设计内的受限结果\n\n"
-        "| 受限状态 | 用户看到什么 | 出路 |\n|---|---|---|\n"
-        "| 身份未完成 | 身份说明与检查点提示 | 完成身份流程后从检查点继续 |\n\n"
-        "### 需要处理的异常\n\n"
-        "| 异常 | 用户看到什么 | 系统怎么处理 |\n|---|---|---|\n"
-        "| 提交响应丢失 | 处理中，可确认结果 | 用同一幂等标识查既有申请 |",
-        "缺「设计内的受限结果」这一节")
-
-
-@checker
 def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
     """验收写成 bullet——编号与通过条件挤在一行文字里，没法逐条比对。"""
     return _form_outcome(
@@ -2207,15 +2142,6 @@ def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
         "| AC-R1 | 正常用户完成提交，只创建一次申请。 |\n"
         "| AC-1 | 未确认时提交不可用，确认后可进入提交中。 |",
         "缺一张表")
-
-
-@checker
-def s15_appendix_prose_tail(root: Path, ctx: Ctx) -> Outcome:
-    """附录表后挂散文尾巴——没地方去的工程细节挤成段。
-
-    开头那一句目的句不算，判的是表或列表**之后**的正文段。
-    """
-    return _form_case(root, "表后还有一段正文", "附录每节只有目的句加表")
 
 
 @checker
@@ -2250,11 +2176,6 @@ def s18_appendix_image(root: Path, ctx: Ctx) -> Outcome:
     """
     return _form_case(root, "里有", "图在它讲的那一章")
 
-
-@checker
-def s19_material_list_prose_head(root: Path, ctx: Ctx) -> Outcome:
-    """材料清单的列表之前塞散文——上一版只看列表之后。"""
-    return _form_case(root, "目的句之外还有", "材料清单只有目的句和列表行")
 
 def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     """A 档固定形式的五条共用同一套跑法：good 该过，bad 该被点名。"""
@@ -2327,7 +2248,6 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     if missed:
         return Outcome(False, f"注入的违例没被点名：{missed}；实际输出 {bad_out[:200]}")
     return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
-
 
 
 #: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——

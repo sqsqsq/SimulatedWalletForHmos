@@ -12,9 +12,7 @@ import json
 from pathlib import Path
 
 from flow.state import (
-
-
-    CARRY_ALL, FlowError, GATES, SCOPE_SOURCES, SKILL_ROOT, STORY_CONTRACT, log)
+    CARRY_ALL, FlowError, GATES, SKILL_ROOT, STORY_CONTRACT, log)
 
 # 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
 SPLIT_PARTS = ("AR", "story-src", ".split-parts.json")
@@ -67,7 +65,6 @@ def read_sidecar(feature_root: Path, parts: tuple[str, ...]) -> object | None:
 #: 定位侧车的字段。读取函数按它校验，`status` 按它给骨架——写两份的话，
 #: 改了字段名骨架不会跟着变，作者照骨架写出来的东西会被读取函数拒掉。
 POSITIONING_FIELDS = {
-    "scope_source": None,          # 合法值来自 SCOPE_SOURCES，骨架里现填
     "scope_text": "本 AR 当前范围，一句话；取全量时也要写出全量是什么",
     "sr_related_ars": "同一 SR 下的**其它** AR：[{ar, scope}]，没有就给空数组",
 }
@@ -80,22 +77,15 @@ def read_positioning(feature_root: Path) -> dict | None:
     只能默默取上游全量：初析即使识别出「无预填说明」，若没有一步把该识别结果变成范围结论，
     SR 全量就会被当成本 AR 范围。
 
-    脚本只存 AI「它无从得知」的判断（范围从哪来、是什么、同 SR 还有哪些 AR），
+    脚本只存 AI「它无从得知」的判断（范围是什么、同 SR 还有哪些 AR），
     不代它判断——与 `import_sources.py` 的归类件同一条分工边界。
     """
     payload = read_sidecar(feature_root, POSITIONING)
     if payload is None:
         return None
     if not isinstance(payload, dict):
-        raise FlowError(f"{POSITIONING[-1]} 须是对象：含 scope_source / scope_text / sr_related_ars")
+        raise FlowError(f"{POSITIONING[-1]} 须是对象：含 scope_text / sr_related_ars")
 
-    source = str(payload.get("scope_source") or "").strip()
-    if source not in SCOPE_SOURCES:
-        raise FlowError(
-            f"scope_source 须为 {' / '.join(SCOPE_SOURCES)} 之一，实为「{source}」"
-            "——范围是用户直接说的、从 AR 标题读到的、从 design.md 预填读到的、"
-            "从 SR 关联清单推出来的，还是都没有而取了部件全量，"
-            "下游据此判断这个范围可不可靠")
     scope_text = str(payload.get("scope_text") or "").strip()
     if not scope_text:
         raise FlowError(
@@ -118,7 +108,7 @@ def read_positioning(feature_root: Path) -> dict | None:
                 "本 AR 的范围写在 scope_text")
         normalized.append({"ar": ar, "scope": str(item.get("scope") or "").strip()})
 
-    return {"scope_source": source, "scope_text": scope_text, "sr_related_ars": normalized}
+    return {"scope_text": scope_text, "sr_related_ars": normalized}
 
 
 def read_scope_options(feature_root: Path) -> list[dict] | None:
@@ -219,7 +209,7 @@ def read_gate_options(feature_root: Path, gate: str,
                       round_no: int = 1) -> list[dict]:
     """读本次关卡摆出的选项集，并核它摆的就是这一级。
 
-    每项必须有 `key`（选项标识），其余字段随关卡自由（label / scope / recommended /
+    每项必须有 `key`（选项标识），其余字段随关卡自由（label / scope /
     dimension …）——统一只约束标识，是为了让「chosen 必须在 options 里」这条校验
     对三级关卡通用，不必为每个关卡各写一套值域。
 

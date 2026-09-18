@@ -1,7 +1,7 @@
 """把 inbox/ 里的人工材料转成流程能消费的形态：docx 转正文、图片抽取与登记。
 
 正式命令是 `core/import_sources.py`，本模块只做实现。归类由 AI 写进
-`inbox/.classify.json`（`{"文件名": "RR|SR|AR|UX"}`），脚本只负责执行与收敛；
+`inbox/.classify.json`（`{"文件名": "<类>"}`，值域见 `CLASSES`），脚本只负责执行与收敛；
 没给归类的文件不会被默默忽略——那等于人以为导了、实际没导。
 
 核心不变量：
@@ -165,8 +165,7 @@ def validate(sources: list[Path], classify: dict[str, str]) -> None:
                 "若你也读不了，请让用户提供可读版本")
         if path.name not in classify:
             raise ImportError_(
-                f"「{path.name}」未给出归类：请指明它属 RR（产品需求）/ SR（系统设计）/ "
-                "AR（本部件补充）/ UX（界面设计）中的哪一类")
+                f"「{path.name}」未给出归类：请指明它属 {' / '.join(CLASSES)} 中的哪一类")
         if classify[path.name] not in CLASSES:
             raise ImportError_(
                 f"「{path.name}」的归类「{classify[path.name]}」非法，须为 {'/'.join(CLASSES)}")
@@ -501,7 +500,7 @@ def convert_sources(sources: list[Path], classify: dict[str, str]
     for path in sources:
         cls = classify[path.name]
         if cls == "MEETING":
-            continue          # 会议转写不并进正文，由 `cmd_import` 解析成发言结构
+            continue          # 会议转写不并进正文：按版本留存，由读会处理
         if path.suffix.lower() in IMAGE_EXTS:
             if cls != "UX":
                 raise ImportError_(

@@ -414,14 +414,6 @@ class TheTopicListStandsOnItsOwn(MeetingCase):
         self.assertEqual(([], [], []), (seen["problems"], seen["missing"], seen["stale"]))
         self.assertFalse((folder / "topics.json").exists(), "还要求一份话题索引")
 
-    def test_an_old_topic_index_is_named_as_unsupported(self) -> None:
-        docx = self.imported()
-        _, folder = self.folder(docx)
-        (folder / "topics.json").write_text("[]", encoding="utf-8")
-        self.read_meeting(docx)
-        self.assertTrue(any("topics.json" in p and "本轮" in p for p in self.problems()),
-                        self.problems())
-
     def test_each_breach_in_the_list(self) -> None:
         docx = self.imported()
         loose = json.loads(json.dumps(TOPICS))
