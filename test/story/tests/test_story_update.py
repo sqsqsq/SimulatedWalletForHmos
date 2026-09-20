@@ -220,6 +220,132 @@ class UnreadableIsAGapNotADeletion(UpdateCase):
         self.assertNotIn("spec/spec.md", out["changed"], out)
 
 
+class StatusReportsFactsNotJudgement(UpdateCase):
+    """`status` 只报事实：有没有开着的、说明在不在、阶段闭没闭环。"""
+
+    def test_it_says_there_is_nothing_open(self) -> None:
+        out = self.update("--action", "status")
+        self.assertIsNone(out["open"])
+        self.assertEqual(0, out["rounds"])
+
+    def test_it_points_at_the_open_round_and_asks_for_notes(self) -> None:
+        rid = self.update()["update"]
+        out = self.update("--action", "status")
+        self.assertEqual(rid, out["open"])
+        self.assertIsNone(out["notes"], "还没写说明却说有")
+        self.assertIn("update-notes", out["action"])
+
+    def test_the_fetch_command_comes_from_the_script(self) -> None:
+        """取材落点由脚本给，模型不自己拼 `--out`——拼了就能指到需求目录外面。"""
+        out = self.update("--action", "status")
+        self.assertIn("--out", out["fetch"])
+        self.assertIn("AR/story-src/incoming", out["fetch"].replace("\\", "/"))
+
+    def test_phase_facts_come_from_the_harness_summary(self) -> None:
+        reports = self.feature_root / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(
+            json.dumps({"phase": "spec", "verdict": "PASS", "closure_status": "closed"}),
+            encoding="utf-8")
+        out = self.update("--action", "status")
+        self.assertEqual("closed", out["phases"][0]["closure"])
+
+    def test_an_unreadable_summary_is_not_guessed(self) -> None:
+        """闭没闭环不许猜——猜错的方向永远是「以为闭了」。"""
+        reports = self.feature_root / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text("{坏的", encoding="utf-8")
+        out = self.update("--action", "status")
+        self.assertFalse(out["phases"][0]["readable"])
+        self.assertNotIn("closure", out["phases"][0])
+
+
+class ClosingBindsTheNotes(UpdateCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.rid = self.update()["update"]
+
+    def notes(self, text: str = "## 当前依据\n首版。\n") -> None:
+        (self.updates / self.rid / "update-notes.md").write_text(text, encoding="utf-8")
+
+    def test_no_notes_no_close(self) -> None:
+        """没有说明就收口的话，下一轮拿到的基准背后没有任何解释。"""
+        out = self.update("--action", "close")
+        self.assertIn("update-notes", out.get("error", ""))
+        rec = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual("open", rec["status"], "没收口成却把记录改了")
+
+    def test_empty_notes_do_not_count(self) -> None:
+        self.notes("   \n\n")
+        self.assertIn("update-notes", self.update("--action", "close").get("error", ""))
+
+    def test_closing_keeps_text_for_the_next_comparison(self) -> None:
+        self.notes()
+        out = self.update("--action", "close")
+        self.assertEqual("closed", out["status"])
+        self.assertTrue((self.updates / self.rid / "after").is_dir())
+        # 有了 after/，下一轮改动才算得出正文差异（没有它只能说「这几份变了」）
+        spec = self.feature_root / "spec" / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + "\n新加的一行\n", encoding="utf-8")
+        nxt = self.update()
+        self.assertGreaterEqual(nxt["diffs"], 1, "有了比较正文却没算出差异")
+
+
+class RestoreKeepsBothSides(UpdateCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.rid = self.update()["update"]
+        self.spec = self.feature_root / "spec" / "spec.md"
+
+    def test_it_puts_the_scene_back_and_saves_what_came_after(self) -> None:
+        self.spec.write_text(self.spec.read_text(encoding="utf-8") + "\n这一轮改的\n",
+                             encoding="utf-8")
+        later = self.feature_root / "AR" / "story-src" / "这一轮新建的.md"
+        later.write_text("开始之后才有的。\n", encoding="utf-8")
+
+        out = self.update("--action", "restore")
+        self.assertEqual("restored", out["status"])
+        self.assertNotIn("这一轮改的", self.spec.read_text(encoding="utf-8"))
+        self.assertFalse(later.exists(), "这一轮之后新建的文件没被还原掉")
+        saved = self.updates / self.rid / Path(out["conflict_copy"]).name
+        self.assertIn("这一轮改的", (saved / "spec" / "spec.md").read_text(encoding="utf-8"),
+                      "被覆盖的那一版没留下来")
+        self.assertTrue((saved / "AR" / "story-src" / "这一轮新建的.md").is_file())
+
+    def test_our_own_bookkeeping_is_not_reported_as_a_conflict(self) -> None:
+        """流程契约里那一笔记号是本层自己写的。报成冲突的话，真冲突会被这条噪声埋掉。"""
+        out = self.update("--action", "restore")
+        self.assertNotIn("AR/story-src/story-flow.json", out["conflicts"])
+
+
+class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
+    def decide(self, *extra: str) -> dict:
+        proc = subprocess.run(
+            [sys.executable, str(FLOW), "decide", "--feature", FEATURE,
+             "--project-root", str(self.root), *extra],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+        rows = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
+        return json.loads(rows[-1])
+
+    def test_it_needs_an_open_round(self) -> None:
+        """不挂在某一轮上的话，事后无从定位这条人签属于哪一次更新。"""
+        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "需求方在评审会上说的")
+        self.assertIn("没有开着的更新", out.get("error", ""))
+
+    def test_it_records_the_actual_words(self) -> None:
+        self.update()
+        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "需求方原话：按 36 小时做")
+        self.assertEqual("human", out["recorded"]["by"])
+        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertEqual("需求方原话：按 36 小时做", flow["update"]["decisions"][0]["basis"])
+
+    def test_an_empty_basis_is_refused(self) -> None:
+        """人签只认真实原话——模型的转述不算。"""
+        self.update()
+        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "   ")
+        self.assertIn("--basis", out.get("error", ""))
+
+
 class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
     """只读取材：取回来放暂存，业务文件一个字节都不碰。"""
 

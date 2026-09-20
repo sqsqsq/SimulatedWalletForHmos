@@ -1,3 +1,10 @@
+# 2026-09-20 C2 交回实测：12192（prompts_md 1879 / scripts_py 2708 / scripts_mjs 3435 / hooks_mjs 3394 / data 776），
+# C2 净 +273（py +189、mjs +54、prompts +30）。C1 用 302 + C2 用 273 = 575，初始新增额度 674 余 99 给 C3。
+# **scripts_py 超在途额度 58（2708 > 2650），本条按 §5 交评审处理：不改测试绕过、不删功能换绿。**
+# 差额来源：签额度时 update.py 估 200–280 含四个动作，实际 prepare 170 + status/close/restore 150 = 320，
+# 比上沿多 40；decisions.py 的 update 分支（约 30）与 routing.py 的改道（约 15）在签字表里归在 C2 同一格、没单独估。
+# 总量 12270 未超（现 12192）。请评审定：按实签一次，还是压回。
+# 依据：design/1.9.4/2026-09-20-版本实施/步骤C2交回-2026-09-20.md §7。
 # 2026-09-20 C1 返修实测：11919（scripts_py 2519，其余四类不动），相对 C1 交回的 11912 再 +7。
 # 两条返修：① 监视集合补 knowledge-use / decisions / story-template / plan.md 与根目录两份强契约
 # （contracts.yaml、use-cases.yaml 在需求根目录不在 plan/ 下，照真实产物核过）——漏了它们，

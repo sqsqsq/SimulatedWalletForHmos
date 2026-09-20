@@ -275,6 +275,23 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
                 "先跑 `story_flow.py reopen`，再读会；有要人定的话题时摆给人一次"
                 + frozen_tail(feature_root, contract, manifest))
+    # **更新正在进行时，收口后的去向是「按修订清单改」，不是重走关卡。**
+    #
+    # 不加这一支的话，update 改完材料一跑 status，路由会把人送回材料盘点与范围关卡——
+    # 而范围这一轮并没有重新定，材料也不是「补了一批要重新拍板」，是一次有明确依据的修订。
+    # 重走一遍的代价不只是多问两次：关卡会开出新一轮，这一轮的 story 与 spec 据以成文的
+    # 那批料就对不上了。新会议不走这里（上面 `late` 那支已经接住）——会上有要人定的话题，
+    # 那是真的要人重新拍板。
+    if after_complete(contract) and (contract.get("update") or {}).get("open"):
+        rid = contract["update"]["open"]
+        return ("update_in_progress",
+                f"更新 {rid} 正在进行：按 AR/story-src/updates/{rid}/update-notes.md 里的修订清单改，"
+                "不重走材料与范围关卡。成文登记之后要改章先跑 `story_flow.py reopen`，"
+                "在草稿上改、`chapter` 提交、`story` 重新登记；这一轮新到的材料跟着 "
+                "`story_flow.py round` 登记到本轮（它不开新轮）。"
+                "范围本身要变，按已确认的权限问人，不自己扩。"
+                "改完跑 `story_flow.py update --action close` 收口这一轮"
+                + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written" and contract.get("archived"):
         return ("done", "本轮已归档送审。评审回流走 `/story review`；补料或改稿先 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))

@@ -16,6 +16,38 @@ from flow.routing import live_materials, material_state, next_step
 from flow.meetings import topic_options
 
 
+def cmd_decide_update(feature_root: Path, item: str, basis: str) -> dict:
+    """更新期间人拍的一次板 —— **记原话，不造人签**。
+
+    与三级关卡分开：那三级问的是「材料够不够、范围怎么定、哪份承载」，是起手才有的事；
+    这里记的是一次更新里冒出来、只有人能定的事（来源冲突、要改已经承诺过的口径、
+    沿用谁在哪一版的表态）。**它不扩大关卡集合**，也不因此多一次停等——
+    停不停由方法页定，这条只负责把人真说过的话落到盘上。
+
+    没有开着的更新就不记：那说明这次根本不在更新里，记下来也无从定位它属于哪一轮。
+    `update-notes` 里写着「已确认」不算——那是模型的转述，人签只认这条命令记下的原话。
+    """
+    if not item.strip():
+        raise FlowError("--update 要写清定的是哪件事")
+    if not basis.strip():
+        raise FlowError("--basis 不能为空：人签只认真实原话，模型的转述不算")
+    contract = load(feature_root)
+    if contract is None:
+        raise FlowError("这个单没走过 /story，没有可以记录的流程契约")
+    state = contract.get("update") or {}
+    if not state.get("open"):
+        raise FlowError("现在没有开着的更新：先跑 `story_flow.py update` 起一轮，"
+                        "这条记录要挂在某一轮上，否则事后无从定位它属于哪一次")
+    entry = {"item": item.strip(), "basis": basis.strip(), "by": "human", "at": now()}
+    state.setdefault("decisions", []).append(entry)
+    contract["update"] = state
+    save(feature_root, contract)
+    log(f"更新 {state['open']} 记下一条人的决定：{entry['item']}")
+    return {"update": state["open"], "recorded": entry,
+            "action": f"已记：{entry['item']}。依据是人的原话，"
+                      "后续说明里引用这一条，不要另写「人工已批准」之类的字样"}
+
+
 def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]:
     gate = args.gate or GATES[0]     # 值域由 argparse 的 choices 拦
     if not (args.basis or "").strip():

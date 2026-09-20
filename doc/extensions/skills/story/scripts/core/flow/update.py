@@ -11,7 +11,8 @@
 落点在 `AR/story-src/updates/<id>/`，它不在材料扫描的范围里（材料只认合同声明的正文源、
 `ux-reference`/`assets` 与会议原件），所以本层自己的写入不会把材料版本顶出一个新轮次。
 
-C1 只交 `prepare`；`status` / `close` / `restore` 在 C2。
+四个动作：`prepare` 起手比一遍、`status` 报现在开着什么、`close` 收口并留下可比的正文、
+`restore` 把现场还原到这一轮开始之前。
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ from pathlib import Path
 
 from materials import registry
 
-from flow.state import CONTRACT, FlowError, STORY, REVIEW, load, log, now
+from flow.state import (CONTRACT, FlowError, SKILL_ROOT, STORY, REVIEW,
+                        load, log, now, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
 UPDATES = ("AR", "story-src", "updates")
@@ -239,6 +241,12 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     if incoming:
         shutil.copytree(feature_root / Path(*INCOMING), root / "incoming", dirs_exist_ok=True)
 
+    contract["update"] = {"open": rid, "opened_at": now()}
+    save(feature_root, contract)
+    # 这一笔是本层自己的记号（路由据它改去向）。镜像里那份一起更新：
+    # 不同步的话，每次 restore 都会把流程契约报成「有人在这之后改过」，
+    # 而改它的正是我们自己——真正的冲突会被这条噪声埋掉。
+    shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
     record = {"id": rid, "opened_at": now(), "status": "open",
               "files": current, "unreadable": unreadable, "comparison": diff,
               "incoming": incoming, "request": str(request or "").strip() or None,
@@ -268,3 +276,191 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
                       "处置方法见 phases/update.md"}
+
+
+# ---------------------------------------------------------------------------
+# 阶段事实：哪些阶段有产物、闭没闭环。
+#
+# 读的是 harness 自己写的 `<阶段>/reports/summary.json`——它是**只读投影**，
+# 不是我们的账。自己另记一份的话，两边迟早对不上，而人会信错的那一份。
+# 读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
+PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
+
+
+def _phase_facts(feature_root: Path) -> list[dict]:
+    out = []
+    for phase in PHASES:
+        summary = feature_root / phase / "reports" / "summary.json"
+        if not summary.is_file():
+            continue
+        try:
+            data = json.loads(summary.read_text(encoding="utf-8").lstrip("﻿"))
+        except (OSError, ValueError) as exc:
+            out.append({"phase": phase, "readable": False, "why": str(exc)})
+            continue
+        out.append({"phase": phase, "readable": True,
+                    "closure": data.get("closure_status"),
+                    "verdict": data.get("verdict"),
+                    "subject": data.get("verifier_subject_id")})
+    return out
+
+
+def _incoming_dir(feature_root: Path) -> Path:
+    """取材暂存区的落点**由本层拥有**。
+
+    让模型自己拼 `--out` 的话，它可以指到任何目录——包括需求目录外面。
+    路径由这里给、命令由这里渲染，对接层就不必承担「不许写到别处」这件事。
+    """
+    return feature_root / Path(*INCOMING)
+
+
+def _fetch_command(feature_root: Path, feature: str) -> str:
+    adapter = SKILL_ROOT / "scripts" / "adapters" / "story.js"
+    return (f"node {adapter.as_posix()} fetch {feature} <token> "
+            f"--out {_incoming_dir(feature_root).as_posix()}")
+
+
+def _latest(records: list[tuple[str, dict]], status: str | None = None) -> tuple[str, dict] | None:
+    for rid, rec in reversed(records):
+        if status is None or rec.get("status") == status:
+            return rid, rec
+    return None
+
+
+def cmd_update_status(feature_root: Path, feature: str) -> dict:
+    """现在有没有开着的更新、上一次做到哪、说明在哪。**只报事实，不判对错。**"""
+    records = _records(feature_root)
+    openest = _latest(records, "open")
+    closed = _latest(records, "closed")
+    out = {"rounds": len(records), "phases": _phase_facts(feature_root),
+           "incoming": _incoming(feature_root),
+           "fetch": _fetch_command(feature_root, feature)}
+    if openest:
+        rid, rec = openest
+        notes = _updates_dir(feature_root) / rid / "update-notes.md"
+        out.update(open=rid, opened_at=rec.get("opened_at"),
+                   notes=f"AR/story-src/updates/{rid}/update-notes.md" if notes.is_file() else None,
+                   action=(f"更新 {rid} 还开着。"
+                           + ("说明在 update-notes.md，接着做完或 restore 还原现场。"
+                              if notes.is_file()
+                              else "还没有 update-notes.md——close 要绑定它，先把本轮判断写下来。")))
+        return out
+    out.update(open=None,
+               last_closed=closed[0] if closed else None,
+               action=("没有开着的更新。" + ("上一次已收口，可以起新的一轮。" if closed
+                                             else "这个单还没有做过 update。")))
+    return out
+
+
+def cmd_update_close(feature_root: Path) -> dict:
+    """收口这一轮：**绑定说明、记下此刻的文件摘要、留一份可比的正文**。
+
+    只记录「本轮处理到这里」，**不判语义对不对，也不发布**——那两件事一个归审查、
+    一个归归档。没有 `update-notes.md` 就不收口：收了的话，下一轮拿到的基准背后
+    没有任何解释，而「上次为什么这么改」正是下一轮最需要的东西。
+    """
+    records = _records(feature_root)
+    openest = _latest(records, "open")
+    if not openest:
+        raise FlowError("没有开着的更新可以收口：先跑 `story_flow.py update` 起一轮")
+    rid, rec = openest
+    root = _updates_dir(feature_root) / rid
+    notes = root / "update-notes.md"
+    if not notes.is_file() or not notes.read_text(encoding="utf-8").strip():
+        raise FlowError(
+            f"{rid} 还没有写 update-notes.md（或它是空的），不收口。"
+            "四段就够：当前依据、变化与影响、决定与修订、核对与剩余——"
+            f"落点 AR/story-src/updates/{rid}/update-notes.md")
+
+    current, unreadable = _scan(feature_root)
+    # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
+    after = root / "after"
+    kept = 0
+    for key in current:
+        src = feature_root / key
+        if not src.is_file():
+            continue
+        target = after / key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, target)
+        kept += 1
+
+    rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
+               notes=f"AR/story-src/updates/{rid}/update-notes.md",
+               after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
+               phases=_phase_facts(feature_root))
+    contract = load(feature_root) or {}
+    contract["update"] = {"open": None, "last_closed": rid}
+    save(feature_root, contract)
+    (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
+                                      encoding="utf-8")
+    log(f"update {rid} 收口：比较正文留了 {kept} 份")
+    return {"update": rid, "status": "closed", "compared_next_time": kept,
+            "unreadable": unreadable,
+            "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
+                      + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
+                         if unreadable else "")}
+
+
+def cmd_update_restore(feature_root: Path) -> dict:
+    """把需求目录还原到这一轮开始之前。**先保住现在，再往回写。**
+
+    还原是覆盖，而覆盖掉的可能正是有人刚写的东西。所以顺序是：凡是与 `before/` 不一样的，
+    先原样存进 `conflict-<时刻>/`，再照 `before/` 写回去；这一轮之后新建的文件删掉
+    （它们在开始之前不存在，「还原」就该让它们不存在），删之前同样先存。
+    **两边都留着**，报告说清哪几份有冲突——不替人决定要谁。
+    """
+    records = _records(feature_root)
+    target = _latest(records, "open") or _latest(records)
+    if not target:
+        raise FlowError("这个单没有做过 update，没有可以还原的现场")
+    rid, rec = target
+    root = _updates_dir(feature_root) / rid
+    before = root / "before"
+    if not before.is_dir():
+        raise FlowError(f"{rid} 没有留下 before/，还原不了。"
+                        "它应当在起手时建好；目录被移走的话，这一轮只能按当前内容继续")
+
+    saved = root / f"conflict-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
+    mirrored = {p.relative_to(before).as_posix() for p in before.rglob("*") if p.is_file()}
+    live = {p.relative_to(feature_root).as_posix() for p in feature_root.rglob("*")
+            if p.is_file() and not (set(p.relative_to(feature_root).parts) & MIRROR_SKIP)}
+
+    conflicts, restored, removed = [], 0, 0
+    def keep(rel: str) -> None:
+        src = feature_root / rel
+        dest = saved / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        conflicts.append(rel)
+
+    for rel in sorted(mirrored):
+        src, dst = before / rel, feature_root / rel
+        if dst.is_file() and dst.read_bytes() == src.read_bytes():
+            continue
+        if dst.is_file():
+            keep(rel)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        restored += 1
+    for rel in sorted(live - mirrored):
+        keep(rel)
+        (feature_root / rel).unlink()
+        removed += 1
+
+    rec.update(status="restored", restored_at=now(),
+               conflicts=conflicts,
+               conflict_copy=(f"AR/story-src/updates/{rid}/{saved.name}" if conflicts else None))
+    contract = load(feature_root) or {}
+    contract["update"] = {"open": None, "last_restored": rid}
+    save(feature_root, contract)
+    (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
+                                      encoding="utf-8")
+    log(f"update {rid} 已还原：写回 {restored} 份、删掉 {removed} 份、留存 {len(conflicts)} 份")
+    return {"update": rid, "status": "restored", "restored": restored, "removed": removed,
+            "conflicts": conflicts,
+            "conflict_copy": rec["conflict_copy"],
+            "action": f"需求目录已回到 {rid} 开始之前。"
+                      + (f"有 {len(conflicts)} 份在这之后被改过或新建，原样存在 "
+                         f"{rec['conflict_copy']}/，两边都在，要哪一份由人定。"
+                         if conflicts else "没有发现这之后的改动。")}

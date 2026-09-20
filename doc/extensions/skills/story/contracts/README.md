@@ -67,6 +67,12 @@ keep 的编号是读者要对照的（验收编号）；drop 的是仓内工作�
 
 流程契约（AR/story-src/story-flow.json）的常量：schema 版本、关卡名、第二级里固定的「整体承载」键。写入侧 `scripts/core/flow/state.py` 与门禁 `flow/check.mjs` 都从这里读，两边不各存一份字面。
 
+**`story-flow.json` 里的 `update` 键不在这份合同里，也不加判据。** 它是可选键，由 `flow/update.py`
+一处写入、`flow/routing.py` 一处读：`{"open": <轮次 id 或 null>, "opened_at"/"last_closed"/"last_restored",
+"decisions": [{"item","basis","by","at"}]}`。形状由写入侧保证——这与门禁「写入侧已保证的形状不在这里重判」
+的口径一致（`flow/check.mjs` 只认 schema、rounds、positioning、gates，不拒绝未知的顶层键）。
+**`flow.schema` 不因它升版**：旧读者忽略这个键就行，升了会让在途的单立刻报 schema 不符，而它们的流程并没有变。
+
 ## pending_mark
 
 骨架给每章留的待写记号。JS 与 Python 两侧都要认它——各写一份字面的话，改一处忘一处，story 的进度在两条路上会说成两样。

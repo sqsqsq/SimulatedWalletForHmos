@@ -237,6 +237,9 @@ export function decisionProblems(ctx) {
 
 //: 澄清正文的段首：加粗小标题（`**依据**：…`）。一段从它起，到下一个段首止。
 const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
+//: 澄清正文的第一段：这一条在问什么。变义判定只看它。
+const NL = String.fromCharCode(10);
+const DECISION_SEGMENT = '决策点';
 const OPTIONS_SEGMENT = '可选的做法';
 const SUGGESTION_SEGMENT = '建议';
 //: 一个选项里「做法」与「选它会怎样」之间的分隔：后面写后果。
@@ -506,6 +509,78 @@ function issueHandEdited(zone, fresh) {
 }
 
 /**
+ * 人工区里有没有人真写过字 —— 与**任何一种首版**逐字节相同就是没写过。
+ *
+ * 与 `keptHumanZone` 的判据共用一处：那边判「要不要原样保留」，这边判「丢了会不会丢掉人的话」，
+ * 两处各写一份的话，迟早出现「保留了但不算数」或「算数了却没保留」。
+ */
+function hasHumanWords(zone, id) {
+  if (zone === null) return false;
+  const anchor = `<!-- decision: ${id} -->`;
+  return ![...Object.values(REVIEW_MODES), PLAIN_ZONE]
+    .some(z => zone === [...z, '', anchor].join('\n'));
+}
+
+/**
+ * 旧稿里有、这次登记表里没有的议题 —— **人写过字的那些，不许静默消失**。
+ *
+ * `renderReview` 只按当前登记表里的 id 重建，旧文里多出来的那几条压根不进新文，
+ * 而 `build` 是整份覆盖。于是「作者把一条议题删了」与「评审人在那条上写的意见」
+ * 一起没了，没有任何信号。实测里这条路没有一个用例走过。
+ *
+ * 判的只是**在不在**，不判该不该删：删得对不对是业务判断，归人与模型。
+ */
+function orphanOpinions(old, ids) {
+  const out = [];
+  const seen = new Set(ids);
+  const re = /<!-- decision: ([^>]+?) -->/g;
+  for (let m = re.exec(old); m; m = re.exec(old)) {
+    const id = m[1].trim();
+    if (seen.has(id)) continue;
+    const zones = issueZones(old, id, '');
+    if (hasHumanWords(zones?.human ?? null, id)) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * 这条议题的问题**换过了吗** —— 拿人表态那一刻的机器区摘要，与这次要写的比。
+ *
+ * 标记里记的摘要说的是「人是在哪一版问题下写的字」。登记表改了标题或澄清正文，
+ * 新摘要就与它不同——**那一刻旧的勾选还挂在新问题下面**，而它回答的是另一个问题。
+ * 脚本只判这一件确定的事；「只是改了措辞」还是「换成了另一个问题」是语义判断，归模型。
+ */
+function issueRewritten(zones, fresh) {
+  const was = zones?.machine?.body ?? null;
+  if (was === null) return 'no';
+  const before = decisionPoint(was);
+  const after = decisionPoint(fresh);
+  // **判不出来就不拦**：早先的稿子里这一段可能叫别的名字，
+  // 拿整段正文去比的话，改个标题错字也会停手，而真正换问题的那一次淹在噪声里。
+  // 判不出不等于没事——调用方出一声，让人自己看一眼。
+  if (before === null || after === null) return 'unknown';
+  return before === after ? 'no' : 'yes';
+}
+
+/**
+ * 机器区里的**决策点**那一段 —— 「这一条到底在问什么」。
+ *
+ * 比的只有它，不是整段机器区：
+ *   编号由渲染顺序算，插一条、换个分类，后面每条的编号都会变——**重排不是改问题**；
+ *   标题补一句「（复议）」、依据里补一条材料、建议改个说法，问的还是同一件事；
+ *   而「决策点」换了，那就是另一个问题了，人上次的回答答的不是它。
+ * 决策点是澄清正文的固定第一段（作业书「决策登记」定的形态，choice 与 confirm 都有）。
+ * 找不到这一段就返回 null：这一条判不出来，交给调用方出声，不假装判过。
+ */
+function decisionPoint(text) {
+  const lines = String(text).split(NL);
+  const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === DECISION_SEGMENT);
+  if (at < 0) return null;
+  const next = lines.findIndex((l, i) => i > at && SEGMENT_HEAD.test(l));
+  return projectionDigest(lines.slice(at, next < 0 ? lines.length : next).join(NL));
+}
+
+/**
  * 这条议题要保留的人工区（人工填写内容的唯一真源）；返回 null 表示按当前 `review_mode` 给首版。
  *
  * 与某种首版逐字节相同的人工区里没有人的字，跟着当前交互方式重生成不丢任何东西。
@@ -513,11 +588,7 @@ function issueHandEdited(zone, fresh) {
  */
 function keptHumanZone(zones, dec, notes) {
   const zone = zones?.human ?? null;
-  const anchor = `<!-- decision: ${dec.id} -->`;
-  if (zone === null
-      || [...Object.values(REVIEW_MODES), PLAIN_ZONE].some(z => zone === [...z, '', anchor].join('\n'))) {
-    return null;
-  }
+  if (!hasHumanWords(zone, dec.id)) return null;
   const label = HUMAN_ZONE_MARKS.find(mark => zone.startsWith(mark));
   const want = zoneOf(dec)[0];
   if (label !== want) {
@@ -602,6 +673,17 @@ function groupByCategory(list, categories) {
 function renderReview(list, previous = '', categories = [], notes = []) {
   const old = String(previous ?? '');
   const decisions = Array.isArray(list) ? list.filter(Boolean) : [];
+  // **整份覆盖之前先看一眼旧文里多出来的那几条**：登记表里没有了，而人在上面写过字。
+  // 不看的话，这一次 build 就是那条意见最后存在的时刻，而且没有任何信号。
+  const orphans = orphanOpinions(old, decisions.map(d => d?.id));
+  if (orphans.length) {
+    throw new ProjectionConflict(
+      `旧的评审记录里有 ${orphans.length} 条议题不在这次的登记表里，而评审人在上面写过意见`
+      + `（${orphans.join('、')}）——这次没有写盘，那几条意见还在 AR/review.md 里。`
+      + '这几条是真的要撤销，就先把它们的人工区连同 `<!-- decision: … -->` 标记一起删掉再跑；'
+      + '是登记表漏了，就把它们补回 decisions.json。**不要直接重跑一遍指望它自己过去**——'
+      + '过去了就等于把人的话删了。');
+  }
   const out = [renderDocHeader(decisions)];
 
   STATUS_CHAPTERS.forEach((chapter, ci) => {
@@ -624,6 +706,24 @@ function renderReview(list, previous = '', categories = [], notes = []) {
             + '填写位里人写的内容不要删'
             + (zones.ambiguous ? '。这条议题里有不止一处行首「方案选择：」或「审核结果：」，'
               + '填写位从哪一行开始也可能认不准，先请人看一眼这一条' : ''));
+        }
+        const rewritten = hasHumanWords(zones?.human ?? null, dec.id)
+          ? issueRewritten(zones, machine) : 'no';
+        if (rewritten === 'unknown') {
+          notes.push(`议题 ${dec.id} 的正文这次改了，而评审人已经在它下面写过意见；`
+            + '它没有「**决策点**」那一段，脚本判不出问的还是不是同一件事——'
+            + '人写的内容原样保留了，问的事要是变了，请评审人重新看一眼这一条');
+        }
+        if (rewritten === 'yes') {
+          // 人是在**上一版问题**下写的字。问题换了还把勾选带过去，等于替他回答了一个
+          // 他没看过的问题。这里只判摘要变没变；「只是改了措辞」还是「换了个问题」是语义判断，
+          // 归模型——它判定意义未变时，用 `story_flow.py decide --update` 把人的原话记一笔，
+          // 再把这条的人工区照原样留着重跑。
+          throw new ProjectionConflict(
+            `议题 ${dec.id} 的正文这次改了，而评审人已经在它下面写过意见——这次没有写盘，`
+            + '盘上那一份还是人看过的那一版。'
+            + '意思没变（只是措辞）：`story_flow.py decide --update` 记一笔沿用谁在哪一版的表态，再重跑；'
+            + '意思变了：这是一个新问题，先把旧的人工区内容移走或让评审人重新表态，再重跑。');
         }
         const human = keptHumanZone(zones, dec, notes) ?? renderHumanZone(dec);
         parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);

@@ -17,13 +17,15 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
     python story_flow.py decide   --feature <AR> --gate <g> --chosen <c> --basis <t>
+    python story_flow.py decide   --feature <AR> --update <定了哪件事> --basis <人的原话>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
-    python story_flow.py update   --feature <AR> [--request <人这次要求改的事>]
+    python story_flow.py update   --feature <AR> [--action prepare|status|close|restore]
+                                  [--request <人这次要求改的事>]
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
 （数据对接层 story.js）不随交付走，各部署环境自备实现，所以判据不能挂在它落的文件上。
@@ -68,12 +70,13 @@ from materials import importer
 
 from flow.state import DESIGN_DRAFT, FlowError, GATES, log
 from flow.inputs import MATERIAL_CHOICES, cmd_init
-from flow.decisions import cmd_decide
+from flow.decisions import cmd_decide, cmd_decide_update
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
-from flow.update import cmd_update_prepare
+from flow.update import (cmd_update_close, cmd_update_prepare, cmd_update_restore,
+                         cmd_update_status)
 
 
 # ---------------------------------------------------------------------------
@@ -92,10 +95,13 @@ def main() -> int:
     ap.add_argument("--meeting", default=None,
                     help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
     ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
+    ap.add_argument("--update", dest="update_item", default=None,
+                    help="decide：更新期间人定的一件事（与三级关卡无关，要有开着的 update）")
     ap.add_argument("--from", dest="from_path", default=None,
                     help="complete：要提交的提取稿，落点 " + "/".join(DESIGN_DRAFT))
-    ap.add_argument("--action", default="prepare", choices=["prepare"],
-                    help="update：本轮做哪一步。C1 只有 prepare")
+    ap.add_argument("--action", default="prepare",
+                    choices=["prepare", "status", "close", "restore"],
+                    help="update：本轮做哪一步")
     ap.add_argument("--request", default=None,
                     help="update：人这次明确要求改的事（原话）。只是「查一下有没有变化」不填——"
                          "填了就不会走无变化快速退出")
@@ -119,8 +125,12 @@ def main() -> int:
         elif args.mode == "round":
             result.update(cmd_round(feature_root))
         elif args.mode == "decide":
-            payload, code = cmd_decide(feature_root, args)
-            result.update(payload)
+            if args.update_item:
+                result.update(cmd_decide_update(feature_root, args.update_item,
+                                                str(args.basis or "")))
+            else:
+                payload, code = cmd_decide(feature_root, args)
+                result.update(payload)
         elif args.mode == "status":
             result.update(cmd_status(feature_root))
         elif args.mode == "story":
@@ -132,7 +142,14 @@ def main() -> int:
         elif args.mode == "meeting-refresh":
             result.update(cmd_meeting_refresh(feature_root, str(args.meeting or "").strip()))
         elif args.mode == "update":
-            result.update(cmd_update_prepare(feature_root, args.request))
+            if args.action == "status":
+                result.update(cmd_update_status(feature_root, args.feature))
+            elif args.action == "close":
+                result.update(cmd_update_close(feature_root))
+            elif args.action == "restore":
+                result.update(cmd_update_restore(feature_root))
+            else:
+                result.update(cmd_update_prepare(feature_root, args.request))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
 

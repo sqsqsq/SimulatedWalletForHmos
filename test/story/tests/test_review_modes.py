@@ -29,6 +29,20 @@ CHOICE_BODY = ("**决策点**：受理超时后由谁发起重试。\n\n"
 CONFIRM_BODY = ("**决策点**：提交与补卡由两张单分别承接。\n\n"
                 "**依据**：上游已经拆成两张开发单。\n\n"
                 "**结论与影响**：本单只做提交与回执展示。")
+#: 与 CHOICE_BODY **同一个决策点**，只是换成复核形态。
+#: 换填写方式与换问题是两件事：拿另一件事的正文去测「换填写方式」，测的就成了
+#: 「同一个 id 换成了另一个问题」——那一条现在会停手（人上次答的不是这个问题）。
+CHOICE_BODY_AS_CONFIRM = ("**决策点**：受理超时后由谁发起重试。\n\n"
+                          "**依据**：接口说明只写了超时按未受理处理。\n\n"
+                          "**结论与影响**：本单按提示用户手动重试做，验收加一条重试入口。")
+#: 与 CONFIRM_BODY 同一个决策点，换成选方案形态。
+CONFIRM_BODY_AS_CHOICE = ("**决策点**：提交与补卡由两张单分别承接。\n\n"
+                          "**依据**：上游已经拆成两张开发单。\n\n"
+                          "**可选的做法**：\n\n"
+                          "1. 本单只做提交——补卡入口留给兄弟单，本单验收不含它。\n"
+                          "2. 本单一并做补卡入口——兄弟单只做后台，本单多一屏。\n\n"
+                          "**建议**：选择方案 1（本单只做提交）。\n\n"
+                          "**理由**：补卡入口的界面稿还没有。")
 CHOICE_ZONE = "方案选择：\n请填写上方选项编号；另有方案时写明具体结论与理由。\n\n"
 CONFIRM_ZONE = "审核结果：\n- [ ] 确认\n- [ ] 不同意\n不同意原因：\n调整结论：\n\n"
 
@@ -48,6 +62,11 @@ class ModesCase(RendererCase):
 
     def text(self) -> str:
         return self.review.read_text(encoding="utf-8")
+
+    def fill(self, old: str, new: str) -> None:
+        text = self.text()
+        self.assertIn(old, text, "夹具变了，用例要跟着改")
+        self.review.write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def anchor(self, dec_id: str) -> str:
         return f"<!-- decision: {dec_id} -->"
@@ -122,11 +141,6 @@ class EachOptionSaysWhatChoosingItChanges(ModesCase):
 
 
 class WhatTheReviewerWroteStays(ModesCase):
-    def fill(self, old: str, new: str) -> None:
-        text = self.text()
-        self.assertIn(old, text, "夹具变了，用例要跟着改")
-        self.review.write_text(text.replace(old, new, 1), encoding="utf-8")
-
     def test_filled_zones_survive_rerender_and_reordering(self) -> None:
         a = entry("retry-owner", "choice", CHOICE_BODY)
         b = entry("split", "confirm", CONFIRM_BODY)
@@ -149,7 +163,7 @@ class WhatTheReviewerWroteStays(ModesCase):
         chose = "方案选择：\n2\n\n"
         self.fill(CHOICE_ZONE + self.anchor("retry-owner"), chose + self.anchor("retry-owner"))
 
-        a.update(review_mode="confirm", clarification=CONFIRM_BODY)
+        a.update(review_mode="confirm", clarification=CHOICE_BODY_AS_CONFIRM)
         proc = self.build(a)
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn(chose + self.anchor("retry-owner"), self.text(), "改了交互方式就把人写的删了")
@@ -237,6 +251,52 @@ class SqueezedOptionsAreCaughtInEveryArrangement(ModesCase):
         self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
 
 
+class AnOpinionNeverDisappearsInARerender(ModesCase):
+    """`build` 是整份覆盖。人写过字的那几条，**不能靠「这次没渲染它」悄悄没掉**。
+
+    两种没掉法各锁一条：
+      ① 议题从登记表里删了——旧文里那一条连同人的意见一起不进新文；
+      ② 议题还在，但问的事换了——旧的勾选被原样挂到新问题下面，等于替他答了没看过的问题。
+    两种都停在写盘之前：盘上那一份还是人看过的样子，要怎么处置由人和模型定。
+    """
+
+    def test_deleting_an_issue_someone_answered_stops_the_build(self) -> None:
+        a = entry("retry-owner", "choice", CHOICE_BODY)
+        b = entry("split", "confirm", CONFIRM_BODY)
+        self.assertEqual(0, self.build(a, b).returncode)
+        judged = "审核结果：\n- [x] 确认\n\n"
+        self.fill(CONFIRM_ZONE + self.anchor("split"), judged + self.anchor("split"))
+        before = self.text()
+
+        proc = self.build(a)                      # 登记表里把 split 删了
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("split", proc.stderr)
+        self.assertIn("写过意见", proc.stderr)
+        self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
+
+    def test_deleting_an_issue_nobody_answered_is_fine(self) -> None:
+        """没人写过字的那一条删掉是正常的：拦它只会把每次改登记表都变成一次报错。"""
+        a = entry("retry-owner", "choice", CHOICE_BODY)
+        b = entry("split", "confirm", CONFIRM_BODY)
+        self.assertEqual(0, self.build(a, b).returncode)
+        self.assertEqual(0, self.build(a).returncode)
+        self.assertNotIn("split", self.text())
+
+    def test_changing_the_question_under_an_answer_stops_the_build(self) -> None:
+        a = entry("retry-owner", "choice", CHOICE_BODY)
+        self.assertEqual(0, self.build(a).returncode)
+        chose = "方案选择：\n2\n\n"
+        self.fill(CHOICE_ZONE + self.anchor("retry-owner"), chose + self.anchor("retry-owner"))
+        before = self.text()
+
+        a.update(clarification=CONFIRM_BODY, review_mode="confirm")   # 换成另一件事
+        proc = self.build(a)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("已经在它下面写过意见", proc.stderr)
+        self.assertIn("decide --update", proc.stderr, "没给出沿用旧表态的那条出路")
+        self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
+
+
 class QuotedLabelsStayInsideTheHumanZone(ModesCase):
     """人工区从哪一行开始按生成时记下的正文摘要认：人在意见里引用标签，不会把意见算进机器正文。"""
 
@@ -261,7 +321,7 @@ class QuotedLabelsStayInsideTheHumanZone(ModesCase):
         self.assertIn(judged + self.anchor("split"), text)
         self.assertIn(chose + self.anchor("retry-owner"), text)
 
-        a.update(review_mode="choice", clarification=CHOICE_BODY)
+        a.update(review_mode="choice", clarification=CONFIRM_BODY_AS_CHOICE)
         proc = self.build(b, a)
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn(judged + self.anchor("split"), self.text(), "改了交互方式就把人写的动了")
