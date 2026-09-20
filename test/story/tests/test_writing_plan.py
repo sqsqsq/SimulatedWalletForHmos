@@ -399,6 +399,30 @@ class TheSkeletonBecomesTheDraft(PlanCase):
             self.assertIn(needle, starts)
         self.assertNotIn("| 数据 |", starts, "起点里造了模板表头")
 
+    def test_the_starts_group_by_section_not_by_kind(self) -> None:
+        """一节要两样（状态图讲转移、表讲每个状态允许什么）时，两样排在它自己的标题下。
+
+        起点这段文字是给作者「按需贴进去」的。按种类排的话，图在图那一轮出、表在表那一轮出，
+        中间隔着别的小节的标题——后一节的表就印在了前一节下面，照着贴必然贴错位置。
+        """
+        two = ("#### 改约与取消\n- 答：揽收前能改什么\n"
+               "形式：状态图\n- 描述：揽收前后的状态与各状态允许的动作\n"
+               "形式：表格\n- 描述：每个状态允许的动作与限制条件\n"
+               "#### 下单\n- 答：填哪些信息\n形式：表格\n- 描述：每项信息的来源与是否可改\n")
+        self.write_plan()
+        self.cmd("skeleton")
+        draft = self.draft("06")
+        draft.write_text(draft.read_text(encoding="utf-8") + "\n我写到一半的内容。\n",
+                         encoding="utf-8")
+        self.write_plan(with_chapter("06-features", two))
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+        starts = out.split("结构起点：", 1)[1]
+        mine = starts.split("### 改约与取消", 1)[1].split("### 下单", 1)[0]
+        self.assertIn("stateDiagram", mine, "这一节的图起点跑到别的小节下面去了")
+        self.assertIn("「改约与取消」这一节要一张表", mine,
+                      "同一节的第二样起点没跟着它自己的标题")
+
     def test_a_skeleton_diagram_is_checked_in_its_own_section(self) -> None:
         self.write_plan(with_chapter("07-exceptions", "#### 跨方恢复\n- 答：两边怎么恢复\n形式：图"))
         self.cmd("skeleton")

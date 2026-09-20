@@ -243,39 +243,42 @@ export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}
  * @returns {string[]} markdown 行；什么都不缺时为空
  */
 export function missingPickedSeeds(ch, view, { diagramHint, formHint } = {}) {
-  const rows = [];
-  const named = new Set();
-  const heading = (at) => {
-    const key = normalizeHeading(at);
-    if (!at || named.has(key)) return [];
-    named.add(key);
-    return sectionBody(view, at) === null ? [`### ${at}`, ''] : [];
+  //: **按小节归堆，不按种类**。一节同时要状态图与表是正常安排（状态图讲转移、表讲每个状态
+  //  允许什么）；按种类排的话，图在图那一轮、表在表那一轮，中间隔着别的小节的标题——
+  //  这一节的表就排在了上一节标题下面，而这段文字是给作者「按需贴进去」的。
+  const groups = new Map();
+  const push = (at, added) => {
+    const key = normalizeHeading(at ?? '');
+    if (!groups.has(key)) {
+      groups.set(key, at && sectionBody(view, at) === null ? [`### ${at}`, ''] : []);
+    }
+    groups.get(key).push(...added);
   };
   // 合同的表：模板在同范围选了表格时给起点——那一处的形式要求由这张合同表接替
   const wanted = (t) => (ch.structure?.forms ?? []).some(f => contractCovers(ch, f)
     && normalizeHeading(f.at ?? '') === normalizeHeading(t.at ?? ''));
   for (const t of requiredTables(ch).filter(wanted)) {
     if (tablesIn(view, t.at) !== null && !tableProblem(ch, view, t)) continue;
-    rows.push(...heading(t.at ?? ''), ...tableSeed(t, {}), '');
+    push(t.at ?? '', [...tableSeed(t, {}), '']);
   }
   for (const d of (ch.structure?.diagrams ?? []).filter(x => x.selected)) {
     if (hasDiagram(view, d.at, d.syntax, d.under ?? '') === true) continue;
-    rows.push(...heading(d.at), ...(diagramHint ? [diagramHint(d.under || d.at, d.syntax), ''] : []));
+    push(d.at, diagramHint ? [diagramHint(d.under || d.at, d.syntax), ''] : []);
   }
   for (const f of ch.structure?.forms ?? []) {
     if (contractCovers(ch, f)) continue;         // 起点由上面那张合同表给，一处只给一次
     // 那一节还没有：起点给标题，也给这一处要完成什么——只补标题的话，作者不知道这里要做什么
     const span = scopeSpan(view, f.at ?? '', f.under ?? '');
     if (span && !formProblem(ch, view, f)) continue;
-    rows.push(...heading(f.at ?? ''), ...(formHint ? [formHint(f.under || f.at, f), ''] : []));
+    push(f.at ?? '', formHint ? [formHint(f.under || f.at, f), ''] : []);
   }
-  for (const h of requiredH3(ch).filter(x => x.selected)) rows.push(...heading(h.title));
+  for (const h of requiredH3(ch).filter(x => x.selected)) push(h.title, []);
   for (const h of ch.structure?.h4 ?? []) {
     const subs = subsectionNames(view, h.parent);
     if (subs?.has(normalizeHeading(h.title))) continue;
-    rows.push(...heading(h.parent), `#### ${h.title}`, '');
+    push(h.parent, [`#### ${h.title}`, '']);
   }
-  return rows;
+  return [...groups.values()].flat();
 }
 
 /** 一张必要表的起始形态：术语行来自真源，其余给占位行让作者往下填。 */

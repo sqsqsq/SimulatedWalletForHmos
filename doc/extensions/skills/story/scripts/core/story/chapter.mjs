@@ -233,7 +233,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + ` --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: ${planRel}；来源 ${originals}；需求分析 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；决策登记 `
-      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「二、动笔前：先写骨架」`);
+      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「四、动笔前：先设计表达」`);
   } else if (left.length) {
     const title = left[0];
     const at = (ctx.contract.chapters ?? [])

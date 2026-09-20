@@ -53,13 +53,14 @@ export function writingPlanShell(contract) {
     + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点；'
     + `要用某种形式承载就单起一行 \`形式：<${formWords()}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
-    + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第二节 -->', '',
+    + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
+    + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{本需求最容易被误解的对象与关系是什么，读者先理解哪一件才能理解后文；'
     + '依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
   for (const ch of contract.chapters ?? []) {
     rows.push(`### ${ch.id}`,
-      `- {{正文章名：${ch.title}。这一章的主线一句，以及它下面的小节与形式}}`, '');
+      `- {{正文章名：${ch.title}。读者在这一章先得到什么、往下怎么展开，以及它下面的小节与形式}}`, '');
   }
   return rows.join('\n');
 }
@@ -94,7 +95,7 @@ export function readWritingPlan(ctx) {
   if (h2.some(h => RETIRED_PARTS.includes(h.name))) {
     say(`还是旧协议（「## ${RETIRED_PARTS.join('」「## ')}」）——按骨架协议重写：\`## ${PARTS.story}\` 写阅读主线，`
       + `\`## ${PARTS.skeleton}\` 下每章一个 \`### <章 ID>\`，正文要有的小节各写一行 \`#### 标题\`；`
-      + '写法见 story-write.md「二、动笔前：先设计表达」');
+      + '写法见 story-write.md「四、动笔前：先设计表达」');
     return plan;
   }
   const part = (name) => {

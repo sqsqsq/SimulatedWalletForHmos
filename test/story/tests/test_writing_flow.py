@@ -31,6 +31,18 @@ def read_ext(rel: str) -> str:
     return (REPO_ROOT / "doc" / "extensions" / rel).read_text(encoding="utf-8")
 
 
+def section(guide: str, name: str) -> str:
+    """按章名切出作业书的一节 —— **锁内容，不锁它排第几**。
+
+    作业书按写章时机排，中间插一节、并两节都是正常的重排；用 `## 四、回看` 这种
+    带序号的字面去定位，重排一次就红一片，而红的全是「序号变了」，不是内容丢了。
+    章名本身仍然是锁：改名要连着改这里。
+    """
+    m = re.search(rf"^## [一二三四五六七八九十]+、{re.escape(name)}.*$", guide, re.M)
+    assert m, f"作业书里没有「{name}」这一节"
+    return guide[m.end():].split("\n## ", 1)[0]
+
+
 class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
         spec = read("phases/spec.md")
@@ -43,11 +55,10 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_the_authoring_guide_carries_the_recheck(self) -> None:
         """回看的对象是脚本枚举的清单，动作是撞两问、处置回真源；旧的「三项工作」散文退场。"""
         guide = read("phases/story-write.md")
-        self.assertIn("## 四、回看", guide)
-        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
+        body = section(guide, "回看")
         for needle in ("回看清单", "初筛疑点", "骨架待核", "这句话材料里有吗", "材料给的靠得住吗",
                        "处置回真源，不写台账", "没有问题不制造改动", "对着读", "引导", "承接"):
-            self.assertIn(needle, section, f"回看那一节少了「{needle}」")
+            self.assertIn(needle, body, f"回看那一节少了「{needle}」")
         for gone in ("三项工作", "从来源核实际覆盖", "推演关系与决定", "核组织和表达"):
             self.assertNotIn(gone, guide, f"旧整稿方法「{gone}」还和回看并存")
 
@@ -59,11 +70,11 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         被删掉，而验收从此判不独立。
         """
         guide = read("phases/story-write.md")
-        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
-        self.assertNotIn("有就删掉一处", section,
+        body = section(guide, "回看")
+        self.assertNotIn("有就删掉一处", body,
                          "「逐字相同就删一处」是无条件删除，与必要重现相反")
         for needle in ("独有用途", "完整复述", "互补", "验收独立判"):
-            self.assertIn(needle, section, f"动作一没给出判断依据「{needle}」")
+            self.assertIn(needle, body, f"动作一没给出判断依据「{needle}」")
 
     def test_the_guide_says_two_steps(self) -> None:
         """两处说同一件事时先问该由谁说——步数只在开头声明一次，别处引用它。"""
@@ -86,8 +97,7 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
 
     def test_the_guide_says_what_the_design_holds_and_how_it_binds(self) -> None:
         guide = read("phases/story-write.md")
-        self.assertIn("## 二、动笔前：先设计表达", guide)
-        design = guide.split("## 二、动笔前：先设计表达", 1)[1].split(chr(10) + "## ", 1)[0]
+        design = section(guide, "动笔前：先设计表达")
         for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`形式：<类型>`",
                        "`- 描述：…`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
                        "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "reopen"):
@@ -119,11 +129,16 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
 
     def test_the_chapter_method_consumes_the_design(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("## 三、照骨架写一章", 1)[1].split("\n## ", 1)[0]
+        body = section(guide, "照骨架写一章")
         for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
-                       "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定",
-                       "图从要解释的关系出发", "照搬它不等于讲清了", "不硬造页面"):
-            self.assertIn(needle, section, f"写一章那一节少了「{needle}」")
+                       "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定"):
+            self.assertIn(needle, body, f"写一章那一节少了「{needle}」")
+        # 图怎么选归「表达选择」一节，写章这里只说落盘；两处并存过一轮（可改画 / 一律原样搬入），
+        # 作者读到哪句走哪条，car 那一轮的时序图就这么被改画成流程图、丢了失败责任。
+        picks = section(guide, "表达选择：先选用途，再选载体")
+        for needle in ("照搬它不等于讲清了", "不硬造页面", "换图种可以，丢关系不行"):
+            self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
+        self.assertNotIn("图从要解释的关系出发", body, "图的选法又在写章那一节抄了一份")
 
     def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
         guide = read("phases/story-write.md")
@@ -178,10 +193,10 @@ class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
 
     def test_the_guide_sends_the_changed_chapter_back_through_submit(self) -> None:
         guide = read("phases/story-write.md")
-        section = guide.split("## 四、回看", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("chapter", section, "改完的章要说明怎么落盘")
-        self.assertNotIn("copyedit", section, "七行自证已退场，作业书不该还要它")
-        self.assertNotIn("恰好七行", section)
+        body = section(guide, "回看")
+        self.assertIn("chapter", body, "改完的章要说明怎么落盘")
+        self.assertNotIn("copyedit", body, "七行自证已退场，作业书不该还要它")
+        self.assertNotIn("恰好七行", body)
 
     def test_no_seven_line_ledger_is_asked_for_anywhere(self) -> None:
         """生产者、校验、冻结、指令四处一起退——留一处，它就还会被人当成要求。"""
@@ -255,20 +270,23 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         self.assertIn("每类第三列是撞的方向，不是遍历顺序", guide)
         self.assertIn("不是配额", guide)
         self.assertNotIn("对着这十一类过一遍", guide, "分类又被当成了遍历顺序")
-        self.assertLess(guide.index("**登记时选 `category`**"), guide.index("## 四、回看"),
-                        "类型表要放在登记时选类别那里")
+        self.assertIn("**登记时选 `category`**", section(guide, "照骨架写一章"),
+                      "类型表要放在登记时选类别那里")
 
     def test_the_guide_says_what_the_overview_figure_should_show(self) -> None:
         """总览图讲给评审者什么——不说清的话，作者会把上游契约图复制一遍；
         只说「要不一样」又会逼出为了不同而不同的图。图种按内容的关系选，一处维护。
         """
         guide = read("phases/story-write.md")
-        figures = guide.split("**图从要解释的关系出发**", 1)[1].split("\n\n", 1)[0]
+        picks = section(guide, "表达选择：先选用途，再选载体")
         for needle in ("业务流程章", "主路径与全部分支去向", "交接点", "不为了与上游不同而刻意画不同"):
-            self.assertIn(needle, figures, f"画图那一段少了「{needle}」")
-        form = guide.split("### 形式按内容的关系选", 1)[1].split("\n## ", 1)[0]
-        for relation in ("先后与分支", "状态与转移", "调用与返回"):
-            self.assertIn(relation, form, f"形式选择表里少了「{relation}」这一行")
+            self.assertIn(needle, picks, f"画图那一段少了「{needle}」")
+        # 全部分支由总览与局部一起承担：要求一张图塞下全部分支，作者就只能把节点挤成一团，
+        # 或者为了图干净在两处都不讲某条分支。
+        for needle in ("总览", "局部", "接回主线"):
+            self.assertIn(needle, picks, f"总览与局部的分工没说清，少了「{needle}」")
+        for relation in ("主路径与条件分流", "一个对象的状态", "谁调用谁、谁返回、谁补偿"):
+            self.assertIn(relation, picks, f"表达选择表里少了「{relation}」这一行")
 
     def test_the_guide_registers_a_declined_image_outside_the_appendix(self) -> None:
         """不用的图，理由登记在材料清单里；附录那一节只列初始资料。
@@ -310,7 +328,7 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
     def test_the_guide_keeps_what_no_check_covers(self) -> None:
         """没有判据接的约定要留着，但留在它该在的那一节，不另起一段重讲一遍。"""
         guide = read("phases/story-write.md")
-        self.assertIn("表前有一句引导", guide.split("## 四、回看", 1)[1],
+        self.assertIn("表前有一句引导", section(guide, "回看"),
                       "表前引导没有判据接，回看要问它")
         self.assertIn("标题用真实业务名", guide.split("## 一、", 1)[1],
                       "小节怎么起名没有判据接，读者原则要说")
