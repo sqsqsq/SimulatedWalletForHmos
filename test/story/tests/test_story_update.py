@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -124,13 +125,45 @@ class NothingChangedMeansNothingHappens(UpdateCase):
 
 
 class EditsMadeBeforeTheRunAreCaught(UpdateCase):
+    #: 人可能直接动、又决定下游成不成立的那几份。**少盯一份，它的手改就永远检不出来**，
+    #: 而且会被报成「无变化」退出——比漏报更糟的是它看起来像结论。
+    WATCHED = {
+        "AR/review.md": "# 评审记录\n\n首版。\n",
+        "spec/knowledge-use.yaml": "entries: []\n",
+        "AR/story-src/decisions.json": '{"decisions": []}\n',
+        "AR/story-src/story-template.md": "# 写作设计\n\n## 阅读主线\n\n先看这里。\n",
+        "plan/plan.md": "# 设计\n\n首版。\n",
+        "contracts.yaml": "contracts: []\n",
+        "use-cases.yaml": "use_cases: []\n",
+    }
+
     def setUp(self) -> None:
         super().setUp()
-        # 基准要在「人动手之前」建好，所以这一份先写进去再跑第一轮。
-        (self.feature_root / "AR" / "review.md").write_text(
-            "# 评审记录\n\n首版。\n", encoding="utf-8")
+        # 基准要在「人动手之前」建好，所以这几份先写进去再跑第一轮。
+        for rel, text in self.WATCHED.items():
+            target = self.feature_root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
         self.update()
         self.close_latest()
+
+    def test_every_watched_product_shows_up_when_hand_edited(self) -> None:
+        """逐份核：改了哪一份就报哪一份。
+
+        `plan/plan.md` 与根目录那两份强契约是 plan 单的常改处（car 就是 plan 单），
+        漏掉它们的话，一次 plan 阶段的 update 会整个报成「没变化」。
+        `contracts.yaml` / `use-cases.yaml` **在需求根目录不在 `plan/` 下**，按目录名猜会全盘落空。
+        """
+        for rel in self.WATCHED:
+            with self.subTest(rel=rel):
+                target = self.feature_root / rel
+                target.write_text(target.read_text(encoding="utf-8") + "\n# 人手改的一行\n",
+                                  encoding="utf-8")
+                out = self.update()
+                self.assertEqual("changed", out["comparison"], out)
+                self.assertIn(rel, out["changed"], out)
+                # 每一轮都要关掉，否则下一份会撞上 resume。
+                self.close_latest()
 
     def test_a_hand_edited_product_shows_up(self) -> None:
         """有人在起跑前直接改了产物——只比材料指纹的话，这一笔永远看不见。"""
@@ -145,6 +178,46 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
         (self.feature_root / "AR" / "review.md").unlink()
         out = self.update()
         self.assertIn("AR/review.md", out["changed"], out)
+
+
+class UnreadableIsAGapNotADeletion(UpdateCase):
+    """在盘上、但读不出来——这是缺口，**不是「它被删了」，更不是「没有变化」**。
+
+    这一条要在进程内跑：让某一份的读取抛 OSError，子进程里没法构造。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.update()
+        self.close_latest()
+
+    def prepare_with_broken_read(self, broken: str) -> dict:
+        core = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core")
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            real = update_mod.registry.file_digest
+
+            def flaky(path):
+                if path.name == broken:
+                    raise OSError("装作读不出来")
+                return real(path)
+
+            with unittest.mock.patch.object(update_mod.registry, "file_digest", flaky):
+                return update_mod.cmd_update_prepare(self.feature_root)
+        finally:
+            sys.path.remove(str(core))
+
+    def test_it_is_reported_as_a_gap(self) -> None:
+        out = self.prepare_with_broken_read("spec.md")
+        self.assertNotEqual("unchanged", out["comparison"], "读不到却报了无变化")
+        self.assertIn("spec/spec.md", out["unreadable"], out)
+        self.assertIn("这是缺口", out["action"])
+
+    def test_it_is_not_counted_as_removed(self) -> None:
+        """上次在、这次读不出来，`removed` 里不许有它——模型会拿着它去删下游功能。"""
+        out = self.prepare_with_broken_read("spec.md")
+        self.assertNotIn("spec/spec.md", out["changed"], out)
 
 
 class FetchOnlyWritesToTheStagingArea(unittest.TestCase):

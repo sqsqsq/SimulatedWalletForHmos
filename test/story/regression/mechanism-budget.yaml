@@ -1,3 +1,9 @@
+# 2026-09-20 C1 返修实测：11919（scripts_py 2519，其余四类不动），相对 C1 交回的 11912 再 +7。
+# 两条返修：① 监视集合补 knowledge-use / decisions / story-template / plan.md 与根目录两份强契约
+# （contracts.yaml、use-cases.yaml 在需求根目录不在 plan/ 下，照真实产物核过）——漏了它们，
+# plan 单的 update 会整个报成无变化；② 读不到的文件不再被 _compare 算成「被删了」，
+# _scan 带 key 返回、_compare 把它们从 removed 里摘出去。C1 累计净 +302。
+# 依据：design/1.9.4/2026-09-20-版本实施/步骤C1评审-2026-09-20.md §4 第 1、2 条。
 # 2026-09-20 C1 交回实测：11912（prompts_md 1849 / scripts_py 2512 / scripts_mjs 3381 / hooks_mjs 3394 / data 776），
 # 相对 B1 的 11617 净 +295：scripts_py +170（新增 core/flow/update.py 的 prepare 与 story_flow 接线）、
 # prompts_md +125（新增 phases/update.md 154 行、scripts/README 的 fetch 合同、两处 SKILL 说明）。

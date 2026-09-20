@@ -30,8 +30,20 @@ UPDATES = ("AR", "story-src", "updates")
 INCOMING = ("AR", "story-src", "incoming")
 #: 镜像不复制的东西：本层自己的落点与暂存区。复制它们等于把镜像套进镜像。
 MIRROR_SKIP = {UPDATES[-1], INCOMING[-1]}
-#: 除材料之外还要盯着的当前产物。它们不是材料，但 update 要回答「它们跟上次比变了没有」。
-PRODUCTS = (STORY, REVIEW, ("spec", "spec.md"), ("acceptance.yaml",))
+#: 除材料之外还要盯着的当前产物与业务真源。它们不是材料，但 update 要回答「跟上次比变了没有」。
+#:
+#: **少列一份，那一份的手改就永远检不出来**，而且会被报成「无变化」退出——比漏报更糟的是
+#: 它看起来像结论。所以凡是人可能直接动、又决定下游是否成立的，都在这里：
+#: 叙事与评审件、Spec 与它的两份真源投影（验收、知识判断）、决策登记与写作设计、
+#: 以及 Plan 与它的两份强契约（`contracts.yaml` / `use-cases.yaml` **在需求根目录**，
+#: 不在 `plan/` 下面——按目录名猜会全盘落空）。
+#: 列在这里只表示「盯着」：盘上没有的跳过，不当成被删（`_scan`）。
+PRODUCTS = (
+    STORY, REVIEW,
+    ("spec", "spec.md"), ("acceptance.yaml",), ("spec", "knowledge-use.yaml"),
+    ("AR", "story-src", "decisions.json"), ("AR", "story-src", "story-template.md"),
+    ("plan", "plan.md"), ("contracts.yaml",), ("use-cases.yaml",),
+)
 
 
 def _updates_dir(feature_root: Path) -> Path:
@@ -57,14 +69,16 @@ def _records(feature_root: Path) -> list[tuple[str, dict]]:
     return out
 
 
-def _scan(feature_root: Path) -> tuple[dict[str, str], list[str]]:
+def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
     """当前盘上这一轮要盯的文件 → 指纹。**读不到的单列，不当成不存在。**
 
     「文件不在」与「文件在但读不出来」是两件事：前者是删除，后者是环境问题。
     混成一个的话，一次权限错误会被报成「上游把这份材料删了」，而模型据此去删下游功能。
+    所以读不到的那几份**带着 key 单独返回**——`_compare` 要拿它把这些从「删除」里摘出去，
+    否则分开这一步只做了一半：`_scan` 分清了，下游又合回去。
     """
     seen: dict[str, str] = {}
-    unreadable: list[str] = []
+    unreadable: dict[str, str] = {}
     rels = [Path(rel) for rel in registry.source_docs()] + [Path(*p) for p in PRODUCTS]
     for rel in rels:
         path = feature_root / rel
@@ -74,7 +88,7 @@ def _scan(feature_root: Path) -> tuple[dict[str, str], list[str]]:
         try:
             seen[key] = registry.file_digest(path) or ""
         except OSError as exc:
-            unreadable.append(f"{key}（{exc}）")
+            unreadable[key] = str(exc)
     return seen, unreadable
 
 
@@ -90,15 +104,20 @@ def _baseline(records: list[tuple[str, dict]]) -> dict[str, str] | None:
     return None
 
 
-def _compare(current: dict[str, str], base: dict[str, str] | None) -> dict:
-    """与基准比：新增 / 修改 / 删除。基准缺席时**如实说不知道**，不报「无变化」。"""
+def _compare(current: dict[str, str], base: dict[str, str] | None,
+             unreadable: dict[str, str]) -> dict:
+    """与基准比：新增 / 修改 / 删除。基准缺席时**如实说不知道**，不报「无变化」。
+
+    读不到的那几份不进任何一类：它们上次在、这次没读出来，**那不是删除**，
+    是这一轮对它们判不了。混进 `removed` 的话，模型会拿着「上游删了它」去删下游功能。
+    """
     if base is None:
         return {"complete": False, "added": [], "modified": [], "removed": [],
                 "unknown": sorted(current)}
     return {"complete": True,
             "added": sorted(k for k in current if k not in base),
             "modified": sorted(k for k in current if k in base and current[k] != base[k]),
-            "removed": sorted(k for k in base if k not in current),
+            "removed": sorted(k for k in base if k not in current and k not in unreadable),
             "unknown": []}
 
 
@@ -187,7 +206,7 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
 
     current, unreadable = _scan(feature_root)
     base = _baseline(records)
-    diff = _compare(current, base)
+    diff = _compare(current, base, unreadable)
     incoming = _incoming(feature_root)
     asked = bool(str(request or "").strip())
     changed = diff["added"] + diff["modified"] + diff["removed"]
@@ -238,7 +257,8 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
         lines.append("没有上次已处理的版本可比：这一轮说不出「原来怎么写」，"
                      "按当前材料与产物核一致性，别补造历史")
     if unreadable:
-        lines.append("读不到：" + "、".join(unreadable) + "——这是缺口，不是「没有变化」")
+        lines.append("读不到：" + "、".join(f"{k}（{why}）" for k, why in unreadable.items())
+                     + "——这是缺口，不是「没有变化」，更不是「它被删了」")
     if asked and not changed and not incoming:
         # 文件一个字节没变，但人明确要求改一件事：这不是「无变化」，要走语义流程。
         lines.append("文件没变，但这一轮有人明确要求改的事，按它处置")
