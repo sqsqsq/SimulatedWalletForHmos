@@ -168,6 +168,36 @@ def _output_text(event: dict) -> str:
     return ANSI_RE.sub("", str(out or ""))
 
 
+def split_at_checkpoint(events: list[dict], live_path: Path | None) -> int | None:
+    """第一段与第二段的分界 —— **按装置自己发的事件切，不按时间猜**。
+
+    双检查点单的 `live.jsonl` 里有 `resume_update` 那一条：它之前是第一段，之后是第二段。
+    两段混在一起算的话，第二段那几分钟的增量会被摊进第一段的总量，
+    「这次更新花了多少」就再也分不出来。没有这条事件就是普通单终点，返回 None。
+
+    分界取**时间戳**而不是序号：两条流（装置的 live 与模型的 events）各有各的序号，
+    拿一条流的序号去切另一条，切在哪完全是巧合。
+    """
+    if live_path is None or not live_path.is_file():
+        return None
+    mark = None
+    for line in live_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("event") == "resume_update":
+            mark = _ts(row.get("ts") or row.get("timestamp"))
+            break
+    if mark is None:
+        return None
+    for i, e in enumerate(events):
+        ts = _ts(e.get("timestamp"))
+        if ts and ts >= mark:
+            return i
+    return len(events)
+
+
 def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     events = list(_iter_events(events_path))
     if not events:
@@ -268,9 +298,21 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     if first_ts and last_ts:
         duration_min = round((last_ts - first_ts).total_seconds() / 60, 1)
 
+    # 双检查点单：两段各自多少事件、各自多长。混在一起算的话，第二段那几分钟的增量
+    # 会被摊进第一段的总量，「这次更新花了多少」就再也分不出来。
+    cut = split_at_checkpoint(events, (run_dir / "live.jsonl") if run_dir else None)
+    segments = None
+    if cut is not None:
+        def span(rows: list[dict]) -> float | None:
+            stamps = [t for t in (_ts(e.get("timestamp")) for e in rows) if t]
+            return round((stamps[-1] - stamps[0]).total_seconds() / 60, 1) if len(stamps) > 1 else None
+        segments = {"initial": {"events": cut, "duration_min": span(events[:cut])},
+                    "update": {"events": len(events) - cut, "duration_min": span(events[cut:])}}
+
     return {
         "events": len(events),
         "duration_min": duration_min,
+        "segments": segments,
         "tool_calls": sum(tools.values()),
         "tools": tools.most_common(8),
         "reads_rule_text": reads_rule,

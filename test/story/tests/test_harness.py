@@ -901,35 +901,47 @@ class GateReplyRoutingTest(unittest.TestCase):
                          "阶段边界仍在说「按推荐走」——模型会照 spec 的推荐去归档")
 
 
-class StoryReviewEndPhaseTest(unittest.TestCase):
-    """story 侧终点：跑到评审意见处置完成为止。
+class TwoCheckpointEndPhaseTest(unittest.TestCase):
+    """双检查点单的完成事实：到目标不终止，第二段的终点看契约。
 
-    归档送审与 `/story review` 回流都发生在 spec 闭环**之后**，而 end_phase 原先
-    只认 framework 六阶段——用 spec 跑，驱动器在三产物齐备时就停了，续不到回流。
-    借道 `end_phase: plan` 能让循环不停，但读用例的人会困惑为什么要 plan。
+    1.9.4 之前这里测的是 `story-review` 这个假阶段——它在 PHASE_ORDER 之外，
+    凭证是 `/story review` 的处置台账。两者随 update 一起退场：评审意见现在是
+    update 的输入，而「更新到哪算走完」由这一轮的 update 操作关没关掉来判，
+    不再需要一个额外的阶段名。
     """
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
-        self.feature = self.tmp / "AR"
+        self.feature = self.tmp / "AR" / "story-src"
         self.feature.mkdir(parents=True)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_it_is_an_accepted_end_phase(self) -> None:
-        self.assertEqual(rc.phase_index(rc.STORY_REVIEW), 0,
-                         "story 侧终点应沿用 spec 的产物判据再叠回流凭证")
+    def test_the_fake_phase_is_gone(self) -> None:
+        """`story-review` 不再是合法 end_phase——它随 `/story review` 一起退场。"""
+        self.assertFalse(hasattr(rc, "STORY_REVIEW"), "假阶段常量还在")
+        with self.assertRaises(SystemExit):
+            rc.phase_index("story-review")
 
     def test_an_unknown_end_phase_still_fails(self) -> None:
         with self.assertRaises(SystemExit):
             rc.phase_index("nowhere")
 
-    def test_the_disposition_ledger_is_the_evidence(self) -> None:
-        """判据是处置台账：意见逐条有了去向，这一趟才算走完。"""
+    def test_the_second_segment_ends_on_the_contract_not_on_words(self) -> None:
+        """第二段的终点看流程契约那一笔，**不看模型说没说「更新完成」**。
+
+        模型说完还可能继续写；而那一笔只有 `update --action close` 能关掉。
+        """
         src = (REPO_ROOT / "test" / "story" / "scripts" / "run_case.py").read_text(encoding="utf-8")
-        self.assertIn("review-disposition.json", src,
-                      "story 侧终点未以处置台账为凭证")
+        self.assertIn("def update_round(", src, "没有按契约判第二段终点的读取")
+        self.assertIn("story-flow.json", src)
+        self.assertNotIn("review-disposition.json", src, "旧回流台账的判据还在")
+
+    def test_the_session_is_persisted_for_the_second_segment(self) -> None:
+        """session 要落盘：第二段续的是同一次对话，断没断宿主得看得见。"""
+        src = (REPO_ROOT / "test" / "story" / "scripts" / "run_case.py").read_text(encoding="utf-8")
+        self.assertIn('state["cli_session_id"]', src)
 
 
 class HumanReplyTest(unittest.TestCase):

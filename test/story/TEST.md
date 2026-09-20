@@ -345,6 +345,30 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 **本域不设任何时限与轮次上限**：`soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` / `reply_wait_sec` 写进配置会被
 直接拒绝（`run_case.py` 启动即 `SystemExit`）。真出现 `timed_out` 说明有人把时限重新引进来了，装置会出声告警。
 
+## 5.9 双检查点（只对配了 `after_initial: update` 的 Case）
+
+普通 Case 到目标就终止，这一节与它无关。配了这一行的 Case 多一段：**第一段到目标不终止**，
+停在那里等你评完、回流，再在**同一次对话**里跑第二段。
+
+顺序是死的，错一步就丢东西：
+
+| 步 | 命令 | 为什么必须在这一步 |
+|---|---|---|
+| 1 | Case 自己停在第一检查点（`awaiting_reply`，`awaiting_kind: initial_checkpoint`） | 到目标不 break：终止就只能另起一个 run，而那时 `events.jsonl` 已被截断、游标归零、session 也要重拉——**那是重启新会话冒充续行** |
+| 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，这时复制才说得清是哪一刻。复制前后各取一次目录摘要，不一样就判这次快照作废 |
+| 3 | 只读评测那份快照 | 工作区马上要跑第二段；评的是快照，不是还在动的目录 |
+| 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
+| 5 | `resume-update --case <id> --text "<一句正常的业务请求>" [--deliver ...]` | 投的是业务话，不是测试控制语句；材料先到、话后到 |
+| 6 | Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
+| 7 | `checkpoint --point update` → 只读后评 → `conclude` | 与第一段同一套 |
+| 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段回流的那一份不被覆盖 |
+
+**等待窗口里你只做两件事**：固定快照、只读评测。不要向被测会话发评分、缺陷清单、脚本路径或修法——
+那是把答案写进题面。恢复驱动之后你仍然只扮演需求方。
+
+**续不上就说续不上**：第一段到目标却没拿到 session，终态是 `cli_session_lost`。
+不要退而求其次另起一个 run 接着跑——那是另一次对话，测不出「同一次会话里的更新」。
+
 ## 6. 回灌与现场保留
 
 全部 Case 终态后执行：

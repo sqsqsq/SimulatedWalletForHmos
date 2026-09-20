@@ -1,3 +1,6 @@
+# 2026-09-20 T1 交回：机制侧净 0，实测仍 12168。本步只动 test/story/**，不在 measure() 的计量范围
+# （根是 doc/extensions）。按参考/03 §4 单列：运行器 +约 260（估 240–400）、离线回归 +约 170，均在区间内。
+# 依据：design/1.9.4/2026-09-20-版本实施/步骤T1交回-2026-09-20.md §7。
 # 2026-09-20 C3 交回实测：12168（prompts_md 1838 / scripts_py 2716 / scripts_mjs 3444 / hooks 3394 / data 776），
 # C3 净 −47：prompts_md −48（退 review_reflow.md 113 行，加 update 入口与派审段约 65）、scripts_py +1。
 # 旧 review 全链退场：review.js 69 行（.js 不计机制）、review_reflow.md 113 行、SKILL 检视节、四桥接路由、

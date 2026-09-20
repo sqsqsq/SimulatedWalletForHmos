@@ -145,6 +145,10 @@ REPLY_FILE = "reply.json"
 # 宿主判定「本轮到此为止」。与 reply 同构的单槽文件：写它不杀任何进程，
 # worker 读到就退出续话循环、照常跑完门禁与收尾。
 CONCLUDE_FILE = "conclude.json"
+# 宿主评完第一段、要 worker 接着跑第二段。与 reply 同构的单槽文件：
+# 它带的是**一句正常的业务请求**（`/story update <编号>` 这类），不是测试控制语句——
+# 被测模型看到的必须与真实使用时一模一样。
+RESUME_FILE = "resume.json"
 # 交给宿主的模型原话截断长度——够他判断，又不至于把 poll 响应撑爆。
 PROMPT_LIMIT = 4000
 
@@ -179,6 +183,19 @@ def pop_pending_reply(out_dir: Path) -> str | None:
     残缺内容送进被测会话。
     """
     path = out_dir / REPLY_FILE
+    try:
+        text = str(json.loads(path.read_text(encoding="utf-8")).get("text") or "").strip()
+    except Exception:  # noqa: BLE001
+        return None
+    if not text:
+        return None
+    path.unlink(missing_ok=True)
+    return text
+
+
+def pop_resume_request(out_dir: Path) -> str | None:
+    """取走宿主的续跑请求（取走即删，同 `pop_pending_reply`）。"""
+    path = out_dir / RESUME_FILE
     try:
         text = str(json.loads(path.read_text(encoding="utf-8")).get("text") or "").strip()
     except Exception:  # noqa: BLE001
@@ -430,21 +447,18 @@ def next_unclosed_phase(feature: str, end_phase: str) -> str | None:
     return None
 
 
-# story 侧终点：归档送审 → 评审人表态 → `/story review` 回流处置。
-# 它不在 framework 阶段链上（PHASE_ORDER 是 framework 的），却在 spec 闭环**之后**——
-# 用 end_phase=spec 跑，驱动器在三产物齐备时就停了，续不到回流那一步。
-STORY_REVIEW = "story-review"
+# 注：1.9.4 之前这里还有一个 story 侧终点 `story-review`——归档送审、评审人表态、
+# `/story review` 回流处置，凭证是那份处置台账。它随 `/story review` 一起退场：
+# 评审意见现在走 `/story update`，而「更新到哪算走完」由双检查点的第二段判
+# （见 `update_round` 与 `after_initial`），不再需要一个 PHASE_ORDER 之外的假阶段。
 
 
 def phase_index(phase: str) -> int:
-    if phase == STORY_REVIEW:
-        return 0                         # 走 spec 那条产物判据，再叠回流凭证
     try:
         return PHASE_ORDER.index(phase)
     except ValueError:
         raise SystemExit(
-            f"[runner] 未知 end_phase「{phase}」，"
-            f"可用：{' / '.join((*PHASE_ORDER, STORY_REVIEW))}") from None
+            f"[runner] 未知 end_phase「{phase}」，可用：{' / '.join(PHASE_ORDER)}") from None
 
 
 # 注：曾用 `check-receipt.ts` 的退出码判闭环（那是 framework 自己的判据，不自造，
@@ -462,11 +476,58 @@ def target_reached(feature: str, end_phase: str) -> bool:
     """
     if not artifacts_ready(feature):
         return False
-    if end_phase == STORY_REVIEW:
-        # 回流的凭证是处置台账：评审意见逐条有了去向，这一趟才算走完。
-        return (REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "review-disposition.json").is_file()
     ok, _ = phase_evidence_complete(feature, end_phase)
     return ok
+
+
+def update_round(feature: str) -> dict:
+    """这个单的更新操作现在什么样 —— 读流程契约里那一笔，**不读模型的说明**。
+
+    第二段的终点靠它判：`open` 归零、`last_closed` 换了一个新 id，才叫「这一轮写完了」。
+    模型说「更新完成」不算数——它说完还可能继续写；而这份契约由脚本写入，
+    只有 `update --action close` 能把它关掉。
+    """
+    path = REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "story-flow.json"
+    try:
+        flow = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"readable": False, "open": None, "last_closed": None}
+    state = flow.get("update") or {}
+    return {"readable": True, "open": state.get("open"),
+            "last_closed": state.get("last_closed")}
+
+
+def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int) -> str | None:
+    """第一段到目标之后停在这里 —— **不终止、不覆写、保住 session**。
+
+    终止的话，第二段就只能另起一个 run：`events.jsonl` 每次启动都被截断、游标归零，
+    CLI session 也要重新拉起——那是「重启一个新会话冒充续行」，不是同一次对话里的更新。
+    所以这里与等人回话同构：无上限地等，每隔一阵出一次声，租约照常续。
+
+    两个出口：宿主投来续跑请求（第二段开始），或宿主判收工（这一轮到此为止）。
+    """
+    state.update(status="awaiting_reply", checkpoint_stage="initial",
+                 awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"), awaiting_turn=turn,
+                 awaiting_kind="initial_checkpoint",
+                 awaiting_prompt="第一段已到目标并闭环，等宿主固定快照、评测、回流，再投续跑请求")
+    refresh_worker_lease(out_dir, state, force=True, event="awaiting_initial_checkpoint")
+    feed.emit("initial_checkpoint", turn=turn)
+    runlog.event("第一检查点", "到目标未终止，等宿主评完第一段")
+    waited = 0
+    while True:
+        text = pop_resume_request(out_dir)
+        if text:
+            runlog.event("续跑", text[:200])
+            feed.emit("resume_update", turn=turn, text=observe.shorten(text, 300))
+            return text
+        if pop_conclude_request(out_dir) is not None:
+            return None
+        time.sleep(1)
+        waited += 1
+        refresh_worker_lease(out_dir, state, event="awaiting_initial_checkpoint")
+        if waited % REPLY_NUDGE == 0:
+            state["awaiting_stale_sec"] = waited
+            refresh_worker_lease(out_dir, state, force=True, event="initial_checkpoint_stale")
 
 
 def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
@@ -479,8 +540,7 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
     `beyond_target` 是把「模型说要进 plan」落成事实的那一半：它嘴上说时这里是空的，
     它真建了下一阶段的产物时才非空。两者摆在一起，宿主才判得准。
     """
-    ok, missing = (True, []) if end_phase == STORY_REVIEW \
-        else phase_evidence_complete(feature, end_phase)
+    ok, missing = phase_evidence_complete(feature, end_phase)
     feature_root = REPO_ROOT / FEATURES_DIR / feature
     beyond = [phase for phase in PHASE_ORDER[phase_index(end_phase) + 1:]
               if phase_was_reached(feature_root, phase)]
@@ -513,8 +573,14 @@ def publish_closure(out_dir: Path, state: dict, feature: str,
 #: `target_missing` 单独说，评测看那两个。
 TERMINAL_BY_STOP_REASON = {
     "target_reached": ("finished", 0),
+    # 双检查点单的正常终点：第二段的 update 收口了。与 target_reached 一样算跑完——
+    # 它不是「没到目标」，是到了目标又做完了第二段。
+    "update_checkpoint": ("finished", 0),
     "cli_cannot_continue": ("cli_failed", 1),
     "no_session_id": ("cli_session_lost", 2),
+    # 第一段到目标却没有 session：续不了同一次对话。**单独一个名字**，
+    # 不混进 no_session_id——那一条说的是从头就没拿到，这一条是第一段跑完才发现。
+    "cli_session_lost": ("cli_session_lost", 2),
 }
 
 
@@ -1514,6 +1580,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         prepared = True
     # end_phase 缺省 spec、start_phase 缺省 story——既有用例一字不改，行为逐字节一致。
     end_phase = str(end_phase_override or case.get("end_phase") or "spec").strip()
+    # **不配就是普通单终点**：既有用例一个字节不改，行为逐字节一致。
+    # 配了 `after_initial: update` 才走双检查点——到目标不终止，等宿主评完第一段再续第二段。
+    after_initial = str(case.get("after_initial") or "").strip()
     end_idx = phase_index(end_phase)
     start_phase = resolve_start_phase(case, start_phase_override)
     if start_phase != "story" and phase_index(start_phase) > end_idx:
@@ -1536,6 +1605,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
              "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "cli_run_id": None,
              "interactive": interactive, "requested_start_phase": start_phase,
              "requested_end_phase": end_phase,
+             "after_initial": after_initial or None,
+             "checkpoint_stage": "initial" if after_initial else None,
              "cli_config_id": cli_config["id"]}
     refresh_worker_lease(out_dir, state, force=True, event="run_start",
                          phase=start_phase)
@@ -1681,6 +1752,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     raise
 
                 session_id = str(run.get("session_id") or "")
+                # **session 要落盘**：它此前只是局部变量，进程外看不见。第二段续的是
+                # 同一次对话，宿主得看得见它还在；断了也要当场看得出来，而不是
+                # 事后从「为什么模型什么都不记得」里倒推。
+                state["cli_session_id"] = session_id or None
                 refresh_worker_lease(out_dir, state, force=True, event="cli_run_finished")
                 # 每回合把闭环事实刷进 state：宿主是靠它判定「本轮到此为止」的，
                 # 只在终态算一次的话，poll 期间他什么也看不到。
@@ -1695,9 +1770,44 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     runlog.event("宿主收工", result["conclude_reason"] or "（未写理由）")
                     feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                     break
-                if target_reached(feature, end_phase):
-                    result["stop_reason"] = "target_reached"
-                    break
+                if target_reached(feature, end_phase) and state.get("checkpoint_stage") != "update":
+                    if not after_initial:
+                        result["stop_reason"] = "target_reached"
+                        break
+                    if not session_id:
+                        # 没有 session 就续不了同一次对话。**说清楚是这个原因**，
+                        # 不要退而求其次另起一个 run——那是重启新会话冒充续行。
+                        result["stop_reason"] = "cli_session_lost"
+                        runlog.event("续跑不了", "第一段到目标，但 CLI 没给回 session id")
+                        break
+                    resumed = wait_for_resume(out_dir, feed, runlog, state, turn=turns)
+                    if resumed is None:
+                        result["stop_reason"] = "host_concluded"
+                        result["conclude_reason"] = "第一检查点等待期间收到收工判定"
+                        feed.emit("host_concluded", turn=turns)
+                        break
+                    # 进第二段：记下此刻的更新操作，第二段的终点靠它与之后的比。
+                    entry = update_round(feature)
+                    state.update(status="running", checkpoint_stage="update",
+                                 update_entry_round=entry.get("last_closed"),
+                                 awaiting_kind=None, awaiting_prompt=None)
+                    refresh_worker_lease(out_dir, state, force=True, event="resume_update")
+                    result["resumed_at_turn"] = turns
+                    request = replace(request, prompt=driver_prompt(resumed, interactive),
+                                      session_id=session_id)
+                    continue
+                if state.get("checkpoint_stage") == "update":
+                    # 第二段的终点**看契约不看说辞**：这一轮 update 关掉了，才算写完。
+                    now_round = update_round(feature)
+                    closed = now_round.get("last_closed")
+                    if (not now_round.get("open") and closed
+                            and closed != state.get("update_entry_round")):
+                        state["update_closed_round"] = closed
+                        result["stop_reason"] = "update_checkpoint"
+                        result["update_round"] = closed
+                        runlog.event("第二检查点", f"更新 {closed} 已收口")
+                        feed.emit("update_checkpoint", turn=turns, round=closed)
+                        break
                 if run.get("status") != "succeeded":
                     result["stop_reason"] = "cli_cannot_continue"
                     break
@@ -1760,9 +1870,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         result["elapsed_sec"] = round(time.time() - t0, 1)
         result["target_reached"] = target_reached(feature, end_phase)
         result["closure"] = closure_facts(feature, start_phase, end_phase)
-        next_phase = (PHASE_ORDER[end_idx + 1]
-                      if end_phase != STORY_REVIEW and end_idx + 1 < len(PHASE_ORDER)
-                      else None)
+        next_phase = PHASE_ORDER[end_idx + 1] if end_idx + 1 < len(PHASE_ORDER) else None
         result["pipeline"] = {
             "requested_start_phase": start_phase,
             "requested_end_phase": end_phase,
@@ -2161,6 +2269,99 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     return 0
 
 
+def cmd_checkpoint(case_id: str, point: str) -> int:
+    """把这一刻的产物固定成一份不可变快照 —— **评测看的是它，不是还在动的工作区**。
+
+    只在 worker 已经停在检查点上时做：它正等着，没有任何写入者。跑着的时候复制，
+    复制到一半模型又写了一笔，那份快照谁也说不清是哪一刻的。
+
+    **复制前后各取一次目录摘要，不一样就判这次快照失败**——宁可重做一次，
+    也不能拿一份混着两个时刻的证据去评测。同内容重入是幂等的；已经有一份内容不同的，
+    不覆盖、报出来，让人自己看是哪一次的。
+    """
+    _, out_dir, feature = _load_case(case_id)
+    state = reconcile_worker_state(out_dir, read_state(out_dir))
+    status = state.get("status")
+    if status != "awaiting_reply":
+        print(json.dumps({"ok": False, "error": f"worker 不在等待态（{status or '没在跑'}），"
+                                                "这时复制会混进模型正在写的东西"},
+                         ensure_ascii=False))
+        return 1
+    source = REPO_ROOT / FEATURES_DIR / feature
+    if not source.is_dir():
+        print(json.dumps({"ok": False, "error": f"需求目录不在：{source}"}, ensure_ascii=False))
+        return 1
+    dest = out_dir / "checkpoints" / point
+    before = _tree_digest(source)
+    if dest.exists():
+        same = _tree_digest(dest) == before
+        print(json.dumps({"ok": same, "case": case_id, "point": point,
+                          "path": str(dest), "reused": same,
+                          **({} if same else {"error": "已有一份内容不同的快照，没有覆盖——"
+                                                      "先看清楚它是哪一次的"})},
+                         ensure_ascii=False))
+        return 0 if same else 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, dest)
+    after = _tree_digest(source)
+    if after != before:
+        shutil.rmtree(dest, ignore_errors=True)
+        print(json.dumps({"ok": False, "error": "复制期间需求目录变了，这次快照作废——"
+                                                "worker 应当停着，先查是谁在写"},
+                         ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "case": case_id, "point": point, "path": str(dest),
+                      "digest": before, "session": state.get("cli_session_id"),
+                      "stage": state.get("checkpoint_stage")}, ensure_ascii=False))
+    return 0
+
+
+def _tree_digest(root: Path) -> str:
+    """一棵目录的内容摘要：逐文件相对路径 + 内容哈希，排序后再哈希。
+
+    只认内容与位置，不认时间戳——同一份东西复制一遍摘要不变，才判得出「复制期间变没变」。
+    """
+    parts = []
+    for f in sorted(root.rglob("*")):
+        if not f.is_file() or f.is_symlink():
+            continue
+        parts.append(f"{f.relative_to(root).as_posix()}:{hashlib.sha256(f.read_bytes()).hexdigest()}")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None) -> int:
+    """评完第一段，把第二段的业务请求投给还停着的那个 worker。
+
+    投的是**一句正常的业务话**（`/story update <编号>`），不是测试控制语句——
+    被测模型看到的必须与真实使用时一模一样。`--deliver` 的顺序与 reply 一致：
+    先把材料放进去，再排这句话；反了的话，模型会照着话去看一个还不存在的东西。
+    """
+    _, out_dir, feature = _load_case(case_id)
+    text = (text or "").strip()
+    if not text:
+        print(json.dumps({"ok": False, "error": "--text 不能为空"}, ensure_ascii=False))
+        return 1
+    state = reconcile_worker_state(out_dir, read_state(out_dir))
+    if state.get("awaiting_kind") != "initial_checkpoint":
+        print(json.dumps({"ok": False, "error": "worker 没有停在第一检查点上"
+                                                f"（现在 {state.get('awaiting_kind') or state.get('status') or '没在跑'}）"},
+                         ensure_ascii=False))
+        return 1
+    if not (out_dir / "checkpoints" / "initial").is_dir():
+        print(json.dumps({"ok": False, "error": "第一段的快照还没固定：先 checkpoint --point initial。"
+                                                "没有它，第二段跑完就再也拿不到第一段的样子"},
+                         ensure_ascii=False))
+        return 1
+    delivered = deliver_supplements(case_id, feature, list(deliver or []))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / RESUME_FILE).write_text(
+        json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+        encoding="utf-8")
+    print(json.dumps({"ok": True, "case": case_id, "queued": text[:200],
+                      "delivered": delivered}, ensure_ascii=False))
+    return 0
+
+
 def cmd_conclude(case_id: str, reason: str) -> int:
     """宿主判定「本轮到此为止」——**优雅收工，不杀任何进程**。
 
@@ -2290,7 +2491,7 @@ def main() -> int:
     ap.add_argument("case_id")
     ap.add_argument("command", nargs="?", default="start",
                     choices=("run", "start", "poll", "status", "stop", "reply",
-                             "conclude"))
+                             "conclude", "checkpoint", "resume-update"))
     ap.add_argument("--prepared", action="store_true", help="内部：审计目录已由 start 清理")
     ap.add_argument("--run-id", default=None, help="内部：绑定 start 创建的不可变运行")
     ap.add_argument("--cli-config", default=None,
@@ -2308,6 +2509,8 @@ def main() -> int:
     ap.add_argument("--reason", default="",
                     help="conclude：本轮为什么停在这里（进终态回执）")
     ap.add_argument("--text", default="", help="reply：以用户身份回的那句话（说人话，别抄选项 key）")
+    ap.add_argument("--point", default="initial", choices=("initial", "update"),
+                    help="checkpoint：固定哪一段的快照")
     ap.add_argument("--deliver", action="append", default=[],
                     help="reply：随这句话把 cases/<id>/supplements/ 下的补料放进收件箱，可多次")
     args = ap.parse_args()
@@ -2329,6 +2532,10 @@ def main() -> int:
         return cmd_reply(args.case_id, args.text, args.deliver)
     if args.command == "conclude":
         return cmd_conclude(args.case_id, args.reason)
+    if args.command == "checkpoint":
+        return cmd_checkpoint(args.case_id, args.point)
+    if args.command == "resume-update":
+        return cmd_resume_update(args.case_id, args.text, args.deliver)
     return cmd_stop(args.case_id, args.force)
 
 

@@ -333,15 +333,17 @@ class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
 
     def test_a_file_in_the_root_is_moved_as_is(self) -> None:
         self.init_audit()
-        (self.ar() / "review-disposition.json").write_text("{}", encoding="utf-8")
-        out = self.assert_check_names("AR/review-disposition.json 不该在这一层")
+        # 拿一个**中性的过程件**当例子：判的是「AR 根只放交付件」这条通用规则，
+        # 不绑任何一份具体台账的名字（旧的 review-disposition.json 已随回流退场）。
+        (self.ar() / "update-notes.md").write_text("过程记录\n", encoding="utf-8")
+        out = self.assert_check_names("AR/update-notes.md 不该在这一层")
         self.assertIn("原样挪进 AR/story-src/", out)
 
     def test_the_ledger_in_story_src_is_not_a_stray(self) -> None:
         self.init_audit()
-        (self.src / "review-disposition.json").write_text("{}", encoding="utf-8")
+        (self.src / "update-notes.md").write_text("过程记录\n", encoding="utf-8")
         _, out = self.check_output()
-        self.assertNotIn("review-disposition.json", out)
+        self.assertNotIn("update-notes.md", out)
 
 
 class TestRequirementIdInTitle(StoryBuildCase):

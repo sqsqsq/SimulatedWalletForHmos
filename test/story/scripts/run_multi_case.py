@@ -81,7 +81,9 @@ FEATURE_ARCHIVE_TIMESTAMP_FORMAT = str(CFG.get("feature_history", {}).get(
     "timestamp_format", "%Y%m%d-%H%M%S"))
 
 VALID_START = {"story", "spec", "plan", "coding", "review", "ut", "testing"}
-VALID_END = VALID_START | {"story-review"}
+# 1.9.4：`story-review` 这个 PHASE_ORDER 之外的假终点随 `/story review` 一起退场。
+# 评审意见现在是 update 的输入，「更新到哪算走完」由双检查点的第二段判（after_initial）。
+VALID_END = set(VALID_START)
 PHASE_ORDER = ("spec", "plan", "coding", "review", "ut", "testing")
 TERMINAL_STATUS = {
     "finished", "timeout", "stopped", "stop_failed", "cli_failed",
@@ -89,6 +91,10 @@ TERMINAL_STATUS = {
     "provider_rejected", "workspace_prepare_failed", "unexpected_human_decision",
     "gate_failed", "target_not_reached",
     "content_policy_rejected", "cli_config_exhausted",
+    # 这三个在 Case 侧（run_case.TERMINAL_STATUS）本来就是终态，宿主侧此前没认：
+    # 于是 Case 已经收尾、证据齐备，finalize 却判它「还活着」而拒绝回灌。
+    # 双检查点让 Case 更常停在这几个态上，两边必须是同一份名单。
+    "concluded_by_host", "cli_session_lost", "harness_incomplete",
 }
 PHASE_ACTIVE_STATUS = {"starting", "running", "stopping"}
 WAITING_STATUS = "awaiting_reply"
@@ -133,6 +139,8 @@ class CasePlan:
     phases: tuple[str, ...]
     interaction_script: tuple[dict[str, Any], ...] = ()
     supplements: tuple[dict[str, Any], ...] = ()
+    #: 到目标之后还做不做第二段。空 = 普通单终点，行为与 1.9.4 之前逐字节一致。
+    after_initial: str = ""
 
     @property
     def contains_coding(self) -> bool:
@@ -149,6 +157,7 @@ class CasePlan:
             "contains_coding": self.contains_coding,
             "interaction_script": list(self.interaction_script),
             "supplements": list(self.supplements),
+            "after_initial": self.after_initial or None,
         }
 
 
@@ -719,15 +728,8 @@ def gate_phase_ready(record: dict[str, Any], expected_phase: str) -> bool:
 
 
 def phase_scope(start_phase: str, end_phase: str) -> tuple[str, ...]:
-    """Return phases that can touch Framework state for a case.
-
-    ``story-review`` is a Story-side endpoint after the regular spec closure;
-    it still has a spec phase but never reaches coding.
-    """
-    if end_phase == "story-review":
-        end_index = PHASE_ORDER.index("spec")
-    else:
-        end_index = PHASE_ORDER.index(end_phase)
+    """Return phases that can touch Framework state for a case."""
+    end_index = PHASE_ORDER.index(end_phase)
     start_index = 0 if start_phase == "story" else PHASE_ORDER.index(start_phase)
     if start_index > end_index:
         raise ValueError(f"阶段范围反向: {start_phase} -> {end_phase}")
@@ -754,10 +756,13 @@ def load_case_plan(case_id: str) -> CasePlan:
         phases = phase_scope(start_phase, end_phase)
     except ValueError as exc:
         raise SystemExit(f"[multi] {exc}") from exc
+    after_initial = str(case.get("after_initial") or "").strip()
+    if after_initial and after_initial != "update":
+        raise SystemExit(f"[multi] case {case_id} 的 after_initial 只认 update: {after_initial}")
     return CasePlan(case_id, feature, start_phase, end_phase,
                     bool(case.get("interactive")), phases,
                     load_interaction_script(case_id),
-                    load_supplements(case_id))
+                    load_supplements(case_id), after_initial)
 
 
 def select_cases(case_ids: list[str], all_cases: bool) -> list[CasePlan]:
@@ -2744,6 +2749,94 @@ def command_retry(suite_id: str, case_id: str, reason: str) -> int:
     return 0
 
 
+def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
+    """把某一段的产物固定成不可变快照。**worker 必须正停着**，判据在 Case 侧。"""
+    path, suite = load_suite(suite_id)
+    if case_id not in suite["case_states"]:
+        raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
+    record = refresh_record(suite["case_states"][case_id])
+    returncode, payload, stdout, stderr = invoke_case(
+        case_id, "checkpoint", "--point", point, suite=suite)
+    if returncode == 0 and isinstance(payload, dict):
+        record.setdefault("checkpoints", {})[point] = {
+            "path": payload.get("path"), "digest": payload.get("digest"),
+            "session": payload.get("session"), "at": now()}
+    else:
+        record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
+    append_event(suite, "case_checkpoint", case=case_id, point=point, returncode=returncode)
+    save_suite(path / "suite.json", suite)
+    print(json.dumps(payload or {"ok": returncode == 0, "returncode": returncode,
+                                 "stdout": stdout[-2000:], "stderr": stderr[-2000:]},
+                     ensure_ascii=False, indent=2))
+    return returncode
+
+
+def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
+    """把**固定下来的那一份**回流到主仓，按原编号。
+
+    回流的是快照不是工作区：工作区还在跑第二段，拿它回流等于把两段混成一份。
+    目的地已经有内容不同的东西时不覆盖，两边都留着并报冲突——这条复用 finalize 的口径。
+    第一段回流成功之后才允许续跑第二段（Case 侧 `resume-update` 自己也查快照在不在）。
+    """
+    path, suite = load_suite(suite_id)
+    if case_id not in suite["case_states"]:
+        raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
+    record = refresh_record(suite["case_states"][case_id])
+    saved = ((record.get("checkpoints") or {}).get(point) or {}).get("path")
+    if not saved or not Path(saved).is_dir():
+        raise SystemExit(f"[multi] {case_id} 的 {point} 快照还没固定，先 checkpoint")
+    source = Path(saved)
+    destination = FEATURES_ROOT / str(record["feature"])
+    source_digest = _tree_digest(source)
+    result: dict[str, Any] = {"case": case_id, "point": point,
+                              "source": str(source), "destination": str(destination),
+                              "sha256": source_digest}
+    if destination.exists():
+        if _tree_digest(destination) == source_digest:
+            result["status"] = "already_promoted"
+        else:
+            result["status"] = "destination_conflict"
+            result["destination_sha256"] = _tree_digest(destination)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, destination)
+        result["status"] = "promoted"
+    record.setdefault("promotions", {})[point] = {**result, "at": now()}
+    append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
+                 status=result["status"])
+    save_suite(path / "suite.json", suite)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["status"] in ("promoted", "already_promoted") else 1
+
+
+def command_resume_update(suite_id: str, case_id: str, text: str,
+                          deliver: list[str] | None = None) -> int:
+    """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。"""
+    path, suite = load_suite(suite_id)
+    if case_id not in suite["case_states"]:
+        raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
+    record = refresh_record(suite["case_states"][case_id])
+    if not ((record.get("promotions") or {}).get("initial") or {}).get("status") \
+            in ("promoted", "already_promoted"):
+        raise SystemExit(f"[multi] {case_id} 的第一段还没回流，先 promote-checkpoint —— "
+                         "回流之前续跑的话，第一段的产物就只剩快照里那一份了")
+    args = ["--text", text]
+    for name in deliver or []:
+        args += ["--deliver", name]
+    returncode, payload, stdout, stderr = invoke_case(case_id, "resume-update", *args, suite=suite)
+    if returncode == 0:
+        record["resumed_update"] = {"text": text[:400], "delivered": list(deliver or []),
+                                    "at": now()}
+    else:
+        record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
+    append_event(suite, "case_resumed_update", case=case_id, returncode=returncode)
+    save_suite(path / "suite.json", suite)
+    print(json.dumps(payload or {"ok": returncode == 0, "returncode": returncode,
+                                 "stdout": stdout[-2000:], "stderr": stderr[-2000:]},
+                     ensure_ascii=False, indent=2))
+    return returncode
+
+
 def command_conclude(suite_id: str, case_id: str, reason: str) -> int:
     """宿主判定「这个 Case 本轮到此为止」——**逐 Case，且不杀进程**。
 
@@ -2897,7 +2990,11 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     # Feature documents are independent Case outputs.  They must not be blocked
     # by source changes promoted by an earlier Case in the same finalize batch.
     feature_source = workspace / "doc" / "features" / str(record["feature"])
-    feature_destination = FEATURES_ROOT / str(record["feature"])
+    # 双检查点单的终态文档**另名落地**：原编号那一份是第一段回流的，两段分开看才比得出
+    # 「更新改了什么」。目录名换了不改里面的需求编号，也不动报告与引用。
+    feature_destination = FEATURES_ROOT / (
+        f"{record['feature']}-update" if record.get("after_initial") == "update"
+        else str(record["feature"]))
     if feature_source.is_dir():
         source_digest = _tree_digest(feature_source)
         destination_digest = _tree_digest(feature_destination)
@@ -3057,13 +3154,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("plan", "start", "poll", "status",
                                             "reply", "conclude", "retry", "stop",
-                                            "finalize"))
+                                            "checkpoint", "promote-checkpoint",
+                                            "resume-update", "finalize"))
     parser.add_argument("case_ids", nargs="*")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--suite-id", default="")
     parser.add_argument("--end-phase", default="",
                         help="覆盖未指定继续 Case 的本轮终止阶段")
+    parser.add_argument("--point", default="initial", choices=("initial", "update"),
+                        help="checkpoint / promote-checkpoint：哪一段的快照")
     parser.add_argument("--continue-case", default="",
                         help="选定一个 Case 使用单独的后续终止阶段")
     parser.add_argument("--continue-end-phase", default="",
@@ -3122,6 +3222,19 @@ def main() -> int:
         if not args.reply_case:
             raise SystemExit("[multi] conclude 必须提供 --case（逐 Case 收工，不是整 suite）")
         return command_conclude(args.suite_id, args.reply_case, args.reason)
+    if args.command == "checkpoint":
+        if not args.reply_case:
+            raise SystemExit("[multi] checkpoint 必须提供 --case")
+        return command_checkpoint(args.suite_id, args.reply_case, args.point)
+    if args.command == "promote-checkpoint":
+        if not args.reply_case:
+            raise SystemExit("[multi] promote-checkpoint 必须提供 --case")
+        return command_promote_checkpoint(args.suite_id, args.reply_case, args.point)
+    if args.command == "resume-update":
+        if not args.reply_case or not args.text.strip():
+            raise SystemExit("[multi] resume-update 必须提供 --case 与 --text"
+                             "（投的是一句正常的业务请求，不是测试控制语句）")
+        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver)
     if args.command == "retry":
         if not args.reply_case:
             raise SystemExit("[multi] retry 必须提供 --case（逐 Case 重启，不动其它 Case）")

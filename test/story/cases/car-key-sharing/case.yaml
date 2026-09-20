@@ -20,6 +20,17 @@ supplements:
   - file: 车钥匙接受侧界面说明.docx
     deliver: on_request
 
+# 到目标之后还做第二段（说明见 auto-topup 同位注释）。
+after_initial: update
+
+# 第二段的输入：评审人在评审记录的人工意见区里留下的决定。
+# 插入只用明确的自由意见边界，不去动机器区——那是脚本的地盘，宿主改它等于替产物做决定。
+update_inputs:
+  - file: car-review-feedback.md
+    kind: review_human_zone
+    note: 撤销宽限改 36 小时（替代此前的 24 小时口径），提示语用「正在收回」；
+      转分享与强制下线保持未决
+
 # prompt 是**需求方说的话**：只给单据性质、材料在哪、做到哪一步。
 # 不点命令、脚本、文件名、关卡名，也不写处置法。
 prompt: |
