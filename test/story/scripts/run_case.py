@@ -2329,6 +2329,91 @@ def _tree_digest(root: Path) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+#: 评审记录里那块「计划外意见」的边界。宿主只往这对标记之间插字——
+#: 机器区是脚本的地盘，宿主改它等于替产物做决定。真源在 `core/story/review.mjs`，
+#: 这里是测试域的只读引用：它变了这两行要跟着变（离线用例会红）。
+FREEFORM_OPEN = "<!-- freeform-zone -->"
+FREEFORM_CLOSE = "<!-- /freeform-zone -->"
+
+
+def deliver_update_inputs(case_id: str, feature: str) -> list[dict]:
+    """第二段起跑前把变更材料投到位 —— **按它该去的地方投，不是一律丢进收件箱**。
+
+    三种落点各有各的物理动作，混成一种就测不出真实形态：
+
+    - `local_material`：人手上的新版文档 → 收件箱，与正常补料同一条路；
+    - `review_human_zone`：评审人在评审记录里留下的决定 → 只插进那块自由意见区的
+      边界之间。**边界找不到就不插**，改成一份普通材料投进收件箱并记下来——
+      宿主动机器区等于替产物做决定；
+    - `system`：需求系统上的正文被改了 → 写进系统目录那一份。
+
+    投放幂等：同一份重复投只是覆盖同样的字节。**初始那一轮绝不投**——
+    提前铺好的话，「它会不会认出变化」就永远测不到。
+    """
+    case, _, _ = _load_case_definition(case_id)
+    entries = case.get("update_inputs") or []
+    if not entries:
+        return []
+    source_root = HERE.parent / "cases" / case_id / "update-inputs"
+    feature_root = REPO_ROOT / FEATURES_DIR / feature
+    done: list[dict] = []
+    for item in entries:
+        name = str(item.get("file") or "").strip()
+        kind = str(item.get("kind") or "local_material").strip()
+        source = (source_root / name).resolve()
+        if not name or not source.is_file() or source.parent != source_root.resolve():
+            raise SystemExit(f"[runner] 找不到更新输入或路径越界: {case_id}: {name}")
+        if kind == "review_human_zone":
+            done.append(_insert_into_freeform(feature_root, source))
+        elif kind == "system":
+            done.append(_write_into_system(feature, source, item))
+        else:
+            inbox = (feature_root / "inbox").resolve()
+            inbox.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, inbox / source.name)
+            done.append({"file": source.name, "kind": "local_material",
+                         "destination": f"inbox/{source.name}"})
+    return done
+
+
+def _insert_into_freeform(feature_root: Path, source: Path) -> dict:
+    """把评审人的话插进评审记录的自由意见区。**边界不明就不插。**"""
+    review = feature_root / "AR" / "review.md"
+    text = source.read_text(encoding="utf-8")
+    if not review.is_file():
+        raise SystemExit(f"[runner] {review} 不在，插不了评审意见——第一段应当已经产出它")
+    body = review.read_text(encoding="utf-8")
+    at = body.find(FREEFORM_OPEN)
+    end = body.find(FREEFORM_CLOSE)
+    if at < 0 or end < at:
+        # 不去猜边界在哪：改成一份普通材料，并**如实记下来**——
+        # 这一趟测的就不再是「评审意见回流」那条路，评测时要知道。
+        inbox = (feature_root / "inbox").resolve()
+        inbox.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, inbox / source.name)
+        return {"file": source.name, "kind": "review_human_zone",
+                "destination": f"inbox/{source.name}",
+                "note": "评审记录里找不到自由意见区的边界，改投收件箱；这不是回流那条路"}
+    head = at + len(FREEFORM_OPEN)
+    review.write_text(body[:head] + "\n" + text.strip() + "\n" + body[end:], encoding="utf-8")
+    return {"file": source.name, "kind": "review_human_zone",
+            "destination": "AR/review.md（自由意见区）"}
+
+
+def _write_into_system(feature: str, source: Path, item: dict) -> dict:
+    """需求系统上的正文被改了：写进系统目录那一份。"""
+    system = os.environ.get("STORY_REQUIREMENT_SYSTEM_DIR", "").strip()
+    if not system:
+        raise SystemExit("[runner] 这条更新输入要写需求系统，但没有 STORY_REQUIREMENT_SYSTEM_DIR")
+    rel = str(item.get("destination") or "design.md").strip()
+    target = (Path(system) / feature / rel).resolve()
+    if Path(system).resolve() not in target.parents:
+        raise SystemExit(f"[runner] 更新输入的系统落点越界: {rel}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return {"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"}
+
+
 def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     """评完第一段，把第二段的业务请求投给还停着的那个 worker。
 
@@ -2352,7 +2437,10 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None)
                                                 "没有它，第二段跑完就再也拿不到第一段的样子"},
                          ensure_ascii=False))
         return 1
-    delivered = deliver_supplements(case_id, feature, list(deliver or []))
+    # 先投材料、再排话：反了的话，模型会照着那句话去看一个还不存在的东西。
+    delivered = deliver_update_inputs(case_id, feature)
+    delivered += [{"file": n, "kind": "supplement", "destination": f"inbox/{n}"}
+                  for n in deliver_supplements(case_id, feature, list(deliver or []))]
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / RESUME_FILE).write_text(
         json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
