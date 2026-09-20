@@ -23,6 +23,7 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
+    python story_flow.py update   --feature <AR> [--request <人这次要求改的事>]
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
 （数据对接层 story.js）不随交付走，各部署环境自备实现，所以判据不能挂在它落的文件上。
@@ -72,6 +73,7 @@ from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
+from flow.update import cmd_update_prepare
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
                     choices=["init", "round", "decide", "status", "complete", "reopen",
-                             "story", "archived", "meeting-refresh"])
+                             "story", "archived", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
@@ -92,6 +94,11 @@ def main() -> int:
     ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
     ap.add_argument("--from", dest="from_path", default=None,
                     help="complete：要提交的提取稿，落点 " + "/".join(DESIGN_DRAFT))
+    ap.add_argument("--action", default="prepare", choices=["prepare"],
+                    help="update：本轮做哪一步。C1 只有 prepare")
+    ap.add_argument("--request", default=None,
+                    help="update：人这次明确要求改的事（原话）。只是「查一下有没有变化」不填——"
+                         "填了就不会走无变化快速退出")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -124,6 +131,8 @@ def main() -> int:
             result.update(cmd_reopen(feature_root))
         elif args.mode == "meeting-refresh":
             result.update(cmd_meeting_refresh(feature_root, str(args.meeting or "").strip()))
+        elif args.mode == "update":
+            result.update(cmd_update_prepare(feature_root, args.request))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
 

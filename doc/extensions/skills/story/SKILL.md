@@ -43,6 +43,12 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | spec 阶段作业（含成文顺序、verifier 与交付门） | [phases/spec.md](phases/spec.md) |
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
+| 产物更新（**入口尚未开放**，见下） | [phases/update.md](phases/update.md) |
+
+**`/story update` 还没开放给用户**：当前只有它的两件确定性支持可用——
+`story_flow.py update`（检测变化、留下本次执行前的完整现场）与 `story.js fetch`（只读取材到暂存区，
+一个业务文件都不写）。方法正文已在 `phases/update.md`，但完整入口、回写与旧 `review` 的退场在后续步骤，
+**在那之前仍走 `/story review`**，不要对外宣称 update 可用。
 
 **作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（六个阶段各一份）；
 spec 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>` 拿到。

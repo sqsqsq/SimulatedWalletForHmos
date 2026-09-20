@@ -1,3 +1,9 @@
+# 2026-09-20 C1 交回实测：11912（prompts_md 1849 / scripts_py 2512 / scripts_mjs 3381 / hooks_mjs 3394 / data 776），
+# 相对 B1 的 11617 净 +295：scripts_py +170（新增 core/flow/update.py 的 prepare 与 story_flow 接线）、
+# prompts_md +125（新增 phases/update.md 154 行、scripts/README 的 fetch 合同、两处 SKILL 说明）。
+# 其余三类未动。对照签的初始新增额度 +674：C1 用掉 295，在途 scripts_py 2650（现 2512）、总 12270（现 11912）。
+# adapters/story.js 的 fetch 约 +75 单列不进机制预算，落在参考/03 §4 的 .js 220–340 区间内。
+# 依据：design/1.9.4/2026-09-20-版本实施/步骤C1交回-2026-09-20.md §6。
 # 2026-09-20 设计评审签（C 开工准备交回后；用户授权「预算你来拍」）：C1–C3 初始新增额度 +674（上沿：update.md 130–170、update.py 200–280、
 # review.mjs 删议题/变义对账 45–70、routing.py 25–40、decisions.py 20–30、story_flow.py 8–14、SKILL+说明 35–55、data 5–15），预计退出 −133
 # （review_reflow.md 113 + SKILL 检视节约 10 + 合同侧约 10，全部在 C3）。在途只动 scripts_py 2400→2650 与总 12020→12270，其余四类不动；

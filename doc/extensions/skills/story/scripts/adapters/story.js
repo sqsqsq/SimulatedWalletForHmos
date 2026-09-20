@@ -2,7 +2,8 @@
  * story.js — /story 的数据对接层（本文件是部署环境间唯一需要替换的实现）
  *
  * 契约（CLI，**本 docstring 即唯一真源**；成功 0 / 失败非 0）：
- *   node story.js <init|archive|restore|review|help> <AR> [mcp-token] [--project-root <abs>]
+ *   node story.js <init|archive|restore|review|fetch|help> <AR> [mcp-token]
+ *       [--project-root <abs>] [--out <暂存目录>]
  *   人类可读日志走 stderr；stdout 最后输出单行 JSON 结果：
  *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","success":true}
  *             按单号从需求系统拉单据：AR 自己、它挂的 SR、SR 挂的 RR，各写一份
@@ -32,6 +33,16 @@
  *             人可能在系统上批注、也可能直接改本地文件，流程不关心来源。
  *             系统上没有回稿时 `status: unchanged`，本地文件原样保留——不伪造表态。
  *             AR/review.md 不存在即失败（先跑 /spec 产出首版）。实现在同目录 review.js
+ *   fetch   → {"mode":"fetch","reqNo":"...","out":"<暂存目录>","fetched":3,"failed":0,
+ *              "items":[{"name":"...","label":"...","ticket":"...","status":"fetched|absent|failed",
+ *                        "digest":"sha256:...","origin":"<单号>/<文件>","bytes":123}],"success":true}
+ *             **只读取材**：把这张单现在关联到的上游（AR/SR/RR 正文）与评审回稿取回
+ *             `--out` 指的暂存目录，并写一份 `fetched.json` 取材回执。
+ *             **一个业务文件都不写**——不碰 AR/review.md，也不碰 AR/design.md；
+ *             写进正文是模型读完之后的事。`status` 三态分开：取到 / 系统上没有（常态）/
+ *             读取失败（故障），混成一个的话一次读取错误会被当成「评审没提意见」。
+ *             本地单（`local-` 开头）明确不适用：不取 token、不访问系统，当场失败。
+ *             `--out` 必填，没有默认落点：默认一个的话，两个单同时更新会写进同一处
  *   help    → 打印工作流程（纯文本，CLI 级帮助）
  *   失败    → {"mode":"<命令>","reqNo":"...","success":false,"error":"..."}
  *
@@ -59,6 +70,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 /** 需求系统的默认落点：本工程演示用；正式测试与部署环境都由环境变量指定。 */
 const DEFAULT_SYSTEM_DIR = path.join('test', 'story', 'requirement-system');
@@ -290,6 +302,73 @@ function cmdRestore(ar, system) {
   emit({ mode: 'restore', reqNo: ar, restored: true, verified, success: true });
 }
 
+/**
+ * fetch —— **只读取材**：把这张单现在关联到的上游与评审内容取回暂存区。
+ *
+ * 与 `init` 的分工：`init` 是第一次建工作区，不覆盖已有文件；`fetch` 是之后每一次
+ * 「上面有没有新东西」，所以它**一个业务文件都不写**，只往 `--out` 指的暂存目录里放，
+ * 并留一份清单说清每一份的来历。写进正文是模型读完之后的事，不在这里发生。
+ *
+ * 与 `review` 的分工：`review` 直接覆盖 `AR/review.md`——它假设「系统上的就是最新的」，
+ * 本地那一版是旧的。而人可能刚在本地改过，覆盖就把人的修改吃掉了。fetch 不做这个假设。
+ *
+ * 取材回执 `fetched.json` 逐份记四件事：它是什么（来源身份）、内容摘要、原件在系统上的位置、
+ * 取到没有。**缺席与失败分开**：系统上本来就没有评审回稿是常态，读不出来是故障，
+ * 混成一个的话，一次读取错误会被当成「评审没提意见」。
+ */
+function cmdFetch(ar, featureRoot, system, outDir) {
+  if (/^local[-_]/i.test(ar)) {
+    fail(`${ar} 是本地单：它不挂在需求系统上，fetch 不适用（也不取 token、不访问系统）。`
+      + '本地单的材料由人直接放进 inbox/');
+  }
+  const ticket = readTicket(system, ar);
+  if (!ticket.found) {
+    fail(`${ar} 在需求系统上取不到（${ticket.reason}）：先确认单号，或这张单还没建。`
+      + 'fetch 不落占位件——取不到就是取不到');
+  }
+  const srNo = ticket.detail && ticket.detail.parentNo;
+  const rrNo = ticket.detail && ticket.detail.rrNo;
+  const wanted = [
+    { name: 'AR-design.md', label: '开发需求正文（本单）', no: ar, parts: ['design.md'] },
+    { name: 'SR-design.md', label: '系统设计正文', no: srNo, parts: ['design.md'] },
+    { name: 'RR-prd.md', label: '产品需求正文', no: rrNo, parts: ['prd.md'] },
+    { name: 'review-feedback.md', label: '评审人留下的回稿', no: ar, parts: ['review-feedback.md'] },
+  ];
+  fs.mkdirSync(outDir, { recursive: true });
+  const items = wanted.map((w) => {
+    if (!w.no) return { ...pick(w), status: 'absent', note: '这张单上没有挂它' };
+    let text = null;
+    try {
+      text = ticketText(system, w.no, ...w.parts);
+    } catch (e) {
+      return { ...pick(w), status: 'failed', note: e.message };
+    }
+    if (text === null) return { ...pick(w), status: 'absent', note: '系统上现在没有这一份' };
+    fs.writeFileSync(path.join(outDir, w.name), text, 'utf-8');
+    return {
+      ...pick(w),
+      status: 'fetched',
+      digest: `sha256:${crypto.createHash('sha256').update(text).digest('hex').slice(0, 16)}`,
+      origin: [w.no, ...w.parts].join('/'),
+      bytes: Buffer.byteLength(text, 'utf-8'),
+    };
+  });
+  const receipt = { mode: 'fetch', reqNo: ar, fetchedAt: ts(), items };
+  fs.writeFileSync(path.join(outDir, 'fetched.json'),
+    `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
+  const got = items.filter(i => i.status === 'fetched').length;
+  const bad = items.filter(i => i.status === 'failed').length;
+  log(`取回 ${got} 份到 ${outDir}${bad ? `，${bad} 份读取失败` : ''}；一个业务文件都没动`);
+  emit({ mode: 'fetch', reqNo: ar, out: outDir, fetched: got, failed: bad,
+    items, success: bad === 0 });
+  if (bad) process.exit(1);
+}
+
+/** 清单里每份都带的身份三件：文件名、它是什么、在系统上挂在哪张单下。 */
+function pick(w) {
+  return { name: w.name, label: w.label, ticket: w.no || null };
+}
+
 function cmdReview(ar, featureRoot, system) {
   // 实现拆在同目录 review.js——部署环境统一走本文件的 CLI，内部怎么组织是各自的事。
   const { fetchReview } = require('./review.js');
@@ -313,6 +392,7 @@ const cmd = process.argv[2];
 const ar = process.argv[3];
 let mcpToken;
 let projectRootArg;
+let outArg;
 let argError;
 for (let i = 4; i < process.argv.length; i++) {
   const a = process.argv[i];
@@ -321,6 +401,11 @@ for (let i = 4; i < process.argv.length; i++) {
     if (projectRootArg === undefined) argError = '--project-root 缺少值';
   } else if (a.startsWith('--project-root=')) {
     projectRootArg = a.slice('--project-root='.length);
+  } else if (a === '--out') {
+    outArg = process.argv[++i];
+    if (outArg === undefined) argError = '--out 缺少值';
+  } else if (a.startsWith('--out=')) {
+    outArg = a.slice('--out='.length);
   } else if (a.startsWith('--')) {
     argError = `未知参数：${a}`;
   } else if (mcpToken === undefined) {
@@ -330,8 +415,9 @@ for (let i = 4; i < process.argv.length; i++) {
   }
 }
 
-const USAGE = '用法：node story.js <init|archive|restore|review|help> <AR> [mcp-token] [--project-root <abs>]';
-const CMDS = ['init', 'archive', 'restore', 'review', 'help'];
+const USAGE = '用法：node story.js <init|archive|restore|review|fetch|help> <AR> [mcp-token] '
+  + '[--project-root <abs>] [--out <暂存目录>（fetch 必填）]';
+const CMDS = ['init', 'archive', 'restore', 'review', 'fetch', 'help'];
 if (argError) fail(`${argError}。${USAGE}`);
 if (!CMDS.includes(cmd)) {
   fail(USAGE);
@@ -357,3 +443,8 @@ if (cmd === 'init') cmdInit(ar, featureRoot, localAr, system);
 else if (cmd === 'archive') cmdArchive(ar, featureRoot, system);
 else if (cmd === 'restore') cmdRestore(ar, system);
 else if (cmd === 'review') cmdReview(ar, featureRoot, system);
+else if (cmd === 'fetch') {
+  // 暂存目录必须由调用方指定：默认一个落点的话，两个单同时更新会写进同一处。
+  if (!outArg) fail(`fetch 要 --out <暂存目录>：它只往那里写，不碰任何业务文件。${USAGE}`);
+  cmdFetch(ar, featureRoot, system, path.resolve(projectRoot, outArg));
+}

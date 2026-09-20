@@ -14,6 +14,10 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 |---|---|---|
 | `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
 | `<ext>/skills/story/scripts/adapters/`（`story.js`、`token.js`、`review.js`） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
+
+> **升到 1.9.4 的目标工程要给自己的 `story.js` 补 `fetch`**（只读取材到 `--out` 暂存区，
+> 合同见 `skills/story/scripts/README.md`）。没补时产物更新会报错停下，不会退回用 `review` 顶替。
+
 | `<ext>/knowledge/` | 目标 | 不读不写 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
 | `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |

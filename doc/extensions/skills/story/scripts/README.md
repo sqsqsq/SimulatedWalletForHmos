@@ -17,11 +17,23 @@
 
 | 文件 | 干什么 | 合同要点 |
 |---|---|---|
-| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `review` / `help`） | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
+| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `review` / `fetch` / `help`） | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
 | `token.js` | 取 mcp token | 成功退出 0，**stdout 即 token 本身**（纯文本单行，不是 JSON）；失败非 0，错误走 stderr |
 | `review.js` | `story.js review` 的实现模块 | 由 `story.js` 同目录 `require`，不单独作为 CLI 入口 |
 
 写盘落点也是合同的一部分：`AR/design.md`、`AR/review.md`、`AR/detail.json`、`AR/.review-backup/` 由这一层写。**公共机制不往 `AR/` 根下写任何辅助文件**，辅助件一律进 `AR/story-src/`。
+
+### 1.9.4 的合同变化：新增 `fetch`
+
+`fetch <单号> <token> --out <暂存目录>` 是**只读取材**：取回这张单现在关联的上游正文与评审回稿，
+写进 `--out` 指的目录并留一份 `fetched.json` 取材回执（逐份记来源身份、摘要、系统上的位置、取到没有），
+**一个业务文件都不写**。`status` 三态分开：`fetched` / `absent`（系统上本来就没有，常态）/
+`failed`（读取故障）——混成一个的话，一次读取错误会被当成「评审没提意见」。
+本地单不适用，当场失败；`--out` 必填。
+
+**目标工程升级到 1.9.4 要给自己的 `story.js` 补上 `fetch`**。没补时产物更新会报
+「目标 adapter 未实现 1.9.4 合同的 fetch」并停，**不会退回用 `review` 顶替**——
+那条路直接覆盖 `AR/review.md`，会把人刚写的意见吃掉。`review` 本身在本版仍然保留。
 
 ## 换实现时要守住的两件
 
