@@ -22,6 +22,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import run_case as rc  # noqa: E402
@@ -140,6 +141,72 @@ class TheTwoSegmentsLandInDifferentPlaces(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertIn(status, rc.TERMINAL_STATUS)
                 self.assertIn(status, rmc.TERMINAL_STATUS)
+
+
+class TheSecondCheckpointAlsoWaits(unittest.TestCase):
+    """第二段写完也要停着 —— **快照要在停着的时候取**。
+
+    上一版这里直接 break，run 以 `finished` 收场，而 `checkpoint` 只认等待态：
+    TEST §5.9 第 7 步「checkpoint --point update → 后评 → conclude」会卡在第一条命令上。
+    """
+
+    def test_it_stops_instead_of_finishing(self) -> None:
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        self.assertIn("def wait_at_update_checkpoint(", src)
+        self.assertIn('awaiting_kind="update_checkpoint"', src)
+        body = src.split("def wait_at_update_checkpoint", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("pop_conclude_request", body, "第二检查点没有出口")
+        self.assertNotIn("pop_resume_request", body,
+                         "第二段之后没有第三段，这里不该再收续跑请求")
+
+    def test_the_checkpoint_command_still_requires_a_stopped_worker(self) -> None:
+        """两个检查点用同一条判据：worker 停着才复制。"""
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        body = src.split("def cmd_checkpoint", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn('status != "awaiting_reply"', body)
+
+
+class NothingToUpdateIsAlsoAnEnding(unittest.TestCase):
+    """这一轮检测下来真的没变化，也是一条正当的结束，不是「还没跑完」。
+
+    「无变化」那条路按设计什么都不建、什么都不删——契约上那一笔不会动。
+    不认它的话，一次「没什么要改」的更新会一直停着等人来收，而它早就走完了。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.updates = self.tmp / "doc" / "features" / "AR1" / "AR" / "story-src" / "updates"
+        self.updates.mkdir(parents=True)
+        self._real = rc.REPO_ROOT
+        rc.REPO_ROOT = self.tmp
+        self.addCleanup(lambda: setattr(rc, "REPO_ROOT", self._real))
+
+    def test_the_mark_is_read_back(self) -> None:
+        (self.updates / ".last-prepare.json").write_text(
+            json.dumps({"comparison": "unchanged", "at": "2026-09-20T10:00:00+00:00"}),
+            encoding="utf-8")
+        got = rc.last_prepare("AR1")
+        self.assertEqual("unchanged", got["comparison"])
+
+    def test_a_missing_or_broken_mark_is_not_an_ending(self) -> None:
+        """读不出来就是读不出来——不能拿它当「没变化」把一轮结束掉。"""
+        self.assertEqual({}, rc.last_prepare("AR1"))
+        (self.updates / ".last-prepare.json").write_text("{坏的", encoding="utf-8")
+        self.assertEqual({}, rc.last_prepare("AR1"))
+
+    def test_only_a_mark_left_after_resuming_counts(self) -> None:
+        """比的是时刻：续跑之前那一次检测的结论，不能拿来结束第二段。"""
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        self.assertIn('state.get("resumed_at")', src, "没有按续跑时刻比对")
+
+    def test_the_mark_is_a_process_file_not_a_product(self) -> None:
+        """留痕落在过程目录、点开头：不进材料清单，也不该被当成业务产物。"""
+        upd = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
+               / "core" / "flow" / "update.py").read_text(encoding="utf-8")
+        self.assertIn('".last-prepare.json"', upd)
+        body = upd.split("def _note_prepare", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("except OSError", body, "留痕失败不该让一次正常的检测失败")
 
 
 class TheOldFakePhaseIsGone(unittest.TestCase):

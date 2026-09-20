@@ -30,6 +30,7 @@ import json
 import os
 import signal
 import shutil
+from datetime import datetime, timezone
 import subprocess
 import sys
 import time
@@ -191,6 +192,11 @@ def pop_pending_reply(out_dir: Path) -> str | None:
         return None
     path.unlink(missing_ok=True)
     return text
+
+
+def now_iso() -> str:
+    """与 `story_flow.py` 写留痕时同一个口径（UTC、秒级），才比得出先后。"""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def pop_resume_request(out_dir: Path) -> str | None:
@@ -528,6 +534,47 @@ def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int) -> s
         if waited % REPLY_NUDGE == 0:
             state["awaiting_stale_sec"] = waited
             refresh_worker_lease(out_dir, state, force=True, event="initial_checkpoint_stale")
+
+
+def wait_at_update_checkpoint(out_dir: Path, feed, runlog, state: dict, *,
+                              turn: int, why: str) -> None:
+    """第二段写完之后也停在这里 —— **快照要在停着的时候取**。
+
+    上一版这里直接 break，run 以 `finished` 收场，而 `checkpoint` 只认等待态：
+    于是 TEST §5.9 第 7 步「checkpoint --point update → 后评 → conclude」
+    卡在第一条命令上。停等与第一检查点同构，但**只有一个出口**：宿主 conclude。
+    第二段没有第三段，续跑请求到这里不该再被接受。
+    """
+    state.update(status="awaiting_reply", checkpoint_stage="update",
+                 awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"), awaiting_turn=turn,
+                 awaiting_kind="update_checkpoint", awaiting_prompt=why)
+    refresh_worker_lease(out_dir, state, force=True, event="awaiting_update_checkpoint")
+    feed.emit("update_checkpoint_wait", turn=turn, why=why)
+    runlog.event("第二检查点", f"{why}；等宿主固定快照、后评，再 conclude")
+    waited = 0
+    while pop_conclude_request(out_dir) is None:
+        time.sleep(1)
+        waited += 1
+        refresh_worker_lease(out_dir, state, event="awaiting_update_checkpoint")
+        if waited % REPLY_NUDGE == 0:
+            state["awaiting_stale_sec"] = waited
+            refresh_worker_lease(out_dir, state, force=True, event="update_checkpoint_stale")
+
+
+def last_prepare(feature: str) -> dict:
+    """上一次 `story_flow.py update` 检测出什么 —— 过程事实，不是业务产物。
+
+    「无变化快速退出」那一条不建操作记录（设计要求：什么都不建、什么都不删），
+    于是第二段就没有可观测的终点——worker 会一直等到宿主 conclude，
+    而那一趟其实早就结束了。这一份是 prepare 自己留的机械留痕（点开头、在过程目录里、
+    不进材料清单、不进比较集合），装置据它认出「这一轮检测完了、结论是没变化」。
+    """
+    path = (REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "updates"
+            / ".last-prepare.json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
@@ -1790,6 +1837,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     entry = update_round(feature)
                     state.update(status="running", checkpoint_stage="update",
                                  update_entry_round=entry.get("last_closed"),
+                                 resumed_at=now_iso(),
                                  awaiting_kind=None, awaiting_prompt=None)
                     refresh_worker_lease(out_dir, state, force=True, event="resume_update")
                     result["resumed_at_turn"] = turns
@@ -1800,13 +1848,30 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     # 第二段的终点**看契约不看说辞**：这一轮 update 关掉了，才算写完。
                     now_round = update_round(feature)
                     closed = now_round.get("last_closed")
+                    why = None
                     if (not now_round.get("open") and closed
                             and closed != state.get("update_entry_round")):
                         state["update_closed_round"] = closed
-                        result["stop_reason"] = "update_checkpoint"
                         result["update_round"] = closed
-                        runlog.event("第二检查点", f"更新 {closed} 已收口")
-                        feed.emit("update_checkpoint", turn=turns, round=closed)
+                        why = f"更新 {closed} 已收口"
+                    else:
+                        # 另一条正当的结束：这一轮检测下来真的没有变化——它不建操作记录，
+                        # 所以契约上那一笔不会动。不认它的话，一次「没什么要改」的更新
+                        # 会一直停在这里等人 conclude，而它其实早就走完了。
+                        seen = last_prepare(feature)
+                        if (seen.get("comparison") == "unchanged"
+                                and str(seen.get("at") or "") > str(state.get("resumed_at") or "")):
+                            state["update_unchanged"] = True
+                            result["update_unchanged"] = True
+                            why = "这一轮检测下来没有变化（未建操作记录）"
+                    if why:
+                        result["stop_reason"] = "update_checkpoint"
+                        feed.emit("update_checkpoint", turn=turns,
+                                  round=result.get("update_round"),
+                                  unchanged=bool(result.get("update_unchanged")))
+                        wait_at_update_checkpoint(out_dir, feed, runlog, state,
+                                                  turn=turns, why=why)
+                        result["conclude_reason"] = "第二检查点评测完成"
                         break
                 if run.get("status") != "succeeded":
                     result["stop_reason"] = "cli_cannot_continue"

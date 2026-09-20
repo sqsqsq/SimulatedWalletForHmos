@@ -54,9 +54,19 @@ class UpdateCase(unittest.TestCase):
         self.assertTrue(rows, f"stdout 里没有结果 JSON：{proc.stdout}\n{proc.stderr}")
         return json.loads(rows[-1])
 
+    def rounds(self) -> list[str]:
+        """盘上有几轮 —— **只数轮次目录**。
+
+        `updates/` 下还有一份 `.last-prepare.json`：那是 prepare 留的机械痕迹
+        （点开头、过程件），说的是「这一次检测完了、结论是什么」，不是一轮更新。
+        把它数进来的话，「无变化那一趟没有新建一轮」这条判据就永远红。
+        """
+        return sorted(d.name for d in self.updates.iterdir()
+                      if d.is_dir() and not d.name.startswith("."))
+
     def close_latest(self) -> str:
         """把最后一轮标成 closed——正常由 C2 的 `close` 做，这里只为构造「上次已处理的版本」。"""
-        latest = sorted(self.updates.iterdir())[-1]
+        latest = self.updates / self.rounds()[-1]
         rec = json.loads((latest / "record.json").read_text(encoding="utf-8"))
         rec["status"] = "closed"
         (latest / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2),
@@ -95,7 +105,7 @@ class OneRoundAtATime(UpdateCase):
         again = self.update()
         self.assertEqual("resume", again["comparison"])
         self.assertEqual(first, again["update"])
-        self.assertEqual(1, len(list(self.updates.iterdir())), "开着的时候又建了一轮")
+        self.assertEqual(1, len(self.rounds()), "开着的时候又建了一轮")
 
 
 class NothingChangedMeansNothingHappens(UpdateCase):
@@ -107,8 +117,7 @@ class NothingChangedMeansNothingHappens(UpdateCase):
     def test_it_says_unchanged_and_leaves_no_trace(self) -> None:
         out = self.update()
         self.assertEqual("unchanged", out["comparison"], out)
-        self.assertEqual([self.closed], [d.name for d in self.updates.iterdir()],
-                         "无变化那一趟留下了临时目录")
+        self.assertEqual([self.closed], self.rounds(), "无变化那一趟留下了临时目录")
 
     def test_it_does_not_touch_the_earlier_rounds(self) -> None:
         """清理只管本次的临时副本——**历史备份一个字节都不许动**。"""

@@ -20,7 +20,7 @@ CASE_IDS = {
     if path.is_dir() and (path / "case.yaml").is_file()
 }
 VALID_START = {"story", "spec", "plan", "coding", "review", "ut", "testing"}
-VALID_END = VALID_START | {"story-review"}
+VALID_END = set(VALID_START)
 VARIANTS = ("brief.md", "role.md", "process.md")
 
 

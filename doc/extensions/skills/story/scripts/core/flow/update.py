@@ -180,6 +180,24 @@ def _write_diffs(feature_root: Path, base_dir: Path | None, changed: list[str], 
     return written
 
 
+def _note_prepare(feature_root: Path, comparison: str) -> None:
+    """这一次检测完了、结论是什么 —— **机械留痕，不是业务产物**。
+
+    「无变化」那条路按设计什么都不建、什么都不删，于是外面看不出它跑过没有。
+    留一行点开头的痕迹在过程目录里：不进材料清单、不进比较集合、下一轮照样被忽略，
+    但测试装置据它认得出「这一轮走完了，结论是没变化」——
+    不然一次「没什么要改」的更新会停在那里等人来收，而它其实早就结束了。
+    """
+    base = _updates_dir(feature_root)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        (base / ".last-prepare.json").write_text(
+            json.dumps({"comparison": comparison, "at": now()}, ensure_ascii=False),
+            encoding="utf-8")
+    except OSError:
+        pass          # 留痕失败不该让一次正常的检测失败
+
+
 def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     """一次 update 的起手：比一遍、该留的留下、该说的说清楚。
 
@@ -215,6 +233,7 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
 
     if diff["complete"] and not changed and not incoming and not unreadable and not asked:
         # 本次什么都没建，所以也没有要删的临时副本；说清楚「比过了、真没变」。
+        _note_prepare(feature_root, "unchanged")
         return {"comparison": "unchanged", "compared": len(current),
                 "action": "与上次已处理的版本逐份比过，没有变化，也没有没做完的更新。"
                           "这一轮不改任何业务文件，不进语义流程。"}
@@ -270,6 +289,7 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     if asked and not changed and not incoming:
         # 文件一个字节没变，但人明确要求改一件事：这不是「无变化」，要走语义流程。
         lines.append("文件没变，但这一轮有人明确要求改的事，按它处置")
+    _note_prepare(feature_root, kind)
     log(f"update {rid}：镜像 {mirrored} 份、差异 {diffs} 份")
     return {"comparison": kind, "update": rid, "changed": changed, "incoming": incoming,
             "unreadable": unreadable, "baseline": bool(base), "diffs": diffs,
