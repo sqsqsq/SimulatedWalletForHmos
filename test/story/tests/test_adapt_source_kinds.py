@@ -1,4 +1,4 @@
-"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。\n\nDemo 包里的 `story.js` / `token.js` / `review.js` 是**替身**——用本地目录模拟需求系统，\n复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，\n共用同一套实现，复刻时正该带上。\n\n判来源看包 `manifest.yaml` 的 `name`。它归目标、升级不改，所以每个仓的 manifest 里\n那个名字始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、\n目录结构或对接脚本的内容去猜。\n\n这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份\n（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。\n"""
+"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。\n\nDemo 包里的 `story.js` / `token.js` 是**替身**——用本地目录模拟需求系统，\n复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，\n共用同一套实现，复刻时正该带上。\n\n判来源看包 `manifest.yaml` 的 `name`。它归目标、升级不改，所以每个仓的 manifest 里\n那个名字始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、\n目录结构或对接脚本的内容去猜。\n\n这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份\n（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。\n"""
 from __future__ import annotations
 
 import json
@@ -75,7 +75,7 @@ class SourceKindCase(unittest.TestCase):
         """把某个仓的对接层换成它自己的实现。"""
         d = at / ADAPTERS
         d.mkdir(parents=True, exist_ok=True)
-        for name in ("story.js", "token.js", "review.js"):
+        for name in ("story.js", "token.js"):
             (d / name).write_text(f"// {mark}\nmodule.exports = {{ who: '{mark}-{name}' }};\n",
                                   encoding="utf-8")
 

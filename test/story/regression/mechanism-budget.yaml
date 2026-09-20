@@ -1,3 +1,10 @@
+# 2026-09-20 C3 交回实测：12168（prompts_md 1838 / scripts_py 2716 / scripts_mjs 3444 / hooks 3394 / data 776），
+# C3 净 −47：prompts_md −48（退 review_reflow.md 113 行，加 update 入口与派审段约 65）、scripts_py +1。
+# 旧 review 全链退场：review.js 69 行（.js 不计机制）、review_reflow.md 113 行、SKILL 检视节、四桥接路由、
+# story.js 的 review 命令与两处旧台账消费者。预计退出 −133 实际约 −133，与估算相符。
+# 累计新增 302+273+23−47=551 对初始额度 674（R=82%）；scripts_py 2716<2750，总 12168<12270，各类在额度内。
+# 全量 1179 passed / 15 skipped，零失败（并行 74 秒）。
+# 依据：design/1.9.4/2026-09-20-版本实施/步骤C3交回-2026-09-20.md §7。
 # 2026-09-20 C2 返修实测：12215（prompts_md 1886 / scripts_py 2715 / scripts_mjs 3444 / hooks 3394 / data 776），
 # 返修净 +23。两条阻断：① 变义判据原本没有解锁路径——报错让人 decide --update 记一笔再重跑，
 # 而 review.mjs 不读契约里的 update.decisions，重跑还是同样的报错，模型会死循环；

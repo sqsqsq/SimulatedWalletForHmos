@@ -2,7 +2,7 @@
  * story.js — /story 的数据对接层（本文件是部署环境间唯一需要替换的实现）
  *
  * 契约（CLI，**本 docstring 即唯一真源**；成功 0 / 失败非 0）：
- *   node story.js <init|archive|restore|review|fetch|help> <AR> [mcp-token]
+ *   node story.js <init|archive|restore|fetch|help> <AR> [mcp-token]
  *       [--project-root <abs>] [--out <暂存目录>]
  *   人类可读日志走 stderr；stdout 最后输出单行 JSON 结果：
  *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","success":true}
@@ -26,13 +26,6 @@
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             把该单最新的历史版本写回系统正文，回退 archive 那次覆盖；
  *             没有历史版本即失败（restore 仅在 archive 之后可用）。本地 design.md 不变
- *   review  → {"mode":"review","reqNo":"...","fetched":true,"target":"AR/review.md",
- *              "backupPath":"AR/.review-backup/<ts>-review.md","status":"confirmed|unchanged","success":true}
- *             拉回评审人在系统上留下的反馈，**直接写入 AR/review.md**（先备份原件）。
- *             产出不是中间 JSON 而是写回 review.md：回流阶段模型的输入唯一就是它，
- *             人可能在系统上批注、也可能直接改本地文件，流程不关心来源。
- *             系统上没有回稿时 `status: unchanged`，本地文件原样保留——不伪造表态。
- *             AR/review.md 不存在即失败（先跑 /spec 产出首版）。实现在同目录 review.js
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"<暂存目录>","fetched":3,"failed":0,
  *              "items":[{"name":"...","label":"...","ticket":"...","status":"fetched|absent|failed",
  *                        "digest":"sha256:...","origin":"<单号>/<文件>","bytes":123}],"success":true}
@@ -57,7 +50,7 @@
  *     <system>/<AR号>/design.md            开发需求正文（archive 覆盖的就是它）
  *     <system>/<AR号>/history/             历史版本，archive 备份、restore 取用
  *     <system>/<AR号>/attachments/         附件，评审记录传到这里
- *     <system>/<AR号>/review-feedback.md   评审人留下的回稿（review 拉它）
+ *     <system>/<AR号>/review-feedback.md   评审人留下的回稿（fetch 取它）
  *
  * 目录位置读环境变量 `STORY_REQUIREMENT_SYSTEM_DIR`，未设时取工程内的默认演示目录。
  * **系统只承载 md**：真实需求系统的正文是纯文本单据，图片一律走别的渠道（人手上的
@@ -309,8 +302,9 @@ function cmdRestore(ar, system) {
  * 「上面有没有新东西」，所以它**一个业务文件都不写**，只往 `--out` 指的暂存目录里放，
  * 并留一份清单说清每一份的来历。写进正文是模型读完之后的事，不在这里发生。
  *
- * 与 `review` 的分工：`review` 直接覆盖 `AR/review.md`——它假设「系统上的就是最新的」，
- * 本地那一版是旧的。而人可能刚在本地改过，覆盖就把人的修改吃掉了。fetch 不做这个假设。
+ * **它取代了 1.9.4 之前的 `review` 命令**：那一条直接覆盖 `AR/review.md`，假设「系统上的就是最新的、
+ * 本地那一版是旧的」。而人可能刚在本地改过，覆盖就把他的修改吃掉了。fetch 不做这个假设——
+ * 取回来放暂存，采不采用、怎么并进去，由读过原文的人和模型定。
  *
  * 取材回执 `fetched.json` 逐份记四件事：它是什么（来源身份）、内容摘要、原件在系统上的位置、
  * 取到没有。**缺席与失败分开**：系统上本来就没有评审回稿是常态，读不出来是故障，
@@ -369,21 +363,13 @@ function pick(w) {
   return { name: w.name, label: w.label, ticket: w.no || null };
 }
 
-function cmdReview(ar, featureRoot, system) {
-  // 实现拆在同目录 review.js——部署环境统一走本文件的 CLI，内部怎么组织是各自的事。
-  const { fetchReview } = require('./review.js');
-  const receipt = fetchReview({ ar, featureRoot, system, log, ts });
-  emit(receipt);
-  if (!receipt.success) process.exit(1);
-}
-
 function cmdHelp() {
   console.log(`[story.js] /story 工作流程（按预期开发顺序）
   1. /story init <AR>     拉取 AR/SR/RR 单据与材料 + 生成 AR/design.md 空模板（触发 AI 按 rules/ar_design_init.md 提取；覆盖前须确认）
   2. /spec                需求规格三产物：spec.md（代码要求）+ AR/review.md（人的决策）+ AR/story.md（归档件），门禁校验三份齐备
   3. /story archive <AR>  以 AR/story.md 为正文、AR/review.md 为附件归档上传（系统正文名固定 design.md；工作区文件不变）
   4. /story restore <AR>  把系统正文恢复回上一版（本地 design.md 不变）
-  5. /story review <AR>   拉回评审回稿写入 AR/review.md（先备份），再据此修订 spec
+  5. /story update <AR>   取回上游与评审的新内容，据它更新已有产物（取材只写暂存，不覆盖当前稿）
   详细规则：doc/extensions/skills/story/SKILL.md`);
 }
 
@@ -415,9 +401,9 @@ for (let i = 4; i < process.argv.length; i++) {
   }
 }
 
-const USAGE = '用法：node story.js <init|archive|restore|review|fetch|help> <AR> [mcp-token] '
+const USAGE = '用法：node story.js <init|archive|restore|fetch|help> <AR> [mcp-token] '
   + '[--project-root <abs>] [--out <暂存目录>（fetch 必填）]';
-const CMDS = ['init', 'archive', 'restore', 'review', 'fetch', 'help'];
+const CMDS = ['init', 'archive', 'restore', 'fetch', 'help'];
 if (argError) fail(`${argError}。${USAGE}`);
 if (!CMDS.includes(cmd)) {
   fail(USAGE);
@@ -442,7 +428,6 @@ const system = systemRoot(projectRoot);
 if (cmd === 'init') cmdInit(ar, featureRoot, localAr, system);
 else if (cmd === 'archive') cmdArchive(ar, featureRoot, system);
 else if (cmd === 'restore') cmdRestore(ar, system);
-else if (cmd === 'review') cmdReview(ar, featureRoot, system);
 else if (cmd === 'fetch') {
   // 暂存目录必须由调用方指定：默认一个落点的话，两个单同时更新会写进同一处。
   if (!outArg) fail(`fetch 要 --out <暂存目录>：它只往那里写，不碰任何业务文件。${USAGE}`);

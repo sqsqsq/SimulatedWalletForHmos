@@ -69,11 +69,17 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 - **⑤ 之后闭环链不回头（硬规则）**：有阻断项才返修（见下「失败出口」）；没有阻断项就走 ⑥，把链走完。
   **闭环之后发现的真实问题**（verifier WARN 里有内容依据的也算）走 framework 的修正入口：
   `harness-runner.ts --correction-init` 按修正三问定责任层 → 改真源 →
-  `harness-runner.ts --revalidate --feature <名>`——它只重跑脚本门禁，verifier 不重审，
-  回执如实标注沿用已有 PASS。**不重跑 spec 闭环链、不手动派 verifier**：每跑一次 harness 都换一份审查对象，
-  每派一次就是整份再审。story 侧的改动仍经 `reopen` → `chapter` → `story` 登记，同样不派 verifier。
+  `harness-runner.ts --revalidate --feature <名>`——它只重跑脚本门禁。
+  **这条路不重跑 spec 闭环链、不手动派 verifier**：每跑一次 harness 都换一份审查对象，
+  每派一次就是整份再审，而这里改的是收口后冒出来的局部问题。
+  story 侧的改动仍经 `reopen` → `chapter` → `story` 登记，同样不派 verifier。
+
+  **另一条路是 `/story update`**，它与上面这条的区别不在「代码拦不拦」，在**谁发起、材料变了多少**：
+  用户主动要求按新的材料与意见更新已有产物，改完的那几个阶段**要按新的审查对象审一次**——
+  材料确实换了一批，沿用上一版的 PASS 说的是另一份产物。怎么派、怎么回写见
+  [update.md](update.md)「与闭环、修正入口的关系」，本页不复述第二遍。
   纯表达类 WARN（措辞、标题偏好）交评审回流或下一轮，记进 `spec/notes.md` 只是登记，不算处置完成。
-  交付门上人给的评审意见走 `/story review`，不算这里的修改。已经做了的正确修改不回滚。
+  交付门上人给的评审意见走 `/story update`，不算这里的修改。已经做了的正确修改不回滚。
 - **⑥ 回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己先生成再校验；要写备注写 `<phase>/notes.md`。
   只有 `check-receipt` 报 subject 失配时才重跑 harness（那之后 verifier 再来一次）。
   **`check --deliver` 是交付门**：它把回执再跑一次，再核读者审查那一项的**实际结论**——判的不是 PASS 就不交付，

@@ -1,9 +1,9 @@
 ---
 name: story
-description: 需求开发流程编排——story init / archive / restore / review / adapt / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
+description: 需求开发流程编排——story init / archive / restore / update / adapt / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
 ---
 
-用法：`/story <init|archive|restore|review|adapt|help> [AR|目标工程]`
+用法：`/story <init|archive|restore|update|adapt|help> [AR|目标工程]`
 
 ## 命令转化
 
@@ -14,7 +14,7 @@ description: 需求开发流程编排——story init / archive / restore / revi
 | `init <编号>` | 「初始化」（`AR` 开头的还需先读「需求系统 Token」；非 `AR` 开头走本地起手，不需要 token） |
 | `archive <AR>` | 「需求系统 Token」+「归档」 |
 | `restore <AR>` | 「需求系统 Token」+「恢复」 |
-| `review <AR>` | 「需求系统 Token」+「检视」 |
+| `update <编号>` | 「更新」（要从需求系统取新内容时还需先读「需求系统 Token」） |
 | `adapt [<目标工程>]` | **改读** [story-adaptation/SKILL.md](../../../doc/extensions/skills/story-adaptation/SKILL.md)（不读 story 的 SKILL）——把本扩展装到／升级到另一个工程，与需求流程无关 |
 | `help` | **勿读 SKILL**——直接输出下方「工作流程」 |
 
@@ -30,7 +30,7 @@ description: 需求开发流程编排——story init / archive / restore / revi
 | 2 | `/spec` | 需求规格阶段（非 story 实现，流程必经）：一次 pass 产出三份产物并过闭环门禁 |
 | 3 | `/story archive <AR>` | AR/story.md 作正文、AR/review.md 作附件，**两份**一并归档上传（自动备份；任一缺失或未过门禁即拒绝，不写工作区 AR/design.md） |
 | 4 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
-| 5 | `/story review <AR>` | （可选）把评审人在系统上留下的反馈拉回 `AR/review.md`，据此修订 `spec/spec.md`；评审表态由人填，模型只做处置 |
+| 5 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物；先检测再决定要不要读，取材只写暂存、不覆盖当前稿 |
 | — | `/story adapt [<目标工程>]` | 工程运维（不在开发顺序内）：把 Story Extension 装到／升级到另一个工程 |
 | — | `/story help` | 输出本流程说明 |
 

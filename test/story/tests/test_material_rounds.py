@@ -1133,7 +1133,7 @@ class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
 
     def test_the_data_layer_never_hears_about_the_manifest(self) -> None:
         """对接层的 js 各部署环境自备、不随包交付，不能要求它们跟着改。"""
-        for name in ("story.js", "review.js", "token.js"):
+        for name in ("story.js", "token.js"):
             text = (STORY_SCRIPTS.parent / "adapters" / name).read_text(encoding="utf-8")
             for word in ("materials.json", "manifest"):
                 self.assertNotIn(word, text,

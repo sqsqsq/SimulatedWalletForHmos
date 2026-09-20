@@ -13,14 +13,14 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | 目录 | 归谁 | 复制时 |
 |---|---|---|
 | `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
-| `<ext>/skills/story/scripts/adapters/`（`story.js`、`token.js`、`review.js`） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
-
-> **升到 1.9.4 的目标工程要给自己的 `story.js` 补 `fetch`**（只读取材到 `--out` 暂存区，
-> 合同见 `skills/story/scripts/README.md`）。没补时产物更新会报错停下，不会退回用 `review` 顶替。
-
+| `<ext>/skills/story/scripts/adapters/`（`story.js`、`token.js`） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
 | `<ext>/knowledge/` | 目标 | 不读不写 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
 | `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
+
+> **升到 1.9.4 的目标工程要给自己的 `story.js` 补 `fetch`**（只读取材到 `--out` 暂存区，
+> 合同见 `skills/story/scripts/README.md`），并可以删掉 `review`——本版它已经退场。
+> 没补 `fetch` 时产物更新会报错停下，不会退回用 `review` 顶替。
 
 **没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
 
@@ -28,12 +28,12 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 来源 | 对接层 | 为什么 |
 |---|---|---|
-| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它那三个 js 是用本地目录模拟需求系统的替身，装进业务仓会往一个不存在的地方读写单据 |
+| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它那两个 js 是用本地目录模拟需求系统的替身，装进业务仓会往一个不存在的地方读写单据 |
 | **另一个业务仓** | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现（A12） |
 
 判来源看包 `manifest.yaml` 的 `name`——它归目标、升级不改，所以每个仓的 manifest 里那个名字始终是它自己的。不靠仓名长相、目录结构或脚本内容猜。
 
-Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同自己实现三个，或者从一个已经实现好的业务仓复刻过来。
+Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同自己实现那两个，或者从一个已经实现好的业务仓复刻过来。
 
 ## 你要做的四件事
 
@@ -101,7 +101,7 @@ diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提�
 
 ## 对接层的输出合同
 
-`adapters/` 里那三个由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
+`adapters/` 里那两个由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
 
 ## 不做的事
 

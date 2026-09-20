@@ -1,6 +1,6 @@
 ---
 name: story
-description: /story 需求流程编排——init 拉取需求资料并建工作区骨架、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、review 拉回评审反馈。
+description: /story 需求流程编排——init 拉取需求资料并建工作区骨架、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、update 按新的材料与意见更新已有产物。
 ---
 
 # story — 需求开发流程编排
@@ -42,13 +42,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | spec 阶段作业（含成文顺序、verifier 与交付门） | [phases/spec.md](phases/spec.md) |
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
-| 评审回流 | [rules/review_reflow.md](rules/review_reflow.md) |
-| 产物更新（**入口尚未开放**，见下） | [phases/update.md](phases/update.md) |
-
-**`/story update` 还没开放给用户**：当前只有它的两件确定性支持可用——
-`story_flow.py update`（检测变化、留下本次执行前的完整现场）与 `story.js fetch`（只读取材到暂存区，
-一个业务文件都不写）。方法正文已在 `phases/update.md`，但完整入口、回写与旧 `review` 的退场在后续步骤，
-**在那之前仍走 `/story review`**，不要对外宣称 update 可用。
+| 产物更新 | [phases/update.md](phases/update.md) |
 
 **作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（六个阶段各一份）；
 spec 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>` 拿到。
@@ -148,13 +142,19 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 
 `node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖。
 
-### 检视
+### 更新
 
-`/story review <AR>` 把评审人在系统上留下的反馈拉回来，写入 `AR/review.md`（先备份原件）。
-**你不代填表态、不动人工区**；模型的输入唯一就是 `AR/review.md`。处置前完整读一遍
-[rules/review_reflow.md](rules/review_reflow.md)。产物是 `AR/story-src/review-disposition.json`
-与被修订的 `spec/spec.md`；**`AR/story.md` 与归档件不动**——story 定稿于评审时点。
-归档件保持快照不等于当前产物不改：人的新决定照常改进 spec 与下游，差异记进台账。
+需求已经有产物之后，上游材料、评审意见或人的新决定使它不再成立时跑 `/story update <编号>`。
+它**先检测再决定要不要你读**：真的一个字节没变就报「未检测到变化」退出，不碰任何业务文件；
+有变化才把本次执行前的完整现场留一份，交你读原文判断。
+
+取回上游与评审的新内容用只读取材（`story.js fetch`），它**一个业务文件都不写**——
+不像 1.9.4 之前的 `review` 那样直接覆盖 `AR/review.md`，把人刚写的意见吃掉。
+方法完整一份在 [phases/update.md](phases/update.md)。
+
+**人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
+意思没变就用 `story_flow.py decide --update <议题 id> --basis <他同意沿用的原话>` 记一笔再重跑；
+意思变了就让他重新看一眼那一条。
 
 ## 产物定位
 

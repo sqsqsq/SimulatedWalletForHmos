@@ -107,15 +107,15 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_an_upgrade_leaves_the_adapters_untouched(self) -> None:
-        """目标自己实现的三个对接脚本，升级之后逐字未变。"""
+        """目标自己实现的对接脚本，升级之后逐字未变。"""
         mine = "// 这个仓自己实现的\nmodule.exports = {};\n"
-        for name in ("story.js", "token.js", "review.js"):
+        for name in ("story.js", "token.js"):
             (self.adapters / name).write_text(mine, encoding="utf-8")
         self.commit("目标自己实现对接层")
 
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
-        for name in ("story.js", "token.js", "review.js"):
+        for name in ("story.js", "token.js"):
             self.assertEqual(mine, (self.adapters / name).read_text(encoding="utf-8"),
                              f"升级动了 {name}——那是目标自己实现的")
 

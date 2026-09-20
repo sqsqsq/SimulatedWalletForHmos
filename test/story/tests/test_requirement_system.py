@@ -203,8 +203,12 @@ class TestArchive(SystemCase):
         self.assertFalse((self.system / "ISSUE-70002").exists())
 
 
-class TestRestoreAndReview(SystemCase):
-    """KM-3：回退那次覆盖；拉回评审人写下的东西。"""
+class TestRestore(SystemCase):
+    """KM-3：回退 archive 那次覆盖。
+
+    1.9.4 之前这里还有 `review`（把评审回稿直接写回 AR/review.md）。它随本版退场——
+    那条路假设「系统上的就是最新的」，而人可能刚在本地改过，覆盖就把他的修改吃掉了。
+    取评审内容改由 `fetch` 只读取到暂存区，见 test_story_update。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -225,29 +229,6 @@ class TestRestoreAndReview(SystemCase):
         self.assertEqual(1, proc.returncode)
         self.assertFalse(self.receipt(proc)["success"])
 
-    def test_review_writes_the_feedback_back_after_backing_up(self) -> None:
-        feedback = "# 评审记录\n\n结论：同意，但第三章要改。\n"
-        (self.system / AR / "review-feedback.md").write_text(feedback, encoding="utf-8")
-        proc = self.story("review", AR)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        receipt = self.receipt(proc)
-        self.assertEqual("confirmed", receipt["status"])
-        self.assertEqual(feedback, (self.feature / "AR" / "review.md").read_text("utf-8"))
-        backup = self.feature / receipt["backupPath"]
-        self.assertEqual(self.notes_text, backup.read_text("utf-8"))
-
-    def test_review_without_feedback_changes_nothing(self) -> None:
-        """不伪造表态：系统上没人批注，本地就该原样保留。"""
-        proc = self.story("review", AR)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("unchanged", self.receipt(proc)["status"])
-        self.assertEqual(self.notes_text, (self.feature / "AR" / "review.md").read_text("utf-8"))
-
-    def test_review_requires_a_first_draft(self) -> None:
-        (self.feature / "AR" / "review.md").unlink()
-        proc = self.story("review", AR)
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("AR/review.md", self.receipt(proc)["error"])
 
 
 class TestNoStaleDataSource(unittest.TestCase):
@@ -302,7 +283,7 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
         installed = (self.project / "doc" / "extensions" / "skills" / "story"
                      / "scripts" / "adapters")
         installed.mkdir(parents=True)
-        for name in ("story.js", "review.js", "token.js"):
+        for name in ("story.js", "token.js"):
             (installed / name).write_bytes((SCRIPTS / name).read_bytes())
         self.installed = installed / "story.js"
 

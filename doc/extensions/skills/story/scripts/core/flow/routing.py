@@ -293,7 +293,7 @@ def next_step(feature_root: Path, contract: dict | None,
                 "改完跑 `story_flow.py update --action close` 收口这一轮"
                 + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written" and contract.get("archived"):
-        return ("done", "本轮已归档送审。评审回流走 `/story review`；补料或改稿先 `story_flow.py reopen`"
+        return ("done", "本轮已归档送审。评审意见与上游新材料走 `/story update`；补料或改稿先 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))
     if contract.get("status") == "story_written":
         # 产物没变就不重跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
@@ -312,7 +312,7 @@ def next_step(feature_root: Path, contract: dict | None,
                 "`harness-runner.ts --correction-init` 定责任层 → 改真源 → "
                 "`--revalidate --feature <名>`（只重跑脚本门禁，verifier 不重审，回执标沿用已有 PASS）；"
                 "**不重跑闭环链、不手动派 verifier**。纯表达类 WARN 交评审回流或下一轮；"
-                "交付门上人的评审意见走 `/story review`。已做的正确修改不回滚。回执由 harness 生成，不用你填。"
+                "交付门上人的评审意见走 `/story update`。已做的正确修改不回滚。回执由 harness 生成，不用你填。"
                 "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，照它给出的下一步走"
                 "（范围与材料没变时先 `complete` 收口），再在草稿上改、`chapter` 提交、`story` 重新登记"
                 "——材料变了再审是正常返修，不是重复审"

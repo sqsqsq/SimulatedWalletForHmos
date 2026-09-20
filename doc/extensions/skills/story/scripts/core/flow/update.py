@@ -435,8 +435,11 @@ def cmd_update_restore(feature_root: Path) -> dict:
 
     saved = root / f"conflict-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
     mirrored = {p.relative_to(before).as_posix() for p in before.rglob("*") if p.is_file()}
+    # 链接与镜像侧同一口径：镜像不跟随链接，这里也不能把链接算成「这一轮新建的」——
+    # 算进去就会被当成多出来的文件删掉，而它在这一轮开始之前就在。
     live = {p.relative_to(feature_root).as_posix() for p in feature_root.rglob("*")
-            if p.is_file() and not (set(p.relative_to(feature_root).parts) & MIRROR_SKIP)}
+            if p.is_file() and not p.is_symlink()
+            and not (set(p.relative_to(feature_root).parts) & MIRROR_SKIP)}
 
     conflicts, restored, removed = [], 0, 0
     def keep(rel: str) -> None:

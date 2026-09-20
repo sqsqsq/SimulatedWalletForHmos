@@ -200,7 +200,7 @@ class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
 
     def test_no_seven_line_ledger_is_asked_for_anywhere(self) -> None:
         """生产者、校验、冻结、指令四处一起退——留一处，它就还会被人当成要求。"""
-        for rel in ("phases/story-write.md", "phases/spec.md", "rules/review_reflow.md",
+        for rel in ("phases/story-write.md", "phases/spec.md", "phases/update.md",
                     "scripts/core/story-build.mjs", "scripts/core/story/check.mjs",
                     "scripts/core/story/context.mjs", "scripts/core/story_flow.py"):
             self.assertNotIn("copyedit", read(rel), f"{rel} 还在要七行自证")

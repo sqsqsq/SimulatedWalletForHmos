@@ -8,7 +8,7 @@
 
 | 文件 | 拿什么 |
 |---|---|
-| 当前 `spec/spec.md`（含 §10、§11）、`AR/review.md` 与 `AR/story-src/review-disposition.json`（有才读） | 要履行的业务条件、验收与未决，人已表的态与评审回稿的处置——设计的前提，不是背景。§10 每条命中都要有实体扛着，强制力与验法两列定落点要什么证据；§11 的候选是选型的出发点 |
+| 当前 `spec/spec.md`（含 §10、§11）、`AR/review.md` 与最近一次 `AR/story-src/updates/<id>/update-notes.md`（有才读） | 要履行的业务条件、验收与未决，人已表的态与最近一次更新改了什么、还留着什么——设计的前提，不是背景。§10 每条命中都要有实体扛着，强制力与验法两列定落点要什么证据；§11 的候选是选型的出发点 |
 | `doc/extensions/skills/story/templates/plan-sections.md` | 「知识决策（设计输入）」章骨架与契约挂法样例 |
 | `doc/extensions/manifest.yaml` 的 `provides.knowledge` 里**命中**的那几个文件 | 条目的处置列、落法附注与**探针列**；候选模式的选型篇。未命中的域不必读 |
 
