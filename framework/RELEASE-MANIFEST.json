@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "3dffe4c17931342b96e4dcee2915927afdb3174e",
-  "built_at": "2026-09-18T15:20:03.420Z",
+  "source_commit": "e2a63bb844dca02b03b891c01337078a2e181c07",
+  "built_at": "2026-09-20T07:38:32.423Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "991a1634ae59bcbf1b21f0cd431fbc41ab65c49c5bbca2588e578038d3801fbd"
+      "sha256": "4e635531599797ca1d9c3b6c64d8099c010100a835f8853479cc817ecaae5d0e"
     },
     {
       "path": "README.md",
@@ -34,7 +34,7 @@
     },
     {
       "path": "agents/claude/templates/agents/phase-executor.md",
-      "sha256": "e3a436e9b31bfd04d95a3ffcf1217186d98d1211dcd0ece47a7d9a114d2245ba"
+      "sha256": "7d01d8d59962553e2093d51cd2b705e7ec2560e7043420d75b4c8fb43e0a4888"
     },
     {
       "path": "agents/claude/templates/agents/verifier.md",
@@ -458,7 +458,7 @@
     },
     {
       "path": "docs/concepts/skill-contracts.md",
-      "sha256": "f1b0d85e89890b4005d16eb7f9fa09eb22521df9f30c1b17d36ba5aed018a36d"
+      "sha256": "b3627b24ef7e58af8f6456881ec793fc99f70c468c7072da201fd99c12f2c020"
     },
     {
       "path": "docs/concepts/terminology-guarding.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "d9119af492de4466636d00e20f4e998458b5759ee859b993b73eff48edff5aa5"
+      "sha256": "3f62eb822db27027bfd7a1506ccb024e6fb021e97b31572cfce4647ffca2d2e8"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -518,7 +518,7 @@
     },
     {
       "path": "docs/operations/project-entry.md",
-      "sha256": "cd15862637290c252c59e12a097650d91efdaca15a4e8d1966fc7e5da5bbf616"
+      "sha256": "e8e0c356648a64f2030cf89e367978b6d4650fb5045a804c5c35da3e2e2f5902"
     },
     {
       "path": "docs/operations/release-checklist.md",
@@ -642,7 +642,7 @@
     },
     {
       "path": "harness/harness-runner.ts",
-      "sha256": "fe516ea6f291b437a10d5d54e163c0af4c9ee303f176f7f39d7503dd099925b7"
+      "sha256": "27dc6409aa40b88c58de4bf0a5a4175b9bf56f404a364ffd89f641e3d5d1ac61"
     },
     {
       "path": "harness/hooks-dispatcher.ts",
@@ -902,7 +902,7 @@
     },
     {
       "path": "harness/scripts/goal-mode-entry.ts",
-      "sha256": "a8c3c46e12d253a07414bd355b7f78a4d2420a4816f4260667c3bee1d6414b9e"
+      "sha256": "97e6a325a148f85eba4636cb436c32ae6b50b13ce84a9af8b24548011eff4d4c"
     },
     {
       "path": "harness/scripts/goal-monitor.ts",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "d7c945dbcf2eb607edd01d20e0d2ecc695c4540006728107fe2536af6d6316c1"
+      "sha256": "22b8bbf681df647c1fa4d3b66a84bcdc618e162792316e2feb63fb01f64bf738"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -990,7 +990,7 @@
     },
     {
       "path": "harness/scripts/utils/ac-coverage-report.ts",
-      "sha256": "d2c53f98898e40d3590e4205275b2ab3bc683609d6ef18054ef148ee117388d6"
+      "sha256": "7a0b8a894d295ed011a4e570231dedfda76ba6be3dbbf0e66dd9bfbf7299ef7d"
     },
     {
       "path": "harness/scripts/utils/acceptance-layering.ts",
@@ -1074,7 +1074,7 @@
     },
     {
       "path": "harness/scripts/utils/assess.ts",
-      "sha256": "023b87dd266d2887e75f158c66a7e78ee2f9790fc83f9ae509b788ea6b550748"
+      "sha256": "645be651f50433317ff39303b58830e33d39c14ced0ea72f1637eb03e4b24892"
     },
     {
       "path": "harness/scripts/utils/ast-analyzer.ts",
@@ -1150,7 +1150,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-skill-projection.ts",
-      "sha256": "83e49469c8d94ef589d530163640ec56939f5e1bbca52e06bf469cea00b9daaf"
+      "sha256": "2d6d0a3d95bb7a4996bb714fce2dae9232c3511db1c44ecdcf29ec9f97301a18"
     },
     {
       "path": "harness/scripts/utils/blueprint-views.ts",
@@ -1170,11 +1170,11 @@
     },
     {
       "path": "harness/scripts/utils/capability-resolution-entry-input.ts",
-      "sha256": "df367240dcb3af967c9b5af16a7821d272bd6c97d6c75018ea821b25a3846556"
+      "sha256": "7debc9de478238fb679aef8265b6477c196d5eec947aee2f6fd48eabda7287b4"
     },
     {
       "path": "harness/scripts/utils/capability-resolution.ts",
-      "sha256": "166a4a15d774c1f58ef7f3c71effaa1034fe158fb5954185226de2f2eee90faf"
+      "sha256": "352845aa1ac20f10ef49e8bcccc58b8ca94647174b82f54db653946842d69857"
     },
     {
       "path": "harness/scripts/utils/catalog-parser.ts",
@@ -1370,7 +1370,7 @@
     },
     {
       "path": "harness/scripts/utils/context-facts.ts",
-      "sha256": "84b9a8ad002b98529f9a3a318da46a7e835fa2e343bd23b0df7fe92434519ed7"
+      "sha256": "d1e789d6ee272a67482775c062643cf39b8ca563e0d3cbb546387bd08e2035d9"
     },
     {
       "path": "harness/scripts/utils/contract-reference-closure.ts",
@@ -1462,7 +1462,7 @@
     },
     {
       "path": "harness/scripts/utils/execution-scope.ts",
-      "sha256": "a790a5e01d063377a367032259d03fbbc2d4c27c2995008cf5992d2bf1402fab"
+      "sha256": "c80328ac03cd04a95f2b6f6d595dc3b0307480e055e54227693704e66af06222"
     },
     {
       "path": "harness/scripts/utils/exploration-strategy.ts",
@@ -1498,7 +1498,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-track.ts",
-      "sha256": "a44a010cd7ed16058f72ec7d171c28f6e368ba8722c6fa9d2872ebe0c102575f"
+      "sha256": "28ca50a88c07ec24f6b54e01f045c02f55d4bd176169cd32806ad09ce6149233"
     },
     {
       "path": "harness/scripts/utils/fidelity-lock-shared.ts",
@@ -1562,7 +1562,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-failure-classifier.ts",
-      "sha256": "84c619c39082d5cc81f41c70ee3258b7a21db64fe7a1cbfc285d6bb9fd3e0da5"
+      "sha256": "cbfcd50b9ee268702d010922d52305f35658c8e32627779ada699210ce17c4fb"
     },
     {
       "path": "harness/scripts/utils/goal-handoff.ts",
@@ -1586,7 +1586,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "625f01aa274e0730519207174aa315e1e0daf3ec4203c529d3569780eeb14449"
+      "sha256": "324c759987fb2a7f29074b04e7327cba1f3e242a0476ea1c15805acfa8ed32fd"
     },
     {
       "path": "harness/scripts/utils/goal-phase-executor.ts",
@@ -1614,11 +1614,11 @@
     },
     {
       "path": "harness/scripts/utils/goal-reconcile-observation.ts",
-      "sha256": "0f63f541fba8f0d758ddeabcc2d4e0de048507a201cf064cd44d24c0b1c3adc0"
+      "sha256": "6c314368c24c909c6fca97b147537955001ed33402c11c5c15ad1c5f64e693b6"
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
-      "sha256": "4ba69cdb1627f341ebdda78bb1fd35eb9c90dd89a1be7895a25a60561d567760"
+      "sha256": "27389ec6fa41529da457f0e1569f6708daa1829a8e6962051db893e04b4cdd25"
     },
     {
       "path": "harness/scripts/utils/goal-run-baseline.ts",
@@ -1638,7 +1638,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-runner-phase.ts",
-      "sha256": "035c0203e3ff4c03bdcfd9eb40dfb7a308ca50309039f595da2d5b6980f326af"
+      "sha256": "152276aad6c4b0539a57d3048f1b9b0c2ed26bf2f647ea4d95b01cc3d3e7e64f"
     },
     {
       "path": "harness/scripts/utils/goal-supervisor.ts",
@@ -1838,7 +1838,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-evidence-manifest.ts",
-      "sha256": "a4eb0cbde0d31829a2f8b5f2cdd52b5de6379e5c22cbee881f414c561c8b3d22"
+      "sha256": "01ba256c8d06636f8572d69919a355c42effa7d2a1e54d513535416047f0965f"
     },
     {
       "path": "harness/scripts/utils/phase-personal-prerequisites.ts",
@@ -2014,7 +2014,7 @@
     },
     {
       "path": "harness/scripts/utils/upstream-verdict-gate.ts",
-      "sha256": "234833e3102a59fdd92025df83b7fdf55e14f47ec9e7ed2610b3e7c6373b4ea6"
+      "sha256": "9a82edd71dde48b09cf7bc39a6d16af7ebf6ac4206c9b937551c3c545f4590f4"
     },
     {
       "path": "harness/scripts/utils/usage-capture.ts",
@@ -4610,7 +4610,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "a63386c175929b25d6fa8f040d12b54f61bf8bd4c79316b27365beb585308ea6"
+      "sha256": "4cd2c7110d416e8938d11eb157364db3862a552d58979b956b1fab4def402b57"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -4666,7 +4666,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "c914603dddb8681f6e7bf1894c16120a72bce350100ffbb057ee5ecdb86246c7"
+      "sha256": "bb78588006672720a1a0bf84f529a3e380631bfa3e8f8b1822b4bdcd6361471b"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
