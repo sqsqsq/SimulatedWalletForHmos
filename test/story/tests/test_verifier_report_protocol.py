@@ -627,11 +627,11 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         两处各写一遍时改一处另一处静默过期——而过期的那一份仍会被送到审查者手上。
         """
         method = self.overlay_method()
-        for needle in ("章首那张图", "端到端过程", "分支去向", "理由成不成立",
+        for needle in ("总览与局部加起来", "端到端过程", "分支去向", "理由成不成立",
                        "跨章对着读", "blocking_findings", "advisories", "不许空"):
             self.assertIn(needle, method, f"overlay 里没有「{needle}」")
         fragment = self.inject()
-        for needle in ("章首那张图", "端到端过程", "理由成不成立", "blocking_findings"):
+        for needle in ("总览与局部加起来", "端到端过程", "理由成不成立", "blocking_findings"):
             self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
 
     def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
