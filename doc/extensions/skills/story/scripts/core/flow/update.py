@@ -385,7 +385,18 @@ def cmd_update_close(feature_root: Path) -> dict:
         shutil.copyfile(src, target)
         kept += 1
 
+    # 暂存区在这一轮结束时清空。**副本已经在本轮目录里**（prepare 复制过），
+    # 不清的话下一轮 prepare 看见它非空，永远报 changed——一次没清，之后每一次都白跑。
+    # 要采用的那几份此时应当已经按正常导入链进了正文（放 inbox → `round` 登记），
+    # 没采用的理由写在 update-notes 里：清掉的是暂存，不是依据。
+    staged = feature_root / Path(*INCOMING)
+    cleared = 0
+    if staged.is_dir():
+        cleared = sum(1 for f in staged.rglob("*") if f.is_file())
+        shutil.rmtree(staged)
+
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
+               cleared_incoming=cleared,
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
                phases=_phase_facts(feature_root))
@@ -396,8 +407,9 @@ def cmd_update_close(feature_root: Path) -> dict:
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
     return {"update": rid, "status": "closed", "compared_next_time": kept,
-            "unreadable": unreadable,
+            "unreadable": unreadable, "cleared_incoming": cleared,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
+                      + (f"取材暂存区的 {cleared} 份已清（副本在本轮 incoming/ 里）。" if cleared else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}
 

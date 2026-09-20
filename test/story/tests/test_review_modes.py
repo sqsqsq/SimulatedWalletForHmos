@@ -68,6 +68,16 @@ class ModesCase(RendererCase):
         self.assertIn(old, text, "夹具变了，用例要跟着改")
         self.review.write_text(text.replace(old, new, 1), encoding="utf-8")
 
+    def write_flow_carry(self, *items: str) -> None:
+        """在流程契约里记下「这一轮人说了沿用哪几条」——正常由 `decide --update` 写。"""
+        flow = self.src / "story-flow.json"
+        data = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
+        data["update"] = {"open": "20260920-000000",
+                          "decisions": [{"item": i, "basis": "人说：意思没变，沿用",
+                                         "by": "human", "at": "2026-09-20T00:00:00+00:00"}
+                                        for i in items]}
+        flow.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def anchor(self, dec_id: str) -> str:
         return f"<!-- decision: {dec_id} -->"
 
@@ -295,6 +305,32 @@ class AnOpinionNeverDisappearsInARerender(ModesCase):
         self.assertIn("已经在它下面写过意见", proc.stderr)
         self.assertIn("decide --update", proc.stderr, "没给出沿用旧表态的那条出路")
         self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
+
+    def test_recording_the_carry_over_unlocks_it(self) -> None:
+        """停手必须有出路：人说了沿用，重跑就带回他的表态——不然记了一笔还是同样的报错。"""
+        a = entry("retry-owner", "choice", CHOICE_BODY)
+        self.assertEqual(0, self.build(a).returncode)
+        chose = "方案选择：\n2\n\n"
+        self.fill(CHOICE_ZONE + self.anchor("retry-owner"), chose + self.anchor("retry-owner"))
+
+        a.update(clarification=CONFIRM_BODY, review_mode="confirm")
+        self.assertEqual(1, self.build(a).returncode, "问题换了却没停手")
+
+        self.write_flow_carry("retry-owner")
+        proc = self.build(a)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn(chose + self.anchor("retry-owner"), self.text(), "说了沿用却没带回表态")
+        self.assertIn("沿用上一版的表态", proc.stdout)
+
+    def test_a_carry_over_for_another_issue_does_not_unlock_this_one(self) -> None:
+        """记的是别条议题的沿用，这一条照样停手——不然一笔记录能放行所有议题。"""
+        a = entry("retry-owner", "choice", CHOICE_BODY)
+        self.assertEqual(0, self.build(a).returncode)
+        self.fill(CHOICE_ZONE + self.anchor("retry-owner"),
+                  "方案选择：\n2\n\n" + self.anchor("retry-owner"))
+        a.update(clarification=CONFIRM_BODY, review_mode="confirm")
+        self.write_flow_carry("split")
+        self.assertEqual(1, self.build(a).returncode, "别条议题的记录把这一条放行了")
 
 
 class QuotedLabelsStayInsideTheHumanZone(ModesCase):

@@ -346,6 +346,29 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         self.assertIn("--basis", out.get("error", ""))
 
 
+class TheStagingAreaHasAnEnd(UpdateCase):
+    """取材暂存区在收口时清空 —— 不清的话，下一轮永远看见它非空、永远报「有变化」。"""
+
+    def test_close_clears_it_and_the_next_round_is_quiet(self) -> None:
+        staged = self.src / "incoming"
+        staged.mkdir(parents=True, exist_ok=True)
+        (staged / "RR-prd.md").write_text("上游的新版正文。\n", encoding="utf-8")
+
+        rid = self.update()["update"]
+        self.assertIn("RR-prd.md", self.updates / rid / "incoming"
+                      and [f.name for f in (self.updates / rid / "incoming").iterdir()],
+                      "起手没有把暂存区的副本留进本轮目录")
+        (self.updates / rid / "update-notes.md").write_text("## 当前依据\n读过了。\n",
+                                                            encoding="utf-8")
+        out = self.update("--action", "close")
+        self.assertEqual(1, out["cleared_incoming"])
+        self.assertFalse(staged.exists(), "收口了暂存区还在")
+        self.assertTrue((self.updates / rid / "incoming" / "RR-prd.md").is_file(),
+                        "清掉的应该只是暂存，本轮的副本要留着")
+        self.assertEqual("unchanged", self.update()["comparison"],
+                         "暂存区没清干净，下一轮还在报有变化")
+
+
 class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
     """只读取材：取回来放暂存，业务文件一个字节都不碰。"""
 

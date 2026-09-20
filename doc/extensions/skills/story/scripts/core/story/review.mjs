@@ -159,7 +159,8 @@ export function cmdBuild(ctx) {
   let out;
   const notes = [];
   try {
-    out = renderReview(list, old, ctx.contract.decision_categories ?? [], notes);
+    out = renderReview(list, old, ctx.contract.decision_categories ?? [], notes,
+                       carriedOver(ctx.flowPath));
   } catch (e) {
     if (e instanceof ProjectionConflict) fail(e.message);
     throw e;
@@ -563,6 +564,23 @@ function issueRewritten(zones, fresh) {
 }
 
 /**
+ * 这一轮里人明确说了「沿用上一版表态」的那几条议题 —— **解锁变义判据的唯一路径**。
+ *
+ * 变义时停手是对的，但停手必须有出路：模型判定「只是改了措辞」时，人用
+ * `story_flow.py decide --update <议题 id> --basis <原话>` 记一笔，这里据它带回。
+ * 没有这一段的话，报错让人去记一笔、记完重跑却还是同样的报错——那是个死胡同。
+ *
+ * **只认这条命令记下的原话**：`update-notes` 里写「已确认」不算，那是模型的转述。
+ * 契约读不出来就当没有：宁可多停一次，也不能因为读不到就默认放行。
+ */
+function carriedOver(flowPath) {
+  const flow = flowPath ? readJson(flowPath, null) : null;
+  const rows = flow?.update?.decisions;
+  if (!Array.isArray(rows)) return new Set();
+  return new Set(rows.map(r => String(r?.item ?? '').trim()).filter(Boolean));
+}
+
+/**
  * 机器区里的**决策点**那一段 —— 「这一条到底在问什么」。
  *
  * 比的只有它，不是整段机器区：
@@ -670,7 +688,7 @@ function groupByCategory(list, categories) {
  * @param {{key:string, section:string}[]} categories 合同的类型词表
  * @returns {string}
  */
-function renderReview(list, previous = '', categories = [], notes = []) {
+function renderReview(list, previous = '', categories = [], notes = [], carried = new Set()) {
   const old = String(previous ?? '');
   const decisions = Array.isArray(list) ? list.filter(Boolean) : [];
   // **整份覆盖之前先看一眼旧文里多出来的那几条**：登记表里没有了，而人在上面写过字。
@@ -714,7 +732,11 @@ function renderReview(list, previous = '', categories = [], notes = []) {
             + '它没有「**决策点**」那一段，脚本判不出问的还是不是同一件事——'
             + '人写的内容原样保留了，问的事要是变了，请评审人重新看一眼这一条');
         }
-        if (rewritten === 'yes') {
+        if (rewritten === 'yes' && carried.has(String(dec.id))) {
+          // 人说了沿用：把上一版的表态带过来，标记里的摘要换成这一版——
+          // 不换的话下一次 build 还会判成「问题换了」，同一件事要人记第二遍。
+          notes.push(`议题 ${dec.id} 的正文改了，按 decide --update 记下的原话沿用上一版的表态`);
+        } else if (rewritten === 'yes') {
           // 人是在**上一版问题**下写的字。问题换了还把勾选带过去，等于替他回答了一个
           // 他没看过的问题。这里只判摘要变没变；「只是改了措辞」还是「换了个问题」是语义判断，
           // 归模型——它判定意义未变时，用 `story_flow.py decide --update` 把人的原话记一笔，
