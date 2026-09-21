@@ -34,8 +34,11 @@
    摆第一级选项侧车，向人报告上游哪几份变了、没变、取不到，本地已有什么，一句缺口判断，
    问**这一次要不要补料**，停下等他。
 4. 他放料进 `inbox/` 或答「不补」→ `decide --gate material_scope` 记原话 → 有新原件先导入 →
-   `round` 登记到本轮（它不开新轮）。新原件是某份旧原件的新版本时，导入前把旧的移进 `.backup/`
-   （不删），清单里写明取代关系——同一类原件导入时按文件名拼接，不移就是两版拼在一起。
+   `round` 登记到本轮（它不开新轮）。新原件是某份旧原件的新版本时，**导入前把 `inbox/` 里那份旧原件本身**
+   移到 `.backup/<旧原件名>-<时刻>`（不删；`inputs` 的 `superseded_hint` 会列出同类的已归类原件），
+   清单里写明取代关系——同一类原件导入时按文件名拼接，不移就是两版拼在一起。
+   导入前的目标文件（如 `RR/prd.md`）由导入链自己备份，不用你管：
+   `Move-Item inbox/<旧原件> .backup/<旧原件>-20260921T1030`
 5. **比较并开这一轮**：`update --action prepare`。
 
 取回的三份正文与人补的料一样在 `inbox/` 里等导入，归类照 init 的做法由你判；本单的系统正文与本地 story
@@ -70,8 +73,7 @@
 
 人在这一轮里拍的板用 `story_flow.py decide --update "<定了哪件事>" --basis "<他的原话>"` 记一笔。
 它记的是**原话**：`update-notes.md` 里写「已确认」不算人签，那是你的转述。
-人已表态的议题登记为 settled 时，**不给它写 `review_mode: confirm` 再请同一方确认**——他已经答过了；
-确实还要另一方复核才写 confirm，并在决策点里点名是谁。
+人已表态的议题登记为 settled 时，`review_mode` 怎么写见 `phases/story-write.md`「决策登记」。
 
 **议题正文改了、而评审人已经在它下面写过意见**时，渲染会停下来：他答的是上一版的问题。
 你判定只是改了措辞、问的还是同一件事，就用上面这条命令把 `<定了哪件事>` 写成**那条议题的 id**、
@@ -197,9 +199,8 @@
 ## 五、与闭环、修正入口的关系
 
 仓根 `CLAUDE.md` 那句「verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标
-`completed_with_prior_review`」说的是**报告缺席时的兜底路径**（`framework/harness/scripts/check-receipt.ts`
-先找当前 subject 的报告，只有 `report_missing` 才退到历史 PASS）。update 改完材料之后重新跑一次门禁，
-当前 subject 的请求就在盘上，提交这一轮的报告走的是主路径，不是那条兜底。
+`completed_with_prior_review`」说的是**报告缺席时的兜底路径**。`--revalidate` 在跑内就按这条兜底把阶段闭环了，
+而**已闭环的 summary 不再被改写**：之后写好的报告只有再跑一次完整 harness 才会被采纳（下一节第 4 步）。
 `NEXT:` 行说的「停下等待用户指令」，`/story update` 正是那条用户指令。
 
 普通的局部修正仍按 `phases/spec.md` 的原路走：`--correction-init` 定责任层 → 改真源 →
@@ -226,15 +227,17 @@ cd framework/harness && npx ts-node harness-runner.ts --revalidate --feature <�
    `check-receipt` 会判 `report_missing` 而退回沿用历史 PASS：**表面闭环，实际没审**。
 2. 把那份请求 JSON **整段原文**交给 verifier，不加任何文字。
 3. 回复**原样全文**写到 `summary.verifier_report` 指的那份文件，一个字不改、不做摘要。
-4. `harness-runner.ts --sync-closure --phase <阶段> --feature <编号>`，然后确认：
-   当前报告的 subject 对得上、`verdict=PASS`、`blocker_count=0`，且 `readiness_signals` 里
-   **没有** `semantic_not_reverified`——它由收口器每次先清除、只在仍然沿用历史 PASS 时加回，
-   所以它还在就说明这一轮的报告没有被采纳。**仅凭退出码 0 不够**。
+4. 跑一次完整的 `harness-runner.ts --phase <阶段> --feature <编号>`（**不是** `--sync-closure`：
+   它对已闭环的阶段不改写，输出「已闭环」也不代表这一轮的报告被采纳了）。然后读 summary 确认：
+   `verifier_subject_id` 与报告终态块的 subject 对得上、`verdict=PASS`、`blocker_count=0`，
+   且没有 `verifier_closure`、`readiness_signals` 里**没有** `semantic_not_reverified`——
+   它还在就说明报告没被采纳。**仅凭退出码 0 或「已闭环」字样不够**，要读盘。
 5. 报了阻断项就按正常返修改；材料因此又变了，重新取最新的请求再审一次，
-   **不要回退去用历史 PASS**。纯风格建议不触发新一轮。
+   **不要回退去用历史 PASS**。verifier 判 PASS 时给的建议（advisory）**不改材料、不再 revalidate、
+   不再派审**，记进该阶段的 `notes.md`——只有阻断项才返修。
 
 **派审期间不动被审的材料**：业务正文、决定，以及被纳入材料视图的 `update-notes.md`，
-从生成请求到同步闭环之间一个字节都不改。为了补一句「已审」去改刚审过的正文，
+从生成请求到第 4 步读完 summary 之间一个字节都不改。为了补一句「已审」去改刚审过的正文，
 审查对象就漂了，那份报告说的是另一版。
 
 **本宿主没有 verifier、或这一轮没有合法请求**：如实报告「这次更新没有完成独立审查」。

@@ -332,7 +332,7 @@ def update_open_step(feature_root: Path, contract: dict,
             "`complete` 收口（范围与材料没变，它直接过）→ 在草稿上改、`chapter` 提交 → "
             "`story` 重新登记。**新到的料先 `round` 登记到本轮，再 reopen**。"
             "范围本身要变不在这一轮做：报「尚未完成：范围需重新拍板」并收口保留项，由人走 `reopen` 重拍。"
-            "改完：`--revalidate` → 派 verifier → `--sync-closure` → "
+            "改完：`--revalidate` → 派 verifier → 完整跑一次 `harness-runner.ts --phase <阶段>` → "
             "`story_flow.py update --action close` 收口这一轮"
             + frozen_tail(feature_root, contract, manifest))
 

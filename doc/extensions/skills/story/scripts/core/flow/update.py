@@ -228,8 +228,34 @@ def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]
     registered = bool((last.get("materials") or {}).get("digest"))
     return {"current": current, "unreadable": unreadable, "diff": diff,
             "changed": diff["added"] + diff["modified"] + diff["removed"],
+            "superseded_hint": _superseded_hint(feature_root, state["pending"]),
             "pending": state["pending"], "materials_changed": registered and state["changed"],
             "request": str(request or "").strip() or None}
+
+
+def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
+    """新原件可能取代的旧原件：收件箱里**已归类**的同类原件。**只列，不判**——是不是新版由你读了定。
+
+    导入链把同一类的原件按名拼接成目标正文，没有「替代」一说：旧原件留在收件箱里，
+    目标就是两版拼在一起（正式 T2 里模型备份了目标文件，旧原件原地没动）。
+    新原件自己还没归类时，列出全部已归类的原件。
+    """
+    inbox = feature_root / "inbox"
+    try:
+        classes = json.loads((inbox / ".classify.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(classes, dict):
+        return []
+    known = {name: cls for name, cls in classes.items() if (inbox / name).is_file()}
+    out = []
+    for new in pending:
+        cls = known.get(new)
+        olds = sorted(n for n, c in known.items() if n != new and (cls is None or c == cls))
+        if olds:
+            out.append({"new": new, "same_class": olds,
+                        "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backup/"})
+    return out
 
 
 def _nothing(facts: dict) -> bool:
@@ -265,6 +291,7 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
     fetch = _fetch_command(feature_root, feature, project_root)
     return {"stage": "inputs", "changed": facts["changed"], "unreadable": facts["unreadable"],
             "baseline": facts["diff"]["complete"], "pending": facts["pending"],
+            "superseded_hint": facts["superseded_hint"],
             "materials_changed": facts["materials_changed"],
             "upstream": _receipt(feature_root) if fetch else None, "fetch": fetch,
             "action": ("`upstream` 是最近一次取材的回执（看它的时刻，没取过或不是这一次取的就先跑 `fetch`）；"
@@ -370,6 +397,7 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     _note_prepare(feature_root, kind)
     log(f"update {rid}：镜像 {mirrored} 份、差异 {diffs} 份")
     return {"comparison": kind, "update": rid, "changed": changed, "pending": pending,
+            "superseded_hint": facts["superseded_hint"],
             "unreadable": unreadable, "baseline": diff["complete"], "diffs": diffs,
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
@@ -396,11 +424,37 @@ def _phase_facts(feature_root: Path) -> list[dict]:
         except (OSError, ValueError) as exc:
             out.append({"phase": phase, "readable": False, "why": str(exc)})
             continue
+        subject = data.get("verifier_subject_id")
+        mode = (data.get("verifier_closure") or {}).get("mode")
         out.append({"phase": phase, "readable": True,
                     "closure": data.get("closure_status"),
                     "verdict": data.get("verdict"),
-                    "subject": data.get("verifier_subject_id")})
+                    "subject": subject, "closure_mode": mode,
+                    "signals": [x.get("id") if isinstance(x, dict) else x
+                                for x in data.get("readiness_signals") or []],
+                    "unadopted": mode == "completed_with_prior_review"
+                    and _report_passed(feature_root / phase / "reports", subject)})
     return out
+
+
+#: 审查报告的终态块（framework `verifier-subject.ts::parseResultBlock` 读的那一段）。
+RESULT_BLOCK = re.compile(r"<!-- maison-verifier-result:v1 -->(.*?)<!-- /maison-verifier-result:v1 -->", re.S)
+
+
+def _report_passed(reports: Path, subject: str | None) -> bool:
+    """当前 subject 的报告在盘上、终态块回显的就是它、判的是 PASS。"""
+    if not subject:
+        return False
+    try:
+        text = (reports / f"verifier.report.{subject}.md").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    blocks = RESULT_BLOCK.findall(text)
+    if len(blocks) != 1:
+        return False
+    fields = dict(line.split(":", 1) for line in blocks[0].strip().splitlines() if ":" in line)
+    return (fields.get("verifier_subject_id", "").strip() == subject
+            and fields.get("verdict", "").strip() == "PASS")
 
 
 def _fetch_command(feature_root: Path, feature: str, project_root: Path) -> str | None:
@@ -469,6 +523,16 @@ def cmd_update_close(feature_root: Path) -> dict:
             "四段就够：当前依据、变化与影响、决定与修订、核对与剩余——"
             f"落点 AR/story-src/updates/{rid}/update-notes.md")
 
+    # 报告写了、判了 PASS，阶段却仍标「沿用历史」：framework 不改写已闭环的 summary，
+    # 只有再跑一次完整 harness 才采纳它。这时收口，这一轮就带着一个「没审」的闭环结束了。
+    phases = _phase_facts(feature_root)
+    stuck = [f["phase"] for f in phases if f.get("unadopted")]
+    if stuck:
+        raise FlowError(
+            f"{'、'.join(stuck)} 的审查报告已写、判 PASS，但阶段闭环仍是沿用历史（没被采纳），不收口："
+            "逐个跑 `harness-runner.ts --phase <阶段> --feature <编号>`（不是 --sync-closure），"
+            "读 summary 确认 semantic_not_reverified 已消失再收口")
+
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     after = root / "after"
@@ -485,7 +549,7 @@ def cmd_update_close(feature_root: Path) -> dict:
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
-               phases=_phase_facts(feature_root))
+               phases=phases)
     contract = load(feature_root) or {}
     contract["update"] = {"open": None, "last_closed": rid}
     save(feature_root, contract)
@@ -493,7 +557,7 @@ def cmd_update_close(feature_root: Path) -> dict:
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
     return {"update": rid, "status": "closed", "compared_next_time": kept,
-            "unreadable": unreadable,
+            "unreadable": unreadable, "phases": phases,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}

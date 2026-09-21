@@ -484,6 +484,56 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual("update_in_progress", self.next_of())
 
 
+class CloseKnowsWhetherTheReviewWasAdopted(UpdateCase):
+    """收口前逐阶段看审查闭环：报告写了、判 PASS，阶段却仍沿用历史 → 不收口。
+
+    framework 不改写已闭环的 summary，`--sync-closure` 输出「已闭环」也不代表报告被采纳了；
+    只有再跑一次完整 harness 才会采纳（C5 实验）。正式 T2 两个模型都据「已闭环」报了完成。
+    """
+
+    SUBJECT = "a" * 64
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rid = self.update()["update"]
+        (self.updates / self.rid / "update-notes.md").write_text("## 当前依据\n读过了。\n", encoding="utf-8")
+        self.reports = self.feature_root / "spec" / "reports"
+        self.reports.mkdir(parents=True, exist_ok=True)
+        (self.reports / f"verifier.report.{self.SUBJECT}.md").write_text(
+            "审查正文。\n\n<!-- maison-verifier-result:v1 -->\n"
+            f"verifier_subject_id: {self.SUBJECT}\nverdict: PASS\nblocker_count: 0\n"
+            "<!-- /maison-verifier-result:v1 -->\n", encoding="utf-8")
+
+    def summary(self, adopted: bool) -> None:
+        body = {"closure_status": "closed", "verdict": "PASS", "verifier_subject_id": self.SUBJECT,
+                "readiness_signals": [] if adopted else [{"id": "semantic_not_reverified"}]}
+        if not adopted:
+            body["verifier_closure"] = {"mode": "completed_with_prior_review"}
+        (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
+
+    def test_a_written_but_unadopted_report_blocks_the_close(self) -> None:
+        self.summary(adopted=False)
+        out = self.update("--action", "close")
+        self.assertIn("没被采纳", out.get("error", ""), out)
+        self.assertIn("--phase", out["error"])
+
+    def test_an_adopted_report_closes_and_the_facts_come_back(self) -> None:
+        self.summary(adopted=True)
+        out = self.update("--action", "close")
+        self.assertEqual("closed", out.get("status"), out)
+        spec = [f for f in out["phases"] if f["phase"] == "spec"][0]
+        self.assertIsNone(spec["closure_mode"])
+        self.assertEqual([], spec["signals"])
+
+    def test_no_report_is_not_this_guard(self) -> None:
+        """没派审（无变化、只改过程记录）时仍能收口：守卫只管「报告在却没被采纳」。"""
+        (self.reports / f"verifier.report.{self.SUBJECT}.md").unlink()
+        self.summary(adopted=False)
+        out = self.update("--action", "close")
+        self.assertEqual("closed", out.get("status"), out)
+        self.assertEqual("completed_with_prior_review", out["phases"][0]["closure_mode"])
+
+
 class ANewVersionReplacesTheOldOriginal(UpdateCase):
     """同一来源的新版本：旧原件移进 `.backup/` 再导入，目标正文只含新版。
 
@@ -506,6 +556,10 @@ class ANewVersionReplacesTheOldOriginal(UpdateCase):
         (inbox / "产品原稿-v1.md").write_text("# 产品需求\n\n单日上限 200。\n", encoding="utf-8")
         self.import_all({"产品原稿-v1.md": "RR"})
         (inbox / "RR-prd.md").write_text("# 产品需求\n\n单日上限 300。\n", encoding="utf-8")
+        hint = self.update("--action", "inputs")["superseded_hint"]
+        self.assertEqual([{"new": "RR-prd.md", "same_class": ["产品原稿-v1.md"]}],
+                         [{k: h[k] for k in ("new", "same_class")} for h in hint],
+                         "没提示同类的旧原件")
         backup = self.feature_root / ".backup"
         backup.mkdir(exist_ok=True)
         (inbox / "产品原稿-v1.md").rename(backup / "产品原稿-v1.md")

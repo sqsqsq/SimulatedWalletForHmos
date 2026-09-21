@@ -989,7 +989,7 @@ class TestRetiredThings(unittest.TestCase):
         红了就一起改，别只把断言改绿。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.9.3"', manifest)
+        self.assertIn('version: "1.9.4"', manifest)
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 test/story/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
