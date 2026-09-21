@@ -336,9 +336,12 @@ flowchart TD
 | UX-01 | 签约页与管理页（均为新增界面）中方向性布局参数一律用 start/end，文本对齐用 TextAlign.Start/End，禁止 left/right 硬编码；界面沿用交通卡详情页既有样式。 | — |
 | SEC-01 | 充值记录展示中的卡号按既有 MaskUtil.maskAccount 类规则脱敏；端侧事件与日志只记录去标识账号、卡片类型、阶段、结果分类，不记录卡号、金额明细与支付参数；agreementNo 只透传、不在钱包持久化。 | — |
 | DFX-01 | 端云接口调用仅在用户主动进入页面或操作时触发一次（getAutoTopupPolicy / createAutoTopupContract / getAutoTopupStatus / cancelAutoTopupContract），无定时或后台轮询；状态展示优先读 wallet_auto_topup_contract 缓存避免重复查询，缓存缺失才走云侧。 | wallet_auto_topup_contract |
-| OBS-01 | 签约流程（策略查询→免密验证→创建签约）与状态查询/解约流程每一步的进入与结果、分支走向与异常用 Logger 记录，按日志可还原一次签约或管理操作的完整路径。 | — |
-| OBS-02 | VOC 记关键路径事件：签约成功/失败、用户取消验证、签约停用、功能开关关闭时入口不可达，均上报一条 VOC 事件。 | auto_topup_signup |
-| OBS-03 | 业务步骤到达终态时各记一条 Chart：签约结束终态集合互斥且穷尽（成功/停用/取消/失败），状态查询与解约同样各自有唯一终态上报。 | auto_topup_status |
+| OBS-01 | 签约、状态查询与解约新增的日志经 Logger 封装，带签约阶段与去标识账号等定位上下文；门面已记过的不再单独重复记。 | — |
+| OBS-02 | VOC 记过程关键点：拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；签约、状态查询与解约的终态只发 Chart，不同时发 VOC。 | auto_topup_signup |
+| OBS-03 | 统计签约、状态查询、解约三个节点：签约覆盖全程成功、普通失败、主动取消，状态查询与解约覆盖成功与普通失败；同一节点同一次执行只发一条终态。 | auto_topup_status |
+| OBS-04 | 三个节点的 Chart 内码按十位五段登记；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败。 | auto_topup_signup |
+| OBS-05 | 建约失败的外码取卡云实际返回的错误码，没有就不填；签约耗时以毫秒计，从拉起验证到收到建约结果。 | auto_topup_signup |
+| OBS-06 | 本单新增签约、状态查询、解约三组内码，先核仓内无既有登记，再在方案定的唯一登记位置登记。 | auto_topup_status |
 | RES-02 | 签约页与管理页新增用户可见文案（门限/面额档位、协议勾选、开启按钮、停用状态、失败原因等）优先复用项目已有中文完全一致的 string 资源；确需新增按 string.json 惯例定义并中英文齐备，代码不硬编码中文字面量。 | — |
 | COMPAT-01 | 四个端云接口与 wallet_auto_topup_contract 缓存键均为新增：不删除任何既有字段、不改既有字段类型与含义；新增接口字段均可空或有默认值（可签约性；档位列表）、不触发既有服务端校验；缓存缺失时以云侧 getAutoTopupStatus 查询为准，兼容无缓存的旧版本。 | wallet_auto_topup_contract |
 | ENV-01 | 清除数据或清除缓存后，wallet_auto_topup_contract 与签约页暂存的门限面额均缺失：页面以云侧 getAutoTopupStatus/策略查询为准自恢复或回填默认，不崩溃、不死循环；退出登录即清除缓存与暂存。 | wallet_auto_topup_contract |

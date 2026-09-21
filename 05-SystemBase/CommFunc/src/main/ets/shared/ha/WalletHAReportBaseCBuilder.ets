@@ -76,7 +76,7 @@ export abstract class WalletHAReportBaseCBuilder {
     return this.setReportParam('HappenedTime', happenedTime);
   }
 
-  protected setReportParam(name: string, value: WalletHAReportParam): WalletHAReportBaseCBuilder {
+  setReportParam(name: string, value: WalletHAReportParam): WalletHAReportBaseCBuilder {
     this.params[name] = value;
     return this;
   }

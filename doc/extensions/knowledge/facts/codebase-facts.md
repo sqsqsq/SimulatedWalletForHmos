@@ -37,18 +37,12 @@ applies_when: always（凡需给出「代码库现状」这一半事实时）
 
 ## 5. 可观测性 — `confirmed: 已确认`
 
-日志、VOC、Chart 三渠道齐备，都在 `CommFunc`，惯例如下：
+日志、VOC、Chart 三渠道都在 `CommFunc`：
 
-- **日志** `Logger`（`shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）：本地调测与完整流程还原——
-  流程每一步的进入与结果、分支走向、异常都记；不打敏感字段，确需记录先脱敏
-  （哪些算敏感、脱到什么程度见安全隐私规约，脱敏入口见下面的敏感数据处理）。
-- **VOC** 默认用门面 `WalletHAManager.logAndReport` / `logErrorAndReport` / `logDebugAndReport(eventID, desc)`
-  （对应档日志 + 一条 VOC，一行搞定）；只在「只上报、不打日志」时用 `vocBuilder(eventID, desc).report()`，不额外 set 属性。
-  记关键路径事件：关键步骤的进入与完成、重要状态标记的变更、用户中止与失败。
-- **Chart** `WalletHAManager.chartBuilder(WalletHAEventID, funcID, subFuncID).report()`：成功率、时延、终态统计——
-  业务步骤到达终态时每步一条，终态取 `WalletFuncResult`。
-- 同一处代码 VOC 与 Chart 二选一：终态那一处发 Chart，过程关键点发 VOC。
-- 三渠道共用同一次执行的流程与步骤标识（上报经 `setFuncID` / `setSubFuncID` 携带）；密度日志 > VOC > Chart，不设数量配额。
+- **日志** `Logger`（`shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）；脱敏入口见下面的敏感数据处理。
+- **VOC** 门面 `WalletHAManager.logAndReport` / `logErrorAndReport` / `logDebugAndReport(eventID, desc)` 一次记对应档日志并发一条 VOC；
+  只上报不打日志用 `vocBuilder(eventID, desc).report()`。
+- **Chart** 见 `chart-reporting.md`。
 - 上报非阻塞，失败只记 `Logger.error`，不向调用方抛出。
 
 ## 6. 敏感数据处理 — `confirmed: 已确认`

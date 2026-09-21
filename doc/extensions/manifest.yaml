@@ -35,6 +35,7 @@ provides:
     - knowledge/facts/README.md
     - knowledge/facts/component-profile.md
     - knowledge/facts/codebase-facts.md
+    - knowledge/facts/chart-reporting.md
     - knowledge/constraints/README.md
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md
