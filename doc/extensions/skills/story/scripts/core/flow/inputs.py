@@ -206,14 +206,14 @@ def sidecar_gate(feature_root: Path) -> str | None:
 
 
 def read_gate_options(feature_root: Path, gate: str,
-                      round_no: int = 1) -> list[dict]:
+                      remaining: bool = False) -> list[dict]:
     """读本次关卡摆出的选项集，并核它摆的就是这一级。
 
     每项必须有 `key`（选项标识），其余字段随关卡自由（label / scope /
     dimension …）——统一只约束标识，是为了让「chosen 必须在 options 里」这条校验
     对三级关卡通用，不必为每个关卡各写一套值域。
 
-    **第 2 轮起，材料级里提出补料请求的那些选项还要写 `missing` 与 `why`**
+    **`remaining`（init 第 2 轮起）时，材料级里提出补料请求的那些选项还要写 `missing` 与 `why`**
     （还缺什么、为什么现有材料不够）：补齐一轮之后再停，问的必须是**剩余的**缺口，
     不能把上一轮的选项原样再摆一遍。要说得出缺什么，就得先拿新材料盘一遍。
     「继续分析」「调整范围」这类不是缺口，不受此限。
@@ -256,12 +256,11 @@ def read_gate_options(feature_root: Path, gate: str,
             raise FlowError(f"{GATE_OPTIONS[-1]} 第 {i + 1} 项缺 key")
         if key in keys:
             raise FlowError(f"选项 key 重复：「{key}」——每项一个标识")
-        if (gate == "material_scope" and round_no > 1
-                and key in MATERIAL_REQUEST_KEYS):
+        if gate == "material_scope" and remaining and key in MATERIAL_REQUEST_KEYS:
             for field, what in (("missing", "还缺什么"), ("why", "为什么现有材料不够")):
                 if not str(opt.get(field) or "").strip():
                     raise FlowError(
-                        f"第 {round_no} 轮的「{key}」缺 {field}（{what}）——"
+                        f"「{key}」缺 {field}（{what}）——"
                         "补齐一轮之后再停，问的必须是剩余的缺口。"
                         "先用新增的材料重新盘点，说得出还缺什么再摆这个选项；"
                         "材料够了就不摆，直接进需求分析")

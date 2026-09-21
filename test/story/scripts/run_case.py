@@ -577,6 +577,30 @@ def last_prepare(feature: str) -> dict:
         return {}
 
 
+def review_closure(feature: str) -> dict:
+    """各阶段审查闭环现在是哪一种 —— 第二检查点带给宿主，**只报事实**。
+
+    `completed_with_prior_review` 或信号里还挂着 `semantic_not_reverified`，说明这一轮的
+    审查报告没有被采纳（沿用了历史 PASS）。预跑里 auto 就停在这一步：报告写了、没同步闭环，
+    模型却报了完成——不带出来的话，宿主要逐份翻 summary 才看得见。
+    """
+    out = {}
+    for phase in PHASE_ORDER:
+        path = REPO_ROOT / FEATURES_DIR / feature / phase / "reports" / "summary.json"
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
+        except Exception as exc:  # noqa: BLE001
+            out[phase] = {"readable": False, "why": str(exc)}
+            continue
+        signals = [s.get("id") if isinstance(s, dict) else s
+                   for s in data.get("readiness_signals") or []]
+        out[phase] = {"mode": (data.get("verifier_closure") or {}).get("mode"),
+                      "signals": signals, "subject": data.get("verifier_subject_id")}
+    return out
+
+
 def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
     """本轮的闭环事实——**只报事实，不下结论**。
 
@@ -1868,7 +1892,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         result["stop_reason"] = "update_checkpoint"
                         feed.emit("update_checkpoint", turn=turns,
                                   round=result.get("update_round"),
-                                  unchanged=bool(result.get("update_unchanged")))
+                                  unchanged=bool(result.get("update_unchanged")),
+                                  closure=review_closure(feature))
                         wait_at_update_checkpoint(out_dir, feed, runlog, state,
                                                   turn=turns, why=why)
                         result["conclude_reason"] = "第二检查点评测完成"

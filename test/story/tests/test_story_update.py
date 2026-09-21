@@ -5,9 +5,10 @@
 
   ① 四种去向各走各的：真没变就退出、上一轮开着就不另起、基准缺席不冒充无变化、有变化才往下；
   ② 无变化那一趟**不留任何痕迹**，也不碰历史备份；
-  ③ 启动前有人手改过的文件必须被检出来——只比材料指纹的话，产物那几份改了看不见；
+  ③ 启动前有人手改过的交付件必须被检出来——判定只看人和上游会动的八项，中间真源不算；
   ④ 读不到的来源单列成缺口，不当成「这份被删了」；
-  ⑤ `fetch` 只往暂存区写，一个业务文件都不碰；缺席与故障分开。
+  ⑤ 输入阶段先停在材料关卡问补料，人答了、料登记进本轮才比；
+  ⑥ `fetch` 只往本单 inbox 写正文，回执不进 inbox，一个业务文件都不碰；缺席与故障分开。
 
 测不了的是「这次变化该怎么改」——那要读原文，归模型与真实运行。
 """
@@ -46,8 +47,14 @@ class UpdateCase(unittest.TestCase):
         self.updates = self.src / "updates"
 
     def update(self, *extra: str) -> dict:
+        """不写 `--action` 就是 prepare：多数用例测的是比较本身，输入阶段另有一组。"""
+        if "--action" not in extra:
+            extra = ("--action", "prepare", *extra)
+        return self.flow("update", *extra)
+
+    def flow(self, mode: str, *extra: str) -> dict:
         proc = subprocess.run(
-            [sys.executable, str(FLOW), "update", "--feature", FEATURE,
+            [sys.executable, str(FLOW), mode, "--feature", FEATURE,
              "--project-root", str(self.root), *extra],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
         rows = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
@@ -97,6 +104,20 @@ class TheFirstRunHasNoBaseline(UpdateCase):
         nested = self.updates / out["update"] / "before" / "AR" / "story-src" / "updates"
         self.assertFalse(nested.exists(), "镜像套娃了")
 
+    def test_reports_and_backups_stay_out_of_the_mirror(self) -> None:
+        """阶段报告、导入备份与重验过程件不是业务内容；报告的 64 位哈希文件名套进检查点目录
+        还会超 Windows 路径上限（预跑 auto 的第二检查点快照第一次就是这么失败的）。"""
+        for rel in ("spec/reports/verifier.material." + "a" * 64 + ".json",
+                    ".backup/prd-20260920.md", "spec/revalidation.json"):
+            target = self.feature_root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}", encoding="utf-8")
+        before = self.updates / self.update()["update"] / "before"
+        self.assertFalse((before / "spec" / "reports").exists(), "阶段报告进了镜像")
+        self.assertFalse((before / ".backup").exists(), "导入备份进了镜像")
+        self.assertFalse((before / "spec" / "revalidation.json").exists(), "重验过程件进了镜像")
+        self.assertTrue((before / "spec" / "spec.md").is_file(), "排除得太宽，业务正文也没了")
+
 
 class OneRoundAtATime(UpdateCase):
     def test_an_open_round_is_resumed_not_restarted(self) -> None:
@@ -134,22 +155,22 @@ class NothingChangedMeansNothingHappens(UpdateCase):
 
 
 class EditsMadeBeforeTheRunAreCaught(UpdateCase):
-    #: 人可能直接动、又决定下游成不成立的那几份。**少盯一份，它的手改就永远检不出来**，
+    #: 人会直接动的交付件。**少盯一份，它的手改就永远检不出来**，
     #: 而且会被报成「无变化」退出——比漏报更糟的是它看起来像结论。
     WATCHED = {
         "AR/review.md": "# 评审记录\n\n首版。\n",
-        "spec/knowledge-use.yaml": "entries: []\n",
-        "AR/story-src/decisions.json": '{"decisions": []}\n',
-        "AR/story-src/story-template.md": "# 写作设计\n\n## 阅读主线\n\n先看这里。\n",
         "plan/plan.md": "# 设计\n\n首版。\n",
+    }
+    #: 模型据交付件写出来的中间真源：随交付件的修订而变，是结果不是原因，不进判定。
+    DERIVED = {
+        "AR/story-src/decisions.json": '{"decisions": []}\n',
         "contracts.yaml": "contracts: []\n",
-        "use-cases.yaml": "use_cases: []\n",
     }
 
     def setUp(self) -> None:
         super().setUp()
         # 基准要在「人动手之前」建好，所以这几份先写进去再跑第一轮。
-        for rel, text in self.WATCHED.items():
+        for rel, text in {**self.WATCHED, **self.DERIVED}.items():
             target = self.feature_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
@@ -159,9 +180,8 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
     def test_every_watched_product_shows_up_when_hand_edited(self) -> None:
         """逐份核：改了哪一份就报哪一份。
 
-        `plan/plan.md` 与根目录那两份强契约是 plan 单的常改处（car 就是 plan 单），
-        漏掉它们的话，一次 plan 阶段的 update 会整个报成「没变化」。
-        `contracts.yaml` / `use-cases.yaml` **在需求根目录不在 `plan/` 下**，按目录名猜会全盘落空。
+        `plan/plan.md` 是 plan 单的常改处（car 就是 plan 单），漏掉它的话，
+        一次 plan 阶段的 update 会整个报成「没变化」。
         """
         for rel in self.WATCHED:
             with self.subTest(rel=rel):
@@ -182,6 +202,14 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
         out = self.update()
         self.assertEqual("changed", out["comparison"], out)
         self.assertIn("spec/spec.md", out["changed"])
+
+    def test_intermediate_sources_do_not_count(self) -> None:
+        """决策登记与强契约手改了也不报：报出来只是对人没有意义的几行。
+        人要直接改强契约，那是 framework 的修正入口，不是 update。"""
+        for rel in self.DERIVED:
+            target = self.feature_root / rel
+            target.write_text(target.read_text(encoding="utf-8") + "# 手改\n", encoding="utf-8")
+        self.assertEqual("unchanged", self.update()["comparison"])
 
     def test_a_removed_product_is_reported_as_removed(self) -> None:
         (self.feature_root / "AR" / "review.md").unlink()
@@ -248,7 +276,18 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         """取材落点由脚本给，模型不自己拼 `--out`——拼了就能指到需求目录外面。"""
         out = self.update("--action", "status")
         self.assertIn("--out", out["fetch"])
-        self.assertIn("AR/story-src/incoming", out["fetch"].replace("\\", "/"))
+        self.assertTrue(out["fetch"].replace("\\", "/").endswith(f"{FEATURE}/inbox"), out["fetch"])
+        self.assertIn("--project-root", out["fetch"], "回执会跟着脚本位置落到别的工程里")
+
+    def test_a_local_feature_has_no_fetch(self) -> None:
+        """本地单不挂在需求系统上：没有这条命令，输入阶段直接问补料。"""
+        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            self.assertIsNone(update_mod._fetch_command(self.feature_root, "local-demo", self.root))
+        finally:
+            sys.path.remove(str(core))
 
     def test_phase_facts_come_from_the_harness_summary(self) -> None:
         reports = self.feature_root / "spec" / "reports"
@@ -355,31 +394,130 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         self.assertIn("--basis", out.get("error", ""))
 
 
-class TheStagingAreaHasAnEnd(UpdateCase):
-    """取材暂存区在收口时清空 —— 不清的话，下一轮永远看见它非空、永远报「有变化」。"""
+class TheInputsStageAsksFirst(UpdateCase):
+    """一次 update 先报输入、在材料关卡问一次要不要补料，人答了才比（D21）。
 
-    def test_close_clears_it_and_the_next_round_is_quiet(self) -> None:
-        staged = self.src / "incoming"
-        staged.mkdir(parents=True, exist_ok=True)
-        (staged / "RR-prd.md").write_text("上游的新版正文。\n", encoding="utf-8")
+    关卡、侧车、人签、登记全是 init 第一级那一套；答的那一笔记在当前轮，不开新轮。
+    """
 
-        rid = self.update()["update"]
-        self.assertIn("RR-prd.md", self.updates / rid / "incoming"
-                      and [f.name for f in (self.updates / rid / "incoming").iterdir()],
-                      "起手没有把暂存区的副本留进本轮目录")
-        (self.updates / rid / "update-notes.md").write_text("## 当前依据\n读过了。\n",
-                                                            encoding="utf-8")
-        out = self.update("--action", "close")
-        self.assertEqual(1, out["cleared_incoming"])
-        self.assertFalse(staged.exists(), "收口了暂存区还在")
-        self.assertTrue((self.updates / rid / "incoming" / "RR-prd.md").is_file(),
-                        "清掉的应该只是暂存，本轮的副本要留着")
-        self.assertEqual("unchanged", self.update()["comparison"],
-                         "暂存区没清干净，下一轮还在报有变化")
+    def setUp(self) -> None:
+        super().setUp()
+        self.update()
+        self.close_latest()
+
+    def contract(self) -> dict:
+        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+
+    def next_of(self) -> str:
+        return self.flow("status")["next"]
+
+    def answer(self, chosen: str = "confirm_scope", basis: str = "不补。") -> dict:
+        sys.path.insert(0, str(FLOW.parent))
+        from flow.inputs import material_options  # noqa: PLC0415
+        (self.src / ".gate-options.json").write_text(json.dumps(
+            {"gate": "material_scope", "options": [dict(o) for o in material_options()]},
+            ensure_ascii=False), encoding="utf-8")
+        return self.flow("decide", "--gate", "material_scope", "--chosen", chosen, "--basis", basis)
+
+    def test_it_reports_and_stops_at_the_material_gate(self) -> None:
+        was = self.rounds()
+        out = self.update("--action", "inputs")
+        self.assertEqual("inputs", out["stage"], out)
+        self.assertIn("fetch", out)
+        self.assertEqual("inputs", self.contract()["update"]["stage"])
+        self.assertEqual("await_gate:material_scope", self.next_of())
+        self.assertEqual(was, self.rounds(), "输入阶段只报告，却建了一轮")
+
+    def test_the_earlier_answer_is_not_this_one(self) -> None:
+        """init 那一笔不是这一次的回答——哪怕时刻看起来在后面。
+
+        时刻只精确到秒，夹具里 init 的关卡与输入阶段常在同一秒（手工实跑就撞上了）。
+        按时刻比会把上一次的回答当成这一次的，材料关卡整个被跳过。
+        """
+        flow = self.contract()
+        for gate in flow["rounds"][-1]["gates"]:
+            gate["at"] = "2999-01-01T00:00:00+00:00"
+        (self.src / "story-flow.json").write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        self.update("--action", "inputs")
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_prepare_waits_for_the_answer(self) -> None:
+        self.update("--action", "inputs")
+        self.assertIn("补料", self.update().get("error", ""))
+
+    def test_the_answer_goes_into_the_same_round(self) -> None:
+        rounds = len(self.contract()["rounds"])
+        self.update("--action", "inputs")
+        out = self.answer()
+        self.assertEqual("accepted", out["outcome"], out)
+        self.assertEqual(rounds, len(self.contract()["rounds"]), "答补料开了新轮")
+        gates = [g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "material_scope"]
+        self.assertEqual(2, len(gates), "这一笔没追加到本轮")
+        self.assertEqual("update_prepare", self.next_of())
+
+    def test_no_supplement_and_nothing_changed_is_unchanged(self) -> None:
+        self.update("--action", "inputs")
+        self.answer()
+        out = self.update()
+        self.assertEqual("unchanged", out["comparison"], out)
+        self.assertNotIn("stage", self.contract()["update"], "输入阶段的记号没清，路由会一直停在关卡")
+        mark = json.loads((self.updates / ".last-prepare.json").read_text(encoding="utf-8"))
+        self.assertEqual("unchanged", mark["comparison"])
+
+    def test_a_new_original_in_the_inbox_is_a_change(self) -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / "交通卡自动充值-v2.md").write_text("# 产品需求\n\n单日上限 300。\n", encoding="utf-8")
+        out = self.update("--action", "inputs")
+        self.assertIn("交通卡自动充值-v2.md", out["pending"], out)
+        self.assertEqual("accepted", self.answer("supplied", "新版放进去了")["outcome"])
+        self.assertEqual("import_materials", self.next_of(), "有未并入的原件却没先让导入")
+        out = self.update()
+        self.assertEqual("changed", out["comparison"], out)
+        self.assertIn("交通卡自动充值-v2.md", out["pending"])
+
+    def test_after_reopen_the_route_is_the_revision_not_the_gates(self) -> None:
+        self.update("--action", "inputs")
+        self.answer()
+        self.assertEqual("changed", self.update("--request", "把单日上限改成 300")["comparison"])
+        self.flow("reopen")
+        self.assertEqual("update_in_progress", self.next_of())
 
 
-class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
-    """只读取材：取回来放暂存，业务文件一个字节都不碰。"""
+class ANewVersionReplacesTheOldOriginal(UpdateCase):
+    """同一来源的新版本：旧原件移进 `.backup/` 再导入，目标正文只含新版。
+
+    导入链的不变量是「某类目标全文 = 该类 inbox 原件按名拼接」，没有「替代」语义；
+    旧原件留在 inbox 的话，`RR/prd.md` 就是两版拼在一起（预跑里 auto 为了躲开它把 v2 归成了 AR）。
+    """
+
+    def import_all(self, classes: dict[str, str]) -> None:
+        inbox = self.feature_root / "inbox"
+        (inbox / ".classify.json").write_text(json.dumps(classes, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_only_the_new_version_lands(self) -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / "产品原稿-v1.md").write_text("# 产品需求\n\n单日上限 200。\n", encoding="utf-8")
+        self.import_all({"产品原稿-v1.md": "RR"})
+        (inbox / "RR-prd.md").write_text("# 产品需求\n\n单日上限 300。\n", encoding="utf-8")
+        backup = self.feature_root / ".backup"
+        backup.mkdir(exist_ok=True)
+        (inbox / "产品原稿-v1.md").rename(backup / "产品原稿-v1.md")
+        self.import_all({"RR-prd.md": "RR"})
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("单日上限 300", prd)
+        self.assertNotIn("单日上限 200", prd, "旧版还拼在正文里")
+        self.assertTrue((backup / "产品原稿-v1.md").is_file(), "旧原件被删了，不是移走")
+
+
+class FetchOnlyWritesToTheInbox(unittest.TestCase):
+    """只读取材：三份正文放本单 inbox，与人补的料走同一条导入链；业务文件一个字节都不碰。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -401,7 +539,8 @@ class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
         (self.feature / "AR").mkdir(parents=True)
         self.review = self.feature / "AR" / "review.md"
         self.review.write_text("# 评审记录\n\n人已经写过的意见。\n", encoding="utf-8")
-        self.out = self.feature / "AR" / "story-src" / "incoming"
+        self.out = self.feature / "inbox"
+        self.src = self.feature / "AR" / "story-src"
 
     def fetch(self, ar: str = AR, *extra: str) -> tuple[int, dict]:
         proc = subprocess.run(
@@ -430,14 +569,31 @@ class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
         self.assertEqual(4, receipt["fetched"])
         self.assertEqual(was, self.review.read_text(encoding="utf-8"),
                          "取回评审回稿时覆盖了 AR/review.md")
-        self.assertTrue((self.out / "review-feedback.md").is_file())
+        self.assertFalse((self.out / "review-feedback.md").exists(),
+                         "评审回稿不是需求正文，进了 inbox 就没有类别可归")
+        self.assertTrue((self.src / "review-feedback.md").is_file())
 
     def test_the_receipt_says_where_each_one_came_from(self) -> None:
         self.fetch(AR, "--out", str(self.out))
-        receipt = json.loads((self.out / "fetched.json").read_text(encoding="utf-8"))
+        self.assertEqual([], list(self.out.glob("*.json")), "回执进了 inbox，会被当成材料导入")
+        receipt = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))
         prd = [i for i in receipt["items"] if i["name"] == "RR-prd.md"][0]
         self.assertEqual(f"{RR}/prd.md", prd["origin"])
         self.assertTrue(prd["digest"].startswith("sha256:"))
+
+    def test_what_equals_the_local_copy_is_not_dropped_in(self) -> None:
+        """与本地逐字相同的不落盘：放进去它就是一份「未并入的原件」，每次 update 都被报成新料。
+        本单系统正文与本地 story 相同，就是自己归档上去的那一版。"""
+        (self.feature / "RR").mkdir()
+        (self.feature / "RR" / "prd.md").write_text("# 产品需求\n\n单日上限 200。\n", encoding="utf-8")
+        (self.feature / "AR" / "story.md").write_text("# 开发需求\n\n上游先填了一版。\n",
+                                                      encoding="utf-8")
+        code, receipt = self.fetch(AR, "--out", str(self.out))
+        self.assertEqual(0, code, receipt)
+        states = {i["name"]: i["status"] for i in receipt["items"]}
+        self.assertEqual("same", states["RR-prd.md"])
+        self.assertEqual("same", states["AR-design.md"])
+        self.assertEqual(["SR-design.md"], sorted(f.name for f in self.out.iterdir()))
 
     def test_a_local_feature_is_refused(self) -> None:
         """本地单不挂在需求系统上：不取 token、不访问系统，当场说清楚。"""
@@ -448,7 +604,7 @@ class FetchOnlyWritesToTheStagingArea(unittest.TestCase):
     def test_an_unknown_ticket_leaves_no_placeholder(self) -> None:
         code, receipt = self.fetch("AR-not-exist", "--out", str(self.out))
         self.assertNotEqual(0, code)
-        self.assertFalse(self.out.exists(), "查无此单却建了暂存目录")
+        self.assertFalse(self.out.exists(), "查无此单却建了 inbox")
 
     def test_out_is_required(self) -> None:
         """没有默认落点：默认一个的话，两个单同时更新会写进同一处。"""

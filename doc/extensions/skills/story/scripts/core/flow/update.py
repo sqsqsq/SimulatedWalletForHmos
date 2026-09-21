@@ -1,51 +1,51 @@
 """`/story update` 的文件侧支持 —— **脚本只回答确定的事**。
 
-这一层做四件机械的事：把本次执行前的现场完整留一份、把取回来的新内容放进暂存、
-与上次已处理的版本比一遍、把结果说清楚。**变化意味着什么、要改哪里，一概不判**——
+这一层做三件机械的事：把本次执行前的现场完整留一份、与上次已处理的版本比一遍、
+把结果说清楚。取回来的新内容与人补的料一样进 `inbox/`，走 init 那条材料链——
+这里不另开第二个入料口。**变化意味着什么、要改哪里，一概不判**——
 那是模型读原文的事（方法在 `phases/update.md`）。
 
-顺序是先检测再决定要不要模型理解：真的一个字节没变、比较也完整、上一轮没留下没做完的事，
-就报「未检测到变化」，把本次的临时副本删掉退出，不进语义流程、不碰业务文件。
+顺序是**先定输入，再检测**：`inputs` 报告上游与本地各有什么（不建任何东西），
+模型据此在第一级关卡问人要不要补料；人答完、料登记进本轮，`prepare` 才比一遍。
+真的一个字节没变、比较也完整、上一轮没留下没做完的事，就报「未检测到变化」退出，
+不进语义流程、不碰业务文件。
 **没查到不等于没变**：比较基准缺席、来源读不到，都单列出来说清可查范围，不许混进「无变化」。
 
 落点在 `AR/story-src/updates/<id>/`，它不在材料扫描的范围里（材料只认合同声明的正文源、
 `ux-reference`/`assets` 与会议原件），所以本层自己的写入不会把材料版本顶出一个新轮次。
 
-四个动作：`prepare` 起手比一遍、`status` 报现在开着什么、`close` 收口并留下可比的正文、
-`restore` 把现场还原到这一轮开始之前。
+五个动作：`inputs` 报输入、`prepare` 比一遍并开这一轮、`status` 报现在开着什么、
+`close` 收口并留下可比的正文、`restore` 把现场还原到这一轮开始之前。
 """
 from __future__ import annotations
 
 import difflib
 import json
+import re
 import shutil
 from pathlib import Path
 
 from materials import registry
 
+from flow.routing import inputs_answer, material_state
 from flow.state import (CONTRACT, FlowError, SKILL_ROOT, STORY, REVIEW,
-                        load, log, now, save)
+                        load, log, now, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
 UPDATES = ("AR", "story-src", "updates")
-#: 只读取材的暂存区。`adapters/story.js fetch --out` 写它，本层只读、只搬、不解析。
-INCOMING = ("AR", "story-src", "incoming")
-#: 镜像不复制的东西：本层自己的落点与暂存区。复制它们等于把镜像套进镜像。
-MIRROR_SKIP = {UPDATES[-1], INCOMING[-1]}
-#: 除材料之外还要盯着的当前产物与业务真源。它们不是材料，但 update 要回答「跟上次比变了没有」。
+#: 镜像不复制的目录：本层自己的落点（复制它等于把镜像套进镜像），以及阶段报告与导入备份——
+#: 它们不是业务内容，而报告带 64 位哈希的文件名，套进更深的目录会超 Windows 的路径上限。
+MIRROR_SKIP = {UPDATES[-1], "reports", ".backup"}
+#: 同样不复制的单个文件：framework 重验留下的过程件。
+MIRROR_SKIP_FILES = {"revalidation.json"}
+#: 除材料正文之外，判「跟上次比变了没有」要看的交付件——**人会直接动的那几份**。
 #:
-#: **少列一份，那一份的手改就永远检不出来**，而且会被报成「无变化」退出——比漏报更糟的是
-#: 它看起来像结论。所以凡是人可能直接动、又决定下游是否成立的，都在这里：
-#: 叙事与评审件、Spec 与它的两份真源投影（验收、知识判断）、决策登记与写作设计、
-#: 以及 Plan 与它的两份强契约（`contracts.yaml` / `use-cases.yaml` **在需求根目录**，
-#: 不在 `plan/` 下面——按目录名猜会全盘落空）。
-#: 列在这里只表示「盯着」：盘上没有的跳过，不当成被删（`_scan`）。
-PRODUCTS = (
-    STORY, REVIEW,
-    ("spec", "spec.md"), ("acceptance.yaml",), ("spec", "knowledge-use.yaml"),
-    ("AR", "story-src", "decisions.json"), ("AR", "story-src", "story-template.md"),
-    ("plan", "plan.md"), ("contracts.yaml",), ("use-cases.yaml",),
-)
+#: 连同合同登记的三份上游正文（`registry.source_docs()`）与收件箱（由材料事实回答，
+#: 不按文件哈希比），一共八项。决策登记、写作设计、知识判断、验收与两份强契约不在里面：
+#: 它们是模型据这几份写出来的中间真源，随交付件的修订而变，是结果不是原因。
+#: 人要直接改强契约，那是 framework 的修正入口，不是 update。
+#: 盘上没有的跳过，不当成被删（`_scan`）。
+PRODUCTS = (STORY, REVIEW, ("spec", "spec.md"), ("plan", "plan.md"))
 
 
 def _updates_dir(feature_root: Path) -> Path:
@@ -123,25 +123,20 @@ def _compare(current: dict[str, str], base: dict[str, str] | None,
             "unknown": []}
 
 
-def _incoming(feature_root: Path) -> list[str]:
-    """取材暂存区里现在有什么。**只看、不导**：导入会改正文，那是模型读完之后的事。"""
-    base = feature_root / Path(*INCOMING)
-    if not base.is_dir():
-        return []
-    return sorted(f.relative_to(base).as_posix() for f in base.rglob("*")
-                  if f.is_file() and not f.name.startswith("."))
+def _skipped(rel: Path) -> bool:
+    return bool(set(rel.parts[:-1]) & MIRROR_SKIP) or rel.name in MIRROR_SKIP_FILES
 
 
 def _mirror(feature_root: Path, dest: Path) -> int:
     """本次执行前的完整现场。**先存够再往下走**：存不下就别开始。
 
-    跳过本层自己的两个目录；符号链接不跟随——跟随的话，指到需求目录外面的那一条
+    跳过 `MIRROR_SKIP` 那几类；符号链接不跟随——跟随的话，指到需求目录外面的那一条
     会把镜像写到别处，而「还原」时又照着它写回去。
     """
     count = 0
     for src in sorted(feature_root.rglob("*")):
         rel = src.relative_to(feature_root)
-        if set(rel.parts) & MIRROR_SKIP or src.is_symlink():
+        if _skipped(rel) or src.is_symlink():
             continue
         if src.is_file():
             target = dest / rel
@@ -198,45 +193,126 @@ def _note_prepare(feature_root: Path, comparison: str) -> None:
         pass          # 留痕失败不该让一次正常的检测失败
 
 
-def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
-    """一次 update 的起手：比一遍、该留的留下、该说的说清楚。
-
-    四种去向，`comparison` 直说是哪一种：
-
-    - `resume`   上一轮还开着。**不新建镜像**——新的会把旧的恢复依据盖掉；
-    - `unchanged` 真的没变、比较完整、也没有人明确要求重查：删掉本次临时副本退出；
-    - `incomplete` 比较基准缺席或来源读不到：说清可查与不可查的范围，交模型判当前一致性；
-    - `changed`  有变化：本轮镜像留着不动，差异与位置交给模型。
-
-    **返回的全是机械事实**：哪几份文件跟上次不一样、暂存区里有什么、镜像在哪。
-    这些事实不表示任何业务结论——「变化意味着什么」由模型读原文回答。
-    """
+def _contract(feature_root: Path) -> dict:
     contract = load(feature_root)
     if contract is None:
         raise FlowError("这个单没走过 /story：先跑 `story_flow.py init`，"
                         "update 更新的是已经存在的产物")
+    return contract
 
-    records = _records(feature_root)
+
+def _resume(records: list[tuple[str, dict]]) -> dict | None:
+    """上一轮还开着：**不新建镜像**——新的会把旧的恢复依据盖掉。"""
     for rid, rec in reversed(records):
         if rec.get("status") == "open":
             return {"comparison": "resume", "update": rid,
                     "notes": f"AR/story-src/updates/{rid}/update-notes.md",
                     "action": f"上一次 update（{rid}）还开着：先读它的 update-notes 与 before/ "
                               "接着做完，或按它的记录还原现场。不新建这一轮的镜像。"}
+    return None
 
+
+def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]],
+             request: str | None) -> dict:
+    """四类输入一次收齐：交付件与上游正文对上次的差异、读不到的、收件箱的材料事实、人的要求。
+
+    `inputs` 与 `prepare` 读的是同一份——两处各收一遍，迟早一处说有变化、一处说没有。
+    材料事实就是 init 的第一级关卡用的那两个（`material_state`），不另算一套。
+    """
     current, unreadable = _scan(feature_root)
-    base = _baseline(records)
-    diff = _compare(current, base, unreadable)
-    incoming = _incoming(feature_root)
-    asked = bool(str(request or "").strip())
-    changed = diff["added"] + diff["modified"] + diff["removed"]
+    diff = _compare(current, _baseline(records), unreadable)
+    rounds = contract.get("rounds") or []
+    last = rounds[-1] if rounds else {}
+    state = material_state(feature_root, last)
+    # 没登记过材料基准不算「变了」：那是轮次自己缺指纹，由流程契约的判据报
+    registered = bool((last.get("materials") or {}).get("digest"))
+    return {"current": current, "unreadable": unreadable, "diff": diff,
+            "changed": diff["added"] + diff["modified"] + diff["removed"],
+            "pending": state["pending"], "materials_changed": registered and state["changed"],
+            "request": str(request or "").strip() or None}
 
-    if diff["complete"] and not changed and not incoming and not unreadable and not asked:
+
+def _nothing(facts: dict) -> bool:
+    return (facts["diff"]["complete"] and not facts["changed"] and not facts["unreadable"]
+            and not facts["pending"] and not facts["materials_changed"] and not facts["request"])
+
+
+def _receipt(feature_root: Path) -> dict | None:
+    """最近一次取材的回执。**原样转交**：取到没有、与本地是否相同由对接层写明，这里不判。"""
+    path = feature_root / "AR" / "story-src" / "fetched.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8").lstrip("\ufeff"))
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
+                      request: str | None = None) -> dict:
+    """输入阶段：**报告，不建任何东西**。人还没说要不要补料，现在比出来的不是最终的变化。
+
+    在流程契约上记一笔 `update.stage = inputs`：路由据它把这一次停在第一级关卡——
+    与 init 同一个关卡、同一份侧车、同一条 `decide`，问的是这一次要不要补料。
+    """
+    contract = _contract(feature_root)
+    records = _records(feature_root)
+    resumed = _resume(records)
+    if resumed:
+        return resumed
+    facts = _collect(feature_root, contract, records, request)
+    contract["update"] = {**(contract.get("update") or {}), "stage": "inputs", "inputs_at": now(),
+                          "inputs_from": len(round_gates(contract))}
+    save(feature_root, contract)
+    fetch = _fetch_command(feature_root, feature, project_root)
+    return {"stage": "inputs", "changed": facts["changed"], "unreadable": facts["unreadable"],
+            "baseline": facts["diff"]["complete"], "pending": facts["pending"],
+            "materials_changed": facts["materials_changed"],
+            "upstream": _receipt(feature_root) if fetch else None, "fetch": fetch,
+            "action": ("`upstream` 是最近一次取材的回执（看它的时刻，没取过或不是这一次取的就先跑 `fetch`）；"
+                       if fetch else "本地单没有上游；")
+                      + "按 `rules/init_analysis.md` S2a 盘点手上的料，摆第一级选项侧车，"
+                      "问人这一次要不要补料，**停等**。人答了 → `decide --gate material_scope` 记原话 → "
+                      "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare`"}
+
+
+def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
+    """输入定了之后比一遍、该留的留下、该说的说清楚。
+
+    四种去向，`comparison` 直说是哪一种：
+
+    - `resume`   上一轮还开着。**不新建镜像**——新的会把旧的恢复依据盖掉；
+    - `unchanged` 八项都没变、收件箱没有未并入的原件、比较完整、也没有人明确要求：什么都不建，退出；
+    - `incomplete` 比较基准缺席或来源读不到：说清可查与不可查的范围，交模型判当前一致性；
+    - `changed`  有变化：本轮镜像留着不动，差异与位置交给模型。
+
+    **返回的全是机械事实**：哪几份文件跟上次不一样、收件箱里什么还没并入、镜像在哪。
+    这些事实不表示任何业务结论——「变化意味着什么」由模型读原文回答。
+    """
+    contract = _contract(feature_root)
+    update = contract.get("update") or {}
+    if update.get("stage") == "inputs":
+        answer = inputs_answer(contract)
+        if not answer or answer.get("outcome") != "accepted":
+            raise FlowError("输入阶段还没问过人要不要补料：按 `status` 的下一步在第一级关卡停一次，"
+                            "人答了、料登记进本轮，再跑 prepare")
+    records = _records(feature_root)
+    resumed = _resume(records)
+    if resumed:
+        return resumed
+
+    facts = _collect(feature_root, contract, records, request)
+    current, unreadable, diff, changed = (facts["current"], facts["unreadable"],
+                                          facts["diff"], facts["changed"])
+    pending, asked = facts["pending"], bool(facts["request"])
+
+    if _nothing(facts):
         # 本次什么都没建，所以也没有要删的临时副本；说清楚「比过了、真没变」。
+        # 输入阶段的记号到此用完：留着的话路由会一直把这个单停在补料关卡。
+        contract["update"] = {k: v for k, v in update.items() if k not in ("stage", "inputs_at", "inputs_from")}
+        save(feature_root, contract)
         _note_prepare(feature_root, "unchanged")
         return {"comparison": "unchanged", "compared": len(current),
-                "action": "与上次已处理的版本逐份比过，没有变化，也没有没做完的更新。"
-                          "这一轮不改任何业务文件，不进语义流程。"}
+                "action": "与上次已处理的版本逐份比过，没有变化，收件箱也没有未并入的原件，"
+                          "没有没做完的更新。这一轮不改任何业务文件，不进语义流程。"}
 
     # id 用时间是为了人一眼看得出先后；撞名就加序号，**不把「同一秒跑了两次」做成失败**。
     stem = now().replace("-", "").replace(":", "").replace("T", "-")[:15]
@@ -257,9 +333,6 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
             break
     diffs = _write_diffs(feature_root, base_dir, diff["added"] + diff["modified"], root / "diff")
 
-    if incoming:
-        shutil.copytree(feature_root / Path(*INCOMING), root / "incoming", dirs_exist_ok=True)
-
     contract["update"] = {"open": rid, "opened_at": now()}
     save(feature_root, contract)
     # 这一笔是本层自己的记号（路由据它改去向）。镜像里那份一起更新：
@@ -268,31 +341,36 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
     record = {"id": rid, "opened_at": now(), "status": "open",
               "files": current, "unreadable": unreadable, "comparison": diff,
-              "incoming": incoming, "request": str(request or "").strip() or None,
+              "materials": {"pending": pending, "changed": facts["materials_changed"]},
+              "request": facts["request"],
               "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": mirrored}}
     (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
 
     # 有东西要处理就是 changed；走到这里却什么都没有，只能是基准缺席或来源读不到。
-    kind = "changed" if (changed or incoming or asked) else "incomplete"
+    material = bool(pending or facts["materials_changed"])
+    kind = "changed" if (changed or material or asked) else "incomplete"
     lines = []
     if changed:
         lines.append("变了的：" + "、".join(changed))
-    if incoming:
-        lines.append(f"取材暂存区有 {len(incoming)} 份等你读（不覆盖当前稿）")
+    if pending:
+        lines.append(f"收件箱有 {len(pending)} 份还没并入正文（{'、'.join(pending[:3])}）："
+                     "采用的先导入、`round` 登记到本轮")
+    elif facts["materials_changed"]:
+        lines.append("材料指纹与本轮登记的对不上：先 `round` 登记到本轮")
     if not diff["complete"]:
         lines.append("没有上次已处理的版本可比：这一轮说不出「原来怎么写」，"
                      "按当前材料与产物核一致性，别补造历史")
     if unreadable:
         lines.append("读不到：" + "、".join(f"{k}（{why}）" for k, why in unreadable.items())
                      + "——这是缺口，不是「没有变化」，更不是「它被删了」")
-    if asked and not changed and not incoming:
+    if asked and not changed and not material:
         # 文件一个字节没变，但人明确要求改一件事：这不是「无变化」，要走语义流程。
         lines.append("文件没变，但这一轮有人明确要求改的事，按它处置")
     _note_prepare(feature_root, kind)
     log(f"update {rid}：镜像 {mirrored} 份、差异 {diffs} 份")
-    return {"comparison": kind, "update": rid, "changed": changed, "incoming": incoming,
-            "unreadable": unreadable, "baseline": bool(base), "diffs": diffs,
+    return {"comparison": kind, "update": rid, "changed": changed, "pending": pending,
+            "unreadable": unreadable, "baseline": diff["complete"], "diffs": diffs,
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
                       "处置方法见 phases/update.md"}
@@ -325,19 +403,18 @@ def _phase_facts(feature_root: Path) -> list[dict]:
     return out
 
 
-def _incoming_dir(feature_root: Path) -> Path:
-    """取材暂存区的落点**由本层拥有**。
+def _fetch_command(feature_root: Path, feature: str, project_root: Path) -> str | None:
+    """取材命令由本层渲染：落点是这个单的 `inbox/`——与人补料同一个入料口。
 
-    让模型自己拼 `--out` 的话，它可以指到任何目录——包括需求目录外面。
-    路径由这里给、命令由这里渲染，对接层就不必承担「不许写到别处」这件事。
+    让模型自己拼 `--out` 的话，它可以指到任何目录，包括需求目录外面。
+    `--project-root` 一并写上：回执落在它下面的需求目录里，与 `--out` 必须是同一个工程。
+    本地单不挂在需求系统上，没有这条命令。
     """
-    return feature_root / Path(*INCOMING)
-
-
-def _fetch_command(feature_root: Path, feature: str) -> str:
+    if re.match(r"local[-_]", feature, re.IGNORECASE):
+        return None
     adapter = SKILL_ROOT / "scripts" / "adapters" / "story.js"
     return (f"node {adapter.as_posix()} fetch {feature} <token> "
-            f"--out {_incoming_dir(feature_root).as_posix()}")
+            f"--project-root {project_root.as_posix()} --out {(feature_root / 'inbox').as_posix()}")
 
 
 def _latest(records: list[tuple[str, dict]], status: str | None = None) -> tuple[str, dict] | None:
@@ -347,14 +424,14 @@ def _latest(records: list[tuple[str, dict]], status: str | None = None) -> tuple
     return None
 
 
-def cmd_update_status(feature_root: Path, feature: str) -> dict:
+def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> dict:
     """现在有没有开着的更新、上一次做到哪、说明在哪。**只报事实，不判对错。**"""
     records = _records(feature_root)
     openest = _latest(records, "open")
     closed = _latest(records, "closed")
     out = {"rounds": len(records), "phases": _phase_facts(feature_root),
-           "incoming": _incoming(feature_root),
-           "fetch": _fetch_command(feature_root, feature)}
+           "stage": ((load(feature_root) or {}).get("update") or {}).get("stage"),
+           "fetch": _fetch_command(feature_root, feature, project_root)}
     if openest:
         rid, rec = openest
         notes = _updates_dir(feature_root) / rid / "update-notes.md"
@@ -405,18 +482,7 @@ def cmd_update_close(feature_root: Path) -> dict:
         shutil.copyfile(src, target)
         kept += 1
 
-    # 暂存区在这一轮结束时清空。**副本已经在本轮目录里**（prepare 复制过），
-    # 不清的话下一轮 prepare 看见它非空，永远报 changed——一次没清，之后每一次都白跑。
-    # 要采用的那几份此时应当已经按正常导入链进了正文（放 inbox → `round` 登记），
-    # 没采用的理由写在 update-notes 里：清掉的是暂存，不是依据。
-    staged = feature_root / Path(*INCOMING)
-    cleared = 0
-    if staged.is_dir():
-        cleared = sum(1 for f in staged.rglob("*") if f.is_file())
-        shutil.rmtree(staged)
-
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
-               cleared_incoming=cleared,
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
                phases=_phase_facts(feature_root))
@@ -427,9 +493,8 @@ def cmd_update_close(feature_root: Path) -> dict:
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
     return {"update": rid, "status": "closed", "compared_next_time": kept,
-            "unreadable": unreadable, "cleared_incoming": cleared,
+            "unreadable": unreadable,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
-                      + (f"取材暂存区的 {cleared} 份已清（副本在本轮 incoming/ 里）。" if cleared else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}
 
@@ -459,7 +524,7 @@ def cmd_update_restore(feature_root: Path) -> dict:
     # 算进去就会被当成多出来的文件删掉，而它在这一轮开始之前就在。
     live = {p.relative_to(feature_root).as_posix() for p in feature_root.rglob("*")
             if p.is_file() and not p.is_symlink()
-            and not (set(p.relative_to(feature_root).parts) & MIRROR_SKIP)}
+            and not _skipped(p.relative_to(feature_root))}
 
     conflicts, restored, removed = [], 0, 0
     def keep(rel: str) -> None:

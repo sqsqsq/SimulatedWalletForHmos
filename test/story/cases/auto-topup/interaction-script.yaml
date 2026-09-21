@@ -39,3 +39,10 @@ replies:
     expected_kind: story_gate
     expected_phase: archived
     text: 评审意见已写在系统上，拉回来处理；开关那条要改。
+
+  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §5.9 第 6 步）。
+  # 料已经随第二段的那句话投进去了，这里只答「补不补」。
+  - id: update-material
+    expected_turn: 6
+    expected_kind: story_gate
+    text: 就这份新版，按它更新。

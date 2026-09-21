@@ -243,8 +243,7 @@ def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str |
     if sidecar_gate(feature_root) != "material_scope":
         return False, None
     try:
-        read_gate_options(feature_root, "material_scope",
-                          contract["rounds"][-1].get("round", 1))
+        read_gate_options(feature_root, "material_scope", remaining=True)
     except FlowError as exc:
         return True, str(exc)
     return True, None
@@ -254,6 +253,88 @@ def frozen_tail(feature_root: Path, contract: dict, manifest: dict | None = None
     """冻结态的下一步末尾那一句：收件箱里有没有没人管的原件。`next` 本身不变。"""
     note = frozen_inbox_note(feature_root, contract, manifest)
     return f"。**另外**：{note}" if note else ""
+
+
+def inputs_answer(contract: dict) -> dict | None:
+    """update 的输入阶段开始之后，人在第一级留下的最后一笔；还没答过返回 None。
+
+    与 init 同一个关卡、记在当前轮：update 不开新轮（开了，已成文的 story 据以成文的那批料
+    就对不上了）。「这一次答没答」按位置分：输入阶段开始时本轮已有几笔记在 `inputs_from`，
+    只认它之后追加的。**不按时刻比**——时刻只精确到秒，同一秒里的上一次回答会被当成这一次。
+    """
+    since = int((contract.get("update") or {}).get("inputs_from") or 0)
+    for gate in reversed(round_gates(contract)[since:]):
+        if gate.get("gate") == "material_scope":
+            return gate
+    return None
+
+
+def update_inputs_step(feature_root: Path, contract: dict,
+                       manifest: dict | None = None) -> tuple[str, str]:
+    """update 的输入阶段：**先问要不要补料，人答了再比**。
+
+    问法、侧车、人签、登记全是 init 第一级那一套；差别只在它每次 update 都停一次——
+    上游变没变、手上还缺什么，只有人说了才算定。
+    """
+    answer = inputs_answer(contract)
+    if answer is None or answer.get("outcome") != "accepted":
+        if sidecar_gate(feature_root) == "material_scope":
+            try:
+                # 问的是「这一次要不要补」，不是补过一轮之后的剩余缺口
+                read_gate_options(feature_root, "material_scope", remaining=False)
+            except FlowError as exc:
+                return "fix_gate_options", f"这一级的选项侧车还立不住，先补齐再问人：{exc}"
+        return ("await_gate:material_scope",
+                "update 的输入阶段：**先摆选项侧车再问人**——报告上游哪几份变了、没变、取不到，"
+                "本地已有什么，一句缺口判断，问这一次要不要补料："
+                + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
+    state = material_state(feature_root, contract["rounds"][-1], manifest)
+    pending = pending_import_step(state)
+    if pending:
+        return pending
+    if state["changed"]:
+        return ("refresh_round", "新料已并入正文：跑 `story_flow.py round` 登记到本轮（它不开新轮），"
+                "再 `story_flow.py update --action prepare`")
+    return ("update_prepare", "输入已定：跑 `story_flow.py update --feature <名> --action prepare`"
+            "，它比较八项并开这一轮（全都没变就直接说没变）")
+
+
+def update_open_step(feature_root: Path, contract: dict,
+                     manifest: dict | None = None) -> tuple[str, str] | None:
+    """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**——收口前后都是这一句。
+
+    不加这一支的话，update 改完材料一跑 status，路由会把人送回材料盘点与范围关卡；
+    `reopen` 之后状态回到 in_progress，常规路径也会把它当成一轮新的范围判断。
+    范围这一轮并没有重新定，材料也不是「补了一批要重新拍板」，是一次有明确依据的修订。
+
+    返回 None 的只有一种：reopen 之后材料又变了——那时 `round` 会开新轮，
+    交回常规路径如实说「要重新走关卡」，不在这里假装它还是一次修订。
+    """
+    rid = contract["update"]["open"]
+    state = material_state(feature_root, contract["rounds"][-1], manifest)
+    pending = pending_import_step(state)
+    if pending:
+        return pending
+    closed = after_complete(contract)
+    if state["changed"]:
+        if not closed:
+            return None
+        return ("refresh_round", "这一轮新到的料已并入正文：先跑 `story_flow.py round` 登记到本轮"
+                "（它不开新轮），**再** `reopen`——反过来，路由会按「材料变了」把你送回关卡")
+    if not closed:
+        # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人重新拍板
+        meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
+        if meeting_now:
+            return meeting_now
+    return ("update_in_progress",
+            f"更新 {rid} 正在进行：按 AR/story-src/updates/{rid}/update-notes.md 里的修订清单改，"
+            "不重走材料与范围关卡。改章的顺序：`story_flow.py reopen` 撤销成文登记 → "
+            "`complete` 收口（范围与材料没变，它直接过）→ 在草稿上改、`chapter` 提交 → "
+            "`story` 重新登记。**新到的料先 `round` 登记到本轮，再 reopen**。"
+            "范围本身要变不在这一轮做：报「尚未完成：范围需重新拍板」并收口保留项，由人走 `reopen` 重拍。"
+            "改完：`--revalidate` → 派 verifier → `--sync-closure` → "
+            "`story_flow.py update --action close` 收口这一轮"
+            + frozen_tail(feature_root, contract, manifest))
 
 
 def next_step(feature_root: Path, contract: dict | None,
@@ -268,6 +349,9 @@ def next_step(feature_root: Path, contract: dict | None,
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
+    update = contract.get("update") or {}
+    if update.get("stage") == "inputs":
+        return update_inputs_step(feature_root, contract, manifest)
     # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
     late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
             if after_complete(contract) else [])
@@ -275,23 +359,10 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
                 "先跑 `story_flow.py reopen`，再读会；有要人定的话题时摆给人一次"
                 + frozen_tail(feature_root, contract, manifest))
-    # **更新正在进行时，收口后的去向是「按修订清单改」，不是重走关卡。**
-    #
-    # 不加这一支的话，update 改完材料一跑 status，路由会把人送回材料盘点与范围关卡——
-    # 而范围这一轮并没有重新定，材料也不是「补了一批要重新拍板」，是一次有明确依据的修订。
-    # 重走一遍的代价不只是多问两次：关卡会开出新一轮，这一轮的 story 与 spec 据以成文的
-    # 那批料就对不上了。新会议不走这里（上面 `late` 那支已经接住）——会上有要人定的话题，
-    # 那是真的要人重新拍板。
-    if after_complete(contract) and (contract.get("update") or {}).get("open"):
-        rid = contract["update"]["open"]
-        return ("update_in_progress",
-                f"更新 {rid} 正在进行：按 AR/story-src/updates/{rid}/update-notes.md 里的修订清单改，"
-                "不重走材料与范围关卡。成文登记之后要改章先跑 `story_flow.py reopen`，"
-                "在草稿上改、`chapter` 提交、`story` 重新登记；这一轮新到的材料跟着 "
-                "`story_flow.py round` 登记到本轮（它不开新轮）。"
-                "范围本身要变，按已确认的权限问人，不自己扩。"
-                "改完跑 `story_flow.py update --action close` 收口这一轮"
-                + frozen_tail(feature_root, contract, manifest))
+    if update.get("open"):
+        step = update_open_step(feature_root, contract, manifest)
+        if step:
+            return step
     if contract.get("status") == "story_written" and contract.get("archived"):
         return ("done", "本轮已归档送审。评审意见与上游新材料走 `/story update`；补料或改稿先 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))

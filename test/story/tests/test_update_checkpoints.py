@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -313,6 +314,41 @@ class TheTwoSegmentsAreMeasuredApart(unittest.TestCase):
         (self.tmp / "state.json").write_text("{}", encoding="utf-8")
         self.assertIsNone(self.mr.split_at_checkpoint([{"timestamp": "2026-09-21T10:00:00+08:00"}],
                                                       self.tmp))
+
+
+class TheSecondCheckpointShowsTheReviewClosure(unittest.TestCase):
+    """第二检查点把各阶段审查闭环是哪一种带给宿主。
+
+    预跑里 auto 写了审查报告却没同步闭环，summary 仍是「沿用历史 PASS」，模型报了完成；
+    宿主要逐份翻文件才看得见。这里只报事实，不判。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        feature = self.tmp / "doc" / "features" / "AR1"
+        for phase, body in (("spec", {"verifier_closure": {"mode": "completed_with_prior_review"},
+                                      "readiness_signals": [{"id": "semantic_not_reverified"}],
+                                      "verifier_subject_id": "e1de"}),
+                            ("plan", {"readiness_signals": [], "verifier_subject_id": "6233"})):
+            (feature / phase / "reports").mkdir(parents=True)
+            (feature / phase / "reports" / "summary.json").write_text(json.dumps(body),
+                                                                      encoding="utf-8")
+        patcher = unittest.mock.patch.multiple(rc, REPO_ROOT=self.tmp, FEATURES_DIR="doc/features")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_it_reports_each_phase_as_it_is(self) -> None:
+        out = rc.review_closure("AR1")
+        self.assertEqual("completed_with_prior_review", out["spec"]["mode"])
+        self.assertEqual(["semantic_not_reverified"], out["spec"]["signals"])
+        self.assertEqual([], out["plan"]["signals"])
+        self.assertNotIn("coding", out, "没有产物的阶段不该出现")
+
+    def test_the_event_carries_it(self) -> None:
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        at = src.index('feed.emit("update_checkpoint"')
+        self.assertIn("closure=review_closure(feature)", src[at:at + 300])
 
 
 class TheOldFakePhaseIsGone(unittest.TestCase):

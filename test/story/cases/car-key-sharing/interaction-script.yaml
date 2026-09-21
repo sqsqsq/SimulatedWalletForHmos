@@ -44,3 +44,10 @@ replies:
     expected_kind: story_gate
     expected_phase: spec
     text: 通过。撤销中的用户文案改为「正在收回」；未定两件保持未定。
+
+  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §5.9 第 6 步）。
+  # 料已经随第二段的那句话投进去了，这里只答「补不补」。
+  - id: update-material
+    expected_turn: 7
+    expected_kind: story_gate
+    text: 不补。

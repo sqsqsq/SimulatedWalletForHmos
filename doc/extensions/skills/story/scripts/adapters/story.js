@@ -322,13 +322,19 @@ function cmdFetch(ar, featureRoot, system, outDir) {
   }
   const srNo = ticket.detail && ticket.detail.parentNo;
   const rrNo = ticket.detail && ticket.detail.rrNo;
+  // 三份正文进 inbox，与人补的料走同一条导入链。`local` 是本地对应的那几份：
+  // 取回来的与其中一份逐字相同就不落盘（`same`）——放进去它就是一份「未并入的原件」，
+  // 每次 update 都会被报成新料。本单的系统正文与本地 story 相同，就是自己归档上去的那一版。
+  // 评审回稿不是需求正文，导入链没有它的类别：放在回执旁边，由模型读，不进 inbox。
+  const src = path.join(featureRoot, 'AR', 'story-src');
   const wanted = [
-    { name: 'AR-design.md', label: '开发需求正文（本单）', no: ar, parts: ['design.md'] },
-    { name: 'SR-design.md', label: '系统设计正文', no: srNo, parts: ['design.md'] },
-    { name: 'RR-prd.md', label: '产品需求正文', no: rrNo, parts: ['prd.md'] },
-    { name: 'review-feedback.md', label: '评审人留下的回稿', no: ar, parts: ['review-feedback.md'] },
+    { name: 'AR-design.md', label: '开发需求正文（本单）', no: ar, parts: ['design.md'],
+      local: ['AR/design.md', 'AR/story.md'] },
+    { name: 'SR-design.md', label: '系统设计正文', no: srNo, parts: ['design.md'], local: ['SR/design.md'] },
+    { name: 'RR-prd.md', label: '产品需求正文', no: rrNo, parts: ['prd.md'], local: ['RR/prd.md'] },
+    { name: 'review-feedback.md', label: '评审人留下的回稿', no: ar, parts: ['review-feedback.md'],
+      local: [], dir: src },
   ];
-  fs.mkdirSync(outDir, { recursive: true });
   const items = wanted.map((w) => {
     if (!w.no) return { ...pick(w), status: 'absent', note: '这张单上没有挂它' };
     let text = null;
@@ -338,24 +344,32 @@ function cmdFetch(ar, featureRoot, system, outDir) {
       return { ...pick(w), status: 'failed', note: e.message };
     }
     if (text === null) return { ...pick(w), status: 'absent', note: '系统上现在没有这一份' };
-    fs.writeFileSync(path.join(outDir, w.name), text, 'utf-8');
-    return {
-      ...pick(w),
-      status: 'fetched',
+    const facts = {
       digest: `sha256:${crypto.createHash('sha256').update(text).digest('hex').slice(0, 16)}`,
       origin: [w.no, ...w.parts].join('/'),
       bytes: Buffer.byteLength(text, 'utf-8'),
     };
+    const same = w.local.find(rel => readOr(path.join(featureRoot, rel)) === text);
+    if (same) return { ...pick(w), status: 'same', note: `与本地 ${same} 逐字相同`, ...facts };
+    const dir = w.dir || outDir;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, w.name), text, 'utf-8');
+    return { ...pick(w), status: 'fetched', saved: path.relative(featureRoot, path.join(dir, w.name))
+      .split(path.sep).join('/'), ...facts };
   });
   const receipt = { mode: 'fetch', reqNo: ar, fetchedAt: ts(), items };
-  fs.writeFileSync(path.join(outDir, 'fetched.json'),
-    `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, 'fetched.json'), `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
   const got = items.filter(i => i.status === 'fetched').length;
   const bad = items.filter(i => i.status === 'failed').length;
   log(`取回 ${got} 份到 ${outDir}${bad ? `，${bad} 份读取失败` : ''}；一个业务文件都没动`);
   emit({ mode: 'fetch', reqNo: ar, out: outDir, fetched: got, failed: bad,
     items, success: bad === 0 });
   if (bad) process.exit(1);
+}
+
+function readOr(file) {
+  try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
 }
 
 /** 清单里每份都带的身份三件：文件名、它是什么、在系统上挂在哪张单下。 */
@@ -369,7 +383,7 @@ function cmdHelp() {
   2. /spec                需求规格三产物：spec.md（代码要求）+ AR/review.md（人的决策）+ AR/story.md（归档件），门禁校验三份齐备
   3. /story archive <AR>  以 AR/story.md 为正文、AR/review.md 为附件归档上传（系统正文名固定 design.md；工作区文件不变）
   4. /story restore <AR>  把系统正文恢复回上一版（本地 design.md 不变）
-  5. /story update <AR>   取回上游与评审的新内容，据它更新已有产物（取材只写暂存，不覆盖当前稿）
+  5. /story update <AR>   取回上游与评审的新内容，据它更新已有产物（取材只写 inbox，不覆盖当前稿）
   详细规则：doc/extensions/skills/story/SKILL.md`);
 }
 
@@ -402,7 +416,7 @@ for (let i = 4; i < process.argv.length; i++) {
 }
 
 const USAGE = '用法：node story.js <init|archive|restore|fetch|help> <AR> [mcp-token] '
-  + '[--project-root <abs>] [--out <暂存目录>（fetch 必填）]';
+  + '[--project-root <abs>] [--out <本单 inbox>（fetch 必填）]';
 const CMDS = ['init', 'archive', 'restore', 'fetch', 'help'];
 if (argError) fail(`${argError}。${USAGE}`);
 if (!CMDS.includes(cmd)) {
@@ -429,7 +443,8 @@ if (cmd === 'init') cmdInit(ar, featureRoot, localAr, system);
 else if (cmd === 'archive') cmdArchive(ar, featureRoot, system);
 else if (cmd === 'restore') cmdRestore(ar, system);
 else if (cmd === 'fetch') {
-  // 暂存目录必须由调用方指定：默认一个落点的话，两个单同时更新会写进同一处。
-  if (!outArg) fail(`fetch 要 --out <暂存目录>：它只往那里写，不碰任何业务文件。${USAGE}`);
+  // 落点必须由调用方指定（update 渲染好的那条命令里就是本单的 inbox）：
+  // 默认一个落点的话，两个单同时更新会写进同一处。
+  if (!outArg) fail(`fetch 要 --out <本单 inbox>：它只往那里写，不碰任何业务文件。${USAGE}`);
   cmdFetch(ar, featureRoot, system, path.resolve(projectRoot, outArg));
 }

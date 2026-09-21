@@ -12,7 +12,7 @@ from flow.state import (
 from flow.inputs import (
     GATE_OPTIONS, MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, SCOPE_OPTIONS, SPLIT_PARTS,
     consume_sidecar, read_gate_options, read_split_parts, sidecar_gate, split_carrier_options)
-from flow.routing import live_materials, material_state, next_step
+from flow.routing import inputs_answer, live_materials, material_state, next_step
 from flow.meetings import topic_options
 
 
@@ -77,8 +77,10 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     # 而收件箱里有料时那一步是导入。人能不能表态与导入没做没关系——
     # 他可以放好料先答一句，也可以等导完再答，两种都是同一次表态。
     # 所以这一级的前置是「本轮这一级还没有定下来」，不比对 next 的字面。
+    # update 的输入阶段同一个关卡、记在同一轮，「这一级定没定」只算输入阶段开始之后那一笔
+    in_update = (contract.get("update") or {}).get("stage") == "inputs"
     if gate == "material_scope":
-        settled = last_gate(round_gates(contract), gate)
+        settled = inputs_answer(contract) if in_update else last_gate(round_gates(contract), gate)
         if settled and settled["outcome"] == "accepted":
             raise FlowError(
                 f"本轮第一级已经定了（{settled['chosen']}）——材料再变会开出新一轮，"
@@ -92,7 +94,9 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
     # 后两级不读它，但盘上留着别级的侧车仍要拦：那说明摆选项与走流程对不上，
     # 放过去的话，第一级下一次会把这份别人的侧车读成「材料又有新缺口」。
     if gate == "material_scope":
-        options = read_gate_options(feature_root, gate, current["round"])
+        # init 第 2 轮起问的是补过之后的剩余缺口；update 问的是这一次要不要补
+        options = read_gate_options(feature_root, gate,
+                                    remaining=not in_update and current["round"] > 1)
         if chosen not in MATERIAL_CHOICES:
             raise FlowError(
                 f"material_scope 的 --chosen 须为 {' / '.join(MATERIAL_CHOICES)} 之一，实为「{chosen}」")

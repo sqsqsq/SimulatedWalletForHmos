@@ -359,8 +359,8 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段；评的是快照，不是还在动的目录 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
 | 5 | `resume-update --case <id> --text "<一句正常的业务请求>" [--deliver ...]` | 投的是业务话，不是测试控制语句；材料先到、话后到 |
-| 6 | Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
-| 7 | `checkpoint --point update` → 只读后评 → `conclude` | 与第一段同一套 |
+| 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「就这份新版，按它更新」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
+| 7 | `checkpoint --point update` → 只读后评 → **`conclude`** | 与第一段同一套。后评做完**必须** `conclude`：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段回流的那一份不被覆盖 |
 
 **等待窗口里你只做两件事**：固定快照、只读评测。不要向被测会话发评分、缺陷清单、脚本路径或修法——
