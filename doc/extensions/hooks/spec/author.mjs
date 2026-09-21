@@ -19,7 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
+import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
@@ -77,6 +77,9 @@ function positionSection(projectRoot, feature) {
 function knowledgeSection(projectRoot, feature) {
   const useFile = path.join(featureRoot(projectRoot, feature), 'spec', 'knowledge-use.yaml');
   const knowledge = activeKnowledge(projectRoot);
+  // 路径按实际扩展根给（`paths.extension_dir`），与知识加载读的是同一处——写死默认目录，
+  // 目标仓换了目录时规则照常加载，作者拿到的却是一条不存在的路径。
+  const where = f => relDisplay(projectRoot, path.join(extensionRoot(projectRoot), f.file));
   // 清单为空 = 这个仓还没配置知识。说这一句，不要渲染出「激活 0 条约束（域：）」——
   // 那种句子看起来像派生坏了，作者会去翻机制找原因，而事实是这里本来就没东西可判。
   if (!knowledge.entries.length && !knowledge.facts.length && !knowledge.patterns.length) {
@@ -95,7 +98,11 @@ function knowledgeSection(projectRoot, feature) {
     // 事实文件逐份列路径与它讲什么：规则里说「见部件画像」，画像在哪只有这里说得出来
     //（清单是目标仓的，机制不写死任何一个文件名）。
     '项目事实这几份，规则里提到「画像」「工程事实」时来这里找：',
-    ...knowledge.facts.map(f => `- \`doc/extensions/${f.file}\`——${f.facets.join('、')}`),
+    ...knowledge.facts.map(f => `- \`${where(f)}\`——${f.facets.join('、')}`),
+    '',
+    // 规约的原文入口：判断前读命中域的整份文件——主表是索引，落法附注里的要求同样有效。
+    '规约原文在这几份（判命中之前读该域整份，落法附注同样有效）：',
+    ...knowledge.constraints.map(c => `- \`${where(c)}\`——${c.domain}：${c.title}`),
     '',
     fs.existsSync(useFile)
       ? '骨架已在磁盘上，逐条填 `applicable` 与依据；填完跑 `knowledge-use.mjs render --feature <名>`。'

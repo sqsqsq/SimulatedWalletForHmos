@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -191,6 +192,151 @@ class NeutralKnowledgeCase(unittest.TestCase):
     def render(self) -> subprocess.CompletedProcess:
         return node(str(self.module("knowledge-use.mjs")), "render",
                     "--feature", FEATURE, "--project-root", str(self.root))
+
+
+# 一份与钱包上报协议完全不同的「统计上报」规约：编码是字母加六位、结果只有通过与拒绝、
+# 没有取消也没有耗时的节点是合法的；它自己在落法附注里要求单独成节。机制一个字不认识它。
+NEUTRAL_REPORTING = """---
+name: 中性上报域
+kind: constraints
+domain: NRP
+applies_when: 需求涉及对外统计
+---
+
+# 中性上报域
+
+| 编号 | 约束 | 强制力 | 命中条件 | 处置 | 验证（执行体） | 探针 |
+|---|---|---|---|---|---|---|
+| NRP-01 | 每个统计点在结果确定时报一条，编码为一个字母加六位数字 | 红线 | 需求涉及对外统计 | 列出统计点与编码 | 模型：核统计点与编码 | 无 |
+| NRP-02 | 结果只取通过或拒绝 | 红线 | 需求涉及对外统计 | 逐统计点给出结果 | 模型：核结果取值 | 无 |
+
+## 落法附注
+
+- 命中 NRP-01 的需求，在业务章单独用一节讲统计方案。
+- 有的统计点只有「通过」一种结果、也不计时，这是合法的，不补造拒绝或耗时。
+"""
+
+
+class TheRuleTextIsHandedOverByPath(NeutralKnowledgeCase):
+    """规约原文按路径送到作者与审查者手里——**从激活清单派生，不认域名**。
+
+    「要不要单独成节」「结果有哪几种」由规约原文自己说，机制只负责把原文送到；
+    换一个编码格式、结果集合都不同的上报规约，通用层一行不改照样送到。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.ext / "knowledge" / "constraints" / "neutral-reporting.md").write_text(
+            NEUTRAL_REPORTING, encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        text = manifest.read_text(encoding="utf-8")
+        manifest.write_text(text.replace(
+            "    - knowledge/constraints/neutral-domain.md",
+            "    - knowledge/constraints/neutral-domain.md\n"
+            "    - knowledge/constraints/neutral-reporting.md"), encoding="utf-8")
+
+    def test_the_task_package_lists_every_active_rule_file(self) -> None:
+        proc = subprocess.run(
+            ["node", str(self.ext / "hooks" / "spec" / "author.mjs"), "--feature", FEATURE],
+            cwd=str(self.root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("doc/extensions/knowledge/constraints/neutral-reporting.md", proc.stdout)
+        self.assertIn("NRP", proc.stdout)
+        self.assertIn("落法附注同样有效", proc.stdout)
+
+    def test_the_reviewer_gets_the_same_paths(self) -> None:
+        for phase in ("spec", "plan"):
+            with self.subTest(phase=phase):
+                proc = node("--input-type=module", "-e",
+                            f"const m = (await import({as_url(self.module('pre_verifier.mjs'))})).default;"
+                            f"const out = await m({{ phase: '{phase}', feature: {json.dumps(FEATURE)},"
+                            f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                            "process.stdout.write((out.promptFragments ?? []).join('\\n\\n'));")
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                self.assertIn("doc/extensions/knowledge/constraints/neutral-reporting.md", proc.stdout)
+                self.assertIn("落法附注同样是要求", proc.stdout)
+
+    def test_the_entries_derive_as_written(self) -> None:
+        """条目按原文派生：结果集合就是「通过或拒绝」，没被补成别的集合。
+
+        只证明派生不改写内容；知识在真实需求里被怎样应用，归 S4 的成品评价。
+        """
+        got = json.loads(self.eval_js(
+            "JSON.stringify(k.activeKnowledge(root).entries.filter(e => e.prefix === 'NRP')"
+            ".map(e => [e.id, e.constraint, e.handling]))"))
+        self.assertEqual([["NRP-01", "每个统计点在结果确定时报一条，编码为一个字母加六位数字", "列出统计点与编码"],
+                          ["NRP-02", "结果只取通过或拒绝", "逐统计点给出结果"]], got)
+
+
+class TheRuleTextFollowsTheExtensionDir(TheRuleTextIsHandedOverByPath):
+    """扩展不在默认目录时，送到作者与审查者手里的仍是**实际存在的**原文路径。
+
+    知识加载按 `paths.extension_dir` 找文件；入口若写死默认目录，规则照常加载，
+    拿到路径的人却打不开——原文没送到，还看不出来。
+    """
+
+    MOVED = "tools/story-ext"
+
+    def setUp(self) -> None:
+        super().setUp()
+        moved = self.root / self.MOVED
+        moved.parent.mkdir(parents=True)
+        shutil.move(str(self.ext), str(moved))
+        self.ext = moved
+        (self.root / "framework.config.json").write_text(
+            json.dumps({"paths": {"extension_dir": self.MOVED}}), encoding="utf-8")
+
+    def listed(self, text: str) -> list[str]:
+        return sorted(set(re.findall(r"`([^`\s]+/knowledge/[^`\s]+\.md)`", text)))
+
+    def assert_all_exist(self, text: str) -> None:
+        paths = self.listed(text)
+        self.assertTrue(paths, "一条原文路径都没列出来")
+        self.assertEqual([], [p for p in paths if not (self.root / p).is_file()], "列出了打不开的路径")
+        self.assertTrue(all(p.startswith(self.MOVED + "/") for p in paths), paths)
+
+    def test_the_task_package_lists_every_active_rule_file(self) -> None:
+        proc = subprocess.run(
+            ["node", str(self.ext / "hooks" / "spec" / "author.mjs"), "--feature", FEATURE],
+            cwd=str(self.root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assert_all_exist(proc.stdout)
+
+    def test_the_reviewer_gets_the_same_paths(self) -> None:
+        for phase in ("spec", "plan"):
+            with self.subTest(phase=phase):
+                proc = node("--input-type=module", "-e",
+                            f"const m = (await import({as_url(self.ext / 'hooks' / 'shared' / 'pre_verifier.mjs')})).default;"
+                            f"const out = await m({{ phase: '{phase}', feature: {json.dumps(FEATURE)},"
+                            f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                            "process.stdout.write((out.promptFragments ?? []).join('\\n\\n'));")
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                self.assert_all_exist(proc.stdout)
+
+    def test_the_entries_derive_as_written(self) -> None:
+        """这一项与目录无关，父类已核。"""
+
+
+class TheGenericLayerKnowsNoWalletProtocol(unittest.TestCase):
+    """通用层（hooks、skills、审查规则）不认钱包上报协议：专名只许出现在知识里。
+
+    出现一处，那一处就只在钱包这份 Demo 上成立——换一个目标仓就是错的默认。
+    """
+
+    TOKENS = ("WalletHA", "WalletFuncResult", "chartBuilder", "vocBuilder", "OBS-0",
+              "STEP_ERROR", "十位", "内码")
+
+    def test_no_token_outside_knowledge(self) -> None:
+        hits = []
+        for base in (EXT / "hooks", EXT / "skills", EXT / "rules"):
+            for f in base.rglob("*"):
+                if not f.is_file() or f.suffix not in {".mjs", ".py", ".md", ".yaml", ".json"}:
+                    continue
+                text = f.read_text(encoding="utf-8", errors="replace")
+                hits += [f"{f.relative_to(EXT).as_posix()}：{t}" for t in self.TOKENS if t in text]
+        self.assertEqual([], hits)
 
 
 class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):

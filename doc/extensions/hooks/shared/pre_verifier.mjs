@@ -22,7 +22,7 @@ import { readContracts } from './contracts.mjs';
 import { activeKnowledge } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { extensionRoot, lines, readTextOrNull } from './paths.mjs';
+import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
@@ -175,6 +175,11 @@ export default async function preVerifier(ctx) {
     `本阶段被审的知识判断在 **\`${source.file}\`**：${source.what}。`,
     '**原知识与仓内事实是审查依据，这份判断与契约是被审的对象**——下表把每条规约的原条目与当前判断并列，',
     '对着原文判，不拿判断自证。',
+    ...(knowledge?.constraints?.length
+      ? ['下表只有主表一行；规约的落法附注同样是要求，原文在：'
+        + knowledge.constraints.map(c => '`' + relDisplay(ctx.projectRoot,
+          path.join(extensionRoot(ctx.projectRoot), c.file)) + '`').join('、')]
+      : []),
     '',
     ...table,
     '',
