@@ -16,6 +16,7 @@ finalize 的目的地固定成原编号。这一组锁住改完之后的几件�
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -207,6 +208,111 @@ class NothingToUpdateIsAlsoAnEnding(unittest.TestCase):
         self.assertIn('".last-prepare.json"', upd)
         body = upd.split("def _note_prepare", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("except OSError", body, "留痕失败不该让一次正常的检测失败")
+
+
+class LongPathsDoNotBreakTheRun(unittest.TestCase):
+    """T2 实跑撞上的：Windows 260 字符上限。
+
+    更新轮次的 `before/` 镜像里原样套着带 64 位哈希的阶段报告，放进 output 下的
+    检查点目录或 run 的 artifact 副本就过了 300 字符。上一版三处都崩：检查点快照、
+    收尾的 artifact 副本（崩在这里 worker 连终态都没写成，被判 worker_lost）、
+    宿主侧的回流与摘要。报错还说成「系统找不到指定的路径」——文件明明在。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(rc._long(self.tmp), ignore_errors=True))
+
+    def deep_tree(self) -> Path:
+        """造一棵真的超过 260 字符的目录：路径长度照实跑里那一条的形态。"""
+        root = self.tmp / "src"
+        leaf = root.joinpath("AR", "story-src", "updates", "20260920-123715", "before",
+                             "spec", "reports")
+        name = "verifier.material." + "a" * 64 + ".json"
+        rc._long(leaf).mkdir(parents=True)
+        (rc._long(leaf) / name).write_text("{}", encoding="utf-8")
+        return root
+
+    def test_the_prefix_is_added_once_on_windows(self) -> None:
+        p = rc._long(self.tmp)
+        if os.name == "nt":
+            self.assertTrue(str(p).startswith("\\\\?\\"))
+            self.assertEqual(p, rc._long(p), "前缀加了两次")
+        else:
+            self.assertEqual(self.tmp, p)
+
+    def test_both_sides_agree_on_the_digest(self) -> None:
+        """两侧的摘要口径一致：不然「复制期间变没变」「目的地是不是同一份」判出两种答案。"""
+        root = self.deep_tree()
+        self.assertIsNotNone(rc._tree_digest(root))
+        self.assertIsNotNone(rmc._tree_digest(root))
+
+    @unittest.skipUnless(os.name == "nt", "260 字符上限只在 Windows 上存在")
+    def test_a_deep_tree_copies_into_a_deep_destination(self) -> None:
+        root = self.deep_tree()
+        dest = self.tmp.joinpath("output", "story", "story-suite-20260920-1155", "cases",
+                                 "auto-topup", "20260920-194122-28204-8bae2f56",
+                                 "checkpoints", "update")
+        self.assertGreater(len(str(dest)) + 150, 260, "这棵树不够深，测不到上限")
+        shutil.copytree(rc._long(root), rc._long(dest))
+        self.assertEqual(rc._tree_digest(root), rc._tree_digest(dest))
+
+    def test_every_whole_tree_copy_goes_through_it(self) -> None:
+        """整目录复制一处都不能漏——漏一处，那一处就是下一次的 worker_lost。"""
+        case = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        self.assertIn("shutil.copytree(_long(src), _long(artifact))", case)
+        self.assertIn("shutil.copytree(_long(source), _long(dest))", case)
+        multi = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
+        self.assertIn("shutil.copytree(_long(feature_source), _long(feature_destination))", multi)
+        self.assertIn("shutil.copytree(_long(source), _long(destination))", multi)
+
+    def test_a_failed_snapshot_leaves_no_half_copy(self) -> None:
+        """复制一半的快照比没有更糟：下一次重试会撞上「已有一份不同的快照」。"""
+        case = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        body = case.split("def cmd_checkpoint", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("已清掉半成品", body)
+
+
+class ASuiteThatFinishedDirtyIsStillFinished(unittest.TestCase):
+    """`harness_contaminated` 是在全部 Case 都终态之后才算出来的——它是终态。
+
+    清理预检的名单漏了它，上一轮 suite 就会永远挡住之后每一次起跑，
+    而它早就结束了、一个活进程都没有（T2 起跑时撞上的）。
+    """
+
+    def test_the_cleanup_precheck_accepts_it(self) -> None:
+        src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
+        at = src.index("terminal_suite = str(suite.get(\"status\")) in {")
+        self.assertIn("harness_contaminated", src[at:at + 200])
+
+
+class TheTwoSegmentsAreMeasuredApart(unittest.TestCase):
+    """分界取 `state.json` 的 `resumed_at`——带日期与时区。
+
+    `live.jsonl` 的 `ts` 只有时分秒：两段跨过午夜时（第一段晚上跑完、第二段第二天早上
+    才续上）根本比不出先后。T2 里 car 两段合计量出 919 分钟，全是夜里的睡眠空档。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        sys.path.insert(0, str(SCRIPTS))
+        import measure_run  # noqa: PLC0415
+        self.mr = measure_run
+
+    def test_it_cuts_across_midnight(self) -> None:
+        (self.tmp / "state.json").write_text(
+            json.dumps({"resumed_at": "2026-09-21T02:34:36+00:00"}), encoding="utf-8")
+        events = [{"timestamp": "2026-09-20T20:40:00+08:00"},   # 第一段，前一晚
+                  {"timestamp": "2026-09-20T20:51:00+08:00"},
+                  {"timestamp": "2026-09-21T10:35:00+08:00"},   # 第二段，第二天早上
+                  {"timestamp": "2026-09-21T10:50:00+08:00"}]
+        self.assertEqual(2, self.mr.split_at_checkpoint(events, self.tmp))
+
+    def test_a_plain_run_has_no_split(self) -> None:
+        (self.tmp / "state.json").write_text("{}", encoding="utf-8")
+        self.assertIsNone(self.mr.split_at_checkpoint([{"timestamp": "2026-09-21T10:00:00+08:00"}],
+                                                      self.tmp))
 
 
 class TheOldFakePhaseIsGone(unittest.TestCase):

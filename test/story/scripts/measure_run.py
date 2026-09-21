@@ -168,32 +168,29 @@ def _output_text(event: dict) -> str:
     return ANSI_RE.sub("", str(out or ""))
 
 
-def split_at_checkpoint(events: list[dict], live_path: Path | None) -> int | None:
-    """第一段与第二段的分界 —— **按装置自己发的事件切，不按时间猜**。
+def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
+    """第一段与第二段的分界 —— **按续跑那一刻切，不按时间猜**。
 
-    双检查点单的 `live.jsonl` 里有 `resume_update` 那一条：它之前是第一段，之后是第二段。
-    两段混在一起算的话，第二段那几分钟的增量会被摊进第一段的总量，
-    「这次更新花了多少」就再也分不出来。没有这条事件就是普通单终点，返回 None。
+    分界取 worker 在续跑时写进 `state.json` 的 `resumed_at`：它是带日期与时区的完整时刻。
+    **不读 `live.jsonl` 的 `ts`**：那一列只有时分秒、没有日期，两段一旦跨过午夜
+    （第一段晚上跑完、第二段第二天早上才续上）就比不出先后——实跑里就是这样。
+    也不按序号切：装置的 live 与模型的 events 各有各的序号，拿一条的切另一条是巧合。
 
-    分界取**时间戳**而不是序号：两条流（装置的 live 与模型的 events）各有各的序号，
-    拿一条流的序号去切另一条，切在哪完全是巧合。
+    没有 `resumed_at` 就是普通单终点，返回 None。
     """
-    if live_path is None or not live_path.is_file():
+    if run_dir is None:
         return None
-    mark = None
-    for line in live_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if row.get("event") == "resume_update":
-            mark = _ts(row.get("ts") or row.get("timestamp"))
-            break
+    try:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    mark = _ts(state.get("resumed_at"))
     if mark is None:
         return None
     for i, e in enumerate(events):
         ts = _ts(e.get("timestamp"))
-        if ts and ts >= mark:
+        # 两边都带时区才比；混着裸时刻比会抛错，也会比错
+        if ts and ts.tzinfo and ts >= mark:
             return i
     return len(events)
 
@@ -300,7 +297,7 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
 
     # 双检查点单：两段各自多少事件、各自多长。混在一起算的话，第二段那几分钟的增量
     # 会被摊进第一段的总量，「这次更新花了多少」就再也分不出来。
-    cut = split_at_checkpoint(events, (run_dir / "live.jsonl") if run_dir else None)
+    cut = split_at_checkpoint(events, run_dir)
     segments = None
     if cut is not None:
         def span(rows: list[dict]) -> float | None:

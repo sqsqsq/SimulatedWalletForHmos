@@ -1998,9 +1998,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         src = REPO_ROOT / FEATURES_DIR / feature
         if src.is_dir():
             artifact = out_dir / "artifact"
+            # 长路径前缀：更新轮次的 before/ 镜像里套着带 64 位哈希的阶段报告，
+            # 放进 run 目录就过了 260 字符。上一版在这里崩掉，worker 连终态都没写成，
+            # 被判 worker_lost，门禁结果与 phase-results 一并没了。
             if artifact.exists():
-                shutil.rmtree(artifact)
-            shutil.copytree(src, artifact)
+                shutil.rmtree(_long(artifact))
+            shutil.copytree(_long(src), _long(artifact))
 
         # Review 与所有 gate 都已读完同一份成型 diff，现在恢复
         # 用户跑前的索引/工作树字节状态。
@@ -2367,10 +2370,18 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
                          ensure_ascii=False))
         return 0 if same else 1
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, dest)
+    try:
+        shutil.copytree(_long(source), _long(dest))
+    except (OSError, shutil.Error) as exc:
+        # 复制一半的快照比没有更糟：下一次重试会撞上「已有一份内容不同的快照」而拒绝，
+        # 人只能手动去删一个他不知道为什么在那里的目录。
+        shutil.rmtree(_long(dest), ignore_errors=True)
+        print(json.dumps({"ok": False, "error": f"复制快照失败，已清掉半成品：{str(exc)[:600]}"},
+                         ensure_ascii=False))
+        return 1
     after = _tree_digest(source)
     if after != before:
-        shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(_long(dest), ignore_errors=True)
         print(json.dumps({"ok": False, "error": "复制期间需求目录变了，这次快照作废——"
                                                 "worker 应当停着，先查是谁在写"},
                          ensure_ascii=False))
@@ -2381,16 +2392,31 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
     return 0
 
 
+def _long(path: Path) -> Path:
+    """Windows 上给绝对路径加 `\\\\?\\` 前缀，越过 260 字符的老上限。
+
+    检查点复制的是整个需求目录，而第二段的 `updates/<id>/before/` 里原样套着一份
+    阶段报告（文件名带 64 位审查对象哈希），再放进 output 下好几层深的检查点目录，
+    路径轻松过 300。不加前缀的话 copytree 报「系统找不到指定的路径」——
+    **文件明明在，是路径太长**，报错却说成找不到，排查的人会先去怀疑文件丢了。
+    """
+    if os.name != "nt":
+        return path
+    text = str(path.resolve())
+    return path if text.startswith("\\\\?\\") else Path("\\\\?\\" + text)
+
+
 def _tree_digest(root: Path) -> str:
     """一棵目录的内容摘要：逐文件相对路径 + 内容哈希，排序后再哈希。
 
     只认内容与位置，不认时间戳——同一份东西复制一遍摘要不变，才判得出「复制期间变没变」。
     """
     parts = []
-    for f in sorted(root.rglob("*")):
+    base = _long(root)
+    for f in sorted(base.rglob("*")):
         if not f.is_file() or f.is_symlink():
             continue
-        parts.append(f"{f.relative_to(root).as_posix()}:{hashlib.sha256(f.read_bytes()).hexdigest()}")
+        parts.append(f"{f.relative_to(base).as_posix()}:{hashlib.sha256(f.read_bytes()).hexdigest()}")
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 

@@ -1419,7 +1419,12 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
             target.update({"suite_status": suite.get("status"),
                            "case_statuses": statuses, "worker_pids": pids,
                            "live_worker_pids": live_pids})
-            terminal_suite = str(suite.get("status")) in {"finished", "failed", "stopped"}
+            # `harness_contaminated` 也是终态：它是在**全部 Case 都终态之后**才算出来的
+            # （见 finalize_suite_status），说的是「跑完了，但跑的过程中机制面被人改过」。
+            # 漏掉它的代价不是少清一次：那一轮 suite 会永远挡住之后每一次起跑，
+            # 而它早就结束了、一个活进程都没有。
+            terminal_suite = str(suite.get("status")) in {
+                "finished", "failed", "stopped", "harness_contaminated"}
             if not terminal_suite or live_pids:
                 target["status"] = "blocked_active_suite"
                 blockers.append(f"{name}: active suite or worker")
@@ -2799,7 +2804,7 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
             result["destination_sha256"] = _tree_digest(destination)
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, destination)
+        shutil.copytree(_long(source), _long(destination))
         result["status"] = "promoted"
     record.setdefault("promotions", {})[point] = {**result, "at": now()}
     append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
@@ -2923,13 +2928,26 @@ def _copy_file_with_backup(source: Path, destination: Path,
     })
 
 
+def _long(path: Path) -> Path:
+    """Windows 上给绝对路径加 `\\\\?\\` 前缀，越过 260 字符的老上限（口径同 run_case）。
+
+    回流复制的是整个需求目录，其中更新轮次的 `before/` 镜像套着带 64 位哈希的报告；
+    不加前缀的话 copytree 报「系统找不到指定的路径」——文件明明在，是路径太长。
+    """
+    if os.name != "nt":
+        return path
+    text = str(path.resolve())
+    return path if text.startswith("\\\\?\\") else Path("\\\\?\\" + text)
+
+
 def _tree_digest(root: Path) -> str | None:
     if not root.is_dir():
         return None
     files: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
+    base = _long(root)       # 逐文件读同样会撞 260 字符上限，与复制同一口径
+    for path in sorted(base.rglob("*")):
         if path.is_file() and not path.is_symlink():
-            files[path.relative_to(root).as_posix()] = hashlib.sha256(
+            files[path.relative_to(base).as_posix()] = hashlib.sha256(
                 path.read_bytes()).hexdigest()
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -3007,7 +3025,7 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
             conflicts.append({**feature_item, "reason": "feature_destination_conflict",
                               "destination_sha256": destination_digest})
         else:
-            shutil.copytree(feature_source, feature_destination)
+            shutil.copytree(_long(feature_source), _long(feature_destination))
             promoted.append(feature_item)
 
     # Source promotion uses a per-file three-way check.  This accepts the suite
