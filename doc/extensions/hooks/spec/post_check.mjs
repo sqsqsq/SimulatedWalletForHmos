@@ -21,7 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { CROSS_DOC_COORDINATES, scanBannedTerms, formatHits }
   from '../../skills/story/scripts/core/story/language.mjs';
-import { headingEnd, parseDocument, tableCells }
+import { fenceRanges, headingEnd, parseDocument, tableCells }
   from '../../skills/story/scripts/core/story/document.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -357,7 +357,7 @@ function strayProse(body) {
 }
 
 const SPEC_EXT_SECTIONS = [
-  { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/], ['依赖变更', /依赖变更/]] },
+  { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
 ];
 
 export default guard('spec', async (ctx) => {
@@ -401,7 +401,8 @@ export default guard('spec', async (ctx) => {
         problems.push(`缺少宿主扩展章节「§${ch}」（core spec 模板未含，须在验收标准之后追加）`);
         continue;
       }
-      for (const [name, subRe] of subs) {
+      // 埋点是埋点设计的唯一完整说明：按流程写，可以有 H4、短段、表与列表，不放图与围栏（附录投影不收图）；其余小节只收表。
+      for (const [name, subRe, opts = {}] of subs) {
         const subIdx = findHeading(lines, subRe);
         if (subIdx === -1 || subIdx < chIdx) {
           problems.push(`§${ch} 缺少小节「${name}」（小节不得删；不涉及也须写「不涉及 + 一句依据」）`);
@@ -412,6 +413,12 @@ export default guard('spec', async (ctx) => {
           problems.push(`§${ch}「${name}」未填写（须给出事实或「不涉及 + 一句依据」）`);
         } else if (hasTemplatePlaceholder(body)) {
           problems.push(`§${ch}「${name}」残留模板占位「{ … }」——须替换为实际结论`);
+        } else if (opts.prose) {
+          const figure = body.find(l => /!\[[^\]]*\]\(/.test(l)) ?? body[fenceRanges(body)[0]?.from];
+          if (figure) {
+            problems.push(`§${ch}「${name}」里有图或围栏（「${figure.trim().slice(0, 20)}…」）`
+              + '——这一节用标题、短段、表与列表写；业务需要的图放它讲的业务章，这里用文字说明或链接过去');
+          }
         } else {
           const stray = strayProse(body);
           if (stray) {

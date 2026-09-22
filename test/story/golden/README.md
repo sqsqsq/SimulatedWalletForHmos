@@ -1,3 +1,7 @@
+## 新增专项候选：银行卡开卡上报（2026-09-22）
+
+[Spec / Story / Plan 对照样稿](bank-card-opening-reporting-candidate/README.md)：按用户要求展示运营 BI 与运维 Chart 从业务设计到技术映射的承接。尚未定稿，仅为效果审视候选；不属于下文已定稿金样的机器否决锚，不投入当前 Case 或被测模型上下文。
+
 # test/story/golden — 金样正本（归档区）
 
 ## 新增候选：AR90006（2026-09-10）

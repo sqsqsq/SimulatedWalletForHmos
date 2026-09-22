@@ -444,6 +444,78 @@ class TestDecisionUnits(StoryBuildCase):
         self.assertNotIn("材料在枚举之后变了", out)
 
 
+class TheEventDesignIsProjectedWhole(StoryBuildCase):
+    """§9.4 是埋点设计的唯一完整说明：附录按原次序整节投影，不只搬表。
+
+    只搬表的话，流程怎么分、指标是什么、哪些交互由自动上报采集全丢了，归档件里只剩名目表。
+    """
+
+    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程，按流程写。\n\n#### 开户办理\n\n服务指标：开户成功率（运维）。\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 运维统计 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n#### 结果查询\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+        self.spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        text = self.spec.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4"), text.index("### 9.5")
+        self.spec.write_text(text[:start] + self.EVENTS + text[end:], encoding="utf-8")
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def zone(self) -> str:
+        text = self.story()
+        at = text.index("<!-- story-build:begin 数据、配置与事件 ")
+        return text[at:text.index("<!-- story-build:end -->", at)]
+
+    def test_prose_headings_tables_and_lists_come_in_order(self) -> None:
+        zone = self.zone()
+        order = ["#### 埋点", "开户与结果查询两个流程", "##### 开户办理", "服务指标：开户成功率",
+                 "| 信息校验 |", "| 短信验证 |", "- 页面进入、点击由自动运维上报采集", "##### 结果查询",
+                 "| 查询开户结果 |"]
+        at = [zone.index(piece) for piece in order]
+        self.assertEqual(sorted(at), at, "段落、小标题、表与列表没按原次序投影")
+
+    def test_the_code_status_column_stays_in_spec(self) -> None:
+        self.assertNotIn("代码现状", self.zone())
+        self.assertNotIn("检索零命中", self.zone())
+
+    def test_other_subsections_keep_their_own_conclusion(self) -> None:
+        """数据存储、配置项没有表时，它们各自的「不涉及」照样在，并标明是哪一项。"""
+        zone = self.zone()
+        self.assertIn("数据存储——不涉及", zone)
+        self.assertIn("配置项——不涉及", zone)
+
+    def test_relative_references_are_rebased_to_the_story(self) -> None:
+        """spec 在 spec/、归档件在 AR/：相对引用要换成从归档件出发，否则投过去就是坏链。
+
+        锚点指回 spec 那一处（它指的标题在归档件里不存在）；外链与围栏里的样例不动。
+        """
+        text = self.spec.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4"), text.index("### 9.5")
+        self.spec.write_text(text[:start] + '### 9.4 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n#### 开户办理\n\n回看[本节开头](#开户办理)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n' + text[end:], encoding="utf-8")
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        zone = self.zone()
+        for want in ("[口径说明](../spec/detail.md)", "[上级材料](../assets/rules.md#口径)",
+                     "[平台](https://example.com/spec)", "[本节开头](../spec/spec.md#开户办理)",
+                     "![流程](../spec/img/flow.png)", "[校验规则](../spec/rules/check.md)",
+                     "[围栏里的样例](detail.md)", "[ref]: ../spec/notes/ref.md"):
+            with self.subTest(want=want):
+                self.assertIn(want, zone)
+
+    def test_the_projected_zone_passes_check_and_a_source_change_is_caught(self) -> None:
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+        self.spec.write_text(self.spec.read_text(encoding="utf-8").replace(
+            "服务指标：开户成功率（运维）。", "服务指标：开户成功率与结果查询成功率（运维）。"), encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("数据、配置与事件", out)
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("结果查询成功率", self.zone())
+
+
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     """附录 A–D 的机器区与真源逐区逐行比 —— **不先 project 再比**。
 

@@ -466,7 +466,7 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
 class TheReportingFactsStayInTheirLane(unittest.TestCase):
     """上报事实一处维护：VOC、Chart、BI 在同一份 facts，Chart 独有的语义不套给其它渠道。
 
-    只做 VOC 或只做 BI 的需求，读到的是它那一渠道的事实；BI 在本仓没有实现，要读到「无」而不是被说成已支持。
+    渠道各自使用项目定义的字段；共用的渠道分工说明不等于把 Chart 编码协议套给 VOC。
     """
 
     KNOWLEDGE = REPO_ROOT / "doc" / "extensions" / "knowledge"
@@ -488,16 +488,18 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, text)
 
-    def test_every_channel_has_its_row_and_bi_says_none(self) -> None:
+    def test_every_channel_has_its_row(self) -> None:
+        """项目的四种上报来源各一行：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一行。"""
         overview = next(v for k, v in self.sections().items() if k.startswith("1."))
-        for channel in ("| VOC |", "| Chart |", "| BI |"):
+        for channel in ("| VOC |", "| Chart |", "| BI |", "| 自动运维上报 |"):
             self.assertIn(channel, overview)
-        bi = next(l for l in overview.splitlines() if l.startswith("| BI |"))
-        self.assertIn("无", bi, "BI 在本仓没有实现，不能读成已支持")
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
-        shared = "".join(v for k, v in self.sections().items() if k.startswith(("1.", "2.")))
-        for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_", "终态"):
+        sections = self.sections()
+        voc = next(p for v in sections.values() for p in v.split("\n\n") if p.startswith("VOC "))
+        shared = next(v for k, v in sections.items() if k.startswith("1.")) + voc
+        # “终态”可用于解释渠道分工；这里只排除具体运维编码/枚举协议。
+        for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_"):
             with self.subTest(token=token):
                 self.assertNotIn(token, shared, "Chart 独有的语义写进了公共或 VOC 部分")
 

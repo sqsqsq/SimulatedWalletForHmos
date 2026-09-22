@@ -81,3 +81,75 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyTheEventSectionTakesProse(TheContractSectionIsJudgedOnRealOutput):
+    """§9.4 承载完整埋点设计，可以有 H4、正文与列表；其余小节仍然只收表。"""
+
+    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程，按流程写。\n\n#### 开户办理\n\n服务指标：开户成功率（运维）。\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 运维统计 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集，流程见[开户办理](#开户办理)。\n\n#### 结果查询\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if shutil.which("node") is None:
+            raise unittest.SkipTest("环境里没有 node")
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls._tmp.name) / "work"
+        (cls.root / "doc").mkdir(parents=True)
+        shutil.copytree(EXT, cls.root / "doc" / "extensions")
+        link_harness_yaml(cls.root)
+        feature = cls.root / "doc" / "features" / FEATURE
+        shutil.copytree(REAL, feature)
+        (feature / "AR" / "story-src" / "story-flow.json").write_text(
+            json.dumps({"schema": 3, "feature": FEATURE, "status": "complete",
+                        "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False), encoding="utf-8")
+        spec = feature / "spec" / "spec.md"
+        text = spec.read_bytes().decode("utf-8")
+        nl = "\r\n" if "\r\n" in text else "\n"
+        start, end = text.index("### 9.4"), text.index("### 9.5")
+        head, rest = text[:end], text[end:]
+        head = head[:start] + cls.EVENTS.replace("\n", nl)
+        at = head.index("### 9.2")
+        head = head[:at] + head[at:].replace("|" + nl + nl, "|" + nl + nl + "这里多写了一段说明。" + nl + nl, 1)
+        spec.write_bytes((head + rest).encode("utf-8"))
+        driver = cls.root / "drive.mjs"
+        driver.write_text(DRIVER, encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(driver), str(cls.root / "doc/extensions/hooks/spec/post_check.mjs"),
+             FEATURE, str(cls.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        assert proc.returncode == 0, proc.stderr[-800:]
+        cls.report = proc.stdout
+
+    def test_a_real_spec_has_no_stray_prose_report(self) -> None:
+        """父类这一条在这里不成立：数据存储那一节故意多了一段。"""
+
+    def test_the_event_section_is_not_reported(self) -> None:
+        self.assertNotIn("「埋点」表外有段落", self.report, self.report[:600])
+
+    def test_other_subsections_still_take_only_tables(self) -> None:
+        self.assertIn("「数据存储」表外有段落", self.report, self.report[:600])
+
+    def test_text_and_links_are_not_taken_for_figures(self) -> None:
+        self.assertNotIn("里有图或围栏", self.report, self.report[:600])
+
+
+class FiguresInTheEventSectionAreReportedAtSpec(OnlyTheEventSectionTakesProse):
+    """§9.4 投影进 Story 附录，附录不收图：图与围栏在 Spec 就报，并指到业务章。"""
+
+    FIGURE = "![开户流程](images/open.png)\n\n"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.EVENTS = OnlyTheEventSectionTakesProse.EVENTS.replace("#### 结果查询\n\n", cls.FIGURE + "#### 结果查询\n\n")
+        super().setUpClass()
+
+    def test_text_and_links_are_not_taken_for_figures(self) -> None:
+        """父类这一条在这里不成立：这一节故意放了图。"""
+
+    def test_the_figure_is_reported_with_where_it_belongs(self) -> None:
+        self.assertIn("「埋点」里有图或围栏", self.report, self.report[:600])
+        self.assertIn("业务需要的图放它讲的业务章", self.report)
+
+
+class DiagramFencesInTheEventSectionAreReportedAtSpec(FiguresInTheEventSectionAreReportedAtSpec):
+    FIGURE = "```mermaid\nflowchart LR\n  A --> B\n```\n\n"

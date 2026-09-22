@@ -35,30 +35,25 @@ constraints:
   - id: DFX-02
     applicable: false
     reason: 界面沿用交通卡详情页现有样式、不新增控件类型；导入的界面示意图与流程图仅作参考资料进 ux-reference/assets，不引入工程资源；无新增 SDK 依赖与 hap 包，无体积增量可量化对象。
-  - id: OBS-01
-    applicable: true
-    requirement: 签约、状态查询与解约新增的日志经 Logger 封装，带签约阶段与去标识账号等定位上下文；门面已记过的不再单独重复记。
-    contract: ""
   - id: OBS-02
     applicable: true
-    requirement: VOC 记过程关键点：拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；签约、状态查询与解约的终态只发 Chart，不同时发 VOC。
+    requirement: 签约、状态查询与解约的关键过程经项目统一入口记录：VOC 记拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；新增本地日志经 Logger 带签约阶段与去标识账号；签约页、管理页的进入与点击由自动运维上报覆盖，不另记；三个节点的终态只发 Chart，不同时发 VOC。
     contract: auto_topup_signup
   - id: OBS-03
     applicable: true
     requirement: 统计签约、状态查询、解约三个节点：签约覆盖全程成功、普通失败、主动取消，状态查询与解约覆盖成功与普通失败；同一节点同一次执行只发一条终态。
     contract: auto_topup_status
-  - id: OBS-04
-    applicable: true
-    requirement: 三个节点的 Chart 内码按十位五段登记；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败。
-    contract: auto_topup_signup
   - id: OBS-05
     applicable: true
-    requirement: 建约失败的外码取卡云实际返回的错误码，没有就不填；签约耗时以毫秒计，从拉起验证到收到建约结果。
+    requirement: 三个节点的 Chart 内码按十位五段、结果分类与内码末段分开表达；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败；建约失败的外码取卡云实际返回的错误码，没有就不带；签约耗时以毫秒计，从拉起验证到收到建约结果。
     contract: auto_topup_signup
   - id: OBS-06
     applicable: true
     requirement: 本单新增签约、状态查询、解约三组内码，先核仓内无既有登记，再在方案定的唯一登记位置登记。
     contract: auto_topup_status
+  - id: OBS-07
+    applicable: false
+    reason: RR 明确签约转化率目标，SR 要求端侧记录阶段与结果；当前材料未明确新增独立 BI 事件，本夹具不新增 BI，转化目标不等于独立运营采集要求，必要维度不足时另行澄清。
   - id: RES-01
     applicable: false
     reason: 本项目界面不新增图片或图标——沿用交通卡详情页现有样式与控件类型；产品原稿图仅作界面参考（ux-reference/）与流程说明（assets/），不进入工程资源目录。

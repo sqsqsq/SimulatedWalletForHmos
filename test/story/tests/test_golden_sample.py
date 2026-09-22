@@ -73,6 +73,12 @@ EXPECTED_CANONICAL_FILES = {
     "assets/AR90006/manage-page.png",
     "assets/AR90006/signup-page.png",
     "assets/AR90006/verify-page.png",
+    # 设计者的候选样稿（2026-09-22，上报的多流程、多指标组织方式）：只供效果审视，
+    # 不是定稿金样，不进形态比对与否决锚；逐个登记，不放行整个目录。
+    "bank-card-opening-reporting-candidate/README.md",
+    "bank-card-opening-reporting-candidate/spec.md",
+    "bank-card-opening-reporting-candidate/story.md",
+    "bank-card-opening-reporting-candidate/plan.md",
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。

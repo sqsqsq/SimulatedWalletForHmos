@@ -12,6 +12,7 @@ import {
   chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock, zoneHandEdited, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
+import { relFromStory } from './sources.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
 /** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
@@ -74,14 +75,15 @@ export function appendixChapter(contract) {
  * spec 里某一节：命中标题（二、三级）之下、到下一个同级或更高级标题之前。
  * 切法与定位都走 `document.parseDocument`——围栏里的样例标题与表不算。
  *
- * @returns {{text: string, tables: {header: string[], rows: string[][]}[]}}
+ * @returns {{title: string, text: string, tables: {header: string[], rows: string[][]}[]}}
  */
 function specSection(spec, re) {
   const doc = parseDocument(spec);
   const h = doc.headings.find(x => x.level >= 2 && x.level <= 3 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
-  if (!h) return { text: '', tables: [] };
+  if (!h) return { title: '', text: '', tables: [] };
   const end = headingEnd(doc, h);
-  return { text: doc.lines.slice(h.at + 1, end).join('\n'), tables: tablesWithin(doc, h.at + 1, end) };
+  return { title: h.raw.replace(/^[\d.]+\s*/, ''), text: doc.lines.slice(h.at + 1, end).join('\n'),
+    tables: tablesWithin(doc, h.at + 1, end) };
 }
 
 /** 模板占位单元格（`{ 接口名 }` 这种）——spec 没填时不该派生进 story。 */
@@ -159,9 +161,18 @@ const DROP_COLUMNS = ['代码现状'];
 const APPENDIX_FROM_SPEC = [
   ['接口', [{ at: '§9.1', re: /^###\s*9\.1/ }]],
   ['数据、配置与事件', [{ at: '§9.2', re: /^###\s*9\.2/ },
-    { at: '§9.3', re: /^###\s*9\.3/ }, { at: '§9.4', re: /^###\s*9\.4/ }]],
+    { at: '§9.3', re: /^###\s*9\.3/ }, { at: '§9.4', re: /^###\s*9\.4/, whole: true }]],
   ['改动边界', [{ at: '§9.5', re: /^###\s*9\.5/ }]],
 ];
+
+/** 一张 spec 表投进附录的样子：去掉不投的列与模板占位行。没有行返回 null。 */
+function projectedTable(t) {
+  const keep = t.header.map((h, i) => [h, i])
+    .filter(([h]) => !DROP_COLUMNS.some(d => h.includes(d)));
+  const rows = t.rows.filter(r => !isPlaceholderRow(r))
+    .map(r => keep.map(([, i]) => r[i] ?? ''));
+  return rows.length ? { header: keep.map(([h]) => h), rows } : null;
+}
 
 /** 某个附录小节该有的表：spec 对应几节就给几张，表头按原顺序带过来（去掉不投的列）。 */
 function appendixTables(spec, name) {
@@ -170,14 +181,75 @@ function appendixTables(spec, name) {
   const out = [];
   for (const { re } of from[1]) {
     for (const t of specSection(spec, re).tables) {
-      const keep = t.header.map((h, i) => [h, i])
-        .filter(([h]) => !DROP_COLUMNS.some(d => h.includes(d)));
-      const rows = t.rows.filter(r => !isPlaceholderRow(r))
-        .map(r => keep.map(([, i]) => r[i] ?? ''));
-      if (rows.length) out.push({ header: keep.map(([h]) => h), rows });
+      const got = projectedTable(t);
+      if (got) out.push(got);
     }
   }
   return out;
+}
+
+/**
+ * 整节投影：正文、小标题、列表、图与表**按原次序**搬进附录，表照样去掉不投的列。
+ *
+ * 用在「这一节是某项设计的唯一完整说明」的来源上（埋点）：只搬表，流程怎么分、各点位为什么统计、
+ * 结果有哪些就全丢了，读者在归档件里只剩一张名目表。标题挂在「附录小节」之下：
+ * 这一节的标题成 H4，它里面的小标题各降一级。HTML 注释（模板说明）不搬。
+ * 除了标题什么都没有时返回空：那是真的空，由调用方回落到「不涉及」或报空节。
+ */
+/**
+ * spec 里的相对引用换成从归档件出发的写法：spec 在 `spec/`，归档件在 `AR/`。
+ *
+ * 行内链接、图片与引用式定义都换；外链（带协议）、根路径与内嵌数据不动；
+ * 只有锚点的指回 spec 那一处——它指的标题在归档件里并不存在。
+ */
+function rebase(target) {
+  const t = String(target);
+  if (/^[a-z][\w+.-]*:/i.test(t) || t.startsWith('/')) return t;
+  if (t.startsWith('#')) return `${relFromStory('spec/spec.md')}${t}`;
+  const [file, frag = ''] = t.split(/(?=#)/);
+  return relFromStory(path.posix.normalize(path.posix.join('spec', file))) + frag;
+}
+
+function rebaseLinks(line) {
+  return line
+    .replace(/(!?\[[^\]]*\]\()\s*([^)\s]+)((?:\s+"[^"]*")?\s*\))/g, (_, open, target, close) => open + rebase(target) + close)
+    .replace(/^(\s*\[[^\]]+\]:\s*)(\S+)/, (_, head, target) => head + rebase(target));
+}
+
+function wholeSection(spec, re) {
+  const doc = parseDocument(spec);
+  const h = doc.headings.find(x => x.level >= 2 && x.level <= 3 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  if (!h) return [];
+  const end = headingEnd(doc, h);
+  const tables = new Map(tablesWithin(doc, h.at + 1, end).map(t => [t.line, t]));
+  const body = [];
+  let comment = false;
+  for (let i = h.at + 1; i < end; i += 1) {
+    const line = doc.lines[i];
+    if (!doc.fenced.has(i)) {
+      if (comment || /^\s*<!--/.test(line)) {
+        comment = !/-->\s*$/.test(line);
+        continue;
+      }
+      const t = tables.get(i);
+      if (t) {
+        const got = projectedTable(t);
+        if (got) body.push(...renderTable(got.header, got.rows.map(r => r.map(rebaseLinks))));
+        i = t.line + 1 + t.rows.length;          // 表头、分隔行、各行
+        continue;
+      }
+      const sub = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
+      if (sub) {
+        body.push(`${'#'.repeat(Math.min(6, sub[1].length + 1))} ${sub[2]}`);
+        continue;
+      }
+      body.push(rebaseLinks(line));
+      continue;
+    }
+    body.push(line);
+  }
+  const text = body.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return text ? [`#### ${h.raw.replace(/^[\d.]+\s*/, '')}`, '', ...text.split('\n')] : [];
 }
 
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */
@@ -240,9 +312,25 @@ function appendixProjection(ctx, spec, name) {
   if (want.includes(normalizeHeading('规约判定'))) {
     return [KNOWLEDGE_USE_SOURCE, verdictSkeleton(ctx)];
   }
-  const tables = appendixTables(spec, name);
-  const rows = tables.flatMap((t, i) => i ? ['', ...renderTable(t.header, t.rows)]
-    : renderTable(t.header, t.rows));
+  const from = APPENDIX_FROM_SPEC.find(x => normalizeHeading(x[0]) === normalizeHeading(name));
+  const groups = [];
+  for (const src of from?.[1] ?? []) {
+    if (src.whole) {
+      const lines = wholeSection(spec, src.re);
+      if (lines.length) groups.push(lines);
+      continue;
+    }
+    const section = specSection(spec, src.re);
+    const tables = section.tables.map(projectedTable).filter(Boolean);
+    for (const got of tables) groups.push(renderTable(got.header, got.rows));
+    // 这一节没有表，它写的「不涉及：<依据>」就是它的结论，照样进附录——
+    // 丢了它，读者看不出这一项是查过、不涉及，还是没写
+    const na = tables.length ? null : section.text.split(/\r?\n/).map(l => l.trim())
+      .find(l => /^不涉及[:：]\s*\S/.test(l));
+    if (na) groups.push([`${section.title}——${na}`]);
+  }
+  // 多张表、多段之间空一行：连着写 markdown 会把它们并成一张错表
+  const rows = groups.flatMap((g, i) => (i ? ['', ...g] : g));
   if (!rows.length) {
     const na = specNotApplicable(spec, name);
     return ['spec §9 技术契约', na ? [na] : []];
