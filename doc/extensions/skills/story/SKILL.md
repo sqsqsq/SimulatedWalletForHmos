@@ -144,13 +144,19 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 
 ### 更新
 
-需求已经有产物之后，上游材料、评审意见或人的新决定使它不再成立时跑 `/story update <编号>`。
-入口与 init 同构：**先报输入、在材料关卡问一次要不要补料，人答了再比**——
-八项真的没变就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
+- **前置**：这个单已经有产物（Spec / Story / Review / Plan 至少一样），上游材料、评审意见或人的新决定使它不再成立
+- **取材不写业务文件**：`fetch` 只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
-取回上游与评审的新内容用只读取材（`story.js fetch`，落进本单 `inbox/`），它**一个业务文件都不写**：
-`AR/review.md` 里人刚写的意见原样留着，采不采用新内容由读过原文的你与人决定。
-方法完整一份在 [phases/update.md](phases/update.md)。
+```bash
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 回执的 fetch 字段给出 ② 的完整命令
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root <工程根> --out <本单 inbox>   # ② 取上游（照 ① 给的原样跑；本地单跳过）
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare   # ④ 比较并开这一轮
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
+```
+
+**④ 八项真的没变**就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
+整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
 意思没变就用 `story_flow.py decide --update <议题 id> --basis <他同意沿用的原话>` 记一笔再重跑；
