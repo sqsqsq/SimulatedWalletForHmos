@@ -366,6 +366,27 @@ class RestoreKeepsBothSides(UpdateCase):
         self.assertNotIn("AR/story-src/story-flow.json", out["conflicts"])
 
 
+class RestoreRefusesWithoutAScene(UpdateCase):
+    """还原不了时说清原因，**当前内容一个字节不动**——不能为了「还原」先把现在的丢了。"""
+
+    def test_nothing_to_restore_when_no_update_was_made(self) -> None:
+        spec = self.feature_root / "spec" / "spec.md"
+        was = spec.read_bytes()
+        out = self.update("--action", "restore")
+        self.assertIn("没有做过 update", out.get("error", ""), out)
+        self.assertEqual(was, spec.read_bytes())
+
+    def test_a_missing_scene_is_refused_and_current_content_kept(self) -> None:
+        rid = self.update()["update"]
+        spec = self.feature_root / "spec" / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + "\n这一轮改的\n", encoding="utf-8")
+        was = spec.read_bytes()
+        shutil.rmtree(self.updates / rid / "before")
+        out = self.update("--action", "restore")
+        self.assertIn("没有留下 before/", out.get("error", ""), out)
+        self.assertEqual(was, spec.read_bytes(), "还原失败却改了当前内容")
+
+
 class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
     def decide(self, *extra: str) -> dict:
         proc = subprocess.run(
@@ -532,6 +553,46 @@ class CloseKnowsWhetherTheReviewWasAdopted(UpdateCase):
         out = self.update("--action", "close")
         self.assertEqual("closed", out.get("status"), out)
         self.assertEqual("completed_with_prior_review", out["phases"][0]["closure_mode"])
+
+
+class ClosedPhasesMustStayClosed(UpdateCase):
+    """开这一轮时已闭环的阶段，收口时要仍然闭环；本来没闭环的阶段不是这一轮要推进的。
+
+    完整跑一次 harness 时，报告对不上当前 subject 或判 FAIL，阶段会回到 open（1.9.5 plan 实验）。
+    此前的守卫只拦「报告在、却沿用历史」，拦不住这一种——一轮更新会带着没闭环的阶段收口。
+    """
+
+    def summary(self, phase: str, closure: str) -> None:
+        reports = self.feature_root / phase / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(json.dumps(
+            {"closure_status": closure, "verdict": "PASS", "verifier_subject_id": "b" * 64,
+             "readiness_signals": []}), encoding="utf-8")
+
+    def open_round(self) -> None:
+        rid = self.update()["update"]
+        (self.updates / rid / "update-notes.md").write_text("## 当前依据\n读过了。\n", encoding="utf-8")
+
+    def test_a_phase_reopened_by_this_round_blocks_the_close(self) -> None:
+        self.summary("spec", "closed")
+        self.open_round()
+        self.summary("spec", "open")
+        out = self.update("--action", "close")
+        self.assertIn("spec（仍未闭环）", out.get("error", ""), out)
+
+    def test_a_vanished_summary_blocks_the_close(self) -> None:
+        self.summary("spec", "closed")
+        self.open_round()
+        (self.feature_root / "spec" / "reports" / "summary.json").unlink()
+        self.assertIn("spec（summary 不见了）", self.update("--action", "close").get("error", ""))
+
+    def test_a_phase_that_was_never_closed_does_not_block(self) -> None:
+        """Plan 本来就在途：这一轮只更新已有产物，不负责把它推到闭环。"""
+        self.summary("spec", "closed")
+        self.summary("plan", "open")
+        self.open_round()
+        out = self.update("--action", "close")
+        self.assertEqual("closed", out.get("status"), out)
 
 
 class ANewVersionReplacesTheOldOriginal(UpdateCase):

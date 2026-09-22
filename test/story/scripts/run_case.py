@@ -1534,11 +1534,91 @@ def _gate_diagnosis(cp: subprocess.CompletedProcess, *, command: list[str] | Non
     }
 
 
-def _run_story_gates(feature: str, out_dir: Path) -> dict[str, str]:
+def _post_check_verdict(r: subprocess.CompletedProcess | None) -> str | None:
+    """post_check 的结论按它自己的输出协议：读到带 `ok` 的 JSON 才算跑成；否则返回 None。"""
+    if r is None:
+        return None
+    for line in reversed((r.stdout or "").splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and "ok" in data:
+            return "pass" if r.returncode == 0 and data["ok"] is True else "fail"
+    return None
+
+
+def _story_build_verdict(r: subprocess.CompletedProcess | None) -> str | None:
+    """story-build check 的结论（用户 2026-09-21 定的输出协议）。
+
+    退出 0 且有「通过」行 = 通过；退出 1 且有它自己的诊断（`[story-build` 开头，起手预检的
+    `[story-build]` 也是它报的产物问题）= 内容不通过；其余——别的退出码、没有输出、启动异常——
+    都是**检查没跑成**，返回 None。T2 里两个 Case 的 node 在内存紧张时没起来（0xC0000142、日志为空），
+    被记成了内容不通过；那只是一个样本，这里不认具体退出码。
+    """
+    if r is None:
+        return None
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0 and "[story-build check] 通过" in out:
+        return "pass"
+    if r.returncode == 1 and "[story-build" in out:
+        return "fail"
+    return None
+
+
+def _story_gate_inputs(feature: str) -> str | None:
+    """story 门禁读到的全部输入的摘要——**任何一样变了，旧结论就不能再用**。
+
+    检查器按 `framework.config.json` 的 `paths` 找扩展与需求目录，所以配置本身、门禁配置（跑哪两个入口）、
+    两个入口文件、配置解析出的扩展目录与需求目录都在内。只哈希 story.md 不够：检查器还读侧车、契约、
+    知识与引用资源；少算一样，旧 PASS 就会被当成新的。
+    """
+    config_path = REPO_ROOT / "framework.config.json"
+    try:
+        config_bytes = config_path.read_bytes() if config_path.is_file() else b""
+        paths = (json.loads(config_bytes or b"{}").get("paths") or {})
+    except (OSError, ValueError):
+        return None
+    ext_rel = str(paths.get("extension_dir") or "doc/extensions").strip() or "doc/extensions"
+    parts = [hashlib.sha256(config_bytes).hexdigest()[:16],
+             hashlib.sha256(json.dumps(CFG["gates"], sort_keys=True).encode("utf-8")).hexdigest()[:16]]
+    try:
+        for rel in (CFG["gates"].get("post_check"), CFG["gates"].get("story_build")):
+            entry = REPO_ROOT / rel if rel else None
+            parts.append(hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
+                         if entry and entry.is_file() else "absent")
+        ext = REPO_ROOT / ext_rel
+        parts.append(_tree_digest(ext) if ext.is_dir() else "absent")
+        parts.append(_tree_digest(REPO_ROOT / FEATURES_DIR / feature))
+    except OSError:
+        return None
+    return ":".join(parts)
+
+
+def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
     """运行只属于 story→spec 新生成链路的两个门禁。绿 ≠ 语义达标。
 
     plan-only 不调用本函数，因而不会重复解释既有 Story。
+
+    **没跑成的门禁不写进结果**：它只在诊断里记原因与原始输出，终态由缺席门禁的现有语义
+    （`harness_incomplete`，装置这边的账）表达——不把机器问题记成被测产物的内容失败。
+
+    **同一份输入只跑一次**：第二检查点等待之前已经跑过、之后输入一字未变，收工时直接用那次的结果，
+    不再起进程（收工时机器状态常常已经变了）。输入有任何变化就重跑，旧结论不沿用。
     """
+    diagnostics_path = out_dir / "gate_diagnostics.json"
+    inputs = _story_gate_inputs(feature)
+    try:
+        cached = json.loads(diagnostics_path.read_text(encoding="utf-8")).get("story_gates_cache")
+    except (OSError, ValueError):
+        cached = None
+    if inputs and isinstance(cached, dict) and cached.get("inputs") == inputs:
+        gates = dict(cached.get("gates") or {})
+        diagnostics = dict(cached.get("diagnostics") or {})
+        diagnostics["story_gates_cache"] = {**cached, "reused_at": now_iso()}
+        _write_gate_diagnostics(diagnostics_path, diagnostics, feed)
+        return gates
+
     post_check = REPO_ROOT / CFG["gates"]["post_check"]
     script = (
         "import {pathToFileURL} from 'node:url';"
@@ -1548,13 +1628,14 @@ def _run_story_gates(feature: str, out_dir: Path) -> dict[str, str]:
     command = ["node", "--input-type=module", "-e", script]
     post_log = out_dir / "gate_post_check.log"
     r, post_diagnosis = _run_logged_gate(command, cwd=REPO_ROOT, log_path=post_log)
-    gates = {
-        "post_check": ("pass" if r is not None and r.returncode == 0
-                       and '"ok":true' in (r.stdout or "") else "fail"),
-    }
-    diagnostics = {
-        "post_check": post_diagnosis,
-    }
+    gates: dict[str, str] = {}
+    diagnostics: dict[str, Any] = {"post_check": post_diagnosis}
+    verdict = _post_check_verdict(r)
+    if verdict:
+        gates["post_check"] = verdict
+    else:
+        post_diagnosis["status"] = "not_run"
+        post_diagnosis["reason"] = "没有读到它的结论输出（带 ok 的 JSON）：检查没跑成，不是内容不通过"
     # story.md 的九项判据：章节合同、来源单元三态守恒、裁决与判定表核实、术语守恒、四红线。
     story_build = CFG["gates"].get("story_build")
     if story_build:
@@ -1563,24 +1644,50 @@ def _run_story_gates(feature: str, out_dir: Path) -> dict[str, str]:
         build_log = out_dir / "gate_story_build.log"
         r3, build_diagnosis = _run_logged_gate(
             build_command, cwd=REPO_ROOT, log_path=build_log)
-        gates["story_build_check"] = (
-            "pass" if r3 is not None and r3.returncode == 0 else "fail")
         diagnostics["story_build_check"] = build_diagnosis
-    (out_dir / "gate_diagnostics.json").write_text(
-        json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+        verdict = _story_build_verdict(r3)
+        if verdict:
+            gates["story_build_check"] = verdict
+        else:
+            build_diagnosis["status"] = "not_run"
+            build_diagnosis["reason"] = ("既不是「通过」也不是它自己的诊断（退出码不是 0/1、没有输出或启动异常）："
+                                         "检查没跑成，不是内容不通过")
+    # 只有两项都拿到结论才缓存：没跑成的那次不是业务结论，下一次调用要重查——
+    # 缓存了它，环境恢复之后也永远是「没跑成」。
+    wanted = {"post_check"} | ({"story_build_check"} if story_build else set())
+    if inputs and wanted <= set(gates):
+        diagnostics["story_gates_cache"] = {
+            "inputs": inputs, "run": out_dir.name, "at": now_iso(),
+            "gates": gates, "diagnostics": {k: v for k, v in diagnostics.items()
+                                            if k != "story_gates_cache"}}
+    _write_gate_diagnostics(diagnostics_path, diagnostics, feed)
     return gates
+
+
+def _write_gate_diagnostics(path: Path, diagnostics: dict[str, Any], feed=None) -> None:
+    """写不进去要让宿主看得见：打到 worker 的 stderr（进 worker.log），有事件流就再发一条。
+
+    缓存因此没落盘，下次照常重查，不伪造「已检查」。
+    """
+    try:
+        path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        print(f"[runner] {path.name} 写不进去（{exc}）：门禁诊断与缓存没落盘，下次重查",
+              file=sys.stderr, flush=True)
+        if feed is not None:
+            feed.emit("gate_diagnostics_write_failed", error=str(exc))
 
 
 def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
               start_phase: str = "story",
-              upstream_fingerprint: dict[str, Any] | None = None) -> dict[str, str]:
+              upstream_fingerprint: dict[str, Any] | None = None, feed=None) -> dict[str, str]:
     """只运行本轮阶段区间适用的 gate，并统一发布可追溯诊断。"""
     gates: dict[str, str] = {}
     diagnostics: dict[str, Any] = {}
     diagnostics_path = out_dir / "gate_diagnostics.json"
 
     if start_phase == "story":
-        gates.update(_run_story_gates(feature, out_dir))
+        gates.update(_run_story_gates(feature, out_dir, feed))
         try:
             diagnostics.update(json.loads(diagnostics_path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError):
@@ -1890,6 +1997,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                             why = "这一轮检测下来没有变化（未建操作记录）"
                     if why:
                         result["stop_reason"] = "update_checkpoint"
+                        if start_phase == "story":
+                            # 产物此刻稳定：先把 story 门禁跑掉。等宿主评完再跑，机器状态往往已经变了
+                            #（T2 两个 Case 都是收工后 node 起不来）；输入不变时收工直接用这次的结果。
+                            feed.emit("story_gates_prerun", **_run_story_gates(feature, out_dir, feed))
                         feed.emit("update_checkpoint", turn=turns,
                                   round=result.get("update_round"),
                                   unchanged=bool(result.get("update_unchanged")),
@@ -1988,7 +2099,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         else:
             result["gates"] = run_gates(
                 feature, out_dir, end_phase, start_phase=start_phase,
-                upstream_fingerprint=upstream_fingerprint)
+                upstream_fingerprint=upstream_fingerprint, feed=feed)
         feed.emit("gates_done", **result["gates"])
 
         missing_gates = sorted(set(expected_gate_names(start_phase, end_phase))

@@ -340,7 +340,7 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 | 配置组全部鉴权失败 | `cli_config_exhausted` | 1 | 当前 suite 无可用 CLI 配置 |
 
 另外两个与被测能力无关的终态：`harness_incomplete`（退出码 2）= 装置自己漏跑了 gate（gate 判红是被测对象的账，没跑是装置的账）；
-`worker_lost` = 进程真的不在了。
+`worker_lost` = 进程真的不在了。story 的两个门禁**没跑成**（检查进程没起来、没有它自己的结论输出）也落到 `harness_incomplete`，原因与原始输出记在 `gate_diagnostics.json` 该项的 `status: not_run`；只有拿到检查器自己的结论判了不通过，才是 `gate_failed`。
 
 **本域不设任何时限与轮次上限**：`soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` / `reply_wait_sec` 写进配置会被
 直接拒绝（`run_case.py` 启动即 `SystemExit`）。真出现 `timed_out` 说明有人把时限重新引进来了，装置会出声告警。
@@ -360,7 +360,7 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 | 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
 | 5 | `resume-update --case <id> --text "<一句正常的业务请求>" [--deliver ...]` | 投的是业务话，不是测试控制语句；材料先到、话后到 |
 | 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「就这份新版，按它更新」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
-| 7 | `checkpoint --point update` → 只读后评 → **`conclude`** | 与第一段同一套。后评做完**必须** `conclude`：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
+| 7 | `checkpoint --point update` → 只读后评 → **`conclude`**（story 门禁已在进第二检查点等待前跑过，输入没变就直接用那次结果） | 与第一段同一套。后评做完**必须** `conclude`：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段回流的那一份不被覆盖 |
 
 **等待窗口里你只做两件事**：固定快照、只读评测。不要向被测会话发评分、缺陷清单、脚本路径或修法——

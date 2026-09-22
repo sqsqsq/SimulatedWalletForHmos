@@ -15,9 +15,11 @@ finalize 的目的地固定成原编号。这一组锁住改完之后的几件�
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -349,6 +351,141 @@ class TheSecondCheckpointShowsTheReviewClosure(unittest.TestCase):
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
         at = src.index('feed.emit("update_checkpoint"')
         self.assertIn("closure=review_closure(feature)", src[at:at + 300])
+
+
+class StoryGatesTellNotRunFromFailed(unittest.TestCase):
+    """收尾的 story 门禁：「检查没跑成」与「内容不通过」分开记，同一份输入只跑一次。
+
+    T2 两个 Case 收工之后 node 起不来（0xC0000142、日志为空），被记成 gate_failed；
+    事后在同一工作区重跑，检查通过。那是机器的账，不是被测产物的。
+    """
+
+    PASS = ("[story-build check] 通过：10 章\n", "", 0)
+    CONTENT_FAIL = ("", "[story-build check] 2 处未通过\n", 1)
+    PREFLIGHT_FAIL = ("", "[story-build] spec/knowledge-use.yaml 还有 3 条没有判断\n", 1)
+    NOT_STARTED = ("", "", 3221225794)
+    POST_OK = ('{"ok":true}\n', "", 0)
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        hook = self.tmp / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
+        hook.parent.mkdir(parents=True)
+        hook.write_text("// 替身\n", encoding="utf-8")
+        self.feature = self.tmp / "doc" / "features" / "AR1"
+        (self.feature / "AR" / "story-src").mkdir(parents=True)
+        (self.feature / "AR" / "story.md").write_text("# story\n", encoding="utf-8")
+        self.out = self.tmp / "run"
+        self.out.mkdir()
+        patcher = unittest.mock.patch.multiple(rc, REPO_ROOT=self.tmp, FEATURES_DIR="doc/features")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.calls = 0
+        self.build = self.PASS
+
+    def fake_gate(self, command, *, cwd, log_path, shell=False):
+        self.calls += 1
+        out, err, code = self.POST_OK if "--input-type=module" in command else self.build
+        log_path.write_text(out + err, encoding="utf-8")
+        return (subprocess.CompletedProcess(command, code, out, err),
+                {"command": command, "returncode": code})
+
+    def run_gates(self, feed=None) -> dict:
+        with unittest.mock.patch.object(rc, "_run_logged_gate", self.fake_gate):
+            return rc._run_story_gates("AR1", self.out, feed)
+
+    def test_the_verdict_follows_the_output_protocol(self) -> None:
+        cases = {self.PASS: "pass", self.CONTENT_FAIL: "fail", self.PREFLIGHT_FAIL: "fail",
+                 self.NOT_STARTED: None, ("", "", 1): None, ("随便什么\n", "", 0): None}
+        for (out, err, code), want in cases.items():
+            with self.subTest(code=code, out=out, err=err):
+                self.assertEqual(want, rc._story_build_verdict(
+                    subprocess.CompletedProcess([], code, out, err)))
+        self.assertIsNone(rc._story_build_verdict(None), "启动异常也是没跑成")
+        self.assertIsNone(rc._post_check_verdict(subprocess.CompletedProcess([], 0, "", "")))
+        self.assertEqual("fail", rc._post_check_verdict(
+            subprocess.CompletedProcess([], 0, '{"ok":false}\n', "")))
+
+    def test_a_check_that_did_not_run_is_absent_not_failed(self) -> None:
+        """没跑成的不写进结果——缺席的门禁由现有语义判成 harness_incomplete，不是 gate_failed。"""
+        self.build = self.NOT_STARTED
+        gates = self.run_gates()
+        self.assertNotIn("story_build_check", gates)
+        self.assertEqual("pass", gates["post_check"])
+        diag = json.loads((self.out / "gate_diagnostics.json").read_text(encoding="utf-8"))
+        self.assertEqual("not_run", diag["story_build_check"]["status"])
+        self.assertIn("story_build_check",
+                      set(rc.expected_gate_names("story", "spec")) - set(gates),
+                      "缺席没有落到装置的账上")
+
+    def test_a_real_content_failure_stays_a_failure(self) -> None:
+        self.build = self.CONTENT_FAIL
+        self.assertEqual("fail", self.run_gates()["story_build_check"])
+
+    def test_the_same_inputs_are_checked_once(self) -> None:
+        first = self.run_gates()
+        self.assertEqual(2, self.calls)
+        self.assertEqual(first, self.run_gates(), "复用的结果与第一次不同")
+        self.assertEqual(2, self.calls, "输入一字未变，却又起了检查进程")
+
+    def test_any_input_change_reruns(self) -> None:
+        """正文、侧车、检查器实现变了都重跑——旧 PASS 不沿用。"""
+        for rel in ("doc/features/AR1/AR/story.md", "doc/features/AR1/AR/story-src/story-template.md",
+                    "doc/extensions/hooks/spec/post_check.mjs"):
+            with self.subTest(rel=rel):
+                self.run_gates()
+                before = self.calls
+                target = self.tmp / rel
+                target.write_text((target.read_text(encoding="utf-8") if target.exists() else "")
+                                  + "改了一行\n", encoding="utf-8")
+                self.run_gates()
+                self.assertEqual(before + 2, self.calls, f"{rel} 变了却复用了旧结果")
+
+    def test_a_run_that_did_not_finish_is_checked_again(self) -> None:
+        """没跑成那次不是业务结论，不缓存：环境恢复后下一次调用真的重查、拿到新结论。"""
+        self.build = self.NOT_STARTED
+        self.assertNotIn("story_build_check", self.run_gates())
+        self.build = self.PASS
+        gates = self.run_gates()
+        self.assertEqual(4, self.calls, "输入没变，但上次没跑成，这次该重查")
+        self.assertEqual("pass", gates["story_build_check"])
+
+    def test_a_real_content_failure_is_reused(self) -> None:
+        """有效的内容不通过是结论，输入没变就复用。"""
+        self.build = self.CONTENT_FAIL
+        self.run_gates()
+        self.assertEqual("fail", self.run_gates()["story_build_check"])
+        self.assertEqual(2, self.calls)
+
+    def test_a_config_change_reruns(self) -> None:
+        """检查器按工程配置找扩展与需求目录：配置变了，旧结论不能再用。"""
+        self.run_gates()
+        (self.tmp / "framework.config.json").write_text(
+            json.dumps({"paths": {"extension_dir": "tools/other-ext"}}), encoding="utf-8")
+        self.run_gates()
+        self.assertEqual(4, self.calls, "改了扩展目录配置却复用了旧结论")
+
+    def test_a_diagnostics_write_failure_reaches_the_host(self) -> None:
+        """写不进诊断要让宿主看见（stderr 进 worker.log，再发一条事件），且下次重查。"""
+        (self.out / "gate_diagnostics.json").mkdir()
+        events = []
+
+        class Feed:
+            def emit(self, name, **kw):
+                events.append(name)
+
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.run_gates(Feed())
+        self.assertIn("gate_diagnostics.json 写不进去", err.getvalue())
+        self.assertIn("gate_diagnostics_write_failed", events)
+        self.run_gates(Feed())
+        self.assertEqual(4, self.calls, "缓存没落盘却被当成已检查")
+
+    def test_the_second_checkpoint_runs_the_gates_before_waiting(self) -> None:
+        src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
+        at = src.index('result["stop_reason"] = "update_checkpoint"')
+        body = src[at:at + 1500]
+        self.assertLess(body.index("_run_story_gates"), body.index("wait_at_update_checkpoint"))
 
 
 class TheOldFakePhaseIsGone(unittest.TestCase):

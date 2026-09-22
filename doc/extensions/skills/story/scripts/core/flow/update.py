@@ -366,7 +366,9 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     # 不同步的话，每次 restore 都会把流程契约报成「有人在这之后改过」，
     # 而改它的正是我们自己——真正的冲突会被这条噪声埋掉。
     shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
-    record = {"id": rid, "opened_at": now(), "status": "open",
+    # 开这一轮时已闭环的阶段：收口时它们要仍然闭环。本来没闭环的阶段不是这一轮必须推进的对象。
+    closed_before = [f["phase"] for f in _phase_facts(feature_root) if f.get("closure") == "closed"]
+    record = {"id": rid, "opened_at": now(), "status": "open", "phases_before": closed_before,
               "files": current, "unreadable": unreadable, "comparison": diff,
               "materials": {"pending": pending, "changed": facts["materials_changed"]},
               "request": facts["request"],
@@ -526,6 +528,16 @@ def cmd_update_close(feature_root: Path) -> dict:
     # 报告写了、判了 PASS，阶段却仍标「沿用历史」：framework 不改写已闭环的 summary，
     # 只有再跑一次完整 harness 才采纳它。这时收口，这一轮就带着一个「没审」的闭环结束了。
     phases = _phase_facts(feature_root)
+    now_by = {f["phase"]: f for f in phases}
+    # 开轮时已闭环的阶段，这一轮改过之后仍要闭环：被打回 open、summary 不见了或读不出，
+    # 都说明改动之后的审查与闭环没走完——这时收口，这一轮就带着一个没闭环的阶段结束了。
+    broken = [f"{ph}（{'summary 不见了' if ph not in now_by else '读不出 summary' if not now_by[ph]['readable'] else '仍未闭环'}）"
+              for ph in rec.get("phases_before") or []
+              if ph not in now_by or not now_by[ph]["readable"] or now_by[ph].get("closure") != "closed"]
+    if broken:
+        raise FlowError(
+            f"开这一轮时已闭环的阶段现在没闭环：{'、'.join(broken)}，不收口。"
+            "按该阶段 summary 的 NEXT 走完（派审、返修或重跑 `harness-runner.ts --phase <阶段>`）再收口")
     stuck = [f["phase"] for f in phases if f.get("unadopted")]
     if stuck:
         raise FlowError(
