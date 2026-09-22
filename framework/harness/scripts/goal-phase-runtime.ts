@@ -48,6 +48,7 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
+  buildNoRelevantTargetGuidance,
 } from './utils/await-confirm-guidance';
 import {
   decide,
@@ -143,6 +144,7 @@ import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
+  evaluateFreshRunContinuation,
   loadEffectiveExecutionScope,
   applyScopeRevisions,
   eventsWithScopeRevocations,
@@ -417,6 +419,7 @@ import {
   classifyTimedOutWithFreshBlockers,
   resolveBlockerActionability,
   extractDeterministicAffectedFiles,
+  extractContentRelatedFiles,
   extractIntegritySubtypes,
   stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
@@ -1027,6 +1030,7 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
   // post-impl review P2#8：严格 === 'agent_fixable'——toolchain_blocked 回喂只会诱导
   // agent「修环境」（它修不了）；toolchain 走 operator 队列单列。
   const toolchainParked = all.filter(b => resolveBlockerActionability(b) === 'toolchain_blocked');
+  const frameworkParked = all.filter(b => resolveBlockerActionability(b) === 'framework_blocked');
   const feedable = all.filter(b => resolveBlockerActionability(b) === 'agent_fixable').slice(0, 4);
   const lines: string[] = [];
   for (const b of feedable) {
@@ -1053,6 +1057,12 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
     lines.push(
       `- (parked, environment/toolchain — do NOT attempt) ${toolchainParked.map(b => b.id ?? '?').join(', ')}: ` +
       'these are environment failures queued for the operator; do not modify product code or artifacts to work around them.',
+    );
+  }
+  if (frameworkParked.length > 0) {
+    lines.push(
+      `- (parked, framework — do NOT attempt) ${frameworkParked.map(b => b.id ?? '?').join(', ')}: ` +
+      'framework implementation failed; product/artifact edits cannot repair it. Preserve the failure for source-framework repair.',
     );
   }
   if (lines.length === 0) {
@@ -4179,6 +4189,13 @@ export async function waitForDetachedStartup(input: {
   return { state: 'failed', detail: `child exited during startup confirmation${logTail() ? `: ${logTail()}` : ''}` };
 }
 
+function normalizeSupersedeTargets(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  return values
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+}
+
 async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   const layout = detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
@@ -4197,17 +4214,42 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   }
   const feature = raw.feature;
   const isResume = raw.isResume;
+  const runId = raw.runId ?? newRunId();
+  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
+  const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
 
   // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
   // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。
   if (!isResume && !raw.dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
+    try {
+      const requirement = resolveRequirementInput({
+        requirement: argv.requirement,
+        requirementFile: argv['requirement-file'],
+        projectRoot,
+      });
+      const continuation = evaluateFreshRunContinuation({
+        projectRoot,
+        manifest: {
+          feature,
+          run_id: runId,
+          report_dir: reportDirRel,
+          requirement: requirement.text,
+          ...(requirement.sources.length > 0 ? { requirement_source_files: requirement.sources } : {}),
+          ...(supersedeTargets[0] ? { successor_of: supersedeTargets[0] } : {}),
+        },
+        forceFresh: Boolean(argv.force),
+      });
+      if (!continuation.allowed) {
+        console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+        return 1;
+      }
+    } catch (error) {
+      console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+      return 1;
+    }
   }
-
-  const runId = raw.runId ?? newRunId();
-
-  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
   const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
@@ -4638,12 +4680,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
-  const requestedSupersedeTargets =
-    Array.isArray(argv.supersede)
-      ? argv.supersede.filter((value): value is string => typeof value === 'string')
-      : typeof argv.supersede === 'string'
-        ? [argv.supersede]
-        : [];
+  const requestedSupersedeTargets = normalizeSupersedeTargets(argv.supersede);
   const requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
     // D1.3：出生范围 = 转交时 feature 的**有效**范围（有冻结记录时不重算候选）——
     // 与 `--prepare-run` 入口**同一个** `resolveBirthExecutionScope`，不是第三条路径。
@@ -5026,6 +5063,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
   if (!argv.resume && !attachCreatedRunId && !dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
+    const continuation = evaluateFreshRunContinuation({
+      projectRoot,
+      manifest,
+      forceFresh: Boolean(argv.force),
+    });
+    if (!continuation.allowed) {
+      console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+      return 1;
+    }
   }
 
   acquireGoalLocks(projectRoot, featuresDir, manifest.feature, {
@@ -5060,6 +5106,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       manifest,
       chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
+      forceFresh: Boolean(argv.force),
     });
     // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
     //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
@@ -6801,6 +6848,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             feature: manifest.feature,
             frameworkRoot,
             currentRunId: manifest.run_id,
+            // B（plan b5c1e9d7 §3.2）：本门只在 phase==='coding' 时进入（:6834 早退），
+            // 传的就是「当前正在施工的 owner」——归属为它的条目此刻本就在变，不算上游漂移。
+            pendingOwnerPhase: String(phase),
           });
           if (authority.kind === 'ok') {
             return false;
@@ -8537,6 +8587,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const integritySubtypes =
           baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(decisionSummary) : [];
         const affectedFiles = extractDeterministicAffectedFiles(decisionSummary);
+        const contentRelatedFiles = extractContentRelatedFiles(decisionSummary);
         // P0-B：agent_timeout 无 deterministic affected_files 时监控 phase 主产物
         // （spec.md 等 + context-exploration.md）——产物内容变化=有进展，guard 放行续作。
         const watchedFiles =
@@ -8544,7 +8595,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ? affectedFiles
             : baseFailureKind === 'agent_timeout'
               ? timeoutWatchArtifactPaths(projectRoot, manifest.feature, phase)
-              : [];
+              : baseFailureKind === 'code_regression'
+                ? contentRelatedFiles
+                : [];
         const currentArtifactSnapshot =
           watchedFiles.length > 0 ? snapshotArtifacts(projectRoot, watchedFiles) : {};
 
@@ -8645,6 +8698,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        // plan e7a2c4f1 §3.6：no-progress guard 的 `phase_halt` 在 `decideAndEmit` 之后才发
+        //（顺序见下方赋值处注释），这里只暂存事件体。
+        let noProgressHaltEvent: Record<string, unknown> | undefined;
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
         if (repairCandidatesUnwritable) {
@@ -8898,6 +8954,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             currentBlockerSignature,
             priorArtifactSnapshot,
             currentArtifactSnapshot,
+            relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
           })
         ) {
           driverGuardAction = 'halt';
@@ -8916,6 +8973,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   : failureKind === 'agent_timeout'
                     ? 'no_progress_agent_timeout'
                     : 'no_progress_guard';
+          // plan e7a2c4f1 §3.6（G27）：相关集合未知/为空＝没解析出可修目标，本阶段无路
+          // 可走——沿**既有** `no_progress_guard` 停下交回（不新增 halt reason），只把
+          // 理由说准。措辞守住一条线：`extractContentRelatedFiles` 的集合只来自
+          // `repair_candidates[].files` 与 `blockers[].affected_files`，空集说明「相关目标
+          // 未知」，**不是**「证明了没做修复尝试」。
+          if (failureKind === 'code_regression' && contentRelatedFiles.length === 0) {
+            awaitConfirmGuidance = buildNoRelevantTargetGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              blockerIds: (decisionSummary?.blockers ?? [])
+                .map((blocker) => String((blocker as { id?: string }).id ?? ''))
+                .filter(Boolean)
+                .slice(0, 8),
+              harnessPrefixRel: layout.frameworkRel
+                ? path.posix.join(layout.frameworkRel, 'harness')
+                : 'harness',
+            }).join('\n');
+            console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
+          }
+          // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
+          // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
+          // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
+          // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
+          // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
+          // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
+          noProgressHaltEvent = {
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: `blocker_signature 重复且 watched 产物零变化（failure_kind=${failureKind}）`,
+            ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
+            ...runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase) },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                can_prompt_now: runtimeOwnerKind === 'session',
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            )),
+          };
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
           // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
@@ -9174,6 +9273,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           blockers: (decisionSummary?.blockers ?? []).map((blocker) => ({
             id: String((blocker as { id?: string }).id ?? 'unknown'),
             blocking_class: (blocker as { blocking_class?: string }).blocking_class,
+            classification: (blocker as { classification?: string }).classification,
+            actionability: (blocker as { actionability?: import('./utils/goal-failure-classifier').BlockerActionability }).actionability,
           })),
           deterministicDefects: driverActionableDefects.map((defect) => defect.fingerprint),
           retriesUsed: retries,
@@ -9434,6 +9535,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
               { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
             )) : {}),
           });
+        }
+        // §3.6：guard 驱动的 no-progress halt 在 verdict 之后落事件——`rebuildOutcomesFromEvents`
+        // 按"最后一条 phase_halt 覆盖更早的 terminal phase_verdict"重建，先发会被丢掉。
+        if (noProgressHaltEvent && action === 'halt') {
+          goalEvents.emit(noProgressHaltEvent);
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();

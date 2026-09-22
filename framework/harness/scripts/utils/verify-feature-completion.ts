@@ -63,25 +63,55 @@ const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
  * necessarily not sealed yet — D2 revisions never seal — so the terminal `run_end` check is
  * skipped for it and only for it. Every other check, and every historical run, is unchanged.
  */
-export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string): string[] {
+/**
+ * `pendingOwnerPhase`: the phase executing RIGHT NOW. Its owned outputs are mid-flight by
+ * definition, so the existing `ownedOutputIsCurrent` exemption applies to them and only to them
+ * (plan b5c1e9d7 §3.2). Callers that are not "some owner is building right now" omit it and keep
+ * today's behavior; terminal completion (:412 below) must never claim it.
+ */
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): string[] {
+  const freshnessOpts = pendingOwnerPhase ? { pendingOwnerPhase } : undefined;
   validateExecutionScope(scope);
   const issues = scope.unresolved.filter(gap => !obligationIds || obligationIds.has(gap.obligation_id)).map(gap => `${gap.obligation_id}: ${gap.reason}`);
   for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
     for (const { ref, basis } of [...obligation.basis.map(ref => ({ ref, basis: true })), ...(obligation.satisfied_by ?? []).map(ref => ({ ref, basis: false }))]) {
       if ('input_id' in ref) {
         if (!Array.isArray(ref.dependencies) || !/^[0-9a-f]{64}$/.test(ref.content_fingerprint)) { issues.push(`${obligation.id}: invalid input binding`); continue; }
+        // plan e7a2c4f1 §3.4（G02/G04）：内容等价判据必须**两侧同一个**。resolver 侧自动对齐的
+        // 只是账本形状（依赖字节漂移而解析值逐字节相同），若完成侧仍逐字节比旧 sha256，就会出现
+        // 「resolver 过了、完成检查照样判 input binding stale」的分裂——冻结的 acceptance.yaml
+        // 只加一行注释就永远完成不了。这里复用**同一个** `readBoundInput`（同 input_id + 同 source +
+        // 依赖存在性/role 一致 + `content_fingerprint` 相等），而且**不回写冻结记录**：对齐只影响
+        // 本次判定。内容真变、依赖存在性或 role 变了，`readBoundInput` 仍会抛，逐字节那条照旧报 stale。
+        let contentAligned: boolean | null = null;
+        const alignedByContent = (): boolean => {
+          if (contentAligned === null) {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { readBoundInput, bindingHasParsedValue } = require('./capability-resolution') as typeof import('./capability-resolution');
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+            contentAligned = bindingHasParsedValue(ref) && (() => {
+              try {
+                readBoundInput({ projectRoot, frameworkRoot: inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref);
+                return true;
+              } catch { return false; }
+            })();
+          }
+          return contentAligned;
+        };
         for (const dep of ref.dependencies) {
           // Executed output duties describe the input code at birth; their result is
           // checked by the existing write-set/baseline and phase evidence chain.
           if (basis && isExecutionSourceBasis(projectRoot, scope, obligation, dep)) continue;
-          if (!isInsideProjectRoot(projectRoot, dep.path) || sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) issues.push(`${obligation.id}: input binding stale ${dep.path}`);
+          if (!isInsideProjectRoot(projectRoot, dep.path) || fs.existsSync(dep.path) !== dep.exists) { issues.push(`${obligation.id}: input binding stale ${dep.path}`); continue; }
+          if (sha256File(dep.path) !== dep.sha256 && !alignedByContent()) issues.push(`${obligation.id}: input binding stale ${dep.path}`);
         }
       } else if (!ref.run_id) {
         // D1 §4.2.4：feature 载体的阶段证据引用没有 run 身份（**不伪造**）。判据换成同强度的
         // 本地事实：证据 manifest 完整、aggregate 与引用一致、freshness fresh。run 终局与
         // run 身份两项在无 run 路径上没有等价物，按 D1.5 的同一条豁免处理。
         const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
-        const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
+        const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
         if (!evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') {
           issues.push(`${obligation.id}: reused evidence invalid`);
         }
@@ -93,7 +123,7 @@ export function executionScopeEvidenceIssues(projectRoot: string, feature: strin
           const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
           const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const evidence = loadPhaseEvidenceManifest(projectRoot, feature, ref.phase);
-          const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase])[0];
+          const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
           if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') issues.push(`${obligation.id}: reused evidence invalid`);
         } catch { issues.push(`${obligation.id}: reused run missing/corrupt`); }

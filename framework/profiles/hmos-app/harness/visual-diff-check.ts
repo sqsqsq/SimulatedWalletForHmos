@@ -853,6 +853,28 @@ export function computeScreensHash(screens: VisualDiffScreenEntry[]): string {
 /** t0③：check → runner 的进程内结构化 payload（不进 summary.json，持久化走账本侧车） */
 export interface VisualDiffStructuredPayload {
   kind: 'visual_diff';
+  /**
+   * plan e7a2c4f1 §3.1：true 表示**每个 P0 屏**都满足"屏本身没问题 + 采集完成 + 目标被至少
+   * 一路证据覆盖（placement 核对跑完 或 vl_screening region_attest）"；不再表示"聚合命中全是
+   * advisory"。辅助核对缺席不整轮否定，真实 fail / must_fix / 缺采 / 零覆盖仍然否定。
+   */
+  channel_evidence_usable: boolean;
+  /**
+   * 本轮真的跑完文本 placement 核对的屏（`TextPlacementResult.verifiedScreens` 物化）。
+   * 随 checks[].structured → script-report.json 落盘供事后取证，判据的实际通路是进程内传递。
+   */
+  placement_verified_screens: string[];
+  /**
+   * plan e7a2c4f1 §3.3/§3.4（G28）：`channel_evidence_usable=false` 时**责任归属**在这里定，
+   * 因为只有这里同时看得见三个合取项。消费方（`execution-channel-evidence` →
+   * `testing_channel_evidence_obligation` → `repair_candidates` / 失败归因）据此给
+   * `repair_owner`，不解析散文、不新增 check id：
+   *  · `coding`：屏 fail/must_fix、pass 屏登记的 blocker/major 缺陷、P0 屏确定性 placement 背离——产品真值；
+   *  · `spec`：覆盖不成立且降级原因含引用未声明 / 已声明缺文件 / 图片解码失败（责任文件走 `affected_files`）；
+   *  · `capability`：覆盖不成立且降级原因**全是** OCR 执行能力缺失（三档，不回 coding、不回 spec）；
+   *  · `null`：可消费，或覆盖不成立但说不出原因（如没采）——不归责，沿既有行为。
+   */
+  evidence_block_owner: 'coding' | 'spec' | 'capability' | null;
   loop_id: string;
   attempt_id: string | null;
   goal_run_id: string | null;
@@ -951,6 +973,12 @@ interface VisualDiffHit {
   line: string;
   suggestion?: string;
   rank: number;
+  /**
+   * producer 对本条命中的定性：true=只是"这轮少了一路观测"，不是关于屏的真值。
+   * plan e7a2c4f1 §3.1 起 `channel_evidence_usable` 改按逐屏真值 + 覆盖条件求值，**不再读本字段**；
+   * 它现在只是 producer 的语义标注（保留供人读与后续清理），不构成任何放行/否决权。
+   */
+  advisory?: boolean;
 }
 
 function visualDiffHitRank(severity: 'BLOCKER' | 'MAJOR', status: 'FAIL' | 'WARN'): number {
@@ -982,7 +1010,11 @@ function finalizeVisualDiffHits(
   reportRel: string,
   baseDetails: string,
   hits: VisualDiffHit[],
+  /** plan e7a2c4f1 §3.3：责任文件（如 ref_id 命名对不上时的 spec/ui-spec.yaml + spec/spec.md），
+   *  沿既有 `CheckResult.affected_files` 通道出去，不新建字段。 */
+  extraAffectedFiles: readonly string[] = [],
 ): CheckResult {
+  const affected = [...new Set([reportRel, ...extraAffectedFiles])];
   if (hits.length === 0) {
     return {
       id: 'visual_diff',
@@ -991,20 +1023,19 @@ function finalizeVisualDiffHits(
       severity: 'MAJOR',
       status: 'PASS',
       details: baseDetails,
-      affected_files: [reportRel],
+      affected_files: affected,
     };
   }
   hits.sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id));
   const top = hits[0];
-  const resultId = hits.some(h => h.rank >= 3) ? 'visual_diff' : top.id;
   return {
-    id: resultId,
+    id: 'visual_diff',
     category: 'structure',
     description: desc,
     severity: top.severity,
     status: top.status,
     details: `${baseDetails}\n${hits.map(h => h.line).join('\n')}`,
-    affected_files: [reportRel],
+    affected_files: affected,
     ...(top.suggestion ? { suggestion: top.suggestion } : {}),
   };
 }
@@ -1149,6 +1180,15 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // （OCR 混淆 / 整页参考图 vs 单视口口径缺口）——最终物化为 structuredPayload
   // .uncertain_signals[] 随 script-report.json 落盘；不回写 visual-diff.json。
   let collectedUncertainSignals: Array<{ screen_id: string; target: string; reason: string }> = [];
+  // plan e7a2c4f1 §3.1：文本 placement 核对真的跑完的屏（同一外层收集变量模式）——
+  // 物化为 structuredPayload.placement_verified_screens，并供 channel_evidence_usable 求值。
+  let collectedPlacementVerifiedScreens: string[] = [];
+  // 同一模式：P0 屏上的确定性 placement fail_signals（产品事实，低档位只 WARN 也不得放行）。
+  let collectedPlacementFailScreens: string[] = [];
+  // §3.3：参考图引用类降级的**责任文件**（spec owner 侧），随 CheckResult.affected_files 出去。
+  const placementResponsibleFiles = new Set<string>();
+  // §3.4（G28）：本轮降级原因的去重集合（同一外层收集变量模式）——只用于算 evidence_block_owner。
+  const collectedDegradedCauses = new Set<string>();
 
   const specMd = loadSpecMarkdown(ctx);
   const uiChange = specMd ? parseUiChangeFromSpecMarkdown(specMd) : null;
@@ -1747,17 +1787,26 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       comparableScreens,
       rel => resolveShotPath(ctx.projectRoot, rel),
       // B08 D3：比对域索引——top_slice 屏指向派生图（与截图同坐标系，OCR 文本位置不换算）；其余原图
-      s => topSliceScreens.get(s.screen_id)?.derivedPath ?? resolveRefSourceImage(refIndex, refIdFor(s)).path,
+      // plan e7a2c4f1 §3.3：把 resolveRefSourceImage 的 note 一并交给 producer——旧实现只取
+      // `.path`，诊断当场丢弃，下游只能说"参考原图缺失/不可读"。
+      s => {
+        const derived = topSliceScreens.get(s.screen_id)?.derivedPath;
+        return derived ? { path: derived } : resolveRefSourceImage(refIndex, refIdFor(s));
+      },
       // adjudicated-repair-loop：OCR 注入缝（测试用；缺省走真实 ocrImageWords）
       injectedVisualDiffOcrFn ?? undefined,
     );
     // M2：producer 归类的 uncertain 信号（OCR 混淆 / 口径缺口）——留下供 structuredPayload 物化
     collectedUncertainSignals = placement.uncertainSignals;
+    collectedPlacementVerifiedScreens = placement.verifiedScreens;
     const p0BaseSet = new Set(p0Ids.map(canonicalOverlayBase));
     const failScreensPlacement = placement.perScreen.filter(
       p => p.fail_signals.length > 0 && p0BaseSet.has(canonicalOverlayBase(p.screen_id)),
     );
     const warnScreensPlacement = placement.perScreen.filter(p => !failScreensPlacement.includes(p));
+    // plan e7a2c4f1 §3.1（codex review 返修）：确定性 fail_signals 是**产品事实**（一档），
+    // 非 hard-pixel 档位下它只出 WARN（下方 ratchet），不能因此被当成可消费证据。
+    collectedPlacementFailScreens = failScreensPlacement.map(p => p.screen_id);
     if (failScreensPlacement.length > 0) {
       const ratchet = pixel1to1
         ? fidelityRatchetFailOrWarn(ctx, false)
@@ -1808,15 +1857,40 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
             .join(' | '),
       });
     }
+    // 五类原因的成文与责任文件（第五类"真实视觉差异"由屏自身的 fail/must_fix 承载，不在这条 hit 里）
+    const causeLabel: Record<string, string> = {
+      ref_undeclared: '引用未声明（回 spec：ui-spec.yaml 的 ref_id 与 spec.md 的 authoritative_refs.id 须统一）',
+      ref_missing_file: '已声明但缺文件（回 spec：补文件或改该 id 的 path）',
+      ref_decode_failed: '图片解码失败（回 spec：换一张可读的图）',
+      ocr_capability: 'OCR 执行能力缺失（环境/工具，属能力缺口，不回 spec）',
+    };
+    const byCause = new Map<string, string[]>();
+    for (const d of placement.degradedReasons) {
+      const list = byCause.get(d.cause) ?? [];
+      list.push(`${d.screen_id}: ${d.detail}`);
+      byCause.set(d.cause, list);
+      collectedDegradedCauses.add(d.cause);
+      for (const f of d.files) if (f.startsWith('spec/')) placementResponsibleFiles.add(f);
+    }
+    const placementDegradedLines = [...byCause.entries()].map(
+      ([cause, lines]) => `【${causeLabel[cause] ?? cause}】${lines.slice(0, 4).join('；')}${lines.length > 4 ? `…共 ${lines.length} 屏` : ''}`,
+    );
     if (placement.ocrUnavailable.length > 0 || placement.refUnavailable.length > 0) {
       pushVisualDiffHit(hits, {
         id: 'visual_diff_text_placement_degraded',
         severity: 'MAJOR',
         status: 'WARN',
+        // plan e7a2c4f1 §3.1（G11）：这条描述的是"这轮少了一路辅助核对"，不是"屏有问题"——
+        // 与 T8 观测（visual_diff_layout_invariants）同级标 advisory；对结论的影响改由
+        // channel_evidence_usable 的逐屏覆盖条件承担，不再靠"hit 列表干净"整轮否定。
+        advisory: true,
+        // plan e7a2c4f1 §3.3（G12/G31）：详情按**原因**成文并点名责任文件与具体 id，
+        // 不再是一句"参考原图缺失/不可读"——宿主三轮都在找图片文件，真问题是两边 id 命名不一致。
         line:
-          `文本块观测降级：` +
-          (placement.ocrUnavailable.length ? `截图 OCR 不可用（${placement.ocrUnavailable.join(', ')}）` : '') +
-          (placement.refUnavailable.length ? `${placement.ocrUnavailable.length ? '；' : ''}参考原图缺失/不可读（${placement.refUnavailable.join(', ')}）` : '') +
+          `文本块观测降级（按原因分类；前三类回 spec owner 走既有 correction，OCR 能力缺口属能力档不回 spec）：` +
+          (placementDegradedLines.length > 0
+            ? placementDegradedLines.join('；')
+            : `截图 OCR 不可用（${placement.ocrUnavailable.join(', ')}）${placement.refUnavailable.length ? `；参考图不可用（${placement.refUnavailable.join(', ')}）` : ''}`) +
           `——须复核，不静默放过`,
       });
     }
@@ -2349,6 +2423,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         id: 'visual_diff_layout_invariants',
         severity: 'MAJOR',
         status: 'WARN',
+        advisory: true,
         line:
           `【T8 布局结构观测（WARN 档，档位见 layout-oracle-calibration.md）】` +
           warnLines.slice(0, 6).join(' | ') + (warnLines.length > 6 ? ` …共 ${warnLines.length} 处` : ''),
@@ -2626,6 +2701,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         id: 'visual_diff_finding_transcription',
         severity: 'MAJOR',
         status: 'WARN',
+        advisory: true,
         line:
           `【t2 落账提醒】T8 warn 命中未转录 defects（终判前须落账或以 defect 记录处置结论）：` +
           `${unloggedWarn.slice(0, 6).join(', ')}${unloggedWarn.length > 6 ? `…共 ${unloggedWarn.length} 处` : ''}`,
@@ -2867,7 +2943,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
   }
   const detailsWithNotes = referenceNotes.length > 0 ? `${details}\n${referenceNotes.join('\n')}` : details;
-  const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits);
+  const finalResult = finalizeVisualDiffHits(desc, reportRel, detailsWithNotes, hits, [...placementResponsibleFiles]);
 
   if (roundEvaluation?.decision.fused && pixel1to1) {
     // 既有机器收敛熔断保留；不再存在 candidate-pass 人签分支。
@@ -2876,8 +2952,49 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
 
   // t0③：进程内结构化 payload（runner 消费追加账本 + summary.visual_round；不进 summary
   // blocker schema）。持久化侧车=账本本身。
+  //
+  // plan e7a2c4f1 §3.1（G13）：证据资格判据 = **关于屏的真值 + 逐屏覆盖条件**，不再用 hit 列表
+  // 形状（"所有命中都 advisory"）。旧判据让任何一条未标 advisory 的 WARN——哪怕只是"这轮少了
+  // 一路辅助核对"——把四屏 pass/fail=0/must_fix=0 的整轮视觉证据判死（宿主三轮全中）。
+  //   ① 屏本身没问题：verdict≠fail 且 must_fix 为空（既有判据，按全部屏求值，强于逐 P0 屏）；
+  //      **外加已证实的产品事实**（codex review 返修）：pass 屏登记的 blocker/major `defects`
+  //      （`blockingDefectPass`）与 P0 屏的确定性 placement `fail_signals`。低档位（非 hard
+  //      pixel）下既有 ratchet 只把这两类降成 WARN，不在此否决就等于把"已知渲染缺陷 + 屏 pass"
+  //      绑成 covered——这正是 harness-gates 里 major/blocker 缺陷必须拒绝的那条。
+  //   ② 采集确实完成：该屏有 evaluated_screenshot_hash；
+  //   ③ 目标被至少一路证据覆盖：placement 核对跑完，或该屏有 vl_screening 的 region_attest。
+  // 不读 hit 列表、不用 contentActionableMissing（熔断不合格时被清空）、不用 unavailable 集合取反；
+  // 能力缺口类 WARN（OCR 降级、dump 缺失）照旧可消费。
+  const placementVerifiedScreens = new Set(collectedPlacementVerifiedScreens);
+  const p0ScreenEvidenceCovered = (targetId: string): boolean => {
+    const entry = resolveP0Entry(targetId);
+    if (!entry) return false;
+    if (isMissingEvaluatedScreenshotHash(entry) || isCaptureMutableVerdict(entry.verdict)) return false;
+    return (
+      placementVerifiedScreens.has(entry.screen_id) ||
+      machineRegionAttest(entry).some(a => a.method === 'vl_screening')
+    );
+  };
+  // plan e7a2c4f1 §3.4（G28）：三个合取项拆成具名值，既是判据本身，也是责任归属的唯一依据。
+  const productTruthIntact =
+    !rep.screens.some(screen => screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0) &&
+    blockingDefectPass.length === 0 &&
+    collectedPlacementFailScreens.length === 0;
+  const coverageIntact = p0Ids.every(p0ScreenEvidenceCovered);
+  const specOwnedCauses = [...collectedDegradedCauses].filter(cause => cause !== 'ocr_capability');
   const structuredPayload: VisualDiffStructuredPayload = {
     kind: 'visual_diff',
+    channel_evidence_usable: productTruthIntact && coverageIntact,
+    evidence_block_owner: productTruthIntact && coverageIntact
+      ? null
+      : !productTruthIntact
+        ? 'coding'
+        : specOwnedCauses.length > 0
+          ? 'spec'
+          : collectedDegradedCauses.has('ocr_capability')
+            ? 'capability'
+            : null,
+    placement_verified_screens: [...placementVerifiedScreens],
     loop_id: loopId,
     attempt_id: goalRunId ? attemptId : null,
     goal_run_id: goalRunId,
