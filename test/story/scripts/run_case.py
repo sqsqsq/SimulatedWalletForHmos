@@ -28,6 +28,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import signal
 import shutil
 from datetime import datetime, timezone
@@ -581,7 +582,7 @@ def review_closure(feature: str) -> dict:
     """各阶段审查闭环现在是哪一种 —— 第二检查点带给宿主，**只报事实**。
 
     `completed_with_prior_review` 或信号里还挂着 `semantic_not_reverified`，说明这一轮的
-    审查报告没有被采纳（沿用了历史 PASS）。预跑里 auto 就停在这一步：报告写了、没同步闭环，
+    审查报告没有被采纳（沿用了历史 PASS）；`report_adopted` 只在当前报告确实被采纳且通过时为 true。预跑里 auto 就停在这一步：报告写了、没同步闭环，
     模型却报了完成——不带出来的话，宿主要逐份翻 summary 才看得见。
     """
     out = {}
@@ -596,9 +597,51 @@ def review_closure(feature: str) -> dict:
             continue
         signals = [s.get("id") if isinstance(s, dict) else s
                    for s in data.get("readiness_signals") or []]
-        out[phase] = {"mode": (data.get("verifier_closure") or {}).get("mode"),
-                      "signals": signals, "subject": data.get("verifier_subject_id")}
+        mode = (data.get("verifier_closure") or {}).get("mode")
+        subject = data.get("verifier_subject_id")
+        report = _report_result(data.get("verifier_report"))
+        # report_adopted = 当前报告已被采纳且通过，判据同 phases/update.md「与闭环、修正入口的关系」第 4 步：
+        # 闭环且 summary 为 PASS、零阻断；报告在盘且终态块的 subject 就是当前 subject、PASS、零阻断；
+        # 没有兜底闭环方式、没挂未重审信号。缺哪一样都是 false，不从缺席的字段推定成功。
+        out[phase] = {"mode": mode, "signals": signals, "subject": subject,
+                      "closure_status": data.get("closure_status"), "verdict": data.get("verdict"),
+                      "report": report,
+                      "report_adopted": bool(subject) and not mode
+                      and "semantic_not_reverified" not in signals
+                      and data.get("closure_status") == "closed"
+                      and data.get("verdict") == "PASS" and data.get("blocker_count") == 0
+                      and report.get("valid") is True and report.get("subject") == subject
+                      and report.get("verdict") == "PASS" and report.get("blocker_count") == 0}
     return out
+
+
+#: 终态块与字段规则同 framework `verifier-subject.ts::parseResultBlock`：恰好一个完整块，块外文字不算。
+RESULT_BLOCK = re.compile(r"<!-- maison-verifier-result:v1 -->(.*?)<!-- /maison-verifier-result:v1 -->", re.S)
+SUBJECT_ID = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _report_result(rel: str | None) -> dict:
+    """verifier 报告的终态块。不在盘、读不了、块不合协议，各自如实报，不抛异常。"""
+    path = REPO_ROOT / rel if rel else None
+    if path is None or not path.is_file():
+        return {"present": False}
+    try:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"present": True, "readable": False, "why": str(exc)}
+    blocks = RESULT_BLOCK.findall(text)
+    if len(blocks) != 1:
+        return {"present": True, "readable": True, "valid": False, "why": f"终态块 {len(blocks)} 个"}
+
+    def field(key: str) -> str | None:
+        m = re.search(rf"^\s*{key}\s*:\s*(.+?)\s*$", blocks[0], re.M)
+        return m.group(1) if m else None
+
+    subject, verdict, blockers = field("verifier_subject_id"), field("verdict"), field("blocker_count")
+    valid = (bool(subject and SUBJECT_ID.match(subject)) and verdict in ("PASS", "FAIL")
+             and bool(blockers and blockers.isdigit()))
+    return {"present": True, "readable": True, "valid": valid, "subject": subject, "verdict": verdict,
+            "blocker_count": int(blockers) if blockers and blockers.isdigit() else blockers}
 
 
 def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
@@ -737,6 +780,7 @@ def build_phase_results(feature: str, start_phase: str, end_phase: str,
                         gates: dict[str, str]) -> dict[str, dict[str, Any]]:
     """建立每个 phase 的执行、门禁与 formal closure 记录。"""
     feature_root = REPO_ROOT / FEATURES_DIR / feature
+    reviews = review_closure(feature)
     output: dict[str, dict[str, Any]] = {}
     for phase in applicable_phases(start_phase, end_phase):
         reached = _phase_reached(feature_root, phase)
@@ -760,6 +804,8 @@ def build_phase_results(feature: str, start_phase: str, end_phase: str,
             "execution_status": "completed" if reached else "not_reached",
             "closure_status": closure,
             "closure_missing": missing,
+            # 执行到终点、formal closure 与本轮审查报告是否被采纳是三件事，分开报
+            "review": reviews.get(phase),
             "gates": phase_gates,
         }
     return output

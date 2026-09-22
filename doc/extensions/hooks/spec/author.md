@@ -59,4 +59,4 @@
 
 ## 跑哪条命令
 
-`cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <需求名>`。走 `/story` 链时，这一段的顺序由 `story_flow.py status` 逐步打印（它也给出这一步要写的文件长什么样）。**harness 放在三份产物齐备之后**——之前跑它一定红。取证与结论写法见 [`evidence-rules.md`](../../skills/story/reference/evidence-rules.md)。
+`cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <需求名>`。走 `/story` 链时，这一段的顺序由 `story_flow.py status` 逐步打印（它也给出这一步要写的文件长什么样）。**harness 放在三份产物齐备之后**——之前跑它一定红。verifier 报告写好后读 summary，当前报告还没被采纳时再完整跑一次这条命令采纳它（采纳的判据见 [update.md](../../skills/story/phases/update.md)「与闭环、修正入口的关系」第 4 步）。取证与结论写法见 [`evidence-rules.md`](../../skills/story/reference/evidence-rules.md)。

@@ -326,7 +326,7 @@ class TheGenericLayerKnowsNoWalletProtocol(unittest.TestCase):
     """
 
     TOKENS = ("WalletHA", "WalletFuncResult", "chartBuilder", "vocBuilder", "OBS-0",
-              "STEP_ERROR", "十位", "内码")
+              "STEP_ERROR", "十位", "内码", "步骤成功", "自动采集")
 
     def test_no_token_outside_knowledge(self) -> None:
         hits = []

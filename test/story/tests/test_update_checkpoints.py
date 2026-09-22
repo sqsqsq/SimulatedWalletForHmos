@@ -347,10 +347,129 @@ class TheSecondCheckpointShowsTheReviewClosure(unittest.TestCase):
         self.assertEqual([], out["plan"]["signals"])
         self.assertNotIn("coding", out, "没有产物的阶段不该出现")
 
+    def test_phase_results_carry_the_review_apart_from_closure(self) -> None:
+        results = rc.build_phase_results("AR1", "spec", "plan", {})
+        self.assertEqual("completed_with_prior_review", results["spec"]["review"]["mode"])
+        self.assertFalse(results["spec"]["review"]["report_adopted"])
+
     def test_the_event_carries_it(self) -> None:
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
         at = src.index('feed.emit("update_checkpoint"')
         self.assertIn("closure=review_closure(feature)", src[at:at + 300])
+
+
+class ReportAdoptedMeansTheCurrentReportPassedAndWasTakenIn(unittest.TestCase):
+    """`report_adopted` 只在当前报告确实被采纳且通过时为 true。
+
+    判据同 phases/update.md「与闭环、修正入口的关系」第 4 步：summary 闭环、PASS、零阻断；
+    报告在盘，终态块的 subject 是当前 subject、PASS、零阻断；没有兜底闭环、没挂未重审信号。
+    终态块按 framework `parseResultBlock` 的协议读：恰好一个完整块，块外文字不算，字段值合法。
+    """
+
+    SUBJECT = "5a036a42e5bf1aafcb49d8e64a8f2e33e93200bc96d1dda1abb2a999c5bb8a8d"
+    OTHER = "208a977e110f80d2be405b8298bf9f07c46b36b4acb98d7d13cbee3870b32d36"
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.reports = self.tmp / "doc" / "features" / "AR1" / "plan" / "reports"
+        self.reports.mkdir(parents=True)
+        patcher = unittest.mock.patch.multiple(rc, REPO_ROOT=self.tmp, FEATURES_DIR="doc/features")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def summary(self, **overrides) -> None:
+        rel = f"doc/features/AR1/plan/reports/verifier.report.{self.SUBJECT}.md"
+        body = {"verdict": "PASS", "blocker_count": 0, "closure_status": "closed",
+                "readiness_signals": [], "verifier_subject_id": self.SUBJECT, "verifier_report": rel}
+        body.update(overrides)
+        (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
+
+    @staticmethod
+    def block(subject: str, verdict: str = "PASS", blockers: str = "0", close: bool = True) -> str:
+        return ("<!-- maison-verifier-result:v1 -->\n"
+                f"verifier_subject_id: {subject}\nverdict: {verdict}\nblocker_count: {blockers}\n"
+                + ("<!-- /maison-verifier-result:v1 -->\n" if close else ""))
+
+    def report(self, text: str) -> None:
+        (self.reports / f"verifier.report.{self.SUBJECT}.md").write_text(
+            "审查正文\n\n" + text, encoding="utf-8")
+
+    def review(self) -> dict:
+        return rc.review_closure("AR1")["plan"]
+
+    def test_the_current_passing_report_taken_in_counts(self) -> None:
+        self.summary()
+        self.report(self.block(self.SUBJECT))
+        self.assertTrue(self.review()["report_adopted"])
+
+    def test_no_report_on_disk_does_not(self) -> None:
+        self.summary()
+        self.assertFalse(self.review()["report_adopted"])
+        self.assertEqual({"present": False}, self.review()["report"])
+
+    def test_a_report_for_another_subject_does_not(self) -> None:
+        self.summary()
+        self.report(self.block(self.OTHER))
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_an_open_failing_phase_does_not(self) -> None:
+        """评审复现的形态：open、FAIL、报告未验证、subject 是当前的、信号为空、没有报告。"""
+        self.summary(closure_status="open", verdict="FAIL", report_validity="UNVERIFIED")
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_a_failing_report_does_not(self) -> None:
+        self.summary()
+        self.report(self.block(self.SUBJECT, "FAIL", "2"))
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_closing_on_a_prior_review_does_not(self) -> None:
+        self.summary(verifier_closure={"mode": "completed_with_prior_review"},
+                     readiness_signals=[{"id": "semantic_not_reverified"}])
+        self.report(self.block(self.SUBJECT))
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_text_after_the_block_does_not_rewrite_it(self) -> None:
+        """评审复现：终态块判 FAIL，块外备注里写着 PASS 与 0——终态仍是 FAIL。"""
+        self.summary()
+        self.report(self.block(self.SUBJECT, "FAIL", "1") + "\n备注\nverdict: PASS\nblocker_count: 0\n")
+        review = self.review()
+        self.assertFalse(review["report_adopted"])
+        self.assertEqual("FAIL", review["report"]["verdict"])
+
+    def test_a_block_without_its_end_marker_is_not_a_result(self) -> None:
+        self.summary()
+        self.report(self.block(self.SUBJECT, close=False))
+        review = self.review()
+        self.assertFalse(review["report_adopted"])
+        self.assertFalse(review["report"]["valid"])
+
+    def test_two_blocks_are_not_a_result(self) -> None:
+        self.summary()
+        self.report(self.block(self.SUBJECT) + self.block(self.SUBJECT))
+        self.assertFalse(self.review()["report"]["valid"])
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_a_malformed_subject_is_not_a_result(self) -> None:
+        self.summary(verifier_subject_id="5a03")
+        self.report(self.block("5a03"))
+        self.assertFalse(self.review()["report"]["valid"])
+        self.assertFalse(self.review()["report_adopted"])
+
+    def test_an_unreadable_report_is_reported_not_raised(self) -> None:
+        self.summary()
+        self.report(self.block(self.SUBJECT))
+        real = Path.read_text
+
+        def read_text(path, *args, **kwargs):
+            if path.name.startswith("verifier.report."):
+                raise OSError("拒绝访问")
+            return real(path, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "read_text", read_text):
+            review = self.review()
+        self.assertFalse(review["report"]["readable"])
+        self.assertFalse(review["report_adopted"])
 
 
 class StoryGatesTellNotRunFromFailed(unittest.TestCase):
