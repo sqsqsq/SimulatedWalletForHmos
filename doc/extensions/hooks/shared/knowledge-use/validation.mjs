@@ -237,7 +237,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   }
 
   // patterns：只登记候选，候选须在册。**零在册模式是合法业务**——
-  // patterns: [] 就是「没有可判断的候选」的正常登记，不再逼着作者造一行
+  // patterns: [] 就是「没有可判断的候选」的正常登记，不要求作者另写一行
   // 「为什么都不需要」：候选集是空的，那种行注定只有一种填法，问了等于没问。
   if (!use.patterns.length && knowledge.patternIds.length > 0) {
     problems.push('patterns 一个适用单元都没登记 —— 零候选是正常结论，'

@@ -280,7 +280,7 @@ def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
     走文件不走参数：JSON 全是引号，任何 shell 都要对参数再解析一遍——同一条命令在
     bash 下原样送达、在 PowerShell 下双引号被吞。这条纪律本 skill 的所有脚本一致。
 
-    份表回答的是「拆成几份、各归谁、什么顺序、谁依赖谁」；`scope_text` 不再单独登记，
+    份表回答的是「拆成几份、各归谁、什么顺序、谁依赖谁」；`scope_text` 不单独登记，
     由本 AR 那份的 scope 推导——同一事实两处登记，迟早各说各话。
     """
     path = feature_root / Path(*SPLIT_PARTS)

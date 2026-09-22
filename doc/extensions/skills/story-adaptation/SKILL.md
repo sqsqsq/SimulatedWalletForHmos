@@ -18,9 +18,8 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
 | `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
 
-> **升到 1.9.4 的目标工程要给自己的 `story.js` 补 `fetch`**（只读取材到本单 `inbox/`，回执写 `AR/story-src/fetched.json`，
-> 合同见 `skills/story/scripts/README.md`），并可以删掉 `review`——本版它已经退场。
-> 没补 `fetch` 时产物更新会报错停下，不会退回用 `review` 顶替。
+> **目标工程的 `story.js` 要实现 `fetch`**（只读取材到本单 `inbox/`，回执写 `AR/story-src/fetched.json`，
+> 合同见 `skills/story/scripts/README.md`）：`/story update` 靠它取上游与评审回稿，命令失败时 update 报出来并停下。
 
 **没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
 

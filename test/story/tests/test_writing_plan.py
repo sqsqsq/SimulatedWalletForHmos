@@ -5,7 +5,7 @@
 脚本只做确定的事：建空壳、读骨架、把骨架铺成草稿、提交时核骨架里的标题与表图在不在。
 这一组锁住其中确定的那几件：
 
-  ① 空壳与旧协议都不算设计过；骨架缺在哪一次报全、指得到位置；
+  ① 空壳不算设计过；骨架缺在哪一次报全、指得到位置；
   ② 没动过的草稿按骨架铺好标题、说明与表图；动过的一个字节不改，只给缺的起点；
   ③ 章提交与全篇 check 同一份核对：骨架里的标题、表、图正文都要有，正文可以多；
   ④ 十章齐后下一步是回看清单；设计随稿冻结，reopen 之后可以再改。
@@ -111,16 +111,6 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
         self.assertTrue(problems, "空壳被当成了已经写好的设计")
         self.assertTrue(all("模板占位符" in p for p in problems), problems)
 
-    def test_the_old_protocol_is_refused_without_being_read(self) -> None:
-        """旧形态（章节安排 + 结构选择 JSON）不双读：报一次，说清按骨架重写。"""
-        old = (BASE.replace("## 骨架", "## 章节安排")
-               + "\n## 结构选择\n\n```json\n[{\"chapter\": \"06-features\", \"at\": \"\", \"kind\": \"diagram\"}]\n```\n")
-        got = read_plan(old)
-        self.assertEqual(1, len(got["problems"]), got["problems"])
-        self.assertIn("旧协议", got["problems"][0])
-        self.assertIn("按骨架协议重写", got["problems"][0])
-        self.assertEqual([], got["structures"], "旧形态的 JSON 被读进来了")
-
     def test_each_broken_shape_is_located(self) -> None:
         cases = {
             "未知章 ID": (BASE.replace("### 03-scope", "### 03-范围"),
@@ -133,10 +123,6 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                      ["「形式：（空）」不认识", "表格", "有序列表"]),
             "不认识的形式": (with_chapter("06-features", "#### 本地数据\n形式：随手画"),
                         ["「形式：随手画」不认识", "流程图", "时序图", "状态图"]),
-            "旧表头写法": (with_chapter("06-features", "#### 本地数据\n表头：数据 | 何时清除"),
-                       ["是上一版写法", "形式：<类型>"]),
-            "旧图写法": (with_chapter("06-features", "#### 本地数据\n图：时序图"),
-                     ["是上一版写法", "形式：<类型>"]),
             "形式写成说明行": (with_chapter("06-features", "#### 本地数据\n- 形式：表格"),
                          ["形式要单起一行"]),
             "不涉及还留小节": (with_chapter("06-features", "- 不涉及：没有功能变化\n#### 本地数据\n- 答：x"),
@@ -263,14 +249,14 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
         self.assertIn("[⓪c 写作设计]", out)
         self.assertIn("模板占位符", out.split("[⓪c 写作设计]", 2)[-1])
 
-    def test_an_old_design_is_refused_with_the_way_out(self) -> None:
+    def test_a_design_without_its_skeleton_is_refused_with_the_way_out(self) -> None:
         self.cmd("skeleton")
         self.write_plan(BASE.replace("## 骨架", "## 章节安排"))
         code, out = self.cmd("skeleton")
         self.assertEqual(0, code, out)
         self.assertTrue(out.startswith("NEXT: 先写整篇写作设计"), out[:200])
         self.assertIn("记一笔：写作设计", out)
-        self.assertIn("按骨架协议重写", out)
+        self.assertIn("缺「## 骨架」", out)
 
     def test_a_valid_design_moves_on_to_the_first_chapter(self) -> None:
         self.cmd("skeleton")

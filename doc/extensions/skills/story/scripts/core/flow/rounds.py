@@ -30,7 +30,7 @@ def cmd_round(feature_root: Path) -> dict:
         raise FlowError(str(exc)) from exc
     digest = manifest["digest"]
     reference = {"digest": digest}
-    # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不再自己记一遍哈希
+    # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不另记哈希
     ingested = sorted(s["file"] for s in manifest["sources"] if s.get("ingested"))
 
     contract = load(feature_root) or {

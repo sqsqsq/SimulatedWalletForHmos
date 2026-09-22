@@ -20,8 +20,6 @@ import { relFromFeature } from './sources.mjs';
 
 //: 两个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
 const PARTS = { story: '阅读主线', skeleton: '骨架' };
-//: 上一版协议的两部分：读到就整份报一次，不双读。
-const RETIRED_PARTS = ['章节安排', '结构选择'];
 //: 形式协议的四个词。它们是协议词，不是业务分类；图种另从 DIAGRAM_SYNTAXES 派生。
 const FORMS = {
   表格: { kind: 'table' },
@@ -34,7 +32,6 @@ const ANY_DIAGRAM = '图';
 const LINE = {
   note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
-  retired: /^(?:表头|图)[:：]/,
 };
 
 /** 形式清单那句话：四个协议词 + 图种，报错与空壳共用一处。 */
@@ -92,12 +89,6 @@ export function readWritingPlan(ctx) {
     const hit = !fenced.has(at) && /^##\s+(.+?)\s*$/.exec(line);
     return hit ? [{ name: normalizeHeading(hit[1]), at }] : [];
   });
-  if (h2.some(h => RETIRED_PARTS.includes(h.name))) {
-    say(`还是旧协议（「## ${RETIRED_PARTS.join('」「## ')}」）——按骨架协议重写：\`## ${PARTS.story}\` 写阅读主线，`
-      + `\`## ${PARTS.skeleton}\` 下每章一个 \`### <章 ID>\`，正文要有的小节各写一行 \`#### 标题\`；`
-      + '写法见 story-write.md「四、动笔前：先设计表达」');
-    return plan;
-  }
   const part = (name) => {
     const hits = h2.filter(h => h.name === name);
     if (hits.length !== 1) {
@@ -185,9 +176,6 @@ function readSkeleton(plan, lines, range, fenced, say) {
       const form = value ? parseForm(value) : null;
       if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——写 ${formWords()}`);
       else target.forms.push(form);
-    } else if (LINE.retired.test(line)) {
-      say(`${where()}的「${line.slice(0, 24)}」是上一版写法——改成一行 形式：<类型>`
-        + `（${formWords()}），再用 - 描述： 说明它表达什么；列与节点在写章时定`);
     } else {
       say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架里只写 - 说明行、形式： 与 ####、##### 标题`);
     }
@@ -246,7 +234,7 @@ function addPick(plan, pick) {
  * 这一章要核、要打底的结构 = 合同的最小必要结构 ∪ 写作设计选定的形式。
  *
  * 骨架的 `####` 小节进 `h3`、`#####` 进 `h4`（都要在正文里），`skeleton` 原样带上给草稿铺说明行。
- * **表的列不再由模板定**：模板选表格只要求那个位置真有一张表，列由写章的人按原文决定；
+ * **表的列由写章的人定**：模板选表格只要求那个位置真有一张表，列按原文决定；
  * 合同自带的必要表照旧按锚列核（那是既有交付合同，不是模板提前定列）。
  * 图记位置与点名的类型；与合同那张章级图重合时记 `alsoRequired`，有没有图由合同那条核。
  * 叙述只进草稿指引，不进存在性检查。

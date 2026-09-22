@@ -148,8 +148,8 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 入口与 init 同构：**先报输入、在材料关卡问一次要不要补料，人答了再比**——
 八项真的没变就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
 
-取回上游与评审的新内容用只读取材（`story.js fetch`，落进本单 `inbox/`），它**一个业务文件都不写**——
-不像 1.9.4 之前的 `review` 那样直接覆盖 `AR/review.md`，把人刚写的意见吃掉。
+取回上游与评审的新内容用只读取材（`story.js fetch`，落进本单 `inbox/`），它**一个业务文件都不写**：
+`AR/review.md` 里人刚写的意见原样留着，采不采用新内容由读过原文的你与人决定。
 方法完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。

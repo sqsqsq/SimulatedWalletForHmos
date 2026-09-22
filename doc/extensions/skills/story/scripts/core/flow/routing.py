@@ -538,7 +538,7 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     if decision["chosen"] != CARRY_ALL and not settled_this_round(contract):
         return "await_gate:split_carrier", "S3 第三级：呈现该维度的份表，取得本 AR 承载哪份"
 
-    # 范围已定——整体承载，或份表已定案。直接进 S4，不再回关卡收口
+    # 范围已定——整体承载，或份表已定案。直接进 S4
     if not (feature_root / Path(*DESIGN_DRAFT)).is_file():
         return ("generate_design",
                 "S4：按 rules/ar_design_init.md 提取，写到 "

@@ -35,7 +35,7 @@ def cmd_status(feature_root: Path) -> dict:
     # 历史查契约文件本身。
     gates = round_gates(contract) if contract.get("rounds") else []
     # 材料事实直接给出去：消费者（起手预检、作者包）按 pending/changed 判断，
-    # 不再去猜 `next` 的字面值——那样只认得出其中一种情况。没有轮次时没有基准可比，
+    # 不从 `next` 的字面值反推——字面值只认得出其中一种情况。没有轮次时没有基准可比，
     # 给 null，不用 false 冒充「材料没问题」。
     state = material_state(feature_root, current, manifest) if manifest is not None else None
     topics = topic_digest(feature_root, meeting.read_notes(feature_root, []), contract)

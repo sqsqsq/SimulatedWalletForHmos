@@ -74,7 +74,7 @@ const FLOW_FIX = "处置：回 /story 走完三级关卡（材料 → 范围怎�
  * **每道判据问的都是「到没到某个点」，答案是一段区间，不是一个值。**
  * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：「须 complete」写成
  * `status !== 'complete'`，成文登记后 spec harness 一重跑就 FAIL，`upstream_verdict_gate`
- * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。回归形态见测试域台账。
+ * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。
  *
  * `archived` 不是流程状态：归档是契约里独立的记录字段（`contract.archived`），
  * 登记归档要求流程已在 `story_written`，状态本身不再前进——流程状态只写实际走到过的值。
@@ -251,7 +251,7 @@ export function flowProblems(featureRoot) {
     );
   } else {
     // 收口的前置是**本轮范围已定**：第二级选了整体承载，或第三级完成定案。
-    // 不再看「末条是不是 proceed」——范围一定就直接进 S4，没有回关卡收口这一步了。
+    // 范围一定就直接进 S4，收口不依赖最后一条决策是什么。
     const carriedAll = lastGates.some(
       d => d?.gate === 'scope_decision' && d?.chosen === carryAll && d?.outcome === 'accepted'
     );

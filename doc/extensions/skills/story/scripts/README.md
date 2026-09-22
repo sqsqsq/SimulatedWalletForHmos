@@ -9,7 +9,7 @@
 
 新增的公共脚本一律进 `core/`。往 `scripts/` 根下放文件会被 `adapt-scan --check ⑧` 拦下：放在那里的两边都不认，永远升级不到目标手里。
 
-## `adapters/` 里那三个的输出合同
+## `adapters/` 里两个文件的输出合同
 
 它们是需求系统的对接层。本仓这三份是**替身**（本地目录模拟需求系统），部署环境各自实现自己那份，从不调用扩展内容。
 
@@ -17,25 +17,22 @@
 
 | 文件 | 干什么 | 合同要点 |
 |---|---|---|
-| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `review` / `fetch` / `help`） | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
+| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `fetch` / `help`） | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
 | `token.js` | 取 mcp token | 成功退出 0，**stdout 即 token 本身**（纯文本单行，不是 JSON）；失败非 0，错误走 stderr |
 
 写盘落点也是合同的一部分：`AR/design.md`、`AR/review.md`、`AR/detail.json`、`AR/.review-backup/` 由这一层写。**公共机制不往 `AR/` 根下写任何辅助文件**，辅助件一律进 `AR/story-src/`。
 
-### 1.9.4 的合同变化：新增 `fetch`
+### `fetch`：只读取材
 
-`fetch <单号> <token> --out <本单 inbox>` 是**只读取材**：取回这张单现在关联的上游正文与评审回稿。
+`fetch <单号> <token> --project-root <工程根> --out <本单 inbox>` 是**只读取材**：取回这张单现在关联的上游正文与评审回稿。
 三份正文写进 `--out`（`/story update` 渲染的命令里就是本单的 `inbox/`，与人补的料走同一条导入链），
 与本地对应文件逐字相同的不落盘；评审回稿不是需求正文，写在 `AR/story-src/review-feedback.md`；
 回执 `AR/story-src/fetched.json` 逐份记来源身份、摘要、系统上的位置、取到没有——它不能放进 inbox，
 否则会被当成一份材料导入。**一个业务文件都不写**。`status` 四态分开：`fetched` / `same`（与本地相同）/
 `absent`（系统上本来就没有，常态）/ `failed`（读取故障）——混成一个的话，一次读取错误会被当成「评审没提意见」。
-本地单不适用，当场失败；`--out` 必填。
+本地单不适用，当场失败；`--out` 必填，`--project-root` 定回执写在哪个工程的需求目录下。
 
-**目标工程升级到 1.9.4 要给自己的 `story.js` 补上 `fetch`，并可以删掉 `review`**：
-本版 `review` 命令与 `review.js` 已经退场。没补 `fetch` 时产物更新会报
-「目标 adapter 未实现 1.9.4 合同的 fetch」并停，**不会退回用 `review` 顶替**——
-那条路直接覆盖 `AR/review.md`，会把人刚写的意见吃掉。
+`/story update` 按这份合同渲染并调用 `fetch`、原样读回执；命令失败时 update 报出来并停下。
 
 ## 换实现时要守住的两件
 
