@@ -14,8 +14,8 @@ applies_when: 需求涉及上报（VOC、Chart 或 BI）时
 | Chart | 运维统计 | `WalletHAManager.chartBuilder(eventID, funcID, subFuncID)` |
 | BI | 运营打点 | 无（已核对：产品目录检索 `BIBuilder` 零命中）；真实仓叫 `BIBuilder` 是用户告知的，不是本仓已有能力 |
 
-都在 `CommFunc` `shared/ha/`，从 `index.ets` 导出。两个 Builder 都写 hiAppEvent 的 `WalletHA` 域，非阻塞，发送失败只记 `Logger.error`、不向调用方抛出；
-`report()` 只发调用方设过的字段，不补缺、不去重。
+本仓已实现的 VOC 与 Chart 都在 `CommFunc` `shared/ha/`，从 `index.ets` 导出。两个 Builder 都写 hiAppEvent 的 `WalletHA` 域，非阻塞，发送失败只记 `Logger.error`、不向调用方抛出；
+`report()` 发送当前 Builder 里的参数：渠道自动设置的标识见各自小节，其余业务字段由调用方提供；不负责业务去重。
 
 ## 2. VOC — `confirmed: 已确认`
 
