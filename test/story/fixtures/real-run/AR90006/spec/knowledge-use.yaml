@@ -11,9 +11,9 @@ facts:
   - id: component-profile
     used_for: 确认本 AR 落位——钱包端承担交通卡自动充值的签约入口、签约交互与状态展示，属本部件「卡证票券的使用与生命周期管理」职责；交互方命中服务器接口与其他手机应用（支付部件）。
   - id: codebase-facts
-    used_for: §9 取证——端云接口现状（无端云封装检索零命中）、持久化现状（relationalStore/AppStorage）、日志与 VOC 封装（Logger/WalletHAManager）、敏感数据处理（CardNumberMaskUtil）、资源惯例（$r）。
-  - id: chart-reporting
-    used_for: 三个统计节点的 Chart 入口、结果分类与内码设置方法；仓内尚无内码登记，方案里定登记位置。
+    used_for: §9 取证——端云接口现状（无端云封装检索零命中）、持久化现状（relationalStore/AppStorage）、本地日志封装（Logger）、敏感数据处理（CardNumberMaskUtil）、资源惯例（$r）。
+  - id: reporting
+    used_for: 过程关键点的 VOC 门面，三个统计节点的 Chart 入口、结果分类与内码设置方法；仓内尚无内码登记，方案里定登记位置。
 
 # 整域都不适用时登记在这里（prefix / applicable: false / reason）。
 # 域里只要有一条命中，就不判整域、改为逐条登记到 constraints。

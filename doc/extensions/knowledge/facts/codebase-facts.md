@@ -35,15 +35,9 @@ applies_when: always（凡需给出「代码库现状」这一半事实时）
 `static readonly <NAME>: boolean`；同目录另有非布尔的业务常量，按类型区分。
 **无远程配置封装（已核对）**：源码内无管理台/云侧下发开关。
 
-## 5. 可观测性 — `confirmed: 已确认`
+## 5. 本地日志 — `confirmed: 已确认`
 
-日志、VOC、Chart 三渠道都在 `CommFunc`：
-
-- **日志** `Logger`（`shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）；脱敏入口见下面的敏感数据处理。
-- **VOC** 门面 `WalletHAManager.logAndReport` / `logErrorAndReport` / `logDebugAndReport(eventID, desc)` 一次记对应档日志并发一条 VOC；
-  只上报不打日志用 `vocBuilder(eventID, desc).report()`。
-- **Chart** 见 `chart-reporting.md`。
-- 上报非阻塞，失败只记 `Logger.error`，不向调用方抛出。
+`Logger`（`CommFunc` `shared/log/Logger.ets`，封装 `hilog`，`debug` / `info` / `error`）；脱敏入口见下面的敏感数据处理。
 
 ## 6. 敏感数据处理 — `confirmed: 已确认`
 

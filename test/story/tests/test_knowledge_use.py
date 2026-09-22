@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -460,6 +461,45 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
             "    impact: 签约页与管理页的布局参数"))
         zone = self.render_ok().split("规约约束要求", 1)[1]
         self.assertIn("影响 · 签约页与管理页的布局参数", zone)
+
+
+class TheReportingFactsStayInTheirLane(unittest.TestCase):
+    """上报事实一处维护：VOC、Chart、BI 在同一份 facts，Chart 独有的语义不套给其它渠道。
+
+    只做 VOC 或只做 BI 的需求，读到的是它那一渠道的事实；BI 在本仓没有实现，要读到「无」而不是被说成已支持。
+    """
+
+    KNOWLEDGE = REPO_ROOT / "doc" / "extensions" / "knowledge"
+
+    def sections(self) -> dict[str, str]:
+        text = (self.KNOWLEDGE / "facts" / "reporting.md").read_text(encoding="utf-8")
+        parts = re.split(r"^## ", text, flags=re.M)
+        return {part.split("\n", 1)[0]: part for part in parts[1:]}
+
+    def test_one_entry_in_the_activation_list(self) -> None:
+        manifest = (REPO_ROOT / "doc" / "extensions" / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertIn("knowledge/facts/reporting.md", manifest)
+        self.assertNotIn("chart-reporting", manifest)
+        self.assertFalse((self.KNOWLEDGE / "facts" / "chart-reporting.md").exists())
+
+    def test_codebase_facts_no_longer_repeats_reporting(self) -> None:
+        text = (self.KNOWLEDGE / "facts" / "codebase-facts.md").read_text(encoding="utf-8")
+        for token in ("WalletHAManager", "vocBuilder", "chartBuilder", "logAndReport"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
+
+    def test_every_channel_has_its_row_and_bi_says_none(self) -> None:
+        overview = next(v for k, v in self.sections().items() if k.startswith("1."))
+        for channel in ("| VOC |", "| Chart |", "| BI |"):
+            self.assertIn(channel, overview)
+        bi = next(l for l in overview.splitlines() if l.startswith("| BI |"))
+        self.assertIn("无", bi, "BI 在本仓没有实现，不能读成已支持")
+
+    def test_chart_only_semantics_stay_under_chart(self) -> None:
+        shared = "".join(v for k, v in self.sections().items() if k.startswith(("1.", "2.")))
+        for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_", "终态"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, shared, "Chart 独有的语义写进了公共或 VOC 部分")
 
 
 class TheEntryIsOnlyACommand(unittest.TestCase):
