@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readText } from './context.mjs';
+import { isSystemRequirement, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { scanMaterialList } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
@@ -66,14 +66,13 @@ const REMOTE_ONLY_SOURCES = ['PRD', 'SE'];
  * 合同声明的来源这一轮各自必不必需 —— **起手与交付前的 check 问的是同一份判定**。
  *
  * 两处各判一次，同一份缺件就会被说成两件事：起手说「本地单缺 PRD 正常」，
- * 交付前的 check 说「它是必备来源」。远程单的身份由既有的 `AR/detail.json` 认，
- * 不新增声明。
+ * 交付前的 check 说「它是必备来源」。系统需求按编号认（`isSystemRequirement`）。
  *
  * @returns {{docs: object[], missing: object[], blocking: object[]}}
  */
 export function sourceStatus(ctx) {
   const { docs, missing } = scanSources(ctx);
-  const remote = fs.existsSync(path.join(ctx.featureRoot, 'AR', 'detail.json'));
+  const remote = isSystemRequirement(path.basename(ctx.featureRoot));
   const adjusted = missing.map(m => (remote || !REMOTE_ONLY_SOURCES.includes(m.doc)
     ? m
     : { ...m, required: false, why: '本地单没有需求系统给的这一份' }));

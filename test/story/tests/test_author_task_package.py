@@ -33,7 +33,7 @@ FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "TP90001"
 #: 协议齐全的最小写作设计：章提交要读得了设计，测章文件处理的用例起手前放它。
 PLAN_FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes" / "R01-verdict-echo"
-                / "good" / "doc" / "features" / "AR90001" / "AR" / "story-src" / "story-template.md")
+                / "good" / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-template.md")
 
 # 任务包体量上限：作者要在动笔前一次读完它
 MAX_PACKAGE_BYTES = 12 * 1024
@@ -236,10 +236,10 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         self.assertNotIn("spec 里现在没有图", section, "给不出来不等于没有图")
 
     def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
-        """远程单的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
-        (self.feature_root / "AR" / "detail.json").write_text(
-            json.dumps({"reqNo": FEATURE}, ensure_ascii=False), encoding="utf-8")
-        section = self.task_package().split("## 4a.", 1)[1].split("## 4b.", 1)[0]
+        """系统需求（AR 开头）的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
+        remote = f"AR{FEATURE}"
+        shutil.copytree(self.feature_root, self.feature_root.parent / remote)
+        section = self.task_package(remote).split("## 4a.", 1)[1].split("## 4b.", 1)[0]
         self.assertIn("读不到 `SR/design.md`", section)
         self.assertIn("找回来", section)
 

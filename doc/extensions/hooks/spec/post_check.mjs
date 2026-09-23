@@ -33,6 +33,7 @@ import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
+import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -392,6 +393,11 @@ export default guard('spec', async (ctx) => {
   // 登记前会重跑 story-build check，登记成功即九项判据都过了。
   problems.push(...storyProduced(featureDir));
 
+  // ---- 主章号以目标 profile 的模板为准，模板里不编号的章不计入序号 ----
+  const chapters = chapterTemplates(ctx.projectRoot, 'spec', 'spec_template', 'skills/story/templates/spec-sections.md');
+  problems.push(...chapters.problems);
+  if (chapters.templates) problems.push(...chapterNumberProblems(text, chapters.templates));
+
   // ---- 两章的结构完整性：章在、小节齐、非空、无模板占位（story 专属）----
   // 这两章是扩展在 core 模板之上新增的，只跑原生 spec 的使用者从没被要求写过。
   if (isStory) {
@@ -517,6 +523,7 @@ export default guard('spec', async (ctx) => {
   return gate(ctx, {
     problems,
     groups,
+    skipped: chapters.skipped,
     checks: [
       { id: 'knowledge_exit_structure', status: total ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${total} 条` },
     ],

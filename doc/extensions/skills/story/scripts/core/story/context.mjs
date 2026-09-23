@@ -32,6 +32,11 @@ export function readText(file) {
   try { return fs.readFileSync(file, 'utf-8').replace(/^﻿/, ''); } catch { return null; }
 }
 
+/** 本项目只有 AR 开头的需求挂在需求系统上，其余（问题单、自定义名、local 开头…）都是本地需求。来源由编号决定，与 `flow/state.py::system_requirement` 同一规则。 */
+export function isSystemRequirement(feature) {
+  return String(feature ?? '').startsWith('AR');
+}
+
 export function readJson(file, fallback) {
   const t = readText(file);
   if (t === null) return fallback;

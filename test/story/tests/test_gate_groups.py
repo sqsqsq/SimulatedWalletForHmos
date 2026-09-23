@@ -52,7 +52,10 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
     def test_a_clean_spec_passes(self) -> None:
         self.judged()
         self.acceptance_with()
-        self.assertEqual("", self.hook("spec"))
+        # 中性工程没配 profile：没有问题，只如实记章号那一条未执行
+        message = self.hook("spec")
+        self.assertTrue(message.startswith("扩展门禁有 1 条判据未执行："), message)
+        self.assertIn("spec 主章号（framework.config.json 没有配 project_profile.name", message)
 
 
 class PlanProblemsShowUpTogether(kp.ProtocolCase):
@@ -90,7 +93,39 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
         self.judged()
         self.write_plan(decision_first=True)
         self.write_contracts(kp.contracts())
-        self.assertEqual("", self.hook("plan"))
+        # 中性工程没配 profile：没有问题，只如实记章号那一条未执行
+        message = self.hook("plan")
+        self.assertTrue(message.startswith("扩展门禁有 1 条判据未执行："), message)
+        self.assertIn("plan 主章号（framework.config.json 没有配 project_profile.name", message)
+
+    def test_use_cases_cite_acceptance_ids_that_exist(self) -> None:
+        """验收编号取 acceptance 各列表条目的 id，不认前缀；只报悬空的那几个，并说出在哪条用例。"""
+        self.judged()
+        self.write_plan(decision_first=True)
+        self.write_contracts(kp.contracts())
+        (self.feature_root / "acceptance.yaml").write_text(
+            "criteria:\n  - id: 开户-01\n    description: x\nboundaries:\n  - id: B7\n    description: y\n",
+            encoding="utf-8")
+        (self.feature_root / "use-cases.yaml").write_text(
+            "use_cases:\n  - id: 开户\n    branches:\n      - id: 正常\n        linked_acceptance: [开户-01, B7]\n"
+            "      - id: 失败\n        linked_acceptance: [AC-K9]\n", encoding="utf-8")
+        message = self.hook("plan")
+        self.assertIn("验收 AC-K9（失败）", message)
+        self.assertNotIn("开户-01（", message)
+        self.assertNotIn("B7（", message)
+
+    def test_a_design_chapter_is_cited_by_its_real_number(self) -> None:
+        self.judged()
+        self.write_plan(decision_first=True)
+        self.write_contracts(kp.contracts())
+        plan = self.feature_root / "plan" / "plan.md"
+        plan.write_text(plan.read_text(encoding="utf-8").replace(
+            "## 2. 模块架构图",
+            "| 条目编号 | 落点实体 | 承载设计章 |\n|---|---|---|\n| NEU-01 | 甲 | 2. 模块架构图（出口） |\n"
+            "| NEU-02 | 乙 | 3. 模块架构图 |\n\n## 2. 模块架构图"), encoding="utf-8")
+        message = self.hook("plan")
+        self.assertIn("「3. 模块架构图」对不上本文的章：「模块架构图」在本文是第 2 章", message)
+        self.assertEqual(1, message.count("对不上本文的章"), "号与章名对得上的那一行不该报")
 
 
 if __name__ == "__main__":

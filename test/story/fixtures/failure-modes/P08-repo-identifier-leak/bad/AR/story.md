@@ -1,4 +1,4 @@
-# AR90001 示例需求
+# REQ-DEMO 示例需求
 
 结论依据见 doc/extensions/knowledge 的工程画像。
 

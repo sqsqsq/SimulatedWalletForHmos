@@ -273,11 +273,18 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         self.assertIn("update-notes", out["action"])
 
     def test_the_fetch_command_comes_from_the_script(self) -> None:
-        """取材落点由脚本给，模型不自己拼 `--out`——拼了就能指到需求目录外面。"""
-        out = self.update("--action", "status")
-        self.assertIn("--out", out["fetch"])
-        self.assertTrue(out["fetch"].replace("\\", "/").endswith(f"{FEATURE}/inbox"), out["fetch"])
-        self.assertIn("--project-root", out["fetch"], "回执会跟着脚本位置落到别的工程里")
+        """取材落点由脚本给，模型不自己拼 `--out`——拼了就能指到需求目录外面。本地需求没有这条命令。"""
+        self.assertIsNone(self.update("--action", "status")["fetch"])
+        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            ar = self.feature_root.parent / "AR90006"
+            got = update_mod._fetch_command(ar, "AR90006", self.root)
+        finally:
+            sys.path.remove(str(core))
+        self.assertTrue(got.replace("\\", "/").endswith("AR90006/inbox"), got)
+        self.assertIn("--project-root", got, "回执会跟着脚本位置落到别的工程里")
 
     def test_a_local_feature_has_no_fetch(self) -> None:
         """本地单不挂在需求系统上：没有这条命令，输入阶段直接问补料。"""
@@ -714,7 +721,7 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
         """本地单不挂在需求系统上：不取 token、不访问系统，当场说清楚。"""
         code, receipt = self.fetch("local-demo", "--out", str(self.out))
         self.assertNotEqual(0, code)
-        self.assertIn("本地单", receipt["error"])
+        self.assertIn("本地需求", receipt["error"])
 
     def test_an_unknown_ticket_leaves_no_placeholder(self) -> None:
         code, receipt = self.fetch("AR-not-exist", "--out", str(self.out))

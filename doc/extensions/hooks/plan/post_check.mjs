@@ -27,7 +27,9 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, ver
   from '../shared/obligations.mjs';
 import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { contractsPath, readContracts, resourceEntries } from '../shared/contracts.mjs';
+import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
+import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
+import { parseYaml } from '../shared/yaml.mjs';
 import { cellByHeader, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
@@ -36,11 +38,10 @@ const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体�
 /**
  * 设计章的起始形态——「知识决策」必须排在它们之前。
  *
- * **这些词不是数出来的**：它们是 framework 规定的 plan 法定章名（`skills/feature/plan/SKILL.md`
- * 的九章：1 Scope 声明与继承 / 2 模块架构图 / 3 目录文件结构规划 / 4 数据模型定义 /
- * 5 页面组件树 / 6 状态管理方案 / 7 服务层接口定义 / 8 路由导航设计 / 9 spec 功能映射表）
- * 里第 2–8 章那几个，也就是「设计」那一段。第 1 章 Scope 声明是框架要求的前置，
- * 不算设计章——所以判的是「知识决策在设计章之前」，不是「知识决策排第一」。
+ * **这些词不是数出来的**：它们是 framework 规定的 plan 法定章名（profile 的 plan 模板：
+ * 不编号的 Scope 声明与继承，之后 1 模块架构图 … 8 spec 功能映射表）里「设计」那一段。
+ * Scope 声明是框架要求的前置，不算设计章——所以判的是「知识决策在设计章之前」，不是「知识决策排第一」。
+ * 章号以模板为准，由下面的章号核对判。
  *
  * **真正的风险是它与 framework 的 `check-plan.ts > required_chapters` 是两份抄本**：
  * 那边改了章名，这边不会跟着改，本判据就会静默失灵而没有任何信号。
@@ -186,6 +187,37 @@ function planPatternChoices(planText) {
   return { choices: out, problems };
 }
 
+/**
+ * `use-cases.yaml` 里 `linked_acceptance` 引的编号都要在 `acceptance.yaml` 里存在。
+ * 验收编号取 acceptance 顶层各列表条目的 `id`，不认前缀；文件缺席或读不了与悬空引用分开报。
+ */
+function acceptanceRefProblems(projectRoot, feature, group) {
+  const raw = readTextOrNull(path.join(featureRoot(projectRoot, feature), 'use-cases.yaml'));
+  if (raw === null) return [];
+  const acc = readAcceptance(projectRoot, feature);
+  if (!acc.acceptance) {
+    group.skipped.push({ what: '用例的验收引用', why: acc.error ?? '没有 acceptance.yaml' });
+    return [];
+  }
+  let cases;
+  try { cases = parseYaml(raw); } catch (e) { return [`use-cases.yaml 解析失败：${e.message}`]; }
+  const ids = new Set(Object.values(acc.acceptance).filter(Array.isArray).flat()
+    .map(c => c?.id).filter(Boolean).map(String));
+  const dangling = new Map();
+  const walk = (node, at) => {
+    if (Array.isArray(node)) { node.forEach(n => walk(n, at)); return; }
+    if (!node || typeof node !== 'object') return;
+    const here = node.id ? String(node.id) : at;
+    for (const ref of Array.isArray(node.linked_acceptance) ? node.linked_acceptance : []) {
+      if (!ids.has(String(ref))) dangling.set(String(ref), [...(dangling.get(String(ref)) ?? []), here]);
+    }
+    Object.values(node).forEach(v => walk(v, here));
+  };
+  walk(cases, '');
+  return [...dangling].map(([ref, at]) => `use-cases.yaml 引了验收 ${ref}（${[...new Set(at)].join('、')}），`
+    + 'acceptance.yaml 里没有这个编号——下游按编号取验收，引用要用 acceptance 里实际的 id');
+}
+
 export default guard('plan', async (ctx) => {
   const planPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'plan', 'plan.md');
   const planText = readTextOrNull(planPath);
@@ -200,7 +232,16 @@ export default guard('plan', async (ctx) => {
   const obligation = { name: '每条 must 自身', problems: [], skipped: [] };
   const consistency = { name: '命中集合与义务集合一致', problems: [], skipped: [] };
   const pattern = { name: '设计模式采用与候选交叉核对', problems: [], skipped: [] };
-  const groups = [chapter, contract, obligation, consistency, pattern];
+  const reference = { name: '章号、设计章引用与验收引用', problems: [], skipped: [] };
+  const groups = [chapter, contract, obligation, consistency, pattern, reference];
+
+  // ---- 0. 章号以模板为准；「承载设计章」的号与章名对得上；用例引用的验收编号存在 ----
+  const chapters = chapterTemplates(ctx.projectRoot, 'plan', 'plan_template');
+  reference.problems.push(...chapters.problems);
+  reference.skipped.push(...chapters.skipped);
+  if (chapters.templates) reference.problems.push(...chapterNumberProblems(planText, chapters.templates));
+  reference.problems.push(...chapterRefProblems(planText, '承载设计章'));
+  reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
 
   // ---- 1. 知识决策章的位置：位置即语义（只依赖 plan 可读）----
   const { decision, design } = findHeadings(planText);

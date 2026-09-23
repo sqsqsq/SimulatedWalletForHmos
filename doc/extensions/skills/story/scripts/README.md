@@ -9,18 +9,18 @@
 
 新增的公共脚本一律进 `core/`。往 `scripts/` 根下放文件会被 `adapt-scan --check ⑧` 拦下：放在那里的两边都不认，永远升级不到目标手里。
 
-## `adapters/` 里两个文件的输出合同
+## `adapters/` 的公共入口及其合同
 
-它们是需求系统的对接层。本仓这三份是**替身**（本地目录模拟需求系统），部署环境各自实现自己那份，从不调用扩展内容。
+对接层由两个公共入口对外：`story.js`（需求系统命令）与 `token.js`（取 token）。入口背后可以按目标工程拆成多个内部模块，公共机制只调用入口、只读入口约定的结果。本仓的实现是**替身**（本地目录模拟需求系统），部署环境各自实现，从不调用扩展内容。
 
-合同的真源是每个文件自己的 docstring——**改实现时先读它，那是唯一依据**：
+合同的真源是入口文件自己的 docstring——**改实现时先读它，那是唯一依据**：
 
-| 文件 | 干什么 | 合同要点 |
+| 入口 | 干什么 | 合同要点 |
 |---|---|---|
-| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `fetch` / `help`） | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
+| `story.js` | 需求系统对接（`init` / `archive` / `restore` / `fetch`）；只接受 AR 开头的编号，其余是本地需求，四条命令都在取 token、访问系统之前失败 | 人类可读日志走 stderr；stdout 最后一行是 JSON 结果，各命令的字段见 docstring；失败非 0 退出且 JSON 带 `success: false` 与 `error` |
 | `token.js` | 取 mcp token | 成功退出 0，**stdout 即 token 本身**（纯文本单行，不是 JSON）；失败非 0，错误走 stderr |
 
-写盘落点也是合同的一部分：`AR/design.md`、`AR/review.md`、`AR/detail.json`、`AR/.review-backup/` 由这一层写。**公共机制不往 `AR/` 根下写任何辅助文件**，辅助件一律进 `AR/story-src/`。
+写盘落点也是合同的一部分：`init` 写 `AR/design.md`（本地已有不覆盖）与各级 `detail.json`；`fetch` 写本单 `inbox/`、`AR/story-src/review-feedback.md` 与 `AR/story-src/fetched.json`。**公共机制不往 `AR/` 根下写任何辅助文件**，辅助件一律进 `AR/story-src/`。
 
 ### `fetch`：只读取材
 
@@ -30,7 +30,7 @@
 回执 `AR/story-src/fetched.json` 逐份记来源身份、摘要、系统上的位置、取到没有——它不能放进 inbox，
 否则会被当成一份材料导入。**一个业务文件都不写**。`status` 四态分开：`fetched` / `same`（与本地相同）/
 `absent`（系统上本来就没有，常态）/ `failed`（读取故障）——混成一个的话，一次读取错误会被当成「评审没提意见」。
-本地单不适用，当场失败；`--out` 必填，`--project-root` 定回执写在哪个工程的需求目录下。
+本地需求（非 AR 开头）不适用，当场失败；`--out` 必填，`--project-root` 定回执写在哪个工程的需求目录下。
 
 `/story update` 按这份合同渲染 `fetch` 命令、由模型执行，再原样读回执；命令失败时 update 报出来并停下。
 
@@ -45,3 +45,11 @@
 |---|---|---|
 | `<需求>/ux-reference/.captions.json` | 图片侧车：按图片内容摘要记「这张图是什么」与「本需求为什么不用它」，材料清单与作者任务包从它读 | 只经 `import_sources.py` 的 `--register-ux`、`--caption-image`（含 `--unused`、`--used`）写，不手改 |
 | `story-build.mjs check --offline --story <文件>` | 对一份脱离需求目录的 story 单独跑不依赖工作区的确定性检查（例如核一份认可的样稿）；来源、材料清单、决策登记相关的判项不跑 | 不读需求工作区，不写盘 |
+
+## 内外网隔离与新增能力交接
+
+adapters 隔离部署环境中的需求系统、鉴权和内容处理实现；core 只消费约定的入口及结果。唯一 CLI 入口可以调用多个内部模块，目标工程的内部文件拆分由其实现维护。
+
+新增或改变跨环境能力时，本合同须与调用方一起更新，并在适配交接中明确：新增/变更/删除的能力、触发它的流程、参数与输出、写入范围、失败与不适用语义、目标需要落实的动作及验证方法。无对接变化也明确说明；不能要求目标维护者阅读 Demo diff 推断需补什么。
+
+外网替身通过只证明合同在替身环境可用。目标 adapters 未覆盖的新能力应列为尚未适配，该功能不能宣称可用；不得用替身覆盖内网实现、用静默降级掩盖缺口，或将目标内部模块名写进通用流程。

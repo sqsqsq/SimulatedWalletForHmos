@@ -51,9 +51,9 @@ STORY_MD = """# 甲需求（SMPFEAT）
 """
 
 DRIVER = """
-const [, , modulePath, projectRoot, feature, phase] = process.argv;
+const [, , modulePath, projectRoot, feature, phase, run] = process.argv;
 const mod = await import(modulePath);
-process.stdout.write(JSON.stringify(mod.storyReviewProblems(projectRoot, feature, phase)));
+process.stdout.write(JSON.stringify(mod.storyReviewProblems(projectRoot, feature, phase, run ? JSON.parse(run) : undefined)));
 """
 
 # 汇总表：每项一行，PASS 也列，最后一格是一行证据。
@@ -91,8 +91,9 @@ PER_UNIT_TABLE = """
 class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
     """报告的落点只有一个来源：harness 写的 `summary.verifier_report`。"""
 
-    def _run(self, *, summary, report: str | None) -> dict:
-        """summary=None 表示 harness 还没跑过。"""
+    def _run(self, *, summary, report: str | None, run: dict | None = None,
+             extra: dict[str, str] | None = None) -> dict:
+        """summary=None 表示 harness 还没跑过；run 是调用方给的运行事实，extra 是报告目录里另放的文件。"""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             reports = root / "doc" / "features" / "SMPFEAT" / "spec" / "reports"
@@ -104,11 +105,14 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
                     json.dumps(summary, ensure_ascii=False), encoding="utf-8")
             if report is not None:
                 (root / REPORT_REL).write_text(report, encoding="utf-8")
+            for name, text in (extra or {}).items():
+                (reports / name).write_text(text, encoding="utf-8")
 
             driver = root / "driver.mjs"
             driver.write_text(DRIVER, encoding="utf-8")
             r = subprocess.run(
-                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec"],
+                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec",
+                 *([json.dumps(run)] if run is not None else [])],
                 capture_output=True, text=True, encoding="utf-8",
             )
             self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
@@ -130,12 +134,119 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
         self.assertIn("没有登记审查员", out["detail"])
 
     def test_a_declared_landing_with_no_file_fails(self) -> None:
-        """落点写了、文件不在 = 派了 verifier 却没把回复写下来。"""
+        """落点写了、文件不在：推不出回复存在——有匹配当前请求的回复才原样写回，否则取当前请求派审。"""
         out = self.run_with(None)
         self.assertEqual("FAIL", out["status"])
-        self.assertIn("原样全文", out["problems"][0])
-        self.assertIn("重新写到", out["problems"][0])
+        said = out["problems"][0]
+        self.assertIn("当前审查对象还没有报告", said)
+        self.assertIn("原样全文写到", said)
+        self.assertIn("取当前请求派审", said)
+        self.assertIn("当前审查只认对当前请求的原样回复", said)
 
+    def test_a_prior_review_closure_says_the_current_object_was_not_reviewed(self) -> None:
+        """沿用历史审查收口时，照 summary 说出当前对象没有独立审查、沿用的是谁，不当成通过。"""
+        out = self._run(summary={
+            "verifier_report": REPORT_REL, "verifier_subject_id": SUBJECT,
+            "verifier_request": f"doc/features/SMPFEAT/spec/reports/verifier.request.{SUBJECT}.json",
+            "verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "b" * 64,
+                                 "current_subject_id": SUBJECT,
+                                 "current_material_not_reverified": ["lifecycle_hook_fragments"]},
+        }, report=None)
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("当前对象未独立审查", out["detail"])
+        said = out["problems"][0]
+        self.assertIn("按 completed_with_prior_review 收口", said)
+        self.assertIn("没有独立审查，沿用的是 bbbbbbbbbbbb", said)
+        self.assertIn("lifecycle_hook_fragments", said)
+        self.assertIn(f"verifier.request.{SUBJECT}.json", said)
+
+
+
+class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
+    """当前对象没有报告时的分流：只有修正重验、没有进行中的 update、且沿用的历史报告就是那个对象的有效 PASS，
+    才按沿用交付，并留一笔「当前材料未独立重审」；其余都按未完成报。"""
+
+    PRIOR = "b" * 64
+
+    def summary(self, signals=("script_revalidated",)) -> dict:
+        return {"verifier_report": REPORT_REL, "verifier_subject_id": SUBJECT, "verdict": "PASS",
+                "closure_status": "closed", "readiness_signals": [{"id": s} for s in signals],
+                "verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": self.PRIOR,
+                                     "current_subject_id": SUBJECT,
+                                     "current_material_not_reverified": ["lifecycle_hook_fragments"]}}
+
+    def history(self, subject: str | None = None, verdict: str = "PASS", row: str = "PASS") -> dict[str, str]:
+        return {f"verifier.report.{self.PRIOR}.md": row_text(row) + "\n<!-- maison-verifier-result:v1 -->\n"
+                f"verifier_subject_id: {subject or self.PRIOR}\nverdict: {verdict}\nblocker_count: 0\n"
+                "<!-- /maison-verifier-result:v1 -->\n"}
+
+    def test_a_correction_with_a_valid_reviewed_pass_is_carried_with_a_note(self) -> None:
+        out = self._run(summary=self.summary(), report=None, run={"updateOpen": False}, extra=self.history())
+        self.assertEqual("PASS", out["reviewVerdict"])
+        self.assertIn("当前材料未独立重审", out["notes"][0])
+        self.assertIn("lifecycle_hook_fragments", out["notes"][0])
+
+    def test_a_missing_or_failed_history_is_not_carried(self) -> None:
+        for name, extra in (("缺席", {}), ("FAIL", self.history(verdict="FAIL")),
+                            ("对象不符", self.history(subject="c" * 64)), ("读者审查未过", self.history(row="FAIL"))):
+            with self.subTest(name):
+                out = self._run(summary=self.summary(), report=None, run={"updateOpen": False}, extra=extra)
+                self.assertEqual("FAIL", out["status"])
+                self.assertEqual("沿用的历史审查无效", out["detail"])
+
+    def test_an_open_update_needs_a_current_review_even_after_revalidate(self) -> None:
+        out = self._run(summary=self.summary(), report=None, run={"updateOpen": True}, extra=self.history())
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("按新的审查对象审一次", out["problems"][0])
+
+    def test_without_the_revalidate_mark_it_cannot_be_confirmed(self) -> None:
+        out = self._run(summary=self.summary(signals=()), report=None, run={"updateOpen": False}, extra=self.history())
+        self.assertEqual("FAIL", out["status"])
+        self.assertEqual("当前对象未独立审查", out["detail"])
+
+    def test_without_run_facts_it_cannot_be_confirmed(self) -> None:
+        out = self._run(summary=self.summary(), report=None, extra=self.history())
+        self.assertEqual("FAIL", out["status"])
+        self.assertIn("调用方没有给出运行事实", out["detail"])
+
+    def test_an_empty_run_is_unknown_not_no_update(self) -> None:
+        out = self._run(summary=self.summary(), report=None, run={}, extra=self.history())
+        self.assertEqual("FAIL", out["status"])
+        self.assertNotIn("notes", out)
+
+    def test_the_delivery_gate_reads_the_flow_contract_before_carrying(self) -> None:
+        """交付门从流程契约取运行事实：读得出且没开 update 才沿用；缺文件、读不了、坏 JSON 都是未知，不放行、不带 note。"""
+        delivery = REPO / "doc/extensions/skills/story/scripts/core/story/delivery.mjs"
+        cases = {
+            "没开 update": ('{"status": "story_written"}', "PASS"),
+            "update 已收口": ('{"update": {"open": null, "last_closed": "u1"}}', "PASS"),
+            "update 进行中": ('{"update": {"open": "u2"}}', "FAIL"),
+            "缺文件": (None, "FAIL"),
+            "坏 JSON": ("{ 坏了", "FAIL"),
+            "不是对象": ("[1]", "FAIL"),
+            "读不了": ("<dir>", "FAIL"),
+        }
+        for name, (flow, want) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as d:
+                flow_path = Path(d) / "story-flow.json"
+                if flow == "<dir>":
+                    flow_path.mkdir()
+                elif flow is not None:
+                    flow_path.write_text(flow, encoding="utf-8")
+                script = (f"const m = await import({json.dumps(delivery.as_uri())});"
+                          f"process.stdout.write(JSON.stringify(m.deliveryRunFacts({{ flowPath: {json.dumps(str(flow_path))} }})));")
+                facts = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True,
+                                       text=True, encoding="utf-8", timeout=60)
+                self.assertEqual(0, facts.returncode, facts.stderr)
+                out = self._run(summary=self.summary(), report=None, run=json.loads(facts.stdout),
+                                extra=self.history())
+                self.assertEqual(want, out["status"] if want == "FAIL" else out["reviewVerdict"], out)
+                if want == "FAIL":
+                    self.assertNotIn("notes", out)
+
+
+def row_text(status: str) -> str:
+    return row(status) + ("" if status == "PASS" else DETAILS)
 
 class TheSummaryRowIsTheConclusion(unittest.TestCase):
     """上游的输出契约：汇总表每项一行（PASS 也列），明细只列非 PASS。"""
@@ -371,7 +482,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
         (src / "decisions.json").write_text("[]", encoding="utf-8")
         shutil.copy2(REPO / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
-                     "/AR90001/AR/story-src/story-template.md", src / "story-template.md")
+                     "/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -717,7 +828,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
 
     def base_plan(self) -> str:
         return (REPO / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
-                / "AR90001/AR/story-src/story-template.md").read_text(encoding="utf-8")
+                / "REQ-DEMO/AR/story-src/story-template.md").read_text(encoding="utf-8")
 
     def test_the_task_carries_the_writing_design_once_and_follows_it(self) -> None:
         """写作设计全文随任务到审查者手上一次；改了设计，任务跟着变——审查核的是这一版。"""
@@ -750,7 +861,11 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertNotIn("读不到 `SR/design.md`", section, "本地单没有系统设计是正常的")
         (feature / "AR" / "detail.json").write_text("{}", encoding="utf-8")
         section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
-        self.assertIn("读不到 `SR/design.md`", section, "远程单缺必备来源没点名")
+        self.assertNotIn("读不到 `SR/design.md`", section, "本地需求留着 detail.json 仍是本地需求")
+        remote = f"AR{FEATURE}"
+        shutil.copytree(feature, feature.parent / remote)
+        section = self.inject(remote).split("### 原材料原文", 1)[1].split("###", 1)[0]
+        self.assertIn("读不到 `SR/design.md`", section, "系统需求缺必备来源没点名")
 
     def test_the_overlay_judges_against_sources_not_the_design(self) -> None:
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在 overlay。"""

@@ -24,6 +24,14 @@ CORE_DIR = SKILL_ROOT / "scripts" / "core"
 CONTRACT = ("AR", "story-src", "story-flow.json")
 
 
+def system_requirement(feature: str) -> bool:
+    """本项目只有 AR 开头的需求挂在需求系统上，其余（问题单、自定义名、local 开头…）都是本地需求。
+
+    来源由编号决定，与 `story/context.mjs::isSystemRequirement` 同一规则。
+    """
+    return str(feature).startswith("AR")
+
+
 DESIGN = ("AR", "design.md")
 # S4 提取稿的落点。**输入与输出分开**：`AR/design.md` 是上游给进来的输入件，
 # 模型把提取结果写在这里，由 `complete` 提交上去。写在同一个文件里的话，

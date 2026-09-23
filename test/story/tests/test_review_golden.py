@@ -31,7 +31,7 @@ GOLDEN = REPO_ROOT / "test" / "story" / "golden" / "review-金样-AR90006.md"
 BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
-FEATURE = "AR90001"
+FEATURE = "REQ-DEMO"
 
 #: 立样时点 2026-08-30（晚四修：三级分层定稿）。本文件直接读取唯一金样正本。sha256 前 16 位。
 #: 2026-09-07：每条议题的正文前多一行投影标记（带内容摘要）——议题正文由登记表

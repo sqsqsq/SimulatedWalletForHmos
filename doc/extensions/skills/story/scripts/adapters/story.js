@@ -1,8 +1,8 @@
 /**
- * story.js — /story 的数据对接层（本文件是部署环境间唯一需要替换的实现）
+ * story.js — /story 需求系统对接的公共 CLI 入口（本仓为本地替身；部署环境各自实现入口及其内部模块）
  *
  * 契约（CLI，**本 docstring 即唯一真源**；成功 0 / 失败非 0）：
- *   node story.js <init|archive|restore|fetch|help> <AR> [mcp-token]
+ *   node story.js <init|archive|restore|fetch> <AR> [mcp-token]
  *       [--project-root <abs>] [--out <暂存目录>]
  *   人类可读日志走 stderr；stdout 最后输出单行 JSON 结果：
  *   init    → {"mode":"init","reqNo":"...","parentNo":"SR...","rrNo":"RR...","success":true}
@@ -34,9 +34,9 @@
  *             **一个业务文件都不写**——不碰 AR/review.md，也不碰 AR/design.md；
  *             写进正文是模型读完之后的事。`status` 四态分开：取到 / 与本地逐字相同（不落盘）/
  *             系统上没有（常态）/ 读取失败（故障），混成一个的话一次读取错误会被当成「评审没提意见」。
- *             本地单（`local-` 开头）明确不适用：不取 token、不访问系统，当场失败。
  *             `--out` 必填，没有默认落点：默认一个的话，两个单同时更新会写进同一处
- *   help    → 打印工作流程（纯文本，CLI 级帮助）
+ *   来源    → 本项目只有 AR 开头的需求挂在需求系统上，其余编号都是本地需求：四条命令对它们一律
+ *             不适用，在取 token、访问系统之前当场失败。无命令或命令不认识只给用法并失败。
  *   失败    → {"mode":"<命令>","reqNo":"...","success":false,"error":"..."}
  *
  * mcp-token：第三位置参数（token.js 获取）。本实现不校验、不使用；
@@ -57,7 +57,7 @@
  * 设计文档、原型说明），因此本替身不上传也不拉取任何图片——把图片塞进系统，
  * 本地就会跑出一条真实环境里不存在的取材路径。
  *
- * 替换本文件时保持上述 CLI 契约不变——
+ * 替换实现时保持上述 CLI 契约不变——
  * 不允许出现「文档写这个、本地干那个」的分叉：那正是本地测不出真实契约问题的成因。
  */
 'use strict';
@@ -310,10 +310,6 @@ function cmdRestore(ar, system) {
  * 混成一个的话，一次读取错误会被当成「评审没提意见」。
  */
 function cmdFetch(ar, featureRoot, system, outDir) {
-  if (/^local[-_]/i.test(ar)) {
-    fail(`${ar} 是本地单：它不挂在需求系统上，fetch 不适用（也不取 token、不访问系统）。`
-      + '本地单的材料由人直接放进 inbox/');
-  }
   const ticket = readTicket(system, ar);
   if (!ticket.found) {
     fail(`${ar} 在需求系统上取不到（${ticket.reason}）：先确认单号，或这张单还没建。`
@@ -376,16 +372,6 @@ function pick(w) {
   return { name: w.name, label: w.label, ticket: w.no || null };
 }
 
-function cmdHelp() {
-  console.log(`[story.js] /story 工作流程（按预期开发顺序）
-  1. /story init <AR>     拉取 AR/SR/RR 单据与材料 + 生成 AR/design.md 空模板（触发 AI 按 rules/ar_design_init.md 提取；覆盖前须确认）
-  2. /spec                需求规格三产物：spec.md（代码要求）+ AR/review.md（人的决策）+ AR/story.md（归档件），门禁校验三份齐备
-  3. /story archive <AR>  以 AR/story.md 为正文、AR/review.md 为附件归档上传（系统正文名固定 design.md；工作区文件不变）
-  4. /story restore <AR>  把系统正文恢复回上一版（本地 design.md 不变）
-  5. /story update <AR>   取回上游与评审的新内容，据它更新已有产物（取材只写 inbox，不覆盖当前稿）
-  详细规则：doc/extensions/skills/story/SKILL.md`);
-}
-
 // ---------------------------------------------------------------------------
 const cmd = process.argv[2];
 const ar = process.argv[3];
@@ -414,18 +400,18 @@ for (let i = 4; i < process.argv.length; i++) {
   }
 }
 
-const USAGE = '用法：node story.js <init|archive|restore|fetch|help> <AR> [mcp-token] '
+const USAGE = '用法：node story.js <init|archive|restore|fetch> <AR> [mcp-token] '
   + '[--project-root <abs>] [--out <本单 inbox>（fetch 必填）]';
-const CMDS = ['init', 'archive', 'restore', 'fetch', 'help'];
+const CMDS = ['init', 'archive', 'restore', 'fetch'];
 if (argError) fail(`${argError}。${USAGE}`);
 if (!CMDS.includes(cmd)) {
   fail(USAGE);
 }
-if (cmd === 'help') {
-  cmdHelp();
-  process.exit(0);
-}
 if (!ar || !/^[\w.-]+$/.test(ar)) fail(`非法 AR 单号：「${ar ?? ''}」`);
+if (!ar.startsWith('AR')) {
+  fail(`${ar} 是本地需求：只有 AR 开头的需求挂在需求系统上，${cmd} 不适用（不取 token、不访问系统）。`
+    + '本地需求的材料由人直接放进 inbox/');
+}
 // 本实现不校验 mcpToken；部署环境在此校验缺失即失败，并用它调 mcp
 if (!mcpToken) log('未传入 mcp-token（本地容忍；部署环境将拒绝执行）');
 

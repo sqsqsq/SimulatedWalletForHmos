@@ -91,7 +91,7 @@ function settledRows(decisionsPath) {
       `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
       `- **评审时要人做什么**：${String(d.review_mode ?? '').trim() || '（没写）'}`,
       '- **作者写的澄清正文**：',
-      ...String(d.clarification ?? '（没写）').split('\n').map(l => `  > ${l}`));
+      ...String(d.clarification ?? '（没写）').split(/\r?\n/).map(l => `  > ${l}`));
   }
   return out;
 }

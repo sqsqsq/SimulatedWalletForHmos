@@ -222,6 +222,9 @@ function wholeSection(spec, re) {
   if (!h) return [];
   const end = headingEnd(doc, h);
   const tables = new Map(tablesWithin(doc, h.at + 1, end).map(t => [t.line, t]));
+  // 源小节自己的号（如 9.4）下的局部编号只在 spec 里成立，搬进附录就去掉；业务标题里的数字不动
+  const own = /^(\d+(?:\.\d+)*)\s/.exec(h.raw)?.[1];
+  const local = own ? new RegExp(`^${own.replace(/\./g, '\\.')}(?:\\.\\d+)+\\.?\\s+`) : null;
   const body = [];
   let comment = false;
   for (let i = h.at + 1; i < end; i += 1) {
@@ -240,7 +243,7 @@ function wholeSection(spec, re) {
       }
       const sub = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
       if (sub) {
-        body.push(`${'#'.repeat(Math.min(6, sub[1].length + 1))} ${sub[2]}`);
+        body.push(`${'#'.repeat(Math.min(6, sub[1].length + 1))} ${local ? sub[2].replace(local, '') : sub[2]}`);
         continue;
       }
       body.push(rebaseLinks(line));
@@ -249,7 +252,7 @@ function wholeSection(spec, re) {
     body.push(line);
   }
   const text = body.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return text ? [`#### ${h.raw.replace(/^[\d.]+\s*/, '')}`, '', ...text.split('\n')] : [];
+  return text ? [`#### ${h.raw.replace(/^[\d.]+\s*/, '')}`, '', ...text.split(/\r?\n/)] : [];
 }
 
 /** 附录里承载材料清单的那一节的名字（合同数据，本文件不写业务词）。 */

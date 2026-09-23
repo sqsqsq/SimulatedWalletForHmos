@@ -178,7 +178,7 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
             src.mkdir(parents=True, exist_ok=True)
             (src / "decisions.json").write_text("[]", encoding="utf-8")
             shutil.copy2(REPO_ROOT / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc"
-                         "/features/AR90001/AR/story-src/story-template.md", src / "story-template.md")
+                         "/features/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
             proc = subprocess.run(
                 ["node", str(BUILD), "check", "--feature", "AR90004",
                  "--project-root", str(root)],

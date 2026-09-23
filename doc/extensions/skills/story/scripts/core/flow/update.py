@@ -28,7 +28,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.routing import inputs_answer, material_state
-from flow.state import (CONTRACT, FlowError, SKILL_ROOT, STORY, REVIEW,
+from flow.state import (CONTRACT, FlowError, SKILL_ROOT, STORY, REVIEW, system_requirement,
                         load, log, now, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -464,9 +464,9 @@ def _fetch_command(feature_root: Path, feature: str, project_root: Path) -> str 
 
     让模型自己拼 `--out` 的话，它可以指到任何目录，包括需求目录外面。
     `--project-root` 一并写上：回执落在它下面的需求目录里，与 `--out` 必须是同一个工程。
-    本地单不挂在需求系统上，没有这条命令。
+    本地需求不挂在需求系统上，没有这条命令。
     """
-    if re.match(r"local[-_]", feature, re.IGNORECASE):
+    if not system_requirement(feature):
         return None
     adapter = SKILL_ROOT / "scripts" / "adapters" / "story.js"
     return (f"node {adapter.as_posix()} fetch {feature} <token> "

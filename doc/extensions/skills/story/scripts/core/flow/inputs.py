@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from flow.state import (
+    system_requirement,
     CARRY_ALL, FlowError, GATES, SKILL_ROOT, STORY_CONTRACT, log)
 
 # 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
@@ -443,7 +444,7 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
         readme.read_text(encoding="utf-8") if readme.is_file()
         else "# 收件箱\n\n把手上的需求材料放进本目录，导入步骤会归类并写入对应上游文件。\n")
 
-    local = not (feature_root / "AR" / "detail.json").is_file()
+    local = not system_requirement(feature)
     missing = [rel for rel in ("RR/prd.md", "SR/design.md") if rel in created]
     log(f"工作区骨架：新建 {len(created)} 个文件"
         + (f"，保留已有 {len(kept)} 个" if kept else ""))

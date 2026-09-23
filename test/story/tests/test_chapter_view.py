@@ -23,7 +23,7 @@ DOCUMENT = EXT / "skills" / "story" / "scripts" / "core" / "story" / "document.m
 BUILD = EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
-FEATURE = "AR90001"
+FEATURE = "REQ-DEMO"
 
 CHAPTER = (
     "章首一段话。\n"

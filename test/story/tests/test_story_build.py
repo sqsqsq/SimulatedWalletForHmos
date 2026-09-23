@@ -27,7 +27,7 @@ IMAGES = (REPO_ROOT
 BUILD = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
-FEATURE = "AR90001"
+FEATURE = "REQ-DEMO"
 FLOW = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 #: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
 PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
@@ -194,7 +194,7 @@ class StoryBuildCase(unittest.TestCase):
             decisions.write_text('{"decisions": []}', encoding="utf-8")
 
     DRAFT = (
-        "# AR90001 — 开发需求（AR）\n\n"
+        "# REQ-DEMO — 开发需求（AR）\n\n"
         "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
         "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
         "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
@@ -232,7 +232,7 @@ class TestArchiveRedlines(StoryBuildCase):
     def test_repo_path_in_story_is_named(self) -> None:
         self.init_audit()
         self.rewrite_story("本需求不涉及。\n\n## 术语",
-                           "详见 doc/features/AR90001/AR/design.md。\n\n## 术语")
+                           "详见 doc/features/REQ-DEMO/AR/design.md。\n\n## 术语")
         self.assert_check_names("仓内路径")
 
 
@@ -442,6 +442,27 @@ class TestDecisionUnits(StoryBuildCase):
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn("材料在枚举之后变了", out)
+
+
+class SourceNumbersStayInTheSpec(StoryBuildCase):
+    """§9.4 里的局部编号（9.4.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
+
+    EVENTS = ('### 9.4 埋点\n\n#### 9.4.1 开户办理\n\n| 步骤 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
+              '#### 2.0 版本的结果查询\n\n- 查询结果按次记录。\n\n')
+
+    def test_the_local_number_is_dropped_and_business_digits_kept(self) -> None:
+        self.init_audit()
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4"), text.index("### 9.5")
+        spec.write_text(text[:start] + self.EVENTS + text[end:], encoding="utf-8")
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        story = self.story()
+        zone = story[story.index("<!-- story-build:begin 数据、配置与事件 "):]
+        self.assertIn("##### 开户办理", zone)
+        self.assertNotIn("9.4.1", zone)
+        self.assertIn("##### 2.0 版本的结果查询", zone)
 
 
 class TheEventDesignIsProjectedWhole(StoryBuildCase):
@@ -779,7 +800,7 @@ class TestFormLints(StoryBuildCase):
         self.assertEqual(0, code, out)          # 夹具的材料清单本来就带链接
 
         first = self.story().split("\n", 1)[0]
-        self.rewrite_story(first, first + "\n\n实现见 doc/features/AR90001/spec/spec.md。")
+        self.rewrite_story(first, first + "\n\n实现见 doc/features/REQ-DEMO/spec/spec.md。")
         self.assert_check_names("仓内路径")
 
 
@@ -1185,7 +1206,7 @@ class TestArRootStaysClean(StoryBuildCase):
 
     def test_the_delivery_documents_pass(self) -> None:
         """白名单上的照过——`detail.json` 由对接层写，它是这一层的正当住户。"""
-        (self.ar_root() / "detail.json").write_text('{"id": "AR90001"}', encoding="utf-8")
+        (self.ar_root() / "detail.json").write_text('{"id": "REQ-DEMO"}', encoding="utf-8")
         _, out = self.check_output()
         self.assertNotIn("不该在这一层", out)
 
@@ -1307,7 +1328,7 @@ class TestReviewComesAfterTheStory(Step8Case):
 
     def test_build_refuses_before_the_story_is_written(self) -> None:
         self.write_decision()
-        self.story_path.write_text("# 交通卡紧急挂失（AR90001）\n", encoding="utf-8")
+        self.story_path.write_text("# 交通卡紧急挂失（REQ-DEMO）\n", encoding="utf-8")
         proc = self.run_build("build")
         self.assertEqual(1, proc.returncode, "story 还没成文，review 却渲染出来了")
         out = (proc.stderr or "") + (proc.stdout or "")
@@ -1951,7 +1972,7 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
 
     def test_a_work_id_inside_a_diagram_is_not_flagged(self) -> None:
         """上游那张图是原样搬来的，里头的节点名不是作者写的字——让他改只能改坏图。"""
-        body = "讲这一段流程。\n\n```mermaid\ngraph TD\nA[AR90001 的节点] --> B[结束]\n```\n"
+        body = "讲这一段流程。\n\n```mermaid\ngraph TD\nA[REQ-DEMO 的节点] --> B[结束]\n```\n"
         proc = self.put("业务流程", body)
         self.assertEqual(0, proc.returncode, self.out(proc))
         proc2 = self.put("业务流程", body.replace("```mermaid", "```text"))
@@ -3022,12 +3043,6 @@ class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
     交付前的 check 说「它是必备来源」——作者只能挑一句信。
     """
 
-    def detail_json(self) -> None:
-        """写一份需求系统的单据身份：这一份在，PRD 与系统设计就是必备来源。"""
-        (self.feature_root() / "AR" / "detail.json").write_text(
-            json.dumps({"reqNo": FEATURE, "parentNo": "SR90001", "rrNo": "RR90001"},
-                       ensure_ascii=False), encoding="utf-8")
-
     def test_a_missing_required_source_blocks_both(self) -> None:
         (self.feature_root() / "spec" / "spec.md").unlink()
         before = self.files_now()
@@ -3052,12 +3067,24 @@ class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
         _, skeleton_out = self.skeleton()
         self.assertIn("本地单没有需求系统给的这一份", skeleton_out)
 
-    def test_a_remote_ticket_must_have_them(self) -> None:
-        """有单据身份就是远程单：同一份缺件在这里是必备缺失。"""
-        self.detail_json()
+    def test_a_local_ticket_with_a_leftover_detail_file_stays_local(self) -> None:
+        """需求目录里留着 `AR/detail.json`，本地需求仍是本地需求：来源由编号决定。"""
+        (self.feature_root() / "AR" / "detail.json").write_text('{"reqNo": "x"}', encoding="utf-8")
         (self.feature_root() / "SR" / "design.md").unlink()
+        self.round_now()
         code, out = self.check_output()
-        self.assertEqual(1, code, out)
+        self.assertEqual(0, code, out)
+        self.assertIn("本地单没有需求系统给的这一份", out)
+
+    def test_a_system_requirement_must_have_them(self) -> None:
+        """AR 开头就是系统需求，没有 `detail.json` 也一样：同一份缺件在这里是必备缺失。"""
+        remote = "AR90009"
+        shutil.copytree(self.feature_root(), self.feature_root().parent / remote)
+        (self.feature_root().parent / remote / "SR" / "design.md").unlink()
+        proc = subprocess.run(["node", str(BUILD), "check", "--feature", remote, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        out = (proc.stderr or "") + (proc.stdout or "")
+        self.assertEqual(1, proc.returncode, out)
         self.assertIn("SR/design.md", out)
         self.assertIn("必备来源", out)
 

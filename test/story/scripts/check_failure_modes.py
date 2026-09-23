@@ -1833,7 +1833,7 @@ def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[in
         return _story_build_in(work, extra_verdict)
 
 
-def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
+def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-DEMO") -> tuple[int, str]:
     build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
         build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
@@ -1844,18 +1844,18 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
     if flow is None:
         flow = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story_flow.py"
     subprocess.run(
-        [sys.executable, str(flow), "round", "--feature", "AR90001",
+        [sys.executable, str(flow), "round", "--feature", feature,
          "--project-root", str(root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def run(cmd: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(build), cmd, "--feature", "AR90001", "--project-root", str(root)],
+            ["node", str(build), cmd, "--feature", feature, "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     # init 退场（08 §2.1）：决策骨架由 skeleton 接管；S 夹具的 check 只需要
     # 决策件在，缺了就补一份空骨架——与旧 init 等价的最小动作。
-    decisions = root / "doc" / "features" / "AR90001" / "AR" / "story-src" / "decisions.json"
+    decisions = root / "doc" / "features" / feature / "AR" / "story-src" / "decisions.json"
     if not decisions.exists():
         decisions.parent.mkdir(parents=True, exist_ok=True)
         decisions.write_text('{"decisions": []}', encoding="utf-8")
@@ -1863,7 +1863,7 @@ def _story_build_in(root: Path, extra_verdict: str | None) -> tuple[int, str]:
     # 让 check 走到被测的那一条，而不是先停在「写作设计不在」。
     plan = decisions.parent / "story-template.md"
     if not plan.exists():
-        shutil.copy2(FORM_BASE / "doc" / "features" / "AR90001" / "AR" / "story-src"
+        shutil.copy2(FORM_BASE / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src"
                      / "story-template.md", plan)
 
     r = run("check")
@@ -1883,7 +1883,7 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     判定原先落在一份独立的记录文件里，那份文件退场后既无作业指引也无门禁。
     现在条目是来源单元，缺一条要点名一条。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
     if code == 0:
@@ -1920,7 +1920,7 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
             hook = DEFAULT_EXTENSION_DIR / "hooks" / "spec" / "post_check.mjs"
         proc = subprocess.run(
             ["node", "--input-type=module", "-e", script, "--",
-             str(hook), str(work), "AR90001"],
+             str(hook), str(work), "REQ-DEMO"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
@@ -1940,14 +1940,14 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
     而且回话里不能提 story 专属的那几样——作者读到「三份产物」「技术契约」，
     就会去写他根本不需要写的东西。
     """
-    spec = root / "doc" / "features" / "AR90001" / "spec" / "spec.md"
+    spec = root / "doc" / "features" / "REQ-DEMO" / "spec" / "spec.md"
     if not spec.exists():
         return Outcome(True, "夹具里没有规格件（该形态未启用）")
     result = _spec_post_check(root)
     if result is None:
         return Outcome(False, "spec post_check 跑不起来")
     ok, message = result
-    has_flow = (root / "doc" / "features" / "AR90001" / "AR" / "story-src" / "story-flow.json").exists()
+    has_flow = (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json").exists()
     if has_flow:
         # 有流程契约 = 走了 /story：该被要求写全，拦住才对
         if ok:
@@ -1971,7 +1971,7 @@ def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     判据不是「报了错」而是**点名了是哪一类、在哪一行**：只说「不合规」的门禁，
     作者只能靠删字去试。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -1993,7 +1993,7 @@ def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
     而当时的判据只核「附录这一章存在」，倾倒完全合法。
     判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2011,7 +2011,7 @@ def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
     名义长回来，实际后果是评审人先读一遍字段表，再在六个答不上来的格子里跳过或胡填，
     而「已确认」因此不可信。留给评审人的只有每条议题末尾那处填写位。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "review.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "review.md").exists():
         return Outcome(True, "夹具里没有评审记录（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2028,7 +2028,7 @@ def s10_image_path_copied(root: Path, ctx: Ctx) -> Outcome:
     → **又复制第三份进归档目录并改名**，story 按裸文件名引用。模板从来只约定图题形态，
     没约定引用路径口径，于是这条链一路无人拦。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2045,7 +2045,7 @@ def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
     实测：两个文件的内容完全相同，story 分别称它们为「管理页」与「管理页布局参考」，
     后一张没有任何说明段——读者以为看漏了什么，其实是同一张图。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2069,7 +2069,7 @@ def _story_with_chapter(chapter: str, body: str) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "work"
         shutil.copytree(FORM_BASE, work)
-        path = work / "doc" / "features" / "AR90001" / "AR" / "story.md"
+        path = work / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md"
         lines = path.read_text(encoding="utf-8").split("\n")
         out, skipping = [], False
         for line in lines:
@@ -2084,7 +2084,7 @@ def _story_with_chapter(chapter: str, body: str) -> tuple[int, str]:
             if not skipping:
                 out.append(line)
         path.write_text("\n".join(out), encoding="utf-8")
-        return _story_build_in(work, "待提交状态：用户点了提交但未收到回执")
+        return _story_build_in(work, "待提交状态：用户点了提交但未收到回执", "REQ-DEMO")
 
 
 def _form_outcome(chapter: str, bad: str, good: str, needle: str) -> Outcome:
@@ -2157,7 +2157,7 @@ def s17_image_new_dir(root: Path, ctx: Ctx) -> Outcome:
     实测一轮：模型自建了一个图片目录再复制一份，全树因此有五份同一张图。
     同一张图散在几个目录里，改了一处其余几处就成了旧图。
     """
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2179,7 +2179,7 @@ def s18_appendix_image(root: Path, ctx: Ctx) -> Outcome:
 
 def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     """A 档固定形式的五条共用同一套跑法：good 该过，bad 该被点名。"""
-    if not (root / "doc" / "features" / "AR90001" / "AR" / "story.md").exists():
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
     if code == 0:
@@ -2402,7 +2402,7 @@ def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
     （基线就这么判，注释里自己承认过）。`story_flow.py story` 登记前会重跑
     `story-build check`，登记成功即九项判据都过了。
     """
-    feature_root = root / "doc" / "features" / "AR90001"
+    feature_root = root / "doc" / "features" / "REQ-DEMO"
     if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     problems = _flow_check_call(root, feature_root, "storyProduced")
@@ -2439,7 +2439,7 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     写成「等于 complete」就会在 S5 之后让 spec harness 一重跑就 FAIL，
     `upstream_verdict_gate` 再把 coding、review 一并判 FAIL——四个已闭环的阶段集体翻红。
     """
-    feature_root = root / "doc" / "features" / "AR90001"
+    feature_root = root / "doc" / "features" / "REQ-DEMO"
     if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
         return Outcome(True, "夹具里没有流程契约（该形态未启用）")
     script = (

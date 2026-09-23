@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story"
 CONTRACT = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "contracts" / "story-chapters.json"
 PLAN_FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes" / "R01-verdict-echo"
-                / "good" / "doc" / "features" / "AR90001" / "AR" / "story-src" / "story-template.md")
+                / "good" / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-template.md")
 
 ANALYSIS = """# 需求分析
 

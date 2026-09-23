@@ -13,7 +13,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | 目录 | 归谁 | 复制时 |
 |---|---|---|
 | `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
-| `<ext>/skills/story/scripts/adapters/`（`story.js`、`token.js`） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
+| `<ext>/skills/story/scripts/adapters/`（入口、鉴权及其内部实现模块） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
 | `<ext>/knowledge/` | 目标 | 不读不写 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
 | `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
@@ -27,12 +27,20 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 来源 | 对接层 | 为什么 |
 |---|---|---|
-| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它那两个 js 是用本地目录模拟需求系统的替身，装进业务仓会往一个不存在的地方读写单据 |
+| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它的对接实现用本地目录模拟需求系统，装进业务仓会往一个不存在的地方读写单据 |
 | **另一个业务仓** | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现（A12） |
 
 判来源看包 `manifest.yaml` 的 `name`——它归目标、升级不改，所以每个仓的 manifest 里那个名字始终是它自己的。不靠仓名长相、目录结构或脚本内容猜。
 
-Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同自己实现那两个，或者从一个已经实现好的业务仓复刻过来。
+Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同实现公共入口及所需内部模块，或者从一个已经实现好的业务仓复刻过来。
+
+## 对接能力交接
+
+安装或升级前，读取包的 `skills/story/scripts/README.md`，核对本次对接能力的新增、变更与删除。逐项向目标维护者说明：哪项流程需要它、入口参数/结果/失败语义、目标需改什么、怎样验证；公共入口不变也不表示对接内部无需调整。
+
+对照目标实现确认各项能力。所需功能尚未实现时明确列为未适配，不声称整个流程已经可用；继续按目录所有权安装机制，不自动覆盖目标对接实现或为某个项目添加复制特例。对接实现与验证由获授权的目标维护任务承担。
+
+本命令的 `--check` 只核安装一致性，不能代替真实对接能力验证。交回分别说明机制安装结果、对接能力结果和剩余动作；Demo 替身的测试结果不冒充内网对接已经通过。
 
 ## 你要做的四件事
 
@@ -100,7 +108,7 @@ diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提�
 
 ## 对接层的输出合同
 
-`adapters/` 里那两个由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
+`adapters/` 的入口及内部模块由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
 
 ## 不做的事
 

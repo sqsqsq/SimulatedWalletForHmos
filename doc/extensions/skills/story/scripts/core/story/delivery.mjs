@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readJson } from './context.mjs';
+import { isSystemRequirement, readJson } from './context.mjs';
 import { storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
 
 /**
@@ -33,8 +33,7 @@ function receiptRunner(harness) {
  * 这是脚本给的确定性文本，与 `story_flow.py status` 同一口径。
  */
 export function deliveryNextSteps(ctx) {
-  const remote = readJson(ctx.flowPath, null) !== null
-    && !/^local[-_]/i.test(String(ctx.args.feature ?? ''));
+  const remote = readJson(ctx.flowPath, null) !== null && isSystemRequirement(ctx.args.feature);
   const rows = remote
     ? ['  1  归档送审：`/story archive <AR>`',
       '  2  进入 plan：按 framework 的 `phase.next_step` 走',
@@ -44,6 +43,13 @@ export function deliveryNextSteps(ctx) {
     : ['  本地单没有归档：进入 plan，按 framework 的 `phase.next_step` 走。'];
   return ['', '[story-build check] 交付门通过。下一步由你选：', '',
     ...rows, ''].join('\n');
+}
+
+/** 报告核对要的运行事实：流程契约读得出、是对象，才知道有没有进行中的 update；否则是未知。 */
+export function deliveryRunFacts(ctx) {
+  const flow = readJson(ctx.flowPath, null);
+  return flow && typeof flow === 'object' && !Array.isArray(flow)
+    ? { updateOpen: Boolean(flow.update?.open) } : { unknown: '流程契约读不到或不是有效的 JSON 对象' };
 }
 
 /**
@@ -92,7 +98,7 @@ export function deliveryProblems(ctx) {
     return fail(`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`);
   }
 
-  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
+  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec', deliveryRunFacts(ctx));
   if (review.status === 'NOT_APPLICABLE') {
     // 本宿主没有登记审查员：沿用户批准记一笔放行，但**如实说没审过**——
     // 说成「语义 PASS」的话，这份 story 会带着一句没发生过的结论交出去。
@@ -109,7 +115,7 @@ export function deliveryProblems(ctx) {
       notes: [],
     };
   }
-  return { problems: [], notes: [] };
+  return { problems: [], notes: review.notes ?? [] };
 }
 
 // --------------------------------------------------------------------------

@@ -556,7 +556,7 @@ function issueRewritten(zones, fresh) {
   if (was === null) return 'no';
   const before = decisionPoint(was);
   const after = decisionPoint(fresh);
-  // **判不出来就不拦**：早先的稿子里这一段可能叫别的名字，
+  // **判不出来就不拦**：已有稿子里这一段可能叫别的名字，
   // 拿整段正文去比的话，改个标题错字也会停手，而真正换问题的那一次淹在噪声里。
   // 判不出不等于没事——调用方出一声，让人自己看一眼。
   if (before === null || after === null) return 'unknown';

@@ -56,9 +56,29 @@ const INVALID_EVIDENCE =
 function reportLocation(projectRoot, feature, phase) {
   const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
   const summary = readJsonOrNull(path.join(dir, 'summary.json'));
-  if (!summary) return { summaryFound: false, abs: null };
+  if (!summary) return { summaryFound: false, abs: null, summary: null };
   const rel = typeof summary.verifier_report === 'string' ? summary.verifier_report.trim() : '';
-  return { summaryFound: true, abs: rel ? path.resolve(projectRoot, rel) : null };
+  return { summaryFound: true, abs: rel ? path.resolve(projectRoot, rel) : null, summary };
+}
+
+/**
+ * 当前对象没有报告时说什么 —— 只说盘上的事实和真实的去处。
+ *
+ * 缺文件推不出「回复存在、只是没写」：当前对象可能根本没被审过。所以先说有匹配当前请求的
+ * 原始回复才原样写回，否则取当前请求派审；闭环沿用了历史审查时，把这件事照 summary 说出来。
+ * 当前审查只认对当前请求的原样回复。
+ */
+function missingReport(summary, abs) {
+  const request = typeof summary.verifier_request === 'string' ? summary.verifier_request : '（summary 没写）';
+  const prior = summary.verifier_closure;
+  const facts = prior?.mode
+    ? `本阶段按 ${prior.mode} 收口：当前对象 ${String(prior.current_subject_id ?? summary.verifier_subject_id ?? '').slice(0, 12)}… `
+      + `没有独立审查，沿用的是 ${String(prior.reviewed_subject_id ?? '').slice(0, 12)}… 的审查`
+      + `（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）。`
+    : '当前审查对象还没有报告。';
+  return `${facts}有与当前请求 ${request} 一致的原始回复，就原样全文写到 ${abs}，再完整跑一次 harness；`
+    + '没有这样的回复，等本轮材料改完，取当前请求派审。'
+    + '当前审查只认对当前请求的原样回复';
 }
 
 /**
@@ -140,8 +160,8 @@ function readerReviewDetails(text) {
  *
  * @returns {{status: string, problems: string[], detail: string}}
  */
-export function storyReviewProblems(projectRoot, feature, phase) {
-  const { summaryFound, abs } = reportLocation(projectRoot, feature, phase);
+export function storyReviewProblems(projectRoot, feature, phase, run) {
+  const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
   if (!summaryFound) {
     return { status: 'NOT_APPLICABLE', problems: [], reviewVerdict: null,
       detail: 'harness 尚未运行，本项还轮不到判' };
@@ -155,17 +175,50 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     };
   }
   const text = readTextOrNull(abs);
-  if (text === null) {
-    return {
-      status: 'FAIL',
-      problems: [`verifier 报告不在落点上：${abs}——`
-        + '把 verifier 的回复**原样全文**重新写到 `summary.verifier_report` 指向的那份文件；'
-        + '没有它，读者审查有没有执行无从核对'],
-      reviewVerdict: null,
-      detail: '报告缺席',
-    };
-  }
+  return text === null ? withoutCurrentReport(summary, abs, run) : judgeReport(text);
+}
 
+const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
+
+/** 报告的终态块（恰好一个完整块才算）：审的是哪个对象、判了什么。 */
+function resultBlock(text) {
+  const blocks = [...String(text ?? '').matchAll(RESULT_BLOCK)];
+  if (blocks.length !== 1) return null;
+  const field = key => new RegExp(`^\\s*${key}\\s*:\\s*(\\S+)\\s*$`, 'm').exec(blocks[0][1])?.[1] ?? null;
+  return { subject: field('verifier_subject_id'), verdict: field('verdict') };
+}
+
+/**
+ * 当前对象没有报告时能不能交付。只有 framework 修正重验（summary 带 `script_revalidated`）、没有进行中的 update、
+ * 本阶段闭环 PASS 并沿用历史审查，且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
+ * `run` 是调用方给的运行事实：`updateOpen` 为布尔才是已知，未知（`unknown` 说明原因）按未完成报。
+ */
+function withoutCurrentReport(summary, abs, run) {
+  const prior = summary.verifier_closure;
+  const fail = (detail, extra = '') => ({ status: 'FAIL', problems: [missingReport(summary, abs) + extra], reviewVerdict: null, detail });
+  if (typeof run?.updateOpen !== 'boolean') {
+    return fail(`当前对象未独立审查；${run?.unknown ?? '调用方没有给出运行事实'}，判不了能否沿用`);
+  }
+  if (run.updateOpen) return fail('update 进行中', '；update 进行中，本轮改过的阶段按新的审查对象审一次');
+  const signals = (summary.readiness_signals ?? []).map(s => s?.id ?? s);
+  if (prior?.mode !== 'completed_with_prior_review' || !signals.includes('script_revalidated')
+    || summary.closure_status !== 'closed' || summary.verdict !== 'PASS') {
+    return fail(prior?.mode ? '当前对象未独立审查' : '报告缺席');
+  }
+  const history = readTextOrNull(path.join(path.dirname(abs), `verifier.report.${prior.reviewed_subject_id}.md`));
+  const block = resultBlock(history);
+  const judged = history === null ? null : judgeReport(history);
+  if (block?.subject !== prior.reviewed_subject_id || block?.verdict !== 'PASS'
+    || judged.problems.length || judged.reviewVerdict !== 'PASS') {
+    return fail('沿用的历史审查无效', `；修正重验沿用的 ${String(prior.reviewed_subject_id).slice(0, 12)}… 报告缺席或不是有效的 PASS`);
+  }
+  return { status: 'PASS', problems: [], reviewVerdict: 'PASS', detail: '修正重验沿用历史审查',
+    notes: [`当前材料未独立重审：当前对象 ${String(summary.verifier_subject_id).slice(0, 12)}… 沿用 `
+      + `${String(prior.reviewed_subject_id).slice(0, 12)}… 的审查（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）`] };
+}
+
+/** 报告正文里读者审查这一项：汇总行、证据、非 PASS 时的两类结论。 */
+function judgeReport(text) {
   const row = summaryRow(text);
   if (!row) {
     return {
