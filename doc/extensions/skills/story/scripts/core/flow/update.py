@@ -28,7 +28,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.routing import inputs_answer, material_state
-from flow.state import (CONTRACT, FlowError, SKILL_ROOT, STORY, REVIEW, system_requirement,
+from flow.state import (CONTRACT, FlowError, STORY, REVIEW, system_requirement,
                         load, log, now, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -283,19 +283,19 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
     records = _records(feature_root)
     resumed = _resume(records)
     if resumed:
-        return resumed
+        return {**resumed, "paths": _paths(project_root, feature_root)}
     facts = _collect(feature_root, contract, records, request)
     contract["update"] = {**(contract.get("update") or {}), "stage": "inputs", "inputs_at": now(),
                           "inputs_from": len(round_gates(contract))}
     save(feature_root, contract)
-    fetch = _fetch_command(feature_root, feature, project_root)
-    return {"stage": "inputs", "changed": facts["changed"], "unreadable": facts["unreadable"],
+    system = system_requirement(feature)
+    return {"stage": "inputs", "paths": _paths(project_root, feature_root), "changed": facts["changed"], "unreadable": facts["unreadable"],
             "baseline": facts["diff"]["complete"], "pending": facts["pending"],
             "superseded_hint": facts["superseded_hint"],
             "materials_changed": facts["materials_changed"],
-            "upstream": _receipt(feature_root) if fetch else None, "fetch": fetch,
-            "action": ("`upstream` 是最近一次取材的回执（看它的时刻，没取过或不是这一次取的就先跑 `fetch`）；"
-                       if fetch else "本地单没有上游；")
+            "upstream": _receipt(feature_root) if system else None,
+            "action": ("`upstream` 是最近一次取材的回执，展示它的时刻；本次取材成功与否以那次取材自己的结果为准。"
+                       if system else "本地需求没有上游；")
                       + "按 `rules/init_analysis.md` S2a 盘点手上的料，摆第一级选项侧车，"
                       "问人这一次要不要补料，**停等**。人答了 → `decide --gate material_scope` 记原话 → "
                       "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare`"}
@@ -459,18 +459,11 @@ def _report_passed(reports: Path, subject: str | None) -> bool:
             and fields.get("verdict", "").strip() == "PASS")
 
 
-def _fetch_command(feature_root: Path, feature: str, project_root: Path) -> str | None:
-    """取材命令由本层渲染：落点是这个单的 `inbox/`——与人补料同一个入料口。
-
-    让模型自己拼 `--out` 的话，它可以指到任何目录，包括需求目录外面。
-    `--project-root` 一并写上：回执落在它下面的需求目录里，与 `--out` 必须是同一个工程。
-    本地需求不挂在需求系统上，没有这条命令。
-    """
-    if not system_requirement(feature):
-        return None
-    adapter = SKILL_ROOT / "scripts" / "adapters" / "story.js"
-    return (f"node {adapter.as_posix()} fetch {feature} <token> "
-            f"--project-root {project_root.as_posix()} --out {(feature_root / 'inbox').as_posix()}")
+def _paths(project_root: Path, feature_root: Path) -> dict:
+    """本需求的本地位置（绝对路径）：取材落点 `inbox` 与人补料同一个入料口，回执跟着工程根走。"""
+    return {"project_root": project_root.resolve().as_posix(),
+            "feature_root": feature_root.resolve().as_posix(),
+            "inbox": (feature_root / "inbox").resolve().as_posix()}
 
 
 def _latest(records: list[tuple[str, dict]], status: str | None = None) -> tuple[str, dict] | None:
@@ -487,7 +480,7 @@ def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> d
     closed = _latest(records, "closed")
     out = {"rounds": len(records), "phases": _phase_facts(feature_root),
            "stage": ((load(feature_root) or {}).get("update") or {}).get("stage"),
-           "fetch": _fetch_command(feature_root, feature, project_root)}
+           "paths": _paths(project_root, feature_root)}
     if openest:
         rid, rec = openest
         notes = _updates_dir(feature_root) / rid / "update-notes.md"

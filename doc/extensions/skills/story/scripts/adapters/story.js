@@ -11,9 +11,8 @@
  *             AR/design.md 是**需求分析的预填输入**，系统上有就拉下来、本地已有一律不覆盖；
  *             它有没有内容、范围够不够，由后续关卡判，本命令不做这个判断。
  *             系统上查无此单即失败——单号打错时必须当场停住，而不是落一地占位件；
- *             系统上某份正文缺失则**不写**该文件，留给 `story_flow.py init` 落占位件。
- *             工作区骨架（收件箱、占位件、design.md 空骨架）由它在本命令之后补齐，
- *             两者互不依赖
+ *             系统上某份正文缺失则**不写**该文件；工作区骨架（收件箱、占位件、design.md 空骨架）
+ *             不归本命令，本命令只负责把系统上有的正文与单据身份落到本地
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,"success":true}
  *             系统侧正文名固定为 design.md，归档是覆盖它而非新建：
  *             ①系统当前正文备份进该单的历史版本目录（restore 靠的就是它）
@@ -22,7 +21,7 @@
  *             **工作区一个字节都不动**——归档是往系统上写，不是在本地搬文件；
  *             AR/story.md 与 AR/review.md 缺任一即失败，无降级路径。
  *             **门禁不在这里**：本文件是需求系统对接层的替身，内网是独立实现、从不调用扩展内容；
- *             归档前的校验由 /story 链的 story-build check 承担（SKILL 归档节 ①）
+ *             归档前的校验由 /story 流程在调用本命令之前完成
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             把该单最新的历史版本写回系统正文，回退 archive 那次覆盖；
  *             没有历史版本即失败（restore 仅在 archive 之后可用）。本地 design.md 不变
@@ -226,9 +225,9 @@ function cmdInit(ar, featureRoot, localAr, system) {
 
   const missing = ['RR/prd.md', 'SR/design.md'].filter(rel => !pulled.includes(rel));
   if (missing.length > 0) {
-    log(`系统上没有：${missing.join('、')}——这部分材料要另外拿到并走收件箱导入。`);
+    log(`系统上没有：${missing.join('、')}，本地未写入。`);
   }
-  log('材料已落盘。接着跑 `story_flow.py init` 建工作区骨架（收件箱、占位件、design.md 空骨架）。');
+  log(`材料已落盘：${pulled.join('、') || '（无正文）'}，单据身份写入各级 detail.json。`);
   emit({ mode: 'init', reqNo: ar, parentNo: ids.SR, rrNo: ids.RR, success: true });
 }
 

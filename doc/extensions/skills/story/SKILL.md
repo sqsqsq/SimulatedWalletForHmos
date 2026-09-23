@@ -117,6 +117,8 @@ node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
+① 失败就停下，报出它的 `error`，不建骨架。
+
 **看骨架判材料**：`RR/prd.md`、`SR/design.md` 是正文还是占位件（正文写着「本文档未从需求系统拉取到」）。
 有占位件就当缺料，请用户把对应文档放进 `inbox/` 走导入。
 
@@ -135,6 +137,8 @@ node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-tok
 python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记（自带 ① 的门禁，不可逆）
 ```
 
+② 失败就停下，不做 ③ 登记。
+
 **③ 登记之后**，`AR/review.md` **归人所有——只备份，不重建**。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
 
@@ -148,12 +152,17 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 - **取材不写业务文件**：`fetch` 只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```bash
-python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 回执的 fetch 字段给出 ② 的完整命令
-node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root <工程根> --out <本单 inbox>   # ② 取上游（照 ① 给的原样跑；本地单跳过）
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare   # ④ 比较并开这一轮
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
 ```
+
+- **①** 有开着的更新（`open`）时按它的记录续做，本轮已经取过材的不再重复取。
+- **②** 只对 AR 开头的系统需求执行，先按「需求系统 Token」取 token；两个路径取自 ① 返回的 `paths`，按当前 shell 加引号。
+  本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的 `success` 与逐份状态为准：失败就停在这里，
+  报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
 
 **④ 八项真的没变**就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
 整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。

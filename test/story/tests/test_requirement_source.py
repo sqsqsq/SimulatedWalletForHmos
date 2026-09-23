@@ -5,10 +5,14 @@
      中间含 AR 的编号都算本地；AR 开头而系统上查无此单仍是故障，不降级成本地；
   ② 对接层只有 init / fetch / archive / restore，流程帮助归 `/story help`；
   ③ core 两侧（Python 的 `system_requirement`、mjs 的 `isSystemRequirement`）对同一组编号判定一致，
-     取材命令与建骨架的来源标记都按编号，需求目录里留着 `AR/detail.json` 也照编号判。
+     建骨架的来源标记按编号，需求目录里留着 `AR/detail.json` 也照编号判；
+  ④ core 与对接层互不认识对方：core 的代码里没有对接层的路径或程序名，对接层的代码里没有 core 的命令。
+     注释与文档字符串里描述另一层的职责不算。
 """
+import ast
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -86,18 +90,44 @@ class BothSidesOfCoreJudgeTheSame(unittest.TestCase):
     def test_a_leftover_detail_file_does_not_make_a_local_requirement_remote(self) -> None:
         sys.path.insert(0, str(CORE))
         try:
-            from flow import inputs, update
+            from flow import inputs
         finally:
             sys.path.remove(str(CORE))
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "ISSUE-206"
             (root / "AR").mkdir(parents=True)
             (root / "AR" / "detail.json").write_text('{"reqNo": "ISSUE-206"}', encoding="utf-8")
-            self.assertIsNone(update._fetch_command(root, "ISSUE-206", Path(d)))
             self.assertTrue(inputs.cmd_init(root, "ISSUE-206")["local"])
-            ar = Path(d) / "AR90006"
-            self.assertIn("story.js fetch AR90006", update._fetch_command(ar, "AR90006", Path(d)))
-            self.assertFalse(inputs.cmd_init(ar, "AR90006")["local"])
+            self.assertFalse(inputs.cmd_init(Path(d) / "AR90006", "AR90006")["local"])
+
+
+
+def code_strings(path: Path) -> str:
+    """一个文件里真正参与执行的文字：Python 取字符串常量（不含文档字符串），JS 去掉注释。"""
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".py":
+        tree = ast.parse(text)
+        docs = {id(n.body[0].value) for n in ast.walk(tree)
+                if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.body and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+        return "\n".join(n.value for n in ast.walk(tree)
+                         if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs)
+    return re.sub(r"//.*", "", re.sub(r"/\*.*?\*/", "", text, flags=re.S))
+
+
+class CoreAndAdapterDoNotKnowEachOther(unittest.TestCase):
+    def test_core_names_no_adapter(self) -> None:
+        hits = [f"{f.relative_to(CORE).as_posix()}: {word}"
+                for f in sorted(CORE.rglob("*")) if f.suffix in {".py", ".mjs"} and "__pycache__" not in f.parts
+                for word in ("adapters", "story.js", "token.js") if word in code_strings(f)]
+        self.assertEqual([], hits)
+
+    def test_the_adapter_names_no_core_command(self) -> None:
+        for f in sorted((STORY / "scripts" / "adapters").glob("*.js")):
+            code = code_strings(f)
+            for word in ("story_flow", "story-build", "/core/"):
+                with self.subTest(file=f.name, word=word):
+                    self.assertNotIn(word, code)
 
 
 if __name__ == "__main__":

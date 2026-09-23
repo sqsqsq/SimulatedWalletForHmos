@@ -272,29 +272,62 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         self.assertIsNone(out["notes"], "还没写说明却说有")
         self.assertIn("update-notes", out["action"])
 
-    def test_the_fetch_command_comes_from_the_script(self) -> None:
-        """取材落点由脚本给，模型不自己拼 `--out`——拼了就能指到需求目录外面。本地需求没有这条命令。"""
-        self.assertIsNone(self.update("--action", "status")["fetch"])
-        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
-        sys.path.insert(0, str(core))
-        try:
-            from flow import update as update_mod  # noqa: PLC0415
-            ar = self.feature_root.parent / "AR90006"
-            got = update_mod._fetch_command(ar, "AR90006", self.root)
-        finally:
-            sys.path.remove(str(core))
-        self.assertTrue(got.replace("\\", "/").endswith("AR90006/inbox"), got)
-        self.assertIn("--project-root", got, "回执会跟着脚本位置落到别的工程里")
+    def test_status_gives_local_paths_and_no_adapter_command(self) -> None:
+        """core 只报本地位置：取材命令由 SKILL 指导模型调用，core 不认识对接层的路径与参数。
+        本工作区没有 `adapters/` 目录，core 照常工作。"""
+        self.assertFalse((self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "adapters").exists())
+        for action in ("status", "inputs"):
+            with self.subTest(action):
+                out = self.update("--action", action)
+                self.assertEqual({"project_root": self.root.resolve().as_posix(),
+                                  "feature_root": self.feature_root.resolve().as_posix(),
+                                  "inbox": (self.feature_root / "inbox").resolve().as_posix()}, out["paths"])
+                self.assertNotIn("fetch", out)
+                text = json.dumps(out, ensure_ascii=False)
+                self.assertNotIn("story.js", text)
+                self.assertNotIn("adapters", text)
 
-    def test_a_local_feature_has_no_fetch(self) -> None:
-        """本地单不挂在需求系统上：没有这条命令，输入阶段直接问补料。"""
+    def test_a_local_requirement_has_no_upstream(self) -> None:
+        out = self.update("--action", "inputs")
+        self.assertIsNone(out["upstream"])
+        self.assertIn("本地需求没有上游", out["action"])
+
+    def test_a_system_requirement_reads_its_receipt(self) -> None:
+        """AR 需求按来源展示最近一次取材回执；有没有回执不决定来源。"""
         core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        ar = self.feature_root.parent / "AR90009"
+        shutil.copytree(self.feature_root, ar)
+        receipt = {"mode": "fetch", "reqNo": "AR90009", "fetchedAt": "2026-09-23T10:00:00", "items": []}
+        (ar / "AR" / "story-src" / "fetched.json").write_text(json.dumps(receipt), encoding="utf-8")
         sys.path.insert(0, str(core))
         try:
             from flow import update as update_mod  # noqa: PLC0415
-            self.assertIsNone(update_mod._fetch_command(self.feature_root, "local-demo", self.root))
+            out = update_mod.cmd_update_inputs(ar, "AR90009", self.root)
         finally:
             sys.path.remove(str(core))
+        self.assertEqual(receipt, out["upstream"])
+        self.assertEqual((ar / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+
+    def test_a_resumed_update_still_gives_the_paths(self) -> None:
+        self.update()                                  # 开一轮，不收口
+        out = self.update("--action", "inputs")
+        self.assertEqual("resume", out["comparison"], out)
+        self.assertEqual((self.feature_root / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+
+    def test_paths_follow_the_configured_features_dir_with_spaces(self) -> None:
+        """需求目录按 `paths.features_dir` 解析，工程根与需求目录都含空格时也原样给出绝对路径。"""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "my project"
+            feature = root / "work items" / "feats" / FEATURE
+            (feature / "AR" / "story-src").mkdir(parents=True)
+            (root / "framework.config.json").write_text(
+                json.dumps({"paths": {"features_dir": "work items/feats"}}), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(FLOW), "update", "--feature", FEATURE,
+                                   "--project-root", str(root), "--action", "status"],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+            out = json.loads([l for l in proc.stdout.splitlines() if l.strip().startswith("{")][-1])
+        self.assertEqual(root.resolve().as_posix(), out["paths"]["project_root"])
+        self.assertEqual((feature / "inbox").resolve().as_posix(), out["paths"]["inbox"])
 
     def test_phase_facts_come_from_the_harness_summary(self) -> None:
         reports = self.feature_root / "spec" / "reports"
@@ -451,7 +484,7 @@ class TheInputsStageAsksFirst(UpdateCase):
         was = self.rounds()
         out = self.update("--action", "inputs")
         self.assertEqual("inputs", out["stage"], out)
-        self.assertIn("fetch", out)
+        self.assertEqual((self.feature_root / "inbox").resolve().as_posix(), out["paths"]["inbox"])
         self.assertEqual("inputs", self.contract()["update"]["stage"])
         self.assertEqual("await_gate:material_scope", self.next_of())
         self.assertEqual(was, self.rounds(), "输入阶段只报告，却建了一轮")
@@ -716,6 +749,17 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
         self.assertEqual("same", states["RR-prd.md"])
         self.assertEqual("same", states["AR-design.md"])
         self.assertEqual(["SR-design.md"], sorted(f.name for f in self.out.iterdir()))
+
+    def test_the_adapter_reports_facts_not_core_steps(self) -> None:
+        """对接层只报取回、落盘的事实，不提示 core 的下一步命令。"""
+        for cmd in (["init", AR, "token"], ["fetch", AR, "token", "--out", str(self.out)]):
+            with self.subTest(cmd[0]):
+                proc = subprocess.run(["node", str(STORY_JS), *cmd, "--project-root", str(self.project)],
+                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                                      env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+                self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+                for word in ("story_flow", "story-build", "core/"):
+                    self.assertNotIn(word, proc.stdout + proc.stderr)
 
     def test_a_local_feature_is_refused(self) -> None:
         """本地单不挂在需求系统上：不取 token、不访问系统，当场说清楚。"""
