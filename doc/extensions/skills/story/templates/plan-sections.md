@@ -57,6 +57,13 @@ interfaces:
           - text: 同一幂等键重复调用不得创建第二份单据
             rule: <规约条目编号>
             verify: both
+  - name: OrderSubmitFlow            # 以命中一条统计义务为前提：决定结果的业务方法扛义务，
+    methods:                         # 上报封装只按项目协议组装与发送，不另挂「覆盖全部结果」
+      - name: submit
+        must:
+          - text: 提交这个统计点在各实际适用结果确定时按项目协议记录一次，同一次提交不重复记录
+            rule: <规约条目编号>
+            verify: ut
 
 components:
   - name: OrderSheet
@@ -86,6 +93,8 @@ files:
     pattern: <在册的模式标识>
     role: <该模式声明过的角色名>
 ```
+
+`use-cases.yaml` 里引验收写 `acceptance.yaml` 实际的 id，调用写契约里声明过的方法或已核的外部接口。
 
 引用一条资源写完整的 `resource_keys.<模块>.<分类>.<key>`。参考截图这类不进运行包的材料不是运行资源，
 不因 visual-parity 告警而登记进 `resource_keys`（是不是运行资源由审查判）。

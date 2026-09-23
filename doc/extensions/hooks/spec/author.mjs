@@ -105,7 +105,7 @@ function knowledgeSection(projectRoot, feature) {
     ...knowledge.constraints.map(c => `- \`${where(c)}\`——${c.domain}：${c.title}`),
     '',
     fs.existsSync(useFile)
-      ? '骨架已在磁盘上，逐条填 `applicable` 与依据；填完跑 `knowledge-use.mjs render --feature <名>`。'
+      ? '骨架已在磁盘上：判断先于承载章的设计，设计定下的落点同步回这里；填完跑 `knowledge-use.mjs render --feature <名>`。'
       : `先跑 \`node doc/extensions/hooks/shared/knowledge-use.mjs init --feature ${feature}\` 生成骨架`
         + '（激活条目一条不落，你只填判断），填完跑 `render`。',
     '',
