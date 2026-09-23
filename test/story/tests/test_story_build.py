@@ -361,9 +361,10 @@ class TestRedlineScope(StoryBuildCase):
     """逐类作用域：工程标识只管附录之外，文档坐标全篇判；一行命中几种坐标只报一条。"""
 
     def _put_in_appendix(self, line: str) -> None:
-        bodies = _chapter_bodies(self.story_path)
-        anchor = bodies[_appendix_title()].split("\n")[0]
-        self.rewrite_story(anchor, anchor + "\n\n" + line)
+        """作者说明写在技术约定那一节的末尾：机器区之外、下一节之前。"""
+        anchor = "### 改动边界"
+        self.assertIn(anchor, self.story())
+        self.rewrite_story(anchor, line + "\n\n" + anchor)
 
     def test_a_doc_coordinate_in_the_appendix_is_named(self) -> None:
         """附录里作者写的那部分同样随归档走：指向不随归档的文件，放在哪里读者都打不开。"""
@@ -459,7 +460,7 @@ class SourceNumbersStayInTheSpec(StoryBuildCase):
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         story = self.story()
-        zone = story[story.index("<!-- story-build:begin 数据、配置与事件 "):]
+        zone = story[story.index("<!-- story-build:begin 技术约定·埋点 "):]
         self.assertIn("##### 开户办理", zone)
         self.assertNotIn("9.4.1", zone)
         self.assertIn("##### 2.0 版本的结果查询", zone)
@@ -484,27 +485,41 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     def zone(self) -> str:
+        return self.zone_of("技术约定·埋点")
+
+    def zone_of(self, name: str) -> str:
         text = self.story()
-        at = text.index("<!-- story-build:begin 数据、配置与事件 ")
+        at = text.index(f"<!-- story-build:begin {name} ")
         return text[at:text.index("<!-- story-build:end -->", at)]
 
     def test_prose_headings_tables_and_lists_come_in_order(self) -> None:
+        """埋点这个 H4 标题归作者（草稿铺好），机器区从它下面的总述开始。"""
         zone = self.zone()
-        order = ["#### 埋点", "开户与结果查询两个流程", "##### 开户办理", "服务指标：开户成功率",
+        self.assertNotIn("#### 埋点", zone)
+        order = ["开户与结果查询两个流程", "##### 开户办理", "服务指标：开户成功率",
                  "| 信息校验 |", "| 短信验证 |", "- 页面进入、点击由自动运维上报采集", "##### 结果查询",
                  "| 查询开户结果 |"]
         at = [zone.index(piece) for piece in order]
         self.assertEqual(sorted(at), at, "段落、小标题、表与列表没按原次序投影")
+
+    def test_numbering_the_zone_headings_is_not_an_edit(self) -> None:
+        """登记时先投影后编号：区里的指标小标题被编上号，核对不报、再投影也不当手改。"""
+        proc = self.run_build("number")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertRegex(self.zone(), r"##### 10\.1\.4\.\d+ 开户办理")
+        code, out = self.check_output()
+        self.assertNotIn("技术约定·埋点", out, out)
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     def test_the_code_status_column_stays_in_spec(self) -> None:
         self.assertNotIn("代码现状", self.zone())
         self.assertNotIn("检索零命中", self.zone())
 
     def test_other_subsections_keep_their_own_conclusion(self) -> None:
-        """数据存储、配置项没有表时，它们各自的「不涉及」照样在，并标明是哪一项。"""
-        zone = self.zone()
-        self.assertIn("数据存储——不涉及", zone)
-        self.assertIn("配置项——不涉及", zone)
+        """数据、配置没有表时，各自的「不涉及」进各自的机器区——H4 标题已经说明是哪一项。"""
+        self.assertIn("不涉及：", self.zone_of("技术约定·数据"))
+        self.assertIn("不涉及：", self.zone_of("技术约定·配置"))
 
     def test_relative_references_are_rebased_to_the_story(self) -> None:
         """spec 在 spec/、归档件在 AR/：相对引用要换成从归档件出发，否则投过去就是坏链。
@@ -531,14 +546,14 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
             "服务指标：开户成功率（运维）。", "服务指标：开户成功率与结果查询成功率（运维）。"), encoding="utf-8")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
-        self.assertIn("数据、配置与事件", out)
+        self.assertIn("技术约定·埋点", out)
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("结果查询成功率", self.zone())
 
 
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
-    """附录 A–D 的机器区与真源逐区逐行比 —— **不先 project 再比**。
+    """附录的机器区与真源逐区逐行比 —— **不先 project 再比**。
 
     先 project 再比是必绿的：那等于拿刚写下去的东西跟自己比。这一组直接改盘上的机器区
     （非首列、删行、换序、破标记）与真源，check 必须发现，且**一个字节都不许写**。
@@ -570,21 +585,21 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
 
     def test_a_change_outside_the_first_column_is_caught(self) -> None:
         """只比首列的老判据看不见这一类：标识没动，说明被改了。"""
-        at, end, lines = self.zone_lines("改动边界")
-        target = next(i for i in range(at + 1, end) if lines[i].startswith("| 依赖 |"))
-        lines[target] = "| 依赖 | 改成了别的说法 |"
+        at, end, lines = self.zone_lines("规约判定")
+        target = next(i for i in range(at + 1, end) if "SMP-01" in lines[i])
+        lines[target] = "| 甲域约束 | SMP-01 | 不命中 | 改成了别的说法 |"
         self.rewrite(lines)
         self.expect_caught()
 
     def test_a_deleted_row_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("改动边界")
+        at, end, lines = self.zone_lines("规约判定")
         del lines[end - 1]
         self.rewrite(lines)
         self.expect_caught()
 
     def test_a_reordered_pair_of_rows_is_caught(self) -> None:
         """行序算在内：拿 Set 比集合的老判据换了顺序也看不见。"""
-        at, end, lines = self.zone_lines("改动边界")
+        at, end, lines = self.zone_lines("规约判定")
         body = list(range(at + 1, end))
         self.assertGreaterEqual(len(body), 2)
         lines[body[-1]], lines[body[-2]] = lines[body[-2]], lines[body[-1]]
@@ -612,7 +627,7 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         start = text.index("### 9.1")
         end = text.index("### 9.2")
         spec.write_text(text[:start] + text[end:], encoding="utf-8")
-        at, endline, lines = self.zone_lines("接口")
+        at, endline, lines = self.zone_lines("技术约定·接口")
         lines[at:endline + 1] = ["这一节的接口约定见业务方案章。"]
         self.rewrite(lines)
         self.expect_caught("§9.1")
@@ -730,7 +745,7 @@ class TestFormLints(StoryBuildCase):
 
     def put_materials(self, body: str) -> None:
         text = self.story()
-        head = "### E. 材料清单\n\n"
+        head = "### 材料清单\n\n本篇据以写成的材料。\n\n"
         start = text.index(head) + len(head)
         self.story_path.write_text(text[:start] + body, encoding="utf-8")
 
@@ -884,7 +899,8 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
         for title, want in (("1 闸机前的窘境", "1 闸机前的窘境"),   # 不剥
                             ("1.1 已经带号", "已经带号"),
                             ("1. 单级带点", "单级带点"),
-                            ("A. 接口", "接口")):
+                            ("10.1.1 接口", "接口"),
+                            ("A. 接口", "A. 接口")):             # 字母序已退出，不再当序号剥
             with self.subTest(title=title):
                 proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", title],
                                       capture_output=True, text=True, encoding="utf-8",
@@ -945,10 +961,20 @@ class TestNumbering(StoryBuildCase):
         self.assertIn("![图 1 · 提交入口页面布局](entry.png)", text)
         self.assertIn("![图 2 · 状态走向](flow.png)", text)
 
-    def test_the_appendix_keeps_its_letters(self) -> None:
-        """附录小节用字母序号，机器不动它——那是附录判据管的地方。"""
+    def test_any_depth_is_numbered(self) -> None:
+        """编号不设层级上限：几级小标题就几段号；换上级时下级从 1 重来。"""
+        self.put_features("### 提交与回执\n\n#### 回执\n\n##### 超时\n\n###### 重试\n\n#### 撤回\n")
         text = self.number()
-        self.assertIn("### A. 接口", text)
+        for line in ("### 6.1 提交与回执", "#### 6.1.1 回执", "##### 6.1.1.1 超时",
+                     "###### 6.1.1.1.1 重试", "#### 6.1.2 撤回"):
+            self.assertIn(line, text)
+
+    def test_the_appendix_is_numbered_like_the_body(self) -> None:
+        """附录与正文同一条编号规则：章号.节号，H4、H5 往下接。"""
+        text = self.number()
+        self.assertIn("### 10.1 技术约定", text)
+        self.assertIn("#### 10.1.1 接口", text)
+        self.assertIn("### 10.4 材料清单", text)
 
     def test_a_chapter_outside_the_contract_is_left_alone(self) -> None:
         """合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的。"""
@@ -2286,7 +2312,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertNotIn("| 受限情形 |", exceptions, "固定两张表该退了")
 
     def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
-        """附录 A–D 归机器区，草稿里不放——放了他就要在两处维护同一张表。"""
+        """附录的机器区由投影写，草稿里不放——放了他就要在两处维护同一张表。"""
         draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
         self.assertIn("{{一句这一节给评审者看什么}}", draft)
         self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
@@ -2375,7 +2401,7 @@ class TheContractCarriesTheKeptSeeds(RealRunCase):
         self.assertNotIn("### ", scope, "范围章没有要机器定位的小节，不预置标题")
 
 class TheMachineZoneComesFromTheSource(RealRunCase):
-    """附录 A–D 每次都从当前真源重算，不读旧 story、不含占位。
+    """附录的机器区每次都从当前真源重算，不读旧 story、不含占位。
 
     读旧的就成了「真源 + 一份会漂移的副本」；含占位则作者填了会被下一次投影打回。
     """
@@ -2390,10 +2416,13 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         return self.story()
 
-    def test_landing_the_appendix_projects_a_to_d(self) -> None:
+    def test_landing_the_appendix_projects_every_zone(self) -> None:
+        """技术约定下接口、数据、配置、埋点各一区，改动边界、规约判定各一区。"""
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertEqual(4, appendix.count("story-build:begin"), "A–D 四节没投影")
+        self.assertEqual(6, appendix.count("story-build:begin"), "机器区没投全")
+        for name in ("技术约定·接口", "技术约定·数据", "技术约定·配置", "技术约定·埋点", "改动边界", "规约判定"):
+            self.assertIn(f"story-build:begin {name} ", appendix)
         self.assertIn("getAutoTopupPolicy", appendix)
         self.assertIn("给评审看这一节。", appendix, "作者写的目的句丢了")
         self.assertIn("给出了业务规则", appendix, "材料贡献句丢了")
@@ -2425,7 +2454,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.build("project")
         story = self.story()
         self.assertIn("改过的依据", story, "重投影没跟上真源")
-        self.assertEqual(4, story.count("story-build:begin"), "重投影后机器区数量变了")
+        self.assertEqual(6, story.count("story-build:begin"), "重投影后机器区数量变了")
         self.assertIn("给评审看这一节。", story)
         self.assertIn("给出了业务规则", story)
 
@@ -2436,19 +2465,21 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.assertIn("方向性布局参数一律用 start/end", appendix)
 
     def test_tables_do_not_run_together(self) -> None:
-        """多张投影表之间要空行——连着写会被 markdown 并成一张错表。"""
+        """每张投影表前面是空行、标题或机器区起始标记——连着写会被 markdown 并成一张错表。"""
         self.build("skeleton")
         story = self.author_appendix()
-        data = story.split("### 数据、配置与事件", 1)[1].split("### 改动边界", 1)[0]
+        data = story.split("技术约定", 1)[1].split("改动边界", 1)[0]
         lines = [l.strip() for l in data.split("\n")]
         # 表头 = 下一行是分隔行的那一行。分隔行必须**非空**且只由 | - : 空格组成——
         # 少了「非空」这一条，空行也满足，于是表后的第一行数据被当成新表头。
         heads = [i for i, l in enumerate(lines)
                  if l.startswith("|") and i + 1 < len(lines) and lines[i + 1]
                  and set(lines[i + 1]) <= set("|-: ")]
-        self.assertGreaterEqual(len(heads), 3, "spec §9.2/9.3/9.4 三张表没都投过来")
-        for i in heads[1:]:
-            self.assertEqual("", lines[i - 1], "两张表之间没有空行，markdown 会并成一张")
+        self.assertGreaterEqual(len(heads), 3, "spec §9.1–9.4 的表没都投过来")
+        for i in heads:
+            before = lines[i - 1]
+            self.assertTrue(before == "" or before.startswith("#") or before.startswith("<!-- story-build:begin"),
+                            f"表前一行是「{before}」，markdown 会把它并进前一张表")
 
 
 class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
@@ -2519,7 +2550,7 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         story = self.story()
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
-        self.assertIn("story-build:begin 接口", story)
+        self.assertIn("story-build:begin 技术约定·接口", story)
 
 
 
@@ -2770,7 +2801,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         要说不涉及就在那一节写「不涉及：<依据>」一行，那是写出来的结论（见下一条）。
         """
         story = self.landed_appendix()
-        self.assertIn("story-build:begin 接口", story)
+        self.assertIn("story-build:begin 技术约定·接口", story)
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
         start = text.index("### 9.1")
@@ -2802,6 +2833,43 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertIn("不涉及：本需求不新增任何三方依赖。", boundary)
         self.assertIn("| 改动 |", boundary, "Scope 的模块行也要在")
 
+    def zone(self, story: str, name: str) -> str:
+        at = story.index(f"<!-- story-build:begin {name} ")
+        return story[at:story.index("<!-- story-build:end -->", at)]
+
+    def test_the_interface_columns_use_the_readers_names(self) -> None:
+        """列名按合同换成读者用的名字，只丢列、改名，不造新列；「代码现状」不投。"""
+        zone = self.zone(self.landed_appendix(), "技术约定·接口")
+        self.assertIn("| 接口 | 性质 | 输入 → 输出 | 错误码 |", zone)
+        self.assertNotIn("云侧接口", zone)
+        self.assertNotIn("代码现状", zone)
+
+    def test_one_requirement_one_row(self) -> None:
+        """一条规约两条要求：出两行，编号每行都写，规约域与判定只在首行。"""
+        use = self.use_file()
+        text = use.read_text(encoding="utf-8")
+        old = next(l for l in text.split("\n") if l.strip().startswith("requirement:")
+                   and "start/end" in l)
+        use.write_text(text.replace(old, "    requirement:\n      - 新增界面的方向性布局参数用 start/end\n"
+                                         "      - 文本对齐用 TextAlign.Start/End", 1), encoding="utf-8")
+        zone = self.zone(self.landed_appendix(), "规约判定")
+        rows = [l for l in zone.split("\n") if "| UX-01 |" in l]
+        self.assertEqual(2, len(rows), rows)
+        self.assertIn("| 命中 |", rows[0])
+        self.assertTrue(rows[1].startswith("|  | UX-01 |  |"), rows[1])
+
+    def test_an_author_note_after_a_zone_is_left_alone(self) -> None:
+        """H4 下机器区之后是作者说明：不参加比较，重投也不动它。"""
+        story = self.landed_appendix()
+        end = story.index("<!-- story-build:end -->", story.index("<!-- story-build:begin 技术约定·接口 "))
+        cut = end + len("<!-- story-build:end -->")
+        note = "\n\n错误码上游未给出，联调时补齐失败语义。"
+        self.story_path.write_text(story[:cut] + note + story[cut:], encoding="utf-8")
+        code, out = self.check_output()           # 别的章还没写，整篇不过；只看这一区有没有被报
+        self.assertNotIn("技术约定·接口", out, out)
+        self.build("project")
+        self.assertIn("错误码上游未给出，联调时补齐失败语义。", self.story())
+
     def boundary_zone(self) -> str:
         """只取机器区——目的句在它外面，那一句归作者。"""
         section = self.landed_appendix().split("### 改动边界", 1)[1].split("###", 1)[0]
@@ -2817,16 +2885,14 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                 and l.strip()]
         self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
 
-    def test_the_scope_rationale_is_carried_as_a_row_not_a_tail(self) -> None:
-        """Scope 的说明是一整段、不分模块——原样引一次，**进表成行**。
-
-        挂在表后当散文的话，⑫ 判它是表外零散文；而机器区没有作者，
-        他删掉、`project` 写回来，他只能去改门禁。一次实跑就卡在这里。
-        """
+    def test_the_scope_rationale_follows_the_table(self) -> None:
+        """Scope 的说明是一整段、不分模块——原样引一次，放在表后，不拆进行里。"""
         zone = self.boundary_zone()
-        self.assertIn("| 为什么这么切 |", zone, "说明原文没有进表")
-        row = next(l for l in zone.split("\n") if l.startswith("| 为什么这么切 |"))
-        self.assertGreater(len(row), 40, "说明原文没跟着那一行走")
+        self.assertNotIn("| 为什么这么切 |", zone, "说明塞进了表格")
+        lines = [l for l in zone.split("\n") if l.strip()]
+        last_row = max(i for i, l in enumerate(lines) if l.startswith("|"))
+        tail = "".join(lines[last_row + 1:])
+        self.assertGreater(len(tail), 40, "说明原文没跟在表后")
 
     def test_the_table_has_only_columns_that_carry_something(self) -> None:
         """两列。第三列「依据」逐行重复同一句来源，读者读它读不出任何新东西。"""
@@ -2835,13 +2901,12 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertEqual(2, header.count("|") - 1, f"表不是两列：{header}")
 
     def test_the_dependency_row_keeps_the_upstream_id_verbatim(self) -> None:
-        """依赖行的第一列一个字都不改——⑫b 按第一列核「附录 ⊇ spec §9」。
+        """来自依赖变更的那一行，第一列一个字都不改：读者拿它回 spec 找原文。
 
-        加个「依赖：」前缀这一行就与 spec 对不上，⑫b 当场报少行；而机器区没有作者，
-        他删不掉也改不动，唯一的出路是去改门禁。「这一行讲的是依赖」放第二列说。
+        「这一行讲的是依赖」放第二列说；同一个模块在 Scope 里已有一行时不另起一行。
         """
         zone = self.boundary_zone()
-        row = next(l for l in zone.split("\n") if "| 依赖：" in l)
+        row = next(l for l in zone.split("\n") if "| 依赖变更：" in l)
         first = row.split("|")[1].strip()
         spec = (self.feature / "spec" / "spec.md").read_text(encoding="utf-8")
         self.assertIn(f"| {first} |", spec, "依赖行的第一列不是 spec 里的那个原文")
@@ -3015,7 +3080,7 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         """本轮自己生成的规格与记录不是材料——列进去就是把自证当依据。"""
         story = self.feature_root() / "AR" / "story.md"
         text = story.read_text(encoding="utf-8")
-        at = text.index("### E. 材料清单")
+        at = text.index("### 材料清单")
         end = text.index("\n### ", at + 5) if "\n### " in text[at + 5:] else len(text)
         story.write_text(
             text[:end] + "\n- 本轮规格：这一轮写的规格。原文：[spec/spec.md](../spec/spec.md)\n"
@@ -3029,7 +3094,7 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         self.list_every_material()
         story = self.feature_root() / "AR" / "story.md"
         text = story.read_text(encoding="utf-8")
-        at = text.index("### E. 材料清单") + len("### E. 材料清单")
+        at = text.index("### 材料清单") + len("### 材料清单")
         story.write_text(text[:at] + "\n\n这一节回答据哪几份材料写成。\n\n"
                          + "缺的那几份在上面的记一笔里说过。\n" + text[at:], encoding="utf-8")
         code, out = self.check_output()

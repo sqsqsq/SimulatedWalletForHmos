@@ -329,7 +329,7 @@ export function subsectionNames(view, parent) {
 /**
  * 标题规范化 —— **全链唯一通道**。
  *
- * 归档件的标题带编号（`## 1. 背景`、`### 4.1 参与方与分工`、`### A. 接口`），
+ * 归档件的标题带编号（`## 1. 背景`、`### 4.1 参与方与分工`、`#### 10.1.1 接口`），
  * 而合同里存的是业务名（`背景`、`接口`）。编号是表达形式，不是标识：作者按阅读
  * 习惯加编号是对的，合同不该跟着存两套名字。
  *
@@ -337,9 +337,7 @@ export function subsectionNames(view, parent) {
  * 附录小节名、语言红线的作用域边界、落点归章。逐处各自放宽的话，漏掉任何一处
  * 都会让整个附录被当成主叙事扫，报出大量本该允许的标识。
  *
- * 剥两种前缀，都要求**后面跟空白**，且数字形态必须带点或分级：
- *   - `1. ` / `10. ` / `4.1 ` / `8.2.1 `
- *   - `A. ` / `B、`
+ * 剥数字序号前缀，要求**后面跟空白**，且必须带点或分级：`1. ` / `10. ` / `4.1 ` / `8.2.1 `。
  * 「2026 年改版」这种以数字开头的正常标题不被误剥（无点且非分级）。
  *
  * **裸序号（`1 现状与问题`）不在这里剥**：本函数被十几处标题匹配共用而没有位置信息，
@@ -366,9 +364,6 @@ function takeAuthorNumber(name, expected, counters) {
   return counters.some(c => rest.startsWith(c)) ? null : rest;
 }
 
-/** `A. ` `B、` —— 附录小节的字母序号。 */
-const LETTER_PREFIX = /^[A-Z][.、]\s*/;
-
 /**
  * 剥掉标题的序号前缀，返回业务名。
  *
@@ -378,7 +373,6 @@ const LETTER_PREFIX = /^[A-Z][.、]\s*/;
 export function normalizeHeading(title) {
   let s = String(title ?? '').trim();
   s = s.replace(NUMBER_PREFIX, '');
-  s = s.replace(LETTER_PREFIX, '');
   return s.trim();
 }
 
@@ -388,36 +382,32 @@ const FIGURE_PREFIX = /^图\s*\d+\s*(?:[·・]\s*)?/;
 /**
  * 给一篇 story 重编号 —— 章序取合同，节序取出现顺序，图序取全篇顺序。
  *
- * **为什么由机器做**：编号是纯确定性变换，合同定死章序、附录固定 A–E，作者写业务名
+ * **为什么由机器做**：编号是纯确定性变换，合同定死章序与附录各节，作者写业务名
  * 就够了。编号只写进模板而没有判据接住时，顺境的产物做了、逆境的整章丢光——
  * 无判据的形态必丢，而这件事根本不需要人来做。
  *
  * **幂等**：先剥旧号再编，已经对的文件重跑逐字节不变；乱号、缺号、半带号一并归位。
- * 附录小节的字母序号不重编——那是合同的附录小节判据管的地方，这里不插手。
+ * 全篇一条规则：合同认得的章之下，任何层级按深度编号（10.1、10.1.1、10.1.4.1 …），附录与正文相同，
+ * 不设层级上限。正文引用其他小节写小节名，不写号——这里不改正文里的引用。
  *
  * @param {string} text story 全文
- * @param {{title:string, appendix?:boolean}[]} chapters 合同章序
+ * @param {{title:string}[]} chapters 合同章序
  * @param {string[]} counters 合同 `heading_counters`——裸序号判定的第二道
  * @returns {string}
  */
 export function renumberStory(text, chapters = [], counters = []) {
   const order = new Map();
-  const appendix = new Set();
   (chapters ?? []).forEach((c, i) => {
     const name = normalizeHeading(c?.title ?? '');
-    if (!name) return;
-    order.set(name, i + 1);
-    if (c?.appendix) appendix.add(name);
+    if (name) order.set(name, i + 1);
   });
 
   let chapterNo = 0;              // 0＝当前不在合同认得的章里，那一段不编
-  let inAppendix = false;
-  let sub = 0;
-  let subsub = 0;
   let figure = 0;
-  // 作者自己编到第几个了。每章重置；H4 的序列在每个新 H3 处重置。
-  let authorSub = 0;
-  let authorSubsub = 0;
+  // 计数栈：下标 0 是三级标题，往下每一级一格。遇到某级标题，本级加一、更深的截掉。
+  // `authored` 同形：作者自己编到第几个（裸序号按位置剥，见 takeAuthorNumber）。
+  let seq = [];
+  let authored = [];
 
   // 分行按 CRLF 安全的通道走；回写统一 LF——重编号本来就是重写整篇，
   // 顺手把行尾统一掉，比留着两种行尾在同一份文件里好。
@@ -426,37 +416,23 @@ export function renumberStory(text, chapters = [], counters = []) {
   return lines.map((raw, at) => {
     if (fenced.has(at)) return raw;          // 围栏里的标题是样例，不编号
 
-    const head = /^(#{2,4})\s+(.+?)\s*$/.exec(raw);
+    const head = /^(#{2,})\s+(.+?)\s*$/.exec(raw);
     if (head) {
-      const level = head[1].length;
+      const depth = head[1].length - 3;      // -1 是章，0 起是章下各级
       const name = normalizeHeading(head[2]);
-      if (level === 2) {
+      if (depth < 0) {
         chapterNo = order.get(name) ?? 0;
-        inAppendix = appendix.has(name);
-        sub = 0; subsub = 0;
-        authorSub = 0; authorSubsub = 0;
+        seq = []; authored = [];
         // 合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的
         return chapterNo ? `## ${chapterNo}. ${name}` : raw;
       }
       if (!chapterNo) return raw;
-      if (inAppendix) {
-        // 附录的小节用字母：A.–E. 是合同定的形态，读者按「附录 C」回找。
-        // 序号由这里统一铺，草稿与投影都不带——同章序、节序一条幂等规则。
-        if (level !== 3) return raw;
-        sub += 1;
-        return `### ${String.fromCharCode(64 + sub)}. ${name}`;
-      }
-      if (level === 3) {
-        sub += 1; subsub = 0; authorSubsub = 0;
-        const stripped = takeAuthorNumber(name, authorSub + 1, counters);
-        if (stripped !== null) authorSub += 1;
-        return `### ${chapterNo}.${sub} ${stripped ?? name}`;
-      }
-      if (!sub) return raw;       // 没有上级小节的 H4 编不出号，留给判据说话
-      subsub += 1;
-      const strippedSub = takeAuthorNumber(name, authorSubsub + 1, counters);
-      if (strippedSub !== null) authorSubsub += 1;
-      return `#### ${chapterNo}.${sub}.${subsub} ${strippedSub ?? name}`;
+      if (depth > seq.length) return raw;    // 跳级（上一级还没出现）编不出号，留给判据说话
+      seq = [...seq.slice(0, depth), (seq[depth] ?? 0) + 1];
+      authored = authored.slice(0, depth + 1);
+      const stripped = takeAuthorNumber(name, (authored[depth] ?? 0) + 1, counters);
+      if (stripped !== null) authored[depth] = (authored[depth] ?? 0) + 1;
+      return `${head[1]} ${[chapterNo, ...seq].join('.')} ${stripped ?? name}`;
     }
 
     return raw.replace(/!\[([^\]]*)\]/g, (whole, alt) => {
@@ -591,12 +567,25 @@ const DIGEST_IN_MARK = /sha256:([0-9a-f]{16})\s*-->\s*$/;
  * 两处各写一份的话，口径迟早分叉：一处忽略行尾空白、另一处不忽略，
  * 同一份产物在两条路上会判出不同的「有没有被人改过」。
  *
- * 忽略每行尾部空白与末尾空行：编辑器保存时顺手删掉一个行尾空格，不是改动。
+ * 忽略每行尾部空白、末尾空行与标题序号（`zoneLine`）：保存时顺手删掉的行尾空格、
+ * 重编号铺上的序号，都不是改动。
  */
 export const projectionDigest = (text) => crypto.createHash('sha256')
   .update((Array.isArray(text) ? text.join('\n') : String(text))
-    .replace(/\s+$/, '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).join('\n'))
+    .replace(/\s+$/, '').split(/\r?\n/).map(zoneLine).join('\n'))
   .digest('hex').slice(0, 16);
+
+/**
+ * 投影区里一行的比较形态：去行尾空白，标题行按 `normalizeHeading` 剥掉序号。
+ *
+ * 标题序号是表达形式，不是内容：story 的序号由登记时的重编号铺（投影不带），
+ * review 的序号由渲染器铺。两处「有没有被人改过」都不看序号——与全链标题比较同一个通道。
+ */
+export function zoneLine(line) {
+  const l = String(line ?? '').replace(/\s+$/, '');
+  const h = /^(#{1,6})\s+(.+)$/.exec(l);
+  return h ? `${h[1]} ${normalizeHeading(h[2])}` : l;
+}
 
 /** 起始标记里记着的摘要；旧稿的标记没有它，返回 null。 */
 export const recordedDigest = (markLine) =>

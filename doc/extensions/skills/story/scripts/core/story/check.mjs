@@ -260,7 +260,7 @@ export function cmdCheck(ctx) {
   problems.push(...appendixStructureProblems(ctx, sections, viewOf));
 
   mark('⑫b 机器区与真源一致');
-  // 附录 A–D 的机器区与真源逐区逐行比——**与 project 写进去的是同一份计算**。
+  // 附录的机器区与真源逐区逐行比——**与 project 写进去的是同一份计算**。
   // 「每条规约有行」「spec 的行不丢」都在其内：少一行就是一处差异，不必再各写一条
   // 反着解析回去的判据。
   problems.push(...appendixZoneProblems(ctx, storyText));

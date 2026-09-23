@@ -58,7 +58,7 @@ provides:
   #
   # **作者要求不在这里登记**：宿主把这份清单里的作者事件只用在装配 verifier 上下文上，
   # 它从不进入作者动笔前的上下文，登记在那里等于没送到。本扩展的作者要求由
-  # `hooks/<phase>/author.md`（原则页）与 `hooks/spec/author.mjs`（本次任务包）承载，
+  # `hooks/<phase>/author.md`（原则页）与 `hooks/{spec,plan}/author.mjs`（本次任务包）承载，
   # 作者动笔前自己跑命令取；入口写在 SKILL、CLAUDE.md 扩展段与 `story_flow.py status`
   # 的下一步文本里。
   hooks:

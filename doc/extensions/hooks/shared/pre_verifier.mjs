@@ -22,8 +22,9 @@ import { readContracts } from './contracts.mjs';
 import { activeKnowledge } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { extensionRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
+import { extensionRoot, featureRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
+import { planStatRows, pointKey, specStatPoints } from './stat-points.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
@@ -47,8 +48,34 @@ const WALK = {
     + '命中的规约要求讲清某项专项时，按那份知识核承载章里的相应设计' },
   plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
     handoff: '编码能据以实现与验证：实体与方法、参数来源、调用时机、观察来源与验证；'
+      + '每个统计点有责任方法与结果来源，项目知识定义的协议字段有实际值或精确待决；'
       + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
 };
+
+/**
+ * plan：spec §9.4 的每个统计点与 plan 埋点小节里同名的那一行并列，对不上的两边各自单列。
+ * 审查逐点看的是这张表；spec 不涉及时说明本项不适用。
+ */
+function statPointTable(projectRoot, feature) {
+  const dir = featureRoot(projectRoot, feature);
+  const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
+  const points = spec === null ? null : specStatPoints(spec);
+  if (!points || points.na || !points.groups.some(g => g.points.length)) {
+    return [`spec §9.4 ${points?.na ? `写的是「${points.na}」` : '没有统计点'}：埋点这一项不适用，核 plan 是否也写了不涉及。`];
+  }
+  const plan = planStatRows(readTextOrNull(path.join(dir, 'plan', 'plan.md')) ?? '');
+  const byKey = new Map((plan?.rows ?? []).map(r => [pointKey(r.point), r]));
+  const rows = ['| 指标 | spec 的这一行 | plan 的这一行 |', '|---|---|---|'];
+  for (const g of points.groups) {
+    for (const r of g.rows) {
+      const got = byKey.get(pointKey(r[0]));
+      byKey.delete(pointKey(r[0]));
+      rows.push(`| ${cell(g.title)} | ${cell(r.join(' ／ '))} | ${got ? cell(got.cells.join(' ／ ')) : '（plan 没有这一行）'} |`);
+    }
+  }
+  for (const got of byKey.values()) rows.push(`| — | （spec 没有这个统计点） | ${cell(got.cells.join(' ／ '))} |`);
+  return rows;
+}
 
 /** 表格一格：竖线转义、换行并成一行，空的写一横。 */
 const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ').trim() || '—';
@@ -192,6 +219,11 @@ export default async function preVerifier(ctx) {
     '',
     ...table,
     '',
+    ...(phase === 'plan' && knowledge ? [
+      '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature), '',
+      knowledge.facts.length ? '项目事实入口（协议字段、登记位置与已有能力按这几份核）：'
+        + knowledge.facts.map(f => '`' + relDisplay(ctx.projectRoot, path.join(extensionRoot(ctx.projectRoot), f.file)) + '`').join('、')
+        : '激活清单里没有项目事实：协议字段不核值，只核与知识无关的几件事。', ''] : []),
     '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',
     '',
     `1. **按业务流程走通${(WALK[phase] ?? { what: '本阶段产物' }).what}**：实际会发生的正常、异常与未执行路径各走到哪，`

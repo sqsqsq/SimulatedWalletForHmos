@@ -31,18 +31,20 @@ BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
 #: 金样正文与归档图片只在 test/story/golden 维护；原始材料夹具保留自己的来源图片。
 GOLDEN_FINGERPRINTS = {
+    # 2026-09-23 附录改为登记处（design/1.9.5/2026-09-23-第三轮结果与表达正向设计/01 §2.1）：
+    # 两份金样的附录合为四节，A 技术约定下分接口 / 数据 / 配置 / 埋点四个 H4，埋点按指标分 H5；正文未动。
     # 2026-09-07 用户裁定：章首那张时序图补两行来源标记——它同时承接
     # SR §3 的端到端时序与 spec §5.1 的流程图（改画成了时序），
     # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "abac36c868bfd782",
+    "story-金样-AR90004.md": "1c7568fc6a5fa11a",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
     # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
     # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
-    "story-金样-AR90006.md": "c6acfa464c41ddcb",
-    "story-金样-AR90006-说明.md": "1f0758d7d6c0d9ea",
+    "story-金样-AR90006.md": "c9b4702693314adf",
+    "story-金样-AR90006-说明.md": "3d27773f42a858cf",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",
@@ -82,8 +84,8 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 406, "chapters": 10, "subsections": 35,
-         "table_rows": 159, "diagrams": 1, "images": 2}
+SHAPE = {"lines": 430, "chapters": 10, "subsections": 34,
+         "table_rows": 165, "diagrams": 1, "images": 2}
 
 
 def digest(path: Path) -> str:

@@ -147,7 +147,7 @@ function cmdSkeleton(ctx) {
   if (spec !== null && !spec.trim()) {
     fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
   }
-  const gaps = spec === null ? [] : specGaps(spec);
+  const gaps = spec === null ? [] : specGaps(ctx.contract, spec);
   if (gaps.length) {
     fail(`spec.md 还缺起手要读的这几节，先回 spec 补齐再起骨架：\n  · ${gaps.join('\n  · ')}\n`
       + '  这件事确实不涉及，就在那一节里写「不涉及：<依据>」一行——'

@@ -93,10 +93,11 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
         self.judged()
         self.write_plan(decision_first=True)
         self.write_contracts(kp.contracts())
-        # 中性工程没配 profile：没有问题，只如实记章号那一条未执行
+        # 中性工程没配 profile、也没有 spec：没有问题，如实记章号与埋点两条未执行
         message = self.hook("plan")
-        self.assertTrue(message.startswith("扩展门禁有 1 条判据未执行："), message)
+        self.assertTrue(message.startswith("扩展门禁有 2 条判据未执行："), message)
         self.assertIn("plan 主章号（framework.config.json 没有配 project_profile.name", message)
+        self.assertIn("埋点逐统计点落实（spec 没有埋点一节）", message)
 
     def test_use_cases_cite_acceptance_ids_that_exist(self) -> None:
         """验收编号取 acceptance 各列表条目的 id，不认前缀；只报悬空的那几个，并说出在哪条用例。"""

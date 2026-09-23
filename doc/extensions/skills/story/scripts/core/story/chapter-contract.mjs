@@ -2,7 +2,7 @@
  * 章节合同的最小必要结构 —— 必要 H3、必要表、图与起始种子的唯一解释。
  *
  * 合同（story-chapters.json）每章给 `structure`：`h3` 是机器要定位的小节（给表定范围的
- * 那种与附录五节），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
+ * 那种与附录各节），`tables` 是必须出现的表（`header` 全列供打底、`anchors` 最低锚列、
  * `at` 所属小节），`diagram: true` 表示这一章要有一张真正的图。
  * 哪些章要什么全部是合同数据，这里不写死任何章名或表头——加一条必要结构改合同，代码不动。
  * 写作设计骨架里的小节、形式与图由 `writing-plan.selectedStructure` 并进同一个 `structure`
@@ -74,7 +74,7 @@ export function renderTable(header, rows) {
     ...rows.map(r => `| ${r.join(' | ')} |`)];
 }
 
-/** 这一章要定位的必要 H3（给表定范围的那种、附录五节，与写作设计选定的小节）。 */
+/** 这一章要定位的必要 H3（给表定范围的那种、附录各节，与写作设计选定的小节）。 */
 function requiredH3(ch) {
   return ch?.structure?.h3 ?? [];
 }
@@ -191,7 +191,7 @@ export function pickedStructureNames(ch) {
  * 按骨架铺：骨架的小节标题树、每节的说明行（`guide` 由草稿生产者给出它的指引行格式）、
  * 表头与作图提示放在骨架写的位置；合同另有、骨架没列的必要小节接在后面；
  * 骨架写「不涉及」的章只放那一句。术语行/材料清单行来自输入（facts 已解析），这里
- * 不重读源文件。附录 A–D 不预填机器正文——那四节归投影，作者改的是真源。
+ * 不重读源文件。附录不预填机器正文——机器区归投影，作者改的是真源。
  * 图不生成节点：只留一行作图提示（`diagramHint`）。
  *
  * @param {object} ch 合同章（可已并入写作设计骨架）
@@ -291,13 +291,15 @@ function tableSeed(t, facts) {
   return renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]);
 }
 
-/** 附录：五节标题 + 每节一句目的；材料清单那一节多给贡献行。 */
+/** 附录：各节标题 + 每节一句目的；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
 function appendixSeedRows(ch, facts) {
   const out = [];
   for (const name of ch.subsections ?? []) {
     out.push(`### ${name}`, '', '{{一句这一节给评审者看什么}}', '');
+    // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
+    // 放了他就要在两处维护同一张表。
+    for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');
     // 材料清单是作者种子：类别与链接由清单给，「贡献了什么」只有他知道。
-    // 其余四节由 `project` 投影，草稿里不放——放了他就要在两处维护同一张表。
     if (normalizeHeading(name) === normalizeHeading(facts?.materialListName ?? '')) {
       out.push(...(facts?.materialListRows ?? []), '');
     }

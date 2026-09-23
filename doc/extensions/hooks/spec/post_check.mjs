@@ -357,6 +357,31 @@ function strayProse(body) {
   return null;
 }
 
+/**
+ * 埋点一节的形状：总述在首个指标（`####`）之前，表都在某个指标下，每个指标至少一行统计点。
+ * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名与行数。
+ */
+export function indicatorShape(where, body) {
+  const lines = body.map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
+  if (/^不涉及[:：]\s*\S/.test(lines[0] ?? '')) return [];
+  const problems = [];
+  const rows = new Map();
+  let h4 = null;
+  let lead = false;
+  for (const l of lines) {
+    if (/^####\s/.test(l)) { h4 = l.replace(/^#+\s*/, ''); rows.set(h4, 0); continue; }
+    if (!l.startsWith('|')) { if (!h4) lead = true; continue; }
+    if (!h4) { problems.push(`${where}有统计点表不在指标小标题（####）下——一个指标一个 H4，表放在它下面`); return problems; }
+    if (!/^\|[\s:|-]+\|?$/.test(l)) rows.set(h4, rows.get(h4) + 1);
+  }
+  if (!rows.size) problems.push(`${where}没有指标小标题（####）——以指标为单位组织，每个指标一个 H4 与它的统计点表`);
+  if (rows.size && !lead) problems.push(`${where}首个指标之前缺总述——两三句写采集什么、为谁用、已有能力覆盖的不重复列、字段的隐私边界`);
+  for (const [title, n] of rows) {
+    if (n < 2) problems.push(`${where}的指标「${title}」下没有统计点行——写出要算它需要的统计点，或去掉这个小标题`);
+  }
+  return problems;
+}
+
 const SPEC_EXT_SECTIONS = [
   { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
 ];
@@ -407,7 +432,7 @@ export default guard('spec', async (ctx) => {
         problems.push(`缺少宿主扩展章节「§${ch}」（core spec 模板未含，须在验收标准之后追加）`);
         continue;
       }
-      // 埋点是埋点设计的唯一完整说明：按流程写，可以有 H4、短段、表与列表，不放图与围栏（附录投影不收图）；其余小节只收表。
+      // 埋点是埋点设计的唯一完整说明：以指标为单位，总述、每个指标一个 H4 与它的统计点表，不放图与围栏（附录投影不收图）；其余小节只收表。
       for (const [name, subRe, opts = {}] of subs) {
         const subIdx = findHeading(lines, subRe);
         if (subIdx === -1 || subIdx < chIdx) {
@@ -425,6 +450,7 @@ export default guard('spec', async (ctx) => {
             problems.push(`§${ch}「${name}」里有图或围栏（「${figure.trim().slice(0, 20)}…」）`
               + '——这一节用标题、短段、表与列表写；业务需要的图放它讲的业务章，这里用文字说明或链接过去');
           }
+          problems.push(...indicatorShape(`§${ch}「${name}」`, body));
         } else {
           const stray = strayProse(body);
           if (stray) {

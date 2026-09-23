@@ -6,9 +6,10 @@
  * coding SKILL 枚举 contracts 的 7 个集合作为本阶段输入，不含它；能完整落地的规约，
  * 靠的都是挂在编码者本来就要读的契约字段上。
  *
- * 所以本阶段只判两件事：
+ * 所以本阶段判三件事：
  *   ① **集合一致**——spec 判命中的条目，在契约里都有实体扛着；反过来也不多出来；
- *   ② **挂对地方**——must 只能挂五类实体，编号在册，verify 取值封闭，探针可执行。
+ *   ② **挂对地方**——must 只能挂五类实体，编号在册，verify 取值封闭，探针可执行；
+ *   ③ **埋点逐统计点落实**——spec 埋点的每个统计点在 plan 有行、责任方法在契约里、落在该点的统计义务挂在它上面。
  *
  * **真源是 `spec/knowledge-use.yaml`**，不是 spec.md 里那两张表：那两张表是它的投影，
  * 解析投影等于让判据依赖渲染格式。
@@ -30,6 +31,7 @@ import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
 import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
+import { planStatRows, pointKey, specStatPoints } from '../shared/stat-points.mjs';
 import { cellByHeader, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
@@ -216,6 +218,35 @@ function acceptanceRefProblems(projectRoot, feature, group) {
   walk(cases, '');
   return [...dangling].map(([ref, at]) => `use-cases.yaml 引了验收 ${ref}（${[...new Set(at)].join('、')}），`
     + 'acceptance.yaml 里没有这个编号——下游按编号取验收，引用要用 acceptance 里实际的 id');
+}
+
+/** 契约里声明的方法：`<接口>.<方法>`。 */
+function declaredMethods(contracts) {
+  const list = (x) => (Array.isArray(x) ? x : []);
+  return list(contracts?.interfaces).flatMap(i => list(i?.methods).map(m => `${i?.name}.${m?.name}`));
+}
+
+/**
+ * spec 判命中、且落点（`contract`）写的是某个统计点的规约：`统计点 → 规约编号集`。
+ * 落点引的是 §9 表第一列登记的名字，统计点名正是其中之一；读不到那份判断返回空表。
+ */
+function statRulesByPoint(projectRoot, feature, points) {
+  const out = new Map();
+  const keys = new Set(points.map(pointKey));
+  let use;
+  try {
+    use = readUse(projectRoot, feature);
+  } catch (e) {
+    if (e instanceof UseError) return out;
+    throw e;
+  }
+  for (const row of use.constraints) {
+    const at = pointKey(row?.contract ?? '');
+    if (row?.applicable !== true || row.waived || !keys.has(at)) continue;
+    if (!out.has(at)) out.set(at, new Set());
+    out.get(at).add(String(row.id ?? '').trim());
+  }
+  return out;
 }
 
 export default guard('plan', async (ctx) => {
@@ -409,6 +440,51 @@ export default guard('plan', async (ctx) => {
             if (!specHits.hits.get(unit)?.has(candidate)) {
               pattern.problems.push(`plan 的设计模式选型表给「${unit}」写了候选 ${candidate}，spec 没有提出它`
                 + '——模式选型只能从 spec 登记的候选里选，真需要时回 spec 补候选登记');
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 6. 埋点：spec 的每个统计点在 plan 有行，责任方法在契约里，落在该点上的统计义务挂在它上面 ----
+  // 只核对应、引用与挂点；结果、来源、去重与验证写没写到位是语义，归 verifier。
+  const statGroup = { name: '埋点逐统计点落实', problems: [], skipped: [] };
+  groups.push(statGroup);
+  {
+    const spec = readTextOrNull(path.join(featureRoot(ctx.projectRoot, ctx.feature), 'spec', 'spec.md'));
+    const points = spec === null ? null : specStatPoints(spec);
+    const wantPoints = points && !points.na ? points.groups.flatMap(g => g.points) : [];
+    const plan = planStatRows(planText);
+    if (!wantPoints.length) {
+      statGroup.skipped.push({ what: '埋点逐统计点落实', why: points ? 'spec 的埋点一节不涉及或没有统计点' : 'spec 没有埋点一节' });
+    } else if (!plan) {
+      statGroup.problems.push(`spec 的埋点列了 ${wantPoints.length} 个统计点，plan.md 没有「埋点」小节`
+        + '——在服务层接口定义章下逐个统计点写责任方法、本端怎么取得结果、去重与验证');
+    } else {
+      const byKey = new Map(plan.rows.map(r => [pointKey(r.point), r]));
+      const missing = wantPoints.filter(p => !byKey.has(pointKey(p)));
+      if (missing.length) {
+        statGroup.problems.push(`spec 埋点的这些统计点在 plan 埋点小节没有对应行：${missing.join('、')}——按统计点名一点一行`);
+      }
+      if (noContract) {
+        statGroup.skipped.push({ what: '责任方法与统计义务', why: noContract });
+      } else {
+        const declared = new Set(declaredMethods(contracts));
+        const rulesAt = statRulesByPoint(ctx.projectRoot, ctx.feature, wantPoints);
+        for (const r of plan.rows) {
+          if (!r.methods.length) {
+            statGroup.problems.push(`「${r.point}」没写责任方法——写成「接口.方法」，指向 contracts.yaml 里决定这个结果的那个方法`);
+            continue;
+          }
+          const unknown = r.methods.filter(m => !declared.has(m));
+          if (unknown.length) {
+            statGroup.problems.push(`「${r.point}」的责任方法 ${unknown.join('、')} 在 contracts.yaml 的 interfaces[].methods[] 里找不到`);
+          }
+          for (const rule of rulesAt.get(pointKey(r.point)) ?? []) {
+            if (!r.methods.some(m => obligations.some(o => o.rule === rule && o.entityPath === `interfaces.${m}`))) {
+              statGroup.problems.push(`spec 把 ${rule} 落在统计点「${r.point}」上，它的责任方法（${r.methods.join('、')}）没挂这条 must`
+                + '——决定结果的方法各自扛统计义务，上报封装只组装发送');
             }
           }
         }

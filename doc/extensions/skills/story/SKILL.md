@@ -45,7 +45,7 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | 产物更新 | [phases/update.md](phases/update.md) |
 
 **作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（六个阶段各一份）；
-spec 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>` 拿到。
+spec 与 plan 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>` 或 `node doc/extensions/hooks/plan/author.mjs --feature <名>` 拿到。
 
 ## 推进契约
 

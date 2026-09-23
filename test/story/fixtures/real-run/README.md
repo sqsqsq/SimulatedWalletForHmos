@@ -5,9 +5,9 @@
 
 | 文件 | 为什么留它 |
 |---|---|
-| `spec/spec.md` | CRLF，385 行。骨架的术语起始行、流程图、附录 A/B/C 都从它派生 |
-| `spec/knowledge-use.yaml` | 附录 D 的判定与依据的真源 |
-| `AR/story-src/materials.json` | CRLF。附录 E 的类别与链接、图引用串都从它来 |
+| `spec/spec.md` | CRLF，385 行。骨架的术语起始行、流程图、附录技术约定与改动边界的机器区都从它派生 |
+| `spec/knowledge-use.yaml` | 附录规约判定的判定与依据的真源 |
+| `AR/story-src/materials.json` | CRLF。附录材料清单的类别与链接、图引用串都从它来 |
 | `AR/story-src/decisions.json`、`copyedit.md` | `check` 要的台账 |
 | `assets/`、`ux-reference/` | 图片实体：图引用与断链判据要它们真的在盘上 |
 | `RR/`、`SR/`、`AR/design.md` | 合同声明的来源，缺了 `check` 会记一笔 |
