@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "e128e07f96a3ed52effc22ec5234fa61d44ead92",
-  "built_at": "2026-09-22T16:29:18.868Z",
+  "source_commit": "1d2f2e33278a48c7b147046fe990fa68c505b692",
+  "built_at": "2026-09-23T03:59:03.462Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -862,7 +862,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "9fa4836afe9fb8cf65313ee8880650c7823d7fd6d24a72ee23ac2fcf56dfec8b"
+      "sha256": "83018db819597abc069f9f0fb307531bc7224bb96acb77adac0436c646ae2920"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -2442,7 +2442,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/authoritative-ref-images.ts",
-      "sha256": "4b5d8a4c2dcec3ab9f913f263c64afa2c28a6da1938be4cf42388baede082a1d"
+      "sha256": "81a39fffec9ea7bce1c9321ec2ebdfe1c58eb46d9b7fe562e3d6af28555e9949"
     },
     {
       "path": "profiles/hmos-app/harness/build-fingerprint.ts",
@@ -2742,7 +2742,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/spec-visual-handoff-check.ts",
-      "sha256": "86465392c1c9e226c8d2a88193019e273274b2dfb998c3e12c0669ca857f2bca"
+      "sha256": "63ffa956dde93fc7dbe7a28a36aeeba2babffa56abc28711f361f6fb66a2c92f"
     },
     {
       "path": "profiles/hmos-app/harness/static-fidelity-score.ts",
