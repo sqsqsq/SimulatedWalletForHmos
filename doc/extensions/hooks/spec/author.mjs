@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
-import { activeKnowledge } from '../shared/knowledge.mjs';
+import { activeKnowledge, declarationContext } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
@@ -87,6 +87,8 @@ function knowledgeSection(projectRoot, feature) {
       '',
       '**本仓未配置知识**——激活清单里没有登记任何规约、项目事实或模式，'
       + '没有要判的东西。这一节不用写，`knowledge-use.yaml` 也不用建。',
+      '本需求要用到某项能力而本仓没有时，按台账说明缺什么、影响哪些设计，从代码与材料取证，仍缺的列为未决。',
+      ...declarationContext(projectRoot, knowledge),
       ''];
   }
   return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
@@ -94,6 +96,8 @@ function knowledgeSection(projectRoot, feature) {
     `激活 **${knowledge.entries.length} 条**约束（域：${knowledge.prefixes.join('、')}）、`
     + `**${knowledge.facts.length} 份**项目事实；在册模式候选：`
     + `${knowledge.patternIds.join(' / ') || '（无）'}。`,
+    '',
+    ...declarationContext(projectRoot, knowledge),
     '',
     // 事实文件逐份列路径与它讲什么：规则里说「见部件画像」，画像在哪只有这里说得出来
     //（清单是目标仓的，机制不写死任何一个文件名）。

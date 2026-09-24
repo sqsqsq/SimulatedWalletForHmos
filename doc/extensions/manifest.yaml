@@ -21,22 +21,17 @@ provides:
   # 目录里躺着的未登记文件，任何阶段都读不到。
   #
   # **一份清单，不设第二份**：「这个文件属于哪类知识」写在文件自己的 frontmatter
-  # （`kind: facts | constraints | patterns | index`），不在这里再分一次组。
+  # （`kind: facts | constraints | patterns`），不在这里再分一次组。
   # 两份清单意味着两处要同步，改一处忘另一处就是静默漂移——而它们本来就该是同一件事。
   #
-  # `kind: index` 是索引件（目录的字段模型、模式的路由与粒度定义）：随清单交付、
-  # 可被引用，但不承载条目，因此不参与条目与模式的派生。它**不是第四类知识**——
-  # 说明性文档不形成新的知识类型。
+  # 知识的读写规则与能力台账归机制（skills/story/reference/knowledge/），knowledge/ 下只放目标自己的内容。
   #
   # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从各文件的
   # frontmatter 与正文派生，机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
   knowledge:
-    - knowledge/README.md
-    - knowledge/facts/README.md
     - knowledge/facts/component-profile.md
     - knowledge/facts/codebase-facts.md
     - knowledge/facts/reporting.md
-    - knowledge/constraints/README.md
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md
     - knowledge/constraints/dfx-baseline.md
@@ -45,7 +40,6 @@ provides:
     - knowledge/constraints/compatibility-checklist.md
     - knowledge/constraints/env-exceptions.md
     - knowledge/constraints/deliverables.md
-    - knowledge/design-patterns/README.md
     - knowledge/design-patterns/decision-tree.md
     - knowledge/design-patterns/page-interaction.md
 

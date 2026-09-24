@@ -2,6 +2,11 @@
 name: codebase-facts
 kind: facts
 applies_when: always（凡需给出「代码库现状」这一半事实时）
+protocol: 1
+capabilities:
+  - id: codebase-facts
+    revision: 1
+    covers: [对外暴露面, 端云接口, 数据存储, 配置项, 本地日志, 敏感数据处理, 资源, 依赖变更]
 ---
 
 # 工程取证事实登记

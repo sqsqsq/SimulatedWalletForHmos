@@ -4,9 +4,15 @@ kind: patterns
 applies_when: 单个页面或组件内用户交互很多，且交互之间由业务结果驱动先后顺序（做完一件事自动进入下一个交互）
 not_applies_when: 页面只有两三个独立按钮，各自触发一次动作后结束；交互之间没有先后依赖
 triggers_usecase_spec: true
+depends_on: 编排 SDK（oh 包名 framework）
 roles: [动作表, 动作枚举, 交互封装, 上下文, 页面组件]
 optional_roles: []
 coordinator_role: 交互封装
+protocol: 1
+capabilities:
+  - id: page-interaction
+    revision: 1
+    covers: [上篇, 下篇]
 ---
 
 # 页面交互编排

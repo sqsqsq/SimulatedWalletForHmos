@@ -2,6 +2,11 @@
 name: component-profile
 kind: facts
 applies_when: always（凡需判断「上游内容是否与本部件相关」时）
+protocol: 1
+capabilities:
+  - id: component-profile
+    revision: 1
+    covers: [部件申明, 交互方清单]
 ---
 
 # 部件画像

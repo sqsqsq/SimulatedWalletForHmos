@@ -2,6 +2,11 @@
 name: security-privacy
 kind: constraints
 applies_when: always
+protocol: 1
+capabilities:
+  - id: security-privacy
+    revision: 1
+    covers: [条目表, 落法附注]
 ---
 
 # 安全隐私

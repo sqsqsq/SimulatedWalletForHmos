@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -57,6 +58,32 @@ class DeliveryCase(kp.ProtocolCase):
         path = self.feature_root / "AR" / "story-src"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+
+class DeclarationsReachEveryReader(DeliveryCase):
+    """spec / plan 作者包与审查拿到同一份登记原文和同一对规则入口，字段名只有一套。"""
+
+    def test_the_three_readers_see_the_same_declaration(self) -> None:
+        self.judged()
+        self.edit_knowledge("facts/neutral-facts.md", "kind: facts\n",
+                            "kind: facts\nprotocol: 1\ncapabilities:\n"
+                            "  - id: exit-registry\n    revision: 1\n    covers: [出口登记]\n")
+        line = ('- {file: knowledge/facts/neutral-facts.md, protocol: 1, capabilities: '
+                '[{"id":"exit-registry","revision":1,"covers":["出口登记"]}], capability_decisions: []}')
+        outputs = {}
+        for phase in ("spec", "plan"):
+            proc = subprocess.run(["node", str(self.ext / "hooks" / phase / "author.mjs"), "--feature", nk.FEATURE],
+                                  cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=90)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            outputs[f"{phase} 作者包"] = proc.stdout
+        outputs["plan 审查"] = self.pre_verifier("plan")
+        for who, text in outputs.items():
+            with self.subTest(who=who):
+                self.assertIn(line, text)
+                self.assertIn("doc/extensions/skills/story/reference/knowledge/protocol.md", text)
+                self.assertIn("doc/extensions/skills/story/reference/knowledge/capabilities.md", text)
+                self.assertNotIn("bindings", text)
+                self.assertNotRegex(text, r"(?<!capability_)decisions:", "登记字段出现了别名")
 
 
 class NotesReachTheJudgement(DeliveryCase):

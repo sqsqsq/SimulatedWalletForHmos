@@ -2,6 +2,11 @@
 name: dfx-baseline
 kind: constraints
 applies_when: always
+protocol: 1
+capabilities:
+  - id: dfx-baseline
+    revision: 1
+    covers: [条目表, 落法附注]
 ---
 
 # DFX 基线（性能/功耗/ROM/RAM）

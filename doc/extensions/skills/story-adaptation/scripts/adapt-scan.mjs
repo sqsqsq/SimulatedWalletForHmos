@@ -5,7 +5,7 @@
  * **所有权由目录表达**，不靠推断：
  *   `<ext>/skills/story/scripts/core/`      公共，整份换掉（包里不再有的自然消失）
  *   `<ext>/skills/story/scripts/adapters/`  对接实现；Demo 来源不碰，业务仓之间复刻时覆盖
- *   `<ext>/knowledge/`                      目标的知识，不读不写
+ *   `<ext>/knowledge/`                      目标的知识，脚本不读不写（适配由模型按方法页做）
  *   `<ext>/manifest.yaml`                   机制登记归包，name / description / 知识清单归目标
  *   其余 `<ext>/**`                         机制，整份换掉
  *
@@ -28,7 +28,7 @@ const MODES = ['--apply', '--check'];
 
 /** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
 const ADAPTERS = 'skills/story/scripts/adapters';
-/** 目标的知识：升级不读不写，首次只建目录与各类 README。 */
+/** 目标的知识：首次与升级都不读不写；首装的清单为空，第一份部件画像由模型写。 */
 const KNOWLEDGE = 'knowledge';
 /** 公共脚本的唯一落点。`scripts/` 这一层除了它与 adapters 不放东西——⑧ 守这条。 */
 const SCRIPTS_DIR = 'skills/story/scripts';
@@ -127,23 +127,13 @@ function knowledgeBlock(manifestText) {
 }
 
 /**
- * 首次安装建的知识骨架：各类 README，一份不多。
- *
- * 它们是读法与清单说明（`kind: index`），派生出来四类皆空——正是「这个仓还没配置
- * 知识」该有的样子。包里的知识正文一份不带：那是 Demo 自己的业务内容（A3）。
- */
-function skeletonKnowledge(pdir) {
-  return walk(join(pdir, KNOWLEDGE), pdir).filter(p => p.endsWith('README.md')).sort();
-}
-
-/**
  * 合成 manifest：包的为底，知识清单按两态各走各的。
  *
  * 它是写入面上唯一一个「一个文件两种所有权」的地方（§3）：其余键与包相同，
  * `provides.knowledge` 归目标。
  *
  * **升级**：目标现有的清单原样放回——知识激活随目标，不因升级重选。
- * **首次**：换成刚建的骨架。照抄包的清单会登记 Demo 那十几份知识正文，而目标里
+ * **首次**：空清单。照抄包的清单会登记 Demo 那十几份知识正文，而目标里
  * 一份都没有，`activeKnowledge` 当场报「登记的文件读不到」——新仓装完第一件事是撞墙。
  *
  * **目标登记了空清单，那就是空清单。** 一个还没配置知识的仓是正常状态（`knowledge.mjs`
@@ -156,7 +146,7 @@ function skeletonKnowledge(pdir) {
  * 一次升级把它们改成包的，目标就顶着发布源的名字了。`version` 反过来归包——
  * 目标只能从它看出自己拿到的是哪一批产物形态。
  */
-function composeManifest(pkgText, tgtText, skeleton, identity) {
+function composeManifest(pkgText, tgtText, identity) {
   const lines0 = pkgText.split(/\r?\n/);
   const keep = { ...identity };
   if (tgtText) {
@@ -175,7 +165,7 @@ function composeManifest(pkgText, tgtText, skeleton, identity) {
     ...lines.slice(0, mine.at + 1), ...items.map(p => `    - ${p}`), ...lines.slice(mine.to),
   ].join('\n');
   const merged = (() => {
-    if (!tgtText) return withList(skeleton ?? []);
+    if (!tgtText) return withList([]);
     const theirs = knowledgeBlock(tgtText);
     if (!theirs) return withList([]);
     return [...lines.slice(0, mine.from), theirs.text, ...lines.slice(mine.to)].join('\n');
@@ -433,7 +423,7 @@ if (mode === '--apply') {
   // 2. manifest 合成：机制登记归包，知识激活清单归目标
   const composed = composeManifest(
     PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '',
-    skeletonKnowledge(PDIR), freshIdentity(TARGET));
+    freshIdentity(TARGET));
   if (!existsSync(tgtManifest) || read(tgtManifest) !== composed) {
     mkdirSync(dirname(tgtManifest), { recursive: true });
     writeFileSync(tgtManifest, composed, 'utf8');
@@ -475,7 +465,7 @@ if (mode === '--apply') {
     }
   }
 
-  // 6. 首次安装另做两件：配置键与知识骨架。升级两件都不碰。
+  // 6. 首次安装另做一件：配置键。升级不碰。知识不建骨架，由模型按方法页从部件画像写起。
   if (STATE === 'fresh') {
     const cfgFile = join(TARGET, 'framework.config.json');
     const cfg = config(TARGET);
@@ -483,15 +473,6 @@ if (mode === '--apply') {
       cfg.paths = { ...(cfg.paths || {}), extension_dir: 'doc/extensions' };
       writeFileSync(cfgFile, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
       written.push('framework.config.json');
-    }
-    // 知识只建目录与各类 README（读法与清单说明），不放包里的知识正文——
-    // 那是这个仓自己的东西，从空的开始（A3）。**与写进 manifest 的是同一份清单**：
-    // 各扫一遍的话，登记的与建出来的会在下一次改动时错开。
-    for (const p of skeletonKnowledge(PDIR)) {
-      const to = join(TDIR, ...p.split('/'));
-      mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(join(PDIR, ...p.split('/')), to);
-      written.push(p);
     }
   }
 
@@ -610,7 +591,7 @@ if (existsSync(tgtManifest)) {
   // 比之前把换行归一：合成结果一律 LF，而目标用什么换行是它的排版自由——
   // 拿这个判「装错了」，一个内容完全正确的 CRLF 仓会一直红，而报错还指着知识清单。
   const sameText = (a, b) => a.split(/\r\n/).join('\n') === b.split(/\r\n/).join('\n');
-  if (!sameText(composeManifest(PKG_MANIFEST_TEXT, tgtText, skeletonKnowledge(PDIR),
+  if (!sameText(composeManifest(PKG_MANIFEST_TEXT, tgtText,
     freshIdentity(TARGET)), tgtText)) {
     bad.push('② manifest 不是这个包合成出来的：机制登记（version / skills / bridges / hooks /'
       + ' overlay）要与包相同，name / description / provides.knowledge 归目标'

@@ -4,9 +4,15 @@ kind: patterns
 applies_when: 业务流程有多个分支，且每个分支自身是多步的、有自己的失败处理，用 if/else 串会难以维护
 not_applies_when: 单一线性流程；分支只有一两步；分支条件是纯数据校验而非业务阶段推进
 triggers_usecase_spec: true
+depends_on: 编排 SDK（oh 包名 framework）
 roles: [节点表, 步骤枚举, 上下文, 构建与启动]
 optional_roles: [页面跳转]
 coordinator_role: 构建与启动
+protocol: 1
+capabilities:
+  - id: decision-tree
+    revision: 1
+    covers: [上篇, 下篇]
 ---
 
 # 流程分支编排（决策树）

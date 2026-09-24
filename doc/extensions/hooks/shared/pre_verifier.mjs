@@ -19,7 +19,7 @@
  */
 import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
-import { activeKnowledge } from './knowledge.mjs';
+import { activeKnowledge, declarationContext } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
@@ -226,6 +226,10 @@ export default async function preVerifier(ctx) {
     `本阶段被审的知识判断在 **\`${source.file}\`**：${source.what}。`,
     '**材料、原知识与仓内事实是审查依据，本阶段产物与这份判断是被审的对象**——下表把每条规约的原条目与当前判断并列，',
     '对着原文判，不拿判断自证。',
+    '',
+    ...(knowledge ? declarationContext(ctx.projectRoot, knowledge)
+      : [`知识没能加载，作者用的登记来源无从并列：${knowledgeGap}——依赖知识的检查写未验证，不当作没有知识。`]),
+    '',
     ...(knowledge?.constraints?.length
       ? ['下表只有主表一行；规约的落法附注同样是要求，原文在：'
         + knowledge.constraints.map(c => '`' + relDisplay(ctx.projectRoot,

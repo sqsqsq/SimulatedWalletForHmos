@@ -91,7 +91,7 @@ class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
 
     F6 实证：spec §11 五个单元全判「无候选」，反证逐句复述模式索引的判定语言
     （「无跨步骤状态」「几个彼此独立的按钮」）。四环因果里的一环是**读者面缺口**
-    ——那句「承载会换，业务不会」只写在模式索引里，而模式索引的读者标注只面向 plan；
+    ——那句「承载会换，业务不会」当时只写在模式索引里（1.9.6 起模式的读写规则归机制侧 protocol.md），读者标注只面向 plan；
     spec 阶段做候选判定的人，手上是 spec 模板，看不到它。
 
     所以它现在写在两处。两处就有漂移的风险，用这条测试锁住：改一处必须改另一处。
@@ -102,7 +102,7 @@ class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
         "当前用模拟、演示或简化方式承载某一步，不改变业务信号——承载会换，业务不会。",
     )
     READERS = (
-        Path("doc/extensions/knowledge/design-patterns/README.md"),
+        Path("doc/extensions/skills/story/reference/knowledge/protocol.md"),
         Path("doc/extensions/skills/story/templates/spec-sections.md"),
     )
 

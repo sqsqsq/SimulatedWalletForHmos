@@ -128,6 +128,68 @@ class ProtocolCase(nk.NeutralKnowledgeCase):
         (self.feature_root / "contracts.yaml").write_text(text, encoding="utf-8")
 
 
+class DeclarationsAreRawFacts(ProtocolCase):
+    """能力登记只核结构、原样交出：无登记照常读，跨文件同一能力与目标自有 ID 都合法，错误一次汇总。"""
+
+    def declarations(self) -> list[dict]:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const k = await import({nk.as_url(self.module('knowledge.mjs'))});"
+                       f"process.stdout.write(JSON.stringify(k.activeKnowledge({json.dumps(self.root.as_posix())}).declarations));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return {d["file"]: d for d in json.loads(proc.stdout)}
+
+    def declare(self, rel: str, block: str) -> None:
+        self.edit_knowledge(rel, "\n---\n", "\n" + block.rstrip("\n") + "\n---\n")
+
+    def test_knowledge_without_declarations_still_loads(self) -> None:
+        got = self.declarations()["knowledge/facts/neutral-facts.md"]
+        self.assertEqual({"file": "knowledge/facts/neutral-facts.md", "protocol": None,
+                          "capabilities": [], "capability_decisions": []}, got)
+
+    def test_one_capability_across_files_and_a_target_own_id_are_legal(self) -> None:
+        self.declare("facts/neutral-facts.md", "protocol: 1\ncapabilities:\n"
+                     "  - id: exit-registry\n    revision: 1\n    covers: [出口登记]\n"
+                     "  - id: target-own-thing\n    revision: 3\n    covers: [重试入口]")
+        self.declare("constraints/neutral-domain.md", "capabilities:\n"
+                     "  - id: exit-registry\n    revision: 1\n    covers: [条目表]")
+        self.assertEqual("", self.load_error())
+        got = self.declarations()
+        self.assertEqual(["exit-registry", "target-own-thing"],
+                         [c["id"] for c in got["knowledge/facts/neutral-facts.md"]["capabilities"]])
+        self.assertIsNone(got["knowledge/constraints/neutral-domain.md"]["protocol"])
+
+    def test_an_older_revision_is_passed_through_not_judged(self) -> None:
+        self.declare("facts/neutral-facts.md", "capabilities:\n  - id: exit-registry\n    revision: 1\n    covers: [出口登记]")
+        self.assertEqual("", self.load_error())
+        self.assertEqual(1, self.declarations()["knowledge/facts/neutral-facts.md"]["capabilities"][0]["revision"])
+
+    def test_problems_in_two_files_are_reported_together(self) -> None:
+        self.declare("facts/neutral-facts.md", "capabilities:\n"
+                     "  - id: exit-registry\n    revision: 1\n    covers: [出口登记]\n"
+                     "  - id: exit-registry\n    revision: 1\n    covers: [重试入口]")
+        self.declare("constraints/neutral-domain.md", "capability_decisions:\n"
+                     "  - id: exit-registry\n    revision: one\n    scope: ['*', 出口]\n"
+                     "    decision: deferred\n    reason: 暂缓\n    basis: 用户选择")
+        message = self.load_error()
+        for needle in ("neutral-facts.md 的 capabilities[1] 与前面重复登记能力「exit-registry」",
+                       "neutral-domain.md 的 capability_decisions[0]（exit-registry） revision 不是正整数",
+                       "把整项 '*' 与具体面混写", "deferred 要写 impact"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, message)
+
+    def test_an_old_index_file_asks_for_the_migration(self) -> None:
+        (self.ext / "knowledge" / "README.md").write_text("---\nname: old\nkind: index\nprotocol: 1\n---\n\n# 旧索引\n",
+                                                           encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        self.edit(manifest, "  knowledge:\n", "  knowledge:\n    - knowledge/README.md\n")
+        message = self.load_error()
+        self.assertIn("knowledge/README.md 是旧版知识索引件（kind: index）", message)
+        self.assertIn("knowledge-adaptation.md 第 5 步", message)
+        (self.ext / "knowledge" / "README.md").unlink()
+        self.edit(manifest, "    - knowledge/README.md\n", "")
+        self.assertEqual("", self.load_error(), "迁移之后照常读")
+
+
 class TheProtocolIsCheckedOnLoad(ProtocolCase):
     """载入即核：版本不一致、值域不合，各自点名，一次列全。"""
 
@@ -135,9 +197,9 @@ class TheProtocolIsCheckedOnLoad(ProtocolCase):
         self.assertEqual("", self.load_error())
 
     def test_a_newer_protocol_names_both_sides(self) -> None:
-        self.edit_knowledge("constraints/README.md", "protocol: 1", "protocol: 2")
+        self.edit_knowledge("constraints/neutral-domain.md", "kind: constraints", "kind: constraints\nprotocol: 2")
         message = self.load_error()
-        self.assertIn("声明知识协议 2", message)
+        self.assertIn("constraints/neutral-domain.md 的 protocol 写的是「2」", message)
         self.assertIn("本机制实现的是 1", message)
 
     def test_every_breach_is_named_at_once(self) -> None:

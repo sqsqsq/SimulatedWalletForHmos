@@ -1,6 +1,6 @@
 """新装的仓装完就能跑：`provides.knowledge` 是空的，全链照走。
 
-首次安装只建知识目录与各类 README，不放任何知识正文（Adapt 需求 A3）。那之后清单
+首次安装不建知识骨架，不放任何知识正文（Adapt 需求 A3）。那之后清单
 就是空的，而知识派生此前把「清单为空」当派生失败：`activeKnowledge` 直接 throw，
 八个调用点里七个硬失败——新仓装完第一件事是撞墙。
 
@@ -112,6 +112,9 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         self.assertEqual(0, proc.returncode, f"空知识下任务包出不来：{proc.stderr}")
         self.assertIn("本仓未配置知识", proc.stdout)
         self.assertNotIn("域：）", proc.stdout, "渲染出了空洞的派生结果，作者会以为机制坏了")
+        self.assertIn("skills/story/reference/knowledge/protocol.md", proc.stdout)
+        self.assertIn("skills/story/reference/knowledge/capabilities.md", proc.stdout)
+        self.assertNotIn("都还没有能力登记", proc.stdout, "空清单不是「有知识没登记」")
 
     def test_the_use_skeleton_comes_out_with_zero_entries(self) -> None:
         """`knowledge-use.yaml` 的骨架照样生成，只是一条都没有——没有条目要判。"""

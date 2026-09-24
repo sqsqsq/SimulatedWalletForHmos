@@ -199,7 +199,7 @@ class TheMechanismFollowsThePackage(AdaptCase):
         """一个文件两种所有权：机制登记跟包，`provides.knowledge` 跟目标。"""
         manifest = self.ext / "manifest.yaml"
         text = manifest.read_text(encoding="utf-8")
-        mine = "  knowledge:\n    - knowledge/README.md\n"
+        mine = "  knowledge:\n    - knowledge/facts/own-profile.md\n"
         head, _, tail = text.partition("  knowledge:\n")
         keep = tail.split("\n  hooks:", 1)[1] if "\n  hooks:" in tail else ""
         manifest.write_text(head + mine + "\n  hooks:" + keep, encoding="utf-8")
@@ -208,10 +208,38 @@ class TheMechanismFollowsThePackage(AdaptCase):
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         after = manifest.read_text(encoding="utf-8")
-        self.assertIn("    - knowledge/README.md\n", after)
+        self.assertIn("    - knowledge/facts/own-profile.md\n", after)
         self.assertNotIn("knowledge/constraints/ux-consistency.md", after,
                          "升级把包的知识清单塞给了目标——知识激活随目标，不因升级重选")
         self.assertIn("story-adaptation", after, "机制登记没跟上包")
+
+
+class AnOldIndexIsLeftForTheModel(AdaptCase):
+    """旧仓自己改过的 README（kind: index）：脚本不碰它与激活清单，机制照装；加载器指出这份要迁移。"""
+
+    def test_upgrade_keeps_the_old_index_and_the_loader_names_it(self) -> None:
+        readme = self.ext / "knowledge" / "facts" / "README.md"
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_text("---\nname: facts-index\nkind: index\nprotocol: 1\n---\n\n本仓自定：画像先写交互方。\n",
+                          encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        text = manifest.read_text(encoding="utf-8")
+        manifest.write_text(text.replace("  knowledge:\n", "  knowledge:\n    - knowledge/facts/README.md\n", 1),
+                            encoding="utf-8")
+        self.commit("旧仓带自定义索引件")
+        for mode in ("--apply", "--check"):
+            proc = self.adapt(mode)
+            self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertIn("本仓自定：画像先写交互方。", readme.read_text(encoding="utf-8"))
+        self.assertIn("    - knowledge/facts/README.md\n", manifest.read_text(encoding="utf-8"))
+        module = (self.ext / "hooks" / "shared" / "knowledge.mjs").resolve().as_uri()
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const k = await import(process.argv[1]);"
+             "try { k.activeKnowledge(process.argv[2]); } catch (e) { process.stdout.write(e.message); }",
+             module, str(self.target)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertIn("knowledge/facts/README.md 是旧版知识索引件（kind: index）", proc.stdout)
 
 
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):
@@ -250,7 +278,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
 
     照抄包的清单会登记十几份目标里根本没有的知识正文，`activeKnowledge` 当场报
     「登记的文件读不到」：新仓装完第一件事是撞墙。而「装完就能跑」是 A3 的直接后果——
-    首次安装只建目录与各类 README，知识从空的开始。
+    首次安装不建知识骨架，清单为空，第一份部件画像由模型按方法页写。
     """
 
     def setUp(self) -> None:  # noqa: D102
@@ -259,16 +287,15 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         shutil.rmtree(self.ext)
         self.commit("空仓")
 
-    def test_the_manifest_registers_the_skeleton_not_the_demo(self) -> None:
+    def test_the_manifest_registers_no_knowledge_and_writes_none(self) -> None:
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         block = manifest.split("  knowledge:\n", 1)[1].split("\n  hooks:", 1)[0]
         listed = [l.strip()[2:] for l in block.splitlines() if l.strip().startswith("- ")]
-        self.assertTrue(listed, "首次安装的清单是空的——各类 README 一份都没登记")
-        for rel in listed:
-            self.assertTrue(rel.endswith("README.md"), f"首次安装登记了知识正文：{rel}")
-            self.assertTrue((self.ext / rel).is_file(), f"登记了却没建出来：{rel}")
+        self.assertEqual([], listed, "首次安装替目标激活了知识")
+        written = [p for p in (self.ext / "knowledge").rglob("*") if p.is_file()] if (self.ext / "knowledge").exists() else []
+        self.assertEqual([], written, "脚本往目标的 knowledge/ 写了东西")
 
     def test_the_derivation_runs_on_a_fresh_install(self) -> None:
         """装完直接跑知识派生：四类皆空、不抛——这是「装完就能跑」的判据本身。"""
@@ -290,7 +317,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
                           "entries": 0, "problems": 0}, json.loads(proc.stdout))
 
     def test_a_fresh_install_passes_its_own_check(self) -> None:
-        """刚装完跑 `--check` 要过：首次安装的写入面含知识骨架，那几个 README 是这次建的。
+        """刚装完跑 `--check` 要过：首次安装的知识清单为空，判据不把它当成装错。
 
         两态不分的话，判据会把自己刚写出来的东西判成「升级动了目标的知识」。
         """

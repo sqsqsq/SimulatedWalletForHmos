@@ -1,6 +1,6 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现；知识与目标身份一个字节不碰。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现，脚本不碰知识与目标身份；知识由模型按适配方法识别差异、人定范围后依据真实代码补齐。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
@@ -14,7 +14,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 |---|---|---|
 | `<ext>/skills/story/scripts/core/` | 包 | 整份换掉，包里没有的删掉 |
 | `<ext>/skills/story/scripts/adapters/`（入口、鉴权及其内部实现模块） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
-| `<ext>/knowledge/` | 目标 | 不读不写 |
+| `<ext>/knowledge/` | 目标 | 脚本不读不写；内容由你按「知识适配」一节改 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
 | `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
 
@@ -42,6 +42,10 @@ Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/script
 
 本命令的 `--check` 只核安装一致性，不能代替真实对接能力验证。交回分别说明机制安装结果、对接能力结果和剩余动作；Demo 替身的测试结果不冒充内网对接已经通过。
 
+## 知识适配
+
+安装或升级前先读三份：包的 `skills/story-adaptation/reference/knowledge-adaptation.md`（识别 → 交人决定 → 改写 → 走查 → 交回的方法与中性示例）、`skills/story/reference/knowledge/protocol.md`（知识的写法与能力登记格式）、`skills/story/reference/knowledge/capabilities.md`（每项能力要回答什么、取证位置、修订与迁移依据）。脚本装完机制后，按方法页完成知识部分；旧版的 `knowledge/**/README.md`（`kind: index`）退出也在方法页第 5 步。
+
 ## 你要做的四件事
 
 ### 1 前置（脚本自己查，不过就停）
@@ -60,7 +64,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 ### 2 判态（脚本判，你不猜）
 
 目标有没有 `manifest.yaml`——**有就是升级，没有就是首次**。历史版本识别、结构签名、混合状态处理都不存在于本实现。
-版本相同且没有文件要写时，它报「当前适配仍有效」并退出 0。
+版本相同且没有文件要写时，它报「当前适配仍有效」并退出 0——这只说机制不用再装，知识照样按方法页核一遍。
 
 ### 3 写入
 
@@ -71,17 +75,17 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 **首次安装多两件**，其中一件归你：
 
-- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），建知识目录与各类 `README.md`（读法与清单说明），按目标的 `project_name` 生成 manifest 的 `name` 与 `description`。**不放包里的知识正文**——那是目标仓自己的东西，从空的开始。
+- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），按目标的 `project_name` 生成 manifest 的 `name` 与 `description`，知识激活清单为空。**不放包里的任何知识**——那是目标仓自己的东西，从空的开始。
 - **你做的：写部件画像**。这是首次安装里唯一归模型的一件事：
 
 | 项 | 内容 |
 |---|---|
 | 看什么 | 目标仓的 `framework.config.json` 架构 DSL（层、模块、跨模块出口文件）、`doc/module-catalog.yaml`、`doc/architecture.md`；三者缺的按仓内目录实扫 |
-| 写什么 | 部件画像。**落点与形态照 `<ext>/knowledge/facts/README.md` 写**——那份说明归知识侧，文件名与节结构都在它里面，机制不复述一遍 |
+| 写什么 | 部件画像：写法见 `protocol.md` 第二节，要回答的面与走查见 `capabilities.md` 的 `component-profile` 条；放在 `<ext>/knowledge/facts/` 下，frontmatter 登记这项能力 |
 | 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；查不到的写「未确认」，不写推断 |
 | 停一次问人 | 摆出这份画像、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
 
-画像写完记得登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。
+画像写完记得登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。其余能力按方法页形成差异交人决定。
 
 ### 4 确认
 
@@ -100,7 +104,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | ⑧ | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
 
 `--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
-**这个目标现在装的是不是包的这一版**。
+**这个目标现在装的是不是包的这一版**。知识能不能加载、内容够不够是另一件事，交回时与它分开报（方法页「交回」）。
 
 拿 `git diff` 判「升级碰了什么」不成立：目标自己改过知识、`--apply` 一个字节没写，
 diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提交了，diff 为空，装错了也看不出来。
@@ -113,6 +117,6 @@ diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提�
 ## 不做的事
 
 - **不做历史兼容**：旧结构、混合目录、部分迁移状态都不进设计、不进分支、不进验收。已有产物由用户手动调整。
-- **不动 knowledge 内容**：升级不读不写，首次不填包里的正文。
+- **脚本不动 knowledge**：升级不读不写，首次不放包里的正文；知识内容只由你在人定的范围内按方法页改。
 - **不动 framework**：包不依赖任何 framework 改动。
 - **不动目标 `framework.config.json` 的其它键**：它是目标工程的架构 DSL 真源，adapt 只在首次安装时确保 `paths.extension_dir` 存在。

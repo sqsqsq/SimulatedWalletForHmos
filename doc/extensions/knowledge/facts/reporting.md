@@ -2,6 +2,11 @@
 name: reporting
 kind: facts
 applies_when: 需求涉及业务定位、运维统计或独立运营采集时
+protocol: 1
+capabilities:
+  - id: reporting
+    revision: 1
+    covers: [业务统计语义, 渠道与已有能力, 身份与 SDK 映射, 结果与字段映射, 业务扩展字段, 登记与复用, 使用参考]
 ---
 
 # 上报
