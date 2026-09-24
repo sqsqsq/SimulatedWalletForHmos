@@ -30,7 +30,7 @@ provides:
   # frontmatter 与正文派生，机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
   knowledge:
     - knowledge/facts/component-profile.md
-    - knowledge/facts/codebase-facts.md
+    - knowledge/facts/engineering-capabilities.md
     - knowledge/facts/reporting.md
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md

@@ -494,8 +494,8 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
                           "业务扩展字段", "登记与复用", "使用参考"], fact["facets"])
         self.assertEqual(["业务扩展字段"], fact["unconfirmed"])
 
-    def test_codebase_facts_no_longer_repeats_reporting(self) -> None:
-        text = (self.KNOWLEDGE / "facts" / "codebase-facts.md").read_text(encoding="utf-8")
+    def test_engineering_capabilities_do_not_repeat_reporting(self) -> None:
+        text = (self.KNOWLEDGE / "facts" / "engineering-capabilities.md").read_text(encoding="utf-8")
         for token in ("WalletHAManager", "vocBuilder", "chartBuilder", "logAndReport"):
             with self.subTest(token=token):
                 self.assertNotIn(token, text)
@@ -503,7 +503,7 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
     def test_every_channel_has_its_row(self) -> None:
         """项目的四种上报来源各一行：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一行。"""
         overview = next(v for k, v in self.sections().items() if "渠道与已有能力" in k)
-        for channel in ("| VOC |", "| Chart |", "| BI |", "| 自动运维上报 |"):
+        for channel in ("| VOC |", "| Chart |", "| BI |", "| 交互自动记录 |"):
             self.assertIn(channel, overview)
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
