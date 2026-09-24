@@ -242,6 +242,39 @@ class AnOldIndexIsLeftForTheModel(AdaptCase):
         self.assertIn("knowledge/facts/README.md 是旧版知识索引件（kind: index）", proc.stdout)
 
 
+class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
+    """方法页第 7 步的只读检查：刚装完、没有任何需求时照样能核知识，不写文件；知识坏了非零退出。"""
+
+    def check_script(self) -> str:
+        page = (PKG_EXT / "skills" / "story-adaptation" / "reference" / "knowledge-adaptation.md").read_text(encoding="utf-8")
+        block = page.split("7. **确认与交回**", 1)[1].split("```js", 1)[1].split("```", 1)[0]
+        return "\n".join(l[3:] if l.startswith("   ") else l for l in block.splitlines())
+
+    def run_check(self) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", "--input-type=module", "-e", self.check_script()], cwd=self.target,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+
+    def test_a_fresh_install_checks_clean_and_writes_nothing(self) -> None:
+        shutil.rmtree(self.ext)
+        self.commit("空仓")
+        self.assertEqual(0, self.adapt("--apply").returncode)
+        self.commit("装好")
+        proc = self.run_check()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn('"status":"PASS"', proc.stdout)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.target, capture_output=True, text=True)
+        self.assertEqual("", status.stdout.strip(), "检查写了文件")
+        self.assertFalse((self.target / "doc" / "features").exists(), "检查造了需求目录")
+
+    def test_broken_knowledge_exits_non_zero_with_the_file(self) -> None:
+        manifest = self.ext / "manifest.yaml"
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+            "  knowledge:\n", "  knowledge:\n    - knowledge/facts/gone.md\n", 1), encoding="utf-8")
+        proc = self.run_check()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("knowledge/facts/gone.md", proc.stderr)
+
+
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):
     """前置不满足就停，不猜、不替用户动工作区。"""
 

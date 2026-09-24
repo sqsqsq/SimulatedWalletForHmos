@@ -25,7 +25,7 @@
    - 有内容无登记：按内容识别它覆盖了哪些能力与面，不凭文件名推定；只补登记与真实缺口，保留原文与目标扩展。
    - 旧版索引件（`kind: index` 的 README）仍在激活清单里：加载会报错，这是必要的协议迁移，见第 5 步。
    - 同一内容出现在多个文件时先定权威来源，不合并成新副本。
-3. **形成差异，交人决定**：一项一行——能力或受影响的面、当前证据、要补什么、对当前任务的影响、建议（本次适配 / 不适用 / 留待以后）。没有差异的说明依据。已有有效决定沿用，不全量重问；只把真正要选的一次摆给人。加载器报出的格式错误必须修，不进选项。
+3. **形成差异，交人决定**：一项一行——能力或受影响的面、当前证据、要补什么、对当前任务的影响、建议（本次适配 / 不适用 / 留待以后）。没有差异的说明依据。已有有效决定沿用，不全量重问；只把真正要选的一次摆给人。加载器报出的格式错误要修，不能当作不适用；人可以暂缓必要的协议迁移，此时依赖这些知识的阶段不能加载，交回写明这条边界（见第 5 步）。
 4. **按人定的范围改写**：读定义也读实际调用，结合业务协议写。
    - 当前实现由代码证明；业务语义由协议、需求或负责人证明；已定而未实现的写「已定规范」；查不到的标「未确认」，不编。
    - 相同编程语言或类名不是照搬 Demo 的理由，Demo 只参考信息组织。
@@ -35,7 +35,23 @@
    - 遇到新的业务决定、事实冲突或超出已选范围，停下问具体问题；已选范围内的成品不逐项再确认。
 5. **协议迁移（旧 README 退出）**：读旧 README 与实际内容 → 通用规则已由 `protocol.md` 接替，目标自己加的项目说明迁进相应知识文件 → 把格式改到当前可解析形态 → 从激活清单删去 README，修引用 → 删除 README → 重新加载核可读。人暂缓这一步时，交回写明「机制已安装，知识格式迁移待办，依赖知识的阶段当前加载失败」，保留原文件。
 6. **走查**：每项已适配能力拿一个正常业务走一遍——阶段能不能取得所需定义、哪些设计现在写得出、哪些仍待核。
-7. **确认与交回**：跑 `adapt-scan --check`，再用任一阶段任务包确认知识能加载。
+7. **确认与交回**：跑 `adapt-scan --check`；再在目标工程根执行下面这段只读检查（交给 `node --input-type=module`），它按目标的 `paths.extension_dir` 加载激活知识并做结构自检，不需要需求编号、不写任何文件。两者分开报告；PASS 只证明能加载、结构成立，不证明内容正确。
+
+   ```js
+   import fs from 'node:fs';
+   import path from 'node:path';
+   import { pathToFileURL } from 'node:url';
+   const root = process.cwd();
+   const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+   const ext = path.resolve(root, config.paths?.extension_dir ?? 'doc/extensions');
+   const api = await import(pathToFileURL(path.join(ext, 'hooks/shared/knowledge.mjs')).href);
+   const knowledge = api.activeKnowledge(root);
+   const problems = api.selfCheck(root, knowledge);
+   if (problems.length) throw new Error(problems.join('\n'));
+   console.log(JSON.stringify({ status: 'PASS', files: knowledge.declarations.length }));
+   ```
+
+   出错时非零退出并带文件与原因；缺运行依赖按依赖提示处理，不算知识缺失。
 
 ## 完成条件
 

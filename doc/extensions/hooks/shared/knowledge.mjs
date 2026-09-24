@@ -462,18 +462,19 @@ export function activeKnowledge(projectRoot) {
   // 不合协议的条目收齐再一次报：知识所有者升级机制之后要逐条改，不该改一条撞一条。
   const bad = [];
   for (const relPosix of knowledgeFiles(projectRoot)) {
-    if (seen.has(relPosix)) fail(`${relPosix} 在激活清单里重复登记`);
+    if (seen.has(relPosix)) { bad.push(`${relPosix} 在激活清单里重复登记`); continue; }
     seen.add(relPosix);
 
     const abs = path.join(root, ...relPosix.split('/').filter(Boolean));
     const text = readTextOrNull(abs);
-    if (text === null) fail(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`);
+    if (text === null) { bad.push(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`); continue; }
 
     const frontmatter = splitFrontmatter(text).frontmatter;
     const kind = frontmatterPairs(frontmatter).kind;
     if (!kind) {
-      fail(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
+      bad.push(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
         + `不能靠目录或文件名去猜（可用：${KNOWLEDGE_KINDS.join(' / ')}）`);
+      continue;
     }
     if (!KNOWLEDGE_KINDS.includes(kind)) {
       bad.push(kind === 'index'
@@ -483,9 +484,15 @@ export function activeKnowledge(projectRoot) {
       continue;
     }
     out.declarations.push(parseDeclaration(relPosix, frontmatter, bad));
-    if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix, bad));
-    else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix, bad));
-    else out.facts.push(parseFactFile(abs, relPosix, bad));
+    // 本文件的结构错误（条目表零行、缺角色等）记下后接着核下一份：维护者一轮看到全部问题。
+    try {
+      if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix, bad));
+      else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix, bad));
+      else out.facts.push(parseFactFile(abs, relPosix, bad));
+    } catch (e) {
+      if (!(e instanceof KnowledgeError)) throw e;
+      bad.push(e.message);
+    }
   }
   if (bad.length) fail(`知识不合协议（${bad.length} 处，按所在文件改）：\n  · ${bad.join('\n  · ')}`);
 
@@ -608,8 +615,7 @@ export function declarationContext(projectRoot, knowledge) {
   }
   rows.push('', '各文件的能力登记（原样）：', '', '```yaml');
   for (const d of declared) {
-    rows.push(`- {file: ${d.file}, protocol: ${d.protocol ?? 'null'}, capabilities: ${JSON.stringify(d.capabilities)}, `
-      + `capability_decisions: ${JSON.stringify(d.capability_decisions)}}`);
+    rows.push(`- ${JSON.stringify(d)}`);
   }
   rows.push('```');
   const bare = (knowledge?.declarations ?? []).length - declared.length;

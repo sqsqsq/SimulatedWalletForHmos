@@ -68,8 +68,8 @@ class DeclarationsReachEveryReader(DeliveryCase):
         self.edit_knowledge("facts/neutral-facts.md", "kind: facts\n",
                             "kind: facts\nprotocol: 1\ncapabilities:\n"
                             "  - id: exit-registry\n    revision: 1\n    covers: [出口登记]\n")
-        line = ('- {file: knowledge/facts/neutral-facts.md, protocol: 1, capabilities: '
-                '[{"id":"exit-registry","revision":1,"covers":["出口登记"]}], capability_decisions: []}')
+        line = ('- {"file":"knowledge/facts/neutral-facts.md","protocol":1,"capabilities":'
+                '[{"id":"exit-registry","revision":1,"covers":["出口登记"]}],"capability_decisions":[]}')
         outputs = {}
         for phase in ("spec", "plan"):
             proc = subprocess.run(["node", str(self.ext / "hooks" / phase / "author.mjs"), "--feature", nk.FEATURE],

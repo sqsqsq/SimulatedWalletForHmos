@@ -177,6 +177,35 @@ class DeclarationsAreRawFacts(ProtocolCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, message)
 
+    def test_the_rendered_declarations_read_back_unchanged(self) -> None:
+        """登记上下文按 YAML 读回与原声明逐字段相等：路径带逗号、括号也不被改写。"""
+        decls = [{"file": "knowledge/facts/a, b (v2).md", "protocol": 1,
+                  "capabilities": [{"id": "x", "revision": 2, "covers": ["面, 一"]}], "capability_decisions": []},
+                 {"file": "knowledge/facts/plain.md", "protocol": None, "capabilities": [],
+                  "capability_decisions": [{"id": "y", "revision": 1, "scope": ["*"], "decision": "deferred",
+                                            "reason": "r", "basis": "b", "impact": "i"}]}]
+        proc = nk.node("--input-type=module", "-e",
+                       f"const k = await import({nk.as_url(self.module('knowledge.mjs'))});"
+                       f"const y = await import({nk.as_url(self.module('yaml.mjs'))});"
+                       f"const rows = k.declarationContext({json.dumps(self.root.as_posix())}, {{ declarations: {json.dumps(decls)} }});"
+                       "const body = rows.slice(rows.indexOf('```yaml') + 1, rows.lastIndexOf('```')).join('\\n');"
+                       "process.stdout.write(JSON.stringify(y.parseYaml(body)));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(decls, json.loads(proc.stdout))
+
+    def test_every_file_problem_is_reported_in_one_load(self) -> None:
+        """缺文件、缺 kind、协议不兼容与合法文件混在一起：一次报全，不返回部分结果。"""
+        (self.ext / "knowledge" / "facts" / "no-kind.md").write_text("---\nname: x\n---\n\n# x\n", encoding="utf-8")
+        self.edit_knowledge("facts/neutral-facts.md", "kind: facts\n", "kind: facts\nprotocol: 99\n")
+        manifest = self.ext / "manifest.yaml"
+        self.edit(manifest, "  knowledge:\n",
+                  "  knowledge:\n    - knowledge/facts/missing.md\n    - knowledge/facts/no-kind.md\n")
+        message = self.load_error()
+        for needle in ("读不到 —— knowledge/facts/missing.md", "knowledge/facts/no-kind.md 的 frontmatter 缺 kind",
+                       "neutral-facts.md 的 protocol 写的是「99」"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, message)
+
     def test_an_old_index_file_asks_for_the_migration(self) -> None:
         (self.ext / "knowledge" / "README.md").write_text("---\nname: old\nkind: index\nprotocol: 1\n---\n\n# 旧索引\n",
                                                            encoding="utf-8")
