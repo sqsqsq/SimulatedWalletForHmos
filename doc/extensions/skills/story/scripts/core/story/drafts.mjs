@@ -2,7 +2,7 @@
  * 章草稿 —— 路径、章头渲染与缺稿补建的唯一归属。
  *
  * 草稿是**作者区**：作者在草稿里改，`chapter --from` 消费草稿原子落盘。
- * 章头（读者问题、主要职责、写作设计里本章那一段、提交命令）与必要种子由这里渲染；
+ * 章头（读者要能回答的问题、别章分工、写前读什么、提交命令）与必要种子由这里渲染；
  * 形态解释不在这份文件——必要结构归 chapter-contract，写作设计选定的结构归
  * writing-plan，本模块只组合。输入是入口已解析好的数据（`facts`、写作设计 `plan`）
  * 与现有上下文字段（`ctx`），这里不读 Spec、不扫材料、不判形态。
@@ -75,7 +75,7 @@ const formHint = (at, form) => guideLine(`${at ? `「${at}」这一节` : '这�
   + '。写作设计里选的形式在这里承载不了要解释的关系时，有依据地改设计并记下原因', '完成表达');
 
 /**
- * 一章的草稿：章头（读者问题、主要职责、写前读什么、提交命令）+ 必要种子。
+ * 一章的草稿：章头（读者要能回答的问题、别章分工、写前读什么、提交命令）+ 必要种子。
  *
  * 作者拿到的不该是一张白纸：本章要回答什么、写前对照什么、写完怎么提交，
  * 都在他动笔前进草稿；必要种子（术语起始行、必要与选定的表头、附录投影入口）
@@ -88,8 +88,8 @@ function chapterDraft(ctx, ch, facts) {
   const file = draftPath(ctx, index, ch.title);
   const plan = relFromFeature(ctx, ctx.templatePath);
   return [
-    guideLine((ch.questions ?? []).join('；'), '读者问题'),
-    guideLine(ch.boundary, '主要职责'),
+    guideLine(`读完这一章，读者要能回答：${(ch.questions ?? []).join('；')}（直接回答，不写本章讲什么）`),
+    guideLine(`别的章负责：${ch.boundary}；这里不重复`),
     guideLine('这一步是完成表达：照骨架逐节写——先读这一节要解释什么、依据在哪，再决定列、节点与项目，'
       + '写成正文。写本章前先读已写章与本章共用的关系，再对照本章要用的原文；'
       + `设计要改回写作设计 ${plan}，并在 story-src/template-adjustments.md 记下实质调整的原因`),

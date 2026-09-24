@@ -57,7 +57,7 @@ class TestFinalPassIsInTheFlow(unittest.TestCase):
         guide = read("phases/story-write.md")
         body = section(guide, "回看")
         for needle in ("回看清单", "初筛疑点", "骨架待核", "这句话材料里有吗", "材料给的靠得住吗",
-                       "处置回真源，不写台账", "没有问题不制造改动", "对着读", "引导", "承接"):
+                       "处置回真源，不写台账", "没有问题不制造改动", "对着读", "指着文档说话", "承接"):
             self.assertIn(needle, body, f"回看那一节少了「{needle}」")
         for gone in ("三项工作", "从来源核实际覆盖", "推演关系与决定", "核组织和表达"):
             self.assertNotIn(gone, guide, f"旧整稿方法「{gone}」还和回看并存")
@@ -328,8 +328,8 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
     def test_the_guide_keeps_what_no_check_covers(self) -> None:
         """没有判据接的约定要留着，但留在它该在的那一节，不另起一段重讲一遍。"""
         guide = read("phases/story-write.md")
-        self.assertIn("表前有一句引导", section(guide, "回看"),
-                      "表前引导没有判据接，回看要问它")
+        self.assertIn("指着文档说话", section(guide, "回看"),
+                      "指着文档说话没有机器判据，回看要问它")
         self.assertIn("标题用真实业务名", guide.split("## 一、", 1)[1],
                       "小节怎么起名没有判据接，读者原则要说")
         self.assertNotIn("不是三次机会", guide,
@@ -356,7 +356,9 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         for ch in contract["chapters"]:
             self.assertTrue(str(ch.get("boundary", "")).strip(),
-                            f"{ch['id']} 没有内容边界——章头的「主要职责」从它渲染")
+                            f"{ch['id']} 没有别章分工——章头的「别的章负责」从它渲染")
+            self.assertFalse(str(ch["boundary"]).startswith("讲"),
+                             f"{ch['id']} 的分工写成了本章职责，会被改写成开场白")
             self.assertTrue(ch.get("questions"), f"{ch['id']} 没有读者问题")
 
 
@@ -397,3 +399,25 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheWritingMindOpensTheGuide(unittest.TestCase):
+    """作者动笔前读的第一段是读者与声音，范例承载它；审查从读者位置判指着文档说话。"""
+
+    EXT = REPO_ROOT / "doc" / "extensions"
+    DOCTALK = "本章 / 本节 / 这张图 / 下表 / 如下"
+
+    def test_story_write_opens_with_the_reader_and_a_neutral_example(self) -> None:
+        text = (SKILL / "phases" / "story-write.md").read_text(encoding="utf-8")
+        head = text.split("## 一、", 1)[0]
+        for needle in ("像向一个没参与的同事解释这件业务那样写", "章不写开场白，第一句就是业务",
+                       "### 开通流程", "不这样写：", self.DOCTALK):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, head)
+        for old in ("表前有一句引导", "恢复类内容用「时机 / 方案 / 走向」这类短段引导", "图要说清它解释的范围"):
+            with self.subTest(old=old):
+                self.assertNotIn(old, text)
+
+    def test_the_reviewer_names_document_talk_as_an_advisory(self) -> None:
+        overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        self.assertIn(f"正文里指着文档说话的句子——{self.DOCTALK}——与章开场白", overlay)

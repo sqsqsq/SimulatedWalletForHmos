@@ -1864,14 +1864,14 @@ class TheCandidateKeepsWhatIsNotOurs(Step8Case):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def test_only_the_generators_own_guide_lines_are_stripped(self) -> None:
-        body = ("<!-- story-draft:guide 读者问题：这一章要回答什么 -->\n\n"
+        body = ("<!-- story-draft:guide 读完这一章，读者要能回答：这一章要回答什么 -->\n\n"
                 "本章正文。\n\n"
                 "<!-- 作者自己的备注：这段等确认后再改 -->\n\n"
                 "```markdown\n<!-- story-draft:guide 举例：长这样 -->\n```\n")
         proc = self.put("背景", body)
         self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
         story = self.story_path.read_text(encoding="utf-8")
-        self.assertNotIn("读者问题：这一章要回答什么", story, "自有指导没剥掉")
+        self.assertNotIn("读者要能回答：这一章要回答什么", story, "自有指导没剥掉")
         self.assertIn("作者自己的备注", story, "作者写的注释被当成指导删掉了")
         self.assertIn("举例：长这样", story, "围栏里的样例被按指导清洗了")
 
@@ -2297,7 +2297,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.build("skeleton")
         draft = self.draft("05-业务流程.md").read_text(encoding="utf-8")
         self.assertNotIn("```mermaid", draft, "草稿又预放了一张图")
-        self.assertIn("读者问题", draft, "章头指引还得在：这一章要一张作者自己画的图")
+        self.assertIn("读者要能回答", draft, "章头指引还得在：这一章要一张作者自己画的图")
 
     def test_optional_form_quota_branches_are_gone(self) -> None:
         """可选形式（prose/list/labels/页面状态表）不再由草稿预置或机器核——
@@ -2319,15 +2319,15 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
 
     def test_the_draft_head_carries_the_contract_questions(self) -> None:
-        """章头是读者问题与主要职责的唯一送达面——合同改了它跟着变。"""
+        """章头是读者要能回答的问题与别章分工的唯一送达面——合同改了它跟着变。"""
         self.build("skeleton")
         draft = self.draft("04-业务方案.md").read_text(encoding="utf-8")
-        self.assertIn("<!-- story-draft:guide 读者问题：", draft)
+        self.assertIn("<!-- story-draft:guide 读完这一章，读者要能回答：", draft)
         contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts"
                                / "story-chapters.json").read_text(encoding="utf-8"))
         ch = next(c for c in contract["chapters"] if c["title"] == "业务方案")
         self.assertIn(ch["questions"][0], draft, "章头没从合同渲染读者问题")
-        self.assertIn(ch["boundary"], draft, "章头没从合同渲染主要职责")
+        self.assertIn(f"别的章负责：{ch['boundary']}；这里不重复", draft, "章头没从合同渲染别章分工")
 
     def test_a_written_chapter_gets_its_draft_back_from_the_current_story(self) -> None:
         """返修要有落点：成文登记删掉草稿目录，之后 verifier 报了阻断问题，

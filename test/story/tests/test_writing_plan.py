@@ -560,7 +560,8 @@ class TheExpressionScaffolding(PlanCase):
     def test_the_shell_asks_three_questions_and_spares_the_appendix(self) -> None:
         code, out = self.cmd("skeleton")
         shell = self.plan.read_text(encoding="utf-8")
-        self.assertIn("读者在这一章要判断什么；哪个关系必须用图、图后要点讲什么", shell)
+        self.assertIn("读者是谁、读完要做什么决定；哪几件事最容易误解", shell)
+        self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要讲哪几条判断", shell)
         self.assertIn("- 附录不写骨架：", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 

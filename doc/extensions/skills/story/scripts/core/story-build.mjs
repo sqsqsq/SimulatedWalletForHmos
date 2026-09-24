@@ -195,7 +195,7 @@ function cmdSkeleton(ctx) {
     fs.mkdirSync(path.dirname(ctx.storyPath), { recursive: true });
     fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
     result = `${ctx.contract.chapters.length} 章骨架 + ${made.length} 份章草稿`
-      + '（`AR/story-src/drafts/`，每份开头是本章的读者问题与必要种子）；'
+      + '（`AR/story-src/drafts/`，每份开头是读者读完这一章要能回答的问题与必要种子）；'
       + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
