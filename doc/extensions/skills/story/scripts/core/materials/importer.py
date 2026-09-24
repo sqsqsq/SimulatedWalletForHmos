@@ -9,7 +9,7 @@
     某类材料的目标文件全文 = 该类 inbox 文件集合（按文件名排序拼接）的转换结果。
 
 由此重跑幂等、改了重放即重转、某类清空则该类目标不再被本模块改写（不是清空——
-「不动」才是收敛语义）。覆盖前旧内容进 `.backup/`。
+「不动」才是收敛语义）。覆盖前旧内容进 `.backups/local/`。
 
 只用标准库：docx 是 zip + OOXML，图片抽取本就要走 `zipfile` + XML；再引第三方解析器
 等于结构走一套、图片走另一套，还给交付件添一项部署依赖。
@@ -425,10 +425,10 @@ def _backup_stem(feature_root: Path, target: Path) -> str:
 
 
 def backup(feature_root: Path, target: Path) -> Path | None:
-    """覆盖前留一份：被抹掉的内容必须有退路。沿用 archive 的 .backup/ 约定。"""
+    """覆盖前留一份：被抹掉的内容必须有退路。本地文档的备份在需求目录 .backups/local/。"""
     if not target.exists():
         return None
-    dest_dir = feature_root / ".backup"
+    dest_dir = feature_root / ".backups" / "local"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{_backup_stem(feature_root, target)}-{time.strftime('%Y%m%d%H%M%S')}.md"
     shutil.copyfile(target, dest)
@@ -436,8 +436,8 @@ def backup(feature_root: Path, target: Path) -> Path | None:
 
 
 def backups_of(feature_root: Path, target: Path) -> list[Path]:
-    """`target` 在 `.backup/` 里的全部副本，按文件名排序。命名只在 `backup` 这一处定。"""
-    return sorted((feature_root / ".backup").glob(f"{_backup_stem(feature_root, target)}-*.md"))
+    """`target` 在 `.backups/local/` 里的全部副本，按文件名排序。命名只在 `backup` 这一处定。"""
+    return sorted((feature_root / ".backups" / "local").glob(f"{_backup_stem(feature_root, target)}-*.md"))
 
 
 def demote_headings(markdown: str, shift: int) -> str:

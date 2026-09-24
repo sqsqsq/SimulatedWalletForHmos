@@ -35,7 +35,7 @@ from flow.state import (CONTRACT, FlowError, STORY, REVIEW, system_requirement,
 UPDATES = ("AR", "story-src", "updates")
 #: 镜像不复制的目录：本层自己的落点（复制它等于把镜像套进镜像），以及阶段报告与导入备份——
 #: 它们不是业务内容，而报告带 64 位哈希的文件名，套进更深的目录会超 Windows 的路径上限。
-MIRROR_SKIP = {UPDATES[-1], "reports", ".backup"}
+MIRROR_SKIP = {UPDATES[-1], "reports", ".backups"}
 #: 同样不复制的单个文件：framework 重验留下的过程件。
 MIRROR_SKIP_FILES = {"revalidation.json"}
 #: 除材料正文之外，判「跟上次比变了没有」要看的交付件——**人会直接动的那几份**。
@@ -254,7 +254,7 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
         olds = sorted(n for n, c in known.items() if n != new and (cls is None or c == cls))
         if olds:
             out.append({"new": new, "same_class": olds,
-                        "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backup/"})
+                        "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backups/local/"})
     return out
 
 

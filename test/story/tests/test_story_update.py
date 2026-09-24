@@ -108,13 +108,13 @@ class TheFirstRunHasNoBaseline(UpdateCase):
         """阶段报告、导入备份与重验过程件不是业务内容；报告的 64 位哈希文件名套进检查点目录
         还会超 Windows 路径上限（预跑 auto 的第二检查点快照第一次就是这么失败的）。"""
         for rel in ("spec/reports/verifier.material." + "a" * 64 + ".json",
-                    ".backup/prd-20260920.md", "spec/revalidation.json"):
+                    ".backups/local/prd-20260920.md", "spec/revalidation.json"):
             target = self.feature_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("{}", encoding="utf-8")
         before = self.updates / self.update()["update"] / "before"
         self.assertFalse((before / "spec" / "reports").exists(), "阶段报告进了镜像")
-        self.assertFalse((before / ".backup").exists(), "导入备份进了镜像")
+        self.assertFalse((before / ".backups").exists(), "导入备份进了镜像")
         self.assertFalse((before / "spec" / "revalidation.json").exists(), "重验过程件进了镜像")
         self.assertTrue((before / "spec" / "spec.md").is_file(), "排除得太宽，业务正文也没了")
 
@@ -636,7 +636,7 @@ class ClosedPhasesMustStayClosed(UpdateCase):
 
 
 class ANewVersionReplacesTheOldOriginal(UpdateCase):
-    """同一来源的新版本：旧原件移进 `.backup/` 再导入，目标正文只含新版。
+    """同一来源的新版本：旧原件移进 `.backups/local/` 再导入，目标正文只含新版。
 
     导入链的不变量是「某类目标全文 = 该类 inbox 原件按名拼接」，没有「替代」语义；
     旧原件留在 inbox 的话，`RR/prd.md` 就是两版拼在一起（预跑里 auto 为了躲开它把 v2 归成了 AR）。
@@ -661,8 +661,8 @@ class ANewVersionReplacesTheOldOriginal(UpdateCase):
         self.assertEqual([{"new": "RR-prd.md", "same_class": ["产品原稿-v1.md"]}],
                          [{k: h[k] for k in ("new", "same_class")} for h in hint],
                          "没提示同类的旧原件")
-        backup = self.feature_root / ".backup"
-        backup.mkdir(exist_ok=True)
+        backup = self.feature_root / ".backups" / "local"
+        backup.mkdir(parents=True, exist_ok=True)
         (inbox / "产品原稿-v1.md").rename(backup / "产品原稿-v1.md")
         self.import_all({"RR-prd.md": "RR"})
         prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
@@ -761,11 +761,20 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
                 for word in ("story_flow", "story-build", "core/"):
                     self.assertNotIn(word, proc.stdout + proc.stderr)
 
+    def refused(self, ar: str, *extra: str) -> tuple[int, str, str]:
+        """参数错：退出码、stdout、stderr——入口只写 stderr，不写 JSON。"""
+        proc = subprocess.run(
+            ["node", str(STORY_JS), "fetch", ar, "token", "--project-root", str(self.project), *extra],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+        return proc.returncode, proc.stdout, proc.stderr
+
     def test_a_local_feature_is_refused(self) -> None:
-        """本地单不挂在需求系统上：不取 token、不访问系统，当场说清楚。"""
-        code, receipt = self.fetch("local-demo", "--out", str(self.out))
+        """本地单不挂在需求系统上：不访问系统，当场说清楚。"""
+        code, out, err = self.refused("local-demo", "--out", str(self.out))
         self.assertNotEqual(0, code)
-        self.assertIn("本地需求", receipt["error"])
+        self.assertEqual("", out.strip())
+        self.assertIn("本地需求", err)
 
     def test_an_unknown_ticket_leaves_no_placeholder(self) -> None:
         code, receipt = self.fetch("AR-not-exist", "--out", str(self.out))
@@ -774,9 +783,10 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
 
     def test_out_is_required(self) -> None:
         """没有默认落点：默认一个的话，两个单同时更新会写进同一处。"""
-        code, receipt = self.fetch(AR)
+        code, out, err = self.refused(AR)
         self.assertNotEqual(0, code)
-        self.assertIn("--out", receipt["error"])
+        self.assertEqual("", out.strip())
+        self.assertIn("--out", err)
 
 
 if __name__ == "__main__":

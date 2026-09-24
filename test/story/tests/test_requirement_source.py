@@ -29,13 +29,13 @@ LOCAL = ["ISSUE-206", "local-demo", "myreq", "XAR1", "ar90001"]
 SYSTEM = ["AR90006", "AR-not-exist"]
 
 
-def run_story(*args: str, system: Path) -> tuple[int, dict]:
+def run_story(*args: str, system: Path) -> tuple[int, dict | None, str]:
+    """退出码、stdout 末行 JSON（参数错时没有，为 None）、stderr。"""
     proc = subprocess.run(["node", str(STORY_JS), *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=60,
                           env={**os.environ, "STORY_REQUIREMENT_SYSTEM_DIR": str(system)})
     rows = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
-    assert rows, proc.stdout + proc.stderr
-    return proc.returncode, json.loads(rows[-1])
+    return proc.returncode, (json.loads(rows[-1]) if rows else None), proc.stderr
 
 
 class TheAdapterServesOnlySystemRequirements(unittest.TestCase):
@@ -48,23 +48,27 @@ class TheAdapterServesOnlySystemRequirements(unittest.TestCase):
         for cmd in ("init", "fetch", "archive", "restore"):
             for no in LOCAL:
                 with self.subTest(cmd=cmd, no=no):
-                    code, out = run_story(cmd, no, "token", "--out", "x", "--project-root", self._tmp.name,
-                                          system=self.system)
+                    code, out, err = run_story(cmd, no, "token", "--out", "x",
+                                               "--project-root", self._tmp.name, system=self.system)
                     self.assertNotEqual(0, code)
-                    self.assertIn("本地需求", out["error"])
-                    self.assertNotIn("需求系统不可达", out["error"])
+                    self.assertIsNone(out, "参数错只写 stderr，不写 stdout JSON")
+                    self.assertIn("本地需求", err)
+                    self.assertNotIn("需求系统不可达", err)
 
     def test_a_system_requirement_that_cannot_be_read_stays_a_failure(self) -> None:
-        code, out = run_story("init", "AR-not-exist", "token", "--project-root", self._tmp.name,
-                              system=self.system)
+        code, out, _ = run_story("init", "AR-not-exist", "token", "--project-root", self._tmp.name,
+                                 system=self.system)
         self.assertNotEqual(0, code)
+        self.assertFalse(out["success"])
         self.assertIn("需求系统不可达", out["error"])
 
     def test_the_adapter_has_no_help_command(self) -> None:
-        code, out = run_story("help", system=self.system)
+        code, out, err = run_story("help", system=self.system)
         self.assertNotEqual(0, code)
-        self.assertIn("<init|archive|restore|fetch>", out["error"])
-        self.assertNotIn("help", out["error"])
+        self.assertIsNone(out)
+        usage = err.split("用法：", 1)[1]
+        self.assertIn("<init|archive|restore|fetch>", usage)
+        self.assertNotIn("help", usage)
 
 
 class BothSidesOfCoreJudgeTheSame(unittest.TestCase):

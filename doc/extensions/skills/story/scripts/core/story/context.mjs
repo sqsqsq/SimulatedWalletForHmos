@@ -259,7 +259,7 @@ export function strayFileProblems(ctx) {
   const problems = [];
   // ⑮ AR 根下只有交付文档：`AR/` 这一层的独立文件只有白名单那几个，辅助件进 `story-src/`。
   //
-  // **只判文件，目录一律放过**：`story-src/`、`.review-backup/`、`assets/` 都是正当的
+  // **只判文件，目录一律放过**：`story-src/`、`assets/` 这类目录都是正当的
   // 落点，限制它们没有意义。判的是「这一层散没散」，不是「这一层该有什么」——白名单里
   // 的文件缺了不报，各有各的判据管。
   {

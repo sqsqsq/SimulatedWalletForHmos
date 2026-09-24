@@ -1224,8 +1224,8 @@ class TestArRootStaysClean(StoryBuildCase):
                       "点名了还要说挪去哪——只说错了，作者不知道下一步做什么")
 
     def test_directories_are_left_alone(self) -> None:
-        """`story-src/`、`.review-backup/`、`assets/` 都是正当落点，限制它们没有意义。"""
-        for name in (".review-backup", "assets"):
+        """`story-src/`、`assets/` 这类目录都是正当落点，限制它们没有意义。"""
+        for name in ("story-src", "assets"):
             (self.ar_root() / name).mkdir(exist_ok=True)
         _, out = self.check_output()
         self.assertNotIn("不该在这一层", out)
@@ -3074,7 +3074,7 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         self.list_every_material()
         code, out = self.check_output()
         self.assertEqual(0, code, out)
-        self.assertNotIn(".backup", out)
+        self.assertNotIn(".backups", out)
 
     def test_the_spec_and_review_are_not_original_materials(self) -> None:
         """本轮自己生成的规格与记录不是材料——列进去就是把自证当依据。"""

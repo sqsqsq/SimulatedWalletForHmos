@@ -4,8 +4,8 @@
 按模板渲染出来，而那个目录早已不在——`init` 走到拉材料就崩，`review` 永远 `unchanged`，
 四个 Case 全靠测试驱动把材料预先铺进需求目录，**被测模型从来没有真的从系统拉过单**。
 
-现在它读一个真实存在的目录：查无此单会停住、归档会覆盖系统正文并留下历史版本、
-restore 回退那次覆盖、review 拉回评审人留在系统上的回稿。这里判的就是这四件事
+现在它读一个真实存在的目录：查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到
+需求目录的 `.backups/cloud/`、restore 用那份备份恢复系统正文。这里判的就是这几件事
 （KM-1…KM-4），因为它们是被测模型在实跑里唯一能观察到的「系统行为」。
 """
 from __future__ import annotations
@@ -143,7 +143,7 @@ class TestInit(SystemCase):
 
 
 class TestArchive(SystemCase):
-    """KM-2：归档是往系统上写，本地一个字节都不动。"""
+    """KM-2：归档是往系统上写；本地只多一份系统正文的备份，在 `.backups/cloud/`。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -159,11 +159,11 @@ class TestArchive(SystemCase):
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.notes_text,
                          (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
-        history = sorted((self.system / AR / "history").glob("design-*.md"))
-        self.assertEqual(1, len(history))
-        self.assertEqual(AR_TEXT, history[0].read_text("utf-8"))
-        self.assertEqual(str(receipt["backupPath"]),
-                         f"{AR}/history/{history[0].name}")
+        self.assertTrue(receipt["reviewArchived"])
+        backups = sorted((self.feature / ".backups" / "cloud").glob("design-*.md"))
+        self.assertEqual(1, len(backups))
+        self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
+        self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
 
     def test_only_markdown_reaches_the_system(self) -> None:
         """本地有图也不上传：系统不承载图片，链接更不该被改写。"""
@@ -177,13 +177,16 @@ class TestArchive(SystemCase):
         self.assertEqual({".json", ".md"}, set(uploaded))
         self.assertIn("../assets/ux/screen.png", (self.system / AR / "design.md").read_text("utf-8"))
 
-    def test_workspace_is_untouched(self) -> None:
+    def test_only_the_cloud_backup_is_written_locally(self) -> None:
         before = {p.relative_to(self.feature).as_posix(): p.read_bytes()
                   for p in sorted(self.feature.rglob("*")) if p.is_file()}
         self.story("archive", AR)
         after = {p.relative_to(self.feature).as_posix(): p.read_bytes()
                  for p in sorted(self.feature.rglob("*")) if p.is_file()}
-        self.assertEqual(before, after)
+        added = sorted(set(after) - set(before))
+        self.assertEqual(1, len(added), added)
+        self.assertTrue(added[0].startswith(".backups/cloud/design-"), added)
+        self.assertEqual(before, {k: v for k, v in after.items() if k in before})
 
     def test_missing_story_fails_without_touching_the_system(self) -> None:
         (self.feature / "AR" / "story.md").unlink()
@@ -204,11 +207,7 @@ class TestArchive(SystemCase):
 
 
 class TestRestore(SystemCase):
-    """KM-3：回退 archive 那次覆盖。
-
-    1.9.4 之前这里还有 `review`（把评审回稿直接写回 AR/review.md）。它随本版退场——
-    那条路假设「系统上的就是最新的」，而人可能刚在本地改过，覆盖就把他的修改吃掉了。
-    取评审内容改由 `fetch` 只读取到暂存区，见 test_story_update。"""
+    """KM-3：restore 用 `.backups/cloud/` 里的备份恢复系统正文，本地业务文件不动。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -224,10 +223,21 @@ class TestRestore(SystemCase):
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.story_text, (self.feature / "AR" / "story.md").read_text("utf-8"))
 
-    def test_restore_without_history_fails(self) -> None:
+    def test_restore_takes_the_latest_cloud_backup(self) -> None:
+        self.story("archive", AR)
+        cloud = self.feature / ".backups" / "cloud"
+        (cloud / "design-29990101000000.md").write_text("# 更晚的备份\n", encoding="utf-8")
+        proc = self.story("restore", AR)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("# 更晚的备份\n", (self.system / AR / "design.md").read_text("utf-8"))
+        self.assertEqual(2, len(list(cloud.glob("design-*.md"))), "restore 不该再备份一份")
+
+    def test_restore_without_backup_fails(self) -> None:
         proc = self.story("restore", AR)
         self.assertEqual(1, proc.returncode)
-        self.assertFalse(self.receipt(proc)["success"])
+        receipt = self.receipt(proc)
+        self.assertFalse(receipt["success"])
+        self.assertIn(".backups", receipt["error"])
 
 
 
@@ -283,8 +293,8 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
         installed = (self.project / "doc" / "extensions" / "skills" / "story"
                      / "scripts" / "adapters")
         installed.mkdir(parents=True)
-        for name in ("story.js", "token.js"):
-            (installed / name).write_bytes((SCRIPTS / name).read_bytes())
+        for source in SCRIPTS.glob("*.js"):
+            (installed / source.name).write_bytes(source.read_bytes())
         self.installed = installed / "story.js"
 
     def test_material_lands_in_the_features_dir_of_the_project(self) -> None:

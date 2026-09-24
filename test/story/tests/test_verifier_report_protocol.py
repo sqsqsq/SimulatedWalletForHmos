@@ -790,9 +790,9 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertNotIn("```````markdown", task)
 
     def test_the_task_says_where_the_overwritten_ar_is_kept(self) -> None:
-        """当前 AR/design.md 是提取稿：回查上游原话给 .backup/ 的位置，不让它用提取稿替。"""
+        """当前 AR/design.md 是提取稿：回查上游原话给 .backups/local/ 的位置，不让它用提取稿替。"""
         task = self.inject()
-        self.assertIn("`.backup/`", task)
+        self.assertIn("`.backups/local/`", task)
         self.assertIn("提取稿", task)
 
     def test_the_task_carries_the_recheck_list(self) -> None:

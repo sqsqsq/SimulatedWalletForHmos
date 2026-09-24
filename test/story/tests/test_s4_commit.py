@@ -5,7 +5,7 @@
 「重新盘点」——自己的输出把自己推回了未定状态，而永久忽略这份材料又会让上游真的
 更新时无人发现。
 
-所以提取稿另落一份，由 `complete --from` 提交：被覆盖的上游那一份先进 `.backup/`
+所以提取稿另落一份，由 `complete --from` 提交：被覆盖的上游那一份先进 `.backups/local/`
 （与导入覆盖正文同一条退路），再覆盖，再把材料基准挪到覆盖之后的现状。
 这一份锁的是这条顺序、它的失败语义，以及「哪些差异算提交自己写的、哪些仍算材料变了」。
 """
@@ -61,7 +61,7 @@ class S4Case(unittest.TestCase):
         self.design = self.feature_root / "AR" / "design.md"
         self.design.write_text(UPSTREAM_AR, encoding="utf-8")
         self.src = self.feature_root / "AR" / "story-src"
-        self.backup_dir = self.feature_root / ".backup"
+        self.backup_dir = self.feature_root / ".backups" / "local"
 
     # -- 驱动 ---------------------------------------------------------------
 
@@ -85,7 +85,7 @@ class S4Case(unittest.TestCase):
         return self.ok("status")["next"]
 
     def backups(self) -> list[Path]:
-        """被覆盖的 `AR/design.md` 在 `.backup/` 里的全部副本。"""
+        """被覆盖的 `AR/design.md` 在 `.backups/local/` 里的全部副本。"""
         return sorted(self.backup_dir.glob("AR-design.md-*.md"))
 
     def backup_upstream(self, text: str = UPSTREAM_AR) -> Path:
@@ -175,7 +175,7 @@ class TheCandidateDoesNotReopenItsOwnRound(S4Case):
                          "关卡记录的签署者不是人")
 
     def test_the_overwritten_upstream_goes_to_the_backup(self) -> None:
-        """上游预填被提取稿盖掉之前留一份：`.backup/` 是覆盖正文的通用退路。"""
+        """上游预填被提取稿盖掉之前留一份：`.backups/local/` 是覆盖正文的通用退路。"""
         self.ready_to_commit()
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual(1, len(self.backups()), "覆盖上游输入之前没有备份")
@@ -301,7 +301,7 @@ class InterruptedCommitsRetryTheSameCommand(S4Case):
         self.assertEqual("in_progress", self.contract()["status"])
 
     def test_an_unrelated_backup_does_not_count_as_this_input(self) -> None:
-        """`.backup/` 里别的内容不是本次被覆盖的那一份：按内容认，不按文件在不在认。"""
+        """`.backups/local/` 里别的内容不是本次被覆盖的那一份：按内容认，不按文件在不在认。"""
         self.ready_to_commit()
         self.backup_upstream("# 很早以前的另一份\n")
         result = self.ok("complete", "--from", "AR/story-src/design-draft.md")

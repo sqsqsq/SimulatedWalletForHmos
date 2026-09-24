@@ -35,10 +35,10 @@
    问**这一次要不要补料**，停下等他。
 4. 他放料进 `inbox/` 或答「不补」→ `decide --gate material_scope` 记原话 → 有新原件先导入 →
    `round` 登记到本轮（它不开新轮）。新原件是某份旧原件的新版本时，**导入前把 `inbox/` 里那份旧原件本身**
-   移到 `.backup/<旧原件名>-<时刻>`（不删；`inputs` 的 `superseded_hint` 会列出同类的已归类原件），
+   移到 `.backups/local/<旧原件名>-<时刻>`（不删；`inputs` 的 `superseded_hint` 会列出同类的已归类原件），
    清单里写明取代关系——同一类原件导入时按文件名拼接，不移就是两版拼在一起。
    导入前的目标文件（如 `RR/prd.md`）由导入链自己备份，不用你管：
-   `Move-Item inbox/<旧原件> .backup/<旧原件>-20260921T1030`
+   `Move-Item inbox/<旧原件> .backups/local/<旧原件>-20260921T1030`
 5. **比较并开这一轮**：`update --action prepare`。
 
 取回的三份正文与人补的料一样在 `inbox/` 里等导入，归类照 init 的做法由你判；本单的系统正文与本地 story

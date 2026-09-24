@@ -61,7 +61,7 @@ python doc/extensions/skills/story/scripts/core/import_sources.py --preview <doc
 这条对本 Skill 的所有脚本一致：**结构化数据走文件，参数只放标量**。
 
 **导入是整体覆盖**：某类的目标文件全文 = 该类材料按文件名排序拼接的转换结果；
-旧内容自动进 `.backup/`。某类没有材料则该类目标不动。图片抽到 `assets/<文件名>/`，
+旧内容自动进 `.backups/local/`。某类没有材料则该类目标不动。图片抽到 `assets/<文件名>/`，
 正文用 `../assets/<文件名>/…` 引用。
 
 **之后**：导过哪些原件由材料清单 `AR/story-src/materials.json` 的 `sources` 说明，

@@ -240,7 +240,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '- `AR/story-src/decisions.json` —— 已登记的判断：哪些定了、哪些还开着，未决的去向从它核');
   rows.push('', '### 另外这几份按需去读', '',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
-    '- `.backup/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
+    '- `.backups/local/` —— 收口提交覆盖 `AR/design.md` 之前的上游那一份（有才有）。'
       + '当前 `AR/design.md` 是提取稿，回查上游原话看它与 `RR`、`SR` 原文，不拿提取稿自证；',
     '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
   // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。

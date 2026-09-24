@@ -1,6 +1,6 @@
 """S4 提取稿的提交（`complete`）：候选核对、被覆盖输入的身份与备份。
 
-提交前先核候选是不是还是空骨架、章号是不是连续；提交时被覆盖的那份上游 AR 先进 `.backup/`
+提交前先核候选是不是还是空骨架、章号是不是连续；提交时被覆盖的那份上游 AR 先进 `.backups/local/`
 ——与导入覆盖正文同一条退路。提交之后 `AR/design.md` 里是本轮提取稿，上游预填的每一条
 由提取稿承接（`rules/ar_design_init.md`），被覆盖前的原文在备份里。
 """
@@ -89,7 +89,7 @@ def candidate_problems(feature_root: Path, feature: str, text: str) -> list[str]
 def known_identities(feature_root: Path, feature: str, contract: dict) -> list[str]:
     """被覆盖前那一份 AR 可以是谁：逐一列出内容摘要。
 
-    三类来源各有确定证据——`.backup/` 里已备份的上游那一份、`init` 落的空骨架（行尾两种
+    三类来源各有确定证据——`.backups/local/` 里已备份的上游那一份、`init` 落的空骨架（行尾两种
     形态都认）、契约里已登记的上一轮提取稿。这是「被覆盖的 AR 是谁」仅有的答案集：
     中间态识别与来历核对共用这一份枚举，出现新场景时加在这里，不在调用方各自猜。
     """
@@ -105,7 +105,7 @@ def known_identities(feature_root: Path, feature: str, contract: dict) -> list[s
 
 
 def backup_holding(feature_root: Path, sha: str | None) -> Path | None:
-    """`.backup/` 里内容就是 `sha` 的那一份被覆盖的 AR；没有返回 None。"""
+    """`.backups/local/` 里内容就是 `sha` 的那一份被覆盖的 AR；没有返回 None。"""
     for path in importer.backups_of(feature_root, feature_root / Path(*DESIGN)):
         if sha and registry.file_digest(path) == sha:
             return path
@@ -205,7 +205,7 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         raise FlowError("提取稿还不能提交：" + "；".join(problems))
     if retry and prior_sha not in identities:
         raise FlowError(
-            f"AR/design.md 的来历说不清（摘要 {prior_sha}）：既不是 .backup/ 里已备份的上游输入，"
+            f"AR/design.md 的来历说不清（摘要 {prior_sha}）：既不是 .backups/local/ 里已备份的上游输入，"
             "也不是 init 的空骨架或契约里登记过的提取稿。先确认它是谁写的，再跑收口——"
             "把一份来历不明的覆盖当成自己的写入放过，本轮真实的材料变化就被盖掉了")
 
