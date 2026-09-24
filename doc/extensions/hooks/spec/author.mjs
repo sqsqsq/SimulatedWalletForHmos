@@ -28,7 +28,7 @@ import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
-import { DECISION_FIELDS } from '../../skills/story/scripts/core/story/review.mjs';
+import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
@@ -99,6 +99,7 @@ function knowledgeSection(projectRoot, feature) {
     //（清单是目标仓的，机制不写死任何一个文件名）。
     '项目事实这几份，规则里提到「画像」「工程事实」时来这里找：',
     ...knowledge.facts.map(f => `- \`${where(f)}\`——${f.facets.join('、')}`),
+    '写 §9.4 之前，先从这几份里取本需求要用的业务统计语义与已有采集能力（写法见 `author.md` 第 4 步）。',
     '',
     // 规约的原文入口：判断前读命中域的整份文件——主表是索引，落法附注里的要求同样有效。
     '规约原文在这几份（判命中之前读该域整份，落法附注同样有效）：',
@@ -157,7 +158,38 @@ function acceptancePath(projectRoot, feature) {
     'acceptance.yaml'))}`;
 }
 
-function decisionSection(contract) {
+/**
+ * 当前登记的原文：按 open / settled 分组，每项的 id、状态、标题、该谁定与澄清正文照抄。
+ * 哪段正文受哪条影响由作者按原文判断——登记表里没有这份结构，脚本不从自然语言里推。
+ * 文件在而读不出条目是缺口，不当成零条。
+ */
+function currentDecisions(projectRoot, feature) {
+  const file = path.join(featureRoot(projectRoot, feature), 'AR', 'story-src', 'decisions.json');
+  const rel = relDisplay(projectRoot, file);
+  if (!fs.existsSync(file)) return ['**本次尚无登记**：按业务流程走的时候认出要人定的事，照上面的字段登记。'];
+  const list = decisionList(readJsonOrNull(file));
+  if (!list) {
+    return [`**\`${rel}\` 读不出条目**：文件不是合法 JSON，或顶层既不是 \`[ … ]\` 也不是 \`{"decisions": [ … ]}\`——`
+      + '先修好它再动笔，读不出不等于没有议题。'];
+  }
+  if (!list.length) return ['**当前登记为空**：按业务流程走的时候认出要人定的事，照上面的字段登记。'];
+  const rows = ['当前登记（原文照列；仍 open 的选择只写共同要求与受影响的条件，不写成确定的行为或验收）：', ''];
+  for (const status of ['open', 'settled']) {
+    const items = list.filter(d => String(d?.status ?? '') === status);
+    if (!items.length) continue;
+    rows.push(`### ${status}`, '');
+    for (const d of items) {
+      rows.push(`#### ${d.id ?? '（无 id）'}：${d.title ?? ''}`, '', `该谁定：${d.decider ?? '—'}`, '',
+        String(d.clarification ?? '').trim() || '（澄清正文空）', '');
+    }
+  }
+  const other = list.filter(d => !['open', 'settled'].includes(String(d?.status ?? '')));
+  if (other.length) rows.push(`状态不是 open / settled 的：${other.map(d => d?.id ?? '（无 id）').join('、')}——按字段要求改正。`, '');
+  rows.push('写完正文后按当时的登记再对一遍：新增或改过的议题，影响有没有写回功能、流程与验收处。');
+  return rows;
+}
+
+function decisionSection(projectRoot, feature, contract) {
   const categories = (contract.decision_categories ?? []).map(c => c.key).filter(Boolean);
   const fields = DECISION_FIELDS.map(([name, what]) => `\`${name}\`（${what}）`).join('、');
   return ['## 3. 决策登记（`AR/story-src/decisions.json`）',
@@ -174,7 +206,9 @@ function decisionSection(contract) {
     + '材料的哪一节、会议的哪个话题、评审记录里谁的哪一条。指不出来就是 `open`，'
     + '`decider` 写该谁定。`decider` 有名字只说明该谁定，不说明他定过。',
     '',
-    '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。'];
+    '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。',
+    '',
+    ...currentDecisions(projectRoot, feature)];
 }
 
 /**
@@ -376,7 +410,7 @@ function taskPackage(projectRoot, feature) {
     '',
     ...knowledgeSection(projectRoot, feature),
     '',
-    ...decisionSection(contract),
+    ...decisionSection(projectRoot, feature, contract),
     '',
     ...storyInputs(ctx, sourceStatus(ctx)),
     '',

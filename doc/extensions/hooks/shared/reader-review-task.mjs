@@ -14,6 +14,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
 import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 /**
  * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
@@ -65,7 +66,8 @@ function meetingTopicRows(src) {
 }
 
 /**
- * 登记成已定的那几条，连同澄清正文一起摆出来 —— **判的是「这个结论谁给的」**。
+ * 登记表的两问：仍开着的选择有没有被正文替人选了一边（按选项后果对照行为与验收判）；
+ * 登记成已定的那几条连同澄清正文一起摆出来 —— **判的是「这个结论谁给的」**。
  *
  * 只给 id 与标题（回看清单已有）判不了这件事：`settled` 的问题从来不在形态，
  * 在于结论没有来源——例如 `decider` 写「开发侧，确认归档动作已安排」、
@@ -74,11 +76,22 @@ function meetingTopicRows(src) {
  *
  * 一条都没有时也说出来：`settled` 一条不登记同样可能是漏登记。
  */
-function settledRows(decisionsPath) {
-  const list = readJsonOrNull(decisionsPath);
-  const all = Array.isArray(list) ? list : (Array.isArray(list?.decisions) ? list.decisions : null);
+function decisionRows(decisionsPath) {
+  const all = decisionList(readJsonOrNull(decisionsPath));
   if (!all) return ['', '### 登记成已定的那几条', '', '`AR/story-src/decisions.json` 读不出登记列表——这一节未取得，未验证。'];
+  const open = all.filter(d => d?.status === 'open');
   const settled = all.filter(d => d?.status === 'settled');
+  const out = ['', '### 仍开着的选择：受影响的行为有没有被写成已定', '',
+    open.length
+      ? '逐条按各选项的实际后果，对照 Spec、Story 与 `acceptance.yaml` 里的功能、流程、异常与验收：'
+        + '依赖这个选择的行为只写了共同要求与条件，还是已经替人选了一边。判的是后果，不是正文里有没有「待定」二字。'
+      : '本轮没有仍开着的条目。',
+    ...(open.length ? [''] : []), ...open.map(d => `- **${d.id ?? '（无编号）'}** ${String(d.title ?? '').trim()}`
+      + `（该谁定：${String(d.decider ?? '').trim() || '没写'}）`)];
+  return [...out, ...settledDetail(settled)];
+}
+
+function settledDetail(settled) {
   const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
     '逐条回材料、会议原话与评审记录核：这个结论有没有人真的表过态。'
     + '`decider` 有名字只说明该谁定；「已安排」「某某侧确认」是转述或计划，不是表态。'];
@@ -256,7 +269,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     rows.push(...meetingTopicRows(src));
   }
 
-  rows.push(...settledRows(planCtx.decisionsPath));
+  rows.push(...decisionRows(planCtx.decisionsPath));
 
   rows.push('', '### 上游图与 story 里承接它的图', '',
     '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；图种可以换，声称承接却丢了关系才算问题。',

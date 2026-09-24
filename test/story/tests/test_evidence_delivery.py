@@ -167,6 +167,18 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("未裁决", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
 
+    def test_open_decisions_are_listed_for_a_consequence_check(self) -> None:
+        src = self.src()
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
+        (src / "decisions.json").write_text(json.dumps([
+            {"id": "D-2", "status": "open", "title": "超时后是否自动重试", "decider": "需求方"},
+            {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}],
+            ensure_ascii=False), encoding="utf-8")
+        section = self.reader_task().split("### 仍开着的选择", 1)[1].split("### 登记成已定", 1)[0]
+        self.assertIn("按各选项的实际后果", section)
+        self.assertIn("- **D-2** 超时后是否自动重试（该谁定：需求方）", section)
+        self.assertNotIn("D-1", section, "已定的归下一节")
+
     def test_upstream_diagrams_sit_next_to_the_story_diagram_that_carries_them(self) -> None:
         (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "SR" / "design.md").write_text(

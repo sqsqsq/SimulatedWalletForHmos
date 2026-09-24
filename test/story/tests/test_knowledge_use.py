@@ -482,6 +482,18 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
         self.assertNotIn("chart-reporting", manifest)
         self.assertFalse((self.KNOWLEDGE / "facts" / "chart-reporting.md").exists())
 
+    def test_each_facet_keeps_its_own_heading_and_confirmation(self) -> None:
+        """业务语义在前、协议映射在后只是阅读顺序：每个事实面仍是独立 H2，未确认的面仍要求取证。"""
+        proc = node("--input-type=module", "-e",
+                    f"const k = (await import({as_url(EXT / 'hooks/shared/knowledge.mjs')}))"
+                    f".activeKnowledge({json.dumps(REPO_ROOT.as_posix())});"
+                    "process.stdout.write(JSON.stringify(k.facts.find(f => f.name === 'reporting')));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        fact = json.loads(proc.stdout)
+        self.assertEqual(["业务统计语义", "渠道与已有能力", "身份与 SDK 映射", "结果与字段映射",
+                          "业务扩展字段", "登记与复用", "使用参考"], fact["facets"])
+        self.assertEqual(["业务扩展字段"], fact["unconfirmed"])
+
     def test_codebase_facts_no_longer_repeats_reporting(self) -> None:
         text = (self.KNOWLEDGE / "facts" / "codebase-facts.md").read_text(encoding="utf-8")
         for token in ("WalletHAManager", "vocBuilder", "chartBuilder", "logAndReport"):
@@ -490,14 +502,14 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
 
     def test_every_channel_has_its_row(self) -> None:
         """项目的四种上报来源各一行：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一行。"""
-        overview = next(v for k, v in self.sections().items() if k.startswith("1."))
+        overview = next(v for k, v in self.sections().items() if "渠道与已有能力" in k)
         for channel in ("| VOC |", "| Chart |", "| BI |", "| 自动运维上报 |"):
             self.assertIn(channel, overview)
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
         sections = self.sections()
         voc = next(p for v in sections.values() for p in v.split("\n\n") if p.startswith("VOC "))
-        shared = next(v for k, v in sections.items() if k.startswith("1.")) + voc
+        shared = "".join(v for k, v in sections.items() if "渠道与已有能力" in k or "业务统计语义" in k) + voc
         # “终态”可用于解释渠道分工；这里只排除具体运维编码/枚举协议。
         for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_"):
             with self.subTest(token=token):

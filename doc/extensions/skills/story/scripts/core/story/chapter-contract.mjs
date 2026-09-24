@@ -295,7 +295,7 @@ function tableSeed(t, facts) {
 function appendixSeedRows(ch, facts) {
   const out = [];
   for (const name of ch.subsections ?? []) {
-    out.push(`### ${name}`, '', '{{一句：这一节登记什么的精确名称}}', '');
+    out.push(`### ${name}`, '', '{{用一句话说清适用对象、成立条件或业务影响}}', '');
     // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
     // 放了他就要在两处维护同一张表。
     for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');

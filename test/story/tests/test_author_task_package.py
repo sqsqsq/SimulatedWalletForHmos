@@ -197,6 +197,55 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
         self.assertTrue(chapters and cats, "合同里一个豁免都没有，这条夹具没有对象")
 
 
+class CurrentDecisionsReachTheAuthor(WorkspaceCase):
+    """决策登记原文送到作者：两种合法形状照列，空与缺如实说，读不出不当成零条，不替作者推断影响。"""
+
+    OPEN = {"id": "D-2", "status": "open", "category": "业务口径", "title": "超时后是否自动重试",
+            "decider": "需求方",
+            "clarification": "**选项**：A 自动重试一次；B 提示用户手动重试。\n\n**推荐**：B，依据是材料未给重试上限。"}
+    SETTLED = {"id": "D-1", "status": "settled", "category": "范围", "title": "本单只做签约",
+               "decider": "需求方", "clarification": "**依据**：范围关卡选了整体承载。"}
+
+    def write(self, raw: str) -> None:
+        (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(raw, encoding="utf-8")
+
+    def section(self) -> str:
+        out = self.task_package()
+        return out[out.index("## 3. 决策登记"):out.index("\n## 4.")]
+
+    def test_both_legal_shapes_reach_the_author_verbatim(self) -> None:
+        for raw in (json.dumps([self.OPEN, self.SETTLED], ensure_ascii=False),
+                    json.dumps({"decisions": [self.OPEN, self.SETTLED]}, ensure_ascii=False)):
+            with self.subTest(shape=raw[:1]):
+                self.write(raw)
+                got = self.section()
+                self.assertLess(got.index("### open"), got.index("### settled"))
+                self.assertIn("#### D-2：超时后是否自动重试", got)
+                self.assertIn("A 自动重试一次；B 提示用户手动重试", got, "选项原文要在")
+                self.assertIn("**推荐**：B，依据是材料未给重试上限。", got)
+                self.assertIn("该谁定：需求方", got)
+
+    def test_the_script_does_not_infer_which_text_is_affected(self) -> None:
+        self.write(json.dumps([self.OPEN], ensure_ascii=False))
+        got = self.section()
+        for phrase in ("受影响的章节", "影响段落", "impacts"):
+            self.assertNotIn(phrase, got)
+
+    def test_an_empty_list_and_a_missing_file_say_so(self) -> None:
+        self.write("[]")
+        self.assertIn("当前登记为空", self.section())
+        (self.feature_root / "AR" / "story-src" / "decisions.json").unlink()
+        self.assertIn("本次尚无登记", self.section())
+
+    def test_a_broken_file_is_not_zero_decisions(self) -> None:
+        for raw in ("{ not json", json.dumps({"items": []})):
+            with self.subTest(raw=raw):
+                self.write(raw)
+                got = self.section()
+                self.assertIn("读不出条目", got)
+                self.assertNotIn("当前登记为空", got)
+
+
 class SpecDiagramsReachTheAuthor(WorkspaceCase):
     """spec 里的图逐张给身份、主题与**原件坐标**，不指定放哪一章。
 

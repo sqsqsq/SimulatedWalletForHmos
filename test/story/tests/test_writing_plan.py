@@ -542,7 +542,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
 class TheExpressionScaffolding(PlanCase):
     """图三件套的脚手架、每章三问的空壳、附录章不要骨架。"""
 
-    GUIDES = ("作图：先把这段过程讲一遍", "作图：这里放", "作图：逐条")
+    GUIDES = ("作图：先把这段过程讲一遍", "作图：这里放", "作图：说明各分支成立的条件")
 
     def test_a_chosen_diagram_gets_three_guides_that_are_stripped_on_submit(self) -> None:
         self.write_plan(with_chapter("07-exceptions", SEQUENCE))
@@ -550,7 +550,7 @@ class TheExpressionScaffolding(PlanCase):
         draft = self.draft("07")
         text = draft.read_text(encoding="utf-8")
         at = [text.index(g) for g in self.GUIDES]
-        self.assertEqual(sorted(at), at, "三行指引的顺序是讲过程、放图、逐条讲判断")
+        self.assertEqual(sorted(at), at, "三行指引的顺序是讲过程、放图、说明分支")
         draft.write_text(text + "\n" + SEQ_FENCE, encoding="utf-8")
         code, out = self.cmd("chapter", "--chapter", "异常与恢复", "--from", str(draft))
         self.assertEqual(0, code, out)

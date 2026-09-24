@@ -384,17 +384,17 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
         text = (SKILL / "phases" / "story-write.md").read_text(encoding="utf-8")
         self.assertIn("**每张图三件套**", text)
         for old in ("图前一句承接", "图前那一句说清", "逐条复述箭头而没有新信息的那句话删掉", "不是常用推荐",
-                    "数据、配置与事件"):
+                    "数据、配置与事件", "图后逐条讲判断", "一句收束"):
             with self.subTest(old=old):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
         overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
-        for q in ("图前是不是把这段过程讲了一遍", "图后是不是逐条讲了分支", "图种合不合读者要判断的那件事",
+        for q in ("图前是不是把这段过程讲了一遍", "图后是不是说明了各分支成立的条件", "图种合不合读者要判断的那件事",
                   "一段是不是讲了几件独立的事"):
             with self.subTest(q=q):
                 self.assertIn(q, overlay)
-        self.assertTrue(any("图前讲过程、图后讲判断" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
+        self.assertTrue(any("图前讲过程、图后讲分支" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
 
 
 if __name__ == "__main__":

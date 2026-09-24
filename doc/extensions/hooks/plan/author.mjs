@@ -2,7 +2,7 @@
  * plan 阶段作者任务包 —— **本次要做什么**，从真源渲染。
  *
  * 与 `author.md` 的分工：那一页写原则与写法，这一份只出这一次的数据——命中哪几条规约、
- * 原文在哪、项目事实在哪、spec §9.4 写了什么、每个统计点要回答哪几问。
+ * 原文在哪、项目事实在哪、spec §9.4 写了什么、有哪些统计点；逐结果落实的作业只在 `author.md`。
  * 数据来源与 spec 任务包相同：激活清单、`spec/knowledge-use.yaml` 与 spec 本身。
  *
  *     node doc/extensions/hooks/plan/author.mjs --feature <名>
@@ -12,14 +12,11 @@ import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
-import { specStatPoints } from '../shared/stat-points.mjs';
+import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
+import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 const SELF = 'doc/extensions/hooks/plan/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/plan-sections.md';
-//: 每个统计点都要回答的几问：前五问与项目知识无关，最后一问只在项目知识定义了协议字段时才有。
-const QUESTIONS = ['责任方法（决定这个结果的那个方法，写成契约里的「接口.方法」）', '本端取得结果的调用或查询',
-  '去重（什么算同一次）与耗时起止', '验证：正常、失败及各实际结果各怎么核', '与 spec 这一行的结果逐一对应',
-  '项目知识定义的身份、编码、分类、外部错误码：给实际值，或写清缺哪一段、由谁按什么规则定'];
 
 function knowledgeSection(projectRoot, feature) {
   const knowledge = activeKnowledge(projectRoot);
@@ -41,16 +38,19 @@ function knowledgeSection(projectRoot, feature) {
 }
 
 function statPointSection(projectRoot, feature) {
-  const spec = readTextOrNull(path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md'));
+  const dir = featureRoot(projectRoot, feature);
+  const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
-  const rows = ['## 2. 埋点：spec §9.4 与要逐点回答的几问', ''];
-  if (!points) return [...rows, 'spec 没有埋点一节——先回 spec 补上，不涉及也要写一行「不涉及：<依据>」。'];
-  rows.push('spec 原文：', '', '````markdown', points.text, '````', '');
-  if (points.na || !points.groups.some(g => g.points.length)) {
-    return [...rows, 'spec 写的是不涉及：plan 的埋点小节写一行「本需求不涉及：<依据>」。'];
+  const state = statDesignState(points);
+  const rows = ['## 2. 埋点：spec §9.4 的统计设计与逐结果落实', ''];
+  if (state === 'missing') {
+    return [...rows, isStoryFeature(dir) ? 'spec 没有埋点一节：上游没交出统计设计——先回 spec 补上，不涉及也要写一行「不涉及：<依据>」。'
+      : '本需求没走 /story，spec 未提供统计设计：按本阶段原有要求设计，不另起埋点小节。'];
   }
-  rows.push(`形状见 \`${TEMPLATE}\` 的「埋点」小节。每个统计点都回答这几问：`, '',
-    ...QUESTIONS.map((q, i) => `${i + 1}. ${q}`), '', '统计点：', '');
+  rows.push('spec 原文（指标、流程、步骤与业务结果都在这里，先通读）：', '', '````markdown', points.text, '````', '');
+  if (state === 'na') return [...rows, 'spec 写的是不涉及：核这条依据站得住，plan 的埋点小节写一行「本需求不涉及：<依据>」。'];
+  if (state === 'empty') return [...rows, 'spec 的埋点一节没有指标点位表：统计设计结构待补——先回 spec 在每个指标下补上带「统计点」列的表。'];
+  rows.push(`按 \`${SELF}\`「四、埋点」的作业逐个业务结果落实，形状见 \`${TEMPLATE}\` 的「埋点」小节。各指标的统计点：`, '');
   for (const g of points.groups) rows.push(`- **${g.title}**：${g.points.join('、')}`);
   return rows;
 }

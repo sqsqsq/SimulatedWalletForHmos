@@ -24,7 +24,8 @@ import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
-import { planStatRows, pointKey, specStatPoints } from './stat-points.mjs';
+import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
+import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
@@ -45,35 +46,49 @@ const SOURCE_OF_TRUTH = {
 /** 审查先走通的产物与它交给下游的东西：spec 交 plan 设计，plan 交编码实现与验证。 */
 const WALK = {
   spec: { what: '业务章与承载专项的那一章', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
+    + '关键结论有源材料或已定决定支持，`decisions.json` 里仍 open 的选择没有写成无条件的行为或验收；'
+    + '统计设计讲清每个指标观察的流程、步骤与实际结果及本端何时得知；'
     + '命中的规约要求讲清某项专项时，按那份知识核承载章里的相应设计' },
   plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
-    handoff: '编码能据以实现与验证：实体与方法、参数来源、调用时机、观察来源与验证；'
-      + '每个统计点有责任方法与结果来源，项目知识定义的协议字段有实际值或精确待决；'
+    handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
+      + '选中交互模式要的用户动作与业务状态在 use-cases 里实际存在；'
+      + '每个统计点的每种结果有责任方法、结果来源与参数来源，项目知识定义的协议字段有实际值或具体候选——'
+      + '候选已设计而未登记与根本没给值是两回事，分开判；'
       + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
 };
 
 /**
- * plan：spec §9.4 的每个统计点与 plan 埋点小节里同名的那一行并列，对不上的两边各自单列。
- * 审查逐点看的是这张表；spec 不涉及时说明本项不适用。
+ * plan：spec §9.4 的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
+ * 同一统计点被几个指标共用时，每个指标下都列出同一组 plan 行。spec 没给统计设计时如实说缺在哪。
  */
 function statPointTable(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
-  if (!points || points.na || !points.groups.some(g => g.points.length)) {
-    return [`spec §9.4 ${points?.na ? `写的是「${points.na}」` : '没有统计点'}：埋点这一项不适用，核 plan 是否也写了不涉及。`];
+  const state = statDesignState(points);
+  if (state === 'missing') {
+    return [isStoryFeature(dir) ? 'spec 缺埋点一节：上游没有交出统计设计，plan 的埋点无从承接——按 spec 缺口判。'
+      : '本需求没走 /story，spec 未提供统计设计：埋点这一项按本阶段原有要求审，不另立缺口。'];
   }
+  if (state === 'na') return [`spec 埋点一节写的是「${points.na}」：核这条依据是否成立、plan 是否同样写了不涉及。`];
+  if (state === 'empty') return ['spec 埋点一节没有指标点位表：统计设计结构待补——按 spec 缺口判，plan 行无从对齐。'];
   const plan = planStatRows(readTextOrNull(path.join(dir, 'plan', 'plan.md')) ?? '');
-  const byKey = new Map((plan?.rows ?? []).map(r => [pointKey(r.point), r]));
-  const rows = ['| 指标 | spec 的这一行 | plan 的这一行 |', '|---|---|---|'];
+  const byKey = new Map();
+  for (const r of plan?.rows ?? []) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
+  const consumed = new Set();
+  const rows = ['| 指标 | spec 的这一行 | plan 的结果行 |', '|---|---|---|'];
   for (const g of points.groups) {
     for (const r of g.rows) {
-      const got = byKey.get(pointKey(r[0]));
-      byKey.delete(pointKey(r[0]));
-      rows.push(`| ${cell(g.title)} | ${cell(r.join(' ／ '))} | ${got ? cell(got.cells.join(' ／ ')) : '（plan 没有这一行）'} |`);
+      const key = pointKey(r[0]);
+      const got = byKey.get(key) ?? [];
+      consumed.add(key);
+      rows.push(`| ${cell(g.title)} | ${cell(r.join(' ／ '))} | `
+        + `${got.length ? got.map(x => cell(x.cells.join(' ／ '))).join('<br>') : '（plan 没有这个统计点）'} |`);
     }
   }
-  for (const got of byKey.values()) rows.push(`| — | （spec 没有这个统计点） | ${cell(got.cells.join(' ／ '))} |`);
+  for (const [key, got] of byKey) {
+    if (!consumed.has(key)) for (const x of got) rows.push(`| — | （spec 没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
+  }
   return rows;
 }
 
@@ -229,6 +244,8 @@ export default async function preVerifier(ctx) {
     `1. **按业务流程走通${(WALK[phase] ?? { what: '本阶段产物' }).what}**：实际会发生的正常、异常与未执行路径各走到哪，`
       + '结果由谁、凭什么得到。走不通的地方点名断在哪一步。',
     `2. **核本阶段交付够不够下游用**：${(WALK[phase] ?? { handoff: '下游能据以继续' }).handoff}。未知要具体而真实。`,
+    '   缺口按对下游的影响定级：下游要重新决定接口结构、核心业务行为或必要取值的，相关条目 FAIL；'
+      + '措辞与局部优化才是 advisory / WARN。概述写得长不等于交付够用。',
     '3. **核知识判断与设计一致**，上表是追溯入口：命中的要求在设计里落地了吗，落点是不是真的做这件事的实体（借挂、夹带点名）；',
     '   不适用的依据能回查到命中条件里的事实吗（「不涉及」不是依据）；豁免有没有理由、影响与补偿；',
     '   项目事实登记的能力复用了吗；模式候选的单元与信号、采用模式的角色投影指向真实的分支、步骤与实体吗。',

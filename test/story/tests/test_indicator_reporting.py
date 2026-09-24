@@ -1,13 +1,14 @@
 """埋点以指标为单位：spec §9.4 的结构、plan 埋点逐统计点落实、作者任务包与审查并列。
 
 锁住：
-  ① spec 门禁只核 9.4 的结构——总述在首个指标前，表都在某个指标（####）下，每个指标至少一行统计点；
-     写「不涉及：<依据>」的整节不判；不核指标名、统计点名与行数；
-  ② plan 门禁核三件事：spec 的每个统计点在 plan 埋点小节有行；责任方法能解析到契约的
-     `interfaces[].methods[]`；spec 把规约落在某个统计点上时，该点的责任方法挂了那条 must。
+  ① spec 门禁只核 9.4 的结构——总述在首个指标前，表都在某个指标（####）下，每个指标有带「统计点」列的点位表；
+     说明表不算点位，统计点列不必在第一列；写「不涉及：<依据>」的整节不判；不核指标名、统计点名与结果写法；
+  ② plan 门禁核三件事：spec 的每个统计点在 plan 埋点小节有结果行（一点可以多行）；每条结果行的责任方法
+     能解析到契约的 `interfaces[].methods[]`；spec 把规约落在某个统计点上时，该点结果行的责任方法挂了那条 must。
      照抄 spec 表的 plan（没有责任方法）FAIL，逐点落实的形状 PASS；spec 不涉及时显式未执行；
-  ③ plan 任务包把 §9.4 原文与每个统计点要回答的几问逐条列出；
-  ④ 审查任务把 spec 的每个统计点与 plan 的那一行按名并列，对不上的两边各自单列；
+     走 /story 而 spec 缺埋点一节或没有点位表时报上游缺口，没走 /story 的按原范围跳过；
+  ③ plan 任务包给 §9.4 原文与各指标的统计点，逐结果落实的作业只在作者页；
+  ④ 审查任务把 spec 的每个统计点与 plan 的全部结果行按名并列，共用的点每个指标下都看得到，对不上的两边各自单列；
   ⑤ 激活清单里没有项目事实时，任务包、门禁、审查照常，只说明没有事实可核。
 全部在中性工作区里跑：机制不认识任何项目知识专名。
 """
@@ -87,6 +88,15 @@ ROWS = """| 统计点 | 结果 | 本端何时得知 | 责任方法 | 去重与�
 | 提交预约 | 成功 / 失败 / 用户取消 | 提交请求返回时 | BookingFlow.submit | 同一幂等键只记一次；耗时=请求起止 | 三种结果各一条 |
 | 到场核销 | 已核销 | 刷新列表回查状态时 | BookingRepo.refreshList | 同一预约只记一次 | 刷新前后状态变化各一条 |"""
 
+#: 同一统计点按结果分行：提交预约三种结果各一行，顺序即作者写的顺序。
+MULTI = """| 统计点 | 结果 | 责任方法 | 验证 |
+|---|---|---|---|
+| 查询时段 | 有时段 / 无时段 / 查询失败 | BookingRepo.querySlots | 三种各一条 |
+| 提交预约 | 成功 | BookingFlow.submit | 预期一条成功 |
+| 提交预约 | 失败 | BookingFlow.submit | 预期一条失败 |
+| 提交预约 | 用户取消 | BookingFlow.submit | 预期一条取消 |
+| 到场核销 | 已核销 | BookingRepo.refreshList | 一条 |"""
+
 CONTRACTS = """interfaces:
   - name: BookingRepo
     methods:
@@ -135,7 +145,21 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
 
     def test_an_indicator_without_rows_is_named(self) -> None:
         got = self.problems("总述一句。\n\n#### 提交成功率（提交流程）\n\n衡量提交成功的比例。")
-        self.assertTrue(any("没有统计点行" in p for p in got), got)
+        self.assertTrue(any("下没有统计点" in p for p in got), got)
+
+    def test_an_explanation_table_is_not_a_point_table(self) -> None:
+        got = self.problems("总述一句。\n\n#### 提交成功率（提交流程）\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |")
+        self.assertTrue(any("下没有统计点" in p for p in got), got)
+
+    def test_the_point_column_need_not_come_first(self) -> None:
+        body = ("总述一句。\n\n#### 提交成功率（提交流程）\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
+                "| 实际业务结果 | 统计点 | 本端获知时机 |\n|---|---|---|\n| 已受理、拒绝 | 提交/请求 | 响应返回时 |")
+        self.assertEqual([], self.problems(body))
+        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs",
+                 f"m.specStatPoints({json.dumps('### 9.4 埋点' + chr(10) + chr(10) + body)})")
+        self.assertEqual(["提交/请求"], got["groups"][0]["points"])
+        self.assertEqual(["提交/请求", "已受理、拒绝", "响应返回时"], got["groups"][0]["rows"][0])
+        self.assertIn("发起的提交", got["text"], "说明表留在原文里给模型读")
 
     def test_not_applicable_is_a_conclusion(self) -> None:
         self.assertEqual([], self.problems("不涉及：本需求没有需要统计的业务步骤。"))
@@ -180,6 +204,11 @@ class ReportingCase(nk.NeutralKnowledgeCase):
                        "process.stdout.write(out.promptFragments.join('\\n'));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
+
+    def drop_stat_section(self) -> None:
+        text = self.spec_path.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
+        self.spec_path.write_text(text[:start] + text[end:], encoding="utf-8")
 
     def drop_facts(self) -> None:
         """激活清单里去掉全部项目事实：知识换成没有事实的一份。"""
@@ -227,7 +256,36 @@ class ThePlanLandsEveryStatisticPoint(ReportingCase):
         start, end = text.index("### 9.4 埋点"), text.index("## 10.")
         self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
                                   + text[end:], encoding="utf-8")
-        self.assertIn("埋点逐统计点落实（spec 的埋点一节不涉及或没有统计点）", self.plan_check())
+        self.assertIn("埋点逐统计点落实（spec 的埋点一节写了不涉及）", self.plan_check())
+
+    def test_one_point_may_have_a_row_per_result(self) -> None:
+        self.write_plan(MULTI)
+        message = self.plan_check()
+        for phrase in ("没有对应行", "没写责任方法", "找不到", "没挂这条 must"):
+            self.assertNotIn(phrase, message)
+
+    def test_a_bad_method_is_named_on_its_own_result_row(self) -> None:
+        self.write_plan(MULTI.replace("| 用户取消 | BookingFlow.submit |", "| 用户取消 | BookingFlow.cancelSubmit |"))
+        message = self.plan_check()
+        self.assertIn("「提交预约」第 3 条结果行的责任方法 BookingFlow.cancelSubmit", message)
+        self.assertNotIn("第 1 条结果行", message, "另外两行合法")
+
+    def test_a_story_spec_without_the_section_is_an_upstream_gap(self) -> None:
+        self.drop_stat_section()
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text("{}", encoding="utf-8")
+        self.assertIn("spec 没有埋点一节，plan 的埋点无从承接", self.plan_check())
+
+    def test_a_direct_spec_without_the_section_keeps_its_scope(self) -> None:
+        self.drop_stat_section()
+        self.assertIn("本需求没走 /story，spec 未提供统计设计", self.plan_check())
+
+    def test_a_section_without_point_tables_is_a_structure_gap(self) -> None:
+        text = self.spec_path.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
+        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n总述一句。\n\n#### 预约成功率（预约流程）\n\n只有一段话。\n\n"
+                                  + text[end:], encoding="utf-8")
+        self.assertIn("没有指标点位表", self.plan_check())
 
 
 class TheAuthorAndReviewerGetThePoints(ReportingCase):
@@ -236,7 +294,8 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
     def test_the_task_package_lists_each_point_with_its_questions(self) -> None:
         out = self.task_package()
         self.assertIn("衡量从提交预约到服务方确认的比例", out, "spec 原文没照列")
-        self.assertEqual(1, out.count("责任方法（决定这个结果的那个方法"), "问题只列一次")
+        self.assertIn("「四、埋点」的作业逐个业务结果落实", out)
+        self.assertNotIn("每个统计点都回答这几问", out, "作业只在作者页写一处")
         self.assertIn("- **预约成功率（预约流程）**：查询时段、提交预约", out)
         self.assertIn("- **到场核销率（核销流程）**：到场核销", out)
         self.assertIn("neutral-facts.md", out)
@@ -247,7 +306,24 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
         self.assertIn("埋点逐统计点并列", task)
         row = next(l for l in task.split("\n") if l.startswith("| 预约成功率") and "提交预约" in l)
         self.assertIn("BookingFlow.submit", row, "spec 行旁边没有 plan 的那一行")
-        self.assertIn("（plan 没有这一行）", task, "对不上的统计点没有单列")
+        self.assertIn("（plan 没有这个统计点）", task, "对不上的统计点没有单列")
+
+    def test_the_reviewer_sees_every_result_row_in_order(self) -> None:
+        self.write_plan(MULTI)
+        row = next(l for l in self.review_task().split("\n") if l.startswith("| 预约成功率") and "提交预约" in l)
+        self.assertLess(row.index("成功"), row.index("失败"))
+        self.assertLess(row.index("失败"), row.index("用户取消"), "三行都在、顺序保留")
+
+    def test_a_point_shared_by_two_indicators_shows_under_both(self) -> None:
+        text = self.spec_path.read_text(encoding="utf-8").replace(
+            "| 到场核销 | 服务方扫码核销 |", "| 提交预约 | 提交预约请求 | 成功 | 提交请求返回时 | 已有 | 同上 |\n| 到场核销 | 服务方扫码核销 |")
+        self.spec_path.write_text(text, encoding="utf-8")
+        self.write_plan(MULTI)
+        task = self.review_task()
+        rows = [l for l in task.split("\n") if "提交预约" in l and l.startswith(("| 预约成功率", "| 到场核销率"))]
+        self.assertEqual(2, len(rows), rows)
+        self.assertTrue(all("用户取消" in r for r in rows), "第二个指标没看到同一组 plan 行")
+        self.assertNotIn("（plan 没有这个统计点）", task)
 
     def test_an_identity_written_as_a_rule_reference_reaches_the_reviewer(self) -> None:
         """把身份写成引用知识条款：并列表原样带过去，overlay 按没落地判。"""
@@ -264,8 +340,8 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
                                   + text[end:], encoding="utf-8")
         self.write_use(neutral=JUDGEMENT.replace("contract: 提交预约", "contract: 预约接口"))
         self.assertIn("plan 的埋点小节写一行「本需求不涉及：<依据>」", self.task_package())
-        self.assertIn("埋点这一项不适用", self.review_task())
-        self.assertIn("埋点逐统计点落实（spec 的埋点一节不涉及或没有统计点）", self.plan_check())
+        self.assertIn("核这条依据是否成立", self.review_task())
+        self.assertIn("埋点逐统计点落实（spec 的埋点一节写了不涉及）", self.plan_check())
 
     def test_without_project_facts_everything_still_runs(self) -> None:
         self.drop_facts()

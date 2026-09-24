@@ -34,6 +34,7 @@ import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mj
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
+import { specStatPoints } from '../shared/stat-points.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -358,26 +359,28 @@ function strayProse(body) {
 }
 
 /**
- * 埋点一节的形状：总述在首个指标（`####`）之前，表都在某个指标下，每个指标至少一行统计点。
- * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名与行数。
+ * 埋点一节的形状：总述在首个指标（`####`）之前，表都在某个指标下，每个指标有带「统计点」列的点位表且至少一行。
+ * 点位按任务包与审查同一份解析（`specStatPoints`）取，说明表不算点位。
+ * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名与结果写法。
  */
 export function indicatorShape(where, body) {
   const lines = body.map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
   if (/^不涉及[:：]\s*\S/.test(lines[0] ?? '')) return [];
   const problems = [];
-  const rows = new Map();
-  let h4 = null;
+  let h4 = false;
   let lead = false;
   for (const l of lines) {
-    if (/^####\s/.test(l)) { h4 = l.replace(/^#+\s*/, ''); rows.set(h4, 0); continue; }
+    if (/^####\s/.test(l)) { h4 = true; continue; }
     if (!l.startsWith('|')) { if (!h4) lead = true; continue; }
     if (!h4) { problems.push(`${where}有统计点表不在指标小标题（####）下——一个指标一个 H4，表放在它下面`); return problems; }
-    if (!/^\|[\s:|-]+\|?$/.test(l)) rows.set(h4, rows.get(h4) + 1);
   }
-  if (!rows.size) problems.push(`${where}没有指标小标题（####）——以指标为单位组织，每个指标一个 H4 与它的统计点表`);
-  if (rows.size && !lead) problems.push(`${where}首个指标之前缺总述——两三句写采集什么、为谁用、已有能力覆盖的不重复列、字段的隐私边界`);
-  for (const [title, n] of rows) {
-    if (n < 2) problems.push(`${where}的指标「${title}」下没有统计点行——写出要算它需要的统计点，或去掉这个小标题`);
+  const groups = specStatPoints(['### 埋点', ...body].join('\n'))?.groups ?? [];
+  if (!groups.length) problems.push(`${where}没有指标小标题（####）——以指标为单位组织，每个指标一个 H4 与它的统计点表`);
+  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述——两三句写采集什么、为谁用、已有能力覆盖的不重复列、字段的隐私边界`);
+  for (const g of groups) {
+    if (!g.points.length) {
+      problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
+    }
   }
   return problems;
 }

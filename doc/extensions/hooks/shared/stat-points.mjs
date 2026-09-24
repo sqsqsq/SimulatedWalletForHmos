@@ -1,8 +1,8 @@
 /**
  * 统计点 —— spec「埋点」一节与 plan「埋点」小节的读取，任务包、门禁与审查共用这一份。
  *
- * 只认模板结构：spec 的埋点一节下每个 `####` 是一个指标，表的第一列是统计点名；plan 的埋点小节里
- * 表头含「统计点」的那一列是统计点、含「责任方法」的那一列是它的责任方法。
+ * 只认模板结构：spec 的埋点一节下每个 `####` 是一个指标，表头含「统计点」的表是它的点位表；plan 的埋点小节里
+ * 表头含「统计点」的那一列是统计点、含「责任方法」的那一列是它的责任方法，同一统计点可以有多行结果。
  * 不认任何知识文件名、渠道名、结果枚举或编码——那些只在项目知识里。
  */
 import { headingEnd, parseDocument, tablesWithin } from '../../skills/story/scripts/core/story/document.mjs';
@@ -31,7 +31,8 @@ function notApplicable(doc, from, to) {
 
 /**
  * spec 的埋点一节：`{ na, text, groups: [{ title, points, rows }] }`，没有这一节返回 null。
- * `text` 是这一节的原文（给任务包与审查照列），`points` 是各指标表第一列的统计点名，`rows` 是对应的整行。
+ * `text` 是这一节的原文（给任务包与审查照列，说明表也在里面），`points` 是各指标点位表里的统计点名，
+ * `rows` 是对应的整行——统计点那一格挪到首位，其余格保持原来的相对顺序。
  */
 export function specStatPoints(specText) {
   const s = section(specText, 3);
@@ -40,10 +41,25 @@ export function specStatPoints(specText) {
   const h4s = doc.headings.filter(x => x.level === 4 && x.at > s.h.at && x.at < to);
   const groups = h4s.map((h, k) => {
     const end = h4s[k + 1]?.at ?? to;
-    const rows = tablesWithin(doc, h.at + 1, end).flatMap(t => t.rows).filter(r => clean(r[0]));
+    const rows = [];
+    for (const t of tablesWithin(doc, h.at + 1, end)) {
+      const p = t.header.findIndex(c => clean(c).includes('统计点'));
+      if (p < 0) continue;
+      for (const r of t.rows) if (clean(r[p])) rows.push([r[p], ...r.slice(0, p), ...r.slice(p + 1)]);
+    }
     return { title: h.raw, points: rows.map(r => clean(r[0])), rows };
   });
   return { na: notApplicable(doc, from, to), text: doc.lines.slice(s.h.at, to).join('\n'), groups };
+}
+
+/**
+ * spec 统计设计的状态：没有这一节 `missing`、写了不涉及 `na`、有节而没有点位表 `empty`、有点位 `ready`。
+ * 三个消费者（plan 作者包、plan 门禁、审查任务）各按自己的读者说话，状态只在这里判。
+ */
+export function statDesignState(points) {
+  if (!points) return 'missing';
+  if (points.na) return 'na';
+  return points.groups.some(g => g.points.length) ? 'ready' : 'empty';
 }
 
 /**

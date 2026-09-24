@@ -31,8 +31,9 @@ import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
 import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
-import { planStatRows, pointKey, specStatPoints } from '../shared/stat-points.mjs';
+import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { cellByHeader, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
@@ -454,36 +455,46 @@ export default guard('plan', async (ctx) => {
   {
     const spec = readTextOrNull(path.join(featureRoot(ctx.projectRoot, ctx.feature), 'spec', 'spec.md'));
     const points = spec === null ? null : specStatPoints(spec);
-    const wantPoints = points && !points.na ? points.groups.flatMap(g => g.points) : [];
+    const state = statDesignState(points);
+    const wantPoints = state === 'ready' ? points.groups.flatMap(g => g.points) : [];
     const plan = planStatRows(planText);
-    if (!wantPoints.length) {
-      statGroup.skipped.push({ what: '埋点逐统计点落实', why: points ? 'spec 的埋点一节不涉及或没有统计点' : 'spec 没有埋点一节' });
+    const story = isStoryFeature(featureRoot(ctx.projectRoot, ctx.feature));
+    if (state === 'missing' && story) {
+      statGroup.problems.push('spec 没有埋点一节，plan 的埋点无从承接——先回 spec 补上统计设计；确实不涉及也写一行「不涉及：<依据>」');
+    } else if (state === 'empty') {
+      statGroup.problems.push('spec 的埋点一节没有指标点位表——先回 spec 在每个指标 H4 下补上带「统计点」列的表，plan 再逐点承接');
+    } else if (!wantPoints.length) {
+      statGroup.skipped.push({ what: '埋点逐统计点落实', why: state === 'na' ? 'spec 的埋点一节写了不涉及' : '本需求没走 /story，spec 未提供统计设计' });
     } else if (!plan) {
       statGroup.problems.push(`spec 的埋点列了 ${wantPoints.length} 个统计点，plan.md 没有「埋点」小节`
-        + '——在服务层接口定义章下逐个统计点写责任方法、本端怎么取得结果、去重与验证');
+        + '——在服务层接口定义章下每个统计点列出适用结果及责任方法，允许多行');
     } else {
-      const byKey = new Map(plan.rows.map(r => [pointKey(r.point), r]));
-      const missing = wantPoints.filter(p => !byKey.has(pointKey(p)));
+      const have = new Set(plan.rows.map(r => pointKey(r.point)));
+      const missing = wantPoints.filter(p => !have.has(pointKey(p)));
       if (missing.length) {
-        statGroup.problems.push(`spec 埋点的这些统计点在 plan 埋点小节没有对应行：${missing.join('、')}——按统计点名一点一行`);
+        statGroup.problems.push(`spec 埋点的这些统计点在 plan 埋点小节没有对应行：${missing.join('、')}——每个统计点列出适用结果及责任方法，允许多行`);
       }
       if (noContract) {
         statGroup.skipped.push({ what: '责任方法与统计义务', why: noContract });
       } else {
         const declared = new Set(declaredMethods(contracts));
         const rulesAt = statRulesByPoint(ctx.projectRoot, ctx.feature, wantPoints);
+        const seen = new Map();
         for (const r of plan.rows) {
+          const k = (seen.get(pointKey(r.point)) ?? 0) + 1;
+          seen.set(pointKey(r.point), k);
+          const at = `「${r.point}」第 ${k} 条结果行`;
           if (!r.methods.length) {
-            statGroup.problems.push(`「${r.point}」没写责任方法——写成「接口.方法」，指向 contracts.yaml 里决定这个结果的那个方法`);
+            statGroup.problems.push(`${at}没写责任方法——写成「接口.方法」，指向 contracts.yaml 里决定这个结果的那个方法`);
             continue;
           }
           const unknown = r.methods.filter(m => !declared.has(m));
           if (unknown.length) {
-            statGroup.problems.push(`「${r.point}」的责任方法 ${unknown.join('、')} 在 contracts.yaml 的 interfaces[].methods[] 里找不到`);
+            statGroup.problems.push(`${at}的责任方法 ${unknown.join('、')} 在 contracts.yaml 的 interfaces[].methods[] 里找不到`);
           }
           for (const rule of rulesAt.get(pointKey(r.point)) ?? []) {
             if (!r.methods.some(m => obligations.some(o => o.rule === rule && o.entityPath === `interfaces.${m}`))) {
-              statGroup.problems.push(`spec 把 ${rule} 落在统计点「${r.point}」上，它的责任方法（${r.methods.join('、')}）没挂这条 must`
+              statGroup.problems.push(`spec 把 ${rule} 落在统计点「${r.point}」上，${at}的责任方法（${r.methods.join('、')}）没挂这条 must`
                 + '——决定结果的方法各自扛统计义务，上报封装只组装发送');
             }
           }
