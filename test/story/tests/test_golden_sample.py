@@ -38,12 +38,12 @@ GOLDEN_FINGERPRINTS = {
     # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "1c7568fc6a5fa11a",
+    "story-金样-AR90004.md": "c2666e63fba19444",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
     # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
     # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
-    "story-金样-AR90006.md": "c9b4702693314adf",
+    "story-金样-AR90006.md": "56dc05e56144f710",
     "story-金样-AR90006-说明.md": "3d27773f42a858cf",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
@@ -84,7 +84,7 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 430, "chapters": 10, "subsections": 34,
+SHAPE = {"lines": 437, "chapters": 10, "subsections": 34,
          "table_rows": 165, "diagrams": 1, "images": 2}
 
 

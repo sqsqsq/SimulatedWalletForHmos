@@ -29,6 +29,8 @@ const FORMS = {
 };
 //: 「形式：图」是任一种图；点名图种时写中文名或 mermaid 首个声明都认，点名了正文就只认那一种。
 const ANY_DIAGRAM = '图';
+//: 附录章在空壳里的那一行：它不要骨架，这一行只是说明，删掉也不报缺。
+const APPENDIX_NOTE = '附录不写骨架：写章时补每节一句业务定位、说明段与材料贡献';
 const LINE = {
   note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
@@ -47,17 +49,20 @@ const formWords = () => `${Object.keys(FORMS).join(' / ')} / ${ANY_DIAGRAM}`
 export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '',
     `<!-- 骨架每章一段：正文要有的每个小节写一行 \`#### 标题\`，下面用 \`- 答：\` 写这一节解决读者的`
-    + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点；'
+    + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
     + `要用某种形式承载就单起一行 \`形式：<${formWords()}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
     + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
+    + '选了图的，描述写两半：图讲的范围与关系，图后要点要解释哪几条分支或交接；'
     + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{本需求最容易被误解的对象与关系是什么，读者先理解哪一件才能理解后文；'
     + '依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
   for (const ch of contract.chapters ?? []) {
-    rows.push(`### ${ch.id}`,
-      `- {{正文章名：${ch.title}。读者在这一章先得到什么、往下怎么展开，以及它下面的小节与形式}}`, '');
+    // 附录的四节由合同定、机器区由投影写，写作设计里没有要它安排的东西
+    rows.push(`### ${ch.id}`, ch.appendix ? `- ${APPENDIX_NOTE}`
+      : `- {{正文章名：${ch.title}。读者在这一章要判断什么；哪个关系必须用图、图后要点讲什么；`
+        + '其余用表、列表或叙述各讲什么}}', '');
   }
   return rows.join('\n');
 }
@@ -180,12 +185,14 @@ function readSkeleton(plan, lines, range, fenced, say) {
       say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架里只写 - 说明行、形式： 与 ####、##### 标题`);
     }
   }
-  for (const id of known.keys()) {
-    if (!plan.skeletons.has(id)) say(`的「## ${PARTS.skeleton}」缺「### ${id}」`);
+  for (const [id, c] of known) {
+    if (!plan.skeletons.has(id) && !c.appendix) say(`的「## ${PARTS.skeleton}」缺「### ${id}」`);
   }
   for (const sk of plan.skeletons.values()) {
     const listed = sk.sections.length + sk.forms.length;
-    if (!listed && !sk.notes.length) say(`的「### ${sk.id}」没有骨架——本章不涉及也写一行 - 不涉及：<理由>`);
+    if (!listed && !sk.notes.length && !known.get(sk.id).appendix) {
+      say(`的「### ${sk.id}」没有骨架——本章不涉及也写一行 - 不涉及：<理由>`);
+    }
     if (sk.notApplicable !== null && listed) say(`的「### ${sk.id}」写了不涉及，却还留着小节或形式——二选一`);
     const contractCh = known.get(sk.id);
     const subs = contractCh.subsections ?? [];

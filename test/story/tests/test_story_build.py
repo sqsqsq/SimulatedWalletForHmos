@@ -2314,7 +2314,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
     def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
         """附录的机器区由投影写，草稿里不放——放了他就要在两处维护同一张表。"""
         draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
-        self.assertIn("{{一句这一节给评审者看什么}}", draft)
+        self.assertIn("{{一句：这一节登记什么的精确名称}}", draft)
         self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
 
@@ -2410,7 +2410,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         """作者填完草稿里属于他的那几处。"""
         draft = self.draft("10-附录.md")
         text = (draft.read_text(encoding="utf-8")
-                .replace("{{一句这一节给评审者看什么}}", "给评审看这一节。")
+                .replace("{{一句：这一节登记什么的精确名称}}", "接口与数据的精确名称在这里。")
                 .replace("{{这份材料贡献了什么}}", "给出了业务规则"))
         draft.write_text(text, encoding="utf-8")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
@@ -2424,7 +2424,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         for name in ("技术约定·接口", "技术约定·数据", "技术约定·配置", "技术约定·埋点", "改动边界", "规约判定"):
             self.assertIn(f"story-build:begin {name} ", appendix)
         self.assertIn("getAutoTopupPolicy", appendix)
-        self.assertIn("给评审看这一节。", appendix, "作者写的目的句丢了")
+        self.assertIn("接口与数据的精确名称在这里。", appendix, "作者写的定位句丢了")
         self.assertIn("给出了业务规则", appendix, "材料贡献句丢了")
 
     def test_the_machine_zone_holds_no_placeholder(self) -> None:
@@ -2455,7 +2455,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         story = self.story()
         self.assertIn("改过的依据", story, "重投影没跟上真源")
         self.assertEqual(6, story.count("story-build:begin"), "重投影后机器区数量变了")
-        self.assertIn("给评审看这一节。", story)
+        self.assertIn("接口与数据的精确名称在这里。", story)
         self.assertIn("给出了业务规则", story)
 
     def test_the_verdict_basis_comes_from_the_source(self) -> None:

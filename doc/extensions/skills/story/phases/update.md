@@ -233,8 +233,7 @@ cd framework/harness && npx ts-node harness-runner.ts --revalidate --feature <�
    且没有 `verifier_closure`、`readiness_signals` 里**没有** `semantic_not_reverified`——
    它还在就说明报告没被采纳。**仅凭退出码 0 或「已闭环」字样不够**，要读盘。
 5. 报了阻断项就按正常返修改；材料因此又变了，重新取最新的请求再审一次，
-   **不要回退去用历史 PASS**。verifier 判 PASS 时给的建议（advisory）**不改材料、不再 revalidate、
-   不再派审**，记进该阶段的 `notes.md`——只有阻断项才返修。
+   **不要回退去用历史 PASS**。当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。
 
 **派审期间不动被审的材料**：业务正文、决定，以及被纳入材料视图的 `update-notes.md`，
 从生成请求到第 4 步读完 summary 之间一个字节都不改。为了补一句「已审」去改刚审过的正文，

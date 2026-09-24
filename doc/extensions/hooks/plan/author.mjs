@@ -16,10 +16,10 @@ import { specStatPoints } from '../shared/stat-points.mjs';
 
 const SELF = 'doc/extensions/hooks/plan/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/plan-sections.md';
-//: 每个统计点要回答的几问：前五问与项目知识无关，最后一问只在项目知识定义了协议字段时才有。
+//: 每个统计点都要回答的几问：前五问与项目知识无关，最后一问只在项目知识定义了协议字段时才有。
 const QUESTIONS = ['责任方法（决定这个结果的那个方法，写成契约里的「接口.方法」）', '本端取得结果的调用或查询',
-  '去重（什么算同一次）与耗时起止', '验证：正常、失败及各实际结果各怎么核', '与 spec 这一行的结果逐一对应'];
-const PROTOCOL = '项目知识定义的身份、编码、分类、外部错误码：给实际值，或写清缺哪一段、由谁按什么规则定';
+  '去重（什么算同一次）与耗时起止', '验证：正常、失败及各实际结果各怎么核', '与 spec 这一行的结果逐一对应',
+  '项目知识定义的身份、编码、分类、外部错误码：给实际值，或写清缺哪一段、由谁按什么规则定'];
 
 function knowledgeSection(projectRoot, feature) {
   const knowledge = activeKnowledge(projectRoot);
@@ -49,12 +49,9 @@ function statPointSection(projectRoot, feature) {
   if (points.na || !points.groups.some(g => g.points.length)) {
     return [...rows, 'spec 写的是不涉及：plan 的埋点小节写一行「本需求不涉及：<依据>」。'];
   }
-  rows.push(`形状见 \`${TEMPLATE}\` 的「埋点」小节。每个统计点回答：`, '');
-  for (const g of points.groups) {
-    rows.push(`**${g.title}**`, '');
-    for (const p of g.points) rows.push(`- ${p}：${QUESTIONS.join('；')}；${PROTOCOL}`);
-    rows.push('');
-  }
+  rows.push(`形状见 \`${TEMPLATE}\` 的「埋点」小节。每个统计点都回答这几问：`, '',
+    ...QUESTIONS.map((q, i) => `${i + 1}. ${q}`), '', '统计点：', '');
+  for (const g of points.groups) rows.push(`- **${g.title}**：${g.points.join('、')}`);
   return rows;
 }
 

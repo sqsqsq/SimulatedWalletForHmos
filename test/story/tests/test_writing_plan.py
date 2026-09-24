@@ -461,7 +461,7 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         text = with_chapter("05-flow", "- 本章主线：x\n形式：图")
         self.write_plan(with_chapter("08-acceptance", ACCEPTANCE_LINE, text))
         self.cmd("skeleton")
-        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
+        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图：这里放"))
         acceptance = self.draft("08").read_text(encoding="utf-8")
         self.assertEqual(1, acceptance.count("| 编号 |"), "合同那张表的起点没给或给了两次")
         self.assertNotIn("场景与前置", acceptance, "模板的列被当成了表头")
@@ -477,7 +477,7 @@ class TheSkeletonBecomesTheDraft(PlanCase):
             self.draft(prefix).write_text("先写到这里。\n", encoding="utf-8")
         _, out = self.cmd("skeleton")
         self.assertEqual(1, out.count("| 编号 |"), f"表的起点给了不止一次：{out[-1200:]}")
-        self.assertEqual(1, out.count("作图："), f"图的起点给了不止一次：{out[-1200:]}")
+        self.assertEqual(1, out.count("作图：这里放"), f"图的起点给了不止一次：{out[-1200:]}")
 
 
 #: 骨架点名要时序图的一节；围栏开头可以先有空行与 `%%` 注释，之后才是声明。
@@ -519,7 +519,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
         self.write_plan(with_chapter("07-exceptions", SEQUENCE + "\n形式：图"))
         self.cmd("skeleton")
         draft = self.draft("07").read_text(encoding="utf-8")
-        self.assertEqual(1, draft.count("作图："), draft)
+        self.assertEqual(1, draft.count("作图：这里放"), draft)
         self.assertIn("时序图", draft, "留下的不是更具体的那项")
         code, out = self.put("异常与恢复", self.section("没有图。\n"))
         self.assertEqual(1, code, out)
@@ -529,7 +529,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
     def test_with_the_contract_diagram_the_gap_is_reported_once(self) -> None:
         self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：时序图"))
         self.cmd("skeleton")
-        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图："))
+        self.assertEqual(1, self.draft("05").read_text(encoding="utf-8").count("作图：这里放"))
         code, out = self.put("业务流程", "提交之后等回执。\n")
         self.assertEqual(1, code, out)
         self.assertEqual(1, out.count("没有图") + out.count("没有时序图"), f"同一个缺口报了不止一次：{out}")
@@ -537,6 +537,40 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
         self.assertEqual(1, code, out)
         self.assertIn("「业务流程」没有时序图", out, "章里已有流程图时没核图类型")
         self.assertEqual(0, self.put("业务流程", "提交之后等回执。\n\n" + SEQ_FENCE)[0])
+
+
+class TheExpressionScaffolding(PlanCase):
+    """图三件套的脚手架、每章三问的空壳、附录章不要骨架。"""
+
+    GUIDES = ("作图：先把这段过程讲一遍", "作图：这里放", "作图：逐条")
+
+    def test_a_chosen_diagram_gets_three_guides_that_are_stripped_on_submit(self) -> None:
+        self.write_plan(with_chapter("07-exceptions", SEQUENCE))
+        self.cmd("skeleton")
+        draft = self.draft("07")
+        text = draft.read_text(encoding="utf-8")
+        at = [text.index(g) for g in self.GUIDES]
+        self.assertEqual(sorted(at), at, "三行指引的顺序是讲过程、放图、逐条讲判断")
+        draft.write_text(text + "\n" + SEQ_FENCE, encoding="utf-8")
+        code, out = self.cmd("chapter", "--chapter", "异常与恢复", "--from", str(draft))
+        self.assertEqual(0, code, out)
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertNotIn("story-draft:guide", story, "指引进了归档件")
+
+    def test_the_shell_asks_three_questions_and_spares_the_appendix(self) -> None:
+        code, out = self.cmd("skeleton")
+        shell = self.plan.read_text(encoding="utf-8")
+        self.assertIn("读者在这一章要判断什么；哪个关系必须用图、图后要点讲什么", shell)
+        self.assertIn("- 附录不写骨架：", shell)
+        self.assertIn("没有就不写", shell, "待核只在有时写")
+
+    def test_an_appendix_without_skeleton_is_not_reported(self) -> None:
+        text = BASE
+        start = text.index("### 10-appendix\n")
+        nxt = text.find("\n### ", start + 1)
+        self.write_plan(text[:start] + (text[nxt + 1:] if nxt >= 0 else ""))
+        code, out = self.cmd("skeleton")
+        self.assertNotIn("10-appendix", out, out[-800:])
 
 
 class TenChaptersHandOverToTheRecheck(PlanCase):

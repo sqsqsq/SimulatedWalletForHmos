@@ -236,9 +236,9 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
     def test_the_task_package_lists_each_point_with_its_questions(self) -> None:
         out = self.task_package()
         self.assertIn("衡量从提交预约到服务方确认的比例", out, "spec 原文没照列")
-        for point in ("查询时段", "提交预约", "到场核销"):
-            self.assertIn(f"- {point}：责任方法", out)
-        self.assertIn("预约成功率（预约流程）", out)
+        self.assertEqual(1, out.count("责任方法（决定这个结果的那个方法"), "问题只列一次")
+        self.assertIn("- **预约成功率（预约流程）**：查询时段、提交预约", out)
+        self.assertIn("- **到场核销率（核销流程）**：到场核销", out)
         self.assertIn("neutral-facts.md", out)
 
     def test_the_reviewer_sees_both_sides_of_every_point(self) -> None:

@@ -46,7 +46,7 @@ spec §9.4 列了统计点时，「服务层接口定义」章下写「埋点」
 
 `cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <需求名>`
 
-派审之后又改了审查材料的，先重跑这条命令取新的请求再派。verifier 报告写好后读 summary，当前报告还没被采纳时再完整跑一次这条命令采纳它；已采纳就按 `NEXT:` 走，报告有阻断项或材料又变了先按真实反馈处理（采纳的判据见 [update.md](../../skills/story/phases/update.md)「与闭环、修正入口的关系」第 4 步）。
+当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。verifier 报告写好后读 summary，当前报告还没被采纳时再完整跑一次这条命令采纳它；已采纳就按 `NEXT:` 走，报告有阻断项或材料又变了先按真实反馈处理（采纳的判据见 [update.md](../../skills/story/phases/update.md)「与闭环、修正入口的关系」第 4 步）。
 
 ## 六、门禁会拦什么
 

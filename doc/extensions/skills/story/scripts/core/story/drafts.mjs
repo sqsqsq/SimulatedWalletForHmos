@@ -50,10 +50,17 @@ function guideLine(text, label = '') {
   return `<!-- ${GUIDE_MARK} ${label ? `${label}：` : ''}${one} -->`;
 }
 
-/** 选定的图只留一行作图提示：参与方与消息由作者按本需求的关系画，脚本不预放。 */
-const diagramHint = (at, syntax) => guideLine(`${at ? `「${at}」这一节` : '这一章'}要一张你在写作设计里选定的`
-  + (syntax ? `${DIAGRAM_SYNTAXES[syntax].name}——mermaid 围栏首个声明写 ${DIAGRAM_SYNTAXES[syntax].heads[0]}`
-    : '图——用画图语言的围栏') + '，按本需求要解释的关系画', '作图');
+/**
+ * 选定的图铺三行指引（图三件套）：图前讲过程、放图、图后逐条讲判断。参与方与消息由作者按本需求的关系画，
+ * 脚本不预放；三行都是指引，提交时剥掉。
+ */
+const diagramHint = (at, syntax) => [
+  guideLine('先把这段过程讲一遍：谁在什么条件下做什么、结果怎样', '作图'),
+  guideLine(`这里放${at ? `「${at}」这一节` : '这一章'}选定的`
+    + (syntax ? `${DIAGRAM_SYNTAXES[syntax].name}——mermaid 围栏首个声明写 ${DIAGRAM_SYNTAXES[syntax].heads[0]}`
+      : '图——用画图语言的围栏') + '；承接上游的图，围栏第一行写图源标记', '作图'),
+  guideLine('逐条：这条分支里读者要知道的条件、责任、后果；只有一条路径时一句收束', '作图'),
+];
 
 /**
  * 选定的表与列表：只说这里要完成什么，不预生成表头或项目。

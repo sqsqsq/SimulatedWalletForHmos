@@ -159,7 +159,7 @@ export function renderSkeleton(projectRoot, knowledge) {
       continue;
     }
     rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
-      '    #   落点二选一：contract 写 §9 登记过的名字，impact 写实际影响对象');
+      '    #   落点二选一：contract 写 §9 登记过的名字（落在统计点上的写统计点名），impact 写实际影响对象');
   }
   rows.push('', '# 设计模式候选：**只登记不选型**（选型是 plan 的事）。');
   // 一个候选都不在册时不摆填写占位：那个空条目问的是「这一段像哪个模式」，

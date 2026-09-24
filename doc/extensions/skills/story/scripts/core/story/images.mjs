@@ -145,7 +145,7 @@ export function imageProblems(ctx, storyText) {
         } else if (!usedBy.has(i) && !declined) {
           problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
             + '在 story 里没被引用，也没登记为什么不用——'
-            + '属于本需求就在讲它的那一章引用（图前一句说清它画的是什么），'
+            + '属于本需求就在讲它的那一章引用（图前先把这段过程讲一遍，图后逐条讲判断），'
             + '不属于本需求就跑 ' + mark(m.paths[0]) + ' --unused "<为什么不用它>"`；'
             + '归档件不为一张不用的图留正文');
         }

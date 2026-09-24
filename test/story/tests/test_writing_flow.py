@@ -151,7 +151,7 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
 class TestChapterDimensions(unittest.TestCase):
     def test_repetition_is_one_of_the_dimensions(self) -> None:
         dims = CONTRACT["verdicts"]["chapter_dimensions"]
-        self.assertEqual(7, len(dims), "逐章维度数变了：改维度要连着改这一行")
+        self.assertEqual(8, len(dims), "逐章维度数变了：改维度要连着改这一行")
         self.assertTrue(any("一处完整表述" in d for d in dims),
                         "缺「同一件事只在一处完整表述」这一维")
 
@@ -358,6 +358,41 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
             self.assertTrue(str(ch.get("boundary", "")).strip(),
                             f"{ch['id']} 没有内容边界——章头的「主要职责」从它渲染")
             self.assertTrue(ch.get("questions"), f"{ch['id']} 没有读者问题")
+
+
+
+class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
+    """图三件套与交付门分流：作者面、审查面各说同一件事，旧说法退出。"""
+
+    EXT = REPO_ROOT / "doc" / "extensions"
+    SPLIT = "当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法"
+
+    def test_the_split_rule_is_the_same_sentence_in_every_place(self) -> None:
+        places = [self.EXT / "hooks" / "plan" / "author.md", SKILL / "phases" / "spec.md", SKILL / "phases" / "update.md"]
+        sentences = set()
+        for f in places:
+            text = f.read_text(encoding="utf-8")
+            with self.subTest(file=f.name):
+                self.assertNotIn("派审之后又改了审查材料", text, "旧的一律重派还在")
+                at = text.index(self.SPLIT)
+                sentences.add(text[at:text.index("才取新请求再派审。", at)])
+        self.assertEqual(1, len(sentences), sentences)
+
+    def test_story_write_states_the_triple_and_no_old_sentence(self) -> None:
+        text = (SKILL / "phases" / "story-write.md").read_text(encoding="utf-8")
+        self.assertIn("**每张图三件套**", text)
+        for old in ("图前一句承接", "图前那一句说清", "逐条复述箭头而没有新信息的那句话删掉", "不是常用推荐",
+                    "数据、配置与事件"):
+            with self.subTest(old=old):
+                self.assertNotIn(old, text)
+
+    def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
+        overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        for q in ("图前是不是把这段过程讲了一遍", "图后是不是逐条讲了分支", "图种合不合读者要判断的那件事",
+                  "一段是不是讲了几件独立的事"):
+            with self.subTest(q=q):
+                self.assertIn(q, overlay)
+        self.assertTrue(any("图前讲过程、图后讲判断" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
 
 
 if __name__ == "__main__":

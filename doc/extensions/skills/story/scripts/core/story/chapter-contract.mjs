@@ -192,11 +192,11 @@ export function pickedStructureNames(ch) {
  * 表头与作图提示放在骨架写的位置；合同另有、骨架没列的必要小节接在后面；
  * 骨架写「不涉及」的章只放那一句。术语行/材料清单行来自输入（facts 已解析），这里
  * 不重读源文件。附录不预填机器正文——机器区归投影，作者改的是真源。
- * 图不生成节点：只留一行作图提示（`diagramHint`）。
+ * 图不生成节点：只铺图三件套的三行指引（`diagramHint`）。
  *
  * @param {object} ch 合同章（可已并入写作设计骨架）
  * @param {object} facts 入口解析好的当前输入：terms、materialListRows、materialListName
- * @param {{diagramHint?: Function, guide?: (note: string) => string}} [options]
+ * @param {{diagramHint?: (at: string, syntax?: string) => string[], guide?: (note: string) => string}} [options]
  * @returns {string[]} markdown 行
  */
 export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}) {
@@ -209,7 +209,7 @@ export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}
   // 两者都不生成内容——列、节点与项目由写章的人按原文定。
   const hint = (at, under = '') => [
     ...(ch.structure?.diagrams ?? []).filter(d => same(d.at, at) && same(d.under, under))
-      .flatMap(d => (diagramHint ? [diagramHint(under || at, d.syntax), ''] : [])),
+      .flatMap(d => (diagramHint ? [...diagramHint(under || at, d.syntax), ''] : [])),
     ...(ch.structure?.forms ?? []).filter(f => same(f.at, at) && same(f.under, under))
       .flatMap(f => (formHint ? [formHint(under || at, f), ''] : [])),
   ];
@@ -263,7 +263,7 @@ export function missingPickedSeeds(ch, view, { diagramHint, formHint } = {}) {
   }
   for (const d of (ch.structure?.diagrams ?? []).filter(x => x.selected)) {
     if (hasDiagram(view, d.at, d.syntax, d.under ?? '') === true) continue;
-    push(d.at, diagramHint ? [diagramHint(d.under || d.at, d.syntax), ''] : []);
+    push(d.at, diagramHint ? [...diagramHint(d.under || d.at, d.syntax), ''] : []);
   }
   for (const f of ch.structure?.forms ?? []) {
     if (contractCovers(ch, f)) continue;         // 起点由上面那张合同表给，一处只给一次
@@ -291,11 +291,11 @@ function tableSeed(t, facts) {
   return renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]);
 }
 
-/** 附录：各节标题 + 每节一句目的；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
+/** 附录：各节标题 + 每节一句业务定位；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
 function appendixSeedRows(ch, facts) {
   const out = [];
   for (const name of ch.subsections ?? []) {
-    out.push(`### ${name}`, '', '{{一句这一节给评审者看什么}}', '');
+    out.push(`### ${name}`, '', '{{一句：这一节登记什么的精确名称}}', '');
     // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
     // 放了他就要在两处维护同一张表。
     for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');

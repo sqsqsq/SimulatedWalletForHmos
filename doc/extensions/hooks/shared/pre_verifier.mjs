@@ -219,9 +219,9 @@ export default async function preVerifier(ctx) {
     '',
     ...table,
     '',
-    ...(phase === 'plan' && knowledge ? [
+    ...(phase === 'plan' ? [
       '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature), '',
-      knowledge.facts.length ? '项目事实入口（协议字段、登记位置与已有能力按这几份核）：'
+      knowledge?.facts.length ? '项目事实入口（协议字段、登记位置与已有能力按这几份核）：'
         + knowledge.facts.map(f => '`' + relDisplay(ctx.projectRoot, path.join(extensionRoot(ctx.projectRoot), f.file)) + '`').join('、')
         : '激活清单里没有项目事实：协议字段不核值，只核与知识无关的几件事。', ''] : []),
     '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',

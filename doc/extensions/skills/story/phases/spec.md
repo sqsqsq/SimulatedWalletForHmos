@@ -68,7 +68,7 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
   **调用只带 request JSON**；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件。
   写好之后读 summary：这份报告**还没被采纳**时，再完整跑一次 ④ 的 harness 采纳它——这是 ⑤ 的收尾，不是回到 ④ 重走链（采纳的判据、为什么不能用 `--sync-closure` 见 [update.md](update.md)「与闭环、修正入口的关系」第 4 步）；
   已采纳就进 ⑥。报告有阻断项或材料又变了，按真实反馈与 `NEXT:` 处理，不拿历史 PASS 代替。
-  派审之后又改了审查材料（spec、Story、验收），先重跑 ④ 取新请求再派；当前审查只认对当前请求的原样回复。
+  当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。当前审查只认对当前请求的原样回复。
 - **⑤ 之后闭环链不回头（硬规则）**：有阻断项才返修（见下「失败出口」）；没有阻断项就走 ⑥，把链走完。
   **闭环之后发现的真实问题**（verifier WARN 里有内容依据的也算）走 framework 的修正入口：
   `harness-runner.ts --correction-init` 按修正三问定责任层 → 改真源 →
