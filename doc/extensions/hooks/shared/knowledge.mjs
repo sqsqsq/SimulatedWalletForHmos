@@ -338,10 +338,10 @@ function parseDeclaration(rel, frontmatter, bad) {
   try {
     fm = parseYaml(frontmatter) ?? {};
   } catch (e) {
-    bad.push(`${rel} 的 frontmatter 不是合法 YAML（${String(e.message).split('\n')[0]}）——登记字段按 ${PROTOCOL_DOC} 第五节写`);
+    bad.push(`${rel} 的 frontmatter 不是合法 YAML（${String(e.message).split('\n')[0]}）——登记字段按 ${PROTOCOL_DOC} 第六节写`);
     return out;
   }
-  const say = (field, what) => bad.push(`${rel} 的 ${field} ${what}——正确写法见 ${PROTOCOL_DOC} 第五节`);
+  const say = (field, what) => bad.push(`${rel} 的 ${field} ${what}——正确写法见 ${PROTOCOL_DOC} 第六节`);
   const text = (v) => typeof v === 'string' && v.trim() !== '';
   const texts = (v) => Array.isArray(v) && v.length > 0 && v.every(text);
   const revision = (v) => Number.isInteger(v) && v > 0;

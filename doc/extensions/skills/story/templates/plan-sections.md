@@ -18,6 +18,15 @@
 | 适用单元 | 候选 | 选 / 不选 | 实例名 | 理由 |
 |---|---|---|---|---|
 
+<!-- 采用的模式按角色承担的业务职责投到契约（模式文件讲角色与协作，投到哪里只在这里）：
+     构建并启动编排的持有者 → contracts 的 files（标 pattern / role）与 interfaces；
+     内部执行步骤（节点、动作枚举）→ contracts 的 interfaces，不进 use-cases；
+     用户能触发的动作与它调用的业务方法 → use-cases 的 ui_bindings.user_actions[].calls；
+     用户视角的一次完整往返 → use-cases 的 branches[].user_sequence；
+     用户或界面能观察到的业务状态 → use-cases 的 state_model.phases；
+     步骤里取数、落库的边界 → use-cases 的 data_boundaries[]。
+     内部步骤不冒充业务状态；实例是这些正常实体，不另设旁账。 -->
+
 ### 规约义务
 
 <!-- spec §10 的每条命中条目一行，不要一行塞多条；与 contracts.yaml 里的 must 是同一件事的两次渲染，落点必须一致。 -->

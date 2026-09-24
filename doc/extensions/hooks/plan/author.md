@@ -11,7 +11,7 @@
 | 当前 `spec/spec.md`（含 §10、§11）、`AR/review.md` 与最近一次 `AR/story-src/updates/<id>/update-notes.md`（有才读） | 要履行的业务条件、验收与未决，人已表的态与最近一次更新改了什么、还留着什么——设计的前提，不是背景。§10 每条命中都要有实体扛着，强制力与验法两列定落点要什么证据；§11 的候选是选型的出发点 |
 | `doc/extensions/skills/story/templates/plan-sections.md` | 「知识决策（设计输入）」章骨架、埋点小节的形状与契约挂法样例 |
 | `node doc/extensions/hooks/plan/author.mjs --feature <名>` 的输出（本次任务包，动笔前取一次） | 命中规约的原文入口、项目事实入口、spec §9.4 原文与各指标的统计点。`context-exploration` 的 `key_inputs_read` 要含本页——任务包是它的展开 |
-| `doc/extensions/manifest.yaml` 的 `provides.knowledge` 里**命中**的那几个文件 | 条目的处置列、落法附注与**探针列**；候选模式的选型篇。未命中的域不必读 |
+| `doc/extensions/manifest.yaml` 的 `provides.knowledge` 里**命中**的那几个文件 | 条目的处置列、落法附注与**探针列**；项目事实与选中模式里的应用方法、协议与参考——先读开头的用途，再读要用的正文，结论落进设计与契约。未命中的域不必读 |
 
 ## 二、设计要证明它履行得了需求
 
@@ -36,7 +36,7 @@ components:
 - 规约原文要求讲清的专项方案，在承载它的设计章里写真实的调用责任、数据来源、边界与验证，同一方案只写一处；`must` 挂到决定结果的业务方法与承载字段的数据实体上，不全压在公共封装上，也不只给一个枚举挂「覆盖全部结果」。
 - **不是某条规约要求的业务规则写在这里**：承载它的实体自己的 `description`，或 plan.md 对应设计章的一句，不挂 `must`。把「单个清单最多 50 项」挂到兼容性条目上就是借挂——编号在册、规则合法，那条规约却不要求这件事。
 - 一条 `must` 就是一处落点，`verify` 说这一处的证据由谁取，按该规约验证列声明的执行体定：含「实机」写 `ut` / `device` / `both`（这一处标 `review` 就是没证据）；只有「模型」（或加「构建」）`review` 即可；「人工」不挂 `must`（那是评审动作）。
-- 采用的设计模式：给每个角色文件标 `files[].pattern` + `files[].role`，`role` 取值须是该模式 frontmatter 里声明过的角色名。
+- 采用的设计模式：给每个角色文件标 `files[].pattern` + `files[].role`，`role` 取值须是该模式 frontmatter 里声明过的角色名；业务状态、用户动作与内部步骤各投到哪，见模板「设计模式选型」的注释。
 
 ## 四、埋点
 

@@ -81,7 +81,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 | 项 | 内容 |
 |---|---|
 | 看什么 | 目标仓的 `framework.config.json` 架构 DSL（层、模块、跨模块出口文件）、`doc/module-catalog.yaml`、`doc/architecture.md`；三者缺的按仓内目录实扫 |
-| 写什么 | 部件画像：写法见 `protocol.md` 第二节，要回答的面与走查见 `capabilities.md` 的 `component-profile` 条；放在 `<ext>/knowledge/facts/` 下，frontmatter 登记这项能力 |
+| 写什么 | 部件画像：写法见 `protocol.md` 第三节，要回答的面与走查见 `capabilities.md` 的 `component-profile` 条；放在 `<ext>/knowledge/facts/` 下，frontmatter 登记这项能力 |
 | 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；查不到的写「未确认」，不写推断 |
 | 停一次问人 | 摆出这份画像、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
 
