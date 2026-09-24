@@ -60,16 +60,12 @@ class DeliveryCase(kp.ProtocolCase):
         return path
 
 
-class DeclarationsReachEveryReader(DeliveryCase):
-    """spec / plan 作者包与审查拿到同一份登记原文和同一对规则入口，字段名只有一套。"""
+class KnowledgeGuideReachesEveryReader(DeliveryCase):
+    """spec / plan 作者包与审查拿到同一份「路径 —— 用途」与读写规则位置，按知识的自我描述，不点名。"""
 
-    def test_the_three_readers_see_the_same_declaration(self) -> None:
+    def test_the_three_readers_see_the_same_guide(self) -> None:
         self.judged()
-        self.edit_knowledge("facts/neutral-facts.md", "kind: facts\n",
-                            "kind: facts\nprotocol: 1\ncapabilities:\n"
-                            "  - id: exit-registry\n    revision: 1\n    covers: [出口登记]\n")
-        line = ('- {"file":"knowledge/facts/neutral-facts.md","protocol":1,"capabilities":'
-                '[{"id":"exit-registry","revision":1,"covers":["出口登记"]}],"capability_decisions":[]}')
+        line = "- `doc/extensions/knowledge/facts/neutral-facts.md` —— 设计出口与重试时：本工程已有的出口登记与重试入口"
         outputs = {}
         for phase in ("spec", "plan"):
             proc = subprocess.run(["node", str(self.ext / "hooks" / phase / "author.mjs"), "--feature", nk.FEATURE],
@@ -81,9 +77,6 @@ class DeclarationsReachEveryReader(DeliveryCase):
             with self.subTest(who=who):
                 self.assertIn(line, text)
                 self.assertIn("doc/extensions/skills/story/reference/knowledge/protocol.md", text)
-                self.assertIn("doc/extensions/skills/story/reference/knowledge/capabilities.md", text)
-                self.assertNotIn("bindings", text)
-                self.assertNotRegex(text, r"(?<!capability_)decisions:", "登记字段出现了别名")
 
 
 class NotesReachTheJudgement(DeliveryCase):

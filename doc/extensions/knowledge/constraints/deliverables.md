@@ -1,8 +1,7 @@
 ---
 name: deliverables
 kind: constraints
-applies_when: always
-revision: 1
+applies_when: 所有需求：代码之外、容易遗漏却阻塞上线或协作的交付事项
 ---
 
 # 资料交付

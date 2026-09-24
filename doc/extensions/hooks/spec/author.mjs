@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
-import { activeKnowledge, declarationContext } from '../shared/knowledge.mjs';
+import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
@@ -87,8 +87,8 @@ function knowledgeSection(projectRoot, feature) {
       '',
       '**本仓未配置知识**——激活清单里没有登记任何规约、项目事实或模式，'
       + '没有要判的东西。这一节不用写，`knowledge-use.yaml` 也不用建。',
-      '本需求要用到某项能力而本仓没有时，按台账说明缺什么、影响哪些设计，从代码与材料取证，仍缺的列为未决。',
-      ...declarationContext(projectRoot, knowledge),
+      '本需求要用到的项目能力从代码与材料取证，仍缺的列为未决。',
+      ...knowledgeGuide(projectRoot, knowledge),
       ''];
   }
   return ['## 2. 本轮的知识判断（`spec/knowledge-use.yaml`）',
@@ -97,13 +97,11 @@ function knowledgeSection(projectRoot, feature) {
     + `**${knowledge.facts.length} 份**项目事实；在册模式候选：`
     + `${knowledge.patternIds.join(' / ') || '（无）'}。`,
     '',
-    ...declarationContext(projectRoot, knowledge),
+    ...knowledgeGuide(projectRoot, knowledge),
     '',
-    // 事实文件逐份列路径与它讲什么：规则里说「见部件画像」，画像在哪只有这里说得出来
-    //（清单是目标仓的，机制不写死任何一个文件名）。
-    '项目事实这几份，规则里提到「画像」「工程事实」时来这里找：',
+    // 项目事实逐份列面名：知识使用登记的 facet 取这里的名字（清单是目标仓的，机制不写死任何一个文件名）。
+    '项目事实的面（登记 `facts[].used` 时 facet 取这些名字）：',
     ...knowledge.facts.map(f => `- \`${where(f)}\`——${f.facets.join('、')}`),
-    '写 §9.4 之前，先从这几份里取本需求要用的统计设计方法与已有采集能力（写法见 `author.md` 第 4 步）。',
     '',
     // 规约的原文入口：判断前读命中域的整份文件——主表是索引，落法附注里的要求同样有效。
     '规约原文在这几份（判命中之前读该域整份，落法附注同样有效）：',

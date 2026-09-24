@@ -1,6 +1,7 @@
 ---
 name: alpha-facts
 kind: facts
+applies_when: 夹具知识 alpha-facts
 ---
 
 # 甲工程事实

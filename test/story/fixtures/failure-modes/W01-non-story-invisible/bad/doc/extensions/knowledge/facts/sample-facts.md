@@ -1,6 +1,7 @@
 ---
 name: sample-facts
 kind: facts
+applies_when: 夹具知识 sample-facts
 ---
 
 # 甲工程画像

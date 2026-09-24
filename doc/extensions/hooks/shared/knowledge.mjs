@@ -27,26 +27,12 @@ const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
 
 /** 读写规则与适配方法的位置（相对扩展根）：任务包、审查与报错都指向这里。 */
 const PROTOCOL_DOC = 'skills/story/reference/knowledge/protocol.md';
-const CAPABILITIES_DOC = 'skills/story/reference/knowledge/capabilities.md';
-const ADAPTATION_DOC = 'skills/story-adaptation/reference/knowledge-adaptation.md';
 
 /** 激活清单文件名（相对扩展根）。 */
 const MANIFEST_NAME = 'manifest.yaml';
 
 /** 处置列以此开头的条目是纯评审动作：不产生代码要求。 */
 const REVIEW_ACTION_MARK = '（评审动作）';
-
-/**
- * 本机制实现的读写协议版本。知识文件在 frontmatter 写 `protocol`，写了就要与它一致：
- * 版本号证明两边读的是同一份格式，不证明知识可信。
- */
-const PROTOCOL = 1;
-
-/** 登记元数据的键：出现任一个才按 YAML 解析 frontmatter，旧知识的浅层写法照常读。 */
-const DECLARATION_KEYS = ['protocol', 'revision', 'capabilities', 'capability_decisions'];
-
-/** 不适用与留待以后两种人作出的选择。 */
-const DECISIONS = ['not_applicable', 'deferred'];
 
 /** 强制力值域：未满足时怎么处理——红线阻断不许豁免，基线可豁免须补偿，建议可不做。 */
 const FORCES = ['红线', '基线', '建议'];
@@ -323,72 +309,6 @@ function parsePatternFile(absPath, rel, bad) {
   };
 }
 
-/**
- * 一份知识文件的能力登记：`{ file, protocol, capabilities, capability_decisions }`。
- * 只核结构（类型、必填、同文件重复、`['*']` 不混写），不比台账、不判覆盖程度——那是模型的事。
- * 缺席的字段给 null / []；有问题追加到 `bad`，能读到的其余字段照常收。
- */
-function parseDeclaration(rel, frontmatter, bad) {
-  const out = { file: rel, protocol: null, capabilities: [], capability_decisions: [] };
-  if (!DECLARATION_KEYS.some(k => new RegExp(`^${k}\\s*:`, 'm').test(frontmatter))) return out;
-  let fm;
-  try {
-    fm = parseYaml(frontmatter) ?? {};
-  } catch (e) {
-    bad.push(`${rel} 的 frontmatter 不是合法 YAML（${String(e.message).split('\n')[0]}）——登记字段按 ${PROTOCOL_DOC} 第六节写`);
-    return out;
-  }
-  const say = (field, what) => bad.push(`${rel} 的 ${field} ${what}——正确写法见 ${PROTOCOL_DOC} 第六节`);
-  const text = (v) => typeof v === 'string' && v.trim() !== '';
-  const texts = (v) => Array.isArray(v) && v.length > 0 && v.every(text);
-  const revision = (v) => Number.isInteger(v) && v > 0;
-  if (fm.protocol !== undefined) {
-    if (fm.protocol === PROTOCOL) out.protocol = PROTOCOL;
-    else say('protocol', `写的是「${fm.protocol}」，本机制实现的是 ${PROTOCOL}：升级扩展，或按 ${PROTOCOL} 版写回并改这个值`);
-  }
-  // `revision` 一行 = 承担与 name 同名的能力、覆盖整份；别的能力或部分面才写 capabilities 列表。
-  const ids = new Set();
-  if (fm.revision !== undefined) {
-    if (!revision(fm.revision)) say('revision', '不是正整数');
-    else if (!text(fm.name)) say('revision', '要与 name 一起写：它声明的是与 name 同名的能力');
-    else {
-      out.capabilities.push({ id: fm.name, revision: fm.revision, covers: ['*'] });
-      ids.add(fm.name);
-    }
-  }
-  if (fm.capabilities !== undefined) {
-    if (!Array.isArray(fm.capabilities)) say('capabilities', '不是列表');
-    else {
-      fm.capabilities.forEach((c, i) => {
-        const at = `capabilities[${i}]`;
-        if (!text(c?.id)) return say(at, '缺 id');
-        if (ids.has(c.id)) say(at, `与前面重复登记能力「${c.id}」：同一文件一项能力只写一次（与 name 同名的已由 revision 声明）`);
-        ids.add(c.id);
-        if (!revision(c.revision)) say(`${at}（${c.id}）`, 'revision 不是正整数');
-        if (!texts(c.covers)) say(`${at}（${c.id}）`, 'covers 不是非空的面列表');
-        out.capabilities.push({ id: c.id, revision: c.revision, covers: c.covers });
-      });
-    }
-  }
-  if (fm.capability_decisions !== undefined) {
-    if (!Array.isArray(fm.capability_decisions)) say('capability_decisions', '不是列表');
-    else {
-      fm.capability_decisions.forEach((d, i) => {
-        const at = `capability_decisions[${i}]${text(d?.id) ? `（${d.id}）` : ''}`;
-        if (!text(d?.id)) say(at, '缺 id');
-        if (!revision(d?.revision)) say(at, 'revision 不是正整数');
-        if (!texts(d?.scope)) say(at, 'scope 不是非空的面列表');
-        else if (d.scope.includes('*') && d.scope.length > 1) say(at, "scope 把整项 '*' 与具体面混写");
-        if (!DECISIONS.includes(d?.decision)) say(at, `decision 只取 ${DECISIONS.join(' / ')}`);
-        for (const k of ['reason', 'basis']) if (!text(d?.[k])) say(at, `缺 ${k}`);
-        if (d?.decision === 'deferred' && !text(d?.impact)) say(at, 'deferred 要写 impact：可能影响哪些任务');
-        out.capability_decisions.push(d);
-      });
-    }
-  }
-  return out;
-}
-
 /** 一个二级标题是一面：面名去掉编号与「 — 」之后的说明。 */
 function parseFactFile(absPath, rel) {
   const text = readTextOrNull(absPath);
@@ -445,15 +365,16 @@ export function knowledgeFiles(projectRoot) {
  * frontmatter `kind` 里。清单里再按类分一次组就成了两份，那意味着新增一个知识文件
  * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
  *
- * `declarations` 按清单顺序逐份给出能力登记的原始事实（见 `parseDeclaration`），不给任何覆盖结论。
+ * 知识靠自己描述自己：frontmatter 的 `applies_when` 说何时读、回答什么，每份解析结果带上它
+ * （`appliesWhen`），任务包与审查据此把知识交给当前阶段；机制不点任何知识的名字。
  *
- * @returns {{facts: object[], constraints: object[], patterns: object[], declarations: object[],
+ * @returns {{facts: object[], constraints: object[], patterns: object[],
  *            entries: object[], prefixes: string[], patternIds: string[]}}
- * @throws 清单缺失 / 文件读不到 / kind 缺失或未知 / 条目表零行 / 角色未声明 / 登记结构不对
+ * @throws 清单缺失 / 文件读不到 / kind 或 applies_when 缺失 / kind 未知 / 条目表零行 / 角色未声明
  */
 export function activeKnowledge(projectRoot) {
   const root = extensionRoot(projectRoot);
-  const out = { facts: [], constraints: [], patterns: [], declarations: [] };
+  const out = { facts: [], constraints: [], patterns: [] };
   const seen = new Set();
   // 不合协议的条目收齐再一次报：知识所有者升级机制之后要逐条改，不该改一条撞一条。
   const bad = [];
@@ -465,26 +386,28 @@ export function activeKnowledge(projectRoot) {
     const text = readTextOrNull(abs);
     if (text === null) { bad.push(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`); continue; }
 
-    const frontmatter = splitFrontmatter(text).frontmatter;
-    const kind = frontmatterPairs(frontmatter).kind;
+    const pairs = frontmatterPairs(splitFrontmatter(text).frontmatter);
+    const kind = pairs.kind;
     if (!kind) {
       bad.push(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
         + `不能靠目录或文件名去猜（可用：${KNOWLEDGE_KINDS.join(' / ')}）`);
       continue;
     }
     if (!KNOWLEDGE_KINDS.includes(kind)) {
-      bad.push(kind === 'index'
-        ? `${relPosix} 是旧版知识索引件（kind: index），读写规则已由 ${PROTOCOL_DOC} 提供——`
-          + `把其中本仓自有的说明迁进相应知识文件，从激活清单删去它，步骤见 ${ADAPTATION_DOC} 第 5 步`
-        : `${relPosix} 的 kind="${kind}" 不在封闭集合里（知识三类：${KNOWLEDGE_KINDS.join(' / ')}）`);
+      bad.push(`${relPosix} 的 kind="${kind}" 不在封闭集合里（知识三类：${KNOWLEDGE_KINDS.join(' / ')}，`
+        + `写法见 ${PROTOCOL_DOC}）`);
       continue;
     }
-    out.declarations.push(parseDeclaration(relPosix, frontmatter, bad));
+    const appliesWhen = String(pairs.applies_when ?? '').trim();
+    if (!appliesWhen) {
+      bad.push(`${relPosix} 的 frontmatter 缺 applies_when —— 写这份知识何时读、回答什么，`
+        + `任务包与审查按它把知识交给当前阶段（写法见 ${PROTOCOL_DOC}）`);
+    }
     // 本文件的结构错误（条目表零行、缺角色等）记下后接着核下一份：维护者一轮看到全部问题。
     try {
-      if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix, bad));
-      else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix, bad));
-      else out.facts.push(parseFactFile(abs, relPosix));
+      if (kind === 'constraints') out.constraints.push({ ...parseConstraintFile(abs, relPosix, bad), appliesWhen });
+      else if (kind === 'patterns') out.patterns.push({ ...parsePatternFile(abs, relPosix, bad), appliesWhen });
+      else out.facts.push({ ...parseFactFile(abs, relPosix), appliesWhen });
     } catch (e) {
       if (!(e instanceof KnowledgeError)) throw e;
       bad.push(e.message);
@@ -596,25 +519,12 @@ export function selfCheck(projectRoot, knowledge) {
 }
 
 /**
- * 登记上下文：读写规则与台账的实际路径，加每份激活文件的能力登记原文。
- * 作者任务包与审查任务共用这一段，只渲染已有对象，不读代码、不推导能力差异。
+ * 激活知识及其自述用途，外加读写规则的位置：作者任务包与审查任务共用这一段。
+ * 只渲染已有对象，不按任何知识名字分支。
  */
-export function declarationContext(projectRoot, knowledge) {
+export function knowledgeGuide(projectRoot, knowledge) {
   const at = rel => `\`${relDisplay(projectRoot, path.join(extensionRoot(projectRoot), rel))}\``;
-  const rows = [`知识的读写规则在 ${at(PROTOCOL_DOC)}（先读本次用到的那一类），各项能力要回答什么在 ${at(CAPABILITIES_DOC)}`
-    + '（确认能力要求、修订变化或缺口时展开相应条目）。'];
-  if (!(knowledge?.declarations ?? []).length) return rows;
-  const declared = (knowledge?.declarations ?? []).filter(d => d.protocol !== null || d.capabilities.length
-    || d.capability_decisions.length);
-  if (!declared.length) {
-    return [...rows, '激活的知识都还没有能力登记：内容照常可用，与能力的关联尚待核实，用到时按实际内容说明依据。'];
-  }
-  rows.push('', '各文件的能力登记（原样）：', '', '```yaml');
-  for (const d of declared) {
-    rows.push(`- ${JSON.stringify(d)}`);
-  }
-  rows.push('```');
-  const bare = (knowledge?.declarations ?? []).length - declared.length;
-  if (bare) rows.push(`另有 ${bare} 份没有登记：关联尚待核实，内容照常可用。`);
-  return rows;
+  const all = [...(knowledge?.facts ?? []), ...(knowledge?.constraints ?? []), ...(knowledge?.patterns ?? [])];
+  return [`知识的读写规则见 ${at(PROTOCOL_DOC)}。激活的知识与各自用途（按当前需求选读）：`, '',
+    ...(all.length ? all.map(k => `- ${at(k.file)} —— ${k.appliesWhen}`) : ['- （激活清单为空）'])];
 }

@@ -1,8 +1,7 @@
 ---
 name: dfx-baseline
 kind: constraints
-applies_when: always
-revision: 1
+applies_when: 所有需求：性能基线与功耗、包体、内存的引入评估
 ---
 
 # DFX 基线（性能/功耗/ROM/RAM）

@@ -1,8 +1,7 @@
 ---
 name: event-tracking
 kind: facts
-applies_when: 需求涉及业务定位、运维统计或独立运营采集时
-revision: 1
+applies_when: 需求涉及业务定位、运维统计或独立运营采集时：怎样设计统计、怎样把结果报出去、新编号怎样分配
 ---
 
 # 埋点上报
@@ -25,14 +24,12 @@ revision: 1
 3. **每点写结果与获知时机**：只写实际适用的业务结果，写明本端在哪个响应、回调或状态查询里知道。一次尝试从发起到终态，失败后重新输入是新尝试。远端产生、本端看不到的，写清由谁统计或列为待决；页面进入与点击说明不了业务结论。
 4. **运营需求**：独立运营采集只在需求明确要求时加。
 
-例：观察「服务开通」一次尝试的结果，短信验证步骤用来定位开通卡在哪；校验失败可重新输入，步骤失败不等于开通失败；假设最终结果由服务端回调告知。本例没有运营诉求。
+例：「服务开通」一次尝试（假设最终结果由服务端回调告知，无运营诉求）：
 
 | 业务点 | 业务结果 | 本端获知依据 |
 |---|---|---|
 | 信息校验 | 通过、条件不满足 | 校验返回 |
-| 发送验证码 | 发送成功、发送失败 | 发送响应 |
-| 校验验证码 | 校验通过、未通过、请求失败 | 校验响应，或请求发出后通信失败 |
-| 短信验证步骤 | 验证完成、用户主动终止 | 子点结果与用户操作 |
+| 短信验证 / 校验验证码 | 校验通过、未通过、请求失败 | 校验响应，或请求发出后通信失败 |
 | 开通结果 | 开通成功、开通失败 | 开通结果回调或查询 |
 
 ## 2. 上报实现
@@ -49,49 +46,38 @@ revision: 1
    - 外码 `setWalletEventExtCode(string)` 只带实际拿到的外部错误码；耗时 `setDuration(number)` 毫秒，有诉求且起止明确时带；描述 `setWalletEventDesc(string)`。
    - 自定义维度 `setReportParam(name, value)`，值为 string / number / boolean，标准字段用专用入口，扩展参数见第 4 面。BI 按运营需求选参，不默认带运维内码、外码或分类。
 
-例：「校验验证码」三种结果。假设全仓尚无已分配值，按第 3 面首次候选：模块 `01`、流程 `01`、节点 `02` 短信验证、子节点 `02` 校验，均为示意、未占号；其余点同样处理，如开通结果由处理回调的方法报。
+例：上表「校验验证码」三种结果，按第 3 面首次候选（均为示意、未占号）：
 
-| 业务结果 | 身份 | 内码（候选） | 结果分类 | 外码 | 何时记录 → 预期事件 |
-|---|---|---|---|---|---|
-| 校验通过 | `Wallet_COMMON`，流程 `001`，步骤 `002` | `0101020200` | `STEP_SUCCESS` | 不带 | 收到通过响应 → 一条 |
-| 未通过 | 同上 | `0101020201` | `STEP_ERROR_BY_ERROR` | 响应里的外部错误码 | 收到未通过响应 → 一条 |
-| 请求失败 | 同上 | `0101020202` | `STEP_ERROR_BY_ERROR` | 错误对象里的码 | 请求发出后通信失败 → 一条 |
+| 业务结果 | 身份 | 内码（候选） | 结果分类 | 外码 |
+|---|---|---|---|---|
+| 校验通过 | `Wallet_COMMON`，流程 `001`，步骤 `002` | `0101020200` | `STEP_SUCCESS` | — |
+| 未通过 | 同上 | `0101020201` | `STEP_ERROR_BY_ERROR` | 响应里的外部错误码 |
+| 请求失败 | 同上 | `0101020202` | `STEP_ERROR_BY_ERROR` | 错误对象里的码 |
 
 ### 落地与核对
 
 读者：写代码、审查、写单测与真机测试的人。Chart 用 `WalletHAManager.chartBuilder(eventID, funcID, subFuncID)` 链式设字段后 `.report()`；VOC 用 `vocBuilder(eventID, desc).report()`，同时记本地日志用 `logAndReport` / `logErrorAndReport` / `logDebugAndReport`。两者经 `CommFunc/src/main/ets/index.ets` 导出，发送不阻塞业务、失败只记本地日志，不做业务去重。
 
-约定：结果在决定它的业务方法里报；发请求与结算分开，正常、失败、异常与重复到达的回调都进同一结算方法，一次尝试只记一次；重试建新尝试，尝试标识与业务幂等身份分开；已发请求按最终结果记，不因退出界面改记取消。反模式：在公共封装或页面回调里统一上报；页面退出后屏蔽后到的结果。
+约定：结果在决定它的业务方法里报；发请求与结算分开，正常响应、业务失败、请求异常与重复到达的回调都调同一个结算方法，一次尝试记一条；重新输入时建新尝试，尝试标识与业务幂等身份各管各的；已发出的请求按它自己的最终结果记。
 
 ```ts
-// 示意：SmsVerifyService、VerifyAttempt、CheckOutcome、IN_CODE_CHECK 为待建设计，chartBuilder 与 setter 为现有接口
-async checkCode(attempt: VerifyAttempt, code: string): Promise<boolean> {
-  try {
-    const resp = await this.smsVerifyService.check(code);
-    this.settleCheck(attempt, resp.passed ? 'pass' : 'fail', resp.extCode);
-    return resp.passed;
-  } catch (e) {
-    this.settleCheck(attempt, 'transport', (e as TransportError).code);
-    return false;
-  }
-}
-
+// 示意：VerifyAttempt、CheckOutcome、IN_CODE_CHECK 为待建设计；chartBuilder 与 setter 为现有接口
 settleCheck(attempt: VerifyAttempt, outcome: CheckOutcome, extCode?: string): void {
   if (attempt.settled) {
-    return;                                   // 重复回调只进这里：不发请求，不多记
+    return;
   }
   attempt.settled = true;
   const builder = WalletHAManager.chartBuilder(WalletHAEventID.Wallet_COMMON, FLOW_OPEN, STEP_SMS_VERIFY)
     .setWalletEventInCode(IN_CODE_CHECK[outcome])
     .setWalletFuncResult(outcome === 'pass' ? WalletFuncResult.STEP_SUCCESS : WalletFuncResult.STEP_ERROR_BY_ERROR);
-  if (outcome !== 'pass' && extCode) {
+  if (extCode) {
     builder.setWalletEventExtCode(extCode);
   }
   builder.report();
 }
 ```
 
-表外还要核：同一尝试回调重复到达，不发请求也不多出事件；重新输入（调用方新建 `VerifyAttempt`）再出一条；退出验证界面时已发出的发送请求照常按响应记录。
+核对：三种结果各一条事件；回调重复到达仍是一条；重新输入后再出一条。
 
 ## 3. 编号分配与复用
 

@@ -1,12 +1,11 @@
 ---
 name: page-interaction
 kind: patterns
-applies_when: 单个页面或组件内用户交互很多，且交互之间由业务结果驱动先后顺序（做完一件事自动进入下一个交互）
+applies_when: 页面内交互多、且由业务结果驱动下一个交互时：用动作表编排交互的选型与落地
 depends_on: 编排 SDK（oh 包名 framework）
 roles: [动作表, 动作枚举, 交互封装, 上下文, 页面组件]
 optional_roles: []
 coordinator_role: 交互封装
-revision: 1
 ---
 
 # 页面交互编排

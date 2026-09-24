@@ -113,8 +113,6 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         self.assertIn("本仓未配置知识", proc.stdout)
         self.assertNotIn("域：）", proc.stdout, "渲染出了空洞的派生结果，作者会以为机制坏了")
         self.assertIn("skills/story/reference/knowledge/protocol.md", proc.stdout)
-        self.assertIn("skills/story/reference/knowledge/capabilities.md", proc.stdout)
-        self.assertNotIn("都还没有能力登记", proc.stdout, "空清单不是「有知识没登记」")
 
     def test_the_use_skeleton_comes_out_with_zero_entries(self) -> None:
         """`knowledge-use.yaml` 的骨架照样生成，只是一条都没有——没有条目要判。"""

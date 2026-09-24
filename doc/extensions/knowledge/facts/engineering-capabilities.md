@@ -1,8 +1,7 @@
 ---
 name: engineering-capabilities
 kind: facts
-applies_when: always（设计与编码要用到下列工程能力时）
-revision: 1
+applies_when: 设计与编码要用到对外入口、共享状态、开关、日志、脱敏、资源或依赖时：本项目已有的实现与用法
 ---
 
 # 工程已有能力

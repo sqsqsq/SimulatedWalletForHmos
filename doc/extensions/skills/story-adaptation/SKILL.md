@@ -44,7 +44,7 @@ Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/script
 
 ## 知识适配
 
-安装或升级前先读三份：包的 `skills/story-adaptation/reference/knowledge-adaptation.md`（识别 → 交人决定 → 改写 → 走查 → 交回的方法与中性示例）、`skills/story/reference/knowledge/protocol.md`（知识的写法与能力登记格式）、`skills/story/reference/knowledge/capabilities.md`（每项能力要回答什么、取证位置、修订与迁移依据）。脚本装完机制后，按方法页完成知识部分；旧版的 `knowledge/**/README.md`（`kind: index`）退出也在方法页第 5 步。
+安装或升级前先读两份：包的 `skills/story/reference/knowledge/protocol.md`（三类知识怎样描述自己、怎样写给模型用）与 `skills/story-adaptation/reference/knowledge-adaptation.md`（从目标仓自己的代码与业务出发写知识、走查、交回的方法与中性示例）。脚本装完机制后，按方法页完成知识部分。
 
 ## 你要做的四件事
 
@@ -76,16 +76,16 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 **首次安装多两件**，其中一件归你：
 
 - 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），按目标的 `project_name` 生成 manifest 的 `name` 与 `description`，知识激活清单为空。**不放包里的任何知识**——那是目标仓自己的东西，从空的开始。
-- **你做的：写部件画像**。这是首次安装里唯一归模型的一件事：
+- **你做的：写部件定位知识**——回答本部件是谁、职责边界、与哪些交互方怎样交互，初析与 AR 提取靠它判断上游内容归不归本部件。这是首次安装里唯一归模型的一件事：
 
 | 项 | 内容 |
 |---|---|
 | 看什么 | 目标仓的 `framework.config.json` 架构 DSL（层、模块、跨模块出口文件）、`doc/module-catalog.yaml`、`doc/architecture.md`；三者缺的按仓内目录实扫 |
-| 写什么 | 部件画像：写法见 `protocol.md` 第三节，要回答的面与走查见 `capabilities.md` 的 `component-profile` 条；放在 `<ext>/knowledge/facts/` 下，frontmatter 登记这项能力 |
+| 写什么 | 一份 facts：写法见 `protocol.md`，`applies_when` 写明它回答本部件是谁、与谁交互；放在 `<ext>/knowledge/facts/` 下，文件名由你定 |
 | 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；依据在别人手里的写明向谁取得，不写推断 |
-| 停一次问人 | 摆出这份画像、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
+| 停一次问人 | 摆出这份知识、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
 
-画像写完记得登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。其余能力按方法页形成差异交人决定。
+写完登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。其余知识按方法页，从目标仓自己的代码与需求出发决定写哪些。
 
 ### 4 确认
 

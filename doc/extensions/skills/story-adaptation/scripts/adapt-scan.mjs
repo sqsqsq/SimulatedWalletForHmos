@@ -28,7 +28,7 @@ const MODES = ['--apply', '--check'];
 
 /** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
 const ADAPTERS = 'skills/story/scripts/adapters';
-/** 目标的知识：首次与升级都不读不写；首装的清单为空，第一份部件画像由模型写。 */
+/** 目标的知识：首次与升级都不读不写；首装的清单为空，第一份部件定位知识由模型写。 */
 const KNOWLEDGE = 'knowledge';
 /** 公共脚本的唯一落点。`scripts/` 这一层除了它与 adapters 不放东西——⑧ 守这条。 */
 const SCRIPTS_DIR = 'skills/story/scripts';
@@ -465,7 +465,7 @@ if (mode === '--apply') {
     }
   }
 
-  // 6. 首次安装另做一件：配置键。升级不碰。知识不建骨架，由模型按方法页从部件画像写起。
+  // 6. 首次安装另做一件：配置键。升级不碰。知识不建骨架，由模型按方法页从部件定位知识写起。
   if (STATE === 'fresh') {
     const cfgFile = join(TARGET, 'framework.config.json');
     const cfg = config(TARGET);
@@ -487,7 +487,7 @@ if (mode === '--apply') {
   if (removed.length) removed.forEach(p => console.log(`  - ${p}`));
   console.log('[adapt-scan] 下一步：跑 --check 自检；'
     + (STATE === 'fresh'
-      ? '首次安装还要按 SKILL.md 写部件画像，摆给人确认一次'
+      ? '首次安装还要按 SKILL.md 写部件定位知识，摆给人确认一次'
       : '`git diff` 看这次动了哪些文件'));
   process.exit(0);
 }

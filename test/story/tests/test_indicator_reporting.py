@@ -345,7 +345,9 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
 
     def test_without_project_facts_everything_still_runs(self) -> None:
         self.drop_facts()
-        self.assertIn("激活清单里没有项目事实", self.task_package())
+        package = self.task_package()
+        self.assertNotIn("knowledge/facts/", package, "去掉的事实不该再列出")
+        self.assertIn("激活的知识与各自用途", package)
         self.assertIn("激活清单里没有项目事实", self.review_task())
         message = self.plan_check()
         self.assertNotIn("没写责任方法", message)

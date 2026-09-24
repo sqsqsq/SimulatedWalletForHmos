@@ -1,8 +1,7 @@
 ---
 name: ux-consistency
 kind: constraints
-applies_when: 需求含新页面/UI 改版
-revision: 1
+applies_when: 需求含新页面或 UI 改版时：多形态设备与显示设置下的一致性要求
 ---
 
 # UX 一致性

@@ -1,8 +1,7 @@
 ---
 name: env-exceptions
 kind: constraints
-applies_when: always
-revision: 1
+applies_when: 所有需求：用户调整设备环境导致的异常场景
 ---
 
 # 环境异常标准场景库

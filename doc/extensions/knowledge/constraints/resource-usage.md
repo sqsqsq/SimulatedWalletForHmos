@@ -2,8 +2,7 @@
 name: resource-usage
 kind: constraints
 domain: RES
-applies_when: 需求涉及界面图片、图标或用户可见文案
-revision: 1
+applies_when: 需求涉及界面图片、图标或用户可见文案时：资源先复用再新增的要求
 ---
 
 # 资源使用

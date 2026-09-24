@@ -1,6 +1,7 @@
 ---
 name: sample-domain
 kind: constraints
+applies_when: 夹具知识 sample-domain
 ---
 
 | 编号 | 约束 |

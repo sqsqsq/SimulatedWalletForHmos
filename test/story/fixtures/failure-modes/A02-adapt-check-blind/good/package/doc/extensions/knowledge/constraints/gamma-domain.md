@@ -1,6 +1,7 @@
 ---
 name: gamma-domain
 kind: constraints
+applies_when: 夹具知识 gamma-domain
 ---
 
 # 丙域约束

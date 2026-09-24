@@ -1,6 +1,7 @@
 ---
 name: sample-pattern
 kind: patterns
+applies_when: 夹具知识 sample-pattern
 roles:
   角色甲: 甲类
 ---

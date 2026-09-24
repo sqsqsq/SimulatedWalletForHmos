@@ -19,7 +19,7 @@
  */
 import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
-import { activeKnowledge, declarationContext } from './knowledge.mjs';
+import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
@@ -226,8 +226,8 @@ export default async function preVerifier(ctx) {
     '**材料、原知识与仓内事实是审查依据，本阶段产物与这份判断是被审的对象**——下表把每条规约的原条目与当前判断并列，',
     '对着原文判，不拿判断自证。',
     '',
-    ...(knowledge ? declarationContext(ctx.projectRoot, knowledge)
-      : [`知识没能加载，作者用的登记来源无从并列：${knowledgeGap}——依赖知识的检查写未验证，不当作没有知识。`]),
+    ...(knowledge ? knowledgeGuide(ctx.projectRoot, knowledge)
+      : [`知识没能加载：${knowledgeGap}——依赖知识的检查写未验证，不当作没有知识。`]),
     '',
     ...(knowledge?.constraints?.length
       ? ['下表只有主表一行；规约的落法附注同样是要求，原文在：'
@@ -239,8 +239,7 @@ export default async function preVerifier(ctx) {
     '',
     ...(phase === 'plan' ? [
       '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature), '',
-      knowledge?.facts.length ? '项目事实入口（要用到的已有能力、字段与取值规则按这几份核）：'
-        + knowledge.facts.map(f => '`' + relDisplay(ctx.projectRoot, path.join(extensionRoot(ctx.projectRoot), f.file)) + '`').join('、')
+      knowledge?.facts.length ? '要用到的已有能力、字段与取值规则，按上面列出的项目事实核。'
         : '激活清单里没有项目事实：取值不对照项目规则核，只核与知识无关的几件事。', ''] : []),
     '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',
     '',

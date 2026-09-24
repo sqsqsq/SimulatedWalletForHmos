@@ -2,8 +2,7 @@
 name: observability
 kind: constraints
 domain: OBS
-applies_when: 新增或修改业务流程的定位、运维统计或独立运营采集
-revision: 1
+applies_when: 新增或修改业务流程时：问题定位与统计上报的义务
 ---
 
 # 可观测性

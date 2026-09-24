@@ -1,8 +1,7 @@
 ---
 name: compatibility-checklist
 kind: constraints
-applies_when: always
-revision: 1
+applies_when: 所有需求：逐项核兼容性的检查表
 ---
 
 # 兼容性检查表

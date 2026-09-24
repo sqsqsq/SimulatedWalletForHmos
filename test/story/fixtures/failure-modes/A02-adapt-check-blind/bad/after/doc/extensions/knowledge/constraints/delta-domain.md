@@ -1,6 +1,7 @@
 ---
 name: delta-domain
 kind: constraints
+applies_when: 夹具知识 delta-domain
 ---
 
 # 丁域约束

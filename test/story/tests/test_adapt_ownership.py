@@ -214,40 +214,12 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertIn("story-adaptation", after, "机制登记没跟上包")
 
 
-class AnOldIndexIsLeftForTheModel(AdaptCase):
-    """旧仓自己改过的 README（kind: index）：脚本不碰它与激活清单，机制照装；加载器指出这份要迁移。"""
-
-    def test_upgrade_keeps_the_old_index_and_the_loader_names_it(self) -> None:
-        readme = self.ext / "knowledge" / "facts" / "README.md"
-        readme.parent.mkdir(parents=True, exist_ok=True)
-        readme.write_text("---\nname: facts-index\nkind: index\nprotocol: 1\n---\n\n本仓自定：画像先写交互方。\n",
-                          encoding="utf-8")
-        manifest = self.ext / "manifest.yaml"
-        text = manifest.read_text(encoding="utf-8")
-        manifest.write_text(text.replace("  knowledge:\n", "  knowledge:\n    - knowledge/facts/README.md\n", 1),
-                            encoding="utf-8")
-        self.commit("旧仓带自定义索引件")
-        for mode in ("--apply", "--check"):
-            proc = self.adapt(mode)
-            self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertIn("本仓自定：画像先写交互方。", readme.read_text(encoding="utf-8"))
-        self.assertIn("    - knowledge/facts/README.md\n", manifest.read_text(encoding="utf-8"))
-        module = (self.ext / "hooks" / "shared" / "knowledge.mjs").resolve().as_uri()
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const k = await import(process.argv[1]);"
-             "try { k.activeKnowledge(process.argv[2]); } catch (e) { process.stdout.write(e.message); }",
-             module, str(self.target)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertIn("knowledge/facts/README.md 是旧版知识索引件（kind: index）", proc.stdout)
-
-
 class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
     """方法页第 7 步的只读检查：刚装完、没有任何需求时照样能核知识，不写文件；知识坏了非零退出。"""
 
     def check_script(self) -> str:
         page = (PKG_EXT / "skills" / "story-adaptation" / "reference" / "knowledge-adaptation.md").read_text(encoding="utf-8")
-        block = page.split("7. **确认与交回**", 1)[1].split("```js", 1)[1].split("```", 1)[0]
+        block = page.split("**确认与交回**", 1)[1].split("```js", 1)[1].split("```", 1)[0]
         return "\n".join(l[3:] if l.startswith("   ") else l for l in block.splitlines())
 
     def run_check(self) -> subprocess.CompletedProcess:

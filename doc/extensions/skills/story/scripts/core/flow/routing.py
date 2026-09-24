@@ -524,8 +524,8 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
         return ("run_analysis",
                 "S2b 需求粒度分析（材料已确认）：需求概览 → 本部件视角 → 本 AR 定位 → "
                 "待实现功能清单 → 范围定法选项 → 来源初筛；落盘后重跑 `round`。"
-                "本部件的职责范围与六类交互方在项目事实里，"
-                "路径见任务包第 2 节的清单。"
+                "本部件的职责范围与交互方在激活知识里自述回答它的那一份，"
+                "按各知识的 applies_when 找。"
                 "待补：" + "；".join(missing))
 
     # 第二级：这个范围怎么定

@@ -1,6 +1,7 @@
 ---
 name: beta-facts
 kind: facts
+applies_when: 夹具知识 beta-facts
 ---
 
 # 乙工程事实

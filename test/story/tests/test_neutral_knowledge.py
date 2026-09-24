@@ -30,6 +30,7 @@ FEATURE = "NK90001"
 NEUTRAL_CONSTRAINT = """---
 name: 中性域
 kind: constraints
+applies_when: 需求有新增出口时：出口的标识与字段要求
 domain: NEU
 ---
 
@@ -48,6 +49,7 @@ domain: NEU
 NEUTRAL_FACT = """---
 name: neutral-facts
 kind: facts
+applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口
 ---
 
 # 中性工程画像

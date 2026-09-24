@@ -1,8 +1,7 @@
 ---
 name: security-privacy
 kind: constraints
-applies_when: always
-revision: 1
+applies_when: 所有需求：个人数据、权限与对外暴露面的红线
 ---
 
 # 安全隐私

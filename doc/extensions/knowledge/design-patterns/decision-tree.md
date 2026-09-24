@@ -1,12 +1,11 @@
 ---
 name: decision-tree
 kind: patterns
-applies_when: 业务流程有多个分支，且每个分支自身是多步的、有自己的失败处理，用 if/else 串会难以维护
+applies_when: 业务流程有多个分支、每个分支多步且各有失败处理时：用节点表编排流程的选型与落地
 depends_on: 编排 SDK（oh 包名 framework）
 roles: [节点表, 步骤枚举, 上下文, 构建与启动]
 optional_roles: [页面跳转]
 coordinator_role: 构建与启动
-revision: 1
 ---
 
 # 流程分支编排（决策树）

@@ -1,6 +1,7 @@
 ---
 name: sample-pattern
 kind: patterns
+applies_when: 夹具知识 sample-pattern
 roles: [表, 上下文]
 coordinator_role: 表
 ---
