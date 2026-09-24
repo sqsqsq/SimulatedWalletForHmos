@@ -43,7 +43,7 @@ const REVIEW_ACTION_MARK = '（评审动作）';
 const PROTOCOL = 1;
 
 /** 登记元数据的键：出现任一个才按 YAML 解析 frontmatter，旧知识的浅层写法照常读。 */
-const DECLARATION_KEYS = ['protocol', 'capabilities', 'capability_decisions'];
+const DECLARATION_KEYS = ['protocol', 'revision', 'capabilities', 'capability_decisions'];
 
 /** 不适用与留待以后两种人作出的选择。 */
 const DECISIONS = ['not_applicable', 'deferred'];
@@ -56,9 +56,6 @@ const EXECUTORS = ['模型', '构建', '实机', '人工'];
 
 /** 探针列的前缀：知识作者声明「这个形态本身就是要求」。不带它的探针只是取证线索。 */
 const BLOCKING_MARK = '阻断：';
-
-/** 项目事实的面级 `confirmed` 值域；第二个是「用前先核」。 */
-const CONFIRMED = ['已确认', '未确认'];
 
 class KnowledgeError extends Error {}
 
@@ -349,14 +346,23 @@ function parseDeclaration(rel, frontmatter, bad) {
     if (fm.protocol === PROTOCOL) out.protocol = PROTOCOL;
     else say('protocol', `写的是「${fm.protocol}」，本机制实现的是 ${PROTOCOL}：升级扩展，或按 ${PROTOCOL} 版写回并改这个值`);
   }
+  // `revision` 一行 = 承担与 name 同名的能力、覆盖整份；别的能力或部分面才写 capabilities 列表。
+  const ids = new Set();
+  if (fm.revision !== undefined) {
+    if (!revision(fm.revision)) say('revision', '不是正整数');
+    else if (!text(fm.name)) say('revision', '要与 name 一起写：它声明的是与 name 同名的能力');
+    else {
+      out.capabilities.push({ id: fm.name, revision: fm.revision, covers: ['*'] });
+      ids.add(fm.name);
+    }
+  }
   if (fm.capabilities !== undefined) {
     if (!Array.isArray(fm.capabilities)) say('capabilities', '不是列表');
     else {
-      const ids = new Set();
       fm.capabilities.forEach((c, i) => {
         const at = `capabilities[${i}]`;
         if (!text(c?.id)) return say(at, '缺 id');
-        if (ids.has(c.id)) say(at, `与前面重复登记能力「${c.id}」：同一文件一项能力写一次，把 covers 合在一起`);
+        if (ids.has(c.id)) say(at, `与前面重复登记能力「${c.id}」：同一文件一项能力只写一次（与 name 同名的已由 revision 声明）`);
         ids.add(c.id);
         if (!revision(c.revision)) say(`${at}（${c.id}）`, 'revision 不是正整数');
         if (!texts(c.covers)) say(`${at}（${c.id}）`, 'covers 不是非空的面列表');
@@ -383,25 +389,15 @@ function parseDeclaration(rel, frontmatter, bad) {
   return out;
 }
 
-/** 一节一面；面标题里的 `confirmed:` 核值域，「未确认」的面单列——用它的需求要写核实依据。 */
-function parseFactFile(absPath, rel, bad) {
+/** 一个二级标题是一面：面名去掉编号与「 — 」之后的说明。 */
+function parseFactFile(absPath, rel) {
   const text = readTextOrNull(absPath);
   if (text === null) fail(`派生为空：激活清单登记的项目知识文件读不到 —— ${rel}`);
   const { frontmatter, body } = splitFrontmatter(text);
   const fm = frontmatterPairs(frontmatter);
-  const facets = [];
-  const unconfirmed = [];
-  for (const m of lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)) {
-    const facet = m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim();
-    if (!facet) continue;
-    facets.push(facet);
-    const confirmed = m[1].match(/confirmed:\s*([^`\s]+)/)?.[1];
-    if (confirmed && !CONFIRMED.includes(confirmed)) {
-      bad.push(`${rel} 的面「${facet}」confirmed 写的是「${confirmed}」——只取 ${CONFIRMED.join(' / ')}`);
-    }
-    if (confirmed === CONFIRMED[1]) unconfirmed.push(facet);
-  }
-  return { file: rel, name: fm.name ?? '', facets, unconfirmed };
+  const facets = lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)
+    .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim()).filter(Boolean);
+  return { file: rel, name: fm.name ?? '', facets };
 }
 
 /**
@@ -488,7 +484,7 @@ export function activeKnowledge(projectRoot) {
     try {
       if (kind === 'constraints') out.constraints.push(parseConstraintFile(abs, relPosix, bad));
       else if (kind === 'patterns') out.patterns.push(parsePatternFile(abs, relPosix, bad));
-      else out.facts.push(parseFactFile(abs, relPosix, bad));
+      else out.facts.push(parseFactFile(abs, relPosix));
     } catch (e) {
       if (!(e instanceof KnowledgeError)) throw e;
       bad.push(e.message);

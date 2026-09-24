@@ -484,7 +484,7 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
                 self.assertNotIn(f"knowledge/facts/{old}", manifest)
                 self.assertFalse((self.KNOWLEDGE / "facts" / old).exists())
 
-    def test_each_facet_keeps_its_own_heading_and_confirmation(self) -> None:
+    def test_each_facet_keeps_its_own_heading(self) -> None:
         """面按读者任务组织，每个事实面是独立 H2；知识只写确定的内容，没有未确认面。"""
         proc = node("--input-type=module", "-e",
                     f"const k = (await import({as_url(EXT / 'hooks/shared/knowledge.mjs')}))"
@@ -493,7 +493,6 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         fact = json.loads(proc.stdout)
         self.assertEqual(["统计设计", "上报实现", "编号分配与复用", "业务扩展字段"], fact["facets"])
-        self.assertEqual([], fact["unconfirmed"])
 
     def test_engineering_capabilities_do_not_repeat_reporting(self) -> None:
         text = (self.KNOWLEDGE / "facts" / "engineering-capabilities.md").read_text(encoding="utf-8")

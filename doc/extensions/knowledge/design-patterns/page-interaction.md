@@ -6,7 +6,7 @@ depends_on: 编排 SDK（oh 包名 framework）
 roles: [动作表, 动作枚举, 交互封装, 上下文, 页面组件]
 optional_roles: []
 coordinator_role: 交互封装
-capabilities: [{id: page-interaction, revision: 1, covers: [上篇, 下篇]}]
+revision: 1
 ---
 
 # 页面交互编排

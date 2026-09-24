@@ -42,11 +42,11 @@ kind: facts
 
 # 中性工程画像
 
-## 出口登记 — `confirmed: 已确认`
+## 出口登记
 
 本工程的出口统一登记在中性出口表里。
 
-## 重试入口 — `confirmed: 未确认`
+## 重试入口
 
 重试入口可能在中性调度器里。
 """
@@ -158,6 +158,16 @@ class DeclarationsAreRawFacts(ProtocolCase):
                          [c["id"] for c in got["knowledge/facts/neutral-facts.md"]["capabilities"]])
         self.assertIsNone(got["knowledge/constraints/neutral-domain.md"]["protocol"])
 
+    def test_a_revision_line_declares_the_capability_named_by_the_file(self) -> None:
+        self.declare("facts/neutral-facts.md", "revision: 2")
+        self.assertEqual("", self.load_error())
+        got = self.declarations()["knowledge/facts/neutral-facts.md"]["capabilities"]
+        self.assertEqual([{"id": "neutral-facts", "revision": 2, "covers": ["*"]}], got)
+
+    def test_a_revision_line_and_the_same_id_in_the_list_is_a_duplicate(self) -> None:
+        self.declare("facts/neutral-facts.md", "revision: 1\ncapabilities: [{id: neutral-facts, revision: 1, covers: [出口登记]}]")
+        self.assertIn("重复登记能力「neutral-facts」", self.load_error())
+
     def test_an_older_revision_is_passed_through_not_judged(self) -> None:
         self.declare("facts/neutral-facts.md", "capabilities:\n  - id: exit-registry\n    revision: 1\n    covers: [出口登记]")
         self.assertEqual("", self.load_error())
@@ -236,10 +246,9 @@ class TheProtocolIsCheckedOnLoad(ProtocolCase):
         self.edit_knowledge("constraints/neutral-domain.md", "| 模型：核对生成点 | 无 |", "| 模型：核对生成点 | grep:出口 |")
         self.edit_knowledge("constraints/neutral-domain.md", "| 记耗时 | 模型：核对耗时点 |", "| （评审动作）记耗时 | 测试：核对耗时点 |")
         self.edit_knowledge("design-patterns/neutral-pattern.md", "# 下篇 · 结构与落地", "## 结构与落地")
-        self.edit_knowledge("facts/neutral-facts.md", "confirmed: 未确认", "confirmed: 大概")
         message = self.load_error()
         for needle in ("强制力「必须」", "探针形态未知", "不认识的执行体「测试」", "验证列要有「人工」",
-                       "「# 下篇 · …」", "confirmed 写的是「大概」"):
+                       "「# 下篇 · …」"):
             self.assertIn(needle, message)
 
 
@@ -256,7 +265,7 @@ class TheJudgementSeesTheEntry(ProtocolCase):
         for line in ("# 红线 · 重复触发时复用同一个标识", "# 命中条件：有重试路径", "# 命中后要给出：", "# 验法：模型 / 实机"):
             self.assertIn(line, block)
         self.assertNotIn("命中：", text, "命中条件又挤回同一行")
-        self.assertIn("# 面：出口登记 / 重试入口（未确认：重试入口）", text)
+        self.assertIn("# 面：出口登记 / 重试入口\n", text)
 
     def test_the_projection_carries_force_and_method(self) -> None:
         self.judged()
@@ -290,26 +299,6 @@ class AWaiverFollowsTheForce(ProtocolCase):
         zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约约束要求")[1]
         self.assertIn("命中但本轮豁免（评审判）", zone)
         self.assertNotIn("| NEU-04 |", zone, "豁免的命中不进落实表")
-
-    def test_an_unconfirmed_facet_needs_where_it_was_checked(self) -> None:
-        self.write_use(neutral=judgement())
-        self.edit(self.use_path, "facet: 出口登记", "facet: 重试入口")
-        code, out = self.render_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("是未确认的面，没写 verified", out)
-        self.edit(self.use_path, "used_for: 出口登记在哪张表按它取",
-                  "used_for: 重试从哪进按它取\n        verified: src/scheduler.ets")
-        self.assertEqual(0, self.render_output()[0])
-
-    def test_a_confirmed_rule_without_code_is_valid_basis(self) -> None:
-        """已定未实现的规范：依据是负责人确认记录，不要求代码路径；报错的修法同时说两种依据。"""
-        self.write_use(neutral=judgement())
-        self.edit(self.use_path, "facet: 出口登记", "facet: 重试入口")
-        _, out = self.render_output()
-        self.assertIn("当前实现引代码或配置，已定规范引协议、需求或负责人确认记录", out)
-        self.edit(self.use_path, "used_for: 出口登记在哪张表按它取",
-                  "used_for: 重试从哪进按它取\n        verified: 重试入口规范，负责人 2026-09-20 评审纪要第 3 条")
-        self.assertEqual(0, self.render_output()[0])
 
     def test_an_empty_facet_says_it_is_empty(self) -> None:
         self.write_use(neutral=judgement())

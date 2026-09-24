@@ -3,7 +3,7 @@ name: resource-usage
 kind: constraints
 domain: RES
 applies_when: 需求涉及界面图片、图标或用户可见文案
-capabilities: [{id: resource-usage, revision: 1, covers: [条目表, 落法附注]}]
+revision: 1
 ---
 
 # 资源使用

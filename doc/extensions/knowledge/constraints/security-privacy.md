@@ -2,7 +2,7 @@
 name: security-privacy
 kind: constraints
 applies_when: always
-capabilities: [{id: security-privacy, revision: 1, covers: [条目表, 落法附注]}]
+revision: 1
 ---
 
 # 安全隐私

@@ -2,7 +2,7 @@
 name: compatibility-checklist
 kind: constraints
 applies_when: always
-capabilities: [{id: compatibility-checklist, revision: 1, covers: [条目表, 落法附注]}]
+revision: 1
 ---
 
 # 兼容性检查表

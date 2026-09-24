@@ -2,7 +2,7 @@
 name: event-tracking
 kind: facts
 applies_when: 需求涉及业务定位、运维统计或独立运营采集时
-capabilities: [{id: event-tracking, revision: 1, covers: [统计设计, 上报实现, 编号分配与复用, 业务扩展字段]}]
+revision: 1
 ---
 
 # 埋点上报

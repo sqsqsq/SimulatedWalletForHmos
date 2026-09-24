@@ -2,7 +2,7 @@
 name: ux-consistency
 kind: constraints
 applies_when: 需求含新页面/UI 改版
-capabilities: [{id: ux-consistency, revision: 1, covers: [条目表, 落法附注]}]
+revision: 1
 ---
 
 # UX 一致性

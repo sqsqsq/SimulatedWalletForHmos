@@ -6,7 +6,7 @@ depends_on: 编排 SDK（oh 包名 framework）
 roles: [节点表, 步骤枚举, 上下文, 构建与启动]
 optional_roles: [页面跳转]
 coordinator_role: 构建与启动
-capabilities: [{id: decision-tree, revision: 1, covers: [上篇, 下篇]}]
+revision: 1
 ---
 
 # 流程分支编排（决策树）

@@ -330,7 +330,7 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
         self.write_plan(ROWS.replace("一次进入一次", "身份按知识首次登记"))
         self.assertIn("身份按知识首次登记", self.review_task())
         overlay = (self.ext / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8")
-        self.assertIn("「按知识条款首次登记」这类引用规则代替给值的，按没落地判", overlay)
+        self.assertIn("以引用规则代替给值、或规则本可算出值却没给的，", overlay)
 
     def test_a_spec_that_does_not_apply_says_so_everywhere(self) -> None:
         """spec §9.4 写不涉及：任务包、审查、门禁各自显式说不适用，不是静默跳过。"""

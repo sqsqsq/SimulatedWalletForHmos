@@ -2,7 +2,7 @@
 name: env-exceptions
 kind: constraints
 applies_when: always
-capabilities: [{id: env-exceptions, revision: 1, covers: [条目表]}]
+revision: 1
 ---
 
 # 环境异常标准场景库

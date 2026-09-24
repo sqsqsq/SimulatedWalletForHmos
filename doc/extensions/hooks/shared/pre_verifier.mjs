@@ -52,8 +52,7 @@ const WALK = {
   plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
     handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
       + '选中交互模式要的用户动作与业务状态在 use-cases 里实际存在；'
-      + '每个统计点的每种结果有责任方法、结果来源与参数来源，项目知识定义的协议字段有实际值或具体候选——'
-      + '候选已设计而未登记与根本没给值是两回事，分开判；'
+      + '每个统计点的每种结果有责任方法、结果来源与参数来源，项目知识要求的字段有实际值或按其规则得出的值及来源；'
       + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
 };
 
@@ -240,9 +239,9 @@ export default async function preVerifier(ctx) {
     '',
     ...(phase === 'plan' ? [
       '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature), '',
-      knowledge?.facts.length ? '项目事实入口（协议字段、登记位置与已有能力按这几份核）：'
+      knowledge?.facts.length ? '项目事实入口（要用到的已有能力、字段与取值规则按这几份核）：'
         + knowledge.facts.map(f => '`' + relDisplay(ctx.projectRoot, path.join(extensionRoot(ctx.projectRoot), f.file)) + '`').join('、')
-        : '激活清单里没有项目事实：协议字段不核值，只核与知识无关的几件事。', ''] : []),
+        : '激活清单里没有项目事实：取值不对照项目规则核，只核与知识无关的几件事。', ''] : []),
     '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',
     '',
     `1. **按业务流程走通${(WALK[phase] ?? { what: '本阶段产物' }).what}**：实际会发生的正常、异常与未执行路径各走到哪，`

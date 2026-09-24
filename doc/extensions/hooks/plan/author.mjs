@@ -33,7 +33,7 @@ function knowledgeSection(projectRoot, feature) {
   return ['## 1. 命中的规约与项目事实', '',
     hits.length ? `spec 判命中 ${hits.length} 条：${hits.join('、')}。原文（含落法附注）在：` : 'spec 没有判命中的规约。',
     ...files.map(c => `- ${where(c)}——${c.title}`), '',
-    knowledge.facts.length ? '项目事实（已有能力、登记位置、协议字段在这里找）：' : '激活清单里没有项目事实。',
+    knowledge.facts.length ? '项目事实（已有能力、字段与取值规则在这里找）：' : '激活清单里没有项目事实。',
     ...knowledge.facts.map(f => `- ${where(f)}`), '',
     ...declarationContext(projectRoot, knowledge),
     '承接 spec 已判定的业务义务，按实现要的字段读相应知识；值仍缺依据时写清缺哪一项、影响哪几处设计。'];

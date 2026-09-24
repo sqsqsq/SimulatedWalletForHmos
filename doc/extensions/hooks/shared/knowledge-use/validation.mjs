@@ -80,8 +80,8 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   }
 
   // facts：激活即事实，只判「登记的那些在册」，不要求逐份登记——
-  // 用没用到某一份事实是作者的判断，机器数不出来。登记了就按面记：用了哪一面、拿它做什么，
-  // 未确认的面还要写核实时看的位置——按文件记答不了「核的是哪个事实」。
+  // 用没用到某一份事实是作者的判断，机器数不出来。登记了就按面记：用了哪一面、拿它做什么——
+  // 按文件记答不了「用的是哪个事实」。
   const factByName = new Map();
   for (const f of knowledge.facts) {
     for (const n of [f.file, f.name, path.basename(f.file, '.md')]) if (n) factByName.set(n, f);
@@ -108,9 +108,6 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         continue;
       }
       if (!text(u, 'used_for')) problems.push(`facts「${id}·${facet}」没写 used_for —— 用它做了什么是评审者要回查的`);
-      if (fact.unconfirmed.includes(facet) && !text(u, 'verified')) {
-        problems.push(`facts「${id}·${facet}」是未确认的面，没写 verified —— 写核实依据及位置——当前实现引代码或配置，已定规范引协议、需求或负责人确认记录`);
-      }
     }
   }
 
