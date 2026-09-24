@@ -2,11 +2,7 @@
 name: deliverables
 kind: constraints
 applies_when: always
-protocol: 1
-capabilities:
-  - id: deliverables
-    revision: 1
-    covers: [条目表, 落法附注]
+capabilities: [{id: deliverables, revision: 1, covers: [条目表, 落法附注]}]
 ---
 
 # 资料交付

@@ -31,7 +31,7 @@ provides:
   knowledge:
     - knowledge/facts/component-profile.md
     - knowledge/facts/engineering-capabilities.md
-    - knowledge/facts/reporting.md
+    - knowledge/facts/event-tracking.md
     - knowledge/constraints/ux-consistency.md
     - knowledge/constraints/security-privacy.md
     - knowledge/constraints/dfx-baseline.md

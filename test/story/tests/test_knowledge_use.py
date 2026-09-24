@@ -472,26 +472,28 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
     KNOWLEDGE = REPO_ROOT / "doc" / "extensions" / "knowledge"
 
     def sections(self) -> dict[str, str]:
-        text = (self.KNOWLEDGE / "facts" / "reporting.md").read_text(encoding="utf-8")
+        text = (self.KNOWLEDGE / "facts" / "event-tracking.md").read_text(encoding="utf-8")
         parts = re.split(r"^## ", text, flags=re.M)
         return {part.split("\n", 1)[0]: part for part in parts[1:]}
 
     def test_one_entry_in_the_activation_list(self) -> None:
         manifest = (REPO_ROOT / "doc" / "extensions" / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn("knowledge/facts/reporting.md", manifest)
-        self.assertNotIn("chart-reporting", manifest)
-        self.assertFalse((self.KNOWLEDGE / "facts" / "chart-reporting.md").exists())
+        self.assertIn("knowledge/facts/event-tracking.md", manifest)
+        for old in ("chart-reporting.md", "reporting.md"):
+            with self.subTest(old=old):
+                self.assertNotIn(f"knowledge/facts/{old}", manifest)
+                self.assertFalse((self.KNOWLEDGE / "facts" / old).exists())
 
     def test_each_facet_keeps_its_own_heading_and_confirmation(self) -> None:
-        """面按读者任务组织：每个事实面仍是独立 H2，未确认的面仍要求取证。"""
+        """面按读者任务组织，每个事实面是独立 H2；知识只写确定的内容，没有未确认面。"""
         proc = node("--input-type=module", "-e",
                     f"const k = (await import({as_url(EXT / 'hooks/shared/knowledge.mjs')}))"
                     f".activeKnowledge({json.dumps(REPO_ROOT.as_posix())});"
-                    "process.stdout.write(JSON.stringify(k.facts.find(f => f.name === 'reporting')));")
+                    "process.stdout.write(JSON.stringify(k.facts.find(f => f.name === 'event-tracking')));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         fact = json.loads(proc.stdout)
         self.assertEqual(["统计设计", "上报实现", "编号分配与复用", "业务扩展字段"], fact["facets"])
-        self.assertEqual(["业务扩展字段"], fact["unconfirmed"])
+        self.assertEqual([], fact["unconfirmed"])
 
     def test_engineering_capabilities_do_not_repeat_reporting(self) -> None:
         text = (self.KNOWLEDGE / "facts" / "engineering-capabilities.md").read_text(encoding="utf-8")

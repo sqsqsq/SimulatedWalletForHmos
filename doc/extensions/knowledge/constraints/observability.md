@@ -3,11 +3,7 @@ name: observability
 kind: constraints
 domain: OBS
 applies_when: 新增或修改业务流程的定位、运维统计或独立运营采集
-protocol: 1
-capabilities:
-  - id: observability
-    revision: 1
-    covers: [条目表, 落法附注]
+capabilities: [{id: observability, revision: 1, covers: [条目表, 落法附注]}]
 ---
 
 # 可观测性

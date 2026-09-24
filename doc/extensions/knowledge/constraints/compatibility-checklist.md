@@ -2,11 +2,7 @@
 name: compatibility-checklist
 kind: constraints
 applies_when: always
-protocol: 1
-capabilities:
-  - id: compatibility-checklist
-    revision: 1
-    covers: [条目表, 落法附注]
+capabilities: [{id: compatibility-checklist, revision: 1, covers: [条目表, 落法附注]}]
 ---
 
 # 兼容性检查表
