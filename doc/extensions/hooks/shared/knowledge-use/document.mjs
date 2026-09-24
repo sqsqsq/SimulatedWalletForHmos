@@ -119,7 +119,7 @@ export function renderSkeleton(projectRoot, knowledge) {
     `manifest_digest: ${manifestDigest(projectRoot)}`,
     '',
     '# 用到了哪几份项目知识：used 逐面一项（facet 取下面列的面名，used_for 写拿它做了什么；',
-    '# 面是「未确认」的，补 verified 写核实时看的仓内路径）。没用到的整份删掉。',
+    '# 面是「未确认」的，补 verified 写核实依据及位置：当前实现引代码或配置，已定规范引协议、需求或负责人确认记录）。没用到的整份删掉。',
     'facts:',
   ];
   for (const f of knowledge.facts) {

@@ -109,7 +109,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
       }
       if (!text(u, 'used_for')) problems.push(`facts「${id}·${facet}」没写 used_for —— 用它做了什么是评审者要回查的`);
       if (fact.unconfirmed.includes(facet) && !text(u, 'verified')) {
-        problems.push(`facts「${id}·${facet}」是未确认的面，没写 verified —— 写核实时看的仓内路径`);
+        problems.push(`facts「${id}·${facet}」是未确认的面，没写 verified —— 写核实依据及位置——当前实现引代码或配置，已定规范引协议、需求或负责人确认记录`);
       }
     }
   }

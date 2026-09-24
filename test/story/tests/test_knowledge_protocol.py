@@ -301,6 +301,16 @@ class AWaiverFollowsTheForce(ProtocolCase):
                   "used_for: 重试从哪进按它取\n        verified: src/scheduler.ets")
         self.assertEqual(0, self.render_output()[0])
 
+    def test_a_confirmed_rule_without_code_is_valid_basis(self) -> None:
+        """已定未实现的规范：依据是负责人确认记录，不要求代码路径；报错的修法同时说两种依据。"""
+        self.write_use(neutral=judgement())
+        self.edit(self.use_path, "facet: 出口登记", "facet: 重试入口")
+        _, out = self.render_output()
+        self.assertIn("当前实现引代码或配置，已定规范引协议、需求或负责人确认记录", out)
+        self.edit(self.use_path, "used_for: 出口登记在哪张表按它取",
+                  "used_for: 重试从哪进按它取\n        verified: 重试入口规范，负责人 2026-09-20 评审纪要第 3 条")
+        self.assertEqual(0, self.render_output()[0])
+
     def test_an_empty_facet_says_it_is_empty(self) -> None:
         self.write_use(neutral=judgement())
         self.edit(self.use_path, "facet: 出口登记", 'facet: ""')
