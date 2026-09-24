@@ -507,7 +507,8 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
         sections = self.sections()
-        voc = next(p for v in sections.values() for p in v.split("\n\n") if p.startswith("VOC "))
+        body = "".join(sections.values())
+        voc = body[body.index("VOC 另用标识"):].split("。", 1)[0]
         shared = "".join(v for k, v in sections.items() if "统计设计" in k) + voc
         # “终态”可用于解释渠道分工；这里只排除具体运维编码/枚举协议。
         for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_"):
