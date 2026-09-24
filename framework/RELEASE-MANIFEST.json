@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "844606b34b7cfa23cb02b2dbae10a0f126e2d64d",
-  "built_at": "2026-09-24T02:20:52.096Z",
+  "source_commit": "0f10dd56bc8efe762802215da27080598ea3b96b",
+  "built_at": "2026-09-24T06:59:37.578Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -666,7 +666,7 @@
     },
     {
       "path": "harness/prompts/verify-coding.md",
-      "sha256": "ef1ae96500d79f23c2c457c588c895ed76f310f5ba2669f90b8c212e6d58c8fb"
+      "sha256": "9135279dd85dee2396d58e83b6ddaf497c9b346f9244e7d739ff9e6d005a7532"
     },
     {
       "path": "harness/prompts/verify-extensions.md",
@@ -686,7 +686,7 @@
     },
     {
       "path": "harness/prompts/verify-testing.md",
-      "sha256": "bdacc9bacf610209c39c5f144327fe4d79bad45053f5d5b913b7a0401ae33457"
+      "sha256": "93a475f97107e993ffb8087357a7599c9ee7a2accc0ea71ae263ee2e01d68ace"
     },
     {
       "path": "harness/prompts/verify-ut.md",
@@ -4662,7 +4662,7 @@
     },
     {
       "path": "skills/reference/device-testing-workflow-detail.md",
-      "sha256": "10fc7a5c66bdb510b223ecc5903421379821480f8946fcfaccf2c9adb8ae8e1b"
+      "sha256": "e6d732ffb5230c3878cf28ec3b2bbdb7dac1a06d1c63263bd009935a7de99a4e"
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
