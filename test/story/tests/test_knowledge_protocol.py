@@ -149,20 +149,58 @@ class KnowledgeDescribesItself(ProtocolCase):
                       got["guide"])
         self.assertTrue(any("protocol.md" in line for line in got["guide"]))
 
+    def describe(self, value: str) -> None:
+        self.edit_knowledge("facts/neutral-facts.md",
+                            "applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口\n", value)
+
+    def test_every_legal_yaml_form_reaches_the_reader(self) -> None:
+        """引号、折叠与保留换行都是合法 YAML：读者拿到的是它们的真实文字，不是 `>` 或两个引号。"""
+        cases = {
+            "引号": ('applies_when: "设计出口时: 出口登记在哪"\n', "设计出口时: 出口登记在哪"),
+            "折叠": ("applies_when: >\n  设计出口时：\n  出口登记在哪\n", "设计出口时： 出口登记在哪"),
+            "保留换行": ("applies_when: |\n  设计出口时：\n  出口登记在哪\n", "设计出口时：\n出口登记在哪"),
+        }
+        before = self.ext.joinpath("knowledge/facts/neutral-facts.md").read_text(encoding="utf-8")
+        for form, (value, want) in cases.items():
+            with self.subTest(form=form):
+                self.ext.joinpath("knowledge/facts/neutral-facts.md").write_text(before, encoding="utf-8")
+                self.describe(value)
+                got = self.loaded()
+                fact = next(f for f in got["facts"] if f["name"] == "neutral-facts")
+                self.assertEqual(want, fact["appliesWhen"])
+                self.assertIn("—— " + want.replace("\n", "\n  "), "\n".join(got["guide"]))
+
+    def test_an_empty_or_non_text_description_is_named(self) -> None:
+        before = self.ext.joinpath("knowledge/facts/neutral-facts.md").read_text(encoding="utf-8")
+        for value, needle in (('applies_when: ""\n', "applies_when 是空的"),
+                              ("applies_when: '   '\n", "applies_when 是空的"),
+                              ("applies_when:\n", "缺 applies_when"),
+                              ("applies_when: [a, b]\n", "applies_when 不是文字"),
+                              ("applies_when: 1\n", "applies_when 不是文字")):
+            with self.subTest(value=value):
+                self.ext.joinpath("knowledge/facts/neutral-facts.md").write_text(before, encoding="utf-8")
+                self.describe(value)
+                self.assertIn(f"knowledge/facts/neutral-facts.md 的 {'frontmatter ' if needle.startswith('缺') else ''}{needle}",
+                              self.load_error())
+
     def test_every_file_problem_is_reported_in_one_load(self) -> None:
-        """缺文件、缺 kind、缺 applies_when、kind 不在三类里，与合法文件混在一起：一次报全。"""
+        """缺文件、缺 kind、缺 applies_when、kind 不在三类里、frontmatter 读不出，与合法文件混在一起：一次报全。"""
         facts = self.ext / "knowledge" / "facts"
         (facts / "no-kind.md").write_text("---\nname: x\n---\n\n# x\n", encoding="utf-8")
         (facts / "no-use.md").write_text("---\nname: y\nkind: facts\n---\n\n# y\n", encoding="utf-8")
         (facts / "odd-kind.md").write_text("---\nname: z\nkind: index\napplies_when: 说明\n---\n\n# z\n", encoding="utf-8")
+        (facts / "bad-yaml.md").write_text("---\nname: w\nkind: facts\napplies_when: 何时: 回答: 什么\n---\n\n# w\n",
+                                           encoding="utf-8")
         manifest = self.ext / "manifest.yaml"
         self.edit(manifest, "  knowledge:\n",
                   "  knowledge:\n    - knowledge/facts/missing.md\n    - knowledge/facts/no-kind.md\n"
-                  "    - knowledge/facts/no-use.md\n    - knowledge/facts/odd-kind.md\n")
+                  "    - knowledge/facts/no-use.md\n    - knowledge/facts/odd-kind.md\n"
+                  "    - knowledge/facts/bad-yaml.md\n")
         message = self.load_error()
         for needle in ("读不到 —— knowledge/facts/missing.md", "knowledge/facts/no-kind.md 的 frontmatter 缺 kind",
                        "knowledge/facts/no-use.md 的 frontmatter 缺 applies_when",
-                       'knowledge/facts/odd-kind.md 的 kind="index" 不在封闭集合里'):
+                       'knowledge/facts/odd-kind.md 的 kind="index" 不在封闭集合里',
+                       "knowledge/facts/bad-yaml.md 的 frontmatter 不是合法 YAML"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, message)
 

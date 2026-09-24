@@ -44,7 +44,7 @@ applies_when: 需求涉及业务定位、运维统计或独立运营采集时：
    - 结果分类 `setWalletFuncResult`：`SUCCESS` 全流程成功、`STEP_SUCCESS` 步骤成功、`STEP_ERROR_BY_ERROR` 普通失败（含拒绝授权）、`STEP_ERROR_BY_USER` 用户主动取消。
    - 内码 `setWalletEventInCode(string)`：十位，五段各两位（业务模块、业务流程、节点、子节点、具体结果），前导零保留；定位具体结果，与分类独立，身份不随结果改名。
    - 外码 `setWalletEventExtCode(string)` 只带实际拿到的外部错误码；耗时 `setDuration(number)` 毫秒，有诉求且起止明确时带；描述 `setWalletEventDesc(string)`。
-   - 自定义维度 `setReportParam(name, value)`，值为 string / number / boolean，标准字段用专用入口，扩展参数见第 4 面。BI 按运营需求选参，不默认带运维内码、外码或分类。
+   - 自定义维度 `setReportParam(name, value)`，值为 string / number / boolean，标准字段用专用入口，扩展参数见第 4 面。BI 按运营需求选参，不默认带运维内码、外码或分类；项目协议允许时可借内码、外码表达相近的业务含义，同时写明运营侧的含义、取值来源与消费约定，不沿用运维解释。
 
 例：上表「校验验证码」三种结果，按第 3 面首次候选（均为示意、未占号）：
 

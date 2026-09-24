@@ -56,22 +56,32 @@ function splitFrontmatter(text) {
   return { frontmatter: m[1], body: m[2] };
 }
 
-/** frontmatter 键值（浅层，值保留原始文本）。 */
-function frontmatterPairs(fm) {
-  const out = {};
-  for (const line of lines(fm)) {
-    const m = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
-    if (m) out[m[1]] = m[2].trim();
+/**
+ * frontmatter 按 YAML 读成映射：与 manifest 同一读取器，引号、转义、折叠与保留换行都按 YAML 的真实含义取值。
+ * 读不出或不是映射时抛 KnowledgeError，由调用方记在该文件名下。
+ */
+function frontmatterOf(fm) {
+  let value;
+  try {
+    value = parseYaml(fm);
+  } catch (e) {
+    if (e?.name !== 'YAMLParseError') throw e;
+    fail(`frontmatter 不是合法 YAML —— ${e.message.split('\n')[0]}`);
   }
-  return out;
+  if (typeof value !== 'object' || Array.isArray(value)) fail('frontmatter 要写成「键: 值」映射');
+  return value;
 }
 
-/** `[a, b]` 形态的 frontmatter 列表值。 */
-function fmList(raw) {
-  const s = String(raw ?? '').trim();
-  if (!s.startsWith('[') || !s.endsWith(']')) return s ? [s] : [];
-  const inner = s.slice(1, -1).trim();
-  return inner ? inner.split(',').map(x => x.trim()).filter(Boolean) : [];
+/** frontmatter 的标量取成去空白的字符串；没写为空串。 */
+function fmText(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+/** frontmatter 的列表值：YAML 列表逐项取字符串，单个标量当一项。 */
+function fmList(value) {
+  if (Array.isArray(value)) return value.map(fmText).filter(Boolean);
+  const s = fmText(value);
+  return s ? [s] : [];
 }
 
 /**
@@ -179,11 +189,7 @@ function parseExecutors(cell) {
     : s.split(/[\s/、，,]+/).filter(Boolean);
 }
 
-function parseConstraintFile(absPath, rel, bad) {
-  const text = readTextOrNull(absPath);
-  if (text === null) fail(`派生为空：激活清单登记的规约文件读不到 —— ${rel}`);
-  const { frontmatter, body } = splitFrontmatter(text);
-  const fm = frontmatterPairs(frontmatter);
+function parseConstraintFile(body, fm, rel, bad) {
   const table = markdownTable(body, ['编号', '约束']);
   if (!table) {
     fail(`派生为空：${rel} 找不到条目表 —— 表头须同时含「编号」与「约束」两列`);
@@ -236,7 +242,7 @@ function parseConstraintFile(absPath, rel, bad) {
   if (prefixes.size !== 1) {
     fail(`${rel} 的条目跨了多个域前缀（${[...prefixes].join('、')}）—— 一个文件一个域`);
   }
-  const declared = fm.domain;
+  const declared = fmText(fm.domain);
   const derived = [...prefixes][0];
   if (declared && declared !== derived) {
     fail(`${rel} 声明的 domain「${declared}」与条目编号前缀「${derived}」不一致`);
@@ -268,10 +274,10 @@ function parseConstraintFile(absPath, rel, bad) {
   }
   // 中文域名取正文一级标题——归档件面向评审者，写仓内 slug 他们对不上
   const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
-  const title = titleMatch ? titleMatch[1].trim() : (fm.name ?? derived);
+  const title = titleMatch ? titleMatch[1].trim() : (fmText(fm.name) || derived);
   return {
     file: rel,
-    name: fm.name ?? '',
+    name: fmText(fm.name),
     title,
     domain: derived,
     entries: entries.map(e => ({ ...e, domainTitle: title, note: noteOf.get(e.id) ?? '' })),
@@ -279,12 +285,8 @@ function parseConstraintFile(absPath, rel, bad) {
   };
 }
 
-function parsePatternFile(absPath, rel, bad) {
-  const text = readTextOrNull(absPath);
-  if (text === null) fail(`派生为空：激活清单登记的模式文件读不到 —— ${rel}`);
-  const { frontmatter, body } = splitFrontmatter(text);
-  const fm = frontmatterPairs(frontmatter);
-  const id = fm.name;
+function parsePatternFile(body, fm, rel, bad) {
+  const id = fmText(fm.name);
   if (!id) fail(`${rel} 的 frontmatter 缺 name —— 模式标识是全链受控标识，不能缺`);
   // 上篇给 spec / plan 选型，下篇给 coding / review 落地：缺一篇，那一侧就无从读起。
   const halves = ['上篇', '下篇'].filter(h => !new RegExp(`^#\\s+${h}\\s*·`, 'm').test(body));
@@ -296,7 +298,7 @@ function parsePatternFile(absPath, rel, bad) {
   if (!roles.length) {
     fail(`派生为空：${rel} 未声明 roles —— 模式采用后要逐角色投影到契约实体，没有角色就无从校验`);
   }
-  const coordinator = fm.coordinator_role ?? '';
+  const coordinator = fmText(fm.coordinator_role);
   if (coordinator && !roles.includes(coordinator)) {
     fail(`${rel} 的 coordinator_role「${coordinator}」不在 roles 里`);
   }
@@ -310,14 +312,10 @@ function parsePatternFile(absPath, rel, bad) {
 }
 
 /** 一个二级标题是一面：面名去掉编号与「 — 」之后的说明。 */
-function parseFactFile(absPath, rel) {
-  const text = readTextOrNull(absPath);
-  if (text === null) fail(`派生为空：激活清单登记的项目知识文件读不到 —— ${rel}`);
-  const { frontmatter, body } = splitFrontmatter(text);
-  const fm = frontmatterPairs(frontmatter);
+function parseFactFile(body, fm, rel) {
   const facets = lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)
     .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim()).filter(Boolean);
-  return { file: rel, name: fm.name ?? '', facets };
+  return { file: rel, name: fmText(fm.name), facets };
 }
 
 /**
@@ -386,8 +384,16 @@ export function activeKnowledge(projectRoot) {
     const text = readTextOrNull(abs);
     if (text === null) { bad.push(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`); continue; }
 
-    const pairs = frontmatterPairs(splitFrontmatter(text).frontmatter);
-    const kind = pairs.kind;
+    const { frontmatter, body } = splitFrontmatter(text);
+    let fm;
+    try {
+      fm = frontmatterOf(frontmatter);
+    } catch (e) {
+      if (!(e instanceof KnowledgeError)) throw e;
+      bad.push(`${relPosix} 的 ${e.message}`);
+      continue;
+    }
+    const kind = fmText(fm.kind);
     if (!kind) {
       bad.push(`${relPosix} 的 frontmatter 缺 kind —— 它决定这个文件按哪类知识解析，`
         + `不能靠目录或文件名去猜（可用：${KNOWLEDGE_KINDS.join(' / ')}）`);
@@ -398,16 +404,19 @@ export function activeKnowledge(projectRoot) {
         + `写法见 ${PROTOCOL_DOC}）`);
       continue;
     }
-    const appliesWhen = String(pairs.applies_when ?? '').trim();
+    const raw = fm.applies_when;
+    const appliesWhen = typeof raw === 'string' ? raw.trim() : '';
     if (!appliesWhen) {
-      bad.push(`${relPosix} 的 frontmatter 缺 applies_when —— 写这份知识何时读、回答什么，`
+      const got = raw === undefined || raw === null ? '的 frontmatter 缺 applies_when'
+        : typeof raw === 'string' ? '的 applies_when 是空的' : `的 applies_when 不是文字（读到 ${typeof raw}）`;
+      bad.push(`${relPosix} ${got} —— 用一句话写这份知识何时读、回答什么，`
         + `任务包与审查按它把知识交给当前阶段（写法见 ${PROTOCOL_DOC}）`);
     }
     // 本文件的结构错误（条目表零行、缺角色等）记下后接着核下一份：维护者一轮看到全部问题。
     try {
-      if (kind === 'constraints') out.constraints.push({ ...parseConstraintFile(abs, relPosix, bad), appliesWhen });
-      else if (kind === 'patterns') out.patterns.push({ ...parsePatternFile(abs, relPosix, bad), appliesWhen });
-      else out.facts.push({ ...parseFactFile(abs, relPosix), appliesWhen });
+      if (kind === 'constraints') out.constraints.push({ ...parseConstraintFile(body, fm, relPosix, bad), appliesWhen });
+      else if (kind === 'patterns') out.patterns.push({ ...parsePatternFile(body, fm, relPosix, bad), appliesWhen });
+      else out.facts.push({ ...parseFactFile(body, fm, relPosix), appliesWhen });
     } catch (e) {
       if (!(e instanceof KnowledgeError)) throw e;
       bad.push(e.message);
@@ -526,5 +535,5 @@ export function knowledgeGuide(projectRoot, knowledge) {
   const at = rel => `\`${relDisplay(projectRoot, path.join(extensionRoot(projectRoot), rel))}\``;
   const all = [...(knowledge?.facts ?? []), ...(knowledge?.constraints ?? []), ...(knowledge?.patterns ?? [])];
   return [`知识的读写规则见 ${at(PROTOCOL_DOC)}。激活的知识与各自用途（按当前需求选读）：`, '',
-    ...(all.length ? all.map(k => `- ${at(k.file)} —— ${k.appliesWhen}`) : ['- （激活清单为空）'])];
+    ...(all.length ? all.map(k => `- ${at(k.file)} —— ${k.appliesWhen.replace(/\n/g, '\n  ')}`) : ['- （激活清单为空）'])];
 }

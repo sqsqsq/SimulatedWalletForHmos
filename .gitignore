@@ -93,6 +93,7 @@ doc/extensions/adapt/
 **/.cac/settings.local.json
 output/
 **.pyc
+**/__pycache__/
 # Story 设计过程不入库：方案、评审与状态记录都留在工作区，不归档。
 test/story/design/
 test/story/spec/

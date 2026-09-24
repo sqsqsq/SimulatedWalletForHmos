@@ -24,7 +24,8 @@ provides:
   # （`kind: facts | constraints | patterns`），不在这里再分一次组。
   # 两份清单意味着两处要同步，改一处忘另一处就是静默漂移——而它们本来就该是同一件事。
   #
-  # 知识的读写规则与能力台账归机制（skills/story/reference/knowledge/），knowledge/ 下只放目标自己的内容。
+  # 每份知识用自己 frontmatter 的 applies_when 说明何时读、回答什么；读写规则归机制
+  # （skills/story/reference/knowledge/protocol.md），knowledge/ 下只放目标自己的内容。
   #
   # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从各文件的
   # frontmatter 与正文派生，机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
