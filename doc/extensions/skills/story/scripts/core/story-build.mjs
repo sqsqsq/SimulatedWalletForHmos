@@ -87,8 +87,11 @@ function cmdNumber(ctx) {
 // skeleton / chapter：骨架与逐章原子落盘
 // --------------------------------------------------------------------------
 
+/**
+ * 附录机器区按当前真源重投。**登记之后也可以跑**：冻结的是作者写的部分，机器区一直跟着真源；
+ * spec 改了，重投一次就跟上，不必 reopen。
+ */
 function cmdProject(ctx) {
-  refuseIfFrozen(ctx, 'project');
   const story = readText(ctx.storyPath);
   if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架');
   const { text, zones } = projectAppendix(ctx, story);
@@ -188,7 +191,9 @@ function cmdSkeleton(ctx) {
       + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
         : '草稿齐备，一份未覆盖'}`;
   } else {
-    const body = [`# ${path.basename(ctx.featureRoot)}`, ''];
+    // 大标题「编号 需求名」：名称取自需求详情；本地单没有详情，作者照 check 的提示补上名称
+    const title = String(readJson(path.join(ctx.featureRoot, 'AR', 'detail.json'), {})?.title ?? '').trim();
+    const body = [`# ${path.basename(ctx.featureRoot)}${title ? ` ${title}` : ''}`, ''];
     for (const ch of ctx.contract.chapters) {
       body.push(`## ${ch.title}`, '', pendingMark(ch.title), '');
     }

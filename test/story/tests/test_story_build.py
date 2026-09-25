@@ -3289,3 +3289,50 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTitleCarriesTheName(StoryBuildCase):
+    """AC24：归档件大标题是「编号 需求名」——只有编号，读者在需求系统外认不出是哪件事。"""
+
+    def test_a_title_with_only_the_id_is_named(self) -> None:
+        self.init_audit()
+        first = self.story().split("\n", 1)[0]
+        self.rewrite_story(first, f"# {FEATURE}")
+        self.assertIn("大标题缺需求名", self.assert_check_names("大标题缺需求名"))
+
+
+class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
+    """AC24：来源标记只核引用——指到上游真有的图、不指向 story 自己；写在围栏外只报一处。"""
+
+    def add_before_terms(self, block: str) -> None:
+        self.rewrite_story("本需求不涉及。\n\n## 术语", "本需求不涉及。\n\n" + block + "\n\n## 术语")
+
+    def test_a_mark_to_a_missing_figure_is_named(self) -> None:
+        self.init_audit()
+        self.add_before_terms("```mermaid\n%% 图源 SR §99 #1\ngraph TD\nA-->B\n```")
+        self.assertIn("「SR §99 #1」", self.assert_check_names("来源标记"))
+
+    def test_a_mark_to_the_story_itself_is_named(self) -> None:
+        self.init_audit()
+        self.add_before_terms("```mermaid\n%% 图源 story §1 #1\ngraph TD\nA-->B\n```")
+        self.assertIn("指向的不是上游文档", self.assert_check_names("来源标记"))
+
+    def test_a_mark_outside_the_fence_is_one_report(self) -> None:
+        self.init_audit()
+        self.add_before_terms("%% 图源 SR §99 #1")
+        out = self.assert_check_names("写在了围栏外")
+        self.assertNotIn("文档坐标", out, "同一行又按文档坐标报了一遍")
+
+
+class TheProjectionRefreshesAfterRegistration(Step8Case):
+    """AC22：登记之后 spec 改了，`project` 直接重投附录机器区，不必 reopen。"""
+
+    def test_project_runs_on_a_registered_story(self) -> None:
+        ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+        flow = self.src / "story-flow.json"
+        data = json.loads(flow.read_text(encoding="utf-8"))
+        data["status"] = "story_written"
+        flow.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("重投", proc.stdout)

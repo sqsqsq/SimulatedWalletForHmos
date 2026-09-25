@@ -59,42 +59,42 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 ```
 
 - **附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写**：它们是 spec §9.1 与
-  `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。
+  `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。登记之后 spec 改了，`story-build project`
+  直接重投这几节，不必 reopen。
 - **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。
-  `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后 story 冻结，
-  要改先 `reopen`（见下「闭环之后」）。
+  `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后作者写的部分冻结，
+  要改先 `reopen`。
 - **④ 之前必须走完 ①–③**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
-- **⑤ 派不派只看 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次；说本宿主没有审查员就直接进 ⑥。
-  **调用只带 request JSON**；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件。
-  写好之后读 summary：这份报告**还没被采纳**时，再完整跑一次 ④ 的 harness 采纳它——这是 ⑤ 的收尾，不是回到 ④ 重走链（采纳的判据、为什么不能用 `--sync-closure` 见 [update.md](update.md)「与闭环、修正入口的关系」第 4 步）；
-  已采纳就进 ⑥。报告有阻断项或材料又变了，按真实反馈与 `NEXT:` 处理，不拿历史 PASS 代替。
-  当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。当前审查只认对当前请求的原样回复。
-- **⑤ 之后闭环链不回头（硬规则）**：有阻断项才返修（见下「失败出口」）；没有阻断项就走 ⑥，把链走完。
-  **闭环之后发现的真实问题**（verifier WARN 里有内容依据的也算）走 framework 的修正入口：
-  `harness-runner.ts --correction-init` 按修正三问定责任层 → 改真源 →
-  `harness-runner.ts --revalidate --feature <名>`——它只重跑脚本门禁。
-  **这条路不重跑 spec 闭环链、不手动派 verifier**：每跑一次 harness 都换一份审查对象，
-  每派一次就是整份再审，而这里改的是收口后冒出来的局部问题。
-  story 侧的改动仍经 `reopen` → `chapter` → `story` 登记，同样不派 verifier。
 
-  **另一条路是 `/story update`**，它与上面这条的区别不在「代码拦不拦」，在**谁发起、材料变了多少**：
-  用户主动要求按新的材料与意见更新已有产物，改完的那几个阶段**要按新的审查对象审一次**——
-  材料确实换了一批，沿用上一版的 PASS 说的是另一份产物。怎么派、怎么回写见
-  [update.md](update.md)「与闭环、修正入口的关系」，本页不复述第二遍。
-  纯表达类 WARN（措辞、标题偏好）交评审回流或下一轮，记进 `spec/notes.md` 只是登记，不算处置完成。
-  已经做了的正确修改不回滚。
-- **⑥ 回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己先生成再校验；要写备注写 `<phase>/notes.md`。
-  只有 `check-receipt` 报 subject 失配时才重跑 harness（那之后 verifier 再来一次）。
-  **`check --deliver` 是交付门**：它把回执再跑一次，再核读者审查那一项的**实际结论**——判的不是 PASS 就不交付，
-  本宿主没登记审查员时如实记一笔「未经读者语义审查即交付」。通过之后按 SKILL 停等表停一次。
+### 闭环
 
-### 失败出口：verifier 报了阻断问题
+**⑤ 派不派只看 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次；说本宿主没有审查员就直接进 ⑥。
+请求与报告的路径都由 summary 的 `verifier_request`、`verifier_report` 给：不要自己拼 subject、不复用上一轮的文件名——
+拿错了 `check-receipt` 判 `report_missing`，退回沿用历史 PASS，表面闭环、实际没审。
+调用只带 request JSON；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件，
+再完整跑一次 harness 采纳它（不用 `--sync-closure`：它对已闭环的阶段不改写）。读 summary 确认
+`verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
+门禁核这份报告：格式不合的回复被存为被拒回复、不计结论，重投同一份 request；缺哪条判据点名「缺判据」；
+同一审查对象只认第一份合规结论，重投覆盖不算。
 
-`story_flow.py reopen` 撤销成文登记（唯一的回退出口）→ 照 reopen 给出的下一步走：范围与材料没变时是
-`complete --from AR/story-src/design-draft.md` 重新收口，材料变了走盘点与关卡 → `story-build skeleton`
-（只补缺席的章，story.md 一个字节不动）→ 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）
-→ `chapter --from <草稿>` → `story_flow.py story` 重新登记 → harness → verifier 再审。
-材料变了、审查对象换代，这是正常返修，不是重复审。
+**报告回来之后怎么处置，全扩展只有这一张表**：
+
+| 报告结论 | 你做什么 | 闭环方式 |
+|---|---|---|
+| 有阻断项 | 按阻断项返修：story 侧 `story_flow.py reopen` → 照它给的下一步走 → 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）→ `chapter` → `story` 重新登记 | 完整 harness → 取新请求再派审 |
+| PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完跑 `harness-runner.ts --revalidate --feature <名>` | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
+| PASS，改动改变业务口径、范围、验收、契约实体 | 改完完整跑 harness | 取新请求再派审 |
+| PASS，建议不在本阶段修 | 不改材料 | notes 逐条记建议与去处（下一阶段或评审） |
+
+- 改动属于哪一类由你判断，写进 `<阶段>/notes.md`；门禁核报告里每条 WARN、FAIL 在 notes 里都有处置记录。
+- 读者审查判 WARN 而没有阻断项时交付门放行，建议项进 notes；只有阻断项才拦。
+- 审查之后改了知识判断或决策状态，notes 写新依据——只为消掉审查意见而改判断不算处置。
+- 门禁反复报同一问题而你判断改不动时，停下向人说明缺什么、需要谁提供，不靠多跑几次过关。
+- `/story update` 里改了业务的阶段，在 update-notes 写「业务改动的阶段：…」，`update --action close` 核它们有当前对象的报告。
+
+**⑥ 回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己先生成再校验；要写备注写 `<phase>/notes.md`。
+**`check --deliver` 是交付门**：它把回执再跑一次，再核读者审查那一项的结论；本宿主没登记审查员时如实记一笔
+「未经读者语义审查即交付」。通过之后按 SKILL 停等表问一次「归档送审 / 进入 plan」。
 
 ## 三、§9.1 技术契约怎么写
 
@@ -118,7 +118,7 @@ core spec 模板在 §8 之后预留了锚点「宿主扩展治理项」：写�
 别拿平台常识替代它：某个 API 在别的工程常见，不等于本工程在用；项目知识里已核实为「没有」的能力，不要选进新设计。
 
 **防重复**：写之前先查 spec 已有章节，同一件事只写一处。加密 / 脱敏 / 调用方校验归 §7.3；
-性能阈值归 §7.1；谁先上线、阻塞谁，以及管理台排期、打点归档、翻译回稿，归《决策与评审记录》。
+性能阈值归 §7.1；谁先上线、阻塞谁，以及排期与跨方确认，归《决策与评审记录》。
 §9.1 不重复这些；「9. 宿主扩展治理项」的锚点表指向它们在决策记录里的议题。埋点设计写在 9.1.4 一处，业务章引用它。
 
 ## 四、交付门之后

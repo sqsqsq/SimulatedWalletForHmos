@@ -75,6 +75,41 @@ export function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) 
   return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
 }
 
+/** 围栏外的图源标记行（1 起）：标记只在图的围栏第一行算数。 */
+export function strayMarks(text) {
+  const doc = parseDocument(text);
+  return doc.lines.flatMap((line, i) => (!doc.fenced.has(i) && /^\s*%%\s*图源/.test(line) ? [i + 1] : []));
+}
+
+/**
+ * 来源标记指得到吗 —— 指向的图在直接上游里存在，且不是指向 story 自己。
+ *
+ * 只核引用本身：图是不是承接了那张图的关系，要读内容，归读者审查的图文一致判据。
+ */
+export function sourceMarkProblems(ctx, storyText) {
+  const problems = [];
+  const known = new Set();
+  const labels = new Set();
+  for (const [label, upstream] of upstreamDocs(ctx)) {
+    labels.add(label);
+    for (const d of diagramsOf(upstream)) known.add(`${label} ${d.id}`);
+  }
+  for (const d of diagramsOf(storyText)) {
+    for (const mark of d.sources) {
+      if (known.has(mark)) continue;
+      const label = mark.split(/\s+/)[0];
+      problems.push(labels.has(label)
+        ? `story ${d.id} 的来源标记「${mark}」指向的图在 ${label} 里没有——照 skeleton 输出里给的那行写，或去掉这行标记`
+        : `story ${d.id} 的来源标记「${mark}」指向的不是上游文档（上游是 ${[...labels].join('、') || '无'}）——`
+          + '标记写直接上游那一张图，不指向 story 自己');
+    }
+  }
+  for (const line of strayMarks(storyText)) {
+    problems.push(`第 ${line} 行的图源标记写在了围栏外——标记要写在图的围栏里第一行`);
+  }
+  return problems;
+}
+
 /** 图片身份：引到的每一张是不是材料里登记过的那一张，登记的每一张有没有去处。 */
 export function imageProblems(ctx, storyText) {
   const problems = [];

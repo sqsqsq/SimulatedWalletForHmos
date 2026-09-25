@@ -23,8 +23,8 @@ import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
-import { parseYaml } from './yaml.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
+import { overlayChecks } from './verifier-report.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
@@ -156,28 +156,20 @@ function obligationTable(projectRoot, feature, knowledge) {
 }
 
 /**
- * 本阶段该产出哪些知识判据结论 —— **从 overlay 现取**，不在这里维护第二份清单。
+ * 本阶段全部判据与报告结构 —— overlay 里的每一条都进请求，逐条出结论。
  *
- * overlay 是这些判据的真源；把 id 抄一份到代码里，改了 overlay 就会两边对不上，
- * 而且是静默的（框架侧 overlay 解析失败本身也不出声）。所以这里解析不出来就响亮报出，
- * 让人看见「判据清单没生效」，而不是悄悄注入一份空要求。
+ * framework 的任务清单只列它自己的判据，overlay-only 的项不由它送；这里不送的那一条就不是任务。
+ * 报告结构写在请求里：格式不合的回复会被存为被拒回复，不计结论。
  */
-function overlayCheckIds(projectRoot, phase) {
-  const p = path.join(extensionRoot(projectRoot), 'rules', `${phase}-rules.overlay.yaml`);
-  const text = readTextOrNull(p);
-  if (text === null) return { ids: [], error: `读不到 rules/${phase}-rules.overlay.yaml` };
-  let checks;
-  try {
-    checks = parseYaml(text)?.semantic_checks;
-  } catch (e) {
-    return { ids: [], error: `${phase} overlay 解析失败：${String(e.message).split(/\r?\n/)[0]}` };
-  }
-  if (!checks || typeof checks !== 'object') return { ids: [], error: `${phase} overlay 里没有 semantic_checks` };
-  const ids = Object.keys(checks);
-  if (!ids.length) return { ids: [], error: `${phase} overlay 的 semantic_checks 解析出零条判据` };
-  // **全部送达**，不按前缀挑。framework 的任务清单只列它自己那些，overlay-only 的项
-  // 不由它送；这里漏掉哪一条，哪一条就不是「任务」，审查者不会去做它。
-  return { ids, error: null };
+function allChecksFragment(checks) {
+  const rows = Object.entries(checks).map(([id, c]) => {
+    const first = String(c?.description ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[。；])/)[0];
+    return `- \`${id}\`（${c?.severity ?? '未定级'}）：${first}`;
+  });
+  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '',
+    '**报告结构**：汇总表每条判据一行，四格 `id | status | severity | 证据`，PASS 也列、证据不空；',
+    'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；',
+    '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
 }
 
 export default async function preVerifier(ctx) {
@@ -185,8 +177,8 @@ export default async function preVerifier(ctx) {
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
   const source = SOURCE_OF_TRUTH[phase];
   if (!source) throw new Error(`pre_verifier 不认识阶段「${phase}」：manifest 登记它的阶段要在 SOURCE_OF_TRUTH 里有一项`);
-  const { ids: checkIds, error } = overlayCheckIds(ctx.projectRoot, phase);
-  if (!error && !checkIds.length) return {};
+  const { checks, error } = overlayChecks(ctx.projectRoot, phase);
+  const checkIds = Object.keys(checks);
   if (error) {
     return {
       promptFragments: [[
@@ -214,8 +206,8 @@ export default async function preVerifier(ctx) {
       : phase === 'spec' ? specJudgementTable(ctx.projectRoot, ctx.feature, knowledge)
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
-  // 读者审查放最前：它要通读整份归档件与全部材料，是这批判据里最重的一项。
-  // 排在后面容易被当成附注跳过。
+  fragments.push(allChecksFragment(checks));
+  // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));
   }

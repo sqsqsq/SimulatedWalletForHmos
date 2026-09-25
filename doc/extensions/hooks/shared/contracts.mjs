@@ -4,6 +4,7 @@
  * 义务本身不在这里：它挂在契约实体上，由 `obligations.mjs` 运行期派生。
  * 本模块只负责**读取与解析**，判据在各阶段的 post_check。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
@@ -206,6 +207,15 @@ export function contractFiles(contracts) {
 }
 
 /** acceptance.yaml 读取（知识义务的验证要求单源）。 */
+/** 验收编号的形态：唯一定义在章节合同 `id_shapes.acceptance`。 */
+const STORY_CONTRACT = new URL('../../skills/story/contracts/story-chapters.json', import.meta.url);
+
+const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CONTRACT, 'utf-8')
+  .replace(/^\uFEFF/, '')).id_shapes[kind].join('|')})\\b`, 'g');
+export const acceptanceIdRe = () => idShape('acceptance');
+/** 上游材料里读者要对照的原始验收编号形态（`id_shapes.keep`）。 */
+export const keptIdRe = () => idShape('keep');
+
 export function readAcceptance(projectRoot, feature) {
   const p = path.join(featureRoot(projectRoot, feature), 'acceptance.yaml');
   const raw = readTextOrNull(p);

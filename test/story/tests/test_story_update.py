@@ -35,7 +35,7 @@ FLOW = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
 
 
 #: 一份能收口的 update-notes：四段里至少有「不变项与理由」表
-NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
+NOTES = ("## 当前依据\n读过了。\n\n业务改动的阶段：无\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
          "| 验收口径 | 这一轮没有动到它 |\n")
 
 
@@ -852,3 +852,26 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
         out = self.update()
         self.assertTrue(out["baseline"], out)
         self.assertIn("spec/spec.md", out["changed"])
+
+
+class BusinessChangesNeedACurrentReview(UpdateCase):
+    """AC20：改了业务的阶段在 update-notes 里声明，收口核它们有当前审查对象的 PASS 报告。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rid = self.update()["update"]
+
+    def notes(self, text: str) -> None:
+        (self.updates / self.rid / "update-notes.md").write_text(text, encoding="utf-8")
+
+    def test_the_changed_phases_must_be_declared(self) -> None:
+        self.notes(NOTES.replace("业务改动的阶段：无\n\n", ""))
+        self.assertIn("业务改动的阶段", self.update("--action", "close").get("error", ""))
+
+    def test_a_declared_phase_without_a_current_report_does_not_close(self) -> None:
+        reports = self.feature_root / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(json.dumps(
+            {"closure_status": "closed", "verdict": "PASS", "verifier_subject_id": "c" * 64}), encoding="utf-8")
+        self.notes(NOTES.replace("业务改动的阶段：无", "业务改动的阶段：spec"))
+        self.assertIn("没有当前审查对象的 PASS 报告", self.update("--action", "close").get("error", ""))

@@ -201,50 +201,15 @@ contracts、use-cases、AR 提取件与写作设计、`context/facts.md`、会�
 本地文件写完了、脚本退出 0、操作记录关闭了，**都不能代替上面这几个判断**。
 没有历史版本时可以说「当前无需修订」，但不能说「历史从未发生过变化」。
 
-## 五、与闭环、修正入口的关系
+## 五、与闭环的关系
 
-报告缺席时，framework 沿用历史 PASS 并如实标 `completed_with_prior_review`；`--revalidate` 在跑内就按这条兜底把阶段闭环了，
-而**已闭环的 summary 不再被改写**：之后写好的报告只有再跑一次完整 harness 才会被采纳（下一节第 4 步）。
-`NEXT:` 行说的「停下等待用户指令」，`/story update` 正是那条用户指令。
+**哪些阶段要按新的审查对象审一次**：这一轮确实改了该阶段的业务口径、范围、验收或契约实体。
+在 update-notes 写一行「业务改动的阶段：spec、plan」（没有写「无」），`close` 核这些阶段有当前对象的 PASS 报告。
+只改表达、核对后未修订、只改了过程记录的阶段不派审。按阶段依赖来，先 spec 后 plan；spec 的返修改了 plan 的材料时，
+先把 plan 同步好再取它的请求。
 
-普通的局部修正仍按 `phases/spec.md` 的原路走：`--correction-init` 定责任层 → 改真源 →
-`--revalidate` 只重跑脚本门禁，不派 verifier。两者的区别是**谁发起、材料变了多少**，
-不是「代码有没有拦着」。
-
-### 改动过的阶段，要按新的审查对象审一次
-
-**什么时候派**：这一轮确实改了该阶段供评审或后续工作使用的产物或业务依据。
-无变化快速退出、核对后未修订、只改了过程记录（`update-notes.md` 自己）——这三条都不派。
-不能只看文件名判「这是过程记录」：改了有效决定或审查依据的，仍要看实际影响。
-
-按阶段依赖来，先 spec 后 plan；spec 的返修改了 plan 的材料时，**先把 plan 同步好再取它的请求**，
-不要投一个已经失效的。
-
-```text
-cd framework/harness && npx ts-node harness-runner.ts --revalidate --feature <编号>
-```
-
-重验之后，对每个改过的阶段：
-
-1. 读该阶段当前 `summary.json` 的 `verifier_request` 与 `verifier_report`——**路径由它给**，
-   不要自己拼 subject、不要复用上一轮的文件名。两个文件名都带 subject 哈希，拿错了
-   `check-receipt` 会判 `report_missing` 而退回沿用历史 PASS：**表面闭环，实际没审**。
-2. 把那份请求 JSON **整段原文**交给 verifier，不加任何文字。
-3. 回复**原样全文**写到 `summary.verifier_report` 指的那份文件，一个字不改、不做摘要。
-4. 跑一次完整的 `harness-runner.ts --phase <阶段> --feature <编号>`（**不是** `--sync-closure`：
-   它对已闭环的阶段不改写，输出「已闭环」也不代表这一轮的报告被采纳了）。然后读 summary 确认：
-   `verifier_subject_id` 与报告终态块的 subject 对得上、`verdict=PASS`、`blocker_count=0`，
-   且没有 `verifier_closure`、`readiness_signals` 里**没有** `semantic_not_reverified`——
-   它还在就说明报告没被采纳。**仅凭退出码 0 或「已闭环」字样不够**，要读盘。
-5. 报了阻断项就按正常返修改；材料因此又变了，重新取最新的请求再审一次，
-   **不要回退去用历史 PASS**。当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。
-
-**派审期间不动被审的材料**：业务正文、决定，以及被纳入材料视图的 `update-notes.md`，
-从生成请求到第 4 步读完 summary 之间一个字节都不改。为了补一句「已审」去改刚审过的正文，
-审查对象就漂了，那份报告说的是另一版。
-
-**本宿主没有 verifier、或这一轮没有合法请求**：如实报告「这次更新没有完成独立审查」。
-不补造请求、不用自审顶替、不说「已审查通过」。
+派审、采纳与报告回来之后的处置，按 `phases/spec.md`「闭环」一节那张表，本页不另写一份。
+派审期间不动被审的材料；本宿主没有 verifier 时，如实报告「这次更新没有完成独立审查」，不用自审顶替。
 
 ### 回写需求系统
 

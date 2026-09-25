@@ -869,15 +869,12 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
             self.assertNotIn(gone, text, "「%s」还在，进 spec 前仍会停一次" % gone)
         self.assertIn("直接进 spec，不问", text)
 
-    def test_the_failure_exit_has_a_checkable_precondition(self) -> None:
-        """「修不动了」是失败上报，不是确认点，而且前提必须可核。
-
-        写成「同一处连续 3 次修不好」由模型自己判的话，试一次就能宣布修不好
-        然后合法停下——与条件式白名单是同一个毛病。
-        """
+    def test_the_failure_exit_is_a_handover_not_a_counter(self) -> None:
+        """「修不动了」是请人接手，不是确认点；停不停由作者判断，要说清缺什么、需要谁提供。"""
         text = self.skill()
         self.assertIn("失败出口", text, "失败上报要与停等点分开写")
-        self.assertIn("连续三次运行", text, "前提要可核：连续三次 check 都报同一类")
+        self.assertIn("缺什么、需要谁提供", text)
+        self.assertNotIn("连续三次运行", text, "机械次数替掉了作者的判断")
         self.assertNotIn("触发白名单第 3 条", text, "旧的自述式出口还在被引用")
 
     def test_no_delegated_choice_path_remains(self) -> None:

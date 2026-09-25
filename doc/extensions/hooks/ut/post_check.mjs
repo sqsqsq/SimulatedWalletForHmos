@@ -13,7 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
-import { knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
@@ -25,7 +25,7 @@ function coveredAcceptanceIds(projectRoot, feature) {
   const reportPath = path.join(root, 'ut', 'reports', 'ac-coverage.json');
   const raw = readTextOrNull(reportPath);
   if (raw !== null) {
-    for (const m of raw.matchAll(/\b(?:AC|BD)-(?:G\d+|\d+)\b/g)) ids.add(m[0]);
+    for (const m of raw.matchAll(acceptanceIdRe())) ids.add(m[0]);
   }
 
   // 用例里以 [AC-N] 形态标注的（框架 UT 约定）
@@ -45,7 +45,7 @@ function coveredAcceptanceIds(projectRoot, feature) {
       if (!/\.(ets|ts|js|md|json|yaml)$/.test(e.name)) continue;
       const text = readTextOrNull(p);
       if (text === null) continue;
-      for (const m of text.matchAll(/\b(?:AC|BD)-(?:G\d+|\d+)\b/g)) ids.add(m[0]);
+      for (const m of text.matchAll(acceptanceIdRe())) ids.add(m[0]);
     }
   }
   return ids;

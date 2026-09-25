@@ -14,7 +14,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
-import { knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
@@ -45,7 +45,7 @@ function referencedAcceptanceIds(projectRoot, feature) {
       const text = readTextOrNull(p);
       if (text === null) continue;
       artifactCount++;
-      for (const m of text.matchAll(/\b(?:AC|BD)-(?:G\d+|\d+)\b/g)) ids.add(m[0]);
+      for (const m of text.matchAll(acceptanceIdRe())) ids.add(m[0]);
     }
   }
   return { ids, artifactCount };

@@ -24,7 +24,7 @@ import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { carriedDiagramProblems, imageProblems } from './images.mjs';
+import { carriedDiagramProblems, imageProblems, sourceMarkProblems, strayMarks } from './images.mjs';
 import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -116,6 +116,9 @@ export function cmdCheck(ctx) {
     if (!h1Text.includes(ctx.args.feature)) {
       problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
         + '——归档件流转出去之后，读者靠这个编号回到需求系统');
+    } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
+      problems.push(`大标题缺需求名：写成 \`# ${ctx.args.feature} <需求名称>\``
+        + '——名称取自需求详情，本地单写需求方给的名称；只有编号，读者在需求系统外认不出这是哪件事');
     }
   }
 
@@ -160,7 +163,10 @@ export function cmdCheck(ctx) {
   const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
-  const storyForPaths = redactMaterialLinks(storyText, ctx);
+  // 围栏外的图源标记由 ⑫d 一处报，这里先抹掉，同一行不再按文档坐标报第二遍
+  const stray = new Set(strayMarks(storyText));
+  const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
+    .map((line, i) => (stray.has(i + 1) ? '' : line)).join('\n');
   // review 的禁用词作用域比别的判据窄：人工区与「上线/管控」类议题不判，
   // 见 `redactReviewExemptZones`。词表一个字没削，收的是作用域。
   const reviewForBanned = redactReviewExemptZones(reviewText, ctx);
@@ -219,9 +225,8 @@ export function cmdCheck(ctx) {
         groups.get(key).push(h);
       }
       for (const list of groups.values()) {
-        const sample = list.slice(0, 3).map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
-        problems.push(`${label} 出现${list[0].label} ${list.length} 处（${sample}${list.length > 3 ? ' …' : ''}）`
-          + `——${list[0].hint}`);
+        const all = list.map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
+        problems.push(`${label} 出现${list[0].label} ${list.length} 处（${all}）——${list[0].hint}`);
       }
     }
   }
@@ -274,7 +279,7 @@ export function cmdCheck(ctx) {
   mark('⑫d 上游图承接');
   // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
   // 离线仲裁锚没有上游文档，整类不判。
-  if (!ctx.offline) problems.push(...carriedDiagramProblems(ctx, storyText));
+  if (!ctx.offline) problems.push(...carriedDiagramProblems(ctx, storyText), ...sourceMarkProblems(ctx, storyText));
 
   mark('⑬ 评审记录只含渲染语法');
   problems.push(...reviewFormProblems(reviewText, ctx.contract));

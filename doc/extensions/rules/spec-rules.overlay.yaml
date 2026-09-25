@@ -22,7 +22,8 @@ semantic_checks:
       不命中的条目给得出回查到命中条件的事实——「不涉及」不是依据，项目事实说「仓里没有现成实现」只说明复用结果；
       豁免写清理由、影响与补偿。通用措辞也可以准确，专门措辞也可能错，按内容判。
       登记齐不齐、编号在不在册、投影跟不跟得上，机械层已经核过。有一条走不通、只是转述或依据站不住，即 FAIL。
-    severity: MAJOR
+      必须设计项缺值、未决写成已定、验收不可判定，让下游必须重新决定，按阻断判。
+    severity: BLOCKER
     ai_prompt_hint: >
       先按业务流程读 spec 的业务章与承载章，记下走不通的地方；再打开 `spec/knowledge-use.yaml`：
       命中的那几条，requirement 落在哪个具体名字上、承载章里有没有对应的设计；不命中的那几条，reason 说的事实是不是
@@ -57,10 +58,11 @@ semantic_checks:
       **spec 不写文档坐标**（见 evidence-rules「不写的东西」）——核对靠按名回查，不靠产物给出处。
       **未走 /story 的 feature（无 AR/story-src/story-flow.json）本检查 SKIP**——§9.1 技术契约与 story
       附录都是扩展新增的落点，那种场景下两者都不存在。
-    severity: MAJOR
+      spec 写的工程现状结论与仓里对不上，下游会照错的现状设计，按阻断判。
+    severity: BLOCKER
     ai_prompt_hint: >
       抽查 spec §9.1 技术契约与 story 附录「技术约定」中至少 3 条事实（优先抽「新增/修改」类结论）：取出结论里的具体名字
-      （如 createBusinessOrder、last_business_context、feature_entry_enabled），到
+      （接口名、存储键、配置项名这类），到
       doc/features/{module}/spec/spec.md、SR/design.md、RR/prd.md 与 in_scope 模块源码中检索该名字，
       判断结论是否被支撑。**特别核查数值，且两个产物判据不同**（形态真源见
       skills/story/reference/evidence-rules.md 的证据表）：
@@ -114,6 +116,17 @@ semantic_checks:
       或抄一段能检索到的原文——够支撑这条判断就行，不按长度计。
       既给不出可回查位置、也没有能支撑判断的原文，或只是把 story-flow.json 的 scope 字段
       复制一遍的，该条按**未裁**处理。
+
+  judgement_change_basis:
+    description: >
+      审查之后改过的判断有新依据：`spec/knowledge-use.yaml` 或 `AR/story-src/decisions.json` 里的判断，
+      在上一次审查之后改了（命中改不命中、适用改不适用、置信度降级、settled 改 open 或反过来），
+      `spec/notes.md` 写了这次改动的新事实或新决定。只为消掉审查意见而改判断、说不出新依据的，
+      或改完之后与承载章的设计自相矛盾的，FAIL。没有这类改动时写 PASS 并说明核过哪几处。
+    severity: MAJOR
+    ai_prompt_hint: >
+      对照 `spec/notes.md` 与 knowledge-use.yaml、decisions.json：找出审查之后改过的判断，逐条看 notes 里有没有新依据、
+      改后的判断与 spec 承载章是否一致。details 写有问题的那几条：哪一条、原判断与新判断、缺的依据是什么。
 
   story_reader_review:
     description: >

@@ -46,7 +46,7 @@ spec §9.1.4 列了统计点时，在「9.2 埋点」实现它们（形状见模
 
 `cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <需求名>`
 
-当前报告 PASS 之后，改动只是它的 advisory 或 WARN 修法：改完重跑一次完整 harness 走历史沿用，在该阶段 `notes.md` 记「按 <subject> 报告的建议修改，未独立重审」；改动改变了业务口径、范围、验收条件或新增实体，才取新请求再派审。verifier 报告写好后读 summary，当前报告还没被采纳时再完整跑一次这条命令采纳它；已采纳就按 `NEXT:` 走，报告有阻断项或材料又变了先按真实反馈处理（采纳的判据见 [update.md](../../skills/story/phases/update.md)「与闭环、修正入口的关系」第 4 步）。
+报告回来之后按 [phases/spec.md](../../skills/story/phases/spec.md)「闭环」那张表处置，改动属于哪一类写进 `plan/notes.md`。写 plan 时发现 spec 的现状结论与仓不符：走修正入口改 spec，并登记与工程现状矛盾的议题，再继续 plan；不在 plan 里另写一套现状。
 
 ## 六、门禁会拦什么
 

@@ -539,10 +539,15 @@ def cmd_update_close(feature_root: Path) -> dict:
             f"{rid} 还没有写 update-notes.md（或它是空的），不收口。"
             "四段就够：当前依据、变化与影响、决定与修订、核对与剩余——"
             f"落点 AR/story-src/updates/{rid}/update-notes.md")
-    if not unchanged_rows(notes.read_text(encoding="utf-8")):
+    text = notes.read_text(encoding="utf-8")
+    if not unchanged_rows(text):
         raise FlowError(
             f"{rid} 的 update-notes.md 缺「不变项与理由」表，不收口：列出这次变化牵到却不用改的"
             "重要内容，每行写不变项与为什么不用改——防的是优化一处、损坏另一处")
+    changed = CHANGED_PHASES.search(text)
+    if not changed:
+        raise FlowError(f"{rid} 的 update-notes.md 没写「业务改动的阶段：<阶段，逗号分隔；没有写 无>」，不收口："
+                        "改了业务口径、范围、验收或契约实体的阶段要按新对象审一次，收口核它们有当前报告")
 
     # 报告写了、判了 PASS，阶段却仍标「沿用历史」：framework 不改写已闭环的 summary，
     # 只有再跑一次完整 harness 才采纳它。这时收口，这一轮就带着一个「没审」的闭环结束了。
@@ -557,6 +562,12 @@ def cmd_update_close(feature_root: Path) -> dict:
         raise FlowError(
             f"开这一轮时已闭环的阶段现在没闭环：{'、'.join(broken)}，不收口。"
             "按该阶段 summary 的 NEXT 走完（派审、返修或重跑 `harness-runner.ts --phase <阶段>`）再收口")
+    declared = [p.strip() for p in re.split(r"[、,，\s]+", changed.group(1)) if p.strip() in PHASES]
+    unreviewed = [ph for ph in declared
+                  if not _report_passed(feature_root / ph / "reports", (now_by.get(ph) or {}).get("subject"))]
+    if unreviewed:
+        raise FlowError(f"{'、'.join(unreviewed)} 这一轮改了业务，却没有当前审查对象的 PASS 报告，不收口："
+                        "按 `phases/spec.md`「闭环」一节取新请求派审，完整跑一次 harness 采纳后再收口")
     stuck = [f["phase"] for f in phases if f.get("unadopted")]
     if stuck:
         raise FlowError(
@@ -585,6 +596,8 @@ def cmd_update_close(feature_root: Path) -> dict:
                          if unreadable else "")}
 
 
+#: 这一轮改了业务的阶段：`业务改动的阶段：spec、plan`，没有写「无」。
+CHANGED_PHASES = re.compile(r"^业务改动的阶段[:：]\s*(.+?)\s*$", re.M)
 #: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。
 UNCHANGED_HEAD = re.compile(r"^#{2,4}\s+.*不变项")
 TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")

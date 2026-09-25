@@ -5,10 +5,12 @@
  * 这里出的是它判不出来的部分：本需求的输入路径、这一版合同的十章问题与章级维度、
  * 材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
-import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { headingEnd, parseDocument, ZONE_BEGIN, ZONE_END, zonesByLine }
+  from '../../skills/story/scripts/core/story/document.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
@@ -216,11 +218,15 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
   // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
   // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
-  const fence = `${'`'.repeat(longestFence(story) + 1)}markdown`;
-  rows.push('', '### 审查对象：当前 `AR/story.md` 全文', '',
-    `（${story.split(/\r?\n/).length} 行，下面这一段就是全文；`
-    + '与盘上那一份不一致时以盘上为准，并把这件事写进结论）', '',
-    fence, story.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));
+  // 附录的机器区由 spec §9.1 与 knowledge-use.yaml 投影：这里按区名留一行指向盘上原文，
+  // 投影刷新不改这一段，审查对象只随作者区变；作者区的摘要放在最前面，标明是标识不是内容。
+  const authored = authorZone(story);
+  const fence = `${'`'.repeat(longestFence(authored) + 1)}markdown`;
+  rows.unshift(`<!-- 审查对象标识（非审查内容）：story 作者区 sha256:${crypto.createHash('sha256')
+    .update(authored.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16)} -->`, '');
+  rows.push('', '### 审查对象：当前 `AR/story.md`（附录机器区按区名指向盘上原文）', '',
+    '（与盘上那一份不一致时以盘上为准，并把这件事写进结论；机器区的内容打开 `AR/story.md` 读，与正文同样要核）', '',
+    fence, authored.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));
 
   // 写作设计：作者这一版的阅读主线与骨架，全文一次。读不到不能拿空设计当审过，说成缺口。
   const plan = readOrNull(path.join(root, 'AR', 'story-src', 'story-template.md'));
@@ -304,6 +310,18 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   // 方法与结论要求只在 overlay 的 `story_reader_review` 维护一份，宿主把它装配进 verifier 的任务。
   return rows.join('\n');
+}
+
+/** story 的作者区：机器区（投影）整段换成一行区名。 */
+function authorZone(story) {
+  const lines = String(story).split(/\r?\n/);
+  const zones = zonesByLine(lines);
+  const out = [];
+  lines.forEach((line, i) => {
+    if (line.startsWith(ZONE_BEGIN)) out.push(`（附录机器区：${zones.get(i + 1)?.name ?? line.slice(ZONE_BEGIN.length).split(' · ')[0]}）`);
+    else if (!zones.has(i) && line.trim() !== ZONE_END) out.push(line);
+  });
+  return out.join('\n');
 }
 
 /** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */

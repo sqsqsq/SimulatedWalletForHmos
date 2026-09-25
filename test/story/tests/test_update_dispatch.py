@@ -167,9 +167,11 @@ class TheMethodPageSaysHowToGetItRight(unittest.TestCase):
     """方法页要把上面这几条错路写给模型——判据在框架那边，做对与否在提示这边。"""
 
     def test_it_names_the_wrong_paths(self) -> None:
-        page = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "phases"
-                / "update.md").read_text(encoding="utf-8")
+        phases = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "phases"
+        closure = (phases / "spec.md").read_text(encoding="utf-8").split("### 闭环", 1)[1]
         for needle in ("verifier_request", "原样全文", "sync-closure",
                        "semantic_not_reverified", "report_missing", "不要自己拼 subject"):
-            self.assertIn(needle, page, f"方法页没说「{needle}」")
-        self.assertIn("没有完成独立审查", page, "没说宿主没有审查员时该如实报告")
+            self.assertIn(needle, closure, f"闭环一节没说「{needle}」")
+        update = (phases / "update.md").read_text(encoding="utf-8")
+        self.assertIn("「闭环」", update, "update 方法页没有指向唯一的闭环规则")
+        self.assertIn("没有完成独立审查", update, "没说宿主没有审查员时该如实报告")

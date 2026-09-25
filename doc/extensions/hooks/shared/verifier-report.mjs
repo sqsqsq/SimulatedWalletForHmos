@@ -22,10 +22,89 @@
  *
  * 报几条、报得对不对不判：那是资格门用成对样本量的事，不是门禁能判的。
  */
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+
+/**
+ * 本阶段 overlay 的全部语义判据 —— 审查请求与报告核对读同一份，不在代码里另存判据清单。
+ *
+ * @returns {{checks: Record<string, {description?: string, severity?: string}>, error: string|null}}
+ */
+export function overlayChecks(projectRoot, phase) {
+  const file = path.join(extensionRoot(projectRoot), 'rules', `${phase}-rules.overlay.yaml`);
+  const text = readTextOrNull(file);
+  if (text === null) return { checks: {}, error: `读不到 rules/${phase}-rules.overlay.yaml` };
+  let checks;
+  try {
+    checks = parseYaml(text)?.semantic_checks;
+  } catch (e) {
+    return { checks: {}, error: `${phase} overlay 解析失败：${String(e.message).split(/\r?\n/)[0]}` };
+  }
+  if (!checks || typeof checks !== 'object' || !Object.keys(checks).length) {
+    return { checks: {}, error: `${phase} overlay 的 semantic_checks 解析出零条判据` };
+  }
+  return { checks, error: null };
+}
+
+/** 报告里的表格行：`[{id, status}]`，id 是第一格、status 是第二格。 */
+function tableRows(text) {
+  return String(text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|'))
+    .map(l => tableCells(l).map(c => c.replace(/`|\*/g, '').trim()))
+    .filter(c => c[0]).map(c => ({ id: c[0], status: String(c[1] ?? '').toUpperCase() }));
+}
+
+/**
+ * 当前审查报告立不立得住 —— 格式、判据全不全、同一对象是不是只有一个结论、WARN 行有没有处置记录。
+ *
+ * 报告由调用方原样落盘在 `summary.verifier_report`。格式不合的回复原样存进 `reports/rejected/`，
+ * 不计作一次结论；同一对象已有合规报告时，重投的回复被拒——对象没变，结论就不换。
+ * 还没派审（报告不在）不在这里报：派不派由 framework 的 NEXT 行说。
+ *
+ * @returns {string[]}
+ */
+export function reportProblems(projectRoot, feature, phase) {
+  const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
+  if (!summaryFound || !abs) return [];
+  const text = readTextOrNull(abs);
+  if (text === null) return [];
+  const block = resultBlock(text);
+  const rows = tableRows(text);
+  const ids = new Set(rows.map(r => r.id));
+  if (!block || !ids.size) {
+    const dir = path.join(path.dirname(abs), 'rejected');
+    fs.mkdirSync(dir, { recursive: true });
+    const kept = path.join(dir, `${Date.now()}-${path.basename(abs)}`);
+    fs.renameSync(abs, kept);
+    return [`审查回复格式不合（${!block ? '终态块不是恰好一个' : '没有汇总表'}），已原样存为被拒回复 `
+      + `${path.relative(projectRoot, kept).replace(/\\/g, '/')}，不计作结论。${INVALID_EVIDENCE}`];
+  }
+  const problems = [];
+  const { checks } = overlayChecks(projectRoot, phase);
+  for (const id of Object.keys(checks)) {
+    if (!ids.has(id)) problems.push(`缺判据：${id}——报告汇总表里没有这一条的结论，按阻断处理。${INVALID_EVIDENCE}`);
+  }
+  const subject = block.subject;
+  const ledgerPath = path.join(path.dirname(abs), 'verifier.conclusions.json');
+  const ledger = readJsonOrNull(ledgerPath) ?? {};
+  const digest = crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
+  if (subject && ledger[subject] && ledger[subject] !== digest) {
+    problems.push(`审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是重投后覆盖上去的——`
+      + '对象没变，结论不换：把原报告放回原处；材料真改了，取新请求再审');
+  } else if (subject && !ledger[subject]) {
+    fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
+  }
+  const notes = readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '';
+  const undisposed = rows.filter(r => /^(WARN|FAIL)$/.test(r.status) && !notes.includes(r.id));
+  if (undisposed.length) {
+    problems.push(`${phase}/notes.md 没写这几条审查结论的处置：${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}`
+      + '——逐条写按哪一类处置（见 phases/spec.md「闭环」）：返修、只改表达已重验、改了业务已再审，或留给哪一阶段');
+  }
+  return problems;
+}
 
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';
@@ -160,7 +239,7 @@ function readerReviewDetails(text) {
  *
  * @returns {{status: string, problems: string[], detail: string}}
  */
-export function storyReviewProblems(projectRoot, feature, phase, run) {
+export function storyReviewProblems(projectRoot, feature, phase) {
   const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
   if (!summaryFound) {
     return { status: 'NOT_APPLICABLE', problems: [], reviewVerdict: null,
@@ -175,7 +254,7 @@ export function storyReviewProblems(projectRoot, feature, phase, run) {
     };
   }
   const text = readTextOrNull(abs);
-  return text === null ? withoutCurrentReport(summary, abs, run) : judgeReport(text);
+  return text === null ? withoutCurrentReport(summary, abs) : judgeReport(text);
 }
 
 const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
@@ -189,17 +268,14 @@ function resultBlock(text) {
 }
 
 /**
- * 当前对象没有报告时能不能交付。只有 framework 修正重验（summary 带 `script_revalidated`）、没有进行中的 update、
- * 本阶段闭环 PASS 并沿用历史审查，且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
- * `run` 是调用方给的运行事实：`updateOpen` 为布尔才是已知，未知（`unknown` 说明原因）按未完成报。
+ * 当前对象没有报告时能不能交付：`phases/spec.md`「闭环」表里「PASS 之后只改表达」那一类——
+ * framework 修正重验（summary 带 `script_revalidated`）、本阶段闭环 PASS 并沿用历史审查，
+ * 且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
+ * update 里改了业务的阶段由 `update --action close` 核它们有当前对象的报告。
  */
-function withoutCurrentReport(summary, abs, run) {
+function withoutCurrentReport(summary, abs) {
   const prior = summary.verifier_closure;
   const fail = (detail, extra = '') => ({ status: 'FAIL', problems: [missingReport(summary, abs) + extra], reviewVerdict: null, detail });
-  if (typeof run?.updateOpen !== 'boolean') {
-    return fail(`当前对象未独立审查；${run?.unknown ?? '调用方没有给出运行事实'}，判不了能否沿用`);
-  }
-  if (run.updateOpen) return fail('update 进行中', '；update 进行中，本轮改过的阶段按新的审查对象审一次');
   const signals = (summary.readiness_signals ?? []).map(s => s?.id ?? s);
   if (prior?.mode !== 'completed_with_prior_review' || !signals.includes('script_revalidated')
     || summary.closure_status !== 'closed' || summary.verdict !== 'PASS') {
@@ -272,6 +348,12 @@ function judgeReport(text) {
       };
     }
     const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
+    if (!missing.length) {
+      const blocking = Array.isArray(details.blocking_findings) ? details.blocking_findings : [];
+      const advisories = Array.isArray(details.advisories) ? details.advisories : [];
+      return { status: 'PASS', problems: [], reviewVerdict, blocking, advisories,
+        detail: `读者审查已落报告（${status}）` };
+    }
     if (missing.length) {
       return {
         status: 'FAIL',

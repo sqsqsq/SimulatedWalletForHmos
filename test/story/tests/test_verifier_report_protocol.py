@@ -163,8 +163,9 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
 
 
 class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
-    """当前对象没有报告时的分流：只有修正重验、没有进行中的 update、且沿用的历史报告就是那个对象的有效 PASS，
-    才按沿用交付，并留一笔「当前材料未独立重审」；其余都按未完成报。"""
+    """当前对象没有报告时的分流：只有修正重验、且沿用的历史报告就是那个对象的有效 PASS，
+    才按沿用交付，并留一笔「当前材料未独立重审」；其余都按未完成报。
+    update 里改了业务的阶段由 `update --action close` 核当前报告，交付门不再按「update 开着」一律拦。"""
 
     PRIOR = "b" * 64
 
@@ -194,55 +195,16 @@ class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
                 self.assertEqual("FAIL", out["status"])
                 self.assertEqual("沿用的历史审查无效", out["detail"])
 
-    def test_an_open_update_needs_a_current_review_even_after_revalidate(self) -> None:
-        out = self._run(summary=self.summary(), report=None, run={"updateOpen": True}, extra=self.history())
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("按新的审查对象审一次", out["problems"][0])
-
     def test_without_the_revalidate_mark_it_cannot_be_confirmed(self) -> None:
         out = self._run(summary=self.summary(signals=()), report=None, run={"updateOpen": False}, extra=self.history())
         self.assertEqual("FAIL", out["status"])
         self.assertEqual("当前对象未独立审查", out["detail"])
 
-    def test_without_run_facts_it_cannot_be_confirmed(self) -> None:
+    def test_the_update_state_does_not_decide_the_carry(self) -> None:
+        """交付门不读流程契约判 update 开没开：沿用只看修正重验与历史报告。"""
         out = self._run(summary=self.summary(), report=None, extra=self.history())
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("调用方没有给出运行事实", out["detail"])
-
-    def test_an_empty_run_is_unknown_not_no_update(self) -> None:
-        out = self._run(summary=self.summary(), report=None, run={}, extra=self.history())
-        self.assertEqual("FAIL", out["status"])
-        self.assertNotIn("notes", out)
-
-    def test_the_delivery_gate_reads_the_flow_contract_before_carrying(self) -> None:
-        """交付门从流程契约取运行事实：读得出且没开 update 才沿用；缺文件、读不了、坏 JSON 都是未知，不放行、不带 note。"""
-        delivery = REPO / "doc/extensions/skills/story/scripts/core/story/delivery.mjs"
-        cases = {
-            "没开 update": ('{"status": "story_written"}', "PASS"),
-            "update 已收口": ('{"update": {"open": null, "last_closed": "u1"}}', "PASS"),
-            "update 进行中": ('{"update": {"open": "u2"}}', "FAIL"),
-            "缺文件": (None, "FAIL"),
-            "坏 JSON": ("{ 坏了", "FAIL"),
-            "不是对象": ("[1]", "FAIL"),
-            "读不了": ("<dir>", "FAIL"),
-        }
-        for name, (flow, want) in cases.items():
-            with self.subTest(name), tempfile.TemporaryDirectory() as d:
-                flow_path = Path(d) / "story-flow.json"
-                if flow == "<dir>":
-                    flow_path.mkdir()
-                elif flow is not None:
-                    flow_path.write_text(flow, encoding="utf-8")
-                script = (f"const m = await import({json.dumps(delivery.as_uri())});"
-                          f"process.stdout.write(JSON.stringify(m.deliveryRunFacts({{ flowPath: {json.dumps(str(flow_path))} }})));")
-                facts = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True,
-                                       text=True, encoding="utf-8", timeout=60)
-                self.assertEqual(0, facts.returncode, facts.stderr)
-                out = self._run(summary=self.summary(), report=None, run=json.loads(facts.stdout),
-                                extra=self.history())
-                self.assertEqual(want, out["status"] if want == "FAIL" else out["reviewVerdict"], out)
-                if want == "FAIL":
-                    self.assertNotIn("notes", out)
+        self.assertEqual("PASS", out["reviewVerdict"], out)
+        self.assertIn("当前材料未独立重审", out["notes"][0])
 
 
 def row_text(status: str) -> str:
@@ -573,7 +535,21 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.write_report("FAIL")
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode, (out.stdout + out.stderr)[-600:])
-        self.assertIn("判的是 FAIL", out.stdout + out.stderr)
+        self.assertIn("判 FAIL", out.stdout + out.stderr)
+        self.assertIn("第 5 章说未实名可下单", out.stdout + out.stderr, "没指到那一条阻断问题")
+
+    def test_a_warn_without_blocking_passes_with_its_advisories(self) -> None:
+        """AC21：读者审查判 WARN 而没有阻断项，交付门放行，建议项进 notes。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("WARN")
+        target = self.root / REPORT_REL
+        target.write_text(target.read_text(encoding="utf-8").replace(
+            "        blocking_findings:\n          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n        advisories: []",
+            "        blocking_findings: []\n        advisories:\n          - 第 3 章标题可以更短"), encoding="utf-8")
+        out = self.check("--deliver")
+        both = out.stdout + out.stderr
+        self.assertNotIn("[⑭ 交付门]", both, f"WARN 无阻断却被交付门拦住：{both[-600:]}")
+        self.assertIn("第 3 章标题可以更短", both, "建议项没进 notes")
 
     def test_a_passing_report_raises_nothing_at_the_gate(self) -> None:
         """审查判 PASS、回执过了、结构齐备——交付门这一类不该有问题。
@@ -760,7 +736,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         正文里合法地出现一道更长的示例围栏就会把包装提前关上。
         """
         task = self.inject()
-        self.assertIn("### 审查对象：当前 `AR/story.md` 全文", task)
+        self.assertIn("### 审查对象：当前 `AR/story.md`", task)
         fence = next(l for l in task.split("\n")
                      if l.startswith("```") and l.endswith("markdown"))
         self.assertGreaterEqual(len(fence) - len("markdown"), 4, fence)
@@ -768,6 +744,19 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
             if line.strip():
                 self.assertIn(line, task, f"全文里少了这一行：{line}")
         self.assertEqual(1, task.count(fence), "全文放了不止一次")
+
+    def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
+        """AC22：机器区重投不改审查片段（审查对象不变）；作者区改了，片段与作者区摘要跟着变。"""
+        story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+        zone = ("\n<!-- story-build:begin 技术约定 · 由spec §9.1生成，改它请改真源 · sha256:0000000000000000 -->\n"
+                "| 接口 | 用途 |\n|---|---|\n| queryState | 查状态 |\n<!-- story-build:end -->\n")
+        story.write_text(STORY_MD + zone, encoding="utf-8")
+        first = self.inject()
+        story.write_text(STORY_MD + zone.replace("queryState | 查状态", "queryState | 查处理状态"), encoding="utf-8")
+        self.assertEqual(first, self.inject(), "机器区重投换了审查对象")
+        self.assertIn("审查对象标识（非审查内容）", first)
+        story.write_text(STORY_MD + "\n作者补的一句。\n" + zone, encoding="utf-8")
+        self.assertNotEqual(first, self.inject(), "作者区改了，审查对象没跟着变")
 
     def test_a_longer_inner_fence_does_not_close_the_wrapper(self) -> None:
         """正文里合法地出现一道更长的围栏（贴一段 markdown 示例）时，包装不能被它关上。"""

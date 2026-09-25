@@ -29,6 +29,7 @@ import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { cellByHeader, childHeading, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
+import { reportProblems } from '../shared/verifier-report.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
@@ -477,6 +478,9 @@ export default guard('plan', async (ctx) => {
       }
     }
   }
+
+  // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
+  groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });
 
   const total = groups.reduce((n, g) => n + g.problems.length, 0);
   return gate(ctx, {

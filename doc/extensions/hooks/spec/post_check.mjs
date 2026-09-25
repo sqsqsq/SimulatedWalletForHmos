@@ -31,8 +31,9 @@ import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
-import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
-import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
+import { acceptanceIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
+import { reportProblems } from '../shared/verifier-report.mjs';
+import { featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
 import { statPointsOfSection } from '../shared/stat-points.mjs';
 
@@ -159,11 +160,12 @@ function scanDocCoords(text) {
  * 由 spec overlay 的语义判据回查原文承担——字面命中不等于同一个量，
  * 未命中也不等于没有真实来源，脚本裁不了这个真假。
  */
-const NUMERIC_RE = /(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)(?![A-Za-z])/gi;
+//: 序数（第 N 次、第 N 轮）是位置不是数值，不核来源。
+const NUMERIC_RE = /(?<!第\s*)(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)(?![A-Za-z])/gi;
 const SOURCE_TAG_RE = /(上游约束|本工程设定|平台基线|无上游依据)/;
 
 function scanNumericSources(text) {
-  const problems = [];
+  const rows = [];
   const doc = parseDocument(text);
   const lines = doc.lines;
   for (let i = 0; i < lines.length; i++) {
@@ -172,10 +174,69 @@ function scanNumericSources(text) {
     const nums = [...line.matchAll(NUMERIC_RE)];
     if (nums.length === 0) continue;
     if (!SOURCE_TAG_RE.test(line)) {
-      problems.push(
-        `第 ${i + 1} 行的数值「${nums.map(m => m[0]).join('、')}」未标来源类型` +
-          `（须三选一：上游约束：<文档名> / 本工程设定，无上游依据 / 平台基线）：${line.trim().slice(0, 60)}`
-      );
+      rows.push(`第 ${i + 1} 行「${nums.map(m => m[0]).join('、')}」：${line.trim().slice(0, 60)}`);
+    }
+  }
+  return rows.length ? [`${rows.length} 处数值未标来源类型——每处三选一写明：上游约束：<文档名> / `
+    + `本工程设定，无上游依据 / 平台基线。逐处：${rows.join('；')}`] : [];
+}
+
+/**
+ * §8 验收标准与 acceptance.yaml 对得上 —— 可以机械核的一致性不留给语义审查。
+ *
+ * §8 每一行的第一个验收编号是这一行的编号，同一行里其余形如「字母+数字」的编号是它关联的功能；
+ * 编号要在 acceptance.yaml 里有、关联功能与那一条的 `prd_function` 一致；同一编号只有一种含义。
+ * 走 /story 的需求另核上游材料里的原始验收编号：在 §8 或 acceptance.yaml 里有对应行，或写明不承接的理由。
+ */
+function acceptanceAlignment(ctx, lines, featureDir, isStory) {
+  const problems = [];
+  const s8 = findHeading(lines, /验收标准/);
+  const { acceptance, error, exists } = readAcceptance(ctx.projectRoot, ctx.feature);
+  if (s8 === -1 || !exists || error) return problems;
+  const entries = ['criteria', 'boundaries'].flatMap(k => (Array.isArray(acceptance?.[k]) ? acceptance[k] : []));
+  const accById = new Map();
+  for (const e of entries) {
+    const id = String(e?.id ?? '').trim();
+    if (id) accById.set(id, [...(accById.get(id) ?? []), e]);
+  }
+  for (const [id, list] of accById) {
+    if (list.length > 1) problems.push(`同号不同义：${id} 在 acceptance.yaml 里有 ${list.length} 条——一个编号只说一件事，另起编号`);
+  }
+  const rows = new Map();
+  for (const raw of sectionBody(lines, s8)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('>') || /不承接/.test(line)) continue;
+    const ids = [...line.matchAll(acceptanceIdRe())].map(m => m[0]);
+    if (!ids.length) continue;
+    const rest = line.replace(acceptanceIdRe(), ' ');
+    const codes = [...rest.matchAll(/\b[A-Z]{1,3}\d+\b/g)].map(m => m[0]);
+    const said = rest.replace(/\b[A-Z]{1,3}\d+\b/g, '').replace(/[-*\[\]()（）,，:：|\sx]/g, '');
+    rows.set(ids[0], [...(rows.get(ids[0]) ?? []), { codes, said }]);
+  }
+  for (const [id, list] of rows) {
+    if (new Set(list.map(r => r.said)).size > 1) {
+      problems.push(`同号不同义：§8 里 ${id} 出现在 ${list.length} 行、说的不是同一件事——一个编号只说一件事`);
+    }
+    const acc = accById.get(id);
+    if (!acc) {
+      problems.push(`§8 的 ${id} 在 acceptance.yaml 里没有——验收清单以 acceptance.yaml 为全集，补一条或改 §8 的编号`);
+      continue;
+    }
+    const want = String(acc[0]?.prd_function ?? '').split(/[\s,，、]+/).filter(Boolean).sort().join('、');
+    const got = [...new Set(list[0].codes)].sort().join('、');
+    if (want && got && want !== got) {
+      problems.push(`${id} 的关联功能两处不一致：§8 写 ${got}，acceptance.yaml 的 prd_function 写 ${want}——以一处为准改另一处`);
+    }
+  }
+  if (isStory) {
+    const upstream = ['RR/prd.md', 'AR/design.md']
+      .map(rel => readTextOrNull(path.join(featureDir, ...rel.split('/'))) ?? '').join('\n');
+    const declined = lines.filter(l => /不承接/.test(l)).join('\n');
+    const kept = [...new Set([...upstream.matchAll(keptIdRe())].map(m => m[0]))];
+    const lost = kept.filter(id => !rows.has(id) && !accById.has(id) && !declined.includes(id));
+    if (lost.length) {
+      problems.push(`上游材料的验收编号没有承接：${lost.join('、')}——原编号在 §8 与 acceptance.yaml 里各有一行`
+        + '（沿用上游编号，不重新编号），或在 §8 写「不承接：<编号> <理由>」');
     }
   }
   return problems;
@@ -555,27 +616,26 @@ export default guard('spec', async (ctx) => {
     // 客户端语境：spec 是编码与评审件的共同上游，源头不放行才不会一路带下去
     const bannedHits = scanBannedTerms(text);
     if (bannedHits.length > 0) {
-      problems.push(
-        `含客户端语境禁用词 ${bannedHits.length} 处（服务器侧词汇，单独使用也算）：${formatHits(bannedHits.slice(0, 3), 'banned').join('；')}` +
-          (bannedHits.length > 3 ? `；…另 ${bannedHits.length - 3} 处` : '')
-      );
+      problems.push(`含客户端语境禁用词 ${bannedHits.length} 处（服务器侧词汇，单独使用也算）：`
+        + formatHits(bannedHits, 'banned').join('；'));
     }
 
     // 独立审计：不写文档坐标（详见 evidence-rules 独立审计原则）
     const coordHits = scanDocCoords(text);
     if (coordHits.length > 0) {
-      problems.push(
-        `含文档坐标 ${coordHits.length} 处（spec 须可独立审计；改用事物的名字，如「见管理台功能开关 feature_entry_enabled」）：` +
-          coordHits.slice(0, 3).map(h => `第 ${h.line} 行「${h.coord}」`).join('、') +
-          (coordHits.length > 3 ? `…另 ${coordHits.length - 3} 处` : '')
-      );
+      problems.push(`含文档坐标 ${coordHits.length} 处（spec 须可独立审计；改用事物本身的名字，如接口名、配置项名）：`
+        + coordHits.map(h => `第 ${h.line} 行「${h.coord}」`).join('、'));
     }
 
     // 数值来源：机械层只核标没标（结构门）；真假归 overlay 的数值依据判项。
-    const numericProblems = scanNumericSources(text);
-    numericProblems.slice(0, 5).forEach(p => problems.push(p));
-    if (numericProblems.length > 5) problems.push(`另有 ${numericProblems.length - 5} 处数值来源问题`);
+    problems.push(...scanNumericSources(text));
   }
+
+  // ---- 可机械核的一致性：§8 与 acceptance.yaml、上游原始验收编号 ----
+  problems.push(...acceptanceAlignment(ctx, lines, featureDir, isStory));
+
+  // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
+  problems.push(...reportProblems(ctx.projectRoot, ctx.feature, 'spec'));
 
   const total = problems.length + groups.reduce((n, g) => n + g.problems.length, 0);
   return gate(ctx, {

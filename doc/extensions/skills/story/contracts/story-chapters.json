@@ -176,6 +176,7 @@
     }
   ],
   "id_shapes": {
+    "acceptance": ["AC-[A-Z]?\\d+", "BD-[A-Z]?\\d+"],
     "keep": [
       "AC-[A-Z]?\\d+"
     ],

@@ -42,13 +42,6 @@ export function deliveryNextSteps(ctx) {
     ...rows, ''].join('\n');
 }
 
-/** 报告核对要的运行事实：流程契约读得出、是对象，才知道有没有进行中的 update；否则是未知。 */
-export function deliveryRunFacts(ctx) {
-  const flow = readJson(ctx.flowPath, null);
-  return flow && typeof flow === 'object' && !Array.isArray(flow)
-    ? { updateOpen: Boolean(flow.update?.open) } : { unknown: '流程契约读不到或不是有效的 JSON 对象' };
-}
-
 /**
  * 交付门 —— 阶段闭环成立了吗，读者审查这一项写成形态了吗。
  *
@@ -95,24 +88,26 @@ export function deliveryProblems(ctx) {
     return fail(`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`);
   }
 
-  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec', deliveryRunFacts(ctx));
+  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
   if (review.status === 'NOT_APPLICABLE') {
     // 本宿主没有登记审查员：沿用户批准记一笔放行，但**如实说没审过**——
     // 说成「语义 PASS」的话，这份 story 会带着一句没发生过的结论交出去。
     return { problems: [], notes: [`story 未经读者语义审查即交付：${review.detail}`] };
   }
   if (review.problems.length) return { problems: review.problems, notes: [] };
-  // 报告的**结构**没问题不等于**审查判它过了**。交付门看的是审查自己的结论：
-  // 结构齐备而 verdict 是 FAIL 时放行，等于把「审出问题」当成了「审过了」。
-  if (review.reviewVerdict !== 'PASS') {
-    return {
-      problems: [`读者语义审查判的是 ${review.reviewVerdict ?? '（取不到）'}，不是 PASS——`
-        + '按报告里那一条的阻断问题改 story，改完重跑 harness 让审查员重判；'
-        + '报告结构齐备只说明它确实审了，不说明它判过了'],
-      notes: [],
-    };
+  // 报告的**结构**没问题不等于**审查判它过了**：交付门看审查自己的结论与阻断项。
+  // 只有阻断项才拦；判 WARN 而没有阻断项时放行，建议项记进 notes（`phases/spec.md`「闭环」）。
+  const blocking = review.blocking ?? [];
+  if (review.reviewVerdict === 'PASS' || (review.reviewVerdict === 'WARN' && !blocking.length)) {
+    const advisories = (review.advisories ?? []).map(a => `读者审查建议：${typeof a === 'string' ? a : JSON.stringify(a)}`);
+    return { problems: [], notes: [...(review.notes ?? []), ...advisories] };
   }
-  return { problems: [], notes: review.notes ?? [] };
+  return {
+    problems: [`读者语义审查判 ${review.reviewVerdict ?? '（取不到）'}，有 ${blocking.length} 条阻断问题——`
+      + (blocking.length ? `逐条改：${blocking.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}` : '按报告里那一条的结论改')
+      + '。改完按 `phases/spec.md`「闭环」表里「有阻断项」那一行走'],
+    notes: [],
+  };
 }
 
 
