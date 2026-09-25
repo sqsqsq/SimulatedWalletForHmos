@@ -341,15 +341,15 @@ flowchart TD
 |---|---|---|---|---|
 | UX-01 | 基线 | 签约页与管理页（均为新增界面）中方向性布局参数一律用 start/end，文本对齐用 TextAlign.Start/End，禁止 left/right 硬编码；界面沿用交通卡详情页既有样式。 | — | 模型 / 实机 |
 | SEC-01 | 红线 | 充值记录展示中的卡号按既有 MaskUtil.maskAccount 类规则脱敏；端侧事件与日志只记录去标识账号、卡片类型、阶段、结果分类，不记录卡号、金额明细与支付参数；agreementNo 只透传、不在钱包持久化。 | — | 模型 / 实机 |
-| DFX-01 | 基线 | 端云接口调用仅在用户主动进入页面或操作时触发一次（getAutoTopupPolicy / createAutoTopupContract / getAutoTopupStatus / cancelAutoTopupContract），无定时或后台轮询；状态展示优先读 wallet_auto_topup_contract 缓存避免重复查询，缓存缺失才走云侧。 | §9 · wallet_auto_topup_contract | 模型 |
-| OBS-02 | 基线 | 签约、状态查询与解约的关键过程经项目统一入口记录：VOC 记拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；新增本地日志经 Logger 带签约阶段与去标识账号；签约页、管理页的进入与点击由自动运维上报覆盖，不另记；三个节点的终态只发 Chart，不同时发 VOC。 | §9 · auto_topup_signup | 模型 / 实机 |
-| OBS-03 | 基线 | 统计签约、状态查询、解约三个节点：签约覆盖全程成功、普通失败、主动取消，状态查询与解约覆盖成功与普通失败；同一节点同一次执行只发一条终态。 | §9 · auto_topup_status | 模型 / 实机 |
-| OBS-05 | 基线 | 三个节点的 Chart 内码按十位五段、结果分类与内码末段分开表达；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败；建约失败的外码取卡云实际返回的错误码，没有就不带；签约耗时以毫秒计，从拉起验证到收到建约结果。 | §9 · auto_topup_signup | 模型 / 实机 |
-| OBS-06 | 基线 | 本单新增签约、状态查询、解约三组内码，先核仓内无既有登记，再在方案定的唯一登记位置登记。 | §9 · auto_topup_status | 模型 / 实机 |
+| DFX-01 | 基线 | 端云接口调用仅在用户主动进入页面或操作时触发一次（getAutoTopupPolicy / createAutoTopupContract / getAutoTopupStatus / cancelAutoTopupContract），无定时或后台轮询；状态展示优先读 wallet_auto_topup_contract 缓存避免重复查询，缓存缺失才走云侧。 | §9.1 · wallet_auto_topup_contract | 模型 |
+| OBS-02 | 基线 | 签约、状态查询与解约的关键过程经项目统一入口记录：VOC 记拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；新增本地日志经 Logger 带签约阶段与去标识账号；签约页、管理页的进入与点击由自动运维上报覆盖，不另记；三个节点的终态只发 Chart，不同时发 VOC。 | §9.1 · auto_topup_signup | 模型 / 实机 |
+| OBS-03 | 基线 | 统计签约、状态查询、解约三个节点：签约覆盖全程成功、普通失败、主动取消，状态查询与解约覆盖成功与普通失败；同一节点同一次执行只发一条终态。 | §9.1 · auto_topup_status | 模型 / 实机 |
+| OBS-05 | 基线 | 三个节点的 Chart 内码按十位五段、结果分类与内码末段分开表达；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败；建约失败的外码取卡云实际返回的错误码，没有就不带；签约耗时以毫秒计，从拉起验证到收到建约结果。 | §9.1 · auto_topup_signup | 模型 / 实机 |
+| OBS-06 | 基线 | 本单新增签约、状态查询、解约三组内码，先核仓内无既有登记，再在方案定的唯一登记位置登记。 | §9.1 · auto_topup_status | 模型 / 实机 |
 | RES-02 | 基线 | 签约页与管理页新增用户可见文案（门限/面额档位、协议勾选、开启按钮、停用状态、失败原因等）优先复用项目已有中文完全一致的 string 资源；确需新增按 string.json 惯例定义并中英文齐备，代码不硬编码中文字面量。 | — | 模型 |
-| COMPAT-01 | 基线 | 四个端云接口与 wallet_auto_topup_contract 缓存键均为新增：不删除任何既有字段、不改既有字段类型与含义；新增接口字段均可空或有默认值（可签约性；档位列表）、不触发既有服务端校验；缓存缺失时以云侧 getAutoTopupStatus 查询为准，兼容无缓存的旧版本。 | §9 · wallet_auto_topup_contract | 模型 |
-| ENV-01 | 基线 | 清除数据或清除缓存后，wallet_auto_topup_contract 与签约页暂存的门限面额均缺失：页面以云侧 getAutoTopupStatus/策略查询为准自恢复或回填默认，不崩溃、不死循环；退出登录即清除缓存与暂存。 | §9 · wallet_auto_topup_contract | 模型 / 实机 |
-| ENV-02 | 基线 | 同一张卡已有生效签约时入口直达管理页、不重复建立签约；签约提交对重复触发有幂等保护（createAutoTopupContract 对同卡已生效签约返回既有 contractNo），支付验证拉起不重复弹窗。 | §9 · createAutoTopupContract | 模型 / 实机 |
+| COMPAT-01 | 基线 | 四个端云接口与 wallet_auto_topup_contract 缓存键均为新增：不删除任何既有字段、不改既有字段类型与含义；新增接口字段均可空或有默认值（可签约性；档位列表）、不触发既有服务端校验；缓存缺失时以云侧 getAutoTopupStatus 查询为准，兼容无缓存的旧版本。 | §9.1 · wallet_auto_topup_contract | 模型 |
+| ENV-01 | 基线 | 清除数据或清除缓存后，wallet_auto_topup_contract 与签约页暂存的门限面额均缺失：页面以云侧 getAutoTopupStatus/策略查询为准自恢复或回填默认，不崩溃、不死循环；退出登录即清除缓存与暂存。 | §9.1 · wallet_auto_topup_contract | 模型 / 实机 |
+| ENV-02 | 基线 | 同一张卡已有生效签约时入口直达管理页、不重复建立签约；签约提交对重复触发有幂等保护（createAutoTopupContract 对同卡已生效签约返回既有 contractNo），支付验证拉起不重复弹窗。 | §9.1 · createAutoTopupContract | 模型 / 实机 |
 | DLV-01 | 基线 | 签约页与管理页新增的中英文文案梳理成待翻译字符串清单，跟踪翻译回稿后合入对应 string 资源（zh_CN 与基础语言同步）。 | — | 模型 / 人工 |
 
 不命中的依据：

@@ -434,8 +434,10 @@ def m17_dangling_knowledge_reference(root: Path, ctx: Ctx) -> Outcome:
                     continue
                 if eid.split("-")[0] in names["prefixes"] and eid not in names["entries"]:
                     hits.append(f"{rel}:{n} 编号 `{eid}` 在激活清单里不存在（死判据）")
-            # b) 显式的知识文件路径引用：写出来了就必须真的在册
-            for pm in re.finditer(r"knowledge/[\w./-]+\.md", line):
+            # b) 显式的知识文件路径引用：写出来了就必须真的在册。取整个路径，扩展根下 knowledge/ 起头的才是知识
+            for pm in re.finditer(r"[\w./-]*knowledge/[\w./-]+\.md", line):
+                if not pm.group(0).removeprefix("doc/extensions/").startswith("knowledge/"):
+                    continue
                 slug = pm.group(0).rsplit("/", 1)[-1].removesuffix(".md")
                 if slug not in names["slugs"] and slug != "README":
                     hits.append(f"{rel}:{n} 知识路径 `{pm.group(0)}` 不在激活清单")

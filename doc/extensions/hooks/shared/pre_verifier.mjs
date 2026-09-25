@@ -170,7 +170,7 @@ function overlayCheckIds(projectRoot, phase) {
   try {
     checks = parseYaml(text)?.semantic_checks;
   } catch (e) {
-    return { ids: [], error: `${phase} overlay 解析失败：${String(e.message).split('\n')[0]}` };
+    return { ids: [], error: `${phase} overlay 解析失败：${String(e.message).split(/\r?\n/)[0]}` };
   }
   if (!checks || typeof checks !== 'object') return { ids: [], error: `${phase} overlay 里没有 semantic_checks` };
   const ids = Object.keys(checks);

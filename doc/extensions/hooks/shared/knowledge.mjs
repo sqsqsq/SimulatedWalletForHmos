@@ -66,7 +66,7 @@ function frontmatterOf(fm) {
     value = parseYaml(fm);
   } catch (e) {
     if (e?.name !== 'YAMLParseError') throw e;
-    fail(`frontmatter 不是合法 YAML —— ${e.message.split('\n')[0]}`);
+    fail(`frontmatter 不是合法 YAML —— ${e.message.split(/\r?\n/)[0]}`);
   }
   if (typeof value !== 'object' || Array.isArray(value)) fail('frontmatter 要写成「键: 值」映射');
   return value;
