@@ -1,56 +1,78 @@
 # 银行卡开卡与结果查询 — 实现计划（Plan 节选）
 
-> 只摘「服务层接口定义」的埋点小节；编码、责任方法都是候选值，假设与候选地位见[候选说明](README.md)。
+> 只摘宿主扩展的埋点小节；编码、责任方法都是候选值，假设与候选地位见[候选说明](README.md)。
 
-## 6. 服务层接口定义
+## 9. 宿主扩展
 
-### 6.1 埋点
+### 9.2 埋点
 
-页面、点击的自动运维上报继续复用；没有明确的运营需求，不分配运营事件、不加运营上报调用。下面只落实 Spec 9.4 两个指标的每个统计点。
+本节实现 Spec 9.1.4 的开卡成功率与查询成功率，指标定义与口径以 Spec 为准。页面、点击的自动运维上报继续复用；没有明确的运营需求，不分配运营事件、不加运营上报调用。
 
-| 指标（流程） | 身份前缀 | 责任方法 | 登记位置 |
-|---|---|---|---|
-| 开卡成功率、步骤耗时与失败原因（开卡办理） | BankCard / 001（候选，待登记） | BankCardOpenFlow.submitInfo、IdentityCheckService.check、SmsVerifyController.send、SmsVerifyController.verify、FaceVerifyController.detect、FaceVerifyController.compare、CardOpenService.apply、CardOpenService.writeCard、OpenResultLoader.load、BankCardOpenFlow.finish | 目标仓业务码登记文件（按项目知识的登记规则，首用新建） |
-| 查询成功率（开卡结果查询） | BankCard / 002（候选，待登记） | OpenStatusQuery.query、OpenStatusQuery.fetchStatus | 目标仓业务码登记文件（与开卡办理同一份） |
+#### 9.2.1 共同约定
 
-身份是 `模板_流程_步骤` 三段；内码十位 `10`（银行卡）`01|02`（流程）`NN`（节点）`SS`（子点）`RR`（结果：`00` 成功、`01` 起失败、`10` 主动取消），全部按字符串保留前导零。分类：全流程与查询整体成功 SUCCESS，其余成功 STEP_SUCCESS；失败 STEP_ERROR_BY_ERROR；主动取消 STEP_ERROR_BY_USER。外码取失败那一步的外部返回，没有就不带，不拿内码充外码。
+- **身份**：`模板_流程_步骤` 三段，同一步骤的子点与步骤整体共用。开卡办理：信息校验 `BankCard_001_001`、短信验证 `BankCard_001_002`、人脸核验 `BankCard_001_003`、写卡 `BankCard_001_004`、结果展示 `BankCard_001_005`、开卡全流程 `BankCard_001_000`。开卡结果查询：参数校验 `BankCard_002_001`、状态查询 `BankCard_002_002`、查询整体 `BankCard_002_000`。
+- **内码**：十位 `10`（银行卡）`01|02`（流程）`NN`（节点）`SS`（子点）`RR`（结果：`00` 成功、`01` 起失败、`10` 主动取消），按字符串保留前导零；子点 `00` 表示步骤整体，节点 `00` 表示流程整体。
+- **分类**：开卡全流程与查询整体成功 SUCCESS，其余成功 STEP_SUCCESS；失败 STEP_ERROR_BY_ERROR；主动取消 STEP_ERROR_BY_USER。
+- **失败原因**：外码取失败那一步的外部返回码，没有就不带，内码不充当外码；步骤整体与全流程取失败子点的外码。
+- **尝试**：一次开卡关联标识与尝试序号由开卡业务控制者持有，走项目允许的扩展参数；去重键是「一次开卡＋节点与子点＋这一点的尝试序号」。
+- **登记位置**：目标仓业务码登记文件，开卡与查询同一份，首用新建。
 
-#### 开卡成功率、步骤耗时与失败原因（开卡办理·运维）
+#### 9.2.2 逐点实现
 
-| 统计点 | 身份 | 结果 → 内码 | 外码来源 | 本端何时得知 | 责任方法 | 去重与耗时 | 验证 |
-|---|---|---|---|---|---|---|---|
-| 卡号校验 | BankCard_001_001 | 通过 1001010100；不通过 1001010101 | 无（本地校验） | 提交后本地校验完成时 | BankCardOpenFlow.submitInfo | 每次提交一次尝试；耗时=校验起止 | 非法卡号、合法卡号各一条 |
-| 身份校验 | BankCard_001_001 | 通过 1001010200；拒绝 1001010201；服务异常 1001010202 | 身份校验接口返回码 | 校验请求返回时 | IdentityCheckService.check | 卡号不通过时不发起、不记；耗时=请求起止 | 拒绝、服务异常各一条 |
-| 信息校验整体 | BankCard_001_001 | 成功 1001010000；失败 1001010001；取消 1001010010 | 失败子点的外码 | 必要校验都有结果或用户终止时 | BankCardOpenFlow.submitInfo | 同一提交的重复通知不重报；耗时=提交到收敛 | 更正卡号后再提交记两次尝试 |
-| 验证码发送 | BankCard_001_002 | 受理 1001020100；业务拒绝 1001020101；服务失败 1001020102 | 短信接口返回码 | 发送请求返回时 | SmsVerifyController.send | 每次发送或重发一次尝试；耗时=请求起止 | 重发一次记两条 |
-| 验证码校验 | BankCard_001_002 | 通过 1001020200；错误 1001020201；过期 1001020202；服务失败 1001020203 | 校验接口返回码 | 校验请求返回时 | SmsVerifyController.verify | 每次提交验证码一次尝试；耗时=请求起止 | 先错后对记两条 |
-| 短信验证整体 | BankCard_001_002 | 成功 1001020000；失败 1001020001；取消 1001020010 | 失败子点的外码 | 校验通过、无法继续或用户退出时 | SmsVerifyController.verify | 可恢复的输错不结束整体；耗时=进入短信步骤到收敛 | 先错后对只记一条成功 |
-| 活体检测 | BankCard_001_003 | 通过 1001030100；不通过 1001030101；用户中止 1001030110 | 活体组件返回码 | 检测回调时 | FaceVerifyController.detect | 中止后迟到的回调不改结果；耗时=启动到回调 | 中止后迟到回调一条 |
-| 身份比对 | BankCard_001_003 | 一致 1001030200；不一致 1001030201；服务异常 1001030202 | 比对接口返回码 | 比对请求返回时 | FaceVerifyController.compare | 活体未通过不发起、不记；耗时=请求起止 | 不一致一条 |
-| 人脸核验整体 | BankCard_001_003 | 成功 1001030000；核验失败 1001030001；拒绝授权 1001030002；取消 1001030010 | 失败子点的外码 | 检测与比对都有结果或用户中止时 | FaceVerifyController.compare | 拒绝授权不编子点结果；耗时=进入人脸步骤到收敛 | 拒绝授权一条 |
-| 开卡申请 | BankCard_001_004 | 受理 1001040100；业务拒绝 1001040101；服务异常 1001040102 | 开卡接口错误码 | 申请请求返回时 | CardOpenService.apply | 同一申请只记一次；耗时=请求起止 | 业务拒绝一条 |
-| 本地写入与激活确认 | BankCard_001_004 | 成功 1001040200；失败 1001040201；待确认时不记 | 写卡组件返回码 | 写入返回时；待确认的在查明后 | CardOpenService.writeCard | 待确认查明后只记一次；耗时=写入起止 | 超时待确认、查明成功一条 |
-| 写卡整体 | BankCard_001_004 | 成功 1001040000；失败 1001040001 | 失败子点的外码 | 权威结果与本地写入都确定时 | CardOpenService.writeCard | 动画与页面生命周期不触发；耗时=申请到两者确定 | 动画先于确认结束时不提前记 |
-| 结果数据获取 | BankCard_001_005 | 成功 1001050100；失败 1001050101 | 结果接口返回码 | 数据请求返回时 | OpenResultLoader.load | 页面曝光不记；不改写开卡结果；耗时=请求起止 | 获取失败而开卡成功一条 |
-| 开卡全流程 | BankCard_001_000 | 成功 1001000000；失败 1001000001；取消 1001000010 | 失败那一步的外码 | 写卡整体确定或用户终止时 | BankCardOpenFlow.finish | 一次开卡只记一次；耗时=首次提交到收敛 | 正常、卡号失败、取消各一条 |
+| 统计点 | 结果 | 责任方法 | 字段取值 | 去重与验证 |
+|---|---|---|---|---|
+| 卡号校验 | 通过 | BankCardOpenFlow.submitInfo | 内码 1001010100，STEP_SUCCESS | 每次提交一次尝试；合法卡号一条 |
+| 卡号校验 | 不通过 | BankCardOpenFlow.submitInfo | 内码 1001010101，STEP_ERROR_BY_ERROR，本地校验不带外码 | 非法卡号一条 |
+| 身份校验 | 通过 | IdentityCheckService.check | 内码 1001010200，STEP_SUCCESS | 卡号不通过时不发起、不记 |
+| 身份校验 | 拒绝 | IdentityCheckService.check | 内码 1001010201，STEP_ERROR_BY_ERROR，外码取身份校验接口返回码 | 拒绝一条 |
+| 身份校验 | 服务异常 | IdentityCheckService.check | 内码 1001010202，STEP_ERROR_BY_ERROR，外码取身份校验接口返回码 | 服务异常一条 |
+| 信息校验整体 | 成功 | BankCardOpenFlow.submitInfo | 内码 1001010000，STEP_SUCCESS | 同一提交的重复通知不重报 |
+| 信息校验整体 | 失败 | BankCardOpenFlow.submitInfo | 内码 1001010001，STEP_ERROR_BY_ERROR | 更正卡号后再提交记两次尝试 |
+| 信息校验整体 | 用户取消 | BankCardOpenFlow.submitInfo | 内码 1001010010，STEP_ERROR_BY_USER | 用户终止一条 |
+| 验证码发送 | 受理 | SmsVerifyController.send | 内码 1001020100，STEP_SUCCESS | 每次发送或重发一次尝试；重发记两条 |
+| 验证码发送 | 业务拒绝 | SmsVerifyController.send | 内码 1001020101，STEP_ERROR_BY_ERROR，外码取短信接口返回码 | 业务拒绝一条 |
+| 验证码发送 | 服务失败 | SmsVerifyController.send | 内码 1001020102，STEP_ERROR_BY_ERROR，外码取短信接口返回码 | 服务失败一条 |
+| 验证码校验 | 通过 | SmsVerifyController.verify | 内码 1001020200，STEP_SUCCESS | 每次提交验证码一次尝试；先错后对记两条 |
+| 验证码校验 | 错误 | SmsVerifyController.verify | 内码 1001020201，STEP_ERROR_BY_ERROR，外码取校验接口返回码 | 错误一条，重输是新尝试 |
+| 验证码校验 | 过期 | SmsVerifyController.verify | 内码 1001020202，STEP_ERROR_BY_ERROR，外码取校验接口返回码 | 过期一条 |
+| 验证码校验 | 服务失败 | SmsVerifyController.verify | 内码 1001020203，STEP_ERROR_BY_ERROR，外码取校验接口返回码 | 服务失败一条 |
+| 短信验证整体 | 成功 | SmsVerifyController.verify | 内码 1001020000，STEP_SUCCESS | 可恢复的输错不结束整体；先错后对只记一条成功 |
+| 短信验证整体 | 失败 | SmsVerifyController.verify | 内码 1001020001，STEP_ERROR_BY_ERROR | 无法继续时一条 |
+| 短信验证整体 | 用户取消 | SmsVerifyController.verify | 内码 1001020010，STEP_ERROR_BY_USER | 用户退出一条 |
+| 活体检测 | 通过 | FaceVerifyController.detect | 内码 1001030100，STEP_SUCCESS | 中止后迟到的回调不改结果 |
+| 活体检测 | 不通过 | FaceVerifyController.detect | 内码 1001030101，STEP_ERROR_BY_ERROR，外码取活体组件返回码 | 不通过一条 |
+| 活体检测 | 用户中止 | FaceVerifyController.detect | 内码 1001030110，STEP_ERROR_BY_USER | 中止后迟到回调仍一条 |
+| 身份比对 | 一致 | FaceVerifyController.compare | 内码 1001030200，STEP_SUCCESS | 活体未通过不发起、不记 |
+| 身份比对 | 不一致 | FaceVerifyController.compare | 内码 1001030201，STEP_ERROR_BY_ERROR，外码取比对接口返回码 | 不一致一条 |
+| 身份比对 | 服务异常 | FaceVerifyController.compare | 内码 1001030202，STEP_ERROR_BY_ERROR，外码取比对接口返回码 | 服务异常一条 |
+| 人脸核验整体 | 成功 | FaceVerifyController.compare | 内码 1001030000，STEP_SUCCESS | 检测与比对都有结果时一条 |
+| 人脸核验整体 | 核验失败 | FaceVerifyController.compare | 内码 1001030001，STEP_ERROR_BY_ERROR | 核验失败一条 |
+| 人脸核验整体 | 拒绝授权 | FaceVerifyController.compare | 内码 1001030002，STEP_ERROR_BY_ERROR | 拒绝授权不编子点结果；一条 |
+| 人脸核验整体 | 用户取消 | FaceVerifyController.compare | 内码 1001030010，STEP_ERROR_BY_USER | 用户中止一条 |
+| 开卡申请 | 受理 | CardOpenService.apply | 内码 1001040100，STEP_SUCCESS | 同一申请只记一次 |
+| 开卡申请 | 业务拒绝 | CardOpenService.apply | 内码 1001040101，STEP_ERROR_BY_ERROR，外码取开卡接口错误码 | 业务拒绝一条 |
+| 开卡申请 | 服务异常 | CardOpenService.apply | 内码 1001040102，STEP_ERROR_BY_ERROR，外码取开卡接口错误码 | 服务异常一条 |
+| 本地写入与激活确认 | 成功 | CardOpenService.writeCard | 内码 1001040200，STEP_SUCCESS | 待确认查明后只记一次；超时待确认、查明成功一条 |
+| 本地写入与激活确认 | 失败 | CardOpenService.writeCard | 内码 1001040201，STEP_ERROR_BY_ERROR，外码取写卡组件返回码 | 失败一条 |
+| 写卡整体 | 成功 | CardOpenService.writeCard | 内码 1001040000，STEP_SUCCESS | 动画与页面生命周期不触发；动画先于确认结束时不提前记 |
+| 写卡整体 | 失败 | CardOpenService.writeCard | 内码 1001040001，STEP_ERROR_BY_ERROR | 权威结果与本地写入都确定时一条 |
+| 结果数据获取 | 成功 | OpenResultLoader.load | 内码 1001050100，STEP_SUCCESS | 页面曝光不记 |
+| 结果数据获取 | 失败 | OpenResultLoader.load | 内码 1001050101，STEP_ERROR_BY_ERROR，外码取结果接口返回码 | 不改写开卡结果；获取失败而开卡成功一条 |
+| 开卡全流程 | 成功 | BankCardOpenFlow.finish | 内码 1001000000，SUCCESS | 一次开卡只记一次；正常开卡一条 |
+| 开卡全流程 | 失败 | BankCardOpenFlow.finish | 内码 1001000001，STEP_ERROR_BY_ERROR | 卡号失败一条 |
+| 开卡全流程 | 用户取消 | BankCardOpenFlow.finish | 内码 1001000010，STEP_ERROR_BY_USER | 取消一条 |
+| 查询参数校验 | 通过 | OpenStatusQuery.query | 内码 1002010100，STEP_SUCCESS | 每次查询一次尝试 |
+| 查询参数校验 | 无效 | OpenStatusQuery.query | 内码 1002010101，STEP_ERROR_BY_ERROR，本地校验不带外码 | 参数无效时不发请求 |
+| 开卡状态查询 | 成功 | OpenStatusQuery.fetchStatus | 内码 1002020100，STEP_SUCCESS，另带查到的开卡状态 | 接口重试按实际尝试分别记；查到「开卡失败」仍记成功 |
+| 开卡状态查询 | 业务失败 | OpenStatusQuery.fetchStatus | 内码 1002020101，STEP_ERROR_BY_ERROR，外码取查询接口返回码 | 业务失败一条 |
+| 开卡状态查询 | 服务失败 | OpenStatusQuery.fetchStatus | 内码 1002020102，STEP_ERROR_BY_ERROR，外码取查询接口返回码 | 服务失败一条 |
+| 查询整体 | 成功 | OpenStatusQuery.query | 内码 1002000000，SUCCESS | 不触发开卡流程上报 |
+| 查询整体 | 失败 | OpenStatusQuery.query | 内码 1002000001，STEP_ERROR_BY_ERROR | 查询失败不改开卡结果 |
 
-- 父步骤与子点共用步骤身份，靠内码的节点、子点段区分；去重键是「一次开卡＋节点与子点＋这一点的尝试序号」，不是身份或结果码。
-- 一次开卡关联标识与尝试序号由开卡业务控制者持有，走项目允许的扩展参数。
+逐行核实际事件的身份、内码、分类、外码、次数与时机；另核没有新增的运营上报调用，自动上报覆盖的页面与点击没有被手工重复。
 
-#### 查询成功率（开卡结果查询·运维）
+#### 9.2.3 待登记与缺依据
 
-| 统计点 | 身份 | 结果 → 内码 | 外码来源 | 本端何时得知 | 责任方法 | 去重与耗时 | 验证 |
-|---|---|---|---|---|---|---|---|
-| 查询参数校验 | BankCard_002_001 | 通过 1002010100；无效 1002010101 | 无（本地校验） | 本地校验完成时 | OpenStatusQuery.query | 每次查询一次尝试；耗时=校验起止 | 参数无效时不发请求 |
-| 开卡状态查询 | BankCard_002_002 | 成功 1002020100（开卡状态另带）；业务失败 1002020101；服务失败 1002020102 | 查询接口返回码 | 查询请求返回时 | OpenStatusQuery.fetchStatus | 接口重试按实际尝试分别记；耗时=请求起止 | 查到「开卡失败」仍记成功 |
-| 查询整体 | BankCard_002_000 | 成功 1002000000；失败 1002000001 | 失败子点的外码 | 校验与状态查询都有结果时 | OpenStatusQuery.query | 不触发开卡流程上报；耗时=提交到收敛 | 查询失败不改开卡结果 |
-
-#### 待登记
-
-- 模板 `BankCard`、流程号 `001` / `002`、各步骤号都是候选：由实现者在目标仓登记文件里按顺序取号，coding 时核冲突，冲突就改取下一个。
-- 外码所在的外部接口与字段名要在真实接口契约取证后填，候选样稿不编。
-- 关联标识与尝试序号的字段名、类型与缺席语义，在契约的数据实体里登记。
-
-#### 验证要点
-
-按统计点核实际事件的身份、内码、分类、外码、次数与时机，不只核「调用过上报封装」。覆盖：正常开卡、卡号失败后更正、短信先错后对、拒绝人脸授权、用户中止与迟到回调、写入待确认后查明、结果数据获取失败；查询分别核查到开卡成功 / 失败 / 处理中与查询自身失败。另核没有新增的运营上报调用，自动上报覆盖的页面与点击没有被手工重复。
+- 模板 `BankCard`、流程号 `001` / `002`、各步骤号是候选：实现者在目标仓登记文件里按顺序取号，coding 时核冲突，冲突就改取下一个。
+- 外码所在的外部接口与字段名，在真实接口契约取证后填；影响所有带外码的行。
+- 关联标识与尝试序号的字段名、类型与缺席语义，在契约的数据实体里登记；影响全部行的去重。
