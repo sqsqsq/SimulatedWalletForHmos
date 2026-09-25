@@ -1,4 +1,4 @@
-"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。\n\nDemo 包里的 `story.js` / `token.js` 是**替身**——用本地目录模拟需求系统，\n复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，\n共用同一套实现，复刻时正该带上。\n\n判来源看包 `manifest.yaml` 的 `name`。它归目标、升级不改，所以每个仓的 manifest 里\n那个名字始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、\n目录结构或对接脚本的内容去猜。\n\n这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份\n（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。\n"""
+"""两种来源：Demo 不给对接实现，业务仓之间共用一套（A12）。\n\nDemo 包里的 `story.js` / `token.js` 是**替身**——用本地目录模拟需求系统，\n复制到业务仓等于把人家的真实现盖掉。业务仓之间不一样：它们对接的是同一个需求系统，\n共用同一套实现，复刻时正该带上。\n\n判来源看包 `manifest.yaml` 的 `adapters`：写 `stand-in` 的包里是替身，没有这个键的是业务仓。\n它归目标、升级不改，所以每个仓说的都是它自己的对接层——不必靠仓名、\n目录结构或对接脚本的内容去猜。\n\n这一份锁四件：Demo 来源不给也不覆盖对接实现；业务仓来源整体覆盖；目标的身份\n（`name` / `description`）不被任何一次升级改掉；两种来源交替时各按各的规矩。\n"""
 from __future__ import annotations
 
 import json
@@ -149,56 +149,57 @@ class SourceKindCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("BizA 的真实现", self.adapter_text(target))
 
-    def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
-        """`name` 取的是 YAML 的**值**，不是那一行的字面。\n\n        `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 是同一个值。拿字面去比，\n        加一对引号就把 Demo 判成业务仓——而那一判之下 `--apply` 会把目标的真实现\n        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。\n        """
-        target = self.blank_repo("BizA")
-        self.adapt("--apply", target, REPO_ROOT)
-        self.write_adapters(target, "BizA 的真实现")
-        self.commit(target, "自己实现对接层")
-
-        for written in ('name: "wallet-sdk-demo"', "name: 'wallet-sdk-demo'",
-                        "name: wallet-sdk-demo  # 就是它",
-                        'name: "wallet-sdk-demo"  # 引号加注释',
-                        "name: 'wallet-sdk-demo'  # 引号加注释"):
-            pkg = self.root / "quoted-pkg"
-            if pkg.exists():
-                shutil.rmtree(pkg)
-            pkg.mkdir()
-            shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
-            shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
-                            ignore=shutil.ignore_patterns("__pycache__", ".*"))
-            link_harness_yaml(pkg)
-            for rel in LAUNCHERS:
-                dst = pkg / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(REPO_ROOT / rel, dst)
-            manifest = pkg / "doc" / "extensions" / "manifest.yaml"
-            manifest.write_text("\n".join(
-                written if l.startswith("name:") else l
-                for l in manifest.read_text(encoding="utf-8").split("\n")), encoding="utf-8")
-
-            proc = self.adapt("--apply", target, pkg)
-            self.assertEqual(0, proc.returncode, self.out(proc))
-            self.assertIn("BizA 的真实现", self.adapter_text(target),
-                          f"`{written}` 被判成业务仓，目标的真实现被替身盖了")
-
-    def test_a_package_without_a_name_stops(self) -> None:
-        """读不出名字就停：这一个值决定要不要覆盖对接实现，没有默认值可退。"""
-        target = self.blank_repo("BizA")
-        pkg = self.root / "nameless-pkg"
+    def pkg_with_manifest(self, rewrite) -> Path:
+        """Demo 包的一份拷贝，manifest 逐行经 `rewrite` 改写。"""
+        pkg = self.root / "rewritten-pkg"
+        if pkg.exists():
+            shutil.rmtree(pkg)
         pkg.mkdir()
         shutil.copy(REPO_ROOT / "framework.config.json", pkg / "framework.config.json")
         shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".*"))
         link_harness_yaml(pkg)
+        for rel in LAUNCHERS:
+            dst = pkg / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO_ROOT / rel, dst)
         manifest = pkg / "doc" / "extensions" / "manifest.yaml"
-        manifest.write_text("\n".join(
-            l for l in manifest.read_text(encoding="utf-8").split("\n")
-            if not l.startswith("name:")), encoding="utf-8")
+        manifest.write_text("\n".join(rewrite(l) for l in manifest.read_text(encoding="utf-8").split("\n")),
+                            encoding="utf-8")
+        return pkg
 
+    def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
+        """`adapters` 取的是 YAML 的**值**，不是那一行的字面。\n\n        `adapters: stand-in` 与 `adapters: "stand-in"` 是同一个值。拿字面去比，\n        加一对引号就把替身包判成业务仓——而那一判之下 `--apply` 会把目标的真实现\n        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。\n        """
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        self.write_adapters(target, "BizA 的真实现")
+        self.commit(target, "自己实现对接层")
+
+        for written in ('adapters: "stand-in"', "adapters: 'stand-in'",
+                        "adapters: stand-in  # 替身",
+                        'adapters: "stand-in"  # 引号加注释',
+                        "adapters: 'stand-in'  # 引号加注释"):
+            pkg = self.pkg_with_manifest(lambda l, w=written: w if l.startswith("adapters:") else l)
+            proc = self.adapt("--apply", target, pkg)
+            self.assertEqual(0, proc.returncode, self.out(proc))
+            self.assertIn("BizA 的真实现", self.adapter_text(target),
+                          f"`{written}` 被判成业务仓，目标的真实现被替身盖了")
+
+    def test_the_package_name_does_not_decide(self) -> None:
+        """包改叫什么都不影响来源判断：写了 `adapters: stand-in` 就不给对接实现。"""
+        target = self.blank_repo("BizA")
+        pkg = self.pkg_with_manifest(lambda l: "name: renamed-demo" if l.startswith("name:") else l)
         proc = self.adapt("--apply", target, pkg)
-        self.assertEqual(2, proc.returncode, "包没有 name 却照写了")
-        self.assertIn("name", self.out(proc))
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertFalse((target / ADAPTERS).exists(), "换了包名就把替身装进业务仓了")
+
+    def test_a_business_manifest_carries_no_stand_in_mark(self) -> None:
+        """从替身包装出来的业务仓，manifest 里没有 `adapters` 那一行和它的注释。"""
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        text = (target / "doc" / "extensions" / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("adapters:", text)
+        self.assertNotIn("替身", text)
 
     # ---- 安装结果 ----
 

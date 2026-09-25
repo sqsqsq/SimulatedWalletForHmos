@@ -1,6 +1,7 @@
 ---
 name: dfx-baseline
 kind: constraints
+form: entries
 applies_when: 所有需求：性能基线与功耗、包体、内存的引入评估
 ---
 

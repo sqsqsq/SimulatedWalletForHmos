@@ -1,6 +1,7 @@
 ---
 name: deliverables
 kind: constraints
+form: entries
 applies_when: 所有需求：代码之外、容易遗漏却阻塞上线或协作的交付事项
 ---
 

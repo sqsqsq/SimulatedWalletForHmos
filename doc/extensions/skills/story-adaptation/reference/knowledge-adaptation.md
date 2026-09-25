@@ -10,7 +10,8 @@
 
 | 读什么 | 拿什么 |
 |---|---|
-| 包的 `skills/story/reference/knowledge/protocol.md` | 三类知识怎样描述自己、共同写法与各类写法 |
+| 包的 `skills/story/reference/knowledge/protocol.md` | 知识怎样描述自己、四个合法格、共同写法与各格写法 |
+| 升级时 `adapt-scan --apply` 末尾的「知识适配」 | 晚于目标 `knowledge_adapted_for` 的协议演进条目，与目标知识按当前协议加载的结果 |
 | 目标的 `manifest.yaml > provides.knowledge` 与其中每个文件 | 已有知识 |
 | 目标的代码、架构配置、模块画像、编码规范与业务说明 | 取证来源；已由它们承担的内容不进知识 |
 | 安装脚本的输出 | 机制装没装成 |
@@ -21,7 +22,7 @@
 2. **定读者要作的决定**：按各阶段看哪些决定离不开本项目知识——初析判断上游内容归不归本部件；spec 判规约命中、找可复用的已有能力、做专项设计（如统计设计）；plan 选模式、定实现与取值；coding 照项目约定落地；review 与测试核义务。挑一个正常需求作检查对象。加载器报出的问题一并列上。据此列出本次要新写或要重写的知识、各自回答什么，摆给人定一次范围；已有且可用的不动。
 3. **取证并写**：
    - 查定义、实际调用、配置与业务协议，分清当前实现、已定规范、依据在别人手里的（写明向谁取得什么）；
-   - 按 protocol 写：frontmatter 的 `applies_when` 写清何时读、回答什么；正文正向陈述有什么、怎么用；多步推导的照设计模式的篇与节写；
+   - 先按下面「四格怎么写」定这份知识落在哪一格、`form` 写什么，再按 protocol 写：frontmatter 的 `applies_when` 写清何时读、回答什么；正文正向陈述有什么、怎么用；
    - 同一内容只在一份里写；编码规范、架构配置已经写的不再写；包内示例知识只参考组织方式，内容以本仓为准；
    - 新文件写完整再加进 `provides.knowledge`；拆分、合并、改名时同步激活清单与引用，旧文件退出。
    - 遇到新的业务决定、事实冲突或超出已定范围，停下问具体问题。
@@ -39,10 +40,28 @@
    const k = api.activeKnowledge(root);
    const problems = api.selfCheck(root, k);
    if (problems.length) throw new Error(problems.join('\n'));
-   console.log(JSON.stringify({ status: 'PASS', facts: k.facts.length, constraints: k.constraints.length, patterns: k.patterns.length }));
+   const counts = {};
+   for (const kind of ['facts', 'constraints', 'patterns']) {
+     for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
+   }
+   console.log(JSON.stringify({ status: 'PASS', counts }));
    ```
 
-   出错时非零退出并带文件与原因；缺运行依赖按依赖提示处理，不算知识缺失。
+   出错时非零退出并带文件与原因；缺运行依赖按依赖提示处理，不算知识缺失。计数按「类型 × 形态」列出，与第 2 步定的范围对得上。
+6. **写适配版本**：知识部分交回时，把目标 `manifest.yaml` 的 `knowledge_adapted_for` 写成当前扩展版本；下次升级据它只列更新的演进条目。
+
+## 四格怎么写
+
+一份知识落在哪一格，看读者拿它做什么：查一个已有东西在哪、怎么用，是分面；照着一步步推出设计，是上下篇；判一条要求命中与否，是条目表。每格四件事：
+
+| 格 | 何时用这个形态 | 到哪取证 | 照哪份 Demo 示例 | 怎样走查 |
+|---|---|---|---|---|
+| facts × facets | 读者要查项目已有的实现、封装与惯例；首装先写部件画像，它是这一格的第一份 | 定义与实际调用、配置、模块画像没写到的职责边界与交互方 | 包 `knowledge/facts/` 里 `form: facets` 的各份 | 拿正常需求逐面问「要用的能力在哪、怎么用」，读者能指到实现名与用法 |
+| facts × halves | 读者要按项目方法多步推导，设计侧与实现侧各读一篇 | 方法的真源：规范、协议、已有实现里一步步的做法与取值规则 | 包 `knowledge/facts/` 里 `form: halves` 的那份 | 上篇走一遍能写出设计侧的结论；下篇走一遍能给出实现侧的每个必须设计项具体值 |
+| constraints × entries | 读者要判一条要求命中与否、落实后怎么验 | 已定规范与负责人确认记录；当前实现核「已满足」与建设差距 | 包 `knowledge/constraints/` 各份，带「探针」列的示范探针写法 | 拿正常需求逐条判命中，命中的能说出落点与各执行体的验法 |
+| patterns × halves | 读者要为流程段或页面选结构并落到文件与角色 | 项目里已用这个结构的实现、SDK 行为事实 | 包 `knowledge/design-patterns/` 各份 | 按单元切需求判候选；命中的能写出角色、文件落点与结构骨架 |
+
+Demo 示例只看组织方式，内容以本仓为准。一份知识讲了两种读法时拆成两份，各落一格。
 
 ## 完成条件
 
@@ -58,11 +77,11 @@
 
 ## 交回
 
-分别写：机制安装结果；每份新写或重写的知识回答什么、证据位置、走查结论、待向他人取得的依据；未做的及其影响到哪些阶段；剩余动作。
+分别写：机制安装结果；每份新写或重写的知识落在哪一格、回答什么、证据位置、走查结论、待向他人取得的依据；只读检查的计数；`knowledge_adapted_for` 写成了哪一版；未做的及其影响到哪些阶段；剩余动作。
 
 ## 示例：后台任务通知（中性题材，路径与值均为示意）
 
-目标是一个后台服务仓。它有一份讲后台服务的 facts 知识，`applies_when` 只写了「always」，正文列着通知封装 `Notifier.send` 与重试策略。
+目标是一个后台服务仓。它有一份讲后台服务的 facts 知识（`form: facets`），`applies_when` 只写了「always」，正文列着通知封装 `Notifier.send` 与重试策略。
 
 - **定决定**：设计「发生某事后通知用户」的需求时，读者要写出调用入口、成功失败怎么判、失败后是否重试。
 - **取证**：读 `Notifier.send` 定义与两处调用：返回投递回执，重试由封装按回执状态发起；取消后是否还通知，代码与需求都没有依据，需求负责人决定。

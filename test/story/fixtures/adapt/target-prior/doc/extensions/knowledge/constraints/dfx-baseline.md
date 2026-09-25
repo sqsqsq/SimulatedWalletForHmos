@@ -1,6 +1,7 @@
 ---
 name: dfx-baseline
 kind: constraints
+form: entries
 applies_when: 夹具知识 dfx-baseline
 ---
 

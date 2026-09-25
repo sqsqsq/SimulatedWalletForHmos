@@ -1,5 +1,5 @@
 schema: 1
-manifest_digest: "sha256:5994710e5af63806"
+manifest_digest: "sha256:594e081fdf17ff9c"
 facts:
   - id: sample-facts
     used:

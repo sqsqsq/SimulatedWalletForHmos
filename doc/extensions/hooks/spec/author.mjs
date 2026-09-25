@@ -27,7 +27,7 @@ import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/d
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
-import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
+import { SHELL, shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
@@ -54,13 +54,13 @@ function positionSection(projectRoot, feature) {
   if (error) {
     return ['## 1. 你现在在哪', '',
       `**位置没取到：${error}**`, '',
-      '它答不出来，这一步的下一动作就没有真源。先让这条命令在本工程跑通（PowerShell'
-      + '里路径带空格要引起来）：', '', '```powershell', command, '```'];
+      '它答不出来，这一步的下一动作就没有真源。先让这条命令在本工程跑通（路径带空格要引起来）：',
+      '', `\`\`\`${SHELL}`, command, '```'];
   }
   if (!status || status.exists === false) {
     return ['## 1. 你现在在哪', '',
       '这个需求还没走过 `/story` 的 S1–S3：先按 SKILL 走材料与范围，收口后再回来。',
-      '', '```powershell', command, '```'];
+      '', `\`\`\`${SHELL}`, command, '```'];
   }
   const rows = ['## 1. 你现在在哪', '', `**下一步**：${status.action}`];
   const state = status.material_state;
@@ -103,9 +103,9 @@ function knowledgeSection(projectRoot, feature) {
     '',
     ...knowledgeGuide(projectRoot, knowledge),
     '',
-    // 项目事实逐份列面名：知识使用登记的 facet 取这里的名字（清单是目标仓的，机制不写死任何一个文件名）。
-    '项目事实的面（登记 `facts[].used` 时 facet 取这些名字）：',
-    ...knowledge.facts.map(f => `- \`${where(f)}\`——${f.facets.join('、')}`),
+    // 项目事实逐份列登记单元：知识使用登记的 facet 取这里的名字（清单是目标仓的，机制不写死任何一个文件名）。
+    '项目事实的登记单元（登记 `facts[].used` 时 facet 取这些名字；上下篇的读读者含 spec 的那一篇，登记那一篇）：',
+    ...knowledge.facts.map(f => `- \`${where(f)}\`——${f.form === 'halves' ? '篇' : '面'}：${f.units.join('、')}`),
     '',
     // 规约的原文入口：判断前读命中域的整份文件——主表是索引，落法附注里的要求同样有效。
     '规约原文在这几份（判命中之前读该域整份，落法附注同样有效）：',
@@ -280,10 +280,10 @@ function imageSection(projectRoot, feature) {
       unused
         ? '  这张已经登记不用。**改主意要引用它时**才跑这条，它撤掉上面那条理由；仍然不用就不跑：'
         : '  **决定不用它时**才跑这条，把 `<…>` 换成真的理由；要用它就不跑，把上面那串引进正文：',
-      '  ```powershell',
+      `  \`\`\`${SHELL}`,
       // 整条一行，不续行：续行的反斜杠在模板串里要写两个、渲染出来是一个，
       // 数错一次 shell 就把它当字面参数，而续行不换来任何东西。
-      // 围栏标 powershell：参数按本工程命令行的规则引，换 shell 要自己核。
+      // 围栏按宿主 shell 标注，参数按同一个 shell 的规则引。
       '  python doc/extensions/skills/story/scripts/core/import_sources.py'
         + ` --feature ${shellArg(feature)} --caption-image ${shellArg(`${featureDir}/${main}`)}`
         + (unused ? ' --used' : ' --unused "<为什么它不属于本需求>"'),
@@ -377,10 +377,9 @@ function statDesignSection(projectRoot, feature) {
   const rows = ['## 5. 统计设计（§9.1.4）', ''];
   if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.1.4 的统计设计：按本阶段原有要求写。'];
   rows.push('这次要交：§9.1.4 先一段总述，然后每个指标一个小节、标题写指标名；小节下先写定义段，'
-    + `再放带「统计点」「所在流程」列的表，表后写边界。形状见 \`${TEMPLATE}\` 的 9.1.4。`,
-  '动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它读者含 spec 的上篇；不凭阶段开头的记忆写。',
-  '写完后：按那一篇的应用步骤逐条回查，走不通的直接改设计，不另写推演。',
-  '§9.1.4 设计打点：业务结果与每次上报要带的信息写在这里；字段名、取值与登记由 plan 实现。');
+    + `再放带「统计点」列的表，其余列按知识要求写。形状见 \`${TEMPLATE}\` 的 9.1.4。`,
+  '动笔前：按第 2 节知识清单的 applies_when 找回答这一节问题的知识；上下篇的读读者含 spec 的那一篇。',
+  '写完后：按那一篇自查，走不通的直接改设计；项目规则算得出的写成具体值；实现层的取值由 plan 落实。');
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
   const state = statDesignState(points);

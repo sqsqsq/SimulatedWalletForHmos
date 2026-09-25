@@ -1,6 +1,7 @@
 ---
 name: sample-conditional
 kind: constraints
+form: entries
 domain: CND
 applies_when: 需求含界面
 ---

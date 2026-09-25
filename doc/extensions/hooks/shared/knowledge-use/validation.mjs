@@ -96,14 +96,15 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
       continue;
     }
     const used = Array.isArray(row.used) ? row.used : [];
+    const unit = fact.form === 'halves' ? '篇' : '面';
     if (!used.length) {
-      problems.push(`facts 的「${id}」没写 used —— 逐面一项：facet 写用了哪一面，used_for 写拿它做了什么`);
+      problems.push(`facts 的「${id}」没写 used —— 逐${unit}一项：facet 写用了哪一${unit}，used_for 写拿它做了什么`);
     }
     for (const u of used) {
       const facet = text(u, 'facet');
-      if (!fact.facets.includes(facet)) {
-        problems.push(`facts 的「${id}」${facet ? `没有面「${facet}」` : '有一项 facet 空着——填骨架注释列出的面名'}`
-          + `（有：${fact.facets.join('、')}）`);
+      if (!fact.units.includes(facet)) {
+        problems.push(`facts 的「${id}」${facet ? `没有${unit}「${facet}」` : `有一项 facet 空着——填骨架注释列出的${unit}名`}`
+          + `（有：${fact.units.join('、')}）`);
         continue;
       }
       if (!text(u, 'used_for')) problems.push(`facts「${id}·${facet}」没写 used_for —— 用它做了什么是评审者要回查的`);

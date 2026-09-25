@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -40,17 +41,16 @@ PLAN_FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes" / "R
 MAX_PACKAGE_BYTES = 12 * 1024
 
 
-def run_in_shell(command: str, cwd=None) -> subprocess.CompletedProcess:
-    """把渲染出来的命令**原样交给本工程的命令行**跑一遍。
+# 机制按运行环境选 shell（`story/drafts.mjs` 的 `SHELL`）：有 SHELL 变量的是 POSIX shell，
+# Windows 上没有它的是 PowerShell。测试用同一条规则选，跑的就是机制引参数时对准的那个。
+SHELL = "bash" if os.environ.get("SHELL") or os.name != "nt" else "powershell"
 
-    引用规则由机制那一侧定（`story/drafts.mjs` 的 `shellArg`：PowerShell 的单引号
-    字面量）；测试必须用同一个 shell 跑，否则测的是另一套规则——cmd.exe 不认单引号，
-    路径会连着引号一起进参数。找不到 PowerShell 就退回 POSIX shell：单引号在它那里
-    是同样的字面含义。
-    """
+
+def run_in_shell(command: str, cwd=None) -> subprocess.CompletedProcess:
+    """把渲染出来的命令**原样交给宿主的命令行**跑一遍。"""
     exe = shutil.which("pwsh") or shutil.which("powershell")
     args = ([exe, "-NoProfile", "-Command", command + "; exit $LASTEXITCODE"]
-            if exe else ["bash", "-lc", command])
+            if SHELL == "powershell" else ["bash", "-lc", command])
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=180,
                           cwd=None if cwd is None else str(cwd))
@@ -1039,7 +1039,7 @@ class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
         proc = run("node", str(REPO_ROOT / "doc" / "extensions" / "hooks" / "spec"
                                / "author.mjs"), "--feature", FEATURE, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)
-        block = proc.stdout.split("```powershell", 1)[1].split("```", 1)[0].strip()
+        block = proc.stdout.split(f"```{SHELL}", 1)[1].split("```", 1)[0].strip()
         self.assertIn(f"'{self.root}'", block, "工程根没有按 shell 规则引起来")
         ran = run_in_shell(block, cwd=self.root)
         self.assertEqual(0, ran.returncode, (ran.stdout or "") + (ran.stderr or ""))

@@ -25,6 +25,15 @@ import { parseYaml } from './yaml.mjs';
 /** 三类知识的类型键——封闭集合。 */
 const KNOWLEDGE_KINDS = ['facts', 'constraints', 'patterns'];
 
+/**
+ * 形态：机器读的正文结构，封闭集合；与类型组成四个合法格。
+ * facets 分面（二级标题一面）、halves 上下篇（两个一级标题分篇）、entries 条目表。
+ */
+const FORMS = { facts: ['facets', 'halves'], constraints: ['entries'], patterns: ['halves'] };
+
+/** 上下篇的两个篇名：halves 形态的登记单元就是它们。 */
+export const HALVES = ['上篇', '下篇'];
+
 /** 读写规则与适配方法的位置（相对扩展根）：任务包、审查与报错都指向这里。 */
 const PROTOCOL_DOC = 'skills/story/reference/knowledge/protocol.md';
 
@@ -283,15 +292,31 @@ function parseConstraintFile(body, fm, rel, bad) {
   };
 }
 
+/**
+ * 上下篇：两个一级标题「# 上篇 · …」「# 下篇 · …」，各篇至少一个二级标题。
+ * 返回两篇的原文（含一级标题）；结构不合记进 `bad`。不核节名、序号与读者字样。
+ */
+function halvesOf(body, rel, bad) {
+  const text = String(body ?? '');
+  const at = HALVES.map(h => text.search(new RegExp(`^#\\s+${h}\\s*·`, 'm')));
+  const missing = HALVES.filter((h, i) => at[i] < 0);
+  if (missing.length) {
+    bad.push(`${rel} 声明 form: halves，却缺一级标题 ${missing.map(h => `「# ${h} · …」`).join('')}`
+      + `——两篇各一个一级标题，写法见 ${PROTOCOL_DOC}`);
+    return null;
+  }
+  const [a, b] = at;
+  const halves = { [HALVES[0]]: text.slice(a, b > a ? b : undefined), [HALVES[1]]: text.slice(b, a > b ? a : undefined) };
+  for (const h of HALVES) {
+    if (!/^##\s+\S/m.test(halves[h])) bad.push(`${rel} 的「${h}」下没有二级标题——每篇按节写，节用二级标题`);
+  }
+  return halves;
+}
+
 function parsePatternFile(body, fm, rel, bad) {
   const id = fmText(fm.name);
   if (!id) fail(`${rel} 的 frontmatter 缺 name —— 模式标识是全链受控标识，不能缺`);
-  // 上篇给 spec / plan 选型，下篇给 coding / review 落地：缺一篇，那一侧就无从读起。
-  const halves = ['上篇', '下篇'].filter(h => !new RegExp(`^#\\s+${h}\\s*·`, 'm').test(body));
-  if (halves.length) {
-    bad.push(`${rel} 缺一级标题 ${halves.map(h => `「# ${h} · …」`).join('')}`
-      + '——模式文件分上篇（适用与选型）与下篇（结构与落地）两个一级标题');
-  }
+  const halves = halvesOf(body, rel, bad);
   const roles = fmList(fm.roles);
   if (!roles.length) {
     fail(`派生为空：${rel} 未声明 roles —— 模式采用后要逐角色投影到契约实体，没有角色就无从校验`);
@@ -306,14 +331,26 @@ function parsePatternFile(body, fm, rel, bad) {
     id,
     roles,
     optionalRoles: fmList(fm.optional_roles),
+    units: HALVES,
+    halves,
   };
 }
 
-/** 一个二级标题是一面：面名去掉编号与「 — 」之后的说明。 */
-function parseFactFile(body, fm, rel) {
-  const facets = lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)
+/**
+ * 项目事实：分面（二级标题一面，面名去掉编号与「 — 」之后的说明）或上下篇（登记单元是篇名）。
+ * 分面的正文里不能有「# 上篇 ·」——那是上下篇的写法，声明与正文不符。
+ */
+function parseFactFile(body, fm, rel, form, bad) {
+  if (form === 'halves') {
+    return { file: rel, name: fmText(fm.name), units: HALVES, halves: halvesOf(body, rel, bad) };
+  }
+  if (new RegExp(`^#\\s+${HALVES[0]}\\s*·`, 'm').test(body)) {
+    bad.push(`${rel} 声明 form: facets，正文却分了上下篇——多步推导的项目方法写 form: halves`);
+  }
+  const units = lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)
     .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim()).filter(Boolean);
-  return { file: rel, name: fmText(fm.name), facets };
+  if (!units.length) bad.push(`${rel} 声明 form: facets，却没有二级标题——一个二级标题是一面`);
+  return { file: rel, name: fmText(fm.name), units };
 }
 
 /**
@@ -366,7 +403,9 @@ export function knowledgeFiles(projectRoot) {
  *
  * @returns {{facts: object[], constraints: object[], patterns: object[],
  *            entries: object[], prefixes: string[], patternIds: string[]}}
- * @throws 清单缺失 / 文件读不到 / kind 或 applies_when 缺失 / kind 未知 / 条目表零行 / 角色未声明
+ * 每份解析结果带 `form` 与登记单元 `units`（分面是面名，上下篇是篇名，条目表是编号），下游只看解析结果。
+ *
+ * @throws 清单缺失 / 文件读不到 / kind、form 或 applies_when 缺失 / 组合不合法 / 声明与正文不符 / 条目表零行 / 角色未声明
  */
 export function activeKnowledge(projectRoot) {
   const root = extensionRoot(projectRoot);
@@ -402,6 +441,12 @@ export function activeKnowledge(projectRoot) {
         + `写法见 ${PROTOCOL_DOC}）`);
       continue;
     }
+    const form = fmText(fm.form);
+    if (!(FORMS[kind] ?? []).includes(form)) {
+      bad.push(`${relPosix} ${form ? `的 kind: ${kind} 与 form: ${form} 不是合法组合` : '的 frontmatter 缺 form'}`
+        + ` —— ${kind} 可用的形态：${FORMS[kind].join(' / ')}（四格见 ${PROTOCOL_DOC}）`);
+      continue;
+    }
     const raw = fm.applies_when;
     const appliesWhen = typeof raw === 'string' ? raw.trim() : '';
     if (!appliesWhen) {
@@ -412,9 +457,11 @@ export function activeKnowledge(projectRoot) {
     }
     // 本文件的结构错误（条目表零行、缺角色等）记下后接着核下一份：维护者一轮看到全部问题。
     try {
-      if (kind === 'constraints') out.constraints.push({ ...parseConstraintFile(body, fm, relPosix, bad), appliesWhen });
-      else if (kind === 'patterns') out.patterns.push({ ...parsePatternFile(body, fm, relPosix, bad), appliesWhen });
-      else out.facts.push({ ...parseFactFile(body, fm, relPosix), appliesWhen });
+      if (kind === 'constraints') {
+        const c = parseConstraintFile(body, fm, relPosix, bad);
+        out.constraints.push({ ...c, form, units: c.entries.map(e => e.id), appliesWhen });
+      } else if (kind === 'patterns') out.patterns.push({ ...parsePatternFile(body, fm, relPosix, bad), form, appliesWhen });
+      else out.facts.push({ ...parseFactFile(body, fm, relPosix, form, bad), form, appliesWhen });
     } catch (e) {
       if (!(e instanceof KnowledgeError)) throw e;
       bad.push(e.message);

@@ -1,6 +1,7 @@
 ---
 name: alpha-domain
 kind: constraints
+form: entries
 applies_when: 夹具知识 alpha-domain
 ---
 

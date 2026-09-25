@@ -1,6 +1,7 @@
 ---
 name: sample-domain
 kind: constraints
+form: entries
 applies_when: 夹具知识 sample-domain
 ---
 

@@ -22,6 +22,7 @@ import test_neutral_knowledge as nk  # noqa: E402
 CONSTRAINT = """---
 name: 中性域
 kind: constraints
+form: entries
 applies_when: 需求有新增出口时：出口的标识与字段要求
 domain: NEU
 ---
@@ -39,6 +40,7 @@ domain: NEU
 FACT = """---
 name: neutral-facts
 kind: facts
+form: facets
 applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口
 ---
 
@@ -187,7 +189,7 @@ class KnowledgeDescribesItself(ProtocolCase):
         """缺文件、缺 kind、缺 applies_when、kind 不在三类里、frontmatter 读不出，与合法文件混在一起：一次报全。"""
         facts = self.ext / "knowledge" / "facts"
         (facts / "no-kind.md").write_text("---\nname: x\n---\n\n# x\n", encoding="utf-8")
-        (facts / "no-use.md").write_text("---\nname: y\nkind: facts\n---\n\n# y\n", encoding="utf-8")
+        (facts / "no-use.md").write_text("---\nname: y\nkind: facts\nform: facets\n---\n\n# y\n", encoding="utf-8")
         (facts / "odd-kind.md").write_text("---\nname: z\nkind: index\napplies_when: 说明\n---\n\n# z\n", encoding="utf-8")
         (facts / "bad-yaml.md").write_text("---\nname: w\nkind: facts\napplies_when: 何时: 回答: 什么\n---\n\n# w\n",
                                            encoding="utf-8")
@@ -211,7 +213,7 @@ class KnowledgeDescribesItself(ProtocolCase):
         (facts / "neutral-facts.md").unlink()
         (facts / "exit-registry.md").write_text(body.replace("name: neutral-facts", "name: exit-registry"),
                                                encoding="utf-8")
-        (facts / "retry-entry.md").write_text("---\nname: retry-entry\nkind: facts\napplies_when: 设计重试时：重试从哪进\n"
+        (facts / "retry-entry.md").write_text("---\nname: retry-entry\nkind: facts\nform: facets\napplies_when: 设计重试时：重试从哪进\n"
                                               "---\n\n# 重试\n\n## 重试入口\n\n中性调度器。\n", encoding="utf-8")
         manifest = self.ext / "manifest.yaml"
         self.edit(manifest, "knowledge/facts/neutral-facts.md",

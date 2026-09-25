@@ -1,6 +1,7 @@
 ---
 name: security-privacy
 kind: constraints
+form: entries
 applies_when: 所有需求：个人数据、权限与对外暴露面的红线
 ---
 

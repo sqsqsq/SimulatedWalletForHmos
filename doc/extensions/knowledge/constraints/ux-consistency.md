@@ -1,6 +1,7 @@
 ---
 name: ux-consistency
 kind: constraints
+form: entries
 applies_when: 需求含新页面或 UI 改版时：多形态设备与显示设置下的一致性要求
 ---
 

@@ -27,16 +27,20 @@ export function draftPath(ctx, index, title) {
 }
 
 /**
- * 一个参数交给 shell 之前包起来 —— **本工程的命令行是 PowerShell**。
- *
- * 单引号里 PowerShell 不做任何展开：`$`、反引号、双引号都是字面；参数自身的单引号
- * 写两遍就是一个字面单引号。双引号不行——`$name` 与反引号会在双引号里被展开，
- * 而反斜杠在 PowerShell 里根本不是转义符，靠它去转义只会把反斜杠本身留在参数里。
- * 不包也不行：图名带空格是常事（`page one.png`），裸拼会被拆成两个参数，
+ * 宿主的命令行，取自运行环境：有 `SHELL` 的是 POSIX shell，Windows 上没有它的是 PowerShell。
+ * 命令围栏按它标注，参数按它引。
+ */
+export const SHELL = process.env.SHELL || process.platform !== 'win32' ? 'bash' : 'powershell';
+
+/**
+ * 一个参数交给 shell 之前包起来。两种 shell 都用单引号：里面不做任何展开，`$`、反引号、
+ * 双引号都是字面。参数自身的单引号，PowerShell 写两遍，POSIX shell 先闭合再转义再打开。
+ * 不包不行：图名带空格是常事（`page one.png`），裸拼会被拆成两个参数，
  * 作者复制过去得到 `unrecognized arguments: one.png`。
  */
 export function shellArg(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+  const text = String(value);
+  return SHELL === 'powershell' ? `'${text.replace(/'/g, "''")}'` : `'${text.replace(/'/g, "'\\''")}'`;
 }
 
 /**

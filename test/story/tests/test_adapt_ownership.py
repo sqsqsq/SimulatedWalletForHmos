@@ -142,7 +142,7 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
     def test_an_upgrade_leaves_the_knowledge_untouched(self) -> None:
         """知识归目标：升级不读不写，正文与激活清单都不动（A2）。"""
         mine = self.ext / "knowledge" / "facts" / "component-profile.md"
-        body = "---\nname: 我的画像\nkind: facts\n---\n\n# 这个仓自己写的\n"
+        body = "---\nname: 我的画像\nkind: facts\nform: facets\n---\n\n# 这个仓自己写的\n"
         mine.write_text(body, encoding="utf-8")
         self.commit("目标写了自己的画像")
 
@@ -245,6 +245,44 @@ class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
         proc = self.run_check()
         self.assertNotEqual(0, proc.returncode)
         self.assertIn("knowledge/facts/gone.md", proc.stderr)
+
+
+class TheUpgradeAsksAboutKnowledge(AdaptCase):
+    """AC07：升级后按演进记录与只读检查决定问不问人；选稍后不落盘任何文件。"""
+
+    def set_adapted(self, version: str) -> None:
+        manifest = self.ext / "manifest.yaml"
+        rows = [f'knowledge_adapted_for: "{version}"' if l.startswith("knowledge_adapted_for:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(f"知识按 {version} 适配过")
+
+    def test_newer_protocol_entries_are_listed_and_asked(self) -> None:
+        self.set_adapted("1.9.6")
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertIn("1.9.7：每份知识的 frontmatter 必须写 `form`", proc.stdout)
+        self.assertIn("停一次问人「现在做知识适配吗」", proc.stdout)
+        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertIn('knowledge_adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")
+
+    def test_a_knowledge_breach_is_listed_and_asked(self) -> None:
+        fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
+        fact.write_text(fact.read_text(encoding="utf-8").replace("\nform:", "\nshape:", 1), encoding="utf-8")
+        self.commit("有一份知识没写 form")
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertIn('"status":"FAIL"', proc.stdout)
+        self.assertIn(f"{fact.name} 的 frontmatter 缺 form", proc.stdout)
+        self.assertIn("停一次问人", proc.stdout)
+
+    def test_nothing_to_adapt_is_one_sentence(self) -> None:
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertIn("知识与当前协议一致，不用适配", proc.stdout)
+        self.assertNotIn("停一次问人", proc.stdout)
+        self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/manifest.yaml",
+                                      "doc/extensions/knowledge").stdout.strip(), "只是提示却写了知识或清单")
 
 
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):

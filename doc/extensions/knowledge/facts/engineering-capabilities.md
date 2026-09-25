@@ -1,6 +1,7 @@
 ---
 name: engineering-capabilities
 kind: facts
+form: facets
 applies_when: 设计与编码要用到对外入口、页面导航、共享状态、开关、日志、脱敏、资源或依赖时：本项目已有的实现与用法
 ---
 

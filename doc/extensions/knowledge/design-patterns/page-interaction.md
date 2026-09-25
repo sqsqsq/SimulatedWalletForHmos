@@ -1,6 +1,7 @@
 ---
 name: page-interaction
 kind: patterns
+form: halves
 applies_when: 页面内交互多、且由业务结果驱动下一个交互时：用动作表编排交互的选型与落地
 depends_on: 编排 SDK（oh 包名 framework）
 roles: [动作表, 动作枚举, 交互封装, 上下文, 页面组件]

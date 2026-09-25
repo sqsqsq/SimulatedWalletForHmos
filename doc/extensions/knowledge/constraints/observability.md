@@ -1,6 +1,7 @@
 ---
 name: observability
 kind: constraints
+form: entries
 domain: OBS
 applies_when: 新增或修改业务流程时：问题定位与统计上报的义务
 ---

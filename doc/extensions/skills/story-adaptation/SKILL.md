@@ -27,10 +27,10 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 来源 | 对接层 | 为什么 |
 |---|---|---|
-| **Demo**（`wallet-sdk-demo`） | 不给、也不覆盖 | 它的对接实现用本地目录模拟需求系统，装进业务仓会往一个不存在的地方读写单据 |
-| **另一个业务仓** | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现 |
+| **替身包**（manifest 写 `adapters: stand-in`） | 不给、也不覆盖 | 它的对接实现用本地目录模拟需求系统，装进业务仓会往一个不存在的地方读写单据 |
+| **业务仓**（没有这个键） | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现 |
 
-判来源看包 `manifest.yaml` 的 `name`——它归目标、升级不改，所以每个仓的 manifest 里那个名字始终是它自己的。不靠仓名长相、目录结构或脚本内容猜。
+判来源看包 `manifest.yaml` 的 `adapters`——它归目标、升级不改，所以每个仓说的都是它自己的对接层。不靠仓名、目录结构或脚本内容猜。
 
 Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同实现公共入口及所需内部模块，或者从一个已经实现好的业务仓复刻过来。
 
@@ -44,7 +44,7 @@ Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/script
 
 ## 知识适配
 
-安装或升级前先读两份：包的 `skills/story/reference/knowledge/protocol.md`（三类知识怎样描述自己、怎样写给模型用）与 `skills/story-adaptation/reference/knowledge-adaptation.md`（从目标仓自己的代码与业务出发写知识、走查、交回的方法与中性示例）。脚本装完机制后，按方法页完成知识部分。
+安装或升级前先读两份：包的 `skills/story/reference/knowledge/protocol.md`（知识怎样描述自己、四个合法格、怎样写给模型用）与 `skills/story-adaptation/reference/knowledge-adaptation.md`（从目标仓自己的代码与业务出发写知识、走查、交回的方法与中性示例）。脚本装完机制后，按方法页完成知识部分。
 
 ## 你要做的四件事
 
@@ -93,15 +93,24 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目标根> --package <包根>
 ```
 
-四组，全过退出 0：
+五组，全过退出 0：
 
 | 组 | 判什么 |
 |---|---|
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
-| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `provides.knowledge` 跟目标 |
-| ⑤ | 入口文件（`AGENTS.md` / `CLAUDE.md`）含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
-| ⑦ | 目标 `.gitignore` 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
-| ⑧ | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
+| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `knowledge_adapted_for` / `provides.knowledge` 跟目标 |
+| ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
+| ④ `.gitignore` | 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
+| ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
+
+### 升级之后：知识要不要适配
+
+升级的 `--apply` 最后打印「知识适配」：演进记录（`reference/knowledge-changes.md`）里晚于目标
+`knowledge_adapted_for` 的条目，与按当前协议加载目标知识的结果。`--check` 通过、机制交回之后：
+
+- 任一非空：把条目与问题原样摆给人，停一次问「现在做知识适配吗」。要做就按方法页做，交回时把目标 manifest 的
+  `knowledge_adapted_for` 写成这一版；选稍后，不写任何东西；
+- 都空：报一句「知识与当前协议一致」，不问。
 
 `--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
 **这个目标现在装的是不是包的这一版**。知识能不能加载、内容够不够是另一件事，交回时与它分开报（方法页「交回」）。

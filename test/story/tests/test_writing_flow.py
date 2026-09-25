@@ -413,7 +413,7 @@ class TheWritingMindOpensTheGuide(unittest.TestCase):
         text = (SKILL / "phases" / "story-write.md").read_text(encoding="utf-8")
         head = text.split("## 一、", 1)[0]
         for needle in ("像向一个没参与的同事解释这件业务那样写", "章不写开场白，第一句就是业务",
-                       "### 开通流程", "不这样写：", self.DOCTALK):
+                       "一个中性的范例（", "```markdown\n###", "不这样写：", self.DOCTALK):
             with self.subTest(needle=needle):
                 self.assertIn(needle, head)
         for old in ("表前有一句引导", "恢复类内容用「时机 / 方案 / 走向」这类短段引导", "图要说清它解释的范围"):

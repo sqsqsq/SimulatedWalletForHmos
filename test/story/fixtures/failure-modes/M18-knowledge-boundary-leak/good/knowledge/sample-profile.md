@@ -1,6 +1,7 @@
 ---
 name: sample-profile
 kind: facts
+form: facets
 applies_when: 夹具知识 sample-profile
 ---
 

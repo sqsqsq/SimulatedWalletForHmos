@@ -1,6 +1,7 @@
 ---
 name: sample-always
 kind: constraints
+form: entries
 domain: SMP
 applies_when: always
 ---

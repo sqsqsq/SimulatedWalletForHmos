@@ -1,6 +1,7 @@
 ---
 name: compatibility-checklist
 kind: constraints
+form: entries
 applies_when: 所有需求：逐项核兼容性的检查表
 ---
 

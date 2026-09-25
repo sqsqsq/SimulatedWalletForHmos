@@ -9,7 +9,7 @@
  */
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
+import { activeKnowledge, HALVES, knowledgeGuide } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
@@ -22,8 +22,10 @@ function knowledgeSection(projectRoot, feature) {
   const knowledge = activeKnowledge(projectRoot);
   const where = f => `\`${relDisplay(projectRoot, path.join(extensionRoot(projectRoot), f.file))}\``;
   let hits = [];
+  let use = null;
   try {
-    hits = codeRequirementIds(readUse(projectRoot, feature), knowledge);
+    use = readUse(projectRoot, feature);
+    hits = codeRequirementIds(use, knowledge);
   } catch (e) {
     if (!(e instanceof UseError)) throw e;
     return ['## 1. 命中的规约与项目事实', '', `读不到 spec 的知识判断：${e.message}——先回 spec 把它补上。`];
@@ -33,7 +35,27 @@ function knowledgeSection(projectRoot, feature) {
     hits.length ? `spec 判命中 ${hits.length} 条：${hits.join('、')}。原文（含落法附注）在：` : 'spec 没有判命中的规约。',
     ...files.map(c => `- ${where(c)}——${c.title}`), '',
     ...knowledgeGuide(projectRoot, knowledge), '',
-    '承接 spec 已判定的业务义务，按实现要的字段读相应知识；值仍缺依据时写清缺哪一项、影响哪几处设计。'];
+    '承接 spec 已判定的业务义务，按实现要的字段读相应知识；值仍缺依据时写清缺哪一项、影响哪几处设计。', '',
+    ...deliveredHalves(knowledge, use)];
+}
+
+/**
+ * 本阶段知识：spec 在 knowledge-use 登记用了上篇的那几份上下篇知识，把下篇全文附上。
+ * 送什么由 spec 的登记决定，这里不按内容挑；上下篇知识 spec 没登记的，点名供作者核对。
+ */
+function deliveredHalves(knowledge, use) {
+  const [upper, lower] = HALVES;
+  const used = new Set((use?.facts ?? [])
+    .filter(r => (Array.isArray(r?.used) ? r.used : []).some(u => String(u?.facet ?? '').trim() === upper))
+    .map(r => String(r?.id ?? '').trim()));
+  const halves = knowledge.facts.filter(f => f.form === 'halves');
+  const sent = halves.filter(f => used.has(f.name) && f.halves?.[lower]);
+  const rows = ['## 1b. 本阶段知识：spec 登记用过上篇的那几份，下篇全文', ''];
+  for (const f of sent) rows.push(`### ${f.name} · ${lower}`, '', '````markdown', f.halves[lower].trim(), '````', '');
+  if (!sent.length) rows.push('spec 没有登记用过任何一份上下篇知识的上篇。', '');
+  const unused = halves.filter(f => !used.has(f.name)).map(f => f.name);
+  if (unused.length) rows.push(`spec 未登记使用的上下篇知识：${unused.join('、')}——核一下本需求确实用不到它们。`);
+  return rows;
 }
 
 function statPointSection(projectRoot, feature) {
@@ -51,8 +73,8 @@ function statPointSection(projectRoot, feature) {
   if (state === 'empty') return [...rows, 'spec 的埋点一节没有指标点位表：统计设计结构待补——先回 spec 在每个指标下补上带「统计点」列的表。'];
   rows.push(`按 \`${SELF}\`「四、埋点」的作业逐个统计点、逐个结果落实，形状见 \`${TEMPLATE}\` 的「9.2 埋点」；指标定义与口径以 spec 为准，plan 按统计点引用。各指标的统计点：`, '');
   for (const g of points.groups) rows.push(`- **${g.title}**：${g.points.join('、')}`);
-  rows.push('', '动笔前：重读第 1 节知识清单里用途写到统计设计与上报的那份，读者含 plan 的下篇；不凭 spec 阶段的记忆写。',
-    '每写完一行：按那一篇的使用约定与完成判断自查——项目规则算得出的字段都写成具体值，项目知识点名的角色在契约里都有承载它的实体与方法。',
+  rows.push('', '动笔前：读第 1b 节附上的下篇；那里没有的，按第 1 节知识清单的 applies_when 找读者含 plan 的那一篇。',
+    '每写完一行：按那一篇自查——项目规则算得出的字段都写成具体值，那一篇要求的角色在契约里都有承载它的实体与方法。',
     '项目规则算不出值的行才进「缺依据」，写明缺哪一项、影响哪几行；「xx」「待定」这类占位不是值。');
   return rows;
 }

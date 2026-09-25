@@ -9,7 +9,7 @@
 | 文件 | 拿什么 |
 |---|---|
 | `contracts.yaml` | 各实体上的 `must`——`text` 是这条义务在这个实体上具体要做什么，`verify` 是谁来验 |
-| 被选中的那个设计模式文档（在 `manifest.yaml` 的 `provides.knowledge` 里） | 它的**下篇 · 结构与落地**：结构、落点与命名、骨架、约定、反模式（模式文件的读法见 `skills/story/reference/knowledge/protocol.md` 第五节） |
+| 被选中的那个设计模式知识（在 `manifest.yaml` 的 `provides.knowledge` 里） | form 为 halves 的**下篇**：结构、落点与命名、骨架、约定、反模式（读法见 `skills/story/reference/knowledge/protocol.md`「设计模式」一节） |
 
 `must.text` 已经带着本需求的专名；它引用契约里其它实体的定义时照那份定义写，封装与接口的实际签名以源码为准。项目事实里的应用方法与参考骨架用来理解怎么落，不用来改契约。
 

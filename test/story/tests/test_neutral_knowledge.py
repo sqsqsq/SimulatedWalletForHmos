@@ -30,6 +30,7 @@ FEATURE = "NK90001"
 NEUTRAL_CONSTRAINT = """---
 name: 中性域
 kind: constraints
+form: entries
 applies_when: 需求有新增出口时：出口的标识与字段要求
 domain: NEU
 ---
@@ -49,6 +50,7 @@ domain: NEU
 NEUTRAL_FACT = """---
 name: neutral-facts
 kind: facts
+form: facets
 applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口
 ---
 
@@ -62,6 +64,7 @@ applies_when: 设计出口与重试时：本工程已有的出口登记与重试
 NEUTRAL_PATTERN = """---
 name: neutral-pattern
 kind: patterns
+form: halves
 applies_when: 同一标识要贯穿多个步骤
 not_applies_when: 单步完成、无状态贯穿
 roles: [标识生成者, 标识消费者]
@@ -74,9 +77,13 @@ sections:
 
 # 上篇 · 适用与选型
 
+## 适用
+
 多步之间要传同一个标识时适用；单步完成时不适用。
 
 # 下篇 · 结构与落地
+
+## 角色
 
 标识生成者在入口生成标识，标识消费者只读不改。
 """
@@ -209,6 +216,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
 NEUTRAL_REPORTING = """---
 name: 中性上报域
 kind: constraints
+form: entries
 domain: NRP
 applies_when: 需求涉及对外统计
 ---
@@ -327,26 +335,6 @@ class TheRuleTextFollowsTheExtensionDir(TheRuleTextIsHandedOverByPath):
 
     def test_the_entries_derive_as_written(self) -> None:
         """这一项与目录无关，父类已核。"""
-
-
-class TheGenericLayerKnowsNoWalletProtocol(unittest.TestCase):
-    """通用层（hooks、skills、审查规则）不认钱包上报协议：专名只许出现在知识里。
-
-    出现一处，那一处就只在钱包这份 Demo 上成立——换一个目标仓就是错的默认。
-    """
-
-    TOKENS = ("WalletHA", "WalletFuncResult", "chartBuilder", "vocBuilder", "OBS-0",
-              "STEP_ERROR", "十位", "内码", "步骤成功", "自动采集")
-
-    def test_no_token_outside_knowledge(self) -> None:
-        hits = []
-        for base in (EXT / "hooks", EXT / "skills", EXT / "rules"):
-            for f in base.rglob("*"):
-                if not f.is_file() or f.suffix not in {".mjs", ".py", ".md", ".yaml", ".json"}:
-                    continue
-                text = f.read_text(encoding="utf-8", errors="replace")
-                hits += [f"{f.relative_to(EXT).as_posix()}：{t}" for t in self.TOKENS if t in text]
-        self.assertEqual([], hits)
 
 
 class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):

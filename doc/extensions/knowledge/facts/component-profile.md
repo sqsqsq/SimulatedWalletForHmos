@@ -1,6 +1,7 @@
 ---
 name: component-profile
 kind: facts
+form: facets
 applies_when: 判断上游内容是否归本部件时：本部件是谁、职责边界、与哪些交互方怎样交互
 ---
 
