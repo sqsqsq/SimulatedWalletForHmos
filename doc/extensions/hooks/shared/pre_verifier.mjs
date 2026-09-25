@@ -90,7 +90,7 @@ function statPointTable(projectRoot, feature) {
     if (!consumed.has(key)) for (const x of got) rows.push(`| — | （spec 没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
   }
   rows.push('', '并列的每一行按项目知识写的完成判断核：项目规则算得出的字段是不是具体值，'
-    + '尝试由谁持有、由哪个方法结算有没有名字。');
+    + '项目知识点名的角色在契约里都有承载它的实体与方法。');
   return rows;
 }
 

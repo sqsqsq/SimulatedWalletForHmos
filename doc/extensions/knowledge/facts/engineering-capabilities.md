@@ -10,10 +10,9 @@ applies_when: 设计与编码要用到对外入口、页面导航、共享状态
 
 ## 1. 对外入口与页面导航
 
-- 外部拉起的入口是 Ability：登记在 `01-Product/Phone/src/main/module.json5` 的 `abilities[]`，`exported` 决定能否被外部拉起；`PhoneAbility` 用 `loadContent('pages/index')` 加载宿主页。
-- 宿主页 `01-Product/Phone/src/main/ets/pages/index.ets` 是唯一的 `@Entry` 页（同模块 `main_pages.json` 只列它），持有唯一的 `Navigation` 与导航栈，`aboutToAppear` 里用 `NavPathContext.attach(stack)` 挂上。
-- 业务页面是 `NavDestination`，按名字进栈：`pushPath({ name: 'CardPackPage' })` → 宿主 `navDestinationMap` 按名字调模块导出的 `@Builder`（`buildCardPackPage`，由 `02-Feature/WalletMain/src/main/ets/index.ets` 导出）→ 页面根节点 `NavDestination()`。新增页面写三处：页面文件导出 builder、模块 `index.ets` 导出它、宿主 `navDestinationMap` 加一个名字分支。`WalletMain` 的 `route_map.json` 列着同名映射，`module.json5` 未引用它，名字查找以宿主 `navDestinationMap` 为准。
-- 取栈：Tab 首屏子树用与 `Navigation` 同源的 `@Link navPathStack`；二级页用 `CommFunc` 的 `NavPathContext.stack()`（`shared/navigation/NavPathContext.ets`）。
+- 外部入口是 Ability，登记在 Phone 模块 `module.json5` 的 `abilities[]`，`exported` 控制能否被外部拉起；宿主页 Phone 的 `pages/index.ets` 是唯一 `@Entry`，持有唯一的 `Navigation`。
+- 业务页是 `NavDestination`，按名字 `pushPath`；名字在宿主 `navDestinationMap` 里映射到模块 `index.ets` 导出的 `@Builder`，新增页面改这三处：页面文件导出 builder、模块 `index.ets` 导出它、宿主映射加一个名字分支。`route_map.json` 未被 `module.json5` 引用，不算登记。
+- 取栈用 `CommFunc` 的 `NavPathContext`。
 
 ## 2. 数据存储
 

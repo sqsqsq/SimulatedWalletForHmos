@@ -500,11 +500,12 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, text)
 
-    def test_every_channel_has_its_row(self) -> None:
-        """项目的四种上报来源各一行：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一行。"""
+    def test_every_channel_is_named_with_its_status(self) -> None:
+        """项目的四种上报来源都在统计设计里点名，当前实现与已定规范分开：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一种。"""
         overview = next(v for k, v in self.sections().items() if "统计设计" in k)
-        for channel in ("| VOC |", "| Chart |", "| BI |", "| 交互自动记录 |"):
-            self.assertIn(channel, overview)
+        for channel in ("VOC", "Chart", "BI", "交互自动记录", "当前实现", "已定规范"):
+            with self.subTest(channel=channel):
+                self.assertIn(channel, overview)
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
         sections = self.sections()
