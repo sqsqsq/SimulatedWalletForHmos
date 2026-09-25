@@ -34,7 +34,7 @@
 # =============================================================================
 
 schema_version: "1.0"
-updated: "2026-08-25"
+updated: "2026-09-26"
 
 modes:
 
@@ -301,6 +301,54 @@ modes:
   # ---------------------------------------------------------------------------
   # 产物层（feature 产物里的失效形态）
   # ---------------------------------------------------------------------------
+
+  - id: M19-rule-defined-twice
+    dimension: knowledge
+    found_round: "2026-09-25"
+    form: 同一条规则在两处写正文——定义处之外又抄了一遍，改的时候只改到一处
+    clause: 1.9.7 G05 / C02
+    checker: m19_rule_defined_twice
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M19-rule-defined-twice/bad
+    good_fixture: test/story/fixtures/failure-modes/M19-rule-defined-twice/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      定义处由引用声明：别的文档写「<文件>「<节名>」」指过去，被指的那一节就是定义处。
+      它里面够长的规则句在别的交付文件里原样出现即报；只核被引用过的节。
+
+  - id: M20-mechanism-writes-knowledge-structure
+    dimension: knowledge
+    found_round: "2026-09-25"
+    form: 机制写死某份知识的结构——节名、角色名、表头列名或知识名出现在模板之外的机制文件里
+    clause: 1.9.7 E 域 / 05 §3.2
+    checker: m20_mechanism_writes_knowledge_structure
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M20-mechanism-writes-knowledge-structure/bad
+    good_fixture: test/story/fixtures/failure-modes/M20-mechanism-writes-knowledge-structure/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      词表从知识目录现场派生（frontmatter 的 name 与 roles、二级以下标题、首张表的表头），
+      减去协议与产物模板里出现的词；manifest 登记知识清单是它的职责，不在此列。
+
+  - id: M21-environment-hardcoded
+    dimension: knowledge
+    found_round: "2026-09-25"
+    form: 机制写死运行环境或来源仓——命令围栏标死某个 shell，或写出包自己的仓名
+    clause: 1.9.7 E08 / G
+    checker: m21_environment_hardcoded
+    target: mechanism
+    bad_fixture: test/story/fixtures/failure-modes/M21-environment-hardcoded/bad
+    good_fixture: test/story/fixtures/failure-modes/M21-environment-hardcoded/good
+    applicable_when: always
+    severity: BLOCKER
+    status: fixed
+    scope_note: >
+      命令由脚本按宿主 shell 输出，文档里的命令围栏不标 shell；来源仓按 manifest 属性判断，
+      包名只在 manifest 里。
 
   - id: P01-appendix-prefix-granularity
     dimension: knowledge
@@ -1157,8 +1205,6 @@ modes:
     clause: KG-3 / 坑 #30
     checker: s15_appendix_prose_tail
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S15-appendix-prose-tail/bad
-    good_fixture: test/story/fixtures/failure-modes/S15-appendix-prose-tail/good
     applicable_when: always
     severity: BLOCKER
     status: retired
@@ -1230,8 +1276,6 @@ modes:
     clause: KG5-2 / 坑 #36
     checker: s19_material_list_prose_head
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S19-material-list-prose-head/bad
-    good_fixture: test/story/fixtures/failure-modes/S19-material-list-prose-head/good
     applicable_when: always
     severity: BLOCKER
     status: retired

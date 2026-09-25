@@ -35,7 +35,8 @@ import { acceptanceIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../
 import { reportProblems } from '../shared/verifier-report.mjs';
 import { featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
-import { statPointsOfSection } from '../shared/stat-points.mjs';
+import { indicatorShape } from '../shared/stat-points.mjs';
+import { hostAnchorProblems } from '../shared/chapters.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -60,35 +61,6 @@ function findChild(lines, parentIdx, titleRe) {
   const parent = doc.headings.find(x => x.at === parentIdx);
   const h = parent && childHeading(doc, parent, titleRe);
   return h ? h.at : -1;
-}
-
-/**
- * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，附录是全文最后一章。
- * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
- */
-export function hostAnchorProblems(lines, isStory) {
-  const doc = docOf(lines);
-  const problems = [];
-  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展治理项/.test(h.name));
-  const children = [[/规约约束要求/, '规约约束要求'], [/设计模式候选/, '设计模式候选登记'],
-    ...(isStory ? [[/技术契约/, '技术契约']] : [])];
-  if (!anchor) {
-    problems.push('缺「9. 宿主扩展治理项」章——它在「8. 验收标准」之后，'
-      + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${SECTIONS_DOC}）`);
-  } else {
-    for (const [re, name] of children) {
-      const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
-      if (h && h !== childHeading(doc, anchor, re)) {
-        problems.push(`「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——现在是「${'#'.repeat(h.level)} ${h.raw}」`);
-      }
-    }
-  }
-  const h2 = doc.headings.filter(h => h.level === 2);
-  const appendix = h2.findIndex(h => /^附录/.test(h.name));
-  if (appendix >= 0 && appendix < h2.length - 1) {
-    problems.push(`附录要是全文最后一章：「${h2.slice(appendix + 1).map(h => h.raw).join('」「')}」排在了附录之后`);
-  }
-  return problems;
 }
 
 /** 某个标题管到的行区间 `[start, end)`。 */
@@ -442,37 +414,6 @@ function strayProse(body) {
   return null;
 }
 
-/**
- * 埋点一节的形状：总述在首个指标之前，表都在某个指标下，每个指标有定义段与带「统计点」列的点位表且至少一行。
- * 指标是埋点标题的下一级（`level` 是埋点标题的层级）。点位按任务包与审查同一份解析取，说明表不算点位。
- * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名、定义段与结果写法。
- */
-export function indicatorShape(where, body, level) {
-  const lines = body.map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
-  if (/^不涉及[:：]\s*\S/.test(lines[0] ?? '')) return [];
-  const problems = [];
-  const indicator = new RegExp(`^#{${level + 1}}\\s`);
-  let seen = false;
-  let lead = false;
-  for (const l of lines) {
-    if (indicator.test(l)) { seen = true; continue; }
-    if (!l.startsWith('|')) { if (!seen) lead = true; continue; }
-    if (!seen) { problems.push(`${where}有统计点表不在指标小节下——一个指标一个小节，表放在它下面（形态见 ${SECTIONS_DOC}）`); return problems; }
-  }
-  const groups = statPointsOfSection([`${'#'.repeat(level)} 埋点`, ...body].join('\n'))?.groups ?? [];
-  if (!groups.length) problems.push(`${where}没有指标小节——一个指标一个小节，下面放它的统计点表（形态见 ${SECTIONS_DOC}）`);
-  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述（形态见 ${SECTIONS_DOC}）`);
-  for (const g of groups) {
-    if (!g.lead) {
-      problems.push(`${where}的指标「${g.title}」缺定义段——标题与表之间先写定义段，再放表`);
-    }
-    if (!g.points.length) {
-      problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
-    }
-  }
-  return problems;
-}
-
 const SPEC_EXT_SECTIONS = [
   { ch: '9.1 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
 ];
@@ -542,7 +483,7 @@ export default guard('spec', async (ctx) => {
               + '——这一节用标题、短段、表与列表写；业务需要的图放它讲的业务章，这里用文字说明或链接过去');
           }
           const level = docOf(lines).headings.find(h => h.at === subIdx).level;
-          problems.push(...indicatorShape(`§${ch}「${name}」`, body, level));
+          problems.push(...indicatorShape(`§${ch}「${name}」`, body, level, SECTIONS_DOC));
         } else {
           const stray = strayProse(body);
           if (stray) {
@@ -556,7 +497,7 @@ export default guard('spec', async (ctx) => {
   }
 
   // ---- 宿主扩展的位置：扩展内容挂在 framework 模板的锚点下，附录最后 ----
-  problems.push(...hostAnchorProblems(lines, isStory));
+  problems.push(...hostAnchorProblems(lines.join('\n'), isStory, SECTIONS_DOC));
 
   // ---- 知识判定的两个出口（四组，各按前置判）----
   // 出口按**命中条目**派生，不为任何域预留固定小节——预留小节就是把域清单硬编码换个地方存在。

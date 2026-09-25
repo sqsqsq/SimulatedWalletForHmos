@@ -218,8 +218,8 @@ function versionNotes(text) {
 /**
  * 取 manifest 顶层某个键的**值**，不是它那一行的字面。
  *
- * `name: wallet-sdk-demo` 与 `name: "wallet-sdk-demo"` 在 YAML 里是同一个值，行尾
- * 跟个注释也一样。拿字面去比，加一对引号就会把 Demo 判成业务仓——而那一判之下
+ * `adapters: stand-in` 与 `adapters: "stand-in"` 在 YAML 里是同一个值，行尾
+ * 跟个注释也一样。拿字面去比，加一对引号就会把替身包判成业务仓——而那一判之下
  * `--apply` 会把目标的真实现覆盖成替身，退出码还是 0。所以这里走真正的解析器。
  */
 function manifestValue(manifestText, key) {

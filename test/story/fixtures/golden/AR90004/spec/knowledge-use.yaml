@@ -1,0 +1,113 @@
+schema: 1
+manifest_digest: "sha256:d1e6e0eb53bc0bc6"
+
+facts:
+  - id: component-profile
+    used:
+      - facet: 部件申明
+        used_for: 判定挂失的资格、提交与结果页面归钱包端，冻结判定与补卡归卡云与兄弟单
+  - id: engineering-capabilities
+    used:
+      - facet: 数据存储
+        used_for: 恢复上下文用 relationalStore 按账号隔离保存
+      - facet: 配置项
+        used_for: 入口开关按既有功能开关读取，读取失败按关闭处理
+      - facet: 敏感数据处理
+        used_for: 卡号与账号在采集处脱敏，恢复记录只存摘要
+  - id: event-tracking
+    used:
+      - facet: 上篇
+        used_for: 把关键路径可观察翻成冻结成功率与中断恢复成功率两个指标，并切出三个统计点
+
+constraint_domains: []
+
+constraints:
+  - id: UX-01
+    applicable: true
+    requirement:
+      - 资格、恢复与结果三段的方向性布局参数用 start/end，文本对齐用 TextAlign.Start/End
+    impact: 挂失页面三段布局
+  - id: SEC-01
+    applicable: true
+    requirement:
+      - 页面、日志、上报与恢复记录只接收脱敏卡片标识与账号范围摘要
+      - 恢复数据按账号范围隔离，不随备份恢复
+    contract: loss_report_recovery_context
+  - id: DFX-01
+    applicable: true
+    requirement:
+      - 资格查询只在打开页面、身份回跳与冲突恢复时调用，页面停留期间不轮询
+      - 冻结结果只在提交返回后与用户主动刷新时查询
+    contract: queryLossEligibility
+  - id: DFX-02
+    applicable: true
+    requirement:
+      - 交付时给出新增文案资源的体积增量；不新增图片、三方 SDK 与独立安装包
+    impact: WalletMain 资源清单与依赖清单
+  - id: OBS-02
+    applicable: true
+    requirement:
+      - 资格、身份恢复、提交、结果与冲突各阶段经本地日志记录，并以同一流程关联标识串联
+    contract: queryFreezeResult
+  - id: OBS-03
+    applicable: true
+    requirement:
+      - 统计冻结成功率与中断恢复成功率，覆盖提交挂失、冻结结果与流程恢复三个统计点
+    contract: 冻结结果
+  - id: OBS-05
+    applicable: true
+    requirement:
+      - 每个统计点每种结果在结果确定时上报一条，重复回调不产生第二条终态
+    contract: 提交挂失
+  - id: OBS-06
+    applicable: true
+    requirement:
+      - 三个统计点的上报编码先核仓内无既有登记，再在项目唯一登记位置登记
+    contract: 流程恢复
+  - id: OBS-07
+    applicable: false
+    reason: 材料没有运营采集诉求，AC-8 要求的是关键路径可观察，由运维统计承接
+  - id: RES-01
+    applicable: true
+    requirement:
+      - 界面图标使用系统符号，不新增图片
+    impact: 挂失页面三段布局
+  - id: RES-02
+    applicable: true
+    requirement:
+      - 新增文案登记在 WalletMain 资源中，中英文成对，页面只引用资源 key
+    impact: WalletMain 文案资源清单
+  - id: COMPAT-01
+    applicable: true
+    requirement:
+      - 三个新增接口的出参缺字段时按失败或处理中收敛，不当作已冻结
+    contract: queryFreezeResult
+  - id: COMPAT-02
+    applicable: false
+    reason: 三个接口的失败都收敛为页面可读失败状态，本需求不新增错误码，也不改动既有码的编号与含义
+  - id: ENV-01
+    applicable: true
+    requirement:
+      - 清除恢复数据或缓存后重新进入，从无上下文状态重建挂失流程，不崩溃、不死循环
+    contract: loss_report_recovery_context
+  - id: ENV-02
+    applicable: true
+    requirement:
+      - 重新进入、身份回跳与快速重复点击共享同一幂等状态，不重复创建挂失申请
+    contract: createOrReuseLossApplication
+  - id: DLV-01
+    applicable: true
+    requirement:
+      - 新增页面文案形成翻译清单，跟踪中英文资源的回译与合入
+    impact: WalletMain 文案资源清单
+  - id: DLV-02
+    applicable: false
+    reason: 挂失入口只在钱包内的交通卡详情页出现，不对其他应用开放；三个接口由钱包调用卡云，不对外提供
+
+patterns:
+  - unit: 挂失资格、提交、结果与重试流程
+    candidate: decision-tree
+    signal: 资格、身份、既有申请、已冻结 / 处理中 / 失败是互斥分支，每支各有后续步骤与失败处理
+  - unit: 挂失页面三段与生命周期恢复
+    candidate: page-interaction
+    signal: 确认、身份回跳、冲突恢复、重试与客服由业务结果决定下一个交互

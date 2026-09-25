@@ -49,7 +49,7 @@ export function specStatPoints(specText) {
 }
 
 /** 同 `specStatPoints`，读一段以埋点标题开头的正文（门禁拿到的就是这一节）。 */
-export function statPointsOfSection(sectionText) {
+function statPointsOfSection(sectionText) {
   return statPoints(leadingSection(sectionText));
 }
 
@@ -105,3 +105,34 @@ export function planStatRows(planText) {
 
 /** 统计点名比较用的形态：去空白与标记。 */
 export const pointKey = (name) => clean(name).replace(/\s+/g, '');
+
+/**
+ * 埋点一节的形状：总述在首个指标之前，表都在某个指标下，每个指标有定义段与带「统计点」列的点位表且至少一行。
+ * 指标是埋点标题的下一级（`level` 是埋点标题的层级）。点位按任务包与审查同一份解析取，说明表不算点位。
+ * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名、定义段与结果写法。
+ */
+export function indicatorShape(where, body, level, formDoc) {
+  const lines = body.map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
+  if (/^不涉及[:：]\s*\S/.test(lines[0] ?? '')) return [];
+  const problems = [];
+  const indicator = new RegExp(`^#{${level + 1}}\\s`);
+  let seen = false;
+  let lead = false;
+  for (const l of lines) {
+    if (indicator.test(l)) { seen = true; continue; }
+    if (!l.startsWith('|')) { if (!seen) lead = true; continue; }
+    if (!seen) { problems.push(`${where}有统计点表不在指标小节下——一个指标一个小节，表放在它下面（形态见 ${formDoc}）`); return problems; }
+  }
+  const groups = statPointsOfSection([`${'#'.repeat(level)} 埋点`, ...body].join('\n'))?.groups ?? [];
+  if (!groups.length) problems.push(`${where}没有指标小节——一个指标一个小节，下面放它的统计点表（形态见 ${formDoc}）`);
+  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述（形态见 ${formDoc}）`);
+  for (const g of groups) {
+    if (!g.lead) {
+      problems.push(`${where}的指标「${g.title}」缺定义段——标题与表之间先写定义段，再放表`);
+    }
+    if (!g.points.length) {
+      problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
+    }
+  }
+  return problems;
+}

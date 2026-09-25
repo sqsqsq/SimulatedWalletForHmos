@@ -154,10 +154,15 @@ def js(module, expr: str) -> str:
 class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
     """① 只核结构，不核名字与行数。"""
 
-    SHAPE = nk.EXT / "hooks" / "spec" / "post_check.mjs"
+    SHAPE = nk.EXT / "hooks" / "shared" / "stat-points.mjs"
 
     def problems(self, body: str) -> list[str]:
-        return js(self.SHAPE, f"m.indicatorShape('§9.1.1「埋点」', {json.dumps(body.split(chr(10)))}, 4)")
+        return js(self.SHAPE, f"m.indicatorShape('§9.1.1「埋点」', {json.dumps(body.split(chr(10)))}, 4, 'spec-sections.md')")
+
+    def points(self, section: str) -> dict:
+        """按生产入口读：把这一节放进技术契约下，由 specStatPoints 取出。"""
+        spec = "## 9. 宿主扩展治理项\n\n### 9.1 技术契约\n\n" + section
+        return js(self.SHAPE, f"m.specStatPoints({json.dumps(spec)})")
 
     def test_an_overview_and_indicators_with_rows_pass(self) -> None:
         body = SPEC.split("#### 9.1.4 埋点", 1)[1].split("### 9.2", 1)[0]
@@ -183,8 +188,7 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
         body = ("总述一句。\n\n##### 提交成功率\n\n衡量提交成功的比例。\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
                 "| 实际业务结果 | 统计点 | 本端获知时机 |\n|---|---|---|\n| 已受理、拒绝 | 提交/请求 | 响应返回时 |")
         self.assertEqual([], self.problems(body))
-        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs",
-                 f"m.statPointsOfSection({json.dumps('#### 9.1.4 埋点' + chr(10) + chr(10) + body)})")
+        got = self.points("#### 9.1.4 埋点\n\n" + body)
         self.assertEqual(["提交/请求"], got["groups"][0]["points"])
         self.assertEqual(["提交/请求", "已受理、拒绝", "响应返回时"], got["groups"][0]["rows"][0])
         self.assertIn("发起的提交", got["text"], "说明表留在原文里给模型读")
@@ -201,7 +205,7 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
     def test_the_definition_is_the_first_prose_line_before_the_table(self) -> None:
         body = ("#### 9.1.4 埋点\n\n总述。\n\n##### 甲\n\n| 统计点 | 结果 |\n|---|---|\n| 一 | 成功 |\n\n表后边界。\n\n"
                 "##### 乙\n\n<!-- 注释 -->\n衡量乙的比例。\n第二行。\n\n| 统计点 | 结果 |\n|---|---|\n| 二 | 成功 |")
-        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs", f"m.statPointsOfSection({json.dumps(body)})")
+        got = self.points(body)
         self.assertEqual(["", "衡量乙的比例。"], [g["lead"] for g in got["groups"]])
 
     def test_not_applicable_is_a_conclusion(self) -> None:

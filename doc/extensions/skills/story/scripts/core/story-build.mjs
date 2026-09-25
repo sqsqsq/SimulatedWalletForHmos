@@ -54,10 +54,8 @@ function parseArgs(argv) {
   for (let i = 3; i < argv.length; i++) {
     if (argv[i] === '--feature') args.feature = argv[++i];
     else if (argv[i] === '--project-root') args.projectRoot = argv[++i];
-    else if (argv[i] === '--story') args.story = argv[++i];
     else if (argv[i] === '--chapter') args.chapter = argv[++i];
     else if (argv[i] === '--from') args.from = argv[++i];
-    else if (argv[i] === '--offline') args.offline = true;
     else if (argv[i] === '--deliver') args.deliver = true;
   }
   return args;
@@ -222,18 +220,10 @@ function cmdSkeleton(ctx) {
 function main() {
   const args = parseArgs(process.argv);
   if (!COMMANDS.includes(args.command)) {
-    fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]
-`
-      + '      story-build.mjs check --offline --story <story.md 路径>');
-  }
-  if (args.offline && args.command !== 'check') {
-    fail('--offline 只用于 check：它只读一份文档，登记与渲染都需要需求目录');
+    fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]`);
   }
   if (args.deliver && args.command !== 'check') {
     fail('--deliver 只用于 check：它判的是这份 story 能不能交付');
-  }
-  if (args.deliver && args.offline) {
-    fail('--deliver 与 --offline 互斥：交付门要读需求目录里的闭环产物');
   }
   const ctx = createContext(args);
   if (args.command === 'skeleton') cmdSkeleton(ctx);

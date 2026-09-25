@@ -110,8 +110,8 @@ class TheTemplateComesFromTheProfile(unittest.TestCase):
 
     def test_another_profile_name_resolves_through_its_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            got = call("profileAsset", str(self.workspace(d)), "spec", "spec_template")
-            self.assertEqual(TEMPLATE, got["text"].replace("\r\n", "\n"))
+            got = call("chapterTemplates", str(self.workspace(d)), "spec", "spec_template")
+            self.assertEqual(TEMPLATE, got["templates"][0].replace("\r\n", "\n"))
 
     def test_no_profile_is_not_applicable(self) -> None:
         with tempfile.TemporaryDirectory() as d:

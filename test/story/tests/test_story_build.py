@@ -21,6 +21,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import golden_workspace  # noqa: E402
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -754,21 +756,6 @@ class TestFormLints(StoryBuildCase):
         self.init_audit()
         code, out = self.check_output()
         self.assertNotIn("链接点不开", out)
-
-    def test_offline_does_not_judge_whether_the_file_exists(self) -> None:
-        """离线不判存在性：那时没有 feature 上下文，基准目录只能靠猜。
-
-        判据一旦开始猜就没法解释也没法回归。金样正是离线跑的——它是独立文件，
-        身边没有 RR/ 也没有 AR/，存在性判在那里必然全红。
-        """
-        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
-                           "原文：[RR/prd.md](RR/prd.md)\n")
-        self.init_audit()
-        proc = subprocess.run(
-            ["node", str(BUILD), "check", "--offline", "--story", str(self.story_path),
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertNotIn("链接点不开", (proc.stderr or "") + (proc.stdout or ""))
 
     def test_the_material_link_is_the_one_place_a_repo_path_may_appear(self) -> None:
         """豁免只到这一节的链接语法：正文里的仓内路径照拦。"""
@@ -1746,10 +1733,10 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         self.story = REPO_ROOT / "test" / "story" / "golden" / "story-金样-AR90004.md"
 
     def check(self) -> str:
-        proc = subprocess.run(
-            ["node", str(self.build), "check", "--offline", "--story", str(self.story)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        return (proc.stderr or "") + (proc.stdout or "")
+        """金样放进用这份副本机制搭的需求工作区，经生产入口 check。"""
+        with tempfile.TemporaryDirectory() as ws:
+            golden_workspace.build(Path(ws), extensions=self.mech)
+            return golden_workspace.check(Path(ws))[1]
 
     def test_a_good_contract_says_nothing_about_id_shapes(self) -> None:
         self.assertNotIn("id_shapes", self.check())
@@ -2380,7 +2367,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
         self.assertNotIn("代码现状", appendix)
-        self.assertNotIn("oh-package.json5", appendix, "仓内路径进了归档件")
+        self.assertNotIn("检索 WalletMain data 层端云调用零命中", appendix, "代码现状列进了归档件")
 
     def test_reprojection_follows_the_source(self) -> None:
         """真源变了，重投影跟上；作者区一个字节不动。"""
@@ -2388,9 +2375,9 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.author_appendix()
         use = self.feature / "spec" / "knowledge-use.yaml"
         text = use.read_text(encoding="utf-8")
-        self.assertIn("本项目界面不新增图片或图标", text)
-        use.write_text(text.replace("本项目界面不新增图片或图标",
-                                    "改过的依据：本项目界面不新增图片或图标", 1),
+        self.assertIn("无新引入位图资源", text)
+        use.write_text(text.replace("无新引入位图资源",
+                                    "改过的依据：无新引入位图资源", 1),
                        encoding="utf-8")
         self.build("project")
         story = self.story()
@@ -2403,7 +2390,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         """判定的依据取 knowledge-use.yaml 的原文，不留 `{{依据}}` 让作者再抄。"""
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertIn("方向性布局参数一律用 start/end", appendix)
+        self.assertIn("方向性布局参数使用 start/end", appendix)
 
     def test_tables_do_not_run_together(self) -> None:
         """每张投影表前面是空行、标题或机器区起始标记——连着写会被 markdown 并成一张错表。"""
@@ -2507,30 +2494,36 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
             "### 5.2 自动充值触发\n\n"
             "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
 
-    def carried_for(self, upstream: str, label: str, story: str):
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const m = await import(process.argv[1]);"
-             "process.stdout.write(JSON.stringify("
-             "m.diagramsNotCarried(process.argv[2], process.argv[3], process.argv[4])"
-             ".map(d => d.id)));",
-             IMAGES.resolve().as_uri(), upstream, label, story],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    UPSTREAM = {"SR": "SR/design.md", "spec": "spec/spec.md"}
+
+    def missing(self, upstream: dict[str, str], story: str) -> list[tuple[str, str, str]]:
+        """经 check 用的 `carriedDiagramProblems` 取「在 story 里没有」的那几张：(来源, 身份, 主题)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, text in upstream.items():
+                f = Path(tmp) / self.UPSTREAM[label]
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(text, encoding="utf-8")
+            proc = subprocess.run(
+                ["node", "--input-type=module", "-e",
+                 "const m = await import(process.argv[1]);"
+                 "const ctx = { featureRoot: process.argv[2], contract: { sources: {"
+                 " SE: { path: 'SR/design.md' }, SPEC: { path: 'spec/spec.md' } } } };"
+                 "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, process.argv[3])));",
+                 IMAGES.resolve().as_uri(), tmp, story],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        return json.loads(proc.stdout)
+        out = []
+        for line in json.loads(proc.stdout):
+            m = re.match(r"^(\S+) (§\S+ #\d+)（(.*?)）在 story 里没有", line)
+            self.assertIsNotNone(m, line)
+            out.append(m.groups())
+        return out
+
+    def carried_for(self, upstream: str, label: str, story: str):
+        return [i for _, i, _ in self.missing({label: upstream}, story)]
 
     def carried(self, story: str):
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const m = await import(process.argv[1]);"
-             "const [spec, story] = [process.argv[2], process.argv[3]];"
-             "process.stdout.write(JSON.stringify("
-             "m.diagramsNotCarried(spec, 'spec', story)"
-             ".map(d => [d.id, m.diagramTopic(d)])));",
-             IMAGES.resolve().as_uri(), self.SPEC, story],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        return json.loads(proc.stdout)
+        return [[i, topic] for _, i, topic in self.missing({"spec": self.SPEC}, story)]
 
     def test_identity_comes_from_the_position(self) -> None:
         """作者不用给图起名：它在哪一节、是那一节的第几张，就是它的身份。"""
@@ -2707,9 +2700,9 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.landed_appendix()
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        cell = "| getAutoTopupPolicy | 新增 |"
+        cell = "| `getAutoTopupPolicy` | 新增 |"
         self.assertIn(cell, text, "夹具变了，用例要跟着改")
-        spec.write_text(text.replace(cell, "| getAutoTopupPolicy | 新增（见 PRD §3） |", 1), encoding="utf-8")
+        spec.write_text(text.replace(cell, "| `getAutoTopupPolicy` | 新增（见 PRD §3） |", 1), encoding="utf-8")
         self.build("project")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
@@ -2769,13 +2762,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertNotIn("代码现状", zone)
 
     def test_one_requirement_one_row(self) -> None:
-        """一条规约两条要求：出两行，编号每行都写，规约域与判定只在首行。"""
-        use = self.use_file()
-        text = use.read_text(encoding="utf-8")
-        old = next(l for l in text.split("\n") if l.strip().startswith("requirement:")
-                   and "start/end" in l)
-        use.write_text(text.replace(old, "    requirement:\n      - 新增界面的方向性布局参数用 start/end\n"
-                                         "      - 文本对齐用 TextAlign.Start/End", 1), encoding="utf-8")
+        """一条规约两条要求（夹具的 UX-01 就是）：出两行，编号每行都写，规约域与判定只在首行。"""
         zone = self.zone(self.landed_appendix(), "规约判定")
         rows = [l for l in zone.split("\n") if "| UX-01 |" in l]
         self.assertEqual(2, len(rows), rows)

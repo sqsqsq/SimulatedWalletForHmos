@@ -9,7 +9,7 @@
 import * as path from 'node:path';
 import { extensionRoot, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
-import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { childHeading, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 
 const NUMBER = /^(\d+(?:\.\d+)*)\.?\s+/;
 
@@ -18,7 +18,7 @@ const NUMBER = /^(\d+(?:\.\d+)*)\.?\s+/;
  * 没配 profile 是合法的「不适用」（`skip`）；配了却读不到清单、键或文件、清单解析失败，是输入坏了（`problem`）。
  * @returns {{text?: string, skip?: string, problem?: string}}
  */
-export function profileAsset(projectRoot, skill, key) {
+function profileAsset(projectRoot, skill, key) {
   // 配置自己读：解析失败作为输入问题报出，与未配置 profile 分开
   const raw = readTextOrNull(path.join(projectRoot, 'framework.config.json'));
   let config = {};
@@ -123,4 +123,57 @@ export function chapterNumberProblems(text, templates) {
     }
   }
   return problems;
+}
+
+/**
+ * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，附录是全文最后一章。
+ * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
+ */
+export function hostAnchorProblems(text, isStory, formDoc) {
+  const doc = parseDocument(text);
+  const problems = [];
+  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展治理项/.test(h.name));
+  const children = [[/规约约束要求/, '规约约束要求'], [/设计模式候选/, '设计模式候选登记'],
+    ...(isStory ? [[/技术契约/, '技术契约']] : [])];
+  if (!anchor) {
+    problems.push('缺「9. 宿主扩展治理项」章——它在「8. 验收标准」之后，'
+      + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`);
+  } else {
+    for (const [re, name] of children) {
+      const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
+      if (h && h !== childHeading(doc, anchor, re)) {
+        problems.push(`「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——现在是「${'#'.repeat(h.level)} ${h.raw}」`);
+      }
+    }
+  }
+  const h2 = doc.headings.filter(h => h.level === 2);
+  const appendix = h2.findIndex(h => /^附录/.test(h.name));
+  if (appendix >= 0 && appendix < h2.length - 1) {
+    problems.push(`附录要是全文最后一章：「${h2.slice(appendix + 1).map(h => h.raw).join('」「')}」排在了附录之后`);
+  }
+  return problems;
+}
+
+/**
+ * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，知识决策是它的 9.1、埋点是 9.2；
+ * 9.1 下三节——设计模式选型、规约义务、项目知识影响——都要在。层级由找到的父标题推出。
+ */
+const DECISION_PARTS = ['设计模式选型', '规约义务', '项目知识影响'];
+
+export function hostExtensionProblems(planText, formDoc) {
+  const doc = parseDocument(planText);
+  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展/.test(h.name));
+  if (!anchor) {
+    return ['plan.md 缺「9. 宿主扩展」章——它在「8. spec 功能映射表」之后，'
+      + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${formDoc}）`];
+  }
+  const decision = childHeading(doc, anchor, /^知识决策/);
+  if (!decision) {
+    const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
+    return [elsewhere
+      ? `「知识决策（设计输入）」要写成「9. 宿主扩展」的下一级小节 9.1——现在是「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」`
+      : '「9. 宿主扩展」下缺「9.1 知识决策（设计输入）」——设计模式选型、规约义务、项目知识影响三节写在它下面'];
+  }
+  return DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
+    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`);
 }

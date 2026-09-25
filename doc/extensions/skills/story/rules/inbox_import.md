@@ -43,7 +43,7 @@
 
 **读 `.docx` 用预览，不要自己写解析**：
 
-```bash
+```
 python doc/extensions/skills/story/scripts/core/import_sources.py --preview <docx 路径>
 ```
 

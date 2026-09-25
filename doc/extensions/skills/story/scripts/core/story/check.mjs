@@ -5,9 +5,6 @@
  * 按职责去各模块要问题、把问题按判据类分组打印。逐域的判据一条也不在这里实现：
  * 附录的归附录、图片的归图片、来源的归来源、章内的归 chapter——同一个错由两处判，
  * 作者会收到两条说法不同的报错。
- *
- * 离线模式（`--offline`，仲裁锚）：没有工程上下文，依赖材料与清单的判项一条不判，
- * 不依赖的照跑。走的是**同一个函数**，不是另写一套——另写一套就会与生产链漂移。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -55,8 +52,6 @@ export function cmdCheck(ctx) {
   const mark = (label) => marks.push({ from: problems.length, label });
   // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
   const notes = [];
-  // 离线模式（仲裁锚）：没有工程上下文，依赖材料与清单的判项一条不判，
-  // 不依赖的照跑——同一个函数，不是另写一套。
   const storyText = readText(ctx.storyPath);
   if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
 
@@ -75,19 +70,18 @@ export function cmdCheck(ctx) {
   const want = ctx.contract.chapters.map(c => c.title);
 
   mark('⓪a 声明的来源都在');
-  if (!ctx.offline) {
+  {
     const out = sourceProblems(ctx);
     problems.push(...out.problems);
     notes.push(...out.notes);
   }
 
   mark('⓪b 台账没在登记之后被换过');
-  if (!ctx.offline) problems.push(...ledgerDigestProblems(ctx));
+  problems.push(...ledgerDigestProblems(ctx));
 
   mark('⓪c 写作设计');
   // 章是照写作设计写的：设计读不了，下面按章核的选定结构也就无从谈起。
-  // 离线仲裁锚只有一份文档，没有需求工作区——不假造设计，也不以它缺席拒绝那份文档。
-  const plan = ctx.offline ? null : readWritingPlan(ctx);
+  const plan = readWritingPlan(ctx);
   if (plan) problems.push(...plan.problems);
 
   mark('① 章标题与顺序');
@@ -106,20 +100,17 @@ export function cmdCheck(ctx) {
 
   mark('①b 大标题带需求编号');
   // ①b 大标题带需求编号：归档件离开这个仓库之后，编号是它与需求系统之间唯一的绳子。
-  //
-  // 在线时比对的是本 feature 的编号；离线只有一份 story、不知道编号，这一类不判。
+
   const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
   const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
   if (!h1Text) {
     problems.push('没有大标题——归档件的第一行是 `# <需求编号> <需求名称>`');
-  } else if (ctx.args.feature) {
-    if (!h1Text.includes(ctx.args.feature)) {
-      problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
-        + '——归档件流转出去之后，读者靠这个编号回到需求系统');
-    } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
-      problems.push(`大标题缺需求名：写成 \`# ${ctx.args.feature} <需求名称>\``
-        + '——名称取自需求详情，本地单写需求方给的名称；只有编号，读者在需求系统外认不出这是哪件事');
-    }
+  } else if (!h1Text.includes(ctx.args.feature)) {
+    problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
+      + '——归档件流转出去之后，读者靠这个编号回到需求系统');
+  } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
+    problems.push(`大标题缺需求名：写成 \`# ${ctx.args.feature} <需求名称>\``
+      + '——名称取自需求详情，本地单写需求方给的名称；只有编号，读者在需求系统外认不出这是哪件事');
   }
 
   mark('③ 验收编号落在验收章');
@@ -142,7 +133,7 @@ export function cmdCheck(ctx) {
   }
 
   mark('⑤ 决策登记字段齐备');
-  if (!ctx.offline) problems.push(...decisionProblems(ctx));
+  problems.push(...decisionProblems(ctx));
 
   mark('④ 图片身份');
   {
@@ -278,14 +269,13 @@ export function cmdCheck(ctx) {
 
   mark('⑫d 上游图承接');
   // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
-  // 离线仲裁锚没有上游文档，整类不判。
-  if (!ctx.offline) problems.push(...carriedDiagramProblems(ctx, storyText), ...sourceMarkProblems(ctx, storyText));
+  problems.push(...carriedDiagramProblems(ctx, storyText), ...sourceMarkProblems(ctx, storyText));
 
   mark('⑬ 评审记录只含渲染语法');
   problems.push(...reviewFormProblems(reviewText, ctx.contract));
 
   mark('⑮ AR 根下只有交付文档');
-  if (!ctx.offline) problems.push(...strayFileProblems(ctx));
+  problems.push(...strayFileProblems(ctx));
 
   mark('⑭ 交付门');
   // ⑭ 交付门：只有 `check --deliver` 判，普通 check 恒不判。

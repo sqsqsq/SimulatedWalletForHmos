@@ -15,8 +15,7 @@ import unittest
 import test_neutral_knowledge as nk
 from test_indicator_reporting import js
 
-SPEC_GATE = nk.EXT / "hooks" / "spec" / "post_check.mjs"
-PLAN_GATE = nk.EXT / "hooks" / "plan" / "post_check.mjs"
+CHAPTERS = nk.EXT / "hooks" / "shared" / "chapters.mjs"
 TEMPLATES = nk.EXT / "skills" / "story" / "templates"
 
 ANCHORED_SPEC = """# 需求 spec
@@ -107,11 +106,11 @@ ANCHORED_PLAN = """# 计划
 
 
 def spec_problems(text: str, is_story: bool = True) -> list[str]:
-    return js(SPEC_GATE, f"m.hostAnchorProblems({json.dumps(text.split(chr(10)))}, {json.dumps(is_story)})")
+    return js(CHAPTERS, f"m.hostAnchorProblems({json.dumps(text)}, {json.dumps(is_story)}, 'spec-sections.md')")
 
 
 def plan_problems(text: str) -> list[str]:
-    return js(PLAN_GATE, f"m.hostExtensionProblems({json.dumps(text)})")
+    return js(CHAPTERS, f"m.hostExtensionProblems({json.dumps(text)}, 'plan-sections.md')")
 
 
 class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):

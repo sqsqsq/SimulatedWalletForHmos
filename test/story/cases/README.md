@@ -50,5 +50,7 @@ prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，
 ## `interaction-script.yaml`
 
 - 写的是**需求方的立场**，不是台词；`text` 按立场写，宿主用自己的话说出来（TEST §3.0）。
-- `planned_phase` 是那句话的阶段前提（`story` / `spec` / `archived`），由宿主判断这话现在说出口通不通。
+- `expected_phase` 是那句话的阶段前提（`story` / `spec` / `archived`，poll 里回显为 `planned_phase`），由宿主判断这话现在说出口通不通；
+  `expected_kind` 是等待类型，与当前这一问对不上时 poll 不展示这一条。
+- 一条只答一个关卡的一个问题；立场不替模型说出本该观测的识别，不提前泄露定源或处置。
 - `expected_turn` / `expected_phase` 与实跑对不上时，先按本该说的话回，跑完再按实跑顺序校准（TEST §3.3）；不为对上脚本改话术。

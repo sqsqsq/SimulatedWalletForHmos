@@ -168,6 +168,11 @@ def write_json(path: Path, value: Any) -> None:
     os.replace(temp, path)
 
 
+#: 按**路径**排除的文件：工作区不是 git 仓，根忽略文件在那里唯一的作用是让内置检索
+#: 跳过 `doc/features/`——被测模型的全部产物都在那里，检索会对已知内容返回零命中。
+WORKSPACE_EXCLUDED_FILES = {".gitignore"}
+
+
 def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
     """把仓库树复制进 Case 工作区，按黑名单排除。"""
     copied: list[str] = []
@@ -193,6 +198,8 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
                 continue
             if child.is_dir():
                 visit(child, target / child.name)
+            elif relative in WORKSPACE_EXCLUDED_FILES:
+                continue
             else:
                 destination = target / child.name
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1748,6 +1755,21 @@ def is_new_gate(record: dict[str, Any]) -> bool:
     return turn != record.get("last_replied_turn")
 
 
+def plan_matches(step: dict[str, Any] | None, awaiting: dict[str, Any],
+                 record: dict[str, Any]) -> bool:
+    """规划条目是不是这一问的：等待类型一致；条目写了框架阶段时，与当前阶段一致。"""
+    if not step:
+        return False
+    kind = step.get("expected_kind")
+    if kind and kind != awaiting.get("kind"):
+        return False
+    phase = step.get("expected_phase")
+    current = record.get("current_phase")
+    if phase in PHASE_ORDER and current in PHASE_ORDER and phase != current:
+        return False
+    return True
+
+
 def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
     """每一关都交给宿主回答，并把「这一关按规划本该表达什么」一并交出去。
 
@@ -1776,7 +1798,9 @@ def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
     index = int(record.get("interaction_index") or 0)
     awaiting = record.get("last_awaiting") or {}
     prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
-    planned = script[index] if index < len(script) else None
+    next_step = script[index] if index < len(script) else None
+    # 只在规划条目与当前这一问相符时给出它：展示一条对不上的立场，宿主会把它当成这一关的答案。
+    planned = next_step if plan_matches(next_step, awaiting, record) else None
     request = {
         "case": record["case"],
         "turn": awaiting.get("turn"),
@@ -1794,9 +1818,12 @@ def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
         "planned_phase": (planned or {}).get("expected_phase"),
         "planned_turn": (planned or {}).get("expected_turn"),
         "script_cursor": f"{index}/{len(script)}",
+        "plan_note": (None if planned or not next_step
+                      else "规划里没有对应这一问：按 answered 只答所问"),
         "reply": None,
         # 「规划走完了」和「这个 Case 本来就没写规划」是两回事，分开报。
         "reason": ("host_reply_required" if planned
+                   else "host_answer_required" if next_step
                    else "plan_exhausted" if script else "no_plan_for_this_case"),
         "detected_at": now(),
         "reply_status": "adaptive_reply_required",
@@ -2603,6 +2630,62 @@ def command_poll(suite_id: str, wait_sec: int, max_chars: int) -> int:
     return 0
 
 
+#: watch 连续失败几次就退出：装置自己坏了，不能一直空转。
+WATCH_MAX_FAILURES = 3
+
+
+def watch_exit_reason(payload: dict[str, Any]) -> str | None:
+    """这一次 poll 之后该不该把控制权交回宿主：要回话、要评测收尾、suite 结束。"""
+    if payload.get("suite_terminal"):
+        return "suite 已结束：finalize"
+    if payload.get("adaptive_reply_requests"):
+        cases = "、".join(str(r.get("case")) for r in payload["adaptive_reply_requests"])
+        return f"要回话：{cases}"
+    for case in payload.get("cases") or []:
+        if case.get("status") == WAITING_STATUS:
+            return f"要宿主处置：{case.get('case')} 在等"
+    return None
+
+
+def command_watch(suite_id: str, interval: int, max_chars: int) -> int:
+    """按间隔零等待 poll，直到需要宿主：要回话、要评测收尾、suite 结束，或 poll 连续失败。
+
+    只 poll，不回话：回话仍由宿主按每关一句作答。每次的完整 poll 结果存到
+    `output/story/<suite>/host/last-poll.json`，退出时打印退出原因。
+    """
+    if interval < 1:
+        raise SystemExit("[multi] --interval 必须 >= 1")
+    path, _ = load_suite(suite_id)
+    host_dir = path / "host"
+    host_dir.mkdir(parents=True, exist_ok=True)
+    failures = 0
+    while True:
+        try:
+            _, suite = load_suite(suite_id)
+            if suite.get("status") not in {"finished", "failed", "stopped"}:
+                poll_suite(suite, 0, max_chars)
+                settle_scripted_interactions(suite, max_chars)
+                suite["status"] = finalize_suite_status(suite)
+                save_suite(path / "suite.json", suite)
+            payload = control_payload(suite)
+            write_json(host_dir / "last-poll.json", payload)
+            failures = 0
+        except Exception as exc:  # noqa: BLE001 —— 失败计数，连续失败才退出
+            failures += 1
+            reason = None if failures < WATCH_MAX_FAILURES else f"poll 连续失败 {failures} 次：{exc}"
+            if reason:
+                print(json.dumps({"exit": reason}, ensure_ascii=False), flush=True)
+                return 2
+            time.sleep(interval)
+            continue
+        reason = watch_exit_reason(payload)
+        if reason:
+            print(json.dumps({"exit": reason, "last_poll": str(host_dir / "last-poll.json")},
+                             ensure_ascii=False), flush=True)
+            return 0
+        time.sleep(interval)
+
+
 def command_status(suite_id: str) -> int:
     path, suite = load_suite(suite_id)
     del path
@@ -2683,23 +2766,10 @@ def command_reply(suite_id: str, case_id: str, text: str,
         # 规划指针由宿主**显式声明**推进（`--step <id>`），不再靠拿回复文本去和
         # 脚本逐字比对。宿主是按情境把那个意思说出来的，不会逐字重合——
         # 上一版因此几乎从不推进指针，规划条目一条条烂在后面没人知道。
-        script = list(record.get("interaction_script") or [])
-        if step_id:
-            hit = next((i for i, s in enumerate(script)
-                        if str(s.get("id") or "") == step_id), None)
-            if hit is None:
-                record["last_error"] = {
-                    "step": step_id,
-                    "error": "规划里没有这个条目",
-                    "known": [str(s.get("id") or "") for s in script],
-                }
-            else:
-                record["interaction_index"] = max(
-                    int(record.get("interaction_index") or 0), hit + 1)
-                record["interaction_state"] = (
-                    "complete" if hit + 1 >= len(script) else "waiting")
-                append_event(suite, "planned_step_covered", case=case_id,
-                             step=step_id, interaction_index=record["interaction_index"])
+        advance_plan(record, step_id)
+        if step_id and "interaction_index" in record:
+            append_event(suite, "planned_step_covered", case=case_id,
+                         step=step_id, interaction_index=record["interaction_index"])
         record.setdefault("host_reply_kinds", []).append(reply_kind)
     save_suite(path / "suite.json", suite)
     print(json.dumps(payload or {"ok": False, "returncode": returncode,
@@ -2814,9 +2884,28 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     return 0 if result["status"] in ("promoted", "already_promoted") else 1
 
 
+def advance_plan(record: dict[str, Any], step_id: str) -> None:
+    """规划指针由宿主**显式声明**推进（`--step <id>`），不拿回复文本去和脚本逐字比对。"""
+    if not step_id:
+        return
+    script = list(record.get("interaction_script") or [])
+    hit = next((i for i, s in enumerate(script) if str(s.get("id") or "") == step_id), None)
+    if hit is None:
+        record["last_error"] = {"step": step_id, "error": "规划里没有这个条目",
+                                "known": [str(s.get("id") or "") for s in script]}
+        return
+    record["interaction_index"] = max(int(record.get("interaction_index") or 0), hit + 1)
+    record["interaction_state"] = "complete" if hit + 1 >= len(script) else "waiting"
+
+
 def command_resume_update(suite_id: str, case_id: str, text: str,
-                          deliver: list[str] | None = None) -> int:
-    """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。"""
+                          deliver: list[str] | None = None,
+                          answer: str = "", step_id: str = "") -> int:
+    """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。
+
+    模型停在检查点时常留着一问（交付门问归档送审还是进入 plan）：`answer` 先答它，
+    按规划立场记为 planned（`step_id` 指名条目），答完那一轮再投 `text`。
+    """
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
         raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
@@ -2826,12 +2915,22 @@ def command_resume_update(suite_id: str, case_id: str, text: str,
         raise SystemExit(f"[multi] {case_id} 的第一段还没回流，先 promote-checkpoint —— "
                          "回流之前续跑的话，第一段的产物就只剩快照里那一份了")
     args = ["--text", text]
+    if answer.strip():
+        args += ["--answer", answer.strip()]
     for name in deliver or []:
         args += ["--deliver", name]
     returncode, payload, stdout, stderr = invoke_case(case_id, "resume-update", *args, suite=suite)
     if returncode == 0:
-        record["resumed_update"] = {"text": text[:400], "delivered": list(deliver or []),
-                                    "at": now()}
+        record["resumed_update"] = {"text": text[:400], "answer": answer.strip() or None,
+                                    "delivered": list(deliver or []), "at": now()}
+        if answer.strip():
+            append_case_observation(suite, case_id, {
+                "kind": "interaction_reply", "mode": "manual",
+                "reply_kind": "planned" if step_id else "answered",
+                "planned_step": step_id or None,
+                "prompt": (record.get("last_awaiting") or {}).get("prompt"),
+                "reply": answer.strip(), "returncode": returncode})
+            advance_plan(record, step_id)
     else:
         record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
     append_event(suite, "case_resumed_update", case=case_id, returncode=returncode)
@@ -3170,7 +3269,7 @@ def command_finalize(suite_id: str, promote: bool, cleanup: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("plan", "start", "poll", "status",
+    parser.add_argument("command", choices=("plan", "start", "poll", "status", "watch",
                                             "reply", "conclude", "retry", "stop",
                                             "checkpoint", "promote-checkpoint",
                                             "resume-update", "finalize"))
@@ -3199,7 +3298,11 @@ def main() -> int:
                              "neutral=中性推进 / improvised=宿主自己的话（会污染观测）")
     parser.add_argument("--deliver", action="append", default=[],
                         help="reply：随这句话把该 Case supplements/ 下的材料放进收件箱，可多次")
+    parser.add_argument("--answer", default="",
+                        help="resume-update：先答检查点上模型那一问的一句话（配 --step 记为 planned），答完再投 --text")
     parser.add_argument("--wait-sec", type=int, default=15)
+    parser.add_argument("--interval", type=int, default=60,
+                        help="watch：两次零等待 poll 之间隔几秒")
     parser.add_argument("--max-chars", type=int, default=200000)
     parser.add_argument("--authorize-non-sandbox", action="store_true",
                         help="记录宿主模型已获授权在非沙箱环境启动本轮外层协调器")
@@ -3236,6 +3339,8 @@ def main() -> int:
         return command_poll(args.suite_id, args.wait_sec, args.max_chars)
     if args.command == "status":
         return command_status(args.suite_id)
+    if args.command == "watch":
+        return command_watch(args.suite_id, args.interval, args.max_chars)
     if args.command == "conclude":
         if not args.reply_case:
             raise SystemExit("[multi] conclude 必须提供 --case（逐 Case 收工，不是整 suite）")
@@ -3252,7 +3357,8 @@ def main() -> int:
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] resume-update 必须提供 --case 与 --text"
                              "（投的是一句正常的业务请求，不是测试控制语句）")
-        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver)
+        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver,
+                                     args.answer, args.step_id)
     if args.command == "retry":
         if not args.reply_case:
             raise SystemExit("[multi] retry 必须提供 --case（逐 Case 重启，不动其它 Case）")

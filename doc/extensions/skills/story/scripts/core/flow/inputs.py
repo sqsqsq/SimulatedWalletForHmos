@@ -294,11 +294,14 @@ def read_ids(feature_root: Path, feature: str) -> dict[str, str | None]:
     只读不造：伪造单号等于谎称本地单有系统单据。
     """
     def field(rel: str, key: str) -> str | None:
-        try:
-            data = json.loads((feature_root / rel).read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
+        path = feature_root / rel
+        if not path.is_file():
             return None
-        value = data.get(key)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except ValueError as exc:
+            raise FlowError(f"{rel} 不是合法 JSON：{exc}——它是需求系统的拉取产物，重新取材覆盖它") from exc
+        value = data.get(key) if isinstance(data, dict) else None
         return value.strip() if isinstance(value, str) and value.strip() else None
 
     return {

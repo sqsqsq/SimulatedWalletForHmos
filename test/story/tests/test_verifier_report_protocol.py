@@ -565,15 +565,6 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertNotIn("未经读者语义审查", both, "有报告却说没审过")
         self.assertNotIn("[⑭ 交付门]", both, f"交付门报了问题：{both[-600:]}")
 
-    def test_deliver_is_refused_offline(self) -> None:
-        out = subprocess.run(
-            ["node", str(STORY_BUILD), "check", "--deliver", "--offline",
-             "--story", str(REPO / "test/story/golden/story-金样-AR90004.md")],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertNotEqual(0, out.returncode)
-        self.assertIn("互斥", out.stderr)
-
-
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。
 

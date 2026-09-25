@@ -24,39 +24,15 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, ver
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
-import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
+import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
-import { cellByHeader, childHeading, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+import { cellByHeader, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
-
-/**
- * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，知识决策是它的 9.1、埋点是 9.2；
- * 9.1 下三节——设计模式选型、规约义务、项目知识影响——都要在。层级由找到的父标题推出。
- */
-const DECISION_PARTS = ['设计模式选型', '规约义务', '项目知识影响'];
-
-export function hostExtensionProblems(planText) {
-  const doc = parseDocument(planText);
-  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展/.test(h.name));
-  if (!anchor) {
-    return ['plan.md 缺「9. 宿主扩展」章——它在「8. spec 功能映射表」之后，'
-      + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${SECTIONS_DOC}）`];
-  }
-  const decision = childHeading(doc, anchor, /^知识决策/);
-  if (!decision) {
-    const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
-    return [elsewhere
-      ? `「知识决策（设计输入）」要写成「9. 宿主扩展」的下一级小节 9.1——现在是「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」`
-      : '「9. 宿主扩展」下缺「9.1 知识决策（设计输入）」——设计模式选型、规约义务、项目知识影响三节写在它下面'];
-  }
-  return DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
-    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`);
-}
 
 /**
  * spec 判命中、且产生代码要求的条目编号集 —— 本阶段义务集的比对基准。
@@ -261,7 +237,7 @@ export default guard('plan', async (ctx) => {
   reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
 
   // ---- 1. 宿主扩展与知识决策的结构（只依赖 plan 可读）----
-  chapter.problems.push(...hostExtensionProblems(planText));
+  chapter.problems.push(...hostExtensionProblems(planText, SECTIONS_DOC));
 
   // ---- 2. 契约可读、must 挂位、resource_keys 形状 ----
   const read = readContracts(ctx.projectRoot, ctx.feature);

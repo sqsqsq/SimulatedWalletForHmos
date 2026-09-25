@@ -1,96 +1,146 @@
-# 本阶段知识判断的唯一真源。spec 的 §10/§11 由它生成，那两章不手写。
-#
-# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（本需求要做什么，
-# 写得下一个人照着能编码），不命中写 reason（可回查的依据；「不涉及」三个字不算依据）。
-# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。
+# 本阶段知识判断的唯一真源。spec 的 §9.2/§9.3 由它生成，那两章不手写。
 schema: 1
-manifest_digest: sha256:2affcff6a4794edc
+manifest_digest: sha256:21254f7234570cad
 
-# 用到了哪几份项目知识，各自用来做了什么。没用到的不必登记。
 facts:
   - id: component-profile
-    used_for: 确认本 AR 落位——钱包端承担交通卡自动充值的签约入口、签约交互与状态展示，属本部件「卡证票券的使用与生命周期管理」职责；交互方命中服务器接口与其他手机应用（支付部件）。
-  - id: codebase-facts
-    used_for: §9 取证——端云接口现状（无端云封装检索零命中）、持久化现状（relationalStore/AppStorage）、本地日志封装（Logger）、敏感数据处理（CardNumberMaskUtil）、资源惯例（$r）。
-  - id: reporting
-    used_for: 过程关键点的 VOC 门面，三个统计节点的 Chart 入口、结果分类与内码设置方法；仓内尚无内码登记，方案里定登记位置。
+    used:
+      - facet: "部件申明"
+        used_for: "确认本部件为钱包客户端（单框架钱包/纯鸿蒙钱包/钱包客户端/WalletForHMOS），职责范围含交通卡在手机上的添加、展示、使用与生命周期管理，故自动充值页归属本部件"
+      - facet: "交互方清单"
+        used_for: "LL 功能点逐条标注交互方类别：服务器接口（getPolicy/create/update/status/cancel）、其他手机应用（支付拉起免密验证）、手机系统接口（本地缓存 localStorage/preferences）"
+  - id: engineering-capabilities
+    used:
+      - facet: "对外入口与页面导航"
+        used_for: "定新页面（签约页、管理页、详情页入口）按 NavDestination + navDestinationMap + 模块 index.ets + 宿主映射注册；NavPathContext 取栈 & 命名为设计"
+      - facet: "数据存储"
+        used_for: "§9.1.2 定 wallet_auto_topup_contract 缓存：按账号隔离、退出登录清除、不参与备份恢复，使用 localStorage/preferences 并存于 WalletMain data 层"
+      - facet: "配置项"
+        used_for: "§9.1.3 定功能开关、门限/面额/单日上限/连续失败等配置：写 WalletMain shared/constant 常量或远端策略返回值"
+      - facet: "本地日志"
+        used_for: "§7 与异常处理设计：用 CommFunc Logger 记录签约查询失败与状态变化，禁止自造日志体系"
+      - facet: "敏感数据处理"
+        used_for: "§7.3 与 AC-R5：卡号脱敏用 MaskUtil（按数据类型选封装），agreementNo 只透传不持久化；记录事件只带去标识账号"
+      - facet: "资源"
+        used_for: "§7 与 9.1.3：页面文案与颜色优先复用 Phone/WalletMain 已有 resources 键"
+      - facet: "依赖变更（SDK / 组件 / TA）"
+        used_for: "§9.1.5：确认无新增 SDK（编排 SDK framework 若有需要才声明，支付签约为外部能力）"
+  - id: event-tracking
+    used:
+      - facet: "应用步骤"
+        used_for: "§9.1.4 统计设计：定签约成功率指标（分子分母、每次上报字段、统计点、获知时机）"
+      - facet: "什么时候不该用"
+        used_for: "判别：纯 UI 展示不建点位；仅签约/创建这几步业务结果纳入统计设计"
+      - facet: "使用约定"
+        used_for: "§9.1.4 边界与探头：一次尝试结算一次、重试为新尝试、卡片交易远端产生超时本端不可观察的写明由云侧统计"
 
-# 整域都不适用时登记在这里（prefix / applicable: false / reason）。
-# 域里只要有一条命中，就不判整域、改为逐条登记到 constraints。
 constraint_domains: []
 
 constraints:
   - id: UX-01
     applicable: true
-    requirement: 签约页与管理页（均为新增界面）中方向性布局参数一律用 start/end，文本对齐用 TextAlign.Start/End，禁止 left/right 硬编码；界面沿用交通卡详情页既有样式。
-    contract: ""
+    requirement:
+      - "签约页、管理页与详情页入口的方向性布局参数使用 start/end，禁止 left/right；文本对齐用 TextAlign.Start/End"
+      - "页面新增组件在 RTL 语言下镜像正确，实机以 ar 语言验证"
+    impact: "签约页、管理页、详情页自动充值入口"
   - id: SEC-01
     applicable: true
-    requirement: 充值记录展示中的卡号按既有 MaskUtil.maskAccount 类规则脱敏；端侧事件与日志只记录去标识账号、卡片类型、阶段、结果分类，不记录卡号、金额明细与支付参数；agreementNo 只透传、不在钱包持久化。
-    contract: ""
+    requirement:
+      - "卡号在记录展示处脱敏（复用 CommFunc MaskUtil，按数据类型选封装）；脱敏在采集/模型出口做，不在视图层过滤"
+      - "agreementNo 只透传不持久化；端侧事件只记录去标识账号、卡片类型、阶段与结果分类，不记录卡号、金额明细、支付参数"
+      - "wallet_auto_topup_contract 缓存不落卡号明文，只存 contractNo、门限、面额与状态"
+    impact: "自动充值记录列表、端侧事件、wallet_auto_topup_contract 缓存"
   - id: DFX-01
     applicable: true
-    requirement: 端云接口调用仅在用户主动进入页面或操作时触发一次（getAutoTopupPolicy / createAutoTopupContract / getAutoTopupStatus / cancelAutoTopupContract），无定时或后台轮询；状态展示优先读 wallet_auto_topup_contract 缓存避免重复查询，缓存缺失才走云侧。
-    contract: wallet_auto_topup_contract
+    requirement:
+      - "签约/查询/修改/关闭接口均由用户动作触发，频次评估为低频用户驱动（无定时任务、无开机启动、无后台轮询）"
+      - "免网展示依赖 wallet_auto_topup_contract 缓存，避免重复拉取；进入签约页/管理页仅一次策略/状态查询"
+      - "同一次页面会话内不重复并发调用同一接口；创建签约按钮防抖防重入"
+    contract: "createAutoTopupContract"
   - id: DFX-02
-    applicable: false
-    reason: 界面沿用交通卡详情页现有样式、不新增控件类型；导入的界面示意图与流程图仅作参考资料进 ux-reference/assets，不引入工程资源；无新增 SDK 依赖与 hap 包，无体积增量可量化对象。
+    applicable: true
+    requirement:
+      - "新增页面不引入预置图片资源（界面示意图仅 ux-reference 参考，不打包）；图标复用 sys.symbol 系统图标"
+      - "新增用户可见字符串为文本资源，体积增量极小（预计 <1KB），无 SDK 依赖与 hap 包新增时按现状基线评估"
+    impact: "签约页、管理页、详情页入口"
   - id: OBS-02
     applicable: true
-    requirement: 签约、状态查询与解约的关键过程经项目统一入口记录：VOC 记拉起免密验证、发出创建签约请求、签约停用、功能开关关闭时入口不可达；新增本地日志经 Logger 带签约阶段与去标识账号；签约页、管理页的进入与点击由自动运维上报覆盖，不另记；三个节点的终态只发 Chart，不同时发 VOC。
-    contract: auto_topup_signup
+    requirement:
+      - "签约、策略查询、状态查询、修改、关闭的关键结果用 CommFunc Logger 记录（阶段、结果分类），复用统一入口"
+      - "定位点设在业务决定结果处：策略查询返回不可签约、创建返回 contractNo、状态查询变更、修改/关闭结果"
+    contract: "createAutoTopupContract"
   - id: OBS-03
     applicable: true
-    requirement: 统计签约、状态查询、解约三个节点：签约覆盖全程成功、普通失败、主动取消，状态查询与解约覆盖成功与普通失败；同一节点同一次执行只发一条终态。
-    contract: auto_topup_status
+    requirement:
+      - "签约成功率指标落实到创建签约流程：策略查询、免密验证返回、创建签约三个统计点，实际适用结果各记录一次"
+      - "同点位同次尝试不重复：一次签约尝试只结算一次，重试为新尝试"
+    impact: "签约流程策略查询、免密验证返回、创建签约三个统计点"
   - id: OBS-05
     applicable: true
-    requirement: 三个节点的 Chart 内码按十位五段、结果分类与内码末段分开表达；用户明确放弃这次签约记主动取消，支付侧拒绝授权记普通失败；建约失败的外码取卡云实际返回的错误码，没有就不带；签约耗时以毫秒计，从拉起验证到收到建约结果。
-    contract: auto_topup_signup
+    requirement:
+      - "上报字段映射：去标识账号（账号域脱敏串）、卡片类型、业务阶段、结果分类（成功/失败/用户取消/请求失败），缺席条件为字段不可得时不填或按协议默认"
+      - "字段取值来源真实：结果取自对应业务方法返回值或通信失败标记，不虚构"
+    impact: "签约流程策略查询、免密验证返回、创建签约三个统计点"
   - id: OBS-06
     applicable: true
-    requirement: 本单新增签约、状态查询、解约三组内码，先核仓内无既有登记，再在方案定的唯一登记位置登记。
-    contract: auto_topup_status
+    requirement:
+      - "新增统计点复用已有模板枚举 Wallet_COMMON；新流程/步骤/内码登记到特性 shared 层编码常量文件，编号不冲突、含义明确"
+      - "变更保持既有事件含义与消费方兼容；同语义事件不重复新建"
+    impact: "签约流程策略查询、免密验证返回、创建签约三个统计点"
   - id: OBS-07
-    applicable: false
-    reason: RR 明确签约转化率目标，SR 要求端侧记录阶段与结果；当前材料未明确新增独立 BI 事件，本夹具不新增 BI，转化目标不等于独立运营采集要求，必要维度不足时另行澄清。
+    applicable: true
+    requirement:
+      - "签约为独立运营采集的只有系统设计声明的端侧事件（去标识账号/卡片类型/阶段/结果分类），不超出该声明自行补造 BI 点位"
+      - "事件时机与维度按系统设计的端侧事件口径，未定的（如上报渠道选 Chart 或 VOC）在 spec 记为待定并交由 plan 落实"
+    impact: "签约流程策略查询、免密验证返回、创建签约三个统计点"
   - id: RES-01
-    applicable: false
-    reason: 本项目界面不新增图片或图标——沿用交通卡详情页现有样式与控件类型；产品原稿图仅作界面参考（ux-reference/）与流程说明（assets/），不进入工程资源目录。
+    applicable: true
+    requirement:
+      - "平台图标优先引用 sys.symbol；页面示意图为 ux-reference 参考不打包进应用资源；无新引入位图资源"
+    impact: "签约页、管理页、详情页入口"
   - id: RES-02
     applicable: true
-    requirement: 签约页与管理页新增用户可见文案（门限/面额档位、协议勾选、开启按钮、停用状态、失败原因等）优先复用项目已有中文完全一致的 string 资源；确需新增按 string.json 惯例定义并中英文齐备，代码不硬编码中文字面量。
-    contract: ""
+    requirement:
+      - "用户可见文案优先复用 Phone/WalletMain 已有 resources 键；确有新增的定义到所属模块 resources/base/element string，中英文齐备"
+      - "新增文案（如签约页标题、停用横幅文案、协议指引）逐条登记来源与复用/新增判定"
+    impact: "签约页、管理页、详情页入口"
   - id: COMPAT-01
     applicable: true
-    requirement: 四个端云接口与 wallet_auto_topup_contract 缓存键均为新增：不删除任何既有字段、不改既有字段类型与含义；新增接口字段均可空或有默认值（可签约性；档位列表）、不触发既有服务端校验；缓存缺失时以云侧 getAutoTopupStatus 查询为准，兼容无缓存的旧版本。
-    contract: wallet_auto_topup_contract
+    requirement:
+      - "新增 5 个端云接口（getAutoTopupPolicy/createAutoTopupContract/updateAutoTopupContract/getAutoTopupStatus/cancelAutoTopupContract）全部为新增，无删除既有字段"
+      - "逐问：不删除旧版依赖字段（ADD-only）；新增字段由服务端定义可空或默认值；不改变既有字段含义；create 遇已有签约返回既有 contractNo 为兼容行为"
+    contract: "createAutoTopupContract"
   - id: COMPAT-02
-    applicable: false
-    reason: AR90006 全程未声明对既有错误码的修改或删除；四个端云接口全部为新增，不涉及复用或变更既有错误码定义，无错误码 diff 对象。
+    applicable: true
+    requirement:
+      - "新增签约相关错误码（如不可签约、单日上限、连续失败停用等）为新增，既有错误码编号与含义保持不变"
+      - "旧版本客户端收到新错误码时的兜底：按通用失败处理提示用户，不崩溃"
+    contract: "createAutoTopupContract"
   - id: ENV-01
     applicable: true
-    requirement: 清除数据或清除缓存后，wallet_auto_topup_contract 与签约页暂存的门限面额均缺失：页面以云侧 getAutoTopupStatus/策略查询为准自恢复或回填默认，不崩溃、不死循环；退出登录即清除缓存与暂存。
-    contract: wallet_auto_topup_contract
+    requirement:
+      - "wallet_auto_topup_contract 缓存为可重建数据：清除缓存/清除数据后进入管理页重查云侧，页面自恢复展示，不崩溃不死循环"
+      - "退出登录同步清除缓存"
+    impact: "wallet_auto_topup_contract 缓存、管理页"
   - id: ENV-02
     applicable: true
-    requirement: 同一张卡已有生效签约时入口直达管理页、不重复建立签约；签约提交对重复触发有幂等保护（createAutoTopupContract 对同卡已生效签约返回既有 contractNo），支付验证拉起不重复弹窗。
-    contract: createAutoTopupContract
+    requirement:
+      - "创建签约按钮防抖防重入：同一次点击只发起一次 createAutoTopupContract；接口幂等由服务端保证（已有签约返回既有 contractNo）"
+      - "多入口重复进入签约页不产生重复弹窗或重复请求"
+    contract: "createAutoTopupContract"
   - id: DLV-01
     applicable: true
-    requirement: 签约页与管理页新增的中英文文案梳理成待翻译字符串清单，跟踪翻译回稿后合入对应 string 资源（zh_CN 与基础语言同步）。
-    contract: ""
+    requirement:
+      - "新增用户可见字符串（签约页、管理页、停用横幅、协议指引）梳理成待翻译清单，登记翻译跟踪状态，回稿后合入资源"
+    impact: "签约页、管理页、详情页入口"
   - id: DLV-02
     applicable: false
-    reason: 签约页与管理页均为应用内 NavDestination 导航页面，无新增对外深链/对外接口；支付验证由既有支付部件能力拉起，不属于本部件对外开放面，无文档归档对象。
+    reason: "本需求新增页面为本部件 App 内部页面、调云端接口不构成对外开放；未新增交付给其他部件/应用/第三方使用的页面入口或 API，故不触发文档归档评审动作"
 
-# 设计模式候选：**只登记不选型**（选型是 plan 的事）。
-# 在册候选：decision-tree / page-interaction
-# 这个单元没有合适的候选时，candidate 写「无候选」，signal 里说明为什么没有。
 patterns:
-  - unit: 自动充值签约流程
+  - unit: "签约流程（入口 → 策略查询 → 免密验证 → 创建签约 → 结果展示）"
     candidate: "decision-tree"
-    signal: 签约前有策略查询分出的多条前置分支（未实名→引导实名后回签、已生效签约→直达管理页、可签约→签约页），签约中又有免密验证的结果分支（成功/取消/失败留页），每个分支各自多步、各有失败处理，串成 if/else 会难维护。
-  - unit: 自动充值签约页与管理页交互
+    signal: "签约流程含多分支（未实名引导/已签约转管理/验证失败/创建失败），每分支多步且各有失败处理，适合节点表编排"
+  - unit: "签约页与管理页页面内交互"
     candidate: "page-interaction"
-    signal: 签约页门限与面额选择、协议勾选后「开启」才可点击、点开后才拉起支付验证、验证结果决定下一步，交互先后由业务结果驱动；管理页状态展示、修改、关闭同样由状态决定可用动作。
+    signal: "签约页交互序列由业务结果驱动（选中门限面额→勾协议→开启→拉起验证→回调回来续跑/停留），等待用户时需停机，适合动作表编排"

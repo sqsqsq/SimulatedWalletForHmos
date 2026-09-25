@@ -44,7 +44,7 @@ spec 阶段是**一次 pass 产出三份**，事实同源，不得只交 `spec.m
 `spec.md` 与 `decisions.json` **定稿之后**、跑 harness **之前**，按下面走完。成文方法见
 [`phases/story-write.md`](story-write.md)。
 
-```bash
+```
 node .../story-build.mjs skeleton --feature <feature>  # ① 当前输入 + 写作设计空壳 + 十章骨架 + 十份章草稿
 #                                 （流程、材料、来源、Spec 与决策登记一次预检完，全过才写盘）
 #                              ①b 写整篇写作设计：AR/story-src/story-template.md 的阅读主线与每章骨架，

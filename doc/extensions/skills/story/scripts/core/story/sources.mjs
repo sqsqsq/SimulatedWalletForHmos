@@ -99,10 +99,10 @@ function basename(rel) {
  * 落点时它按内容合并成一条，`paths` 列出全部落点——**图片的身份是它的内容，不是路径**。
  *
  * @returns {{kind:string,sha256:string,paths:string[]}[] | null | 'broken'}
- *   null = 没有清单（offline 或还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
+ *   null = 没有清单（还没跑过 round）；'broken' = 清单坏了，两者不能混为一谈
  */
 export function readManifest(ctx) {
-  if (ctx.offline || !ctx.srcDir) return null;
+  if (!ctx.srcDir) return null;
   const text = readText(path.join(ctx.srcDir, 'materials.json'));
   if (text === null) return null;
   try { return JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
@@ -272,14 +272,12 @@ export function sourceProblems(ctx) {
   // 都按那里分）——两处各判一次的话，同一份缺件在起手说「本地单缺它正常」、
   // 在这里说「它是必备来源」，作者只能挑一句信。
   // **必备缺了拦**：归档件的依据缺了一块，评审者无从复核；可选缺了记一笔。
-  if (!ctx.offline) {
-    const { missing, blocking } = sourceStatus(ctx);
-    for (const m of blocking) {
-      problems.push(`${missingSourceLine(m)}——补回它再交；`
-        + '这一轮确实不该有它，就改合同把它登记成可选来源');
-    }
-    for (const m of missing.filter(x => !x.required)) notes.push(missingSourceLine(m));
+  const { missing, blocking } = sourceStatus(ctx);
+  for (const m of blocking) {
+    problems.push(`${missingSourceLine(m)}——补回它再交；`
+      + '这一轮确实不该有它，就改合同把它登记成可选来源');
   }
+  for (const m of missing.filter(x => !x.required)) notes.push(missingSourceLine(m));
   return { problems, notes };
 }
 
@@ -304,24 +302,16 @@ export function materialListProblems(ctx, storyText) {
       for (const h of scanMaterialList(body, span.start + 1)) {
         problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
       }
-      // 链接得能点开 —— 只在线上判，因为只有线上才知道那份文件在不在。
-      //
-      // 典型写法 `[RR/prd.md](RR/prd.md)` 解析不到：story.md 在 AR/ 下，
-      // 这个裸相对路径解析出来是 `AR/RR/prd.md`——**不存在**。
-      //
-      // 离线不判存在性：那时没有 feature 上下文，基准目录只能靠猜，而判据一旦
-      // 开始猜就没法解释也没法回归。离线拿到的往往是一份脱离需求目录的独立文件，
-      // 它身边本就没有 RR/ 与 AR/——形态判照跑，存在性留给线上。
-      if (!ctx.offline) {
-        const fromDir = path.dirname(ctx.storyPath);
-        for (const [line, target] of materialLinkTargets(body, span.start + 1)) {
-          if (/^(https?:|mailto:)/i.test(target)) continue;
-          if (!fs.existsSync(path.resolve(fromDir, target))) {
-            problems.push(`「${appendix.title}·${name}」第 ${line} 行的链接点不开：`
-              + `${target} —— 从归档件所在的位置解析不到这份文件。`
-              + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态，'
-              + '指错了等于没指');
-          }
+      // 链接得能点开：典型写法 `[RR/prd.md](RR/prd.md)` 解析不到——story.md 在 AR/ 下，
+      // 这个裸相对路径解析出来是 `AR/RR/prd.md`，不存在。
+      const fromDir = path.dirname(ctx.storyPath);
+      for (const [line, target] of materialLinkTargets(body, span.start + 1)) {
+        if (/^(https?:|mailto:)/i.test(target)) continue;
+        if (!fs.existsSync(path.resolve(fromDir, target))) {
+          problems.push(`「${appendix.title}·${name}」第 ${line} 行的链接点不开：`
+            + `${target} —— 从归档件所在的位置解析不到这份文件。`
+            + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态，'
+            + '指错了等于没指');
         }
       }
       // 集合面：列到的与真正在手里的那几份材料对得上

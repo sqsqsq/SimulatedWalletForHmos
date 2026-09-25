@@ -161,11 +161,8 @@ def _write_diffs(feature_root: Path, base_dir: Path | None, changed: list[str], 
         new = feature_root / rel
         if not old.is_file() or not new.is_file():
             continue
-        try:
-            a = old.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-            b = new.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-        except OSError:
-            continue
+        a = old.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        b = new.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
         text = "".join(difflib.unified_diff(a, b, fromfile=f"上次/{rel}", tofile=f"现在/{rel}"))
         if not text.strip():
             continue

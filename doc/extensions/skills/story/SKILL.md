@@ -115,7 +115,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 - **输入**：AR 单号 + `<mcp-token>`（取法见「需求系统 Token」）
 - **输出**：`doc/features/<AR>/` 下的 `RR/` `SR/` `AR/` `inbox/` 四个目录与骨架文件
 
-```bash
+```
 node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>   # ① 取材
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
@@ -134,7 +134,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 - **前置**：spec 阶段已闭环，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
 - **archive 不修改工作区任何文件**
 
-```bash
+```
 node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门
 node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ② 上传
 python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记（自带 ① 的门禁，不可逆）
@@ -163,7 +163,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 - **前置**：这个单已经有产物（Spec / Story / Review / Plan 至少一样）
 - **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
-```bash
+```
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
 node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料

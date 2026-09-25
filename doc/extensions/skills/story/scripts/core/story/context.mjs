@@ -80,7 +80,7 @@ function compileIdShapes(contract) {
 //: 各写一串 `..` 的话，模块再挪一层就得挨个数。
 const CORE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 两种上下文共用的那两样：工程根与章节合同。合同读不出来当场失败，不降级成空。 */
+/** 工程根与章节合同。合同读不出来当场失败，不降级成空。 */
 function commonInputs(args) {
   const projectRoot = path.resolve(
     args.projectRoot ?? path.join(CORE_DIR, '..', '..', '..', '..', '..', '..'));
@@ -90,33 +90,7 @@ function commonInputs(args) {
   return { projectRoot, contract, idShapes: compileIdShapes(contract) };
 }
 
-/**
- * 只读一份 story 的上下文 —— `check --offline --story <路径>`。
- *
- * **为什么要有它**：判据得有个仲裁锚。理想产物冻结在夹具里，任何一条判据改动
- * 都先拿它跑一遍——拦住理想产物的判据，错的是判据。而理想产物没有需求目录、
- * 没有台账，正常的 check 连门都进不去。
- *
- * 走的是**同一个 `cmdCheck`**，不是另写一套：另写一套就会与生产链漂移，
- * 到那时「拿它跑过了」什么也证明不了。需求目录侧的输入给空，
- * 依赖它们的判项自然一条不判；不依赖的照跑。
- */
-function createOfflineContext(args) {
-  if (!args.story) fail('缺 --story <story.md 路径>');
-  const { projectRoot, contract, idShapes } = commonInputs(args);
-  const storyPath = path.resolve(args.story);
-  if (readText(storyPath) === null) fail(`读不到 ${storyPath}`);
-  return {
-    args, projectRoot, contract, idShapes, offline: true,
-    featureRoot: path.dirname(path.dirname(storyPath)),
-    storyPath,
-    decisionsPath: '',
-    reviewPath: '',
-  };
-}
-
 export function createContext(args) {
-  if (args.offline) return createOfflineContext(args);
   if (!args.feature) fail('缺 --feature');
   const { projectRoot, contract, idShapes } = commonInputs(args);
   if (!Array.isArray(contract.chapters) || contract.chapters.length === 0) {
@@ -143,7 +117,7 @@ export function createContext(args) {
  * 登记后拒绝重算、归档时随稿走的同一批。冻结与存在性两处说的必须是同一批文件，
  * 各写一份就会改一处忘一处。第二列是缺了怎么补。
  */
-export const STORY_SRC_LEDGERS = [
+const STORY_SRC_LEDGERS = [
   ['decisionsPath', '跑 skeleton 产出'],
   ['templatePath', '跑 skeleton 建空壳，再按本需求写成整篇设计'],
 ];
@@ -157,7 +131,6 @@ export const STORY_SRC_LEDGERS = [
  * 报错文案要把这条路直接堵死：缺的那件是**补产出**，不是删同伴文件。
  */
 export function requireLedgers(ctx) {
-  if (ctx.offline) return;                 // 仲裁锚只有一份 story，没有台账目录
   const missing = STORY_SRC_LEDGERS
     .filter(([key]) => ctx[key] && readText(ctx[key]) === null)
     .map(([key, how]) => `${path.basename(ctx[key])}（${how}）`);
@@ -174,7 +147,7 @@ export function requireLedgers(ctx) {
  * @returns {{written:boolean, digests:Record<string,string|null>}}
  */
 function storyFrozen(ctx) {
-  const flow = ctx.offline ? null : readJson(ctx.flowPath, null);
+  const flow = readJson(ctx.flowPath, null);
   return {
     written: flow?.status === 'story_written',
     digests: flow?.story_src_digests ?? {},
@@ -198,14 +171,8 @@ function digestOf(text) {
     .digest('hex').slice(0, 16);
 }
 
-/**
- * 激活规约条目 —— 派生失败要出声，不能当作「本需求没有规约」。
- *
- * 离线仲裁只有一份 story，没有工程上下文，此时给空数组：依赖它的判项自然不判，
- * 而不是拿一份空清单去判「一条规约都没判到」。
- */
+/** 激活规约条目 —— 派生失败要出声，不能当作「本需求没有规约」。 */
 export function activeKnowledgeEntries(ctx) {
-  if (ctx.offline) return [];
   try {
     return activeKnowledge(ctx.projectRoot).entries ?? [];
   } catch (e) {
@@ -221,7 +188,7 @@ export function activeKnowledgeEntries(ctx) {
  */
 export function specText(ctx) {
   const rel = ctx.contract?.sources?.SPEC?.path;
-  if (!rel || ctx.offline || !ctx.featureRoot) return null;
+  if (!rel || !ctx.featureRoot) return null;
   const text = readText(path.join(ctx.featureRoot, ...rel.split('/')));
   // 行尾在这里归一，不在下游各处正则里补 `\r?`：真实的 spec.md 由宿主在 Windows 上写，
   // 是 CRLF；补正则要每加一处派生就记得补一次，漏一处就是一次静默为空的派生。
@@ -235,15 +202,13 @@ export function ledgerDigestProblems(ctx) {
   //
   // story 定稿于登记那一刻，台账记的是它据以成文的依据，于是两者一起冻。
   // 拒绝命令挡不住有人直接改文件——指纹核对补上那一面。
-  if (!ctx.offline) {
-    for (const [name, want2] of Object.entries(storyFrozen(ctx).digests)) {
-      const now = digestOf(readText(path.join(ctx.srcDir, name)));
-      if (want2 === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
-      if (want2 !== now) {
-        problems.push(`${name} 与成文登记时的台账对不上——`
-          + 'story 定稿之后台账随稿冻结，它记的是这份 story 据以成文的依据；'
-          + '改了它，产物与依据就对不上了');
-      }
+  for (const [name, want2] of Object.entries(storyFrozen(ctx).digests)) {
+    const now = digestOf(readText(path.join(ctx.srcDir, name)));
+    if (want2 === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
+    if (want2 !== now) {
+      problems.push(`${name} 与成文登记时的台账对不上——`
+        + 'story 定稿之后台账随稿冻结，它记的是这份 story 据以成文的依据；'
+        + '改了它，产物与依据就对不上了');
     }
   }
   return problems;

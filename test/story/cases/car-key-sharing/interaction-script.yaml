@@ -1,6 +1,6 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
-# 只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
+# 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
 # expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
 replies:
   - id: hand-over-the-product-doc
@@ -10,20 +10,19 @@ replies:
     # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
     deliver:
       - 数字车钥匙分享.docx
-    text: 补充材料，产品需求稿已放入需求目录，按它来。
+    text: 补充材料，产品需求稿已放入需求目录。
 
-  # 只在模型问到撤销时限（48h / 24h 冲突）时才说；没问就不说，不并进别的关卡的回话（用户 2026-09-18 裁定）。
-  - id: product-doc-wins-on-grace-window
+  - id: materials-complete
     expected_turn: 2
     expected_kind: story_gate
     expected_phase: story
-    text: 撤销时限按产品稿 24 小时；未定的两件保持未定。
+    text: 材料就这些。
 
-  - id: init-wrap-up
+  - id: scope-no-split
     expected_turn: 3
     expected_kind: story_gate
     expected_phase: story
-    text: 材料就这些，不拆单，往下走。
+    text: 不拆单。
 
   - id: hand-over-the-accept-doc
     expected_turn: 4
@@ -39,15 +38,20 @@ replies:
     expected_phase: spec
     text: 术语确认，按你列的定。
 
-  - id: review-comments
+  - id: enter-plan
     expected_turn: 6
     expected_kind: story_gate
     expected_phase: spec
-    text: 通过。撤销中的用户文案改为「正在收回」；未定两件保持未定。
+    text: 进入 plan。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §5.9 第 6 步）。
-  # 料已经随第二段的那句话投进去了，这里只答「补不补」。
   - id: update-material
     expected_turn: 7
     expected_kind: story_gate
     text: 不补。
+
+  # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
+  - id: grace-window-conflict
+    expected_turn: 8
+    expected_kind: story_gate
+    text: 车辆侧撤销即拒绝不变，36 小时是对方设备上卡片收回的期限。

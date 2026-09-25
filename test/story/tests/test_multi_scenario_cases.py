@@ -162,21 +162,25 @@ class CompositeCoverageTest(unittest.TestCase):
     def test_every_story_capability_has_a_carrier(self) -> None:
         # 「上游已拆两张单与兄弟交接」由退役的 traffic-card-loss（金样回归锚，
         # case.retired.yaml，不进常规 suite）承载，不在此表。
+        # 只登记走得到的能力：两个 Case 的终点是 spec 与 plan，coding 与真实改码不在这一轮。
         carriers = {
             "系统按单号拉取": {"auto-topup"},
             "没有系统单据的本地起手": {"car-key-sharing"},
             "系统只给 md，界面材料要另外要": {"auto-topup"},
             "占位件识别与按需补料": {"auto-topup", "car-key-sharing"},
             "docx 转正文并抽图": {"auto-topup", "car-key-sharing"},
-            "同轮材料冲突与人工定源": {"car-key-sharing"},
+            "材料冲突登记为议题、评审回流定源": {"car-key-sharing"},
             "材料写明尚未决定的问题保持 open": {"car-key-sharing"},
-            "归档到系统与评审回稿处置": {"auto-topup"},
+            "归档送审与 update 取回评审回稿": {"auto-topup"},
+            "评审人在议题人工区表态、update 承接": {"car-key-sharing"},
             "多方协作与多步分支流程": {"car-key-sharing"},
-            "知识链传到 coding 并真实改码": {"auto-topup", "car-key-sharing"},
             "会议转写进需求输入": {"auto-topup"},
         }
         for capability, expected in carriers.items():
             self.assertTrue(expected <= CASE_IDS, capability)
+        ends = {case_id: definition(case_id).get("end_phase") for case_id in CASE_IDS}
+        self.assertEqual({"auto-topup": "spec", "car-key-sharing": "plan"}, ends,
+                         "终点变了，上面的能力登记要跟着核")
 
     def test_retired_case_stays_out_of_the_suite(self) -> None:
         """AR90004 与金样材料同源（训练集），退役为回归锚：材料保留、不进 Case 集。"""
@@ -249,9 +253,11 @@ class CompositeCoverageTest(unittest.TestCase):
         sr = (CASES / "auto-topup/system/SR90006/design.md").read_text(encoding="utf-8")
         for token in ("可拆成", "contractNo", "阻塞", "与开发确认后定"):
             self.assertIn(token, sr)
-        # 评审回稿放在系统上，等归档之后拉回来。
-        feedback = (CASES / "auto-topup/system/AR90006/review-feedback.md") \
-            .read_text(encoding="utf-8")
+        # 评审回稿送审之后才有：起跑时系统上没有，第二段前由装置放上系统，update 取上游时取回。
+        self.assertFalse((CASES / "auto-topup/system/AR90006/review-feedback.md").exists())
+        inputs = {i["file"]: i for i in definition("auto-topup")["update_inputs"]}
+        self.assertEqual("system", inputs["review-feedback.md"]["kind"])
+        feedback = (CASES / "auto-topup/update-inputs/review-feedback.md").read_text(encoding="utf-8")
         self.assertIn("要改", feedback)
         self.assertIn("暂缓", feedback)
 

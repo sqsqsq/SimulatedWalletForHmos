@@ -33,44 +33,49 @@ process.stdout.write(JSON.stringify(await hook({ phase, feature, projectRoot }))
 """
 
 ACCEPTANCE = """criteria:
-  - id: AC-R1
+  - id: AC-1
     prd_function: F1, F2
     description: 第 1 条验收
-  - id: AC-R2
-    prd_function: F2, F3, F5
+  - id: AC-2
+    prd_function: F2, F5, F6
     description: 第 2 条验收
-  - id: AC-R3
-    prd_function: F5, F6
-    description: 第 3 条验收
-  - id: AC-R4
-    prd_function: F1, F7
-    description: 第 4 条验收
-  - id: AC-R5
-    prd_function: F5, F7
-    description: 第 5 条验收
-  - id: AC-R6
+  - id: AC-3
     prd_function: F6
+    description: 第 3 条验收
+  - id: AC-4
+    prd_function: F1
+    description: 第 4 条验收
+  - id: AC-5
+    prd_function: F6
+    description: 第 5 条验收
+  - id: AC-7
+    prd_function: F3, F4
     description: 第 6 条验收
-  - id: AC-R7
-    prd_function: F2, F3, F4
+  - id: AC-8
+    prd_function: F1, F2
     description: 第 7 条验收
-  - id: AC-R8
+  - id: AC-9
     prd_function: F1, F4
     description: 第 8 条验收
-  - id: AC-R9
-    prd_function: F1, F5
+  - id: AC-6
+    prd_function: F7, F8
     description: 第 9 条验收
-  - id: AC-R10
-    prd_function: F4
+  - id: AC-10
+    prd_function: F9
     description: 第 10 条验收
-  - id: AC-G1
+  - id: AC-11
+    prd_function: F10
     description: 第 11 条验收
-  - id: AC-G2
+  - id: AC-G1
     description: 第 12 条验收
-  - id: AC-G3
+  - id: AC-G2
     description: 第 13 条验收
-  - id: AC-G4
+  - id: AC-G3
     description: 第 14 条验收
+  - id: AC-G4
+    description: 第 15 条验收
+  - id: AC-G5
+    description: 第 16 条验收
 """
 
 
@@ -180,22 +185,23 @@ class TheAcceptanceIdsLineUp(ClosureCase):
             self.assertNotIn(needle, out)
 
     def test_an_id_missing_from_acceptance_is_named(self) -> None:
-        self.edit_spec("**AC-R5**(F5, F7)", "**AC-R15**(F5, F7)")
-        self.assertIn("§8 的 AC-R15 在 acceptance.yaml 里没有", self.gate())
+        self.edit_spec("**AC-5** (AC-R5, F6)", "**AC-15** (AC-R5, F6)")
+        self.assertIn("§8 的 AC-15 在 acceptance.yaml 里没有", self.gate())
 
     def test_a_function_drift_is_named(self) -> None:
-        self.edit_spec("**AC-R3**(F5, F6)", "**AC-R3**(F5)")
-        self.assertIn("AC-R3 的关联功能两处不一致", self.gate())
+        self.edit_spec("**AC-3** (AC-R3, F6)", "**AC-3** (AC-R3, F5)")
+        self.assertIn("AC-3 的关联功能两处不一致", self.gate())
 
     def test_one_id_with_two_meanings_is_named(self) -> None:
         (self.fr / "acceptance.yaml").write_text(
-            ACCEPTANCE + "  - id: AC-R2\n    prd_function: F9\n    description: 另一件事\n", encoding="utf-8")
-        self.assertIn("同号不同义：AC-R2", self.gate())
+            ACCEPTANCE + "  - id: AC-2\n    prd_function: F9\n    description: 另一件事\n", encoding="utf-8")
+        self.assertIn("同号不同义：AC-2", self.gate())
 
     def test_an_upstream_id_that_was_renumbered_is_named(self) -> None:
         prd = self.fr / "RR" / "prd.md"
         prd.write_text(prd.read_text(encoding="utf-8") + "\n| AC-K7 | 上游写的一条验收 |\n", encoding="utf-8")
-        self.assertIn("上游材料的验收编号没有承接：AC-K7", self.gate())
+        lost = next(l for l in self.gate().split("\\n") if "上游材料的验收编号没有承接" in l)
+        self.assertIn("AC-K7", lost)
         self.edit_spec("### P0 功能验收标准", "不承接：AC-K7 归兄弟单验收。\n\n### P0 功能验收标准")
         self.assertNotIn("AC-K7", self.gate())
 

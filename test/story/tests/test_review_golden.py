@@ -29,8 +29,8 @@ FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
 
-#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别）。sha256 前 16 位。
-FINGERPRINT = "33089aeaf423a229"
+#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）。sha256 前 16 位。
+FINGERPRINT = "c2055c1dcbca18ad"
 HUMAN_ZONE_HEAD = "评审结论："
 
 

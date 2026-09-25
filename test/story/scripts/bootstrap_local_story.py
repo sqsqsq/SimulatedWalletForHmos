@@ -53,10 +53,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CASES_ROOT = REPO_ROOT / "test" / "story" / "cases"
 EXT_SCRIPTS = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
-STORY_JS = EXT_SCRIPTS / "story.js"
-STORY_FLOW = EXT_SCRIPTS / "story_flow.py"
+STORY_JS = EXT_SCRIPTS / "adapters" / "story.js"
+#: 默认需求系统目录登记在对接层的 `mcp.js` 里（`story.js` 经它访问需求系统）。
+SYSTEM_DIR_SOURCE = EXT_SCRIPTS / "adapters" / "mcp.js"
+STORY_FLOW = EXT_SCRIPTS / "core" / "story_flow.py"
 
-#: 默认目标目录。**必须与 `story.js` 的 `DEFAULT_SYSTEM_DIR` 一字不差**——
+#: 默认目标目录。**必须与 `mcp.js` 的 `DEFAULT_SYSTEM_DIR` 一字不差**——
 #: 一致，人才不用设环境变量。单测 `test_local_bootstrap.py` 跨语言比对这两个常量。
 DEFAULT_SYSTEM_DIR = Path("test") / "story" / "requirement-system"
 SYSTEM_DIR_ENV = "STORY_REQUIREMENT_SYSTEM_DIR"
@@ -70,13 +72,13 @@ def log(msg: str) -> None:
 
 
 def read_default_system_dir_from_story_js() -> Path | None:
-    """从 `story.js` 里把那个默认目录读出来，用于核对两边没有漂移。
+    """从 `mcp.js` 里把那个默认目录读出来，用于核对两边没有漂移。
 
-    读不到就返回 None——这是个核对手段，不是运行依赖；`story.js` 换了写法时
+    读不到就返回 None——这是个核对手段，不是运行依赖；`mcp.js` 换了写法时
     脚本仍然能跑，只是核对失效，由单测去发现。
     """
     try:
-        text = STORY_JS.read_text(encoding="utf-8")
+        text = SYSTEM_DIR_SOURCE.read_text(encoding="utf-8")
     except OSError:
         return None
     hit = re.search(r"DEFAULT_SYSTEM_DIR\s*=\s*path\.join\(([^)]*)\)", text)
@@ -162,18 +164,26 @@ def seed(target: Path, tickets: dict[str, tuple[str, Path]],
         log(f"--reset：删掉 {target} 重建")
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
-    installed, skipped = [], []
+    installed, skipped, drift = [], [], []
     for no, (case_id, src) in tickets.items():
         dst = target / no
         for path in sorted(p for p in src.rglob("*") if p.is_file()):
             out = dst / path.relative_to(src)
             if out.exists():
                 skipped.append(str(out.relative_to(target)))
+                if out.read_bytes() != path.read_bytes():
+                    drift.append(f"{out.relative_to(target).as_posix()}（与夹具不同）")
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, out)
+        # 夹具里已经没有的文件还留在副本里：副本落后于夹具，人读到的是旧单据
+        if dst.is_dir():
+            drift += [f"{p.relative_to(target).as_posix()}（夹具里没有）"
+                      for p in sorted(dst.rglob("*")) if p.is_file()
+                      and not (src / p.relative_to(dst)).exists()
+                      and p.relative_to(dst).parts[0] not in ("history", "attachments")]
         installed.append({**ticket_summary(src), "from_case": case_id})
-    return {"installed": installed, "skipped": skipped}
+    return {"installed": installed, "skipped": skipped, "drift": drift}
 
 
 def leftover_features(tickets: dict) -> list[str]:
@@ -266,17 +276,20 @@ def main() -> int:
             f"← {item['from_case']}，{len(item['files'])} 个文件")
     for rel in result["skipped"]:
         log(f"已存在，跳过：{rel}")
+    for rel in result["drift"]:
+        log(f"副本落后于夹具：{rel}——跑 --reset 回到当前夹具")
 
     verified = verify(args.verify, target) if args.verify else None
     if verified is not None:
         log("链路验证：" + ("通过" if verified.get("ok") else f"没通过 {verified}"))
 
     receipt = {
-        "ok": verified is None or bool(verified.get("ok")),
+        "ok": (verified is None or bool(verified.get("ok"))) and not result["drift"],
         "system_dir": str(target),
         "needs_env_var": target != (REPO_ROOT / DEFAULT_SYSTEM_DIR),
         "installed": [item["reqNo"] for item in result["installed"]],
         "skipped_files": len(result["skipped"]),
+        "drift": result["drift"],
         "leftover_features": leftover,
         "verify": verified,
         "next": [

@@ -170,16 +170,15 @@ export function cmdBuild(ctx) {
  */
 export function decisionProblems(ctx) {
   const problems = [];
-  // ⑤ 决策登记的字段齐备（离线模式没有需求目录，这一项不判）
+  // ⑤ 决策登记的字段齐备
   //
   // **只判形式，不判数量、不判叙述**。数量下限会催生凑数议题——凑数比零议题更坏，
   // 它把评审人的注意力摊薄在假议题上；叙述质量的判据会催生套话，模型总能写出
   // 一段过得去而什么也没说的话。数量塌陷与叙述质量由评审记录的效果定义、
   // verifier 的逐问、以及评审人自己接。这里只核「渲染得出来」：
   // 标题、澄清正文、请谁确认，缺一条渲出来就是半个议题。
-  const decisions = ctx.offline ? null : readJson(ctx.decisionsPath, null);
-  if (ctx.offline) { /* 仲裁锚只判文档本身 */ }
-  else if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
+  const decisions = readJson(ctx.decisionsPath, null);
+  if (!decisions) problems.push('缺 decisions.json——决策登记是 review 的唯一数据源');
   else if (decisionList(decisions) === null) {
     problems.push(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
   } else {

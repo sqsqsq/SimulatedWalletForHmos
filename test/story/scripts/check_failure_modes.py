@@ -47,6 +47,9 @@ from typing import Callable, Iterable
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import golden_workspace  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LEDGER = REPO_ROOT / "test" / "story" / "regression" / "failure-modes.yaml"
 DEFAULT_EXTENSION_DIR = REPO_ROOT / "doc" / "extensions"
@@ -303,7 +306,7 @@ def sources_for(entry_id: str, entries: list[dict]) -> list[str]:
 # 机制层 checker（target=mechanism，root = 扩展根或夹具目录）
 # --------------------------------------------------------------------------- #
 
-CODE_SUFFIXES = (".mjs", ".js", ".yaml", ".yml", ".json")
+CODE_SUFFIXES = (".mjs", ".js", ".py", ".yaml", ".yml", ".json")
 TEXT_SUFFIXES = (".md",)
 ALL_SUFFIXES = CODE_SUFFIXES + TEXT_SUFFIXES
 #: 不属于机制层、机制层判据不适用的目录。
@@ -500,7 +503,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     豁免按语境登记，逐条具名（见 `M02_EXEMPT`）：产品动作本身用这些词、
     合同数据里的业务项、禁用词的替换说法。
     """
-    case_ids = re.compile(r"\b(AR|DTS|ISSUE)-?\d{4,}\b")
+    case_ids = re.compile(r"\b(AR|SR|RR|DTS|ISSUE)-?\d{3,}\b|\bAC-[A-Z]\d+\b")
     run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
     # 轮次叙述：不带数字也算。「两跑的作者都…」「一次真实实跑说明了…」都是维护痕迹，
     # 交付面用现在时讲道理就够。`上一轮` 不在列——那是流程概念（round 开出的上一轮）。
@@ -513,7 +516,16 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     negative_pointer = re.compile(r"不必去|不要去|别去")
     business_words = _case_business_words()
     case_names = _case_and_suite_names()
+    numbers = _case_numbers()
     hits = []
+    # 知识是目标仓的业务内容，但示例与写法不该照着测试用例写：业务名在知识里出现同样点名。
+    knowledge = root / "knowledge"
+    for path in (iter_files(knowledge, ALL_SUFFIXES) if knowledge.is_dir() else []):
+        rel = path.relative_to(root).as_posix()
+        for n, line in enumerate(split_lines(read_text(path)), start=1):
+            hit_word = next((w for w in business_words if w in line), None)
+            if hit_word:
+                hits.append(f"{rel}:{n} 测试数据「{hit_word}」")
     for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         rel = path.relative_to(root).as_posix()
         for n, line in enumerate(split_lines(read_text(path)), start=1):
@@ -542,7 +554,8 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
                                 "直接给出正确的位置或做法，它本身就是答案")
                     continue
             hit_word = next((w for w in business_words if w in line), None) \
-                or next((w for w in case_names if w in line), None)
+                or next((w for w in case_names if w in line), None) \
+                or next((w for w in numbers if re.search(rf"(?<!\d){re.escape(w)}", line)), None)
             if hit_word:
                 hits.append(f"{rel}:{n} 测试数据「{hit_word}」")
     if hits:
@@ -553,19 +566,10 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
 
 #: M02 的豁免，逐条具名。词表是兜底，判断归评审——所以豁免也具名，不写成通配。
 M02_EXEMPT = (
-    # 产品动作本身就叫这个：`/story restore` 恢复到上一版、archive 覆盖后的状态转移。
+    # 产品动作本身就叫这个：`/story restore` 恢复到上一版。
     ("skills/story/SKILL.md", "上一版"),
-    ("hooks/spec/post_check.mjs", "不再是"),
-    ("skills/story/scripts/core/story-build.mjs", "上一版"),
-    # 版本头注就是给升级方看的行为变化清单，那是它的用途。
-    ("manifest.yaml", "退场"),
-    # 合同数据里的业务项与禁用词的替换说法。
-    ("contracts/story-chapters.json", "旧版本"),
-    ("skills/story/scripts/core/story/language.mjs", "旧版本"),
     # adapt 面对的是目标工程里可能真的存在的旧目录。
     ("skills/story-adaptation/SKILL.md", "退场"),
-    ("skills/story-adaptation/SKILL.md", "旧的"),
-    ("skills/story-adaptation/SKILL.md", "早先"),
 )
 
 
@@ -604,6 +608,34 @@ def _case_and_suite_names() -> list[str]:
     return sorted(n for n in names if len(n) >= 6)
 
 
+def _case_numbers() -> list[str]:
+    """用例立场、答案卷与更新输入里的业务数值（数字加单位）：机制层出现同一个数值，就是照着用例写的。"""
+    cases_dir = REPO_ROOT / "test" / "story" / "cases"
+    found: set[str] = set()
+    unit = re.compile(r"\d+\s?(?:元|小时|h|分钟|天|次|秒|个月)")
+    for case_yaml in cases_dir.glob("*/case.yaml"):
+        root = case_yaml.parent
+        for f in (case_yaml, root / "interaction-script.yaml", root / "meeting-answer-key.md",
+                  *(root / "update-inputs").glob("*.md")):
+            if f.is_file():
+                found.update(m.group(0) for m in unit.finditer(read_text(f)))
+    return sorted(found)
+
+
+def _golden_titles() -> list[str]:
+    """金样与候选样稿的业务名：大标题去掉单号与括注。"""
+    golden = REPO_ROOT / "test" / "story" / "golden"
+    names: set[str] = set()
+    for f in [*(f for f in golden.glob("story-*.md") if "说明" not in f.name), *golden.glob("*/README.md")]:
+        first = split_lines(read_text(f))[0] if read_text(f) else ""
+        if not first.startswith("# "):
+            continue
+        name = re.sub(r"^#\s*(?:AR\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
+        if len(name) >= 4 and re.search(r"[\u4e00-\u9fff]", name):
+            names.add(name)
+    return sorted(names)
+
+
 def _case_business_words() -> list[str]:
     """从测试 Case 派生业务特征词；派生不到就只用单号形态（不硬编码业务名）。
 
@@ -629,6 +661,7 @@ def _case_business_words() -> list[str]:
         for asset_dir in (case_root / "workspace").rglob("assets/*"):
             if asset_dir.is_dir() and len(asset_dir.name) >= 4:
                 words.add(asset_dir.name)
+    words.update(_golden_titles())
     return sorted(w for w in words if re.search(r"[\u4e00-\u9fff]", w))
 
 
@@ -696,7 +729,26 @@ def m06_silent_empty_derivation(root: Path, ctx: Ctx) -> Outcome:
     又会把渲染与校验也算进来——它们返回空列表是「没问题」，不是「没派生出来」。
 
     命令入口不在此列：它的出声方式是非零退出码，不是 throw。
+
+    Python 侧同一类：读 JSON / YAML 时把解析失败（``ValueError`` / ``YAMLError``）接住后
+    静默返回空值、``pass`` 或 ``continue``——坏了的文件被当成「没写」，后面每一步都在错的前提上走。
+    文件不在（``OSError``）返回空值是另一件事，不在此列。
     """
+    parse_fail = re.compile(r"^\s*except\b.*(?:ValueError|JSONDecodeError|YAMLError).*:\s*$")
+    swallow = re.compile(r"^\s*(?:return(?:\s+(?:None|\[\]|\{\}|''|\"\"|0|False))?|pass|continue)\s*$")
+    parses = re.compile(r"json\.loads?|yaml\.safe_load|parse_yaml")
+    for path in iter_files(root, (".py",), NON_MECHANISM_DIRS):
+        lines = split_lines(read_text(path))
+        for i, line in enumerate(lines[:-1]):
+            if not (parse_fail.match(line) and swallow.match(lines[i + 1])):
+                continue
+            # 往上找到同缩进的 try，看 try 块里读的是不是 JSON / YAML
+            indent = len(line) - len(line.lstrip())
+            j = i - 1
+            while j >= 0 and not (lines[j].strip() == "try:" and len(lines[j]) - len(lines[j].lstrip()) == indent):
+                j -= 1
+            if j >= 0 and parses.search("\n".join(lines[j:i])):
+                return Outcome(False, f"{path.relative_to(root).as_posix()}:{i + 1} 读 JSON/YAML 失败后静默当成没有")
     derives = re.compile(r"knowledgeFiles|activeKnowledge|parseManifest")
     targets = [p for p in iter_files(root, (".mjs",), ())
                if "knowledge" in p.name or "knowledge" in p.parent.name]
@@ -2193,7 +2245,6 @@ def _form_case(root: Path, needle: str, ok: str) -> Outcome:
 
 
 GOLDEN_STORY = REPO_ROOT / "test/story/golden/story-金样-AR90004.md"
-GOLDEN_ASSETS = REPO_ROOT / "test/story/golden/assets"
 
 
 @checker
@@ -2207,41 +2258,30 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     两个分支都验。只验「零 FAIL」不够：判项集体空转时也是零 FAIL，
     那种「通过」比拦错更难发现。
     """
-    build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
-    if build is None:
-        build = DEFAULT_EXTENSION_DIR / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    ext = root if _ext_file(root, "skills/story/scripts/core/story-build.mjs") else DEFAULT_EXTENSION_DIR
     if not GOLDEN_STORY.exists():
         return Outcome(False, "金样不在库里——判据失去仲裁锚")
 
-    def run(story: Path) -> tuple[int, str]:
-        proc = subprocess.run(
-            ["node", str(build), "check", "--offline", "--story", str(story),
-             "--project-root", str(REPO_ROOT)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()
+    def run(story: str | None) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            golden_workspace.build(Path(tmp), story, extensions=ext)
+            return golden_workspace.check(Path(tmp))
 
-    code, out = run(GOLDEN_STORY)
+    code, out = run(None)
     if code != 0:
         return Outcome(False, f"判据拦住了金样：{out[:260]}")
 
-    # 反分支：塞一个工程标识与一段超长的话进主叙事，判项应当各自点名
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "AR"
-        work.mkdir(parents=True)
-        shutil.copy2(GOLDEN_STORY, work / "story.md")
-        shutil.copytree(GOLDEN_ASSETS, work / "assets")
-        story = work / "story.md"
-        text = read_text(story)
-        head = text.split("\n## ", 2)
-        if len(head) < 3:
-            return Outcome(False, "金样切不出第二章——形态变了，本条的注入点要重定")
-        injected = text.replace(
-            "\n## " + head[2].split("\n", 1)[0],
-            "\n## " + head[2].split("\n", 1)[0]
-            + "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。",
-            1)
-        story.write_text(injected, encoding="utf-8")
-        bad_code, bad_out = run(story)
+    # 反分支：塞一个工程标识与一个模板占位进主叙事，判项应当各自点名
+    text = read_text(GOLDEN_STORY)
+    head = text.split("\n## ", 2)
+    if len(head) < 3:
+        return Outcome(False, "金样切不出第二章——形态变了，本条的注入点要重定")
+    injected = text.replace(
+        "\n## " + head[2].split("\n", 1)[0],
+        "\n## " + head[2].split("\n", 1)[0]
+        + "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。",
+        1)
+    bad_code, bad_out = run(injected)
     if bad_code == 0:
         return Outcome(False, "往金样里塞了工程标识与模板占位符却仍然全过——判项在空转")
     # 两个违例都取**确定性的明确记号**：工程标识与模板占位符。原先用的「超长段落」
@@ -2253,9 +2293,146 @@ def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
 
 
+_REF_RE = re.compile(r"([\w./-]+\.md)\)?[`]?「([^」]{2,20})」")
+_SENT_SPLIT = re.compile(r"[。；\n]")
+
+
+def _sentences(text: str) -> list[str]:
+    """一段规则正文里可比的句子：去掉表格竖线与标记，规范化后够长的才算。"""
+    out = []
+    for raw in _SENT_SPLIT.split(text):
+        line = raw.strip().strip("|").replace("|", " ")
+        if line.startswith("#") or line.startswith("<!--"):
+            continue
+        norm = normalize(line)
+        if len(norm) >= 18:
+            out.append(norm)
+    return out
+
+
+def _section(text: str, name: str) -> str | None:
+    """标题含 `name` 的那一节正文（到同级或更高级标题为止）。"""
+    lines = split_lines(text)
+    for i, l in enumerate(lines):
+        m = re.match(r"^(#{1,6})\s+(.*)$", l)
+        if m and name in m.group(2):
+            level = len(m.group(1))
+            body = []
+            for l2 in lines[i + 1:]:
+                m2 = re.match(r"^(#{1,6})\s", l2)
+                if m2 and len(m2.group(1)) <= level:
+                    break
+                body.append(l2)
+            return "\n".join(body)
+    return None
+
+
+@checker
+def m19_rule_defined_twice(root: Path, ctx: Ctx) -> Outcome:
+    """同一条规则在两处写正文。
+
+    规则只在一处定义：别的文档用「<文件>「<节名>」」指过去，不再抄一遍。被指向的那一节就是定义处；
+    它里面的规则句在别的交付文件里又原样出现，两处迟早只改到一处。
+    """
+    files = iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS)
+    texts = {p: read_text(p) for p in files}
+    defined: dict[str, tuple[Path, str]] = {}
+    for text in texts.values():
+        for rel, name in _REF_RE.findall(text):
+            target = next((p for p in files if p.as_posix().endswith("/" + rel.lstrip("./"))
+                           or p.name == rel), None)
+            if target is None:
+                continue
+            body = _section(texts[target], name)
+            for sent in _sentences(body or ""):
+                defined.setdefault(sent, (target, name))
+    hits = []
+    for path, text in texts.items():
+        norm = normalize(text.replace("|", " "))
+        for sent, (target, name) in defined.items():
+            if path != target and sent in norm:
+                hits.append(f"{path.relative_to(root).as_posix()} 重写了 "
+                            f"{target.relative_to(root).as_posix()}「{name}」里的规则：{sent[:30]}…")
+    if hits:
+        return Outcome(False, "同一规则多处定义：" + "；".join(sorted(set(hits))[:4]))
+    return Outcome(True, f"{len(defined)} 句被引用的规则各只在定义处出现")
+
+
+def _knowledge_structure_words(root: Path) -> set[str]:
+    """从知识目录派生：知识名、角色名、节名与表头列名。"""
+    words: set[str] = set()
+    for path in iter_files(root / "knowledge", (".md",)) if (root / "knowledge").is_dir() else []:
+        text = read_text(path)
+        fm = re.match(r"^---\n(.*?)\n---", text, flags=re.S)
+        if fm:
+            data = yaml.safe_load(fm.group(1)) or {}
+            words.add(str(data.get("name") or ""))
+            words.update(str(r) for r in (data.get("roles") or []))
+        for m in re.finditer(r"^##+\s+(.+?)\s*$", text, flags=re.M):
+            words.add(re.sub(r"^\d+(\.\d+)*\.?\s*", "", m.group(1).split(" — ")[0]).strip())
+        for line in split_lines(text):
+            if line.startswith("|") and not set(line) <= set("|-: "):
+                words.update(c.strip().strip("`") for c in line.strip("|").split("|"))
+                break
+    return {w for w in words if len(w) >= 3 and not w.isdigit()}
+
+
+@checker
+def m20_mechanism_writes_knowledge_structure(root: Path, ctx: Ctx) -> Outcome:
+    """机制写死某份知识的结构：节名、角色名、表头列名或知识名出现在机制文件里。
+
+    机制只引用协议与产物模板定义的结构名；某份知识换了节名或列名，机制一个字不动也照常工作。
+    词表从知识目录现场派生，减去协议与模板里出现的词。
+    """
+    words = _knowledge_structure_words(root)
+    if not words:
+        return Outcome(True, "无知识目录（不适用）")
+    allowed = "\n".join(read_text(p) for p in iter_files(root, TEXT_SUFFIXES)
+                         if p.name == "protocol.md" or "templates" in p.parts)
+    words = {w for w in words if w not in allowed}
+    hits = []
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
+        # manifest 登记知识清单是它的职责；协议与模板定义结构名
+        if path.name in ("protocol.md", "manifest.yaml") or "templates" in path.parts:
+            continue
+        text = read_text(path)
+        hits += [f"{path.relative_to(root).as_posix()}「{w}」" for w in sorted(words) if w in text]
+    if hits:
+        return Outcome(False, "机制写死知识结构：" + "；".join(hits[:5]))
+    return Outcome(True, f"机制零知识结构词（派生 {len(words)} 个）")
+
+
+@checker
+def m21_environment_hardcoded(root: Path, ctx: Ctx) -> Outcome:
+    """机制写死运行环境或来源仓：命令围栏标死某个 shell，或写出包自己的仓名。
+
+    命令按宿主 shell 输出，围栏不标具体 shell；来源仓的判断看 manifest 的属性，不看名字。
+    """
+    fence = re.compile(r"```(powershell|pwsh|bash|sh|zsh|cmd|bat)\b")
+    manifest = root / "manifest.yaml"
+    name = None
+    if manifest.is_file():
+        try:
+            name = str((yaml.safe_load(read_text(manifest)) or {}).get("name") or "") or None
+        except yaml.YAMLError:
+            return Outcome(False, "manifest.yaml 读不出来")
+    hits = []
+    for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
+        if path == manifest:
+            continue
+        for n, line in enumerate(split_lines(read_text(path)), start=1):
+            if fence.search(line):
+                hits.append(f"{path.relative_to(root).as_posix()}:{n} 围栏写死 shell")
+            elif name and name in line:
+                hits.append(f"{path.relative_to(root).as_posix()}:{n} 写出来源仓名「{name}」")
+    if hits:
+        return Outcome(False, "环境或来源仓写死：" + "；".join(hits[:5]))
+    return Outcome(True, "命令围栏不标 shell，机制不写来源仓名")
+
+
 #: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——
 #: 而样本是用来检验机制的，被检验的东西反过来指向检验它的东西，这条链就闭合成了自证。
-VERIFICATION_ASSET_WORDS = ("金样", "golden", "fixtures", "夹具目录", "test/story")
+VERIFICATION_ASSET_WORDS = ("金样", "仲裁锚", "golden", "fixtures", "夹具目录", "test/story")
 
 
 @checker

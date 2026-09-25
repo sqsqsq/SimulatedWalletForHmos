@@ -70,7 +70,7 @@ export function diagramTopic(d) {
  * 只核登记对应：图搬没搬对、周围文字写没写好由语义审查判。
  * 缺了指向的是**功能**不是图——图漏了先找它讲的那件事在下游哪里。
  */
-export function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
+function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
   const carried = new Set(diagramsOf(downstreamText).flatMap(d => d.sources));
   return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
 }

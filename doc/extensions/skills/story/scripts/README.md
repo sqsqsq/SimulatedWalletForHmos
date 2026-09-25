@@ -57,7 +57,6 @@
 | 约定 | 是什么 | 怎么用 |
 |---|---|---|
 | `<需求>/ux-reference/.captions.json` | 图片侧车：按图片内容摘要记「这张图是什么」与「本需求为什么不用它」，材料清单与作者任务包从它读 | 只经 `import_sources.py` 的 `--register-ux`、`--caption-image`（含 `--unused`、`--used`）写，不手改 |
-| `story-build.mjs check --offline --story <文件>` | 对一份脱离需求目录的 story 单独跑不依赖工作区的确定性检查（例如核一份认可的样稿）；来源、材料清单、决策登记相关的判项不跑 | 不读需求工作区，不写盘 |
 
 ## 内外网隔离与新增能力交接
 

@@ -26,7 +26,6 @@ const DOMAIN_NA = '整域不适用';
  * 都是正常形态，此时这一条不判（**不是判过了**）。
  */
 function knowledgeUseVerdicts(ctx, entries = []) {
-  if (ctx.offline) return null;
   const reviewActions = new Map(entries.filter(e => e.reviewAction)
     .map(e => [e.id, e.handling ?? '']));
   try {
@@ -114,7 +113,7 @@ export function specTerms(text) {
 }
 
 /** spec 头部声明的模块清单（`in_scope_modules` / `out_of_scope_modules`）。 */
-export function scopeList(text, key) {
+function scopeList(text, key) {
   const block = String(text ?? '').match(new RegExp(key + String.raw`:\s*\n((?:\s*-\s*.+\n)+)`));
   return (block?.[1] ?? '').split(/\r?\n/)
     .map(l => l.match(/^\s*-\s*(.+?)\s*$/)?.[1]).filter(Boolean);
@@ -403,11 +402,11 @@ function verdictSkeleton(ctx, section) {
   const entries = activeKnowledgeEntries(ctx);
   if (!entries.length) return [];
   const use = knowledgeUseVerdicts(ctx, entries);
-  // 判断骨架还没生成（离线、或 knowledge-use.yaml 不在）：投不出来就不投，
+  // 判断骨架还没生成（knowledge-use.yaml 不在）：投不出来就不投，
   // 那一节保持原样，缺表由 check ⑫b 报。这一步不代替它下结论。
   // 文件在却读不出判断，那是它写坏了——停下把话说清，别静默跳过。
   if (!use) {
-    if (ctx.offline || !fs.existsSync(path.join(ctx.featureRoot, 'spec', 'knowledge-use.yaml'))) return [];
+    if (!fs.existsSync(path.join(ctx.featureRoot, 'spec', 'knowledge-use.yaml'))) return [];
     fail('spec/knowledge-use.yaml 读不出判断：附录的判定表是它的投影，先把那份 YAML 修好');
   }
   // 机器区里不写占位：作者改不了它（下一次投影会盖回来），挂着又永远不会被填。
@@ -450,7 +449,6 @@ function verdictSkeleton(ctx, section) {
  * @returns {string[]} 空表示输入成立；非空时投影不该被当成「期望为空」
  */
 function appendixSourceProblems(ctx, spec) {
-  if (ctx.offline) return [];              // 仲裁锚没有需求目录，这一层不判
   if (!appendixSpecSources(ctx.contract).length) return [];
   if (spec === null) {
     return ['读不到 spec/spec.md，附录的机器区无从投影也无从核对'
@@ -583,10 +581,6 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
  */
 export function appendixZoneProblems(ctx, storyText) {
   const problems = [];
-  // 离线仲裁锚只有一份文档：spec 与激活清单都不在手里，**没有真源可比**。
-  // 拿一份空真源去比，结论是「盘上多了一整段机器区」——而判据拦住理想产物时，
-  // 错的是判据。形态那几条（⑫）照跑，这一条留给线上。
-  if (ctx.offline) return problems;
   const appendix = appendixChapter(ctx.contract);
   if (!appendix) return problems;
   const span = chapterSpan(storyText, appendix.title);

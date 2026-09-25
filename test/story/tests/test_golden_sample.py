@@ -13,24 +13,24 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "test" / "story" / "scripts"))
+import golden_workspace  # noqa: E402
 GOLDEN = REPO_ROOT / "test" / "story" / "golden"
 INPUT_FIXTURE = REPO_ROOT / "test" / "story" / "fixtures" / "golden" / "AR90004"
 GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
-BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
 
 #: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接
 #: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
 #: 金样正文与归档图片只在 test/story/golden 维护；原始材料夹具保留自己的来源图片。
 GOLDEN_FINGERPRINTS = {
+    # 2026-09-26 附录按合同改成「定位句 + 机器区 + 作者说明」，机器区由输入夹具投影
+    # （plan/1.9.7/2026-09-25-整体设计/06 §3.4）；埋点改按指标组织，8.6 末段与灰度观察随之按两个指标写。
     # 2026-09-23 附录改为登记处（plan/1.9.5/2026-09-23-第三轮结果与表达正向设计/01 §2.1）：
     # 两份金样的附录合为四节，A 技术约定下分接口 / 数据 / 配置 / 埋点四个 H4，埋点按指标分 H5；正文未动。
     # 2026-09-07 用户裁定：章首那张时序图补两行来源标记——它同时承接
@@ -38,14 +38,16 @@ GOLDEN_FINGERPRINTS = {
     # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "35ad4854ff1396d9",
+    "story-金样-AR90004.md": "954cc153586b11b8",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
+    # 2026-09-26 AR90006 按 0903 澄清会结论与答案卷更新（签约更新接口、AC-R1 与开关口径、两件待定），
+    # 埋点标题只写指标名，材料清单按归档件的相对位置并补澄清会记录；说明里的来源与编号事实随之修正。
     # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
     # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
-    "story-金样-AR90006.md": "c822182e07acf9d0",
+    "story-金样-AR90006.md": "38e3eb18a9f6dc1b",
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
-    "story-金样-AR90006-说明.md": "51d1c482e62bc6f9",
+    "story-金样-AR90006-说明.md": "896d404e10c6557f",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",
@@ -54,11 +56,16 @@ GOLDEN_FINGERPRINTS = {
 }
 
 INPUT_FINGERPRINTS = {
-    # 2026-09-25 spec 的扩展章挂到宿主扩展锚点下（plan/1.9.6/2026-09-25-宿主扩展归位与埋点分工/01），章内正文未动。
+    # 2026-09-26 夹具补成可由现行机制检查的需求工作区（06 §3.5）：spec 9.1.4 按指标组织、
+    # 9.2/9.3 由新增的知识判断投影；补写作设计、决策登记与界面原型原件。
     "AR/design.md": "ed2119f15893b568",
+    "AR/story-src/decisions.json": "36d7a7c82f3822a6",
+    "AR/story-src/story-template.md": "e4b02703194c89bd",
+    "inbox/紧急挂失界面原型说明.docx": "5fa860eb01b25972",
     "RR/prd.md": "ff0013420c4c0741",
     "SR/design.md": "d9ccbd10489f89d1",
-    "spec/spec.md": "4ddec78a78dcbd3c",
+    "spec/knowledge-use.yaml": "12bc6c070ee1e9e3",
+    "spec/spec.md": "a7db0e55dcbe15c2",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
@@ -86,20 +93,19 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 437, "chapters": 10, "subsections": 34,
-         "table_rows": 165, "diagrams": 1, "images": 2}
+SHAPE = {"lines": 467, "chapters": 10, "subsections": 34,
+         "table_rows": 174, "diagrams": 1, "images": 2}
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
-def offline_check(story: Path) -> tuple[int, str]:
-    proc = subprocess.run(
-        ["node", str(BUILD), "check", "--offline", "--story", str(story),
-         "--project-root", str(REPO_ROOT)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-    return proc.returncode, ((proc.stderr or "") + (proc.stdout or "")).strip()
+def workspace_check(story: str | None = None) -> tuple[int, str]:
+    """金样放进它的需求工作区，经 `story-build check --feature` 判。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        golden_workspace.build(Path(tmp), story)
+        return golden_workspace.check(Path(tmp))
 
 
 class GoldenIsFrozen(unittest.TestCase):
@@ -157,9 +163,7 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
     流程图讲的是同一件事，金样把它们合成一张、改画成时序——一个围栏、两行标记。
     这正是「重复来源可以合并」的形态，也是它唯一能被机器核到的形态。
 
-    这里跑的是非 offline 的 `check`（offline 读不到上游，⑫b 那一段根本不执行）。
-    **只核图对应这一类**：金样的冻结件是那份文稿，配套的台账与材料清单是流程件，
-    不随它冻结，所以整体退出码在这个工作区里说明不了金样本身。
+    **只核图对应这一类**：去掉标记后整篇还有别的类会不会报，与这一类无关。
     """
 
     MARKS = "%% 图源 SR §3 #1\n%% 图源 spec §5.1 #1\n"
@@ -169,26 +173,7 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
         return [l.strip() for l in out.split("\n") if "在 story 里没有" in l]
 
     def check_output(self, story: str) -> str:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            feature = root / "doc" / "features" / "AR90004"
-            shutil.copytree(INPUT_FIXTURE, feature)
-            shutil.copytree(REPO_ROOT / "doc" / "extensions",
-                            root / "doc" / "extensions",
-                            ignore=shutil.ignore_patterns("node_modules"))
-            link_harness_yaml(root)
-            (feature / "AR" / "story.md").write_text(story, encoding="utf-8")
-            src = feature / "AR" / "story-src"
-            src.mkdir(parents=True, exist_ok=True)
-            (src / "decisions.json").write_text("[]", encoding="utf-8")
-            shutil.copy2(REPO_ROOT / "test/story/fixtures/failure-modes/R01-verdict-echo/good/doc"
-                         "/features/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
-            proc = subprocess.run(
-                ["node", str(BUILD), "check", "--feature", "AR90004",
-                 "--project-root", str(root)],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=90)
-        return proc.stdout + proc.stderr
+        return workspace_check(story)[1]
 
     def test_both_upstream_diagrams_are_carried(self) -> None:
         complaints = self.diagram_complaints(
@@ -217,28 +202,18 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
 class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
 
-    def test_offline_check_is_clean(self) -> None:
-        code, out = offline_check(GOLDEN_STORY)
+    def test_the_golden_passes_in_its_workspace(self) -> None:
+        code, out = workspace_check()
         self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")
 
-    def test_the_offline_judgements_actually_run(self) -> None:
+    def test_the_judgements_actually_run(self) -> None:
         """零 FAIL 要是「真的判过了」，不是「一条都没跑」。
 
-        往副本的主叙事里塞一个工程标识加一段超长的话，两条判据都该点名。
-        不验这个，`--offline` 退化成空转也没人知道。
+        往主叙事里塞一个工程标识与一个模板占位，两条判据都该点名。
         """
-        import shutil
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp) / "AR"
-            work.mkdir(parents=True)
-            shutil.copy2(GOLDEN_STORY, work / "story.md")
-            shutil.copytree(GOLDEN / "assets", work / "assets")
-            story = work / "story.md"
-            text = story.read_text(encoding="utf-8")
-            marker = "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。"
-            story.write_text(text.replace("## 2. 术语", "## 2. 术语" + marker, 1), encoding="utf-8")
-            code, out = offline_check(story)
+        text = GOLDEN_STORY.read_text(encoding="utf-8")
+        marker = "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。"
+        code, out = workspace_check(text.replace("## 2. 术语", "## 2. 术语" + marker, 1))
         self.assertEqual(1, code)
         self.assertIn("工程标识", out)
         self.assertIn("模板占位符", out)

@@ -47,7 +47,7 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 
 这是硬规则：说出解法的那一刻，测的就不再是被测模型能不能自己走通，而是宿主知不知道答案。
 
-其余纪律：按本协议 poll / 回复 / 记录；heartbeat 及代跑轮询只承担 §3.1/§4 的观测唤醒，不另派 Agent 或维护任务研究、改写被测产物，
+其余纪律：按本协议 poll / 回复 / 记录；heartbeat 与 `watch` 只承担 §3.1/§4 的观测唤醒，不另派 Agent 或维护任务研究、改写被测产物，
 避免宿主 hook 污染证据；不在主工程跑 harness。评测在 finalize 之后做，实跑期间不切换成实现维护职责。
 
 ### 0.3 人手跑一遍（不经测试装置）
@@ -145,7 +145,8 @@ features 是迁移归档，不在本轮结束时恢复；本轮 workspace/output
 宿主每一关按三步走：
 
 1. 读 `adaptive_reply_requests[]`：`question` 是模型的原话，`planned_intent` 是这一关按规划本该表达的立场，`planned_deliver` 是该交出去
-   的材料，`planned_phase` 是那句话的阶段前提，`script_cursor` 是规划走到第几条；
+   的材料，`planned_phase` 是那句话的阶段前提，`script_cursor` 是规划走到第几条。规划条目只在它的等待类型与阶段和这一问相符时给出；
+   对不上时这几项为空，`plan_note` 写「规划里没有对应这一问」，按 `answered` 只答所问；
 2. 判断这一关属于哪一种，据此决定说什么，并用 `--reply-kind` 如实标注：
 
    | `--reply-kind` | 什么时候用 | 说什么 |
@@ -164,6 +165,9 @@ features 是迁移归档，不在本轮结束时恢复；本轮 workspace/output
 - 补料：先 `--deliver` 把文件送进收件箱，再回一句「已放入」或对应选项，不描述文件里有什么；
 - 模型问了规划外的问题：一句立场，不点命令、文件、字段、关卡名，不复述它已经说过的；
 - 模型没提问：一句中性推进。
+
+**规划外的关卡**按 `answered` 一句作答，不捎带规划里别的立场：framework 的术语确认与视觉 provider 询问、模型自己开的 update
+在材料关卡问要不要补料，都属这一类。
 
 一次回话不超过一句；多说的每一个字都是宿主的话进了观测。`--reply-kind` 是记账：产物出来之后要回答「这份东西有多少是被宿主的话
 影响的」，`improvised` 那几条要连原话一起进交付报告。
@@ -188,15 +192,16 @@ python test/story/scripts/run_multi_case.py reply --suite-id story-suite-2026082
 `--deliver <文件名>`（文件名取自该 Case 的 `supplements/`）：文件先落进收件箱，那句话才排进队列；顺序反了，模型会照着
 「我放进去了」去看一个还不存在的目录。
 
-### 3.1 用脚本代跑 heartbeat 时：`reply_then_poll` 必须把宿主叫醒
+### 3.1 用 `watch` 敲门：只 poll，不回话，退出即停
 
-当轮回复的纪律只在人或模型亲自看每一次 poll 返回时成立。代跑脚本若只做「poll、按 `next_interval_sec` 睡、再 poll」，
-`reply_then_poll` 就没有出口：驱动器一直等，轮询与状态正常，`last_error` 为空，只有 `next_action` 在说该回话。代跑脚本必须：
+```powershell
+python test/story/scripts/run_multi_case.py watch --suite-id story-suite-20260822-140000 --interval 60
+```
 
-1. `next_action == "reply_then_poll"` 时立刻退出（或以其它方式唤醒宿主），不自己续睡；
-2. 退出前把「因为要回话而停」写进日志，事后看得出是等宿主，不是脚本挂了。
+`watch` 按间隔做零等待 poll，遇到以下任一情况就退出并打印原因：有 Case 要回话、有 Case 停在检查点要评测或收尾、suite 结束、
+poll 连续失败三次。每次的完整 poll 结果存到 `output/story/<suite>/host/last-poll.json`，退出后宿主读它当轮作答。
 
-脚本只负责按间隔敲门与在该叫人时叫人；判断一律留在驱动器里。
+`watch` 不回话、不判断：回话仍由宿主按 §3.0 每关一句作答，答完再起一次 `watch`。
 
 ### 3.2 原话就在 poll 返回里，取不到才走兜底
 
@@ -269,7 +274,7 @@ python test/story/scripts/run_multi_case.py conclude --suite-id story-suite-2026
 ### 3.6 等你回话没有上限
 
 worker 停在 `awaiting_reply` 会一直等，不设时限；它等的是宿主有没有把回复放进去，而宿主会被打断、会跨会话。每 5 分钟发一条
-`awaiting_reply_stale` 事件，Case 条目里带 `waited_sec`，代跑 heartbeat 的脚本据它叫人（§3.1）。等待的唯一另一个出口是 `conclude`。
+`awaiting_reply_stale` 事件，Case 条目里带 `waited_sec`，`watch` 遇到等待就退出叫人（§3.1）。等待的唯一另一个出口是 `conclude`。
 
 ## 4. 15/120 秒 heartbeat
 
@@ -283,7 +288,7 @@ Story 阶段或 awaiting_reply；本轮状态读取全部成功。第一次满�
 
 任一条件不满足立即清零。已进入 Spec 后终止的 Case 保留资格；未进入 Spec 就失败的 Case 不能触发 120 秒。120 秒期间出现等待回复、
 阶段回退或状态异常时，把同一个 heartbeat 改回 15 秒；重新连续确认两轮后再改为 120 秒。poll 返回 `reply_then_poll` 时按 §3.0 当轮
-回复并立即再次零等待 poll（脚本代跑时见 §3.1）。返回 `finalize` 时执行回灌、输出逐 Case 汇总并暂停 heartbeat，不调用 `stop`。
+回复并立即再次零等待 poll（用 `watch` 敲门时见 §3.1）。返回 `finalize` 时执行回灌、输出逐 Case 汇总并暂停 heartbeat，不调用 `stop`。
 
 heartbeat 提示词必须包含当前 suite-id，并要求：每次只执行一次 `poll --wait-sec 0`；处理自适应回复后立即再 poll；
 按 `next_interval_sec` 更新当前 heartbeat；每轮展示简短完整快照；命令失败时诊断并重试一次，仍失败则保留 15 秒节奏并报告；
@@ -354,14 +359,24 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 
 | 步 | 命令 | 为什么必须在这一步 |
 |---|---|---|
-| 1 | Case 自己停在第一检查点（`awaiting_reply`，`awaiting_kind: initial_checkpoint`） | 到目标不 break：终止就只能另起一个 run，而那时 `events.jsonl` 已被截断、游标归零、session 也要重拉——**那是重启新会话冒充续行** |
+| 1 | Case 自己停在第一检查点（`awaiting_reply`，`awaiting_kind: initial_checkpoint`）；模型最后那一问原样在 `question` 与 `pending_question` 里 | 到目标不 break：终止就只能另起一个 run，而那时 `events.jsonl` 已被截断、游标归零、session 也要重拉——**那是重启新会话冒充续行**。检查点等待期间 `reply` 一律被拒 |
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，这时复制才说得清是哪一刻。复制前后各取一次目录摘要，不一样就判这次快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段；评的是快照，不是还在动的目录 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
-| 5 | `resume-update --case <id> --text "<一句正常的业务请求>" [--deliver ...]` | 投的是业务话，不是测试控制语句；材料先到、话后到 |
+| 5 | `resume-update --case <id> --answer "<这一问的立场>" --step <规划条目> --text "<case.yaml 的 update_request>"` | 先答检查点上那一问（记为 planned），那一轮结束再投第二段的业务请求；业务请求原样取 `case.yaml` 的 `update_request`。`update_inputs` 在这一步自动投放，见下表；`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「就这份新版，按它更新」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
-| 7 | `checkpoint --point update` → 只读后评 → **`conclude`**（story 门禁已在进第二检查点等待前跑过，输入没变就直接用那次结果） | 与第一段同一套。后评做完**必须** `conclude`：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
+| 7 | `checkpoint --point update` → 只读后评 → **`conclude`**（story 门禁已在进第二检查点等待前跑过，输入没变就直接用那次结果） | 与第一段同一套。后评做完**必须** `conclude`（收工判定见 §3.5）：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段回流的那一份不被覆盖 |
+
+`update_inputs` 的三种落点，`resume-update` 时按 `kind` 自动投放：
+
+| `kind` | 投到哪 | 模拟的是 |
+|---|---|---|
+| `local_material` | 需求目录的收件箱 | 人手上的新版文档 |
+| `system` | 需求系统里那张单（`destination` 指文件） | 需求系统上的正文或评审回稿被更新，update 取上游时取回 |
+| `review_human_zone` | 评审记录里标题含 `match` 词的那条议题的人工区：勾结论、写修改意见，换行随评审记录 | 评审人在送审件上表态；找不到或找到不止一条议题就不写并记下来 |
+
+本地单没有需求系统：送审件就是工作区里的 `AR/review.md` 与 `AR/story.md`。
 
 **等待窗口里你只做两件事**：固定快照、只读评测。不要向被测会话发评分、缺陷清单、脚本路径或修法——
 那是把答案写进题面。恢复驱动之后你仍然只扮演需求方。
@@ -539,6 +554,9 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 | 7 | `doc/extensions` 非知识层**代码行**（注释与空行不计） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
+
+双检查点的 Case 按段计时：两段各记模型时间、工具时间、等人时间、verifier 次数与耗时、首次门禁与首次登记是否零阻断、返工时长
+（从门禁或审查打回到再次通过）。分段点是第一检查点的等待开始与续跑时刻（runlog 的「第一检查点」「续跑」两条）。
 
 前六项目标是诊断参照，不自动换算为质量分、重试次数或输入截断阈值。第 7 项配额限的是机制规模不是文字长短：注释算进去，省下来的只会是
 解释；逐类怎么剥注释见预算文件头部。现有脚本检查既有签定的峰值/总量，超限处置按 AGENTS §5；100%/125%/150% 新增实现预算的机械分级
