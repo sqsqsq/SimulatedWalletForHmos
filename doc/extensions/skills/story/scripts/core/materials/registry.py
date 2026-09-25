@@ -80,9 +80,7 @@ def kind_of(path: Path) -> str:
 def read_captions(feature_root: Path) -> dict[str, dict]:
     """读图片说明与取舍。坏了当没有——缺了不该让整份清单算不出来。
 
-    每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它）。
-    值也可能是一个光秃秃的字符串，那是只记说明的写法：读到字符串按
-    ``{"caption": 它}`` 升格，已经登记过的说明不丢。
+    每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它），值是对象。
     """
     try:
         data = json.loads((feature_root / Path(*CAPTIONS)).read_text(encoding="utf-8-sig"))
@@ -92,9 +90,7 @@ def read_captions(feature_root: Path) -> dict[str, dict]:
         return {}
     out: dict[str, dict] = {}
     for key, value in data.items():
-        if isinstance(value, str):
-            entry = {"caption": value} if value.strip() else {}
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             entry = {k: v for k, v in value.items()
                      if k in ("caption", "unused") and isinstance(v, str) and v.strip()}
         else:

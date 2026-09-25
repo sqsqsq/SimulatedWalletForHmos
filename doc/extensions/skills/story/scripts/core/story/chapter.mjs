@@ -246,7 +246,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}（骨架已铺在里面）；${planRel} 里`
       + `「${ctx.contract.chapters[at]?.id ?? title}」的骨架；当前 ${storyRel} 里已写的章；`
-      + `来源 ${originals}；方法见 ${guide} 的「五、十章各自怎么组织」`);
+      + `来源 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
   } else {
     rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
       + 'Spec、验收、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
@@ -256,7 +256,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；来源 ${originals}；草稿目录 `
       + `${relFromFeature(ctx, path.dirname(draftPath(ctx, 0, 'x')))}；`
-      + `方法见 ${guide} 的「四、回看」`);
+      + `方法见 ${guide} 的「六、回看」`);
   }
   rows.push(`RESULT: ${result}`);
   for (const w of warnings) rows.push(`  记一笔：${w}`);

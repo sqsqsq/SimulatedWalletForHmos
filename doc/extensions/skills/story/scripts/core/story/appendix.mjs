@@ -366,7 +366,7 @@ export function projectAppendix(ctx, storyText) {
       continue;
     }
     const block = zoneBlock(z.zone, z.source, z.rows);
-    if (at0 && zoneHandEdited(lines, at0, z.rows)) {
+    if (at0 && zoneHandEdited(lines, at0)) {
       // 停在这里，不盖。他写的那几行是他花时间想出来的；静默盖掉的话，
       // 东西没了而他不知道，下一次还会再写一遍。
       fail(`「${z.zone}」由${z.source}投影，盘上的内容与投影对不上——`

@@ -57,8 +57,7 @@ function isSeparatorRow(line) {
 /**
  * 围栏范围 —— **开闭判断只有这一处**。
  *
- * 从前三个地方各写一份（切章、区间定位、重编号），后来收成两份（`parseChapter` 与掩码）。
- * 两份仍然是两份：改一个边界条件要改两处，而它们只在样例上一致。这里出范围，
+ * 切章、区间定位、重编号都要判围栏；各写一份，改一个边界条件就要改几处。这里出范围，
  * 别处一律从范围派生——要行标记的拿 `fencedLines`，要语言与闭合状态的读这几个字段。
  *
  * **合法关闭行有三个条件**：同种标记、不短于开启标记，且标记之后到行末只有空白。
@@ -587,7 +586,7 @@ export function zoneLine(line) {
   return h ? `${h[1]} ${normalizeHeading(h[2])}` : l;
 }
 
-/** 起始标记里记着的摘要；旧稿的标记没有它，返回 null。 */
+/** 起始标记里记着的摘要；没有返回 null。 */
 export const recordedDigest = (markLine) =>
   DIGEST_IN_MARK.exec(String(markLine ?? ''))?.[1] ?? null;
 
@@ -609,19 +608,13 @@ export const zoneBlock = (name, source, rows) =>
 /**
  * 盘上这一段，是不是有人动过手 —— 动过就返回它现在的样子，没动过返回 null。
  *
- * 标记里带摘要：与盘上内容比，相等就是没人动过（真源变没变不影响这个判断，
- * 那是下一步的事）。
- *
- * 标记里没有摘要，那是**旧稿**：只能与这一次投出来的比，一样就是没人动过、
- * 补上摘要即可；不一样就无从分辨「真源变了」与「有人改了」，按改过处理——
- * 让人自己说哪一种，比替他猜错要好。
+ * 标记里的摘要与盘上内容比，相等就是没人动过（真源变没变不影响这个判断，那是下一步的事）。
+ * 标记里没有摘要就无从分辨「真源变了」与「有人改了」，按改过处理——让人自己说哪一种。
  */
-export function zoneHandEdited(lines, at, freshRows) {
+export function zoneHandEdited(lines, at) {
   const body = lines.slice(at.start + 1, at.end - 1);
   const recorded = recordedDigest(lines[at.start]);
-  const now = projectionDigest(body);
-  if (recorded) return now === recorded ? null : body;
-  return now === projectionDigest(freshRows) ? null : body;
+  return recorded && projectionDigest(body) === recorded ? null : body;
 }
 
 /**
@@ -655,7 +648,4 @@ export function zoneSpan(lines, name) {
   return end < 0 ? null : { start: at, end: end + 1 };
 }
 
-// --------------------------------------------------------------------------
-// check：整篇守恒与形态
-// --------------------------------------------------------------------------
 

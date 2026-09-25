@@ -31,13 +31,13 @@ spec 阶段是**一次 pass 产出三份**，事实同源，不得只交 `spec.m
 |---|---|---|---|
 | `spec/spec.md` | AI | **代码要求** | AI 编码 / 出用例 / 门禁 |
 | `AR/review.md` | 由 `AR/story-src/decisions.json` 渲染 + **人确认** | 每条决策的澄清叙述与人的填写位 | 评审者 |
-| `AR/story.md` | AI（按章写、按章落盘） | 完整需求叙事 + 判断 + 合规回显 | 评审者（归档件·叙事主件） |
+| `AR/story.md` | AI（按章写、按章落盘） | 完整需求叙事 + 判断 + 附录规约判定 | 评审者（归档件·叙事主件） |
 
 - `AR/review.md` **不手写**：你把每条决策登记进 `decisions.json`（什么算一条议题、澄清正文怎么分段，
   见 [`phases/story-write.md`](story-write.md) 的「决策登记」）；分层、编号与表态位由脚本生成。
   **表态位只能由评审人填**：填写位里的编号、勾选与文字你一个字都不写，推荐项也不替人预选——代填即 BLOCKER。
 - **story 不是 spec 的排版件**：spec 的可标识事实、PRD 的业务语境、SE 的全局方案，以及无编号的
-  数据与交付事实，都必须在 story 有完整落点；它还要补足判断、权衡、风险与合规回显。
+  数据与交付事实，都必须在 story 有完整落点；它还要补足判断、权衡、风险与规约判定。
 
 ### 阶段内顺序（story 在这里成文，不另起一步）
 
@@ -62,7 +62,7 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
   `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。
 - **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。
   `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后 story 冻结，
-  评审回流只改 `spec.md`，不动 story（见 SKILL.md「检视」节）。
+  要改先 `reopen`（见下「闭环之后」）。
 - **④ 之前必须走完 ①–③**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 - **⑤ 派不派只看 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次；说本宿主没有审查员就直接进 ⑥。
   **调用只带 request JSON**；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件。

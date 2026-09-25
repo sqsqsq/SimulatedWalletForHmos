@@ -248,15 +248,6 @@ class TheCaptionStoreHoldsTwoIndependentFacts(MaterialRoundCase):
         self.assertEqual("签约页", entry["caption"])
         self.assertNotIn("unused", entry)
 
-    def test_a_bare_string_is_read_as_a_caption(self) -> None:
-        """只记说明的写法：读到字符串按说明升格，已经登记过的一句不丢。"""
-        m = self.store()
-        path = self.feature_root / "ux-reference" / ".captions.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({self.a_sha(): "签约页"}, ensure_ascii=False),
-                        encoding="utf-8")
-        self.assertEqual("签约页", m.read_captions(self.feature_root)[self.a_sha()]["caption"])
-
 
 class CompleteThenMaterialChanged(MaterialRoundCase):
     """收口之后材料又变了：不开新轮，只记一笔；要重新决策显式 `reopen`。

@@ -2713,31 +2713,15 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
         self.assertEqual(0, self.project().returncode)
         self.assertIn("| NewlyExcluded | 不改 |", self.story(), "真源改了却没重投")
 
-    def test_an_old_zone_without_a_digest_just_gets_one(self) -> None:
-        """旧稿没有摘要：内容与投影一致，说明没人动过，补上摘要即可。"""
+    def test_a_zone_without_a_digest_counts_as_edited(self) -> None:
+        """标记里没有摘要：无从分辨「真源变了」与「有人改了」，按改过处理，停下问人。"""
         text = self.land()
         at = text.index("<!-- story-build:begin 改动边界")
         end = text.index("-->", at) + 3
         marker = text[at:end]
-        self.assertIn("sha256:", marker)
         stripped = marker[:marker.index(" · sha256:")] + " -->"
         self.story_path.write_text(text[:at] + stripped + text[end:], encoding="utf-8")
-        self.assertEqual(0, self.project().returncode, "旧稿没人动过却被拦下")
-        self.assertIn("sha256:", self.story()[at:at + 200], "摘要没补上")
-
-    def test_an_old_zone_that_differs_is_not_overwritten(self) -> None:
-        """旧稿而内容对不上：无从分辨「真源变了」与「有人改了」，按改过处理。
-
-        替他猜错的代价是他写的东西没了；让他自己说是哪一种，代价只是一次停顿。
-        """
-        text = self.edit_zone(self.land())
-        at = text.index("<!-- story-build:begin 改动边界")
-        end = text.index("-->", at) + 3
-        marker = text[at:end]
-        stripped = marker[:marker.index(" · sha256:")] + " -->"
-        self.story_path.write_text(text[:at] + stripped + text[end:], encoding="utf-8")
-        self.assertEqual(1, self.project().returncode, "旧稿的手改被盖掉了")
-        self.assertIn("我加的一行", self.story())
+        self.assertEqual(1, self.project().returncode, "没有摘要的投影区被当成原样覆盖了")
 
 
 class TheProjectionSpeaksTheSourceLanguage(RealRunCase):

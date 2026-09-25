@@ -87,10 +87,21 @@ export function readUse(projectRoot, feature) {
 }
 
 /**
- * 一条条目的要求 —— **列表**，一条一句。
+ * 命中、本轮落实、产生代码要求的规约编号：`applicable: true`、没有豁免、处置不是评审动作。
+ * spec 验收桥、plan 义务与两份作者任务包按同一份算，命中集合只有这一个定义。
+ */
+export function codeRequirementIds(use, knowledge) {
+  const review = new Set(knowledge.entries.filter(e => e.reviewAction).map(e => e.id));
+  return use.constraints
+    .filter(r => r?.applicable === true && !r.waived)
+    .map(r => text(r, 'id'))
+    .filter(id => id && !review.has(id));
+}
+
+/**
+ * 一条条目的要求 —— **列表**，一条一句；写成标量等价于只有一条的列表。
  *
- * 写成一段的时候，读者要在一百多字里数分号才分得出这是几件事，而每一件本来都该
- * 独立可懂。旧写法（单句）照收：那也是一条。
+ * 写成一段的时候，读者要在一百多字里数分号才分得出这是几件事，而每一件本来都该独立可懂。
  */
 export function requirements(row) {
   const raw = row?.requirement;

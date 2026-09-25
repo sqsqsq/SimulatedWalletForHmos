@@ -164,7 +164,7 @@
 `decide --gate split_carrier`：
 
 ```json
-[{"seq": 1, "carrier": "AR900xx", "scope": "入口与状态展示", "depends_on": []},
+[{"seq": 1, "carrier": "<AR 单号>", "scope": "入口与状态展示", "depends_on": []},
  {"seq": 2, "carrier": "<本 feature 名>", "scope": "核心处理链路", "depends_on": [1]},
  {"seq": 3, "carrier": "待立项", "scope": "周边适配", "depends_on": [1]}]
 ```

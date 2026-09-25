@@ -10,7 +10,7 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
-import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
+import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
@@ -23,8 +23,7 @@ function knowledgeSection(projectRoot, feature) {
   const where = f => `\`${relDisplay(projectRoot, path.join(extensionRoot(projectRoot), f.file))}\``;
   let hits = [];
   try {
-    hits = readUse(projectRoot, feature).constraints.filter(r => r?.applicable === true && !r.waived)
-      .map(r => String(r.id ?? '').trim());
+    hits = codeRequirementIds(readUse(projectRoot, feature), knowledge);
   } catch (e) {
     if (!(e instanceof UseError)) throw e;
     return ['## 1. 命中的规约与项目事实', '', `读不到 spec 的知识判断：${e.message}——先回 spec 把它补上。`];

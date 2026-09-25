@@ -28,7 +28,7 @@ const AUTHOR_DOC = 'doc/extensions/hooks/coding/author.md';
 const FIX = `处置：补齐落点实现或修正违规写法；确实落不了的回 plan 改 must（改了要重跑 plan 阶段），`
   + `再重跑 harness --phase coding。形态见 ${AUTHOR_DOC}。`;
 
-/** 落点末段标识符：`data_models.Ctx.flowId` → `flowId`；`files.a/b/X.ets` → `X`。 */
+/** 落点末段标识符：`data_models.A.b` → `b`；`files.dir/X.ext` → `X`。 */
 function tailIdentifier(entityPath) {
   const raw = String(entityPath ?? '');
   const last = raw.split('.').pop() ?? '';
@@ -112,7 +112,7 @@ export default guard('coding', async (ctx) => {
     if (reported.has(`${ob.rule}|${r.ok}|${r.detail}`)) continue;
     reported.add(`${ob.rule}|${r.ok}|${r.detail}`);
     if (!r.scanned) {
-      // 0 命中要出声：探针写错了与代码没问题，在结果上完全同形（KB-11）
+      // 0 命中要出声：探针写错了与代码没问题，在结果上完全同形
       warnings.push(`${where}扫描 0 个文件——形态可能不匹配本工程：${r.detail}`);
     } else if (r.ok) {
       continue;
@@ -164,7 +164,6 @@ export default guard('coding', async (ctx) => {
       { id: 'knowledge_landing_in_code', status: problems.length ? STATUS.FAIL : STATUS.PASS,
         // 这一条判的是**契约实体标识在不在、探针形态**，不是「义务落实了没有」——
         // 后者是语义判断，由 overlay 的同名 semantic_check 交给 verifier，告警里的证据缺口是它的输入。
-        // 名字沿用是因为它已经进了 trace 与回执；措辞在这里说清，免得被当成落实的证明。
         detail: `契约实体标识存在：义务 ${obligations.length} 条、角色 ${roles.length} 个；`
           + `问题 ${problems.length} 条`
           + (warnings.length ? `；告警 ${warnings.length} 条：${warnings.join('；')}` : '') },

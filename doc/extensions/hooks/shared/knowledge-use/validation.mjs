@@ -97,8 +97,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
     }
     const used = Array.isArray(row.used) ? row.used : [];
     if (!used.length) {
-      problems.push(`facts 的「${id}」没写 used —— 逐面一项：facet 写用了哪一面，used_for 写拿它做了什么`
-        + (row.used_for === undefined ? '' : '（整份一句的 used_for 答不了核的是哪个事实）'));
+      problems.push(`facts 的「${id}」没写 used —— 逐面一项：facet 写用了哪一面，used_for 写拿它做了什么`);
     }
     for (const u of used) {
       const facet = text(u, 'facet');
@@ -128,7 +127,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
     }
     if (isEmptyReason(text(row, 'reason'))) {
       problems.push(`constraint_domains 的「${prefix}」判整域不适用但没写依据`
-        + ' —— 依据要可回查：「本需求无新增对外开放页面或接口」是依据，「不涉及」不是');
+        + ' —— 依据要指出命中条件里哪个事实在本需求中不成立，「不涉及」不是依据');
     }
     naDomains.set(prefix, text(row, 'reason'));
   }
@@ -193,7 +192,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         problems.push(`${id} 判命中却没写 requirement —— 命中而不说要求做什么，编码那里拿不到`);
       }
       // 落点二选一，**由作者显式声明是哪一种**：`contract` 是 §9 里的实体名（验真），
-      // `impact` 是实际影响对象（RTL、图标、文案、翻译这类本来就没有 §9 实体）。
+      // `impact` 是实际影响对象（不对应 §9 登记实体的那一类）。
       // 不按「查不查得到」反推类型：接口名拼错也会滑成非实体落点，验真永远不会失败。
       const at = text(row, 'contract');
       const impact = text(row, 'impact');
@@ -258,7 +257,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         + `（在册的：${knowledge.patternIds.join('、') || '无'}）—— `
         + '候选只能查表填，通用模式名不是合法值');
     }
-    if (text(row, 'chosen') || row.chosen !== undefined) {
+    if (row.chosen !== undefined) {
       problems.push(`patterns 的「${unit}」写了 chosen —— spec 只登记候选不选型，`
         + '选型缺方案上下文，那是 plan 的事，结论落 contracts.yaml');
     }

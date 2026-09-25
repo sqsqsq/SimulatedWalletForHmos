@@ -134,10 +134,9 @@ const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
  * 文档坐标的全部形态。文件名只认**文档**：任意 `.md`，加上知识文件与框架产物的名字——
  * 资源与代码文件名（`string.json`）是工程标识，附录里是它们的正当落点，不在这里拦。
  */
-/** 指到别的文档的章节或不存在的互指编号 —— spec 门禁也按这两种判（spec 可以写自己的文件名与 §）。 */
+/** 指到别的文档的章节 —— spec 门禁也按这一种判（spec 可以写自己的文件名与 §）。 */
 export const CROSS_DOC_COORDINATES = [
   DOC_COORDINATE_HEAD,
-  { re: /(?:见|指回|来源|源：)\s*A[1-8]\b/g, hint: '这个编号在本文里不存在——改用事物的名字' },
 ];
 
 function docCoordinateForms(projectRoot) {

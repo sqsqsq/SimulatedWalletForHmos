@@ -146,7 +146,7 @@ def round_gates(contract: dict) -> list[dict]:
 
     位置一律按当前轮判，不看历史轮次展平后的末条：一轮 = 一次「初析 → 关卡」循环，
     补料后进入新一轮，上一轮选过什么就不再代表现在在哪。展平了判会出两种错——
-    第一轮选过 proceed、补料进第二轮后能直接收口；拆分定案后补料重析，想重新拆
+    上一轮的表态替补料后的新一轮收口；拆分定案后补料重析，想重新拆
     却被告知「已定案」。
     """
     return contract["rounds"][-1].get("gates", []) if contract.get("rounds") else []

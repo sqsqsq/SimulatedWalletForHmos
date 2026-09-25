@@ -3,7 +3,7 @@
  *
  * 与 `author.md` 的分工：那一页写原则与写法（为什么这么做、怎么写才算数），并且是
  * `context-exploration` 里 `key_inputs_read` 能逐字引用的坐标；这一份只出**这一次的数据**——
- * 你现在在哪、本轮激活几条、材料里有哪几张图、十章各答什么、哪些词不能用。
+ * 你现在在哪、本轮的知识判断、决策登记、材料与上游里的图、统计设计要交什么、哪些词不能用。
  *
  * 所以这里没有成段的说明文字：讲道理的话属于 `.md`，写在脚本字符串里既不好读也不好改。
  * 数据从三处真源来——章节合同、激活清单、材料清单与流程契约，改真源这里跟着变。
@@ -23,6 +23,7 @@ import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull, relDisplay 
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
+import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
@@ -115,7 +116,7 @@ function knowledgeSection(projectRoot, feature) {
       : `先跑 \`node doc/extensions/hooks/shared/knowledge-use.mjs init --feature ${feature}\` 生成骨架`
         + '（激活条目一条不落，你只填判断），填完跑 `render`。',
     '',
-    ...acceptanceKeys(useFile, projectRoot, feature),
+    ...acceptanceKeys(projectRoot, feature, knowledge),
     '怎么填、什么算依据，见 `author.md`。'];
 }
 
@@ -125,16 +126,18 @@ function knowledgeSection(projectRoot, feature) {
  * **路径按框架解析的那一个给**：它读 `<features_dir>/<feature>/acceptance.yaml`，
  * 不是 `spec/` 下面。写错一个层级，作者会为了确认到底在哪去翻框架源码。
  *
- * 漏接是 harness 的常见首红：判了 applicable 却没有对应的 `knowledge_rule`。
- * 编号列出来，作者照着接；骨架还没填时给规则本身。
+ * 命中集合与 spec 门禁同一份定义；骨架还没填或读不出时给规则本身。
  *
- * **条目长什么样也一并给**：`acceptance.schema.yaml` 只约束顶层 `criteria`，
- * 不定义条目字段，渲染不出形状；作者于是去 grep 框架的 `check-acceptance.ts`
- * 与本扩展的 `post_check.mjs`，为的只是搞清 `knowledge_rule` 放哪一层。
+ * **条目长什么样也一并给**：`acceptance.schema.yaml` 只约束顶层 `criteria`，不定义条目字段，
+ * 这里给一条满足 framework 必填项的最小条目。
  */
-function acceptanceKeys(useFile, projectRoot, feature) {
-  const text = fs.existsSync(useFile) ? fs.readFileSync(useFile, 'utf-8') : '';
-  const ids = [...text.matchAll(/^\s*-?\s*id:\s*(\S+)[\s\S]*?applicable:\s*true/gm)].map(m => m[1]);
+function acceptanceKeys(projectRoot, feature, knowledge) {
+  let ids = [];
+  try {
+    ids = codeRequirementIds(readUse(projectRoot, feature), knowledge);
+  } catch (e) {
+    if (!(e instanceof UseError)) throw e;
+  }
   return [ids.length
     ? `判 \`applicable: true\` 的每一条，都要在 \`${acceptancePath(projectRoot, feature)}\` 有一条带 `
       + `\`knowledge_rule: <编号>\` 的 criteria。本轮已判 applicable：${ids.join('、')}。`
@@ -152,6 +155,7 @@ function acceptanceKeys(useFile, projectRoot, feature) {
   '    verification_steps:',
   '      - {{怎么验}}',
   '    expected_result: {{看到什么算过}}',
+  '    ut_layer: unit',
   '    knowledge_rule: {{规约编号}}',
   '```',
   ''];
@@ -233,8 +237,7 @@ function imageSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
   const manifest = readJsonOrNull(path.join(dir, 'AR', 'story-src', 'materials.json'));
   const rows = ['## 4. 材料里的图', ''];
-  // **形状不对不是「没有图」**：清单不在、读不出、`materials` 不是数组（旧的
-  // `items`/`path` 落在这里）、`paths` 形状不对，都是缺口。静默按零张渲染的话，
+  // **形状不对不是「没有图」**：清单不在、读不出、`materials` 不是数组、`paths` 形状不对，都是缺口。静默按零张渲染的话，
   // 作者会以为这一轮不涉及图。形状判定与全篇 check、审查任务共用 `imagesIn` 一份。
   const { images, gap } = imagesIn(manifest);
   if (gap) {
@@ -291,11 +294,9 @@ function imageSection(projectRoot, feature) {
 }
 
 /**
- * 上游某一份文档里的图 —— **给坐标，不给副本**。
+ * 上游某一份文档里的图 —— 身份、主题、原件路径与围栏行范围，附这一刻的原件内容。
  *
- * 从前把每张图的围栏整段复制进任务包。那份副本一旦与原件不同步，作者改的是副本；
- * 任务包也因此长到一次读不完。现在给的是**身份、主题、原件路径与围栏行范围**，
- * 他按坐标去读原件——原件是唯一的那一份。
+ * 作者按身份写来源标记、按行范围回原件核对；附上的内容取自原件，改图改的是下游自己的那一张。
  *
  * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。
  * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
@@ -366,12 +367,6 @@ export function storyInputs(ctx, sources) {
 }
 
 /**
- * 禁用词：词表 + **在哪不算**。
- *
- * 词表、作用域、豁免三样都在这一节：哪几章整章豁免、review 的哪几类议题豁免、
- * 哪几种语境下同一个词不算，都从合同渲染，判定按同一份数据走。
- */
-/**
  * 统计设计这次要交什么、动笔前读什么、写完怎么自查——在动笔那一刻送到作者面前。
  *
  * 只说阶段任务与形状，不复述知识里的定义与步骤，也不点知识的名字：哪份讲统计设计由作者按
@@ -397,6 +392,12 @@ function statDesignSection(projectRoot, feature) {
   return rows;
 }
 
+/**
+ * 禁用词：词表 + **在哪不算**。
+ *
+ * 词表、作用域、豁免三样都在这一节：哪几章整章豁免、review 的哪几类议题豁免、
+ * 哪几种语境下同一个词不算，都从合同渲染，判定按同一份数据走。
+ */
 function vocabularySection(contract) {
   const rows = ['## 6. 这些词不能用（服务器侧词汇，单独使用也算）', ''];
   for (const { term, hint } of clientVocabulary()) rows.push(`- 「${term}」→ ${hint}`);
@@ -407,7 +408,7 @@ function vocabularySection(contract) {
     .filter(c => c?.banned_terms_exempt).map(c => c.key);
   rows.push('', '**在哪不算**：', '',
     chapters.length
-      ? `- 整章豁免：「${chapters.join('」「')}」——这几章讲的就是发布与开关动作本身；`
+      ? `- 整章豁免：「${chapters.join('」「')}」；`
       : '- 没有整章豁免的章；',
     categories.length
       ? `- 决策议题豁免：类别为「${categories.join('」「')}」的那几条，`
@@ -421,7 +422,7 @@ function vocabularySection(contract) {
 
 /**
  * 任务包正文。合同读不到就抛——任务包是它的投影，缺了没有可降级的形态，
- * 静默出一份少了五章要求的任务包比报错更贵。
+ * 静默出一份缺了合同投影的任务包比报错更贵。
  */
 function taskPackage(projectRoot, feature) {
   const contract = readJsonOrNull(path.join(SKILL_ROOT, 'contracts', 'story-chapters.json'));

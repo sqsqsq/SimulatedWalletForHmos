@@ -125,14 +125,13 @@ export function cmdCheck(ctx) {
   //    一处判（⑪），那边还会把画图围栏内部挖掉。两处各扫一遍的话，搬来的图会被这里报出来，
   //    而作者在那边刚被告知不用改。
   //
-  // 合同里的形态正则编译一次，坏的当场报出来：从前每个消费处各 catch 掉，
-  // 写错一条就静默不判，而门禁全绿。
+  // 合同里的形态正则编译一次，坏的当场报出来：写错一条就静默不判的话，门禁全绿。
   problems.push(...(ctx.idShapes?.problems ?? []));
   const acceptanceSec = sections.find(s => s.title.includes('验收'));
   for (const re of ctx.idShapes?.keep ?? []) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
-    if (!acceptanceSec) { problems.push('story 里有验收编号，却没有「质量与验收」章'); continue; }
+    if (!acceptanceSec) { problems.push('story 里有验收编号，却没有「验收」章'); continue; }
     const missed = [...inStory].filter(id => !acceptanceSec.text.includes(id));
     if (missed.length) {
       problems.push(`这些验收编号没有出现在「${acceptanceSec.title}」章：${missed.join('、')}`);

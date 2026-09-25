@@ -1,12 +1,7 @@
 /**
  * plan 阶段 post_check（实例扩展）—— 义务是否**挂到了契约实体上**。
  *
- * 基线判的是一本平行账本（契约里那个与实体无关的独立块）的形态：三重锚定、anchor 自指、
- * landing 解析、criterion/step/roles 一致性，25+ 条硬判据。账本本身没人读——framework 的
- * coding SKILL 枚举 contracts 的 7 个集合作为本阶段输入，不含它；能完整落地的规约，
- * 靠的都是挂在编码者本来就要读的契约字段上。
- *
- * 所以本阶段判三件事：
+ * 规约能完整落地，靠的是挂在编码者本来就要读的契约字段上。本阶段判三件事：
  *   ① **集合一致**——spec 判命中的条目，在契约里都有实体扛着；反过来也不多出来；
  *   ② **挂对地方**——must 只能挂五类实体，编号在册，verify 取值封闭，探针可执行；
  *   ③ **埋点逐统计点落实**——spec 埋点的每个统计点在 plan 有行、责任方法在契约里、落在该点的统计义务挂在它上面。
@@ -26,7 +21,7 @@ import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, verifyProblem }
   from '../shared/obligations.mjs';
-import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
+import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
 import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
@@ -81,15 +76,8 @@ function specHitIds(projectRoot, feature, knowledge) {
     if (e instanceof UseError) return null;
     throw e;
   }
-  const ids = new Set();
-  for (const row of use.constraints) {
-    // 本轮豁免的命中不落实，不进契约；它的去向是评审人表态
-    if (row?.applicable !== true || row.waived) continue;
-    const id = String(row.id ?? '').trim();
-    // 处置标「（评审动作）」的条目是纯流程动作，不产生代码要求，不进契约
-    if (id && !entryById(knowledge, id)?.reviewAction) ids.add(id);
-  }
-  return ids;
+  // 本轮豁免的不落实、评审动作不产生代码要求，都不进契约
+  return new Set(codeRequirementIds(use, knowledge));
 }
 
 /**
@@ -307,7 +295,7 @@ export default guard('plan', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    // 派生失败必须出声，不能静默当空集通过——那会让下面每条判据都恒真（G7）
+    // 派生失败必须出声，不能静默当空集通过——那会让下面每条判据都恒真
     obligation.problems.push(`激活知识派生失败：${e.message}`);
   }
   const noKnowledge = knowledge ? null : '激活知识派生失败';
@@ -355,7 +343,7 @@ export default guard('plan', async (ctx) => {
   } else {
     const got = new Set(obligations.map(o => o.rule).filter(Boolean));
     if (wanted.size > 0 && got.size === 0) {
-      // 派生为空要出声，不能静默当「没有义务」通过（G7）
+      // 派生为空要出声，不能静默当「没有义务」通过
       consistency.problems.push(`spec 判了 ${wanted.size} 条命中，契约里却一条 must 都没有`
         + `——义务没有落到实体上，下游零注入。处置：按 ${SECTIONS_DOC} 把每条挂到对应实体`);
     }
@@ -396,9 +384,7 @@ export default guard('plan', async (ctx) => {
 
   // ---- 5b. spec 判命中的候选，在 plan 有行、不选时有理由 ----
   //
-  // 典型失效：spec 正确命中了候选（业务信号真实），plan 拿当前的临时承载形态当理由
-  // 把它否了——**拿临时形态当信号输入**。否决在闭环内完成，没有任何人过目，
-  // 知识文件本身一个字没错。
+  // 否决理由要是业务信号的反证；拿实现载体的现状当理由，否决在闭环内完成而没人过目。
   //
   // 这里只判形式几件事：命中的候选按 (单元, 候选) 逐对有没有行、不选时理由列空不空、
   // plan 有没有把 spec 没提出的候选加进来。同一单元多个候选各配各的行——
@@ -432,7 +418,7 @@ export default guard('plan', async (ctx) => {
             if (choice.choice.includes('不选') && !choice.reason) {
               pattern.problems.push(`「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
                 + '——不选是表态有后果的决策，理由要写成业务信号的反证'
-                + '（那个业务过程为什么不满足该模式的信号），不能以当前是模拟或演示承载为由');
+                + '（那个业务过程为什么不满足该模式的信号），不能拿实现载体的现状当理由');
             }
           }
         }

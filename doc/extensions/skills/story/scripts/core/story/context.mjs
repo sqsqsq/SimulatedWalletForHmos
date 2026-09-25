@@ -61,8 +61,7 @@ export function readRaw(file) {
 /**
  * 合同里的编号形态 —— **一条命令编译一次**，结果挂在 ctx 上给所有消费者用。
  *
- * 从前每个消费处各 `new RegExp` 一次、`catch` 掉就跳过：合同里写错一条正则，那一条判据
- * 静默不判而门禁全绿；而且一次 check 里十章各编译一遍，编的是同一串字面。
+ * 各消费处自己编译、`catch` 掉就跳过的话，合同里写错一条正则，那一条判据静默不判而门禁全绿。
  * 编译放建上下文这一刻：坏配置这时就知道，报给人看由消费者决定（章内判据不该为
  * 「合同写错了」拦住作者的这一章）。
  *
@@ -125,7 +124,7 @@ export function createContext(args) {
   if (!args.feature) fail('缺 --feature');
   const { projectRoot, contract, idShapes } = commonInputs(args);
   if (!Array.isArray(contract.chapters) || contract.chapters.length === 0) {
-    // 派生为空要出声，不能当作「没有章节要求」通过（G7）
+    // 派生为空要出声，不能当作「没有章节要求」通过
     fail('章节合同解析不出任何章节——合同坏了，不是「本需求没有章节」');
   }
   const featureDir = featureRoot(projectRoot, args.feature);
@@ -186,7 +185,7 @@ function storyFrozen(ctx) {
   };
 }
 
-/** 台账冻结之后，重算它的两个命令一律拒绝执行。 */
+/** 台账冻结之后，重算它的命令（skeleton、project、chapter）一律拒绝执行。 */
 export function refuseIfFrozen(ctx, command) {
   if (!storyFrozen(ctx).written) return;
   fail(`story 已定稿登记（story_written），台账随稿冻结，${command} 不再执行。\n`
@@ -239,7 +238,7 @@ export function ledgerDigestProblems(ctx) {
   // ⓪b 台账没在登记之后被换过
   //
   // story 定稿于登记那一刻，台账记的是它据以成文的依据，于是两者一起冻。
-  // 拒绝 init 挡的是命令，挡不住有人直接改文件——指纹核对补上那一面。
+  // 拒绝命令挡不住有人直接改文件——指纹核对补上那一面。
   if (!ctx.offline) {
     for (const [name, want2] of Object.entries(storyFrozen(ctx).digests)) {
       const now = digestOf(readText(path.join(ctx.srcDir, name)));

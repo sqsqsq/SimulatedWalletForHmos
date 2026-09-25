@@ -22,7 +22,8 @@ import { readContracts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { extensionRoot, featureRoot, lines, readTextOrNull, relDisplay } from './paths.mjs';
+import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { parseYaml } from './yaml.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
@@ -134,7 +135,7 @@ function specJudgementTable(projectRoot, feature, knowledge) {
 
 /**
  * plan 及之后：每条出现过的规约一行，原条目与契约上挂着它的全部 `must` 并列。
- * 审查判「must 是不是这条规约要求的那件事、有没有把步骤终态写成对象状态这类原义偏离」，要对着原文判。
+ * 审查判「must 是不是这条规约要求的那件事、是否改变了规约原义」，要对着原文判。
  */
 function obligationTable(projectRoot, feature, knowledge) {
   const { contracts, error, exists } = readContracts(projectRoot, feature);
@@ -165,17 +166,14 @@ function overlayCheckIds(projectRoot, phase) {
   const p = path.join(extensionRoot(projectRoot), 'rules', `${phase}-rules.overlay.yaml`);
   const text = readTextOrNull(p);
   if (text === null) return { ids: [], error: `读不到 rules/${phase}-rules.overlay.yaml` };
-  const rows = lines(text);
-  const start = rows.findIndex(l => /^semantic_checks\s*:/.test(l));
-  if (start < 0) return { ids: [], error: `${phase} overlay 里没有 semantic_checks` };
-  const ids = [];
-  for (let i = start + 1; i < rows.length; i++) {
-    const line = rows[i];
-    if (!line.trim() || line.trim().startsWith('#')) continue;
-    if (!/^\s/.test(line)) break;                      // 回到顶层键，本段结束
-    const m = line.match(/^ {2}([A-Za-z_][\w]*)\s*:\s*$/);
-    if (m) ids.push(m[1]);
+  let checks;
+  try {
+    checks = parseYaml(text)?.semantic_checks;
+  } catch (e) {
+    return { ids: [], error: `${phase} overlay 解析失败：${String(e.message).split('\n')[0]}` };
   }
+  if (!checks || typeof checks !== 'object') return { ids: [], error: `${phase} overlay 里没有 semantic_checks` };
+  const ids = Object.keys(checks);
   if (!ids.length) return { ids: [], error: `${phase} overlay 的 semantic_checks 解析出零条判据` };
   // **全部送达**，不按前缀挑。framework 的任务清单只列它自己那些，overlay-only 的项
   // 不由它送；这里漏掉哪一条，哪一条就不是「任务」，审查者不会去做它。
@@ -185,7 +183,8 @@ function overlayCheckIds(projectRoot, phase) {
 export default async function preVerifier(ctx) {
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
-  const source = SOURCE_OF_TRUTH[phase] ?? SOURCE_OF_TRUTH.plan;
+  const source = SOURCE_OF_TRUTH[phase];
+  if (!source) throw new Error(`pre_verifier 不认识阶段「${phase}」：manifest 登记它的阶段要在 SOURCE_OF_TRUTH 里有一项`);
   const { ids: checkIds, error } = overlayCheckIds(ctx.projectRoot, phase);
   if (!error && !checkIds.length) return {};
   if (error) {
@@ -215,7 +214,7 @@ export default async function preVerifier(ctx) {
       : phase === 'spec' ? specJudgementTable(ctx.projectRoot, ctx.feature, knowledge)
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
-  // 读者审查放最前：它要通读一份 300 行的归档件与全部材料，是这批判据里最重的一项。
+  // 读者审查放最前：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   // 排在后面容易被当成附注跳过。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));

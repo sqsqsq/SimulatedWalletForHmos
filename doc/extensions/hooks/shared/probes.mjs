@@ -1,10 +1,7 @@
 /**
  * 探针执行 —— 机器只判它判得了、且**对已知违规有区分力**的事。
  *
- * 基线的 coding 探针是 `\b名\b` 跨文件文本存在性：不分声明/调用/注释，
- * 末段是容器名时恒真：方向性布局参数写成 left/right 这种明晃晃的违规会被它照常放行，
- * 因为它查的是「组件名在不在」，而组件名当然在。
- *
+ * 只查「名字在不在」的文本存在性不分声明、调用与注释，末段是容器名时恒真，对违规没有区分力。
  * 这里执行的是**规约自带的探针表达式**（规约表的「探针」列，随知识走）：
  * 本文件不含任何规则编号、域前缀或来自规约的正则字面——换一套知识，这里一个字都不用改。
  *
@@ -17,8 +14,7 @@ import * as path from 'node:path';
  * 把注释内容抹成空格，**保留行数与列位**（报行号要用）。
  *
  * 不剥注释的探针会把「注释里提了一句这个名字」当成真的引用或真的违规——
- * 那正是 `\b名\b` 这种探针「不分声明/调用/注释」的病：一个角色类零调用，
- * 只因另一个文件的注释里写着「这里本该组装 NodeTable」，引用可达性就判过了。
+ * 一个角色类零调用，只因另一个文件的注释里提到它的类名，引用可达性就会判过。
  *
  * 只处理 `//` 与 `/* *\/`。字符串字面量里的 `//`（如 URL）会被误当注释起点，
  * 代价是那半行不参与匹配——宁可漏判也不误判，探针的价值在于报出来的都算数。
@@ -116,8 +112,8 @@ function methodBody(text, methodName) {
  * @param {{kind: string, pattern: string, count: number|null, raw: string}} probe
  * @param {{projectRoot: string, files: string[], entityName: string, entityKind: string}} target
  * @returns {{ok: boolean, detail: string, scanned: number}}
- *   `scanned` 是实际读到的文件数。**0 命中要出声**（KB-11）：探针写错了与代码没问题，
- *   在结果上完全同形——这正是基线恒真探针的翻版。
+ *   `scanned` 是实际读到的文件数。**0 命中要出声**：探针写错了与代码没问题，
+ *   在结果上完全同形。
  */
 export function runProbe(probe, target) {
   const { projectRoot, files, entityName, entityKind } = target;

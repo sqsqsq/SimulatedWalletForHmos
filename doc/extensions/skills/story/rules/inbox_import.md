@@ -53,7 +53,7 @@ python doc/extensions/skills/story/scripts/core/import_sources.py --preview <doc
 
 ## 落盘：先写判断，再跑脚本
 
-1. 写 `doc/features/<AR>/inbox/.classify.json`，内容 `{"<文件名>":"RR|SR|AR|UX", ...}`；
+1. 写 `doc/features/<AR>/inbox/.classify.json`，内容 `{"<文件名>":"RR|SR|AR|UX|IMAGES|MEETING", ...}`；
 2. `python doc/extensions/skills/story/scripts/core/import_sources.py --feature <AR>`
 
 **为什么写文件而不是当参数传**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——

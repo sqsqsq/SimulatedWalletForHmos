@@ -193,7 +193,7 @@ export function flowProblems(featureRoot) {
   });
 
   // 收口与拆分一律按**当前轮**判：一轮 = 一次「初析 → 关卡」循环，补料会开新一轮。
-  // 展平所有轮次去判，第一轮那次 proceed 就能替补料后的新一轮授权收口。
+  // 展平所有轮次去判，上一轮的表态就会替补料后的新一轮授权收口。
   const lastRound = rounds[rounds.length - 1];
   const lastGates = Array.isArray(lastRound?.gates) ? lastRound.gates : [];
   // split 是契约级字段，但决策属于某一轮——靠 settled_round 挂钩，重新初析后不再算数
@@ -229,11 +229,10 @@ export function flowProblems(featureRoot) {
       }
     }
     // 份表回答「拆成几份、各归谁、什么顺序、谁依赖谁」；只有一段范围文字，
-    // story 05 章的必答问（兄弟各承载什么、先后依赖）就只能靠现编。
+    // story 讲范围的那一章要答的兄弟各承载什么、先后依赖，就只能靠现编。
     const parts = Array.isArray(flow.split.parts) ? flow.split.parts : [];
     if (parts.length) {
-      // feature 名从产物路径推导——本函数只拿得到 featureRoot，取 ctx 会在这里抛
-      // ReferenceError，而它只在拆分定案时才触发，平时跑 proceed 路径根本发现不了。
+      // feature 名从产物路径推导：本函数只拿得到 featureRoot。
       const feature = path.basename(featureRoot);
       const mine = parts.filter(p => String(p?.carrier ?? '').trim() === feature);
       if (mine.length !== 1) {
@@ -305,11 +304,9 @@ export function isStoryFeature(featureRoot) {
  * spec 一次 pass 产出 `spec.md` / `AR/review.md` / `AR/story.md`，三者事实同源。
  * 判据不查文件在不在：只查存在的话，**手写一份简版照样过**。
  * 查的是登记态——`story_flow.py story` 登记前会重跑 `story-build check`，
- * 登记成功即等于九项判据都过了。一处判定，一处真源。
+ * 登记成功即等于 check 的判据都过了。一处判定，一处真源。
  *
- * 把成文挪到 spec 之后当独立一步、触发条件写「归档之前」的话：本地单没有归档，
- * 这个时点不存在，于是四个阶段全绿而 story 从来没被写出来。成文回到 spec 阶段内，
- * 它就有阶段边界守着了。
+ * 成文在 spec 阶段内，由阶段边界守着：本地单没有归档这个时点，挂在归档上的触发条件永远不来。
  */
 export function storyProduced(featureRoot) {
   const { exists, flow, error } = readFlow(featureRoot);

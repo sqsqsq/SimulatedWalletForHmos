@@ -1,8 +1,7 @@
 /**
  * 图片的身份与去处 —— 引到的每一张是不是材料里登记过的那一张，登记的每一张有没有去处。
  *
- * 按**内容**认图不按文件名认：只比文件名时，同名复制进一个新目录的拦不住，
- * 而那正是「全树五份同一张图」的来路。
+ * 按**内容**认图不按文件名认：只比文件名时，同名复制进一个新目录的拦不住。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -95,9 +94,8 @@ export function imageProblems(ctx, storyText) {
   {
     // 图片身份：引到的每一张都要是材料里**登记过**的那一张。
     //
-    // 判据只有这一条：路径在登记的落点集合里。**没有「归档副本区按字节认」这条特权**——
-    // 它从前允许 `AR/assets/` 下未登记的文件靠字节相同混过去，而那正是「自建一个图片目录、
-    // 全树五份同一张图」的入口：登记里没有它，谁也说不出它是哪一轮、哪一份材料来的。
+    // 判据只有这一条：路径在登记的落点集合里，任何目录都没有按字节认的特权——
+    // 未登记的文件说不出它是哪一轮、哪一份材料来的。
     // 已经登记进材料的 assets 路径照样合法（它在登记集合里）。
     const registered = materialImages(ctx);
     if (registered?.gap) {
@@ -159,11 +157,8 @@ export function imageProblems(ctx, storyText) {
  * 材料清单里的图片对象 —— **一份形状判定，三个消费者**（全篇 check、作者包、审查任务）。
  *
  * 「没有图」只有一种：`materials` 是数组而里面没有图片记录。别的都是**缺口**：
- * 清单不在、读不出、`materials` 不是数组（旧的 `items`/`path` 就落在这里）、
- * 图片记录的 `paths` 不是非空字符串数组。当成零图放过的话，作者会以为这一轮不涉及图、
- * 审查会写「本项不适用」，而实际是清单坏了——两种在产物上看不出分别。
- *
- * 退旧兼容不等于静默漏掉旧形状：读到旧形状要说出来，让人去重算清单。
+ * 清单不在、读不出、`materials` 不是数组、图片记录的 `paths` 不是非空字符串数组。
+ * 当成零图放过的话，作者会以为这一轮不涉及图、审查会写「本项不适用」，而实际是清单坏了。
  *
  * @param {object|null} manifest 已读出的清单对象；null = 读不出或不在
  * @returns {{images: object[], gap: string|null}}
@@ -175,8 +170,7 @@ export function imagesIn(manifest) {
   }
   if (!Array.isArray(manifest.materials)) {
     return { images: [],
-      gap: 'AR/story-src/materials.json 里没有 `materials` 数组'
-        + `（旧的 \`items\`/\`path\` 形状已经不支持）${fix}` };
+      gap: `AR/story-src/materials.json 里没有 \`materials\` 数组${fix}` };
   }
   const images = manifest.materials.filter(m => String(m?.kind ?? '').includes('image'));
   const bad = images.filter(m => !Array.isArray(m.paths) || !m.paths.length

@@ -33,7 +33,7 @@
 - `original` 与那一行逐字相同，`corrected` 里不能有换行，非空行不能改成空行；
 - 没有要改的写 `[]`。
 
-写完出阅读件（**不要手写 `evidence.md`**）：
+写完用下面的命令出阅读件 `evidence.md`：
 
 ```
 python doc/extensions/skills/story/scripts/core/story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>

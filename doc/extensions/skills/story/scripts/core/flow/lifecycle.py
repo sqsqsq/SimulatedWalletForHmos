@@ -66,10 +66,8 @@ def cmd_status(feature_root: Path) -> dict:
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
     """登记「叙事件已成文」——spec 阶段三份产物的第三份到位了。
 
-    story 在 **spec 阶段内**成文：先建十章骨架，再按合同顺序一次写一章、
-    经命令原子落盘。把它挪到 spec 之后当独立一步、由子 agent 一次写成整篇的话，
-    两处都出过事——触发条件写「归档之前」而本地单没有归档，于是四个阶段全绿
-    而 story 从来没被写出来；一次写成整篇是全有或全无，子 agent 返回空就什么都不剩。
+    story 在 **spec 阶段内**成文：先建十章骨架，再按合同顺序一次写一章、经命令原子落盘。
+    成文有 spec 的阶段边界守着；逐章落盘让中途失败只影响那一章。
 
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
@@ -144,7 +142,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
-    # 之后 `story-build check` 拿它核对，`skeleton` 与 `build` 直接拒绝重算。
+    # 之后 `story-build check` 拿它核对，`skeleton`、`project` 与 `chapter` 直接拒绝重算。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
@@ -176,7 +174,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     story, review = feature_root / Path(*STORY), feature_root / Path(*REVIEW)
     for path, name in ((story, "AR/story.md"), (review, "AR/review.md")):
         if not path.is_file():
-            raise FlowError(f"{name} 不存在：归档件三缺一，无可登记的归档态")
+            raise FlowError(f"{name} 不存在：归档件不全，无可登记的归档态")
 
     checker = CORE_DIR / "story-build.mjs"
     node = shutil.which("node")

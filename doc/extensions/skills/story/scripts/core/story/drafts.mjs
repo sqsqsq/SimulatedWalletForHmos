@@ -139,7 +139,7 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
   const written = chapterState?.written ?? new Map();
   const pending = chapterState?.pending ?? new Set();
   fs.mkdirSync(path.join(ctx.srcDir, DRAFTS), { recursive: true });
-  // 设计还读不了（空壳、旧协议、缺口）就不按它铺：铺进去的占位或半截骨架会让草稿看起来被动过，
+  // 设计还读不了（空壳、形状不对、缺口）就不按它铺：铺进去的占位或半截骨架会让草稿看起来被动过，
   // 设计写好之后反而换不成骨架起点。
   const usable = Boolean(plan) && !plan.problems.length;
   ctx.contract.chapters.forEach((ch, i) => {

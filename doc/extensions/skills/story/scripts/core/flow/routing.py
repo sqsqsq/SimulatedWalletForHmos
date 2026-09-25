@@ -126,19 +126,13 @@ SPEC_STAGE_ORDER = (
 def pending_chapters(feature_root: Path) -> int:
     """story 里还带着待写记号的章数 —— **只读**，不在这里重做章级检查。
 
-    记号的真源是章节合同的 ``pending_mark``；读不到合同就退回默认字面，
-    路由不该因为一份读不出的合同而说不出下一步。
+    记号的真源是章节合同的 ``pending_mark``；合同读不到是包坏了，照实报错。
     """
     try:
         text = (feature_root / "AR" / "story.md").read_text(encoding="utf-8")
     except OSError:
         return 0
-    mark = "待写"
-    try:
-        contract = json.loads(STORY_CONTRACT.read_text(encoding="utf-8"))
-        mark = str(contract.get("pending_mark") or mark)
-    except (OSError, ValueError):
-        pass
+    mark = str(json.loads(STORY_CONTRACT.read_text(encoding="utf-8"))["pending_mark"])
     return len(re.findall(r"<!--\s*" + re.escape(mark) + r"[:：]", text))
 
 def spec_stage_step(feature_root: Path) -> tuple[str, str]:

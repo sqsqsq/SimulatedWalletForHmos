@@ -136,7 +136,7 @@ def read_classify(inbox: Path) -> dict[str, str]:
     except ValueError as exc:
         raise ImportError_(f"inbox/{CLASSIFY_FILE} 不是合法 JSON：{exc}") from exc
     if not isinstance(data, dict):
-        raise ImportError_(f"inbox/{CLASSIFY_FILE} 应是 {{\"文件名\": \"RR|SR|AR|UX\"}} 对象")
+        raise ImportError_(f"inbox/{CLASSIFY_FILE} 应是 {{\"文件名\": \"{'|'.join(CLASSES)}\"}} 对象")
     return data
 
 

@@ -39,7 +39,7 @@ export function decisionList(raw) {
   return null;
 }
 
-//: 登记表形状不对时说什么 —— 五个读点同一句，形状只在这里描述一次。
+//: 登记表形状不对时说什么 —— 各读点同一句，形状只在这里描述一次。
 const DECISION_SHAPE = '读不出条目：顶层要么是 `{"decisions": [ … ]}`，要么直接是 `[ … ]`'
   + '——`skeleton` 起手时不存在就建一份空骨架，照它的形状填';
 
@@ -126,7 +126,7 @@ export function decisionsMissing(ctx) {
  *
  * 「story 还没写完，review 先出来了」不是模型跑偏，是作业顺序把它排在了前面。
  *
- * 判据取「story 里有没有章」而不是「文件在不在」：`init` 会先落一份空骨架，
+ * 判据取「story 里有没有章」而不是「文件在不在」：`skeleton` 会先落一份空骨架，
  * 文件存在证明不了成文发生过。
  */
 function requireStoryFirst(ctx) {
@@ -140,7 +140,7 @@ function requireStoryFirst(ctx) {
 
 export function cmdBuild(ctx) {
   const decisions = readJson(ctx.decisionsPath, null);
-  if (!decisions) fail(`缺 ${ctx.decisionsPath}——先跑 init 建骨架`);
+  if (!decisions) fail(`缺 ${ctx.decisionsPath}——先跑 skeleton 建骨架`);
   requireStoryFirst(ctx);
   const list = decisionList(decisions);
   if (list === null) fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
@@ -229,7 +229,7 @@ export function decisionProblems(ctx) {
       if (keys.length && !keys.includes(category)) {
         problems.push(`决策 ${dec?.id ?? '（无编号）'} 的类别`
           + `${category ? `「${category}」不在词表里` : '没登记'}——`
-          + `从这十一类里挑一个：${keys.join(' / ')}`);
+          + `从这 ${keys.length} 类里挑一个：${keys.join(' / ')}`);
       }
     }
   }
@@ -348,8 +348,7 @@ export function reviewFormProblems(reviewText, contract) {
  *   疑问句与反问句读起来像考卷，评审人得先把它翻译成「所以你们打算怎么做」；
  * - **正文用小标题分段**，不是把五个字段拼成一串 bullet。拼成 bullet 时
  *   「问题 / 建议 / 为什么 / 影响什么 / 来源 / 请谁确认」六行——那是表单腔，
- *   字段会被填成分类名与泛词
- *   （「影响」从「单日上限口径 200 元」塌成「权限模型、接受流程」）；
+ *   字段会被填成分类名与泛词；
  * - **人工区按人要做的事给**（`REVIEW_MODES`）：选方案的填编号或另写方案，复核结论的勾确认或
  *   不同意并写原因与调整结论。没有字段表：要改成什么本来就得写字，框只让「确认」一眼可见。
  *
@@ -465,7 +464,7 @@ function renderHumanZone(dec) {
  * 范围是这一条议题：上一个议题的结束标记之后，到本议题的 `<!-- decision: ID -->`。
  * 机器区从 `#### ` 那一行起；人工区从某一行行首的填写位标签（`方案选择：` / `审核结果：`）起。
  * 人在意见里引用这两个标签是正常的，所以**不取最后一处**：从前往后找第一个让它之前的机器区
- * 与标记里记的摘要（旧稿没有标记时与这次渲染出来的）对得上的标签。一个都对不上说明机器区
+ * 与标记里记的摘要对得上的标签。一个都对不上说明机器区
  * 真被改过，这时取第一处，由调用方停下；`ambiguous` 标出范围里不止一处标签，报错时说明边界可能认不准。
  *
  * @returns {{machine: {mark, body}|null, human: string|null, ambiguous: boolean}|null}
@@ -490,8 +489,8 @@ function issueZones(reviewText, id, fresh) {
   if (head < 0) return { machine: null, human: reviewText.slice(starts[0], end + anchor.length), ambiguous: false };
   const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
   const mark = markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null;
-  const want = recordedDigest(mark) ?? projectionDigest(fresh);
-  const at = starts.find(s => projectionDigest(reviewText.slice(head + 1, s)) === want) ?? starts[0];
+  const want = recordedDigest(mark);
+  const at = (want && starts.find(s => projectionDigest(reviewText.slice(head + 1, s)) === want)) ?? starts[0];
   return { machine: { mark, body: reviewText.slice(head + 1, at) },
     human: reviewText.slice(at, end + anchor.length), ambiguous: starts.length > 1 };
 }
@@ -499,14 +498,12 @@ function issueZones(reviewText, id, fresh) {
 /**
  * 这一段有人动过手吗。
  *
- * 标记里带摘要：与盘上内容比，相等就是没人动过。没有摘要那是**旧稿**：
- * 只能与这一次渲染出来的比，一样就是没人动过；不一样就无从分辨「登记表变了」
- * 与「有人改了」，按改过处理——让人自己说是哪一种，比替他猜错要好。
+ * 标记里的摘要与盘上内容比，相等就是没人动过；没有摘要就无从分辨「登记表变了」
+ * 与「有人改了」，按改过处理——让人自己说是哪一种。
  */
-function issueHandEdited(zone, fresh) {
+function issueHandEdited(zone) {
   const recorded = recordedDigest(zone.mark);
-  const now = projectionDigest(zone.body);
-  return recorded ? now !== recorded : now !== projectionDigest(fresh);
+  return !recorded || projectionDigest(zone.body) !== recorded;
 }
 
 /**
@@ -650,7 +647,7 @@ function renderFreeformSection(inner, no = STATUS_CHAPTERS.length + 1) {
 /**
  * 类型 → 成章的自然名。
  *
- * 十一类词表有两个形态：扫描指引用原名（`安全隐私与合规落地`，带触发特征与问句），
+ * 决策类别词表有两个形态：扫描指引用原名（`安全隐私与合规落地`，带触发特征与问句），
  * 成章用自然名（`安全与隐私`）。映射是合同数据，渲染器不认识任何一个具体类别。
  * 词表里没有的类别原样成章——那是 `check` 要点名的事，渲染不替它遮掩。
  */
@@ -713,7 +710,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
       group.items.forEach((dec, ii) => {
         const machine = renderMachineZone(dec, `${no}.${gi + 1}.${ii + 1}`);
         const zones = issueZones(old, dec.id, machine);
-        if (zones?.machine && issueHandEdited(zones.machine, machine)) {
+        if (zones?.machine && issueHandEdited(zones.machine)) {
           // 停在这里，不盖，文件不动。评审人要说的话在填写位里，那一段逐字节保留；
           // 写在议题正文里的，起草方要么把它接进登记表，要么明确不接——两样都比抹掉好。
           throw new ProjectionConflict(

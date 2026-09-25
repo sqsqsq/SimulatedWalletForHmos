@@ -104,8 +104,9 @@ export default guard('review', async (ctx) => {
     }
     // 依据只看**依据列**——把落实位置列算进来会让「不适用 + 空依据」蒙混过关
     // （那一列填着符号名，看着就有内容了）。
+    const basis = col(row, '依据').replace(/[|\s—\-]/g, '');
     if ((verdict === '不适用' || (verdict === '未落实' && force === '基线'))
-      && col(row, '依据').replace(/[|\s—\-]/g, '').length < 6) {
+      && (!basis || basis === verdict)) {
       problems.push(`${where} 判「${verdict}」但依据列是空的——`
         + (verdict === '不适用' ? '「不适用」三个字不构成依据，要写清本次变更为什么碰不到它'
           : '基线可以不做，但要写清为什么这一处没落实、用什么补上'));

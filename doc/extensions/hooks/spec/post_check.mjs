@@ -15,7 +15,7 @@
  * 数值来源也只核「标没标」这个可确定格式；标了『上游约束』的，原文所指业务量
  * 是否属实、单位换算有没有依据，由 spec overlay 的数值依据判项承担。
  *
- * 契约：stdin JSON ctx → stdout JSON result（同 hooks/coding/pre_check.mjs 演示）。
+ * 契约：stdin JSON ctx → stdout JSON result。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -28,7 +28,7 @@ import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
-import { readUse, UseError } from '../shared/knowledge-use/document.mjs';
+import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
@@ -96,11 +96,10 @@ function sectionFilled(body) {
 }
 
 /**
- * 文档坐标扫描（evidence-rules §0 独立审计原则）。
+ * 文档坐标扫描（evidence-rules「不写的东西」）。
  * spec 是可独立审计的文件——结论不挂 `spec §x`/`SR §x`/`RR §x`/`AR §x` 这类章节坐标，
- * 小节之间也不用「见 A5」互指；核对由 verifier 按名称回查与开发的证据抽查关卡完成。
- * 坐标是 AI 自己写的、可以伪造（写「≤1500 ms（SR §3.1）」而该章节根本没有时延数字），
- * 换个文档就失效，且会一路带进不含这些源文件的归档件。
+ * 核对由 verifier 按名称回查与开发的证据抽查关卡完成。
+ * 坐标是作者自己写的，指向的章节里未必有那个事实；换个文档就失效，且会一路带进不含这些源文件的归档件。
  */
 function scanDocCoords(text) {
   const hits = [];
@@ -123,7 +122,7 @@ function scanDocCoords(text) {
  * 由 spec overlay 的语义判据回查原文承担——字面命中不等于同一个量，
  * 未命中也不等于没有真实来源，脚本裁不了这个真假。
  */
-const NUMERIC_RE = /(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)\b/gi;
+const NUMERIC_RE = /(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)(?![A-Za-z])/gi;
 const SOURCE_TAG_RE = /(上游约束|本工程设定|平台基线|无上游依据)/;
 
 function scanNumericSources(text) {
@@ -222,9 +221,7 @@ function knowledgeExitGroups(ctx, lines) {
   } else {
     // 命中并落实、产生代码要求的那些，要在 acceptance 里有对应验收条目（本轮豁免的不落实，不建）
     const byId = new Map(knowledge.entries.map(e => [e.id, e]));
-    const specIds = new Set(use.constraints
-      .filter(r => r.applicable === true && !r.waived && !byId.get(String(r.id ?? '').trim())?.reviewAction)
-      .map(r => String(r.id ?? '').trim()));
+    const specIds = new Set(codeRequirementIds(use, knowledge));
     bridge.problems.push(...acceptanceCoverage(ctx, specIds));
     bridge.problems.push(...reviewActionLandings(ctx, byId, use));
   }
@@ -324,17 +321,6 @@ function acceptanceCoverage(ctx, specIds) {
   return problems;
 }
 
-/**
- * spec 宿主扩展章节（core 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）：
- *   §9 技术契约 —— 给下游 AI：plan 据此编码、test-plan 据此出用例
- * 模板见 skills/story/templates/spec-sections.md。
- *
- * 判定结论（命中/不命中）不在 spec：它零条代码要求，纯粹是给评审者的完备性回显，
- * 与「spec 只装与最终代码有关的内容」相悖——它落在归档件「影响面与合规」章的判定表里，
- * 由叙事件承载、`story-build check` 核。
- * spec 只收判定**产生的代码要求**（§10）与**模式候选登记**（§11），两者独立成章。
- * 结论是不是本需求的设计，由 verifier 对着真源与材料判——那是判断，脚本判不了。
- */
 /**
  * §9 某一节里表外的第一段正文，没有就返回 null。
  *
@@ -476,7 +462,7 @@ export default guard('spec', async (ctx) => {
   // ---- 术语映射表：业务名词须有解释（story 专属）----
   // 「解释」列是扩展在 core 模板的 §0 之上追加的，附录 A 只留一句索引。
   // 判据不用白名单——**权威模块落在 in_scope_modules 里的行就是本需求的业务词汇**，
-  // 评审者必须能查到；权威模块是被消费的基础能力（账号 / 通用 UI / 工具）时可留「—」。
+  // 评审者必须能查到；权威模块不在 in_scope_modules 里的行可留「—」。
   // 数据全在 spec 自己里，加约束文件或改架构都不会让这条判据失效。
   if (isStory) {
     const scopeBlock = text.match(/in_scope_modules:\s*\n((?:\s*-\s*.+\n)+)/);
@@ -501,18 +487,16 @@ export default guard('spec', async (ctx) => {
         rows.push(cells);
       }
       // 「解释」与「权威模块」列按表头定位，不按位置：列序随编辑漂移，列名才是契约。
-      const explainIdx = headerCells
-        ? headerCells.findIndex(h => h.trim().includes('解释'))
-        : -1;
-      const moduleIdx = headerCells
-        ? headerCells.findIndex(h => h.trim().includes('权威模块'))
-        : 1;
+      const explainIdx = headerCells ? headerCells.findIndex(h => h.trim().includes('解释')) : -1;
+      const moduleIdx = headerCells ? headerCells.findIndex(h => h.trim().includes('权威模块')) : -1;
       const business = rows.filter(c => inScope.has((c[moduleIdx] ?? '').trim()));
       const noExplain = business.filter(c => {
-        const last = (c[explainIdx] ?? '').trim();
-        return !last || last === '—' || /^\[[ x]\]$/.test(last);
+        const explain = (c[explainIdx] ?? '').trim();
+        return !explain || explain === '—';
       });
-      if (rows.length > 0 && noExplain.length > 0) {
+      if (rows.length > 0 && (explainIdx < 0 || moduleIdx < 0)) {
+        problems.push('术语映射表的表头缺「权威模块」或「解释」列——按 spec 模板的 §0 表头写，判据按列名定位');
+      } else if (rows.length > 0 && noExplain.length > 0) {
         problems.push(
           `术语映射表有 ${noExplain.length} 个业务名词没写「解释」：${noExplain.map(c => (c[0] ?? '').trim()).join('、')}` +
             '——它们的权威模块在本需求 Scope 内，是本需求的业务词汇；评审叙事件的术语表从这里抄，' +

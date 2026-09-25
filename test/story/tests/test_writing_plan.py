@@ -586,7 +586,7 @@ class TenChaptersHandOverToTheRecheck(PlanCase):
             self.assertEqual(0, code, out)
         head = out.split("\n")[:2]
         self.assertTrue(head[0].startswith("NEXT: 十章齐了——回看"), head)
-        for needle in ("story-template.md", "decisions.json", "init-analysis.md", "RR/prd.md", "「四、回看」"):
+        for needle in ("story-template.md", "decisions.json", "init-analysis.md", "RR/prd.md", "「六、回看」"):
             self.assertIn(needle, head[1], f"回看的输入少了「{needle}」")
         self.assertIn("[骨架待核] 02-terms：等待态这个词评审人认不认得", out)
         code, again = self.cmd("skeleton")

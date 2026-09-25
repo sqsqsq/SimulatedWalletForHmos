@@ -137,7 +137,6 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
                 f"{'/'.join(SPLIT_PARTS)}（每份含 seq / carrier / scope / depends_on，"
                 "carrier 为本 AR 的恰好一份 = 用户选中的那份，其余份写兄弟 AR 单号或「待立项」）。"
                 "只留在对话里，会话一断就丢")
-        if parts:
             # 定案的必须是选中的：人选了第 k 份，份表就得把第 k 份给本 AR。
             # 两处各写一次，不核对的话「选的」与「记的」可以完全无关而全绿。
             mine = next(p for p in parts if p["carrier"] == feature_root.name)

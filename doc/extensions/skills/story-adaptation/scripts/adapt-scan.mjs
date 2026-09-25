@@ -358,7 +358,7 @@ const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
  * 这一次带不带对接层。
  *
  * 两种来源：**Demo** 的三个 js 是本地目录模拟需求系统的替身，复制到业务仓等于把人家的
- * 真实现盖掉；**业务仓之间**共用同一套对接实现，复刻时正该带上（A12）。
+ * 真实现盖掉；**业务仓之间**共用同一套对接实现，复刻时正该带上。
  *
  * 判据是包 manifest 的 `name`：它归目标、升级不改，所以每个仓的 manifest 里那个名字
  * 始终是它自己的——「这个包从哪个仓发出来」有唯一答案，不必靠仓名长相、目录结构
@@ -555,7 +555,7 @@ const bad = [];
 // 「相对上一个提交变了什么」，回答不了「这是谁做的」。
 //
 // 所有权已经由目录定死，`--apply` 的写入面天然不含 `knowledge/` 与 `adapters/`
-// （`packageMechanism` 一开始就把它们排除在外）——「adapt 碰没碰它们」由实现保证，
+// （`coveredFiles` 一开始就把它们排除在外）——「adapt 碰没碰它们」由实现保证，
 // 不需要再找证据。这里只回答剩下的那个问题：**这个目标现在装的是不是包的这一版。**
 {
   const pkgFiles = coveredFiles(PDIR, WITH_ADAPTERS);
@@ -571,7 +571,7 @@ const bad = [];
     if (!inPkg.has(p)) bad.push(`① 机制面多出包里没有的文件：${p}——跑 --apply 清掉`);
   }
   // 跳板在 `<ext>/` 之外，覆盖范围扫不到它们——不单独核的话，一个装坏了的宿主入口
-  // 能一直躺在那里而自检说通过，而它正是人每天敲 `/story` 打进来的地方（A7）。
+  // 能一直躺在那里而自检说通过，而它正是人每天敲 `/story` 打进来的地方。
   for (const b of BRIDGES) {
     const from = join(PKG, ...b.split('/'));
     const to = join(TARGET, ...b.split('/'));
@@ -639,7 +639,7 @@ for (const line of missingGitignoreLines(TARGET)) {
 // ⑧ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录
 //
 // 判的是**包**，不是目标。所有权由目录表达，所以根这一层必须是空的：往根下放一个
-// 脚本，它归谁就又要靠推断——而「靠推断」正是这次重写要退掉的东西。
+// 脚本，它归谁就又要靠推断；所有权只由目录表达。
 {
   const at = join(PDIR, ...SCRIPTS_DIR.split('/'));
   if (existsSync(at)) {

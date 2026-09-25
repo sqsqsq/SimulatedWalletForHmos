@@ -440,9 +440,7 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
     put("AR/design.md", ar_design_skeleton(ids))
 
     readme = SKILL_ROOT / "templates" / "inbox-readme.md"
-    put("inbox/README.md",
-        readme.read_text(encoding="utf-8") if readme.is_file()
-        else "# 收件箱\n\n把手上的需求材料放进本目录，导入步骤会归类并写入对应上游文件。\n")
+    put("inbox/README.md", readme.read_text(encoding="utf-8"))
 
     local = not system_requirement(feature)
     missing = [rel for rel in ("RR/prd.md", "SR/design.md") if rel in created]
