@@ -267,9 +267,17 @@ flowchart TD
 - [ ] **AC-G3**：页面文案通过 WalletMain 资源 key 读取；日志和埋点不包含完整卡号、完整账号或身份凭据。
 - [ ] **AC-G4**：深色主题与从右到左布局下，风险说明、主操作、重试、联系客服和结果状态保持可读、可见、可操作。
 
-## 9. 技术契约
+## 9. 宿主扩展治理项
 
-### 9.1 端云接口
+| 扩展项 | 是否涉及 | 承载位置 |
+|---|---|---|
+| 技术契约 | 是 | 9.1 |
+| 规约约束要求 | 是 | 9.2 |
+| 设计模式候选登记 | 是 | 9.3 |
+
+### 9.1 技术契约
+
+#### 9.1.1 端云接口
 
 | 云侧接口 | 新增·复用·变更 | 入参 → 出参 | 错误码 | 代码现状 |
 |---|---|---|---|---|
@@ -277,19 +285,19 @@ flowchart TD
 | `createOrReuseLossApplication` | 新增 WalletMain 卡云适配接口 | `cardId, accountScope, userConfirmation, idempotencyKey` → `applicationId, submitted` | 创建或复用失败由页面收敛为可读失败状态 | 有效申请返回原 `applicationId`；响应丢失后重试不得创建第二份申请。 |
 | `queryFreezeResult` | 新增 WalletMain 卡云适配接口 | `applicationId` → `frozen, processing, failed, reason` | 非 `frozen` 不得映射为成功 | 以卡云返回的冻结结果为成功依据；当前工程未发现现成结果查询接口。 |
 
-### 9.2 数据存储
+#### 9.1.2 数据存储
 
 | 键名/表名 | 介质 | 值结构 | 有效期 | 用途 | 代码现状 |
 |---|---|---|---|---|---|
 | `loss_report_recovery_context` | relationalStore | `maskedCardId, accountScopeHash, checkpoint, idempotencyKey, applicationIdDigest, updatedAt` | 最终成功、明确失败、账号变化或超过有效期时清理；补卡协作期按上游共享约定保留 | 页面返回、身份恢复和重试查询时恢复同一流程；按账号隔离且不随备份恢复 | `WalletMain` 当前没有该键或持久化封装；工程已有 `FinancialCard/BankCardRdbHelper.ets` 作为 relationalStore 参考。 |
 
-### 9.3 配置项
+#### 9.1.3 配置项
 
 | 配置项 | 默认值 | 行为 |
 |---|---|---|
 | `traffic_card_emergency_loss_enabled` | `false`（关闭） | 关闭或读取失败时隐藏紧急挂失入口；旧版本读取不到该项时按关闭处理。 |
 
-### 9.4 埋点
+#### 9.1.4 埋点
 
 | 事件 | 触发节点 | 归属 | 报表影响 | 代码现状 |
 |---|---|---|---|---|
@@ -297,17 +305,17 @@ flowchart TD
 | `loss_flow_result` | 收到冻结成功、处理中或失败结果 | 运维 | 新增最终状态和耗时维度；不记录完整卡号、账号或申请号 | `WalletMain` 当前无挂失埋点。 |
 | `loss_flow_recovery` | 身份回跳、冲突恢复、重试或重新进入 | 运维 | 新增恢复阶段和结果分类维度；上报失败不改变挂失结果 | `WalletMain` 当前无挂失埋点。 |
 
-### 9.5 依赖变更
+#### 9.1.5 依赖变更
 
 不涉及新增或升级外部依赖：复用 `AccountManager`、`CommUI`、`CommFunc` 的已有出口；卡云适配层由 `WalletMain` 自有代码承载。
 
-### 9.6 结果交接
+#### 9.1.6 结果交接
 
 | 交接名 | 生产条件 | 必填字段 | 禁止行为 |
 |---|---|---|---|
 | `TrafficCardFreezeHandoff` | 仅 `finalFreezeState = frozen` 或上游定义的冻结终态 | `accountId`、`cardId`、`freezeTicketId`、`finalFreezeState` | 不带入补卡地址、费用、订单、支付或制卡字段；不触发 AR90005。 |
 
-## 10. 规约约束要求
+### 9.2 规约约束要求
 
 | 编号 | 本需求的要求 | 落点契约名 |
 |---|---|---|
@@ -325,7 +333,7 @@ flowchart TD
 | ENV-02 | 页面重新进入、身份回跳和快速重复操作共享同一幂等流程状态，不重复创建请求或重复弹出恢复窗口。 | `createOrReuseLossApplication` |
 | DLV-01 | 新增或修改的页面文案形成翻译清单，并跟踪中文、英文资源的回译与合入状态。 | WalletMain 文案资源清单 |
 
-## 11. 设计模式候选登记
+### 9.3 设计模式候选登记
 
 | 适用单元 | 候选 | 命中信号或反证 |
 |---|---|---|
@@ -351,7 +359,3 @@ flowchart TD
 | 日期 | 版本 | 变更内容 | 变更人 |
 |---|---|---|---|
 | 2026-08-29 | v1.0 | 根据 RR/SR/AR、产品原型和用户确认生成 AR90004 初稿；明确不含 AR90005 补卡。 | Codex |
-
-## 宿主扩展治理项
-
-本需求的治理项行动（管理台排期 / 打点归档 / 翻译回稿 / TA 联调 / Demo）落《决策与评审记录》的上线决策与跨团队协同，此处不重复列举。

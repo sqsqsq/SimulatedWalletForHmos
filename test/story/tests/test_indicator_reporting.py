@@ -1,13 +1,13 @@
-"""埋点以指标为单位：spec §9.4 的结构、plan 埋点逐统计点落实、作者任务包与审查并列。
+"""埋点以指标为单位：spec §9.1.4 的结构、plan 埋点逐统计点落实、作者任务包与审查并列。
 
 锁住：
-  ① spec 门禁只核 9.4 的结构——总述在首个指标前，表都在某个指标（####）下，每个指标有带「统计点」列的点位表；
+  ① spec 门禁只核 9.1.4 的结构——总述在首个指标前，表都在某个指标小节（埋点的下一级）下，每个指标有带「统计点」列的点位表；
      说明表不算点位，统计点列不必在第一列；写「不涉及：<依据>」的整节不判；不核指标名、统计点名与结果写法；
-  ② plan 门禁核三件事：spec 的每个统计点在 plan 埋点小节有结果行（一点可以多行）；每条结果行的责任方法
+  ② plan 门禁核三件事：spec 的每个统计点在 plan 9.2 埋点有结果行（一点可以多行）；每条结果行的责任方法
      能解析到契约的 `interfaces[].methods[]`；spec 把规约落在某个统计点上时，该点结果行的责任方法挂了那条 must。
      照抄 spec 表的 plan（没有责任方法）FAIL，逐点落实的形状 PASS；spec 不涉及时显式未执行；
      走 /story 而 spec 缺埋点一节或没有点位表时报上游缺口，没走 /story 的按原范围跳过；
-  ③ plan 任务包给 §9.4 原文与各指标的统计点，逐结果落实的作业只在作者页；
+  ③ plan 任务包给 §9.1.4 原文与各指标的统计点，逐结果落实的作业只在作者页；
   ④ 审查任务把 spec 的每个统计点与 plan 的全部结果行按名并列，共用的点每个指标下都看得到，对不上的两边各自单列；
   ⑤ 激活清单里没有项目事实时，任务包、门禁、审查照常，只说明没有事实可核。
 全部在中性工作区里跑：机制不认识任何项目知识专名。
@@ -22,62 +22,86 @@ import test_neutral_knowledge as nk
 
 SPEC = """# {feature} spec
 
-## 9. 技术契约
+## 9. 宿主扩展治理项
 
-### 9.1 端云接口
+| 扩展项 | 是否涉及 | 承载位置 |
+|---|---|---|
+| 技术契约 | 是 | 9.1 |
+| 规约约束要求 | 是 | 9.2 |
+| 设计模式候选登记 | 是 | 9.3 |
+
+### 9.1 技术契约
+
+#### 9.1.1 端云接口
 
 | 名称 | 用途 |
 |---|---|
 | 预约接口 | 查时段与提交预约 |
 
-### 9.4 埋点
+#### 9.1.4 埋点
 
 采集预约与核销的结果分类，供运维看成功率；页面进入与点击已由工程自动采集覆盖，不重复列；字段只带阶段与结果分类。
 
-#### 预约成功率（预约流程）
+##### 预约成功率
 
-衡量从提交预约到服务方确认的比例。要算它，需要查询时段、提交预约两点的结果。
+衡量从提交预约到服务方确认的比例：分子是提交成功，分母是全部提交；打点在预约流程的查询时段与提交预约两步。
 
-| 统计点（步骤/子点） | 业务动作 | 实际适用结果 | 本端何时得知 | 已有或新增 | 代码现状 |
-|---|---|---|---|---|---|
-| 查询时段 | 进入预约时查可约时段 | 有时段 / 无时段 / 查询失败 | 查询请求返回时 | 新增 | 检索零命中 |
-| 提交预约 | 提交预约请求 | 成功 / 失败 / 用户取消 | 提交请求返回时 | 新增 | 检索零命中 |
+| 统计点（步骤/子点） | 所在流程 | 业务动作 | 实际适用结果 | 本端何时得知 | 已有或新增 | 代码现状 |
+|---|---|---|---|---|---|---|
+| 查询时段 | 预约流程 | 进入预约时查可约时段 | 有时段 / 无时段 / 查询失败 | 查询请求返回时 | 新增 | 检索零命中 |
+| 提交预约 | 预约流程 | 提交预约请求 | 成功 / 失败 / 用户取消 | 提交请求返回时 | 新增 | 检索零命中 |
 
-#### 到场核销率（核销流程）
+##### 到场核销率
 
 衡量预约后到场核销的比例。
 
-| 统计点（步骤/子点） | 业务动作 | 实际适用结果 | 本端何时得知 | 已有或新增 | 代码现状 |
-|---|---|---|---|---|---|
-| 到场核销 | 服务方扫码核销 | 已核销 | 刷新列表回查状态时 | 新增 | 检索零命中 |
+| 统计点（步骤/子点） | 所在流程 | 业务动作 | 实际适用结果 | 本端何时得知 | 已有或新增 | 代码现状 |
+|---|---|---|---|---|---|---|
+| 到场核销 | 核销流程 | 服务方扫码核销 | 已核销 | 刷新列表回查状态时 | 新增 | 检索零命中 |
 
 - 核销在服务方发生，本端只在刷新列表时得知；超期未到由服务方统计。
 
-## 10. 规约约束要求
+### 9.2 规约约束要求
 
 <!-- 由 knowledge-use.yaml 生成 -->
 
-## 11. 设计模式候选登记
+### 9.3 设计模式候选登记
 
 <!-- 由 knowledge-use.yaml 生成 -->
 """
 
-#: 逐统计点落实的 plan 埋点小节（金样形状）；`rows` 覆写统计点表。
+#: 逐统计点实现的 plan 埋点小节；`rows` 覆写逐点实现表。
 PLAN = """# 计划
-
-## 知识决策（设计输入）
-
-略。
 
 ## 6. 服务层接口定义
 
-### 埋点
+略。
 
-| 指标（流程） | 责任方法 |
-|---|---|
-| 预约成功率（预约流程） | BookingRepo.querySlots、BookingFlow.submit |
+## 9. 宿主扩展
 
-#### 预约成功率（预约流程）
+### 9.1 知识决策（设计输入）
+
+#### 9.1.1 设计模式选型
+
+本需求不涉及：无候选。
+
+#### 9.1.2 规约义务
+
+略。
+
+#### 9.1.3 项目知识影响
+
+略。
+
+### 9.2 埋点
+
+本节实现 spec 9.1.4 的预约成功率与到场核销率。
+
+#### 9.2.1 共同约定
+
+略。
+
+#### 9.2.2 逐点实现
 
 {rows}
 """
@@ -111,7 +135,7 @@ CONTRACTS = """interfaces:
             verify: ut
 """
 
-#: NEU-01 落在统计点「提交预约」上（§10 的落点引统计点名）。
+#: NEU-01 落在统计点「提交预约」上（§9.2 的落点引统计点名）。
 JUDGEMENT = ("  - id: NEU-01\n    applicable: true\n    requirement: 提交预约的结果按项目协议记录一次\n"
              "    contract: 提交预约\n  - id: NEU-02\n    applicable: false\n    reason: 本需求没有重试路径")
 
@@ -133,34 +157,34 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
     SHAPE = nk.EXT / "hooks" / "spec" / "post_check.mjs"
 
     def problems(self, body: str) -> list[str]:
-        return js(self.SHAPE, f"m.indicatorShape('§9「埋点」', {json.dumps(body.split(chr(10)))})")
+        return js(self.SHAPE, f"m.indicatorShape('§9.1.1「埋点」', {json.dumps(body.split(chr(10)))}, 4)")
 
     def test_an_overview_and_indicators_with_rows_pass(self) -> None:
-        body = SPEC.split("### 9.4 埋点", 1)[1].split("## 10.", 1)[0]
+        body = SPEC.split("#### 9.1.4 埋点", 1)[1].split("### 9.2", 1)[0]
         self.assertEqual([], self.problems(body))
 
     def test_a_table_outside_any_indicator_is_named(self) -> None:
         got = self.problems("总述一句。\n\n| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |")
-        self.assertTrue(any("不在指标小标题" in p for p in got), got)
+        self.assertTrue(any("不在指标小节下" in p for p in got), got)
 
     def test_a_missing_overview_is_named(self) -> None:
-        got = self.problems("#### 提交成功率（提交流程）\n\n| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |")
+        got = self.problems("##### 提交成功率\n\n| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |")
         self.assertTrue(any("缺总述" in p for p in got), got)
 
     def test_an_indicator_without_rows_is_named(self) -> None:
-        got = self.problems("总述一句。\n\n#### 提交成功率（提交流程）\n\n衡量提交成功的比例。")
+        got = self.problems("总述一句。\n\n##### 提交成功率\n\n衡量提交成功的比例。")
         self.assertTrue(any("下没有统计点" in p for p in got), got)
 
     def test_an_explanation_table_is_not_a_point_table(self) -> None:
-        got = self.problems("总述一句。\n\n#### 提交成功率（提交流程）\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |")
+        got = self.problems("总述一句。\n\n##### 提交成功率\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |")
         self.assertTrue(any("下没有统计点" in p for p in got), got)
 
     def test_the_point_column_need_not_come_first(self) -> None:
-        body = ("总述一句。\n\n#### 提交成功率（提交流程）\n\n衡量提交成功的比例。\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
+        body = ("总述一句。\n\n##### 提交成功率\n\n衡量提交成功的比例。\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
                 "| 实际业务结果 | 统计点 | 本端获知时机 |\n|---|---|---|\n| 已受理、拒绝 | 提交/请求 | 响应返回时 |")
         self.assertEqual([], self.problems(body))
         got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs",
-                 f"m.specStatPoints({json.dumps('### 9.4 埋点' + chr(10) + chr(10) + body)})")
+                 f"m.statPointsOfSection({json.dumps('#### 9.1.4 埋点' + chr(10) + chr(10) + body)})")
         self.assertEqual(["提交/请求"], got["groups"][0]["points"])
         self.assertEqual(["提交/请求", "已受理、拒绝", "响应返回时"], got["groups"][0]["rows"][0])
         self.assertIn("发起的提交", got["text"], "说明表留在原文里给模型读")
@@ -170,14 +194,14 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
         table = "| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |"
         for lead in ("", "<!-- 这里写定义 -->\n\n"):
             with self.subTest(lead=lead):
-                got = self.problems(f"总述一句。\n\n#### 提交成功率（提交流程）\n\n{lead}{table}")
-                self.assertTrue(any("「提交成功率（提交流程）」标题与表之间缺一段" in p for p in got), got)
-        self.assertEqual([], self.problems(f"总述一句。\n\n#### 提交成功率（提交流程）\n\n- 衡量提交成功的比例。\n\n{table}"))
+                got = self.problems(f"总述一句。\n\n##### 提交成功率\n\n{lead}{table}")
+                self.assertTrue(any("「提交成功率」缺定义段" in p for p in got), got)
+        self.assertEqual([], self.problems(f"总述一句。\n\n##### 提交成功率\n\n- 衡量提交成功的比例。\n\n{table}"))
 
     def test_the_definition_is_the_first_prose_line_before_the_table(self) -> None:
-        body = ("### 9.4 埋点\n\n总述。\n\n#### 甲（流程一）\n\n| 统计点 | 结果 |\n|---|---|\n| 一 | 成功 |\n\n表后边界。\n\n"
-                "#### 乙（流程二）\n\n<!-- 注释 -->\n衡量乙的比例。\n第二行。\n\n| 统计点 | 结果 |\n|---|---|\n| 二 | 成功 |")
-        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs", f"m.specStatPoints({json.dumps(body)})")
+        body = ("#### 9.1.4 埋点\n\n总述。\n\n##### 甲\n\n| 统计点 | 结果 |\n|---|---|\n| 一 | 成功 |\n\n表后边界。\n\n"
+                "##### 乙\n\n<!-- 注释 -->\n衡量乙的比例。\n第二行。\n\n| 统计点 | 结果 |\n|---|---|\n| 二 | 成功 |")
+        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs", f"m.statPointsOfSection({json.dumps(body)})")
         self.assertEqual(["", "衡量乙的比例。"], [g["lead"] for g in got["groups"]])
 
     def test_not_applicable_is_a_conclusion(self) -> None:
@@ -185,7 +209,7 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
 
 
 class ReportingCase(nk.NeutralKnowledgeCase):
-    """中性工作区：一份以指标组织的 spec §9.4、一份判断（NEU-01 落在「提交预约」）、契约与 plan。"""
+    """中性工作区：一份以指标组织的 spec §9.1.4、一份判断（NEU-01 落在「提交预约」）、契约与 plan。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -237,7 +261,7 @@ class ReportingCase(nk.NeutralKnowledgeCase):
         proc = subprocess.run(["node", str(self.ext / "hooks/spec/author.mjs"), "--feature", nk.FEATURE],
                               cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=90)
         self.assertEqual(0, proc.returncode, proc.stderr)
-        return proc.stdout.split("## 5. 统计设计（§9.4）", 1)[1].split("\n## ", 1)[0]
+        return proc.stdout.split("## 5. 统计设计（§9.1.4）", 1)[1].split("\n## ", 1)[0]
 
     def mark_story(self) -> None:
         flow = self.feature_root / "AR" / "story-src" / "story-flow.json"
@@ -246,7 +270,7 @@ class ReportingCase(nk.NeutralKnowledgeCase):
 
     def drop_stat_section(self) -> None:
         text = self.spec_path.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
+        start, end = text.index("#### 9.1.4 埋点"), text.index("### 9.2")
         self.spec_path.write_text(text[:start] + text[end:], encoding="utf-8")
 
     def drop_facts(self) -> None:
@@ -292,8 +316,8 @@ class ThePlanLandsEveryStatisticPoint(ReportingCase):
 
     def test_a_spec_that_does_not_apply_is_an_explicit_skip(self) -> None:
         text = self.spec_path.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
-        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
+        start, end = text.index("#### 9.1.4 埋点"), text.index("### 9.2")
+        self.spec_path.write_text(text[:start] + "#### 9.1.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
                                   + text[end:], encoding="utf-8")
         self.assertIn("埋点逐统计点落实（spec 的埋点一节写了不涉及）", self.plan_check())
 
@@ -321,8 +345,8 @@ class ThePlanLandsEveryStatisticPoint(ReportingCase):
 
     def test_a_section_without_point_tables_is_a_structure_gap(self) -> None:
         text = self.spec_path.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
-        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n总述一句。\n\n#### 预约成功率（预约流程）\n\n只有一段话。\n\n"
+        start, end = text.index("#### 9.1.4 埋点"), text.index("### 9.2")
+        self.spec_path.write_text(text[:start] + "#### 9.1.4 埋点\n\n总述一句。\n\n##### 预约成功率\n\n只有一段话。\n\n"
                                   + text[end:], encoding="utf-8")
         self.assertIn("没有指标点位表", self.plan_check())
 
@@ -333,39 +357,40 @@ class TheSpecAuthorIsToldWhatTheStatisticDesignOwes(ReportingCase):
     def test_a_story_feature_gets_the_task_and_the_current_state(self) -> None:
         self.mark_story()
         section = self.spec_package()
-        for line in ("这次要交：§9.4 先一段总述", "doc/extensions/skills/story/templates/spec-sections.md",
+        for line in ("这次要交：§9.1.4 先一段总述", "每个指标一个小节、标题写指标名；小节下先写定义段",
+                     "doc/extensions/skills/story/templates/spec-sections.md",
                      "动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它读者含 spec 的上篇", "写完后：按那一篇的应用步骤逐条回查"):
             with self.subTest(line=line):
                 self.assertIn(line, section)
-        self.assertIn("- 预约成功率（预约流程） —— 定义段：有；统计点：2 个", section)
-        self.assertIn("- 到场核销率（核销流程） —— 定义段：有；统计点：1 个", section)
+        self.assertIn("- 预约成功率 —— 定义段：有；统计点：2 个", section)
+        self.assertIn("- 到场核销率 —— 定义段：有；统计点：1 个", section)
         self.assertNotIn("knowledge/", section, "第 5 节不点知识的名字，由作者按用途自述去找")
 
     def test_a_missing_definition_is_listed(self) -> None:
         self.mark_story()
         text = self.spec_path.read_text(encoding="utf-8").replace("衡量预约后到场核销的比例。\n", "")
         self.spec_path.write_text(text, encoding="utf-8")
-        self.assertIn("- 到场核销率（核销流程） —— 定义段：缺；统计点：1 个", self.spec_package())
+        self.assertIn("- 到场核销率 —— 定义段：缺；统计点：1 个", self.spec_package())
 
     def test_before_writing_there_is_only_the_task(self) -> None:
         self.mark_story()
         self.drop_stat_section()
         section = self.spec_package()
         self.assertIn("这次要交：", section)
-        self.assertNotIn("当前 §9.4", section)
+        self.assertNotIn("当前 §9.1.4", section)
 
     def test_not_applicable_asks_for_its_basis(self) -> None:
         self.mark_story()
         text = self.spec_path.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
-        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n" + text[end:],
+        start, end = text.index("#### 9.1.4 埋点"), text.index("### 9.2")
+        self.spec_path.write_text(text[:start] + "#### 9.1.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n" + text[end:],
                                   encoding="utf-8")
-        self.assertIn("当前 §9.4 写的是「不涉及：本需求没有需要统计的业务步骤。」——核这条依据站得住。",
+        self.assertIn("当前 §9.1.4 写的是「不涉及：本需求没有需要统计的业务步骤。」——核这条依据站得住。",
                       self.spec_package())
 
     def test_a_direct_spec_is_not_asked_for_it(self) -> None:
         section = self.spec_package()
-        self.assertIn("本需求没走 /story，不要求 §9.4 的统计设计", section)
+        self.assertIn("本需求没走 /story，不要求 §9.1.4 的统计设计", section)
         self.assertNotIn("这次要交：", section)
 
 
@@ -375,10 +400,11 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
     def test_the_task_package_lists_each_point_with_its_questions(self) -> None:
         out = self.task_package()
         self.assertIn("衡量从提交预约到服务方确认的比例", out, "spec 原文没照列")
-        self.assertIn("「四、埋点」的作业逐个业务结果落实", out)
+        self.assertIn("「四、埋点」的作业逐个统计点、逐个结果落实", out)
+        self.assertIn("指标定义与口径以 spec 为准", out)
         self.assertNotIn("每个统计点都回答这几问", out, "作业只在作者页写一处")
-        self.assertIn("- **预约成功率（预约流程）**：查询时段、提交预约", out)
-        self.assertIn("- **到场核销率（核销流程）**：到场核销", out)
+        self.assertIn("- **预约成功率**：查询时段、提交预约", out)
+        self.assertIn("- **到场核销率**：到场核销", out)
         self.assertIn("neutral-facts.md", out)
 
     def test_the_author_and_reviewer_are_pointed_at_the_completion_checks(self) -> None:
@@ -405,7 +431,8 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
 
     def test_a_point_shared_by_two_indicators_shows_under_both(self) -> None:
         text = self.spec_path.read_text(encoding="utf-8").replace(
-            "| 到场核销 | 服务方扫码核销 |", "| 提交预约 | 提交预约请求 | 成功 | 提交请求返回时 | 已有 | 同上 |\n| 到场核销 | 服务方扫码核销 |")
+            "| 到场核销 | 核销流程 | 服务方扫码核销 |",
+            "| 提交预约 | 预约流程 | 提交预约请求 | 成功 | 提交请求返回时 | 已有 | 同上 |\n| 到场核销 | 核销流程 | 服务方扫码核销 |")
         self.spec_path.write_text(text, encoding="utf-8")
         self.write_plan(MULTI)
         task = self.review_task()
@@ -422,10 +449,10 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
         self.assertIn("以引用规则代替给值、或规则本可算出值却没给的，", overlay)
 
     def test_a_spec_that_does_not_apply_says_so_everywhere(self) -> None:
-        """spec §9.4 写不涉及：任务包、审查、门禁各自显式说不适用，不是静默跳过。"""
+        """spec §9.1.4 写不涉及：任务包、审查、门禁各自显式说不适用，不是静默跳过。"""
         text = self.spec_path.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
-        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
+        start, end = text.index("#### 9.1.4 埋点"), text.index("### 9.2")
+        self.spec_path.write_text(text[:start] + "#### 9.1.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
                                   + text[end:], encoding="utf-8")
         self.write_use(neutral=JUDGEMENT.replace("contract: 提交预约", "contract: 预约接口"))
         package, review = self.task_package(), self.review_task()

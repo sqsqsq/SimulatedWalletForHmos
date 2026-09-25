@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""§9 技术契约「表外有段落」这条判据，跑在**真实产物**上。
+"""§9.1 技术契约「表外有段落」这条判据，跑在**真实产物**上。
 
 它只在真实输入上才现形：判的是节内正文的行，而行的边界由切节那一步给。
 判据自己把它拼成字符串再切一遍的话，数组会以逗号连成一整行，节首那个空行
@@ -45,7 +45,7 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
         shutil.copytree(EXT, cls.root / "doc" / "extensions")
         link_harness_yaml(cls.root)
         shutil.copytree(REAL, cls.root / "doc" / "features" / FEATURE)
-        # §9 那一章只在走过 /story 的 feature 上判——夹具里补一份流程契约，
+        # §9.1 那一章只在走过 /story 的 feature 上判——夹具里补一份流程契约，
         # 否则这一整组判据整块跳过，测出来的绿是「没判」不是「判过」。
         (cls.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps({"schema": 3, "feature": FEATURE, "status": "complete",
@@ -68,15 +68,15 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
     def test_a_real_spec_has_no_stray_prose_report(self) -> None:
         """五节都是表，一段散文也没有。"""
         self.assertNotIn("表外有段落", self.report,
-                         f"真实 spec 的 §9 被误报：{self.report[:600]}")
+                         f"真实 spec 的 §9.1 被误报：{self.report[:600]}")
 
     def test_the_five_subsections_are_all_seen(self) -> None:
         """判据确实跑到了这五节上——一条都没报不等于一条都没判。"""
         spec = (REAL / "spec" / "spec.md").read_text(encoding="utf-8")
         for name in ("端云接口", "数据存储", "配置项", "埋点", "依赖变更"):
             with self.subTest(section=name):
-                self.assertIn(name, spec, "夹具的 §9 少了这一节，判据没有对象")
-        self.assertNotIn("缺少小节", self.report, f"§9 的小节没被认出来：{self.report[:600]}")
+                self.assertIn(name, spec, "夹具的 §9.1 少了这一节，判据没有对象")
+        self.assertNotIn("缺少小节", self.report, f"§9.1 的小节没被认出来：{self.report[:600]}")
 
 
 if __name__ == "__main__":
@@ -84,9 +84,9 @@ if __name__ == "__main__":
 
 
 class OnlyTheEventSectionTakesProse(TheContractSectionIsJudgedOnRealOutput):
-    """§9.4 承载完整埋点设计，可以有 H4、正文与列表；其余小节仍然只收表。"""
+    """§9.1.4 承载完整埋点设计，可以有 H4、正文与列表；其余小节仍然只收表。"""
 
-    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程，按流程写。\n\n#### 开户办理\n\n服务指标：开户成功率（运维）。\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 运维统计 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集，流程见[开户办理](#开户办理)。\n\n#### 结果查询\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
+    EVENTS = '#### 9.1.4 埋点\n\n开户与结果查询两个流程各看一个成功率。\n\n##### 开户成功率\n\n衡量开户办理的完成比例：分子是开户成功，分母是全部提交开户；打点在开户办理流程的信息校验与短信验证两步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 开户办理 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 开户办理 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集，流程见[开户成功率](#开户成功率)。\n\n##### 查询成功率\n\n衡量开户结果查询的成功比例：分子是查询成功，分母是全部查询；打点在结果查询流程的查询开户结果一步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 结果查询 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -105,10 +105,10 @@ class OnlyTheEventSectionTakesProse(TheContractSectionIsJudgedOnRealOutput):
         spec = feature / "spec" / "spec.md"
         text = spec.read_bytes().decode("utf-8")
         nl = "\r\n" if "\r\n" in text else "\n"
-        start, end = text.index("### 9.4"), text.index("### 9.5")
+        start, end = text.index("#### 9.1.4"), text.index("#### 9.1.5")
         head, rest = text[:end], text[end:]
         head = head[:start] + cls.EVENTS.replace("\n", nl)
-        at = head.index("### 9.2")
+        at = head.index("#### 9.1.2")
         head = head[:at] + head[at:].replace("|" + nl + nl, "|" + nl + nl + "这里多写了一段说明。" + nl + nl, 1)
         spec.write_bytes((head + rest).encode("utf-8"))
         driver = cls.root / "drive.mjs"
@@ -134,13 +134,13 @@ class OnlyTheEventSectionTakesProse(TheContractSectionIsJudgedOnRealOutput):
 
 
 class FiguresInTheEventSectionAreReportedAtSpec(OnlyTheEventSectionTakesProse):
-    """§9.4 投影进 Story 附录，附录不收图：图与围栏在 Spec 就报，并指到业务章。"""
+    """§9.1.4 投影进 Story 附录，附录不收图：图与围栏在 Spec 就报，并指到业务章。"""
 
     FIGURE = "![开户流程](images/open.png)\n\n"
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.EVENTS = OnlyTheEventSectionTakesProse.EVENTS.replace("#### 结果查询\n\n", cls.FIGURE + "#### 结果查询\n\n")
+        cls.EVENTS = OnlyTheEventSectionTakesProse.EVENTS.replace("##### 查询成功率\n\n", cls.FIGURE + "##### 查询成功率\n\n")
         super().setUpClass()
 
     def test_text_and_links_are_not_taken_for_figures(self) -> None:

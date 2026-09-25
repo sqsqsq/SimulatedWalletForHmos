@@ -164,6 +164,12 @@ export function headingEnd(doc, heading) {
   return next ? next.at : (doc?.lines ?? []).length;
 }
 
+/** `parent` 管到的范围里、下一级中名字匹配 `nameRe` 的第一个标题；没有返回 undefined。 */
+export function childHeading(doc, parent, nameRe) {
+  const end = headingEnd(doc, parent);
+  return doc.headings.find(h => h.at > parent.at && h.at < end && h.level === parent.level + 1 && nameRe.test(h.name));
+}
+
 /**
  * 按名字挑一项 —— **全链唯一的按名定位规则**：先精确，再包含；包含只在唯一命中时成立。
  *
@@ -552,7 +558,7 @@ export const EMPTY_SECTION_TEXT = '本需求不涉及。';
 // 机器区（投影区）的标记与定位
 // --------------------------------------------------------------------------
 //: 生成区的标记。**这段的所有者是脚本**：内容从真源投影而来，`chapter` 落盘时
-//: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（spec §9、
+//: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（spec §9.1、
 //: knowledge-use.yaml、materials.json），不是这里。
 //:
 //: 与作者区的分界就是所有权：术语的措辞、流程图的节点文字是**一次性种子**——

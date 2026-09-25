@@ -5,12 +5,12 @@
  *     node knowledge-use.mjs render --feature <名> [--project-root <路径>]
  *
  * `init` 按激活清单生成判断骨架（条目一条不落，判断留空），`render` 在判断填完之后
- * 把 spec 的 §10/§11 生成出来。
+ * 把 spec 的 §9.2/§9.3 生成出来。
  *
  * ## 为什么是这个形状
  *
  * 判断「哪条规约命中、本需求要求做什么」「哪些模式是候选」的真源是
- * `spec/knowledge-use.yaml`，§10/§11 两章是它的投影。作者只编辑 YAML，投影由本命令写：
+ * `spec/knowledge-use.yaml`，§9.2/§9.3 两章是它的投影。作者只编辑 YAML，投影由本命令写：
  * 机械判据读结构，不解析人写的表；投影与真源对不上时错的一定是投影。
  *
  * ## 三类知识各自的生命周期（合同）
@@ -64,7 +64,7 @@ function main(argv) {
   if (command !== 'render' && command !== 'init') {
     process.stderr.write('用法：knowledge-use.mjs <init|render> --feature <名> [--project-root <路径>]\n'
       + '  init   —— 按激活清单生成骨架（条目一条不落，判断留空）\n'
-      + '  render —— 判断填完之后，把 spec 的 §10/§11 生成出来\n');
+      + '  render —— 判断填完之后，把 spec 的 §9.2/§9.3 生成出来\n');
     process.exit(2);
   }
   const args = parseArgs(rest);

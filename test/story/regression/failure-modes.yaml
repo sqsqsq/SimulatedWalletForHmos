@@ -377,15 +377,15 @@ modes:
     severity: BLOCKER
     status: fixed
 
-  - id: P06-knowledge-decision-after-design
+  - id: P06-knowledge-decision-outside-anchor
     dimension: knowledge
-    found_round: "2026-08-22"
-    form: plan 的知识决策章排在它影响的设计章之后 → 位置即语义，只能是事后总结
-    clause: B1-10 / 冻结 03-C6
-    checker: p06_knowledge_decision_after_design
+    found_round: "2026-09-25"
+    form: plan 的知识决策没有写成宿主扩展锚点「9. 宿主扩展」下的 9.1，或缺设计模式选型、规约义务、项目知识影响之一
+    clause: 1.9.6 宿主扩展归位与埋点分工 02
+    checker: p06_knowledge_decision_outside_anchor
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P06-knowledge-decision-after-design/bad
-    good_fixture: test/story/fixtures/failure-modes/P06-knowledge-decision-after-design/good
+    bad_fixture: test/story/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/bad
+    good_fixture: test/story/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/good
     applicable_when: 存在 plan/plan.md
     severity: BLOCKER
     status: fixed

@@ -1224,7 +1224,7 @@ class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
 class RegistrationReprojectsFirst(unittest.TestCase):
     """登记的顺序是 project → number → check。
 
-    附录的机器区是 spec §9 与 knowledge-use.yaml 的投影，而真源在成文期间还会变；
+    附录的机器区是 spec §9.1 与 knowledge-use.yaml 的投影，而真源在成文期间还会变；
     以登记这一次为准，否则归档件里留的是一份会漂移的副本。
     """
 

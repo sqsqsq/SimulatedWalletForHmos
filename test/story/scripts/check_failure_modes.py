@@ -1109,27 +1109,28 @@ def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def p06_knowledge_decision_after_design(root: Path, ctx: Ctx) -> Outcome:
-    """知识决策章必须排在第一个设计章之前（位置即语义）。"""
+def p06_knowledge_decision_outside_anchor(root: Path, ctx: Ctx) -> Outcome:
+    """知识决策是宿主扩展锚点「9. 宿主扩展」的下一级小节 9.1，三节齐全。"""
     plan = _plan_path(root)
     if plan is None:
         return Outcome(True, "无 plan.md（不适用）")
-    lines = split_lines(read_text(plan))
-    decision_at = design_at = None
-    design_re = re.compile(r"^##\s*\d+[.、]?\s*(模块架构|数据模型|目录|页面|状态管理|服务层|路由)")
-    for i, line in enumerate(lines):
-        s = line.strip()
-        if decision_at is None and re.match(r"^##\s*知识决策", s):
-            decision_at = i
-        if design_at is None and design_re.match(s):
-            design_at = i
-    if decision_at is None:
-        return Outcome(False, "plan.md 缺「知识决策（设计输入）」章")
-    if design_at is not None and decision_at > design_at:
-        return Outcome(
-            False, f"知识决策章在第 {decision_at + 1} 行，晚于设计章第 {design_at + 1} 行（事后总结）"
-        )
-    return Outcome(True, "知识决策章先于设计章")
+    heads = [(len(m.group(1)), m.group(2).strip(), i) for i, line in enumerate(split_lines(read_text(plan)))
+             if (m := re.match(r"^(#{1,6})\s+(.+)$", line.strip()))]
+    name = lambda text: re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", text)
+    anchor = next((h for h in heads if h[0] == 2 and name(h[1]).startswith("宿主扩展")), None)
+    if anchor is None:
+        return Outcome(False, "plan.md 缺「9. 宿主扩展」章")
+    end = next((h[2] for h in heads if h[2] > anchor[2] and h[0] <= 2), 10 ** 9)
+    decision = next((h for h in heads if anchor[2] < h[2] < end and h[0] == 3
+                     and name(h[1]).startswith("知识决策")), None)
+    if decision is None:
+        return Outcome(False, "「9. 宿主扩展」下没有 9.1 知识决策")
+    d_end = next((h[2] for h in heads if h[2] > decision[2] and h[0] <= 3), 10 ** 9)
+    subs = {name(h[1]) for h in heads if decision[2] < h[2] < d_end and h[0] == 4}
+    missing = [s for s in ("设计模式选型", "规约义务", "项目知识影响") if not any(x.startswith(s) for x in subs)]
+    if missing:
+        return Outcome(False, f"9.1 知识决策缺：{'、'.join(missing)}")
+    return Outcome(True, "知识决策在宿主扩展锚点下，三节齐全")
 
 
 @checker

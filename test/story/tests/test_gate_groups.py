@@ -29,7 +29,7 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
     def test_three_independent_problems_are_named_in_one_run(self) -> None:
         """缺候选章（章节组）、编号不在册（判断组）、桥指向没要求的条目（桥接组）——一次全出。"""
         self.judged()
-        self.drop_heading("## 11. 设计模式候选登记")
+        self.drop_heading("### 9.3 设计模式候选登记")
         self.write_use(neutral=kp.judgement() + "\n  - id: NEU-99\n    applicable: false\n    reason: 没有这一条")
         self.acceptance_with("NEU-04")
         message = self.hook("spec")
@@ -42,7 +42,7 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
     def test_a_missing_exit_chapter_no_longer_hides_the_bridge(self) -> None:
         """缺「规约约束要求」章曾经直接 return：桥接问题要等作者补完章才第一次露面。"""
         self.judged()
-        self.drop_heading("## 10. 规约约束要求")
+        self.drop_heading("### 9.2 规约约束要求")
         self.acceptance_with("NEU-04")
         message = self.hook("spec")
         self.assertIn("缺「规约约束要求」章", message)
@@ -59,39 +59,44 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
 
 
 class PlanProblemsShowUpTogether(kp.ProtocolCase):
-    """plan：章节位置、契约形状、每条 must、集合一致、模式五组。"""
+    """plan：宿主扩展结构、契约形状、每条 must、集合一致、模式五组。"""
 
-    def write_plan(self, decision_first: bool) -> None:
-        decision = "## 知识决策（设计输入）\n\n### 设计模式选型\n\n" \
-            "| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n" \
-            "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n\n"
+    def write_plan(self, in_anchor: bool) -> None:
+        """in_anchor：知识决策写成「9. 宿主扩展」的 9.1；否则写成设计章之前的独立二级章。"""
+        table = ("| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n"
+                 "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n\n")
         design = "## 2. 模块架构图\n\n略。\n\n"
+        if in_anchor:
+            text = (design + "## 9. 宿主扩展\n\n### 9.1 知识决策（设计输入）\n\n#### 9.1.1 设计模式选型\n\n" + table
+                    + "#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n")
+        else:
+            text = ("## 知识决策（设计输入）\n\n### 设计模式选型\n\n" + table
+                    + "### 规约义务\n\n略。\n\n### 项目知识影响\n\n略。\n\n" + design)
         (self.feature_root / "plan").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "plan" / "plan.md").write_text(
-            "# 计划\n\n" + (decision + design if decision_first else design + decision), encoding="utf-8")
+        (self.feature_root / "plan" / "plan.md").write_text("# 计划\n\n" + text, encoding="utf-8")
 
     def test_chapter_order_and_must_placement_are_named_together(self) -> None:
         self.judged()
-        self.write_plan(decision_first=False)
+        self.write_plan(in_anchor=False)
         self.write_contracts("data_models:\n  - name: 出口记录\n    must:\n"
                              "      - rule: NEU-01\n        text: x\n        verify: review\n"
                              + kp.contracts())
         message = self.hook("plan")
-        self.assertIn("晚于第一个设计章", message)
+        self.assertIn("plan.md 缺「9. 宿主扩展」章", message)
         self.assertIn("data_models.出口记录 顶层挂了 must", message, "挂位问题没有与章节问题同轮出现")
 
     def test_an_unreadable_contract_reports_the_chapter_and_says_what_waits(self) -> None:
         self.judged()
-        self.write_plan(decision_first=False)
+        self.write_plan(in_anchor=False)
         self.write_contracts("interfaces: [\n")
         message = self.hook("plan")
         self.assertIn("解析失败", message)
-        self.assertIn("晚于第一个设计章", message, "契约读不出屏蔽了章节组")
+        self.assertIn("plan.md 缺「9. 宿主扩展」章", message, "契约读不出屏蔽了章节组")
         self.assertIn("契约解析失败", message.split("未能执行")[-1], "义务与集合组该以 skipped 写明前置")
 
     def test_a_clean_plan_passes(self) -> None:
         self.judged()
-        self.write_plan(decision_first=True)
+        self.write_plan(in_anchor=True)
         self.write_contracts(kp.contracts())
         # 中性工程没配 profile、也没有 spec：没有问题，如实记章号与埋点两条未执行
         message = self.hook("plan")
@@ -102,7 +107,7 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
     def test_use_cases_cite_acceptance_ids_that_exist(self) -> None:
         """验收编号取 acceptance 各列表条目的 id，不认前缀；只报悬空的那几个，并说出在哪条用例。"""
         self.judged()
-        self.write_plan(decision_first=True)
+        self.write_plan(in_anchor=True)
         self.write_contracts(kp.contracts())
         (self.feature_root / "acceptance.yaml").write_text(
             "criteria:\n  - id: 开户-01\n    description: x\nboundaries:\n  - id: B7\n    description: y\n",
@@ -117,7 +122,7 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
 
     def test_a_design_chapter_is_cited_by_its_real_number(self) -> None:
         self.judged()
-        self.write_plan(decision_first=True)
+        self.write_plan(in_anchor=True)
         self.write_contracts(kp.contracts())
         plan = self.feature_root / "plan" / "plan.md"
         plan.write_text(plan.read_text(encoding="utf-8").replace(

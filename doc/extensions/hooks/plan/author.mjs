@@ -2,7 +2,7 @@
  * plan 阶段作者任务包 —— **本次要做什么**，从真源渲染。
  *
  * 与 `author.md` 的分工：那一页写原则与写法，这一份只出这一次的数据——命中哪几条规约、
- * 原文在哪、项目事实在哪、spec §9.4 写了什么、有哪些统计点；逐结果落实的作业只在 `author.md`。
+ * 原文在哪、项目事实在哪、spec §9.1.4 写了什么、有哪些统计点；逐结果落实的作业只在 `author.md`。
  * 数据来源与 spec 任务包相同：激活清单、`spec/knowledge-use.yaml` 与 spec 本身。
  *
  *     node doc/extensions/hooks/plan/author.mjs --feature <名>
@@ -41,7 +41,7 @@ function statPointSection(projectRoot, feature) {
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
   const state = statDesignState(points);
-  const rows = ['## 2. 埋点：spec §9.4 的统计设计与逐结果落实', ''];
+  const rows = ['## 2. 埋点：spec §9.1.4 的统计设计与逐结果落实', ''];
   if (state === 'missing') {
     return [...rows, isStoryFeature(dir) ? 'spec 没有埋点一节：上游没交出统计设计——先回 spec 补上，不涉及也要写一行「不涉及：<依据>」。'
       : '本需求没走 /story，spec 未提供统计设计：按本阶段原有要求设计，不另起埋点小节。'];
@@ -49,7 +49,7 @@ function statPointSection(projectRoot, feature) {
   rows.push('spec 原文（指标、流程、步骤与业务结果都在这里，先通读）：', '', '````markdown', points.text, '````', '');
   if (state === 'na') return [...rows, 'spec 写的是不涉及：核这条依据站得住，plan 的埋点小节写一行「本需求不涉及：<依据>」。'];
   if (state === 'empty') return [...rows, 'spec 的埋点一节没有指标点位表：统计设计结构待补——先回 spec 在每个指标下补上带「统计点」列的表。'];
-  rows.push(`按 \`${SELF}\`「四、埋点」的作业逐个业务结果落实，形状见 \`${TEMPLATE}\` 的「埋点」小节。各指标的统计点：`, '');
+  rows.push(`按 \`${SELF}\`「四、埋点」的作业逐个统计点、逐个结果落实，形状见 \`${TEMPLATE}\` 的「9.2 埋点」；指标定义与口径以 spec 为准，plan 按统计点引用。各指标的统计点：`, '');
   for (const g of points.groups) rows.push(`- **${g.title}**：${g.points.join('、')}`);
   rows.push('', '动笔前：重读第 1 节知识清单里用途写到统计设计与上报的那份，读者含 plan 的下篇；不凭 spec 阶段的记忆写。',
     '每写完一行：按那一篇的使用约定与完成判断自查——项目规则算得出的字段都写成具体值，项目知识点名的角色在契约里都有承载它的实体与方法。',
@@ -68,7 +68,8 @@ function main(argv) {
   process.stdout.write([`# plan 阶段 · 本次任务包（${feature}）`, '',
     `\`context-exploration\` 的 \`key_inputs_read\` 要含 \`${SELF}\`——本任务包是它的展开。`, '',
     ...knowledgeSection(root, feature), '', ...statPointSection(root, feature), '',
-    `契约挂法与「知识决策」章骨架见 \`${TEMPLATE}\`。`].join('\n') + '\n');
+    '先写「9. 宿主扩展」的 9.1 知识决策，再写设计章 1–8：设计章里的实体与方法照 9.1 定。',
+    `宿主扩展章骨架与契约挂法见 \`${TEMPLATE}\`。`].join('\n') + '\n');
   return 0;
 }
 

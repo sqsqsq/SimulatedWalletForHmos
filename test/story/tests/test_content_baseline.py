@@ -17,22 +17,23 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BASELINE = REPO_ROOT / "test" / "story" / "fixtures" / "content-baseline"
 
 #: 冻结时点 2026-08-29。sha256 前 16 位。
+#: 2026-09-25 三份 spec 的扩展章挂到宿主扩展锚点下（design/1.9.6/2026-09-25-宿主扩展归位与埋点分工/01），章内正文未动。
 FINGERPRINTS = {
     "AR90004/AR/design.md": "dafdaf1a370a771e",
     "AR90004/AR/story.md": "6234f3221b52984b",
     "AR90004/RR/prd.md": "c674ac15d2ce5658",
     "AR90004/SR/design.md": "4ec7b2c05d383f93",
-    "AR90004/spec/spec.md": "cd81d17f774ae43f",
+    "AR90004/spec/spec.md": "960164f14d746dda",
     "AR90006/AR/design.md": "8c628f4d2665d77b",
     "AR90006/AR/story.md": "216bf749040bc2e6",
     "AR90006/RR/prd.md": "ad4e8eb73e30438b",
     "AR90006/SR/design.md": "0da37518fd99c443",
-    "AR90006/spec/spec.md": "2ffcc2380b97d225",
+    "AR90006/spec/spec.md": "d8fab137ea722495",
     "ISSUE-410/AR/design.md": "f261b6bf08f42781",
     "ISSUE-410/AR/story.md": "0c1414840dc41695",
     "ISSUE-410/RR/prd.md": "d60ff729c11b385c",
     "ISSUE-410/SR/design.md": "6bb145d5faa553a4",
-    "ISSUE-410/spec/spec.md": "2c0fc08405822f2b",
+    "ISSUE-410/spec/spec.md": "502dff392e761597",
 }
 
 #: 冻结时点的形态。批次 4 的「形态守恒」以此为源侧参照。

@@ -141,7 +141,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         text = self.pre_verifier("spec")
         self.assertIn("原知识与仓内事实是审查依据", text)
         row = next(l for l in text.splitlines() if l.startswith("| NEU-02 |"))
-        for part in ("红线", "重复触发时复用同一个标识", "有重试路径", "重试复用", "命中：重试复用标识", "§9 · 中性出口接口"):
+        for part in ("红线", "重复触发时复用同一个标识", "有重试路径", "重试复用", "命中：重试复用标识", "§9.1 · 中性出口接口"):
             self.assertIn(part, row)
         self.assertIn("不命中：本需求的出口不计耗时", next(l for l in text.splitlines() if l.startswith("| NEU-04 |")))
 

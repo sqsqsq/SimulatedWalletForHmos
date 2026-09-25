@@ -1,22 +1,31 @@
 /**
  * 统计点 —— spec「埋点」一节与 plan「埋点」小节的读取，任务包、门禁与审查共用这一份。
  *
- * 只认模板结构：spec 的埋点一节下每个 `####` 是一个指标，表头含「统计点」的表是它的点位表；plan 的埋点小节里
- * 表头含「统计点」的那一列是统计点、含「责任方法」的那一列是它的责任方法，同一统计点可以有多行结果。
+ * 只认模板结构，层级由找到的父标题推出：spec 的埋点是「技术契约」的下一级小节，其下一级的每个标题是一个指标，
+ * 表头含「统计点」的表是它的点位表；plan 的埋点是「宿主扩展」的下一级小节，表头含「统计点」的那一列是统计点、
+ * 含「责任方法」的那一列是它的责任方法，同一统计点可以有多行结果。
  * 不认任何知识文件名、渠道名、结果枚举或编码——那些只在项目知识里。
  */
-import { headingEnd, parseDocument, tablesWithin } from '../../skills/story/scripts/core/story/document.mjs';
+import { childHeading, headingEnd, parseDocument, tablesWithin } from '../../skills/story/scripts/core/story/document.mjs';
 
 const NA = /^(本需求)?不涉及[:：]?\s*\S/;
 const clean = (s) => String(s ?? '').replace(/[`*]/g, '').trim();
 //: 「接口.方法」形态的引用：plan 表里责任方法这么写，契约里按 `interfaces.<接口>.<方法>` 找。
 const METHOD_REF = /[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*/g;
 
-/** 某一级标题名含「埋点」的那一节：`{ doc, from, to }`；没有返回 null。 */
-function section(text, level) {
+/** 名字匹配 `parentRe` 的标题之下、下一级里名含「埋点」的那一节：`{ doc, h, from, to }`；没有返回 null。 */
+function section(text, parentRe) {
   const doc = parseDocument(String(text ?? ''));
-  const h = doc.headings.find(x => x.level === level && /埋点/.test(x.raw));
+  const parent = doc.headings.find(x => parentRe.test(x.name));
+  const h = parent && childHeading(doc, parent, /埋点/);
   return h ? { doc, h, from: h.at + 1, to: headingEnd(doc, h) } : null;
+}
+
+/** 一段以埋点标题开头的正文：`{ doc, h, from, to }`；首个标题不是埋点返回 null。 */
+function leadingSection(text) {
+  const doc = parseDocument(String(text ?? ''));
+  const h = doc.headings[0];
+  return h && /埋点/.test(h.name) ? { doc, h, from: h.at + 1, to: headingEnd(doc, h) } : null;
 }
 
 /** 一节正文里写出来的「不涉及：<依据>」（写在任何小标题之前）；没有返回 null。 */
@@ -36,12 +45,20 @@ function notApplicable(doc, from, to) {
  * `rows` 是对应的整行——统计点那一格挪到首位，其余格保持原来的相对顺序。
  */
 export function specStatPoints(specText) {
-  const s = section(specText, 3);
+  return statPoints(section(specText, /技术契约/));
+}
+
+/** 同 `specStatPoints`，读一段以埋点标题开头的正文（门禁拿到的就是这一节）。 */
+export function statPointsOfSection(sectionText) {
+  return statPoints(leadingSection(sectionText));
+}
+
+function statPoints(s) {
   if (!s) return null;
   const { doc, from, to } = s;
-  const h4s = doc.headings.filter(x => x.level === 4 && x.at > s.h.at && x.at < to);
-  const groups = h4s.map((h, k) => {
-    const end = h4s[k + 1]?.at ?? to;
+  const indicators = doc.headings.filter(x => x.level === s.h.level + 1 && x.at > s.h.at && x.at < to);
+  const groups = indicators.map((h, k) => {
+    const end = indicators[k + 1]?.at ?? to;
     const tables = tablesWithin(doc, h.at + 1, end);
     const lead = doc.lines.slice(h.at + 1, tables[0]?.line ?? end).map(l => l.trim())
       .find(l => l && !l.startsWith('<!--') && !l.startsWith('|')) ?? '';
@@ -67,11 +84,10 @@ export function statDesignState(points) {
 }
 
 /**
- * plan 的埋点小节：`{ na, rows: [{ point, methods, cells }] }`，没有这一节返回 null。
- * 小节可以是 `###` 或 `####`（挂在服务层接口定义章下）。
+ * plan 的埋点小节（「宿主扩展」的下一级）：`{ na, rows: [{ point, methods, cells }] }`，没有这一节返回 null。
  */
 export function planStatRows(planText) {
-  const s = section(planText, 3) ?? section(planText, 4);
+  const s = section(planText, /^宿主扩展/);
   if (!s) return null;
   const { doc, from, to } = s;
   const rows = [];

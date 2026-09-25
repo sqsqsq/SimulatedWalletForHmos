@@ -7,10 +7,12 @@ semantic_checks:
     description: >
       spec 要能交给 plan 去设计：业务关系走得通，规约的适用判断落在真实的设计上。先沿材料里的业务流程走一遍
       业务章与承载专项的那一章（实际会发生的正常、异常与未执行路径各到哪、结果由谁得到），再看 `spec/knowledge-use.yaml`
-      （§10/§11 是它的投影）里的判断与这份设计是否一致。
+      （§9.2/§9.3 是它的投影）里的判断与这份设计是否一致。
       命中的条目：requirement 说清落在哪个接口、存储键、字段或业务步骤上，并且承载章里真有对应的设计；
       只把规约要求换句话说一遍、或只列名目看不出方案的，FAIL。原文（含落法附注）要求讲清的专项写在承载它的那一章，
-      例如 §9.4 按指标看：指标观察的流程、起止与范围讲清了，材料里的业务目标与这个指标的关系说明了；
+      例如 §9.1.4 按指标看：每个指标小节的标题是指标名，定义段读得出口径（分子与分母各是本端哪些结果）、
+      每次上报带什么信息与打点位置（哪些流程、哪些步骤）；材料里的业务目标与这个指标的关系说明了，
+      以后台数据为分母的写了需要什么数据、由谁统计；
       沿流程列出的步骤与实际业务结果算得出这个指标（算不出就是漏了步骤或结果）；结果写的是业务结果，实现层的取值留给 plan；
       标为已有覆盖的，项目知识里确登记为已实现——只是规范、尚未实现的不算覆盖，当前指标要用的数据仍要写出；每个结果本端何时、凭什么得知可以指认，远端拿不到的写明了由谁统计或待决。
       关键结论有源材料或已定决定支持：`AR/story-src/decisions.json` 里仍 open 的选择，没有被写成无条件的行为或验收——
@@ -49,15 +51,15 @@ semantic_checks:
       details 写你判出问题的那几条与依据；不出裁决表、不为每条找引文。
   spec_ext_conclusion_validity:
     description: >
-      spec §9 技术契约与 story 附录「技术约定」的结论须真实、具体、可按名回查：结论中写全了它谈论的东西的名字
+      spec §9.1 技术契约与 story 附录「技术约定」的结论须真实、具体、可按名回查：结论中写全了它谈论的东西的名字
       （接口名/存储键/事件名/配置项名/模块名/错误码），且该名字在 spec、SR 或代码中确实存在、
       语义一致；「不涉及」条目附有判断依据（现状扫描或 Scope 声明）；无凭空推断。
       **spec 不写文档坐标**（见 evidence-rules「不写的东西」）——核对靠按名回查，不靠产物给出处。
-      **未走 /story 的 feature（无 AR/story-src/story-flow.json）本检查 SKIP**——§9 技术契约与 story
+      **未走 /story 的 feature（无 AR/story-src/story-flow.json）本检查 SKIP**——§9.1 技术契约与 story
       附录都是扩展新增的落点，那种场景下两者都不存在。
     severity: MAJOR
     ai_prompt_hint: >
-      抽查 spec §9 技术契约与 story 附录「技术约定」中至少 3 条事实（优先抽「新增/修改」类结论）：取出结论里的具体名字
+      抽查 spec §9.1 技术契约与 story 附录「技术约定」中至少 3 条事实（优先抽「新增/修改」类结论）：取出结论里的具体名字
       （如 createBusinessOrder、last_business_context、feature_entry_enabled），到
       doc/features/{module}/spec/spec.md、SR/design.md、RR/prd.md 与 in_scope 模块源码中检索该名字，
       判断结论是否被支撑。**特别核查数值，且两个产物判据不同**（形态真源见
@@ -79,18 +81,18 @@ semantic_checks:
   upstream_inputs_coverage:
     description: >
       上游输入覆盖（信息守恒）：doc/features/{module}/ 下存在 SR/design.md 或 RR/prd.md 时，
-      spec/context-exploration.md 的 key_inputs_read 须包含它们；spec 业务流程图与 §9.1 端云接口
+      spec/context-exploration.md 的 key_inputs_read 须包含它们；spec 业务流程图与 §9.1.1 端云接口
       的端云结论不得与 SR/design.md 的端云声明矛盾。
     severity: MAJOR
     ai_prompt_hint: >
       检查 doc/features/{module}/SR/design.md 与 RR/prd.md 是否存在；存在则核对
       context-exploration.md key_inputs_read 是否覆盖；再比对 SR 中与本部件相关的端云接口
-      声明与 spec 流程图/§9.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
+      声明与 spec 流程图/§9.1.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
       或两者接口清单矛盾，即 FAIL。SR/RR 均不存在时本检查 SKIP。
       对象是 **SR 声明的每个与本部件相关的接口**，逐个核。
       **每条裁决给得出回查位置**：指到 SR/design.md 的哪一节，或抄一段能检索到的原文——
       够支撑这条判断就行，不按长度计。
-      既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的 §9.1 表格复制一遍的，
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的 §9.1.1 表格复制一遍的，
       该条按**未裁**处理。
   split_boundary_consistency:
     description: >
@@ -166,7 +168,7 @@ semantic_checks:
       （节点同名、带着图源标记不等于关系还在；任务书把每张上游图与承接它的 story 图并排给出，逐张对照，
       图种可以换，声称承接却丢了关系才算）、
       实现选型（存储介质、内部结构这类换个实现方案结论就变、又不改对外承诺的事）出现在待确认区，
-      或 spec §9 里没定的实现项没写明「由 plan 定」、
+      或 spec §9.1 里没定的实现项没写明「由 plan 定」、
       材料之间的冲突由作者自行选定一边，改变了明确的验收或范围口径却拿不出人的裁决依据
       （术语确认不等于批准业务改动，能解释一种方案也不等于获得授权），
       以及**规约或知识判定的依据只回显条目名称、复述规约原文**——那样的依据说不出它落在

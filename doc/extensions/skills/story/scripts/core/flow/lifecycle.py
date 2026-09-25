@@ -73,7 +73,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     不在这里重实现——两处各判各的，迟早对不上。
 
     **编号之前先重投影**：附录的接口、数据、边界、判定四节是机器区，
-    真源（spec §9、knowledge-use.yaml）在成文期间还会变——补一条规约判定、改一个
+    真源（spec §9.1、knowledge-use.yaml）在成文期间还会变——补一条规约判定、改一个
     接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
 
     **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`

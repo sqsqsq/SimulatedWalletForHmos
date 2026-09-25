@@ -27,37 +27,34 @@ import { contractsPath, readAcceptance, readContracts, resourceEntries } from '.
 import { chapterNumberProblems, chapterRefProblems, chapterTemplates } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
-import { cellByHeader, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+import { cellByHeader, childHeading, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
 
 /**
- * 设计章的起始形态——「知识决策」必须排在它们之前。
- *
- * **这些词不是数出来的**：它们是 framework 规定的 plan 法定章名（profile 的 plan 模板：
- * 不编号的 Scope 声明与继承，之后 1 模块架构图 … 8 spec 功能映射表）里「设计」那一段。
- * Scope 声明是框架要求的前置，不算设计章——所以判的是「知识决策在设计章之前」，不是「知识决策排第一」。
- * 章号以模板为准，由下面的章号核对判。
- *
- * **真正的风险是它与 framework 的 `check-plan.ts > required_chapters` 是两份抄本**：
- * 那边改了章名，这边不会跟着改，本判据就会静默失灵而没有任何信号。
- * `test_plan_pattern_crosscheck.py` 锁两边一致——framework 改章名时测试先红。
+ * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，知识决策是它的 9.1、埋点是 9.2；
+ * 9.1 下三节——设计模式选型、规约义务、项目知识影响——都要在。层级由找到的父标题推出。
  */
-const DESIGN_HEADING_RE = /^##\s*\d*[.、]?\s*(模块架构|目录|文件结构|数据模型|页面组件|状态管理|服务层|接口定义|路由|导航)/;
-const DECISION_HEADING_RE = /^##\s*知识决策/;
+const DECISION_PARTS = ['设计模式选型', '规约义务', '项目知识影响'];
 
-function findHeadings(text) {
-  const rows = lines(text);
-  let decision = -1;
-  let design = -1;
-  for (let i = 0; i < rows.length; i++) {
-    const s = rows[i].trim();
-    if (decision < 0 && DECISION_HEADING_RE.test(s)) decision = i + 1;
-    if (design < 0 && DESIGN_HEADING_RE.test(s)) design = i + 1;
+export function hostExtensionProblems(planText) {
+  const doc = parseDocument(planText);
+  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展/.test(h.name));
+  if (!anchor) {
+    return ['plan.md 缺「9. 宿主扩展」章——它在「8. spec 功能映射表」之后，'
+      + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${SECTIONS_DOC}）`];
   }
-  return { decision, design };
+  const decision = childHeading(doc, anchor, /^知识决策/);
+  if (!decision) {
+    const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
+    return [elsewhere
+      ? `「知识决策（设计输入）」要写成「9. 宿主扩展」的下一级小节 9.1——现在是「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」`
+      : '「9. 宿主扩展」下缺「9.1 知识决策（设计输入）」——设计模式选型、规约义务、项目知识影响三节写在它下面'];
+  }
+  return DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
+    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`);
 }
 
 /**
@@ -89,7 +86,7 @@ function specHitIds(projectRoot, feature, knowledge) {
 function tableRows(rows, from, level) {
   const pipes = [];
   for (let i = from; i < rows.length; i++) {
-    const h = rows[i].trim().match(/^(#{2,4})\s+/);
+    const h = rows[i].trim().match(/^(#{1,6})\s+/);
     if (h && h[1].length <= level) break;
     const s = rows[i].trim();
     if (s.startsWith('|')) pipes.push(tableCells(s));
@@ -99,11 +96,10 @@ function tableRows(rows, from, level) {
   return { headers, rows: pipes.filter((c, i) => !isSeparator(c) && !(headers && i === 0)) };
 }
 
-/** 某一章的起始行号与它的标题级别。 */
-function chapterAt(rows, re) {
-  const start = rows.findIndex(l => re.test(l.trim()));
-  if (start < 0) return null;
-  return { start, level: (rows[start].trim().match(/^(#{2,4})/) ?? ['', '##'])[1].length };
+/** 名字匹配的那一节的起始行号与它的标题级别（层级、编号都不限）。 */
+function chapterAt(rows, nameRe) {
+  const h = parseDocument(rows.join('\n')).headings.find(x => nameRe.test(x.name));
+  return h ? { start: h.at, level: h.level } : null;
 }
 
 /**
@@ -145,7 +141,7 @@ function specPatternHits(projectRoot, feature) {
 /**
  * plan 的设计模式选型表：`unit -> Map(candidate -> { 选不选, 理由 })`。
  *
- * 选型表就在「知识决策（设计输入）」章里——它是 plan 期的可见面，
+ * 选型表就在「9.1 知识决策（设计输入）」里——它是 plan 期的可见面，
  * 有 plan 门禁看、有 verifier 问，模式否决就该落在这里。
  * 候选列（第二列）是身份的另一半：同一单元有多个候选时，靠它才分得清谁被选谁被否。
  * 「无候选」是说明不是模式身份，两侧同义——说明行不进这个集合，也不进 spec 侧的候选集。
@@ -155,7 +151,7 @@ function specPatternHits(projectRoot, feature) {
  */
 function planPatternChoices(planText) {
   const rows = lines(planText);
-  const at = chapterAt(rows, /^#{2,4}\s+设计模式选型/);
+  const at = chapterAt(rows, /^设计模式选型/);
   if (!at) return null;
   const out = new Map();
   const problems = [];
@@ -217,7 +213,7 @@ function declaredMethods(contracts) {
 
 /**
  * spec 判命中、且落点（`contract`）写的是某个统计点的规约：`统计点 → 规约编号集`。
- * 落点引的是 §9 表第一列登记的名字，统计点名正是其中之一；读不到那份判断返回空表。
+ * 落点引的是 §9.1 表第一列登记的名字，统计点名正是其中之一；读不到那份判断返回空表。
  */
 function statRulesByPoint(projectRoot, feature, points) {
   const out = new Map();
@@ -242,12 +238,12 @@ export default guard('plan', async (ctx) => {
   const planPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'plan', 'plan.md');
   const planText = readTextOrNull(planPath);
   if (planText === null) {
-    return gate(ctx, { skipped: [{ what: '知识决策章与义务实体', why: 'plan.md 还没生成' }] });
+    return gate(ctx, { skipped: [{ what: '宿主扩展、知识决策与义务实体', why: 'plan.md 还没生成' }] });
   }
 
   // 按数据前置分组：章节只要 plan 可读；契约形状要契约可解析；义务与集合一致要契约与激活知识；
   // 集合一致与候选交叉核对还要 knowledge-use 可读。前置缺的组记 skipped，不让别的组因它被屏蔽。
-  const chapter = { name: '知识决策章', problems: [], skipped: [] };
+  const chapter = { name: '宿主扩展与知识决策', problems: [], skipped: [] };
   const contract = { name: '契约可读与 must 挂位', problems: [], skipped: [] };
   const obligation = { name: '每条 must 自身', problems: [], skipped: [] };
   const consistency = { name: '命中集合与义务集合一致', problems: [], skipped: [] };
@@ -256,22 +252,15 @@ export default guard('plan', async (ctx) => {
   const groups = [chapter, contract, obligation, consistency, pattern, reference];
 
   // ---- 0. 章号以模板为准；「承载设计章」的号与章名对得上；用例引用的验收编号存在 ----
-  const chapters = chapterTemplates(ctx.projectRoot, 'plan', 'plan_template');
+  const chapters = chapterTemplates(ctx.projectRoot, 'plan', 'plan_template', 'skills/story/templates/plan-sections.md');
   reference.problems.push(...chapters.problems);
   reference.skipped.push(...chapters.skipped);
   if (chapters.templates) reference.problems.push(...chapterNumberProblems(planText, chapters.templates));
   reference.problems.push(...chapterRefProblems(planText, '承载设计章'));
   reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
 
-  // ---- 1. 知识决策章的位置：位置即语义（只依赖 plan 可读）----
-  const { decision, design } = findHeadings(planText);
-  if (decision < 0) {
-    chapter.problems.push('plan.md 缺「知识决策（设计输入）」章'
-      + '——知识决策要先于它影响的设计，排在后面就只能是事后总结');
-  } else if (design > 0 && decision > design) {
-    chapter.problems.push(`「知识决策（设计输入）」在第 ${decision} 行，晚于第一个设计章（第 ${design} 行）`
-      + '——位置就是语义：排在设计之后，它只能是「做完了顺便声明用过哪些知识」');
-  }
+  // ---- 1. 宿主扩展与知识决策的结构（只依赖 plan 可读）----
+  chapter.problems.push(...hostExtensionProblems(planText));
 
   // ---- 2. 契约可读、must 挂位、resource_keys 形状 ----
   const read = readContracts(ctx.projectRoot, ctx.feature);
@@ -448,12 +437,12 @@ export default guard('plan', async (ctx) => {
     if (state === 'missing' && story) {
       statGroup.problems.push('spec 没有埋点一节，plan 的埋点无从承接——先回 spec 补上统计设计；确实不涉及也写一行「不涉及：<依据>」');
     } else if (state === 'empty') {
-      statGroup.problems.push('spec 的埋点一节没有指标点位表——先回 spec 在每个指标 H4 下补上带「统计点」列的表，plan 再逐点承接');
+      statGroup.problems.push('spec 的埋点一节没有指标点位表——先回 spec 在每个指标小节下补上带「统计点」列的表，plan 再逐点承接');
     } else if (!wantPoints.length) {
       statGroup.skipped.push({ what: '埋点逐统计点落实', why: state === 'na' ? 'spec 的埋点一节写了不涉及' : '本需求没走 /story，spec 未提供统计设计' });
     } else if (!plan) {
       statGroup.problems.push(`spec 的埋点列了 ${wantPoints.length} 个统计点，plan.md 没有「埋点」小节`
-        + '——在服务层接口定义章下每个统计点列出适用结果及责任方法，允许多行');
+        + '——在「9.2.2 逐点实现」表里每个统计点列出适用结果及责任方法，允许多行');
     } else {
       const have = new Set(plan.rows.map(r => pointKey(r.point)));
       const missing = wantPoints.filter(p => !have.has(pointKey(p)));

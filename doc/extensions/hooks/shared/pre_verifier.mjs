@@ -48,18 +48,18 @@ const SOURCE_OF_TRUTH = {
 const WALK = {
   spec: { what: '业务章与承载专项的那一章', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
     + '关键结论有源材料或已定决定支持，`decisions.json` 里仍 open 的选择没有写成无条件的行为或验收；'
-    + '统计设计讲清每个指标的观察范围、涉及的流程与步骤、实际结果及本端何时得知，'
+    + '统计设计的指标小节标题是指标名，定义段读得出口径与打点位置，各点写出实际结果及本端何时得知，'
     + '并按项目知识上篇的应用步骤逐条回查，判不过的写出是哪一步；'
     + '命中的规约要求讲清某项专项时，按那份知识核承载章里的相应设计' },
   plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
     handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
       + '选中交互模式要的用户动作与业务状态在 use-cases 里实际存在；'
-      + '每个统计点的每种结果有责任方法、结果来源与参数来源，项目知识要求的字段有实际值或按其规则得出的值及来源；'
+      + '每个统计点的每种结果有责任方法、结果来源与参数来源，项目知识要求的字段有实际值或按其规则得出的值及来源，指标口径引用 spec；'
       + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
 };
 
 /**
- * plan：spec §9.4 的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
+ * plan：spec §9.1.4 的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
  * 同一统计点被几个指标共用时，每个指标下都列出同一组 plan 行。spec 没给统计设计时如实说缺在哪。
  */
 function statPointTable(projectRoot, feature) {
@@ -125,7 +125,7 @@ function specJudgementTable(projectRoot, feature, knowledge) {
             : r.applicable !== true ? `applicable 写的是「${r.applicable}」`
               : r.waived ? `命中·本轮豁免：${r.waived?.reason ?? ''}${r.waived?.compensation ? `；补偿：${r.waived.compensation}` : ''}`
                 : `命中：${(e.reviewAction ? [r.reason] : requirements(r)).filter(Boolean).join('；')}`;
-    const landing = !r ? '—' : r.contract ? `§9 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
+    const landing = !r ? '—' : r.contract ? `§9.1 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
       : r.decision ? `议题 ${r.decision}` : '—';
     rows.push(`| ${e.id} | ${cell(e.force)} | ${cell(e.constraint)} | ${cell(e.when)} | ${cell(e.handling)} `
       + `| ${cell(e.note)} | ${cell(judged)} | ${cell(landing)} |`);

@@ -53,10 +53,11 @@ GOLDEN_FINGERPRINTS = {
 }
 
 INPUT_FINGERPRINTS = {
+    # 2026-09-25 spec 的扩展章挂到宿主扩展锚点下（design/1.9.6/2026-09-25-宿主扩展归位与埋点分工/01），章内正文未动。
     "AR/design.md": "ed2119f15893b568",
     "RR/prd.md": "ff0013420c4c0741",
     "SR/design.md": "d9ccbd10489f89d1",
-    "spec/spec.md": "8ea24b8250376bc4",
+    "spec/spec.md": "4ddec78a78dcbd3c",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",

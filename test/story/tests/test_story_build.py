@@ -446,40 +446,40 @@ class TestDecisionUnits(StoryBuildCase):
 
 
 class SourceNumbersStayInTheSpec(StoryBuildCase):
-    """§9.4 里的局部编号（9.4.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
+    """§9.1.4 里的局部编号（9.1.4.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
 
-    EVENTS = ('### 9.4 埋点\n\n#### 9.4.1 开户办理\n\n| 步骤 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
-              '#### 2.0 版本的结果查询\n\n- 查询结果按次记录。\n\n')
+    EVENTS = ('#### 9.1.4 埋点\n\n##### 9.1.4.1 开户成功率\n\n| 统计点 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
+              '##### 2.0 版本的查询成功率\n\n- 查询结果按次记录。\n\n')
 
     def test_the_local_number_is_dropped_and_business_digits_kept(self) -> None:
         self.init_audit()
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4"), text.index("### 9.5")
+        start, end = text.index("#### 9.1.4"), text.index("#### 9.1.5")
         spec.write_text(text[:start] + self.EVENTS + text[end:], encoding="utf-8")
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         story = self.story()
         zone = story[story.index("<!-- story-build:begin 技术约定·埋点 "):]
-        self.assertIn("##### 开户办理", zone)
-        self.assertNotIn("9.4.1", zone)
-        self.assertIn("##### 2.0 版本的结果查询", zone)
+        self.assertIn("##### 开户成功率", zone)
+        self.assertNotIn("9.1.4.1", zone)
+        self.assertIn("##### 2.0 版本的查询成功率", zone)
 
 
 class TheEventDesignIsProjectedWhole(StoryBuildCase):
-    """§9.4 是埋点设计的唯一完整说明：附录按原次序整节投影，不只搬表。
+    """§9.1.4 是埋点设计的唯一完整说明：附录按原次序整节投影，不只搬表。
 
     只搬表的话，流程怎么分、指标是什么、哪些交互由自动上报采集全丢了，归档件里只剩名目表。
     """
 
-    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程，按流程写。\n\n#### 开户办理\n\n服务指标：开户成功率（运维）。\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 运维统计 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n#### 结果查询\n\n| 步骤 | 目的 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 运维统计 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
+    EVENTS = '#### 9.1.4 埋点\n\n开户与结果查询两个流程各看一个成功率。\n\n##### 开户成功率\n\n衡量开户办理的完成比例：分子是开户成功，分母是全部提交开户；打点在开户办理流程的信息校验与短信验证两步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 开户办理 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 开户办理 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n##### 查询成功率\n\n衡量开户结果查询的成功比例：分子是查询成功，分母是全部查询；打点在结果查询流程的查询开户结果一步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 结果查询 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
 
     def setUp(self) -> None:
         super().setUp()
         self.init_audit()
         self.spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
         text = self.spec.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4"), text.index("### 9.5")
+        start, end = text.index("#### 9.1.4"), text.index("#### 9.1.5")
         self.spec.write_text(text[:start] + self.EVENTS + text[end:], encoding="utf-8")
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -496,8 +496,8 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         """埋点这个 H4 标题归作者（草稿铺好），机器区从它下面的总述开始。"""
         zone = self.zone()
         self.assertNotIn("#### 埋点", zone)
-        order = ["开户与结果查询两个流程", "##### 开户办理", "服务指标：开户成功率",
-                 "| 信息校验 |", "| 短信验证 |", "- 页面进入、点击由自动运维上报采集", "##### 结果查询",
+        order = ["开户与结果查询两个流程", "##### 开户成功率", "衡量开户办理的完成比例",
+                 "| 信息校验 |", "| 短信验证 |", "- 页面进入、点击由自动运维上报采集", "##### 查询成功率",
                  "| 查询开户结果 |"]
         at = [zone.index(piece) for piece in order]
         self.assertEqual(sorted(at), at, "段落、小标题、表与列表没按原次序投影")
@@ -506,7 +506,7 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         """登记时先投影后编号：区里的指标小标题被编上号，核对不报、再投影也不当手改。"""
         proc = self.run_build("number")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertRegex(self.zone(), r"##### 10\.1\.4\.\d+ 开户办理")
+        self.assertRegex(self.zone(), r"##### 10\.1\.4\.\d+ 开户成功率")
         code, out = self.check_output()
         self.assertNotIn("技术约定·埋点", out, out)
         proc = self.run_build("project")
@@ -527,13 +527,13 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         锚点指回 spec 那一处（它指的标题在归档件里不存在）；外链与围栏里的样例不动。
         """
         text = self.spec.read_text(encoding="utf-8")
-        start, end = text.index("### 9.4"), text.index("### 9.5")
-        self.spec.write_text(text[:start] + '### 9.4 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n#### 开户办理\n\n回看[本节开头](#开户办理)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n' + text[end:], encoding="utf-8")
+        start, end = text.index("#### 9.1.4"), text.index("#### 9.1.5")
+        self.spec.write_text(text[:start] + '#### 9.1.4 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n##### 开户成功率\n\n回看[本节开头](#开户成功率)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n' + text[end:], encoding="utf-8")
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         zone = self.zone()
         for want in ("[口径说明](../spec/detail.md)", "[上级材料](../assets/rules.md#口径)",
-                     "[平台](https://example.com/spec)", "[本节开头](../spec/spec.md#开户办理)",
+                     "[平台](https://example.com/spec)", "[本节开头](../spec/spec.md#开户成功率)",
                      "![流程](../spec/img/flow.png)", "[校验规则](../spec/rules/check.md)",
                      "[围栏里的样例](detail.md)", "[ref]: ../spec/notes/ref.md"):
             with self.subTest(want=want):
@@ -543,13 +543,13 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.spec.write_text(self.spec.read_text(encoding="utf-8").replace(
-            "服务指标：开户成功率（运维）。", "服务指标：开户成功率与结果查询成功率（运维）。"), encoding="utf-8")
+            "分母是全部提交开户", "分母是全部进入开户页的用户"), encoding="utf-8")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
         self.assertIn("技术约定·埋点", out)
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertIn("结果查询成功率", self.zone())
+        self.assertIn("分母是全部进入开户页的用户", self.zone())
 
 
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
@@ -618,19 +618,19 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.expect_caught("两段机器区")
 
     def test_a_deleted_required_spec_section_is_not_an_empty_expectation(self) -> None:
-        """只删 spec §9.1 与对应的机器区，作者区留一句说明——旧判据返回 0。
+        """只删 spec §9.1.1 与对应的机器区，作者区留一句说明——旧判据返回 0。
 
         「没有这一节」与「这件事不涉及」不是一回事：后者是写出来的结论，评审者读得到。
         """
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        start = text.index("### 9.1")
-        end = text.index("### 9.2")
+        start = text.index("#### 9.1.1")
+        end = text.index("#### 9.1.2")
         spec.write_text(text[:start] + text[end:], encoding="utf-8")
         at, endline, lines = self.zone_lines("技术约定·接口")
         lines[at:endline + 1] = ["这一节的接口约定见业务方案章。"]
         self.rewrite(lines)
-        self.expect_caught("§9.1")
+        self.expect_caught("§9.1.1")
 
     def test_an_unknown_machine_zone_is_not_author_text(self) -> None:
         """合同里没有这个名字的机器区：它没有真源可比，会一直冒充现行投影。"""
@@ -649,7 +649,7 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     def test_a_nested_begin_marker_is_caught(self) -> None:
         """一个结束只配一个开始：两个开始都去认后面同一行，其中一段的边界是编的。"""
         at, endline, lines = self.zone_lines("改动边界")
-        inner = "<!-- story-build:begin 接口 · 由spec §9 技术契约生成，改它请改真源 -->"
+        inner = "<!-- story-build:begin 接口 · 由spec §9.1 技术契约生成，改它请改真源 -->"
         self.rewrite(lines[:at + 1] + [inner] + lines[at + 1:])
         self.expect_caught("还没关上")
 
@@ -699,7 +699,7 @@ class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
     def _put_id_in_materials(self) -> None:
         """在夹具的 spec 上**追加**一段带本需求编号的范围说明。
 
-        不整份覆盖：spec §9 是附录机器区的真源，换掉它等于换了真源，
+        不整份覆盖：spec §9.1 是附录机器区的真源，换掉它等于换了真源，
         那时 ⑫b 报「机器区与真源对不上」是对的——而这一条要测的是编号，不是附录。
         """
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
@@ -2475,7 +2475,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         heads = [i for i, l in enumerate(lines)
                  if l.startswith("|") and i + 1 < len(lines) and lines[i + 1]
                  and set(lines[i + 1]) <= set("|-: ")]
-        self.assertGreaterEqual(len(heads), 3, "spec §9.1–9.4 的表没都投过来")
+        self.assertGreaterEqual(len(heads), 3, "spec §9.1.1–9.4 的表没都投过来")
         for i in heads:
             before = lines[i - 1]
             self.assertTrue(before == "" or before.startswith("#") or before.startswith("<!-- story-build:begin"),
@@ -2788,29 +2788,28 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertIn("story-build:begin 技术约定·接口", story)
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        start = text.index("### 9.1")
-        end = text.index("### 9.2")
-        spec.write_text(text[:start] + "### 9.1 端云接口\r\n\r\n" + text[end:],
+        start = text.index("#### 9.1.1")
+        end = text.index("#### 9.1.2")
+        spec.write_text(text[:start] + "#### 9.1.1 端云接口\r\n\r\n" + text[end:],
                         encoding="utf-8")
         before = self.story_path.read_bytes()
         proc = self.build_raw("project")
         out = (proc.stderr or "") + (proc.stdout or "")
         self.assertEqual(1, proc.returncode, out)
-        self.assertIn("§9.1", out)
+        self.assertIn("§9.1.1", out)
         self.assertEqual(before, self.story_path.read_bytes(), "拒绝了却已经写盘")
         code, cout = self.check_output()
         self.assertEqual(1, code, cout)
-        self.assertIn("§9.1", cout, "只读检查要给同一个结论")
+        self.assertIn("§9.1.1", cout, "只读检查要给同一个结论")
 
     def test_a_not_applicable_line_reaches_the_appendix(self) -> None:
-        """§9.5 写「不涉及：…」也是结论——丢了它，story 相对 spec 就减了一条。"""
+        """§9.1.5 写「不涉及：…」也是结论——丢了它，story 相对 spec 就减了一条。"""
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        start = text.index("### 9.5")
-        end = text.index("## 10.") if "## 10." in text[start:] else len(text)
-        end = text.index("## 10.", start)
+        start = text.index("#### 9.1.5")
+        end = text.index("### 9.2", start)
         spec.write_text(text[:start]
-                        + "### 9.5 依赖变更\r\n\r\n不涉及：本需求不新增任何三方依赖。\r\n\r\n"
+                        + "#### 9.1.5 依赖变更\r\n\r\n不涉及：本需求不新增任何三方依赖。\r\n\r\n"
                         + text[end:], encoding="utf-8")
         story = self.landed_appendix()
         boundary = story.split("### 改动边界", 1)[1].split("###", 1)[0]
@@ -2899,7 +2898,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         out = proc.stdout + proc.stderr
-        self.assertNotIn("少了 spec §9", out, out[:600])
+        self.assertNotIn("少了 spec §9.1", out, out[:600])
 
     def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
         """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
@@ -2910,7 +2909,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
 
         **机器区没有作者**：它写出违规内容时，作者删掉，下一次 `project` 又写回来，
         check 再报——他赢不了，只能转去改判据或改脚本。一次实跑就这么卡了 25 分钟：
-        「依据」列写着 `spec §9.5 依赖变更`，而 spec.md 不随归档，红线判它是文档坐标。
+        「依据」列写着 `spec §9.1.5 依赖变更`，而 spec.md 不随归档，红线判它是文档坐标。
         """
         # 「表后散文」那一条随段数配额退场（Q7 §1：说明是否倾倒业务内容归语义审查）；
         # 这里留下的是真红线——文档坐标与仓内路径，它们不读懂内容就看得见。
@@ -3170,15 +3169,15 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
     def test_each_projection_source_is_required_on_its_own(self) -> None:
         """附录一节从三份输入投影，三份不能互相替代。
 
-        用「任意一节有正文」放过的话，只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——
+        用「任意一节有正文」放过的话，只要 §9.1.2 在，§9.1.3 与 §9.1.4 缺了也不会有人提——
         而附录那一节正是从这三节一起投出来的。
         """
         spec = self.feature_root() / "spec" / "spec.md"
         full = spec.read_text(encoding="utf-8")
-        for section in ("### 9.2 数据存储", "### 9.3 配置项", "### 9.4 埋点"):
+        for section in ("#### 9.1.2 数据存储", "#### 9.1.3 配置项", "#### 9.1.4 埋点"):
             with self.subTest(section=section):
                 cut = full.index(section)
-                end = full.index("### 9", cut + len(section))
+                end = full.index("#### 9.1", cut + len(section))
                 spec.write_text(full[:cut] + full[end:], encoding="utf-8")
                 before = self.files_now()
                 code, out = self.skeleton()

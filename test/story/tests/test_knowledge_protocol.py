@@ -2,7 +2,7 @@
 
 全部用中性知识（机制从没见过的域前缀与模式），机制零改动：
   载入——协议版本与值域不合就点名，一次列全；
-  看到——骨架每条带条目内容行，§10 带强制力与验法；
+  看到——骨架每条带条目内容行，§9.2 带强制力与验法；
   识别——本轮豁免按强制力允许，未确认的事实面要写核实位置；
   应用——每处落点的 verify 符合规约声明的执行体，契约流式与块式同一读法、resource_keys 按 framework 两层合同；
   传递——review 一处落点一行、结论按列取准确值、未落实按强制力处置；
@@ -240,7 +240,7 @@ class TheProtocolIsCheckedOnLoad(ProtocolCase):
 
 
 class TheJudgementSeesTheEntry(ProtocolCase):
-    """看到：判命中时要的内容送到骨架那一行；§10 带着 plan 定证据来源要的两列。"""
+    """看到：判命中时要的内容送到骨架那一行；§9.2 带着 plan 定证据来源要的两列。"""
 
     def test_the_skeleton_carries_each_entry_and_facet(self) -> None:
         proc = nk.node(str(self.module("knowledge-use.mjs")), "init",
@@ -280,7 +280,7 @@ class TheJudgementSeesTheEntry(ProtocolCase):
     def test_the_projection_carries_force_and_method(self) -> None:
         self.judged()
         zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约约束要求")[1]
-        self.assertIn("| NEU-02 | 红线 | 重试复用标识 | §9 · 中性出口接口 | 模型 / 实机 |", zone)
+        self.assertIn("| NEU-02 | 红线 | 重试复用标识 | §9.1 · 中性出口接口 | 模型 / 实机 |", zone)
 
 
 class AWaiverFollowsTheForce(ProtocolCase):
@@ -332,10 +332,10 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
         self.judged()
         (self.feature_root / "plan").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "plan" / "plan.md").write_text(
-            "# 计划\n\n## 知识决策（设计输入）\n\n### 设计模式选型\n\n"
+            "# 计划\n\n## 2. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 知识决策（设计输入）\n\n#### 9.1.1 设计模式选型\n\n"
             "| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n"
             "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n"
-            "\n## 2. 模块架构图\n\n略。\n", encoding="utf-8")
+            "\n#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n", encoding="utf-8")
         self.write_contracts(text)
         return self.hook("plan")
 

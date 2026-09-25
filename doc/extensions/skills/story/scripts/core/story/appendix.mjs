@@ -37,7 +37,7 @@ function knowledgeUseVerdicts(ctx, entries = []) {
       // 依据也一起带回来：判断已经写在那份 YAML 里（命中写 requirement、
       // 不命中写 reason），让作者对着它再抄一遍，抄出来的只会更短。
       // requirement 是列表（一条要求一句）：**全部带上，一条一项**——判定表一条要求一行，
-      // 只取第一条的话附录就成了 §10 的截断视图，拼进一格又成了读不完的长格。
+      // 只取第一条的话附录就成了 §9.2 的截断视图，拼进一格又成了读不完的长格。
       if (id) {
         const req = Array.isArray(row.requirement) ? row.requirement : [row.requirement];
         // 评审动作条目命中时没有 requirement——它的结果是一次跨团队的动作。
@@ -81,7 +81,7 @@ export function appendixChapter(contract) {
  */
 function specSection(spec, re) {
   const doc = parseDocument(spec);
-  const h = doc.headings.find(x => x.level >= 2 && x.level <= 3 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  const h = doc.headings.find(x => x.level >= 2 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
   if (!h) return { title: '', text: '', tables: [] };
   const end = headingEnd(doc, h);
   return { title: h.raw.replace(/^[\d.]+\s*/, ''), text: doc.lines.slice(h.at + 1, end).join('\n'),
@@ -131,8 +131,8 @@ function projectionOf(contract) {
   return { drop: p.drop_columns ?? [], sections: p.sections ?? {} };
 }
 
-/** spec 小节号 → 定位那一节标题的正则（`9.1` 不误中 `9.10`）。 */
-const specHeading = (from) => new RegExp(`^###\\s*${String(from).replace(/\./g, '\\.')}(?![\\d.])`);
+/** spec 小节号 → 定位那一节标题的正则，层级不限（`9.1.1` 不误中 `9.1.10`）。 */
+const specHeading = (from) => new RegExp(`^#{2,6}\\s*${String(from).replace(/\./g, '\\.')}(?![\\d.])`);
 
 /**
  * 一张 spec 表投进附录的样子：去掉不投的列与模板占位行，列名按合同换成读者用的名字。
@@ -221,16 +221,19 @@ function rebaseLinks(line) {
  *
  * 用在「这一节是某项设计的唯一完整说明」的来源上（埋点）：只搬表，指标怎么定、
  * 各点为什么统计、结果有哪些就全丢了。这一节自己的标题归附录的 H4（作者区），
- * 里面的小标题各降一级、去掉源小节号下的局部编号。HTML 注释（模板说明）不搬。
+ * 里面的小标题按相对源节的深度排在它之下，去掉源小节号下的局部编号。HTML 注释（模板说明）不搬。
  * 除了标题什么都没有时返回空：那是真的空，由调用方报空节。
  */
+//: 附录下每一节（10.1.x）的标题层级：整节投影进来的小标题按相对源节的深度排在它之下。
+const APPENDIX_SECTION_LEVEL = 4;
+
 function wholeSection(spec, re, drop, rename) {
   const doc = parseDocument(spec);
-  const h = doc.headings.find(x => x.level >= 2 && x.level <= 3 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  const h = doc.headings.find(x => x.level >= 2 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
   if (!h) return [];
   const end = headingEnd(doc, h);
   const tables = new Map(tablesWithin(doc, h.at + 1, end).map(t => [t.line, t]));
-  // 源小节自己的号（如 9.4）下的局部编号只在 spec 里成立，搬进附录就去掉；业务标题里的数字不动
+  // 源小节自己的号（如 9.1.4）下的局部编号只在 spec 里成立，搬进附录就去掉；业务标题里的数字不动
   const own = /^(\d+(?:\.\d+)*)\s/.exec(h.raw)?.[1];
   const local = own ? new RegExp(`^${own.replace(/\./g, '\\.')}(?:\\.\\d+)+\\.?\\s+`) : null;
   const body = [];
@@ -251,7 +254,7 @@ function wholeSection(spec, re, drop, rename) {
       }
       const sub = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
       if (sub) {
-        body.push(`${'#'.repeat(Math.min(6, sub[1].length + 1))} ${local ? sub[2].replace(local, '') : sub[2]}`);
+        body.push(`${'#'.repeat(Math.min(6, APPENDIX_SECTION_LEVEL + sub[1].length - h.level))} ${local ? sub[2].replace(local, '') : sub[2]}`);
         continue;
       }
       body.push(rebaseLinks(line));
@@ -451,7 +454,7 @@ function appendixSourceProblems(ctx, spec) {
   if (!appendixSpecSources(ctx.contract).length) return [];
   if (spec === null) {
     return ['读不到 spec/spec.md，附录的机器区无从投影也无从核对'
-      + '——它们是 spec §9 的投影，先让 spec 可读'];
+      + '——它们是 spec §9.1 的投影，先让 spec 可读'];
   }
   // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
   return appendixSpecGaps(ctx.contract, spec).map(g => `${g}；`
@@ -472,7 +475,7 @@ function appendixSpecSources(contract) {
  * 附录各机器区要的 spec 小节在不在 —— 起手预检与只读核对共用这一份。
  *
  * **逐节核**：一节投一节的内容，几份输入不能互相替代。用「任意一节有正文」放过，
- * 只要 §9.2 在，§9.3 与 §9.4 缺了也不会有人提——而附录的那几段正是从它们投出来的。
+ * 只要 §9.1.2 在，§9.1.3 与 §9.1.4 缺了也不会有人提——而附录的那几段正是从它们投出来的。
  */
 function appendixSpecGaps(contract, spec) {
   return appendixSpecSources(contract)
@@ -483,7 +486,7 @@ function appendixSpecGaps(contract, spec) {
 /**
  * 本步要消费的 Spec 章节在不在 —— **起手的必需输入**，缺了回 Spec。
  *
- * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 §9 的那几节投
+ * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 §9.1 的那几节投
  * 附录。**「没有这一节」与「这件事不涉及」不是一回事**：后者是 Spec 里写出来的
  * 结论（`不涉及：<依据>`），评审者读得到；前者只是没写到那儿，而起手一路往下走的话，
  * 作者会在十章都写完之后才发现附录没有可投的东西。

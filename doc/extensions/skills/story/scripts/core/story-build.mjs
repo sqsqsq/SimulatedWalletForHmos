@@ -21,7 +21,7 @@
  * |------|--------|
  * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
- * | `project` | 附录机器区按当前真源（spec §9、knowledge-use.yaml）重投 |
+ * | `project` | 附录机器区按当前真源（spec §9.1、knowledge-use.yaml）重投 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
@@ -94,7 +94,7 @@ function cmdProject(ctx) {
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
-    + '（spec §9 / knowledge-use.yaml）；材料清单归你，不动\n');
+    + '（spec §9.1 / knowledge-use.yaml）；材料清单归你，不动\n');
 }
 
 /**

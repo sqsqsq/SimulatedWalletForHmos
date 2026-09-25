@@ -2,7 +2,7 @@
  * knowledge-use 的真源文件本身：怎么定位、怎么读、怎么算指纹、骨架长什么样。
  *
  * spec 阶段的知识判断只有这一份真源（`spec/knowledge-use.yaml`）。本模块只管
- * 「文件里现在写的是什么」，判全了没有归 validation，投影成 §10/§11 归 projection。
+ * 「文件里现在写的是什么」，判全了没有归 validation，投影成 §9.2/§9.3 归 projection。
  *
  * 条目取值的规范化（列表、去空白、要求写成一条还是一列）也在这里唯一维护：
  * 验证与渲染读的是同一份规范化结果，各写一份的话，同一行字会在两边判出两种形态。
@@ -65,7 +65,7 @@ export function readUse(projectRoot, feature) {
   if (raw === null) {
     fail(`缺 ${relDisplay(projectRoot, p)} —— spec 阶段的知识判断写在这里：`
       + 'facts 用了什么、每条规约命中与否、模式有哪些候选。'
-      + '它是唯一真源，§10/§11 由它生成');
+      + '它是唯一真源，§9.2/§9.3 由它生成');
   }
   let data;
   try {
@@ -117,12 +117,12 @@ export function requirements(row) {
  */
 export function renderSkeleton(projectRoot, knowledge) {
   const rows = [
-    '# 本阶段知识判断的唯一真源。spec 的 §10/§11 由它生成，那两章不手写。',
+    '# 本阶段知识判断的唯一真源。spec 的 §9.2/§9.3 由它生成，那两章不手写。',
     '#',
     '# 怎么填：激活的每一条 constraints 都要有去处——命中写 requirement（列表，一条要求一句，',
     '# 写得下一个人照着能编码），不命中写 reason：命中条件里哪个事实在本需求不成立',
     '# （「不涉及」三个字不算依据；拿处置结果否定命中也不算）。',
-    '# contract 引 spec §9 里登记的名字，没有就留空串。填完跑 render。',
+    '# contract 引 spec §9.1 里登记的名字，没有就留空串。填完跑 render。',
     '# 值里有英文冒号加空格（「条件: 结果」）时整句加引号，否则这份 YAML 读不出来。',
     '# 命中但这一轮不做：applicable: true 加 waived 块（下面缩进写 reason 与 compensation）；',
     '# 红线不能豁免，基线要写 compensation，豁免要登记进《决策与评审记录》由评审人表态。',
@@ -170,7 +170,7 @@ export function renderSkeleton(projectRoot, knowledge) {
       continue;
     }
     rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
-      '    #   落点二选一：contract 写 §9 登记过的名字（落在统计点上的写统计点名），impact 写实际影响对象');
+      '    #   落点二选一：contract 写 §9.1 登记过的名字（落在统计点上的写统计点名），impact 写实际影响对象');
   }
   rows.push('', '# 设计模式候选：**只登记不选型**（选型是 plan 的事）。');
   // 一个候选都不在册时不摆填写占位：那个空条目问的是「这一段像哪个模式」，

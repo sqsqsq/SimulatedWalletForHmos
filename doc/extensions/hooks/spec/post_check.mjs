@@ -4,8 +4,8 @@
  * 作用：把**本阶段产物**与**宿主扩展章节**纳入 spec 阶段闭环判定。
  *   1. 本阶段三份产物：spec.md（代码要求）、AR/review.md（归档件·决策件）、
  *      AR/story.md（归档件·叙事主件，在阶段内按章写、按章落盘成文，登记态即判据）；
- *   2. §9 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
- *   3. 知识判定的两个出口（§10 规约约束要求 / §11 设计模式候选登记）：独立成节、
+ *   2. §9.1 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
+ *   3. 知识判定的两个出口（§9.2 规约约束要求 / §9.3 设计模式候选登记）：独立成节、
  *      与 spec/knowledge-use.yaml 这份真源一致、命中集与 acceptance 的桥接键一致；
  *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
  *   5. story 前置流程契约（AR/story-src/story-flow.json）已收口且决策留痕齐备。
@@ -21,7 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { CROSS_DOC_COORDINATES, scanBannedTerms, formatHits }
   from '../../skills/story/scripts/core/story/language.mjs';
-import { fenceRanges, headingEnd, parseDocument, tableCells }
+import { childHeading, fenceRanges, headingEnd, parseDocument, tableCells }
   from '../../skills/story/scripts/core/story/document.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -34,7 +34,7 @@ import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mj
 import { knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
-import { specStatPoints } from '../shared/stat-points.mjs';
+import { statPointsOfSection } from '../shared/stat-points.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
 const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
@@ -47,10 +47,47 @@ function docOf(lines) {
   return parsed.get(lines);
 }
 
-/** 按标题关键词定位章节（二到四级；标题编号由 `normalizeHeading` 剥掉）。找不到返回 -1。 */
+/** 按标题关键词定位章节（二级起任意层级；标题编号由 `normalizeHeading` 剥掉）。找不到返回 -1。 */
 function findHeading(lines, titleRe) {
-  const h = docOf(lines).headings.find(x => x.level >= 2 && x.level <= 4 && titleRe.test(x.name));
+  const h = docOf(lines).headings.find(x => x.level >= 2 && titleRe.test(x.name));
   return h ? h.at : -1;
+}
+
+/** 在某个标题管到的范围内、它的下一级里按关键词找小节。找不到返回 -1。 */
+function findChild(lines, parentIdx, titleRe) {
+  const doc = docOf(lines);
+  const parent = doc.headings.find(x => x.at === parentIdx);
+  const h = parent && childHeading(doc, parent, titleRe);
+  return h ? h.at : -1;
+}
+
+/**
+ * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，附录是全文最后一章。
+ * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
+ */
+export function hostAnchorProblems(lines, isStory) {
+  const doc = docOf(lines);
+  const problems = [];
+  const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展治理项/.test(h.name));
+  const children = [[/规约约束要求/, '规约约束要求'], [/设计模式候选/, '设计模式候选登记'],
+    ...(isStory ? [[/技术契约/, '技术契约']] : [])];
+  if (!anchor) {
+    problems.push('缺「9. 宿主扩展治理项」章——它在「8. 验收标准」之后，'
+      + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${SECTIONS_DOC}）`);
+  } else {
+    for (const [re, name] of children) {
+      const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
+      if (h && h !== childHeading(doc, anchor, re)) {
+        problems.push(`「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——现在是「${'#'.repeat(h.level)} ${h.raw}」`);
+      }
+    }
+  }
+  const h2 = doc.headings.filter(h => h.level === 2);
+  const appendix = h2.findIndex(h => /^附录/.test(h.name));
+  if (appendix >= 0 && appendix < h2.length - 1) {
+    problems.push(`附录要是全文最后一章：「${h2.slice(appendix + 1).map(h => h.raw).join('」「')}」排在了附录之后`);
+  }
+  return problems;
 }
 
 /** 某个标题管到的行区间 `[start, end)`。 */
@@ -152,7 +189,7 @@ function scanNumericSources(text) {
  *   1. 两章独立成节，且不落在技术契约章的区间内（并进去会让守恒从按名退化成按号）；
  *   2. 编号粒度到条目级、编号在册（只写域前缀会让整域漏判照样放行）；
  *   3. 命中集与 acceptance 的 knowledge_rule 集一致；
- *   4. §10/§11 投影与真源一致。
+ *   4. §9.2/§9.3 投影与真源一致。
  *
  * 四组各自的前置：章节组只要 spec 可读；知识层组要激活知识可派生、knowledge-use 可读；
  * 桥接组要判断可读（约束集合可枚举），与投影无关；投影组要判断本身成立且出口章在——
@@ -167,7 +204,7 @@ function knowledgeExitGroups(ctx, lines) {
   const chapter = { name: '知识出口章节', problems: [], skipped: [] };
   const layer = { name: '知识层自检与 knowledge-use 判断', problems: [], skipped: [] };
   const bridge = { name: '命中集合与 acceptance 桥接', problems: [], skipped: [] };
-  const projection = { name: '§10/§11 投影与真源一致', problems: [], skipped: [] };
+  const projection = { name: '§9.2/§9.3 投影与真源一致', problems: [], skipped: [] };
 
   // ---- 组 1：章节，只依赖 spec 可读 ----
   const exitIdx = findHeading(lines, /规约约束要求/);
@@ -202,7 +239,7 @@ function knowledgeExitGroups(ctx, lines) {
   }
   if (knowledge) {
     layer.problems.push(...selfCheck(ctx.projectRoot, knowledge));
-    // 判断的真源是 knowledge-use.yaml；§10/§11 是它的投影。作者只编辑 YAML，投影由生成器写。
+    // 判断的真源是 knowledge-use.yaml；§9.2/§9.3 是它的投影。作者只编辑 YAML，投影由生成器写。
     try {
       use = readUse(ctx.projectRoot, ctx.feature);
     } catch (e) {
@@ -228,12 +265,12 @@ function knowledgeExitGroups(ctx, lines) {
 
   // ---- 组 4：投影一致性，前置是判断本身成立且出口章在 ----
   if (noJudgement) {
-    projection.skipped.push({ what: '§10/§11 投影与真源一致', why: noJudgement });
+    projection.skipped.push({ what: '§9.2/§9.3 投影与真源一致', why: noJudgement });
   } else if (coverage.length) {
-    projection.skipped.push({ what: '§10/§11 投影与真源一致',
+    projection.skipped.push({ what: '§9.2/§9.3 投影与真源一致',
       why: `knowledge-use.yaml 的判断有 ${coverage.length} 处不成立，先修它们再核投影` });
   } else if (exitIdx === -1) {
-    projection.skipped.push({ what: '§10/§11 投影与真源一致', why: '缺「规约约束要求」章，投影区不存在' });
+    projection.skipped.push({ what: '§9.2/§9.3 投影与真源一致', why: '缺「规约约束要求」章，投影区不存在' });
   } else {
     // 判据核投影与真源一致，对不上时错的一定是投影。
     projection.problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
@@ -322,7 +359,7 @@ function acceptanceCoverage(ctx, specIds) {
 }
 
 /**
- * §9 某一节里表外的第一段正文，没有就返回 null。
+ * §9.1 某一节里表外的第一段正文，没有就返回 null。
  *
  * 这一节是给下游 AI 的技术契约：plan 据它编码、test-plan 据它出用例。
  * 表外那几段承载的通常是实现取舍与待定项——它们有自己的去处，进了契约
@@ -345,27 +382,28 @@ function strayProse(body) {
 }
 
 /**
- * 埋点一节的形状：总述在首个指标（`####`）之前，表都在某个指标下，每个指标有带「统计点」列的点位表且至少一行。
- * 点位按任务包与审查同一份解析（`specStatPoints`）取，说明表不算点位。
- * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名与结果写法。
+ * 埋点一节的形状：总述在首个指标之前，表都在某个指标下，每个指标有定义段与带「统计点」列的点位表且至少一行。
+ * 指标是埋点标题的下一级（`level` 是埋点标题的层级）。点位按任务包与审查同一份解析取，说明表不算点位。
+ * 写「不涉及：<依据>」的整节不判。只核结构，不核指标名、统计点名、定义段与结果写法。
  */
-export function indicatorShape(where, body) {
+export function indicatorShape(where, body, level) {
   const lines = body.map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
   if (/^不涉及[:：]\s*\S/.test(lines[0] ?? '')) return [];
   const problems = [];
-  let h4 = false;
+  const indicator = new RegExp(`^#{${level + 1}}\\s`);
+  let seen = false;
   let lead = false;
   for (const l of lines) {
-    if (/^####\s/.test(l)) { h4 = true; continue; }
-    if (!l.startsWith('|')) { if (!h4) lead = true; continue; }
-    if (!h4) { problems.push(`${where}有统计点表不在指标小标题（####）下——一个指标一个 H4，表放在它下面`); return problems; }
+    if (indicator.test(l)) { seen = true; continue; }
+    if (!l.startsWith('|')) { if (!seen) lead = true; continue; }
+    if (!seen) { problems.push(`${where}有统计点表不在指标小节下——一个指标一个小节，表放在它下面（形态见 ${SECTIONS_DOC}）`); return problems; }
   }
-  const groups = specStatPoints(['### 埋点', ...body].join('\n'))?.groups ?? [];
-  if (!groups.length) problems.push(`${where}没有指标小标题（####）——以指标为单位组织，每个指标一个 H4 与它的统计点表`);
-  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述——两三句写采集什么、为谁用、已有能力覆盖的不重复列、字段的隐私边界`);
+  const groups = statPointsOfSection([`${'#'.repeat(level)} 埋点`, ...body].join('\n'))?.groups ?? [];
+  if (!groups.length) problems.push(`${where}没有指标小节——一个指标一个小节，下面放它的统计点表（形态见 ${SECTIONS_DOC}）`);
+  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述（形态见 ${SECTIONS_DOC}）`);
   for (const g of groups) {
     if (!g.lead) {
-      problems.push(`${where}的指标「${g.title}」标题与表之间缺一段——先写它衡量什么率或分布、要算它需要哪几类结果，再放表`);
+      problems.push(`${where}的指标「${g.title}」缺定义段——标题与表之间先写定义段，再放表`);
     }
     if (!g.points.length) {
       problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
@@ -375,7 +413,7 @@ export function indicatorShape(where, body) {
 }
 
 const SPEC_EXT_SECTIONS = [
-  { ch: '9 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
+  { ch: '9.1 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
 ];
 
 export default guard('spec', async (ctx) => {
@@ -395,7 +433,7 @@ export default guard('spec', async (ctx) => {
   const problems = [];
 
   // 场景探针：走过 /story 的 feature 才有流程契约。
-  // 本 hook 的检查分两类——**扩展新增的结构要求**（三份产物、§9 技术契约、术语解释列、
+  // 本 hook 的检查分两类——**扩展新增的结构要求**（三份产物、§9.1 技术契约、术语解释列、
   // 归档件红线）只在 story 场景成立，对「口述一个需求直接跑 spec」的用法是凭空多出来的
   // 硬阻断；**知识判定的两个出口**（约束要求章、模式候选登记）与 story 无关，对所有人生效
   // ——判定产生的代码要求不进 spec，编码那里就拿不到。
@@ -421,13 +459,13 @@ export default guard('spec', async (ctx) => {
     for (const { ch, title, subs } of SPEC_EXT_SECTIONS) {
       const chIdx = findHeading(lines, title);
       if (chIdx === -1) {
-        problems.push(`缺少宿主扩展章节「§${ch}」（core spec 模板未含，须在验收标准之后追加）`);
+        problems.push(`缺少宿主扩展小节「§${ch}」——写在「9. 宿主扩展治理项」下（形态见 ${SECTIONS_DOC}）`);
         continue;
       }
-      // 埋点是埋点设计的唯一完整说明：以指标为单位，总述、每个指标一个 H4 与它的统计点表，不放图与围栏（附录投影不收图）；其余小节只收表。
+      // 埋点是埋点设计的唯一完整说明：以指标为单位，总述、每个指标一个小节与它的统计点表，不放图与围栏（附录投影不收图）；其余小节只收表。
       for (const [name, subRe, opts = {}] of subs) {
-        const subIdx = findHeading(lines, subRe);
-        if (subIdx === -1 || subIdx < chIdx) {
+        const subIdx = findChild(lines, chIdx, subRe);
+        if (subIdx === -1) {
           problems.push(`§${ch} 缺少小节「${name}」（小节不得删；不涉及也须写「不涉及 + 一句依据」）`);
           continue;
         }
@@ -442,7 +480,8 @@ export default guard('spec', async (ctx) => {
             problems.push(`§${ch}「${name}」里有图或围栏（「${figure.trim().slice(0, 20)}…」）`
               + '——这一节用标题、短段、表与列表写；业务需要的图放它讲的业务章，这里用文字说明或链接过去');
           }
-          problems.push(...indicatorShape(`§${ch}「${name}」`, body));
+          const level = docOf(lines).headings.find(h => h.at === subIdx).level;
+          problems.push(...indicatorShape(`§${ch}「${name}」`, body, level));
         } else {
           const stray = strayProse(body);
           if (stray) {
@@ -454,6 +493,9 @@ export default guard('spec', async (ctx) => {
       }
     }
   }
+
+  // ---- 宿主扩展的位置：扩展内容挂在 framework 模板的锚点下，附录最后 ----
+  problems.push(...hostAnchorProblems(lines, isStory));
 
   // ---- 知识判定的两个出口（四组，各按前置判）----
   // 出口按**命中条目**派生，不为任何域预留固定小节——预留小节就是把域清单硬编码换个地方存在。

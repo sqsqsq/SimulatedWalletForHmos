@@ -83,19 +83,27 @@ sections:
 
 SPEC_HEAD = """# {feature} spec
 
-## 9. 技术契约
+## 9. 宿主扩展治理项
 
-### 9.1 端云接口
+| 扩展项 | 是否涉及 | 承载位置 |
+|---|---|---|
+| 技术契约 | 是 | 9.1 |
+| 规约约束要求 | 是 | 9.2 |
+| 设计模式候选登记 | 是 | 9.3 |
+
+### 9.1 技术契约
+
+#### 9.1.1 端云接口
 
 | 名称 | 用途 |
 |---|---|
 | 中性出口接口 | 带标识的出口 |
 
-## 10. 规约约束要求
+### 9.2 规约约束要求
 
 <!-- 由 knowledge-use.yaml 生成 -->
 
-## 11. 设计模式候选登记
+### 9.3 设计模式候选登记
 
 <!-- 由 knowledge-use.yaml 生成 -->
 """
@@ -362,7 +370,7 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
         self.assertIn("没有去处", proc.stderr)
 
     def test_a_complete_judgement_reaches_the_projection(self) -> None:
-        """判全之后，中性域的结论出现在 §10 生成区里。"""
+        """判全之后，中性域的结论出现在 §9.2 生成区里。"""
         self.write_use()
         proc = self.render()
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -393,7 +401,7 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
         self.assertIn("不在册", proc.stderr)
 
     def test_the_contract_name_is_checked_against_the_new_spec(self) -> None:
-        """落点名核的是这份 spec 的 §9，不是一份预置清单。"""
+        """落点名核的是这份 spec 的 §9.1，不是一份预置清单。"""
         self.write_use()
         text = self.use_path.read_text(encoding="utf-8")
         self.use_path.write_text(
@@ -401,7 +409,7 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
             encoding="utf-8")
         proc = self.render()
         self.assertEqual(1, proc.returncode)
-        self.assertIn("不在 §9 技术契约里", proc.stderr)
+        self.assertIn("不在 §9.1 技术契约里", proc.stderr)
 
 
 class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
@@ -411,10 +419,10 @@ class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
         contracts = self.feature_root / "contracts.yaml"
         (self.feature_root / "plan").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "plan" / "plan.md").write_text(
-            "# 计划\n\n## 知识决策（设计输入）\n\n### 设计模式选型\n\n"
+            "# 计划\n\n## 2. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 知识决策（设计输入）\n\n#### 9.1.1 设计模式选型\n\n"
             "| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n"
             "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n"
-            "\n## 2. 模块架构图\n\n略。\n", encoding="utf-8")
+            "\n#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n", encoding="utf-8")
         if not contracts.exists():
             contracts.write_text(
                 "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"

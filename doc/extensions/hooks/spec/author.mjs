@@ -370,23 +370,23 @@ export function storyInputs(ctx, sources) {
  * 统计设计这次要交什么、动笔前读什么、写完怎么自查——在动笔那一刻送到作者面前。
  *
  * 只说阶段任务与形状，不复述知识里的定义与步骤，也不点知识的名字：哪份讲统计设计由作者按
- * 各知识的用途自述去找。已写了 §9.4 的，列出每个指标有没有定义段、几个统计点，返修时照着补。
+ * 各知识的用途自述去找。已写了 §9.1.4 的，列出每个指标有没有定义段、几个统计点，返修时照着补。
  */
 function statDesignSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
-  const rows = ['## 5. 统计设计（§9.4）', ''];
-  if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.4 的统计设计：按本阶段原有要求写。'];
-  rows.push('这次要交：§9.4 先一段总述，然后每个指标一个 H4，标题写「指标名（流程名）」；H4 下先一段写它衡量什么率或分布、'
-    + `要算它需要哪几类结果，再放带「统计点」列的表，表后写边界。形状见 \`${TEMPLATE}\` 的 9.4。`,
+  const rows = ['## 5. 统计设计（§9.1.4）', ''];
+  if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.1.4 的统计设计：按本阶段原有要求写。'];
+  rows.push('这次要交：§9.1.4 先一段总述，然后每个指标一个小节、标题写指标名；小节下先写定义段，'
+    + `再放带「统计点」「所在流程」列的表，表后写边界。形状见 \`${TEMPLATE}\` 的 9.1.4。`,
   '动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它读者含 spec 的上篇；不凭阶段开头的记忆写。',
   '写完后：按那一篇的应用步骤逐条回查，走不通的直接改设计，不另写推演。',
-  '§9.4 写业务结果；上报用的字段、取值与登记留给 plan。');
+  '§9.1.4 设计打点：业务结果与每次上报要带的信息写在这里；字段名、取值与登记由 plan 实现。');
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
   const state = statDesignState(points);
-  if (state === 'na') rows.push('', `当前 §9.4 写的是「${points.na}」——核这条依据站得住。`);
+  if (state === 'na') rows.push('', `当前 §9.1.4 写的是「${points.na}」——核这条依据站得住。`);
   if (state === 'empty' || state === 'ready') {
-    rows.push('', '当前 §9.4 的指标：',
+    rows.push('', '当前 §9.1.4 的指标：',
       ...points.groups.map(g => `- ${g.title} —— 定义段：${g.lead ? '有' : '缺'}；统计点：${g.points.length} 个`));
   }
   return rows;

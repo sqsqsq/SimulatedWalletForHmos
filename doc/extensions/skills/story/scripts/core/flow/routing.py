@@ -115,7 +115,7 @@ SPEC_STAGE_ORDER = (
     "动笔前先取本阶段的作者要求：原则页 `doc/extensions/hooks/spec/author.md`，"
     "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
     "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
-    "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9 → "
+    "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与 §9.1 → "
     "story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
     "回看清单逐条处置 → "
     "story_flow.py story 登记"
@@ -150,7 +150,7 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 + " 进 /spec：第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
                 "（激活条目一条不落，你只填 applicable 与依据）。" + SPEC_STAGE_ORDER)
     if not have("spec", "spec.md"):
-        return "spec_write", "判断骨架已在。接着写 spec.md（§10/§11 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
+        return "spec_write", "判断骨架已在。接着写 spec.md（§9.2/§9.3 由 render 生成，不手写）。" + SPEC_STAGE_ORDER
     if not have("AR", "story.md"):
         return ("story_skeleton",
                 "spec.md 已在。跑 `story-build skeleton`：它给出成文要用的当前输入"
