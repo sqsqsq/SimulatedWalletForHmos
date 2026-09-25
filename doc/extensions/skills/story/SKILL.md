@@ -1,6 +1,6 @@
 ---
 name: story
-description: /story 需求流程编排——init 拉取需求资料并建工作区骨架、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、update 按新的材料与意见更新已有产物。
+description: /story 需求流程编排——init 拉取需求资料并建工作区骨架、成文归档叙事件、archive 归档评审载体、restore 回退归档覆盖、update 承接新材料、评审回流、人的新决定与直接改稿，更新已有产物。
 ---
 
 # story — 需求开发流程编排
@@ -64,45 +64,49 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 
 ## 停等真值表
 
-整条链只在这几处停；表外一律不问。「门禁报错了要不要修」「check 过了下一步做什么」「进 harness 还是进 verifier」
-「这一步做完了要不要继续」**都不是停等点**——那是义务不是选择题。
+整条链只在这几处停，**这张表是全部停等点的唯一清单**；表外一律不问。「门禁报错了要不要修」「check 过了下一步做什么」
+「进 harness 还是进 verifier」「这一步做完了要不要继续」**都不是停等点**——那是义务不是选择题。
 
-| 停在哪 | 触发 | 谁定 | 来历 |
+| 停在哪 | 谁问、何时问 | 选项来源 | 怎样记录 |
 |---|---|---|---|
-| **材料关卡**（`material_scope`） | 第一轮**必停**，无论材料看起来齐不齐；此后只在你拿新材料重新盘出缺口、写了本级选项侧车时再停；`/story update` 每次**必停一次**，问这一次要不要补料 | 人 | 本扩展新增，无条件 |
-| **会议裁决**（`meeting`） | 材料确认之后，会议判断里有带 `question` 的话题时停一次；没有会议或没有要问的就不停。停不停由 `status` 从会议判断枚举，不由你临场判 | 人，逐话题 | 本扩展新增，有条件 |
-| **范围关卡**（`scope_decision` 及其追问 `split_carrier`） | 需求分析之后**必停**；切法与承载哪份是同一次对话里的追问，算这一处 | 人 | 本扩展新增，无条件 |
-| **交付门之后** | `story-build check --deliver` 通过，按它打印的选项问一次：归档送审、进入 plan，或先归档再进 plan（本地单只有进 plan） | 人 | 既有确认点 |
-| **查无此单** | 全是占位件且取材报「查无此单」 | 人确认单号 | 既有确认点 |
-| **归档、恢复** | 不可逆或覆盖线上内容的操作 | 按各自的既有确认点 | 既有确认点 |
+| **材料关卡**（`material_scope`） | 你问。第一轮必停；此后只在你拿新材料重新盘出缺口时停；`/story update` 的输入阶段每次必停一次 | 两项固定，顺序与标签来自章节合同；推荐由脚本按你写的缺口文件算 | `decide --ask --reply` |
+| **会议裁决**（`meeting`） | 你问。材料确认之后，会议判断里有带 `question` 的话题时停一次，逐话题 | 会议判断里那个话题的选项 | 同上，另加 `--meeting --item` |
+| **范围关卡**（`scope_decision` 及追问 `split_carrier`） | 你问。需求分析之后必停；切法与承载哪份是同一次对话里的追问 | 契约里需求分析定下的选项集；份表 | 同上 |
+| **术语确认**（framework 的关卡） | 你问。spec 阶段写术语表时，交互态下请人逐条确认 | spec §0 术语映射表 | 人确认之后才勾 `[x]`；人没确认的不勾 |
+| **视觉 provider**（framework 的个人设置询问） | framework 在阶段入口问 | framework 给的候选 | 人答了用 framework 的 `record-visual-provider` 落盘 |
+| **交付门之后** | 你问。`story-build check --deliver` 通过后问一次：「归档送审 / 进入 plan」（本地单只有进 plan）。用户开场说做到送审或做到评审时，这一问就是本轮终点的停等 | 交付门打印的选项 | 人选归档就走「命令入口 · 归档」 |
+| **查无此单** | 你问。全是占位件且取材报「查无此单」 | 确认单号 | 按人给的单号重取 |
+| **归档、恢复** | 你问。不可逆或覆盖线上内容的操作 | 各自的既有确认点 | 按各自的既有确认点 |
 
-**停等的开关不交给被停的那一方**：「要不要停」不由判断材料齐不齐、范围有没有变来决定。
-**你的判断只进选项推荐**，定不定由人。**关卡决策只认人签**：`decide` 没有代签参数，记录里一律写 human。
-「按推荐走、别逐个问」免不掉材料与范围这两级——定错了后面全废。
+**停等的开关不交给被停的那一方**：「要不要停」不由判断材料齐不齐、范围有没有变来决定。你的判断只进推荐与提议，定不定由人。
+
+### 问法由脚本出
+
+到了停等点，`story_flow.py status` 除 `next` 之外返回 `ask`（问法编号 `ask_id`、编号选项、推荐、缺口）并写侧车。
+停等消息三段：
+
+```
+<一句结论与缺口>              盘点或分析做完了什么、要人定的是什么
+<ask.block 原样>              选项一项一行，推荐单独一行「推荐：n（理由）」
+```
+
+**不放**：材料总表（在 `init-analysis.md` 里）、已经说过的事、流程解释、命令、文件路径、判据名。选项标签不改写、不调顺序。
+有确认组件就用组件，没有就给编号菜单，同一轮消息内给全。
+
+**人签只来自人的回话**：人答了之后跑 `decide --gate <本级> --ask <ask_id> --reply "<人的原话>"`。原话写了编号或标签，
+脚本照它映射；原话是他自己的话，加 `--chosen <编号>` 写明他选的是哪一项。没有当前问法的人签写不进契约。
+`rejected`（退出码 2）是「记下了但不能按它走」，按脚本给的补救动作原地重问同一个关卡。
+回应给出新诉求 → 这是讨论的开始：去分析、把方案摆出来，收敛了再问。**人确认前不记录、不往下走**；他已经确认过的事不再问第二遍。
+
+**你自己的判断记成提议**：`decide --gate <本级> --propose --chosen <编号> --why "<理由>"` 记为 `by: model`，
+流程不因它前进；下一次停等时脚本把它列进问法，请人确认。「按推荐走、别逐个问」免不掉材料与范围这两级——定错了后面全废。
+
+**流程契约只由脚本写**：`story-flow.json` 带自身摘要，手改会被报出来并给恢复路径；要改一笔记录，用对应命令重新记。
 
 ### 失败出口（不是停等点）
 
 停下来说「我修不动了」是**报告修不动、请人接手**。它的前提是可核的：同一判据类在 `story-build check` 的
 **连续三次运行**里都报了，且三次之间产物确有改动。不满足就不是合法停等——照报错文案修，改完重跑。
-
-### 停等消息怎么写：三段，不超过 12 行
-
-```
-<一句现状>                    盘点/分析做完了什么，一句话
-<一句缺口或问题>              要他定的是什么，结论句
-1. <选项>（推荐）             每项一行，推荐标出来
-2. <选项>
-```
-
-**不放**：材料总表（在 `init-analysis.md` 里）、已经说过的事、流程解释、命令、文件路径、判据名。
-选项文字写成他的话——「不拆，整体承载」，不是「carry_all」。有确认组件就用组件，没有就给 portable 编号菜单，
-同一轮消息内给全。选项标签要自带执行前提：写「材料已放进 `<完整路径>`，请导入」，不写「补充材料后继续」。
-
-**人回应之后**：对上了某一项 → `story_flow.py decide` 落契约（`basis` 引他的原话），按 `next` 继续；
-`rejected`（退出码 2）是「记下了但不能按它走」，按脚本给的补救动作原地重提同一个关卡。
-回应给出新诉求 → 这是讨论的开始：去分析、把方案摆出来，收敛了再记录。
-**人确认前不记录、不往下走**；他已经确认过的事不再问第二遍。**选项集必须落进契约**——只记选中项的话，
-「看过选项后选了不拆」与「压根没生成拆分选项」事后完全同形。
 
 ## 命令入口
 
@@ -147,12 +151,21 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 
 ### 更新
 
-- **前置**：这个单已经有产物（Spec / Story / Review / Plan 至少一样），上游材料、评审意见或人的新决定使它不再成立
-- **取材不写业务文件**：`fetch` 只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
+`/story update` 承接一切让已有产物不再成立的依据变化，**只有这一个入口**：
+
+| 变化 | 怎么进来 |
+|---|---|
+| 新材料 | 人放进 `inbox/`，或系统需求经取材取回，走导入链 |
+| 评审回流 | 评审人在 review.md 人工区表态；系统需求的评审回稿经取材取回 |
+| 人的新决定 | 人在对话里说的，经 `decide --update` 记原话 |
+| 有人直接改过的文档 | 八项比较报出来 |
+
+- **前置**：这个单已经有产物（Spec / Story / Review / Plan 至少一样）
+- **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```bash
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
-node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare   # ④ 比较并开这一轮
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
@@ -160,14 +173,15 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 
 - **①** 有开着的更新（`open`）时按它的记录续做，本轮已经取过材的不再重复取。
 - **②** 只对 AR 开头的系统需求执行，先按「需求系统 Token」取 token；两个路径取自 ① 返回的 `paths`，按当前 shell 加引号。
-  本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的 `success` 与逐份状态为准：失败就停在这里，
-  报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
+  这一轮没取过上游，③ 会停下并指回这一步。本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的
+  `success` 与逐份状态为准：失败就停在这里，报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
+- **③** 收件箱有新原件先导入、`round` 登记到本轮，再 ④；④ 见到未并入的原件会拒绝并列出文件。
 
 **④ 八项真的没变**就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
 整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
-意思没变就用 `story_flow.py decide --update <议题 id> --basis <他同意沿用的原话>` 记一笔再重跑；
+意思没变，请他确认沿用，用 `story_flow.py decide --feature <编号> --update <议题 id> --reply "<他的原话>"` 记一笔再重跑；
 意思变了就让他重新看一眼那一条。
 
 ## 产物定位

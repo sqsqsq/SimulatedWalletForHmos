@@ -23,6 +23,7 @@ import difflib
 import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from materials import registry
@@ -241,12 +242,15 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
     新原件自己还没归类时，列出全部已归类的原件。
     """
     inbox = feature_root / "inbox"
+    path = inbox / ".classify.json"
+    if not path.is_file():
+        return []
     try:
-        classes = json.loads((inbox / ".classify.json").read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return []
+        classes = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise FlowError(f"inbox/.classify.json 不是合法 JSON（{exc}）：修正归类件再跑") from exc
     if not isinstance(classes, dict):
-        return []
+        raise FlowError("inbox/.classify.json 应是 {\"文件名\": \"类别\"} 对象")
     known = {name: cls for name, cls in classes.items() if (inbox / name).is_file()}
     out = []
     for new in pending:
@@ -263,13 +267,27 @@ def _nothing(facts: dict) -> bool:
             and not facts["pending"] and not facts["materials_changed"] and not facts["request"])
 
 
+RECEIPT = ("AR", "story-src", "fetched.json")
+
+
 def _receipt(feature_root: Path) -> dict | None:
     """最近一次取材的回执。**原样转交**：取到没有、与本地是否相同由对接层写明，这里不判。"""
-    path = feature_root / "AR" / "story-src" / "fetched.json"
+    path = feature_root / Path(*RECEIPT)
+    if not path.is_file():
+        return None
     try:
         return json.loads(path.read_text(encoding="utf-8").lstrip("\ufeff"))
-    except (OSError, ValueError):
-        return None
+    except ValueError as exc:
+        raise FlowError(f"{'/'.join(RECEIPT)} 读不出来（{exc}）：重跑取材，它会重写回执") from exc
+
+
+def _fetched_this_round(feature_root: Path, contract: dict,
+                        records: list[tuple[str, dict]]) -> bool:
+    """这一轮取过上游没有：回执晚于上一轮 update 收口（或成文登记）的那一刻。"""
+    path = feature_root / Path(*RECEIPT)
+    closed = _latest(records, "closed")
+    stamp = (closed[1].get("closed_at") if closed else None) or contract.get("story_written_at")
+    return path.is_file() and (not stamp or path.stat().st_mtime >= datetime.fromisoformat(stamp).timestamp())
 
 
 def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
@@ -284,11 +302,15 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
     resumed = _resume(records)
     if resumed:
         return {**resumed, "paths": _paths(project_root, feature_root)}
+    system = system_requirement(feature)
+    if system and not _fetched_this_round(feature_root, contract, records):
+        # 系统上的评审回稿与改版正文只能经取材进来：没取就比，比出来的是上一次的世界
+        raise FlowError("系统需求这一轮还没取上游：先按 SKILL「更新」② 取上游，落点用 "
+                        "`update --action status` 返回的 paths，取完再报输入")
     facts = _collect(feature_root, contract, records, request)
     contract["update"] = {**(contract.get("update") or {}), "stage": "inputs", "inputs_at": now(),
                           "inputs_from": len(round_gates(contract))}
     save(feature_root, contract)
-    system = system_requirement(feature)
     return {"stage": "inputs", "paths": _paths(project_root, feature_root), "changed": facts["changed"], "unreadable": facts["unreadable"],
             "baseline": facts["diff"]["complete"], "pending": facts["pending"],
             "superseded_hint": facts["superseded_hint"],
@@ -296,8 +318,8 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
             "upstream": _receipt(feature_root) if system else None,
             "action": ("`upstream` 是最近一次取材的回执，展示它的时刻；本次取材成功与否以那次取材自己的结果为准。"
                        if system else "本地需求没有上游；")
-                      + "按 `rules/init_analysis.md` S2a 盘点手上的料，摆第一级选项侧车，"
-                      "问人这一次要不要补料，**停等**。人答了 → `decide --gate material_scope` 记原话 → "
+                      + "按 `rules/init_analysis.md` S2a 盘点手上的料，缺口写进 `.material-gaps.json`，"
+                      "跑 `status` 取问法，问人这一次要不要补料，**停等**。人答了 → `decide` 记原话 → "
                       "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare`"}
 
 
@@ -327,6 +349,9 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
         return resumed
 
     facts = _collect(feature_root, contract, records, request)
+    if facts["pending"]:
+        raise FlowError("收件箱里还有没并入正文的原件，先导入、`round` 登记到本轮，再 prepare："
+                        + "、".join(facts["pending"]))
     current, unreadable, diff, changed = (facts["current"], facts["unreadable"],
                                           facts["diff"], facts["changed"])
     pending, asked = facts["pending"], bool(facts["request"])
@@ -382,10 +407,7 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     lines = []
     if changed:
         lines.append("变了的：" + "、".join(changed))
-    if pending:
-        lines.append(f"收件箱有 {len(pending)} 份还没并入正文（{'、'.join(pending[:3])}）："
-                     "采用的先导入、`round` 登记到本轮")
-    elif facts["materials_changed"]:
+    if facts["materials_changed"]:
         lines.append("材料指纹与本轮登记的对不上：先 `round` 登记到本轮")
     if not diff["complete"]:
         lines.append("没有上次已处理的版本可比：这一轮说不出「原来怎么写」，"
@@ -517,6 +539,10 @@ def cmd_update_close(feature_root: Path) -> dict:
             f"{rid} 还没有写 update-notes.md（或它是空的），不收口。"
             "四段就够：当前依据、变化与影响、决定与修订、核对与剩余——"
             f"落点 AR/story-src/updates/{rid}/update-notes.md")
+    if not unchanged_rows(notes.read_text(encoding="utf-8")):
+        raise FlowError(
+            f"{rid} 的 update-notes.md 缺「不变项与理由」表，不收口：列出这次变化牵到却不用改的"
+            "重要内容，每行写不变项与为什么不用改——防的是优化一处、损坏另一处")
 
     # 报告写了、判了 PASS，阶段却仍标「沿用历史」：framework 不改写已闭环的 summary，
     # 只有再跑一次完整 harness 才采纳它。这时收口，这一轮就带着一个「没审」的闭环结束了。
@@ -540,16 +566,7 @@ def cmd_update_close(feature_root: Path) -> dict:
 
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
-    after = root / "after"
-    kept = 0
-    for key in current:
-        src = feature_root / key
-        if not src.is_file():
-            continue
-        target = after / key
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, target)
-        kept += 1
+    kept = _keep(feature_root, current, root / "after")
 
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
@@ -566,6 +583,58 @@ def cmd_update_close(feature_root: Path) -> dict:
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}
+
+
+#: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。
+UNCHANGED_HEAD = re.compile(r"^#{2,4}\s+.*不变项")
+TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+TABLE_RULE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+
+
+def unchanged_rows(text: str) -> int:
+    """update-notes 里「不变项与理由」表的数据行数。"""
+    lines = text.replace("\r\n", "\n").split("\n")
+    at = next((i for i, line in enumerate(lines) if UNCHANGED_HEAD.match(line)), None)
+    if at is None:
+        return 0
+    rows = []
+    for line in lines[at + 1:]:
+        if line.startswith("#"):
+            break
+        if TABLE_ROW.match(line) and not TABLE_RULE.match(line):
+            rows.append(line)
+    return max(len(rows) - 1, 0)          # 第一行是表头
+
+
+def _keep(feature_root: Path, current: dict[str, str], after: Path) -> int:
+    """把这一轮盯着的那几份正文留到 `after/`，给下一轮比。"""
+    kept = 0
+    for key in current:
+        src = feature_root / key
+        if src.is_file():
+            (after / key).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, after / key)
+            kept += 1
+    return kept
+
+
+def record_baseline(feature_root: Path) -> str | None:
+    """成文登记时留第一份比较基准：之后第一次 update 也比得出「原来怎么写」。
+
+    只在这个单还没有任何 update 记录时写——已经 update 过的，基准是上一轮收口留下的那一份。
+    """
+    if _records(feature_root):
+        return None
+    rid = now().replace("-", "").replace(":", "").replace("T", "-")[:15] + "-story"
+    root = _updates_dir(feature_root) / rid
+    current, unreadable = _scan(feature_root)
+    kept = _keep(feature_root, current, root / "after")
+    record = {"id": rid, "kind": "story_baseline", "status": "closed", "closed_at": now(),
+              "files": current, "unreadable": unreadable,
+              "after": {"path": f"AR/story-src/updates/{rid}/after", "files": kept}}
+    (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                                      encoding="utf-8")
+    return rid
 
 
 def cmd_update_restore(feature_root: Path) -> dict:

@@ -35,13 +35,13 @@ import {
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
-  createContext, fail, readJson, readText, refuseIfFrozen, specText, writeJson,
+  createContext, fail, readJson, readText, refuseIfFrozen, specText,
 } from './story/context.mjs';
 import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
-import { cmdBuild, decisionsMissing } from './story/review.mjs';
+import { cmdBuild, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
@@ -154,8 +154,9 @@ function cmdSkeleton(ctx) {
       + '写出来的结论评审者读得到，没写到那儿的，起手这一步分不出是哪一种');
   }
 
-  // ---- 预检 ⑤：决策登记形状合法（只读，不写） ----
-  const makeDecisions = decisionsMissing(ctx);
+  // ---- 预检 ⑤：决策登记起手前就有议题，或写明本单无待决（只读，不写） ----
+  const gap = registrationGap(ctx);
+  if (gap) fail(gap);
 
   // ---- 内容计算：也在写盘之前 ----
   const facts = {
@@ -175,7 +176,6 @@ function cmdSkeleton(ctx) {
   // ---- 预检全过，开始写盘 ----
   // 写作设计不是预检：它还是空壳时起手照走，只是下一步变成先写它。
   const hadPlan = fs.existsSync(ctx.templatePath);
-  if (makeDecisions) writeJson(ctx.decisionsPath, { decisions: [] });
   if (!hadPlan) fs.writeFileSync(ctx.templatePath, writingPlanShell(ctx.contract), 'utf-8');
   const plan = readWritingPlan(ctx);
   const { made, seeded, starts } = writeDrafts(ctx, facts, chapterState, plan);

@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from flow_steps import walk_to_complete
 from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -79,39 +80,16 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
     if (src / "story-flow.json").is_file():
         return
-    def flow(*args: str) -> None:
+    def flow(*args: str) -> dict:
         proc = subprocess.run(
             [sys.executable, str(FLOW_SCRIPT), *args, "--feature", feature,
              "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=120, cwd=str(root))
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
-    flow("init")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "material_scope", "options": [
-            {"key": "supplied", "label": "a", "request": True},
-            {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
-        encoding="utf-8")
-    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--basis", "夹具：现有材料就是全部")
-    (src / ".positioning.json").write_text(json.dumps({
-        "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
-        "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
-    (src / ".scope-options.json").write_text(json.dumps(
-        [{"key": "carry_all", "label": "按当前范围整体承载", "recommended": True}],
-        ensure_ascii=False), encoding="utf-8")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "scope_decision",
-         "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
-        ensure_ascii=False), encoding="utf-8")
-    flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-         "--basis", "夹具：整体承载")
-    flow("complete", "--from", "AR/story-src/design-draft.md")
+    walk_to_complete(flow, src, draft_text, "本 AR 承载自动充值签约与管理")
 
 
 class WorkspaceCase(unittest.TestCase):
@@ -213,9 +191,8 @@ class CurrentDecisionsReachTheAuthor(WorkspaceCase):
         out = self.task_package()
         return out[out.index("## 3. 决策登记"):out.index("\n## 4.")]
 
-    def test_both_legal_shapes_reach_the_author_verbatim(self) -> None:
-        for raw in (json.dumps([self.OPEN, self.SETTLED], ensure_ascii=False),
-                    json.dumps({"decisions": [self.OPEN, self.SETTLED]}, ensure_ascii=False)):
+    def test_the_register_reaches_the_author_verbatim(self) -> None:
+        for raw in (json.dumps({"decisions": [self.OPEN, self.SETTLED]}, ensure_ascii=False),):
             with self.subTest(shape=raw[:1]):
                 self.write(raw)
                 got = self.section()
@@ -226,19 +203,19 @@ class CurrentDecisionsReachTheAuthor(WorkspaceCase):
                 self.assertIn("该谁定：需求方", got)
 
     def test_the_script_does_not_infer_which_text_is_affected(self) -> None:
-        self.write(json.dumps([self.OPEN], ensure_ascii=False))
+        self.write(json.dumps({"decisions": [self.OPEN]}, ensure_ascii=False))
         got = self.section()
         for phrase in ("受影响的章节", "影响段落", "impacts"):
             self.assertNotIn(phrase, got)
 
     def test_an_empty_list_and_a_missing_file_say_so(self) -> None:
-        self.write("[]")
+        self.write('{"decisions": []}')
         self.assertIn("当前登记为空", self.section())
         (self.feature_root / "AR" / "story-src" / "decisions.json").unlink()
         self.assertIn("本次尚无登记", self.section())
 
     def test_a_broken_file_is_not_zero_decisions(self) -> None:
-        for raw in ("{ not json", json.dumps({"items": []})):
+        for raw in ("{ not json", json.dumps({"items": []}), json.dumps([self.OPEN], ensure_ascii=False)):
             with self.subTest(raw=raw):
                 self.write(raw)
                 got = self.section()
@@ -943,10 +920,10 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         action = self.status()["action"]
         for step in ("check-receipt", "--deliver", "plan"):
             self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
-        self.assertIn("不重跑 harness", action)
-        self.assertIn("--correction-init", action, "闭环后的修正没指向 framework 修正入口")
-        self.assertIn("--revalidate", action, "闭环后的修正没指向 framework 重验入口")
-        self.assertIn("不手动派 verifier", action, "闭环后修正时还会手动派 verifier")
+        # 规则只在 phase 文档写一次，路由指过去（G05）
+        self.assertIn("phases/spec.md", action, "没指向闭环规则所在的那一节")
+        spec_phase = (REPO_ROOT / "doc/extensions/skills/story/phases/spec.md").read_text(encoding="utf-8")
+        self.assertIn("--revalidate", spec_phase, "闭环规则里没有重验入口")
         # 回执是 harness 的只读投影（receipt_schema 2.1），agent 零手填——
         # 让模型去回填一份它不该碰的文件，轻则白做，重则被判手写凭证。
         self.assertNotIn("回填", action, "还在让模型回填 framework 的凭证")
@@ -957,14 +934,8 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         payload = self.status()
         self.assertIn("sidecar", payload, "关卡这一步没给出要写的文件形状")
         shape = json.dumps(payload["sidecar"], ensure_ascii=False)
-        self.assertIn(".gate-options.json", shape)
-        self.assertIn("material_scope", shape, "侧车形状没写明是给哪一级摆的")
-        # 这一级摆哪两项也随形状一起给：键是固定的，作者要改的只有 label。
-        # 不给的话他得先去别处找键叫什么，而 `decide` 只认合同登记的那两个。
-        keys = [o["key"] for o in json.loads(CONTRACT.read_text(encoding="utf-8"))
-                ["gates"]["material_scope"]["options"]]
-        for key in keys:
-            self.assertIn(key, shape, f"侧车形状里没给出 {key} 这一项")
+        self.assertIn(".material-gaps.json", shape)
+        self.assertIn("missing", shape, "缺口文件的形状没给出来")
 
 
 class ChapterFileCarriesOnlyBody(WorkspaceCase):
@@ -984,6 +955,8 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
             + '\n## 0. 术语映射表\n\n| 业务名 | 权威模块 | 说明 |\n|---|---|---|\n| 受理单编号 | 提交入口 | 云侧受理后返回的编号 |\n\n## 9. 宿主扩展治理项\n\n| 扩展项 | 是否涉及 | 承载位置 |\n|---|---|---|\n| 技术契约 | 是 | 9.1 |\n| 规约约束要求 | 是 | 9.2 |\n| 设计模式候选登记 | 是 | 9.3 |\n\n### 9.1 技术契约\n\n#### 9.1.1 端云接口\n\n不涉及：复用既有提交接口。\n\n#### 9.1.2 数据存储\n\n不涉及：不落库。\n\n#### 9.1.3 配置项\n\n不涉及：没有新增配置。\n\n#### 9.1.4 埋点\n\n不涉及：不新增埋点。\n\n#### 9.1.5 依赖变更\n\n不涉及：只改一处入口。\n', encoding="utf-8")
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src", DRAFT_TEXT)
+        (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(
+            '{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
         # 章是照写作设计写的：这一组测章文件的标题处理，设计放一份协议齐全的最小件
         shutil.copy2(PLAN_FIXTURE, self.feature_root / "AR" / "story-src" / "story-template.md")
         self.assertEqual(0, self.build("skeleton").returncode)
@@ -1027,7 +1000,7 @@ class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
     """
 
     FLOW = {
-        "schema": 3, "feature": FEATURE, "status": "complete",
+        "schema": 4, "feature": FEATURE, "status": "complete",
         "design_generated_at": "2026-09-12T00:00:00",
         "rounds": [{
             "round": 1,

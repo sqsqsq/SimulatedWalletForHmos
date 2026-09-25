@@ -165,7 +165,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         doc.write_text(text, encoding="utf-8")
         decisions = self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "decisions.json"
         if not decisions.exists():
-            decisions.write_text('{"decisions": []}', encoding="utf-8")
+            decisions.write_text('{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
 
     def test_each_chapter_is_parsed_once(self) -> None:
         build = self.mech / "skills" / "story" / "scripts" / "core" / "story-build.mjs"

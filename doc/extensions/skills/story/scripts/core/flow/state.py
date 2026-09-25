@@ -108,22 +108,71 @@ def ledger_digest(path: Path) -> str | None:
     return sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+#: 契约自身的内容摘要。每次写入由本模块重算；读到对不上说明有人绕过命令改过文件。
+DIGEST_KEY = "digest"
+#: 本次命令里读到的手改提示。入口把它带进输出，命令本身照常执行。
+TAMPER_NOTES: list[str] = []
+
+
+def contract_digest(contract: dict) -> str:
+    body = {k: v for k, v in contract.items() if k != DIGEST_KEY}
+    text = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def load(feature_root: Path) -> dict | None:
     path = feature_root / Path(*CONTRACT)
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
+        contract = json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
     except ValueError as exc:
         raise FlowError(
-            f"AR/story-src/story-flow.json 不是合法 JSON（{exc}）：它应当只由本脚本写入。"
-            "若曾手工编辑，请修正语法或删除后回到 S2 重新登记轮次") from exc
+            f"AR/story-src/story-flow.json 不是合法 JSON（{exc}）：它只由本脚本写入。"
+            "修正语法后跑 `story_flow.py status` 核对当前位置") from exc
+    if contract.get(DIGEST_KEY) != contract_digest(contract):
+        note = ("流程契约被手改过（内容摘要对不上），本次命令照常执行："
+                "跑 `story_flow.py status` 核对当前位置；手改里要保留的决定，"
+                "用对应命令重新记录（decide / round / reopen），下一次写入会重算摘要")
+        if note not in TAMPER_NOTES:
+            TAMPER_NOTES.append(note)
+            log(note)
+    return contract
 
 
 def save(feature_root: Path, contract: dict) -> None:
     path = feature_root / Path(*CONTRACT)
     path.parent.mkdir(parents=True, exist_ok=True)
+    contract[DIGEST_KEY] = contract_digest(contract)
     path.write_text(json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def stage_of(contract: dict | None) -> str:
+    """流程现在处在哪一段——**各命令判位置只问这一处**。
+
+    返回 `none`（没有轮次）、`gathering`（收口前：盘点、关卡、提取）、`complete`（已收口、
+    story 未登记）、`story_written`、`archived`、`update_inputs`（update 输入阶段）、
+    `update_open`（update 这一轮开着）。update 的两段优先：update 期间 reopen 回到的是
+    这一轮，complete 沿用已定范围，新材料登记进当前轮。
+    """
+    if contract is None or not contract.get("rounds"):
+        return "none"
+    update = contract.get("update") or {}
+    if update.get("stage") == "inputs":
+        return "update_inputs"
+    if update.get("open"):
+        return "update_open"
+    if contract.get("archived"):
+        return "archived"
+    if contract.get("status") == "story_written":
+        return "story_written"
+    if contract.get("status") == "complete":
+        return "complete"
+    return "gathering"
+
+
+def in_update(contract: dict | None) -> bool:
+    return stage_of(contract) in ("update_inputs", "update_open")
 
 
 def require(contract: dict | None) -> dict:

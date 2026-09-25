@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml
+from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMAGES = (REPO_ROOT
@@ -122,10 +123,6 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     """
     if (src / "story-flow.json").is_file():
         return
-    sys.path.insert(0, str(FLOW.parent))
-    from flow.inputs import material_options  # noqa: PLC0415
-    from flow.state import CARRY_ALL  # noqa: PLC0415
-
     def flow(*args: str) -> dict:
         proc = subprocess.run(
             [sys.executable, str(FLOW), *args, "--feature", feature,
@@ -135,30 +132,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
-    flow("init")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "material_scope",
-         "options": [dict(o) for o in material_options()]},
-        ensure_ascii=False), encoding="utf-8")
-    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--basis", "夹具：现有材料就是全部")
-    (src / ".positioning.json").write_text(json.dumps({
-        "scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
-        "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
-    (src / ".scope-options.json").write_text(json.dumps(
-        [{"key": CARRY_ALL, "label": "按当前范围整体承载",
-          "recommended": True}], ensure_ascii=False), encoding="utf-8")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "scope_decision",
-         "options": [{"key": CARRY_ALL, "label": "按当前范围整体承载"}]},
-        ensure_ascii=False), encoding="utf-8")
-    flow("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-         "--basis", "夹具：整体承载")
-    flow("complete", "--from", "AR/story-src/design-draft.md")
+    walk_to_complete(flow, src, draft_text)
 
 
 
@@ -191,7 +165,7 @@ class StoryBuildCase(unittest.TestCase):
         """
         decisions = self.src / "decisions.json"
         if not decisions.exists():
-            decisions.write_text('{"decisions": []}', encoding="utf-8")
+            decisions.write_text('{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
 
     DRAFT = (
         "# REQ-DEMO — 开发需求（AR）\n\n"
@@ -254,7 +228,7 @@ class TestErrorWordingPointsAtForm(StoryBuildCase):
         self.assertNotIn("但那一章里找不到", source)
 
 
-REVIEW_HUMAN_ZONE = "审核结果：\n"
+REVIEW_HUMAN_ZONE = HUMAN_ZONE
 
 
 class TestReviewForm(StoryBuildCase):
@@ -263,7 +237,7 @@ class TestReviewForm(StoryBuildCase):
     曾经这里还有暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、
     确认依据七个字段。评审人打开它先要读一遍字段表，而其中六格他答不上来
     （责任人和期限是排期的事，确认依据是审计的事）。答不上来的格子只会被跳过或胡填。
-    没写 review_mode 的议题仍是一行「审核结果：」；选方案与复核结论两种填写位见 test_review_modes。
+    每条议题的人工区只有三态与修改意见。
     """
 
     review_path = property(
@@ -271,25 +245,20 @@ class TestReviewForm(StoryBuildCase):
 
     def write_decision(self) -> None:
         (self.src / "decisions.json").write_text(json.dumps({
-            "decisions": [{
-                "id": "submit-boundary", "status": "settled",
-                "title": "提交入口与补卡由两张开发单分别承接",
-                "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。\n\n"
-                                 "**根据**：上游已经拆成两张开发单。\n\n"
-                                 "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
-                "decider": "需求负责人",
-                "category": "范围与拆分",
-            }],
+            "decisions": [settled_decision(
+                "submit-boundary", "提交入口与补卡由两张开发单分别承接",
+                "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示，验收不含补卡。",
+                said="补卡另起一张单")],
         }, ensure_ascii=False), encoding="utf-8")
 
-    def test_the_human_zone_is_one_line(self) -> None:
+    def test_the_human_zone_is_three_states_and_an_opinion(self) -> None:
         self.write_decision()
         self.assertEqual(0, self.run_build("build").returncode)
         text = self.review_path.read_text(encoding="utf-8")
         self.assertIn(REVIEW_HUMAN_ZONE, text)
         for gone in ("暂缓责任人", "完成期限", "是否阻塞执行", "后续动作",
                      "确认人", "确认日期", "确认依据", "**状态**",
-                     "- [ ]", "同意当前建议", "暂缓原因"):
+                     "方案选择：", "审核结果：", "不同意原因", "调整结论"):
             self.assertNotIn(gone, text, f"「{gone}」不该再出现在评审记录里")
 
     def test_filled_human_zone_survives_a_rerender(self) -> None:
@@ -302,13 +271,14 @@ class TestReviewForm(StoryBuildCase):
         text = self.review_path.read_text(encoding="utf-8")
         anchor = "<!-- decision: submit-boundary -->"
         filled = text.replace(
-            "审核结果：\n\n" + anchor,
-            "审核结果：范围要含补卡入口。\n\n**确认人**：某评审人\n\n" + anchor)
+            "修改意见：\n\n" + anchor,
+            "修改意见：范围要含补卡入口。\n\n**确认人**：某评审人\n\n" + anchor)
+        self.assertNotEqual(text, filled, "夹具变了，用例要跟着改")
         self.review_path.write_text(filled, encoding="utf-8")
 
         self.assertEqual(0, self.run_build("build").returncode)
         again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("审核结果：范围要含补卡入口。", again)
+        self.assertIn("修改意见：范围要含补卡入口。", again)
         self.assertIn("**确认人**：某评审人", again, "旧形态里人写过的字也要保住")
 
     def test_legacy_fields_in_the_review_are_named(self) -> None:
@@ -316,7 +286,7 @@ class TestReviewForm(StoryBuildCase):
         self.init_audit()
         self.review_path.write_text(
             "# 评审记录\n\n### 1. 提交入口与补卡由两张开发单分别承接\n\n"
-            "审核结果：\n\n"
+            "评审结论：\n\n"
             "<!-- decision: submit-boundary -->\n\n"
             "**确认日期**：\n\n**状态**：草稿（待开发确认）\n",
             encoding="utf-8")
@@ -393,25 +363,19 @@ class TestDecisionUnits(StoryBuildCase):
 
     DECISIONS = {
         "decisions": [
-            {"id": "DEC-001", "status": "settled",
-             "title": "挂失结果以卡片服务的回执为准",
-             "clarification": "**要定的事**：挂失办没办成，以哪一侧的说法为准。\n\n"
-                              "**根据**：本端只有请求态，判不了卡是否真的停用。\n\n"
-                              "**结论与影响**：以卡片服务的回执为准，页面照回执显示。",
-             "decider": "需求负责人", "category": "验收口径"},
-            {"id": "DEC-002", "status": "settled",
-             "title": "同卡同状态的重复提交按一次算",
-             "clarification": "**要定的事**：同一张卡短时间内重复提交怎么处理。\n\n"
-                              "**根据**：重复提交只会让用户以为办了两次。\n\n"
-                              "**结论与影响**：按一次算，第二次直接回到等待态。",
-             "decider": "需求负责人", "category": "流程顺序与准入"},
-            {"id": "DEC-003", "status": "open",
-             "title": "线下渠道的入口这轮收不收",
-             "clarification": "**要定的事**：线下渠道的入口要不要一起收进本单。\n\n"
-                              "**可选的做法**：1. 本单先不收，等渠道方给时间表；"
-                              "2. 一起收，范围扩到渠道侧。\n\n"
-                              "**建议**：按第 1 种做。",
-             "decider": "产品负责人", "category": "范围与拆分"},
+            settled_decision("DEC-001", "挂失结果以卡片服务的回执为准",
+                             "挂失办没办成，以哪一侧的说法为准。",
+                             "以卡片服务的回执为准，页面照回执显示。",
+                             said="以卡片服务回执为准", category="质量指标"),
+            settled_decision("DEC-002", "同卡同状态的重复提交按一次算",
+                             "同一张卡短时间内重复提交怎么处理。",
+                             "按一次算，第二次直接回到等待态。",
+                             said="重复提交按一次算", category="业务规则"),
+            open_decision("DEC-003", "线下渠道的入口这轮收不收",
+                          "线下渠道的入口要不要一起收进本单。",
+                          [("本单先不收，等渠道方给时间表", "范围不变"),
+                           ("一起收", "范围扩到渠道侧")],
+                          "按第 1 种做。"),
         ],
     }
 
@@ -435,11 +399,9 @@ class TestDecisionUnits(StoryBuildCase):
         self.init_audit()
         self.assertEqual(0, self.check_output()[0])
         self.write_decisions(self.DECISIONS["decisions"] + [
-            {"id": "DEC-004", "status": "open", "title": "回执超时的等待时长",
-             "clarification": "**要定的事**：回执迟迟不到时等多久。\n\n"
-                              "**可选的做法**：1. 先按现网默认值；2. 等渠道方给数。\n\n"
-                              "**建议**：按第 1 种做。",
-             "decider": "需求负责人", "category": "规则与数值"}])
+            open_decision("DEC-004", "回执超时的等待时长", "回执迟迟不到时等多久。",
+                          [("先按现网默认值", "现在就能定"), ("等渠道方给数", "要等渠道方")],
+                          "按第 1 种做。", category="业务规则")])
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn("材料在枚举之后变了", out)
@@ -1137,7 +1099,7 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
     def register(self) -> None:
         """把成文态登记写进流程契约——含登记那一刻的台账指纹。"""
         flow = {
-            "schema": 3, "feature": FEATURE, "status": "story_written",
+            "schema": 4, "feature": FEATURE, "status": "story_written",
             "rounds": [{"round": 1, "gates": []}],
             "story_src_digests": {n: self.ledger_digest(n) for n in self.FROZEN},
         }
@@ -1194,15 +1156,10 @@ class Step8Case(StoryBuildCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     def write_decision(self, extra: list[dict] | None = None) -> None:
-        rows = [{
-            "id": "submit-boundary", "status": "settled",
-            "title": "提交入口与补卡由两张开发单分别承接",
-            "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。\n\n"
-                             "**根据**：上游已经拆成两张开发单。\n\n"
-                             "**结论与影响**：本单只做提交与回执展示，验收不含补卡。",
-            "decider": "需求负责人",
-            "category": "范围与拆分",
-        }] + (extra or [])
+        rows = [settled_decision(
+            "submit-boundary", "提交入口与补卡由两张开发单分别承接",
+            "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示，验收不含补卡。",
+            said="补卡另起一张单")] + (extra or [])
         (self.src / "decisions.json").write_text(
             json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
 
@@ -1244,9 +1201,8 @@ class TheFieldCheckIsOneImplementation(Step8Case):
     先渲染再由 check 报错，等于让他拿着一份半成品去猜哪一条是根因。
     """
 
-    BAD = [{"id": "x-1", "status": "settled", "title": "少了请谁确认这一项",
-            "clarification": "**要定的事**：甲。\n\n**根据**：乙。\n\n**结论与影响**：丙。",
-            "category": "范围与拆分"}]
+    BAD = [{k: v for k, v in settled_decision(
+        "x-1", "少了请谁评审这一项", "甲。", "丙。").items() if k != "decider"}]
 
     def write_decisions(self, rows) -> None:
         (self.src / "decisions.json").write_text(
@@ -1267,7 +1223,7 @@ class TheFieldCheckIsOneImplementation(Step8Case):
         self.write_decisions(self.BAD)
         code, out = self.check_output()
         self.assertEqual(1, code, out)
-        self.assertIn("请谁确认", out, "两条路要给同一个答案")
+        self.assertIn("请谁评审", out, "两条路要给同一个答案")
 
     def test_a_legal_register_renders(self) -> None:
         rows = [dict(self.BAD[0], decider="需求负责人")]
@@ -1275,7 +1231,7 @@ class TheFieldCheckIsOneImplementation(Step8Case):
         proc = self.run_build("build")
         self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
         review = self.root / "doc" / "features" / FEATURE / "AR" / "review.md"
-        self.assertIn("少了请谁确认这一项", review.read_text(encoding="utf-8"))
+        self.assertIn("少了请谁评审这一项", review.read_text(encoding="utf-8"))
 
     def test_the_old_renderer_file_is_gone(self) -> None:
         """同包删旧文件，不留转发壳——留着它，下一个人还会从那里 import。"""
@@ -1299,27 +1255,17 @@ class TestReviewComesAfterTheStory(Step8Case):
         (self.src / "decisions.json").write_text(
             json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    ROWS = [{
-        "id": "submit-boundary", "status": "settled",
-        "title": "提交入口与补卡由两张开发单分别承接",
-        "clarification": "**要定的事**：提交与补卡要不要放在同一张单里做。" + chr(10) * 2
-                         + "**根据**：上游已经拆成两张开发单。" + chr(10) * 2
-                         + "**结论与影响**：本单只做提交与回执展示。",
-        "decider": "需求负责人",
-        "category": "范围与拆分",
-    }]
+    ROWS = [settled_decision(
+        "submit-boundary", "提交入口与补卡由两张开发单分别承接",
+        "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示。", said="补卡另起一张单")]
 
-    def test_a_bare_array_is_read_as_the_register(self) -> None:
-        """顶层直接写 `[ … ]` 也认——JSON 里把一个列表写成列表是同样自然的直觉。
-
-        不认的话，读取处拿到 undefined 就走「零条」那一支：渲染器照常跑完、
-        打印「已渲染 0 个议题」、退出码 0，而评审人打开的是一份空模板。
-        """
+    def test_a_bare_array_is_refused_with_the_shape(self) -> None:
+        """登记表只有一种顶层形状：顶层直接写 `[ … ]` 当场报错并给出该写的形状。"""
         self.write_raw_decisions(self.ROWS)
         proc = self.run_build("build")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertIn("submit-boundary",
-                      self.review_path.read_text(encoding="utf-8"), "议题没渲染出来")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn('{"decisions"', out)
 
     def test_a_shape_that_cannot_be_read_speaks_up(self) -> None:
         """读不出来与「一条都没有」是两回事——后者合法，前者要当场喊。
@@ -1381,24 +1327,19 @@ class TestReviewComesAfterTheStory(Step8Case):
         self.assertEqual(0, self.run_build("build").returncode)
         text = self.review_path.read_text(encoding="utf-8")
         filled = text.replace(
-            "审核结果：\n\n<!-- decision: submit-boundary -->",
-            "审核结果：范围要含补卡入口。\n\n<!-- decision: submit-boundary -->")
+            "修改意见：\n\n<!-- decision: submit-boundary -->",
+            "修改意见：范围要含补卡入口。\n\n<!-- decision: submit-boundary -->")
         self.assertNotEqual(text, filled, "夹具变了，用例要跟着改")
         self.review_path.write_text(filled, encoding="utf-8")
 
-        self.write_decision(extra=[{
-            "id": "receipt-timeout", "status": "open",
-            "title": "回执超时后由谁重试",
-            "clarification": "**要定的事**：写第五章时发现材料没说超时之后谁重试。\n\n"
-                             "**根据**：PRD 只写了超时按未提交处理。\n\n"
-                             "**结论与影响**：待评审人定。",
-            "decider": "需求负责人",
-            "category": "范围与拆分",
-        }])
+        self.write_decision(extra=[open_decision(
+            "receipt-timeout", "回执超时后由谁重试", "材料没说超时之后谁重试。",
+            [("由本端重试一次", "用户少等一步"), ("交给用户手动重试", "本端不做重试")],
+            "按第 1 种做。", decider="需求负责人")])
         self.assertEqual(0, self.run_build("build").returncode)
         again = self.review_path.read_text(encoding="utf-8")
         self.assertIn("回执超时后由谁重试", again, "成文中新登记的判断没进 review")
-        self.assertIn("审核结果：范围要含补卡入口。", again, "人填的表态被重渲染冲掉了")
+        self.assertIn("修改意见：范围要含补卡入口。", again, "人填的表态被重渲染冲掉了")
 
     def hand_edit_the_machine_zone(self) -> None:
         text = self.review_path.read_text(encoding="utf-8")
@@ -1435,7 +1376,7 @@ class TestReviewComesAfterTheStory(Step8Case):
 
         text = self.review_path.read_text(encoding="utf-8")
         head = text.index("<!-- story-build:begin 议题 ")
-        tail = text.index("审核结果：", head)
+        tail = text.index("评审结论：", head)
         self.review_path.write_text(text[:head] + text[tail:], encoding="utf-8")
 
         self.assertEqual(0, self.run_build("build").returncode, "删干净了还是不让过")

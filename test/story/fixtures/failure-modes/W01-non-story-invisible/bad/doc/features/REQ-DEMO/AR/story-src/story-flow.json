@@ -1,5 +1,7 @@
 {
   "reqNo": "REQ-DEMO",
   "status": "complete",
-  "rounds": []
+  "rounds": [],
+  "schema": 4,
+  "digest": "63683b5e7e7fb2ba"
 }

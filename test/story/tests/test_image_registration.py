@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from flow_steps import walk_to_complete
 from ext_workspace import link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -50,39 +51,16 @@ def ensure_flow_state(root: Path, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
     if (src / "story-flow.json").is_file():
         return
-    def flow(*args: str) -> None:
+    def flow(*args: str) -> dict:
         proc = subprocess.run(
             [sys.executable, str(FLOW_SCRIPT), *args, "--feature", FEATURE,
              "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=120, cwd=str(root))
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "design-draft.md").write_text(DRAFT_TEXT, encoding="utf-8")
-    flow("init")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "material_scope", "options": [
-            {"key": "supplied", "label": "a", "request": True},
-            {"key": "confirm_scope", "label": "b"}]}, ensure_ascii=False),
-        encoding="utf-8")
-    flow("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-         "--basis", "夹具：现有材料就是全部")
-    (src / ".positioning.json").write_text(json.dumps({
-        "scope_source": "user_stated", "scope_text": "x", "sr_related_ars": []},
-        ensure_ascii=False), encoding="utf-8")
-    (src / ".scope-options.json").write_text(json.dumps(
-        [{"key": "carry_all", "label": "按当前范围整体承载", "recommended": True}],
-        ensure_ascii=False), encoding="utf-8")
-    flow("round")
-    (src / ".gate-options.json").write_text(json.dumps(
-        {"gate": "scope_decision",
-         "options": [{"key": "carry_all", "label": "按当前范围整体承载"}]},
-        ensure_ascii=False), encoding="utf-8")
-    flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-         "--basis", "夹具：整体承载")
-    flow("complete", "--from", "AR/story-src/design-draft.md")
+    walk_to_complete(flow, src, DRAFT_TEXT, "x")
 
 
 class RegistrationCase(unittest.TestCase):

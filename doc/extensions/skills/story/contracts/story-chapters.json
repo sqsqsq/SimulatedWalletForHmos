@@ -257,52 +257,13 @@
     {"name": "下一步", "pattern": "^#{1,6}?\\s*\\**\\s*下一步\\**\\s*[:：]?\\s*$"}
   ],
   "decision_categories": [
-    {
-      "key": "范围与拆分",
-      "section": "交付范围"
-    },
-    {
-      "key": "流程顺序与准入",
-      "section": "流程与准入"
-    },
-    {
-      "key": "入口与管控",
-      "section": "入口与开关",
-      "banned_terms_exempt": true
-    },
-    {
-      "key": "规则与数值",
-      "section": "业务规则"
-    },
-    {
-      "key": "数据与缓存",
-      "section": "数据与缓存"
-    },
-    {
-      "key": "界面与还原度",
-      "section": "界面还原"
-    },
-    {
-      "key": "异常与受限体验",
-      "section": "异常体验"
-    },
-    {
-      "key": "依赖与可用性",
-      "section": "依赖与承载"
-    },
-    {
-      "key": "安全隐私与合规落地",
-      "section": "安全与隐私"
-    },
-    {
-      "key": "交付顺序与协同",
-      "section": "交付与联调",
-      "banned_terms_exempt": true
-    },
-    {
-      "key": "验收口径",
-      "section": "验收口径"
-    }
+    {"key": "范围与交付"},
+    {"key": "业务规则"},
+    {"key": "交互与界面"},
+    {"key": "数据与隐私"},
+    {"key": "依赖与承载"},
+    {"key": "上线与开关", "banned_terms_exempt": true},
+    {"key": "质量指标"}
   ],
   "gates": {
     "material_scope": {
@@ -313,7 +274,7 @@
     }
   },
   "flow": {
-    "schema": 3,
+    "schema": 4,
     "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
     "carry_all": "carry_all"
   },

@@ -36,7 +36,7 @@ FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 #: 真实的三级标题；`####` 是更深的小节，不是话题标题
 H3 = re.compile(r"^###\s+(.+?)\s*$")
 #: 人的裁决记录里留下的字段：证据是人选了什么、依据是什么，不含任何业务合成
-GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "basis", "at")
+GATE_FIELDS = ("gate", "meeting", "item", "options", "chosen", "reply", "at")
 
 
 def _accepted(contract: dict, gate: str) -> list[dict]:
@@ -49,14 +49,14 @@ def pending_asks(notes: dict, contract: dict) -> list[str]:
     signed = {(g.get("meeting"), g.get("item")) for g in _accepted(contract, "meeting")}
     return [f"{key}/{t.get('id')}" for key, section in sorted(notes.items())
             for t in meeting.topics_of(section)
-            if str(t.get("question", "")).strip() and (key, str(t.get("id"))) not in signed]
+            if str(t.get("question") or "").strip() and (key, str(t.get("id"))) not in signed]
 
 
 def topic_options(feature_root: Path, version: str, item: str) -> list[dict]:
     """`decide --gate meeting` 的选项集：取自那个话题的 options，脚本只认 key。"""
     section = meeting.read_notes(feature_root, []).get(version) or {}
     topic = next((t for t in meeting.topics_of(section) if str(t.get("id")) == item), None)
-    if not topic or not str(topic.get("question", "")).strip():
+    if not topic or not str(topic.get("question") or "").strip():
         raise FlowError(f"会议判断「{version}」里没有要问人的话题「{item}」——--meeting 写 <主名>@<sha8>，"
                         "--item 写话题 id；待裁决的条目列在 `status` 的 meetings 里")
     return [{"key": o.get("key"), "label": o.get("label", "")}
@@ -84,7 +84,7 @@ def topic_digest(feature_root: Path, notes: dict, contract: dict) -> list[dict]:
             if folder is not None:
                 row["evidence"] = [meeting.line_ref(feature_root, folder, r)
                                    for r in meeting.ranges(topic.get("evidence"))]
-            if str(topic.get("question", "")).strip() and not gate:
+            if str(topic.get("question") or "").strip() and not gate:
                 row["question"] = topic["question"]
                 row["recommend"] = topic.get("recommend")
                 row["options"] = [{"key": o.get("key"), "label": o.get("label", "")}

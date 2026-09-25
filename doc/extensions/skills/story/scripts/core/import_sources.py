@@ -74,8 +74,11 @@ def main() -> int:
 
     project_root = Path(args.project_root).resolve() if args.project_root \
         else importer.DEFAULT_PROJECT_ROOT
-    feature_root = (project_root / importer.features_dir(project_root) / args.feature
-                    if args.feature else None)
+    try:
+        feature_root = (project_root / importer.features_dir(project_root) / args.feature
+                        if args.feature else None)
+    except importer.ImportError_ as exc:
+        return emit({"mode": "import", "ok": False, "error": str(exc)}, 1)
 
     if args.caption_image:
         if feature_root is None:
@@ -121,7 +124,7 @@ def main() -> int:
 
     result: dict = {"mode": "import", "reqNo": args.feature}
     try:
-        result.update(success=True, **importer.cmd_import(feature_root))
+        result.update(success=True, **importer.cmd_import(feature_root, project_root))
         return emit(result, 0)
     except importer.ImportError_ as exc:
         importer.log(str(exc))

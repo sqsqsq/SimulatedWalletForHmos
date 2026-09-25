@@ -13,7 +13,8 @@ from pathlib import Path
 from materials import importer, registry
 
 from flow.state import (
-    DESIGN, DESIGN_DRAFT, FlowError, S4_STEPS, after_complete, load, log, now, require, save)
+    DESIGN, DESIGN_DRAFT, FlowError, S4_STEPS, after_complete, in_update, load, log, now,
+    require, save)
 from flow.inputs import ar_design_skeleton, read_ids
 from flow.routing import material_state, scope_step
 
@@ -194,9 +195,11 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     # 收口的前置是**本轮范围已定**，而不是某一条特定记录——补料会开新一轮，
     # 上一轮定的范围不能替这一轮授权。判据与 next_step 同源（同一个 scope_step），
     # 定位/选项集缺失时它会报 run_analysis，不必在这里另判一遍。
-    step, action = scope_step(feature_root, contract)
-    if step not in S4_STEPS:
-        raise FlowError(f"本轮范围尚未定下来，还不能收口：{action}（`status` 的 next 是 {step}）")
+    # update 期间沿用本单已定范围：这一轮是修订，不重走范围关卡
+    if not in_update(contract):
+        step, action = scope_step(feature_root, contract)
+        if step not in S4_STEPS:
+            raise FlowError(f"本轮范围尚未定下来，还不能收口：{action}（`status` 的 next 是 {step}）")
     if contract["split"]["decided"] == "split" and \
             not str(contract["split"].get("scope_text") or "").strip():
         raise FlowError("拆分已定案但 split.scope_text 为空：范围文字丢失，无法写入 design.md")

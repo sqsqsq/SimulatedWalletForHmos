@@ -293,7 +293,7 @@ def _notes_problems(key: str, section: dict, total: int, problems: list[str]) ->
             say(problem)
         if not str(topic.get("finding", "")).strip():
             say("没写 finding：这个话题定了什么、与文档差在哪、还有什么没定，一段话说清")
-        question = str(topic.get("question", "")).strip()
+        question = str(topic.get("question") or "").strip()
         options = [o for o in topic.get("options") or [] if isinstance(o, dict)]
         if topic.get("ownership") == "unclear" and not question:
             say("归属判不准，要写 question 摆给人")

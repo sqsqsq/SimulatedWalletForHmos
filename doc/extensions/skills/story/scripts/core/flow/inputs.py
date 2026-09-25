@@ -17,13 +17,13 @@ from flow.state import (
 
 # 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
 SPLIT_PARTS = ("AR", "story-src", ".split-parts.json")
-# 选项集侧车：本次关卡摆给人的全部选项。每条 gate 一份，读后销毁
-GATE_OPTIONS = ("AR", "story-src", ".gate-options.json")
 # 本 AR 定位侧车：三源核对后收敛出的当前范围结论。round 消费
 POSITIONING = ("AR", "story-src", ".positioning.json")
 # 范围定法选项集侧车：需求分析（S2b）产出的**全部**可选项。round 消费进契约，
 # 第二级关卡此后只能从契约里取——见 read_scope_options 的注释
 SCOPE_OPTIONS = ("AR", "story-src", ".scope-options.json")
+# 材料关卡的缺口：盘点后写，`status` 据它算第一级的推荐，`decide` 记完即销毁
+GAPS = ("AR", "story-src", ".material-gaps.json")
 
 
 def material_options() -> list[dict]:
@@ -42,8 +42,7 @@ _MATERIAL_OPTIONS = material_options()
 #: 第一级的值域是闭合的；第二、三级的值域由本次选项集自己定义（维度名、份序号），
 #: 统一由「chosen 必须在 options 里」把关，不为每级各写一套枚举。
 MATERIAL_CHOICES = tuple(o["key"] for o in _MATERIAL_OPTIONS)
-#: 「我还要料」的那一项。第 2 轮起它要写清剩余缺口（见 read_gate_options）；
-#: 「现有材料就是全部」不在其中——那不是缺口。
+#: 「我还要料」的那一项：缺口文件里 missing 非空时推荐它。
 MATERIAL_REQUEST_KEYS = tuple(o["key"] for o in _MATERIAL_OPTIONS if o.get("request"))
 
 
@@ -145,6 +144,11 @@ def read_scope_options(feature_root: Path) -> list[dict] | None:
                 "（整体承载列出功能点；切法写清按什么切、切成几份）")
         keys.append(key)
 
+    recommended = [str(o.get("key")) for o in payload if str(o.get("recommend") or "").strip()]
+    if len(recommended) > 1:
+        raise FlowError(f"{SCOPE_OPTIONS[-1]} 里有 {len(recommended)} 项写了 recommend："
+                        "推荐至多一项，写在那一项的 recommend 里（一句理由）")
+
     if CARRY_ALL not in keys:
         raise FlowError(
             f"选项集缺固定首项 `{CARRY_ALL}`（按当前范围整体承载）"
@@ -161,7 +165,7 @@ def read_scope_options(feature_root: Path) -> list[dict] | None:
                     f"切法「{item['key']}」缺 parts（至少两份）："
                     "没有份表的切法是空壳，人无法评估切完是什么样")
         normalized.append(item)
-    # 固定首项排最前：人第一眼看到的是「不切」，其余是在此基础上的切分建议
+    # 顺序由契约定：整体承载固定在最前，其余照分析给出的顺序；推荐另起一行，不靠排位
     normalized.sort(key=lambda o: 0 if o["key"] == CARRY_ALL else 1)
     return normalized
 
@@ -193,86 +197,21 @@ def split_carrier_options(current: dict) -> list[dict]:
             for p in dim.get("parts") or []]
 
 
-def sidecar_gate(feature_root: Path) -> str | None:
-    """盘上摆着的选项侧车是给哪一级摆的——没摆、或写坏了，返回 None。
-
-    三级共用一个文件名，所以它必须自报级别。不报的话，模型为第二级摆的选项
-    会被第一级读成「材料上又出了新缺口」，把已经往前走的流程拨回上一级。
-    """
-    payload = read_sidecar(feature_root, GATE_OPTIONS)
-    if not isinstance(payload, dict):
-        return None
-    at = str(payload.get("gate") or "").strip()
-    return at if at in GATES else None
-
-
-def read_gate_options(feature_root: Path, gate: str,
-                      remaining: bool = False) -> list[dict]:
-    """读本次关卡摆出的选项集，并核它摆的就是这一级。
-
-    每项必须有 `key`（选项标识），其余字段随关卡自由（label / scope /
-    dimension …）——统一只约束标识，是为了让「chosen 必须在 options 里」这条校验
-    对三级关卡通用，不必为每个关卡各写一套值域。
-
-    **`remaining`（init 第 2 轮起）时，材料级里提出补料请求的那些选项还要写 `missing` 与 `why`**
-    （还缺什么、为什么现有材料不够）：补齐一轮之后再停，问的必须是**剩余的**缺口，
-    不能把上一轮的选项原样再摆一遍。要说得出缺什么，就得先拿新材料盘一遍。
-    「继续分析」「调整范围」这类不是缺口，不受此限。
-    """
-    payload = read_sidecar(feature_root, GATE_OPTIONS)
+def read_gaps(feature_root: Path) -> dict | None:
+    """材料盘点的缺口：`{"missing": [还缺的材料…], "why": "一句缺口判断"}`。没写返回 None。"""
+    payload = read_sidecar(feature_root, GAPS)
     if payload is None:
-        raise FlowError(
-            "缺选项集侧车：把本次关卡摆给人的全部选项写进 "
-            f'{"/".join(GATE_OPTIONS)}（形如 {{"gate": "{gate}", "options": [{{"key": …}}]}}）。'
-            "只记选中的那项，事后分不清「看过选项后这么选」与「压根没摆过选项」")
+        return None
+    where = GAPS[-1]
     if not isinstance(payload, dict):
-        raise FlowError(
-            f'{GATE_OPTIONS[-1]} 须是对象：{{"gate": "<哪一级>", "options": [每项一个选项]}}'
-            "——级别要写在文件里，三级共用一个文件名")
-    at = str(payload.get("gate") or "").strip()
-    if at not in GATES:
-        raise FlowError(
-            f"{GATE_OPTIONS[-1]} 的 gate 须为 {' / '.join(GATES)} 之一，实为「{at}」")
-    if at != gate:
-        raise FlowError(
-            f"侧车是给 {at} 级摆的，这一步是 {gate}——"
-            "要么摆错了级别，要么这一步走错了。`status` 的 next 说的是哪一级就摆哪一级")
-    options = payload.get("options")
-    if not isinstance(options, list) or not options:
-        raise FlowError(f"{GATE_OPTIONS[-1]} 的 options 须是非空数组：每项一个选项")
-
-    # 第一级的 label 由合同给，作者写了也以合同为准——契约里留痕的必须是
-    # **摆给人的那两句**，而它们是固定的。作者要说的缺口在 missing / why 里。
-    if gate == "material_scope":
-        fixed = {o["key"]: o["label"] for o in material_options()}
-        for opt in options:
-            opt["label"] = fixed.get(str(opt.get("key") or "").strip(), opt.get("label"))
-
-    keys: list[str] = []
-    for i, opt in enumerate(options):
-        if not isinstance(opt, dict):
-            raise FlowError(f"{GATE_OPTIONS[-1]} 第 {i + 1} 项不是对象")
-        key = str(opt.get("key") or "").strip()
-        if not key:
-            raise FlowError(f"{GATE_OPTIONS[-1]} 第 {i + 1} 项缺 key")
-        if key in keys:
-            raise FlowError(f"选项 key 重复：「{key}」——每项一个标识")
-        if gate == "material_scope" and remaining and key in MATERIAL_REQUEST_KEYS:
-            for field, what in (("missing", "还缺什么"), ("why", "为什么现有材料不够")):
-                if not str(opt.get(field) or "").strip():
-                    raise FlowError(
-                        f"「{key}」缺 {field}（{what}）——"
-                        "补齐一轮之后再停，问的必须是剩余的缺口。"
-                        "先用新增的材料重新盘点，说得出还缺什么再摆这个选项；"
-                        "材料够了就不摆，直接进需求分析")
-        keys.append(key)
-
-    normalized = []
-    for opt in options:
-        item = {k: v for k, v in opt.items() if k != "key"}
-        item["key"] = str(opt["key"]).strip()
-        normalized.append(item)
-    return normalized
+        raise FlowError(f'{where} 须是对象：{{"missing": [还缺的材料], "why": "一句缺口判断"}}')
+    missing = payload.get("missing")
+    if not isinstance(missing, list) or not all(str(m).strip() for m in missing):
+        raise FlowError(f"{where} 的 missing 须是数组，每项写一份还缺的材料；不缺就给空数组")
+    why = str(payload.get("why") or "").strip()
+    if not why:
+        raise FlowError(f"{where} 缺 why：一句缺口判断——缺什么、为什么现有材料不够，或者为什么够了")
+    return {"missing": [str(m).strip() for m in missing], "why": why}
 
 
 def read_split_parts(feature_root: Path, feature: str) -> list[dict]:

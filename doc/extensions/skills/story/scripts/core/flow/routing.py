@@ -15,10 +15,9 @@ from materials import meeting, registry
 
 from flow.state import (
     CARRY_ALL, DESIGN_DRAFT, FlowError, STORY_CONTRACT, after_complete,
-    last_gate, round_gates)
+    last_gate, round_gates, stage_of)
 from flow.inputs import (
-    GATE_OPTIONS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, material_options,
-    read_gate_options, sidecar_gate)
+    GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
 
 def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
@@ -130,8 +129,8 @@ def pending_chapters(feature_root: Path) -> int:
     """
     try:
         text = (feature_root / "AR" / "story.md").read_text(encoding="utf-8")
-    except OSError:
-        return 0
+    except OSError as exc:
+        raise FlowError(f"AR/story.md 读不出来（{exc}）") from exc
     mark = str(json.loads(STORY_CONTRACT.read_text(encoding="utf-8"))["pending_mark"])
     return len(re.findall(r"<!--\s*" + re.escape(mark) + r"[:：]", text))
 
@@ -171,76 +170,64 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
             "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
 
+#: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
+DECIDE_USAGE = ("把 `status` 输出里 `ask.block` 原样摆给人（前面一句结论与缺口），停等。"
+                "人回话后跑 `story_flow.py decide --feature <名> --gate <本级> --ask <ask_id> "
+                "--reply \"<人的原话>\"`；原话没写编号或标签时加 `--chosen <编号>`。"
+                "自己的判断用 `decide --propose --chosen <编号> --why \"<理由>\"` 记成提议，下次停等请人确认")
+
+
 def sidecar_shape(step: str) -> dict | None:
     """这一步要写的侧车长什么样：字段、合法值、为什么要它。
 
     形状是确定的，该在需要它的那一步就摆出来，而不是等作者去读源码或撞报错。
-    合法值取自本模块的常量，不另立一份。
     """
     if step == "run_analysis":
-        positioning = dict(POSITIONING_FIELDS)
         return {
             "写这两份": [
-                {"path": "/".join(POSITIONING), "shape": positioning},
+                {"path": "/".join(POSITIONING), "shape": dict(POSITIONING_FIELDS)},
                 {"path": "/".join(SCOPE_OPTIONS),
                  "shape": [{"key": CARRY_ALL, "label": "按当前范围整体承载：列出功能点"},
                            {"key": "<切法标识>", "label": "按什么切、切成几份",
+                            "recommend": "推荐这一项的一句理由（至多一项写）",
                             "parts": [{"seq": 1, "scope": "这一份承载什么", "depends_on": []},
                                       {"seq": 2, "scope": "另一份承载什么", "depends_on": [1]}]}],
                  "note": f"固定首项 {CARRY_ALL} 必须在——不切永远是一个可选项；"
                          "切法至少两份，没有份表的切法是空壳"},
             ],
         }
-    if step == "await_gate:meeting":
-        return {"不写侧车": "选项就是会议判断里那个话题的 options，全部话题在本次输出的 meetings 里；"
-                "人答完逐条跑 `decide --gate meeting --meeting <主名>@<sha8> --item <话题 id> "
-                "--chosen <key> --basis \"<人的原话>\"`"}
+    if step in ("inventory_materials", "fix_material_gaps"):
+        return {"path": "/".join(GAPS),
+                "shape": {"missing": ["还缺的材料：名称与在哪句话里提到"], "why": "一句缺口判断"},
+                "note": "missing 没有就给空数组；第一级的推荐由脚本按它算"}
     if step.startswith("await_gate:"):
-        gate = step.split(":", 1)[1]
-        note = {
-            "写这份，再去问人": {
-                "path": "/".join(GATE_OPTIONS),
-                "shape": {"gate": gate,
-                          "options": [{"key": "<选项标识>", "label": "人能看懂的选项文字"}]},
-                "第一级不用写 label": "那两句固定，脚本按 key 填；缺什么写进 missing / why",
-                "note": "先把摆给人的**全部**选项写进这份文件，再跑 `decide` 记录人选了哪个。"
-                        "只记选中项，事后分不清「看过选项后这么选」与「压根没摆过选项」。"
-                        f"`gate` 必须写 {gate}——三级共用一个文件名，不写明是给谁摆的，"
-                        "上一级会把它当成自己这一级又出了新问题",
-            },
-        }
-    if step == "await_gate:material_scope":
-        # 这一级问的是事实：料放进去了，或者现有材料就是全部。够不够仍由你盘点、
-        # 由人定，机器不判——所以键是固定的两个，label 可以按本轮缺口改写。
-        note["这一级摆哪两项"] = material_options()
-    return note if step.startswith("await_gate:") else None
+        return {"回话": DECIDE_USAGE
+                + ("；会议逐个话题记，另加 `--meeting <主名>@<sha8> --item <话题 id>`"
+                   if step == "await_gate:meeting" else "")}
+    return None
 
 
-def material_gate_state(feature_root: Path, contract: dict) -> tuple[bool, str | None]:
-    """第一级停不停，以及本级侧车缺什么——**一次问完**。
+def material_step(feature_root: Path, always: bool) -> tuple[str, str] | None:
+    """第一级停不停、停之前缺什么——**一次问完**。
 
-    停不停：第 1 轮无条件停；第 2 轮起，只在本级侧车摆在盘上时停。
-    第一轮没有任何人对材料表过态，必须停。此后每一轮都是材料变了才开出来的，
-    再停一次得是模型拿新材料**重新盘出了缺口**：那时它写一份本级的选项侧车，
-    写了就停，没写就直接进分析。`decide` 会消费掉侧车，盘上留着的只会是这一轮新写的。
-
-    判据不看上一轮选了什么：那一次回答的是上一轮的缺口，这一轮问的是**还缺什么**。
-    侧车必须自报级别，否则模型为第二级摆的选项会被这里读成材料上的新缺口。
-
-    **侧车立不立得住在这里一并判**（第二个返回值）：校验只写在 `decide` 里的话，
-    顺序是 `status` 说停 → 人被问了一次 → `decide` 才拒收。人已经答过，
-    缺的字段却要模型回头补，那一次询问白问了——而它问的正是「还缺什么」
-    这件模型自己没说清的事。
+    第一轮与 update 输入阶段必停：还没有人对这批材料表过态。此后每一轮是材料变了才开出来的，
+    只在你拿新材料重新盘出缺口、写了缺口文件时再停；不缺就不停，直接进需求分析。
+    推荐由脚本按缺口算：还缺料就推荐请人放料，不缺就推荐开始分析。
     """
-    if len(contract.get("rounds") or []) <= 1:
-        return True, None
-    if sidecar_gate(feature_root) != "material_scope":
-        return False, None
     try:
-        read_gate_options(feature_root, "material_scope", remaining=True)
+        gaps = read_gaps(feature_root)
     except FlowError as exc:
-        return True, str(exc)
-    return True, None
+        return "fix_material_gaps", f"缺口文件还立不住，先改好再问人：{exc}"
+    if gaps is None:
+        if not always:
+            return None
+        return ("inventory_materials",
+                "盘点材料：清单与一句缺口判断写进 `AR/story-src/init-analysis.md` 第 ⑤ 节 1–2，"
+                f"缺口写进 `{'/'.join(GAPS)}`，再跑 `status` 取问法")
+    if not always and not gaps["missing"]:
+        return ("fix_material_gaps", "第 2 轮起只在还缺料时停：缺口文件的 missing 是空的，"
+                "删掉它直接进需求分析")
+    return "await_gate:material_scope", "第一级材料关卡。" + DECIDE_USAGE
 
 
 def frozen_tail(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
@@ -267,21 +254,12 @@ def update_inputs_step(feature_root: Path, contract: dict,
                        manifest: dict | None = None) -> tuple[str, str]:
     """update 的输入阶段：**先问要不要补料，人答了再比**。
 
-    问法、侧车、人签、登记全是 init 第一级那一套；差别只在它每次 update 都停一次——
+    问法、缺口文件、人签、登记全是 init 第一级那一套；差别只在它每次 update 都停一次——
     上游变没变、手上还缺什么，只有人说了才算定。
     """
     answer = inputs_answer(contract)
     if answer is None or answer.get("outcome") != "accepted":
-        if sidecar_gate(feature_root) == "material_scope":
-            try:
-                # 问的是「这一次要不要补」，不是补过一轮之后的剩余缺口
-                read_gate_options(feature_root, "material_scope", remaining=False)
-            except FlowError as exc:
-                return "fix_gate_options", f"这一级的选项侧车还立不住，先补齐再问人：{exc}"
-        return ("await_gate:material_scope",
-                "update 的输入阶段：**先摆选项侧车再问人**——报告上游哪几份变了、没变、取不到，"
-                "本地已有什么，一句缺口判断，问这一次要不要补料："
-                + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
+        return material_step(feature_root, always=True)
     state = material_state(feature_root, contract["rounds"][-1], manifest)
     pending = pending_import_step(state)
     if pending:
@@ -294,40 +272,30 @@ def update_inputs_step(feature_root: Path, contract: dict,
 
 
 def update_open_step(feature_root: Path, contract: dict,
-                     manifest: dict | None = None) -> tuple[str, str] | None:
+                     manifest: dict | None = None) -> tuple[str, str]:
     """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**——收口前后都是这一句。
 
-    不加这一支的话，update 改完材料一跑 status，路由会把人送回材料盘点与范围关卡；
-    `reopen` 之后状态回到 in_progress，常规路径也会把它当成一轮新的范围判断。
-    范围这一轮并没有重新定，材料也不是「补了一批要重新拍板」，是一次有明确依据的修订。
-
-    返回 None 的只有一种：reopen 之后材料又变了——那时 `round` 会开新轮，
-    交回常规路径如实说「要重新走关卡」，不在这里假装它还是一次修订。
+    update 这一轮里 reopen 回到的就是这一轮：新材料 `round` 登记进当前轮，`complete` 沿用已定范围。
     """
     rid = contract["update"]["open"]
     state = material_state(feature_root, contract["rounds"][-1], manifest)
     pending = pending_import_step(state)
     if pending:
         return pending
-    closed = after_complete(contract)
     if state["changed"]:
-        if not closed:
-            return None
-        return ("refresh_round", "这一轮新到的料已并入正文：先跑 `story_flow.py round` 登记到本轮"
-                "（它不开新轮），**再** `reopen`——反过来，路由会按「材料变了」把你送回关卡")
-    if not closed:
+        return ("refresh_round", "这一轮新到的料已并入正文：跑 `story_flow.py round` 登记到本轮"
+                "（update 期间它不开新轮）")
+    if not after_complete(contract):
         # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人重新拍板
         meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
         if meeting_now:
             return meeting_now
+        return ("run_complete", f"更新 {rid}：改完提取稿 `{'/'.join(DESIGN_DRAFT)}` 跑 "
+                f"`story_flow.py complete --feature <名> --from {'/'.join(DESIGN_DRAFT)}` 收口，"
+                "范围沿用本单已定的")
     return ("update_in_progress",
-            f"更新 {rid} 正在进行：按 AR/story-src/updates/{rid}/update-notes.md 里的修订清单改，"
-            "不重走材料与范围关卡。改章的顺序：`story_flow.py reopen` 撤销成文登记 → "
-            "`complete` 收口（范围与材料没变，它直接过）→ 在草稿上改、`chapter` 提交 → "
-            "`story` 重新登记。**新到的料先 `round` 登记到本轮，再 reopen**。"
-            "范围本身要变不在这一轮做：报「尚未完成：范围需重新拍板」并收口保留项，由人走 `reopen` 重拍。"
-            "改完：`--revalidate` → 派 verifier → 完整跑一次 `harness-runner.ts --phase <阶段>` → "
-            "`story_flow.py update --action close` 收口这一轮"
+            f"更新 {rid} 正在进行：按 `AR/story-src/updates/{rid}/update-notes.md` 的修订清单改，"
+            "改法与收口见 `phases/update.md`「二、六个动作」"
             + frozen_tail(feature_root, contract, manifest))
 
 
@@ -343,8 +311,8 @@ def next_step(feature_root: Path, contract: dict | None,
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
-    update = contract.get("update") or {}
-    if update.get("stage") == "inputs":
+    stage = stage_of(contract)
+    if stage == "update_inputs":
         return update_inputs_step(feature_root, contract, manifest)
     # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
     late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
@@ -353,36 +321,18 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
                 "先跑 `story_flow.py reopen`，再读会；有要人定的话题时摆给人一次"
                 + frozen_tail(feature_root, contract, manifest))
-    if update.get("open"):
-        step = update_open_step(feature_root, contract, manifest)
-        if step:
-            return step
-    if contract.get("status") == "story_written" and contract.get("archived"):
+    if stage == "update_open":
+        return update_open_step(feature_root, contract, manifest)
+    if stage == "archived":
         return ("done", "本轮已归档送审。评审意见与上游新材料走 `/story update`；补料或改稿先 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))
-    if contract.get("status") == "story_written":
-        # 产物没变就不重跑 harness：它每跑一次都重新派生 subject，换了代就要重审，而产物一个
-        # 字节没动。check-receipt 报 subject 失配、或产物确实改了才重跑，那时 verifier 也要再来一次。
+    if stage == "story_written":
         return ("run_archived",
-                "叙事件已登记成文（review.md 已在登记那一步渲染并核过）。"
-                "按这个顺序走完，中间不回头："
-                "跑 harness（spec 闭环）→ 按 harness 末尾 `NEXT:` 行派 verifier"
-                "（它说没有审查员就直接下一步）→ check-receipt → "
-                "`story-build check --deliver` 交付门。"
-                "**交付门通过之后按它打印的选择走**：归档送审、进入 plan，或先归档再进 plan；"
-                "本地单没有归档，只有进 plan。"
-                "**产物没变化就不重跑 harness、不重审**（复用已有结论）；"
-                "verifier 回复之后闭环链不回头：有阻断项才返修（见下），没有就走完上面的链。"
-                "闭环之后发现的真实问题（有内容依据的 WARN 也算）走 framework 修正入口："
-                "`harness-runner.ts --correction-init` 定责任层 → 改真源 → "
-                "`--revalidate --feature <名>`（只重跑脚本门禁，verifier 不重审，回执标沿用已有 PASS）；"
-                "**不重跑闭环链、不手动派 verifier**。纯表达类 WARN 交评审回流或下一轮；"
-                "交付门上人的评审意见走 `/story update`。已做的正确修改不回滚。回执由 harness 生成，不用你填。"
-                "verifier 报了阻断问题就跑 `story_flow.py reopen` 撤销成文登记，照它给出的下一步走"
-                "（范围与材料没变时先 `complete` 收口），再在草稿上改、`chapter` 提交、`story` 重新登记"
-                "——材料变了再审是正常返修，不是重复审"
+                "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
+                "check-receipt → `story-build check --deliver` 交付门；交付门通过后按停等表问一次"
+                "「归档送审 / 进入 plan」（本地单只有进 plan）"
                 + frozen_tail(feature_root, contract, manifest))
-    if contract.get("status") == "complete":
+    if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
         # 仍然彼此相等，只有按磁盘现状重算才看得见。处置是 `round`——它把这次变化
@@ -490,17 +440,11 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     # 第一级：材料。**先于任何需求分析**——材料不全时做的范围判断注定作废，
     # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
-    stops, problem = material_gate_state(feature_root, contract)
-    if material is None and problem:
-        return ("fix_gate_options",
-                f"这一级的选项侧车还立不住，先补齐再问人：{problem}")
-    if material is None and stops:
-        return ("await_gate:material_scope",
-                "S3 第一级：**先摆选项侧车再问人**——带出材料清单与一句缺口判断，取得选择："
-                + " / ".join(str(o.get("label") or o["key"]) for o in material_options()))
-    if material and material["outcome"] == "rejected":
-        return ("await_gate:material_scope",
-                "上一笔被驳回（收件箱里没有新文件、材料也没变），在第一级重新取得选择")
+    if material is None or material["outcome"] == "rejected":
+        step = material_step(feature_root,
+                             always=len(contract.get("rounds") or []) <= 1 or material is not None)
+        if step:
+            return step
 
     # 材料已确认 → 有会议就先读会（有要人定的话题停一次），形成当前的会议结果，
     # 再做需求粒度分析：分析与提取读的都是它

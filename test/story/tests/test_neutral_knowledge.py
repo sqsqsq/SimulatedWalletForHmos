@@ -674,7 +674,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         flow_dir = self.feature_root / "AR" / "story-src"
         flow_dir.mkdir(parents=True, exist_ok=True)
         (flow_dir / "story-flow.json").write_text(json.dumps({
-            "schema": 3, "feature": FEATURE, "status": "complete",
+            "schema": 4, "feature": FEATURE, "status": "complete",
             "rounds": [{"round": 1, "gates": []}],
         }), encoding="utf-8")
         self.spec_path.write_text(

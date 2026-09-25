@@ -212,12 +212,12 @@ class TestIssueDefinitionIsOneText(unittest.TestCase):
     两份逐字一致靠的是有人记得同步；改一处忘一处，作者就会在两个地方读到两种说法。
     """
 
-    ANCHOR = "**什么算一条议题**"
+    ANCHOR = "**登记什么**"
 
     def definition(self) -> str:
         text = read("phases/story-write.md")
         self.assertIn(self.ANCHOR, text, "作业书里没有议题的正面定义")
-        return text.split(self.ANCHOR, 1)[1].split("\n\n", 1)[0]
+        return text.split(self.ANCHOR, 1)[1].split("**登记时机**", 1)[0]
 
     def test_the_phase_page_points_at_it_instead_of_repeating(self) -> None:
         phase = read("phases/spec.md")
@@ -225,10 +225,10 @@ class TestIssueDefinitionIsOneText(unittest.TestCase):
         self.assertIn("story-write.md", phase, "阶段页没给出定义在哪")
         self.assertIn("什么算一条议题", phase, "阶段页连指路都没有，作者不知道去哪读")
 
-    def test_it_names_the_admission_rule_and_the_two_registrations(self) -> None:
-        """准入判据只有一条：表态「不同意」会有产物要改。两种登记态各有去处。"""
+    def test_it_names_the_admission_rule_and_what_is_not_registered(self) -> None:
+        """准入判据只有一条：表态「需修改」会有产物要改；实现选型不登记。"""
         body = self.definition()
-        for needle in ("表态", "不同意", "settled", "open", "漏登记"):
+        for needle in ("表态", "需修改", "实现选型", "漏登记"):
             self.assertIn(needle, body)
 
 
@@ -267,7 +267,7 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         数据、依赖五个热点，模型对不上号。新表拆到「内容特征可识别」的粒度。
         """
         guide = read("phases/story-write.md")
-        self.assertIn("每类第三列是撞的方向，不是遍历顺序", guide)
+        self.assertIn("要回答的问题", guide)
         self.assertIn("不是配额", guide)
         self.assertNotIn("对着这十一类过一遍", guide, "分类又被当成了遍历顺序")
         self.assertIn("**登记时选 `category`**", section(guide, "照骨架写一章"),
@@ -309,7 +309,7 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         keys = [c["key"] for c in contract["decision_categories"]]
         guide = read("phases/story-write.md")
-        table = guide.split("每类第三列是撞的方向", 1)[1].split("\n## ", 1)[0]
+        table = guide.split("从下面七个维度里挑一个", 1)[1].split("\n## ", 1)[0]
         for key in keys:
             self.assertIn(f"| {key} |", table, f"作业书的扫描表里没有「{key}」")
 

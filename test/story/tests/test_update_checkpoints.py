@@ -61,7 +61,7 @@ class TheSecondSegmentEndsOnTheContract(unittest.TestCase):
         self.addCleanup(lambda: setattr(rc, "REPO_ROOT", self._real_root))
 
     def write_flow(self, update: dict | None) -> None:
-        body: dict = {"schema": 3, "rounds": []}
+        body: dict = {"schema": 4, "rounds": []}
         if update is not None:
             body["update"] = update
         (self.src / "story-flow.json").write_text(json.dumps(body), encoding="utf-8")

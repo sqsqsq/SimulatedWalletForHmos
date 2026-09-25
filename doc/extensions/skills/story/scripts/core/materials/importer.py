@@ -101,15 +101,16 @@ DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[7]
 
 
 def features_dir(project_root: Path) -> str:
-    """需求目录叫什么，由工程自己的 framework.config.json 说了算。"""
+    """需求目录叫什么，由工程自己的 framework.config.json 说了算；没有这份配置用默认目录。"""
+    path = project_root / "framework.config.json"
+    if not path.is_file():
+        return "doc/features"
     try:
-        cfg = json.loads((project_root / "framework.config.json").read_text(encoding="utf-8"))
-        value = (cfg.get("paths") or {}).get("features_dir")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    except (OSError, ValueError):
-        pass
-    return "doc/features"
+        cfg = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise ImportError_(f"{path} 不是合法 JSON（{exc}）：需求目录登记在它的 paths.features_dir") from exc
+    value = (cfg.get("paths") or {}).get("features_dir")
+    return value.strip() if isinstance(value, str) and value.strip() else "doc/features"
 
 
 # ---------------------------------------------------------------------------
@@ -637,8 +638,10 @@ def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> di
             "caption": caption.strip(), "digest": manifest.get("digest")}
 
 
-def cmd_import(feature_root: Path) -> dict:
+def cmd_import(feature_root: Path, project_root: Path) -> dict:
     """把 inbox/ 里这一批材料整批转换并落盘。
+
+    打印的图片路径相对工程根，就是 `--caption-image` 接受的写法，照抄即可。
 
     要么都落，要么一个字节不动：转换全部在内存里做完才开始写盘，中途失败抛
     `ImportError_`，盘上停在导入前的样子——不存在「部分导入成功」的中间态。
@@ -684,6 +687,13 @@ def cmd_import(feature_root: Path) -> dict:
         log(f"{cls} → {rel.as_posix()}"
             f"（{len(doc_sections[cls])} 份材料{'，旧版已备份' if saved else ''}）")
 
+    def shown(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(project_root.resolve()).as_posix()
+        except ValueError:
+            return path.resolve().as_posix()
+
+    images: list[str] = []
     for stem, blobs in media.items():
         asset_dir = feature_root / "assets" / stem
         if asset_dir.exists():
@@ -691,7 +701,8 @@ def cmd_import(feature_root: Path) -> dict:
         asset_dir.mkdir(parents=True, exist_ok=True)
         for name, blob in blobs.items():
             (asset_dir / name).write_bytes(blob)
-        log(f"图片 → assets/{stem}/（{len(blobs)} 张）")
+            images.append(shown(asset_dir / name))
+        log(f"图片 → {shown(asset_dir)}/（{len(blobs)} 张）")
 
     for path in ux_images:
         dest_dir = feature_root / UX_IMAGE_DIR
@@ -699,7 +710,8 @@ def cmd_import(feature_root: Path) -> dict:
         # 顶层平铺：框架对 ux-reference 的扫描非递归，放子目录等于隐形
         shutil.copyfile(path, dest_dir / path.name)
         written.append(f"{UX_IMAGE_DIR.as_posix()}/{path.name}")
-        log(f"UX 参考图 → {UX_IMAGE_DIR.as_posix()}/{path.name}")
+        images.append(shown(dest_dir / path.name))
+        log(f"UX 参考图 → {shown(dest_dir / path.name)}")
     for path, text, blobs in meetings:
         # 一个源版本一个目录：同名换了内容落新目录，旧版本的原文与读会产物原样留着
         folder, fresh = meeting.save_version(feature_root, path, text, blobs)
@@ -708,4 +720,4 @@ def cmd_import(feature_root: Path) -> dict:
         log(f"会议材料 → {rel}/（{len(text.splitlines())} 行"
             + (f"，{len(blobs)} 张图" if blobs else "")
             + ("" if fresh else "；这一版已经存过，原样复用") + "）")
-    return {"converted": [p.name for p in sources], "targets": written}
+    return {"converted": [p.name for p in sources], "targets": written, "images": images}

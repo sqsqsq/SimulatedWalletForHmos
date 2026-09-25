@@ -78,16 +78,20 @@ def kind_of(path: Path) -> str:
 
 
 def read_captions(feature_root: Path) -> dict[str, dict]:
-    """读图片说明与取舍。坏了当没有——缺了不该让整份清单算不出来。
+    """读图片说明与取舍。没写过就是空的；写坏了报错并指明文件。
 
     每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它），值是对象。
     """
+    path = feature_root / Path(*CAPTIONS)
+    if not path.is_file():
+        return {}
     try:
-        data = json.loads((feature_root / Path(*CAPTIONS)).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise MaterialError(f"{'/'.join(CAPTIONS)} 不是合法 JSON（{exc}）："
+                            "它由 `import_sources.py --caption-image` 写，修正语法或重新登记") from exc
     if not isinstance(data, dict):
-        return {}
+        raise MaterialError(f"{'/'.join(CAPTIONS)} 应是对象：{{图片摘要: {{caption, unused}}}}")
     out: dict[str, dict] = {}
     for key, value in data.items():
         if isinstance(value, dict):

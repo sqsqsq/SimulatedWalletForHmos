@@ -26,11 +26,14 @@ FLOW = STORY_SCRIPTS / "story_flow.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.decisions import cmd_decide  # noqa: E402
-from flow.inputs import MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
+from flow.inputs import MATERIAL_REQUEST_KEYS  # noqa: E402
 from flow.lifecycle import cmd_status  # noqa: E402
 from flow.state import CARRY_ALL  # noqa: E402
 from flow.submission import cmd_complete  # noqa: E402
 from materials import registry  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flow_steps import answer, write_gaps  # noqa: E402
 
 FEATURE = "AR90001"
 UPSTREAM_AR = ("# AR90001 上游预填\n\n## 上游先写下的几条\n\n"
@@ -95,27 +98,18 @@ class S4Case(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def gate_options(self, gate: str) -> None:
-        self.src.mkdir(parents=True, exist_ok=True)
-        options = ([dict(o) for o in material_options()]
-                   if gate == "material_scope"
-                   else [{"key": CARRY_ALL, "label": "按当前范围整体承载"}])
-        (self.src / ".gate-options.json").write_text(
-            json.dumps({"gate": gate, "options": options}, ensure_ascii=False),
-            encoding="utf-8")
+    def answer(self, gate: str, reply: str, *extra: str) -> dict:
+        return answer(self.ok, gate, reply, *extra)
 
     def ready_to_commit(self, with_draft: bool = True) -> None:
         """S1–S3 走完，停在「该做 S4 了」。"""
         self.ok("init")
         self.ok("round")
-        self.gate_options("material_scope")
-        self.ok("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-                "--basis", "用户回复：现有材料就是全部")
+        write_gaps(self.src)
+        self.answer("material_scope", "现有材料就是全部")
         self.write_analysis()
         self.ok("round")
-        self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-                "--basis", "用户回复：整体承载")
+        self.answer("scope_decision", "1")
         if with_draft:
             self.write_draft()
 
@@ -128,8 +122,8 @@ class S4Case(unittest.TestCase):
             "sr_related_ars": [],
         }, ensure_ascii=False), encoding="utf-8")
         (self.src / ".scope-options.json").write_text(json.dumps(
-            [{"key": CARRY_ALL, "label": "按当前范围整体承载",
-              "recommended": True}], ensure_ascii=False), encoding="utf-8")
+            [{"key": CARRY_ALL, "label": "按当前范围整体承载"}], ensure_ascii=False),
+            encoding="utf-8")
 
     def write_draft(self, text: str = DRAFT) -> Path:
         path = self.src / "design-draft.md"
@@ -150,9 +144,7 @@ class S4Case(unittest.TestCase):
         self.ok("round")                       # 第 2 轮：没摆第一级选项就不停在那一级
         self.write_analysis()
         self.ok("round")
-        self.gate_options("scope_decision")
-        self.ok("decide", "--gate", "scope_decision", "--chosen", CARRY_ALL,
-                "--basis", "用户回复：整体承载")
+        self.answer("scope_decision", "1")
         self.write_draft(DRAFT.replace("端侧承载签约入口与状态展示。", "第二轮改写过。"))
 
 
@@ -509,10 +501,11 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
         self.assertEqual(len(refreshes) + 1, len(builds),
                          f"提交期间取了 {len(builds)} 次材料事实，写入前应当只取一次")
 
-    def decide_now(self, gate: str, chosen: str, scope_text: str = "") -> tuple[dict, int]:
-        """在进程内记一条关卡决策——要数的是**这一条命令**里读了几次磁盘。"""
-        args = argparse.Namespace(gate=gate, chosen=chosen,
-                                  basis=f"用户回复：{chosen}", scope_text=scope_text)
+    def decide_now(self, gate: str, chosen: str) -> tuple[dict, int]:
+        """在进程内记一条关卡决策——要数的是**这一条命令**里读了几次磁盘。问法在计数前取好。"""
+        ask = json.loads((self.src / ".ask.json").read_text(encoding="utf-8"))
+        args = argparse.Namespace(gate=gate, chosen=chosen, ask=ask["ask_id"],
+                                  reply=f"用户回复：{chosen}", meeting=None, item=None)
         return cmd_decide(self.feature_root, args)
 
     def write_scope_options(self, options: list[dict]) -> None:
@@ -523,7 +516,8 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
     def first_gate_ready(self) -> None:
         self.ok("init")
         self.ok("round")
-        self.gate_options("material_scope")
+        write_gaps(self.src)
+        self.ok("status")
 
     def test_the_first_gate_asks_the_disk_once(self) -> None:
         self.first_gate_ready()
@@ -545,13 +539,12 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
 
     def second_gate_ready(self, options: list[dict] | None = None) -> None:
         self.first_gate_ready()
-        self.ok("decide", "--gate", "material_scope", "--chosen", "confirm_scope",
-                "--basis", "用户回复：现有材料就是全部")
+        self.answer("material_scope", "现有材料就是全部")
         self.write_analysis()
         if options is not None:
             self.write_scope_options(options)
         self.ok("round")
-        self.gate_options("scope_decision")
+        self.ok("status")
 
     def test_the_second_gate_asks_the_disk_once(self) -> None:
         """正常第二级：前置路由与末尾的下一步各要一次事实，它们该是同一份。"""
@@ -570,12 +563,12 @@ class TheMaterialFactIsTakenOncePerTimepoint(S4Case):
             {"key": CARRY_ALL, "label": "按当前范围整体承载"},
             {"key": "by_capability", "label": "按能力切两份", "parts": parts},
         ])
-        self.ok("decide", "--gate", "scope_decision", "--chosen", "by_capability",
-                "--basis", "用户回复：按能力切")
+        self.answer("scope_decision", "按能力切两份")
         (self.src / ".split-parts.json").write_text(json.dumps(
             [{"seq": 1, "carrier": FEATURE, "scope": "本单承载签约入口", "depends_on": []},
              {"seq": 2, "carrier": "AR90002", "scope": "兄弟单承载补卡", "depends_on": [1]}],
             ensure_ascii=False), encoding="utf-8")
+        self.ok("status")
         builds, refreshes = self.count_material_reads()
         _, code = self.decide_now("split_carrier", "1")
         self.assertEqual(0, code)

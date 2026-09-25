@@ -107,7 +107,7 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         feature_root = ws / "doc" / "features" / "demo"
         (feature_root / "AR" / "story-src").mkdir(parents=True)
         (feature_root / "AR" / "story-src" / "story-flow.json").write_text(json.dumps({
-            "schema": 3, "feature": "demo", "status": "complete",
+            "schema": 4, "feature": "demo", "status": "complete",
             "rounds": [{"round": 1, "gates": []}],
         }, ensure_ascii=False), encoding="utf-8")
 

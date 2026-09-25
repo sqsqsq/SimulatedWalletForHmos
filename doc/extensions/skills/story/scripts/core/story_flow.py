@@ -3,21 +3,22 @@
 契约记录每一步的输入、输出与交互：**摆出了哪些选项**、谁在什么依据下选了哪一项，
 事后可查、可推翻。
 
-契约同时是这条流程的**状态机**：`status` 子命令读它就能回答「现在走到哪、下一步干什么」。
-所以 skill 正文不必维护成篇的分支判定文本——位置由数据回答，不由记忆回答。
+`status` 子命令读它就能回答「现在走到哪、下一步干什么」（位置只由 `flow/state.py > stage_of`
+判定）；到了停等点，它同时生成问法（选项、顺序、推荐）并写侧车，模型原样摆给人。
 
 契约里绝大多数内容是机械事实——时间戳、轮次边界、收件箱里还有没有没导过的料。
 这类事实靠记忆复现就会失真，所以一律由脚本自取。
 
 分工因此是：**判断留 AI，执行归脚本**（与 `import_sources.py` 的归类件同一条边界）。
-AI 只传它真正知道而脚本无从得知的东西——人选了哪一项、依据是什么；其余一律脚本自己取。
+AI 只传它真正知道而脚本无从得知的东西——人的原话、材料缺口、需求分析；其余一律脚本自己取。
 本轮导入了什么也在「脚本自己取」这一侧：`round` 每次调用都让材料清单按磁盘现状
 重算材料清单，从清单里读出哪些原件已经并入正文——没有回执，也不需要谁记住发生过什么。
 
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
-    python story_flow.py decide   --feature <AR> --gate <g> --chosen <c> --basis <t>
-    python story_flow.py decide   --feature <AR> --update <定了哪件事> --basis <人的原话>
+    python story_flow.py decide   --feature <AR> --gate <g> --ask <ask_id> --reply <人的原话> [--chosen <编号>]
+    python story_flow.py decide   --feature <AR> --gate <g> --propose --chosen <编号> --why <理由>
+    python story_flow.py decide   --feature <AR> --update <定了哪件事> --reply <人的原话>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
@@ -33,8 +34,9 @@ AI 只传它真正知道而脚本无从得知的东西——人选了哪一项�
 公共参数：`--project-root <abs>`。stdout 单行 JSON；人类可读日志走 stderr。
 **参数只放标量**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——同一条命令
 bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据一律走文件：
-选项集走 `AR/story-src/.gate-options.json`、本 AR 定位走 `AR/story-src/.positioning.json`、
-拆分份表走 `AR/story-src/.split-parts.json`，脚本读后即销毁（一次性）。
+材料缺口走 `AR/story-src/.material-gaps.json`、本 AR 定位走 `AR/story-src/.positioning.json`、
+拆分份表走 `AR/story-src/.split-parts.json`，脚本读后即销毁（一次性）；问法 `AR/story-src/.ask.json`
+由 `status` 写、`decide` 读。
 
 退出码（`decide` 的退出码回答「能不能按这个选择往下走」）：
 
@@ -50,14 +52,14 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
   就能造出一个新轮次；
 - **一次关卡交互 = 一条 gate 记录**，含未生效的那次。校验与记录是同一次调用，
   所以不存在"忘了记"；
-- **摆过的选项与选中的那项一起记**。只记 `chosen` 的话，「看过选项后选了不拆」与
-  「压根没生成拆分选项」在事后完全同形，后者可以伪装成前者通过全部门禁。
-  因此 `options` 必填，且 `chosen` 必须是其中一项：**选的只能是摆出来的**；
+- **摆过的选项与选中的那项一起记**，连同问法编号与人的原话：选的只能是摆出来的，
+  签的只能是问过的；
+- **契约带自身摘要**：读到对不上时报「契约被手改」并给恢复路径，命令照常执行；
 - 时间戳一律由本脚本取当下，调用方碰不到该字段。
 
 本文件只做参数解析、分派与顶层输出；每条命令的实现在 `flow/` 下按职责分开：
-契约读写与常量在 `state`，一次性侧车与骨架在 `inputs`，「现在走到哪」在 `routing`，
-`decide`/`round`/`complete`/`status` 各在 `decisions`/`rounds`/`submission`/`lifecycle`。
+契约读写、常量与阶段判定在 `state`，一次性侧车与骨架在 `inputs`，「现在走到哪」在 `routing`，
+问法在 `asks`，`decide`/`round`/`complete`/`status` 各在 `decisions`/`rounds`/`submission`/`lifecycle`。
 """
 from __future__ import annotations
 
@@ -68,9 +70,9 @@ from pathlib import Path
 
 from materials import importer
 
-from flow.state import DESIGN_DRAFT, FlowError, GATES, log
-from flow.inputs import MATERIAL_CHOICES, cmd_init
-from flow.decisions import cmd_decide, cmd_decide_update
+from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
+from flow.inputs import cmd_init
+from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
@@ -89,9 +91,12 @@ def main() -> int:
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
                     help="关卡编号，缺省 material_scope")
+    ap.add_argument("--ask", default=None, help="decide：`status` 给出的问法编号 ask_id")
+    ap.add_argument("--reply", default=None, help="decide：人的原话，逐字")
     ap.add_argument("--chosen", default=None,
-                    help="选中项的 key；material_scope 为 " + " / ".join(MATERIAL_CHOICES))
-    ap.add_argument("--basis", default=None, help="决策依据：用户原话，或授权原话 + 推荐理由")
+                    help="decide：人选的选项编号或键——原话没写编号或标签时用；--propose 时是提议项")
+    ap.add_argument("--propose", action="store_true", help="decide：记成模型的提议，不推进流程")
+    ap.add_argument("--why", default=None, help="decide --propose：一句理由")
     ap.add_argument("--meeting", default=None,
                     help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
     ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
@@ -127,7 +132,9 @@ def main() -> int:
         elif args.mode == "decide":
             if args.update_item:
                 result.update(cmd_decide_update(feature_root, args.update_item,
-                                                str(args.basis or "")))
+                                                str(args.reply or "")))
+            elif args.propose:
+                result.update(cmd_propose(feature_root, args))
             else:
                 payload, code = cmd_decide(feature_root, args)
                 result.update(payload)
@@ -157,11 +164,15 @@ def main() -> int:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
 
         result["success"] = code == 0
+        if TAMPER_NOTES:
+            result["warning"] = TAMPER_NOTES[0]
         print(json.dumps(result, ensure_ascii=False))
         return code
-    except FlowError as exc:
+    except (FlowError, importer.ImportError_) as exc:
         log(str(exc))
         result.update(success=False, error=str(exc))
+        if TAMPER_NOTES:
+            result["warning"] = TAMPER_NOTES[0]
         print(json.dumps(result, ensure_ascii=False))
         return 1
 

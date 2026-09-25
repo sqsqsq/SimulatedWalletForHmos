@@ -23,7 +23,7 @@ FLOW_CHECK = (REPO_ROOT / "doc" / "extensions" / "skills" / "story"
 FEATURE = "AR90001"
 
 MINIMAL_FLOW = {
-    "schema": 3,
+    "schema": 4,
     "feature": FEATURE,
     "status": "complete",
     "rounds": [{"round": 1, "gates": []}],
@@ -113,10 +113,10 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
             "scope_options": [{"key": "carry_all", "label": "按当前范围整体承载"}],
             "gates": [{"gate": "material_scope", "chosen": "confirm_scope",
                        "options": [{"key": "confirm_scope"}], "outcome": "accepted",
-                       "at": "2026-09-12T00:00:00", "by": "human"},
+                       "at": "2026-09-12T00:00:00", "by": "human", "ask_id": "a1", "reply": "1"},
                       {"gate": "scope_decision", "chosen": "carry_all",
                        "options": [{"key": "carry_all"}], "outcome": "accepted",
-                       "at": "2026-09-12T00:00:00", "by": "human"}],
+                       "at": "2026-09-12T00:00:00", "by": "human", "ask_id": "a1", "reply": "1"}],
         }]
         flow["design_generated_at"] = "2026-09-12T00:00:00"
         (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text(
@@ -163,15 +163,25 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
         self.assertFalse(any("schema 为" in p for p in problems), "合同读不到却拿写死的 schema 去判")
 
     def test_shape_only_fields_are_not_judged(self) -> None:
-        """签名人、时间戳、outcome 值域、被拒的 reason：写入侧已保证，手改成错形状也不改变流程走向。"""
+        """时间戳、outcome 值域、被拒的 reason：写入侧已保证，手改成错形状也不改变流程走向。"""
         def mutate(data):
             gates = data["rounds"][0]["gates"]
-            gates[0]["by"] = "ai"
             del gates[0]["at"]
             gates.insert(0, {"gate": "material_scope", "chosen": "supplied",
-                             "options": [{"key": "supplied"}], "outcome": "rejected"})
+                             "options": [{"key": "supplied"}], "outcome": "rejected",
+                             "by": "human", "ask_id": "a0", "reply": "放好了"})
         self.edit_flow(mutate)
         self.assertEqual([], self.problems())
+
+    def test_every_gate_record_is_a_full_human_sign(self) -> None:
+        """人签缺问法编号、原话或写成模型签的，门禁点名——关卡记录只由 decide 在问过之后写。"""
+        for field, value in (("by", "ai"), ("ask_id", ""), ("reply", "")):
+            with self.subTest(field=field):
+                def mutate(data, field=field, value=value):
+                    data["rounds"][0]["gates"][0][field] = value
+                self.setUp()
+                self.edit_flow(mutate)
+                self.assertTrue(any("不是一笔完整的人签" in p for p in self.problems()))
 
     def test_a_choice_outside_the_options_is_still_caught(self) -> None:
         """改了 chosen 而没改 options——这一条决定后续流程，手改也要抓。"""

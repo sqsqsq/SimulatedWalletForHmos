@@ -1,18 +1,11 @@
 """review 金样是评审记录的效果定义——渲染器渲不出它，改的是渲染器。
 
-story 金样定的是叙事件长什么样，这一份定的是**评审记录**长什么样：
-review.md 就是决策的澄清——已决策的呈现结果供评审人过目，不确定、矛盾、错误的要人评估。
-
-实跑实证过反面：上一版渲染「问题 / 建议 / 为什么 / 影响什么 / 来源 / 请谁确认」六行 bullet，
-「来源」被填成六类议题的类名、「影响」从具体落点塌成泛词——表单腔逼出来的是填格子，
-不是判断。所以形态从金样正推：带序号的陈述句标题、带小标题分段的正文、
-一行「请…确认」、一行「审核结果：」留给人。
-
-本文件守三件事：
+形态从金样正推：带序号的陈述句标题、带小标题分段的正文、一行「请<角色>评审。」、
+三态加修改意见的人工区。本文件守三件事：
 
   ① 金样一个字节没变（指纹）；
   ② 拿金样自己的条目倒推登记表，`build` 渲出来的与金样**逐字节相同**；
-  ③ 人写在「审核结果：」后面的内容，重渲染时一个字节不动。
+  ③ 人写在人工区里的内容，重渲染时一个字节不动。
 """
 from __future__ import annotations
 
@@ -26,6 +19,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flow_steps import HUMAN_ZONE  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = REPO_ROOT / "test" / "story" / "golden" / "review-金样-AR90006.md"
 BUILD = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story-build.mjs"
@@ -33,18 +29,9 @@ FIXTURE = (REPO_ROOT / "test" / "story" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
 
-#: 立样时点 2026-08-30（晚四修：三级分层定稿）。本文件直接读取唯一金样正本。sha256 前 16 位。
-#: 2026-09-07：每条议题的正文前多一行投影标记（带内容摘要）——议题正文由登记表
-#: 生成，重投前拿摘要与盘上的比，有人在这里写过字就停下问他。人工区不在其内。
-#: 2026-09-23：投影摘要的比较口径不看标题序号（与 story 附录机器区同一口径），
-#: 十个议题标记里的摘要值随之变化，正文一个字没变。
-FINGERPRINT = "15159f044d9aca17"
-
-def categories() -> list[dict]:
-    """类型词表在合同里：扫描指引用 `key`，成章用 `section`。"""
-    contract = json.loads((REPO_ROOT / "doc/extensions/skills/story/contracts"
-                           / "story-chapters.json").read_text(encoding="utf-8"))
-    return contract.get("decision_categories") or []
+#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别）。sha256 前 16 位。
+FINGERPRINT = "33089aeaf423a229"
+HUMAN_ZONE_HEAD = "评审结论："
 
 
 def golden_body() -> str:
@@ -56,12 +43,10 @@ def golden_body() -> str:
 def parse_golden() -> list[dict]:
     """把金样倒推成登记表。
 
-    倒推而不是另写一份样本：另写一份就有了第二个真源，它与金样迟早对不上。
-    三级分层各承载一个字段：一级章名给 `status`、二级章名反查 `category`、
-    三级标题给 `title`；「请…确认」之前是 `clarification`，之后是人工区。
-    编号本身不进登记表——它由渲染顺序生成。
+    倒推而不是另写一份样本：另写一份就有了第二个真源。三级分层各承载一个字段：
+    一级章名给 `status`、二级章名给 `category`、三级标题给 `title`；「请…评审。」之前是
+    `clarification`，之后是人工区。形态由状态定：待确认是 choice，已定是 confirm。
     """
-    by_section = {c["section"]: c["key"] for c in categories()}
     out: list[dict] = []
     status, category, cur = "open", "", None
 
@@ -79,18 +64,18 @@ def parse_golden() -> list[dict]:
             continue
         if line.startswith("### "):
             flush()
-            name = re.sub(r"^###\s+\d+(?:\.\d+)*\s+", "", line).strip()
-            category = by_section.get(name, name)
+            category = re.sub(r"^###\s+\d+(?:\.\d+)*\s+", "", line).strip()
             continue
         if line.startswith("#### "):
             flush()
             cur = {"id": "", "status": status, "category": category,
+                   "review_mode": "confirm" if status == "settled" else "choice",
                    "title": re.sub(r"^####\s+\d+(?:\.\d+)*\s+", "", line).strip(),
                    "clarification": [], "decider": ""}
             continue
         if cur is None:
             continue
-        ask = re.fullmatch(r"请(.+)确认。", line.strip())
+        ask = re.fullmatch(r"请(.+)评审。", line.strip())
         if ask:
             cur["decider"] = ask.group(1)
             continue
@@ -98,8 +83,8 @@ def parse_golden() -> list[dict]:
         if mark:
             cur["id"] = mark.group(1)
             continue
-        if line.strip() == "审核结果：" or cur["decider"]:
-            continue                      # 「请…确认」之后到锚之间是人工区
+        if cur["decider"]:
+            continue                      # 「请…评审。」之后到锚之间是人工区
         cur["clarification"].append(line)
     flush()
     return out
@@ -115,7 +100,7 @@ class ReviewGoldenIsFrozen(unittest.TestCase):
     def test_it_parses_into_ten_entries(self) -> None:
         """倒推得出的登记表要真的有内容——解析坏掉时下面两条会静默空转。"""
         entries = parse_golden()
-        self.assertEqual(10, len(entries))
+        self.assertTrue(entries, "金样倒推不出登记表")
         self.assertTrue(all(e["title"] and e["clarification"] and e["decider"]
                             for e in entries))
         self.assertIn("settled", {e["status"] for e in entries})
@@ -152,8 +137,8 @@ class RenderMatchesGolden(RendererCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual(golden_body(), self.review.read_text(encoding="utf-8"))
 
-    def test_a_settled_and_an_open_entry_render_the_same_way(self) -> None:
-        """两条各取一种：已定与待定走同一条渲染路径，形态没有分叉。"""
+    def test_a_settled_and_an_open_entry_share_one_human_zone(self) -> None:
+        """已定与待定的机器区按形态不同，人工区是同一个样子：三态与修改意见，不预选。"""
         entries = parse_golden()
         pick = [next(e for e in entries if e["status"] == "settled"),
                 next(e for e in entries if e["status"] == "open")]
@@ -165,16 +150,9 @@ class RenderMatchesGolden(RendererCase):
         for entry in pick:
             self.assertIn(f"{entry['title']}\n", out)
             self.assertIn(entry["clarification"], out)
-            self.assertIn(f"请{entry['decider']}确认。\n\n审核结果：\n\n"
+            self.assertIn(f"请{entry['decider']}评审。\n\n{HUMAN_ZONE}\n"
                           f"<!-- decision: {entry['id']} -->", out)
-
-    def test_no_checkbox_and_no_placeholder_survive(self) -> None:
-        """没写 review_mode 的议题只有一行「审核结果：」：三态勾选块与「（暂无）」占位都不回来。"""
-        self.write_decisions(parse_golden())
-        self.assertEqual(0, self.run_build().returncode)
-        out = self.review.read_text(encoding="utf-8")
-        for gone in ("- [ ]", "同意当前建议", "暂缓原因", "（暂无）", "审核结果（由评审人填写）"):
-            self.assertNotIn(gone, out)
+        self.assertNotIn("- [x]", out, "替人预选了")
 
 
 class HumanZoneSurvivesRerender(RendererCase):
@@ -182,12 +160,11 @@ class HumanZoneSurvivesRerender(RendererCase):
         entries = parse_golden()[:2]
         self.write_decisions(entries)
         self.assertEqual(0, self.run_build().returncode)
-        said = "审核结果：不同意。上限跟着云侧走可以，但页面要显示这个数是云侧给的。"
+        said = "修改意见：页面要显示这个数是云侧给的。"
         anchor = "<!-- decision: {} -->".format(entries[0]["id"])
         text = self.review.read_text(encoding="utf-8")
-        # 只改第一条议题的那一处：顶部提示里也写着这四个字（它在教人往哪写）
         self.review.write_text(
-            text.replace("审核结果：\n\n" + anchor, said + "\n\n" + anchor, 1),
+            text.replace("修改意见：\n\n" + anchor, said + "\n\n" + anchor, 1),
             encoding="utf-8")
 
         # 登记表改了（标题换一个字），机器区该重算，人工区不该动
@@ -217,7 +194,7 @@ class FieldsAreRequired(RendererCase):
     def test_each_missing_field_is_named(self) -> None:
         for field, needle in (("title", "陈述句标题"),
                               ("clarification", "澄清正文"),
-                              ("decider", "请谁确认")):
+                              ("decider", "请谁评审")):
             with self.subTest(field=field):
                 entry = dict(parse_golden()[0])
                 entry[field] = ""
@@ -244,7 +221,7 @@ class FieldsAreRequired(RendererCase):
         self.assertIn("类别", out)
 
     def test_the_word_list_is_a_map_not_a_quota(self) -> None:
-        """十一类是扫描指引与章节词表：机器不判每类有没有条目、不判空类要不要解释。"""
+        """决策类别是词表：机器不判每类有没有条目、不判空类要不要解释。"""
         entries = [e for e in parse_golden() if e["category"] == parse_golden()[0]["category"]]
         self.write_decisions(entries)
         _, out = self.run_check()

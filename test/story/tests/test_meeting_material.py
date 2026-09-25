@@ -22,6 +22,9 @@ sys.path.insert(0, str(CORE))
 from flow import meetings  # noqa: E402
 from materials import importer, meeting, registry  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flow_steps import write_gaps  # noqa: E402
+
 FEATURE = "MT90001"
 NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
       'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
@@ -198,18 +201,20 @@ class MeetingCase(unittest.TestCase):
         path.write_text("\n".join(rows), encoding="utf-8")
         return path
 
+    def ask_id(self) -> str:
+        return self.status()["ask"]["ask_id"]
+
     def confirm_materials(self, chosen: str = "confirm_scope") -> None:
         """人在第一级材料关卡上表态（第一轮无条件停这一次）。"""
-        (self.fr / "AR" / "story-src" / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope", "options": [{"key": "supplied"}, {"key": "confirm_scope"}]}),
-            encoding="utf-8")
+        write_gaps(self.fr / "AR" / "story-src")
         code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                "--chosen", chosen, "--basis", "材料够了")
+                                "--ask", self.ask_id(), "--reply", "材料够了", "--chosen", chosen)
         self.assertEqual(0, code, log)
 
     def decide_meeting(self, key: str, item: str = "T2", chosen: str = "a") -> None:
         code, _, log = self.cli("story_flow.py", "decide", "--gate", "meeting", "--meeting", key,
-                                "--item", item, "--chosen", chosen, "--basis", "就用短信")
+                                "--item", item, "--ask", self.ask_id(), "--reply", "就用短信",
+                                "--chosen", chosen)
         self.assertEqual(0, code, log)
 
     def problems(self) -> list[str]:
@@ -465,35 +470,33 @@ class TheHumanChoiceIsTheOnlyDecision(MeetingCase):
         self.confirm_materials()
         self.key = self.read_meeting(self.docx)
 
-    def decide(self, *args: str) -> tuple[int, dict, str]:
-        return self.cli("story_flow.py", "decide", "--gate", "meeting",
-                        "--meeting", self.key, "--item", "T2", *args)
+    def decide(self, *args: str, item: str = "T2") -> tuple[int, dict, str]:
+        return self.cli("story_flow.py", "decide", "--gate", "meeting", "--ask", self.ask_id(),
+                        "--meeting", self.key, "--item", item, *args)
 
     def test_only_a_listed_key_is_recorded(self) -> None:
-        code, out, _ = self.decide("--chosen", "不存在", "--basis", "就用短信")
+        code, out, _ = self.decide("--chosen", "不存在", "--reply", "就用短信")
         self.assertEqual(1, code)
-        self.assertIn("不在本次选项集里", out["error"])
-        code, _, log = self.decide("--chosen", "a", "--basis", "就用短信")
+        self.assertIn("不在本次选项里", out["error"])
+        code, _, log = self.decide("--chosen", "a", "--reply", "就用短信")
         self.assertEqual(0, code, log)
         gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
-        self.assertEqual(("a", "就用短信", "human"), (gate["chosen"], gate["basis"], gate["by"]))
-        self.assertEqual({"key", "label"}, set(gate["options"][0]), "关卡记录里多抄了别的东西")
+        self.assertEqual(("a", "就用短信", "human"), (gate["chosen"], gate["reply"], gate["by"]))
+        self.assertEqual({"no", "key", "label"}, set(gate["options"][0]), "关卡记录里多抄了别的东西")
 
     def test_a_topic_without_a_question_is_never_asked(self) -> None:
         self.assertEqual(["T2"], [a.split("/")[-1] for a in meetings.pending_asks(
             meeting.read_notes(self.fr, []), self.contract())])
-        code, out, _ = self.cli("story_flow.py", "decide", "--gate", "meeting",
-                                "--meeting", self.key, "--item", "T1",
-                                "--chosen", "a", "--basis", "随便")
+        code, out, _ = self.decide("--chosen", "a", "--reply", "随便", item="T1")
         self.assertEqual(1, code)
-        self.assertIn("没有要问人的话题", out["error"])
+        self.assertIn("没有会议话题", out["error"])
 
     def test_the_answer_the_human_actually_gave_is_what_lands(self) -> None:
         """人给了自选答案：把它补成真实选项再记，不替他选推荐项。"""
         topics = json.loads(json.dumps(TOPICS))
         topics[1]["options"].append({"key": "c", "label": "先按站内信通知，短信下一轮再说"})
         self.read_meeting(self.docx, topics=topics)
-        code, _, log = self.decide("--chosen", "c", "--basis", "先站内信")
+        code, _, log = self.decide("--chosen", "c", "--reply", "先站内信")
         self.assertEqual(0, code, log)
         gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
         self.assertEqual("c", gate["chosen"], "记成了推荐项")
@@ -646,7 +649,7 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
     def test_read_refresh_ask_decide(self) -> None:
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
-        self.assertEqual("await_gate:material_scope", self.status()["next"],
+        self.assertEqual("inventory_materials", self.status()["next"],
                          "第一轮先问材料，会议不排在材料关卡前面")
         self.confirm_materials()
         self.assertEqual("read_meeting", self.status()["next"])
@@ -669,8 +672,12 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         """人说「料放进去了」，交来的料里有会议：导入、读会，不再回头问一次材料。"""
         (self.inbox / "readme.md").write_text("空收件箱" + chr(10), encoding="utf-8")
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
+        write_gaps(self.fr / "AR" / "story-src", ("会议记录",))
+        ask_id = self.ask_id()
         docx = self.place()
-        self.confirm_materials("supplied")
+        code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
+                                "--ask", ask_id, "--reply", "会议记录放进去了", "--chosen", "supplied")
+        self.assertEqual(0, code, log)
         self.assertEqual("import_materials", self.status()["next"])
         self.assertEqual(0, self.cli("import_sources.py")[0])
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
@@ -701,7 +708,7 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.confirm_materials()
         self.read_meeting(docx)
         code, out, _ = self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                "--chosen", "confirm_scope", "--basis", "再确认一次")
+                                "--ask", "x", "--reply", "再确认一次")
         self.assertEqual(1, code)
         self.assertIn("本轮第一级已经定了", out["error"])
 
@@ -732,7 +739,7 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         state = self.status()
         self.assertNotIn("meetings", state)
-        self.assertEqual("await_gate:material_scope", state["next"])
+        self.assertEqual("inventory_materials", state["next"])
         self.assertFalse((self.fr / "AR" / "story-src" / "doc-refresh.md").exists(),
                          "没有会议却造了一份会议结果")
 

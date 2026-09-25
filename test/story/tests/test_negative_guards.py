@@ -400,7 +400,7 @@ class ReviewBannedTermsScope(NegativeCase):
     DEC_ID = "DEC-901"
 
     def write_review(self, machine: str, human: str = "", freeform: str = "",
-                     category: str = "规则与数值") -> None:
+                     category: str = "业务规则") -> None:
         """造一份结构与渲染器一致的 review.md，并让 decisions.json 认得这条议题。"""
         src = self.feature_root() / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
@@ -410,8 +410,9 @@ class ReviewBannedTermsScope(NegativeCase):
                             "clarification": "甲", "decider": "需求方"}]},
             ensure_ascii=False, indent=2), encoding="utf-8")
         (self.feature_root() / "AR" / "review.md").write_text(
-            "# 评审记录\n\n#### 1 甲议题\n\n" + machine + "\n\n请需求方确认。\n\n"
-            "审核结果：\n" + human + "\n<!-- decision: " + self.DEC_ID + " -->\n\n"
+            "# 评审记录\n\n#### 1 甲议题\n\n" + machine + "\n\n请需求方评审。\n\n"
+            "评审结论：\n- [ ] 同意\n- [x] 需修改\n- [ ] 暂缓\n修改意见：" + human
+            + "\n<!-- decision: " + self.DEC_ID + " -->\n\n"
             "## 其他意见\n\n<!-- freeform-zone -->\n" + freeform
             + "\n<!-- /freeform-zone -->\n",
             encoding="utf-8")
@@ -422,18 +423,15 @@ class ReviewBannedTermsScope(NegativeCase):
 
     def test_the_human_zone_is_not_judged(self) -> None:
         """人工区是**人的表态**，不是产品承诺——「先灰度一周」不该被拦。"""
-        self.write_review("甲议题的澄清正文。", human="不同意时改什么：先灰度一周再全量。")
+        self.write_review("甲议题的澄清正文。", human="先灰度一周再全量。")
         self.init_audit()
         self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
 
-    def test_a_choice_zone_is_not_judged_either(self) -> None:
-        """选方案的填写位同样是人的表态。"""
+    def test_choosing_another_option_in_the_opinion_is_not_judged_either(self) -> None:
+        """在修改意见里选别的做法，同样是人的表态。"""
         self.write_review("甲议题的澄清正文。", human="选 2，先灰度一周再全量。")
-        review = self.feature_root() / "AR" / "review.md"
-        review.write_text(review.read_text(encoding="utf-8").replace("审核结果：\n", "方案选择：\n", 1),
-                          encoding="utf-8")
         self.init_audit()
-        self.assertEqual(self.banned_hits(), "", "选方案的填写位被当成产品承诺判了")
+        self.assertEqual(self.banned_hits(), "", "修改意见被当成产品承诺判了")
 
     def test_the_freeform_zone_is_not_judged(self) -> None:
         """「其他意见」章整章是人写的，同理不判。"""

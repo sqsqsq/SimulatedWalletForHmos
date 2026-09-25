@@ -25,6 +25,9 @@ sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
 from flow.state import CONTRACT, STORY_SRC_FROZEN  # noqa: E402
 from materials import importer  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flow_steps import write_gaps  # noqa: E402
 FEATURE = "AR90001"
 
 
@@ -544,64 +547,49 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
     """第一级请人陈述事实：料放进去了，或者现有材料就是全部。
 
     够不够由作者盘点、由人定——**文件到了不等于内容够了**，机器不判这件事。
+    作者把缺口写进缺口文件，问法（两项固定、顺序固定、推荐按缺口算）由 `status` 生成；
     人回的是哪一项，收件箱里的原件都会被导入；导完重新盘点，还缺什么才再停一次。
-    上一轮缺的没补上照样可以再问，问的是「还缺什么」而不是「够不够」。
     """
 
-    def gate_options(self) -> list[dict]:
-        """第一级摆哪两项——**从合同取**，夹具与脚本读的是同一份登记。
+    def src(self) -> Path:
+        return self.feature_root / "AR" / "story-src"
 
-        夹具自己抄一份 key 的话，合同改了它照样绿：它守的就不再是「两边一致」。
-        """
-        return [dict(o) for o in material_options()]
-
-    def write_gate_options(self, gate: str = "material_scope",
-                           options: list[dict] | None = None) -> None:
-        src = self.feature_root / "AR" / "story-src"
-        src.mkdir(parents=True, exist_ok=True)
-        if options is None:
-            options = (self.gate_options() if gate == "material_scope"
-                       else [{"key": "carry_all", "label": "按当前范围整体承载"}])
-        (src / ".gate-options.json").write_text(
-            json.dumps({"gate": gate, "options": options}, ensure_ascii=False),
-            encoding="utf-8")
-
-    def write_gap_options(self, missing: str = "管理页的界面图",
-                          why: str = "来的原稿只有签约页，管理页那一节没有可参照的界面",
-                          with_gap: bool = True) -> None:
-        """摆一次带缺口的第一级选项：`missing` / `why` 是第 2 轮起的硬要求。"""
-        options = self.gate_options()
-        if with_gap:
-            for opt in options:
-                if opt["key"] in MATERIAL_REQUEST_KEYS:
-                    opt["missing"], opt["why"] = missing, why
-        self.write_gate_options(options=options)
+    def gaps(self, *missing: str, why: str = "来的原稿只有签约页，管理页那一节没有可参照的界面") -> None:
+        write_gaps(self.src(), missing, why)
 
     def write_analysis_sidecars(self) -> None:
         """需求分析（S2b）的两份产出，round 消费进契约。"""
-        src = self.feature_root / "AR" / "story-src"
+        src = self.src()
         src.mkdir(parents=True, exist_ok=True)
         (src / ".positioning.json").write_text(json.dumps({
-            "scope_source": "user_stated",
-            "scope_text": "本 AR 承载自动充值签约与管理",
-            "sr_related_ars": [],
+            "scope_text": "本 AR 承载自动充值签约与管理", "sr_related_ars": [],
         }, ensure_ascii=False), encoding="utf-8")
         (src / ".scope-options.json").write_text(json.dumps([
-            {"key": "carry_all", "label": "按当前范围整体承载：签约、管理、扣款回执",
-             "recommended": True},
+            {"key": "carry_all", "label": "按当前范围整体承载：签约、管理、扣款回执"},
         ], ensure_ascii=False), encoding="utf-8")
 
-    def next_of(self) -> str:
+    def status(self) -> dict:
         proc = self.run_flow("status")
         self.assertEqual(0, proc.returncode, self.out_of(proc))
-        return json.loads(proc.stdout[proc.stdout.index("{"):])["next"]
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    def sign(self, chosen: str) -> subprocess.CompletedProcess:
-        return self.run_flow("decide", "--gate", "material_scope", "--chosen", chosen,
-                             "--basis", f"用户回复：{chosen}")
+    def next_of(self) -> str:
+        return self.status()["next"]
+
+    def ask(self) -> dict:
+        return json.loads((self.src() / ".ask.json").read_text(encoding="utf-8"))
+
+    def sign(self, reply: str, *extra: str) -> subprocess.CompletedProcess:
+        return self.run_flow("decide", "--gate", "material_scope", "--ask", self.ask()["ask_id"],
+                             "--reply", reply, *extra)
 
     def sign_supplied(self) -> subprocess.CompletedProcess:
-        return self.sign(MATERIAL_REQUEST_KEYS[0])
+        return self.sign("材料放好了", "--chosen", "1")
+
+    def asked(self) -> None:
+        """盘点写下缺口，`status` 生成问法——人被问到的那一刻。"""
+        self.gaps("管理页的界面图")
+        self.assertEqual("await_gate:material_scope", self.next_of())
 
     def put_inbox(self, name: str = "原稿.md") -> None:
         inbox = self.feature_root / "inbox"
@@ -621,9 +609,9 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual(0, proc.returncode, self.out_of(proc))
 
     def one_supply_round(self) -> None:
-        """走完一次完整的补料：摆选项 → 放料 → 人陈述事实 → 导入 → 开新一轮。"""
+        """走完一次完整的补料：问 → 放料 → 人陈述事实 → 导入 → 开新一轮。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
         self.assertEqual(0, self.sign_supplied().returncode)
         self.import_now()
@@ -632,32 +620,92 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
     def out_of(self, proc) -> str:
         return (proc.stdout or "") + (proc.stderr or "")
 
+    # -- 问法由脚本生成 -------------------------------------------------------
+
+    def test_the_first_round_stops_after_the_inventory(self) -> None:
+        """第一轮必停；先盘点、写下缺口，才有问法。"""
+        self.round_now()
+        self.assertEqual("inventory_materials", self.next_of())
+        self.asked()
+
+    def test_the_ask_has_fixed_order_labels_and_a_recommendation(self) -> None:
+        """AC12：两项顺序与标签来自合同，占位已换成本单编号；缺口非空时推荐补料。"""
+        self.round_now()
+        self.asked()
+        ask = self.status()["ask"]
+        want = [o["key"] for o in material_options()]
+        self.assertEqual(want, [o["key"] for o in ask["options"]])
+        self.assertEqual([1, 2], [o["no"] for o in ask["options"]])
+        self.assertTrue(all("<单>" not in o["label"] for o in ask["options"]))
+        self.assertIn(FEATURE, ask["options"][0]["label"])
+        self.assertEqual(MATERIAL_REQUEST_KEYS[0], ask["recommend"]["key"])
+        self.assertIn("推荐：", ask["block"])
+        self.assertEqual(ask, self.ask(), "摆给人的问法与盘上的侧车不是同一份")
+
+    def test_no_gap_recommends_starting_the_analysis(self) -> None:
+        self.round_now()
+        self.gaps(why="产品稿、系统设计与会议记录都在")
+        ask = self.status()["ask"]
+        self.assertNotIn(ask["recommend"]["key"], MATERIAL_REQUEST_KEYS)
+
+    def test_the_recorded_choice_is_the_asked_one_with_the_words(self) -> None:
+        """AC11：人签记下问法编号、全部选项、原话与映射到的那一项。"""
+        self.round_now()
+        self.asked()
+        ask_id = self.ask()["ask_id"]
+        self.assertEqual(0, self.sign("2").returncode)
+        gate = json.loads((self.src() / "story-flow.json").read_text(encoding="utf-8"))["rounds"][-1]["gates"][-1]
+        self.assertEqual((ask_id, "2", "human", "reply"),
+                         (gate["ask_id"], gate["reply"], gate["by"], gate["mapped_by"]))
+        self.assertEqual([o["key"] for o in material_options()], [o["key"] for o in gate["options"]])
+
+    def test_a_sign_without_the_current_ask_is_refused(self) -> None:
+        """AC11：没问过、或问法换过了，人签写不进契约。"""
+        self.round_now()
+        self.gaps()
+        proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "deadbeef",
+                             "--reply", "2")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("没有待回答的问法", self.out_of(proc))
+        self.status()
+        proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "deadbeef",
+                             "--reply", "2")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("不是当前问法", self.out_of(proc))
+
+    def test_a_reply_pointing_elsewhere_than_chosen_is_refused(self) -> None:
+        self.round_now()
+        self.asked()
+        proc = self.sign("选 2", "--chosen", "1")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("记人说的那一项", self.out_of(proc))
+
+    def test_a_model_proposal_waits_for_the_human(self) -> None:
+        """AC11：提议记为 by: model、不推进流程，下一次问法里请人确认。"""
+        self.round_now()
+        self.gaps()
+        proc = self.run_flow("decide", "--gate", "material_scope", "--propose",
+                             "--chosen", "confirm_scope", "--why", "材料都在")
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        contract = json.loads((self.src() / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertEqual("model", contract["proposals"][0]["by"])
+        self.assertEqual([], contract["rounds"][-1]["gates"], "提议记成了人签")
+        ask = self.status()["ask"]
+        self.assertEqual("confirm_scope", ask["proposals"][0]["chosen"])
+        self.assertIn("待你确认的提议", ask["block"])
+
     # -- 人回哪一项，料都进来 -------------------------------------------------
 
-    def test_the_first_round_always_stops(self) -> None:
-        """第一轮照停：那一轮没有任何人对材料表过态。"""
-        self.round_now()
-        self.assertEqual("await_gate:material_scope", self.next_of())
-
     def test_material_on_disk_is_imported_before_anyone_answers(self) -> None:
-        """料到了，关卡还没人回答——下一步就是导入，不必等表态。
-
-        等表态才导的话，人回答之前流程里每一个判断都建立在一份不全的材料上；
-        而文件已经在盘上，导入是脚本的活。
-        """
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
         self.assertEqual("import_materials", self.next_of())
 
     def test_answering_still_works_while_the_import_is_pending(self) -> None:
-        """`status` 说去导入，不挡人表态——两件事互不排斥。
-
-        表态的前置是「本轮这一级还没定」，不是「下一步恰好是这一级」：
-        挂在后者上的话，人刚放好料那一笔就永远签不下去。
-        """
+        """人说放好了、料也在收件箱：表态照记，下一步仍是导入。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
         self.assertEqual("import_materials", self.next_of())
         proc = self.sign_supplied()
@@ -665,52 +713,41 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual("import_materials", self.next_of(), "签完下一步变了")
 
     def test_the_same_level_cannot_be_signed_twice_in_one_round(self) -> None:
-        """本轮这一级定过了就不再收——材料再变会开新一轮，那时才轮到重新表态。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
         self.assertEqual(0, self.sign_supplied().returncode)
-        self.write_gate_options()
-        proc = self.sign("confirm_scope")
+        proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "x", "--reply", "2")
         self.assertEqual(1, proc.returncode, "同一轮里签了两次")
         self.assertIn("本轮第一级已经定了", self.out_of(proc))
 
     def test_after_a_rejection_new_material_points_at_the_import(self) -> None:
-        """上一笔被驳回、人这才把料放上来：下一步是导入，不是再问一遍。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.assertEqual(2, self.sign_supplied().returncode)
         self.assertEqual("await_gate:material_scope", self.next_of())
         self.put_inbox()
         self.assertEqual("import_materials", self.next_of())
 
     def test_saying_the_material_is_all_there_still_imports_the_inbox(self) -> None:
-        """人说「现有材料就是全部」，收件箱里的原件照样先导入。
-
-        不导的话，那份料要到成文登记时才被发现，之前每个判断都建立在一份不全的材料上。
-        人回的是「不再补了」，不是「盘上那份不算数」。
-        """
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
-        self.assertEqual(0, self.sign("confirm_scope").returncode)
+        self.assertEqual(0, self.sign("现有材料就是全部").returncode)
         self.assertEqual("import_materials", self.next_of())
 
     def test_the_import_step_names_the_files_and_gives_the_command(self) -> None:
-        """命令给全、点名是哪几件——不问人，直接做。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox("签约页.md")
-        self.assertEqual(0, self.sign("confirm_scope").returncode)
-        proc = self.run_flow("status")
-        out = self.out_of(proc)
+        self.assertEqual(0, self.sign("2").returncode)
+        out = self.out_of(self.run_flow("status"))
         self.assertIn("import_sources.py --feature", out, "没给出可跑的导入命令")
         self.assertIn("签约页.md", out, "没点名要导的是哪一件")
 
     def test_after_importing_it_asks_to_register_the_new_round(self) -> None:
-        """导完材料就变了：先登记新一轮，再拿新材料重新盘点。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.put_inbox()
         self.assertEqual(0, self.sign_supplied().returncode)
         self.import_now()
@@ -718,32 +755,17 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
 
     # -- 「放进去了」是一句会被当场核对的事实 --------------------------------
 
-    def test_saying_supplied_with_material_in_the_inbox_is_accepted(self) -> None:
-        """人把料放进收件箱、回一句「放进去了」——成立，下一步是导入。"""
-        self.round_now()
-        self.write_gate_options()
-        self.put_inbox()
-        proc = self.sign_supplied()
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
-        self.assertEqual("import_materials", self.next_of())
-
     def test_saying_supplied_after_the_material_landed_is_accepted(self) -> None:
-        """料已经并进正文、只是本轮还没登记——同样成立，下一步是登记新一轮。
-
-        「料到没到」看的是磁盘：收件箱里有没导的，或者材料指纹已经不是本轮那个。
-        只认前一种的话，料先落进正文的那条路会被驳回，而料明明已经在手上。
-        """
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         self.add_ux("signup.png")
         proc = self.sign_supplied()
         self.assertEqual(0, proc.returncode, self.out_of(proc))
         self.assertEqual("run_round", self.next_of())
 
     def test_saying_supplied_with_nothing_on_disk_is_refused(self) -> None:
-        """盘上什么都没有——那一笔记下去下一步无处可去，原地重提。"""
         self.round_now()
-        self.write_gate_options()
+        self.asked()
         proc = self.sign_supplied()
         self.assertEqual(2, proc.returncode)
         self.assertIn("收件箱里没有新文件", self.out_of(proc))
@@ -752,124 +774,43 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
     # -- 导入之后：还缺什么才再停 --------------------------------------------
 
     def test_no_new_gap_goes_straight_to_analysis(self) -> None:
-        """盘完不缺了就直接进需求分析，不把上一轮的选项再摆一遍。"""
         self.one_supply_round()
         self.assertEqual("run_analysis", self.next_of())
 
     def test_a_new_gap_stops_again(self) -> None:
-        """盘出剩下的缺口、写进侧车 → 再停一次。这不是无效询问。"""
         self.one_supply_round()
-        self.write_gap_options()
-        self.assertEqual("await_gate:material_scope", self.next_of())
-
-    def test_the_same_gap_can_be_asked_again(self) -> None:
-        """上一轮缺的没补上，照样可以再问——问的是「还缺什么」，不是「够不够」。
-
-        「人上一次已经回答过」不成立：他上一次回答的是上一轮的缺口。
-        """
-        self.one_supply_round()
-        self.write_gap_options(missing="管理页的界面图", why="这一份补来的还是签约页")
+        self.gaps("管理页的界面图", why="这一份补来的还是签约页")
         self.assertEqual("await_gate:material_scope", self.next_of())
         self.put_inbox("管理页.md")
         self.assertEqual(0, self.sign_supplied().returncode)
 
-    def test_a_second_round_request_must_say_what_is_still_missing(self) -> None:
-        """补过一轮之后再停，问的必须是**剩余**的缺口，不能把旧选项原样再摆。"""
+    def test_a_later_round_gap_file_must_say_what_is_missing(self) -> None:
+        """补过一轮之后再停，问的必须是剩余的缺口；写了空缺口就在问人之前报出来。"""
         self.one_supply_round()
-        self.write_gap_options(with_gap=False)
-        proc = self.sign_supplied()
-        self.assertEqual(1, proc.returncode)
-        out = self.out_of(proc)
-        self.assertIn("missing", out)
-        self.assertIn("剩余的缺口", out)
+        self.gaps(why="都齐了")
+        payload = self.status()
+        self.assertEqual("fix_material_gaps", payload["next"])
+        self.assertNotIn("ask", payload, "缺口立不住却先把人拦下来问了")
 
-    def test_a_non_request_option_needs_no_gap_fields(self) -> None:
-        """「现有材料就是全部」不是缺口，不受这一条约束。"""
-        self.one_supply_round()
-        self.write_gate_options(options=[
-            o for o in self.gate_options()
-            if o["key"] not in MATERIAL_REQUEST_KEYS])
-        proc = self.sign("confirm_scope")
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
-
-    def test_status_refuses_to_stop_on_a_sidecar_that_will_be_rejected(self) -> None:
-        """校验要在 `status` 决定停不停之前。
-
-        只写在 `decide` 里的话，顺序是：`status` 说停 → 人被问了一次 → `decide` 才拒收。
-        人已经答过，缺的字段却要模型回头补，那一次询问白问了。
-        """
-        self.one_supply_round()
-        self.write_gap_options(with_gap=False)
-        proc = self.run_flow("status")
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
-        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual("fix_gate_options", payload["next"],
-                         "侧车立不住却先把人拦下来问了")
-        self.assertIn("missing", self.out_of(proc))
-
-    # -- 三级共用一个侧车文件名，级别要写明 ----------------------------------
-
-    def test_the_second_level_is_not_pulled_back_by_its_own_sidecar(self) -> None:
-        """走到第二级：为第二级摆的侧车不该把 next 拨回第一级。
-
-        侧车不带级别时就是这样坏的——第一级读到「盘上有侧车」，判成材料上又有新缺口，
-        于是 `next` 回到第一级，而 `decide --gate scope_decision` 被
-        「当前这一步不是它」挡住，流程卡死在两级之间。
-        """
+    def test_the_second_level_ask_comes_from_the_contract(self) -> None:
         self.one_supply_round()
         self.write_analysis_sidecars()
         self.round_now()
         self.assertEqual("await_gate:scope_decision", self.next_of())
-
-        self.write_gate_options("scope_decision")
-        self.assertEqual("await_gate:scope_decision", self.next_of(),
-                         "第二级的侧车把流程拨回了第一级")
-        proc = self.run_flow("decide", "--gate", "scope_decision", "--chosen", "carry_all",
-                             "--basis", "用户回复：1（=按当前范围整体承载）")
+        self.assertEqual(["carry_all"], [o["key"] for o in self.status()["ask"]["options"]])
+        proc = self.run_flow("decide", "--gate", "scope_decision",
+                             "--ask", self.ask()["ask_id"], "--reply", "1")
         self.assertEqual(0, proc.returncode, self.out_of(proc))
-
-    def test_a_sidecar_for_another_level_is_refused(self) -> None:
-        """摆错级别当场拦下，不放它进契约。"""
-        self.round_now()
-        self.write_gate_options("scope_decision")
-        proc = self.sign_supplied()
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("侧车是给 scope_decision 级摆的", self.out_of(proc))
 
     # -- 选项集只有一处登记 ---------------------------------------------------
 
-    def test_the_labels_are_fixed_whatever_the_author_writes(self) -> None:
-        """两句标签固定：作者写了自己的措辞，落进契约的仍是合同那两句。
-
-        实跑里他把「材料已补齐，放进 inbox，请导入」改成了「**界面设计图**已放进…」——
-        往标签里塞了一个具体类别。标签可改写的话，摆给人的那句话是合同给的还是他当场
-        编的，事后分不出来，而那正是「他问了什么」的全部内容。本轮缺什么走 missing / why。
-        """
-        self.round_now()
-        编的 = [dict(o, label="界面设计图已放进 doc/features/AR90001/inbox/，请导入")
-              for o in self.gate_options()]
-        self.write_gate_options(options=编的)
-        self.put_inbox()
-        self.assertEqual(0, self.sign_supplied().returncode)
-        gates = json.loads((self.feature_root / "AR" / "story-src" / "story-flow.json")
-                           .read_text(encoding="utf-8"))["rounds"][-1]["gates"]
-        landed = {o["key"]: o.get("label") for o in gates[-1]["options"]}
-        for o in material_options():
-            self.assertEqual(o["label"], landed[o["key"]],
-                             f"{o['key']} 的标签被作者的措辞盖掉了")
-
     def test_the_option_keys_live_in_the_contract_only(self) -> None:
-        """键只登记在合同里：脚本与流程校验都从那里读，谁也不另存一份字面。
-
-        各存一份的话，只改一处，`decide` 写进契约的选择会在阶段门禁上被判非法——
-        而那两处相隔一个目录，改的人看不见另一处。
-        """
         contract = json.loads(
             (STORY_SCRIPTS.parents[1] / "contracts" / "story-chapters.json")
             .read_text(encoding="utf-8"))
         keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
         self.assertEqual(list(MATERIAL_CHOICES), keys)
-        for path in (FLOW, STORY_SCRIPTS / "flow" / "check.mjs"):
+        for path in (FLOW, STORY_SCRIPTS / "flow" / "check.mjs", STORY_SCRIPTS / "flow" / "asks.py"):
             text = path.read_text(encoding="utf-8")
             for key in keys:
                 self.assertNotIn(f"'{key}'", text, f"{path.name} 里还留着 {key} 的字面")
@@ -907,7 +848,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
             proc = subprocess.run(
                 [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
                  "--project-root", str(root), "--gate", "material_scope",
-                 "--chosen", MATERIAL_CHOICES[0], "--by", "ai", "--basis", "他说的原话"],
+                 "--chosen", MATERIAL_CHOICES[0], "--by", "ai", "--reply", "他说的原话"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=120, cwd=str(REPO_ROOT))
             self.assertNotEqual(0, proc.returncode, "代签参数竟然被接受了")

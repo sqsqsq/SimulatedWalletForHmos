@@ -109,7 +109,7 @@ class AReviewActionLandsOnADecision(DeliveryCase):
         self.render()
 
     def make_story_feature(self, ids: list[str]) -> None:
-        (self.src() / "story-flow.json").write_text('{"schema": 3, "rounds": []}', encoding="utf-8")
+        (self.src() / "story-flow.json").write_text('{"schema": 4, "rounds": []}', encoding="utf-8")
         (self.src() / "decisions.json").write_text(
             json.dumps({"decisions": [{"id": i} for i in ids]}), encoding="utf-8")
 
@@ -190,9 +190,9 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
     def test_open_decisions_are_listed_for_a_consequence_check(self) -> None:
         src = self.src()
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
-        (src / "decisions.json").write_text(json.dumps([
+        (src / "decisions.json").write_text(json.dumps({"decisions": [
             {"id": "D-2", "status": "open", "title": "超时后是否自动重试", "decider": "需求方"},
-            {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}],
+            {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}]},
             ensure_ascii=False), encoding="utf-8")
         section = self.reader_task().split("### 仍开着的选择", 1)[1].split("### 登记成已定", 1)[0]
         self.assertIn("按各选项的实际后果", section)
@@ -225,8 +225,8 @@ class AChoiceNeedsASuggestion(ModesCase):
         self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
 
     def test_a_confirm_needs_no_suggestion(self) -> None:
-        body = "**决策点**：甲。\n\n**依据**：乙。\n\n**结论与影响**：丙。"
-        self.assertEqual(0, self.build(entry("retry-owner", "confirm", body)).returncode)
+        body = "**决策点**：甲。\n\n**依据**：产品负责人说「就这么做」。\n\n**结论与影响**：丙。"
+        self.assertEqual(0, self.build(entry("retry-owner", "confirm", body, status="settled")).returncode)
 
 
 class TheChapterTableIsSeededOnce(PlanCase):

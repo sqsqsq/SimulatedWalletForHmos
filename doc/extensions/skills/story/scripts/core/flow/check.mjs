@@ -172,6 +172,11 @@ export function flowProblems(featureRoot) {
       } else if (!options.some(o => String(o?.key ?? '').trim() === String(d?.chosen ?? '').trim())) {
         problems.push(`${at}的 chosen「${d?.chosen}」不在 options 里——选的必须是摆出来的`);
       }
+      // 人签只能记在问过之后：问法编号与人的原话缺一，这一笔就说不清是谁在什么问题下选的
+      if (d?.by !== 'human' || !String(d?.ask_id ?? '').trim() || !String(d?.reply ?? '').trim()) {
+        problems.push(`${at}不是一笔完整的人签（缺 by: human、ask_id 或原话 reply）`
+          + '——关卡记录只由 `story_flow.py decide --ask <问法编号> --reply <人的原话>` 写');
+      }
       if (gate === 'material_scope' && !contract.keys.has(d?.chosen)) {
         problems.push(`${at}的 chosen 非法（material_scope 须为 `
           + `${[...contract.keys].join(' / ')} 之一）`);

@@ -32,10 +32,12 @@ ALLOWED = {
     "inputs": {"state"},
     "meetings": {"state"},
     "routing": {"state", "inputs", "meetings"},
-    "decisions": {"state", "inputs", "routing", "meetings"},
+    "asks": {"state", "inputs", "meetings"},
+    "update": {"state", "routing"},
+    "decisions": {"state", "inputs", "routing", "meetings", "asks"},
     "rounds": {"state", "inputs", "routing", "meetings"},
     "submission": {"state", "inputs", "routing"},
-    "lifecycle": {"state", "inputs", "routing", "meetings"},
+    "lifecycle": {"state", "inputs", "routing", "meetings", "asks", "update"},
 }
 
 
@@ -96,8 +98,8 @@ class TheCallGraphHasOneDirection(unittest.TestCase):
 class ImportingAModuleChangesNothing(unittest.TestCase):
     """import 一个子模块不该解析参数、不该输出、不该写盘。"""
 
-    MODULES = ("flow.state", "flow.inputs", "flow.meetings", "flow.routing", "flow.decisions",
-               "flow.rounds", "flow.submission", "flow.lifecycle",
+    MODULES = ("flow.state", "flow.inputs", "flow.meetings", "flow.routing", "flow.asks",
+               "flow.decisions", "flow.rounds", "flow.submission", "flow.lifecycle", "flow.update",
                "materials.registry", "materials.importer", "materials.meeting")
 
     def test_import_is_silent_and_writes_nothing(self) -> None:
@@ -166,24 +168,21 @@ class OneRuleFindsEveryResource(unittest.TestCase):
                          "落下的不是 Skill 自带的那份模板")
 
     def test_the_gate_values_come_from_the_chapter_contract(self) -> None:
-        """第一级的值域是章节合同给的：读不到合同，这条命令连值域都报不出来。"""
+        """第一级的问法来自章节合同：换了工作目录、工程根带空格，照样读得到合同。"""
         contract = json.loads(
             (CORE.parents[1] / "contracts" / "story-chapters.json")
             .read_text(encoding="utf-8").lstrip(chr(0xFEFF)))
         keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
         self.payload(self.flow("init"))
         self.payload(self.flow("round"))
-        # 侧车自己说这一项合法：值域的真源是合同，侧车说了不算
-        made_up = "压根不存在的键"
         src = self.feature_root / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
-        (src / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope",
-             "options": [{"key": made_up, "label": "侧车现编的一项"}]},
-            ensure_ascii=False), encoding="utf-8")
-        out = self.payload(self.flow("decide", "--gate", "material_scope",
-                                     "--chosen", made_up,
-                                     "--basis", "用户原话"))
+        (src / ".material-gaps.json").write_text(json.dumps(
+            {"missing": [], "why": "材料齐了"}, ensure_ascii=False), encoding="utf-8")
+        ask = self.payload(self.flow("status"))["ask"]
+        self.assertEqual(keys, [o["key"] for o in ask["options"]])
+        out = self.payload(self.flow("decide", "--gate", "material_scope", "--ask", ask["ask_id"],
+                                     "--reply", "我自己编的一项", "--chosen", "压根不存在的键"))
         self.assertFalse(out["success"], out)
         for key in keys:
             self.assertIn(key, out["error"], f"报错没列出合同里的 {key}")

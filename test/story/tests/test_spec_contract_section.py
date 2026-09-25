@@ -48,7 +48,7 @@ class TheContractSectionIsJudgedOnRealOutput(unittest.TestCase):
         # §9.1 那一章只在走过 /story 的 feature 上判——夹具里补一份流程契约，
         # 否则这一整组判据整块跳过，测出来的绿是「没判」不是「判过」。
         (cls.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
-            json.dumps({"schema": 3, "feature": FEATURE, "status": "complete",
+            json.dumps({"schema": 4, "feature": FEATURE, "status": "complete",
                         "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False),
             encoding="utf-8")
         driver = cls.root / "drive.mjs"
@@ -100,7 +100,7 @@ class OnlyTheEventSectionTakesProse(TheContractSectionIsJudgedOnRealOutput):
         feature = cls.root / "doc" / "features" / FEATURE
         shutil.copytree(REAL, feature)
         (feature / "AR" / "story-src" / "story-flow.json").write_text(
-            json.dumps({"schema": 3, "feature": FEATURE, "status": "complete",
+            json.dumps({"schema": 4, "feature": FEATURE, "status": "complete",
                         "rounds": [{"round": 1, "gates": []}]}, ensure_ascii=False), encoding="utf-8")
         spec = feature / "spec" / "spec.md"
         text = spec.read_bytes().decode("utf-8")

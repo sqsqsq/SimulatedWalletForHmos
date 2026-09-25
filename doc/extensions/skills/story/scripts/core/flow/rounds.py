@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    FlowError, SCHEMA, after_complete, load, log, require, save)
+    FlowError, SCHEMA, after_complete, in_update, load, log, require, save)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import frozen_inbox_note, live_materials, next_step
@@ -76,14 +76,17 @@ def cmd_round(feature_root: Path) -> dict:
     # **判的是「收口及之后」不是「恰好在 complete」**：`story_written` 与已归档比它更靠后，
     # 而 story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料，
     # 那份已经定稿的 story 就对不上它自己声称的依据了。
-    if after_complete(contract) and rounds:
+    #
+    # **update 期间同理**：这一轮是一次有依据的修订，范围沿用本单已定的；新材料登记进当前轮，
+    # reopen 之后也一样——开新轮会把人送回材料与范围关卡。
+    if (after_complete(contract) or in_update(contract)) and rounds:
         current = rounds[-1]
         stamp(current)
         save(feature_root, contract)
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
-        log(f"收口后材料有变（{digest}）：只更新第 {current['round']} 轮的材料指纹，未开新轮。"
-            "要重新决策跑 `story_flow.py reopen`")
+        log(f"材料有变（{digest}）：只更新第 {current['round']} 轮的材料指纹，未开新轮。"
+            "要重新拍板范围，先收口这一轮 update，再跑 `story_flow.py reopen`")
         return {"round": current["round"], "created": False, "materials": digest,
                 "afterComplete": True,
                 "positioning": bool(current.get("positioning")),

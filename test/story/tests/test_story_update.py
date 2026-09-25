@@ -28,9 +28,15 @@ from test_story_build import (  # noqa: E402
     FEATURE, FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state,
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
+from flow_steps import answer, write_gaps  # noqa: E402
 
 FLOW = (REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts"
         / "core" / "story_flow.py")
+
+
+#: 一份能收口的 update-notes：四段里至少有「不变项与理由」表
+NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
+         "| 验收口径 | 这一轮没有动到它 |\n")
 
 
 class UpdateCase(unittest.TestCase):
@@ -287,6 +293,21 @@ class StatusReportsFactsNotJudgement(UpdateCase):
                 self.assertNotIn("story.js", text)
                 self.assertNotIn("adapters", text)
 
+    def test_a_system_requirement_without_a_fetch_stops(self) -> None:
+        """AC15：系统需求这一轮没取过上游就不报输入，指明取材那一步。"""
+        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        ar = self.feature_root.parent / "AR90008"
+        shutil.copytree(self.feature_root, ar)
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            from flow.state import FlowError  # noqa: PLC0415
+            with self.assertRaises(FlowError) as caught:
+                update_mod.cmd_update_inputs(ar, "AR90008", self.root)
+        finally:
+            sys.path.remove(str(core))
+        self.assertIn("还没取上游", str(caught.exception))
+
     def test_a_local_requirement_has_no_upstream(self) -> None:
         out = self.update("--action", "inputs")
         self.assertIsNone(out["upstream"])
@@ -353,7 +374,7 @@ class ClosingBindsTheNotes(UpdateCase):
         super().setUp()
         self.rid = self.update()["update"]
 
-    def notes(self, text: str = "## 当前依据\n首版。\n") -> None:
+    def notes(self, text: str = NOTES) -> None:
         (self.updates / self.rid / "update-notes.md").write_text(text, encoding="utf-8")
 
     def test_no_notes_no_close(self) -> None:
@@ -366,6 +387,12 @@ class ClosingBindsTheNotes(UpdateCase):
     def test_empty_notes_do_not_count(self) -> None:
         self.notes("   \n\n")
         self.assertIn("update-notes", self.update("--action", "close").get("error", ""))
+
+    def test_notes_without_the_unchanged_table_do_not_close(self) -> None:
+        """AC15：不列不变项与理由就不收口——防的是优化一处、损坏另一处。"""
+        self.notes("## 当前依据\n读过了。\n\n## 变化与影响\n改了上限。\n")
+        out = self.update("--action", "close")
+        self.assertIn("不变项与理由", out.get("error", ""), out)
 
     def test_closing_keeps_text_for_the_next_comparison(self) -> None:
         self.notes()
@@ -438,21 +465,21 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
 
     def test_it_needs_an_open_round(self) -> None:
         """不挂在某一轮上的话，事后无从定位这条人签属于哪一次更新。"""
-        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "需求方在评审会上说的")
+        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "需求方在评审会上说的")
         self.assertIn("没有开着的更新", out.get("error", ""))
 
     def test_it_records_the_actual_words(self) -> None:
         self.update()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "需求方原话：按 36 小时做")
+        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "按 36 小时做")
         self.assertEqual("human", out["recorded"]["by"])
         flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertEqual("需求方原话：按 36 小时做", flow["update"]["decisions"][0]["basis"])
+        self.assertEqual("按 36 小时做", flow["update"]["decisions"][0]["reply"])
 
-    def test_an_empty_basis_is_refused(self) -> None:
+    def test_an_empty_reply_is_refused(self) -> None:
         """人签只认真实原话——模型的转述不算。"""
         self.update()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--basis", "   ")
-        self.assertIn("--basis", out.get("error", ""))
+        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "   ")
+        self.assertIn("--reply", out.get("error", ""))
 
 
 class TheInputsStageAsksFirst(UpdateCase):
@@ -472,13 +499,9 @@ class TheInputsStageAsksFirst(UpdateCase):
     def next_of(self) -> str:
         return self.flow("status")["next"]
 
-    def answer(self, chosen: str = "confirm_scope", basis: str = "不补。") -> dict:
-        sys.path.insert(0, str(FLOW.parent))
-        from flow.inputs import material_options  # noqa: PLC0415
-        (self.src / ".gate-options.json").write_text(json.dumps(
-            {"gate": "material_scope", "options": [dict(o) for o in material_options()]},
-            ensure_ascii=False), encoding="utf-8")
-        return self.flow("decide", "--gate", "material_scope", "--chosen", chosen, "--basis", basis)
+    def answer(self, chosen: str = "confirm_scope", reply: str = "不补。") -> dict:
+        write_gaps(self.src)
+        return answer(self.flow, "material_scope", reply, "--chosen", chosen)
 
     def test_it_reports_and_stops_at_the_material_gate(self) -> None:
         was = self.rounds()
@@ -486,6 +509,8 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual("inputs", out["stage"], out)
         self.assertEqual((self.feature_root / "inbox").resolve().as_posix(), out["paths"]["inbox"])
         self.assertEqual("inputs", self.contract()["update"]["stage"])
+        self.assertEqual("inventory_materials", self.next_of())
+        write_gaps(self.src)
         self.assertEqual("await_gate:material_scope", self.next_of())
         self.assertEqual(was, self.rounds(), "输入阶段只报告，却建了一轮")
 
@@ -500,7 +525,7 @@ class TheInputsStageAsksFirst(UpdateCase):
             gate["at"] = "2999-01-01T00:00:00+00:00"
         (self.src / "story-flow.json").write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
         self.update("--action", "inputs")
-        self.assertEqual("await_gate:material_scope", self.next_of())
+        self.assertEqual("inventory_materials", self.next_of())
 
     def test_prepare_waits_for_the_answer(self) -> None:
         self.update("--action", "inputs")
@@ -534,14 +559,31 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual("accepted", self.answer("supplied", "新版放进去了")["outcome"])
         self.assertEqual("import_materials", self.next_of(), "有未并入的原件却没先让导入")
         out = self.update()
-        self.assertEqual("changed", out["comparison"], out)
-        self.assertIn("交通卡自动充值-v2.md", out["pending"])
+        self.assertIn("先导入", out.get("error", ""), "AC15：收件箱有未并入的原件时 prepare 要拒绝")
+        self.assertIn("交通卡自动充值-v2.md", out["error"])
 
-    def test_after_reopen_the_route_is_the_revision_not_the_gates(self) -> None:
+    def test_inside_an_open_round_every_command_agrees(self) -> None:
+        """AC13：update 这一轮开着时，reopen、status、round、complete、decide 判定一致。
+
+        reopen 回到这一轮而不开新轮；新材料登记进当前轮；complete 沿用已定范围直接收口；
+        关卡不再问人。这是 09-25 实跑里死锁的那条序列。
+        """
         self.update("--action", "inputs")
         self.answer()
         self.assertEqual("changed", self.update("--request", "把单日上限改成 300")["comparison"])
+        rounds = len(self.contract()["rounds"])
         self.flow("reopen")
+        self.assertEqual("run_complete", self.next_of())
+        prd = self.feature_root / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n单日上限 300。\n", encoding="utf-8")
+        self.assertEqual("refresh_round", self.next_of())
+        self.flow("round")
+        self.assertEqual(rounds, len(self.contract()["rounds"]), "update 期间开了新轮")
+        self.assertEqual("run_complete", self.next_of())
+        out = self.flow("decide", "--gate", "scope_decision", "--ask", "x", "--reply", "1")
+        self.assertIn("当前这一步不是 scope_decision", out.get("error", ""))
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual("complete", done.get("status"), done)
         self.assertEqual("update_in_progress", self.next_of())
 
 
@@ -557,7 +599,7 @@ class CloseKnowsWhetherTheReviewWasAdopted(UpdateCase):
     def setUp(self) -> None:
         super().setUp()
         self.rid = self.update()["update"]
-        (self.updates / self.rid / "update-notes.md").write_text("## 当前依据\n读过了。\n", encoding="utf-8")
+        (self.updates / self.rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         self.reports = self.feature_root / "spec" / "reports"
         self.reports.mkdir(parents=True, exist_ok=True)
         (self.reports / f"verifier.report.{self.SUBJECT}.md").write_text(
@@ -611,7 +653,7 @@ class ClosedPhasesMustStayClosed(UpdateCase):
 
     def open_round(self) -> None:
         rid = self.update()["update"]
-        (self.updates / rid / "update-notes.md").write_text("## 当前依据\n读过了。\n", encoding="utf-8")
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
 
     def test_a_phase_reopened_by_this_round_blocks_the_close(self) -> None:
         self.summary("spec", "closed")
@@ -791,3 +833,22 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
+    """成文登记即留基准：第一次 update 也比得出「原来怎么写」，不再永远是 incomplete。"""
+
+    def test_the_first_update_compares_against_the_registered_story(self) -> None:
+        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import record_baseline  # noqa: PLC0415
+            self.assertTrue(record_baseline(self.feature_root))
+            self.assertIsNone(record_baseline(self.feature_root), "已有基准又写了一份")
+        finally:
+            sys.path.remove(str(core))
+        spec = self.feature_root / "spec" / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + "\n登记之后改的一行\n", encoding="utf-8")
+        out = self.update()
+        self.assertTrue(out["baseline"], out)
+        self.assertIn("spec/spec.md", out["changed"])

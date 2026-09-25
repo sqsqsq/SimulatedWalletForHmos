@@ -25,7 +25,7 @@ CLIENT = CORE / "flow" / "client.mjs"
 FEATURE = "AR90001"
 
 FLOW_JSON = {
-    "schema": 3,
+    "schema": 4,
     "feature": FEATURE,
     "status": "complete",
     "design_generated_at": "2026-09-12T00:00:00",

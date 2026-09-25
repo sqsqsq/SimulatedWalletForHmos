@@ -12,6 +12,8 @@ from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_SRC_FROZEN, ledger_digest, load, log,
     now, require, round_gates, save)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
+from flow import asks
+from flow.update import record_baseline
 from flow.meetings import topic_digest
 from materials import meeting
 
@@ -24,6 +26,8 @@ def cmd_status(feature_root: Path) -> dict:
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
     step, action = next_step(feature_root, contract, manifest)
     shape = sidecar_shape(step)
+    # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
+    ask = asks.build(feature_root, contract, step) if contract and contract.get("rounds") else None
     if contract is None:
         out = {"exists": False, "next": step, "action": action}
         if shape:
@@ -59,6 +63,7 @@ def cmd_status(feature_root: Path) -> dict:
         **({"meetings": topics} if topics and "meeting" in step else {}),
         "next": step,
         "action": action,
+        **({"ask": ask} if ask else {}),
         **({"sidecar": shape} if shape else {}),
     }
 
@@ -153,7 +158,9 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
     }
     save(feature_root, contract)
-    return {"status": "story_written", "story": str(story)}
+    baseline = record_baseline(feature_root)
+    return {"status": "story_written", "story": str(story),
+            **({"update_baseline": baseline} if baseline else {})}
 
 
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:

@@ -43,10 +43,6 @@ export function readJson(file, fallback) {
   try { return JSON.parse(t); } catch { return fallback; }
 }
 
-export function writeJson(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
-}
 /**
  * **原样读** —— 不剥 BOM、不动行尾。要按原文坐标替换的地方读它。
  *

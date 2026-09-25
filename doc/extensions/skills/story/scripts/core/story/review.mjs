@@ -18,30 +18,39 @@ import { ProjectionConflict, projectionDigest, recordedDigest } from './document
 export const DECISION_FIELDS = [
   ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
   ['clarification', '带小标题分段的澄清正文'],
-  ['decider', '请谁确认'],
+  ['decider', '请谁评审（角色名）'],
 ];
 
 /**
- * 登记表里的条目 —— **两种写法都收，认不出来返回 null**。
+ * 登记表里的条目：顶层是 `{"decisions": [ … ]}`，认不出来返回 null。
  *
- * `{"decisions": [ … ]}` 是骨架给的形状；顶层直接写 `[ … ]` 是把它当一个列表，
- * JSON 里那是同样自然的直觉。两种都能无歧义读出同一批条目，认它不算纵容。
- *
- * **认不出来时不返回空数组**：空数组与「一条都没登记」同形，而后者是合法状态
- * （骨架刚建完就是零条）。混成一件的代价是整类失效没有声音——渲染器照常跑完、
- * 打印「已渲染 0 个议题」、退出码 0，而评审人打开的是一份空模板。
- *
- * 宽进有边界：单数 `decision`、空壳 `{}` 这类不猜，交给调用方报错说清形状。
+ * **认不出来时不返回空数组**：空数组与「一条都没登记」同形，而后者是合法状态。
  */
 export function decisionList(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (raw && typeof raw === 'object' && Array.isArray(raw.decisions)) return raw.decisions;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.decisions)) {
+    return raw.decisions;
+  }
   return null;
 }
 
 //: 登记表形状不对时说什么 —— 各读点同一句，形状只在这里描述一次。
-const DECISION_SHAPE = '读不出条目：顶层要么是 `{"decisions": [ … ]}`，要么直接是 `[ … ]`'
-  + '——`skeleton` 起手时不存在就建一份空骨架，照它的形状填';
+const DECISION_SHAPE = '读不出条目：顶层写成 `{"decisions": [ … ]}`；本单确实没有要登记的议题时写 '
+  + '`{"decisions": [], "no_pending": "<理由>"}`';
+
+/**
+ * 起手前核决策登记的**结构**：要么有议题，要么显式写明本单无待决与理由。
+ *
+ * 不核正文用词：有没有漏登记由审查按选项后果核。起手时给一个必须回答的位置，
+ * 议题就在动笔前登记，不会等十章写完才补。
+ */
+export function registrationGap(ctx) {
+  const raw = readJson(ctx.decisionsPath, null);
+  const list = decisionList(raw);
+  if (raw === null || list === null) return `${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`;
+  if (list.length || String(raw.no_pending ?? '').trim()) return null;
+  return `${path.basename(ctx.decisionsPath)} 还没有任何议题：先按 phases/story-write.md「决策登记」`
+    + '把要人评审的事登记进去；本单确实没有，写 `"no_pending": "<理由>"`';
+}
 
 /**
  * 归档件禁用词在 `review.md` 上的**作用域**：把不判的那几段抹成空行。
@@ -52,7 +61,7 @@ const DECISION_SHAPE = '读不出条目：顶层要么是 `{"decisions": [ … ]
  *
  * | 不判的 | 为什么 |
  * |---|---|
- * | 人工区（`方案选择：` 或 `审核结果：` 之后到该议题的结束标记） | 那是**人的表态**：「不同意，先灰度一周」是他在说要改成什么，不是产品要交付灰度能力 |
+ * | 人工区（`评审结论：` 之后到该议题的结束标记） | 那是**人的表态**：「需修改，先灰度一周」是他在说要改成什么，不是产品要交付灰度能力 |
  * | 「其他意见」章（`freeform-zone` 之内） | 同上，整章都是人写的 |
  * | 必答内容就是上线动作 / 开关管控的那几类议题 | 与 story 的章级豁免逐字同一条判据：讲开关放量与上线顺序是这一类议题的本职，把它判成违规等于要求作者删掉评审人最要看的那一段 |
  *
@@ -94,27 +103,6 @@ export function redactReviewExemptZones(reviewText, ctx) {
     if (owner[i] && exemptCats.has(catOf.get(owner[i]) ?? '')) keep[i] = false;
   }
   return lines.map((l, i) => (keep[i] ? l : '')).join('\n');
-}
-
-/**
- * 决策登记**严格读取** —— 坏 JSON、错误形状都当场报错，绝不静默覆盖。
- *
- * @returns {boolean} 要不要建一份空骨架（不存在才建；空数组是合法状态，不逼着造议题）
- */
-export function decisionsMissing(ctx) {
-  const raw = readText(ctx.decisionsPath);
-  if (raw === null) return true;
-  let parsed = null;
-  try {
-    parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
-  } catch {
-    fail(`${path.basename(ctx.decisionsPath)} 不是合法 JSON：它只应由脚本写入；`
-      + '修好或删掉这份坏件再起骨架——直接覆盖会把里面已登记的判断抹掉');
-  }
-  if (decisionList(parsed) === null) {
-    fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
-  }
-  return false;
 }
 
 /**
@@ -213,15 +201,7 @@ export function decisionProblems(ctx) {
           + '——小标题写成加粗段首（`**要点**：…`）；'
           + '议题的层次由状态分章、类型成节、逐条成项给出，正文里再起标题会把它压乱');
       }
-      // 人要做的事只收两种取值；选方案的，选项得是真正的列表——人按编号选。
-      // 选项合不合理、推荐有没有依据归作者与审查，这里不判选项个数。
-      const mode = dec?.review_mode;
-      if (mode !== undefined && !Object.hasOwn(REVIEW_MODES, mode)) {
-        problems.push(`决策 ${dec?.id ?? '（无编号）'} 的 review_mode「${mode}」不认识——`
-          + '人要从几个方案里选一个写 choice，复核一个已有结论写 confirm');
-      } else if (mode === 'choice') {
-        problems.push(...choiceListProblems(dec));
-      }
+      problems.push(...formProblems(dec));
       // 类别决定它成章落在哪一节。**只判在不在词表里**——不判每类有没有条目、
       // 不判数量、不判空类要不要解释：那些是配额，配额逼出来的是凑数与逃生口。
       const keys = (ctx.contract.decision_categories ?? []).map(c => c?.key);
@@ -241,6 +221,7 @@ const SEGMENT_HEAD = /^\s*\*\*([^*]+)\*\*\s*[:：]?/;
 //: 澄清正文的第一段：这一条在问什么。变义判定只看它。
 const NL = String.fromCharCode(10);
 const DECISION_SEGMENT = '决策点';
+const BASIS_SEGMENT = '依据';
 const OPTIONS_SEGMENT = '可选的做法';
 const SUGGESTION_SEGMENT = '建议';
 //: 一个选项里「做法」与「选它会怎样」之间的分隔：后面写后果。
@@ -255,42 +236,75 @@ function optionsSqueezed(line) {
   return nums.some((n, i) => nums.slice(i + 1).includes(n + 1));
 }
 
-/**
- * 选方案的议题：「可选的做法」那一段是真正的有序列表，一个选项一项。
- *
- * 只看那一段——决策点、依据、建议里的编号是正常的说明，不是让人选的方案。
- * 只判形状，不判选项个数，也不判选项与建议合不合理。
- */
-function choiceListProblems(dec) {
-  const id = dec?.id ?? '（无编号）';
+//: 议题形态：open 必须给可选做法让人评；settled 是人已经定过的，依据引人的原话。
+const REVIEW_MODES = ['choice', 'confirm'];
+//: 决定人只写角色：动作词、文档名都不是人
+const NOT_A_ROLE = /确认|评审|审核|拍板|决定|在.*上|文档|原稿|改版稿|《|》|\.(md|docx)\b/;
+
+function segmentOf(dec, name) {
   const lines = String(dec?.clarification ?? '').split(/\r?\n/);
-  const segment = (name) => {
-    const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === name);
-    const next = lines.findIndex((l, i) => at >= 0 && i > at && SEGMENT_HEAD.test(l));
-    return at < 0 ? null
-      : [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
-  };
-  // 建议段：人从几个方案里选，要先看到起草方推荐哪一个；推荐不出来也要写明缺哪个事实。
-  const suggestion = segment(SUGGESTION_SEGMENT);
-  const noSuggestion = !suggestion?.some(l => l.trim())
-    ? [`决策 ${id} 是选方案的议题，缺「**${SUGGESTION_SEGMENT}**」这一段（或它是空的）——先写选择方案几、再写理由；`
-      + '信息不够推荐不出来时，写明缺哪个事实']
-    : [];
-  const area = segment(OPTIONS_SEGMENT) ?? [];
-  const list = choiceOptionProblems(id, area);
-  return [...list, ...noSuggestion];
+  const at = lines.findIndex(l => SEGMENT_HEAD.exec(l)?.[1].trim() === name);
+  if (at < 0) return null;
+  const next = lines.findIndex((l, i) => i > at && SEGMENT_HEAD.test(l));
+  return [lines[at].replace(SEGMENT_HEAD, ''), ...lines.slice(at + 1, next < 0 ? lines.length : next)];
 }
 
-/** 「可选的做法」那一段的形状：有序列表、一项一个、每项写后果。 */
+/**
+ * 议题形态合不合规：形态由状态定，渲染前一次报全、各给改法。
+ *
+ * - open（待评审）：`review_mode: choice`，「可选的做法」至少两项、每项写后果，并有「建议」；
+ * - settled（已定）：`review_mode: confirm`，「依据」里引人的原话（「…」）；
+ * - `decider` 只写角色名。
+ */
+function formProblems(dec) {
+  const id = dec?.id ?? '（无编号）';
+  const out = [];
+  const mode = dec?.review_mode;
+  const settled = dec?.status === 'settled';
+  if (!REVIEW_MODES.includes(mode)) {
+    out.push(`决策 ${id} 的 review_mode「${mode ?? ''}」不认识：待评审的写 choice，已定的写 confirm`);
+  } else if (!settled && mode !== 'choice') {
+    out.push(`决策 ${id} 还没定（status 不是 settled），要写成 choice：在「**${OPTIONS_SEGMENT}**」列至少两种做法、`
+      + `各写后果，再写「**${SUGGESTION_SEGMENT}**」`);
+  } else if (settled && mode !== 'confirm') {
+    out.push(`决策 ${id} 已定（settled），写成 confirm：依据引人的原话，评审人复核这个结论`);
+  }
+  if (!settled && mode === 'choice') out.push(...choiceListProblems(id, dec));
+  if (settled) {
+    const basis = segmentOf(dec, BASIS_SEGMENT);
+    if (!basis?.some(l => /「[^」]+」/.test(l))) {
+      out.push(`决策 ${id} 已定，「**${BASIS_SEGMENT}**」里要引人的表态：谁、在什么场合说的原话（「…」）。`
+        + '说不出人的表态就是还没定，改成 open 的 choice');
+    }
+  }
+  const decider = String(dec?.decider ?? '').trim();
+  if (decider && NOT_A_ROLE.test(decider)) {
+    out.push(`决策 ${id} 的 decider「${decider}」不是角色：只写角色名（如「产品负责人」），`
+      + '不写动作、场合或文档名');
+  }
+  return out;
+}
+
+/** 选方案的议题：「可选的做法」是有序列表，至少两项、每项写后果；有「建议」。 */
+function choiceListProblems(id, dec) {
+  const suggestion = segmentOf(dec, SUGGESTION_SEGMENT);
+  const noSuggestion = !suggestion?.some(l => l.trim())
+    ? [`决策 ${id} 缺「**${SUGGESTION_SEGMENT}**」这一段（或它是空的）——先写选择方案几、再写理由；`
+      + '信息不够推荐不出来时，写明缺哪个事实']
+    : [];
+  return [...choiceOptionProblems(id, segmentOf(dec, OPTIONS_SEGMENT) ?? []), ...noSuggestion];
+}
+
+/** 「可选的做法」那一段的形状：有序列表、一项一个、至少两项、每项写后果。 */
 function choiceOptionProblems(id, area) {
   if (area.some(optionsSqueezed)) {
     return [`决策 ${id} 把几个选项写在了同一段——「${OPTIONS_SEGMENT}」写成有序列表，`
-      + '一个选项一项（`1. …` 换行 `2. …`），评审人填的就是这个编号'];
+      + '一个选项一项（`1. …` 换行 `2. …`）'];
   }
   const options = area.filter(l => /^\s*\d+[.)]\s+\S/.test(l));
-  if (!options.length) {
-    return [`决策 ${id} 是选方案的议题（review_mode: choice），「**${OPTIONS_SEGMENT}**」这一段却没有有序列表——`
-      + '在这个加粗段首下一个选项一项列出，评审人按编号选；其实只是请人复核已有结论的，改成 confirm'];
+  if (options.length < 2) {
+    return [`决策 ${id}「**${OPTIONS_SEGMENT}**」要有至少两项有序列表——待评审的事给出可选的做法，`
+      + '评审人才有得选'];
   }
   // 每个选项都要说选它会怎样：写不出后果差别的，不是真取舍。只判字面，不判后果写得好不好。
   const bare = options.flatMap((line, k) => {
@@ -299,8 +313,7 @@ function choiceOptionProblems(id, area) {
   });
   if (bare.length) {
     return [`决策 ${id} 的「${OPTIONS_SEGMENT}」第 ${bare.join('、')} 项没写选它会怎样——每项写成`
-      + `「做法${OPTION_CONSEQUENCE}选它会怎样」，说清范围、行为、验收或交付哪一项会变；`
-      + '写不出后果差别的不是真取舍，改成 confirm'];
+      + `「做法${OPTION_CONSEQUENCE}选它会怎样」，说清范围、行为、验收或交付哪一项会变`];
   }
   return [];
 }
@@ -349,8 +362,8 @@ export function reviewFormProblems(reviewText, contract) {
  * - **正文用小标题分段**，不是把五个字段拼成一串 bullet。拼成 bullet 时
  *   「问题 / 建议 / 为什么 / 影响什么 / 来源 / 请谁确认」六行——那是表单腔，
  *   字段会被填成分类名与泛词；
- * - **人工区按人要做的事给**（`REVIEW_MODES`）：选方案的填编号或另写方案，复核结论的勾确认或
- *   不同意并写原因与调整结论。没有字段表：要改成什么本来就得写字，框只让「确认」一眼可见。
+ * - **人工区只有三态与修改意见**：同意 / 需修改 / 暂缓，要改成什么写在修改意见里；
+ *   选方案议题的选项留在机器区，评审人选了别的做法也写在修改意见里。
  *
  * ## 两条不变的机制
  *
@@ -366,20 +379,11 @@ export function reviewFormProblems(reviewText, contract) {
  */
 
 /**
- * 议题要人做的事（登记表可选的 `review_mode`）→ 人工区首版的样子。
- *
- * 与 `status` 无关：status 说决定成立没有，review_mode 说人在这里是从方案里选，还是复核一个结论。
- * 两种填写位都留自由文字：勾框只是让「确认」一眼可见，不同意时要改成什么照样得写字。
- * 没写 review_mode 的条目仍是一行「审核结果：」，人写在后面。
- * 每种形态的第一行就是机器区与人工区的分界：它之前确定性重渲染，之后逐字节保留。
+ * 人工区首版：三态与修改意见，每条议题同一个样子。第一行是机器区与人工区的分界：
+ * 它之前确定性重渲染，之后逐字节保留。
  */
-const REVIEW_MODES = {
-  choice: ['方案选择：', '请填写上方选项编号；另有方案时写明具体结论与理由。'],
-  confirm: ['审核结果：', '- [ ] 确认', '- [ ] 不同意', '不同意原因：', '调整结论：'],
-};
-const PLAIN_ZONE = ['审核结果：'];
-const HUMAN_ZONE_MARKS = [...new Set(Object.values(REVIEW_MODES).map(z => z[0]))];
-const zoneOf = (dec) => REVIEW_MODES[dec?.review_mode] ?? PLAIN_ZONE;
+const HUMAN_ZONE = ['评审结论：', '- [ ] 同意', '- [ ] 需修改', '- [ ] 暂缓', '修改意见：'];
+const HUMAN_ZONE_MARKS = [HUMAN_ZONE[0]];
 
 //: 议题正文的所有者是脚本：整段由登记表决定，每次 build 重渲染。与 story 的附录
 //: 同一条纪律——重投前拿摘要与盘上的比，有人在这里写过字就停下问他，不静默盖掉。
@@ -402,25 +406,17 @@ const STATUS_CHAPTERS = [
 ];
 const FREEFORM_CHAPTER = '其他意见';
 
-/** 顶部提示：全篇怎么填只说这一次；这一份里有哪几种填写位，就说哪几种。 */
-const DOC_HINT = '> 怎么填：第一部分还没定，等你拍板；第二部分已经定了，过目复核即可。';
-const ZONE_HINTS = [
-  [REVIEW_MODES.choice, '选方案的议题填「方案选择：」——写上方选项的编号；都不合适就写明你的方案和理由。'],
-  [REVIEW_MODES.confirm, '复核结论的议题在「审核结果：」下勾「确认」或「不同意」，不同意时写原因与调整后的结论。'],
-  [PLAIN_ZONE, '，把你的意见写在它后面——同意就写「同意」；有不同意见，写清楚要改成什么；需要暂缓，写原因。'],
-];
+/** 顶部提示：全篇怎么填只说这一次。 */
+const DOC_HINT = '> 怎么填：第一部分还没定，等你评；第二部分已经定了，过目复核即可。'
+  + '每条末尾在「评审结论：」下勾同意、需修改或暂缓，要改成什么、选别的做法或暂缓的原因写在「修改意见：」后面。';
 
 /** 其他意见处的提示：它与顶部那条职责不同——那条说怎么表态，这条说怎么补充。 */
 const FREEFORM_HINT = '> 以上议题之外你认为该说的事写在这里——缺的分支、该复用的既有能力、'
   + '遗漏的埋点都算。按 1. 2. 3. 编号列举，每条写清是什么、影响哪里。';
 
 /** 归档件的头部：大标题 + 一条可见提示。 */
-function renderDocHeader(list) {
-  const zones = new Set(list.map(zoneOf));
-  if (!zones.size) zones.add(PLAIN_ZONE);
-  const lines = ZONE_HINTS.filter(([zone]) => zones.has(zone)).map(([zone, hint]) => (zone !== PLAIN_ZONE ? hint
-    : `${zones.size > 1 ? '只有一行「审核结果：」的议题' : '每条末尾有一行「审核结果：」'}${hint}`));
-  return `# 评审记录\n\n${DOC_HINT}${lines.join('')}\n`;
+function renderDocHeader() {
+  return `# 评审记录\n\n${DOC_HINT}\n`;
 }
 
 /**
@@ -442,27 +438,23 @@ function renderMachineZone(dec, number) {
     '',
     String(dec.clarification ?? '').trim(),
     '',
-    `请${String(dec.decider ?? '').trim()}确认。`,
+    `请${String(dec.decider ?? '').trim()}评审。`,
     '',
   ].join('\n');
 }
 
 /**
- * 议题块的**人工区**首版：按 `review_mode` 给填写位，此后 build 一个字节都不动它。
- *
- * 不设暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、确认依据这类字段。
- * 判据是「需要说明书就是设计错了」：那些格子评审人多半答不上来，只会被跳过或胡填。
- * 填写位不预选任何一项——推荐不是人的选择。
+ * 议题块的**人工区**首版，此后 build 一个字节都不动它。填写位不预选任何一项——推荐不是人的选择。
  */
 function renderHumanZone(dec) {
-  return [...zoneOf(dec), '', `<!-- decision: ${dec.id} -->`].join('\n');
+  return [...HUMAN_ZONE, '', `<!-- decision: ${dec.id} -->`].join('\n');
 }
 
 /**
  * 从既有 review 里切出某议题的**机器区**与**人工区**。
  *
  * 范围是这一条议题：上一个议题的结束标记之后，到本议题的 `<!-- decision: ID -->`。
- * 机器区从 `#### ` 那一行起；人工区从某一行行首的填写位标签（`方案选择：` / `审核结果：`）起。
+ * 机器区从 `#### ` 那一行起；人工区从某一行行首的填写位标签 `评审结论：` 起。
  * 人在意见里引用这两个标签是正常的，所以**不取最后一处**：从前往后找第一个让它之前的机器区
  * 与标记里记的摘要对得上的标签。一个都对不上说明机器区
  * 真被改过，这时取第一处，由调用方停下；`ambiguous` 标出范围里不止一处标签，报错时说明边界可能认不准。
@@ -514,9 +506,9 @@ function issueHandEdited(zone) {
  */
 function hasHumanWords(zone, id) {
   if (zone === null) return false;
+  // 换行归一再比：评审人的编辑器把文件存成 CRLF，不等于他写了字
   const anchor = `<!-- decision: ${id} -->`;
-  return ![...Object.values(REVIEW_MODES), PLAIN_ZONE]
-    .some(z => zone === [...z, '', anchor].join('\n'));
+  return zone.replace(/\r\n/g, '\n') !== [...HUMAN_ZONE, '', anchor].join('\n');
 }
 
 /**
@@ -564,7 +556,7 @@ function issueRewritten(zones, fresh) {
  * 这一轮里人明确说了「沿用上一版表态」的那几条议题 —— **解锁变义判据的唯一路径**。
  *
  * 变义时停手是对的，但停手必须有出路：模型判定「只是改了措辞」时，人用
- * `story_flow.py decide --update <议题 id> --basis <原话>` 记一笔，这里据它带回。
+ * `story_flow.py decide --update <议题 id> --reply <原话>` 记一笔，这里据它带回。
  * 没有这一段的话，报错让人去记一笔、记完重跑却还是同样的报错——那是个死胡同。
  *
  * **只认这条命令记下的原话**：`update-notes` 里写「已确认」不算，那是模型的转述。
@@ -595,22 +587,10 @@ function decisionPoint(text) {
   return projectionDigest(lines.slice(at, next < 0 ? lines.length : next).join(NL));
 }
 
-/**
- * 这条议题要保留的人工区（人工填写内容的唯一真源）；返回 null 表示按当前 `review_mode` 给首版。
- *
- * 与某种首版逐字节相同的人工区里没有人的字，跟着当前交互方式重生成不丢任何东西。
- * 人写过的一律原样保留——交互方式后来改了也不换形式，只在 `notes` 里说一声，由人决定怎么继续。
- */
-function keptHumanZone(zones, dec, notes) {
+/** 这条议题要保留的人工区；返回 null 表示没人写过，给首版。 */
+function keptHumanZone(zones, dec) {
   const zone = zones?.human ?? null;
-  if (!hasHumanWords(zone, dec.id)) return null;
-  const label = HUMAN_ZONE_MARKS.find(mark => zone.startsWith(mark));
-  const want = zoneOf(dec)[0];
-  if (label !== want) {
-    notes.push(`议题 ${dec.id} 的「${label}」里已经有人写过，这次没有换成「${want}」`
-      + '——人写的内容原样保留；要改成新的填写方式，先和评审人确认');
-  }
-  return zone;
+  return hasHumanWords(zone, dec.id) ? zone : null;
 }
 
 /**
@@ -698,7 +678,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
       + '是登记表漏了，就把它们补回 decisions.json。**不要直接重跑一遍指望它自己过去**——'
       + '过去了就等于把人的话删了。');
   }
-  const out = [renderDocHeader(decisions)];
+  const out = [renderDocHeader()];
 
   STATUS_CHAPTERS.forEach((chapter, ci) => {
     const no = ci + 1;
@@ -718,7 +698,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
             + '要改议题怎么说，改登记表之后重跑；'
             + '要撤销正文里的手改，只删「#### 标题」到「请…确认。」这一段（含它上面那行标记）再跑，会重新写出来；'
             + '填写位里人写的内容不要删'
-            + (zones.ambiguous ? '。这条议题里有不止一处行首「方案选择：」或「审核结果：」，'
+            + (zones.ambiguous ? '。这条议题里有不止一处行首「评审结论：」，'
               + '填写位从哪一行开始也可能认不准，先请人看一眼这一条' : ''));
         }
         const rewritten = hasHumanWords(zones?.human ?? null, dec.id)
@@ -740,10 +720,10 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
           throw new ProjectionConflict(
             `议题 ${dec.id} 的正文这次改了，而评审人已经在它下面写过意见——这次没有写盘，`
             + '盘上那一份还是人看过的那一版。'
-            + '意思没变（只是措辞）：`story_flow.py decide --update` 记一笔沿用谁在哪一版的表态，再重跑；'
+            + '意思没变（只是措辞）：请评审人确认沿用，`story_flow.py decide --update <议题 id> --reply <原话>` 记一笔，再重跑；'
             + '意思变了：这是一个新问题，先把旧的人工区内容移走或让评审人重新表态，再重跑。');
         }
-        const human = keptHumanZone(zones, dec, notes) ?? renderHumanZone(dec);
+        const human = keptHumanZone(zones, dec) ?? renderHumanZone(dec);
         parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);
       });
     });
