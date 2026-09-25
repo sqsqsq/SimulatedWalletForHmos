@@ -497,16 +497,19 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
                           "结构骨架", "使用约定", "设计之外的完成判断", "反模式"], fact["facets"])
 
     def test_the_halves_and_sections_are_written_like_the_patterns(self) -> None:
-        """同一语义一种写法：篇名带读者阶段，节名与序号跟设计模式一致。只核结构名，不核内容。"""
+        """同一语义一种写法：分篇的项目事实与设计模式篇名带读者阶段、节名与序号一致。只核结构名，不核内容。"""
         def outline(path: Path) -> tuple[list[str], list[str]]:
             text = path.read_text(encoding="utf-8")
             halves = re.findall(r"^# ([上下]篇) · .+（读者：[^）]+）$", text, flags=re.M)
             sections = re.findall(r"^## \d+\. ([^—\n]+?)(?:\s+—.*)?$", text, flags=re.M)
             return halves, sections
-        fact = outline(self.KNOWLEDGE / "facts" / "event-tracking.md")
-        for pattern in sorted((self.KNOWLEDGE / "design-patterns").glob("*.md")):
-            with self.subTest(pattern=pattern.name):
-                self.assertEqual(outline(pattern), fact)
+        split = [f for f in sorted((self.KNOWLEDGE / "facts").glob("*.md"))
+                 if re.search(r"^# 上篇 · ", f.read_text(encoding="utf-8"), flags=re.M)]
+        self.assertTrue(split, "没有分篇的项目事实，这条核不到东西")
+        for fact in split:
+            for pattern in sorted((self.KNOWLEDGE / "design-patterns").glob("*.md")):
+                with self.subTest(fact=fact.name, pattern=pattern.name):
+                    self.assertEqual(outline(pattern), outline(fact))
 
     def test_engineering_capabilities_do_not_repeat_reporting(self) -> None:
         text = (self.KNOWLEDGE / "facts" / "engineering-capabilities.md").read_text(encoding="utf-8")
