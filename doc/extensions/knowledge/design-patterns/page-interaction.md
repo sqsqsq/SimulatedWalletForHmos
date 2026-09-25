@@ -118,7 +118,7 @@ export class CheckoutPageInteraction {
 
 用户在面板里提交验证码后，由面板回调再次 `doOperator(CheckoutActions.SUBMIT)` 续跑。
 
-## 7. 使用约定（人为纪律，SDK 不强制——review 逐条核查）
+## 7. 使用约定 — 人为纪律，SDK 不强制，review 逐条核查
 
 1. **页面动作必经 `doOperator`**：页面组件不直接调业务方法串流程，只发起动作；
    否则动作表里读到的链路与实际执行的不一致。

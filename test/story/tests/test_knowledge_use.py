@@ -471,10 +471,11 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
 
     KNOWLEDGE = REPO_ROOT / "doc" / "extensions" / "knowledge"
 
-    def sections(self) -> dict[str, str]:
+    def halves(self) -> tuple[str, str]:
+        """按两个一级标题切成上篇、下篇。"""
         text = (self.KNOWLEDGE / "facts" / "event-tracking.md").read_text(encoding="utf-8")
-        parts = re.split(r"^## ", text, flags=re.M)
-        return {part.split("\n", 1)[0]: part for part in parts[1:]}
+        upper = text[text.index("\n# 上篇 · "):text.index("\n# 下篇 · ")]
+        return upper, text[text.index("\n# 下篇 · "):]
 
     def test_one_entry_in_the_activation_list(self) -> None:
         manifest = (REPO_ROOT / "doc" / "extensions" / "manifest.yaml").read_text(encoding="utf-8")
@@ -485,14 +486,27 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
                 self.assertFalse((self.KNOWLEDGE / "facts" / old).exists())
 
     def test_each_facet_keeps_its_own_heading(self) -> None:
-        """面按读者任务组织，每个事实面是独立 H2；知识只写确定的内容，没有未确认面。"""
+        """方法型事实照设计模式的篇与节写：每节是一面，节名与模式同名同序。"""
         proc = node("--input-type=module", "-e",
                     f"const k = (await import({as_url(EXT / 'hooks/shared/knowledge.mjs')}))"
                     f".activeKnowledge({json.dumps(REPO_ROOT.as_posix())});"
                     "process.stdout.write(JSON.stringify(k.facts.find(f => f.name === 'event-tracking')));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         fact = json.loads(proc.stdout)
-        self.assertEqual(["统计设计", "上报实现", "编号分配与复用", "业务扩展字段"], fact["facets"])
+        self.assertEqual(["解决什么问题", "什么时候不该用", "应用步骤", "SDK 行为事实", "角色与文件落点",
+                          "结构骨架", "使用约定", "设计之外的完成判断", "反模式"], fact["facets"])
+
+    def test_the_halves_and_sections_are_written_like_the_patterns(self) -> None:
+        """同一语义一种写法：篇名带读者阶段，节名与序号跟设计模式一致。只核结构名，不核内容。"""
+        def outline(path: Path) -> tuple[list[str], list[str]]:
+            text = path.read_text(encoding="utf-8")
+            halves = re.findall(r"^# ([上下]篇) · .+（读者：[^）]+）$", text, flags=re.M)
+            sections = re.findall(r"^## \d+\. ([^—\n]+?)(?:\s+—.*)?$", text, flags=re.M)
+            return halves, sections
+        fact = outline(self.KNOWLEDGE / "facts" / "event-tracking.md")
+        for pattern in sorted((self.KNOWLEDGE / "design-patterns").glob("*.md")):
+            with self.subTest(pattern=pattern.name):
+                self.assertEqual(outline(pattern), fact)
 
     def test_engineering_capabilities_do_not_repeat_reporting(self) -> None:
         text = (self.KNOWLEDGE / "facts" / "engineering-capabilities.md").read_text(encoding="utf-8")
@@ -502,16 +516,15 @@ class TheReportingFactsStayInTheirLane(unittest.TestCase):
 
     def test_every_channel_is_named_with_its_status(self) -> None:
         """项目的四种上报来源都在统计设计里点名，当前实现与已定规范分开：只做 VOC、只做 BI 或只涉及页面交互的需求都读得到自己那一种。"""
-        overview = next(v for k, v in self.sections().items() if "统计设计" in k)
+        overview = self.halves()[0]
         for channel in ("VOC", "Chart", "BI", "交互自动记录", "当前实现", "已定规范"):
             with self.subTest(channel=channel):
                 self.assertIn(channel, overview)
 
     def test_chart_only_semantics_stay_under_chart(self) -> None:
-        sections = self.sections()
-        body = "".join(sections.values())
-        voc = body[body.index("VOC 另用标识"):].split("。", 1)[0]
-        shared = "".join(v for k, v in sections.items() if "统计设计" in k) + voc
+        upper, lower = self.halves()
+        voc = lower[lower.index("VOC 另用标识"):].split("。", 1)[0]
+        shared = upper + voc
         # “终态”可用于解释渠道分工；这里只排除具体运维编码/枚举协议。
         for token in ("WalletFuncResult", "十位", "FuncID_SubFuncID", "STEP_"):
             with self.subTest(token=token):

@@ -132,7 +132,7 @@ const tree = new DecisionTreeBuilderV2<OrderTasks, OrderContext>()
 await tree.start(ctx);
 ```
 
-## 7. 使用约定（人为纪律，SDK 不强制——review 逐条核查）
+## 7. 使用约定 — 人为纪律，SDK 不强制，review 逐条核查
 
 1. **决策逻辑只在节点表内**：分支判断写在节点函数里，不在调用方再包一层 if/else 决定调哪个树。
 2. **`nextNodes` 与实际返回一致**：节点实际可能返回的后继，都要列进它的 `nextNodes`；

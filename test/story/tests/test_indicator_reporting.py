@@ -118,7 +118,7 @@ JUDGEMENT = ("  - id: NEU-01\n    applicable: true\n    requirement: 提交预�
 
 #: 统计点齐了才出现的逐行自查句：作者包与审查各一句。
 PLAN_SELF_CHECK = "项目规则算不出值的行才进「缺依据」"
-REVIEW_SELF_CHECK = "并列的每一行按项目知识写的完成判断核"
+REVIEW_SELF_CHECK = "并列的每一行按项目知识下篇的使用约定与完成判断核"
 
 def js(module, expr: str) -> str:
     proc = nk.node("--input-type=module", "-e",
@@ -334,7 +334,7 @@ class TheSpecAuthorIsToldWhatTheStatisticDesignOwes(ReportingCase):
         self.mark_story()
         section = self.spec_package()
         for line in ("这次要交：§9.4 先一段总述", "doc/extensions/skills/story/templates/spec-sections.md",
-                     "动笔前：在第 2 节的知识清单里找用途写到统计设计的那份", "写完后：按那份知识写的完成判断逐条走一遍"):
+                     "动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它读者含 spec 的上篇", "写完后：按那一篇的应用步骤逐条回查"):
             with self.subTest(line=line):
                 self.assertIn(line, section)
         self.assertIn("- 预约成功率（预约流程） —— 定义段：有；统计点：2 个", section)
@@ -384,10 +384,10 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
     def test_the_author_and_reviewer_are_pointed_at_the_completion_checks(self) -> None:
         """统计点齐了才有逐行自查：作者包末尾给动笔前读什么、每行怎么自查，审查按同一份完成判断核。"""
         package = self.task_package()
-        self.assertIn("动笔前：重读第 1 节知识清单里用途写到上报实现的那份", package)
+        self.assertIn("动笔前：重读第 1 节知识清单里用途写到统计设计与上报的那份，读者含 plan 的下篇", package)
         self.assertIn(PLAN_SELF_CHECK, package)
         self.assertIn(REVIEW_SELF_CHECK, self.review_task())
-        self.assertIn("按项目知识写的完成判断逐条核", self.spec_review_task())
+        self.assertIn("按项目知识上篇的应用步骤逐条回查", self.spec_review_task())
 
     def test_the_reviewer_sees_both_sides_of_every_point(self) -> None:
         self.write_plan("\n".join(l for l in ROWS.split("\n") if "到场核销" not in l))

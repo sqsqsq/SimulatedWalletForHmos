@@ -383,8 +383,8 @@ function statDesignSection(projectRoot, feature) {
   if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.4 的统计设计：按本阶段原有要求写。'];
   rows.push('这次要交：§9.4 先一段总述，然后每个指标一个 H4，标题写「指标名（流程名）」；H4 下先一段写它衡量什么率或分布、'
     + `要算它需要哪几类结果，再放带「统计点」列的表，表后写边界。形状见 \`${TEMPLATE}\` 的 9.4。`,
-  '动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它写给统计设计作者的部分；不凭阶段开头的记忆写。',
-  '写完后：按那份知识写的完成判断逐条走一遍，走不通的直接改设计，不另写推演。',
+  '动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它读者含 spec 的上篇；不凭阶段开头的记忆写。',
+  '写完后：按那一篇的应用步骤逐条回查，走不通的直接改设计，不另写推演。',
   '§9.4 写业务结果；上报用的字段、取值与登记留给 plan。');
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
