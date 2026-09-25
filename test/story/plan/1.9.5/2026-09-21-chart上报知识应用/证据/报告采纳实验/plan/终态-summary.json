@@ -1,0 +1,268 @@
+{
+  "schema_version": "1.3",
+  "phase": "plan",
+  "feature": "ISSUE-206",
+  "verdict": "PASS",
+  "report_validity": "PASS",
+  "quality_axes": {
+    "functional": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "acceptance_device_focus_present",
+        "acceptance_ut_layer_complete",
+        "acceptance_yaml_present",
+        "architecture_diagram",
+        "architecture_impact_declared",
+        "capability_plan_context",
+        "component_tree_per_page",
+        "context_exploration_facts_phase_delta_present",
+        "contract_file_reference_closure",
+        "data_model_typed",
+        "file_structure_per_module",
+        "integration_scope_consistency",
+        "interface_signatures_complete",
+        "legacy_device_testing_todo_deprecated",
+        "mapping_to_file",
+        "module_change_table",
+        "node_options_injection",
+        "plan_to_architecture",
+        "route_design_table",
+        "scope_consistency_with_spec",
+        "scope_declaration",
+        "spec_constraint_traceability",
+        "spec_mapping_table",
+        "spec_p0_coverage",
+        "spec_p1_coverage",
+        "state_management_table"
+      ],
+      "resolution": null
+    },
+    "visual": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "capability_plan_visual_context",
+        "visual_parity_coverage"
+      ],
+      "resolution": null
+    },
+    "asset": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    },
+    "evidence": {
+      "applicable": false,
+      "required_for_release": false,
+      "verdict": "NOT_APPLICABLE",
+      "blocking_class": null,
+      "source_checks": [],
+      "resolution": null
+    }
+  },
+  "release_readiness": "READY",
+  "completion_status": "COMPLETE",
+  "blocker_count": 0,
+  "fail_count": 0,
+  "warn_count": 0,
+  "gate_fingerprint": "3.0.0:8c7de1410a77",
+  "asset_debt_revision": "no-debt",
+  "script_report": "doc/features/ISSUE-206/plan/reports/script-report.json",
+  "merged_report": "doc/features/ISSUE-206/plan/reports/merged-report.md",
+  "ai_prompt": "doc/features/ISSUE-206/plan/reports/ai-prompt.md",
+  "summary_json": "doc/features/ISSUE-206/plan/reports/summary.json",
+  "run_statuses": [],
+  "readiness_signals": [],
+  "blocking_warnings": [],
+  "blocking_skips": [],
+  "blockers": [],
+  "next_action": "fix_verifier_findings_then_rerun_harness",
+  "closure_status": "open",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_plan_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "spec",
+          "state": "resolved",
+          "selected_source": "spec@1",
+          "selected_source_fingerprint": "700cc7cc93a2a8f169da2e0ababdbd3865dbacfdabd00dd8ffcfe86245464cd6",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "spec@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\PRD.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\prd\\PRD.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\prd\\spec.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec.md",
+                  "exists": false,
+                  "sha256": null,
+                  "role": "artifact"
+                },
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec\\spec.md",
+                  "exists": true,
+                  "sha256": "25d78de61189671f54588a93926d0cf4b7a0b85b4992422f7f2540f80d344385",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec\\spec.md"
+            }
+          ]
+        },
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "bdd6f1e30036daaeba89218ccb65c0e6e069a0ee86d4f922612e296f03971c1e",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "9a7ad981e374c36c6213f916d23205a9cb6eaf267d0881ba45e29b69818039ab",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\acceptance.yaml"
+            }
+          ]
+        },
+        {
+          "id": "codebase",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "a9abaf5226e0f5c5836287cacf6eb4e40edc6fdd7c9ce31dd87427693d3214a3",
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "derive"
+                }
+              ],
+              "detail": "project_root"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_plan_visual_context",
+      "axis": "visual",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.ui",
+      "applicability_dependencies": [
+        {
+          "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\PRD.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\prd\\PRD.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\prd\\spec.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec.md",
+          "exists": false,
+          "sha256": null,
+          "role": "applicability"
+        },
+        {
+          "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec\\spec.md",
+          "exists": true,
+          "sha256": "25d78de61189671f54588a93926d0cf4b7a0b85b4992422f7f2540f80d344385",
+          "role": "applicability"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "ui_spec",
+          "state": "resolved",
+          "selected_source": "ui-spec@1",
+          "selected_source_fingerprint": "e75eae85ce50dd24649a934d3bff9475381cfcdf8633d970803e688ec709f0dc",
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "ui-spec@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec\\ui-spec.yaml",
+                  "exists": true,
+                  "sha256": "f2f57586ba2d1992dec4c835663f43ff06f05a943831e031027c8242ac24cfd8",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "C:\\Users\\kangz\\AppData\\Local\\Temp\\c5plan\\doc\\features\\ISSUE-206\\spec\\ui-spec.yaml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "7b0e16d4fe46cb5d4d8d7c0f61b58e6ab54842400343a19ecc9e9dc2c85dcf11",
+  "generated_at": "2026-09-21T10:51:25.523Z",
+  "source_commit_sha": "4a6b8488def0addac5c459ae1d342b8b82258098",
+  "worktree_digest": "30cc8b7992bcd4c7",
+  "verifier_subject_id": "208a977e110f80d2be405b8298bf9f07c46b36b4acb98d7d13cbee3870b32d36",
+  "verifier_request": "doc/features/ISSUE-206/plan/reports/verifier.request.208a977e110f80d2be405b8298bf9f07c46b36b4acb98d7d13cbee3870b32d36.json",
+  "verifier_report": "doc/features/ISSUE-206/plan/reports/verifier.report.208a977e110f80d2be405b8298bf9f07c46b36b4acb98d7d13cbee3870b32d36.md",
+  "receipt_status": "failed"
+}

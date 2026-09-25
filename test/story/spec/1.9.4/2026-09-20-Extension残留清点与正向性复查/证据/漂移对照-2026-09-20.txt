@@ -1,0 +1,110 @@
+基线表条目 77，当前文件 105；未变 9，变化 61，已删除 7，新增 35
+
+## 已删除（基线在册，当前不存在）
+- hooks/shared/yaml-lite.mjs（基线 215 行）
+- skills/story/scripts/core/flow-check.mjs（基线 395 行）
+- skills/story/scripts/core/headings.mjs（基线 140 行）
+- skills/story/scripts/core/lint-rules.mjs（基线 553 行）
+- skills/story/scripts/core/materials.py（基线 337 行）
+- skills/story/scripts/core/review-render.mjs（基线 303 行）
+- skills/story/scripts/core/story-sources.mjs（基线 761 行）
+
+## 新增（当前存在，基线不在册）
+- hooks/shared/knowledge-use/document.mjs（当前 181 行）
+- hooks/shared/knowledge-use/projection.mjs（当前 215 行）
+- hooks/shared/knowledge-use/validation.mjs（当前 270 行）
+- hooks/shared/yaml.mjs（当前 61 行）
+- skills/story/contracts/README.md（当前 86 行）
+- skills/story/phases/meeting-read.md（当前 125 行）
+- skills/story/scripts/core/flow/__init__.py（当前 1 行）
+- skills/story/scripts/core/flow/check.mjs（当前 338 行）
+- skills/story/scripts/core/flow/client.mjs（当前 90 行）
+- skills/story/scripts/core/flow/decisions.py（当前 155 行）
+- skills/story/scripts/core/flow/inputs.py（当前 454 行）
+- skills/story/scripts/core/flow/lifecycle.py（当前 200 行）
+- skills/story/scripts/core/flow/meetings.py（当前 222 行）
+- skills/story/scripts/core/flow/rounds.py（当前 144 行）
+- skills/story/scripts/core/flow/routing.py（当前 461 行）
+- skills/story/scripts/core/flow/state.py（当前 155 行）
+- skills/story/scripts/core/flow/submission.py（当前 252 行）
+- skills/story/scripts/core/materials/__init__.py（当前 1 行）
+- skills/story/scripts/core/materials/importer.py（当前 711 行）
+- skills/story/scripts/core/materials/meeting.py（当前 359 行）
+- skills/story/scripts/core/materials/registry.py（当前 357 行）
+- skills/story/scripts/core/story/appendix.mjs（当前 672 行）
+- skills/story/scripts/core/story/chapter-contract.mjs（当前 303 行）
+- skills/story/scripts/core/story/chapter.mjs（当前 368 行）
+- skills/story/scripts/core/story/check.mjs（当前 324 行）
+- skills/story/scripts/core/story/context.mjs（当前 272 行）
+- skills/story/scripts/core/story/delivery.mjs（当前 118 行）
+- skills/story/scripts/core/story/document.mjs（当前 672 行）
+- skills/story/scripts/core/story/drafts.mjs（当前 164 行）
+- skills/story/scripts/core/story/images.mjs（当前 242 行）
+- skills/story/scripts/core/story/language.mjs（当前 338 行）
+- skills/story/scripts/core/story/recheck.mjs（当前 70 行）
+- skills/story/scripts/core/story/review.mjs（当前 637 行）
+- skills/story/scripts/core/story/sources.mjs（当前 375 行）
+- skills/story/scripts/core/story/writing-plan.mjs（当前 287 行）
+
+## 内容变化（SHA 不同；格式：路径 | 基线行->当前行）
+- hooks/coding/author.md | 49 -> 48
+- hooks/coding/post_check.mjs | 157 -> 174
+- hooks/plan/author.md | 47 -> 59
+- hooks/plan/post_check.mjs | 327 -> 388
+- hooks/review/author.md | 45 -> 45
+- hooks/review/post_check.mjs | 124 -> 127
+- hooks/shared/contracts.mjs | 186 -> 274
+- hooks/shared/gate.mjs | 108 -> 123
+- hooks/shared/knowledge-use.mjs | 664 -> 104
+- hooks/shared/knowledge.mjs | 427 -> 535
+- hooks/shared/obligations.mjs | 117 -> 150
+- hooks/shared/paths.mjs | 64 -> 70
+- hooks/shared/pre_verifier.mjs | 128 -> 205
+- hooks/shared/probes.mjs | 198 -> 199
+- hooks/shared/reader-review-task.mjs | 236 -> 277
+- hooks/shared/verifier-report.mjs | 242 -> 236
+- hooks/spec/author.md | 60 -> 60
+- hooks/spec/author.mjs | 350 -> 396
+- hooks/spec/post_check.mjs | 519 -> 520
+- hooks/testing/author.md | 43 -> 42
+- hooks/testing/post_check.mjs | 107 -> 112
+- hooks/ut/author.md | 43 -> 42
+- hooks/ut/post_check.mjs | 104 -> 109
+- knowledge/constraints/README.md | 37 -> 32
+- knowledge/constraints/compatibility-checklist.md | 24 -> 23
+- knowledge/constraints/deliverables.md | 27 -> 27
+- knowledge/constraints/dfx-baseline.md | 33 -> 33
+- knowledge/constraints/observability.md | 24 -> 24
+- knowledge/constraints/resource-usage.md | 25 -> 25
+- knowledge/constraints/ux-consistency.md | 26 -> 26
+- knowledge/design-patterns/README.md | 65 -> 66
+- knowledge/design-patterns/decision-tree.md | 178 -> 176
+- knowledge/design-patterns/page-interaction.md | 160 -> 159
+- knowledge/facts/README.md | 20 -> 21
+- knowledge/facts/component-profile.md | 35 -> 35
+- manifest.yaml | 101 -> 101
+- rules/coding-rules.overlay.yaml | 38 -> 38
+- rules/plan-rules.overlay.yaml | 65 -> 79
+- rules/review-rules.overlay.yaml | 33 -> 35
+- rules/spec-rules.overlay.yaml | 162 -> 217
+- rules/testing-rules.overlay.yaml | 22 -> 23
+- rules/ut-rules.overlay.yaml | 34 -> 35
+- skills/story-adaptation/scripts/adapt-scan.mjs | 676 -> 690
+- skills/story/SKILL.md | 285 -> 184
+- skills/story/contracts/story-chapters.json | 416 -> 339
+- skills/story/phases/spec.md | 142 -> 118
+- skills/story/phases/story-write.md | 475 -> 304
+- skills/story/reference/evidence-rules.md | 106 -> 108
+- skills/story/rules/ar_design_init.md | 143 -> 154
+- skills/story/rules/inbox_import.md | 95 -> 104
+- skills/story/rules/init_analysis.md | 234 -> 256
+- skills/story/rules/review_reflow.md | 99 -> 113
+- skills/story/rules/scope_gate.md | 196 -> 187
+- skills/story/scripts/README.md | 29 -> 36
+- skills/story/scripts/adapters/story.js | 359 -> 359
+- skills/story/scripts/core/import_sources.py | 682 -> 133
+- skills/story/scripts/core/story-build.mjs | 3745 -> 247
+- skills/story/scripts/core/story_flow.py | 1679 -> 141
+- skills/story/templates/inbox-readme.md | 28 -> 27
+- skills/story/templates/plan-sections.md | 136 -> 91
+- skills/story/templates/spec-sections.md | 178 -> 78

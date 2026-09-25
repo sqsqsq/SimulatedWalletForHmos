@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BASELINE = REPO_ROOT / "test" / "story" / "fixtures" / "content-baseline"
 
 #: 冻结时点 2026-08-29。sha256 前 16 位。
-#: 2026-09-25 三份 spec 的扩展章挂到宿主扩展锚点下（design/1.9.6/2026-09-25-宿主扩展归位与埋点分工/01），章内正文未动。
+#: 2026-09-25 三份 spec 的扩展章挂到宿主扩展锚点下（plan/1.9.6/2026-09-25-宿主扩展归位与埋点分工/01），章内正文未动。
 FINGERPRINTS = {
     "AR90004/AR/design.md": "dafdaf1a370a771e",
     "AR90004/AR/story.md": "6234f3221b52984b",

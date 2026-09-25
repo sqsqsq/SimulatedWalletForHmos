@@ -1,0 +1,517 @@
+[
+  {
+    "id": "M01",
+    "features": [
+      "F1.1",
+      "F6.3"
+    ],
+    "name": "系统与本地起手",
+    "implementations": "adapters/story.cmdInit、token、story_flow.cmd_init、scripts/README",
+    "comparison": "适配器取外部材料，flow建本地骨架；旧story-build init既不取材也不建工作区，不属于此功能",
+    "decision": "保留两种职责，旧成文init不受保护",
+    "target": "适配器按协议取材，flow一次建缺件；真实仓对接与demo替身分开",
+    "loss": "删适配器会失去远程取材；删flow骨架会失去本地起手，二者不能互代",
+    "verification": "本地不远程；已有原件不覆盖；缺凭据错误明确"
+  },
+  {
+    "id": "M02",
+    "features": [
+      "F1.2"
+    ],
+    "name": "原件转换与导入验真",
+    "implementations": "import_sources.docx_to_markdown/convert_sources、materials.collect_sources",
+    "comparison": "前者转换并写入，后者调用同一转换比现状以判未并入；不是两套转换算法",
+    "decision": "保留共享转换，调用成本列运行观察",
+    "target": "导入算法一份；轮次核验复用；不新增“导入成功”自证状态",
+    "loss": "只保留导入日志无法发现原件同名换内容；只比文件名会误判已导入",
+    "verification": "DOCX表图、改原件、只补图、不支持格式"
+  },
+  {
+    "id": "M03",
+    "features": [
+      "F1.3"
+    ],
+    "name": "图片身份与引用呈现",
+    "implementations": "materials SHA/paths/unused、author.imageSection、check④、contract.story_image_dir",
+    "comparison": "身份一张对应多路径；任务包却每条路径重复命令；check另允许未登记AR/assets副本，与当前不复制路径冲突",
+    "decision": "合并输入并退出未登记副本旁路（R11/R12）",
+    "target": "一个身份一项输入，保留路径别名；引用必须登记；现有已登记assets合法",
+    "loss": "不能删除图片采用/排除判断或内容身份，不能把登记路径数当图片数",
+    "verification": "同图双路径只一项任务；注册图仍可引用；未登记副本拒绝"
+  },
+  {
+    "id": "M04",
+    "features": [
+      "F1.4"
+    ],
+    "name": "材料变化与确认轮次",
+    "implementations": "materials.build/refresh、flow.cmd_round/material_state、sources.basis",
+    "comparison": "材料摘要绑定人决定；basis绑定段坐标；冻结摘要绑定成文依据，对象不同，不能因都有hash一刀合并",
+    "decision": "保留三种对象；不扩通用版本系统",
+    "target": "同一材料计算复用；只记录会影响确认或引用的时点",
+    "loss": "删轮次关联会使旧决定套新料；删basis会让SE#编号错绑",
+    "verification": "原件变更、派生写入不误重开、旧引用不能静默放行"
+  },
+  {
+    "id": "M05",
+    "features": [
+      "F1.5",
+      "F1.6"
+    ],
+    "name": "范围分析与侧车确认",
+    "implementations": "init_analysis/scope_gate、flow.read_positioning/read_scope_options/read_gate_options/read_split_parts/cmd_decide、flow-check.currentScope",
+    "comparison": "定位、可选切法、人选择、最终份表不是同一事实；同一侧车的校验服务展示前与提交点是合理复用",
+    "decision": "保留，压缩重复说明而非删确认链",
+    "target": "一个人决定只落一次，原选择集可追溯；字段约束共用",
+    "loss": "删选项集会失去可推翻的范围依据，删份表无法解释兄弟边界",
+    "verification": "整体/拆分/承载、缺侧车先报错、已签不重复问"
+  },
+  {
+    "id": "M06",
+    "features": [
+      "F1.7"
+    ],
+    "name": "S4候选提交",
+    "implementations": "design-draft、cmd_complete/prior_ar/digest_with、来源留存",
+    "comparison": "源AR会被提取稿替换，留存用于来源身份；不是旧版本兼容层",
+    "decision": "保留完整职责",
+    "target": "预检→留原输入→候选覆盖→同轮基准→complete，部分失败可重试",
+    "loss": "删留存会让派生稿冒充原始证据；不允许任意现状重新签基准",
+    "verification": "候选修改、外部同时变更、中途失败及幂等完成"
+  },
+  {
+    "id": "M07",
+    "features": [
+      "F2.1"
+    ],
+    "name": "原材料枚举与初筛入口",
+    "implementations": "scanSources/cmdInit、indexSources/missingRequired/cmdSources/ensureDecisions",
+    "comparison": "旧init只报来源与建决策骨架，新sources已接替；scanSources的“required仅调措辞因为夹具”又与新必需源校验两套语义",
+    "decision": "删除旧入口并统一来源存在性职责（R01/R13）",
+    "target": "indexSources及同一必需来源判据供sources/assembly/check，optional只提示；offline显式结构模式保留",
+    "loss": "不删除ensureDecisions，也不因最小夹具改变正常运行的必需来源语义",
+    "verification": "缺required/optional、骨架不覆盖、offline不依赖仓、旧init调用退出"
+  },
+  {
+    "id": "M08",
+    "features": [
+      "F2.1",
+      "F2.2"
+    ],
+    "name": "索引切分与短引用",
+    "implementations": "splitUnits/ancestors/contextRefs、buildIndex/indexImages、relocate、source-selection",
+    "comparison": "单元坐标是确定性劳动；默认keep和模型显式取舍不同；语义尚未判断不能由脚本填默认已用",
+    "decision": "保留当前职责",
+    "target": "ATX/父前导与原文位置，文件级basis，变化给候选不自动重绑",
+    "loss": "删context会丢上级前提；逐单元强填会恢复已退台账",
+    "verification": "父子/同名/无标题/围栏/变化重定位、未分配仍可访问"
+  },
+  {
+    "id": "M09",
+    "features": [
+      "F2.2"
+    ],
+    "name": "编排读取与有效取舍",
+    "implementations": "story-build.readTemplate、reader-review-task.planJson/sourceCatalogue、story-sources.flatSections/effectiveDispositions",
+    "comparison": "审查侧重新写JSON围栏解析、覆盖优先级和章节遍历；结果目的不同但解析和取舍语义相同",
+    "decision": "合并为已有纯模块的同一读取/解析职责（R09）",
+    "target": "story-sources提供文本解析与有效取舍；作者/审查各自渲染，不跨进程、不复制政策",
+    "loss": "不能删除审查者对omit/defer/未分配的访问，不能以作者布局裁定真实覆盖",
+    "verification": "同一输入两侧相同取舍；坏JSON都报；children/同单元多位置"
+  },
+  {
+    "id": "M10",
+    "features": [
+      "F2.2"
+    ],
+    "name": "运行时阅读设计",
+    "implementations": "templateSkeleton/afterSpec、content/form/related/structures、作者第二步",
+    "comparison": "通用读者方法指导判断，content是当前决定，sources是定位，不是三份同义需求",
+    "decision": "保留，元数据由脚本提供；R09先补renderTemplate四可选字段写入说明，不能只让消费者知道协议",
+    "target": "按需求编排一次，新增认识允许深化，业务变化回真源",
+    "loss": "删template会回到每章重新规划；把它当答案又会限制正文",
+    "verification": "能生成两种合法组织，未列内容可补，已选结构与关系可改"
+  },
+  {
+    "id": "M11",
+    "features": [
+      "F2.3"
+    ],
+    "name": "按需材料视图",
+    "implementations": "assignUnits/chapterView/sharedView/writeViews/chapterLead/contextRefs",
+    "comparison": "chapterLead是按章投影，template是全篇关系；shared显式多处引用只一份，未分配索引，职责明确",
+    "decision": "保留，不判为旧双源",
+    "target": "一个视图写入口，原件不改；只在本章需要时读共享正文",
+    "loss": "删视图会把定位和上下文搬运还给模型；盲减输入会损失前提",
+    "verification": "单章/共享/未分配/父前提/related缺稿，重建不改作者正文"
+  },
+  {
+    "id": "M12",
+    "features": [
+      "F2.3",
+      "F5.4"
+    ],
+    "name": "编排变化提示",
+    "implementations": "readViews/viewDrift/same，与当前assign/template",
+    "comparison": "没有旧结构化快照，盘上旧视图是唯一先前证据；两条标记解析只供提示，不是提交判据",
+    "decision": "保留有界提示；撤回原Q03强改要求",
+    "target": "可比旧/新标记和文字变动；不增持久化快照；不当完整影响分析",
+    "loss": "直接删去会失去现有改动提示；换结构化却不保存旧输入逻辑不成立",
+    "verification": "提示不覆盖稿、不阻断；误报漏报不得代替模型影响判断"
+  },
+  {
+    "id": "M13",
+    "features": [
+      "F2.4"
+    ],
+    "name": "章稿与精确提交",
+    "implementations": "draftBody/chapterSeed/renderSlot/cmdChapter/stripOwnHeading、chapterProblems",
+    "comparison": "种子归脚本一次生成；正文归模型；两份文件分别是输入与输出而非两份作者真源",
+    "decision": "保留可靠落盘",
+    "target": "只替目标章；已有稿不重播；必要种子说明剥离，机器区标记保留",
+    "loss": "删章提交会恢复整篇重写和中断丢稿风险",
+    "verification": "提交失败旧Story不变；其它章逐字节保留；缺稿按现稿补回"
+  },
+  {
+    "id": "M14",
+    "features": [
+      "F2.4.1",
+      "F2.4.2"
+    ],
+    "name": "必要结构与动态选择",
+    "implementations": "story-chapters.subsections/form.slots、template.structures、requiredShapes/chapterProblems/structureProblems",
+    "comparison": "固定凭据结构与本次选定形式有不同权威；不是所有旧slots都该被动态模板取代",
+    "decision": "保留两类要求，合并重叠执行结果",
+    "target": "稳定凭据不可由作者取消；动态结构可随编排改；同项重叠不重复播种",
+    "loss": "删稳定要求会丢验收/附录凭据；只保留稳定要求又不能落实本次选择",
+    "verification": "缺列/错位置/同名目标被拦，未声明建议标题不拦"
+  },
+  {
+    "id": "M15",
+    "features": [
+      "F2.4.2",
+      "F2.4.3"
+    ],
+    "name": "自适应表达",
+    "implementations": "story-write读者方法、图类型阈值、段长/单元格项数、overlay",
+    "comparison": "关系方法符合目标；人数/字数/项数是旧经验代理；两者不能作为同一包保留",
+    "decision": "R02/R14退出阈值与重复禁令，保留方法",
+    "target": "按读者问题、关系与复杂度选形式；独有信息优先",
+    "loss": "不能全删通用指导让模型自觉，也不能以表格配额证明可读",
+    "verification": "两方时序、多方流程、必要长段与短段都按效果评价"
+  },
+  {
+    "id": "M16",
+    "features": [
+      "F2.4.2",
+      "F1.3"
+    ],
+    "name": "来源图承接与任务装配",
+    "implementations": "diagramsOf/diagramsNotCarried/carryableBlock、author.diagramSection、chapters原文",
+    "comparison": "来源对应仍是已确认保护；但原文已能按章送达，author再内联全部Mermaid是旧“一次给全”送达面",
+    "decision": "R10退全量围栏复制，保留图源检测",
+    "target": "作者包给来源图目录/精确位置；初筛和编排读原文；最终核对应",
+    "loss": "不能借减输入删除图源对应或把图压成箭头散文",
+    "verification": "SR+Spec图都能定位，合图/改画仍有标记；作者包不再次展开全图"
+  },
+  {
+    "id": "M17",
+    "features": [
+      "F2.5"
+    ],
+    "name": "附录机器投影及校验",
+    "implementations": "appendixProjection/projectAppendix/verdictSkeleton、check⑦与⑫b",
+    "comparison": "新投影已由真源决定行；旧check另从文档抽规约/第一列集合，保留了手写时代的第二套一致性算法，且只核部分列",
+    "decision": "R07替换两套旧行核对为同源只读投影比对",
+    "target": "复用现行投影计算，比较机器区与当前预期；作者解释区不参与机器区比较；手改保护保留",
+    "loss": "不能直接删⑦/⑫b造成单独check失去校验；替代必须能发现丢行与改值",
+    "verification": "删行、改非首列、增错行、真源更新、手改区均发现；语义仍由模型；在不先project的单独check/--deliver下核新比对结果，生成器用独立期望测试"
+  },
+  {
+    "id": "M18",
+    "features": [
+      "F2.5",
+      "F2.6"
+    ],
+    "name": "材料清单与附录形态",
+    "implementations": "materialListTargets/Skeleton/scanMaterialList、check⑫及⑫c",
+    "comparison": "清单必须定位原件；“目的句之外第二段必错”是段数代理，不证明是否倾倒；固定五节与投影是独立保护",
+    "decision": "R15退出散文块数量规则，保留目录与引用核验",
+    "target": "材料一项能追溯贡献及来源，额外说明按语义检查；保留五节与机器区",
+    "loss": "不删来源完整、非来源混入、坏链接检查，不开放任意影子契约表",
+    "verification": "两段必要来源说明不因段数失败；漏来源/错链仍失败"
+  },
+  {
+    "id": "M19",
+    "features": [
+      "F2.6"
+    ],
+    "name": "编号、语言与图片可读性",
+    "implementations": "headings/number、lint-rules、check①/①b/③/⑨/⑩/⑪/⑫a",
+    "comparison": "编号生成与正文检查、源图身份与路径存在检查不同；这些不因同在check就视为重复",
+    "decision": "保留明确机械规则；整理旧解释按R18",
+    "target": "规范化只处理编号/标识/路径；语义风格不凭关键词外推",
+    "loss": "删路径检查可能产出打不开的归档件；单有number不能保证输入身份",
+    "verification": "原编号、坏图/路径、已声明必要结构与人工区域边界"
+  },
+  {
+    "id": "M20",
+    "features": [
+      "F3.1",
+      "F3.2"
+    ],
+    "name": "判断登记与人读评审",
+    "implementations": "decisions/decisionList/check⑤、review-render及check⑬",
+    "comparison": "发现由模型，分类是组织，渲染是确定性；人工表态必须与机器区不同",
+    "decision": "保留功能；将重复方法归规则源",
+    "target": "Review文档由一份decisions渲染，人工区域原样保留",
+    "loss": "删除机器区保护会覆盖人意见；删除类别词表会改变当前组织协议",
+    "verification": "已有表态/自由反馈不丢，未知不写已定；不按议题数量凑数"
+  },
+  {
+    "id": "M21",
+    "features": [
+      "F3.3",
+      "F3.4"
+    ],
+    "name": "归档恢复与评审回流",
+    "implementations": "adapters.cmdArchive/cmdRestore/review、review_reflow、flow.cmd_archived",
+    "comparison": "远程覆盖恢复与需求返修reopen对象不同；评审时点稿和修订Spec也非双份真源",
+    "decision": "保留，R04清授权冲突",
+    "target": "用户选择后上传；反馈原样回流并修责任产物；本地单无远程动作",
+    "loss": "不能因restore与reopen名称像就删一个",
+    "verification": "远程备份/恢复、人工反馈保留、本地出口与反馈改变责任源"
+  },
+  {
+    "id": "M22",
+    "features": [
+      "F4.1",
+      "F7.1"
+    ],
+    "name": "知识清单与内容解析",
+    "implementations": "knowledgeFiles/activeKnowledge/parseFact/Constraint/Pattern/selfCheck",
+    "comparison": "同一知识原文与索引不等同；B5删无人读的派生不代表实际内容已退；清单语法与内容完整不同",
+    "decision": "保留并区分错误与未配置",
+    "target": "manifest一份声明、纯解析复用、知识域动态发现",
+    "loss": "按目录文件名猜类型会把目标知识配置错读；不允许坏清单静默空集",
+    "verification": "空知识合法、登记缺件报错、未知kind/重复编号/知识边界明确"
+  },
+  {
+    "id": "M23",
+    "features": [
+      "F4.2"
+    ],
+    "name": "事实与画像",
+    "implementations": "knowledge/facts、author.knowledgeSection、首次adapt画像扫描",
+    "comparison": "“不能当既有能力复用”有效；README“无X不要选新设计”会禁止合法新增",
+    "decision": "R17替换禁止新增的泛化，保留事实约束",
+    "target": "既有能力按仓核实；本轮新增按需求设计说明",
+    "loss": "不删除画像或核实现状；不得凭事实库缺项断定需求禁止",
+    "verification": "不存在既有封装不能引用；有依据新增能力仍可设计"
+  },
+  {
+    "id": "M24",
+    "features": [
+      "F4.3"
+    ],
+    "name": "规约判断与出处",
+    "implementations": "coverageProblems/constraints/domains/reviewAction、spec.scanNumericSources",
+    "comparison": "适用、落点、出处是有效目标；数值字面没匹配就判“伪造”越过脚本能力边界",
+    "decision": "保留知识判断，R16退出词面等同语义的裁决",
+    "target": "机械检查只核来源字段与可定位性；真假/换算由既有verifier核，不增另一份说明台账",
+    "loss": "不能整个删来源保护或把空理由通过；不能为匹配字符改事实",
+    "verification": "单位换算可依据说明，伪造来源由语义审查发现，字段坏仍拦"
+  },
+  {
+    "id": "M25",
+    "features": [
+      "F4.3",
+      "F2.5"
+    ],
+    "name": "知识判断的多个输出",
+    "implementations": "knowledge-use.renderConstraints/renderPatterns、story.verdictSkeleton、author.knowledgeSection",
+    "comparison": "Spec输出代码要求，Story显示全量命中/不命中，作者包提供待做任务；并非三个模型分别判适用",
+    "decision": "保留差异化投影，不合并业务判断副本",
+    "target": "只读knowledge-use，领域规范化结果复用；各视图只渲染本消费者需要的列",
+    "loss": "只剩Spec命中表会丢不适用依据；只剩Story汇总不够编码",
+    "verification": "一个判断改变后各投影一致，多要求不截断，评审动作不变代码义务"
+  },
+  {
+    "id": "M26",
+    "features": [
+      "F4.4"
+    ],
+    "name": "模式候选与多模式单元",
+    "implementations": "knowledge-use.patterns/renderSkeleton/coverageProblems、plan.specPatternHits/planPatternChoices",
+    "comparison": "候选与选择两阶段有效；生成器认无在册模式，校验却强制填；Map按unit覆盖会吞同单元第二模式",
+    "decision": "保留功能，D02/D03修缺口，不称旧机制删除",
+    "target": "无在册模式空表合法；有模式仍需判断；候选以unit+pattern完整保留",
+    "loss": "不能把整个模式功能因未测删掉，不能用只能一个模式规避数据丢失",
+    "verification": "无模式、无候选、同单元双模式、多单元同模式"
+  },
+  {
+    "id": "M27",
+    "features": [
+      "F4.5",
+      "F4.6"
+    ],
+    "name": "实体义务与实现探针",
+    "implementations": "contracts.resolveEntityRef、obligationsFromContracts/misplacedMust、coding与probes",
+    "comparison": "实体指向、must意义和probe结果三种责任；探针语法由知识给出，不自动构成全部语义",
+    "decision": "保留，限定结论能力；R23统一不重复选型与可读实现篇的边界",
+    "target": "Plan实体must是下游输入，脚本仅核存在/给定模式，verifier看实际作用",
+    "loss": "删义务链等于删已交付知识能力，不是清残留",
+    "verification": "合法实体、非法挂载、零扫描、角色无人用、名在但行为未落实"
+  },
+  {
+    "id": "M28",
+    "features": [
+      "F4.7"
+    ],
+    "name": "代码Review知识复核",
+    "implementations": "review.author/post_check/overlay、契约must与实际diff",
+    "comparison": "检查表行/定位与独立判断作用不同，不是可任删的一套 ",
+    "decision": "保留",
+    "target": "报告完整与语义落实分工；统一同一id定义，不复述原规约充数",
+    "loss": "删结构会难以查漏；删语义则只有“名字出现”",
+    "verification": "遗漏义务/不适用无依据/位置正确行为错误"
+  },
+  {
+    "id": "M29",
+    "features": [
+      "F4.8",
+      "F4.9"
+    ],
+    "name": "验收桥接与验证分派",
+    "implementations": "spec.acceptanceCoverage、contracts.knowledgeCriteria、ut/testing post_check",
+    "comparison": "criteria限定和下游两集合是不同策略，但可以共享读取/条目解析；单值Map丢同规则多条验收",
+    "decision": "R19合并解析保留策略；D01修一对多；R06退困难即转device",
+    "target": "结构化条目全集一次提取，调用者选集合，must.verify不因测不了自动改",
+    "loss": "不得放宽Spec桥接，不得删both、不用测试名代替断言",
+    "verification": "一规则两AC不丢；criteria限定保持；UT/device覆盖原范围；实际作者AC-1样例必须被UT/testing识别，不重编号原验收"
+  },
+  {
+    "id": "M30",
+    "features": [
+      "F5.1"
+    ],
+    "name": "阶段作者输入",
+    "implementations": "六阶段author、spec.taskPackage、各阶段作业页与overlay",
+    "comparison": "“何时读”“本次读什么”“怎么做”“怎么判”有各自消费者；内容重复须按意义而非文件名退",
+    "decision": "保留入口与必要当次提示，R05/R10/R14/R18去旧段",
+    "target": "原则一份、动态数据一份、当前动作简短；不必为每阶段再写全文方法",
+    "loss": "一味只留链接可能导致行动前未送达；不能只靠报错教学",
+    "verification": "初次与恢复都能拿任务，当前命令无倒序，读者问题与期望一致"
+  },
+  {
+    "id": "M31",
+    "features": [
+      "F5.2"
+    ],
+    "name": "写作步骤恢复",
+    "implementations": "flow.spec_stage_step/SPEC_STAGE_ORDER、story-build.cmdPrepare",
+    "comparison": "Python五个存在性分支与prepare的可读/可装配分支重复承担写作子路由；最新2.3已指定prepare唯一负责",
+    "decision": "R08退Python子路由",
+    "target": "complete后Python只指prepare；prepare承接缺知识判断入口及Spec时点，不起Node查询",
+    "loss": "不能先删Python再留下知识init无人指路；不是删除范围/S4状态机",
+    "verification": "缺索引/初筛/knowledge-use/Spec/template/章稿时单一路由"
+  },
+  {
+    "id": "M32",
+    "features": [
+      "F5.3",
+      "F5.4"
+    ],
+    "name": "成文依据与冻结",
+    "implementations": "assemblyInputs/sourceDrift、chapter局部核、check⑯、flow.STORY_SRC_FROZEN/cmd_story/reopen",
+    "comparison": "装配前与登记前复用同一依据是两时点非两规则；冻结保护已登记对象而非每轮task协议",
+    "decision": "保留复用，退出并行旧来源检查见R13",
+    "target": "字段校验与来源变化一次定义，登记固定当前结果，返修解相应冻结",
+    "loss": "删任一时点会让错误输入先成文或变更后登记；不增加分章版本票据",
+    "verification": "缺/坏/过期初筛、源变化、人工区、部分失败恢复"
+  },
+  {
+    "id": "M33",
+    "features": [
+      "F5.5",
+      "F5.6"
+    ],
+    "name": "Framework审查闭环与交付",
+    "implementations": "pre_verifier/overlay/readerReviewTask/verifier-report、Framework hooks/receipt",
+    "comparison": "Framework调度与报告结构已有，扩展仅装审查对象；reader任务里仍有一整段重复方法与输出schema",
+    "decision": "R09复用数据解析；R20退重复语义规则文本；R04授权对齐",
+    "target": "overlay唯一定义如何审，request装输入/必要读法，Framework原生凭据",
+    "loss": "不能删Story/template全文或未采用来源入口；不把能力缺失当PASS",
+    "verification": "同一请求规则只有一份，subject绑定，实际verdict与结构status分开"
+  },
+  {
+    "id": "M34",
+    "features": [
+      "F5.7"
+    ],
+    "name": "运行证据与任务可见性",
+    "implementations": "gate/evidence.writePostCheckEvidence、review-task",
+    "comparison": "当前Framework dispatcher只记录ok:false；无证据文件无法区分PASS执行与未执行。review-task调用真实同一任务函数无影子定义",
+    "decision": "保留，不能以只有维护者读取为由删除",
+    "target": "维护者是合法消费者；证据不参与另一套状态机",
+    "loss": "删evidence会失去当前PASS执行事实；删旁路不省任务算法只损可查性",
+    "verification": "PASS/FAIL/未执行区分，任务旁路等于真实装配内容"
+  },
+  {
+    "id": "M35",
+    "features": [
+      "F6"
+    ],
+    "name": "跨仓安装与退出",
+    "implementations": "adapt SKILL/adapt-scan、bridges、README",
+    "comparison": "安装检查与运行检查不重复；知识所有权、业务来源身份与机械包内容不同",
+    "decision": "保留现行目录所有权方案",
+    "target": "demo不覆目标adapters，业务仓覆adapters，知识不改，首次画像只扫描一次",
+    "loss": "删来源区别会把demo替身装入业务仓；删删除旧文件操作会保留包外残留",
+    "verification": "三种来源/目标状态，脏覆盖面、配置身份、缺件，不重开历史迁移"
+  },
+  {
+    "id": "M36",
+    "features": [
+      "F7.1",
+      "F7.2"
+    ],
+    "name": "通用读取/路径/摘要",
+    "implementations": "paths/yaml-lite、各领域轻量read/parseArgs、headings、materials.file_digest",
+    "comparison": "跨Python/Node、领域摘要与JSON容错语义并不完全相同；函数名相同不足以推出合并",
+    "decision": "保留跨语言与不同语义；同编排解析合并见R09",
+    "target": "稳定配置路径共享；无持久化通用缓存/无跨进程抽象",
+    "loss": "强合会增加调用开销或改变缺失/坏件处理；不能以共享名义扩大平台",
+    "verification": "边界路径/坏输入/换行与源字节摘要口径分别验证"
+  },
+  {
+    "id": "M37",
+    "features": [
+      "F4.1",
+      "F4.2",
+      "F4.3",
+      "F4.4"
+    ],
+    "name": "Knowledge正文与示例",
+    "implementations": "knowledge下全部正文/README，manifest登记",
+    "comparison": "知识是目标内容，里面的SDK代码例子不是生产死代码；未读取派生字段与原文仍可被模型消费不同",
+    "decision": "保留有效内容，不按无import删除；R17仅修明确歧义；R22同步退出三处旧project_knowledge契约落点，模式正文保留",
+    "target": "域/模式条目不固化成机制枚举；阶段建议不能冒充Framework路由",
+    "loss": "删样板即删内容能力，不能计作机制瘦身",
+    "verification": "激活可读、类型边界、目标facts可核、模式选择/实现各读适当部分"
+  },
+  {
+    "id": "M38",
+    "features": [
+      "F2.7",
+      "F2.4.3"
+    ],
+    "name": "整稿核对与误删防线",
+    "implementations": "story-write第四步、template、overlay、旧form.note",
+    "comparison": "作者核对是修稿，审查是评价；旧09 note有细化的控制影响问题，当前questions仍有核心目标但只送审查端，作者编排前未明确取得它",
+    "decision": "保留整稿；R21补回稳定读者目标的作者送达，非恢复整份旧note",
+    "target": "编排前从现有合同读questions，聚焦控制对象/存量/在途/恢复；正文按需求实例化，不复制两份细则",
+    "loss": "删整稿会漏跨章；把旧note全恢复会恢复双源",
+    "verification": "有页面与无页面、多控制对象；存量/在途/不可逆/恢复条件不缺"
+  }
+]

@@ -464,27 +464,26 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
                          images[0]["paths"], "两个落点没有都记下来")
 
 
-class DesignArtifactsStayOutOfTheIndex(unittest.TestCase):
-    """设计过程不入库（用户 2026-09-08 裁定）：方案、评审与状态记录留在工作区。
-
-    它们是过程件，读者是当轮的维护实施者与评审；入库之后每一次改动都要过一遍提交，
-    而改动本身正是这类文档的常态。盘上要在——不入库不等于不写。
+class ProcessArtifactsEnterTheIndex(unittest.TestCase):
+    """过程件入库（用户 2026-09-25 裁定）：spec 与 plan 各版本的方案、评审与交回都随提交留下历史；
+    实跑的运行证据（事件流、运行日志、截图、材料原件、压缩包）放在 `output/story/`，不进过程件目录。
     """
 
-    def test_the_design_and_spec_dirs_are_ignored(self):
-        for rel in ("test/story/design", "test/story/spec"):
-            d = REPO / rel
-            self.assertTrue(d.is_dir(), f"{rel} 不在盘上了——不入库不等于不写")
-            proc = subprocess.run(["git", "check-ignore", str(d)],
-                                  cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
-            self.assertNotEqual("", proc.stdout.strip(), f"{rel} 还会被提交进库")
+    ROOTS = ("test/story/spec", "test/story/plan")
+    EVIDENCE_SUFFIXES = {".jsonl", ".log", ".zip", ".docx", ".png"}
 
-    def test_nothing_from_them_is_still_tracked(self):
-        """已入库的那些要撤出索引——忽略规则不会自动撤，留着就还会被改动带进提交。"""
-        proc = subprocess.run(["git", "ls-files", "test/story/design", "test/story/spec"],
-                              cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual("", proc.stdout.strip(),
-                         "还有设计件躺在索引里：git rm -r --cached 一次")
+    def test_both_roots_are_on_disk_and_not_ignored(self):
+        for rel in self.ROOTS:
+            with self.subTest(root=rel):
+                self.assertTrue((REPO / rel).is_dir(), f"{rel} 不在盘上")
+                ignored = subprocess.run(["git", "check-ignore", "-q", f"{rel}/1.9.0/00-总览.md"],
+                                         cwd=str(REPO)).returncode == 0
+                self.assertFalse(ignored, f"{rel} 被忽略了")
+
+    def test_run_evidence_lives_under_output(self):
+        stray = [p.relative_to(REPO).as_posix() for rel in self.ROOTS for p in (REPO / rel).rglob("*")
+                 if p.is_file() and (p.suffix in self.EVIDENCE_SUFFIXES or p.name == "runlog.md")]
+        self.assertEqual([], stray, "运行证据放到 output/story/ 下")
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。
