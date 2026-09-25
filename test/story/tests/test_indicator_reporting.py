@@ -116,6 +116,10 @@ JUDGEMENT = ("  - id: NEU-01\n    applicable: true\n    requirement: 提交预�
              "    contract: 提交预约\n  - id: NEU-02\n    applicable: false\n    reason: 本需求没有重试路径")
 
 
+#: 统计点齐了才出现的逐行自查句：作者包与审查各一句。
+PLAN_SELF_CHECK = "项目规则算不出值的行才进「缺依据」"
+REVIEW_SELF_CHECK = "并列的每一行按项目知识写的完成判断核"
+
 def js(module, expr: str) -> str:
     proc = nk.node("--input-type=module", "-e",
                    f"const m = await import({nk.as_url(module)}); process.stdout.write(JSON.stringify({expr}));")
@@ -152,7 +156,7 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
         self.assertTrue(any("下没有统计点" in p for p in got), got)
 
     def test_the_point_column_need_not_come_first(self) -> None:
-        body = ("总述一句。\n\n#### 提交成功率（提交流程）\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
+        body = ("总述一句。\n\n#### 提交成功率（提交流程）\n\n衡量提交成功的比例。\n\n| 口径 | 说明 |\n|---|---|\n| 分母 | 发起的提交 |\n\n"
                 "| 实际业务结果 | 统计点 | 本端获知时机 |\n|---|---|---|\n| 已受理、拒绝 | 提交/请求 | 响应返回时 |")
         self.assertEqual([], self.problems(body))
         got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs",
@@ -160,6 +164,21 @@ class TheSpecSectionIsShapedByIndicator(unittest.TestCase):
         self.assertEqual(["提交/请求"], got["groups"][0]["points"])
         self.assertEqual(["提交/请求", "已受理、拒绝", "响应返回时"], got["groups"][0]["rows"][0])
         self.assertIn("发起的提交", got["text"], "说明表留在原文里给模型读")
+
+    def test_an_indicator_without_a_definition_is_named(self) -> None:
+        """指标标题与第一张表之间要有一段正文；注释不算正文。只核有没有，不核写了什么。"""
+        table = "| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |"
+        for lead in ("", "<!-- 这里写定义 -->\n\n"):
+            with self.subTest(lead=lead):
+                got = self.problems(f"总述一句。\n\n#### 提交成功率（提交流程）\n\n{lead}{table}")
+                self.assertTrue(any("「提交成功率（提交流程）」标题与表之间缺一段" in p for p in got), got)
+        self.assertEqual([], self.problems(f"总述一句。\n\n#### 提交成功率（提交流程）\n\n- 衡量提交成功的比例。\n\n{table}"))
+
+    def test_the_definition_is_the_first_prose_line_before_the_table(self) -> None:
+        body = ("### 9.4 埋点\n\n总述。\n\n#### 甲（流程一）\n\n| 统计点 | 结果 |\n|---|---|\n| 一 | 成功 |\n\n表后边界。\n\n"
+                "#### 乙（流程二）\n\n<!-- 注释 -->\n衡量乙的比例。\n第二行。\n\n| 统计点 | 结果 |\n|---|---|\n| 二 | 成功 |")
+        got = js(nk.EXT / "hooks" / "shared" / "stat-points.mjs", f"m.specStatPoints({json.dumps(body)})")
+        self.assertEqual(["", "衡量乙的比例。"], [g["lead"] for g in got["groups"]])
 
     def test_not_applicable_is_a_conclusion(self) -> None:
         self.assertEqual([], self.problems("不涉及：本需求没有需要统计的业务步骤。"))
@@ -204,6 +223,26 @@ class ReportingCase(nk.NeutralKnowledgeCase):
                        "process.stdout.write(out.promptFragments.join('\\n'));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
+
+    def spec_review_task(self) -> str:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const pv = (await import({nk.as_url(self.ext / 'hooks/shared/pre_verifier.mjs')})).default;"
+                       f"const out = await pv({{ phase: 'spec', feature: {json.dumps(nk.FEATURE)},"
+                       f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                       "process.stdout.write(out.promptFragments.join('\\n'));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
+
+    def spec_package(self) -> str:
+        proc = subprocess.run(["node", str(self.ext / "hooks/spec/author.mjs"), "--feature", nk.FEATURE],
+                              cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout.split("## 5. 统计设计（§9.4）", 1)[1].split("\n## ", 1)[0]
+
+    def mark_story(self) -> None:
+        flow = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        flow.parent.mkdir(parents=True, exist_ok=True)
+        flow.write_text("{}", encoding="utf-8")
 
     def drop_stat_section(self) -> None:
         text = self.spec_path.read_text(encoding="utf-8")
@@ -288,6 +327,48 @@ class ThePlanLandsEveryStatisticPoint(ReportingCase):
         self.assertIn("没有指标点位表", self.plan_check())
 
 
+class TheSpecAuthorIsToldWhatTheStatisticDesignOwes(ReportingCase):
+    """spec 任务包第 5 节：这次交什么、动笔前读什么、写完怎么自查；已写的逐指标列定义段有无与点数。"""
+
+    def test_a_story_feature_gets_the_task_and_the_current_state(self) -> None:
+        self.mark_story()
+        section = self.spec_package()
+        for line in ("这次要交：§9.4 先一段总述", "doc/extensions/skills/story/templates/spec-sections.md",
+                     "动笔前：在第 2 节的知识清单里找用途写到统计设计的那份", "写完后：按那份知识写的完成判断逐条走一遍"):
+            with self.subTest(line=line):
+                self.assertIn(line, section)
+        self.assertIn("- 预约成功率（预约流程） —— 定义段：有；统计点：2 个", section)
+        self.assertIn("- 到场核销率（核销流程） —— 定义段：有；统计点：1 个", section)
+        self.assertNotIn("knowledge/", section, "第 5 节不点知识的名字，由作者按用途自述去找")
+
+    def test_a_missing_definition_is_listed(self) -> None:
+        self.mark_story()
+        text = self.spec_path.read_text(encoding="utf-8").replace("衡量预约后到场核销的比例。\n", "")
+        self.spec_path.write_text(text, encoding="utf-8")
+        self.assertIn("- 到场核销率（核销流程） —— 定义段：缺；统计点：1 个", self.spec_package())
+
+    def test_before_writing_there_is_only_the_task(self) -> None:
+        self.mark_story()
+        self.drop_stat_section()
+        section = self.spec_package()
+        self.assertIn("这次要交：", section)
+        self.assertNotIn("当前 §9.4", section)
+
+    def test_not_applicable_asks_for_its_basis(self) -> None:
+        self.mark_story()
+        text = self.spec_path.read_text(encoding="utf-8")
+        start, end = text.index("### 9.4 埋点"), text.index("## 10.")
+        self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n" + text[end:],
+                                  encoding="utf-8")
+        self.assertIn("当前 §9.4 写的是「不涉及：本需求没有需要统计的业务步骤。」——核这条依据站得住。",
+                      self.spec_package())
+
+    def test_a_direct_spec_is_not_asked_for_it(self) -> None:
+        section = self.spec_package()
+        self.assertIn("本需求没走 /story，不要求 §9.4 的统计设计", section)
+        self.assertNotIn("这次要交：", section)
+
+
 class TheAuthorAndReviewerGetThePoints(ReportingCase):
     """③ 任务包逐条列问题；④ 审查按名并列；⑤ 没有项目事实时照常。"""
 
@@ -299,6 +380,14 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
         self.assertIn("- **预约成功率（预约流程）**：查询时段、提交预约", out)
         self.assertIn("- **到场核销率（核销流程）**：到场核销", out)
         self.assertIn("neutral-facts.md", out)
+
+    def test_the_author_and_reviewer_are_pointed_at_the_completion_checks(self) -> None:
+        """统计点齐了才有逐行自查：作者包末尾给动笔前读什么、每行怎么自查，审查按同一份完成判断核。"""
+        package = self.task_package()
+        self.assertIn("动笔前：重读第 1 节知识清单里用途写到上报实现的那份", package)
+        self.assertIn(PLAN_SELF_CHECK, package)
+        self.assertIn(REVIEW_SELF_CHECK, self.review_task())
+        self.assertIn("按项目知识写的完成判断逐条核", self.spec_review_task())
 
     def test_the_reviewer_sees_both_sides_of_every_point(self) -> None:
         self.write_plan("\n".join(l for l in ROWS.split("\n") if "到场核销" not in l))
@@ -339,8 +428,11 @@ class TheAuthorAndReviewerGetThePoints(ReportingCase):
         self.spec_path.write_text(text[:start] + "### 9.4 埋点\n\n不涉及：本需求没有需要统计的业务步骤。\n\n"
                                   + text[end:], encoding="utf-8")
         self.write_use(neutral=JUDGEMENT.replace("contract: 提交预约", "contract: 预约接口"))
-        self.assertIn("plan 的埋点小节写一行「本需求不涉及：<依据>」", self.task_package())
-        self.assertIn("核这条依据是否成立", self.review_task())
+        package, review = self.task_package(), self.review_task()
+        self.assertIn("plan 的埋点小节写一行「本需求不涉及：<依据>」", package)
+        self.assertIn("核这条依据是否成立", review)
+        self.assertNotIn(PLAN_SELF_CHECK, package, "没有统计点就没有逐行自查")
+        self.assertNotIn(REVIEW_SELF_CHECK, review)
         self.assertIn("埋点逐统计点落实（spec 的埋点一节写了不涉及）", self.plan_check())
 
     def test_without_project_facts_everything_still_runs(self) -> None:

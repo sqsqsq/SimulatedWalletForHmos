@@ -378,6 +378,9 @@ export function indicatorShape(where, body) {
   if (!groups.length) problems.push(`${where}没有指标小标题（####）——以指标为单位组织，每个指标一个 H4 与它的统计点表`);
   if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述——两三句写采集什么、为谁用、已有能力覆盖的不重复列、字段的隐私边界`);
   for (const g of groups) {
+    if (!g.lead) {
+      problems.push(`${where}的指标「${g.title}」标题与表之间缺一段——先写它衡量什么率或分布、要算它需要哪几类结果，再放表`);
+    }
     if (!g.points.length) {
       problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
     }

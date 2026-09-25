@@ -118,11 +118,13 @@ export function renderSkeleton(projectRoot, knowledge) {
     `schema: ${SCHEMA}`,
     `manifest_digest: ${manifestDigest(projectRoot)}`,
     '',
-    '# 用到了哪几份项目知识：used 逐面一项（facet 取下面列的面名，used_for 写拿它做了什么）。没用到的整份删掉。',
+    '# 用到了哪几份项目知识：按每份的「何时读」判断本需求用不用；不用的整份删掉，不必打开。',
+    '# 用到的 used 逐面一项：facet 取下面列的面名，used_for 写拿它作出了什么决定或写出了哪段设计。',
     'facts:',
   ];
   for (const f of knowledge.facts) {
     rows.push(`  - id: ${f.name || path.basename(f.file, '.md')}`,
+      `    # 何时读：${String(f.appliesWhen ?? '').replace(/\n/g, '\n    #   ')}`,
       `    # 面：${f.facets.join(' / ')}`, '    used:', '      - facet: ""', '        used_for: ""');
   }
   rows.push(

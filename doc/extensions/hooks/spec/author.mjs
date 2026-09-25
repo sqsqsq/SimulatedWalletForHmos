@@ -19,7 +19,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from '../shared/paths.mjs';
+import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
+import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
+import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
 import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
@@ -31,6 +33,7 @@ import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/stor
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
+const TEMPLATE = 'doc/extensions/skills/story/templates/spec-sections.md';
 const SKILL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'story');
 
 /**
@@ -368,6 +371,32 @@ export function storyInputs(ctx, sources) {
  * 词表、作用域、豁免三样都在这一节：哪几章整章豁免、review 的哪几类议题豁免、
  * 哪几种语境下同一个词不算，都从合同渲染，判定按同一份数据走。
  */
+/**
+ * 统计设计这次要交什么、动笔前读什么、写完怎么自查——在动笔那一刻送到作者面前。
+ *
+ * 只说阶段任务与形状，不复述知识里的定义与步骤，也不点知识的名字：哪份讲统计设计由作者按
+ * 各知识的用途自述去找。已写了 §9.4 的，列出每个指标有没有定义段、几个统计点，返修时照着补。
+ */
+function statDesignSection(projectRoot, feature) {
+  const dir = featureRoot(projectRoot, feature);
+  const rows = ['## 5. 统计设计（§9.4）', ''];
+  if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.4 的统计设计：按本阶段原有要求写。'];
+  rows.push('这次要交：§9.4 先一段总述，然后每个指标一个 H4，标题写「指标名（流程名）」；H4 下先一段写它衡量什么率或分布、'
+    + `要算它需要哪几类结果，再放带「统计点」列的表，表后写边界。形状见 \`${TEMPLATE}\` 的 9.4。`,
+  '动笔前：在第 2 节的知识清单里找用途写到统计设计的那份，重读它写给统计设计作者的部分；不凭阶段开头的记忆写。',
+  '写完后：按那份知识写的完成判断逐条走一遍，走不通的直接改设计，不另写推演。',
+  '§9.4 写业务结果；上报用的字段、取值与登记留给 plan。');
+  const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
+  const points = spec === null ? null : specStatPoints(spec);
+  const state = statDesignState(points);
+  if (state === 'na') rows.push('', `当前 §9.4 写的是「${points.na}」——核这条依据站得住。`);
+  if (state === 'empty' || state === 'ready') {
+    rows.push('', '当前 §9.4 的指标：',
+      ...points.groups.map(g => `- ${g.title} —— 定义段：${g.lead ? '有' : '缺'}；统计点：${g.points.length} 个`));
+  }
+  return rows;
+}
+
 function vocabularySection(contract) {
   const rows = ['## 6. 这些词不能用（服务器侧词汇，单独使用也算）', ''];
   for (const { term, hint } of clientVocabulary()) rows.push(`- 「${term}」→ ${hint}`);
@@ -415,6 +444,8 @@ function taskPackage(projectRoot, feature) {
     ...decisionSection(projectRoot, feature, contract),
     '',
     ...storyInputs(ctx, sourceStatus(ctx)),
+    '',
+    ...statDesignSection(projectRoot, feature),
     '',
     ...vocabularySection(contract),
   ];

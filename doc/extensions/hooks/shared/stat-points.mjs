@@ -30,8 +30,9 @@ function notApplicable(doc, from, to) {
 }
 
 /**
- * spec 的埋点一节：`{ na, text, groups: [{ title, points, rows }] }`，没有这一节返回 null。
- * `text` 是这一节的原文（给任务包与审查照列，说明表也在里面），`points` 是各指标点位表里的统计点名，
+ * spec 的埋点一节：`{ na, text, groups: [{ title, lead, points, rows }] }`，没有这一节返回 null。
+ * `text` 是这一节的原文（给任务包与审查照列，说明表也在里面），`lead` 是指标标题与它第一张表之间
+ * 第一行正文（没有为 `''`，门禁据它判「有没有定义段」，不判内容），`points` 是各指标点位表里的统计点名，
  * `rows` 是对应的整行——统计点那一格挪到首位，其余格保持原来的相对顺序。
  */
 export function specStatPoints(specText) {
@@ -41,13 +42,16 @@ export function specStatPoints(specText) {
   const h4s = doc.headings.filter(x => x.level === 4 && x.at > s.h.at && x.at < to);
   const groups = h4s.map((h, k) => {
     const end = h4s[k + 1]?.at ?? to;
+    const tables = tablesWithin(doc, h.at + 1, end);
+    const lead = doc.lines.slice(h.at + 1, tables[0]?.line ?? end).map(l => l.trim())
+      .find(l => l && !l.startsWith('<!--') && !l.startsWith('|')) ?? '';
     const rows = [];
-    for (const t of tablesWithin(doc, h.at + 1, end)) {
+    for (const t of tables) {
       const p = t.header.findIndex(c => clean(c).includes('统计点'));
       if (p < 0) continue;
       for (const r of t.rows) if (clean(r[p])) rows.push([r[p], ...r.slice(0, p), ...r.slice(p + 1)]);
     }
-    return { title: h.raw, points: rows.map(r => clean(r[0])), rows };
+    return { title: h.raw, lead, points: rows.map(r => clean(r[0])), rows };
   });
   return { na: notApplicable(doc, from, to), text: doc.lines.slice(s.h.at, to).join('\n'), groups };
 }

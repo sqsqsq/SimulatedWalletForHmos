@@ -47,7 +47,8 @@ const SOURCE_OF_TRUTH = {
 const WALK = {
   spec: { what: '业务章与承载专项的那一章', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
     + '关键结论有源材料或已定决定支持，`decisions.json` 里仍 open 的选择没有写成无条件的行为或验收；'
-    + '统计设计讲清每个指标的观察范围、涉及的流程与步骤、实际结果及本端何时得知；'
+    + '统计设计讲清每个指标的观察范围、涉及的流程与步骤、实际结果及本端何时得知，'
+    + '并按项目知识写的完成判断逐条核，判不过的写出是哪一条；'
     + '命中的规约要求讲清某项专项时，按那份知识核承载章里的相应设计' },
   plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
     handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
@@ -88,6 +89,8 @@ function statPointTable(projectRoot, feature) {
   for (const [key, got] of byKey) {
     if (!consumed.has(key)) for (const x of got) rows.push(`| — | （spec 没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
   }
+  rows.push('', '并列的每一行按项目知识写的完成判断核：项目规则算得出的字段是不是具体值，'
+    + '尝试由谁持有、由哪个方法结算有没有名字。');
   return rows;
 }
 

@@ -254,6 +254,29 @@ class TheJudgementSeesTheEntry(ProtocolCase):
         self.assertNotIn("命中：", text, "命中条件又挤回同一行")
         self.assertIn("# 面：出口登记 / 重试入口\n", text)
 
+    def init_skeleton(self) -> str:
+        proc = nk.node(str(self.module("knowledge-use.mjs")), "init",
+                       "--feature", nk.FEATURE, "--project-root", str(self.root))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return self.use_path.read_text(encoding="utf-8")
+
+    def test_each_fact_says_when_to_read_it(self) -> None:
+        """骨架每份项目事实带自己的「何时读」，作者据它判用不用；多行自述续行仍是注释，骨架照常读回。"""
+        text = self.init_skeleton()
+        self.assertIn("    # 何时读：设计出口与重试时：本工程已有的出口登记与重试入口\n    # 面：", text)
+        self.edit_knowledge("facts/neutral-facts.md",
+                            "applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口\n",
+                            "applies_when: |\n  设计出口时：\n  出口登记在哪\n")
+        self.use_path.unlink()
+        text = self.init_skeleton()
+        self.assertIn("    # 何时读：设计出口时：\n    #   出口登记在哪\n    # 面：", text)
+        proc = nk.node("--input-type=module", "-e",
+                       f"const d = await import({nk.as_url(self.module('knowledge-use/document.mjs'))});"
+                       f"const u = d.readUse({json.dumps(self.root.as_posix())}, {json.dumps(nk.FEATURE)});"
+                       "process.stdout.write(JSON.stringify(u.facts.map(f => f.id)));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("neutral-facts", json.loads(proc.stdout))
+
     def test_the_projection_carries_force_and_method(self) -> None:
         self.judged()
         zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约约束要求")[1]
