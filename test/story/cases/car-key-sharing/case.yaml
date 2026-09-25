@@ -21,8 +21,7 @@ supplements:
     deliver: on_request
 
 # 到目标之后还做第二段（说明见 auto-topup 同位注释）。
-# 1.9.5 S4 只跑第一段（用户 2026-09-21 定：不开 update 第二段）；要跑双检查点时恢复下一行。
-# after_initial: update
+after_initial: update
 
 # 第二段的输入：评审人在评审记录的人工意见区里留下的决定。
 # 插入只用明确的自由意见边界，不去动机器区——那是脚本的地盘，宿主改它等于替产物做决定。
