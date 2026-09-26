@@ -14,6 +14,8 @@
 - 阶段 evidence 现在区分源码责任：合法 coding/UT 产出可推进此前 Research 观察，测试文件变化不再反向作废 coding/review；未归属源码、需求或 contracts 漂移仍照常 stale。旧 manifest 没有责任字段时不会被猜测洗绿，重跑责任阶段即可生成新证据。相同 UT 覆盖结论重复生成时，`ac-coverage.json` 保持原字节与时间，verifier subject 不因时钟单独换代。
 - 下游 capability 缺少由上游阶段生产的输入时，恢复现在读取既有 `SourceAttempt.upstream_producer` 并回实际 owner；没有链内 owner 的 absent 继续作为可诊断输入缺口，不冒充 framework bug。测试自有返修只重跑受影响阶段，真实产品/契约变化与显式重跑仍会扩大必要重验范围。
 - `goal-runner --detach` 返回前会做一次最长 10 秒的启动确认，JSON 新增 `startup`：区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`。仅 pid/目录不再冒充健康；确认超时不会杀仍活跃 child，早退保留当前日志尾并非零退出。detached `--attach-created` 现在与 `--resume` 一样由共享输入解析锁定既有 run_id，不再生成第二个随机身份。
+- 完成后修正改走 successor：`goal-runner --supersede <完成 run>` 在该 supersede 上下文按当前输入重解析出生范围（既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段），不再整份继承源 run 范围；新 completion 落后继 run 目录，旧原件保留；feature 冻结记录的转交改为追加式 `transfers[]`（旧单值 `transferred_to` 照读）。`--revalidate` 仍只做在途机械重验、不签发 completion；无 run 的 feature 完成先追加范围修订再起新 run，`--supersede` 对它拒绝。已完成 CU 在蓝图升版后由 design-preparation readiness 原位升版指针（契约不变即同一 CU）；completion 的 STALE 裁决词改为评估入口 `assessFeature` 的 uncovered 义务清单。旧产物零迁移。
+- 框架发布前以上一版宿主产物为兼容基线：影响已完成产物的规则变更，会在本文件给出可执行的迁移步骤；没有对应条目即表示升级无需宿主动作。
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
 
@@ -363,7 +365,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 回修候选依赖 verifier 逐条确认，而 verifier request 此前只在脚本 `verdict=PASS` 时签发——于是 review 的负面裁决（`negative_verdict_closure` / `conditional_pass_closure`）与 UT 的真实用例断言失败这两类产品失败，永远拿不到能驱动回修的证据，只能原地重试到预算耗尽。3.0.x 起 harness 对这两类**已复现**的失败照样装配 `ai-prompt.md` 并签发 request。
 
 - **产品裁决一字不改**：`verdict=FAIL`、exit 1、`closure_status=open` 全部保持。verifier 的 PASS 只证明"这份报告可信"，不构成产品通过；失败的 phase 也不要求先闭环。
-- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL/SKIP。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
+- **只开两扇门**：review 需 `report_validity=PASS`、BLOCKER FAIL 全为上述两条、无未标注为已确认不适用的 BLOCKER SKIP、无未解析 capability；UT 需编译 PASS、执行 FAIL 且归因 `code_regression`、无其它 BLOCKER FAIL，也无未标注为已确认不适用的 BLOCKER SKIP（3.1.0 起：checker 已确认判据对象不存在的 SKIP 带 `structured.applicability=not_applicable`，不再当"门禁未跑完"阻断诊断；工件缺失/无效、上游阻断、未执行的 SKIP 照旧阻断）。缺源码、坏表、编译/设备/工具链失败、混合失败与 `INCOMPLETE` 一律保持原样（先修输入或环境）。
 - **新的 `next_action` 取值 `run_verifier_for_repair`**：不是新阶段、不是新状态机。控制台 `NEXT` 行会给齐 request 路径、报告落盘路径与后续命令。goal 编排下写完报告即回传本轮（外层 runner 会重跑 gate harness 并重算候选，agent **不要**自己再跑一次）；非 goal 才由调用方自己重跑一次本阶段 harness。
 - **报告终态口径不变，但现在写明了**：`blocker_count` 只数**本轮 verifier 自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，`verdict=PASS` 当且仅当为 0。确认了 N 条产品缺陷但审查自身无 BLOCKER FAIL 时，正确终态是 `PASS / 0`——不要把产品 FAIL 抄进终态，那会让逐条 confirmed 派生的回修候选整批消失。
 - **verifier 报告的机器解析改读正式汇总表**：`verify-*.md` §7.1 的 `| id | status | ... |` 表现在可被机器读取（此前只认 §7.2 的 YAML，而 YAML 按契约只列非 PASS 项，于是所有 PASS 对机器不可见）。旧 YAML 形态继续兼容；同条一致重复去重，**冲突或坏状态一律不采信**（不会选择有利的 PASS），落回既有"未确认/修格式"通道。宿主无需改写历史报告。
