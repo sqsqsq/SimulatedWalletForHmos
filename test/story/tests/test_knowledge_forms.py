@@ -264,7 +264,7 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
     def test_the_lower_half_names_the_required_design_items(self) -> None:
         lower = self.method_fact()["halves"]["下篇"]
         header = next(l for l in lower.split("\n") if l.startswith("| 统计点 |"))
-        for column in ("事件 ID", "内码", "结果分类"):
+        for column in ("事件 ID", "内码", "结果分类", "描述"):
             with self.subTest(column=column):
                 self.assertIn(column, header)
 
