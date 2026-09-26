@@ -133,8 +133,8 @@ features 是迁移归档，不在本轮结束时恢复；本轮 workspace/output
 
 每次 `start`/`poll` 返回 `suite_terminal`、`selected_case_count`、动态 `cases`、`interactions`、`adaptive_reply_requests`、
 `automation_stability` 和 `next_action`。`next_action` 仅有 `poll_after_interval`、`reply_then_poll`、`finalize`。同时返回
-`progress_changed`、`changes` 和 `next_interval_sec`。每次 heartbeat 唤醒都简短展示全部实际 Case 当前阶段、交互、错误及下一间隔；
-无变化也显示仍在观测。
+`progress_changed`、`changes` 和 `next_interval_sec`。heartbeat 唤醒后静默处理：只在 suite 终态 finalize、装置或 CLI 故障、
+需要用户拍板时向用户报告。
 
 ### 3.0 谁来当需求方：宿主，不是脚本
 
@@ -290,7 +290,7 @@ Story 阶段或 awaiting_reply；本轮状态读取全部成功。第一次满�
 回复并立即再次零等待 poll（用 `watch` 敲门时见 §3.1）。返回 `finalize` 时执行回灌、输出逐 Case 汇总并暂停 heartbeat，不调用 `stop`。
 
 heartbeat 提示词必须包含当前 suite-id，并要求：每次只执行一次 `poll --wait-sec 0`；处理自适应回复后立即再 poll；
-按 `next_interval_sec` 更新当前 heartbeat；每轮展示简短完整快照；命令失败时诊断并重试一次，仍失败则保留 15 秒节奏并报告；
+按 `next_interval_sec` 更新当前 heartbeat；无终态、故障或待拍板事项时不向用户输出；命令失败时诊断并重试一次，仍失败则保留 15 秒节奏并报告；
 终态 finalize 后暂停当前 heartbeat。重复唤醒不得创建新任务。
 
 ## 5. 状态与证据
