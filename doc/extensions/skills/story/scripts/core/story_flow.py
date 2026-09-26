@@ -26,7 +26,6 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
     python story_flow.py update   --feature <AR> [--action inputs|prepare|status|close|restore]
-                                  [--request <人这次要求改的事>]
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
 （数据对接层 story.js）不随交付走，各部署环境自备实现，所以判据不能挂在它落的文件上。
@@ -46,7 +45,7 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
 核心不变量：
 
-- **一轮 = 一次材料状态**。轮次边界只由材料清单的 `digest` 判定（`AR/story-src/materials.json`）：
+- **一轮 = 一次材料状态**。轮次边界由材料清单的 `digest` 判定（`AR/story-src/materials.json`），`reopen` 重拍范围时另开一轮：
   材料一个字节没变就不是新一轮（幂等），补料导入则必然换版本。初析件在同一轮内可以从
   盘点版改到完整版，它的哈希照实登记，但不划轮次——否则「材料没动、重写一遍分析」
   就能造出一个新轮次；
@@ -109,9 +108,6 @@ def main() -> int:
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
-    ap.add_argument("--request", default=None,
-                    help="update：人这次明确要求改的事（原话）。只是「查一下有没有变化」不填——"
-                         "填了就不会走无变化快速退出")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -158,10 +154,9 @@ def main() -> int:
             elif args.action == "restore":
                 result.update(cmd_update_restore(feature_root))
             elif args.action == "inputs":
-                result.update(cmd_update_inputs(feature_root, args.feature, project_root,
-                                                 args.request))
+                result.update(cmd_update_inputs(feature_root, args.feature, project_root))
             else:
-                result.update(cmd_update_prepare(feature_root, args.request))
+                result.update(cmd_update_prepare(feature_root))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
 

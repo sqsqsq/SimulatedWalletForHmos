@@ -91,7 +91,8 @@ function main(argv) {
   process.stdout.write([`# plan 阶段 · 本次任务包（${feature}）`, '',
     `\`context-exploration\` 的 \`key_inputs_read\` 要含 \`${SELF}\`——本任务包是它的展开。`, '',
     ...knowledgeSection(root, feature), '', ...statPointSection(root, feature), '',
-    '先写「9. 宿主扩展」的 9.1 知识决策，再写设计章 1–8：设计章里的实体与方法照 9.1 定。',
+    '动笔前先想清 9.1 知识决策的三项设计输入，设计章 1–8 里的实体与方法照它定；'
+      + '9.1 写在文末「## 9. 宿主扩展」下（第 8 章之后，其后只有附录）。',
     `宿主扩展章骨架与契约挂法见 \`${TEMPLATE}\`。`].join('\n') + '\n');
   return 0;
 }

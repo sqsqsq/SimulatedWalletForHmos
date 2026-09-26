@@ -100,7 +100,7 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
         design = section(guide, "动笔前：先设计表达")
         for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`形式：<类型>`",
                        "`- 描述：…`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
-                       "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "reopen"):
+                       "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "重新登记"):
             self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
         for gone in ("## 章节安排", "## 结构选择", '"kind": "table"', "表头：列"):
             self.assertNotIn(gone, guide, f"旧的写作设计协议「{gone}」还在作业书里")

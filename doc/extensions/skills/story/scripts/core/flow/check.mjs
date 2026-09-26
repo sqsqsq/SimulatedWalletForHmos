@@ -126,7 +126,7 @@ export function flowProblems(featureRoot) {
 
   rounds.forEach((r, i) => {
     const where = `AR/story-src/story-flow.json 第 ${i + 1} 轮`;
-    // 一轮 = 一次材料状态：轮次只由材料清单的 digest 划界。
+    // 一轮 = 一次材料状态：轮次由材料清单的 digest 划界，`reopen` 重拍范围时另开一轮。
     //
     // 这里**不查初析件哈希**。初析在同一轮内会从盘点版改到完整版，拿它划轮次，
     // 等于「材料没动、重写一遍分析」也能造出一轮，而真正补了料却在分析之前跑 round 的

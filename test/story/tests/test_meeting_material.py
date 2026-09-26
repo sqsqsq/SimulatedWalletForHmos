@@ -712,15 +712,15 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertEqual(1, code)
         self.assertIn("本轮第一级已经定了", out["error"])
 
-    def test_a_meeting_arriving_after_closure_reopens(self) -> None:
-        """收口之后才导进来的会议没有会议判断：先 reopen 再读会；读过的会不算迟到。"""
+    def test_a_meeting_arriving_after_closure_is_read_first(self) -> None:
+        """收口之后才导进来的会议没有会议判断：先读会（有要人定的话题才 reopen）；读过的会不算迟到。"""
         from flow import routing
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         contract = {**self.contract(), "status": "complete"}
-        self.assertEqual("reopen_meeting", routing.next_step(self.fr, contract)[0])
+        self.assertEqual("late_meeting", routing.next_step(self.fr, contract)[0])
         self.read_meeting(docx)
-        self.assertNotEqual("reopen_meeting", routing.next_step(self.fr, contract)[0])
+        self.assertNotEqual("late_meeting", routing.next_step(self.fr, contract)[0])
 
     def test_every_topic_shows_up_including_the_ones_that_are_not_ours(self) -> None:
         docx = self.imported()

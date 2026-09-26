@@ -40,11 +40,12 @@ DESIGN_DRAFT = ("AR", "story-src", "design-draft.md")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")
-# 成文态登记时随稿冻结的依据：story 定稿了，它据以成文的决策登记与写作设计也就定稿了。
-# 登记之后再改它们，story.md 冻了而依据换了一批；`reopen` 撤销登记之后才可以改。
-STORY_SRC_FROZEN = (
-    "decisions.json",
-    "story-template.md",
+# 成文登记时记指纹的文件（相对需求目录）：story 与它据以成文的决策登记、写作设计。
+# 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
+STORY_REGISTERED = (
+    "AR/story.md",
+    "AR/story-src/decisions.json",
+    "AR/story-src/story-template.md",
 )
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，流程侧与
 #: `flow/check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的
@@ -155,9 +156,9 @@ def stage_of(contract: dict | None) -> str:
     """流程现在处在哪一段——**各命令判位置只问这一处**。
 
     返回 `none`（没有轮次）、`gathering`（收口前：盘点、关卡、提取）、`complete`（已收口、
-    story 未登记）、`story_written`、`archived`、`update_inputs`（update 输入阶段）、
-    `update_open`（update 这一轮开着）。update 的两段优先：update 期间 reopen 回到的是
-    这一轮，complete 沿用已定范围，新材料登记进当前轮。
+    story 未登记）、`story_written`、`archived`（已登记且归档过）、`update_inputs`（update
+    输入阶段）、`update_open`（update 这一轮开着）。update 的两段优先：这一轮沿用已定范围，
+    新材料登记进当前轮。归档是 `story_written` 上的标记，不是另一档状态。
     """
     if contract is None or not contract.get("rounds"):
         return "none"
@@ -166,10 +167,8 @@ def stage_of(contract: dict | None) -> str:
         return "update_inputs"
     if update.get("open"):
         return "update_open"
-    if contract.get("archived"):
-        return "archived"
     if contract.get("status") == "story_written":
-        return "story_written"
+        return "archived" if contract.get("archived") else "story_written"
     if contract.get("status") == "complete":
         return "complete"
     return "gathering"
@@ -186,12 +185,25 @@ def require(contract: dict | None) -> dict:
 
 
 def after_complete(contract: dict) -> bool:
-    """流程收口了没有——**收口那一刻及其之后都算**。
+    """流程收口了没有——**收口那一刻及其之后都算**，只看状态。
 
-    `complete` 之后还有 `story_written` 与归档；材料在这些状态下再变，同样不该开新轮。
+    `complete` 之后还有 `story_written`；材料在这些状态下再变，同样不该开新轮。
+    归档过的单 `reopen` 之后回到收口前，与没归档过的一样。
     """
-    return (contract.get("status") in ("complete", "story_written")
-            or bool(contract.get("archived")))
+    return contract.get("status") in ("complete", "story_written")
+
+
+def registration_drift(feature_root: Path, contract: dict) -> list[str]:
+    """已登记的 story 之后又改了哪几份：登记时的指纹对不上现在的文件。没登记过返回空。
+
+    与 `story/context.mjs` 的 `ledgerDigestProblems` 是同一件事的两处读者：
+    流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `ledger_digest` 口径算。
+    """
+    if contract.get("status") != "story_written":
+        return []
+    digests = contract.get("story_digests") or {}
+    return [rel for rel in STORY_REGISTERED
+            if digests.get(rel) != ledger_digest(feature_root / Path(*rel.split("/")))]
 
 
 def round_gates(contract: dict) -> list[dict]:

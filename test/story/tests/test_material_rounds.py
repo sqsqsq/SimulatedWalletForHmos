@@ -23,7 +23,7 @@ MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
-from flow.state import CONTRACT, STORY_SRC_FROZEN  # noqa: E402
+from flow.state import CONTRACT, STORY_REGISTERED  # noqa: E402
 from materials import importer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -412,27 +412,55 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual("in_progress", self.contract()["status"])
 
     def test_reopen_undoes_the_story_registration(self) -> None:
-        """已成文时 reopen 要把成文登记一起撤销——留着就成了两说。
-
-        `story_written_at` 与 `story_src_digests` 是「这份 story 据以成文的依据」的快照。
-        status 退回而它们还在：流程说还没成文，契约里却记着成文时刻与台账指纹，
-        而台账冻结只看 status，重开后台账可以重算，那份快照指的却是重算之前的东西。
-        """
+        """重拍范围时成文登记一起作废：范围定了之后 story 按新范围重新登记。"""
         self.complete_it("story_written")
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["story_written_at"] = "2026-09-04T00:00:00+08:00"
-        data["story_src_digests"] = {"decisions.json": "sha"}
+        data["story_digests"] = {"AR/story-src/decisions.json": "sha"}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         contract = self.contract()
         self.assertNotIn("story_written_at", contract)
-        self.assertNotIn("story_src_digests", contract)
+        self.assertNotIn("story_digests", contract)
         out = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual(["story_src_digests", "story_written_at"], out["storyRegistrationUndone"],
-                         "撤销了什么要说出来——不然查不回来产物为什么对不上")
+        self.assertEqual(["story_digests", "story_written_at"], out["storyRegistrationUndone"],
+                         "作废了什么要说出来——不然查不回来产物为什么对不上")
+
+    def test_reopen_opens_a_round_for_the_scope_gate(self) -> None:
+        """材料没变也另开一轮：当前轮已记的范围关卡不替重拍授权，下一步回到范围关卡。"""
+        self.complete_it("story_written")
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        before = data["rounds"][-1]
+        before["positioning"] = {"scope_text": "整单", "sr_related_ars": []}
+        before["scope_options"] = [{"key": "all", "label": "整体承载"}]
+        before["gates"] = [{"gate": "scope_decision", "chosen": "all", "outcome": "accepted", "by": "human"}]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        self.assertEqual(0, self.run_flow("reopen").returncode)
+        rounds = self.contract()["rounds"]
+        self.assertEqual(len(data["rounds"]) + 1, len(rounds))
+        self.assertEqual(before["materials"], rounds[-1]["materials"], "重拍沿用本轮的材料基准")
+        self.assertEqual([], rounds[-1]["gates"])
+        status = self.run_flow("status")
+        payload = json.loads(status.stdout[status.stdout.index("{"):])
+        self.assertEqual("await_gate:scope_decision", payload["next"],
+                         "重开之后没回到范围关卡：当前轮已记的范围替重拍授权了")
+
+    def test_reopen_waits_for_an_open_update(self) -> None:
+        """update 这一轮开着时不重拍：它沿用已定范围，先收口这一轮。"""
+        self.complete_it("story_written")
+        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["update"] = {"open": "20260926-000000"}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        proc = self.run_flow("reopen")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("update", proc.stdout + proc.stderr)
+        self.assertEqual("story_written", self.contract()["status"])
 
     def test_reopen_from_complete_has_nothing_to_undo(self) -> None:
         """还没成文时没有成文登记可撤——留痕里就是空的，不编造。"""
@@ -447,7 +475,7 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.round_now()
         proc = self.run_flow("reopen")
         self.assertEqual(1, proc.returncode)
-        self.assertIn("不在收口态", (proc.stdout or "") + (proc.stderr or ""))
+        self.assertIn("还没收口", (proc.stdout or "") + (proc.stderr or ""))
 
     def test_reopen_says_what_to_do_next(self) -> None:
         """重开之后先做什么由现状回答——不说的话作者会直接去登记，而那一步会被拒。"""
@@ -471,15 +499,20 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertIn("下一步", out)
         self.assertIn(action[:16], out, "登记被拒时给的下一步与 status 不是同一句")
 
-    def test_registering_twice_says_it_is_one_time(self) -> None:
-        """已经成文登记过再来一次：说清只登记一次、要改走 reopen，不说成「没收口」。"""
+    def test_registering_again_replaces_the_registration(self) -> None:
+        """已经登记过再跑 `story`：上一次登记作废、按当前内容重新登记。
+
+        这里盘上没有 story.md，登记失败——状态停在已收口、未登记，说的是缺 story，
+        不是「只登记一次」，也不是「没收口」。
+        """
         self.complete_it("story_written")
         proc = self.run_flow("story")
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertEqual(1, proc.returncode, out)
-        self.assertIn("只登记一次", out)
-        self.assertIn("reopen", out)
+        self.assertIn("重新登记", out)
+        self.assertIn("AR/story.md 不存在", out)
         self.assertNotIn("没收口", out)
+        self.assertEqual("complete", self.contract()["status"])
 
 
     def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
@@ -1123,7 +1156,7 @@ class TheManifestIsNotAFrozenLedger(unittest.TestCase):
     """
 
     def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
-        self.assertNotIn("materials.json", STORY_SRC_FROZEN,
+        self.assertNotIn("AR/story-src/materials.json", STORY_REGISTERED,
                          "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
 
 
@@ -1143,7 +1176,7 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     def test_none_of_them_is_a_frozen_ledger(self) -> None:
         """三件都留，但都不随稿冻结——冻结的是「据以成文的依据」，它们还要继续变。"""
         for name in self.NAMES:
-            self.assertNotIn(name, STORY_SRC_FROZEN)
+            self.assertNotIn(f"AR/story-src/{name}", STORY_REGISTERED)
 
     def test_they_live_under_story_src_not_the_ar_root(self) -> None:
         """路径本身就是判据：`AR/` 根下只放交付文档，辅助件在 `story-src/` 这一层。"""
@@ -1156,7 +1189,7 @@ class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
     """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
 
     def test_drafts_are_not_frozen_into_the_ledger(self) -> None:
-        self.assertNotIn("drafts", STORY_SRC_FROZEN)
+        self.assertFalse(any("/drafts" in rel for rel in STORY_REGISTERED))
 
 
 class RegistrationReprojectsFirst(unittest.TestCase):

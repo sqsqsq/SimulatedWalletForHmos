@@ -59,11 +59,11 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 ```
 
 - **附录的接口、数据·配置·事件、改动边界、规约判定四节不用你写**：它们是 spec §9.1 与
-  `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。登记之后 spec 改了，`story-build project`
-  直接重投这几节，不必 reopen。
+  `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。登记之后 spec 改了，重跑 `story_flow.py story`：
+  它先重投这几节，再重新登记。
 - **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。
-  `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后作者写的部分冻结，
-  要改先 `reopen`。
+  `story` 自己跑编号、渲染 review、全篇 `check`，**不必自己先 build**。登记之后要改：改草稿、`chapter` 提交，
+  或改决策登记、写作设计，改完重跑 `story` 就是重新登记。
 - **④ 之前必须走完 ①–③**：spec 门禁核的是「三份产物齐备」，`story_written` 未登记即 BLOCKER。
 
 ### 闭环
@@ -81,7 +81,7 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 
 | 报告结论 | 你做什么 | 闭环方式 |
 |---|---|---|
-| 有阻断项 | 按阻断项返修：story 侧 `story_flow.py reopen` → 照它给的下一步走 → 改最早出错的那一处（Spec、决策登记、写作设计或章草稿）→ `chapter` → `story` 重新登记 | 完整 harness → 取新请求再派审 |
+| 有阻断项 | 按阻断项返修：改最早出错的那一处（Spec、决策登记、写作设计或章草稿）→ 改了章草稿的 `chapter` 提交 → `story` 重新登记 | 完整 harness → 取新请求再派审 |
 | PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完跑 `harness-runner.ts --revalidate --feature <名>` | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
 | PASS，改动改变业务口径、范围、验收、契约实体 | 改完完整跑 harness | 取新请求再派审 |
 | PASS，建议不在本阶段修 | 不改材料 | notes 逐条记建议与去处（下一阶段或评审） |

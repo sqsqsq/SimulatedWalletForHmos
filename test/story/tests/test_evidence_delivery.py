@@ -187,16 +187,24 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("未裁决", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
 
-    def test_open_decisions_are_listed_for_a_consequence_check(self) -> None:
+    def test_each_open_decision_comes_with_its_options_for_a_verdict(self) -> None:
+        """U41：每条 open 议题带澄清原文，审查逐条给结论——只给标题时两个用例都放过了替人选边的正文。"""
         src = self.src()
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
         (src / "decisions.json").write_text(json.dumps({"decisions": [
-            {"id": "D-2", "status": "open", "title": "超时后是否自动重试", "decider": "需求方"},
+            {"id": "D-2", "status": "open", "title": "超时后是否自动重试", "decider": "需求方",
+             "clarification": "**要定的事**：超时之后怎么办。\n\n1. 自动重试一次\n2. 提示用户手动重试"},
+            {"id": "D-3", "status": "open", "title": "宽限期多长", "decider": "产品负责人",
+             "clarification": "**要定的事**：宽限期。\n\n1. 24 小时\n2. 48 小时"},
             {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}]},
             ensure_ascii=False), encoding="utf-8")
         section = self.reader_task().split("### 仍开着的选择", 1)[1].split("### 登记成已定", 1)[0]
-        self.assertIn("按各选项的实际后果", section)
-        self.assertIn("- **D-2** 超时后是否自动重试（该谁定：需求方）", section)
+        self.assertIn("每一条都写一句结论", section)
+        self.assertIn("各选项（含保持待定）都会有的行为才是共同要求", section)
+        for head, option in (("#### D-2 超时后是否自动重试", "  > 1. 自动重试一次"),
+                             ("#### D-3 宽限期多长", "  > 2. 48 小时")):
+            self.assertIn(head, section)
+            self.assertIn(option, section, "选项原文没带到审查者手上")
         self.assertNotIn("D-1", section, "已定的归下一节")
 
     def test_upstream_diagrams_sit_next_to_the_story_diagram_that_carries_them(self) -> None:

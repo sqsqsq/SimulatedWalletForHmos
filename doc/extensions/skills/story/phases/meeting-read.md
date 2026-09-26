@@ -127,4 +127,4 @@ python doc/extensions/skills/story/scripts/core/story_flow.py decide --feature <
 读新会议时先取 `doc-refresh.md` 里当前的结果与它的来源，再判断这一场是补充、修正还是冲突：
 **不预设会议一定比文档新，也不按文件名或时间自动覆盖**。要推翻已经定过的事，在 `finding` 里
 说清推翻的是哪一条、依据是什么，并写 `question` 让人裁决；先后说不清或语义对不上的，保留成
-待裁决，不自己定。收口之后才到的会议，`status` 会让你先 `reopen`。
+待裁决，不自己定。收口之后才到的会议照样读；会上有要人定的话题时 `status` 会让你先 `reopen` 重拍，只是补充事实就读完照常改、重新登记。

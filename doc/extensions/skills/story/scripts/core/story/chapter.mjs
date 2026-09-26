@@ -25,7 +25,7 @@ import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections,
 } from './document.mjs';
-import { fail, readRaw, readText, refuseIfFrozen } from './context.mjs';
+import { fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
@@ -272,12 +272,11 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
  * 要改第五章就替换第五章，不重新输出整篇：整篇重出是全有或全无，
  * 中途断了磁盘上什么都没有。
  *
- * 顺序：冻结守卫 → 读候选与 Story → 唯一章锚 → 剥指导 → 剥自己的标题 →
+ * 顺序：读候选与 Story → 唯一章锚 → 剥指导 → 剥自己的标题 →
  * 附录候选在内存投影 → 写前核对 → 替换目标区 → 接续。**核对在写盘之前**：
  * 判不过时 Story 与候选文件都不变，作者改草稿重跑就是。
  */
 export function cmdChapter(ctx) {
-  refuseIfFrozen(ctx, 'chapter');
   const title = String(ctx.args.chapter ?? '').trim();
   if (!title) fail('缺 --chapter <章名>：要替换哪一章');
   const from = ctx.args.from;

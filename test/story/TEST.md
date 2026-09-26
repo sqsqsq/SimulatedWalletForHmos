@@ -270,6 +270,10 @@ python test/story/scripts/run_multi_case.py conclude --suite-id story-suite-2026
 这是一条有效观测（模型自认为完成而凭证不齐），不是装置失败：退出码 0 表达的是「这次运行没有装置或 CLI 层面的故障」，
 产物到不到位由 `target_reached` 与 `target_missing` 单独说，评测看那两个。
 
+`conclude` 在模型这一轮结束时生效：worker 在轮与轮之间读收工请求。模型在一轮里持续运行时收不了工——
+宿主看到它已陷入循环（同一件事反复做、runlog 里自述绕不出去），按故障向用户报告现象与依据，由用户决定是否 `stop`；
+强停之后照常 `finalize` 回灌，终态如实记 `stopped`，诊断写进本轮评审意见。
+
 ### 3.6 等你回话没有上限
 
 worker 停在 `awaiting_reply` 会一直等，不设时限；它等的是宿主有没有把回复放进去，而宿主会被打断、会跨会话。每 5 分钟发一条

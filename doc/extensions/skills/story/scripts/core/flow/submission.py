@@ -133,14 +133,17 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
     design_bytes = design_path.read_bytes() if design_path.is_file() else None
     total = sum(len(r.get("gates", [])) for r in contract["rounds"])
     if after_complete(contract):
-        if contract.get("status") == "complete" and design_bytes == cand_bytes:
+        if design_bytes == cand_bytes:
             log("已经收口过了：AR/design.md 就是这份提取稿，没有重复提交")
-            return {"status": "complete", "rounds": len(contract["rounds"]),
+            return {"status": contract.get("status"), "rounds": len(contract["rounds"]),
                     "gates": total, "committed": False}
-        raise FlowError(
-            "本轮已经收口，AR/design.md 里是已提交的那一份提取稿。要换掉它，"
-            "先跑 `story_flow.py reopen` 重新走范围与收口——下游从收口那一刻起就在读它，"
-            "悄悄换一份，读到的和登记的就成了两份")
+        # update 这一轮修订提取稿是它的本分（`phases/update.md` 第 5 步），范围沿用本单已定的；
+        # 其余时候换提取稿就是换范围的依据，先重拍范围
+        if not in_update(contract):
+            raise FlowError(
+                "本轮已经收口，AR/design.md 里是已提交的那一份提取稿。要换掉它，"
+                "先跑 `story_flow.py reopen` 重拍范围——下游从收口那一刻起就在读它，"
+                "悄悄换一份，读到的和登记的就成了两份")
 
     current = contract["rounds"][-1]
     base = (current.get("materials") or {}).get("digest")
@@ -234,11 +237,14 @@ def cmd_complete(feature_root: Path, feature: str, from_arg: str | None) -> dict
         done.append("/".join(registry.MANIFEST))
 
         # 收口时的 design.md 身份登记：`sha256` 用于认出「上一轮的提取稿」——重试与下一轮
-        # 提交都拿它对身份。它不是冻结比对基准：归档会用评审载体覆盖这份文件，拿登记哈希去比
-        # 归档后的当前 AR 必然误报；成文依据的冻结比对走 story_src_digests 那一套。
+        # 提交都拿它对身份。它不是成文登记的比对基准：归档会用评审载体覆盖这份文件，拿登记哈希去比
+        # 归档后的当前 AR 必然误报；成文登记的比对走 story_digests 那一套。
         contract["design"] = {"sha256": registry.file_digest(design_path)}
         contract["design_generated_at"] = now()
         contract["status"] = "complete"
+        # 提取稿换了，story 据以成文的依据跟着换：上一次成文登记作废，story 重新登记
+        for key in ("story_written_at", "story_digests"):
+            contract.pop(key, None)
         save(feature_root, contract)     # **最后写**，同样在提交失败处理内：
         # 这里断了，清单已是新基准而流程契约还是旧的——重跑同一条命令，
         # 预检会凭备份或登记身份认出这个中间态，直接补上这次保存。

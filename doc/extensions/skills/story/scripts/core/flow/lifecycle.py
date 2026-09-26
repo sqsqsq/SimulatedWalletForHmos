@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_SRC_FROZEN, ledger_digest, load, log,
+    CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_REGISTERED, ledger_digest, load, log,
     now, require, round_gates, save)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
@@ -47,7 +47,7 @@ def cmd_status(feature_root: Path) -> dict:
         "exists": True,
         "schema": contract.get("schema"),
         "status": contract.get("status"),
-        # 成文登记的时刻：story 定稿于这一刻，重开会把它撤掉
+        # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
@@ -82,18 +82,22 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
 
     **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`
-    统一铺——作者写业务名标题就够了。登记之后 story 冻结，所以编号必须在这之前完成；
-    命令幂等，已经对的文件一个字节都不改。
+    统一铺——作者写业务名标题就够了。编号在登记之前完成；命令幂等，已经对的文件一个字节都不改。
 
-    **只登记一次**：story 定稿于评审时点，评审回流只改 spec.md，不动 story。
+    **可以重复登记**：登记记下 story 与它的决策登记、写作设计此刻的指纹。之后改了任何一份
+    （spec 阶段返修、update 修订），改完重跑本命令就是重新登记——上一次登记先作废，
+    检查通过再记新的一次；检查没过时状态停在已收口、未登记，照报错改完再跑。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
     if status == "story_written":
-        raise FlowError("成文态已经登记过：story 定稿于登记那一刻，只登记一次。"
-                        "要改先跑 `story_flow.py reopen`，按它给出的下一步走")
+        for key in ("story_written_at", "story_digests"):
+            contract.pop(key, None)
+        contract["status"] = status = "complete"
+        save(feature_root, contract)
+        log("上一次成文登记已作废，按当前内容重新登记")
     if status != "complete":
-        # reopen 之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
+        # 重拍范围之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
         # 下一步要按磁盘现状读材料；读不出来时「还没收口」照样先说，原因附在后面。
         try:
             _, action = next_step(feature_root, contract, live_materials(feature_root))
@@ -146,16 +150,15 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
-    # 台账随稿冻结：story 定稿了，它据以成文的账本也定稿了。指纹记在这里，
-    # 之后 `story-build check` 拿它核对，`skeleton`、`project` 与 `chapter` 直接拒绝重算。
+    # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
+    # 与流程路由拿它核「登记之后改过没有」，改过就重跑 `story` 重新登记。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
-    # 写出来的」的现场；`reopen` 撤销登记后作者要改某一章，手上也才有可改的东西。
-    src = feature_root / "AR" / "story-src"
-    contract["story_src_digests"] = {
-        name: ledger_digest(src / name) for name in STORY_SRC_FROZEN
+    # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
+    contract["story_digests"] = {
+        rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED
     }
     save(feature_root, contract)
     baseline = record_baseline(feature_root)

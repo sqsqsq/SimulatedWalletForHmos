@@ -126,7 +126,22 @@ export function chapterNumberProblems(text, templates) {
 }
 
 /**
- * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，附录是全文最后一章。
+ * 扩展章在全文的位置：framework 模板末尾的锚点章之后只有附录。spec 与 plan 共用这一条——
+ * 两边第 8 章不是同一章，按章号认要各写一套；「之后只有附录」对两边都成立。
+ */
+function anchorPositionProblems(doc, anchor, name) {
+  const h2 = doc.headings.filter(h => h.level === 2);
+  const at = h2.indexOf(anchor);
+  const after = h2.slice(at + 1).filter(h => !/^附录/.test(h.name));
+  if (!after.length) return [];
+  const before = h2.slice(0, at);
+  return [`「${anchor.raw}」要在最后一个设计章之后、附录之前——现在它`
+    + (before.length ? `在「${before.at(-1).raw}」之后，` : '是第一章，')
+    + `后面还有「${after.map(h => h.raw).join('」「')}」。把「${name}」整章挪到「${after.at(-1).raw}」之后`];
+}
+
+/**
+ * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，锚点之后只有附录，附录是全文最后一章。
  * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
  */
 export function hostAnchorProblems(text, isStory, formDoc) {
@@ -139,6 +154,7 @@ export function hostAnchorProblems(text, isStory, formDoc) {
     problems.push('缺「9. 宿主扩展治理项」章——它在「8. 验收标准」之后，'
       + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`);
   } else {
+    problems.push(...anchorPositionProblems(doc, anchor, '9. 宿主扩展治理项'));
     for (const [re, name] of children) {
       const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
       if (h && h !== childHeading(doc, anchor, re)) {
@@ -155,7 +171,7 @@ export function hostAnchorProblems(text, isStory, formDoc) {
 }
 
 /**
- * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，知识决策是它的 9.1、埋点是 9.2；
+ * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，之后只有附录；知识决策是它的 9.1、埋点是 9.2；
  * 9.1 下三节——设计模式选型、规约义务、项目知识影响——都要在。层级由找到的父标题推出。
  */
 const DECISION_PARTS = ['设计模式选型', '规约义务', '项目知识影响'];
@@ -167,13 +183,14 @@ export function hostExtensionProblems(planText, formDoc) {
     return ['plan.md 缺「9. 宿主扩展」章——它在「8. spec 功能映射表」之后，'
       + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${formDoc}）`];
   }
+  const position = anchorPositionProblems(doc, anchor, '9. 宿主扩展');
   const decision = childHeading(doc, anchor, /^知识决策/);
   if (!decision) {
     const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
-    return [elsewhere
+    return [...position, elsewhere
       ? `「知识决策（设计输入）」要写成「9. 宿主扩展」的下一级小节 9.1——现在是「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」`
       : '「9. 宿主扩展」下缺「9.1 知识决策（设计输入）」——设计模式选型、规约义务、项目知识影响三节写在它下面'];
   }
-  return DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
-    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`);
+  return [...position, ...DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
+    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`)];
 }

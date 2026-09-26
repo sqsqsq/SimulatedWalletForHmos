@@ -6,9 +6,9 @@
 那是模型读原文的事（方法在 `phases/update.md`）。
 
 顺序是**先定输入，再检测**：`inputs` 报告上游与本地各有什么（不建任何东西），
-模型据此在第一级关卡问人要不要补料；人答完、料登记进本轮，`prepare` 才比一遍。
-真的一个字节没变、比较也完整、上一轮没留下没做完的事，就报「未检测到变化」退出，
-不进语义流程、不碰业务文件。
+模型据此在第一级关卡问人要不要补料；人答完、料登记进本轮，`prepare` 比一遍并开这一轮。
+比较结果是交给模型的事实：一个字节没变也照常开轮，变化意味着什么、要不要改由模型读原文判；
+没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
 **没查到不等于没变**：比较基准缺席、来源读不到，都单列出来说清可查范围，不许混进「无变化」。
 
 落点在 `AR/story-src/updates/<id>/`，它不在材料扫描的范围里（材料只认合同声明的正文源、
@@ -30,7 +30,7 @@ from materials import registry
 
 from flow.routing import inputs_answer, material_state
 from flow.state import (CONTRACT, FlowError, STORY, REVIEW, system_requirement,
-                        load, log, now, round_gates, save)
+                        load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
 UPDATES = ("AR", "story-src", "updates")
@@ -172,25 +172,6 @@ def _write_diffs(feature_root: Path, base_dir: Path | None, changed: list[str], 
         written += 1
     return written
 
-
-def _note_prepare(feature_root: Path, comparison: str) -> None:
-    """这一次检测完了、结论是什么 —— **机械留痕，不是业务产物**。
-
-    「无变化」那条路按设计什么都不建、什么都不删，于是外面看不出它跑过没有。
-    留一行点开头的痕迹在过程目录里：不进材料清单、不进比较集合、下一轮照样被忽略，
-    但测试装置据它认得出「这一轮走完了，结论是没变化」——
-    不然一次「没什么要改」的更新会停在那里等人来收，而它其实早就结束了。
-    """
-    base = _updates_dir(feature_root)
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-        (base / ".last-prepare.json").write_text(
-            json.dumps({"comparison": comparison, "at": now()}, ensure_ascii=False),
-            encoding="utf-8")
-    except OSError:
-        pass          # 留痕失败不该让一次正常的检测失败
-
-
 def _contract(feature_root: Path) -> dict:
     contract = load(feature_root)
     if contract is None:
@@ -210,9 +191,8 @@ def _resume(records: list[tuple[str, dict]]) -> dict | None:
     return None
 
 
-def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]],
-             request: str | None) -> dict:
-    """四类输入一次收齐：交付件与上游正文对上次的差异、读不到的、收件箱的材料事实、人的要求。
+def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]) -> dict:
+    """输入一次收齐：交付件与上游正文对上次的差异、读不到的、收件箱的材料事实、上次以来新导入的原件。
 
     `inputs` 与 `prepare` 读的是同一份——两处各收一遍，迟早一处说有变化、一处说没有。
     材料事实就是 init 的第一级关卡用的那两个（`material_state`），不另算一套。
@@ -228,7 +208,25 @@ def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]
             "changed": diff["added"] + diff["modified"] + diff["removed"],
             "superseded_hint": _superseded_hint(feature_root, state["pending"]),
             "pending": state["pending"], "materials_changed": registered and state["changed"],
-            "request": str(request or "").strip() or None}
+            "imported": _imported_since(feature_root, records)}
+
+
+def _sources(feature_root: Path) -> list[dict]:
+    """已并入正文的原件（文件名、摘要、归类），取自材料清单。读不出清单时为空——那由 `round` 报。"""
+    try:
+        manifest = registry.read(feature_root)
+    except registry.MaterialError:
+        return []
+    return [{"file": s.get("file"), "sha256": s.get("sha256"), "class": s.get("class")}
+            for s in manifest.get("sources") or [] if s.get("ingested")]
+
+
+def _imported_since(feature_root: Path, records: list[tuple[str, dict]]) -> list[dict]:
+    """上一次收口（或成文基准）以来新并入正文的原件，**含只取图的**：它们的正文不进八项比较，
+    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。"""
+    closed = _latest(records, "closed")
+    seen = {(s.get("file"), s.get("sha256")) for s in ((closed[1].get("sources") if closed else None) or [])}
+    return [s for s in _sources(feature_root) if (s["file"], s["sha256"]) not in seen]
 
 
 def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
@@ -257,11 +255,6 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
             out.append({"new": new, "same_class": olds,
                         "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backups/local/"})
     return out
-
-
-def _nothing(facts: dict) -> bool:
-    return (facts["diff"]["complete"] and not facts["changed"] and not facts["unreadable"]
-            and not facts["pending"] and not facts["materials_changed"] and not facts["request"])
 
 
 RECEIPT = ("AR", "story-src", "fetched.json")
@@ -297,8 +290,7 @@ def _fetched_this_round(feature_root: Path, contract: dict,
     return not stamp or fetched >= datetime.fromisoformat(stamp)
 
 
-def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
-                      request: str | None = None) -> dict:
+def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path) -> dict:
     """输入阶段：**报告，不建任何东西**。人还没说要不要补料，现在比出来的不是最终的变化。
 
     在流程契约上记一笔 `update.stage = inputs`：路由据它把这一次停在第一级关卡——
@@ -314,14 +306,14 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
         # 系统上的评审回稿与改版正文只能经取材进来：没取就比，比出来的是上一次的世界
         raise FlowError("系统需求这一轮还没取上游：先按 SKILL「更新」② 取上游，落点用 "
                         "`update --action status` 返回的 paths，取完再报输入")
-    facts = _collect(feature_root, contract, records, request)
+    facts = _collect(feature_root, contract, records)
     contract["update"] = {**(contract.get("update") or {}), "stage": "inputs", "inputs_at": now(),
                           "inputs_from": len(round_gates(contract))}
     save(feature_root, contract)
     return {"stage": "inputs", "paths": _paths(project_root, feature_root), "changed": facts["changed"], "unreadable": facts["unreadable"],
             "baseline": facts["diff"]["complete"], "pending": facts["pending"],
             "superseded_hint": facts["superseded_hint"],
-            "materials_changed": facts["materials_changed"],
+            "materials_changed": facts["materials_changed"], "imported": facts["imported"],
             "upstream": _receipt(feature_root) if system else None,
             "action": ("`upstream` 是最近一次取材的回执，展示它的时刻；本次取材成功与否以那次取材自己的结果为准。"
                        if system else "本地需求没有上游；")
@@ -330,17 +322,17 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
                       "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare`"}
 
 
-def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
-    """输入定了之后比一遍、该留的留下、该说的说清楚。
+def cmd_update_prepare(feature_root: Path) -> dict:
+    """输入定了之后比一遍、开这一轮、该留的留下、该说的说清楚。
 
-    四种去向，`comparison` 直说是哪一种：
+    `comparison` 直说比出来的是哪一种：
 
     - `resume`   上一轮还开着。**不新建镜像**——新的会把旧的恢复依据盖掉；
-    - `unchanged` 八项都没变、收件箱没有未并入的原件、比较完整、也没有人明确要求：什么都不建，退出；
+    - `unchanged` 八项都没变、也没有新并入的原件：照常开轮，要不要改由模型按原文与人的这次要求判；
     - `incomplete` 比较基准缺席或来源读不到：说清可查与不可查的范围，交模型判当前一致性；
     - `changed`  有变化：本轮镜像留着不动，差异与位置交给模型。
 
-    **返回的全是机械事实**：哪几份文件跟上次不一样、收件箱里什么还没并入、镜像在哪。
+    **返回的全是机械事实**：哪几份文件跟上次不一样、新并入了哪些原件、镜像在哪。
     这些事实不表示任何业务结论——「变化意味着什么」由模型读原文回答。
     """
     contract = _contract(feature_root)
@@ -355,23 +347,13 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     if resumed:
         return resumed
 
-    facts = _collect(feature_root, contract, records, request)
+    facts = _collect(feature_root, contract, records)
     if facts["pending"]:
         raise FlowError("收件箱里还有没并入正文的原件，先导入、`round` 登记到本轮，再 prepare："
                         + "、".join(facts["pending"]))
     current, unreadable, diff, changed = (facts["current"], facts["unreadable"],
                                           facts["diff"], facts["changed"])
-    pending, asked = facts["pending"], bool(facts["request"])
-
-    if _nothing(facts):
-        # 本次什么都没建，所以也没有要删的临时副本；说清楚「比过了、真没变」。
-        # 输入阶段的记号到此用完：留着的话路由会一直把这个单停在补料关卡。
-        contract["update"] = {k: v for k, v in update.items() if k not in ("stage", "inputs_at", "inputs_from")}
-        save(feature_root, contract)
-        _note_prepare(feature_root, "unchanged")
-        return {"comparison": "unchanged", "compared": len(current),
-                "action": "与上次已处理的版本逐份比过，没有变化，收件箱也没有未并入的原件，"
-                          "没有没做完的更新。这一轮不改任何业务文件，不进语义流程。"}
+    pending, imported = facts["pending"], facts["imported"]
 
     # id 用时间是为了人一眼看得出先后；撞名就加序号，**不把「同一秒跑了两次」做成失败**。
     stem = now().replace("-", "").replace(":", "").replace("T", "-")[:15]
@@ -399,18 +381,22 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     # 而改它的正是我们自己——真正的冲突会被这条噪声埋掉。
     shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
     # 开这一轮时已闭环的阶段：收口时它们要仍然闭环。本来没闭环的阶段不是这一轮必须推进的对象。
-    closed_before = [f["phase"] for f in _phase_facts(feature_root) if f.get("closure") == "closed"]
+    # 各阶段此刻的审查对象一并记下：收口时对象变了的阶段要有当前对象的审查结论。
+    facts_now = _phase_facts(feature_root)
+    closed_before = [f["phase"] for f in facts_now if f.get("closure") == "closed"]
     record = {"id": rid, "opened_at": now(), "status": "open", "phases_before": closed_before,
+              "subjects_before": {f["phase"]: f.get("subject") for f in facts_now if f.get("subject")},
+              "story_registered": contract.get("status") == "story_written",
               "files": current, "unreadable": unreadable, "comparison": diff,
-              "materials": {"pending": pending, "changed": facts["materials_changed"]},
-              "request": facts["request"],
+              "materials": {"pending": pending, "changed": facts["materials_changed"],
+                            "imported": imported},
               "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": mirrored}}
     (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
 
-    # 有东西要处理就是 changed；走到这里却什么都没有，只能是基准缺席或来源读不到。
-    material = bool(pending or facts["materials_changed"])
-    kind = "changed" if (changed or material or asked) else "incomplete"
+    material = bool(pending or facts["materials_changed"] or imported)
+    kind = ("changed" if (changed or material)
+            else "incomplete" if (not diff["complete"] or unreadable) else "unchanged")
     lines = []
     if changed:
         lines.append("变了的：" + "、".join(changed))
@@ -422,13 +408,15 @@ def cmd_update_prepare(feature_root: Path, request: str | None = None) -> dict:
     if unreadable:
         lines.append("读不到：" + "、".join(f"{k}（{why}）" for k, why in unreadable.items())
                      + "——这是缺口，不是「没有变化」，更不是「它被删了」")
-    if asked and not changed and not material:
-        # 文件一个字节没变，但人明确要求改一件事：这不是「无变化」，要走语义流程。
-        lines.append("文件没变，但这一轮有人明确要求改的事，按它处置")
-    _note_prepare(feature_root, kind)
+    if imported:
+        lines.append("上次以来新并入正文的原件：" + "、".join(f"{s['file']}（{s['class']}）" for s in imported)
+                     + "——只取图的原件正文不进上面的比较，读原件判它带没带来业务变化")
+    if kind == "unchanged":
+        lines.append("与上次已处理的版本逐份比过没有变化：按原文与人这次的要求判要不要改，"
+                     "没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口")
     log(f"update {rid}：镜像 {mirrored} 份、差异 {diffs} 份")
     return {"comparison": kind, "update": rid, "changed": changed, "pending": pending,
-            "superseded_hint": facts["superseded_hint"],
+            "imported": imported, "superseded_hint": facts["superseded_hint"],
             "unreadable": unreadable, "baseline": diff["complete"], "diffs": diffs,
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
@@ -456,11 +444,13 @@ def _phase_facts(feature_root: Path) -> list[dict]:
             out.append({"phase": phase, "readable": False, "why": str(exc)})
             continue
         subject = data.get("verifier_subject_id")
-        mode = (data.get("verifier_closure") or {}).get("mode")
+        closure = data.get("verifier_closure") or {}
+        mode = closure.get("mode")
         out.append({"phase": phase, "readable": True,
                     "closure": data.get("closure_status"),
                     "verdict": data.get("verdict"),
                     "subject": subject, "closure_mode": mode,
+                    "reviewed_subject": closure.get("reviewed_subject_id"),
                     "signals": [x.get("id") if isinstance(x, dict) else x
                                 for x in data.get("readiness_signals") or []],
                     "unadopted": mode == "completed_with_prior_review"
@@ -486,6 +476,19 @@ def _report_passed(reports: Path, subject: str | None) -> bool:
     fields = dict(line.split(":", 1) for line in blocks[0].strip().splitlines() if ":" in line)
     return (fields.get("verifier_subject_id", "").strip() == subject
             and fields.get("verdict", "").strip() == "PASS")
+
+
+def _reviewed(feature_root: Path, fact: dict) -> bool:
+    """这个阶段的当前审查对象有没有审查结论——与交付门（`hooks/shared/verifier-report.mjs`
+    的 `withoutCurrentReport`）同一条判定：当前对象有 PASS 报告；或 PASS 之后只改表达、
+    走了 framework 修正重验，沿用的那份历史报告是有效的 PASS。"""
+    reports = feature_root / fact["phase"] / "reports"
+    if _report_passed(reports, fact.get("subject")):
+        return True
+    return (fact.get("closure_mode") == "completed_with_prior_review"
+            and "script_revalidated" in (fact.get("signals") or [])
+            and fact.get("closure") == "closed" and fact.get("verdict") == "PASS"
+            and _report_passed(reports, fact.get("reviewed_subject")))
 
 
 def _paths(project_root: Path, feature_root: Path) -> dict:
@@ -544,17 +547,13 @@ def cmd_update_close(feature_root: Path) -> dict:
     if not notes.is_file() or not notes.read_text(encoding="utf-8").strip():
         raise FlowError(
             f"{rid} 还没有写 update-notes.md（或它是空的），不收口。"
-            "四段就够：当前依据、变化与影响、决定与修订、核对与剩余——"
+            "五段：当前依据、变化与影响、决定与修订、不变项与理由（一张表）、核对与剩余——"
             f"落点 AR/story-src/updates/{rid}/update-notes.md")
     text = notes.read_text(encoding="utf-8")
     if not unchanged_rows(text):
         raise FlowError(
             f"{rid} 的 update-notes.md 缺「不变项与理由」表，不收口：列出这次变化牵到却不用改的"
             "重要内容，每行写不变项与为什么不用改——防的是优化一处、损坏另一处")
-    changed = CHANGED_PHASES.search(text)
-    if not changed:
-        raise FlowError(f"{rid} 的 update-notes.md 没写「业务改动的阶段：<阶段，逗号分隔；没有写 无>」，不收口："
-                        "改了业务口径、范围、验收或契约实体的阶段要按新对象审一次，收口核它们有当前报告")
 
     # 报告写了、判了 PASS，阶段却仍标「沿用历史」：framework 不改写已闭环的 summary，
     # 只有再跑一次完整 harness 才采纳它。这时收口，这一轮就带着一个「没审」的闭环结束了。
@@ -569,12 +568,14 @@ def cmd_update_close(feature_root: Path) -> dict:
         raise FlowError(
             f"开这一轮时已闭环的阶段现在没闭环：{'、'.join(broken)}，不收口。"
             "按该阶段 summary 的 NEXT 走完（派审、返修或重跑 `harness-runner.ts --phase <阶段>`）再收口")
-    declared = [p.strip() for p in re.split(r"[、,，\s]+", changed.group(1)) if p.strip() in PHASES]
-    unreviewed = [ph for ph in declared
-                  if not _report_passed(feature_root / ph / "reports", (now_by.get(ph) or {}).get("subject"))]
+    # 开轮以来审查对象变了的阶段：当前对象要有审查结论（与交付门同一条判定）
+    before = rec.get("subjects_before") or {}
+    unreviewed = [ph for ph, subject in before.items()
+                  if ph in now_by and now_by[ph].get("subject") != subject and not _reviewed(feature_root, now_by[ph])]
     if unreviewed:
-        raise FlowError(f"{'、'.join(unreviewed)} 这一轮改了业务，却没有当前审查对象的 PASS 报告，不收口："
-                        "按 `phases/spec.md`「闭环」一节取新请求派审，完整跑一次 harness 采纳后再收口")
+        raise FlowError(f"{'、'.join(unreviewed)} 的审查对象在这一轮变了，当前对象还没有审查结论，不收口："
+                        "按 `phases/spec.md`「闭环」一节处置——改了业务的派审并完整跑一次 harness 采纳，"
+                        "PASS 之后只改表达的走修正重验")
     stuck = [f["phase"] for f in phases if f.get("unadopted")]
     if stuck:
         raise FlowError(
@@ -582,11 +583,20 @@ def cmd_update_close(feature_root: Path) -> dict:
             "逐个跑 `harness-runner.ts --phase <阶段> --feature <编号>`（不是 --sync-closure），"
             "读 summary 确认 semantic_not_reverified 已消失再收口")
 
+    # 开轮时已登记的 story，这一轮改过（登记之后改了，或提交提取稿使登记作废）就要按当前内容重新登记
+    contract = load(feature_root) or {}
+    drift = registration_drift(feature_root, contract)
+    if drift or (rec.get("story_registered") and contract.get("status") != "story_written"):
+        raise FlowError("story 这一轮改过，还没按当前内容重新登记，不收口："
+                        + (f"登记之后改过 {'、'.join(drift)}；" if drift else "")
+                        + "跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
+
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
 
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
+               sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
                phases=phases)
@@ -603,8 +613,6 @@ def cmd_update_close(feature_root: Path) -> dict:
                          if unreadable else "")}
 
 
-#: 这一轮改了业务的阶段：`业务改动的阶段：spec、plan`，没有写「无」。
-CHANGED_PHASES = re.compile(r"^业务改动的阶段[:：]\s*(.+?)\s*$", re.M)
 #: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。
 UNCHANGED_HEAD = re.compile(r"^#{2,4}\s+.*不变项")
 TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
@@ -641,7 +649,7 @@ def _keep(feature_root: Path, current: dict[str, str], after: Path) -> int:
 def record_baseline(feature_root: Path) -> str | None:
     """成文登记时留第一份比较基准：之后第一次 update 也比得出「原来怎么写」。
 
-    还没有任何 update 记录时写；reopen 后再登记，旧的成文基准换成这一份。
+    还没有任何 update 记录时写；重新登记时，旧的成文基准换成这一份。
     已经 update 过的，基准是上一轮收口留下的那一份。
     """
     records = _records(feature_root)
@@ -654,7 +662,7 @@ def record_baseline(feature_root: Path) -> str | None:
     current, unreadable = _scan(feature_root)
     kept = _keep(feature_root, current, root / "after")
     record = {"id": rid, "kind": "story_baseline", "status": "closed", "closed_at": now(),
-              "files": current, "unreadable": unreadable,
+              "files": current, "unreadable": unreadable, "sources": _sources(feature_root),
               "after": {"path": f"AR/story-src/updates/{rid}/after", "files": kept}}
     (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")

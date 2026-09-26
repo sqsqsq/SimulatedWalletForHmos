@@ -15,7 +15,7 @@ from materials import meeting, registry
 
 from flow.state import (
     CARRY_ALL, DESIGN_DRAFT, FlowError, STORY_CONTRACT, after_complete,
-    last_gate, round_gates, stage_of)
+    last_gate, registration_drift, round_gates, stage_of)
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
@@ -37,11 +37,11 @@ def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None 
         return ""
     more = f" 等 {len(pending)} 份" if len(pending) > 3 else ""
     head = f"收件箱里有 {len(pending)} 份还没导入的原件（{'、'.join(pending[:3])}{more}）："
-    if contract.get("status") == "complete" and not contract.get("archived"):
-        # 还没登记成文：这时的处置就是导入，与 `next` 给的动作是同一件事。
-        return head + "先导入、再重跑 `round` 登记，它们并进正文之前不起稿"
-    return head + ("story 已经冻结，要把它们纳入就先跑 `story_flow.py reopen`，"
-                   "再导入、重跑 `round`；不纳入就留在收件箱，本轮不受影响")
+    if contract.get("archived") and not (contract.get("update") or {}).get("open"):
+        return head + ("本单已归档送审，新材料走 `/story update` 承接；"
+                       "不纳入就留在收件箱，本轮不受影响")
+    return head + ("先导入、再重跑 `round` 登记到本轮（收口之后它不开新轮）；"
+                   "story 已登记的，据新料改完重跑 `story` 重新登记")
 
 
 def live_materials(feature_root: Path) -> dict:
@@ -268,14 +268,15 @@ def update_inputs_step(feature_root: Path, contract: dict,
         return ("refresh_round", "新料已并入正文：跑 `story_flow.py round` 登记到本轮（它不开新轮），"
                 "再 `story_flow.py update --action prepare`")
     return ("update_prepare", "输入已定：跑 `story_flow.py update --feature <名> --action prepare`"
-            "，它比较八项并开这一轮（全都没变就直接说没变）")
+            "，它比较八项并开这一轮")
 
 
 def update_open_step(feature_root: Path, contract: dict,
                      manifest: dict | None = None) -> tuple[str, str]:
-    """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**——收口前后都是这一句。
+    """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**。
 
-    update 这一轮里 reopen 回到的就是这一轮：新材料 `round` 登记进当前轮，`complete` 沿用已定范围。
+    新材料 `round` 登记进当前轮；提取稿改了由 `complete` 重新提交，范围沿用本单已定的；
+    story 改了（或登记因提交提取稿作废）就重跑 `story` 重新登记。
     """
     rid = contract["update"]["open"]
     state = material_state(feature_root, contract["rounds"][-1], manifest)
@@ -285,18 +286,32 @@ def update_open_step(feature_root: Path, contract: dict,
     if state["changed"]:
         return ("refresh_round", "这一轮新到的料已并入正文：跑 `story_flow.py round` 登记到本轮"
                 "（update 期间它不开新轮）")
+    # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人拍板
+    meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
+    if meeting_now:
+        return meeting_now
     if not after_complete(contract):
-        # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人重新拍板
-        meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
-        if meeting_now:
-            return meeting_now
         return ("run_complete", f"更新 {rid}：改完提取稿 `{'/'.join(DESIGN_DRAFT)}` 跑 "
                 f"`story_flow.py complete --feature <名> --from {'/'.join(DESIGN_DRAFT)}` 收口，"
                 "范围沿用本单已定的")
+    reregister = registration_step(feature_root, contract)
+    if reregister:
+        return reregister
     return ("update_in_progress",
             f"更新 {rid} 正在进行：按 `AR/story-src/updates/{rid}/update-notes.md` 的修订清单改，"
             "改法与收口见 `phases/update.md`「二、六个动作」"
             + frozen_tail(feature_root, contract, manifest))
+
+
+def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
+    """story 已写出来之后要不要重新登记：登记之后又改过，或状态停在已收口（update 里重新提交提取稿、
+    重新登记没过）。不需要返回 None。还在逐章写的单不走这里，由 spec 阶段那条路给下一步。
+    """
+    drift = registration_drift(feature_root, contract)
+    if drift or contract.get("status") == "complete":
+        return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
+                + "改完跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
+    return None
 
 
 def next_step(feature_root: Path, contract: dict | None,
@@ -316,15 +331,21 @@ def next_step(feature_root: Path, contract: dict | None,
         return update_inputs_step(feature_root, contract, manifest)
     # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
     late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
-            if after_complete(contract) else [])
+            if after_complete(contract) and stage != "update_open" else [])
     if late:
-        return ("reopen_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：一场会一轮，"
-                "先跑 `story_flow.py reopen`，再读会；有要人定的话题时摆给人一次"
+        return ("late_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：按 `phases/meeting-read.md` 读会。"
+                "会上有要人定的话题就先 `story_flow.py reopen` 重拍，在范围关卡摆给人；"
+                "只是补充事实就读会后照常改、重跑 `story` 重新登记"
                 + frozen_tail(feature_root, contract, manifest))
     if stage == "update_open":
         return update_open_step(feature_root, contract, manifest)
+    if stage in ("archived", "story_written"):
+        reregister = registration_step(feature_root, contract)
+        if reregister:
+            return reregister
     if stage == "archived":
-        return ("done", "本轮已归档送审。评审意见与上游新材料走 `/story update`；补料或改稿先 `story_flow.py reopen`"
+        return ("done", "本轮已归档送审。评审意见、上游新材料与改稿走 `/story update`；"
+                "要重拍范围才 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",

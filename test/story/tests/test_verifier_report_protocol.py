@@ -863,5 +863,53 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertNotIn("插件", text)
 
 
+
+class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
+    """U38：审查片段只随作者输入变化，登记一份报告不铸出新的审查对象。
+
+    framework 按材料摘要给审查对象寻址，钩子片段在摘要里。片段里写「上一份报告的路径」时，
+    每登记一份报告下一次就是新对象，同一份材料审了又审（09-26 实跑 auto 派审 20 次）。
+    """
+
+    setUp = ReviewTaskReachesTheVerifier.setUp
+    inject = ReviewTaskReachesTheVerifier.inject
+
+    def register_report(self, subject: str) -> None:
+        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        ledger = reports / "verifier.conclusions.json"
+        data = json.loads(ledger.read_text(encoding="utf-8")) if ledger.is_file() else {}
+        data[subject] = {"verdict": "PASS"}
+        ledger.write_text(json.dumps(data), encoding="utf-8")
+        (reports / f"verifier.report.{subject}.md").write_text("审查正文。\n", encoding="utf-8")
+
+    def decisions(self, title: str) -> None:
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        (src / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D1", "status": "open", "title": title, "decider": "需求方",
+             "clarification": "1. 甲\n2. 乙"}]}, ensure_ascii=False), encoding="utf-8")
+
+    def test_registering_reports_leaves_the_task_unchanged(self) -> None:
+        self.decisions("超时后怎么办")
+        first = self.inject()
+        self.register_report("a" * 64)
+        second = self.inject()
+        self.register_report("b" * 64)
+        third = self.inject()
+        self.assertEqual(first, second, "登记一份报告就改了审查片段：审查对象会跟着换代")
+        self.assertEqual(first, third)
+        self.assertIn("verifier.conclusions.json", self.overlay_text(),
+                      "上一份报告的找法要写在判据里，片段里不写")
+
+    def test_the_authors_input_still_moves_the_task(self) -> None:
+        self.decisions("超时后怎么办")
+        before = self.inject()
+        self.decisions("超时之后是否自动重试")
+        self.assertNotEqual(before, self.inject(), "决策登记改了，审查片段却没变")
+
+    def overlay_text(self) -> str:
+        return (self.root / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     unittest.main()

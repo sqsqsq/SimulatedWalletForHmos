@@ -1,9 +1,9 @@
 /**
- * 成文这一次的输入、落点与冻结守卫 —— 每条命令起手都从这里拿 `ctx`。
+ * 成文这一次的输入、落点与登记核对 —— 每条命令起手都从这里拿 `ctx`。
  *
- * 它只回答「这一次在哪个需求、读哪几份文件、还能不能写」，不判内容：判据在各职责模块。
- * 台账与冻结放在一起，因为它们是同一件事的两面——登记那一刻 story 与它的依据一起定稿，
- * 之后既不许命令重算，也不许有人绕过命令直接改文件。
+ * 它只回答「这一次在哪个需求、读哪几份文件、登记之后改过没有」，不判内容：判据在各职责模块。
+ * 台账与登记放在一起，因为它们是同一件事的两面——登记那一刻记下 story 与它的依据的指纹，
+ * 之后改了任何一份，重跑 `story` 重新登记。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -111,10 +111,10 @@ export function createContext(args) {
 }
 
 /**
- * 随稿冻结的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
+ * 随稿登记的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
  *
- * 文件名的真源在 `core/flow/state.py` 的 `STORY_SRC_FROZEN`：那几件是登记时要算指纹、
- * 登记后拒绝重算、归档时随稿走的同一批。冻结与存在性两处说的必须是同一批文件，
+ * 文件名的真源在 `core/flow/state.py` 的 `STORY_REGISTERED`：那几件是登记时要算指纹、
+ * 归档时随稿走的同一批（另加 story 本身）。登记核对与存在性两处说的必须是同一批文件，
  * 各写一份就会改一处忘一处。第二列是缺了怎么补。
  */
 const STORY_SRC_LEDGERS = [
@@ -136,32 +136,19 @@ export function requireLedgers(ctx) {
     .map(([key, how]) => `${path.basename(ctx[key])}（${how}）`);
   if (!missing.length) return;
   fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
-    + '  这几件是这份 story 据以成文的依据，随稿冻结、随稿归档，缺一件产物就没有依据。\n'
+    + '  这几件是这份 story 据以成文的依据，随稿登记、随稿归档，缺一件产物就没有依据。\n'
     + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
     + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
 }
 
 /**
- * 成文态登记了没有——登记那一刻 story 与它的台账一起定稿。
+ * 最近一次成文登记记下的指纹（键是相对需求目录的路径）；没登记过为空。
  *
- * @returns {{written:boolean, digests:Record<string,string|null>}}
+ * @returns {Record<string,string|null>}
  */
-function storyFrozen(ctx) {
+function registeredDigests(ctx) {
   const flow = readJson(ctx.flowPath, null);
-  return {
-    written: flow?.status === 'story_written',
-    digests: flow?.story_src_digests ?? {},
-  };
-}
-
-/** 台账冻结之后，重算它的命令（skeleton、project、chapter）一律拒绝执行。 */
-export function refuseIfFrozen(ctx, command) {
-  if (!storyFrozen(ctx).written) return;
-  fail(`story 已定稿登记（story_written），台账随稿冻结，${command} 不再执行。\n`
-    + '  定稿是一个时点的快照：那一刻的决策登记，就是这份 story 据以成文的全部依据；'
-    + '重算它们等于换掉已定稿产物的依据，而 story.md 不会跟着变。\n'
-    + '  确要改这一版：先跑 `story_flow.py reopen --feature <名>` 撤销成文登记，照它给的下一步走，'
-    + '改完再 `story_flow.py story` 重新登记。');
+  return flow?.status === 'story_written' ? (flow?.story_digests ?? {}) : {};
 }
 
 /** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
@@ -195,23 +182,32 @@ export function specText(ctx) {
   return text === null ? null : text.replace(/\r\n/g, '\n');
 }
 
-/** 台账没在登记之后被换过 —— 拒绝命令挡不住有人直接改文件，指纹核对补上那一面。 */
+/** 登记之后改过没有 —— story 与它的决策登记、写作设计对得上最近一次成文登记的指纹。 */
 export function ledgerDigestProblems(ctx) {
   const problems = [];
-  // ⓪b 台账没在登记之后被换过
+  // ⓪b 登记之后没再改过
   //
-  // story 定稿于登记那一刻，台账记的是它据以成文的依据，于是两者一起冻。
-  // 拒绝命令挡不住有人直接改文件——指纹核对补上那一面。
-  for (const [name, want2] of Object.entries(storyFrozen(ctx).digests)) {
-    const now = digestOf(readText(path.join(ctx.srcDir, name)));
-    if (want2 === null && !fs.existsSync(path.join(ctx.srcDir, name))) continue;
-    if (want2 !== now) {
-      problems.push(`${name} 与成文登记时的台账对不上——`
-        + 'story 定稿之后台账随稿冻结，它记的是这份 story 据以成文的依据；'
-        + '改了它，产物与依据就对不上了');
+  // 登记记下 story 与它据以成文的依据此刻的指纹；之后任一份改了，登记说的就不是现在这份。
+  // 改是正常的（返修、update 修订），改完重跑 `story` 重新登记。
+  // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `ledger_digest`。
+  for (const [rel, want2] of Object.entries(registeredDigests(ctx))) {
+    const file = path.join(ctx.featureRoot, ...rel.split('/'));
+    if (want2 === null && !fs.existsSync(file)) continue;
+    if (want2 !== digestOf(readRawOrNull(file))) {
+      problems.push(`${rel} 在成文登记之后改过：改完跑 \`story_flow.py story --feature <名>\` 重新登记`
+        + '（它会重投附录、编号、渲染 review 并全篇 check）');
     }
   }
   return problems;
+}
+
+/** 按字节原样读（不剥 BOM）：登记指纹与 `ledger_digest` 同口径，读不到为 null。 */
+function readRawOrNull(file) {
+  try {
+    return fs.readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
 }
 
 /** `AR/` 这一层的独立文件只有白名单那几个，辅助件进 `story-src/`；目录一律放过。 */

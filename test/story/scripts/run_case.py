@@ -571,23 +571,6 @@ def wait_at_update_checkpoint(out_dir: Path, feed, runlog, state: dict, *,
             state["awaiting_stale_sec"] = waited
             refresh_worker_lease(out_dir, state, force=True, event="update_checkpoint_stale")
 
-
-def last_prepare(feature: str) -> dict:
-    """上一次 `story_flow.py update` 检测出什么 —— 过程事实，不是业务产物。
-
-    「无变化快速退出」那一条不建操作记录（设计要求：什么都不建、什么都不删），
-    于是第二段就没有可观测的终点——worker 会一直等到宿主 conclude，
-    而那一趟其实早就结束了。这一份是 prepare 自己留的机械留痕（点开头、在过程目录里、
-    不进材料清单、不进比较集合），装置据它认出「这一轮检测完了、结论是没变化」。
-    """
-    path = (REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "updates"
-            / ".last-prepare.json")
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
-
-
 def review_closure(feature: str) -> dict:
     """各阶段审查闭环现在是哪一种 —— 第二检查点带给宿主，**只报事实**。
 
@@ -2045,16 +2028,6 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         state["update_closed_round"] = closed
                         result["update_round"] = closed
                         why = f"更新 {closed} 已收口"
-                    else:
-                        # 另一条正当的结束：这一轮检测下来真的没有变化——它不建操作记录，
-                        # 所以契约上那一笔不会动。不认它的话，一次「没什么要改」的更新
-                        # 会一直停在这里等人 conclude，而它其实早就走完了。
-                        seen = last_prepare(feature)
-                        if (seen.get("comparison") == "unchanged"
-                                and str(seen.get("at") or "") > str(state.get("resumed_at") or "")):
-                            state["update_unchanged"] = True
-                            result["update_unchanged"] = True
-                            why = "这一轮检测下来没有变化（未建操作记录）"
                     if why:
                         result["stop_reason"] = "update_checkpoint"
                         if start_phase == "story":
@@ -2063,7 +2036,6 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                             feed.emit("story_gates_prerun", **_run_story_gates(feature, out_dir, feed))
                         feed.emit("update_checkpoint", turn=turns,
                                   round=result.get("update_round"),
-                                  unchanged=bool(result.get("update_unchanged")),
                                   closure=review_closure(feature))
                         wait_at_update_checkpoint(out_dir, feed, runlog, state,
                                                   turn=turns, why=why)

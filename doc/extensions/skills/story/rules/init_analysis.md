@@ -202,7 +202,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 | 你自己的判断 | `python …/story_flow.py decide --feature <AR> --gate <本级> --propose --chosen <编号> --why "<理由>"`：记成提议，下次停等请人确认 |
 | S4 提取稿写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`（提交为 AR/design.md 并收口） |
 | **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
-| **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`，然后照常 `round` → `decide` → `complete`。它是唯一的回退出口，会留痕 |
+| **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`：另开一轮回到范围关卡（材料没变也一样），然后照常 `decide` → `complete` → `story` 重新登记。它只用于重拍范围，会留痕；只改 story 不用它 |
 
 ### 侧车文件
 

@@ -177,7 +177,8 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
   `success` 与逐份状态为准：失败就停在这里，报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
 - **③** 收件箱有新原件先导入、`round` 登记到本轮，再 ④；④ 见到未并入的原件会拒绝并列出文件。
 
-**④ 八项真的没变**就报「未检测到变化」退出，不碰任何业务文件；有变化才把本次执行前的现场留一份，交你读原文判断。
+**④** 把本次执行前的现场留一份并开这一轮，比较结果（八项哪几份变了、上次以来新并入的原件）交你读原文判断；
+八项都没变也照常开轮，没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
 整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
@@ -193,7 +194,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `AR/story-src/upstream.md` | 人工补录的本部件上游材料（外部输入） |
 | `ux-reference/` | 界面参考图与设计基准（外部输入） |
 | `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**；Spec 与成文从它的来源初筛起步） |
-| `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿冻结） |
+| `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
 | `AR/story-src/materials.json` | 手上有哪些材料、各自的身份与版本；收件箱里哪些原件还没并入正文 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
 | `AR/design.md` | 上游要**本部件（本 AR 范围内）**做什么（S4 提取件，/spec 的输入） |

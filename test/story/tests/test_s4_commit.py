@@ -136,12 +136,12 @@ class S4Case(unittest.TestCase):
         return self.flow("complete", "--from", source)
 
     def second_round_ready(self) -> None:
-        """第一轮收口后重开，第二轮由别的材料开出、AR 没换。"""
+        """第一轮收口后重开（另开第 2 轮），再由别的材料开出第 3 轮、AR 没换。"""
         self.ready_to_commit()
         self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.ok("reopen")
         self.prd.write_text("# 产品需求\n\n背景。\n\n第二轮补的。\n", encoding="utf-8")
-        self.ok("round")                       # 第 2 轮：没摆第一级选项就不停在那一级
+        self.ok("round")                       # 第 3 轮：没摆第一级选项就不停在那一级
         self.write_analysis()
         self.ok("round")
         self.answer("scope_decision", "1")
@@ -321,13 +321,12 @@ class OnlyRealUpstreamInputIsBackedUp(S4Case):
         self.assertEqual(1, len(self.backups()))
         self.assertEqual(UPSTREAM_AR, self.backups()[0].read_text(encoding="utf-8"))
 
-    def test_after_reopen_with_nothing_changed_the_next_step_is_to_close_again(self) -> None:
-        """范围与材料都没变：重开之后下一步就是重新收口——不是重走关卡，也不是直接去登记。"""
+    def test_after_reopen_with_nothing_changed_the_scope_gate_comes_back(self) -> None:
+        """材料没变也回到范围关卡：reopen 就是为重拍范围，已记的那一笔不替它授权（U39）。"""
         self.ready_to_commit()
         self.ok("complete", "--from", "AR/story-src/design-draft.md")
         result = self.ok("reopen")
-        self.assertEqual("run_complete", result.get("next"), result)
-        self.assertIn("complete", result.get("action", ""))
+        self.assertEqual("await_gate:scope_decision", result.get("next"), result)
 
 
 class PrecheckFailuresChangeNothing(S4Case):
@@ -454,7 +453,7 @@ class TheFinalSaveFailureStillRecovers(S4Case):
         self.ok("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", self.contract()["status"])
         self.assertEqual(1, len(self.backups()), "派生稿被当成上游输入备份了")
-        self.assertEqual(2, len(self.contract()["rounds"]), "恢复不得开出新一轮")
+        self.assertEqual(3, len(self.contract()["rounds"]), "恢复不得开出新一轮")
 
 
 class TheMaterialFactIsTakenOncePerTimepoint(S4Case):

@@ -1,10 +1,10 @@
 """宿主扩展章挂在 framework 预留的锚点下。
 
 锁住：
-  ① spec：扩展内容是「9. 宿主扩展治理项」的下一级小节（技术契约在走 /story 时必有），附录是全文最后一章；
-     扩展小节写成锚点外的独立二级章、附录夹在正文中间，都报出现在的位置；
-  ② plan：知识决策是「9. 宿主扩展」的 9.1，下挂设计模式选型、规约义务、项目知识影响；
-     写在锚点外、缺锚点、缺一节，各报各的；
+  ① spec：扩展内容是「9. 宿主扩展治理项」的下一级小节（技术契约在走 /story 时必有），锚点之后只有附录，
+     附录是全文最后一章；扩展小节写成锚点外的独立二级章、附录夹在正文中间、锚点排在设计章前面，都报出现在的位置；
+  ② plan：知识决策是「9. 宿主扩展」的 9.1，下挂设计模式选型、规约义务、项目知识影响，锚点之后只有附录；
+     写在锚点外、缺锚点、缺一节、锚点排在设计章前面，各报各的；
   ③ 两份模板自身满足上面的结构：模板与门禁同一份形态。
 """
 from __future__ import annotations
@@ -143,6 +143,15 @@ class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
         text = ANCHORED_SPEC.replace("### 9.2 规约约束要求", "#### 9.2 规约约束要求")
         self.assertIn("「规约约束要求」要写成", "\n".join(spec_problems(text)))
 
+    def test_the_anchor_written_before_the_design_chapters_is_placed(self) -> None:
+        """U40：09-26 实跑 car 的 plan 把扩展章写在全文最前，结构齐全、门禁没拦。spec 同一条判据。"""
+        head, rest = ANCHORED_SPEC.split("## 8. 验收标准\n\n略。\n\n", 1)
+        anchor, appendix = rest.split("## 附录", 1)
+        text = head + anchor + "## 1. 背景\n\n略。\n\n## 8. 验收标准\n\n略。\n\n## 附录" + appendix
+        got = "\n".join(spec_problems(text))
+        self.assertIn("「9. 宿主扩展治理项」要在最后一个设计章之后、附录之前——现在它是第一章", got)
+        self.assertIn("「8. 验收标准」", got)
+
 
 class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
     """②"""
@@ -161,6 +170,17 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
         got = plan_problems("# 计划\n\n## 1. 模块架构图\n\n略。\n")
         self.assertEqual(1, len(got), got)
         self.assertIn("plan.md 缺「9. 宿主扩展」章", got[0])
+
+    def test_the_anchor_written_before_the_design_chapters_is_placed(self) -> None:
+        head, anchor = ANCHORED_PLAN.split("## 8. spec 功能映射表\n\n略。\n\n", 1)
+        text = head + anchor + "\n## 1. 模块架构图\n\n略。\n\n## 8. spec 功能映射表\n\n略。\n"
+        got = plan_problems(text)
+        self.assertEqual(1, len(got), got)
+        self.assertIn("「9. 宿主扩展」要在最后一个设计章之后、附录之前——现在它是第一章", got[0])
+        self.assertIn("挪到「8. spec 功能映射表」之后", got[0])
+
+    def test_an_appendix_after_the_anchor_is_fine(self) -> None:
+        self.assertEqual([], plan_problems(ANCHORED_PLAN + "\n## 附录\n\n略。\n"))
 
     def test_each_missing_part_is_named(self) -> None:
         text = ANCHORED_PLAN.replace("#### 9.1.2 规约义务\n\n略。\n\n", "").replace("#### 9.1.3 项目知识影响", "#### 9.1.3 其它")
@@ -184,7 +204,9 @@ class TheTemplatesHaveTheShapeTheGatesCheck(unittest.TestCase):
         self.assertEqual([], spec_problems(text))
 
     def test_the_plan_template(self) -> None:
-        text = "# 计划\n\n" + self.headings(TEMPLATES / "plan-sections.md")
+        """模板文件后半是 contracts.yaml 与埋点的写法说明，进 plan.md 的是「## 9. 宿主扩展」那一章。"""
+        chapter = self.headings(TEMPLATES / "plan-sections.md").split("\n\n## `contracts.yaml`", 1)[0]
+        text = "# 计划\n\n## 8. spec 功能映射表\n\n" + chapter
         self.assertEqual([], plan_problems(text))
         for name in ("#### 9.2.1 共同约定", "#### 9.2.2 逐点实现", "#### 9.2.3 待登记与缺依据"):
             with self.subTest(name=name):

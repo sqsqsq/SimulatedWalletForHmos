@@ -335,7 +335,7 @@ function reviewActionLandings(ctx, byId, use) {
     }
     if (!decision) {
       problems.push(`${id} 是命中的评审动作，没写 decision——先在 AR/story-src/decisions.json 登记这件事的议题，`
-        + '再把议题 id 写进来；成文登记之后才判到的，先 reopen');
+        + '再把议题 id 写进来；成文登记之后才判到的，登记议题后重跑 `story` 重新登记');
     } else if (ids === null) {
       problems.push(`${id} 的 decision「${decision}」核不了：AR/story-src/decisions.json 读不出议题列表`);
     } else if (!ids.has(decision)) {

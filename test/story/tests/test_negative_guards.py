@@ -165,12 +165,13 @@ class LedgersMustAllExist(NegativeCase):
                 self.assertIn("不是把同伴文件删掉", out, "报错没堵住删台账那条路")
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
-        """清理、冻结、存在性三处说的必须是同一批文件——各写一份就会改一处忘一处。"""
+        """登记、存在性两处说的必须是同一批台账——各写一份就会改一处忘一处。"""
         flow = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/flow/state.py"
                 ).read_text(encoding="utf-8")
-        block = flow.split("STORY_SRC_FROZEN = (", 1)[1].split(")", 1)[0]
-        self.assertEqual(tuple(sorted(re.findall(r'"([^"]+)"', block))),
-                         tuple(sorted(self.LEDGERS)))
+        block = flow.split("STORY_REGISTERED = (", 1)[1].split(")", 1)[0]
+        ledgers = [rel.rsplit("/", 1)[1] for rel in re.findall(r'"([^"]+)"', block)
+                   if rel.startswith("AR/story-src/")]
+        self.assertEqual(tuple(sorted(ledgers)), tuple(sorted(self.LEDGERS)))
 
         build = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/context.mjs"
                  ).read_text(encoding="utf-8")

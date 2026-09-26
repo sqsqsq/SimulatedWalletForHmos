@@ -1067,45 +1067,44 @@ class TestRetiredThings(unittest.TestCase):
                          "包又往 `version:` 上面写演进记录了——那一段归装它的工程")
 
 
-class TestLedgerFrozenAfterRegistration(StoryBuildCase):
-    """成文登记之后台账随稿冻结——story.md 冻了，账本也得冻。
+class TestChangesAfterRegistration(StoryBuildCase):
+    """成文登记记下 story 与台账的指纹：之后改了任何一份，check 点名并指向重新登记。
 
     实测一轮：登记 00:04，spec 阶段 00:20 又跑了一次 init，登记那一刻的落点账被冲掉。
-    产物还在，它据以成文的依据换了一批，谁也看不出来。
+    产物还在，它据以成文的依据换了一批，谁也看不出来——指纹核对让它看得出来。
     """
 
-    FROZEN = ("decisions.json",)
+    REGISTERED = ("AR/story-src/decisions.json", "AR/story.md")
 
-    def ledger_digest(self, name: str) -> str | None:
-        path = self.src / name
+    def ledger_digest(self, rel: str) -> str | None:
+        path = self.root / "doc" / "features" / FEATURE / rel
         if not path.is_file():
             return None
         text = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def register(self) -> None:
-        """把成文态登记写进流程契约——含登记那一刻的台账指纹。"""
+        """把成文态登记写进流程契约——含登记那一刻的指纹。"""
         flow = {
             "schema": 4, "feature": FEATURE, "status": "story_written",
             "rounds": [{"round": 1, "gates": []}],
-            "story_src_digests": {n: self.ledger_digest(n) for n in self.FROZEN},
+            "story_digests": {rel: self.ledger_digest(rel) for rel in self.REGISTERED},
         }
         (self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def test_skeleton_is_refused_after_registration(self) -> None:
+    def test_a_changed_story_is_named_by_check(self) -> None:
+        """登记之后改了一章没重新登记：登记说的已经不是现在这份。"""
         self.init_audit()
+        story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+        story.write_text(story.read_text(encoding="utf-8") if story.is_file() else "# 需求\n", encoding="utf-8")
         self.register()
-        proc = self.run_build("skeleton")
-        self.assertEqual(1, proc.returncode, "登记之后 skeleton 还能跑，台账就没冻住")
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertIn("台账随稿冻结", out)
-        self.assertNotIn("撤登记", out, "登记单向，报错不该指向一个不存在的动作")
-        # 登记后改章只有 reopen 一条路（1.9.3 R8）：拒绝时要说出这条路
-        self.assertIn("story_flow.py reopen", out, "登记后被拒却不说怎么改")
+        story.write_text(story.read_text(encoding="utf-8") + "\n登记之后补的一句。\n", encoding="utf-8")
+        out = self.assert_check_names("AR/story.md 在成文登记之后改过")
+        self.assertIn("story_flow.py story", out)
 
     def test_a_changed_ledger_is_named_by_check(self) -> None:
-        """拒绝两条命令挡不住有人直接改文件——指纹核对补上那一面。"""
+        """直接改台账同样看得出来：指纹核对不靠拒绝命令。"""
         self.init_audit()
         self.register()
         path = self.src / "decisions.json"
@@ -1117,11 +1116,11 @@ class TestLedgerFrozenAfterRegistration(StoryBuildCase):
             "decider": "需求负责人",
         })
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        out = self.assert_check_names("与成文登记时的台账对不上")
-        self.assertIn("decisions.json", out)
+        out = self.assert_check_names("AR/story-src/decisions.json 在成文登记之后改过")
+        self.assertIn("story_flow.py story", out)
 
     def test_nothing_changes_before_registration(self) -> None:
-        """登记之前一切照旧——冻结只在定稿之后生效。"""
+        """登记之前一切照旧——登记核对只在登记之后生效。"""
         self.init_audit()
         self.assertEqual(0, self.run_build("skeleton").returncode,
                          "没登记就拦 skeleton，那是把正常流程拦了")

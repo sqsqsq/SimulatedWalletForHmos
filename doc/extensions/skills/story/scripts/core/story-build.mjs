@@ -11,7 +11,7 @@
  * ## 判据的边界
  *
  * 这里只判**确定性不变量**：章标题与顺序、编号、附录结构、图片身份与落点、
- * 语言红线、决策登记字段、材料清单形态、台账随稿冻结。凡是要读懂内容才判得了的
+ * 语言红线、决策登记字段、材料清单形态、登记之后改过没有。凡是要读懂内容才判得了的
  * ——讲清没讲清、贴不贴合、图题说的是不是这张图——都不在这里，归 verifier 的
  * 语义判据与真实结果观察。用字符串近似语义，模型只会照着字符串改。
  *
@@ -35,7 +35,7 @@ import {
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
-  createContext, fail, readJson, readText, refuseIfFrozen, specText,
+  createContext, fail, readJson, readText, specText,
 } from './story/context.mjs';
 import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
 import {
@@ -86,8 +86,8 @@ function cmdNumber(ctx) {
 // --------------------------------------------------------------------------
 
 /**
- * 附录机器区按当前真源重投。**登记之后也可以跑**：冻结的是作者写的部分，机器区一直跟着真源；
- * spec 改了，重投一次就跟上，不必 reopen。
+ * 附录机器区按当前真源重投。登记之后 spec 改了，直接重跑 `story_flow.py story`：
+ * 它先重投再登记，一步跟上。
  */
 function cmdProject(ctx) {
   const story = readText(ctx.storyPath);
@@ -106,8 +106,6 @@ function cmdProject(ctx) {
  * 他要先弄清哪些已经建了，才知道重跑安不安全。
  */
 function cmdSkeleton(ctx) {
-  refuseIfFrozen(ctx, 'skeleton');
-
   // ---- 预检 ①：流程走到位了没有 ----
   const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
   if (!flow) {
@@ -116,7 +114,7 @@ function cmdSkeleton(ctx) {
   }
   const flowGaps = flowProblems(ctx.featureRoot);
   if (flowGaps.length) fail(flowGaps.join('\n'));
-  if (flow.status !== 'complete') {
+  if (flow.status !== 'complete' && flow.status !== 'story_written') {
     fail(`本轮还没有收口（status: ${flow.status}）：按 status 的下一步走完 S3/S4，再起 story 骨架`);
   }
 

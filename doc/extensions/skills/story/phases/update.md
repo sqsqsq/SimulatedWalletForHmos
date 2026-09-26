@@ -24,12 +24,11 @@
 2. **报告输入**：
 
    ```text
-   python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs [--request "<人这次明确要求改的事>"]
+   python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs
    ```
 
    它只报告、不建任何东西：八项里哪几份跟上次已处理的版本不一样、读不到的、收件箱里还没并入正文的原件
-   （`pending`）、最近一次取材的回执（`upstream`：逐份 `fetched` / `same` / `absent` / `failed`）。
-   `--request` 只在**人明确要求改一件事**时带上（「把默认排序改成按时间」）；只是来看看有没有变化就不带。
+   （`pending`）、上次以来新并入正文的原件（`imported`）、最近一次取材的回执（`upstream`：逐份 `fetched` / `same` / `absent` / `failed`）。
 3. **材料关卡停一次**：按 `rules/init_analysis.md` S2a 盘点手上的料（不取的理由只能是范围不依赖它），
    缺口写进 `.material-gaps.json`，跑 `status` 取问法；向人报告上游哪几份变了、没变、取不到，本地已有什么，
    一句缺口判断，`ask.block` 原样摆出，问**这一次要不要补料**，停下等他。
@@ -46,18 +45,21 @@
 后者要如实说成缺口。`fetch` 命令失败（包括目标工程的对接实现没有这条命令）时，报出来并停下，不用别的写入方式代替取材：
 直接覆盖 `AR/review.md` 会把人刚写的意见吃掉。
 
-## 一、`prepare` 的四种去向
+## 一、`prepare` 比出的四种情况
 
-判定只看**人和上游会动的八项**：`RR/prd.md`、`SR/design.md`、`AR/design.md`、`inbox/`（按材料事实，
+比较只看**人和上游会动的八项**：`RR/prd.md`、`SR/design.md`、`AR/design.md`、`inbox/`（按材料事实，
 不按文件哈希）、`AR/story.md`、`AR/review.md`、`spec/spec.md`、`plan/plan.md`。决策登记、写作设计、
-验收与强契约是你据它们写出来的中间真源，是结果不是原因，不进判定。
+验收与强契约是你据它们写出来的中间真源，是结果不是原因，不进比较。另列上次以来新并入正文的原件（`imported`，
+含只取图的）：只取图的原件正文不进八项，它带没带来业务变化由你读原件判。
+
+比较结果是事实，不是结论：除了 `resume`，`prepare` 都开这一轮，要不要改、改哪里由你读原文与人这次的要求判。
 
 | `comparison` | 意思 | 你做什么 |
 |---|---|---|
-| `unchanged` | 八项与上次已处理的版本逐份比过都没变，收件箱没有未并入的原件，也没有没做完的更新 | **到此为止**。如实报告「未检测到变化」，不改任何业务文件，不往下读 |
+| `unchanged` | 八项与上次已处理的版本逐份比过都没变，也没有新并入的原件 | 读人这次的要求与评审回稿判要不要改；没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口，报告「核对后无需修订」 |
 | `resume` | 上一次 update 还开着 | 读它的 `before/` 与 `update-notes.md` 接着做完，或按记录还原现场。**不要另起一轮** |
 | `incomplete` | 比较基准缺席或有来源读不到 | 这不是「没有变化」。说清可查与不可查的范围，按当前材料与产物核一致性，**不补造「原来怎么写」** |
-| `changed` | 有文件变了、收件箱有未并入的原件，或人明确要求改 | 往下走第二节 |
+| `changed` | 有文件变了，或有新并入的原件 | 往下走第二节 |
 
 它同时留下 `AR/story-src/updates/<id>/before/`——**本次执行前的现场**（阶段报告与导入备份不在里面）。
 它是还原依据，不是给你读的材料；这一轮的新内容照常写在原来的位置，不要往 `before/` 里写东西。
@@ -156,8 +158,8 @@
 | 还没生成、或本次无权改的下游 | 说明后续要承担什么、为什么 | 不生成不存在的新阶段产物，不冒充已落实 |
 
 原材料与生产真源分开改。接口、验收、知识这些确定性投影仍由既有脚本产生，
-**不手改派生区去迎合检查**。story 侧的改动走 `reopen` → `complete` 收口（update 期间沿用本单已定范围）→
-改草稿、`chapter` 提交 → `story` 重新登记；update 期间 `reopen` 回到这一轮，新料 `round` 登记进当前轮，不开新轮。
+**不手改派生区去迎合检查**。AR 提取稿改了，`complete --from` 重新提交（范围沿用本单已定的）；
+story 侧的改动：改草稿、`chapter` 提交 → `story` 重新登记。新料 `round` 登记进当前轮，不开新轮。
 
 **传播清单**：一项变化逐一核这些位置，改了的与不用改的都要有去向——spec、acceptance、story、review、plan、
 contracts、use-cases、AR 提取件与写作设计、`context/facts.md`、会议判断与当前会议结果。
@@ -204,9 +206,10 @@ contracts、use-cases、AR 提取件与写作设计、`context/facts.md`、会�
 ## 五、与闭环的关系
 
 **哪些阶段要按新的审查对象审一次**：这一轮确实改了该阶段的业务口径、范围、验收或契约实体。
-在 update-notes 写一行「业务改动的阶段：spec、plan」（没有写「无」），`close` 核这些阶段有当前对象的 PASS 报告。
-只改表达、核对后未修订、只改了过程记录的阶段不派审。按阶段依赖来，先 spec 后 plan；spec 的返修改了 plan 的材料时，
-先把 plan 同步好再取它的请求。
+`close` 核开轮以来审查对象变了的阶段有审查结论，与交付门同一条判定：当前对象有 PASS 报告，
+或 PASS 之后只改表达、走了修正重验。只改表达、核对后未修订、只改了过程记录的阶段不派审。
+按阶段依赖来，先 spec 后 plan；spec 的返修改了 plan 的材料时，先把 plan 同步好再取它的请求。
+story 改过的，`close` 核它已按当前内容重新登记。
 
 派审、采纳与报告回来之后的处置，按 `phases/spec.md`「闭环」一节那张表，本页不另写一份。
 派审期间不动被审的材料；本宿主没有 verifier 时，如实报告「这次更新没有完成独立审查」，不用自审顶替。

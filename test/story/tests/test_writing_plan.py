@@ -649,37 +649,35 @@ class ALandedChapterStillGetsItsStarts(PlanCase):
         self.assertIn("### 失败提示", self.starts_in(out))
 
 
-class TheDesignFreezesWithTheStory(PlanCase):
-    """登记那一刻设计与决策登记一起定稿：之后改了 check 点名，reopen 撤销登记后可以再改。"""
+class TheDesignIsRegisteredWithTheStory(PlanCase):
+    """登记记下设计与决策登记的指纹：之后改了 check 点名、指向重新登记；重新登记之后不再点名。"""
 
     def register(self) -> None:
         sys.path.insert(0, str(FLOW.parent))
-        from flow.state import STORY_SRC_FROZEN, ledger_digest  # noqa: PLC0415
-        self.assertIn("story-template.md", STORY_SRC_FROZEN)
+        from flow.state import STORY_REGISTERED, ledger_digest  # noqa: PLC0415
+        self.assertIn("AR/story-src/story-template.md", STORY_REGISTERED)
+        feature_root = self.src.parent.parent
         path = self.src / "story-flow.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         flow["status"] = "story_written"
-        flow["story_src_digests"] = {n: ledger_digest(self.src / n) for n in STORY_SRC_FROZEN}
+        flow["story_digests"] = {rel: ledger_digest(feature_root / rel) for rel in STORY_REGISTERED}
         path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def test_an_edit_after_registration_is_named_and_reopen_releases_it(self) -> None:
+    def test_an_edit_after_registration_is_named_until_registered_again(self) -> None:
         self.write_plan()
         self.cmd("skeleton")
         self.register()
         self.plan.write_text(self.plan.read_text(encoding="utf-8")
                              .replace("先讲一次提交", "登记之后改了：先讲一次提交"), encoding="utf-8")
         _, out = self.cmd("check")
-        self.assertIn("story-template.md 与成文登记时的台账对不上", out)
+        self.assertIn("AR/story-src/story-template.md 在成文登记之后改过", out)
+        self.assertIn("story_flow.py story", out, "点名了却不说重新登记")
         code, out = self.cmd("skeleton")
-        self.assertEqual(1, code, "登记之后 skeleton 还能跑")
+        self.assertEqual(0, code, "登记之后 skeleton 是恢复动作，不该拒绝：" + out)
 
-        proc = subprocess.run([sys.executable, str(FLOW), "reopen", "--feature", FEATURE,
-                               "--project-root", str(self.root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=120)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.register()
         _, out = self.cmd("check")
-        self.assertNotIn("story-template.md 与成文登记时的台账对不上", out, "reopen 之后设计仍被当成冻结")
+        self.assertNotIn("在成文登记之后改过", out, "重新登记之后设计仍被点名")
 
 
 if __name__ == "__main__":

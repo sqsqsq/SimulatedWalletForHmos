@@ -167,7 +167,7 @@ export function renderSkeleton(projectRoot, knowledge) {
       // 作者不必先去别处弄清「评审动作」是什么意思才敢填。
       rows.push('    applicable:   # 处置是评审动作：命中与否照判，两种都补 reason；不写 requirement / contract',
         '    #   命中时落点：走 /story 的写 decision（《决策与评审记录》里登记这件事的议题 id——先登记议题再填，',
-        '    #   成文登记之后才判到就先 reopen）；不走 /story 的写 impact（谁、在哪份产物里表态）');
+        '    #   成文登记之后才判到的，登记议题后重跑 story 重新登记）；不走 /story 的写 impact（谁、在哪份产物里表态）');
       continue;
     }
     rows.push('    applicable:   # true → 补 requirement（列表）与落点；false → 补 reason',
