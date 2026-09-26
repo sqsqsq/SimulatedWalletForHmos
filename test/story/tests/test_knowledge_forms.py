@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -184,12 +183,22 @@ class ThePlanPackageCarriesTheLowerHalf(MethodCase):
         self.use_method()
         self.assertEqual(0, self.render().returncode)
         self.assertIn("## 另一个节名", self.plan_package())
+        # 门禁与审查请求照常：不因知识的增删改而异常或报知识不合协议
+        for hook, phase in (("spec/post_check.mjs", "spec"), ("shared/pre_verifier.mjs", "spec"),
+                            ("shared/pre_verifier.mjs", "plan")):
+            with self.subTest(hook=hook, phase=phase):
+                out = self.run_hook(hook, phase)
+                for needle in ("门禁自身异常", "知识不合协议", "激活知识派生失败"):
+                    self.assertNotIn(needle, out)
 
-        def digest(base: Path) -> dict[str, str]:
-            return {p.relative_to(base).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                    for p in base.rglob("*") if p.is_file() and "__pycache__" not in p.parts
-                    and p.relative_to(base).parts[0] != "knowledge" and p.name != "manifest.yaml"}
-        self.assertEqual(digest(EXT), digest(self.ext))
+    def run_hook(self, hook: str, phase: str) -> str:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const m = (await import({nk.as_url(self.ext / 'hooks' / hook)})).default;"
+                       f"const out = await m({{ phase: '{phase}', feature: {json.dumps(nk.FEATURE)},"
+                       f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                       "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
 
 
 def knowledge_words() -> set[str]:
@@ -223,10 +232,21 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
                 if f.is_file() and f.suffix in {".mjs", ".py", ".md", ".yaml", ".json"} and "__pycache__" not in f.parts:
                     yield f, f.read_text(encoding="utf-8", errors="replace")
 
+    @staticmethod
+    def protocol_structure_names() -> set[str]:
+        """协议定义的结构名：两个篇名，§一 的 frontmatter 字段与 §六 条目表的列名。"""
+        protocol = (EXT / "skills/story/reference/knowledge/protocol.md").read_text(encoding="utf-8")
+        names = {"上篇", "下篇"}
+        for no in ("一", "六"):
+            section = protocol.split(f"## {no}、", 1)[1].split("\n## ", 1)[0]
+            names |= {c.strip().strip("`") for c in re.findall(r"^\| ([^|]+) \|", section, flags=re.M)}
+        return names
+
     def test_no_knowledge_word_outside_the_structure_names(self) -> None:
-        """词表从知识派生，减去协议与产物模板定义的结构名；两个字的通用词不算专名。"""
-        allowed = "\n".join(p.read_text(encoding="utf-8") for p in self.STRUCTURE_DOCS)
-        words = {w for w in knowledge_words() if w not in allowed and len(w) >= 3}
+        """词表从知识派生，减去协议的结构名与产物模板里的出口名；两个字的通用词不算专名。"""
+        templates = "\n".join(p.read_text(encoding="utf-8") for p in self.STRUCTURE_DOCS[1:])
+        allowed = self.protocol_structure_names()
+        words = {w for w in knowledge_words() if w not in allowed and w not in templates and len(w) >= 3}
         self.assertTrue(words, "派生词表为空，这条核不到东西")
         hits = [f"{f.relative_to(EXT).as_posix()}：{w}" for f, text in self.mechanism_texts()
                 for w in sorted(words) if w in text]

@@ -82,9 +82,9 @@ schema 三问（版本号 / 迁移 / 备份恢复）是分析过程，结论写�
 
 | 反例（空话，无从核对） | 正例（可按名回查） |
 |---|---|
-| 新增了一个管理台开关 | `feature_entry_enabled`（管理台功能开关，新增）：默认 `false`；关闭态隐藏新增入口及其提示 |
-| 新增了下单接口 | 云侧接口 `createBusinessOrder`（新增）：入参 `bizNo`/`amount`(分)/`source`，出参 `orderNo`/`payParams`，新增错误码 `ORDER_REJECTED` |
-| 端侧新增了缓存 | 存储键 `last_business_context`（新增）：值结构 `{ orderNo, bizNo, createdAt }`，有效期 30 分钟 |
+| 新增了一个管理台开关 | `event_signup_enabled`（管理台功能开关，新增）：默认 `false`；关闭态隐藏报名入口及其提示 |
+| 新增了报名接口 | 云侧接口 `submitSignup`（新增）：入参 `eventId`/`sessionId`/`contact`，出参 `ticketNo`，新增错误码 `SESSION_FULL` |
+| 端侧新增了缓存 | 存储键 `signup_draft`（新增）：值结构 `{ eventId, sessionId, savedAt }`，有效期 30 分钟 |
 
 名字写全了，verifier 与证据抽查关卡才能按名搜遍 spec / SR / RR / 代码去核对。
 不涉及的小节写「不涉及 + 一句判断依据」，依据同样要具体（扫了什么、什么现状）。
@@ -103,4 +103,4 @@ schema 三问（版本号 / 迁移 / 备份恢复）是分析过程，结论写�
 
 **文档坐标**（`spec §x` / `SR §x` / `RR §x` / `AR §x`）与**小节互指**（`见 A5`）一律不写：
 坐标换个文档就失效，名字到哪都成立，且坐标由 AI 自己写、无法自证真假。
-改用事物的名字——写「见管理台功能开关 `feature_entry_enabled`」，不写「见 A5」。
+改用事物的名字——写「见管理台功能开关 `event_signup_enabled`」，不写「见 A5」。

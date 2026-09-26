@@ -50,7 +50,7 @@
           ],
           "chosen": "confirm_scope",
           "outcome": "accepted",
-          "by": "ai",
+          "by": "human",
           "at": "2026-08-28T11:25:55+00:00",
           "ask_id": "fixture1",
           "reply": "按你推荐的选项继续，不用再问我；每个决策照常写明选了哪一项、依据是什么"
@@ -66,7 +66,7 @@
           ],
           "chosen": "carry_all",
           "outcome": "accepted",
-          "by": "ai",
+          "by": "human",
           "at": "2026-08-28T11:27:35+00:00",
           "ask_id": "fixture1",
           "reply": "按你推荐的选项继续，不用再问我；每个决策照常写明选了哪一项、依据是什么。分析未找到满足四条判据的切分维度（流程单页面原子事务），代选整体承载"
@@ -85,5 +85,5 @@
   },
   "design_generated_at": "2026-08-28T11:28:36+00:00",
   "story_written_at": "2026-08-28T12:45:02+00:00",
-  "digest": "384f4bca803abc9f"
+  "digest": "3eeb1c7338e93f27"
 }

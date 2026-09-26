@@ -157,11 +157,18 @@ def current(feature_root: Path, ask_id: str, gate: str) -> dict:
 PUNCT = re.compile(r"[\s，。、；：！？,.;:!?「」“”\"'（）()]+")
 
 
+def _number_forms(no: int) -> list[str]:
+    """编号的说法：第 n、n.、n）、选 n，或整句就是 n。日常话里的数（「1 份」「等 1 天」）不算。"""
+    n = rf"(?<![\d.]){no}"
+    return [rf"^\s*{no}\s*[.。．、)）]?\s*$", rf"第\s*{no}(?!\d)", rf"{n}[.．](?!\d)",
+            rf"{n}\s*[)）]", rf"选\s*{no}(?!\d)"]
+
+
 def _marks(option: dict, reply: str) -> bool:
-    """原话里有没有指到这一项：写了它的编号、键或整句标签，或者原话就是标签里的一句话。"""
-    if re.search(rf"(?<![\d.]){option['no']}(?![\d.])", reply):
+    """原话里有没有指到这一项：编号的说法、整句标签，或者原话就是标签里的一句话。键是机器名，不参与。"""
+    if any(re.search(form, reply) for form in _number_forms(option["no"])):
         return True
-    if any(text and text in reply for text in (option["label"], option["key"])):
+    if option["label"] and option["label"] in reply:
         return True
     core = PUNCT.sub("", reply)
     return len(core) >= 4 and core in PUNCT.sub("", option["label"])
@@ -171,7 +178,7 @@ def map_reply(options: list[dict], reply: str, chosen: str | None,
               recommend: dict | None) -> tuple[dict, str]:
     """把人的原话映射到一项，返回 (选项, 映射来源)。
 
-    原话里恰好指到一项（编号、标签、键，或说「按推荐」）就按原话定，来源记 `reply`；
+    原话里恰好指到一项（编号的说法、标签，或说「按推荐」）就按原话定，来源记 `reply`；
     原话是自己的话、没指到任何一项时，由 `--chosen` 指明，来源记 `model`；
     `--chosen` 与原话指到的那一项对不上时拒绝——记的必须是人说的那一项。
     """

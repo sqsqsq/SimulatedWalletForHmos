@@ -177,6 +177,7 @@
   ],
   "id_shapes": {
     "acceptance": ["AC-[A-Z]?\\d+", "BD-[A-Z]?\\d+"],
+    "function": ["F\\d+"],
     "keep": [
       "AC-[A-Z]?\\d+"
     ],
@@ -184,8 +185,7 @@
       "\\bS\\d+\\b",
       "\\bF\\d+\\b",
       "\\bE\\d+\\b",
-      "\\bBD-\\d+\\b",
-      "DEC-\\d+"
+      "\\bBD-\\d+\\b"
     ]
   },
   "language_redline": {

@@ -69,7 +69,7 @@ class ModesCase(RendererCase):
         flow = self.src / "story-flow.json"
         data = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
         data["update"] = {"open": "20260920-000000",
-                          "decisions": [{"item": i, "reply": "意思没变，沿用",
+                          "decisions": [{"item": "沿用上一版表态", "issue": i, "reply": "意思没变，沿用",
                                          "by": "human", "at": "2026-09-20T00:00:00+00:00"}
                                         for i in items]}
         flow.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -125,6 +125,12 @@ class TheFormFollowsTheStatus(ModesCase):
             with self.subTest(decider=bad):
                 self.assertIn("不是角色", self.refused(entry("split", "confirm", CONFIRM_BODY,
                                                          status="settled", decider=bad)))
+
+    def test_role_names_with_action_words_inside_are_roles(self) -> None:
+        for good in ("审核员", "评审组长"):
+            with self.subTest(decider=good):
+                proc = self.build(entry("split", "confirm", CONFIRM_BODY, status="settled", decider=good))
+                self.assertNotIn("不是角色", proc.stderr + proc.stdout)
 
     def test_an_unknown_mode_is_named(self) -> None:
         self.assertIn("review_mode「vote」不认识", self.refused(entry("split", "vote", CONFIRM_BODY)))
@@ -246,6 +252,19 @@ class AnOpinionNeverDisappearsInARerender(ModesCase):
         self.assertIn("split", proc.stderr)
         self.assertIn("写过意见", proc.stderr)
         self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
+
+    def test_a_zone_not_in_the_current_form_stops_the_build(self) -> None:
+        """人工区不是当前形态（没有行首「评审结论：」）：不认、不搬，停下要求按当前形态重写，文件不动。"""
+        a = choice()
+        self.assertEqual(0, self.build(a).returncode)
+        self.fill(ZONE + self.anchor("retry-owner"),
+                  "审核结果：不同意\n不同意原因：XYZ 要改\n\n" + self.anchor("retry-owner"))
+        before = self.text()
+        proc = self.build(a)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("人工区不是当前形态", proc.stderr)
+        self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
+        self.assertIn("XYZ", self.text())
 
     def test_deleting_an_issue_nobody_answered_is_fine(self) -> None:
         a, b = choice(), confirm()

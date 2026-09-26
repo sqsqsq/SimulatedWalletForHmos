@@ -16,9 +16,3 @@ replies:
     expected_kind: story_gate
     expected_phase: story
     text: 只做挂失，不做补卡。
-
-  - id: review-comments
-    expected_turn: 3
-    expected_kind: story_gate
-    expected_phase: archived
-    text: 评审意见已写在系统上，拉回来处理；开关那条要改。

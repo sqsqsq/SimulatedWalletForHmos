@@ -463,22 +463,38 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         rows = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
         return json.loads(rows[-1])
 
+    MARK = "<!-- story-build:begin 议题 D1 · 由决策登记表生成，改它请改真源 · sha256:0123456789abcdef -->"
+
+    def put_issue(self) -> None:
+        (self.feature_root / "AR" / "review.md").write_text(
+            f"# 评审记录\n\n{self.MARK}\n#### 1.1.1 撤销宽限的时长\n", encoding="utf-8")
+
     def test_it_needs_an_open_round(self) -> None:
         """不挂在某一轮上的话，事后无从定位这条人签属于哪一次更新。"""
-        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "需求方在评审会上说的")
+        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "需求方在评审会上说的")
         self.assertIn("没有开着的更新", out.get("error", ""))
 
-    def test_it_records_the_actual_words(self) -> None:
+    def test_it_records_the_actual_words_and_the_issue_shown(self) -> None:
         self.update()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "按 36 小时做")
+        self.put_issue()
+        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
         self.assertEqual("human", out["recorded"]["by"])
         flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertEqual("按 36 小时做", flow["update"]["decisions"][0]["reply"])
+        row = flow["update"]["decisions"][0]
+        self.assertEqual(("按 36 小时做", "D1", "0123456789abcdef"), (row["reply"], row["issue"], row["asked"]))
+
+    def test_it_needs_the_issue(self) -> None:
+        self.update()
+        self.put_issue()
+        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "按 36 小时做")
+        self.assertIn("--issue", out.get("error", ""))
+        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D9", "--reply", "按 36 小时做")
+        self.assertIn("评审记录里没有议题 D9", out.get("error", ""))
 
     def test_an_empty_reply_is_refused(self) -> None:
         """人签只认真实原话——模型的转述不算。"""
         self.update()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "   ")
+        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "   ")
         self.assertIn("--reply", out.get("error", ""))
 
 
@@ -843,8 +859,14 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
         sys.path.insert(0, str(core))
         try:
             from flow.update import record_baseline  # noqa: PLC0415
-            self.assertTrue(record_baseline(self.feature_root))
-            self.assertIsNone(record_baseline(self.feature_root), "已有基准又写了一份")
+            first = record_baseline(self.feature_root)
+            self.assertTrue(first)
+            # reopen 后再登记：只有成文基准、没有 update 记录时，基准换成这一次登记的
+            (self.src / "updates" / first).rename(self.src / "updates" / "20000101-000000-story")
+            second = record_baseline(self.feature_root)
+            self.assertTrue(second)
+            self.assertEqual([second], sorted(p.name for p in (self.src / "updates").iterdir()),
+                             "旧的成文基准没换掉")
         finally:
             sys.path.remove(str(core))
         spec = self.feature_root / "spec" / "spec.md"

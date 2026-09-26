@@ -30,7 +30,7 @@ export function draftPath(ctx, index, title) {
  * 宿主的命令行，取自运行环境：有 `SHELL` 的是 POSIX shell，Windows 上没有它的是 PowerShell。
  * 命令围栏按它标注，参数按它引。
  */
-export const SHELL = process.env.SHELL || process.platform !== 'win32' ? 'bash' : 'powershell';
+export const SHELL = (process.env.SHELL || process.platform !== 'win32') ? 'bash' : 'powershell';
 
 /**
  * 一个参数交给 shell 之前包起来。两种 shell 都用单引号：里面不做任何展开，`$`、反引号、

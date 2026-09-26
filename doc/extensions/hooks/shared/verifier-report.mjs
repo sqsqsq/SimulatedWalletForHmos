@@ -60,8 +60,9 @@ function tableRows(text) {
 /**
  * 当前审查报告立不立得住 —— 格式、判据全不全、同一对象是不是只有一个结论、WARN 行有没有处置记录。
  *
- * 报告由调用方原样落盘在 `summary.verifier_report`。格式不合的回复原样存进 `reports/rejected/`，
- * 不计作一次结论；同一对象已有合规报告时，重投的回复被拒——对象没变，结论就不换。
+ * 报告由调用方原样落盘在 `summary.verifier_report`。格式不合或缺判据的回复每次运行都报，不计作结论；
+ * 合规的第一份登记进 `verifier.conclusions.json`，同一对象之后换了内容的回复被拒——对象没变，结论就不换。
+ * 门禁写盘只有这一处登记。
  * 还没派审（报告不在）不在这里报：派不派由 framework 的 NEXT 行说。
  *
  * @returns {string[]}
@@ -75,12 +76,7 @@ export function reportProblems(projectRoot, feature, phase) {
   const rows = tableRows(text);
   const ids = new Set(rows.map(r => r.id));
   if (!block || !ids.size) {
-    const dir = path.join(path.dirname(abs), 'rejected');
-    fs.mkdirSync(dir, { recursive: true });
-    const kept = path.join(dir, `${Date.now()}-${path.basename(abs)}`);
-    fs.renameSync(abs, kept);
-    return [`审查回复格式不合（${!block ? '终态块不是恰好一个' : '没有汇总表'}），已原样存为被拒回复 `
-      + `${path.relative(projectRoot, kept).replace(/\\/g, '/')}，不计作结论。${INVALID_EVIDENCE}`];
+    return [`审查回复格式不合（${!block ? '终态块不是恰好一个' : '没有汇总表'}），不计作结论。${INVALID_EVIDENCE}`];
   }
   const problems = [];
   const { checks } = overlayChecks(projectRoot, phase);
@@ -92,9 +88,9 @@ export function reportProblems(projectRoot, feature, phase) {
   const ledger = readJsonOrNull(ledgerPath) ?? {};
   const digest = crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
   if (subject && ledger[subject] && ledger[subject] !== digest) {
-    problems.push(`审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是重投后覆盖上去的——`
-      + '对象没变，结论不换：把原报告放回原处；材料真改了，取新请求再审');
-  } else if (subject && !ledger[subject]) {
+    problems.push(`审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是换了内容的重投——`
+      + '对象没变，结论不换；材料真改了，取新请求再审');
+  } else if (subject && !ledger[subject] && !problems.length) {
     fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
   }
   const notes = readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '';

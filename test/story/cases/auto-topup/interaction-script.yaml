@@ -73,4 +73,4 @@ replies:
   - id: update-material
     expected_turn: 12
     expected_kind: story_gate
-    text: 就这份新版，按它更新。
+    text: 不补，材料就这些。

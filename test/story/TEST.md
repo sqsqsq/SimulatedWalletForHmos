@@ -172,8 +172,7 @@ features 是迁移归档，不在本轮结束时恢复；本轮 workspace/output
 一次回话不超过一句；多说的每一个字都是宿主的话进了观测。`--reply-kind` 是记账：产物出来之后要回答「这份东西有多少是被宿主的话
 影响的」，`improvised` 那几条要连原话一起进交付报告。
 
-`planned_phase` 是那句话的阶段前提（`story` / `spec` / `archived`）。装置不据它决定发不发，由宿主判断这话现在说出口通不通；
-评审意见在归档之前说，模型只会答非所问。
+`planned_phase` 是那句话的阶段前提（`story` / `spec` / …），装置只在它与当前阶段一致时给出这一条。
 
 **`awaiting_reply` 必须在它出现的那一次唤醒内回复完毕**：poll 返回的 `adaptive_reply_requests[].question` 就是模型的原话，
 `case_inputs_hint` 是本 Case 的公开输入清单，当轮即可作答，不需要另开一轮去翻 runlog。只看 `status` 不读 `question`、把回复推到
@@ -364,7 +363,7 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段；评的是快照，不是还在动的目录 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
 | 5 | `resume-update --case <id> --answer "<这一问的立场>" --step <规划条目> --text "<case.yaml 的 update_request>"` | 先答检查点上那一问（记为 planned），那一轮结束再投第二段的业务请求；业务请求原样取 `case.yaml` 的 `update_request`。`update_inputs` 在这一步自动投放，见下表；`--deliver` 只投 `supplements/` 里的补料 |
-| 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「就这份新版，按它更新」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
+| 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「不补，材料就这些」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
 | 7 | `checkpoint --point update` → 只读后评 → **`conclude`**（story 门禁已在进第二检查点等待前跑过，输入没变就直接用那次结果） | 与第一段同一套。后评做完**必须** `conclude`（收工判定见 §3.5）：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段回流的那一份不被覆盖 |
 
@@ -555,8 +554,10 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 | 7 | `doc/extensions` 非知识层**代码行**（注释与空行不计） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
 
-双检查点的 Case 按段计时：两段各记模型时间、工具时间、等人时间、verifier 次数与耗时、首次门禁与首次登记是否零阻断、返工时长
-（从门禁或审查打回到再次通过）。分段点是第一检查点的等待开始与续跑时刻（runlog 的「第一检查点」「续跑」两条）。
+`measure_run.py` 的 `segments` 按段给出（双检查点单分 `initial` / `update`，按续跑时刻切；普通单一段 `whole`）：
+`duration_min`、`model_gap_sec` 与 `tool_gap_sec`（事件间隔归属的近似值）、`verifier_runs` 与 `verifier_gap_sec`、
+`first_harness` 与 `first_story_register`（首次的失败条数）、`rework_min`（没过到下一次同类通过之间的分钟数，各次相加）。
+等人时间只有全程数 `human_wait_sec`。
 
 前六项目标是诊断参照，不自动换算为质量分、重试次数或输入截断阈值。第 7 项配额限的是机制规模不是文字长短：注释算进去，省下来的只会是
 解释；逐类怎么剥注释见预算文件头部。现有脚本检查既有签定的峰值/总量，超限处置按 AGENTS §5；100%/125%/150% 新增实现预算的机械分级

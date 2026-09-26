@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
+import json
 import sys
 import tempfile
 import unittest
@@ -38,7 +40,7 @@ GOLDEN_FINGERPRINTS = {
     # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "954cc153586b11b8",
+    "story-金样-AR90004.md": "5a9ac1ca6241c2be",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
     # 2026-09-26 AR90006 按 0903 澄清会结论与答案卷更新（签约更新接口、AC-R1 与开关口径、两件待定），
@@ -64,8 +66,8 @@ INPUT_FINGERPRINTS = {
     "inbox/紧急挂失界面原型说明.docx": "5fa860eb01b25972",
     "RR/prd.md": "ff0013420c4c0741",
     "SR/design.md": "d9ccbd10489f89d1",
-    "spec/knowledge-use.yaml": "12bc6c070ee1e9e3",
-    "spec/spec.md": "a7db0e55dcbe15c2",
+    "spec/knowledge-use.yaml": "073dcaed046304a7",
+    "spec/spec.md": "c26ad1a1b9965439",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
@@ -201,6 +203,23 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
 
 class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
+
+    def test_the_spec_gate_accepts_the_golden_inputs(self) -> None:
+        """金样的输入夹具经 spec 门禁：上游编号承接、知识登记、埋点形状都不报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            golden_workspace.build(root)
+            gate = root / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
+            proc = subprocess.run(
+                ["node", "--input-type=module", "-e",
+                 f"const m = (await import({json.dumps(gate.as_uri())})).default;"
+                 f"const out = await m({{ phase: 'spec', feature: 'AR90004', projectRoot: {json.dumps(root.as_posix())} }});"
+                 "process.stdout.write(JSON.stringify(out));"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        for needle in ("门禁自身异常", "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest",
+                       "缺定义段", "下没有统计点"):
+            self.assertNotIn(needle, proc.stdout)
 
     def test_the_golden_passes_in_its_workspace(self) -> None:
         code, out = workspace_check()

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from flow.state import (
@@ -17,17 +18,31 @@ from flow.routing import inputs_answer, live_materials, material_state, next_ste
 from flow import asks
 
 
-def cmd_decide_update(feature_root: Path, item: str, reply: str) -> dict:
+def issue_digest(feature_root: Path, issue: str) -> str:
+    """评审记录里这条议题机器区的摘要：人回话时看到的就是它，记下来作问法的等价物。"""
+    review = feature_root / "AR" / "review.md"
+    text = review.read_text(encoding="utf-8") if review.is_file() else ""
+    hit = re.search(rf"<!-- story-build:begin 议题 {re.escape(issue)} · .*?sha256:([0-9a-f]+) -->", text)
+    if not hit:
+        raise FlowError(f"评审记录里没有议题 {issue}：人定的事先登记成议题、build 进评审记录，"
+                        "人看过那一条再回话")
+    return hit.group(1)
+
+
+def cmd_decide_update(feature_root: Path, item: str, reply: str, issue: str) -> dict:
     """更新期间人定的一件事 —— **记原话，不造人签**。
 
     与三级关卡分开：那三级是起手才有的事；这里记的是一次更新里冒出来、只有人能定的事
     （来源冲突、要改已经承诺过的口径、沿用谁在哪一版的表态）。它不扩大关卡集合。
+    每一件都挂在评审记录的一条议题上（`--issue`），记下那条议题当时的机器区摘要——人看到的就是它。
     没有开着的更新就不记：记下来也无从定位它属于哪一轮。
     """
     if not item.strip():
         raise FlowError("--update 要写清定的是哪件事")
     if not reply.strip():
         raise FlowError("--reply 不能为空：人签只认人的原话")
+    if not str(issue or "").strip():
+        raise FlowError("--update 要带 --issue <议题编号>：人定的事挂在评审记录的哪一条议题上")
     contract = load(feature_root)
     if contract is None:
         raise FlowError("这个单没走过 /story，没有可以记录的流程契约")
@@ -35,7 +50,8 @@ def cmd_decide_update(feature_root: Path, item: str, reply: str) -> dict:
     if not state.get("open"):
         raise FlowError("现在没有开着的更新：先跑 `story_flow.py update` 起一轮，"
                         "这条记录要挂在某一轮上")
-    entry = {"item": item.strip(), "reply": reply.strip(), "by": "human", "at": now()}
+    entry = {"item": item.strip(), "issue": issue.strip(), "asked": issue_digest(feature_root, issue.strip()),
+             "reply": reply.strip(), "by": "human", "at": now()}
     state.setdefault("decisions", []).append(entry)
     contract["update"] = state
     save(feature_root, contract)

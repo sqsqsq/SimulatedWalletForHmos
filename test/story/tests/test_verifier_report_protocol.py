@@ -51,9 +51,9 @@ STORY_MD = """# 甲需求（SMPFEAT）
 """
 
 DRIVER = """
-const [, , modulePath, projectRoot, feature, phase, run] = process.argv;
+const [, , modulePath, projectRoot, feature, phase] = process.argv;
 const mod = await import(modulePath);
-process.stdout.write(JSON.stringify(mod.storyReviewProblems(projectRoot, feature, phase, run ? JSON.parse(run) : undefined)));
+process.stdout.write(JSON.stringify(mod.storyReviewProblems(projectRoot, feature, phase)));
 """
 
 # 汇总表：每项一行，PASS 也列，最后一格是一行证据。
@@ -91,9 +91,9 @@ PER_UNIT_TABLE = """
 class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
     """报告的落点只有一个来源：harness 写的 `summary.verifier_report`。"""
 
-    def _run(self, *, summary, report: str | None, run: dict | None = None,
+    def _run(self, *, summary, report: str | None,
              extra: dict[str, str] | None = None) -> dict:
-        """summary=None 表示 harness 还没跑过；run 是调用方给的运行事实，extra 是报告目录里另放的文件。"""
+        """summary=None 表示 harness 还没跑过；extra 是报告目录里另放的文件。"""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             reports = root / "doc" / "features" / "SMPFEAT" / "spec" / "reports"
@@ -111,8 +111,7 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
             driver = root / "driver.mjs"
             driver.write_text(DRIVER, encoding="utf-8")
             r = subprocess.run(
-                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec",
-                 *([json.dumps(run)] if run is not None else [])],
+                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec"],
                 capture_output=True, text=True, encoding="utf-8",
             )
             self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
@@ -182,7 +181,7 @@ class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
                 "<!-- /maison-verifier-result:v1 -->\n"}
 
     def test_a_correction_with_a_valid_reviewed_pass_is_carried_with_a_note(self) -> None:
-        out = self._run(summary=self.summary(), report=None, run={"updateOpen": False}, extra=self.history())
+        out = self._run(summary=self.summary(), report=None, extra=self.history())
         self.assertEqual("PASS", out["reviewVerdict"])
         self.assertIn("当前材料未独立重审", out["notes"][0])
         self.assertIn("lifecycle_hook_fragments", out["notes"][0])
@@ -191,12 +190,12 @@ class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
         for name, extra in (("缺席", {}), ("FAIL", self.history(verdict="FAIL")),
                             ("对象不符", self.history(subject="c" * 64)), ("读者审查未过", self.history(row="FAIL"))):
             with self.subTest(name):
-                out = self._run(summary=self.summary(), report=None, run={"updateOpen": False}, extra=extra)
+                out = self._run(summary=self.summary(), report=None, extra=extra)
                 self.assertEqual("FAIL", out["status"])
                 self.assertEqual("沿用的历史审查无效", out["detail"])
 
     def test_without_the_revalidate_mark_it_cannot_be_confirmed(self) -> None:
-        out = self._run(summary=self.summary(signals=()), report=None, run={"updateOpen": False}, extra=self.history())
+        out = self._run(summary=self.summary(signals=()), report=None, extra=self.history())
         self.assertEqual("FAIL", out["status"])
         self.assertEqual("当前对象未独立审查", out["detail"])
 
@@ -737,7 +736,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertEqual(1, task.count(fence), "全文放了不止一次")
 
     def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
-        """AC22：机器区重投不改审查片段（审查对象不变）；作者区改了，片段与作者区摘要跟着变。"""
+        """AC22：机器区重投不改审查片段（审查对象不变）；作者区改了，片段跟着变。片段不含机器区内容。"""
         story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
         zone = ("\n<!-- story-build:begin 技术约定 · 由spec §9.1生成，改它请改真源 · sha256:0000000000000000 -->\n"
                 "| 接口 | 用途 |\n|---|---|\n| queryState | 查状态 |\n<!-- story-build:end -->\n")
@@ -745,7 +744,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         first = self.inject()
         story.write_text(STORY_MD + zone.replace("queryState | 查状态", "queryState | 查处理状态"), encoding="utf-8")
         self.assertEqual(first, self.inject(), "机器区重投换了审查对象")
-        self.assertIn("审查对象标识（非审查内容）", first)
+        self.assertNotIn("queryState", first, "机器区内容进了审查片段")
         story.write_text(STORY_MD + "\n作者补的一句。\n" + zone, encoding="utf-8")
         self.assertNotEqual(first, self.inject(), "作者区改了，审查对象没跟着变")
 

@@ -18,7 +18,7 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py round    --feature <AR>
     python story_flow.py decide   --feature <AR> --gate <g> --ask <ask_id> --reply <人的原话> [--chosen <编号>]
     python story_flow.py decide   --feature <AR> --gate <g> --propose --chosen <编号> --why <理由>
-    python story_flow.py decide   --feature <AR> --update <定了哪件事> --reply <人的原话>
+    python story_flow.py decide   --feature <AR> --update <定了哪件事> --issue <议题编号> --reply <人的原话>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
@@ -100,6 +100,8 @@ def main() -> int:
     ap.add_argument("--meeting", default=None,
                     help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
     ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
+    ap.add_argument("--issue", default=None,
+                    help="decide --update：人定的事挂在评审记录的哪一条议题上（D 编号）")
     ap.add_argument("--update", dest="update_item", default=None,
                     help="decide：更新期间人定的一件事（与三级关卡无关，要有开着的 update）")
     ap.add_argument("--from", dest="from_path", default=None,
@@ -132,7 +134,7 @@ def main() -> int:
         elif args.mode == "decide":
             if args.update_item:
                 result.update(cmd_decide_update(feature_root, args.update_item,
-                                                str(args.reply or "")))
+                                                str(args.reply or ""), args.issue or ""))
             elif args.propose:
                 result.update(cmd_propose(feature_root, args))
             else:

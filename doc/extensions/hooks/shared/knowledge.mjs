@@ -34,6 +34,9 @@ const FORMS = { facts: ['facets', 'halves'], constraints: ['entries'], patterns:
 /** 上下篇的两个篇名：halves 形态的登记单元就是它们。 */
 export const HALVES = ['上篇', '下篇'];
 
+/** 事实按 `name` 认：knowledge-use 的 `facts[].id` 就是它，校验与送达共用这一处。 */
+export const factsByName = knowledge => new Map(knowledge.facts.map(f => [f.name, f]));
+
 /** 读写规则与适配方法的位置（相对扩展根）：任务包、审查与报错都指向这里。 */
 const PROTOCOL_DOC = 'skills/story/reference/knowledge/protocol.md';
 
@@ -439,6 +442,10 @@ export function activeKnowledge(projectRoot) {
     if (!KNOWLEDGE_KINDS.includes(kind)) {
       bad.push(`${relPosix} 的 kind="${kind}" 不在封闭集合里（知识三类：${KNOWLEDGE_KINDS.join(' / ')}，`
         + `写法见 ${PROTOCOL_DOC}）`);
+      continue;
+    }
+    if (!fmText(fm.name)) {
+      bad.push(`${relPosix} 的 frontmatter 缺 name —— 登记与引用都按它认这份知识（写法见 ${PROTOCOL_DOC}）`);
       continue;
     }
     const form = fmText(fm.form);

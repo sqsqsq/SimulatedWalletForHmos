@@ -40,7 +40,7 @@
 
 `fetch <单号> <token> --project-root <工程根> --out <本单 inbox>` 是**只读取材**：取回这张单现在关联的上游正文与评审回稿。
 三份正文写进 `--out`（本单的 `inbox/`，与人补的料走同一条导入链），与本地对应文件逐字相同的不落盘；
-评审回稿不是需求正文，写在 `AR/story-src/review-feedback.md`；回执 `AR/story-src/fetched.json` 逐份记来源身份、摘要、
+评审回稿不是需求正文，写在 `AR/story-src/review-feedback.md`；回执 `AR/story-src/fetched.json` 带取材时刻 `fetchedAt`（ISO 8601），逐份记来源身份、摘要、
 系统上的位置、取到没有——它不能放进 inbox，否则会被当成一份材料导入。**一个业务文件都不写**。
 `status` 四态分开：`fetched` / `same`（与本地相同）/ `absent`（系统上本来就没有，常态）/ `failed`（读取故障）——
 混成一个的话，一次读取错误会被当成「评审没提意见」。

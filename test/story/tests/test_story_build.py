@@ -365,15 +365,15 @@ class TestDecisionUnits(StoryBuildCase):
 
     DECISIONS = {
         "decisions": [
-            settled_decision("DEC-001", "挂失结果以卡片服务的回执为准",
+            settled_decision("D1", "挂失结果以卡片服务的回执为准",
                              "挂失办没办成，以哪一侧的说法为准。",
                              "以卡片服务的回执为准，页面照回执显示。",
                              said="以卡片服务回执为准", category="质量指标"),
-            settled_decision("DEC-002", "同卡同状态的重复提交按一次算",
+            settled_decision("D2", "同卡同状态的重复提交按一次算",
                              "同一张卡短时间内重复提交怎么处理。",
                              "按一次算，第二次直接回到等待态。",
                              said="重复提交按一次算", category="业务规则"),
-            open_decision("DEC-003", "线下渠道的入口这轮收不收",
+            open_decision("D3", "线下渠道的入口这轮收不收",
                           "线下渠道的入口要不要一起收进本单。",
                           [("本单先不收，等渠道方给时间表", "范围不变"),
                            ("一起收", "范围扩到渠道侧")],
@@ -401,7 +401,7 @@ class TestDecisionUnits(StoryBuildCase):
         self.init_audit()
         self.assertEqual(0, self.check_output()[0])
         self.write_decisions(self.DECISIONS["decisions"] + [
-            open_decision("DEC-004", "回执超时的等待时长", "回执迟迟不到时等多久。",
+            open_decision("D4", "回执超时的等待时长", "回执迟迟不到时等多久。",
                           [("先按现网默认值", "现在就能定"), ("等渠道方给数", "要等渠道方")],
                           "按第 1 种做。", category="业务规则")])
         code, out = self.check_output()

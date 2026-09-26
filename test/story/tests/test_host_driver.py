@@ -90,6 +90,18 @@ class ThePlanIsShownOnlyWhenItFits(unittest.TestCase):
     def test_a_gate_in_another_phase_does_not_get_it_either(self) -> None:
         self.assertIsNone(self.request(self.record("story_gate", "plan"))["planned_step_id"])
 
+    def test_story_and_spec_do_not_take_each_others_stances(self) -> None:
+        record = self.record("story_gate", "story")
+        self.assertIsNone(self.request(record)["planned_step_id"], "story 阶段展示了 spec 的立场")
+        record = self.record("story_gate", "spec")
+        record["interaction_script"][0]["expected_phase"] = "story"
+        self.assertIsNone(self.request(record)["planned_step_id"], "spec 阶段展示了 story 的立场")
+
+    def test_an_unknown_phase_does_not_get_it(self) -> None:
+        got = self.request(self.record("story_gate", None))
+        self.assertIsNone(got["planned_step_id"])
+        self.assertIn("规划里没有对应这一问", got["plan_note"])
+
     def test_a_matching_gate_gets_the_stance(self) -> None:
         got = self.request(self.record("story_gate", "spec"))
         self.assertEqual("enter-plan", got["planned_step_id"])

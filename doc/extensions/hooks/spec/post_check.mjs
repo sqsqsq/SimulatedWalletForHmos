@@ -31,7 +31,7 @@ import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
-import { acceptanceIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
+import { acceptanceIdRe, functionIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 import { featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
@@ -157,8 +157,8 @@ function scanNumericSources(text) {
  * §8 验收标准与 acceptance.yaml 对得上 —— 可以机械核的一致性不留给语义审查。
  *
  * §8 每一行的第一个验收编号是这一行的编号，同一行里其余形如「字母+数字」的编号是它关联的功能；
- * 编号要在 acceptance.yaml 里有、关联功能与那一条的 `prd_function` 一致；同一编号只有一种含义。
- * 走 /story 的需求另核上游材料里的原始验收编号：在 §8 或 acceptance.yaml 里有对应行，或写明不承接的理由。
+ * 编号要在 acceptance.yaml 里有；§8 里一个编号第一次作行首出现的那一行是它的定义，关联功能与 `prd_function` 一致。
+ * 走 /story 的需求另核上游材料里的原始验收编号：在 §8 任一行里出现、在 acceptance.yaml 里有，或写明不承接的理由。
  */
 function acceptanceAlignment(ctx, lines, featureDir, isStory) {
   const problems = [];
@@ -174,28 +174,24 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
   for (const [id, list] of accById) {
     if (list.length > 1) problems.push(`同号不同义：${id} 在 acceptance.yaml 里有 ${list.length} 条——一个编号只说一件事，另起编号`);
   }
-  const rows = new Map();
+  const defined = new Map();
+  const mentioned = new Set();
   for (const raw of sectionBody(lines, s8)) {
     const line = raw.trim();
     if (!line || line.startsWith('>') || /不承接/.test(line)) continue;
     const ids = [...line.matchAll(acceptanceIdRe())].map(m => m[0]);
     if (!ids.length) continue;
-    const rest = line.replace(acceptanceIdRe(), ' ');
-    const codes = [...rest.matchAll(/\b[A-Z]{1,3}\d+\b/g)].map(m => m[0]);
-    const said = rest.replace(/\b[A-Z]{1,3}\d+\b/g, '').replace(/[-*\[\]()（）,，:：|\sx]/g, '');
-    rows.set(ids[0], [...(rows.get(ids[0]) ?? []), { codes, said }]);
+    ids.forEach(id => mentioned.add(id));
+    if (!defined.has(ids[0])) defined.set(ids[0], [...line.matchAll(functionIdRe())].map(m => m[0]));
   }
-  for (const [id, list] of rows) {
-    if (new Set(list.map(r => r.said)).size > 1) {
-      problems.push(`同号不同义：§8 里 ${id} 出现在 ${list.length} 行、说的不是同一件事——一个编号只说一件事`);
-    }
+  for (const [id, codes] of defined) {
     const acc = accById.get(id);
     if (!acc) {
       problems.push(`§8 的 ${id} 在 acceptance.yaml 里没有——验收清单以 acceptance.yaml 为全集，补一条或改 §8 的编号`);
       continue;
     }
     const want = String(acc[0]?.prd_function ?? '').split(/[\s,，、]+/).filter(Boolean).sort().join('、');
-    const got = [...new Set(list[0].codes)].sort().join('、');
+    const got = [...new Set(codes)].sort().join('、');
     if (want && got && want !== got) {
       problems.push(`${id} 的关联功能两处不一致：§8 写 ${got}，acceptance.yaml 的 prd_function 写 ${want}——以一处为准改另一处`);
     }
@@ -205,10 +201,10 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
       .map(rel => readTextOrNull(path.join(featureDir, ...rel.split('/'))) ?? '').join('\n');
     const declined = lines.filter(l => /不承接/.test(l)).join('\n');
     const kept = [...new Set([...upstream.matchAll(keptIdRe())].map(m => m[0]))];
-    const lost = kept.filter(id => !rows.has(id) && !accById.has(id) && !declined.includes(id));
+    const lost = kept.filter(id => !mentioned.has(id) && !accById.has(id) && !declined.includes(id));
     if (lost.length) {
-      problems.push(`上游材料的验收编号没有承接：${lost.join('、')}——原编号在 §8 与 acceptance.yaml 里各有一行`
-        + '（沿用上游编号，不重新编号），或在 §8 写「不承接：<编号> <理由>」');
+      problems.push(`上游材料的验收编号没有承接：${lost.join('、')}——在 §8 或 acceptance.yaml 里有对应行，`
+        + '或在 §8 写「不承接：<编号> <理由>」');
     }
   }
   return problems;

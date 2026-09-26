@@ -1,7 +1,7 @@
 """审查与闭环：判据全量下发、报告核对、可机械核的一致性前移到 spec 门禁。
 
   ① 审查请求含本阶段 overlay 的全部判据；报告缺一条，门禁报「缺判据」（AC19）；
-  ② 报告格式不合存为被拒回复、不计结论；同一对象已有合规结论时，重投覆盖被拒（AC23）；
+  ② 报告格式不合或缺判据每次都报、不计结论；同一对象已有合规结论时，换了内容的重投被拒（AC23）；
   ③ 报告里 WARN、FAIL 的判据在 notes 里要有处置记录（AC20 的记录一侧）；
   ④ §8 与 acceptance.yaml 的编号、关联功能、同号同义，上游原始验收编号的承接（AC24）；
   ⑤ 数值来源一次列全，序数不当数值（AC25）。
@@ -148,12 +148,22 @@ class EveryCheckReachesTheReviewer(ClosureCase):
 
 
 class OneSubjectOneConclusion(ClosureCase):
-    def test_a_malformed_reply_is_kept_as_rejected_and_not_counted(self) -> None:
+    def test_a_malformed_reply_is_reported_every_run_and_not_counted(self) -> None:
         target = self.put_report("审查员说：都看过了，没问题。\n")
+        for _ in range(2):
+            self.assertIn("审查回复格式不合", self.gate(), "第二次运行问题消失了")
+        self.assertTrue(target.exists(), "门禁动了报告文件")
+        self.assertFalse((self.reports / "verifier.conclusions.json").exists(), "格式不合的回复登记成了结论")
+
+    def test_a_full_resubmission_after_a_missing_check_is_accepted(self) -> None:
+        """缺判据的回复不登记；重投完整回复之后不再报报告问题。"""
+        ids = self.overlay_ids()
+        target = self.put_report(report_text(ids[1:]))
+        self.assertIn(f"缺判据：{ids[0]}", self.gate())
+        target.write_text(report_text(ids), encoding="utf-8")
         out = self.gate()
-        self.assertIn("被拒回复", out)
-        self.assertFalse(target.exists(), "格式不合的回复还占着报告的位置")
-        self.assertTrue(list((self.reports / "rejected").glob("*.md")), "被拒回复没留下")
+        for needle in ("缺判据", "已经有过一份合规结论", "审查回复格式不合"):
+            self.assertNotIn(needle, out)
 
     def test_a_second_valid_reply_for_the_same_subject_is_refused(self) -> None:
         ids = self.overlay_ids()
@@ -180,8 +190,10 @@ class TheAcceptanceIdsLineUp(ClosureCase):
         self.spec().write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def test_aligned_ids_raise_nothing(self) -> None:
+        """实跑夹具经 spec 门禁：验收编号、上游编号承接与知识登记都不报。"""
         out = self.gate()
-        for needle in ("在 acceptance.yaml 里没有", "关联功能两处不一致", "同号不同义"):
+        for needle in ("在 acceptance.yaml 里没有", "关联功能两处不一致", "同号不同义",
+                       "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest"):
             self.assertNotIn(needle, out)
 
     def test_an_id_missing_from_acceptance_is_named(self) -> None:

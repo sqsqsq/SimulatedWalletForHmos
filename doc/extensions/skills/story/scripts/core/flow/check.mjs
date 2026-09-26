@@ -112,8 +112,8 @@ export function flowProblems(featureRoot) {
   // 写入侧已保证的形状（outcome 值域、时间戳、签名人）手改成错形状也不改变流程走向，不在这里重判。
   if (flow?.schema !== schema) {
     return [
-      `AR/story-src/story-flow.json 的 schema 为 ${flow?.schema ?? '缺失'}，本阶段要求 ${schema}。` +
-        `契约应由 scripts/core/story_flow.py 写入，请勿手工维护。${FLOW_FIX}`,
+      `AR/story-src/story-flow.json 不是当前版本的流程契约（schema ${flow?.schema ?? '缺失'}，当前 ${schema}）：` +
+        '这张单在旧版本收口，或清掉需求目录后从 init 重新起单',
     ];
   }
 

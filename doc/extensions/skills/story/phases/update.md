@@ -70,7 +70,7 @@
 | `--action close` | 这一轮改完、核完 | 收口：**要先写好 `update-notes.md`**；把此刻八项的内容留一份作下一轮的比较基准 |
 | `--action restore` | 这一轮要整个撤回 | 还原到这一轮开始之前；**先把这之后改过或新建的原样存起来**，两边都留着，要哪份由人定 |
 
-人在这一轮里拍的板用 `story_flow.py decide --feature <编号> --update "<定了哪件事>" --reply "<他的原话>"` 记一笔。
+人在这一轮里拍的板用 `story_flow.py decide --feature <编号> --update "<定了哪件事>" --issue <议题编号> --reply "<他的原话>"` 记一笔：先把这件事登记成议题、build 进评审记录，人看过那一条再回话。
 它记的是**原话**：`update-notes.md` 里写「已确认」不算人签，那是你的转述。
 人已表态的议题登记为 settled 时，`review_mode` 怎么写见 `phases/story-write.md`「决策登记」。
 

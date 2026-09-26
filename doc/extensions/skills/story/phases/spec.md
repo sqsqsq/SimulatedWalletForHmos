@@ -74,8 +74,8 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 调用只带 request JSON；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件，
 再完整跑一次 harness 采纳它（不用 `--sync-closure`：它对已闭环的阶段不改写）。读 summary 确认
 `verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
-门禁核这份报告：格式不合的回复被存为被拒回复、不计结论，重投同一份 request；缺哪条判据点名「缺判据」；
-同一审查对象只认第一份合规结论，重投覆盖不算。
+门禁核这份报告：格式不合或缺判据的回复每次运行都报、不计结论，重投同一份 request 拿完整回复；
+同一审查对象只认第一份合规结论，之后换了内容的重投不算。
 
 **报告回来之后怎么处置，全扩展只有这一张表**：
 

@@ -397,7 +397,7 @@ class ReviewBannedTermsScope(NegativeCase):
     等于零豁免。实跑两处命中全在 review，且全是决策语言。
     """
 
-    DEC_ID = "DEC-901"
+    DEC_ID = "D901"
 
     def write_review(self, machine: str, human: str = "", freeform: str = "",
                      category: str = "业务规则") -> None:

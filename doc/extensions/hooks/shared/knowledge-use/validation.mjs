@@ -6,7 +6,7 @@
  *
  * 取值一律用 document 已规范化的结果，不重新读一遍 YAML。
  */
-import * as path from 'node:path';
+import { factsByName } from '../knowledge.mjs';
 import { NO_CANDIDATE, manifestDigest, requirements, text } from './document.mjs';
 
 /**
@@ -82,17 +82,14 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   // facts：激活即事实，只判「登记的那些在册」，不要求逐份登记——
   // 用没用到某一份事实是作者的判断，机器数不出来。登记了就按面记：用了哪一面、拿它做什么——
   // 按文件记答不了「用的是哪个事实」。
-  const factByName = new Map();
-  for (const f of knowledge.facts) {
-    for (const n of [f.file, f.name, path.basename(f.file, '.md')]) if (n) factByName.set(n, f);
-  }
+  const factByName = factsByName(knowledge);
   for (const row of use.facts) {
     const id = text(row, 'id');
     if (!id) { problems.push('facts 里有一行没写 id'); continue; }
     const fact = factByName.get(id);
     if (!fact) {
       problems.push(`facts 里的「${id}」不在激活清单的事实件里`
-        + `（在册的：${[...factByName.keys()].filter(n => !n.includes('/')).join('、')}）`);
+        + `（在册的：${[...factByName.keys()].join('、')}）`);
       continue;
     }
     const used = Array.isArray(row.used) ? row.used : [];

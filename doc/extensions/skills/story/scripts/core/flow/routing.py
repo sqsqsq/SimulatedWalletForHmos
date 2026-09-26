@@ -173,7 +173,7 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
 #: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
 DECIDE_USAGE = ("把 `status` 输出里 `ask.block` 原样摆给人（前面一句结论与缺口），停等。"
                 "人回话后跑 `story_flow.py decide --feature <名> --gate <本级> --ask <ask_id> "
-                "--reply \"<人的原话>\"`；原话没写编号或标签时加 `--chosen <编号>`。"
+                "--reply \"<人的原话>\"`；原话没用编号的说法（第 n、n.、n）、选 n、整句为 n）或标签指到某一项时加 `--chosen <编号>`。"
                 "自己的判断用 `decide --propose --chosen <编号> --why \"<理由>\"` 记成提议，下次停等请人确认")
 
 

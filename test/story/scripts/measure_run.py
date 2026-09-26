@@ -98,6 +98,10 @@ ANSI_RE = re.compile("\x1b\\[[0-9;]*m")
 #: 一次 harness 调用 = 一轮门禁。判「同一 check id 反复 FAIL」要按轮次去重，
 #: 不能按文本出现次数——同一份报告被 console 打一次、又被 cat 一次就会翻倍。
 HARNESS_CMD_RE = re.compile(r"harness-runner")
+#: story 成文登记：`story_flow.py story`。
+STORY_REGISTER_RE = re.compile(r"story_flow\.py\S*\s+story\b")
+#: 成文登记没过时输出里的形态（check 报「N 处未通过」或登记被拒）。
+REGISTER_FAIL_RE = re.compile(r"未通过|没有登记|拒绝登记|\"ok\":\s*false")
 
 #: `story-build check` 通过时打印的两个数：多少条机器核实、多少条交给模型裁。
 #: 它说明守恒有多少压在模型层上——模型层的保证只能靠对抗测试证明，
@@ -193,6 +197,57 @@ def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
         if ts and ts.tzinfo and ts >= mark:
             return i
     return len(events)
+
+
+def segment_metrics(rows: list[dict]) -> dict:
+    """一段的效率观测：时长、模型与工具时间、verifier 次数与耗时、首次门禁与首次登记、返工时长。
+
+    模型与工具时间都是**事件间隔归属的近似值**（间隔归给本条事件：工具事件记工具，其余记模型）；
+    返工时长是一次门禁或登记没过到下一次同类通过之间的分钟数，各次相加。等人时间由驱动器累计，只有全程数。
+    """
+    stamps = [t for t in (_ts(e.get("timestamp")) for e in rows) if t]
+    model_gap = tool_gap = verifier_gap = 0.0
+    verifier_runs = 0
+    first = {"harness": None, "story_register": None}
+    failing_since: dict[str, datetime] = {}
+    rework_sec = 0.0
+    prev = None
+    for e in rows:
+        ts = _ts(e.get("timestamp"))
+        gap = (ts - prev).total_seconds() if (ts and prev) else 0.0
+        prev = ts or prev
+        if e.get("type") != "tool":
+            model_gap += gap
+            continue
+        tool_gap += gap
+        name = str(e.get("tool_name") or "").lower()
+        request, output = _request_text(e), _output_text(e)
+        if name == "task":
+            verifier_runs += 1
+            verifier_gap += gap
+            continue
+        kind = ("harness" if name == "bash" and HARNESS_CMD_RE.search(request)
+                else "story_register" if name == "bash" and STORY_REGISTER_RE.search(request) else None)
+        if not kind:
+            continue
+        fails = (len({m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"})
+                 if kind == "harness" else len(REGISTER_FAIL_RE.findall(output)))
+        if first[kind] is None:
+            first[kind] = {"fail_count": fails}
+        if fails and kind not in failing_since and ts:
+            failing_since[kind] = ts
+        elif not fails and kind in failing_since and ts:
+            rework_sec += (ts - failing_since.pop(kind)).total_seconds()
+    return {
+        "duration_min": round((stamps[-1] - stamps[0]).total_seconds() / 60, 1) if len(stamps) > 1 else None,
+        "model_gap_sec": round(model_gap, 1),
+        "tool_gap_sec": round(tool_gap, 1),
+        "verifier_runs": verifier_runs,
+        "verifier_gap_sec": round(verifier_gap, 1),
+        "first_harness": first["harness"],
+        "first_story_register": first["story_register"],
+        "rework_min": round(rework_sec / 60, 1),
+    }
 
 
 def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
@@ -298,13 +353,9 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     # 双检查点单：两段各自多少事件、各自多长。混在一起算的话，第二段那几分钟的增量
     # 会被摊进第一段的总量，「这次更新花了多少」就再也分不出来。
     cut = split_at_checkpoint(events, run_dir)
-    segments = None
-    if cut is not None:
-        def span(rows: list[dict]) -> float | None:
-            stamps = [t for t in (_ts(e.get("timestamp")) for e in rows) if t]
-            return round((stamps[-1] - stamps[0]).total_seconds() / 60, 1) if len(stamps) > 1 else None
-        segments = {"initial": {"events": cut, "duration_min": span(events[:cut])},
-                    "update": {"events": len(events) - cut, "duration_min": span(events[cut:])}}
+    segments = ({"whole": {"events": len(events), **segment_metrics(events)}} if cut is None else
+                {"initial": {"events": cut, **segment_metrics(events[:cut])},
+                 "update": {"events": len(events) - cut, **segment_metrics(events[cut:])}})
 
     return {
         "events": len(events),
@@ -433,7 +484,14 @@ def render(result: dict) -> str:
          f"{result['conservation_model']} 条   模型层的保证只能靠对抗测试证明"
          if result["conservation_machine"] is not None
          else "    （本轮没跑出 story-build check 的通过行）"),
+        "",
+        "  ── 按段（模型与工具时间是间隔归属的近似值）──",
     ]
+    for name, seg in (result.get("segments") or {}).items():
+        lines.append(
+            f"    {name}：{seg['duration_min']} 分钟｜模型 {seg['model_gap_sec']}s｜工具 {seg['tool_gap_sec']}s"
+            f"｜verifier {seg['verifier_runs']} 次 {seg['verifier_gap_sec']}s"
+            f"｜首次门禁 {seg['first_harness']}｜首次登记 {seg['first_story_register']}｜返工 {seg['rework_min']} 分钟")
     return "\n".join(lines)
 
 

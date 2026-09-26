@@ -5,7 +5,6 @@
  * 这里出的是它判不出来的部分：本需求的输入路径、这一版合同的十章问题与章级维度、
  * 材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
  */
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extensionRoot, featureRoot, readJsonOrNull } from './paths.mjs';
@@ -219,11 +218,9 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
   // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
   // 附录的机器区由 spec §9.1 与 knowledge-use.yaml 投影：这里按区名留一行指向盘上原文，
-  // 投影刷新不改这一段，审查对象只随作者区变；作者区的摘要放在最前面，标明是标识不是内容。
+  // 片段含作者区全文、不含机器区，投影刷新不改这一段，审查对象只随作者区变。
   const authored = authorZone(story);
   const fence = `${'`'.repeat(longestFence(authored) + 1)}markdown`;
-  rows.unshift(`<!-- 审查对象标识（非审查内容）：story 作者区 sha256:${crypto.createHash('sha256')
-    .update(authored.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16)} -->`, '');
   rows.push('', '### 审查对象：当前 `AR/story.md`（附录机器区按区名指向盘上原文）', '',
     '（与盘上那一份不一致时以盘上为准，并把这件事写进结论；机器区的内容打开 `AR/story.md` 读，与正文同样要核）', '',
     fence, authored.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));

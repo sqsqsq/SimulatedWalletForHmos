@@ -17,6 +17,7 @@
  *
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
@@ -158,9 +159,22 @@ function obligationTable(projectRoot, feature, knowledge) {
  * 本阶段全部判据与报告结构 —— overlay 里的每一条都进请求，逐条出结论。
  *
  * framework 的任务清单只列它自己的判据，overlay-only 的项不由它送；这里不送的那一条就不是任务。
- * 报告结构写在请求里：格式不合的回复会被存为被拒回复，不计结论。
+ * 报告结构写在请求里：格式不合的回复不计结论。
  */
-function allChecksFragment(checks) {
+/**
+ * 本阶段上一份合规审查报告：`verifier.conclusions.json` 里最后登记的那个审查对象的报告。
+ * 审查之后改过的判断以它为基准核依据；还没审过返回 null。
+ */
+function previousReport(projectRoot, feature, phase) {
+  const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
+  const ledger = readTextOrNull(path.join(dir, 'verifier.conclusions.json'));
+  const subjects = ledger ? Object.keys(JSON.parse(ledger)) : [];
+  const last = subjects.at(-1);
+  const file = last && path.join(dir, `verifier.report.${last}.md`);
+  return file && fs.existsSync(file) ? relDisplay(projectRoot, file) : null;
+}
+
+function allChecksFragment(checks, previous) {
   const rows = Object.entries(checks).map(([id, c]) => {
     const first = String(c?.description ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[。；])/)[0];
     return `- \`${id}\`（${c?.severity ?? '未定级'}）：${first}`;
@@ -168,7 +182,8 @@ function allChecksFragment(checks) {
   return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '',
     '**报告结构**：汇总表每条判据一行，四格 `id | status | severity | 证据`，PASS 也列、证据不空；',
     'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；',
-    '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
+    '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。',
+    ...(previous ? ['', `上一份审查报告：\`${previous}\`——审查之后改过的判断以它为基准核依据。`] : [])].join('\n');
 }
 
 export default async function preVerifier(ctx) {
@@ -205,7 +220,7 @@ export default async function preVerifier(ctx) {
       : phase === 'spec' ? specJudgementTable(ctx.projectRoot, ctx.feature, knowledge)
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
-  fragments.push(allChecksFragment(checks));
+  fragments.push(allChecksFragment(checks, previousReport(ctx.projectRoot, ctx.feature, phase)));
   // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));

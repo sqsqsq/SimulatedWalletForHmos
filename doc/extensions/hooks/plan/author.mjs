@@ -9,7 +9,7 @@
  */
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeKnowledge, HALVES, knowledgeGuide } from '../shared/knowledge.mjs';
+import { activeKnowledge, factsByName, HALVES, knowledgeGuide } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
@@ -45,15 +45,16 @@ function knowledgeSection(projectRoot, feature) {
  */
 function deliveredHalves(knowledge, use) {
   const [upper, lower] = HALVES;
+  const byName = factsByName(knowledge);
   const used = new Set((use?.facts ?? [])
     .filter(r => (Array.isArray(r?.used) ? r.used : []).some(u => String(u?.facet ?? '').trim() === upper))
-    .map(r => String(r?.id ?? '').trim()));
+    .map(r => byName.get(String(r?.id ?? '').trim())).filter(Boolean));
   const halves = knowledge.facts.filter(f => f.form === 'halves');
-  const sent = halves.filter(f => used.has(f.name) && f.halves?.[lower]);
+  const sent = halves.filter(f => used.has(f) && f.halves?.[lower]);
   const rows = ['## 1b. 本阶段知识：spec 登记用过上篇的那几份，下篇全文', ''];
   for (const f of sent) rows.push(`### ${f.name} · ${lower}`, '', '````markdown', f.halves[lower].trim(), '````', '');
   if (!sent.length) rows.push('spec 没有登记用过任何一份上下篇知识的上篇。', '');
-  const unused = halves.filter(f => !used.has(f.name)).map(f => f.name);
+  const unused = halves.filter(f => !used.has(f)).map(f => f.name);
   if (unused.length) rows.push(`spec 未登记使用的上下篇知识：${unused.join('、')}——核一下本需求确实用不到它们。`);
   return rows;
 }

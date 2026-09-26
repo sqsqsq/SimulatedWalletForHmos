@@ -368,6 +368,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                  "expected_phase": "story", "deliver": []},
             ],
             "interaction_index": 0,
+            "current_phase": "story",
             "last_awaiting": {"turn": 7, "kind": "story_gate", "prompt": "范围怎么定？"},
         })
         suite = self.suite(record)
@@ -424,12 +425,9 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         finally:
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
-    def test_the_phase_precondition_is_handed_to_the_host_not_enforced(self) -> None:
-        """阶段前提随规划条目一起交给宿主判断，装置不再据它决定发不发。
-
-        评审意见这类话依赖尚未发生的事（归档）。上一版的做法是「前提不满足就回落」，
-        而现在**每一关都回落**——前提写进 `planned_phase`，宿主看着它决定这一关
-        该不该把那个意思说出口。判据仍是「装置一个字都没发出去」。
+    def test_a_step_for_another_phase_is_not_shown(self) -> None:
+        """规划条目的阶段与当前阶段对不上（这里是不在阶段表里的前提）：不给这条立场，写 plan_note。
+        判据仍是「装置一个字都没发出去」，指针也不动。
         """
         record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
         workspace = Path(tempfile.mkdtemp())
@@ -457,9 +455,8 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                 run_multi_case.request_host_reply(record, suite)
             request = record["last_adaptive_request"]
             self.assertEqual("adaptive_reply_required", record["interaction_state"])
-            self.assertEqual("archived", request["planned_phase"],
-                             "阶段前提要交到宿主手上，让他判断这话现在该不该说")
-            self.assertEqual("评审意见", request["planned_intent"])
+            self.assertIsNone(request["planned_intent"], "对不上的立场交到了宿主手上")
+            self.assertIn("规划里没有对应这一问", request["plan_note"])
             # 指针只由宿主 `--step` 推进，装置自己不动它
             self.assertEqual(0, record["interaction_index"])
         finally:
@@ -603,7 +600,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                        "interaction_state": "complete",
                        "last_reply_status": "accepted"})
         changes = run_multi_case.progress_changes(before, suite, [{
-            "name": "scripted_reply_accepted", "case": "arbitrary-case"}])
+            "name": "adaptive_reply_required", "case": "arbitrary-case"}])
         self.assertEqual("case_progress", changes[0]["kind"])
         self.assertIn("last_phase", changes[0]["fields"])
         self.assertEqual("interaction", changes[1]["kind"])

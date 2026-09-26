@@ -346,6 +346,39 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertGreater(gaps["verifier"], 0)
 
 
+class EachSegmentIsMeasured(unittest.TestCase):
+    """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、verifier、首次门禁与登记、返工。"""
+
+    def test_the_two_segments_carry_their_own_fields(self):
+        records = [
+            {"type": "usage", "usage": {"context_total": 10}},
+            _harness(GATE_FAIL),
+            {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
+            _harness(GATE_PASS),
+            {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
+             "tool_output": "[story-build check] 2 处未通过"},
+            {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
+             "tool_output": "登记成文"},
+        ]
+        events = _events(*records)
+        for e in events:
+            e["timestamp"] += "+00:00"
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "events.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in events),
+                                             encoding="utf-8")
+            (run / "state.json").write_text(json.dumps({"resumed_at": "2026-09-02T10:04:00+00:00"}), encoding="utf-8")
+            r = measure_run.measure(run / "events.jsonl", run_dir=run)
+        first, second = r["segments"]["initial"], r["segments"]["update"]
+        self.assertEqual({"fail_count": 2}, first["first_harness"])
+        self.assertEqual(1, first["verifier_runs"])
+        self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
+        self.assertEqual({"fail_count": 1}, second["first_story_register"])
+        self.assertEqual(1.0, second["rework_min"])
+        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "verifier_gap_sec"):
+            self.assertIn(key, second)
+
+
 class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
     """P10：目标阶段、runner 提示、准备执行 gate 都不能把阶段抬上去。"""
 

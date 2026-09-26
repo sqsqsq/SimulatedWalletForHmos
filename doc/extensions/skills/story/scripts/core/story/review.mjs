@@ -128,7 +128,7 @@ function requireStoryFirst(ctx) {
 
 export function cmdBuild(ctx) {
   const decisions = readJson(ctx.decisionsPath, null);
-  if (!decisions) fail(`缺 ${ctx.decisionsPath}——先跑 skeleton 建骨架`);
+  if (!decisions) fail(registrationGap(ctx));
   requireStoryFirst(ctx);
   const list = decisionList(decisions);
   if (list === null) fail(`${path.basename(ctx.decisionsPath)} ${DECISION_SHAPE}`);
@@ -238,7 +238,8 @@ function optionsSqueezed(line) {
 //: 议题形态：open 必须给可选做法让人评；settled 是人已经定过的，依据引人的原话。
 const REVIEW_MODES = ['choice', 'confirm'];
 //: 决定人只写角色：动作词、文档名都不是人
-const NOT_A_ROLE = /确认|评审|审核|拍板|决定|在.*上|文档|原稿|改版稿|《|》|\.(md|docx)\b/;
+//: 按结构判：带括号或书名号、写了场合（「在…上」）、以动作或文稿结尾、带文件后缀的都不是角色名
+const NOT_A_ROLE = /[（）()《》]|在.+上|(确认|评审|审核|拍板|决定|稿|文档)$|\.(md|docx)\b/;
 
 function segmentOf(dec, name) {
   const lines = String(dec?.clarification ?? '').split(/\r?\n/);
@@ -476,7 +477,13 @@ function issueZones(reviewText, id, fresh) {
     if (nl < 0) break;
     at = nl + 1;
   }
-  if (!starts.length) return { machine: null, human: null, ambiguous: false };
+  // 找不到当前形态的人工区起点：整块当机器区交摘要核，有人写过字（含不是当前形态的人工区）就对不上
+  if (!starts.length) {
+    if (head < 0) return { machine: null, human: null, ambiguous: false };
+    const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+    return { machine: { mark: markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null,
+      body: reviewText.slice(head + 1, end) }, human: null, ambiguous: false, noZone: true };
+  }
   if (head < 0) return { machine: null, human: reviewText.slice(starts[0], end + anchor.length), ambiguous: false };
   const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
   const mark = markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null;
@@ -555,7 +562,7 @@ function issueRewritten(zones, fresh) {
  * 这一轮里人明确说了「沿用上一版表态」的那几条议题 —— **解锁变义判据的唯一路径**。
  *
  * 变义时停手是对的，但停手必须有出路：模型判定「只是改了措辞」时，人用
- * `story_flow.py decide --update <议题 id> --reply <原话>` 记一笔，这里据它带回。
+ * `story_flow.py decide --update <定了哪件事> --issue <议题 id> --reply <原话>` 记一笔，这里据它带回。
  * 没有这一段的话，报错让人去记一笔、记完重跑却还是同样的报错——那是个死胡同。
  *
  * **只认这条命令记下的原话**：`update-notes` 里写「已确认」不算，那是模型的转述。
@@ -565,7 +572,7 @@ function carriedOver(flowPath) {
   const flow = flowPath ? readJson(flowPath, null) : null;
   const rows = flow?.update?.decisions;
   if (!Array.isArray(rows)) return new Set();
-  return new Set(rows.map(r => String(r?.item ?? '').trim()).filter(Boolean));
+  return new Set(rows.map(r => String(r?.issue ?? '').trim()).filter(Boolean));
 }
 
 /**
@@ -689,7 +696,12 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
       group.items.forEach((dec, ii) => {
         const machine = renderMachineZone(dec, `${no}.${gi + 1}.${ii + 1}`);
         const zones = issueZones(old, dec.id, machine);
-        if (zones?.machine && issueHandEdited(zones.machine)) {
+        if (zones?.noZone && issueHandEdited(zones.machine)) {
+          throw new ProjectionConflict(
+            `议题 ${dec.id} 的人工区不是当前形态（行首「${HUMAN_ZONE[0]}」加三态与修改意见），这次没有写盘——`
+            + '按当前形态重写这一条的人工区后再登记');
+        }
+        if (zones?.machine && !zones.noZone && issueHandEdited(zones.machine)) {
           // 停在这里，不盖，文件不动。评审人要说的话在填写位里，那一段逐字节保留；
           // 写在议题正文里的，起草方要么把它接进登记表，要么明确不接——两样都比抹掉好。
           throw new ProjectionConflict(
@@ -719,7 +731,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
           throw new ProjectionConflict(
             `议题 ${dec.id} 的正文这次改了，而评审人已经在它下面写过意见——这次没有写盘，`
             + '盘上那一份还是人看过的那一版。'
-            + '意思没变（只是措辞）：请评审人确认沿用，`story_flow.py decide --update <议题 id> --reply <原话>` 记一笔，再重跑；'
+            + '意思没变（只是措辞）：请评审人确认沿用，`story_flow.py decide --update 沿用上一版表态 --issue <议题 id> --reply <原话>` 记一笔，再重跑；'
             + '意思变了：这是一个新问题，先把旧的人工区内容移走或让评审人重新表态，再重跑。');
         }
         const human = keptHumanZone(zones, dec) ?? renderHumanZone(dec);

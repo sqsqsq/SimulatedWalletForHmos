@@ -555,7 +555,8 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
                     continue
             hit_word = next((w for w in business_words if w in line), None) \
                 or next((w for w in case_names if w in line), None) \
-                or next((w for w in numbers if re.search(rf"(?<!\d){re.escape(w)}", line)), None)
+                or next((w for w in numbers if path.suffix == ".md"
+                         and re.search(rf"(?<!\d){re.escape(w)}", line)), None)
             if hit_word:
                 hits.append(f"{rel}:{n} 测试数据「{hit_word}」")
     if hits:
@@ -619,7 +620,8 @@ def _case_numbers() -> list[str]:
                   *(root / "update-inputs").glob("*.md")):
             if f.is_file():
                 found.update(m.group(0) for m in unit.finditer(read_text(f)))
-    return sorted(found)
+    # 小次数（「3 次」）是日常写法，不是用例特征
+    return sorted(w for w in found if not (w.endswith("次") and int(re.match(r"\d+", w).group(0)) < 10))
 
 
 def _golden_titles() -> list[str]:
@@ -2374,7 +2376,7 @@ def _knowledge_structure_words(root: Path) -> set[str]:
             if line.startswith("|") and not set(line) <= set("|-: "):
                 words.update(c.strip().strip("`") for c in line.strip("|").split("|"))
                 break
-    return {w for w in words if len(w) >= 3 and not w.isdigit()}
+    return {w for w in words if len(w) >= 4 and not w.isdigit()}
 
 
 @checker

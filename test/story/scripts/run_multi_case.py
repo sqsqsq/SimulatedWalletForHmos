@@ -53,7 +53,7 @@ _configure_console()
 sys.path.insert(0, str(HERE))
 import run_layout  # noqa: E402
 from cli_config_group import load_cli_group  # noqa: E402
-from phase_state import derive_phase_state  # noqa: E402
+from phase_state import ALL_PHASES, derive_phase_state  # noqa: E402
 
 CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
 
@@ -168,9 +168,11 @@ def write_json(path: Path, value: Any) -> None:
     os.replace(temp, path)
 
 
-#: 按**路径**排除的文件：工作区不是 git 仓，根忽略文件在那里唯一的作用是让内置检索
-#: 跳过 `doc/features/`——被测模型的全部产物都在那里，检索会对已知内容返回零命中。
-WORKSPACE_EXCLUDED_FILES = {".gitignore"}
+#: 工作区根的检索放行规则。工作区在系统临时目录下，而那一层可能落在某个更上层 git 仓的范围里
+#: （实测：用户目录本身是 git 仓、`.gitignore` 写 `*`）——内置检索按那份规则把整个工作区当成被忽略，
+#: 对已知内容返回零命中。`.ignore` 的优先级高于 `.gitignore`，根下这一份把工作区全部放行。
+WORKSPACE_SEARCH_IGNORE = ".ignore"
+WORKSPACE_SEARCH_RULE = "!*\n"
 
 
 def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
@@ -198,8 +200,6 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
                 continue
             if child.is_dir():
                 visit(child, target / child.name)
-            elif relative in WORKSPACE_EXCLUDED_FILES:
-                continue
             else:
                 destination = target / child.name
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +221,7 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     workspace_root.mkdir(parents=True, exist_ok=False)
     template.mkdir(parents=True, exist_ok=False)
     copied = _copy_workspace_tree(REPO_ROOT, template)
+    (template / WORKSPACE_SEARCH_IGNORE).write_text(WORKSPACE_SEARCH_RULE, encoding="utf-8")
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
     write_json(suite_root / "workspace-boundary.json", {
@@ -1757,17 +1758,17 @@ def is_new_gate(record: dict[str, Any]) -> bool:
 
 def plan_matches(step: dict[str, Any] | None, awaiting: dict[str, Any],
                  record: dict[str, Any]) -> bool:
-    """规划条目是不是这一问的：等待类型一致；条目写了框架阶段时，与当前阶段一致。"""
+    """规划条目是不是这一问的：等待类型一致；条目写了阶段时，两边都已知且一致（阶段含 story）。"""
     if not step:
         return False
     kind = step.get("expected_kind")
     if kind and kind != awaiting.get("kind"):
         return False
     phase = step.get("expected_phase")
+    if not phase:
+        return True
     current = record.get("current_phase")
-    if phase in PHASE_ORDER and current in PHASE_ORDER and phase != current:
-        return False
-    return True
+    return phase in ALL_PHASES and current in ALL_PHASES and phase == current
 
 
 def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
@@ -2438,8 +2439,7 @@ def settle_scripted_interactions(suite: dict[str, Any], max_chars: int) -> None:
 
 
 def interaction_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    names = {"scripted_reply_accepted", "scripted_reply_rejected",
-             "adaptive_reply_required"}
+    names = {"adaptive_reply_required"}
     return [event for event in events if event.get("name") in names]
 
 

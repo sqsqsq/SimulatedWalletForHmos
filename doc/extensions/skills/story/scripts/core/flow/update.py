@@ -280,11 +280,19 @@ def _receipt(feature_root: Path) -> dict | None:
 
 def _fetched_this_round(feature_root: Path, contract: dict,
                         records: list[tuple[str, dict]]) -> bool:
-    """这一轮取过上游没有：回执晚于上一轮 update 收口（或成文登记）的那一刻。"""
+    """这一轮取过上游没有：回执里的取材时刻晚于上一轮 update 收口（或成文登记）的那一刻。"""
     path = feature_root / Path(*RECEIPT)
+    if not path.is_file():
+        return False
+    at = str((_receipt(feature_root) or {}).get("fetchedAt") or "")
+    try:
+        fetched = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise FlowError(f"{'/'.join(RECEIPT)} 的取材时刻 fetchedAt 不是 ISO 8601 时刻（{at or '缺失'}）："
+                        "对接层按合同写回执，重跑取材") from exc
     closed = _latest(records, "closed")
     stamp = (closed[1].get("closed_at") if closed else None) or contract.get("story_written_at")
-    return path.is_file() and (not stamp or path.stat().st_mtime >= datetime.fromisoformat(stamp).timestamp())
+    return not stamp or fetched >= datetime.fromisoformat(stamp)
 
 
 def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path,
@@ -631,10 +639,14 @@ def _keep(feature_root: Path, current: dict[str, str], after: Path) -> int:
 def record_baseline(feature_root: Path) -> str | None:
     """成文登记时留第一份比较基准：之后第一次 update 也比得出「原来怎么写」。
 
-    只在这个单还没有任何 update 记录时写——已经 update 过的，基准是上一轮收口留下的那一份。
+    还没有任何 update 记录时写；reopen 后再登记，旧的成文基准换成这一份。
+    已经 update 过的，基准是上一轮收口留下的那一份。
     """
-    if _records(feature_root):
+    records = _records(feature_root)
+    if any(r.get("kind") != "story_baseline" for _, r in records):
         return None
+    for rid, _ in records:
+        shutil.rmtree(_updates_dir(feature_root) / rid)
     rid = now().replace("-", "").replace(":", "").replace("T", "-")[:15] + "-story"
     root = _updates_dir(feature_root) / rid
     current, unreadable = _scan(feature_root)

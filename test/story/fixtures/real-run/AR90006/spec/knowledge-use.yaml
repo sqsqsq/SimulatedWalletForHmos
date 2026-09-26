@@ -1,6 +1,6 @@
 # 本阶段知识判断的唯一真源。spec 的 §9.2/§9.3 由它生成，那两章不手写。
 schema: 1
-manifest_digest: sha256:21254f7234570cad
+manifest_digest: sha256:3a26546d3a270fd5
 
 facts:
   - id: component-profile
@@ -27,12 +27,8 @@ facts:
         used_for: "§9.1.5：确认无新增 SDK（编排 SDK framework 若有需要才声明，支付签约为外部能力）"
   - id: event-tracking
     used:
-      - facet: "应用步骤"
-        used_for: "§9.1.4 统计设计：定签约成功率指标（分子分母、每次上报字段、统计点、获知时机）"
-      - facet: "什么时候不该用"
-        used_for: "判别：纯 UI 展示不建点位；仅签约/创建这几步业务结果纳入统计设计"
-      - facet: "使用约定"
-        used_for: "§9.1.4 边界与探头：一次尝试结算一次、重试为新尝试、卡片交易远端产生超时本端不可观察的写明由云侧统计"
+      - facet: "上篇"
+        used_for: "§9.1.4 统计设计：定签约成功率指标、统计点与获知时机，判别纯 UI 展示不建点位，写明远端产生、本端不可观察的由云侧统计"
 
 constraint_domains: []
 

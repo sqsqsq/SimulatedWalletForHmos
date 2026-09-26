@@ -130,6 +130,10 @@ def load(feature_root: Path) -> dict | None:
         raise FlowError(
             f"AR/story-src/story-flow.json 不是合法 JSON（{exc}）：它只由本脚本写入。"
             "修正语法后跑 `story_flow.py status` 核对当前位置") from exc
+    if contract.get("schema") != SCHEMA:
+        raise FlowError(
+            f"不是当前版本的流程契约（schema {contract.get('schema', '缺失')}，当前 {SCHEMA}）："
+            "这张单在旧版本收口，或清掉需求目录后从 init 重新起单")
     if contract.get(DIGEST_KEY) != contract_digest(contract):
         note = ("流程契约被手改过（内容摘要对不上），本次命令照常执行："
                 "跑 `story_flow.py status` 核对当前位置；手改里要保留的决定，"

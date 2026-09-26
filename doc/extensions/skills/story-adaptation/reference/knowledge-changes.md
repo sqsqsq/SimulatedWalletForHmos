@@ -6,6 +6,6 @@
 
 ## 1.9.7
 
-- 每份知识的 frontmatter 必须写 `form`，且类型与形态只认四格（facts × facets、facts × halves、constraints × entries、patterns × halves）：逐份定格、补 `form`，只读检查按「类型 × 形态」计数核对。
+- 每份知识的 frontmatter 写齐 `name`、`kind`、`form`、`applies_when` 四项，类型与形态只认四格（facts × facets、facts × halves、constraints × entries、patterns × halves）：逐份定格、补 `form`，只读检查按「类型 × 形态」计数核对。知识使用登记按 `name` 认知识，上下篇知识按「上篇 / 下篇」登记。
 - 多步推导的项目方法写成 facts × halves（上篇给设计侧、下篇给实现侧）：spec 登记用了上篇的，plan 任务包附它的下篇全文，所以下篇要能单独读懂。
 - 方法型知识里的必须设计项写成具名列，每一行要给具体值；原来合并在一格里的字段拆开。

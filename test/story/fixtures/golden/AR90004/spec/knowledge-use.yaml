@@ -1,5 +1,5 @@
 schema: 1
-manifest_digest: "sha256:d1e6e0eb53bc0bc6"
+manifest_digest: "sha256:94fe3690d6eba16e"
 
 facts:
   - id: component-profile

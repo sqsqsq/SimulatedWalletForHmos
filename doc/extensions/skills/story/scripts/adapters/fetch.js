@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { callMcp, REQUIREMENT_URL } = require('./mcp');
-const { featureDir, levelDir, timestamp } = require('./dirs');
+const { featureDir, levelDir } = require('./dirs');
 
 const BODY = { AR: 'design.md', SR: 'design.md', RR: 'prd.md' };
 const FALLBACK_TITLE = { AR: '开发需求', SR: '系统设计', RR: '产品需求' };
@@ -117,7 +117,7 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   }
   fs.mkdirSync(src, { recursive: true });
   fs.writeFileSync(path.join(src, 'fetched.json'),
-    `${JSON.stringify({ mode: 'fetch', reqNo, fetchedAt: timestamp(), items }, null, 2)}\n`, 'utf-8');
+    `${JSON.stringify({ mode: 'fetch', reqNo, fetchedAt: new Date().toISOString(), items }, null, 2)}\n`, 'utf-8');
   const fetched = items.filter(i => i.status === 'fetched').length;
   const failed = items.filter(i => i.status === 'failed').length;
   log(`取回 ${fetched} 份到 ${outDir}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);

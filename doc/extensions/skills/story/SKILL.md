@@ -93,8 +93,8 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 **不放**：材料总表（在 `init-analysis.md` 里）、已经说过的事、流程解释、命令、文件路径、判据名。选项标签不改写、不调顺序。
 有确认组件就用组件，没有就给编号菜单，同一轮消息内给全。
 
-**人签只来自人的回话**：人答了之后跑 `decide --gate <本级> --ask <ask_id> --reply "<人的原话>"`。原话写了编号或标签，
-脚本照它映射；原话是他自己的话，加 `--chosen <编号>` 写明他选的是哪一项。没有当前问法的人签写不进契约。
+**人签只来自人的回话**：人答了之后跑 `decide --gate <本级> --ask <ask_id> --reply "<人的原话>"`。原话用编号的说法（「第 n」「n.」「n）」「选 n」或整句就是 n）
+或标签指到某一项，脚本照它映射；其余加 `--chosen <编号>` 写明他选的是哪一项，与原话指到的冲突时拒绝。没有当前问法的人签写不进契约。
 `rejected`（退出码 2）是「记下了但不能按它走」，按脚本给的补救动作原地重问同一个关卡。
 回应给出新诉求 → 这是讨论的开始：去分析、把方案摆出来，收敛了再问。**人确认前不记录、不往下走**；他已经确认过的事不再问第二遍。
 
@@ -181,7 +181,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
-意思没变，请他确认沿用，用 `story_flow.py decide --feature <编号> --update <议题 id> --reply "<他的原话>"` 记一笔再重跑；
+意思没变，请他确认沿用，用 `story_flow.py decide --feature <编号> --update 沿用上一版表态 --issue <议题 id> --reply "<他的原话>"` 记一笔再重跑；
 意思变了就让他重新看一眼那一条。
 
 ## 产物定位

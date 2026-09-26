@@ -261,7 +261,7 @@ class TheUpgradeAsksAboutKnowledge(AdaptCase):
         self.set_adapted("1.9.6")
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertIn("1.9.7：每份知识的 frontmatter 必须写 `form`", proc.stdout)
+        self.assertIn("1.9.7：每份知识的 frontmatter 写齐", proc.stdout)
         self.assertIn("停一次问人「现在做知识适配吗」", proc.stdout)
         manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         self.assertIn('knowledge_adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")

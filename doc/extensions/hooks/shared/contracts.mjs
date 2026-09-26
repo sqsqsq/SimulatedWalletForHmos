@@ -215,6 +215,8 @@ const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CON
 export const acceptanceIdRe = () => idShape('acceptance');
 /** 上游材料里读者要对照的原始验收编号形态（`id_shapes.keep`）。 */
 export const keptIdRe = () => idShape('keep');
+/** 验收行关联的功能编号形态（`id_shapes.function`）。 */
+export const functionIdRe = () => idShape('function');
 
 export function readAcceptance(projectRoot, feature) {
   const p = path.join(featureRoot(projectRoot, feature), 'acceptance.yaml');
