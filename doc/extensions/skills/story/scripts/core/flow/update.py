@@ -380,13 +380,10 @@ def cmd_update_prepare(feature_root: Path) -> dict:
     # 不同步的话，每次 restore 都会把流程契约报成「有人在这之后改过」，
     # 而改它的正是我们自己——真正的冲突会被这条噪声埋掉。
     shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
-    # 开这一轮时已闭环的阶段：收口时它们要仍然闭环。本来没闭环的阶段不是这一轮必须推进的对象。
-    # 各阶段此刻的审查对象一并记下：收口时对象变了的阶段要有当前对象的审查结论。
-    facts_now = _phase_facts(feature_root)
-    closed_before = [f["phase"] for f in facts_now if f.get("closure") == "closed"]
+    # 开这一轮时已闭环的阶段及其审查对象：收口时它们要仍然闭环，对象变了的要有当前对象的审查结论。
+    # 本来没闭环的阶段不是这一轮必须推进的对象。
+    closed_before = {f["phase"]: f.get("subject") for f in _phase_facts(feature_root) if f.get("closure") == "closed"}
     record = {"id": rid, "opened_at": now(), "status": "open", "phases_before": closed_before,
-              "subjects_before": {f["phase"]: f.get("subject") for f in facts_now if f.get("subject")},
-              "story_registered": contract.get("status") == "story_written",
               "files": current, "unreadable": unreadable, "comparison": diff,
               "materials": {"pending": pending, "changed": facts["materials_changed"],
                             "imported": imported},
@@ -444,13 +441,11 @@ def _phase_facts(feature_root: Path) -> list[dict]:
             out.append({"phase": phase, "readable": False, "why": str(exc)})
             continue
         subject = data.get("verifier_subject_id")
-        closure = data.get("verifier_closure") or {}
-        mode = closure.get("mode")
+        mode = (data.get("verifier_closure") or {}).get("mode")
         out.append({"phase": phase, "readable": True,
                     "closure": data.get("closure_status"),
                     "verdict": data.get("verdict"),
                     "subject": subject, "closure_mode": mode,
-                    "reviewed_subject": closure.get("reviewed_subject_id"),
                     "signals": [x.get("id") if isinstance(x, dict) else x
                                 for x in data.get("readiness_signals") or []],
                     "unadopted": mode == "completed_with_prior_review"
@@ -478,17 +473,16 @@ def _report_passed(reports: Path, subject: str | None) -> bool:
             and fields.get("verdict", "").strip() == "PASS")
 
 
-def _reviewed(feature_root: Path, fact: dict) -> bool:
-    """这个阶段的当前审查对象有没有审查结论——与交付门（`hooks/shared/verifier-report.mjs`
-    的 `withoutCurrentReport`）同一条判定：当前对象有 PASS 报告；或 PASS 之后只改表达、
-    走了 framework 修正重验，沿用的那份历史报告是有效的 PASS。"""
-    reports = feature_root / fact["phase"] / "reports"
-    if _report_passed(reports, fact.get("subject")):
-        return True
-    return (fact.get("closure_mode") == "completed_with_prior_review"
-            and "script_revalidated" in (fact.get("signals") or [])
-            and fact.get("closure") == "closed" and fact.get("verdict") == "PASS"
-            and _report_passed(reports, fact.get("reviewed_subject")))
+def _reviewed_now(fact: dict) -> bool:
+    """harness 的 summary 说当前对象审过：闭环 PASS，且不是沿用历史，或沿用历史而走的是修正重验。
+
+    与交付门是同一条规则，framework 的 summary 是它的唯一真源，这里不重判报告；
+    spec 读者审查那一行的细判仍归交付门。
+    """
+    mode = fact.get("closure_mode")
+    return (fact.get("closure") == "closed" and fact.get("verdict") == "PASS"
+            and (mode is None or (mode == "completed_with_prior_review"
+                                  and "script_revalidated" in (fact.get("signals") or []))))
 
 
 def _paths(project_root: Path, feature_root: Path) -> dict:
@@ -561,32 +555,33 @@ def cmd_update_close(feature_root: Path) -> dict:
     now_by = {f["phase"]: f for f in phases}
     # 开轮时已闭环的阶段，这一轮改过之后仍要闭环：被打回 open、summary 不见了或读不出，
     # 都说明改动之后的审查与闭环没走完——这时收口，这一轮就带着一个没闭环的阶段结束了。
+    before = rec.get("phases_before") or {}
     broken = [f"{ph}（{'summary 不见了' if ph not in now_by else '读不出 summary' if not now_by[ph]['readable'] else '仍未闭环'}）"
-              for ph in rec.get("phases_before") or []
+              for ph in before
               if ph not in now_by or not now_by[ph]["readable"] or now_by[ph].get("closure") != "closed"]
     if broken:
         raise FlowError(
             f"开这一轮时已闭环的阶段现在没闭环：{'、'.join(broken)}，不收口。"
             "按该阶段 summary 的 NEXT 走完（派审、返修或重跑 `harness-runner.ts --phase <阶段>`）再收口")
-    # 开轮以来审查对象变了的阶段：当前对象要有审查结论（与交付门同一条判定）
-    before = rec.get("subjects_before") or {}
-    unreviewed = [ph for ph, subject in before.items()
-                  if ph in now_by and now_by[ph].get("subject") != subject and not _reviewed(feature_root, now_by[ph])]
-    if unreviewed:
-        raise FlowError(f"{'、'.join(unreviewed)} 的审查对象在这一轮变了，当前对象还没有审查结论，不收口："
-                        "按 `phases/spec.md`「闭环」一节处置——改了业务的派审并完整跑一次 harness 采纳，"
-                        "PASS 之后只改表达的走修正重验")
     stuck = [f["phase"] for f in phases if f.get("unadopted")]
     if stuck:
         raise FlowError(
             f"{'、'.join(stuck)} 的审查报告已写、判 PASS，但阶段闭环仍是沿用历史（没被采纳），不收口："
             "逐个跑 `harness-runner.ts --phase <阶段> --feature <编号>`（不是 --sync-closure），"
             "读 summary 确认 semantic_not_reverified 已消失再收口")
+    unreviewed = [ph for ph, subject in before.items()
+                  if now_by[ph].get("subject") != subject and not _reviewed_now(now_by[ph])]
+    if unreviewed:
+        raise FlowError(f"{'、'.join(unreviewed)} 的审查对象在这一轮变了，当前对象还没有审查结论，不收口："
+                        "按 `phases/spec.md`「闭环」一节处置——改了业务的派审并完整跑一次 harness 采纳，"
+                        "PASS 之后只改表达的走修正重验")
 
-    # 开轮时已登记的 story，这一轮改过（登记之后改了，或提交提取稿使登记作废）就要按当前内容重新登记
+    # 开轮时已登记的 story（本轮镜像里的契约记着那一刻的状态），这一轮改过——登记之后改了，
+    # 或提交提取稿使登记作废——就要按当前内容重新登记
     contract = load(feature_root) or {}
     drift = registration_drift(feature_root, contract)
-    if drift or (rec.get("story_registered") and contract.get("status") != "story_written"):
+    registered_before = (load(root / "before") or {}).get("status") == "story_written"
+    if drift or (registered_before and contract.get("status") != "story_written"):
         raise FlowError("story 这一轮改过，还没按当前内容重新登记，不收口："
                         + (f"登记之后改过 {'、'.join(drift)}；" if drift else "")
                         + "跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")

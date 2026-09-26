@@ -18,7 +18,7 @@ import { relFromFeature } from './sources.mjs';
 import { selectedStructure } from './writing-plan.mjs';
 
 // 章草稿目录。作者在这里写，`chapter --from` 从这里读；登记之后也留着——
-// 它是「这份 story 怎么写出来的」唯一的现场，不进冻结台账，也走不漏到读者手上。
+// 它是「这份 story 怎么写出来的」唯一的现场，不进登记指纹，也走不漏到读者手上。
 const DRAFTS = 'drafts';
 
 export function draftPath(ctx, index, title) {

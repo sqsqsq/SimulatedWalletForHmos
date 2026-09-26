@@ -267,7 +267,7 @@ function resultBlock(text) {
  * 当前对象没有报告时能不能交付：`phases/spec.md`「闭环」表里「PASS 之后只改表达」那一类——
  * framework 修正重验（summary 带 `script_revalidated`）、本阶段闭环 PASS 并沿用历史审查，
  * 且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
- * update 里改了业务的阶段由 `update --action close` 核它们有当前对象的报告。
+ * update 这一轮审查对象变了的阶段，`update --action close` 读 summary 按同一条规则核。
  */
 function withoutCurrentReport(summary, abs) {
   const prior = summary.verifier_closure;

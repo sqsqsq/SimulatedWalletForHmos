@@ -70,7 +70,8 @@ class TheDeliveryGateAsksOneThing(unittest.TestCase):
         from flow import routing  # noqa: PLC0415
         with tempfile.TemporaryDirectory() as tmp:
             fr = Path(tmp)
-            step, action = routing.next_step(fr, {"rounds": [{"round": 1}], "status": "story_written"})
+            step, action = routing.next_step(fr, {"rounds": [{"round": 1}], "status": "story_written",
+                                                  "story_digests": {}})
         self.assertEqual("run_archived", step)
         self.assertIn("归档送审 / 进入 plan", action)
         self.assertIn("phases/spec.md", action, "规则应只写在 phase 文档，路由指过去")

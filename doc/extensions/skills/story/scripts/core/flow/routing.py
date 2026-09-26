@@ -23,8 +23,8 @@ from flow.meetings import meeting_basis, pending_asks, refresh_problems
 def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
 
-    这时不能顺手导：导入会改正文，而已经定稿的 story 声称的依据是当轮的材料快照，
-    导完两边就对不上了。所以出口是显式的 `reopen`，不是静默导入。
+    这时不能顺手导：导入会改正文，而已登记的 story 据以成文的是当轮的材料快照。
+    出口按位置给：已归档的走 `/story update`，其余导入、`round` 登记到本轮、改完重跑 `story`。
 
     但不提它，那份文件从此没有任何人知道——`round` 只看已导入的指纹说「材料未变」，
     `status` 只说下一步走 spec 那条路。**下游没有动作时要说明为什么不适用，
@@ -344,8 +344,13 @@ def next_step(feature_root: Path, contract: dict | None,
         if reregister:
             return reregister
     if stage == "archived":
-        return ("done", "本轮已归档送审。评审意见、上游新材料与改稿走 `/story update`；"
-                "要重拍范围才 `story_flow.py reopen`"
+        # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
+        closed = str((contract.get("update") or {}).get("last_closed") or "")
+        at = str((contract.get("archived") or {}).get("at") or "")
+        updated = closed[:15] > at.replace("-", "").replace(":", "").replace("T", "-")[:15]
+        return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
+                         else "本轮已归档送审。")
+                + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
                 + frozen_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
@@ -384,7 +389,7 @@ def next_step(feature_root: Path, contract: dict | None,
     # 在那之前的每一个判断都建立在一份不全的材料上。文件已经在盘上，
     # 导入是脚本的活，不用问人「放好了吗」。
     # 表态与导入互不挡路：第一级的 `decide` 看的是「这一级定没定」，不看这里给的是什么。
-    # 收口之后不走这条——那时材料再变归 `reopen`，见上面 `story_written` 那支。
+    # 收口之后不走这条——那时材料再变登记到本轮，见上面 `complete` 那支。
     state = material_state(feature_root, current, manifest)
     pending = pending_import_step(state)
     if pending:

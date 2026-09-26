@@ -11,7 +11,7 @@
 | 要写 | `spec/knowledge-use.yaml`、§9.1 技术契约 + §0 术语解释列 | **只有 `spec/knowledge-use.yaml`** |
 | 还要 | 三份产物齐备（`spec.md` / `AR/review.md` / `AR/story.md`） | 无 |
 
-**spec 只写与最终代码有关的要求**：规约判定结论进叙事件附录，决策论证进决策件，推演过程与生成流程的说明都不进可见正文。扩展章模板见 [`spec-sections.md`](../../skills/story/templates/spec-sections.md)。
+**spec 只写与最终代码有关的要求**：规约判定结论进叙事件附录，决策论证进决策件，推演过程与生成流程的说明都不进可见正文。扩展章模板见 [`spec-sections.md`](../../skills/story/templates/spec-sections.md)。修正记录写成附录下的一节，不另起二级章。
 
 ## 本阶段的主任务：从业务关系到完整设计
 

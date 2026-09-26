@@ -23,7 +23,7 @@ MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
-from flow.state import CONTRACT, STORY_REGISTERED  # noqa: E402
+from flow.state import CONTRACT, STORY_REGISTERED, ledger_digest  # noqa: E402
 from materials import importer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -81,7 +81,7 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
         self.contract_path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(self.contract_path.read_text(encoding="utf-8"))
         data.update(status="story_written", story_written_at="2026-09-14T00:00:00+08:00",
-                    story_src_digests={"decisions.json": "sha"})
+                    story_digests={"AR/story-src/decisions.json": "sha"})
         self.written = json.dumps(data, ensure_ascii=False, indent=2)
         self.contract_path.write_text(self.written, encoding="utf-8")
 
@@ -269,11 +269,13 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
             (self.feature_root / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
 
     def complete_it(self, status: str = "complete") -> None:
-        """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。"""
+        """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。已登记的带上此刻的登记指纹。"""
         self.round_now()
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
+        if status == "story_written":
+            data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_material_change_after_complete_opens_no_round(self) -> None:
@@ -356,23 +358,23 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
     def put_inbox_file(self, name: str = "后到的稿.md") -> None:
         inbox = self.feature_root / "inbox"
         inbox.mkdir(exist_ok=True)
-        (inbox / name).write_text("# 后到的稿" + chr(10) * 2 + "冻结之后才来的材料。" + chr(10),
+        (inbox / name).write_text("# 后到的稿" + chr(10) * 2 + "登记之后才来的材料。" + chr(10),
                                   encoding="utf-8")
 
-    def test_a_frozen_story_still_says_what_is_sitting_in_the_inbox(self) -> None:
-        """冻结之后放的料不能顺手导（导了 story 就对不上它自己声称的依据），
-        但要**说出来**——不提的话那份文件从此没人知道，`round` 只会说「材料未变」。
+    def test_a_registered_story_still_says_what_is_sitting_in_the_inbox(self) -> None:
+        """登记之后放的料不顺手导（导了 story 就对不上它据以成文的依据），
+        但要**说出来**并给出路：导入、登记到本轮、改完重跑 `story`——不提的话那份文件从此没人知道。
         """
         self.complete_it("story_written")
         self.put_inbox_file("补的界面稿.md")
         proc = self.run_flow("round")
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertIn("补的界面稿.md", out, "收件箱里那份原件一个字都没提")
-        self.assertIn("reopen", out, "没说清要纳入该走哪条路")
+        self.assertIn("重跑 `story`", out, "没说清要纳入该走哪条路")
 
         proc = self.run_flow("status")
         payload = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual("run_archived", payload["next"], "冻结态的下一步被改掉了")
+        self.assertEqual("run_archived", payload["next"], "已登记的下一步被改掉了")
         self.assertIn("补的界面稿.md", (proc.stdout or "") + (proc.stderr or ""))
 
     def test_an_empty_inbox_after_freezing_says_nothing_extra(self) -> None:
@@ -1148,24 +1150,23 @@ class AManifestAppearsWithoutAnyDataLayer(unittest.TestCase):
 
 
 class TheManifestIsNotAFrozenLedger(unittest.TestCase):
-    """材料清单留在 `story-src/`，但不随稿冻结。
+    """材料清单留在 `story-src/`，但不进登记指纹。
 
-    它是材料真源，会随材料继续演化；定稿那一刻手里是哪版材料，记在契约当轮的
-    `materials.digest` 里——那才是快照。把它也当台账冻结，材料一变 check 就报
-    「台账被换过」，而那正是**正常**的。
+    它是材料真源，会随材料继续演化；登记那一刻手里是哪版材料，记在契约当轮的
+    `materials.digest` 里——那才是快照。把它也记进登记指纹，材料一变 check 就报
+    「登记之后改过」，而那正是**正常**的。
     """
 
     def test_the_manifest_is_not_a_frozen_ledger(self) -> None:
         self.assertNotIn("AR/story-src/materials.json", STORY_REGISTERED,
-                         "材料清单被当成随稿冻结的台账，材料一演化就会被判成台账被换过")
+                         "材料清单进了登记指纹，材料一演化就会被判成登记之后改过")
 
 
 class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
-    """流程契约、需求分析件、导入落点住在 `story-src/`，但都不随稿冻结。
+    """流程契约、需求分析件、导入落点住在 `story-src/`，但都不进登记指纹。
 
-    三件在登记之后还要写：契约要记归档态、`reopen` 要撤销登记，清单与落点随材料重算，
-    分析件随初析演进。当成台账冻结，登记之后的每一步都会被判成
-    「台账被换过」。
+    三件在登记之后还要写：契约要记归档态与重新登记，清单与落点随材料重算，
+    分析件随初析演进。记进登记指纹，登记之后的每一步都会被判成「登记之后改过」。
     """
 
     NAMES = property(lambda self: [
@@ -1174,7 +1175,7 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
     ])
 
     def test_none_of_them_is_a_frozen_ledger(self) -> None:
-        """三件都留，但都不随稿冻结——冻结的是「据以成文的依据」，它们还要继续变。"""
+        """三件都留，但都不进登记指纹——指纹记的是 story 与「据以成文的依据」，它们还要继续变。"""
         for name in self.NAMES:
             self.assertNotIn(f"AR/story-src/{name}", STORY_REGISTERED)
 
@@ -1186,7 +1187,7 @@ class TheMovedInThreeAreNotFrozenLedgers(unittest.TestCase):
 
 
 class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
-    """草稿不进冻结台账：它不是 story 据以成文的依据，是写它的过程。"""
+    """草稿不进登记指纹：它不是 story 据以成文的依据，是写它的过程。"""
 
     def test_drafts_are_not_frozen_into_the_ledger(self) -> None:
         self.assertFalse(any("/drafts" in rel for rel in STORY_REGISTERED))

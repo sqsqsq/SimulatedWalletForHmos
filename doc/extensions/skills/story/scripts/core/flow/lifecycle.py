@@ -130,7 +130,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
             + (numbered.stderr or numbered.stdout or "").strip())
     # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
     # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
-    # 归档件红线（⑨）于是要等到交付门才报，而那时 story 已经冻结，只能 reopen 重来。
+    # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
     rendered = subprocess.run(
         [node, str(checker), "build", "--feature", feature_root.name,
          "--project-root", str(project_root)],
@@ -170,7 +170,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     """登记「叙事件已送审」。归档动作由数据对接层执行，本命令只记状态。
 
     归档态是**流程状态**，落在流程契约里：装配脚本据它判定 `AR/review.md` 已归人所有，
-    此后只备份不重建，评审人的批注与回稿都留在那份文件里。判据在契约里，
+    此后重新渲染时人工区逐字保留、机器区按当前决策件重算，评审人的批注与回稿都留在那份文件里。判据在契约里，
     与谁执行的归档无关——数据对接层由各部署环境自备实现，不随交付走。
 
     **登记自带门禁**：先重跑一次 `story-build check`，通过才记——归档时 story 可能又改过，
@@ -204,5 +204,5 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
 
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
-    log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，装配只备份不重建")
+    log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
     return {"archived": True, "at": contract["archived"]["at"]}

@@ -874,6 +874,11 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
         data["rounds"][-1]["gates"] = []
+        if status == "story_written":
+            # 已登记的契约带此刻的登记指纹（缺了是契约不完整，status 报错）
+            sys.path.insert(0, str(FLOW_SCRIPT.parent))
+            from flow.state import STORY_REGISTERED, ledger_digest  # noqa: PLC0415
+            data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     def test_after_the_flow_closes_it_gives_the_spec_stage_order(self) -> None:

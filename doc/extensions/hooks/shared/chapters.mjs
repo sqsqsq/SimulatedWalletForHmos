@@ -134,14 +134,18 @@ function anchorPositionProblems(doc, anchor, name) {
   const at = h2.indexOf(anchor);
   const after = h2.slice(at + 1).filter(h => !/^附录/.test(h.name));
   if (!after.length) return [];
-  const before = h2.slice(0, at);
-  return [`「${anchor.raw}」要在最后一个设计章之后、附录之前——现在它`
-    + (before.length ? `在「${before.at(-1).raw}」之后，` : '是第一章，')
-    + `后面还有「${after.map(h => h.raw).join('」「')}」。把「${name}」整章挪到「${after.at(-1).raw}」之后`];
+  const where = `「${anchor.raw}」要在最后一个设计章之后、附录之前——现在它`
+    + (at > 0 ? `在「${h2[at - 1].raw}」之后，` : '是第一章，');
+  // 带章号的是设计章，要在扩展章之前；不带章号的（修正记录之类）是附录内容
+  const design = after.filter(h => NUMBER.test(h.raw));
+  const other = after.filter(h => !design.includes(h));
+  const list = hs => `「${hs.map(h => h.raw).join('」「')}」`;
+  return [design.length && `${where}后面还有设计章${list(design)}。把「${name}」整章挪到「${design.at(-1).raw}」之后`,
+    other.length && `${where}后面还有${list(other)}：它不是设计章，并入附录（附录下的一节）`].filter(Boolean);
 }
 
 /**
- * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，锚点之后只有附录，附录是全文最后一章。
+ * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，锚点之后只有附录，附录之后只有附录。
  * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
  */
 export function hostAnchorProblems(text, isStory, formDoc) {
@@ -164,8 +168,9 @@ export function hostAnchorProblems(text, isStory, formDoc) {
   }
   const h2 = doc.headings.filter(h => h.level === 2);
   const appendix = h2.findIndex(h => /^附录/.test(h.name));
-  if (appendix >= 0 && appendix < h2.length - 1) {
-    problems.push(`附录要是全文最后一章：「${h2.slice(appendix + 1).map(h => h.raw).join('」「')}」排在了附录之后`);
+  const tail = appendix >= 0 ? h2.slice(appendix + 1).filter(h => !/^附录/.test(h.name)) : [];
+  if (tail.length) {
+    problems.push(`附录之后只有附录：「${tail.map(h => h.raw).join('」「')}」排在了附录之后`);
   }
   return problems;
 }

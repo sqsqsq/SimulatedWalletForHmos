@@ -83,9 +83,9 @@ function decisionRows(decisionsPath) {
   const settled = all.filter(d => d?.status === 'settled');
   const out = ['', '### 仍开着的选择：受影响的行为有没有被写成已定', '',
     open.length
-      ? '**每一条都写一句结论**：依赖这个选择的行为在 Spec、Story 与 `acceptance.yaml` 的哪几处，'
+      ? '**每一条都写一句结论**，写在读者审查这一条的证据格：依赖这个选择的行为在 Spec、Story 与 `acceptance.yaml` 的哪几处，'
         + '那几处只写了共同要求与条件，还是已经替人选了一边。各选项（含保持待定）都会有的行为才是共同要求；'
-        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边。判的是后果，不是正文里有没有「待定」二字。'
+        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边，同时记进 blocking_findings。判的是后果，不是正文里有没有「待定」二字。'
       : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',

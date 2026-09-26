@@ -145,7 +145,7 @@ class DeclaredSourcesMustExist(NegativeCase):
 class LedgersMustAllExist(NegativeCase):
     """台账缺一件都要被点名。
 
-    冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
+    登记核对只管「登记之后改台账」，管不到登记之前把台账删掉。而删掉是有动力的：
     实跑里台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
 
     逐单元系统退场后台账收到两件：决策登记与统稿留痕。判据一个字没动，基线跟着走。

@@ -142,7 +142,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 
 ② 失败就停下，不做 ③ 登记。
 
-**③ 登记之后**，`AR/review.md` **归人所有——只备份，不重建**。决策件带着未勾的议题去归档是常态路径：
+**③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
 
 ### 恢复

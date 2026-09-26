@@ -201,7 +201,10 @@ def registration_drift(feature_root: Path, contract: dict) -> list[str]:
     """
     if contract.get("status") != "story_written":
         return []
-    digests = contract.get("story_digests") or {}
+    if "story_digests" not in contract:
+        raise FlowError("流程契约记着已成文登记，却没有登记指纹 story_digests：契约不完整。"
+                        "跑 `story_flow.py story` 按当前内容重新登记")
+    digests = contract["story_digests"]
     return [rel for rel in STORY_REGISTERED
             if digests.get(rel) != ledger_digest(feature_root / Path(*rel.split("/")))]
 

@@ -125,7 +125,7 @@ const STORY_SRC_LEDGERS = [
 /**
  * 台账在不在 —— **缺任一即 BLOCKER**，check 到此为止。
  *
- * 冻结只挡「登记之后改台账」，挡不住登记之前把台账删掉。而删掉是有动力的：
+ * 登记核对只管「登记之后改台账」，管不到登记之前把台账删掉。而删掉是有动力的：
  * 台账错到成百上千条时，整份删掉能让 check 的报错数当场归零。
  *
  * 报错文案要把这条路直接堵死：缺的那件是**补产出**，不是删同伴文件。
@@ -142,13 +142,14 @@ export function requireLedgers(ctx) {
 }
 
 /**
- * 最近一次成文登记记下的指纹（键是相对需求目录的路径）；没登记过为空。
+ * 最近一次成文登记记下的指纹（键是相对需求目录的路径）；没登记过为空，登记了却没有指纹为 null。
  *
- * @returns {Record<string,string|null>}
+ * @returns {Record<string,string|null>|null}
  */
 function registeredDigests(ctx) {
   const flow = readJson(ctx.flowPath, null);
-  return flow?.status === 'story_written' ? (flow?.story_digests ?? {}) : {};
+  if (flow?.status !== 'story_written') return {};
+  return flow.story_digests ?? null;
 }
 
 /** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
@@ -190,10 +191,15 @@ export function ledgerDigestProblems(ctx) {
   // 登记记下 story 与它据以成文的依据此刻的指纹；之后任一份改了，登记说的就不是现在这份。
   // 改是正常的（返修、update 修订），改完重跑 `story` 重新登记。
   // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `ledger_digest`。
-  for (const [rel, want2] of Object.entries(registeredDigests(ctx))) {
+  const digests = registeredDigests(ctx);
+  if (digests === null) {
+    return ['流程契约记着已成文登记，却没有登记指纹 story_digests：契约不完整。'
+      + '跑 `story_flow.py story --feature <名>` 按当前内容重新登记'];
+  }
+  for (const [rel, want2] of Object.entries(digests)) {
     const file = path.join(ctx.featureRoot, ...rel.split('/'));
     if (want2 === null && !fs.existsSync(file)) continue;
-    if (want2 !== digestOf(readRawOrNull(file))) {
+    if (want2 !== digestOf(readRaw(file))) {
       problems.push(`${rel} 在成文登记之后改过：改完跑 \`story_flow.py story --feature <名>\` 重新登记`
         + '（它会重投附录、编号、渲染 review 并全篇 check）');
     }
@@ -201,14 +207,6 @@ export function ledgerDigestProblems(ctx) {
   return problems;
 }
 
-/** 按字节原样读（不剥 BOM）：登记指纹与 `ledger_digest` 同口径，读不到为 null。 */
-function readRawOrNull(file) {
-  try {
-    return fs.readFileSync(file, 'utf-8');
-  } catch {
-    return null;
-  }
-}
 
 /** `AR/` 这一层的独立文件只有白名单那几个，辅助件进 `story-src/`；目录一律放过。 */
 export function strayFileProblems(ctx) {

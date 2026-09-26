@@ -90,7 +90,7 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 - 读者审查判 WARN 而没有阻断项时交付门放行，建议项进 notes；只有阻断项才拦。
 - 审查之后改了知识判断或决策状态，notes 写新依据——只为消掉审查意见而改判断不算处置。
 - 门禁反复报同一问题而你判断改不动时，停下向人说明缺什么、需要谁提供，不靠多跑几次过关。
-- `/story update` 里改了业务的阶段，在 update-notes 写「业务改动的阶段：…」，`update --action close` 核它们有当前对象的报告。
+- `/story update` 里审查对象变了的阶段，`update --action close` 核当前对象审过：闭环 PASS，或 PASS 之后只改表达、走了修正重验。
 
 **⑥ 回执不用你填**：它是 harness 的只读投影，`check-receipt` 自己先生成再校验；要写备注写 `<phase>/notes.md`。
 **`check --deliver` 是交付门**：它把回执再跑一次，再核读者审查那一项的结论；本宿主没登记审查员时如实记一笔

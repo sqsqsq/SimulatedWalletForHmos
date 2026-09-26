@@ -71,14 +71,14 @@ def cmd_round(feature_root: Path) -> dict:
     #
     # 开轮的代价是死锁：新轮没有任何决策，而 `decide` 被 status=complete 挡住，
     # 于是既走不下去也退不回来，只能去手改契约文件——那在正式路径上不允许。
-    # 要重新决策请显式跑 `reopen`。
+    # 要重拍范围请显式跑 `reopen`。
     #
-    # **判的是「收口及之后」不是「恰好在 complete」**：`story_written` 与已归档比它更靠后，
-    # 而 story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料，
-    # 那份已经定稿的 story 就对不上它自己声称的依据了。
+    # **判的是「收口及之后」不是「恰好在 complete」**：`story_written` 比它更靠后，
+    # 而 story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料。
+    # 据新料改完 story，重跑 `story` 重新登记。
     #
     # **update 期间同理**：这一轮是一次有依据的修订，范围沿用本单已定的；新材料登记进当前轮，
-    # reopen 之后也一样——开新轮会把人送回材料与范围关卡。
+    # 开新轮会把人送回材料与范围关卡。
     if (after_complete(contract) or in_update(contract)) and rounds:
         current = rounds[-1]
         stamp(current)
@@ -86,7 +86,8 @@ def cmd_round(feature_root: Path) -> dict:
         consume_sidecar(feature_root, POSITIONING)
         consume_sidecar(feature_root, SCOPE_OPTIONS)
         log(f"材料有变（{digest}）：只更新第 {current['round']} 轮的材料指纹，未开新轮。"
-            "要重新拍板范围，先收口这一轮 update，再跑 `story_flow.py reopen`")
+            + ("要重新拍板范围，先收口这一轮 update，再跑 `story_flow.py reopen`" if in_update(contract)
+               else "要重新拍板范围，跑 `story_flow.py reopen`"))
         return {"round": current["round"], "created": False, "materials": digest,
                 "afterComplete": True,
                 "positioning": bool(current.get("positioning")),

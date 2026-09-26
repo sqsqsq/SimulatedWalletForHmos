@@ -143,7 +143,6 @@ class NothingChangedIsAFactNotAnExit(UpdateCase):
         self.assertEqual("unchanged", out["comparison"], out)
         self.assertEqual(2, len(self.rounds()), "没变化就没开轮：人这次的要求没有地方承接")
         self.assertIn("照常收口", out["action"])
-        self.assertFalse((self.updates / ".last-prepare.json").exists())
 
     def test_it_does_not_touch_the_earlier_rounds(self) -> None:
         """清理只管本次的临时副本——**历史备份一个字节都不许动**。"""
@@ -977,7 +976,26 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         closed = self.update("--action", "close")
         self.assertEqual("closed", closed.get("status"), closed)
         self.assertTrue(self.contract().get("archived"), "重新登记把归档标记弄丢了")
-        self.assertEqual("done", self.flow("status")["next"])
+        status = self.flow("status")
+        self.assertEqual("done", status["next"])
+        self.assertIn("回写需求系统等人确认", status["action"], "收口之后没说本地已更新、回写待人确认")
+        self.assert_no_hand_edit()
+
+    def test_a_recommitted_extract_needs_the_story_registered_again(self) -> None:
+        """update 轮内重新提交提取稿：上一次登记随之作废，不重跑 `story` 就不收口。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.mark_archived()
+        rid = self.update()["update"]
+        draft = self.src / "design-draft.md"
+        draft.write_text(draft.read_text(encoding="utf-8") + "\n按改版稿核过一遍。\n", encoding="utf-8")
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertTrue(done.get("committed"), done)
+        self.assertEqual("register_story", self.flow("status")["next"])
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        refused = self.update("--action", "close")
+        self.assertIn("重新登记", refused.get("error", ""), refused)
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
         self.assert_no_hand_edit()
 
     def test_rescoping_after_archive_goes_through_the_scope_gate(self) -> None:
@@ -996,9 +1014,10 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
 
 
 class ChangedSubjectsNeedAReview(UpdateCase):
-    """AC20（U43）：开轮以来审查对象变了的阶段，收口核它有审查结论——与交付门同一条判定。
+    """AC20（U43）：开轮时已闭环、这一轮审查对象变了的阶段，收口时 harness 的 summary 要说当前对象审过。
 
-    判的是审查对象的实际变化，不是 update-notes 里作者声明的一行字。
+    判的是审查对象的实际变化，不是 update-notes 里作者声明的一行字；读的是 framework 写好的
+    summary（闭环 PASS，且不是沿用历史或沿用历史而走了修正重验），与交付门同一条规则、不重判报告。
     """
 
     BEFORE, AFTER = "c" * 64, "d" * 64
@@ -1007,45 +1026,46 @@ class ChangedSubjectsNeedAReview(UpdateCase):
         super().setUp()
         self.reports = self.feature_root / "spec" / "reports"
         self.reports.mkdir(parents=True, exist_ok=True)
-        self.summary(self.BEFORE)
+
+    def open_round(self) -> None:
         self.rid = self.update()["update"]
         (self.updates / self.rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
 
-    def summary(self, subject: str, **extra: object) -> None:
-        body = {"closure_status": "closed", "verdict": "PASS", "verifier_subject_id": subject,
+    def summary(self, subject: str, closure: str = "closed", **extra: object) -> None:
+        body = {"closure_status": closure, "verdict": "PASS", "verifier_subject_id": subject,
                 "readiness_signals": [], **extra}
         (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
 
-    def report(self, subject: str) -> None:
-        (self.reports / f"verifier.report.{subject}.md").write_text(
-            "审查正文。\n\n<!-- maison-verifier-result:v1 -->\n"
-            f"verifier_subject_id: {subject}\nverdict: PASS\nblocker_count: 0\n"
-            "<!-- /maison-verifier-result:v1 -->\n", encoding="utf-8")
+    PRIOR = {"verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "c" * 64}}
 
-    def test_an_unchanged_subject_closes_without_a_new_report(self) -> None:
-        out = self.update("--action", "close")
-        self.assertEqual("closed", out.get("status"), out)
+    def test_an_unchanged_subject_closes(self) -> None:
+        self.summary(self.BEFORE)
+        self.open_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
 
-    def test_a_changed_subject_without_a_review_does_not_close(self) -> None:
+    def test_a_changed_subject_reviewed_and_adopted_closes(self) -> None:
+        self.summary(self.BEFORE)
+        self.open_round()
         self.summary(self.AFTER)
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+
+    def test_a_changed_subject_carried_by_prior_review_does_not_close(self) -> None:
+        self.summary(self.BEFORE)
+        self.open_round()
+        self.summary(self.AFTER, readiness_signals=[{"id": "semantic_not_reverified"}], **self.PRIOR)
         out = self.update("--action", "close")
         self.assertIn("审查对象在这一轮变了", out.get("error", ""), out)
 
-    def test_a_changed_subject_with_its_pass_report_closes(self) -> None:
-        self.summary(self.AFTER)
-        self.report(self.AFTER)
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
-
     def test_an_expression_only_change_carried_by_revalidation_closes(self) -> None:
-        """PASS 之后只改表达、走修正重验：沿用的那份历史报告是有效 PASS 就放行。"""
-        self.report(self.BEFORE)
-        self.summary(self.AFTER, readiness_signals=[{"id": "script_revalidated"}],
-                     verifier_closure={"mode": "completed_with_prior_review",
-                                       "reviewed_subject_id": self.BEFORE})
+        """PASS 之后只改表达、走修正重验：summary 带 script_revalidated 的沿用就放行。"""
+        self.summary(self.BEFORE)
+        self.open_round()
+        self.summary(self.AFTER, readiness_signals=[{"id": "script_revalidated"}], **self.PRIOR)
         self.assertEqual("closed", self.update("--action", "close").get("status"))
 
-    def test_revalidation_without_a_valid_history_does_not_close(self) -> None:
-        self.summary(self.AFTER, readiness_signals=[{"id": "script_revalidated"}],
-                     verifier_closure={"mode": "completed_with_prior_review",
-                                       "reviewed_subject_id": self.BEFORE})
-        self.assertIn("审查对象在这一轮变了", self.update("--action", "close").get("error", ""))
+    def test_a_phase_open_at_the_start_is_not_this_rounds_to_close(self) -> None:
+        """开轮时本来没闭环的阶段不是这一轮必须推进的对象：对象变了、仍没闭环也不挡收口。"""
+        self.summary(self.BEFORE, closure="open")
+        self.open_round()
+        self.summary(self.AFTER, closure="open")
+        self.assertEqual("closed", self.update("--action", "close").get("status"))

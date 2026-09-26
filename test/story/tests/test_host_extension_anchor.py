@@ -126,7 +126,7 @@ class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(f"「{name}」要写成「9. 宿主扩展治理项」的下一级小节", got)
                 self.assertIn(now, got, "没说出现在写在哪")
-        self.assertIn("附录要是全文最后一章", got)
+        self.assertIn("附录之后只有附录", got)
 
     def test_a_missing_anchor_names_what_goes_under_it(self) -> None:
         text = ANCHORED_SPEC.replace("## 9. 宿主扩展治理项", "## 9. 扩展")
@@ -181,6 +181,17 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
 
     def test_an_appendix_after_the_anchor_is_fine(self) -> None:
         self.assertEqual([], plan_problems(ANCHORED_PLAN + "\n## 附录\n\n略。\n"))
+
+    def test_a_correction_log_after_the_anchor_goes_into_the_appendix(self) -> None:
+        """§9 之后追加「修正记录」：它不是设计章，修法是并进附录，不是把 §9 挪到它后面。"""
+        got = plan_problems(ANCHORED_PLAN + "\n## 修正记录\n\n略。\n")
+        self.assertEqual(1, len(got), got)
+        self.assertIn("「修正记录」：它不是设计章，并入附录", got[0])
+        self.assertNotIn("挪到", got[0])
+
+    def test_several_appendices_pass(self) -> None:
+        text = ANCHORED_SPEC + "\n## 附录 B 修正记录\n\n略。\n"
+        self.assertEqual([], spec_problems(text))
 
     def test_each_missing_part_is_named(self) -> None:
         text = ANCHORED_PLAN.replace("#### 9.1.2 规约义务\n\n略。\n\n", "").replace("#### 9.1.3 项目知识影响", "#### 9.1.3 其它")
