@@ -1049,15 +1049,15 @@ class TestRetiredThings(unittest.TestCase):
                                   f"{path.name} 还指着旧路径：{line.strip()}")
 
     def test_the_manifest_version_covers_this_round(self) -> None:
-        """机制变了，manifest 版本要跟着走——它是 adapt 升级路径的唯一真源。
+        """manifest 版本就是正在开发的这一版：上一版发布后，新版本的第一次提交就把它升上去。
 
-        **版本号写死在这里是故意的**：谁改了机制面，这一条就会红，逼他回答
-        「这轮该不该升版本」。版本不升的代价不是洁癖问题——目标工程只能从版本号
-        看出自己拿到的是哪一批产物形态与报错集合，号不动，升过没升过就成了一笔糊涂账。
-        红了就一起改，别只把断言改绿。
+        **版本号写死在这里是故意的**：新版本开工时这一条要跟着改，升级演进记录里这一版的节同时出现——
+        adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号落后，本版条目就漏报。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.9.6"', manifest)
+        self.assertIn('version: "1.9.7"', manifest)
+        changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
+        self.assertIn("\n## 1.9.7\n", changes)
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 test/story/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。

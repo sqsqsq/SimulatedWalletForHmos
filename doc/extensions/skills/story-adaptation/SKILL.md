@@ -1,6 +1,6 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现，脚本不碰知识与目标身份；知识由模型按适配方法识别差异、人定范围后依据真实代码补齐。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现，脚本不碰知识与目标身份；升级后按演进记录列出目标已适配版本之后的知识、对接层与在途单条目，人定范围后由模型依据真实代码逐块做完。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
@@ -16,10 +16,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | `<ext>/skills/story/scripts/adapters/`（入口、鉴权及其内部实现模块） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
 | `<ext>/knowledge/` | 目标 | 脚本不读不写；内容由你按「知识适配」一节改 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
-| `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
-
-> **目标工程的 `story.js` 要实现 `fetch`**（只读取材到本单 `inbox/`，回执写 `AR/story-src/fetched.json`，
-> 合同见 `skills/story/scripts/README.md`）：`/story update` 靠它取上游与评审回稿，命令失败时 update 报出来并停下。
+| `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`adapters`、`adapted_for`、`provides.knowledge` 归目标 | 按这条规则合成 |
 
 **没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
 
@@ -32,15 +29,19 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 判来源看包 `manifest.yaml` 的 `adapters`——它归目标、升级不改，所以每个仓说的都是它自己的对接层。不靠仓名、目录结构或脚本内容猜。
 
-Demo 装出来的仓没有 `adapters/`：目标要照 `<ext>/skills/story/scripts/README.md` 的合同实现公共入口及所需内部模块，或者从一个已经实现好的业务仓复刻过来。
+替身包装出来的仓没有 `adapters/`：对接层列为未适配，从一个已经实现好的业务仓复刻，之后随版本按演进记录的 `[对接层]` 条目跟进。
 
-## 对接能力交接
+## 按版本跟进
 
-安装或升级前，读取包的 `skills/story/scripts/README.md`，核对本次对接能力的新增、变更与删除。逐项向目标维护者说明：哪项流程需要它、入口参数/结果/失败语义、目标需改什么、怎样验证；公共入口不变也不表示对接内部无需调整。
+目标要做的适配全部写在 `reference/upgrade-changes.md`：按扩展版本分节，每条标块——`[知识]`、`[对接层]`、`[在途单]`。目标 manifest 的 `adapted_for` 记它已按哪一版适配；升级只做晚于它的条目，已适配过的不重做。
 
-对照目标实现确认各项能力。所需功能尚未实现时明确列为未适配，不声称整个流程已经可用；继续按目录所有权安装机制，不自动覆盖目标对接实现或为某个项目添加复制特例。对接实现与验证由获授权的目标维护任务承担。
+| 块 | 怎样做 | 交回什么 |
+|---|---|---|
+| `[知识]` | 按方法页 `reference/knowledge-adaptation.md` 改目标知识 | 方法页「交回」一节 |
+| `[对接层]` | 在目标自己的 `adapters/` 里逐条实现条目写的命令、参数、stdout、写盘落点与失败语义，按条目的验证项实际运行 | 每条的改动与实际运行结果；没做完的列为未适配，写明哪项流程因此不可用 |
+| `[在途单]` | 摆给需求负责人，按条目处理做到一半的单 | 处理了哪些单、怎样处理 |
 
-本命令的 `--check` 只核安装一致性，不能代替真实对接能力验证。交回分别说明机制安装结果、对接能力结果和剩余动作；Demo 替身的测试结果不冒充内网对接已经通过。
+对接实现与验证由获授权的目标维护任务承担；本命令不覆盖目标的对接实现，也不为某个项目加复制特例。`--check` 只核安装一致性，不代替对接验证；替身包的测试结果不冒充目标仓对接已经通过。
 
 ## 知识适配
 
@@ -98,19 +99,19 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | 组 | 判什么 |
 |---|---|
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
-| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `knowledge_adapted_for` / `provides.knowledge` 跟目标 |
+| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `adapted_for` / `provides.knowledge` 跟目标 |
 | ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
 | ④ `.gitignore` | 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
-| ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/`，根下除了 `README.md` 没有独立文件 |
+| ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
-### 升级之后：知识要不要适配
+### 升级之后：按版本跟进
 
-升级的 `--apply` 最后打印「知识适配」：演进记录（`reference/knowledge-changes.md`）里晚于目标
-`knowledge_adapted_for` 的条目，与按当前协议加载目标知识的结果。`--check` 通过、机制交回之后：
+升级的 `--apply` 最后打印「按版本跟进」：演进记录里晚于目标 `adapted_for` 的条目按块分组（包带对接实现时，对接层已整份换过，那一块不列），
+加上按当前协议加载目标知识的结果。`--check` 通过、机制交回之后：
 
-- 任一非空：把条目与问题原样摆给人，停一次问「现在做知识适配吗」。要做就按方法页做，交回时把目标 manifest 的
-  `knowledge_adapted_for` 写成这一版；选稍后，不写任何东西；
-- 都空：报一句「知识与当前协议一致」，不问。
+- 任一非空：按块把条目与问题原样摆给人，停一次问「现在做这些适配吗」，人可以只选其中几块。选中的按「按版本跟进」一节做；
+  三块都做完并交回后，把目标 manifest 的 `adapted_for` 写成包的版本；只做了一部分时不写，交回里列出未做的块与条目；选稍后，不写任何东西；
+- 都空：报一句「目标已按包的版本适配」，不问。
 
 `--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
 **这个目标现在装的是不是包的这一版**。知识能不能加载、内容够不够是另一件事，交回时与它分开报（方法页「交回」）。
@@ -118,10 +119,6 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 拿 `git diff` 判「升级碰了什么」不成立：目标自己改过知识、`--apply` 一个字节没写，
 diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提交了，diff 为空，装错了也看不出来。
 「adapt 碰没碰 `knowledge/` 与 `adapters/`」由复制范围保证，不需要事后找证据。
-
-## 对接层的输出合同
-
-`adapters/` 的入口及内部模块由目标仓自己实现，包里那份是替身。它们的 CLI 参数、stdout JSON 与写盘落点写在 `<ext>/skills/story/scripts/README.md`——那是目标仓实现自己那份时的唯一依据。
 
 ## 不做的事
 

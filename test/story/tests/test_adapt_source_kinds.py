@@ -86,7 +86,7 @@ class SourceKindCase(unittest.TestCase):
     # ---- Demo 来源 ----
 
     def test_a_demo_install_does_not_hand_over_the_stand_ins(self) -> None:
-        """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。\n\n        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。\n        目标要自己实现，合同在 `scripts/README.md`。\n        """
+        """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。\n\n        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。\n        目标从已实现的业务仓复刻，之后按升级演进记录的对接层条目跟进。\n        """
         target = self.blank_repo("BizA")
         proc = self.adapt("--apply", target, REPO_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
@@ -148,6 +148,51 @@ class SourceKindCase(unittest.TestCase):
         proc = self.adapt("--apply", target, REPO_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("BizA 的真实现", self.adapter_text(target))
+
+    # ---- 按版本跟进 ----
+
+    def follow_up(self, proc: subprocess.CompletedProcess) -> dict:
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        return json.loads(line.split("按版本跟进：", 1)[1])
+
+    def test_an_unadapted_target_gets_every_block_from_a_stand_in_source(self) -> None:
+        """目标没写 adapted_for（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        self.commit(target, "首装")
+        proc = self.adapt("--apply", target, REPO_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        got = self.follow_up(proc)
+        self.assertEqual("0", got["since"])
+        self.assertEqual({"知识", "对接层", "在途单"}, set(got["items"]))
+        for block, items in got["items"].items():
+            with self.subTest(block=block):
+                self.assertTrue(items, f"{block} 一条都没列")
+        self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
+        self.assertIn("停一次问人", proc.stdout)
+
+    def test_a_business_source_leaves_out_the_adapter_block(self) -> None:
+        """业务仓来源整份换了对接层，那一块不用目标再做。"""
+        source = self.source_repo("BizA")
+        target = self.blank_repo("BizB")
+        self.adapt("--apply", target, source)
+        self.commit(target, "复刻")
+        proc = self.adapt("--apply", target, source)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        got = self.follow_up(proc)
+        self.assertNotIn("对接层", got["items"])
+        self.assertTrue(got["items"]["知识"])
+
+    def test_an_entry_without_a_block_stops_before_writing(self) -> None:
+        """包里的演进记录有一条没标块：包坏了，写目标之前就停。"""
+        pkg = self.pkg_with_manifest(lambda l: l)
+        changes = pkg / "doc/extensions/skills/story-adaptation/reference/upgrade-changes.md"
+        changes.write_text(changes.read_text(encoding="utf-8") + "- 没标块的一条\n", encoding="utf-8")
+        target = self.blank_repo("BizA")
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("没有块标签", self.out(proc))
+        self.assertFalse((target / "doc/extensions/manifest.yaml").exists(), "停之前已经写过盘了")
 
     def pkg_with_manifest(self, rewrite) -> Path:
         """Demo 包的一份拷贝，manifest 逐行经 `rewrite` 改写。"""

@@ -1,14 +1,14 @@
 /**
  * story.js — /story 需求系统对接的公共 CLI 入口（本仓为本地替身；部署环境各自实现入口及其内部模块）
  *
- * 分层与内网一致：
+ * 分层：
  *   story.js（入口：参数解析 → 校验 → 分发）
  *     ├─ fetch.js    init（fetchOne 逐级拉 AR → SR → RR）与 fetch（fetchUpstream 只读取回）
  *     ├─ archive.js  archive（archiveOne）
  *     └─ restore.js  restore（restoreOne，经 archiveOne 回传备份）
  *   mcp.js（需求系统访问层）  dirs.js（路径）  token.js（取 token，独立入口）
  *
- * 契约（CLI，**本 docstring 即唯一真源**）：
+ * 命令接口（SKILL 按此调用）：
  *   node story.js <init|archive|restore|fetch> <AR单号> <mcp-token> [--project-root <abs>] [--out <本单 inbox>]
  *
  *   人类可读日志走 stderr；命令执行完 stdout 最后一行是单行 JSON：
@@ -33,8 +33,7 @@
  *     在访问系统之前就在这里失败。
  *   - 命令执行出错 → 顶层 catch 写 {"mode":"...","reqNo":"...","success":false,"error":"..."}，退出码 1。
  *
- * mcp-token：token.js 取得。本替身不校验内容、不使用；部署环境用它调需求系统。
- * 替换实现时保持上述 CLI 契约不变。
+ * mcp-token：token.js 取得。本替身不校验内容、不使用。
  */
 'use strict';
 const { fetchOne, fetchUpstream } = require('./fetch');

@@ -1,11 +1,11 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "1.9.6"
+version: "1.9.7"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 # 包里的对接实现是替身：用本地目录模拟需求系统，adapt 不把它复制进目标
 adapters: stand-in
-# 这个仓的知识按哪一版协议适配过：知识适配交回时写，adapt 升级后据它提示要改什么
-knowledge_adapted_for: "1.9.7"
+# 这个仓的知识、对接层与在途单已按哪一版适配：三块都交回时写，adapt 升级后据它列出更新的演进条目
+adapted_for: "1.9.7"
 provides:
   skills:
     - story

@@ -1,11 +1,11 @@
 /**
- * fetch.js — 取单据：`init` 首次拉取，`fetch` 只读取回（与内网同名文件，导出同签名的 fetchOne）。
+ * fetch.js — 取单据：`init` 首次拉取，`fetch` 只读取回。
  *
  * fetchOne(reqNo, dirType, mcpToken, backupTimestamp, baseReqNo?) → { parentNo }
  *   拉一级单据的详情与正文，落到 `<features>/<baseReqNo ?? reqNo>/<dirType>/`：
  *   detail.json 每次写；正文（AR/SR 为 design.md，RR 为 prd.md）系统上有才写、本地已有不覆盖——
  *   AR/design.md 是需求分析的预填输入，本地那份可能已经是分析成果。本替身不覆盖正文，
- *   backupTimestamp 不产生备份，保留参数与内网同签名。
+ *   backupTimestamp 不产生备份。
  *   parentNo 是上一级单号（AR → SR，SR → RR，RR 为 null），入口据它逐级往上拉。
  *
  * fetchUpstream(reqNo, mcpToken, { outDir }) → 回执

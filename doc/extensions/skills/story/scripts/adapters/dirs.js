@@ -1,5 +1,5 @@
 /**
- * dirs.js — 目录路径常量与路径函数，所有命令共用（与内网同名同职责）。
+ * dirs.js — 目录路径常量与路径函数，所有命令共用。
  *
  * 工程根：命令行带 `--project-root <abs>` 时用它；不带时从本文件上溯到实例根——
  * 本文件住在 <实例根>/doc/extensions/skills/story/scripts/adapters/，

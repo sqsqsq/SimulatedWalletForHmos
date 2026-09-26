@@ -6,7 +6,7 @@
  *   `<ext>/skills/story/scripts/core/`      公共，整份换掉（包里不再有的自然消失）
  *   `<ext>/skills/story/scripts/adapters/`  对接实现；Demo 来源不碰，业务仓之间复刻时覆盖
  *   `<ext>/knowledge/`                      目标的知识，脚本不读不写（适配由模型按方法页做）
- *   `<ext>/manifest.yaml`                   机制登记归包，name / description / adapters / knowledge_adapted_for / 知识清单归目标
+ *   `<ext>/manifest.yaml`                   机制登记归包，name / description / adapters / adapted_for / 知识清单归目标
  *   其余 `<ext>/**`                         机制，整份换掉
  *
  * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
@@ -33,8 +33,10 @@ const KNOWLEDGE = 'knowledge';
 /** 公共脚本的唯一落点。`scripts/` 这一层除了它与 adapters 不放东西——⑤ 守这条。 */
 const SCRIPTS_DIR = 'skills/story/scripts';
 const CORE = 'core';
-/** 知识协议的演进记录：按扩展版本分节，升级后据它提示目标该改什么。 */
-const CHANGES = 'skills/story-adaptation/reference/knowledge-changes.md';
+/** 升级演进记录：按扩展版本分节、每条标块，升级后据它列出目标这次要做什么。 */
+const CHANGES = 'skills/story-adaptation/reference/upgrade-changes.md';
+/** 演进记录的三块；对接层只在目标自己维护对接层时列出。 */
+const BLOCKS = ['知识', '对接层', '在途单'];
 
 const EXT_BEGIN = '<!-- story-ext:begin -->';
 const EXT_END = '<!-- story-ext:end -->';
@@ -194,10 +196,10 @@ function withVersionNotes(composed, tgtText) {
 }
 
 /**
- * manifest 里归目标的键：这个仓叫什么、是什么、对接层是不是替身、知识按哪一版协议适配过。
+ * manifest 里归目标的键：这个仓叫什么、是什么、对接层是不是替身、知识对接层与在途单已按哪一版适配。
  * 升级不改，首次按目标仓生成；目标没写的不从包里带过去。
  */
-const TARGET_OWNED_KEYS = ['name', 'description', 'adapters', 'knowledge_adapted_for'];
+const TARGET_OWNED_KEYS = ['name', 'description', 'adapters', 'adapted_for'];
 
 /**
  * `version:` 上面那一段注释 —— 返回它的范围与内容。
@@ -376,6 +378,27 @@ const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
  */
 const WITH_ADAPTERS = manifestValue(PKG_MANIFEST_TEXT, 'adapters') !== 'stand-in';
 
+/**
+ * 包的升级演进记录逐条读出（版本、块、正文）。启动时就读：包里这份坏了是包的问题，
+ * 在写目标之前报出来，不在写完之后。
+ */
+function changeEntries() {
+  const file = join(PDIR, ...CHANGES.split('/'));
+  if (!existsSync(file)) die(`包里没有升级演进记录：${CHANGES}`);
+  const out = [];
+  let version = null;
+  read(file).split(/\r?\n/).forEach((line, i) => {
+    const head = line.match(/^##\s+(\d+(?:\.\d+)+)\s*$/);
+    if (head) { version = head[1]; return; }
+    if (!version || !/^-\s+\S/.test(line)) return;
+    const m = line.match(/^-\s+\[([^\]]+)\]\s*(.+)$/);
+    if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`);
+    out.push({ version, block: m[1], text: m[2].trim() });
+  });
+  return out;
+}
+const CHANGE_ENTRIES = changeEntries();
+
 /** 版本号按数字逐段比较。 */
 const newer = (a, b) => {
   const x = String(a).split('.').map(Number);
@@ -387,18 +410,16 @@ const newer = (a, b) => {
 };
 
 /**
- * 升级之后知识要不要适配：演进记录里晚于目标 `knowledge_adapted_for` 的条目，
- * 与按当前协议加载目标知识的结果（按 kind × form 计数，或问题清单）。只报事实，问不问人由模型照 SKILL 走。
+ * 升级之后按版本跟进：演进记录里晚于目标 `adapted_for` 的条目按块分组，
+ * 加上按当前协议加载目标知识的结果（按 kind × form 计数，或问题清单）。只报事实，问不问人由模型照 SKILL 走。
+ *
+ * 包带对接实现时（业务仓来源），对接层已整份换成包的，那一块的条目不列。
  */
-async function knowledgeFollowUp() {
-  const since = manifestValue(read(tgtManifest), 'knowledge_adapted_for') ?? '0';
-  const text = existsSync(join(PDIR, ...CHANGES.split('/'))) ? read(join(PDIR, ...CHANGES.split('/'))) : '';
-  const changes = [];
-  let version = null;
-  for (const line of text.split(/\r?\n/)) {
-    const head = line.match(/^##\s+(\d+(?:\.\d+)+)\s*$/);
-    if (head) { version = head[1]; continue; }
-    if (version && newer(version, since) && /^-\s+\S/.test(line)) changes.push(`${version}：${line.slice(2).trim()}`);
+async function upgradeFollowUp() {
+  const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
+  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
+  for (const e of CHANGE_ENTRIES) {
+    if (newer(e.version, since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
   }
   try {
     const api = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge.mjs')).href);
@@ -408,19 +429,20 @@ async function knowledgeFollowUp() {
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
     }
-    return { changes, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
+    return { since, items, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
   } catch (e) {
-    return { changes, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
+    return { since, items, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
   }
 }
 
-/** 升级后的知识适配提示：有内容就摆出来请模型停一次问人，都空只一句。 */
+/** 升级后的跟进提示：有条目或知识不合协议就摆出来请模型停一次问人，都空只一句。 */
 async function printFollowUp() {
-  const f = await knowledgeFollowUp();
-  console.log(`[adapt-scan] 知识适配：${JSON.stringify(f)}`);
-  console.log(f.changes.length || f.check.status !== 'PASS'
-    ? '[adapt-scan] 有演进条目或知识不合当前协议：把它们摆出来，停一次问人「现在做知识适配吗」；选稍后就不写任何东西'
-    : '[adapt-scan] 知识与当前协议一致，不用适配');
+  const f = await upgradeFollowUp();
+  console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
+  const pending = Object.values(f.items).some(list => list.length);
+  console.log(pending || f.check.status !== 'PASS'
+    ? '[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；选稍后就不写任何东西'
+    : '[adapt-scan] 目标已按包的版本适配，知识与当前协议一致');
 }
 
 // ── --apply ─────────────────────────────────────────────────────────────────
@@ -646,7 +668,7 @@ if (existsSync(tgtManifest)) {
   if (!sameText(composeManifest(PKG_MANIFEST_TEXT, tgtText,
     freshIdentity(TARGET)), tgtText)) {
     bad.push('② manifest 不是这个包合成出来的：机制登记（version / skills / bridges / hooks /'
-      + ' overlay）要与包相同，name / description / adapters / knowledge_adapted_for / provides.knowledge 归目标'
+      + ' overlay）要与包相同，name / description / adapters / adapted_for / provides.knowledge 归目标'
       + '——跑 --apply 重新合成');
   }
 } else {
@@ -703,9 +725,6 @@ for (const line of missingGitignoreLines(TARGET)) {
         }
         continue;
       }
-      // README.md 是这一层的说明（两个目录各归谁、对接层的输出合同），不是脚本，
-      // 归谁的问题在它身上不存在。例外只此一个，写死在这里。
-      if (e.name === 'README.md') continue;
       bad.push(`⑤ 包的 ${SCRIPTS_DIR}/ 根下有独立文件：${e.name}`
         + `——公共脚本进 ${CORE}/（会随升级更新），目标仓自己实现的进 adapters/（升级不碰）；`
         + '放在根下的那一份两边都不认，永远升级不到目标手里');

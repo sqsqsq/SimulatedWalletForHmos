@@ -1,6 +1,6 @@
 # 本阶段知识判断的唯一真源。spec 的 §9.2/§9.3 由它生成，那两章不手写。
 schema: 1
-manifest_digest: sha256:3a26546d3a270fd5
+manifest_digest: sha256:8e540d0170180d82
 
 facts:
   - id: component-profile

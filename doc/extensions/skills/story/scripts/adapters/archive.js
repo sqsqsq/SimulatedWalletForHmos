@@ -1,5 +1,5 @@
 /**
- * archive.js — 归档：把叙事主件写成系统正文、评审记录传为附件（与内网同名文件，导出同签名的 archiveOne）。
+ * archive.js — 归档：把叙事主件写成系统正文、评审记录传为附件。
  *
  * archiveOne(reqNo, mcpToken, skipBackup?, contentOverride?)
  *   → { archived: true, backupPath, verified, reviewArchived }

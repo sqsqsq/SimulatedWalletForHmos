@@ -1,7 +1,7 @@
 /**
- * mcp.js — 需求系统访问层（本仓为本地替身；内网是 MCP 端点的 HTTP 调用）。
+ * mcp.js — 需求系统访问层（本地替身）。
  *
- * 导出与内网同名：`callMcp(url, method, params, mcpToken)` 与两个端点常量。
+ * 导出 `callMcp(url, method, params, mcpToken)` 与两个端点常量。
  * 命令文件只经它访问需求系统；需求系统在哪、怎么连，只有这一层知道。
  *
  * **本替身的需求系统是一个本地目录**，一个子目录就是一张单，只承载 md：
@@ -15,8 +15,7 @@
  *
  * 目录位置读环境变量 `STORY_REQUIREMENT_SYSTEM_DIR`，未设时取工程内的默认演示目录。
  * 方法名是替身自定的（getDetail / getBody / putBody / putAttachment / getAttachment），
- * 评审回稿按正文名 `review-feedback.md` 用 getBody 取；
- * 内网按真实端点实现同一组能力即可。
+ * 评审回稿按正文名 `review-feedback.md` 用 getBody 取。
  *
  * 取不到时抛出带 `code` 的错误，三种要分开，补救动作完全不同：
  *   no_system  需求系统不可达（环境没接上，单号还没被查过）
@@ -97,7 +96,7 @@ const METHODS = {
   },
 };
 
-/** 与内网同签名。替身忽略 url 与 token，按 method 读写本地目录。 */
+/** 替身忽略 url 与 token，按 method 读写本地目录。 */
 async function callMcp(url, method, params, mcpToken) {
   const handler = METHODS[method];
   if (!handler) throw failure('bad_method', `需求系统不认识的方法：${method}`);

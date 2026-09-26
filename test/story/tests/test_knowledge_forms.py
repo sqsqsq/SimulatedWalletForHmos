@@ -308,15 +308,15 @@ class TheProtocolAndMethodPageAgree(unittest.TestCase):
         for r in rows[1:]:
             self.assertTrue(all(c.strip() for c in r.strip("|").split("|")), r)
 
-    def test_the_coding_page_and_the_intranet_guide_point_right(self) -> None:
+    def test_the_coding_page_and_the_upgrade_record_point_right(self) -> None:
+        """升级要做的事只在 adapt 的演进记录里：没有另一份指南，extension 里也不描述目标仓内部。"""
         coding = (EXT / "hooks/coding/author.md").read_text(encoding="utf-8")
         self.assertIn("reference/knowledge/protocol.md", coding)
         self.assertIn("下篇", coding)
-        release = REPO_ROOT / "test/story/release"
-        guide = release / "内网适配指南-1.9.3升级1.9.7.md"
-        self.assertTrue(guide.is_file())
-        self.assertFalse((release / "内网适配指南-1.9.3升级1.9.6.md").exists())
-        self.assertIn("knowledge-adaptation.md", guide.read_text(encoding="utf-8"))
+        adapt = EXT / "skills/story-adaptation"
+        self.assertIn("reference/knowledge-adaptation.md", (adapt / "reference/upgrade-changes.md").read_text(encoding="utf-8"))
+        self.assertEqual([], sorted(p.name for p in (REPO_ROOT / "test/story/release").glob("内网适配指南*")))
+        self.assertFalse((EXT / "skills/story/scripts/README.md").exists())
 
 
 if __name__ == "__main__":

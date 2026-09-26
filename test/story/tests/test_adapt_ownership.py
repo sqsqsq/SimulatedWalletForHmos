@@ -247,12 +247,12 @@ class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
         self.assertIn("knowledge/facts/gone.md", proc.stderr)
 
 
-class TheUpgradeAsksAboutKnowledge(AdaptCase):
-    """AC07：升级后按演进记录与只读检查决定问不问人；选稍后不落盘任何文件。"""
+class TheUpgradeFollowsTheVersionRecord(AdaptCase):
+    """升级后按演进记录（晚于目标 adapted_for 的条目）与只读检查决定问不问人；选稍后不落盘任何文件。"""
 
     def set_adapted(self, version: str) -> None:
         manifest = self.ext / "manifest.yaml"
-        rows = [f'knowledge_adapted_for: "{version}"' if l.startswith("knowledge_adapted_for:") else l
+        rows = [f'adapted_for: "{version}"' if l.startswith("adapted_for:") else l
                 for l in manifest.read_text(encoding="utf-8").split("\n")]
         manifest.write_text("\n".join(rows), encoding="utf-8")
         self.commit(f"知识按 {version} 适配过")
@@ -262,9 +262,9 @@ class TheUpgradeAsksAboutKnowledge(AdaptCase):
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("1.9.7：每份知识的 frontmatter 写齐", proc.stdout)
-        self.assertIn("停一次问人「现在做知识适配吗」", proc.stdout)
+        self.assertIn("停一次问人「现在做这些适配吗」", proc.stdout)
         manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('knowledge_adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")
+        self.assertIn('adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")
 
     def test_a_knowledge_breach_is_listed_and_asked(self) -> None:
         fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
@@ -279,7 +279,7 @@ class TheUpgradeAsksAboutKnowledge(AdaptCase):
     def test_nothing_to_adapt_is_one_sentence(self) -> None:
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertIn("知识与当前协议一致，不用适配", proc.stdout)
+        self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)
         self.assertNotIn("停一次问人", proc.stdout)
         self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/manifest.yaml",
                                       "doc/extensions/knowledge").stdout.strip(), "只是提示却写了知识或清单")
@@ -371,7 +371,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
 
 
 class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
-    """⑧ 判的是包：`scripts/` 那一层只有 core/ 与 adapters/。"""
+    """⑤ 判的是包：`scripts/` 那一层只有 core/ 与 adapters/。"""
 
     def test_the_package_scripts_dir_has_exactly_two_subdirs(self) -> None:
         """真包上直接核：所有权由目录表达的前提，就是根这一层是空的。"""
@@ -379,8 +379,7 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
         dirs = sorted(p.name for p in at.iterdir() if p.is_dir() and p.name != "__pycache__")
         self.assertEqual(["adapters", "core"], dirs)
         files = sorted(p.name for p in at.iterdir() if p.is_file())
-        self.assertEqual(["README.md"], files,
-                         "scripts/ 根下多了独立文件——它归谁又要靠推断了")
+        self.assertEqual([], files, "scripts/ 根下多了文件——它归谁又要靠推断了")
 
     def test_a_stray_file_in_the_package_is_named(self) -> None:
         """反向锁：包里往根下放一个脚本，`--check` 要报出来。

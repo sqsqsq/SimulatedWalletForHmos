@@ -1,5 +1,5 @@
 /**
- * restore.js — 回退归档：把最近一次归档前的系统正文写回系统（与内网同名文件，导出同签名的 restoreOne）。
+ * restore.js — 回退归档：把最近一次归档前的系统正文写回系统。
  *
  * restoreOne(reqNo, mcpToken) → { restored: true, verified }
  *   取 `<需求目录>/.backups/cloud/` 里最新的一份，经 archiveOne 的 contentOverride 上传（不再备份）。
