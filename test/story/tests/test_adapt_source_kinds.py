@@ -156,10 +156,10 @@ class SourceKindCase(unittest.TestCase):
         return json.loads(line.split("按版本跟进：", 1)[1])
 
     def test_an_unadapted_target_gets_every_block_from_a_stand_in_source(self) -> None:
-        """目标没写 adapted_for（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
+        """目标没写 adapted_for、装的是旧版（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, REPO_ROOT)
-        self.commit(target, "首装")
+        self.set_version(target, "1.9.3")
         proc = self.adapt("--apply", target, REPO_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
         got = self.follow_up(proc)
@@ -170,6 +170,24 @@ class SourceKindCase(unittest.TestCase):
                 self.assertTrue(items, f"{block} 一条都没列")
         self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
         self.assertIn("停一次问人", proc.stdout)
+
+    def set_version(self, target: Path, version: str) -> None:
+        manifest = target / "doc/extensions/manifest.yaml"
+        rows = [f'version: "{version}"' if l.startswith("version:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(target, f"装的是 {version}")
+
+    def test_in_flight_entries_follow_the_installed_version(self) -> None:
+        """在途单只跟从哪一版升上来有关：装的是上一版就只列本版；知识与对接层没写 adapted_for 仍从头列。"""
+        target = self.blank_repo("BizA")
+        self.adapt("--apply", target, REPO_ROOT)
+        self.set_version(target, "1.9.6")
+        got = self.follow_up(self.adapt("--apply", target, REPO_ROOT))
+        self.assertEqual("1.9.6", got["installed"])
+        self.assertTrue(got["items"]["在途单"])
+        self.assertTrue(all(i.startswith("1.9.7：") for i in got["items"]["在途单"]), got["items"]["在途单"])
+        self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]))
 
     def test_a_business_source_leaves_out_the_adapter_block(self) -> None:
         """业务仓来源整份换了对接层，那一块不用目标再做。"""
@@ -182,6 +200,16 @@ class SourceKindCase(unittest.TestCase):
         got = self.follow_up(proc)
         self.assertNotIn("对接层", got["items"])
         self.assertTrue(got["items"]["知识"])
+
+    def test_an_indented_sub_item_stops_before_writing(self) -> None:
+        """演进记录每条一行：缩进的子项不静默跳过，写目标之前就停。"""
+        pkg = self.pkg_with_manifest(lambda l: l)
+        changes = pkg / "doc/extensions/skills/story-adaptation/reference/upgrade-changes.md"
+        changes.write_text(changes.read_text(encoding="utf-8") + "  - 缩进的子项\n", encoding="utf-8")
+        target = self.blank_repo("BizA")
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("不用子项", self.out(proc))
 
     def test_an_entry_without_a_block_stops_before_writing(self) -> None:
         """包里的演进记录有一条没标块：包坏了，写目标之前就停。"""

@@ -182,7 +182,9 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
     const ids = [...line.matchAll(acceptanceIdRe())].map(m => m[0]);
     if (!ids.length) continue;
     ids.forEach(id => mentioned.add(id));
-    if (!defined.has(ids[0])) defined.set(ids[0], [...line.matchAll(functionIdRe())].map(m => m[0]));
+    if (!defined.has(ids[0])) {
+      defined.set(ids[0], [...line.replace(acceptanceIdRe(), ' ').matchAll(functionIdRe())].map(m => m[0]));
+    }
   }
   for (const [id, codes] of defined) {
     const acc = accById.get(id);

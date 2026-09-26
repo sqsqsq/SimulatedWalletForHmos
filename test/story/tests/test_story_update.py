@@ -308,6 +308,23 @@ class StatusReportsFactsNotJudgement(UpdateCase):
             sys.path.remove(str(core))
         self.assertIn("还没取上游", str(caught.exception))
 
+    def test_a_receipt_time_without_a_zone_stops(self) -> None:
+        """回执的取材时刻按合同带时区；不带的报流程错误并指明重跑取材，不在比较时刻时崩出类型错误。"""
+        core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
+        ar = self.feature_root.parent / "AR90010"
+        shutil.copytree(self.feature_root, ar)
+        receipt = {"mode": "fetch", "reqNo": "AR90010", "fetchedAt": "2026-09-23T10:00:00", "items": []}
+        (ar / "AR" / "story-src" / "fetched.json").write_text(json.dumps(receipt), encoding="utf-8")
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            from flow.state import FlowError  # noqa: PLC0415
+            with self.assertRaises(FlowError) as caught:
+                update_mod.cmd_update_inputs(ar, "AR90010", self.root)
+        finally:
+            sys.path.remove(str(core))
+        self.assertIn("带时区", str(caught.exception))
+
     def test_a_local_requirement_has_no_upstream(self) -> None:
         out = self.update("--action", "inputs")
         self.assertIsNone(out["upstream"])
@@ -318,7 +335,7 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         core = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core"
         ar = self.feature_root.parent / "AR90009"
         shutil.copytree(self.feature_root, ar)
-        receipt = {"mode": "fetch", "reqNo": "AR90009", "fetchedAt": "2026-09-23T10:00:00", "items": []}
+        receipt = {"mode": "fetch", "reqNo": "AR90009", "fetchedAt": "2026-09-23T10:00:00Z", "items": []}
         (ar / "AR" / "story-src" / "fetched.json").write_text(json.dumps(receipt), encoding="utf-8")
         sys.path.insert(0, str(core))
         try:

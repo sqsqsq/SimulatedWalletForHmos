@@ -263,6 +263,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("1.9.7：每份知识的 frontmatter 写齐", proc.stdout)
         self.assertIn("停一次问人「现在做这些适配吗」", proc.stdout)
+        for older in ("1.9.4：", "1.9.5：", "1.9.6："):
+            self.assertNotIn(older, proc.stdout, "已适配过的版本又列了一遍")
         manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         self.assertIn('adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")
 

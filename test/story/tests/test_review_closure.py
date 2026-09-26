@@ -204,6 +204,11 @@ class TheAcceptanceIdsLineUp(ClosureCase):
         self.edit_spec("**AC-3** (AC-R3, F6)", "**AC-3** (AC-R3, F5)")
         self.assertIn("AC-3 的关联功能两处不一致", self.gate())
 
+    def test_an_acceptance_id_shaped_like_a_function_is_not_split(self) -> None:
+        """`AC-F1` 是验收编号：先剔掉验收编号再认功能编号，不从里面切出 `F1`。"""
+        self.edit_spec("**AC-3** (AC-R3, F6)", "**AC-3** (AC-F1, F6)")
+        self.assertNotIn("AC-3 的关联功能两处不一致", self.gate())
+
     def test_one_id_with_two_meanings_is_named(self) -> None:
         (self.fr / "acceptance.yaml").write_text(
             ACCEPTANCE + "  - id: AC-2\n    prd_function: F9\n    description: 另一件事\n", encoding="utf-8")

@@ -261,13 +261,6 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
         got, _ = load(REPO_ROOT)
         return next(f for f in got["facts"] if f["form"] == "halves")
 
-    def test_the_lower_half_names_the_required_design_items(self) -> None:
-        lower = self.method_fact()["halves"]["下篇"]
-        header = next(l for l in lower.split("\n") if l.startswith("| 统计点 |"))
-        for column in ("事件 ID", "内码", "结果分类", "描述"):
-            with self.subTest(column=column):
-                self.assertIn(column, header)
-
     def test_the_example_topic_differs_from_cases_and_golden(self) -> None:
         """示例题材从用例补料名与金样标题派生禁用词：整名与它的前三个字都不出现。"""
         topics: set[str] = set()

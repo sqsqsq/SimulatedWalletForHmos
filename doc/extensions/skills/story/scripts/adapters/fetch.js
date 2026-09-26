@@ -12,7 +12,7 @@
  *   **只读取材**：把这张单现在关联的上游正文与评审回稿取回，一个业务文件都不写。
  *   三份正文写进 outDir（本单 inbox），与本地对应文件逐字相同的不落盘；评审回稿写
  *   `AR/story-src/review-feedback.md`；回执写 `AR/story-src/fetched.json`（不放 inbox，
- *   否则会被当成一份材料导入）。每份的 status 四态分开：fetched / same / absent / failed——
+ *   否则会被当成一份材料导入），带取材时刻 fetchedAt（带时区的 ISO 8601）。每份的 status 四态分开：fetched / same / absent / failed——
  *   混成一个的话，一次读取错误会被当成「评审没提意见」。
  */
 'use strict';

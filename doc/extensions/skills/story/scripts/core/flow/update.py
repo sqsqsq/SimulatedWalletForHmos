@@ -287,9 +287,11 @@ def _fetched_this_round(feature_root: Path, contract: dict,
     at = str((_receipt(feature_root) or {}).get("fetchedAt") or "")
     try:
         fetched = datetime.fromisoformat(at.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise FlowError(f"{'/'.join(RECEIPT)} 的取材时刻 fetchedAt 不是 ISO 8601 时刻（{at or '缺失'}）："
-                        "对接层按合同写回执，重跑取材") from exc
+    except ValueError:
+        fetched = None
+    if fetched is None or fetched.tzinfo is None:
+        raise FlowError(f"{'/'.join(RECEIPT)} 的取材时刻 fetchedAt 不是带时区的 ISO 8601 时刻（{at or '缺失'}）："
+                        "对接层按合同写回执，重跑取材")
     closed = _latest(records, "closed")
     stamp = (closed[1].get("closed_at") if closed else None) or contract.get("story_written_at")
     return not stamp or fetched >= datetime.fromisoformat(stamp)

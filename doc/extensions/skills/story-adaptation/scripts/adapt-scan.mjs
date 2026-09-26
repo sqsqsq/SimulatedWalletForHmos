@@ -366,6 +366,11 @@ const PKG_MANIFEST_TEXT = read(pkgManifest);
 const BRIDGES = bridgesOf(PKG_MANIFEST_TEXT);
 
 const tgtManifest = join(TDIR, 'manifest.yaml');
+/**
+ * 目标升级前装的是哪一版：写目标之前读，写完 `version` 就是包的了。
+ * 在途单条目只跟「从哪一版升上来」有关，按它列；知识与对接层按目标的 `adapted_for` 列。
+ */
+const INSTALLED = existsSync(tgtManifest) ? manifestValue(read(tgtManifest), 'version') ?? '0' : null;
 /** 两态，就这一条判据：目标有没有 manifest.yaml。历史版本识别不存在于本实现。 */
 const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
 
@@ -390,6 +395,7 @@ function changeEntries() {
   read(file).split(/\r?\n/).forEach((line, i) => {
     const head = line.match(/^##\s+(\d+(?:\.\d+)+)\s*$/);
     if (head) { version = head[1]; return; }
+    if (version && /^\s+-\s/.test(line)) die(`${CHANGES} 第 ${i + 1} 行是缩进的子项：演进记录每条一行、不用子项`);
     if (!version || !/^-\s+\S/.test(line)) return;
     const m = line.match(/^-\s+\[([^\]]+)\]\s*(.+)$/);
     if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`);
@@ -410,16 +416,17 @@ const newer = (a, b) => {
 };
 
 /**
- * 升级之后按版本跟进：演进记录里晚于目标 `adapted_for` 的条目按块分组，
+ * 升级之后按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于升级前所装版本的在途单条目，按块分组，
  * 加上按当前协议加载目标知识的结果（按 kind × form 计数，或问题清单）。只报事实，问不问人由模型照 SKILL 走。
  *
  * 包带对接实现时（业务仓来源），对接层已整份换成包的，那一块的条目不列。
  */
 async function upgradeFollowUp() {
   const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
+  const from = { 在途单: INSTALLED ?? '0' };
   const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
   for (const e of CHANGE_ENTRIES) {
-    if (newer(e.version, since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
+    if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
   }
   try {
     const api = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge.mjs')).href);
@@ -429,9 +436,9 @@ async function upgradeFollowUp() {
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
     }
-    return { since, items, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
+    return { since, installed: INSTALLED, items, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
   } catch (e) {
-    return { since, items, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
+    return { since, installed: INSTALLED, items, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
   }
 }
 
