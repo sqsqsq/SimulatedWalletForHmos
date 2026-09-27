@@ -22,9 +22,15 @@ function cell(value) {
   return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
+/** 登记名落点：名字所在的节 · 名字；找不到所在节时只写名字。 */
+export function landingName(sections, name) {
+  const where = sections?.get(name);
+  return where ? `${where} · ${cell(name)}` : cell(name);
+}
+
 /**
  * 「规约」的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。
- * 落点写名字所在的节（技术契约 / 埋点）；spec 里找不到这个名字时按技术契约写。
+ * 落点写名字所在的节（技术契约 / 埋点）；spec 里找不到这个名字所在的节时只写名字。
  */
 function renderConstraints(knowledge, use, sections) {
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
@@ -42,7 +48,7 @@ function renderConstraints(knowledge, use, sections) {
     // 一百多字里数分号，而每一条本来都该独立可懂。
     const entry = byId.get(text(row, 'id'));
     const at = text(row, 'contract')
-      ? `${sections?.get(text(row, 'contract')) ?? '技术契约'} · ${cell(text(row, 'contract'))}`
+      ? landingName(sections, text(row, 'contract'))
       : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
     for (const req of requirements(row)) {
       out.push(`| ${cell(text(row, 'id'))} | ${entry?.force ?? '—'} | ${cell(req)} | ${at} `

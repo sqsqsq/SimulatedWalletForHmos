@@ -311,7 +311,7 @@ class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
               const use = d.readUse(root, {json.dumps(FEATURE)});
               const text = require('fs').readFileSync({json.dumps(self.spec_path.as_posix())}, 'utf-8');
               process.stdout.write(JSON.stringify(
-                pr.zoneProblems(root, text, pr.renderZones(kn, use))));
+                pr.zoneProblems(root, text, pr.renderZones(kn, use, text))));
             }});
         """)
         self.assertEqual(0, proc.returncode, proc.stderr)

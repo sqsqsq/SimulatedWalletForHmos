@@ -1102,26 +1102,45 @@ def _plan_path(root: Path) -> Path | None:
     return None
 
 
-def _freeze(root: Path) -> dict | None:
+def _musts(root: Path) -> list[tuple[str, str]]:
+    """契约实体上挂的 must：`(规约编号, 实体路径)`。实体路径按 `interfaces.<接口>.<方法>` 这类形态写。"""
     path = _contracts_path(root)
     if path is None:
-        return None
+        return []
     try:
         data = yaml.safe_load(read_text(path)) or {}
     except yaml.YAMLError as exc:
         raise RuntimeError(f"contracts.yaml 解析失败：{exc}") from exc
-    for key in ("knowledge_freeze", "project_knowledge"):
-        if isinstance(data.get(key), dict):
-            return data[key]
-    return None
+    out: list[tuple[str, str]] = []
 
+    def take(owner: str, node) -> None:
+        for m in (node.get("must") or []) if isinstance(node, dict) else []:
+            if isinstance(m, dict) and str(m.get("rule", "")).strip():
+                out.append((str(m["rule"]).strip(), owner))
 
-def _obligations(freeze: dict) -> list[dict]:
-    for key in ("obligations", "constraint_obligations"):
-        val = freeze.get(key)
-        if isinstance(val, list):
-            return [o for o in val if isinstance(o, dict)]
-    return []
+    for dm in data.get("data_models") or []:
+        for f in (dm.get("fields") or []) if isinstance(dm, dict) else []:
+            if isinstance(f, dict):
+                take(f"data_models.{dm.get('name')}.{f.get('name')}", f)
+    for itf in data.get("interfaces") or []:
+        for m in (itf.get("methods") or []) if isinstance(itf, dict) else []:
+            if isinstance(m, dict):
+                take(f"interfaces.{itf.get('name')}.{m.get('name')}", m)
+    for c in data.get("components") or []:
+        if isinstance(c, dict):
+            take(f"components.{c.get('name')}", c)
+            for st in c.get("state") or []:
+                if isinstance(st, dict):
+                    take(f"components.{c.get('name')}.{st.get('name')}", st)
+    for f in data.get("files") or []:
+        if isinstance(f, dict):
+            take(f"files.{f.get('path')}", f)
+    for module, cats in (data.get("resource_keys") or {}).items():
+        for cat, items in (cats or {}).items() if isinstance(cats, dict) else []:
+            for it in items or []:
+                if isinstance(it, dict):
+                    take(f"resource_keys.{module}.{cat}.{it.get('key')}", it)
+    return out
 
 
 @checker
@@ -1277,44 +1296,6 @@ def p12_numeric_index_paragraph(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def p13_silent_downstream_skip(root: Path, ctx: Ctx) -> Outcome:
-    """下游对每条冻结义务必须给证据或显式「不适用 + 理由」。"""
-    freeze = _freeze(root)
-    if freeze is None:
-        return Outcome(True, "无知识冻结块（不适用）")
-    rules = [str(o.get("rule", "")) for o in _obligations(freeze) if o.get("rule")]
-    if not rules:
-        return Outcome(True, "冻结无义务条目（不适用）")
-    report = None
-    for rel in ("review/review-report.md", "review-report.md"):
-        p = root / rel
-        if p.exists():
-            report = p
-            break
-    if report is None:
-        return Outcome(True, "无 review 报告（不适用）")
-    text = read_text(report)
-    headers = header_index(text, ["rule", "结论"]) or header_index(text, ["义务", "结论"])
-    if not headers:
-        return Outcome(False, "review 报告缺「知识义务复核」表")
-    covered: dict[str, str] = {}
-    for _, cells in md_table_rows(text, headers[:2]):
-        joined = " ".join(cells)
-        for rid in ENTRY_ID_RE.findall(joined):
-            covered[rid] = joined
-    missing = [r for r in rules if r not in covered]
-    if missing:
-        return Outcome(False, "下游静默跳过：" + "、".join(missing[:8]))
-    empty_reason = [
-        r for r, row in covered.items()
-        if "不适用" in row and len(re.sub(r"[|\s不适用]", "", row)) < len(r) + 4
-    ]
-    if empty_reason:
-        return Outcome(False, "标「不适用」但无理由：" + "、".join(empty_reason[:5]))
-    return Outcome(True, f"{len(rules)} 条义务均有结论")
-
-
-@checker
 def p14_image_broken_link(root: Path, ctx: Ctx) -> Outcome:
     """归档件里的图片引用必须解析得到文件。
 
@@ -1412,58 +1393,32 @@ def p16_spec_exit_diverges(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def p17_landing_md_yaml_mismatch(root: Path, ctx: Ctx) -> Outcome:
-    """方案正文的落点与契约里的落点是同一份冻结的两次渲染，不能各写各的。"""
-    freeze = _freeze(root)
-    if freeze is None:
-        return Outcome(True, "无知识冻结块（不适用）")
+    """方案「规约」一节的落点实体与契约里挂着这条 must 的实体是同一件事的两次渲染，不能各写各的。"""
+    musts = _musts(root)
+    if not musts:
+        return Outcome(True, "契约里没有挂 must 的实体（不适用）")
     plan = root / "plan" / "plan.md"
     if not plan.exists():
         return Outcome(True, "无方案正文（不适用）")
     text = read_text(plan)
     headers = header_index(text, ["编号", "落点"])
     if not headers:
-        return Outcome(False, "方案正文缺义务表（须有编号与落点两列）")
+        return Outcome(False, "方案正文缺「规约」一节的表（须有编号与落点两列）")
     md: dict[str, str] = {}
     for _, cells in md_table_rows(text, ["编号", "落点"]):
         for rid in ENTRY_ID_RE.findall(cell(cells, headers, "编号")):
-            md[rid] = cell(cells, headers, "落点")
+            md[rid] = md.get(rid, "") + " " + cell(cells, headers, "落点")
     bad: list[str] = []
-    for ob in _obligations(freeze):
-        rid = str(ob.get("rule", "")).strip()
-        landings = ob.get("landing")
-        refs = landings if isinstance(landings, list) else ([landings] if landings else [])
-        tails = [str(r).split(".")[-1] for r in refs if str(r).strip()]
-        if not rid or not tails:
-            continue
+    for rid, entity in musts:
+        tail = entity.split(".")[-1]
         row = md.get(rid)
         if row is None:
             bad.append(f"{rid}（正文表缺行）")
-        elif not any(t in row for t in tails):
-            bad.append(f"{rid}（正文「{row[:20]}」/ 契约「{'、'.join(tails)}」）")
+        elif tail not in row:
+            bad.append(f"{rid}（正文「{row.strip()[:20]}」/ 契约「{entity}」）")
     if bad:
-        return Outcome(False, "落点两处对不上：" + "；".join(bad[:5]))
-    return Outcome(True, f"{len(md)} 条义务的落点两处一致")
-
-
-@checker
-def p18_step_equals_criterion(root: Path, ctx: Ctx) -> Outcome:
-    """业务步骤不能拿验收编号顶替——那样这条义务在流程里没有落点。"""
-    freeze = _freeze(root)
-    if freeze is None:
-        return Outcome(True, "无知识冻结块（不适用）")
-    obligations = _obligations(freeze)
-    if not obligations:
-        return Outcome(True, "冻结无义务条目（不适用）")
-    same = [
-        str(ob.get("rule", ""))
-        for ob in obligations
-        if str(ob.get("step", "")).strip()
-        and str(ob.get("step", "")).strip() == str(ob.get("criterion", "")).strip()
-    ]
-    if same:
-        return Outcome(False, "step 拿验收编号顶替：" + "、".join(same[:8]))
-    return Outcome(True, f"{len(obligations)} 条义务的 step 都是业务步骤")
-
+        return Outcome(False, "落点两处对不上：" + "；".join(sorted(set(bad))[:5]))
+    return Outcome(True, f"{len(musts)} 处 must 的落点两处一致")
 
 # --------------------------------------------------------------------------- #
 # adapt（工程适配）

@@ -216,7 +216,7 @@ class MeasureReadsRealEvents(unittest.TestCase):
              "tool_input": {"pattern": "cmdCheck", "path": "C:\\ws\\doc\\extensions\\skills"}},
         ])
         self.assertEqual(2, r["reads_rule_text"])
-        self.assertEqual(1, r["reads_checker_source"])
+        self.assertEqual(2, r["reads_checker_source"], "在 skills 目录里检索也是读源码")
 
     def test_paths_only_in_output_or_in_writes_are_not_reads(self):
         """输出里出现的路径不是模型读入；写文件提到规则路径也不是读。"""
@@ -256,7 +256,9 @@ class MeasureReadsRealEvents(unittest.TestCase):
         """framework 下的工具源码、`*.ts` 通配与 harness 源码目录里的递归检索都算读机制源码。"""
         for command in ("sed -n '1,80p' framework/harness/scripts/utils/context-facts.ts",
                         "grep -n applySequentialMultiplier framework/harness/scripts/utils/*.ts",
-                        "grep -rn acceptance_flow_structure framework/harness/scripts/utils/ | head"):
+                        "grep -rn acceptance_flow_structure framework/harness/scripts/utils/ | head",
+                        "grep -rn knowledge_rule framework/harness",
+                        "rg flowProblems doc/extensions/hooks"):
             with self.subTest(command=command):
                 r = self._measure([{"tool_name": "bash", "tool_input": {"command": command}}])
                 self.assertEqual(1, r["reads_checker_source"])
@@ -264,10 +266,21 @@ class MeasureReadsRealEvents(unittest.TestCase):
     def test_prompts_and_reports_under_harness_are_not_source(self):
         """harness 目录下的提示词与报告不是源码：目录检索只认到目录为止的路径。"""
         for command in ("cat framework/harness/prompts/spec-verifier.md",
-                        "cat framework/harness/reports/summary.json"):
+                        "cat framework/harness/reports/summary.json",
+                        "grep -rn x framework/harness/prompts/",
+                        "grep -rn x framework/harness/prompts",
+                        "rg x doc/extensions/skills/story/phases",
+                        'grep -rn "framework" 02-Feature/WalletMain/src/main/ets'):
             with self.subTest(command=command):
                 r = self._measure([{"tool_name": "bash", "tool_input": {"command": command}}])
                 self.assertEqual(0, r["reads_checker_source"])
+
+    def test_a_glob_counts_only_when_it_lists_source_files(self):
+        """Glob 列的是它的模式要的文件：在 framework 下找 `.md` 不是读源码，找 `.mjs` 才是。"""
+        md = self._measure([{"tool_name": "glob", "tool_input": {"path": "C:/ws/framework", "pattern": "**/spec*.md"}}])
+        self.assertEqual(0, md["reads_checker_source"])
+        mjs = self._measure([{"tool_name": "glob", "tool_input": {"pattern": "doc/extensions/hooks/**/*.mjs"}}])
+        self.assertEqual(1, mjs["reads_checker_source"])
 
     def test_knowledge_and_phase_rule_yaml_are_not_source(self):
         """知识与阶段规则是写给模型读的，不是机制源码。"""

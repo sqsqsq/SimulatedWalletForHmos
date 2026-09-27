@@ -44,15 +44,19 @@ RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
 #: 机制源码：读它 = 在逆向判据。目标是 0 次。
 #:
 #: 只认两种：机制源码文件——framework 下的 `.ts`（含 `*.ts` 通配）、扩展下的 `.mjs`/`.py`；
-#: 以及对源码目录的递归检索——framework 整个目录、它的 harness 源码目录或扩展的 hooks/skills 目录，
-#: 路径到目录为止（以 `/` 收尾），目录下的具体非源码文件（提示词、报告）不算。
+#: 以及对源码目录的递归检索——framework 整个目录、它的 harness 源码目录（不含 prompts、reports、
+#: state、templates、schemas）、扩展的 hooks 目录、skills 目录与各 skill 目录及其 scripts 目录。
+#: 目录带不带结尾斜杠都认；目录名不带点，具体文件（提示词、报告、知识）不会被当成目录；
+#: 写在引号里的是检索词，不是路径。Glob 按它要列的文件认，只看源码文件那一种。
 #: 知识层是 `.md`，不在其内：那是给模型实现需求用的内容，读它是正当的。
-CHECKER_PATH_RE = re.compile(
-    r"framework/[\w/.*-]+\.ts\b"
-    r"|doc/extensions/[\w/.*-]+\.(?:mjs|py)\b"
-    r"|framework/(?:[\w.-]+/)*harness/(?:[\w.-]+/)*(?=[\s\"']|$)"
-    r"|framework/(?=[\s\"']|$)"
-    r"|doc/extensions/(?:hooks|skills)(?:/[\w.-]+)*/(?=[\s\"']|$)")
+_SOURCE_DIRS = (
+    r"(?<=[\s/])framework"
+    r"|framework/(?:[\w-]+/)*harness(?:/(?!(?:prompts|reports|state|templates|schemas)\b)[\w-]+)*"
+    r"|doc/extensions/hooks(?:/[\w-]+)*"
+    r"|doc/extensions/skills(?:/[\w-]+)?"
+    r"|doc/extensions/skills(?:/[\w-]+)*/scripts(?:/[\w-]+)*")
+SOURCE_FILE_RE = re.compile(r"framework/[\w/.*-]+\.ts\b|doc/extensions/[\w/.*-]+\.(?:mjs|py)\b")
+CHECKER_PATH_RE = re.compile(rf"{SOURCE_FILE_RE.pattern}|(?:{_SOURCE_DIRS})/?(?=[\s|;)]|$)")
 
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
 #:
@@ -347,7 +351,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         read_text = " ".join(segments)
         if read_text:
             # 一次工具调用计一次：命令里哪一段读了机制源码都算
-            reads_checker += any(CHECKER_PATH_RE.search(seg) for seg in segments)
+            source = SOURCE_FILE_RE if name == "glob" else CHECKER_PATH_RE
+            reads_checker += any(source.search(seg) for seg in segments)
             if RULE_PATH_RE.search(read_text):
                 reads_rule += 1
             elif "doc/features/" in read_text:

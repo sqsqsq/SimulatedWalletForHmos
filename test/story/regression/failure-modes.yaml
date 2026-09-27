@@ -529,13 +529,13 @@ modes:
     found_round: "2026-08-22"
     form: 下游阶段对冻结义务既无证据也无"不适用+理由"，静默跳过与做过没写事后同形
     clause: B1-11 / AGENTS.md §3「显式不适用优于静默跳过」
-    checker: p13_silent_downstream_skip
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/bad
-    good_fixture: test/story/fixtures/failure-modes/P13-silent-downstream-skip/good
     applicable_when: 存在 contracts.yaml 知识冻结块 且 存在 review/review-report.md
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者 2026-09-27，依据用户同日「废弃机制全部退出」的裁定（步骤 9 返修评审 R5′）
+    reason: >
+      这一形态读 contracts.yaml 的 knowledge_freeze 块，现行扩展已没有它的读写方。下游对每处义务给结论由 review 门禁的知识义务复核表承担（hooks/review/post_check.mjs）：契约里每条 must 一处落点一行，结论取值封闭，「不适用」与基线「未落实」的依据列不能空。
 
   - id: P14-image-broken-link
     dimension: knowledge
@@ -578,13 +578,13 @@ modes:
   - id: P17-landing-md-yaml-mismatch
     dimension: knowledge
     found_round: "2026-08-25"
-    form: 方案正文义务表的落点与契约冻结的 landing 各写各的，评审者读到的落点与下游去找的不是一个
+    form: 方案「规约」一节的落点实体与契约里挂着这条 must 的实体各写各的，评审者读到的落点与下游去找的不是一个
     clause: B1-17「落点两处一致」
     checker: p17_landing_md_yaml_mismatch
     target: product
     bad_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/bad
     good_fixture: test/story/fixtures/failure-modes/P17-landing-md-yaml-mismatch/good
-    applicable_when: 存在 plan/plan.md 与 contracts.yaml 知识冻结块
+    applicable_when: 存在 plan/plan.md 与 contracts.yaml 里挂 must 的实体
     severity: BLOCKER
     status: fixed
 
@@ -593,13 +593,13 @@ modes:
     found_round: "2026-08-25"
     form: 冻结义务的业务步骤拿验收编号顶替，这条义务在业务流程里没有落点却照样过门禁
     clause: B1-17「step 是业务步骤」
-    checker: p18_step_equals_criterion
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/bad
-    good_fixture: test/story/fixtures/failure-modes/P18-step-equals-criterion/good
     applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者 2026-09-27，依据用户同日「废弃机制全部退出」的裁定（步骤 9 返修评审 R5′）
+    reason: >
+      这一形态读 knowledge_freeze 块里义务的 step 与 criterion 字段，现行契约没有这两个字段：义务以 must 挂在承担它的实体上，落点就是这个实体；验收编号经 acceptance.yaml 的 knowledge_rule 接回规约，由 spec、ut、testing 门禁核。
 
   # ---------------------------------------------------------------------------
   # adapt（工程适配）
