@@ -94,7 +94,7 @@ function docCoordinateForms(projectRoot) {
   return [
     ...CROSS_DOC_COORDINATES,
     { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g,
-      hint: '按仓内文件名加编号判：编号只在附录的规约判定表里合法，正文用中文规约名' },
+      hint: '按仓内文件名加编号判：编号只在附录的规约表里合法，正文用中文规约名' },
     { re: new RegExp(String.raw`\b(?:[\w-]+\.md|(?:${names.map(escapeRe).join('|')})\.(?:ya?ml|json))\b`, 'g'),
       hint: '按文档文件名判：这些文件不随归档，评审人拿到的只有归档件，打不开它' },
     { re: /§\s*\d[\d.]*/g, hint: '按章节号判：章节号随重编号漂移，归档件里指不回原处' },
@@ -116,7 +116,7 @@ function knowledgeFileNames(projectRoot) {
 const FORMS = {
   repo_identifier: { label: '工程标识',
     hint: '主叙事给评审人读，工程标识只在附录合法：反引号里的文字、驼峰与多段下划线形态的词都按工程标识判' },
-  rule_id: { label: '规约编号', hint: '主叙事给评审人读，规约编号只在附录的规约判定表里合法' },
+  rule_id: { label: '规约编号', hint: '主叙事给评审人读，规约编号只在附录的规约表里合法' },
   doc_coordinate: { label: '文档坐标', hint: DOC_COORDINATE_HEAD.hint },
   source_tag: { label: '来源括注', hint: '以合同登记词起头的括号按来源括注判：它打断主叙事的阅读，这条只在附录之外判' },
 };

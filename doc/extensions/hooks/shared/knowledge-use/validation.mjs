@@ -20,13 +20,13 @@ function isEmptyReason(reason) {
 }
 
 /**
- * §9.1 技术契约章里登记的名字 —— `constraints[].contract` 只能引用这里面的。
+ * spec 扩展章「技术契约」与「埋点」两节里登记的名字 —— `constraints[].contract` 只能引用这里面的。
  *
  * 这个字段是**spec 内部**的落点声明：命中的规约要求落在哪个已登记的接口、存储键、
  * 配置项上。plan 侧的实体落点（`contracts.yaml` 的 `must` 挂在哪个实体）是另一层，
  * 由 plan 定，两者不互为抄本。不核的话它就是一列没人读的字，写错写空都没有信号。
  *
- * **§9.1 那一章只在走 `/story` 时才写**，所以找不到它返回 null，调用方不判这一条——
+ * **这两节只在走 `/story` 时才写**，所以两节都找不到时返回 null，调用方不判这一条——
  * 那不是「缺了一章」，是这个需求本来就不写它。直接跑 spec 的需求里，
  * 这一列是自由文本，扩展对它们要保持隐形。
  *
@@ -34,26 +34,30 @@ function isEmptyReason(reason) {
  * 把它收进来，`contract: 云侧接口` 就验得过——而那是一列的名字，不是任何一个落点。
  * 表头认得出来：它的下一行是分隔行。
  *
- * **章在而一个实体都没有，返回的是空集合，不是 null**：那两件事的处置相反——
- * 没有这一章 = 不判；有这一章而空 = 任何 `contract` 都引不到东西，逐条都要报。
+ * **节在而一个实体都没有，返回的是空集合，不是 null**：那两件事的处置相反——
+ * 没有这两节 = 不判；有而空 = 任何 `contract` 都引不到东西，逐条都要报。
  */
+const CONTRACT_SECTIONS = /^#{2,6}\s+(?:\d+(?:\.\d+)*\.?\s+)?(?:技术契约|埋点)\s*$/;
+
 function contractNames(specText) {
   const rows = String(specText ?? '').split(/\r?\n/);
-  const start = rows.findIndex(l => /^#{2,6}\s+.*技术契约/.test(l.trim()));
-  if (start < 0) return null;
-  const level = rows[start].trim().match(/^#+/)[0].length;
+  const starts = rows.map((l, i) => (CONTRACT_SECTIONS.test(l.trim()) ? i : -1)).filter(i => i >= 0);
+  if (!starts.length) return null;
   const names = new Set();
   const isSeparator = (l) => /^\|[\s:|-]+\|?$/.test(String(l ?? '').trim());
-  for (let i = start + 1; i < rows.length; i += 1) {
-    const h = rows[i].trim().match(/^(#{2,6})\s+/);
-    if (h && h[1].length <= level) break;
-    const line = rows[i].trim();
-    if (!line.startsWith('|')) continue;
-    if (isSeparator(line)) continue;
-    if (isSeparator(rows[i + 1])) continue;          // 下一行是分隔行 = 这行是表头
-    const first = line.replace(/^\||\|$/g, '').split('|')[0]?.replace(/[`*]/g, '').trim() ?? '';
-    if (!first || /^[-: ]*$/.test(first) || /^\{.*\}$/.test(first)) continue;
-    names.add(first);
+  for (const start of starts) {
+    const level = rows[start].trim().match(/^#+/)[0].length;
+    for (let i = start + 1; i < rows.length; i += 1) {
+      const h = rows[i].trim().match(/^(#{2,6})\s+/);
+      if (h && h[1].length <= level) break;
+      const line = rows[i].trim();
+      if (!line.startsWith('|')) continue;
+      if (isSeparator(line)) continue;
+      if (isSeparator(rows[i + 1])) continue;          // 下一行是分隔行 = 这行是表头
+      const first = line.replace(/^\||\|$/g, '').split('|')[0]?.replace(/[`*]/g, '').trim() ?? '';
+      if (!first || /^[-: ]*$/.test(first) || /^\{.*\}$/.test(first)) continue;
+      names.add(first);
+    }
   }
   return names;
 }
@@ -66,7 +70,7 @@ function contractNames(specText) {
  */
 export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   const problems = [];
-  // §9.1 里登记了哪些名字。那一章只在走 /story 时写，没有它就不判这一条（见 contractNames）。
+  // 技术契约与埋点里登记了哪些名字。这两节只在走 /story 时写，没有就不判这一条（见 contractNames）。
   const contracts = specText === null ? null : contractNames(specText);
 
   const want = manifestDigest(projectRoot);
@@ -169,7 +173,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
       }
       if (text(row, 'decision')) {
         problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 写了 decision——decision 只用于处置是（评审动作）的条目；`
-          + '这一条产生代码要求，落点是 contract（§9.1 登记实体）或 impact（实际影响对象）');
+          + '这一条产生代码要求，落点是 contract（技术契约或埋点里登记的名字）或 impact（实际影响对象）');
       }
       // 命中但本轮豁免：强制力决定允不允许、补偿要不要写；豁免不写要求与落点
       if (row.waived !== undefined) {
@@ -187,30 +191,30 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
         continue;
       }
       if (!requirements(row).length) {
-        problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 判命中却没写 requirement——命中而不说要求做什么，§9.2 与下游 plan、编码都拿不到：要求从 requirement 投影`);
+        problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 判命中却没写 requirement——命中而不说要求做什么，spec 的「规约」与下游 plan、编码都拿不到：要求从 requirement 投影`);
       }
-      // 落点二选一，**由作者显式声明是哪一种**：`contract` 是 §9.1 里的实体名（验真），
-      // `impact` 是实际影响对象（不对应 §9.1 登记实体的那一类）。
+      // 落点二选一，**由作者显式声明是哪一种**：`contract` 是技术契约或埋点里登记的名字（验真），
+      // `impact` 是实际影响对象（不对应登记名字的那一类）。
       // 不按「查不查得到」反推类型：接口名拼错也会滑成非实体落点，验真永远不会失败。
       const at = text(row, 'contract');
       const impact = text(row, 'impact');
       if (!at && !impact) {
         problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 判命中却没写落点——落点类型由作者声明：`
-          + '`contract` 是 §9.1 登记过的接口/存储键/配置项名（门禁核它在 §9.1 里），`impact` 是实际影响对象'
+          + '`contract` 是技术契约或埋点里登记过的接口/存储键/配置项/统计点名（门禁核它在那两节里），`impact` 是实际影响对象'
           + '（点名，「页面」「资源」这种泛称不算）');
       } else if (at && impact) {
         problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 同时写了 contract 与 impact——一条命中只有一种落点：`
-          + '落在 §9.1 实体上的是 contract，落在别处的是 impact');
+          + '落在登记名字上的是 contract，落在别处的是 impact');
       }
-      // `contracts === null` = 这个需求不写 §9.1，本条不判；空集合是**判得了的**：
+      // `contracts === null` = 这个需求不写技术契约与埋点，本条不判；空集合是**判得了的**：
       // 那一章在，只是一个实体都没登记，于是任何 `contract` 都引不到东西。
       if (at && contracts && !contracts.has(at)) {
         const listed = contracts.size
           ? `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
-          : '（§9.1 现在一个实体都没登记）';
-        problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 的 contract「${at}」不在 §9.1 技术契约里${listed}`
-          + '——contract 按 §9.1 各表数据行第一格登记的接口、存储键或配置项名核；'
-          + '不落在 §9.1 实体上的落点属于 impact');
+          : '（技术契约与埋点现在一个名字都没登记）';
+        problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 的 contract「${at}」不在技术契约与埋点里${listed}`
+          + '——contract 按这两节各表数据行第一格登记的接口、存储键、配置项或统计点名核；'
+          + '不落在这些名字上的落点属于 impact');
       }
     } else if (row.applicable === false) {
       if (isEmptyReason(text(row, 'reason'))) {

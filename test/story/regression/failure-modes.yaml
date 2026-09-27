@@ -393,7 +393,7 @@ modes:
     form: spec 约束出口「本需求的要求」列复述规约原文，到编码那里等于没有要求
     clause: B1-12 / B1-14 / N8
     target: product
-    applicable_when: 存在 spec/spec.md 规约约束要求章
+    applicable_when: 存在 spec/spec.md 扩展章的「规约」节
     severity: BLOCKER
     status: fixed
 
@@ -415,7 +415,7 @@ modes:
   - id: P05-anchor-points-to-declaration
     dimension: knowledge
     found_round: "2026-08-24"
-    form: 冻结义务的 anchor 指回知识决策声明表自己，或 landing 为空 → 声明冒充落点
+    form: 冻结义务的 anchor 指回 plan 声明义务的「规约」一节自己，或 landing 为空 → 声明冒充落点
     clause: B1-10 / AGENTS.md §3「声明不是应用」
     checker: p05_anchor_points_to_declaration
     target: product
@@ -428,7 +428,7 @@ modes:
   - id: P06-knowledge-decision-outside-anchor
     dimension: knowledge
     found_round: "2026-09-25"
-    form: plan 的知识决策没有写成宿主扩展锚点「9. 宿主扩展」下的 9.1，或缺设计模式选型、规约义务、项目知识影响之一
+    form: plan 的设计输入（项目知识、规约、设计模式）没有写成宿主扩展锚点「9. 宿主扩展」的下一级小节，或缺其中之一
     clause: 1.9.6 宿主扩展归位与埋点分工 02
     checker: p06_knowledge_decision_outside_anchor
     target: product

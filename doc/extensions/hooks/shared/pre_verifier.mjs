@@ -58,7 +58,7 @@ const WALK = {
 };
 
 /**
- * plan：spec §9.1.4 的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
+ * plan：spec 埋点的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
  * 同一统计点被几个指标共用时，每个指标下都列出同一组 plan 行。spec 没给统计设计时如实说缺在哪。
  */
 function statPointTable(projectRoot, feature) {
@@ -124,7 +124,7 @@ function specJudgementTable(projectRoot, feature, knowledge) {
             : r.applicable !== true ? `applicable 写的是「${r.applicable}」`
               : r.waived ? `命中·本轮豁免：${r.waived?.reason ?? ''}${r.waived?.compensation ? `；补偿：${r.waived.compensation}` : ''}`
                 : `命中：${(e.reviewAction ? [r.reason] : requirements(r)).filter(Boolean).join('；')}`;
-    const landing = !r ? '—' : r.contract ? `§9.1 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
+    const landing = !r ? '—' : r.contract ? `登记名 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
       : r.decision ? `议题 ${r.decision}` : '—';
     rows.push(`| ${e.id} | ${cell(e.force)} | ${cell(e.constraint)} | ${cell(e.when)} | ${cell(e.handling)} `
       + `| ${cell(e.note)} | ${cell(judged)} | ${cell(landing)} |`);

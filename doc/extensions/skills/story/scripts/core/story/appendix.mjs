@@ -1,5 +1,5 @@
 /**
- * 附录 —— spec 契约与规约判定的投影、手改保护，以及附录自己的结构判据。
+ * 附录 —— spec 技术契约、规约与埋点的投影、手改保护，以及附录自己的结构判据。
  *
  * 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。这里管两件事：
  * 机器区**从真源重算**（不读旧 story，读旧的就成了真源加一份会漂的副本），
@@ -9,14 +9,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
-  chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock, zoneHandEdited,
-  zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
+  chapterSpan, childHeading, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock,
+  zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
 import { relFromStory } from './sources.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
-/** 规约判定表的取值封闭；整域不适用时该域内条目不必逐条列。 */
+/** 附录·规约那张表的判定取值封闭；整域不适用时该域内条目不必逐条列。 */
 const DOMAIN_NA = '整域不适用';
 
 /**
@@ -36,7 +36,7 @@ function knowledgeUseVerdicts(ctx, entries = []) {
       // 依据也一起带回来：判断已经写在那份 YAML 里（命中写 requirement、
       // 不命中写 reason），让作者对着它再抄一遍，抄出来的只会更短。
       // requirement 是列表（一条要求一句）：**全部带上，一条一项**——判定表一条要求一行，
-      // 只取第一条的话附录就成了 §9.2 的截断视图，拼进一格又成了读不完的长格。
+      // 只取第一条的话附录就成了 spec「规约」的截断视图，拼进一格又成了读不完的长格。
       if (id) {
         const req = Array.isArray(row.requirement) ? row.requirement : [row.requirement];
         // 评审动作条目命中时没有 requirement——它的结果是一次跨团队的动作。
@@ -80,7 +80,10 @@ export function appendixChapter(contract) {
  */
 function specSection(spec, re) {
   const doc = parseDocument(spec);
-  const h = doc.headings.find(x => x.level >= 2 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  return sectionOf(doc, doc.headings.find(x => x.level >= 2 && re.test(`${'#'.repeat(x.level)} ${x.raw}`)));
+}
+
+function sectionOf(doc, h) {
   if (!h) return { title: '', text: '', tables: [] };
   const end = headingEnd(doc, h);
   return { title: h.raw.replace(/^[\d.]+\s*/, ''), text: doc.lines.slice(h.at + 1, end).join('\n'),
@@ -130,8 +133,29 @@ function projectionOf(contract) {
   return { drop: p.drop_columns ?? [], sections: p.sections ?? {} };
 }
 
-/** spec 小节号 → 定位那一节标题的正则，层级不限（`9.1.1` 不误中 `9.1.10`）。 */
-const specHeading = (from) => new RegExp(`^#{2,6}\\s*${String(from).replace(/\./g, '\\.')}(?![\\d.])`);
+const escapeRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * spec 里按节名一路往下的那一节（合同 `from`，如 `["宿主扩展治理项", "技术契约", "端云接口"]`）：
+ * 第一个名字是二级标题，之后逐级找下一级小节；标题按名字开头认，号不参与——spec 的节号变了合同不用动。
+ */
+function specHeadingAt(doc, names) {
+  let h = null;
+  for (const name of names ?? []) {
+    const re = new RegExp(`^${escapeRe(normalizeHeading(name))}`);
+    h = h ? childHeading(doc, h, re) : doc.headings.find(x => x.level === 2 && re.test(x.name));
+    if (!h) return null;
+  }
+  return h;
+}
+
+function specSectionAt(spec, names) {
+  const doc = parseDocument(spec);
+  return sectionOf(doc, specHeadingAt(doc, names));
+}
+
+/** 合同里来源小节的名字，报错与机器区标记里给人看。 */
+const sourceName = (names) => `「${(names ?? []).join(' › ')}」`;
 
 /**
  * 一张 spec 表投进附录的样子：去掉不投的列与模板占位行，列名按合同换成读者用的名字。
@@ -145,38 +169,25 @@ function projectedTable(t, drop, rename = {}) {
   return rows.length ? { header: keep.map(([h]) => rename[h] ?? h), rows } : null;
 }
 
-/** 一节正文里写出来的「不涉及：<依据>」——它也是结论，评审者要看到；没有返回 null。 */
+/** 一节正文里写出来的「不涉及」结论（以「不涉及」起头的一行）——它也是结论，评审者要看到；没有返回 null。 */
 function notApplicableLine(text) {
   return String(text ?? '').split(/\r?\n/).map(l => l.trim())
-    .find(l => /^不涉及[:：]\s*\S/.test(l)) ?? null;
+    .find(l => /^不涉及\S/.test(l)) ?? null;
 }
 
 /**
- * 附录·改动边界 —— 「这次改了哪里、哪里保证不动」：Scope 的两份清单与依赖变更合成**一个模块一行**。
- *
- * 同一个模块只出一行：它在 Scope 里不改、在依赖变更里是复用，读者要的是一个结论，
- * 两行分开写他要自己合。依赖变更里 Scope 之外的条目（新引入的库）各占一行。
+ * 附录·改动边界 —— 这次需求在工程上动到哪些模块、哪些相关模块保证不动：**一个模块一行**，
+ * 值只有「改动」「不改」。来源是 spec 的 Scope 声明：`in_scope_modules` 改动，`out_of_scope_modules` 不改
+ * （复用其已有出口也是不改）。新引入的依赖在技术契约·依赖变更一节。
  * Scope 的切分理由留在 spec：它是写给 plan 与工程的说明；归档件讲为什么这么切，
  * 归「范围」「业务方案」两章，用业务语言。
  */
-function scopeBoundary(ctx, spec, section, def) {
-  const source = specSection(spec, specHeading(def.from));
-  const deps = new Map();
-  for (const t of source.tables) {
-    for (const r of t.rows) {
-      const [name, change] = [(r[0] ?? '').trim(), (r[1] ?? '').trim()];
-      if (!isPlaceholderRow(r) && name && change && !/^[-—]$/.test(change)) deps.set(name, change);
-    }
-  }
-  const rows = [];
-  for (const m of scopeList(spec, 'in_scope_modules')) { rows.push([m, '改动']); deps.delete(m); }
-  for (const m of scopeList(spec, 'out_of_scope_modules')) { rows.push([m, deps.get(m) ?? '不改']); deps.delete(m); }
-  for (const [name, change] of deps) rows.push([name, `依赖变更：${change}`]);
-  // 依赖变更写的「不涉及」也是结论，丢了它 story 相对 spec 就减了一条；
-  // 两份清单也没有模块时只投这一句，不投一张空表
-  const na = source.tables.length ? null : notApplicableLine(source.text);
-  if (!rows.length) return na ? [na] : [];
-  return [...renderTable(appendixTableHeader(ctx, section), rows), ...(na ? ['', na] : [])];
+function scopeBoundary(ctx, spec, section) {
+  const rows = [
+    ...scopeList(spec, 'in_scope_modules').map(m => [m, '改动']),
+    ...scopeList(spec, 'out_of_scope_modules').map(m => [m, '不改']),
+  ];
+  return rows.length ? renderTable(appendixTableHeader(ctx, section), rows) : [];
 }
 
 /**
@@ -207,16 +218,13 @@ function rebaseLinks(line) {
  * 里面的小标题按相对源节的深度排在它之下，去掉源小节号下的局部编号。HTML 注释（模板说明）不搬。
  * 除了标题什么都没有时返回空：那是真的空，由调用方报空节。
  */
-//: 附录下每一节（10.1.x）的标题层级：整节投影进来的小标题按相对源节的深度排在它之下。
-const APPENDIX_SECTION_LEVEL = 4;
-
-function wholeSection(spec, re, drop, rename) {
+function wholeSection(spec, names, drop, rename, level) {
   const doc = parseDocument(spec);
-  const h = doc.headings.find(x => x.level >= 2 && re.test(`${'#'.repeat(x.level)} ${x.raw}`));
+  const h = specHeadingAt(doc, names);
   if (!h) return [];
   const end = headingEnd(doc, h);
   const tables = new Map(tablesWithin(doc, h.at + 1, end).map(t => [t.line, t]));
-  // 源小节自己的号（如 9.1.4）下的局部编号只在 spec 里成立，搬进附录就去掉；业务标题里的数字不动
+  // 源小节自己的号（如 9.4）下的局部编号只在 spec 里成立，搬进附录就去掉；业务标题里的数字不动
   const own = /^(\d+(?:\.\d+)*)\s/.exec(h.raw)?.[1];
   const local = own ? new RegExp(`^${own.replace(/\./g, '\\.')}(?:\\.\\d+)+\\.?\\s+`) : null;
   const body = [];
@@ -237,7 +245,7 @@ function wholeSection(spec, re, drop, rename) {
       }
       const sub = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
       if (sub) {
-        body.push(`${'#'.repeat(Math.min(6, APPENDIX_SECTION_LEVEL + sub[1].length - h.level))} ${local ? sub[2].replace(local, '') : sub[2]}`);
+        body.push(`${'#'.repeat(Math.min(6, level + sub[1].length - h.level))} ${local ? sub[2].replace(local, '') : sub[2]}`);
         continue;
       }
       body.push(rebaseLinks(line));
@@ -255,7 +263,7 @@ export function materialSubsectionName(contract) {
   return (appendix?.subsections ?? []).find(n => n.includes('材料')) ?? null;
 }
 
-//: 规约判定那一节的真源名字——报错与投影标记共用一处字面。
+//: 附录·规约那一节的真源名字——报错与投影标记共用一处字面。
 const KNOWLEDGE_USE_SOURCE = 'spec/knowledge-use.yaml';
 
 /** 附录里由脚本合成的那张表的表头 —— 登记在合同，脚本不留字面。 */
@@ -267,12 +275,14 @@ function appendixTableHeader(ctx, name) {
   return String(table).split('|').map(h => h.trim());
 }
 
-/** spec 某一小节投进附录某个 H4 的行：整节、若干张表，或者它写出来的「不涉及」。 */
-function specRows(spec, h4, drop) {
-  const re = specHeading(h4.from);
-  if (h4.whole) return wholeSection(spec, re, drop, h4.rename);
-  const section = specSection(spec, re);
-  const tables = section.tables.map(t => projectedTable(t, drop, h4.rename)).filter(Boolean);
+/**
+ * spec 某一小节投进附录的行：整节、若干张表，或者它写出来的「不涉及」。
+ * `level` 是附录里承载它的标题层级（H3 的节或 H4 的小节）：整节投影的小标题按相对源节的深度排在它之下。
+ */
+function specRows(spec, def, drop, level) {
+  if (def.whole) return wholeSection(spec, def.from, drop, def.rename, level);
+  const section = specSectionAt(spec, def.from);
+  const tables = section.tables.map(t => projectedTable(t, drop, def.rename)).filter(Boolean);
   // 多张表之间空一行：连着写 markdown 会把它们并成一张错表
   if (tables.length) return tables.flatMap((t, i) => [...(i ? [''] : []), ...renderTable(t.header, t.rows)]);
   const na = notApplicableLine(section.text);
@@ -291,14 +301,15 @@ function appendixZones(ctx, spec) {
   const out = [];
   for (const [section, def] of Object.entries(sections)) {
     if (def.kind === 'scope') {
-      out.push({ zone: section, section, source: `spec 的 Scope 声明与 §${def.from}`,
-        rows: scopeBoundary(ctx, spec, section, def) });
+      out.push({ zone: section, section, source: 'spec 的 Scope 声明', rows: scopeBoundary(ctx, spec, section) });
     } else if (def.kind === 'knowledge_use') {
       out.push({ zone: section, section, source: KNOWLEDGE_USE_SOURCE, rows: verdictSkeleton(ctx, section) });
+    } else if (def.from) {
+      out.push({ zone: section, section, source: `spec ${sourceName(def.from)}`, rows: specRows(spec, def, drop, 3) });
     } else {
       for (const h4 of def.h4 ?? []) {
-        out.push({ zone: `${section}·${h4.title}`, section, h4: h4.title, source: `spec §${h4.from}`,
-          rows: specRows(spec, h4, drop) });
+        out.push({ zone: `${section}·${h4.title}`, section, h4: h4.title, source: `spec ${sourceName(h4.from)}`,
+          rows: specRows(spec, h4, drop, 4) });
       }
     }
   }
@@ -310,7 +321,7 @@ function appendixZones(ctx, spec) {
  *
  * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句、H4 标题与材料清单，机器区由这里投出来，
  *    他登记前跑 `check` 才不会因为机器区是空的而红；
- * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判定、改一个接口），
+ * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判断、改一个接口），
  *    以登记这一次为准。
  *
  * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
@@ -376,7 +387,7 @@ export function projectAppendix(ctx, storyText) {
 }
 
 /**
- * 附录·规约判定的整张表 —— **依据也取真源，一条要求一行**。
+ * 附录·规约的整张表 —— **依据也取真源，一条要求一行**。
  *
  * 判断已经写在 `spec/knowledge-use.yaml` 里：不命中写的是为什么不适用，
  * 命中写的是这一轮要满足的要求。编号每行都写，读者从任一行都认得出是哪条规约；
@@ -436,7 +447,7 @@ function appendixSourceProblems(ctx, spec) {
   if (!appendixSpecSources(ctx.contract).length) return [];
   if (spec === null) {
     return ['读不到 spec/spec.md'
-      + '——附录的机器区由 spec §9.1 各节投影，spec 读不到时无从投影也无从核对'];
+      + '——附录的机器区由 spec 扩展章各节投影，spec 读不到时无从投影也无从核对'];
   }
   // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
   return appendixSpecGaps(ctx.contract, spec).map(g => `${g}；`
@@ -447,7 +458,7 @@ function appendixSourceProblems(ctx, spec) {
 function appendixSpecSources(contract) {
   const out = [];
   for (const [section, def] of Object.entries(projectionOf(contract).sections)) {
-    if (def.from) out.push({ from: def.from, to: section });
+    if (def.from && def.kind !== 'scope') out.push({ from: def.from, to: section });
     for (const h4 of def.h4 ?? []) out.push({ from: h4.from, to: `${section}·${h4.title}` });
   }
   return out;
@@ -457,18 +468,19 @@ function appendixSpecSources(contract) {
  * 附录各机器区要的 spec 小节在不在 —— 起手预检与只读核对共用这一份。
  *
  * **逐节核**：一节投一节的内容，几份输入不能互相替代。用「任意一节有正文」放过，
- * 只要 §9.1.2 在，§9.1.3 与 §9.1.4 缺了也不会有人提——而附录的那几段正是从它们投出来的。
+ * 只要数据存储在，配置项与埋点缺了也不会有人提——而附录的那几段正是从它们投出来的。
  */
 function appendixSpecGaps(contract, spec) {
   return appendixSpecSources(contract)
-    .filter(src => !specSection(spec, specHeading(src.from)).text.trim())
-    .map(src => `spec/spec.md §${src.from}：定位不到这一节或它没有正文——附录「${src.to}」由它投影`);
+    .filter(src => !specSectionAt(spec, src.from).text.trim())
+    .map(src => `spec/spec.md${sourceName(src.from)}：定位不到这一节或它没有正文——附录「${src.to}」由它投影，`
+      + '按节名从「宿主扩展治理项」逐级往下一级小节找');
 }
 
 /**
  * 本步要消费的 Spec 章节在不在 —— **起手的必需输入**，缺了回 Spec。
  *
- * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 §9.1 的那几节投
+ * skeleton 自己消费术语映射表（术语那一章的起始行）；`project` 之后要 spec 扩展章的那几节投
  * 附录。**「没有这一节」与「这件事不涉及」不是一回事**：后者是 Spec 里写出来的
  * 结论（`不涉及：<依据>`），评审者读得到；前者只是没写到那儿，而起手一路往下走的话，
  * 作者会在十章都写完之后才发现附录没有可投的东西。
@@ -519,6 +531,15 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
       if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
         problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行，也没有「不涉及：<依据>」`
           + '——附录每节的内容按表、列表或一行不涉及结论判');
+      }
+      // 有小节登记的节（技术契约）：小节按合同的节名认，机器区投在同名小节下
+      const def = Object.entries(projectionOf(ctx.contract).sections).find(([k]) => normalizeHeading(k) === want)?.[1];
+      const h4 = (def?.h4 ?? []).map(h => h.title);
+      const have = all.filter(l => /^####\s/.test(l)).map(l => normalizeHeading(l.replace(/^####\s+/, '')));
+      for (const name of h4.filter(n => !have.includes(n))) {
+        problems.push(`「${appendixDef.title}·${want}」：下面缺「${name}」小节`
+          + (have.length ? `（现在的小节是「${have.join('」「')}」）` : '')
+          + `——这一节的小节按章节合同登记的节名认：${h4.join('、')}，机器区投在同名小节下`);
       }
     }
     const dump = viewOf(appendixSection.title).fences.find(f => f.lang && f.lang !== 'mermaid');
@@ -578,7 +599,7 @@ export function appendixZoneProblems(ctx, storyText) {
   for (const z of zones) {
     const at = onDisk.get(z.zone);
     // **真源读不出来不等于「期望是空的」**——与上面 spec 那一条同一个道理。
-    // 规约判定的真源是 `spec/knowledge-use.yaml`：激活清单里有条目而投影是空的，
+    // 附录·规约的真源是 `spec/knowledge-use.yaml`：激活清单里有条目而投影是空的，
     // 说明那份判断件不在或读不出，而它恰恰是「哪几条规约要逐条判」的唯一依据。
     if (!z.rows.length && z.source === KNOWLEDGE_USE_SOURCE) {
       const active = activeKnowledgeEntries(ctx);

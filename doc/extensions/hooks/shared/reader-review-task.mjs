@@ -223,7 +223,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
   // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
   // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
-  // 附录的机器区由 spec §9.1 与 knowledge-use.yaml 投影：这里按区名留一行指向盘上原文，
+  // 附录的机器区由 spec 扩展章与 knowledge-use.yaml 投影：这里按区名留一行指向盘上原文，
   // 片段含作者区全文、不含机器区，投影刷新不改这一段，审查对象只随作者区变。
   const authored = authorZone(story);
   const fence = `${'`'.repeat(longestFence(authored) + 1)}markdown`;

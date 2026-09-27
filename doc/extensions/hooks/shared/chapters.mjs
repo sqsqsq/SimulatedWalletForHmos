@@ -7,11 +7,14 @@
  * 正文里合法的自定义小节不管。
  */
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { extensionRoot, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
-import { childHeading, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { childHeading, headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 
 const NUMBER = /^(\d+(?:\.\d+)*)\.?\s+/;
+//: 本文件所在扩展的根（hooks/shared 的上两级）：扩展模板随机制一起交付。
+const OWN_EXTENSION_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
  * 目标 profile 里某个 skill 资产的正文。
@@ -146,26 +149,62 @@ function anchorPositionProblems(doc, anchor, name) {
 }
 
 /**
- * 宿主扩展的位置：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，锚点之后只有附录，附录之后只有附录。
- * 规约约束要求与设计模式候选登记对所有需求生效；技术契约只在走 /story 时要求。
+ * 扩展章下有哪几节、什么顺序 —— **只在扩展模板里定义**：模板里宿主扩展那一章（第一个二级标题）的
+ * 下一级标题，去掉号就是节名。门禁、投影与作者页都按这些节名认，不按节号。
+ * 模板随机制一起交付，按本文件所在的扩展目录取。
+ *
+ * @param {string} templateRel 相对扩展根的模板路径
+ * @returns {{names: string[], problems: string[]}}
  */
-export function hostAnchorProblems(text, isStory, formDoc) {
+export function templateSections(templateRel) {
+  const text = readTextOrNull(path.join(OWN_EXTENSION_ROOT, ...templateRel.split('/')));
+  if (text === null) return { names: [], problems: [`扩展模板 ${templateRel} 读不到——扩展章有哪几节、什么顺序以这份模板为准，读不到就核不了`] };
+  const doc = parseDocument(text);
+  const anchor = doc.headings.find(h => h.level === 2);
+  const names = anchor
+    ? doc.headings.filter(h => h.level === anchor.level + 1 && h.at > anchor.at && h.at < headingEnd(doc, anchor)).map(h => h.name)
+    : [];
+  return names.length ? { names, problems: [] }
+    : { names, problems: [`扩展模板 ${templateRel} 里没有扩展章的小节——扩展章的节名取模板第一个二级标题的下一级标题`] };
+}
+
+/**
+ * 扩展章的小节：`wanted` 里的每一节都是锚点章的下一级（按节名认），几节的先后按模板顺序 `sections`。
+ * 找得到而不在下一级的报位置，找不到的报缺；只核节名与层级，内容各节自己的判据管。
+ */
+function sectionProblems(doc, anchor, title, sections, wanted, formDoc) {
+  const problems = [];
+  const list = `「${sections.join('」「')}」`;
+  for (const name of wanted) {
+    if (childHeading(doc, anchor, new RegExp(`^${name}$`))) continue;
+    const elsewhere = doc.headings.find(h => h.level >= 2 && h.name === name);
+    problems.push(elsewhere
+      ? `「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」：「${name}」要写成「${title}」的下一级小节——扩展章的小节按节名在这一章的下一级找，${list}平列（形态见 ${formDoc}）`
+      : `「${title}」：下一级缺「${name}」一节——扩展章的小节按节名（标题去掉号之后整名相等）在这一章的下一级找，${list}按这个顺序平列（形态见 ${formDoc}）`);
+  }
+  const end = headingEnd(doc, anchor);
+  const kids = doc.headings.filter(h => h.level === anchor.level + 1 && h.at > anchor.at && h.at < end && sections.includes(h.name));
+  const order = kids.map(h => sections.indexOf(h.name));
+  if (order.some((v, i) => i && v < order[i - 1])) {
+    problems.push(`「${title}」：下一级几节的顺序是「${kids.map(h => h.name).join('」「')}」——扩展章小节的顺序固定为${list}，编号按位置顺排`);
+  }
+  return problems;
+}
+
+/**
+ * spec 宿主扩展的位置与小节：扩展内容是 framework 模板末尾锚点「宿主扩展治理项」的下一级小节，
+ * 锚点之后只有附录，附录之后只有附录。`sections` 是模板定义的全部节名与顺序，`wanted` 是本需求要写的那几节。
+ */
+export function hostAnchorProblems(text, sections, wanted, formDoc) {
   const doc = parseDocument(text);
   const problems = [];
   const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展治理项/.test(h.name));
-  const children = [[/规约约束要求/, '规约约束要求'], [/设计模式候选/, '设计模式候选登记'],
-    ...(isStory ? [[/技术契约/, '技术契约']] : [])];
   if (!anchor) {
     problems.push('spec.md 缺「9. 宿主扩展治理项」章——按名字以「宿主扩展治理项」开头的二级标题认；它在「8. 验收标准」之后，'
-      + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`);
+      + `${wanted.map(n => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`);
   } else {
     problems.push(...anchorPositionProblems(doc, anchor, '9. 宿主扩展治理项'));
-    for (const [re, name] of children) {
-      const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
-      if (h && h !== childHeading(doc, anchor, re)) {
-        problems.push(`「${'#'.repeat(h.level)} ${h.raw}」：「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——扩展小节按标题名在这一章的下一级找`);
-      }
-    }
+    problems.push(...sectionProblems(doc, anchor, '9. 宿主扩展治理项', sections, wanted, formDoc));
   }
   const h2 = doc.headings.filter(h => h.level === 2);
   const appendix = h2.findIndex(h => /^附录/.test(h.name));
@@ -177,26 +216,16 @@ export function hostAnchorProblems(text, isStory, formDoc) {
 }
 
 /**
- * 宿主扩展的结构：framework plan 模板末尾的锚点写成「9. 宿主扩展」，之后只有附录；知识决策是它的 9.1、埋点是 9.2；
- * 9.1 下三节——设计模式选型、规约义务、项目知识影响——都要在。层级由找到的父标题推出。
+ * plan 宿主扩展的位置与小节：framework plan 模板末尾的锚点写成「9. 宿主扩展」，之后只有附录；
+ * `wanted` 里的节（设计输入）都要在它的下一级，几节的先后按模板顺序 `sections`。
  */
-const DECISION_PARTS = ['设计模式选型', '规约义务', '项目知识影响'];
-
-export function hostExtensionProblems(planText, formDoc) {
+export function hostExtensionProblems(planText, sections, wanted, formDoc) {
   const doc = parseDocument(planText);
   const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展/.test(h.name));
   if (!anchor) {
     return ['plan.md 缺「9. 宿主扩展」章——按名字以「宿主扩展」开头的二级标题认；它在「8. spec 功能映射表」之后，'
-      + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${formDoc}）`];
+      + `${sections.map(n => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`];
   }
-  const position = anchorPositionProblems(doc, anchor, '9. 宿主扩展');
-  const decision = childHeading(doc, anchor, /^知识决策/);
-  if (!decision) {
-    const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
-    return [...position, elsewhere
-      ? `「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」：「知识决策（设计输入）」不在「9. 宿主扩展」的下一级——知识决策按名字在「宿主扩展」的下一级找，形态是 9.1`
-      : 'plan.md「9. 宿主扩展」：下一级缺「9.1 知识决策（设计输入）」——按名字以「知识决策」开头的小节认，设计模式选型、规约义务、项目知识影响三节在它下面'];
-  }
-  return [...position, ...DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
-    .map(name => `plan.md「9.1 知识决策（设计输入）」下缺「${name}」一节——三节按名字开头在知识决策的下一级找，都要在`)];
+  return [...anchorPositionProblems(doc, anchor, '9. 宿主扩展'),
+    ...sectionProblems(doc, anchor, '9. 宿主扩展', sections, wanted, formDoc)];
 }

@@ -23,7 +23,7 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, ver
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
-import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems } from '../shared/chapters.mjs';
+import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems, templateSections } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { cellByHeader, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
@@ -114,9 +114,9 @@ function specPatternHits(projectRoot, feature) {
 }
 
 /**
- * plan 的设计模式选型表：`unit -> Map(candidate -> { 选不选, 理由 })`。
+ * plan「设计模式」一节的选型表：`unit -> Map(candidate -> { 选不选, 理由 })`。
  *
- * 选型表就在「9.1 知识决策（设计输入）」里——它是 plan 期的可见面，
+ * 选型表就在扩展章的「设计模式」一节里（设计输入）——它是 plan 期的可见面，
  * 有 plan 门禁看、有 verifier 问，模式否决就该落在这里。
  * 候选列（第二列）是身份的另一半：同一单元有多个候选时，靠它才分得清谁被选谁被否。
  * 「无候选」是说明不是模式身份，两侧同义——说明行不进这个集合，也不进 spec 侧的候选集。
@@ -126,7 +126,7 @@ function specPatternHits(projectRoot, feature) {
  */
 function planPatternChoices(planText) {
   const rows = lines(planText);
-  const at = chapterAt(rows, /^设计模式选型/);
+  const at = chapterAt(rows, /^设计模式$/);
   if (!at) return null;
   const out = new Map();
   const problems = [];
@@ -140,7 +140,7 @@ function planPatternChoices(planText) {
     let byPattern = out.get(unit);
     if (!byPattern) { byPattern = new Map(); out.set(unit, byPattern); }
     if (byPattern.has(pattern)) {
-      problems.push(`plan.md「设计模式选型」：「${unit}」的候选 ${pattern} 写了两行——`
+      problems.push(`plan.md「设计模式」：「${unit}」的候选 ${pattern} 写了两行——`
         + '选型行按（单元, 候选）认，同一对只有一行结论；同一单元有多个候选时各占一行，逐个给结论');
       continue;
     }
@@ -188,7 +188,7 @@ function declaredMethods(contracts) {
 
 /**
  * spec 判命中、且落点（`contract`）写的是某个统计点的规约：`统计点 → 规约编号集`。
- * 落点引的是 §9.1 表第一列登记的名字，统计点名正是其中之一；读不到那份判断返回空表。
+ * 落点引的是 spec 技术契约与埋点各表第一列登记的名字，统计点名正是其中之一；读不到那份判断返回空表。
  */
 function statRulesByPoint(projectRoot, feature, points) {
   const out = new Map();
@@ -213,12 +213,12 @@ export default guard('plan', async (ctx) => {
   const planPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'plan', 'plan.md');
   const planText = readTextOrNull(planPath);
   if (planText === null) {
-    return gate(ctx, { skipped: [{ what: '宿主扩展、知识决策与义务实体', why: 'plan.md 还没生成' }] });
+    return gate(ctx, { skipped: [{ what: '宿主扩展与义务实体', why: 'plan.md 还没生成' }] });
   }
 
   // 按数据前置分组：章节只要 plan 可读；契约形状要契约可解析；义务与集合一致要契约与激活知识；
   // 集合一致与候选交叉核对还要 knowledge-use 可读。前置缺的组记 skipped，不让别的组因它被屏蔽。
-  const chapter = { name: '宿主扩展与知识决策', problems: [], skipped: [] };
+  const chapter = { name: '宿主扩展章结构', problems: [], skipped: [] };
   const contract = { name: '契约可读与 must 挂位', problems: [], skipped: [] };
   const obligation = { name: '每条 must 自身', problems: [], skipped: [] };
   const consistency = { name: '命中集合与义务集合一致', problems: [], skipped: [] };
@@ -234,8 +234,13 @@ export default guard('plan', async (ctx) => {
   reference.problems.push(...chapterRefProblems(planText, '承载设计章'));
   reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
 
-  // ---- 1. 宿主扩展与知识决策的结构（只依赖 plan 可读）----
-  chapter.problems.push(...hostExtensionProblems(planText, SECTIONS_DOC));
+  // ---- 1. 宿主扩展章的结构（只依赖 plan 可读）：设计输入三节都要在，埋点按 spec 的统计设计另判 ----
+  const sections = templateSections('skills/story/templates/plan-sections.md');
+  chapter.problems.push(...sections.problems);
+  if (sections.names.length) {
+    chapter.problems.push(...hostExtensionProblems(planText, sections.names,
+      sections.names.filter(n => n !== '埋点'), SECTIONS_DOC));
+  }
 
   // ---- 2. 契约可读、must 挂位、resource_keys 形状 ----
   const read = readContracts(ctx.projectRoot, ctx.feature);
@@ -245,7 +250,7 @@ export default guard('plan', async (ctx) => {
     contract.problems.push(read.error);
     noContract = '契约解析失败';
   } else if (!read.exists) {
-    contract.problems.push('contracts.yaml：feature 根目录下还没有这份文件——规约义务以 must 挂在契约实体上，coding 从这些实体读义务，没有它下游零注入');
+    contract.problems.push('contracts.yaml：feature 根目录下还没有这份文件——规约要求以 must 挂在契约实体上，coding 从这些实体读义务，没有它下游零注入');
     noContract = '契约文件还没建';
   } else {
     for (const bad of misplacedMust(contracts)) {
@@ -365,8 +370,8 @@ export default guard('plan', async (ctx) => {
       if (planChoices === null) {
         const total = [...specHits.hits.values()].reduce((n, m) => n + m.size, 0);
         if (total) {
-          pattern.problems.push(`plan.md：没有「设计模式选型」一节，spec/knowledge-use.yaml 登记了 ${total} 条设计模式候选`
-            + '——按名字以「设计模式选型」开头的标题找这一节，spec 登记的候选在这里逐条给结论，选或不选都算');
+          pattern.problems.push(`plan.md：没有「设计模式」一节，spec/knowledge-use.yaml 登记了 ${total} 条设计模式候选`
+            + '——按节名「设计模式」找这一节，spec 登记的候选在这里逐条给结论，选或不选都算');
         }
       } else {
         pattern.problems.push(...planChoices.problems);
@@ -375,12 +380,12 @@ export default guard('plan', async (ctx) => {
           for (const [candidate] of byPattern) {
             const choice = choices.get(unit)?.get(candidate);
             if (!choice) {
-              pattern.problems.push(`plan.md「设计模式选型」：spec/knowledge-use.yaml 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
+              pattern.problems.push(`plan.md「设计模式」：spec/knowledge-use.yaml 给「${unit}」登记了候选 ${candidate}，plan「设计模式」的选型表里没有这一行`
                 + '——选型行按（单元, 候选）与 spec 登记的候选逐对比对，每个候选一行结论；漏一行它就在闭环里悄悄消失了');
               continue;
             }
             if (choice.choice.includes('不选') && !choice.reason) {
-              pattern.problems.push(`plan.md「设计模式选型」：「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
+              pattern.problems.push(`plan.md「设计模式」：「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
                 + '——「不选」列含「不选」的行按否决判，否决要有理由；理由是业务信号的反证'
                 + '（那个业务过程为什么不满足该模式的信号），由审查逐条判');
             }
@@ -389,7 +394,7 @@ export default guard('plan', async (ctx) => {
         for (const [unit, byPattern] of choices) {
           for (const candidate of byPattern.keys()) {
             if (!specHits.hits.get(unit)?.has(candidate)) {
-              pattern.problems.push(`plan.md「设计模式选型」：「${unit}」写了候选 ${candidate}，spec 没有提出它`
+              pattern.problems.push(`plan.md「设计模式」：「${unit}」写了候选 ${candidate}，spec 没有提出它`
                 + '——选型行按（单元, 候选）与 spec/knowledge-use.yaml 登记的候选逐对比对，候选集以 spec 的登记为准');
             }
           }
@@ -410,14 +415,14 @@ export default guard('plan', async (ctx) => {
     const plan = planStatRows(planText);
     const story = isStoryFeature(featureRoot(ctx.projectRoot, ctx.feature));
     if (state === 'missing' && story) {
-      statGroup.problems.push('spec.md「9.1 技术契约」：没有「埋点」小节，plan 的埋点无从承接——plan 按 spec「技术契约」下一级的「埋点」小节逐点承接统计点；不涉及的写一行「不涉及：<依据>」');
+      statGroup.problems.push('spec.md「9. 宿主扩展治理项」：没有「埋点」小节，plan 的埋点无从承接——plan 按 spec 扩展章下一级的「埋点」小节逐点承接统计点；不涉及的写一行「不涉及：<依据>」');
     } else if (state === 'empty') {
       statGroup.problems.push('spec.md「埋点」：没有指标点位表——统计点从每个指标小节下表头含「统计点」的表读，plan 逐点承接');
     } else if (!wantPoints.length) {
       statGroup.skipped.push({ what: '埋点逐统计点落实', why: state === 'na' ? 'spec 的埋点一节写了不涉及' : '本需求没走 /story，spec 未提供统计设计' });
     } else if (!plan) {
       statGroup.problems.push(`plan.md「9. 宿主扩展」：没有「埋点」小节，spec 的埋点列了 ${wantPoints.length} 个统计点`
-        + '——plan 的埋点是「宿主扩展」的下一级小节，统计点在「9.2.2 逐点实现」表里逐个列出适用结果及责任方法，允许多行');
+        + '——plan 的埋点是「宿主扩展」的下一级小节，统计点在它的「逐点实现」表里逐个列出适用结果及责任方法，允许多行');
     } else {
       const have = new Set(plan.rows.map(r => pointKey(r.point)));
       const missing = wantPoints.filter(p => !have.has(pointKey(p)));

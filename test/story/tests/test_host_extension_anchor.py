@@ -1,11 +1,12 @@
 """宿主扩展章挂在 framework 预留的锚点下。
 
 锁住：
-  ① spec：扩展内容是「9. 宿主扩展治理项」的下一级小节（技术契约在走 /story 时必有），锚点之后只有附录，
-     附录是全文最后一章；扩展小节写成锚点外的独立二级章、附录夹在正文中间、锚点排在设计章前面，都报出现在的位置；
-  ② plan：知识决策是「9. 宿主扩展」的 9.1，下挂设计模式选型、规约义务、项目知识影响，锚点之后只有附录；
-     写在锚点外、缺锚点、缺一节、锚点排在设计章前面，各报各的；
-  ③ 两份模板自身满足上面的结构：模板与门禁同一份形态。
+  ① spec：技术契约、规约、设计模式、埋点平列在「9. 宿主扩展治理项」的下一级（技术契约与埋点在走 /story 时必有），
+     顺序同模板，锚点之后只有附录，附录是全文最后一章；扩展小节写成锚点外的独立二级章、埋点写回技术契约之下、
+     附录夹在正文中间、锚点排在设计章前面，都报出现在的位置；
+  ② plan：项目知识、规约、设计模式平列在「9. 宿主扩展」的下一级，锚点之后只有附录；
+     写在锚点外、缺锚点、缺一节、顺序不对、锚点排在设计章前面，各报各的；
+  ③ 两份模板自身满足上面的结构：节名与顺序只在模板里定义，门禁照它判。
 """
 from __future__ import annotations
 
@@ -36,13 +37,17 @@ ANCHORED_SPEC = """# 需求 spec
 
 不涉及：复用既有接口。
 
-### 9.2 规约约束要求
+### 9.2 规约
 
 <!-- 生成区 -->
 
-### 9.3 设计模式候选登记
+### 9.3 设计模式
 
 <!-- 生成区 -->
+
+### 9.4 埋点
+
+不涉及：本需求不统计。
 
 ## 附录
 
@@ -72,11 +77,11 @@ DETACHED_SPEC = """# 需求 spec
 
 不涉及：复用既有接口。
 
-## 10. 规约约束要求
+## 10. 规约
 
 <!-- 生成区 -->
 
-## 11. 设计模式候选登记
+## 11. 设计模式
 
 <!-- 生成区 -->
 """
@@ -89,28 +94,31 @@ ANCHORED_PLAN = """# 计划
 
 ## 9. 宿主扩展
 
-### 9.1 知识决策（设计输入）
+### 9.1 项目知识
 
-#### 9.1.1 设计模式选型
+略。
+
+### 9.2 规约
+
+略。
+
+### 9.3 设计模式
 
 本需求不涉及：无候选。
-
-#### 9.1.2 规约义务
-
-略。
-
-#### 9.1.3 项目知识影响
-
-略。
 """
 
 
 def spec_problems(text: str, is_story: bool = True) -> list[str]:
-    return js(CHAPTERS, f"m.hostAnchorProblems({json.dumps(text)}, {json.dumps(is_story)}, 'spec-sections.md')")
+    """与 spec 门禁同一口径：节名与顺序取模板，技术契约与埋点只在走 /story 时要。"""
+    wanted = "t" if is_story else "t.filter(n => !['技术契约', '埋点'].includes(n))"
+    return js(CHAPTERS, "(() => { const t = m.templateSections('skills/story/templates/spec-sections.md').names;"
+              f"return m.hostAnchorProblems({json.dumps(text)}, t, {wanted}, 'spec-sections.md'); }})()")
 
 
 def plan_problems(text: str) -> list[str]:
-    return js(CHAPTERS, f"m.hostExtensionProblems({json.dumps(text)}, 'plan-sections.md')")
+    """与 plan 门禁同一口径：设计输入三节都要在，埋点另判。"""
+    return js(CHAPTERS, "(() => { const t = m.templateSections('skills/story/templates/plan-sections.md').names;"
+              f"return m.hostExtensionProblems({json.dumps(text)}, t, t.filter(n => n !== '埋点'), 'plan-sections.md'); }})()")
 
 
 class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
@@ -121,8 +129,8 @@ class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
 
     def test_detached_chapters_and_a_middle_appendix_are_each_reported(self) -> None:
         got = "\n".join(spec_problems(DETACHED_SPEC))
-        for name, now in (("技术契约", "## 9. 技术契约"), ("规约约束要求", "## 10. 规约约束要求"),
-                          ("设计模式候选登记", "## 11. 设计模式候选登记")):
+        for name, now in (("技术契约", "## 9. 技术契约"), ("规约", "## 10. 规约"),
+                          ("设计模式", "## 11. 设计模式")):
             with self.subTest(name=name):
                 self.assertIn(f"「{name}」要写成「9. 宿主扩展治理项」的下一级小节", got)
                 self.assertIn(now, got, "没说出现在写在哪")
@@ -135,13 +143,29 @@ class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
         self.assertIn("「技术契约」", got)
 
     def test_the_contract_section_is_asked_only_on_the_story_chain(self) -> None:
-        """没走 /story 的需求不写技术契约：锚点只挂 9.2、9.3 也成立。"""
-        text = ANCHORED_SPEC.replace("### 9.1 技术契约\n\n#### 9.1.1 端云接口\n\n不涉及：复用既有接口。\n\n", "")
+        """没走 /story 的需求不写技术契约与埋点：锚点只挂规约、设计模式也成立。"""
+        text = (ANCHORED_SPEC.replace("### 9.1 技术契约\n\n#### 9.1.1 端云接口\n\n不涉及：复用既有接口。\n\n", "")
+                .replace("### 9.4 埋点\n\n不涉及：本需求不统计。\n\n", ""))
         self.assertEqual([], spec_problems(text, is_story=False))
+        self.assertIn("下一级缺「技术契约」一节", "\n".join(spec_problems(text)))
 
     def test_a_subsection_one_level_too_deep_is_reported(self) -> None:
-        text = ANCHORED_SPEC.replace("### 9.2 规约约束要求", "#### 9.2 规约约束要求")
-        self.assertIn("「规约约束要求」要写成", "\n".join(spec_problems(text)))
+        text = ANCHORED_SPEC.replace("### 9.2 规约", "#### 9.2 规约")
+        self.assertIn("「规约」要写成", "\n".join(spec_problems(text)))
+
+    def test_the_stat_section_written_back_under_the_contract_is_placed(self) -> None:
+        """旧形态：埋点写在技术契约之下——按新结构报出它现在的位置。"""
+        text = (ANCHORED_SPEC.replace("### 9.4 埋点\n\n不涉及：本需求不统计。\n\n", "")
+                .replace("不涉及：复用既有接口。\n\n", "不涉及：复用既有接口。\n\n#### 9.1.2 埋点\n\n不涉及：本需求不统计。\n\n"))
+        got = "\n".join(spec_problems(text))
+        self.assertIn("「#### 9.1.2 埋点」：「埋点」要写成「9. 宿主扩展治理项」的下一级小节", got)
+
+    def test_sections_out_of_order_are_reported(self) -> None:
+        text = ANCHORED_SPEC.replace("### 9.2 规约", "### 9.2 规约 TMP").replace("### 9.3 设计模式", "### 9.2 规约") \
+            .replace("### 9.2 规约 TMP", "### 9.3 设计模式")
+        got = "\n".join(spec_problems(text))
+        self.assertIn("顺序是「技术契约」「设计模式」「规约」「埋点」", got)
+        self.assertIn("顺序固定为「技术契约」「规约」「设计模式」「埋点」", got)
 
     def test_the_anchor_written_before_the_design_chapters_is_placed(self) -> None:
         """U40：09-26 实跑 car 的 plan 把扩展章写在全文最前，结构齐全、门禁没拦。spec 同一条判据。"""
@@ -160,12 +184,21 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
     def test_the_anchored_layout_passes(self) -> None:
         self.assertEqual([], plan_problems(ANCHORED_PLAN))
 
-    def test_a_decision_chapter_outside_the_anchor_is_placed(self) -> None:
-        text = ("# 计划\n\n## 知识决策（设计输入）\n\n### 设计模式选型\n\n略。\n\n"
-                "## 1. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.2 埋点\n\n略。\n")
+    def test_design_inputs_outside_the_anchor_are_placed(self) -> None:
+        text = ("# 计划\n\n## 设计输入\n\n### 项目知识\n\n略。\n\n### 规约\n\n略。\n\n### 设计模式\n\n略。\n\n"
+                "## 1. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 埋点\n\n略。\n")
         got = plan_problems(text)
-        self.assertEqual(1, len(got), got)
-        self.assertIn("「## 知识决策（设计输入）」：「知识决策（设计输入）」不在「9. 宿主扩展」的下一级", got[0])
+        self.assertEqual(3, len(got), got)
+        self.assertIn("「### 项目知识」：「项目知识」要写成「9. 宿主扩展」的下一级小节", got[0])
+
+    def test_the_old_wrapper_is_placed(self) -> None:
+        """旧形态：三节包在「知识决策」下——按新结构报出位置。"""
+        text = ANCHORED_PLAN.replace("### 9.1 项目知识", "### 9.1 知识决策（设计输入）\n\n#### 9.1.1 项目知识") \
+            .replace("### 9.2 规约", "#### 9.1.2 规约").replace("### 9.3 设计模式", "#### 9.1.3 设计模式")
+        got = "\n".join(plan_problems(text))
+        for name in ("项目知识", "规约", "设计模式"):
+            with self.subTest(name=name):
+                self.assertIn(f"：「{name}」要写成「9. 宿主扩展」的下一级小节", got)
 
     def test_no_anchor_is_one_problem(self) -> None:
         got = plan_problems("# 计划\n\n## 1. 模块架构图\n\n略。\n")
@@ -196,11 +229,11 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
         self.assertEqual([], spec_problems(text))
 
     def test_each_missing_part_is_named(self) -> None:
-        text = ANCHORED_PLAN.replace("#### 9.1.2 规约义务\n\n略。\n\n", "").replace("#### 9.1.3 项目知识影响", "#### 9.1.3 其它")
+        text = ANCHORED_PLAN.replace("### 9.2 规约\n\n略。\n\n", "").replace("### 9.1 项目知识", "### 9.1 其它")
         got = "\n".join(plan_problems(text))
-        self.assertIn("下缺「规约义务」一节", got)
-        self.assertIn("下缺「项目知识影响」一节", got)
-        self.assertNotIn("设计模式选型", got)
+        self.assertIn("下一级缺「规约」一节", got)
+        self.assertIn("下一级缺「项目知识」一节", got)
+        self.assertNotIn("缺「设计模式」", got)
 
 
 class TheTemplatesHaveTheShapeTheGatesCheck(unittest.TestCase):
@@ -221,9 +254,15 @@ class TheTemplatesHaveTheShapeTheGatesCheck(unittest.TestCase):
         chapter = self.headings(TEMPLATES / "plan-sections.md").split("\n\n## `contracts.yaml`", 1)[0]
         text = "# 计划\n\n## 8. spec 功能映射表\n\n" + chapter
         self.assertEqual([], plan_problems(text))
-        for name in ("#### 9.2.1 共同约定", "#### 9.2.2 逐点实现", "#### 9.2.3 待登记与缺依据"):
+        for name in ("#### 9.4.1 共同约定", "#### 9.4.2 逐点实现", "#### 9.4.3 待登记与缺依据"):
             with self.subTest(name=name):
-                self.assertIn(name, text, "plan 9.2 埋点按共同约定、逐点实现、待登记三节组织")
+                self.assertIn(name, text, "plan 的埋点按共同约定、逐点实现、待登记三节组织")
+
+    def test_the_names_come_from_the_templates(self) -> None:
+        spec = js(CHAPTERS, "m.templateSections('skills/story/templates/spec-sections.md').names")
+        plan = js(CHAPTERS, "m.templateSections('skills/story/templates/plan-sections.md').names")
+        self.assertEqual(["技术契约", "规约", "设计模式", "埋点"], spec)
+        self.assertEqual(["项目知识", "规约", "设计模式", "埋点"], plan)
 
 
 if __name__ == "__main__":

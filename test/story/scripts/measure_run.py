@@ -14,8 +14,8 @@
 
 - 第 2、3 项只看工具**入参**（读了什么），**含 bash 里的读**：``cat`` / ``sed`` / ``grep``，以及
   ``node -e "readFileSync(...)"``（一轮实跑读判据脚本 68 次全走最后这一种，当时口径只认前几种，报表上写着 0）。
-- 第 3 项的对象含 framework 的 ``check-*.ts`` 与**扩展自己的判据脚本**（``hooks/``、``skills/`` 下的 ``.mjs``/``.py``），
-  不含知识层——读知识是正当的。
+- 第 3 项的对象是机制源码：``framework/`` 下的 ``.ts`` 与 ``doc/extensions/`` 下的 ``.mjs``/``.py``，
+  读取类动作的参数里出现就计一次；知识层是 ``.md``，不在其内——读知识是正当的。
 - 第 4 项只看工具**输出**（门禁报了什么），同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 ``cat`` 一次不算两轮。
 - 三个字段：``gate_rounds_with_fail``（有 FAIL 的门禁轮次）；``gap_sec_by_kind``（门禁 / verifier / 成文 / 其它的时间去向，
   **按事件间隔归属的近似值**——事件流里没有工具开始事件，拿不到真实 span，字段名如实标注）；``human_wait_sec``（**由驱动器累计**，
@@ -41,14 +41,18 @@ from pathlib import Path
 #: 读「规则文本」的路径形态——判它是不是在猜门禁要什么，而不是在读自己的产物。
 RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
 
-#: checker 源码：读它 = 在逆向判据。目标是 0 次。
+#: 机制源码：读它 = 在逆向判据。目标是 0 次。
 #:
-#: 两处都要认：framework 的 `check-*.ts`，以及**扩展自己的判据脚本**——
-#: 一轮实跑里被读得最多的正是后者（`story-build.mjs` 34 次、`knowledge-use.mjs` 17 次）。
-#: 知识层（`doc/extensions/knowledge/`）不算：那是给模型实现需求用的内容，读它是正当的。
+#: framework 下的 `.ts`（含 `*.ts` 通配）与扩展下的 `.mjs`/`.py` 都算，在 framework 整个目录、
+#: 它的 harness 源码目录或扩展的 hooks/skills 目录里递归检索也算——实跑里被读的有 framework 的
+#: context-facts 等工具源码，也有扩展自己的判据脚本（`story-build.mjs`、`knowledge-use.mjs`）。
+#: 知识层是 `.md`，不在其内：那是给模型实现需求用的内容，读它是正当的。
 CHECKER_PATH_RE = re.compile(
-    r"framework/harness/scripts/check-[a-z]+\.ts"
-    r"|doc/extensions/(?:hooks|skills)/[\w/.-]+\.(?:mjs|py|ts)")
+    r"framework/[\w/.*-]+\.ts\b"
+    r"|doc/extensions/[\w/.*-]+\.(?:mjs|py)\b"
+    r"|framework/(?:[\w.-]+/)*harness/[\w/.*-]*"
+    r"|framework/(?=[\s\"']|$)"
+    r"|doc/extensions/(?:hooks|skills)(?:/[\w.-]+)*/(?=[\s\"']|$)")
 
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
 #:
@@ -60,24 +64,56 @@ DIAGRAM_FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)[ \t]*(?:mermaid|plantuml|puml
                               re.IGNORECASE)
 
 #:
-#: **读取动词要直接作用于那条路径**（算法 v2，1.9.3 步骤 7）：命令按管道、`&&`、`;` 切段，
-#: 只有「段首是读取动词」或「段里有内联读文件」且路径在同一段里，才算读。
-#: `node …/story-build.mjs check | tail -20` 是执行判据脚本再截输出，不是读它的源码——
-#: v1 把整条命令里任意一处 `tail` 当成读，执行一次就记一次「逆向判据」。
-READ_ALGORITHM = "v2"
+#: **读取动词要直接作用于那条路径**（算法 v3）：命令按引号外、未转义的管道、`&&`、`;` 切段，
+#: 只有「段首是读取动词」或「段里有内联读文件」且路径在同一段里，才算读；一次工具调用计一次。
+#: `node …/story-build.mjs check | tail -20` 是执行判据脚本再截输出，不是读它的源码。
+#: v2 把 grep 模式里的 `\|` 当成管道切段，模式之后的路径落进没有读取动词的段里，读不出来。
+READ_ALGORITHM = "v3"
 READ_VERB_RE = re.compile(
     r"^(?:cat|head|tail|sed|less|more|type|grep|rg|awk|findstr|get-content|gc|select-string|sls)\b",
     re.IGNORECASE)
 INLINE_READ_RE = re.compile(r"readFileSync|readFile\b|open\(")
-SEGMENT_SPLIT_RE = re.compile(r"\|\||&&|[|;\n]")
+#: 切段只认引号外、未转义的分隔符：grep 模式里的 `\|` 与引号里的 `|` 是模式的一部分，不是管道。
+SEGMENT_SEPARATORS = ("||", "&&", "|", ";", "\n")
 #: PowerShell 包了一层：`"…powershell.exe" -Command "rg …"`——剥掉外壳再切段
 POWERSHELL_WRAPPER_RE = re.compile(r"^.*?-command\s+[\"']?", re.IGNORECASE)
+
+
+def _split_segments(command: str) -> list[str]:
+    """按管道、`&&`、`;`、换行切段；引号里的与反斜杠转义的分隔符不切。"""
+    segs, cur, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and i + 1 < len(command):
+            cur.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = None if ch == quote else quote
+            cur.append(ch)
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+            cur.append(ch)
+            i += 1
+            continue
+        sep = next((x for x in SEGMENT_SEPARATORS if command.startswith(x, i)), None)
+        if sep:
+            segs.append("".join(cur))
+            cur = []
+            i += len(sep)
+            continue
+        cur.append(ch)
+        i += 1
+    segs.append("".join(cur))
+    return segs
 
 
 def _read_segments(command: str) -> list[str]:
     """bash 命令里真正在读文件的那几段（读取动词打头，或段内有内联读文件）。"""
     out = []
-    for seg in SEGMENT_SPLIT_RE.split(command):
+    for seg in _split_segments(command):
         if "-command" in seg.lower():
             seg = POWERSHELL_WRAPPER_RE.sub("", seg, count=1)
         s = seg.strip().strip("\"'").strip()
@@ -303,14 +339,15 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         output = _output_text(e)
 
         if name in {"read", "grep", "glob"}:
-            read_text = request
+            segments = [request]
         elif name == "bash":
-            read_text = " ".join(_read_segments(request))
+            segments = _read_segments(request)
         else:
-            read_text = ""
+            segments = []
+        read_text = " ".join(segments)
         if read_text:
-            if CHECKER_PATH_RE.search(read_text):
-                reads_checker += 1
+            # 一次工具调用计一次：命令里哪一段读了机制源码都算
+            reads_checker += any(CHECKER_PATH_RE.search(seg) for seg in segments)
             if RULE_PATH_RE.search(read_text):
                 reads_rule += 1
             elif "doc/features/" in read_text:

@@ -737,7 +737,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
     def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
         """AC22：机器区重投不改审查片段（审查对象不变）；作者区改了，片段跟着变。片段不含机器区内容。"""
         story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
-        zone = ("\n<!-- story-build:begin 技术约定 · 由spec §9.1生成，改它请改真源 · sha256:0000000000000000 -->\n"
+        zone = ("\n<!-- story-build:begin 技术契约·端云接口 · 由spec 「宿主扩展治理项 › 技术契约 › 端云接口」生成，改它请改真源 · sha256:0000000000000000 -->\n"
                 "| 接口 | 用途 |\n|---|---|\n| queryState | 查状态 |\n<!-- story-build:end -->\n")
         story.write_text(STORY_MD + zone, encoding="utf-8")
         first = self.inject()

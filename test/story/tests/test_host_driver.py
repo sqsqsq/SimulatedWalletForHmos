@@ -194,5 +194,28 @@ class TheReviewVerdictLandsInTheIssueZone(unittest.TestCase):
                 self.assertIn("没有写", done[1]["note"])
 
 
+class TheCarFeedbackHitsOneIssueEach(unittest.TestCase):
+    """car 的评审回流资产：拿第三次重跑的议题标题跑一次投放，每条表态只命中一条议题。"""
+
+    TITLES = ("被分享人能否把钥匙再转给第三个人，本期不做结论",
+              "撤销后双方长期不联网是否需要车厂强制下线，本期不做结论",
+              "撤销后对方离线时的失效宽限时限定为 24 小时",
+              "车钥匙分享的六个车云/车厂云接口在模拟工程中以本地模拟仓储承载",
+              "被分享人接受侧界面不属于本轮钱包端范围")
+    FEEDBACK = REPO_ROOT / "test" / "story" / "cases" / "car-key-sharing" / "update-inputs" / "car-review-feedback.yaml"
+
+    def test_every_verdict_lands(self) -> None:
+        zone = "请产品负责人评审。\n\n评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n"
+        review = "# 评审记录\n\n" + "".join(f"#### 1.1.{k} {t}\n\n{zone}<!-- decision: D{k} -->\n\n"
+                                            for k, t in enumerate(self.TITLES, 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AR").mkdir()
+            (root / "AR" / "review.md").write_text(review, encoding="utf-8")
+            done = rc._write_review_zones(root, self.FEEDBACK)
+        self.assertEqual(3, len(done))
+        self.assertTrue(all("note" not in d for d in done), done)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,23 +29,23 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
     def test_three_independent_problems_are_named_in_one_run(self) -> None:
         """缺候选章（章节组）、编号不在册（判断组）、桥指向没要求的条目（桥接组）——一次全出。"""
         self.judged()
-        self.drop_heading("### 9.3 设计模式候选登记")
+        self.drop_heading("### 9.3 设计模式")
         self.write_use(neutral=kp.judgement() + "\n  - id: NEU-99\n    applicable: false\n    reason: 没有这一条")
         self.acceptance_with("NEU-04")
         message = self.hook("spec")
-        self.assertIn("缺「设计模式候选登记」章", message)
+        self.assertIn("下一级缺「设计模式」一节", message)
         self.assertIn("NEU-99", message, "编号不在册没有与章节问题同轮出现")
         self.assertIn("指向了 spec 里没有要求的条目", message)
         self.assertIn("【", message, "报错没有按组分节")
         self.assertIn("先修它们再核投影", message, "投影组该说明它为什么没跑")
 
     def test_a_missing_exit_chapter_no_longer_hides_the_bridge(self) -> None:
-        """缺「规约约束要求」章曾经直接 return：桥接问题要等作者补完章才第一次露面。"""
+        """缺「规约」节曾经直接 return：桥接问题要等作者补完章才第一次露面。"""
         self.judged()
-        self.drop_heading("### 9.2 规约约束要求")
+        self.drop_heading("### 9.2 规约")
         self.acceptance_with("NEU-04")
         message = self.hook("spec")
-        self.assertIn("缺「规约约束要求」章", message)
+        self.assertIn("下一级缺「规约」一节", message)
         self.assertIn("指向了 spec 里没有要求的条目", message, "章缺失屏蔽了桥接组")
         self.assertIn("投影区不存在", message)
 
@@ -64,16 +64,14 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
     """plan：宿主扩展结构、契约形状、每条 must、集合一致、模式五组。"""
 
     def write_plan(self, in_anchor: bool) -> None:
-        """in_anchor：知识决策写成「9. 宿主扩展」的 9.1；否则写成设计章之前的独立二级章。"""
+        """in_anchor：设计输入三节写成「9. 宿主扩展」的下一级；否则写成设计章之前的独立二级章。"""
         table = ("| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n"
                  "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n\n")
         design = "## 2. 模块架构图\n\n略。\n\n"
         if in_anchor:
-            text = (design + "## 9. 宿主扩展\n\n### 9.1 知识决策（设计输入）\n\n#### 9.1.1 设计模式选型\n\n" + table
-                    + "#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n")
+            text = (design + "## 9. 宿主扩展\n\n### 9.1 项目知识\n\n略。\n\n### 9.2 规约\n\n略。\n\n### 9.3 设计模式\n\n" + table)
         else:
-            text = ("## 知识决策（设计输入）\n\n### 设计模式选型\n\n" + table
-                    + "### 规约义务\n\n略。\n\n### 项目知识影响\n\n略。\n\n" + design)
+            text = ("## 设计输入\n\n### 项目知识\n\n略。\n\n### 规约\n\n略。\n\n### 设计模式\n\n" + table + design)
         (self.feature_root / "plan").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "plan" / "plan.md").write_text("# 计划\n\n" + text, encoding="utf-8")
 

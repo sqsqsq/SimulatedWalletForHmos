@@ -5,8 +5,8 @@
 
 | 文件 | 为什么留它 |
 |---|---|
-| `spec/spec.md` | CRLF，385 行。骨架的术语起始行、流程图、附录技术约定与改动边界的机器区都从它派生 |
-| `spec/knowledge-use.yaml` | 附录规约判定的判定与依据的真源 |
+| `spec/spec.md` | CRLF，385 行。骨架的术语起始行、流程图、附录技术契约、埋点与改动边界的机器区都从它派生 |
+| `spec/knowledge-use.yaml` | 附录·规约的判定与依据的真源 |
 | `AR/story-src/materials.json` | CRLF。附录材料清单的类别与链接、图引用串都从它来 |
 | `AR/story-src/decisions.json`、`copyedit.md` | `check` 要的台账 |
 | `assets/`、`ux-reference/` | 图片实体：图引用与断链判据要它们真的在盘上 |

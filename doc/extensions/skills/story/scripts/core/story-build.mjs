@@ -21,7 +21,7 @@
  * |------|--------|
  * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
- * | `project` | 附录机器区按当前真源（spec §9.1、knowledge-use.yaml）重投 |
+ * | `project` | 附录机器区按当前真源（spec 扩展章、knowledge-use.yaml）重投 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
@@ -95,7 +95,7 @@ function cmdProject(ctx) {
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
-    + '（spec §9.1 / knowledge-use.yaml）；材料清单归你，不动\n');
+    + '（spec 扩展章 / knowledge-use.yaml）；材料清单归你，不动\n');
 }
 
 /**
@@ -144,7 +144,7 @@ function cmdSkeleton(ctx) {
   // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节都在 ----
   const spec = specText(ctx);
   if (spec !== null && !spec.trim()) {
-    fail('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与 §9.1 各节派生');
+    fail('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与扩展章各节派生');
   }
   const gaps = spec === null ? [] : specGaps(ctx.contract, spec);
   if (gaps.length) {
@@ -197,7 +197,7 @@ function cmdSkeleton(ctx) {
     fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
     result = `${ctx.contract.chapters.length} 章骨架 + ${made.length} 份章草稿`
       + '（`AR/story-src/drafts/`，每份开头是读者读完这一章要能回答的问题与必要种子）；'
-      + '附录的接口/数据·配置·事件/改动边界/规约判定四节由 project 从真源投影，不用你写';
+      + '附录的技术契约、规约、埋点、改动边界四节由 project 从真源投影，不用你写';
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
   if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;

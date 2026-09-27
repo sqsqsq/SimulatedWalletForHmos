@@ -2,6 +2,7 @@
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
 # 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
 # expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
+# 接受侧界面说明在模型开口要它时交出，之后材料关卡才答「材料就这些」（用例设计：按需补料各一次）。
 replies:
   - id: hand-over-the-product-doc
     expected_turn: 1
@@ -12,25 +13,25 @@ replies:
       - 数字车钥匙分享.docx
     text: 补充材料，产品需求稿已放入需求目录。
 
-  - id: materials-complete
-    expected_turn: 2
-    expected_kind: story_gate
-    expected_phase: story
-    text: 材料就这些。
-
-  - id: scope-no-split
-    expected_turn: 3
-    expected_kind: story_gate
-    expected_phase: story
-    text: 不拆单。
-
   - id: hand-over-the-accept-doc
-    expected_turn: 4
+    expected_turn: 2
     expected_kind: story_gate
     expected_phase: story
     deliver:
       - 车钥匙接受侧界面说明.docx
     text: 补充材料，接受侧界面说明已放入需求目录。
+
+  - id: materials-complete
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: 材料就这些。
+
+  - id: scope-no-split
+    expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: story
+    text: 不拆单。
 
   - id: terms-confirmed
     expected_turn: 5

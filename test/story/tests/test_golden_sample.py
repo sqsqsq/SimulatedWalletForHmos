@@ -42,14 +42,17 @@ GOLDEN_FINGERPRINTS = {
     # 正是「重复来源合并、一个围栏多行标记」的形态。
     # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
     # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    "story-金样-AR90004.md": "20f7907a683cf301",
+    # 2026-09-27 步骤 9（U55，用户同日确认）：附录改为技术契约（端云接口、数据存储、配置项、依赖变更）、规约、埋点、
+    # 改动边界、材料清单平列，机器区按当前真源重投；只改标题层级、编号与节名。
+    "story-金样-AR90004.md": "eb78b66b0f7e97a5",
     "assets/image1.png": "7a0b672988d707e2",
     "assets/image2.png": "da8a096f4a859ddb",
     # 2026-09-26 AR90006 按 0903 澄清会结论与答案卷更新（签约更新接口、AC-R1 与开关口径、两件待定），
     # 埋点标题只写指标名，材料清单按归档件的相对位置并补澄清会记录；说明里的来源与编号事实随之修正。
     # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
     # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
-    "story-金样-AR90006.md": "38e3eb18a9f6dc1b",
+    # 2026-09-27 步骤 9（U55，用户同日确认）：附录节名与层级按平列形态重排，内容未动。
+    "story-金样-AR90006.md": "216e138ed4667f8d",
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
     "story-金样-AR90006-说明.md": "896d404e10c6557f",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
@@ -69,7 +72,8 @@ INPUT_FINGERPRINTS = {
     "RR/prd.md": "ff0013420c4c0741",
     "SR/design.md": "d9ccbd10489f89d1",
     "spec/knowledge-use.yaml": "073dcaed046304a7",
-    "spec/spec.md": "c26ad1a1b9965439",
+    # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
+    "spec/spec.md": "a4d8d0bef4690351",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
@@ -97,7 +101,7 @@ EXPECTED_CANONICAL_FILES = {
 }
 
 #: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 463, "chapters": 10, "subsections": 34,
+SHAPE = {"lines": 476, "chapters": 10, "subsections": 35,
          "table_rows": 174, "diagrams": 1, "images": 2}
 
 

@@ -164,7 +164,7 @@ export function activeKnowledgeEntries(ctx) {
   try {
     return activeKnowledge(ctx.projectRoot).entries ?? [];
   } catch (e) {
-    fail(`激活知识派生失败（${e.message}）——规约判定表按激活清单逐条核，派生不出时不按「没有规约」放行`);
+    fail(`激活知识派生失败（${e.message}）——附录·规约表按激活清单逐条核，派生不出时不按「没有规约」放行`);
     return [];
   }
 }

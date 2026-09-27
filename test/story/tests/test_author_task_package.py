@@ -625,8 +625,8 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
 | 扩展项 | 是否涉及 | 承载位置 |
 |---|---|---|
 | 技术契约 | 是 | 9.1 |
-| 规约约束要求 | 是 | 9.2 |
-| 设计模式候选登记 | 是 | 9.3 |
+| 规约 | 是 | 9.2 |
+| 设计模式 | 是 | 9.3 |
 
 ### 9.1 技术契约
 
@@ -636,11 +636,11 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
 |---|---|
 | 建立签约接口 | 建立自动充值签约 |
 
-### 9.2 规约约束要求
+### 9.2 规约
 
 <!-- 由 knowledge-use.yaml 生成 -->
 
-### 9.3 设计模式候选登记
+### 9.3 设计模式
 
 <!-- 由 knowledge-use.yaml 生成 -->
 """
@@ -649,7 +649,7 @@ class TheAcceptanceExampleIsRealShape(WorkspaceCase):
         """把上下文搭到「桥接那一条真的会跑」——少一样它就提前返回，夹具就成了空跑。
 
         要的三样：spec.md（缺了整个 hook `skipped`）、一份对得上真实知识的判断
-        （对不上时判断本身先红，投影与桥接都到不了）、§9.2/§9.3 的生成区
+        （对不上时判断本身先红，投影与桥接都到不了）、「规约」「设计模式」 的生成区
         （由 render 写，投影核不过同样先红）。
         """
         spec_dir = self.feature_root / "spec"
@@ -929,7 +929,7 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         # skeleton 起手预检需要收口态的流程契约与材料基准（08 §2.1）
         (self.feature_root / "spec" / "spec.md").write_text(
             '# AR90001 — 需求规格\n\n> **模块标识**: `AR90001`\n'
-            + '\n## 0. 术语映射表\n\n| 业务名 | 权威模块 | 说明 |\n|---|---|---|\n| 受理单编号 | 提交入口 | 云侧受理后返回的编号 |\n\n## 9. 宿主扩展治理项\n\n| 扩展项 | 是否涉及 | 承载位置 |\n|---|---|---|\n| 技术契约 | 是 | 9.1 |\n| 规约约束要求 | 是 | 9.2 |\n| 设计模式候选登记 | 是 | 9.3 |\n\n### 9.1 技术契约\n\n#### 9.1.1 端云接口\n\n不涉及：复用既有提交接口。\n\n#### 9.1.2 数据存储\n\n不涉及：不落库。\n\n#### 9.1.3 配置项\n\n不涉及：没有新增配置。\n\n#### 9.1.4 埋点\n\n不涉及：不新增埋点。\n\n#### 9.1.5 依赖变更\n\n不涉及：只改一处入口。\n', encoding="utf-8")
+            + '\n## 0. 术语映射表\n\n| 业务名 | 权威模块 | 说明 |\n|---|---|---|\n| 受理单编号 | 提交入口 | 云侧受理后返回的编号 |\n\n## 9. 宿主扩展治理项\n\n| 扩展项 | 是否涉及 | 承载位置 |\n|---|---|---|\n| 技术契约 | 是 | 9.1 |\n| 规约 | 是 | 9.2 |\n| 设计模式 | 是 | 9.3 |\n\n### 9.1 技术契约\n\n#### 9.1.1 端云接口\n\n不涉及：复用既有提交接口。\n\n#### 9.1.2 数据存储\n\n不涉及：不落库。\n\n#### 9.1.3 配置项\n\n不涉及：没有新增配置。\n\n#### 9.1.4 依赖变更\n\n不涉及：只改一处入口。\n\n### 9.2 埋点\n\n不涉及：不新增埋点。\n', encoding="utf-8")
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src", DRAFT_TEXT)
         (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(

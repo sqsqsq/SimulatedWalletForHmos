@@ -1,7 +1,7 @@
 /**
- * spec §9.2/§9.3 的生成区：渲染、写入与只读保护。
+ * spec 扩展章「规约」「设计模式」两节的生成区：渲染、写入与只读保护。
  *
- * 这两章的正文只有生成区一份，每一个字节都由本模块写。作者改判断改 YAML，
+ * 这两节的正文只有生成区一份，每一个字节都由本模块写。作者改判断改 YAML，
  * 手改生成区会被门禁按行指出来——人读的表与机器真源各说各话，比不生成更糟。
  */
 import { fail, requirements, text } from './document.mjs';
@@ -11,17 +11,17 @@ const BEGIN = '<!-- knowledge-use:begin ';
 
 const END = '<!-- knowledge-use:end -->';
 
-/** 生成区的名字 —— 同时是 spec 里那两章的标题关键词。 */
+/** 生成区的名字 —— 同时是 spec 扩展章里那两节的节名（标题去掉号之后整名相等）。 */
 const ZONES = [
-  { key: 'constraints', name: '规约约束要求', heading: /规约约束要求/ },
-  { key: 'patterns', name: '设计模式候选登记', heading: /设计模式候选/ },
+  { key: 'constraints', name: '规约', heading: /^#{2,6}\s+(?:\d+(?:\.\d+)*\.?\s+)?规约\s*$/ },
+  { key: 'patterns', name: '设计模式', heading: /^#{2,6}\s+(?:\d+(?:\.\d+)*\.?\s+)?设计模式\s*$/ },
 ];
 
 function cell(value) {
   return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-/** §9.2 的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。 */
+/** 「规约」的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。 */
 function renderConstraints(knowledge, use) {
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
   const hits = use.constraints.filter(r => r.applicable === true
@@ -37,7 +37,7 @@ function renderConstraints(knowledge, use) {
     // 一条要求一行：同一个编号有几条要求就出几行。挤进一格的话，读者要在
     // 一百多字里数分号，而每一条本来都该独立可懂。
     const entry = byId.get(text(row, 'id'));
-    const at = text(row, 'contract') ? `§9.1 · ${cell(text(row, 'contract'))}`
+    const at = text(row, 'contract') ? `登记名 · ${cell(text(row, 'contract'))}`
       : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
     for (const req of requirements(row)) {
       out.push(`| ${cell(text(row, 'id'))} | ${entry?.force ?? '—'} | ${cell(req)} | ${at} `
@@ -82,7 +82,7 @@ function renderConstraints(knowledge, use) {
   return out.join('\n');
 }
 
-/** §9.3 的正文：逐个适用单元一行，只登记不选型。 */
+/** 「设计模式」的正文：逐个适用单元一行，只登记不选型。 */
 function renderPatterns(knowledge, use) {
   const out = ['| 适用单元 | 候选 | 命中信号或反证 |', '|---|---|---|'];
   for (const row of use.patterns) {
@@ -126,9 +126,9 @@ function zoneOf(specText, zone) {
 }
 
 /**
- * 把生成区写进 spec 正文 —— 幂等：已有生成区就整块替换，没有就追加到该章标题之后。
+ * 把生成区写进 spec 正文 —— 幂等：已有生成区就整块替换，没有就追加到该节标题之后。
  *
- * 章不存在时不代写标题：那一章该不该在、叫什么名字，由模板定，不由生成器造。
+ * 节不存在时不代写标题：那一节该不该在、叫什么名字，由模板定，不由生成器造。
  */
 export function applyZones(specText, rendered) {
   let out = specText.replace(/\r\n/g, '\n');
@@ -142,12 +142,12 @@ export function applyZones(specText, rendered) {
     const rows = out.split(/\r?\n/);
     const idx = rows.findIndex(l => /^#{2,6}\s/.test(l) && zone.heading.test(l));
     if (idx < 0) {
-      fail(`spec.md 里找不到「${zone.name}」章 —— 生成器不代写章标题：`
-        + '那一章该不该在、叫什么名字由模板定');
+      fail(`spec.md 里找不到「${zone.name}」节 —— 生成器不代写节标题：`
+        + '按标题去掉号之后整名等于「' + zone.name + '」认，那一节该不该在、叫什么名字由模板定');
     }
     let insert = idx + 1;
     while (insert < rows.length && rows[insert].trim() === '') insert += 1;
-    // 章标题后的 HTML 注释是模板给作者的写法说明，生成区排在它之后
+    // 节标题后的 HTML 注释是模板给作者的写法说明，生成区排在它之后
     if (rows[insert]?.trimStart().startsWith('<!--') && !rows[insert].includes(BEGIN.trim())) {
       while (insert < rows.length && !rows[insert].includes('-->')) insert += 1;
       insert += 1;
@@ -159,7 +159,7 @@ export function applyZones(specText, rendered) {
 }
 
 /**
- * 一章的正文范围：标题行之后到下一个同级或更高级标题之前。
+ * 一节的正文范围：标题行之后到下一个同级或更高级标题之前。
  *
  * @returns {{start:number, end:number}|null} 行下标，左闭右开
  */
@@ -177,7 +177,7 @@ function chapterSpan(rows, heading) {
 /**
  * 生成区与 YAML 对不对得上 —— 手改生成区、以及生成区之外的另一张表，都在这里被判出来。
  *
- * 这两章的正文只有生成区一份：同一章出现第二张表，就有两处说同一件事，
+ * 这两节的正文只有生成区一份：同一节出现第二张表，就有两处说同一件事，
  * 而只有一处跟着 YAML 走。
  */
 export function zoneProblems(projectRoot, specText, rendered) {
@@ -186,7 +186,7 @@ export function zoneProblems(projectRoot, specText, rendered) {
   for (const zone of ZONES) {
     const found = zoneOf(specText, zone);
     if (!found.found) {
-      problems.push(`spec.md 的「${zone.name}」章没有生成区——`
+      problems.push(`spec.md 的「${zone.name}」节没有生成区——`
         + '生成区由 `node doc/extensions/hooks/shared/knowledge-use.mjs render --feature <名>` 从 spec/knowledge-use.yaml 生成');
       continue;
     }
@@ -206,9 +206,9 @@ export function zoneProblems(projectRoot, specText, rendered) {
       if (!inZone && line.trimStart().startsWith('|')) stray.push(i + 1);
     }
     if (stray.length) {
-      problems.push(`spec.md 的「${zone.name}」章在生成区之外还有表`
+      problems.push(`spec.md 的「${zone.name}」节在生成区之外还有表`
         + `（第 ${stray.slice(0, 3).join('、')} 行${stray.length > 3 ? ' …' : ''}）`
-        + '——这一章的正文只有生成区一份；判断的真源是 knowledge-use.yaml，投影由 render 生成');
+        + '——这一节的正文只有生成区一份；判断的真源是 knowledge-use.yaml，投影由 render 生成');
     }
   }
   return problems;

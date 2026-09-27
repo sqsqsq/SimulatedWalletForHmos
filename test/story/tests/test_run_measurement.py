@@ -242,7 +242,32 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual(0, r["reads_checker_source"])
         self.assertEqual(0, r["reads_rule_text"])
         self.assertEqual(1, r["bash_rule_path_not_read"], "执行判据脚本要记成未分类，看得见")
-        self.assertEqual("v2", r["read_algorithm"])
+        self.assertEqual("v3", r["read_algorithm"])
+
+    def test_an_escaped_bar_in_a_grep_pattern_is_not_a_pipe(self):
+        """grep 模式里的 `\\|` 是「或」，不是管道：模式之后的路径仍在读取动词那一段里。"""
+        r = self._measure([{
+            "tool_name": "bash",
+            "tool_input": {"command": 'grep -n "Code Facts\\|code_facts" framework/harness/scripts/utils/context-facts.ts | head'},
+        }])
+        self.assertEqual(1, r["reads_checker_source"])
+
+    def test_framework_source_beyond_check_scripts_counts(self):
+        """framework 下的工具源码、`*.ts` 通配与 harness 源码目录里的递归检索都算读机制源码。"""
+        for command in ("sed -n '1,80p' framework/harness/scripts/utils/context-facts.ts",
+                        "grep -n applySequentialMultiplier framework/harness/scripts/utils/*.ts",
+                        "grep -rn acceptance_flow_structure framework/harness/scripts/utils/ | head"):
+            with self.subTest(command=command):
+                r = self._measure([{"tool_name": "bash", "tool_input": {"command": command}}])
+                self.assertEqual(1, r["reads_checker_source"])
+
+    def test_knowledge_and_phase_rule_yaml_are_not_source(self):
+        """知识与阶段规则是写给模型读的，不是机制源码。"""
+        r = self._measure([
+            {"tool_name": "read", "tool_input": {"filePath": "doc/extensions/knowledge/facts/demo.md"}},
+            {"tool_name": "bash", "tool_input": {"command": "cat framework/specs/phase-rules/spec-rules.yaml"}},
+        ])
+        self.assertEqual(0, r["reads_checker_source"])
 
     def test_read_and_execute_in_one_command_counts_the_read(self):
         """读与执行混在一条命令里：读的那一段照算，执行的那一段不算。"""

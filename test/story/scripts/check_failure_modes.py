@@ -1146,7 +1146,7 @@ def p01_appendix_prefix_granularity(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
-    """anchor 不得指回知识决策声明章；landing 不得为空。"""
+    """anchor 不得指回 plan 扩展章里声明义务的「规约」一节；landing 不得为空。"""
     freeze = _freeze(root)
     if freeze is None:
         return Outcome(True, "无知识冻结块（不适用）")
@@ -1155,8 +1155,8 @@ def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
         rule = str(ob.get("rule", "?"))
         anchor = str(ob.get("anchor", ""))
         landing = ob.get("landing") or []
-        if re.search(r"知识决策|knowledge[_ ]decision", anchor):
-            bad.append(f"{rule} 的 anchor 指回知识决策章（声明不是落点）")
+        if re.fullmatch(r"\s*(?:\d+(?:\.\d+)*\.?\s*)?规约\s*", anchor):
+            bad.append(f"{rule} 的 anchor 指回声明义务的「规约」一节（声明不是落点）")
         if not landing and "评审动作" not in str(ob.get("handling", "")):
             bad.append(f"{rule} 的 landing 为空（没有承载实体）")
     if bad:
@@ -1166,7 +1166,7 @@ def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
 
 @checker
 def p06_knowledge_decision_outside_anchor(root: Path, ctx: Ctx) -> Outcome:
-    """知识决策是宿主扩展锚点「9. 宿主扩展」的下一级小节 9.1，三节齐全。"""
+    """设计输入（项目知识、规约、设计模式）是宿主扩展锚点「9. 宿主扩展」的下一级小节，三节齐全。"""
     plan = _plan_path(root)
     if plan is None:
         return Outcome(True, "无 plan.md（不适用）")
@@ -1177,16 +1177,11 @@ def p06_knowledge_decision_outside_anchor(root: Path, ctx: Ctx) -> Outcome:
     if anchor is None:
         return Outcome(False, "plan.md 缺「9. 宿主扩展」章")
     end = next((h[2] for h in heads if h[2] > anchor[2] and h[0] <= 2), 10 ** 9)
-    decision = next((h for h in heads if anchor[2] < h[2] < end and h[0] == 3
-                     and name(h[1]).startswith("知识决策")), None)
-    if decision is None:
-        return Outcome(False, "「9. 宿主扩展」下没有 9.1 知识决策")
-    d_end = next((h[2] for h in heads if h[2] > decision[2] and h[0] <= 3), 10 ** 9)
-    subs = {name(h[1]) for h in heads if decision[2] < h[2] < d_end and h[0] == 4}
-    missing = [s for s in ("设计模式选型", "规约义务", "项目知识影响") if not any(x.startswith(s) for x in subs)]
+    subs = {name(h[1]) for h in heads if anchor[2] < h[2] < end and h[0] == 3}
+    missing = [s for s in ("项目知识", "规约", "设计模式") if s not in subs]
     if missing:
-        return Outcome(False, f"9.1 知识决策缺：{'、'.join(missing)}")
-    return Outcome(True, "知识决策在宿主扩展锚点下，三节齐全")
+        return Outcome(False, f"「9. 宿主扩展」下一级缺：{'、'.join(missing)}")
+    return Outcome(True, "设计输入三节在宿主扩展锚点的下一级")
 
 
 @checker
@@ -1905,7 +1900,7 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(True, "激活规约条目在判定表里逐条有行")
     # 判定表是 `knowledge-use.yaml` 的投影（Q6）：少一条规约就是机器区少一行，
     # 不再另有一条「逐条问这个编号有没有行」的反向解析判据。
-    if "规约判定" in out and "少了行" in out:
+    if "「规约」" in out and "少了行" in out:
         return Outcome(False, f"判定表缺行被点名：{out.split('少了行')[0][-80:]}少了行")
     return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
 
@@ -1976,7 +1971,7 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
 def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     """工程标识、规约编号出现在主叙事里——打断了面向人的阅读。
 
-    它们不是不该在归档件里：评审者要查接口名、要核规约判定，查得到才行。
+    它们不是不该在归档件里：评审者要查接口名、要核规约判断，查得到才行。
     问题在于位置——读者顺着九章读下来，每隔两行撞见一个 camelCase 就得停下来
     判断「这是我要懂的东西吗」。附录是它们的唯一落点，主叙事写中文业务名。
 
@@ -2579,46 +2574,6 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     if unclosed:
         return Outcome(False, f"契约被判未收口：{unclosed[0][:120]}")
     return Outcome(True, f"收口判定正确（其余 {len(problems)} 条与本形态无关）")
-
-def adjudication_keys(spec_text: str) -> list[str]:
-    """必答集的核对键 —— 与扩展侧 ``verdict-set.mjs`` 的 ``specSet`` 同口径。
-
-    **数据源是 spec §10「规约约束要求」表本身**。上一版两边都读
-    ``AR/story-src/knowledge.json``，那是同一批结论的第二份写法——两处判定对不上时，
-    评审者无从知道哪个是准的，所以那份登记件退场了。
-
-    两边各自实现（一边给 verifier 注入清单、一边在测试域核对目标产物），口径靠
-    ``test_adjudication_parity.py`` 绑定：改了一边不改另一边，那个测试会红。
-    """
-    lines = split_lines(spec_text)
-    start = next(
-        (i for i, l in enumerate(lines) if re.match(r"^#{2,4}\s+.*规约约束要求", l.strip())),
-        -1,
-    )
-    if start < 0:
-        return []
-    level = len(re.match(r"^(#{2,4})", lines[start].strip()).group(1))
-    keys: list[str] = []
-    headers_seen = False
-    for line in lines[start + 1:]:
-        h = re.match(r"^(#{2,4})\s+", line.strip())
-        if h and len(h.group(1)) <= level:
-            break
-        s = line.strip()
-        if not s.startswith("|"):
-            continue
-        cells = [c.strip() for c in s.strip("|").split("|")]
-        if all(re.fullmatch(r"[-: ]*", c) for c in cells):
-            continue
-        if not headers_seen:
-            headers_seen = True
-            continue
-        rid = cells[0].replace("`", "").replace("*", "").strip() if cells else ""
-        if _ENTRY_ID_RE.match(rid):
-            keys.append(rid)
-    seen: set[str] = set()
-    return [k for k in keys if not (k in seen or seen.add(k))]
-
 
 def _registry(root: Path) -> dict | None:
     """判定登记件（归档件的知识判定源）。"""

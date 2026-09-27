@@ -49,7 +49,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
     def workspace(self) -> Path:
         """把存档摆成一个 projectRoot：doc/extensions + doc/features/<feature>。
 
-        存档是批次 4 的实跑产物，那时知识判断还写在 spec 的 §9.2/§9.3 两张表里。
+        存档是批次 4 的实跑产物，那时知识判断还写在 spec 的 「规约」「设计模式」 两张表里。
         真源换成 `spec/knowledge-use.yaml` 之后，**不回头改存档**——历史轮次的产物
         是证据，改了就不是它当时的样子了。工作区里按那两张表现搭一份真源即可：
         判据读的是同一批结论，只是换了个入口。
@@ -63,7 +63,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
         return tmp
 
     def write_knowledge_use(self, root: Path) -> None:
-        """按存档 spec 的 §9.2/§9.3 现搭 `spec/knowledge-use.yaml`。
+        """按存档 spec 的 「规约」「设计模式」 现搭 `spec/knowledge-use.yaml`。
 
         激活清单里没出现在 §9.2 的条目逐条判不命中——完备性判据要求每条都有去处，
         而存档那一轮的 §9.2 只列命中项。
@@ -159,7 +159,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
         换来的只是模型换一种说法。
         """
         message = self.run_hook(self.workspace())
-        self.assertNotIn("plan 的设计模式选型表里没有这一行", message)
+        self.assertNotIn("plan「设计模式」的选型表里没有这一行", message)
         self.assertNotIn("理由列是空的", message)
 
     def test_a_hit_candidate_missing_from_the_plan_table_is_named(self) -> None:
@@ -170,7 +170,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
         keep = [r for r in rows if "decision-tree" not in r or not r.strip().startswith("|")]
         self.assertLess(len(keep), len(rows), "存档变了：选型表里没有 decision-tree 那一行")
         path.write_text("\n".join(keep), encoding="utf-8")
-        self.assertIn("plan 的设计模式选型表里没有这一行", self.run_hook(root))
+        self.assertIn("plan「设计模式」的选型表里没有这一行", self.run_hook(root))
 
     def test_an_unselected_candidate_without_a_reason_is_named(self) -> None:
         """不选是表态有后果的决策——理由列不能空。"""
@@ -201,7 +201,7 @@ class PlanPatternCrossCheck(unittest.TestCase):
             out.append(r)
         spec.write_text("\n".join(out), encoding="utf-8")
         message = self.run_hook(root)
-        self.assertNotIn("设计模式选型表里没有这一行", message)
+        self.assertNotIn("「设计模式」的选型表里没有这一行", message)
         self.assertNotIn("理由列是空的", message)
 
 
@@ -226,10 +226,10 @@ class MultiCandidateUnits(PlanPatternCrossCheck):
 
     def write_plan_table(self, root: Path, table_rows: list[str]) -> None:
         self.plan_path(root).write_text(
-            "# 计划\n\n## 2. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 知识决策（设计输入）\n\n#### 9.1.1 设计模式选型\n\n"
+            "# 计划\n\n## 2. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 项目知识\n\n略。\n\n### 9.2 规约\n\n略。\n\n### 9.3 设计模式\n\n"
             "| 适用单元 | 候选 | 选 / 不选 | 实例名 | 理由 |\n"
             "|---|---|---|---|---|\n" + "\n".join(table_rows) +
-            "\n\n#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n", encoding="utf-8")
+            "\n", encoding="utf-8")
 
     def test_two_candidates_can_be_split_adopt_and_reject(self) -> None:
         """同单元双候选，一个采用一个拒绝（带理由）——两个结论都合法。"""

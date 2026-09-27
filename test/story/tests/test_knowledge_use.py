@@ -1,4 +1,4 @@
-"""`knowledge-use.yaml` 是 spec 阶段知识判断的唯一真源，§9.2/§9.3 是它的投影。
+"""`knowledge-use.yaml` 是 spec 阶段知识判断的唯一真源，扩展章的「规约」「设计模式」两节是它的投影。
 
 判两件事：
 
@@ -39,8 +39,8 @@ SPEC_HEAD = """# {feature} spec
 | 扩展项 | 是否涉及 | 承载位置 |
 |---|---|---|
 | 技术契约 | 是 | 9.1 |
-| 规约约束要求 | 是 | 9.2 |
-| 设计模式候选登记 | 是 | 9.3 |
+| 规约 | 是 | 9.2 |
+| 设计模式 | 是 | 9.3 |
 
 ### 9.1 技术契约
 
@@ -50,11 +50,11 @@ SPEC_HEAD = """# {feature} spec
 |---|---|
 | wallet_receipt_temp | 凭证渲染产物的临时落点 |
 
-### 9.2 规约约束要求
+### 9.2 规约
 
 <!-- 判定产生的代码要求，按命中条目派生。 -->
 
-### 9.3 设计模式候选登记
+### 9.3 设计模式
 
 <!-- 只登记候选，不做选型。 -->
 """
@@ -225,7 +225,7 @@ class TestTheJudgementMustCoverEveryActiveEntry(KnowledgeUseCase):
         self.assertIn("requirement", out, "没点名是哪个字段写错了")
 
     def test_a_review_action_hit_gets_its_own_section(self) -> None:
-        """它不进 §9.2 的命中表——混进去读者会当成要写的代码；
+        """它不进 「规约」的命中表——混进去读者会当成要写的代码；
         从表里删掉又等于说「没命中」，而它确实命中了。所以单列一小节。
         """
         self.with_review_action("    applicable: true\n"
@@ -239,6 +239,19 @@ class TestTheJudgementMustCoverEveryActiveEntry(KnowledgeUseCase):
         self.assertIn("说明文档要随本轮归档", line, "依据没带上")
         table = out.split("| 编号 | 强制力 | 本需求的要求 | 落点契约名 | 验法 |", 1)[1].split("\n\n", 1)[0]
         self.assertNotIn(REVIEW_ACTION, table, "评审动作混进了命中表")
+
+
+class TheRenderSaysWhereItWrites(KnowledgeUseCase):
+    """spec 还没写出来时 render 说清在哪、什么问题、机制：判断写进 spec 扩展章的两节。"""
+
+    def test_a_missing_spec_is_explained(self) -> None:
+        self.write_use()
+        self.spec_path.unlink()
+        proc = self.render()
+        self.assertEqual(1, proc.returncode)
+        for piece in ("spec/spec.md", "还没有这份文件", "「规约」「设计模式」两节", "spec 要先写出来"):
+            with self.subTest(piece=piece):
+                self.assertIn(piece, proc.stderr)
 
 
 class TestPatternsAreCandidatesOnly(KnowledgeUseCase):
@@ -284,7 +297,7 @@ class TestPatternsAreCandidatesOnly(KnowledgeUseCase):
 
 
 class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
-    """§9.2/§9.3 是投影。它与 YAML 对不上时，错的一定是投影。"""
+    """「规约」「设计模式」 是投影。它与 YAML 对不上时，错的一定是投影。"""
 
     def zone_problems(self) -> list[str]:
         proc = node("-e", f"""
@@ -350,13 +363,13 @@ class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
             self.assertIn("没有生成区", p)
 
     def test_a_changed_judgement_changes_the_projection(self) -> None:
-        """改 YAML 里的一条为不命中，重新生成之后 §9.2 跟着变——投影是活的。"""
+        """改 YAML 里的一条为不命中，重新生成之后 「规约」跟着变——投影是活的。"""
         self.write_use()
         self.assertIn("wallet_receipt_temp", self.render_ok())
         self.write_use(constraints=f"  - id: {HIT}\n    applicable: false\n"
                                    "    reason: 本需求不产生任何出口，凭证只在端侧生成不外传")
         text = self.render_ok()
-        zone = text.split("knowledge-use:begin 规约约束要求")[1].split("knowledge-use:end")[0]
+        zone = text.split("knowledge-use:begin 规约 ")[1].split("knowledge-use:end")[0]
         self.assertNotIn("wallet_receipt_temp", zone, "改判之后生成区还留着旧的落点")
         self.assertIn("本需求不产生任何出口", zone)
 
@@ -396,7 +409,7 @@ class TestTheJudgementKnowsWhichKnowledgeItWasMadeAgainst(KnowledgeUseCase):
 class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
     """一条要求一行，落点由作者显式说是哪一种。
 
-    五跑的 §9.2 一格 80–155 字、混着代码标识，十一行里四行落点写「—」——
+    五跑的 「规约」一格 80–155 字、混着代码标识，十一行里四行落点写「—」——
     要求没有落点，等于判了命中却没说落在哪。
     """
 
@@ -410,7 +423,7 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
             "      - 分享完成或离开页面即删\n"
             "    contract: wallet_receipt_temp"))
         spec = self.render_ok()
-        zone = spec.split("规约约束要求", 1)[1]
+        zone = spec.split("knowledge-use:begin 规约 ", 1)[1]
         self.assertIn("凭证临时文件写 wallet_receipt_temp", zone)
         self.assertIn("分享完成或离开页面即删", zone)
         rows = [l for l in zone.split("\n") if l.startswith(f"| {HIT} |")]
@@ -424,7 +437,7 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
         self.assert_render_names("没写落点")
 
     def test_both_kinds_of_landing_at_once_is_named(self) -> None:
-        """二选一：落在 §9.1 实体上写 contract，落在别处写 impact。"""
+        """二选一：落在技术契约登记的名字上写 contract，落在别处写 impact。"""
         self.write_use(constraints=(
             f"  - id: {HIT}\n"
             "    applicable: true\n"
@@ -440,34 +453,34 @@ class TheRequirementIsOneLinePerThing(KnowledgeUseCase):
             "    applicable: true\n"
             "    requirement: 凭证临时文件写 wallet_receipt_temp\n"
             "    contract: 名称"))
-        self.assert_render_names("不在 §9.1 技术契约里")
+        self.assert_render_names("不在技术契约与埋点里")
 
     def test_an_empty_section_nine_still_refuses_a_contract(self) -> None:
-        """§9.1 在而一个实体都没登记：任何 contract 都引不到东西，不能整条跳过。
+        """技术契约在而一个名字都没登记：任何 contract 都引不到东西，不能整条跳过。
 
         「没有这一章」与「有这一章而空」处置相反——前者不判，后者逐条报。
         """
         self.spec_path.write_text(
             "# 甲需求 spec\n\n## 9. 宿主扩展治理项\n\n### 9.1 技术契约\n\n#### 9.1.2 数据存储\n\n"
             "| 名称 | 用途 |\n|---|---|\n\n"
-            "### 9.2 规约约束要求\n\n<!-- 判定产生的代码要求，按命中条目派生。 -->\n\n"
-            "### 9.3 设计模式候选登记\n\n<!-- 只登记候选，不做选型。 -->\n",
+            "### 9.2 规约\n\n<!-- 判定产生的代码要求，按命中条目派生。 -->\n\n"
+            "### 9.3 设计模式\n\n<!-- 只登记候选，不做选型。 -->\n",
             encoding="utf-8")
         self.write_use(constraints=(
             f"  - id: {HIT}\n"
             "    applicable: true\n"
             "    requirement: 凭证临时文件写 wallet_receipt_temp\n"
             "    contract: wallet_receipt_temp"))
-        self.assert_render_names("§9.1 现在一个实体都没登记")
+        self.assert_render_names("技术契约与埋点现在一个名字都没登记")
 
     def test_an_impact_landing_is_accepted_and_prefixed(self) -> None:
-        """RTL、图标、文案这类本来就没有 §9.1 实体，不强挂——但要点名影响对象。"""
+        """RTL、图标、文案这类本来就没有技术契约里的名字，不强挂——但要点名影响对象。"""
         self.write_use(constraints=(
             f"  - id: {HIT}\n"
             "    applicable: true\n"
             "    requirement: 方向性布局参数一律用 start/end\n"
             "    impact: 签约页与管理页的布局参数"))
-        zone = self.render_ok().split("规约约束要求", 1)[1]
+        zone = self.render_ok().split("knowledge-use:begin 规约 ", 1)[1]
         self.assertIn("影响 · 签约页与管理页的布局参数", zone)
 
 

@@ -369,22 +369,22 @@ export function storyInputs(ctx, sources) {
  * 统计设计这次要交什么、动笔前读什么、写完怎么自查——在动笔那一刻送到作者面前。
  *
  * 只说阶段任务与形状，不复述知识里的定义与步骤，也不点知识的名字：哪份讲统计设计由作者按
- * 各知识的用途自述去找。已写了 §9.1.4 的，列出每个指标有没有定义段、几个统计点，返修时照着补。
+ * 各知识的用途自述去找。已写了埋点的，列出每个指标有没有定义段、几个统计点，返修时照着补。
  */
 function statDesignSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
-  const rows = ['## 5. 统计设计（§9.1.4）', ''];
-  if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求 §9.1.4 的统计设计：按本阶段原有要求写。'];
-  rows.push('这次要交：§9.1.4 先一段总述，然后每个指标一个小节、标题写指标名；小节下先写定义段，'
-    + `再放带「统计点」列的表，其余列按知识要求写。形状见 \`${TEMPLATE}\` 的 9.1.4。`,
+  const rows = ['## 5. 统计设计（扩展章「埋点」）', ''];
+  if (!isStoryFeature(dir)) return [...rows, '本需求没走 /story，不要求扩展章「埋点」的统计设计：按本阶段原有要求写。'];
+  rows.push('这次要交：「埋点」先一段总述，然后每个指标一个小节、标题写指标名；小节下先写定义段，'
+    + `再放带「统计点」列的表，其余列按知识要求写。形状见 \`${TEMPLATE}\` 的「埋点」。`,
   '动笔前：按第 2 节知识清单的 applies_when 找回答这一节问题的知识；上下篇的读读者含 spec 的那一篇。',
   '写完后：按那一篇自查，走不通的直接改设计；项目规则算得出的写成具体值；实现层的取值由 plan 落实。');
   const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
   const points = spec === null ? null : specStatPoints(spec);
   const state = statDesignState(points);
-  if (state === 'na') rows.push('', `当前 §9.1.4 写的是「${points.na}」——核这条依据站得住。`);
+  if (state === 'na') rows.push('', `当前「埋点」写的是「${points.na}」——核这条依据站得住。`);
   if (state === 'empty' || state === 'ready') {
-    rows.push('', '当前 §9.1.4 的指标：',
+    rows.push('', '当前「埋点」的指标：',
       ...points.groups.map(g => `- ${g.title} —— 定义段：${g.lead ? '有' : '缺'}；统计点：${g.points.length} 个`));
   }
   return rows;
