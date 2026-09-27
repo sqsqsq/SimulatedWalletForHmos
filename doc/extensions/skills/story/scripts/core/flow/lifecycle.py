@@ -20,7 +20,7 @@ from materials import meeting
 
 def cmd_status(feature_root: Path) -> dict:
     contract = load(feature_root)
-    # 材料事实**一份**：路由、冻结提示与下面的 JSON 输出读的是同一个时点的清单。
+    # 材料事实**一份**：路由、收件箱提示与下面的 JSON 输出读的是同一个时点的清单。
     # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
     # 自己拿的是哪一份。算不出来沿 FlowError 退出，不伪造 false。
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None

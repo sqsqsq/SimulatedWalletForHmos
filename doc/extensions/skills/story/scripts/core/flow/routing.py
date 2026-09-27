@@ -20,13 +20,12 @@ from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
 
-def frozen_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
+def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
 
-    这时不能顺手导：导入会改正文，而已登记的 story 据以成文的是当轮的材料快照。
-    出口按位置给：已归档的走 `/story update`，其余导入、`round` 登记到本轮、改完重跑 `story`。
+    出口按位置给：已归档的走 `/story update`，其余导入、`round` 登记到本轮、改完重跑 `story` 重新登记。
 
-    但不提它，那份文件从此没有任何人知道——`round` 只看已导入的指纹说「材料未变」，
+    不提它，那份文件从此没有任何人知道——`round` 只看已导入的指纹说「材料未变」，
     `status` 只说下一步走 spec 那条路。**下游没有动作时要说明为什么不适用，
     缺席不代表不适用。**
     """
@@ -230,9 +229,9 @@ def material_step(feature_root: Path, always: bool) -> tuple[str, str] | None:
     return "await_gate:material_scope", "第一级材料关卡。" + DECIDE_USAGE
 
 
-def frozen_tail(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
-    """冻结态的下一步末尾那一句：收件箱里有没有没人管的原件。`next` 本身不变。"""
-    note = frozen_inbox_note(feature_root, contract, manifest)
+def closed_tail(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
+    """收口之后下一步末尾那一句：收件箱里有没有没人管的原件。`next` 本身不变。"""
+    note = closed_inbox_note(feature_root, contract, manifest)
     return f"。**另外**：{note}" if note else ""
 
 
@@ -300,7 +299,7 @@ def update_open_step(feature_root: Path, contract: dict,
     return ("update_in_progress",
             f"更新 {rid} 正在进行：按 `AR/story-src/updates/{rid}/update-notes.md` 的修订清单改，"
             "改法与收口见 `phases/update.md`「二、一条线」"
-            + frozen_tail(feature_root, contract, manifest))
+            + closed_tail(feature_root, contract, manifest))
 
 
 def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
@@ -336,7 +335,7 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("late_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：按 `phases/meeting-read.md` 读会。"
                 "会上有要人定的话题就先 `story_flow.py reopen` 重拍，在范围关卡摆给人；"
                 "只是补充事实就读会后照常改、重跑 `story` 重新登记"
-                + frozen_tail(feature_root, contract, manifest))
+                + closed_tail(feature_root, contract, manifest))
     if stage == "update_open":
         return update_open_step(feature_root, contract, manifest)
     if stage in ("archived", "story_written"):
@@ -351,13 +350,13 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
                          else "本轮已归档送审。")
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
-                + frozen_tail(feature_root, contract, manifest))
+                + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
                 "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
                 "check-receipt → `story-build check --deliver` 交付门；交付门通过后按停等表问一次"
                 "「归档送审 / 进入 plan」（本地单只有进 plan）"
-                + frozen_tail(feature_root, contract, manifest))
+                + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
@@ -377,9 +376,9 @@ def next_step(feature_root: Path, contract: dict | None,
                     "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
                     "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
                     "再继续 spec 阶段——spec 与叙事件都按本轮登记的那批料写"
-                    + frozen_tail(feature_root, contract, manifest))
+                    + closed_tail(feature_root, contract, manifest))
         step, action = spec_stage_step(feature_root)
-        return step, action + frozen_tail(feature_root, contract, manifest)
+        return step, action + closed_tail(feature_root, contract, manifest)
 
     current = contract["rounds"][-1]
 

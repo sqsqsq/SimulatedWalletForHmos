@@ -137,11 +137,7 @@ class WorkspaceCase(unittest.TestCase):
 
 
 class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
-    """作者动笔前该拿到的两样：验收落在哪、禁用词在哪不算。
-
-    这两条都是实跑里逼着作者去翻源码的：路径写错一个层级，他去框架里找真相；
-    豁免只写在脚本注释里，他去读判定脚本。
-    """
+    """作者动笔前该拿到验收落在哪：路径写错一个层级，他就去框架里找真相。"""
 
     def test_the_acceptance_path_is_the_one_the_framework_reads(self) -> None:
         """框架读的是需求根目录那一份，不是 `spec/` 下面。"""
@@ -157,22 +153,6 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
              "--", "doc/extensions"],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual("", proc.stdout.strip(), f"还有地方写着旧路径：{proc.stdout}")
-
-    def test_the_banned_words_come_with_where_they_do_not_count(self) -> None:
-        """词表一直在；缺的是作用域——哪几章、哪几类议题、同词的另一种语义。"""
-        package = self.task_package()
-        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        chapters = [c["title"] for c in contract["chapters"] if c.get("banned_terms_exempt")]
-        cats = [c["key"] for c in contract.get("decision_categories", [])
-                if c.get("banned_terms_exempt")]
-        self.assertIn("在哪不算", package)
-        for name in chapters:
-            with self.subTest(chapter=name):
-                self.assertIn(name, package.split("在哪不算", 1)[1])
-        for key in cats:
-            with self.subTest(category=key):
-                self.assertIn(key, package.split("在哪不算", 1)[1])
-        self.assertTrue(chapters and cats, "合同里一个豁免都没有，这条夹具没有对象")
 
 
 class CurrentDecisionsReachTheAuthor(WorkspaceCase):
@@ -296,14 +276,6 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
 
 class TaskPackageIsRendered(WorkspaceCase):
     """任务包是真源的投影，不是又一页手写说明。"""
-
-    def test_banned_words_come_with_what_to_write_instead(self) -> None:
-        """词表连改法一起送达：只说不许用，作者不知道该写什么。"""
-        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        package = self.task_package()
-        for item in contract["language_redline"]["client_vocabulary"]:
-            self.assertIn(item["term"], package)
-            self.assertIn(item["hint"], package)
 
     def test_active_constraints_are_counted_from_the_manifest(self) -> None:
         """条目数从激活清单来：作者要知道这一轮要判几条，不是「若干条」。"""

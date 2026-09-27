@@ -30,7 +30,7 @@ import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
-import { scanBannedTerms, scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
+import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
 import { chapterImageProblems, chapterSourceMarkProblems, strayMarks } from './images.mjs';
 import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
@@ -190,10 +190,10 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
 }
 
 /**
- * 本章正文逐行能判的红线：仓内路径、客户端禁用词、语言红线、图片身份、图源标记。
+ * 本章正文逐行能判的红线：仓内路径、语言红线、图片身份、图源标记。
  *
- * 扫描函数与整篇检查同一套，按本章正文调用：补上本章标题再扫，作用域（附录、豁免章、
- * 节号）照整篇的口径判，行号减一回到正文。附录的机器区不在这里判——它由真源投影而来，
+ * 扫描函数与整篇检查同一套，按本章正文调用：补上本章标题再扫，作用域（附录、节号）
+ * 照整篇的口径判，行号减一回到正文。附录的机器区不在这里判——它由真源投影而来，
  * 整篇检查把那里的问题报到真源（⑩b）；材料清单里的原文链接是仓内路径唯一允许出现的位置。
  */
 function chapterLineProblems(ctx, chapter, body, at) {
@@ -209,12 +209,6 @@ function chapterLineProblems(ctx, chapter, body, at) {
   for (const h of scanLocalPaths(scan, ctx.projectRoot)) {
     out.push(`${line(h.line)}：含仓内路径「${h.path}」——评审人手上没有这个仓，仓内路径在归档件里打不开；`
       + '材料清单里的原文链接是唯一允许的位置');
-  }
-  if (!chapter.banned_terms_exempt) {
-    for (const h of scanBannedTerms(scan, { contract: ctx.contract })) {
-      out.push(`${line(h.line)}：客户端语境禁用词「${h.term}」——归档件写给端侧评审人，`
-        + `章节合同的词表记着这个词在端侧的说法：${h.hint}`);
-    }
   }
   const redline = ctx.contract.language_redline ?? {};
   if (Array.isArray(redline.kinds) && redline.kinds.length) {

@@ -24,7 +24,6 @@ import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { activeKnowledge, knowledgeGuide } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
-import { clientVocabulary } from '../../skills/story/scripts/core/story/language.mjs';
 import { FLOW_SCRIPT, queryFlowStatus }
   from '../../skills/story/scripts/core/flow/client.mjs';
 import { SHELL, shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
@@ -392,34 +391,6 @@ function statDesignSection(projectRoot, feature) {
 }
 
 /**
- * 禁用词：词表 + **在哪不算**。
- *
- * 词表、作用域、豁免三样都在这一节：哪几章整章豁免、review 的哪几类议题豁免、
- * 哪几种语境下同一个词不算，都从合同渲染，判定按同一份数据走。
- */
-function vocabularySection(contract) {
-  const rows = ['## 6. 这些词不能用（服务器侧词汇，单独使用也算）', ''];
-  for (const { term, hint } of clientVocabulary()) rows.push(`- 「${term}」→ ${hint}`);
-
-  const chapters = (contract.chapters ?? [])
-    .filter(c => c?.banned_terms_exempt).map(c => c.title);
-  const categories = (contract.decision_categories ?? [])
-    .filter(c => c?.banned_terms_exempt).map(c => c.key);
-  rows.push('', '**在哪不算**：', '',
-    chapters.length
-      ? `- 整章豁免：「${chapters.join('」「')}」；`
-      : '- 没有整章豁免的章；',
-    categories.length
-      ? `- 决策议题豁免：类别为「${categories.join('」「')}」的那几条，`
-        + 'review 里它们照原样写；'
-      : '- 没有豁免的决策类别；',
-    '- 引用上游规约的章节名不算——那是在指路，不是在用这个词；',
-    '- 讲禁用词本身的地方不算（比如这一节）。');
-  rows.push('', '数值怎么标来源、验收怎么接回规约，见 `author.md`。');
-  return rows;
-}
-
-/**
  * 任务包正文。合同读不到就抛——任务包是它的投影，缺了没有可降级的形态，
  * 静默出一份缺了合同投影的任务包比报错更贵。
  */
@@ -447,7 +418,7 @@ function taskPackage(projectRoot, feature) {
     '',
     ...statDesignSection(projectRoot, feature),
     '',
-    ...vocabularySection(contract),
+    '数值怎么标来源、验收怎么接回规约，见 `author.md`。',
   ];
   return rows.join('\n');
 }

@@ -489,7 +489,7 @@ export function specGaps(contract, spec) {
 }
 
 /**
- * 附录结构：只有合同约定的那几节，每节先一句业务定位，节内有内容，不放图不放围栏。
+ * 附录结构：只有合同约定的那几节，节内有内容，不放图不放围栏。
  *
  * 判的是结构不是内容：机器区之外的说明写得好不好归语义审查。
  */
@@ -515,11 +515,6 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
         continue;
       }
       const all = body.split(/\r?\n/).map(l => l.trim());
-      // 定位句：这里能查到哪些东西的精确名称。先于表、列表、小标题与机器区。
-      const first = all.find(Boolean) ?? '';
-      if (/^(\||#|[-*+]\s|\d+[.)]\s|<!--)/.test(first) || !first) {
-        problems.push(`「${appendixDef.title}·${want}」：开头缺一句定位——每节首个非空行按定位句判，它说这一节能查到哪些东西（如「接口、数据、配置与统计点的精确名称在这里，正文用中文名」），表、清单、小标题与机器区排在它之后`);
-      }
       const rows = all.filter(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
       if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
         problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行，也没有「不涉及：<依据>」`

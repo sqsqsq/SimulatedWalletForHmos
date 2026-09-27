@@ -17,7 +17,6 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { STATUS } from '../shared/evidence.mjs';
 import { contractFiles, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
@@ -68,7 +67,7 @@ export default guard('coding', async (ctx) => {
   const files = contractFiles(contracts);
   const present = files.filter(rel => fs.existsSync(path.resolve(ctx.projectRoot, rel)));
   if (!present.length) {
-    // 契约文件一个都还没建：框架原生的文件完整性门禁会报，这里不重复；但要留痕说明没跑成
+    // 契约文件一个都还没建：框架原生的文件完整性门禁会报，这里不重复；但要报出这组判据没跑成
     return gate(ctx, {
       skipped: [{ what: '义务落点与探针', why: '契约点名的实现文件一个都还没建' }],
     });
@@ -154,16 +153,5 @@ export default guard('coding', async (ctx) => {
     });
   }
 
-  return gate(ctx, {
-    problems,
-    checks: [
-      { id: 'knowledge_landing_in_code', status: problems.length ? STATUS.FAIL : STATUS.PASS,
-        // 这一条判的是**契约实体标识在不在、探针形态**，不是「义务落实了没有」——
-        // 后者是语义判断，由 overlay 的同名 semantic_check 交给 verifier，告警里的证据缺口是它的输入。
-        detail: `契约实体标识存在：义务 ${obligations.length} 条、角色 ${roles.length} 个；`
-          + `问题 ${problems.length} 条`
-          + (warnings.length ? `；告警 ${warnings.length} 条：${warnings.join('；')}` : '') },
-    ],
-    inputs: present.map(rel => path.resolve(ctx.projectRoot, rel)),
-  });
+  return gate(ctx, { problems, warnings });
 });

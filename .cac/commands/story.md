@@ -18,24 +18,6 @@ argument-hint: <init|archive|restore|update|adapt|help> [AR|目标工程]
 | `restore <AR>` | 「需求系统 Token」+「恢复」 |
 | `update <编号>` | 「更新」（要从需求系统取新内容时还需先读「需求系统 Token」） |
 | `adapt [<目标工程>]` | **改读** [story-adaptation/SKILL.md](../../doc/extensions/skills/story-adaptation/SKILL.md)（不读 story 的 SKILL）——把本扩展装到／升级到另一个工程，与需求流程无关 |
-| `help` | **勿读 SKILL**——直接输出下方「工作流程」 |
+| `help` | 「链条」与「命令入口」——据它说明各命令做什么、按什么顺序用 |
 
 `init` 的编号可以是 AR 单号，也可以是问题单号／工单号——按前缀自动分派，详见「初始化」章。
-
-## 工作流程（/story help 直接输出本节）
-
-按预期开发顺序：
-
-| 顺序 | 命令 | 功能 |
-|---|---|---|
-| 1 | `/story init <编号>` | 起手：拉取／落盘 AR·SR·RR 需求资料，**随后由 SKILL 接管**，一路走到进入 `/spec` |
-| 2 | `/spec` | 需求规格阶段（非 story 实现，流程必经）：一次 pass 产出三份产物并过闭环门禁 |
-| 3 | `/story archive <AR>` | AR/story.md 作正文、AR/review.md 作附件，**两份**一并归档上传（自动备份；任一缺失或未过门禁即拒绝，不写工作区 AR/design.md） |
-| 4 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
-| 5 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物；先检测再决定要不要读，取材只写暂存、不覆盖当前稿 |
-| — | `/story adapt [<目标工程>]` | 工程运维（不在开发顺序内）：把 Story Extension 装到／升级到另一个工程 |
-| — | `/story help` | 输出本流程说明 |
-
-`init` 之后不需要人再敲命令——中断后用
-`python doc/extensions/skills/story/scripts/core/story_flow.py status --feature <编号>`
-问「现在走到哪、下一步干什么」。

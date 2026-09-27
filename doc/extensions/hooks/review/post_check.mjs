@@ -60,7 +60,7 @@ export default guard('review', async (ctx) => {
   const reportPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
   const text = readTextOrNull(reportPath);
   if (text === null) {
-    // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要留痕
+    // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要报出来
     return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '审查报告还没生成' }] });
   }
 
@@ -70,7 +70,6 @@ export default guard('review', async (ctx) => {
       problems: [`review/review-report.md 缺「${SECTION_TITLE}」表——门禁在标题含「${SECTION_TITLE}」的小节里读第一张表，契约里每条 must 一行结论。`
         + '形态：| rule | 落点（契约实体） | 落实位置（文件:符号） | 结论（落实/未落实/不适用） | 依据 |'
         + '；「不适用」也要写，缺席与「做过但没写」事后完全同形，而只有前者是缺陷'],
-      inputs: [reportPath],
     });
   }
 
@@ -78,7 +77,7 @@ export default guard('review', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return gate(ctx, { problems: [`激活知识派生失败（review 门禁按激活知识取规约的强制力）：${e.message}`], inputs: [reportPath] });
+    return gate(ctx, { problems: [`激活知识派生失败（review 门禁按激活知识取规约的强制力）：${e.message}`] });
   }
 
   const problems = [];
@@ -120,8 +119,5 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  return gate(ctx, {
-    problems,
-    inputs: [reportPath],
-  });
+  return gate(ctx, { problems });
 });

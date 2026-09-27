@@ -1,5 +1,5 @@
 /**
- * post_check 的统一出口 —— 六个阶段共用：入口守卫、报错文案、留痕调用。
+ * post_check 的统一出口 —— 六个阶段共用：入口守卫、报错文案。
  *
  * ## 1. 顶层异常自报 BLOCKER
  * framework 的 dispatcher 对 hook 崩栈或超时按 MAJOR 处理，「门禁自己坏了」与「门禁判它没问题」
@@ -12,8 +12,11 @@
  * ## 3. 每条问题自带在哪、什么问题、机制
  * 判出问题的那条检查把它写成「<在哪>：<问题>——<机制>」，怎么修由作者按规则与机制判断；
  * 出口只负责编号列全，不加统一的开头与结尾。
+ *
+ * ## 4. 不阻断的消息也要送到作者
+ * framework 的 dispatcher 只把 `ok:false` 的消息写进 harness 报告，`ok:true` 带的消息不落地。
+ * 没有问题、但有判据没跑成或有告警时，按 `ok:false` + MINOR 返回：进报告、不影响 verdict。
  */
-import { STATUS, writePostCheckEvidence } from './evidence.mjs';
 
 /**
  * 包住 post_check 主体：入口守卫 + 顶层 try/catch。
@@ -42,18 +45,18 @@ export function guard(phase, body) {
 }
 
 /**
- * 组装出口：写留痕（通过也写）→ 全绿返回 ok，否则一次列全。
+ * 组装出口：全绿返回 ok，否则一次列全。
  *
  * @param {{projectRoot: string, feature: string, phase: string}} ctx
  * @param {{
  *   problems?: string[],
  *   skipped?: {what: string, why: string}[],
  *   groups?: {name: string, problems?: string[], skipped?: {what: string, why: string}[]}[],
- *   checks?: {id: string, status: string, detail?: string}[],
- *   inputs?: string[],
+ *   warnings?: string[],
  * }} r
  *   `problems` 逐条是「<在哪>：<问题>——<机制>」；`skipped` 是因前置缺失而没能执行的判据，
  *   即使本次没有 problems 也要报出来——「没报错」不等于「都查过了」。
+ *   `warnings` 是不阻断的告警，作者按它补证据或在审查里说明。
  *   `groups` 是按数据前置分的组：每组自己决定能否执行，能执行的全部执行，报错按组分节，
  *   作者一眼看到每一类各有几处、还有哪一组等前置——而不是修完一类才看见下一类。
  */
@@ -66,27 +69,18 @@ export function gate(ctx, r) {
   const problems = [...(r?.problems ?? []).filter(Boolean), ...groups.flatMap(g => g.problems)];
   const skipped = [...(r?.skipped ?? []).filter(s => s && s.what), ...groups.flatMap(g => g.skipped)];
 
-  const checks = r?.checks?.length
-    ? r.checks
-    : [{
-        id: `ext_${ctx.phase}_gate`,
-        status: problems.length ? STATUS.FAIL : STATUS.PASS,
-        detail: `问题 ${problems.length} 条；未执行判据 ${skipped.length} 条`,
-      }];
-  // 跳过的判据本身就是留痕的一部分：事后要能分辨「查过且通过」与「压根没查」。
-  for (const s of skipped) {
-    checks.push({ id: s.id ?? `skipped:${s.what}`, status: STATUS.NOT_APPLICABLE, detail: s.why });
+  const warnings = (r?.warnings ?? []).filter(Boolean);
+  const notes = [];
+  if (skipped.length) {
+    notes.push(`${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
+      + skipped.map(s => `${s.what}（${s.why}）`).join('；'));
   }
-  writePostCheckEvidence(ctx, { checks, inputs: r?.inputs ?? [] });
+  if (warnings.length) notes.push(`告警 ${warnings.length} 条（不阻断）：${warnings.join('；')}`);
 
-  if (!problems.length && !skipped.length) return { ok: true };
+  if (!problems.length && !notes.length) return { ok: true };
   if (!problems.length) {
-    // 没有问题、但有判据没跑成：不阻断（没有证据说产物有错），但要让人看见缺口。
-    return {
-      ok: true,
-      message: `扩展门禁有 ${skipped.length} 条判据未执行：`
-        + skipped.map(s => `${s.what}（${s.why}）`).join('；'),
-    };
+    // 没有证据说产物有错，不阻断；缺口与告警要让作者看见。
+    return { ok: false, severityOverride: 'MINOR', message: notes.join('\n') };
   }
 
   const parts = [`以下 ${problems.length} 处需要修正（一次列全，不必逐轮试）：`];
@@ -98,10 +92,7 @@ export function gate(ctx, r) {
     parts.push(`【${g.name}】${g.problems.length} 处`);
     g.problems.forEach(p => parts.push(`${++n}. ${p}`));
   }
-  if (skipped.length) {
-    parts.push(`另有 ${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
-      + skipped.map(s => `${s.what}（${s.why}）`).join('；'));
-  }
+  parts.push(...notes);
 
   return { ok: false, severityOverride: 'BLOCKER', message: parts.join('\n') };
 }

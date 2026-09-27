@@ -54,7 +54,7 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
         self.acceptance_with()
         # 中性工程没配 profile：没有问题，只如实记章号那一条未执行
         message = self.hook("spec")
-        self.assertTrue(message.startswith("扩展门禁有 1 条判据未执行："), message)
+        self.assertTrue(message.startswith("1 条判据因前置缺失未能执行"), message)
         self.assertIn("spec 主章号（framework.config.json 没有配 project_profile.name", message)
 
 
@@ -100,7 +100,7 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
         self.write_contracts(kp.contracts())
         # 中性工程没配 profile、也没有 spec：没有问题，如实记章号与埋点两条未执行
         message = self.hook("plan")
-        self.assertTrue(message.startswith("扩展门禁有 2 条判据未执行："), message)
+        self.assertTrue(message.startswith("2 条判据因前置缺失未能执行"), message)
         self.assertIn("plan 主章号（framework.config.json 没有配 project_profile.name", message)
         self.assertIn("埋点逐统计点落实（本需求没走 /story，spec 未提供统计设计）", message)
 

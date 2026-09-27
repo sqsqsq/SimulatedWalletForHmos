@@ -22,10 +22,10 @@ import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
 import { carriedDiagramProblems, imageProblems, strayMarks } from './images.mjs';
-import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
+import { decisionProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
-  formatHits, scanBannedTerms, scanBrokenImages, scanLanguageRedline, scanLocalPaths,
+  formatHits, scanBrokenImages, scanLanguageRedline, scanLocalPaths,
 } from './language.mjs';
 
 function groupedProblems(problems, marks) {
@@ -141,24 +141,18 @@ export function cmdCheck(ctx) {
   }
 
   mark('⑨ 归档件红线');
-  // ⑨ 归档件红线：仓内路径 / 客户端禁用词 / 图片断链
+  // ⑨ 归档件红线：仓内路径 / 图片断链
   //
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
-  // 词表在合同、判定形态在 language.mjs，这里只调。附录里由真源投影的机器区不在这里报：
+  // 判定形态在 language.mjs，这里只调。附录里由真源投影的机器区不在这里报：
   // 它没有作者，报在这里作者删掉、下一次投影又写回来——那些问题收到 ⑩b 报到真源。
   const reviewText = readText(ctx.reviewPath) ?? '';
-  // 章级豁免由合同数据给（`banned_terms_exempt`）：讲发布动作的那一章里，
-  // 那几个词是业务事实不是客户端文案——收缩的是作用域，不是词表。
-  const bannedExempt = ctx.contract.chapters.filter(c => c.banned_terms_exempt).map(c => c.title);
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
   // 围栏外的图源标记由 ⑫d 一处报，这里先抹掉，同一行不再按文档坐标报第二遍
   const stray = new Set(strayMarks(storyText));
   const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
     .map((line, i) => (stray.has(i + 1) ? '' : line)).join('\n');
-  // review 的禁用词作用域比别的判据窄：人工区与「上线/管控」类议题不判，
-  // 见 `redactReviewExemptZones`。词表一个字没削，收的是作用域。
-  const reviewForBanned = redactReviewExemptZones(reviewText, ctx);
   const storyLines = storyText.split(/\r?\n/);
   const zones = zonesByLine(storyLines);
   const zoneHits = [];
@@ -170,15 +164,10 @@ export function cmdCheck(ctx) {
     if (zone) zoneHits.push({ zone, line: h.line, what, hit: hitOf(h) });
     return !zone && h.line < firstChapter;
   }));
-  for (const [label, text, bannedText] of [
-    ['story', storyForPaths, storyForPaths],
-    ['review', reviewText, reviewForBanned],
-  ]) {
+  for (const [label, text] of [['story', storyForPaths], ['review', reviewText]]) {
     if (!text) continue;
     for (const [what, kind, hits, hitOf] of [
       ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot), h => h.path],
-      ['客户端语境禁用词', 'banned',
-        scanBannedTerms(bannedText, { exemptChapters: bannedExempt, contract: ctx.contract }), h => h.term],
       // story 的图片断链逐章判（见 ⑪，与章提交同一处）；这里只剩 review 那一份
       ['图片断链', 'image', label === 'story' ? []
         : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path), h => h.path],
@@ -275,9 +264,6 @@ export function cmdCheck(ctx) {
   // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
   // 标记本身指不指得到、写没写在围栏里，是本章的事，由 ⑪ 判。
   problems.push(...carriedDiagramProblems(ctx, storyText));
-
-  mark('⑬ 评审记录只含渲染语法');
-  problems.push(...reviewFormProblems(reviewText, ctx.contract));
 
   mark('⑮ AR 根下只有交付文档');
   problems.push(...strayFileProblems(ctx));

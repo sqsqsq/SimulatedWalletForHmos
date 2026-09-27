@@ -6,7 +6,7 @@
 
 ## 一、上游输入必读
 
-正文生成前必须读下面几份（存在时），并在 `spec/context-exploration.md` 的 `key_inputs_read` 里记录：
+正文生成前必须读下面几份（存在时），并记进 framework `context-exploration` 的 `key_inputs_read`：
 
 | 文件 | 是什么 |
 |---|---|

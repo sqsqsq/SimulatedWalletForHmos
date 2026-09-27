@@ -78,22 +78,37 @@ class NegativeCase(StoryBuildCase):
         self.write_audit(data)
 
 
-class ArchivedDocMustStayReadableOutsideThisRepo(NegativeCase):
-    """归档件红线：读者手上没有这个仓。"""
+class RetiredJudgementsDoNotBlock(NegativeCase):
+    """读者审查按语义判的内容，check 不按字面拦：发布用语、附录节首不写定位句、人工区里的「下一步：」。"""
 
-    def test_N1_review_promises_a_delivery_mechanism(self) -> None:
-        """坏产物：评审记录里写「采用灰度发布」——那是在承诺交付机制。
+    def put_chapter_line(self, line: str) -> None:
+        text = self.story()
+        head = "## 功能说明\n\n"
+        at = text.index(head) + len(head)
+        self.story_path.write_text(text[:at] + line + "\n\n" + text[at:], encoding="utf-8")
 
-        review 是决策文档，写反事实与理由是本职（「不同意时改成什么」）；
-        但**真的在承诺一种发布方式**时它仍该被拦。这两者的界线只有读了才知道，
-        所以这条判据在 review 上放开之前，先在这里锁住它现在拦得住。
-        """
+    def test_a_release_word_in_story_and_review_is_not_reported(self) -> None:
+        self.put_chapter_line("本方案采用灰度发布，先放开一部分用户。")
         review = self.feature_root() / "AR" / "review.md"
         existing = review.read_text(encoding="utf-8") if review.exists() else "# 评审记录\n"
-        review.write_text(existing + "\n本方案采用灰度发布，先放开一部分用户。\n",
-                          encoding="utf-8")
+        review.write_text(existing + "\n本方案采用灰度发布，先放开一部分用户。\n", encoding="utf-8")
         self.init_audit()
-        self.assert_check_names("review.md 出现客户端语境禁用词")
+        _, out = self.check_output()
+        self.assertNotIn("灰度", out)
+
+    def test_an_appendix_section_may_open_with_its_content(self) -> None:
+        self.rewrite_story("### 材料清单\n\n本篇据以写成的材料。\n\n", "### 材料清单\n\n")
+        self.init_audit()
+        _, out = self.check_output()
+        self.assertNotIn("材料清单」：开头", out)
+
+    def test_the_reviewer_may_write_next_step_in_the_human_zone(self) -> None:
+        review = self.feature_root() / "AR" / "review.md"
+        existing = review.read_text(encoding="utf-8") if review.exists() else "# 评审记录\n"
+        review.write_text(existing + "\n修改意见：\n下一步：\n", encoding="utf-8")
+        self.init_audit()
+        _, out = self.check_output()
+        self.assertNotIn("评审记录里出现", out)
 
 
 class DeclaredSourcesMustExist(NegativeCase):
@@ -277,10 +292,8 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
 
     THIS = Path(__file__)
 
-    # 本段退掉九条：它们守的判据（落点守恒、形态守恒、裁决核实、逐问逐章、术语实体词）
-    # 随逐单元系统一起退场。剩下三条重新编号 N1..N3——「不许缺号」这条元判据比的是基线，
-    # 基线跟着退场走，判据本身一个字没动。
-    NEGATIVE_COUNT = 1
+    # 反例条数：编号从 N1 连续到这个数。现有判据的反例各在其判据的测试文件里。
+    NEGATIVE_COUNT = 0
 
     def test_negatives_are_numbered_without_gaps(self) -> None:
         body = self.THIS.read_text(encoding="utf-8")
@@ -326,39 +339,10 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
                              m.group(1) + " 没写明哪一批转正")
 
 
-class ContextDependentWordsLeftTheVocabulary(unittest.TestCase):
-    """词义要读上下文才分得清的词不进词表：订单、数据、状态的撤销与恢复是正常业务语言。
-
-    服务器侧发布动作的词仍在词表里照拦；客户端文案有没有描述端侧不存在的服务器动作，
-    归语义审查看实际对象，不在脚本里叠一句句语境豁免。
-    """
+class NoWordListForToolVocabulary(unittest.TestCase):
+    """语言红线合同与判定脚本里没有按字面拦装置用语的词表。"""
 
     LANGUAGE = REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/language.mjs"
-
-    def hits(self, text: str) -> list:
-        import subprocess  # noqa: PLC0415
-        script = ("import {pathToFileURL} from 'node:url';"
-                  "const m = await import(pathToFileURL(process.argv[1]).href);"
-                  "process.stdout.write(JSON.stringify(m.scanBannedTerms(process.argv[2]).map(h => h.term)));")
-        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--",
-                               str(self.LANGUAGE), text],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return json.loads(proc.stdout)
-
-    def test_business_undo_and_recovery_are_plain_language(self) -> None:
-        for line in ("扣款失败时订单保留，已占用的额度回滚。", "缓存缺失时回退到云侧查询。",
-                     "撤销签约后状态回退为未签约。"):
-            with self.subTest(line=line):
-                self.assertEqual([], self.hits(line), "合法的业务撤销与恢复被当成服务器侧词汇拦了")
-
-    def test_server_release_words_are_still_caught(self) -> None:
-        self.assertIn("灰度", self.hits("本方案采用灰度发布。"))
-
-    def test_a_business_sentence_that_says_redline_is_still_judged(self) -> None:
-        """按行语境的豁免退出：一句业务话里出现「红线」「禁用」二字，不能顺带放过同一行的禁用词。"""
-        self.assertIn("灰度", self.hits("这条红线要求本期灰度发布前完成评审。"))
 
     def test_no_word_list_for_tool_vocabulary_is_left(self) -> None:
         """装置词表退出：合同与脚本里都不再有按字面拦「关卡」「台账」一类词的表。"""
@@ -371,117 +355,6 @@ class ContextDependentWordsLeftTheVocabulary(unittest.TestCase):
         for gone in ("EXEMPT_LINE_PATTERNS", "AI_HEADING_TERMS", "SEARCH_PHRASE_RE", "harnessTerms", "scanDanglingRefs"):
             self.assertNotIn(gone, rules, f"language.mjs 里还留着「{gone}」")
 
-    def test_no_context_exemption_is_left_for_the_retired_words(self) -> None:
-        rules = self.LANGUAGE.read_text(encoding="utf-8")
-        for gone in ("数据回退", "事务回退", "状态可恢复或明确回退"):
-            self.assertNotIn(gone, rules, f"退出词表的词还留着语境豁免「{gone}」")
-        package = (REPO_ROOT / "doc/extensions/hooks/spec/author.mjs").read_text(encoding="utf-8")
-        self.assertNotIn("同一个词的另一种语义", package, "任务包还在教作者替词")
-
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class ReviewBannedTermsScope(NegativeCase):
-    """归档件禁用词在 `review.md` 上的作用域 —— 放宽项，硬门是 N6 仍拦得住。
-
-    ## 放宽账
-
-    - **它防的是什么**：归档件里出现服务端发布术语，让评审人以为这是产品要交付的东西；
-    - **误伤面**：人工区与两类议题里**真·产品承诺**将不再被这条拦住；
-    - **谁来接**：其余机器区照拦（`test_N6_*` 是硬门）；story 侧一字未动，仍全篇照拦。
-
-    ## 为什么原来会误伤
-
-    `scanBannedTerms` 的豁免参数传的是 **story 的章标题**，review.md 里没有那些标题，
-    等于零豁免。实跑两处命中全在 review，且全是决策语言。
-    """
-
-    DEC_ID = "D901"
-
-    def write_review(self, machine: str, human: str = "", freeform: str = "",
-                     category: str = "业务规则") -> None:
-        """造一份结构与渲染器一致的 review.md，并让 decisions.json 认得这条议题。"""
-        src = self.feature_root() / "AR" / "story-src"
-        src.mkdir(parents=True, exist_ok=True)
-        (src / "decisions.json").write_text(json.dumps(
-            {"decisions": [{"id": self.DEC_ID, "category": category,
-                            "status": "settled", "title": "甲议题",
-                            "clarification": "甲", "decider": "需求方"}]},
-            ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.feature_root() / "AR" / "review.md").write_text(
-            "# 评审记录\n\n#### 1 甲议题\n\n" + machine + "\n\n请需求方评审。\n\n"
-            "评审结论：\n- [ ] 同意\n- [x] 需修改\n- [ ] 暂缓\n修改意见：" + human
-            + "\n<!-- decision: " + self.DEC_ID + " -->\n\n"
-            "## 其他意见\n\n<!-- freeform-zone -->\n" + freeform
-            + "\n<!-- /freeform-zone -->\n",
-            encoding="utf-8")
-
-    def banned_hits(self) -> str:
-        _, out = self.check_output()
-        return "\n".join(l for l in out.splitlines() if "review.md 出现客户端语境禁用词" in l)
-
-    def test_the_human_zone_is_not_judged(self) -> None:
-        """人工区是**人的表态**，不是产品承诺——「先灰度一周」不该被拦。"""
-        self.write_review("甲议题的澄清正文。", human="先灰度一周再全量。")
-        self.init_audit()
-        self.assertEqual(self.banned_hits(), "", "人工区被当成产品承诺判了")
-
-    def test_choosing_another_option_in_the_opinion_is_not_judged_either(self) -> None:
-        """在修改意见里选别的做法，同样是人的表态。"""
-        self.write_review("甲议题的澄清正文。", human="选 2，先灰度一周再全量。")
-        self.init_audit()
-        self.assertEqual(self.banned_hits(), "", "修改意见被当成产品承诺判了")
-
-    def test_the_freeform_zone_is_not_judged(self) -> None:
-        """「其他意见」章整章是人写的，同理不判。"""
-        self.write_review("甲议题的澄清正文。", freeform="上游说没有运营灰度诉求。")
-        self.init_audit()
-        self.assertEqual(self.banned_hits(), "", "freeform 区被当成产品承诺判了")
-
-    def test_an_exempt_category_is_not_judged(self) -> None:
-        """必答内容就是开关管控的那类议题——讲放量是本职，不是跑题。"""
-        self.write_review("上游约定：分享功能开关默认关闭，随版本放开。",
-                          category="入口与管控")
-        self.init_audit()
-        self.assertEqual(self.banned_hits(), "", "上线/管控类议题被误伤")
-
-    def test_a_non_exempt_category_is_still_judged(self) -> None:
-        """**本项的硬门**：不属上线/管控类的议题，机器区里真承诺发布方式仍要拦。"""
-        self.write_review("本方案采用灰度发布，先放开一部分用户。",
-                          category="规则与数值")
-        self.init_audit()
-        self.assertNotEqual(self.banned_hits(), "",
-                            "非豁免类议题的机器区放行了——本项设计错，要回退重做")
-
-    def test_the_word_list_itself_is_untouched(self) -> None:
-        """收的是作用域，不是词表：合同里的词条数不许少。
-
-        降级词表会让 story 侧一起失守，那是另一码事。词表 2026-09-04 从脚本搬进合同——
-        作者要在动笔前读到它，脚本里再留一份副本就是两个真源。
-        """
-        contract = json.loads((
-            REPO_ROOT / "doc/extensions/skills/story/contracts/story-chapters.json"
-        ).read_text(encoding="utf-8"))
-        vocabulary = contract["language_redline"]["client_vocabulary"]
-        self.assertGreaterEqual(len(vocabulary), 6, "禁用词表被削了")
-        self.assertTrue(all(v.get("term") and v.get("hint") for v in vocabulary),
-                        "每个词都要带改法——只说不许用，作者不知道该写什么")
-        rules = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/language.mjs"
-                 ).read_text(encoding="utf-8")
-        self.assertNotIn("const BANNED_TERMS", rules, "脚本里又留了一份词表副本")
-
-    def test_the_exempt_set_comes_from_the_contract(self) -> None:
-        """豁免类别由合同数据给，脚本不写死类别名——写死名字换个工程就静默失效。"""
-        body = (REPO_ROOT / "doc/extensions/skills/story/scripts/core/story/review.mjs"
-                ).read_text(encoding="utf-8")
-        seg = body.split("function redactReviewExemptZones", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn("banned_terms_exempt", seg)
-        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        for cat in contract["decision_categories"]:
-            if cat.get("banned_terms_exempt"):
-                self.assertNotIn(cat["key"], seg,
-                                 "类别名 %s 被写死进脚本了" % cat["key"])
-
-

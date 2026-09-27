@@ -68,19 +68,6 @@ class TestContractsSingleSource(unittest.TestCase):
         self.assertFalse(result["exists"], "子目录下的那份不该被读到")
         self.assertEqual(result["names"], [])
 
-    def test_path_matches_framework_loader(self) -> None:
-        """路径与 framework 的 spec-loader 同源：feature 根下的 contracts.yaml。"""
-        script = (
-            "import {pathToFileURL} from 'node:url';"
-            "const m=await import(pathToFileURL(process.argv[1]).href);"
-            "console.log(m.contractsPath(process.argv[2], process.argv[3]));")
-        proc = subprocess.run(
-            [self.node, "--input-type=module", "-e", script, "--",
-             str(CONTRACTS_MJS), str(self.root), FEATURE],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(proc.stdout.strip()), self.feature_root / "contracts.yaml")
-
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)

@@ -504,6 +504,20 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         row = flow["update"]["decisions"][0]
         self.assertEqual(("按 36 小时做", "D1", "0123456789abcdef"), (row["reply"], row["issue"], row["asked"]))
 
+    def test_the_words_stay_on_record_after_the_close(self) -> None:
+        """收口只清开着的那一轮：这一轮人的每句原话与问法摘要随 record.json 留档。"""
+        rid = self.update()["update"]
+        self.put_issue()
+        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        self.decide("--update", "开关默认关闭", "--issue", "D1", "--reply", "默认关，灰度开关由运营开")
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual([("按 36 小时做", "0123456789abcdef"), ("默认关，灰度开关由运营开", "0123456789abcdef")],
+                         [(d["reply"], d["asked"]) for d in rec["decisions"]])
+        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertNotIn("decisions", flow["update"])
+
     def test_it_needs_the_issue(self) -> None:
         self.update()
         self.put_issue()

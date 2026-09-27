@@ -26,7 +26,7 @@ semantic_checks:
 # 作者起手内容的读没读过：唯一的机械留痕。
 # 本阶段的作者要求由作者动笔前自己取（入口见 SKILL 与 CLAUDE.md 扩展段），
 # 取到之后没有任何东西能证明它被读了——
-# 除非作者把来源坐标写进 `context-exploration.md` 的 `key_inputs_read`。
+# 除非作者把来源坐标写进 framework `context-exploration` 的 `key_inputs_read`。
 # 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
 # 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
 # 字符串就是那份原则页的仓内相对路径，逐字一致。

@@ -30,7 +30,7 @@ const ENTITY_KINDS = [
  * feature 根、扩展读子目录。那时执行者只能复制一份去同步，而义务（实体上的 `must`）
  * 就挂在那份副本上——「每类数据一份真源」被绕开了。
  */
-export function contractsPath(projectRoot, feature) {
+function contractsPath(projectRoot, feature) {
   return path.join(featureRoot(projectRoot, feature), 'contracts.yaml');
 }
 

@@ -465,19 +465,24 @@ class TheCodeIsTheEvidence(ProtocolCase):
         return self.hook("coding")
 
     def test_a_clue_probe_that_misses_does_not_fail(self) -> None:
-        """NEU-02 的方法体探针只是线索：换一种写法认不出，不等于没做。"""
-        self.assertEqual("", self.coding(self.GOOD))
+        """NEU-02 的方法体探针只是线索：换一种写法认不出，不等于没做，作为告警送到作者。"""
+        message = self.coding(self.GOOD)
+        self.assertTrue(message.startswith("告警 1 条（不阻断）"), message)
+        self.assertIn("证据缺口", message)
 
     def test_a_blocking_probe_follows_the_force(self) -> None:
         bad = self.GOOD.replace("const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });")
         self.assertIn("而这条规约是红线", self.coding(bad))
         self.edit_knowledge("constraints/neutral-domain.md", "| 红线 | 有新增出口 | 字段名用中性词",
                             "| 基线 | 有新增出口 | 字段名用中性词")
-        self.assertEqual("", self.coding(bad), "基线只记未落实，交 review 写依据")
+        message = self.coding(bad)
+        self.assertTrue(message.startswith("告警"), "基线只记未落实，交 review 写依据：" + message)
+        self.assertIn("记未落实", message)
         self.edit_knowledge("constraints/neutral-domain.md", "| 基线 | 有新增出口 | 字段名用中性词",
                             "| 红线 | 有新增出口 | 字段名用中性词")
         self.edit_knowledge("constraints/neutral-domain.md", "阻断：absent_regex", "absent_regex")
-        self.assertEqual("", self.coding(bad), "不带阻断的同一个表达式只是证据缺口")
+        message = self.coding(bad)
+        self.assertTrue(message.startswith("告警"), "不带阻断的同一个表达式只是证据缺口：" + message)
 
     def test_a_file_probe_is_reported_once_per_rule(self) -> None:
         """同一规约挂两处、探针不按实体收窄：扫的是同一批文件，同样的行号只报一次。"""

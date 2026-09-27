@@ -646,18 +646,14 @@ modes:
     found_round: "2026-08-28"
     form: post_check 通过时不留痕，「跑了并通过」与「根本没跑」在产物上完全同形
     clause: 04 #2 / 00 §4.3
-    checker: a04_gate_pass_leaves_no_trace
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/A04-gate-pass-no-trace/bad
-    good_fixture: test/story/fixtures/failure-modes/A04-gate-pass-no-trace/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
-    scope_note: >
-      dispatcher 只在 hook 返回 ok:false 时记结果（hooks-dispatcher.ts:177-188）。
-      基线态六个 post_check 只有两个写留痕，AR90004 的 coding/reports 里没有 ext-post-check.json
-      ——要证明某条判据在真实链路上生效过，举不出任何证据。
-      认间接留痕：post_check 若 import 了自己会写留痕的 shared 模块，同样算数（避免六处复制样板）。
+    status: retired
+    approved_by: 用户（2026-09-27 步骤 8 裁定废弃机制全部退出，U52）
+    reason: >
+      门禁运行记录在机制里没有读取方，只有本检查拿它当证据。门禁结论以 harness 报告为准：
+      阻断的问题按 BLOCKER、不阻断的告警与未执行判据按 MINOR 进报告（hooks-dispatcher.ts:177-187 只记 ok:false）。
 
   - id: A05-entry-misses-section
     dimension: infra
@@ -1038,13 +1034,14 @@ modes:
     found_round: "2026-08-30"
     form: 评审记录长回签署字段与状态行（确认人/确认日期/确认依据/状态）——表单再次膨胀成需要说明书的东西
     clause: KG-4 / B2-9
-    checker: s07_review_legacy_fields
     target: mechanism
-    bad_fixture: test/story/fixtures/failure-modes/S07-review-legacy-fields/bad
-    good_fixture: test/story/fixtures/failure-modes/S07-review-legacy-fields/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 用户（2026-09-27 步骤 8 裁定废弃机制全部退出，U52）
+    reason: >
+      review.md 由渲染器生成，表单行不再长回来由渲染器与它的测试守
+      （test_story_build.TestReviewForm）；按行首正则在运行时核还会拦评审人在人工区写的「下一步：」。
     scope_note: >
       判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来：
       暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、确认依据七个字段，

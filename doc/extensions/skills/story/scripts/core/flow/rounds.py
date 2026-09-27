@@ -12,7 +12,7 @@ from flow.state import (
     FlowError, SCHEMA, after_complete, in_update, load, log, require, save)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
-from flow.routing import frozen_inbox_note, live_materials, next_step
+from flow.routing import closed_inbox_note, live_materials, next_step
 
 
 def cmd_round(feature_root: Path) -> dict:
@@ -50,9 +50,9 @@ def cmd_round(feature_root: Path) -> dict:
         if scope_options:
             entry["scope_options"] = scope_options
 
-    frozen = frozen_inbox_note(feature_root, contract, manifest)
-    if frozen:
-        log(frozen)
+    note = closed_inbox_note(feature_root, contract, manifest)
+    if note:
+        log(note)
 
     # 材料没变就不是新一轮。「幂等」只意味着**不新建轮次**，不意味着不更新事实。
     if rounds and (rounds[-1].get("materials") or {}).get("digest") == digest:
@@ -119,7 +119,7 @@ def cmd_reopen(feature_root: Path) -> dict:
     范围关卡不替重拍授权。新一轮沿用本轮的材料基准、本 AR 定位与范围选项集，
     分析要改就改侧车再跑 `round`。
 
-    已登记的成文一并作废：范围重拍之后 story 要按新范围重新登记。
+    状态回到 `in_progress`，登记记号随之清掉：范围定了之后照常 `complete`，再跑 `story` 按新范围登记。
     只改 story 不用走这里——改完重跑 `story` 就是重新登记。
 
     update 这一轮开着时不重拍：update 沿用本单已定的范围，先 `update close` 收口这一轮。
@@ -151,7 +151,7 @@ def cmd_reopen(feature_root: Path) -> dict:
         step, action = None, (f"下一步暂时算不出来（{exc}）。重开已经生效，不要再跑 reopen；"
                               "按这个原因修好材料后跑 `story_flow.py status` 取下一步")
     log(f"流程已重开（{status} → in_progress），重拍的关卡记进第 {entry['round']} 轮"
-        + ("；成文登记已作废，范围定了之后 story 重新登记" if undone else "")
+        + ("；范围定了之后照常 complete，再跑 story 按新范围登记" if undone else "")
         + f"。下一步：{action}")
     return {"status": "in_progress", "rounds": len(contract["rounds"]),
             "storyRegistrationUndone": undone, "next": step, "action": action}

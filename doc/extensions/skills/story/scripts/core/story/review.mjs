@@ -53,59 +53,6 @@ export function registrationGap(ctx) {
 }
 
 /**
- * 归档件禁用词在 `review.md` 上的**作用域**：把不判的那几段抹成空行。
- *
- * 抹而不是跳过，是为了让行号不变——报错要指得回原文的那一行。
- *
- * 红线管的是**这份文档对产品的承诺**。review 里有两片地方不是承诺：
- *
- * | 不判的 | 为什么 |
- * |---|---|
- * | 人工区（`评审结论：` 之后到该议题的结束标记） | 那是**人的表态**：「需修改，先灰度一周」是他在说要改成什么，不是产品要交付灰度能力 |
- * | 「其他意见」章（`freeform-zone` 之内） | 同上，整章都是人写的 |
- * | 必答内容就是上线动作 / 开关管控的那几类议题 | 与 story 的章级豁免逐字同一条判据：讲开关放量与上线顺序是这一类议题的本职，把它判成违规等于要求作者删掉评审人最要看的那一段 |
- *
- * **豁免类别由合同数据给**（`decision_categories[].banned_terms_exempt`），
- * 脚本不写死类别名——写死名字换个工程就静默失效。
- *
- * **其余机器区照拦**：议题澄清正文里真的在承诺一种发布方式时，它仍该被拦住。
- */
-export function redactReviewExemptZones(reviewText, ctx) {
-  const text = String(reviewText ?? '');
-  if (!text) return text;
-  const exemptCats = new Set((ctx.contract.decision_categories ?? [])
-    .filter(c => c?.banned_terms_exempt).map(c => c.key));
-  const catOf = new Map();
-  for (const dec of decisionList(readJson(ctx.decisionsPath, null)) ?? []) {
-    if (dec?.id) catOf.set(String(dec.id), String(dec.category ?? ''));
-  }
-  // CRLF 安全：这里只喂给禁用词扫描，它自己也按同样的切法，行号对得上就行。
-  const lines = text.split(/\r?\n/);
-  // 先把每一行归到它所属的议题：结束标记在块尾，所以从标记往回划。
-  const owner = new Array(lines.length).fill(null);
-  let from = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/<!--\s*decision:\s*([^\s>-]+)\s*-->/);
-    if (!m) continue;
-    for (let k = from; k <= i; k++) owner[k] = m[1];
-    from = i + 1;
-  }
-  const keep = new Array(lines.length).fill(true);
-  let inFreeform = false;
-  let inHuman = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.includes(FREEFORM_OPEN)) inFreeform = true;
-    if (inFreeform) { keep[i] = false; if (line.includes(FREEFORM_CLOSE)) inFreeform = false; continue; }
-    if (HUMAN_ZONE_MARKS.some(mark => line.startsWith(mark))) inHuman = true;
-    if (/<!--\s*decision:/.test(line)) inHuman = false;
-    if (inHuman) { keep[i] = false; continue; }
-    if (owner[i] && exemptCats.has(catOf.get(owner[i]) ?? '')) keep[i] = false;
-  }
-  return lines.map((l, i) => (keep[i] ? l : '')).join('\n');
-}
-
-/**
  * review 只能在 story 成文之后渲染 —— 顺序本身就是一条判据。
  *
  * review 是**判断的台账**，而判断在成文过程中还会长出来：写到某一章才发现材料两处打架、
@@ -316,25 +263,6 @@ function choiceOptionProblems(id, area) {
       + `「做法${OPTION_CONSEQUENCE}选它会怎样」认，后果说范围、行为、验收或交付哪一项会变`];
   }
   return [];
-}
-
-/** 评审记录只含渲染语法：填写说明、签署字段、状态行、下一步都是表单在膨胀。 */
-export function reviewFormProblems(reviewText, contract) {
-  const problems = [];
-  // ⑬ 评审记录只含渲染语法：出现填写说明、签署字段、状态行、下一步就是表单在膨胀
-  //
-  // 判据是「需要说明书就是设计错了」。这几样每次都以「让评审更规范」的名义长回来，
-  // 而它们的实际后果是评审人先读一遍字段表，再在答不上来的格子里胡填。
-  if (reviewText) {
-    const lines = reviewText.split(/\r?\n/).map(l => l.trim());
-    const banned = (contract?.review_form_banned_lines ?? [])
-      .filter(({ pattern }) => lines.some(l => new RegExp(pattern).test(l)));
-    for (const { name } of banned) {
-      problems.push(`AR/review.md：评审记录里出现「${name}」——合同的 review_form_banned_lines 登记了这类表单行；评审人要填的只有每条议题末尾那处填写位，`
-        + '填写说明、签署字段、状态行让人在答不上来的格子里胡填');
-    }
-  }
-  return problems;
 }
 
 // --------------------------------------------------------------------------

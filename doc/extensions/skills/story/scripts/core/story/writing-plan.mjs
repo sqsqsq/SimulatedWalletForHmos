@@ -30,7 +30,7 @@ const FORMS = {
 //: 「形式：图」是任一种图；点名图种时写中文名或 mermaid 首个声明都认，点名了正文就只认那一种。
 const ANY_DIAGRAM = '图';
 //: 附录章在空壳里的那一行：它不要骨架，这一行只是说明，删掉也不报缺。
-const APPENDIX_NOTE = '附录不写骨架：写章时补每节一句业务定位、说明段与材料贡献';
+const APPENDIX_NOTE = '附录不写骨架：写章时补说明段与材料贡献，节首可以有一句业务定位';
 const LINE = {
   note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,

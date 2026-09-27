@@ -35,12 +35,7 @@ function scanSources(ctx) {
     const abs = path.join(ctx.featureRoot, rel);
     const text = readText(abs);
     if (text !== null) {
-      docs.push({
-        doc, rel, text,
-        // `derived`＝这一份是本轮流程自己生成的中间产物，不是上游给的材料。
-        // 它只守业务编号，工程细节的家是它自己。
-        derived: obj.derived === true,
-      });
+      docs.push({ doc, rel, text });
       continue;
     }
     // 读不到的带回来，必需性交给 sourceStatus。

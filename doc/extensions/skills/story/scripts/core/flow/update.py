@@ -590,12 +590,13 @@ def cmd_update_close(feature_root: Path) -> dict:
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
 
+    contract = load(feature_root) or {}
+    # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
-               phases=phases)
-    contract = load(feature_root) or {}
+               phases=phases, decisions=(contract.get("update") or {}).get("decisions", []))
     contract["update"] = {"open": None, "last_closed": rid}
     save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",

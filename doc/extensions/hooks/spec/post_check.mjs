@@ -7,7 +7,7 @@
  *   2. §9.1 技术契约的结构完整性（core spec 模板未含，由 hooks/spec/author.md 指令驱动 AI 追加）；
  *   3. 知识判定的两个出口（§9.2 规约约束要求 / §9.3 设计模式候选登记）：独立成节、
  *      与 spec/knowledge-use.yaml 这份真源一致、命中集与 acceptance 的桥接键一致；
- *   4. 三条全文红线：禁用词 / 文档坐标 / 数值来源；
+ *   4. 两条全文红线：文档坐标 / 数值来源；
  *   5. story 前置流程契约（AR/story-src/story-flow.json）已收口且决策留痕齐备。
  *
  * 校验边界：**不校验结论真假**——文档坐标可被 AI 伪造，校验格式只给虚假的安全感。
@@ -19,13 +19,11 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CROSS_DOC_COORDINATES, scanBannedTerms, formatHits }
-  from '../../skills/story/scripts/core/story/language.mjs';
+import { CROSS_DOC_COORDINATES } from '../../skills/story/scripts/core/story/language.mjs';
 import { childHeading, fenceRanges, headingEnd, parseDocument, tableCells }
   from '../../skills/story/scripts/core/story/document.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
-import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
@@ -388,29 +386,6 @@ function acceptanceCoverage(ctx, specIds) {
   return problems;
 }
 
-/**
- * §9.1 某一节里表外的第一段正文，没有就返回 null。
- *
- * 这一节是给下游 AI 的技术契约：plan 据它编码、test-plan 据它出用例。
- * 表外那几段承载的通常是实现取舍与待定项——它们有自己的去处，进了契约
- * 只会让下游读到一句「由 plan 决定」。
- * 「不涉及：<依据>」独行豁免：那是空节规则的既有形态。
- */
-function strayProse(body) {
-  // 收到的是 `sectionBody` 切出来的**行数组**，按数组逐行判。
-  // 行的边界由上游给，这里不重新猜——重新切一遍就有第二种切法。
-  for (const raw of Array.isArray(body) ? body : String(body ?? '').split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('|') || line.startsWith('#')) continue;
-    if (/^不涉及[:：]\s*\S/.test(line)) continue;
-    if (/^([-*_])\1{2,}$/.test(line)) continue;      // 分隔线：章与章之间的横线，不是段落
-    if (/^[-*+]\s/.test(line) || /^\d+[.、)]\s/.test(line)) continue;   // 列表另说
-    if (line.startsWith('<!--')) continue;
-    return line.replace(/^>\s*/, '');
-  }
-  return null;
-}
-
 const SPEC_EXT_SECTIONS = [
   { ch: '9.1 技术契约', title: /技术契约/, subs: [['端云接口', /端云接口/], ['数据存储', /数据存储/], ['配置项', /配置项/], ['埋点', /埋点/, { prose: true }], ['依赖变更', /依赖变更/]] },
 ];
@@ -420,7 +395,7 @@ export default guard('spec', async (ctx) => {
   const specPath = path.join(featureDir, 'spec', 'spec.md');
 
   // spec 本身缺失由 framework 的 check-spec 负责，本 hook 只管宿主扩展部分。
-  // 但扩展判据一条都没跑成，要留痕说明——「没报错」不等于「查过了」。
+  // 但扩展判据一条都没跑成，要报出来——「没报错」不等于「查过了」。
   if (!fs.existsSync(specPath)) {
     return gate(ctx, { skipped: [{ what: 'spec 宿主扩展章节与知识出口', why: 'spec.md 还没生成' }] });
   }
@@ -479,13 +454,6 @@ export default guard('spec', async (ctx) => {
           }
           const level = docOf(lines).headings.find(h => h.at === subIdx).level;
           problems.push(...indicatorShape(`spec.md「${ch}」的「${name}」`, body, level, SECTIONS_DOC));
-        } else {
-          const stray = strayProse(body);
-          if (stray) {
-            problems.push(`spec.md「${ch}」的「${name}」表外有段落（「${stray.slice(0, 20)}…」）`
-              + '——这一节是 plan 据以编码、test-plan 据以出用例的技术契约，内容是一张表或一行「不涉及：<依据>」，列表与分隔线不算段落；'
-              + '实现取舍的位置是 spec/notes.md，要人拍板的事的位置是决策件');
-          }
         }
       }
     }
@@ -545,17 +513,10 @@ export default guard('spec', async (ctx) => {
     }
   }
 
-  // ---- 三条全文红线（客户端词表在章节合同 language_redline，判定在 story/language.mjs · story 专属）----
-  // 这三条的作业指导随 story 专属注入件下发；未走 /story 的使用者只在通用注入件里读到
+  // ---- 两条全文红线（判定形态在 story/language.mjs · story 专属）----
+  // 这两条的作业指导随 story 专属注入件下发；未走 /story 的使用者只在通用注入件里读到
   // 建议形态，不该在这里被硬阻断——**注入指导与硬阻断是两件事**。
   if (isStory) {
-    // 客户端语境：spec 是编码与评审件的共同上游，源头不放行才不会一路带下去
-    const bannedHits = scanBannedTerms(text);
-    if (bannedHits.length > 0) {
-      problems.push(`spec.md：客户端语境禁用词 ${bannedHits.length} 处：${formatHits(bannedHits, 'banned').join('；')}`
-        + '——禁用词是服务器侧词汇，词表在章节合同 language_redline，单独使用也算命中');
-    }
-
     // 独立审计：不写文档坐标（详见 evidence-rules 独立审计原则）
     const coordHits = scanDocCoords(text);
     if (coordHits.length > 0) {
@@ -573,15 +534,6 @@ export default guard('spec', async (ctx) => {
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   problems.push(...reportProblems(ctx.projectRoot, ctx.feature, 'spec'));
 
-  const total = problems.length + groups.reduce((n, g) => n + g.problems.length, 0);
-  return gate(ctx, {
-    problems,
-    groups,
-    skipped: chapters.skipped,
-    checks: [
-      { id: 'knowledge_exit_structure', status: total ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${total} 条` },
-    ],
-    inputs: [specPath],
-  });
+  return gate(ctx, { problems, groups, skipped: chapters.skipped });
 });
 

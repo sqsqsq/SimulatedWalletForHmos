@@ -501,7 +501,7 @@ def m02_test_case_features(root: Path, ctx: Ctx) -> Outcome:
     的方案、评审与提交说明里，那里正需要说清「为什么改」。
 
     豁免按语境登记，逐条具名（见 `M02_EXEMPT`）：产品动作本身用这些词、
-    合同数据里的业务项、禁用词的替换说法。
+    合同数据里的业务项。
     """
     case_ids = re.compile(r"\b(AR|SR|RR|DTS|ISSUE)-?\d{3,}\b|\bAC-[A-Z]\d+\b")
     run_counts = re.compile(r"(实测|首跑|上一版|曾经|改动前)[^。；\n]{0,12}?\d")
@@ -1692,48 +1692,6 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def a04_gate_pass_leaves_no_trace(root: Path, ctx: Ctx) -> Outcome:
-    """门禁通过时不留痕——「跑了并通过」与「根本没跑」事后同形。
-
-    框架的 dispatcher 只在 hook 返回 ``ok:false`` 时把结果记进报告，通过的那次什么都不留。
-    基线态六个 ``post_check.mjs`` 里只有两个写留痕，AR90004 的 ``coding/reports/`` 里
-    没有 ``ext-post-check.json``——要证明某条判据在真实链路上生效过，举不出任何证据。
-
-    判据：每个阶段的 ``post_check.mjs`` 都能追溯到留痕（直接 import ``evidence.mjs``，
-    或经统一出口间接调用）。阶段清单派生自 ``hooks/`` 子目录。
-    """
-    hooks_dir = root / "hooks"
-    if not hooks_dir.exists():
-        return Outcome(True, "无 hooks 目录")
-    phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir() and p.name != "shared")
-    if not phases:
-        return Outcome(False, "判定基准派生为空（hooks/ 下没有阶段目录），不当作通过")
-
-    # 间接留痕：shared/ 下哪些模块自己写了留痕，import 它们就等于留了痕。
-    tracing: set[str] = set()
-    shared = hooks_dir / "shared"
-    if shared.exists():
-        for mod in sorted(shared.glob("*.mjs")):
-            if "writePostCheckEvidence" in read_text(mod):
-                tracing.add(mod.name)
-
-    missing: list[str] = []
-    for phase in phases:
-        pc = hooks_dir / phase / "post_check.mjs"
-        if not pc.exists():
-            continue
-        body = read_text(pc)
-        if "writePostCheckEvidence" in body:
-            continue
-        if any(re.search(rf"from ['\"][^'\"]*{re.escape(name)}['\"]", body) for name in tracing):
-            continue
-        missing.append(f"hooks/{phase}/post_check.mjs 通过时不留痕")
-    if missing:
-        return Outcome(False, "；".join(missing))
-    return Outcome(True, f"{len(phases)} 个阶段的 post_check 均留痕（含经 {sorted(tracing)} 间接留痕）")
-
-
-@checker
 def a05_entry_file_misses_extension_section(root: Path, ctx: Ctx) -> Outcome:
     """扩展交付了入口段，宿主入口文件却没带上它。
 
@@ -1959,16 +1917,13 @@ _STORY_ONLY_WORDS = ("story", "三份产物", "叙事件", "技术契约", "归�
 def _spec_post_check(root: Path) -> tuple[bool, str] | None:
     """跑真实的 spec post_check，回 (ok, message)；跑不起来回 None。
 
-    **在副本上跑**，与 `_story_build_cycle` 同一口径：hook 通过时也会写留痕
-    （`spec/reports/ext-post-check.json`，里面有时间戳），在夹具原地跑就是每跑一次
-    把夹具写脏一次——那两个文件因此长期挂在工作区里，被一次次捎带提交，
-    而谁也说不清它们到底改了什么。
+    **在副本上跑**，与 `_story_build_cycle` 同一口径：检查器不改夹具。
     """
     script = (
         "import {pathToFileURL} from 'node:url';"
         "const hook=(await import(pathToFileURL(process.argv[1]).href)).default;"
         "const r=await hook({phase:'spec',feature:process.argv[3],projectRoot:process.argv[2]});"
-        "console.log(JSON.stringify({ok:r.ok!==false,message:r.message??''}));")
+        "console.log(JSON.stringify({ok:r.ok!==false||r.severityOverride==='MINOR',message:r.message??''}));")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / root.name
         shutil.copytree(root, work)
@@ -2059,23 +2014,6 @@ def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "附录的倾倒被点名（合同外小节 / 围栏块 / 空节）")
     return Outcome(False, f"check 未过（非附录结构原因）：{out[:200]}")
 
-
-@checker
-def s07_review_legacy_fields(root: Path, ctx: Ctx) -> Outcome:
-    """评审记录长回签署字段与状态行——表单再次膨胀成需要说明书的东西。
-
-    判据是「需要说明书就是设计错了」。七个字段加一行状态每次都以「让评审更规范」的
-    名义长回来，实际后果是评审人先读一遍字段表，再在六个答不上来的格子里跳过或胡填，
-    而「已确认」因此不可信。留给评审人的只有每条议题末尾那处填写位。
-    """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "review.md").exists():
-        return Outcome(True, "夹具里没有评审记录（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "评审记录只留议题末尾的填写位给评审人")
-    if "评审记录里出现" in out:
-        return Outcome(False, "签署字段与状态行被点名")
-    return Outcome(False, f"check 未过（非评审表单原因）：{out[:200]}")
 
 @checker
 def s10_image_path_copied(root: Path, ctx: Ctx) -> Outcome:

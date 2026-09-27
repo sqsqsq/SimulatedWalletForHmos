@@ -78,22 +78,6 @@ semantic_checks:
       或抄一段能检索到的原文——够支撑这条判断就行，不按长度计。
       既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的结论复制一遍的，
       该条按**未裁**处理。
-  upstream_inputs_coverage:
-    description: >
-      上游输入覆盖（信息守恒）：doc/features/{module}/ 下存在 SR/design.md 或 RR/prd.md 时，
-      spec/context-exploration.md 的 key_inputs_read 须包含它们；spec 业务流程图与 §9.1.1 端云接口
-      的端云结论不得与 SR/design.md 的端云声明矛盾。
-    severity: MAJOR
-    ai_prompt_hint: >
-      检查 doc/features/{module}/SR/design.md 与 RR/prd.md 是否存在；存在则核对
-      context-exploration.md key_inputs_read 是否覆盖；再比对 SR 中与本部件相关的端云接口
-      声明与 spec 流程图/§9.1.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
-      或两者接口清单矛盾，即 FAIL。SR/RR 均不存在时本检查 SKIP。
-      对象是 **SR 声明的每个与本部件相关的接口**，逐个核。
-      **每条裁决给得出回查位置**：指到 SR/design.md 的哪一节，或抄一段能检索到的原文——
-      够支撑这条判断就行，不按长度计。
-      既给不出可回查位置、也没有能支撑判断的原文，或只是把 spec 自己的 §9.1.1 表格复制一遍的，
-      该条按**未裁**处理。
   split_boundary_consistency:
     description: >
       拆分边界一致性：AR/story-src/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
@@ -239,7 +223,7 @@ semantic_checks:
 # 作者起手内容的读没读过：唯一的机械留痕。
 # 本阶段的作者要求由作者动笔前自己取（入口见 SKILL 与 CLAUDE.md 扩展段），
 # 取到之后没有任何东西能证明它被读了——
-# 除非作者把来源坐标写进 `context-exploration.md` 的 `key_inputs_read`。
+# 除非作者把来源坐标写进 framework `context-exploration` 的 `key_inputs_read`。
 # 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
 # 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
 # 字符串就是那份原则页的仓内相对路径，逐字一致。

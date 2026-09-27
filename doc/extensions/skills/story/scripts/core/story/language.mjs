@@ -1,8 +1,8 @@
 /**
  * 归档件红线与语言红线的判定形态 —— 词与类别在章节合同（`language_redline`），形态在这里。
  *
- * 读者是 story-build check（story.md 与 review.md）与 hooks/spec/post_check.mjs（spec.md 的客户端词）。
- * 合同给：红线有哪几类及各自作用域、来源括注的词、客户端禁用词与改法；本文件给：行内代码、
+ * 读者是 story-build check（story.md 与 review.md）、章提交与 hooks/spec/post_check.mjs（spec.md 的文档坐标）。
+ * 合同给：红线有哪几类及各自作用域、来源括注的词；本文件给：行内代码、
  * 驼峰与下划线标识、文档坐标、仓内路径这几种**形态本身**。围栏与标题的切法走 `document.mjs`，
  * 本文件不自己认围栏。
  *
@@ -11,31 +11,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
 import { headingEnd, normalizeHeading, parseDocument } from './document.mjs';
-
-const CONTRACT_PATH = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'contracts', 'story-chapters.json');
-
-let vocabularyCache = null;
-
-/**
- * 客户端语境禁用词，取自章节合同。已读好合同的调用方把它传进来，不再读第二遍。
- *
- * 合同缺这一段就是漏交付：判据默默不判比报错更坏——归档件里的服务端词会一路带到编码。
- */
-export function clientVocabulary(contract) {
-  if (!contract && vocabularyCache) return vocabularyCache;
-  const raw = contract ?? JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf-8'));
-  const list = raw?.language_redline?.client_vocabulary;
-  if (!Array.isArray(list) || list.length === 0) {
-    throw new Error('章节合同的 language_redline.client_vocabulary：缺或为空——客户端语境词表是合同数据，脚本里不留副本');
-  }
-  const out = list.map(x => ({ term: String(x.term), hint: String(x.hint ?? '') }));
-  if (!contract) vocabularyCache = out;
-  return out;
-}
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -77,33 +54,6 @@ function localPathRe(projectRoot) {
   const alts = [...GENERIC_PATH_ALTS];
   if (ids.length) alts.unshift(String.raw`\b(?:${ids.map(escapeRe).join('|')})\/[\w./-]+`);
   return new RegExp(`(?:${alts.join('|')})`, 'g');
-}
-
-/**
- * 扫描禁用词：客户端语境里只可能指服务器侧动作的词。围栏里的不判。
- *
- * **章级豁免**（`opts.exemptChapters`，取值来自合同数据）：某些章天然在讲发布与开关动作，
- * 那几个词在那一章是业务事实——收缩的是作用域，不是词表。
- *
- * @param {string} text
- * @param {{exemptChapters?: string[], contract?: object}} [opts]
- * @returns {{line:number, term:string, hint:string, text:string}[]}
- */
-export function scanBannedTerms(text, opts = {}) {
-  const exempt = new Set((opts.exemptChapters ?? []).map(normalizeHeading).filter(Boolean));
-  const vocabulary = clientVocabulary(opts.contract);
-  const doc = parseDocument(text);
-  const chapterAt = new Map(doc.headings.filter(h => h.level === 2).map(h => [h.at, h.name]));
-  const hits = [];
-  let inExemptChapter = false;
-  doc.lines.forEach((line, i) => {
-    if (chapterAt.has(i)) inExemptChapter = exempt.has(chapterAt.get(i));
-    if (doc.fenced.has(i) || inExemptChapter) return;
-    for (const { term, hint } of vocabulary) {
-      if (line.includes(term)) hits.push({ line: i + 1, term, hint, text: line.trim().slice(0, 100) });
-    }
-  });
-  return hits;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +118,7 @@ const FORMS = {
     hint: '主叙事给评审人读，工程标识只在附录合法：反引号里的文字、驼峰与多段下划线形态的词都按工程标识判' },
   rule_id: { label: '规约编号', hint: '主叙事给评审人读，规约编号只在附录的规约判定表里合法' },
   doc_coordinate: { label: '文档坐标', hint: DOC_COORDINATE_HEAD.hint },
-  source_tag: { label: '来源括注', hint: '以合同登记词起头的括号按来源括注判，它打断正文；「谁定的」的落点是附录的材料清单' },
+  source_tag: { label: '来源括注', hint: '以合同登记词起头的括号按来源括注判：它打断主叙事的阅读，这条只在附录之外判' },
 };
 
 /** 合同里写字符串 = 默认作用域（附录之外），写 `{kind, scope}` = 按它说的。 */
@@ -311,7 +261,6 @@ export function scanLocalPaths(text, projectRoot) {
 /** 把扫描结果渲染成人可读的问题列表 */
 export function formatHits(hits, kind) {
   return hits.map(h => {
-    if (kind === 'banned') return `第 ${h.line} 行：禁用词「${h.term}」（${h.text}）——章节合同的客户端词表对它的说明：${h.hint}`;
     if (kind === 'image') return `第 ${h.line} 行：图片引用「${h.path}」解析不到文件——图片按归档件所在目录解析相对路径`;
     return `第 ${h.line} 行：含仓内路径「${h.path}」（${h.text}）——评审人手上没有这个仓，仓内路径在归档件里打不开`;
   });

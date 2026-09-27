@@ -73,15 +73,11 @@ export default guard('testing', async (ctx) => {
   const { acceptance, error: accError } = readAcceptance(ctx.projectRoot, ctx.feature);
   const { byRule, problems: accProblems } = knowledgeCriteria(acceptance);
   const problems = accError ? [accError] : [...accProblems];
-  const notApplicable = [];
 
   for (const ob of obligations) {
     const rule = String(ob.rule ?? '?');
     // verify 是四阶段分派的单源：本阶段只管 device 与 both，其余是显式不适用
-    if (ob.verify !== 'device' && ob.verify !== 'both') {
-      notApplicable.push(`${rule}（verify: ${ob.verify || '未标'}，不由实机验）`);
-      continue;
-    }
+    if (ob.verify !== 'device' && ob.verify !== 'both') continue;
     const entries = byRule.get(rule);
     if (!entries || !entries.length) {
       problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
@@ -101,11 +97,5 @@ export default guard('testing', async (ctx) => {
     }
   }
 
-  return gate(ctx, {
-    problems,
-    checks: notApplicable.length
-      ? [{ id: 'ext_testing_not_applicable', status: 'NOT_APPLICABLE',
-          detail: `按 must.verify 显式分派：${notApplicable.join('、')}` }]
-      : undefined,
-  });
+  return gate(ctx, { problems });
 });

@@ -16,14 +16,13 @@
  * 契约：stdin JSON ctx → stdout JSON result。
  */
 import * as path from 'node:path';
-import { STATUS } from '../shared/evidence.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, verifyProblem }
   from '../shared/obligations.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
-import { contractsPath, readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
+import { readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
 import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
@@ -457,13 +456,5 @@ export default guard('plan', async (ctx) => {
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });
 
-  const total = groups.reduce((n, g) => n + g.problems.length, 0);
-  return gate(ctx, {
-    groups,
-    checks: [
-      { id: 'knowledge_obligation_on_entity', status: total ? STATUS.FAIL : STATUS.PASS,
-        detail: `义务 ${obligations.length} 条；问题 ${total} 条` },
-    ],
-    inputs: [planPath, contractsPath(ctx.projectRoot, ctx.feature)],
-  });
+  return gate(ctx, { groups });
 });

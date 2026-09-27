@@ -1574,7 +1574,10 @@ def _gate_diagnosis(cp: subprocess.CompletedProcess, *, command: list[str] | Non
 
 
 def _post_check_verdict(r: subprocess.CompletedProcess | None) -> str | None:
-    """post_check 的结论按它自己的输出协议：读到带 `ok` 的 JSON 才算跑成；否则返回 None。"""
+    """post_check 的结论按它自己的输出协议：读到带 `ok` 的 JSON 才算跑成；否则返回 None。
+
+    `ok:false` 带 MINOR 是不阻断的告警与未执行判据，算通过。
+    """
     if r is None:
         return None
     for line in reversed((r.stdout or "").splitlines()):
@@ -1583,7 +1586,8 @@ def _post_check_verdict(r: subprocess.CompletedProcess | None) -> str | None:
         except ValueError:
             continue
         if isinstance(data, dict) and "ok" in data:
-            return "pass" if r.returncode == 0 and data["ok"] is True else "fail"
+            passed = data["ok"] is True or data.get("severityOverride") == "MINOR"
+            return "pass" if r.returncode == 0 and passed else "fail"
     return None
 
 

@@ -17,7 +17,7 @@
  * 「这一章要有哪个小节」是在报错里。
  *
  * 边界：**只判，不切文**。围栏、小节、表头由 `document.parseChapter` 解析一次，
- * 这里读它的结果；源图对应、全局编号、投影完整性、图片身份、冻结、语义质量都不在这里。
+ * 这里读它的结果；源图对应、全局编号、投影完整性、图片身份、语义质量都不在这里。
  * 本模块不读磁盘、不写文件、不输出 stdout，也不导入 story-build 入口。
  */
 import {
@@ -202,7 +202,7 @@ export function pickedStructureNames(ch) {
 export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}) {
   const sk = ch.structure?.skeleton;
   const notes = (n) => (guide && n?.notes?.length ? [...n.notes.map(guide), ''] : []);
-  if (ch.appendix) return [...notes(sk), ...appendixSeedRows(ch, facts)];
+  if (ch.appendix) return [...notes(sk), ...appendixSeedRows(ch, facts, guide)];
   if (sk && sk.notApplicable !== null) return [...notes(sk), EMPTY_SECTION_TEXT];
   const same = (a, b) => normalizeHeading(a ?? '') === normalizeHeading(b ?? '');
   // 一个位置可以有几种形式：图各留一行作图提示，表与列表各留一行「这里要完成什么」。
@@ -291,11 +291,12 @@ function tableSeed(t, facts) {
   return renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]);
 }
 
-/** 附录：各节标题 + 每节一句业务定位；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
-function appendixSeedRows(ch, facts) {
+/** 附录：各节标题（节首可以有一句业务定位，写草稿时给一行指引）；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
+function appendixSeedRows(ch, facts, guide) {
   const out = [];
   for (const name of ch.subsections ?? []) {
-    out.push(`### ${name}`, '', '{{用一句话说清适用对象、成立条件或业务影响}}', '');
+    out.push(`### ${name}`, '');
+    if (guide) out.push(guide('节首可以有一句业务定位：这一节能查到哪些东西的精确名称'), '');
     // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
     // 放了他就要在两处维护同一张表。
     for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');

@@ -283,19 +283,6 @@ class TestReviewForm(StoryBuildCase):
         self.assertIn("修改意见：范围要含补卡入口。", again)
         self.assertIn("**确认人**：某评审人", again, "旧形态里人写过的字也要保住")
 
-    def test_legacy_fields_in_the_review_are_named(self) -> None:
-        """人工区之外又长回签署字段与状态行时，check 要点名。"""
-        self.init_audit()
-        self.review_path.write_text(
-            "# 评审记录\n\n### 1. 提交入口与补卡由两张开发单分别承接\n\n"
-            "评审结论：\n\n"
-            "<!-- decision: submit-boundary -->\n\n"
-            "**确认日期**：\n\n**状态**：草稿（待开发确认）\n",
-            encoding="utf-8")
-        out = self.assert_check_names("评审记录里出现")
-        self.assertIn("确认日期", out)
-        self.assertIn("状态行", out)
-
 
 class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
     """AR 根下只有交付文档：过程件（如评审处置台账）进 story-src。"""
@@ -2309,7 +2296,8 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
     def test_the_appendix_draft_only_asks_for_what_is_his(self) -> None:
         """附录的机器区由投影写，草稿里不放——放了他就要在两处维护同一张表。"""
         draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
-        self.assertIn("{{用一句话说清适用对象、成立条件或业务影响}}", draft)
+        self.assertIn("节首可以有一句业务定位", draft, "定位句可写可不写，草稿只给指引")
+        self.assertNotIn("{{用一句话", draft, "定位句不是必填项")
         self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
 
@@ -2405,7 +2393,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         """作者填完草稿里属于他的那几处。"""
         draft = self.draft("10-附录.md")
         text = (draft.read_text(encoding="utf-8")
-                .replace("{{用一句话说清适用对象、成立条件或业务影响}}", "服务端返回的受理状态决定后续处理路径。")
+                .replace("### 技术约定\n\n", "### 技术约定\n\n服务端返回的受理状态决定后续处理路径。\n\n", 1)
                 .replace("{{这份材料贡献了什么}}", "给出了业务规则"))
         draft.write_text(text, encoding="utf-8")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
