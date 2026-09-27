@@ -42,22 +42,22 @@ function readChapterContract() {
     contract = JSON.parse(stripBom(fs.readFileSync(file, 'utf-8')));
   } catch (err) {
     return { flow: null, keys: null,
-      problem: `章节合同读不到或不是合法 JSON（${err.message}）：流程常量与第一级关卡的值域登记在它的`
-        + ' flow 与 gates.material_scope 里，读不到就判不了契约——先修 contracts/story-chapters.json' };
+      problem: `章节合同 contracts/story-chapters.json：读不到或不是合法 JSON（${err.message}）——流程常量与第一级关卡的值域登记在它的`
+        + ' flow 与 gates.material_scope 里，读不到就判不了契约' };
   }
   const f = contract?.flow;
   const gates = Array.isArray(f?.gates) ? f.gates.map(g => String(g ?? '').trim()).filter(Boolean) : [];
   if (!Number.isInteger(f?.schema) || !gates.length || !String(f?.carry_all ?? '').trim()) {
     return { flow: null, keys: null,
-      problem: '章节合同的 flow 缺 schema / gates / carry_all：流程契约的常量没了，'
-        + '判不了契约——先修 contracts/story-chapters.json' };
+      problem: '章节合同 contracts/story-chapters.json 的 flow：缺 schema / gates / carry_all——流程契约的常量登记在这里，'
+        + '缺了判不了契约' };
   }
   const keys = (contract?.gates?.material_scope?.options ?? [])
     .map(o => String(o?.key ?? '').trim()).filter(Boolean);
   if (!keys.length) {
     return { flow: null, keys: null,
-      problem: '章节合同的 gates.material_scope.options 是空的：第一级关卡的值域没了，'
-        + '判不了 chosen——先修 contracts/story-chapters.json' };
+      problem: '章节合同 contracts/story-chapters.json 的 gates.material_scope.options：是空的——第一级关卡的值域登记在这里，'
+        + '空了判不了 chosen' };
   }
   return { flow: { schema: f.schema, gates: new Set(gates), carryAll: String(f.carry_all).trim() },
     keys: new Set(keys), problem: null };
@@ -67,7 +67,7 @@ function stripBom(text) {
   return String(text ?? '').replace(/^\uFEFF/, '');
 }
 
-const FLOW_FIX = "处置：回 /story 走完三级关卡（材料 → 范围怎么定 → 承载哪份）把范围定下来后再进本阶段。";
+const FLOW_FIX = "前置流程由 /story 的三级关卡（材料 → 范围怎么定 → 承载哪份）逐级写进契约，范围收口之后才进本阶段。";
 /**
  * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）。
  *
@@ -100,7 +100,7 @@ export function flowProblems(featureRoot) {
   if (!exists) return [];
   if (error) {
     // 坏 JSON 不能当「没有契约」放过去——那等于跳步免费
-    return [`AR/story-src/story-flow.json 不是合法 JSON（${error}）：流程契约无法校验。${FLOW_FIX}`];
+    return [`AR/story-src/story-flow.json：不是合法 JSON（${error}）——流程契约无法校验，读不出按没走完计；${FLOW_FIX}`];
   }
 
   const contract = readChapterContract();
@@ -112,8 +112,8 @@ export function flowProblems(featureRoot) {
   // 写入侧已保证的形状（outcome 值域、时间戳、签名人）手改成错形状也不改变流程走向，不在这里重判。
   if (flow?.schema !== schema) {
     return [
-      `AR/story-src/story-flow.json 不是当前版本的流程契约（schema ${flow?.schema ?? '缺失'}，当前 ${schema}）：` +
-        '这张单在旧版本收口，或清掉需求目录后从 init 重新起单',
+      `AR/story-src/story-flow.json：schema 是 ${flow?.schema ?? '缺失'}，当前流程契约是 ${schema}——` +
+        '契约由 story_flow.py 按当前 schema 写入，旧版本的契约不做迁移',
     ];
   }
 
@@ -121,7 +121,7 @@ export function flowProblems(featureRoot) {
   const rounds = Array.isArray(flow?.rounds) ? flow.rounds : [];
 
   if (rounds.length === 0) {
-    problems.push(`AR/story-src/story-flow.json 没有任何轮次记录——契约在但流程没走过。${FLOW_FIX}`);
+    problems.push(`AR/story-src/story-flow.json：没有任何轮次记录，契约在而流程没走过——${FLOW_FIX}`);
   }
 
   rounds.forEach((r, i) => {
@@ -133,8 +133,8 @@ export function flowProblems(featureRoot) {
     // 那一轮反倒被判成伪造。材料变没变是磁盘上的事实，由 `materials/registry.py` 按现状算。
     const digest = String(r?.materials?.digest ?? '');
     if (!digest) {
-      problems.push(`${where}缺 materials.digest——轮次没有材料版本可依，`
-        + '重跑 `scripts/core/story_flow.py round` 让它按磁盘现状重算。' + FLOW_FIX);
+      problems.push(`${where}：缺 materials.digest——轮次按材料版本划界，`
+        + 'digest 由 `scripts/core/story_flow.py round` 按磁盘现状算出写入。' + FLOW_FIX);
     }
 
     // 本 AR 定位是整条范围链的起点：没有它，「本 AR 承载什么」就没有依据，
@@ -146,7 +146,7 @@ export function flowProblems(featureRoot) {
     const pos = r?.positioning;
     if (isLastRound) {
       if (!pos || !String(pos?.scope_text ?? '').trim()) {
-        problems.push(`${where}缺 positioning.scope_text——本 AR 当前范围没定下来就收了口`);
+        problems.push(`${where}缺 positioning.scope_text——收口那一轮的范围链从本 AR 定位起，本 AR 当前范围没定下来就收了口`);
       } else if (!Array.isArray(pos?.sr_related_ars)) {
         problems.push(`${where}的 positioning.sr_related_ars 不是数组（同 SR 其它 AR；没有给空数组）`);
       } else if (pos.sr_related_ars.some(x => String(x?.ar ?? '').trim() === path.basename(featureRoot))) {
@@ -163,7 +163,7 @@ export function flowProblems(featureRoot) {
       const at = `${where}第 ${j + 1} 条关卡记录`;
       const gate = d?.gate;
       if (!GATES.has(gate)) {
-        problems.push(`${at}的 gate 非法（须为 ${[...GATES].join(' / ')}）`);
+        problems.push(`${at}的 gate 非法（须为 ${[...GATES].join(' / ')}）——关卡名按章节合同 flow.gates 认`);
       }
       // 只记选中项的话，「看过选项后选了不拆」与「压根没摆过拆分选项」事后完全同形
       const options = Array.isArray(d?.options) ? d.options : null;
@@ -179,7 +179,7 @@ export function flowProblems(featureRoot) {
       }
       if (gate === 'material_scope' && !contract.keys.has(d?.chosen)) {
         problems.push(`${at}的 chosen 非法（material_scope 须为 `
-          + `${[...contract.keys].join(' / ')} 之一）`);
+          + `${[...contract.keys].join(' / ')} 之一）——值域按章节合同 gates.material_scope.options 认`);
       }
       // 第二级摆出的选项必须就是分析定下的那些——多一项就是现编的
       if (gate === 'scope_decision' && Array.isArray(r?.scope_options) && Array.isArray(d?.options)) {
@@ -251,7 +251,7 @@ export function flowProblems(featureRoot) {
 
   if (!reached(flow, 'complete')) {
     problems.push(
-      `story 前置流程未收口（status=${flow?.status ?? '缺失'}）：材料与拆分决策没走完就进了 spec。${FLOW_FIX}`
+      `AR/story-src/story-flow.json：status 是 ${flow?.status ?? '缺失'}，story 前置流程未收口，材料与拆分决策没走完就进了 spec——${FLOW_FIX}`
     );
   } else {
     // 收口的前置是**本轮范围已定**：第二级选了整体承载，或第三级完成定案。
@@ -318,13 +318,13 @@ export function storyProduced(featureRoot) {
   if (!exists) return [];                // 没走 /story，本判据不适用
   if (error) {
     // 读不出状态就判不了成文态。**不当作「没成文」也不当作「成文了」**——说出读不了这件事。
-    return [`AR/story-src/story-flow.json 不是合法 JSON（${error}）：成文态无从判定。${FLOW_FIX}`];
+    return [`AR/story-src/story-flow.json：不是合法 JSON（${error}）——成文态按契约状态判，读不出无从判定；${FLOW_FIX}`];
   }
   if (reached(flow, 'story_written')) return [];
   return [
-    'spec 三份产物缺叙事件（AR/story.md 未登记成文）：spec 是一次 pass 产出 '
-    + 'spec.md / AR/review.md / AR/story.md 三份。处置：跑 `story_flow.py status --feature <feature>`，'
-    + '按它给的下一步走到 `story_flow.py story` 登记。',
+    'AR/story.md：未登记成文，spec 三份产物缺叙事件——spec 是一次 pass 产出 '
+    + 'spec.md / AR/review.md / AR/story.md 三份；成文态由 `story_flow.py story` 登记，'
+    + '当前该做的动作由 `story_flow.py status --feature <feature>` 给出。',
   ];
 }
 

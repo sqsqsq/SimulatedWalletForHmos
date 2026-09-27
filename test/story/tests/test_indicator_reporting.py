@@ -341,7 +341,7 @@ class ThePlanLandsEveryStatisticPoint(ReportingCase):
         self.drop_stat_section()
         (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text("{}", encoding="utf-8")
-        self.assertIn("spec 没有埋点一节，plan 的埋点无从承接", self.plan_check())
+        self.assertIn("没有「埋点」小节，plan 的埋点无从承接", self.plan_check())
 
     def test_a_direct_spec_without_the_section_keeps_its_scope(self) -> None:
         self.drop_stat_section()

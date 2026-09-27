@@ -33,13 +33,12 @@ import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
 import { acceptanceIdRe, functionIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
-import { featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
+import { featureRoot, readJsonOrNull, readTextOrNull } from '../shared/paths.mjs';
 import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
 import { indicatorShape } from '../shared/stat-points.mjs';
 import { hostAnchorProblems } from '../shared/chapters.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/spec-sections.md';
-const EVIDENCE_DOC = 'doc/extensions/skills/story/reference/evidence-rules.md';
 
 /** 提取小节正文（到下一个 ##/### 标题为止） */
 //: 一份 spec 只解析一次：标题、节尾、围栏都从 `document.parseDocument` 读，不在这里另切一遍。
@@ -149,8 +148,8 @@ function scanNumericSources(text) {
       rows.push(`第 ${i + 1} 行「${nums.map(m => m[0]).join('、')}」：${line.trim().slice(0, 60)}`);
     }
   }
-  return rows.length ? [`${rows.length} 处数值未标来源类型——每处三选一写明：上游约束：<文档名> / `
-    + `本工程设定，无上游依据 / 平台基线。逐处：${rows.join('；')}`] : [];
+  return rows.length ? [`spec.md：${rows.length} 处数值未标来源类型：${rows.join('；')}——带单位（毫秒、秒、分钟、次）的数值按阈值与时长判，`
+    + '所在行要写明来源类型「上游约束：<文档名>」「本工程设定，无上游依据」「平台基线」之一；门禁只核这一行标没标，来源真假归审查'] : [];
 }
 
 /**
@@ -172,7 +171,7 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
     if (id) accById.set(id, [...(accById.get(id) ?? []), e]);
   }
   for (const [id, list] of accById) {
-    if (list.length > 1) problems.push(`同号不同义：${id} 在 acceptance.yaml 里有 ${list.length} 条——一个编号只说一件事，另起编号`);
+    if (list.length > 1) problems.push(`acceptance.yaml：${id} 同号不同义，在 criteria 与 boundaries 里有 ${list.length} 条——验收条目按 id 认，一个编号只说一件事，下游按编号取验收`);
   }
   const defined = new Map();
   const mentioned = new Set();
@@ -189,13 +188,13 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
   for (const [id, codes] of defined) {
     const acc = accById.get(id);
     if (!acc) {
-      problems.push(`§8 的 ${id} 在 acceptance.yaml 里没有——验收清单以 acceptance.yaml 为全集，补一条或改 §8 的编号`);
+      problems.push(`spec.md「验收标准」：${id} 在 acceptance.yaml 里没有——验收清单以 acceptance.yaml 的 criteria 与 boundaries 为全集，「验收标准」每行的第一个验收编号按 id 在其中找`);
       continue;
     }
     const want = String(acc[0]?.prd_function ?? '').split(/[\s,，、]+/).filter(Boolean).sort().join('、');
     const got = [...new Set(codes)].sort().join('、');
     if (want && got && want !== got) {
-      problems.push(`${id} 的关联功能两处不一致：§8 写 ${got}，acceptance.yaml 的 prd_function 写 ${want}——以一处为准改另一处`);
+      problems.push(`spec.md「验收标准」：${id} 的关联功能两处不一致，「验收标准」写 ${got}，acceptance.yaml 的 prd_function 写 ${want}——${id} 第一次作行首的那一行里其余的功能编号是它的关联功能，按集合与 prd_function 比对`);
     }
   }
   if (isStory) {
@@ -205,8 +204,8 @@ function acceptanceAlignment(ctx, lines, featureDir, isStory) {
     const kept = [...new Set([...upstream.matchAll(keptIdRe())].map(m => m[0]))];
     const lost = kept.filter(id => !mentioned.has(id) && !accById.has(id) && !declined.includes(id));
     if (lost.length) {
-      problems.push(`上游材料的验收编号没有承接：${lost.join('、')}——在 §8 或 acceptance.yaml 里有对应行，`
-        + '或在 §8 写「不承接：<编号> <理由>」');
+      problems.push(`spec.md「验收标准」：上游材料的验收编号没有承接：${lost.join('、')}——RR/prd.md 与 AR/design.md 里的原始验收编号，出现在「验收标准」任一行、`
+        + 'acceptance.yaml 的 id 或 spec 里含「不承接」的行即算承接；不承接行的形态是「不承接：<编号> <理由>」');
     }
   }
   return problems;
@@ -243,18 +242,18 @@ function knowledgeExitGroups(ctx, lines) {
   const contractIdx = findHeading(lines, /技术契约/);
   const contractRange = sectionRange(lines, contractIdx);
   if (exitIdx === -1) {
-    chapter.problems.push('缺「规约约束要求」章——判定产生的代码要求没有落点，到编码那里就等于不存在。'
-      + `形态见 ${SECTIONS_DOC}：这一章的正文由 spec/knowledge-use.yaml 生成，不手写。`);
+    chapter.problems.push('spec.md「9. 宿主扩展治理项」：缺「规约约束要求」章——判定产生的代码要求落在这一节，编码按它取要求；'
+      + `按标题里的「规约约束要求」认，正文由 spec/knowledge-use.yaml 生成（形态见 ${SECTIONS_DOC}）`);
   }
   if (patternIdx === -1) {
-    chapter.problems.push('缺「设计模式候选登记」章——零候选是正常结论，但要显式登记适用单元与理由，'
-      + '空着分不清「判过了不需要」与「压根没想这件事」');
+    chapter.problems.push('spec.md「9. 宿主扩展治理项」：缺「设计模式候选登记」章——按标题里的「设计模式候选」认，正文由 spec/knowledge-use.yaml 的 patterns 生成；'
+      + '零候选也是结论，登记适用单元与理由，空着分不清「判过了不需要」与「压根没想这件事」');
   }
   // 独立成节：不得落在技术契约章的区间内
   for (const [idx, name] of [[exitIdx, '规约约束要求'], [patternIdx, '设计模式候选登记']]) {
     if (idx >= 0 && contractRange && idx > contractRange.start && idx < contractRange.end) {
-      chapter.problems.push(`「${name}」并进了技术契约章——三章各回答一个问题，须独立成节：`
-        + '契约章登记「有什么」，要求章说「必须满足什么」，候选章说「可选什么」。');
+      chapter.problems.push(`spec.md「${name}」：落在「技术契约」一节管到的范围里——一节管到下一个同级或更高级标题为止；三节各回答一个问题、各自独立成节：`
+        + '契约节登记「有什么」，要求节说「必须满足什么」，候选节说「可选什么」');
     }
   }
 
@@ -266,7 +265,7 @@ function knowledgeExitGroups(ctx, lines) {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    layer.problems.push(`激活知识派生失败：${e.message}`);
+    layer.problems.push(`${e.message}——激活知识派生失败；激活知识由扩展根下 manifest.yaml 的 provides.knowledge 登记的知识文件派生，知识判定的各项核对以它为准`);
   }
   if (knowledge) {
     layer.problems.push(...selfCheck(ctx.projectRoot, knowledge));
@@ -329,18 +328,18 @@ function reviewActionLandings(ctx, byId, use) {
     const decision = String(row.decision ?? '').trim();
     const impact = String(row.impact ?? '').trim();
     if (!story) {
-      if (decision) problems.push(`${id} 写了 decision「${decision}」，而这个需求没走 /story、没有议题登记——改写 impact：谁、在哪份产物里表态`);
-      else if (!impact) problems.push(`${id} 是命中的评审动作，没写 impact——写清谁、在哪份产物里对这件事表态`);
+      if (decision) problems.push(`spec/knowledge-use.yaml：${id} 写了 decision「${decision}」，这个需求没走 /story、没有议题登记——decision 按 AR/story-src/decisions.json 的议题 id 认，只有走 /story 的需求有议题；不走 /story 的需求，评审动作的落点是 impact：谁、在哪份产物里表态`);
+      else if (!impact) problems.push(`spec/knowledge-use.yaml：${id} 是命中的评审动作，没写 impact——不走 /story 的需求没有议题登记，评审动作的落点是 impact：谁、在哪份产物里对这件事表态`);
       continue;
     }
     if (!decision) {
-      problems.push(`${id} 是命中的评审动作，没写 decision——先在 AR/story-src/decisions.json 登记这件事的议题，`
-        + '再把议题 id 写进来；成文登记之后才判到的，登记议题后重跑 `story` 重新登记');
+      problems.push(`spec/knowledge-use.yaml：${id} 是命中的评审动作，没写 decision——走 /story 的需求里评审动作落到议题，decision 按 AR/story-src/decisions.json 的议题 id 认；`
+        + 'story 的登记由 `story` 写出，登记之后新增的议题在下一次 `story` 登记时进入 story');
     } else if (ids === null) {
-      problems.push(`${id} 的 decision「${decision}」核不了：AR/story-src/decisions.json 读不出议题列表`);
+      problems.push(`AR/story-src/decisions.json：读不出议题列表——spec/knowledge-use.yaml 的 ${id} 写的 decision「${decision}」按这份文件的议题 id 核，读不出就核不了`);
     } else if (!ids.has(decision)) {
-      problems.push(`${id} 的 decision「${decision}」在 AR/story-src/decisions.json 里没有这个议题`
-        + `（现有：${[...ids].slice(0, 8).join('、') || '无'}）`);
+      problems.push(`spec/knowledge-use.yaml：${id} 的 decision「${decision}」在 AR/story-src/decisions.json 里没有这个议题`
+        + `（现有：${[...ids].slice(0, 8).join('、') || '无'}）——decision 按议题 id 原样比对`);
     }
   }
   return problems;
@@ -363,7 +362,7 @@ function acceptanceCoverage(ctx, specIds) {
   const { acceptance, error, exists } = readAcceptance(ctx.projectRoot, ctx.feature);
   if (!exists) return problems;
   if (error) {
-    problems.push(`${error}——知识义务的桥接在验收的 criteria 与 boundaries 里，读不出就核不了`);
+    problems.push(error);
     return problems;
   }
   // **按结构读，不按正则扫**：正则扫的是「文件里出现过这个编号」，
@@ -376,14 +375,14 @@ function acceptanceCoverage(ctx, specIds) {
   if (accIds.size || specIds.size) {
     const missing = [...specIds].filter(id => !accIds.has(id));
     if (missing.length) {
-      problems.push(`这些条目有代码要求但 acceptance.yaml 没有对应验收条目：${missing.join('、')}`
-        + '——每条要求要有一条带 knowledge_rule 的 criteria，'
+      problems.push(`acceptance.yaml：${missing.join('、')} 在 spec/knowledge-use.yaml 里产生代码要求，没有对应验收条目`
+        + '——每条代码要求按 knowledge_rule 的编号对应一条带 knowledge_rule 的 criteria，'
         + '它是 ut/testing 找到「该覆盖哪个场景」的桥（分派本身由 contracts 里 must.verify 定），'
         + '缺了下游就无从覆盖');
     }
     const unknown = [...accIds].filter(id => !specIds.has(id));
     if (unknown.length) {
-      problems.push(`acceptance.yaml 的 knowledge_rule 指向了 spec 里没有要求的条目：${unknown.join('、')}`);
+      problems.push(`acceptance.yaml：knowledge_rule 指向了 spec 里没有要求的条目：${unknown.join('、')}——knowledge_rule 的编号集与 knowledge-use.yaml 里命中、未豁免、产生代码要求的条目集比对`);
     }
   }
   return problems;
@@ -418,9 +417,7 @@ const SPEC_EXT_SECTIONS = [
 
 export default guard('spec', async (ctx) => {
   const featureDir = featureRoot(ctx.projectRoot, ctx.feature);
-  const rel = relDisplay(ctx.projectRoot, path.join(featureDir, 'spec', 'spec.md'));
   const specPath = path.join(featureDir, 'spec', 'spec.md');
-  const fix = `处置：按 ${SECTIONS_DOC} 补齐 spec 宿主扩展章节（结论写法见 ${EVIDENCE_DOC}），然后重跑 harness --phase spec。`;
 
   // spec 本身缺失由 framework 的 check-spec 负责，本 hook 只管宿主扩展部分。
   // 但扩展判据一条都没跑成，要留痕说明——「没报错」不等于「查过了」。
@@ -459,35 +456,35 @@ export default guard('spec', async (ctx) => {
     for (const { ch, title, subs } of SPEC_EXT_SECTIONS) {
       const chIdx = findHeading(lines, title);
       if (chIdx === -1) {
-        problems.push(`缺少宿主扩展小节「§${ch}」——写在「9. 宿主扩展治理项」下（形态见 ${SECTIONS_DOC}）`);
+        problems.push(`spec.md「9. 宿主扩展治理项」：缺「${ch}」小节——走 /story 的需求按标题里的「技术契约」找这一节（形态见 ${SECTIONS_DOC}）`);
         continue;
       }
       // 埋点是埋点设计的唯一完整说明：以指标为单位，总述、每个指标一个小节与它的统计点表，不放图与围栏（附录投影不收图）；其余小节只收表。
       for (const [name, subRe, opts = {}] of subs) {
         const subIdx = findChild(lines, chIdx, subRe);
         if (subIdx === -1) {
-          problems.push(`§${ch} 缺少小节「${name}」（小节不得删；不涉及也须写「不涉及 + 一句依据」）`);
+          problems.push(`spec.md「${ch}」：缺少小节「${name}」——按标题关键词在「技术契约」的下一级找，五个小节都要在；不涉及的写「不涉及：<依据>」`);
           continue;
         }
         const body = sectionBody(lines, subIdx);
         if (!sectionFilled(body)) {
-          problems.push(`§${ch}「${name}」未填写（须给出事实或「不涉及 + 一句依据」）`);
+          problems.push(`spec.md「${ch}」的「${name}」：没有内容——有表格数据行或非引用、非注释的正文行才算填写；不涉及的写「不涉及：<依据>」`);
         } else if (hasTemplatePlaceholder(body)) {
-          problems.push(`§${ch}「${name}」残留模板占位「{ … }」——须替换为实际结论`);
+          problems.push(`spec.md「${ch}」的「${name}」：残留模板占位「{ … }」——花括号里含中文的「{ … }」按模板待填处判，出现即这一节未填写`);
         } else if (opts.prose) {
           const figure = body.find(l => /!\[[^\]]*\]\(/.test(l)) ?? body[fenceRanges(body)[0]?.from];
           if (figure) {
-            problems.push(`§${ch}「${name}」里有图或围栏（「${figure.trim().slice(0, 20)}…」）`
-              + '——这一节用标题、短段、表与列表写；业务需要的图放它讲的业务章，这里用文字说明或链接过去');
+            problems.push(`spec.md「${ch}」的「${name}」里有图或围栏（「${figure.trim().slice(0, 20)}…」）`
+              + '——埋点一节由标题、短段、表与列表组成，附录投影不收图与围栏；业务需要的图放它讲的业务章');
           }
           const level = docOf(lines).headings.find(h => h.at === subIdx).level;
-          problems.push(...indicatorShape(`§${ch}「${name}」`, body, level, SECTIONS_DOC));
+          problems.push(...indicatorShape(`spec.md「${ch}」的「${name}」`, body, level, SECTIONS_DOC));
         } else {
           const stray = strayProse(body);
           if (stray) {
-            problems.push(`§${ch}「${name}」表外有段落（「${stray.slice(0, 20)}…」）`
-              + '——这一节要么是一张表，要么是一行「不涉及：<依据>」。'
-              + '约定进表格；实现取舍写 spec/notes.md；要人拍板的写决策件');
+            problems.push(`spec.md「${ch}」的「${name}」表外有段落（「${stray.slice(0, 20)}…」）`
+              + '——这一节是 plan 据以编码、test-plan 据以出用例的技术契约，内容是一张表或一行「不涉及：<依据>」，列表与分隔线不算段落；'
+              + '实现取舍的位置是 spec/notes.md，要人拍板的事的位置是决策件');
           }
         }
       }
@@ -537,12 +534,12 @@ export default guard('spec', async (ctx) => {
         return !explain || explain === '—';
       });
       if (rows.length > 0 && (explainIdx < 0 || moduleIdx < 0)) {
-        problems.push('术语映射表的表头缺「权威模块」或「解释」列——按 spec 模板的 §0 表头写，判据按列名定位');
+        problems.push('spec.md「术语映射表」：表头缺「权威模块」或「解释」列——判据按列名定位这两列，列名以 spec 模板 §0 的表头为准');
       } else if (rows.length > 0 && noExplain.length > 0) {
         problems.push(
-          `术语映射表有 ${noExplain.length} 个业务名词没写「解释」：${noExplain.map(c => (c[0] ?? '').trim()).join('、')}` +
-            '——它们的权威模块在本需求 Scope 内，是本需求的业务词汇；评审叙事件的术语表从这里抄，' +
-            '漏了评审者在归档件里就查不到这个词。基础能力类术语可留「—」'
+          `spec.md「术语映射表」：${noExplain.length} 个业务名词没写「解释」：${noExplain.map(c => (c[0] ?? '').trim()).join('、')}` +
+            '——权威模块在 in_scope_modules 里的行按本需求的业务词汇判，「解释」要有内容；评审叙事件的术语表从这一列取，' +
+            '漏了评审者在归档件里就查不到这个词。权威模块不在 in_scope_modules 里的基础能力类术语可留「—」'
         );
       }
     }
@@ -555,15 +552,15 @@ export default guard('spec', async (ctx) => {
     // 客户端语境：spec 是编码与评审件的共同上游，源头不放行才不会一路带下去
     const bannedHits = scanBannedTerms(text);
     if (bannedHits.length > 0) {
-      problems.push(`含客户端语境禁用词 ${bannedHits.length} 处（服务器侧词汇，单独使用也算）：`
-        + formatHits(bannedHits, 'banned').join('；'));
+      problems.push(`spec.md：客户端语境禁用词 ${bannedHits.length} 处：${formatHits(bannedHits, 'banned').join('；')}`
+        + '——禁用词是服务器侧词汇，词表在章节合同 language_redline，单独使用也算命中');
     }
 
     // 独立审计：不写文档坐标（详见 evidence-rules 独立审计原则）
     const coordHits = scanDocCoords(text);
     if (coordHits.length > 0) {
-      problems.push(`含文档坐标 ${coordHits.length} 处（spec 须可独立审计；改用事物本身的名字，如接口名、配置项名）：`
-        + coordHits.map(h => `第 ${h.line} 行「${h.coord}」`).join('、'));
+      problems.push(`spec.md：文档坐标 ${coordHits.length} 处：${coordHits.map(h => `第 ${h.line} 行「${h.coord}」`).join('、')}`
+        + '——「spec §x」「AR §x」这类写法按文档坐标判；spec 须可独立审计，事物用它本身的名字指称（接口名、配置项名）');
     }
 
     // 数值来源：机械层只核标没标（结构门）；真假归 overlay 的数值依据判项。
@@ -585,7 +582,6 @@ export default guard('spec', async (ctx) => {
       { id: 'knowledge_exit_structure', status: total ? STATUS.FAIL : STATUS.PASS, detail: `问题 ${total} 条` },
     ],
     inputs: [specPath],
-    fix: `产物：spec.md（${rel}）。${fix}`,
   });
 });
 

@@ -121,17 +121,17 @@ export function indicatorShape(where, body, level, formDoc) {
   for (const l of lines) {
     if (indicator.test(l)) { seen = true; continue; }
     if (!l.startsWith('|')) { if (!seen) lead = true; continue; }
-    if (!seen) { problems.push(`${where}有统计点表不在指标小节下——一个指标一个小节，表放在它下面（形态见 ${formDoc}）`); return problems; }
+    if (!seen) { problems.push(`${where}：有统计点表不在指标小节下——指标是埋点标题的下一级标题，一个指标一个小节，表归它上方的指标小节，首个指标之前只有总述（形态见 ${formDoc}）`); return problems; }
   }
   const groups = statPointsOfSection([`${'#'.repeat(level)} 埋点`, ...body].join('\n'))?.groups ?? [];
-  if (!groups.length) problems.push(`${where}没有指标小节——一个指标一个小节，下面放它的统计点表（形态见 ${formDoc}）`);
-  if (groups.length && !lead) problems.push(`${where}首个指标之前缺总述（形态见 ${formDoc}）`);
+  if (!groups.length) problems.push(`${where}：没有指标小节——指标是埋点标题的下一级标题，一个指标一个小节，下面放它的统计点表（形态见 ${formDoc}）`);
+  if (groups.length && !lead) problems.push(`${where}：首个指标之前缺总述——首个指标小节之前的非表格正文按总述读（形态见 ${formDoc}）`);
   for (const g of groups) {
     if (!g.lead) {
-      problems.push(`${where}的指标「${g.title}」缺定义段——标题与表之间先写定义段，再放表`);
+      problems.push(`${where}的指标「${g.title}」缺定义段——指标标题与它第一张表之间的第一行正文按定义段读`);
     }
     if (!g.points.length) {
-      problems.push(`${where}的指标「${g.title}」下没有统计点——在它下面放一张带「统计点」列的表写出观察它需要的点位，或去掉这个小标题`);
+      problems.push(`${where}的指标「${g.title}」下没有统计点——埋点标题的下一级标题都按指标读，统计点取指标下表头含「统计点」的表里非空的那一格`);
     }
   }
   return problems;

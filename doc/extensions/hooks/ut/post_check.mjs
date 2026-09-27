@@ -80,19 +80,19 @@ export default guard('ut', async (ctx) => {
     }
     const entries = byRule.get(rule);
     if (!entries || !entries.length) {
-      problems.push(`义务 ${rule} 标了 verify: ${ob.verify}，但 acceptance.yaml 里没有`
-        + `knowledge_rule: ${rule} 的验收条目——本阶段无从知道该覆盖哪个场景`);
+      problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
+        + `knowledge_rule: ${rule} 的验收条目——门禁按 knowledge_rule 把验收条目认回规约，要覆盖的场景从这些条目取`);
       continue;
     }
     for (const c of entries) {
       const id = String(c.id ?? '').trim();
       if (!id) {
-        problems.push(`义务 ${rule} 有一条验收条目没写 id——按编号回查覆盖证据时对不到场景`);
+        problems.push(`acceptance.yaml：义务 ${rule} 有一条验收条目没写 id——UT 覆盖证据按验收编号回查`);
         continue;
       }
       if (!covered.has(id)) {
-        problems.push(`义务 ${rule} 的验收条目 ${id} 在 UT 侧找不到覆盖证据`
-          + `——本阶段该覆盖它却没有；确实 UT 验不了要回 plan 核实际验法，不为过检查改分派`);
+        problems.push(`ut/：义务 ${rule} 的验收条目 ${id} 在 UT 侧找不到覆盖证据`
+          + `——门禁在 ut/reports/ac-coverage.json 与 ut/ 下的用例文件里找这个编号；verify 是证据分派，按实际验法定，不随检查结果改`);
       }
     }
   }
@@ -103,6 +103,5 @@ export default guard('ut', async (ctx) => {
       ? [{ id: 'ext_ut_not_applicable', status: 'NOT_APPLICABLE',
           detail: `按 must.verify 显式分派：${notApplicable.join('、')}` }]
       : undefined,
-    fix: '处置：补齐用例覆盖，或回 plan 修正 must.verify 后重跑。',
   });
 });

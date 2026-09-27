@@ -46,7 +46,7 @@ export function readContracts(projectRoot, feature) {
   try {
     return { contracts: parseYaml(raw), error: null, exists: true };
   } catch (e) {
-    return { contracts: null, error: `contracts.yaml 解析失败：${e.message}`, exists: true };
+    return { contracts: null, error: `contracts.yaml：解析失败（${e.message}）——契约按 YAML 解析，解析失败时实体与挂在上面的 must 都读不出`, exists: true };
   }
 }
 
@@ -162,25 +162,25 @@ export function resourceEntries(contracts) {
   const problems = [];
   const rk = contracts?.resource_keys;
   if (rk === undefined || rk === null || rk === '') return { entries, problems };
-  const shape = '——形态是 `resource_keys:` → `<模块>:` → `<分类>:` → `- key: …`（与 framework 合同一致）';
+  const shape = '——framework 合同按两层对象读 resource_keys，形态是 `resource_keys:` → `<模块>:` → `<分类>:` → `- key: …`';
   if (typeof rk !== 'object' || Array.isArray(rk)) {
-    problems.push(`resource_keys 不是「模块 → 分类 → 资源列表」的两层对象（读到${Array.isArray(rk) ? '列表' : typeof rk}）${shape}`);
+    problems.push(`contracts.yaml 的 resource_keys 不是「模块 → 分类 → 资源列表」的两层对象（读到${Array.isArray(rk) ? '列表' : typeof rk}）${shape}`);
     return { entries, problems };
   }
   for (const [module, cats] of Object.entries(rk)) {
     if (!cats || typeof cats !== 'object' || Array.isArray(cats)) {
-      problems.push(`resource_keys.${module} 下应是「分类 → 资源列表」（读到${Array.isArray(cats) ? '列表' : typeof cats}）${shape}`);
+      problems.push(`contracts.yaml 的 resource_keys.${module}：下一层不是「分类 → 资源列表」（读到${Array.isArray(cats) ? '列表' : typeof cats}）${shape}`);
       continue;
     }
     for (const [category, list] of Object.entries(cats)) {
       if (!Array.isArray(list)) {
-        problems.push(`resource_keys.${module}.${category} 应是资源条目列表（读到 ${typeof list}）${shape}`);
+        problems.push(`contracts.yaml 的 resource_keys.${module}.${category}：不是资源条目列表（读到 ${typeof list}）${shape}`);
         continue;
       }
       list.forEach((node, i) => {
         const key = entityName(node);
         if (!key) {
-          problems.push(`resource_keys.${module}.${category} 第 ${i + 1} 条没有 key`);
+          problems.push(`contracts.yaml 的 resource_keys.${module}.${category} 第 ${i + 1} 条：没有 key——资源条目按 key 认，引用写作 resource_keys.<模块>.<分类>.<key>，must 按这个引用挂`);
           return;
         }
         entries.push({ module, category, key, node, ref: `resource_keys.${module}.${category}.${key}` });
@@ -225,7 +225,7 @@ export function readAcceptance(projectRoot, feature) {
   try {
     return { acceptance: parseYaml(raw), error: null, exists: true };
   } catch (e) {
-    return { acceptance: null, error: `acceptance.yaml 解析失败：${e.message}`, exists: true };
+    return { acceptance: null, error: `acceptance.yaml：解析失败（${e.message}）——验收条目与 knowledge_rule 桥接都按这份 YAML 的结构读，解析不了就核不了`, exists: true };
   }
 }
 
@@ -271,7 +271,7 @@ export function knowledgeCriteria(acceptance, sections = ACCEPTANCE_SECTIONS) {
       if (!('knowledge_rule' in row)) return;
       const rule = row.knowledge_rule;
       if (typeof rule !== 'string' || !rule.trim()) {
-        problems.push(`${section}「${String(row.id ?? '（没写 id）')}」的 knowledge_rule 不是一个编号——`
+        problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：knowledge_rule 不是一个编号——`
           + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
           + '写成列表或留空的话，下游按编号分派时对不到场景（形状见任务包 §2）');
         return;

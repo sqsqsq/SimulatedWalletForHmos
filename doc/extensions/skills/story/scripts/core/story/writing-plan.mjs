@@ -83,8 +83,8 @@ export function readWritingPlan(ctx) {
   const say = (msg) => plan.problems.push(`写作设计 ${rel} ${msg}`);
   const text = readText(ctx.templatePath);
   if (text === null || !text.trim()) {
-    say(`${text === null ? '不在' : '是空的'}——跑 skeleton 建空壳，对照原材料、需求分析里的来源初筛、`
-      + 'Spec 与决策登记，把它写成本需求的阅读主线与每章骨架');
+    say(`${text === null ? '不在' : '是空的'}——空壳由 skeleton 建；阅读主线与每章骨架由作者对照原材料、需求分析里的来源初筛、`
+      + 'Spec 与决策登记写成，章提交按它核结构');
     return plan;
   }
   plan.text = text;
@@ -97,14 +97,14 @@ export function readWritingPlan(ctx) {
   const part = (name) => {
     const hits = h2.filter(h => h.name === name);
     if (hits.length !== 1) {
-      say(hits.length ? `有 ${hits.length} 个「## ${name}」——只留一个` : `缺「## ${name}」这一部分`);
+      say(hits.length ? `有 ${hits.length} 个「## ${name}」——协议按名字认这一部分，只认一个` : `缺「## ${name}」这一部分——协议要阅读主线与骨架两部分`);
       return null;
     }
     const next = h2.find(h => h.at > hits[0].at);
     return { from: hits[0].at + 1, to: next ? next.at : lines.length };
   };
   const story = part(PARTS.story);
-  if (story && !lines.slice(story.from, story.to).join('\n').trim()) say(`的「${PARTS.story}」是空的`);
+  if (story && !lines.slice(story.from, story.to).join('\n').trim()) say(`的「${PARTS.story}」是空的——这一部分按有无正文判`);
   const skeleton = part(PARTS.skeleton);
   if (skeleton) readSkeleton(plan, lines, skeleton, fenced, say);
   plan.problems.push(...placeholderProblems(text, `写作设计 ${rel} `));
@@ -135,13 +135,13 @@ function readSkeleton(plan, lines, range, fenced, say) {
       const id = head[2];
       started = true;
       ch = null; parent = null; node = null;
-      if (!known.has(id)) say(`的「### ${id}」不是章节合同里的章 ID（${[...known.keys()].join('、')}）`);
+      if (!known.has(id)) say(`的「### ${id}」不是章节合同里的章 ID（${[...known.keys()].join('、')}）——骨架按合同章 ID 分章`);
       else if (plan.skeletons.has(id)) say(`的「### ${id}」出现了两次——一章一段骨架`);
       else plan.skeletons.set(id, (ch = { id, ...blank(), notApplicable: null }));
       continue;
     }
     if (!ch) {
-      if (!started) say(`的「## ${PARTS.skeleton}」要从一行 \`### <章 ID>\` 开始`);
+      if (!started) say(`的「## ${PARTS.skeleton}」第一行不是 \`### <章 ID>\`——骨架按 ### 章 ID 分章，章 ID 之前的行归不到任何一章`);
       started = true;
       continue;
     }
@@ -150,12 +150,12 @@ function readSkeleton(plan, lines, range, fenced, say) {
       // 重名只在同一个父节下算重名：两个 #### 各自的 ##### 同名是两处不同的位置
       const peers = head[1].length === 4 ? ch.sections : (parent?.sections ?? []);
       if (head[1].length === 5 && !parent) {
-        say(`的「### ${ch.id}」里「##### ${section.title}」前面没有 #### 小节——##### 写在某个 #### 下面`);
+        say(`的「### ${ch.id}」里「##### ${section.title}」前面没有 #### 小节——##### 按它上面最近的 #### 归属`);
         node = null;
         continue;
       }
       if (same(peers, section.title)) {
-        say(`的「### ${ch.id}」里「${section.title}」重复——同一级小节一个名字只用一次`);
+        say(`的「### ${ch.id}」里「${section.title}」重复——小节按名字认，同一父节下同名的两节认不开`);
       }
       (head[1].length === 4 ? ch.sections : parent.sections).push(section);
       if (head[1].length === 4) parent = section;
@@ -168,7 +168,7 @@ function readSkeleton(plan, lines, range, fenced, say) {
       const note = m[1].trim();
       if (LINE.form.test(note)) {
         // 写成说明行的形式声明脚本不接管：说一次，别让作者以为已经定了
-        say(`${where()}的「- ${note}」：形式要单起一行写 形式：<类型>，不带「- 」`);
+        say(`${where()}的「- ${note}」：形式声明写成了说明行——形式要单起一行写「形式：<类型>」，带「- 」的行按说明行读，脚本不接管`);
         continue;
       }
       target.notes.push(note);
@@ -179,21 +179,21 @@ function readSkeleton(plan, lines, range, fenced, say) {
     } else if ((m = LINE.form.exec(line))) {
       const value = m[1].trim();
       const form = value ? parseForm(value) : null;
-      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——写 ${formWords()}`);
+      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords()}`);
       else target.forms.push(form);
     } else {
-      say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架里只写 - 说明行、形式： 与 ####、##### 标题`);
+      say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架按 - 说明行、形式： 与 ####、##### 标题逐行认`);
     }
   }
   for (const [id, c] of known) {
-    if (!plan.skeletons.has(id) && !c.appendix) say(`的「## ${PARTS.skeleton}」缺「### ${id}」`);
+    if (!plan.skeletons.has(id) && !c.appendix) say(`的「## ${PARTS.skeleton}」缺「### ${id}」——骨架按合同逐章核，附录之外每章一段`);
   }
   for (const sk of plan.skeletons.values()) {
     const listed = sk.sections.length + sk.forms.length;
     if (!listed && !sk.notes.length && !known.get(sk.id).appendix) {
-      say(`的「### ${sk.id}」没有骨架——本章不涉及也写一行 - 不涉及：<理由>`);
+      say(`的「### ${sk.id}」没有骨架——每章的骨架按小节、形式或说明行判，不涉及的章写一行 - 不涉及：<理由>`);
     }
-    if (sk.notApplicable !== null && listed) say(`的「### ${sk.id}」写了不涉及，却还留着小节或形式——二选一`);
+    if (sk.notApplicable !== null && listed) say(`的「### ${sk.id}」写了不涉及，却还留着小节或形式——两个声明冲突，章提交无法按骨架核这一章`);
     const contractCh = known.get(sk.id);
     const subs = contractCh.subsections ?? [];
     for (const s of contractCh.appendix ? sk.sections : []) {

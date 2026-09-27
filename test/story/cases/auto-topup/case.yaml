@@ -38,7 +38,7 @@ after_initial: update
 update_inputs:
   - file: 交通卡自动充值-v2.docx
     kind: local_material
-    note: RR90006 的 v1.1：单日上限 200 → 300（与会议「200 不动」冲突，有意保留的探针）、协议文案写明上限、开关只管新签约且入口不隐藏（与会议一致）
+    note: RR90006 的 v1.1：单日上限 200 → 300（与会议「200 不动」冲突，有意保留的探针）、协议文案写明上限、开关只管新签约、已签约用户入口不隐藏且直达管理页、未签约用户开关关闭时看不到入口（与会议一致）
   # 评审人在需求系统上的批注回稿：送审之后才有，update 取上游时取回。
   - file: review-feedback.md
     kind: system

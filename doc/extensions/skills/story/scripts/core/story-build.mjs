@@ -68,7 +68,7 @@ function parseArgs(argv) {
  */
 function cmdNumber(ctx) {
   const before = readText(ctx.storyPath);
-  if (before === null) fail(`没有 AR/story.md 可编号（${ctx.storyPath}）`);
+  if (before === null) fail(`AR/story.md：不在（${ctx.storyPath}）——编号作用在 skeleton 建出的 story 上`);
   const after = renumberStory(before, ctx.contract.chapters ?? [],
                               ctx.contract.heading_counters ?? []);
   if (after === before) {
@@ -91,7 +91,7 @@ function cmdNumber(ctx) {
  */
 function cmdProject(ctx) {
   const story = readText(ctx.storyPath);
-  if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架');
+  if (story === null) fail('AR/story.md：不在——骨架由 skeleton 建，附录机器区投在它的附录章里');
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
@@ -109,23 +109,23 @@ function cmdSkeleton(ctx) {
   // ---- 预检 ①：流程走到位了没有 ----
   const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
   if (!flow) {
-    fail('AR/story-src/story-flow.json 不存在：本 feature 还没走过 /story 的 S1–S3。'
-      + '先跑 `story_flow.py init` 按关卡走完范围，收口后再起 story 骨架');
+    fail('AR/story-src/story-flow.json：不存在，本需求还没走过 /story 的 S1–S3'
+      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围收口之后起');
   }
   const flowGaps = flowProblems(ctx.featureRoot);
   if (flowGaps.length) fail(flowGaps.join('\n'));
   if (flow.status !== 'complete' && flow.status !== 'story_written') {
-    fail(`本轮还没有收口（status: ${flow.status}）：按 status 的下一步走完 S3/S4，再起 story 骨架`);
+    fail(`AR/story-src/story-flow.json：status 是 ${flow.status}，本轮还没有收口——story 骨架在 complete 或 story_written 时起，当前动作由 \`story_flow.py status\` 给出`);
   }
 
   // ---- 预检 ②：材料 —— 清单在、与本轮基准一致、且磁盘现状仍是这批料 ----
   const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);
   const base = (flow.rounds?.[flow.rounds.length - 1]?.materials) ?? {};
   if (!manifest) {
-    fail('材料清单不存在：materials.json 由 `story_flow.py round` 生成，先跑它');
+    fail('AR/story-src/materials.json：不存在——材料清单由 `story_flow.py round` 生成');
   }
   if (manifest.digest !== base.digest) {
-    fail('材料清单与本轮登记的基准对不上：重跑 `story_flow.py round` 归位后再起骨架');
+    fail('AR/story-src/materials.json：digest 与 story-flow.json 本轮登记的材料基准对不上——两者都由 `story_flow.py round` 按磁盘现状写入，骨架按本轮基准起');
   }
   const notReady = materialsNotReady(ctx);
   if (notReady) fail(`材料还不能起稿：${notReady}`);
@@ -134,23 +134,23 @@ function cmdSkeleton(ctx) {
   const { docs, missing, blocking } = sourceStatus(ctx);
   if (!docs.length) {
     fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {})
-      .map(x => (typeof x === 'string' ? x : x?.path)).filter(Boolean).join('、')}）`);
+      .map(x => (typeof x === 'string' ? x : x?.path)).filter(Boolean).join('、')}）——骨架据合同 sources 声明的材料起`);
   }
   if (blocking.length) {
-    fail('必备来源缺失，先补齐再起骨架：'
+    fail('必备来源缺失，骨架没起：'
       + blocking.map(m => missingSourceLine(m)).join('；'));
   }
 
   // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节都在 ----
   const spec = specText(ctx);
   if (spec !== null && !spec.trim()) {
-    fail('spec/spec.md 是空的——先完成 spec 阶段的规格件，再起 story 骨架');
+    fail('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与 §9.1 各节派生');
   }
   const gaps = spec === null ? [] : specGaps(ctx.contract, spec);
   if (gaps.length) {
-    fail(`spec.md 还缺起手要读的这几节，先回 spec 补齐再起骨架：\n  · ${gaps.join('\n  · ')}\n`
-      + '  这件事确实不涉及，就在那一节里写「不涉及：<依据>」一行——'
-      + '写出来的结论评审者读得到，没写到那儿的，起手这一步分不出是哪一种');
+    fail(`spec/spec.md：缺起手要读的这几节，骨架没起：\n  · ${gaps.join('\n  · ')}\n`
+      + '  不涉及的节写「不涉及：<依据>」一行也算有内容——'
+      + '起手按这一节有没有正文判，写出来的结论评审者读得到');
   }
 
   // ---- 预检 ⑤：决策登记起手前就有议题，或写明本单无待决（只读，不写） ----

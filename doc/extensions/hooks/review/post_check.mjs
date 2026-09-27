@@ -67,7 +67,7 @@ export default guard('review', async (ctx) => {
   const table = reviewTable(text);
   if (!table || !table.data.length) {
     return gate(ctx, {
-      problems: [`审查报告缺「${SECTION_TITLE}」表——契约里每条 must 一行结论。`
+      problems: [`review/review-report.md 缺「${SECTION_TITLE}」表——门禁在标题含「${SECTION_TITLE}」的小节里读第一张表，契约里每条 must 一行结论。`
         + '形态：| rule | 落点（契约实体） | 落实位置（文件:符号） | 结论（落实/未落实/不适用） | 依据 |'
         + '；「不适用」也要写，缺席与「做过但没写」事后完全同形，而只有前者是缺陷'],
       inputs: [reportPath],
@@ -78,7 +78,7 @@ export default guard('review', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return gate(ctx, { problems: [`激活知识派生失败：${e.message}`], inputs: [reportPath] });
+    return gate(ctx, { problems: [`激活知识派生失败（review 门禁按激活知识取规约的强制力）：${e.message}`], inputs: [reportPath] });
   }
 
   const problems = [];
@@ -88,18 +88,18 @@ export default guard('review', async (ctx) => {
     const where = `义务 ${ob.rule}（${ob.entityPath}）`;
     const row = table.data.find(r => col(r, 'rule') === ob.rule && col(r, '落点') === ob.entityPath);
     if (!row) {
-      problems.push(`${where} 在复核表里没有对应行——一处落点一行：rule 列写编号，落点列写 ${ob.entityPath}；`
-        + '同一规约的另一处落点有结论代替不了这一处，哪怕这一处是「不适用 + 理由」');
+      problems.push(`review/review-report.md：${where} 在复核表里没有对应行——门禁按 rule 列等于「${ob.rule}」且落点列等于「${ob.entityPath}」认行，一处落点一行；`
+        + '同一规约另一处落点的结论代替不了这一处，哪怕这一处是「不适用 + 理由」');
       continue;
     }
     const verdict = col(row, '结论');
     if (!VERDICTS.includes(verdict)) {
-      problems.push(`${where} 的结论列是「${verdict}」——只写 ${VERDICTS.join(' / ')} 之一`);
+      problems.push(`review/review-report.md 第 ${row.line} 行：${where} 的结论列是「${verdict}」——结论列取值封闭为 ${VERDICTS.join(' / ')}`);
       continue;
     }
     const force = entryById(knowledge, ob.rule)?.force;
     if (verdict === '未落实' && force === '红线') {
-      problems.push(`${where} 判「未落实」，这条规约是红线——回 coding 落实，红线不能带着未落实交付`);
+      problems.push(`review/review-report.md 第 ${row.line} 行：${where} 判「未落实」，这条规约是红线——强制力取自激活知识，红线未落实即阻断，不能带着交付`);
       continue;
     }
     // 依据只看**依据列**——把落实位置列算进来会让「不适用 + 空依据」蒙混过关
@@ -107,22 +107,21 @@ export default guard('review', async (ctx) => {
     const basis = col(row, '依据').replace(/[|\s—\-]/g, '');
     if ((verdict === '不适用' || (verdict === '未落实' && force === '基线'))
       && (!basis || basis === verdict)) {
-      problems.push(`${where} 判「${verdict}」但依据列是空的——`
-        + (verdict === '不适用' ? '「不适用」三个字不构成依据，要写清本次变更为什么碰不到它'
-          : '基线可以不做，但要写清为什么这一处没落实、用什么补上'));
+      problems.push(`review/review-report.md 第 ${row.line} 行：${where} 判「${verdict}」但依据列是空的——门禁只读依据列，空或只写结论本身都算空；`
+        + (verdict === '不适用' ? '「不适用」三个字不构成依据，依据写本次变更为什么碰不到它'
+          : '基线可以不做，依据写为什么这一处没落实、用什么补上'));
     }
   }
 
   for (const id of new Set(roles.map(r => r.pattern).filter(Boolean))) {
     if (!table.data.some(r => r.joined.includes(id))) {
-      problems.push(`采用的模式 ${id} 在复核表里没有对应行`
-        + '——契约里有文件标了它，本阶段就要核实现是否按这个结构落');
+      problems.push(`review/review-report.md：采用的模式 ${id} 在复核表里没有对应行`
+        + '——契约 files 里有文件标了这个 pattern，门禁在复核表各行里找这个模式名；本阶段核实现是否按这个结构落');
     }
   }
 
   return gate(ctx, {
     problems,
     inputs: [reportPath],
-    fix: '处置：在审查报告补齐复核表，或回 plan 修正 must 后重跑。',
   });
 });

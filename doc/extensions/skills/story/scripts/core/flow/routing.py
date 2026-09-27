@@ -299,7 +299,7 @@ def update_open_step(feature_root: Path, contract: dict,
         return reregister
     return ("update_in_progress",
             f"更新 {rid} 正在进行：按 `AR/story-src/updates/{rid}/update-notes.md` 的修订清单改，"
-            "改法与收口见 `phases/update.md`「二、六个动作」"
+            "改法与收口见 `phases/update.md`「二、一条线」"
             + frozen_tail(feature_root, contract, manifest))
 
 

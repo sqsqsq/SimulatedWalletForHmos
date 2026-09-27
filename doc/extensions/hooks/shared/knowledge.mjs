@@ -78,9 +78,9 @@ function frontmatterOf(fm) {
     value = parseYaml(fm);
   } catch (e) {
     if (e?.name !== 'YAMLParseError') throw e;
-    fail(`frontmatter 不是合法 YAML —— ${e.message.split(/\r?\n/)[0]}`);
+    fail(`frontmatter 不是合法 YAML（${e.message.split(/\r?\n/)[0]}）——frontmatter 按 YAML 读成映射，kind、form、name、applies_when 从中取值`);
   }
-  if (typeof value !== 'object' || Array.isArray(value)) fail('frontmatter 要写成「键: 值」映射');
+  if (typeof value !== 'object' || Array.isArray(value)) fail('frontmatter 读出来不是「键: 值」映射——kind、form、name、applies_when 按键从这个映射取值');
   return value;
 }
 
@@ -172,17 +172,17 @@ function parseProbe(raw) {
   const expr = blocking ? cell.slice(BLOCKING_MARK.length).trim() : cell;
   const kind = expr.split(':', 1)[0];
   if (!PROBE_KINDS.includes(kind)) {
-    fail(`探针形态未知：「${kind}」——只接受 [${BLOCKING_MARK}]${PROBE_KINDS.join(' / ')}，或写「无」`);
+    fail(`探针形态未知：「${kind}」——探针列按「[${BLOCKING_MARK}]<形态>:<表达式>」解析，形态封闭为 ${PROBE_KINDS.join(' / ')}，没有探针的格是「无」`);
   }
   const rest = expr.slice(kind.length + 1);
   const probe = { kind, pattern: rest, count: null, raw: expr, blocking };
   if (kind === 'referenced_outside_definition') return { ...probe, pattern: '' };
-  if (!rest) fail(`探针「${kind}」缺表达式：${expr}`);
+  if (!rest) fail(`探针「${kind}」缺表达式：${expr}——${kind} 按冒号后的正则在落点文件里匹配，冒号后为空就无从匹配`);
   if (kind === 'count_eq') {
     // count_eq:<re>:<n> —— 正则里可能有冒号，所以从右边切一次
     const at = rest.lastIndexOf(':');
     const n = Number(rest.slice(at + 1));
-    if (at < 0 || !Number.isInteger(n)) fail(`探针 count_eq 形态应为 count_eq:<正则>:<次数>：${expr}`);
+    if (at < 0 || !Number.isInteger(n)) fail(`探针「${expr}」取不出次数——count_eq 按 count_eq:<正则>:<次数> 解析，次数是最右一个冒号之后的整数`);
     return { ...probe, pattern: rest.slice(0, at), count: n };
   }
   return probe;
@@ -202,7 +202,7 @@ function parseExecutors(cell) {
 function parseConstraintFile(body, fm, rel, bad) {
   const table = markdownTable(body, ['编号', '约束']);
   if (!table) {
-    fail(`派生为空：${rel} 找不到条目表 —— 表头须同时含「编号」与「约束」两列`);
+    fail(`${rel}：找不到条目表，派生不出规约条目——条目表按表头同时含「编号」「约束」两列的 Markdown 表认`);
   }
   const entries = [];
   for (const cells of table.data) {
@@ -215,15 +215,15 @@ function parseConstraintFile(body, fm, rel, bad) {
     const force = pick(cells, table.headers, '强制力').replace(/[`*]/g, '').trim();
     const executors = parseExecutors(pick(cells, table.headers, '验证'));
     const say = (msg) => bad.push(`${rel} ${id} ${msg}`);
-    if (!FORCES.includes(force)) say(`的强制力「${force || '(空)'}」不在 ${FORCES.join(' / ')} 里`);
+    if (!FORCES.includes(force)) say(`的强制力「${force || '(空)'}」不在 ${FORCES.join(' / ')} 里——强制力决定未满足时各道门怎样处理（红线阻断、基线可豁免须补偿、建议可不做），取值封闭`);
     const alien = executors.filter(x => !EXECUTORS.includes(x));
     if (!executors.length || alien.length) {
       say(`的验证列${alien.length ? `有不认识的执行体「${alien.join('、')}」` : '解析不出执行体'}`
-        + `——写成「<执行体>：<怎么验>」，执行体取 ${EXECUTORS.join(' / ')}，几段就是几种证据都要`);
+        + `——验证列按「<执行体>：<怎么验>」分段解析，执行体封闭为 ${EXECUTORS.join(' / ')}，几段就是几种证据都要`);
     }
     if (reviewAction !== executors.includes('人工') && (reviewAction || executors.every(x => x === '人工'))) {
-      say(reviewAction ? '的处置是评审动作，验证列要有「人工」'
-        : `只由人工验，处置要以「${REVIEW_ACTION_MARK}」开头——不产生代码要求的条目才只靠人工`);
+      say((reviewAction ? '的处置是评审动作，验证列要有「人工」' : `只由人工验，处置列没有以「${REVIEW_ACTION_MARK}」开头`)
+        + `——处置以「${REVIEW_ACTION_MARK}」开头与证据只来自人工成对判：这类条目不产生代码要求`);
     }
     let probe = null;
     try {
@@ -246,16 +246,16 @@ function parseConstraintFile(body, fm, rel, bad) {
     });
   }
   if (!entries.length) {
-    fail(`派生为空：${rel} 的条目表解析出零行 —— 检查编号是否为「前缀-两位数」形态`);
+    fail(`${rel} 的条目表解析出零行——编号列按「<域前缀>-<两位数>」认数据行（域前缀是大写字母开头的 2–8 位大写字母或数字），不合形态的行不计`);
   }
   const prefixes = new Set(entries.map(e => e.prefix));
   if (prefixes.size !== 1) {
-    fail(`${rel} 的条目跨了多个域前缀（${[...prefixes].join('、')}）—— 一个文件一个域`);
+    fail(`${rel} 的条目跨了多个域前缀（${[...prefixes].join('、')}）——域前缀从条目编号派生，一个文件一个域`);
   }
   const declared = fmText(fm.domain);
   const derived = [...prefixes][0];
   if (declared && declared !== derived) {
-    fail(`${rel} 声明的 domain「${declared}」与条目编号前缀「${derived}」不一致`);
+    fail(`${rel} 声明的 domain「${declared}」与条目编号前缀「${derived}」不一致——域从条目编号前缀派生，frontmatter 的 domain 按它核`);
   }
   // 落法附注：顶层列表项以 `**<编号>**` 起头的是那一条的附注，到下一个顶层项或标题为止（缩进的续行、
   // 子项并成一行）；其余顶层项是整域通则。送到判断骨架与审查任务书，读它的是判命中的作者与审查者。
@@ -272,7 +272,7 @@ function parseConstraintFile(body, fm, rel, bad) {
       const head = item[1].match(/^\*\*([A-Z][A-Z0-9]{1,7}-\d{2})\*\*\s*[：:]?\s*(.*)$/);
       if (head) {
         const id = head[1];
-        if (!entries.some(e => e.id === id)) bad.push(`${rel} 的落法附注里有「${id}」，条目表里没有这个编号`);
+        if (!entries.some(e => e.id === id)) bad.push(`${rel} 的落法附注里有「${id}」，条目表里没有这个编号——以 **<编号>** 起头的附注项附在同编号条目上送达`);
         noteOf.set(id, head[2].trim());
         append = (t) => noteOf.set(id, `${noteOf.get(id)} ${t}`.trim());
       } else {
@@ -322,11 +322,11 @@ function parsePatternFile(body, fm, rel, bad) {
   const halves = halvesOf(body, rel, bad);
   const roles = fmList(fm.roles);
   if (!roles.length) {
-    fail(`派生为空：${rel} 未声明 roles —— 模式采用后要逐角色投影到契约实体，没有角色就无从校验`);
+    fail(`${rel} 的 frontmatter 未声明 roles——模式采用后要逐角色投影到契约实体，没有角色就无从校验`);
   }
   const coordinator = fmText(fm.coordinator_role);
   if (coordinator && !roles.includes(coordinator)) {
-    fail(`${rel} 的 coordinator_role「${coordinator}」不在 roles 里`);
+    fail(`${rel} 的 coordinator_role「${coordinator}」不在 roles 里——协调角色取 roles 中的一个`);
   }
   // 适用条件与正文由模型直接读，机制只认标识与角色（冻结门禁的投影基准）。
   return {
@@ -348,7 +348,7 @@ function parseFactFile(body, fm, rel, form, bad) {
     return { file: rel, name: fmText(fm.name), units: HALVES, halves: halvesOf(body, rel, bad) };
   }
   if (new RegExp(`^#\\s+${HALVES[0]}\\s*·`, 'm').test(body)) {
-    bad.push(`${rel} 声明 form: facets，正文却分了上下篇——多步推导的项目方法写 form: halves`);
+    bad.push(`${rel} 声明 form: facets，正文却分了上下篇——form 决定正文按分面（二级标题一面）还是按上下篇解析，「# 上篇 · …」是 form: halves 的写法`);
   }
   const units = lines(body).map(l => l.match(/^##\s+(.+?)\s*$/)).filter(Boolean)
     .map(m => m[1].replace(/\s*—.*$/, '').replace(/^\d+(\.\d+)*\.?\s*/, '').trim()).filter(Boolean);
@@ -377,18 +377,18 @@ export function knowledgeFiles(projectRoot) {
   const manifestPath = path.join(root, MANIFEST_NAME);
   const raw = readTextOrNull(manifestPath);
   if (raw === null) {
-    fail(`派生为空：读不到激活清单 ${relDisplay(projectRoot, manifestPath)}`);
+    fail(`${relDisplay(projectRoot, manifestPath)}：读不到激活清单——知识只按这份清单登记的文件读取，清单读不到就派生不出任何知识`);
   }
   let manifest;
   try {
     manifest = parseYaml(raw);
   } catch (e) {
-    fail(`激活清单解析失败（解析失败不当作空清单）：${e.message}`);
+    fail(`${relDisplay(projectRoot, manifestPath)}：激活清单解析失败（${e.message}）——清单按 YAML 读，解析失败不当作空清单`);
   }
   const declared = manifest?.provides?.knowledge;
   if (declared !== undefined && declared !== null && !Array.isArray(declared)) {
-    fail(`manifest 的 provides.knowledge 不是列表（读到 ${typeof declared}）——`
-      + '要么逐行列出激活的知识文件，要么整条不写；写成别的形状没有「还没配置」的含义');
+    fail(`${relDisplay(projectRoot, manifestPath)} 的 provides.knowledge 不是列表（读到 ${typeof declared}）——`
+      + '这一条按列表逐行读激活的知识文件，整条不写表示这个仓还没配置知识；其他形状不当作「还没配置」');
   }
   return (Array.isArray(declared) ? declared : [])
     .map(rel => String(rel).replace(/\\/g, '/'));
@@ -417,12 +417,12 @@ export function activeKnowledge(projectRoot) {
   // 不合协议的条目收齐再一次报：知识所有者升级机制之后要逐条改，不该改一条撞一条。
   const bad = [];
   for (const relPosix of knowledgeFiles(projectRoot)) {
-    if (seen.has(relPosix)) { bad.push(`${relPosix} 在激活清单里重复登记`); continue; }
+    if (seen.has(relPosix)) { bad.push(`${relPosix} 在激活清单里重复登记——激活按清单逐项读文件，一个文件登记一次`); continue; }
     seen.add(relPosix);
 
     const abs = path.join(root, ...relPosix.split('/').filter(Boolean));
     const text = readTextOrNull(abs);
-    if (text === null) { bad.push(`派生为空：激活清单登记的文件读不到 —— ${relPosix}`); continue; }
+    if (text === null) { bad.push(`激活清单登记的文件读不到 —— ${relPosix}（知识只读清单登记的文件，登记了读不到按读取失败报，不当作空）`); continue; }
 
     const { frontmatter, body } = splitFrontmatter(text);
     let fm;
@@ -474,12 +474,12 @@ export function activeKnowledge(projectRoot) {
       bad.push(e.message);
     }
   }
-  if (bad.length) fail(`知识不合协议（${bad.length} 处，按所在文件改）：\n  · ${bad.join('\n  · ')}`);
+  if (bad.length) fail(`知识不合协议（${bad.length} 处，每条写明所在文件）：\n  · ${bad.join('\n  · ')}`);
 
   const entries = out.constraints.flatMap(c => c.entries);
   const ids = entries.map(e => e.id);
   const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
-  if (dup.length) fail(`条目编号重复：${[...new Set(dup)].join('、')} —— 编号一经分配不复用`);
+  if (dup.length) fail(`条目编号重复：${[...new Set(entries.filter(e => dup.includes(e.id)).map(e => `${e.file} ${e.id}`))].join('、')}——激活规约的编号全仓唯一，一经分配不复用`);
 
   return {
     ...out,
@@ -523,7 +523,7 @@ export function selfCheck(projectRoot, knowledge) {
       const m = line.match(implPathRe);
       if (m) {
         problems.push(`${c.file}:${i + 1} 规约携带工程实现事实「${m[0]}」`
-          + '——归项目知识；此处只写「按项目知识的入口找现成的」');
+          + '——自检按源码路径与文件名（.ets / .ts / .js / .json5）判；源码位置归项目知识，规约写要求与时机');
       }
     });
   }
@@ -536,7 +536,7 @@ export function selfCheck(projectRoot, knowledge) {
       const hit = phaseWords.filter(w => line.toLowerCase().includes(w));
       if (hit.length >= 3) {
         problems.push(`${file} 出现阶段消费矩阵（表头含 ${hit.join('/')}）`
-          + '——阶段路由归各阶段自己的规则，知识不维护');
+          + '——自检把同时含三个及以上阶段名的表格行认作阶段矩阵；阶段路由归各阶段自己的规则，知识不维护');
         break;
       }
     }
@@ -571,7 +571,7 @@ export function selfCheck(projectRoot, knowledge) {
       const m = line.match(mechanismRe);
       if (m) {
         problems.push(`${file}:${i + 1} 知识指向机制「${m[0].trim()}」`
-          + '——维护坐标不进知识，知识只写给模型实现需求用的内容');
+          + '——自检把扩展根下 knowledge/ 以外的一级目录与 manifest.yaml 认作机制坐标；维护坐标不进知识，知识只写给模型实现需求用的内容');
       }
     });
   }

@@ -276,10 +276,13 @@ class SectionShapesAreChecked(ViewCase):
         return node_eval(
             "import {pathToFileURL} from 'node:url';"
             "const m = await import(pathToFileURL(process.argv[1]).href);"
-            "const ctx = {storyPath: process.argv[3], idShapes: {drop: []}};"
+            "const fs = await import('node:fs');"
+            "const contract = JSON.parse(fs.readFileSync(process.argv[4], 'utf-8'));"
+            "const ctx = {storyPath: process.argv[3], idShapes: {drop: []}, contract, projectRoot: process.argv[5], featureRoot: process.argv[3] + '.none'};"
             "process.stdout.write(JSON.stringify("
             "  m.chapterProblems(ctx, {title: '功能说明'}, process.argv[2])));",
-            str(chapter), text, str(REPO_ROOT / "AR" / "story.md"))
+            str(chapter), text, str(REPO_ROOT / "AR" / "story.md"),
+            str(EXT / "skills" / "story" / "contracts" / "story-chapters.json"), str(REPO_ROOT))
 
     def test_a_repeated_and_an_empty_section_are_named(self) -> None:
         got = self.problems(self.CHAPTER)
@@ -287,8 +290,8 @@ class SectionShapesAreChecked(ViewCase):
         empty = [p for p in got if "「取件提醒」小节下面没有正文" in p]
         self.assertEqual(1, len(repeated), got)
         self.assertEqual(1, len(empty), got)
-        self.assertIn("合成一节", repeated[0])
-        self.assertIn("删掉这个标题", empty[0])
+        self.assertIn("小节按标题名认", repeated[0], "没说这条怎么判")
+        self.assertIn("只有标题的小节读者读不到内容", empty[0], "没说这条怎么判")
 
     def test_a_diagram_only_section_and_fenced_samples_pass(self) -> None:
         got = self.problems(self.CHAPTER)

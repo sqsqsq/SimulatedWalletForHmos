@@ -177,7 +177,11 @@ class EveryWarnHasADisposition(ClosureCase):
     def test_a_warn_row_needs_a_line_in_the_notes(self) -> None:
         ids = self.overlay_ids()
         self.put_report(report_text(ids, {ids[0]: "WARN"}))
-        self.assertIn(f"{ids[0]}（WARN）", self.gate())
+        out = self.gate()
+        self.assertIn(f"spec/notes.md：审查结论 {ids[0]}（WARN）没有处置记录", out)
+        # 门禁报错只说在哪、什么问题、机制（10 §3.3）：没有统一开头，也不追加与这条无关的处置尾巴
+        self.assertNotIn("补齐 spec 宿主扩展章节", out)
+        self.assertNotIn("先读 ", out)
         (self.fr / "spec" / "notes.md").write_text(
             f"# notes\n\n- {ids[0]}：只改表达，已按闭环表重验。\n", encoding="utf-8")
         self.assertNotIn(f"{ids[0]}（WARN）", self.gate())
@@ -198,7 +202,7 @@ class TheAcceptanceIdsLineUp(ClosureCase):
 
     def test_an_id_missing_from_acceptance_is_named(self) -> None:
         self.edit_spec("**AC-5** (AC-R5, F6)", "**AC-15** (AC-R5, F6)")
-        self.assertIn("§8 的 AC-15 在 acceptance.yaml 里没有", self.gate())
+        self.assertIn("spec.md「验收标准」：AC-15 在 acceptance.yaml 里没有", self.gate())
 
     def test_a_function_drift_is_named(self) -> None:
         self.edit_spec("**AC-3** (AC-R3, F6)", "**AC-3** (AC-R3, F5)")
@@ -212,7 +216,7 @@ class TheAcceptanceIdsLineUp(ClosureCase):
     def test_one_id_with_two_meanings_is_named(self) -> None:
         (self.fr / "acceptance.yaml").write_text(
             ACCEPTANCE + "  - id: AC-2\n    prd_function: F9\n    description: 另一件事\n", encoding="utf-8")
-        self.assertIn("同号不同义：AC-2", self.gate())
+        self.assertIn("AC-2 同号不同义", self.gate())
 
     def test_an_upstream_id_that_was_renumbered_is_named(self) -> None:
         prd = self.fr / "RR" / "prd.md"

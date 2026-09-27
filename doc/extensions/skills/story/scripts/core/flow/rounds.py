@@ -128,7 +128,7 @@ def cmd_reopen(feature_root: Path) -> dict:
     status = contract.get("status")
     if in_update(contract):
         raise FlowError("update 这一轮还开着：它沿用本单已定的范围，不在这一轮里重拍。"
-                        "先按 `phases/update.md` 收口这一轮（`update --action close`，范围问题写进保留项），"
+                        "先按 `phases/update.md`「二、一条线」收口这一轮（范围问题写进保留项），"
                         "再跑 `story_flow.py reopen`")
     if not after_complete(contract):
         raise FlowError(f"流程还没收口（现在是 {status}），范围关卡本来就开着：跑 `story_flow.py status` 取下一步")

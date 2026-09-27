@@ -277,7 +277,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         self.assertEqual(0, self.mark_unused("属别的需求的页面").returncode)
         self.put_in_body("签约页长这样。\n\n"
                          "![图 1 · 签约页](../ux-reference/signup-page.png)\n")
-        self.assertIn("正文却引了它", self.check_output())
+        self.assertIn("在材料里登记着不用的理由", self.check_output())
 
     def test_using_it_settles_it_too(self) -> None:
         text = self.story.read_text(encoding="utf-8")

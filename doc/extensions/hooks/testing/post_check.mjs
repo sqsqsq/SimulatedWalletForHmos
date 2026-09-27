@@ -84,19 +84,19 @@ export default guard('testing', async (ctx) => {
     }
     const entries = byRule.get(rule);
     if (!entries || !entries.length) {
-      problems.push(`义务 ${rule} 标了 verify: ${ob.verify}，但 acceptance.yaml 里没有`
-        + `knowledge_rule: ${rule} 的验收条目——本阶段无从知道该走查什么`);
+      problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
+        + `knowledge_rule: ${rule} 的验收条目——门禁按 knowledge_rule 把验收条目认回规约，要走查的场景从这些条目取`);
       continue;
     }
     for (const c of entries) {
       const id = String(c.id ?? '').trim();
       if (!id) {
-        problems.push(`义务 ${rule} 有一条验收条目没写 id——实机测试计划与报告按编号回查时对不到场景`);
+        problems.push(`acceptance.yaml：义务 ${rule} 有一条验收条目没写 id——实机测试计划与报告按验收编号回查`);
         continue;
       }
       if (!referenced.has(id)) {
-        problems.push(`义务 ${rule} 的验收条目 ${id} 在实机测试产物里没有被引用`
-          + '——本阶段是这些约束的最后一道关，漏了就再没有人验');
+        problems.push(`testing/：义务 ${rule} 的验收条目 ${id} 在实机测试产物里没有被引用`
+          + '——门禁在 testing/ 下的 .md、.json、.yaml 里找这个编号；本阶段是这些约束的最后一道关，漏了就再没有人验');
       }
     }
   }
@@ -107,6 +107,5 @@ export default guard('testing', async (ctx) => {
       ? [{ id: 'ext_testing_not_applicable', status: 'NOT_APPLICABLE',
           detail: `按 must.verify 显式分派：${notApplicable.join('、')}` }]
       : undefined,
-    fix: '处置：在测试计划与报告里覆盖这些验收条目，或回 plan 修正 must.verify 后重跑。',
   });
 });

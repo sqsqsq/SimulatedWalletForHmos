@@ -21,7 +21,7 @@ import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { carriedDiagramProblems, imageProblems, sourceMarkProblems, strayMarks } from './images.mjs';
+import { carriedDiagramProblems, imageProblems, strayMarks } from './images.mjs';
 import { decisionProblems, redactReviewExemptZones, reviewFormProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -89,13 +89,10 @@ export function cmdCheck(ctx) {
   if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
     const extra = titles.filter(t => !want.includes(t));
-    problems.push(`章节标题与合同不一致：${missing.length ? `缺 ${missing.join('、')}` : ''}`
+    problems.push(`story.md：章节标题与合同不一致：${missing.length ? `缺 ${missing.join('、')}` : ''}`
       + `${extra.length ? ` 多 ${extra.join('、')}` : ''}`
-      + `${!missing.length && !extra.length ? '（顺序不对）' : ''}`);
-  }
-  for (const sec of sections) {
-    const body = sec.text.trim();
-    if (!body) problems.push(`「${sec.title}」是空节——确实不涉及就写「${EMPTY_SECTION_TEXT}」一句`);
+      + `${!missing.length && !extra.length ? '（顺序不对）' : ''}`
+      + '——章按章节合同登记的标题与顺序认，逐章落盘也按这些章锚定位');
   }
 
   mark('①b 大标题带需求编号');
@@ -104,13 +101,13 @@ export function cmdCheck(ctx) {
   const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
   const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
   if (!h1Text) {
-    problems.push('没有大标题——归档件的第一行是 `# <需求编号> <需求名称>`');
+    problems.push('story.md 第 1 行：没有大标题——归档件的大标题是 `# <需求编号> <需求名称>`');
   } else if (!h1Text.includes(ctx.args.feature)) {
-    problems.push(`大标题缺需求编号：写成 \`# ${ctx.args.feature} <需求名称>\``
-      + '——归档件流转出去之后，读者靠这个编号回到需求系统');
+    problems.push(`story.md 大标题：缺需求编号 ${ctx.args.feature}`
+      + '——归档件流转出去之后，读者靠这个编号回到需求系统；大标题的形态是 `# <需求编号> <需求名称>`');
   } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
-    problems.push(`大标题缺需求名：写成 \`# ${ctx.args.feature} <需求名称>\``
-      + '——名称取自需求详情，本地单写需求方给的名称；只有编号，读者在需求系统外认不出这是哪件事');
+    problems.push('story.md 大标题：只有需求编号、没有需求名'
+      + '——只有编号，读者在需求系统外认不出这是哪件事；名称取自需求详情，本地单是需求方给的名称');
   }
 
   mark('③ 验收编号落在验收章');
@@ -125,10 +122,11 @@ export function cmdCheck(ctx) {
   for (const re of ctx.idShapes?.keep ?? []) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
-    if (!acceptanceSec) { problems.push('story 里有验收编号，却没有「验收」章'); continue; }
+    if (!acceptanceSec) { problems.push('story.md：有验收编号，却没有「验收」章——验收编号按章节合同 id_shapes 认，出现过的都要落在验收章'); continue; }
     const missed = [...inStory].filter(id => !acceptanceSec.text.includes(id));
     if (missed.length) {
-      problems.push(`这些验收编号没有出现在「${acceptanceSec.title}」章：${missed.join('、')}`);
+      problems.push(`story.md「${acceptanceSec.title}」：没有出现验收编号 ${missed.join('、')}`
+        + '——正文里出现过的验收编号（按章节合同 id_shapes 认）都要在验收章里有');
     }
   }
 
@@ -164,11 +162,13 @@ export function cmdCheck(ctx) {
   const storyLines = storyText.split(/\r?\n/);
   const zones = zonesByLine(storyLines);
   const zoneHits = [];
-  // story 的命中按行分到投影区与作者区：投影区的留给 ⑩b，作者区的就地报
+  // story 的命中按行分三处：投影区的留给 ⑩b 报到真源；章正文里的由 ⑪ 按章报（与章提交同一实现）；
+  // 这里只报章之外那一段（大标题与前言）
+  const firstChapter = sections.length ? sections[0].at + 1 : storyLines.length + 1;
   const authored = (label, hits, what, hitOf) => (label !== 'story' ? hits : hits.filter((h) => {
     const zone = zones.get(h.line - 1);
     if (zone) zoneHits.push({ zone, line: h.line, what, hit: hitOf(h) });
-    return !zone;
+    return !zone && h.line < firstChapter;
   }));
   for (const [label, text, bannedText] of [
     ['story', storyForPaths, storyForPaths],
@@ -184,7 +184,7 @@ export function cmdCheck(ctx) {
         : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path), h => h.path],
     ]) {
       const own = authored(label, hits, what, hitOf);
-      if (own.length) problems.push(`${label} 出现${what} ${own.length} 处：${formatHits(own, kind)}`);
+      if (own.length) problems.push(`${label}.md 出现${what} ${own.length} 处：${formatHits(own, kind)}`);
     }
   }
 
@@ -217,7 +217,8 @@ export function cmdCheck(ctx) {
       }
       for (const list of groups.values()) {
         const all = list.map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
-        problems.push(`${label} 出现${list[0].label} ${list.length} 处（${all}）——${list[0].hint}`);
+        const why = [...new Set(list.map(h => h.why).filter(Boolean))].join('、');
+        problems.push(`${label}.md 出现${list[0].label} ${list.length} 处（${all}）${why ? `，${why}` : ''}——${list[0].hint}`);
       }
     }
   }
@@ -234,22 +235,25 @@ export function cmdCheck(ctx) {
     byZone.get(z.zone.name).items.push(`${z.line} 行${hit.what}「${hit.words.join('」「')}」（那一行：${row}）`);
   }
   for (const [name, { source, items }] of byZone) {
-    problems.push(`附录「${name}」的机器区从${source}投影而来，里面有 ${items.length} 处红线：`
+    problems.push(`${source}（投影到 story.md 附录「${name}」）：有 ${items.length} 处红线：`
       + `${items.slice(0, 5).join('；')}${items.length > 5 ? ' …' : ''}`
-      + `——机器区不手改：到${source}里改这几行对应的原文，再跑 \`story-build.mjs project\` 让它重投`);
+      + '——附录机器区由 `story-build project` 从真源按行投影，问题出在真源里对应的那几行；手改机器区会被下一次投影覆盖');
   }
 
-  mark('⑪ 章内必要项');
+  mark('⑪ 章内判据（story.md 由各章草稿经 chapter 装配，直接改 story.md 会被下一次装配覆盖）');
   // 与章提交同一个实现：单章通过而全篇报同一条（或反过来）时，
-  // 作者只能把两处的差别当成运气。
+  // 作者只能把两处的差别当成运气。经 `chapter` 提交的章在提交时已经判过，
+  // 这里报出的是绕过 `chapter` 直接改了 story.md 的那几处。
   for (const ch of ctx.contract.chapters ?? []) {
     const text = sectionText.get(ch.title);
     if (text === undefined) continue;             // 章缺失由 ① 报，这里不重复
     const planned = plan ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
-    problems.push(...chapterProblems(ctx, planned, text, () => viewOf(ch.title)));
+    const head = sections.find(s2 => s2.title === ch.title)?.at ?? 0;
+    problems.push(...chapterProblems(ctx, planned, text, () => viewOf(ch.title),
+      n => `story.md「${ch.title}」第 ${head + 1 + n} 行`));
   }
   // 章之外那一段（大标题与前言）的占位符：逐章判覆盖不到它。
-  problems.push(...placeholderProblems(storyText.split(/\n##\s/)[0]));
+  problems.push(...placeholderProblems(storyText.split(/\n##\s/)[0], 'story.md 大标题一段'));
 
   mark('⑫ 附录结构');
   problems.push(...appendixStructureProblems(ctx, sections, viewOf));
@@ -269,7 +273,8 @@ export function cmdCheck(ctx) {
 
   mark('⑫d 上游图承接');
   // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
-  problems.push(...carriedDiagramProblems(ctx, storyText), ...sourceMarkProblems(ctx, storyText));
+  // 标记本身指不指得到、写没写在围栏里，是本章的事，由 ⑪ 判。
+  problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑬ 评审记录只含渲染语法');
   problems.push(...reviewFormProblems(reviewText, ctx.contract));

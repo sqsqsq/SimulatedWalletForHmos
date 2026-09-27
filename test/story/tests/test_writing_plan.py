@@ -240,7 +240,7 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
         code, out = self.cmd("check")
         self.assertEqual(1, code, out)
         self.assertIn("台账缺", out)
-        self.assertIn("story-template.md（跑 skeleton 建空壳", out)
+        self.assertIn("story-template.md（由 skeleton 建空壳", out)
 
     def test_check_names_a_shell_design_under_its_own_class(self) -> None:
         self.cmd("skeleton")
@@ -301,7 +301,7 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         code, out = self.put("功能说明", "提交后界面停在等待态。\n\n" + TABLE)
         self.assertEqual(1, code, out)
         self.assertIn("「功能说明」缺「失败提示」这一节", out)
-        self.assertIn("删掉骨架里那一行", out, "没给出改骨架这条出路")
+        self.assertIn("写作设计骨架里列了它，章提交按骨架核", out, "没说这一节为什么是必要的")
         code, out = self.put("功能说明", "提交后界面停在等待态。\n\n" + TABLE
                              + "\n### 失败提示\n\n提交失败时停在原页面。\n")
         self.assertEqual(1, code, out)
@@ -441,15 +441,15 @@ class TheSkeletonBecomesTheDraft(PlanCase):
                 story_before = self.story_path.read_bytes()
                 code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
                 self.assertEqual(1, code, out)
-                self.assertIn("两处说法冲突", out)
-                self.assertIn("- 不涉及：", out, "没给出改骨架这条出路")
+                self.assertIn("两处说法要一致", out)
+                self.assertIn("- 不涉及：", out, "没说骨架里不涉及怎么写")
                 self.assertEqual(story_before, self.story_path.read_bytes(), "冲突却写了盘")
 
                 story = self.story_path.read_text(encoding="utf-8")
                 self.story_path.write_text(story.replace(f"<!-- 待写：{title} -->", "本需求不涉及。"),
                                            encoding="utf-8")
                 _, out = self.cmd("check")
-                self.assertIn("两处说法冲突", out, "全篇 check 与章提交不是同一条检查")
+                self.assertIn("两处说法要一致", out, "全篇 check 与章提交不是同一条检查")
 
                 self.story_path.write_bytes(story_before)
                 self.write_plan(with_chapter(chapter_id, "- 不涉及：本需求没有这部分"))

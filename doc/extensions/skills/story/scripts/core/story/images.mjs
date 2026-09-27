@@ -82,11 +82,15 @@ export function strayMarks(text) {
 }
 
 /**
- * 来源标记指得到吗 —— 指向的图在直接上游里存在，且不是指向 story 自己。
+ * 本章的图源标记指得到吗 —— 指向的图在直接上游里存在、不是指向 story 自己，且写在围栏第一行。
  *
+ * 只看本章就判得了，所以在提交本章时判（章提交与整篇检查的 ⑪ 共用）。
  * 只核引用本身：图是不是承接了那张图的关系，要读内容，归读者审查的图文一致判据。
+ *
+ * @param {string} text 本章正文，第一行是本章标题（图的节号按标题认）
+ * @param {(line:number) => string} where 正文行号（1 起，含标题行）→ 作者要改的位置
  */
-export function sourceMarkProblems(ctx, storyText) {
+export function chapterSourceMarkProblems(ctx, text, where) {
   const problems = [];
   const known = new Set();
   const labels = new Set();
@@ -94,96 +98,109 @@ export function sourceMarkProblems(ctx, storyText) {
     labels.add(label);
     for (const d of diagramsOf(upstream)) known.add(`${label} ${d.id}`);
   }
-  for (const d of diagramsOf(storyText)) {
+  for (const d of diagramsOf(text)) {
     for (const mark of d.sources) {
       if (known.has(mark)) continue;
       const label = mark.split(/\s+/)[0];
-      problems.push(labels.has(label)
-        ? `story ${d.id} 的来源标记「${mark}」指向的图在 ${label} 里没有——照 skeleton 输出里给的那行写，或去掉这行标记`
-        : `story ${d.id} 的来源标记「${mark}」指向的不是上游文档（上游是 ${[...labels].join('、') || '无'}）——`
-          + '标记写直接上游那一张图，不指向 story 自己');
+      problems.push(`${where(d.at.from)}：图源标记「${mark}」` + (labels.has(label)
+        ? `指向的图在 ${label} 里没有——标记按上游文档的节号与该节内第几张认，${label} 现有的图见 skeleton 输出`
+        : `指向的不是直接上游（上游是 ${[...labels].join('、') || '无'}）——标记登记的是 story 这张图承接了上游哪一张`));
     }
   }
-  for (const line of strayMarks(storyText)) {
-    problems.push(`第 ${line} 行的图源标记写在了围栏外——标记要写在图的围栏里第一行`);
+  for (const line of strayMarks(text)) {
+    problems.push(`${where(line)}：图源标记写在了围栏外——只有图的围栏里开头那几行 \`%% 图源\` 算登记`);
   }
   return problems;
 }
 
-/** 图片身份：引到的每一张是不是材料里登记过的那一张，登记的每一张有没有去处。 */
+/**
+ * 本章引的每一张图：有 alt、是材料里登记过的那一张、没有同时登记成不用。
+ *
+ * 只看本章就判得了，在提交本章时判；全篇才判得了的（同一张图引了两次、两个路径指同一张、
+ * 登记的图全篇都没去处）留在整篇检查的 `imageProblems`。材料清单读不出时这里不判，缺口由整篇检查报。
+ *
+ * @param {string} text 本章正文（行号与 `where` 同一口径）
+ */
+export function chapterImageProblems(ctx, text, where) {
+  const problems = [];
+  const registered = materialImages(ctx);
+  // 登记为零张时不核身份（与整篇检查同一口径：没有登记集合可比）
+  const usable = Array.isArray(registered) && registered.length ? registered : null;
+  const storyDir = usable ? path.dirname(relFromFeature(ctx, ctx.storyPath)) : '';
+  const byPath = new Map();
+  (usable ?? []).forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
+  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
+    for (const [, alt, src] of line.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)) {
+      if (!alt.trim()) problems.push(`${where(i + 1)}：图片 ${src} 没有 alt 文本——alt 是评审人看不到图时读到的那句话`);
+      if (!usable || /^(https?:|data:)/i.test(src)) continue;
+      const idx = byPath.get(joinPosix(storyDir, src));
+      if (idx === undefined) {
+        const name = path.posix.basename(src);
+        const same = [...byPath.keys()].filter(rel => path.posix.basename(rel) === name)
+          .map(rel => path.posix.relative(storyDir, rel));
+        problems.push(`${where(i + 1)}：图片「${src}」不在材料的图片登记里——story 里的图按登记的引用认`
+          + `（相对 ${storyDir}/ 解析）${same.length ? `，同名的登记引用是 \`${same.join('`、`')}\`` : ''}`
+          + '；副本与改名后的文件没有登记，说不出是哪一轮、哪一份材料');
+        continue;
+      }
+      const declined = String(usable[idx].unused ?? '').trim();
+      if (declined) {
+        problems.push(`${where(i + 1)}：图片「${src}」在材料里登记着不用的理由（${declined}）——`
+          + '登记的去向与正文的引用说的是两件事，图的去向以材料清单里的登记为准'
+          + '（登记由 `import_sources.py --caption-image <路径> --used / --unused` 写入）');
+      }
+    }
+  });
+  return problems;
+}
+
+/**
+ * 图片身份里要读全篇才判得了的那几条：同一张图引了不止一次、两个路径指同一张、
+ * 登记的每一张在全篇有没有去处。本章能判的（alt、在不在登记、登记成不用却引了）在提交本章时判。
+ */
 export function imageProblems(ctx, storyText) {
   const problems = [];
   const notes = [];
-  // ④ 图片身份：story 引了哪些图、每一张是不是材料清单里登记过的那一张。
-  //
-  // 这两条是确定性的链接与图片检查，单独成块：判的是「引用可不可解析、
-  // 在不在登记里」，与作者画了几张无关，所以不跟形态守恒放一起。
   const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
   const seen = new Set();
-  for (const [, alt, src] of imgs) {
-    if (!alt.trim()) problems.push(`图片 ${src} 没有 alt 文本`);
-    if (seen.has(src)) problems.push(`图片 ${src} 在 story 里出现了不止一次`);
+  for (const [, , src] of imgs) {
+    if (seen.has(src)) problems.push(`story.md：图片 ${src} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
     seen.add(src);
   }
-
-  {
-    // 图片身份：引到的每一张都要是材料里**登记过**的那一张。
-    //
-    // 判据只有这一条：路径在登记的落点集合里，任何目录都没有按字节认的特权——
-    // 未登记的文件说不出它是哪一轮、哪一份材料来的。
-    // 已经登记进材料的 assets 路径照样合法（它在登记集合里）。
-    const registered = materialImages(ctx);
-    if (registered?.gap) {
-      problems.push(`${registered.gap}——图片引用无从核对身份`);
-    } else if (!registered) {
-      notes.push('没有材料清单（AR/story-src/materials.json），图片身份与落点判据未执行'
-        + '——跑 `story_flow.py round` 生成它之后这条才判得了');
-    } else if (registered.length) {
-      const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
-      const byPath = new Map();
-      registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
-      const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
-      for (const src of seen) {
-        if (/^(https?:|data:)/i.test(src)) continue;
-        const rel = joinPosix(storyDir, src);
-        const idx = byPath.has(rel) ? byPath.get(rel) : -1;
-        if (idx < 0) {
-          problems.push(`story 引用的图片「${src}」不在材料的图片登记里`
-            + '——引它在仓里的既有落盘位置，不要复制一份到别处再改名；'
-            + '副本没人维护，改了名读者也认不出它就是原来那张');
-          continue;
-        }
-        if (!usedBy.has(idx)) usedBy.set(idx, []);
-        usedBy.get(idx).push(src);
-      }
-      for (const [idx, srcs] of usedBy) {
-        if (srcs.length < 2) continue;
-        problems.push(`同一张图被两个路径引用：${srcs.join('、')}`
-          + `（材料里登记为 ${registered[idx].paths.join('、')}）`
-          + '——同一张图只引一次，一处说清它画的是什么');
-      }
-
-      // 每张图都有去处：要么正文引了，要么在材料清单里登记了为什么不用。
-      //
-      // 判的是**去处**不是义务：图可以不用——参考稿废弃了、那是友商的、
-      // 那是别的单据的页面，都是正当理由。不正当的是它在材料里而去向没人说过，
-      // 读者无从知道你看没看过它。理由成不成立由读者审查判，这里只报缺口。
-      const mark = rel => '`import_sources.py --feature <名> --caption-image ' + rel;
-      for (const [i, m] of registered.map((m2, i2) => [i2, m2])) {
-        const declined = String(m.unused ?? '').trim();
-        if (usedBy.has(i) && declined) {
-          problems.push(`「${m.paths[0]}」登记着不用的理由（${declined}），正文却引了它——`
-            + '二者取其一：属于本需求就 ' + mark(m.paths[0]) + ' --used` 清掉理由，'
-            + '不属于本需求就把正文里那处删掉');
-        } else if (!usedBy.has(i) && !declined) {
-          problems.push(`材料里登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
-            + '在 story 里没被引用，也没登记为什么不用——'
-            + '属于本需求就在讲它的那一章引用（图前说明业务过程，图后说明分支条件、处理责任和结果），'
-            + '不属于本需求就跑 ' + mark(m.paths[0]) + ' --unused "<为什么不用它>"`；'
-            + '归档件不为一张不用的图留正文');
-        }
-      }
-    }
+  const registered = materialImages(ctx);
+  if (registered?.gap) {
+    problems.push(`${registered.gap}；图片引用无从核对身份`);
+    return { problems, notes };
+  }
+  if (!registered) {
+    notes.push('AR/story-src/materials.json：不在，图片身份与落点判据未执行'
+      + '——这份清单由 `story_flow.py round` 生成');
+    return { problems, notes };
+  }
+  const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
+  const byPath = new Map();
+  registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
+  const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
+  for (const src of seen) {
+    if (/^(https?:|data:)/i.test(src)) continue;
+    const idx = byPath.get(joinPosix(storyDir, src));
+    if (idx === undefined) continue;   // 不在登记里的由本章判据报
+    if (!usedBy.has(idx)) usedBy.set(idx, []);
+    usedBy.get(idx).push(src);
+  }
+  for (const [idx, srcs] of usedBy) {
+    if (srcs.length < 2) continue;
+    problems.push(`story.md：同一张图被两个路径引用：${srcs.join('、')}`
+      + `（材料里登记为 ${registered[idx].paths.join('、')}）——图按材料登记的内容认，同一张图只在一处引`);
+  }
+  // 每张图都有去处：要么正文引了，要么在材料清单里登记了为什么不用。判的是**去处**不是义务：
+  // 图可以不用；不正当的是它在材料里而去向没人说过。理由成不成立由读者审查判，这里只报缺口。
+  for (const [i, m] of registered.map((m2, i2) => [i2, m2])) {
+    if (usedBy.has(i) || String(m.unused ?? '').trim()) continue;
+    problems.push(`AR/story-src/materials.json 登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
+      + '：在 story 里没被引用，也没登记为什么不用——每张登记的图按有没有去处判：'
+      + '讲它的那一章有引用，或材料清单里有不用的理由'
+      + '（登记由 `import_sources.py --feature <名> --caption-image ' + m.paths[0] + ' --unused "<理由>"` 写入）');
   }
   return { problems, notes };
 }
@@ -199,20 +216,20 @@ export function imageProblems(ctx, storyText) {
  * @returns {{images: object[], gap: string|null}}
  */
 export function imagesIn(manifest) {
-  const fix = '——它只应由脚本写入；跑 `story_flow.py round` 重算材料清单';
+  const fix = '——这份清单由 `story_flow.py round` 按磁盘现状生成';
   if (manifest === null || typeof manifest !== 'object') {
-    return { images: [], gap: `AR/story-src/materials.json 读不出材料清单${fix}` };
+    return { images: [], gap: `AR/story-src/materials.json：读不出材料清单${fix}` };
   }
   if (!Array.isArray(manifest.materials)) {
     return { images: [],
-      gap: `AR/story-src/materials.json 里没有 \`materials\` 数组${fix}` };
+      gap: `AR/story-src/materials.json：没有 \`materials\` 数组${fix}` };
   }
   const images = manifest.materials.filter(m => String(m?.kind ?? '').includes('image'));
   const bad = images.filter(m => !Array.isArray(m.paths) || !m.paths.length
     || m.paths.some(rel => typeof rel !== 'string' || !rel.trim()));
   if (bad.length) {
     return { images: [],
-      gap: `AR/story-src/materials.json 里有 ${bad.length} 条图片记录的 \`paths\` 形状不对`
+      gap: `AR/story-src/materials.json：有 ${bad.length} 条图片记录的 \`paths\` 形状不对`
         + `（要一个非空的字符串数组）${fix}` };
   }
   return { images, gap: null };
@@ -255,8 +272,8 @@ export function carriedDiagramProblems(ctx, storyText) {
   // 周围文字自己写）是整类共同的写法，不逐张重复。
   for (const [label, upstream] of upstreamDocs(ctx)) {
     for (const d of diagramsNotCarried(upstream, label, storyText)) {
-      problems.push(`${label} ${d.id}（${diagramTopic(d)}）在 story 里没有——`
-        + '讲这件事的那一章补图并在围栏第一行写 `%% 图源 ' + `${label} ${d.id}` + '`；那件事没讲，先补内容');
+      problems.push(`${label} ${d.id}（${diagramTopic(d)}）在 story 里没有——没有围栏带着它的图源标记；`
+        + '上游每张图按 story 围栏开头的 `%% 图源 ' + `${label} ${d.id}` + '` 认承接；这张图讲的那件事落在 story 哪一章，图就在那一章');
     }
   }
   return problems;

@@ -93,7 +93,7 @@ class ArchivedDocMustStayReadableOutsideThisRepo(NegativeCase):
         review.write_text(existing + "\n本方案采用灰度发布，先放开一部分用户。\n",
                           encoding="utf-8")
         self.init_audit()
-        self.assert_check_names("review 出现客户端语境禁用词")
+        self.assert_check_names("review.md 出现客户端语境禁用词")
 
 
 class DeclaredSourcesMustExist(NegativeCase):
@@ -162,7 +162,7 @@ class LedgersMustAllExist(NegativeCase):
                 code, out = self.check_output()
                 self.assertNotEqual(code, 0, name + " 缺失居然没拦：" + out)
                 self.assertIn(name, out, "拦是拦了，但没点名是哪一件：" + out)
-                self.assertIn("不是把同伴文件删掉", out, "报错没堵住删台账那条路")
+                self.assertIn("报错数随之减少而问题仍在", out, "报错没说删台账为什么不解决问题")
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
         """登记、存在性两处说的必须是同一批台账——各写一份就会改一处忘一处。"""
@@ -420,7 +420,7 @@ class ReviewBannedTermsScope(NegativeCase):
 
     def banned_hits(self) -> str:
         _, out = self.check_output()
-        return "\n".join(l for l in out.splitlines() if "review 出现客户端语境禁用词" in l)
+        return "\n".join(l for l in out.splitlines() if "review.md 出现客户端语境禁用词" in l)
 
     def test_the_human_zone_is_not_judged(self) -> None:
         """人工区是**人的表态**，不是产品承诺——「先灰度一周」不该被拦。"""

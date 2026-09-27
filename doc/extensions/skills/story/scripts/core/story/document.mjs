@@ -462,7 +462,7 @@ export function renumberStory(text, chapters = [], counters = []) {
 export function storySections(storyText) {
   const doc = parseDocument(storyText);
   const h2s = doc.headings.filter(h => h.level === 2);
-  return h2s.map((h, k) => ({ title: h.name, raw: h.raw,
+  return h2s.map((h, k) => ({ title: h.name, raw: h.raw, at: h.at,
     text: doc.lines.slice(h.at + 1, h2s[k + 1]?.at ?? doc.lines.length).join('\n') }));
 }
 
@@ -539,14 +539,19 @@ export function pendingChapters(storyText) {
   return out;
 }
 
-/** 模板占位符 `{{…}}` —— 模板留给作者替换的位置，留在成品里就是没写完。 */
-export function placeholderProblems(text, where = '') {
+/**
+ * 模板占位符 `{{…}}` —— 模板留给作者替换的位置，留在成品里就是没写完。
+ *
+ * @param {string} [where] 行号前的位置前缀
+ * @param {(line:number) => string} [at] 行号 → 位置（给了就用它，不用前缀）
+ */
+export function placeholderProblems(text, where = '', at = null) {
   const out = [];
   String(text ?? '').split(/\r?\n/).forEach((line, i) => {
     const hit = /\{\{[^}]*\}\}/.exec(line);
     if (!hit) return;
-    out.push(`${where}第 ${i + 1} 行还留着模板占位符「${hit[0]}」`
-      + '——它是模板留给你替换的位置，换成这一节真正要写的内容');
+    out.push(`${at ? at(i + 1) : `${where}第 ${i + 1} 行`}：还留着模板占位符「${hit[0]}」`
+      + '——`{{…}}` 是模板留给作者写的位置，留着按没写完判');
   });
   return out;
 }

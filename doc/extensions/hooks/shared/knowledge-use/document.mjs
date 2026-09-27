@@ -42,7 +42,7 @@ export function manifestDigest(projectRoot) {
   const h = createHash('sha256');
   for (const relPosix of knowledgeFiles(projectRoot)) {
     const text = readTextOrNull(path.join(root, ...relPosix.split('/').filter(Boolean)));
-    if (text === null) fail(`激活清单登记的文件读不到：${relPosix}`);
+    if (text === null) fail(`激活清单登记的文件读不到：${relPosix}——manifest_digest 按清单里每个知识文件的内容算`);
     h.update(relPosix).update('\0').update(text.replace(/\r\n/g, '\n')).update('\0');
   }
   return 'sha256:' + h.digest('hex').slice(0, 16);
@@ -50,7 +50,7 @@ export function manifestDigest(projectRoot) {
 
 function asList(value, field) {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) fail(`knowledge-use.yaml 的 ${field} 不是列表`);
+  if (!Array.isArray(value)) fail(`spec/knowledge-use.yaml 的 ${field} 不是列表——${field} 按 YAML 列表逐行读`);
   return value;
 }
 
@@ -63,18 +63,17 @@ export function readUse(projectRoot, feature) {
   const p = usePath(projectRoot, feature);
   const raw = readTextOrNull(p);
   if (raw === null) {
-    fail(`缺 ${relDisplay(projectRoot, p)} —— spec 阶段的知识判断写在这里：`
-      + 'facts 用了什么、每条规约命中与否、模式有哪些候选。'
-      + '它是唯一真源，§9.2/§9.3 由它生成');
+    fail(`缺 ${relDisplay(projectRoot, p)}——spec 阶段的知识判断（facts 用了什么、每条规约命中与否、模式有哪些候选）`
+      + '以它为唯一真源：骨架由 `knowledge-use.mjs init` 生成，§9.2/§9.3 由 `knowledge-use.mjs render` 从它生成');
   }
   let data;
   try {
     data = parseYaml(raw);
   } catch (e) {
-    fail(`${relDisplay(projectRoot, p)} 解析失败（解析失败不当作空判断）：${e.message}`);
+    fail(`${relDisplay(projectRoot, p)} 解析失败（${e.message}）——这份判断按 YAML 读，解析失败不当作空判断`);
   }
   if (Number(data?.schema) !== SCHEMA) {
-    fail(`${relDisplay(projectRoot, p)} 的 schema 是 ${data?.schema}，本版要求 ${SCHEMA}`);
+    fail(`${relDisplay(projectRoot, p)} 的 schema 是 ${data?.schema}——本版扩展按 schema ${SCHEMA} 读这份判断`);
   }
   return {
     schema: SCHEMA,

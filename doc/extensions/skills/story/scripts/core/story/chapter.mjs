@@ -8,9 +8,10 @@
  *
  * ## 判据只有一份
  *
- * `chapterProblems` 是本章能确定的那几条，章提交与全篇 check 同一个实现：单章通过
- * 而全篇报同一条（或反过来）时，作者只能把两处的差别当成运气。跨章的事（章序、
- * 验收编号全集、来源图全集、材料身份）不在这里——它们要读别的章才判得了。
+ * `chapterProblems` 是只看本章正文就判得了的全部判据，章提交与全篇 check 同一个实现：
+ * 单章通过而全篇报同一条（或反过来）时，作者只能把两处的差别当成运气。提交时判出，
+ * 位置就是正在改的草稿与行。跨章的事（章序、验收编号全集、登记的图全篇有没有去处、
+ * 上游图全篇有没有承接、材料清单、机器区与真源）要读别的章，不在这里。
  *
  * ## 接续只有一处
  *
@@ -23,13 +24,14 @@ import * as path from 'node:path';
 import { chapterStructureProblems, pickedStructureNames } from './chapter-contract.mjs';
 import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
-  parseChapter, pendingChapters, placeholderProblems, storySections,
+  parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
-import { fail, readRaw, readText } from './context.mjs';
+import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
-import { relFromFeature, sourceStatus } from './sources.mjs';
+import { redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
-import { scanBrokenImages } from './language.mjs';
+import { scanBannedTerms, scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
+import { chapterImageProblems, chapterSourceMarkProblems, strayMarks } from './images.mjs';
 import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
 
@@ -115,13 +117,12 @@ function sectionShapeProblems(title, view) {
   const seen = new Set();
   for (const s of view.sections ?? []) {
     if (seen.has(s.name)) {
-      out.push(`「${title}」里有两个「${s.raw}」小节——读者分不清哪一节讲哪件事：`
-        + '合成一节，或者按各自讲的事改成不同的名字');
+      out.push(`「${title}」：有两个「${s.raw}」小节——小节按标题名认，同名的两节读者分不清哪一节讲哪件事`);
     }
     seen.add(s.name);
     const drawn = (view.fences ?? []).some(f => f.from > s.from && f.from < s.to);
     if (!drawn && !s.body.some(line => line.trim())) {
-      out.push(`「${title}」的「${s.raw}」小节下面没有正文——补上这一节要讲的内容，或者删掉这个标题`);
+      out.push(`「${title}」：「${s.raw}」小节下面没有正文也没有图——只有标题的小节读者读不到内容`);
     }
   }
   return out;
@@ -138,15 +139,17 @@ function sectionShapeProblems(title, view) {
  * @param {Function} [getView] 取这一章的解析结果——全篇 check 传它自己那份记忆化的
  *   取法，**要用时才算**：空章根本不解析，十章的 check 不会为九个空章各切一遍文。
  *   章提交只有一章，不传，自己解析。
+ * @param {(line:number) => string} [where] 正文行号（1 起）→ 作者要改的位置：章提交给草稿与行，
+ *   整篇检查给 story.md 与行；不给时报章名与章内行号
  * @returns {string[]}
  */
-export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
+export function chapterProblems(ctx, chapter, candidateBody, getView = null, where = null) {
   const out = [];
   const body = String(candidateBody ?? '');
+  const at = where ?? (n => `「${chapter.title}」第 ${n} 行`);
   if (!norm(body)) {
-    out.push(`「${chapter.title}」只有标题没有正文`
-      + `——本需求真的不涉及它时写「${EMPTY_SECTION_TEXT}」，那是明说过的结论；`
-      + '空着分不清「判过了不涉及」与「还没写」');
+    out.push(`「${chapter.title}」：只有标题没有正文`
+      + `——不涉及的章写「${EMPTY_SECTION_TEXT}」一句才算明说过的结论；空着分不清「判过了不涉及」与「还没写」`);
     return out;
   }
   // 明说过「不涉及」的章到此为止：它没有结构可言，也没有解析的必要——
@@ -155,9 +158,8 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
   if (norm(body) === norm(EMPTY_SECTION_TEXT)) {
     const picked = pickedStructureNames(chapter);
     if (picked.length) {
-      out.push(`「${chapter.title}」写的是「${EMPTY_SECTION_TEXT}」，写作设计却还为它选着`
-        + `${picked.join('、')}——两处说法冲突：确实不涉及，就把写作设计骨架里这一章改成一行`
-        + '「- 不涉及：<理由>」，撤掉这几项；否则按骨架把这一章写出来');
+      out.push(`「${chapter.title}」：正文写的是「${EMPTY_SECTION_TEXT}」，写作设计骨架却还为它选着`
+        + `${picked.join('、')}——章提交按写作设计骨架核结构，骨架里不涉及的章写成一行「- 不涉及：<理由>」，两处说法要一致`);
     }
     return out;
   }
@@ -166,31 +168,86 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null) {
   // 读者那边整段变成代码块。
   for (const f of view.fences ?? []) {
     if (f.closed) continue;
-    out.push(`「${chapter.title}」第 ${f.from + 1} 行的围栏没有闭合`
-      + '——同种标记、不短于开启标记、标记之后到行末只有空白，才算关上');
+    out.push(`${at(f.from + 1)}：围栏没有闭合`
+      + '——同种标记、不短于开启标记、标记之后到行末只有空白，才算关上；没关上时之后的正文都算在围栏里');
   }
-  out.push(...placeholderProblems(body, `「${chapter.title}」`));
+  out.push(...placeholderProblems(body, '', at));
   if (pendingChapters(body).length) {
-    out.push(`「${chapter.title}」还带着待写 marker`
-      + '——它是骨架给这一章留的记号，这一章的正文该把它顶掉');
+    out.push(`「${chapter.title}」：还带着待写 marker——它是骨架给这一章留的记号，带着它的章按「还没写」计`);
   }
   out.push(...chapterStructureProblems(chapter, view));
   out.push(...sectionShapeProblems(chapter.title, view));
   for (const re of ctx.idShapes?.drop ?? []) {
     const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]);
     if (!hits.length) continue;
-    out.push(`「${chapter.title}」里出现了仓内工作编号：`
-      + `${[...new Set(hits)].slice(0, 6).join('、')}`
-      + '——读者对不上这些标识，改写成事物本身的名字');
+    out.push(`「${chapter.title}」：出现了仓内工作编号 ${[...new Set(hits)].slice(0, 6).join('、')}`
+      + '——编号形态按章节合同 id_shapes 判（图的围栏里不判），评审人手上没有这些编号的对照');
   }
   // 图片断链：评审者手上没有这个仓，点不开的引用他不知道是坏的。
-  const hits = scanBrokenImages(body, path.dirname(ctx.storyPath), fs, path);
-  if (hits.length) {
-    out.push(`「${chapter.title}」有 ${hits.length} 处图片断链：`
-      + `${hits.slice(0, 3).map(h => h.hit ?? h.target ?? h).join('、')}`
-      + '——引它在仓里的既有落盘位置，副本与改名读者都认不出来');
+  for (const h of scanBrokenImages(body, path.dirname(ctx.storyPath), fs, path)) {
+    out.push(`${at(h.line)}：图片引用「${h.path}」按 AR/story.md 所在目录解析不到文件——归档件里的图按这个相对路径打开`);
+  }
+  out.push(...chapterLineProblems(ctx, chapter, body, at));
+  return out;
+}
+
+/**
+ * 本章正文逐行能判的红线：仓内路径、客户端禁用词、语言红线、图片身份、图源标记。
+ *
+ * 扫描函数与整篇检查同一套，按本章正文调用：补上本章标题再扫，作用域（附录、豁免章、
+ * 节号）照整篇的口径判，行号减一回到正文。附录的机器区不在这里判——它由真源投影而来，
+ * 整篇检查把那里的问题报到真源（⑩b）；材料清单里的原文链接是仓内路径唯一允许出现的位置。
+ */
+function chapterLineProblems(ctx, chapter, body, at) {
+  const out = [];
+  const zones = zonesByLine(body.split(/\r?\n/));
+  const text = [`## ${chapter.title}`, ...body.split(/\r?\n/).map((l, i) => (zones.has(i) ? '' : l))].join('\n');
+  const line = n => at(n - 1);                   // 扫描行号含标题行
+  out.push(...chapterSourceMarkProblems(ctx, text, line));
+  out.push(...chapterImageProblems(ctx, text, line));
+  // 围栏外的图源标记已由上面报，这几行不再按路径、坐标各报一遍
+  const stray = new Set(strayMarks(text));
+  const scan = redactMaterialLinks(text.split(/\r?\n/).map((l, i) => (stray.has(i + 1) ? '' : l)).join('\n'), ctx);
+  for (const h of scanLocalPaths(scan, ctx.projectRoot)) {
+    out.push(`${line(h.line)}：含仓内路径「${h.path}」——评审人手上没有这个仓，仓内路径在归档件里打不开；`
+      + '材料清单里的原文链接是唯一允许的位置');
+  }
+  if (!chapter.banned_terms_exempt) {
+    for (const h of scanBannedTerms(scan, { contract: ctx.contract })) {
+      out.push(`${line(h.line)}：客户端语境禁用词「${h.term}」——归档件写给端侧评审人，`
+        + `章节合同的词表记着这个词在端侧的说法：${h.hint}`);
+    }
+  }
+  const redline = ctx.contract.language_redline ?? {};
+  if (Array.isArray(redline.kinds) && redline.kinds.length) {
+    const hits = scanLanguageRedline(scan, { kinds: redline.kinds, appendixTitle: appendixChapter(ctx.contract)?.title,
+      ruleIds: activeKnowledgeEntries(ctx).map(e => e.id), sourceTags: redline.source_tags, projectRoot: ctx.projectRoot });
+    for (const h of hits) {
+      out.push(`${line(h.line)}：${h.label}「${h.hits.join('」「')}」${h.why ? `${h.why}` : ''}——${h.hint}`);
+    }
   }
   return out;
+}
+
+/**
+ * 章提交的报错位置：本章正文的行 → 草稿里内容相同的那一行。
+ *
+ * 正文是草稿剥掉章头指引与本章标题、附录投上机器区之后的样子，行号与草稿对不上；
+ * 按内容顺序认回草稿行。机器区与剥掉的行在草稿里没有，报本章行号。
+ */
+function draftLocator(draftText, body, draftRel, title) {
+  const draft = String(draftText ?? '').split(/\r?\n/);
+  const rows = String(body).split(/\r?\n/);
+  const map = new Map();
+  let from = 0;
+  rows.forEach((row, i) => {
+    if (!row.trim()) return;
+    const k = draft.findIndex((d, j) => j >= from && d.trimEnd() === row.trimEnd());
+    if (k < 0) return;
+    map.set(i + 1, k + 1);
+    from = k + 1;
+  });
+  return n => (map.has(n) ? `草稿 ${draftRel} 第 ${map.get(n)} 行` : `「${title}」第 ${n} 行（由真源投影，草稿里没有这一行）`);
 }
 
 /** 同名章锚有几处 —— 两处都替不对：替前一处，后一处仍是旧的。 */
@@ -283,19 +340,19 @@ export function cmdChapter(ctx) {
   if (!from) fail('缺 --from <文件>：这一章的内容写在文件里，不走命令行参数——'
     + '正文里有换行、引号与 markdown，任何 shell 都会再解析一遍');
   const body = readText(path.resolve(from));
-  if (body === null) fail(`读不到 ${from}`);
+  if (body === null) fail(`${from}：读不到——章提交从这个文件读本章正文`);
   if (!body.trim()) {
-    fail(`${from} 是空的：空正文不是一章，本需求真的不涉及时写「${EMPTY_SECTION_TEXT}」`);
+    fail(`${from}：是空的——章按正文判，本需求不涉及的章写「${EMPTY_SECTION_TEXT}」一句`);
   }
 
   // **原样读**：这一步是按区间把原文拼回去，读进来少一个 BOM，写回去就少一个 BOM，
   // 「其余章一个字节未动」这句话随之不成立。判据那一侧仍用剥过 BOM 的读法。
   const story = readRaw(ctx.storyPath);
-  if (story === null) fail('AR/story.md 不在：先跑 skeleton 建骨架，再一章一章落盘');
+  if (story === null) fail('AR/story.md：不在——骨架与章锚由 skeleton 建，章提交按章锚替换');
   const chapters = ctx.contract.chapters ?? [];
   const chapter = chapters.find(c => normalizeHeading(c.title) === normalizeHeading(title));
   if (!chapter) {
-    fail(`合同里没有「${title}」这一章。章名取自章节合同：`
+    fail(`--chapter「${title}」：合同里没有这一章——章名按章节合同认：`
       + `${chapters.map(c => c.title).join('、')}`);
   }
   // 章是照写作设计写的：设计读不了就先不落盘——空壳时写下的章没有可核的依据，
@@ -304,33 +361,33 @@ export function cmdChapter(ctx) {
   if (plan.problems.length) {
     fail(`写作设计还读不了，「${title}」先不落盘（${path.basename(ctx.storyPath)} 没动）：\n`
       + `${plan.problems.map(p => `  · ${p}`).join('\n')}\n`
-      + `  写好它再提交；当前输入与下一步跑 node ${shellArg(ctx.scriptPath)} skeleton`
-      + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
+      + `  章提交按写作设计骨架核结构，设计读不了时不落盘；当前输入与下一步由 node ${shellArg(ctx.scriptPath)} skeleton`
+      + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)} 给出`);
   }
   const planned = { ...chapter, structure: selectedStructure(plan, chapter.id) };
   const anchors = chapterAnchors(story, title);
   if (!anchors) {
-    fail(`story 里找不到「${title}」的章锚——骨架被改过或章名写错了。`
-      + '章锚是逐章落盘的定位点，别手工改动它');
+    fail(`AR/story.md：找不到「${title}」的章锚（## ${title}）`
+      + '——章锚由 skeleton 按合同章名建，章提交按它定位替换区间');
   }
   if (anchors > 1) {
-    fail(`story 里有 ${anchors} 处「${title}」章锚——替换按章锚定位，只会替掉第一处，`
-      + '另一处仍是旧的，而读者会读到两遍。先把重复的那一处删掉再提交');
+    fail(`AR/story.md：有 ${anchors} 处「${title}」章锚——替换按章锚定位，只会替掉第一处，`
+      + '另一处仍是旧的，读者会读到两遍');
   }
   const span = chapterSpan(story, title);
   // 先剥写给作者的说明（章头指引），再剥开头属于本章自己的 H1/同名 H2——
   // 章草稿的章头是注释行，混在任何顺序里都必须先剥干净，标题比对才认得出开头。
   const trimmed = stripOwnHeading(stripGuidance(body), title).replace(/\s+$/, '');
-  if (!trimmed) fail(`${from} 除了章标题没有别的内容：这一章的正文写在标题之后`);
+  if (!trimmed) fail(`${from}：除了章标题没有别的内容——章提交剥掉章头指引与本章标题后按余下正文判`);
   // 剥完还剩章级标题，说明这个文件放了不止一章。**整份候选都要看**：
   // 只看开头的话，写在正文后半段的那个 H2 会连同它下面的正文一起落盘，
   // story 里多出一个章锚，而写前核对只看得见被重新切出来的前半章。
   const stray = strayHeadings(trimmed);
   if (stray.length) {
-    fail(`${from} 里还有 ${stray.length} 个章级标题（${stray.slice(0, 3).join('、')}`
-      + `${stray.length > 3 ? '…' : ''}）——一个文件只放一章：`
-      + '别的章的标题落进来会多出一个章锚，下一次按章锚替换就切错了。'
-      + '章内的小节用 `###`；要举带标题的例子就放进代码围栏');
+    fail(`${from}：围栏外还有 ${stray.length} 个章级标题（${stray.slice(0, 3).join('、')}`
+      + `${stray.length > 3 ? '…' : ''}）——一个文件只放一章，围栏外的 # / ## 按章级标题认：`
+      + '落进 story 会多出一个章锚，下一次按章锚替换就切错；'
+      + '章内小节是 `###`，代码围栏里的标题按样例算');
   }
   let next = `${story.slice(0, span.start)}## ${title}\n\n${trimmed}\n\n${story.slice(span.end)}`;
   // 附录章 = 作者区 + 当前真源投影出的机器区。**投在写前核对之前**：那四节本就
@@ -339,12 +396,14 @@ export function cmdChapter(ctx) {
     next = projectAppendix(ctx, next).text;
   }
 
-  const bad = chapterProblems(ctx, planned, chapterBodyIn(next, title));
+  const candidate = chapterBodyIn(next, title);
+  const bad = chapterProblems(ctx, planned, candidate, null,
+    draftLocator(body, candidate, relFromFeature(ctx, path.resolve(from)), title));
   if (bad.length) {
     process.stderr.write(`[story-build chapter] 「${title}」${bad.length} 处未通过，`
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);
     bad.forEach((b, i) => process.stderr.write(`  ${i + 1}. ${b}\n`));
-    process.stderr.write('  在草稿上改完，重跑这条命令。\n');
+    process.stderr.write('  章提交在写盘前核对，草稿里的改动经这条命令提交后才进 story.md。\n');
     process.exit(1);
   }
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');
@@ -357,10 +416,10 @@ export function cmdChapter(ctx) {
   } catch (e) {
     try {
       process.stderr.write(`[story-build chapter] 「${title}」**已落盘**，`
-        + `接续算不出来（${e?.message ?? e}）——**不要重交这一章**。`
-        + `跑 node ${shellArg(ctx.scriptPath)} skeleton`
+        + `接续算不出来（${e?.message ?? e}）——写入已成立，不要重交这一章；`
+        + `定位与草稿由 node ${shellArg(ctx.scriptPath)} skeleton`
         + ` --feature ${shellArg(ctx.args.feature)}`
-        + ` --project-root ${shellArg(ctx.projectRoot)} 取回定位与草稿。
+        + ` --project-root ${shellArg(ctx.projectRoot)} 给出。
 `);
     } catch { /* 输出通道全关时给不出提示；退出码仍是 0，因为写入确实成立 */ }
   }

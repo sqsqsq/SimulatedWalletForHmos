@@ -24,9 +24,6 @@ import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { blankComments, filesForEntity, runProbe } from '../shared/probes.mjs';
 
-const AUTHOR_DOC = 'doc/extensions/hooks/coding/author.md';
-const FIX = `处置：补齐落点实现或修正违规写法；确实落不了的回 plan 改 must（改了要重跑 plan 阶段），`
-  + `再重跑 harness --phase coding。形态见 ${AUTHOR_DOC}。`;
 
 /** 落点末段标识符：`data_models.A.b` → `b`；`files.dir/X.ext` → `X`。 */
 function tailIdentifier(entityPath) {
@@ -48,7 +45,7 @@ function sources(projectRoot, files) {
 
 export default guard('coding', async (ctx) => {
   const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return gate(ctx, { problems: [error], fix: FIX });
+  if (error) return gate(ctx, { problems: [error] });
   if (!exists) {
     return gate(ctx, { skipped: [{ what: '义务落点与探针', why: '契约还没建（或读不到）' }] });
   }
@@ -57,7 +54,7 @@ export default guard('coding', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return gate(ctx, { problems: [`激活知识派生失败：${e.message}`], fix: FIX });
+    return gate(ctx, { problems: [`激活知识派生失败（coding 门禁按激活知识取规约的探针与编号）：${e.message}`] });
   }
 
   const obligations = obligationsFromContracts(contracts);
@@ -91,7 +88,7 @@ export default guard('coding', async (ctx) => {
     const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
     if (!code.some(s => re.test(s.blank))) {
       problems.push(`义务 ${ob.rule} 挂在「${ob.entityPath}」上，代码里找不到「${name}」`
-        + '——契约说这条义务落在这个实体上，实现里却没有它（只写在注释里不算）');
+        + '——门禁取 contracts.yaml 落点的末段标识符，在契约 files 点名的已建文件里抹掉注释后按整词找');
     }
   }
 
@@ -119,7 +116,7 @@ export default guard('coding', async (ctx) => {
     } else if (!probe.blocking) {
       warnings.push(`${where}没认出要找的形态（证据缺口，落没落实交 verifier 与实机判）：${r.detail}`);
     } else if (entry.force === '红线') {
-      problems.push(`${where}未过：${r.detail}——知识声明这个形态本身就是要求，而这条规约是红线`);
+      problems.push(`${where}未过：${r.detail}——探针带「阻断：」前缀，形态本身就是要求，而这条规约是红线：未过即阻断`);
     } else {
       warnings.push(`${where}未过，这一处记未落实（${entry.force}，review 复核表要写依据）：${r.detail}`);
     }
@@ -138,7 +135,7 @@ export default guard('coding', async (ctx) => {
       { projectRoot: ctx.projectRoot, files: present, entityName: base, entityKind: 'files' });
     if (!r.ok) {
       problems.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.path}）${r.detail}`
-        + '——角色类建了却没有任何地方调用它，等于这个模式只落在了文件名上');
+        + '——门禁在契约点名的其他已建文件里抹掉注释后按整词找这个角色的文件名；只有定义没有调用，这个模式就只落在了文件名上');
     }
   }
 
@@ -151,7 +148,7 @@ export default guard('coding', async (ctx) => {
       for (let k = 0; k < line.length; k++) if (blank[i][k] !== line[k]) note += line[k];
       for (const m of note.matchAll(/\b[A-Z][A-Z0-9]{1,7}-\d{2}\b/g)) {
         if (ids.has(m[0])) {
-          problems.push(`${s.rel}:${i + 1} 注释里写了规约编号 ${m[0]}——编号留在契约与验收里，注释只写这段代码的意图`);
+          problems.push(`${s.rel}:${i + 1} 注释里写了规约编号 ${m[0]}——门禁只扫注释、只认激活清单里的编号；编号的追踪链在契约与验收里，注释只写这段代码的意图`);
         }
       }
     });
@@ -159,7 +156,6 @@ export default guard('coding', async (ctx) => {
 
   return gate(ctx, {
     problems,
-    fix: FIX,
     checks: [
       { id: 'knowledge_landing_in_code', status: problems.length ? STATUS.FAIL : STATUS.PASS,
         // 这一条判的是**契约实体标识在不在、探针形态**，不是「义务落实了没有」——

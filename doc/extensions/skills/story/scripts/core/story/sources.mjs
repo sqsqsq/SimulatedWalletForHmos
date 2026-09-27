@@ -51,7 +51,7 @@ function scanSources(ctx) {
 
 /** 缺失来源报成一句话。必备与可选两种措辞，降级的那几份带上「为什么不算缺」。 */
 export function missingSourceLine(m) {
-  return `合同声明的来源 ${m.doc} 不存在：${m.rel}`
+  return `${m.rel}：合同声明的来源 ${m.doc} 不存在`
     + (m.required
       ? '——它是必备来源，缺了这一轮的材料就不完整'
       : `（${m.why ?? '可选来源'}，缺了是正常的）`);
@@ -245,15 +245,15 @@ export function materialsNotReady(ctx) {
   const { data, error } = queryFlowStatus(ctx.projectRoot, ctx.args.feature,
     { timeoutMs: 120000 });
   if (error) {
-    return `材料现状问不出来（${error}）：原件导没导、材料变没变由 story_flow 的材料链`
-      + '按磁盘现状答——它跑不起来就没有人能回答这件事。先让'
-      + ' `story_flow.py status --feature <名> --project-root <工程根>` 跑通，再起骨架';
+    return `\`story_flow.py status\` 跑不通（${error}）——原件导没导、材料变没变由 story_flow 的材料链`
+      + '按磁盘现状答，起骨架前读它的结论'
+      + '（`story_flow.py status --feature <名> --project-root <工程根>`）';
   }
   const state = data?.material_state ?? null;
   if (!state) return null;        // 没有轮次：基准不符由上面的清单判据报
   if (!state.pending.length && !state.changed) return null;
   return String(data.action ?? '').trim()
-    || '材料与本轮登记的不是同一批：跑 `story_flow.py status` 看当前该做什么';
+    || '材料与本轮登记的不是同一批——当前该做的动作由 `story_flow.py status` 按材料链给出';
 }
 
 /**
@@ -274,8 +274,8 @@ export function sourceProblems(ctx) {
   // **必备缺了拦**：归档件的依据缺了一块，评审者无从复核；可选缺了记一笔。
   const { missing, blocking } = sourceStatus(ctx);
   for (const m of blocking) {
-    problems.push(`${missingSourceLine(m)}——补回它再交；`
-      + '这一轮确实不该有它，就改合同把它登记成可选来源');
+    problems.push(`${missingSourceLine(m)}；`
+      + '必需性按合同 sources 的 required 与单据来源判（本地单不要求需求系统给的 PRD、SE）');
   }
   for (const m of missing.filter(x => !x.required)) notes.push(missingSourceLine(m));
   return { problems, notes };
@@ -300,7 +300,7 @@ export function materialListProblems(ctx, storyText) {
       const want = materialListTargets(ctx);
       // 行形态（有没有链接、是不是写成了表格）；链到的是不是这一轮的材料，由下面按材料清单逐份对
       for (const h of scanMaterialList(body, span.start + 1)) {
-        problems.push(`「${appendix.title}·${name}」第 ${h.line} 行——${h.hint}`);
+        problems.push(`「${appendix.title}·${name}」第 ${h.line} 行：${h.hint}`);
       }
       // 链接得能点开：典型写法 `[RR/prd.md](RR/prd.md)` 解析不到——story.md 在 AR/ 下，
       // 这个裸相对路径解析出来是 `AR/RR/prd.md`，不存在。
@@ -308,21 +308,20 @@ export function materialListProblems(ctx, storyText) {
       for (const [line, target] of materialLinkTargets(body, span.start + 1)) {
         if (/^(https?:|mailto:)/i.test(target)) continue;
         if (!fs.existsSync(path.resolve(fromDir, target))) {
-          problems.push(`「${appendix.title}·${name}」第 ${line} 行的链接点不开：`
-            + `${target} —— 从归档件所在的位置解析不到这份文件。`
-            + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态，'
-            + '指错了等于没指');
+          problems.push(`「${appendix.title}·${name}」第 ${line} 行：链接点不开，${target} 解析不到文件`
+            + '——材料清单的链接按 AR/story.md 所在目录解析；'
+            + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态');
         }
       }
       // 集合面：列到的与真正在手里的那几份材料对得上
       if (want === 'broken') {
-        problems.push('AR/story-src/materials.json 读不出材料清单——'
-          + `「${appendix.title}·${name}」列得全不全无从核对。`
-          + '它只应由脚本写入，若曾手工编辑，删掉后重跑 `story_flow.py round`');
+        problems.push('AR/story-src/materials.json：读不出材料清单——'
+          + `「${appendix.title}·${name}」列得全不全按它核；`
+          + '这份清单由 `story_flow.py round` 按磁盘现状生成');
       } else if (!want) {
-        notes.push(`没有材料清单（AR/story-src/materials.json），`
+        notes.push('AR/story-src/materials.json：不在，'
           + `「${appendix.title}·${name}」的集合判据未执行`
-          + '——跑 `story_flow.py round` 生成它之后这条才判得了');
+          + '——这份清单由 `story_flow.py round` 生成');
       } else {
         const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
         const listed = new Set();
@@ -333,16 +332,16 @@ export function materialListProblems(ctx, storyText) {
         const allowed = new Set(want.must.flat());
         for (const group of want.must) {
           if (!group.some(rel => listed.has(rel))) {
-            problems.push(`「${appendix.title}·${name}」少了一份材料：${group[0]}`
-              + '——它在这一轮的材料里，读者据这一节把材料找出来，漏一份等于那份材料没人知道');
+            problems.push(`「${appendix.title}·${name}」：少了一份材料 ${group[0]}`
+              + '——这一节按 materials.json 里这一轮的正文材料与收件箱原件逐份核，读者据这一节把材料找出来');
           }
         }
         for (const rel of listed) {
           if (allowed.has(rel)) continue;
-          problems.push(`「${appendix.title}·${name}」列了不是初始资料的东西：${rel}`
-            + '——这一节回答「据哪几份材料写成」：上游那几份正文与收件箱原件，'
-            + '各一行。本轮自己生成的规格与记录不是材料；'
-            + '图的去向登记在材料清单里（`--caption-image … --unused`），不写在这一节');
+          problems.push(`「${appendix.title}·${name}」：列了不是初始资料的东西 ${rel}`
+            + '——这一节回答「据哪几份材料写成」，按 materials.json 只收上游那几份正文与收件箱原件，'
+            + '各一行；本轮自己生成的规格与记录不算材料；'
+            + '图的去向登记在材料清单里（`--caption-image … --unused`）');
         }
       }
     }

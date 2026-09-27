@@ -9,16 +9,11 @@
  * 判据之间有依赖：产物不存在就没法校验产物内容。调用方把跳过的判据连同**为什么跳过**
  * 一起交出来，随报错一并列出——作者一眼看到后面还有几关。
  *
- * ## 3. 首行指向 author.md
- * 报错的第一句永远是「先读 <本阶段的 author.md>」：要求在那一页写全，
- * 报错负责指出哪一条没满足、怎么回到正确路径。
+ * ## 3. 每条问题自带在哪、什么问题、机制
+ * 判出问题的那条检查把它写成「<在哪>：<问题>——<机制>」，怎么修由作者按规则与机制判断；
+ * 出口只负责编号列全，不加统一的开头与结尾。
  */
 import { STATUS, writePostCheckEvidence } from './evidence.mjs';
-
-/** 每个阶段的作者须知位置（本文件不含任何业务字面，只有路径模板）。 */
-function authorDoc(phase) {
-  return `doc/extensions/hooks/${phase}/author.md`;
-}
 
 /**
  * 包住 post_check 主体：入口守卫 + 顶层 try/catch。
@@ -39,9 +34,8 @@ export function guard(phase, body) {
         ok: false,
         severityOverride: 'BLOCKER',
         message: `扩展门禁自身异常（${phase} post_check）：${e?.message ?? e}`
-          + `——本阶段的扩展判据一条都没跑完，结论不可用。`
-          + `处置：把这条异常连同 ${authorDoc(phase)} 一起反馈给扩展维护者；`
-          + `在修好之前不要把本次 harness 结果当作通过。`,
+          + `——异常出在门禁代码，本阶段的扩展判据没有跑完，这次 harness 结果不代表产物通过；`
+          + `门禁代码由扩展维护者修。`,
       };
     }
   };
@@ -57,9 +51,8 @@ export function guard(phase, body) {
  *   groups?: {name: string, problems?: string[], skipped?: {what: string, why: string}[]}[],
  *   checks?: {id: string, status: string, detail?: string}[],
  *   inputs?: string[],
- *   fix?: string,
  * }} r
- *   `problems` 逐条是「哪里不对 + 该怎么写」；`skipped` 是因前置缺失而没能执行的判据，
+ *   `problems` 逐条是「<在哪>：<问题>——<机制>」；`skipped` 是因前置缺失而没能执行的判据，
  *   即使本次没有 problems 也要报出来——「没报错」不等于「都查过了」。
  *   `groups` 是按数据前置分的组：每组自己决定能否执行，能执行的全部执行，报错按组分节，
  *   作者一眼看到每一类各有几处、还有哪一组等前置——而不是修完一类才看见下一类。
@@ -72,7 +65,6 @@ export function gate(ctx, r) {
   }));
   const problems = [...(r?.problems ?? []).filter(Boolean), ...groups.flatMap(g => g.problems)];
   const skipped = [...(r?.skipped ?? []).filter(s => s && s.what), ...groups.flatMap(g => g.skipped)];
-  const doc = authorDoc(ctx.phase);
 
   const checks = r?.checks?.length
     ? r.checks
@@ -97,8 +89,7 @@ export function gate(ctx, r) {
     };
   }
 
-  const parts = [`先读 ${doc}——本阶段扩展要求的全部内容都在那一页。`];
-  parts.push(`以下 ${problems.length} 处需要修正（一次列全，不必逐轮试）：`);
+  const parts = [`以下 ${problems.length} 处需要修正（一次列全，不必逐轮试）：`];
   let n = 0;
   const ungrouped = (r?.problems ?? []).filter(Boolean);
   ungrouped.forEach(p => parts.push(`${++n}. ${p}`));
@@ -111,7 +102,6 @@ export function gate(ctx, r) {
     parts.push(`另有 ${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
       + skipped.map(s => `${s.what}（${s.why}）`).join('；'));
   }
-  if (r?.fix) parts.push(r.fix);
 
   return { ok: false, severityOverride: 'BLOCKER', message: parts.join('\n') };
 }

@@ -133,13 +133,12 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
         self.assertIn("没有登记审查员", out["detail"])
 
     def test_a_declared_landing_with_no_file_fails(self) -> None:
-        """落点写了、文件不在：推不出回复存在——有匹配当前请求的回复才原样写回，否则取当前请求派审。"""
+        """落点写了、文件不在：推不出回复存在——报错说清落点只认对当前请求的原样全文回复。"""
         out = self.run_with(None)
         self.assertEqual("FAIL", out["status"])
         said = out["problems"][0]
         self.assertIn("当前审查对象还没有报告", said)
-        self.assertIn("原样全文写到", said)
-        self.assertIn("取当前请求派审", said)
+        self.assertIn("落点只认 verifier 对当前请求", said)
         self.assertIn("当前审查只认对当前请求的原样回复", said)
 
     def test_a_prior_review_closure_says_the_current_object_was_not_reviewed(self) -> None:

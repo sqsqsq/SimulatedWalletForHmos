@@ -30,7 +30,7 @@ export function clientVocabulary(contract) {
   const raw = contract ?? JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf-8'));
   const list = raw?.language_redline?.client_vocabulary;
   if (!Array.isArray(list) || list.length === 0) {
-    throw new Error('章节合同缺 language_redline.client_vocabulary：客户端语境词表是合同数据，脚本里不留副本');
+    throw new Error('章节合同的 language_redline.client_vocabulary：缺或为空——客户端语境词表是合同数据，脚本里不留副本');
   }
   const out = list.map(x => ({ term: String(x.term), hint: String(x.hint ?? '') }));
   if (!contract) vocabularyCache = out;
@@ -125,7 +125,7 @@ const INLINE_CODE_RE = /`([^`\n]+)`/g;
  * 随归档的只有叙事件与《决策与评审记录》两份；spec、系统设计、产品需求稿、知识文件都留在仓内。
  */
 const DOC_COORDINATE_HEAD = { re: /\b(?:spec|SR|RR|PRD|AR)\s*§\s*[\d.]*/g,
-  hint: '这份文档不随归档，读者打不开——把那一处的结论直接写进来，或改用本文章节名' };
+  hint: '文档坐标指向不随归档的文件或会随重编号漂移的章节号，评审人拿到的只有归档件，打不开它' };
 
 //: 框架产物的文件名：随工程不变。知识文件名随激活清单变，运行时取。
 const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
@@ -144,10 +144,10 @@ function docCoordinateForms(projectRoot) {
   return [
     ...CROSS_DOC_COORDINATES,
     { re: /\b[a-z][a-z0-9-]*:[A-Z]{2,10}-\d{2}\b/g,
-      hint: '这是仓内文件名加编号——改写为中文规约名（编号进附录的规约判定表）' },
+      hint: '按仓内文件名加编号判：编号只在附录的规约判定表里合法，正文用中文规约名' },
     { re: new RegExp(String.raw`\b(?:[\w-]+\.md|(?:${names.map(escapeRe).join('|')})\.(?:ya?ml|json))\b`, 'g'),
-      hint: '仓内文件名不随归档——知识文件写它的中文名，产物文件改述为本文章节名' },
-    { re: /§\s*\d[\d.]*/g, hint: '章节号会随重编号变——改用本文章节名' },
+      hint: '按文档文件名判：这些文件不随归档，评审人拿到的只有归档件，打不开它' },
+    { re: /§\s*\d[\d.]*/g, hint: '按章节号判：章节号随重编号漂移，归档件里指不回原处' },
   ];
 }
 
@@ -164,10 +164,11 @@ function knowledgeFileNames(projectRoot) {
 }
 
 const FORMS = {
-  repo_identifier: { label: '工程标识', hint: '工程标识进附录的那几张表，主叙事写中文业务名' },
-  rule_id: { label: '规约编号', hint: '主叙事写中文规约名；编号进附录的规约判定表' },
+  repo_identifier: { label: '工程标识',
+    hint: '主叙事给评审人读，工程标识只在附录合法：反引号里的文字、驼峰与多段下划线形态的词都按工程标识判' },
+  rule_id: { label: '规约编号', hint: '主叙事给评审人读，规约编号只在附录的规约判定表里合法' },
   doc_coordinate: { label: '文档坐标', hint: DOC_COORDINATE_HEAD.hint },
-  source_tag: { label: '来源括注', hint: '「谁定的」进附录的材料清单，不打断正文' },
+  source_tag: { label: '来源括注', hint: '以合同登记词起头的括号按来源括注判，它打断正文；「谁定的」的落点是附录的材料清单' },
 };
 
 /** 合同里写字符串 = 默认作用域（附录之外），写 `{kind, scope}` = 按它说的。 */
@@ -207,7 +208,8 @@ function commentLines(lines) {
  * @param {string[]} [opts.ruleIds] 激活清单里的规约编号
  * @param {string[]} [opts.sourceTags] 来源括注的词（合同数据）
  * @param {string} [opts.projectRoot] 工程根：给出则把激活知识的文件名纳入文档坐标
- * @returns {{line:number, kind:string, label:string, hits:string[], hint:string, text:string}[]}
+ * @returns {{line:number, kind:string, label:string, hits:string[], hint:string, why:string, text:string}[]}
+ *   `why` 是这一行按什么形态判中的（如「写在反引号里」），没有专门形态时为空
  */
 export function scanLanguageRedline(text, opts = {}) {
   const scopes = redlineScopes(opts.kinds);
@@ -226,17 +228,18 @@ export function scanLanguageRedline(text, opts = {}) {
     if (doc.fenced.has(i) || comments.has(i)) return;
     const inAppendix = !!appendix && i > appendix.at && i < appendixEnd;
     const found = new Map();
-    const add = (kind, hit, hint = FORMS[kind].hint) => {
+    const add = (kind, hit, hint = FORMS[kind].hint, why = '') => {
       const scope = scopes.get(kind);
       if (!scope || (inAppendix && scope !== 'all')) return;
-      const f = found.get(kind) ?? { hits: [], hint };
+      const f = found.get(kind) ?? { hits: [], hint, whys: new Set() };
       if (!f.hits.some(x => x.includes(hit))) f.hits.push(hit);   // `spec §5.1` 已报就不再单列 `§5.1`
+      if (why) f.whys.add(why);
       found.set(kind, f);
     };
-    for (const m of raw.matchAll(INLINE_CODE_RE)) add('repo_identifier', m[1]);
+    for (const m of raw.matchAll(INLINE_CODE_RE)) add('repo_identifier', m[1], undefined, '写在反引号里');
     const outsideCode = raw.replace(INLINE_CODE_RE, ' ');
     for (const re of [CAMEL_CASE_RE, SNAKE_CASE_RE]) {
-      for (const m of outsideCode.matchAll(re)) add('repo_identifier', m[0]);
+      for (const m of outsideCode.matchAll(re)) add('repo_identifier', m[0], undefined, '驼峰或下划线形态');
     }
     for (const id of ruleIds) if (raw.includes(id)) add('rule_id', id);
     // 来源括注在**表格里不判**：表格的一格里「谁定的」是结构化事实，不构成打断。
@@ -248,16 +251,16 @@ export function scanLanguageRedline(text, opts = {}) {
     }
     for (const [kind, f] of found) {
       out.push({ line: i + 1, kind, label: FORMS[kind].label, hits: f.hits, hint: f.hint,
-        text: raw.trim().slice(0, 100) });
+        why: [...f.whys].join('、'), text: raw.trim().slice(0, 100) });
     }
   });
   return out;
 }
 
-/** 材料清单那一节的行形态修法。 */
+/** 材料清单那一节的行形态：问题与判法。 */
 const MATERIAL_LIST_HINTS = {
-  material_row: '材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
-  material_link: '每份材料给一条原文链接——读者据此自己把那份材料找出来；'
+  material_row: '写成了表格行——材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
+  material_link: '这一项没有 markdown 链接——每份材料给一条原文链接，读者据此自己把那份材料找出来；'
     + '光写「产品需求文档」他不知道该找谁要哪一份',
 };
 
@@ -308,9 +311,9 @@ export function scanLocalPaths(text, projectRoot) {
 /** 把扫描结果渲染成人可读的问题列表 */
 export function formatHits(hits, kind) {
   return hits.map(h => {
-    if (kind === 'banned') return `第 ${h.line} 行禁用词「${h.term}」（${h.hint}）：${h.text}`;
-    if (kind === 'image') return `第 ${h.line} 行图片引用「${h.path}」解析不到文件`;
-    return `第 ${h.line} 行含仓内路径「${h.path}」：${h.text}`;
+    if (kind === 'banned') return `第 ${h.line} 行：禁用词「${h.term}」（${h.text}）——章节合同的客户端词表对它的说明：${h.hint}`;
+    if (kind === 'image') return `第 ${h.line} 行：图片引用「${h.path}」解析不到文件——图片按归档件所在目录解析相对路径`;
+    return `第 ${h.line} 行：含仓内路径「${h.path}」（${h.text}）——评审人手上没有这个仓，仓内路径在归档件里打不开`;
   });
 }
 

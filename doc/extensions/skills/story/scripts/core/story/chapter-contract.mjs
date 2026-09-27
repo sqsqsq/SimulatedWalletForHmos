@@ -26,9 +26,9 @@ import {
 } from './document.mjs';
 
 //: 骨架里定的表图缺了时，报错多说这一句：它不是合同要求，改主意就改骨架。
-const PICKED = '——这是写作设计骨架里定的结构；改主意就同时改骨架';
+const PICKED = '——这是写作设计骨架里定的结构，章提交按骨架核';
 //: 骨架里列的小节缺了时的两个出口。
-const SKELETON_EXITS = '——写作设计骨架里有它：补上它，或者先删掉骨架里那一行再提交';
+const SKELETON_EXITS = '——写作设计骨架里列了它，章提交按骨架核';
 
 /** 一处选定形式叫什么：给人看的那半句。 */
 const formName = (form) => (form.kind === 'table' ? '一张表'
@@ -106,7 +106,7 @@ function tableProblem(ch, view, slot) {
   if (candidates.some(cols => groups.every(g => has(cols, g)))) return null;
   if (!candidates.length) {
     return `${where}缺一张表（表头含「${groups[0][0]}」，`
-      + `另外这几列也要有：${groups.slice(1).map(g => g[0]).join('、') || '无'}）`;
+      + `另外这几列也要有：${groups.slice(1).map(g => g[0]).join('、') || '无'}）——章节合同要求这张表，按锚列认，列名可以换说法`;
   }
   // 有同主语的表但没有一张齐的：按缺得最少的那张说，作者改它就够了
   const best = candidates
@@ -134,9 +134,9 @@ export function chapterStructureProblems(ch, view) {
     if (sectionBody(view, want.title) !== null) continue;
     const ambiguous = ambiguousSection(view, want.title);
     problems.push(ambiguous
-      ? `「${ch.title}」里「${want.title}」同时像${ambiguous.map(n => `「${n}」`).join('、')}这几节`
-        + '——把这一节的标题写成它的完整名字，或给不相干的那一节换个名字'
-      : `「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : ''}`);
+      ? `「${ch.title}」：「${want.title}」同时像${ambiguous.map(n => `「${n}」`).join('、')}这几节`
+        + '——必要小节按标题名认（先精确、再包含），同时包含它的有好几节时认不出是哪一节'
+      : `「${ch.title}」缺「${want.title}」这一节${want.selected ? SKELETON_EXITS : '——章节合同要这一节，按标题名认（先精确、再包含）'}`);
   }
   for (const want of ch?.structure?.h4 ?? []) {
     // 先定位父节：全章找同名 H4 的话，甲节缺的那一节会被乙节的同名子节顶替通过
@@ -151,8 +151,8 @@ export function chapterStructureProblems(ch, view) {
     if (problem) problems.push(problem);
   }
   if (ch?.structure?.diagram && !hasDiagram(view)) {
-    problems.push(`「${ch.title}」没有图——这一章要一张覆盖主路径与全部分支去向的总览图；`
-      + '放在章首那段或一个总览小节里都行，代码围栏不算');
+    problems.push(`「${ch.title}」没有图——章节合同要这一章有一张覆盖主路径与全部分支去向的总览图；`
+      + '按画图语言的围栏认，位置不限（章首那段或总览小节），代码围栏不算');
   }
   for (const slot of ch?.structure?.diagrams ?? []) {
     // 与合同那张重合：有没有图由上面那条核；点名了类型的，章里有图之后再核是不是那一种

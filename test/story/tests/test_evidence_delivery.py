@@ -124,7 +124,7 @@ class AReviewActionLandsOnADecision(DeliveryCase):
 
     def test_a_feature_without_story_writes_who_answers(self) -> None:
         self.judged_with_action("    decision: D-1\n")
-        self.assertIn("没走 /story、没有议题登记——改写 impact", self.hook("spec"))
+        self.assertIn("没走 /story、没有议题登记——decision 按", self.hook("spec"))
         self.judged_with_action("    impact: 出口负责人在评审记录里表态\n")
         self.assertNotIn("NEU-05", self.hook("spec"))
 
@@ -229,7 +229,7 @@ class AChoiceNeedsASuggestion(ModesCase):
         body = CHOICE_BODY.split("**建议**", 1)[0].rstrip()
         proc = self.build(entry("retry-owner", "choice", body))
         self.assertNotEqual(0, proc.returncode)
-        self.assertIn("缺「**建议**」这一段", proc.stderr + proc.stdout)
+        self.assertIn("缺「**建议**」段", proc.stderr + proc.stdout)
         self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
 
     def test_a_confirm_needs_no_suggestion(self) -> None:

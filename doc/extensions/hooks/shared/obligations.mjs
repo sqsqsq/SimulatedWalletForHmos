@@ -29,11 +29,11 @@ const VERIFY_BY_EXECUTOR = { 实机: ['ut', 'device', 'both'] };
  * @returns {string|null} 对不上时的说明
  */
 export function verifyProblem(entry, verify) {
-  if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一`;
+  if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一——verify 取值封闭，定这处落点的证据由谁取，ut / device / both 是实机，review 只由 verifier 判`;
   const [executor, allowed] = Object.entries(VERIFY_BY_EXECUTOR)
     .find(([x]) => (entry?.executors ?? []).includes(x)) ?? [];
   return allowed && !allowed.includes(verify)
-    ? `标了 verify: ${verify}，而该规约声明要「${executor}」证据——这处落点改成 ${allowed.join(' / ')} 之一`
+    ? `标了 verify: ${verify}，而该规约声明要「${executor}」证据——声明要「${executor}」证据的规约，每处落点的 verify 取 ${allowed.join(' / ')}`
     : null;
 }
 
@@ -101,29 +101,29 @@ export function obligationsFromContracts(contracts) {
 export function misplacedMust(contracts) {
   const bad = [];
   for (const dm of arr(contracts?.data_models)) {
-    if (mustOf(dm).length) bad.push(`data_models.${name(dm)} 顶层挂了 must——应挂在它的 fields[] 上`);
+    if (mustOf(dm).length) bad.push(`contracts.yaml 的 data_models.${name(dm)} 顶层挂了 must，data_models 的 must 位置是 fields[]`);
   }
   for (const itf of arr(contracts?.interfaces)) {
-    if (mustOf(itf).length) bad.push(`interfaces.${name(itf)} 顶层挂了 must——应挂在它的 methods[] 上`);
+    if (mustOf(itf).length) bad.push(`contracts.yaml 的 interfaces.${name(itf)} 顶层挂了 must，interfaces 的 must 位置是 methods[]`);
   }
   for (const key of ['modules', 'navigation', 'state_management', 'integration_points']) {
     for (const it of arr(contracts?.[key])) {
-      if (mustOf(it).length) bad.push(`${key}.${name(it)} 挂了 must——不在允许的五类实体内`);
+      if (mustOf(it).length) bad.push(`contracts.yaml 的 ${key}.${name(it)} 挂了 must，${key} 不在允许挂 must 的实体里`);
     }
   }
   const rk = contracts?.resource_keys;
   if (rk && typeof rk === 'object' && !Array.isArray(rk)) {
     for (const [module, cats] of Object.entries(rk)) {
-      if (mustOf(cats).length) bad.push(`resource_keys.${module} 模块层挂了 must——应挂在它某个分类下的资源条目上`);
+      if (mustOf(cats).length) bad.push(`contracts.yaml 的 resource_keys.${module} 模块层挂了 must，resource_keys 的 must 位置是分类下的资源条目`);
       if (!cats || typeof cats !== 'object' || Array.isArray(cats)) continue;
       for (const [category, list] of Object.entries(cats)) {
         if (!Array.isArray(list) && mustOf(list).length) {
-          bad.push(`resource_keys.${module}.${category} 分类层挂了 must——应挂在这个分类下的资源条目上`);
+          bad.push(`contracts.yaml 的 resource_keys.${module}.${category} 分类层挂了 must，resource_keys 的 must 位置是分类下的资源条目`);
         }
       }
     }
   }
-  if (mustOf(contracts).length) bad.push('contracts 顶层挂了 must——义务要挂在具体实体上');
+  if (mustOf(contracts).length) bad.push('contracts.yaml 顶层挂了 must，must 的位置是具体实体');
   return bad;
 }
 

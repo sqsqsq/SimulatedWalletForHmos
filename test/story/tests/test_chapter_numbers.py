@@ -85,7 +85,8 @@ class ChapterReferencesPointAtRealChapters(unittest.TestCase):
 
     def test_only_the_wrong_numbered_reference_is_named(self) -> None:
         got = call("chapterRefProblems", self.PLAN, "承载设计章")
-        self.assertEqual(["「承载设计章」写的「2. 架构」对不上本文的章：「架构」在本文是第 1 章"], got)
+        self.assertEqual(["「承载设计章」列的「2. 架构」对不上本文的章：「架构」在本文是第 1 章"
+                          "——带号引用按「号. 章名」与本文的二级标题比对，号与章名指同一章"], got)
 
 
 class TheTemplateComesFromTheProfile(unittest.TestCase):

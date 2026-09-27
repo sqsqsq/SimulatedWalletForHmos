@@ -66,26 +66,26 @@ export function deliveryProblems(ctx) {
     + `--feature ${ctx.args.feature} --phase spec`;
   const fail = (msg) => ({ problems: [msg], notes: [] });
   if (!fs.existsSync(receipt)) {
-    return fail('交付门跑不了：找不到 framework/harness/scripts/check-receipt.ts——'
-      + '闭环判定归框架，这个仓里没有框架就判不了交付，别把它当通过');
+    return fail('framework/harness/scripts/check-receipt.ts：找不到，交付门跑不了——'
+      + '闭环判定归框架，判不了按未通过计');
   }
   const runner = receiptRunner(harness);
   if (!runner) {
-    return fail('交付门跑不了：framework/harness 里没有 ts-node——'
-      + `先在那个目录装依赖，再自己跑一次 \`${manual}\`；跑不了不等于过了`);
+    return fail('framework/harness 里没有 ts-node，交付门跑不了——'
+      + `回执由这份 ts-node 起 check-receipt.ts 判（等价命令 \`${manual}\`），判不了按未通过计`);
   }
   const r = spawnSync(process.execPath,
     [runner, path.join('scripts', 'check-receipt.ts'),
       '--feature', ctx.args.feature, '--phase', 'spec'],
     { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
   if (r.error) {
-    return fail(`交付门跑不了：${r.error.message}——自己跑一次 \`${manual}\`，`
-      + '过了再来；跑不了不等于过了');
+    return fail(`check-receipt 起不来（${r.error.message}），交付门跑不了——等价命令是 \`${manual}\`，`
+      + '判不了按未通过计');
   }
   if (r.status !== 0) {
     const say = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/)
       .filter(Boolean).slice(-12).join(' / ');
-    return fail(`spec 阶段还没闭环，不能交付——check-receipt 说：${say || `退出码 ${r.status}`}`);
+    return fail(`spec 阶段回执：check-receipt 未通过（${say || `退出码 ${r.status}`}）——交付门以框架判定的 spec 阶段闭环为前提`);
   }
 
   const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
@@ -103,9 +103,9 @@ export function deliveryProblems(ctx) {
     return { problems: [], notes: [...(review.notes ?? []), ...advisories] };
   }
   return {
-    problems: [`读者语义审查判 ${review.reviewVerdict ?? '（取不到）'}，有 ${blocking.length} 条阻断问题——`
-      + (blocking.length ? `逐条改：${blocking.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}` : '按报告里那一条的结论改')
-      + '。改完按 `phases/spec.md`「闭环」表里「有阻断项」那一行走'],
+    problems: [`读者语义审查报告：判 ${review.reviewVerdict ?? '（取不到）'}，有 ${blocking.length} 条阻断问题`
+      + (blocking.length ? `（${blocking.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}）` : '')
+      + '——交付门在审查判 PASS、或判 WARN 且没有阻断项时放行；有阻断项之后怎么走见 `phases/spec.md`「闭环」表「有阻断项」那一行'],
     notes: [],
   };
 }

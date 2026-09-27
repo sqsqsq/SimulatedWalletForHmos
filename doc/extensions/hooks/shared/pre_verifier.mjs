@@ -175,7 +175,7 @@ export default async function preVerifier(ctx) {
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
   const source = SOURCE_OF_TRUTH[phase];
-  if (!source) throw new Error(`pre_verifier 不认识阶段「${phase}」：manifest 登记它的阶段要在 SOURCE_OF_TRUTH 里有一项`);
+  if (!source) throw new Error(`hooks/shared/pre_verifier.mjs 的 SOURCE_OF_TRUTH 没有阶段「${phase}」——manifest 给哪些阶段登记了 pre_verifier，这张表就按阶段写明被审的知识判断在哪份文件`);
   const { checks, error } = overlayChecks(ctx.projectRoot, phase);
   const checkIds = Object.keys(checks);
   if (error) {

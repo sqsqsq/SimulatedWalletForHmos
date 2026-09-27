@@ -309,7 +309,7 @@ class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
         # 不绑任何一份具体台账的名字（旧的 review-disposition.json 已随回流退场）。
         (self.ar() / "update-notes.md").write_text("过程记录\n", encoding="utf-8")
         out = self.assert_check_names("AR/update-notes.md 不该在这一层")
-        self.assertIn("原样挪进 AR/story-src/", out)
+        self.assertIn("辅助件的落点是 AR/story-src/", out)
 
     def test_the_ledger_in_story_src_is_not_a_stray(self) -> None:
         self.init_audit()
@@ -325,7 +325,7 @@ class TestRequirementIdInTitle(StoryBuildCase):
         self.init_audit()
         first = self.story().split("\n", 1)[0]
         self.rewrite_story(first, "# " + first[2:].replace(FEATURE, "").strip())
-        out = self.assert_check_names("大标题缺需求编号")
+        out = self.assert_check_names("大标题：缺需求编号")
         self.assertIn(FEATURE, out, "报错要把该写的编号给出来")
 
 
@@ -343,14 +343,14 @@ class TestRedlineScope(StoryBuildCase):
         self.init_audit()
         self.assertEqual(0, self.check_output()[0])
         self._put_in_appendix("口径以 PRD §3.2 为准。")
-        self.assert_check_names("出现文档坐标")
+        self.assert_check_names("：文档坐标「")
 
     def test_one_line_with_several_coordinates_is_one_report(self) -> None:
         """同一行里既有章节坐标又有文件名：一条报错，两处都列出来——不再由两道判据各报一次。"""
         self.init_audit()
         self._put_in_appendix("口径见 spec §5.1 与 prd.md。")
-        out = self.assert_check_names("出现文档坐标 1 处")
-        self.assertIn("「spec §5.1」「prd.md」", out)
+        out = self.assert_check_names("：文档坐标「spec §5.1」「prd.md」")
+        self.assertEqual(1, out.count("：文档坐标「"), "同一行几处坐标应只报一条")
         self.assertNotIn("悬空引用", out)
 
     def test_identifiers_stay_legal_in_the_appendix(self) -> None:
@@ -628,7 +628,7 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         code, out = self.check_output()
         self.assertEqual(1, code, out)
         self.assertIn("机器区", out)
-        self.assertIn("改真源", out, "没有指出该改的是真源")
+        self.assertIn("内容以真源为准", out, "没有指出内容以真源为准")
         self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
 
     def test_an_unreadable_required_spec_is_not_an_empty_expectation(self) -> None:
@@ -2101,10 +2101,10 @@ class ChaptersLandOneAtATime(Step8Case):
         self.assertIn("合同里没有", (proc.stderr or "") + (proc.stdout or ""))
 
     def test_an_empty_body_is_refused(self) -> None:
-        """空正文不是一章：真的不涉及时那句话本身就是结论。"""
+        """章按正文判：真的不涉及时那句话本身就是结论。"""
         proc = self.put_chapter("背景", "   \n")
         self.assertEqual(1, proc.returncode)
-        self.assertIn("空正文不是一章", (proc.stderr or "") + (proc.stdout or ""))
+        self.assertIn("章按正文判", (proc.stderr or "") + (proc.stdout or ""))
 
     def test_the_content_goes_through_a_file_not_an_argument(self) -> None:
         """正文走文件：它带换行、引号与 markdown，任何 shell 都会再解析一遍。"""
@@ -2185,6 +2185,54 @@ class RealRunCase(unittest.TestCase):
 
     def story(self) -> str:
         return self.story_path.read_text(encoding="utf-8")
+
+
+
+class OneChapterIsJudgedWhenItIsSubmitted(RealRunCase):
+    """只看本章正文就判得了的，提交这一章时判（10 §3.2）：位置是正在改的草稿与行，
+    报错写问题与机制、不替作者选修法；整篇检查只留要读别的章才判得了的。"""
+
+    def submit(self, name: str, title: str, extra: str) -> subprocess.CompletedProcess:
+        self.build("skeleton")
+        draft = self.fill(self.draft(name))
+        draft.write_text(draft.read_text(encoding="utf-8").replace("agreementNo", "免密协议号")
+                         + "\n" + extra + "\n", encoding="utf-8")
+        return self.build_raw("chapter", "--chapter", title, "--from", str(draft))
+
+    def test_a_backtick_name_is_caught_in_the_draft(self) -> None:
+        self.build("skeleton")
+        before = self.story()
+        proc = self.submit("03-范围.md", "范围", "签约结果写进`自动充值签约缓存`。")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        self.assertEqual(before, self.story(), "判不过却落了盘")
+        self.assertRegex(out, r"草稿 AR/story-src/drafts/03-范围\.md 第 \d+ 行")
+        self.assertIn("「自动充值签约缓存」写在反引号里", out)
+        self.assertIn("反引号里的文字", out, "没说这条规则怎么判")
+
+    def test_an_image_reference_is_checked_against_the_registered_one(self) -> None:
+        proc = self.submit("03-范围.md", "范围", "![签约页](../assets/auto-topup-signup-page.png)")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        self.assertIn("story 里的图按登记的引用认", out)
+        self.assertIn("`../ux-reference/auto-topup-signup-page.png`", out, "没给出登记的引用")
+
+    def test_a_direct_edit_of_story_md_is_named_by_chapter(self) -> None:
+        self.build("skeleton")
+        story = self.story()
+        head = "## 范围\n"
+        self.assertIn(head, story)
+        self.story_path.write_text(story.replace(head, head + "\n签约结果写进`自动充值签约缓存`。\n", 1),
+                                   encoding="utf-8")
+        _, out = self.check_output()
+        self.assertRegex(out, r"story\.md「范围」第 \d+ 行：工程标识「自动充值签约缓存」写在反引号里")
+        self.assertIn("story.md 由各章草稿经 chapter 装配", out)
+
+    def test_a_registered_image_nobody_uses_is_left_to_the_whole_check(self) -> None:
+        proc = self.submit("03-范围.md", "范围", "")
+        self.assertNotIn("没被引用", proc.stdout + proc.stderr, "跨章判据进了单章提交")
+        _, out = self.check_output()
+        self.assertIn("在 story 里没被引用", out)
 
 
 class DraftsCarryTheDeterministicWork(RealRunCase):
@@ -2418,8 +2466,11 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
     """
 
     def landed(self, name: str, title: str) -> str:
-        draft = self.draft(name)
-        self.build("chapter", "--chapter", title, "--from", str(self.fill(draft)))
+        draft = self.fill(self.draft(name))
+        # 术语章的起始行照抄 spec §0 的说明列，那里的接口字段名是作者要改写的正文，
+        # 章提交按语言红线当场判（本组测的是脚本给的东西，不是这一处）
+        draft.write_text(draft.read_text(encoding="utf-8").replace("agreementNo", "免密协议号"), encoding="utf-8")
+        self.build("chapter", "--chapter", title, "--from", str(draft))
         return self.story()
 
     def test_guidance_never_reaches_the_archive(self) -> None:
@@ -2621,7 +2672,7 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
         self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
         out = proc.stdout + proc.stderr
         self.assertIn("改动边界", out, "没说清是哪一节")
-        self.assertIn("删掉再跑", out, "拒绝了却没给撤销的出口")
+        self.assertIn("不在时投影重新写出", out, "拒绝了却没给撤销的出口")
         self.assertIn("我加的一行", self.story(), "拒绝了却还是把文件改了")
 
     def test_deleting_the_zone_lets_it_be_written_again(self) -> None:
@@ -2705,10 +2756,11 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.build("project")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
-        self.assertIn("的机器区从", out)
+        self.assertIn("（投影到 story.md 附录「", out)
         self.assertIn("「PRD §3」", out)
-        self.assertIn("story-build.mjs project", out)
-        self.assertNotIn("story 出现文档坐标", out, "机器区里的问题又就地报给了作者")
+        self.assertIn("story-build project", out, "没说机器区由什么生成")
+        self.assertNotIn("story.md 出现文档坐标", out, "机器区里的问题又就地报给了作者")
+        self.assertNotIn("：文档坐标「PRD §3」", out, "机器区里的问题又按章报给了作者")
 
     def test_an_emptied_required_section_stops_the_projection(self) -> None:
         """必需小节被删空：**不是「不涉及」**，投影拒绝且 Story 不变。
@@ -2795,14 +2847,16 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                 and l.strip()]
         self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
 
-    def test_the_scope_rationale_follows_the_table(self) -> None:
-        """Scope 的说明是一整段、不分模块——原样引一次，放在表后，不拆进行里。"""
+    def test_the_scope_rationale_stays_in_the_spec(self) -> None:
+        """Scope 的切分理由写给 plan 与工程（这份夹具里带 `navDestinationMap`），留在 spec；
+        归档件讲为什么这么切归范围与业务方案两章。机器区只有模块表，⑩b 不因它报红线。"""
+        spec = (self.feature / "spec" / "spec.md").read_text(encoding="utf-8")
+        self.assertIn("navDestinationMap", spec, "夹具的切分理由里该有工程标识，这条才测得到")
         zone = self.boundary_zone()
-        self.assertNotIn("| 为什么这么切 |", zone, "说明塞进了表格")
-        lines = [l for l in zone.split("\n") if l.strip()]
-        last_row = max(i for i, l in enumerate(lines) if l.startswith("|"))
-        tail = "".join(lines[last_row + 1:])
-        self.assertGreater(len(tail), 40, "说明原文没跟在表后")
+        self.assertNotIn("navDestinationMap", zone)
+        self.assertNotIn("自动充值端侧能力", zone, "切分理由被投进了归档件")
+        self.assertTrue(all(l.startswith("|") for l in zone.split("\n")[1:]
+                            if l.strip() and not l.strip().startswith("<!--")), zone)
 
     def test_the_table_has_only_columns_that_carry_something(self) -> None:
         """两列。第三列「依据」逐行重复同一句来源，读者读它读不出任何新东西。"""
@@ -3284,7 +3338,7 @@ class TheTitleCarriesTheName(StoryBuildCase):
         self.init_audit()
         first = self.story().split("\n", 1)[0]
         self.rewrite_story(first, f"# {FEATURE}")
-        self.assertIn("大标题缺需求名", self.assert_check_names("大标题缺需求名"))
+        self.assertIn("没有需求名", self.assert_check_names("只有需求编号、没有需求名"))
 
 
 class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
@@ -3296,12 +3350,12 @@ class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
     def test_a_mark_to_a_missing_figure_is_named(self) -> None:
         self.init_audit()
         self.add_before_terms("```mermaid\n%% 图源 SR §99 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("「SR §99 #1」", self.assert_check_names("来源标记"))
+        self.assertIn("「SR §99 #1」", self.assert_check_names("图源标记"))
 
     def test_a_mark_to_the_story_itself_is_named(self) -> None:
         self.init_audit()
         self.add_before_terms("```mermaid\n%% 图源 story §1 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("指向的不是上游文档", self.assert_check_names("来源标记"))
+        self.assertIn("指向的不是直接上游", self.assert_check_names("图源标记"))
 
     def test_a_mark_outside_the_fence_is_one_report(self) -> None:
         self.init_audit()

@@ -32,7 +32,6 @@ import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
-const FIX = `处置：按 ${SECTIONS_DOC} 的形态把义务挂到契约实体上，再重跑 harness --phase plan。`;
 
 /**
  * spec 判命中、且产生代码要求的条目编号集 —— 本阶段义务集的比对基准。
@@ -106,8 +105,8 @@ function specPatternHits(projectRoot, feature) {
     let byPattern = hits.get(unit);
     if (!byPattern) { byPattern = new Map(); hits.set(unit, byPattern); }
     if (byPattern.has(candidate)) {
-      problems.push(`spec 的 patterns 把「${unit}」的候选 ${candidate} 登记了两次——`
-        + '删掉重复行；同一单元有多个候选时各写一行，选型时逐个给结论');
+      problems.push(`spec/knowledge-use.yaml 的 patterns：「${unit}」的候选 ${candidate} 登记了两次——`
+        + '候选按（单元, 候选）认，同一对只登记一行；同一单元有多个候选时各占一行，选型时逐个给结论');
       continue;
     }
     byPattern.set(candidate, row);
@@ -142,8 +141,8 @@ function planPatternChoices(planText) {
     let byPattern = out.get(unit);
     if (!byPattern) { byPattern = new Map(); out.set(unit, byPattern); }
     if (byPattern.has(pattern)) {
-      problems.push(`plan 的设计模式选型表把「${unit}」的候选 ${pattern} 写了两行——`
-        + '删掉重复行；同一单元有多个候选时各写一行，逐个给结论');
+      problems.push(`plan.md「设计模式选型」：「${unit}」的候选 ${pattern} 写了两行——`
+        + '选型行按（单元, 候选）认，同一对只有一行结论；同一单元有多个候选时各占一行，逐个给结论');
       continue;
     }
     byPattern.set(pattern, { choice: choice ?? '', reason: reason ?? '' });
@@ -164,7 +163,7 @@ function acceptanceRefProblems(projectRoot, feature, group) {
     return [];
   }
   let cases;
-  try { cases = parseYaml(raw); } catch (e) { return [`use-cases.yaml 解析失败：${e.message}`]; }
+  try { cases = parseYaml(raw); } catch (e) { return [`use-cases.yaml：解析失败（${e.message}）——linked_acceptance 的验收引用从这份 YAML 读，解析不了就核不了`]; }
   const ids = new Set(Object.values(acc.acceptance).filter(Array.isArray).flat()
     .map(c => c?.id).filter(Boolean).map(String));
   const dangling = new Map();
@@ -179,7 +178,7 @@ function acceptanceRefProblems(projectRoot, feature, group) {
   };
   walk(cases, '');
   return [...dangling].map(([ref, at]) => `use-cases.yaml 引了验收 ${ref}（${[...new Set(at)].join('、')}），`
-    + 'acceptance.yaml 里没有这个编号——下游按编号取验收，引用要用 acceptance 里实际的 id');
+    + 'acceptance.yaml 里没有这个编号——验收编号取 acceptance.yaml 各列表条目的 id，下游按编号取验收');
 }
 
 /** 契约里声明的方法：`<接口>.<方法>`。 */
@@ -247,11 +246,11 @@ export default guard('plan', async (ctx) => {
     contract.problems.push(read.error);
     noContract = '契约解析失败';
   } else if (!read.exists) {
-    contract.problems.push('缺 contracts.yaml——义务挂在它的实体上，没有它下游零注入');
+    contract.problems.push('contracts.yaml：feature 根目录下还没有这份文件——规约义务以 must 挂在契约实体上，coding 从这些实体读义务，没有它下游零注入');
     noContract = '契约文件还没建';
   } else {
     for (const bad of misplacedMust(contracts)) {
-      contract.problems.push(`${bad}——义务要挂在下游真的会读的那个实体上，挂在别处等于又造了一本账本`);
+      contract.problems.push(`${bad}——must 的挂载位置是封闭集合（data_models[].fields[]、interfaces[].methods[]、components[] 及其 state[]、resource_keys 的资源条目、files[]），coding 只从这些位置读义务`);
     }
     contract.problems.push(...resourceEntries(contracts).problems);
   }
@@ -262,7 +261,7 @@ export default guard('plan', async (ctx) => {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
     // 派生失败必须出声，不能静默当空集通过——那会让下面每条判据都恒真
-    obligation.problems.push(`激活知识派生失败：${e.message}`);
+    obligation.problems.push(`${e.message}——激活知识派生失败；激活知识由扩展根下 manifest.yaml 的 provides.knowledge 登记的知识文件派生，must 的编号、verify 与集合一致都按它核`);
   }
   const noKnowledge = knowledge ? null : '激活知识派生失败';
 
@@ -275,21 +274,21 @@ export default guard('plan', async (ctx) => {
     for (const ob of obligations) {
       const at = ob.entityPath || '(未知实体)';
       if (!ob.rule) {
-        obligation.problems.push(`${at} 上有一条 must 没写 rule——义务要认回具体的规约条目`);
+        obligation.problems.push(`contracts.yaml 的 ${at}：有一条 must 没写 rule——must 按 rule 的编号认回激活清单里的规约条目`);
         continue;
       }
       const entry = entryById(knowledge, ob.rule);
       if (!entry) {
-        obligation.problems.push(`${at} 的 must.rule「${ob.rule}」不在激活清单里——编号写错，或那条规约已下架`);
+        obligation.problems.push(`contracts.yaml 的 ${at}：must.rule「${ob.rule}」不在激活清单里——rule 按编号在激活知识里查；激活知识由扩展根下 manifest.yaml 的 provides.knowledge 登记的知识文件派生`);
         continue;
       }
       if (!ob.text) {
         // text 写得对不对是语义判断（它是本需求的设计，还是规约原文换个说法）——
         // 归 verifier。机械层只问「写没写」。
-        obligation.problems.push(`${at} 的 ${ob.rule} 缺 text——要写本次要落实成什么，不是只标个编号`);
+        obligation.problems.push(`contracts.yaml 的 ${at}：${ob.rule} 的 must 缺 text——text 写这条规约在本需求落实成什么，coding 按它落实`);
       }
       const verify = verifyProblem(entry, ob.verify);
-      if (verify) obligation.problems.push(`${at} 的 ${ob.rule} ${verify}`);
+      if (verify) obligation.problems.push(`contracts.yaml 的 ${at} 的 ${ob.rule} ${verify}`);
     }
     // 方法体探针要有方法落点，否则 coding 无处可跑：记为未执行，不阻断 plan
     for (const rule of new Set(obligations.map(o => o.rule))) {
@@ -310,18 +309,18 @@ export default guard('plan', async (ctx) => {
     const got = new Set(obligations.map(o => o.rule).filter(Boolean));
     if (wanted.size > 0 && got.size === 0) {
       // 派生为空要出声，不能静默当「没有义务」通过
-      consistency.problems.push(`spec 判了 ${wanted.size} 条命中，契约里却一条 must 都没有`
-        + `——义务没有落到实体上，下游零注入。处置：按 ${SECTIONS_DOC} 把每条挂到对应实体`);
+      consistency.problems.push(`contracts.yaml：一条 must 都没有，spec/knowledge-use.yaml 判了 ${wanted.size} 条命中并产生代码要求`
+        + `——义务以 must 挂在契约实体上，coding 从实体读义务，没有 must 下游零注入（挂法见 ${SECTIONS_DOC}）`);
     }
     const missing = [...wanted].filter(id => !got.has(id));
     if (missing.length) {
-      consistency.problems.push(`这些条目在 spec 判了命中，契约里没有任何实体扛着：${missing.join('、')}`
-        + '——判了命中却没有代码要求，等于知识在设计阶段就丢了');
+      consistency.problems.push(`contracts.yaml：${missing.join('、')} 在 spec 判了命中，契约里没有任何实体扛着`
+        + '——命中集（spec/knowledge-use.yaml）与 must.rule 集双向比对；判了命中却没有 must，等于知识在设计阶段就丢了');
     }
     const unknown = [...got].filter(id => !wanted.has(id));
     if (unknown.length) {
-      consistency.problems.push(`契约里的这些 must.rule 不在 spec 的命中集内：${unknown.join('、')}`
-        + '——两处判定对不上，评审者会看到互相矛盾的结论；要么回 spec 补登记，要么去掉');
+      consistency.problems.push(`contracts.yaml：这些 must.rule 不在 spec 的命中集内：${unknown.join('、')}`
+        + '——命中集与 must.rule 集双向比对，命中的判定只在 spec/knowledge-use.yaml 一处；两处对不上，评审者会看到互相矛盾的结论');
     }
   }
 
@@ -332,18 +331,18 @@ export default guard('plan', async (ctx) => {
     for (const pr of patternRolesFromContracts(contracts)) {
       const pat = knowledge.patterns.find(p => p.id === pr.pattern);
       if (!pat) {
-        pattern.problems.push(`files「${pr.path}」标的 pattern「${pr.pattern}」不在册`
-          + `（在册的：${knowledge.patternIds.join('、') || '无'}）`);
+        pattern.problems.push(`contracts.yaml 的 files「${pr.path}」：pattern「${pr.pattern}」不在册`
+          + `（在册的：${knowledge.patternIds.join('、') || '无'}）——pattern 按激活知识里登记的模式编号认`);
         continue;
       }
       if (!pr.role) {
-        pattern.problems.push(`files「${pr.path}」标了 pattern 却没写 role——角色是模式声明过的那几个之一`);
+        pattern.problems.push(`contracts.yaml 的 files「${pr.path}」：标了 pattern「${pr.pattern}」，没写 role——role 取该模式声明过的角色之一，角色实体就是这个文件里的类`);
         continue;
       }
       const roles = [...(pat.roles ?? []), ...(pat.optionalRoles ?? [])];
       if (roles.length && !roles.includes(pr.role)) {
-        pattern.problems.push(`files「${pr.path}」的 role「${pr.role}」不是 ${pr.pattern} 声明的角色`
-          + `（该模式的角色：${roles.join('、')}）`);
+        pattern.problems.push(`contracts.yaml 的 files「${pr.path}」：role「${pr.role}」不是 ${pr.pattern} 声明的角色`
+          + `（该模式的角色：${roles.join('、')}）——role 按该模式在知识里声明的角色与可选角色比对`);
       }
     }
   }
@@ -367,8 +366,8 @@ export default guard('plan', async (ctx) => {
       if (planChoices === null) {
         const total = [...specHits.hits.values()].reduce((n, m) => n + m.size, 0);
         if (total) {
-          pattern.problems.push(`spec 登记了 ${total} 条设计模式候选，plan.md 却没有「设计模式选型」表`
-            + '——命中的候选要逐条给结论，选或不选都算');
+          pattern.problems.push(`plan.md：没有「设计模式选型」一节，spec/knowledge-use.yaml 登记了 ${total} 条设计模式候选`
+            + '——按名字以「设计模式选型」开头的标题找这一节，spec 登记的候选在这里逐条给结论，选或不选都算');
         }
       } else {
         pattern.problems.push(...planChoices.problems);
@@ -377,22 +376,22 @@ export default guard('plan', async (ctx) => {
           for (const [candidate] of byPattern) {
             const choice = choices.get(unit)?.get(candidate);
             if (!choice) {
-              pattern.problems.push(`spec 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
-                + '——命中的候选逐条给结论，漏一行它就在闭环里悄悄消失了');
+              pattern.problems.push(`plan.md「设计模式选型」：spec/knowledge-use.yaml 给「${unit}」登记了候选 ${candidate}，plan 的设计模式选型表里没有这一行`
+                + '——选型行按（单元, 候选）与 spec 登记的候选逐对比对，每个候选一行结论；漏一行它就在闭环里悄悄消失了');
               continue;
             }
             if (choice.choice.includes('不选') && !choice.reason) {
-              pattern.problems.push(`「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
-                + '——不选是表态有后果的决策，理由要写成业务信号的反证'
-                + '（那个业务过程为什么不满足该模式的信号），不能拿实现载体的现状当理由');
+              pattern.problems.push(`plan.md「设计模式选型」：「${unit}」的候选 ${candidate} 被判不选，理由列是空的`
+                + '——「不选」列含「不选」的行按否决判，否决要有理由；理由是业务信号的反证'
+                + '（那个业务过程为什么不满足该模式的信号），由审查逐条判');
             }
           }
         }
         for (const [unit, byPattern] of choices) {
           for (const candidate of byPattern.keys()) {
             if (!specHits.hits.get(unit)?.has(candidate)) {
-              pattern.problems.push(`plan 的设计模式选型表给「${unit}」写了候选 ${candidate}，spec 没有提出它`
-                + '——模式选型只能从 spec 登记的候选里选，真需要时回 spec 补候选登记');
+              pattern.problems.push(`plan.md「设计模式选型」：「${unit}」写了候选 ${candidate}，spec 没有提出它`
+                + '——选型行按（单元, 候选）与 spec/knowledge-use.yaml 登记的候选逐对比对，候选集以 spec 的登记为准');
             }
           }
         }
@@ -412,19 +411,19 @@ export default guard('plan', async (ctx) => {
     const plan = planStatRows(planText);
     const story = isStoryFeature(featureRoot(ctx.projectRoot, ctx.feature));
     if (state === 'missing' && story) {
-      statGroup.problems.push('spec 没有埋点一节，plan 的埋点无从承接——先回 spec 补上统计设计；确实不涉及也写一行「不涉及：<依据>」');
+      statGroup.problems.push('spec.md「9.1 技术契约」：没有「埋点」小节，plan 的埋点无从承接——plan 按 spec「技术契约」下一级的「埋点」小节逐点承接统计点；不涉及的写一行「不涉及：<依据>」');
     } else if (state === 'empty') {
-      statGroup.problems.push('spec 的埋点一节没有指标点位表——先回 spec 在每个指标小节下补上带「统计点」列的表，plan 再逐点承接');
+      statGroup.problems.push('spec.md「埋点」：没有指标点位表——统计点从每个指标小节下表头含「统计点」的表读，plan 逐点承接');
     } else if (!wantPoints.length) {
       statGroup.skipped.push({ what: '埋点逐统计点落实', why: state === 'na' ? 'spec 的埋点一节写了不涉及' : '本需求没走 /story，spec 未提供统计设计' });
     } else if (!plan) {
-      statGroup.problems.push(`spec 的埋点列了 ${wantPoints.length} 个统计点，plan.md 没有「埋点」小节`
-        + '——在「9.2.2 逐点实现」表里每个统计点列出适用结果及责任方法，允许多行');
+      statGroup.problems.push(`plan.md「9. 宿主扩展」：没有「埋点」小节，spec 的埋点列了 ${wantPoints.length} 个统计点`
+        + '——plan 的埋点是「宿主扩展」的下一级小节，统计点在「9.2.2 逐点实现」表里逐个列出适用结果及责任方法，允许多行');
     } else {
       const have = new Set(plan.rows.map(r => pointKey(r.point)));
       const missing = wantPoints.filter(p => !have.has(pointKey(p)));
       if (missing.length) {
-        statGroup.problems.push(`spec 埋点的这些统计点在 plan 埋点小节没有对应行：${missing.join('、')}——每个统计点列出适用结果及责任方法，允许多行`);
+        statGroup.problems.push(`plan.md「埋点」：spec 埋点的这些统计点没有对应行：${missing.join('、')}——统计点名去掉空白与标记后按名比对，每个统计点列出适用结果及责任方法，允许多行`);
       }
       if (noContract) {
         statGroup.skipped.push({ what: '责任方法与统计义务', why: noContract });
@@ -435,19 +434,19 @@ export default guard('plan', async (ctx) => {
         for (const r of plan.rows) {
           const k = (seen.get(pointKey(r.point)) ?? 0) + 1;
           seen.set(pointKey(r.point), k);
-          const at = `「${r.point}」第 ${k} 条结果行`;
+          const at = `plan.md「埋点」「${r.point}」第 ${k} 条结果行`;
           if (!r.methods.length) {
-            statGroup.problems.push(`${at}没写责任方法——写成「接口.方法」，指向 contracts.yaml 里决定这个结果的那个方法`);
+            statGroup.problems.push(`${at}没写责任方法——「责任方法」列按「接口.方法」读，指向 contracts.yaml 里决定这个结果的那个方法`);
             continue;
           }
           const unknown = r.methods.filter(m => !declared.has(m));
           if (unknown.length) {
-            statGroup.problems.push(`${at}的责任方法 ${unknown.join('、')} 在 contracts.yaml 的 interfaces[].methods[] 里找不到`);
+            statGroup.problems.push(`${at}的责任方法 ${unknown.join('、')} 在 contracts.yaml 的 interfaces[].methods[] 里找不到——责任方法按「接口.方法」与契约声明的方法比对`);
           }
           for (const rule of rulesAt.get(pointKey(r.point)) ?? []) {
             if (!r.methods.some(m => obligations.some(o => o.rule === rule && o.entityPath === `interfaces.${m}`))) {
-              statGroup.problems.push(`spec 把 ${rule} 落在统计点「${r.point}」上，${at}的责任方法（${r.methods.join('、')}）没挂这条 must`
-                + '——决定结果的方法各自扛统计义务，上报封装只组装发送');
+              statGroup.problems.push(`${at}：spec 把 ${rule} 落在统计点「${r.point}」上，责任方法（${r.methods.join('、')}）没挂这条 must`
+                + '——统计义务按 contracts.yaml 里 interfaces.<接口>.<方法> 上的 must 核；决定结果的方法各自扛统计义务，上报封装只组装发送');
             }
           }
         }
@@ -461,7 +460,6 @@ export default guard('plan', async (ctx) => {
   const total = groups.reduce((n, g) => n + g.problems.length, 0);
   return gate(ctx, {
     groups,
-    fix: FIX,
     checks: [
       { id: 'knowledge_obligation_on_entity', status: total ? STATUS.FAIL : STATUS.PASS,
         detail: `义务 ${obligations.length} 条；问题 ${total} 条` },

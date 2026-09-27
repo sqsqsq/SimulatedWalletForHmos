@@ -415,7 +415,7 @@ sequenceDiagram
 
 这次改了哪些模块、哪些模块保证不动。
 
-<!-- story-build:begin 改动边界 · 由spec 的 Scope 声明与 §9.1.5生成，改它请改真源 · sha256:fb29d36bac4885e7 -->
+<!-- story-build:begin 改动边界 · 由spec 的 Scope 声明与 §9.1.5生成，改它请改真源 · sha256:50300484b23ce256 -->
 | 模块 | 本单怎么动 |
 |---|---|
 | WalletMain | 改动 |
@@ -423,10 +423,6 @@ sequenceDiagram
 | CommUI | 不改 |
 | CommFunc | 不改 |
 | Phone | 不改 |
-
-AR90004 是 WalletMain 内的交通卡紧急挂失流程，允许改动范围只覆盖从卡包进入到冻结结果交接。
-AccountManager、CommUI、CommFunc 和 Phone 只提供既有出口或宿主装配，本需求不同意为了挂失逻辑把业务提到这些模块；
-若发现必须修改它们的公共接口，应先提交 scope 扩展提议并取得确认。补卡地址、费用、订单、支付、制卡、跟踪及补卡客服交接属于 AR90005，不能因两单有关联而纳入本单。
 <!-- story-build:end -->
 
 ### 10.3 规约判定

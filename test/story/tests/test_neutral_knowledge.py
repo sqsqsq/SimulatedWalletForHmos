@@ -638,7 +638,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
             "  - id: BD-1\n    knowledge_rule: NEU-01\n")
         self.cover(["BD-1"])
         message = self.ut_message()
-        self.assertNotIn("没有knowledge_rule: NEU-01 的验收条目", message,
+        self.assertNotIn("knowledge_rule: NEU-01 的验收条目", message,
                          f"boundaries 的条目该计入 UT 桥：{message}")
         spec_proc = node("--input-type=module", "-e",
                          f"const hook = (await import({as_url(self.ext / 'hooks/spec/post_check.mjs')})).default;"

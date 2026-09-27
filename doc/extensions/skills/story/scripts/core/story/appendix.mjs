@@ -156,7 +156,8 @@ function notApplicableLine(text) {
  *
  * 同一个模块只出一行：它在 Scope 里不改、在依赖变更里是复用，读者要的是一个结论，
  * 两行分开写他要自己合。依赖变更里 Scope 之外的条目（新引入的库）各占一行。
- * 切分理由是一整段，**原样放在表后**，不拆进行里：脚本不猜哪一句对应哪个模块。
+ * Scope 的切分理由留在 spec：它是写给 plan 与工程的说明；归档件讲为什么这么切，
+ * 归「范围」「业务方案」两章，用业务语言。
  */
 function scopeBoundary(ctx, spec, section, def) {
   const source = specSection(spec, specHeading(def.from));
@@ -171,28 +172,11 @@ function scopeBoundary(ctx, spec, section, def) {
   for (const m of scopeList(spec, 'in_scope_modules')) { rows.push([m, '改动']); deps.delete(m); }
   for (const m of scopeList(spec, 'out_of_scope_modules')) { rows.push([m, deps.get(m) ?? '不改']); deps.delete(m); }
   for (const [name, change] of deps) rows.push([name, `依赖变更：${change}`]);
-  const why = scopeRationale(spec);
   // 依赖变更写的「不涉及」也是结论，丢了它 story 相对 spec 就减了一条；
   // 两份清单也没有模块时只投这一句，不投一张空表
   const na = source.tables.length ? null : notApplicableLine(source.text);
-  if (!rows.length) return na ? [na, ...(why ? ['', ...why.split(/\r?\n/)] : [])] : [];
-  return [...renderTable(appendixTableHeader(ctx, section), rows), ...(na ? ['', na] : []), '',
-    ...(why ?? '本单的范围声明里没有写切分理由。').split(/\r?\n/)];
-}
-
-/**
- * Scope 的说明段 —— **原样引一次**，不拆。
- *
- * 它是一整段，讲的是这一轮为什么这么切；脚本不猜哪一句对应哪个模块——
- * 猜错了读者会把别的模块的理由读到自己那一行上。
- */
-function scopeRationale(spec) {
-  const block = String(spec ?? '').match(/rationale:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
-  if (!block) return null;
-  const lines = block[1].replace(/\s+$/, '').split(/\r?\n/);
-  const indent = Math.min(...lines.filter(l => l.trim())
-    .map(l => l.match(/^[ \t]*/)[0].length));
-  return lines.map(l => l.slice(indent)).join('\n').trim() || null;
+  if (!rows.length) return na ? [na] : [];
+  return [...renderTable(appendixTableHeader(ctx, section), rows), ...(na ? ['', na] : [])];
 }
 
 /**
@@ -279,7 +263,7 @@ function appendixTableHeader(ctx, name) {
   const want = normalizeHeading(name);
   const table = Object.entries(appendixChapter(ctx.contract)?.subsection_tables ?? {})
     .find(([k]) => normalizeHeading(k) === want)?.[1];
-  if (!table) fail(`合同的附录没登记「${name}」这一节的表头（subsection_tables）`);
+  if (!table) fail(`章节合同附录章的 subsection_tables：没登记「${name}」这一节的表头——脚本合成的附录表按合同登记的表头出，脚本不留字面`);
   return String(table).split('|').map(h => h.trim());
 }
 
@@ -371,9 +355,9 @@ export function projectAppendix(ctx, storyText) {
     if (at0 && zoneHandEdited(lines, at0)) {
       // 停在这里，不盖。他写的那几行是他花时间想出来的；静默盖掉的话，
       // 东西没了而他不知道，下一次还会再写一遍。
-      fail(`「${z.zone}」由${z.source}投影，盘上的内容与投影对不上——`
-        + '要改结论，改真源之后重跑；'
-        + '要撤销这里的手改，把这一段（含首尾两行标记）删掉再跑，投影会重新写出来');
+      fail(`附录「${z.zone}」的机器区：盘上内容与起始标记记下的摘要对不上，有人手改过——`
+        + `机器区由 \`story-build project\` 从 ${z.source} 投影，发现手改就停下不盖；`
+        + '内容以真源为准，这一段连同首尾两行标记不在时投影重新写出');
     }
     count += 1;
     if (at0) { lines = [...lines.slice(0, at0.start), ...block, ...lines.slice(at0.end)]; continue; }
@@ -407,7 +391,7 @@ function verdictSkeleton(ctx, section) {
   // 文件在却读不出判断，那是它写坏了——停下把话说清，别静默跳过。
   if (!use) {
     if (!fs.existsSync(path.join(ctx.featureRoot, 'spec', 'knowledge-use.yaml'))) return [];
-    fail('spec/knowledge-use.yaml 读不出判断：附录的判定表是它的投影，先把那份 YAML 修好');
+    fail(`spec/knowledge-use.yaml：文件在而读不出判断——附录「${section}」的判定表由它投影，读不出就投不出`);
   }
   // 机器区里不写占位：作者改不了它（下一次投影会盖回来），挂着又永远不会被填。
   // 骨架在而某一条没依据，就在这里停下把话说清——判断本来就该先写进那份 YAML，
@@ -415,10 +399,10 @@ function verdictSkeleton(ctx, section) {
   const covered = (e) => use.naDomains.has(e.prefix);
   const missing = entries.filter(e => !covered(e) && !use.rows.get(e.id)?.basis.length);
   if (missing.length) {
-    fail(`spec/knowledge-use.yaml 里这 ${missing.length} 条还没有判断依据：`
-      + `${missing.slice(0, 4).map(e => e.id).join('、')}${missing.length > 4 ? '…' : ''}`
-      + '——命中写 requirement、不命中写 reason，整域不适用写进 constraint_domains，'
-      + '填完再投影。附录的判定表是它的投影，投影不替你编依据');
+    fail(`spec/knowledge-use.yaml：${missing.length} 条激活规约没有判断依据（`
+      + `${missing.slice(0, 4).map(e => e.id).join('、')}${missing.length > 4 ? '…' : ''}）`
+      + '——依据的写法是命中写 requirement、不命中写 reason，整域不适用登记在 constraint_domains；'
+      + `附录「${section}」的表逐条搬这里的依据，没有依据的条目投不出来`);
   }
   // 整域不适用的域投一行域级结论；域内条目不再逐条出现——那正是那份 YAML 的写法，
   // `check ⑫b` 比对的是同一份投影，也认这一行覆盖全域。
@@ -451,12 +435,12 @@ function verdictSkeleton(ctx, section) {
 function appendixSourceProblems(ctx, spec) {
   if (!appendixSpecSources(ctx.contract).length) return [];
   if (spec === null) {
-    return ['读不到 spec/spec.md，附录的机器区无从投影也无从核对'
-      + '——它们是 spec §9.1 的投影，先让 spec 可读'];
+    return ['读不到 spec/spec.md'
+      + '——附录的机器区由 spec §9.1 各节投影，spec 读不到时无从投影也无从核对'];
   }
   // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
   return appendixSpecGaps(ctx.contract, spec).map(g => `${g}；`
-    + '这件事确实不涉及，就在那一节里写「不涉及：<依据>」一行，写出来的结论评审者读得到');
+    + '不涉及的节写「不涉及：<依据>」一行也算有内容，投影把这一行搬进附录，评审者读得到');
 }
 
 /** 附录要从 spec 投影的小节：`[{from, to}]`，`to` 是附录里的落点名。 */
@@ -478,7 +462,7 @@ function appendixSpecSources(contract) {
 function appendixSpecGaps(contract, spec) {
   return appendixSpecSources(contract)
     .filter(src => !specSection(spec, specHeading(src.from)).text.trim())
-    .map(src => `spec 里定位不到 §${src.from}：附录「${src.to}」要从它投影`);
+    .map(src => `spec/spec.md §${src.from}：定位不到这一节或它没有正文——附录「${src.to}」由它投影`);
 }
 
 /**
@@ -497,7 +481,7 @@ function appendixSpecGaps(contract, spec) {
 export function specGaps(contract, spec) {
   const gaps = [];
   if (!specSection(spec, /术语映射表/).text.trim()) {
-    gaps.push('spec 里定位不到「术语映射表」这一节：术语那一章的起始行从它派生');
+    gaps.push('spec/spec.md「术语映射表」：定位不到这一节或它没有正文——术语那一章的起始行由它派生');
   }
   // 附录那几节的要求与只读核对共用一份（`appendixSpecGaps`）：起手放过而交付前才报，
   // 或者反过来，作者都只能在两条路之间猜。
@@ -518,34 +502,34 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
   if (appendixSection && wantSubs.length) {
     for (const sub of sectionNames(viewOf(appendixSection.title))) {
       if (!wantSubs.includes(sub.name)) {
-        problems.push(`「${appendixDef.title}」多了一节「${sub.raw}」`
-          + `——${appendixDef.title}只有约定的这几节：${wantSubs.join('、')}；`
+        problems.push(`「${appendixDef.title}·${sub.raw}」：不是合同约定的节`
+          + `——${appendixDef.title}的节由章节合同登记：${wantSubs.join('、')}；`
           + '工程细节各有落点，叙述归正文章');
       }
     }
     for (const want of wantSubs) {
       const body = sectionBody(viewOf(appendixSection.title), want);
       if (body === null) {
-        problems.push(`「${appendixDef.title}」缺「${want}」这一节`
-          + '——确实不涉及也要留标题，写「不涉及：<依据>」一行');
+        problems.push(`「${appendixDef.title}」：缺「${want}」这一节`
+          + '——附录按合同逐节核，不涉及的节留标题并写「不涉及：<依据>」一行');
         continue;
       }
       const all = body.split(/\r?\n/).map(l => l.trim());
       // 定位句：这里能查到哪些东西的精确名称。先于表、列表、小标题与机器区。
       const first = all.find(Boolean) ?? '';
       if (/^(\||#|[-*+]\s|\d+[.)]\s|<!--)/.test(first) || !first) {
-        problems.push(`「${appendixDef.title}·${want}」开头缺一句定位——先写这里能查到哪些东西（如「接口、数据、配置与统计点的精确名称在这里，正文用中文名」），再放表或清单`);
+        problems.push(`「${appendixDef.title}·${want}」：开头缺一句定位——每节首个非空行按定位句判，它说这一节能查到哪些东西（如「接口、数据、配置与统计点的精确名称在这里，正文用中文名」），表、清单、小标题与机器区排在它之后`);
       }
       const rows = all.filter(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
       if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
-        problems.push(`「${appendixDef.title}·${want}」是空的`
-          + '——成表或成列表，确实不涉及就写「不涉及：<依据>」一行');
+        problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行，也没有「不涉及：<依据>」`
+          + '——附录每节的内容按表、列表或一行不涉及结论判');
       }
     }
     const dump = viewOf(appendixSection.title).fences.find(f => f.lang && f.lang !== 'mermaid');
     if (dump) {
-      problems.push(`「${appendixDef.title}」里有 ${dump.lang} 围栏块`
-        + `——${appendixDef.title}是登记处，不是原文存放处`);
+      problems.push(`「${appendixDef.title}」：有 ${dump.lang} 围栏块`
+        + `——${appendixDef.title}按登记处判，mermaid 之外的围栏块都不收`);
     }
 
     // 附录里不放图。图若整批迁进附录，正文各章写着「下图是…」，
@@ -556,10 +540,10 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
     const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
       .map(m => m[1]);
     if (inAppendix.length) {
-      problems.push(`「${appendixDef.title}」里有 ${inAppendix.length} 张图`
+      problems.push(`「${appendixDef.title}」：有 ${inAppendix.length} 张图`
         + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`
-        + '——图片放它讲的那一章，跟着讲它的那句话走；'
-        + `${appendixDef.title}是查阅件，读者不会为了看一张图翻到这里来`);
+        + '——图放在讲它的那句话所在的章；'
+        + `${appendixDef.title}是查阅件，不放图`);
     }
   }
   return problems;
@@ -604,24 +588,24 @@ export function appendixZoneProblems(ctx, storyText) {
     if (!z.rows.length && z.source === KNOWLEDGE_USE_SOURCE) {
       const active = activeKnowledgeEntries(ctx);
       if (active.length) {
-        problems.push(`读不出 ${z.source}，「${appendix.title}·${z.zone}」无从核对`
-          + `——这一轮激活了 ${active.length} 条规约，判定表是它的投影；`
-          + '先跑 `knowledge-use.mjs init` 把判断件补上，再跑 `story-build project`');
+        problems.push(`${z.source}：读不出，「${appendix.title}·${z.zone}」无从核对`
+          + `——这一轮激活了 ${active.length} 条规约，判定表由它投影；`
+          + '判断件骨架由 `knowledge-use.mjs init` 生成，投影由 `story-build project` 写入');
         continue;
       }
     }
     if (!z.rows.length) {
       // 真源那一节现在什么都没有：机器区也该不在。留着就是上一版冒充现状。
       if (at) {
-        problems.push(`「${appendix.title}·${z.zone}」还留着机器区，而${z.source}那一节已经没有内容`
-          + '——跑 `story-build project` 让它跟着真源去掉');
+        problems.push(`「${appendix.title}·${z.zone}」：还留着机器区，而${z.source}那一节已经没有内容`
+          + '——机器区由 `story-build project` 从真源投影，真源为空时投影删掉这一区');
       }
       continue;
     }
     if (!at) {
-      problems.push(`「${appendix.title}·${z.zone}」缺机器区（由${z.source}投影）`
-        + '——那几行不该由你写，跑 `story-build project` 投出来；'
-        + '它旁边的目的句与说明归你，投影不碰');
+      problems.push(`「${appendix.title}·${z.zone}」：缺机器区`
+        + `——机器区由 \`story-build project\` 从 ${z.source} 投影；`
+        + '机器标记之外的目的句与说明归作者，投影不碰');
       continue;
     }
     const have = lines.slice(at.start + 1, at.end - 1);
@@ -631,17 +615,17 @@ export function appendixZoneProblems(ctx, storyText) {
       + `${diff.at === null ? '' : `，第 ${diff.at + 1} 行`}）：`
       + `${diff.have === null ? '' : `盘上是「${cut(diff.have)}」，`}`
       + `${diff.want === null ? '' : `${z.source}投出来是「${cut(diff.want)}」`}`
-      + '——要改结论就改真源再跑 `story-build project`；机器区里手改的东西下一次投影会被打回');
+      + `——机器区由 \`story-build project\` 从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖`);
   }
   // **集合两向都核**：上面走的是合同要的那几区；盘上多出来的名字在这里报。
   // 合同里没有它，就没有真源与它比——既不受投影约束，也不是作者说明，它会长期冒充现行投影。
   const known = new Set(zones.map(z => z.zone));
   for (const name of onDisk.keys()) {
     if (known.has(name)) continue;
-    problems.push(`「${appendix.title}」里有一段机器区「${name}」，而合同的投影里没有它`
-      + `（${zones.map(z => z.zone).join('、')}）`
-      + '——它没有真源可比，只会一直冒充现行投影；'
-      + '要留这段内容就把它移到作者区（机器标记之外），否则连首尾标记一起删掉');
+    problems.push(`「${appendix.title}」：机器区「${name}」不在合同的投影登记里`
+      + `（登记的是 ${zones.map(z => z.zone).join('、')}）`
+      + '——机器区按合同登记的名字对应真源，这一段没有真源可比，也不随投影更新；'
+      + '机器标记之外是作者区');
   }
   return problems;
 }
@@ -672,9 +656,9 @@ function zonesOnDisk(lines, problems, chapterTitle) {
     if (line.startsWith(ZONE_BEGIN)) {
       const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
       if (open) {
-        problems.push(`「${chapterTitle}」第 ${i + 1} 行又开了一个机器区（${name}），`
-          + `而第 ${open.start + 1} 行那个（${open.name}）还没关上`
-          + '——里层这一段永远不会被当成一个区；把它们（含首尾标记）删掉再跑 `story-build project`');
+        problems.push(`「${chapterTitle}」第 ${i + 1} 行：又开了一个机器区（${name}），`
+          + `而第 ${open.start + 1} 行的（${open.name}）还没关上`
+          + '——机器区按起始、结束标记成对认，嵌套的里层认不成区；机器区的内容由 `story-build project` 从真源投影');
         return;
       }
       open = { name, start: i };
@@ -682,22 +666,22 @@ function zonesOnDisk(lines, problems, chapterTitle) {
     }
     if (line.trim() !== ZONE_END) return;
     if (!open) {
-      problems.push(`「${chapterTitle}」第 ${i + 1} 行是个孤立的结束标记，前面没有起始标记`
-        + '——它指不到任何一段投影；删掉它再跑 `story-build project`');
+      problems.push(`「${chapterTitle}」第 ${i + 1} 行：结束标记前面没有起始标记`
+        + '——机器区按起始、结束标记成对认，孤立的结束标记指不到任何一段投影');
       return;
     }
     if (out.has(open.name)) {
-      problems.push(`「${chapterTitle}·${open.name}」在盘上有两段机器区`
-        + '——投影只认第一段，第二段会一直挂在那里冒充现状；删掉多的那一段再跑 project');
+      problems.push(`「${chapterTitle}·${open.name}」：在盘上有两段机器区`
+        + '——投影只认第一段，第二段不随真源更新');
     } else {
       out.set(open.name, { start: open.start, end: i + 1 });
     }
     open = null;
   });
   if (open) {
-    problems.push(`「${chapterTitle}·${open.name}」的机器区只有起始标记，没有结束标记`
-      + '——那两行是投影的定位点，缺一行整段就认不出来了；'
-      + '把这一段（含首尾标记）删掉再跑 `story-build project`');
+    problems.push(`「${chapterTitle}·${open.name}」：机器区只有起始标记，没有结束标记`
+      + '——首尾两行标记是投影的定位点，缺一行整段认不出来；'
+      + '机器区的内容由 `story-build project` 从真源投影');
   }
   return out;
 }

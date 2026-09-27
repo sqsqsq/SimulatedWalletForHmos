@@ -186,14 +186,14 @@ export function zoneProblems(projectRoot, specText, rendered) {
   for (const zone of ZONES) {
     const found = zoneOf(specText, zone);
     if (!found.found) {
-      problems.push(`spec.md 的「${zone.name}」章没有生成区 —— `
-        + '跑 `node doc/extensions/hooks/shared/knowledge-use.mjs render --feature <名>` 生成');
+      problems.push(`spec.md 的「${zone.name}」章没有生成区——`
+        + '生成区由 `node doc/extensions/hooks/shared/knowledge-use.mjs render --feature <名>` 从 spec/knowledge-use.yaml 生成');
       continue;
     }
     if (found.body !== rendered[zone.key]) {
-      problems.push(`spec.md 的「${zone.name}」生成区与 spec/knowledge-use.yaml 对不上 —— `
-        + '这一区由 YAML 生成，手改它等于让人读的表与机器真源各说各话。'
-        + '改判断请改 YAML，再跑 `knowledge-use.mjs render` 重新生成');
+      problems.push(`spec.md 的「${zone.name}」生成区与 spec/knowledge-use.yaml 对不上——`
+        + '这一区由 `knowledge-use.mjs render` 从 YAML 逐字生成，门禁按同一渲染逐字比对；'
+        + '判断的真源是 YAML，手改生成区会让人读的表与机器真源各说各话');
     }
     const span = chapterSpan(rows, zone.heading);
     if (!span) continue;
@@ -208,7 +208,7 @@ export function zoneProblems(projectRoot, specText, rendered) {
     if (stray.length) {
       problems.push(`spec.md 的「${zone.name}」章在生成区之外还有表`
         + `（第 ${stray.slice(0, 3).join('、')} 行${stray.length > 3 ? ' …' : ''}）`
-        + ' —— 这一章的正文只有生成区一份；判断写在 knowledge-use.yaml 里，投影由 render 生成');
+        + '——这一章的正文只有生成区一份；判断的真源是 knowledge-use.yaml，投影由 render 生成');
     }
   }
   return problems;

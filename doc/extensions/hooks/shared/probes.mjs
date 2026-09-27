@@ -130,7 +130,7 @@ export function runProbe(probe, target) {
     try {
       re = new RegExp(probe.pattern, 'g');
     } catch (e) {
-      return { ok: false, detail: `探针表达式不是合法正则：${probe.raw}（${e.message}）`, scanned: 0 };
+      return { ok: false, detail: `探针表达式不是合法正则：${probe.raw}（${e.message}）——表达式取自规约条目表的「探针」列，按 JavaScript 正则编译`, scanned: 0 };
     }
   }
 
@@ -149,7 +149,7 @@ export function runProbe(probe, target) {
     }
     case 'present_in_method': {
       if (entityKind !== 'interfaces') {
-        return { ok: false, detail: `present_in_method 只能用在方法上，当前实体是 ${entityKind}`, scanned: 0 };
+        return { ok: false, detail: `present_in_method 在方法体里找，当前落点实体是 ${entityKind}——这一形态只对契约 interfaces 下的方法成立`, scanned: 0 };
       }
       const method = String(entityName ?? '').split('.').pop();
       for (const f of readable) {
@@ -159,7 +159,7 @@ export function runProbe(probe, target) {
         if (re.test(body)) {
           return { ok: true, detail: `${f.rel} 的 ${method}() 里命中`, scanned: readable.length };
         }
-        return { ok: false, detail: `${f.rel} 的 ${method}() 方法体里没有要求的形态`, scanned: readable.length };
+        return { ok: false, detail: `${f.rel} 的 ${method}() 方法体里没有匹配「${probe.pattern}」的内容`, scanned: readable.length };
       }
       return { ok: false, detail: `在 ${readable.length} 个文件里都找不到方法 ${method}()`, scanned: readable.length };
     }
@@ -187,7 +187,7 @@ export function runProbe(probe, target) {
       }
       return n === probe.count
         ? { ok: true, detail: `命中 ${n} 次，符合恒等要求`, scanned: readable.length }
-        : { ok: false, detail: `命中 ${n} 次，要求恒等于 ${probe.count}`, scanned: readable.length };
+        : { ok: false, detail: `「${probe.pattern}」在落点文件里命中 ${n} 次，要求恒等于 ${probe.count}`, scanned: readable.length };
     }
     default:
       return { ok: false, detail: `未知探针形态：${probe.kind}`, scanned: 0 };

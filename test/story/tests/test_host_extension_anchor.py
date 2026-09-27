@@ -149,7 +149,8 @@ class TheSpecExtensionHangsUnderTheAnchor(unittest.TestCase):
         anchor, appendix = rest.split("## 附录", 1)
         text = head + anchor + "## 1. 背景\n\n略。\n\n## 8. 验收标准\n\n略。\n\n## 附录" + appendix
         got = "\n".join(spec_problems(text))
-        self.assertIn("「9. 宿主扩展治理项」要在最后一个设计章之后、附录之前——现在它是第一章", got)
+        self.assertIn("「9. 宿主扩展治理项」：位于全文第一章", got)
+        self.assertIn("在最后一个设计章之后、附录之前", got, "没说这条怎么判")
         self.assertIn("「8. 验收标准」", got)
 
 
@@ -164,7 +165,7 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
                 "## 1. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.2 埋点\n\n略。\n")
         got = plan_problems(text)
         self.assertEqual(1, len(got), got)
-        self.assertIn("要写成「9. 宿主扩展」的下一级小节 9.1——现在是「## 知识决策（设计输入）」", got[0])
+        self.assertIn("「## 知识决策（设计输入）」：「知识决策（设计输入）」不在「9. 宿主扩展」的下一级", got[0])
 
     def test_no_anchor_is_one_problem(self) -> None:
         got = plan_problems("# 计划\n\n## 1. 模块架构图\n\n略。\n")
@@ -176,8 +177,8 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
         text = head + anchor + "\n## 1. 模块架构图\n\n略。\n\n## 8. spec 功能映射表\n\n略。\n"
         got = plan_problems(text)
         self.assertEqual(1, len(got), got)
-        self.assertIn("「9. 宿主扩展」要在最后一个设计章之后、附录之前——现在它是第一章", got[0])
-        self.assertIn("挪到「8. spec 功能映射表」之后", got[0])
+        self.assertIn("「9. 宿主扩展」：位于全文第一章", got[0])
+        self.assertIn("后面还有设计章「1. 模块架构图」「8. spec 功能映射表」", got[0])
 
     def test_an_appendix_after_the_anchor_is_fine(self) -> None:
         self.assertEqual([], plan_problems(ANCHORED_PLAN + "\n## 附录\n\n略。\n"))
@@ -186,7 +187,8 @@ class ThePlanKnowledgeDecisionIsAnchorSection(unittest.TestCase):
         """§9 之后追加「修正记录」：它不是设计章，修法是并进附录，不是把 §9 挪到它后面。"""
         got = plan_problems(ANCHORED_PLAN + "\n## 修正记录\n\n略。\n")
         self.assertEqual(1, len(got), got)
-        self.assertIn("「修正记录」：它不是设计章，并入附录", got[0])
+        self.assertIn("后面还有「修正记录」", got[0])
+        self.assertIn("不带章号的二级标题按附录内容判", got[0], "没说非设计章为什么归附录")
         self.assertNotIn("挪到", got[0])
 
     def test_several_appendices_pass(self) -> None:

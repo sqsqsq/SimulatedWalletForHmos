@@ -68,8 +68,8 @@ function compileIdShapes(contract) {
   for (const kind of ['drop', 'keep']) {
     for (const shape of contract?.id_shapes?.[kind] ?? []) {
       try { out[kind].push(new RegExp(shape, 'g')); } catch {
-        out.problems.push(`章节合同的 id_shapes.${kind} 里有一条不是合法正则：${shape}`
-          + '——它现在一条都判不了，改合同里那一条');
+        out.problems.push(`章节合同的 id_shapes.${kind}：「${shape}」不是合法正则`
+          + '——编号形态在建上下文时编译，编译不了的这一条判不了');
       }
     }
   }
@@ -86,7 +86,7 @@ function commonInputs(args) {
     args.projectRoot ?? path.join(CORE_DIR, '..', '..', '..', '..', '..', '..'));
   const contract = readJson(
     path.join(CORE_DIR, '..', '..', 'contracts', 'story-chapters.json'), null);
-  if (!contract) fail('章节合同缺失：contracts/story-chapters.json');
+  if (!contract) fail('contracts/story-chapters.json：章节合同读不到或不是合法 JSON——每条命令起手读它，读不出不降级成空');
   return { projectRoot, contract, idShapes: compileIdShapes(contract) };
 }
 
@@ -95,7 +95,7 @@ export function createContext(args) {
   const { projectRoot, contract, idShapes } = commonInputs(args);
   if (!Array.isArray(contract.chapters) || contract.chapters.length === 0) {
     // 派生为空要出声，不能当作「没有章节要求」通过
-    fail('章节合同解析不出任何章节——合同坏了，不是「本需求没有章节」');
+    fail('contracts/story-chapters.json：chapters 为空或不是数组——章节是所有判据的前提，派生为空按合同损坏报');
   }
   const featureDir = featureRoot(projectRoot, args.feature);
   const srcDir = path.join(featureDir, 'AR', 'story-src');
@@ -115,11 +115,11 @@ export function createContext(args) {
  *
  * 文件名的真源在 `core/flow/state.py` 的 `STORY_REGISTERED`：那几件是登记时要算指纹、
  * 归档时随稿走的同一批（另加 story 本身）。登记核对与存在性两处说的必须是同一批文件，
- * 各写一份就会改一处忘一处。第二列是缺了怎么补。
+ * 各写一份就会改一处忘一处。第二列是它由哪里产出。
  */
 const STORY_SRC_LEDGERS = [
-  ['decisionsPath', '跑 skeleton 产出'],
-  ['templatePath', '跑 skeleton 建空壳，再按本需求写成整篇设计'],
+  ['decisionsPath', '由 skeleton 产出'],
+  ['templatePath', '由 skeleton 建空壳，作者按本需求写成整篇设计'],
 ];
 
 /**
@@ -135,10 +135,10 @@ export function requireLedgers(ctx) {
     .filter(([key]) => ctx[key] && readText(ctx[key]) === null)
     .map(([key, how]) => `${path.basename(ctx[key])}（${how}）`);
   if (!missing.length) return;
-  fail(`台账缺 ${missing.length} 件：${missing.join('、')}\n`
-    + '  这几件是这份 story 据以成文的依据，随稿登记、随稿归档，缺一件产物就没有依据。\n'
-    + '  **缺的那件要补产出，不是把同伴文件删掉。** 报错多的时候删台账能让报错数下去，'
-    + '但那是把依据删了，不是把问题解决了——被删的那些事实，评审者再也看不到有人核过。');
+  fail(`AR/story-src/ 台账缺 ${missing.length} 件：${missing.join('、')}\n`
+    + '  这几件是这份 story 据以成文的依据，随稿登记、随稿归档，check 在台账齐全时才往下判。\n'
+    + '  台账记着评审者要看到的已核事实：台账不在，这些事实与它们被核过的记录一起不在，'
+    + '报错数随之减少而问题仍在。');
 }
 
 /**
@@ -164,7 +164,7 @@ export function activeKnowledgeEntries(ctx) {
   try {
     return activeKnowledge(ctx.projectRoot).entries ?? [];
   } catch (e) {
-    fail(`激活知识派生失败：${e.message}——规约判定表无从核对，不能当作「没有规约」通过`);
+    fail(`激活知识派生失败（${e.message}）——规约判定表按激活清单逐条核，派生不出时不按「没有规约」放行`);
     return [];
   }
 }
@@ -193,15 +193,15 @@ export function ledgerDigestProblems(ctx) {
   // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `ledger_digest`。
   const digests = registeredDigests(ctx);
   if (digests === null) {
-    return ['流程契约记着已成文登记，却没有登记指纹 story_digests：契约不完整。'
-      + '跑 `story_flow.py story --feature <名>` 按当前内容重新登记'];
+    return ['AR/story-src/story-flow.json：记着已成文登记，却没有登记指纹 story_digests，契约不完整'
+      + '——登记指纹由 `story_flow.py story --feature <名>` 按当前内容重新登记时写入'];
   }
   for (const [rel, want2] of Object.entries(digests)) {
     const file = path.join(ctx.featureRoot, ...rel.split('/'));
     if (want2 === null && !fs.existsSync(file)) continue;
     if (want2 !== digestOf(readRaw(file))) {
-      problems.push(`${rel} 在成文登记之后改过：改完跑 \`story_flow.py story --feature <名>\` 重新登记`
-        + '（它会重投附录、编号、渲染 review 并全篇 check）');
+      problems.push(`${rel} 在成文登记之后改过（与登记记下的指纹不同）——登记由 \`story_flow.py story --feature <名>\` 按当前内容重新登记`
+        + '（它重投附录、编号、渲染 review 并全篇 check）');
     }
   }
   return problems;
@@ -223,8 +223,8 @@ export function strayFileProblems(ctx) {
         .filter(e => e.isFile() && !AR_ROOT_FILES.includes(e.name)).map(e => e.name)
       : [];
     for (const name of strays) {
-      problems.push(`AR/${name} 不该在这一层——根下只放交付文档与单据身份`
-        + `（${AR_ROOT_FILES.join('、')}）。把它原样挪进 AR/story-src/；目录不受这条限制`);
+      problems.push(`AR/${name} 不该在这一层——AR 根下的独立文件按白名单判，只有交付文档与单据身份`
+        + `（${AR_ROOT_FILES.join('、')}），辅助件的落点是 AR/story-src/；目录不受这条限制`);
     }
   }
   return problems;

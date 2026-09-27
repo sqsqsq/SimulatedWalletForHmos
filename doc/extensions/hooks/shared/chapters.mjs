@@ -46,11 +46,11 @@ export function chapterTemplates(projectRoot, skill, key, extTemplate) {
   const got = profileAsset(projectRoot, skill, key);
   const what = `${skill} 主章号`;
   if (got.skip) return { templates: null, skipped: [{ what, why: got.skip }], problems: [] };
-  if (got.problem) return { templates: null, skipped: [], problems: [`${what}核不了：${got.problem}`] };
+  if (got.problem) return { templates: null, skipped: [], problems: [`${got.problem}——${what}以 project_profile.name 对应 profile 的 skill-assets.yaml 登记的阶段模板为准，取不到模板就核不了`] };
   if (!extTemplate) return { templates: [got.text], skipped: [], problems: [] };
   const ext = readTextOrNull(path.join(extensionRoot(projectRoot), ...extTemplate.split('/')));
   return ext === null
-    ? { templates: null, skipped: [], problems: [`${what}核不了：扩展模板 ${extTemplate} 读不到`] }
+    ? { templates: null, skipped: [], problems: [`扩展模板 ${extTemplate} 读不到——${what}里扩展追加的章以这份模板给号，读不到就核不了`] }
     : { templates: [got.text, ext], skipped: [], problems: [] };
 }
 
@@ -85,8 +85,9 @@ export function chapterRefProblems(text, column) {
       const actual = byNumber.get(m[1]);
       if (!actual || !(actual.startsWith(name) || name.startsWith(actual))) {
         const real = [...byNumber].find(([, n]) => n.startsWith(name) || name.startsWith(n));
-        problems.push(`「${column}」写的「${m[1]}. ${name}」对不上本文的章：`
-          + (real ? `「${name}」在本文是第 ${real[0]} 章` : `本文第 ${m[1]} 章是「${actual ?? '（没有）'}」`));
+        problems.push(`「${column}」列的「${m[1]}. ${name}」对不上本文的章：`
+          + (real ? `「${name}」在本文是第 ${real[0]} 章` : `本文第 ${m[1]} 章是「${actual ?? '（没有）'}」`)
+          + '——带号引用按「号. 章名」与本文的二级标题比对，号与章名指同一章');
       }
     }
   }
@@ -111,8 +112,8 @@ export function chapterNumberProblems(text, templates) {
       parent = [got];
       if (!want.has(h.name) || want.get(h.name) === got) continue;
       problems.push(want.get(h.name) === null
-        ? `「## ${h.raw}」：模板里这一章不编号，不计入章序——去掉「${got}.」，后面各章按模板的号`
-        : `「## ${h.raw}」：模板里这一章是第 ${want.get(h.name)} 章，号写成了「${got ?? '无'}」`);
+        ? `「## ${h.raw}」：模板里这一章不编号，这里写了「${got}.」——主章号以模板为准，模板里不编号的章不计入章序，后面各章按模板的号`
+        : `「## ${h.raw}」：模板里这一章是第 ${want.get(h.name)} 章，号写成了「${got ?? '无'}」——主章号以 profile 模板与扩展模板为准，按章名对照`);
       continue;
     }
     const up = parent[h.level - 3] ?? null;
@@ -134,14 +135,14 @@ function anchorPositionProblems(doc, anchor, name) {
   const at = h2.indexOf(anchor);
   const after = h2.slice(at + 1).filter(h => !/^附录/.test(h.name));
   if (!after.length) return [];
-  const where = `「${anchor.raw}」要在最后一个设计章之后、附录之前——现在它`
-    + (at > 0 ? `在「${h2[at - 1].raw}」之后，` : '是第一章，');
+  const where = `「${anchor.raw}」：位于`
+    + (at > 0 ? `「${h2[at - 1].raw}」之后，` : '全文第一章，');
   // 带章号的是设计章，要在扩展章之前；不带章号的（修正记录之类）是附录内容
   const design = after.filter(h => NUMBER.test(h.raw));
   const other = after.filter(h => !design.includes(h));
   const list = hs => `「${hs.map(h => h.raw).join('」「')}」`;
-  return [design.length && `${where}后面还有设计章${list(design)}。把「${name}」整章挪到「${design.at(-1).raw}」之后`,
-    other.length && `${where}后面还有${list(other)}：它不是设计章，并入附录（附录下的一节）`].filter(Boolean);
+  return [design.length && `${where}后面还有设计章${list(design)}——「${name}」在最后一个设计章之后、附录之前，带章号的二级标题按设计章判`,
+    other.length && `${where}后面还有${list(other)}——「${name}」之后只有附录，不带章号的二级标题按附录内容判，位置是附录下的一节`].filter(Boolean);
 }
 
 /**
@@ -155,14 +156,14 @@ export function hostAnchorProblems(text, isStory, formDoc) {
   const children = [[/规约约束要求/, '规约约束要求'], [/设计模式候选/, '设计模式候选登记'],
     ...(isStory ? [[/技术契约/, '技术契约']] : [])];
   if (!anchor) {
-    problems.push('缺「9. 宿主扩展治理项」章——它在「8. 验收标准」之后，'
+    problems.push('spec.md 缺「9. 宿主扩展治理项」章——按名字以「宿主扩展治理项」开头的二级标题认；它在「8. 验收标准」之后，'
       + `${children.map(([, n]) => `「${n}」`).join('')}是它的下一级小节（形态见 ${formDoc}）`);
   } else {
     problems.push(...anchorPositionProblems(doc, anchor, '9. 宿主扩展治理项'));
     for (const [re, name] of children) {
       const h = doc.headings.find(x => x.level >= 2 && re.test(x.name));
       if (h && h !== childHeading(doc, anchor, re)) {
-        problems.push(`「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——现在是「${'#'.repeat(h.level)} ${h.raw}」`);
+        problems.push(`「${'#'.repeat(h.level)} ${h.raw}」：「${name}」要写成「9. 宿主扩展治理项」的下一级小节（9.x）——扩展小节按标题名在这一章的下一级找`);
       }
     }
   }
@@ -170,7 +171,7 @@ export function hostAnchorProblems(text, isStory, formDoc) {
   const appendix = h2.findIndex(h => /^附录/.test(h.name));
   const tail = appendix >= 0 ? h2.slice(appendix + 1).filter(h => !/^附录/.test(h.name)) : [];
   if (tail.length) {
-    problems.push(`附录之后只有附录：「${tail.map(h => h.raw).join('」「')}」排在了附录之后`);
+    problems.push(`「${tail.map(h => h.raw).join('」「')}」：排在了附录之后——附录之后只有附录，名字以「附录」开头的二级标题按附录判`);
   }
   return problems;
 }
@@ -185,7 +186,7 @@ export function hostExtensionProblems(planText, formDoc) {
   const doc = parseDocument(planText);
   const anchor = doc.headings.find(h => h.level === 2 && /^宿主扩展/.test(h.name));
   if (!anchor) {
-    return ['plan.md 缺「9. 宿主扩展」章——它在「8. spec 功能映射表」之后，'
+    return ['plan.md 缺「9. 宿主扩展」章——按名字以「宿主扩展」开头的二级标题认；它在「8. spec 功能映射表」之后，'
       + `「知识决策（设计输入）」是它的 9.1、「埋点」是 9.2（形态见 ${formDoc}）`];
   }
   const position = anchorPositionProblems(doc, anchor, '9. 宿主扩展');
@@ -193,9 +194,9 @@ export function hostExtensionProblems(planText, formDoc) {
   if (!decision) {
     const elsewhere = doc.headings.find(h => /^知识决策/.test(h.name));
     return [...position, elsewhere
-      ? `「知识决策（设计输入）」要写成「9. 宿主扩展」的下一级小节 9.1——现在是「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」`
-      : '「9. 宿主扩展」下缺「9.1 知识决策（设计输入）」——设计模式选型、规约义务、项目知识影响三节写在它下面'];
+      ? `「${'#'.repeat(elsewhere.level)} ${elsewhere.raw}」：「知识决策（设计输入）」不在「9. 宿主扩展」的下一级——知识决策按名字在「宿主扩展」的下一级找，形态是 9.1`
+      : 'plan.md「9. 宿主扩展」：下一级缺「9.1 知识决策（设计输入）」——按名字以「知识决策」开头的小节认，设计模式选型、规约义务、项目知识影响三节在它下面'];
   }
   return [...position, ...DECISION_PARTS.filter(name => !childHeading(doc, decision, new RegExp(`^${name}`)))
-    .map(name => `「9.1 知识决策（设计输入）」下缺「${name}」一节`)];
+    .map(name => `plan.md「9.1 知识决策（设计输入）」下缺「${name}」一节——三节按名字开头在知识决策的下一级找，都要在`)];
 }

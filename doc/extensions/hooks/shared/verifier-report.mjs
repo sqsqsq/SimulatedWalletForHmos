@@ -37,15 +37,15 @@ import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/d
 export function overlayChecks(projectRoot, phase) {
   const file = path.join(extensionRoot(projectRoot), 'rules', `${phase}-rules.overlay.yaml`);
   const text = readTextOrNull(file);
-  if (text === null) return { checks: {}, error: `读不到 rules/${phase}-rules.overlay.yaml` };
+  if (text === null) return { checks: {}, error: `读不到 rules/${phase}-rules.overlay.yaml——本阶段审查判据从它的 semantic_checks 读` };
   let checks;
   try {
     checks = parseYaml(text)?.semantic_checks;
   } catch (e) {
-    return { checks: {}, error: `${phase} overlay 解析失败：${String(e.message).split(/\r?\n/)[0]}` };
+    return { checks: {}, error: `rules/${phase}-rules.overlay.yaml 解析失败（${String(e.message).split(/\r?\n/)[0]}）——本阶段审查判据从它的 semantic_checks 读` };
   }
   if (!checks || typeof checks !== 'object' || !Object.keys(checks).length) {
-    return { checks: {}, error: `${phase} overlay 的 semantic_checks 解析出零条判据` };
+    return { checks: {}, error: `rules/${phase}-rules.overlay.yaml 的 semantic_checks 解析出零条判据——审查请求与报告核对都按这里的判据逐条出结论` };
   }
   return { checks, error: null };
 }
@@ -76,28 +76,29 @@ export function reportProblems(projectRoot, feature, phase) {
   const rows = tableRows(text);
   const ids = new Set(rows.map(r => r.id));
   if (!block || !ids.size) {
-    return [`审查回复格式不合（${!block ? '终态块不是恰好一个' : '没有汇总表'}），不计作结论。${INVALID_EVIDENCE}`];
+    return [`${summary.verifier_report}：审查回复格式不合（${!block ? '终态块不是恰好一个' : '没有汇总表'}），不计作结论。${INVALID_EVIDENCE}`];
   }
   const problems = [];
   const { checks } = overlayChecks(projectRoot, phase);
   for (const id of Object.keys(checks)) {
-    if (!ids.has(id)) problems.push(`缺判据：${id}——报告汇总表里没有这一条的结论，按阻断处理。${INVALID_EVIDENCE}`);
+    if (!ids.has(id)) problems.push(`${summary.verifier_report} 的汇总表缺判据：${id}——汇总表逐条对 rules/${phase}-rules.overlay.yaml 的 semantic_checks，缺一条的报告按阻断处理。${INVALID_EVIDENCE}`);
   }
   const subject = block.subject;
   const ledgerPath = path.join(path.dirname(abs), 'verifier.conclusions.json');
   const ledger = readJsonOrNull(ledgerPath) ?? {};
   const digest = crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
   if (subject && ledger[subject] && ledger[subject] !== digest) {
-    problems.push(`审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是换了内容的重投——`
-      + '对象没变，结论不换；材料真改了，取新请求再审');
+    problems.push(`${summary.verifier_report}：审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是换了内容的重投——`
+      + '同一审查对象只登记第一份合规结论（同目录 verifier.conclusions.json）；审查对象随材料变化，材料改过之后 harness 给出新的请求与对象');
   } else if (subject && !ledger[subject] && !problems.length) {
     fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
   }
   const notes = readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '';
   const undisposed = rows.filter(r => /^(WARN|FAIL)$/.test(r.status) && !notes.includes(r.id));
   if (undisposed.length) {
-    problems.push(`${phase}/notes.md 没写这几条审查结论的处置：${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}`
-      + '——逐条写按哪一类处置（见 phases/spec.md「闭环」）：返修、只改表达已重验、改了业务已再审，或留给哪一阶段');
+    problems.push(`${phase}/notes.md：审查结论 ${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}没有处置记录`
+      + '——门禁按判据编号在 notes.md 里找它的处置；处置的几类（返修、只改表达已重验、改了业务已再审、留给哪一阶段）'
+      + '在 phases/spec.md「闭环」');
   }
   return problems;
 }
@@ -115,10 +116,10 @@ const SUMMARY_COLUMNS = 4;
  * 报错说给**读报错的那个人**听 —— 他是作者，不是审查员。
  *
  * 报告必须是子代理回复的原样落盘，作者照着报错去补一行、补一个键，补出来的是
- * 伪造的审查证据。所以缺什么都不叫他写，叫他把同一份 request 再投一次。
+ * 伪造的审查证据。所以缺什么都不叫他写，只说审查证据认什么。
  */
 const INVALID_EVIDENCE =
-  '这份回复不是有效证据：把同一份 request 再投给 verifier，拿到完整回复后原样全文落盘。'
+  '这份回复不是有效证据——审查证据只认同一份 request 再投给 verifier 得到的原样全文回复，落盘后下一次 harness 运行按它核。'
   + '**不要自己补**——补出来的不是审查结论。';
 
 /**
@@ -151,8 +152,8 @@ function missingReport(summary, abs) {
       + `没有独立审查，沿用的是 ${String(prior.reviewed_subject_id ?? '').slice(0, 12)}… 的审查`
       + `（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）。`
     : '当前审查对象还没有报告。';
-  return `${facts}有与当前请求 ${request} 一致的原始回复，就原样全文写到 ${abs}，再完整跑一次 harness；`
-    + '没有这样的回复，等本轮材料改完，取当前请求派审。'
+  return `${facts}报告落点是 ${abs}（harness 登记在 summary.verifier_report）——落点只认 verifier 对当前请求 ${request} 的原样全文回复，`
+    + '写入后下一次完整的 harness 运行才读到它；请求与审查对象随本轮材料生成。'
     + '当前审查只认对当前请求的原样回复';
 }
 
@@ -250,7 +251,7 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     };
   }
   const text = readTextOrNull(abs);
-  return text === null ? withoutCurrentReport(summary, abs) : judgeReport(text);
+  return text === null ? withoutCurrentReport(summary, abs) : judgeReport(text, summary.verifier_report);
 }
 
 const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
@@ -267,7 +268,7 @@ function resultBlock(text) {
  * 当前对象没有报告时能不能交付：`phases/spec.md`「闭环」表里「PASS 之后只改表达」那一类——
  * framework 修正重验（summary 带 `script_revalidated`）、本阶段闭环 PASS 并沿用历史审查，
  * 且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
- * update 这一轮审查对象变了的阶段，`update --action close` 读 summary 按同一条规则核。
+ * update 收口怎么核见 `phases/update.md`「二、一条线」第 9 步（flow/update.py 读 summary 实现）。
  */
 function withoutCurrentReport(summary, abs) {
   const prior = summary.verifier_closure;
@@ -282,7 +283,7 @@ function withoutCurrentReport(summary, abs) {
   const judged = history === null ? null : judgeReport(history);
   if (block?.subject !== prior.reviewed_subject_id || block?.verdict !== 'PASS'
     || judged.problems.length || judged.reviewVerdict !== 'PASS') {
-    return fail('沿用的历史审查无效', `；修正重验沿用的 ${String(prior.reviewed_subject_id).slice(0, 12)}… 报告缺席或不是有效的 PASS`);
+    return fail('沿用的历史审查无效', `；修正重验沿用的 ${String(prior.reviewed_subject_id).slice(0, 12)}… 报告（同目录 verifier.report.<对象>.md）缺席或不是有效的 PASS——沿用只在那份历史报告是 reviewed_subject_id 的有效 PASS 时成立`);
   }
   return { status: 'PASS', problems: [], reviewVerdict: 'PASS', detail: '修正重验沿用历史审查',
     notes: [`当前材料未独立重审：当前对象 ${String(summary.verifier_subject_id).slice(0, 12)}… 沿用 `
@@ -290,12 +291,12 @@ function withoutCurrentReport(summary, abs) {
 }
 
 /** 报告正文里读者审查这一项：汇总行、证据、非 PASS 时的两类结论。 */
-function judgeReport(text) {
+function judgeReport(text, at = 'verifier 报告') {
   const row = summaryRow(text);
   if (!row) {
     return {
       status: 'FAIL',
-      problems: [`verifier 报告的汇总表里没有 ${STORY_REVIEW_ID} 这一行——`
+      problems: [`${at} 的汇总表里没有 ${STORY_REVIEW_ID} 这一行——门禁按第一格等于这个 id 的表格行认它；`
         + '这一项是 story 语义质量的发现者，汇总表里找不到它就等于这一轮没审。'
         + INVALID_EVIDENCE],
       reviewVerdict: null,
@@ -307,8 +308,8 @@ function judgeReport(text) {
   if (row.length < SUMMARY_COLUMNS) {
     return {
       status: 'FAIL',
-      problems: [`${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
-        + '汇总表是 id、status、severity、一行证据四格。' + INVALID_EVIDENCE],
+      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
+        + '汇总表每行四格（id、status、severity、一行证据），证据取第 4 格。' + INVALID_EVIDENCE],
       reviewVerdict: null,
       detail: `汇总表只有 ${row.length} 列`,
     };
@@ -322,8 +323,8 @@ function judgeReport(text) {
   if (!evidence || /^[-—–]+$/.test(evidence)) {
     return {
       status: 'FAIL',
-      problems: [`${STORY_REVIEW_ID} 那一行的证据格是空的——`
-        + '空证据与没审长得一样。' + INVALID_EVIDENCE],
+      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行的证据格是空的——`
+        + '证据取第 4 格，空或只有横线都算空；空证据与没审长得一样。' + INVALID_EVIDENCE],
       reviewVerdict,
       detail: '证据格为空',
     };
@@ -336,9 +337,8 @@ function judgeReport(text) {
       // 补完还报，他只能去翻这个脚本。
       return {
         status: 'FAIL',
-        problems: [`verifier 报告里的结构块读不出来（${unreadable}）——`
-          + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。`
-          + '把 verifier 的回复原样重写一遍，结构块写成合法 YAML。' + INVALID_EVIDENCE],
+        problems: [`${at} 里的结构块读不出来（${unreadable}）——门禁按 YAML 读报告里的围栏块，`
+          + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。` + INVALID_EVIDENCE],
         reviewVerdict,
       detail: '结构块读不出来',
       };
@@ -353,9 +353,9 @@ function judgeReport(text) {
     if (missing.length) {
       return {
         status: 'FAIL',
-        problems: [`${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
-          + '两类结论都要在这一条的 `details` 下：阻断问题与提醒各归各的键，'
-          + '没有就写成空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
+        problems: [`${at}：${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
+          + '门禁在 YAML 明细 `checks` 里按 id 取这一条的 `details`，阻断问题与提醒各归各的键，'
+          + '没有发现的是空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
         reviewVerdict,
       detail: `缺 ${missing.join('、')}`,
       };
