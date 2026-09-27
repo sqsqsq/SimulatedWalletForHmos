@@ -261,6 +261,14 @@ class MeasureReadsRealEvents(unittest.TestCase):
                 r = self._measure([{"tool_name": "bash", "tool_input": {"command": command}}])
                 self.assertEqual(1, r["reads_checker_source"])
 
+    def test_prompts_and_reports_under_harness_are_not_source(self):
+        """harness 目录下的提示词与报告不是源码：目录检索只认到目录为止的路径。"""
+        for command in ("cat framework/harness/prompts/spec-verifier.md",
+                        "cat framework/harness/reports/summary.json"):
+            with self.subTest(command=command):
+                r = self._measure([{"tool_name": "bash", "tool_input": {"command": command}}])
+                self.assertEqual(0, r["reads_checker_source"])
+
     def test_knowledge_and_phase_rule_yaml_are_not_source(self):
         """知识与阶段规则是写给模型读的，不是机制源码。"""
         r = self._measure([

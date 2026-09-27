@@ -290,7 +290,7 @@ class TheJudgementSeesTheEntry(ProtocolCase):
     def test_the_projection_carries_force_and_method(self) -> None:
         self.judged()
         zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约 ")[1]
-        self.assertIn("| NEU-02 | 红线 | 重试复用标识 | 登记名 · 中性出口接口 | 模型 / 实机 |", zone)
+        self.assertIn("| NEU-02 | 红线 | 重试复用标识 | 技术契约 · 中性出口接口 | 模型 / 实机 |", zone)
 
 
 class AWaiverFollowsTheForce(ProtocolCase):

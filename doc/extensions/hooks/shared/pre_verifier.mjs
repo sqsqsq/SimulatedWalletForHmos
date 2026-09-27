@@ -21,6 +21,7 @@ import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
+import { contractSections } from './knowledge-use/validation.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
 import { readerReviewTask } from './reader-review-task.mjs';
@@ -112,6 +113,7 @@ function specJudgementTable(projectRoot, feature, knowledge) {
   }
   const byId = new Map((use?.constraints ?? []).map(r => [String(r?.id ?? '').trim(), r]));
   const na = new Map((use?.domains ?? []).map(r => [String(r?.prefix ?? '').trim(), r]));
+  const sections = contractSections(readTextOrNull(path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md')));
   const rows = ['| 编号 | 强制力 | 约束原文 | 命中条件 | 命中后要给出 | 附注 | 作者判断 | 落点 |',
     '|---|---|---|---|---|---|---|---|'];
   for (const e of knowledge.entries) {
@@ -124,7 +126,7 @@ function specJudgementTable(projectRoot, feature, knowledge) {
             : r.applicable !== true ? `applicable 写的是「${r.applicable}」`
               : r.waived ? `命中·本轮豁免：${r.waived?.reason ?? ''}${r.waived?.compensation ? `；补偿：${r.waived.compensation}` : ''}`
                 : `命中：${(e.reviewAction ? [r.reason] : requirements(r)).filter(Boolean).join('；')}`;
-    const landing = !r ? '—' : r.contract ? `登记名 · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
+    const landing = !r ? '—' : r.contract ? `${sections?.get(r.contract) ?? '技术契约'} · ${r.contract}` : r.impact ? `影响 · ${r.impact}`
       : r.decision ? `议题 ${r.decision}` : '—';
     rows.push(`| ${e.id} | ${cell(e.force)} | ${cell(e.constraint)} | ${cell(e.when)} | ${cell(e.handling)} `
       + `| ${cell(e.note)} | ${cell(judged)} | ${cell(landing)} |`);

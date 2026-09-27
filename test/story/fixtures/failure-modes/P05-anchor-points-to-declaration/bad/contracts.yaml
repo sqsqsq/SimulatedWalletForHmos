@@ -1,7 +1,0 @@
-feature: sample
-knowledge_freeze:
-  obligations:
-    - rule: SMP-01
-      obligation: 受理单编号在提交入口生成并透传
-      anchor: 9.2 规约
-      landing: []

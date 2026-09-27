@@ -398,15 +398,15 @@ class TestDecisionUnits(StoryBuildCase):
 
 def replace_stat_section(text: str, section: str) -> str:
     """夹具 spec 的埋点是扩展章下一级的最后一节：整节换成 `section`。"""
-    start = text.index("### 9.2 埋点")
+    start = re.search(r"^### [\d.]+ 埋点", text, re.M).start()
     end = text.find("\n## ", start)
     return text[:start] + section + ("" if end < 0 else text[end + 1:])
 
 
 class SourceNumbersStayInTheSpec(StoryBuildCase):
-    """埋点里的局部编号（9.2.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
+    """埋点里的局部编号（9.4.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
 
-    EVENTS = ('### 9.2 埋点\n\n#### 9.2.1 开户成功率\n\n| 统计点 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
+    EVENTS = ('### 9.4 埋点\n\n#### 9.4.1 开户成功率\n\n| 统计点 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
               '#### 2.0 版本的查询成功率\n\n- 查询结果按次记录。\n\n')
 
     def test_the_local_number_is_dropped_and_business_digits_kept(self) -> None:
@@ -418,7 +418,7 @@ class SourceNumbersStayInTheSpec(StoryBuildCase):
         story = self.story()
         zone = story[story.index("<!-- story-build:begin 埋点 "):]
         self.assertIn("#### 开户成功率", zone)
-        self.assertNotIn("9.2.1", zone)
+        self.assertNotIn("9.4.1", zone)
         self.assertIn("#### 2.0 版本的查询成功率", zone)
 
 
@@ -428,7 +428,7 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
     只搬表的话，流程怎么分、指标是什么、哪些交互由自动上报采集全丢了，归档件里只剩名目表。
     """
 
-    EVENTS = '### 9.2 埋点\n\n开户与结果查询两个流程各看一个成功率。\n\n#### 开户成功率\n\n衡量开户办理的完成比例：分子是开户成功，分母是全部提交开户；打点在开户办理流程的信息校验与短信验证两步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 开户办理 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 开户办理 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n#### 查询成功率\n\n衡量开户结果查询的成功比例：分子是查询成功，分母是全部查询；打点在结果查询流程的查询开户结果一步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 结果查询 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
+    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程各看一个成功率。\n\n#### 开户成功率\n\n衡量开户办理的完成比例：分子是开户成功，分母是全部提交开户；打点在开户办理流程的信息校验与短信验证两步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 开户办理 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 开户办理 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n#### 查询成功率\n\n衡量开户结果查询的成功比例：分子是查询成功，分母是全部查询；打点在结果查询流程的查询开户结果一步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 结果查询 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
 
     def setUp(self) -> None:
         super().setUp()
@@ -481,7 +481,7 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         锚点指回 spec 那一处（它指的标题在归档件里不存在）；外链与围栏里的样例不动。
         """
         text = self.spec.read_text(encoding="utf-8")
-        self.spec.write_text(replace_stat_section(text, '### 9.2 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n#### 开户成功率\n\n回看[本节开头](#开户成功率)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n'), encoding="utf-8")
+        self.spec.write_text(replace_stat_section(text, '### 9.4 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n#### 开户成功率\n\n回看[本节开头](#开户成功率)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n'), encoding="utf-8")
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         zone = self.zone()

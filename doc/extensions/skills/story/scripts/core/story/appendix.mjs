@@ -528,9 +528,9 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
       }
       const all = body.split(/\r?\n/).map(l => l.trim());
       const rows = all.filter(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
-      if (!rows.length && !/不涉及[:：]\s*\S/.test(body)) {
-        problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行，也没有「不涉及：<依据>」`
-          + '——附录每节的内容按表、列表或一行不涉及结论判');
+      if (!rows.length && !notApplicableLine(body)) {
+        problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行，也没有「不涉及」结论`
+          + '——附录每节的内容按表、列表或一行以「不涉及」起头的结论判');
       }
       // 有小节登记的节（技术契约）：小节按合同的节名认，机器区投在同名小节下
       const def = Object.entries(projectionOf(ctx.contract).sections).find(([k]) => normalizeHeading(k) === want)?.[1];

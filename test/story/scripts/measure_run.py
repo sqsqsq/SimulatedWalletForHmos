@@ -43,14 +43,14 @@ RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
 
 #: 机制源码：读它 = 在逆向判据。目标是 0 次。
 #:
-#: framework 下的 `.ts`（含 `*.ts` 通配）与扩展下的 `.mjs`/`.py` 都算，在 framework 整个目录、
-#: 它的 harness 源码目录或扩展的 hooks/skills 目录里递归检索也算——实跑里被读的有 framework 的
-#: context-facts 等工具源码，也有扩展自己的判据脚本（`story-build.mjs`、`knowledge-use.mjs`）。
+#: 只认两种：机制源码文件——framework 下的 `.ts`（含 `*.ts` 通配）、扩展下的 `.mjs`/`.py`；
+#: 以及对源码目录的递归检索——framework 整个目录、它的 harness 源码目录或扩展的 hooks/skills 目录，
+#: 路径到目录为止（以 `/` 收尾），目录下的具体非源码文件（提示词、报告）不算。
 #: 知识层是 `.md`，不在其内：那是给模型实现需求用的内容，读它是正当的。
 CHECKER_PATH_RE = re.compile(
     r"framework/[\w/.*-]+\.ts\b"
     r"|doc/extensions/[\w/.*-]+\.(?:mjs|py)\b"
-    r"|framework/(?:[\w.-]+/)*harness/[\w/.*-]*"
+    r"|framework/(?:[\w.-]+/)*harness/(?:[\w.-]+/)*(?=[\s\"']|$)"
     r"|framework/(?=[\s\"']|$)"
     r"|doc/extensions/(?:hooks|skills)(?:/[\w.-]+)*/(?=[\s\"']|$)")
 

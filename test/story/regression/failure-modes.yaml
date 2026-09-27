@@ -417,13 +417,14 @@ modes:
     found_round: "2026-08-24"
     form: 冻结义务的 anchor 指回 plan 声明义务的「规约」一节自己，或 landing 为空 → 声明冒充落点
     clause: B1-10 / AGENTS.md §3「声明不是应用」
-    checker: p05_anchor_points_to_declaration
     target: product
-    bad_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/bad
-    good_fixture: test/story/fixtures/failure-modes/P05-anchor-points-to-declaration/good
     applicable_when: 存在 contracts.yaml 知识冻结块
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者 2026-09-27，依据用户同日「废弃机制全部退出」的裁定（步骤 9 评审 R5）
+    reason: >
+      这一形态检查 contracts.yaml 的 knowledge_freeze 块，现行扩展已没有它的读写方：义务以 must 挂在契约实体上，
+      落点就是挂着它的实体，声明冒充落点由 plan 门禁的挂位与集合一致判据承担。
 
   - id: P06-knowledge-decision-outside-anchor
     dimension: knowledge

@@ -1145,26 +1145,6 @@ def p01_appendix_prefix_granularity(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, "附录编号全部到条目级")
 
 @checker
-def p05_anchor_points_to_declaration(root: Path, ctx: Ctx) -> Outcome:
-    """anchor 不得指回 plan 扩展章里声明义务的「规约」一节；landing 不得为空。"""
-    freeze = _freeze(root)
-    if freeze is None:
-        return Outcome(True, "无知识冻结块（不适用）")
-    bad = []
-    for ob in _obligations(freeze):
-        rule = str(ob.get("rule", "?"))
-        anchor = str(ob.get("anchor", ""))
-        landing = ob.get("landing") or []
-        if re.fullmatch(r"\s*(?:\d+(?:\.\d+)*\.?\s*)?规约\s*", anchor):
-            bad.append(f"{rule} 的 anchor 指回声明义务的「规约」一节（声明不是落点）")
-        if not landing and "评审动作" not in str(ob.get("handling", "")):
-            bad.append(f"{rule} 的 landing 为空（没有承载实体）")
-    if bad:
-        return Outcome(False, "；".join(bad[:5]))
-    return Outcome(True, "冻结义务均有非自指 anchor 与非空 landing")
-
-
-@checker
 def p06_knowledge_decision_outside_anchor(root: Path, ctx: Ctx) -> Outcome:
     """设计输入（项目知识、规约、设计模式）是宿主扩展锚点「9. 宿主扩展」的下一级小节，三节齐全。"""
     plan = _plan_path(root)

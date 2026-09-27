@@ -34,18 +34,21 @@ function isEmptyReason(reason) {
  * 把它收进来，`contract: 云侧接口` 就验得过——而那是一列的名字，不是任何一个落点。
  * 表头认得出来：它的下一行是分隔行。
  *
- * **节在而一个实体都没有，返回的是空集合，不是 null**：那两件事的处置相反——
+ * **节在而一个实体都没有，返回的是空表，不是 null**：那两件事的处置相反——
  * 没有这两节 = 不判；有而空 = 任何 `contract` 都引不到东西，逐条都要报。
+ *
+ * @returns {Map<string, string>|null} 名字 → 它登记在哪一节（技术契约 / 埋点）
  */
-const CONTRACT_SECTIONS = /^#{2,6}\s+(?:\d+(?:\.\d+)*\.?\s+)?(?:技术契约|埋点)\s*$/;
+const CONTRACT_SECTIONS = /^#{2,6}\s+(?:\d+(?:\.\d+)*\.?\s+)?(技术契约|埋点)\s*$/;
 
-function contractNames(specText) {
+export function contractSections(specText) {
   const rows = String(specText ?? '').split(/\r?\n/);
   const starts = rows.map((l, i) => (CONTRACT_SECTIONS.test(l.trim()) ? i : -1)).filter(i => i >= 0);
   if (!starts.length) return null;
-  const names = new Set();
+  const names = new Map();
   const isSeparator = (l) => /^\|[\s:|-]+\|?$/.test(String(l ?? '').trim());
   for (const start of starts) {
+    const section = CONTRACT_SECTIONS.exec(rows[start].trim())[1];
     const level = rows[start].trim().match(/^#+/)[0].length;
     for (let i = start + 1; i < rows.length; i += 1) {
       const h = rows[i].trim().match(/^(#{2,6})\s+/);
@@ -56,7 +59,7 @@ function contractNames(specText) {
       if (isSeparator(rows[i + 1])) continue;          // 下一行是分隔行 = 这行是表头
       const first = line.replace(/^\||\|$/g, '').split('|')[0]?.replace(/[`*]/g, '').trim() ?? '';
       if (!first || /^[-: ]*$/.test(first) || /^\{.*\}$/.test(first)) continue;
-      names.add(first);
+      if (!names.has(first)) names.set(first, section);
     }
   }
   return names;
@@ -70,8 +73,8 @@ function contractNames(specText) {
  */
 export function coverageProblems(projectRoot, knowledge, use, specText = null) {
   const problems = [];
-  // 技术契约与埋点里登记了哪些名字。这两节只在走 /story 时写，没有就不判这一条（见 contractNames）。
-  const contracts = specText === null ? null : contractNames(specText);
+  // 技术契约与埋点里登记了哪些名字。这两节只在走 /story 时写，没有就不判这一条（见 contractSections）。
+  const contracts = specText === null ? null : contractSections(specText);
 
   const want = manifestDigest(projectRoot);
   if (use.manifestDigest && use.manifestDigest !== want) {
@@ -210,7 +213,7 @@ export function coverageProblems(projectRoot, knowledge, use, specText = null) {
       // 那一章在，只是一个实体都没登记，于是任何 `contract` 都引不到东西。
       if (at && contracts && !contracts.has(at)) {
         const listed = contracts.size
-          ? `（已登记的：${[...contracts].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
+          ? `（已登记的：${[...contracts.keys()].slice(0, 6).join('、')}${contracts.size > 6 ? '…' : ''}）`
           : '（技术契约与埋点现在一个名字都没登记）';
         problems.push(`spec/knowledge-use.yaml：constraints 的 ${id} 的 contract「${at}」不在技术契约与埋点里${listed}`
           + '——contract 按这两节各表数据行第一格登记的接口、存储键、配置项或统计点名核；'

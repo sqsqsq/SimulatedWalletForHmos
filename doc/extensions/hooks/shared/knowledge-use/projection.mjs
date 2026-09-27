@@ -5,6 +5,7 @@
  * 手改生成区会被门禁按行指出来——人读的表与机器真源各说各话，比不生成更糟。
  */
 import { fail, requirements, text } from './document.mjs';
+import { contractSections } from './validation.mjs';
 
 /** 生成区的边界标记。两个标记之间的每一个字节都由本模块写。 */
 const BEGIN = '<!-- knowledge-use:begin ';
@@ -21,8 +22,11 @@ function cell(value) {
   return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-/** 「规约」的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。 */
-function renderConstraints(knowledge, use) {
+/**
+ * 「规约」的正文：命中条目逐条一行，本轮豁免与整域不适用各列在后面。
+ * 落点写名字所在的节（技术契约 / 埋点）；spec 里找不到这个名字时按技术契约写。
+ */
+function renderConstraints(knowledge, use, sections) {
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
   const hits = use.constraints.filter(r => r.applicable === true
     && !(byId.get(text(r, 'id'))?.reviewAction));
@@ -37,7 +41,8 @@ function renderConstraints(knowledge, use) {
     // 一条要求一行：同一个编号有几条要求就出几行。挤进一格的话，读者要在
     // 一百多字里数分号，而每一条本来都该独立可懂。
     const entry = byId.get(text(row, 'id'));
-    const at = text(row, 'contract') ? `登记名 · ${cell(text(row, 'contract'))}`
+    const at = text(row, 'contract')
+      ? `${sections?.get(text(row, 'contract')) ?? '技术契约'} · ${cell(text(row, 'contract'))}`
       : text(row, 'impact') ? `影响 · ${cell(text(row, 'impact'))}` : '—';
     for (const req of requirements(row)) {
       out.push(`| ${cell(text(row, 'id'))} | ${entry?.force ?? '—'} | ${cell(req)} | ${at} `
@@ -92,10 +97,10 @@ function renderPatterns(knowledge, use) {
   return out.join('\n');
 }
 
-/** 两个生成区的正文。键与 ZONES 对齐。 */
-export function renderZones(knowledge, use) {
+/** 两个生成区的正文。键与 ZONES 对齐；`specText` 给落点的节名。 */
+export function renderZones(knowledge, use, specText = null) {
   return {
-    constraints: renderConstraints(knowledge, use),
+    constraints: renderConstraints(knowledge, use, contractSections(specText)),
     patterns: renderPatterns(knowledge, use),
   };
 }

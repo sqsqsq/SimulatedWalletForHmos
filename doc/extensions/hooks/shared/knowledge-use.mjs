@@ -91,7 +91,7 @@ function main(argv) {
       for (const p of problems) process.stderr.write(`  · ${p}\n`);
       process.exit(1);
     }
-    const next = applyZones(specText, renderZones(knowledge, use));
+    const next = applyZones(specText, renderZones(knowledge, use, specText));
     fs.writeFileSync(specPath, next, 'utf-8');
     process.stdout.write(`[knowledge-use] 生成区已写入 ${relDisplay(projectRoot, specPath)}\n`);
   } catch (e) {

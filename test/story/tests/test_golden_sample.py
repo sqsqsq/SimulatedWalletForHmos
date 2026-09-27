@@ -73,7 +73,8 @@ INPUT_FINGERPRINTS = {
     "SR/design.md": "d9ccbd10489f89d1",
     "spec/knowledge-use.yaml": "073dcaed046304a7",
     # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
-    "spec/spec.md": "a4d8d0bef4690351",
+    # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
+    "spec/spec.md": "4a2b81e36d35c45f",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",

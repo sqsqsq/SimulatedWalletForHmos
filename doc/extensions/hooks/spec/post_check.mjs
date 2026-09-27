@@ -282,7 +282,7 @@ function knowledgeExitGroups(ctx, lines) {
     projection.skipped.push({ what: projection.name, why: '扩展章下缺「规约」节，投影区不存在' });
   } else {
     // 判据核投影与真源一致，对不上时错的一定是投影。
-    projection.problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use)));
+    projection.problems.push(...zoneProblems(ctx.projectRoot, specText, renderZones(knowledge, use, specText)));
   }
   return [layer, bridge, projection];
 }
