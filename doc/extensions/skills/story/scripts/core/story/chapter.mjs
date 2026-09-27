@@ -36,41 +36,36 @@ import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
 
 /**
- * 剥掉**草稿生产者自己写的**指导行 —— 只认 `story-draft:guide` 这一个标记。
+ * 草稿 → 本章正文：剥掉指导行、开头属于本章自己的标题与末尾空白，同时记下留下的每一行在草稿里是第几行。
  *
- * 它们是脚手架：作者照着写，写完该留在草稿里，不进归档件。**只剥自有的那些**：
- * 作者自己写的注释、围栏里的注释示例、机器区的首尾标记、来源标记都是正文的一部分，
- * 按「像注释」通杀的话，他写下的东西会在落盘那一刻静默消失，而他不知道。
- * 围栏里的同名行也不剥：那是被引用的样例，不是给他看的指导。
+ * - **指导行只认 `story-draft:guide` 这一个标记**：它们是脚手架，写完该留在草稿里，不进归档件。
+ *   作者自己写的注释、围栏里的注释示例、机器区的首尾标记、来源标记都是正文的一部分；
+ *   围栏里的同名行也不剥，那是被引用的样例。
+ * - **开头的 H1 与本章同名的 H2 剥掉**：命令会加回 `## <章名>`；别的章级标题不剥，由提交那条拒绝。
+ *
+ * `origin[i]` 是正文第 i+1 行在草稿里的行号（1 起）：报错直接用它指回草稿，不按文字去认。
+ *
+ * @returns {{text: string, origin: number[]}}
  */
-function stripGuidance(body) {
+function stripDraft(body, title) {
   const text = String(body ?? '');
   const fenced = fencedLines(text);
-  return text.split(/\r?\n/)
-    .filter((l, k) => fenced.has(k) || !l.trim().startsWith(`<!-- ${GUIDE_MARK}`))
-    .join('\n');
-}
-
-
-/**
- * 开头那几行属于本章自己的标题，剥掉 —— 命令会加回 `## <章名>`。
- *
- * 作者写章文件时很自然会带上本章标题；命令再包一层，story 里就出现两行一样的标题。
- * 只剥 **H1**（它只属于骨架）与**与本章同名的 H2**；别的章级标题不剥，由下面那条拒绝。
- */
-function stripOwnHeading(body, title) {
+  let rows = text.split(/\r?\n/).map((line, k) => ({ line, no: k + 1 }))
+    .filter(r => fenced.has(r.no - 1) || !r.line.trim().startsWith(`<!-- ${GUIDE_MARK}`));
   const want = normalizeHeading(title);
-  const lines = body.split(/\r?\n/);
   let i = 0;
-  while (i < lines.length) {
-    const line = lines[i].trim();
+  while (i < rows.length) {
+    const line = rows[i].line.trim();
     if (!line) { i += 1; continue; }
     const head = /^(#{1,2})\s+(.+)$/.exec(line);
     if (!head) break;
     if (head[1] === '##' && normalizeHeading(head[2]) !== want) break;
     i += 1;
   }
-  return lines.slice(i).join('\n');
+  rows = rows.slice(i);
+  while (rows.length && !rows.at(-1).line.trim()) rows.pop();
+  if (rows.length) rows[rows.length - 1] = { ...rows.at(-1), line: rows.at(-1).line.trimEnd() };
+  return { text: rows.map(r => r.line).join('\n'), origin: rows.map(r => r.no) };
 }
 
 /**
@@ -139,13 +134,16 @@ function sectionShapeProblems(title, view) {
  * @param {Function} [getView] 取这一章的解析结果——全篇 check 传它自己那份记忆化的
  *   取法，**要用时才算**：空章根本不解析，十章的 check 不会为九个空章各切一遍文。
  *   章提交只有一章，不传，自己解析。
- * @param {(line:number) => string} [where] 正文行号（1 起）→ 作者要改的位置：章提交给草稿与行，
+ * @param {(line:number) => string} [where] 逐行判据的行号（1 起）→ 作者要改的位置：章提交给草稿与行，
  *   整篇检查给 story.md 与行；不给时报章名与章内行号
+ * @param {string} [lineBody] 逐行判据判的正文：章提交给作者写的那份（附录还没投机器区，机器区本来就不在
+ *   逐行判据里），行号与 `where` 同一口径；不给时就是 `candidateBody`
  * @returns {string[]}
  */
-export function chapterProblems(ctx, chapter, candidateBody, getView = null, where = null) {
+export function chapterProblems(ctx, chapter, candidateBody, getView = null, where = null, lineBody = null) {
   const out = [];
   const body = String(candidateBody ?? '');
+  const lines = lineBody === null ? body : String(lineBody);
   const at = where ?? (n => `「${chapter.title}」第 ${n} 行`);
   if (!norm(body)) {
     out.push(`「${chapter.title}」：只有标题没有正文`
@@ -166,12 +164,12 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   const view = getView ? getView() : parseChapter(body);
   // 围栏没闭合：这一行之后的正文全被当成围栏里的东西——判据看不见它，
   // 读者那边整段变成代码块。
-  for (const f of view.fences ?? []) {
+  for (const f of (lineBody === null ? view : parseChapter(lines)).fences ?? []) {
     if (f.closed) continue;
     out.push(`${at(f.from + 1)}：围栏没有闭合`
       + '——同种标记、不短于开启标记、标记之后到行末只有空白，才算关上；没关上时之后的正文都算在围栏里');
   }
-  out.push(...placeholderProblems(body, '', at));
+  out.push(...placeholderProblems(lines, '', at));
   if (pendingChapters(body).length) {
     out.push(`「${chapter.title}」：还带着待写 marker——它是骨架给这一章留的记号，带着它的章按「还没写」计`);
   }
@@ -184,10 +182,10 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
       + '——编号形态按章节合同 id_shapes 判（图的围栏里不判），评审人手上没有这些编号的对照');
   }
   // 图片断链：评审者手上没有这个仓，点不开的引用他不知道是坏的。
-  for (const h of scanBrokenImages(body, path.dirname(ctx.storyPath), fs, path)) {
+  for (const h of scanBrokenImages(lines, path.dirname(ctx.storyPath), fs, path)) {
     out.push(`${at(h.line)}：图片引用「${h.path}」按 AR/story.md 所在目录解析不到文件——归档件里的图按这个相对路径打开`);
   }
-  out.push(...chapterLineProblems(ctx, chapter, body, at));
+  out.push(...chapterLineProblems(ctx, chapter, lines, at));
   return out;
 }
 
@@ -227,27 +225,6 @@ function chapterLineProblems(ctx, chapter, body, at) {
     }
   }
   return out;
-}
-
-/**
- * 章提交的报错位置：本章正文的行 → 草稿里内容相同的那一行。
- *
- * 正文是草稿剥掉章头指引与本章标题、附录投上机器区之后的样子，行号与草稿对不上；
- * 按内容顺序认回草稿行。机器区与剥掉的行在草稿里没有，报本章行号。
- */
-function draftLocator(draftText, body, draftRel, title) {
-  const draft = String(draftText ?? '').split(/\r?\n/);
-  const rows = String(body).split(/\r?\n/);
-  const map = new Map();
-  let from = 0;
-  rows.forEach((row, i) => {
-    if (!row.trim()) return;
-    const k = draft.findIndex((d, j) => j >= from && d.trimEnd() === row.trimEnd());
-    if (k < 0) return;
-    map.set(i + 1, k + 1);
-    from = k + 1;
-  });
-  return n => (map.has(n) ? `草稿 ${draftRel} 第 ${map.get(n)} 行` : `「${title}」第 ${n} 行（由真源投影，草稿里没有这一行）`);
 }
 
 /** 同名章锚有几处 —— 两处都替不对：替前一处，后一处仍是旧的。 */
@@ -377,7 +354,7 @@ export function cmdChapter(ctx) {
   const span = chapterSpan(story, title);
   // 先剥写给作者的说明（章头指引），再剥开头属于本章自己的 H1/同名 H2——
   // 章草稿的章头是注释行，混在任何顺序里都必须先剥干净，标题比对才认得出开头。
-  const trimmed = stripOwnHeading(stripGuidance(body), title).replace(/\s+$/, '');
+  const { text: trimmed, origin } = stripDraft(body, title);
   if (!trimmed) fail(`${from}：除了章标题没有别的内容——章提交剥掉章头指引与本章标题后按余下正文判`);
   // 剥完还剩章级标题，说明这个文件放了不止一章。**整份候选都要看**：
   // 只看开头的话，写在正文后半段的那个 H2 会连同它下面的正文一起落盘，
@@ -396,9 +373,10 @@ export function cmdChapter(ctx) {
     next = projectAppendix(ctx, next).text;
   }
 
-  const candidate = chapterBodyIn(next, title);
-  const bad = chapterProblems(ctx, planned, candidate, null,
-    draftLocator(body, candidate, relFromFeature(ctx, path.resolve(from)), title));
+  // 逐行判据判作者写的那份（与 story 里本章正文同形：标题下空一行再接正文），行号按剥离时记下的对应指回草稿
+  const draftRel = relFromFeature(ctx, path.resolve(from));
+  const bad = chapterProblems(ctx, planned, chapterBodyIn(next, title), null,
+    n => `草稿 ${draftRel} 第 ${origin[n - 2] ?? '?'} 行`, `\n${trimmed}`);
   if (bad.length) {
     process.stderr.write(`[story-build chapter] 「${title}」${bad.length} 处未通过，`
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);

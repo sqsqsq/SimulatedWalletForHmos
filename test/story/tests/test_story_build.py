@@ -2210,6 +2210,26 @@ class OneChapterIsJudgedWhenItIsSubmitted(RealRunCase):
         self.assertIn("「自动充值签约缓存」写在反引号里", out)
         self.assertIn("反引号里的文字", out, "没说这条规则怎么判")
 
+    def test_the_same_sentence_twice_points_at_the_one_with_the_backtick(self) -> None:
+        """位置取剥离时记下的草稿行号，不按文字认：同一句出现两次、第二处带反引号，报第二处的草稿行。"""
+        proc = self.submit("03-范围.md", "范围",
+                           "签约结果写进自动充值签约缓存。\n\n签约结果写进`自动充值签约缓存`。")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        lines = self.draft("03-范围.md").read_text(encoding="utf-8").split("\n")
+        want = next(i for i, l in enumerate(lines, 1) if "`自动充值签约缓存`" in l)
+        self.assertIn(f"草稿 AR/story-src/drafts/03-范围.md 第 {want} 行：工程标识「自动充值签约缓存」", out)
+
+    def test_an_appendix_line_after_a_machine_zone_points_at_the_draft(self) -> None:
+        """附录的逐行判据判投影机器区之前的作者正文：机器区之后的作者行出错，报草稿行。"""
+        proc = self.submit("10-附录.md", "附录", "口径见 spec §5.1。")
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        lines = self.draft("10-附录.md").read_text(encoding="utf-8").split("\n")
+        want = next(i for i, l in enumerate(lines, 1) if "spec §5.1" in l)
+        self.assertIn(f"草稿 AR/story-src/drafts/10-附录.md 第 {want} 行：文档坐标「spec §5.1」", out)
+        self.assertNotIn("由真源投影", out)
+
     def test_an_image_reference_is_checked_against_the_registered_one(self) -> None:
         proc = self.submit("03-范围.md", "范围", "![签约页](../assets/auto-topup-signup-page.png)")
         out = proc.stdout + proc.stderr
