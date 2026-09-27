@@ -53,9 +53,11 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
         self.judged()
         self.acceptance_with()
         # 中性工程没配 profile：没有问题，只如实记章号那一条未执行
-        message = self.hook("spec")
-        self.assertTrue(message.startswith("1 条判据因前置缺失未能执行"), message)
-        self.assertIn("spec 主章号（framework.config.json 没有配 project_profile.name", message)
+        result = self.hook_result("spec")
+        self.assertTrue(result.get("ok"), result)
+        info = self.fragments(result)
+        self.assertIn("1 条判据因前置缺失未能执行", info)
+        self.assertIn("spec 主章号（framework.config.json 没有配 project_profile.name", info)
 
 
 class PlanProblemsShowUpTogether(kp.ProtocolCase):
@@ -99,10 +101,12 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
         self.write_plan(in_anchor=True)
         self.write_contracts(kp.contracts())
         # 中性工程没配 profile、也没有 spec：没有问题，如实记章号与埋点两条未执行
-        message = self.hook("plan")
-        self.assertTrue(message.startswith("2 条判据因前置缺失未能执行"), message)
-        self.assertIn("plan 主章号（framework.config.json 没有配 project_profile.name", message)
-        self.assertIn("埋点逐统计点落实（本需求没走 /story，spec 未提供统计设计）", message)
+        result = self.hook_result("plan")
+        self.assertTrue(result.get("ok"), result)
+        info = self.fragments(result)
+        self.assertIn("2 条判据因前置缺失未能执行", info)
+        self.assertIn("plan 主章号（framework.config.json 没有配 project_profile.name", info)
+        self.assertIn("埋点逐统计点落实（本需求没走 /story，spec 未提供统计设计）", info)
 
     def test_use_cases_cite_acceptance_ids_that_exist(self) -> None:
         """验收编号取 acceptance 各列表条目的 id，不认前缀；只报悬空的那几个，并说出在哪条用例。"""

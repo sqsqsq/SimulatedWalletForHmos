@@ -518,6 +518,16 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
         self.assertNotIn("decisions", flow["update"])
 
+    def test_the_words_stay_on_record_after_a_restore(self) -> None:
+        """还原的那一轮同样留档：人说过的话不随现场一起撤回。"""
+        rid = self.update()["update"]
+        self.put_issue()
+        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        self.assertEqual("restored", self.update("--action", "restore").get("status"))
+        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual([("按 36 小时做", "0123456789abcdef")],
+                         [(d["reply"], d["asked"]) for d in rec["decisions"]])
+
     def test_it_needs_the_issue(self) -> None:
         self.update()
         self.put_issue()

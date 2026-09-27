@@ -13,9 +13,9 @@
  * 判出问题的那条检查把它写成「<在哪>：<问题>——<机制>」，怎么修由作者按规则与机制判断；
  * 出口只负责编号列全，不加统一的开头与结尾。
  *
- * ## 4. 不阻断的消息也要送到作者
- * framework 的 dispatcher 只把 `ok:false` 的消息写进 harness 报告，`ok:true` 带的消息不落地。
- * 没有问题、但有判据没跑成或有告警时，按 `ok:false` + MINOR 返回：进报告、不影响 verdict。
+ * ## 4. 不阻断的信息走审查提示
+ * 告警与未执行判据是给审查者和记录看的信息，作为 `promptFragments` 返回：framework 把各钩子的片段
+ * 累进审查提示的「Lifecycle hooks」一节与 `reports/ai-prompt.md`。`ok:false` 只在真有问题时返回。
  */
 
 /**
@@ -56,7 +56,7 @@ export function guard(phase, body) {
  * }} r
  *   `problems` 逐条是「<在哪>：<问题>——<机制>」；`skipped` 是因前置缺失而没能执行的判据，
  *   即使本次没有 problems 也要报出来——「没报错」不等于「都查过了」。
- *   `warnings` 是不阻断的告警，作者按它补证据或在审查里说明。
+ *   `warnings` 是不阻断的告警（如探针认不出形态的证据缺口），随片段交给审查者。
  *   `groups` 是按数据前置分的组：每组自己决定能否执行，能执行的全部执行，报错按组分节，
  *   作者一眼看到每一类各有几处、还有哪一组等前置——而不是修完一类才看见下一类。
  */
@@ -70,18 +70,19 @@ export function gate(ctx, r) {
   const skipped = [...(r?.skipped ?? []).filter(s => s && s.what), ...groups.flatMap(g => g.skipped)];
 
   const warnings = (r?.warnings ?? []).filter(Boolean);
-  const notes = [];
-  if (skipped.length) {
-    notes.push(`${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
-      + skipped.map(s => `${s.what}（${s.why}）`).join('；'));
-  }
-  if (warnings.length) notes.push(`告警 ${warnings.length} 条（不阻断）：${warnings.join('；')}`);
+  const skippedLine = skipped.length
+    ? `${skipped.length} 条判据因前置缺失未能执行，补齐后会继续检查：`
+      + skipped.map(s => `${s.what}（${s.why}）`).join('；')
+    : '';
+  const info = [
+    ...(problems.length ? [] : [skippedLine].filter(Boolean)),
+    ...(warnings.length ? [`告警 ${warnings.length} 条：${warnings.join('；')}`] : []),
+  ];
+  const promptFragments = info.length
+    ? [`扩展门禁（${ctx.phase} post_check）不阻断的信息：\n${info.map(l => `- ${l}`).join('\n')}`]
+    : [];
 
-  if (!problems.length && !notes.length) return { ok: true };
-  if (!problems.length) {
-    // 没有证据说产物有错，不阻断；缺口与告警要让作者看见。
-    return { ok: false, severityOverride: 'MINOR', message: notes.join('\n') };
-  }
+  if (!problems.length) return promptFragments.length ? { ok: true, promptFragments } : { ok: true };
 
   const parts = [`以下 ${problems.length} 处需要修正（一次列全，不必逐轮试）：`];
   let n = 0;
@@ -92,7 +93,7 @@ export function gate(ctx, r) {
     parts.push(`【${g.name}】${g.problems.length} 处`);
     g.problems.forEach(p => parts.push(`${++n}. ${p}`));
   }
-  parts.push(...notes);
+  if (skippedLine) parts.push(`另有 ${skippedLine}`);
 
-  return { ok: false, severityOverride: 'BLOCKER', message: parts.join('\n') };
+  return { ok: false, severityOverride: 'BLOCKER', message: parts.join('\n'), promptFragments };
 }

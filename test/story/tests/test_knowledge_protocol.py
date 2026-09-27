@@ -115,14 +115,22 @@ class ProtocolCase(nk.NeutralKnowledgeCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
-    def hook(self, phase: str) -> str:
+    def hook_result(self, phase: str) -> dict:
         proc = nk.node("--input-type=module", "-e",
                        f"const hook = (await import({nk.as_url(self.ext / 'hooks' / phase / 'post_check.mjs')})).default;"
                        f"const out = await hook({{ phase: '{phase}', feature: {json.dumps(nk.FEATURE)},"
                        f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                        "process.stdout.write(JSON.stringify(out));")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        return json.loads(proc.stdout or "{}").get("message") or ""
+        return json.loads(proc.stdout or "{}")
+
+    def hook(self, phase: str) -> str:
+        """门禁报的问题（阻断消息）；不阻断的信息见 `fragments`。"""
+        return self.hook_result(phase).get("message") or ""
+
+    def fragments(self, result: dict) -> str:
+        """门禁交给审查提示的片段：告警与未执行判据。"""
+        return "\n".join(result.get("promptFragments") or [])
 
     def judged(self, **over: str) -> None:
         self.write_use(neutral=judgement(**over))
@@ -339,7 +347,9 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
             "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n"
             "\n#### 9.1.2 规约义务\n\n略。\n\n#### 9.1.3 项目知识影响\n\n略。\n", encoding="utf-8")
         self.write_contracts(text)
-        return self.hook("plan")
+        result = self.hook_result("plan")
+        # 阻断的问题与交给审查者的未执行判据一起看：这一组判据两类都会报
+        return (result.get("message") or "") + "\n" + self.fragments(result)
 
     def test_a_device_rule_landing_marked_review_is_named(self) -> None:
         message = self.plan(contracts(v02="review"))
@@ -462,27 +472,27 @@ class TheCodeIsTheEvidence(ProtocolCase):
         self.write_contracts(contracts())
         (self.root / "src").mkdir(exist_ok=True)
         (self.root / "src" / "exit.ets").write_text(source, encoding="utf-8")
-        return self.hook("coding")
+        self.result = self.hook_result("coding")
+        return self.result.get("message") or ""
 
     def test_a_clue_probe_that_misses_does_not_fail(self) -> None:
-        """NEU-02 的方法体探针只是线索：换一种写法认不出，不等于没做，作为告警送到作者。"""
-        message = self.coding(self.GOOD)
-        self.assertTrue(message.startswith("告警 1 条（不阻断）"), message)
-        self.assertIn("证据缺口", message)
+        """NEU-02 的方法体探针只是线索：换一种写法认不出，不等于没做，作为告警交给审查者。"""
+        self.assertEqual("", self.coding(self.GOOD))
+        self.assertTrue(self.result.get("ok"), self.result)
+        self.assertIn("证据缺口", self.fragments(self.result))
 
     def test_a_blocking_probe_follows_the_force(self) -> None:
         bad = self.GOOD.replace("const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });")
         self.assertIn("而这条规约是红线", self.coding(bad))
         self.edit_knowledge("constraints/neutral-domain.md", "| 红线 | 有新增出口 | 字段名用中性词",
                             "| 基线 | 有新增出口 | 字段名用中性词")
-        message = self.coding(bad)
-        self.assertTrue(message.startswith("告警"), "基线只记未落实，交 review 写依据：" + message)
-        self.assertIn("记未落实", message)
+        self.assertEqual("", self.coding(bad), "基线只记未落实，交 review 写依据")
+        self.assertIn("记未落实", self.fragments(self.result))
         self.edit_knowledge("constraints/neutral-domain.md", "| 基线 | 有新增出口 | 字段名用中性词",
                             "| 红线 | 有新增出口 | 字段名用中性词")
         self.edit_knowledge("constraints/neutral-domain.md", "阻断：absent_regex", "absent_regex")
-        message = self.coding(bad)
-        self.assertTrue(message.startswith("告警"), "不带阻断的同一个表达式只是证据缺口：" + message)
+        self.assertEqual("", self.coding(bad), "不带阻断的同一个表达式只是证据缺口")
+        self.assertIn("证据缺口", self.fragments(self.result))
 
     def test_a_file_probe_is_reported_once_per_rule(self) -> None:
         """同一规约挂两处、探针不按实体收窄：扫的是同一批文件，同样的行号只报一次。"""

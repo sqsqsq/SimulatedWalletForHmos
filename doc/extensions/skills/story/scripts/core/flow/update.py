@@ -591,7 +591,7 @@ def cmd_update_close(feature_root: Path) -> dict:
     kept = _keep(feature_root, current, root / "after")
 
     contract = load(feature_root) or {}
-    # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」
+    # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」（还原同样如此）
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
@@ -684,6 +684,8 @@ def cmd_update_restore(feature_root: Path) -> dict:
         raise FlowError(f"{rid} 没有留下 before/，还原不了。"
                         "它应当在起手时建好；目录被移走的话，这一轮只能按当前内容继续")
 
+    # 人在这一轮说过的话先取出来：写回 before/ 会把流程契约一起还原到开轮之前
+    rec["decisions"] = ((load(feature_root) or {}).get("update") or {}).get("decisions", [])
     saved = root / f"conflict-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
     mirrored = {p.relative_to(before).as_posix() for p in before.rglob("*") if p.is_file()}
     # 链接与镜像侧同一口径：镜像不跟随链接，这里也不能把链接算成「这一轮新建的」——

@@ -650,7 +650,7 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: retired
-    approved_by: 用户（2026-09-27 步骤 8 裁定废弃机制全部退出，U52）
+    approved_by: 维护设计者 2026-09-27，依据用户同日「废弃机制全部退出」的裁定（步骤 8，U52）
     reason: >
       门禁运行记录在机制里没有读取方，只有本检查拿它当证据。门禁结论以 harness 报告为准：
       阻断的问题按 BLOCKER、不阻断的告警与未执行判据按 MINOR 进报告（hooks-dispatcher.ts:177-187 只记 ok:false）。
@@ -1038,7 +1038,7 @@ modes:
     applicable_when: always
     severity: BLOCKER
     status: retired
-    approved_by: 用户（2026-09-27 步骤 8 裁定废弃机制全部退出，U52）
+    approved_by: 维护设计者 2026-09-27，依据用户同日「废弃机制全部退出」的裁定（步骤 8，U52）
     reason: >
       review.md 由渲染器生成，表单行不再长回来由渲染器与它的测试守
       （test_story_build.TestReviewForm）；按行首正则在运行时核还会拦评审人在人工区写的「下一步：」。

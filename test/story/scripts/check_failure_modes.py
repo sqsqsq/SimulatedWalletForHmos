@@ -1923,7 +1923,7 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
         "import {pathToFileURL} from 'node:url';"
         "const hook=(await import(pathToFileURL(process.argv[1]).href)).default;"
         "const r=await hook({phase:'spec',feature:process.argv[3],projectRoot:process.argv[2]});"
-        "console.log(JSON.stringify({ok:r.ok!==false||r.severityOverride==='MINOR',message:r.message??''}));")
+        "console.log(JSON.stringify({ok:r.ok!==false,message:r.message??''}));")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / root.name
         shutil.copytree(root, work)
