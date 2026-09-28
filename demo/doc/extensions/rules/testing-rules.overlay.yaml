@@ -1,0 +1,23 @@
+# 实例扩展 testing 阶段规则 overlay（义务派生自契约实体）
+# 经 manifest provides.phase_rules_overlays.testing 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
+#
+# 本文件只问「契约实体上的义务，实机验到了没有」——不复述域名、编号与维度。
+# 本阶段按 plan 挂在实体上的 must 核义务，原知识只用来理解方法与语义：规约内容改了，这里一个字都不用动。
+phase: testing
+version: "1.1"
+semantic_checks:
+  knowledge_obligation_verified:
+    description: >
+      知识义务派生的验收条目，实机是不是**真的验过**，且给了可复核证据。
+      按 must.verify 分派：不由实机验的条目本阶段不适用；标 device/both 的必须有走查或测量记录。
+      **「已验证」三个字不构成结论**——只写「符合要求」而没有截图、数值或日志的，记为未验证。
+      确实到不了的写「待验证 + 阻塞原因」是诚实且可接受的，标成已验证则不是。
+    severity: MAJOR
+    ai_prompt_hint: >
+      读契约各实体上的 must（verify 决定谁来验）与对应验收条目的 device_focus，再读测试计划与报告。
+      逐条看：验证步骤是不是针对这条义务的行为？证据是可复核的具体内容，还是一句结论？
+      本阶段是这些约束的最后一道关，漏了就再没有人验。
+      证据只有一句结论、没有截图/数值/日志的，判 **FAIL**（记为未验证）。
+      **每条裁决给得出回查位置**：指到测试报告里那条可复核证据，或抄它的原文，够支撑判断即可。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 device_focus 复制一遍的，
+      该条按**未裁**处理。

@@ -1,0 +1,357 @@
+"""材料清单（`AR/story-src/materials.json`）的唯一算法与唯一写入者。
+
+这份清单回答两个问题，而且**只有它**回答：
+
+1. 这个需求现在手里有什么材料——每份正文、每张图各自的身份（路径 + 内容哈希）；
+2. 收件箱里的原件哪些已经并入正文、哪些还没有。
+
+清单的 `digest` 是**材料版本**：正文或图片任何一个字节变了，digest 就变；一个字节没变，
+重算多少次都相同。轮次边界就取这个值——流程侧不另算材料哈希。
+
+## 谁来算
+
+只有机制层命令算：`story_flow.py round` 每次被调用时按**磁盘现状**重算并落盘。
+
+需求系统的对接层（各部署环境自备的 `story.js` 等）只负责把材料放到该在的位置，
+不知道这份清单的存在。理由是它不随包交付：把重算挂在对接层上，等于要求每一份自备实现
+都跟着改，而机制层对它们没有任何约束力。按现状重算则对来源免疫——料是谁放的、
+怎么放的都不影响结果。
+
+## 「已并入」怎么判
+
+不靠导入时留下的回执，靠磁盘：拿 `materials/importer.py` 的转换把收件箱里那批料
+重转一遍，与正文比对。转换是确定性的，所以「正文 == 这批料的转换结果」就是「已并入」，
+反过来则说明还有料没导。这样一来，新放的料和被改过的同名料都算未并入，
+而不需要任何一方记住发生过什么。
+
+只用标准库。stdout 无输出：本模块是库，不是命令。
+"""
+from __future__ import annotations
+
+import json
+from hashlib import sha256
+from pathlib import Path
+
+from materials import importer, meeting
+
+SCHEMA = 1
+MANIFEST = ("AR", "story-src", "materials.json")
+
+# 权威材料的正文源：章节合同 `sources` 里上游给进来的那几份（本轮派生的规格不是材料），
+# 顺序照合同，见 `source_docs`。不存在的记 null——「没有」和「没查」是两件事。
+#
+# 目录形态的材料源：目录下每个文件各自进清单，加一张图就是材料变了。
+#
+# 两个目录都是图片的落点，也都是**权威落点**：界面参考图由导入平铺进 `ux-reference/`，
+# 文档内嵌图由导入抽进 `assets/<源文档名>/`。图片的登记只有清单这一处：
+# 多一处就要人同步，对不上时下游只能挑一份信。
+SOURCE_DIRS = ("ux-reference", "assets")
+INBOX = "inbox"
+# 图片说明的落点：点开头，不进清单本身。按 sha256 键——图片的身份是内容不是路径，
+# 同一张图复制到第二个落点、换个名字，说明仍然跟着它。
+CAPTIONS = ("ux-reference", ".captions.json")
+
+
+class MaterialError(Exception):
+    """可预期的失败：材料清单算不出来。带可执行的补救动作，直接呈给人。"""
+
+
+def source_docs() -> list[str]:
+    """清单要算的正文源：合同登记的来源里不是本轮派生的那几份，顺序照合同。"""
+    try:
+        sources = importer.contract_sources()
+    except importer.ImportError_ as exc:
+        raise MaterialError(str(exc)) from exc
+    return [decl["path"] for decl in sources.values()
+            if isinstance(decl, dict) and decl.get("path") and not decl.get("derived")]
+
+
+def file_digest(path: Path) -> str | None:
+    """不存在的源记 null 而非省略——「没有」和「没查」是两件事。"""
+    if not path.is_file():
+        return None
+    return "sha256:" + sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def kind_of(path: Path) -> str:
+    return "image" if path.suffix.lower() in importer.IMAGE_EXTS else "doc"
+
+
+def read_captions(feature_root: Path) -> dict[str, dict]:
+    """读图片说明与取舍。没写过就是空的；写坏了报错并指明文件。
+
+    每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它），值是对象。
+    """
+    path = feature_root / Path(*CAPTIONS)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise MaterialError(f"{'/'.join(CAPTIONS)} 不是合法 JSON（{exc}）："
+                            "它由 `import_sources.py --caption-image` 写，修正语法或重新登记") from exc
+    if not isinstance(data, dict):
+        raise MaterialError(f"{'/'.join(CAPTIONS)} 应是对象：{{图片摘要: {{caption, unused}}}}")
+    out: dict[str, dict] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            entry = {k: v for k, v in value.items()
+                     if k in ("caption", "unused") and isinstance(v, str) and v.strip()}
+        else:
+            continue
+        if entry:
+            out[str(key)] = entry
+    return out
+
+
+def _write_entry(feature_root: Path, sha: str, field: str, value: str | None) -> Path:
+    """只动 ``field`` 这一个字段，另一个原样留着。
+
+    说明与取舍是两件独立的事：改说明不该把「为什么不用」抹掉，
+    标记不用也不该把说明抹掉。
+    """
+    path = feature_root / Path(*CAPTIONS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = read_captions(feature_root)
+    entry = dict(data.get(sha, {}))
+    if value is None:
+        entry.pop(field, None)
+    else:
+        entry[field] = value
+    if entry:
+        data[sha] = entry
+    else:
+        data.pop(sha, None)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    return path
+
+
+def write_caption(feature_root: Path, sha: str, caption: str) -> Path:
+    """登记一张图是什么。同一张图重登记就覆盖——说明可以改，图还是那张。"""
+    return _write_entry(feature_root, sha, "caption", caption)
+
+
+def write_unused(feature_root: Path, sha: str, reason: str) -> Path:
+    """登记本需求为什么不用这张图。"""
+    return _write_entry(feature_root, sha, "unused", reason)
+
+
+def clear_unused(feature_root: Path, sha: str) -> Path:
+    """这张图要用了——把「不用」的理由撤掉。"""
+    return _write_entry(feature_root, sha, "unused", None)
+
+
+def collect_materials(feature_root: Path) -> list[dict]:
+    """枚举权威材料：正文源按合同顺序在前，目录源按路径排序在后。
+
+    每条记 `paths`（一份材料出现的全部位置）而不是单个 path，因为**图片的身份是它的内容，
+    不是它的路径**：界面图按规则要从文档内嵌位置复制一份到 `ux-reference/` 起语义名，
+    那不是第二张图，只是同一张图的第二个落点。逐路径各记一条的话，下游拿到的就是
+    「两张一模一样的图」，于是要么重复引用，要么各引各的、说的其实是同一张。
+    正文不做这种归并：两份内容相同的文档仍是两份材料。
+
+    顺序固定 = digest 稳定。点开头的文件是控制件不是材料，不进清单。
+
+    图片条目带 `caption`（这张图是什么）与 `unused`（本需求为什么不用它）——
+    作者任务包与读者审查逐张列它们。没登记的图**仍然在清单里**，两个字段为空串：
+    漏登记要看得见，不能悄悄消失。两者都不进 `compute_digest`：说明或取舍变了
+    不是材料变了。反过来图的内容变了 sha 就变、取舍归零，作者要重新判——
+    内容变了取舍本来就该重判。
+    """
+    captions = read_captions(feature_root)
+    items: list[dict] = [
+        {"kind": "doc", "paths": [rel], "sha256": file_digest(feature_root / rel)}
+        for rel in source_docs()
+    ]
+    images: dict[str, dict] = {}
+    extra: list[dict] = []
+    for rel in SOURCE_DIRS:
+        directory = feature_root / rel
+        if not directory.is_dir():
+            continue
+        files = [f for f in directory.rglob("*")
+                 if f.is_file() and not f.name.startswith(".")]
+        for f in sorted(files, key=lambda x: x.relative_to(feature_root).as_posix()):
+            rel_path = f.relative_to(feature_root).as_posix()
+            kind = kind_of(f)
+            sha = file_digest(f)
+            if kind == "image":
+                found = images.get(sha)
+                if found:
+                    found["paths"].append(rel_path)
+                else:
+                    entry = captions.get(sha, {})
+                    images[sha] = {"kind": kind, "paths": [rel_path], "sha256": sha,
+                                   "caption": entry.get("caption", ""),
+                                   "unused": entry.get("unused", "")}
+                    extra.append(images[sha])
+            else:
+                extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})
+    # 会议材料一个源版本一份：新会议或同名换了内容都是材料变了，开新一轮、在需求分析之前读会。
+    # 身份取原件——转换件、阅读件与结论是读会的产物，算进来的话读一次会就开一轮。
+    extra.extend(meeting.material_items(feature_root))
+    for item in extra:
+        # 落点排序：同一张图在哪几处是集合不是序列，排过序才能重算即相同
+        item["paths"].sort()
+    return items + sorted(extra, key=lambda m: m["paths"][0])
+
+
+def compute_digest(materials: list[dict]) -> str:
+    """材料版本：逐份身份的有序摘要。
+
+    只算权威材料，不算收件箱：料放进收件箱还没导，流程消费的仍是旧正文，材料版本不该动。
+    导入之后正文变了，版本随之变——这正是「补料开出新一轮」的机械事实。
+    """
+    payload = json.dumps([[m["kind"], m["sha256"], m["paths"]] for m in materials],
+                         ensure_ascii=False)
+    return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def digest_with(manifest: dict, rel: str, sha: str | None) -> str:
+    """把某一份正文源的摘要换成 ``sha`` 之后，材料版本会是多少。
+
+    S4 提交要覆盖 `AR/design.md`，而它本身就是一份材料。没有这一问的话，
+    「材料真的变了」与「这一笔差异是提交自己写下的」在版本号上完全同形，
+    只能二选一去猜；有了它，两者各有确定答案。
+    """
+    items = [dict(m) for m in manifest.get("materials", [])]
+    for item in items:
+        if item.get("paths") == [rel]:
+            item["sha256"] = sha
+    return compute_digest(items)
+
+
+def source_sha(manifest: dict, rel: str) -> str | None:
+    """清单里这份正文源登记的摘要。没登记过这份源则为 None。"""
+    for item in manifest.get("materials", []):
+        if item.get("paths") == [rel]:
+            return item.get("sha256")
+    return None
+
+
+def _same_text(disk: str, want: str) -> bool:
+    """正文比对忽略行尾差异：同一份内容在两台机器上落盘的行尾可能不同。"""
+    return disk.replace("\r\n", "\n") == want.replace("\r\n", "\n")
+
+
+def collect_sources(feature_root: Path) -> list[dict]:
+    """收件箱里的原件：身份 + 是否已并入正文。
+
+    未归类的原件一定未并入——没归类就没有落点。归类件本身坏了则整份清单算不出来，
+    不能当成「收件箱是空的」放过去。
+    """
+    inbox = feature_root / INBOX
+    try:
+        classify = importer.read_classify(inbox)
+        targets = importer.doc_targets()
+    except importer.ImportError_ as exc:
+        raise MaterialError(str(exc)) from exc
+
+    sources = importer.scan_sources(inbox)
+    entries = {p.name: {"file": p.name, "sha256": file_digest(p),
+                        "class": classify.get(p.name) if classify.get(p.name)
+                        in importer.CLASSES else None,
+                        "ingested": False}
+               for p in sources}
+
+    grouped: dict[str, list[Path]] = {}
+    for path in sources:
+        cls = entries[path.name]["class"]
+        if cls:
+            grouped.setdefault(cls, []).append(path)
+
+    for cls, paths in grouped.items():
+        if cls == "MEETING":
+            # 会议材料没有正文落点：这一版的原件留过，就算导过
+            for p in paths:
+                entries[p.name]["ingested"] = meeting.saved(feature_root, p)
+            continue
+        docs = [p for p in paths if p.suffix.lower() not in importer.IMAGE_EXTS]
+        images = [p for p in paths if p.suffix.lower() in importer.IMAGE_EXTS]
+
+        if docs:
+            try:
+                sections, media, _ = importer.convert_sources(
+                    docs, {p.name: cls for p in docs})
+            except (importer.ImportError_, OSError, ValueError) as exc:
+                raise MaterialError(
+                    f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
+            if cls not in targets:
+                # 只抽图那一档没有正文落点：图落地了就算并入
+                for p in docs:
+                    blobs = media.get(p.stem) or {}
+                    asset_dir = feature_root / "assets" / p.stem
+                    entries[p.name]["ingested"] = bool(blobs) and all(
+                        (asset_dir / name).is_file()
+                        and (asset_dir / name).read_bytes() == blob
+                        for name, blob in blobs.items())
+                docs = []
+            target = feature_root / targets[cls] if docs else None
+            if target is not None and target.is_file() and _same_text(
+                    target.read_text(encoding="utf-8", errors="replace"),
+                    importer.render_target(sections[cls])):
+                for p in docs:
+                    entries[p.name]["ingested"] = True
+
+        for image in images:
+            # 界面图的落点是平铺的顶层，字节相同才算并入——同名换了内容也是新料
+            dest = feature_root / importer.UX_IMAGE_DIR / image.name
+            if dest.is_file() and dest.read_bytes() == image.read_bytes():
+                entries[image.name]["ingested"] = True
+
+    return [entries[name] for name in sorted(entries)]
+
+
+def build(feature_root: Path) -> dict:
+    """按磁盘现状算出完整清单。不写盘。"""
+    materials = collect_materials(feature_root)
+    return {
+        "schema": SCHEMA,
+        "feature": feature_root.name,
+        "digest": compute_digest(materials),
+        "materials": materials,
+        "sources": collect_sources(feature_root),
+    }
+
+
+def path_of(feature_root: Path) -> Path:
+    return feature_root / Path(*MANIFEST)
+
+
+def write(feature_root: Path, manifest: dict) -> Path:
+    path = path_of(feature_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    return path
+
+
+def refresh(feature_root: Path) -> dict:
+    """算一遍并落盘 —— 机制层命令唯一该调的入口。"""
+    manifest = build(feature_root)
+    write(feature_root, manifest)
+    return manifest
+
+
+def read(feature_root: Path) -> dict:
+    """读已落盘的清单。没有清单和清单坏了都不是「没有材料」，都要报出来。"""
+    path = path_of(feature_root)
+    if not path.is_file():
+        raise MaterialError(
+            f"{'/'.join(MANIFEST)} 不存在：材料清单由 `story_flow.py round` 生成，先跑它")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
+    except ValueError as exc:
+        raise MaterialError(
+            f"{'/'.join(MANIFEST)} 不是合法 JSON（{exc}）：它只应由脚本写入，"
+            "若曾手工编辑，删掉后重跑 `story_flow.py round`") from exc
+    if data.get("schema") != SCHEMA:
+        raise MaterialError(
+            f"{'/'.join(MANIFEST)} 的 schema 为 {data.get('schema')}，本版要求 {SCHEMA}")
+    return data
+
+
+def pending(manifest: dict) -> list[str]:
+    """收件箱里还没并入正文的原件。空表示没有新料，不表示收件箱是空的。"""
+    return [s["file"] for s in manifest.get("sources", []) if not s.get("ingested")]

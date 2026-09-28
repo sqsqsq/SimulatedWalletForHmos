@@ -1,0 +1,309 @@
+/**
+ * 全篇 check 的调度与归组 —— 这一份 story 能不能交出去。
+ *
+ * 这里只做三件事：把全篇读一遍（章序、大标题、验收编号这类**跨章才判得了**的事）、
+ * 按职责去各模块要问题、把问题按判据类分组打印。逐域的判据一条也不在这里实现：
+ * 附录的归附录、图片的归图片、来源的归来源、章内的归 chapter——同一个错由两处判，
+ * 作者会收到两条说法不同的报错。
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { chapterProblems } from './chapter.mjs';
+import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import {
+  appendixChapter, appendixStructureProblems, appendixZoneProblems,
+} from './appendix.mjs';
+import {
+  activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
+  strayFileProblems,
+} from './context.mjs';
+import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
+import {
+  EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
+} from './document.mjs';
+import { carriedDiagramProblems, imageProblems, strayMarks } from './images.mjs';
+import { decisionProblems } from './review.mjs';
+import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
+import {
+  formatHits, scanBrokenImages, scanLanguageRedline, scanLocalPaths,
+} from './language.mjs';
+
+function groupedProblems(problems, marks) {
+  // 第一个戳之前也可能有报错（判据类之外的前置校验），给它一个兜底类，
+  // 这样下面一个循环就覆盖全部，不会有谁掉出去。
+  const bounds = [{ from: 0, label: '其它' }]
+    .concat(marks.filter(m => m.from < problems.length));
+  const out = [];
+  for (let i = 0; i < bounds.length; i += 1) {
+    const from = bounds[i].from;
+    const to = i + 1 < bounds.length ? bounds[i + 1].from : problems.length;
+    if (to <= from) continue;                       // 这一类这次没报错
+    out.push({ label: bounds[i].label, items: problems.slice(from, to) });
+  }
+  return out;
+}
+
+export function cmdCheck(ctx) {
+  // 起步先判台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的余波。
+  requireLedgers(ctx);
+  const problems = [];
+  // 判据类的分组戳：只影响输出怎么排，不影响判定。
+  const marks = [];
+  const mark = (label) => marks.push({ from: problems.length, label });
+  // 记一笔但不拦：定稿之后材料继续演化是正常的，读者该知道，但它不是错。
+  const notes = [];
+  const storyText = readText(ctx.storyPath);
+  if (storyText === null) fail(`读不到 ${ctx.storyPath}`);
+
+  const sections = storySections(storyText);
+  // 章正文按标题索引：非占位那条按章取正文。
+  const sectionText = new Map(sections.map(s2 => [s2.title, s2.text]));
+  // **一章解析一次**：围栏、小节、表头由 document 扫一遍，下面的判据读同一份结果。
+  // 各判据自己切文的话，同一章在一次 check 里会被切上七八遍，而每一处对
+  // 「围栏里的算不算」「小节到哪结束」都有自己的一份答案。
+  const parsed = new Map();
+  const viewOf = (title) => {
+    if (!parsed.has(title)) parsed.set(title, parseChapter(sectionText.get(title) ?? ''));
+    return parsed.get(title);
+  };
+  const titles = sections.map(s2 => s2.title);
+  const want = ctx.contract.chapters.map(c => c.title);
+
+  mark('⓪a 声明的来源都在');
+  {
+    const out = sourceProblems(ctx);
+    problems.push(...out.problems);
+    notes.push(...out.notes);
+  }
+
+  mark('⓪b 台账没在登记之后被换过');
+  problems.push(...ledgerDigestProblems(ctx));
+
+  mark('⓪c 写作设计');
+  // 章是照写作设计写的：设计读不了，下面按章核的选定结构也就无从谈起。
+  const plan = readWritingPlan(ctx);
+  if (plan) problems.push(...plan.problems);
+
+  mark('① 章标题与顺序');
+  // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
+  if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
+    const missing = want.filter(t => !titles.includes(t));
+    const extra = titles.filter(t => !want.includes(t));
+    problems.push(`story.md：章节标题与合同不一致：${missing.length ? `缺 ${missing.join('、')}` : ''}`
+      + `${extra.length ? ` 多 ${extra.join('、')}` : ''}`
+      + `${!missing.length && !extra.length ? '（顺序不对）' : ''}`
+      + '——章按章节合同登记的标题与顺序认，逐章落盘也按这些章锚定位');
+  }
+
+  mark('①b 大标题带需求编号');
+  // ①b 大标题带需求编号：归档件离开这个仓库之后，编号是它与需求系统之间唯一的绳子。
+
+  const h1 = String(storyText).split(/\r?\n/).find(l => /^#\s+\S/.test(l.trim()));
+  const h1Text = h1 ? h1.trim().replace(/^#\s+/, '') : '';
+  if (!h1Text) {
+    problems.push('story.md 第 1 行：没有大标题——归档件的大标题是 `# <需求编号> <需求名称>`');
+  } else if (!h1Text.includes(ctx.args.feature)) {
+    problems.push(`story.md 大标题：缺需求编号 ${ctx.args.feature}`
+      + '——归档件流转出去之后，读者靠这个编号回到需求系统；大标题的形态是 `# <需求编号> <需求名称>`');
+  } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
+    problems.push('story.md 大标题：只有需求编号、没有需求名'
+      + '——只有编号，读者在需求系统外认不出这是哪件事；名称取自需求详情，本地单是需求方给的名称');
+  }
+
+  mark('③ 验收编号落在验收章');
+  // ③ 验收编号的**全集**：哪个编号出现过、它在不在验收章。这一条要读全篇，
+  //    留在这里；**仓内工作编号那一条不在这里判**——它是章内的事，由 chapterProblems
+  //    一处判（⑪），那边还会把画图围栏内部挖掉。两处各扫一遍的话，搬来的图会被这里报出来，
+  //    而作者在那边刚被告知不用改。
+  //
+  // 合同里的形态正则编译一次，坏的当场报出来：写错一条就静默不判的话，门禁全绿。
+  problems.push(...(ctx.idShapes?.problems ?? []));
+  const acceptanceSec = sections.find(s => s.title.includes('验收'));
+  for (const re of ctx.idShapes?.keep ?? []) {
+    const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
+    if (!inStory.size) continue;
+    if (!acceptanceSec) { problems.push('story.md：有验收编号，却没有「验收」章——验收编号按章节合同 id_shapes 认，出现过的都要落在验收章'); continue; }
+    const missed = [...inStory].filter(id => !acceptanceSec.text.includes(id));
+    if (missed.length) {
+      problems.push(`story.md「${acceptanceSec.title}」：没有出现验收编号 ${missed.join('、')}`
+        + '——正文里出现过的验收编号（按章节合同 id_shapes 认）都要在验收章里有');
+    }
+  }
+
+  mark('⑤ 决策登记字段齐备');
+  problems.push(...decisionProblems(ctx));
+
+  mark('④ 图片身份');
+  {
+    const out = imageProblems(ctx, storyText);
+    problems.push(...out.problems);
+    notes.push(...out.notes);
+  }
+
+  mark('⑨ 归档件红线');
+  // ⑨ 归档件红线：仓内路径 / 图片断链
+  //
+  // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
+  // 判定形态在 language.mjs，这里只调。附录里由真源投影的机器区不在这里报：
+  // 它没有作者，报在这里作者删掉、下一次投影又写回来——那些问题收到 ⑩b 报到真源。
+  const reviewText = readText(ctx.reviewPath) ?? '';
+  // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
+  // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
+  // 围栏外的图源标记由 ⑫d 一处报，这里先抹掉，同一行不再按文档坐标报第二遍
+  const stray = new Set(strayMarks(storyText));
+  const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
+    .map((line, i) => (stray.has(i + 1) ? '' : line)).join('\n');
+  const storyLines = storyText.split(/\r?\n/);
+  const zones = zonesByLine(storyLines);
+  const zoneHits = [];
+  // story 的命中按行分三处：投影区的留给 ⑩b 报到真源；章正文里的由 ⑪ 按章报（与章提交同一实现）；
+  // 这里只报章之外那一段（大标题与前言）
+  const firstChapter = sections.length ? sections[0].at + 1 : storyLines.length + 1;
+  const authored = (label, hits, what, hitOf) => (label !== 'story' ? hits : hits.filter((h) => {
+    const zone = zones.get(h.line - 1);
+    if (zone) zoneHits.push({ zone, line: h.line, what, hit: hitOf(h) });
+    return !zone && h.line < firstChapter;
+  }));
+  for (const [label, text] of [['story', storyForPaths], ['review', reviewText]]) {
+    if (!text) continue;
+    for (const [what, kind, hits, hitOf] of [
+      ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot), h => h.path],
+      // story 的图片断链逐章判（见 ⑪，与章提交同一处）；这里只剩 review 那一份
+      ['图片断链', 'image', label === 'story' ? []
+        : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path), h => h.path],
+    ]) {
+      const own = authored(label, hits, what, hitOf);
+      if (own.length) problems.push(`${label}.md 出现${what} ${own.length} 处：${formatHits(own, kind)}`);
+    }
+  }
+
+  // 规约编号取激活清单：判据全部是数据，不猜。
+  const kEntries = activeKnowledgeEntries(ctx);
+
+  mark('⑩ 语言红线');
+  // ⑩ 语言红线：工程标识、规约编号、来源括注只在主叙事（附录之外）判，文档坐标全篇判；
+  //    review 只判文档坐标。类别与作用域、来源括注的词都是合同数据。
+  //
+  // 接口名、规约编号不是不该在归档件里——评审者要查的时候得查得到，它们的落点是附录。
+  // 文档坐标不一样：指向不随归档的文件，放在哪里读者都打不开。一行一类只报一条。
+  const redline = ctx.contract.language_redline ?? {};
+  if (Array.isArray(redline.kinds) && redline.kinds.length) {
+    const appendix = appendixChapter(ctx.contract);
+    const kindOf = k => (typeof k === 'string' ? k : k?.kind);
+    for (const [label, text, opts] of [
+      ['story', storyForPaths, { kinds: redline.kinds, appendixTitle: appendix?.title,
+        ruleIds: kEntries.map(e => e.id), sourceTags: redline.source_tags, projectRoot: ctx.projectRoot }],
+      ['review', reviewText, { kinds: redline.kinds.filter(k => kindOf(k) === 'doc_coordinate'),
+        projectRoot: ctx.projectRoot }],
+    ]) {
+      if (!text) continue;
+      const own = authored(label, scanLanguageRedline(text, opts), '', h => h);
+      const groups = new Map();
+      for (const h of own) {
+        const key = `${h.kind}|${h.hint}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(h);
+      }
+      for (const list of groups.values()) {
+        const all = list.map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
+        const why = [...new Set(list.map(h => h.why).filter(Boolean))].join('、');
+        problems.push(`${label}.md 出现${list[0].label} ${list.length} 处（${all}）${why ? `，${why}` : ''}——${list[0].hint}`);
+      }
+    }
+  }
+
+  mark('⑩b 机器区里的红线（改真源）');
+  // 机器区的内容是从真源投影来的：问题报到真源那一行，改真源、重投，作者不碰机器区。
+  const byZone = new Map();
+  for (const z of zoneHits) {
+    const hit = typeof z.hit === 'string' ? { what: z.what, words: [z.hit] }
+      : { what: z.hit.label, words: z.hit.hits };
+    const raw = storyLines[z.line - 1] ?? '';
+    const row = raw.trim().startsWith('|') ? tableCells(raw)[0] : raw.trim().slice(0, 30);
+    if (!byZone.has(z.zone.name)) byZone.set(z.zone.name, { source: z.zone.source, items: [] });
+    byZone.get(z.zone.name).items.push(`${z.line} 行${hit.what}「${hit.words.join('」「')}」（那一行：${row}）`);
+  }
+  for (const [name, { source, items }] of byZone) {
+    problems.push(`${source}（投影到 story.md 附录「${name}」）：有 ${items.length} 处红线：`
+      + `${items.slice(0, 5).join('；')}${items.length > 5 ? ' …' : ''}`
+      + '——附录机器区由 `story-build project` 从真源按行投影，问题出在真源里对应的那几行；手改机器区会被下一次投影覆盖');
+  }
+
+  mark('⑪ 章内判据（story.md 由各章草稿经 chapter 装配，直接改 story.md 会被下一次装配覆盖）');
+  // 与章提交同一个实现：单章通过而全篇报同一条（或反过来）时，
+  // 作者只能把两处的差别当成运气。经 `chapter` 提交的章在提交时已经判过，
+  // 这里报出的是绕过 `chapter` 直接改了 story.md 的那几处。
+  for (const ch of ctx.contract.chapters ?? []) {
+    const text = sectionText.get(ch.title);
+    if (text === undefined) continue;             // 章缺失由 ① 报，这里不重复
+    const planned = plan ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
+    const head = sections.find(s2 => s2.title === ch.title)?.at ?? 0;
+    problems.push(...chapterProblems(ctx, planned, text, () => viewOf(ch.title),
+      n => `story.md「${ch.title}」第 ${head + 1 + n} 行`));
+  }
+  // 章之外那一段（大标题与前言）的占位符：逐章判覆盖不到它。
+  problems.push(...placeholderProblems(storyText.split(/\n##\s/)[0], 'story.md 大标题一段'));
+
+  mark('⑫ 附录结构');
+  problems.push(...appendixStructureProblems(ctx, sections, viewOf));
+
+  mark('⑫b 机器区与真源一致');
+  // 附录的机器区与真源逐区逐行比——**与 project 写进去的是同一份计算**。
+  // 「每条规约有行」「spec 的行不丢」都在其内：少一行就是一处差异，不必再各写一条
+  // 反着解析回去的判据。
+  problems.push(...appendixZoneProblems(ctx, storyText));
+
+  mark('⑫c 材料清单');
+  {
+    const out = materialListProblems(ctx, storyText);
+    problems.push(...out.problems);
+    notes.push(...out.notes);
+  }
+
+  mark('⑫d 上游图承接');
+  // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
+  // 标记本身指不指得到、写没写在围栏里，是本章的事，由 ⑪ 判。
+  problems.push(...carriedDiagramProblems(ctx, storyText));
+
+  mark('⑮ AR 根下只有交付文档');
+  problems.push(...strayFileProblems(ctx));
+
+  mark('⑭ 交付门');
+  // ⑭ 交付门：只有 `check --deliver` 判，普通 check 恒不判。
+  //
+  // 两个入口同一实现，按**动作**分而不按文件在不在推断阶段：登记前与返修中跑的是
+  // 普通 check，那时读者审查还没发生，判它只会得到一个恒定的「不适用」；
+  // 交付（远程单上传前、本地单闭环后）跑的是 `--deliver`，那时闭环该已经成立。
+  if (ctx.args.deliver) {
+    const delivery = deliveryProblems(ctx);
+    problems.push(...delivery.problems);
+    notes.push(...delivery.notes);
+  }
+
+  if (notes.length) {
+    process.stdout.write('[story-build check] 记一笔（不拦）：\n');
+    notes.forEach(n => process.stdout.write(`  · ${n}\n`));
+  }
+  if (problems.length) {
+    const groups = groupedProblems(problems, marks);
+    process.stderr.write(`[story-build check] ${problems.length} 处未通过，`
+      + `分属 ${groups.length} 类：\n`);
+    for (const g of groups) {
+      process.stderr.write(`  [${g.label}] ${g.items.length} 处\n`);
+    }
+    process.stderr.write('\n');
+    let n = 0;
+    for (const g of groups) {
+      process.stderr.write(`  [${g.label}]\n`);
+      for (const item of g.items) {
+        n += 1;
+        process.stderr.write(`  ${n}. ${item}\n`);
+      }
+    }
+    process.exit(1);
+  }
+  process.stdout.write(`[story-build check] 通过：${sections.length} 章\n`);
+  // 交付门通过 = 这份 story 可以交出去了。往下有两条路，**由人选**——
+  // 归档送审与进入 plan 都是正当的下一步，谁先谁后取决于这个需求的排期。
+  if (ctx.args.deliver) process.stdout.write(deliveryNextSteps(ctx));
+}

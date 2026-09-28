@@ -1,0 +1,35 @@
+# 实例扩展 ut 阶段规则 overlay（义务派生自契约实体）
+# 经 manifest provides.phase_rules_overlays.ut 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
+#
+# 本文件只问「契约实体上的义务，用例覆盖了没有」——不复述域名、编号与维度。
+# 本阶段按 plan 挂在实体上的 must 核义务，原知识只用来理解方法与语义：规约内容改了，这里一个字都不用动。
+phase: ut
+version: "1.1"
+semantic_checks:
+  knowledge_obligation_verified:
+    description: >
+      知识义务派生的验收条目，其用例是不是**真的覆盖了那个场景**。
+      机械门禁已经查过覆盖证据在不在；这里判用例内容：断言测的是这条义务要求的行为吗？
+      还是只是名字里带了该条目的编号？
+      按 must.verify 分派：不由 UT 验的条目本阶段不适用（那是显式分派不是遗漏），
+      标 ut/both 的必须有实质断言。
+    severity: MAJOR
+    ai_prompt_hint: >
+      读契约各实体上的 must（verify 决定谁来验）与对应验收条目的 ut_focus，再读 UT 用例。
+      判据是用例是否真的覆盖了那个场景，不是用例名里有没有出现该域的词。
+      **逐条**给结论（含判不适用的那些，那是显式分派、也要有一行）。
+      名字对得上但断言不相干的，判 FAIL。
+      **每条裁决给得出回查位置**：指到用例文件里的那句断言，或抄它的原文，够支撑判断即可。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把验收条目的 ut_focus 复制一遍的，
+      该条按**未裁**处理。
+
+# 作者起手内容的读没读过：唯一的机械留痕。
+# 本阶段的作者要求由作者动笔前自己取（入口见 SKILL 与 CLAUDE.md 扩展段），
+# 取到之后没有任何东西能证明它被读了——
+# 除非作者把来源坐标写进 framework `context-exploration` 的 `key_inputs_read`。
+# 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
+# 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
+# 字符串就是那份原则页的仓内相对路径，逐字一致。
+exploration_thresholds:
+  phase_input_snippets_extra:
+    - doc/extensions/hooks/ut/author.md

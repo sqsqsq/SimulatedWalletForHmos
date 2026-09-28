@@ -1,0 +1,35 @@
+# 实例扩展 review 阶段规则 overlay（义务派生自契约实体）
+# 经 manifest provides.phase_rules_overlays.review 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
+#
+# 本文件只问「契约实体上的义务，复核到位了没有」——不复述域名、编号与维度。
+# 本阶段按 plan 挂在实体上的 must 核义务，原知识只用来理解方法与语义：规约内容改了，这里一个字都不用动。
+phase: review
+version: "1.1"
+semantic_checks:
+  knowledge_obligation_reviewed:
+    description: >
+      审查报告的「知识义务复核」表里，每条结论是不是**基于本次 diff 得出的**。
+      机械门禁已经查过行在不在、结论词合不合法；这里判内容：
+      「落实」的行有没有指向 diff 里的具体位置？「不适用」的行给的是本次变更的实际依据，
+      还是一句通用话术？`review_focus` 说的那件事有没有真的被核过？
+      逐条给结论。
+    severity: MAJOR
+    ai_prompt_hint: >
+      读契约各实体上的 must 与审查报告的复核表，对照本次 diff。
+      结论指不到本次具体落点的，判 FAIL——通用的说法本身不算错，指不到这一次的落点才算：
+      上游声明过而本次变更里找不到落点的，正是本阶段该抓的。
+      **每条裁决给得出回查位置**：指到审查报告或 diff 的哪一处，或抄一段能检索到的原文，
+      够支撑这条判断即可。
+      既给不出可回查位置、也没有能支撑判断的原文，或只是把 must.text 复制一遍的，
+      该条按**未裁**处理。
+
+# 作者起手内容的读没读过：唯一的机械留痕。
+# 本阶段的作者要求由作者动笔前自己取（入口见 SKILL 与 CLAUDE.md 扩展段），
+# 取到之后没有任何东西能证明它被读了——
+# 除非作者把来源坐标写进 framework `context-exploration` 的 `key_inputs_read`。
+# 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`
+# 就会在没写时 FAIL。**不新增门禁、状态或字段**，只是给既有门禁多一个必需项。
+# 字符串就是那份原则页的仓内相对路径，逐字一致。
+exploration_thresholds:
+  phase_input_snippets_extra:
+    - doc/extensions/hooks/review/author.md
