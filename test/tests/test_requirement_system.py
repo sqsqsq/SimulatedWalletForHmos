@@ -256,7 +256,7 @@ class TestNoStaleDataSource(unittest.TestCase):
         REPO_ROOT / "test" / "config",
         REPO_ROOT / "test" / "regression",
         REPO_ROOT / "test" / "TEST.md",
-        REPO_ROOT / "test" / "AGENTS.md",
+        REPO_ROOT / "AGENTS.md",
     )
     # 拼出来而不是写成字面：写成字面，这个 checker 每次都会先扫到自己。
     PATTERN = re.compile("|".join(f"mock{sep}data" for sep in ("-", "_")), re.IGNORECASE)
