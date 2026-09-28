@@ -12,20 +12,17 @@
  * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
  * `--check` 据此核**安装结果**——这个目标现在装的是不是包的这一版。
  *
- * **包 = 本脚本所在的扩展**（`<ext>/skills/story-adaptation/scripts/` 往上三层）。要装另一个来源，
- * 就执行那个来源里的这份脚本。目标是 `--target` 给的工程根，扩展装在它的 `paths.extension_dir`。
- *
- * 用法: node <扩展>/skills/story-adaptation/scripts/adapt-scan.mjs --apply|--check --target <目标工程根>
+ * 用法: node adapt-scan.mjs --apply|--check --target <目标根> [--package <包根>]
  * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseYaml } from '../../../hooks/shared/yaml.mjs';
 
 const MODES = ['--apply', '--check'];
 
@@ -54,7 +51,14 @@ const die = (msg, code = 2) => { console.error(`[adapt-scan] ${msg}`); process.e
 const read = f => readFileSync(f, 'utf8');
 const rel = (base, f) => relative(base, f).split(sep).join('/');
 const sha = f => createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
-const shaText = t => createHash('sha256').update(t).digest('hex').slice(0, 16);
+
+/** 从起点向上找含 framework.config.json 的仓库根。 */
+function findRoot(from) {
+  for (let d = resolve(from); ; d = dirname(d)) {
+    if (existsSync(join(d, 'framework.config.json'))) return d;
+    if (d === dirname(d)) return null;
+  }
+}
 
 function config(root) {
   const f = join(root, 'framework.config.json');
@@ -245,67 +249,20 @@ function freshIdentity(root) {
 }
 
 /**
- * 登记里的相对路径 → 规范写法：去掉 `.` 段；`..`、绝对路径、反斜杠、空段不认（返回 null）。
- * 同一个文件只有一种写法，重复判定、脏检查、写入与自检才对得上。
- */
-function canonical(p) {
-  if (typeof p !== 'string' || p.includes('\\') || p.startsWith('/') || /^[A-Za-z]:/.test(p)) return null;
-  const segs = p.split('/').filter(seg => seg !== '.');
-  if (!segs.length || segs.some(seg => seg === '..' || seg === '')) return null;
-  return segs.join('/');
-}
-
-/**
- * 包登记的跳板：`provides.bridges` 每项一对 `target`（相对目标工程）与 `source`（相对扩展根）。
- *
- * 写目标之前全部核完：登记读不出、少键、路径越界、同一目标登记两次（按规范写法与目标文件系统的
- * 大小写规则比）、源不是扩展里读得到的文件，任何一条都是包坏了，报出来就停，目标一个字节不写。
- * 源的正文在这里读好，写入与自检都用这一份。
+ * 包登记的跳板：`provides.bridges` 每项的 `target`（相对工程根）。
+ * 正文从包所在工程的同一路径取——包就是装好了的工程，入口已在宿主位置上；`source` 归发布安装器用。
  */
 function bridgesOf(manifestText) {
-  let doc;
+  let items;
   try {
-    doc = parseYaml(manifestText);
+    items = parseYaml(manifestText)?.provides?.bridges ?? [];
   } catch (e) {
-    return die(`包的 manifest.yaml 读不出（${e.message}）：跳板登记从它取`);
+    return die(`包的 manifest.yaml 读不出（${e.message}）`);
   }
-  const items = doc?.provides?.bridges ?? [];
-  if (!Array.isArray(items)) die('包的 provides.bridges 不是列表：每项写 target 与 source');
-  const problems = [];
-  const seen = new Set();
-  const out = [];
-  items.forEach((item, i) => {
-    const at = `provides.bridges 第 ${i + 1} 项`;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      problems.push(`${at} 不是 target / source 一对`);
-      return;
-    }
-    const target = canonical(item.target);
-    const source = canonical(item.source);
-    if (!target) problems.push(`${at} 的 target 须是目标工程内的相对文件路径：${JSON.stringify(item.target)}`);
-    if (!source) problems.push(`${at} 的 source 须是扩展内的相对文件路径：${JSON.stringify(item.source)}`);
-    if (!target || !source) return;
-    if (seen.has(pathKey(target))) problems.push(`${at} 的 target 与前面的登记是同一个文件：${item.target}`);
-    seen.add(pathKey(target));
-    const file = join(PDIR, ...source.split('/'));
-    let text;
-    try {
-      if (!statSync(file).isFile()) throw new Error('不是文件');
-      text = read(file);
-    } catch (e) {
-      problems.push(`${at} 的源不是扩展里读得到的文件：${source}（${e.code ?? e.message}）`);
-      return;
-    }
-    out.push({ target, source, text });
-  });
-  if (problems.length) {
-    console.error(`[adapt-scan] 停：包的跳板登记有 ${problems.length} 处问题：`);
-    problems.forEach(p => console.error(`  ${p}`));
-    die('包坏了——改正 manifest 的 provides.bridges 或补上源文件。目标一个字节未写', 2);
-  }
-  return out;
+  const bad = items.filter(b => typeof b?.target !== 'string');
+  if (bad.length) die(`包的 provides.bridges 每项要有 target：${JSON.stringify(bad)}`);
+  return items.map(b => b.target);
 }
-
 
 // ── 写入面 ──────────────────────────────────────────────────────────────────
 
@@ -335,14 +292,13 @@ function missingGitignoreLines(root) {
  * 那个答「要覆盖哪些」，这个答「某一条在不在覆盖范围里」。写入前查工作区脏不脏用它。
  */
 function inWriteFace(root, p, bridges, withAdapters) {
-  const key = pathKey(p);
-  if (['.gitignore', ...ENTRIES].some(e => pathKey(e) === key)) return true;
-  if (bridges.some(b => pathKey(b.target) === key)) return true;
-  const ext = pathKey(canonical(extDir(root)) ?? extDir(root));
-  if (!key.startsWith(`${ext}/`)) return false;
-  const inner = key.slice(ext.length + 1);
-  if (inner.startsWith(`${pathKey(KNOWLEDGE)}/`)) return false;
-  if (!withAdapters && inner.startsWith(`${pathKey(ADAPTERS)}/`)) return false;
+  if (p === '.gitignore' || ENTRIES.includes(p)) return true;
+  if (bridges.includes(p)) return true;
+  const ext = extDir(root);
+  if (!p.startsWith(`${ext}/`)) return false;
+  const inner = p.slice(ext.length + 1);
+  if (inner.startsWith(`${KNOWLEDGE}/`)) return false;
+  if (!withAdapters && inner.startsWith(`${ADAPTERS}/`)) return false;
   return true;
 }
 
@@ -353,82 +309,60 @@ function git(root, args) {
   return { ok: r.status === 0, out: r.stdout || '', err: (r.stderr || '').trim() };
 }
 /**
- * 目标在不在 git 管理下：它的 `framework.config.json` 被所在的仓跟踪着。
+ * 目标**自己**是不是一个 git 仓库的根。
  *
- * 目标可以是仓库根，也可以是某个仓库里的子目录；只问「在不在工作区里」不够——
- * 外层仓把目标整个忽略时，目标的改动从没存过档，升级盖掉就找不回来，而脏检查也看不见它们。
+ * 不用 `--is-inside-work-tree`：目标躺在别的 git 仓里面时它也答「是」，而那时
+ * `git status` 报的路径相对的是**外层仓的根**，拿去跟写入面（相对目标根）比会全对不上。
  */
-function inRepo(root) {
-  return git(root, ['ls-files', '--error-unmatch', '--', 'framework.config.json']).ok;
+function isRepo(root) {
+  const r = git(root, ['rev-parse', '--show-toplevel']);
+  return r.ok && resolve(r.out.trim()) === resolve(root);
 }
 
 /**
- * 目标里有未提交改动的路径（相对**目标根**）。
- *
- * 目标可以躺在别的 git 仓里（例如维护仓下的消费工程目录）：porcelain 报的路径相对外层仓的根，
- * 先用 `--show-prefix` 取目标在仓里的前缀，只看目标之内、去掉前缀，才能与写入面（相对目标根）比。
+ * 工作区里有未提交改动的路径（相对仓库根）。
  *
  * `-uall` 把未跟踪的目录展开成文件：不展开的话 git 只报一个目录名（`?? .claude/`），
  * 而首次安装写进去的跳板恰好都在未跟踪目录里——判据会拿目录名去比路径，一条也对不上。
- * `-z` 按原字节给路径（中文名不转义、不加引号），`--no-renames` 让改名的两端各报一条。
+ *
+ * **不 trim 整段输出**：porcelain 的状态位占两格，未暂存的改动第一格是空格
+ * （` D path`），整段 trim 会削掉第一行那个空格，之后每条路径都少一个字符。
  */
 function dirtyPaths(root) {
-  const prefix = git(root, ['rev-parse', '--show-prefix']);
-  const r = git(root, ['status', '--porcelain', '-z', '-uall', '--no-renames', '--', '.']);
-  if (!prefix.ok || !r.ok) return [];
-  const base = prefix.out.trim();
-  return r.out.split('\0').filter(Boolean)
-    .map(entry => entry.slice(3))
-    .filter(p => p.startsWith(base))
-    .map(p => p.slice(base.length));
+  const r = git(root, ['status', '--porcelain', '-uall']);
+  if (!r.ok) return [];
+  return r.out.split(/\r?\n/).filter(Boolean)
+    .map(l => l.slice(3).split(' -> ').pop().replace(/^"|"$/g, ''));
 }
 
 // ── 参数与两态 ──────────────────────────────────────────────────────────────
 
 if (!mode) die(`缺模式：${MODES.join(' | ')}`);
-if (!opt('--target')) die('缺 --target <目标工程根>');
-{
-  const known = new Set([...MODES, '--target']);
-  const extra = argv.filter((a, i) => !known.has(a) && argv[i - 1] !== '--target');
-  if (extra.length) {
-    die(`不认识的参数：${extra.join(' ')}——包就是本脚本所在的扩展；要装另一个来源，执行那个来源里的这份脚本`);
-  }
-}
-const TARGET = resolve(opt('--target'));
-if (!existsSync(join(TARGET, 'framework.config.json'))) {
-  die(`目标工程根下没有 framework.config.json：${TARGET}——--target 给接入了 framework 的工程根`);
-}
-/** 包的扩展根：本脚本在 `<ext>/skills/story-adaptation/scripts/` 下。 */
-const PDIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
-/**
- * 目标所在文件系统分不分大小写：把目标根路径的字母大小写翻过来还找得到它，就是不分。
- * 不分时 `A.md` 与 `a.md` 是同一个文件，路径一律按小写比。
- */
-const CASE_FOLD = (() => {
-  const flipped = TARGET.replace(/[A-Za-z]/g, c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
-  return flipped !== TARGET && existsSync(flipped);
-})();
-function pathKey(p) { return CASE_FOLD ? p.toLowerCase() : p; }
+if (!opt('--target')) die('缺 --target <目标根>');
+const TARGET = findRoot(opt('--target'));
+if (!TARGET) die(`目标不是有效仓库根（找不到 framework.config.json）：${opt('--target')}`);
+const PKG = opt('--package')
+  ? findRoot(opt('--package'))
+  : findRoot(dirname(fileURLToPath(import.meta.url)));
+if (!PKG) die('包不是有效仓库根（找不到 framework.config.json）');
 
-// YAML 用目标 framework harness 的 `yaml` 包读——与目标里扩展门禁读 YAML 是同一个解析器。
-// 包可能不在任何工程里（开发源），所以不借包所在位置的 framework；目标接入 framework 并装好 harness
-// 依赖是扩展能在目标里跑的前提，缺了就停在这里，不先复制一半再让第一道门禁报「读取器不可用」。
-const YAML = (() => {
+const PDIR = join(PKG, ...extDir(PKG).split('/'));
+const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+
+// 扩展的 YAML 读取借目标 framework harness 的 `yaml` 包（hooks/shared/yaml.mjs）：装之前先确认它在。
+// 缺了也能把文件复制过去，但目标跑第一道门禁就会抛「读取器不可用」——那时人看到的是门禁坏了，不是没装依赖。
+// 只在目标**有** harness 时核：harness 本身不在是 framework 还没接入，那是 framework-init 的事，这里只提一句。
+{
   const harness = join(TARGET, 'framework', 'harness');
-  if (!existsSync(harness)) {
-    return die(`目标还没有 ${relative(TARGET, harness)}：先接入 framework，再 --apply / --check`);
-  }
-  try {
-    return createRequire(join(harness, 'package.json'))('yaml');
-  } catch (e) {
-    return die(`目标的 framework harness 还没装依赖（yaml 不可用：${e?.code ?? e?.message ?? e}）：`
+  const yamlPkg = join(harness, 'node_modules', 'yaml');
+  if (!existsSync(join(harness, 'package.json'))) {
+    console.error(`[adapt-scan] 目标还没有 ${relative(TARGET, harness)}：扩展的门禁要在接入 framework 并装好 harness 依赖之后才能跑`);
+  } else if (!existsSync(yamlPkg)) {
+    die(`目标的 framework harness 还没装依赖（缺 ${relative(TARGET, yamlPkg)}）：`
       + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check');
   }
-})();
-/** 解析失败抛 `yaml` 包的原始错误，调用方决定怎么报。 */
-const parseYaml = text => YAML.parse(String(text ?? '')) ?? {};
-const SAME_TREE = resolve(PDIR) === resolve(TDIR);
+}
+const SAME_TREE = resolve(PKG) === resolve(TARGET);
 
 const pkgManifest = join(PDIR, 'manifest.yaml');
 if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`);
@@ -529,9 +463,17 @@ if (mode === '--apply') {
 
   // 前置：不满足就停，不猜。工作区脏的话 diff 里混着用户自己的改动，分不清哪些是
   // 升级带来的——而「升级把用户没提交的改动盖了、diff 里还看不出来」没法补救。
-  if (!inRepo(TARGET)) {
-    die(`目标不在 git 管理下（它的 framework.config.json 没被所在仓跟踪）：${TARGET}\n`
+  if (!isRepo(TARGET)) {
+    die(`目标不是 git 仓库：${TARGET}\n`
       + '  这一次要整份换掉覆盖范围内的文件，没存档的改动被盖掉就找不回来了。');
+  }
+  // 包先查：跳板清单是包自己在 manifest 里登记的，登记了却没有文件是包坏了，不是可选项。
+  // 排在目标那几条之前——包坏了跟目标的状态无关，先说这件事，人才不必先去收拾工作区。
+  const noBridge = BRIDGES.filter(b => !existsSync(join(PKG, ...b.split('/'))));
+  if (noBridge.length) {
+    console.error(`[adapt-scan] 停：包里登记了跳板却没有文件（${noBridge.length} 个）：`);
+    noBridge.forEach(b => console.error(`  ${b}`));
+    die('包坏了——补上文件，或从 manifest 的 provides.bridges 里撤掉登记。目标一个字节未写', 2);
   }
 
   const dirty = dirtyPaths(TARGET).filter(p => inWriteFace(TARGET, p, BRIDGES, WITH_ADAPTERS));
@@ -571,13 +513,14 @@ if (mode === '--apply') {
     written.push('manifest.yaml');
   }
 
-  // 3. 跳板：扩展自有的宿主入口文件，按登记的 target / source 直接覆盖（登记问题已在读包时拦下）
+  // 3. 跳板：扩展自有的宿主入口文件，直接覆盖（缺文件已由前置拦下）
   for (const b of BRIDGES) {
-    const to = join(TARGET, ...b.target.split('/'));
-    if (existsSync(to) && sha(to) === shaText(b.text)) continue;
+    const from = join(PKG, ...b.split('/'));
+    const to = join(TARGET, ...b.split('/'));
+    if (existsSync(to) && sha(from) === sha(to)) continue;
     mkdirSync(dirname(to), { recursive: true });
-    writeFileSync(to, b.text, 'utf8');
-    written.push(b.target);
+    copyFileSync(from, to);
+    written.push(b);
   }
 
   // 4. 入口文件的标记区：只重写标记之间，标记之外一个字节不动
@@ -715,10 +658,11 @@ const bad = [];
   // 跳板在 `<ext>/` 之外，覆盖范围扫不到它们——不单独核的话，一个装坏了的宿主入口
   // 能一直躺在那里而自检说通过，而它正是人每天敲 `/story` 打进来的地方。
   for (const b of BRIDGES) {
-    const to = join(TARGET, ...b.target.split('/'));
-    if (!existsSync(to)) { bad.push(`① 跳板缺失：${b.target}——跑 --apply 写上`); continue; }
-    if (sha(to) !== shaText(b.text)) {
-      bad.push(`① 跳板与包不同：${b.target}（包里的 ${b.source}）——它是扩展自己的宿主入口，跑 --apply 覆盖`);
+    const from = join(PKG, ...b.split('/'));
+    const to = join(TARGET, ...b.split('/'));
+    if (!existsSync(to)) { bad.push(`① 跳板缺失：${b}——跑 --apply 写上`); continue; }
+    if (existsSync(from) && sha(from) !== sha(to)) {
+      bad.push(`① 跳板与包不同：${b}——它是扩展自己的宿主入口，跑 --apply 覆盖`);
     }
   }
 }

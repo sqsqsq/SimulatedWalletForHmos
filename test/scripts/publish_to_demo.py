@@ -1,36 +1,28 @@
-"""把一份 Story Extension 源装进一个消费工程：测试装隔离 template，正式发布装 demo。
+"""把一份 Story Extension 源装进消费工程：测试装一次性 template，发布时装 demo。
 
     python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 
-写入面三块，全部由源决定：扩展目录整体换成源（含源的示范知识，源里没有的旧文件退出）；
-manifest 登记的宿主入口按 target/source 对写到目标；AGENTS.md / CLAUDE.md 的 story-ext 标记区
-换成源的扩展段，区外字节不动。
+顺序固定：枚举源 → 整体替换目标 doc/extensions（含源的示范知识，源里没有的旧文件退出）→ 按 manifest
+登记的 target/source 对写宿主入口 → 用源的扩展段更新 AGENTS.md / CLAUDE.md 的 story-ext 标记区（区外不动）。
 
-写之前全部核完（源集合、入口源、目标配置、标记区、覆盖面上有没有没提交的人工修改），有问题
-一次报全、目标一个字节不写。真写时先把计划与原字节落到维护域 ``output/story/install-*/``，
-再逐个文件原子替换并登记；中途失败时维护者按这份清单恢复（恢复表见 1.9.8 分册 04 §1.3）。
+目标在 git 里时（发布 demo），非忽略状态必须干净、git 查询要成功，否则不装：出错由维护者用 git 看改动、还原。
+一次性 template 失败就丢掉重建。本脚本不回滚、不留安装日志。
 
-退出码：0 已规划 / 已安装；2 预检失败；1 写入失败。stdout 是结果 JSON，诊断走 stderr。
+退出码：0 已规划 / 已安装；2 输入读取或解析失败（目标没写）；1 写入失败（结果里列出实际完成项）。
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
-import tempfile
-import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE_ROOT = REPO_ROOT / "output" / "story"
-DEFAULT_EXTENSION_DIR = "doc/extensions"
+EXTENSION_DIR = "doc/extensions"
 SECTION = "skills/story/AGENTS.section.md"
 ENTRIES = ("AGENTS.md", "CLAUDE.md")
 BEGIN, END = "<!-- story-ext:begin -->", "<!-- story-ext:end -->"
@@ -44,7 +36,7 @@ EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo"})
 
 @dataclass(frozen=True)
 class BridgeFile:
-    """一份宿主入口：source 是已存在的源文件，target 是它在消费工程里的相对路径。"""
+    """一份宿主入口：source 是源文件，target 是它在消费工程里的相对路径。"""
     source: Path
     target: str
 
@@ -57,29 +49,20 @@ class InstallResult:
     planned: list[str] = field(default_factory=list)
     completed: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
-    manifest_path: str | None = None
     problems: list[str] = field(default_factory=list)
 
 
-class Preflight(Exception):
+class InputError(Exception):
     def __init__(self, problems: list[str]):
         super().__init__("；".join(problems))
         self.problems = problems
 
 
-def sha256(data: bytes | None) -> str | None:
-    return None if data is None else hashlib.sha256(data).hexdigest()
-
-
-def _excluded(rel_parts: tuple[str, ...], is_dir: bool) -> bool:
-    name = rel_parts[-1]
-    if name.startswith(EXCLUDED_PREFIX):
+def _excluded(parts: tuple[str, ...], is_dir: bool) -> bool:
+    name = parts[-1]
+    if name.startswith(EXCLUDED_PREFIX) or (len(parts) == 1 and name in EXCLUDED_ROOT_NAMES):
         return True
-    if len(rel_parts) == 1 and name in EXCLUDED_ROOT_NAMES:
-        return True
-    if is_dir:
-        return name in EXCLUDED_DIR_NAMES
-    return Path(name).suffix in EXCLUDED_SUFFIXES
+    return name in EXCLUDED_DIR_NAMES if is_dir else Path(name).suffix in EXCLUDED_SUFFIXES
 
 
 def _walk(root: Path, problems: list[str]) -> list[str]:
@@ -87,22 +70,15 @@ def _walk(root: Path, problems: list[str]) -> list[str]:
     out: list[str] = []
 
     def visit(folder: Path, parts: tuple[str, ...]) -> None:
-        try:
-            children = sorted(folder.iterdir(), key=lambda p: p.name)
-        except OSError as exc:
-            problems.append(f"读不出目录 {folder}：{exc}")
-            return
-        for child in children:
+        for child in sorted(folder.iterdir(), key=lambda p: p.name):
             rel = parts + (child.name,)
             if child.is_symlink() or child.is_junction():
                 problems.append(f"源里有链接或重解析点，不跟随：{'/'.join(rel)}")
-                continue
-            if _excluded(rel, child.is_dir()):
-                continue
-            if child.is_dir():
-                visit(child, rel)
-            elif child.is_file():
-                out.append("/".join(rel))
+            elif not _excluded(rel, child.is_dir()):
+                if child.is_dir():
+                    visit(child, rel)
+                elif child.is_file():
+                    out.append("/".join(rel))
     if root.is_dir():
         visit(root, ())
     return out
@@ -114,42 +90,25 @@ def enumerate_source(source: Path) -> list[str]:
     files = _walk(Path(source), problems)
     seen: dict[str, str] = {}
     for rel in files:
-        key = rel.casefold()
-        if key in seen:
-            problems.append(f"源里有只差大小写的两个路径：{seen[key]} / {rel}")
-        seen[key] = rel
+        if rel.casefold() in seen:
+            problems.append(f"源里有只差大小写的两个路径：{seen[rel.casefold()]} / {rel}")
+        seen[rel.casefold()] = rel
     if problems:
-        raise Preflight(problems)
+        raise InputError(problems)
     return files
-
-
-def canonical(p: str) -> str | None:
-    """相对路径的规范写法：去掉 `.` 段；`..`、绝对路径、反斜杠、空段不认。"""
-    if not isinstance(p, str) or "\\" in p or p.startswith("/") or (len(p) > 1 and p[1] == ":"):
-        return None
-    segs = [s for s in p.split("/") if s != "."]
-    if not segs or any(s in ("..", "") for s in segs):
-        return None
-    return "/".join(segs)
 
 
 def manifest_bridges(source: Path) -> list[BridgeFile]:
     """正常安装的入口来自源 manifest 的 provides.bridges（target/source 对）。"""
     doc = yaml.safe_load((Path(source) / "manifest.yaml").read_text(encoding="utf-8")) or {}
     items = (doc.get("provides") or {}).get("bridges") or []
-    problems: list[str] = []
-    out: list[BridgeFile] = []
-    for i, item in enumerate(items, start=1):
-        if not isinstance(item, dict) or not canonical(item.get("source", "")) or "target" not in item:
-            problems.append(f"manifest provides.bridges 第 {i} 项不是合法的 target/source 对：{item!r}")
-            continue
-        out.append(BridgeFile(source=Path(source) / canonical(item["source"]), target=str(item["target"])))
-    if problems:
-        raise Preflight(problems)
-    return out
+    bad = [item for item in items if not isinstance(item, dict) or not {"source", "target"} <= item.keys()]
+    if bad:
+        raise InputError([f"manifest provides.bridges 每项要有 target 与 source：{bad}"])
+    return [BridgeFile(source=Path(source) / item["source"], target=str(item["target"])) for item in items]
 
 
-def _render_zone(text: str, body: str) -> str:
+def render_zone(text: str, body: str) -> str:
     """标记区在就整段替换，不在就插到「实例扩展」一节末尾，都没有就追加到文件末尾（与 adapt 同一规则）。"""
     eol = "\r\n" if "\r\n" in text else "\n"
     lines = text.replace("\r\n", "\n").split("\n")
@@ -170,65 +129,23 @@ def _render_zone(text: str, body: str) -> str:
 
 
 def _zone_problem(name: str, text: str) -> str | None:
-    lines = text.split("\n")
-    begins = [i for i, line in enumerate(lines) if BEGIN in line]
-    ends = [i for i, line in enumerate(lines) if END in line]
-    if len(begins) > 1 or len(ends) > 1:
-        return f"{name} 的扩展段标记重复（begin {len(begins)} 处、end {len(ends)} 处）"
-    if bool(begins) != bool(ends) or (begins and ends[0] < begins[0]):
+    begins = text.count(BEGIN)
+    ends = text.count(END)
+    if begins > 1 or ends > 1:
+        return f"{name} 的扩展段标记重复（begin {begins} 处、end {ends} 处）"
+    if begins != ends or (begins and text.index(END) < text.index(BEGIN)):
         return f"{name} 的扩展段标记不成对"
     return None
 
 
-def _extension_dir(target: Path, problems: list[str]) -> str | None:
-    config = target / "framework.config.json"
-    try:
-        paths = (json.loads(config.read_text(encoding="utf-8-sig")) or {}).get("paths") or {}
-    except (OSError, ValueError) as exc:
-        problems.append(f"目标配置读不出：{config}（{exc}）")
-        return None
-    rel = canonical(str(paths.get("extension_dir") or DEFAULT_EXTENSION_DIR))
-    if rel is None:
-        problems.append(f"目标配置的 paths.extension_dir 不是工程内相对路径：{paths.get('extension_dir')!r}")
-    return rel
-
-
-def _case_folds(target: Path) -> bool:
-    flipped = str(target).swapcase()
-    return flipped != str(target) and Path(flipped).exists()
-
-
-def _dirty(target: Path) -> list[str] | None:
-    """目标里没提交的路径（相对目标根）；目标不在 git 里返回 None。"""
-    def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(target), *args], capture_output=True)
-    prefix = git("rev-parse", "--show-prefix")
-    if prefix.returncode != 0:
-        return None
-    status = git("status", "--porcelain", "-z", "-uall", "--no-renames", "--", ".")
-    if status.returncode != 0:
-        return None
-    base = prefix.stdout.decode("utf-8").strip()
-    out = []
-    for entry in status.stdout.decode("utf-8", "replace").split("\0"):
-        path = entry[3:]
-        if entry and path.startswith(base):
-            out.append(path[len(base):])
-    return out
-
-
-def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[list[dict], dict[str, bytes], str | None]:
-    """算出全部文件操作；任何问题都在这里收齐后一起抛。返回（操作, 源字节快照, 源版本）。"""
+def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[list[tuple], str | None]:
+    """读全部输入、算出文件操作；读取或解析有问题就一起报告，目标不写。"""
     problems: list[str] = []
-    source, target = Path(source).resolve(), Path(target).resolve()
-    if not source.is_dir():
-        raise Preflight([f"扩展源不是目录：{source}"])
-    if not target.is_dir():
-        raise Preflight([f"目标不是目录：{target}"])
-    ext_rel = _extension_dir(target, problems)
+    if not source.is_dir() or not target.is_dir():
+        raise InputError([f"扩展源或目标不是目录：{source} / {target}"])
     try:
         files = enumerate_source(source)
-    except Preflight as exc:
+    except InputError as exc:
         problems += exc.problems
         files = []
     version = None
@@ -236,183 +153,109 @@ def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[l
         version = str((yaml.safe_load((source / "manifest.yaml").read_text(encoding="utf-8")) or {}).get("version"))
     except (OSError, yaml.YAMLError) as exc:
         problems.append(f"源的 manifest.yaml 读不出：{exc}")
-    fold = _case_folds(target)
-    key = (lambda p: p.casefold()) if fold else (lambda p: p)
-    ops: list[dict] = []
-    snapshot: dict[str, bytes] = {}
-    #: 本次安装负责的全部路径（不论这次变不变）——脏检查的范围
-    face: set[str] = set()
+    ops: list[tuple] = []   # (操作, 目标相对路径, 内容)
 
-    def add_op(rel: str, desired: bytes, src: Path) -> None:
-        face.add(key(rel))
+    def put(rel: str, data: bytes) -> None:
         dst = target / rel
-        before = dst.read_bytes() if dst.is_file() else None
-        if before == desired:
-            return
-        ops.append({"path": rel, "operation": "add" if before is None else "replace",
-                    "desired": desired, "before": before, "src": src})
+        if not (dst.is_file() and dst.read_bytes() == data):
+            ops.append(("write", rel, data))
 
-    if ext_rel is not None:
-        ext_abs = (target / ext_rel).resolve()
-        if ext_abs == source or ext_abs.is_relative_to(source) or source.is_relative_to(ext_abs):
-            problems.append(f"扩展源与目标安装位互相覆盖：{source} / {ext_abs}")
-        else:
-            for rel in files:
-                try:
-                    data = (source / rel).read_bytes()
-                except OSError as exc:
-                    problems.append(f"源文件读不出：{rel}（{exc}）")
-                    continue
-                snapshot[str(source / rel)] = data
-                add_op(f"{ext_rel}/{rel}", data, source / rel)
-            wanted = {key(rel) for rel in files}
-            walk_problems: list[str] = []
-            for rel in _walk(ext_abs, walk_problems):
-                if key(rel) not in wanted:
-                    dst = ext_abs / rel
-                    ops.append({"path": f"{ext_rel}/{rel}", "operation": "delete", "desired": None,
-                                "before": dst.read_bytes(), "src": None})
-            problems += walk_problems
-    seen: dict[str, str] = {}
-    for bridge in bridge_files:
-        rel = canonical(bridge.target)
-        if rel is None:
-            problems.append(f"入口目标不是工程内相对路径：{bridge.target!r}")
-            continue
-        if key(rel) in seen:
-            problems.append(f"入口目标重复：{bridge.target} 与 {seen[key(rel)]} 是同一个文件")
-            continue
-        seen[key(rel)] = bridge.target
-        if ext_rel is not None and key(rel).startswith(key(ext_rel) + "/"):
-            problems.append(f"入口目标落在扩展安装位里：{bridge.target}")
-            continue
-        src = Path(bridge.source)
+    for rel in files:
         try:
-            if not src.is_file():
-                raise OSError("不是文件")
-            data = src.read_bytes()
+            put(f"{EXTENSION_DIR}/{rel}", (source / rel).read_bytes())
         except OSError as exc:
-            problems.append(f"入口源不是读得到的文件：{src}（{exc}）")
-            continue
-        snapshot[str(src)] = data
-        add_op(rel, data, src)
+            problems.append(f"源文件读不出：{rel}（{exc}）")
+    wanted = set(files)
+    for rel in _walk(target / EXTENSION_DIR, problems):
+        if rel not in wanted:
+            ops.append(("delete", f"{EXTENSION_DIR}/{rel}", None))
+    for bridge in bridge_files:
+        try:
+            put(bridge.target, Path(bridge.source).read_bytes())
+        except OSError as exc:
+            problems.append(f"入口源读不出：{bridge.source}（{exc}）")
     section = source / SECTION
     if section.is_file():
-        raw = section.read_bytes()
-        snapshot[str(section)] = raw
-        body = "\n".join(line for line in raw.decode("utf-8").replace("\r\n", "\n").split("\n")
-                         if not line.strip().startswith("<!-- story-ext:")).strip()
+        raw = section.read_text(encoding="utf-8").replace("\r\n", "\n")
+        body = "\n".join(line for line in raw.split("\n") if not line.strip().startswith("<!-- story-ext:")).strip()
         present = [name for name in ENTRIES if (target / name).is_file()]
         if not present:
             problems.append(f"目标没有入口文件（{' / '.join(ENTRIES)}）：扩展段无处可放")
         for name in present:
             text = (target / name).read_bytes().decode("utf-8")
-            issue = _zone_problem(name, text.replace("\r\n", "\n"))
+            issue = _zone_problem(name, text)
             if issue:
                 problems.append(issue)
-                continue
-            add_op(name, _render_zone(text, body).encode("utf-8"), section)
-    dirty = _dirty(target)
-    if dirty:
-        face.update(key(op["path"]) for op in ops)
-        hits = sorted(p for p in dirty if key(p) in face)
-        if hits:
-            problems.append("覆盖面上有没提交的修改，本命令不替人处理：" + "、".join(hits))
+            else:
+                put(name, render_zone(text, body).encode("utf-8"))
     if problems:
-        raise Preflight(problems)
-    return ops, snapshot, version
-
-
-def _write_file(path: Path, data: bytes, item: dict) -> None:
-    """同目录临时文件写好再原子替换；临时路径先登记在清单项里。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.install-{uuid.uuid4().hex[:8]}")
-    item["temp_path"] = str(temp)
-    temp.write_bytes(data)
-    os.replace(temp, path)
-
-
-def _save(manifest_path: Path, record: dict) -> None:
-    manifest_path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+        raise InputError(problems)
+    return ops, version
 
 
 def install_extension(source: Path, target: Path, bridge_files: list[BridgeFile], *,
-                      dry_run: bool = False, evidence_root: Path = EVIDENCE_ROOT) -> InstallResult:
+                      dry_run: bool = False) -> InstallResult:
     source, target = Path(source).resolve(), Path(target).resolve()
     try:
-        ops, snapshot, version = _plan(source, target, bridge_files)
-    except Preflight as exc:
+        ops, version = _plan(source, target, bridge_files)
+    except InputError as exc:
         return InstallResult("preflight_failed", None, str(target), problems=exc.problems)
-    planned = [f"{op['operation']} {op['path']}" for op in ops]
+    planned = [f"{op} {rel}" for op, rel, _ in ops]
     if dry_run:
         return InstallResult("planned", version, str(target), planned=planned)
-
-    evidence_root.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix="install-", dir=evidence_root))
-    manifest_path = folder / "manifest.json"
-    items = []
-    for op in ops:
-        before_path = None
-        if op["before"] is not None:
-            backup = folder / "before" / op["path"]
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            backup.write_bytes(op["before"])
-            before_path = str(backup)
-        items.append({"path": op["path"], "operation": op["operation"],
-                      "before_sha256": sha256(op["before"]), "before_path": before_path,
-                      "desired_sha256": sha256(op["desired"]), "result": "pending", "error": None})
-    record = {"source": str(source), "source_version": version, "target": str(target), "items": items}
-    _save(manifest_path, record)
-
-    completed, failed = [], []
-    for op, item in zip(ops, items):
-        dst = target / op["path"]
+    completed: list[str] = []
+    for op, rel, data in ops:
+        dst = target / rel
         try:
-            src = op["src"]
-            if src is not None and Path(src).read_bytes() != snapshot[str(src)]:
-                raise RuntimeError(f"源在安装过程中变了：{src}")
-            if op["operation"] == "delete":
+            if op == "delete":
                 dst.unlink()
+                folder = dst.parent
+                while folder != target and not any(folder.iterdir()):
+                    folder.rmdir()
+                    folder = folder.parent
             else:
-                _write_file(dst, op["desired"], item)
-            item["result"] = "done"
-            completed.append(op["path"])
-        except Exception as exc:  # noqa: BLE001 —— 失败面落进清单，交维护者按恢复表处理
-            item["result"], item["error"] = "failed", f"{type(exc).__name__}: {exc}"
-            failed.append(op["path"])
-            _save(manifest_path, record)
-            return InstallResult("write_failed", version, str(target), planned, completed, failed,
-                                 str(manifest_path))
-        _save(manifest_path, record)
-    for op in ops:
-        if op["operation"] == "delete":
-            folder_path = (target / op["path"]).parent
-            while folder_path != target and folder_path.is_dir() and not any(folder_path.iterdir()):
-                folder_path.rmdir()
-                folder_path = folder_path.parent
-    return InstallResult("installed", version, str(target), planned, completed, failed, str(manifest_path))
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(data)
+        except OSError as exc:
+            return InstallResult("write_failed", version, str(target), planned, completed,
+                                 [rel], [f"{op} {rel} 失败：{exc}"])
+        completed.append(rel)
+    return InstallResult("installed", version, str(target), planned, completed)
+
+
+def git_dirty(target: Path) -> list[str] | None:
+    """目标所在 git 工作区里、目标之内的非忽略改动；目标不在 git 里返回 None，查询失败抛 InputError。"""
+    inside = subprocess.run(["git", "-C", str(target), "rev-parse", "--is-inside-work-tree"],
+                            capture_output=True, text=True)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return None
+    status = subprocess.run(["git", "-C", str(target), "status", "--porcelain", "-uall", "--", "."],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if status.returncode != 0:
+        raise InputError([f"git 状态查询失败：{status.stderr.strip()}"])
+    return [line for line in status.stdout.splitlines() if line.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="把 Story Extension 源装进消费工程（template 或 demo）")
     ap.add_argument("--source", required=True, help="扩展源码目录")
     ap.add_argument("--target", required=True, help="消费工程目录")
-    ap.add_argument("--dry-run", action="store_true", help="只输出计划，不写目标、不落清单")
+    ap.add_argument("--dry-run", action="store_true", help="只输出计划，不写目标")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
-    source = Path(args.source)
+    target = Path(args.target).resolve()
     try:
-        bridges = manifest_bridges(source)
-    except (Preflight, OSError, yaml.YAMLError) as exc:
-        problems = exc.problems if isinstance(exc, Preflight) else [f"源的 manifest.yaml 读不出：{exc}"]
-        result = InstallResult("preflight_failed", None, str(Path(args.target).resolve()), problems=problems)
-    else:
-        result = install_extension(source, Path(args.target), bridges, dry_run=args.dry_run)
+        dirty = git_dirty(target)
+        if dirty:
+            raise InputError(["目标有没提交的改动，先核对、提交或处理后再装：" + "；".join(dirty[:10])])
+        result = install_extension(Path(args.source), target, manifest_bridges(Path(args.source)),
+                                   dry_run=args.dry_run)
+    except (InputError, OSError, yaml.YAMLError) as exc:
+        problems = exc.problems if isinstance(exc, InputError) else [f"源的 manifest.yaml 读不出：{exc}"]
+        result = InstallResult("preflight_failed", None, str(target), problems=problems)
     for problem in result.problems:
         print(f"[publish] {problem}", file=sys.stderr)
-    if result.status == "write_failed":
-        print(f"[publish] 写入中途失败：按 {result.manifest_path} 与恢复表处理后再重新预检", file=sys.stderr)
     print(json.dumps(asdict(result), ensure_ascii=False, indent=1))
     return {"planned": 0, "installed": 0, "preflight_failed": 2}.get(result.status, 1)
 

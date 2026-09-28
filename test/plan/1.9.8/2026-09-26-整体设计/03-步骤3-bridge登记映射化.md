@@ -4,11 +4,11 @@
 
 ## 1. 源和目标
 
-用户入口仍为 story adapt <project_dir>。adapt-scan 从自身 scripts 所在位置确定扩展根，读取同一根下 manifest、skills、hooks、knowledge 和 bridges；目标通过 --target 指定；本版按用户裁定固定装在 doc/extensions，保留既有配置读取，不增加其它安装位能力。
+用户入口仍为 `story adapt <project_dir>`。正式对外适配从 demo/doc/extensions/skills/story-adaptation/scripts/adapt-scan.mjs 执行，源是 demo 中已安装的发布版；测试从已安装开发版的 template 或消费形态 fixture 执行。
 
-删除源侧 findRoot/framework.config.json 依赖和 --package 的源仓搜索。测试需另一来源时，直接执行该来源里的脚本。源可为开发 extensions，也可为已安装的消费扩展，依据同一相对布局，不自动寻找历史目录。
+定位、配置读取、YAML 依赖解析、参数行为（含 --package）回到 R197 实现：从脚本位置向上找所在消费工程，使用该工程的已安装扩展及宿主入口。目标为参数指定的真实标准工程。本版固定安装位 doc/extensions，保留 R197 的目标依赖检查和安装所有权规则。
 
-修改 adapt 的 SKILL、相关命令说明与检查调用，写清源是本次执行脚本所在扩展。真实目标的知识、name/description/adapted_for、adapters 所有权继续按当前合同处理。
+extensions 是源码存放位置；其中链接和命令按安装后的 doc/extensions 与宿主目标位置编写、验证。adapt 不直接消费开发目录 bridges/，发布安装器负责把这些源装到 demo 宿主位置。
 
 ## 2. bridge 源与映射
 
@@ -48,20 +48,17 @@ manifest 仍用当前 schema 1.0，provides.bridges 改为以下形态；本版�
 
 ## 3. adapt 改动
 
-- bridgesOf 返回 target/source 对；source 相对扩展根。解析失败和源缺失在任何目标写入前报告。
-- inWriteFace、写入循环和 --check 全部按同一映射判断，target 相对消费工程；目标范围及无关文件保护沿既有规则。
-- 映射 target 必须是目标内的相对文件路径，source 必须指向扩展源内真实文件；重复或越界映射明确报错。
-- target 在解析时形成同一规范化路径，重复判定、脏检查、写入、自检共用；路径中的 `.` 及 Windows 同物理路径的大小写写法不能绕过脏面。全部 source 在任何写入前确认是扩展内可读文件，并预读待写文本；目录误作源也必须零写入失败。
-- 按实际目标 Git 路径核脏覆盖，消费工程在维护仓子目录时不可把 Git 仓根相对路径错当工程相对路径。独立 target 与 demo 子目录两种输入均验证。
-- 升级演进记录登记本版及实际目标适配要求；新格式解析直接服务本版，不新增旧映射 fallback。只有目标需要实际人工处理的知识/对接/在途事项才列三类条目；纯自动定位/映射变化不制造停等，可用普通段落说明无额外人工适配动作。
-- 根的 verifier 维护装置与本映射无关。独立 framework 渲染命令的写入行为不成为 adapt 重装调度条件。
+- 以 R197 为基线，bridgesOf 读取新登记中的 target；安装和 --check 均从源消费工程的 target 宿主位置读取，再写入或核对目标工程同一路径。source 字段由发布安装器消费。
+- 保留 R197 的缺入口源检查、覆盖面脏检查、知识/对接/身份所有权、扩展段处理及自检；缺登记的宿主源时目标不写。
+- 退出为开发目录直接执行增加的取源、借目标 harness 解析源 YAML、参数拒绝、仓内子目录 Git 前缀换算/配置跟踪判断，以及 P1 返修的路径规范化、大小写折叠和源预读。--package 恢复 R197 行为，不增加兼容分支。
+- 同步 Skill、命令和升级演进说明：正式源来自 demo 发布版；测试源来自已安装副本。仅真实人工适配事项列入知识/对接/在途提示。
 
 ## 4. 验收和交回
 
-定向 adapt ownership/source kinds/bridge fixtures 同步新源结构，覆盖首装、升级、自检、缺源、坏映射、脏覆盖、两类来源及目标知识保护。节点语法检查通过；根 Story 宿主位退出，开发六份源齐全。
+adapt ownership/source kinds 的包 fixture 使用 package/doc/extensions、framework.config.json、所在工程 YAML 依赖及宿主位置入口。从已安装脚本执行，覆盖首装、升级、重复安装、自检、缺宿主源，以及知识、对接、身份和无关内容保护。六份入口按源工程宿主内容核对。
 
-消费链在固定 doc/extensions 下验：AGENTS 扩展段、bridge、Skill/作者页的下一条命令可定位并运行。工程根本身仍可带空格；这不等于支持自定义扩展安装位。R3 按用户裁定退出原需求，不再要求 bridgeText 或相关路径替换测试。
+M09 从登记 target 所在位置解析 bridge 正文链接；checker 执行器使用 --project-root 内安装的扩展。单测 DEV_EXT 保持消费形态，检查下一条命令能在消费根定位。固定 doc/extensions，不要求开发源独立运行。
 
-AC02 按允许面核 diff：manifest/bridges、adapt 脚本/说明、演进和必要入口路径；其余业务机制与知识保持 R197。AC05 在独立目标装开发源验六份入口，不要求 demo 1.9.7 与开发源相同。
+AC02 核 R197 对照：除登记解析及必要说明外，adapt 保持原定位与复制逻辑；业务 flow/hooks/rules/知识保持。AC05 先装开发版到 template，再由其中 adapt 安装独立目标，不要求 R197 demo 与开发版相等。
 
-交回源/目标实例、写入前失败证据、所有权结果和预算账。P1 总预算分摊见 [总览 §5](00-总览.md#5-预算与计量)。
+交回实际源/目标、六份入口、所有权保护、旧分支和专用测试退出证据。预算按总览 §5 复算；P1 先前通过不免除本次减法的复核。

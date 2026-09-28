@@ -72,3 +72,28 @@ def _install_dev_source() -> Path:
 DEV_EXT = _install_dev_source()
 #: 那个临时消费工程的根：按消费相对路径（`doc/extensions/...`）起脚本、读文件时的工作目录
 DEV_ROOT = DEV_EXT.parents[1]
+
+
+_INSTALLED: Path | None = None
+
+
+def installed_package() -> Path:
+    """用正式安装动作把开发源装进一个临时消费工程（扩展、六份入口、扩展段都到位），返回工程根。
+
+    adapt 按运行态执行：它的包是装好了的工程，从包里的脚本起跑。每个进程建一次。
+    """
+    global _INSTALLED
+    if _INSTALLED is None:
+        root = Path(tempfile.mkdtemp(prefix="story-installed-")) / "package"
+        atexit.register(shutil.rmtree, root.parent, True)
+        root.mkdir()
+        demo = REPO_ROOT / "demo"
+        for name in ("framework.config.json", "AGENTS.md", "CLAUDE.md"):
+            shutil.copy2(demo / name, root / name)
+        link_harness_yaml(root)
+        result = publish_to_demo.install_extension(
+            DEV_SOURCE, root, publish_to_demo.manifest_bridges(DEV_SOURCE))
+        if result.status != "installed":
+            raise RuntimeError(f"开发源装不进临时工程：{result.status} {result.problems or result.failed}")
+        _INSTALLED = root
+    return _INSTALLED

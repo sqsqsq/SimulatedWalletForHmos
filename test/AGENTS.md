@@ -102,6 +102,8 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统，不
 
 ### 3.2 Extension 结构
 
+- **按运行位置设计**：根 `extensions/` 只存放开发源；链接、命令和相对路径按安装到消费工程的 `doc/extensions/` 及宿主目标位置编写、验证。测试先装入隔离 template；正式发布更新 demo；对外 adapt 从 demo 中已安装的发布版执行。
+
 - **两层一桥**：机制层是 `doc/extensions` 中 `knowledge/` 以外的 `skills/`、`hooks/`、`rules/*.overlay.yaml`、合同、`manifest.yaml`
   与宿主跳板，基于 Framework 公共扩展点运行，对目标仓模块名、SDK、业务名、绝对路径和测试 Case 零强依赖；知识层是 `knowledge/` 的
   项目事实、规约和设计模式，本仓内容是可适配样板；Adaptation 按所有权接入目标仓，知识仍由目标维护，不形成第三套所有权。

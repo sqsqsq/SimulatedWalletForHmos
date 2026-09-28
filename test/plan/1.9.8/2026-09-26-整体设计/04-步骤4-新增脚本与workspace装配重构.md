@@ -1,6 +1,6 @@
 # 工作分册 04：安装动作、漂移检查与 workspace 装配
 
-属于 [总览 P2](00-总览.md#2-三个实施包)，前置 P1 通过。先在临时 fixture 验安装与错误路径，再按 05 初始化 demo，最后做完整装配演练。产品源以本版允许面为限。
+属于 [总览 P2](00-总览.md#2-三个实施包)，前置 P1 通过。先在临时 fixture 验安装与错误路径，再核 05 已完成的初始化证据，最后做完整装配演练。产品源以本版允许面为限。
 
 ## 1. 统一安装动作
 
@@ -10,70 +10,29 @@
 python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 ```
 
-名称保留，source/target 必须显式给出。测试目标是隔离 template，发布目标是 demo。目标安装位按本版约定为 doc/extensions，保持既有配置读取；脚本不根据 dev/release 切换目录、不读取历史 commit。
+调用者明确给出 source/target。测试将当前 extensions 装进一次性 template；发布时将本次待发布 extensions 装进 demo，核对后随发布提交入库。安装器不选择 Git 版本。R197 首次初始化的导出与调用见 05，已完成的初始化不重跑。
 
-正常 CLI 从 source/manifest.yaml 读取当前 target/source 对。CLI 和 05 的一次性初始化调用者都使用本节定义的 install_extension；内部函数只消费明确文件对。
+目标只有 demo 及其临时消费副本，固定安装位 doc/extensions。向 demo 发布前，调用者检查 demo 的非忽略 Git 状态为空；查询失败或有修改时停止并报告。维护者在核对、提交或处理现有修改后再发布。template 无 Git 干净要求。
 
-写入前完成：源清单和桥接源存在、目标配置可读、目标在显式目录内、source/target 不互相覆盖、扩展段边界有效，以及发布目标覆盖面无未保存的人工工作。dry-run 只输出计划，不写目标或运行状态。
+安装顺序：枚举源 → 整体替换目标 doc/extensions → 按登记写宿主入口 → 更新 AGENTS/CLAUDE 的 story-ext 标记区。扩展目录包含该源的完整示范知识，源中不存在的旧文件随替换退出；标记区外保持，无标记沿既有首装语义追加，破损标记报告失败。真实目标的知识保护由 adapt 承担。
 
-目标在显式目录内按真实落点判断：扩展目录、bridge 和入口文件的父路径链都要核符号链接/重解析点，越出明确目标根或不能确定时写前拒绝，不能只核相对字符串。正常源的符号链接检查不替代目标检查。
+正常 CLI 从 manifest 的 target/source 对构造文件对：source 相对扩展源码根，target 相对消费根。`.agents/skills/story/SKILL.md` 按映射安装；未登记的 `.agents/skills/story-adaptation/SKILL.md` 保持从 demo 继承的内容。dry-run 只输出源集合、扩展替换位置、入口文件对及标记区位置，不写目标。
 
-实际写入面：
+### 1.1 源集合
 
-1. 按 §1.1 枚举源内容，整体安装到目标 extension_dir，含该源的完整示范知识；源集合中缺失的旧机制文件退出。开发源包含未提交修改和新增未跟踪文件。
-2. bridge 文件对写到目标宿主路径；doc/extensions 固定安装位保持源内容，不做其它安装位的路径替换。
-3. 用同一源的 AGENTS.section.md 重写 AGENTS/CLAUDE 的 story-ext 标记区，区外字节保持；无标记按现有首装语义追加，破损/重复标记在写前报告。
+`enumerate_source(source)` 是安装、dry-run、DEV_EXT 和结果核对共用的唯一枚举算法，返回按 POSIX 相对路径排序的文件集合。读取实际目录中的当前文件，包含未提交修改和新增未跟踪文件。
 
-输出清单到维护域 output/story：源路径和版本、目标、实际文件/摘要、标记区以及完成/失败面。清单用来核同源与定位失败，不引入新的运行调度状态。
+排除源根 adapt/、名称以 .adapt- 开头的文件/目录，以及任意层级 .git、node_modules、__pycache__、.pytest_cache 和 .pyc/.pyo 文件。排除集合只在枚举函数维护；普通隐藏资产保留。保留现有源枚举对链接、不可读文件及大小写冲突的诊断，不追加目标路径链预检。
 
-本次 `.agents/skills/story-adaptation/SKILL.md` 不在 Extension 映射写入面，安装保持它；template 中的 `.agents/skills/story/SKILL.md` 则按开发版映射替换。清单区分安装修改与从 demo 继承的 Framework 保持面，不能因名字都带 story 就一起覆盖。
+### 1.2 共同调用与失败
 
-缺源等预检失败时目标不写。template 中途失败后重建；demo 中途失败先按 §1.3 恢复、重新通过预检，再安装，重试不绕过脏文件检查。
+同一文件提供 `install_extension(source, target, bridge_files, *, dry_run=False)`；`bridge_files` 是 `{source: Path, target: str}` 文件对。正常 CLI 解析当前 manifest；R197 初始化调用者给出导出仓宿主位置的源文件。导入模块不运行 CLI。
 
-### 1.1 源集合的唯一算法
+返回 `{status, source_version, target, planned, completed, failed}`，status 为 planned、installed、preflight_failed 或 write_failed；路径列表只作为本次调用结果，不持久化安装状态。CLI stdout 输出该结果，stderr 输出诊断；退出码分别为成功0、输入读取/解析失败2、写入失败1。发现错误即停止，失败项含路径和原因，completed 只报告实际完成项。读源、配置或登记失败如实报告；不承诺所有异常都在写入前发现。
 
-`publish_to_demo.py` 内 `enumerate_source(source)` 返回相对源根 POSIX 路径排序的文件集合，安装、dry-run、清单和安装结果核对均使用它。遍历实际目录，不使用 git ls-files 筛选：已修改文件按当前字节读取，新文件即使 untracked 也入集合。
+template 安装或核对失败即作废，从 demo 重新装配，失败副本不启动 Case。demo 发布失败停止，维护者检查 Git diff，按发布前基线处理本次安装改动；人工后来修改先保留和核对。demo 恢复干净后再安装。脚本不负责回滚；不增加安装清单、备份、恢复表、原子替换、源冻结/途中复核或逐路径脏检查。
 
-明确排除：源根的 `adapt/`、名称以 `.adapt-` 开头的文件/目录；任意层级 `.git`、`node_modules`、`__pycache__`、`.pytest_cache`；任意 `.pyc`、`.pyo` 文件。该清单唯一放在枚举函数使用的常量中，其他调用者不复制。未列出的隐藏文件和代码资产照常纳入；遇符号链接/重解析点、不可读文件或大小写冲突路径时报告，不跟随到源外。以后出现真实运行态再按责任修改清单，不用宽泛后缀删除可能的业务资产。
-
-开发调用者直接给工作区 extensions；发布调用者从指定发布提交导出干净源再给安装器。安装器不解析 Git 提交、不自动读 HEAD、不自行选发布版本。源字节和清单在预检固定；应用前发现源变化时失败，避免同一安装混入两次编辑。
-
-installed 出口前还须核完整源集合/摘要未变，包含本次未重写、已写、增删文件及 bridge/扩展段来源。源变化不得成功；使用原失败清单交回，不自动重选一版源。template 的后置比较不能代替独立发布 API 的这项合同。
-
-### 1.2 共同函数与结果合同
-
-新增职责均位于同一个 `test/scripts/publish_to_demo.py`，导入模块不执行 CLI。
-
-```python
-install_extension(source: Path, target: Path,
-                  bridge_files: list[BridgeFile], *, dry_run: bool = False) -> InstallResult
-```
-
-`BridgeFile` 为 `{source: Path, target: str}`；source 是已存在的明确源文件，可由初始化调用者指向导出仓根宿主位；target 是消费工程相对文件路径。正常 CLI 将 manifest 的 source 先对扩展根解析后传入。重复 target、目标越界和源目标重叠在写入前失败。
-
-`InstallResult` 为 `{status, source_version, target, planned, completed, failed, manifest_path}`。status 取 `planned|installed|preflight_failed|write_failed`；三个列表均为目标相对路径条目。CLI stdout 输出该 JSON，stderr 输出诊断；退出码 0 为 planned/installed，2 为预检失败，1 为写入失败。dry-run 的 manifest_path 为 null，不写文件。
-
-非 dry-run 清单写入维护仓 `output/story/install-<唯一目录>/manifest.json`，目录由标准库创建唯一名；同目录 `before/<目标相对路径>` 保存覆盖/删除前原始字节。每项包含 `path, operation(add|replace|delete), before_sha256, before_path, desired_sha256, result(pending|done|failed), error`，无文件用 null。摘要为原始字节完整 SHA-256。写前先落完整计划和备份，备份失败不动目标；每个文件完成后更新清单。此清单只服务这次文件操作和恢复，不参与 Story/Framework 状态。
-
-预检只对覆盖面检查脏文件。位于 Git 内的 demo 采用仓根相对路径转目标相对路径核对；不在 Git 内的隔离 template 可以安装。要发布的 demo 初次迁移内容须先形成可回查的提交基线。目录删除仅作用于明确列出的文件，空目录随后收拢；不删除清单外的目标内容。目标已有排除运行态保持，template 的消费运行态由装配步骤清理。
-
-### 1.3 发布失败的恢复表
-
-恢复由维护者消费安装清单，不增加 restore 子命令。先核目标绝对路径仍属于该次 target；每项核 current、before、desired 三个摘要，null 表示不存在。
-
-| 现场 | 动作 |
-|---|---|
-| current == before | 已在原状，保持 |
-| replace 且 current == desired | 从 before_path 恢复原字节 |
-| delete 且 current 为 null | 从 before_path 恢复原字节 |
-| add 且 current == desired | 删除本次新增的该文件 |
-| 其他内容或备份缺失/损坏 | 保持现场，列冲突路径与三方摘要，停止宣称完整恢复 |
-
-单文件使用同目录临时文件加原子替换，临时路径登记在清单；异常临时文件仅在仍符合记录且无人修改时清理。进程在写入后、登记 done 前中断，也按字节而非 result 标志判断恢复。清单不能证明来源的部分写入保留为冲突。
-
-“登记临时路径”指先持久化到磁盘清单，再创建临时文件；只改内存 item 不算登记。清单更新也采用原子替换，清单保存失败即停止后续目标动作。验证包含不经过异常收尾的进程中断，不能只用仍进入 except/save 的 OSError 代替。
-
-恢复后逐项重验安装面及 git 状态。无冲突且等于安装前基线才重新进入预检；有人工新增修改时交其责任人处理，不能为了重试覆盖它。template 失败则保留证据、整次重建，不执行 demo 的恢复操作。
+发布者在操作期间保持待发布源稳定，安装后核源与安装结果，再记录发布源身份和 demo 提交。该操作核对沿用装配的同源检查，不建立源快照机制。
 
 ## 2. workspace 装配
 
@@ -97,13 +56,13 @@ check_framework_drift.py 读取 main:framework/RELEASE-MANIFEST.json 和 demo/fr
 
 ## 4. 离线验收
 
-- 安装正例核所有文件、目标配置、固定 doc/extensions、标记区外保护和重复执行；缺源/错目标/坏映射的负例核目标未写。
+- 安装正例核所有文件、目标配置、固定 doc/extensions、标记区外保护和重复执行；源/登记读取错误返回诊断；写入错误返回失败，不产生备份或安装日志目录。
 - 新增未跟踪 mjs 和已修改 tracked 文件都进入开发 template；同级 node_modules、.adapt-*、adapt、__pycache__、pyc 不进入源集合，普通隐藏资产保留。
-- 在 replace/delete/add 三种操作后分别中断，按恢复表回到原字节；中断后再人工编辑的文件保持并报告冲突；恢复前的再次发布仍被脏面检查拒绝。
+- demo 有非忽略修改或 Git 查询失败时，发布与装配均在写入/复制前停止；干净 demo 可以继续。安装失败报告实际完成项，template 不进入 Case；维护者通过 Git 处理失败的 demo 发布后可重试。
 - fixture 验卫生断言、运行态排除、hooks 依赖、失败 template 不启动 Case；合法消费路径保留 framework/...、doc/extensions/...。
 - 核两份 .agents 在 demo→template 的内容来源：story 按开发映射变，story-adaptation 按 Framework 保持。四份消费钩子配置及脚本随复制在 template，Codex command 无旧机器路径，命令从消费根可解析；不声称未经实测的宿主自动触发成立。
 - 完整演练：R197 demo → 开发版 template → 两个独立 Case 副本；比较安装面同源及 demo 前后不变。之后一次使用新开发源重建，验证不会残留上一版已删除文件。
 - 漂移同版本、版本差、缺文件/坏 JSON 正反例通过。
 - 在开发版 template 上运行失效形态与集成相关测试；源静态扫描仍以 extensions 为对象。
 
-本分册不启动真实 CLI。交回清单、演练/失败证据、实际路径、demo 保持证据及预算；P2 安装/装配属于维护域，不计预算，正确性仍按本分册验收，见 [总览 §5](00-总览.md#5-预算与计量)。
+本分册不启动真实 CLI。交回调用结果、演练/失败证据、实际路径、demo 保持证据及预算；P2 安装/装配属于维护域，不计预算，正确性仍按本分册验收，见 [总览 §5](00-总览.md#5-预算与计量)。

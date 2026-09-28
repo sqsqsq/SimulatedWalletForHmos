@@ -25,31 +25,16 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
 import yaml
-from ext_workspace import link_harness_yaml
+from ext_workspace import installed_package, link_harness_yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PKG_EXT = REPO_ROOT / "extensions"
-#: 包登记的跳板：target（相对目标工程）→ source（相对扩展根），从真包 manifest 读
-BRIDGES = tuple((b["target"], b["source"]) for b in
-                yaml.safe_load((PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["bridges"])
-
-
-def scan_of(ext: Path) -> Path:
-    """包就是扩展根：执行它自己的 adapt-scan。"""
-    return ext / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
-
-
-def place_bridges(at: Path) -> None:
-    """按真包的登记把跳板写到目标工程里——装好了的目标长这样。"""
-    for rel, src in BRIDGES:
-        dst = at / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(PKG_EXT / src, dst)
-
-
-SCAN = scan_of(PKG_EXT)
+#: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
+PKG_ROOT = installed_package()
+PKG_EXT = PKG_ROOT / "doc" / "extensions"
+SCAN = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
+#: 包登记的宿主入口（target），正文在包工程的同一路径
+LAUNCHERS = tuple(b["target"] for b in yaml.safe_load(
+    (PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["bridges"])
 
 
 class AdaptCase(unittest.TestCase):
@@ -75,7 +60,10 @@ class AdaptCase(unittest.TestCase):
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         link_harness_yaml(self.target)
-        place_bridges(self.target)
+        for rel in LAUNCHERS:
+            dst = self.target / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(PKG_ROOT / rel, dst)
         self.ext = self.target / "doc" / "extensions"
         self.scripts = self.ext / "skills" / "story" / "scripts"
         self.core = self.scripts / "core"
@@ -103,7 +91,8 @@ class AdaptCase(unittest.TestCase):
 
     def adapt(self, mode: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(SCAN), mode, "--target", str(self.target)],
+            ["node", str(SCAN), mode, "--target", str(self.target),
+             "--package", str(PKG_ROOT)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def out(self, proc: subprocess.CompletedProcess) -> str:
@@ -401,12 +390,17 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
         判的是**包**不是目标，所以这条用临时包跑：把真包复制一份、放一个脚本进去。
         """
         pkg = Path(self._tmp.name) / "pkg"
-        shutil.copytree(PKG_EXT, pkg, ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
-        (pkg / "skills" / "story" / "scripts" / "loose.mjs").write_text(
+        pkg.mkdir()
+        shutil.copy(self.target / "framework.config.json", pkg / "framework.config.json")
+        shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
+                        ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
+        link_harness_yaml(pkg)
+        (pkg / "doc" / "extensions" / "skills" / "story" / "scripts" / "loose.mjs").write_text(
             "export const x = 1;\n", encoding="utf-8")
 
         proc = subprocess.run(
-            ["node", str(scan_of(pkg)), "--check", "--target", str(self.target)],
+            ["node", str(SCAN), "--check", "--target", str(self.target),
+             "--package", str(pkg)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(1, proc.returncode, "包的 scripts 根下有脚本却判通过了")
         self.assertIn("loose.mjs", self.out(proc))

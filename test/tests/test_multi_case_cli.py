@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+import subprocess
 import sys
 import tempfile
 import shutil
@@ -851,6 +852,12 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         (demo / "framework.config.json").write_text("{}", encoding="utf-8")
         for name in ("AGENTS.md", "CLAUDE.md"):
             (demo / name).write_text("# demo\n\n## 实例扩展\n\n", encoding="utf-8")
+        (demo / ".gitignore").write_text("node_modules/\ndoc/features/\nframework/harness/state/*\n"
+                                         "!framework/harness/state/.gitkeep\n", encoding="utf-8")
+        # 与真实布局一致：demo 是外层仓里的子目录，自己不是仓
+        for cmd in (["init", "-q"], ["add", "-A"],
+                    ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "发布基线"]):
+            subprocess.run(["git", "-C", str(root), *cmd], check=True, capture_output=True)
         return demo
 
     def build_template(self, demo: Path, suite_id: str) -> Path:
@@ -889,8 +896,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         self.assertEqual(snapshot, after, "装配写了 demo")
         boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")
         self.assertEqual("installed", boundary["installed"]["status"])
-        self.assertTrue(Path(boundary["installed"]["manifest_path"]).is_relative_to(root / "suite"),
-                        "安装清单没落在本 suite 的证据目录")
+        self.assertTrue(boundary["demo"]["head"], "没记下装配所用的 demo 提交")
 
     def test_a_maintenance_directory_in_demo_stops_the_assembly(self) -> None:
         for name in sorted(run_multi_case.MAINTENANCE_TOP_LEVEL):
@@ -906,11 +912,42 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                 self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists(),
                                  "结构漂移时还是建了 template")
 
+    def test_an_unclean_demo_is_not_assembled(self) -> None:
+        """demo 是发布基线：业务或宿主文件有没提交的改动、git 查询失败，都不复制、不建 template。"""
+        cases = {
+            "业务文件改了": lambda demo: (demo / "01-Product/src/main/main.ets").write_text("人改了", encoding="utf-8"),
+            "宿主文件新增": lambda demo: (demo / ".opencode/plugin/extra.js").write_text("y", encoding="utf-8"),
+        }
+        for name, dirty in cases.items():
+            with self.subTest(name):
+                root = Path(tempfile.mkdtemp(prefix="story-multi-dirty-"))
+                self.addCleanup(shutil.rmtree, root, True)
+                demo = self.fake_demo(root)
+                dirty(demo)
+                suite_id = f"dirty-demo-{os.getpid()}-{len(name)}"
+                with self.assertRaises(SystemExit) as caught:
+                    self.build_template(demo, suite_id)
+                self.assertIn("没提交的改动", str(caught.exception))
+                self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists())
+        with self.subTest("git 查询失败"):
+            root = Path(tempfile.mkdtemp(prefix="story-multi-gitfail-"))
+            self.addCleanup(shutil.rmtree, root, True)
+            demo = self.fake_demo(root)
+            suite_id = f"git-fail-{os.getpid()}"
+            failing = mock.patch.object(run_multi_case.publish_to_demo, "git_dirty",
+                                        side_effect=run_multi_case.publish_to_demo.InputError(["模拟失败"]))
+            with failing, self.assertRaises(SystemExit) as caught:
+                self.build_template(demo, suite_id)
+            self.assertIn("查不出", str(caught.exception))
+            self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists())
+
     def test_a_template_whose_install_fails_is_not_used(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-multi-install-"))
         self.addCleanup(shutil.rmtree, root, True)
         demo = self.fake_demo(root)
         (demo / "AGENTS.md").write_text("# demo\n<!-- story-ext:begin -->\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "坏标记"],
+                       check=True, capture_output=True)
         with self.assertRaises(SystemExit) as caught:
             self.build_template(demo, f"install-fail-{os.getpid()}")
         self.assertIn("template 作废", str(caught.exception))

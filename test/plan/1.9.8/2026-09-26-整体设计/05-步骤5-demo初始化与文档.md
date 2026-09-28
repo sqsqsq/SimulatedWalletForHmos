@@ -11,11 +11,11 @@
 5. 核四类安装面：机制和知识等于 R197，bridge 按 R197 已登记集合核；AGENTS/CLAUDE 扩展段来自 R197，区外为 demo 自身内容。开发新增 cursor/agents 的六份要求在开发 template 验，不套到旧发布基线。
 6. 核 root/demo verifier 装置逐字节一致、demo 业务/framework 保持面无意外变化，然后提交 demo 发布基线。证据保存命令、发布身份、清单和核对结果。
 
-这只是旧布局发布文件的一次性落位，不增加长期兼容功能。后续正式发布用当前 source/target 安装 CLI；本版范围内 demo 基线保留 1.9.7，开发源 manifest 在本版产品首次改动时按既有发布纪律标 1.9.8。
+这只是旧布局发布文件的一次性落位，不增加长期兼容功能。后续正式发布用当前 source/target 安装 CLI；开发和测试期间 demo 基线保留 1.9.7，发布 1.9.8 时用本次待发布 extensions 更新 demo 并随发布入库；开发源 manifest 在本版产品首次改动时按既有发布纪律标 1.9.8。
 
 R197 已固定为 `c026a70497b511b399c7e15dabd153f852b3a2fe`。两份 `.agents/skills/{story,story-adaptation}/SKILL.md` 由 P1 随 Framework 物化迁入，另归物化保持面，不追加到 R197 的四份 manifest bridge 文件对；初始化安装必须保持它们原字节。四份钩子配置也按消费配置面核，唯 Codex Stop command 的旧机器路径按 01 §1.1 单列例外。这样 R197 安装面和 Framework 保持面各有来源，不能把未列在 bridge 清单的入口误报为残留或自动删除。
 
-初始化缺文件先回 R197 清单核实，不混用当前开发源补齐；源版本不一致不继续。失败按 04 §1.3 恢复并重新通过预检，再从同一源安装。完成后进入 04 的装配演练。
+初始化缺文件先回 R197 清单核实，不混用当前开发源补齐；源版本不一致不继续。失败停止，由维护者通过 Git 核对和处理本次改动，恢复干净后再从同一源安装（04 §1.2）。完成后进入 04 的装配演练。
 
 ### 1.1 可执行的导出和调用顺序
 
@@ -29,7 +29,7 @@ Expand-Archive -LiteralPath scratch/release-1.9.7.zip -DestinationPath $export19
 
 四份宿主文件清单以 R197 manifest 校验；若最终发布集合变化，导出其实际登记的路径并记录，不从本版六份入口补足。导出前清点 commit 树，每个登记项必须存在。压缩包/导出目录属于一次性证据；使用实际 shell 参数数组传路径，不拼接不可信命令。
 
-初始化调用者使用 `importlib.util.spec_from_file_location` 导入 `test/scripts/publish_to_demo.py`，构造 BridgeFile，先 `install_extension(export_root/'doc/extensions', demo, pairs, dry_run=True)`；退出码成功及清单核对后调用同一函数的 dry_run=False。两次输入摘要须一致。调用者只解析这次 R197 清单，产品安装器保持当前映射语义。
+初始化调用者使用 `importlib.util.spec_from_file_location` 导入 `test/scripts/publish_to_demo.py`，构造 BridgeFile，先 `install_extension(export_root/'doc/extensions', demo, pairs, dry_run=True)`；返回 status=planned 且计划核对后调用同一函数的 dry_run=False。调用者只解析这次 R197 清单，产品安装器保持当前映射语义。
 
 四类核对分别为：枚举算法所得机制文件、激活知识及其实际文件、R197 bridge 集合、两份入口的扩展标记区。使用导出字节/确定性标记区渲染结果比较，不以 manifest.version 相同代替内容一致。记录 R197、归档 hash、dry-run 计划、实际结果和 demo 提交；该提交是随后不变性验证的发布基线。
 

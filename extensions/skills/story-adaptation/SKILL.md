@@ -5,8 +5,8 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
 
-**包** = 执行的那份 `adapt-scan.mjs` 所在的扩展（脚本往上三层是扩展根）；要装另一个来源，就执行那个来源里的脚本。
-**目标** = `/story adapt <目标工程>` 的参数，扩展装在目标 `framework.config.json > paths.extension_dir`（缺省 `doc/extensions`）。
+**包** = 发起本命令的仓库（缺省当前仓）。**目标** = `/story adapt <目标工程>` 的参数。
+路径相对各自 `framework.config.json > paths.extension_dir`（缺省 `doc/extensions`）。
 
 ## 所有权由目录表达
 
@@ -52,14 +52,13 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 ### 1 前置（脚本自己查，不过就停）
 
 ```
-node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目标工程根>
+node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目标根> --package <包根>
 ```
 
 它先查三件，任一不满足就退出并点名：
 
-- **目标在 git 管理下**（仓库根或仓库里的子目录都行，目标的 `framework.config.json` 已被所在仓跟踪）、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
-- **目标接入了 framework**：目标根有 `framework.config.json`，`framework/harness` 装好了依赖（包的 manifest 用它的 `yaml` 包读）；
-- **包的跳板登记完整**：`provides.bridges` 每项一对 `target`（相对目标工程）与 `source`（相对扩展根），源文件都在、目标不越界、不重复。
+- **目标是 git 仓库的根**、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
+- **包与目标都读得到**（各自的 `framework.config.json` 与包的 `manifest.yaml`）。
 
 **不替用户动他的工作区**：不自动 stash、不自动提交。报错会点名脏的路径，让他自己先提交或暂存。
 
@@ -92,7 +91,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 ### 4 确认
 
 ```
-node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目标工程根>
+node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目标根> --package <包根>
 ```
 
 五组，全过退出 0：

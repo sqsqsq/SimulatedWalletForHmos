@@ -39,8 +39,6 @@ REPO_ROOT = TEST_ROOT.parent
 DEMO_ROOT = REPO_ROOT / "demo"
 #: 开发源：装配时装进隔离 template（含未提交的修改与新文件）
 DEV_SOURCE = REPO_ROOT / "extensions"
-#: 消费工程里放宿主入口的目录（Framework 物化与 Story 入口都在这里）
-HOST_DIRS = (".agents", ".cac", ".claude", ".codex", ".cursor", ".opencode")
 CASES_ROOT = TEST_ROOT / "cases"
 CONFIG_PATH = TEST_ROOT / "config" / "test.yaml"
 CFG = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
@@ -220,30 +218,30 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
     return copied
 
 
-def demo_state() -> dict[str, Any]:
-    """demo 的结构与现状：顶层有没有维护目录、git 状态、安装面各文件摘要。装配前后各取一次比。"""
+def demo_check() -> str:
+    """demo 是发布基线：顶层不许有维护目录，非忽略的 git 状态必须干净，git 查询要成功。返回当前提交。"""
     drift = sorted(p.name for p in DEMO_ROOT.iterdir() if p.is_dir() and p.name in MAINTENANCE_TOP_LEVEL)
-    status = subprocess.run(["git", "-C", str(DEMO_ROOT), "status", "--porcelain", "-uall", "--", "."],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
-    # 安装面按目录取，不解析 demo 里装的是哪一版的登记格式：扩展目录、两份入口文件、各宿主目录
-    face = [DEMO_ROOT / "doc" / "extensions", *(DEMO_ROOT / name for name in publish_to_demo.ENTRIES),
-            *(DEMO_ROOT / host for host in HOST_DIRS)]
-    digests: dict[str, str] = {}
-    for item in face:
-        files = [item] if item.is_file() else sorted(
-            p for p in item.rglob("*") if p.is_file() and "node_modules" not in p.relative_to(DEMO_ROOT).parts)
-        for path in files:
-            digests[path.relative_to(DEMO_ROOT).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return {"structure_drift": drift, "git_status": status.stdout, "digests": digests}
+    if drift:
+        raise SystemExit(f"[multi] demo 顶层出现维护目录 {drift}：维护材料混进了消费工程，先挪回维护域")
+    try:
+        dirty = publish_to_demo.git_dirty(DEMO_ROOT)
+    except publish_to_demo.InputError as exc:
+        raise SystemExit(f"[multi] demo 的 git 状态查不出，不装配：{exc}") from exc
+    if dirty is None:
+        raise SystemExit(f"[multi] demo 不在 git 里，无从确认它是发布基线：{DEMO_ROOT}")
+    if dirty:
+        raise SystemExit("[multi] demo 有没提交的改动，不装配（先核对、提交或处理）：" + "；".join(dirty[:10]))
+    head = subprocess.run(["git", "-C", str(DEMO_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
+    return head.stdout.strip()
 
 
-def install_dev_source(template: Path, evidence_root: Path) -> dict[str, Any]:
+def install_dev_source(template: Path) -> dict[str, Any]:
     """在 template 里装开发源，再核装上的与开发源逐字节相同；不成立即抛错，template 作废。"""
     result = publish_to_demo.install_extension(
-        DEV_SOURCE, template, publish_to_demo.manifest_bridges(DEV_SOURCE), evidence_root=evidence_root)
+        DEV_SOURCE, template, publish_to_demo.manifest_bridges(DEV_SOURCE))
     if result.status != "installed":
-        raise SystemExit(f"[multi] template 装开发源失败（{result.status}）：{result.problems or result.failed}"
-                         f"——template 作废，不建 Case；清单 {result.manifest_path}")
+        raise SystemExit(f"[multi] template 装开发源失败（{result.status}）：{result.problems}"
+                         "——template 作废，不建 Case，从 demo 重新装配")
     installed = template / "doc" / "extensions"
     mismatch = [rel for rel in publish_to_demo.enumerate_source(DEV_SOURCE)
                 if (installed / rel).read_bytes() != (DEV_SOURCE / rel).read_bytes()]
@@ -253,19 +251,16 @@ def install_dev_source(template: Path, evidence_root: Path) -> dict[str, Any]:
                if (template / b.target).read_bytes() != b.source.read_bytes()]
     if mismatch or extra or bridges:
         raise SystemExit(f"[multi] template 与开发源不同源：内容不同 {mismatch[:5]}、多出 {extra[:5]}、入口 {bridges}")
-    return {"status": result.status, "source_version": result.source_version,
-            "changed": len(result.completed), "manifest_path": result.manifest_path}
+    return {"status": result.status, "source_version": result.source_version, "changed": len(result.completed)}
 
 
 def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
     """建一份短路径的工作区模板：demo 消费工程减去运行态，再装上当前开发源。
 
-    顺序固定：核 demo 结构与现状 → 复制 → 装开发源 → 核同源 → 核 demo 没被写过。任一步不成立即停，
+    顺序固定：核 demo（结构正确、git 干净）→ 复制 → 装开发源 → 核同源 → 核 demo 仍干净。任一步不成立即停，
     template 作废、不建 Case。发布基线（demo）与开发版（template）不混装。
     """
-    before = demo_state()
-    if before["structure_drift"]:
-        raise SystemExit(f"[multi] demo 顶层出现维护目录 {before['structure_drift']}：维护材料混进了消费工程，先挪回维护域")
+    demo_head = demo_check()
     workspace_root = (Path(tempfile.gettempdir()) / "sw-story" / suite_id).resolve()
     template = (workspace_root / WORKSPACE_TEMPLATE_NAME).resolve()
     if not template.is_relative_to(workspace_root):
@@ -278,13 +273,12 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / WORKSPACE_SEARCH_IGNORE).write_text(WORKSPACE_SEARCH_RULE, encoding="utf-8")
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
-    installed = install_dev_source(template, suite_root)
-    after = demo_state()
-    if after != before:
-        raise SystemExit("[multi] 装配前后 demo 不一致：装配只应写 template，先查清是谁写了 demo")
+    installed = install_dev_source(template)
+    if demo_check() != demo_head:
+        raise SystemExit("[multi] 装配前后 demo 的提交变了：装配只应写 template，先查清是谁动了 demo")
     write_json(suite_root / "workspace-boundary.json", {
         "schema_version": 3,
-        "demo": {"git_status": before["git_status"], "install_face_files": len(before["digests"])},
+        "demo": {"head": demo_head},
         "copied": sorted(copied),
         "excluded": sorted(
             [f"{name}/**" for name in WORKSPACE_EXCLUDED_DIR_NAMES]

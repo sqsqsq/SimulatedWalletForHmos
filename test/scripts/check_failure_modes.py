@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import posixpath
 import re
 import shutil
@@ -57,8 +56,6 @@ LEDGER = REPO_ROOT / "test" / "regression" / "failure-modes.yaml"
 DEFAULT_EXTENSION_DIR = REPO_ROOT / "extensions"
 #: 缺省的消费工程：维护仓里的 demo。开发版集成检查显式给装好开发源的工程（--project-root）。
 DEFAULT_PROJECT_ROOT = REPO_ROOT / "demo"
-#: 验证用的 framework harness：给临时目标接 yaml 依赖用
-HARNESS = DEFAULT_PROJECT_ROOT / "framework" / "harness"
 #: 本次检查的消费工程（main 按 --project-root 设定）。执行真实脚本用它里面装好的扩展：
 #: 扩展的脚本只在消费工程里跑得起来（YAML 读取借工程的 framework harness），开发源只做静态扫描。
 PROJECT_ROOT = DEFAULT_PROJECT_ROOT
@@ -1547,36 +1544,17 @@ def _git(cwd: Path, *args: str) -> None:
                    encoding="utf-8", errors="replace")
 
 
-def _link_harness_yaml(target: Path) -> None:
-    """临时目标接上真实 harness 的 ``yaml`` 包：adapt 用目标的 framework 读包的 manifest。"""
-    link = target / "framework" / "harness" / "node_modules" / "yaml"
-    if link.exists():
-        return
-    link.parent.mkdir(parents=True, exist_ok=True)
-    source = HARNESS / "node_modules" / "yaml"
-    if sys.platform == "win32":
-        import _winapi
-        _winapi.CreateJunction(str(source), str(link))
-    else:
-        os.symlink(source, link, target_is_directory=True)
-
-
 def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess:
-    """把目标做成一个提交过的 git 仓，施加 ``after/`` 的变更，再跑包里真实的 ``--check``。
+    """把目标做成一个提交过的 git 仓，施加 ``after/`` 的变更，再跑真实 ``--check``。
 
-    ``package`` 是扩展根：包就是 adapt 脚本所在的扩展。夹具包只放判据相关的片段，执行器
-    放进真实的那一份；目标装的是同一版包，扩展目录里同样带着它。
+    核对靠 `git diff`：没有基线提交就没有「哪些文件变了」，那时脚本报的是「目标不是
+    git 仓库」，与「四项核对判不判得出」不是同一件事。所以先 init + commit，
+    再把 ``after/``（写入后的状态）盖上去——差集就是这次适配动过的东西。
 
+    ``package`` 是装好扩展的工程；执行器是消费工程里装的那份 adapt（运行态），``--package`` 指向包工程。
     判定不在这里重实现：调真实脚本，退出码即结论（同 M15 / M18 的做法）。
     """
-    script = package / ADAPT_SCRIPT
-    if not script.exists():
-        real = (REPO_ROOT / "extensions" / ADAPT_SCRIPT).read_bytes()
-        ext_rel = json.loads((target / "framework.config.json").read_text(encoding="utf-8")) \
-            .get("paths", {}).get("extension_dir", "doc/extensions")
-        for at in (script, target / ext_rel / ADAPT_SCRIPT):
-            at.parent.mkdir(parents=True, exist_ok=True)
-            at.write_bytes(real)
+    script = executor_ext() / ADAPT_SCRIPT
     _git(target, "init", "-q")
     _git(target, "add", "-A")
     _git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "baseline")
@@ -1587,9 +1565,8 @@ def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess
                 dst = target / src.relative_to(after)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(src.read_bytes())
-    _link_harness_yaml(target)
     return subprocess.run(
-        ["node", str(script), "--check", "--target", str(target)],
+        ["node", str(script), "--check", "--target", str(target), "--package", str(package)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
 
 
@@ -1601,13 +1578,13 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
     目标自己实现的对接层 ③ 入口文件的扩展段或标记区没写进去。只要有一种漏过，
     「适配完成」就只是句口号——而这三件恰好是升级唯一能造成不可逆损失的地方。
 
-    夹具自带 ``package/``（扩展根）与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
+    夹具自带 ``package/``（装好扩展的工程）与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
     临时目录再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
     验证它在真包上同样判得出——不是只在迷你夹具里有效。
     """
     import shutil, tempfile
 
-    if not (REPO_ROOT / "extensions" / ADAPT_SCRIPT).exists():
+    if not (executor_ext() / ADAPT_SCRIPT).exists():
         return Outcome(True, "无 adapt 辅助脚本（能力未建）")
 
     with tempfile.TemporaryDirectory() as td:
@@ -1620,7 +1597,7 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
             if not src.exists():
                 return Outcome(False, "缺未适配目标树夹具，真实目标无法取证")
             shutil.copytree(src, tmp / "target")
-            proc = _run_adapt_check(tmp / "target", REPO_ROOT / "extensions")
+            proc = _run_adapt_check(tmp / "target", PROJECT_ROOT)
         out = (proc.stdout + proc.stderr).strip()
 
     if (root / "target").exists():                       # 夹具：退出码即结论
