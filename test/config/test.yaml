@@ -9,7 +9,7 @@ target:
   features_dir: doc/features
 
 feature_history:
-  # 新 suite 起跑前，把 demo 的 doc/features 全部归档到 Story-Features-<时间戳>；不恢复。
+  # 新 suite 起跑前，把维护仓 doc/features（回流的需求产物）全部归档到 Story-Features-<时间戳>；不恢复。
   archive_root: 'E:\Project\bak'
   action_on_new_chain: move
   timestamp_format: '%Y%m%d-%H%M%S'

@@ -1,4 +1,4 @@
-"""给**人**用：装好本地需求系统，让人在 demo 里跑 `/story init <单号>` 直接跑得起来。
+"""给**人**用：装好本地需求系统、从 demo 复制一份隔离副本，让人在副本里跑 `/story init <单号>`。
 
 ## 为什么需要它
 
@@ -7,7 +7,11 @@
 `doc/features/` 一个字节都不会落。
 
 单据装在维护域的 `test/requirement-system`（不入库）：它是测试 Case 的单据，不进 demo。
-装完按回执设 `STORY_REQUIREMENT_SYSTEM_DIR` 指向它，再在 demo 里起会话。
+
+会话在隔离副本里起：demo 是发布基线，不存需求产物。副本用 Case 装配同一套复制规则
+（排除运行态与 `doc/features`），带着 demo 装的发布版扩展，放在系统临时目录的
+`sw-story-trial/<时间>`——在仓外，模型沿父目录走不到维护材料。产物只落在副本里。
+开发版的试跑走正式 template 装配（TEST §2），不在这里。
 
 ## 为什么它在 test/scripts，不随扩展包交付
 
@@ -24,18 +28,17 @@
     python test/scripts/bootstrap_local_story.py --reset    # 回出厂状态
     python test/scripts/bootstrap_local_story.py --verify AR90006   # 验证链路真的通
 
-装完设好环境变量，在 demo 里起会话说 `/story init AR90006`。三点要知道：
+装完按回执设好环境变量、进副本起会话说 `/story init AR90006`。三点要知道：
 
 - 目录是**可写**的：`archive` 会覆盖单据正文、`restore` 会回退；想回出厂状态跑 `--reset`。
-- demo 的 `doc/features/<单号>/` 已存在时脚本会**拦下来**：`story.js` 落材料时「已存在就跳过」，
-  残留会让新一轮材料拉不进来且不报错。先把它移走。
+- 每跑一次建一份新副本，里面没有上一轮的 `doc/features`；用完的副本自己删。
 - 补料（`supplements/` 里那些 docx）不会自动进 `inbox/`，那正是「模型会不会开口要材料」
   要观测的东西：手跑时等它开口，你再复制过去。
 
 ## 与 CLI 测试互不干扰
 
 装置给每个 Case 的需求系统指针要么指向该 Case 自己的快照、要么指向一个不存在的路径，
-绝不会落到这个目录（有机械回归守着）；Case 工作区从 demo 复制，也带不进维护域的这个目录。
+绝不会落到这个目录（有机械回归守着）；Case 工作区与试用副本都从 demo 复制，带不进维护域的这个目录。
 """
 from __future__ import annotations
 
@@ -51,8 +54,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CASES_ROOT = REPO_ROOT / "test" / "cases"
-#: 人手跑 `/story` 的消费工程：维护仓里的 demo，用它装好的扩展
+#: 试用副本的来源：维护仓里的 demo，用它装好的发布版扩展
 DEMO_ROOT = REPO_ROOT / "demo"
+#: 试用副本的父目录（仓外）
+TRIAL_PARENT = Path(tempfile.gettempdir()) / "sw-story-trial"
 
 
 def demo_extension() -> Path:
@@ -175,20 +180,23 @@ def seed(target: Path, tickets: dict[str, tuple[str, Path]],
     return {"installed": installed, "skipped": skipped, "drift": drift}
 
 
-def leftover_features(tickets: dict) -> list[str]:
-    """需求目录里还留着的同名 feature。
+def make_trial_copy() -> Path:
+    """从 demo 复制一份试用副本：与 Case 装配同一套复制规则，另建空的需求目录。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import run_multi_case
 
-    `story.js` 用「已存在就跳过」的写法落材料，残留在那儿会让新一轮的材料**拉不进来**
-    且不报错——人拿到的是半旧半新的工作区。所以默认拦下来，不替人删：那是人的产物。
-    """
-    features = DEMO_ROOT / "doc" / "features"
-    return sorted(no for no in tickets if (features / no).is_dir())
+    trial = TRIAL_PARENT / time.strftime("%Y%m%d-%H%M%S")
+    if trial.exists():
+        raise SystemExit(f"[bootstrap] 试用副本目录已存在，拒绝覆盖：{trial}")
+    run_multi_case._copy_workspace_tree(DEMO_ROOT, trial)
+    (trial / "doc" / "features").mkdir(parents=True, exist_ok=True)
+    return trial
 
 
 def verify(ticket: str, target: Path) -> dict:
     """在临时目录里把两条命令真跑一遍——回执里那句「可以跑了」的唯一证据。
 
-    **不替人在 demo 里跑 `story_flow.py init`**：那两条命令是 `/story init` 的正文，
+    **不替人在副本里跑 `story_flow.py init`**：那两条命令是 `/story init` 的正文，
     替人跑掉就把「模型能不能自己走通初始化」这件事抹掉了，而那正是要观测的。
     这里只在 `%TEMP%` 里验证链路通不通，跑完删干净，仓里零残留。
     """
@@ -224,7 +232,7 @@ def verify(ticket: str, target: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="装好本地需求系统，让人在 demo 里直接跑 /story init <单号>")
+        description="装好本地需求系统、从 demo 复制试用副本，让人在副本里跑 /story init <单号>")
     ap.add_argument("--system-dir", default=None,
                     help=f"目标目录；缺省是维护域的 {DEFAULT_SYSTEM_DIR}")
     ap.add_argument("--only", action="append", default=[],
@@ -233,8 +241,6 @@ def main() -> int:
     ap.add_argument("--reset", action="store_true", help="删掉目标目录重建（回出厂状态）")
     ap.add_argument("--verify", default=None, metavar="单号",
                     help="装完在临时目录里把 /story init 的两条命令真跑一遍")
-    ap.add_argument("--allow-leftover-features", action="store_true",
-                    help="需求目录里已有同名 feature 时照样继续（默认拦下）")
     args = ap.parse_args()
 
     tickets = discover_tickets()
@@ -247,13 +253,6 @@ def main() -> int:
         return 0
 
     target = resolve_system_dir(args.system_dir)
-
-    leftover = leftover_features(tickets)
-    if leftover and not args.allow_leftover_features:
-        log("需求目录里已经有同名 feature：" + "、".join(leftover))
-        log("story.js 落材料时「已存在就跳过」，新一轮材料会拉不进来且不报错——"
-            "先把它们移走或删掉，或者加 --allow-leftover-features 明知故犯")
-        return 2
 
     result = seed(target, tickets, args.only, args.reset)
     for item in result["installed"]:
@@ -268,18 +267,26 @@ def main() -> int:
     if verified is not None:
         log("链路验证：" + ("通过" if verified.get("ok") else f"没通过 {verified}"))
 
+    ok = (verified is None or bool(verified.get("ok"))) and not result["drift"]
+    # 链路不通或单据落后时不建副本：人拿到的副本一定是能跑的
+    trial = make_trial_copy() if ok else None
+    if trial:
+        log(f"试用副本：{trial}")
+
     receipt = {
-        "ok": (verified is None or bool(verified.get("ok"))) and not result["drift"],
+        "ok": ok,
         "system_dir": str(target),
         "env": {SYSTEM_DIR_ENV: str(target)},
+        "trial_root": str(trial) if trial else None,
         "installed": [item["reqNo"] for item in result["installed"]],
         "skipped_files": len(result["skipped"]),
         "drift": result["drift"],
-        "leftover_features": leftover,
         "verify": verified,
         "next": [
-            f"设环境变量 {SYSTEM_DIR_ENV}={target}，在 demo 里起会话说：/story init <单号>",
-            f"或在 demo 里手动：node {STORY_JS.relative_to(DEMO_ROOT).as_posix()} init <单号> local-mcp-token",
+            f'$env:{SYSTEM_DIR_ENV} = "{target}"',
+            f'cd "{trial}"',
+            "在这里起 CLI 会话，说：/story init <单号>",
+            f"或在副本里手动：node {STORY_JS.relative_to(DEMO_ROOT).as_posix()} init <单号> local-mcp-token",
             f"        python {STORY_FLOW.relative_to(DEMO_ROOT).as_posix()} init --feature <单号>",
         ],
         "notes": [

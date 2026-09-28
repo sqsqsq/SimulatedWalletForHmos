@@ -135,12 +135,13 @@ class MaintenanceAndConsumerRootsStayApart(unittest.TestCase):
         self.assertEqual(ws.resolve(), Path(got["run"]))
         self.assertTrue(Path(got["out"]).is_relative_to(REPO_ROOT / "output"), "证据跟着 workspace 走了")
 
-    def test_the_suite_copies_and_promotes_to_demo(self) -> None:
+    def test_the_suite_copies_demo_and_flows_features_back_to_the_maintenance_doc(self) -> None:
+        """真实默认值，不经夹具覆盖：复制源是 demo，需求产物回流根是维护仓 doc/features。"""
         got = self.roots("run_multi_case",
                          '{"repo": str(m.REPO_ROOT), "demo": str(m.DEMO_ROOT), "features": str(m.FEATURES_ROOT)}', None)
         self.assertEqual(REPO_ROOT, Path(got["repo"]))
         self.assertEqual(REPO_ROOT / "demo", Path(got["demo"]))
-        self.assertTrue(Path(got["features"]).is_relative_to(REPO_ROOT / "demo"), got["features"])
+        self.assertEqual(REPO_ROOT / "doc" / "features", Path(got["features"]))
 
     def test_the_checker_reads_the_consumer_it_is_given_and_never_the_maintenance_repo(self) -> None:
         sys.path.insert(0, str(self.SCRIPTS))

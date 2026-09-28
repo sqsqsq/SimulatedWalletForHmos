@@ -309,7 +309,7 @@ class TheProtocolAndMethodPageAgree(unittest.TestCase):
         self.assertIn("下篇", coding)
         adapt = EXT / "skills/story-adaptation"
         self.assertIn("reference/knowledge-adaptation.md", (adapt / "reference/upgrade-changes.md").read_text(encoding="utf-8"))
-        self.assertEqual([], sorted(p.name for p in (REPO_ROOT / "test/release").glob("内网适配指南*")))
+        self.assertEqual([], sorted(p.name for p in (REPO_ROOT / "doc/release").glob("内网适配指南*")))
         self.assertFalse((EXT / "skills/story/scripts/README.md").exists())
 
 

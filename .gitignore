@@ -1,5 +1,5 @@
-# 维护仓：extensions（开发源）、test（维护域）、tools（CLI runtime）与维护装置。
-# demo 消费工程的业务构建、依赖、Framework 状态与需求产物规则在 demo/.gitignore。
+# 维护仓：extensions（开发源）、demo（消费工程）、doc（需求/方案/发布说明与回流产物）、test（测试域）、
+# tools（CLI runtime）与维护装置。demo 的业务构建、依赖与 Framework 状态规则在 demo/.gitignore。
 
 **/node_modules
 **/package-lock.json
@@ -7,6 +7,10 @@
 **/__pycache__/
 .bak/
 output/
+
+# 回流的需求产物（CLI 测试 finalize / 检查点回流到这里）：运行产物，不入库。
+# doc/spec、doc/plan、doc/release 是维护文档，照常入库。
+/doc/features/
 
 # Personal / local agent settings (per developer, gitignored)
 /.claude/settings.local.json
@@ -17,7 +21,8 @@ output/
 # 入库后每次手跑都产生 diff。与需求产物同性质，不入库。
 /test/requirement-system/
 
-# Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
+# 根 scratch 已退出（临时件放 output/scratch）。剩下的是其他会话沙箱建、当前账号无权删除的临时目录；
+# 这条只为它们存在，残留删掉后随之删除。
 /scratch/
 
 # story adapt 工作目录：目标工程所有、包不交付。

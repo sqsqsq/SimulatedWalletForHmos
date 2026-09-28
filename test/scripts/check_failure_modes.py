@@ -73,6 +73,10 @@ def installed_extension(project_root: Path) -> Path:
     if config.is_file():
         rel = json.loads(config.read_text(encoding="utf-8")).get("paths", {}).get("extension_dir") or rel
     return project_root / rel
+
+
+#: CLI 测试回流的需求产物（维护仓 doc/features）：--historical 的样本之一
+RETURNED_FEATURES_DIR = REPO_ROOT / "doc" / "features"
 ARCHIVED_FEATURES_DIR = Path("E:/Project/bak/Story-Features-20260824-121838")
 
 # --------------------------------------------------------------------------- #
@@ -2826,8 +2830,8 @@ def main(argv: list[str] | None = None) -> int:
     historical_rows: list[tuple[str, str, bool, str]] = []
     if args.historical:
         samples: list[Path] = []
-        if features_dir(project_root).exists():
-            samples.extend(p for p in sorted(features_dir(project_root).iterdir()) if p.is_dir())
+        if RETURNED_FEATURES_DIR.exists():
+            samples.extend(p for p in sorted(RETURNED_FEATURES_DIR.iterdir()) if p.is_dir())
         if ARCHIVED_FEATURES_DIR.exists():
             samples.extend(p for p in sorted(ARCHIVED_FEATURES_DIR.iterdir()) if p.is_dir())
         for mode in modes:

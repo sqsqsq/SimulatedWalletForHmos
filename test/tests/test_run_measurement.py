@@ -549,7 +549,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     实跑的运行证据（事件流、运行日志、截图、材料原件、压缩包）放在 `output/story/`，不进过程件目录。
     """
 
-    ROOTS = ("test/spec", "test/plan")
+    ROOTS = ("doc/spec", "doc/plan")
     EVIDENCE_SUFFIXES = {".jsonl", ".log", ".zip", ".docx", ".png"}
 
     def test_both_roots_are_on_disk_and_not_ignored(self):

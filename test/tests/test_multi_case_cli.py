@@ -124,61 +124,57 @@ class StructuredPhaseStateTest(unittest.TestCase):
 
 
 class SuiteFeatureArchiveTest(unittest.TestCase):
-    def test_moves_all_features_to_timestamped_external_archive(self) -> None:
+    """起跑前归档的是维护仓 doc/features 的产物；同在 doc 下的 spec/plan/release 不动。"""
+
+    def maintenance_doc(self) -> Path:
         root = Path(tempfile.mkdtemp())
-        original_repo = run_multi_case.DEMO_ROOT
-        original_features = run_multi_case.FEATURES_ROOT
-        original_archive = run_multi_case.FEATURE_ARCHIVE_ROOT
-        try:
-            repo = root / "repo"
-            features = repo / "doc/features"
-            archive = root / "bak"
-            (features / "AR1").mkdir(parents=True)
-            (features / "AR2").mkdir()
-            (features / "AR1/story.md").write_text("one", encoding="utf-8")
-            run_multi_case.DEMO_ROOT = repo
-            run_multi_case.FEATURES_ROOT = features
-            run_multi_case.FEATURE_ARCHIVE_ROOT = archive
+        self.addCleanup(shutil.rmtree, root, True)
+        doc = root / "repo" / "doc"
+        (doc / "spec/1.9.8").mkdir(parents=True)
+        (doc / "spec/1.9.8/00.md").write_text("需求", encoding="utf-8")
+        for name, value in (("DOC_ROOT", doc), ("FEATURES_ROOT", doc / "features"),
+                            ("FEATURE_ARCHIVE_ROOT", root / "bak")):
+            self.addCleanup(setattr, run_multi_case, name, getattr(run_multi_case, name))
+            setattr(run_multi_case, name, value)
+        return doc
 
-            result = run_multi_case.migrate_existing_features(root / "suite-1")
+    def test_moves_all_features_to_timestamped_external_archive(self) -> None:
+        doc = self.maintenance_doc()
+        features = doc / "features"
+        (features / "AR1").mkdir(parents=True)
+        (features / "AR2").mkdir()
+        (features / "AR1/story.md").write_text("one", encoding="utf-8")
 
-            destination = Path(result["destination_root"])
-            self.assertEqual("completed", result["status"])
-            self.assertRegex(destination.name, r"^Story-Features-\d{8}-\d{6}")
-            self.assertEqual(archive.resolve(), destination.parent)
-            self.assertTrue((destination / "AR1/story.md").is_file())
-            self.assertTrue((destination / "AR2").is_dir())
-            self.assertEqual([], list(features.iterdir()))
-        finally:
-            run_multi_case.DEMO_ROOT = original_repo
-            run_multi_case.FEATURES_ROOT = original_features
-            run_multi_case.FEATURE_ARCHIVE_ROOT = original_archive
-            shutil.rmtree(root, ignore_errors=True)
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+
+        destination = Path(result["destination_root"])
+        self.assertEqual("completed", result["status"])
+        self.assertRegex(destination.name, r"^Story-Features-\d{8}-\d{6}")
+        self.assertEqual(run_multi_case.FEATURE_ARCHIVE_ROOT.resolve(), destination.parent)
+        self.assertTrue((destination / "AR1/story.md").is_file())
+        self.assertTrue((destination / "AR2").is_dir())
+        self.assertEqual([], list(features.iterdir()))
+        self.assertEqual("需求", (doc / "spec/1.9.8/00.md").read_text(encoding="utf-8"))
 
     def test_empty_features_does_not_create_archive_directory(self) -> None:
-        root = Path(tempfile.mkdtemp())
-        original_repo = run_multi_case.DEMO_ROOT
-        original_features = run_multi_case.FEATURES_ROOT
-        original_archive = run_multi_case.FEATURE_ARCHIVE_ROOT
-        try:
-            repo = root / "repo"
-            features = repo / "doc/features"
-            features.mkdir(parents=True)
-            archive = root / "bak"
-            run_multi_case.DEMO_ROOT = repo
-            run_multi_case.FEATURES_ROOT = features
-            run_multi_case.FEATURE_ARCHIVE_ROOT = archive
+        doc = self.maintenance_doc()
+        (doc / "features").mkdir()
 
-            result = run_multi_case.migrate_existing_features(root / "suite-1")
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
 
-            self.assertEqual("no_existing_features", result["status"])
-            self.assertIsNone(result["destination_root"])
-            self.assertFalse(archive.exists())
-        finally:
-            run_multi_case.DEMO_ROOT = original_repo
-            run_multi_case.FEATURES_ROOT = original_features
-            run_multi_case.FEATURE_ARCHIVE_ROOT = original_archive
-            shutil.rmtree(root, ignore_errors=True)
+        self.assertEqual("no_existing_features", result["status"])
+        self.assertIsNone(result["destination_root"])
+        self.assertFalse(run_multi_case.FEATURE_ARCHIVE_ROOT.exists())
+
+    def test_a_root_other_than_doc_features_is_refused(self) -> None:
+        """回流根指错到 doc 本身时，spec/plan/release 会被当成产物搬走——拒绝，一个文件都不动。"""
+        doc = self.maintenance_doc()
+        run_multi_case.FEATURES_ROOT = doc
+        with self.assertRaises(SystemExit) as caught:
+            run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+        self.assertIn("spec、plan、release", str(caught.exception))
+        self.assertTrue((doc / "spec/1.9.8/00.md").is_file())
+        self.assertFalse(run_multi_case.FEATURE_ARCHIVE_ROOT.exists())
 
 
 class MultiCasePlanContinuationTest(unittest.TestCase):
@@ -838,7 +834,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         """一个最小但完整的消费工程：业务、framework、配置、入口文件、宿主目录与依赖。"""
         demo = root / "demo"
         for relative in ("01-Product/src/main", "01-Product/src/test", "framework/harness/state",
-                         ".opencode/plugin", "framework/harness/node_modules/pkg", "doc/features/REAL01",
+                         ".opencode/plugin", "framework/harness/node_modules/pkg",
                          "doc/extensions/hooks/retired"):
             (demo / relative).mkdir(parents=True, exist_ok=True)
         (demo / "01-Product/src/main/main.ets").write_text("product", encoding="utf-8")
@@ -847,7 +843,6 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         (demo / "framework/harness/state/.gitkeep").write_text("", encoding="utf-8")
         (demo / ".opencode/plugin/publish.js").write_text("x", encoding="utf-8")
         (demo / "framework/harness/node_modules/pkg/i.js").write_text("dep", encoding="utf-8")
-        (demo / "doc/features/REAL01/spec.md").write_text("真实需求", encoding="utf-8")
         (demo / "doc/extensions/hooks/retired/old.mjs").write_text("上一版的机制", encoding="utf-8")
         (demo / "framework.config.json").write_text("{}", encoding="utf-8")
         for name in ("AGENTS.md", "CLAUDE.md"):
@@ -884,7 +879,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         self.assertTrue((template / "framework/harness/node_modules/pkg/i.js").is_file())
         self.assertFalse((template / "framework/harness/state/phase.json").exists())
         self.assertTrue((template / "framework/harness/state/.gitkeep").is_file())
-        self.assertFalse((template / "doc/features/REAL01").exists(), "真实需求进了被测侧")
+        self.assertEqual([], list((template / "doc/features").iterdir()), "template 的需求目录应是空的")
         ext = template / "doc/extensions"
         for rel in run_multi_case.publish_to_demo.enumerate_source(run_multi_case.DEV_SOURCE):
             self.assertEqual((run_multi_case.DEV_SOURCE / rel).read_bytes(), (ext / rel).read_bytes(), rel)
@@ -958,6 +953,19 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertIn("提交查不出", str(caught.exception))
             self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists())
 
+    def test_features_left_in_demo_stop_the_assembly(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-multi-features-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        demo = self.fake_demo(root)
+        (demo / "doc/features/REAL01").mkdir(parents=True)
+        (demo / "doc/features/REAL01/spec.md").write_text("真实需求", encoding="utf-8")
+        suite_id = f"features-left-{os.getpid()}"
+        with self.assertRaises(SystemExit) as caught:
+            self.build_template(demo, suite_id)
+        self.assertIn("demo/doc/features", str(caught.exception))
+        self.assertTrue((demo / "doc/features/REAL01/spec.md").is_file(), "装配动了 demo 里的产物")
+        self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists(), "停下前已经建了 template")
+
     def test_a_template_whose_install_fails_is_not_used(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-multi-install-"))
         self.addCleanup(shutil.rmtree, root, True)
@@ -977,7 +985,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             host = root / "host"
             workspace = root / "workspace"
             bundle = root / "bundle"
-            (host / "doc/features").mkdir(parents=True)
+            host.mkdir()
             (workspace / "doc/features/AR-X").mkdir(parents=True)
             (workspace / "01-Product").mkdir(parents=True)
             (workspace / "doc/features/AR-X/story.md").write_text(
@@ -988,7 +996,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             baseline_path.parent.mkdir(parents=True)
             run_multi_case.write_json(baseline_path, baseline)
             run_multi_case.DEMO_ROOT = host
-            run_multi_case.FEATURES_ROOT = host / "doc/features"
+            run_multi_case.FEATURES_ROOT = root / "maintenance/doc/features"
             suite = {
                 "bundle_root": str(bundle),
                 "main_source_baseline": run_multi_case.snapshot_workspace_sources(host),
@@ -1001,7 +1009,8 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             result = run_multi_case.promote_case_workspace(suite, record)
             self.assertEqual("promoted", result["status"])
             self.assertEqual("cli_failed", result["case_status"])
-            self.assertTrue((host / "doc/features/AR-X/story.md").is_file())
+            self.assertTrue((root / "maintenance/doc/features/AR-X/story.md").is_file())
+            self.assertFalse((host / "doc/features").exists(), "需求产物回流进了 demo")
             self.assertTrue((host / "01-Product/new.txt").is_file())
         finally:
             run_multi_case.DEMO_ROOT = original_repo
@@ -1015,7 +1024,6 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         try:
             host = root / "host"
             bundle = root / "bundle"
-            (host / "doc/features").mkdir(parents=True)
             (host / "01-Product").mkdir(parents=True)
             (host / "01-Product/base.txt").write_text("base", encoding="utf-8")
             main_baseline = run_multi_case.snapshot_workspace_sources(host)
@@ -1043,7 +1051,8 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                     "status": "finished", "execution_status": "finished",
                 })
             run_multi_case.DEMO_ROOT = host
-            run_multi_case.FEATURES_ROOT = host / "doc/features"
+            maintenance = root / "maintenance/doc/features"
+            run_multi_case.FEATURES_ROOT = maintenance
 
             first = run_multi_case.promote_case_workspace(suite, records[0])
             second = run_multi_case.promote_case_workspace(suite, records[1])
@@ -1053,13 +1062,83 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             self.assertEqual("promoted", second["status"])
             self.assertEqual("already_promoted", repeated["status"])
             self.assertTrue(repeated["accepted"])
-            self.assertEqual("AR-1", (host / "doc/features/AR-1/story.md").read_text())
-            self.assertEqual("AR-2", (host / "doc/features/AR-2/story.md").read_text())
+            self.assertEqual("AR-1", (maintenance / "AR-1/story.md").read_text())
+            self.assertEqual("AR-2", (maintenance / "AR-2/story.md").read_text())
+            self.assertFalse((host / "doc/features").exists(), "需求产物回流进了 demo")
             self.assertEqual("case-one", (host / "01-Product/base.txt").read_text())
         finally:
             run_multi_case.DEMO_ROOT = original_repo
             run_multi_case.FEATURES_ROOT = original_features
             shutil.rmtree(root, ignore_errors=True)
+
+
+class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
+    """检查点快照与 update 终态都回流到维护仓 doc/features；重复回流幂等，内容不同的目标两边都留。"""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="story-flow-back-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.demo = self.root / "demo"
+        (self.demo / "01-Product").mkdir(parents=True)
+        self.features = self.root / "maintenance/doc/features"
+        for name, value in (("DEMO_ROOT", self.demo), ("FEATURES_ROOT", self.features),
+                            ("SUITES_ROOT", self.root / "suites")):
+            self.addCleanup(setattr, run_multi_case, name, getattr(run_multi_case, name))
+            setattr(run_multi_case, name, value)
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+
+    def workspace_with(self, name: str, text: str) -> Path:
+        workspace = self.root / name
+        (workspace / "doc/features/AR-9").mkdir(parents=True)
+        (workspace / "doc/features/AR-9/story.md").write_text(text, encoding="utf-8")
+        return workspace
+
+    def test_the_checkpoint_snapshot_lands_in_the_maintenance_doc(self) -> None:
+        snapshot = self.root / "snapshot/AR-9"
+        snapshot.mkdir(parents=True)
+        (snapshot / "story.md").write_text("第一段", encoding="utf-8")
+        suite_id = "suite-flow"
+        bundle = self.root / "suites" / suite_id
+        record = {"case": "case-9", "feature": "AR-9", "status": "awaiting_reply",
+                  "checkpoints": {"after_initial": {"path": str(snapshot)}}}
+        run_multi_case.write_json(bundle / "suite.json", {"bundle_root": str(bundle),
+                                                          "case_states": {"case-9": record}, "events": []})
+        with mock.patch.object(run_multi_case, "refresh_record", side_effect=lambda r: r), \
+                mock.patch("sys.stdout"):
+            first = run_multi_case.command_promote_checkpoint(suite_id, "case-9", "after_initial")
+            again = run_multi_case.command_promote_checkpoint(suite_id, "case-9", "after_initial")
+            (snapshot / "story.md").write_text("被改过的快照", encoding="utf-8")
+            conflict = run_multi_case.command_promote_checkpoint(suite_id, "case-9", "after_initial")
+        self.assertEqual((0, 0, 1), (first, again, conflict))
+        self.assertEqual("第一段", (self.features / "AR-9/story.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.demo / "doc/features").exists(), "检查点快照回流进了 demo")
+
+    def test_the_update_terminal_lands_under_its_own_name_and_conflicts_keep_both(self) -> None:
+        suite = {"bundle_root": str(self.root / "bundle"),
+                 "main_source_baseline": run_multi_case.snapshot_workspace_sources(self.demo)}
+
+        def record(workspace: Path, case: str, after_initial: str = "") -> dict:
+            baseline = self.root / "bundle/cases" / case / "workspace-baseline.json"
+            run_multi_case.write_json(baseline, run_multi_case.snapshot_workspace_sources(workspace))
+            return {"case": case, "feature": "AR-9", "workspace": str(workspace),
+                    "workspace_baseline": str(baseline), "status": "finished",
+                    "execution_status": "finished", "after_initial": after_initial}
+
+        plain = record(self.workspace_with("ws-plain", "普通终态"), "case-plain")
+        update = record(self.workspace_with("ws-update", "更新后的终态"), "case-update", "update")
+        self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, plain)["status"])
+        self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, update)["status"])
+        self.assertEqual("普通终态", (self.features / "AR-9/story.md").read_text(encoding="utf-8"))
+        self.assertEqual("更新后的终态", (self.features / "AR-9-update/story.md").read_text(encoding="utf-8"))
+
+        other = record(self.workspace_with("ws-other", "另一份普通终态"), "case-other")
+        result = run_multi_case.promote_case_workspace(suite, other)
+        self.assertIn("feature_destination_conflict", json.dumps(result, ensure_ascii=False))
+        self.assertEqual("普通终态", (self.features / "AR-9/story.md").read_text(encoding="utf-8"), "冲突时覆盖了目标")
+        self.assertTrue((self.root / "ws-other/doc/features/AR-9/story.md").is_file(), "冲突时动了来源")
+        self.assertFalse((self.demo / "doc/features").exists(), "终态回流进了 demo")
 
 
 class PidReuseDoesNotBlockCleanup(unittest.TestCase):

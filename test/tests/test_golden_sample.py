@@ -54,7 +54,8 @@ GOLDEN_FINGERPRINTS = {
     # 2026-09-27 步骤 9（U55，用户同日确认）：附录节名与层级按平列形态重排，内容未动。
     "story-金样-AR90006.md": "216e138ed4667f8d",
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
-    "story-金样-AR90006-说明.md": "896d404e10c6557f",
+    # 2026-09-28 方案目录迁到仓根 doc/plan（1.9.8 P3 目录归属纠正）：同一条链接改到 doc/plan/1.9.1/，正文未动。
+    "story-金样-AR90006-说明.md": "27c234bb7b3a8a26",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",

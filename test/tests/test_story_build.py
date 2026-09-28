@@ -1059,7 +1059,7 @@ class TestRetiredThings(unittest.TestCase):
         changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
         self.assertIn("\n## 1.9.8\n", changes)
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
-        # 「我们这个仓怎么用它」），每一版改了什么在 test/release/ 的发布说明里。
+        # 「我们这个仓怎么用它」），每一版改了什么在 doc/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
         rows = manifest.splitlines()
         at = next(i for i, l in enumerate(rows) if l.startswith("version:"))

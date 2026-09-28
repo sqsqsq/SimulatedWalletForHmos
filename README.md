@@ -6,12 +6,13 @@ Story Extension 的维护仓。Story Extension 挂在 AgentMaison framework 上�
 | 目录 | 是什么 |
 |---|---|
 | `extensions/` | Story Extension 开发源 |
-| `demo/` | 完整消费工程：钱包业务代码 + `framework/` 发布件 + 已安装的 Extension 发布版。人手试用 `/story` 在这里 |
-| `test/` | 维护域：维护契约、测试协议与脚本、Case、需求与方案 |
+| `demo/` | 完整消费工程：钱包业务代码 + `framework/` 发布件 + 已安装的 Extension 发布版。人手试用从它复制隔离副本 |
+| `doc/` | 项目文档：需求（`spec/`）、方案与评审（`plan/`）、发布说明（`release/`）；`features/` 是测试回流的需求产物，不入库 |
+| `test/` | 测试域：测试协议与脚本、Case、夹具、回归台账、金样与演进记录 |
 | `tools/cli/` | 实跑测试调起的 CLI runtime |
 
-维护入口是 [AGENTS.md](AGENTS.md)（结构、framework 接入、Extension 安装与发布），开工前再完整读 [test/AGENTS.md](test/AGENTS.md)。
-测试怎么跑看 [test/TEST.md](test/TEST.md)。
+维护入口是项目级维护契约 [AGENTS.md](AGENTS.md)（结构、角色、不变量、预算、framework 接入、Extension 安装与发布），开工前完整读一遍。
+测试怎么跑看 [test/TEST.md](test/TEST.md)；需求、方案与发布说明在 `doc/spec`、`doc/plan`、`doc/release`。
 
 ## 新 checkout 恢复依赖
 

@@ -1,6 +1,6 @@
 # Story 并行 CLI 测试指南
 
-本指南是 Story 测试域的当前端到端操作协议。维护约束见 [AGENTS.md](AGENTS.md)，演进背景与本协议各条规则的事故来源见
+本指南是 Story 测试域的当前端到端操作协议。维护约束见 [AGENTS.md](../AGENTS.md)，演进背景与本协议各条规则的事故来源见
 [EVOLUTION.md](EVOLUTION.md)。这些维护文件不得进入被测模型上下文。
 
 ## 按当前任务读取
@@ -24,7 +24,7 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 不能创建 suite、迁移 features 或启动 CLI。
 
 **CLI 测试一律以非沙箱启动**（用户长期授权，2026-09-04 复述确认，每轮不必重新征求）：`start` 必须传 `--authorize-non-sandbox`，
-`plan`、`poll`、`reply`、`conclude`、`finalize` 同样在非沙箱环境跑；驱动器要拉起并探测子进程、读写隔离 workspace、把产物回灌进 demo。
+`plan`、`poll`、`reply`、`conclude`、`finalize` 同样在非沙箱环境跑；驱动器要拉起并探测子进程、读写隔离 workspace、把需求产物回流到维护仓 `doc/features/`、把源码回灌进 demo。
 这条只管宿主：不是要求被测模型切换环境，也不得写入 Case prompt。宿主自身的权限层拦下某条命令时请用户放行，不改写命令绕开；
 绕过去的那一跑不算数。
 
@@ -36,7 +36,7 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 
 ### 0.2 宿主在实跑期间的角色：需求方 / 评审人
 
-宿主仍属于维护者，由本次任务指定的维护角色担任（分工见 [AGENTS.md §1](AGENTS.md)），实跑期间只代理需求方/评审人职责：
+宿主仍属于维护者，由本次任务指定的维护角色担任（分工见 [AGENTS.md §1](../AGENTS.md)），实跑期间只代理需求方/评审人职责：
 被测模型面对的是一个懂业务、不代它研究框架实现的对话方。
 
 | | 做 | 不做 |
@@ -52,15 +52,17 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 
 ### 0.3 人手跑一遍（不经测试装置）
 
-人手试用在 demo 里做，用的是 demo 装着的发布版扩展（1.9.8 发布前是 1.9.7）。先装本地需求系统，再带上环境变量进 demo 起会话：
+人手试用在从 demo 复制出的隔离副本里做，用的是 demo 装着的发布版扩展（1.9.8 发布前是 1.9.7）；demo 本身保持发布基线、不存产物。
+bootstrap 装好本地需求系统、验证链路，再按 Case 装配的复制规则把 demo 复制到系统临时目录的 `sw-story-trial/<时间>`，回执给出路径：
 
 ```powershell
-python test/scripts/bootstrap_local_story.py --verify AR90006     # 单据装到维护域 test/requirement-system，并在临时目录验证链路
+python test/scripts/bootstrap_local_story.py --verify AR90006     # 单据装到 test/requirement-system，临时目录验证链路，建试用副本
 $env:STORY_REQUIREMENT_SYSTEM_DIR = "<回执里的 system_dir>"
-cd demo                                                            # 在 demo 根下起 CLI 会话，说 /story init <单号>
+cd "<回执里的 trial_root>"                                         # 在副本根下起 CLI 会话，说 /story init <单号>
 ```
 
-不设这个变量时，demo 里的替身对接层找不到本地单据，报「需求系统不可达」。用法、三点注意与它和 CLI 测试互不干扰的机制见脚本文件头；
+产物只落在副本的 `doc/features/`，用完的副本自己删。开发版的试跑走 §2 的 template 装配。
+不设这个变量时，副本里的替身对接层找不到本地单据，报「需求系统不可达」。用法、三点注意与它和 CLI 测试互不干扰的机制见脚本文件头；
 正式 CLI 测试不用它，每个 Case 用自己的隔离系统快照。它只给本仓，不随扩展包交付。
 
 ## 1. 唯一入口与启动
@@ -117,10 +119,10 @@ Case 的 prompt、材料投放与终点怎么写见 [cases/README.md](cases/READ
 4. 全部安全后尝试删除历史 workspace/output，写入 `previous-run-cleanup.json`。
 5. 安全预检通过但个别历史目录删除失败时，逐目标记录 `retained_cleanup_warning` 和残留路径，保留现场供下一轮重试，
    不阻断本轮 feature 迁移、workspace 创建或 CLI 启动。
-6. 清理预检通过后，将 demo 当前的 `doc/features/*` 整体迁移到 `E:\Project\bak\Story-Features-<时间戳>/`。
+6. 清理预检通过后，将维护仓 `doc/features/*`（上一轮回流的需求产物）整体迁移到 `E:\Project\bak\Story-Features-<时间戳>/`。
 7. 创建模板及各 Case workspace，再顺序启动 CLI。
 
-模板按固定顺序装配：核 demo（结构、git 干净、记下提交）→ 复制 demo（排除运行态：`doc/features`、Framework 活动状态、
+模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除运行态：`doc/features`、Framework 活动状态、
 `oh_modules`、`build`、`.hvigor`、`__pycache__` 等，业务模块自己的单测目录照常带上）→ 在模板里把根 `extensions/` 的当前开发源（含未提交改动）
 装进 `doc/extensions/`、写入口与扩展段 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、不建 Case、
 不起跑；修好后重新装配。demo 顶层出现 `test`、`tools`、`output`、`scratch`、`.bak`、`.git` 即结构错误。各 Case 工作区从模板复制，
@@ -381,7 +383,7 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 | 1 | Case 自己停在第一检查点（`awaiting_reply`，`awaiting_kind: initial_checkpoint`）；模型最后那一问原样在 `question` 与 `pending_question` 里 | 到目标不 break：终止就只能另起一个 run，而那时 `events.jsonl` 已被截断、游标归零、session 也要重拉——**那是重启新会话冒充续行**。检查点等待期间 `reply` 一律被拒 |
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，这时复制才说得清是哪一刻。复制前后各取一次目录摘要，不一样就判这次快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段；评的是快照，不是还在动的目录 |
-| 4 | `promote-checkpoint --case <id> --point initial` | 回流第一段。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
+| 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`。**不先回流就续跑的话，第一段的产物就只剩快照里那一份** |
 | 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"`（不传 `--answer`） | 只投第二段的业务请求，原样取 `case.yaml` 的 `update_request`：它就是人的下一步。检查点上模型留的那一问（交付门、`plan.ok_to_code` 等）属于第一段收尾，**不单独作答**（用户 2026-09-28 裁定）——先答它会在材料关卡之前多出一轮，选项字面还会误导模型（「继续改 plan」让它去问改哪里）。`update_inputs` 在这一步自动投放，见下表；`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手会在材料关卡停一次，问要不要补料：按需求方身份答（auto：「不补，材料就这些」；car：「不补」，见各自 `interaction-script.yaml` 的 `update-material`）。之后 Case 自己停在第二检查点（`stop_reason: update_checkpoint`） | 终点**看流程契约那一笔**——这一轮 update 关掉了才算写完。模型说「更新完成」不算数 |
 | 7 | `checkpoint --point update` → 只读后评 → **`conclude`**（story 门禁已在进第二检查点等待前跑过，输入没变就直接用那次结果） | 与第一段同一套。后评做完**必须** `conclude`（收工判定见 §3.5）：不发的话 worker 一直停着等，只能被外部停掉，终态成 `worker_lost` |
@@ -412,8 +414,8 @@ python test/scripts/run_multi_case.py finalize `
   --suite-id story-suite-20260822-140000 --promote
 ```
 
-回灌依据是 Case 已终态且 workspace 存在。成功或失败 Case 的 `doc/features/<feature>` 都独立复制回 demo，不得因同批其他 Case 已写入
-源码而跳过。受控源码差异逐文件做三方检查：目标仍等于 suite 基线时写入，目标已等于该 Case 结果时记为幂等完成，只有目标同时不同于基线
+回灌依据是 Case 已终态且 workspace 存在。成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（双检查点单的终态另名 `<feature>-update`），不得因同批其他 Case 已写入
+源码而跳过。受控源码差异逐文件回灌 demo，做三方检查：目标仍等于 suite 基线时写入，目标已等于该 Case 结果时记为幂等完成，只有目标同时不同于基线
 和 Case 结果时记录真实冲突；删除只记录不执行。Feature 目标已存在时仅在内容完全相同时视为已回灌，否则保留双方并记录冲突。
 每个 Case 生成不可变原始 `observations.jsonl` 和汇总 `observation-record.md`，记录启动与恢复、阶段和状态变化、15/120 秒观测、交互、
 CLI/gate/基础设施错误、回灌结果和保留路径。
@@ -439,8 +441,10 @@ node --check <每个 extensions 下的 .mjs>      # 逐个之间无依赖，可�
 按 §2 同一装配顺序现建一份（`<id>` 每次取新值，打印的就是模板路径）：
 
 ```powershell
-python -c "import sys, pathlib; sys.path.insert(0, 'test/scripts'); import run_multi_case as m; d = pathlib.Path('output/story/<id>'); d.mkdir(parents=True); print(m.create_workspace_template(d, '<id>')[0])"
+python -c "import sys, pathlib; sys.path.insert(0, 'test/scripts'); import run_multi_case as m; d = pathlib.Path('output/scratch/<id>'); d.mkdir(parents=True); print(m.create_workspace_template(d, '<id>')[0])"
 ```
+
+测试从仓根执行；pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`，需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
 
 能并行的一律并行：每条命令都带着自己的并行参数，照抄不删（`-n auto` / `--jobs` / `-j` 掉一个，同一批用例慢近十倍，结论不变）。
 `check_failure_modes.py` 与 `node --check` 本身是单进程的，后者可同时起几个。串行只在排障时用（§7.9）。
@@ -516,7 +520,7 @@ node doc/extensions/hooks/spec/author.mjs --feature <feature>    # 在装好开�
 
 `status: pending_capability` 报 SKIP（目标能力尚未建，不算回归失败）；`retired` 须带 `reason` + `approved_by`。
 
-`--historical` 是观察档：对实施前基线样本（`doc/features/*` 与 `E:\Project\bak\Story-Features-*`）跑产物类 checker。
+`--historical` 是观察档：对实施前基线样本（维护仓 `doc/features/*` 与 `E:\Project\bak\Story-Features-*`）跑产物类 checker。
 这些样本本就含历史缺陷，检出是预期结果（等同额外的反夹具），不参与 PASS/FAIL。
 
 ### 7.2 机制层负面扫描
@@ -579,7 +583,7 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 4 | 同一 check id FAIL 次数 | ≤ 2 |
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
-| 7 | 交付内容有效行（计量范围唯一见 `test/AGENTS.md §5`） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
+| 7 | 交付内容有效行（计量范围唯一见根 `AGENTS.md §5`） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
 
 `measure_run.py` 的 `segments` 按段给出（双检查点单分 `initial` / `update`，按续跑时刻切；普通单一段 `whole`）：
 `duration_min`、`model_gap_sec` 与 `tool_gap_sec`（事件间隔归属的近似值）、`verifier_runs` 与 `verifier_gap_sec`、

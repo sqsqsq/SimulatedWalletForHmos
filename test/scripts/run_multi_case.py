@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 TEST_ROOT = HERE.parent
 #: 维护仓根：Case、脚本、运行证据（output/story）与开发源在这里
 REPO_ROOT = TEST_ROOT.parent
-#: 维护仓里的完整消费工程：Case 工作区从它复制，需求产物与源码回灌也回到它
+#: 维护仓里的完整消费工程：Case 工作区从它复制，源码回灌回到它
 DEMO_ROOT = REPO_ROOT / "demo"
 #: 开发源：装配时装进隔离 template（含未提交的修改与新文件）
 DEV_SOURCE = REPO_ROOT / "extensions"
@@ -77,8 +77,10 @@ INTERACTION_INTERVAL_SEC = int(CFG.get("observation", {}).get(
 AUTOMATION_INTERVAL_SEC = int(CFG.get("observation", {}).get(
     "automation_interval_sec", CFG.get("observation", {}).get("interval_sec", 120)))
 START_MAX_ATTEMPTS = int(CFG.get("startup", {}).get("max_attempts", 3))
-FEATURES_ROOT = (DEMO_ROOT / str(CFG.get("target", {}).get(
-    "features_dir", "doc/features"))).resolve()
+#: 维护仓的项目文档根：需求（spec）、方案（plan）、发布说明（release）与回流的需求产物
+DOC_ROOT = REPO_ROOT / "doc"
+#: 需求产物的回流根：起跑前从这里归档，检查点与终态回流到这里。消费运行期的 features 在各 workspace 内
+FEATURES_ROOT = DOC_ROOT / "features"
 FEATURE_ARCHIVE_ROOT = Path(str(CFG.get("feature_history", {}).get(
     "archive_root", r"E:\Project\bak")))
 if not FEATURE_ARCHIVE_ROOT.is_absolute():
@@ -219,10 +221,13 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
 
 
 def demo_check() -> str:
-    """demo 是发布基线：顶层不许有维护目录，非忽略的 git 状态必须干净，git 查询要成功。返回当前提交。"""
+    """demo 是发布基线：顶层不许有维护目录、不存需求产物，非忽略的 git 状态必须干净，git 查询要成功。返回当前提交。"""
     drift = sorted(p.name for p in DEMO_ROOT.iterdir() if p.is_dir() and p.name in MAINTENANCE_TOP_LEVEL)
     if drift:
         raise SystemExit(f"[multi] demo 顶层出现维护目录 {drift}：维护材料混进了消费工程，先挪回维护域")
+    if (DEMO_ROOT / "doc" / "features").exists():
+        raise SystemExit(f"[multi] demo/doc/features 存在，发布基线不干净：需求产物的回流根是维护仓的 "
+                         f"{FEATURES_ROOT}，demo 不保存产物；它被 git 忽略，git 状态看不出来，装配停止")
     try:
         dirty = publish_to_demo.git_dirty(DEMO_ROOT)
     except publish_to_demo.InputError as exc:
@@ -1142,8 +1147,9 @@ def set_suite_environment(suite: dict[str, Any]) -> None:
 def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
     """Move all existing features into one timestamped archive outside the repo."""
     source_root = FEATURES_ROOT.resolve()
-    if source_root == DEMO_ROOT or not source_root.is_relative_to(DEMO_ROOT):
-        raise SystemExit(f"[multi] 非法 doc/features 根: {source_root}")
+    if source_root != (DOC_ROOT / "features").resolve():
+        raise SystemExit(f"[multi] 需求产物根只能是 {DOC_ROOT / 'features'}，拒绝归档 {source_root}："
+                         "doc 下的 spec、plan、release 是维护文档，不随产物归档")
     archive_root = FEATURE_ARCHIVE_ROOT.resolve()
     if archive_root == Path(archive_root.anchor) or archive_root == REPO_ROOT.resolve() \
             or archive_root.is_relative_to(REPO_ROOT.resolve()):
@@ -2902,7 +2908,7 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
 
 
 def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
-    """把**固定下来的那一份**回流到 demo，按原编号。
+    """把**固定下来的那一份**回流到维护仓 doc/features，按原编号。
 
     回流的是快照不是工作区：工作区还在跑第二段，拿它回流等于把两段混成一份。
     目的地已经有内容不同的东西时不覆盖，两边都留着并报冲突——这条复用 finalize 的口径。
