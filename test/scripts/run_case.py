@@ -1872,7 +1872,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     client = CliClient(runtime_root=out_dir / "cli-runtime")
     t0 = time.time()
     # 正式多 Case 使用不含 .git 的隔离 workspace；其源码基线与差异由宿主
-    # run_multi_case.py 的白名单快照负责，不能再调用主工程 Git 源码事务。
+    # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
     isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
     source_transaction_required = (
         interval_contains_coding(start_phase, end_phase) and not isolated_workspace

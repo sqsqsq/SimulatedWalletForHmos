@@ -24,14 +24,14 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 不能创建 suite、迁移 features 或启动 CLI。
 
 **CLI 测试一律以非沙箱启动**（用户长期授权，2026-09-04 复述确认，每轮不必重新征求）：`start` 必须传 `--authorize-non-sandbox`，
-`plan`、`poll`、`reply`、`conclude`、`finalize` 同样在非沙箱环境跑；驱动器要拉起并探测子进程、读写隔离 workspace、把产物回灌进本仓。
+`plan`、`poll`、`reply`、`conclude`、`finalize` 同样在非沙箱环境跑；驱动器要拉起并探测子进程、读写隔离 workspace、把产物回灌进 demo。
 这条只管宿主：不是要求被测模型切换环境，也不得写入 Case prompt。宿主自身的权限层拦下某条命令时请用户放行，不改写命令绕开；
 绕过去的那一跑不算数。
 
 ### 0.1 测试目标与观测边界
 
 - 正式 Case 是组合业务场景；叙述变形只做离线检查，不构成正式 Case。
-- 每个 Case 只能看到自身 workspace、初始任务和已发送交互，不得接触 `test/story/` 维护材料、其他 Case 或历史 suite。
+- 每个 Case 只能看到自身 workspace、初始任务和已发送交互，不得接触 `test/` 维护材料、其他 Case 或历史 suite。
 - 观测者（外层协调器）不得替被测模型运行 gate、修改被测产物或清理阶段状态。
 
 ### 0.2 宿主在实跑期间的角色：需求方 / 评审人
@@ -48,22 +48,30 @@ feature 或顺序。允许单选、多选或全选。确认前复述实际 Case�
 这是硬规则：说出解法的那一刻，测的就不再是被测模型能不能自己走通，而是宿主知不知道答案。
 
 其余纪律：按本协议 poll / 回复 / 记录；heartbeat 与 `watch` 只承担 §3.1/§4 的观测唤醒，不另派 Agent 或维护任务研究、改写被测产物，
-避免宿主 hook 污染证据；不在主工程跑 harness。评测在 finalize 之后做，实跑期间不切换成实现维护职责。
+避免宿主 hook 污染证据；不在 demo 里跑 harness。评测在 finalize 之后做，实跑期间不切换成实现维护职责。
 
 ### 0.3 人手跑一遍（不经测试装置）
 
-想在本仓直接试 `/story init`，先用 `scripts/bootstrap_local_story.py` 装本地需求系统；用法、原因、三点注意和它与 CLI 测试
-互不干扰的机制见该脚本文件头说明。它只给本仓，不随扩展包交付。
+人手试用在 demo 里做，用的是 demo 装着的发布版扩展（1.9.8 发布前是 1.9.7）。先装本地需求系统，再带上环境变量进 demo 起会话：
+
+```powershell
+python test/scripts/bootstrap_local_story.py --verify AR90006     # 单据装到维护域 test/requirement-system，并在临时目录验证链路
+$env:STORY_REQUIREMENT_SYSTEM_DIR = "<回执里的 system_dir>"
+cd demo                                                            # 在 demo 根下起 CLI 会话，说 /story init <单号>
+```
+
+不设这个变量时，demo 里的替身对接层找不到本地单据，报「需求系统不可达」。用法、三点注意与它和 CLI 测试互不干扰的机制见脚本文件头；
+正式 CLI 测试不用它，每个 Case 用自己的隔离系统快照。它只给本仓，不随扩展包交付。
 
 ## 1. 唯一入口与启动
 
 正式测试统一使用 `scripts/run_multi_case.py`，即使只运行一个 Case，也不直接运行 `run_case.py`。
 
 ```powershell
-python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数>
-python test/story/scripts/run_multi_case.py start --all --jobs <实际Case数> `
+python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
+python test/scripts/run_multi_case.py start --all --jobs <实际Case数> `
   --suite-id story-suite-20260822-140000 --authorize-non-sandbox
-python test/story/scripts/run_multi_case.py poll --suite-id story-suite-20260822-140000 --wait-sec 0
+python test/scripts/run_multi_case.py poll --suite-id story-suite-20260822-140000 --wait-sec 0
 ```
 
 以上都在非沙箱环境执行（§0）。`plan` 只读确认选中的 Case、feature、目标阶段；`start` 起跑；之后循环 `poll` 并以需求方身份回话（§3）；
@@ -101,20 +109,23 @@ CLI 测试按 `config/test.yaml > cli.configurations` 的顺序选宿主，具�
 Case 的 prompt、材料投放与终点怎么写见 [cases/README.md](cases/README.md)；本节只写装置起跑前的动作。
 
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir` 且该目录已物化 UI kit 组件，否则任何跑到
-   coding 的 Case 都会被 UI kit 门禁拦在「目标目录无法解析」上，与被测能力无关；主工程 `framework/harness/state/` 下没有属于别人的
-   阶段状态（有则先弄清归属，不要盲目 clear-state）。
+   coding 的 Case 都会被 UI kit 门禁拦在「目标目录无法解析」上，与被测能力无关；demo 的 `framework/harness/state/` 下没有属于别人的
+   阶段状态（有则先弄清归属，不要盲目 clear-state）；demo 顶层没有维护目录，git 查询成功且非忽略改动为空（发布基线）。
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
 4. 全部安全后尝试删除历史 workspace/output，写入 `previous-run-cleanup.json`。
 5. 安全预检通过但个别历史目录删除失败时，逐目标记录 `retained_cleanup_warning` 和残留路径，保留现场供下一轮重试，
    不阻断本轮 feature 迁移、workspace 创建或 CLI 启动。
-6. 清理预检通过后，将当前 `doc/features/*` 整体迁移到 `E:\Project\bak\Story-Features-<时间戳>/`。
+6. 清理预检通过后，将 demo 当前的 `doc/features/*` 整体迁移到 `E:\Project\bak\Story-Features-<时间戳>/`。
 7. 创建模板及各 Case workspace，再顺序启动 CLI。
 
-workspace 只复制产品源码和构建配置、`framework/`、`doc/extensions/`、architecture/catalog/glossary 以及当前 Case 所需输入。
-递归排除 `test/`、`tools/`、`output/`、`.git`、历史 `doc/features`、其他 Case 输入和历史 suite。启动前递归检查路径边界与软链接，
-并在 `workspace-boundary.json` 分别记录 `copied`、`excluded` 和各 Case 的 `case_seeded` 清单。边界失败只阻止起跑，不产生额外运行状态。
+模板按固定顺序装配：核 demo（结构、git 干净、记下提交）→ 复制 demo（排除运行态：`doc/features`、Framework 活动状态、
+`oh_modules`、`build`、`.hvigor`、`__pycache__` 等，业务模块自己的单测目录照常带上）→ 在模板里把根 `extensions/` 的当前开发源（含未提交改动）
+装进 `doc/extensions/`、写入口与扩展段 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、不建 Case、
+不起跑；修好后重新装配。demo 顶层出现 `test`、`tools`、`output`、`scratch`、`.bak`、`.git` 即结构错误。各 Case 工作区从模板复制，
+再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、`copied`、`excluded`、安装结果和各 Case 的
+`case_seeded`。边界失败只阻止起跑，不产生额外运行状态。
 
 活动 PID、有效 lease、路径越界、软链接风险、未知目录类型、所有权不明或无法可靠枚举进程时，必须保留现场并在 feature 迁移前停止；
 安全预检已通过后的个别文件删除失败按第 5 项记录并继续，不与路径或所有权风险混为一类。非 suite 长期目录不自动清理。
@@ -183,7 +194,7 @@ features 是迁移归档，不在本轮结束时恢复；本轮 workspace/output
 明确要求。单个 Case 失败也不得停止其他 Case。
 
 ```powershell
-python test/story/scripts/run_multi_case.py reply --suite-id story-suite-20260822-140000 `
+python test/scripts/run_multi_case.py reply --suite-id story-suite-20260822-140000 `
   --case <case-id> --reply-mode adaptive --reply-kind planned --step scope-do-both-in-one `
   --reason "模型问范围怎么定，对应规划里的不拆单立场" `
   --text "只做挂失，不做补卡。"
@@ -196,7 +207,7 @@ python test/story/scripts/run_multi_case.py reply --suite-id story-suite-2026082
 ### 3.1 用 `watch` 敲门：只 poll，不回话，退出即停
 
 ```powershell
-python test/story/scripts/run_multi_case.py watch --suite-id story-suite-20260822-140000 --interval 60
+python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-140000 --interval 60
 ```
 
 `watch` 按间隔做零等待 poll，遇到以下任一情况就退出并打印原因：有 Case 要回话、有 Case 停在检查点要评测或收尾、suite 结束、
@@ -260,7 +271,7 @@ suite 记录里每个 Case 的 `end_phase` 字段始终回显 `case.yaml` 的原
 | 拿不准 | 再 poll 一轮。**不要 stop**：`stop` 只响应用户明确要求 |
 
 ```powershell
-python test/story/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-140000 `
+python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-140000 `
   --case <case-id> --reason "模型宣告进入 plan，本轮目标 spec 已到位"
 ```
 
@@ -397,11 +408,11 @@ CLI、gate、恢复或基础设施失败为非零。被测做得好不好看 `ta
 全部 Case 终态后执行：
 
 ```powershell
-python test/story/scripts/run_multi_case.py finalize `
+python test/scripts/run_multi_case.py finalize `
   --suite-id story-suite-20260822-140000 --promote
 ```
 
-回灌依据是 Case 已终态且 workspace 存在。成功或失败 Case 的 `doc/features/<feature>` 都独立复制回主工程，不得因同批其他 Case 已写入
+回灌依据是 Case 已终态且 workspace 存在。成功或失败 Case 的 `doc/features/<feature>` 都独立复制回 demo，不得因同批其他 Case 已写入
 源码而跳过。受控源码差异逐文件做三方检查：目标仍等于 suite 基线时写入，目标已等于该 Case 结果时记为幂等完成，只有目标同时不同于基线
 和 Case 结果时记录真实冲突；删除只记录不执行。Feature 目标已存在时仅在内容完全相同时视为已回灌，否则保留双方并记录冲突。
 每个 Case 生成不可变原始 `observations.jsonl` 和汇总 `observation-record.md`，记录启动与恢复、阶段和状态变化、15/120 秒观测、交互、
@@ -409,7 +420,7 @@ CLI/gate/基础设施错误、回灌结果和保留路径。
 
 `finalize --cleanup` 已停用，必须明确报错且不删除现场。finalize 后本轮 workspace 和整个 suite output 保留到下一轮起跑时统一清理。
 
-finalize 前确认主工程的阶段状态文件不存在、或不属于本次 feature；否则宿主会话的 hook 会按那份状态把报告写进回灌后的产物里，
+finalize 前确认 demo 的阶段状态文件不存在、或不属于本次 feature；否则宿主会话的 hook 会按那份状态把报告写进回灌后的产物里，
 事后分不清哪些是被测模型产出的、哪些是宿主的副作用。
 
 ## 7. 离线验证
@@ -422,6 +433,13 @@ python -m tools.cli.scripts.validate_clis
 python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
 python test/scripts/check_failure_modes.py --project-root <装好开发源的消费工程>
 node --check <每个 extensions 下的 .mjs>      # 逐个之间无依赖，可同时起
+```
+
+`--project-root` 给的是装好开发源的模板：用最近一次 `start` 的 `%TEMP%/sw-story/<suite-id>/workspace-template`，或不起 CLI、
+按 §2 同一装配顺序现建一份（`<id>` 每次取新值，打印的就是模板路径）：
+
+```powershell
+python -c "import sys, pathlib; sys.path.insert(0, 'test/scripts'); import run_multi_case as m; d = pathlib.Path('output/story/<id>'); d.mkdir(parents=True); print(m.create_workspace_template(d, '<id>')[0])"
 ```
 
 能并行的一律并行：每条命令都带着自己的并行参数，照抄不删（`-n auto` / `--jobs` / `-j` 掉一个，同一批用例慢近十倍，结论不变）。
@@ -437,22 +455,22 @@ opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；�
 没有发布器这一环。两条命令都不启动真实 CLI：
 
 ```powershell
-python -m unittest discover -s test/story/tests -p "test_verifier_chain_in_workspace.py"
-npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\framework   # 在 framework/harness 下跑
+python -m unittest discover -s test/tests -p "test_verifier_chain_in_workspace.py"
+npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\demo\framework   # 在 demo/framework/harness 下跑
 ```
 
-第一条核工作区带没带上子代理定义与作者入口、定义说的是不是当前这一版协议；第二条走 `framework/harness/node_modules/ts-node`。
+第一条核工作区带没带上子代理定义与作者入口、定义说的是不是当前这一版协议；第二条走 `demo/framework/harness/node_modules/ts-node`。
 
 ### 7.0.1 verifier smoke（真实 CLI，独立于 Story）
 
-`test/story/verifier-smoke/` 用一个固定小需求跑到 spec 闭环，验证 verifier 链路。它不在 `cases/*` 里、不进 `--all`，
+`test/verifier-smoke/` 用一个固定小需求跑到 spec 闭环，验证 verifier 链路。它不在 `cases/*` 里、不进 `--all`，
 跑它不影响 Story Case 的发现与统计。
 
 ```powershell
-python test/story/verifier-smoke/run_smoke.py build  --workspace <隔离目录> --force
-python test/story/verifier-smoke/run_smoke.py run    --workspace <隔离目录> `
+python test/verifier-smoke/run_smoke.py build  --workspace <隔离目录> --force
+python test/verifier-smoke/run_smoke.py run    --workspace <隔离目录> `
   --cli-config bailian-deepseek --evidence <隔离目录>\smoke-evidence.json
-python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
+python test/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 ```
 
 `build` 会调真正的 init 物化 `.opencode/`；工程是合成的最小 `generic` 工程，不挂 Extension，架构/画像/术语表在 `fixture/doc/`。
@@ -463,8 +481,8 @@ python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 
 三条现场纪律：
 
-- `harness-runner.ts` 没有 `--project-root`，它按自身位置解析工程根。阶段门禁由被测模型在 workspace 内自己跑；别在主工程跑它，
-  跑了会把报告写进主仓、还会误建 `doc/features/<feature>/`。
+- `harness-runner.ts` 没有 `--project-root`，它按自身位置解析工程根。阶段门禁由被测模型在 workspace 内自己跑；别在 demo 里跑它，
+  跑了会把报告写进 demo、还会误建 `doc/features/<feature>/`。
 - 确认按 `confirmation-registry.yaml` 的 portable 菜单文案匹配（`fixture/replies.yaml`），不按轮次序号。没有条目命中就停等报
   `unknown_question`，不盲答。
 - `spec.feature_path` 冲突、以及 verifier request 生成前的 Research / 术语 / track / 冻结门 BLOCKER，一律归
@@ -473,14 +491,14 @@ python test/story/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
 离线判据（不启动 CLI）：
 
 ```powershell
-python -m unittest discover -s test/story/tests -p "test_verifier_smoke.py"
+python -m unittest discover -s test/tests -p "test_verifier_smoke.py"
 ```
 
 ### 7.0.2 作者起手通道
 
 ```powershell
-python -m unittest discover -s test/story/tests -p "test_author_context_entry.py"
-node doc/extensions/hooks/spec/author.mjs --feature <feature>
+python -m unittest discover -s test/tests -p "test_author_context_entry.py"
+node doc/extensions/hooks/spec/author.mjs --feature <feature>    # 在装好开发源的模板根下跑（demo 里是发布版）
 ```
 
 第二条是消费模型在动笔前跑的那一条，维护侧手查通道时也用它。各阶段的原则页是 `doc/extensions/hooks/<phase>/author.md`，
@@ -494,7 +512,7 @@ node doc/extensions/hooks/spec/author.mjs --feature <feature>
 | 段 | 对象 | 判据 |
 |---|---|---|
 | 夹具自检 | `fixtures/failure-modes/<id>/{bad,good}` | 反夹具必 FAIL、正夹具必 PASS；不过 = checker 本身失效 |
-| 真实目标 | 机制层 = `doc/extensions`；产物层 = `--feature` 指定的**新**产物 | `status: fixed` 的形态一条不许命中 |
+| 真实目标 | 机制层源码扫描 = `extensions`（开发源）；执行器与产物层 = `--project-root` 给的装好开发源的模板及其中 `--feature` 指定的**新**产物 | `status: fixed` 的形态一条不许命中 |
 
 `status: pending_capability` 报 SKIP（目标能力尚未建，不算回归失败）；`retired` 须带 `reason` + `approved_by`。
 
@@ -506,11 +524,11 @@ node doc/extensions/hooks/spec/author.mjs --feature <feature>
 本节是机制层负面扫描命令的唯一维护位置。提交前固定运行；前四项检查知识/工程标识与绝对路径，第五项检查交付面是否混入维护历史：
 
 ```powershell
-rg -n '\b[A-Z]{2,8}-[0-9]{2}\b' doc/extensions -g '!doc/extensions/knowledge/**'
-rg -n '\b(AR|DTS|ISSUE)-?[0-9]{4,}\b' doc/extensions -g '!doc/extensions/knowledge/**'
-rg -n '\b0[1-9]-[A-Z][A-Za-z]{3,}\b' doc/extensions -g '!doc/extensions/knowledge/**'
-rg -n '[A-Za-z]:[\\/]|\bbackup/' doc/extensions
-rg -n '实测[^。]{0,40}[0-9]|首跑 [0-9]|批次 *[0-9]|上一轮那|F[0-9]+ (首版|实测)' doc/extensions -g '!doc/extensions/knowledge/**'
+rg -n '\b[A-Z]{2,8}-[0-9]{2}\b' extensions -g '!extensions/knowledge/**'
+rg -n '\b(AR|DTS|ISSUE)-?[0-9]{4,}\b' extensions -g '!extensions/knowledge/**'
+rg -n '\b0[1-9]-[A-Z][A-Za-z]{3,}\b' extensions -g '!extensions/knowledge/**'
+rg -n '[A-Za-z]:[\\/]|\bbackup/' extensions
+rg -n '实测[^。]{0,40}[0-9]|首跑 [0-9]|批次 *[0-9]|上一轮那|F[0-9]+ (首版|实测)' extensions -g '!extensions/knowledge/**'
 ```
 
 扫描面包含 Markdown、提示词、注释、docstring 和合同说明；这些内容都会进入消费模型上下文，按交付物处理。业务词不在命令中维护固定清单，
@@ -538,7 +556,7 @@ M01/M17 为准：它们的基准从激活清单派生，能区分「真实标识
 `-n auto`，两者不冲突。排障时才串行：
 
 ```powershell
-python -m unittest discover test/story/tests         # 只在排障时用：串行、输出线性
+python -m unittest discover test/tests         # 只在排障时用：串行、输出线性
 ```
 
 测试隔离、重夹具与慢用例的编写纪律见 [tests/README.md](tests/README.md)。
@@ -549,8 +567,8 @@ python -m unittest discover test/story/tests         # 只在排障时用：串�
 不进 PASS 条件（G8），达标与否由人看着数字判断。
 
 ```bash
-python test/story/scripts/measure_run.py output/story/<suite>/cases/<case>/<run>
-python test/story/scripts/measure_run.py <同上> --json      # 需要机器读时
+python test/scripts/measure_run.py output/story/<suite>/cases/<case>/<run>
+python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 ```
 
 | # | 指标 | 目标 |
@@ -608,10 +626,10 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 需要定位时复用以下工具，不新建评测平台；参数先查当前入口帮助。工具名中的 qualification 不代表已启用准入门禁。
 
 ```powershell
-python test/story/scripts/make_narrative_variants.py --list
-python test/story/scripts/make_narrative_variants.py --out <独立临时目录>
+python test/scripts/make_narrative_variants.py --list
+python test/scripts/make_narrative_variants.py --out <独立临时目录>
 # 以下会调用模型，只有获得本次诊断授权后运行
-python test/story/scripts/run_review_qualification.py --config <当前配置> --out <独立输出目录>
+python test/scripts/run_review_qualification.py --config <当前配置> --out <独立输出目录>
 ```
 
 以当前 index 给出的变体及预期为准，不在操作协议固定族数或删几条事实。保留输入改动、配置、输出原文和实际发现的位置；
@@ -673,7 +691,7 @@ python test/story/scripts/run_review_qualification.py --config <当前配置> --
 ### 10.4 晋升为长期基线
 
 本节协议版本为 `story-init-score@1`。将用户确认的评分量表、代表性测试结果及其适用 Case/宿主配置写入受版本管理的
-`test/story/baselines/story-init-quality.md`（首次晋升时建立），成为后续 Extension 演进基线。后续真实测试继续按三项独立评分：
+`test/baselines/story-init-quality.md`（首次晋升时建立），成为后续 Extension 演进基线。后续真实测试继续按三项独立评分：
 既比较已冻结基线，也观察多次结果趋势。修改量表、阈值或基线样本须先向用户说明原因并取得确认，不能为让新版本过线而静默改口径。
 
 ### 10.5 跨轮比较与稳定性

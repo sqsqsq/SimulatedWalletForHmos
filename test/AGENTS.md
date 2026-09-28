@@ -65,9 +65,9 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统，不
 - 本仓对 framework 仅有两处差异：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
   `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，
   根 `.opencode/agent/verifier.md` 是维护装置的拷贝），不含逻辑改动，不交上游。
-  `framework.config.json` 的 `integrity.drift_allowlist` 在 3.0.0 已退役、读取即忽略；保留靠 UPDATE 时对这两处 `init.task_decision`
-  选「保留」。它们不随 story-adaptation 进目标仓；进目标仓的 `.opencode` 内容只有 manifest `provides.bridges`
-  登记的跳板。
+  `demo/framework.config.json` 里的 `integrity.drift_allowlist` 在 3.0.0 已退役、读取即忽略，不起保留作用；接入新发布件时
+  在发布件文件上重新加回这两处定制，再同步根装置，步骤见根 [AGENTS.md](../AGENTS.md)「framework 接入」。
+  它们不随 story-adaptation 进目标仓；进目标仓的 `.opencode` 内容只有 manifest `provides.bridges` 登记的跳板。
 - `demo/.opencode/` 同时是本仓 story 分支的 CLI 测试装置（Case 工作区从 demo 复制）：外网实跑用 opencode，内网用 codex。
 
 ## 3. 不变量

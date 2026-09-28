@@ -1,7 +1,7 @@
 # Validation
 
 本目录自带的离线校验。**改动 `tools/cli` 后手动跑**——本仓的门禁
-(`pytest test/story/tests`) 对象是 story 能力，不含本目录。
+(`pytest test/tests`) 对象是 story 能力，不含本目录。
 
 Run from the repository root:
 

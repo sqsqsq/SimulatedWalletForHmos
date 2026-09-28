@@ -2902,7 +2902,7 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
 
 
 def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
-    """把**固定下来的那一份**回流到主仓，按原编号。
+    """把**固定下来的那一份**回流到 demo，按原编号。
 
     回流的是快照不是工作区：工作区还在跑第二段，拿它回流等于把两段混成一份。
     目的地已经有内容不同的东西时不覆盖，两边都留着并报冲突——这条复用 finalize 的口径。

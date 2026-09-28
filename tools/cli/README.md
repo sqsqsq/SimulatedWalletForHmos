@@ -5,7 +5,7 @@
 > 定义（本仓 Cursor Agent 用 `readonly`/`workspace_write`，上游用 `plan`/`build`）、`registry.py`
 > （上游多了 Windows npm `.CMD`/`.BAT` 包装器解析）、`runner.py` 与 `process_control.py` 的注释与实现。
 > 要取上游改动请**逐文件比对后合入**；算法层与 provider 适配仍建议回上游维护。
-> **使用方**：`test/story/scripts/run_case.py` 通过 `from tools.cli import CliClient, CliRunRequest` 调用。
+> **使用方**：`test/scripts/run_case.py` 通过 `from tools.cli import CliClient, CliRunRequest` 调用。
 
 `tools/cli` provides one provider-neutral, replayable interface for
 invoking agent CLIs. It does not import business runners.
