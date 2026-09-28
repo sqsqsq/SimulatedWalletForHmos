@@ -561,7 +561,7 @@ python test/story/scripts/measure_run.py <同上> --json      # 需要机器读�
 | 4 | 同一 check id FAIL 次数 | ≤ 2 |
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
-| 7 | `doc/extensions` 非知识层**代码行**（注释与空行不计） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
+| 7 | 交付内容有效行（计量范围唯一见 `test/AGENTS.md §5`） | 由 `regression/mechanism-budget.yaml` 的当前峰值/完成上限执行（`test_mechanism_budget.py`）；阶段边界按 AGENTS §5 区分 |
 
 `measure_run.py` 的 `segments` 按段给出（双检查点单分 `initial` / `update`，按续跑时刻切；普通单一段 `whole`）：
 `duration_min`、`model_gap_sec` 与 `tool_gap_sec`（事件间隔归属的近似值）、`verifier_runs` 与 `verifier_gap_sec`、

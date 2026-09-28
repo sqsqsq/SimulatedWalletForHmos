@@ -30,28 +30,25 @@ BUDGET = REPO / "test" / "regression" / "mechanism-budget.yaml"
 
 
 def classify(path: Path) -> str | None:
-    """这个文件算不算进机制规模。
-
-    不算的三类：知识层（内容归目标工程）、依赖目录，以及**安装期工具**——
-    `skills/story-adaptation/**` 是把这套机制装到别的工程去的东西，装完就不参与任何
-    一次需求；预算限的是「本需求的机制有多大」，把安装器算进去，等于让「更好装」和
-    「机制更小」互相挤占（用户 2026-09-05 裁定）。
-    """
-    rel = path.relative_to(EXT).as_posix()
-    if rel.startswith("knowledge/") or "node_modules" in path.parts:
+    """按 test/AGENTS.md §5 的交付范围分类；这里只实现范围和有效行算法。"""
+    try:
+        rel = path.relative_to(EXT).as_posix()
+    except ValueError:
         return None
-    if rel.startswith("skills/story-adaptation/"):
+    if rel.startswith(("knowledge/", "skills/story/scripts/adapters/")):
+        return None
+    if rel == "skills/story-adaptation/reference/upgrade-changes.md":
+        return None
+    if "node_modules" in path.parts or "__pycache__" in path.parts or rel.startswith("adapt/"):
         return None
     # 点开头的目录是工作件，不随包交付
     if any(seg.startswith(".") for seg in rel.split("/")[:-1]):
         return None
     suf = path.suffix
-    if rel.startswith("skills/") and suf == ".mjs":
-        return "scripts_mjs"
-    if rel.startswith("skills/") and suf == ".py":
+    if suf in (".mjs", ".js"):
+        return "hooks_mjs" if rel.startswith("hooks/") else "scripts_mjs"
+    if suf == ".py":
         return "scripts_py"
-    if rel.startswith("hooks/") and suf == ".mjs":
-        return "hooks_mjs"
     if suf == ".md":
         return "prompts_md"
     if suf in (".json", ".yaml", ".yml"):
@@ -74,7 +71,7 @@ def code_lines(path: Path) -> int:
     """
     text = path.read_text(encoding="utf-8", errors="replace")
     suffix = path.suffix
-    if suffix == ".mjs":
+    if suffix in (".mjs", ".js"):
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
         rows = [ln for ln in text.split("\n") if not ln.lstrip().startswith("//")]
     elif suffix == ".py":
@@ -121,6 +118,34 @@ def measure() -> tuple[dict[str, int], dict[str, list[Path]]]:
         lines[cat] = lines.get(cat, 0) + code_lines(p)
         files.setdefault(cat, []).append(p)
     return lines, files
+
+
+class CountingScope(unittest.TestCase):
+    def test_installer_is_delivery_but_knowledge_adapters_and_changelog_are_not(self):
+        for rel, expected in (
+            ("skills/story-adaptation/scripts/adapt-scan.mjs", "scripts_mjs"),
+            ("skills/story-adaptation/SKILL.md", "prompts_md"),
+            ("skills/story-adaptation/reference/knowledge-adaptation.md", "prompts_md"),
+            ("skills/story-adaptation/reference/upgrade-changes.md", None),
+            ("knowledge/facts/project.md", None),
+            ("skills/story/scripts/adapters/adapter.py", None),
+            ("skills/story/scripts/adapters/config.yaml", None),
+            ("skills/story/scripts/core/helper.js", "scripts_mjs"),
+        ):
+            with self.subTest(rel=rel):
+                self.assertEqual(expected, classify(EXT / rel))
+
+    def test_maintenance_and_runtime_are_outside_delivery_budget(self):
+        for path in (
+            REPO / "test/scripts/publish_to_demo.py",
+            REPO / "test/tests/sample.py",
+            REPO / "AGENTS.md",
+            EXT / "node_modules/package/index.js",
+            EXT / ".adapt-1.9.8/notes.md",
+            EXT / "adapt/notes.md",
+        ):
+            with self.subTest(path=path):
+                self.assertIsNone(classify(path))
 
 
 class MechanismBudget(unittest.TestCase):
