@@ -415,13 +415,13 @@ finalize 前确认主工程的阶段状态文件不存在、或不属于本次 f
 ## 7. 离线验证
 
 ```powershell
-python -m pytest test/story/tests -n auto --dist loadscope
+python -m pytest test/tests -n auto --dist loadscope
 python -m pytest tools/cli/tests -n auto --dist loadscope
-python -m compileall -q -j 0 tools/cli test/story/scripts
+python -m compileall -q -j 0 tools/cli test/scripts
 python -m tools.cli.scripts.validate_clis
-python test/story/scripts/run_multi_case.py plan --all --jobs <实际Case数>
-python test/story/scripts/check_failure_modes.py
-node --check <每个 doc/extensions 下的 .mjs>      # 逐个之间无依赖，可同时起
+python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
+python test/scripts/check_failure_modes.py --project-root <装好开发源的消费工程>
+node --check <每个 extensions 下的 .mjs>      # 逐个之间无依赖，可同时起
 ```
 
 能并行的一律并行：每条命令都带着自己的并行参数，照抄不删（`-n auto` / `--jobs` / `-j` 掉一个，同一批用例慢近十倍，结论不变）。

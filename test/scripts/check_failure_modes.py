@@ -2368,7 +2368,18 @@ def m21_environment_hardcoded(root: Path, ctx: Ctx) -> Outcome:
 
 #: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——
 #: 而样本是用来检验机制的，被检验的东西反过来指向检验它的东西，这条链就闭合成了自证。
-VERIFICATION_ASSET_WORDS = ("金样", "仲裁锚", "golden", "fixtures", "夹具目录", "test/")
+VERIFICATION_ASSET_WORDS = ("金样", "仲裁锚", "golden", "fixtures", "夹具目录")
+
+
+def maintenance_path_hits(line: str) -> list[str]:
+    """一行里指向维护域的路径：从维护仓根的 ``test/`` 起头、下一段是维护域里实际存在的条目。
+
+    按路径边界认：``test/`` 前面不能紧跟路径字符（字母、数字、``.``、``-``、``/``），所以
+    ``docs/latest/``、``src/test/`` 这类别处的目录不算；下一段从维护域目录实读，不写词表。
+    """
+    names = sorted((p.name for p in (REPO_ROOT / "test").iterdir()), key=len, reverse=True)
+    pattern = re.compile(r"(?<![\w./-])test/(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w.-])")
+    return [m.group(0) for m in pattern.finditer(line)]
 
 
 @checker
@@ -2384,18 +2395,21 @@ def g02_mechanism_points_at_assets(root: Path, ctx: Ctx) -> Outcome:
     def scan(lines):
         out = []
         for rel, n, line in lines:
-            for word in VERIFICATION_ASSET_WORDS:
-                if word in line:
-                    out.append(f"{rel}:{n} 「{word}」")
-                    break
+            word = next((w for w in VERIFICATION_ASSET_WORDS if w in line), None)
+            paths = maintenance_path_hits(line)
+            if word or paths:
+                out.append(f"{rel}:{n} 「{word or paths[0]}」")
         return out
 
-    # 反例内建：判项本身也要证明它抓得住——不然「零命中」可能只是它在空转
+    # 正反例内建：判项本身也要证明它抓得住、也不误伤——不然「零命中」可能只是它在空转
     sample = [("<样本>", 1, "写之前先照着金样那一份的第四章排布"),
-              ("<样本>", 2, "本章按合同的形态规则写就")]
-    caught = scan(sample)
-    if len(caught) != 1:
-        return Outcome(False, f"判项抓不住自带反例（命中 {len(caught)} 条，应为 1 条）——它在空转")
+              ("<样本>", 2, "按 test/cases/sample/case.yaml 的样子写"),
+              ("<样本>", 3, "本章按合同的形态规则写就"),
+              ("<样本>", 4, "Read docs/latest/reference.md before using the API."),
+              ("<样本>", 5, "单测放在 entry/src/test/ 下")]
+    caught = [c.split(":")[1].split(" ")[0] for c in scan(sample)]
+    if caught != ["1", "2"]:
+        return Outcome(False, f"判项正反例不对（命中第 {caught} 条，应为第 1、2 条）——它在空转或误伤")
 
     hits = scan((path.relative_to(root).as_posix(), n, line)
                 for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS)

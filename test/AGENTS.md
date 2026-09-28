@@ -5,9 +5,11 @@
 
 ## 0. 入口
 
-- 维护 Extension 先完整阅读本文件。维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `test/story/spec/`、`test/story/plan/`
-  中按该任务查找已有材料；无法确定对应任务时补齐歧义，不默认进入某个日期或最新轮次。`doc/features/*` 是历史产物，不是需求真源。
-- 过程件入库：`test/story/spec/` 放需求与版本范围，`test/story/plan/` 放方案、评审与交回，随提交留下历史；实跑的运行证据
+- 维护 Extension 先完整阅读本文件。维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `test/spec/`、`test/plan/`
+  中按该任务查找已有材料；无法确定对应任务时补齐歧义，不默认进入某个日期或最新轮次。`demo/doc/features/*` 是历史产物，不是需求真源。
+- 仓内结构：`extensions/` 是 Extension 开发源，`demo/` 是完整消费工程（业务、framework 发布件、宿主物化与已装的 Extension），
+  `test/` 是本维护域。
+- 过程件入库：`test/spec/` 放需求与版本范围，`test/plan/` 放方案、评审与交回，随提交留下历史；实跑的运行证据
   （事件流、运行日志、截图、材料原件、压缩包）放 `output/story/`，过程件里按路径引用。
 - 运行、修改或评价测试：按 [TEST.md](TEST.md) 任务索引完整读取对应分支，真实 CLI 启动前读完其运行协议；命令、状态、证据与评分
   只在那里维护。
@@ -30,7 +32,7 @@
   拒绝的给出事实依据。
 - 实跑中宿主由本次任务指定的维护角色担任，代理需求方的边界见 TEST §0.2。
 - 消费模型是用 Framework + Extension 在目标工程开发真实需求的模型，包括外网隔离 Case 的被测模型和内网仓的使用模型。它只依赖需求材料、
-  目标仓事实与 Framework/Extension 上下文；交付内容不引导它读 `test/story/`、历史方案、失败用例或 checker 源码。它读 checker 只是
+  目标仓事实与 Framework/Extension 上下文；交付内容不引导它读 `test/`、历史方案、失败用例或 checker 源码。它读 checker 只是
   调查信号（TEST §8 第 3 项）；为定位明确的工具或脚本内部错误可以读实现，但不能据此改业务产物迎合隐藏判据，问题回维护层处理。
   verifier 是产品内部的独立审查能力，按使用流程工作。
 
@@ -58,14 +60,15 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统，不
 
 本仓特殊事实：
 
-- `framework/` 是 AgentMaison 3.0.0 的 vendored 副本（`framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
+- `demo/framework/` 是 AgentMaison 3.0.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
-- 本仓对 framework 仅有两处差异：`framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
-  `framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `.opencode/agent/verifier.md`），不含逻辑改动，不交上游。
+- 本仓对 framework 仅有两处差异：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
+  `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，
+  根 `.opencode/agent/verifier.md` 是维护装置的拷贝），不含逻辑改动，不交上游。
   `framework.config.json` 的 `integrity.drift_allowlist` 在 3.0.0 已退役、读取即忽略；保留靠 UPDATE 时对这两处 `init.task_decision`
   选「保留」。它们不随 story-adaptation 进目标仓；进目标仓的 `.opencode` 内容只有 manifest `provides.bridges`
   登记的跳板。
-- `.opencode/` 同时是本仓 story 分支的 CLI 测试装置：外网实跑用 opencode，内网用 codex。
+- `demo/.opencode/` 同时是本仓 story 分支的 CLI 测试装置（Case 工作区从 demo 复制）：外网实跑用 opencode，内网用 codex。
 
 ## 3. 不变量
 

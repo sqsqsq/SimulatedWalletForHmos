@@ -21,7 +21,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
@@ -45,8 +45,6 @@ const EXT_BEGIN = '<!-- story-ext:begin -->';
 const EXT_END = '<!-- story-ext:end -->';
 const SECTION = 'skills/story/AGENTS.section.md';
 const ENTRIES = ['AGENTS.md', 'CLAUDE.md'];
-/** 跳板正文按这个安装位写链接；目标装在别处时，只把这段路径换成目标的安装位。 */
-const DEFAULT_EXT = 'doc/extensions';
 
 const argv = process.argv.slice(2);
 const mode = MODES.find(m => argv.includes(m));
@@ -247,10 +245,22 @@ function freshIdentity(root) {
 }
 
 /**
+ * 登记里的相对路径 → 规范写法：去掉 `.` 段；`..`、绝对路径、反斜杠、空段不认（返回 null）。
+ * 同一个文件只有一种写法，重复判定、脏检查、写入与自检才对得上。
+ */
+function canonical(p) {
+  if (typeof p !== 'string' || p.includes('\\') || p.startsWith('/') || /^[A-Za-z]:/.test(p)) return null;
+  const segs = p.split('/').filter(seg => seg !== '.');
+  if (!segs.length || segs.some(seg => seg === '..' || seg === '')) return null;
+  return segs.join('/');
+}
+
+/**
  * 包登记的跳板：`provides.bridges` 每项一对 `target`（相对目标工程）与 `source`（相对扩展根）。
  *
- * 写目标之前全部核完：登记读不出、少键、路径越界、同一目标登记两次、源文件不在，
- * 任何一条都是包坏了，报出来就停，目标一个字节不写。
+ * 写目标之前全部核完：登记读不出、少键、路径越界、同一目标登记两次（按规范写法与目标文件系统的
+ * 大小写规则比）、源不是扩展里读得到的文件，任何一条都是包坏了，报出来就停，目标一个字节不写。
+ * 源的正文在这里读好，写入与自检都用这一份。
  */
 function bridgesOf(manifestText) {
   let doc;
@@ -261,8 +271,6 @@ function bridgesOf(manifestText) {
   }
   const items = doc?.provides?.bridges ?? [];
   if (!Array.isArray(items)) die('包的 provides.bridges 不是列表：每项写 target 与 source');
-  const inside = p => typeof p === 'string' && p.trim() !== '' && !p.includes('\\') && !p.startsWith('/')
-    && !/^[A-Za-z]:/.test(p) && !p.split('/').some(seg => seg === '..' || seg === '');
   const problems = [];
   const seen = new Set();
   const out = [];
@@ -272,14 +280,23 @@ function bridgesOf(manifestText) {
       problems.push(`${at} 不是 target / source 一对`);
       return;
     }
-    const { target, source } = item;
-    if (!inside(target)) problems.push(`${at} 的 target 须是目标工程内的相对文件路径：${JSON.stringify(target)}`);
-    if (!inside(source)) problems.push(`${at} 的 source 须是扩展内的相对文件路径：${JSON.stringify(source)}`);
-    if (!inside(target) || !inside(source)) return;
-    if (seen.has(target)) problems.push(`${at} 的 target 重复登记：${target}`);
-    seen.add(target);
-    if (!existsSync(join(PDIR, ...source.split('/')))) problems.push(`${at} 的源文件不在扩展里：${source}`);
-    out.push({ target, source });
+    const target = canonical(item.target);
+    const source = canonical(item.source);
+    if (!target) problems.push(`${at} 的 target 须是目标工程内的相对文件路径：${JSON.stringify(item.target)}`);
+    if (!source) problems.push(`${at} 的 source 须是扩展内的相对文件路径：${JSON.stringify(item.source)}`);
+    if (!target || !source) return;
+    if (seen.has(pathKey(target))) problems.push(`${at} 的 target 与前面的登记是同一个文件：${item.target}`);
+    seen.add(pathKey(target));
+    const file = join(PDIR, ...source.split('/'));
+    let text;
+    try {
+      if (!statSync(file).isFile()) throw new Error('不是文件');
+      text = read(file);
+    } catch (e) {
+      problems.push(`${at} 的源不是扩展里读得到的文件：${source}（${e.code ?? e.message}）`);
+      return;
+    }
+    out.push({ target, source, text });
   });
   if (problems.length) {
     console.error(`[adapt-scan] 停：包的跳板登记有 ${problems.length} 处问题：`);
@@ -289,12 +306,6 @@ function bridgesOf(manifestText) {
   return out;
 }
 
-/** 跳板写进目标的正文：默认安装位原样，自定义安装位只把链接与命令里的扩展路径换成目标的。 */
-function bridgeText(bridge) {
-  const text = read(join(PDIR, ...bridge.source.split('/')));
-  const ext = extDir(TARGET);
-  return ext === DEFAULT_EXT ? text : text.split(`${DEFAULT_EXT}/`).join(`${ext}/`);
-}
 
 // ── 写入面 ──────────────────────────────────────────────────────────────────
 
@@ -324,13 +335,14 @@ function missingGitignoreLines(root) {
  * 那个答「要覆盖哪些」，这个答「某一条在不在覆盖范围里」。写入前查工作区脏不脏用它。
  */
 function inWriteFace(root, p, bridges, withAdapters) {
-  if (p === '.gitignore' || ENTRIES.includes(p)) return true;
-  if (bridges.some(b => b.target === p)) return true;
-  const ext = extDir(root);
-  if (!p.startsWith(`${ext}/`)) return false;
-  const inner = p.slice(ext.length + 1);
-  if (inner.startsWith(`${KNOWLEDGE}/`)) return false;
-  if (!withAdapters && inner.startsWith(`${ADAPTERS}/`)) return false;
+  const key = pathKey(p);
+  if (['.gitignore', ...ENTRIES].some(e => pathKey(e) === key)) return true;
+  if (bridges.some(b => pathKey(b.target) === key)) return true;
+  const ext = pathKey(canonical(extDir(root)) ?? extDir(root));
+  if (!key.startsWith(`${ext}/`)) return false;
+  const inner = key.slice(ext.length + 1);
+  if (inner.startsWith(`${pathKey(KNOWLEDGE)}/`)) return false;
+  if (!withAdapters && inner.startsWith(`${pathKey(ADAPTERS)}/`)) return false;
   return true;
 }
 
@@ -389,6 +401,15 @@ if (!existsSync(join(TARGET, 'framework.config.json'))) {
 /** 包的扩展根：本脚本在 `<ext>/skills/story-adaptation/scripts/` 下。 */
 const PDIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+/**
+ * 目标所在文件系统分不分大小写：把目标根路径的字母大小写翻过来还找得到它，就是不分。
+ * 不分时 `A.md` 与 `a.md` 是同一个文件，路径一律按小写比。
+ */
+const CASE_FOLD = (() => {
+  const flipped = TARGET.replace(/[A-Za-z]/g, c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+  return flipped !== TARGET && existsSync(flipped);
+})();
+function pathKey(p) { return CASE_FOLD ? p.toLowerCase() : p; }
 
 // YAML 用目标 framework harness 的 `yaml` 包读——与目标里扩展门禁读 YAML 是同一个解析器。
 // 包可能不在任何工程里（开发源），所以不借包所在位置的 framework；目标接入 framework 并装好 harness
@@ -552,11 +573,10 @@ if (mode === '--apply') {
 
   // 3. 跳板：扩展自有的宿主入口文件，按登记的 target / source 直接覆盖（登记问题已在读包时拦下）
   for (const b of BRIDGES) {
-    const text = bridgeText(b);
     const to = join(TARGET, ...b.target.split('/'));
-    if (existsSync(to) && sha(to) === shaText(text)) continue;
+    if (existsSync(to) && sha(to) === shaText(b.text)) continue;
     mkdirSync(dirname(to), { recursive: true });
-    writeFileSync(to, text, 'utf8');
+    writeFileSync(to, b.text, 'utf8');
     written.push(b.target);
   }
 
@@ -697,7 +717,7 @@ const bad = [];
   for (const b of BRIDGES) {
     const to = join(TARGET, ...b.target.split('/'));
     if (!existsSync(to)) { bad.push(`① 跳板缺失：${b.target}——跑 --apply 写上`); continue; }
-    if (sha(to) !== shaText(bridgeText(b))) {
+    if (sha(to) !== shaText(b.text)) {
       bad.push(`① 跳板与包不同：${b.target}（包里的 ${b.source}）——它是扩展自己的宿主入口，跑 --apply 覆盖`);
     }
   }

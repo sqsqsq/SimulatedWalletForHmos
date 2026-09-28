@@ -149,9 +149,9 @@ class MaintenanceAndConsumerRootsStayApart(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="consumer with space-"))
         self.addCleanup(shutil.rmtree, root, True)
         (root / "framework.config.json").write_text(
-            json.dumps({"paths": {"extension_dir": "tools/story ext", "features_dir": "work/req"}}),
+            json.dumps({"paths": {"features_dir": "work/req"}}),
             encoding="utf-8")
-        self.assertEqual(root / "tools/story ext", cfm.installed_extension(root))
+        self.assertEqual(root / "doc/extensions", cfm.installed_extension(root))
         self.assertEqual(root / "work/req", cfm.features_dir(root))
         self.assertEqual(REPO_ROOT / "demo", cfm.DEFAULT_PROJECT_ROOT)
         # 没给消费工程：判不了就明说，不退回维护仓根

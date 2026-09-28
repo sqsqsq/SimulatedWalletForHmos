@@ -45,10 +45,15 @@ framework 协议写清发布件输入、实际 UPDATE、两处本地定制、装
 ## 3. 当前维护材料同步
 
 - test/AGENTS.md 保留角色/所有权/不变量/预算原则，更新 framework 的 demo 路径、开发源位置、测试域路径和两处定制的实际处理方式；退役 integrity 字段不成为有效机制。
+- 维护者开工必读的 test/AGENTS §0 索引、§2 发布件路径及 TEST §7 当前命令，作为 P1 最小入口的直接消费者提前修正；本包负责剩余完整说明，不重复计量、不改历史记录。
 - TEST.md 更新脚本路径、bootstrap 默认 demo、复制→template 安装→Case 顺序、发布基线保护、开发版检查目标和回灌位置。删除测试后 git 还原 demo 的安排。
 - EVOLUTION 追加本版结果及证据入口，历史条目保持；release/1.9.8.md 如实描述结构与安装职责及验证边界。
 - 当前其他文档/命令经引用清点随源同步。2.0.1 材料随维护目录迁移，保持本轮已经明确的前置和职责，历史代码观察路径可以保留为证据。
 - 1.9.7 已退出的独立内网指南不创建、不恢复维护；升级内容只维护 adapt/reference/upgrade-changes.md。
+
+人手试用按 bootstrap 回执先设置 `STORY_REQUIREMENT_SYSTEM_DIR` 为维护域实际系统目录，再以 demo 为消费根启动会话。给出该宿主可复制执行的环境变量/切换目录命令及 --verify 操作，不承诺未配置变量时旧 test/story 回落仍可用。正式 CLI 始终用各 Case 自己的隔离系统快照。
+
+新 checkout 验收须从无 `.opencode/package.json`/node_modules 的状态列清依赖恢复命令及依赖身份；这些当前是 ignored 本地现场，不能仅写“已有依赖随迁移”。P2 依赖就位与 P3 人读启动说明使用同一操作来源。
 
 ## 4. 验收与交回
 

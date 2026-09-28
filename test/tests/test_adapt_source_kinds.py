@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import os
 import shutil
 import subprocess
 import tempfile
@@ -433,26 +435,6 @@ class SourceKindCase(unittest.TestCase):
             self.assertEqual((PKG_EXT / src).read_bytes(), (target / rel).read_bytes(), rel)
         self.assertEqual(0, self.adapt("--check", target, PKG_EXT).returncode)
 
-    def test_a_custom_install_location_rewrites_only_the_extension_path(self) -> None:
-        """扩展装在别处：入口里的扩展路径换成实际安装位，其余一字不变，自检同口径通过。"""
-        target = self.root / "Custom"
-        target.mkdir()
-        (target / "framework.config.json").write_text(
-            json.dumps({"project_name": "Custom", "paths": {"extension_dir": "tools/story ext"}}),
-            encoding="utf-8")
-        link_harness_yaml(target)
-        (target / "CLAUDE.md").write_text("# Custom\n\n## 实例扩展\n\n", encoding="utf-8")
-        self.commit(target, "baseline")
-        proc = self.adapt("--apply", target, PKG_EXT)
-        self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertTrue((target / "tools" / "story ext" / "skills" / "story" / "SKILL.md").is_file())
-        for rel, src in BRIDGES:
-            want = (PKG_EXT / src).read_text(encoding="utf-8").replace("doc/extensions/", "tools/story ext/")
-            got = (target / rel).read_text(encoding="utf-8")
-            self.assertEqual(want, got, rel)
-            self.assertNotIn("doc/extensions/", got, rel)
-        self.assertEqual(0, self.adapt("--check", target, PKG_EXT).returncode)
-
     def test_a_target_inside_another_repo_installs_and_guards_its_own_paths(self) -> None:
         """目标是外层仓里的子目录：照常安装；脏检查按目标内的相对路径拦。"""
         outer = self.root / "outer repo"
@@ -477,13 +459,15 @@ class SourceKindCase(unittest.TestCase):
         self.assertEqual("人手改过、还没提交\n", (target / rel).read_text(encoding="utf-8"))
 
     def test_a_broken_registration_stops_before_any_write(self) -> None:
-        """缺源、重复、越界、旧的纯路径列表：都是包坏了，目标一个字节不写。"""
+        """缺源、源是目录、重复、越界、旧的纯路径列表：都是包坏了，目标一个字节不写。"""
         target = self.blank_repo("BizA")
         before = self.snapshot(target)
-        first = BRIDGES[0]
+        first, second = BRIDGES[0], BRIDGES[1]
         cases = {
             "缺源": lambda l: l.replace(first[1], "bridges/missing.md"),
-            "重复": lambda l: l.replace(BRIDGES[1][0], first[0]),
+            "源是目录": lambda l: l.replace(f"source: {first[1]}", "source: bridges"),
+            "重复": lambda l: l.replace(second[0], first[0]),
+            "带 . 的重复": lambda l: l.replace(second[0], "./" + first[0].replace("/", "/./", 1)),
             "越界": lambda l: l.replace(first[0], "../outside/story.md"),
             "旧格式": lambda l: f"    - {first[0]}" if l.strip() == f"- target: {first[0]}" else
                       ("" if l.strip() == f"source: {first[1]}" else l),
@@ -495,6 +479,69 @@ class SourceKindCase(unittest.TestCase):
                 self.assertEqual(2, proc.returncode, self.out(proc))
                 self.assertIn("provides.bridges", self.out(proc))
                 self.assertEqual(before, self.snapshot(target), f"{name}：停之前已经写过盘了")
+
+    def test_an_unreadable_source_stops_before_any_write(self) -> None:
+        """源文件在但读不出：同样在写目标之前停。"""
+        target = self.blank_repo("BizA")
+        before = self.snapshot(target)
+        pkg = self.pkg_with_manifest(lambda l: l)
+        source = pkg / BRIDGES[0][1]
+        if sys.platform == "win32":
+            user = os.environ.get("USERNAME", "")
+            deny = subprocess.run(["icacls", str(source), "/deny", f"{user}:(R)"], capture_output=True)
+            self.addCleanup(subprocess.run, ["icacls", str(source), "/remove:d", user], capture_output=True)
+            if deny.returncode != 0:
+                self.skipTest("本机不能收回读权限")
+        else:
+            source.chmod(0)
+            self.addCleanup(source.chmod, 0o644)
+        try:
+            source.read_bytes()
+            self.skipTest("收回读权限没有生效（例如以管理员运行）")
+        except OSError:
+            pass
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn(BRIDGES[0][1], self.out(proc))
+        self.assertEqual(before, self.snapshot(target), "停之前已经写过盘了")
+
+    def installed_and_hand_edited(self) -> tuple[Path, Path]:
+        """装好并提交的目标，其中第一份入口被人改过、还没提交。"""
+        target = self.blank_repo("BizA")
+        self.assertEqual(0, self.adapt("--apply", target, PKG_EXT).returncode)
+        self.commit(target, "装好")
+        edited = target / BRIDGES[0][0]
+        edited.write_text("人手改过、还没提交\n", encoding="utf-8")
+        return target, edited
+
+    def test_a_dot_segment_alias_cannot_bypass_the_dirty_check(self) -> None:
+        """登记写成 `a/./b` 与 `a/b` 是同一个文件：人改过没提交的，照样拦下、原字节不动。"""
+        target, edited = self.installed_and_hand_edited()
+        alias = BRIDGES[0][0].replace("/", "/./", 1)
+        pkg = self.pkg_with_manifest(lambda l: l.replace(f"target: {BRIDGES[0][0]}", f"target: {alias}"))
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn(BRIDGES[0][0], self.out(proc))
+        self.assertEqual("人手改过、还没提交\n", edited.read_text(encoding="utf-8"))
+
+    def test_a_case_variant_is_the_same_file_where_the_file_system_folds_case(self) -> None:
+        """不分大小写的文件系统上，大小写不同的写法指同一个文件：不能绕过脏检查，也不能当成两项登记。"""
+        target, edited = self.installed_and_hand_edited()
+        flipped = str(target).swapcase()
+        if flipped == str(target) or not Path(flipped).exists():
+            self.skipTest("这个文件系统区分大小写")
+        variant = BRIDGES[0][0].upper()
+        pkg = self.pkg_with_manifest(lambda l: l.replace(f"target: {BRIDGES[0][0]}", f"target: {variant}"))
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertEqual("人手改过、还没提交\n", edited.read_text(encoding="utf-8"))
+
+        before = self.snapshot(target)
+        pkg = self.pkg_with_manifest(lambda l: l.replace(f"target: {BRIDGES[1][0]}", f"target: {variant}"))
+        proc = self.adapt("--apply", target, pkg)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("同一个文件", self.out(proc))
+        self.assertEqual(before, self.snapshot(target))
 
     def test_a_source_option_from_the_old_invocation_is_refused(self) -> None:
         """包就是脚本所在的扩展：旧的 --package 不再有意义，给了就明确拒绝。"""

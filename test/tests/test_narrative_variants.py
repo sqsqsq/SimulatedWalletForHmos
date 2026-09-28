@@ -27,6 +27,7 @@ EXTENSION = DEV_EXT
 
 sys.path.insert(0, str(SCRIPTS))
 import make_narrative_variants as maker  # noqa: E402
+from check_failure_modes import maintenance_path_hits  # noqa: E402
 
 
 class TheFixtureItselfHolds(unittest.TestCase):
@@ -107,6 +108,16 @@ class TheFixtureItselfHolds(unittest.TestCase):
 class TheAnswerIsNotInTheDeliverable(unittest.TestCase):
     """交付给消费模型与 verifier 的机制内容里，不能有样本路径、期望结论或测试坐标。"""
 
+    def test_a_maintenance_path_is_told_apart_from_names_that_merely_contain_test(self) -> None:
+        """指向维护域的路径要认出来；别处碰巧含 `test/` 的名字不算。"""
+        for leak in ("按 test/fixtures/sample/input.md 写", "`test/TEST.md`", "(test/cases/a/case.yaml)"):
+            with self.subTest(leak=leak):
+                self.assertTrue(maintenance_path_hits(leak), leak)
+        for legal in ("Read docs/latest/reference.md before using the API.",
+                      "单测放在 entry/src/test/ 下", "contest/rules.md", "写 test/ 目录的说明"):
+            with self.subTest(legal=legal):
+                self.assertEqual([], maintenance_path_hits(legal), legal)
+
     def test_no_fixture_or_test_path_in_the_extension(self) -> None:
         offenders = []
         for path in EXTENSION.rglob("*"):
@@ -114,10 +125,11 @@ class TheAnswerIsNotInTheDeliverable(unittest.TestCase):
                     ".md", ".mjs", ".js", ".py", ".yaml", ".yml", ".json"):
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            for needle in ("narrative-variants", "pairs.json", "test/",
-                           "fixtures/", "金样"):
+            for needle in ("narrative-variants", "pairs.json", "fixtures/", "金样"):
                 if needle in text:
                     offenders.append(f"{path.relative_to(EXTENSION).as_posix()}：{needle}")
+            for hit in maintenance_path_hits(text):
+                offenders.append(f"{path.relative_to(EXTENSION).as_posix()}：{hit}")
         self.assertEqual([], offenders, "交付面出现了测试坐标：%s" % offenders)
 
     def test_the_review_check_names_no_business_of_the_fixtures(self) -> None:
