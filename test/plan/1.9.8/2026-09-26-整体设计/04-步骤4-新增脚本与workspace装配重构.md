@@ -10,7 +10,7 @@
 python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 ```
 
-调用者明确给出 source/target。测试将当前 extensions 装进一次性 template；发布时将本次待发布 extensions 装进 demo，核对后随发布提交入库。安装器不选择 Git 版本。R197 首次初始化的导出与调用见 05，已完成的初始化不重跑。
+命令行用于向 Git 管理的 demo 发布；测试装配直接调用下述 install_extension，将当前 extensions 装进一次性 template。调用者明确给出 source/target；发布时将本次待发布 extensions 装进 demo，核对后随发布提交入库。安装器不选择 Git 版本。R197 首次初始化的导出与调用见 05，已完成的初始化不重跑。
 
 目标只有 demo 及其临时消费副本，固定安装位 doc/extensions。向 demo 发布前，调用者检查 demo 的非忽略 Git 状态为空；查询失败或有修改时停止并报告。维护者在核对、提交或处理现有修改后再发布。template 无 Git 干净要求。
 
@@ -38,13 +38,13 @@ template 安装或核对失败即作废，从 demo 重新装配，失败副本�
 
 run_multi_case.py 使用以下固定顺序：
 
-1. 检查 demo 基线和源卫生。Git 查询成功且 demo 非忽略变更为空才继续；有在途人工修改或 Git 查询失败时，在复制前报告并停止，不替用户还原。正常 ignored 依赖/运行态保持原规则。记录版本化安装面、相关文件摘要和 git 状态，单纯前后相等不能证明发布基线干净。
+1. 检查 demo 基线和源卫生。Git 查询成功且 demo 非忽略变更为空才继续；有在途人工修改或 Git 查询失败时，在复制前报告并停止，不替用户还原。正常 ignored 依赖/运行态保持原规则。记录当前提交，提交查询失败或结果为空时停止。
 2. 从 DEMO_ROOT 整体复制到现有隔离 template。顶层维护目录 test/tools/output/scratch/.bak/.git 应触发结构错误。
 3. 保留既有运行态排除：消费配置的 features 目录、Framework 状态中的活动内容、oh_modules/build/intermediates/.hvigor/.pytest_cache/__pycache__ 等；保留必要 .gitkeep。node_modules 保留并验证可用，不以存在代替 hooks 加载成功。
-4. 在 template 内调用安装命令，source 为根 extensions，target 为 template。
+4. 装配调用 install_extension，source 为根 extensions，target 为 template；template 不经发布 CLI 的 Git 前置。
 5. 核扩展、知识、bridge 和扩展段同源，运行框架及 gate 可按消费相对路径加载。
 6. 复制完成的 template 到各 Case workspace，沿原 Case 初始化/启动协议执行。缺前置的 template 不进入本步骤。
-7. 核 demo 文件摘要和 git 状态与装配前一致；这只验证装配不写 demo，不包含用户授权的 finalize 回灌动作。
+7. 再核 demo 结构、Git 干净状态与提交身份，提交须与装配前一致；这验证版本化 demo 基线未变，不宣称检查了 ignored 运行态，也不包含用户授权的 finalize 回灌动作。
 
 状态排除和相对路径计算以传入消费根为基点；回灌按 02 的 demo 目标处理。维护代码不注入被测模型上下文。开发源运行态不随安装进入 template，发布基线与开发版不会混装。
 
