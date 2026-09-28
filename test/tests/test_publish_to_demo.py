@@ -118,18 +118,33 @@ class BadInputWritesNothing(PublishCase):
 
 
 class TheWriteFaceIsExact(PublishCase):
-    def test_a_second_run_changes_nothing(self) -> None:
+    def test_a_second_run_leaves_the_same_bytes(self) -> None:
         self.assertEqual("installed", self.install().status)
-        again = self.install()
-        self.assertEqual(("installed", []), (again.status, again.completed))
+        first = self.snapshot()
+        self.assertEqual("installed", self.install().status)
+        self.assertEqual(first, self.snapshot())
 
-    def test_a_file_the_source_dropped_leaves(self) -> None:
+    def test_the_extension_directory_is_replaced_whole(self) -> None:
+        """源里没有的旧文件、旧运行态都退出；同名的文件与目录两个方向互换都装得上。"""
         ext = self.target / "doc" / "extensions"
         (ext / "hooks" / "retired").mkdir(parents=True)
         (ext / "hooks" / "retired" / "old.mjs").write_text("gone", encoding="utf-8")
+        (ext / "adapt").mkdir()
+        (ext / "adapt" / "old.json").write_text("{}", encoding="utf-8")
+        (ext / "asset").write_text("旧版是文件", encoding="utf-8")
+        (ext / "sheet" / "inner").mkdir(parents=True)
+        (ext / "sheet" / "inner" / "old.md").write_text("旧版是目录", encoding="utf-8")
+        (self.source / "asset").mkdir()
+        (self.source / "asset" / "new.md").write_text("新版是目录", encoding="utf-8")
+        (self.source / "sheet").write_text("新版是文件", encoding="utf-8")
+
         result = self.install()
-        self.assertIn("doc/extensions/hooks/retired/old.mjs", result.completed)
-        self.assertFalse((ext / "hooks" / "retired").exists(), "删空的目录没收拢")
+        self.assertEqual("installed", result.status, result.problems)
+        for gone in ("hooks/retired", "adapt"):
+            self.assertFalse((ext / gone).exists(), f"{gone} 没随整体替换退出")
+        self.assertEqual("新版是目录", (ext / "asset" / "new.md").read_text(encoding="utf-8"))
+        self.assertEqual("新版是文件", (ext / "sheet").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(pub.enumerate_source(self.source)), sorted(pub.enumerate_source(ext)))
 
     def test_the_zone_matches_what_the_installed_adapt_writes(self) -> None:
         """同一份扩展段，发布安装器与装好的 adapt 写进入口文件的结果逐字节相同；区外不动。"""
@@ -156,7 +171,7 @@ class TheWriteFaceIsExact(PublishCase):
         self.assertEqual("write_failed", result.status)
         self.assertEqual([".cac/commands/story.md"], result.failed)
         for rel in result.completed:
-            self.assertTrue((self.target / rel).is_file(), rel)
+            self.assertTrue((self.target / rel).exists(), rel)
         self.assertNotIn(".cac/commands/story.md", result.completed)
         self.assertEqual([], [p for p in self.root.rglob("install-*")], "留下了安装日志")
 
@@ -172,15 +187,27 @@ class APublishTargetInGitMustBeClean(PublishCase):
         self.assertEqual(before, self.snapshot())
 
     def test_a_failed_git_query_stops_the_publish(self) -> None:
+        """在不在仓里、状态两条查询，任一失败都不装，目标不写。"""
         self.commit()
         real = subprocess.run
+        for word in ("rev-parse", "status"):
+            with self.subTest(word):
+                def failing(cmd, *a, _word=word, **k):
+                    if cmd[:1] == ["git"] and _word in cmd:
+                        return subprocess.CompletedProcess(cmd, 128, "", "fatal: 模拟查询失败")
+                    return real(cmd, *a, **k)
 
-        def failing(cmd, *a, **k):
-            if cmd[:1] == ["git"] and "status" in cmd:
-                return subprocess.CompletedProcess(cmd, 128, "", "fatal: 模拟查询失败")
-            return real(cmd, *a, **k)
+                before = self.snapshot()
+                with mock.patch.object(pub.subprocess, "run", failing), \
+                        mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+                    code = pub.main(["--source", str(self.source), "--target", str(self.target)])
+                self.assertEqual(2, code)
+                self.assertEqual(before, self.snapshot())
 
-        with mock.patch.object(pub.subprocess, "run", failing):
+    def test_a_target_outside_git_is_not_published(self) -> None:
+        """命令行只用于发布 git 里的 demo：拿不到确定的 git 结果就不装。"""
+        with mock.patch.object(pub.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 128, "", "not a git repository")):
             with self.assertRaises(pub.InputError):
                 pub.git_dirty(self.target)
 

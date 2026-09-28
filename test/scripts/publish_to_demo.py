@@ -5,8 +5,8 @@
 顺序固定：枚举源 → 整体替换目标 doc/extensions（含源的示范知识，源里没有的旧文件退出）→ 按 manifest
 登记的 target/source 对写宿主入口 → 用源的扩展段更新 AGENTS.md / CLAUDE.md 的 story-ext 标记区（区外不动）。
 
-目标在 git 里时（发布 demo），非忽略状态必须干净、git 查询要成功，否则不装：出错由维护者用 git 看改动、还原。
-一次性 template 失败就丢掉重建。本脚本不回滚、不留安装日志。
+命令行用于发布 demo：git 查询必须成功、非忽略状态必须干净，否则不装；出错由维护者用 git 看改动、还原。
+一次性 template 由装配直接调 install_extension，失败就丢掉重建。本脚本不回滚、不留安装日志。
 
 退出码：0 已规划 / 已安装；2 输入读取或解析失败（目标没写）；1 写入失败（结果里列出实际完成项）。
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -139,7 +140,10 @@ def _zone_problem(name: str, text: str) -> str | None:
 
 
 def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[list[tuple], str | None]:
-    """读全部输入、算出文件操作；读取或解析有问题就一起报告，目标不写。"""
+    """读全部输入、备好要写的内容；读取或解析有问题就一起报告，目标不写。
+
+    返回（写入项, 版本）：写入项是 (目标相对路径, 内容)，扩展目录的文件在前，随后是入口与入口文件。
+    """
     problems: list[str] = []
     if not source.is_dir() or not target.is_dir():
         raise InputError([f"扩展源或目标不是目录：{source} / {target}"])
@@ -153,25 +157,15 @@ def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[l
         version = str((yaml.safe_load((source / "manifest.yaml").read_text(encoding="utf-8")) or {}).get("version"))
     except (OSError, yaml.YAMLError) as exc:
         problems.append(f"源的 manifest.yaml 读不出：{exc}")
-    ops: list[tuple] = []   # (操作, 目标相对路径, 内容)
-
-    def put(rel: str, data: bytes) -> None:
-        dst = target / rel
-        if not (dst.is_file() and dst.read_bytes() == data):
-            ops.append(("write", rel, data))
-
+    writes: list[tuple] = []
     for rel in files:
         try:
-            put(f"{EXTENSION_DIR}/{rel}", (source / rel).read_bytes())
+            writes.append((f"{EXTENSION_DIR}/{rel}", (source / rel).read_bytes()))
         except OSError as exc:
             problems.append(f"源文件读不出：{rel}（{exc}）")
-    wanted = set(files)
-    for rel in _walk(target / EXTENSION_DIR, problems):
-        if rel not in wanted:
-            ops.append(("delete", f"{EXTENSION_DIR}/{rel}", None))
     for bridge in bridge_files:
         try:
-            put(bridge.target, Path(bridge.source).read_bytes())
+            writes.append((bridge.target, Path(bridge.source).read_bytes()))
         except OSError as exc:
             problems.append(f"入口源读不出：{bridge.source}（{exc}）")
     section = source / SECTION
@@ -187,48 +181,50 @@ def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[l
             if issue:
                 problems.append(issue)
             else:
-                put(name, render_zone(text, body).encode("utf-8"))
+                writes.append((name, render_zone(text, body).encode("utf-8")))
     if problems:
         raise InputError(problems)
-    return ops, version
+    return writes, version
 
 
 def install_extension(source: Path, target: Path, bridge_files: list[BridgeFile], *,
                       dry_run: bool = False) -> InstallResult:
+    """先删掉整个目标扩展目录，再写源的全部文件、入口与入口文件的扩展段。"""
     source, target = Path(source).resolve(), Path(target).resolve()
     try:
-        ops, version = _plan(source, target, bridge_files)
+        writes, version = _plan(source, target, bridge_files)
     except InputError as exc:
         return InstallResult("preflight_failed", None, str(target), problems=exc.problems)
-    planned = [f"{op} {rel}" for op, rel, _ in ops]
+    planned = [f"replace {EXTENSION_DIR}/", *(rel for rel, _ in writes)]
     if dry_run:
         return InstallResult("planned", version, str(target), planned=planned)
     completed: list[str] = []
-    for op, rel, data in ops:
+    try:
+        if (target / EXTENSION_DIR).exists():
+            shutil.rmtree(target / EXTENSION_DIR)
+    except OSError as exc:
+        return InstallResult("write_failed", version, str(target), planned, completed,
+                             [f"{EXTENSION_DIR}/"], [f"删除旧的 {EXTENSION_DIR} 失败：{exc}"])
+    completed.append(f"{EXTENSION_DIR}/")
+    for rel, data in writes:
         dst = target / rel
         try:
-            if op == "delete":
-                dst.unlink()
-                folder = dst.parent
-                while folder != target and not any(folder.iterdir()):
-                    folder.rmdir()
-                    folder = folder.parent
-            else:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(data)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(data)
         except OSError as exc:
             return InstallResult("write_failed", version, str(target), planned, completed,
-                                 [rel], [f"{op} {rel} 失败：{exc}"])
+                                 [rel], [f"写 {rel} 失败：{exc}"])
         completed.append(rel)
     return InstallResult("installed", version, str(target), planned, completed)
 
 
-def git_dirty(target: Path) -> list[str] | None:
-    """目标所在 git 工作区里、目标之内的非忽略改动；目标不在 git 里返回 None，查询失败抛 InputError。"""
+def git_dirty(target: Path) -> list[str]:
+    """发布目标（demo）在 git 里、目标之内的非忽略改动。查询失败或不在 git 里都抛 InputError——
+    demo 必须拿到确定的干净结果才能发布；一次性 template 由装配直接调安装函数，不走这里。"""
     inside = subprocess.run(["git", "-C", str(target), "rev-parse", "--is-inside-work-tree"],
                             capture_output=True, text=True)
     if inside.returncode != 0 or inside.stdout.strip() != "true":
-        return None
+        raise InputError([f"查不到目标的 git 状态（rev-parse 退出 {inside.returncode}）：{inside.stderr.strip()}"])
     status = subprocess.run(["git", "-C", str(target), "status", "--porcelain", "-uall", "--", "."],
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
     if status.returncode != 0:
@@ -237,7 +233,7 @@ def git_dirty(target: Path) -> list[str] | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="把 Story Extension 源装进消费工程（template 或 demo）")
+    ap = argparse.ArgumentParser(description="发布：把 Story Extension 源装进 git 里的 demo（template 由装配直接调安装函数）")
     ap.add_argument("--source", required=True, help="扩展源码目录")
     ap.add_argument("--target", required=True, help="消费工程目录")
     ap.add_argument("--dry-run", action="store_true", help="只输出计划，不写目标")

@@ -940,6 +940,23 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                 self.build_template(demo, suite_id)
             self.assertIn("查不出", str(caught.exception))
             self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists())
+        with self.subTest("提交查询失败"):
+            root = Path(tempfile.mkdtemp(prefix="story-multi-headfail-"))
+            self.addCleanup(shutil.rmtree, root, True)
+            demo = self.fake_demo(root)
+            suite_id = f"head-fail-{os.getpid()}"
+            real = subprocess.run
+
+            def failing(cmd, *a, **k):
+                if cmd[:1] == ["git"] and cmd[-2:] == ["rev-parse", "HEAD"]:
+                    return subprocess.CompletedProcess(cmd, 128, "", "fatal: 模拟失败")
+                return real(cmd, *a, **k)
+
+            with mock.patch.object(run_multi_case.subprocess, "run", failing), \
+                    self.assertRaises(SystemExit) as caught:
+                self.build_template(demo, suite_id)
+            self.assertIn("提交查不出", str(caught.exception))
+            self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists())
 
     def test_a_template_whose_install_fails_is_not_used(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-multi-install-"))

@@ -227,11 +227,11 @@ def demo_check() -> str:
         dirty = publish_to_demo.git_dirty(DEMO_ROOT)
     except publish_to_demo.InputError as exc:
         raise SystemExit(f"[multi] demo 的 git 状态查不出，不装配：{exc}") from exc
-    if dirty is None:
-        raise SystemExit(f"[multi] demo 不在 git 里，无从确认它是发布基线：{DEMO_ROOT}")
     if dirty:
         raise SystemExit("[multi] demo 有没提交的改动，不装配（先核对、提交或处理）：" + "；".join(dirty[:10]))
     head = subprocess.run(["git", "-C", str(DEMO_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
+    if head.returncode != 0 or not head.stdout.strip():
+        raise SystemExit(f"[multi] demo 的 git 提交查不出，不装配：{head.stderr.strip()}")
     return head.stdout.strip()
 
 
