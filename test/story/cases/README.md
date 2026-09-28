@@ -34,7 +34,7 @@ prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，
 |---|---|---|
 | `<id>/system/` | 需求系统上挂着的单据（一个子目录一张单，含 `detail.json` 与正文 md） | 起跑时复制到系统临时目录（**workspace 之外**，模型 `ls` 看不见），被测侧只经环境变量知道它在哪 |
 | `<id>/workspace/` | 起跑那一刻需求目录里就有的东西 | 起跑时 |
-| `<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 等它开口 |
+| `<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 在模型第一次停在材料关卡时全部一次交出（TEST §3.0） |
 
 补料条目可以带 `kind: meeting`，表示这份 docx 是会议的语音转写：静态检查据此不要求它内嵌图片。
 这个键只给测试域用，投放时被测模型看到的仍只是一份 docx，归类由它自己判。
