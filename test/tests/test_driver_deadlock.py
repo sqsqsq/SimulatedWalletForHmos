@@ -28,13 +28,16 @@ class VerifierReportNaming(unittest.TestCase):
     """verifier 产物的**文件名不是契约**：认一组名字，任一存在即算闭环凭证。"""
 
     def setUp(self):
-        self.tmp = run_case.REPO_ROOT / run_case.FEATURES_DIR / "ZZTEST9001"
+        # 运行根换成临时目录：真实运行根是 demo，往里写会留下 demo/doc/features，挡住下一次装配
+        import shutil
+        root = Path(tempfile.mkdtemp(prefix="verifier-naming-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        patcher = unittest.mock.patch.multiple(run_case, REPO_ROOT=root, FEATURES_DIR="doc/features")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.tmp = root / "doc" / "features" / "ZZTEST9001"
         self.reports = self.tmp / "spec" / "reports"
         self.reports.mkdir(parents=True, exist_ok=True)
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_recognises_each_known_naming(self):
         for name in ("verifier.report.md", "verifier-report.yaml",
