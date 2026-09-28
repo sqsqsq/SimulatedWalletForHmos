@@ -4,7 +4,7 @@
 
 ## 1. 源和目标
 
-用户入口仍为 story adapt <project_dir>。adapt-scan 从自身 scripts 所在位置确定扩展根，读取同一根下 manifest、skills、hooks、knowledge 和 bridges；目标通过 --target 指定，并读取目标的 paths.extension_dir。
+用户入口仍为 story adapt <project_dir>。adapt-scan 从自身 scripts 所在位置确定扩展根，读取同一根下 manifest、skills、hooks、knowledge 和 bridges；目标通过 --target 指定；本版按用户裁定固定装在 doc/extensions，保留既有配置读取，不增加其它安装位能力。
 
 删除源侧 findRoot/framework.config.json 依赖和 --package 的源仓搜索。测试需另一来源时，直接执行该来源里的脚本。源可为开发 extensions，也可为已安装的消费扩展，依据同一相对布局，不自动寻找历史目录。
 
@@ -21,7 +21,7 @@
 | bridges/cursor-skill-story.md | .cursor/skills/story/SKILL.md |
 | bridges/agents-skill-story.md | .agents/skills/story/SKILL.md |
 
-前四份由 R197 原入口归位；后两份按真实宿主形态补齐命令路由，消费路径指向实际安装位。默认 doc/extensions 时前四份内容保持；自定义安装位仅替换链接/路径，不改路由语义。源文件按宿主分开，不合成通用模板。
+前四份由 R197 原入口归位；后两份按真实宿主形态补齐命令路由，消费路径指向实际安装位。前四份在 doc/extensions 布局下保持原内容；按用户裁定退出自定义安装位替换分支及专用测试。源文件按宿主分开，不合成通用模板。
 
 ### 2.1 两份 .agents 入口的版本归属
 
@@ -58,9 +58,9 @@ manifest 仍用当前 schema 1.0，provides.bridges 改为以下形态；本版�
 
 ## 4. 验收和交回
 
-定向 adapt ownership/source kinds/bridge fixtures 同步新源结构，覆盖首装、升级、自检、自定义安装位、缺源、坏映射、脏覆盖、两类来源及目标知识保护。节点语法检查通过；根 Story 宿主位退出，开发六份源齐全。
+定向 adapt ownership/source kinds/bridge fixtures 同步新源结构，覆盖首装、升级、自检、缺源、坏映射、脏覆盖、两类来源及目标知识保护。节点语法检查通过；根 Story 宿主位退出，开发六份源齐全。
 
-自定义安装位按完整消费链验：AGENTS 扩展段、bridge、Skill/作者页的操作引用都指向配置的实际扩展根；采用包内相对引用和配置所得根，命令与 Markdown 分别正确引用空格。测试从安装后的入口取得下一条命令并原样执行，不能只比较与 bridgeText 相同的 replace 结果。必要定位说明纳入 AC02 允许面，业务内容保持。
+消费链在固定 doc/extensions 下验：AGENTS 扩展段、bridge、Skill/作者页的下一条命令可定位并运行。工程根本身仍可带空格；这不等于支持自定义扩展安装位。R3 按用户裁定退出原需求，不再要求 bridgeText 或相关路径替换测试。
 
 AC02 按允许面核 diff：manifest/bridges、adapt 脚本/说明、演进和必要入口路径；其余业务机制与知识保持 R197。AC05 在独立目标装开发源验六份入口，不要求 demo 1.9.7 与开发源相同。
 

@@ -10,7 +10,7 @@
 python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 ```
 
-名称保留，source/target 必须显式给出。测试目标是隔离 template，发布目标是 demo。目标配置决定 extension_dir；脚本不根据 dev/release 切换目录、不读取历史 commit。
+名称保留，source/target 必须显式给出。测试目标是隔离 template，发布目标是 demo。目标安装位按本版约定为 doc/extensions，保持既有配置读取；脚本不根据 dev/release 切换目录、不读取历史 commit。
 
 正常 CLI 从 source/manifest.yaml 读取当前 target/source 对。CLI 和 05 的一次性初始化调用者都使用本节定义的 install_extension；内部函数只消费明确文件对。
 
@@ -19,7 +19,7 @@ python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <�
 实际写入面：
 
 1. 按 §1.1 枚举源内容，整体安装到目标 extension_dir，含该源的完整示范知识；源集合中缺失的旧机制文件退出。开发源包含未提交修改和新增未跟踪文件。
-2. bridge 文件对写到目标宿主路径；默认消费位保持源内容，自定义安装位按 03 改引用路径。
+2. bridge 文件对写到目标宿主路径；doc/extensions 固定安装位保持源内容，不做其它安装位的路径替换。
 3. 用同一源的 AGENTS.section.md 重写 AGENTS/CLAUDE 的 story-ext 标记区，区外字节保持；无标记按现有首装语义追加，破损/重复标记在写前报告。
 
 输出清单到维护域 output/story：源路径和版本、目标、实际文件/摘要、标记区以及完成/失败面。清单用来核同源与定位失败，不引入新的运行调度状态。
@@ -91,10 +91,10 @@ check_framework_drift.py 读取 main:framework/RELEASE-MANIFEST.json 和 demo/fr
 
 ## 4. 离线验收
 
-- 安装正例核所有文件、目标配置、自定义 extension_dir、标记区外保护和重复执行；缺源/错目标/坏映射的负例核目标未写。
+- 安装正例核所有文件、目标配置、固定 doc/extensions、标记区外保护和重复执行；缺源/错目标/坏映射的负例核目标未写。
 - 新增未跟踪 mjs 和已修改 tracked 文件都进入开发 template；同级 node_modules、.adapt-*、adapt、__pycache__、pyc 不进入源集合，普通隐藏资产保留。
 - 在 replace/delete/add 三种操作后分别中断，按恢复表回到原字节；中断后再人工编辑的文件保持并报告冲突；恢复前的再次发布仍被脏面检查拒绝。
-- fixture 验卫生断言、运行态排除、hooks 依赖、失败 template 不启动 Case；合法消费路径保留 framework/...、doc/extensions/... 或其配置安装位。
+- fixture 验卫生断言、运行态排除、hooks 依赖、失败 template 不启动 Case；合法消费路径保留 framework/...、doc/extensions/...。
 - 核两份 .agents 在 demo→template 的内容来源：story 按开发映射变，story-adaptation 按 Framework 保持。四份消费钩子配置及脚本随复制在 template，Codex command 无旧机器路径，命令从消费根可解析；不声称未经实测的宿主自动触发成立。
 - 完整演练：R197 demo → 开发版 template → 两个独立 Case 副本；比较安装面同源及 demo 前后不变。之后一次使用新开发源重建，验证不会残留上一版已删除文件。
 - 漂移同版本、版本差、缺文件/坏 JSON 正反例通过。
