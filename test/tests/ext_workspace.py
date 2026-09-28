@@ -27,6 +27,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HARNESS = REPO_ROOT / "demo" / "framework" / "harness"
 DEV_SOURCE = REPO_ROOT / "extensions"
 
+sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
+import publish_to_demo  # noqa: E402
+
 
 def link_harness_yaml(root: Path) -> Path:
     """让临时工程根像一个接入了 framework 的工程：`framework.config.json`（缺则写空配置，扩展对空配置
@@ -51,20 +54,16 @@ def link_harness_yaml(root: Path) -> Path:
 
 
 def _install_dev_source() -> Path:
-    """开发源装进临时消费工程后的扩展目录。运行态（字节码、适配工作件）不拷。"""
+    """开发源暂存进临时消费工程的 `doc/extensions`：文件集合用正式安装的源枚举规则，运行态不带。
+
+    只做单测暂存：不装入口、不写扩展段、不合成 manifest，也不证明安装正确——那些归 publish_to_demo。
+    """
     root = Path(tempfile.mkdtemp(prefix="story-dev-ext-")) / "consumer"
     atexit.register(shutil.rmtree, root.parent, True)
     ext = root / "doc" / "extensions"
-    runtime = shutil.ignore_patterns(".adapt-*", ".git", "node_modules", "__pycache__",
-                                     ".pytest_cache", "*.pyc", "*.pyo")
-
-    def ignore(folder: str, names: list[str]) -> set[str]:
-        skip = set(runtime(folder, names))
-        if Path(folder) == DEV_SOURCE and "adapt" in names:
-            skip.add("adapt")
-        return skip
-
-    shutil.copytree(DEV_SOURCE, ext, ignore=ignore)
+    for rel in publish_to_demo.enumerate_source(DEV_SOURCE):
+        (ext / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(DEV_SOURCE / rel, ext / rel)
     link_harness_yaml(root)
     return ext
 

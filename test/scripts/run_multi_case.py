@@ -37,6 +37,10 @@ TEST_ROOT = HERE.parent
 REPO_ROOT = TEST_ROOT.parent
 #: 维护仓里的完整消费工程：Case 工作区从它复制，需求产物与源码回灌也回到它
 DEMO_ROOT = REPO_ROOT / "demo"
+#: 开发源：装配时装进隔离 template（含未提交的修改与新文件）
+DEV_SOURCE = REPO_ROOT / "extensions"
+#: 消费工程里放宿主入口的目录（Framework 物化与 Story 入口都在这里）
+HOST_DIRS = (".agents", ".cac", ".claude", ".codex", ".cursor", ".opencode")
 CASES_ROOT = TEST_ROOT / "cases"
 CONFIG_PATH = TEST_ROOT / "config" / "test.yaml"
 CFG = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
@@ -54,6 +58,7 @@ def _configure_console() -> None:
 _configure_console()
 
 sys.path.insert(0, str(HERE))
+import publish_to_demo  # noqa: E402
 import run_layout  # noqa: E402
 from cli_config_group import load_cli_group  # noqa: E402
 from phase_state import ALL_PHASES, derive_phase_state  # noqa: E402
@@ -118,9 +123,10 @@ WORKSPACES_ROOT_NAME = "workspaces"
 # 被测模型不该花两分钟装依赖——二跑实测 `npm install` 用掉 2 分钟。
 # `oh_modules` 仍排除：它只在编译时要，而到 spec 为止的 Case 不编译。
 WORKSPACE_EXCLUDED_DIR_NAMES = {
-    ".git", "output", "test", "tools", "scratch", ".bak",
-    "oh_modules", ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
+    ".git", "oh_modules", ".pytest_cache", "__pycache__", "build", "intermediates", ".hvigor",
 }
+#: 维护域的顶层目录：出现在 demo 顶层说明维护材料混进了消费工程，装配直接停，不靠复制时跳过。
+MAINTENANCE_TOP_LEVEL = frozenset({".git", "output", "test", "tools", "scratch", ".bak"})
 #: 按**路径**排除：真实需求不得进被测侧（Case 的需求由播种放入）。
 WORKSPACE_EXCLUDED_DIRS = {"doc/features"}
 # 按**路径**排除的运行态目录：新 workspace 不能带上一轮的阶段状态，否则起跑点不干净。
@@ -129,7 +135,8 @@ WORKSPACE_EXCLUDED_DIRS = {"doc/features"}
 WORKSPACE_STATEFUL_DIRS = {"framework/harness/state"}
 # 上述目录里仍须保留的文件：发布清单声明了它们，丢了就会被判 framework 漂移。
 WORKSPACE_STATEFUL_KEEP = {".gitkeep"}
-WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES = {".git", "output", "test", "tools"}
+#: 工作区里任何一层都不许有的目录（仓库元数据）；维护域目录只核工作区顶层
+WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES = {".git"}
 
 
 @dataclass(frozen=True)
@@ -213,8 +220,52 @@ def _copy_workspace_tree(source: Path, destination: Path) -> list[str]:
     return copied
 
 
+def demo_state() -> dict[str, Any]:
+    """demo 的结构与现状：顶层有没有维护目录、git 状态、安装面各文件摘要。装配前后各取一次比。"""
+    drift = sorted(p.name for p in DEMO_ROOT.iterdir() if p.is_dir() and p.name in MAINTENANCE_TOP_LEVEL)
+    status = subprocess.run(["git", "-C", str(DEMO_ROOT), "status", "--porcelain", "-uall", "--", "."],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # 安装面按目录取，不解析 demo 里装的是哪一版的登记格式：扩展目录、两份入口文件、各宿主目录
+    face = [DEMO_ROOT / "doc" / "extensions", *(DEMO_ROOT / name for name in publish_to_demo.ENTRIES),
+            *(DEMO_ROOT / host for host in HOST_DIRS)]
+    digests: dict[str, str] = {}
+    for item in face:
+        files = [item] if item.is_file() else sorted(
+            p for p in item.rglob("*") if p.is_file() and "node_modules" not in p.relative_to(DEMO_ROOT).parts)
+        for path in files:
+            digests[path.relative_to(DEMO_ROOT).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {"structure_drift": drift, "git_status": status.stdout, "digests": digests}
+
+
+def install_dev_source(template: Path, evidence_root: Path) -> dict[str, Any]:
+    """在 template 里装开发源，再核装上的与开发源逐字节相同；不成立即抛错，template 作废。"""
+    result = publish_to_demo.install_extension(
+        DEV_SOURCE, template, publish_to_demo.manifest_bridges(DEV_SOURCE), evidence_root=evidence_root)
+    if result.status != "installed":
+        raise SystemExit(f"[multi] template 装开发源失败（{result.status}）：{result.problems or result.failed}"
+                         f"——template 作废，不建 Case；清单 {result.manifest_path}")
+    installed = template / "doc" / "extensions"
+    mismatch = [rel for rel in publish_to_demo.enumerate_source(DEV_SOURCE)
+                if (installed / rel).read_bytes() != (DEV_SOURCE / rel).read_bytes()]
+    extra = sorted(set(publish_to_demo.enumerate_source(installed))
+                   - set(publish_to_demo.enumerate_source(DEV_SOURCE)))
+    bridges = [b.target for b in publish_to_demo.manifest_bridges(DEV_SOURCE)
+               if (template / b.target).read_bytes() != b.source.read_bytes()]
+    if mismatch or extra or bridges:
+        raise SystemExit(f"[multi] template 与开发源不同源：内容不同 {mismatch[:5]}、多出 {extra[:5]}、入口 {bridges}")
+    return {"status": result.status, "source_version": result.source_version,
+            "changed": len(result.completed), "manifest_path": result.manifest_path}
+
+
 def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
-    """建一份短路径的工作区模板：整棵 demo 消费工程树减去黑名单。"""
+    """建一份短路径的工作区模板：demo 消费工程减去运行态，再装上当前开发源。
+
+    顺序固定：核 demo 结构与现状 → 复制 → 装开发源 → 核同源 → 核 demo 没被写过。任一步不成立即停，
+    template 作废、不建 Case。发布基线（demo）与开发版（template）不混装。
+    """
+    before = demo_state()
+    if before["structure_drift"]:
+        raise SystemExit(f"[multi] demo 顶层出现维护目录 {before['structure_drift']}：维护材料混进了消费工程，先挪回维护域")
     workspace_root = (Path(tempfile.gettempdir()) / "sw-story" / suite_id).resolve()
     template = (workspace_root / WORKSPACE_TEMPLATE_NAME).resolve()
     if not template.is_relative_to(workspace_root):
@@ -227,13 +278,19 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / WORKSPACE_SEARCH_IGNORE).write_text(WORKSPACE_SEARCH_RULE, encoding="utf-8")
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
+    installed = install_dev_source(template, suite_root)
+    after = demo_state()
+    if after != before:
+        raise SystemExit("[multi] 装配前后 demo 不一致：装配只应写 template，先查清是谁写了 demo")
     write_json(suite_root / "workspace-boundary.json", {
-        "schema_version": 2,
+        "schema_version": 3,
+        "demo": {"git_status": before["git_status"], "install_face_files": len(before["digests"])},
         "copied": sorted(copied),
         "excluded": sorted(
             [f"{name}/**" for name in WORKSPACE_EXCLUDED_DIR_NAMES]
             + [f"{rel}/**" for rel in WORKSPACE_EXCLUDED_DIRS]
             + ["other Case inputs", "historical suite data"]),
+        "installed": installed,
         "case_seeded": {},
         "created_at": now(),
     })
@@ -328,6 +385,8 @@ def _verify_workspace_boundary(workspace: Path, feature: str) -> dict[str, Any]:
             symlinks.append(relative)
             continue
         if path.is_dir() and path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
+            violations.append(relative)
+        if path.is_dir() and path.parent == workspace and path.name.casefold() in MAINTENANCE_TOP_LEVEL:
             violations.append(relative)
         # 需求系统在远端，被测侧的目录树里不该有它——放进来，模型一个 `ls`
         # 就看见了，「系统按单号拉取」这条链下一轮就可能被绕过去。
@@ -2357,8 +2416,7 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
         "status": "running",
         "suite_id": suite["suite_id"],
         "cases": [],
-        "forbidden_workspace_entries": ["output", "test", "tools", ".git",
-                                        "doc/features (history)"],
+        "forbidden_workspace_entries": [*sorted(MAINTENANCE_TOP_LEVEL), "doc/features (history)"],
         "checked_at": now(),
     }
     workspace_paths: set[str] = set()

@@ -24,6 +24,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "test" / "scripts"
+#: 被测侧从它复制：verifier 装置与宿主入口都以 demo 里的为准
+DEMO = REPO_ROOT / "demo"
+#: demo 当前的发布基线（1.9.7 发布提交）
+RELEASE_BASELINE = "c026a70497b511b399c7e15dabd153f852b3a2fe"
+HOOK_CONFIGS = (".claude/settings.json", ".cac/settings.json", ".codex/hooks.json", ".cursor/hooks.json")
 
 # verifier 链的两件：只读子代理、作者入口。
 # 报告由调用方原样写出，没有第三件——发布器那一环整体退场了。
@@ -68,11 +73,11 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         cls._tmp.cleanup()
 
     def test_the_repo_has_the_chain_materialised(self) -> None:
-        """先看本仓：模板没物化的话，工作区带什么都带不出来。"""
+        """先看 demo：它没物化的话，工作区带什么都带不出来。"""
         for rel in CHAIN:
             with self.subTest(file=str(rel)):
-                self.assertTrue((REPO_ROOT / rel).is_file(),
-                                f"{rel} 没物化——按 framework/agents/opencode/adapter.yaml 落它")
+                self.assertTrue((DEMO / rel).is_file(),
+                                f"demo 里没有 {rel}——按 framework/agents/opencode/adapter.yaml 落它")
 
     def test_the_chain_is_not_git_ignored(self) -> None:
         """`.opencode/.gitignore` 忽略了它们的话，换台机器 clone 出来就又没有了。"""
@@ -81,7 +86,7 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
             with self.subTest(file=str(rel)):
                 proc = subprocess.run(
                     ["git", "check-ignore", "-q", str(rel)],
-                    cwd=str(REPO_ROOT), capture_output=True, text=True)
+                    cwd=str(DEMO), capture_output=True, text=True)
                 self.assertNotEqual(0, proc.returncode,
                                     f"{rel} 被 git 忽略了——它是随仓交付的协议件")
 
@@ -94,7 +99,7 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
 
     def test_the_subagent_definition_speaks_the_current_protocol(self) -> None:
         """子代理定义停在旧协议上，交回来的稿就对不上这一版 request。"""
-        text = (REPO_ROOT / VERIFIER_DEF).read_text(encoding="utf-8")
+        text = (DEMO / VERIFIER_DEF).read_text(encoding="utf-8")
         for needle in ('"schema_version": "1.1"', "material_sha256", "verifier_subject_id"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
@@ -108,10 +113,49 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         工作区不带 `framework/harness/node_modules`，被测模型开跑先装一遍依赖，
         那几分钟每一轮都要付一次。
         """
-        if not (self.runner.REPO_ROOT / "framework" / "harness" / "node_modules").is_dir():
+        if not (DEMO / "framework" / "harness" / "node_modules").is_dir():
             self.skipTest("本仓还没装 harness 依赖，无从判断它带没带过来")
         self.assertTrue((self.template / "framework" / "harness" / "node_modules").is_dir(),
                         "harness 依赖没进工作区——被测模型又要现装一遍")
+
+
+    def test_the_maintenance_copy_of_the_verifier_is_the_demo_one(self) -> None:
+        """根的 verifier 维护装置是 demo 物化件的拷贝，两份逐字节相同。"""
+        self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
+
+    def test_the_two_agents_entries_follow_their_owners(self) -> None:
+        """demo 的两份 .agents 入口是 1.9.7 的 Framework 生成物；template 里 story 换成开发版映射，story-adaptation 不动。"""
+        import subprocess
+        for name in ("story", "story-adaptation"):
+            rel = f".agents/skills/{name}/SKILL.md"
+            released = subprocess.run(["git", "-C", str(REPO_ROOT), "show", f"{RELEASE_BASELINE}:{rel}"],
+                                      capture_output=True).stdout
+            with self.subTest(demo=rel):
+                self.assertEqual(released, (DEMO / rel).read_bytes())
+        story = next(b for b in self.runner.publish_to_demo.manifest_bridges(self.runner.DEV_SOURCE)
+                     if b.target == ".agents/skills/story/SKILL.md")
+        self.assertEqual(story.source.read_bytes(), (self.template / story.target).read_bytes())
+        rel = ".agents/skills/story-adaptation/SKILL.md"
+        self.assertEqual((DEMO / rel).read_bytes(), (self.template / rel).read_bytes())
+
+    def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:
+        """四份钩子配置只在消费工程里；Codex 的 Stop 命令从消费根（含带空格的 workspace）找得到脚本。"""
+        import json
+        for rel in HOOK_CONFIGS:
+            with self.subTest(rel):
+                self.assertTrue((DEMO / rel).is_file())
+                self.assertTrue((self.template / rel).is_file())
+                self.assertFalse((REPO_ROOT / rel).exists(), f"维护仓根还挂着消费钩子 {rel}")
+        command = json.loads((DEMO / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]["Stop"][0]["hooks"][0]["command"]
+        self.assertNotIn(":\\", command, "还是写死的机器路径")
+        script = command.split('"')[1]
+        spaced = Path(tempfile.mkdtemp(prefix="ws with space-"))
+        self.addCleanup(shutil.rmtree, spaced, True)
+        (spaced / ".codex" / "hooks").mkdir(parents=True)
+        shutil.copy2(self.template / script, spaced / script)
+        for root in (DEMO, self.template, spaced):
+            with self.subTest(root=str(root)):
+                self.assertTrue((root / script).is_file(), f"{root} 下找不到 {script}")
 
 
 if __name__ == "__main__":

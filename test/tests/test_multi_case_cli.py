@@ -833,65 +833,87 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                 run_multi_case.command_finalize("unused", False, True)
         self.assertIn("下一轮 suite 起跑时清理", str(caught.exception))
 
-    def test_allowlist_workspace_excludes_test_tools_output_and_git(self) -> None:
-        root = Path(tempfile.mkdtemp(prefix="story-multi-boundary-"))
+    def fake_demo(self, root: Path) -> Path:
+        """一个最小但完整的消费工程：业务、framework、配置、入口文件、宿主目录与依赖。"""
+        demo = root / "demo"
+        for relative in ("01-Product/src/main", "01-Product/src/test", "framework/harness/state",
+                         ".opencode/plugin", "framework/harness/node_modules/pkg", "doc/features/REAL01",
+                         "doc/extensions/hooks/retired"):
+            (demo / relative).mkdir(parents=True, exist_ok=True)
+        (demo / "01-Product/src/main/main.ets").write_text("product", encoding="utf-8")
+        (demo / "01-Product/src/test/Case.test.ets").write_text("业务单测", encoding="utf-8")
+        (demo / "framework/harness/state/phase.json").write_text("state", encoding="utf-8")
+        (demo / "framework/harness/state/.gitkeep").write_text("", encoding="utf-8")
+        (demo / ".opencode/plugin/publish.js").write_text("x", encoding="utf-8")
+        (demo / "framework/harness/node_modules/pkg/i.js").write_text("dep", encoding="utf-8")
+        (demo / "doc/features/REAL01/spec.md").write_text("真实需求", encoding="utf-8")
+        (demo / "doc/extensions/hooks/retired/old.mjs").write_text("上一版的机制", encoding="utf-8")
+        (demo / "framework.config.json").write_text("{}", encoding="utf-8")
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            (demo / name).write_text("# demo\n\n## 实例扩展\n\n", encoding="utf-8")
+        return demo
+
+    def build_template(self, demo: Path, suite_id: str) -> Path:
+        root = demo.parent
         suite_root = root / "suite"
-        original_root = run_multi_case.DEMO_ROOT
-        original_tmp = tempfile.gettempdir
-        try:
-            run_multi_case.DEMO_ROOT = root / "repo"
-            source = run_multi_case.DEMO_ROOT
-            for relative in ("01-Product", "framework", "doc/extensions", "test",
-                             "tools", "output", ".git"):
-                (source / relative).mkdir(parents=True, exist_ok=True)
-                (source / relative / "marker.txt").write_text(relative, encoding="utf-8")
-            (source / "01-Product" / "main.ets").write_text("product", encoding="utf-8")
-            (source / "01-Product" / "nested" / "tools").mkdir(parents=True)
-            (source / "01-Product" / "nested" / "tools" / "secret.txt").write_text(
-                "excluded", encoding="utf-8")
-            (source / "framework" / "harness" / "state").mkdir(parents=True, exist_ok=True)
-            (source / "framework" / "harness" / "state" / "phase.json").write_text("state", encoding="utf-8")
-            for relative in ("AGENTS.md", "framework.config.json", "oh-package.json5"):
-                (source / relative).parent.mkdir(parents=True, exist_ok=True)
-                (source / relative).write_text(relative, encoding="utf-8")
-            # 黑名单之后这些也该跟着进工作区：宿主目录与依赖，被测工程用得上
-            (source / ".opencode" / "plugin").mkdir(parents=True, exist_ok=True)
-            (source / ".opencode" / "plugin" / "publish.js").write_text("x", encoding="utf-8")
-            (source / "framework" / "harness" / "node_modules" / "pkg").mkdir(parents=True)
-            (source / "framework" / "harness" / "node_modules" / "pkg" / "i.js").write_text(
-                "dep", encoding="utf-8")
-            (source / "doc" / "features" / "REAL01").mkdir(parents=True)
-            (source / "doc" / "features" / "REAL01" / "spec.md").write_text(
-                "真实需求", encoding="utf-8")
-            suite_root.mkdir(parents=True)
-            suite_id = f"boundary-test-{os.getpid()}"
-            template, workspace_root = run_multi_case.create_workspace_template(
-                suite_root, suite_id)
-            self.assertTrue((template / "01-Product" / "main.ets").is_file())
-            self.assertFalse((template / "test").exists())
-            self.assertFalse((template / "tools").exists())
-            self.assertFalse((template / "output").exists())
-            self.assertFalse((template / ".git").exists())
-            self.assertFalse((template / "framework" / "harness" / "state" / "phase.json").exists())
-            self.assertFalse((template / "01-Product" / "nested" / "tools").exists())
-            # 黑名单之后跟着进来的：宿主目录与依赖（工作区就是一个能直接跑的工程）
-            self.assertTrue((template / ".opencode" / "plugin" / "publish.js").is_file(),
-                            "宿主目录没进工作区——首跑漏 .opencode 那次 verifier 轴整个失真")
-            self.assertTrue(
-                (template / "framework" / "harness" / "node_modules" / "pkg" / "i.js").is_file(),
-                "依赖没进工作区——被测模型又要花两分钟装它")
-            # 仍然不能进来的：真实需求（Case 的需求由播种放入）
-            self.assertFalse((template / "doc" / "features" / "REAL01").exists())
-            boundary = run_multi_case.read_json(suite_root / "workspace-boundary.json")
-            self.assertIn("copied", boundary)
-            self.assertIn("excluded", boundary)
-            self.assertIn("case_seeded", boundary)
-            self.assertTrue(str(workspace_root).endswith(suite_id))
-        finally:
-            run_multi_case.DEMO_ROOT = original_root
-            shutil.rmtree(root, ignore_errors=True)
-            shutil.rmtree(Path(tempfile.gettempdir()) / "sw-story" / suite_id,
-                          ignore_errors=True)
+        suite_root.mkdir(parents=True, exist_ok=True)
+        original = run_multi_case.DEMO_ROOT
+        run_multi_case.DEMO_ROOT = demo
+        self.addCleanup(setattr, run_multi_case, "DEMO_ROOT", original)
+        self.addCleanup(shutil.rmtree, Path(tempfile.gettempdir()) / "sw-story" / suite_id, True)
+        template, _ = run_multi_case.create_workspace_template(suite_root, suite_id)
+        return template
+
+    def test_the_template_is_demo_plus_the_dev_source(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-multi-boundary-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        demo = self.fake_demo(root)
+        snapshot = {p.relative_to(demo).as_posix(): p.read_bytes() for p in demo.rglob("*") if p.is_file()}
+        template = self.build_template(demo, f"boundary-test-{os.getpid()}")
+
+        self.assertTrue((template / "01-Product/src/main/main.ets").is_file())
+        self.assertTrue((template / "01-Product/src/test/Case.test.ets").is_file(), "业务模块自己的单测目录被当成维护目录丢了")
+        self.assertTrue((template / ".opencode/plugin/publish.js").is_file())
+        self.assertTrue((template / "framework/harness/node_modules/pkg/i.js").is_file())
+        self.assertFalse((template / "framework/harness/state/phase.json").exists())
+        self.assertTrue((template / "framework/harness/state/.gitkeep").is_file())
+        self.assertFalse((template / "doc/features/REAL01").exists(), "真实需求进了被测侧")
+        ext = template / "doc/extensions"
+        for rel in run_multi_case.publish_to_demo.enumerate_source(run_multi_case.DEV_SOURCE):
+            self.assertEqual((run_multi_case.DEV_SOURCE / rel).read_bytes(), (ext / rel).read_bytes(), rel)
+        self.assertFalse((ext / "hooks/retired/old.mjs").exists(), "demo 里上一版的机制文件残留在 template")
+        for bridge in run_multi_case.publish_to_demo.manifest_bridges(run_multi_case.DEV_SOURCE):
+            self.assertEqual(bridge.source.read_bytes(), (template / bridge.target).read_bytes())
+        self.assertIn("<!-- story-ext:begin -->", (template / "AGENTS.md").read_text(encoding="utf-8"))
+        after = {p.relative_to(demo).as_posix(): p.read_bytes() for p in demo.rglob("*") if p.is_file()}
+        self.assertEqual(snapshot, after, "装配写了 demo")
+        boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")
+        self.assertEqual("installed", boundary["installed"]["status"])
+        self.assertTrue(Path(boundary["installed"]["manifest_path"]).is_relative_to(root / "suite"),
+                        "安装清单没落在本 suite 的证据目录")
+
+    def test_a_maintenance_directory_in_demo_stops_the_assembly(self) -> None:
+        for name in sorted(run_multi_case.MAINTENANCE_TOP_LEVEL):
+            with self.subTest(name):
+                root = Path(tempfile.mkdtemp(prefix="story-multi-drift-"))
+                self.addCleanup(shutil.rmtree, root, True)
+                demo = self.fake_demo(root)
+                (demo / name).mkdir()
+                suite_id = f"drift-test-{os.getpid()}-{name.strip('.')}"
+                with self.assertRaises(SystemExit) as caught:
+                    self.build_template(demo, suite_id)
+                self.assertIn("维护目录", str(caught.exception))
+                self.assertFalse((Path(tempfile.gettempdir()) / "sw-story" / suite_id).exists(),
+                                 "结构漂移时还是建了 template")
+
+    def test_a_template_whose_install_fails_is_not_used(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-multi-install-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        demo = self.fake_demo(root)
+        (demo / "AGENTS.md").write_text("# demo\n<!-- story-ext:begin -->\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as caught:
+            self.build_template(demo, f"install-fail-{os.getpid()}")
+        self.assertIn("template 作废", str(caught.exception))
 
     def test_failed_terminal_case_promotes_document_and_source_with_labels(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-promotion-"))

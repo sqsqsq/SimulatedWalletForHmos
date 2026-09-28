@@ -235,11 +235,11 @@ class TestCoordinatorWiring(FixtureCase):
     def test_the_local_requirement_system_is_never_copied_into_a_workspace(self) -> None:
         """人装的那套需求系统不能进被测 workspace——进去了模型 `ls` 就看见了。
 
-        它在 `test/` 下。工作区 2026-09-04 改成按黑名单排除之后，这条守的就是
-        「`test` 一直在黑名单里」——哪天有人把它拿掉，本地需求系统会整个跟进工作区。
+        它在维护域 `test/` 下，工作区从 demo 复制。这条守的是「demo 顶层出现 `test` 就报结构漂移」
+        ——哪天有人把它拿掉，本地需求系统会跟着混进 demo、再进工作区。
         """
-        self.assertIn("test", run_multi_case.WORKSPACE_EXCLUDED_DIR_NAMES,
-                      "test 不在排除名单里——本地需求系统会跟着进 workspace")
+        self.assertIn("test", run_multi_case.MAINTENANCE_TOP_LEVEL,
+                      "demo 顶层出现 test 不再报结构漂移——本地需求系统会跟着进 workspace")
         self.assertIn("doc/features", run_multi_case.WORKSPACE_EXCLUDED_DIRS,
                       "真实需求目录会跟着进被测侧")
 
