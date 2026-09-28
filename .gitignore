@@ -21,10 +21,6 @@ output/
 # 入库后每次手跑都产生 diff。与需求产物同性质，不入库。
 /test/requirement-system/
 
-# 根 scratch 已退出（临时件放 output/scratch）。剩下的是其他会话沙箱建、当前账号无权删除的临时目录；
-# 这条只为它们存在，残留删掉后随之删除。
-/scratch/
-
 # story adapt 工作目录：目标工程所有、包不交付。
 # 目录名带包版本（`.adapt-<version>/`），两个版本的工作件互不覆盖；`adapt/` 是早先
 # 版本留下的历史工作件，一并忽略。
