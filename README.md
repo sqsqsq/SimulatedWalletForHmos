@@ -27,4 +27,4 @@ $env:DEVECO_NODE = "<DevEco>\tools\node\node.exe"
 demo/scripts/build-dependence.ps1                                     # 重建 demo 各模块的 oh_modules
 ```
 
-`package-lock.json` 不入库，harness 的依赖会解析到各自版本范围内的最新补丁版。人手试用 `/story` 还要装本地需求系统，见 TEST §0.3。
+`package-lock.json` 不入库，harness 的依赖会解析到各自版本范围内的最新补丁版。人手试用 `/story` 还要装本地需求系统，见 TEST §1.3。

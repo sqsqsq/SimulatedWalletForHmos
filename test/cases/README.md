@@ -7,7 +7,7 @@
 - `run_case.py` 在每个阶段边界按 `end_phase` 算出下一个未闭环阶段，指名下发推进指令（`continuation_reply`，「现在执行 plan 阶段」）。
 - **Case 的 `prompt` 里不写阶段链**。只写起点动作（`/story init …`）、业务任务与执行要求；「随后依次完成 spec、plan、coding」这类话一律不写。
   写了会与驱动器双写、把「模型会不会自己一路跑」混进观测、改终点时两边对不上（来源见 ../EVOLUTION.md §6）。
-- **要改本轮终点，只改 `case.yaml` 的 `end_phase` 一行**，不动 prompt。命令行 override 与回显字段见 TEST §3.4。
+- **要改本轮终点，只改 `case.yaml` 的 `end_phase` 一行**，不动 prompt。命令行 override 与回显字段见 TEST §4.1。
 - story 流程内的动作（取材、归档送审、评审意见处置）不在 `PHASE_ORDER`（spec…testing）里，驱动器不会下发，所以**要写在 prompt 里**，
   写成需求方的话（「做到评审」「评审我来回」），不是命令名。
 
@@ -34,7 +34,7 @@ prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，
 |---|---|---|
 | `<id>/system/` | 需求系统上挂着的单据（一个子目录一张单，含 `detail.json` 与正文 md） | 起跑时复制到系统临时目录（**workspace 之外**，模型 `ls` 看不见），被测侧只经环境变量知道它在哪 |
 | `<id>/workspace/` | 起跑那一刻需求目录里就有的东西 | 起跑时 |
-| `<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 在模型第一次停在材料关卡时全部一次交出（TEST §3.0） |
+| `<id>/supplements/` | 人手上备着、**要来的**那几份 | `deliver: start` 起跑时；`deliver: on_request` 在模型第一次停在材料关卡时全部一次交出（TEST §3.2） |
 
 补料条目可以带 `kind: meeting`，表示这份 docx 是会议的语音转写：静态检查据此不要求它内嵌图片。
 这个键只给测试域用，投放时被测模型看到的仍只是一份 docx，归类由它自己判。
@@ -43,14 +43,14 @@ prompt 是**提需求那个人说的话**。他懂业务、不懂这套流程，
 **需求系统只承载 md，不承载图片**。图片只有一条路进来：人给的文档（docx）里内嵌，导入时抽出来。多留一条路，
 「归档件里的图能不能打开」测的就不是真实链路了。
 
-材料由**宿主**在回话时带出去：`reply --text "…" --deliver <文件名>`，文件先落进收件箱，那句话才排进队列（TEST §3.0）。
+材料由**宿主**在回话时带出去：`reply --text "…" --deliver <文件名>`，文件先落进收件箱，那句话才排进队列（TEST §3.2）。
 规划条目的 `deliver:` 只是告诉宿主「这一关该把哪份交出去」，它自己不投（`planned_deliver`）。起跑时收件箱里只有说明书；
 提前把材料铺满，「它会不会发现材料不够」就永远测不到。
 
 ## `interaction-script.yaml`
 
-- 写的是**需求方的立场**，不是台词；`text` 按立场写，宿主用自己的话说出来（TEST §3.0）。
+- 写的是**需求方的立场**，不是台词；`text` 按立场写，宿主用自己的话说出来（TEST §3.2）。
 - `expected_phase` 是那句话的阶段前提（`story` / `spec` / `archived`，poll 里回显为 `planned_phase`），由宿主判断这话现在说出口通不通；
   `expected_kind` 是等待类型，与当前这一问对不上时 poll 不展示这一条。
 - 一条只答一个关卡的一个问题；立场不替模型说出本该观测的识别，不提前泄露定源或处置。
-- `expected_turn` / `expected_phase` 与实跑对不上时，先按本该说的话回，跑完再按实跑顺序校准（TEST §3.3）；不为对上脚本改话术。
+- `expected_turn` / `expected_phase` 与实跑对不上时，先按本该说的话回，跑完再按实跑顺序校准（TEST §3.4）；不为对上脚本改话术。

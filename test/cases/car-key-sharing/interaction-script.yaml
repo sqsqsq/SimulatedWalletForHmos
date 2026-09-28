@@ -1,8 +1,8 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
-# 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.0）。
+# 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.2）。
 # expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
-# 模型第一次停在材料关卡时，产品稿与接受侧界面说明一次交齐；之后材料关卡再问才答「材料就这些」（TEST §3.0）。
+# 模型第一次停在材料关卡时，产品稿与接受侧界面说明一次交齐；之后材料关卡再问才答「材料就这些」（TEST §3.2）。
 replies:
   - id: hand-over-the-product-doc
     expected_turn: 1
@@ -38,7 +38,7 @@ replies:
     expected_phase: spec
     text: 进入 plan。
 
-  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §5.9 第 6 步）。
+  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
     expected_turn: 6
     expected_kind: story_gate

@@ -34,7 +34,7 @@ update_inputs:
     # 不按时间最新覆盖安全口径。
     expected: 冲突登记为议题并停下问人
 
-# 第二段的业务请求：resume-update 的 --text 原样用这一句，按 planned 记账（TEST §5.9）。
+# 第二段的业务请求：resume-update 的 --text 原样用这一句，按 planned 记账（TEST §4.4）。
 update_request: 评审人在评审记录里表了态，按评审意见把 ISSUE-206 更新一下。
 
 # prompt 是**需求方说的话**：只给单据性质、材料在哪、做到哪一步。

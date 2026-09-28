@@ -151,7 +151,7 @@ class TheSecondCheckpointAlsoWaits(unittest.TestCase):
     """第二段写完也要停着 —— **快照要在停着的时候取**。
 
     上一版这里直接 break，run 以 `finished` 收场，而 `checkpoint` 只认等待态：
-    TEST §5.9 第 7 步「checkpoint --point update → 后评 → conclude」会卡在第一条命令上。
+    TEST §4.4 第 7 步「checkpoint --point update → 后评 → conclude」会卡在第一条命令上。
     """
 
     def test_it_stops_instead_of_finishing(self) -> None:

@@ -17,7 +17,7 @@
 不驱动多轮对话、不中途截停、不生成报告——那些是从 walletkit / dag 抄来的场景，
 本项目的测试目标不需要，实测也从未触发（12 条预置应答命中 0、截停规则命中 0，
 而 `是否` 那条提问启发式反倒把完成报告误判成未答提问）。分析由维护设计者按
-AGENTS.md §4 与 TEST.md §8 自己做。
+AGENTS.md §4 与 TEST.md §6.1 自己做。
 
 被测会话只收到用例 prompt；本脚本不注入达标判据或任何测试信息（参考规范 §1.1）。
 """
@@ -554,7 +554,7 @@ def wait_at_update_checkpoint(out_dir: Path, feed, runlog, state: dict, *,
     """第二段写完之后也停在这里 —— **快照要在停着的时候取**。
 
     上一版这里直接 break，run 以 `finished` 收场，而 `checkpoint` 只认等待态：
-    于是 TEST §5.9 第 7 步「checkpoint --point update → 后评 → conclude」
+    于是 TEST §4.4 第 7 步「checkpoint --point update → 后评 → conclude」
     卡在第一条命令上。停等与第一检查点同构，但**只有一个出口**：宿主 conclude。
     第二段没有第三段，续跑请求到这里不该再被接受。
     """

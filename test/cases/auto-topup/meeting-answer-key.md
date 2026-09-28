@@ -2,7 +2,7 @@
 
 > 被测输入：`supplements/交通卡澄清会记录-0903.docx`。本文件不在 `system/`、`workspace/`、`supplements/` 里，
 > 不会被复制进被测工作区，也不进 prompt 与宿主回话。评分时对照「模型报出的会议结论、问人的条目、
-> 人裁决后的 `doc-refresh.md`、design.md 与 spec 里的落点」，按 TEST §10 判。
+> 人裁决后的 `doc-refresh.md`、design.md 与 spec 里的落点」，按 TEST §6.4 判。
 
 ## 各话题该有的去向
 

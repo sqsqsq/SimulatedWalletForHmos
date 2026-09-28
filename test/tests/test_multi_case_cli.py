@@ -22,22 +22,6 @@ sys.path.insert(0, str(SCRIPTS))
 import run_multi_case  # noqa: E402
 
 
-class OperatorProtocolTest(unittest.TestCase):
-    def test_test_guide_exposes_new_session_multiselect_and_host_boundary(self) -> None:
-        guide = (SCRIPTS.parent / "TEST.md").read_text(encoding="utf-8")
-        self.assertIn("## 0. 新会话协议", guide)
-        self.assertIn("用户输入“开始测试”", guide)
-        self.assertIn("动态读取可用 Case", guide)
-        self.assertIn("CLI 测试一律以非沙箱启动", guide)
-        self.assertIn("--authorize-non-sandbox", guide)
-        self.assertIn("不得写入 Case prompt", guide)
-        self.assertIn("同一个 heartbeat 每 15 秒唤醒", guide)
-        self.assertIn("poll --wait-sec 0", guide)
-        self.assertIn("同一个 heartbeat 更新为", guide)
-        self.assertIn("本轮 workspace/output 也保留到下一轮", guide)
-        self.assertIn("`finalize --cleanup` 已停用", guide)
-
-
 class MultiCasePlanTest(unittest.TestCase):
     def test_selected_suite_uses_exact_dynamic_case_set(self) -> None:
         selected = sorted(path.name for path in run_multi_case.CASES_ROOT.iterdir()

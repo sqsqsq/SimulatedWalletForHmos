@@ -45,7 +45,7 @@ update_inputs:
     destination: review-feedback.md
     note: 两条同意、一条要改（停用后给出重新签约的去处）、一条暂缓
 
-# 第二段的业务请求：resume-update 的 --text 原样用这一句，按 planned 记账（TEST §5.9）。
+# 第二段的业务请求：resume-update 的 --text 原样用这一句，按 planned 记账（TEST §4.4）。
 update_request: 产品需求出了新版，已放进需求目录；评审人的意见也回到系统上了。按这些把 AR90006 更新一下。
 
 # prompt 是**需求方说的话**：只给单号、材料在哪、做到哪一步。
