@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/check-phase-completion.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

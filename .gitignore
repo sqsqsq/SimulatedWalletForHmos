@@ -1,105 +1,27 @@
+# 维护仓：extensions（开发源）、test（维护域）、tools（CLI runtime）与维护装置。
+# demo 消费工程的业务构建、依赖、Framework 状态与需求产物规则在 demo/.gitignore。
+
 **/node_modules
-**/oh_modules
-**/oh-package-lock.json5
-**/package-lock.json5
 **/package-lock.json
-**/yarn.lock
-**/pnpm-lock.yaml
-/local.properties
-/.idea
-**/build
-**/.hvigor
-**/BuildProfile.ets
-.cxx
-/.clangd
-/.clang-format
-/.clang-tidy
-**/.test
-/.appanalyzer
-/signing
-.obsidian
-/doc/原始需求
+**.pyc
+**/__pycache__/
+.bak/
+output/
+
+# Personal / local agent settings (per developer, gitignored)
 /.claude/settings.local.json
-
-# Framework runtime artifacts (managed by /framework-init)
-framework/harness/node_modules/
-framework/harness/dist/
-framework/harness/reports/*
-!framework/harness/reports/.gitkeep
-# Feature 需求过程产物（本地开发，不入主仓）
-doc/features/
-
-framework/harness/trace/
-framework/harness/package-lock.json
-framework/harness/state/*
-!framework/harness/state/.gitkeep
-
-# Skill 0 staging drafts (managed by /framework-init)
-doc/catalog-staging/
-doc/glossary-staging/
-
-# Framework auto-overwrite backup (managed by /framework-init)
-.framework-backup/
-
-# Skill 6 · hmos-app 真机自动化本地产物（vendor wheel 见 framework/profiles/hmos-app/vendor/hylyre/，须入库）
-**/.hylyre/
-**/tmp_hypium/
-/doc/app-snapshot-cache/
-# Hylyre/Hypium 以工程根为 cwd 时落盘的 task 日志；需要归档时再移出 ignore
-/reports/
-
-# 根目录工程级 build-profile（个人/本机差异大时需单独提交时再移出 ignore）
-/build-profile.json5
-
-# Framework runtime artifacts (managed by /framework-init)
-framework/harness/**/ohosTest/
-framework/harness/**/test/dag/
-
-# Personal framework settings (per developer, gitignored)
-framework.local.json
-
-# Framework runtime artifacts (managed by /framework-init)
-framework/harness/decision.json
-framework/harness/context.json
-framework/harness/init-decision.json
-framework/harness/init-context.json
-
-# Feature-phase harness reports (paths.reports_dir_pattern)
-doc/features/*/*/reports/*
-doc/features/*/goal-runs/
-doc/features/*/ux-reference/_fidelity-cache/
-
-# device-testing device-testing local artifacts (profile-dependent; dirs may not exist yet)
-/doc/features/_adhoc/
+**/.cac/settings.local.json
 
 # 本地需求系统（bootstrap_local_story.py 装的，给人手跑 /story init 用）。
 # 它是**可写状态目录**：archive 覆盖单据正文、history/ 累积版本、attachments/ 落评审件，
-# 入库后每次手跑都产生 diff。与 doc/features/ 同性质，不入库。
-/test/story/requirement-system/
+# 入库后每次手跑都产生 diff。与需求产物同性质，不入库。
+/test/requirement-system/
 
 # Agent scratch: temporary diagnostic scripts (G4, plan e8f5a2c7 — never inside framework/)
 /scratch/
 
-# story adapt 工作目录：目标工程所有、包不交付。本仓既是包又会被自扫描/自适配，
-# 就地产生的 plan/before/backup 属运行产物，不入库（本仓专属，不随 Extension 交付）。
+# story adapt 工作目录：目标工程所有、包不交付。
 # 目录名带包版本（`.adapt-<version>/`），两个版本的工作件互不覆盖；`adapt/` 是早先
 # 版本留下的历史工作件，一并忽略。
-doc/extensions/.adapt-*/
-# story 章草稿：作者在这里写、登记成功即删；中途断了会留下，不入库
-doc/features/**/AR/story-src/drafts/
-doc/extensions/adapt/
-
-# Personal / local agent settings (per developer, gitignored)
-**/.cac/settings.local.json
-output/
-**.pyc
-**/__pycache__/
-.bak/
-
-# Framework runtime artifacts (managed by /framework-init)
-!framework/harness/reports/
-!framework/harness/trace/
-framework/harness/trace/*
-!framework/harness/trace/trace.schema.json
-!framework/harness/trace/gap-notes.template.md
-!framework/harness/state/
+extensions/.adapt-*/
+extensions/adapt/

@@ -1,0 +1,110 @@
+schema_version: "1.0"
+name: wallet-sdk-demo
+version: "1.9.8"
+description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
+# 包里的对接实现是替身：用本地目录模拟需求系统，adapt 不把它复制进目标
+adapters: stand-in
+# 这个仓的知识、对接层与在途单已按哪一版适配：三块都交回时写，adapt 升级后据它列出更新的演进条目
+adapted_for: "1.9.7"
+provides:
+  skills:
+    - story
+    - story-adaptation
+
+  # 扩展自有的宿主入口文件。升级直接覆盖、首次安装写入——它们是本扩展的产物，
+  # 不是目标工程的。宿主目录里的**其它**东西一概不在覆盖范围。
+  #
+  # 每项一对：source 是扩展里的入口正文（相对扩展根），target 是它在目标工程里的位置（相对工程根）。
+  # 登记在这里而不是写进 adapt 脚本的常量里：多一个宿主就多一项数据，机制不动。
+  bridges:
+    - target: .cac/commands/story.md
+      source: bridges/cac-command-story.md
+    - target: .claude/commands/story.md
+      source: bridges/claude-command-story.md
+    - target: .codex/skills/story/SKILL.md
+      source: bridges/codex-skills-story.md
+    - target: .opencode/skill/story/SKILL.md
+      source: bridges/opencode-skill-story.md
+    - target: .cursor/skills/story/SKILL.md
+      source: bridges/cursor-skill-story.md
+    - target: .agents/skills/story/SKILL.md
+      source: bridges/agents-skill-story.md
+
+  # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——
+  # 目录里躺着的未登记文件，任何阶段都读不到。
+  #
+  # **一份清单，不设第二份**：「这个文件属于哪类知识」写在文件自己的 frontmatter
+  # （`kind: facts | constraints | patterns`），不在这里再分一次组。
+  # 两份清单意味着两处要同步，改一处忘另一处就是静默漂移——而它们本来就该是同一件事。
+  #
+  # 每份知识用自己 frontmatter 的 applies_when 说明何时读、回答什么；读写规则归机制
+  # （skills/story/reference/knowledge/protocol.md），knowledge/ 下只放目标自己的内容。
+  #
+  # 域前缀、条目清单、模式标识与角色由 hooks/shared/knowledge.mjs 从各文件的
+  # frontmatter 与正文派生，机制层不维护第二份清单；派生为空会响亮报错，不会静默退化成空集。
+  knowledge:
+    - knowledge/facts/component-profile.md
+    - knowledge/facts/engineering-capabilities.md
+    - knowledge/facts/event-tracking.md
+    - knowledge/constraints/ux-consistency.md
+    - knowledge/constraints/security-privacy.md
+    - knowledge/constraints/dfx-baseline.md
+    - knowledge/constraints/observability.md
+    - knowledge/constraints/resource-usage.md
+    - knowledge/constraints/compatibility-checklist.md
+    - knowledge/constraints/env-exceptions.md
+    - knowledge/constraints/deliverables.md
+    - knowledge/design-patterns/decision-tree.md
+    - knowledge/design-patterns/page-interaction.md
+
+  # 挂载分步进行：manifest 里任何一条路径不存在，加载器会**清空全部 provides**
+  # （全有全无，不降级），所以只登记已交付的钩子。
+  #
+  # 这里登记的两个事件各有各的消费者，别混：
+  #   post_check   → 门禁，产物落盘之后；
+  #   pre_verifier → verifier 的上下文。
+  #
+  # **作者要求不在这里登记**：宿主把这份清单里的作者事件只用在装配 verifier 上下文上，
+  # 它从不进入作者动笔前的上下文，登记在那里等于没送到。本扩展的作者要求由
+  # `hooks/<phase>/author.md`（原则页）与 `hooks/{spec,plan}/author.mjs`（本次任务包）承载，
+  # 作者动笔前自己跑命令取；入口写在 SKILL、CLAUDE.md 扩展段与 `story_flow.py status`
+  # 的下一步文本里。
+  hooks:
+    spec:
+      post_check:
+        - hooks/spec/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    plan:
+      post_check:
+        - hooks/plan/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    coding:
+      post_check:
+        - hooks/coding/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    review:
+      post_check:
+        - hooks/review/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    ut:
+      post_check:
+        - hooks/ut/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+    testing:
+      post_check:
+        - hooks/testing/post_check.mjs
+      pre_verifier:
+        - hooks/shared/pre_verifier.mjs
+
+  phase_rules_overlays:
+    spec: rules/spec-rules.overlay.yaml
+    plan: rules/plan-rules.overlay.yaml
+    coding: rules/coding-rules.overlay.yaml
+    review: rules/review-rules.overlay.yaml
+    ut: rules/ut-rules.overlay.yaml
+    testing: rules/testing-rules.overlay.yaml
