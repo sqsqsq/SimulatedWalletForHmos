@@ -5,7 +5,9 @@
 
 ## 1. 演进记录
 
-2026-09-28 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为维护域 `test/`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。离线收口：全量 1495 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
+2026-09-28 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为维护域 `test/`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。P3 交回验证：全量 1495 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
+
+2026-09-28 P3 评审：用户纠正维护契约与文档归属，要求根 AGENTS 承担完整契约、spec/plan/release 迁根 doc、需求产物回流根 doc/features；P3 暂不通过，1.9.8 未收口。具体实施合同见 [目录归属纠正](plan/1.9.8/2026-09-26-整体设计/评审意见/2026-09-28-P3评审与目录归属纠正.md)。
 
 2026-09-07：用户确认 2026-08-25 分批交付轮次的四批次需求已结束交付，后续批次 5、6 的诊断收敛一并结束。当时工作入口为 [新需求讨论总览](spec/1.9.1/2026-09-04-会议转写修正需求输入/00-讨论总览.md)：会议转写需求保留冻结基线，Extension 整体正向审查与重构进入澄清。交付记录见 [总方案](plan/1.9.0/2026-08-25-story分批次交付/00-总方案.md)。以下日期记录用于追溯，不作为当前任务的自动推进指令。
 
