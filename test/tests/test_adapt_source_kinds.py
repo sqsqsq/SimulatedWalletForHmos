@@ -37,8 +37,6 @@ class SourceKindCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
 
-    # ---- 驱动 ----
-
     def blank_repo(self, project: str, adapters: list[str] | None = None) -> Path:
         """一个接入了 Framework、还没装扩展的空仓：入口文件由 Framework 按「没有扩展」物化，已提交。"""
         at = self.root / project
@@ -109,7 +107,43 @@ class SourceKindCase(unittest.TestCase):
         f = at / ADAPTERS / name
         return f.read_text(encoding="utf-8") if f.is_file() else ""
 
-    # ---- Demo 来源 ----
+    def source_repo(self, project: str = "BizA") -> Path:
+        """一个装好、且自己实现了对接层的业务仓——它就是复刻的来源。"""
+        at = self.blank_repo(project)
+        self.adapt("--apply", at, PKG_ROOT)
+        self.write_adapters(at, f"{project} 的真实现")
+        self.commit(at, "装好并自己实现对接层")
+        return at
+
+    def follow_up(self, proc: subprocess.CompletedProcess) -> dict:
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        return json.loads(line.split("按版本跟进：", 1)[1])
+
+    def set_version(self, target: Path, version: str) -> None:
+        manifest = target / "doc/extensions/manifest.yaml"
+        rows = [f'version: "{version}"' if l.startswith("version:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(target, f"装的是 {version}")
+
+    def pkg_with_manifest(self, rewrite, adaptation: str | None = None) -> Path:
+        """Demo 包的一份拷贝，manifest 逐行经 `rewrite` 改写；给了 `adaptation` 就换掉包的 adaptation.yaml。"""
+        pkg = self.root / "rewritten-pkg"
+        if pkg.exists():
+            shutil.rmtree(pkg)
+        link_framework(pkg)
+        shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
+                        ignore=shutil.ignore_patterns("__pycache__", ".*"))
+        manifest = pkg / "doc" / "extensions" / "manifest.yaml"
+        manifest.write_text("\n".join(rewrite(l) for l in manifest.read_text(encoding="utf-8").split("\n")),
+                            encoding="utf-8")
+        if adaptation is not None:
+            (pkg / "doc" / "extensions" / "adaptation.yaml").write_text(adaptation, encoding="utf-8")
+        return pkg
+
+
+class DemoAndBusinessSources(SourceKindCase):
+    """演示包与业务包作来源：替身不交出去，真实实现不被覆盖，业务仓之间照带。"""
 
     def test_a_demo_install_does_not_hand_over_the_stand_ins(self) -> None:
         """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。\n\n        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。\n        目标从已实现的业务仓复刻，之后按升级演进记录的对接层条目跟进。\n        """
@@ -129,16 +163,6 @@ class SourceKindCase(unittest.TestCase):
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("BizA 的真实现", self.adapter_text(target))
-
-    # ---- 业务仓之间 ----
-
-    def source_repo(self, project: str = "BizA") -> Path:
-        """一个装好、且自己实现了对接层的业务仓——它就是复刻的来源。"""
-        at = self.blank_repo(project)
-        self.adapt("--apply", at, PKG_ROOT)
-        self.write_adapters(at, f"{project} 的真实现")
-        self.commit(at, "装好并自己实现对接层")
-        return at
 
     def test_copying_between_business_repos_carries_the_adapters(self) -> None:
         """业务仓之间复刻：对接实现跟着过去——它们共用同一套（A12）。"""
@@ -175,11 +199,9 @@ class SourceKindCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("BizA 的真实现", self.adapter_text(target))
 
-    # ---- 按版本跟进 ----
 
-    def follow_up(self, proc: subprocess.CompletedProcess) -> dict:
-        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
-        return json.loads(line.split("按版本跟进：", 1)[1])
+class TheAdapterBlocks(SourceKindCase):
+    """对接块：未适配的目标拿到全部块，在途入口跟已装版本，块不全就写前停。"""
 
     def test_an_unadapted_target_gets_every_block_from_a_stand_in_source(self) -> None:
         """目标没写 adapted_for、装的是旧版（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
@@ -196,13 +218,6 @@ class SourceKindCase(unittest.TestCase):
                 self.assertTrue(items, f"{block} 一条都没列")
         self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
         self.assertIn("停一次问人", proc.stdout)
-
-    def set_version(self, target: Path, version: str) -> None:
-        manifest = target / "doc/extensions/manifest.yaml"
-        rows = [f'version: "{version}"' if l.startswith("version:") else l
-                for l in manifest.read_text(encoding="utf-8").split("\n")]
-        manifest.write_text("\n".join(rows), encoding="utf-8")
-        self.commit(target, f"装的是 {version}")
 
     def test_in_flight_entries_follow_the_installed_version(self) -> None:
         """在途单只跟从哪一版升上来有关：装的是上一版就只列本版；知识与对接层没写 adapted_for 仍从头列。"""
@@ -248,20 +263,9 @@ class SourceKindCase(unittest.TestCase):
         self.assertIn("没有块标签", self.out(proc))
         self.assertFalse((target / "doc/extensions/manifest.yaml").exists(), "停之前已经写过盘了")
 
-    def pkg_with_manifest(self, rewrite, adaptation: str | None = None) -> Path:
-        """Demo 包的一份拷贝，manifest 逐行经 `rewrite` 改写；给了 `adaptation` 就换掉包的 adaptation.yaml。"""
-        pkg = self.root / "rewritten-pkg"
-        if pkg.exists():
-            shutil.rmtree(pkg)
-        link_framework(pkg)
-        shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
-                        ignore=shutil.ignore_patterns("__pycache__", ".*"))
-        manifest = pkg / "doc" / "extensions" / "manifest.yaml"
-        manifest.write_text("\n".join(rewrite(l) for l in manifest.read_text(encoding="utf-8").split("\n")),
-                            encoding="utf-8")
-        if adaptation is not None:
-            (pkg / "doc" / "extensions" / "adaptation.yaml").write_text(adaptation, encoding="utf-8")
-        return pkg
+
+class TheSourceKindIsRead(SourceKindCase):
+    """来源种类只按登记读：引号、包名、标记与换行都不改变判断。"""
 
     def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
         """`adapters` 取的是 YAML 的**值**，不是那一行的字面。\n\n        `adapters: stand-in` 与 `adapters: "stand-in"` 是同一个值。拿字面去比，\n        加一对引号就把替身包判成业务仓——而那一判之下 `--apply` 会把目标的真实现\n        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。\n        """
@@ -297,8 +301,6 @@ class SourceKindCase(unittest.TestCase):
         self.assertNotIn("adapted_for:", text)
         self.assertEqual("{}\n", (target / "doc" / "extensions" / "adaptation.yaml").read_text(encoding="utf-8"))
 
-    # ---- 安装结果 ----
-
     def test_a_broken_bridge_is_caught(self) -> None:
         """宿主入口在 `<ext>/` 之外，覆盖范围扫不到——`--check` 按 Framework 的入口核对报出来。
 
@@ -325,7 +327,9 @@ class SourceKindCase(unittest.TestCase):
         proc = self.adapt("--check", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
 
-    # ---- 装到一个真实仓里 ----
+
+class WhatTheTargetGets(SourceKindCase):
+    """目标工程拿到什么：忽略规则、知识登记核对、宿主入口，发布说明不随行。"""
 
     def test_it_adds_nothing_to_a_gitignore_that_already_covers_the_drafts(self) -> None:
         """需求目录整个不入库时，不再补那一行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。\n        """
@@ -398,7 +402,9 @@ class SourceKindCase(unittest.TestCase):
         self.assertIn("只走 story 链", after, "升级把目标自己的说明盖了")
         self.assertNotIn("1.7.0", after.split("version:", 1)[0])
 
-    # ---- 目标的身份 ----
+
+class IdentityAndUpgrade(SourceKindCase):
+    """身份与升级：名字描述归目标、版本跟包、每个 Skill 有原生入口，1.x 就地升级，冲突写前停。"""
 
     def test_the_target_keeps_its_own_name_and_description(self) -> None:
         """`name` 与 `description` 归目标：首次按它的工程名生成，之后任何升级都不改。\n\n        改掉的话，目标的 manifest 就顶着发布源的名字——两个仓的产物看起来出自同一处。\n        """
@@ -428,8 +434,6 @@ class SourceKindCase(unittest.TestCase):
         self.assertIn(version, (target / "doc" / "extensions" / "manifest.yaml")
                       .read_text(encoding="utf-8"))
 
-    # ---- 宿主入口 ----
-
     def test_every_skill_gets_a_framework_owned_entry(self) -> None:
         """新工程装完：包登记的每个 Skill 在每个宿主都有一份带 Framework 归属标记、指向扩展 SKILL 的入口。"""
         target = self.blank_repo("Fresh")
@@ -443,8 +447,6 @@ class SourceKindCase(unittest.TestCase):
                     text = (target / rel).read_text(encoding="utf-8")
                     self.assertIn("agent-maison:instance-extension-bridge", text)
                     self.assertIn(f"doc/extensions/skills/{skill}/SKILL.md", text)
-
-    # ---- 从 1.x 升上来 ----
 
     def test_a_1x_install_is_upgraded_in_place(self) -> None:
         """装着 1.9.8 的目标：适配状态迁进 adaptation.yaml，旧入口与 story-ext 段退出，入口改由 Framework 物化。"""

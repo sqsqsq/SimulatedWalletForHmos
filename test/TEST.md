@@ -355,7 +355,9 @@ python test/scripts/run_multi_case.py finalize `
 
 ## 5. 离线验证
 
-命令从仓根执行，并行参数照抄不删（`-n auto --dist loadscope`、`--jobs`、`-j`；`--dist loadscope` 让同一个类的用例共用夹具、不互相踩）：
+命令从仓根执行，并行参数照抄不删（`-n auto --dist loadscope`、`--jobs`、`-j`；`--dist loadscope` 让同一个类的用例共用夹具、不互相踩）。
+`test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；
+要读原生 Framework 的用例按准备状态分小类，一个类只造一种状态：`loadscope` 按类分 worker，大类会串行拖住整轮。
 
 ```powershell
 python -m pytest test/tests -n auto --dist loadscope

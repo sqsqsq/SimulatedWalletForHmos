@@ -7,6 +7,7 @@ pre_verifier 拿到的是同一个加载器出的任务。
 """
 from __future__ import annotations
 
+import atexit
 import base64
 import hashlib
 import json
@@ -37,10 +38,10 @@ def cu_id(blueprint: str, unit: str) -> str:
 CU = cu_id(BLUEPRINT, "balance-refresh")
 
 
-def make_project(features_dir: str = "doc/features") -> Path:
-    """接入 demo Framework、装好开发版扩展、放进夹具蓝图与施工单位的临时工程。"""
-    root = Path(tempfile.mkdtemp(prefix="story-kt-")) / "p"
-    root.mkdir()
+def make_project(features_dir: str = "doc/features", root: Path | None = None) -> Path:
+    """接入 demo Framework、装好开发版扩展、放进夹具蓝图与施工单位的临时工程；不给 `root` 就新建一个临时目录。"""
+    root = root or Path(tempfile.mkdtemp(prefix="story-kt-")) / "p"
+    root.mkdir(parents=True)
     config = json.loads((REPO_ROOT / "demo" / "framework.config.json").read_text(encoding="utf-8"))
     config.setdefault("paths", {})["features_dir"] = features_dir
     (root / "framework.config.json").write_text(json.dumps(config), encoding="utf-8")
@@ -112,6 +113,38 @@ def prepare(root: Path, action: str, feature: str = CU, requirement: str = REQUI
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if proc.returncode != 0:
         raise RuntimeError(f"准备 {action} 失败：{proc.stderr[-800:]}")
+
+
+#: 本进程准备工程用的固定位置。冻结记录与需求绑定写的是绝对路径：状态在这里造、复制回这里用，路径原样有效，
+#: 不靠原生的换根重定位（需求来源不在需求目录下时它推不出旧根，会读回原处的文件）。同一进程的用例是串行的。
+_WORK = Path(tempfile.mkdtemp(prefix="story-kt-work-")) / "p"
+atexit.register(shutil.rmtree, _WORK.parent, True)
+_PREPARED: dict[tuple, Path] = {}
+
+
+def _without_framework(src: Path):
+    return lambda d, names: ["framework"] if Path(d) == src else []
+
+
+def prepared_project(steps: tuple[str, ...], requirement: str = REQUIREMENT) -> Path:
+    """按原生入口准备好的工程：每种准备每个进程只造一次（冻结一次二三十秒）并存档，每次调用把存档复制回 `_WORK`，
+    用例在上面随便改。`requirement` 不是夹具需求时，先把夹具需求拷成这份只给请求用的来源文件。"""
+    key = (steps, requirement)
+    if key not in _PREPARED:
+        shutil.rmtree(_WORK, ignore_errors=True)
+        make_project(root=_WORK)
+        if requirement != REQUIREMENT:
+            shutil.copy2(_WORK / REQUIREMENT, _WORK / requirement)
+        for step in steps:
+            prepare(_WORK, step, requirement=requirement)
+        archive = Path(tempfile.mkdtemp(prefix="story-kt-prepared-")) / "p"
+        atexit.register(shutil.rmtree, archive.parent, True)
+        shutil.copytree(_WORK, archive, ignore=_without_framework(_WORK))
+        _PREPARED[key] = archive
+    shutil.rmtree(_WORK, ignore_errors=True)
+    shutil.copytree(_PREPARED[key], _WORK, ignore=_without_framework(_PREPARED[key]))
+    link_framework(_WORK)
+    return _WORK
 
 
 def files_under(root: Path) -> dict[str, bytes]:
@@ -249,13 +282,14 @@ class ACustomFeaturesDirIsFollowed(unittest.TestCase):
 
 
 class FreshProject(unittest.TestCase):
-    """每条用例一个新工程：范围冻结只能做一次，各用例要自己的候选与冻结记录。"""
+    """每条用例一份自己的工程：范围冻结只能做一次，各用例要自己的候选与冻结记录。"""
 
     def setUp(self) -> None:
         if shutil.which("node") is None:
             self.skipTest("环境里没有 node")
-        self.root = make_project()
-        self.addCleanup(shutil.rmtree, self.root.parent, True)
+
+    def use(self, *steps: str, requirement: str = REQUIREMENT) -> None:
+        self.root = prepared_project(steps, requirement)
 
     def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared" / script), "--project-root", str(self.root), *args],
@@ -266,11 +300,11 @@ class FreshProject(unittest.TestCase):
         return proc.returncode, json.loads(proc.stdout)
 
 
-class PhaseInputsComeFromTheNativeResolver(FreshProject):
-    """范围冻结后，本阶段输入按原生阶段解析：选哪份、过期、invalid 与必需能力缺失都照原生，读取不写任何东西。"""
+class PhaseInputsBeforeLocalContracts(FreshProject):
+    """范围冻结、还没有本地施工输入：本阶段输入照原生阶段解析——蓝图派生，或原生判缺必需能力。"""
 
     def test_the_blueprint_derivation_is_what_the_resolver_selects_before_local_inputs_exist(self) -> None:
-        prepare(self.root, "freeze")
+        self.use("freeze")
         code, out = self.feature("plan")
         self.assertEqual((0, "ok", "frozen"), (code, out["status"], out["scope"]), out)
         self.assertEqual("derive", out["inputs"]["contracts"]["binding"]["kind"])
@@ -278,17 +312,28 @@ class PhaseInputsComeFromTheNativeResolver(FreshProject):
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertIn("契约来自 derive", task.stdout)
 
+    def test_a_phase_the_native_resolver_blocks_fails_the_task(self) -> None:
+        """原生判本阶段缺必需能力（无 run 的 coding 缺需求正文）：照原生结论失败，不当作空义务。"""
+        self.use("freeze")
+        code, out = self.feature("coding")
+        self.assertEqual((1, "invalid", "blocked"), (code, out["status"], out["assurance"]), out)
+        self.assertEqual("capability_blocked", out["issues"][0]["code"])
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "coding", "--audience", "author")
+        self.assertEqual((1, ""), (task.returncode, task.stdout))
+
+
+class PhaseInputsFromMaterializedContracts(FreshProject):
+    """先物化本地契约再冻结：原生选本地契约；冻结后改了它，原生判过期，读取不写任何东西、不拿蓝图顶上。"""
+
     def test_a_materialized_local_contract_is_what_the_resolver_selects(self) -> None:
-        prepare(self.root, "materialize")
-        prepare(self.root, "freeze")
+        self.use("materialize", "freeze")
         code, out = self.feature("plan")
         self.assertEqual((0, "ok"), (code, out["status"]), out)
         self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"])
 
     def test_a_local_contract_changed_after_freezing_is_not_replaced_by_the_blueprint(self) -> None:
         """原生判过期的本地契约，不能借蓝图派生变绿；知识任务失败、不给半份，读取不写任何东西。"""
-        prepare(self.root, "materialize")
-        prepare(self.root, "freeze")
+        self.use("materialize", "freeze")
         prepare(self.root, "edit")
         features = self.root / "doc" / "features"
         state = REPO_ROOT / "demo" / "framework" / "harness" / "state"
@@ -304,18 +349,8 @@ class PhaseInputsComeFromTheNativeResolver(FreshProject):
         self.assertEqual(before, files_under(features), "读取写了需求目录")
         self.assertEqual(state_before, sorted(p.name for p in state.iterdir()), "读取写了 harness 状态")
 
-    def test_a_phase_the_native_resolver_blocks_fails_the_task(self) -> None:
-        """原生判本阶段缺必需能力（无 run 的 coding 缺需求正文）：照原生结论失败，不当作空义务。"""
-        prepare(self.root, "freeze")
-        code, out = self.feature("coding")
-        self.assertEqual((1, "invalid", "blocked"), (code, out["status"], out["assurance"]), out)
-        self.assertEqual("capability_blocked", out["issues"][0]["code"])
-        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "coding", "--audience", "author")
-        self.assertEqual((1, ""), (task.returncode, task.stdout))
-
     def test_the_reviewer_is_told_when_its_task_cannot_be_read(self) -> None:
-        prepare(self.root, "materialize")
-        prepare(self.root, "freeze")
+        self.use("materialize", "freeze")
         prepare(self.root, "edit")
         probe = ("const m = (await import(process.argv[1])).default;"
                  "const out = await m({ phase: 'review', feature: process.argv[2], projectRoot: process.argv[3] });"
@@ -358,7 +393,7 @@ process.stdout.write(JSON.stringify({ assurance: r.report.assurance, requirement
 """
 
 
-class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
+class SpecCase(FreshProject):
     """无 run 的 spec：需求正文按冻结候选的来源恢复并核对后再交给阶段解析，与原生 harness 同结果；恢复不出时要调用方给原文。"""
 
     def native_spec(self, explicit: str = "") -> dict:
@@ -374,8 +409,12 @@ class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
     def requirement_text(self) -> str:
         return (self.root / "doc/requirements/wallet-balance-refresh.md").read_text(encoding="utf-8").strip()
 
+
+class SpecFromARequirementFile(SpecCase):
+    """候选记下了需求来源文件：按它恢复，与原生同结果，审查者拿到同一份任务。"""
+
     def test_a_file_bound_spec_resolves_as_the_native_harness_does(self) -> None:
-        prepare(self.root, "freeze")
+        self.use("freeze")
         native = self.native_spec()
         self.assertEqual(("full", "resolved", []), (native["assurance"], native["requirement"], native["blocked"]))
         code, out = self.spec()
@@ -384,11 +423,26 @@ class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertNotIn("预览", task.stdout.splitlines()[0])
 
+    def test_the_reviewer_gets_the_spec_task_on_the_same_object(self) -> None:
+        self.use("freeze")
+        probe = ("const m = (await import(process.argv[1])).default;"
+                 "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
+                 "process.stdout.write(out.promptFragments.join('\\n\\n'));")
+        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("# 知识任务：spec（审查者）", proc.stdout)
+        self.assertNotIn("取不到", proc.stdout)
+
+
+class SpecRequirementSourceChanged(SpecCase):
+    """冻结后需求来源变了：照原生报过期。"""
+
     def test_a_requirement_source_changed_after_freezing_is_stale(self) -> None:
         """需求来源是一份只给这次请求用的文件（夹具需求同时是蓝图来源，改它先让蓝图失效）。"""
         request = "doc/requirements/balance-refresh-request.md"
-        shutil.copy2(self.root / REQUIREMENT, self.root / request)
-        prepare(self.root, "freeze", requirement=request)
+        self.use("freeze", requirement=request)
         code, out = self.spec()
         self.assertEqual((0, "ok"), (code, out["status"]), out)
         source = self.root / request
@@ -400,8 +454,12 @@ class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
         self.assertEqual((1, ""), (task.returncode, task.stdout))
         self.assertIn("不换一份需求顶上", task.stderr)
 
+
+class SpecWithAnInlineRequirement(SpecCase):
+    """候选只记了需求正文的指纹：要调用方给原文，并按绑定核对。"""
+
     def test_an_inline_requirement_is_asked_for_and_checked_against_the_binding(self) -> None:
-        prepare(self.root, "freeze-inline")
+        self.use("freeze-inline")
         code, out = self.spec()
         self.assertEqual((1, "requirement_text_needed"), (code, out["issues"][0]["code"]), out)
         task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
@@ -418,21 +476,13 @@ class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
                 task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author", *extra)
                 self.assertEqual(0, task.returncode, task.stderr)
 
-    def test_the_reviewer_gets_the_spec_task_on_the_same_object(self) -> None:
-        prepare(self.root, "freeze")
-        probe = ("const m = (await import(process.argv[1])).default;"
-                 "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
-                 "process.stdout.write(out.promptFragments.join('\\n\\n'));")
-        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
-        proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn("# 知识任务：spec（审查者）", proc.stdout)
-        self.assertNotIn("取不到", proc.stdout)
+
+class TheFirstPhaseIsPreparedNatively(FreshProject):
+    """首阶段：先原生准备范围，再重取任务动笔。"""
 
     def test_the_first_phase_is_prepared_natively_before_the_task_is_used(self) -> None:
         """首阶段：候选有了、范围未冻结时任务只是预览；照 story-knowledge Skill 给的原生准备命令冻结后，重取得到真实输入。"""
-        prepare(self.root, "candidate")
+        self.use("candidate")
         task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertIn("预览，执行范围未冻结", task.stdout.splitlines()[0])
