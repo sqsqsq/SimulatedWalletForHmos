@@ -5,7 +5,7 @@
 
 ## 1. 演进记录
 
-2026-09-29 **1.9.8 发布**：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。
+2026-09-29 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。
 
 2026-09-28 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为测试域 `test/`，其中维护契约合入根 `AGENTS.md`，需求、方案与发布说明迁到根 `doc/spec|plan|release`，需求产物回流根改为根 `doc/features`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。P3 目录归属纠正交回验证：全量 1499 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](../doc/plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](../doc/release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
 
