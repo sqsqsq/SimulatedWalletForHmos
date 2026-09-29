@@ -1649,8 +1649,9 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     基线态六份 ``on_context_load.md`` 400 行通篇是作者向文本（「spec 是什么」「三个自问」
     「不写文档坐标」），于是作者只能靠门禁报错反推要求，内网实测 plan「仅展示」、coding「完全失效」。
 
-    本条守两件事：``hooks/**/*.md`` 只剩 ``author.md``；每份是**索引**不是教材
-    （≤60 行、不整段展开判据推理）。判定基准派生自 ``hooks/`` 的阶段目录，不写死阶段名。
+    本条守两件事：``hooks/**/*.md`` 只剩 ``author.md`` 与 ``reviewer.md``（作者与独立审查者的要求页，
+    由知识任务点名送达）；每份是**索引**不是教材（≤60 行、不整段展开判据推理）。判定基准派生自
+    ``hooks/`` 的阶段目录，不写死阶段名。
     """
     hooks_dir = root / "hooks"
     if not hooks_dir.exists():
@@ -1662,7 +1663,7 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     hits: list[str] = []
     for md in sorted(hooks_dir.rglob("*.md")):
         rel = md.relative_to(root).as_posix()
-        if md.name != "author.md":
+        if md.name not in ("author.md", "reviewer.md"):
             hits.append(f"{rel} 是给作者的文本却放在 hooks 里——它只进 ai-prompt，作者读不到")
             continue
         # 末尾换行是文件的正常形态，不是内容行——算进去会让每份都多 1 行。
@@ -1688,48 +1689,32 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def a05_entry_file_misses_extension_section(root: Path, ctx: Ctx) -> Outcome:
-    """扩展交付了入口段，宿主入口文件却没带上它。
+def a05_author_knowledge_unbound(root: Path, ctx: Ctx) -> Outcome:
+    """作者动笔前的知识要求没挂到 Feature 阶段前。
 
-    主 agent 会话开始时自动进入上下文的只有入口文件（claude 读 CLAUDE.md，
-    codex 只读 AGENTS.md、不加载任何 rules 目录）。扩展把「动笔前先读 author.md」
-    这句话交付成 ``AGENTS.section.md`` 之后，若没写进两份入口文件，作者面通道就是断的
-    ——文件在仓里躺着，没有任何机制会把它送到作者眼前。
-
-    包没有 ``AGENTS.section.md`` 时本条不适用（未启用该形态）。
-
-    **交付位置有两处**：扩展根（夹具形态）与 ``skills/story/``（本仓实际交付的位置）。
-    只认扩展根时，本条在真实仓上恒判「该形态未启用」而静默跳过——检查入口段有没有
-    送达的这条判据，自己没送达。
+    作者进阶段时能自动拿到的，是 Framework 按 ``phase_bindings`` 在阶段作业前调用的 Skill；
+    挂漏一个阶段，那个阶段的作者就拿不到当前动作的知识任务。每个登记了钩子的 Feature 阶段，
+    ``before_phase_work`` 都要挂着一个 ``provides.skills`` 声明过、``skills/<id>/SKILL.md`` 存在的 Skill。
     """
-    section = next((p for p in (root / "AGENTS.section.md",
-                                root / "skills" / "story" / "AGENTS.section.md")
-                    if p.exists()), None)
-    if section is None:
-        return Outcome(True, "包未交付 AGENTS.section.md（该形态未启用）")
-    body = _norm(read_text(section))
-    if not body:
-        return Outcome(False, "AGENTS.section.md 是空的——交付了一个空通道")
-
-    # 入口文件在消费工程根：夹具是夹具自己，真实目标是 --project-root 给的工程。
-    host = ctx.project_root
-    if host is None or not ((host / "CLAUDE.md").exists() or (host / "AGENTS.md").exists()):
-        return Outcome(False, f"消费工程根没有宿主入口文件（CLAUDE.md / AGENTS.md）：{host}——无从证明这段送达了")
-
+    manifest = root / "manifest.yaml"
+    if not manifest.is_file():
+        return Outcome(False, f"没有 manifest.yaml：{manifest}")
+    doc = yaml.safe_load(read_text(manifest)) or {}
+    provides = doc.get("provides") or {}
+    declared = set(provides.get("skills") or [])
+    phases = list((provides.get("hooks") or {}).keys())
+    if not phases:
+        return Outcome(True, "没有登记钩子的 Feature 阶段（该形态未启用）")
     missing: list[str] = []
-    seen: list[str] = []
-    for name in ("AGENTS.md", "CLAUDE.md"):
-        entry = host / name
-        if not entry.exists():
-            if name == "AGENTS.md":
-                missing.append(f"{name} 不存在")
-            continue
-        seen.append(name)
-        if body not in _norm(read_text(entry)):
-            missing.append(f"{name} 的「实例扩展」节没有 AGENTS.section.md 全文")
+    for phase in phases:
+        slot = ((doc.get("phase_bindings") or {}).get(phase) or {}).get("before_phase_work") or []
+        skills = [b.get("ref") for b in slot if isinstance(b, dict) and b.get("kind") == "skill"]
+        good = [s for s in skills if s in declared and (root / "skills" / str(s) / "SKILL.md").is_file()]
+        if not good:
+            missing.append(f"{phase}（挂的 Skill：{skills or '无'}）")
     if missing:
-        return Outcome(False, "；".join(missing) + "——写入后须重渲染 / 重写入口文件")
-    return Outcome(True, f"{seen} 均含 AGENTS.section.md 全文")
+        return Outcome(False, "这些阶段动笔前没挂上可用的知识 Skill：" + "；".join(missing))
+    return Outcome(True, f"{len(phases)} 个阶段动笔前都挂着已声明的知识 Skill")
 
 
 # --------------------------------------------------------------------------- #

@@ -1,12 +1,19 @@
+#!/usr/bin/env node
 /**
  * 读 Framework 原生能力的唯一入口：从显式工程根的 `framework/harness` 加载它安装的 ts-node，
  * 再 require 原生 TypeScript 模块。不复制框架实现、不另装运行器、不从维护源码导入。
  *
  * 同一进程对同一工程根只注册一次；harness 或其依赖缺失时抛错，错误里写明缺什么、怎么装。
+ *
+ * 命令行只读取、不写盘：
+ *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
+ *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id>
+ * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
  */
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const loaded = new Map();
 
@@ -34,4 +41,120 @@ export function loadNative(projectRoot) {
   };
   loaded.set(root, api);
   return api;
+}
+
+const rel = (root, p) => path.relative(root, p).split(path.sep).join('/');
+const failure = (status, error) => ({ status, issues: [{ code: error?.code ?? 'error', message: String(error?.message ?? error) }] });
+
+/** 蓝图的原生完整引用：整蓝图为目标，指向读到的那一版字节。 */
+function blueprintRef(loaded, blueprintId) {
+  const b = loaded.blueprint;
+  return {
+    artifact: 'component-blueprint@1', component_id: b.component_id, blueprint_id: blueprintId,
+    revision: b.revision, source_fingerprint: b.source_fingerprint, artifact_sha256: loaded.artifactSha256,
+    target: { kind: 'blueprint', id: blueprintId },
+  };
+}
+
+/**
+ * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
+ * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
+ */
+export function readBlueprint(projectRoot, blueprintId, purpose = 'draft') {
+  const native = loadNative(projectRoot);
+  const paths = native.module('scripts/utils/component-blueprint-path.ts');
+  const check = native.module('scripts/check-component-blueprint.ts');
+  const prep = native.module('scripts/utils/change-unit-design-preparation.ts');
+  let first;
+  let checked;
+  try {
+    first = paths.loadCanonicalBlueprint(native.root, blueprintId);
+    checked = check.checkCanonicalComponentBlueprint(native.root, blueprintId);
+  } catch (e) {
+    return failure(e?.code === 'component_blueprint_missing' ? 'missing' : 'invalid', e);
+  }
+  if (checked.artifactSha256 !== first.artifactSha256) {
+    return { status: 'stale', issues: [{ code: 'blueprint_changed_while_reading', message: '读取期间蓝图被改写，重新读取' }] };
+  }
+  const admitted = prep.evaluateDesignPreparationEntry(native.root, blueprintId).blueprintAdmitted;
+  const out = {
+    status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
+    blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
+  };
+  if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
+  return out;
+}
+
+/** 读一个原生 Feature（CU 或平铺维护 Feature）的身份与本阶段已有的原生输入；不冻结范围、不启动阶段解析。 */
+export function readFeature(projectRoot, feature) {
+  const native = loadNative(projectRoot);
+  const identity = native.module('scripts/utils/feature-identity.js');
+  const { loadFrameworkConfig } = native.module('config.ts');
+  let kind;
+  let relPath;
+  try {
+    kind = identity.classifyFeatureId(feature);
+    relPath = identity.featureRelativePath(feature);
+  } catch (e) {
+    return failure('invalid', e);
+  }
+  const featuresDir = loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
+  const featurePath = path.join(native.root, ...featuresDir.split('/'), ...String(relPath).split('/'));
+  const out = {
+    status: 'ok', identity: { feature, ...kind }, feature_path: rel(native.root, featurePath),
+    blueprint_ref: null, design_refs: [], inputs: {}, scope: fs.existsSync(path.join(featurePath, 'execution-scope.json')) ? 'frozen' : 'not_frozen',
+    issues: [],
+  };
+  if (kind.kind === 'cu') {
+    const cuPath = native.module('scripts/utils/change-unit-path.ts');
+    const bpPath = native.module('scripts/utils/component-blueprint-path.ts');
+    const projection = native.module('scripts/utils/blueprint-skill-projection.ts');
+    let unit;
+    try {
+      unit = cuPath.loadCanonicalChangeUnit(native.root, kind.blueprintId, kind.changeUnitId).changeUnit;
+      bpPath.resolveComponentBlueprintRef(native.root, unit.component_blueprint_ref);
+    } catch (e) {
+      return { ...out, ...failure(e?.code === 'component_blueprint_identity_mismatch' ? 'stale' : 'invalid', e) };
+    }
+    out.blueprint_ref = unit.component_blueprint_ref;
+    out.design_refs = unit.design_refs ?? [];
+    for (const name of ['acceptance', 'contracts']) {
+      const d = projection.deriveBlueprintSkillInput(native.root, feature, native.frameworkRoot, name);
+      out.inputs[name] = { state: d.state, value: d.state === 'resolved' ? d.value : undefined, detail: d.state === 'resolved' ? undefined : d.detail };
+    }
+    return out;
+  }
+  if (fs.existsSync(featurePath)) {
+    try {
+      const { SpecLoader } = native.module('scripts/utils/spec-loader.ts');
+      const spec = new SpecLoader(native.root, undefined, undefined, native.frameworkRoot).loadFeatureSpec(feature);
+      out.inputs.acceptance = { state: spec.acceptance ? 'resolved' : 'absent', value: spec.acceptance ?? undefined };
+      out.inputs.contracts = { state: spec.contracts ? 'resolved' : 'absent', value: spec.contracts ?? undefined };
+      out.issues.push(...(spec.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
+    } catch (e) {
+      return { ...out, ...failure('invalid', e) };
+    }
+  }
+  return out;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const argv = process.argv.slice(2);
+  const opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
+  const root = opt('--project-root');
+  const action = opt('--action');
+  try {
+    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery | --action feature --feature <id>';
+    if (!root || !['blueprint', 'feature'].includes(action)) throw new Error(usage);
+    if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
+    if (action === 'feature' && !opt('--feature')) throw new Error(usage);
+    const out = action === 'blueprint'
+      ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft')
+      : readFeature(root, opt('--feature'));
+    process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
+    process.exitCode = out.status === 'ok' ? 0 : 1;
+  } catch (e) {
+    process.stderr.write(`[framework-access] ${e?.message ?? e}\n`);
+    process.exitCode = 2;
+  }
 }

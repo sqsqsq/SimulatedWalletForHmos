@@ -9,7 +9,7 @@
 
 1. 六个阶段各有自己那一份原则页，spec 的任务包命令跑得出内容；
 2. 参数缺席 / 真源读不到 → 明确失败、退出非零，**不降级成空**（静默的空和真正的空长得一样）；
-3. 取法写在作者一定读得到的两处：流程的下一步文本、SKILL；
+3. 取法写在作者一定读得到的地方：流程的下一步文本、SKILL；每个阶段动笔前 Framework 按 phase_bindings 调知识 Skill；
 4. 「读过了」有唯一机械留痕：原则页路径进了 `key_inputs_read` 才过既有门禁。
 """
 import json
@@ -97,7 +97,7 @@ class ChannelFailuresAreLoud(unittest.TestCase):
 
 
 class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
-    """取法写在作者一定读得到的两处——文件在磁盘上不等于作者看见了。"""
+    """取法写在作者一定读得到的地方——文件在磁盘上不等于作者看见了。"""
 
     def test_the_flow_next_step_text_carries_the_command(self):
         """作者逐步跟的是 `status` 的下一步文本——spec 段每一步都要带着取法。"""
@@ -125,6 +125,17 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         text = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn(AUTHOR_CLI, text)
         self.assertIn("doc/extensions/hooks/<阶段>/author.md", text)
+
+
+    def test_every_phase_binds_the_knowledge_skill_before_work(self):
+        """每个阶段动笔前，Framework 按 phase_bindings 调 story-knowledge 取当前动作的知识任务。"""
+        doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("story-knowledge", doc["provides"]["skills"])
+        self.assertTrue((EXT / "skills" / "story-knowledge" / "SKILL.md").is_file())
+        for phase in PHASES:
+            with self.subTest(phase=phase):
+                slot = doc["phase_bindings"][phase]["before_phase_work"]
+                self.assertIn({"kind": "skill", "ref": "story-knowledge"}, slot)
 
 
 class TheHostChannelIsNotUsed(unittest.TestCase):

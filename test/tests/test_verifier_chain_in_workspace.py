@@ -122,6 +122,17 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         """根的 verifier 维护装置是 demo 物化件的拷贝，两份逐字节相同。"""
         self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
 
+    def test_the_template_carries_the_demo_framework_release_file_by_file(self) -> None:
+        """template 的 Framework 就是 demo 接入的那一版发布件：按发布清单逐文件核摘要，不拿版本号相同代替。"""
+        import hashlib
+        manifest = json.loads((DEMO / "framework" / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
+        self.assertEqual((DEMO / "framework" / "RELEASE-MANIFEST.json").read_bytes(),
+                         (self.template / "framework" / "RELEASE-MANIFEST.json").read_bytes())
+        customised = {"agents/opencode/adapter.yaml"}   # 根 AGENTS §2 的本地定制
+        differ = [f["path"] for f in manifest["files"] if f["path"] not in customised
+                  and hashlib.sha256((self.template / "framework" / f["path"]).read_bytes()).hexdigest() != f["sha256"]]
+        self.assertEqual([], differ, "template 的 Framework 与 demo 接入的发布件不是同一份")
+
     def test_the_two_agents_entries_follow_their_owners(self) -> None:
         """demo 装着 1.9.8：story 入口等于它已装包登记的来源。template 装着开发版：两个 Skill 入口都由
         Framework 按 manifest 物化，带归属标记、指向各自的 SKILL。"""

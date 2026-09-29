@@ -20,6 +20,7 @@
 import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
+import { knowledgeTask } from './knowledge-task.mjs';
 import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
 import { contractSections } from './knowledge-use/validation.mjs';
 import { landingName } from './knowledge-use/projection.mjs';
@@ -174,6 +175,19 @@ function allChecksFragment(checks) {
     '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
 }
 
+/**
+ * 审查者的知识任务：与作者动笔前取的是同一个加载器，受众换成审查者。
+ * 取不到时写明缺口与责任，审查按未验证处理依赖知识的部分。
+ */
+function reviewerKnowledge(ctx) {
+  try {
+    return knowledgeTask(ctx.projectRoot, { action: ctx.phase, audience: 'reviewer', feature: ctx.feature });
+  } catch (e) {
+    return ['## 知识任务（取不到）', '', String(e?.message ?? e),
+      '', '依赖知识的判断写未验证，并在结论里点名上面的缺口。'].join('\n');
+  }
+}
+
 export default async function preVerifier(ctx) {
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
@@ -209,6 +223,7 @@ export default async function preVerifier(ctx) {
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
   fragments.push(allChecksFragment(checks));
+  fragments.push(reviewerKnowledge(ctx));
   // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));

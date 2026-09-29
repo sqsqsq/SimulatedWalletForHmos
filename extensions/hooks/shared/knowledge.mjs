@@ -373,6 +373,16 @@ function parseFactFile(body, fm, rel, form, bad) {
  * @returns {string[]} 相对扩展根的 POSIX 斜杠路径，按清单顺序
  */
 export function knowledgeFiles(projectRoot) {
+  return knowledgeRegistrations(projectRoot).map(r => r.file);
+}
+
+/**
+ * 激活清单的每一行：字符串登记给全部 Feature 阶段；manifest 1.1 的对象登记带 path、summary 与 audience
+ * （`global` 或阶段名列表），原样保留。对象缺 path 按写坏了报。
+ *
+ * @returns {{file: string, summary: string|null, audience: 'global'|string[]|null}[]} 按清单顺序
+ */
+export function knowledgeRegistrations(projectRoot) {
   const root = extensionRoot(projectRoot);
   const manifestPath = path.join(root, MANIFEST_NAME);
   const raw = readTextOrNull(manifestPath);
@@ -390,8 +400,15 @@ export function knowledgeFiles(projectRoot) {
     fail(`${relDisplay(projectRoot, manifestPath)} 的 provides.knowledge 不是列表（读到 ${typeof declared}）——`
       + '这一条按列表逐行读激活的知识文件，整条不写表示这个仓还没配置知识；其他形状不当作「还没配置」');
   }
-  return (Array.isArray(declared) ? declared : [])
-    .map(rel => String(rel).replace(/\\/g, '/'));
+  return (Array.isArray(declared) ? declared : []).map((item) => {
+    if (item && typeof item === 'object') {
+      if (typeof item.path !== 'string' || !item.path.trim()) {
+        fail(`${relDisplay(projectRoot, manifestPath)} 的 provides.knowledge 有一项对象登记缺 path：${JSON.stringify(item)}`);
+      }
+      return { file: item.path.replace(/\\/g, '/'), summary: item.summary ?? null, audience: item.audience ?? null };
+    }
+    return { file: String(item).replace(/\\/g, '/'), summary: null, audience: null };
+  });
 }
 
 /**

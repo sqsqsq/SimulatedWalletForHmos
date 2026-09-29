@@ -1,0 +1,88 @@
+artifact: change-unit@1
+component_id: wallet-main
+blueprint_id: wallet-balance-refresh
+change_unit_id: balance-refresh
+revision: 3
+priority: 1
+component_blueprint_ref:
+  artifact: component-blueprint@1
+  component_id: wallet-main
+  blueprint_id: wallet-balance-refresh
+  revision: 3
+  source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+  artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+  target:
+    kind: blueprint
+    id: wallet-balance-refresh
+provenance:
+  source_kind: component_blueprint
+  source_ref: doc/features/wallet-balance-refresh/blueprint/component-blueprint.yaml#blueprint:wallet-balance-refresh
+  observed_at: 2026-09-29T11:00:00+08:00
+  evidence_strength: authoritative
+  extraction_method: story-decomposition
+purpose: Refresh wallet balance when home becomes visible.
+preconditions: []
+requires: []
+provides:
+  - provide_id: balance-refresh-behavior
+    description: Balance refresh on home visible.
+design_refs:
+  - &a1
+    artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: wallet-balance-refresh
+    revision: 3
+    source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    target:
+      kind: node
+      id: wallet-main-module
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: wallet-balance-refresh
+    revision: 3
+    source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    target:
+      kind: node
+      id: wallet-balance
+      view_id: logical
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: wallet-balance-refresh
+    revision: 3
+    source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    target:
+      kind: relation
+      id: balance-implemented-by-module
+touches:
+  - owner: wallet-team
+    design_ref: *a1
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+preserved_invariants:
+  - invariant_id: home-layout-unchanged
+    description: Home layout unchanged.
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+target_predicates:
+  - predicate_id: balance-refreshed
+    role: behavior
+    description: Balance refreshed on visible.
+    provide_ids:
+      - balance-refresh-behavior
+    verification_refs:
+      - AC-001
+verification_refs:
+  - verify:balance-refresh
+safe_intermediate_state:
+  description: Builds without refresh wired.
+  build_validation_refs:
+    - verify:build
+  compatibility_refs:
+    - verify:compat
+  recovery_refs:
+    - verify:recovery
+blockers: []

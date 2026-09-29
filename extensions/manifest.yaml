@@ -7,6 +7,7 @@ provides:
   skills:
     - story
     - story-adaptation
+    - story-knowledge
 
   # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——
   # 目录里躺着的未登记文件，任何阶段都读不到。
@@ -43,9 +44,9 @@ provides:
   #   pre_verifier → verifier 的上下文。
   #
   # **作者要求不在这里登记**：宿主把这份清单里的作者事件只用在装配 verifier 上下文上，
-  # 它从不进入作者动笔前的上下文，登记在那里等于没送到。本扩展的作者要求由
-  # `hooks/<phase>/author.md`（原则页）与 `hooks/{spec,plan}/author.mjs`（本次任务包）承载，
-  # 作者动笔前自己跑命令取；入口写在 SKILL 与 `story_flow.py status`
+  # 它从不进入作者动笔前的上下文，登记在那里等于没送到。作者动笔前的知识由下面 phase_bindings
+  # 挂的 story-knowledge 送达；`hooks/<phase>/author.md`（原则页）与 `hooks/{spec,plan}/author.mjs`
+  # （本次任务包）入口写在 SKILL 与 `story_flow.py status`
   # 的下一步文本里。
   hooks:
     spec:
@@ -86,3 +87,14 @@ provides:
     review: rules/review-rules.overlay.yaml
     ut: rules/ut-rules.overlay.yaml
     testing: rules/testing-rules.overlay.yaml
+
+# 每个 Feature 阶段作业开始之前，Framework 先调 story-knowledge 取当前动作的知识任务
+phase_bindings:
+  spec: &author_knowledge
+    before_phase_work:
+      - {kind: skill, ref: story-knowledge}
+  plan: *author_knowledge
+  coding: *author_knowledge
+  review: *author_knowledge
+  ut: *author_knowledge
+  testing: *author_knowledge

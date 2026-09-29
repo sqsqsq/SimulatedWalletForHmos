@@ -656,23 +656,23 @@ modes:
       门禁运行记录在机制里没有读取方，只有本检查拿它当证据。门禁结论以 harness 报告为准：
       阻断的问题按 BLOCKER、不阻断的告警与未执行判据按 MINOR 进报告（hooks-dispatcher.ts:177-187 只记 ok:false）。
 
-  - id: A05-entry-misses-section
+  - id: A05-author-knowledge-unbound
     dimension: infra
     found_round: "2026-08-28"
-    form: 扩展交付了入口段（AGENTS.section.md），宿主的 CLAUDE.md / AGENTS.md 却没带上它——文件在仓里躺着，没有任何机制把它送到作者眼前
-    checker: a05_entry_file_misses_extension_section
+    form: 作者动笔前的知识要求没挂到 Feature 阶段前——manifest 的 phase_bindings 缺某个有钩子的阶段，或挂的 Skill 没声明、不存在，作者进阶段时拿不到当前动作的知识任务
+    checker: a05_author_knowledge_unbound
     clause: E1 / KA-8
     target: mechanism
-    bad_fixture: test/fixtures/failure-modes/A05-entry-misses-section/bad
-    good_fixture: test/fixtures/failure-modes/A05-entry-misses-section/good
+    bad_fixture: test/fixtures/failure-modes/A05-author-knowledge-unbound/bad
+    good_fixture: test/fixtures/failure-modes/A05-author-knowledge-unbound/good
     applicable_when: always
     severity: BLOCKER
     status: fixed
     scope_note: >
-      主 agent 会话开始时自动进上下文的只有入口文件：claude 读 CLAUDE.md，
-      codex 只读 AGENTS(.override).md、不加载任何 rules 目录。这是作者面通道的最后一跳，
-      断在这里前面所有工作都送不到。包没有 AGENTS.section.md 时本条不适用（该形态未启用）。
-      与 adapt --check ⑤ 同口径：那条管目标工程，本条管本仓。
+      作者动笔前能自动拿到的，是 Framework 按 phase_bindings 在阶段作业前调用的 Skill（它同时把「动笔前先处理」
+      写进物化的入口文件）。本条核登记：每个登记了钩子的 Feature 阶段，before_phase_work 都挂着一个
+      provides.skills 声明过、skills/<id>/SKILL.md 存在的 Skill。入口文件是否等于原生渲染由安装的写后核管。
+      2.0.0 起接替原「入口段没进入口文件」一条（story-ext 段随宿主入口交原生物化退出）。
 
   - id: A02-adapt-check-blind
     dimension: infra

@@ -1,0 +1,584 @@
+artifact: component-blueprint@1
+component_id: wallet-main
+blueprint_id: wallet-balance-refresh
+revision: 3
+source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+decision_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+provenance: &a2
+  source_kind: product_requirement
+  source_ref: doc/requirements/wallet-balance-refresh.md#REQ-WALLET-BALANCE-REFRESH
+  observed_at: 2026-09-29T10:00:00+08:00
+  evidence_strength: authoritative
+  extraction_method: authorized-current-scope-input
+review_summary:
+  title: Wallet balance refresh
+  summary: Synthetic thin blueprint for capability probing.
+  authored_by: component-design-author
+  questioning:
+    status: complete
+    provider_id: independent-design-questioning
+    isolated_context: true
+    frontier_budget: 3
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items:
+      - question_id: q-view-logical
+        scope_kind: view
+        scope_ref: view:logical
+        question: Is view:logical closed?
+        frontier_fingerprint: ff-view:logical
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - doc/requirements/wallet-balance-refresh.md
+        verification_refs:
+          - verify:view:logical
+        provenance: &a1
+          source_kind: code
+          source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+          observed_at: 2026-09-29T10:00:00+08:00
+          evidence_strength: observed
+          extraction_method: read-source
+      - question_id: q-view-runtime
+        scope_kind: view
+        scope_ref: view:runtime
+        question: Is view:runtime closed?
+        frontier_fingerprint: ff-view:runtime
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:view:runtime
+        provenance: *a1
+      - question_id: q-view-development
+        scope_kind: view
+        scope_ref: view:development
+        question: Is view:development closed?
+        frontier_fingerprint: ff-view:development
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:view:development
+        provenance: *a1
+      - question_id: q-view-scenarios
+        scope_kind: view
+        scope_ref: view:scenarios
+        question: Is view:scenarios closed?
+        frontier_fingerprint: ff-view:scenarios
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:view:scenarios
+        provenance: *a1
+      - question_id: q-relation-balance-implemented-by-module
+        scope_kind: relation
+        scope_ref: relation:balance-implemented-by-module
+        question: Is relation:balance-implemented-by-module closed?
+        frontier_fingerprint: ff-relation:balance-implemented-by-module
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:relation:balance-implemented-by-module
+        provenance: *a1
+      - question_id: q-app-lens-module-boundaries
+        scope_kind: app_lens
+        scope_ref: app_lens:module_boundaries
+        question: Is app_lens:module_boundaries closed?
+        frontier_fingerprint: ff-app_lens:module_boundaries
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:module_boundaries
+        provenance: *a1
+      - question_id: q-app-lens-capability-seams
+        scope_kind: app_lens
+        scope_ref: app_lens:capability_seams
+        question: Is app_lens:capability_seams closed?
+        frontier_fingerprint: ff-app_lens:capability_seams
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:capability_seams
+        provenance: *a1
+      - question_id: q-app-lens-feature-flags
+        scope_kind: app_lens
+        scope_ref: app_lens:feature_flags
+        question: Is app_lens:feature_flags closed?
+        frontier_fingerprint: ff-app_lens:feature_flags
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:feature_flags
+        provenance: *a1
+      - question_id: q-app-lens-data-producers-consumers
+        scope_kind: app_lens
+        scope_ref: app_lens:data_producers_consumers
+        question: Is app_lens:data_producers_consumers closed?
+        frontier_fingerprint: ff-app_lens:data_producers_consumers
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:data_producers_consumers
+        provenance: *a1
+      - question_id: q-app-lens-lifecycle-triggers
+        scope_kind: app_lens
+        scope_ref: app_lens:lifecycle_triggers
+        question: Is app_lens:lifecycle_triggers closed?
+        frontier_fingerprint: ff-app_lens:lifecycle_triggers
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:lifecycle_triggers
+        provenance: *a1
+      - question_id: q-app-lens-state-owners
+        scope_kind: app_lens
+        scope_ref: app_lens:state_owners
+        question: Is app_lens:state_owners closed?
+        frontier_fingerprint: ff-app_lens:state_owners
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:state_owners
+        provenance: *a1
+      - question_id: q-app-lens-initialization
+        scope_kind: app_lens
+        scope_ref: app_lens:initialization
+        question: Is app_lens:initialization closed?
+        frontier_fingerprint: ff-app_lens:initialization
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:initialization
+        provenance: *a1
+      - question_id: q-app-lens-publication-subscription
+        scope_kind: app_lens
+        scope_ref: app_lens:publication_subscription
+        question: Is app_lens:publication_subscription closed?
+        frontier_fingerprint: ff-app_lens:publication_subscription
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:publication_subscription
+        provenance: *a1
+      - question_id: q-app-lens-ui-refresh
+        scope_kind: app_lens
+        scope_ref: app_lens:ui_refresh
+        question: Is app_lens:ui_refresh closed?
+        frontier_fingerprint: ff-app_lens:ui_refresh
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:ui_refresh
+        provenance: *a1
+      - question_id: q-app-lens-process-recovery
+        scope_kind: app_lens
+        scope_ref: app_lens:process_recovery
+        question: Is app_lens:process_recovery closed?
+        frontier_fingerprint: ff-app_lens:process_recovery
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+        verification_refs:
+          - verify:app_lens:process_recovery
+        provenance: *a1
+      - question_id: q-terminology-current-scope-items
+        scope_kind: terminology
+        scope_ref: terminology:current_scope_items
+        question: Is terminology:current_scope_items closed?
+        frontier_fingerprint: ff-terminology:current_scope_items
+        owner: architecture-owner
+        disposition: answered_with_evidence
+        answer: Evidence-backed.
+        evidence_refs:
+          - doc/requirements/wallet-balance-refresh.md
+        verification_refs:
+          - verify:terminology:current_scope_items
+        provenance: *a1
+  admission:
+    status: pass
+    root_questions_complete: true
+    current_slice:
+      slice_id: cu-balance-refresh
+      contracts_ready: false
+      design_refs_ready: true
+      controlled_fakes: []
+    blocker_refs: []
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - product
+      - development
+    purpose: Define balance display refresh concept.
+    current_state: Balance shown once on first load.
+    target_state: Balance refreshed when home becomes visible.
+    delta: Add refresh-on-visible behavior.
+    decisions_and_gaps:
+      - decision:balance-refresh-policy
+    verification_refs:
+      - verify:logical
+    nodes:
+      - node_id: wallet-balance
+        owner: wallet-team
+        current_state: static balance
+        target_state: refreshed balance
+        provenance: *a2
+        verification_refs:
+          - verify:wallet-balance
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: verified_unchanged
+    unchanged_evidence:
+      evidence_refs:
+        - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      current_state_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+    current_state: HomeRepository loads data on page mount.
+    target_state: HomeRepository loads data on page mount.
+    delta: none
+    stakeholders:
+      - development
+    purpose: Runtime loading path.
+    decisions_and_gaps: []
+    verification_refs:
+      - verify:runtime
+    nodes: []
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - development
+    purpose: Assign implementation owner.
+    current_state: WalletMain owns home data.
+    target_state: WalletMain owns balance refresh.
+    delta: Add refresh trigger in WalletMain.
+    decisions_and_gaps:
+      - decision:balance-refresh-policy
+    verification_refs:
+      - verify:development
+    nodes:
+      - node_id: wallet-main-module
+        owner: wallet-team
+        module: WalletMain
+        current_state: no refresh trigger
+        target_state: refresh trigger
+        design_basis_refs:
+          - view:logical/node:wallet-balance
+        provenance:
+          source_kind: code
+          source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+          observed_at: 2026-09-29T10:00:00+08:00
+          evidence_strength: authoritative
+          extraction_method: read-source
+        verification_refs:
+          - verify:wallet-main-module
+        acceptance:
+          criteria:
+            - id: AC-001
+              prd_function: null
+              priority: P0
+              description: 返回首页时余额刷新
+              testable: true
+              verification_steps:
+                - 切到其他页面后返回首页
+              expected_result: 账户卡片展示最新余额
+              ut_layer: device
+              device_focus: 返回首页后账户卡片余额文本更新
+          boundaries: []
+        contracts:
+          modules:
+            - name: WalletMain
+              layer: 02-Feature
+              format: HAR
+              change_type: modify
+              package_path: 02-Feature/WalletMain
+          module_dependencies: {}
+          data_models: []
+          interfaces:
+            - module: WalletMain
+              layer: 02-Feature
+              file: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+              class: HomeRepository
+              methods:
+                - name: refreshBalance
+                  params: []
+                  return: Promise<void>
+                  async: true
+                  description: 刷新余额
+          components: []
+          files:
+            - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+          change_unit:
+            predicate_mappings:
+              - predicate_id: balance-refreshed
+                implementation_refs:
+                  - planned:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets#HomeRepository.refreshBalance
+                test_refs:
+                  - planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance
+            provide_mappings:
+              - provide_id: balance-refresh-behavior
+                implementation_refs:
+                  - planned:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets#HomeRepository.refreshBalance
+                test_refs:
+                  - planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance
+            design_ref_mappings:
+              - design_ref:
+                  kind: node
+                  id: wallet-main-module
+                  view_id: development
+                implementation_refs:
+                  - planned:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets#HomeRepository.refreshBalance
+                verification_refs:
+                  - planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance
+              - design_ref:
+                  kind: node
+                  id: wallet-balance
+                  view_id: logical
+                implementation_refs:
+                  - planned:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets#HomeRepository.refreshBalance
+                verification_refs:
+                  - planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance
+              - design_ref:
+                  kind: relation
+                  id: balance-implemented-by-module
+                implementation_refs:
+                  - planned:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets#HomeRepository.refreshBalance
+                verification_refs:
+                  - planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: not_applicable
+    applicability_evidence:
+      evidence_refs:
+        - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      disposition: not_applicable
+    stakeholders:
+      - architecture
+    purpose: Deployment topology.
+    current_state: single app
+    target_state: single app
+    delta: none
+    decisions_and_gaps: []
+    verification_refs:
+      - verify:deployment-na
+    nodes: []
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: verified_unchanged
+    unchanged_evidence:
+      evidence_refs:
+        - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      current_state_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+    current_state: User opens home page and sees balance.
+    target_state: User opens home page and sees balance.
+    delta: none
+    stakeholders:
+      - product
+    purpose: User scenarios.
+    decisions_and_gaps: []
+    verification_refs:
+      - verify:scenarios
+    nodes: []
+decisions_and_gaps:
+  decisions:
+    - decision_id: balance-refresh-policy
+      status: decided_with_authority
+      owner: product-owner
+      provenance: *a2
+      verification_refs:
+        - verify:refresh-policy
+  gaps: []
+relations:
+  - relation_id: balance-implemented-by-module
+    from: view:logical/node:wallet-balance
+    to: view:development/node:wallet-main-module
+    relation_type: implemented_by
+    owner: wallet-team
+    provenance: *a1
+    verification_refs:
+      - verify:balance-module-relation
+contracts: []
+providers:
+  - provider_id: current-facts-discovery
+    definition: current-facts-discovery seam
+    consumer: component-design
+    provider: framework
+    requirement: required
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: true
+  - provider_id: se-manual-contracts
+    definition: se-manual-contracts seam
+    consumer: component-design
+    provider: framework
+    requirement: required
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and
+      provenance.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: true
+  - provider_id: app-design-lens
+    definition: app-design-lens seam
+    consumer: component-design
+    provider: framework
+    requirement: required
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: true
+  - provider_id: independent-design-questioning
+    definition: independent-design-questioning seam
+    consumer: component-design
+    provider: framework
+    requirement: required
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered
+      external inputs.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: true
+  - provider_id: conventions-knowledge
+    definition: conventions-knowledge seam
+    consumer: component-design
+    provider: framework
+    requirement: optional
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: false
+    missing_disposition: not_applicable
+  - provider_id: component-assets
+    definition: component-assets seam
+    consumer: component-design
+    provider: framework
+    requirement: optional
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog;
+      component_ref identifies the asset.
+    missing_behavior: report
+    replacement_behavior: static
+    exit_behavior: clear transient
+    conflict_behavior: fail closed
+    available: false
+    missing_disposition: not_applicable
+discovery:
+  source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+  facts:
+    - fact_id: fact-home-repository
+      subject: WalletMain.HomeRepository
+      value: HomeRepository provides home card data
+      provenance: *a1
+  conflicts: []
+  inputs:
+    current_scope_items:
+      - item_id: req-wallet-balance-refresh
+        kind: requirement
+        source_ref: doc/requirements/wallet-balance-refresh.md#REQ-WALLET-BALANCE-REFRESH
+        source_sha256: sha256:3684b9571a1ce45fde4ff351eb1d2ce47160cbd6d27624677b24f4accbd20fae
+        provenance: *a2
+  requirement_traceability:
+    - item_id: req-wallet-balance-refresh
+      blueprint_refs:
+        - view:logical/node:wallet-balance
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  capability_seams:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  feature_flags:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  state_owners:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  initialization:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  publication_subscription:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  ui_refresh:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  process_recovery:
+    disposition: answered_with_evidence
+    evidence_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+derived_results: []
