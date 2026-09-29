@@ -27,7 +27,6 @@ SCRIPTS = REPO_ROOT / "test" / "scripts"
 #: 被测侧从它复制：verifier 装置与宿主入口都以 demo 里的为准
 DEMO = REPO_ROOT / "demo"
 #: demo 当前的发布基线（1.9.7 发布提交）
-RELEASE_BASELINE = "c026a70497b511b399c7e15dabd153f852b3a2fe"
 HOOK_CONFIGS = (".claude/settings.json", ".cac/settings.json", ".codex/hooks.json", ".cursor/hooks.json")
 
 # verifier 链的两件：只读子代理、作者入口。
@@ -124,18 +123,16 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
 
     def test_the_two_agents_entries_follow_their_owners(self) -> None:
-        """demo 的两份 .agents 入口是 1.9.7 的 Framework 生成物；template 里 story 换成开发版映射，story-adaptation 不动。"""
-        import subprocess
-        for name in ("story", "story-adaptation"):
-            rel = f".agents/skills/{name}/SKILL.md"
-            released = subprocess.run(["git", "-C", str(REPO_ROOT), "show", f"{RELEASE_BASELINE}:{rel}"],
-                                      capture_output=True).stdout
-            with self.subTest(demo=rel):
-                self.assertEqual(released, (DEMO / rel).read_bytes())
-        story = next(b for b in self.runner.publish_to_demo.manifest_bridges(self.runner.DEV_SOURCE)
-                     if b.target == ".agents/skills/story/SKILL.md")
-        self.assertEqual(story.source.read_bytes(), (self.template / story.target).read_bytes())
+        """story 入口归 Extension：demo 与 template 各等于自己所装包登记的来源；
+        story-adaptation 入口不在登记里，是 Framework 物化的那份，template 保持 demo 的原样。"""
+        bridges = self.runner.publish_to_demo.manifest_bridges
+        target = ".agents/skills/story/SKILL.md"
+        installed = next(b for b in bridges(DEMO / "doc/extensions") if b.target == target)
+        self.assertEqual(installed.source.read_bytes(), (DEMO / target).read_bytes(), "demo 的 story 入口不是它已装包登记的那份")
+        dev = next(b for b in bridges(self.runner.DEV_SOURCE) if b.target == target)
+        self.assertEqual(dev.source.read_bytes(), (self.template / target).read_bytes())
         rel = ".agents/skills/story-adaptation/SKILL.md"
+        self.assertNotIn(rel, [b.target for b in bridges(self.runner.DEV_SOURCE)])
         self.assertEqual((DEMO / rel).read_bytes(), (self.template / rel).read_bytes())
 
     def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:

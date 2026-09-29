@@ -248,16 +248,20 @@ function freshIdentity(root) {
   };
 }
 
+/**
+ * 包登记的跳板：`provides.bridges` 每项的 `target`（相对工程根）。
+ * 正文从包所在工程的同一路径取——包就是装好了的工程，入口已在宿主位置上；`source` 归发布安装器用。
+ */
 function bridgesOf(manifestText) {
-  const lines = manifestText.split(/\r?\n/);
-  const at = lines.findIndex(l => /^ {2}bridges:/.test(l));
-  if (at < 0) return [];
-  const out = [];
-  for (let i = at + 1; i < lines.length && !/^ {2}\S/.test(lines[i]); i += 1) {
-    const m = lines[i].match(/^\s+-\s+(\S+)/);
-    if (m) out.push(m[1]);
+  let items;
+  try {
+    items = parseYaml(manifestText)?.provides?.bridges ?? [];
+  } catch (e) {
+    return die(`包的 manifest.yaml 读不出（${e.message}）`);
   }
-  return out;
+  const bad = items.filter(b => typeof b?.target !== 'string');
+  if (bad.length) die(`包的 provides.bridges 每项要有 target：${JSON.stringify(bad)}`);
+  return items.map(b => b.target);
 }
 
 // ── 写入面 ──────────────────────────────────────────────────────────────────
