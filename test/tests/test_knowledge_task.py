@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -66,7 +68,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-const [root, feature, action, basis] = process.argv.slice(1);
+const [root, feature, action, basis, REQUIREMENT] = process.argv.slice(1);
 const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
 const native = loadNative(root);
 if (action === 'materialize') {
@@ -79,12 +81,16 @@ if (action === 'materialize') {
     must: [{ rule: 'LOCAL-1', text: '本地加的义务', verify: 'ut' }] });
   fs.writeFileSync(file, YAML.stringify(value));
 } else {
+  // 需求按来源文件给（候选记下来源），或 inline 给正文（候选只记正文指纹）
+  const requirement = action.endsWith('-inline')
+    ? ['--requirement', fs.readFileSync(path.join(root, REQUIREMENT), 'utf8').trim()] : ['--requirement-file', REQUIREMENT];
   const prep = spawnSync(process.execPath, [path.join(native.harness, 'node_modules/ts-node/dist/bin.js'), '--transpile-only',
     path.join(native.harness, 'scripts/goal-mode-entry.ts'), '--project-root', root, '--feature', feature, '--prepare-scope',
     '--completion-target', 'feature', '--requested-results', '返回首页余额刷新', '--requested-phases', 'spec,plan,coding,review,ut',
-    '--requirement-file', 'doc/requirements/wallet-balance-refresh.md', '--impact-behavior-change', 'true',
+    ...requirement, '--impact-behavior-change', 'true',
     '--impact-reason', '用户可见余额展示变化', '--impact-basis', basis], { cwd: native.harness, encoding: 'utf8' });
   if (prep.status !== 0) { process.stderr.write(prep.stdout + prep.stderr); process.exit(1); }
+  if (action.startsWith('candidate')) process.exit(0);
   const frozen = native.module('scripts/utils/feature-execution-scope.ts')
     .ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: native.frameworkRoot, feature });
   if (!['frozen', 'reused'].includes(frozen.status)) { process.stderr.write(JSON.stringify(frozen.checks)); process.exit(1); }
@@ -92,12 +98,17 @@ if (action === 'materialize') {
 """
 
 
-def prepare(root: Path, action: str, feature: str = CU) -> None:
-    """测试准备，只用原生入口：materialize 物化施工输入、edit 改本地契约字节、freeze 生成范围候选并冻结。"""
-    if action == "freeze":
+#: 夹具蓝图的来源需求；范围候选默认也用它作需求来源
+REQUIREMENT = "doc/requirements/wallet-balance-refresh.md"
+
+
+def prepare(root: Path, action: str, feature: str = CU, requirement: str = REQUIREMENT) -> None:
+    """测试准备，只用原生入口：materialize 物化施工输入、edit 改本地契约字节、candidate 只生成范围候选、
+    freeze 生成候选并冻结；带 -inline 的两种把需求正文直接交给 prepare-scope，候选里不记来源文件。"""
+    if action.startswith(("freeze", "candidate")):
         (root / IMPACT_BASIS).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / "demo" / IMPACT_BASIS, root / IMPACT_BASIS)
-    proc = subprocess.run(["node", "--input-type=module", "-e", PREPARE, str(root), feature, action, IMPACT_BASIS],
+    proc = subprocess.run(["node", "--input-type=module", "-e", PREPARE, str(root), feature, action, IMPACT_BASIS, requirement],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if proc.returncode != 0:
         raise RuntimeError(f"准备 {action} 失败：{proc.stderr[-800:]}")
@@ -237,8 +248,8 @@ class ACustomFeaturesDirIsFollowed(unittest.TestCase):
         self.assertFalse((root / "doc" / "features").exists(), "读取造出了默认需求目录")
 
 
-class PhaseInputsComeFromTheNativeResolver(unittest.TestCase):
-    """范围冻结后，本阶段输入按原生阶段解析：选哪份、过期、invalid 与必需能力缺失都照原生，读取不写任何东西。"""
+class FreshProject(unittest.TestCase):
+    """每条用例一个新工程：范围冻结只能做一次，各用例要自己的候选与冻结记录。"""
 
     def setUp(self) -> None:
         if shutil.which("node") is None:
@@ -253,6 +264,10 @@ class PhaseInputsComeFromTheNativeResolver(unittest.TestCase):
     def feature(self, phase: str) -> tuple[int, dict]:
         proc = self.run_script("framework-access.mjs", "--action", "feature", "--feature", CU, "--phase", phase)
         return proc.returncode, json.loads(proc.stdout)
+
+
+class PhaseInputsComeFromTheNativeResolver(FreshProject):
+    """范围冻结后，本阶段输入按原生阶段解析：选哪份、过期、invalid 与必需能力缺失都照原生，读取不写任何东西。"""
 
     def test_the_blueprint_derivation_is_what_the_resolver_selects_before_local_inputs_exist(self) -> None:
         prepare(self.root, "freeze")
@@ -312,6 +327,131 @@ class PhaseInputsComeFromTheNativeResolver(unittest.TestCase):
         self.assertIn("## 知识任务（取不到）", proc.stdout)
         self.assertIn("未验证", proc.stdout)
         self.assertNotIn("# 知识任务：review（审查者）", proc.stdout)
+
+
+#: 原生 harness 无 run 的 spec 在阶段解析前恢复需求的那一段（harness-runner.ts 的 runlessRequirement），照原样调用：
+#: 候选的需求绑定 → 显式需求或唯一来源文件 → 按绑定核对 → 带需求组装入口 → 阶段解析。
+NATIVE_SPEC = """
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, feature, explicit] = process.argv.slice(1);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const n = loadNative(root);
+const binding = n.module('scripts/utils/feature-track.ts').featureRequirementBinding(root, feature);
+const rel = n.module('scripts/utils/project-relative-path.ts');
+const legacyRoot = rel.inferLegacyProjectRoot(root, binding);
+const { resolveRequirementInput } = n.module('scripts/utils/goal-manifest.ts');
+const sources = binding.dependencies.filter(d => d.exists).map(d => rel.resolveDependencyPath(root, d.path, legacyRoot));
+const req = explicit ? resolveRequirementInput({ requirement: explicit, projectRoot: root })
+  : resolveRequirementInput({ requirementFile: sources[0], projectRoot: root });
+const cr = n.module('scripts/utils/capability-resolution.ts');
+cr.readBoundInput({ frameworkRoot: n.frameworkRoot, projectRoot: root, feature, phase: 'spec', track: 'full', requirement: req.text,
+  requirementSourceFiles: binding.dependencies.length ? req.sources : [],
+  inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }, binding, legacyRoot);
+const args = { frameworkRoot: n.frameworkRoot, projectRoot: root, feature, phase: 'spec', featuresDir: 'doc/features',
+  requirement: req.text, requirementSourceFiles: req.sources };
+const entry = n.module('scripts/utils/capability-resolution-entry-input.ts').resolveCapabilityResolutionEntryInput(args);
+const track = n.module('scripts/utils/runtime-policy.ts').resolveFeatureTrack(n.module('scripts/utils/feature-track.ts').loadFeatureTrackDecl(root, feature));
+const r = cr.resolveCapabilityInputs({ ...args, track, ...entry });
+process.stdout.write(JSON.stringify({ assurance: r.report.assurance, requirement: r.inputs?.values?.requirement?.state,
+  blocked: r.report.capabilities.filter(c => c.state === 'blocked').map(c => c.id) }));
+"""
+
+
+class SpecRecoversTheRequirementLikeTheNativeHarness(FreshProject):
+    """无 run 的 spec：需求正文按冻结候选的来源恢复并核对后再交给阶段解析，与原生 harness 同结果；恢复不出时要调用方给原文。"""
+
+    def native_spec(self, explicit: str = "") -> dict:
+        proc = subprocess.run(["node", "--input-type=module", "-e", NATIVE_SPEC, str(self.root), CU, explicit],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def spec(self, *extra: str) -> tuple[int, dict]:
+        proc = self.run_script("framework-access.mjs", "--action", "feature", "--feature", CU, "--phase", "spec", *extra)
+        return proc.returncode, json.loads(proc.stdout)
+
+    def requirement_text(self) -> str:
+        return (self.root / "doc/requirements/wallet-balance-refresh.md").read_text(encoding="utf-8").strip()
+
+    def test_a_file_bound_spec_resolves_as_the_native_harness_does(self) -> None:
+        prepare(self.root, "freeze")
+        native = self.native_spec()
+        self.assertEqual(("full", "resolved", []), (native["assurance"], native["requirement"], native["blocked"]))
+        code, out = self.spec()
+        self.assertEqual((0, "ok", native["assurance"]), (code, out["status"], out["assurance"]), out)
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        self.assertNotIn("预览", task.stdout.splitlines()[0])
+
+    def test_a_requirement_source_changed_after_freezing_is_stale(self) -> None:
+        """需求来源是一份只给这次请求用的文件（夹具需求同时是蓝图来源，改它先让蓝图失效）。"""
+        request = "doc/requirements/balance-refresh-request.md"
+        shutil.copy2(self.root / REQUIREMENT, self.root / request)
+        prepare(self.root, "freeze", requirement=request)
+        code, out = self.spec()
+        self.assertEqual((0, "ok"), (code, out["status"]), out)
+        source = self.root / request
+        source.write_bytes(source.read_bytes() + "\n补一句冻结后才加的需求。\n".encode("utf-8"))
+        code, out = self.spec()
+        self.assertEqual((1, "invalid", "requirement_stale"), (code, out["status"], out["issues"][0]["code"]), out)
+        self.assertIn("stale", out["issues"][0]["message"])
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
+        self.assertEqual((1, ""), (task.returncode, task.stdout))
+        self.assertIn("不换一份需求顶上", task.stderr)
+
+    def test_an_inline_requirement_is_asked_for_and_checked_against_the_binding(self) -> None:
+        prepare(self.root, "freeze-inline")
+        code, out = self.spec()
+        self.assertEqual((1, "requirement_text_needed"), (code, out["issues"][0]["code"]), out)
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
+        self.assertEqual((1, ""), (task.returncode, task.stdout))
+        self.assertIn("--requirement-file", task.stderr)
+        code, out = self.spec("--requirement", "另一句不是冻结时的需求")
+        self.assertEqual((1, "requirement_stale"), (code, out["issues"][0]["code"]), out)
+        native = self.native_spec(self.requirement_text())
+        for extra in (("--requirement", self.requirement_text()),
+                      ("--requirement-file", "doc/requirements/wallet-balance-refresh.md")):
+            with self.subTest(given=extra[0]):
+                code, out = self.spec(*extra)
+                self.assertEqual((0, "ok", native["assurance"]), (code, out["status"], out["assurance"]), out)
+                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author", *extra)
+                self.assertEqual(0, task.returncode, task.stderr)
+
+    def test_the_reviewer_gets_the_spec_task_on_the_same_object(self) -> None:
+        prepare(self.root, "freeze")
+        probe = ("const m = (await import(process.argv[1])).default;"
+                 "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
+                 "process.stdout.write(out.promptFragments.join('\\n\\n'));")
+        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("# 知识任务：spec（审查者）", proc.stdout)
+        self.assertNotIn("取不到", proc.stdout)
+
+    def test_the_first_phase_is_prepared_natively_before_the_task_is_used(self) -> None:
+        """首阶段：候选有了、范围未冻结时任务只是预览；照 story-knowledge Skill 给的原生准备命令冻结后，重取得到真实输入。"""
+        prepare(self.root, "candidate")
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        self.assertIn("预览，执行范围未冻结", task.stdout.splitlines()[0])
+        skill = (self.root / "doc/extensions/skills/story-knowledge/SKILL.md").read_text(encoding="utf-8")
+        command = re.search(r"```\s*\n\s*(node -e .+?)\s*\n\s*```", skill, re.S).group(1)
+        script = shlex.split(command.replace("<工程根> <Feature id>", ""))[2]
+        harness = self.root / "framework" / "harness"
+        frozen = subprocess.run(["node", "-e", script, str(self.root), CU], cwd=harness,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, frozen.returncode, frozen.stdout + frozen.stderr)
+        self.assertEqual("frozen", json.loads(frozen.stdout)["status"])
+        for phase in ("spec", "plan"):
+            with self.subTest(phase=phase):
+                code, out = self.feature(phase)
+                self.assertEqual((0, "ok", "frozen"), (code, out["status"], out["scope"]), out)
+                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", phase, "--audience", "author")
+                self.assertEqual(0, task.returncode, task.stderr)
+                self.assertNotIn("预览", task.stdout.splitlines()[0])
+        self.assertIn("契约来自 derive", task.stdout)
 
 
 class TheKnowledgeTaskHasSixBlocks(NativeCase):

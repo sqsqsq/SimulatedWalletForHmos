@@ -3,10 +3,11 @@
  * 当前动作的知识任务：动笔或审查之前，把这一次要用的知识原文、已成立的判断与义务、完成条件和缺口一次交给模型。
  *
  *   node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <根> --action <动作> --audience author|reviewer
- *        （--blueprint <蓝图 id> | --feature <原生 Feature id>）
+ *        （--blueprint <蓝图 id> | --feature <原生 Feature id> [--requirement-file <文件> | --requirement <原文>]）
  *
  * 蓝图动作：discovery（蓝图可以还不存在）/ design / questioning（要有可读的草稿）。
  * Feature 动作：spec / plan / coding / review / ut / testing，按本阶段已有的原生输入取，不要求后继契约已经形成。
+ * 执行范围未冻结时输出是预览：本阶段输入还没确定，不作为动笔依据。需求正文只在无 run 的 spec 恢复不出来源时给。
  *
  * 只读。退出 0 输出完整任务；1 为坏身份、坏知识登记或所需来源缺失（stdout 不给半份，stderr 写对象、缺口、责任）；
  * 2 为参数或依赖错误。空清单合法，明示零项。
@@ -98,13 +99,15 @@ function blueprintTask(root, id, action) {
   };
 }
 
-function featureTask(root, feature, action) {
-  const f = readFeature(root, feature, action);
+function featureTask(root, feature, action, supplied) {
+  const f = readFeature(root, feature, action, supplied);
   if (f.status !== 'ok') {
     stop(`Feature ${feature}（${action} 阶段）`, f.issues.map(i => `${i.code} ${i.message}`).join('；'),
       f.status === 'stale' ? '设计负责方重新准备该施工单位（蓝图已变）'
         : f.status === 'missing' ? '调用方按原生身份给出存在的 Feature'
-          : '产出这份输入的阶段或设计负责方按原生报错修正');
+          : f.issues.some(i => i.code === 'requirement_text_needed') ? '调用方用 --requirement-file 或 --requirement 给出与范围候选同一份的原始需求正文后重取'
+            : f.issues.some(i => i.code === 'requirement_stale') ? '需求来源在范围冻结后变了：范围负责方按原生修订路径处理，不换一份需求顶上'
+              : '产出这份输入的阶段或设计负责方按原生报错修正');
   }
   const gaps = [];
   const kind = f.identity.kind === 'cu'
@@ -122,8 +125,9 @@ function featureTask(root, feature, action) {
   }
   const duties = [];
   if (f.scope === 'not_frozen') {
-    duties.push('本阶段的原生输入还没有确定：执行范围未冻结，首次阶段调用时由原生入口冻结。');
-    gaps.push('执行范围未冻结：按原生入口（prepare-scope 后首次阶段调用）确定本阶段输入，知识任务不代为冻结；施工义务以冻结后的输入为准。');
+    duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
+    gaps.push('执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」先准备范围'
+      + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
     const contracts = f.inputs.contracts;
     if (contracts?.state === 'resolved') {
@@ -138,11 +142,14 @@ function featureTask(root, feature, action) {
     duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));
     if (f.assurance === 'degraded') gaps.push('原生阶段解析为 degraded：有能力被裁剪，按原生报告核对本阶段可用的输入。');
   }
-  return { object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md` };
+  return {
+    object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md`,
+    preview: f.scope === 'not_frozen',
+  };
 }
 
-export function knowledgeTask(root, { action, audience, blueprint, feature }) {
-  const task = blueprint ? blueprintTask(root, blueprint, action) : featureTask(root, feature, action);
+export function knowledgeTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
+  const task = blueprint ? blueprintTask(root, blueprint, action) : featureTask(root, feature, action, { requirement, requirementFile });
   const { knowledge, rows } = knowledgeBlock(root, action);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
@@ -150,7 +157,7 @@ export function knowledgeTask(root, { action, audience, blueprint, feature }) {
     ? [`按 \`${page}\` 做本动作；知识方面：与本动作相关的每份知识都判断适用与否，适用的把要求落到第 3、4 块对应的设计对象或契约实体上，`
       + '不适用写明本需求里使它不适用的条件；已成立的判断直接承接。']
     : [`对照第 2 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
-  return [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）`, '',
+  return [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
     ...rows, '',
     '## 3. 有效事实与决定', '', ...task.facts, '',
@@ -164,12 +171,14 @@ export function knowledgeTask(root, { action, audience, blueprint, feature }) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
-  const args = { action: opt('--action'), audience: opt('--audience'), blueprint: opt('--blueprint'), feature: opt('--feature') };
+  const args = { action: opt('--action'), audience: opt('--audience'), blueprint: opt('--blueprint'), feature: opt('--feature'),
+    requirement: opt('--requirement'), requirementFile: opt('--requirement-file') };
   const root = opt('--project-root');
   const legal = root && AUDIENCES.includes(args.audience) && !!args.blueprint !== !!args.feature
     && (args.blueprint ? BLUEPRINT_ACTIONS : FEATURE_ACTIONS).includes(args.action);
   if (!legal) {
-    process.stderr.write('用法：--project-root <根> --action <动作> --audience author|reviewer（--blueprint <id> | --feature <id>）\n'
+    process.stderr.write('用法：--project-root <根> --action <动作> --audience author|reviewer'
+      + '（--blueprint <id> | --feature <id> [--requirement-file <文件> | --requirement <原文>]）\n'
       + `  蓝图动作：${BLUEPRINT_ACTIONS.join(' / ')}；Feature 动作：${FEATURE_ACTIONS.join(' / ')}\n`);
     process.exit(2);
   }

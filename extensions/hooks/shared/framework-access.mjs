@@ -8,6 +8,7 @@
  * 命令行只读取、不写盘：
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
+ *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
  * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
  */
 import * as fs from 'node:fs';
@@ -94,14 +95,52 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft') {
   return out;
 }
 
+/** 需求正文要调用方给：原生恢复不出，或给的与冻结绑定对不上。 */
+const requirementGap = message => Object.assign(new Error(message), { code: 'requirement_text_needed' });
+
+/**
+ * 无 run 的 spec 按原生阶段调用恢复并核对原始需求：冻结候选的需求绑定指向来源文件时按原路径读回，
+ * inline 或旧候选没存正文时用调用方给的原文；两种都按冻结绑定核一遍，来源变了照原生报 stale。
+ */
+function runlessRequirement(native, feature, supplied) {
+  const { featureRequirementBinding } = native.module('scripts/utils/feature-track.ts');
+  const { inferLegacyProjectRoot, resolveDependencyPath } = native.module('scripts/utils/project-relative-path.ts');
+  const { resolveRequirementInput } = native.module('scripts/utils/goal-manifest.ts');
+  const { readBoundInput } = native.module('scripts/utils/capability-resolution.ts');
+  const binding = featureRequirementBinding(native.root, feature);
+  const legacyRoot = inferLegacyProjectRoot(native.root, binding);
+  let requirement;
+  if (supplied.requirement !== undefined || supplied.requirementFile !== undefined) {
+    requirement = resolveRequirementInput({ requirement: supplied.requirement, requirementFile: supplied.requirementFile, projectRoot: native.root });
+  } else {
+    const sources = binding.dependencies.filter(dep => dep.exists).map(dep => resolveDependencyPath(native.root, dep.path, legacyRoot));
+    if (sources.length !== 1) throw requirementGap('范围候选没有保存可恢复的需求来源文件（inline 或旧候选）：调用方用 --requirement-file 或 --requirement 给出原始需求正文');
+    requirement = resolveRequirementInput({ requirementFile: sources[0], projectRoot: native.root });
+  }
+  if (!requirement.text?.trim()) throw requirementGap('spec 阶段缺少原始需求正文');
+  try {
+    readBoundInput({
+      frameworkRoot: native.frameworkRoot, projectRoot: native.root, feature, phase: 'spec', track: 'full',
+      requirement: requirement.text, requirementSourceFiles: binding.dependencies.length ? requirement.sources : [],
+      inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+    }, binding, legacyRoot);
+  } catch (e) {
+    throw Object.assign(e, { code: 'requirement_stale' });
+  }
+  return { requirement: requirement.text, requirementSourceFiles: requirement.sources };
+}
+
 /**
  * 读一个原生 Feature（CU 或平铺维护 Feature）在某阶段的输入：身份与蓝图引用，加上当前阶段的原生只读解析结果。
  *
  * 范围已冻结时，按原生阶段调用的同一顺序组装入口参数、跑阶段解析器：用哪份输入、复用、过期与 invalid 全由原生定，
- * 结果原样交出（值经 SpecLoader 规范化）。范围还没冻结时不解析、不代为冻结，只报 `scope: not_frozen`。
+ * 结果原样交出（值经 SpecLoader 规范化）。无 run 的 spec 先按原生恢复并核对原始需求；有 run（`MAISON_GOAL_RUN_ID`）
+ * 时范围与需求都以 run 为准，不收调用方给的需求。范围还没冻结时不解析、不代为冻结，只报 `scope: not_frozen`。
  * 只读：不写范围、报告与回执。
+ *
+ * @param {{ requirement?: string, requirementFile?: string }} [supplied] 调用方手里的原始需求正文或文件，只在无 run 的 spec 用
  */
-export function readFeature(projectRoot, feature, phase) {
+export function readFeature(projectRoot, feature, phase, supplied = {}) {
   const native = loadNative(projectRoot);
   const identity = native.module('scripts/utils/feature-identity.js');
   const { loadFrameworkConfig } = native.module('config.ts');
@@ -134,10 +173,14 @@ export function readFeature(projectRoot, feature, phase) {
       return { ...out, ...failure(e?.code === 'component_blueprint_identity_mismatch' ? 'stale' : 'invalid', e) };
     }
   }
+  const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || undefined;
+  if (goalRunId && (supplied.requirement !== undefined || supplied.requirementFile !== undefined)) {
+    return { ...out, status: 'invalid', issues: [{ code: 'requirement_override', message: `run ${goalRunId} 的需求以冻结 manifest 为准，不收调用方给的需求` }] };
+  }
   try {
     const { resolveEffectiveScopeSource } = native.module('scripts/utils/goal-run-creation.ts');
     const { SpecLoader } = native.module('scripts/utils/spec-loader.ts');
-    if (!resolveEffectiveScopeSource(native.root, feature)) {
+    if (!resolveEffectiveScopeSource(native.root, feature, goalRunId)) {
       // 范围未冻结：不选本阶段输入，只核本地已有文件的形状——坏形状不能等到冻结后才报
       const local = new SpecLoader(native.root, undefined, undefined, native.frameworkRoot).loadFeatureSpec(feature);
       out.issues.push(...(local.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
@@ -149,8 +192,12 @@ export function readFeature(projectRoot, feature, phase) {
     const { resolveCapabilityInputs } = native.module('scripts/utils/capability-resolution.ts');
     const { loadFeatureTrackDecl } = native.module('scripts/utils/feature-track.ts');
     const { resolveFeatureTrack } = native.module('scripts/utils/runtime-policy.ts');
+    const { resolveWorkflowSpec } = native.module('workflow-loader.ts');
+    const requirement = !goalRunId && phase === 'spec'
+      && resolveWorkflowSpec(native.root, { frameworkRoot: native.frameworkRoot }).schema_version === '1.2'
+      ? runlessRequirement(native, feature, supplied) : {};
     const entry = resolveCapabilityResolutionEntryInput({
-      frameworkRoot: native.frameworkRoot, projectRoot: native.root, feature, phase, featuresDir,
+      frameworkRoot: native.frameworkRoot, projectRoot: native.root, feature, phase, featuresDir, goalRunId, ...requirement,
     });
     const resolution = resolveCapabilityInputs({
       frameworkRoot: native.frameworkRoot, projectRoot: native.root, feature, phase,
@@ -184,13 +231,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const root = opt('--project-root');
   const action = opt('--action');
   try {
-    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery | --action feature --feature <id> --phase <阶段>';
+    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery'
+      + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]';
     if (!root || !['blueprint', 'feature'].includes(action)) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
     const out = action === 'blueprint'
       ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft')
-      : readFeature(root, opt('--feature'), opt('--phase'));
+      : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
     process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
     process.exitCode = out.status === 'ok' ? 0 : 1;
   } catch (e) {
