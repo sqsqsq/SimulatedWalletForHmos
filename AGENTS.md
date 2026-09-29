@@ -9,7 +9,8 @@
 |---|---|
 | `extensions/` | Story Extension 开发源（机制、知识样板、宿主入口 `bridges/`） |
 | `demo/` | 完整消费工程：业务代码与业务文档、`framework/` 发布件、消费配置、宿主物化与已安装的 Extension（发布版） |
-| `doc/` | 项目文档：`spec/` 需求与版本范围，`plan/` 方案、评审与交回，`release/` 发布说明、功能全景与使用指南；`features/` 是 CLI 测试回流的需求产物（不入库） |
+| `doc/` | 项目文档：`spec/` 需求与版本范围，`plan/` 方案、评审与交回，`release/` 按版本的发布说明（只写本版增量）与 AI 交付流程说明；`features/` 是 CLI 测试回流的需求产物（不入库） |
+| `README.md` | 项目说明与使用指南，只写当前状态；维护者据此分发给使用者 |
 | `test/` | 测试域：测试协议、脚本、Case、夹具、回归台账、金样、演进记录与本地需求系统 |
 | `tools/cli/` | 实跑用的 CLI runtime |
 | `output/` | 不入库：`output/story/` 放运行证据，`output/scratch/` 放临时脚本、临时工作区与 pytest 缓存 |
@@ -23,8 +24,23 @@
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。
 - [test/EVOLUTION.md](test/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据。
 - `demo/framework/` 是 AgentMaison 发布件，只读，变化只经 §6 进入 demo。本仓根不挂 Framework 的阶段钩子与写保护钩子，只读边界由维护者遵守。
-- 新 checkout 的依赖恢复见 [README.md](README.md)。
+- 新 checkout 先按下方「维护环境准备」恢复依赖。
 - 维护范围只覆盖 interactive 运行模式；Framework 的 headless/goal 能力不在 Extension 的兼容、状态与测试范围内，用户明确提出时另立需求。
+
+### 维护环境准备
+
+依赖目录不入库，clone 之后按下面装齐（PowerShell，在仓根执行）：
+
+```powershell
+python -m pip install pytest pytest-xdist pyyaml                     # 维护脚本与测试
+cd demo/framework/harness; npm install; cd ../../..                  # framework harness（门禁、渲染脚本）
+cd demo/.opencode; npm install @opencode-ai/plugin@1.18.26; cd ../..  # opencode 插件；package.json 由 opencode 生成、不入库
+$env:OHPM_EXE = "<DevEco>\tools\ohpm\bin\ohpm.bat"                    # 鸿蒙依赖用本机 DevEco 自带的 ohpm 与 node
+$env:DEVECO_NODE = "<DevEco>\tools\node\node.exe"
+demo/scripts/build-dependence.ps1                                     # 重建 demo 各模块的 oh_modules
+```
+
+`package-lock.json` 不入库，harness 的依赖会解析到各自版本范围内的最新补丁版。人手试用 `/story` 还要装本地需求系统，见 TEST §1.3。
 
 ## 1. 本项目的角色职责
 
@@ -235,9 +251,9 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
   "@
   ```
 
-  然后跑 `python test/scripts/check_failure_modes.py`（缺省检查 demo）。发布提交带上 demo、`doc/release/<版本>.md`、更新后的
-  [功能全景](doc/release/story功能全景.md) 与 [使用指南](doc/release/story使用指南.md)，并在 EVOLUTION 登记。提交前核三者一致：本版增量里
-  使用者可见的每项变化都进了功能全景的「最近变化版本 / 本版变化」，使用指南的版本链接与命令、入口描述和全景一致。
+  然后跑 `python test/scripts/check_failure_modes.py`（缺省检查 demo）。发布提交带上 demo、`doc/release/<版本>.md` 与更新后的
+  [README](README.md)，并在 EVOLUTION 登记。提交前核：本版增量里使用者可见的每项变化都已反映在 README 的当前描述里
+  （命令、能力、产物、入口、安装），与发布版本一致；README 只写当前状态，版本变化只写在本版发布说明。
 - **失败**：退出 2 是输入读取或 git 前置不成立，目标没写；退出 1 是写入中途失败，结果 JSON 列出实际完成项。用 git 查看并还原 demo，
   修好后从同一源重装。
 - **对外升级**：其他仓的安装与升级用 demo 里已装的发布版 adapt（`demo/doc/extensions/skills/story-adaptation/`）。
