@@ -84,7 +84,7 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
 
 本仓特殊事实：
 
-- `demo/framework/` 是 AgentMaison 3.0.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
+- `demo/framework/` 是 AgentMaison 3.1.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
 - 本仓对 framework 有两处本地定制：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
   `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md`

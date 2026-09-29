@@ -11,13 +11,6 @@
 # `expect_phase` 只用于留痕对账（回复发生时模型自称在哪一步），不参与是否发送的判定。
 
 replies:
-  - id: feature.track
-    registry_portable: "1=接受建议档 2=升 full 3=保持 lite"
-    match: "1=接受建议档"
-    expect_phase: "spec 起手判档"
-    reply: "2"
-    reason: "夹具冻结 full track：这一轮要跑完整 spec 链，不进 lite。"
-
   - id: spec.terminology
     registry_portable: "1=全部确认high行 2=逐行确认 3=逐行修改"
     match: "1=全部确认"

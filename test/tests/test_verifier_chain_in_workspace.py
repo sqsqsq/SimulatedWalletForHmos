@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "test" / "scripts"
 #: 被测侧从它复制：verifier 装置与宿主入口都以 demo 里的为准
 DEMO = REPO_ROOT / "demo"
-#: demo 当前的发布基线（1.9.7 发布提交）
-HOOK_CONFIGS = (".claude/settings.json", ".cac/settings.json", ".codex/hooks.json", ".cursor/hooks.json")
+#: 宿主钩子配置：由 framework-init 物化进消费工程
+HOOK_CONFIGS =(".claude/settings.json", ".cac/settings.json", ".codex/hooks.json", ".cursor/hooks.json")
 
 # verifier 链的两件：只读子代理、作者入口。
 # 报告由调用方原样写出，没有第三件——发布器那一环整体退场了。
@@ -136,23 +136,44 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         self.assertEqual((DEMO / rel).read_bytes(), (self.template / rel).read_bytes())
 
     def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:
-        """四份钩子配置只在消费工程里；Codex 的 Stop 命令从消费根（含带空格的 workspace）找得到脚本。"""
-        import json
+        """四份钩子配置只在消费工程里；其中每条命令都从消费根（含带空格的 workspace）找得到脚本。
+
+        命令登记由 Framework 物化决定（3.1 起 Codex 不再登记 Stop 钩子），这里不预设哪个宿主有哪条钩子。
+        """
+        import re
+
+        def commands(node):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "command" and isinstance(value, str):
+                        yield value
+                    else:
+                        yield from commands(value)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from commands(item)
+
+        scripts = []
         for rel in HOOK_CONFIGS:
             with self.subTest(rel):
                 self.assertTrue((DEMO / rel).is_file())
                 self.assertTrue((self.template / rel).is_file())
                 self.assertFalse((REPO_ROOT / rel).exists(), f"维护仓根还挂着消费钩子 {rel}")
-        command = json.loads((DEMO / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]["Stop"][0]["hooks"][0]["command"]
-        self.assertNotIn(":\\", command, "还是写死的机器路径")
-        script = command.split('"')[1]
+                for command in commands(json.loads((DEMO / rel).read_text(encoding="utf-8"))):
+                    self.assertNotIn(":\\", command, f"{rel} 还是写死的机器路径：{command}")
+                    # `node "<脚本>"` 或 `node <脚本>`；脚本以消费根为基准（${…_PROJECT_DIR}/ 前缀即消费根）
+                    script = re.sub(r"^\$\{[A-Z0-9_]+\}/", "", command.split(None, 1)[1].strip().strip('"'))
+                    scripts.append(script)
+        self.assertTrue(scripts, "四份钩子配置里一条命令都没有")
         spaced = Path(tempfile.mkdtemp(prefix="ws with space-"))
         self.addCleanup(shutil.rmtree, spaced, True)
-        (spaced / ".codex" / "hooks").mkdir(parents=True)
-        shutil.copy2(self.template / script, spaced / script)
+        for script in scripts:
+            (spaced / script).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.template / script, spaced / script)
         for root in (DEMO, self.template, spaced):
-            with self.subTest(root=str(root)):
-                self.assertTrue((root / script).is_file(), f"{root} 下找不到 {script}")
+            for script in scripts:
+                with self.subTest(root=str(root), script=script):
+                    self.assertTrue((root / script).is_file(), f"{root} 下找不到 {script}")
 
 
 if __name__ == "__main__":

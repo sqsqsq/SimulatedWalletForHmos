@@ -119,7 +119,7 @@ def build(ws: Path, *, force: bool = False) -> dict[str, Any]:
     shutil.copytree(FIXTURE / "doc", ws / "doc")
     feature_dir = ws / "doc" / "features" / FEATURE
     feature_dir.mkdir(parents=True)
-    # full track 由夹具冻结，不靠模型在 feature.track 关卡上选对。
+    # full track 由夹具冻结，这一轮跑完整 spec 链。
     (feature_dir / "feature.yaml").write_text("track: full\n", encoding="utf-8")
 
     staging = _run_ts(

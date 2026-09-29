@@ -78,7 +78,6 @@ class SmokeFixture(unittest.TestCase):
         """每条规则只认自己那一关，不串台。"""
         rules = run_smoke.load_replies()
         samples = {
-            "feature.track": "请判档：\n1=接受建议档 2=升 full 3=保持 lite",
             "spec.terminology": "术语映射表待确认：\n1=全部确认 high 行 2=逐行确认 3=逐行修改",
             "spec.freeze": "spec 已完成：\n1=冻结 spec，可进 plan 2=继续改 spec",
             "phase.next_step": "spec 已闭环：\n1=执行 assess 推荐动作 2=暂停 3=其它（说明）",
