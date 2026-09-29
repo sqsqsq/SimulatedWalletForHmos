@@ -35,6 +35,8 @@ SCAN = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
 #: 包登记的宿主入口（target），正文在包工程的同一路径
 LAUNCHERS = tuple(b["target"] for b in yaml.safe_load(
     (PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["bridges"])
+#: 包的版本：`adapted_for` 只会被脚本写成它
+PKG_VERSION = yaml.safe_load((PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["version"]
 
 
 class AdaptCase(unittest.TestCase):
@@ -279,13 +281,80 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn(f"{fact.name} 的 frontmatter 缺 form", proc.stdout)
         self.assertIn("停一次问人", proc.stdout)
 
-    def test_nothing_to_adapt_is_one_sentence(self) -> None:
+    def test_nothing_to_adapt_is_one_sentence_and_records_the_version(self) -> None:
+        """上一版之后没有演进条目、知识合协议：不问人，脚本把 adapted_for 写成包的版本。"""
+        self.set_adapted("1.9.7")
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)
         self.assertNotIn("停一次问人", proc.stdout)
-        self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/manifest.yaml",
-                                      "doc/extensions/knowledge").stdout.strip(), "只是提示却写了知识或清单")
+        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', manifest, "无事可做却没记下已按包的版本适配")
+        self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/knowledge").stdout.strip(),
+                         "只是提示却写了知识")
+        self.assertEqual(0, self.adapt("--check").returncode, "写了 adapted_for 之后 manifest 不再是合成结果")
+
+    def test_a_target_without_adapted_for_starts_from_the_knowledge_baseline(self) -> None:
+        """没按任何版本适配过：知识块从基线一节列起，连同后面各版的知识条目。"""
+        manifest = self.ext / "manifest.yaml"
+        rows = [l for l in manifest.read_text(encoding="utf-8").split("\n") if not l.startswith("adapted_for:")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit("没写过 adapted_for")
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        knowledge = json.loads(line.split("按版本跟进：", 1)[1])["items"]["知识"]
+        self.assertTrue(any(i.startswith("1.9.3：") for i in knowledge), "没列知识基线")
+        self.assertTrue(any(i.startswith("1.9.5：") for i in knowledge), "基线之后的知识条目没列")
+        self.assertIn("停一次问人", proc.stdout)
+        self.assertNotIn("adapted_for", manifest.read_text(encoding="utf-8"), "没等人做完就写了适配版本")
+
+
+class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
+    """`--mark-adapted` 把 adapted_for 写成包的版本；值不由模型定，前置不满足就停。"""
+
+    def mark(self) -> subprocess.CompletedProcess:
+        return self.adapt("--mark-adapted")
+
+    def set_manifest_line(self, key: str, value: str) -> None:
+        manifest = self.ext / "manifest.yaml"
+        rows = [f'{key}: "{value}"' if l.startswith(f"{key}:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(f"{key} {value}")
+
+    def test_it_writes_the_package_version_and_the_check_still_passes(self) -> None:
+        self.set_manifest_line("adapted_for", "1.9.6")
+        proc = self.mark()
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', manifest)
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+    def test_it_stops_when_the_target_has_no_manifest(self) -> None:
+        shutil.rmtree(self.ext)
+        self.commit("空仓")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertFalse((self.ext / "manifest.yaml").exists(), "没装过却写了 manifest")
+
+    def test_it_stops_before_the_mechanism_is_upgraded(self) -> None:
+        self.set_manifest_line("version", "1.9.7")
+        before = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("--apply", self.out(proc))
+        self.assertEqual(before, (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
+
+    def test_it_stops_when_the_knowledge_does_not_load(self) -> None:
+        fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
+        fact.write_text(fact.read_text(encoding="utf-8").replace("\nform:", "\nshape:", 1), encoding="utf-8")
+        self.commit("有一份知识没写 form")
+        before = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn(fact.name, self.out(proc))
+        self.assertEqual(before, (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
 
 
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):
@@ -370,6 +439,23 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.assertEqual(0, self.adapt("--apply").returncode)
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
+
+    def test_a_fresh_install_lists_the_knowledge_baseline_and_leaves_adapted_for_to_the_script(self) -> None:
+        """首次安装就列出从基线起的知识条目、不列在途单，不带 adapted_for；交回后 `--mark-adapted` 写成包的版本。"""
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertNotIn("adapted_for", (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertIn("--mark-adapted", proc.stdout)
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        items = json.loads(line.split("按版本跟进：", 1)[1])["items"]
+        self.assertTrue(any(i.startswith("1.9.3：") for i in items["知识"]), "首次没拿到知识基线")
+        self.assertTrue(any(i.startswith("1.9.5：") for i in items["知识"]))
+        self.assertEqual([], items["在途单"], "首次安装没有在途单")
+        self.commit("首次装好")
+        marked = self.adapt("--mark-adapted")
+        self.assertEqual(0, marked.returncode, self.out(marked))
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(0, self.adapt("--check").returncode)
 
 
 

@@ -157,7 +157,7 @@ class SourceKindCase(unittest.TestCase):
         return json.loads(line.split("按版本跟进：", 1)[1])
 
     def test_an_unadapted_target_gets_every_block_from_a_stand_in_source(self) -> None:
-        """目标没写 adapted_for、装的是旧版（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
+        """目标没写 adapted_for、装的是旧版：从知识基线起列出各版条目；替身来源不给对接层，那一块照列。"""
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, PKG_ROOT)
         self.set_version(target, "1.9.3")
@@ -170,6 +170,7 @@ class SourceKindCase(unittest.TestCase):
             with self.subTest(block=block):
                 self.assertTrue(items, f"{block} 一条都没列")
         self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
+        self.assertTrue(any(i.startswith("1.9.3：") for i in got["items"]["知识"]))
         self.assertIn("停一次问人", proc.stdout)
 
     def set_version(self, target: Path, version: str) -> None:

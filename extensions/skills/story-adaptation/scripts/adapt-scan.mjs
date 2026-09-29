@@ -11,8 +11,9 @@
  *
  * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
  * `--check` 据此核**安装结果**——这个目标现在装的是不是包的这一版。
+ * `--mark-adapted` 在各块交回后把目标的 `adapted_for` 写成包的版本——这个值只由脚本写，模型不定。
  *
- * 用法: node adapt-scan.mjs --apply|--check --target <目标根> [--package <包根>]
+ * 用法: node adapt-scan.mjs --apply|--check|--mark-adapted --target <目标根> [--package <包根>]
  * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
  */
 import { spawnSync } from 'node:child_process';
@@ -24,7 +25,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
 
-const MODES = ['--apply', '--check'];
+const MODES = ['--apply', '--check', '--mark-adapted'];
 
 /** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
 const ADAPTERS = 'skills/story/scripts/adapters';
@@ -149,8 +150,10 @@ function knowledgeBlock(manifestText) {
  * `name` 与 `description` 同样归目标（`identity`）：它们说的是**这个仓**叫什么、是什么，
  * 一次升级把它们改成包的，目标就顶着发布源的名字了。`version` 反过来归包——
  * 目标只能从它看出自己拿到的是哪一批产物形态。
+ *
+ * `override` 给归目标的键指定新值：只有写 `adapted_for` 时用，行位与注释仍按包原文。
  */
-function composeManifest(pkgText, tgtText, identity) {
+function composeManifest(pkgText, tgtText, identity, override = {}) {
   const lines0 = pkgText.split(/\r?\n/);
   const keep = { ...identity };
   if (tgtText) {
@@ -159,6 +162,7 @@ function composeManifest(pkgText, tgtText, identity) {
       if (at) keep[key] = at.slice(key.length + 1).trim();
     }
   }
+  Object.assign(keep, override);
   // 归目标的键：目标有就用目标的，首次按目标生成；目标没有的，包那一行连同它上面的注释不带过去。
   // 去掉的行先占位成 null，知识清单的行号仍按包原文算，拼好再滤掉。
   const lines = lines0.map((l) => {
@@ -368,6 +372,7 @@ const pkgManifest = join(PDIR, 'manifest.yaml');
 if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`);
 const PKG_MANIFEST_TEXT = read(pkgManifest);
 const BRIDGES = bridgesOf(PKG_MANIFEST_TEXT);
+const PKG_VERSION = manifestValue(PKG_MANIFEST_TEXT, 'version');
 
 const tgtManifest = join(TDIR, 'manifest.yaml');
 /**
@@ -419,41 +424,74 @@ const newer = (a, b) => {
   return false;
 };
 
-/**
- * 升级之后按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于升级前所装版本的在途单条目，按块分组，
- * 加上按当前协议加载目标知识的结果（按 kind × form 计数，或问题清单）。只报事实，问不问人由模型照 SKILL 走。
- *
- * 包带对接实现时（业务仓来源），对接层已整份换成包的，那一块的条目不列。
- */
-async function upgradeFollowUp() {
-  const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
-  const from = { 在途单: INSTALLED ?? '0' };
-  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
-  for (const e of CHANGE_ENTRIES) {
-    if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
-  }
+/** 按当前协议加载目标知识：按 kind × form 计数，或问题清单。 */
+async function knowledgeCheck() {
   try {
     const api = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge.mjs')).href);
     const k = api.activeKnowledge(TARGET);
     const problems = api.selfCheck(TARGET, k);
+    if (problems.length) return { status: 'FAIL', problems };
     const counts = {};
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
     }
-    return { since, installed: INSTALLED, items, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
+    return { status: 'PASS', counts };
   } catch (e) {
-    return { since, installed: INSTALLED, items, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
+    return { status: 'FAIL', problems: [String(e?.message ?? e)] };
   }
 }
 
-/** 升级后的跟进提示：有条目或知识不合协议就摆出来请模型停一次问人，都空只一句。 */
+/**
+ * 按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于升级前所装版本的在途单条目，按块分组，
+ * 加上按当前协议加载目标知识的结果。只报事实，问不问人由模型照 SKILL 走。
+ *
+ * 没有 `adapted_for` 的目标从最早一节（知识基线）列起——首次安装拿到的就是完整的知识主题清单。
+ * 首次安装没有在途单，那一块从包的版本算起、不列；包带对接实现时（业务仓来源），对接层已整份换成包的，也不列。
+ */
+async function followUp() {
+  const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
+  const from = { 在途单: INSTALLED ?? PKG_VERSION };
+  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
+  for (const e of CHANGE_ENTRIES) {
+    if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
+  }
+  return { since, installed: INSTALLED, items, check: await knowledgeCheck() };
+}
+
+/** 把目标 `adapted_for` 写成包的版本：按合成规则写，`--check` ② 仍成立。 */
+function writeAdaptedFor() {
+  const tgtText = read(tgtManifest);
+  const next = composeManifest(PKG_MANIFEST_TEXT, tgtText, freshIdentity(TARGET),
+    { adapted_for: `"${PKG_VERSION}"` });
+  if (next !== tgtText) writeFileSync(tgtManifest, next, 'utf8');
+}
+
+/** 写入后的跟进提示：有条目或知识不合协议就摆出来请模型停一次问人；都空就记下适配版本，只一句。 */
 async function printFollowUp() {
-  const f = await upgradeFollowUp();
+  const f = await followUp();
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
-  const pending = Object.values(f.items).some(list => list.length);
-  console.log(pending || f.check.status !== 'PASS'
-    ? '[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；选稍后就不写任何东西'
-    : '[adapt-scan] 目标已按包的版本适配，知识与当前协议一致');
+  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS') {
+    console.log('[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；'
+      + '选稍后就不写任何东西；选中的各块都交回后跑 --mark-adapted');
+    return;
+  }
+  writeAdaptedFor();
+  console.log(`[adapt-scan] 目标已按包的版本适配，知识与当前协议一致：adapted_for 记为 ${PKG_VERSION}`);
+}
+
+// ── --mark-adapted ──────────────────────────────────────────────────────────
+
+if (mode === '--mark-adapted') {
+  if (SAME_TREE) die('包与目标是同一棵树，没有可写的东西');
+  if (!existsSync(tgtManifest)) die('目标没有 manifest.yaml：还没装过，先 --apply');
+  if (INSTALLED !== PKG_VERSION) {
+    die(`目标机制是 ${INSTALLED}、包是 ${PKG_VERSION}：先 --apply 把机制升到包的版本，再做适配`);
+  }
+  const check = await knowledgeCheck();
+  if (check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${check.problems.join('\n  ')}`);
+  writeAdaptedFor();
+  console.log(`[adapt-scan] adapted_for 记为 ${PKG_VERSION}：下次升级只列晚于它的演进条目`);
+  process.exit(0);
 }
 
 // ── --apply ─────────────────────────────────────────────────────────────────
@@ -563,7 +601,7 @@ if (mode === '--apply') {
   // 那句话看起来像什么都没做成，而事实是没有可做的。
   if (!written.length && !removed.length) {
     console.log('[adapt-scan] 当前适配仍有效：目标已在包的版本上，没有要写的东西');
-    if (STATE === 'upgrade') await printFollowUp();
+    await printFollowUp();
     process.exit(0);
   }
   console.log(`[adapt-scan] ${STATE === 'fresh' ? '首次安装' : '升级'}完成：`
@@ -571,9 +609,10 @@ if (mode === '--apply') {
   if (removed.length) removed.forEach(p => console.log(`  - ${p}`));
   console.log('[adapt-scan] 下一步：跑 --check 自检；'
     + (STATE === 'fresh'
-      ? '首次安装还要按 SKILL.md 写部件定位知识，摆给人确认一次'
+      ? '首次安装接着按 SKILL.md：写部件定位知识并摆给人确认一次 → 按下面列出的知识条目逐题判适用、'
+        + '按目标仓写 → 知识交回后跑 --mark-adapted 记下适配版本'
       : '`git diff` 看这次动了哪些文件'));
-  if (STATE === 'upgrade') await printFollowUp();
+  await printFollowUp();
   process.exit(0);
 }
 
