@@ -4,7 +4,7 @@
 
 ## 1. 输入、当前事实与首个动作
 
-所有 main/story 均为 SimulatedWalletForHmos 的分支。当前重新 fetch 得到 origin/main=8806fe40，包内 version=3.0.0、source_commit=453a4df6；story/demo 为 3.0.0/source_commit=0143e21e。该事实说明需要接入 3.1，不说明需要先开发 A/B/C/D。
+所有 main/story 均为 SimulatedWalletForHmos 的分支。当前 main=025d1b6b，Framework 3.1.0/source_commit=074a4c3c 已经 74196422 同步到 demo，20851566 交回并通过基线评审。§1–3 的本轮任务已完成，执行者直接进入 §4；以下版本取得/同步步骤保留供后续实际基线更新使用，不重复安装。
 
 实施者接单先重新核远端并登记结果：
 
@@ -18,7 +18,7 @@ git show origin/main:framework/RELEASE-MANIFEST.json
 - main 仍为 3.0：取得 Framework 3.1 系列的已验证发布 zip、manifest、MIGRATION 和验证记录，按 §2 接入 main。取得的是正常版本发布件，不要求预先包含四项自拟接口。
 - 没有可核发布件：立即交回查到的实际 main/清单、缺少的具体发布输入及其取得情况。设计者负责核实版本交付来源并形成接入决定；实施者不自行用源码目录充当发布件、不改 version 冒充升级。此时只阻止实际复制/安装，仍可核对来源与阅读原生合同。
 
-目前方案尚未取得实际 3.1 zip 路径，不填写虚构文件名或下载地址。此前 agent-maison/7753c18f 是接口观察证据，其发布说明中的本地 zip 描述不能替代真实文件。若发布交付方需重新交出常规 3.1 包，记录该版本交付请求；不将其扩大为四项新功能开发。
+本轮实际取得的是 main 接入提交及其中发布清单，1225 个文件均已核对；不再索取额外 zip 作为重复前置。后续接入若 main 尚无目标发布件，再按上述分支取得真实输入。历史源码观察的本地 zip 描述不替代交付证据。
 
 ## 2. 将 3.1 接入本仓 main
 

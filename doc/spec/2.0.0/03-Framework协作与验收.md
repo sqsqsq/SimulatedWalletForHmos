@@ -8,7 +8,7 @@
 
 准入需原生蓝图结构及语义约束通过，且 review_summary.admission.status=pass；文件存在或泛化的 checker PASS 不代替这两个条件。完整设计交接另外要求 CU/readiness；Story 交付不要求 CU。
 
-源码观察的 design lens 仅支持 hmos-app。本仓 main 仍为 3.0.0，先完成常规 3.1 接入和 story 同步；3.1 源码及旧发布说明不等于实际接入。A/B/C/D 是适配核对项，已有原生能力优先使用，确实不能满足目标的局部差异再由设计者裁定，不是 Framework 基线同步的四项前置。
+源码观察的 design lens 仅支持 hmos-app。本仓 main=025d1b6b 的 3.1.0/074a4c3c 已同步 story/demo 并通过基线评审；下一步以该接入件核实际接口和送达效果。A/B/C/D 是适配核对项，已有原生能力优先使用，确实不能满足目标的局部差异再由设计者裁定，不是 Framework 基线同步的四项前置。
 
 ## 2. 接缝
 
