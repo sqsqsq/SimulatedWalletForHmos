@@ -446,12 +446,13 @@ async function knowledgeCheck() {
  * 加上按当前协议加载目标知识的结果。只报事实，问不问人由模型照 SKILL 走。
  *
  * 没有 `adapted_for` 的目标从最早一节（知识基线）列起——首次安装拿到的就是完整的知识主题清单。
- * 首次安装没有在途单，那一块从包的版本算起、不列；包带对接实现时（业务仓来源），对接层已整份换成包的，也不列。
+ * 不列的块整块不出现：包带对接实现时（业务仓来源）对接层已整份换成包的；首次安装没有在途单。
  */
 async function followUp() {
   const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
-  const from = { 在途单: INSTALLED ?? PKG_VERSION };
-  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
+  const from = { 在途单: INSTALLED ?? '0' };
+  const skip = new Set([...(WITH_ADAPTERS ? ['对接层'] : []), ...(STATE === 'fresh' ? ['在途单'] : [])]);
+  const items = Object.fromEntries(BLOCKS.filter(b => !skip.has(b)).map(b => [b, []]));
   for (const e of CHANGE_ENTRIES) {
     if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
   }
@@ -600,7 +601,7 @@ if (mode === '--apply') {
   // 一个字节都没动 = 这个目标已经在包的版本上。说出来，不要报「写入 0 个文件」——
   // 那句话看起来像什么都没做成，而事实是没有可做的。
   if (!written.length && !removed.length) {
-    console.log('[adapt-scan] 当前适配仍有效：目标已在包的版本上，没有要写的东西');
+    console.log('[adapt-scan] 机制已在包的版本上，没有机制文件要写');
     await printFollowUp();
     process.exit(0);
   }

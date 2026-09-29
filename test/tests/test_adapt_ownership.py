@@ -26,7 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import installed_package, link_harness_yaml
+from ext_workspace import change_versions, installed_package, link_harness_yaml
 
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
@@ -304,8 +304,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
         knowledge = json.loads(line.split("按版本跟进：", 1)[1])["items"]["知识"]
-        self.assertTrue(any(i.startswith("1.9.3：") for i in knowledge), "没列知识基线")
-        self.assertTrue(any(i.startswith("1.9.5：") for i in knowledge), "基线之后的知识条目没列")
+        self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in knowledge},
+                         "没从知识基线起列全各版知识条目")
         self.assertIn("停一次问人", proc.stdout)
         self.assertNotIn("adapted_for", manifest.read_text(encoding="utf-8"), "没等人做完就写了适配版本")
 
@@ -336,6 +336,7 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
         self.commit("空仓")
         proc = self.mark()
         self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("还没装过", self.out(proc))
         self.assertFalse((self.ext / "manifest.yaml").exists(), "没装过却写了 manifest")
 
     def test_it_stops_before_the_mechanism_is_upgraded(self) -> None:
@@ -343,7 +344,7 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
         before = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         proc = self.mark()
         self.assertEqual(2, proc.returncode, self.out(proc))
-        self.assertIn("--apply", self.out(proc))
+        self.assertIn("把机制升到包的版本", self.out(proc))
         self.assertEqual(before, (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
 
     def test_it_stops_when_the_knowledge_does_not_load(self) -> None:
@@ -378,14 +379,14 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
         self.assertEqual(2, proc.returncode, "没有 git 却照写了")
         self.assertIn("git", self.out(proc))
 
-    def test_running_twice_says_it_is_still_valid(self) -> None:
-        """同版本重复执行不损坏内容，第二次说「仍有效」而不是「写入 0 个文件」。"""
+    def test_running_twice_says_the_mechanism_is_current(self) -> None:
+        """同版本重复执行不损坏内容，第二次说「机制已在包的版本上」而不是「写入 0 个文件」。"""
         first = self.adapt("--apply")
         self.assertEqual(0, first.returncode, self.out(first))
         self.commit("第一次升级")
         second = self.adapt("--apply")
         self.assertEqual(0, second.returncode, self.out(second))
-        self.assertIn("当前适配仍有效", self.out(second))
+        self.assertIn("机制已在包的版本上", self.out(second))
 
 
 class AFreshInstallRunsOutOfTheBox(AdaptCase):
@@ -448,9 +449,9 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.assertIn("--mark-adapted", proc.stdout)
         line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
         items = json.loads(line.split("按版本跟进：", 1)[1])["items"]
-        self.assertTrue(any(i.startswith("1.9.3：") for i in items["知识"]), "首次没拿到知识基线")
-        self.assertTrue(any(i.startswith("1.9.5：") for i in items["知识"]))
-        self.assertEqual([], items["在途单"], "首次安装没有在途单")
+        self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in items["知识"]},
+                         "首次没从知识基线起拿到各版知识条目")
+        self.assertNotIn("在途单", items, "首次安装没有在途单，那一块不该列")
         self.commit("首次装好")
         marked = self.adapt("--mark-adapted")
         self.assertEqual(0, marked.returncode, self.out(marked))

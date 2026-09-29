@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import installed_package, link_harness_yaml
+from ext_workspace import change_versions, installed_package, link_harness_yaml
 
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
@@ -170,7 +170,8 @@ class SourceKindCase(unittest.TestCase):
             with self.subTest(block=block):
                 self.assertTrue(items, f"{block} 一条都没列")
         self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
-        self.assertTrue(any(i.startswith("1.9.3：") for i in got["items"]["知识"]))
+        self.assertEqual(change_versions(PKG_EXT, "知识")[0], got["items"]["知识"][0].split("：", 1)[0],
+                         "知识没从最早一节（基线）列起")
         self.assertIn("停一次问人", proc.stdout)
 
     def set_version(self, target: Path, version: str) -> None:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -97,3 +98,19 @@ def installed_package() -> Path:
             raise RuntimeError(f"开发源装不进临时工程：{result.status} {result.problems or result.failed}")
         _INSTALLED = root
     return _INSTALLED
+
+
+def change_versions(ext: Path, block: str) -> list[str]:
+    """包的升级演进记录里带某块条目的版本，按出现顺序；第一个就是最早一节。
+
+    判「从最早一节列起」要拿记录本身作答案，不在测试里写死版本号——记录加一节、改一节，断言照样成立。
+    """
+    version, seen = None, []
+    text = (ext / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        head = re.match(r"^##\s+(\d+(?:\.\d+)+)\s*$", line)
+        if head:
+            version = head.group(1)
+        elif version and line.startswith(f"- [{block}]") and version not in seen:
+            seen.append(version)
+    return seen
