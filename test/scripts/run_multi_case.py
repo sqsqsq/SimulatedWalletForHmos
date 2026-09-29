@@ -81,10 +81,8 @@ START_MAX_ATTEMPTS = int(CFG.get("startup", {}).get("max_attempts", 3))
 DOC_ROOT = REPO_ROOT / "doc"
 #: 需求产物的回流根：起跑前从这里归档，检查点与终态回流到这里。消费运行期的 features 在各 workspace 内
 FEATURES_ROOT = DOC_ROOT / "features"
-FEATURE_ARCHIVE_ROOT = Path(str(CFG.get("feature_history", {}).get(
-    "archive_root", r"E:\Project\bak")))
-if not FEATURE_ARCHIVE_ROOT.is_absolute():
-    FEATURE_ARCHIVE_ROOT = (DEMO_ROOT / FEATURE_ARCHIVE_ROOT).resolve()
+#: 回流根下的维护保留目录：历轮起跑前归档的需求产物按批次存在这里，名字不能被回流占用
+FEATURE_ARCHIVE_NAME = "archive"
 FEATURE_ARCHIVE_TIMESTAMP_FORMAT = str(CFG.get("feature_history", {}).get(
     "timestamp_format", "%Y%m%d-%H%M%S"))
 
@@ -817,6 +815,9 @@ def load_case_plan(case_id: str) -> CasePlan:
     feature = str(case.get("ar") or "").strip()
     if not feature:
         raise SystemExit(f"[multi] case 未声明 ar: {case_id}")
+    if is_archive_name(feature):
+        raise SystemExit(f"[multi] case {case_id} 的需求编号 {feature} 与回流根的归档目录同名，"
+                         "回流会写进 doc/features/archive；换一个编号")
     start_phase = str(case.get("start_phase") or "story").strip()
     end_phase = str(case.get("end_phase") or "spec").strip()
     if start_phase not in VALID_START or end_phase not in VALID_END:
@@ -1141,20 +1142,31 @@ def set_suite_environment(suite: dict[str, Any]) -> None:
     else:
         os.environ.pop(run_layout.RUN_BUNDLE_ENV, None)
         os.environ.pop(run_layout.RUN_CONTROL_ENV, None)
-    os.environ.pop("STORY_FEATURE_ARCHIVE_ROOT", None)
+
+
+def is_archive_name(name: str) -> bool:
+    """回流根下的归档保留名（大小写不敏感，Windows 上 Archive 与 archive 是同一个目录）。"""
+    return name.casefold() == FEATURE_ARCHIVE_NAME
 
 
 def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
-    """Move all existing features into one timestamped archive outside the repo."""
+    """起跑前把回流根下的需求目录归档到 `doc/features/archive/Story-Features-<时间>/`。
+
+    只搬需求目录：`archive` 自身不动；意外出现的文件留在原处并在结果里列出，不当作需求、也不删。
+    """
     source_root = FEATURES_ROOT.resolve()
     if source_root != (DOC_ROOT / "features").resolve():
         raise SystemExit(f"[multi] 需求产物根只能是 {DOC_ROOT / 'features'}，拒绝归档 {source_root}："
                          "doc 下的 spec、plan、release 是维护文档，不随产物归档")
-    archive_root = FEATURE_ARCHIVE_ROOT.resolve()
-    if archive_root == Path(archive_root.anchor) or archive_root == REPO_ROOT.resolve() \
-            or archive_root.is_relative_to(REPO_ROOT.resolve()):
-        raise SystemExit(f"[multi] feature 归档根必须是代码仓外的安全目录: {archive_root}")
-    children = sorted(source_root.iterdir()) if source_root.exists() else []
+    archive_root = source_root / FEATURE_ARCHIVE_NAME
+    entries = sorted(source_root.iterdir()) if source_root.exists() else []
+    for entry in entries:
+        if entry.is_symlink():
+            raise SystemExit(f"[multi] 拒绝迁移 doc/features 下的软链接: {entry}")
+        if is_archive_name(entry.name):
+            archive_root = entry
+    children = [p for p in entries if p.is_dir() and not is_archive_name(p.name)]
+    kept = [p.name for p in entries if not p.is_dir()]
     if not children:
         return {
             "status": "no_existing_features",
@@ -1162,6 +1174,7 @@ def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
             "archive_root": str(archive_root),
             "destination_root": None,
             "moved": [],
+            "kept_unexpected": kept,
             "moved_at": now(),
         }
     stamp = datetime.now().strftime(FEATURE_ARCHIVE_TIMESTAMP_FORMAT)
@@ -1177,13 +1190,10 @@ def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
     destination_root.mkdir(parents=True)
     moved: list[dict[str, Any]] = []
     for child in children:
-        if child.is_symlink():
-            raise SystemExit(f"[multi] 拒绝迁移 doc/features 下的软链接: {child}")
         target = destination_root / child.name
         if target.exists():
             raise SystemExit(f"[multi] 归档目标已存在，拒绝覆盖: {target}")
-        file_count = sum(1 for item in child.rglob("*") if item.is_file()) \
-            if child.is_dir() else 1
+        file_count = sum(1 for item in child.rglob("*") if item.is_file())
         shutil.move(str(child), str(target))
         moved.append({
             "name": child.name,
@@ -1197,6 +1207,7 @@ def migrate_existing_features(bundle_root: Path) -> dict[str, Any]:
         "archive_root": str(archive_root),
         "destination_root": str(destination_root),
         "moved": moved,
+        "kept_unexpected": kept,
         "moved_at": now(),
     }
 
@@ -1649,7 +1660,6 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
             environment[run_layout.RUN_CONTROL_ENV] = str(Path(control_root).resolve())
         else:
             environment.pop(run_layout.RUN_CONTROL_ENV, None)
-    environment.pop("STORY_FEATURE_ARCHIVE_ROOT", None)
     environment.pop(REQUIREMENT_SYSTEM_ENV, None)
     if case_id:
         case = suite.get("case_states", {}).get(case_id) or {}
@@ -2922,6 +2932,8 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     if not saved or not Path(saved).is_dir():
         raise SystemExit(f"[multi] {case_id} 的 {point} 快照还没固定，先 checkpoint")
     source = Path(saved)
+    if is_archive_name(str(record["feature"])):
+        raise SystemExit(f"[multi] {case_id} 的需求编号与归档目录 doc/features/archive 同名，拒绝回流")
     destination = FEATURES_ROOT / str(record["feature"])
     source_digest = _tree_digest(source)
     result: dict[str, Any] = {"case": case_id, "point": point,
@@ -3173,7 +3185,11 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     feature_destination = FEATURES_ROOT / (
         f"{record['feature']}-update" if record.get("after_initial") == "update"
         else str(record["feature"]))
-    if feature_source.is_dir():
+    if feature_source.is_dir() and is_archive_name(feature_destination.name):
+        conflicts.append({"kind": "feature", "source": str(feature_source),
+                          "destination": str(feature_destination),
+                          "reason": "reserved_archive_name"})
+    elif feature_source.is_dir():
         source_digest = _tree_digest(feature_source)
         destination_digest = _tree_digest(feature_destination)
         feature_item = {"kind": "feature", "source": str(feature_source),

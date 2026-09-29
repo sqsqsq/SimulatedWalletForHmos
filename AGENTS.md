@@ -18,7 +18,7 @@
 `extensions/` 是当前开发版；测试时它被装进从 demo 复制的一次性 template；demo 只在正式发布时更新，平时保持上一个发布版。
 
 - 维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `doc/spec/`、`doc/plan/` 中按该任务查找已有材料；对应不上时先补齐歧义。
-  `doc/features/*` 是测试回流的运行产物，维护需求在 `doc/spec/`。
+  `doc/features/*` 是测试回流的运行产物，其下 `archive/` 按批次存历轮起跑前的归档；维护需求在 `doc/spec/`。
 - `doc/spec/`、`doc/plan/`、`doc/release/` 随提交留下历史；运行证据（事件流、运行日志、截图、材料原件、压缩包）放 `output/story/` 并在过程件里按路径引用；
   临时脚本与临时工作区放 `output/scratch/<本次任务>/`。
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。

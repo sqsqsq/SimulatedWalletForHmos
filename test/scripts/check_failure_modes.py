@@ -75,9 +75,25 @@ def installed_extension(project_root: Path) -> Path:
     return project_root / rel
 
 
-#: CLI 测试回流的需求产物（维护仓 doc/features）：--historical 的样本之一
+#: CLI 测试回流的需求产物（维护仓 doc/features）；其下 archive/ 是历轮起跑前归档，按批次分目录
 RETURNED_FEATURES_DIR = REPO_ROOT / "doc" / "features"
-ARCHIVED_FEATURES_DIR = Path("E:/Project/bak/Story-Features-20260824-121838")
+
+
+def historical_samples(root: Path | None = None) -> list[Path]:
+    """--historical 的样本：回流根下的需求目录（archive 除外），加 archive 下每个批次的需求目录；不往下递归。"""
+    root = RETURNED_FEATURES_DIR if root is None else root
+    samples: list[Path] = []
+    if not root.is_dir():
+        return samples
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        if entry.name.casefold() == "archive":
+            for batch in sorted(p for p in entry.iterdir() if p.is_dir()):
+                samples.extend(p for p in sorted(batch.iterdir()) if p.is_dir())
+        else:
+            samples.append(entry)
+    return samples
 
 # --------------------------------------------------------------------------- #
 # 通用工具
@@ -2829,11 +2845,7 @@ def main(argv: list[str] | None = None) -> int:
 
     historical_rows: list[tuple[str, str, bool, str]] = []
     if args.historical:
-        samples: list[Path] = []
-        if RETURNED_FEATURES_DIR.exists():
-            samples.extend(p for p in sorted(RETURNED_FEATURES_DIR.iterdir()) if p.is_dir())
-        if ARCHIVED_FEATURES_DIR.exists():
-            samples.extend(p for p in sorted(ARCHIVED_FEATURES_DIR.iterdir()) if p.is_dir())
+        samples = historical_samples()
         for mode in modes:
             if mode["status"] == "retired" or mode["target"] != "product":
                 continue
@@ -2842,7 +2854,8 @@ def main(argv: list[str] | None = None) -> int:
                     mode["checker"], sample, Ctx(knowledge_root=extension_root / "knowledge",
                                                  project_root=project_root)
                 )
-                historical_rows.append((mode["id"], sample.name, outcome.ok, outcome.evidence))
+                label = sample.relative_to(RETURNED_FEATURES_DIR).as_posix()
+                historical_rows.append((mode["id"], label, outcome.ok, outcome.evidence))
 
     by_mode: dict[str, list[ModeResult]] = {}
     for r in report.results:

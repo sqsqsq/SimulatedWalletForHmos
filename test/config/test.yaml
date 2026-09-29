@@ -9,8 +9,8 @@ target:
   features_dir: doc/features
 
 feature_history:
-  # 新 suite 起跑前，把维护仓 doc/features（回流的需求产物）全部归档到 Story-Features-<时间戳>；不恢复。
-  archive_root: 'E:\Project\bak'
+  # 新 suite 起跑前，把维护仓 doc/features 下的需求目录归档到 doc/features/archive/Story-Features-<时间戳>/；不恢复。
+  # 单个 Case 新链起跑前，工作区里同名的旧产物存进本次运行输出目录的 feature-history/。
   action_on_new_chain: move
   timestamp_format: '%Y%m%d-%H%M%S'
 

@@ -67,8 +67,9 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
 4. 全部安全后删除历史 workspace/output，写入 `previous-run-cleanup.json`。个别目录删除失败时逐个记录 `retained_cleanup_warning`
    与残留路径，下一轮重试，本轮照常继续。
-5. 将维护仓 `doc/features/*`（上一轮回流的需求产物）整体迁移到 `config/test.yaml` 的 `feature_history.archive_root` 下的
-   `Story-Features-<时间戳>/`（仓外目录），本轮结束不恢复。
+5. 将维护仓 `doc/features/` 下的需求目录（上一轮回流的需求产物）归档到 `doc/features/archive/Story-Features-<时间戳>/`，本轮结束不恢复；
+   `archive` 自身不搬，意外出现的文件留在原处并记入 `feature-migration.json`。`archive` 是保留名，需求编号与它同名的 Case 在读取时即被拒绝。
+   单个 Case 新链起跑时，工作区里同名的旧产物存进该次运行输出目录的 `feature-history/`。
 6. 创建模板及各 Case workspace，再顺序启动 CLI。
 
 活动 PID、有效 lease、路径越界、软链接风险、未知目录类型、所有权不明或无法可靠枚举进程时，保留现场并在第 5 步之前停止。
@@ -435,8 +436,8 @@ node doc/extensions/hooks/spec/author.mjs --feature <feature>    # 在装好开�
 | 夹具自检 | `fixtures/failure-modes/<id>/{bad,good}` | 反夹具必 FAIL、正夹具必 PASS；不过即 checker 本身失效 |
 | 真实目标 | 机制层源码扫描读 `extensions`（开发源）；执行器与产物层读 `--project-root` 给的模板及其中 `--feature` 指定的新产物 | `status: fixed` 的形态一条不许命中 |
 
-`status: pending_capability` 报 SKIP；`retired` 须带 `reason` + `approved_by`。`--historical` 是观察档：对维护仓 `doc/features/*` 与
-仓外归档的 `Story-Features-*` 历史样本跑产物类 checker，检出是预期结果，不参与 PASS/FAIL。
+`status: pending_capability` 报 SKIP；`retired` 须带 `reason` + `approved_by`。`--historical` 是观察档：对维护仓 `doc/features/` 下的需求目录与
+`doc/features/archive/` 每个归档批次下的需求目录跑产物类 checker（报告用相对回流根的路径区分同编号），检出是预期结果，不参与 PASS/FAIL。
 
 ### 5.5 维护不变量的机械回归
 
@@ -547,7 +548,7 @@ python test/scripts/run_review_qualification.py --config <当前配置> --out <�
 比较前核对机制版本、宿主/模型配置、原材料、确认范围、交互与干预、结束阶段及产物版本；相同条件的独立重复才提供稳定性证据，
 少量重复通过不等于高成功率，同时看最差一轮与关键缺陷。
 每轮并列记录目标变化、非重点能力变化、成本变化与证据缺口，重点核「优化 A 是否损害 B」。历史检索先查 output 中的 artifact 与保留记录，
-再查已登记的 feature 备份；维护仓 `doc/features` 只是最近一次回流，找不到的证据标不可比。被长期评价引用的材料要有明确保留位置，
+再查 `doc/features/archive/` 的归档批次；维护仓 `doc/features` 下的需求目录只是最近一次回流，找不到的证据标不可比。被长期评价引用的材料要有明确保留位置，
 下一轮起跑会清理的 suite 目录不能当档案。
 
 #### 金样

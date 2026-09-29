@@ -143,6 +143,21 @@ class MaintenanceAndConsumerRootsStayApart(unittest.TestCase):
         self.assertEqual(REPO_ROOT / "demo", Path(got["demo"]))
         self.assertEqual(REPO_ROOT / "doc" / "features", Path(got["features"]))
 
+    def test_historical_samples_are_current_features_plus_each_archived_batch(self) -> None:
+        """回流根下的需求目录（archive 除外）加 archive 下每批的需求目录；不递归进需求内部，同编号不同批次都在。"""
+        sys.path.insert(0, str(self.SCRIPTS))
+        import check_failure_modes as cfm
+
+        root = Path(tempfile.mkdtemp(prefix="returned-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel in ("AR1/AR/story-src", "archive/Story-Features-1/AR1/AR", "archive/Story-Features-2/AR1",
+                    "archive/Story-Features-2/ISSUE-2"):
+            (root / rel).mkdir(parents=True)
+        (root / "notes.txt").write_text("x", encoding="utf-8")
+        got = [p.relative_to(root).as_posix() for p in cfm.historical_samples(root)]
+        self.assertEqual(["AR1", "archive/Story-Features-1/AR1", "archive/Story-Features-2/AR1",
+                          "archive/Story-Features-2/ISSUE-2"], got)
+
     def test_the_checker_reads_the_consumer_it_is_given_and_never_the_maintenance_repo(self) -> None:
         sys.path.insert(0, str(self.SCRIPTS))
         import check_failure_modes as cfm

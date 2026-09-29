@@ -276,28 +276,33 @@ class SnapshotTest(unittest.TestCase):
 
 
 class FeatureHistoryMigrationTest(unittest.TestCase):
-    """新链只迁移当前 feature 到仓外；其它需求、扩展与续跑输入保持原位。"""
+    """新链只迁移当前 feature 到本次运行的 feature-history/；其它需求、扩展与续跑输入保持原位。"""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
-        self.backup = self.tmp / "bak"
+        self.out = self.tmp / "output" / "run-1"
+        self.backup = self.out / "feature-history"
         self._root, self._dir = rc.REPO_ROOT, rc.FEATURES_DIR
-        self._backup = rc.FEATURE_HISTORY_ROOT
         rc.REPO_ROOT = self.repo
-        rc.FEATURE_HISTORY_ROOT = self.backup
 
     def tearDown(self) -> None:
         rc.REPO_ROOT, rc.FEATURES_DIR = self._root, self._dir
-        rc.FEATURE_HISTORY_ROOT = self._backup
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_rejects_dangerous_roots(self) -> None:
         for bad in (".", "doc", "framework"):
             rc.FEATURES_DIR = bad
             with self.assertRaises(SystemExit, msg=f"未拦截危险产物根: {bad}"):
-                rc.migrate_feature_history("AR1", "story")
+                rc.migrate_feature_history("AR1", "story", self.out)
+
+    def test_a_backup_inside_the_features_root_is_refused(self) -> None:
+        rc.FEATURES_DIR = "doc/features"
+        (self.repo / "doc/features/AR1").mkdir(parents=True)
+        with self.assertRaises(SystemExit):
+            rc.migrate_feature_history("AR1", "story", self.repo / "doc/features/run-1")
+        self.assertTrue((self.repo / "doc/features/AR1").is_dir())
 
     def test_moves_only_current_feature_and_keeps_siblings(self) -> None:
         rc.FEATURES_DIR = "doc/features"
@@ -309,9 +314,11 @@ class FeatureHistoryMigrationTest(unittest.TestCase):
         subject = self.repo / "doc" / "extensions" / "skill.md"
         subject.write_text("被测对象", encoding="utf-8")
 
-        result = rc.migrate_feature_history("AR1", "story", "run-1")
+        result = rc.migrate_feature_history("AR1", "story", self.out, "run-1")
         self.assertEqual(result["status"], "moved")
         target = Path(result["target"])
+        self.assertEqual(self.backup.resolve(), target.parent, "旧产物没落在本次运行的 feature-history/")
+        self.assertRegex(target.name, r"^AR1-\d{8}-\d{6}")
         self.assertTrue((target / "AR" / "story.md").is_file())
         self.assertFalse((self.repo / "doc" / "features" / "AR1").exists())
         self.assertTrue((self.repo / "doc" / "features" / "AR2").is_dir())
@@ -319,7 +326,7 @@ class FeatureHistoryMigrationTest(unittest.TestCase):
 
     def test_missing_history_is_a_recorded_noop(self) -> None:
         rc.FEATURES_DIR = "doc/features"
-        result = rc.migrate_feature_history("AR1", "story")
+        result = rc.migrate_feature_history("AR1", "story", self.out)
         self.assertEqual(result["status"], "no_existing_feature")
         self.assertFalse(self.backup.exists(), "没有历史产物时不应创建空备份目录")
 
@@ -327,9 +334,10 @@ class FeatureHistoryMigrationTest(unittest.TestCase):
         rc.FEATURES_DIR = "doc/features"
         feature = self.repo / "doc" / "features" / "AR1"
         feature.mkdir(parents=True)
-        result = rc.migrate_feature_history("AR1", "plan")
+        result = rc.migrate_feature_history("AR1", "plan", self.out)
         self.assertEqual(result["status"], "not_new_chain")
         self.assertTrue(feature.exists())
+        self.assertFalse(self.backup.exists())
 
 
 class WorkspaceSeedTest(unittest.TestCase):
@@ -340,15 +348,12 @@ class WorkspaceSeedTest(unittest.TestCase):
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         self._root, self._dir, self._here = rc.REPO_ROOT, rc.FEATURES_DIR, rc.HERE
-        self._backup = rc.FEATURE_HISTORY_ROOT
         rc.REPO_ROOT, rc.FEATURES_DIR = self.repo, "doc/features"
-        rc.FEATURE_HISTORY_ROOT = self.tmp / "bak"
         rc.HERE = self.repo / "test" / "scripts"
         self.workspace = self.repo / "test" / "cases" / "c1" / "workspace"
 
     def tearDown(self) -> None:
         rc.REPO_ROOT, rc.FEATURES_DIR, rc.HERE = self._root, self._dir, self._here
-        rc.FEATURE_HISTORY_ROOT = self._backup
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_seeds_subtree_and_reports_relative_paths(self) -> None:
@@ -365,7 +370,7 @@ class WorkspaceSeedTest(unittest.TestCase):
         (self.workspace / "inbox" / "prd.docx").write_bytes(b"material")
         (self.repo / "doc" / "features" / "AR1" / "AR").mkdir(parents=True)
 
-        moved = rc.migrate_feature_history("AR1", "story")
+        moved = rc.migrate_feature_history("AR1", "story", self.tmp / "output" / "run-1")
         rc.seed_case_workspace("c1", "AR1")
         self.assertEqual(moved["status"], "moved")
         self.assertTrue((self.repo / "doc" / "features" / "AR1" / "inbox" / "prd.docx").exists())

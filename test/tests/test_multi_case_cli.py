@@ -108,7 +108,7 @@ class StructuredPhaseStateTest(unittest.TestCase):
 
 
 class SuiteFeatureArchiveTest(unittest.TestCase):
-    """起跑前归档的是维护仓 doc/features 的产物；同在 doc 下的 spec/plan/release 不动。"""
+    """起跑前把回流根下的需求目录归档进 doc/features/archive/<批次>/；archive 自身、spec/plan/release 不动。"""
 
     def maintenance_doc(self) -> Path:
         root = Path(tempfile.mkdtemp())
@@ -116,29 +116,41 @@ class SuiteFeatureArchiveTest(unittest.TestCase):
         doc = root / "repo" / "doc"
         (doc / "spec/1.9.8").mkdir(parents=True)
         (doc / "spec/1.9.8/00.md").write_text("需求", encoding="utf-8")
-        for name, value in (("DOC_ROOT", doc), ("FEATURES_ROOT", doc / "features"),
-                            ("FEATURE_ARCHIVE_ROOT", root / "bak")):
+        for name, value in (("DOC_ROOT", doc), ("FEATURES_ROOT", doc / "features")):
             self.addCleanup(setattr, run_multi_case, name, getattr(run_multi_case, name))
             setattr(run_multi_case, name, value)
         return doc
 
-    def test_moves_all_features_to_timestamped_external_archive(self) -> None:
+    def test_current_features_move_into_a_new_batch_and_history_stays(self) -> None:
         doc = self.maintenance_doc()
         features = doc / "features"
         (features / "AR1").mkdir(parents=True)
         (features / "AR2").mkdir()
         (features / "AR1/story.md").write_text("one", encoding="utf-8")
+        (features / "archive/Story-Features-20260101-000000/AR0").mkdir(parents=True)
 
         result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
 
         destination = Path(result["destination_root"])
         self.assertEqual("completed", result["status"])
         self.assertRegex(destination.name, r"^Story-Features-\d{8}-\d{6}")
-        self.assertEqual(run_multi_case.FEATURE_ARCHIVE_ROOT.resolve(), destination.parent)
+        self.assertEqual((features / "archive").resolve(), destination.parent)
         self.assertTrue((destination / "AR1/story.md").is_file())
         self.assertTrue((destination / "AR2").is_dir())
-        self.assertEqual([], list(features.iterdir()))
+        self.assertEqual(["archive"], [p.name for p in features.iterdir()])
+        self.assertTrue((features / "archive/Story-Features-20260101-000000/AR0").is_dir(), "上一批历史被动了")
         self.assertEqual("需求", (doc / "spec/1.9.8/00.md").read_text(encoding="utf-8"))
+
+    def test_only_archive_means_nothing_to_archive(self) -> None:
+        doc = self.maintenance_doc()
+        (doc / "features/archive/Story-Features-20260101-000000/AR0").mkdir(parents=True)
+
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+
+        self.assertEqual("no_existing_features", result["status"])
+        self.assertIsNone(result["destination_root"])
+        self.assertEqual(["Story-Features-20260101-000000"],
+                         [p.name for p in (doc / "features/archive").iterdir()], "不该建空批次")
 
     def test_empty_features_does_not_create_archive_directory(self) -> None:
         doc = self.maintenance_doc()
@@ -147,8 +159,46 @@ class SuiteFeatureArchiveTest(unittest.TestCase):
         result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
 
         self.assertEqual("no_existing_features", result["status"])
-        self.assertIsNone(result["destination_root"])
-        self.assertFalse(run_multi_case.FEATURE_ARCHIVE_ROOT.exists())
+        self.assertFalse((doc / "features/archive").exists())
+
+    def test_archive_in_other_case_is_the_same_reserved_directory(self) -> None:
+        """Archive 与 archive 在 Windows 上是同一个目录：跳过它，新批次也放进它。"""
+        doc = self.maintenance_doc()
+        features = doc / "features"
+        (features / "Archive/Story-Features-20260101-000000").mkdir(parents=True)
+        (features / "AR1").mkdir()
+
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("Archive", Path(result["destination_root"]).parent.name)
+        self.assertEqual(["Archive"], [p.name for p in features.iterdir()])
+
+    def test_a_batch_name_already_taken_gets_a_suffix(self) -> None:
+        doc = self.maintenance_doc()
+        features = doc / "features"
+        self.addCleanup(setattr, run_multi_case, "FEATURE_ARCHIVE_TIMESTAMP_FORMAT",
+                        run_multi_case.FEATURE_ARCHIVE_TIMESTAMP_FORMAT)
+        run_multi_case.FEATURE_ARCHIVE_TIMESTAMP_FORMAT = "fixed"
+        (features / "archive/Story-Features-fixed/AR0").mkdir(parents=True)
+        (features / "AR1").mkdir()
+
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+
+        self.assertEqual("Story-Features-fixed-suite-1", Path(result["destination_root"]).name)
+        self.assertTrue((features / "archive/Story-Features-fixed/AR0").is_dir(), "重名批次被覆盖")
+
+    def test_unexpected_files_stay_and_are_reported(self) -> None:
+        doc = self.maintenance_doc()
+        features = doc / "features"
+        (features / "AR1").mkdir(parents=True)
+        (features / "notes.txt").write_text("不是需求", encoding="utf-8")
+
+        result = run_multi_case.migrate_existing_features(doc.parent / "suite-1")
+
+        self.assertEqual(["notes.txt"], result["kept_unexpected"])
+        self.assertEqual("不是需求", (features / "notes.txt").read_text(encoding="utf-8"))
+        self.assertFalse((Path(result["destination_root"]) / "notes.txt").exists())
 
     def test_a_root_other_than_doc_features_is_refused(self) -> None:
         """回流根指错到 doc 本身时，spec/plan/release 会被当成产物搬走——拒绝，一个文件都不动。"""
@@ -158,7 +208,18 @@ class SuiteFeatureArchiveTest(unittest.TestCase):
             run_multi_case.migrate_existing_features(doc.parent / "suite-1")
         self.assertIn("spec、plan、release", str(caught.exception))
         self.assertTrue((doc / "spec/1.9.8/00.md").is_file())
-        self.assertFalse(run_multi_case.FEATURE_ARCHIVE_ROOT.exists())
+        self.assertFalse((doc / "archive").exists())
+
+    def test_a_case_whose_feature_is_the_reserved_name_is_refused_before_start(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "c1").mkdir()
+        (root / "c1/case.yaml").write_text("id: c1\nar: Archive\n", encoding="utf-8")
+        self.addCleanup(setattr, run_multi_case, "CASES_ROOT", run_multi_case.CASES_ROOT)
+        run_multi_case.CASES_ROOT = root
+        with self.assertRaises(SystemExit) as caught:
+            run_multi_case.load_case_plan("c1")
+        self.assertIn("doc/features/archive", str(caught.exception))
 
 
 class MultiCasePlanContinuationTest(unittest.TestCase):
@@ -1123,6 +1184,38 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         self.assertEqual("普通终态", (self.features / "AR-9/story.md").read_text(encoding="utf-8"), "冲突时覆盖了目标")
         self.assertTrue((self.root / "ws-other/doc/features/AR-9/story.md").is_file(), "冲突时动了来源")
         self.assertFalse((self.demo / "doc/features").exists(), "终态回流进了 demo")
+
+    def test_the_reserved_archive_name_is_never_written_back(self) -> None:
+        """回流根下的 archive 是历史归档：检查点与终态回流都不许写进它。"""
+        history = self.features / "archive/Story-Features-20260101-000000/AR0"
+        history.mkdir(parents=True)
+        (history / "story.md").write_text("历史", encoding="utf-8")
+
+        workspace = self.root / "ws-archive"
+        (workspace / "doc/features/archive").mkdir(parents=True)
+        (workspace / "doc/features/archive/story.md").write_text("覆盖", encoding="utf-8")
+        baseline = self.root / "bundle/cases/case-a/workspace-baseline.json"
+        run_multi_case.write_json(baseline, run_multi_case.snapshot_workspace_sources(workspace))
+        suite = {"bundle_root": str(self.root / "bundle"),
+                 "main_source_baseline": run_multi_case.snapshot_workspace_sources(self.demo)}
+        record = {"case": "case-a", "feature": "archive", "workspace": str(workspace),
+                  "workspace_baseline": str(baseline), "status": "finished", "execution_status": "finished"}
+        result = run_multi_case.promote_case_workspace(suite, record)
+        self.assertIn("reserved_archive_name", json.dumps(result, ensure_ascii=False))
+        self.assertFalse((self.features / "archive/story.md").exists(), "终态回流写进了归档目录")
+
+        snapshot = self.root / "snapshot/Archive"
+        snapshot.mkdir(parents=True)
+        suite_id = "suite-reserved"
+        bundle = self.root / "suites" / suite_id
+        run_multi_case.write_json(bundle / "suite.json", {
+            "bundle_root": str(bundle), "events": [],
+            "case_states": {"case-a": {"case": "case-a", "feature": "Archive", "status": "awaiting_reply",
+                                       "checkpoints": {"initial": {"path": str(snapshot)}}}}})
+        with mock.patch.object(run_multi_case, "refresh_record", side_effect=lambda r: r), \
+                self.assertRaises(SystemExit):
+            run_multi_case.command_promote_checkpoint(suite_id, "case-a", "initial")
+        self.assertEqual(["Story-Features-20260101-000000"], [p.name for p in (self.features / "archive").iterdir()])
 
 
 class PidReuseDoesNotBlockCleanup(unittest.TestCase):

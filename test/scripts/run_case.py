@@ -88,11 +88,8 @@ HEARTBEAT_INTERVAL_SEC = int(CFG.get("observation", {}).get("heartbeat_sec", 10)
 WORKER_LEASE_SEC = int(CFG.get("observation", {}).get("lease_sec", 180))
 FEATURE_HISTORY_CFG = CFG.get("feature_history", {})
 FEATURE_HISTORY_ACTION = str(FEATURE_HISTORY_CFG.get("action_on_new_chain", "move")).strip()
-FEATURE_HISTORY_ROOT = Path(os.environ.get(
-    "STORY_FEATURE_ARCHIVE_ROOT",
-    str(FEATURE_HISTORY_CFG.get("archive_root", r"E:\Project\bak"))))
-if not FEATURE_HISTORY_ROOT.is_absolute():
-    FEATURE_HISTORY_ROOT = (REPO_ROOT / FEATURE_HISTORY_ROOT).resolve()
+#: 新链起跑前的同名旧产物存进本次运行输出目录下的这个子目录，随 suite 证据保留与清理
+FEATURE_HISTORY_DIR = "feature-history"
 FEATURE_HISTORY_TIMESTAMP_FORMAT = str(
     FEATURE_HISTORY_CFG.get("timestamp_format", "%Y%m%d-%H%M%S"))
 if STOP_GRACE < 0:
@@ -1104,9 +1101,9 @@ def restore_phase_slot(snapshot: str | None) -> str:
     return "restored"
 
 
-def migrate_feature_history(feature: str, start_phase: str,
+def migrate_feature_history(feature: str, start_phase: str, out_dir: Path,
                             run_id: str | None = None) -> dict[str, Any]:
-    """新链起跑前把同一 feature 的旧产物移出代码仓，并返回可审计记录。"""
+    """新链起跑前把同一 feature 的旧产物移到本次运行的 `<out_dir>/feature-history/`，并返回可审计记录。"""
     if not should_migrate_feature_history(start_phase):
         return {"status": "not_new_chain", "action": "none", "feature": feature}
     root = (REPO_ROOT / FEATURES_DIR).resolve()
@@ -1118,13 +1115,9 @@ def migrate_feature_history(feature: str, start_phase: str,
     if source.resolve().parent != root:
         raise SystemExit(f"[runner] feature 越出产物根，拒绝迁移: {feature}")
 
-    backup_root = FEATURE_HISTORY_ROOT.resolve()
-    if backup_root == Path(backup_root.anchor) or backup_root == REPO_ROOT.resolve():
-        raise SystemExit(f"[runner] 非法历史备份根，拒绝迁移: {backup_root}")
-    if backup_root.is_relative_to(REPO_ROOT.resolve()) \
-            and not backup_root.is_relative_to(OUT_ROOT.resolve()):
-        raise SystemExit(
-            f"[runner] 历史备份根必须位于代码仓外，或位于本轮输出根内: {backup_root}")
+    backup_root = (Path(out_dir) / FEATURE_HISTORY_DIR).resolve()
+    if backup_root.is_relative_to(root):
+        raise SystemExit(f"[runner] 历史备份落进了产物根，拒绝迁移: {backup_root}")
     if not source.exists():
         return {
             "status": "no_existing_feature", "action": "none", "feature": feature,
@@ -1842,7 +1835,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     result["end_phase"] = end_phase
     result["start_phase"] = start_phase
     if should_migrate_feature_history(start_phase):
-        result["feature_history"] = migrate_feature_history(feature, start_phase, resolved_run_id)
+        result["feature_history"] = migrate_feature_history(feature, start_phase, out_dir, resolved_run_id)
         feed.emit("feature_history_migrated", **result["feature_history"])
         result["workspace_seeded"] = seed_case_workspace(case_id, feature)
         if result["workspace_seeded"]:
