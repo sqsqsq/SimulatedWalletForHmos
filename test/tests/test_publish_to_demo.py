@@ -139,6 +139,25 @@ class BadInputWritesNothing(PublishCase):
         claude.write_text(claude.read_text(encoding="utf-8") + "\n## 我们自己的约定\n", encoding="utf-8")
         self.assert_refused("CLAUDE.md")
 
+    def test_a_source_whose_manifest_framework_rejects(self) -> None:
+        """源包登记了不存在的知识、或把绑定挂在不存在的阶段：替换之前按目标 Framework 核出来，dry-run 同样报。"""
+        manifest = self.source / "manifest.yaml"
+        original = manifest.read_text(encoding="utf-8")
+        cases = {
+            "knowledge_missing": original.replace("  knowledge:\n", "  knowledge:\n    - knowledge/not-present.md\n", 1),
+            "phase_binding": original.replace("  plan: *author_knowledge\n", "  plan: *author_knowledge\n  nope: *author_knowledge\n", 1),
+        }
+        for needle, text in cases.items():
+            with self.subTest(needle):
+                manifest.write_text(text, encoding="utf-8")
+                before = self.snapshot()
+                for dry in (True, False):
+                    result = self.install(dry_run=dry)
+                    self.assertEqual("preflight_failed", result.status, result)
+                    self.assertTrue(any(needle in p for p in result.problems), result.problems)
+                self.assertEqual(before, self.snapshot(), "源包不合规却写了目标")
+        manifest.write_text(original, encoding="utf-8")
+
     def test_a_stray_story_ext_zone_without_an_installed_section(self) -> None:
         """目标上没装旧版扩展，却有 story-ext 标记：认不出是谁的东西，不当作旧扩展段撤掉。"""
         claude = self.target / "CLAUDE.md"
@@ -193,17 +212,35 @@ class TheWriteFaceIsExact(PublishCase):
             self.assertEqual((other / rel).read_bytes(), (self.target / rel).read_bytes(), rel)
 
     def test_a_write_failure_reports_what_was_actually_done(self) -> None:
-        """物化中途写不进去：报失败，列出实际完成的写入，不留安装日志。"""
+        """物化中途写不进去：报失败并保留原始错误，此前真实写出或删掉的宿主入口一个不漏，不留安装日志。"""
+        extra = self.source / "skills" / "extra" / "SKILL.md"
+        extra.parent.mkdir(parents=True)
+        extra.write_text("---\nname: extra\ndescription: 多一个 Skill\n---\n\n# extra\n", encoding="utf-8")
+        manifest = self.source / "manifest.yaml"
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+            "    - story-knowledge\n", "    - story-knowledge\n    - extra\n", 1), encoding="utf-8")
         claude = self.target / "CLAUDE.md"
         claude.chmod(stat.S_IREAD)
         self.addCleanup(claude.chmod, stat.S_IWRITE | stat.S_IREAD)
+        before = {k: v for k, v in self.snapshot().items() if not k.startswith("doc/extensions/")}
         result = self.install()
         self.assertEqual("write_failed", result.status, result.problems)
         self.assertEqual(["materialize host entries"], result.failed)
-        self.assertTrue(result.problems)
-        for rel in result.completed:
-            self.assertTrue((self.target / rel).exists(), rel)
+        self.assertTrue(any("原生物化失败" in p for p in result.problems), result.problems)
+        after = {k: v for k, v in self.snapshot().items() if not k.startswith("doc/extensions/")}
+        changed = sorted(k for k in after if before.get(k) != after[k])
+        gone = sorted(k for k in before if k not in after)
+        self.assertIn(".claude/commands/extra.md", changed)
+        self.assertEqual(changed, sorted(c for c in result.completed if not c.startswith(("doc/extensions/", "remove "))),
+                         "真实改动的宿主入口没有全部列进完成项")
+        self.assertEqual(gone, sorted(c[len("remove "):] for c in result.completed if c.startswith("remove ")))
         self.assertEqual([], [p for p in self.root.rglob("install-*")], "留下了安装日志")
+
+    def test_a_shared_directory_stale_entry_stays_visible_as_a_warning(self) -> None:
+        """chrys 与 generic 共用 .agents：安装可用，但 Framework 对其中一方的 stale 作为警告留下，不算各宿主都核对通过。"""
+        result = self.install()
+        self.assertEqual("installed", result.status, result.problems)
+        self.assertTrue(any(".agents/skills/" in w and "stale" in w for w in result.warnings), result.warnings)
 
 
 class APublishTargetInGitMustBeClean(PublishCase):

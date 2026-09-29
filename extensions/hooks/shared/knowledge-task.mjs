@@ -99,10 +99,12 @@ function blueprintTask(root, id, action) {
 }
 
 function featureTask(root, feature, action) {
-  const f = readFeature(root, feature);
+  const f = readFeature(root, feature, action);
   if (f.status !== 'ok') {
-    stop(`Feature ${feature}`, f.issues.map(i => `${i.code} ${i.message}`).join('；'),
-      f.status === 'stale' ? '设计负责方重新准备该施工单位（蓝图已变）' : '调用方按原生身份给出正确的 Feature');
+    stop(`Feature ${feature}（${action} 阶段）`, f.issues.map(i => `${i.code} ${i.message}`).join('；'),
+      f.status === 'stale' ? '设计负责方重新准备该施工单位（蓝图已变）'
+        : f.status === 'missing' ? '调用方按原生身份给出存在的 Feature'
+          : '产出这份输入的阶段或设计负责方按原生报错修正');
   }
   const gaps = [];
   const kind = f.identity.kind === 'cu'
@@ -119,19 +121,23 @@ function featureTask(root, feature, action) {
     facts = rows.length ? rows : ['契约里还没有知识应用的决定。'];
   }
   const duties = [];
-  const contracts = f.inputs.contracts;
-  if (contracts?.state === 'resolved') {
-    const must = obligationsFromContracts(contracts.value);
-    duties.push(...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.rule} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
+  if (f.scope === 'not_frozen') {
+    duties.push('本阶段的原生输入还没有确定：执行范围未冻结，首次阶段调用时由原生入口冻结。');
+    gaps.push('执行范围未冻结：按原生入口（prepare-scope 后首次阶段调用）确定本阶段输入，知识任务不代为冻结；施工义务以冻结后的输入为准。');
   } else {
-    duties.push(`本阶段还没有可读的施工契约（${contracts?.state ?? 'absent'}）。`);
-    if (!['spec', 'plan'].includes(action)) gaps.push(`${action} 需要施工契约，当前 ${contracts?.state ?? 'absent'}${contracts?.detail ? `：${contracts.detail}` : ''}——回到设计或 plan 责任方。`);
+    const contracts = f.inputs.contracts;
+    if (contracts?.state === 'resolved') {
+      const must = obligationsFromContracts(contracts.value);
+      duties.push(`契约来自 ${contracts.binding?.kind ?? '原生'}${contracts.binding?.artifact ? ` ${contracts.binding.artifact}` : ''}。`,
+        ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.rule} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
+    } else {
+      duties.push(`本阶段没有可读的施工契约（${contracts?.state ?? '本阶段不读契约'}）${contracts?.detail ? `：${contracts.detail}` : ''}。`);
+    }
+    const acceptance = f.inputs.acceptance?.value;
+    const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => c?.knowledge_rule);
+    duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));
+    if (f.assurance === 'degraded') gaps.push('原生阶段解析为 degraded：有能力被裁剪，按原生报告核对本阶段可用的输入。');
   }
-  const acceptance = f.inputs.acceptance?.value;
-  const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => c?.knowledge_rule);
-  if (bridged.length) duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));
-  if (f.scope === 'not_frozen' && f.identity.kind === 'cu') gaps.push('执行范围还没冻结：按原生入口 prepare-scope 并首次阶段调用后冻结，知识任务不代为冻结。');
-  gaps.push(...f.issues.map(i => `原生输入：${i.message}`));
   return { object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md` };
 }
 

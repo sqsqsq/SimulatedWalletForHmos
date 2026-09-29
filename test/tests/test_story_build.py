@@ -1021,10 +1021,16 @@ class TestRetiredThings(unittest.TestCase):
         return "\n".join(out)
 
     def test_the_adapt_preconditions_are_gone(self) -> None:
-        """framework 版本门槛与热修清单退场——framework 的事不归 adapt 管。"""
+        """framework 版本门槛与热修清单退场——framework 的事不归 adapt 管。
+
+        读原生能力走 hooks/shared/framework-access.mjs 按路径加载原生模块，那是调用不是门槛；
+        adapt 自己不再检查 framework 的哪个文件修没修。"""
         text = self.ext_text()
-        for gone in ("3.0.0", "capability-resolution", "MaisonPrimaryButton"):
+        for gone in ("3.0.0", "MaisonPrimaryButton"):
             self.assertNotIn(gone, text, f"「{gone}」还留在扩展包里")
+        adapt = "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                          for p in (self.EXT / "skills/story-adaptation").rglob("*") if p.is_file())
+        self.assertNotIn("capability-resolution", adapt, "adapt 又在检查 framework 的热修")
 
     def test_adapt_leaves_no_work_files_behind(self) -> None:
         """adapt 不落任何工作件：确认靠 git diff，不写 before 快照。

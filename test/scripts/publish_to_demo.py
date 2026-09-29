@@ -42,6 +42,8 @@ class InstallResult:
     completed: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    #: 不影响可用、但要看得见的已知限制（如共用目录的宿主互相改写，Framework 判 stale）
+    warnings: list[str] = field(default_factory=list)
 
 
 class InputError(Exception):
@@ -126,9 +128,11 @@ def _plan(source: Path, target: Path) -> tuple[list[tuple], str | None, list[str
             writes.append((f"{EXTENSION_DIR}/{rel}", (source / rel).read_bytes()))
         except OSError as exc:
             problems.append(f"源文件读不出：{rel}（{exc}）")
-    code, plan = _entries(source / ENTRIES_SCRIPT, target, "--action", "plan", "--skills", ",".join(skills))
+    code, plan = _entries(source / ENTRIES_SCRIPT, target, "--action", "plan", "--skills", ",".join(skills),
+                          "--candidate", str(source))
     if "error" in plan:
         problems.append(f"宿主入口核不了：{plan['error']}")
+    problems += plan.get("problems", [])
     problems += [f"宿主入口冲突：{c}" for c in plan.get("conflicts", [])]
     if problems:
         raise InputError(problems)
@@ -165,12 +169,12 @@ def install_extension(source: Path, target: Path, *, dry_run: bool = False) -> I
         completed.append(rel)
     code, result = _entries(target / EXTENSION_DIR / ENTRIES_SCRIPT, target,
                             "--action", "materialize", "--retire", ",".join(retire))
-    completed += [f"retire {rel}" for rel in result.get("removed", [])] + result.get("written", [])
+    completed += result.get("written", []) + [f"remove {rel}" for rel in result.get("removed", [])]
     problems = ([result["error"]] if "error" in result else []) + result.get("problems", [])
     if code != 0 or problems:
         return InstallResult("write_failed", version, str(target), planned, completed,
-                             ["materialize host entries"], problems)
-    return InstallResult("installed", version, str(target), planned, completed)
+                             ["materialize host entries"], problems, result.get("warnings", []))
+    return InstallResult("installed", version, str(target), planned, completed, warnings=result.get("warnings", []))
 
 
 def git_dirty(target: Path) -> list[str]:

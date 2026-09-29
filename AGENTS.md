@@ -230,8 +230,10 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
 
 同一个安装函数 `test/scripts/publish_to_demo.py` 服务两种目标，顺序固定：宿主入口写前核（只读）→ 整体替换目标 `doc/extensions` →
 撤下已核的旧入口、Framework 原生物化宿主入口并写后核。入口的核与物化只有一份实现，即扩展里的
-`skills/story-adaptation/scripts/entries.mjs`，对外 adapt 用的也是它：入口文件去掉已装旧版的扩展段后须与 Framework 的渲染逐字相同，
-已装旧版登记的入口须与旧发布源相同才撤下，要物化的 Skill 入口位置上不能有无归属的文件；不成立就停在写之前。
+`skills/story-adaptation/scripts/entries.mjs`，对外 adapt 用的也是它：待装的扩展先用目标的 Framework 原生加载器核 manifest 与全部登记引用；
+入口文件去掉已装旧版的扩展段后须与 Framework 的渲染逐字相同，已装旧版登记的入口须与旧发布源相同才撤下，要物化的 Skill 入口位置上
+不能有无归属的文件；不成立就停在写之前。物化中途失败时按前后字节报出已写、已删的入口与原始错误；共用目录的宿主互相改写（Framework
+已知限制）留在结果的 warnings 里。
 
 - **测试**：只装一次性 template，由 `run_multi_case.py` 按 TEST §1.2 装配，离线检查用的 template 按 TEST §5 现建。测试不写 demo；
   需求产物回流到维护仓 `doc/features/`。

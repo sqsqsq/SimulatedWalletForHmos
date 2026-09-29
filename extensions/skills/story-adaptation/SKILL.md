@@ -61,6 +61,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 - **目标是 git 仓库的根**、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
 - **包与目标都读得到**（各自的 `framework.config.json`，包的 `manifest.yaml` 与 `adaptation.yaml`），目标已接入 Framework；
+- **待装的扩展 Framework 认得**：包的机制面、合成后的 manifest 与目标自己的知识摆在一起，用目标的 Framework 核一遍登记——Skill、钩子、规则覆盖、资产、知识与阶段绑定引用的文件都在，阶段名是目标 workflow 里的；
 - **宿主入口写前核**：Framework 物化会整份重写 `AGENTS.md` / `CLAUDE.md`、不接管无归属的入口文件。入口文件去掉已装旧版的扩展段后与 Framework 的渲染不同、已装旧版登记的入口被人改过、要物化的 Skill 入口位置上有无归属的文件，都点名停下——要保留的内容由人挪到它自己的位置，确认可弃的删掉；
 - **manifest 的 `name` 是小写 slug**：Framework 按它识别扩展；目标的 name 不合规就停，由人改。
 

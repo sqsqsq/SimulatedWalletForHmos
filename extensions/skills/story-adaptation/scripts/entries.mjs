@@ -8,10 +8,11 @@
  *   - 已装旧版 manifest 登记的入口（target/source），目标与已装源逐字相同才退出；改过的报冲突。
  *   - 本次要物化的 Skill 入口位置上已有无归属或被改过的文件，报冲突。
  *
- * 用法：node entries.mjs --project-root <工程根> --action plan --skills a,b | materialize --retire p,q | check
+ * 用法：node entries.mjs --project-root <工程根> --action plan --skills a,b [--candidate <待装扩展目录>] | materialize --retire p,q | check
  * 输出 JSON；退出 0 通过，1 有冲突或核对不符，2 输入或依赖错误。
  */
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadNative } from '../../../hooks/shared/framework-access.mjs';
@@ -79,6 +80,27 @@ function bridgeArtifacts(ctx, skills) {
   }));
 }
 
+/**
+ * 待装的扩展在替换之前用目标 Framework 的原生加载器核一遍：manifest 合法，登记的 Skill、钩子、规则覆盖、资产、
+ * 知识与阶段绑定都在。`fill(extDir)` 把待装内容摆进临时工程的扩展目录；临时工程带目标的配置，阶段名按目标的 workflow 核。
+ */
+export function candidateProblems(root, fill) {
+  const native = loadNative(root);
+  const { loadFrameworkConfigWithSources } = native.module('config.ts');
+  const extDir = loadFrameworkConfigWithSources(native.root).config.paths?.extension_dir ?? 'doc/extensions';
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'story-candidate-'));
+  try {
+    fs.copyFileSync(path.join(native.root, 'framework.config.json'), path.join(stage, 'framework.config.json'));
+    const at = path.join(stage, ...extDir.split('/'));
+    fs.mkdirSync(at, { recursive: true });
+    fill(at);
+    const bundle = native.module('extension-loader.ts').loadInstanceExtensions(stage, extDir, { frameworkRoot: native.frameworkRoot });
+    return bundle.errors.map(e => `待装 manifest：${e.code} ${e.message}`.replaceAll(stage, '<待装>'));
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+}
+
 /** 写前核（只读）：返回要退出的旧入口与冲突。 */
 export function entryPlan(root, skills) {
   const ctx = context(root);
@@ -127,41 +149,52 @@ export function entryCheck(root) {
   for (const row of inspect.rows.filter(r => r.type === 'bridge')) {
     states.set(row.source, [...(states.get(row.source) ?? []), row.status]);
   }
+  // 共用同一目录的两个宿主（F5）会让原生对其中一方持续判 stale：同一路径已有宿主判 present 时入口可用，
+  // stale 作为已知限制留在 warnings 里，不当作各宿主都核对通过
+  const warnings = [];
   for (const [p, list] of states) {
     const bad = list.filter(s => !['present', 'stale'].includes(s));
     if (bad.length || !list.includes('present')) problems.push(`${p}：入口状态 ${list.join('/')}`);
+    else if (list.includes('stale')) warnings.push(`${p}：入口状态 ${list.join('/')}（共用目录的宿主互相改写，Framework 已知限制）`);
   }
   for (const f of inspect.findings.filter(f => f.code === 'extension_bridge_adapter_unsupported')) problems.push(f.message);
-  return { problems };
+  return { problems, warnings };
 }
 
 /**
  * 退出已核的旧入口 → 原生物化 → 写后核。
  *
- * 写入清单按前后字节算：原生对共用同一目录的两个宿主会各写一遍同一入口（字节不变也报写入），
- * 不据它的报告说「改了」。
+ * 写入与删除按本次覆盖面的前后字节算，原生中途抛错也照样核：共用同一目录的两个宿主会各写一遍同一入口
+ * （字节不变也报写入），不据原生报告说「改了」；抛错时已经写出或删掉的入口照实列出，原始错误原样保留。
  */
 export function entryMaterialize(root, retire) {
   const ctx = context(root);
   const { native } = ctx;
   const installed = read(path.join(ctx.extRoot, 'manifest.yaml'));
   const skills = installed ? native.require('yaml').parse(installed.toString('utf8'))?.provides?.skills ?? [] : [];
-  const before = new Map([...renderedEntries(ctx).map(e => e.target), ...bridgeArtifacts(ctx, skills).map(a => a.path)]
-    .map(p => [p, read(path.join(native.root, ...p.split('/')))]));
-  const removed = [];
-  for (const rel of retire) {
-    const file = path.join(native.root, ...rel.split('/'));
-    if (fs.existsSync(file)) { fs.rmSync(file); removed.push(rel); }
-  }
-  const result = native.module('scripts/extension.ts').materializeExtensions(native.root, native.frameworkRoot);
+  const watched = [...renderedEntries(ctx).map(e => e.target), ...bridgeArtifacts(ctx, skills).map(a => a.path), ...retire];
+  const at = p => path.join(native.root, ...p.split('/'));
+  const before = new Map(watched.map(p => [p, read(at(p))]));
   const rel = p => (path.isAbsolute(p) ? path.relative(native.root, p).split(path.sep).join('/') : p);
-  const written = [...result.entryFilesWritten, ...result.bridges.flatMap(b => b.filesWritten ?? [])].map(rel)
-    .filter((p) => {
-      const now = read(path.join(native.root, ...p.split('/')));
-      return !(before.get(p) && now && before.get(p).equals(now));
-    });
-  removed.push(...result.bridges.flatMap(b => b.filesRemoved ?? []).map(rel));
-  return { written: [...new Set(written)], removed: [...new Set(removed)], ...entryCheck(root) };
+  let reported = [];
+  let error = null;
+  try {
+    for (const p of retire) if (fs.existsSync(at(p))) fs.rmSync(at(p));
+    const result = native.module('scripts/extension.ts').materializeExtensions(native.root, native.frameworkRoot);
+    reported = [...result.entryFilesWritten, ...result.bridges.flatMap(b => [...(b.filesWritten ?? []), ...(b.filesRemoved ?? [])])].map(rel);
+  } catch (e) {
+    error = e;
+  }
+  const written = [];
+  const removed = [];
+  for (const p of new Set([...watched, ...reported])) {
+    const was = before.get(p) ?? null;
+    const now = read(at(p));
+    if (now && !(was && was.equals(now))) written.push(p);
+    else if (!now && was) removed.push(p);
+  }
+  if (error) return { written, removed, problems: [`原生物化失败：${error?.message ?? error}`], warnings: [] };
+  return { written, removed, ...entryCheck(root) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -174,10 +207,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!root || !['plan', 'materialize', 'check'].includes(action)) {
       throw new Error('用法：--project-root <工程根> --action plan --skills a,b | materialize --retire p,q | check');
     }
-    const out = action === 'plan' ? entryPlan(root, list('--skills'))
+    const out = action === 'plan'
+      ? { ...entryPlan(root, list('--skills')),
+        problems: opt('--candidate') ? candidateProblems(root, dir => fs.cpSync(path.resolve(opt('--candidate')), dir, { recursive: true })) : [] }
       : action === 'materialize' ? entryMaterialize(root, list('--retire')) : entryCheck(root);
     process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
-    process.exitCode = (out.conflicts ?? out.problems).length ? 1 : 0;
+    process.exitCode = [...(out.conflicts ?? []), ...(out.problems ?? [])].length ? 1 : 0;
   } catch (e) {
     process.stderr.write(`[entries] ${e?.message ?? e}\n`);
     process.exitCode = 2;

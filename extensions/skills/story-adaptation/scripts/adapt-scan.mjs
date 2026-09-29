@@ -26,7 +26,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
-import { entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
+import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
 
 const MODES = ['--apply', '--check'];
 
@@ -517,6 +517,38 @@ if (mode === '--apply') {
     die(`目标不是 git 仓库：${TARGET}\n`
       + '  这一次要整份换掉覆盖范围内的文件，没存档的改动被盖掉就找不回来了。');
   }
+  // manifest 的 name 归目标、升级不改；Framework 只认小写 slug，不合规就写前停
+  const composedText = composeManifest(PKG_MANIFEST_TEXT, existsSync(tgtManifest) ? read(tgtManifest) : '', freshIdentity(TARGET));
+  const composedName = manifestValue(composedText, 'name');
+  if (!SLUG.test(composedName ?? '')) {
+    die(`目标 manifest 的 name（${composedName}）不是小写 slug：Framework 按它识别扩展，`
+      + '先把它改成小写字母开头、只含小写字母数字与 _ -，再升级。目标一个字节未写', 2);
+  }
+
+  // 待装的扩展（包的机制面 + 合成后的 manifest + 目标自己的知识）先用目标的 Framework 核一遍：
+  // 登记坏了时入口渲染也会跟着变，先报根因
+  let candidate;
+  try {
+    candidate = candidateProblems(TARGET, (dir) => {
+      for (const p of coveredFiles(PDIR, WITH_ADAPTERS)) {
+        mkdirSync(dirname(join(dir, ...p.split('/'))), { recursive: true });
+        copyFileSync(join(PDIR, ...p.split('/')), join(dir, ...p.split('/')));
+      }
+      writeFileSync(join(dir, 'manifest.yaml'), composedText, 'utf8');
+      for (const p of walk(join(TDIR, KNOWLEDGE))) {
+        mkdirSync(dirname(join(dir, KNOWLEDGE, ...p.split('/'))), { recursive: true });
+        copyFileSync(join(TDIR, KNOWLEDGE, ...p.split('/')), join(dir, KNOWLEDGE, ...p.split('/')));
+      }
+    });
+  } catch (e) {
+    die(`待装的扩展核不了（${e.message}）`);
+  }
+  if (candidate.length) {
+    console.error(`[adapt-scan] 停：待装的扩展有 ${candidate.length} 处 Framework 不认的登记：`);
+    candidate.forEach(c => console.error(`  ${c}`));
+    die('包或目标的知识登记要先修好。目标一个字节未写', 2);
+  }
+
   // 宿主入口写前核：原生物化会整份重写入口文件、不接管无归属的入口，有别的内容就先停
   let plan;
   try {
@@ -540,14 +572,6 @@ if (mode === '--apply') {
   const pkgFiles = coveredFiles(PDIR, WITH_ADAPTERS);
   const written = [];
   const removed = [];
-
-  // manifest 的 name 归目标、升级不改；Framework 只认小写 slug，不合规就写前停
-  const composedName = manifestValue(composeManifest(PKG_MANIFEST_TEXT,
-    existsSync(tgtManifest) ? read(tgtManifest) : '', freshIdentity(TARGET)), 'name');
-  if (!SLUG.test(composedName ?? '')) {
-    die(`目标 manifest 的 name（${composedName}）不是小写 slug：Framework 按它识别扩展，`
-      + '先把它改成小写字母开头、只含小写字母数字与 _ -，再升级。目标一个字节未写', 2);
-  }
 
   // 1. 机制面整体替换：包里没有而目标有的先删，再逐个复制
   const tgtFiles = new Set(existsSync(TDIR) ? coveredFiles(TDIR, WITH_ADAPTERS) : []);
@@ -612,6 +636,7 @@ if (mode === '--apply') {
   }
   written.push(...entries.written);
   removed.push(...entries.removed);
+  entries.warnings.forEach(w => console.error(`[adapt-scan] 已知限制：${w}`));
   if (entries.problems.length) {
     console.error(`[adapt-scan] 宿主入口物化后核对不符 ${entries.problems.length} 处：`);
     entries.problems.forEach(p => console.error(`  ${p}`));

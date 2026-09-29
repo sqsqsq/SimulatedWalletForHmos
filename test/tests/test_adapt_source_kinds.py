@@ -340,6 +340,19 @@ class SourceKindCase(unittest.TestCase):
                          "已经被挡住了还往 .gitignore 里加")
         self.assertEqual(0, self.adapt("--check", target, PKG_ROOT).returncode)
 
+    def test_a_target_knowledge_registration_framework_rejects_stops_before_writing(self) -> None:
+        """目标自己的知识登记坏了（登记的文件不存在）：按合成后的目标登记核，写前停，包的知识不去顶替。"""
+        target = self.legacy_repo()
+        manifest = target / "doc" / "extensions" / "manifest.yaml"
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+            "  knowledge:\n", "  knowledge:\n    - knowledge/facts/gone.md\n", 1), encoding="utf-8")
+        self.commit(target, "目标登记了一份不存在的知识")
+        before = self.snapshot(target)
+        proc = self.adapt("--apply", target, PKG_ROOT)
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("knowledge_missing", self.out(proc))
+        self.assertEqual(before, self.snapshot(target), "停之前已经写过盘了")
+
     def test_an_edited_entry_file_stops_before_writing(self) -> None:
         """入口文件里有 Framework 生成之外的内容：物化会整份重写它，写前就停、点名文件、一个字节不写。"""
         target = self.blank_repo("BizA")
