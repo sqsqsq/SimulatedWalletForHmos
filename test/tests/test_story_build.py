@@ -1055,9 +1055,9 @@ class TestRetiredThings(unittest.TestCase):
         adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号落后，本版条目就漏报。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.9.8"', manifest)
+        self.assertIn('version: "2.0.0"', manifest)
         changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
-        self.assertIn("\n## 1.9.8\n", changes)
+        self.assertIn("\n## 2.0.0\n", changes)
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 doc/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
